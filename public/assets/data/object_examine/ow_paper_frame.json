@@ -1,0 +1,81 @@
+{
+  "id": "ow_paper_frame",
+  "label": "[tag:string:owPaper:frame_label]",
+  "title": "[tag:string:owPaper:frame_title]",
+  "allFoundHint": "[tag:string:owPaper:frame_hint]",
+  "presentation": {
+    "kind": "still",
+    "image": "/resources/runtime/images/examine/ow_paper_frame.png",
+    "physicalWidthCm": 48,
+    "backgroundPreset": "wood",
+    "contactAoIntensity": 0.4,
+    "contactAoRadiusCm": 0.5
+  },
+  "ambience": {
+    "headSway": {
+      "amplitude": 0.12
+    },
+    "breathing": false,
+    "dust": false
+  },
+  "hotspots": [
+    {
+      "id": "left_ankle",
+      "label": "[tag:string:owPaper:left_label]",
+      "x": 290,
+      "y": 1180,
+      "width": 150,
+      "height": 220,
+      "narration": "[tag:string:owPaper:left_look]",
+      "itemUses": [
+        {
+          "itemId": "ow_bamboo",
+          "label": "[tag:string:owPaper:left_use]",
+          "narration": "[tag:string:owPaper:left_work]",
+          "actions": [
+            {
+              "type": "emitNarrativeSignal",
+              "params": {
+                "signal": "ow_paper_splint"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "right_foot",
+      "label": "[tag:string:owPaper:right_label]",
+      "x": 610,
+      "y": 1180,
+      "width": 145,
+      "height": 220,
+      "narration": "[tag:string:owPaper:right_look]",
+      "itemUses": [
+        {
+          "itemId": "ow_paste",
+          "label": "[tag:string:owPaper:right_use]",
+          "narration": "[tag:string:owPaper:right_work]",
+          "actions": [
+            {
+              "type": "emitNarrativeSignal",
+              "params": {
+                "signal": "ow_paper_seam"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "face",
+      "label": "[tag:string:owPaper:face_label]",
+      "x": 410,
+      "y": 40,
+      "width": 200,
+      "height": 230,
+      "decoy": true,
+      "narration": "[tag:string:owPaper:face_look]"
+    }
+  ]
+}

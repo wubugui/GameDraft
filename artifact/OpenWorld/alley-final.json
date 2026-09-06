@@ -1,0 +1,221 @@
+{
+  "method": "Registered time action and diagnostic scene checkpoint; fixed ticks sample native movement.",
+  "samples": [
+    {
+      "scene": "后巷",
+      "minutes": 1080,
+      "actors": [
+        {
+          "id": "ow_yang",
+          "visible": true,
+          "x": 735,
+          "y": 611.23,
+          "animation": "idle",
+          "frame": 5
+        },
+        {
+          "id": "ow_luo",
+          "visible": false,
+          "x": 1027.5,
+          "y": 527.5,
+          "animation": "idle",
+          "frame": 5
+        },
+        {
+          "id": "ow_he",
+          "visible": false,
+          "x": 735,
+          "y": 598.67,
+          "animation": "idle",
+          "frame": 5
+        },
+        {
+          "id": "ow_deng",
+          "visible": true,
+          "x": 915,
+          "y": 410.28,
+          "animation": "idle",
+          "frame": 5
+        },
+        {
+          "id": "ow_man",
+          "visible": true,
+          "x": 877.5,
+          "y": 489.82,
+          "animation": "boy_stand_ring",
+          "frame": 5
+        },
+        {
+          "id": "ow_huang",
+          "visible": true,
+          "x": 960,
+          "y": 435.4,
+          "animation": "idle",
+          "frame": 5
+        }
+      ]
+    },
+    {
+      "scene": "后巷",
+      "minutes": 1080,
+      "actors": [
+        {
+          "id": "ow_yang",
+          "visible": true,
+          "x": 735,
+          "y": 611.23,
+          "animation": "idle",
+          "frame": 13
+        },
+        {
+          "id": "ow_luo",
+          "visible": false,
+          "x": 1027.5,
+          "y": 527.5,
+          "animation": "idle",
+          "frame": 13
+        },
+        {
+          "id": "ow_he",
+          "visible": false,
+          "x": 735,
+          "y": 598.67,
+          "animation": "idle",
+          "frame": 13
+        },
+        {
+          "id": "ow_deng",
+          "visible": true,
+          "x": 915,
+          "y": 410.28,
+          "animation": "idle",
+          "frame": 13
+        },
+        {
+          "id": "ow_man",
+          "visible": true,
+          "x": 877.5,
+          "y": 489.82,
+          "animation": "boy_stand_ring",
+          "frame": 13
+        },
+        {
+          "id": "ow_huang",
+          "visible": true,
+          "x": 960,
+          "y": 435.4,
+          "animation": "idle",
+          "frame": 13
+        }
+      ]
+    },
+    {
+      "scene": "后巷",
+      "minutes": 1080,
+      "actors": [
+        {
+          "id": "ow_yang",
+          "visible": true,
+          "x": 735,
+          "y": 611.23,
+          "animation": "idle",
+          "frame": 3
+        },
+        {
+          "id": "ow_luo",
+          "visible": false,
+          "x": 1027.5,
+          "y": 527.5,
+          "animation": "idle",
+          "frame": 3
+        },
+        {
+          "id": "ow_he",
+          "visible": false,
+          "x": 735,
+          "y": 598.67,
+          "animation": "idle",
+          "frame": 3
+        },
+        {
+          "id": "ow_deng",
+          "visible": true,
+          "x": 915,
+          "y": 410.28,
+          "animation": "idle",
+          "frame": 3
+        },
+        {
+          "id": "ow_man",
+          "visible": true,
+          "x": 877.5,
+          "y": 489.82,
+          "animation": "boy_stand_ring",
+          "frame": 3
+        },
+        {
+          "id": "ow_huang",
+          "visible": true,
+          "x": 960,
+          "y": 435.4,
+          "animation": "idle",
+          "frame": 3
+        }
+      ]
+    },
+    {
+      "scene": "后巷",
+      "minutes": 1080,
+      "actors": [
+        {
+          "id": "ow_yang",
+          "visible": true,
+          "x": 735,
+          "y": 611.23,
+          "animation": "idle",
+          "frame": 10
+        },
+        {
+          "id": "ow_luo",
+          "visible": false,
+          "x": 1027.5,
+          "y": 527.5,
+          "animation": "idle",
+          "frame": 10
+        },
+        {
+          "id": "ow_he",
+          "visible": false,
+          "x": 735,
+          "y": 598.67,
+          "animation": "idle",
+          "frame": 10
+        },
+        {
+          "id": "ow_deng",
+          "visible": true,
+          "x": 915,
+          "y": 410.28,
+          "animation": "idle",
+          "frame": 10
+        },
+        {
+          "id": "ow_man",
+          "visible": true,
+          "x": 877.5,
+          "y": 489.82,
+          "animation": "boy_stand_ring",
+          "frame": 10
+        },
+        {
+          "id": "ow_huang",
+          "visible": true,
+          "x": 960,
+          "y": 435.4,
+          "animation": "idle",
+          "frame": 10
+        }
+      ]
+    }
+  ]
+}

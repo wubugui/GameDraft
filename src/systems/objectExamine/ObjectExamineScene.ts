@@ -1928,11 +1928,12 @@ export class ObjectExamineScene {
       this.bagLayer.addChild(empty);
     } else {
       for (const it of items) {
-        const label = `${it.name}${it.count > 1 ? ` ×${it.count}` : ''}`;
+        const name = this.resolveText(it.name);
+        const label = `${name}${it.count > 1 ? ` ×${it.count}` : ''}`;
         const btn = this.makeChipButton(label, () => {
           this.holdingItemId = it.id;
           this.setHoldingLabel(
-            this.resolveText(this.labels.holding.replace('{item}', it.name)),
+            this.resolveText(this.labels.holding.replace('{item}', name)),
           );
           this.closeBag();
         }, btnW, undefined, SKINS.choice);

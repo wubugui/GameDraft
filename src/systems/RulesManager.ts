@@ -11,15 +11,22 @@ import type {
 } from '../data/types';
 import type { AssetManager } from '../core/AssetManager';
 import { TEXT_URLS } from '../core/projectPaths';
+import { validateRuleKnowledge, type RuleOwnerGraph } from '../core/ruleKnowledgeValidation';
 
 const LAYER_ORDER: RuleLayerKey[] = ['xiang', 'li', 'shu'];
 
 type RuleDefRaw = Record<string, unknown>;
 type FragmentRaw = Record<string, unknown>;
 
+export interface RuleNarrativeProvider {
+  getState(ruleId: string): string | undefined;
+  getRuleId(graphId: string): string | undefined;
+}
+
 function normalizeRuleDef(raw: RuleDefRaw): RuleDef | null {
   const id = String(raw.id ?? '').trim();
   if (!id) return null;
+  if (raw.narrativeStates) return raw as unknown as RuleDef;
   const layersUnknown = raw.layers;
   if (
     layersUnknown &&
@@ -87,6 +94,33 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
 
   private acquiredFragments: Set<string> = new Set();
   private grantedLayers: Map<string, Set<RuleLayerKey>> = new Map();
+  private narrativeProvider: RuleNarrativeProvider | null = null;
+  private invalidNarrativeRules = new Set<string>();
+  private readonly onNarrativeStateChanged = (payload: unknown): void => {
+    const p = payload as { graphId?: string; from?: string; to?: string; cause?: string };
+    // Restoring/initializing a timeline must not replay acquisition notifications.
+    if (p.cause !== 'transition' || !p.graphId || !p.to) return;
+    const ruleId = this.narrativeProvider?.getRuleId(p.graphId);
+    const def = ruleId ? this.ruleDefs.get(ruleId) : undefined;
+    if (!ruleId || !def?.narrativeStates) return;
+    if (this.invalidNarrativeRules.has(ruleId)) return;
+    const before = def.narrativeStates[p.from ?? '']?.layers ?? {};
+    const after = def.narrativeStates[p.to]?.layers ?? {};
+    const keys = RulesManager.definedLayers(def);
+    for (const layer of keys) {
+      if (after[layer] && !before[layer]) {
+        this.eventBus.emit('rule:layer', { ruleId, layer, source: 'narrative' });
+      }
+    }
+    if (keys.length && keys.every(k => after[k]) && !keys.every(k => before[k])) {
+      this.emitRuleAcquired(ruleId);
+    } else if (Object.keys(after).length && JSON.stringify(before) !== JSON.stringify(after)) {
+      this.eventBus.emit('notification:show', {
+        text: this.strings.get('notifications', 'ruleUpdated', { name: def.name }), type: 'rule',
+      });
+    }
+    this.eventBus.emit('rule:updated', { ruleId });
+  };
 
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
@@ -101,8 +135,36 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   init(ctx: GameContext): void {
     this.strings = ctx.strings;
     this.assetManager = ctx.assetManager;
+    this.eventBus.off('narrative:stateChanged', this.onNarrativeStateChanged);
+    this.eventBus.on('narrative:stateChanged', this.onNarrativeStateChanged);
   }
   update(_dt: number): void {}
+
+  bindNarrative(provider: RuleNarrativeProvider): void {
+    this.narrativeProvider = provider;
+  }
+
+  private projectedLayers(def: RuleDef): RuleDef['layers'] {
+    if (this.invalidNarrativeRules.has(def.id)) return {};
+    const state = this.narrativeProvider?.getState(def.id);
+    return state ? def.narrativeStates?.[state]?.layers ?? {} : {};
+  }
+
+  validateNarrativeBindings(graphs: RuleOwnerGraph[]): void {
+    this.invalidNarrativeRules.clear();
+    for (const def of this.ruleDefs.values()) {
+      const errors = validateRuleKnowledge(def, graphs, [...this.fragmentDefs.values()]);
+      if (!errors.length) continue;
+      this.invalidNarrativeRules.add(def.id);
+      console.warn(`RulesManager: invalid knowledge projection "${def.id}": ${errors.join(', ')}`);
+    }
+  }
+
+  private rejectNarrativeGrant(def: RuleDef, action: string): boolean {
+    if (!def.narrativeStates) return false;
+    console.warn(`RulesManager: ${action} cannot grant narrative-owned rule "${def.id}"; emit its story signal`);
+    return true;
+  }
 
   private static definedLayers(def: RuleDef): RuleLayerKey[] {
     return LAYER_ORDER.filter((k) => def.layers[k] != null);
@@ -126,6 +188,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   private hasLayerImpl(ruleId: string, layer: RuleLayerKey): boolean {
     const def = this.ruleDefs.get(ruleId);
     if (!def?.layers?.[layer]) return false;
+    if (def.narrativeStates) return !!this.projectedLayers(def)[layer];
     if (this.grantedLayers.get(ruleId)?.has(layer)) return true;
     const frags: RuleFragmentDef[] = [];
     this.fragmentDefs.forEach((f) => {
@@ -181,6 +244,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
     if (this.hasRuleInternal(ruleId)) return;
     const def = this.ruleDefs.get(ruleId);
     if (!def) return;
+    if (this.rejectNarrativeGrant(def, 'giveRule')) return;
     const keys = RulesManager.definedLayers(def);
     if (keys.length === 0) return;
     const set = this.grantedLayers.get(ruleId) ?? new Set<RuleLayerKey>();
@@ -193,6 +257,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   grantLayer(ruleId: string, layer: RuleLayerKey): void {
     const def = this.ruleDefs.get(ruleId);
     if (!def?.layers?.[layer]) return;
+    if (this.rejectNarrativeGrant(def, 'grantRuleLayer')) return;
     if (this.hasLayerImpl(ruleId, layer)) return;
     const beforeFull = this.hasRuleInternal(ruleId);
     const set = this.grantedLayers.get(ruleId) ?? new Set<RuleLayerKey>();
@@ -215,6 +280,8 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
     }
 
     const ruleId = fragDef.ruleId;
+    const owner = this.ruleDefs.get(ruleId);
+    if (owner && this.rejectNarrativeGrant(owner, 'giveFragment')) return;
     const beforeRuleFull = this.hasRuleInternal(ruleId);
     const beforeLayers = this.snapshotLayerDone(ruleId);
 
@@ -241,6 +308,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   private syncRuleFlags(ruleId: string): void {
     const def = this.ruleDefs.get(ruleId);
     if (!def) return;
+    if (def.narrativeStates) return;
 
     const frags: RuleFragmentDef[] = [];
     this.fragmentDefs.forEach((f) => {
@@ -316,7 +384,8 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   }
 
   getRuleDef(ruleId: string): RuleDef | undefined {
-    return this.ruleDefs.get(ruleId);
+    const def = this.ruleDefs.get(ruleId);
+    return def?.narrativeStates ? { ...def, layers: this.projectedLayers(def) } : def;
   }
 
   getCategoryName(key: string): string {
@@ -329,6 +398,8 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
 
   isDiscovered(ruleId: string): boolean {
     if (this.hasRuleInternal(ruleId)) return false;
+    const def = this.ruleDefs.get(ruleId);
+    if (def?.narrativeStates) return Object.keys(this.projectedLayers(def)).length > 0;
     let fragHit = false;
     this.acquiredFragments.forEach((fragId) => {
       const frag = this.fragmentDefs.get(fragId);
@@ -344,7 +415,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
       if (this.hasRuleInternal(def.id)) return;
       if (!this.isDiscovered(def.id)) return;
       const progress = this.getFragmentProgress(def.id);
-      result.push({ def, collected: progress.collected, total: progress.total });
+      result.push({ def: this.getRuleDef(def.id)!, collected: progress.collected, total: progress.total });
     });
     return result;
   }
@@ -353,7 +424,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
     const result: { def: RuleDef; acquired: boolean }[] = [];
     this.ruleDefs.forEach((def) => {
       if (this.hasRuleInternal(def.id)) {
-        result.push({ def, acquired: true });
+        result.push({ def: this.getRuleDef(def.id)!, acquired: true });
       }
     });
     return result;
@@ -383,7 +454,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   }
 
   getUnlockedLayerTexts(ruleId: string): Partial<Record<RuleLayerKey, string>> {
-    const def = this.ruleDefs.get(ruleId);
+    const def = this.getRuleDef(ruleId);
     if (!def) return {};
     const out: Partial<Record<RuleLayerKey, string>> = {};
     for (const L of RulesManager.definedLayers(def)) {
@@ -430,7 +501,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   serialize(): object {
     const granted: Record<string, RuleLayerKey[]> = {};
     this.grantedLayers.forEach((set, rid) => {
-      if (set.size > 0) granted[rid] = LAYER_ORDER.filter((k) => set.has(k));
+      if (set.size > 0 && !this.ruleDefs.get(rid)?.narrativeStates) granted[rid] = LAYER_ORDER.filter((k) => set.has(k));
     });
     return {
       acquiredFragments: Array.from(this.acquiredFragments),
@@ -445,7 +516,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   }): void {
     this.acquiredFragments = new Set(data.acquiredFragments ?? []);
     this.grantedLayers = new Map(
-      Object.entries(data.grantedLayers ?? {}).map(([rid, ls]) => [
+      Object.entries(data.grantedLayers ?? {}).filter(([rid]) => !this.ruleDefs.get(rid)?.narrativeStates).map(([rid, ls]) => [
         rid,
         new Set((ls ?? []).filter((x): x is RuleLayerKey => ['xiang', 'li', 'shu'].includes(x))),
       ]),
@@ -453,7 +524,7 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
 
     for (const rid of data.acquiredRules ?? []) {
       const def = this.ruleDefs.get(rid);
-      if (!def) continue;
+      if (!def || def.narrativeStates) continue;
       const set = this.grantedLayers.get(rid) ?? new Set<RuleLayerKey>();
       for (const L of RulesManager.definedLayers(def)) {
         set.add(L);
@@ -465,6 +536,9 @@ export class RulesManager implements IGameSystem, IRulesDataProvider {
   }
 
   destroy(): void {
+    this.eventBus.off('narrative:stateChanged', this.onNarrativeStateChanged);
+    this.narrativeProvider = null;
+    this.invalidNarrativeRules.clear();
     this.acquiredFragments.clear();
     this.grantedLayers.clear();
     this.ruleDefs.clear();

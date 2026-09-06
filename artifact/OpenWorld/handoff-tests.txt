@@ -1,0 +1,65 @@
+
+> gamedraft@1.0.0 test
+> vitest run --exclude 'tools/anim_preview/*.test.mjs' && npm run test:anim-preview
+
+
+ RUN  v4.1.5 D:/GameDraft
+
+
+ Test Files  108 passed (108)
+      Tests  1430 passed (1430)
+   Start at  12:24:03
+   Duration  12.97s (transform 16.50s, setup 0ms, import 71.79s, tests 26.01s, environment 24ms)
+
+
+> gamedraft@1.0.0 test:anim-preview
+> node --test tools/anim_preview/*.test.mjs && vitest run tools/anim_preview/assemblyMath.test.ts
+
+✔ archive index parser keeps explicit folder/key/action mapping (2.7899ms)
+✔ copy-only apply preserves source tree and is idempotent (365.0988ms)
+✔ preflight fails on workspace identity conflict without copying (51.6789ms)
+✔ unmapped shipped bundle gets an explicit synthetic H-only baseline workspace (384.7934ms)
+✔ opting out of synthetic workspaces blocks incomplete full apply (37.6422ms)
+✔ synthetic folder collision fails before any revision is copied (24.7208ms)
+✔ Agent submission stays a candidate until a human accepts it (156.7378ms)
+✔ accepting a new upstream revision invalidates only dependent active revisions (389.8744ms)
+✔ recursive compatible restore is limited to the requested downstream closure (784.5449ms)
+✔ human R node rejects Agent submissions and content-addresses duplicate bytes (93.9208ms)
+✔ revision artifacts and objects are read-only isolated copies, never shared hardlinks (100.4819ms)
+✔ workspace write lock rejects a live owner and recovers a dead pid lock (41.2112ms)
+✔ two stale-lock contenders cannot ABA-delete the newly acquired lock (1624.3926ms)
+✔ workspace creation rejects unsafe bundle and static export targets (19.1441ms)
+✔ Agent work queue includes input-ready stale and invalidated nodes in graph order (523.1963ms)
+✔ Agent cannot re-enable a disabled action or forge human provenance (86.7037ms)
+✔ human action spec changes invalidate only that action from D onward (499.4277ms)
+✔ stage invalidation fans out across that stage and only its downstream closure (1118.2769ms)
+✔ legacy H baseline is visible without fabricating an R head (100.6857ms)
+✔ checkpoint restoration switches only the saved accepted heads (267.0461ms)
+✔ checkpoint restore refuses a head whose later review is no longer accepted (106.445ms)
+✔ R calibration is human-only, head-bound, aspect-safe, and remains a candidate (549.5722ms)
+✔ R remains blocked and rejects calibration when no action is enabled (19.1089ms)
+✔ rejected headless candidate feedback remains visible to the Agent (73.6893ms)
+✔ publication is bundle-bound, copy-only, symlink-safe, and dynamically verified (1080.7963ms)
+✔ export targets are human-only and missing targets block H/H_STATIC (51.1472ms)
+✔ H_STATIC publishes exactly one configured PNG copy and detects drift (389.4782ms)
+✔ H_STATIC_BUNDLE hangs off C, needs bundleId, and is superseded by a real H bundle (1318.3276ms)
+✔ changing or clearing bundleId invalidates or blocks H (915.1113ms)
+ℹ tests 29
+ℹ suites 0
+ℹ pass 29
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10451.1854
+
+ RUN  v4.1.5 D:/GameDraft
+
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  12:24:28
+   Duration  283ms (transform 32ms, setup 0ms, import 49ms, tests 4ms, environment 0ms)
+
+
+EXIT_CODE=0

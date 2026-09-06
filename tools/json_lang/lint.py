@@ -46,6 +46,12 @@ def _collect_refs(node, out: list[tuple[str, str]], ctx: str) -> None:
         for k, v in node.items():
             if _is_ref_key(k) and isinstance(v, str) and v.strip():
                 out.append((f"{ctx}.{k}" if ctx else k, v))
+            if (k == "params" and node.get("type") == "startDialogueGraph"
+                    and isinstance(v, dict) and isinstance(v.get("graphId"), str)
+                    and v["graphId"].strip()):
+                # entry belongs to the target graph. The external-entry pass
+                # checks it there; action.next still belongs to this graph.
+                v = {key: value for key, value in v.items() if key != "entry"}
             _collect_refs(v, out, f"{ctx}.{k}" if ctx else k)
     elif isinstance(node, list):
         for i, v in enumerate(node):

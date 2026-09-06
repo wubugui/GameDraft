@@ -244,5 +244,467 @@
     "type": "consumable",
     "description": "偷来的一只肥鸡，扑腾得厉害。烤了顶饱，卖了换钱。",
     "maxStack": 3
+  },
+  {
+    "id": "ow_tally",
+    "name": "[tag:string:owFirst:tally_name]",
+    "type": "key",
+    "description": "[tag:string:owFirst:tally_desc]",
+    "maxStack": 1,
+    "dynamicDescriptions": [
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_tally_trace",
+            "state": "rubbed",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owFirst:tally_rubbed_desc]"
+      }
+    ],
+    "use": {
+      "label": "[tag:string:owFirst:tally_use]",
+      "consume": false,
+      "conditions": [
+        {
+          "narrative": "flow_ow_tally",
+          "state": "found"
+        },
+        {
+          "not": {
+            "narrative": "flow_ow_tally_trace",
+            "state": "rubbed",
+            "reached": true
+          }
+        },
+        {
+          "flag": "has_item_ow_charcoal"
+        }
+      ],
+      "disableHint": "[tag:string:owFirst:tally_use_hint]",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_tally_rub"
+          }
+        }
+      ],
+      "resultText": "[tag:string:owFirst:tally_use_result]"
+    }
+  },
+  {
+    "id": "ow_bowl",
+    "name": "缺口粗瓷碗",
+    "type": "key",
+    "description": "杨嫂借给脚夫的饭碗。缺口用红线缠着，认不错。",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_charcoal",
+    "name": "[tag:string:owFirst:charcoal_name]",
+    "type": "consumable",
+    "maxStack": 10,
+    "description": "[tag:string:owFirst:charcoal_desc]"
+  },
+  {
+    "id": "ow_bamboo",
+    "name": "[tag:string:owFirst:bamboo_name]",
+    "type": "consumable",
+    "maxStack": 10,
+    "description": "[tag:string:owFirst:bamboo_desc]"
+  },
+  {
+    "id": "ow_knife",
+    "name": "[tag:string:owFirst:knife_name]",
+    "type": "key",
+    "maxStack": 1,
+    "description": "[tag:string:owFirst:knife_desc]"
+  },
+  {
+    "id": "ow_rope",
+    "name": "[tag:string:owFirst:rope_name]",
+    "type": "key",
+    "maxStack": 1,
+    "description": "[tag:string:owFirst:rope_desc]"
+  },
+  {
+    "id": "ow_rope_tail",
+    "name": "[tag:string:owWater:ow_rope_tail_name]",
+    "type": "key",
+    "maxStack": 1,
+    "description": "[tag:string:owWater:ow_rope_tail_desc]"
+  },
+  {
+    "id": "ow_bucket",
+    "name": "[tag:string:owWater:ow_bucket_name]",
+    "type": "key",
+    "maxStack": 1,
+    "description": "[tag:string:owWater:ow_bucket_desc]",
+    "icon": "/resources/runtime/images/minigames/water/ow_wooden_bucket.png"
+  },
+  {
+    "id": "ow_cloth",
+    "name": "[tag:string:owWater:ow_cloth_name]",
+    "type": "consumable",
+    "maxStack": 10,
+    "description": "[tag:string:owWater:ow_cloth_desc]"
+  },
+  {
+    "id": "ow_work_coat",
+    "name": "[tag:string:owCloth:ow_work_coat_name]",
+    "description": "[tag:string:owCloth:ow_work_coat_desc]",
+    "type": "key",
+    "maxStack": 1,
+    "icon": "/resources/runtime/images/examine/ow_shore_coat.png"
+  },
+  {
+    "id": "ow_coat_record",
+    "name": "[tag:string:owCloth:ow_coat_record_name]",
+    "description": "[tag:string:owCloth:ow_coat_record_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_shoulder_pad",
+    "name": "[tag:string:owCloth:ow_shoulder_pad_name]",
+    "description": "[tag:string:owCloth:ow_shoulder_pad_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_needle",
+    "name": "[tag:string:owCloth:ow_needle_name]",
+    "description": "[tag:string:owCloth:ow_needle_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_old_clapper",
+    "name": "[tag:string:owWatch:ow_old_clapper_name]",
+    "description": "[tag:string:owWatch:ow_old_clapper_desc]",
+    "type": "key",
+    "maxStack": 1,
+    "icon": "/resources/runtime/images/examine/ow_watch_clapper.png"
+  },
+  {
+    "id": "ow_patched_clapper",
+    "name": "[tag:string:owWatch:ow_patched_clapper_name]",
+    "description": "[tag:string:owWatch:ow_patched_clapper_desc]",
+    "type": "key",
+    "maxStack": 1,
+    "icon": "/resources/runtime/images/examine/ow_watch_clapper.png"
+  },
+  {
+    "id": "ow_lamp_oil",
+    "name": "[tag:string:owWatch:ow_lamp_oil_name]",
+    "description": "[tag:string:owWatch:ow_lamp_oil_desc]",
+    "type": "consumable",
+    "maxStack": 10
+  },
+  {
+    "id": "ow_small_cargo",
+    "name": "[tag:string:owWatch:ow_small_cargo_name]",
+    "description": "[tag:string:owWatch:ow_small_cargo_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_dry_paper",
+    "name": "[tag:string:owPaper:ow_dry_paper_name]",
+    "description": "[tag:string:owPaper:ow_dry_paper_desc]",
+    "type": "consumable",
+    "maxStack": 10
+  },
+  {
+    "id": "ow_damp_paper",
+    "name": "[tag:string:owPaper:ow_damp_paper_name]",
+    "description": "[tag:string:owPaper:ow_damp_paper_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_paste",
+    "name": "[tag:string:owPaper:ow_paste_name]",
+    "description": "[tag:string:owPaper:ow_paste_desc]",
+    "type": "consumable",
+    "maxStack": 10
+  },
+  {
+    "id": "ow_new_servant",
+    "name": "[tag:string:owPaper:ow_new_servant_name]",
+    "description": "[tag:string:owPaper:ow_new_servant_desc]",
+    "type": "key",
+    "maxStack": 1,
+    "icon": "/resources/runtime/images/icons/ow_paper_finished.png"
+  },
+  {
+    "id": "ow_braced_servant",
+    "name": "[tag:string:owPaper:ow_braced_servant_name]",
+    "description": "[tag:string:owPaper:ow_braced_servant_desc]",
+    "type": "key",
+    "maxStack": 1,
+    "icon": "/resources/runtime/images/icons/ow_paper_finished.png"
+  },
+  {
+    "id": "ow_ash_pan",
+    "name": "[tag:string:owTemple:ow_ash_pan_name]",
+    "description": "[tag:string:owTemple:ow_ash_pan_desc]",
+    "type": "key",
+    "maxStack": 1,
+    "icon": "/resources/runtime/images/examine/ow_incense_pan.png"
+  },
+  {
+    "id": "ow_wood_wedge",
+    "name": "[tag:string:owTemple:ow_wood_wedge_name]",
+    "description": "[tag:string:owTemple:ow_wood_wedge_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_temple_ledger",
+    "name": "[tag:string:owTemple:ow_temple_ledger_name]",
+    "description": "[tag:string:owTemple:ow_temple_ledger_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_cold_rice_pot",
+    "name": "[tag:string:owStove:ow_cold_rice_pot_name]",
+    "description": "[tag:string:owStove:ow_cold_rice_pot_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_hot_rice_pot",
+    "name": "[tag:string:owStove:ow_hot_rice_pot_name]",
+    "description": "[tag:string:owStove:ow_hot_rice_pot_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_meal_voucher",
+    "name": "[tag:string:owStove:ow_meal_voucher_name]",
+    "description": "[tag:string:owStove:ow_meal_voucher_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_travel_meal",
+    "name": "[tag:string:owStove:ow_travel_meal_name]",
+    "description": "[tag:string:owStove:ow_travel_meal_desc]",
+    "type": "key",
+    "maxStack": 1,
+    "use": {
+      "label": "[tag:string:owStove:eat_label]",
+      "conditions": [
+        {
+          "narrative": "flow_ow_meal",
+          "state": "carrying"
+        },
+        {
+          "flag": "has_item_ow_travel_meal"
+        }
+      ],
+      "disableHint": "[tag:string:owStove:eat_disabled]",
+      "consume": false,
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_meal_eat"
+          }
+        }
+      ],
+      "resultText": "[tag:string:owStove:eat_result]"
+    }
+  },
+  {
+    "id": "ow_clean_wrapper",
+    "name": "[tag:string:owStove:ow_clean_wrapper_name]",
+    "description": "[tag:string:owStove:ow_clean_wrapper_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_ring_hook",
+    "name": "[tag:string:owStreetPlay:ow_ring_hook_name]",
+    "description": "[tag:string:owStreetPlay:ow_ring_hook_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_sugar_ticket",
+    "name": "[tag:string:owStreetPlay:ow_sugar_ticket_name]",
+    "description": "[tag:string:owStreetPlay:ow_sugar_ticket_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_sugar_prize",
+    "name": "[tag:string:owStreetPlay:ow_sugar_prize_name]",
+    "description": "[tag:string:owStreetPlay:ow_sugar_prize_desc]",
+    "type": "key",
+    "maxStack": 1,
+    "dynamicDescriptions": [
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "dragon",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_dragon]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "carp",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_carp]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "monkey",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_monkey]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "rabbit",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_rabbit]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "rooster",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_rooster]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "flower_basket",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_flower_basket]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "guandao",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_guandao]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "gourd",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_gourd]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "yuanbao",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_yuanbao]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "butterfly",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_butterfly]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "horse",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_horse]"
+      },
+      {
+        "conditions": [
+          {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "bird",
+            "reached": true
+          }
+        ],
+        "text": "[tag:string:owStreetPlay:sugar_desc_bird]"
+      }
+    ],
+    "use": {
+      "label": "[tag:string:owStreetPlay:eat_sugar]",
+      "consume": false,
+      "conditions": [
+        {
+          "narrative": "flow_ow_sugar",
+          "state": "holding"
+        },
+        {
+          "flag": "has_item_ow_sugar_prize"
+        }
+      ],
+      "disableHint": "[tag:string:owStreetPlay:eat_sugar_disabled]",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_eat"
+          }
+        }
+      ],
+      "resultText": "[tag:string:owStreetPlay:eat_sugar_result]"
+    }
+  },
+  {
+    "id": "ow_sugar_stick",
+    "name": "[tag:string:owStreetPlay:ow_sugar_stick_name]",
+    "description": "[tag:string:owStreetPlay:ow_sugar_stick_desc]",
+    "type": "key",
+    "maxStack": 1
+  },
+  {
+    "id": "ow_notice_scrap",
+    "name": "[tag:string:owStreetPlay:ow_notice_scrap_name]",
+    "description": "[tag:string:owStreetPlay:ow_notice_scrap_desc]",
+    "type": "key",
+    "maxStack": 1
   }
 ]

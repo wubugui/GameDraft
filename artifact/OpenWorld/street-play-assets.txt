@@ -1,0 +1,7 @@
+[asset_reference_audit] root=D:\GameDraft
+  scanned media fields: 927
+  scanned text fields:  191
+  scanned rich [img:]:  4
+  scanned map scenes:   18
+  issues:               0
+  OK — 所有引用都能通过 ProjectPaths 解析到磁盘文件。

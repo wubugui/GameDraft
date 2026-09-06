@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "id": "开放世界_歇脚",
+  "entry": "root",
+  "meta": {
+    "title": "公共歇脚点 · 时段选择"
+  },
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "wait_辰": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_rest_辰"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "wait_午": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_rest_午"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "wait_暮": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_rest_暮"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "wait_夜": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_rest_夜"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "歇脚处"
+      },
+      "text": "[tag:string:openWorld:rest_intro]",
+      "next": "choose"
+    },
+    "choose": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "wait_辰",
+          "text": "[tag:string:openWorld:wait_辰]",
+          "next": "wait_辰"
+        },
+        {
+          "id": "wait_午",
+          "text": "[tag:string:openWorld:wait_午]",
+          "next": "wait_午"
+        },
+        {
+          "id": "wait_暮",
+          "text": "[tag:string:openWorld:wait_暮]",
+          "next": "wait_暮"
+        },
+        {
+          "id": "wait_夜",
+          "text": "[tag:string:openWorld:wait_夜]",
+          "next": "wait_夜"
+        },
+        {
+          "id": "wait_no",
+          "text": "[tag:string:openWorld:wait_no]",
+          "next": "end"
+        }
+      ]
+    }
+  }
+}

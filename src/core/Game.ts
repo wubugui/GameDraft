@@ -717,6 +717,10 @@ export class Game {
     this.bubbleChatterSystem = new BubbleChatterSystem({
       emoteBubbleManager: this.emoteBubbleManager,
       resolveEmoteTarget: (id) => this.resolveEmoteTarget(id),
+      isSpeakerVisible: (id) => {
+        const display = this.resolveEmoteTarget(id)?.getDisplayObject() as { visible?: boolean } | undefined;
+        return display !== undefined && display.visible !== false;
+      },
       resolveCharacterEntityId: (cid) => this.resolveCharacterEntityId(cid),
       // 与 resolveEmoteTarget 同一条解析路：先演员（含 player），再当前场景热点
       resolveSpeakerPosition: (targetId) => {
@@ -1672,6 +1676,13 @@ export class Game {
     this.graphDialogueManager.setConditionEvalContextFactory(mkCondCtx);
     this.documentRevealManager.setConditionEvalContextFactory(mkCondCtx);
     this.narrativeStateManager.setConditionEvalContextFactory(mkCondCtx);
+    this.rulesManager.bindNarrative({
+      getState: id => this.narrativeStateManager.getPrimaryActiveStateByOwner('rule', id),
+      getRuleId: graphId => {
+        const graph = this.narrativeStateManager.getGraph(graphId);
+        return graph?.ownerType === 'rule' ? graph.ownerId : undefined;
+      },
+    });
 
     // 位面对账器接线须先于 narrativeStateManager.loadFromAsset——注册图时的 reactive
     // 迁移会立即发 narrative:stateChanged，晚接线会漏掉首轮点名（scene:ready 虽兜底，
@@ -1776,6 +1787,7 @@ export class Game {
       this.scenarioStateManager.configureRuntime(this.flagStore, null, this.eventBus);
     }
     await this.narrativeStateManager.loadFromAsset(this.assetManager);
+    this.rulesManager.validateNarrativeBindings(this.narrativeStateManager.getGraphs());
     if (this.tearDownComplete) return;
 
     registerActionHandlers(this.actionExecutor, {
@@ -3513,7 +3525,8 @@ export class Game {
 
   private async sleepWhileNpcPatrolPaused(npc: Npc, gen: number): Promise<void> {
     while (
-      npc.isPatrolPausedForDialogue &&
+      (npc.isPatrolPausedForDialogue || this.npcScheduleSystem.ownsNpcMovement(npc.id) ||
+        !this.npcScheduleSystem.isNpcPresentNow(npc.def)) &&
       this.patrolGeneration === gen &&
       this.sceneManager.getCurrentNpcs().includes(npc)
     ) {
@@ -4723,6 +4736,10 @@ export class Game {
 
   private setupSceneReadyHandler(): void {
     this.listenEvent('scene:beforeUnload', () => {
+      // 坐标属于旧场景；自动出口不能把旧导航轴带进新场景，拖走刚落地的玩家。
+      this.playerNavTarget = null;
+      this.playerNavPrev = null;
+      this.inputManager.setTouchMoveAxes(0, 0);
       this.patrolGeneration++;
       this.npcPatrolEpoch.clear();
       // 透视缩放随场景走：先清句柄防旧场景系数漂到新场景（NPC/热点随实例销毁）
@@ -6846,6 +6863,11 @@ export class Game {
   private tick(dt: number): void {
     this.lastFps = dt > 0 ? 1 / dt : 0;
     this.playTimeMs += dt * 1000;
+
+    this.hud.setWorldControlsVisible(!(
+      this.waterMinigameManager.isActive || this.sugarWheelMinigameManager.isActive ||
+      this.paperCraftMinigameManager.isActive || this.objectExamineManager.isActive
+    ));
 
     this.camera.setPixelSnapTranslation(this.isEntityPixelDensityMatchRenderingOn());
 

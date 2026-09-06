@@ -1,0 +1,16 @@
+bringing up nodes...
+bringing up nodes...
+
+.............                                                            [100%]
+============================ slowest 10 durations =============================
+13.14s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+7.09s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+3.17s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+1.15s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+0.34s call     tools/editor/tests/test_paper_craft_roundtrip.py::PaperCraftRoundtripTests::test_add_instance_registers_index_and_file_entry
+0.31s call     tools/editor/tests/test_paper_craft_roundtrip.py::PaperCraftRoundtripTests::test_per_field_edit_writes_back_without_dropping_siblings
+0.30s call     tools/editor/tests/test_paper_craft_roundtrip.py::PaperCraftRoundtripTests::test_new_fields_guarded_writes_preserve_format
+0.27s call     tools/editor/tests/test_paper_craft_correct_paper.py::PaperCraftCorrectPaperTests::test_empty_correct_paper_round_trips
+0.27s call     tools/editor/tests/test_paper_craft_roundtrip.py::PaperCraftRoundtripTests::test_reload_refs_preserves_action_content
+0.23s call     tools/editor/tests/test_paper_craft_roundtrip.py::PaperCraftRoundtripTests::test_instance_label_edit_syncs_index_and_instance
+13 passed in 31.11s

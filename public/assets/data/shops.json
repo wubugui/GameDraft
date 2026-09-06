@@ -50,5 +50,59 @@
         "price": 1
       }
     ]
+  },
+  {
+    "id": "ow_luo_supplies",
+    "name": "[tag:string:owFirst:luo_shop_name]",
+    "items": [
+      {
+        "itemId": "ow_charcoal",
+        "price": 2
+      },
+      {
+        "itemId": "ow_bamboo",
+        "price": 3
+      },
+      {
+        "itemId": "ow_rope",
+        "price": 8
+      },
+      {
+        "itemId": "ow_dry_paper",
+        "price": 4
+      },
+      {
+        "itemId": "ow_paste",
+        "price": 3
+      },
+      {
+        "itemId": "nuomi",
+        "price": 2
+      },
+      {
+        "itemId": "ow_wood_wedge",
+        "price": 2
+      }
+    ]
+  },
+  {
+    "id": "ow_he_cloth",
+    "name": "[tag:string:owCloth:he_shop_title]",
+    "items": [
+      {
+        "itemId": "ow_cloth",
+        "price": 2
+      }
+    ]
+  },
+  {
+    "id": "ow_yang_oil",
+    "name": "[tag:string:owWatch:oil_shop_title]",
+    "items": [
+      {
+        "itemId": "ow_lamp_oil",
+        "price": 3
+      }
+    ]
   }
 ]

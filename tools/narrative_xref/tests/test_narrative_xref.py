@@ -745,6 +745,8 @@ class _FakeModel:
             p.stem: _read(p, {}) for p in sorted((root / "public" / "assets" / "scenes").glob("*.json"))
         }
         self.quests = _read(data / "quests.json", [])
+        self.items = _read(data / "items.json", [])
+        self.clues_registry = _read(data / "clues.json", {})
         self.encounters = _read(data / "encounters.json", [])
         self.cutscenes = _read(data / "cutscenes" / "index.json", [])
         self.pressure_holds = _read(data / "pressure_holds.json", [])

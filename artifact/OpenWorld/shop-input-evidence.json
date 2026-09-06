@@ -1,0 +1,1 @@
+{"ok": true, "result": {"before": {"state": "UIOverlay", "open": true, "player": {"x": 697.0183031106742, "y": 613.5392097010476, "facing": "right", "posture": null}}, "during": {"state": "UIOverlay", "player": {"x": 697.0183031106742, "y": 613.5392097010476, "facing": "right", "posture": null}}, "after": {"state": "Exploring", "open": false}}}

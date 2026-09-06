@@ -118,6 +118,7 @@ export class NpcScheduleSystem implements IGameSystem {
       }
       // 有画面遮挡（延时/黑场/直切）：演出没有意义，丢弃在途的走位并按新时刻直接重贴。
       this.cancelAllWalks();
+      this.applyScheduledPositions();
       this.binding?.refreshEntityVisibility();
       this.resyncPresenceBaseline();
     };
@@ -259,6 +260,11 @@ export class NpcScheduleSystem implements IGameSystem {
     return placement.scene === (sceneData?.id ?? null);
   }
 
+  /** 日程在途时独占该实体位移；组装层据此挂起普通巡逻。 */
+  ownsNpcMovement(npcId: string): boolean {
+    return this.leaving.has(npcId) || this.arriving.has(npcId);
+  }
+
   // ---- 剧情覆盖 ----
 
   /** 把某角色钉在指定场景/位置（剧情覆盖，跳过日程表）。`placement` 传 null 清除覆盖。 */
@@ -284,7 +290,17 @@ export class NpcScheduleSystem implements IGameSystem {
       return;
     }
     // 非探索态（对话/过场/面板）：在途走位原地挂起，回到探索态自动续走。
-    if (!b.isExploring()) return;
+    if (!b.isExploring()) {
+      // 对话/菜单中仍 tick 演出位移，只停重发不能挂起已经发出的 moveTo。
+      for (const npc of b.getCurrentNpcs()) {
+        const walk = this.leaving.get(npc.id) ?? this.arriving.get(npc.id);
+        if (!walk?.moving) continue;
+        // 只取消日程自己发出的这一段，不能逐帧打断随后由导演接管的走位。
+        walk.moving = false;
+        npc.cancelActiveMove();
+      }
+      return;
+    }
 
     this.detectScheduleEdges(b, sceneData);
     this.advanceWalks(b);
@@ -405,7 +421,7 @@ export class NpcScheduleSystem implements IGameSystem {
     if (st.moving) return;
     st.moving = true;
     void npc
-      .moveTo(st.targetX, st.targetY, WALK_SPEED, undefined, true)
+      .moveTo(st.targetX, st.targetY, WALK_SPEED, npc.def.patrol?.moveAnimState, true)
       .catch((e) => {
         console.warn('NpcScheduleSystem: 走位失败', e);
       })
@@ -455,6 +471,9 @@ export class NpcScheduleSystem implements IGameSystem {
 
   /** 丢弃全部在途走位。被丢弃的 NPC 由随后的派生回写按日程直接就位。 */
   private cancelAllWalks(): void {
+    for (const npc of this.binding?.getCurrentNpcs() ?? []) {
+      if (this.ownsNpcMovement(npc.id)) npc.cancelActiveMove();
+    }
     this.leaving.clear();
     this.arriving.clear();
   }
@@ -473,10 +492,11 @@ export class NpcScheduleSystem implements IGameSystem {
       if (!cid) continue;
       const placement = this.resolvePlacement(cid, minutes);
       if (!placement || placement.scene !== sceneData.id) continue;
-      if (placement.spot) {
-        npc.x = placement.spot.x;
-        npc.y = placement.spot.y;
-      }
+      // 缺省位置也要重贴，否则昨天走到门口的人翌日还站在门口。
+      npc.cancelActiveMove();
+      const spot = placement.spot ?? npc.def;
+      npc.x = spot.x;
+      npc.y = spot.y;
       const act = placement.activity?.trim();
       if (act) npc.playAnimation(act);
     }

@@ -50,8 +50,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 605.2,
-    "y": 415.8
+    "x": 178.88,
+    "y": 207.36
   },
   "depthConfig": {
     "depth_map": "raw_depth_rg.png",
@@ -190,42 +190,245 @@
   ],
   "spawnPoints": {
     "从山路": {
-      "x": 136.6,
-      "y": 724.5
+      "x": 302.72,
+      "y": 629.76
     },
     "从城里": {
-      "x": 1227.84,
-      "y": 230.0
+      "x": 178.88,
+      "y": 207.36
+    },
+    "ow_from_bridge": {
+      "x": 330.24,
+      "y": 683.52
     }
   },
   "hotspots": [
     {
       "id": "T到山路",
       "type": "transition",
-      "label": "到山路",
-      "x": 116.5,
-      "y": 747.1,
-      "interactionRange": 50.0,
+      "label": "沿河上山",
+      "x": 261.44,
+      "y": 683.52,
+      "interactionRange": 85,
       "data": {
         "targetScene": "mountain_pass",
-        "targetSpawnPoint": "spawn_0"
-      }
+        "targetSpawnPoint": "from_street"
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T回城",
       "type": "transition",
-      "label": "回城",
-      "x": 1250.0,
-      "y": 200.0,
-      "interactionRange": 60.0,
+      "label": "上石阶回雾津",
+      "x": 123.84,
+      "y": 153.6,
+      "interactionRange": 85,
       "data": {
         "targetScene": "雾津街头",
         "targetSpawnPoint": "from_river"
+      },
+      "planes": [
+        "normal",
+        "背尸"
+      ],
+      "conditions": [
+        {
+          "any": [
+            {
+              "not": {
+                "plane": "背尸"
+              }
+            },
+            {
+              "narrative": "flow_ow_steps",
+              "state": "done",
+              "reached": true
+            }
+          ]
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "ow_去老桥",
+      "type": "transition",
+      "label": "顺河去老桥",
+      "x": 412.8,
+      "y": 744.96,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "targetScene": "bridge_underpass",
+        "targetSpawnPoint": "ow_from_river"
+      }
+    },
+    {
+      "id": "ow_water_reed",
+      "type": "inspect",
+      "label": "岸边倒伏的芦苇",
+      "x": 591.68,
+      "y": 472.32,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_水路",
+        "entry": "reed"
+      }
+    },
+    {
+      "id": "ow_rest",
+      "type": "inspect",
+      "label": "歇脚 · 等一等",
+      "x": 509.12,
+      "y": 506.88,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_歇脚"
+      }
+    },
+    {
+      "id": "ow_laundry",
+      "type": "inspect",
+      "label": "[tag:string:owCloth:laundry_label]",
+      "x": 509.12,
+      "y": 441.6,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_认衣",
+        "entry": "coat"
+      }
+    },
+    {
+      "id": "ow_steps",
+      "type": "inspect",
+      "label": "[tag:string:owWater:ow_steps_label]",
+      "x": 160,
+      "y": 215,
+      "interactionRange": 65,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_水路",
+        "entry": "steps"
+      }
+    },
+    {
+      "id": "ow_high_blocked",
+      "type": "inspect",
+      "label": "[tag:string:owWater:ow_high_blocked_label]",
+      "x": 123.84,
+      "y": 153.6,
+      "interactionRange": 85,
+      "planes": [
+        "背尸"
+      ],
+      "data": {
+        "graphId": "开放世界_水路",
+        "entry": "high_blocked"
+      },
+      "conditions": [
+        {
+          "not": {
+            "narrative": "flow_ow_steps",
+            "state": "done",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "ow_needle_gap",
+      "type": "inspect",
+      "label": "[tag:string:owCloth:ow_needle_gap_label]",
+      "x": 516,
+      "y": 479,
+      "interactionRange": 40,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_认衣",
+        "entry": "needle"
       }
     }
   ],
   "ambientSounds": [
     "amb_riverbank_loop",
     "夜晚蛐蛐叫"
+  ],
+  "dayNight": {
+    "enabled": true
+  },
+  "entityGroups": [
+    {
+      "id": "ow_居民",
+      "label": "开放生活圈 · 居民",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "planes": [
+        "normal"
+      ]
+    }
+  ],
+  "npcs": [
+    {
+      "id": "ow_he",
+      "characterId": "ow_he",
+      "x": 557.28,
+      "y": 441.6,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "right",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 557.28,
+            "y": 441.6
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
+    }
+  ],
+  "exitAnchors": [
+    {
+      "id": "ow_door_0",
+      "x": 488.48,
+      "y": 468.48
+    },
+    {
+      "id": "ow_exit_he",
+      "x": 488.48,
+      "y": 468.48
+    }
   ]
 }

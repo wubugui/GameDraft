@@ -1,0 +1,2230 @@
+{
+  "schemaVersion": 1,
+  "id": "开放世界_街坊",
+  "entry": "zhou",
+  "meta": {
+    "title": "雾津街坊 · 职业、作息、问路与委托"
+  },
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "zhou": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_tally",
+            "state": "compromise"
+          },
+          "next": "tally_world_compromise"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_tally",
+            "state": "done"
+          },
+          "next": "tally_world_legacy"
+        },
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_tally",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_tally",
+                "state": "fair",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_tally",
+                "state": "witness",
+                "reached": true
+              }
+            ]
+          },
+          "next": "tally_world_fair"
+        }
+      ],
+      "defaultNext": "zhou_hello"
+    },
+    "zhou_hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:zhou_hello]",
+      "next": "zhou_menu"
+    },
+    "zhou_day": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:zhou_day]",
+      "next": "zhou_menu"
+    },
+    "zhou_road": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:zhou_road]",
+      "next": "zhou_menu"
+    },
+    "zhou_menu": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_bowl",
+            "state": "accepted"
+          },
+          "next": "zhou_menu_bowl"
+        }
+      ],
+      "defaultNext": "zhou_menu_plain"
+    },
+    "yang": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "flow_ow_bowl",
+              "state": "done"
+            }
+          ],
+          "next": "yang_thanks"
+        },
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "yang_night"
+        }
+      ],
+      "defaultNext": "yang_hello"
+    },
+    "yang_hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:yang_hello]",
+      "next": "yang_menu"
+    },
+    "yang_night": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:yang_night]",
+      "next": "yang_menu"
+    },
+    "yang_day": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "repaired",
+            "reached": true
+          },
+          "next": "ow_yang_fixed_day"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "borrowed",
+            "reached": true
+          },
+          "next": "ow_yang_loan_day"
+        }
+      ],
+      "defaultNext": "ow_yang_normal_day"
+    },
+    "yang_road": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:yang_road]",
+      "next": "yang_menu"
+    },
+    "yang_menu": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "all": [
+              {
+                "not": {
+                  "all": [
+                    {
+                      "narrative": "flow_ow_bowl",
+                      "state": "carrying"
+                    }
+                  ]
+                }
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "narrative": "flow_ow_bowl",
+                      "state": "initial"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "next": "yang_menu_0"
+        },
+        {
+          "condition": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "narrative": "flow_ow_bowl",
+                    "state": "carrying"
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "all": [
+                    {
+                      "narrative": "flow_ow_bowl",
+                      "state": "initial"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "next": "yang_menu_1"
+        },
+        {
+          "condition": {
+            "all": [
+              {
+                "not": {
+                  "all": [
+                    {
+                      "narrative": "flow_ow_bowl",
+                      "state": "carrying"
+                    }
+                  ]
+                }
+              },
+              {
+                "all": [
+                  {
+                    "narrative": "flow_ow_bowl",
+                    "state": "initial"
+                  }
+                ]
+              }
+            ]
+          },
+          "next": "yang_menu_2"
+        },
+        {
+          "condition": {
+            "all": [
+              {
+                "all": [
+                  {
+                    "narrative": "flow_ow_bowl",
+                    "state": "carrying"
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "narrative": "flow_ow_bowl",
+                    "state": "initial"
+                  }
+                ]
+              }
+            ]
+          },
+          "next": "yang_menu_3"
+        }
+      ],
+      "defaultNext": "yang_menu_0"
+    },
+    "luo": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "luo_night"
+        }
+      ],
+      "defaultNext": "luo_hello"
+    },
+    "luo_hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:luo_hello]",
+      "next": "luo_menu"
+    },
+    "luo_night": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:luo_night]",
+      "next": "luo_menu"
+    },
+    "luo_day": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_paper",
+            "state": "remade",
+            "reached": true
+          },
+          "next": "ow_paper_day_changed"
+        }
+      ],
+      "defaultNext": "ow_paper_day_normal"
+    },
+    "luo_road": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:luo_road]",
+      "next": "luo_menu"
+    },
+    "luo_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_street_read_notice_luo",
+          "text": "[tag:string:owStreetPlay:topic_read_notice_luo]",
+          "next": "ow_street_read_notice_luo"
+        },
+        {
+          "id": "ow_dry_paper_topic",
+          "text": "[tag:string:owPaper:dry_paper_topic]",
+          "next": "ow_dry_paper_handoff"
+        },
+        {
+          "id": "ow_paper_topic",
+          "text": "[tag:string:owPaper:paper_topic]",
+          "next": "ow_paper_handoff"
+        },
+        {
+          "id": "knife_ask",
+          "text": "[tag:string:owFirst:knife_ask]",
+          "next": "knife_case"
+        },
+        {
+          "id": "luo_shop_option",
+          "text": "[tag:string:owFirst:luo_shop_option]",
+          "next": "luo_shop"
+        },
+        {
+          "id": "luo_ask_day",
+          "text": "[tag:string:openWorld:luo_ask_day]",
+          "next": "luo_day"
+        },
+        {
+          "id": "luo_ask_road",
+          "text": "[tag:string:openWorld:luo_ask_road]",
+          "next": "luo_road"
+        },
+        {
+          "id": "luo_bye",
+          "text": "[tag:string:openWorld:luo_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "he": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "he_night"
+        }
+      ],
+      "defaultNext": "he_hello"
+    },
+    "he_hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:he_hello]",
+      "next": "he_menu"
+    },
+    "he_night": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:he_night]",
+      "next": "he_menu"
+    },
+    "he_day": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:he_day]",
+      "next": "he_menu"
+    },
+    "he_road": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:he_road]",
+      "next": "he_menu"
+    },
+    "he_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "he_cloth_topic",
+          "text": "[tag:string:owCloth:he_cloth_topic]",
+          "next": "he_cloth_handoff"
+        },
+        {
+          "id": "he_needle_topic",
+          "text": "[tag:string:owCloth:he_needle_topic]",
+          "next": "he_needle_handoff"
+        },
+        {
+          "id": "he_coat_topic",
+          "text": "[tag:string:owCloth:he_coat_topic]",
+          "next": "he_coat_handoff"
+        },
+        {
+          "id": "he_bucket_topic",
+          "text": "[tag:string:owWater:he_bucket_topic]",
+          "next": "he_bucket_handoff"
+        },
+        {
+          "id": "he_ask_day",
+          "text": "[tag:string:openWorld:he_ask_day]",
+          "next": "he_day"
+        },
+        {
+          "id": "he_ask_road",
+          "text": "[tag:string:openWorld:he_ask_road]",
+          "next": "he_road"
+        },
+        {
+          "id": "he_bye",
+          "text": "[tag:string:openWorld:he_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "deng": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "deng_night"
+        }
+      ],
+      "defaultNext": "deng_hello"
+    },
+    "deng_hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:deng_hello]",
+      "next": "deng_menu"
+    },
+    "deng_night": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:deng_night]",
+      "next": "deng_menu"
+    },
+    "deng_day": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:deng_day]",
+      "next": "deng_menu"
+    },
+    "deng_road": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:deng_road]",
+      "next": "deng_menu"
+    },
+    "deng_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_watch_witness_topic",
+          "text": "[tag:string:owWatch:watch_witness_topic]",
+          "next": "ow_watch_witness_handoff"
+        },
+        {
+          "id": "deng_coat_topic",
+          "text": "[tag:string:owCloth:deng_coat_topic]",
+          "next": "deng_coat_handoff"
+        },
+        {
+          "id": "tally_ask_deng",
+          "text": "[tag:string:owFirst:tally_ask_deng]",
+          "next": "tally_deng"
+        },
+        {
+          "id": "deng_ask_day",
+          "text": "[tag:string:openWorld:deng_ask_day]",
+          "next": "deng_day"
+        },
+        {
+          "id": "deng_ask_road",
+          "text": "[tag:string:openWorld:deng_ask_road]",
+          "next": "deng_road"
+        },
+        {
+          "id": "deng_bye",
+          "text": "[tag:string:openWorld:deng_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "ding": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "ding_night"
+        }
+      ],
+      "defaultNext": "ding_hello"
+    },
+    "ding_hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:ding_hello]",
+      "next": "ding_menu"
+    },
+    "ding_night": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:ding_night]",
+      "next": "ding_menu"
+    },
+    "ding_day": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:ding_day]",
+      "next": "ding_menu"
+    },
+    "ding_road": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:ding_road]",
+      "next": "ding_menu"
+    },
+    "ding_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_message_topic",
+          "text": "[tag:string:owWatch:message_topic]",
+          "next": "ow_message_handoff"
+        },
+        {
+          "id": "ow_watch_topic",
+          "text": "[tag:string:owWatch:watch_topic]",
+          "next": "ow_watch_handoff"
+        },
+        {
+          "id": "ding_ask_day",
+          "text": "[tag:string:openWorld:ding_ask_day]",
+          "next": "ding_day"
+        },
+        {
+          "id": "ding_ask_road",
+          "text": "[tag:string:openWorld:ding_ask_road]",
+          "next": "ding_road"
+        },
+        {
+          "id": "ding_bye",
+          "text": "[tag:string:openWorld:ding_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "monk": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "monk_night"
+        }
+      ],
+      "defaultNext": "monk_hello"
+    },
+    "monk_hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:monk_hello]",
+      "next": "monk_menu"
+    },
+    "monk_night": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:monk_night]",
+      "next": "monk_menu"
+    },
+    "monk_day": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "sheltered",
+            "reached": true
+          },
+          "next": "ow_monk_late_outside"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "moved",
+            "reached": true
+          },
+          "next": "ow_monk_late_inside"
+        }
+      ],
+      "defaultNext": "ow_monk_day_normal"
+    },
+    "monk_road": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:monk_road]",
+      "next": "monk_menu"
+    },
+    "monk_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_street_read_notice_monk",
+          "text": "[tag:string:owStreetPlay:topic_read_notice_monk]",
+          "next": "ow_street_read_notice_monk"
+        },
+        {
+          "id": "ow_ledger_topic",
+          "text": "[tag:string:owTemple:ledger_topic]",
+          "next": "ow_ledger_handoff"
+        },
+        {
+          "id": "ow_incense_topic",
+          "text": "[tag:string:owTemple:incense_topic]",
+          "next": "ow_incense_handoff"
+        },
+        {
+          "id": "monk_ask_day",
+          "text": "[tag:string:openWorld:monk_ask_day]",
+          "next": "monk_day"
+        },
+        {
+          "id": "monk_ask_road",
+          "text": "[tag:string:openWorld:monk_ask_road]",
+          "next": "monk_road"
+        },
+        {
+          "id": "monk_bye",
+          "text": "[tag:string:openWorld:monk_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "man": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "man_night"
+        }
+      ],
+      "defaultNext": "man_hello"
+    },
+    "man_hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:man_hello]",
+      "next": "man_menu"
+    },
+    "man_night": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:man_night]",
+      "next": "man_menu"
+    },
+    "man_day": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:man_day]",
+      "next": "man_menu"
+    },
+    "man_road": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:man_road]",
+      "next": "man_menu"
+    },
+    "man_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_street_witness",
+          "text": "[tag:string:owStreetPlay:topic_witness]",
+          "next": "ow_street_witness",
+          "requireCondition": {
+            "any": [
+              {
+                "narrative": "flow_ow_ring_hook",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_sugar",
+                "state": "given",
+                "reached": true
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owStreetPlay:topic_witness_hint]"
+        },
+        {
+          "id": "ow_street_sugar",
+          "text": "[tag:string:owStreetPlay:topic_sugar]",
+          "next": "ow_street_sugar"
+        },
+        {
+          "id": "ow_street_hook",
+          "text": "[tag:string:owStreetPlay:topic_hook]",
+          "next": "ow_street_hook"
+        },
+        {
+          "id": "man_ask_day",
+          "text": "[tag:string:openWorld:man_ask_day]",
+          "next": "man_day"
+        },
+        {
+          "id": "man_ask_road",
+          "text": "[tag:string:openWorld:man_ask_road]",
+          "next": "man_road"
+        },
+        {
+          "id": "man_bye",
+          "text": "[tag:string:openWorld:man_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "huang": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "timePhase": "夜"
+            }
+          ],
+          "next": "huang_night"
+        }
+      ],
+      "defaultNext": "huang_hello"
+    },
+    "huang_hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:huang_hello]",
+      "next": "huang_menu"
+    },
+    "huang_night": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:huang_night]",
+      "next": "huang_menu"
+    },
+    "huang_day": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:huang_day]",
+      "next": "huang_menu"
+    },
+    "huang_road": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:huang_road]",
+      "next": "huang_menu"
+    },
+    "huang_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "huang_binding_topic",
+          "text": "[tag:string:owCloth:huang_binding_topic]",
+          "next": "huang_binding_handoff"
+        },
+        {
+          "id": "huang_ask_day",
+          "text": "[tag:string:openWorld:huang_ask_day]",
+          "next": "huang_day"
+        },
+        {
+          "id": "huang_ask_road",
+          "text": "[tag:string:openWorld:huang_ask_road]",
+          "next": "huang_road"
+        },
+        {
+          "id": "huang_bye",
+          "text": "[tag:string:openWorld:huang_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "tally_offer": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_offer]",
+      "next": "tally_offer_emit"
+    },
+    "tally_offer_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_tally_accept"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "bowl_offer": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:bowl_offer]",
+      "next": "bowl_offer_emit"
+    },
+    "bowl_offer_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bowl_accept"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "bowl_collect": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:bowl_collect]",
+      "next": "bowl_collect_emit"
+    },
+    "bowl_collect_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bowl_collect"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "bowl_return": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:bowl_return]",
+      "next": "bowl_return_emit"
+    },
+    "bowl_return_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bowl_return"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "yang_thanks": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:yang_thanks]",
+      "next": "yang_menu"
+    },
+    "tally_find": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owFirst:tally_find]",
+      "next": "tally_find_emit"
+    },
+    "tally_find_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_tally_find"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "port_waiter": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:port_waiter]",
+      "next": "end"
+    },
+    "port_lady": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:port_lady]",
+      "next": "end"
+    },
+    "port_porter": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:port_porter]",
+      "next": "end"
+    },
+    "hill_traveler": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:hill_traveler]",
+      "next": "end"
+    },
+    "temple_keeper": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:temple_keeper]",
+      "next": "end"
+    },
+    "bridge_waiter": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:openWorld:bridge_waiter]",
+      "next": "end"
+    },
+    "yang_menu_0": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_meal_topic",
+          "text": "[tag:string:owStove:meal_topic]",
+          "next": "ow_meal_handoff"
+        },
+        {
+          "id": "ow_stove_topic",
+          "text": "[tag:string:owStove:stove_topic]",
+          "next": "ow_stove_handoff"
+        },
+        {
+          "id": "ow_oil_topic",
+          "text": "[tag:string:owWatch:oil_topic]",
+          "next": "ow_oil_handoff"
+        },
+        {
+          "id": "yang_ask_day",
+          "text": "[tag:string:openWorld:yang_ask_day]",
+          "next": "yang_day"
+        },
+        {
+          "id": "yang_ask_road",
+          "text": "[tag:string:openWorld:yang_ask_road]",
+          "next": "yang_road"
+        },
+        {
+          "id": "yang_bye",
+          "text": "[tag:string:openWorld:yang_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "yang_menu_1": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_meal_topic",
+          "text": "[tag:string:owStove:meal_topic]",
+          "next": "ow_meal_handoff"
+        },
+        {
+          "id": "ow_stove_topic",
+          "text": "[tag:string:owStove:stove_topic]",
+          "next": "ow_stove_handoff"
+        },
+        {
+          "id": "ow_oil_topic",
+          "text": "[tag:string:owWatch:oil_topic]",
+          "next": "ow_oil_handoff"
+        },
+        {
+          "id": "bowl_return_option",
+          "text": "[tag:string:openWorld:bowl_return_option]",
+          "next": "bowl_return",
+          "requireCondition": {
+            "all": [
+              {
+                "narrative": "flow_ow_bowl",
+                "state": "carrying"
+              }
+            ]
+          }
+        },
+        {
+          "id": "yang_ask_day",
+          "text": "[tag:string:openWorld:yang_ask_day]",
+          "next": "yang_day"
+        },
+        {
+          "id": "yang_ask_road",
+          "text": "[tag:string:openWorld:yang_ask_road]",
+          "next": "yang_road"
+        },
+        {
+          "id": "yang_bye",
+          "text": "[tag:string:openWorld:yang_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "yang_menu_2": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_meal_topic",
+          "text": "[tag:string:owStove:meal_topic]",
+          "next": "ow_meal_handoff"
+        },
+        {
+          "id": "ow_stove_topic",
+          "text": "[tag:string:owStove:stove_topic]",
+          "next": "ow_stove_handoff"
+        },
+        {
+          "id": "ow_oil_topic",
+          "text": "[tag:string:owWatch:oil_topic]",
+          "next": "ow_oil_handoff"
+        },
+        {
+          "id": "bowl_offer_option",
+          "text": "[tag:string:openWorld:bowl_offer_option]",
+          "next": "bowl_offer",
+          "requireCondition": {
+            "all": [
+              {
+                "narrative": "flow_ow_bowl",
+                "state": "initial"
+              }
+            ]
+          }
+        },
+        {
+          "id": "yang_ask_day",
+          "text": "[tag:string:openWorld:yang_ask_day]",
+          "next": "yang_day"
+        },
+        {
+          "id": "yang_ask_road",
+          "text": "[tag:string:openWorld:yang_ask_road]",
+          "next": "yang_road"
+        },
+        {
+          "id": "yang_bye",
+          "text": "[tag:string:openWorld:yang_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "yang_menu_3": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_meal_topic",
+          "text": "[tag:string:owStove:meal_topic]",
+          "next": "ow_meal_handoff"
+        },
+        {
+          "id": "ow_stove_topic",
+          "text": "[tag:string:owStove:stove_topic]",
+          "next": "ow_stove_handoff"
+        },
+        {
+          "id": "ow_oil_topic",
+          "text": "[tag:string:owWatch:oil_topic]",
+          "next": "ow_oil_handoff"
+        },
+        {
+          "id": "bowl_return_option",
+          "text": "[tag:string:openWorld:bowl_return_option]",
+          "next": "bowl_return",
+          "requireCondition": {
+            "all": [
+              {
+                "narrative": "flow_ow_bowl",
+                "state": "carrying"
+              }
+            ]
+          }
+        },
+        {
+          "id": "bowl_offer_option",
+          "text": "[tag:string:openWorld:bowl_offer_option]",
+          "next": "bowl_offer",
+          "requireCondition": {
+            "all": [
+              {
+                "narrative": "flow_ow_bowl",
+                "state": "initial"
+              }
+            ]
+          }
+        },
+        {
+          "id": "yang_ask_day",
+          "text": "[tag:string:openWorld:yang_ask_day]",
+          "next": "yang_day"
+        },
+        {
+          "id": "yang_ask_road",
+          "text": "[tag:string:openWorld:yang_ask_road]",
+          "next": "yang_road"
+        },
+        {
+          "id": "yang_bye",
+          "text": "[tag:string:openWorld:yang_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "tally_world_compromise": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_world_compromise]",
+      "next": "zhou_menu"
+    },
+    "tally_world_fair": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_world_fair]",
+      "next": "zhou_menu"
+    },
+    "tally_case": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_tally",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_tally",
+                "state": "fair",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_tally",
+                "state": "witness",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_tally",
+                "state": "compromise",
+                "reached": true
+              }
+            ]
+          },
+          "next": "tally_finished"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_tally",
+            "state": "found"
+          },
+          "next": "tally_decision"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_tally",
+            "state": "accepted"
+          },
+          "next": "tally_pending"
+        }
+      ],
+      "defaultNext": "tally_offer"
+    },
+    "tally_pending": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_pending]",
+      "next": "end"
+    },
+    "tally_finished": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_finished]",
+      "next": "zhou_menu"
+    },
+    "tally_decision": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "tally_show_trace",
+          "text": "[tag:string:owFirst:tally_show_trace]",
+          "next": "tally_fair_line",
+          "requireCondition": {
+            "narrative": "flow_ow_tally_trace",
+            "state": "rubbed",
+            "reached": true
+          },
+          "disabledClickHint": "[tag:string:owFirst:tally_show_trace_disabled]"
+        },
+        {
+          "id": "tally_show_witness",
+          "text": "[tag:string:owFirst:tally_show_witness]",
+          "next": "tally_witness_line",
+          "requireCondition": {
+            "narrative": "flow_ow_tally_witness",
+            "state": "seen",
+            "reached": true
+          },
+          "disabledClickHint": "[tag:string:owFirst:tally_show_witness_disabled]"
+        },
+        {
+          "id": "tally_take_less",
+          "text": "[tag:string:owFirst:tally_take_less]",
+          "next": "tally_compromise_confirm"
+        },
+        {
+          "id": "tally_continue",
+          "text": "[tag:string:owFirst:tally_continue]",
+          "next": "tally_more"
+        }
+      ]
+    },
+    "tally_more": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_more]",
+      "next": "end"
+    },
+    "tally_fair_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_fair_line]",
+      "next": "tally_fair_emit"
+    },
+    "tally_fair_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_tally_fair"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "tally_witness_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_witness_line]",
+      "next": "tally_witness_emit"
+    },
+    "tally_witness_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_tally_witness_settle"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "tally_compromise_confirm": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_compromise_confirm]",
+      "next": "tally_compromise_choice"
+    },
+    "tally_compromise_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "tally_confirm_less",
+          "text": "[tag:string:owFirst:tally_confirm_less]",
+          "next": "tally_compromise_emit"
+        },
+        {
+          "id": "tally_reconsider",
+          "text": "[tag:string:owFirst:tally_reconsider]",
+          "next": "end"
+        }
+      ]
+    },
+    "tally_compromise_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_tally_compromise"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "tally_stack": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_tally_count",
+            "state": "seen",
+            "reached": true
+          },
+          "next": "tally_stack_known"
+        },
+        {
+          "condition": {
+            "posture": "gaze"
+          },
+          "next": "tally_stack_seen"
+        }
+      ],
+      "defaultNext": "tally_stack_hint"
+    },
+    "tally_stack_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owFirst:tally_stack_hint]",
+      "next": "end"
+    },
+    "tally_stack_seen": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owFirst:tally_stack_seen]",
+      "next": "tally_stack_emit"
+    },
+    "tally_stack_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_tally_count"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "tally_stack_known": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owFirst:tally_stack_known]",
+      "next": "end"
+    },
+    "tally_deng": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_tally_witness",
+            "state": "seen",
+            "reached": true
+          },
+          "next": "tally_deng_known"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_tally_count",
+            "state": "seen",
+            "reached": true
+          },
+          "next": "tally_deng_seen"
+        }
+      ],
+      "defaultNext": "tally_deng_hint"
+    },
+    "tally_deng_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_deng_hint]",
+      "next": "tally_offer_emit"
+    },
+    "tally_deng_seen": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_deng_seen]",
+      "next": "tally_deng_emit"
+    },
+    "tally_deng_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_tally_witness"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "tally_deng_known": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_deng_known]",
+      "next": "end"
+    },
+    "luo_shop": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "openShop",
+          "params": {
+            "shopId": "ow_luo_supplies"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "knife_case": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_knife",
+            "state": "done"
+          },
+          "next": "knife_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_knife",
+            "state": "carrying"
+          },
+          "next": "knife_return"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_knife",
+            "state": "accepted"
+          },
+          "next": "knife_pending"
+        }
+      ],
+      "defaultNext": "knife_offer"
+    },
+    "knife_offer": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:knife_offer]",
+      "next": "knife_offer_emit"
+    },
+    "knife_offer_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_knife_accept"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "knife_pending": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:knife_pending]",
+      "next": "end"
+    },
+    "knife_pickup": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_knife",
+                "state": "carrying"
+              },
+              {
+                "narrative": "flow_ow_knife",
+                "state": "done"
+              }
+            ]
+          },
+          "next": "knife_empty"
+        },
+        {
+          "condition": {
+            "posture": "crouch"
+          },
+          "next": "knife_take"
+        }
+      ],
+      "defaultNext": "knife_pickup_hint"
+    },
+    "knife_pickup_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owFirst:knife_pickup_hint]",
+      "next": "end"
+    },
+    "knife_take": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owFirst:knife_take]",
+      "next": "knife_take_emit"
+    },
+    "knife_take_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_knife_take"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "knife_empty": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owFirst:knife_empty]",
+      "next": "end"
+    },
+    "knife_return": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:knife_return]",
+      "next": "knife_return_emit"
+    },
+    "knife_return_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_knife_return"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "knife_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:knife_done]",
+      "next": "end"
+    },
+    "tally_world_legacy": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:tally_world_legacy]",
+      "next": "zhou_menu"
+    },
+    "rope_case": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_rope_loan",
+            "state": "given"
+          },
+          "next": "rope_already"
+        }
+      ],
+      "defaultNext": "rope_borrow"
+    },
+    "rope_already": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:rope_already]",
+      "next": "end"
+    },
+    "rope_borrow": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "[tag:string:owFirst:rope_borrow]",
+      "next": "rope_borrow_emit"
+    },
+    "rope_borrow_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_rope_loan"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "zhou_menu_plain": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "zhou_coat_topic",
+          "text": "[tag:string:owCloth:zhou_coat_topic]",
+          "next": "zhou_coat_handoff"
+        },
+        {
+          "id": "tally_case_option",
+          "text": "[tag:string:owFirst:tally_case_option]",
+          "next": "tally_case"
+        },
+        {
+          "id": "tally_rope_option",
+          "text": "[tag:string:owFirst:tally_rope_option]",
+          "next": "rope_case",
+          "requireCondition": {
+            "any": [
+              {
+                "narrative": "flow_ow_tally",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_tally",
+                "state": "fair",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_tally",
+                "state": "witness",
+                "reached": true
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owFirst:tally_rope_option_disabled]"
+        },
+        {
+          "id": "zhou_day_new",
+          "text": "[tag:string:owFirst:zhou_day_new]",
+          "next": "zhou_day"
+        },
+        {
+          "id": "zhou_road_new",
+          "text": "[tag:string:owFirst:zhou_road_new]",
+          "next": "zhou_road"
+        },
+        {
+          "id": "zhou_end_new",
+          "text": "[tag:string:owFirst:zhou_end_new]",
+          "next": "end"
+        }
+      ]
+    },
+    "zhou_menu_bowl": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "zhou_coat_topic",
+          "text": "[tag:string:owCloth:zhou_coat_topic]",
+          "next": "zhou_coat_handoff"
+        },
+        {
+          "id": "bowl_collect_new",
+          "text": "[tag:string:owFirst:bowl_collect_new]",
+          "next": "bowl_collect"
+        },
+        {
+          "id": "tally_case_option",
+          "text": "[tag:string:owFirst:tally_case_option]",
+          "next": "tally_case"
+        },
+        {
+          "id": "tally_rope_option",
+          "text": "[tag:string:owFirst:tally_rope_option]",
+          "next": "rope_case",
+          "requireCondition": {
+            "any": [
+              {
+                "narrative": "flow_ow_tally",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_tally",
+                "state": "fair",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_tally",
+                "state": "witness",
+                "reached": true
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owFirst:tally_rope_option_disabled]"
+        },
+        {
+          "id": "zhou_day_new",
+          "text": "[tag:string:owFirst:zhou_day_new]",
+          "next": "zhou_day"
+        },
+        {
+          "id": "zhou_road_new",
+          "text": "[tag:string:owFirst:zhou_road_new]",
+          "next": "zhou_road"
+        },
+        {
+          "id": "zhou_end_new",
+          "text": "[tag:string:owFirst:zhou_end_new]",
+          "next": "end"
+        }
+      ]
+    },
+    "he_bucket_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_水路",
+            "entry": "bucket_he"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "qian": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_水路",
+            "entry": "qian"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "zhou_coat_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_认衣",
+            "entry": "zhou_coat"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "deng_coat_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_认衣",
+            "entry": "deng_coat"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "he_coat_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_认衣",
+            "entry": "he_coat"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "he_needle_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_认衣",
+            "entry": "he_needle"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "he_cloth_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_认衣",
+            "entry": "he_shop"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "huang_binding_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_认衣",
+            "entry": "huang_binding"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_watch_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_巡更",
+            "entry": "ding"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_message_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_巡更",
+            "entry": "message"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_watch_witness_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_巡更",
+            "entry": "deng"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_oil_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_巡更",
+            "entry": "oil_shop"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_paper_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_纸扎",
+            "entry": "luo"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_dry_paper_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_纸扎",
+            "entry": "dry_request"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_paper_day_changed": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "罗伯"
+      },
+      "text": "[tag:string:owPaper:ow_paper_day_changed]",
+      "next": "luo_menu"
+    },
+    "ow_paper_day_normal": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "罗伯"
+      },
+      "text": "[tag:string:owPaper:ow_paper_day_normal]",
+      "next": "luo_menu"
+    },
+    "ow_incense_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_庙火",
+            "entry": "monk"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_ledger_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_庙火",
+            "entry": "monk_ledger"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_monk_late_outside": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "扫院僧"
+      },
+      "text": "[tag:string:owTemple:ow_monk_late_outside]",
+      "next": "monk_menu"
+    },
+    "ow_monk_late_inside": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "扫院僧"
+      },
+      "text": "[tag:string:owTemple:ow_monk_late_inside]",
+      "next": "monk_menu"
+    },
+    "ow_monk_day_normal": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "扫院僧"
+      },
+      "text": "[tag:string:owTemple:ow_monk_day_normal]",
+      "next": "monk_menu"
+    },
+    "ow_stove_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_灶火",
+            "entry": "yang"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_meal_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_灶火",
+            "entry": "meal"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_yang_fixed_day": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "杨嫂"
+      },
+      "text": "[tag:string:owStove:ow_yang_fixed_day]",
+      "next": "yang_menu"
+    },
+    "ow_yang_loan_day": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "杨嫂"
+      },
+      "text": "[tag:string:owStove:ow_yang_loan_day]",
+      "next": "yang_menu"
+    },
+    "ow_yang_normal_day": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "杨嫂"
+      },
+      "text": "[tag:string:owStove:ow_yang_normal_day]",
+      "next": "yang_menu"
+    },
+    "ow_street_hook": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_街趣",
+            "entry": "child_hook"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_street_sugar": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_街趣",
+            "entry": "child_sugar"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_street_witness": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_街趣",
+            "entry": "child_witness"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_street_read_notice_luo": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_街趣",
+            "entry": "notice_luo"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_street_read_notice_monk": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_街趣",
+            "entry": "notice_monk"
+          }
+        }
+      ],
+      "next": "end"
+    }
+  }
+}

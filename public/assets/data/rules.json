@@ -116,6 +116,123 @@
           "verified": "effective"
         }
       }
+    },
+    {
+      "id": "ow_air_path",
+      "name": "[tag:string:owKnowledge:name]",
+      "incompleteName": "[tag:string:owKnowledge:incomplete]",
+      "category": "streetwise",
+      "layers": {
+        "xiang": {
+          "text": "[tag:string:owKnowledge:both_x]",
+          "verified": "effective"
+        },
+        "li": {
+          "text": "[tag:string:owKnowledge:both_l]",
+          "verified": "effective"
+        },
+        "shu": {
+          "text": "[tag:string:owKnowledge:both_s]",
+          "verified": "effective"
+        }
+      },
+      "narrativeStates": {
+        "initial": {
+          "layers": {}
+        },
+        "heard": {
+          "layers": {
+            "xiang": {
+              "text": "[tag:string:owKnowledge:heard_x]",
+              "verified": "unverified"
+            }
+          }
+        },
+        "ash": {
+          "layers": {
+            "xiang": {
+              "text": "[tag:string:owKnowledge:ash_x]",
+              "verified": "effective"
+            },
+            "shu": {
+              "text": "[tag:string:owKnowledge:ash_s]",
+              "verified": "unverified"
+            }
+          }
+        },
+        "wind": {
+          "layers": {
+            "xiang": {
+              "text": "[tag:string:owKnowledge:wind_x]",
+              "verified": "effective"
+            },
+            "li": {
+              "text": "[tag:string:owKnowledge:wind_l]",
+              "verified": "unverified"
+            },
+            "shu": {
+              "text": "[tag:string:owKnowledge:wind_s]",
+              "verified": "unverified"
+            }
+          }
+        },
+        "moved": {
+          "layers": {
+            "xiang": {
+              "text": "[tag:string:owKnowledge:moved_x]",
+              "verified": "effective"
+            },
+            "shu": {
+              "text": "[tag:string:owKnowledge:moved_s]",
+              "verified": "questionable"
+            }
+          }
+        },
+        "sheltered": {
+          "layers": {
+            "xiang": {
+              "text": "[tag:string:owKnowledge:sealed_x]",
+              "verified": "effective"
+            },
+            "li": {
+              "text": "[tag:string:owKnowledge:sealed_l]",
+              "verified": "effective"
+            },
+            "shu": {
+              "text": "[tag:string:owKnowledge:sealed_s]",
+              "verified": "effective"
+            }
+          }
+        },
+        "stove": {
+          "layers": {
+            "xiang": {
+              "text": "[tag:string:owKnowledge:stove_x]",
+              "verified": "effective"
+            },
+            "shu": {
+              "text": "[tag:string:owKnowledge:stove_s]",
+              "verified": "effective"
+            }
+          }
+        },
+        "compared": {
+          "layers": {
+            "xiang": {
+              "text": "[tag:string:owKnowledge:both_x]",
+              "verified": "effective"
+            },
+            "li": {
+              "text": "[tag:string:owKnowledge:both_l]",
+              "verified": "effective"
+            },
+            "shu": {
+              "text": "[tag:string:owKnowledge:both_s]",
+              "verified": "effective"
+            }
+          }
+        }
+      }
     }
   ],
   "fragments": [

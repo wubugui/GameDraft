@@ -429,19 +429,21 @@ def test_archive_rhymes_is_registered_condition_source(disk_model: FakeModel) ->
     assert ("archive", "") in disk_model.dirty
 
 
-def test_readonly_source_blocks_every_refactor(disk_model: FakeModel) -> None:
+def test_readonly_source_blocks_every_refactor(disk_model: FakeModel, monkeypatch) -> None:
     """只读数据面（ProjectModel 加载但 save_all 不认领）有引用 → 四种重构一律拒绝。
 
     静默跳过会留悬垂引用，改内存则改动落不了盘凭空消失——两者都不可接受，故 fail-safe 拒绝。
     """
-    disk_model.object_examine_instances = {
+    from tools.editor.shared.signal_refactor import READONLY_SOURCES
+    monkeypatch.setitem(READONLY_SOURCES, 'readonly_fixture', 'readonly_fixture')
+    disk_model.readonly_fixture = {
         "corpse": {"steps": [
             {"type": "emitNarrativeSignal", "params": {"signal": "sig_a"}},
             {"type": "setNarrativeState", "params": {"graphId": "flow_main", "stateId": "s1"}},
         ]},
     }
     assert scan_signal_usages(disk_model, "sig_a")["readonlyBlockers"] == [
-        {"bucket": "object_examine", "itemId": "corpse", "count": 1},
+        {"bucket": "readonly_fixture", "itemId": "corpse", "count": 1},
     ]
     for call in (
         lambda: rename_signal(disk_model, "sig_a", "sig_x"),
@@ -452,9 +454,24 @@ def test_readonly_source_blocks_every_refactor(disk_model: FakeModel) -> None:
         with pytest.raises(SignalRefactorError, match="只读数据面"):
             call()
     # 拒绝 = 零改动（含只读面自身与可写面）
-    assert disk_model.object_examine_instances["corpse"]["steps"][0]["params"]["signal"] == "sig_a"
+    assert disk_model.readonly_fixture["corpse"]["steps"][0]["params"]["signal"] == "sig_a"
     assert scan_signal_usages(disk_model, "sig_a")["registryIndex"] == 0
     assert disk_model.narrative_graphs["compositions"][0]["mainGraph"]["id"] == "flow_main"
+
+
+def test_examine_actions_now_follow_signal_and_state_refactors(disk_model: FakeModel) -> None:
+    action = {"type": "setNarrativeState", "params": {"graphId": "flow_main", "stateId": "s1"}}
+    disk_model.object_examine_instances = {'cloth': {'hotspots': [{
+        'id': 'cuff', 'onFound': [_emit('sig_a')],
+        'operations': [{'id': 'look', 'actions': [action]}],
+    }]}}
+    assert scan_signal_usages(disk_model, 'sig_a')['readonlyBlockers'] == []
+    rename_signal(disk_model, 'sig_a', 'sig_x')
+    rename_state(disk_model, 'flow_main', 's1', 's1x')
+    hs = disk_model.object_examine_instances['cloth']['hotspots'][0]
+    assert hs['onFound'][0]['params']['signal'] == 'sig_x'
+    assert hs['operations'][0]['actions'][0]['params']['stateId'] == 's1x'
+    assert ('object_examine', '') in disk_model.dirty
 
 
 def test_refactor_leaves_no_dangling_dialogue_refs(disk_model: FakeModel) -> None:

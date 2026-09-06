@@ -1,0 +1,125 @@
+{
+  "method": "Registered time action and diagnostic scene checkpoint; fixed ticks sample native movement.",
+  "samples": [
+    {
+      "scene": "码头白天",
+      "minutes": 660,
+      "actors": [
+        {
+          "id": "ow_zhou",
+          "visible": false,
+          "x": 1530,
+          "y": 1021.4,
+          "animation": "lifu_stand",
+          "frame": 5
+        },
+        {
+          "id": "ow_deng",
+          "visible": true,
+          "x": 2256.478561832518,
+          "y": 645.3366592845794,
+          "animation": "walk",
+          "frame": 5
+        },
+        {
+          "id": "ow_qian",
+          "visible": true,
+          "x": 1875,
+          "y": 1130.23,
+          "animation": "idle",
+          "frame": 5
+        }
+      ]
+    },
+    {
+      "scene": "码头白天",
+      "minutes": 660,
+      "actors": [
+        {
+          "id": "ow_zhou",
+          "visible": false,
+          "x": 1530,
+          "y": 1021.4,
+          "animation": "lifu_stand",
+          "frame": 11
+        },
+        {
+          "id": "ow_deng",
+          "visible": true,
+          "x": 2306.1085449844354,
+          "y": 612.0944965694247,
+          "animation": "walk",
+          "frame": 9
+        },
+        {
+          "id": "ow_qian",
+          "visible": true,
+          "x": 1875,
+          "y": 1130.23,
+          "animation": "idle",
+          "frame": 11
+        }
+      ]
+    },
+    {
+      "scene": "码头白天",
+      "minutes": 660,
+      "actors": [
+        {
+          "id": "ow_zhou",
+          "visible": false,
+          "x": 1530,
+          "y": 1021.4,
+          "animation": "lifu_stand",
+          "frame": 15
+        },
+        {
+          "id": "ow_deng",
+          "visible": true,
+          "x": 2448.5395468573784,
+          "y": 525.4644609140028,
+          "animation": "walk",
+          "frame": 10
+        },
+        {
+          "id": "ow_qian",
+          "visible": true,
+          "x": 1875,
+          "y": 1130.23,
+          "animation": "idle",
+          "frame": 15
+        }
+      ]
+    },
+    {
+      "scene": "码头白天",
+      "minutes": 660,
+      "actors": [
+        {
+          "id": "ow_zhou",
+          "visible": false,
+          "x": 1530,
+          "y": 1021.4,
+          "animation": "lifu_stand",
+          "frame": 15
+        },
+        {
+          "id": "ow_deng",
+          "visible": true,
+          "x": 2419.666498675671,
+          "y": 541.5794715391514,
+          "animation": "walk",
+          "frame": 7
+        },
+        {
+          "id": "ow_qian",
+          "visible": true,
+          "x": 1875,
+          "y": 1130.23,
+          "animation": "idle",
+          "frame": 15
+        }
+      ]
+    }
+  ]
+}

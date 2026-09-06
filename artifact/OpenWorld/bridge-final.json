@@ -1,0 +1,93 @@
+{
+  "method": "Registered time action and diagnostic scene checkpoint; fixed ticks sample native movement.",
+  "samples": [
+    {
+      "scene": "桥下",
+      "minutes": 1200,
+      "actors": [
+        {
+          "id": "ow_ding",
+          "visible": false,
+          "x": 2760,
+          "y": 1451.07,
+          "animation": "官兵刀_站立",
+          "frame": 6
+        },
+        {
+          "id": "ow_qian",
+          "visible": false,
+          "x": 2940,
+          "y": 1808.26,
+          "animation": "idle",
+          "frame": 6
+        }
+      ]
+    },
+    {
+      "scene": "桥下",
+      "minutes": 1200,
+      "actors": [
+        {
+          "id": "ow_ding",
+          "visible": false,
+          "x": 2760,
+          "y": 1451.07,
+          "animation": "官兵刀_站立",
+          "frame": 12
+        },
+        {
+          "id": "ow_qian",
+          "visible": false,
+          "x": 2940,
+          "y": 1808.26,
+          "animation": "idle",
+          "frame": 12
+        }
+      ]
+    },
+    {
+      "scene": "桥下",
+      "minutes": 1200,
+      "actors": [
+        {
+          "id": "ow_ding",
+          "visible": false,
+          "x": 2760,
+          "y": 1451.07,
+          "animation": "官兵刀_站立",
+          "frame": 8
+        },
+        {
+          "id": "ow_qian",
+          "visible": false,
+          "x": 2940,
+          "y": 1808.26,
+          "animation": "idle",
+          "frame": 8
+        }
+      ]
+    },
+    {
+      "scene": "桥下",
+      "minutes": 1200,
+      "actors": [
+        {
+          "id": "ow_ding",
+          "visible": false,
+          "x": 2760,
+          "y": 1451.07,
+          "animation": "官兵刀_站立",
+          "frame": 6
+        },
+        {
+          "id": "ow_qian",
+          "visible": false,
+          "x": 2940,
+          "y": 1808.26,
+          "animation": "idle",
+          "frame": 6
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1117 @@
+{
+  "schemaVersion": 1,
+  "id": "开放世界_巡更",
+  "entry": "cord",
+  "meta": {
+    "title": "更梆与夜里当班的人"
+  },
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_watch_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_watch",
+            "objectiveId": "watch_choose_obj"
+          }
+        }
+      ],
+      "next": "methods"
+    },
+    "cord": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_watch",
+                "state": "original",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_watch",
+                "state": "patched",
+                "reached": true
+              }
+            ]
+          },
+          "next": "cord_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_watch_found",
+            "state": "found",
+            "reached": true
+          },
+          "next": "cord_empty"
+        }
+      ],
+      "defaultNext": "cord_intro"
+    },
+    "cord_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:cord_intro]",
+      "next": "focus"
+    },
+    "cord_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:cord_done]",
+      "next": "end"
+    },
+    "cord_empty": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:cord_empty]",
+      "next": "methods"
+    },
+    "methods": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "recover",
+          "text": "[tag:string:owWatch:recover]",
+          "next": "pull_check",
+          "requireCondition": {
+            "all": [
+              {
+                "not": {
+                  "narrative": "flow_ow_watch_found",
+                  "state": "found",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "narrative": "flow_ow_watch",
+                      "state": "original",
+                      "reached": true
+                    },
+                    {
+                      "narrative": "flow_ow_watch",
+                      "state": "patched",
+                      "reached": true
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owWatch:recover_disabled]"
+        },
+        {
+          "id": "spare_where",
+          "text": "[tag:string:owWatch:spare_where]",
+          "next": "bench_route",
+          "requireCondition": {
+            "not": {
+              "any": [
+                {
+                  "narrative": "flow_ow_watch",
+                  "state": "original",
+                  "reached": true
+                },
+                {
+                  "narrative": "flow_ow_watch",
+                  "state": "patched",
+                  "reached": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "leave_watch",
+          "text": "[tag:string:owWatch:leave_watch]",
+          "next": "end"
+        }
+      ]
+    },
+    "bench_where": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:bench_where]",
+      "next": "end"
+    },
+    "bench_route": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_watch",
+            "objectiveId": "watch_bench_obj"
+          }
+        }
+      ],
+      "next": "bench_where"
+    },
+    "pull_check": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "narrative": "flow_ow_water",
+                    "state": "repaired",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_water",
+                    "state": "done",
+                    "reached": true
+                  }
+                ]
+              },
+              {
+                "flag": "has_item_ow_rope"
+              }
+            ]
+          },
+          "next": "pull_time"
+        }
+      ],
+      "defaultNext": "pull_blocked"
+    },
+    "pull_blocked": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:pull_blocked]",
+      "next": "end"
+    },
+    "pull_time": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "timePhase": "夜"
+          },
+          "next": "pull_night"
+        }
+      ],
+      "defaultNext": "pull_day"
+    },
+    "pull_day": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_watch",
+            "objectiveId": "watch_water_obj"
+          }
+        },
+        {
+          "type": "startWaterMinigame",
+          "params": {
+            "id": "ow_watch_clapper"
+          }
+        }
+      ],
+      "next": "pull_after"
+    },
+    "pull_night": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_watch",
+            "objectiveId": "watch_water_obj"
+          }
+        },
+        {
+          "type": "startWaterMinigame",
+          "params": {
+            "id": "ow_watch_clapper_night"
+          }
+        }
+      ],
+      "next": "pull_after"
+    },
+    "pull_after": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_watch_found",
+            "state": "found",
+            "reached": true
+          },
+          "next": "pull_got"
+        }
+      ],
+      "defaultNext": "pull_again"
+    },
+    "pull_got": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:pull_got]",
+      "next": "end"
+    },
+    "pull_again": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:pull_again]",
+      "next": "end"
+    },
+    "bench": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_watch",
+                "state": "original",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_watch",
+                "state": "patched",
+                "reached": true
+              }
+            ]
+          },
+          "next": "bench_done"
+        },
+        {
+          "condition": {
+            "all": [
+              {
+                "narrative": "flow_ow_watch_splint",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_watch_tie",
+                "state": "done",
+                "reached": true
+              }
+            ]
+          },
+          "next": "bench_ready"
+        }
+      ],
+      "defaultNext": "bench_intro"
+    },
+    "bench_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:bench_intro]",
+      "next": "bench_focus"
+    },
+    "bench_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_watch_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_watch",
+            "objectiveId": "watch_bench_obj"
+          }
+        }
+      ],
+      "next": "bench_choice"
+    },
+    "bench_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "bench_work",
+          "text": "[tag:string:owWatch:bench_work]",
+          "next": "bench_open"
+        },
+        {
+          "id": "bench_later",
+          "text": "[tag:string:owWatch:bench_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "bench_open": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startObjectExamine",
+          "params": {
+            "id": "ow_watch_bench"
+          }
+        }
+      ],
+      "next": "bench_after"
+    },
+    "bench_after": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "all": [
+              {
+                "narrative": "flow_ow_watch_splint",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_watch_tie",
+                "state": "done",
+                "reached": true
+              }
+            ]
+          },
+          "next": "bench_ready"
+        }
+      ],
+      "defaultNext": "bench_incomplete"
+    },
+    "bench_incomplete": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:bench_incomplete]",
+      "next": "end"
+    },
+    "bench_ready": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:bench_ready]",
+      "next": "end"
+    },
+    "bench_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:bench_done]",
+      "next": "end"
+    },
+    "ding": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_watch",
+            "state": "original",
+            "reached": true
+          },
+          "next": "ding_original_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_watch",
+            "state": "patched",
+            "reached": true
+          },
+          "next": "ding_patched_done"
+        }
+      ],
+      "defaultNext": "ding_intro"
+    },
+    "ding_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "丁四"
+      },
+      "text": "[tag:string:owWatch:ding_intro]",
+      "next": "focus_ding"
+    },
+    "focus_ding": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_watch_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_watch"
+          }
+        }
+      ],
+      "next": "ding_choice"
+    },
+    "ding_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "give_original",
+          "text": "[tag:string:owWatch:give_original]",
+          "next": "original_commit",
+          "requireCondition": {
+            "flag": "has_item_ow_old_clapper"
+          },
+          "disabledClickHint": "[tag:string:owWatch:give_original_disabled]"
+        },
+        {
+          "id": "give_spare",
+          "text": "[tag:string:owWatch:give_spare]",
+          "next": "patched_commit",
+          "requireCondition": {
+            "flag": "has_item_ow_patched_clapper"
+          },
+          "disabledClickHint": "[tag:string:owWatch:give_spare_disabled]"
+        },
+        {
+          "id": "ding_methods",
+          "text": "[tag:string:owWatch:ding_methods]",
+          "next": "methods"
+        },
+        {
+          "id": "ding_later",
+          "text": "[tag:string:owWatch:ding_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "original_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_watch_return_original"
+          }
+        }
+      ],
+      "next": "ding_original_done"
+    },
+    "patched_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_watch_return_patched"
+          }
+        }
+      ],
+      "next": "ding_patched_done"
+    },
+    "ding_original_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "丁四"
+      },
+      "text": "[tag:string:owWatch:ding_original_done]",
+      "next": "end"
+    },
+    "ding_patched_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "丁四"
+      },
+      "text": "[tag:string:owWatch:ding_patched_done]",
+      "next": "end"
+    },
+    "deng": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "邓幺"
+      },
+      "text": "[tag:string:owWatch:deng]",
+      "next": "focus"
+    },
+    "lamp": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_lamp",
+            "state": "done",
+            "reached": true
+          },
+          "next": "lamp_done"
+        }
+      ],
+      "defaultNext": "lamp_intro"
+    },
+    "lamp_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:lamp_intro]",
+      "next": "lamp_focus"
+    },
+    "lamp_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_lamp_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_lamp"
+          }
+        }
+      ],
+      "next": "lamp_choice"
+    },
+    "lamp_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "lamp_use",
+          "text": "[tag:string:owWatch:lamp_use]",
+          "next": "lamp_commit",
+          "requireCondition": {
+            "flag": "has_item_ow_lamp_oil"
+          },
+          "disabledClickHint": "[tag:string:owWatch:lamp_use_disabled]"
+        },
+        {
+          "id": "lamp_later",
+          "text": "[tag:string:owWatch:lamp_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "lamp_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_lamp_fill"
+          }
+        }
+      ],
+      "next": "lamp_done"
+    },
+    "lamp_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:lamp_done]",
+      "next": "end"
+    },
+    "oil_shop": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "openShop",
+          "params": {
+            "shopId": "ow_yang_oil"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "message": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_message",
+                "state": "bridge_agreed",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_message",
+                "state": "dock_agreed",
+                "reached": true
+              }
+            ]
+          },
+          "next": "message_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_message",
+            "state": "bridge_reply"
+          },
+          "next": "report_check"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_message",
+            "state": "dock_reply"
+          },
+          "next": "report_check"
+        }
+      ],
+      "defaultNext": "message_intro"
+    },
+    "message_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "丁四"
+      },
+      "text": "[tag:string:owWatch:message_intro]",
+      "next": "message_accept"
+    },
+    "message_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_message_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_message"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "report_check": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "all": [
+                  {
+                    "narrative": "flow_ow_message",
+                    "state": "bridge_reply"
+                  },
+                  {
+                    "not": {
+                      "any": [
+                        {
+                          "any": [
+                            {
+                              "narrative": "flow_ow_water",
+                              "state": "repaired",
+                              "reached": true
+                            },
+                            {
+                              "narrative": "flow_ow_water",
+                              "state": "done",
+                              "reached": true
+                            }
+                          ]
+                        },
+                        {
+                          "narrative": "flow_ow_water",
+                          "state": "diverted",
+                          "reached": true
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "all": [
+                  {
+                    "narrative": "flow_ow_message",
+                    "state": "dock_reply"
+                  },
+                  {
+                    "any": [
+                      {
+                        "any": [
+                          {
+                            "narrative": "flow_ow_water",
+                            "state": "repaired",
+                            "reached": true
+                          },
+                          {
+                            "narrative": "flow_ow_water",
+                            "state": "done",
+                            "reached": true
+                          }
+                        ]
+                      },
+                      {
+                        "narrative": "flow_ow_water",
+                        "state": "diverted",
+                        "reached": true
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "next": "report_choice"
+        }
+      ],
+      "defaultNext": "message_stale"
+    },
+    "report_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "report_now",
+          "text": "[tag:string:owWatch:report_now]",
+          "next": "report_commit"
+        },
+        {
+          "id": "report_wait",
+          "text": "[tag:string:owWatch:report_wait]",
+          "next": "end"
+        }
+      ]
+    },
+    "report_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_message_report"
+          }
+        }
+      ],
+      "next": "message_done"
+    },
+    "message_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "丁四"
+      },
+      "text": "[tag:string:owWatch:message_done]",
+      "next": "end"
+    },
+    "message_stale": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "丁四"
+      },
+      "text": "[tag:string:owWatch:message_stale]",
+      "next": "end"
+    },
+    "qian_message": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_message",
+            "state": "initial"
+          },
+          "next": "qian_no_message"
+        },
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_message",
+                "state": "bridge_agreed",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_message",
+                "state": "dock_agreed",
+                "reached": true
+              }
+            ]
+          },
+          "next": "qian_message_done"
+        }
+      ],
+      "defaultNext": "qian_reply"
+    },
+    "qian_no_message": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWatch:qian_no_message]",
+      "next": "end"
+    },
+    "qian_reply": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_message_qian"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_message"
+          }
+        }
+      ],
+      "next": "qian_reply_where"
+    },
+    "qian_reply_where": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "narrative": "flow_ow_water",
+                    "state": "repaired",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_water",
+                    "state": "done",
+                    "reached": true
+                  }
+                ]
+              },
+              {
+                "narrative": "flow_ow_water",
+                "state": "diverted",
+                "reached": true
+              }
+            ]
+          },
+          "next": "qian_reply_dock"
+        }
+      ],
+      "defaultNext": "qian_reply_bridge"
+    },
+    "qian_reply_dock": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWatch:qian_reply_dock]",
+      "next": "end"
+    },
+    "qian_reply_bridge": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWatch:qian_reply_bridge]",
+      "next": "end"
+    },
+    "qian_message_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWatch:qian_message_done]",
+      "next": "end"
+    },
+    "cargo": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_cargo",
+            "state": "done",
+            "reached": true
+          },
+          "next": "cargo_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_cargo",
+            "state": "carrying"
+          },
+          "next": "cargo_carried"
+        },
+        {
+          "condition": {
+            "posture": "crouch"
+          },
+          "next": "cargo_take"
+        }
+      ],
+      "defaultNext": "cargo_stand"
+    },
+    "cargo_stand": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:cargo_stand]",
+      "next": "cargo_accept"
+    },
+    "cargo_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_cargo_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_cargo"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "cargo_take": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_cargo_take"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_cargo"
+          }
+        }
+      ],
+      "next": "cargo_carried"
+    },
+    "cargo_carried": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWatch:cargo_carried]",
+      "next": "end"
+    },
+    "qian_cargo": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_cargo",
+            "state": "done",
+            "reached": true
+          },
+          "next": "cargo_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_cargo",
+            "state": "carrying"
+          },
+          "next": "cargo_return_choice"
+        }
+      ],
+      "defaultNext": "cargo_request"
+    },
+    "cargo_request": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWatch:cargo_request]",
+      "next": "cargo_accept"
+    },
+    "cargo_return_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "return_cargo",
+          "text": "[tag:string:owWatch:return_cargo]",
+          "next": "cargo_commit"
+        },
+        {
+          "id": "keep_cargo",
+          "text": "[tag:string:owWatch:keep_cargo]",
+          "next": "end"
+        }
+      ]
+    },
+    "cargo_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_cargo_return"
+          }
+        }
+      ],
+      "next": "cargo_done"
+    },
+    "cargo_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWatch:cargo_done]",
+      "next": "end"
+    }
+  }
+}

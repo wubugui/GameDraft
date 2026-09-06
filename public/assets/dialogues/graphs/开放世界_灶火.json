@@ -1,0 +1,830 @@
+{
+  "schemaVersion": 1,
+  "id": "开放世界_灶火",
+  "entry": "stove",
+  "meta": {
+    "title": "两家人的一炉火"
+  },
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "stove": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "repaired",
+            "reached": true
+          },
+          "next": "fixed"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "borrowed",
+            "reached": true
+          },
+          "next": "loan_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "cold"
+          },
+          "next": "cold_choices"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "cooking"
+          },
+          "next": "cooking_hint"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "hot"
+          },
+          "next": "hot_hint"
+        }
+      ],
+      "defaultNext": "intro"
+    },
+    "intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:intro]",
+      "next": "accept"
+    },
+    "accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_stove_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_stove"
+          }
+        }
+      ],
+      "next": "methods"
+    },
+    "methods": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "repair_method",
+          "text": "[tag:string:owStove:repair_method]",
+          "next": "repair_terms"
+        },
+        {
+          "id": "borrow_method",
+          "text": "[tag:string:owStove:borrow_method]",
+          "next": "borrow_terms",
+          "requireCondition": {
+            "not": {
+              "any": [
+                {
+                  "narrative": "flow_ow_stove_ash",
+                  "state": "done",
+                  "reached": true
+                },
+                {
+                  "narrative": "flow_ow_stove_foot",
+                  "state": "done",
+                  "reached": true
+                }
+              ]
+            }
+          },
+          "disabledClickHint": "[tag:string:owStove:borrow_method_disabled]"
+        },
+        {
+          "id": "stove_later",
+          "text": "[tag:string:owStove:stove_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "repair_terms": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:repair_terms]",
+      "next": "repair_choices"
+    },
+    "repair_choices": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "look_stove",
+          "text": "[tag:string:owStove:look_stove]",
+          "next": "examine"
+        },
+        {
+          "id": "fire_stove",
+          "text": "[tag:string:owStove:fire_stove]",
+          "next": "fire",
+          "requireCondition": {
+            "all": [
+              {
+                "narrative": "flow_ow_stove_ash",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_stove_foot",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "flag": "has_item_ow_charcoal"
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owStove:fire_stove_disabled]"
+        },
+        {
+          "id": "repair_wait",
+          "text": "[tag:string:owStove:repair_wait]",
+          "next": "end"
+        }
+      ]
+    },
+    "examine": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_stove",
+            "objectiveId": "stove_repair_obj"
+          }
+        },
+        {
+          "type": "startObjectExamine",
+          "params": {
+            "id": "ow_noodle_stove"
+          }
+        }
+      ],
+      "next": "repair_after"
+    },
+    "repair_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:repair_after]",
+      "next": "end"
+    },
+    "fire": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_stove_fire"
+          }
+        }
+      ],
+      "next": "fixed"
+    },
+    "fixed": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:fixed]",
+      "next": "end"
+    },
+    "borrow_terms": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:borrow_terms]",
+      "next": "borrow_choice"
+    },
+    "borrow_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "take_pot",
+          "text": "[tag:string:owStove:take_pot]",
+          "next": "borrow"
+        },
+        {
+          "id": "dont_borrow",
+          "text": "[tag:string:owStove:dont_borrow]",
+          "next": "end"
+        }
+      ]
+    },
+    "borrow": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_stove_borrow"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_stove"
+          }
+        }
+      ],
+      "next": "cold_hint"
+    },
+    "cold_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:cold_hint]",
+      "next": "end"
+    },
+    "cold_choices": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "cold_continue",
+          "text": "[tag:string:owStove:cold_continue]",
+          "next": "cold_hint"
+        },
+        {
+          "id": "cold_cancel",
+          "text": "[tag:string:owStove:cold_cancel]",
+          "next": "cancel"
+        }
+      ]
+    },
+    "cancel": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_stove_cancel"
+          }
+        }
+      ],
+      "next": "methods"
+    },
+    "loan_stove": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "cooking"
+          },
+          "next": "collect_choice"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "cold"
+          },
+          "next": "cook_choice"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "hot"
+          },
+          "next": "hot_stove"
+        }
+      ],
+      "defaultNext": "loan_intro"
+    },
+    "loan_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:loan_intro]",
+      "next": "loan_intro_choice"
+    },
+    "loan_intro_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "loan_go",
+          "text": "[tag:string:owStove:loan_go]",
+          "next": "loan_focus"
+        },
+        {
+          "id": "paste_instead",
+          "text": "[tag:string:owStove:paste_instead]",
+          "next": "paste_handoff"
+        },
+        {
+          "id": "loan_leave",
+          "text": "[tag:string:owStove:loan_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "loan_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_stove_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_stove"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "paste_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_纸扎",
+            "entry": "stove_available"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "hot_stove": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:hot_stove]",
+      "next": "hot_stove_choices"
+    },
+    "hot_stove_choices": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "keep_delivery",
+          "text": "[tag:string:owStove:keep_delivery]",
+          "next": "delivery_focus"
+        },
+        {
+          "id": "paste_first",
+          "text": "[tag:string:owStove:paste_first]",
+          "next": "paste_handoff"
+        },
+        {
+          "id": "stove_freed_leave",
+          "text": "[tag:string:owStove:stove_freed_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "delivery_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_stove",
+            "objectiveId": "stove_deliver_obj"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "cook_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "cook_rice",
+          "text": "[tag:string:owStove:cook_rice]",
+          "next": "cook",
+          "requireCondition": {
+            "flag": "has_item_ow_bucket"
+          },
+          "disabledClickHint": "[tag:string:owStove:cook_rice_disabled]"
+        },
+        {
+          "id": "cook_wait",
+          "text": "[tag:string:owStove:cook_wait]",
+          "next": "end"
+        }
+      ]
+    },
+    "cook": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_stove_cook"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_stove"
+          }
+        }
+      ],
+      "next": "collect_choice"
+    },
+    "collect_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "collect_rice",
+          "text": "[tag:string:owStove:collect_rice]",
+          "next": "collect"
+        },
+        {
+          "id": "leave_rice",
+          "text": "[tag:string:owStove:leave_rice]",
+          "next": "end"
+        }
+      ]
+    },
+    "collect": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_stove_collect"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_stove"
+          }
+        }
+      ],
+      "next": "hot_hint"
+    },
+    "cooking_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:cooking_hint]",
+      "next": "end"
+    },
+    "hot_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:hot_hint]",
+      "next": "end"
+    },
+    "loan_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:loan_done]",
+      "next": "end"
+    },
+    "yang": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "hot"
+          },
+          "next": "delivery"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "repaired",
+            "reached": true
+          },
+          "next": "fixed"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "borrowed",
+            "reached": true
+          },
+          "next": "loan_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "cooking"
+          },
+          "next": "cooking_hint"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_stove",
+            "state": "cold"
+          },
+          "next": "cold_hint"
+        }
+      ],
+      "defaultNext": "yang_request"
+    },
+    "yang_request": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "杨嫂"
+      },
+      "text": "[tag:string:owStove:yang_request]",
+      "next": "yang_accept"
+    },
+    "yang_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_stove_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_stove"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "delivery": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "杨嫂"
+      },
+      "text": "[tag:string:owStove:delivery]",
+      "next": "delivery_choice"
+    },
+    "delivery_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "give_rice",
+          "text": "[tag:string:owStove:give_rice]",
+          "next": "deliver"
+        },
+        {
+          "id": "keep_rice",
+          "text": "[tag:string:owStove:keep_rice]",
+          "next": "end"
+        }
+      ]
+    },
+    "deliver": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_stove_deliver"
+          }
+        }
+      ],
+      "next": "loan_done"
+    },
+    "meal": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_meal",
+            "state": "done",
+            "reached": true
+          },
+          "next": "meal_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_meal",
+            "state": "carrying"
+          },
+          "next": "meal_have"
+        },
+        {
+          "condition": {
+            "not": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "narrative": "flow_ow_stove",
+                      "state": "repaired",
+                      "reached": true
+                    },
+                    {
+                      "all": [
+                        {
+                          "flag": "minutes_of_day",
+                          "op": ">=",
+                          "value": 420
+                        },
+                        {
+                          "flag": "minutes_of_day",
+                          "op": "<",
+                          "value": 1320
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "not": {
+                        "narrative": "flow_ow_stove",
+                        "state": "repaired",
+                        "reached": true
+                      }
+                    },
+                    {
+                      "all": [
+                        {
+                          "flag": "minutes_of_day",
+                          "op": ">=",
+                          "value": 420
+                        },
+                        {
+                          "flag": "minutes_of_day",
+                          "op": "<",
+                          "value": 1200
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "next": "meal_closed"
+        }
+      ],
+      "defaultNext": "meal_intro"
+    },
+    "meal_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "杨嫂"
+      },
+      "text": "[tag:string:owStove:meal_intro]",
+      "next": "meal_accept"
+    },
+    "meal_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_meal_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_meal"
+          }
+        }
+      ],
+      "next": "meal_choices"
+    },
+    "meal_choices": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "meal_voucher",
+          "text": "[tag:string:owStove:meal_voucher]",
+          "next": "redeem",
+          "requireCondition": {
+            "flag": "has_item_ow_meal_voucher"
+          },
+          "disabledClickHint": "[tag:string:owStove:meal_voucher_disabled]"
+        },
+        {
+          "id": "meal_cash",
+          "text": "[tag:string:owStove:meal_cash]",
+          "next": "buy",
+          "requireCondition": {
+            "flag": "coins",
+            "op": ">=",
+            "value": 3
+          },
+          "disabledClickHint": "[tag:string:owStove:meal_cash_disabled]"
+        },
+        {
+          "id": "meal_wait",
+          "text": "[tag:string:owStove:meal_wait]",
+          "next": "end"
+        }
+      ]
+    },
+    "buy": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_meal_buy"
+          }
+        }
+      ],
+      "next": "meal_have"
+    },
+    "redeem": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_meal_redeem"
+          }
+        }
+      ],
+      "next": "meal_have"
+    },
+    "meal_have": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:meal_have]",
+      "next": "end"
+    },
+    "meal_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:meal_done]",
+      "next": "end"
+    },
+    "meal_closed": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStove:meal_closed]",
+      "next": "meal_track"
+    },
+    "meal_track": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_meal_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_meal"
+          }
+        }
+      ],
+      "next": "end"
+    }
+  }
+}

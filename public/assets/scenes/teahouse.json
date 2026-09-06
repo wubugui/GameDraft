@@ -224,7 +224,13 @@
       "initialAnimPlayback": {
         "holdFrame": 0
       },
-      "portraitSlug": "npc_storyteller_anim"
+      "portraitSlug": "npc_storyteller_anim",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "blind_li",
@@ -238,7 +244,13 @@
       "initialAnimPlayback": {
         "holdFrame": 5
       },
-      "initialFacing": "left"
+      "initialFacing": "left",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "npc_掌柜",
@@ -248,7 +260,13 @@
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_teahouse_owner_anim/anim.json",
       "initialAnimState": "idle",
-      "dialogueGraphId": "线外_寻狗_茶馆掌柜"
+      "dialogueGraphId": "线外_寻狗_茶馆掌柜",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "waiter_xiaoer",
@@ -261,7 +279,13 @@
       "initialAnimState": "crouch",
       "initialAnimPlayback": {
         "holdFrame": 9
-      }
+      },
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_steam_1",
@@ -271,7 +295,13 @@
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_steam_2",
@@ -288,7 +318,13 @@
         "startFrame": 8
       },
       "scale": 0.65,
-      "initialFacing": "left"
+      "initialFacing": "left",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_steam_2_copy_2",
@@ -303,7 +339,13 @@
       "initialAnimPlayback": {
         "speed": 0.5,
         "startFrame": 1
-      }
+      },
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_steam_2_copy_2_copy",
@@ -318,7 +360,13 @@
       "initialAnimPlayback": {
         "speed": 0.6,
         "startFrame": 7
-      }
+      },
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_steam_2_copy",
@@ -332,7 +380,13 @@
       "initialAnimPlayback": {
         "reverse": true
       },
-      "scale": 0.5
+      "scale": 0.5,
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_steam_2_copy_copy",
@@ -347,7 +401,13 @@
       "initialAnimPlayback": {
         "speed": 0.3,
         "startFrame": 4
-      }
+      },
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_steam_3",
@@ -357,7 +417,13 @@
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_glow_1",
@@ -367,7 +433,13 @@
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_glow_2",
@@ -377,7 +449,13 @@
       "interactionRange": 0,
       "castShadow": false,
       "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_patron_laugh",
@@ -392,7 +470,13 @@
       "initialAnimPlayback": {
         "reverse": true,
         "startFrame": 4
-      }
+      },
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_patron_chatA",
@@ -407,7 +491,13 @@
       "initialAnimPlayback": {
         "reverse": true,
         "startFrame": 1
-      }
+      },
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_patron_sage",
@@ -422,7 +512,13 @@
       "initialAnimPlayback": {
         "speed": 0.7,
         "startFrame": 5
-      }
+      },
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_patron_drinker",
@@ -437,7 +533,13 @@
       "initialAnimPlayback": {
         "speed": 0.7,
         "startFrame": 2
-      }
+      },
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "fx_patron_eater",
@@ -448,7 +550,13 @@
       "castShadow": false,
       "renderRaw": true,
       "animFile": "/resources/runtime/animation/fx_patron_eater/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "new_npc_1",
@@ -459,7 +567,13 @@
       "animFile": "/resources/runtime/animation/dog_anim/anim.json",
       "initialAnimState": "idle",
       "scale": 0.75,
-      "initialFacing": "left"
+      "initialFacing": "left",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "new_hotspot_0",
@@ -468,7 +582,71 @@
       "y": 175.1,
       "animFile": "/resources/runtime/animation/npc_yamen_gatekeeper_anim/anim.json",
       "interactionRange": 0,
-      "perspectiveScaleEnabled": true
+      "perspectiveScaleEnabled": true,
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
+    },
+    {
+      "id": "ow_zhou",
+      "characterId": "ow_zhou",
+      "x": 104.0,
+      "y": 190.0,
+      "initialAnimState": "lifu_stand",
+      "interactionRange": 95,
+      "initialFacing": "right",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 104.0,
+            "y": 190.0
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "lifu_walk"
+      }
+    },
+    {
+      "id": "ow_luo",
+      "characterId": "ow_luo",
+      "x": 268.1,
+      "y": 225.22,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "right",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 268.1,
+            "y": 225.22
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
     }
   ],
   "depthConfig": {
@@ -551,5 +729,45 @@
   },
   "ambientSounds": [
     "中文人声闹市"
+  ],
+  "dayNight": {
+    "enabled": true
+  },
+  "entityGroups": [
+    {
+      "id": "ow_居民",
+      "label": "开放生活圈 · 居民",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "planes": [
+        "normal"
+      ]
+    }
+  ],
+  "exitAnchors": [
+    {
+      "id": "ow_door_0",
+      "x": 140.0,
+      "y": 174.83
+    },
+    {
+      "id": "ow_door_1",
+      "x": 245.0,
+      "y": 204.75
+    },
+    {
+      "id": "ow_exit_zhou",
+      "x": 112,
+      "y": 179
+    },
+    {
+      "id": "ow_exit_luo",
+      "x": 245.0,
+      "y": 204.75
+    }
   ]
 }

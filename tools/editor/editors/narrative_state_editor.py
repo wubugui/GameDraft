@@ -2262,6 +2262,8 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
         add_reference("scenario", scenario_id, scenario_labels.get(scenario_id, scenario_id))
     for quest_id, title in model.all_quest_ids():
         add_reference("quest", quest_id, title)
+    for rule_id, title in model.all_rule_ids():
+        add_reference("rule", rule_id, title)
     for minigame_id in minigame_ids:
         instance = (
             model.water_minigames_instances.get(minigame_id)
@@ -2286,6 +2288,7 @@ def authoring_catalog(model: ProjectModel) -> dict[str, Any]:
         "scenarioIds": model.scenario_ids_ordered(),
         "sceneIds": model.all_scene_ids(),
         "questIds": [x[0] for x in model.all_quest_ids()],
+        "ruleIds": [x[0] for x in model.all_rule_ids()],
         "sceneEntityRefs": sorted(set(scene_refs)),
         "sceneNpcRefs": sorted(set(scene_npc_refs)),
         "sceneHotspotRefs": sorted(set(scene_hotspot_refs)),
@@ -2730,6 +2733,7 @@ WRAPPER_OWNER_CATALOG_KEYS = {
     "zone": "zoneRefs",
     "sceneGroup": "sceneGroupRefs",
     "quest": "questIds",
+    "rule": "ruleIds",
     "dialogue": "dialogueGraphIds",
     "minigame": "minigameIds",
     "cutscene": "cutsceneIds",
@@ -2742,6 +2746,7 @@ WRAPPER_OWNER_NAVIGATION = {
     "zone": "zone",
     "sceneGroup": "sceneGroup",
     "quest": "quest",
+    "rule": "rule",
     "dialogue": "dialogue",
     "minigame": "minigame",
     "cutscene": "cutscene",

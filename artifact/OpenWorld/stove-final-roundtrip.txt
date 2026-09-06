@@ -1,0 +1,12 @@
+bringing up nodes...
+bringing up nodes...
+
+..                                                                       [100%]
+============================ slowest 10 durations =============================
+35.04s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+9.92s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+6.85s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+2.52s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+0.05s setup    tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+0.01s setup    tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+2 passed in 63.06s (0:01:03)

@@ -1,0 +1,912 @@
+{
+  "schemaVersion": 1,
+  "id": "开放世界_认衣",
+  "entry": "coat",
+  "meta": {
+    "title": "河滩认衣与浣衣人的活计"
+  },
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "coat": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "returned",
+            "reached": true
+          },
+          "next": "coat_gone_returned"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "mended",
+            "reached": true
+          },
+          "next": "coat_gone_mended"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "carrying"
+          },
+          "next": "coat_gone_carried"
+        }
+      ],
+      "defaultNext": "coat_first"
+    },
+    "coat_first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_first]",
+      "next": "coat_accept"
+    },
+    "coat_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_coat_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_coat"
+          }
+        }
+      ],
+      "next": "coat_menu"
+    },
+    "coat_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "coat_look",
+          "text": "[tag:string:owCloth:coat_look]",
+          "next": "coat_examine"
+        },
+        {
+          "id": "coat_keep_choice",
+          "text": "[tag:string:owCloth:coat_keep_choice]",
+          "next": "coat_keep_confirm",
+          "requireCondition": {
+            "any": [
+              {
+                "narrative": "flow_ow_coat_oil",
+                "state": "sampled",
+                "reached": true
+              },
+              {
+                "all": [
+                  {
+                    "narrative": "flow_ow_coat_patch",
+                    "state": "seen",
+                    "reached": true
+                  },
+                  {
+                    "any": [
+                      {
+                        "narrative": "flow_ow_tally",
+                        "state": "fair",
+                        "reached": true
+                      },
+                      {
+                        "narrative": "flow_ow_tally",
+                        "state": "witness",
+                        "reached": true
+                      },
+                      {
+                        "narrative": "flow_ow_tally",
+                        "state": "done",
+                        "reached": true
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "narrative": "flow_ow_coat_borrower",
+                "state": "told",
+                "reached": true
+              },
+              {
+                "all": [
+                  {
+                    "narrative": "flow_ow_coat_patch",
+                    "state": "seen",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_child_witness",
+                    "state": "heard",
+                    "reached": true
+                  }
+                ]
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owStreetPlay:coat_proof_hint]"
+        },
+        {
+          "id": "coat_mend_choice",
+          "text": "[tag:string:owCloth:coat_mend_choice]",
+          "next": "coat_mend_confirm",
+          "requireCondition": {
+            "all": [
+              {
+                "narrative": "flow_ow_coat_borrower",
+                "state": "told",
+                "reached": true
+              },
+              {
+                "flag": "has_item_ow_bucket"
+              },
+              {
+                "flag": "has_item_ow_cloth"
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owCloth:coat_mend_choice_disabled]"
+        },
+        {
+          "id": "coat_ask_choice",
+          "text": "[tag:string:owCloth:coat_ask_choice]",
+          "next": "coat_directions"
+        },
+        {
+          "id": "coat_leave",
+          "text": "[tag:string:owCloth:coat_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "coat_examine": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startObjectExamine",
+          "params": {
+            "id": "ow_shore_coat"
+          }
+        }
+      ],
+      "next": "coat_after_examine"
+    },
+    "coat_after_examine": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_coat_oil",
+            "state": "sampled",
+            "reached": true
+          },
+          "next": "coat_oil_result"
+        },
+        {
+          "condition": {
+            "all": [
+              {
+                "narrative": "flow_ow_coat_patch",
+                "state": "seen",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_child_witness",
+                "state": "heard",
+                "reached": true
+              }
+            ]
+          },
+          "next": "ow_child_patch"
+        },
+        {
+          "condition": {
+            "all": [
+              {
+                "narrative": "flow_ow_coat_patch",
+                "state": "seen",
+                "reached": true
+              },
+              {
+                "any": [
+                  {
+                    "narrative": "flow_ow_tally",
+                    "state": "fair",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_tally",
+                    "state": "witness",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_tally",
+                    "state": "done",
+                    "reached": true
+                  }
+                ]
+              }
+            ]
+          },
+          "next": "coat_known_patch"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_coat_patch",
+            "state": "seen",
+            "reached": true
+          },
+          "next": "coat_patch_result"
+        }
+      ],
+      "defaultNext": "coat_menu"
+    },
+    "coat_oil_result": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_oil_result]",
+      "next": "coat_menu"
+    },
+    "coat_known_patch": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_known_patch]",
+      "next": "coat_menu"
+    },
+    "coat_patch_result": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_patch_result]",
+      "next": "coat_menu"
+    },
+    "coat_directions": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_directions]",
+      "next": "end"
+    },
+    "coat_keep_confirm": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_keep_confirm]",
+      "next": "coat_keep_menu"
+    },
+    "coat_keep_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "coat_keep_yes",
+          "text": "[tag:string:owCloth:coat_keep_yes]",
+          "next": "coat_take"
+        },
+        {
+          "id": "coat_keep_no",
+          "text": "[tag:string:owCloth:coat_keep_no]",
+          "next": "coat_menu"
+        }
+      ]
+    },
+    "coat_take": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_coat_keep"
+          }
+        }
+      ],
+      "next": "coat_gone_carried"
+    },
+    "coat_gone_carried": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_gone_carried]",
+      "next": "end"
+    },
+    "coat_mend_confirm": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_mend_confirm]",
+      "next": "coat_mend_menu"
+    },
+    "coat_mend_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "coat_mend_yes",
+          "text": "[tag:string:owCloth:coat_mend_yes]",
+          "next": "coat_mend"
+        },
+        {
+          "id": "coat_mend_no",
+          "text": "[tag:string:owCloth:coat_mend_no]",
+          "next": "coat_menu"
+        }
+      ]
+    },
+    "coat_mend": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_coat_mend"
+          }
+        }
+      ],
+      "next": "coat_gone_mended"
+    },
+    "coat_gone_mended": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_gone_mended]",
+      "next": "end"
+    },
+    "coat_gone_returned": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:coat_gone_returned]",
+      "next": "end"
+    },
+    "zhou_coat": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "returned",
+            "reached": true
+          },
+          "next": "zhou_coat_after"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "mended",
+            "reached": true
+          },
+          "next": "zhou_coat_mended"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "carrying"
+          },
+          "next": "zhou_coat_return"
+        }
+      ],
+      "defaultNext": "zhou_coat_before"
+    },
+    "zhou_coat_before": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "周三"
+      },
+      "text": "[tag:string:owCloth:zhou_coat_before]",
+      "next": "zhou_coat_accept"
+    },
+    "zhou_coat_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_coat_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_coat"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "zhou_coat_return": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "周三"
+      },
+      "text": "[tag:string:owCloth:zhou_coat_return]",
+      "next": "zhou_coat_finish"
+    },
+    "zhou_coat_finish": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_coat_return"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "zhou_coat_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "周三"
+      },
+      "text": "[tag:string:owCloth:zhou_coat_after]",
+      "next": "end"
+    },
+    "zhou_coat_mended": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "周三"
+      },
+      "text": "[tag:string:owCloth:zhou_coat_mended]",
+      "next": "end"
+    },
+    "deng_coat": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "returned",
+            "reached": true
+          },
+          "next": "deng_coat_after"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "mended",
+            "reached": true
+          },
+          "next": "deng_coat_mended"
+        }
+      ],
+      "defaultNext": "deng_coat_before"
+    },
+    "deng_coat_before": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "邓幺"
+      },
+      "text": "[tag:string:owCloth:deng_coat_before]",
+      "next": "deng_coat_told"
+    },
+    "deng_coat_told": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_coat_borrower"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_coat"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "deng_coat_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "邓幺"
+      },
+      "text": "[tag:string:owCloth:deng_coat_after]",
+      "next": "end"
+    },
+    "deng_coat_mended": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "邓幺"
+      },
+      "text": "[tag:string:owCloth:deng_coat_mended]",
+      "next": "end"
+    },
+    "he_coat": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "returned",
+            "reached": true
+          },
+          "next": "he_coat_returned"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_coat",
+            "state": "mended",
+            "reached": true
+          },
+          "next": "he_coat_mended"
+        }
+      ],
+      "defaultNext": "he_coat_before"
+    },
+    "he_coat_before": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "何婆婆"
+      },
+      "text": "[tag:string:owCloth:he_coat_before]",
+      "next": "he_coat_menu"
+    },
+    "he_coat_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "he_coat_start",
+          "text": "[tag:string:owCloth:he_coat_start]",
+          "next": "he_coat_accept"
+        },
+        {
+          "id": "he_needle_topic",
+          "text": "[tag:string:owCloth:he_needle_topic]",
+          "next": "he_needle"
+        },
+        {
+          "id": "he_cloth_shop",
+          "text": "[tag:string:owCloth:he_cloth_shop]",
+          "next": "he_shop"
+        },
+        {
+          "id": "he_coat_bye",
+          "text": "[tag:string:owCloth:he_coat_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "he_coat_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_coat_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_coat"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "he_coat_returned": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "何婆婆"
+      },
+      "text": "[tag:string:owCloth:he_coat_returned]",
+      "next": "end"
+    },
+    "he_coat_mended": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "何婆婆"
+      },
+      "text": "[tag:string:owCloth:he_coat_mended]",
+      "next": "end"
+    },
+    "he_shop": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "openShop",
+          "params": {
+            "shopId": "ow_he_cloth"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "needle": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_needle",
+                "state": "carrying",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_needle",
+                "state": "done",
+                "reached": true
+              }
+            ]
+          },
+          "next": "needle_empty"
+        },
+        {
+          "condition": {
+            "posture": "crouch"
+          },
+          "next": "needle_found"
+        }
+      ],
+      "defaultNext": "needle_hint"
+    },
+    "needle_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:needle_hint]",
+      "next": "end"
+    },
+    "needle_found": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:needle_found]",
+      "next": "needle_take"
+    },
+    "needle_take": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_needle_take"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_needle"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "needle_empty": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owCloth:needle_empty]",
+      "next": "end"
+    },
+    "he_needle": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_needle",
+            "state": "done",
+            "reached": true
+          },
+          "next": "he_needle_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_needle",
+            "state": "carrying"
+          },
+          "next": "he_needle_return"
+        }
+      ],
+      "defaultNext": "he_needle_first"
+    },
+    "he_needle_first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "何婆婆"
+      },
+      "text": "[tag:string:owCloth:he_needle_first]",
+      "next": "he_needle_accept"
+    },
+    "he_needle_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_needle_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_needle"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "he_needle_return": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "何婆婆"
+      },
+      "text": "[tag:string:owCloth:he_needle_return]",
+      "next": "he_needle_finish"
+    },
+    "he_needle_finish": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_needle_return"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "he_needle_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "何婆婆"
+      },
+      "text": "[tag:string:owCloth:he_needle_done]",
+      "next": "he_needle_done_menu"
+    },
+    "he_needle_done_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "he_buy_after_needle",
+          "text": "[tag:string:owCloth:he_buy_after_needle]",
+          "next": "he_shop"
+        },
+        {
+          "id": "he_needle_bye",
+          "text": "[tag:string:owCloth:he_needle_bye]",
+          "next": "end"
+        }
+      ]
+    },
+    "huang_binding": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_binding",
+            "state": "done",
+            "reached": true
+          },
+          "next": "huang_binding_done"
+        }
+      ],
+      "defaultNext": "huang_binding_first"
+    },
+    "huang_binding_first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "黄婶"
+      },
+      "text": "[tag:string:owCloth:huang_binding_first]",
+      "next": "binding_accept"
+    },
+    "binding_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_binding_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_binding"
+          }
+        }
+      ],
+      "next": "binding_menu"
+    },
+    "binding_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "binding_use",
+          "text": "[tag:string:owCloth:binding_use]",
+          "next": "binding_wrap",
+          "requireCondition": {
+            "flag": "has_item_ow_cloth"
+          },
+          "disabledClickHint": "[tag:string:owCloth:binding_use_disabled]"
+        },
+        {
+          "id": "binding_leave",
+          "text": "[tag:string:owCloth:binding_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "binding_wrap": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_binding_wrap"
+          }
+        }
+      ],
+      "next": "huang_binding_done"
+    },
+    "huang_binding_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "黄婶"
+      },
+      "text": "[tag:string:owCloth:huang_binding_done]",
+      "next": "end"
+    },
+    "ow_child_patch": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:child_patch]",
+      "next": "coat_menu"
+    }
+  }
+}

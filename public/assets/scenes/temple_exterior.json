@@ -49,48 +49,54 @@
     }
   ],
   "spawnPoint": {
-    "x": 658.7,
-    "y": 672.9
+    "x": 1030.4,
+    "y": 1279.62
   },
   "spawnPoints": {
     "from_mountain_pass": {
-      "x": 148.7,
-      "y": 178.9
+      "x": 1030.4,
+      "y": 1279.62
     },
     "spawn_0": {
-      "x": 790.3,
-      "y": 421.94
+      "x": 734.16,
+      "y": 596.67
     }
   },
   "hotspots": [
     {
       "id": "exit_to_mountain_pass",
       "type": "transition",
-      "label": "回山路",
-      "x": 148.7,
-      "y": 178.9,
-      "interactionRange": 27.0,
+      "label": "沿来路下山",
+      "x": 1030.4,
+      "y": 1279.62,
+      "interactionRange": 85,
       "data": {
         "targetScene": "mountain_pass",
         "targetSpawnPoint": "from_temple_exterior"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T到庙宇室内",
       "type": "transition",
-      "label": "到城隍庙",
-      "x": 786.1,
-      "y": 443.9,
-      "interactionRange": 30.0,
+      "label": "进旧庙正殿",
+      "x": 682.64,
+      "y": 517.6,
+      "interactionRange": 85,
       "data": {
         "targetScene": "temple",
         "targetSpawnPoint": "from_street"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "庙宇-纸人",
       "type": "inspect",
-      "label": "",
+      "label": "墙边纸人",
       "x": 619.3,
       "y": 706.4,
       "interactionRange": 20.0,
@@ -101,12 +107,111 @@
     {
       "id": "庙宇-洋人棺材",
       "type": "inspect",
-      "label": "",
+      "label": "院内的洋人棺材",
       "x": 1199.8,
       "y": 408.7,
       "interactionRange": 50.0,
       "data": {
         "text": "洋人的棺材"
+      }
+    },
+    {
+      "id": "ow_rest",
+      "type": "inspect",
+      "label": "歇脚 · 等一等",
+      "x": 875.84,
+      "y": 718.88,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_歇脚"
+      }
+    },
+    {
+      "id": "ow_incense",
+      "type": "inspect",
+      "label": "[tag:string:owTemple:pan_label]",
+      "x": 865,
+      "y": 678,
+      "interactionRange": 38,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_庙火",
+        "entry": "pan"
+      }
+    },
+    {
+      "id": "ow_incense_pan_outside",
+      "type": "inspect",
+      "label": "[tag:string:owTemple:ow_incense_pan_outside_label]",
+      "x": 865,
+      "y": 678,
+      "interactionRange": 25,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_庙火",
+        "entry": "pan"
+      },
+      "conditions": [
+        {
+          "all": [
+            {
+              "not": {
+                "narrative": "flow_ow_incense",
+                "state": "carrying"
+              }
+            },
+            {
+              "not": {
+                "narrative": "flow_ow_incense",
+                "state": "moved",
+                "reached": true
+              }
+            }
+          ]
+        }
+      ],
+      "conditionHidesEntity": true,
+      "displayImage": {
+        "image": "/resources/runtime/images/examine/ow_incense_pan.png",
+        "worldWidth": 32,
+        "worldHeight": 20
+      }
+    },
+    {
+      "id": "ow_temple_wind",
+      "type": "inspect",
+      "label": "[tag:string:owTemple:ow_temple_wind_label]",
+      "x": 644,
+      "y": 484,
+      "interactionRange": 38,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_庙火",
+        "entry": "wind"
+      }
+    },
+    {
+      "id": "ow_temple_bolt",
+      "type": "inspect",
+      "label": "[tag:string:owTemple:ow_temple_bolt_label]",
+      "x": 605,
+      "y": 491,
+      "interactionRange": 30,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_庙火",
+        "entry": "bolt"
       }
     }
   ],
@@ -157,5 +262,141 @@
   "ambientSounds": [
     "阴风"
   ],
-  "worldHeight": 1437.77
+  "worldHeight": 1437.77,
+  "dayNight": {
+    "enabled": true
+  },
+  "entityGroups": [
+    {
+      "id": "ow_居民",
+      "label": "开放生活圈 · 居民",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "planes": [
+        "normal"
+      ]
+    }
+  ],
+  "npcs": [
+    {
+      "id": "ow_monk",
+      "characterId": "ow_monk",
+      "x": 772.8,
+      "y": 661.37,
+      "initialAnimState": "monk_stand",
+      "interactionRange": 95,
+      "initialFacing": "right",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 772.8,
+            "y": 661.37
+          },
+          {
+            "x": 875.84,
+            "y": 690.13
+          },
+          {
+            "x": 991.76,
+            "y": 740.45
+          }
+        ],
+        "speed": 32,
+        "moveAnimState": "monk_walk"
+      }
+    }
+  ],
+  "exitAnchors": [
+    {
+      "id": "ow_door_0",
+      "x": 1043.28,
+      "y": 783.58
+    },
+    {
+      "id": "ow_exit_monk",
+      "x": 1043.28,
+      "y": 783.58
+    }
+  ],
+  "zones": [
+    {
+      "id": "ow_wind_rule_offer",
+      "planes": [
+        "normal"
+      ],
+      "polygon": [
+        {
+          "x": 600,
+          "y": 465
+        },
+        {
+          "x": 680,
+          "y": 465
+        },
+        {
+          "x": 680,
+          "y": 535
+        },
+        {
+          "x": 600,
+          "y": 535
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "flow_ow_incense_wind",
+          "state": "seen",
+          "reached": true
+        },
+        {
+          "narrative": "flow_ow_incense",
+          "state": "accepted"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "enableRuleOffers",
+          "params": {
+            "slots": [
+              {
+                "ruleId": "ow_air_path",
+                "requiredLayers": [
+                  "shu"
+                ],
+                "resultActions": [
+                  {
+                    "type": "startDialogueGraph",
+                    "params": {
+                      "graphId": "开放世界_庙火",
+                      "entry": "seal_choice"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "onExit": [
+        {
+          "type": "disableRuleOffers",
+          "params": {}
+        }
+      ]
+    }
+  ]
 }

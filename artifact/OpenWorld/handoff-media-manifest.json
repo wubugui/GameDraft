@@ -1,0 +1,143 @@
+{
+  "branch": "codex/living-open-world",
+  "runtimeDvcBefore": "f82a2fc56408513f655a56edf63f49dc.dir",
+  "runtimeDvcAfter": "8944eae1191e913e92a9e280621313d8.dir",
+  "added": 19,
+  "modified": 0,
+  "removed": [],
+  "files": [
+    {
+      "path": "public/resources/runtime/images/examine/ow_incense_pan.normal.png",
+      "bytes": 36015,
+      "md5": "35f176a29a35cf55239068a89e2033c9",
+      "sha256": "0ebcc6349164e947215094e3d364bfa68416dd10dfd6a282d81f70a01030c24a",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_incense_pan.png",
+      "bytes": 1972837,
+      "md5": "2c8f6e7790b41769d4be687a66cf5f33",
+      "sha256": "37ff085f0e3ab0adb8b5495a6bc922dd8245f9d67b2c729e8b5a43e46dbad1ac",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_noodle_stove.normal.png",
+      "bytes": 33996,
+      "md5": "5103b5b759a243d1e2f5864775b8bc7d",
+      "sha256": "46427626baebd6c2cd0a47478e33ab1f488f5ea56e2e6c87bab9c5168b3f64fa",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_noodle_stove.png",
+      "bytes": 1888972,
+      "md5": "e93b33b9d023548455bb01003f1652ef",
+      "sha256": "9342dfa032ce81a455dd98cf6b79aa57745f02d633aea7341b7b4704baf05075",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_noodle_stove_repaired.normal.png",
+      "bytes": 36385,
+      "md5": "d78316de92d2ff4a9430a5372226bc70",
+      "sha256": "6d3861e9e1d6163a63a96ea670fa190d04084176a813354d22e53515a693e203",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_noodle_stove_repaired.png",
+      "bytes": 2059996,
+      "md5": "ba0d870172447dbdc75428240cceb2fa",
+      "sha256": "7208ba8f850da73310c18b4429cbf6a79d42c64f8f9220b824e506667a71c640",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_paper_frame.normal.png",
+      "bytes": 43418,
+      "md5": "9ad71b2ec003a405ab6262ae53ddbed3",
+      "sha256": "aa02a8e61157ed71dd6b467042cb85c543cac1a8c42770eae867eeec48adc250",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_paper_frame.png",
+      "bytes": 1873983,
+      "md5": "c2a7ac9ac1c7227265f013815525b390",
+      "sha256": "71b16e5050ce609e3c58e3227acd4d771e3552c0260c486d2c77e14b13e5b3f2",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_paste_stove.normal.png",
+      "bytes": 38532,
+      "md5": "38620c202ed785c6dcb3c7d0f0c0da2c",
+      "sha256": "a1bcd48322235c75dd6d83d5cb4298feab3f4801150fbdb97e823bb10cbb7e63",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_paste_stove.png",
+      "bytes": 1562100,
+      "md5": "208220317f5e2c998d3aaad288f33741",
+      "sha256": "a48beddaacd960cd5c27c563ac2e704b8b92742dc4b9b9201ff29da4673bdfbe",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_shore_coat.png",
+      "bytes": 3289404,
+      "md5": "14589b7e84b0315d67bb459910b75387",
+      "sha256": "76df65873e5a5d12ab87564ce6d5d46cb47fded8245141a114ca30991cf7e45d",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_tea_kettle.normal.png",
+      "bytes": 42552,
+      "md5": "7e6189b04d547d0a6a2a7435233bf733",
+      "sha256": "c8c56c3a77662cbde98b147007622fa8590f858d7c4365621d59fd4165976dd8",
+      "status": "candidate_not_bound"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_tea_kettle.png",
+      "bytes": 1429189,
+      "md5": "198a430215b3a445fea163a84d44d5b8",
+      "sha256": "cc280ed84a42040e4dc193089e698deac6bf41d1ff2b8f38db7bd51503a0a042",
+      "status": "candidate_not_bound"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_watch_clapper.normal.png",
+      "bytes": 24172,
+      "md5": "653c202bb697d24f8ac86875f1380f2b",
+      "sha256": "4f28a4556ddeb8c2c2aee82cdd62e95f55483fea043d8863b59bfa20ebf584c5",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/examine/ow_watch_clapper.png",
+      "bytes": 1030577,
+      "md5": "eebe1e04c6af37d2877154e1b23fb4d2",
+      "sha256": "4458e36e1da3a270b33d5d3e6af91c83574b2197ee09f2bece8ad89253671123",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/icons/ow_paper_finished.png",
+      "bytes": 1384914,
+      "md5": "104ac0d24f2594a0fae8184da9fd1378",
+      "sha256": "7547fa220eccf97f02c37b9af83f671ad230e8479018f4011dea497da0b5afe9",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/minigames/water/ow_wooden_bucket.png",
+      "bytes": 1357626,
+      "md5": "03a0d0968a6c8b9fde106c0c09ef8532",
+      "sha256": "e283e004c5c2c5a7cab47a63dab7d0323213f1910aeb867e08cb136d1f591c3e",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/props/ow_sugar_stall.normal.png",
+      "bytes": 50669,
+      "md5": "c18644841086511cf66104c23792b931",
+      "sha256": "a6b58b1dd2b4e29521c2b1f05352d028eb14969f5f4ca89786fd7ae99cf94080",
+      "status": "runtime_asset"
+    },
+    {
+      "path": "public/resources/runtime/images/props/ow_sugar_stall.png",
+      "bytes": 1417390,
+      "md5": "44d3ec7c705300d8051c8982a943b46a",
+      "sha256": "94a08051a20badd2b3f19d06ede4cbe6abcac6d90fe860059dd19e051cd58f3a",
+      "status": "runtime_asset"
+    }
+  ]
+}

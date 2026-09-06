@@ -139,6 +139,7 @@ export class HUD {
 
   /** 左上角竖排芯片的宿主：内容变了就整条重建（木框是 Sprite，塞不进 Graphics 原地 clear 重画） */
   private chipLayer: Container;
+  private worldControlsVisible = true;
   private coinChip: Container | null = null;
   private questChip: Container | null = null;
   /** 芯片上的成品文字：Text 会随重建销毁，玩家视角读这两个字段 */
@@ -783,9 +784,21 @@ export class HUD {
     this.container.visible = !hidden;
   }
 
+  /** A focused minigame owns its title and controls; health and smell remain. */
+  setWorldControlsVisible(visible: boolean): void {
+    if (this.worldControlsVisible === visible) return;
+    this.worldControlsVisible = visible;
+    this.chipLayer.visible = visible;
+    this.entryLayer.visible = visible;
+    this.mapNameText.visible = visible;
+    this.ruleHintChip.visible = visible && this.hasRuleSlots;
+    if (this.zoneHintChip) this.zoneHintChip.visible = visible && !!this.zoneHintText;
+    if (!visible) this.hideEntryTip();
+  }
+
   setRuleHintVisible(visible: boolean): void {
     this.hasRuleSlots = visible;
-    this.ruleHintChip.visible = visible;
+    this.ruleHintChip.visible = visible && this.worldControlsVisible;
     // 规矩提示的显隐会改区域提示的落位（两条同时在时要错开）
     this.layout();
   }
@@ -807,7 +820,7 @@ export class HUD {
     }
     const raw = this.r(label.trim() || this.strings.get('hud', 'zoneInteractHint'));
     if (this.zoneHintChip && this.zoneHintText === raw) {
-      this.zoneHintChip.visible = true;
+      this.zoneHintChip.visible = this.worldControlsVisible;
       this.layout();
       return;
     }
@@ -818,6 +831,7 @@ export class HUD {
     }
     const built = this.buildHintBar(raw);
     this.zoneHintChip = built.chip;
+    this.zoneHintChip.visible = this.worldControlsVisible;
     this.zoneHintWidth = built.width;
     this.zoneHintText = raw;
     this.container.addChild(this.zoneHintChip);

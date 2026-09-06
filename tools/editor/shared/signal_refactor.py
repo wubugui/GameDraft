@@ -53,6 +53,7 @@ EMIT_SOURCE_BUCKETS: dict[str, tuple[str, bool]] = {
     "water_minigames_instances": ("water_minigames", False),
     "sugar_wheel_instances": ("sugar_wheel", False),
     "paper_craft_instances": ("paper_craft", False),
+    "object_examine_instances": ("object_examine", False),
     # 物件自身用途 `use.actions` 由 EventBridge 经 ActionExecutor 真执行（2026-08-17 与运行时
     # 同步新增），于是 items 从"只有条件面"升级成实发面——原先它在 CONDITION_EXTRA_SOURCES。
     # 漏这一步 = 信号改名不扫物件用途，物件里那条 emitSignal 悄悄悬垂、按了没反应。
@@ -96,11 +97,7 @@ CONDITION_SOURCES: dict[str, tuple[str, bool]] = {**EMIT_SOURCE_BUCKETS, **CONDI
 # 只读数据面：ProjectModel 载入但 save_all 不认领（无脏桶），改了也落不了盘。
 # 扫描必须看见它们（预览诚实），但**绝不能静默改写**——命中即拒绝重构并报出位置，
 # 由作者手工处理。静默跳过 = 悬垂引用；改内存 = 改动凭空消失，两者都不可接受。
-READONLY_SOURCES: dict[str, str] = {
-    # 物件检视实例的动作树由 ObjectExamineManager 经 ActionExecutor 真执行（发射面/条件面
-    # 都成立），但主编辑器至今只加载不保存；dialogue_graph_refactor 早已按同样口径处理它。
-    "object_examine_instances": "object_examine",
-}
+READONLY_SOURCES: dict[str, str] = {}
 
 
 # --------------------------------------------------------------------------- #
@@ -1024,10 +1021,12 @@ def scan_state_usages(model: Any, graph_id: str, state_id: str) -> dict[str, Any
     readonly = _count_over_readonly_sources(model, _state_ref_visitor(gid, sid, None))
     meta_commands, meta_emits = _rewrite_meta_state_refs(narrative, gid, sid, None)
     relative_suspects = _count_relative_state_suspects(model, narrative, sid)
+    target = next((g for g in _iter_graphs(narrative) if g.get('id') == gid), {})
+    knowledge = _rewrite_rule_state_keys(model, target, sid, None)
     total = (
         internal + len(derived_listeners) + narrative_conditions
         + sum(h["count"] for h in external) + meta_commands + meta_emits
-        + sum(h["count"] for h in readonly)
+        + sum(h["count"] for h in readonly) + knowledge
     )
     return {
         "graphId": gid, "stateId": sid,
@@ -1041,7 +1040,27 @@ def scan_state_usages(model: Any, graph_id: str, state_id: str) -> dict[str, Any
         # @owner/@scene 相对叶子疑点：state 同名但归属图静态不可知——只报不改，须人工确认
         "relativeTokenSuspects": relative_suspects,
         "totalRefs": total,
+        "ruleKnowledge": knowledge,
     }
+
+
+def _rewrite_rule_state_keys(model, graph, old, new):
+    if graph.get('ownerType') != 'rule':
+        return 0
+    count = 0
+    for rule in (getattr(model, 'rules_data', None) or {}).get('rules', []):
+        if rule.get('id') != graph.get('ownerId'):
+            continue
+        variants = rule.get('narrativeStates')
+        if not isinstance(variants, dict) or old not in variants:
+            continue
+        count += 1
+        if new is not None:
+            if new in variants:
+                raise SignalRefactorError(f"规矩 {rule['id']} 已有状态正文 {new!r}，不能覆盖")
+            rule['narrativeStates'] = {new if key == old else key: value for key, value in variants.items()}
+            model.mark_dirty('rules')
+    return count
 
 
 def rename_state(
@@ -1076,6 +1095,7 @@ def _rename_state_impl(
 ) -> dict[str, Any]:
     states = target.get("states")
     # 图内：states 键序保真重建 + state.id + initialState/entryState/exitStates + 端点
+    knowledge = _rewrite_rule_state_keys(model, target, old, new)
     rebuilt: dict[str, Any] = {}
     for key, value in states.items():
         if key == old:
@@ -1134,6 +1154,7 @@ def _rename_state_impl(
         "narrativeConditions": narrative_refs, "external": external,
         "metaCommands": meta_commands, "metaEmits": meta_emits,
         "relativeTokenSuspects": relative_suspects,
+        "ruleKnowledge": knowledge,
     }
 
 

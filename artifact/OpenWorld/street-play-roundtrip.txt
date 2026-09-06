@@ -1,0 +1,9 @@
+..                                                                       [100%]
+============================ slowest 10 durations =============================
+39.89s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+15.31s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+12.59s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+2.91s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+0.11s setup    tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+0.08s setup    tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+2 passed in 74.11s (0:01:14)

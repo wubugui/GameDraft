@@ -1,0 +1,16 @@
+bringing up nodes...
+bringing up nodes...
+
+.........                                                                [100%]
+============================ slowest 10 durations =============================
+9.47s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+2.42s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+1.87s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+0.41s call     tools/editor/tests/test_action_manifest_parity.py::test_every_registered_bare_entity_ref_param_is_actually_validated
+0.37s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+0.11s call     tools/editor/tests/test_quest_focus_action.py::test_validator_rejects_objective_from_another_quest
+0.11s teardown tools/editor/tests/test_quest_focus_action.py::test_focus_action_minimal_full_and_orphan_are_lossless
+0.05s call     tools/editor/tests/test_quest_focus_action.py::test_focus_action_minimal_full_and_orphan_are_lossless
+0.04s teardown tools/editor/tests/test_quest_focus_action.py::test_validator_rejects_objective_from_another_quest
+0.04s teardown tools/editor/tests/test_quest_focus_action.py::test_changing_quest_refreshes_objectives_and_preserves_orphan_until_user_selects
+9 passed in 18.02s

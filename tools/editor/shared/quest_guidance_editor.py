@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
+
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
@@ -106,6 +108,8 @@ def normalize_guidance_entry(raw: dict) -> dict:
     kind = str(out.get("kind") or "mapMarker")
     out["kind"] = kind
     out["sceneId"] = str(out.get("sceneId") or "")
+    if not out.get("conditions"):
+        out.pop("conditions", None)
 
     def drop_if_blank(key: str) -> None:
         v = out.get(key)
@@ -166,6 +170,8 @@ def normalize_objective(raw: dict) -> dict:
     out = dict(raw)
     out["id"] = str(out.get("id") or "").strip()
     out["text"] = str(out.get("text") or "")
+    if not out.get("availableWhen"):
+        out.pop("availableWhen", None)
     conds = out.get("completeWhen") or []
     if conds:
         out["completeWhen"] = conds
@@ -193,6 +199,47 @@ def normalize_objectives_list(items) -> list[dict]:
         if entry.get("id"):
             out.append(entry)
     return out
+
+
+class _LazyConditions(CollapsibleSection):
+    """未展开时不构建重型条件树，仍完整往返并支持跨面板引用刷新。"""
+
+    changed = Signal()
+
+    def __init__(self, model, title: str, hint: str):
+        super().__init__(title, start_open=False)
+        self._model = model
+        self._title = title
+        self._hint = hint
+        self._data: list = []
+        self.editor: ConditionEditor | None = None
+        self.set_header_tool_tip(hint)
+        self.expanded_changed.connect(self._expand)
+
+    def _expand(self, expanded: bool) -> None:
+        if not expanded or self.editor is not None:
+            return
+        self.editor = ConditionEditor(self._title, hint=self._hint)
+        self.editor.set_flag_pattern_context(self._model, None)
+        self.editor.set_data(deepcopy(self._data))
+        self.add_body(self.editor)
+        self.editor.changed.connect(self.changed)
+
+    def set_data(self, data: list) -> None:
+        self._data = deepcopy(data)
+        if self.editor is not None:
+            previous = self.editor.blockSignals(True)
+            try:
+                self.editor.set_data(deepcopy(data))
+            finally:
+                self.editor.blockSignals(previous)
+
+    def to_list(self) -> list:
+        return self.editor.to_list() if self.editor is not None else deepcopy(self._data)
+
+    def reload_refs_from_model(self) -> None:
+        if self.editor is not None:
+            self.editor.set_flag_pattern_context(self._model, None)
 
 
 class _GuidanceRow(QFrame):
@@ -283,6 +330,12 @@ class _GuidanceRow(QFrame):
 
         outer.addWidget(body)
 
+        self.conditions = _LazyConditions(
+            model, "生效条件", "按时段或事件状态显示这条已知去处；未配恒生效。",
+        )
+        outer.addWidget(self.conditions)
+        self.conditions.changed.connect(self.changed)
+
         self.kind.currentIndexChanged.connect(self._sync_visibility)
         self.kind.currentIndexChanged.connect(self.changed)
         self.scene.currentIndexChanged.connect(self._refresh_entity_items)
@@ -317,6 +370,7 @@ class _GuidanceRow(QFrame):
         oa = data.get("offscreenArrow")
         self.offscreen.setCurrentText("" if oa is None else ("true" if oa else "false"))
         self.show_distance.setChecked(data.get("showDistance") is True)
+        self.conditions.set_data(list(data.get("conditions") or []))
         self._sync_visibility()
 
     def _refresh_entity_items(self) -> None:
@@ -327,6 +381,7 @@ class _GuidanceRow(QFrame):
     def reload_refs_from_model(self) -> None:
         self.scene.set_items(_scene_pairs(self._model))
         self._refresh_entity_items()
+        self.conditions.reload_refs_from_model()
 
     def _sync_visibility(self) -> None:
         kind = self.kind.currentData()
@@ -368,6 +423,7 @@ class _GuidanceRow(QFrame):
         oa = self.offscreen.currentText()
         out["offscreenArrow"] = None if oa == "" else (oa == "true")
         out["showDistance"] = self.show_distance.isChecked()
+        out["conditions"] = self.conditions.to_list()
         return preserve_numeric_repr(normalize_guidance_entry(out), self._orig)
 
 
@@ -469,7 +525,7 @@ class _ObjectiveRow(QWidget):
         head.addWidget(QLabel("id:"))
         head.addWidget(self.id_edit)
         self.optional = QCheckBox("可选目标")
-        self.optional.setToolTip("可选目标不参与「当前目标」选取，也不挡住后面的目标")
+        self.optional.setToolTip("可选目标不参与自动跟踪；玩家仍可主动选择这条线索")
         head.addWidget(self.optional)
         head.addStretch()
         btn_up = QPushButton("↑")
@@ -495,6 +551,12 @@ class _ObjectiveRow(QWidget):
         self.text.setToolTip("玩家看到的一句话目标（面板复选框行、HUD 目标行都用它）")
         f.addRow("目标文案", self.text)
         outer.addWidget(form)
+
+        self.available = _LazyConditions(
+            model, "开放条件", "条件满足才展示并允许跟踪；用于已发现线索和仍可行的方法。未配恒展示。",
+        )
+        outer.addWidget(self.available)
+        self.available.changed.connect(self.changed)
 
         self.cond = ConditionEditor(
             "完成条件",
@@ -528,6 +590,7 @@ class _ObjectiveRow(QWidget):
         self.id_edit.setText(str(data.get("id") or ""))
         self.text.setText(str(data.get("text") or ""))
         self.optional.setChecked(data.get("optional") is True)
+        self.available.set_data(list(data.get("availableWhen") or []))
         self.cond.set_data(list(data.get("completeWhen") or []))
         self.guidance.set_data(list(data.get("guidance") or []))
         self._sync_title()
@@ -543,6 +606,7 @@ class _ObjectiveRow(QWidget):
 
     def reload_refs_from_model(self) -> None:
         self.cond.set_flag_pattern_context(self._model, None)
+        self.available.reload_refs_from_model()
         self.guidance.reload_refs_from_model()
 
     def to_dict(self) -> dict:
@@ -550,6 +614,7 @@ class _ObjectiveRow(QWidget):
         out["id"] = self.id_edit.text().strip()
         out["text"] = self.text.text()
         out["completeWhen"] = self.cond.to_list()
+        out["availableWhen"] = self.available.to_list()
         out["guidance"] = self.guidance.to_list()
         out["optional"] = self.optional.isChecked()
         return normalize_objective(out)

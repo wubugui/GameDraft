@@ -1,0 +1,388 @@
+{
+  "id": "ow_sugar",
+  "label": "[tag:string:owStreetPlay:wheel_label]",
+  "backgroundImage": "/resources/runtime/images/minigames/sugar_wheel/sugar_stall_table_bg.png",
+  "backgroundFit": "cover",
+  "wheelImage": "/resources/runtime/images/minigames/sugar_wheel/sugar_chongqing_folk_wheel_equal.png",
+  "pointerImage": "/resources/runtime/images/minigames/sugar_wheel/sugar_zodiac_pointer.png",
+  "pointerAnchorY": 0.9,
+  "pointerScale": 1,
+  "wheelScale": 1,
+  "wheelMaxSizePercent": 0.72,
+  "wheelMaxSizePx": 660,
+  "sectorAngleOffsetDeg": 0,
+  "sectorCenterPhase": 0,
+  "pointerArtOffsetDeg": 0,
+  "powerChargeCurve": 1.4,
+  "sectorDirection": "clockwise",
+  "powerChargeMs": 2600,
+  "minLaunchPower": 0,
+  "spinLinearDragPerSec": 0.12,
+  "spinDragLowSpeedThresholdRadPerSec": 2.2,
+  "spinDragLowSpeedBoostPerSec": 2,
+  "spinChargeMinVelocityRadPerSec": 0,
+  "spinChargeMaxVelocityRadPerSec": 10.5,
+  "spinChargeMinAccelRadPerSec2": 0,
+  "spinChargeMaxAccelRadPerSec2": 8.5,
+  "spinAccelHalfLifeSec": 0.42,
+  "spinStopSpeedRadPerSec": 0.06,
+  "spinStopSettleSec": 0.12,
+  "spinDryFrictionAccelRadPerSec2": 0.36,
+  "spinWeightBiasCreepRefRadPerSec": 1.15,
+  "sectors": [
+    {
+      "id": "dragon",
+      "label": "[tag:string:owStreetPlay:sector_dragon]",
+      "payload": {
+        "tier": "grand",
+        "motif": "dragon"
+      },
+      "weight": 0.45,
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_dragon"
+          }
+        }
+      ]
+    },
+    {
+      "id": "carp",
+      "label": "[tag:string:owStreetPlay:sector_carp]",
+      "payload": {
+        "tier": "large",
+        "motif": "carp"
+      },
+      "weight": 0.75,
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_carp"
+          }
+        }
+      ]
+    },
+    {
+      "id": "monkey",
+      "label": "[tag:string:owStreetPlay:sector_monkey]",
+      "payload": {
+        "tier": "small",
+        "motif": "monkey"
+      },
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_monkey"
+          }
+        }
+      ]
+    },
+    {
+      "id": "rabbit",
+      "label": "[tag:string:owStreetPlay:sector_rabbit]",
+      "payload": {
+        "tier": "small",
+        "motif": "rabbit"
+      },
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_rabbit"
+          }
+        }
+      ]
+    },
+    {
+      "id": "rooster",
+      "label": "[tag:string:owStreetPlay:sector_rooster]",
+      "payload": {
+        "tier": "small",
+        "motif": "rooster"
+      },
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_rooster"
+          }
+        }
+      ]
+    },
+    {
+      "id": "flower_basket",
+      "label": "[tag:string:owStreetPlay:sector_flower_basket]",
+      "payload": {
+        "tier": "large",
+        "motif": "flower_basket"
+      },
+      "weight": 0.7,
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_flower_basket"
+          }
+        }
+      ]
+    },
+    {
+      "id": "guandao",
+      "label": "[tag:string:owStreetPlay:sector_guandao]",
+      "payload": {
+        "tier": "grand",
+        "motif": "guandao"
+      },
+      "weight": 0.65,
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_guandao"
+          }
+        }
+      ]
+    },
+    {
+      "id": "gourd",
+      "label": "[tag:string:owStreetPlay:sector_gourd]",
+      "payload": {
+        "tier": "medium",
+        "motif": "gourd"
+      },
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_gourd"
+          }
+        }
+      ]
+    },
+    {
+      "id": "yuanbao",
+      "label": "[tag:string:owStreetPlay:sector_yuanbao]",
+      "payload": {
+        "tier": "large",
+        "motif": "yuanbao"
+      },
+      "weight": 0.8,
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_yuanbao"
+          }
+        }
+      ]
+    },
+    {
+      "id": "butterfly",
+      "label": "[tag:string:owStreetPlay:sector_butterfly]",
+      "payload": {
+        "tier": "medium",
+        "motif": "butterfly"
+      },
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_butterfly"
+          }
+        }
+      ]
+    },
+    {
+      "id": "horse",
+      "label": "[tag:string:owStreetPlay:sector_horse]",
+      "payload": {
+        "tier": "medium",
+        "motif": "horse"
+      },
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_horse"
+          }
+        }
+      ]
+    },
+    {
+      "id": "bird",
+      "label": "[tag:string:owStreetPlay:sector_bird]",
+      "payload": {
+        "tier": "small",
+        "motif": "bird"
+      },
+      "actionsOnSpinLanding": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_land_bird"
+          }
+        }
+      ]
+    }
+  ],
+  "wheelCenterOffsetXPx": 12.5,
+  "wheelCenterOffsetYPx": 26.8,
+  "pointerOffsetXPx": -3.2,
+  "pointerOffsetYPx": -10.2,
+  "foregroundImage": "/resources/runtime/images/minigames/sugar_wheel/sugar_crowd_overlay.png",
+  "foregroundFit": "cover",
+  "pointerAnchorX": 0.5,
+  "speechDurationMs": 2999,
+  "speechMaxVisible": 4,
+  "speechAnchors": [
+    {
+      "role": "child_a",
+      "label": "小孩",
+      "xRatio": 0.13252918287937743,
+      "yRatio": 0.6032684824902725,
+      "tailDirection": "down"
+    },
+    {
+      "role": "child_b",
+      "label": "小孩",
+      "xRatio": 0.3433852140077821,
+      "yRatio": 0.7363164721141373,
+      "tailDirection": "down"
+    },
+    {
+      "role": "child_c",
+      "label": "小孩",
+      "xRatio": 0.5713618677042801,
+      "yRatio": 0.7355642023346304,
+      "tailDirection": "down"
+    },
+    {
+      "role": "child_d",
+      "label": "小孩",
+      "xRatio": 0.7908171206225683,
+      "yRatio": 0.6299610894941632,
+      "tailDirection": "down"
+    },
+    {
+      "role": "protagonist",
+      "xRatio": 0.0772581269876102,
+      "yRatio": 0.3123456790123457,
+      "tailDirection": "none"
+    },
+    {
+      "role": "stall_owner",
+      "label": "摊主",
+      "xRatio": 0.5663035019455253,
+      "yRatio": 0,
+      "tailDirection": "up"
+    }
+  ],
+  "chargeButtonWheelOffsetXPx": 388.3,
+  "chargeButtonWheelOffsetYPx": -43.7,
+  "chargeButtonDiameterPx": 52,
+  "atmosphereGroups": [
+    {
+      "id": "ow_stall_talk",
+      "label": "[tag:string:owStreetPlay:atmo_name]",
+      "weight": 1,
+      "vars": {},
+      "start": [
+        {
+          "op": "say",
+          "role": "child_a",
+          "text": "[tag:string:owStreetPlay:spin_start]"
+        }
+      ],
+      "spinning": [
+        {
+          "op": "wait",
+          "sec": 1.2
+        },
+        {
+          "op": "say",
+          "role": "stall_owner",
+          "text": "[tag:string:owStreetPlay:spin_owner]"
+        }
+      ],
+      "slowing": [
+        {
+          "op": "say",
+          "role": "child_b",
+          "text": "[tag:string:owStreetPlay:spin_slow]"
+        }
+      ],
+      "stop": [
+        {
+          "op": "say",
+          "role": "child_a",
+          "text": "[tag:string:owStreetPlay:spin_stop]"
+        }
+      ]
+    }
+  ],
+  "beforeChargeCondition": {
+    "all": [
+      {
+        "all": [
+          {
+            "flag": "minutes_of_day",
+            "op": ">=",
+            "value": 420
+          },
+          {
+            "flag": "minutes_of_day",
+            "op": "<",
+            "value": 1080
+          }
+        ]
+      },
+      {
+        "not": {
+          "not": {
+            "narrative": "flow_ow_sugar_shape",
+            "state": "initial"
+          }
+        }
+      },
+      {
+        "any": [
+          {
+            "not": {
+              "narrative": "flow_ow_sugar_payment",
+              "state": "initial"
+            }
+          },
+          {
+            "flag": "has_item_ow_sugar_ticket"
+          },
+          {
+            "flag": "coins",
+            "op": ">=",
+            "value": 1
+          }
+        ]
+      }
+    ]
+  },
+  "beforeChargePassActions": [
+    {
+      "type": "emitNarrativeSignal",
+      "params": {
+        "signal": "ow_sugar_launch"
+      }
+    }
+  ],
+  "beforeChargeFailActions": [
+    {
+      "type": "sugarWheelShowSpeech",
+      "params": {
+        "role": "stall_owner",
+        "text": "[tag:string:owStreetPlay:charge_block]",
+        "durationMs": 2400
+      }
+    }
+  ]
+}

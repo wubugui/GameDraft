@@ -848,6 +848,9 @@ class ProjectModel(QObject):
                 fid = row.get("file")
                 if self.paper_craft_instances.get(iid) and isinstance(fid, str):
                     out.append(pc_dir / fid)
+        if "object_examine" in dty:
+            out.append(dp / "object_examine" / "index.json")
+            out.extend(path for path, _ in self._object_examine_save_rows())
         if "filter" in dty:
             filters_dir = dp / "filters"
             out.extend(filters_dir / f"{stem}.json" for stem in sorted(self.filter_defs.keys()))
@@ -912,6 +915,18 @@ class ProjectModel(QObject):
                 pc_err = self._paper_craft_presave_error()
                 if pc_err:
                     raise ValueError(pc_err)
+
+            # narrative_graphs 规范化+校验前移到任何写盘之前：历史实现放在写盘序列
+            # 规矩正文按 owner 图的状态索引；任一端本次写盘都校验这条依赖。
+            if set(dty) & {'rules', 'narrative_graphs'}:
+                from .shared.rule_knowledge_validation import validate_rule_knowledge
+                from .validator import _iter_narrative_graphs
+                graphs = list(_iter_narrative_graphs(self))
+                knowledge_errors = [f"{r.get('id')}: {error}"
+                    for r in self.rules_data.get('rules', []) if isinstance(r, dict)
+                    for error in validate_rule_knowledge(r, graphs, self.rules_data.get('fragments', []))]
+                if knowledge_errors:
+                    raise ValueError('规矩状态正文校验失败：' + '; '.join(knowledge_errors[:8]))
 
             # narrative_graphs 规范化+校验前移到任何写盘之前：历史实现放在写盘序列
             # 中段，quest 已落盘后才发现 narrative 非法 → 半保存出孤儿镜像任务。
@@ -1116,6 +1131,12 @@ class ProjectModel(QObject):
                         continue
                     w.add(pc_dir / fid, inst)
                 maybe_stamp(clk, "paper_craft 已暂存")
+            if "object_examine" in dty:
+                oe_dir = dp / "object_examine"
+                w.add(oe_dir / "index.json", self.object_examine_index)
+                for path, instance in self._object_examine_save_rows():
+                    w.add(path, instance)
+                maybe_stamp(clk, "object_examine 已暂存")
             if "filter" in dty:
                 filters_dir = dp / "filters"
                 keep = set(self.filter_defs.keys())
@@ -1164,6 +1185,22 @@ class ProjectModel(QObject):
         self.dirty_changed.emit(False)
         maybe_stamp(clk, "结束（清 dirty）")
 
+    def _object_examine_save_rows(self) -> list[tuple[Path, dict]]:
+        """Indexed native documents only; reject paths outside the family."""
+        directory = (self.data_path / "object_examine").resolve()
+        rows = []
+        for row in self.object_examine_index:
+            iid = str(row.get("id") or "").strip()
+            filename = row.get("file")
+            instance = self.object_examine_instances.get(iid)
+            if not isinstance(filename, str) or not isinstance(instance, dict) or instance.get("id") != iid:
+                raise ValueError(f"物件检视索引与实例不一致: {iid!r}")
+            path = (directory / filename).resolve()
+            if not path.is_relative_to(directory) or path.suffix.lower() != ".json" or path.name == "index.json":
+                raise ValueError(f"物件检视实例路径无效: {filename!r}")
+            rows.append((path, instance))
+        return rows
+
     def _paper_craft_presave_error(self) -> str | None:
         """扎纸订单硬约束：每张订单 paperOptions/finishOptions 非空——运行时缺失即拒载
         （PaperCraftMinigameScene 加载时 throw），存出去就是坏档，保存前必须拦下。"""
@@ -1196,7 +1233,7 @@ class ProjectModel(QObject):
         "document_reveals", "smell_profiles", "pressure_holds", "signal_cues", "bubble_lines",
         "planes", "npc_schedules", "narrative_templates", "narrative_categories", "dialogue_stubs",
         "dialogue_graph_edits", "dialogue_graph_deletes",
-        "water_minigames", "sugar_wheel", "paper_craft", "filter",
+        "water_minigames", "sugar_wheel", "paper_craft", "object_examine", "filter",
     })
 
     def mark_dirty(self, data_type: str, item_id: str = "") -> None:
@@ -1578,6 +1615,12 @@ class ProjectModel(QObject):
 
     def all_quest_ids(self) -> list[tuple[str, str]]:
         return [(q["id"], q.get("title", q["id"])) for q in self.quests]
+
+    def quest_objective_ids(self, quest_id: str) -> list[tuple[str, str]]:
+        """目标引用只在所属任务内有效；不枚举别的任务以免同名串线。"""
+        quest = next((q for q in self.quests if q.get("id") == quest_id), {})
+        return [(str(o["id"]), str(o.get("text") or o["id"]))
+                for o in quest.get("objectives", []) if isinstance(o, dict) and o.get("id")]
 
     def quest_status_target_ids(self) -> list[tuple[str, str]]:
         """有状态机的任务 id（quest 叶 / updateQuest / nextQuests / initialQuest 的合法目标）。

@@ -107,6 +107,8 @@ export interface BubbleChatterDeps {
   emoteBubbleManager: EmoteBubbleManager;
   /** 与 showEmote 同口径的目标解析（NPC / 玩家 / 热点 / 过场演员） */
   resolveEmoteTarget: (id: string) => IEmoteBubbleAnchor | null;
+  /** 闲聊只准可见实体发起；剧情动作的目标解析仍允许隐藏演员。 */
+  isSpeakerVisible: (targetId: string) => boolean;
   /**
    * 角色档说话人 → 当前场景里引用了该角色的那个摆放的实体 id；场上没有该角色返回 null。
    * 同场景多个摆放引用同一角色时优先取可见的那个，其余按场景声明序（确定性；
@@ -389,7 +391,7 @@ export class BubbleChatterSystem implements IGameSystem {
     for (const def of this.defs.values()) {
       if (def.trigger !== 'approach') continue;
       const pos = this.speakerPosition(def.speaker);
-      const inRange = pos !== null
+      const inRange = pos !== null && this.resolveAnchor(def.speaker) !== null
         && Math.hypot(pos.x - player.x, pos.y - player.y) <= (def.approachRange ?? DEFAULT_APPROACH_RANGE);
       const wasIn = this.wasInRange.get(def.id) === true;
       this.wasInRange.set(def.id, inRange);
@@ -448,7 +450,7 @@ export class BubbleChatterSystem implements IGameSystem {
 
   private resolveAnchor(ref: BubbleSpeakerRef): IEmoteBubbleAnchor | null {
     const id = this.resolveTargetId(ref);
-    return id ? this.deps.resolveEmoteTarget(id) : null;
+    return id && this.deps.isSpeakerVisible(id) ? this.deps.resolveEmoteTarget(id) : null;
   }
 
   private speakerPosition(ref: BubbleSpeakerRef): { x: number; y: number } | null {

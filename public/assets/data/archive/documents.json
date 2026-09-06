@@ -49,5 +49,44 @@
         "flag": "heard_opera_rumor"
       }
     ]
+  },
+  {
+    "id": "doc_ow_temple_accounts",
+    "name": "[tag:string:owTemple:doc_name]",
+    "content": "[tag:string:owTemple:doc_content]",
+    "annotation": "[tag:string:owTemple:doc_annotation]",
+    "discoverConditions": [
+      {
+        "narrative": "flow_ow_ledger",
+        "state": "done",
+        "reached": true
+      }
+    ]
+  },
+  {
+    "id": "doc_ow_notice_luo",
+    "name": "[tag:string:owStreetPlay:doc_luo]",
+    "content": "[tag:string:owStreetPlay:doc_body_luo]",
+    "annotation": "[tag:string:owStreetPlay:doc_note_luo]",
+    "discoverConditions": [
+      {
+        "narrative": "flow_ow_notice",
+        "state": "luo",
+        "reached": true
+      }
+    ]
+  },
+  {
+    "id": "doc_ow_notice_monk",
+    "name": "[tag:string:owStreetPlay:doc_monk]",
+    "content": "[tag:string:owStreetPlay:doc_body_monk]",
+    "annotation": "[tag:string:owStreetPlay:doc_note_monk]",
+    "discoverConditions": [
+      {
+        "narrative": "flow_ow_notice",
+        "state": "monk",
+        "reached": true
+      }
+    ]
   }
 ]

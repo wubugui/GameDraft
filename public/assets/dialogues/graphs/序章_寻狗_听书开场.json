@@ -66,12 +66,6 @@
           "params": {
             "id": "说书-景别复位__part2"
           }
-        },
-        {
-          "type": "setFlag",
-          "params": {
-            "value": true
-          }
         }
       ],
       "next": "n_2"

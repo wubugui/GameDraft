@@ -1,0 +1,15 @@
+{
+  "rule": {"id":"r","name":"试验","category":"streetwise","layers":{"xiang":{"text":"象"},"li":{"text":"理"}},"narrativeStates":{"initial":{"layers":{}},"known":{"layers":{"xiang":{"text":"亲历","verified":"effective"}}}}},
+  "graphs": [{"id":"g","ownerType":"rule","ownerId":"r","states":{"initial":{},"known":{}}}],
+  "cases": [
+    {"name":"native partial knowledge","errors":[]},
+    {"name":"missing owner","graphs":[],"errors":["rule.owner.count"]},
+    {"name":"duplicate owners","graphs":[{"id":"g","ownerType":"rule","ownerId":"r","states":{"initial":{},"known":{}}},{"id":"g2","ownerType":"rule","ownerId":"r","states":{"initial":{},"known":{}}}],"errors":["rule.owner.count"]},
+    {"name":"repeatable owner","graphs":[{"id":"g","ownerType":"rule","ownerId":"r","states":{"initial":{},"known":{}},"run":{}}],"errors":["rule.owner.repeatable"]},
+    {"name":"fragments cannot grant native knowledge","fragments":[{"id":"f","ruleId":"r","layer":"xiang","text":"片","source":"甲"}],"errors":["rule.fragments.mixed"]},
+    {"name":"state rename cannot silently erase knowledge","rule":{"narrativeStates":{"initial":{"layers":{}},"typo":{"layers":{}}}},"errors":["rule.state.missing:known","rule.state.unknown:typo"]},
+    {"name":"empty mapping","rule":{"narrativeStates":{}},"errors":["rule.states.invalid"]},
+    {"name":"malformed state","rule":{"narrativeStates":{"initial":{"layers":{}},"known":null}},"errors":["rule.layers.invalid:known"]},
+    {"name":"undeclared layer and invalid belief","rule":{"narrativeStates":{"initial":{"layers":{}},"known":{"layers":{"shu":{"text":" ","verified":"sure"}}}}},"errors":["rule.layer.undefined:known:shu","rule.text.empty:known:shu","rule.verified.invalid:known:shu"]}
+  ]
+}

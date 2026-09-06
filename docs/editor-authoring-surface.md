@@ -137,6 +137,8 @@
 | **转盘小游戏** | sugar_wheel/index+实例 | 外观资源/分格指针校准/蓄力曲线/物理停针(12 项)/beforeCharge(条件+动作)/speechAnchors/sectors(actions)/atmosphereGroups;**有画布** | speechMaxVisible 被删;payload 须合法 JSON |
 | **扎纸小游戏** | paper_craft/index+实例 | 实例 label/backgroundImage;订单 title/desc/correctPaper/合格分/警告分/targetHint/finishQuestion/onSuccess·Warn·BadActions;部件 label/score/tags/image;槽位 label/可选/坐标/accepts;纸色 label/score/tint/tags;收尾 label/score/tags。实例/订单及各子集合均可增删·重排;**槽位有画布** | 盲区:几乎无(高级字段已补齐) |
 
+| **物件检视** | object_examine/index+实例 | 主从实例列表；物件图与矩形/多边形热区预览；按字段懒建类型表单；持物/前置道具与气味、音频用项目选择器；图片用资源选择器；actions/onFound/onAllFound 用 ActionEditor。可新建实例、热区、操作、用物绑定；高级参数按现存结构展开编辑 | 实例和既有局部 ID 不提供裸改名/删除入口；字段原样透传，统一 object_examine 脏桶保存，信号/状态/对话引用重构可落盘 |
+
 **小游戏通用**:`index.json` 登记 `{id,label,file}` + 各实例独立文件;实例内 `id` 必须 == index 行 id;删实例不清理盘上旧 `<id>.json`(需手动清/走 DVC)。
 
 ---

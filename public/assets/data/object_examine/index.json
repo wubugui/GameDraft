@@ -3,5 +3,25 @@
     "id": "demo_waterlogged_corpse",
     "label": "检视：落水尸（演示）",
     "file": "demo_waterlogged_corpse.json"
+  },
+  {
+    "id": "ow_shore_coat",
+    "label": "检视：河滩工衣",
+    "file": "ow_shore_coat.json"
+  },
+  {
+    "id": "ow_watch_bench",
+    "label": "检视：备用旧梆",
+    "file": "ow_watch_bench.json"
+  },
+  {
+    "id": "ow_paper_frame",
+    "label": "检视：歪脚纸人",
+    "file": "ow_paper_frame.json"
+  },
+  {
+    "id": "ow_noodle_stove",
+    "label": "检视：街摊冷灶",
+    "file": "ow_noodle_stove.json"
   }
 ]

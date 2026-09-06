@@ -3,7 +3,7 @@
     "globalMinIntervalMs": 4000,
     "perSpeakerMinIntervalMs": 12000,
     "maxConcurrent": 2,
-    "audibleRange": 900
+    "audibleRange": 480
   },
   "lineSets": [
     {
@@ -53,6 +53,326 @@
       "scenes": [
         "雾津街头",
         "test_room_a"
+      ]
+    },
+    {
+      "id": "ow_zhou_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_zhou"
+      },
+      "cooldownMs": 44400,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:zhou_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:zhou_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_yang_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_yang"
+      },
+      "cooldownMs": 44400,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:yang_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:yang_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_luo_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_luo"
+      },
+      "cooldownMs": 42300,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:luo_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:luo_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_he_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_he"
+      },
+      "cooldownMs": 40200,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:he_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:he_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_deng_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_deng"
+      },
+      "cooldownMs": 44400,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:deng_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:deng_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_ding_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_ding"
+      },
+      "cooldownMs": 44400,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:ding_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:ding_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_monk_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_monk"
+      },
+      "cooldownMs": 44400,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:monk_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:monk_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_man_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_man"
+      },
+      "cooldownMs": 42300,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:man_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:man_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_qian_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_qian"
+      },
+      "cooldownMs": 44400,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:qian_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:qian_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_huang_ambient",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_huang"
+      },
+      "cooldownMs": 46500,
+      "pickMode": "sequence",
+      "durationMs": 3400,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:huang_bark1]"
+        },
+        {
+          "text": "[tag:string:openWorld:huang_bark2]"
+        }
+      ]
+    },
+    {
+      "id": "ow_zhou_thanks",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_zhou"
+      },
+      "when": {
+        "narrative": "flow_ow_tally",
+        "state": "done"
+      },
+      "trigger": "approach",
+      "priority": 3,
+      "cooldownMs": 60000,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:zhou_thanks_bark]"
+        }
+      ]
+    },
+    {
+      "id": "ow_yang_thanks",
+      "speaker": {
+        "kind": "character",
+        "characterId": "ow_yang"
+      },
+      "when": {
+        "narrative": "flow_ow_bowl",
+        "state": "done"
+      },
+      "trigger": "approach",
+      "priority": 3,
+      "cooldownMs": 60000,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:yang_thanks_bark]"
+        }
+      ]
+    },
+    {
+      "id": "ow_port_waiter",
+      "speaker": {
+        "kind": "entity",
+        "id": "new_npc_0"
+      },
+      "scenes": [
+        "码头白天"
+      ],
+      "cooldownMs": 59000,
+      "durationMs": 3000,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:port_waiter_bark]"
+        }
+      ]
+    },
+    {
+      "id": "ow_port_lady",
+      "speaker": {
+        "kind": "entity",
+        "id": "new_hotspot_4"
+      },
+      "scenes": [
+        "码头白天"
+      ],
+      "cooldownMs": 59000,
+      "durationMs": 3000,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:port_lady_bark]"
+        }
+      ]
+    },
+    {
+      "id": "ow_port_porter",
+      "speaker": {
+        "kind": "entity",
+        "id": "new_hotspot_6"
+      },
+      "scenes": [
+        "码头白天"
+      ],
+      "cooldownMs": 59000,
+      "durationMs": 3000,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:port_porter_bark]"
+        }
+      ]
+    },
+    {
+      "id": "ow_hill_traveler",
+      "speaker": {
+        "kind": "entity",
+        "id": "new_npc_0"
+      },
+      "scenes": [
+        "mountain_pass"
+      ],
+      "cooldownMs": 59000,
+      "durationMs": 3000,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:hill_traveler_bark]"
+        }
+      ]
+    },
+    {
+      "id": "ow_temple_keeper",
+      "speaker": {
+        "kind": "entity",
+        "id": "new_npc_0"
+      },
+      "scenes": [
+        "temple"
+      ],
+      "cooldownMs": 59000,
+      "durationMs": 3000,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:temple_keeper_bark]"
+        }
+      ]
+    },
+    {
+      "id": "ow_bridge_waiter",
+      "speaker": {
+        "kind": "entity",
+        "id": "new_npc_0"
+      },
+      "scenes": [
+        "bridge_underpass"
+      ],
+      "cooldownMs": 59000,
+      "durationMs": 3000,
+      "lines": [
+        {
+          "text": "[tag:string:openWorld:bridge_waiter_bark]"
+        }
       ]
     }
   ]

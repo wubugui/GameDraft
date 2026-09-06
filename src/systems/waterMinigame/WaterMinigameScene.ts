@@ -672,6 +672,8 @@ export class WaterMinigameScene {
       ent.container.visible = false;
     } else if (r === 'fail_snap') {
       void this.showFeedback(this.resolveText('[tag:string:waterMinigame:pullSnap]'));
+    } else if (r === 'fail_slip') {
+      void this.showFeedback(this.resolveText('[tag:string:waterMinigame:pullSlip]'));
     } else {
       void this.showFeedback(this.resolveText('[tag:string:waterMinigame:pullBite]'));
     }

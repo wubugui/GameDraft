@@ -1,0 +1,17 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [ 85%]
+............                                                             [100%]
+============================ slowest 10 durations =============================
+41.25s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+14.74s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+8.55s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+2.86s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+1.30s call     tools/editor/tests/test_narrative_state_editor.py::TestLoadedPageStalenessBanner::test_banner_hidden_when_page_matches_disk
+0.78s call     tools/editor/tests/test_narrative_state_editor.py::TestNarrativeStateEditor::test_projection_derives_context_state_read_edges
+0.52s call     tools/editor/tests/test_narrative_state_editor.py::TestNarrativeStateEditor::test_projection_derives_owner_state_read_edges
+0.38s call     tools/editor/tests/test_narrative_state_editor.py::TestNarrativeStateEditor::test_state_active_plane_survives_normalize_and_save
+0.38s call     tools/editor/tests/test_narrative_state_editor.py::TestNarrativeStateEditor::test_missing_narrative_categories_loads_empty_without_dirty
+0.30s call     tools/editor/tests/test_narrative_state_editor.py::TestNarrativeStateEditor::test_save_all_categories_only_does_not_touch_narrative_graphs
+84 passed in 73.72s (0:01:13)

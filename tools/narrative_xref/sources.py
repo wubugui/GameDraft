@@ -49,7 +49,7 @@ ASSET_SPECS: dict[str, dict[str, str]] = {
 
 # 主编辑器只加载不保存的数据面：目录/清单要看得见它发的信号，重构则拒绝改写它
 # （与 signal_refactor.READONLY_SOURCES 同源，parity 测试锁定）。
-READONLY_ATTRS = frozenset({"object_examine_instances"})
+READONLY_ATTRS = frozenset()
 
 # **条件面比发射面宽**：`{narrative,state}` 叶、活计计数叶、生命周期动作还会出现在
 # 地图节点可见性、图鉴解锁、物品动态描述、章节清单…里。这张表镜像

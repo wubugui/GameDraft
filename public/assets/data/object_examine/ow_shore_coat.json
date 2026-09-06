@@ -1,0 +1,101 @@
+{
+  "id": "ow_shore_coat",
+  "label": "[tag:string:owCloth:coat_ex_label]",
+  "title": "[tag:string:owCloth:coat_ex_title]",
+  "allFoundHint": "[tag:string:owCloth:coat_ex_all]",
+  "presentation": {
+    "kind": "still",
+    "image": "/resources/runtime/images/examine/ow_shore_coat.png",
+    "backgroundPreset": "stone",
+    "physicalWidthCm": 120,
+    "contactAoIntensity": 0.7,
+    "contactAoRadiusCm": 1.5
+  },
+  "ambience": {
+    "headSway": {
+      "amplitude": 0.3
+    },
+    "breathing": false,
+    "dust": false
+  },
+  "smell": {
+    "scent": "mold",
+    "intensity": 15
+  },
+  "hotspots": [
+    {
+      "id": "patch",
+      "label": "[tag:string:owCloth:patch_label]",
+      "x": 470,
+      "y": 250,
+      "width": 185,
+      "height": 190,
+      "anomalyShade": "[tag:string:owCloth:patch_shade]",
+      "anomalyRevealed": "[tag:string:owCloth:patch_seen]",
+      "shadeUiX": 0.16,
+      "shadeUiY": 0.23,
+      "narration": "[tag:string:owCloth:patch_detail]",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_coat_patch"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cuff",
+      "label": "[tag:string:owCloth:cuff_label]",
+      "x": 1290,
+      "y": 725,
+      "width": 205,
+      "height": 160,
+      "anomalyShade": "[tag:string:owCloth:cuff_shade]",
+      "anomalyRevealed": "[tag:string:owCloth:cuff_seen]",
+      "shadeUiX": 0.8,
+      "shadeUiY": 0.35,
+      "operations": [
+        {
+          "id": "smell_cuff",
+          "label": "[tag:string:owCloth:cuff_smell]",
+          "narration": "[tag:string:owCloth:cuff_detail]",
+          "actions": [
+            {
+              "type": "setSmell",
+              "params": {
+                "scent": "ow_tung_oil",
+                "intensity": 65
+              }
+            }
+          ]
+        }
+      ],
+      "itemUses": [
+        {
+          "itemId": "ow_cloth",
+          "label": "[tag:string:owCloth:cuff_use]",
+          "narration": "[tag:string:owCloth:cuff_used]",
+          "actions": [
+            {
+              "type": "emitNarrativeSignal",
+              "params": {
+                "signal": "ow_coat_oil"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hem",
+      "label": "[tag:string:owCloth:hem_label]",
+      "x": 300,
+      "y": 910,
+      "width": 920,
+      "height": 95,
+      "decoy": true,
+      "narration": "[tag:string:owCloth:hem_detail]"
+    }
+  ]
+}

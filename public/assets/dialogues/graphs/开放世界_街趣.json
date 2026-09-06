@@ -1,0 +1,834 @@
+{
+  "schemaVersion": 1,
+  "id": "开放世界_街趣",
+  "entry": "stall",
+  "meta": {
+    "title": "小钩、糖画与认字"
+  },
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "hook": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_ring_hook",
+            "state": "carrying",
+            "reached": true
+          },
+          "next": "hook_empty"
+        },
+        {
+          "condition": {
+            "posture": "crouch"
+          },
+          "next": "hook_take"
+        }
+      ],
+      "defaultNext": "hook_hint"
+    },
+    "hook_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:hook_hint]",
+      "next": "hook_accept"
+    },
+    "hook_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_ring_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_ring_hook"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "hook_take": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:hook_take]",
+      "next": "hook_commit"
+    },
+    "hook_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_ring_take"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_ring_hook"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "hook_empty": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:hook_empty]",
+      "next": "end"
+    },
+    "child_hook": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_ring_hook",
+            "state": "done",
+            "reached": true
+          },
+          "next": "hook_returned"
+        },
+        {
+          "condition": {
+            "flag": "has_item_ow_ring_hook"
+          },
+          "next": "hook_return_choice"
+        }
+      ],
+      "defaultNext": "child_request"
+    },
+    "child_request": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "小满"
+      },
+      "text": "[tag:string:owStreetPlay:child_request]",
+      "next": "child_accept"
+    },
+    "child_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_ring_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_ring_hook"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "hook_return_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "return_hook",
+          "text": "[tag:string:owStreetPlay:return_hook]",
+          "next": "hook_return"
+        },
+        {
+          "id": "keep_hook",
+          "text": "[tag:string:owStreetPlay:keep_hook]",
+          "next": "end"
+        }
+      ]
+    },
+    "hook_return": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_ring_return"
+          }
+        }
+      ],
+      "next": "hook_returned"
+    },
+    "hook_returned": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "小满"
+      },
+      "text": "[tag:string:owStreetPlay:hook_returned]",
+      "next": "child_menu"
+    },
+    "child_sugar": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_sugar",
+            "state": "given",
+            "reached": true
+          },
+          "next": "child_got_sugar"
+        },
+        {
+          "condition": {
+            "flag": "has_item_ow_sugar_prize"
+          },
+          "next": "sugar_offer"
+        }
+      ],
+      "defaultNext": "child_sugar_none"
+    },
+    "child_sugar_none": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "小满"
+      },
+      "text": "[tag:string:owStreetPlay:child_sugar_none]",
+      "next": "child_menu"
+    },
+    "sugar_offer": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "sugar_give",
+          "text": "[tag:string:owStreetPlay:sugar_give]",
+          "next": "sugar_give"
+        },
+        {
+          "id": "sugar_keep",
+          "text": "[tag:string:owStreetPlay:sugar_keep]",
+          "next": "child_menu"
+        }
+      ]
+    },
+    "sugar_give": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_give"
+          }
+        }
+      ],
+      "next": "child_got_sugar"
+    },
+    "child_got_sugar": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "小满"
+      },
+      "text": "[tag:string:owStreetPlay:child_got_sugar]",
+      "next": "child_menu"
+    },
+    "child_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ask_witness",
+          "text": "[tag:string:owStreetPlay:ask_witness]",
+          "next": "child_witness",
+          "requireCondition": {
+            "any": [
+              {
+                "narrative": "flow_ow_ring_hook",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_sugar",
+                "state": "given",
+                "reached": true
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owStreetPlay:ask_witness_disabled]"
+        },
+        {
+          "id": "child_done",
+          "text": "[tag:string:owStreetPlay:child_done]",
+          "next": "end"
+        }
+      ]
+    },
+    "child_witness": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "not": {
+              "any": [
+                {
+                  "narrative": "flow_ow_ring_hook",
+                  "state": "done",
+                  "reached": true
+                },
+                {
+                  "narrative": "flow_ow_sugar",
+                  "state": "given",
+                  "reached": true
+                }
+              ]
+            }
+          },
+          "next": "child_wont"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_child_witness",
+            "state": "heard",
+            "reached": true
+          },
+          "next": "witness_again"
+        }
+      ],
+      "defaultNext": "witness_line"
+    },
+    "child_wont": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "小满"
+      },
+      "text": "[tag:string:owStreetPlay:child_wont]",
+      "next": "end"
+    },
+    "witness_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "小满"
+      },
+      "text": "[tag:string:owStreetPlay:witness_line]",
+      "next": "witness_commit"
+    },
+    "witness_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_child_witness"
+          }
+        }
+      ],
+      "next": "witness_again"
+    },
+    "witness_again": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "小满"
+      },
+      "text": "[tag:string:owStreetPlay:witness_again]",
+      "next": "witness_choice"
+    },
+    "witness_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "follow_coat",
+          "text": "[tag:string:owStreetPlay:follow_coat]",
+          "next": "coat_handoff"
+        },
+        {
+          "id": "witness_leave",
+          "text": "[tag:string:owStreetPlay:witness_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "coat_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_coat_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_coat"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "stall": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_sugar",
+                "state": "given",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_sugar",
+                "state": "eaten",
+                "reached": true
+              }
+            ]
+          },
+          "next": "stall_finished"
+        },
+        {
+          "condition": {
+            "not": {
+              "narrative": "flow_ow_sugar_shape",
+              "state": "initial"
+            }
+          },
+          "next": "sugar_holding"
+        },
+        {
+          "condition": {
+            "not": {
+              "all": [
+                {
+                  "flag": "minutes_of_day",
+                  "op": ">=",
+                  "value": 420
+                },
+                {
+                  "flag": "minutes_of_day",
+                  "op": "<",
+                  "value": 1080
+                }
+              ]
+            }
+          },
+          "next": "stall_closed"
+        }
+      ],
+      "defaultNext": "stall_intro"
+    },
+    "stall_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "糖画摊主"
+      },
+      "text": "[tag:string:owStreetPlay:stall_intro]",
+      "next": "stall_accept"
+    },
+    "stall_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_sugar"
+          }
+        }
+      ],
+      "next": "stall_choices"
+    },
+    "stall_choices": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "play_sugar",
+          "text": "[tag:string:owStreetPlay:play_sugar]",
+          "next": "play",
+          "requireCondition": {
+            "any": [
+              {
+                "not": {
+                  "narrative": "flow_ow_sugar_payment",
+                  "state": "initial"
+                }
+              },
+              {
+                "flag": "has_item_ow_sugar_ticket"
+              },
+              {
+                "flag": "coins",
+                "op": ">=",
+                "value": 1
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owStreetPlay:play_sugar_disabled]"
+        },
+        {
+          "id": "sugar_later",
+          "text": "[tag:string:owStreetPlay:sugar_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "play": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startSugarWheelMinigame",
+          "params": {
+            "id": "ow_sugar"
+          }
+        }
+      ],
+      "next": "after_play"
+    },
+    "after_play": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "not": {
+              "narrative": "flow_ow_sugar_shape",
+              "state": "initial"
+            }
+          },
+          "next": "sugar_holding"
+        },
+        {
+          "condition": {
+            "not": {
+              "narrative": "flow_ow_sugar_payment",
+              "state": "initial"
+            }
+          },
+          "next": "sugar_paid"
+        }
+      ],
+      "defaultNext": "sugar_not_paid"
+    },
+    "sugar_paid": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:sugar_paid]",
+      "next": "end"
+    },
+    "sugar_not_paid": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:sugar_not_paid]",
+      "next": "end"
+    },
+    "sugar_holding": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:sugar_holding]",
+      "next": "holding_choices"
+    },
+    "holding_choices": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "track_child",
+          "text": "[tag:string:owStreetPlay:track_child]",
+          "next": "sugar_child_focus"
+        },
+        {
+          "id": "keep_candy",
+          "text": "[tag:string:owStreetPlay:keep_candy]",
+          "next": "end"
+        }
+      ]
+    },
+    "sugar_child_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_sugar",
+            "objectiveId": "sugar_child_obj"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "stall_finished": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:stall_finished]",
+      "next": "end"
+    },
+    "stall_closed": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:stall_closed]",
+      "next": "stall_accept_closed"
+    },
+    "stall_accept_closed": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_sugar_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_sugar"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "notice": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_notice",
+                "state": "luo",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_notice",
+                "state": "monk",
+                "reached": true
+              }
+            ]
+          },
+          "next": "notice_after"
+        },
+        {
+          "condition": {
+            "flag": "has_item_ow_notice_scrap"
+          },
+          "next": "notice_carry"
+        }
+      ],
+      "defaultNext": "notice_intro"
+    },
+    "notice_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:notice_intro]",
+      "next": "notice_choices"
+    },
+    "notice_choices": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "take_notice",
+          "text": "[tag:string:owStreetPlay:take_notice]",
+          "next": "notice_take"
+        },
+        {
+          "id": "notice_wait",
+          "text": "[tag:string:owStreetPlay:notice_wait]",
+          "next": "notice_track"
+        }
+      ]
+    },
+    "notice_take": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_notice_take"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_notice"
+          }
+        }
+      ],
+      "next": "notice_carry"
+    },
+    "notice_track": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_notice_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_notice"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "notice_carry": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:notice_carry]",
+      "next": "end"
+    },
+    "notice_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:notice_after]",
+      "next": "end"
+    },
+    "notice_luo": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_notice",
+                "state": "luo",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_notice",
+                "state": "monk",
+                "reached": true
+              }
+            ]
+          },
+          "next": "notice_after"
+        },
+        {
+          "condition": {
+            "flag": "has_item_ow_notice_scrap"
+          },
+          "next": "read_luo"
+        }
+      ],
+      "defaultNext": "reader_where"
+    },
+    "read_luo": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "罗伯"
+      },
+      "text": "[tag:string:owStreetPlay:read_luo]",
+      "next": "read_commit_luo"
+    },
+    "read_commit_luo": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_notice_read_luo"
+          }
+        }
+      ],
+      "next": "notice_after"
+    },
+    "notice_monk": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_notice",
+                "state": "luo",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_notice",
+                "state": "monk",
+                "reached": true
+              }
+            ]
+          },
+          "next": "notice_after"
+        },
+        {
+          "condition": {
+            "flag": "has_item_ow_notice_scrap"
+          },
+          "next": "read_monk"
+        }
+      ],
+      "defaultNext": "reader_where"
+    },
+    "read_monk": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "扫院僧"
+      },
+      "text": "[tag:string:owStreetPlay:read_monk]",
+      "next": "read_commit_monk"
+    },
+    "read_commit_monk": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_notice_read_monk"
+          }
+        }
+      ],
+      "next": "notice_after"
+    },
+    "reader_where": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owStreetPlay:reader_where]",
+      "next": "end"
+    }
+  }
+}

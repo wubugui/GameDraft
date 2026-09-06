@@ -1,0 +1,99 @@
+{
+  "id": "ow_river_bucket",
+  "label": "河滩捞木桶",
+  "spotId": "ow_river_shallow",
+  "waterBottom": {
+    "texture": "/resources/runtime/images/minigames/water/riverbed_wild_morning.png",
+    "tint": "#1b2f42",
+    "depth": 1.15
+  },
+  "surface": {
+    "location": "wild",
+    "time": "day",
+    "weather": "clear"
+  },
+  "shoreForeground": {
+    "banks": [
+      {
+        "sprite": "/resources/runtime/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "top",
+        "thickness": 92,
+        "inset": 16,
+        "overhang": 64
+      },
+      {
+        "sprite": "/resources/runtime/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "bottom",
+        "thickness": 118,
+        "inset": 10,
+        "overhang": 64
+      }
+    ]
+  },
+  "bounds": {
+    "width": 720,
+    "height": 480
+  },
+  "entities": [
+    {
+      "id": "dead_grass",
+      "category": "grass",
+      "sprite": "/resources/runtime/images/minigames/water/dead_reeds_gen.png",
+      "pos": {
+        "x": 160,
+        "y": 360
+      },
+      "depth": 0.14,
+      "hint": "[tag:string:owWater:bucket_grass]",
+      "onPick": [],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "laundry_bucket",
+      "category": "sunken",
+      "sprite": "/resources/runtime/images/minigames/water/ow_wooden_bucket.png",
+      "pos": {
+        "x": 350,
+        "y": 260
+      },
+      "depth": 0.2,
+      "valueTier": "normal",
+      "consumeOnSuccess": true,
+      "pull": {
+        "zoneSize": 0.36,
+        "sliderSpeed": 0.4,
+        "rhythm": "stable",
+        "failurePolicy": "slip",
+        "timeLimitSec": 24
+      },
+      "cue": "[tag:string:owWater:bucket_cue]",
+      "onPullSuccess": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bucket_pull_success"
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:owWater:bucket_success]",
+            "type": "success"
+          }
+        }
+      ],
+      "onPullFail": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:owWater:bucket_fail]",
+            "type": "info"
+          }
+        }
+      ],
+      "displaySize": 90,
+      "hitRadius": 65
+    }
+  ]
+}

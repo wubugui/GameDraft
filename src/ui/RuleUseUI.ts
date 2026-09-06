@@ -143,7 +143,7 @@ export class RuleUseUI {
 
       if (layersOk) {
         result.push({ slot, ruleName: this.r(ruleDef.name), enabled: true });
-      } else if (this.rulesData.isDiscovered(slot.ruleId)) {
+      } else if (!ruleDef.narrativeStates && this.rulesData.isDiscovered(slot.ruleId)) {
         const progress = this.rulesData.getFragmentProgress(slot.ruleId);
         const displayName = this.r(ruleDef.incompleteName ?? this.strings.get('ruleUse', 'unknown'));
         const depth = this.rulesData.getRuleDepth(slot.ruleId);
@@ -230,6 +230,7 @@ export class RuleUseUI {
         BADGE_R,
       );
       badge.position.set(BADGE_X, ry + rowBodyH / 2);
+      badge.eventMode = 'none';
       list.content.addChild(badge);
 
       const text = createStyledText({
@@ -248,6 +249,8 @@ export class RuleUseUI {
       });
       text.x = BADGE_X + BADGE_R + UITheme.spacing.md;
       text.y = ry + Math.round((rowBodyH - text.height) / 2);
+      // The whole-row target owns input; foreground labels must not intercept it.
+      text.eventMode = 'none';
 
       // 攒碎片的进度压右侧，不再挤在规矩名后面的括号里
       if (s.progressText) {

@@ -80,6 +80,15 @@
           "peak": 1.0
         }
       }
+    },
+    "ow_tung_oil": {
+      "name": "[tag:string:owCloth:oil_name]",
+      "color": "#a78d59",
+      "rise": 0.25,
+      "sway": 2.0,
+      "swayFreq": 0.8,
+      "jitter": 0.03,
+      "heavy": true
     }
   }
 }

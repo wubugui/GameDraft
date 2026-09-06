@@ -1,0 +1,16 @@
+bringing up nodes...
+bringing up nodes...
+
+....................................................                     [100%]
+============================ slowest 10 durations =============================
+0.57s call     tools/editor/tests/test_rule_knowledge.py::test_user_text_edit_survives_state_switch_and_save_all
+0.46s call     tools/editor/tests/test_rule_knowledge.py::test_lazy_panel_browse_is_lossless
+0.46s call     tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_quest_select_by_id_bool_and_group_compat
+0.44s call     tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_delete_rule_cascades_fragments
+0.36s teardown tools/editor/tests/test_rule_knowledge.py::test_user_text_edit_survives_state_switch_and_save_all
+0.32s call     tools/editor/tests/test_rule_knowledge.py::test_discard_does_not_return_through_flush
+0.32s call     tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_fragment_apply_rejects_empty_and_duplicate_id
+0.31s call     tools/editor/tests/test_rule_knowledge.py::test_state_rename_and_undo_keep_knowledge_bound
+0.31s teardown tools/editor/tests/test_rule_knowledge.py::test_discard_does_not_return_through_flush
+0.30s teardown tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_encounter_select_by_id_returns_bool
+52 passed in 10.88s

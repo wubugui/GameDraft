@@ -1676,6 +1676,8 @@ export type QuestGuidanceKind = 'mapMarker' | 'worldMarker' | 'sceneHint';
  */
 export interface QuestGuidanceDef {
   kind: QuestGuidanceKind;
+  /** 已知去处的生效条件；用于时段与事件分支，未配恒生效。 */
+  conditions?: ConditionExpr[];
   /** 目标所在场景 id（三条通道都必填：地图标记标它、浮标只在同场景显示、提示只在进入它时出） */
   sceneId: string;
   /** worldMarker：指向实体时填（与 x/y 二选一，实体优先） */
@@ -1701,11 +1703,13 @@ export interface QuestGuidanceDef {
 export interface QuestObjectiveDef {
   id: string;
   text: string;
+  /** 这条线索目前是否已开放；未配恒展示，不泄露未知或失效的方法。 */
+  availableWhen?: ConditionExpr[];
   /** 完成条件（与任务完成条件同一套表达式）；留空 = 不会自动勾掉，只随任务整体完成 */
   completeWhen?: ConditionExpr[];
   /** 本目标专属引导；不配则回落到任务级 `guidance` */
   guidance?: QuestGuidanceDef[];
-  /** 可选目标：不参与「当前目标」选取，也不阻塞后面的目标 */
+  /** 可选目标：不参与自动选取；玩家仍可主动跟踪。 */
   optional?: boolean;
 }
 
@@ -1775,6 +1779,8 @@ export interface RuleDef {
   category: 'ward' | 'taboo' | 'jargon' | 'streetwise';
   /** 象 / 理 / 术；至少一层须有内容（由数据与编辑器校验保证） */
   layers: Partial<Record<RuleLayerKey, RuleLayerDef>>;
+  /** Knowledge projected from the unique graph owned by this rule. No grant/fragment mirror. */
+  narrativeStates?: Record<string, { layers: Partial<Record<RuleLayerKey, RuleLayerDef>> }>;
   /** @deprecated 规矩级验证状态已迁移到各层 RuleLayerDef.verified；仍可读用于旧存档兼容 */
   verified?: RuleVerified;
 }
@@ -3161,12 +3167,16 @@ export interface IQuestDataProvider {
   canFocusQuest(questId: string): boolean;
   /** 设为当前任务（活计会同步激活其活计图）；传 null 清空。announce=true 时顺带给一次醒目提示 */
   requestFocusQuest(questId: string | null, opts?: { announce?: boolean }): Promise<void>;
+  /** 是否能直接跟踪目标；挂起的活计须先经任务入口恢复，选线索不代替激活。 */
+  canFocusObjective(questId: string, objectiveId: string): boolean;
+  /** 主动跟踪一条已开放且未完成的线索；只改跟踪，不推进叙事。 */
+  requestFocusObjective(questId: string, objectiveId: string): Promise<boolean>;
 
   // ---- 目标与引导（D7 / D8）----
 
-  /** 目标清单投影；没配目标返回空数组 */
+  /** 当前已开放的目标清单投影；不显示尚未知晓或已失效的分支。 */
   getQuestObjectives(questId: string): QuestObjectiveView[];
-  /** 当前目标 = 第一条未完成的必做目标；没有返回 null */
+  /** 有效的主动选择优先，否则第一条已开放、未完成的必做目标。 */
   getCurrentObjective(questId: string): QuestObjectiveDef | null;
   /** 该任务此刻生效的引导（当前目标的 guidance，回落任务级）；不是当前任务也照查，由调用方决定用不用 */
   getQuestGuidance(questId: string): QuestGuidanceDef[];

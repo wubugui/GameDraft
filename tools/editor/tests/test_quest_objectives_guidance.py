@@ -88,6 +88,22 @@ class GuidanceEditorRoundtripTests(unittest.TestCase):
         w.set_data(FULL_GUIDANCE)
         self.assertEqual(w.to_list(), FULL_GUIDANCE)
 
+    def test_conditional_guidance_is_lazy_and_editable_from_section_button(self) -> None:
+        data = [{"kind": "mapMarker", "sceneId": "dock", "conditions": [{"flag": "at_dock"}]}]
+        w = GuidanceEditor(self.model)
+        w.set_data(data)
+        section = w._rows[0].conditions
+        self.assertIsNone(section.editor)
+        self.assertEqual(w.to_list(), data)
+        changes = []
+        w.changed.connect(lambda: changes.append(True))
+        section._header.click()
+        self.assertIsNotNone(section.editor)
+        self.assertEqual(changes, [], "展开条件区不能让数据变脏")
+        section.editor._rows[0].del_btn.click()
+        self.assertTrue(changes)
+        self.assertEqual(w.to_list(), [{"kind": "mapMarker", "sceneId": "dock"}])
+
     def test_minimal_shape_adds_no_keys(self) -> None:
         """最小形态：只有 kind+sceneId，保存后**一个键都不许多**。"""
         minimal = [{"kind": "worldMarker", "sceneId": "dock", "entityKind": "hotspot", "entityId": "crate"}]
@@ -168,6 +184,22 @@ class ObjectivesEditorTests(unittest.TestCase):
         w = ObjectivesEditor(self.model)
         w.set_data(items)
         self.assertEqual(w.to_list(), items)
+
+    def test_available_when_survives_open_reorder_and_real_condition_delete(self) -> None:
+        items = [
+            {"id": "o1", "text": "已知线索", "availableWhen": [{"flag": "known"}]},
+            {"id": "o2", "text": "另一条线索"},
+        ]
+        w = ObjectivesEditor(self.model)
+        w.set_data(items)
+        self.assertIsNone(w._rows[0].available.editor)
+        self.assertEqual(w.to_list(), items)
+        w._move_row(w._rows[0], 1)
+        self.assertEqual(w.to_list(), list(reversed(items)))
+        section = w._rows[1].available
+        section._header.click()
+        section.editor._rows[0].del_btn.click()
+        self.assertNotIn("availableWhen", w.to_list()[1])
 
     def test_move_carries_conditions_and_guidance(self) -> None:
         items = [
@@ -293,6 +325,27 @@ class GuidanceValidationTests(unittest.TestCase):
     def test_unknown_scene_is_error(self) -> None:
         msgs = self._errors([_quest(guidance=[{"kind": "mapMarker", "sceneId": "没这个场景"}])])
         self.assertTrue(any("不存在" in m for m in msgs), msgs)
+
+    def test_unknown_narrative_in_new_condition_hosts_is_error(self) -> None:
+        bad = [{"narrative": "missing_case", "state": "known"}]
+        hosts = [
+            _quest(objectives=[{"id": "lead", "text": "调查", "availableWhen": bad}]),
+            _quest(guidance=[{"kind": "mapMarker", "sceneId": "dock", "conditions": bad}]),
+            _quest(objectives=[{"id": "lead", "text": "调查", "guidance": [
+                {"kind": "sceneHint", "sceneId": "dock", "text": "找人", "conditions": bad},
+            ]}]),
+        ]
+        for quest in hosts:
+            with self.subTest(quest=quest):
+                msgs = self._errors([quest])
+                self.assertTrue(any("missing_case" in m for m in msgs), msgs)
+
+    def test_new_conditions_require_arrays(self) -> None:
+        msgs = self._errors([_quest(objectives=[
+            {"id": "lead", "text": "调查", "availableWhen": {"flag": "known"}},
+        ], guidance=[{"kind": "mapMarker", "sceneId": "dock", "conditions": "known"}])])
+        self.assertTrue(any("availableWhen" in m and "数组" in m for m in msgs), msgs)
+        self.assertTrue(any("conditions" in m and "数组" in m for m in msgs), msgs)
 
     def test_entity_not_in_scene_is_error(self) -> None:
         msgs = self._errors([_quest(guidance=[

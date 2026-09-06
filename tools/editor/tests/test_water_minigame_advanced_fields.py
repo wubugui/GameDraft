@@ -96,6 +96,39 @@ class WaterMinigameAdvancedFieldsTests(unittest.TestCase):
             self.assertNotIn("onPullSuccess", got[1])
             self.assertNotIn("onPullFail", got[1])
 
+    def test_slip_failure_edits_roundtrip_and_enum_validation_matches_runtime(self) -> None:
+        import re
+        from tools.editor.shared.water_minigame_schema import FAILURE_POLICIES
+        from tools.editor.validator import _validate_water_minigames
+
+        runtime_source = (Path(__file__).resolve().parents[3] / "src/systems/waterMinigame/types.ts").read_text("utf-8")
+        runtime_enum = re.search(r"export type FailurePolicy = ([^;]+);", runtime_source).group(1)
+        self.assertEqual(set(re.findall(r"'([^']+)'", runtime_enum)), set(FAILURE_POLICIES))
+        with TemporaryDirectory() as td:
+            instances = self._base_instances([{
+                'id': 'object', 'category': 'sunken', 'sprite': '', 'depth': 0.3,
+                'pos': {'x': 100, 'y': 100}, 'pull': {'zoneSize': 0.2, 'sliderSpeed': 0.6,
+                    'rhythm': 'stable', 'failurePolicy': 'escape'},
+            }])
+            ed, model = self._editor(Path(td) / "p", instances)
+            ed._ent_list_w.setCurrentRow(0)
+            ed._pull_fail.setCurrentText('slip')
+            ed.flush_to_model()
+            self.assertEqual(self._ents(model)[0]['pull']['failurePolicy'], 'slip')
+            ed._ent_list_w.setCurrentRow(-1)
+            ed._ent_list_w.setCurrentRow(0)
+            self.assertEqual(ed._pull_fail.currentText(), 'slip')
+            for policy in FAILURE_POLICIES:
+                self._ents(model)[0]['pull']['failurePolicy'] = policy
+                issues = []
+                _validate_water_minigames(model, issues)
+                self.assertEqual(issues, [], policy)
+            self._ents(model)[0]['pull']['failurePolicy'] = 'typo'
+            issues = []
+            _validate_water_minigames(model, issues)
+            self.assertEqual(len(issues), 1)
+            self.assertIn('failurePolicy', issues[0].message)
+
     def test_existing_empty_arrays_preserved(self) -> None:
         with TemporaryDirectory() as td:
             ents = [{"id": "a", "category": "grass", "sprite": "", "depth": 0.1, "pos": {"x": 1, "y": 1},

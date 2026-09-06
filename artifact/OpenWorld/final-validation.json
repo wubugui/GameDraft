@@ -1,0 +1,791 @@
+{
+  "issues": [
+    {
+      "severity": "warning",
+      "data_type": "cutsceneSpeaker",
+      "item_id": "cutscenes[赌坊输钱].steps[4]",
+      "message": "说话人 '赌坊看门人' 不在 targetScene '雾津街头' 的 NPC 表中——运行时取不到实体，本行不显立绘、不冒气泡"
+    },
+    {
+      "severity": "warning",
+      "data_type": "cutsceneSpeaker",
+      "item_id": "cutscenes[赌坊输钱].steps[5]",
+      "message": "说话人 '赌坊看门人' 不在 targetScene '雾津街头' 的 NPC 表中——运行时取不到实体，本行不显立绘、不冒气泡"
+    },
+    {
+      "severity": "warning",
+      "data_type": "cutsceneSpeaker",
+      "item_id": "cutscenes[赌坊输钱].steps[13]",
+      "message": "说话人 '赌坊看门人' 不在 targetScene '雾津街头' 的 NPC 表中——运行时取不到实体，本行不显立绘、不冒气泡"
+    },
+    {
+      "severity": "warning",
+      "data_type": "cutsceneSpeaker",
+      "item_id": "cutscenes[赌坊输钱].steps[14]",
+      "message": "说话人 '赌坊看门人' 不在 targetScene '雾津街头' 的 NPC 表中——运行时取不到实体，本行不显立绘、不冒气泡"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "test_room_a",
+      "message": "Hotspot 'new_hotspot_10' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "test_room_a",
+      "message": "Hotspot 'new_hotspot_15' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "义庄",
+      "message": "Hotspot 'hs_停尸凳' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "梦_农家院",
+      "message": "Hotspot 'hs_院门' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "梦_里屋",
+      "message": "Hotspot 'deco_脚尾灯' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "梦_里屋",
+      "message": "Hotspot 'deco_火盆' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "梦_饭屋",
+      "message": "Hotspot 'hs_倒头饭' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "梦_饭屋",
+      "message": "Hotspot 'hs_油灯' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "码头白天",
+      "message": "Hotspot 'new_hotspot_箱子堆' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "码头白天",
+      "message": "Hotspot 'new_hotspot_8' cutsceneIds 包含 'cutscene_10'，不在过场 index 列表中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "码头白天",
+      "message": "Hotspot 'new_hotspot_9' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "码头白天",
+      "message": "Hotspot 'new_hotspot_10' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "码头白天",
+      "message": "Hotspot 'new_hotspot_11' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "码头白天",
+      "message": "Hotspot 'new_hotspot_12' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "码头白天",
+      "message": "Hotspot 'new_hotspot_13' inspect 未配置 graphId、非空 text 或非空 actions"
+    },
+    {
+      "severity": "warning",
+      "data_type": "archive",
+      "item_id": "book_erta_guide/entry/book_entry_2",
+      "message": "书页子条目无任何可显示内容（标题/正文/按语/插图全空），运行时不可见"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_山道闲话:act_ri",
+      "message": "playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_山道闲话:act_ye",
+      "message": "showEmote target='eco_ywl_驮骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_河边:act",
+      "message": "emitNarrativeSignal 信号 'eco_时辰_推进' 未在 narrative_graphs.signals 注册表登记"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_河边:act",
+      "message": "emitNarrativeSignal 信号 'eco_时辰_推进' 没有任何 Transition 监听（发出后不会推动任何迁移）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_河边:act",
+      "message": "persistNpcEnablePatrol npcId='eco_hb_鸭丙' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_河边:act",
+      "message": "persistNpcEnablePatrol npcId='eco_hb_野狐' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_码头白天:act",
+      "message": "emitNarrativeSignal 信号 'eco_时辰_推进' 未在 narrative_graphs.signals 注册表登记"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_码头白天:act",
+      "message": "emitNarrativeSignal 信号 'eco_时辰_推进' 没有任何 Transition 监听（发出后不会推动任何迁移）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_码头白天:act",
+      "message": "persistNpcEnablePatrol npcId='eco_dk_力工丙' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_码头白天:act",
+      "message": "persistNpcEnablePatrol npcId='eco_dk_挑夫' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_码头白天:act",
+      "message": "persistNpcEnablePatrol npcId='eco_dk_巡场兵' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_码头白天:act",
+      "message": "persistNpcEnablePatrol npcId='eco_dk_江鸭甲' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_码头白天:act",
+      "message": "persistNpcEnablePatrol npcId='eco_dk_江鸭乙' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_码头白天:act",
+      "message": "persistNpcEnablePatrol npcId='eco_dk_看摊鹅' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_阎王岭山口:act",
+      "message": "emitNarrativeSignal 信号 'eco_时辰_推进' 未在 narrative_graphs.signals 注册表登记"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_阎王岭山口:act",
+      "message": "emitNarrativeSignal 信号 'eco_时辰_推进' 没有任何 Transition 监听（发出后不会推动任何迁移）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_阎王岭山口:act",
+      "message": "persistNpcEnablePatrol npcId='eco_ywl_挑担' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_歇口气_阎王岭山口:act",
+      "message": "persistNpcEnablePatrol npcId='eco_ywl_队狗' 不在任意场景的 NPC 清单中"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_木料:act_ri",
+      "message": "playNpcAnimation target='eco_dk_客店鸡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_木桶:act_ri",
+      "message": "faceEntity target='eco_dk_船工' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_木桶:act_ri",
+      "message": "showEmote target='eco_dk_船工' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_水缸:act_ri",
+      "message": "faceEntity target='eco_dk_客店鸡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_水缸:act_ri",
+      "message": "playNpcAnimation target='eco_dk_客店鸡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_江面:act_ri",
+      "message": "faceEntity target='eco_dk_栈桥狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_江面:act_ri",
+      "message": "playNpcAnimation target='eco_dk_栈桥狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_江面:act_ye",
+      "message": "playNpcAnimation target='eco_dk_栈桥狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_缆绳:act_ri",
+      "message": "playNpcAnimation target='eco_dk_货堆猫' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_菜箩:act_ri",
+      "message": "faceEntity target='eco_dk_看摊鹅' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_菜箩:act_ri",
+      "message": "playNpcAnimation target='eco_dk_看摊鹅' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_菜箩:act_ri",
+      "message": "showEmote target='eco_dk_看摊鹅' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_货栈门:act_ri",
+      "message": "playNpcAnimation target='eco_dk_江鸭甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_货船:act_ri",
+      "message": "faceEntity target='eco_dk_船工' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_货船:act_ri",
+      "message": "showSpeechBubble target='eco_dk_船工' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_酒坛:act_ri",
+      "message": "faceEntity target='eco_dk_看摊鹅' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_酒坛:act_ri",
+      "message": "playNpcAnimation target='eco_dk_看摊鹅' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_酒坛:act_ri",
+      "message": "showEmote target='eco_dk_看摊鹅' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_饮槽:act_ri",
+      "message": "faceEntity target='eco_dk_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_饮槽:act_ri",
+      "message": "showEmote target='eco_dk_拴骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_饮槽:act_ri",
+      "message": "playNpcAnimation target='eco_dk_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_黄包车歇:act_ri",
+      "message": "faceEntity target='eco_dk_候工甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_黄包车歇:act_ri",
+      "message": "showEmote target='eco_dk_候工甲' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_黄包车歇:act_hui",
+      "message": "faceEntity target='eco_dk_候工甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_黄包车歇:act_hui",
+      "message": "playNpcAnimation target='eco_dk_候工甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_黄包车歇:act_hui",
+      "message": "showEmote target='eco_dk_候工甲' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_黄包车闲:act_ri",
+      "message": "faceEntity target='eco_dk_候工丙' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_码头_黄包车闲:act_ri",
+      "message": "showEmote target='eco_dk_候工丙' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_雾津_布篷底下:act_first",
+      "message": "faceEntity target='eco_wj_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_雾津_拆下的门板:act_first",
+      "message": "faceEntity target='eco_wj_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_雾津_拆下的门板:act_first",
+      "message": "showEmote target='eco_wj_拴骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_雾津_收了的摊架:act_first",
+      "message": "playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_雾津_收了的摊架:act_night",
+      "message": "playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_看_雾津_收了的摊架:act_deep",
+      "message": "playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_枯井_井台水桶:act",
+      "message": "playNpcAnimation target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_枯井_井台水桶:act_deep",
+      "message": "faceEntity target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_枯井_井台水桶:act_deep",
+      "message": "playNpcAnimation target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_河边_漂木:act",
+      "message": "playNpcAnimation target='eco_hb_鸭甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_河边_漂木:act_deep",
+      "message": "faceEntity target='eco_hb_鸭乙' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_河边_漂木:act_deep",
+      "message": "playNpcAnimation target='eco_hb_鸭乙' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_河边_石缝:act",
+      "message": "playNpcAnimation target='eco_hb_鸭乙' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_河边_石缝:act_deep",
+      "message": "faceEntity target='eco_hb_鸭甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_河边_石缝:act_deep",
+      "message": "playNpcAnimation target='eco_hb_鸭甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_丢下的挑担:act",
+      "message": "showEmote target='eco_ywl_挑担' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_丢下的挑担:act_deep",
+      "message": "showEmote target='eco_ywl_挑担' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_丢下的挑担:act_deep",
+      "message": "playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_买路钱:act",
+      "message": "playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_买路钱:act_deep",
+      "message": "playNpcAnimation target='eco_ywl_驮骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_买路钱:act_deep",
+      "message": "showEmote target='eco_ywl_驮骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_棚下灶灰:act",
+      "message": "showEmote target='eco_ywl_驮夫' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_棚下灶灰:act_deep",
+      "message": "showEmote target='eco_ywl_驮夫' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_棚下灶灰:act_deep",
+      "message": "playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_界碑:act",
+      "message": "playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_阎王岭_界碑:act_deep",
+      "message": "playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_东街灯柱:act_first",
+      "message": "playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_东街灯柱:act_night",
+      "message": "playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_板车轮:act_night",
+      "message": "faceEntity target='eco_wj_官差刀' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_板车轮:act_night",
+      "message": "showEmote target='eco_wj_官差刀' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_檐下柴架:act_first",
+      "message": "playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_檐下柴架:act_night",
+      "message": "playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_檐下柴架:act_deep",
+      "message": "playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_檐下柴架:act_deep",
+      "message": "showEmote target='eco_wj_东段狗' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_茶馆门槛:act_first",
+      "message": "playNpcAnimation target='eco_wj_面摊_陈嬢嬢' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_铺外水桶:act_first",
+      "message": "playNpcAnimation target='eco_wj_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_铺外水桶:act_first",
+      "message": "showEmote target='eco_wj_拴骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_翻_雾津_门边水缸:act_first",
+      "message": "showSpeechBubble target='eco_wj_面摊_陈嬢嬢' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_荒庙香客:act_wu",
+      "message": "faceEntity target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "dialogueGraph",
+      "item_id": "未接_生态_荒庙香客:act_wu",
+      "message": "playNpcAnimation target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "narrative",
+      "item_id": "flow_xungou_main",
+      "message": "Transition 't_6' 仍是草稿信号 __draft__（不会被任何来源触发）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "narrative",
+      "item_id": "wrapper_graph_1",
+      "message": "Transition 't_1' 仍是草稿信号 __draft__（不会被任何来源触发）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "narrative",
+      "item_id": "主线_交互点",
+      "message": "Transition 't_1' 仍是草稿信号 __draft__（不会被任何来源触发）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "narrative",
+      "item_id": "街巷_赌坊",
+      "message": "Transition 't_1' 监听信号 '主线_序章完结'，但全项目没有任何对话/资产/叙事图发出它，也无画布黑盒声明（悬垂监听，永远不会触发）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "teahouse",
+      "message": "transition 'exit_to_street' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "test_room_a",
+      "message": "transition 'exit_to_teahouse' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "test_room_a",
+      "message": "transition 'exit_to_mountain_pass' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "test_room_a",
+      "message": "transition 'exit_to_bridge' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "test_room_a",
+      "message": "transition 'exit_to_b' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "test_room_a",
+      "message": "transition 'T到码头1' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "test_room_a",
+      "message": "transition 'T到码头2' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "义庄",
+      "message": "transition 'T_出义庄' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "城隍庙夜",
+      "message": "transition 'T_出庙' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "婆子家院",
+      "message": "transition 'T_出院子' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "婆子家院",
+      "message": "transition 'T_出院回街' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "崖墓",
+      "message": "transition 'T_出崖墓' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "枯井土地庙",
+      "message": "transition 'T_回城' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "码头白天",
+      "message": "transition 'T码头到街巷' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "码头白天",
+      "message": "transition 'T到街巷2' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "破屋",
+      "message": "transition 'T_出破屋' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "野道",
+      "message": "transition 'T_到义庄' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "阎王岭山口",
+      "message": "transition 'T_下山回城' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "雾津街头",
+      "message": "transition 'T_去义庄' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "雾津街头",
+      "message": "transition 'T_去破屋' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    },
+    {
+      "severity": "warning",
+      "data_type": "scene",
+      "item_id": "雾津街头",
+      "message": "transition 'T_去后巷子' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）"
+    }
+  ],
+  "newIssues": []
+}

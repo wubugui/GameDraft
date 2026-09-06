@@ -1,0 +1,885 @@
+{
+  "schemaVersion": 1,
+  "id": "开放世界_庙火",
+  "entry": "pan",
+  "meta": {
+    "title": "风口、灰盘与一本借物账"
+  },
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "pan": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "sheltered",
+            "reached": true
+          },
+          "next": "pan_fixed"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "moved",
+            "reached": true
+          },
+          "next": "pan_moved"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "carrying"
+          },
+          "next": "pan_carried"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "sealed"
+          },
+          "next": "verify_pose"
+        }
+      ],
+      "defaultNext": "pan_intro"
+    },
+    "pan_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:pan_intro]",
+      "next": "pan_focus"
+    },
+    "pan_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_incense_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_incense"
+          }
+        }
+      ],
+      "next": "pan_methods"
+    },
+    "pan_methods": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "go_wind",
+          "text": "[tag:string:owTemple:go_wind]",
+          "next": "wind_where"
+        },
+        {
+          "id": "lift_pan",
+          "text": "[tag:string:owTemple:lift_pan]",
+          "next": "lift_check"
+        },
+        {
+          "id": "pan_later",
+          "text": "[tag:string:owTemple:pan_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "wind_where": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:wind_where]",
+      "next": "wind_focus"
+    },
+    "wind_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_incense",
+            "objectiveId": "incense_wind_obj"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "lift_check": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "not": {
+              "narrative": "flow_ow_bolt",
+              "state": "done",
+              "reached": true
+            }
+          },
+          "next": "lift_bolt"
+        },
+        {
+          "condition": {
+            "not": {
+              "flag": "has_item_ow_bucket"
+            }
+          },
+          "next": "lift_bucket"
+        }
+      ],
+      "defaultNext": "lift_confirm"
+    },
+    "lift_bolt": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:lift_bolt]",
+      "next": "bolt_focus"
+    },
+    "lift_bucket": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:lift_bucket]",
+      "next": "end"
+    },
+    "lift_confirm": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "lift_now",
+          "text": "[tag:string:owTemple:lift_now]",
+          "next": "lift"
+        },
+        {
+          "id": "lift_cancel",
+          "text": "[tag:string:owTemple:lift_cancel]",
+          "next": "end"
+        }
+      ]
+    },
+    "lift": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_incense_lift"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_incense"
+          }
+        }
+      ],
+      "next": "pan_carried"
+    },
+    "pan_carried": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:pan_carried]",
+      "next": "end"
+    },
+    "verify_pose": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "posture": "gaze"
+          },
+          "next": "verify"
+        }
+      ],
+      "defaultNext": "verify_hint"
+    },
+    "verify_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:verify_hint]",
+      "next": "verify_focus"
+    },
+    "verify_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_incense",
+            "objectiveId": "incense_verify_obj"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "verify": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:verify]",
+      "next": "verify_commit"
+    },
+    "verify_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_incense_verify"
+          }
+        }
+      ],
+      "next": "pan_fixed"
+    },
+    "pan_fixed": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:pan_fixed]",
+      "next": "end"
+    },
+    "pan_moved": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:pan_moved]",
+      "next": "end"
+    },
+    "wind": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_incense",
+                "state": "sheltered",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_incense",
+                "state": "moved",
+                "reached": true
+              }
+            ]
+          },
+          "next": "wind_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "carrying"
+          },
+          "next": "pan_carried"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "sealed"
+          },
+          "next": "verify_hint"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_incense_wind",
+            "state": "seen",
+            "reached": true
+          },
+          "next": "seal_choice"
+        },
+        {
+          "condition": {
+            "posture": "gaze"
+          },
+          "next": "wind_seen"
+        }
+      ],
+      "defaultNext": "wind_hint"
+    },
+    "wind_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:wind_hint]",
+      "next": "wind_start"
+    },
+    "wind_start": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_incense_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_incense",
+            "objectiveId": "incense_wind_obj"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "wind_seen": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:wind_seen]",
+      "next": "wind_record"
+    },
+    "wind_record": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_incense_wind"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_incense",
+            "objectiveId": "incense_seal_obj"
+          }
+        }
+      ],
+      "next": "seal_choice"
+    },
+    "seal_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "seal",
+          "text": "[tag:string:owTemple:seal]",
+          "next": "seal_commit",
+          "requireCondition": {
+            "all": [
+              {
+                "flag": "has_item_ow_dry_paper"
+              },
+              {
+                "flag": "has_item_ow_paste"
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owTemple:seal_disabled]"
+        },
+        {
+          "id": "seal_later",
+          "text": "[tag:string:owTemple:seal_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "seal_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_incense_seal"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_incense",
+            "objectiveId": "incense_verify_obj"
+          }
+        }
+      ],
+      "next": "verify_hint"
+    },
+    "wind_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:wind_done]",
+      "next": "end"
+    },
+    "stand": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "moved",
+            "reached": true
+          },
+          "next": "pan_moved"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "carrying"
+          },
+          "next": "stand_choice"
+        }
+      ],
+      "defaultNext": "stand_empty"
+    },
+    "stand_empty": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:stand_empty]",
+      "next": "pan_focus"
+    },
+    "stand_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "stand_place",
+          "text": "[tag:string:owTemple:stand_place]",
+          "next": "stand_place"
+        },
+        {
+          "id": "stand_later",
+          "text": "[tag:string:owTemple:stand_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "stand_place": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_incense_place"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_incense"
+          }
+        }
+      ],
+      "next": "pan_moved"
+    },
+    "bolt": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_bolt",
+            "state": "done",
+            "reached": true
+          },
+          "next": "bolt_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_bolt",
+            "state": "seen"
+          },
+          "next": "bolt_choice"
+        },
+        {
+          "condition": {
+            "posture": "crouch"
+          },
+          "next": "bolt_look"
+        }
+      ],
+      "defaultNext": "bolt_hint"
+    },
+    "bolt_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:bolt_hint]",
+      "next": "bolt_focus"
+    },
+    "bolt_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bolt_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_bolt"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "bolt_look": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:bolt_look]",
+      "next": "bolt_seen"
+    },
+    "bolt_seen": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bolt_look"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_bolt"
+          }
+        }
+      ],
+      "next": "bolt_choice"
+    },
+    "bolt_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "bolt_pry",
+          "text": "[tag:string:owTemple:bolt_pry]",
+          "next": "bolt_pry",
+          "requireCondition": {
+            "flag": "has_item_ow_bamboo"
+          },
+          "disabledClickHint": "[tag:string:owTemple:bolt_pry_disabled]"
+        },
+        {
+          "id": "ow_stick_pry",
+          "text": "[tag:string:owStreetPlay:ow_stick_pry]",
+          "next": "ow_stick_pry",
+          "requireCondition": {
+            "flag": "has_item_ow_sugar_stick"
+          },
+          "disabledClickHint": "[tag:string:owStreetPlay:ow_stick_pry_disabled]"
+        },
+        {
+          "id": "bolt_tap",
+          "text": "[tag:string:owTemple:bolt_tap]",
+          "next": "bolt_tap",
+          "requireCondition": {
+            "any": [
+              {
+                "flag": "has_item_ow_old_clapper"
+              },
+              {
+                "flag": "has_item_ow_patched_clapper"
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owTemple:bolt_tap_disabled]"
+        },
+        {
+          "id": "bolt_leave",
+          "text": "[tag:string:owTemple:bolt_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "bolt_pry": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bolt_pry"
+          }
+        }
+      ],
+      "next": "bolt_done"
+    },
+    "bolt_tap": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bolt_tap"
+          }
+        }
+      ],
+      "next": "bolt_done"
+    },
+    "bolt_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:bolt_done]",
+      "next": "end"
+    },
+    "ledger": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_ledger",
+            "state": "done",
+            "reached": true
+          },
+          "next": "ledger_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_ledger",
+            "state": "carrying"
+          },
+          "next": "ledger_carry"
+        }
+      ],
+      "defaultNext": "ledger_intro"
+    },
+    "ledger_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:ledger_intro]",
+      "next": "ledger_choice"
+    },
+    "ledger_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ledger_take",
+          "text": "[tag:string:owTemple:ledger_take]",
+          "next": "ledger_take"
+        },
+        {
+          "id": "ledger_leave",
+          "text": "[tag:string:owTemple:ledger_leave]",
+          "next": "ledger_focus"
+        }
+      ]
+    },
+    "ledger_take": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_ledger_take"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_ledger"
+          }
+        }
+      ],
+      "next": "ledger_carry"
+    },
+    "ledger_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_ledger_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_ledger"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ledger_carry": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:ledger_carry]",
+      "next": "end"
+    },
+    "monk_ledger": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_ledger",
+            "state": "done",
+            "reached": true
+          },
+          "next": "ledger_done"
+        },
+        {
+          "condition": {
+            "flag": "has_item_ow_temple_ledger"
+          },
+          "next": "ledger_read"
+        }
+      ],
+      "defaultNext": "ledger_where"
+    },
+    "ledger_where": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "扫院僧"
+      },
+      "text": "[tag:string:owTemple:ledger_where]",
+      "next": "ledger_focus"
+    },
+    "ledger_read": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "扫院僧"
+      },
+      "text": "[tag:string:owTemple:ledger_read]",
+      "next": "ledger_read_commit"
+    },
+    "ledger_read_commit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_ledger_read"
+          }
+        }
+      ],
+      "next": "ledger_done"
+    },
+    "ledger_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owTemple:ledger_done]",
+      "next": "end"
+    },
+    "monk": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "sheltered",
+            "reached": true
+          },
+          "next": "monk_fixed"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_incense",
+            "state": "moved",
+            "reached": true
+          },
+          "next": "monk_moved"
+        }
+      ],
+      "defaultNext": "monk_request"
+    },
+    "monk_request": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "扫院僧"
+      },
+      "text": "[tag:string:owTemple:monk_request]",
+      "next": "monk_accept"
+    },
+    "monk_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_incense_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_incense"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "monk_fixed": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "扫院僧"
+      },
+      "text": "[tag:string:owTemple:monk_fixed]",
+      "next": "end"
+    },
+    "monk_moved": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "扫院僧"
+      },
+      "text": "[tag:string:owTemple:monk_moved]",
+      "next": "end"
+    },
+    "ow_stick_pry": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bolt_stick"
+          }
+        }
+      ],
+      "next": "bolt_done"
+    }
+  }
+}

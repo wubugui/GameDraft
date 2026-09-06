@@ -26,6 +26,76 @@
       "id": "癞子",
       "name": "癞子",
       "animFile": "/resources/runtime/animation/npc_funeral_bearer_b_anim/anim.json"
+    },
+    {
+      "id": "ow_zhou",
+      "name": "周三 · 码头脚夫",
+      "animFile": "/resources/runtime/animation/npc_lifu_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "zhou"
+    },
+    {
+      "id": "ow_yang",
+      "name": "杨嫂 · 热面摊",
+      "animFile": "/resources/runtime/animation/npc_teahouse_owner_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "yang"
+    },
+    {
+      "id": "ow_luo",
+      "name": "罗伯 · 补篾匠",
+      "animFile": "/resources/runtime/animation/npc_storyteller_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "luo"
+    },
+    {
+      "id": "ow_he",
+      "name": "何婆婆 · 浣衣人",
+      "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "he"
+    },
+    {
+      "id": "ow_deng",
+      "name": "邓幺 · 跑腿人",
+      "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "deng"
+    },
+    {
+      "id": "ow_ding",
+      "name": "丁四 · 巡更人",
+      "animFile": "/resources/runtime/animation/官差刀_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "ding"
+    },
+    {
+      "id": "ow_monk",
+      "name": "扫院僧",
+      "animFile": "/resources/runtime/animation/npc_ascetic_monk_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "monk"
+    },
+    {
+      "id": "ow_man",
+      "name": "小满 · 滚环小孩",
+      "animFile": "/resources/runtime/animation/boy_ring_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "man"
+    },
+    {
+      "id": "ow_qian",
+      "name": "钱叔 · 守船人",
+      "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "qian"
+    },
+    {
+      "id": "ow_huang",
+      "name": "黄婶 · 采药人",
+      "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "huang"
     }
   ]
 }

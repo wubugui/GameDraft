@@ -442,6 +442,126 @@ describe('QuestManager 目标与引导（D7 / D8）', () => {
   });
 });
 
+describe('QuestManager 章节线索跟踪', () => {
+  const defs: QuestDef[] = [{
+    id: 'case', group: 'g', type: 'side', title: '河边的事', description: '',
+    preconditions: [{ flag: 'case_known' }], completionConditions: [{ flag: 'case_done' }], rewards: [],
+    guidance: [{ kind: 'mapMarker', sceneId: 'old_place' }],
+    objectives: [
+      { id: 'ask', text: '问当事人', completeWhen: [{ flag: 'asked' }] },
+      { id: 'trace', text: '顺着痕迹查', optional: true, availableWhen: [{ flag: 'trace_known' }],
+        completeWhen: [{ flag: 'trace_done' }], guidance: [{ kind: 'mapMarker', sceneId: 'river' }] },
+      { id: 'settle', text: '谈处置办法', availableWhen: [{ flag: 'asked' }] },
+    ],
+  }];
+
+  it('未知分支不可见也不可跟踪；可选线索可主动选择且不完成事件', async () => {
+    const { qm, flagStore } = await makeQuestManager(defs);
+    flagStore.set('case_known', true);
+    expect(qm.getQuestObjectives('case').map(o => o.def.id)).toEqual(['ask']);
+    expect(await qm.requestFocusObjective('case', 'trace')).toBe(false);
+    flagStore.set('trace_known', true);
+    expect(await qm.requestFocusObjective('case', 'trace')).toBe(true);
+    expect(qm.getFocusedQuestView()?.objective).toBe('顺着痕迹查');
+    expect(qm.getActiveGuidance()).toEqual([{ kind: 'mapMarker', sceneId: 'river' }]);
+    expect(qm.getStatus('case')).toBe(QuestStatus.Active);
+    expect(flagStore.get('trace_done')).not.toBe(true);
+  });
+
+  it('选择失效或完成后回落，不在条件重新满足时突然抢回跟踪', async () => {
+    const { qm, flagStore } = await makeQuestManager(defs);
+    flagStore.set('case_known', true);
+    flagStore.set('trace_known', true);
+    await qm.requestFocusObjective('case', 'trace');
+    flagStore.set('trace_known', false);
+    expect(qm.getCurrentObjective('case')?.id).toBe('ask');
+    flagStore.set('trace_known', true);
+    expect(qm.getCurrentObjective('case')?.id).toBe('ask');
+    await qm.requestFocusObjective('case', 'trace');
+    flagStore.set('trace_done', true);
+    expect(qm.getCurrentObjective('case')?.id).toBe('ask');
+    expect(await qm.requestFocusObjective('case', 'trace')).toBe(false);
+  });
+
+  it('存读档保留有效选择，旧档和被移除的目标安全回退', async () => {
+    const { qm, flagStore } = await makeQuestManager(defs);
+    flagStore.set('case_known', true);
+    flagStore.set('trace_known', true);
+    await qm.requestFocusObjective('case', 'trace');
+    const saved = qm.serialize();
+    qm.setRestoring(true);
+    qm.deserialize(saved as never);
+    qm.setRestoring(false);
+    expect(qm.getCurrentObjective('case')?.id).toBe('trace');
+    qm.deserialize({ case: QuestStatus.Active });
+    expect(qm.getCurrentObjective('case')?.id).toBe('ask');
+    qm.deserialize({ statuses: { case: QuestStatus.Active }, focusedQuestId: 'case', selectedObjectives: { case: 'removed' } });
+    expect(qm.getCurrentObjective('case')?.id).toBe('ask');
+  });
+
+  it('时段变化刷新去处；目标引导全部失效时不误指任务级旧地址', async () => {
+    const timed = JSON.parse(JSON.stringify(defs)) as QuestDef[];
+    timed[0].objectives![0].guidance = [
+      { kind: 'mapMarker', sceneId: 'dock', conditions: [{ timePhase: '午' }] },
+      { kind: 'sceneHint', sceneId: 'street', text: '入夜收工了', conditions: [{ timePhase: '夜' }] },
+    ];
+    const { qm, flagStore, eventBus, events } = await makeQuestManager(timed);
+    let phase = '午';
+    qm.setConditionEvalContextFactory(() => ({ flagStore, questManager: qm, scenarioState: {} as never, getTimePhase: () => phase }));
+    flagStore.set('case_known', true);
+    expect(qm.getActiveGuidance().map(g => g.sceneId)).toEqual(['dock']);
+    events.length = 0;
+    phase = '夜';
+    eventBus.emit('time:changed', {});
+    expect(qm.getActiveGuidance().map(g => g.sceneId)).toEqual(['street']);
+    expect(events.some(e => e.name === 'quest:changed')).toBe(true);
+    phase = '辰';
+    eventBus.emit('time:changed', {});
+    expect(qm.getActiveGuidance()).toEqual([]);
+  });
+
+  it('未跟踪任务开放新线索也通知面板；完成后不泄露隐藏分支', async () => {
+    const { qm, flagStore, events } = await makeQuestManager([...FOCUS_DEFS, ...defs]);
+    flagStore.set('a_ok', true);
+    flagStore.set('case_known', true);
+    expect(qm.getFocusedQuestId()).toBe('main_a');
+    events.length = 0;
+    flagStore.set('trace_known', true);
+    expect(events.some(e => e.name === 'quest:changed')).toBe(true);
+    flagStore.set('case_done', true);
+    expect(qm.getQuestObjectives('case').map(o => o.def.id)).toEqual(['ask', 'trace']);
+    expect(qm.getQuestObjectives('case').every(o => o.done)).toBe(true);
+  });
+
+  it('选择线索不激活挂起活计，也不切走另一张活计', async () => {
+    const job = { ...DEFS[1], objectives: [{ id: 'carry', text: '背回去' }] };
+    const { qm } = await makeQuestManager([job]);
+    const activate = vi.fn(async () => {});
+    qm.setActivateRunHandler(activate);
+    qm.setRunInfoProvider(() => runInfo({ active: 'carrying', suspended: true }));
+    expect(qm.canFocusObjective('job_quest', 'carry')).toBe(false);
+    expect(await qm.requestFocusObjective('job_quest', 'carry')).toBe(false);
+    expect(activate).not.toHaveBeenCalled();
+    qm.setRunInfoProvider(() => runInfo({ active: 'carrying', activated: true }));
+    expect(await qm.requestFocusObjective('job_quest', 'carry')).toBe(true);
+    expect(activate).not.toHaveBeenCalled();
+  });
+
+  it('读档后旧的异步活计跟踪请求不能覆盖新选择', async () => {
+    const { qm, flagStore } = await makeQuestManager([...defs, DEFS[1]]);
+    flagStore.set('case_known', true);
+    let finish!: () => void;
+    let active = false;
+    qm.setRunInfoProvider(() => runInfo({ active: 'doing', activated: active }));
+    qm.setActivateRunHandler(() => new Promise<void>(resolve => { finish = () => { active = true; resolve(); }; }));
+    const pending = qm.requestFocusQuest('job_quest');
+    qm.deserialize({ statuses: { case: QuestStatus.Active }, focusedQuestId: 'case' });
+    finish();
+    await pending;
+    expect(qm.getFocusedQuestId()).toBe('case');
+  });
+});
+
 describe('QuestManager 接取提示（D9）', () => {
   it('缺省档位：主线走横幅、支线走木条', async () => {
     const { qm, flagStore, events } = await makeQuestManager(FOCUS_DEFS);

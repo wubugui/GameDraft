@@ -13,6 +13,8 @@ from ..shared import confirm
 from ..shared.form_layout import compact_form
 from ..shared.collapsible_section import CollapsibleSection
 from ..shared.rich_text_field import RichTextLineEdit, RichTextTextEdit
+from ..shared.rule_knowledge_editor import RuleKnowledgeEditor, rule_owner_graphs
+from copy import deepcopy
 
 
 class RuleEditor(QWidget):
@@ -24,6 +26,8 @@ class RuleEditor(QWidget):
         self._rule_snapshot = None
         self._frag_snapshot = None
         self._suppress_commit = False
+        self._knowledge_editor = None
+        self._knowledge_raw = None
 
         root = QVBoxLayout(self)
         self._tabs = QTabWidget()
@@ -109,6 +113,9 @@ class RuleEditor(QWidget):
             sec.add_body(body)
             f.addRow(sec)
             self._layer_edits[lk] = (te, hi, ver)
+        self._knowledge_section = CollapsibleSection("按叙事状态显示的正文", start_open=False)
+        self._knowledge_section.expanded_changed.connect(self._ensure_knowledge_editor)
+        f.addRow(self._knowledge_section)
         apply_btn = QPushButton("Apply"); f.addRow(apply_btn)
         apply_btn.clicked.connect(self._apply_rule)
         scroll.setWidget(detail)
@@ -126,7 +133,18 @@ class RuleEditor(QWidget):
             te, hi, ver = self._layer_edits[lk]
             layers[lk] = (te.toPlainText(), hi.text(), ver.currentText())
         return (self._r_id.text(), self._r_name.text(), self._r_iname.text(),
-                self._r_cat.currentText(), layers)
+                self._r_cat.currentText(), layers, self._knowledge_value())
+
+    def _knowledge_value(self):
+        return self._knowledge_editor.value() if self._knowledge_editor else deepcopy(self._knowledge_raw)
+
+    def _ensure_knowledge_editor(self, expanded):
+        if not expanded or self._knowledge_editor is not None:
+            return
+        self._knowledge_editor = RuleKnowledgeEditor(self._model)
+        self._knowledge_editor.set_rule(self._r_id.text(), self._knowledge_raw)
+        self._knowledge_editor.changed.connect(lambda: self._model.mark_dirty('rules'))
+        self._knowledge_section.add_body(self._knowledge_editor)
 
     def _frag_ui_state(self):
         return (self._f_id.text(), self._f_text.toPlainText(),
@@ -204,6 +222,10 @@ class RuleEditor(QWidget):
         self._rule_idx = row
         r = rules[row]
         self._r_id.setText(r.get("id", ""))
+        self._r_id.setReadOnly('narrativeStates' in r or bool(rule_owner_graphs(self._model, r.get('id'))))
+        self._knowledge_raw = deepcopy(r.get('narrativeStates'))
+        if self._knowledge_editor:
+            self._knowledge_editor.set_rule(r.get('id', ''), self._knowledge_raw)
         self._r_name.setText(r.get("name", ""))
         self._r_iname.setText(r.get("incompleteName", ""))
         self._r_cat.setCurrentText(r.get("category", "ward"))
@@ -360,6 +382,8 @@ class RuleEditor(QWidget):
         r = rules[self._rule_idx]
         prev_id = str(r.get("id", "")).strip()
         new_id = self._r_id.text().strip()
+        if 'narrativeStates' in r or rule_owner_graphs(self._model, prev_id):
+            new_id = prev_id
         if not new_id:
             new_id = prev_id  # 空 id 不接受：保留原 id
         elif new_id != prev_id and any(
@@ -399,7 +423,13 @@ class RuleEditor(QWidget):
             new_layers[lk] = entry
         if not new_layers:
             new_layers = {"xiang": {"text": "", "verified": "unverified"}}
-        r["layers"] = new_layers
+        if self._rule_snapshot is None or self._rule_ui_state()[4] != self._rule_snapshot[4]:
+            r["layers"] = new_layers
+        knowledge = self._knowledge_value()
+        if knowledge is None:
+            r.pop('narrativeStates', None)
+        else:
+            r['narrativeStates'] = knowledge
         for k in ("description", "source", "sourceType", "fragmentCount", "verified"):
             r.pop(k, None)
         self._model.mark_dirty("rules")
@@ -418,6 +448,7 @@ class RuleEditor(QWidget):
         saved_frag = self._frag_idx
         self._refresh_frag_list()
         self._restore_frag_row_by_global_index(saved_frag)
+        self._rule_snapshot = self._rule_ui_state()
 
     @staticmethod
     def _unique_id(prefix: str, existing_ids) -> str:

@@ -20,9 +20,8 @@
 validator 只认 `dialogueGraphEntry` 这组键名收不到它，编辑器干脆一个备用入口都不看，
 于是两处一起把「另一个入口」报成流程孤儿。
 
-已知边界（本模块**不覆盖**，是有意的）：对话图文件内部的 `startDialogueGraph` 动作
-（图跳图并覆盖入口）不在扫描面内——那需要读遍整个 graphs 目录，代价与收益不成比例。
-真出现这种接法时在这里扩，别回去在调用方各打补丁。
+对话图内部的 `startDialogueGraph` 也属于动作面。通过共享引用目录读取有效图，
+包括暂存新增/编辑并排除暂存删除；编辑器与校验器使用同一套入口根。
 """
 
 from __future__ import annotations
@@ -30,6 +29,7 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 
 from .character_dialogue import resolve_npc_dialogue_graph
+from .dialogue_graph_refs import dialogue_graph_document, dialogue_graph_ids
 
 START_DIALOGUE_GRAPH_ACTION = "startDialogueGraph"
 
@@ -93,6 +93,9 @@ def collect_dialogue_graph_entry_overrides(model: Any) -> dict[str, set[str]]:
         getattr(model, "narrative_graphs", {}) or {},
     ):
         _scan_actions(container, overrides)
+
+    for graph_id in dialogue_graph_ids(model):
+        _scan_actions(dialogue_graph_document(model, graph_id), overrides)
 
     return overrides
 

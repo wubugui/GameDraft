@@ -46,6 +46,7 @@ function makeHarness(overrides: Partial<BubbleChatterDeps> = {}): Harness {
       hasBubbleFor: (a: IEmoteBubbleAnchor) => state.bubbleOn.has(a),
     } as never,
     resolveEmoteTarget: (id) => (id === 'npc_a' ? anchorA : id === 'npc_b' ? anchorB : id === 'player' ? anchorA : null),
+    isSpeakerVisible: () => true,
     resolveCharacterEntityId: (cid) => state.characterPlacements[cid] ?? null,
     resolveSpeakerPosition: (id) => (id === 'player' ? state.player : state.positions[id] ?? null),
     playerPosition: () => state.player,
@@ -80,6 +81,20 @@ const ONE_SET = {
 describe('BubbleChatterSystem 基本调度', () => {
   let h: Harness;
   beforeEach(() => { h = makeHarness(); });
+
+  it('日程隐藏的居民不会隔空说话，回来后实体档和角色档都能恢复', () => {
+    let visible = false;
+    for (const speaker of [{ kind: 'entity', id: 'npc_a' }, { kind: 'character', characterId: 'clara' }]) {
+      visible = false;
+      const world = makeHarness({ isSpeakerVisible: () => visible });
+      world.sys.applyDefs({ lineSets: [{ ...ONE_SET.lineSets[0], speaker }] });
+      world.tick(30);
+      expect(world.said).toHaveLength(0);
+      visible = true;
+      world.step();
+      expect(world.said).toHaveLength(1);
+    }
+  });
 
   it('Exploring 态才说话', () => {
     h.sys.applyDefs(ONE_SET);

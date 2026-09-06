@@ -2,7 +2,7 @@ import type { ActionDef } from '../../data/types';
 
 export type WaterCategory = 'sunken' | 'swimming' | 'floating' | 'grass';
 export type PullRhythm = 'stable' | 'burst' | 'spasm' | 'heavy_sink';
-export type FailurePolicy = 'escape' | 'snap' | 'bite';
+export type FailurePolicy = 'escape' | 'snap' | 'bite' | 'slip';
 
 /** 玩法权重：超额捕捞日后隐藏 premium */
 export type WaterValueTier = 'normal' | 'premium';

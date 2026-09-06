@@ -1,0 +1,1 @@
+{"ok": true, "result": {"afterApproach": {"questId": "ow_watch", "title": "[tag:string:owWatch:ow_watch_title]", "objective": "[tag:string:owWatch:watch_bench_obj]"}, "guidance": [{"kind": "mapMarker", "sceneId": "雾津街头"}, {"kind": "worldMarker", "sceneId": "雾津街头", "entityKind": "hotspot", "entityId": "ow_watch_bench", "label": "察看", "offscreenArrow": true}]}}

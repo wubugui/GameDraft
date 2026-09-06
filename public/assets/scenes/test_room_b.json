@@ -59,8 +59,8 @@
       "y": 426.78
     },
     "from_wujin": {
-      "x": 1436.6,
-      "y": 51.9
+      "x": 1170.0,
+      "y": 293.05
     }
   },
   "hotspots": [
@@ -78,14 +78,17 @@
     {
       "id": "exit_to_a",
       "type": "transition",
-      "label": "回到街巷",
-      "x": 109.7,
-      "y": 802.4,
-      "interactionRange": 300.0,
+      "label": "回雾津街头",
+      "x": 345.0,
+      "y": 787.06,
+      "interactionRange": 85,
       "data": {
-        "targetScene": "test_room_a",
-        "targetSpawnPoint": "from_b"
-      }
+        "targetScene": "雾津街头",
+        "targetSpawnPoint": "from_houxiang"
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "taomu_pickup",
@@ -143,48 +146,13 @@
     {
       "id": "hs_纸扎日工",
       "type": "inspect",
-      "label": "雾津纸扎铺 · 接桩糊纸人日工",
-      "x": 466.6,
-      "y": 549.2,
-      "interactionRange": 60.0,
+      "label": "[tag:string:owPaper:bench_spot]",
+      "x": 1000,
+      "y": 565,
+      "interactionRange": 45,
       "data": {
-        "actions": [
-          {
-            "type": "playScriptedDialogue",
-            "params": {
-              "lines": [
-                {
-                  "speaker": "纸扎铺掌柜",
-                  "text": "搭把手不嘛？铺子接了桩白事活路，糊几个随葬纸人，按件给钱。手脚麻利点，莫把忌讳犯了。"
-                }
-              ]
-            }
-          },
-          {
-            "type": "chooseAction",
-            "params": {
-              "prompt": "接这桩糊纸人的日工不？",
-              "allowCancel": true,
-              "options": [
-                {
-                  "text": "接（按件算钱）",
-                  "actions": [
-                    {
-                      "type": "startPaperCraftMinigame",
-                      "params": {
-                        "id": "wujin_paper_servant_daywork"
-                      }
-                    }
-                  ]
-                },
-                {
-                  "text": "莫得空，先走",
-                  "actions": []
-                }
-              ]
-            }
-          }
-        ]
+        "graphId": "开放世界_纸扎",
+        "entry": "bench"
       },
       "planes": [
         "normal"
@@ -193,13 +161,95 @@
     {
       "id": "T_回雾津街头",
       "type": "transition",
-      "label": "回街上",
-      "x": 1230.0,
-      "y": 160.0,
-      "interactionRange": 60.0,
+      "label": "穿过巷口回街",
+      "x": 1275.0,
+      "y": 226.07,
+      "interactionRange": 85,
       "data": {
         "targetScene": "雾津街头",
         "targetSpawnPoint": "from_houxiang"
+      },
+      "planes": [
+        "normal"
+      ]
+    },
+    {
+      "id": "ow_rest",
+      "type": "inspect",
+      "label": "歇脚 · 等一等",
+      "x": 1012.5,
+      "y": 502.38,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_歇脚"
+      }
+    },
+    {
+      "id": "ow_bamboo",
+      "type": "inspect",
+      "label": "[tag:string:owFirst:knife_spot_label]",
+      "x": 1072.5,
+      "y": 502.38,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_街坊",
+        "entry": "knife_pickup"
+      }
+    },
+    {
+      "id": "ow_damp_paper",
+      "type": "inspect",
+      "label": "[tag:string:owPaper:ow_damp_paper_label]",
+      "x": 1160,
+      "y": 555,
+      "interactionRange": 35,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_纸扎",
+        "entry": "damp"
+      }
+    },
+    {
+      "id": "ow_paper_rack",
+      "type": "inspect",
+      "label": "[tag:string:owPaper:ow_paper_rack_label]",
+      "x": 885,
+      "y": 546,
+      "interactionRange": 35,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_纸扎",
+        "entry": "rack"
+      }
+    },
+    {
+      "id": "ow_paste_stove",
+      "type": "inspect",
+      "label": "[tag:string:owPaper:ow_paste_stove_label]",
+      "x": 950,
+      "y": 630,
+      "interactionRange": 35,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_纸扎",
+        "entry": "stove"
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/examine/ow_paste_stove.png",
+        "worldWidth": 34,
+        "worldHeight": 44
       }
     }
   ],
@@ -326,6 +376,180 @@
         "holdFrame": 8
       },
       "group": "官差神秘人-崖墓尸"
+    },
+    {
+      "id": "ow_yang",
+      "characterId": "ow_yang",
+      "x": 735.0,
+      "y": 611.23,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "right",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 735.0,
+            "y": 611.23
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
+    },
+    {
+      "id": "ow_luo",
+      "characterId": "ow_luo",
+      "x": 1027.5,
+      "y": 527.5,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 1027.5,
+            "y": 527.5
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
+    },
+    {
+      "id": "ow_he",
+      "characterId": "ow_he",
+      "x": 735.0,
+      "y": 598.67,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "right",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 735.0,
+            "y": 598.67
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
+    },
+    {
+      "id": "ow_deng",
+      "characterId": "ow_deng",
+      "x": 915.0,
+      "y": 410.28,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 915.0,
+            "y": 410.28
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
+    },
+    {
+      "id": "ow_man",
+      "characterId": "ow_man",
+      "x": 877.5,
+      "y": 489.82,
+      "initialAnimState": "boy_stand_ring",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 877.5,
+            "y": 489.82
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "boy_walk"
+      }
+    },
+    {
+      "id": "ow_huang",
+      "characterId": "ow_huang",
+      "x": 960.0,
+      "y": 435.4,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 960.0,
+            "y": 435.4
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
     }
   ],
   "entityGroups": [
@@ -337,9 +561,69 @@
           "state": "state_1"
         }
       ]
+    },
+    {
+      "id": "ow_居民",
+      "label": "开放生活圈 · 居民",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "planes": [
+        "normal"
+      ]
     }
   ],
   "dayNight": {
     "enabled": true
-  }
+  },
+  "exitAnchors": [
+    {
+      "id": "ow_door_0",
+      "x": 675.0,
+      "y": 623.79
+    },
+    {
+      "id": "ow_door_1",
+      "x": 960.0,
+      "y": 577.74
+    },
+    {
+      "id": "ow_door_2",
+      "x": 1170.0,
+      "y": 309.8
+    },
+    {
+      "id": "ow_exit_yang",
+      "x": 675.0,
+      "y": 623.79
+    },
+    {
+      "id": "ow_exit_luo",
+      "x": 1170.0,
+      "y": 309.8
+    },
+    {
+      "id": "ow_exit_he",
+      "x": 960.0,
+      "y": 577.74
+    },
+    {
+      "id": "ow_exit_deng",
+      "x": 960.0,
+      "y": 577.74
+    },
+    {
+      "id": "ow_exit_man",
+      "x": 960.0,
+      "y": 577.74
+    },
+    {
+      "id": "ow_exit_huang",
+      "x": 960.0,
+      "y": 577.74
+    }
+  ]
 }

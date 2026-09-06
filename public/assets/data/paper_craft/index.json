@@ -3,5 +3,10 @@
     "id": "wujin_paper_servant_daywork",
     "label": "雾津纸扎铺：糊纸人日工",
     "file": "wujin_paper_servant_daywork.json"
+  },
+  {
+    "id": "ow_paper_remake",
+    "label": "罗伯工台：重做纸人",
+    "file": "ow_paper_remake.json"
   }
 ]

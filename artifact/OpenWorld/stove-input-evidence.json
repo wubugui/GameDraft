@@ -1,0 +1,164 @@
+{
+  "ok": true,
+  "result": {
+    "proof": [
+      {
+        "step": "Native crouch retrieve knife, return Luo for stove supplies",
+        "bag": {
+          "items": {
+            "ow_charcoal": 3,
+            "ow_bamboo": 2
+          },
+          "coins": 0
+        }
+      },
+      {
+        "step": "Native side-door wedge earned with bamboo; no inventory injection",
+        "bag": {
+          "items": {
+            "ow_charcoal": 3,
+            "ow_bamboo": 1,
+            "ow_wood_wedge": 1
+          },
+          "coins": 0
+        }
+      },
+      {
+        "step": "In actual stove inspection select bamboo from bag and click ash intake",
+        "bag": {
+          "items": {
+            "ow_charcoal": 3,
+            "ow_wood_wedge": 1
+          },
+          "coins": 0
+        },
+        "ash": "done"
+      },
+      {
+        "step": "Select side-door wedge and click chipped right foot",
+        "bag": {
+          "items": {
+            "ow_charcoal": 3
+          },
+          "coins": 0
+        },
+        "foot": "done"
+      },
+      {
+        "step": "Return from inspection, add one charcoal and complete repaired outcome",
+        "bag": {
+          "items": {
+            "ow_charcoal": 2,
+            "ow_meal_voucher": 1
+          },
+          "coins": 6
+        },
+        "minutes": 695,
+        "state": "repaired"
+      },
+      {
+        "step": "At actual Yang NPC redeem one voucher, no coin charge; packet enters bag",
+        "bag": {
+          "items": {
+            "ow_charcoal": 2,
+            "ow_travel_meal": 1
+          },
+          "coins": 6
+        },
+        "state": "carrying"
+      },
+      {
+        "step": "Open native item-use confirmation; packet is not consumed before confirmation",
+        "bag": {
+          "items": {
+            "ow_charcoal": 2,
+            "ow_travel_meal": 1
+          },
+          "coins": 6
+        },
+        "minutes": 695,
+        "state": "carrying"
+      },
+      {
+        "step": "Confirm native item use: packet removed, wrapper retained, ten minutes pass",
+        "bag": {
+          "items": {
+            "ow_charcoal": 2,
+            "ow_clean_wrapper": 1
+          },
+          "coins": 6
+        },
+        "minutes": 705,
+        "state": "done"
+      },
+      {
+        "step": "After editor JSON cache refresh and scene reload, repaired visual is selected from actual state",
+        "view": {
+          "scene": "雾津街头",
+          "mode": "exploring",
+          "player": {
+            "x": 1636.4612954378285,
+            "y": 1937.3426463858266,
+            "facing": "left",
+            "posture": null
+          },
+          "prompt": {
+            "kind": "hotspot",
+            "label": "[tag:string:owStove:ow_noodle_stove_label]",
+            "x": 1638,
+            "y": 1948
+          },
+          "dialogue": {
+            "active": false,
+            "speaker": "",
+            "text": "",
+            "awaitingAdvance": false,
+            "choices": []
+          },
+          "hud": {
+            "coins": 6,
+            "questTracker": "当前：闲逛找点吃的"
+          },
+          "moving": false
+        },
+        "images": [
+          {
+            "kind": "hotspot",
+            "label": "[tag:string:owStove:ow_stove_image_repaired_label]",
+            "x": 1638,
+            "y": 1948,
+            "image": "/resources/runtime/images/examine/ow_noodle_stove_repaired.png"
+          }
+        ]
+      },
+      {
+        "step": "Native rest to 20:00 after repair: NPC sample is empty, nighttime presence NOT verified",
+        "minutes": 1200,
+        "npcs": []
+      }
+    ],
+    "view": {
+      "scene": "雾津街头",
+      "mode": "exploring",
+      "player": {
+        "x": 1571.742681701456,
+        "y": 1937.3426463858266,
+        "facing": "left",
+        "posture": null
+      },
+      "prompt": null,
+      "dialogue": {
+        "active": false,
+        "speaker": "",
+        "text": "",
+        "awaitingAdvance": false,
+        "choices": []
+      },
+      "hud": {
+        "coins": 6,
+        "questTracker": "当前：闲逛找点吃的"
+      },
+      "moving": false
+    }
+  }
+}

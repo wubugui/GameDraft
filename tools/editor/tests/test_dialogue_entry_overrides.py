@@ -89,6 +89,24 @@ class CollectEntryOverridesTests(unittest.TestCase):
         model = _FakeModel(scenes={"街": _scene_with_hotspot({"entry": "n_2"})})
         self.assertEqual(collect_dialogue_graph_entry_overrides(model), {})
 
+    def test_graph_handoffs_use_effective_staging_and_respect_deletion(self) -> None:
+        def handoff(entry):
+            return {"nodes": {"handoff": {"type": "action", "actions": [{
+                "type": "startDialogueGraph", "params": {"graphId": "g", "entry": entry},
+            }]}}}
+
+        model = _FakeModel(
+            pending_dialogue_graph_edits={"source": handoff("edited")},
+            pending_dialogue_stubs={"new": handoff("new_entry")},
+            all_dialogue_graph_ids=lambda: ["source", "deleted"],
+            pending_dialogue_graph_deletes={"deleted"},
+            dialogues_path=Path("unused"),
+            _load=lambda path, default: handoff("on_disk"),
+        )
+        self.assertEqual(collect_dialogue_graph_entry_overrides(model), {"g": {"edited", "new_entry"}})
+        model.pending_dialogue_graph_edits.clear()
+        self.assertEqual(collect_dialogue_graph_entry_overrides(model), {"g": {"on_disk", "new_entry"}})
+
 
 class GraphEntryRootsTests(unittest.TestCase):
     def test_only_existing_nodes_become_roots(self) -> None:
@@ -142,6 +160,16 @@ class OrphanVerdictParityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertTrue(any("n_alt" in m for m in self._validator_orphans(model, Path(tmp))))
         self.assertTrue(any("n_alt" in w for w in self._editor_orphans(model)))
+
+    def test_cross_graph_handoff_is_an_entry_on_both_sides(self) -> None:
+        model = _FakeModel(pending_dialogue_stubs={"source": {
+            "entry": "handoff", "nodes": {"handoff": {"type": "action", "actions": [{
+                "type": "startDialogueGraph", "params": {"graphId": "g", "entry": "n_alt"},
+            }]}},
+        }})
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self._validator_orphans(model, Path(tmp)), [])
+        self.assertEqual(self._editor_orphans(model), [])
 
 
 if __name__ == "__main__":

@@ -1,0 +1,47 @@
+bringing up nodes...
+bringing up nodes...
+
+............F......                                                      [100%]
+================================== FAILURES ===================================
+___________ test_user_text_edit_survives_state_switch_and_save_all ____________
+[gw0] win32 -- Python 3.11.9 D:\GameDraft\.tools\venv\Scripts\python.exe
+
+tmp_path = WindowsPath('C:/Users/wubugui/AppData/Local/Temp/pytest-of-wubugui/pytest-571/popen-gw0/test_user_text_edit_survives_s0')
+
+    def test_user_text_edit_survives_state_switch_and_save_all(tmp_path):
+        app, model, editor = make_editor(tmp_path)
+        before_layers = copy.deepcopy(model.rules_data['rules'][0]['layers'])
+        QTest.mouseClick(editor._knowledge_section._header, Qt.MouseButton.LeftButton)
+        child = editor._knowledge_editor
+        child.state.setCurrentIndex(child.state.findData('known'))
+        # IdRefSelector stores ids itself; choose the row through the same index signal.
+        if child.state.current_id() != 'known':
+            child.state.setCurrentIndex(2 if child.state.itemText(0) == '（未选择）' else 1)
+        assert child.state.current_id() == 'known'
+        text = child.fields['xiang'][1]
+        text.setFocus()
+        QTest.keyClick(text, Qt.Key.Key_End, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClicks(text, ' evidence')
+        child.state.setCurrentIndex(0)
+        editor.flush_to_model()
+        rule = model.rules_data['rules'][0]
+>       assert rule['narrativeStates']['known']['layers']['xiang']['text'].endswith(' evidence')
+E       AssertionError: assert False
+E        +  where False = <built-in method endswith of str object at 0x000002A1A4943F50>(' evidence')
+E        +    where <built-in method endswith of str object at 0x000002A1A4943F50> = '亲历'.endswith
+
+tools\editor\tests\test_rule_knowledge.py:75: AssertionError
+============================ slowest 10 durations =============================
+0.65s call     tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_delete_rule_cascades_fragments
+0.62s call     tools/editor/tests/test_rule_knowledge.py::test_lazy_panel_browse_is_lossless
+0.42s call     tools/editor/tests/test_rule_knowledge.py::test_discard_does_not_return_through_flush
+0.40s call     tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_encounter_select_by_id_returns_bool
+0.40s call     tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_quest_select_by_id_bool_and_group_compat
+0.40s call     tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_encounter_select_by_id_clears_filter
+0.36s call     tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_fragment_apply_rejects_empty_and_duplicate_id
+0.32s call     tools/editor/tests/test_rule_knowledge.py::test_user_text_edit_survives_state_switch_and_save_all
+0.31s teardown tools/editor/tests/test_rule_knowledge.py::test_lazy_panel_browse_is_lossless
+0.31s teardown tools/editor/tests/test_quest_rule_encounter_nav_fixes.py::NavContractTests::test_rule_select_fragment_jumps_to_fragments_tab
+=========================== short test summary info ===========================
+FAILED tools/editor/tests/test_rule_knowledge.py::test_user_text_edit_survives_state_switch_and_save_all
+1 failed, 18 passed in 16.67s

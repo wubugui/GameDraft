@@ -1,0 +1,277 @@
+[ERR ] [dialogueGraph] 未接_生态_看_码头_木料:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_码头_木桶:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_码头_洋人女子:root 分支 0: narrative 条件引用的图 'eco_风评' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_码头_石碑:root 分支 0: narrative 条件引用的图 'eco_风评' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_码头_缆绳:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_码头_黄包车歇:root 分支 0: narrative 条件引用的图 'eco_风评' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_雾津_墙上告示:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_雾津_布篷底下:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_雾津_拆下的门板:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_雾津_收了的摊架:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_雾津_檐下灯笼:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_看_雾津_铺面匾额:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_码头_船工:root 分支 1: narrative 条件引用的图 'eco_风评' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_枯井_井台水桶:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_河边_漂木:root 分支 1: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_河边_石缝:root 分支 1: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_阎王岭_丢下的挑担:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_阎王岭_买路钱:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_阎王岭_棚下灶灰:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_阎王岭_界碑:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_东口箩筐:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_东街灯柱:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_墙根竹篓:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_巷口木桶:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_板车轮:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_檐下柴架:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_空摊架:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_茶馆门槛:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_西口灯柱:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_铺外水桶:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[ERR ] [dialogueGraph] 未接_生态_翻_雾津_门边水缸:root 分支 0: narrative 条件引用的图 'eco_眼力' 不在 narrative_graphs.json
+[WARN] [cutsceneSpeaker] cutscenes[赌坊输钱].steps[4]: 说话人 '赌坊看门人' 不在 targetScene '雾津街头' 的 NPC 表中——运行时取不到实体，本行不显立绘、不冒气泡
+[WARN] [cutsceneSpeaker] cutscenes[赌坊输钱].steps[5]: 说话人 '赌坊看门人' 不在 targetScene '雾津街头' 的 NPC 表中——运行时取不到实体，本行不显立绘、不冒气泡
+[WARN] [cutsceneSpeaker] cutscenes[赌坊输钱].steps[13]: 说话人 '赌坊看门人' 不在 targetScene '雾津街头' 的 NPC 表中——运行时取不到实体，本行不显立绘、不冒气泡
+[WARN] [cutsceneSpeaker] cutscenes[赌坊输钱].steps[14]: 说话人 '赌坊看门人' 不在 targetScene '雾津街头' 的 NPC 表中——运行时取不到实体，本行不显立绘、不冒气泡
+[WARN] [scene] test_room_a: Hotspot 'new_hotspot_10' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] test_room_a: Hotspot 'new_hotspot_15' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 义庄: Hotspot 'hs_停尸凳' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 梦_农家院: Hotspot 'hs_院门' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 梦_里屋: Hotspot 'deco_脚尾灯' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 梦_里屋: Hotspot 'deco_火盆' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 梦_饭屋: Hotspot 'hs_倒头饭' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 梦_饭屋: Hotspot 'hs_油灯' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 码头白天: Hotspot 'new_hotspot_箱子堆' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 码头白天: Hotspot 'new_hotspot_8' cutsceneIds 包含 'cutscene_10'，不在过场 index 列表中
+[WARN] [scene] 码头白天: Hotspot 'new_hotspot_9' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 码头白天: Hotspot 'new_hotspot_10' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 码头白天: Hotspot 'new_hotspot_11' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 码头白天: Hotspot 'new_hotspot_12' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [scene] 码头白天: Hotspot 'new_hotspot_13' inspect 未配置 graphId、非空 text 或非空 actions
+[WARN] [archive] book_erta_guide/entry/book_entry_2: 书页子条目无任何可显示内容（标题/正文/按语/插图全空），运行时不可见
+[WARN] [dialogueGraph] 未接_生态_山道闲话:act_ri: playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_山道闲话:act_ye: showEmote target='eco_ywl_驮骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_歇口气_河边:act: emitNarrativeSignal 信号 'eco_时辰_推进' 未在 narrative_graphs.signals 注册表登记
+[WARN] [dialogueGraph] 未接_生态_歇口气_河边:act: emitNarrativeSignal 信号 'eco_时辰_推进' 没有任何 Transition 监听（发出后不会推动任何迁移）
+[WARN] [dialogueGraph] 未接_生态_歇口气_河边:act: persistNpcEnablePatrol npcId='eco_hb_鸭丙' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_歇口气_河边:act: persistNpcEnablePatrol npcId='eco_hb_野狐' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_歇口气_码头白天:act: emitNarrativeSignal 信号 'eco_时辰_推进' 未在 narrative_graphs.signals 注册表登记
+[WARN] [dialogueGraph] 未接_生态_歇口气_码头白天:act: emitNarrativeSignal 信号 'eco_时辰_推进' 没有任何 Transition 监听（发出后不会推动任何迁移）
+[WARN] [dialogueGraph] 未接_生态_歇口气_码头白天:act: persistNpcEnablePatrol npcId='eco_dk_力工丙' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_歇口气_码头白天:act: persistNpcEnablePatrol npcId='eco_dk_挑夫' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_歇口气_码头白天:act: persistNpcEnablePatrol npcId='eco_dk_巡场兵' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_歇口气_码头白天:act: persistNpcEnablePatrol npcId='eco_dk_江鸭甲' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_歇口气_码头白天:act: persistNpcEnablePatrol npcId='eco_dk_江鸭乙' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_歇口气_码头白天:act: persistNpcEnablePatrol npcId='eco_dk_看摊鹅' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_歇口气_阎王岭山口:act: emitNarrativeSignal 信号 'eco_时辰_推进' 未在 narrative_graphs.signals 注册表登记
+[WARN] [dialogueGraph] 未接_生态_歇口气_阎王岭山口:act: emitNarrativeSignal 信号 'eco_时辰_推进' 没有任何 Transition 监听（发出后不会推动任何迁移）
+[WARN] [dialogueGraph] 未接_生态_歇口气_阎王岭山口:act: persistNpcEnablePatrol npcId='eco_ywl_挑担' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_歇口气_阎王岭山口:act: persistNpcEnablePatrol npcId='eco_ywl_队狗' 不在任意场景的 NPC 清单中
+[WARN] [dialogueGraph] 未接_生态_看_码头_木料:act_ri: playNpcAnimation target='eco_dk_客店鸡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_木桶:act_ri: faceEntity target='eco_dk_船工' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_木桶:act_ri: showEmote target='eco_dk_船工' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_水缸:act_ri: faceEntity target='eco_dk_客店鸡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_水缸:act_ri: playNpcAnimation target='eco_dk_客店鸡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_江面:act_ri: faceEntity target='eco_dk_栈桥狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_江面:act_ri: playNpcAnimation target='eco_dk_栈桥狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_江面:act_ye: playNpcAnimation target='eco_dk_栈桥狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_缆绳:act_ri: playNpcAnimation target='eco_dk_货堆猫' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_菜箩:act_ri: faceEntity target='eco_dk_看摊鹅' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_菜箩:act_ri: playNpcAnimation target='eco_dk_看摊鹅' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_菜箩:act_ri: showEmote target='eco_dk_看摊鹅' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_货栈门:act_ri: playNpcAnimation target='eco_dk_江鸭甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_货船:act_ri: faceEntity target='eco_dk_船工' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_货船:act_ri: showSpeechBubble target='eco_dk_船工' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_酒坛:act_ri: faceEntity target='eco_dk_看摊鹅' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_酒坛:act_ri: playNpcAnimation target='eco_dk_看摊鹅' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_酒坛:act_ri: showEmote target='eco_dk_看摊鹅' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_饮槽:act_ri: faceEntity target='eco_dk_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_饮槽:act_ri: showEmote target='eco_dk_拴骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_饮槽:act_ri: playNpcAnimation target='eco_dk_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_黄包车歇:act_ri: faceEntity target='eco_dk_候工甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_黄包车歇:act_ri: showEmote target='eco_dk_候工甲' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_黄包车歇:act_hui: faceEntity target='eco_dk_候工甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_黄包车歇:act_hui: playNpcAnimation target='eco_dk_候工甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_黄包车歇:act_hui: showEmote target='eco_dk_候工甲' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_黄包车闲:act_ri: faceEntity target='eco_dk_候工丙' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_码头_黄包车闲:act_ri: showEmote target='eco_dk_候工丙' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_雾津_布篷底下:act_first: faceEntity target='eco_wj_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_雾津_拆下的门板:act_first: faceEntity target='eco_wj_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_雾津_拆下的门板:act_first: showEmote target='eco_wj_拴骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_雾津_收了的摊架:act_first: playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_雾津_收了的摊架:act_night: playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_看_雾津_收了的摊架:act_deep: playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_枯井_井台水桶:act: playNpcAnimation target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_枯井_井台水桶:act_deep: faceEntity target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_枯井_井台水桶:act_deep: playNpcAnimation target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_河边_漂木:act: playNpcAnimation target='eco_hb_鸭甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_河边_漂木:act_deep: faceEntity target='eco_hb_鸭乙' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_河边_漂木:act_deep: playNpcAnimation target='eco_hb_鸭乙' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_河边_石缝:act: playNpcAnimation target='eco_hb_鸭乙' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_河边_石缝:act_deep: faceEntity target='eco_hb_鸭甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_河边_石缝:act_deep: playNpcAnimation target='eco_hb_鸭甲' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_丢下的挑担:act: showEmote target='eco_ywl_挑担' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_丢下的挑担:act_deep: showEmote target='eco_ywl_挑担' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_丢下的挑担:act_deep: playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_买路钱:act: playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_买路钱:act_deep: playNpcAnimation target='eco_ywl_驮骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_买路钱:act_deep: showEmote target='eco_ywl_驮骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_棚下灶灰:act: showEmote target='eco_ywl_驮夫' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_棚下灶灰:act_deep: showEmote target='eco_ywl_驮夫' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_棚下灶灰:act_deep: playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_界碑:act: playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_阎王岭_界碑:act_deep: playNpcAnimation target='eco_ywl_队狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_东街灯柱:act_first: playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_东街灯柱:act_night: playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_板车轮:act_night: faceEntity target='eco_wj_官差刀' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_板车轮:act_night: showEmote target='eco_wj_官差刀' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_檐下柴架:act_first: playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_檐下柴架:act_night: playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_檐下柴架:act_deep: playNpcAnimation target='eco_wj_东段狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_檐下柴架:act_deep: showEmote target='eco_wj_东段狗' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_茶馆门槛:act_first: playNpcAnimation target='eco_wj_面摊_陈嬢嬢' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_铺外水桶:act_first: playNpcAnimation target='eco_wj_拴骡' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_铺外水桶:act_first: showEmote target='eco_wj_拴骡' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_翻_雾津_门边水缸:act_first: showSpeechBubble target='eco_wj_面摊_陈嬢嬢' 无法解析（需 NPC / 热点 id / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_荒庙香客:act_wu: faceEntity target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [dialogueGraph] 未接_生态_荒庙香客:act_wu: playNpcAnimation target='eco_kj_野狗' 在当前上下文下无法解析为实体（NPC / player / 本过场 _cut_*）
+[WARN] [narrative] flow_xungou_main: Transition 't_6' 仍是草稿信号 __draft__（不会被任何来源触发）
+[WARN] [narrative] wrapper_graph_1: Transition 't_1' 仍是草稿信号 __draft__（不会被任何来源触发）
+[WARN] [narrative] 主线_交互点: Transition 't_1' 仍是草稿信号 __draft__（不会被任何来源触发）
+[WARN] [narrative] 街巷_赌坊: Transition 't_1' 监听信号 '主线_序章完结'，但全项目没有任何对话/资产/叙事图发出它，也无画布黑盒声明（悬垂监听，永远不会触发）
+[WARN] [scene] teahouse: transition 'exit_to_street' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] test_room_a: transition 'exit_to_teahouse' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] test_room_a: transition 'exit_to_mountain_pass' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] test_room_a: transition 'exit_to_bridge' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] test_room_a: transition 'exit_to_b' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] test_room_a: transition 'T到码头1' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] test_room_a: transition 'T到码头2' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 义庄: transition 'T_出义庄' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 城隍庙夜: transition 'T_出庙' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 婆子家院: transition 'T_出院子' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 婆子家院: transition 'T_出院回街' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 崖墓: transition 'T_出崖墓' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 枯井土地庙: transition 'T_回城' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 码头白天: transition 'T码头到街巷' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 码头白天: transition 'T到街巷2' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 破屋: transition 'T_出破屋' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 野道: transition 'T_到义庄' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 阎王岭山口: transition 'T_下山回城' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 雾津街头: transition 'T_去义庄' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 雾津街头: transition 'T_去破屋' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [scene] 雾津街头: transition 'T_去后巷子' 未声明 planes 归属（项目已有多位面；独立世界型位面下该出口将不存在，请确认是否有意）
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_山道闲话.json @ nodes/act_ri/actions/0/params/target: 'eco_ywl_队狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_山道闲话.json @ nodes/act_ye/actions/0/params/target: 'eco_ywl_驮骡' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_河边.json @ nodes/act/actions/0/params/signal: 'eco_时辰_推进' is not one of ['Demo主线开始', 'beishi_corpse_inspected', 'beishi_enter_wild', 'beishi_fled', 'beishi_guiju_shou', 'beishi_hired', 'beishi_lg_accepted',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_河边.json @ nodes/act/actions/1/params/npcId: 'eco_hb_鸭丙' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_河边.json @ nodes/act/actions/2/params/npcId: 'eco_hb_野狐' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_码头白天.json @ nodes/act/actions/0/params/signal: 'eco_时辰_推进' is not one of ['Demo主线开始', 'beishi_corpse_inspected', 'beishi_enter_wild', 'beishi_fled', 'beishi_guiju_shou', 'beishi_hired', 'beishi_lg_accepted',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_码头白天.json @ nodes/act/actions/1/params/npcId: 'eco_dk_力工丙' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_码头白天.json @ nodes/act/actions/2/params/npcId: 'eco_dk_挑夫' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_码头白天.json @ nodes/act/actions/3/params/npcId: 'eco_dk_巡场兵' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_码头白天.json @ nodes/act/actions/4/params/npcId: 'eco_dk_江鸭甲' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_码头白天.json @ nodes/act/actions/5/params/npcId: 'eco_dk_江鸭乙' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_码头白天.json @ nodes/act/actions/6/params/npcId: 'eco_dk_看摊鹅' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_阎王岭山口.json @ nodes/act/actions/0/params/signal: 'eco_时辰_推进' is not one of ['Demo主线开始', 'beishi_corpse_inspected', 'beishi_enter_wild', 'beishi_fled', 'beishi_guiju_shou', 'beishi_hired', 'beishi_lg_accepted',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_阎王岭山口.json @ nodes/act/actions/1/params/npcId: 'eco_ywl_挑担' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_歇口气_阎王岭山口.json @ nodes/act/actions/2/params/npcId: 'eco_ywl_队狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_木料.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_木料.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_客店鸡' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_木桶.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_木桶.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_船工' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_木桶.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_船工' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_水缸.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_客店鸡' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_水缸.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_客店鸡' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_江面.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_栈桥狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_江面.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_栈桥狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_江面.json @ nodes/act_ye/actions/0/params/target: 'eco_dk_栈桥狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_洋人女子.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_风评', 'state': '沾晦气', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_石碑.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_风评', 'state': '面熟', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_缆绳.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_缆绳.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_货堆猫' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_菜箩.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_看摊鹅' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_菜箩.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_看摊鹅' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_菜箩.json @ nodes/act_ri/actions/2/params/target: 'eco_dk_看摊鹅' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_货栈门.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_江鸭甲' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_货船.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_船工' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_货船.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_船工' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_酒坛.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_看摊鹅' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_酒坛.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_看摊鹅' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_酒坛.json @ nodes/act_ri/actions/2/params/target: 'eco_dk_看摊鹅' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_饮槽.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_拴骡' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_饮槽.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_拴骡' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_饮槽.json @ nodes/act_ri/actions/2/params/target: 'eco_dk_拴骡' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_黄包车歇.json @ nodes/act_hui/actions/0/params/target: 'eco_dk_候工甲' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_黄包车歇.json @ nodes/act_hui/actions/1/params/target: 'eco_dk_候工甲' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_黄包车歇.json @ nodes/act_hui/actions/2/params/target: 'eco_dk_候工甲' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_黄包车歇.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_风评', 'state': '沾晦气', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_黄包车歇.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_候工甲' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_黄包车歇.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_候工甲' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_黄包车闲.json @ nodes/act_ri/actions/0/params/target: 'eco_dk_候工丙' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_码头_黄包车闲.json @ nodes/act_ri/actions/1/params/target: 'eco_dk_候工丙' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_墙上告示.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_布篷底下.json @ nodes/act_first/actions/0/params/target: 'eco_wj_拴骡' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_布篷底下.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_拆下的门板.json @ nodes/act_first/actions/0/params/target: 'eco_wj_拴骡' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_拆下的门板.json @ nodes/act_first/actions/1/params/target: 'eco_wj_拴骡' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_拆下的门板.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_收了的摊架.json @ nodes/act_night/actions/0/params/target: 'eco_wj_东段狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_收了的摊架.json @ nodes/act_first/actions/0/params/target: 'eco_wj_东段狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_收了的摊架.json @ nodes/act_deep/actions/0/params/target: 'eco_wj_东段狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_收了的摊架.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_檐下灯笼.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_看_雾津_铺面匾额.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_码头_船工.json @ nodes/root/cases/1/conditions: [{'narrative': 'eco_风评', 'state': '沾晦气', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_枯井_井台水桶.json @ nodes/act/actions/0/params/target: 'eco_kj_野狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_枯井_井台水桶.json @ nodes/act_deep/actions/0/params/target: 'eco_kj_野狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_枯井_井台水桶.json @ nodes/act_deep/actions/1/params/target: 'eco_kj_野狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_枯井_井台水桶.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[validate] 31 error(s), 245 warning(s).
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_河边_漂木.json @ nodes/act/actions/0/params/target: 'eco_hb_鸭甲' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_河边_漂木.json @ nodes/act_deep/actions/0/params/target: 'eco_hb_鸭乙' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_河边_漂木.json @ nodes/act_deep/actions/1/params/target: 'eco_hb_鸭乙' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_河边_漂木.json @ nodes/root/cases/1/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_河边_石缝.json @ nodes/act/actions/0/params/target: 'eco_hb_鸭乙' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_河边_石缝.json @ nodes/act_deep/actions/0/params/target: 'eco_hb_鸭甲' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_河边_石缝.json @ nodes/act_deep/actions/1/params/target: 'eco_hb_鸭甲' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_河边_石缝.json @ nodes/root/cases/1/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_丢下的挑担.json @ nodes/act/actions/0/params/target: 'eco_ywl_挑担' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_丢下的挑担.json @ nodes/act_deep/actions/0/params/target: 'eco_ywl_挑担' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_丢下的挑担.json @ nodes/act_deep/actions/1/params/target: 'eco_ywl_队狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_丢下的挑担.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_买路钱.json @ nodes/act/actions/0/params/target: 'eco_ywl_队狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_买路钱.json @ nodes/act_deep/actions/0/params/target: 'eco_ywl_驮骡' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_买路钱.json @ nodes/act_deep/actions/1/params/target: 'eco_ywl_驮骡' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_买路钱.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_棚下灶灰.json @ nodes/act/actions/0/params/target: 'eco_ywl_驮夫' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_棚下灶灰.json @ nodes/act_deep/actions/0/params/target: 'eco_ywl_驮夫' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_棚下灶灰.json @ nodes/act_deep/actions/1/params/target: 'eco_ywl_队狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_棚下灶灰.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_界碑.json @ nodes/act/actions/0/params/target: 'eco_ywl_队狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_界碑.json @ nodes/act_deep/actions/0/params/target: 'eco_ywl_队狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_阎王岭_界碑.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_东口箩筐.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_东街灯柱.json @ nodes/act_night/actions/0/params/target: 'eco_wj_东段狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_东街灯柱.json @ nodes/act_first/actions/0/params/target: 'eco_wj_东段狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_东街灯柱.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_墙根竹篓.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_巷口木桶.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_板车轮.json @ nodes/act_night/actions/0/params/target: 'eco_wj_官差刀' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_板车轮.json @ nodes/act_night/actions/1/params/target: 'eco_wj_官差刀' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_板车轮.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_檐下柴架.json @ nodes/act_night/actions/0/params/target: 'eco_wj_东段狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_檐下柴架.json @ nodes/act_first/actions/0/params/target: 'eco_wj_东段狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_檐下柴架.json @ nodes/act_deep/actions/0/params/target: 'eco_wj_东段狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_檐下柴架.json @ nodes/act_deep/actions/1/params/target: 'eco_wj_东段狗' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_檐下柴架.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_空摊架.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_茶馆门槛.json @ nodes/act_first/actions/0/params/target: 'eco_wj_面摊_陈嬢嬢' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_茶馆门槛.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_西口灯柱.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_铺外水桶.json @ nodes/act_first/actions/0/params/target: 'eco_wj_拴骡' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_铺外水桶.json @ nodes/act_first/actions/1/params/target: 'eco_wj_拴骡' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地庙',
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_铺外水桶.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_门边水缸.json @ nodes/act_first/actions/0/params/target: 'eco_wj_面摊_陈嬢嬢' is not one of ['', 'NPC_癞子', 'T_下山回城', 'T_出义庄', 'T_出城', 'T_出崖墓', 'T_出庙', 'T_出破屋', 'T_出院回街', 'T_出院子', 'T_到义庄', 'T_去义庄', 'T_去后巷', 'T_去后巷子', 'T_去土地
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_翻_雾津_门边水缸.json @ nodes/root/cases/0/conditions: [{'narrative': 'eco_眼力', 'state': '眼尖', 'reached': True}] is not valid under any of the given schemas
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_荒庙香客.json @ nodes/act_wu/actions/0/params/target: 'eco_kj_野狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '
+[WARN] [json-lang] schema: public\assets\dialogues\graphs\未接_生态_荒庙香客.json @ nodes/act_wu/actions/1/params/target: 'eco_kj_野狗' is not one of ['', 'NPC_癞子', '_cut_cloaked_figure', '_cut_temple_short_man', '_cut_temple_tall_man', '_cut_temple_woman', 'blind_li', 'fx_glow_1', '

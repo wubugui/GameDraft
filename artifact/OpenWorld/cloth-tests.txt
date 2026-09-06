@@ -1,0 +1,9 @@
+
+ RUN  v4.1.5 D:/GameDraft
+
+····························
+
+ Test Files  3 passed (3)
+      Tests  28 passed (28)
+   Start at  21:01:25
+   Duration  17.57s (transform 5.73s, setup 0ms, import 18.95s, tests 321ms, environment 16ms)

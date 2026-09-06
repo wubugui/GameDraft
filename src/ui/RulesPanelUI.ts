@@ -236,21 +236,24 @@ export class RulesPanelUI {
    * 规矩是分层验证的（每层各有 verified），行上只放得下一个词：**有存疑就报存疑**，
    * 其次有生效就报生效，全无则未验证。逐层的成色仍旧在右栏逐层标注，不靠这里表达。
    */
-  private aggregateVerified(layers: { verified?: string; text?: string }[]): string {
+  private aggregateVerified(layers: { verified?: string; text?: string }[], requireAll = false): string {
     let hasEffective = false;
+    let hasUnverified = false;
     for (const l of layers) {
       if (!l.text?.trim()) continue;
       const v = l.verified ?? 'unverified';
       if (v === 'questionable') return 'questionable';
       if (v === 'effective') hasEffective = true;
+      else hasUnverified = true;
     }
+    if (requireAll && hasUnverified) return 'unverified';
     return hasEffective ? 'effective' : 'unverified';
   }
 
   private rows(): RuleRow[] {
     const out: RuleRow[] = [];
     for (const r of this.rulesData.getAcquiredRules()) {
-      const vKey = this.aggregateVerified(LAYER_ORDER.map(L => r.def.layers[L] ?? {}));
+      const vKey = this.aggregateVerified(LAYER_ORDER.map(L => r.def.layers[L] ?? {}), !!r.def.narrativeStates);
       out.push({
         id: r.def.id,
         name: this.r(r.def.name),
@@ -261,11 +264,13 @@ export class RulesPanelUI {
       });
     }
     for (const e of this.rulesData.getDiscoveredRules()) {
+      const narrative = !!e.def.narrativeStates;
+      const verified = this.aggregateVerified(Object.values(e.def.layers), narrative);
       out.push({
         id: e.def.id,
-        name: this.r(e.def.incompleteName ?? this.strings.get('rulesPanel', 'unknown')),
-        statusLabel: this.plainLabel('collecting'),
-        statusColor: UITheme.colors.ruleCollecting,
+        name: this.r(e.def.incompleteName ?? (narrative ? e.def.name : this.strings.get('rulesPanel', 'unknown'))),
+        statusLabel: narrative ? this.rulesData.getVerifiedLabel(verified) : this.plainLabel('collecting'),
+        statusColor: narrative ? VERIFIED_COLORS[verified] ?? UITheme.colors.ruleCollecting : UITheme.colors.ruleCollecting,
         acquired: false,
         categoryName: this.rulesData.getCategoryName(e.def.category),
       });
@@ -636,7 +641,7 @@ export class RulesPanelUI {
     view.content.addChild(cat);
     cy += cat.height + UITheme.spacing.md;
 
-    cy = row.acquired
+    cy = row.acquired || !!this.rulesData.getRuleDef(row.id)?.narrativeStates
       ? this.fillAcquiredBody(view.content, row.id, wrapW, cy)
       : this.fillCollectingBody(view.content, row.id, wrapW, cy);
 

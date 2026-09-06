@@ -453,6 +453,7 @@ export const VALID_NARRATIVE_WRAPPER_OWNER_TYPES = [
   'zone',
   'sceneGroup',
   'quest',
+  'rule',
   'dialogue',
   'minigame',
   'cutscene',

@@ -1,3 +1,549 @@
 {
-  "schedules": []
+  "schedules": [
+    {
+      "characterId": "ow_zhou",
+      "entries": [
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "码头白天",
+          "conditions": [
+            {
+              "narrative": "flow_ow_tally",
+              "state": "compromise"
+            }
+          ]
+        },
+        {
+          "from": "07:00",
+          "to": "11:00",
+          "scene": "码头白天"
+        },
+        {
+          "from": "11:00",
+          "to": "13:00",
+          "scene": "teahouse"
+        },
+        {
+          "from": "13:00",
+          "to": "18:00",
+          "scene": "码头白天"
+        },
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "雾津街头",
+          "conditions": [
+            {
+              "not": {
+                "narrative": "flow_ow_tally",
+                "state": "compromise"
+              }
+            }
+          ]
+        },
+        {
+          "from": "20:00",
+          "to": "07:00",
+          "scene": null
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:zhou_exit]",
+      "preferredExit": "ow_exit_zhou"
+    },
+    {
+      "characterId": "ow_yang",
+      "entries": [
+        {
+          "from": "07:00",
+          "to": "22:00",
+          "scene": "雾津街头",
+          "conditions": [
+            {
+              "narrative": "flow_ow_stove",
+              "state": "repaired",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "22:00",
+          "to": "07:00",
+          "scene": null,
+          "conditions": [
+            {
+              "narrative": "flow_ow_stove",
+              "state": "repaired",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "07:00",
+          "to": "13:00",
+          "scene": "雾津街头",
+          "conditions": [
+            {
+              "narrative": "flow_ow_stove",
+              "state": "borrowed",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "13:00",
+          "to": "20:00",
+          "scene": "test_room_b",
+          "conditions": [
+            {
+              "narrative": "flow_ow_stove",
+              "state": "borrowed",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "20:00",
+          "to": "07:00",
+          "scene": null,
+          "conditions": [
+            {
+              "narrative": "flow_ow_stove",
+              "state": "borrowed",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "07:00",
+          "to": "18:00",
+          "scene": "雾津街头",
+          "conditions": [
+            {
+              "not": {
+                "any": [
+                  {
+                    "narrative": "flow_ow_stove",
+                    "state": "repaired",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_stove",
+                    "state": "borrowed",
+                    "reached": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "test_room_b",
+          "conditions": [
+            {
+              "not": {
+                "any": [
+                  {
+                    "narrative": "flow_ow_stove",
+                    "state": "repaired",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_stove",
+                    "state": "borrowed",
+                    "reached": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "from": "20:00",
+          "to": "07:00",
+          "scene": null,
+          "conditions": [
+            {
+              "not": {
+                "any": [
+                  {
+                    "narrative": "flow_ow_stove",
+                    "state": "repaired",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_stove",
+                    "state": "borrowed",
+                    "reached": true
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:yang_exit]",
+      "preferredExit": "ow_exit_yang"
+    },
+    {
+      "characterId": "ow_luo",
+      "entries": [
+        {
+          "from": "07:00",
+          "to": "18:00",
+          "scene": "test_room_b"
+        },
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "test_room_b",
+          "conditions": [
+            {
+              "narrative": "flow_ow_paper",
+              "state": "remade",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "teahouse",
+          "conditions": [
+            {
+              "not": {
+                "narrative": "flow_ow_paper",
+                "state": "remade",
+                "reached": true
+              }
+            }
+          ]
+        },
+        {
+          "from": "20:00",
+          "to": "07:00",
+          "scene": null
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:luo_exit]",
+      "preferredExit": "ow_exit_luo"
+    },
+    {
+      "characterId": "ow_he",
+      "entries": [
+        {
+          "from": "07:00",
+          "to": "11:00",
+          "scene": "河边"
+        },
+        {
+          "from": "11:00",
+          "to": "18:00",
+          "scene": "test_room_b"
+        },
+        {
+          "from": "18:00",
+          "to": "07:00",
+          "scene": null
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:he_exit]",
+      "preferredExit": "ow_exit_he"
+    },
+    {
+      "characterId": "ow_deng",
+      "entries": [
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "码头白天",
+          "conditions": [
+            {
+              "narrative": "flow_ow_coat",
+              "state": "returned",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "test_room_b",
+          "conditions": [
+            {
+              "not": {
+                "narrative": "flow_ow_coat",
+                "state": "returned",
+                "reached": true
+              }
+            }
+          ]
+        },
+        {
+          "from": "07:00",
+          "to": "11:00",
+          "scene": "雾津街头"
+        },
+        {
+          "from": "11:00",
+          "to": "18:00",
+          "scene": "码头白天"
+        },
+        {
+          "from": "20:00",
+          "to": "07:00",
+          "scene": null
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:deng_exit]",
+      "preferredExit": "ow_exit_deng"
+    },
+    {
+      "characterId": "ow_ding",
+      "entries": [
+        {
+          "from": "07:00",
+          "to": "18:00",
+          "scene": null
+        },
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "bridge_underpass"
+        },
+        {
+          "from": "20:00",
+          "to": "22:00",
+          "scene": "bridge_underpass",
+          "conditions": [
+            {
+              "narrative": "flow_ow_watch",
+              "state": "original",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "20:00",
+          "to": "22:00",
+          "scene": "雾津街头",
+          "conditions": [
+            {
+              "not": {
+                "narrative": "flow_ow_watch",
+                "state": "original",
+                "reached": true
+              }
+            }
+          ]
+        },
+        {
+          "from": "22:00",
+          "to": "07:00",
+          "scene": "雾津街头"
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:ding_exit]",
+      "preferredExit": "ow_exit_ding"
+    },
+    {
+      "characterId": "ow_monk",
+      "entries": [
+        {
+          "from": "07:00",
+          "to": "11:00",
+          "scene": "temple_exterior"
+        },
+        {
+          "from": "11:00",
+          "to": "20:00",
+          "scene": "temple"
+        },
+        {
+          "from": "20:00",
+          "to": "22:00",
+          "scene": "temple_exterior",
+          "conditions": [
+            {
+              "narrative": "flow_ow_incense",
+              "state": "sheltered",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "20:00",
+          "to": "22:00",
+          "scene": "temple",
+          "conditions": [
+            {
+              "narrative": "flow_ow_incense",
+              "state": "moved",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "20:00",
+          "to": "22:00",
+          "scene": null,
+          "conditions": [
+            {
+              "not": {
+                "any": [
+                  {
+                    "narrative": "flow_ow_incense",
+                    "state": "sheltered",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_incense",
+                    "state": "moved",
+                    "reached": true
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "from": "22:00",
+          "to": "07:00",
+          "scene": null
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:monk_exit]",
+      "preferredExit": "ow_exit_monk"
+    },
+    {
+      "characterId": "ow_man",
+      "entries": [
+        {
+          "from": "07:00",
+          "to": "18:00",
+          "scene": "雾津街头"
+        },
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "test_room_b"
+        },
+        {
+          "from": "20:00",
+          "to": "07:00",
+          "scene": null
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:man_exit]",
+      "preferredExit": "ow_exit_man"
+    },
+    {
+      "characterId": "ow_qian",
+      "entries": [
+        {
+          "from": "07:00",
+          "to": "18:00",
+          "scene": "码头白天"
+        },
+        {
+          "from": "18:00",
+          "to": "07:00",
+          "scene": "码头白天",
+          "conditions": [
+            {
+              "any": [
+                {
+                  "narrative": "flow_ow_water",
+                  "state": "repaired",
+                  "reached": true
+                },
+                {
+                  "narrative": "flow_ow_water",
+                  "state": "done"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "bridge_underpass",
+          "conditions": [
+            {
+              "narrative": "flow_ow_water",
+              "state": "diverted",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "20:00",
+          "to": "07:00",
+          "scene": "码头白天",
+          "conditions": [
+            {
+              "narrative": "flow_ow_water",
+              "state": "diverted",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "from": "18:00",
+          "to": "07:00",
+          "scene": "bridge_underpass",
+          "conditions": [
+            {
+              "not": {
+                "any": [
+                  {
+                    "narrative": "flow_ow_water",
+                    "state": "done",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_water",
+                    "state": "repaired",
+                    "reached": true
+                  },
+                  {
+                    "narrative": "flow_ow_water",
+                    "state": "diverted",
+                    "reached": true
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:qian_exit]",
+      "preferredExit": "ow_exit_qian"
+    },
+    {
+      "characterId": "ow_huang",
+      "entries": [
+        {
+          "from": "07:00",
+          "to": "18:00",
+          "scene": "mountain_pass"
+        },
+        {
+          "from": "18:00",
+          "to": "20:00",
+          "scene": "test_room_b"
+        },
+        {
+          "from": "20:00",
+          "to": "07:00",
+          "scene": null
+        }
+      ],
+      "exitLine": "[tag:string:openWorld:huang_exit]",
+      "preferredExit": "ow_exit_huang"
+    }
+  ]
 }

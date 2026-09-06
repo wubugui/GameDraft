@@ -77,7 +77,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   giveFragment: { required: ['id'], nonEmpty: ['id'] },
   updateQuest: { required: ['id'], nonEmpty: ['id'] },
   // 当前任务槽（D6）：id 允许空串（= 清空当前任务），故不进 nonEmpty；announce 为可选勾选
-  setFocusedQuest: { required: ['id'], optional: ['announce'] },
+  setFocusedQuest: { required: ['id'], optional: ['announce', 'objectiveId'] },
   pickup: { required: ['itemName', 'count'], nonEmpty: ['itemName'], optional: ['itemId', 'isCurrency'] },
   shopPurchase: { required: ['itemId', 'price'], nonEmpty: ['itemId'] },
   inventoryDiscard: { required: ['itemId'], nonEmpty: ['itemId'] },

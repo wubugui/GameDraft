@@ -420,7 +420,7 @@ export class PaperCraftMinigameScene {
     // 槽名先画、部件后画：摆上之后让纸件盖过标签，同时把标签压到最暗一档。
     // 标签的职责是"这儿该放什么"，件一摆上就该退场——不退就正压在纸人的胳膊上。
     const t = createStyledText({
-      text: `${slot.label}${slot.optional ? this.resolveText('[tag:string:paperCraft:slotOptionalSuffix]') : ''}`,
+      text: `${this.resolveText(slot.label)}${slot.optional ? this.resolveText('[tag:string:paperCraft:slotOptionalSuffix]') : ''}`,
       style: {
         fontFamily: UITheme.fonts.ui,
         fontSize: UITheme.fontSize.micro,
@@ -509,7 +509,7 @@ export class PaperCraftMinigameScene {
     art.position.set(ITEM_W / 2, 24);
     wrap.addChild(art);
     const label = createStyledText({
-      text: part.label,
+      text: this.resolveText(part.label),
       style: {
         fontFamily: UITheme.fonts.ui,
         fontSize: UITheme.fontSize.small,
@@ -768,7 +768,7 @@ export class PaperCraftMinigameScene {
 
     let x = Math.round(t.width) + UITheme.spacing.md;
     for (const o of opts) {
-      const b = this.makeButton(o.label, o.active, o.pick, o.tint);
+      const b = this.makeButton(this.resolveText(o.label), o.active, o.pick, o.tint);
       b.position.set(x, 0);
       c.addChild(b);
       x += b.totalWidth + UITheme.spacing.sm;
@@ -837,7 +837,7 @@ export class PaperCraftMinigameScene {
         fillToken(
           this.resolveText('[tag:string:paperCraft:missingParts]'),
           '{parts}',
-          missing.map((s) => s.label).join('、'),
+          missing.map((s) => this.resolveText(s.label)).join('、'),
         ),
         true,
       );
@@ -917,8 +917,8 @@ export class PaperCraftMinigameScene {
 
   private slotRejectsText(slotLabel: string, partLabel: string): string {
     return fillTemplate(this.resolveText('[tag:string:paperCraft:slotRejects]'), {
-      '{slot}': slotLabel,
-      '{part}': partLabel,
+      '{slot}': this.resolveText(slotLabel),
+      '{part}': this.resolveText(partLabel),
     });
   }
 
@@ -967,7 +967,7 @@ export class PaperCraftMinigameScene {
     g.fill({ color: 0xe9ddc3, alpha: 0.95 });
     g.stroke({ color: 0x5e4630, width: 2 });
     const t = createStyledText({
-      text: part.label,
+      text: this.resolveText(part.label),
       style: {
         fontFamily: UITheme.fonts.ui,
         fontSize: UITheme.fontSize.micro,

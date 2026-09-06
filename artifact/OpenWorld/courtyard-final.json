@@ -1,0 +1,61 @@
+{
+  "method": "Registered time action and diagnostic scene checkpoint; fixed ticks sample native movement.",
+  "samples": [
+    {
+      "scene": "庙宇",
+      "minutes": 420,
+      "actors": [
+        {
+          "id": "ow_monk",
+          "visible": true,
+          "x": 791.0132897960106,
+          "y": 666.453600684523,
+          "animation": "monk_walk",
+          "frame": 4
+        }
+      ]
+    },
+    {
+      "scene": "庙宇",
+      "minutes": 420,
+      "actors": [
+        {
+          "id": "ow_monk",
+          "visible": true,
+          "x": 931.3448060833485,
+          "y": 714.224218789804,
+          "animation": "monk_walk",
+          "frame": 15
+        }
+      ]
+    },
+    {
+      "scene": "庙宇",
+      "minutes": 420,
+      "actors": [
+        {
+          "id": "ow_monk",
+          "visible": true,
+          "x": 914.4568840929974,
+          "y": 706.8932988919912,
+          "animation": "monk_walk",
+          "frame": 5
+        }
+      ]
+    },
+    {
+      "scene": "庙宇",
+      "minutes": 420,
+      "actors": [
+        {
+          "id": "ow_monk",
+          "visible": true,
+          "x": 781.1305489170823,
+          "y": 663.6951803848533,
+          "animation": "monk_walk",
+          "frame": 2
+        }
+      ]
+    }
+  ]
+}

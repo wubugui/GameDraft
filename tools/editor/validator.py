@@ -1097,11 +1097,15 @@ def validate(model: ProjectModel) -> list[Issue]:
                                         f"consumeItem '{ci['id']}' 不存在"))
 
     # --- rules definitions ---
+    from .shared.rule_knowledge_validation import validate_rule_knowledge
+    rule_owner_graphs = list(_iter_narrative_graphs(model))
     _layer_keys = ("xiang", "li", "shu")
     for r in model.rules_data.get("rules", []):
         if not isinstance(r, dict):
             continue
         rid = r.get("id", "?")
+        for error in validate_rule_knowledge(r, rule_owner_graphs, model.rules_data.get('fragments', [])):
+            issues.append(Issue('error', 'rule', rid, error))
         layers = r.get("layers")
         if not isinstance(layers, dict):
             issues.append(Issue("error", "rule", rid, "须有 layers 对象（象/理/术）"))
@@ -1958,6 +1962,9 @@ def _append_quest_objective_issues(
                                 f"objectives[{index}] 的 text 为空（面板与 HUD 会显示一条空目标）"))
         if obj.get("optional") is not None and not isinstance(obj.get("optional"), bool):
             issues.append(Issue("error", "quest", qid, f"objectives[{index}].optional 须为布尔"))
+        for field in ("completeWhen", "availableWhen"):
+            if obj.get(field) is not None and not isinstance(obj[field], list):
+                issues.append(Issue("error", "quest", qid, f"objectives[{index}].{field} 须为数组"))
         _append_quest_guidance_issues(
             model, issues, obj.get("guidance"), qid, f"objectives[{index}].guidance",
         )
@@ -1978,6 +1985,10 @@ def _append_quest_guidance_issues(
         if not isinstance(g, dict):
             issues.append(Issue("error", "quest", qid, f"{tag} 须为对象"))
             continue
+        if g.get("conditions") is not None and not isinstance(g["conditions"], list):
+            issues.append(Issue("error", "quest", qid, f"{tag}.conditions 须为数组"))
+        else:
+            _walk_conditions(model, issues, g.get("conditions"), "quest", qid, None)
         kind = str(g.get("kind") or "").strip()
         if kind not in ("mapMarker", "worldMarker", "sceneHint"):
             issues.append(Issue("error", "quest", qid,
@@ -3201,6 +3212,8 @@ def _validate_water_minigames(model: ProjectModel, issues: list[Issue]) -> None:
     此处补它够不到的「动作类型是否登记 / 裸 id 参数引用（giveItem.id、startCutscene.id…）」，
     免得 onPick/onPullSuccess/onPullFail 里的坏引用一路漏到运行时才暴露。
     """
+    from tools.editor.shared.water_minigame_schema import FAILURE_POLICIES
+
     bag = getattr(model, "water_minigames_instances", None)
     if not isinstance(bag, dict):
         return
@@ -3215,6 +3228,11 @@ def _validate_water_minigames(model: ProjectModel, issues: list[Issue]) -> None:
                 continue
             eid = str(ent.get("id") or "").strip() or "?"
             ctx = f"{iid}:{eid}"
+            pull = ent.get("pull")
+            if isinstance(pull, dict):
+                policy = pull.get("failurePolicy")
+                if policy is not None and policy not in FAILURE_POLICIES:
+                    issues.append(Issue("error", "water_minigame", ctx, f"未知 failurePolicy {policy!r}"))
             for hook in ("onPick", "onPullSuccess", "onPullFail"):
                 acts = ent.get(hook)
                 if isinstance(acts, list):
@@ -6163,6 +6181,12 @@ def _walk_action_defs(
                     "error", data_type, item_id,
                     f"setFocusedQuest 目标任务 {qref!r} 不在 quests.json（运行时跳过，当前任务不会变）",
                 ))
+            objective_id = str(p.get("objectiveId") or "").strip()
+            if objective_id and objective_id not in {oid for oid, _ in model.quest_objective_ids(qref)}:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setFocusedQuest 目标 {objective_id!r} 不属于任务 {qref!r}",
+                ))
         elif t == "enableRuleOffers":
             for slot in (p.get("slots") or []):
                 if isinstance(slot, dict):
@@ -6362,6 +6386,7 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
         for obj in q.get("objectives") or []:
             if isinstance(obj, dict):
                 _walk_conditions(model, issues, obj.get("completeWhen"), "quest", qid, None)
+                _walk_conditions(model, issues, obj.get("availableWhen"), "quest", qid, None)
 
     for enc in model.encounters:
         eid = str(enc.get("id", ""))

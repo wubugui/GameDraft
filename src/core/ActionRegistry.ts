@@ -749,9 +749,12 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('setFocusedQuest', (p) => {
     const raw = String(p.id ?? '').trim();
     void d.questManager
-      .requestFocusQuest(raw === '' ? null : raw, { announce: p.announce === true })
+      .requestFocusQuest(raw === '' ? null : raw, {
+        announce: p.announce === true,
+        objectiveId: typeof p.objectiveId === 'string' ? p.objectiveId.trim() : undefined,
+      })
       .catch((e) => console.warn('setFocusedQuest failed', e));
-  }, ['id', 'announce']);
+  }, ['id', 'announce', 'objectiveId']);
 
   /** R13：先验证 def 存在再切状态（对齐 startCutscene 失败即恢复模式）——
    *  未知 id 时不进 Encounter，避免 encounter:end 永不到来的软锁。 */

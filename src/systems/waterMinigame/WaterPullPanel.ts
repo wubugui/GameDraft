@@ -5,7 +5,7 @@ import { createProgressBar, createTitleRow } from '../../ui/components/UIDecor';
 import type { FailurePolicy, PullRhythm } from './types';
 import { createStyledText, getStyledRaw, setStyledText } from '../../core/styledText';
 
-export type PullPanelResult = 'success' | 'fail_escape' | 'fail_snap' | 'fail_bite' | 'abort';
+export type PullPanelResult = 'success' | 'fail_escape' | 'fail_snap' | 'fail_bite' | 'fail_slip' | 'abort';
 
 export interface WaterPullPanelParams {
   zoneSize: number;
@@ -391,6 +391,7 @@ export class WaterPullPanel extends Container {
     if (this.elapsed >= this.limit) {
       if (this.params.failurePolicy === 'escape') this.finish('fail_escape');
       else if (this.params.failurePolicy === 'snap') this.finish('fail_snap');
+      else if (this.params.failurePolicy === 'slip') this.finish('fail_slip');
       else this.finish('fail_bite');
     }
   }

@@ -1,0 +1,99 @@
+{
+  "id": "ow_bridge_clear",
+  "label": "桥孔捞出阻水箱",
+  "spotId": "ow_bridge_work",
+  "waterBottom": {
+    "texture": "/resources/runtime/images/minigames/water/riverbed_dock_murky.png",
+    "tint": "#1b2f42",
+    "depth": 1.15
+  },
+  "surface": {
+    "location": "dock",
+    "time": "day",
+    "weather": "clear"
+  },
+  "shoreForeground": {
+    "banks": [
+      {
+        "sprite": "/resources/runtime/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "top",
+        "thickness": 92,
+        "inset": 16,
+        "overhang": 64
+      },
+      {
+        "sprite": "/resources/runtime/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "bottom",
+        "thickness": 118,
+        "inset": 10,
+        "overhang": 64
+      }
+    ]
+  },
+  "bounds": {
+    "width": 720,
+    "height": 480
+  },
+  "entities": [
+    {
+      "id": "dead_grass",
+      "category": "grass",
+      "sprite": "/resources/runtime/images/minigames/water/dead_reeds_gen.png",
+      "pos": {
+        "x": 160,
+        "y": 360
+      },
+      "depth": 0.14,
+      "hint": "[tag:string:owWater:bridge_grass]",
+      "onPick": [],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "wedged_crate",
+      "category": "sunken",
+      "sprite": "/resources/runtime/images/minigames/water/sunken_crate_gen.png",
+      "pos": {
+        "x": 430,
+        "y": 305
+      },
+      "depth": 0.48,
+      "valueTier": "normal",
+      "consumeOnSuccess": true,
+      "pull": {
+        "zoneSize": 0.27,
+        "sliderSpeed": 0.59,
+        "rhythm": "heavy_sink",
+        "failurePolicy": "slip",
+        "timeLimitSec": 24
+      },
+      "cue": "[tag:string:owWater:crate_cue]",
+      "onPullSuccess": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_pull_success"
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:owWater:crate_success]",
+            "type": "success"
+          }
+        }
+      ],
+      "onPullFail": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:owWater:crate_fail]",
+            "type": "info"
+          }
+        }
+      ],
+      "displaySize": 108,
+      "hitRadius": 60
+    }
+  ]
+}

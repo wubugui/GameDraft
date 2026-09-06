@@ -21,6 +21,7 @@ type CatalogListKey =
   | 'dialogueGraphIds'
   | 'scenarioIds'
   | 'questIds'
+  | 'ruleIds'
   | 'sceneIds'
   | 'sceneNpcRefs'
   | 'sceneHotspotRefs'
@@ -46,6 +47,7 @@ export const WRAPPER_OWNER_REGISTRY: Record<string, WrapperOwnerRule> = {
   // SceneEditor.select_scene_by_id + main_window SOURCE_NAVIGATION_TABS["scene"]，"跳转资源"可定位场景。
   scene: { catalogKey: 'sceneIds', navigationKind: 'scene' },
   quest: { catalogKey: 'questIds', navigationKind: 'quest' },
+  rule: { catalogKey: 'ruleIds', navigationKind: 'rule' },
   dialogue: { catalogKey: 'dialogueGraphIds', navigationKind: 'dialogue' },
   minigame: { catalogKey: 'minigameIds', navigationKind: 'minigame' },
   cutscene: { catalogKey: 'cutsceneIds', navigationKind: 'cutscene' },
@@ -57,7 +59,7 @@ export const WRAPPER_OWNER_TYPES = Object.keys(WRAPPER_OWNER_REGISTRY);
 
 export function ownerChoicesForType(ownerType: string | undefined, catalog: AuthoringCatalogDef): string[] {
   const key = WRAPPER_OWNER_REGISTRY[(ownerType ?? '').trim() as keyof typeof WRAPPER_OWNER_REGISTRY]?.catalogKey;
-  return key ? catalog[key] : [];
+  return key ? catalog[key] ?? [] : [];
 }
 
 export const BLACKBOX_REFERENCE_KIND: Partial<Record<CompositionElementDef['kind'], string>> = {

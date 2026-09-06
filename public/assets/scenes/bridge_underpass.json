@@ -49,49 +49,302 @@
     }
   ],
   "spawnPoint": {
-    "x": 328,
-    "y": 919
+    "x": 292.0,
+    "y": 1227.83
   },
   "spawnPoints": {
     "from_street": {
-      "x": 328.0,
-      "y": 919.6
+      "x": 292.0,
+      "y": 1227.83
+    },
+    "ow_from_river": {
+      "x": 3040.0,
+      "y": 1875.23
     }
   },
   "hotspots": [
     {
       "id": "exit_to_street",
       "type": "transition",
-      "label": "回街巷",
-      "x": 328.3,
-      "y": 919.3,
-      "interactionRange": 50.0,
+      "label": "回到码头河埠",
+      "x": 180.0,
+      "y": 1361.78,
+      "interactionRange": 85,
       "data": {
-        "targetScene": "test_room_a",
-        "targetSpawnPoint": "from_bridge"
-      }
+        "targetScene": "码头白天",
+        "targetSpawnPoint": "ow_from_bridge"
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "new_hotspot_1",
       "type": "transition",
-      "label": "",
-      "x": 791.2,
-      "y": 1090.2,
-      "interactionRange": 50.0,
+      "label": "沿右岸去河滩",
+      "x": 2980.0,
+      "y": 2009.18,
+      "interactionRange": 85,
       "data": {
-        "targetScene": "temple"
+        "targetScene": "河边",
+        "targetSpawnPoint": "ow_from_bridge"
       },
-      "autoTrigger": true
+      "planes": [
+        "normal",
+        "背尸"
+      ],
+      "conditions": [
+        {
+          "any": [
+            {
+              "not": {
+                "plane": "背尸"
+              }
+            },
+            {
+              "narrative": "flow_ow_water",
+              "state": "repaired",
+              "reached": true
+            }
+          ]
+        }
+      ],
+      "conditionHidesEntity": true
     },
     {
       "id": "new_hotspot_2",
       "type": "inspect",
-      "label": "",
+      "label": "石阶边的旧灯座",
       "x": 465.3,
       "y": 322.9,
       "interactionRange": 50.0,
       "data": {
-        "text": ""
+        "text": "[tag:string:openWorld:bridge_lamp]"
+      }
+    },
+    {
+      "id": "ow_water_post",
+      "type": "inspect",
+      "label": "桥头旧木桩",
+      "x": 2900.0,
+      "y": 1886.39,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_水路",
+        "entry": "post"
+      }
+    },
+    {
+      "id": "ow_rest",
+      "type": "inspect",
+      "label": "歇脚 · 等一等",
+      "x": 1720.0,
+      "y": 1931.04,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_歇脚"
+      }
+    },
+    {
+      "id": "ow_bridge_rule",
+      "type": "inspect",
+      "label": "栏杆上的刻痕",
+      "x": 1400.0,
+      "y": 915.29,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "text": "[tag:string:openWorld:ow_bridge_rule]"
+      }
+    },
+    {
+      "id": "ow_water_downstream",
+      "type": "inspect",
+      "label": "桥下缓水",
+      "x": 540.0,
+      "y": 1361.78,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "text": "[tag:string:openWorld:ow_water_downstream]"
+      },
+      "collisionPolygon": [
+        {
+          "x": 140.0,
+          "y": -122.8
+        },
+        {
+          "x": 340.0,
+          "y": -424.2
+        },
+        {
+          "x": 700.0,
+          "y": -357.2
+        },
+        {
+          "x": 1140.0,
+          "y": -200.9
+        },
+        {
+          "x": 1580.0,
+          "y": -22.3
+        },
+        {
+          "x": 2100.0,
+          "y": 133.9
+        },
+        {
+          "x": 2500.0,
+          "y": 312.5
+        },
+        {
+          "x": 2260.0,
+          "y": 468.8
+        },
+        {
+          "x": 1860.0,
+          "y": 580.4
+        },
+        {
+          "x": 1460.0,
+          "y": 546.9
+        },
+        {
+          "x": 980.0,
+          "y": 390.7
+        },
+        {
+          "x": 460.0,
+          "y": 234.4
+        },
+        {
+          "x": 100.0,
+          "y": 0.0
+        }
+      ],
+      "collisionPolygonLocal": true
+    },
+    {
+      "id": "ow_water_upstream",
+      "type": "inspect",
+      "label": "桥外江面",
+      "x": 1280.0,
+      "y": 814.83,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "text": "[tag:string:openWorld:ow_water_upstream]"
+      },
+      "collisionPolygon": [
+        {
+          "x": -740.0,
+          "y": -814.8
+        },
+        {
+          "x": 2440.0,
+          "y": -814.8
+        },
+        {
+          "x": 1960.0,
+          "y": -468.8
+        },
+        {
+          "x": 1680.0,
+          "y": -267.9
+        },
+        {
+          "x": 1300.0,
+          "y": -33.5
+        },
+        {
+          "x": 1320.0,
+          "y": 189.8
+        },
+        {
+          "x": 1400.0,
+          "y": 223.2
+        },
+        {
+          "x": 1320.0,
+          "y": 301.4
+        },
+        {
+          "x": 1000.0,
+          "y": 133.9
+        },
+        {
+          "x": 640.0,
+          "y": 22.3
+        },
+        {
+          "x": 240.0,
+          "y": -145.1
+        },
+        {
+          "x": 60.0,
+          "y": -290.2
+        },
+        {
+          "x": -160.0,
+          "y": -390.7
+        },
+        {
+          "x": -640.0,
+          "y": -346.0
+        }
+      ],
+      "collisionPolygonLocal": true
+    },
+    {
+      "id": "ow_low_blocked",
+      "type": "inspect",
+      "label": "[tag:string:owWater:ow_low_blocked_label]",
+      "x": 2980.0,
+      "y": 2009.18,
+      "interactionRange": 85,
+      "planes": [
+        "背尸"
+      ],
+      "data": {
+        "graphId": "开放世界_水路",
+        "entry": "low_blocked"
+      },
+      "conditions": [
+        {
+          "not": {
+            "narrative": "flow_ow_water",
+            "state": "repaired",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "ow_watch_cord",
+      "type": "inspect",
+      "label": "[tag:string:owWatch:ow_watch_cord_label]",
+      "x": 2820,
+      "y": 1865,
+      "interactionRange": 55,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_巡更",
+        "entry": "cord"
       }
     }
   ],
@@ -146,12 +399,118 @@
   "npcs": [
     {
       "id": "new_npc_0",
-      "name": "New NPC",
+      "name": "桥边等人的汉子",
       "x": 3125.4,
       "y": 1669.6,
       "interactionRange": 50,
-      "animFile": "/resources/runtime/animation/player_anim/anim.json",
-      "initialAnimState": "idle"
+      "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "bridge_waiter"
+    },
+    {
+      "id": "ow_ding",
+      "characterId": "ow_ding",
+      "x": 2760.0,
+      "y": 1451.07,
+      "initialAnimState": "官兵刀_站立",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 2760.0,
+            "y": 1451.07
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "官兵刀_走路"
+      }
+    },
+    {
+      "id": "ow_qian",
+      "characterId": "ow_qian",
+      "x": 2940.0,
+      "y": 1808.26,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 2940.0,
+            "y": 1808.26
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
+    }
+  ],
+  "dayNight": {
+    "enabled": true
+  },
+  "entityGroups": [
+    {
+      "id": "ow_居民",
+      "label": "开放生活圈 · 居民",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "planes": [
+        "normal"
+      ]
+    }
+  ],
+  "exitAnchors": [
+    {
+      "id": "ow_door_0",
+      "x": 3060.0,
+      "y": 1897.56
+    },
+    {
+      "id": "ow_door_1",
+      "x": 3000.0,
+      "y": 1651.99
+    },
+    {
+      "id": "ow_exit_ding",
+      "x": 3000.0,
+      "y": 1651.99
+    },
+    {
+      "id": "ow_exit_qian",
+      "x": 3060.0,
+      "y": 1897.56
     }
   ]
 }

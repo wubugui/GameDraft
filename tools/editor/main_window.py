@@ -1629,6 +1629,7 @@ class MainWindow(QMainWindow):
         from .editors.sugar_wheel_editor import SugarWheelEditor
         from .editors.paper_craft_editor import PaperCraftEditor
         from .editors.pressure_signal_editor import PressureHoldEditor, SignalCueEditor
+        from .editors.object_examine_editor import ObjectExamineEditor
         from .editors.bubble_lines_editor import BubbleLinesEditor
         from .editors.smell_profile_editor import SmellProfileEditor
         from .editors.plane_editor import PlaneEditor
@@ -1658,6 +1659,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "叙事编排"], "水域小游戏", WaterMinigameEditor),
             (["数据编辑", "叙事编排"], "转盘小游戏", SugarWheelEditor),
             (["数据编辑", "叙事编排"], "扎纸小游戏", PaperCraftEditor),
+            (["数据编辑", "叙事编排"], "物件检视", ObjectExamineEditor),
             (["数据编辑", "叙事编排"], "Scenarios", ScenariosCatalogEditor),
             (["数据编辑", "叙事编排"], "Quest", QuestEditor),
             (["数据编辑", "规则与经济"], "Rule", RuleEditor),
@@ -3058,6 +3060,7 @@ class MainWindow(QMainWindow):
                 return
 
     def navigate_to_minigame(self, instance_id: str) -> None:
+        from .editors.object_examine_editor import ObjectExamineEditor
         from .editors.paper_craft_editor import PaperCraftEditor
         from .editors.sugar_wheel_editor import SugarWheelEditor
         from .editors.water_minigame_editor import WaterMinigameEditor
@@ -3072,6 +3075,8 @@ class MainWindow(QMainWindow):
             candidates.append(SugarWheelEditor)
         if iid in getattr(self._model, "paper_craft_instances", {}):
             candidates.append(PaperCraftEditor)
+        if iid in getattr(self._model, "object_examine_instances", {}):
+            candidates.append(ObjectExamineEditor)
         for cls in candidates:
             for i, ed in enumerate(self._editor_instances):
                 if not isinstance(ed, cls):
@@ -3326,14 +3331,14 @@ class MainWindow(QMainWindow):
             return None, "已打开「Archive」页(未逐条定位)"
         if rel.startswith("filters/"):
             return self._nav_hit_generic("Filters", Path(rel).stem)
-        if rel.startswith(("water_minigames/", "sugar_wheel/", "paper_craft/")):
+        if rel.startswith(("water_minigames/", "sugar_wheel/", "paper_craft/", "object_examine/")):
             tab = {"water_minigames": "水域小游戏", "sugar_wheel": "转盘小游戏",
-                   "paper_craft": "扎纸小游戏"}[rel.split("/", 1)[0]]
+                   "paper_craft": "扎纸小游戏", "object_examine": "物件检视"}[rel.split("/", 1)[0]]
             iid = Path(rel).stem
             if iid != "index" and any(
                 iid in (getattr(self._model, attr, {}) or {})
                 for attr in ("water_minigames_instances", "sugar_wheel_instances",
-                             "paper_craft_instances")):
+                             "paper_craft_instances", "object_examine_instances")):
                 self.navigate_to_minigame(iid)
                 return True, f"已定位小游戏「{iid}」"
             return self._nav_hit_generic(tab)

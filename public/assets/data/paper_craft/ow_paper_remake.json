@@ -1,0 +1,261 @@
+{
+  "id": "ow_paper_remake",
+  "label": "[tag:string:owPaper:paper_label]",
+  "orders": [
+    {
+      "id": "paper_standing",
+      "title": "[tag:string:owPaper:order_title]",
+      "description": "[tag:string:owPaper:order_desc]",
+      "targetHint": "[tag:string:owPaper:order_hint]",
+      "correctPaper": "white",
+      "successScore": 99,
+      "warnScore": 55,
+      "paperOptions": [
+        {
+          "id": "white",
+          "label": "[tag:string:owPaper:paperOptions_white]",
+          "tint": "#f3ead7",
+          "score": 4
+        },
+        {
+          "id": "yellow",
+          "label": "[tag:string:owPaper:paperOptions_yellow]",
+          "tint": "#d5a33d",
+          "score": -6,
+          "tags": [
+            "[tag:string:owPaper:tag_yellow_0]"
+          ]
+        },
+        {
+          "id": "blue",
+          "label": "[tag:string:owPaper:paperOptions_blue]",
+          "tint": "#749bb0",
+          "score": -6,
+          "tags": [
+            "[tag:string:owPaper:tag_blue_0]"
+          ]
+        },
+        {
+          "id": "red",
+          "label": "[tag:string:owPaper:paperOptions_red]",
+          "tint": "#a9372c",
+          "score": -6,
+          "tags": [
+            "[tag:string:owPaper:tag_red_0]"
+          ]
+        }
+      ],
+      "finishQuestion": "[tag:string:owPaper:finish_question]",
+      "finishOptions": [
+        {
+          "id": "paste_plain",
+          "label": "[tag:string:owPaper:finishOptions_paste_plain]",
+          "score": 4
+        },
+        {
+          "id": "tie_loose",
+          "label": "[tag:string:owPaper:finishOptions_tie_loose]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_tie_loose_0]"
+          ]
+        },
+        {
+          "id": "seal_mouth",
+          "label": "[tag:string:owPaper:finishOptions_seal_mouth]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_seal_mouth_0]"
+          ]
+        },
+        {
+          "id": "paint_eye",
+          "label": "[tag:string:owPaper:finishOptions_paint_eye]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_paint_eye_0]"
+          ]
+        }
+      ],
+      "slots": [
+        {
+          "id": "head",
+          "label": "[tag:string:owPaper:slots_head]",
+          "x": 228,
+          "y": 84,
+          "width": 104,
+          "height": 72,
+          "accepts": [
+            "head_plain",
+            "head_tilted",
+            "head_smile"
+          ]
+        },
+        {
+          "id": "arms",
+          "label": "[tag:string:owPaper:slots_arms]",
+          "x": 141,
+          "y": 149,
+          "width": 264,
+          "height": 72,
+          "accepts": [
+            "arms_down",
+            "arms_open",
+            "arms_bound"
+          ],
+          "optional": false
+        },
+        {
+          "id": "body",
+          "label": "[tag:string:owPaper:slots_body]",
+          "x": 224,
+          "y": 212,
+          "width": 112,
+          "height": 116,
+          "accepts": [
+            "body_straight",
+            "body_hunched",
+            "body_long"
+          ]
+        },
+        {
+          "id": "legs",
+          "label": "[tag:string:owPaper:slots_legs]",
+          "x": 234,
+          "y": 332,
+          "width": 92,
+          "height": 66,
+          "accepts": [
+            "legs_plain",
+            "legs_bound",
+            "legs_stump"
+          ]
+        }
+      ],
+      "parts": [
+        {
+          "id": "head_plain",
+          "label": "[tag:string:owPaper:parts_head_plain]",
+          "score": 20,
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/head_plain.png"
+        },
+        {
+          "id": "head_tilted",
+          "label": "[tag:string:owPaper:parts_head_tilted]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_head_tilted_0]"
+          ],
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/head_tilted.png"
+        },
+        {
+          "id": "head_smile",
+          "label": "[tag:string:owPaper:parts_head_smile]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_head_smile_0]"
+          ],
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/head_smile.png"
+        },
+        {
+          "id": "body_straight",
+          "label": "[tag:string:owPaper:parts_body_straight]",
+          "score": 20,
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/body_straight.png"
+        },
+        {
+          "id": "body_hunched",
+          "label": "[tag:string:owPaper:parts_body_hunched]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_body_hunched_0]"
+          ],
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/body_hunched.png"
+        },
+        {
+          "id": "body_long",
+          "label": "[tag:string:owPaper:parts_body_long]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_body_long_0]"
+          ],
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/body_long.png"
+        },
+        {
+          "id": "arms_down",
+          "label": "[tag:string:owPaper:parts_arms_down]",
+          "score": 20,
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/arms_down.png"
+        },
+        {
+          "id": "arms_open",
+          "label": "[tag:string:owPaper:parts_arms_open]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_arms_open_0]"
+          ],
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/arms_open.png"
+        },
+        {
+          "id": "arms_bound",
+          "label": "[tag:string:owPaper:parts_arms_bound]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_arms_bound_0]"
+          ],
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/arms_bound.png"
+        },
+        {
+          "id": "legs_plain",
+          "label": "[tag:string:owPaper:parts_legs_plain]",
+          "score": 20,
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/legs_plain.png"
+        },
+        {
+          "id": "legs_bound",
+          "label": "[tag:string:owPaper:parts_legs_bound]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_legs_bound_0]"
+          ],
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/legs_bound.png"
+        },
+        {
+          "id": "legs_stump",
+          "label": "[tag:string:owPaper:parts_legs_stump]",
+          "score": 0,
+          "tags": [
+            "[tag:string:owPaper:tag_legs_stump_0]"
+          ],
+          "image": "/resources/runtime/images/minigames/paper_craft/parts/legs_stump.png"
+        }
+      ],
+      "onSuccessActions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_paper_success"
+          }
+        }
+      ],
+      "onWarnActions": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:owPaper:paper_warn]",
+            "type": "info"
+          }
+        }
+      ],
+      "onBadActions": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:owPaper:paper_bad]",
+            "type": "info"
+          }
+        }
+      ]
+    }
+  ]
+}

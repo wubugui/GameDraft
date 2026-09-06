@@ -1,0 +1,1190 @@
+{
+  "schemaVersion": 1,
+  "id": "开放世界_水路",
+  "entry": "post",
+  "meta": {
+    "title": "桥下与河滩"
+  },
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "post": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_water",
+            "state": "repaired",
+            "reached": true
+          },
+          "next": "post_repaired"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_water",
+            "state": "diverted",
+            "reached": true
+          },
+          "next": "post_diverted"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_water",
+            "state": "done"
+          },
+          "next": "post_legacy"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_water_clear",
+            "state": "cleared",
+            "reached": true
+          },
+          "next": "post_clear"
+        }
+      ],
+      "defaultNext": "post_first"
+    },
+    "post_first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:post_first]",
+      "next": "post_seen"
+    },
+    "post_seen": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_post"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_water"
+          }
+        }
+      ],
+      "next": "post_menu"
+    },
+    "post_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "water_rig_choice",
+          "text": "[tag:string:owWater:water_rig_choice]",
+          "next": "rig",
+          "requireCondition": {
+            "all": [
+              {
+                "flag": "has_item_ow_rope"
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_water_rig",
+                  "state": "ready",
+                  "reached": true
+                }
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owWater:water_rig_choice_disabled]"
+        },
+        {
+          "id": "water_pull_choice",
+          "text": "[tag:string:owWater:water_pull_choice]",
+          "next": "pull",
+          "requireCondition": {
+            "narrative": "flow_ow_water_rig",
+            "state": "ready",
+            "reached": true
+          },
+          "disabledClickHint": "[tag:string:owWater:water_pull_choice_disabled]"
+        },
+        {
+          "id": "water_divert_choice",
+          "text": "[tag:string:owWater:water_divert_choice]",
+          "next": "divert_confirm",
+          "requireCondition": {
+            "narrative": "flow_ow_water_mark",
+            "state": "marked",
+            "reached": true
+          },
+          "disabledClickHint": "[tag:string:owWater:water_divert_choice_disabled]"
+        },
+        {
+          "id": "water_other_choice",
+          "text": "[tag:string:owWater:water_other_choice]",
+          "next": "other_route"
+        },
+        {
+          "id": "water_leave_choice",
+          "text": "[tag:string:owWater:water_leave_choice]",
+          "next": "end"
+        }
+      ]
+    },
+    "other_route": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:other_route]",
+      "next": "end"
+    },
+    "rig": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_rig"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_water"
+          }
+        }
+      ],
+      "next": "rig_result"
+    },
+    "rig_result": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:rig_result]",
+      "next": "post_menu"
+    },
+    "pull": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_water"
+          }
+        },
+        {
+          "type": "startWaterMinigame",
+          "params": {
+            "id": "ow_bridge_clear"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "post_clear": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:post_clear]",
+      "next": "post_clear_menu"
+    },
+    "post_clear_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "water_repair_choice",
+          "text": "[tag:string:owWater:water_repair_choice]",
+          "next": "repair",
+          "requireCondition": {
+            "flag": "has_item_ow_bamboo"
+          },
+          "disabledClickHint": "[tag:string:owWater:water_repair_choice_disabled]"
+        },
+        {
+          "id": "water_clear_divert",
+          "text": "[tag:string:owWater:water_clear_divert]",
+          "next": "divert_confirm",
+          "requireCondition": {
+            "narrative": "flow_ow_water_mark",
+            "state": "marked",
+            "reached": true
+          },
+          "disabledClickHint": "[tag:string:owWater:water_clear_divert_disabled]"
+        },
+        {
+          "id": "water_clear_leave",
+          "text": "[tag:string:owWater:water_clear_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "repair": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_repair"
+          }
+        }
+      ],
+      "next": "post_repaired"
+    },
+    "post_repaired": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:post_repaired]",
+      "next": "end"
+    },
+    "divert_confirm": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:divert_confirm]",
+      "next": "divert_menu"
+    },
+    "divert_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "divert_yes",
+          "text": "[tag:string:owWater:divert_yes]",
+          "next": "divert"
+        },
+        {
+          "id": "divert_no",
+          "text": "[tag:string:owWater:divert_no]",
+          "next": "end"
+        }
+      ]
+    },
+    "divert": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_divert"
+          }
+        }
+      ],
+      "next": "post_diverted"
+    },
+    "post_diverted": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:post_diverted]",
+      "next": "end"
+    },
+    "post_legacy": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:post_legacy]",
+      "next": "end"
+    },
+    "reed": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_bucket",
+                "state": "carrying"
+              },
+              {
+                "narrative": "flow_ow_bucket",
+                "state": "done",
+                "reached": true
+              }
+            ]
+          },
+          "next": "reed_after"
+        }
+      ],
+      "defaultNext": "reed_first"
+    },
+    "reed_first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:reed_first]",
+      "next": "reed_seen"
+    },
+    "reed_seen": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_reed"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bucket_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_bucket"
+          }
+        }
+      ],
+      "next": "reed_menu"
+    },
+    "reed_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "bucket_pull_choice",
+          "text": "[tag:string:owWater:bucket_pull_choice]",
+          "next": "bucket_pull"
+        },
+        {
+          "id": "reed_leave",
+          "text": "[tag:string:owWater:reed_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "bucket_pull": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_bucket"
+          }
+        },
+        {
+          "type": "startWaterMinigame",
+          "params": {
+            "id": "ow_river_bucket"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "reed_after": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:reed_after]",
+      "next": "reed_after_emit"
+    },
+    "reed_after_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_reed"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "stone": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_water_mark",
+            "state": "marked",
+            "reached": true
+          },
+          "next": "stone_marked"
+        },
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_water",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_water",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_water",
+                "state": "diverted",
+                "reached": true
+              }
+            ]
+          },
+          "next": "stone_done"
+        },
+        {
+          "condition": {
+            "posture": "gaze"
+          },
+          "next": "stone_seen"
+        }
+      ],
+      "defaultNext": "stone_hint"
+    },
+    "stone_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:stone_hint]",
+      "next": "end"
+    },
+    "stone_seen": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:stone_seen]",
+      "next": "stone_emit"
+    },
+    "stone_emit": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_stone"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_water"
+          }
+        }
+      ],
+      "next": "stone_menu"
+    },
+    "stone_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "mark_high_route",
+          "text": "[tag:string:owWater:mark_high_route]",
+          "next": "mark",
+          "requireCondition": {
+            "flag": "has_item_ow_charcoal"
+          },
+          "disabledClickHint": "[tag:string:owWater:mark_high_route_disabled]"
+        },
+        {
+          "id": "stone_leave",
+          "text": "[tag:string:owWater:stone_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "mark": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_mark"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_water"
+          }
+        }
+      ],
+      "next": "stone_marked"
+    },
+    "stone_marked": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:stone_marked]",
+      "next": "end"
+    },
+    "stone_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:stone_done]",
+      "next": "end"
+    },
+    "tail": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_mooring",
+                "state": "carrying",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_mooring",
+                "state": "done",
+                "reached": true
+              }
+            ]
+          },
+          "next": "tail_empty"
+        },
+        {
+          "condition": {
+            "posture": "crouch"
+          },
+          "next": "tail_found"
+        }
+      ],
+      "defaultNext": "tail_hint"
+    },
+    "tail_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:tail_hint]",
+      "next": "end"
+    },
+    "tail_found": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:tail_found]",
+      "next": "tail_take"
+    },
+    "tail_take": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_rope_tail_take"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "tail_empty": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:tail_empty]",
+      "next": "end"
+    },
+    "mooring": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_mooring",
+            "state": "done",
+            "reached": true
+          },
+          "next": "mooring_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_mooring",
+            "state": "fixed"
+          },
+          "next": "mooring_fixed"
+        }
+      ],
+      "defaultNext": "mooring_first"
+    },
+    "mooring_first": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:mooring_first]",
+      "next": "mooring_accept"
+    },
+    "mooring_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_mooring_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_mooring"
+          }
+        }
+      ],
+      "next": "mooring_menu"
+    },
+    "mooring_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "mooring_use",
+          "text": "[tag:string:owWater:mooring_use]",
+          "next": "mooring_fix",
+          "requireCondition": {
+            "flag": "has_item_ow_rope_tail"
+          },
+          "disabledClickHint": "[tag:string:owWater:mooring_use_disabled]"
+        },
+        {
+          "id": "mooring_leave",
+          "text": "[tag:string:owWater:mooring_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "mooring_fix": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_mooring_fix"
+          }
+        }
+      ],
+      "next": "mooring_fixed"
+    },
+    "mooring_fixed": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:mooring_fixed]",
+      "next": "end"
+    },
+    "mooring_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:mooring_done]",
+      "next": "end"
+    },
+    "qian": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_water",
+            "state": "repaired",
+            "reached": true
+          },
+          "next": "qian_repaired"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_water",
+            "state": "diverted",
+            "reached": true
+          },
+          "next": "qian_diverted"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_water",
+            "state": "done"
+          },
+          "next": "qian_legacy"
+        }
+      ],
+      "defaultNext": "qian_before"
+    },
+    "qian_before": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_before]",
+      "next": "qian_accept"
+    },
+    "qian_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_water_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_water"
+          }
+        }
+      ],
+      "next": "qian_menu"
+    },
+    "qian_repaired": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_repaired]",
+      "next": "qian_menu"
+    },
+    "qian_diverted": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_diverted]",
+      "next": "qian_menu"
+    },
+    "qian_legacy": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_legacy]",
+      "next": "qian_menu"
+    },
+    "qian_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_cargo_topic",
+          "text": "[tag:string:owWatch:cargo_topic]",
+          "next": "ow_cargo_handoff"
+        },
+        {
+          "id": "ow_watch_message_topic",
+          "text": "[tag:string:owWatch:watch_message_topic]",
+          "next": "ow_watch_message_handoff"
+        },
+        {
+          "id": "qian_mooring",
+          "text": "[tag:string:owWater:qian_mooring]",
+          "next": "qian_mooring_case"
+        },
+        {
+          "id": "qian_water_work",
+          "text": "[tag:string:owWater:qian_water_work]",
+          "next": "qian_directions"
+        },
+        {
+          "id": "qian_time",
+          "text": "[tag:string:owWater:qian_time]",
+          "next": "qian_time_case"
+        },
+        {
+          "id": "qian_bye_water",
+          "text": "[tag:string:owWater:qian_bye_water]",
+          "next": "end"
+        }
+      ]
+    },
+    "qian_mooring_case": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_mooring",
+            "state": "done",
+            "reached": true
+          },
+          "next": "qian_rope_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_mooring",
+            "state": "fixed"
+          },
+          "next": "qian_rope_reward"
+        }
+      ],
+      "defaultNext": "qian_rope_offer"
+    },
+    "qian_rope_offer": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_rope_offer]",
+      "next": "qian_rope_accept"
+    },
+    "qian_rope_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_mooring_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_mooring"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "qian_rope_reward": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_rope_reward]",
+      "next": "qian_rope_give"
+    },
+    "qian_rope_give": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_mooring_return"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "qian_rope_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_rope_done]",
+      "next": "end"
+    },
+    "qian_directions": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_directions]",
+      "next": "end"
+    },
+    "qian_time_case": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_water",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_water",
+                "state": "done"
+              }
+            ]
+          },
+          "next": "qian_time_dock"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_water",
+            "state": "diverted",
+            "reached": true
+          },
+          "next": "qian_time_divert"
+        }
+      ],
+      "defaultNext": "qian_time_watch"
+    },
+    "qian_time_dock": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_time_dock]",
+      "next": "end"
+    },
+    "qian_time_divert": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_time_divert]",
+      "next": "end"
+    },
+    "qian_time_watch": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "钱叔"
+      },
+      "text": "[tag:string:owWater:qian_time_watch]",
+      "next": "end"
+    },
+    "bucket_he": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_bucket",
+            "state": "done",
+            "reached": true
+          },
+          "next": "he_bucket_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_bucket",
+            "state": "carrying"
+          },
+          "next": "he_bucket_return"
+        }
+      ],
+      "defaultNext": "he_bucket_offer"
+    },
+    "he_bucket_offer": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "何婆婆"
+      },
+      "text": "[tag:string:owWater:he_bucket_offer]",
+      "next": "he_bucket_accept"
+    },
+    "he_bucket_accept": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bucket_accept"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "he_bucket_return": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "何婆婆"
+      },
+      "text": "[tag:string:owWater:he_bucket_return]",
+      "next": "he_bucket_reward"
+    },
+    "he_bucket_reward": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_bucket_return"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "he_bucket_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "何婆婆"
+      },
+      "text": "[tag:string:owWater:he_bucket_done]",
+      "next": "end"
+    },
+    "steps": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_steps",
+            "state": "done",
+            "reached": true
+          },
+          "next": "steps_cleaned"
+        },
+        {
+          "condition": {
+            "posture": "crouch"
+          },
+          "next": "steps_inspected"
+        }
+      ],
+      "defaultNext": "steps_hint"
+    },
+    "steps_hint": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:steps_hint]",
+      "next": "end"
+    },
+    "steps_inspected": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:steps_inspected]",
+      "next": "steps_seen"
+    },
+    "steps_seen": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_steps_inspect"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_steps"
+          }
+        }
+      ],
+      "next": "steps_menu"
+    },
+    "steps_menu": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "steps_clean_choice",
+          "text": "[tag:string:owWater:steps_clean_choice]",
+          "next": "steps_clean",
+          "requireCondition": {
+            "all": [
+              {
+                "flag": "has_item_ow_bucket"
+              },
+              {
+                "flag": "has_item_ow_bamboo"
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owWater:steps_clean_choice_disabled]"
+        },
+        {
+          "id": "steps_leave",
+          "text": "[tag:string:owWater:steps_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "steps_clean": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_steps_clean"
+          }
+        }
+      ],
+      "next": "steps_cleaned"
+    },
+    "steps_cleaned": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:steps_cleaned]",
+      "next": "end"
+    },
+    "low_blocked": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:low_blocked]",
+      "next": "end"
+    },
+    "high_blocked": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owWater:high_blocked]",
+      "next": "end"
+    },
+    "ow_watch_message_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_巡更",
+            "entry": "qian_message"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "ow_cargo_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_巡更",
+            "entry": "qian_cargo"
+          }
+        }
+      ],
+      "next": "end"
+    }
+  }
+}

@@ -48,7 +48,9 @@ _CATEGORY_ORDER = ["grass", "floating", "swimming", "sunken"]
 _TIME_OPTS = ["morning", "day", "night"]
 _WEATHER_OPTS = ["clear", "rain", "fog"]
 _PULL_RHYTHM = ["stable", "burst", "spasm", "heavy_sink"]
-_FAILURE = ["escape", "snap", "bite"]
+from tools.editor.shared.water_minigame_schema import FAILURE_POLICIES
+
+_FAILURE = list(FAILURE_POLICIES)
 _VALUE_TIER = ["normal", "premium"]
 _MOTION_PATH = ["stationary", "drift", "patrol", "approach", "flee"]
 _DEPTH_OSC_CURVE = ["none", "sine", "approach_surface", "random_walk"]

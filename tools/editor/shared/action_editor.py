@@ -188,6 +188,7 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # setFocusedQuest.announce 缺省 false＝不额外给醒目提示；不登记的话
     # 「打开→不改→保存」会给全项目的 setFocusedQuest 凭空写上 announce:false
     ("setFocusedQuest", "announce"): False,
+    ("setFocusedQuest", "objectiveId"): "",
     # emitNarrativeSignal 的显式 owner 覆盖（私有信号逃生口，终审 H1 加）为可选。
     # 不登记的后果实测：打开任何带 emitNarrativeSignal 的对话节点再保存，
     # 凭空注入 ownerType:""/ownerId:""——影响 47 个已发布节点（外围面 agent 抓到的回归）。
@@ -694,7 +695,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "grantRuleLayer": [("ruleId", "str"), ("layer", "str")],
     "giveFragment": [("id", "str")],
     "updateQuest": [("id", "str")],
-    "setFocusedQuest": [("id", "str"), ("announce", "bool")],
+    "setFocusedQuest": [("id", "str"), ("announce", "bool"), ("objectiveId", "str")],
     "startEncounter": [("id", "str")],
     "playBgm": [("id", "str"), ("fadeMs", "int")],
     "stopBgm": [("fadeMs", "int")],
@@ -5558,6 +5559,18 @@ class ActionRow(QWidget):
                     "留空 = 清空当前任务。\n"
                     "目标是活计时会同时激活它的活计图；目标是主线/支线时不动在途活计。",
                 )
+            elif act_type == "setFocusedQuest" and pname == "objectiveId":
+                w = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
+                quest_selector = self._param_widgets.get("id")
+                def refresh_objectives(_value=None, *, target=w, source=quest_selector):
+                    qid = source.current_id() if isinstance(source, IdRefSelector) else str(params.get("id") or "")
+                    target.set_items(self._ctx_model.quest_objective_ids(qid) if self._ctx_model else [])
+                refresh_objectives()
+                w.set_current(str(val) if val is not None else "")
+                w.value_changed.connect(self.changed)
+                if isinstance(quest_selector, IdRefSelector):
+                    quest_selector.value_changed.connect(refresh_objectives)
+                w.setToolTip("可选：跟踪该任务里已开放且未完成的一项目标。留空沿用正常选择；不会推进剧情。切换任务时保留原值，缺失引用由校验指出。")
             elif act_type == "startEncounter" and pname == "id":
                 w = self._make_selector("encounter", str(val) if val is not None else "")
             elif act_type == "playBgm" and pname == "id":

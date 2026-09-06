@@ -23,5 +23,25 @@
     "id": "dock_crate_tutorial",
     "label": "码头捞箱教学",
     "file": "dock_crate_tutorial.json"
+  },
+  {
+    "id": "ow_bridge_clear",
+    "label": "桥孔捞出阻水箱",
+    "file": "ow_bridge_clear.json"
+  },
+  {
+    "id": "ow_river_bucket",
+    "label": "河滩捞木桶",
+    "file": "ow_river_bucket.json"
+  },
+  {
+    "id": "ow_watch_clapper",
+    "label": "桥边捞更梆",
+    "file": "ow_watch_clapper.json"
+  },
+  {
+    "id": "ow_watch_clapper_night",
+    "label": "桥边捞更梆 · 夜",
+    "file": "ow_watch_clapper_night.json"
   }
 ]

@@ -21,6 +21,7 @@ const FOCUS_TYPE_PRIORITY: Record<QuestDef['type'], number> = { main: 0, side: 1
 interface QuestSaveV2 {
   statuses: Record<string, number>;
   focusedQuestId: string | null;
+  selectedObjectives?: Record<string, string>;
 }
 
 /** 本批攒下的提示候选（同批合流规则见玩法文档 D9） */
@@ -69,6 +70,9 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
    * 它决定 HUD 显示哪条、引导指向哪里；进存档。
    */
   private focusedQuestId: string | null = null;
+  /** 只记玩家的跟踪偏好；目标完成与开放状态仍由叙事条件派生。 */
+  private selectedObjectives = new Map<string, string>();
+  private trackingRevision = 0;
   /** 接取先后（自动改选取「最近接取」）；不入档，读档按数据序重建 */
   private acceptOrder: string[] = [];
   /** 当前任务的目标完成签名：变了才广播，避免每次 flag 变动都让 HUD/面板重建 */
@@ -143,6 +147,8 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     this.eventBus.on('flag:changed', this.onFlagChanged);
     // 完成条件可为叙事状态叶子（{narrative, state, reached}）：状态迁移后须重评
     this.eventBus.on('narrative:stateChanged', this.onFlagChanged);
+    this.eventBus.on('time:changed', this.onFlagChanged);
+    this.eventBus.on('player:posture', this.onFlagChanged);
     this.eventBus.on('narrative:runStarted', this.onRunStarted);
     this.eventBus.on('narrative:runSettled', this.onRunSettled);
     this.eventBus.on('narrative:runActivated', this.onRunActivated);
@@ -472,7 +478,8 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
    *   直接作废（`suspendOrDiscardActivated` 对不可恢复的活计是丢实例 + aborted++），
    *   而玩家只是想追踪主线而已——追踪一条主线不该销毁手上的活。
    */
-  async requestFocusQuest(questId: string | null, opts?: { announce?: boolean }): Promise<void> {
+  async requestFocusQuest(questId: string | null, opts?: { announce?: boolean; objectiveId?: string }): Promise<void> {
+    const revision = ++this.trackingRevision;
     if (questId === null || questId === '') {
       this.setFocusedQuest(null, 'clear');
       return;
@@ -494,6 +501,7 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
           return;
         }
         await this.activateRunHandler(def.runArchetype);
+        if (revision !== this.trackingRevision || this.restoring) return;
         // runActivated 事件已把槽同步过来；下面补一次幂等赋值，防注入方吞掉事件。
         // ⚠ 激活是走叙事队列的异步操作，可能失败（图不存在 / 实例已没了）：
         // 只有真激活上了才认，否则会留下"当前任务指着一张没在跑的活计"。
@@ -504,8 +512,30 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
         }
       }
     }
+    const objectiveId = opts?.objectiveId?.trim();
+    if (objectiveId && this.canFocusObjective(questId, objectiveId)) {
+      this.selectedObjectives.set(questId, objectiveId);
+    }
     this.setFocusedQuest(questId, 'focus');
+    // 同一任务换办法也要刷新箭头；不可见/已完成目标交给既有自动回落。
+    this.syncObjectiveSignature();
     if (opts?.announce === true) this.queueAnnounce(questId, 'focus');
+  }
+
+  canFocusObjective(questId: string, objectiveId: string): boolean {
+    if (this.restoring || !this.canFocusQuest(questId)) return false;
+    const def = this.questDefs.get(questId)!;
+    if (def.type === 'repeatable' && !this.runInfoProvider?.(def.runArchetype!)?.activated) return false;
+    return this.getQuestObjectives(questId).some(o => o.def.id === objectiveId && !o.done);
+  }
+
+  async requestFocusObjective(questId: string, objectiveId: string): Promise<boolean> {
+    if (!this.canFocusObjective(questId, objectiveId)) return false;
+    this.trackingRevision++;
+    this.selectedObjectives.set(questId, objectiveId);
+    this.setFocusedQuest(questId, 'objectiveFocus');
+    this.syncObjectiveSignature();
+    return true;
   }
 
   /** 槽的唯一写入口：去重 + 重置目标签名 + 广播 */
@@ -576,14 +606,18 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     if (!def?.objectives?.length) return [];
     // 已完成的任务：目标一律视为勾掉（避免"任务已了、目标还空着"的自相矛盾）
     const questDone = def.type !== 'repeatable' && this.questStatus.get(questId) === QuestStatus.Completed;
-    return def.objectives.map((o) => ({
+    return def.objectives.filter(o => this.evalConditions(o.availableWhen ?? [])).map((o) => ({
       def: o,
       done: questDone || (!!o.completeWhen?.length && this.evalConditions(o.completeWhen)),
     }));
   }
 
   getCurrentObjective(questId: string): QuestObjectiveDef | null {
-    for (const view of this.getQuestObjectives(questId)) {
+    const views = this.getQuestObjectives(questId);
+    const selected = this.selectedObjectives.get(questId);
+    const chosen = views.find(o => o.def.id === selected && !o.done);
+    if (chosen) return chosen.def;
+    for (const view of views) {
       if (view.def.optional === true) continue;
       if (!view.done) return view.def;
     }
@@ -594,8 +628,8 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     const def = this.questDefs.get(questId);
     if (!def) return [];
     const objective = this.getCurrentObjective(questId);
-    if (objective?.guidance?.length) return objective.guidance;
-    return def.guidance ?? [];
+    const guidance = objective?.guidance?.length ? objective.guidance : (def.guidance ?? []);
+    return guidance.filter(g => this.evalConditions(g.conditions ?? []));
   }
 
   getActiveGuidance(): QuestGuidanceDef[] {
@@ -604,12 +638,18 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   }
 
   private computeObjectiveSignature(): string {
-    const id = this.focusedQuestId;
-    if (!id) return '';
-    return `${id}:${this.getQuestObjectives(id).map((o) => (o.done ? '1' : '0')).join('')}`;
+    // 面板也展示未跟踪的任务；它们开放新线索时同样必须刷新。
+    const objectives = Array.from(this.questDefs.keys()).filter(id => this.canFocusQuest(id))
+      .map(id => [id, this.getCurrentObjective(id)?.id,
+        this.getQuestObjectives(id).map(o => [o.def.id, o.done])]);
+    return JSON.stringify([this.focusedQuestId, objectives, this.getActiveGuidance()]);
   }
 
   private syncObjectiveSignature(): void {
+    for (const [questId, objectiveId] of this.selectedObjectives) {
+      if (!this.canFocusQuest(questId) || !this.getQuestObjectives(questId)
+        .some(o => o.def.id === objectiveId && !o.done)) this.selectedObjectives.delete(questId);
+    }
     const sig = this.computeObjectiveSignature();
     if (sig === this.lastObjectiveSig) return;
     this.lastObjectiveSig = sig;
@@ -778,10 +818,14 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   serialize(): object {
     const statuses: Record<string, number> = {};
     this.questStatus.forEach((s, id) => { statuses[id] = s; });
-    return { statuses, focusedQuestId: this.focusedQuestId } satisfies QuestSaveV2;
+    return { statuses, focusedQuestId: this.focusedQuestId,
+      ...(this.selectedObjectives.size ? { selectedObjectives: Object.fromEntries(this.selectedObjectives) } : {})
+    } satisfies QuestSaveV2;
   }
 
   deserialize(data: Record<string, number> | QuestSaveV2): void {
+    this.trackingRevision++;
+    this.selectedObjectives.clear();
     // v1 是扁平的 {questId: status}，v2 包了一层并带当前任务槽。旧档照吃。
     const wrapped = data as Partial<QuestSaveV2>;
     const isV2 = !!data && typeof data === 'object' &&
@@ -801,6 +845,13 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     // 接取顺序未随档存储（questStatus 在 loadDefs 时按 quests.json 数据序播种，序列化即该序），
     // 故 acceptOrder 按数据序重建——"最近接取"在读档后退化为"数据序最后一条"，可接受。
     this.focusedQuestId = savedFocus && this.questDefs.has(savedFocus) ? savedFocus : null;
+    if (isV2 && wrapped.selectedObjectives && typeof wrapped.selectedObjectives === 'object') {
+      for (const [id, objectiveId] of Object.entries(wrapped.selectedObjectives)) {
+        if (typeof objectiveId === 'string' && this.questDefs.get(id)?.objectives?.some(o => o.id === objectiveId)) {
+          this.selectedObjectives.set(id, objectiveId);
+        }
+      }
+    }
     // 读档后不逐条补发 quest:accepted：展示层已改为查询式，setRestoring(false) 那一条
     // quest:changed 就够重建全部显示（HUD 当前任务、面板、引导）。
   }
@@ -808,6 +859,8 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   destroy(): void {
     this.eventBus.off('flag:changed', this.onFlagChanged);
     this.eventBus.off('narrative:stateChanged', this.onFlagChanged);
+    this.eventBus.off('time:changed', this.onFlagChanged);
+    this.eventBus.off('player:posture', this.onFlagChanged);
     this.eventBus.off('narrative:runStarted', this.onRunStarted);
     this.eventBus.off('narrative:runSettled', this.onRunSettled);
     this.eventBus.off('narrative:runActivated', this.onRunActivated);
@@ -818,6 +871,8 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     this.repeatableByArchetype.clear();
     this.questActionTail = Promise.resolve();
     this.focusedQuestId = null;
+    this.selectedObjectives.clear();
+    this.trackingRevision++;
     this.acceptOrder = [];
     this.lastObjectiveSig = '';
     this.announceBatch = [];

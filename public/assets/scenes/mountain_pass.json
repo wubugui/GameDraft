@@ -49,58 +49,110 @@
     }
   ],
   "spawnPoint": {
-    "x": 485.9,
-    "y": 762.7
+    "x": 255.0,
+    "y": 724.57
   },
   "spawnPoints": {
     "from_street": {
-      "x": 66.1,
-      "y": 911.0
+      "x": 255.0,
+      "y": 724.57
     },
     "from_temple_exterior": {
-      "x": 1423.95,
-      "y": 119.99
+      "x": 1230.0,
+      "y": 169.38
     },
     "spawn_0": {
-      "x": 1470.0,
-      "y": 911.0
+      "x": 885.0,
+      "y": 733.98
     }
   },
   "hotspots": [
     {
       "id": "exit_to_street",
       "type": "transition",
-      "label": "回街巷",
-      "x": 285.3,
-      "y": 786.0,
-      "interactionRange": 53.5,
+      "label": "下山去河滩",
+      "x": 120.0,
+      "y": 809.26,
+      "interactionRange": 85,
       "data": {
-        "targetScene": "test_room_a",
-        "targetSpawnPoint": "from_mountain_pass"
-      }
+        "targetScene": "河边",
+        "targetSpawnPoint": "从山路"
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "exit_to_temple",
       "type": "transition",
-      "label": "去庙宇",
-      "x": 1445.6,
-      "y": 113.3,
-      "interactionRange": 53.5,
+      "label": "沿石阶去旧庙",
+      "x": 1275.0,
+      "y": 94.1,
+      "interactionRange": 85,
       "data": {
         "targetScene": "temple_exterior",
         "targetSpawnPoint": "from_mountain_pass"
-      }
+      },
+      "planes": [
+        "normal"
+      ]
     },
     {
       "id": "T到河边",
       "type": "transition",
-      "label": "到河边",
-      "x": 1003.2,
-      "y": 820.6,
-      "interactionRange": 50.0,
+      "label": "沿支路去河滩",
+      "x": 945.0,
+      "y": 818.67,
+      "interactionRange": 85,
       "data": {
         "targetScene": "河边",
         "targetSpawnPoint": "从山路"
+      },
+      "planes": [
+        "normal"
+      ]
+    },
+    {
+      "id": "ow_water_stone",
+      "type": "inspect",
+      "label": "岔路石上的旧水线",
+      "x": 817.5,
+      "y": 663.4,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_水路",
+        "entry": "stone"
+      }
+    },
+    {
+      "id": "ow_rest",
+      "type": "inspect",
+      "label": "歇脚 · 等一等",
+      "x": 780.0,
+      "y": 625.76,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_歇脚"
+      }
+    },
+    {
+      "id": "ow_fork",
+      "type": "inspect",
+      "label": "岔路脚印",
+      "x": 697.5,
+      "y": 428.16,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "text": "[tag:string:openWorld:ow_fork]"
       }
     }
   ],
@@ -155,12 +207,79 @@
   "npcs": [
     {
       "id": "new_npc_0",
-      "name": "New NPC",
+      "name": "歇脚的挑担客",
       "x": 1185.9,
       "y": 549.8,
       "interactionRange": 50,
-      "animFile": "/resources/runtime/animation/player_anim/anim.json",
-      "initialAnimState": "idle"
+      "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "hill_traveler"
+    },
+    {
+      "id": "ow_huang",
+      "characterId": "ow_huang",
+      "x": 810.0,
+      "y": 635.18,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 810.0,
+            "y": 635.18
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
+    }
+  ],
+  "dayNight": {
+    "enabled": true
+  },
+  "entityGroups": [
+    {
+      "id": "ow_居民",
+      "label": "开放生活圈 · 居民",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "planes": [
+        "normal"
+      ]
+    }
+  ],
+  "exitAnchors": [
+    {
+      "id": "ow_door_0",
+      "x": 870.0,
+      "y": 668.11
+    },
+    {
+      "id": "ow_exit_huang",
+      "x": 870.0,
+      "y": 668.11
     }
   ]
 }

@@ -1,0 +1,92 @@
+{
+  "id": "ow_watch_clapper",
+  "label": "桥边捞更梆",
+  "spotId": "ow_watch_hollow",
+  "waterBottom": {
+    "texture": "/resources/runtime/images/minigames/water/riverbed_dock_murky.png",
+    "tint": "#1b2f42",
+    "depth": 1.15
+  },
+  "surface": {
+    "location": "dock",
+    "time": "day",
+    "weather": "clear"
+  },
+  "shoreForeground": {
+    "banks": [
+      {
+        "sprite": "/resources/runtime/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "top",
+        "thickness": 92,
+        "inset": 16,
+        "overhang": 64
+      },
+      {
+        "sprite": "/resources/runtime/images/minigames/water/shore_bank_dock_gen.png",
+        "edge": "bottom",
+        "thickness": 118,
+        "inset": 10,
+        "overhang": 64
+      }
+    ]
+  },
+  "bounds": {
+    "width": 720,
+    "height": 480
+  },
+  "entities": [
+    {
+      "id": "dead_grass",
+      "category": "grass",
+      "sprite": "/resources/runtime/images/minigames/water/dead_reeds_gen.png",
+      "pos": {
+        "x": 160,
+        "y": 360
+      },
+      "depth": 0.14,
+      "hint": "[tag:string:owWater:bridge_grass]",
+      "onPick": [],
+      "onPullSuccess": [],
+      "onPullFail": []
+    },
+    {
+      "id": "watch_clapper",
+      "category": "sunken",
+      "sprite": "/resources/runtime/images/examine/ow_watch_clapper.png",
+      "pos": {
+        "x": 410,
+        "y": 285
+      },
+      "depth": 0.32,
+      "valueTier": "normal",
+      "consumeOnSuccess": true,
+      "displaySize": 95,
+      "hitRadius": 60,
+      "pull": {
+        "zoneSize": 0.3,
+        "sliderSpeed": 0.48,
+        "rhythm": "burst",
+        "failurePolicy": "slip",
+        "timeLimitSec": 24
+      },
+      "cue": "[tag:string:owWatch:water_cue]",
+      "onPullSuccess": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_watch_found"
+          }
+        }
+      ],
+      "onPullFail": [
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "[tag:string:owWatch:water_fail]",
+            "type": "info"
+          }
+        }
+      ]
+    }
+  ]
+}

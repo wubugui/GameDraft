@@ -1,0 +1,81 @@
+{
+  "id": "ow_noodle_stove",
+  "label": "[tag:string:owStove:ex_label]",
+  "title": "[tag:string:owStove:ex_title]",
+  "allFoundHint": "[tag:string:owStove:ex_all]",
+  "presentation": {
+    "kind": "still",
+    "image": "/resources/runtime/images/examine/ow_noodle_stove.png",
+    "physicalWidthCm": 32,
+    "backgroundPreset": "stone",
+    "contactAoIntensity": 0.4,
+    "contactAoRadiusCm": 0.6
+  },
+  "ambience": {
+    "headSway": {
+      "amplitude": 0.12
+    },
+    "breathing": false,
+    "dust": false
+  },
+  "hotspots": [
+    {
+      "id": "ash",
+      "label": "[tag:string:owStove:ash_label]",
+      "x": 382,
+      "y": 750,
+      "width": 390,
+      "height": 220,
+      "narration": "[tag:string:owStove:ash_look]",
+      "itemUses": [
+        {
+          "itemId": "ow_bamboo",
+          "label": "[tag:string:owStove:ash_use]",
+          "narration": "[tag:string:owStove:ash_work]",
+          "actions": [
+            {
+              "type": "emitNarrativeSignal",
+              "params": {
+                "signal": "ow_stove_clear"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "foot",
+      "label": "[tag:string:owStove:foot_label]",
+      "x": 795,
+      "y": 935,
+      "width": 175,
+      "height": 165,
+      "narration": "[tag:string:owStove:foot_look]",
+      "itemUses": [
+        {
+          "itemId": "ow_wood_wedge",
+          "label": "[tag:string:owStove:foot_use]",
+          "narration": "[tag:string:owStove:foot_work]",
+          "actions": [
+            {
+              "type": "emitNarrativeSignal",
+              "params": {
+                "signal": "ow_stove_wedge"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ring",
+      "x": 310,
+      "y": 390,
+      "width": 470,
+      "height": 175,
+      "label": "[tag:string:owStove:ring_label]",
+      "narration": "[tag:string:owStove:ring_look]",
+      "decoy": true
+    }
+  ]
+}

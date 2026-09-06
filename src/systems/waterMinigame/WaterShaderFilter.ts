@@ -3,6 +3,7 @@ import { Filter, GlProgram, Texture } from 'pixi.js';
 const VERT = /* glsl */ `
 in vec2 aPosition;
 out vec2 vTextureCoord;
+out vec2 vTextureExtent;
 
 uniform vec4 uInputSize;
 uniform vec4 uOutputFrame;
@@ -22,11 +23,13 @@ vec2 filterTextureCoord(void) {
 void main(void) {
     gl_Position = filterVertexPosition();
     vTextureCoord = filterTextureCoord();
+    vTextureExtent = uOutputFrame.zw * uInputSize.zw;
 }
 `;
 
 const FRAG = /* glsl */ `
 in vec2 vTextureCoord;
+in vec2 vTextureExtent;
 out vec4 finalColor;
 
 uniform sampler2D uTexture;
@@ -44,7 +47,10 @@ uniform float uUseNormalMap;
 uniform float uWaterBottomDepth;
 
 void main(void) {
-    vec2 uv = vTextureCoord;
+    // Pixi's input occupies only part of a pooled texture. The independently
+    // allocated parameter RT occupies its whole texture. Share surface UVs,
+    // then convert only the color lookup back to Pixi's input UV range.
+    vec2 uv = vTextureCoord / vTextureExtent;
 
     vec2 ripple = vec2(
         sin(uv.x * 48.0 + uTime * 1.7) * cos(uv.y * 31.0 - uTime * 1.1),
@@ -57,7 +63,7 @@ void main(void) {
     }
 
     vec2 suv = clamp(uv + ripple, vec2(0.001), vec2(0.999));
-    vec4 col = texture(uTexture, suv);
+    vec4 col = texture(uTexture, suv * vTextureExtent);
 
     vec4 pm = texture(uParams, suv);
     float pMask = step(0.5, pm.b) * pm.a;

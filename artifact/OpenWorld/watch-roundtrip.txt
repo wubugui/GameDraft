@@ -1,0 +1,16 @@
+bringing up nodes...
+bringing up nodes...
+
+.......                                                                  [100%]
+============================ slowest 10 durations =============================
+16.89s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+4.56s call     tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+3.34s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_open_world_dialogues_roundtrip_through_native_inspector
+0.88s call     tools/editor/tests/test_object_examine_editor.py::test_every_shipped_property_browses_without_mutating_data_or_dirty_state
+0.83s teardown tools/editor/tests/test_open_world_forms_roundtrip.py::test_authored_open_world_forms_are_lossless
+0.27s call     tools/editor/tests/test_object_examine_editor.py::test_pointer_selected_hotspot_edits_real_coordinate_and_saves_only_family
+0.12s teardown tools/editor/tests/test_object_examine_editor.py::test_every_shipped_property_browses_without_mutating_data_or_dirty_state
+0.09s teardown tools/editor/tests/test_object_examine_editor.py::test_pointer_selected_hotspot_edits_real_coordinate_and_saves_only_family
+0.08s teardown tools/editor/tests/test_object_examine_editor.py::test_examine_save_rejects_index_paths_outside_its_family
+0.07s teardown tools/editor/tests/test_object_examine_editor.py::test_item_reference_widget_keeps_unknown_value_and_live_candidates
+7 passed in 34.38s

@@ -337,6 +337,7 @@ function makeNpc(id: string, characterId: string, x = 100, y = 100) {
     y,
     def: { id, characterId, name: id, x, y, interactionRange: 40 } as NpcDef,
     playAnimation: vi.fn(),
+    cancelActiveMove: vi.fn(() => { resolveMove?.(); }),
     moveTo(tx: number, ty: number) {
       moveCalls.push({ x: tx, y: ty });
       return new Promise<void>((res) => {
@@ -509,12 +510,17 @@ describe('NpcScheduleSystem 离场演出（绝不当着玩家的面消失）', (
     rt.sys.update(0.016);
     expect(a.moveCalls).toHaveLength(1);
 
-    a.interrupt(); // Promise 落定，但坐标没变
+    // 模态态必须取消已经发出的移动，而不只是停止重发。
+    rt.state.exploring = false;
+    rt.sys.update(0.016);
+    expect(a.npc.cancelActiveMove).toHaveBeenCalledOnce();
+    expect(rt.sys.ownsNpcMovement(a.npc.id)).toBe(true);
     // moveTo 的 .catch().finally() 各占一层微任务，让出一个宏任务确保 moving 已复位
     await new Promise((r) => setTimeout(r, 0));
     rt.state.exploring = false;
     rt.sys.update(0.016);
     expect(a.moveCalls).toHaveLength(1); // 非探索态不重发
+    expect(a.npc.cancelActiveMove).toHaveBeenCalledOnce(); // 后续帧不抢导演新发的走位
     expect(rt.sys.isNpcPresentNow(a.npc.def)).toBe(true); // 仍在场，没被抹掉
 
     rt.state.exploring = true;
@@ -553,6 +559,14 @@ describe('NpcScheduleSystem 离场演出（绝不当着玩家的面消失）', (
     rt.sys.update(0.016);
     expect(a.moveCalls).toHaveLength(0);
     expect(rt.sys.isNpcPresentNow(a.npc.def)).toBe(false);
+    // 次日遮黑回到同场：恢复工位，不继承昨天离场留下的门口坐标。
+    a.npc.x = 700;
+    rt.state.minutes = parseClock('08:00')!;
+    rt.eventBus.emit('time:changed', { transition: 'timelapse' });
+    expect(a.npc.x).toBe(100);
+    expect(a.npc.y).toBe(300);
+    expect(rt.sys.isNpcPresentNow(a.npc.def)).toBe(true);
+    expect(rt.sys.ownsNpcMovement(a.npc.id)).toBe(false);
   });
 
   it('入场从出口走进来，不原地冒出', () => {

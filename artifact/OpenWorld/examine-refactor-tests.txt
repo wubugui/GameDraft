@@ -1,0 +1,25 @@
+........................................................................ [ 51%]
+................F..................................................      [100%]
+================================== FAILURES ===================================
+____________ test_real_project_matches_catalog_emitted_signal_ids _____________
+
+real_index = <tools.narrative_xref.scan.SignalIndex object at 0x000002B8136AB450>
+
+    def test_real_project_matches_catalog_emitted_signal_ids(real_index):
+        """与 emitted-signal-catalog 的权威口径逐条对账（实发，不含黑盒声明）。"""
+        from tools.editor.shared.narrative_catalog import emitted_signal_ids
+
+        expected = set(emitted_signal_ids(_FakeModel(REPO_ROOT)))
+        got = {c.signal for c in real_index.overview() if c.real_emitter_count > 0}
+>       assert got == expected, f"仅 xref 认为有人发：{got - expected}；仅目录认为有人发：{expected - got}"
+E       AssertionError: 仅 xref 认为有人发：{'ow_tally_rub'}；仅目录认为有人发：set()
+E       assert {'beishi_corp...ccepted', ...} == {'beishi_corp...ccepted', ...}
+E
+E         Extra items in the left set:
+E         'ow_tally_rub'
+E         Use -v to get more diff
+
+tools\narrative_xref\tests\test_narrative_xref.py:800: AssertionError
+=========================== short test summary info ===========================
+FAILED tools/narrative_xref/tests/test_narrative_xref.py::test_real_project_matches_catalog_emitted_signal_ids
+1 failed, 138 passed in 37.08s

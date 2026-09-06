@@ -90,8 +90,12 @@ export class EventBridge {
        *  - 图对话 deferred 链式接续（willContinue）→ 下一张图即将开播，不恢复——
        *    链条全部接续失败时 GraphDialogueManager 会补发一次 willContinue=false 的最终 end。 */
       if (dialogueManager.isActive || graphDialogueManager.isActive) return;
-      if (p?.willContinue === true) return;
-      stateController.setState(GameState.Exploring);
+      if (p?.willContinue === true || p?.nestedInGraph === true) return;
+      // 末拍动作可能已经把控制权交给商店、小游戏或切场。对话只收回自己仍持有的
+      // Dialogue 态；否则 openShop 后紧随的 end 会让玩家在商店背后继续走动。
+      if (stateController.currentState === GameState.Dialogue) {
+        stateController.setState(GameState.Exploring);
+      }
     });
 
     this.listen('encounter:narrativeDone', () => encounterManager.generateOptions());

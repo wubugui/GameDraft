@@ -410,6 +410,7 @@ export interface AuthoringCatalogDef {
   dialogueGraphIds: string[];
   scenarioIds: string[];
   questIds: string[];
+  ruleIds?: string[];
   sceneIds: string[];
   sceneEntityRefs: string[];
   sceneNpcRefs: string[];

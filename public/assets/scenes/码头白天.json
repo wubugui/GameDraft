@@ -104,7 +104,7 @@
   "npcs": [
     {
       "id": "new_npc_0",
-      "name": "New NPC",
+      "name": "候船的老客",
       "x": 1689.0,
       "y": 837.8,
       "interactionRange": 50.0,
@@ -125,7 +125,15 @@
           "y": 20.0
         }
       ],
-      "collisionPolygonLocal": true
+      "collisionPolygonLocal": true,
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "port_waiter"
     },
     {
       "id": "npc_脚帮告示",
@@ -150,7 +158,13 @@
           "y": 1.7
         }
       ],
-      "collisionPolygonLocal": true
+      "collisionPolygonLocal": true,
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "new_npc_4",
@@ -176,11 +190,17 @@
           "y": 23.1
         }
       ],
-      "collisionPolygonLocal": true
+      "collisionPolygonLocal": true,
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "new_npc_3",
-      "name": "New NPC",
+      "name": "拴船的木箱",
       "x": 1268.9,
       "y": 1524.3,
       "interactionRange": 50.0,
@@ -189,6 +209,12 @@
       "initialFacing": "left",
       "cutsceneIds": [
         "洋人第一次出场"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
       ]
     },
     {
@@ -247,11 +273,17 @@
         }
       ],
       "collisionPolygonLocal": true,
-      "perspectiveScaleEnabled": false
+      "perspectiveScaleEnabled": false,
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ]
     },
     {
       "id": "new_hotspot_4",
-      "name": "洋人女性",
+      "name": "候船的洋人女子",
       "x": 1614.7,
       "y": 835.3,
       "animFile": "/resources/runtime/animation/npc_western_lady_anim/anim.json",
@@ -271,11 +303,19 @@
         }
       ],
       "collisionPolygonLocal": true,
-      "perspectiveScaleEnabled": false
+      "perspectiveScaleEnabled": false,
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "port_lady"
     },
     {
       "id": "new_hotspot_6",
-      "name": "搬运工",
+      "name": "歇肩的搬运工",
       "x": 1729,
       "y": 1224.4,
       "animFile": "/resources/runtime/animation/npc_dock_porter_anim/anim.json",
@@ -300,7 +340,110 @@
         }
       ],
       "collisionPolygonLocal": true,
-      "perspectiveScaleEnabled": false
+      "perspectiveScaleEnabled": false,
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "port_porter"
+    },
+    {
+      "id": "ow_zhou",
+      "characterId": "ow_zhou",
+      "x": 1530.0,
+      "y": 1021.4,
+      "initialAnimState": "lifu_stand",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 1530.0,
+            "y": 1021.4
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "lifu_walk"
+      }
+    },
+    {
+      "id": "ow_deng",
+      "characterId": "ow_deng",
+      "x": 2220.0,
+      "y": 669.77,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 2220.0,
+            "y": 669.77
+          },
+          {
+            "x": 2370.0,
+            "y": 569.3
+          },
+          {
+            "x": 2520.0,
+            "y": 485.58
+          }
+        ],
+        "speed": 64,
+        "moveAnimState": "walk"
+      }
+    },
+    {
+      "id": "ow_qian",
+      "characterId": "ow_qian",
+      "x": 1875.0,
+      "y": 1130.23,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 1875.0,
+            "y": 1130.23
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
     }
   ],
   "hotspots": [
@@ -318,18 +461,18 @@
     {
       "id": "new_hotspot_3",
       "type": "inspect",
-      "label": "",
+      "label": "磨亮的河埠石阶",
       "x": 1471.1,
       "y": 1417.8,
       "interactionRange": 50.0,
       "data": {
-        "text": ""
+        "text": "[tag:string:openWorld:port_steps]"
       }
     },
     {
       "id": "new_hotspot_箱子堆",
       "type": "inspect",
-      "label": "",
+      "label": "堆起的货箱",
       "x": 1976.8,
       "y": 1289.5,
       "interactionRange": 50.0,
@@ -559,7 +702,7 @@
     {
       "id": "new_hotspot_13",
       "type": "inspect",
-      "label": "",
+      "label": "落水货箱的捞取处",
       "x": 1885.8,
       "y": 1176.4,
       "interactionRange": 50.0,
@@ -577,7 +720,7 @@
     {
       "id": "主线s1藏钱点B",
       "type": "inspect",
-      "label": "",
+      "label": "货栈藏钱处",
       "x": 2156.7,
       "y": 436.3,
       "interactionRange": 50,
@@ -593,6 +736,139 @@
           "state": "state_1"
         }
       ]
+    },
+    {
+      "id": "ow_去桥下",
+      "type": "transition",
+      "label": "沿河埠去老桥",
+      "x": 210.0,
+      "y": 1590.7,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "targetScene": "bridge_underpass",
+        "targetSpawnPoint": "from_street"
+      }
+    },
+    {
+      "id": "ow_tally_pickup",
+      "type": "inspect",
+      "label": "缆绳旁的折角纸片",
+      "x": 1395.0,
+      "y": 1138.61,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_街坊",
+        "entry": "tally_find"
+      },
+      "conditions": [
+        {
+          "any": [
+            {
+              "narrative": "flow_ow_tally",
+              "state": "initial"
+            },
+            {
+              "narrative": "flow_ow_tally",
+              "state": "accepted"
+            }
+          ]
+        }
+      ],
+      "conditionHidesEntity": true
+    },
+    {
+      "id": "ow_rest",
+      "type": "inspect",
+      "label": "歇脚 · 等一等",
+      "x": 1095.0,
+      "y": 1230.7,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_歇脚"
+      }
+    },
+    {
+      "id": "ow_port_rules",
+      "type": "inspect",
+      "label": "货栈墙上的脚帮规矩",
+      "x": 1560.0,
+      "y": 870.7,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "text": "[tag:string:openWorld:ow_port_rules]"
+      }
+    },
+    {
+      "id": "ow_tally_stack",
+      "type": "inspect",
+      "label": "[tag:string:owFirst:stack_label]",
+      "x": 1500,
+      "y": 1021.4,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_街坊",
+        "entry": "tally_stack"
+      }
+    },
+    {
+      "id": "ow_rope_tail",
+      "type": "inspect",
+      "label": "[tag:string:owWater:ow_rope_tail_label]",
+      "x": 1350,
+      "y": 1090,
+      "interactionRange": 60,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_水路",
+        "entry": "tail"
+      }
+    },
+    {
+      "id": "ow_mooring",
+      "type": "inspect",
+      "label": "[tag:string:owWater:ow_mooring_label]",
+      "x": 1845,
+      "y": 1080,
+      "interactionRange": 70,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_水路",
+        "entry": "mooring"
+      }
+    },
+    {
+      "id": "ow_small_cargo",
+      "type": "inspect",
+      "label": "[tag:string:owWatch:ow_small_cargo_label]",
+      "x": 1570,
+      "y": 1040,
+      "interactionRange": 42,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_巡更",
+        "entry": "cargo"
+      }
     }
   ],
   "zones": [
@@ -899,6 +1175,60 @@
     "spawn_2": {
       "x": 488.2,
       "y": 1610.0
+    },
+    "ow_from_bridge": {
+      "x": 480.0,
+      "y": 1523.72
     }
-  }
+  },
+  "dayNight": {
+    "enabled": true
+  },
+  "entityGroups": [
+    {
+      "id": "ow_居民",
+      "label": "开放生活圈 · 居民",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "planes": [
+        "normal"
+      ]
+    }
+  ],
+  "exitAnchors": [
+    {
+      "id": "ow_door_0",
+      "x": 1620.0,
+      "y": 1071.63
+    },
+    {
+      "id": "ow_door_1",
+      "x": 2010.0,
+      "y": 1188.84
+    },
+    {
+      "id": "ow_door_2",
+      "x": 2610.0,
+      "y": 401.86
+    },
+    {
+      "id": "ow_exit_zhou",
+      "x": 1620.0,
+      "y": 1071.63
+    },
+    {
+      "id": "ow_exit_deng",
+      "x": 2610.0,
+      "y": 401.86
+    },
+    {
+      "id": "ow_exit_qian",
+      "x": 2010.0,
+      "y": 1188.84
+    }
+  ]
 }

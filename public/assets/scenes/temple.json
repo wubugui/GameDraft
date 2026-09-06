@@ -50,13 +50,13 @@
     }
   ],
   "spawnPoint": {
-    "x": 300.59,
-    "y": 354.39
+    "x": 408.0,
+    "y": 374.98
   },
   "spawnPoints": {
     "from_street": {
-      "x": 217.5,
-      "y": 383.8
+      "x": 408.0,
+      "y": 374.98
     },
     "spawn_0": {
       "x": 221.7,
@@ -221,13 +221,88 @@
     {
       "id": "T到室外",
       "type": "transition",
-      "label": "到室外",
-      "x": 162.6,
-      "y": 399.4,
-      "interactionRange": 20.0,
+      "label": "回到庙前院子",
+      "x": 368.0,
+      "y": 406.22,
+      "interactionRange": 85,
       "data": {
         "targetScene": "temple_exterior",
         "targetSpawnPoint": "spawn_0"
+      },
+      "planes": [
+        "normal"
+      ]
+    },
+    {
+      "id": "ow_rest",
+      "type": "inspect",
+      "label": "歇脚 · 等一等",
+      "x": 536.0,
+      "y": 343.73,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_歇脚"
+      }
+    },
+    {
+      "id": "ow_incense_pan_inside",
+      "type": "inspect",
+      "label": "[tag:string:owTemple:ow_incense_pan_inside_label]",
+      "x": 530,
+      "y": 380,
+      "interactionRange": 25,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_庙火",
+        "entry": "stand"
+      },
+      "conditions": [
+        {
+          "narrative": "flow_ow_incense",
+          "state": "moved",
+          "reached": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "displayImage": {
+        "image": "/resources/runtime/images/examine/ow_incense_pan.png",
+        "worldWidth": 32,
+        "worldHeight": 20
+      }
+    },
+    {
+      "id": "ow_temple_stand",
+      "type": "inspect",
+      "label": "[tag:string:owTemple:ow_temple_stand_label]",
+      "x": 530,
+      "y": 380,
+      "interactionRange": 25,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_庙火",
+        "entry": "stand"
+      }
+    },
+    {
+      "id": "ow_temple_ledger",
+      "type": "inspect",
+      "label": "[tag:string:owTemple:ow_temple_ledger_label]",
+      "x": 330,
+      "y": 380,
+      "interactionRange": 25,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_庙火",
+        "entry": "ledger"
       }
     }
   ],
@@ -278,12 +353,79 @@
   "npcs": [
     {
       "id": "new_npc_0",
-      "name": "New NPC",
+      "name": "看香的道人",
       "x": 525.6,
       "y": 287.7,
       "interactionRange": 50,
       "animFile": "/resources/runtime/animation/player_taoist_anim_v1/anim.json",
-      "initialAnimState": "idle"
+      "initialAnimState": "idle",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "dialogueGraphId": "开放世界_街坊",
+      "dialogueGraphEntry": "temple_keeper"
+    },
+    {
+      "id": "ow_monk",
+      "characterId": "ow_monk",
+      "x": 464.0,
+      "y": 357.12,
+      "initialAnimState": "monk_stand",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 464.0,
+            "y": 357.12
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "monk_walk"
+      }
+    }
+  ],
+  "dayNight": {
+    "enabled": true
+  },
+  "entityGroups": [
+    {
+      "id": "ow_居民",
+      "label": "开放生活圈 · 居民",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "planes": [
+        "normal"
+      ]
+    }
+  ],
+  "exitAnchors": [
+    {
+      "id": "ow_door_0",
+      "x": 556.0,
+      "y": 352.66
+    },
+    {
+      "id": "ow_exit_monk",
+      "x": 408,
+      "y": 375
     }
   ]
 }

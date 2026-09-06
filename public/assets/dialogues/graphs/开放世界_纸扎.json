@@ -1,0 +1,801 @@
+{
+  "schemaVersion": 1,
+  "id": "开放世界_纸扎",
+  "entry": "bench",
+  "meta": {
+    "title": "纸、糨糊和站不稳的纸人"
+  },
+  "nodes": {
+    "end": {
+      "type": "end"
+    },
+    "focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_paper_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_paper"
+          }
+        }
+      ],
+      "next": "methods"
+    },
+    "bench": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_paper",
+                "state": "remade",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_paper",
+                "state": "braced",
+                "reached": true
+              }
+            ]
+          },
+          "next": "bench_done"
+        },
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_paper",
+                "state": "remade_ready"
+              },
+              {
+                "narrative": "flow_ow_paper",
+                "state": "braced_ready"
+              }
+            ]
+          },
+          "next": "bench_ready"
+        }
+      ],
+      "defaultNext": "bench_intro"
+    },
+    "bench_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:bench_intro]",
+      "next": "focus"
+    },
+    "methods": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "new_method",
+          "text": "[tag:string:owPaper:new_method]",
+          "next": "remake_check",
+          "requireCondition": {
+            "not": {
+              "any": [
+                {
+                  "narrative": "flow_ow_paper_splint",
+                  "state": "done",
+                  "reached": true
+                },
+                {
+                  "narrative": "flow_ow_paper_seam",
+                  "state": "done",
+                  "reached": true
+                }
+              ]
+            }
+          },
+          "disabledClickHint": "[tag:string:owPaper:new_method_disabled]"
+        },
+        {
+          "id": "old_method",
+          "text": "[tag:string:owPaper:old_method]",
+          "next": "repair_terms"
+        },
+        {
+          "id": "paper_supplies",
+          "text": "[tag:string:owPaper:paper_supplies]",
+          "next": "supplies"
+        },
+        {
+          "id": "paper_leave",
+          "text": "[tag:string:owPaper:paper_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "supplies": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:supplies]",
+      "next": "end"
+    },
+    "remake_check": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "all": [
+              {
+                "flag": "has_item_ow_dry_paper"
+              },
+              {
+                "flag": "has_item_ow_paste"
+              }
+            ]
+          },
+          "next": "remake_terms"
+        }
+      ],
+      "defaultNext": "remake_short"
+    },
+    "remake_short": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:remake_short]",
+      "next": "supplies"
+    },
+    "remake_terms": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:remake_terms]",
+      "next": "remake_choice"
+    },
+    "remake_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "remake_start",
+          "text": "[tag:string:owPaper:remake_start]",
+          "next": "remake_start"
+        },
+        {
+          "id": "remake_wait",
+          "text": "[tag:string:owPaper:remake_wait]",
+          "next": "end"
+        }
+      ]
+    },
+    "remake_start": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_paper",
+            "objectiveId": "paper_new_obj"
+          }
+        },
+        {
+          "type": "startPaperCraftMinigame",
+          "params": {
+            "id": "ow_paper_remake"
+          }
+        }
+      ],
+      "next": "paper_after"
+    },
+    "repair_terms": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:repair_terms]",
+      "next": "repair_choice"
+    },
+    "repair_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "repair_start",
+          "text": "[tag:string:owPaper:repair_start]",
+          "next": "repair_open"
+        },
+        {
+          "id": "repair_wait",
+          "text": "[tag:string:owPaper:repair_wait]",
+          "next": "end"
+        }
+      ]
+    },
+    "repair_open": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_paper",
+            "objectiveId": "paper_old_obj"
+          }
+        },
+        {
+          "type": "startObjectExamine",
+          "params": {
+            "id": "ow_paper_frame"
+          }
+        }
+      ],
+      "next": "paper_after"
+    },
+    "paper_after": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_paper",
+                "state": "remade_ready"
+              },
+              {
+                "narrative": "flow_ow_paper",
+                "state": "braced_ready"
+              }
+            ]
+          },
+          "next": "bench_ready"
+        }
+      ],
+      "defaultNext": "paper_unfinished"
+    },
+    "paper_unfinished": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:paper_unfinished]",
+      "next": "end"
+    },
+    "bench_ready": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:bench_ready]",
+      "next": "return_focus"
+    },
+    "return_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_paper",
+            "objectiveId": "paper_return_obj"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "bench_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:bench_done]",
+      "next": "end"
+    },
+    "luo": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_paper",
+            "state": "remade",
+            "reached": true
+          },
+          "next": "luo_new_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_paper",
+            "state": "braced",
+            "reached": true
+          },
+          "next": "luo_old_done"
+        },
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_paper",
+                "state": "remade_ready"
+              },
+              {
+                "narrative": "flow_ow_paper",
+                "state": "braced_ready"
+              }
+            ]
+          },
+          "next": "luo_check"
+        }
+      ],
+      "defaultNext": "luo_request"
+    },
+    "luo_request": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "罗伯"
+      },
+      "text": "[tag:string:owPaper:luo_request]",
+      "next": "luo_focus"
+    },
+    "luo_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_paper_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_paper"
+          }
+        }
+      ],
+      "next": "luo_where"
+    },
+    "luo_where": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "罗伯"
+      },
+      "text": "[tag:string:owPaper:luo_where]",
+      "next": "end"
+    },
+    "luo_check": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "罗伯"
+      },
+      "text": "[tag:string:owPaper:luo_check]",
+      "next": "deliver_choice"
+    },
+    "deliver_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "deliver",
+          "text": "[tag:string:owPaper:deliver]",
+          "next": "deliver"
+        },
+        {
+          "id": "deliver_later",
+          "text": "[tag:string:owPaper:deliver_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "deliver": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_paper_deliver"
+          }
+        }
+      ],
+      "next": "luo"
+    },
+    "luo_new_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "罗伯"
+      },
+      "text": "[tag:string:owPaper:luo_new_done]",
+      "next": "end"
+    },
+    "luo_old_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "罗伯"
+      },
+      "text": "[tag:string:owPaper:luo_old_done]",
+      "next": "end"
+    },
+    "damp": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_dry_paper",
+            "state": "done",
+            "reached": true
+          },
+          "next": "dry_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_dry_paper",
+            "state": "carrying"
+          },
+          "next": "damp_carried"
+        }
+      ],
+      "defaultNext": "damp_intro"
+    },
+    "damp_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:damp_intro]",
+      "next": "dry_focus"
+    },
+    "dry_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_dry_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_dry_paper"
+          }
+        }
+      ],
+      "next": "damp_choice"
+    },
+    "damp_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "damp_take",
+          "text": "[tag:string:owPaper:damp_take]",
+          "next": "damp_take"
+        },
+        {
+          "id": "damp_later",
+          "text": "[tag:string:owPaper:damp_later]",
+          "next": "end"
+        }
+      ]
+    },
+    "damp_take": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_dry_take"
+          }
+        }
+      ],
+      "next": "damp_carried"
+    },
+    "damp_carried": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:damp_carried]",
+      "next": "dry_track"
+    },
+    "dry_track": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_dry_paper"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "rack": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "narrative": "flow_ow_dry_paper",
+            "state": "done",
+            "reached": true
+          },
+          "next": "dry_done"
+        },
+        {
+          "condition": {
+            "narrative": "flow_ow_dry_paper",
+            "state": "carrying"
+          },
+          "next": "rack_time"
+        }
+      ],
+      "defaultNext": "rack_empty"
+    },
+    "rack_empty": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:rack_empty]",
+      "next": "dry_request_focus"
+    },
+    "dry_request": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "罗伯"
+      },
+      "text": "[tag:string:owPaper:dry_request]",
+      "next": "dry_request_focus"
+    },
+    "dry_request_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_dry_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_dry_paper"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "rack_time": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "all": [
+              {
+                "flag": "minutes_of_day",
+                "op": ">=",
+                "value": 420
+              },
+              {
+                "flag": "minutes_of_day",
+                "op": "<",
+                "value": 1020
+              }
+            ]
+          },
+          "next": "rack_choice"
+        }
+      ],
+      "defaultNext": "rack_dark"
+    },
+    "rack_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "rack_spread",
+          "text": "[tag:string:owPaper:rack_spread]",
+          "next": "rack_spread"
+        },
+        {
+          "id": "rack_wait",
+          "text": "[tag:string:owPaper:rack_wait]",
+          "next": "end"
+        }
+      ]
+    },
+    "rack_spread": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_dry_spread"
+          }
+        }
+      ],
+      "next": "dry_done"
+    },
+    "rack_dark": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:rack_dark]",
+      "next": "end"
+    },
+    "dry_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:dry_done]",
+      "next": "end"
+    },
+    "stove": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "any": [
+              {
+                "narrative": "flow_ow_stove",
+                "state": "cold"
+              },
+              {
+                "narrative": "flow_ow_stove",
+                "state": "cooking"
+              },
+              {
+                "narrative": "flow_ow_stove",
+                "state": "hot"
+              }
+            ]
+          },
+          "next": "ow_rice_handoff"
+        },
+        {
+          "condition": {
+            "flag": "has_item_ow_paste"
+          },
+          "next": "paste_have"
+        }
+      ],
+      "defaultNext": "stove_intro"
+    },
+    "stove_intro": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:stove_intro]",
+      "next": "stove_focus"
+    },
+    "stove_focus": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_paste_accept"
+          }
+        },
+        {
+          "type": "setFocusedQuest",
+          "params": {
+            "id": "ow_paste"
+          }
+        }
+      ],
+      "next": "stove_choice"
+    },
+    "stove_choice": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "ow_rice_topic",
+          "text": "[tag:string:owStove:rice_topic]",
+          "next": "ow_rice_handoff"
+        },
+        {
+          "id": "stove_cook",
+          "text": "[tag:string:owPaper:stove_cook]",
+          "next": "stove_cook",
+          "requireCondition": {
+            "all": [
+              {
+                "flag": "has_item_nuomi"
+              },
+              {
+                "flag": "has_item_ow_bucket"
+              }
+            ]
+          },
+          "disabledClickHint": "[tag:string:owPaper:stove_cook_disabled]"
+        },
+        {
+          "id": "stove_buy",
+          "text": "[tag:string:owPaper:stove_buy]",
+          "next": "paste_buy"
+        },
+        {
+          "id": "stove_leave",
+          "text": "[tag:string:owPaper:stove_leave]",
+          "next": "end"
+        }
+      ]
+    },
+    "stove_cook": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "ow_paste_cook"
+          }
+        }
+      ],
+      "next": "paste_have"
+    },
+    "paste_have": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:paste_have]",
+      "next": "end"
+    },
+    "paste_buy": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "旁白"
+      },
+      "text": "[tag:string:owPaper:paste_buy]",
+      "next": "end"
+    },
+    "ow_rice_handoff": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "开放世界_灶火",
+            "entry": "loan_stove"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "stove_available": {
+      "type": "switch",
+      "cases": [
+        {
+          "condition": {
+            "flag": "has_item_ow_paste"
+          },
+          "next": "paste_have"
+        }
+      ],
+      "defaultNext": "stove_intro"
+    }
+  }
+}

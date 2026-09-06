@@ -69,8 +69,11 @@ function rowFocusId(key: string): string {
 }
 
 interface Objective {
+  id?: string;
   text: string;
   done: boolean;
+  tracked?: boolean;
+  selectable?: boolean;
 }
 
 /** 一条列表行 = 一个任务/活计的展示投影（不持有 def，重建时整份重算） */
@@ -98,6 +101,7 @@ interface QuestRow {
 export class QuestPanelUI {
   private renderer: Renderer;
   private closeRequester: (() => void) | null = null;
+  private lastOpenedFocus: string | null = null;
   private questData: IQuestDataProvider;
   private eventBus: EventBus;
   /** 任务态变了就地重建（面板开着的时候）——面板是**状态镜像**，不是打开那一刻的快照 */
@@ -183,6 +187,16 @@ export class QuestPanelUI {
 
   open(): void {
     if (this._isOpen) return;
+    const focused = this.questData.getFocusedQuestId();
+    if (focused && (focused !== this.lastOpenedFocus || !this.selectedKey)) {
+      const active = this.activeRows().find(row => row.questId === focused);
+      const run = active ? null : this.repeatableRows().find(row => row.questId === focused);
+      if (active || run) {
+        this.tab = active ? 'active' : 'repeatable';
+        this.selectedKey = (active ?? run)!.key;
+      }
+    }
+    this.lastOpenedFocus = focused;
     this._isOpen = true;
     this.build(true);
     window.addEventListener('keydown', this.onKeyBound);
@@ -298,9 +312,14 @@ export class QuestPanelUI {
 
   /** 该任务配了目标就用真目标，没配就退回旧样子（不造假条目） */
   private objectivesOf(questId: string): Objective[] {
+    const current = this.questData.getFocusedQuestId() === questId
+      ? this.questData.getCurrentObjective(questId)?.id : null;
     return this.questData.getQuestObjectives(questId).map(o => ({
+      id: o.def.id,
       text: this.r(o.def.text),
       done: o.done,
+      tracked: o.def.id === current,
+      selectable: this.questData.canFocusObjective(questId, o.def.id),
     }));
   }
 
@@ -930,7 +949,8 @@ export class QuestPanelUI {
       cy += UITheme.spacing.md;
 
       const head = createStyledText({
-        text: this.strings.get('quest', 'objectives'),
+        text: this.strings.get('quest', row.objectives.filter(o => o.selectable).length > 1
+          ? 'chooseObjective' : 'objectives'),
         style: {
           fontSize: UITheme.fontSize.small,
           fill: UITheme.colors.hintMid,
@@ -944,25 +964,58 @@ export class QuestPanelUI {
       cy += head.height + UITheme.spacing.sm;
 
       for (const obj of row.objectives) {
+        const objY = cy;
         const box = this.checkbox(obj.done);
         // 方框与 body(20) 的首行视觉中线对齐（字框比方框高，往下让 3px）
         box.position.set(0, cy + 3);
         view.content.addChild(box);
 
         const t = createStyledText({
-          text: obj.text,
+          text: obj.tracked ? this.strings.get('quest', 'trackedObjective', { text: obj.text }) : obj.text,
           style: {
             // 目标条目是玩家逐条核对的内容行，与正文同档；配角是它前面那个方框。
             fontSize: UITheme.fontSize.body,
-            fill: obj.done ? UITheme.colors.bodyMuted : UITheme.colors.descText,
+            fill: obj.done ? UITheme.colors.bodyMuted : (obj.tracked ? UITheme.colors.questMain : UITheme.colors.descText),
             fontFamily: UITheme.fonts.ui, lineHeight: 28,
             wordWrap: true, breakWords: true,
             wordWrapWidth: wrapW - CHECK_SIZE - UITheme.spacing.md,
           },
         });
         t.position.set(CHECK_SIZE + UITheme.spacing.md, cy);
+        t.eventMode = 'none';
         view.content.addChild(t);
-        cy += Math.max(CHECK_SIZE, t.height) + UITheme.spacing.sm;
+        const objH = Math.max(CHECK_SIZE, t.height) + UITheme.spacing.sm;
+        if (obj.id && obj.selectable && !obj.tracked) {
+          const objectiveId = obj.id;
+          const focusId = `objective:${row.questId}:${objectiveId}`;
+          const highlight = new Graphics();
+          drawHoverRow(highlight, 0, objY, wrapW, objH);
+          highlight.eventMode = 'none';
+          highlight.visible = false;
+          view.content.addChildAt(highlight, view.content.getChildIndex(box));
+          const act = (): void => { void this.onSetObjective(row.questId, objectiveId); };
+          const hit = new Graphics().rect(0, objY, wrapW, objH)
+            .fill({ color: UITheme.colors.descText, alpha: UITheme.alpha.hitArea });
+          hit.eventMode = 'static';
+          hit.cursor = 'pointer';
+          hit.on('pointerdown', e => {
+            markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
+            act();
+          });
+          hit.on('pointerover', () => this.focus.syncHover(focusId));
+          hit.on('pointerout', () => this.focus.clearHover(focusId));
+          view.content.addChild(hit);
+          focusItems.push({
+            id: focusId, x, y: y + objY, w: wrapW, h: objH,
+            group: QuestPanelUI.GROUP_BODY,
+            onFocus: f => {
+              highlight.visible = f;
+              if (f) this.revealDetail(objY, objH);
+            },
+            onActivate: act,
+          });
+        }
+        cy += objH;
       }
       cy += UITheme.spacing.xs;
     }
@@ -986,7 +1039,7 @@ export class QuestPanelUI {
       cy += mark.height + UITheme.spacing.sm;
     }
 
-    // 「设为当前任务」：右栏唯一的可点项（当前任务槽全局唯一，见玩法文档 D6）。
+    // 未选择具体线索时，也可沿用任务级的默认跟踪入口。
     // 已经是当前任务的显示成不可点的状态词，不给"再设一次"这种空操作。
     const focusLabel = row.focused
       ? this.strings.get('quest', 'isCurrent')
@@ -1103,6 +1156,19 @@ export class QuestPanelUI {
     // `setItems` 的兜底是"落到几何上最近的一项"——那正好是底部的关闭键帽，
     // 等于把手柄玩家一脚踢到出口上。
     if (this.selectedKey) this.focus.focusDefault(rowFocusId(this.selectedKey));
+  }
+
+  private async onSetObjective(questId: string, objectiveId: string): Promise<void> {
+    if (this.focusPending) return;
+    this.focusPending = true;
+    try {
+      await this.questData.requestFocusObjective(questId, objectiveId);
+    } catch (e) {
+      console.warn('QuestPanelUI: 跟踪线索失败', e);
+    } finally {
+      this.focusPending = false;
+    }
+    if (this._isOpen && this.selectedKey) this.focus.focusDefault(rowFocusId(this.selectedKey));
   }
 
   /**

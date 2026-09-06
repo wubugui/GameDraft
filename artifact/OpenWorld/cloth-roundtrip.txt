@@ -1,0 +1,62 @@
+.F                                                                       [100%]
+================================== FAILURES ===================================
+___ InspectorRoundtripTests.test_every_shipped_node_roundtrips_without_loss ___
+
+self = <tools.dialogue_graph_editor.tests.test_inspector_roundtrip.InspectorRoundtripTests testMethod=test_every_shipped_node_roundtrips_without_loss>
+
+    def test_every_shipped_node_roundtrips_without_loss(self) -> None:
+        files = _iter_graph_files()
+        self.assertTrue(files, "未找到任何 graphs/*.json，探针无数据可验")
+
+        mismatches: list[str] = []
+        for path in files:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:  # pragma: no cover - 数据损坏才触发
+                mismatches.append(f"{path.name}: 无法解析 ({e})")
+                continue
+            nodes = data.get("nodes")
+            if not isinstance(nodes, dict):
+                continue
+            node_ids = list(nodes.keys())
+            graph_id = str(data.get("id", "") or "").strip()
+            inspector = NodeInspector(
+                lambda ids=node_ids: list(ids),
+                project_root=_PROJECT_ROOT,
+                project_model_getter=lambda: self._pm,
+                dialogue_graph_id_getter=lambda gid=graph_id: gid,
+            )
+            for nid, node in nodes.items():
+                if not isinstance(node, dict):
+                    continue
+                original = copy.deepcopy(node)
+                try:
+                    got = self._roundtrip_node(inspector, nid, node)
+                except Exception as e:  # noqa: BLE001 - 任何 getter 异常都是 bug
+                    mismatches.append(f"{path.name} / {nid} ({node.get('type')}): getter 抛异常 {e!r}")
+                    continue
+                if got != original:
+                    mismatches.append(
+                        f"{path.name} / {nid} ({node.get('type')}):\n"
+                        f"  原始: {json.dumps(original, ensure_ascii=False, sort_keys=True)}\n"
+                        f"  往返: {json.dumps(got, ensure_ascii=False, sort_keys=True)}"
+                    )
+            inspector.deleteLater()
+
+        if mismatches:
+            head = mismatches[:40]
+            extra = f"\n…共 {len(mismatches)} 处不一致" if len(mismatches) > 40 else ""
+>           self.fail(
+                f"inspector 往返丢失/改写了 {len(mismatches)} 个节点的数据：\n"
+                + "\n".join(head)
+                + extra
+            )
+E           AssertionError: inspector 往返丢失/改写了 1 个节点的数据：
+E           开放世界_认衣.json / he_shop (runActions):
+E             原始: {"actions": [{"params": {"id": "ow_he_cloth"}, "type": "openShop"}], "next": "end", "type": "runActions"}
+E             往返: {"actions": [{"params": {"id": "ow_he_cloth", "shopId": ""}, "type": "openShop"}], "next": "end", "type": "runActions"}
+
+tools\dialogue_graph_editor\tests\test_inspector_roundtrip.py:90: AssertionError
+=========================== short test summary info ===========================
+FAILED tools/dialogue_graph_editor/tests/test_inspector_roundtrip.py::InspectorRoundtripTests::test_every_shipped_node_roundtrips_without_loss
+1 failed, 1 passed in 320.06s (0:05:20)

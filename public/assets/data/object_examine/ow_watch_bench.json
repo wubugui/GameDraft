@@ -1,0 +1,81 @@
+{
+  "id": "ow_watch_bench",
+  "label": "[tag:string:owWatch:bench_label]",
+  "title": "[tag:string:owWatch:bench_title]",
+  "allFoundHint": "[tag:string:owWatch:bench_hint]",
+  "presentation": {
+    "kind": "still",
+    "image": "/resources/runtime/images/examine/ow_watch_clapper.png",
+    "physicalWidthCm": 32,
+    "backgroundPreset": "wood",
+    "contactAoIntensity": 0.5,
+    "contactAoRadiusCm": 0.6
+  },
+  "ambience": {
+    "headSway": {
+      "amplitude": 0.2
+    },
+    "breathing": false,
+    "dust": false
+  },
+  "hotspots": [
+    {
+      "id": "split",
+      "label": "[tag:string:owWatch:split_name]",
+      "x": 405,
+      "y": 725,
+      "width": 145,
+      "height": 295,
+      "narration": "[tag:string:owWatch:split_look]",
+      "itemUses": [
+        {
+          "itemId": "ow_bamboo",
+          "label": "[tag:string:owWatch:split_use]",
+          "narration": "[tag:string:owWatch:split_work]",
+          "actions": [
+            {
+              "type": "emitNarrativeSignal",
+              "params": {
+                "signal": "ow_watch_splint"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cord",
+      "label": "[tag:string:owWatch:cord_name]",
+      "x": 345,
+      "y": 30,
+      "width": 475,
+      "height": 280,
+      "narration": "[tag:string:owWatch:cord_look]",
+      "itemUses": [
+        {
+          "itemId": "ow_cloth",
+          "label": "[tag:string:owWatch:cord_use]",
+          "narration": "[tag:string:owWatch:cord_work]",
+          "actions": [
+            {
+              "type": "emitNarrativeSignal",
+              "params": {
+                "signal": "ow_watch_tie"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "face",
+      "label": "[tag:string:owWatch:face_name]",
+      "x": 735,
+      "y": 600,
+      "width": 90,
+      "height": 265,
+      "decoy": true,
+      "narration": "[tag:string:owWatch:face_look]"
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "scope": "Native material acquisition, C06 paper route, S17 and S09 bamboo method. Debug scene entries and JSON cache refresh for coordinate fix only; no items/progress injected.",
+  "steps": [
+    {
+      "step": "Native S13 paper drying and Luo paste purchase supply C06",
+      "bag": {
+        "items": {
+          "ow_dry_paper": 1,
+          "ow_paste": 1
+        },
+        "coins": 0
+      },
+      "minutes": 690
+    },
+    {
+      "step": "Hold X to observe side-door draught, then use dry paper and paste at the gap",
+      "bag": {
+        "items": {},
+        "coins": 0
+      },
+      "minutes": 710,
+      "state": "sealed"
+    },
+    {
+      "step": "Return physically to small pan and hold X to verify; payment after inspection only",
+      "bag": {
+        "items": {},
+        "coins": 6
+      },
+      "minutes": 710,
+      "state": "sheltered"
+    },
+    {
+      "step": "After correcting inaccessible original placement, native walking picks up ledger from (330,380); JSON asset cache refreshed only, no progress changed",
+      "bag": {
+        "items": {
+          "ow_temple_ledger": 1
+        },
+        "coins": 6
+      }
+    },
+    {
+      "step": "Physically ask monk to read ledger and return it; lamp oil and document unlocked",
+      "bag": {
+        "items": {
+          "ow_lamp_oil": 1
+        },
+        "coins": 6
+      },
+      "document": true,
+      "state": "done"
+    },
+    {
+      "step": "Native rest to 20:00 after sealing outcome; monk present outside",
+      "minutes": 1200,
+      "npcs": [
+        {
+          "kind": "npc",
+          "label": "扫院僧",
+          "x": 772.8,
+          "y": 661.37
+        }
+      ]
+    },
+    {
+      "step": "Use C06 wages to buy one bamboo in native shop",
+      "bag": {
+        "items": {
+          "ow_lamp_oil": 1,
+          "ow_bamboo": 1
+        },
+        "coins": 3
+      }
+    },
+    {
+      "step": "Native crouch inspection of side-door bolt, then bamboo pry: consume one bamboo, receive wedge once",
+      "bag": {
+        "items": {
+          "ow_lamp_oil": 1,
+          "ow_wood_wedge": 1
+        },
+        "coins": 3
+      },
+      "minutes": 665,
+      "state": "done"
+    }
+  ]
+}

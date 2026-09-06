@@ -61,8 +61,8 @@
       "id": "T_进茶馆",
       "type": "transition",
       "label": "进茶馆",
-      "x": 1836.0,
-      "y": 1790.0,
+      "x": 1726,
+      "y": 1790,
       "interactionRange": 56.0,
       "data": {
         "targetScene": "teahouse",
@@ -90,17 +90,10 @@
     {
       "id": "T_出城",
       "type": "transition",
-      "label": "出城（河滩方向）",
-      "x": 198.9,
-      "y": 962.7,
-      "interactionRange": 64.0,
-      "conditions": [
-        {
-          "narrative": "flow_xungou_main",
-          "state": "s04_pozi",
-          "reached": true
-        }
-      ],
+      "label": "沿西口去河滩",
+      "x": 220.0,
+      "y": 1103.09,
+      "interactionRange": 85,
       "conditionHidesEntity": true,
       "data": {
         "targetScene": "河边",
@@ -529,7 +522,7 @@
     {
       "id": "主线s1藏钱点A",
       "type": "inspect",
-      "label": "",
+      "label": "墙脚藏钱处",
       "x": 3883.4,
       "y": 606.5,
       "interactionRange": 50,
@@ -549,7 +542,7 @@
     {
       "id": "主线_吃饭点A",
       "type": "inspect",
-      "label": "",
+      "label": "包子铺",
       "x": 2326.1,
       "y": 871.4,
       "interactionRange": 50,
@@ -586,6 +579,197 @@
         "targetScene": "test_room_b",
         "targetSpawnPoint": "from_wujin",
         "text": ""
+      }
+    },
+    {
+      "id": "ow_rest",
+      "type": "inspect",
+      "label": "歇脚 · 等一等",
+      "x": 1572.0,
+      "y": 1958.54,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_歇脚"
+      }
+    },
+    {
+      "id": "ow_sign",
+      "type": "inspect",
+      "label": "街口旧路牌",
+      "x": 2216.0,
+      "y": 2149.9,
+      "interactionRange": 85,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "text": "[tag:string:openWorld:ow_sign]"
+      }
+    },
+    {
+      "id": "ow_watch_bench",
+      "type": "inspect",
+      "label": "[tag:string:owWatch:ow_watch_bench_label]",
+      "x": 2760,
+      "y": 1930,
+      "interactionRange": 45,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_巡更",
+        "entry": "bench"
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/examine/ow_watch_clapper.png",
+        "worldWidth": 35,
+        "worldHeight": 35
+      }
+    },
+    {
+      "id": "ow_watch_lamp",
+      "type": "inspect",
+      "label": "[tag:string:owWatch:ow_watch_lamp_label]",
+      "x": 2635,
+      "y": 1930,
+      "interactionRange": 45,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_巡更",
+        "entry": "lamp"
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/props/dream/dream_oil_lamp_table_prop.png",
+        "worldWidth": 21,
+        "worldHeight": 47
+      }
+    },
+    {
+      "id": "ow_noodle_stove",
+      "type": "inspect",
+      "label": "[tag:string:owStove:ow_noodle_stove_label]",
+      "x": 1638,
+      "y": 1948,
+      "interactionRange": 42,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_灶火",
+        "entry": "stove"
+      }
+    },
+    {
+      "id": "ow_stove_image_broken",
+      "type": "inspect",
+      "label": "[tag:string:owStove:ow_stove_image_broken_label]",
+      "x": 1638,
+      "y": 1948,
+      "interactionRange": 30,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_灶火",
+        "entry": "stove"
+      },
+      "conditions": [
+        {
+          "not": {
+            "narrative": "flow_ow_stove",
+            "state": "repaired",
+            "reached": true
+          }
+        }
+      ],
+      "conditionHidesEntity": true,
+      "displayImage": {
+        "image": "/resources/runtime/images/examine/ow_noodle_stove.png",
+        "worldWidth": 38,
+        "worldHeight": 48
+      }
+    },
+    {
+      "id": "ow_stove_image_repaired",
+      "type": "inspect",
+      "label": "[tag:string:owStove:ow_stove_image_repaired_label]",
+      "x": 1638,
+      "y": 1948,
+      "interactionRange": 30,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_灶火",
+        "entry": "stove"
+      },
+      "conditions": [
+        {
+          "narrative": "flow_ow_stove",
+          "state": "repaired",
+          "reached": true
+        }
+      ],
+      "conditionHidesEntity": true,
+      "displayImage": {
+        "image": "/resources/runtime/images/examine/ow_noodle_stove_repaired.png",
+        "worldWidth": 38,
+        "worldHeight": 48
+      }
+    },
+    {
+      "id": "ow_ring_hook_gap",
+      "type": "inspect",
+      "label": "[tag:string:owStreetPlay:ow_ring_hook_gap_label]",
+      "x": 1030,
+      "y": 1640,
+      "interactionRange": 38,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_街趣",
+        "entry": "hook"
+      }
+    },
+    {
+      "id": "ow_sugar_stall",
+      "type": "inspect",
+      "label": "[tag:string:owStreetPlay:ow_sugar_stall_label]",
+      "x": 1210,
+      "y": 1680,
+      "interactionRange": 48,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_街趣",
+        "entry": "stall"
+      },
+      "displayImage": {
+        "image": "/resources/runtime/images/props/ow_sugar_stall.png",
+        "worldWidth": 110,
+        "worldHeight": 110
+      }
+    },
+    {
+      "id": "ow_notice",
+      "type": "inspect",
+      "label": "[tag:string:owStreetPlay:ow_notice_label]",
+      "x": 2270,
+      "y": 2083,
+      "interactionRange": 42,
+      "planes": [
+        "normal"
+      ],
+      "data": {
+        "graphId": "开放世界_街趣",
+        "entry": "notice"
       }
     }
   ],
@@ -1306,20 +1490,6 @@
       "characterId": "癞子",
       "initialAnimState": "idle",
       "dialogueGraphId": "序章_NPC癞子",
-      "patrol": {
-        "route": [
-          {
-            "x": 1082.2,
-            "y": 2211.6
-          },
-          {
-            "x": 1017.2,
-            "y": 2193.4
-          }
-        ],
-        "speed": 60,
-        "moveAnimState": "idle"
-      },
       "conditions": [
         {
           "narrative": "wrap_癞子",
@@ -1328,6 +1498,167 @@
         }
       ],
       "conditionHidesEntity": true
+    },
+    {
+      "id": "ow_zhou",
+      "characterId": "ow_zhou",
+      "x": 2400.0,
+      "y": 2048.59,
+      "initialAnimState": "lifu_stand",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 2400.0,
+            "y": 2048.59
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "lifu_walk"
+      }
+    },
+    {
+      "id": "ow_yang",
+      "characterId": "ow_yang",
+      "x": 1630.0,
+      "y": 1910.14,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "right",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 1630.0,
+            "y": 1910.14
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "walk"
+      }
+    },
+    {
+      "id": "ow_deng",
+      "characterId": "ow_deng",
+      "x": 1160.0,
+      "y": 1508.3,
+      "initialAnimState": "idle",
+      "interactionRange": 95,
+      "initialFacing": "right",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 1160.0,
+            "y": 1508.3
+          },
+          {
+            "x": 1080.0,
+            "y": 1650.13
+          }
+        ],
+        "speed": 65,
+        "moveAnimState": "walk"
+      }
+    },
+    {
+      "id": "ow_ding",
+      "characterId": "ow_ding",
+      "x": 2640.0,
+      "y": 1845.98,
+      "initialAnimState": "官兵刀_站立",
+      "interactionRange": 95,
+      "initialFacing": "left",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 2640.0,
+            "y": 1845.98
+          },
+          {
+            "x": 2880.0,
+            "y": 1665.89
+          }
+        ],
+        "speed": 48,
+        "moveAnimState": "官兵刀_走路"
+      }
+    },
+    {
+      "id": "ow_man",
+      "characterId": "ow_man",
+      "x": 940.0,
+      "y": 1665.89,
+      "initialAnimState": "boy_stand_ring",
+      "interactionRange": 95,
+      "initialFacing": "right",
+      "group": "ow_居民",
+      "planes": [
+        "normal"
+      ],
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "patrol": {
+        "route": [
+          {
+            "x": 940.0,
+            "y": 1665.89
+          },
+          {
+            "x": 1060.0,
+            "y": 1530.82
+          },
+          {
+            "x": 1120.0,
+            "y": 1463.28
+          }
+        ],
+        "speed": 72,
+        "moveAnimState": "boy_walk"
+      }
     }
   ],
   "zones": [
@@ -2008,6 +2339,19 @@
           "value": true
         }
       ]
+    },
+    {
+      "id": "ow_居民",
+      "label": "开放生活圈 · 居民",
+      "phases": [
+        "辰",
+        "午",
+        "暮",
+        "夜"
+      ],
+      "planes": [
+        "normal"
+      ]
     }
   ],
   "dayNight": {
@@ -2015,22 +2359,49 @@
   },
   "exitAnchors": [
     {
-      "id": "街西口",
-      "x": 199.0,
-      "y": 963.0,
-      "kind": "street"
+      "id": "ow_door_0",
+      "x": 920.0,
+      "y": 1778.45
     },
     {
-      "id": "街东口",
-      "x": 3348.0,
-      "y": 884.0,
-      "kind": "street"
+      "id": "ow_door_1",
+      "x": 1700.0,
+      "y": 1778.45
     },
     {
-      "id": "茶馆门",
-      "x": 1836.0,
-      "y": 1790.0,
-      "kind": "door"
+      "id": "ow_door_2",
+      "x": 2360.0,
+      "y": 2048.59
+    },
+    {
+      "id": "ow_door_3",
+      "x": 3096.0,
+      "y": 1456.53
+    },
+    {
+      "id": "ow_exit_zhou",
+      "x": 2360.0,
+      "y": 2048.59
+    },
+    {
+      "id": "ow_exit_yang",
+      "x": 920.0,
+      "y": 1778.45
+    },
+    {
+      "id": "ow_exit_deng",
+      "x": 920.0,
+      "y": 1778.45
+    },
+    {
+      "id": "ow_exit_ding",
+      "x": 3096.0,
+      "y": 1456.53
+    },
+    {
+      "id": "ow_exit_man",
+      "x": 920.0,
+      "y": 1778.45
     }
   ],
   "timeVariants": {
