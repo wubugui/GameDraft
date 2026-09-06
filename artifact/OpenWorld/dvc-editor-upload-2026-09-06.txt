@@ -1,0 +1,4 @@
+{"oid": "1bce47090bb33497aadb5128c3bc8e0f.dir", "uploaded": true, "bytes": 121940}
+{"oid": "78d8bf2bd71a21c34f069cb430775f87", "uploaded": true, "bytes": 103093}
+{"oid": "0c5ffbd9ae90e81d254df54c3c438046", "uploaded": true, "bytes": 4127}
+Upload only: two changed editor snapshots and their new directory manifest. No downloads.

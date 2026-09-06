@@ -1,0 +1,32 @@
+{
+  "before": "0f6594fd9972c8277ff9d87e23f971c5.dir",
+  "after": "1bce47090bb33497aadb5128c3bc8e0f.dir",
+  "out": {
+    "md5": "1bce47090bb33497aadb5128c3bc8e0f.dir",
+    "size": 586651704,
+    "nfiles": 1087,
+    "hash": "md5",
+    "path": "editor_projects"
+  },
+  "added": [],
+  "removed": [],
+  "changed": [
+    {
+      "path": "editor_data/production_workbench/runtime_debug_snapshot.json",
+      "before_md5": "9bf154f4d09de4f491396a97e323b306",
+      "after_md5": "78d8bf2bd71a21c34f069cb430775f87",
+      "bytes": 103093
+    },
+    {
+      "path": "editor_data/runtime_lighting.json",
+      "before_md5": "a3cf414432027101b56978ed18875264",
+      "after_md5": "0c5ffbd9ae90e81d254df54c3c438046",
+      "bytes": 4127
+    }
+  ],
+  "upload_objects": [
+    "1bce47090bb33497aadb5128c3bc8e0f.dir",
+    "78d8bf2bd71a21c34f069cb430775f87",
+    "0c5ffbd9ae90e81d254df54c3c438046"
+  ]
+}

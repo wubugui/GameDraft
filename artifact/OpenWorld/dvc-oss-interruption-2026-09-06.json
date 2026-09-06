@@ -1,0 +1,10 @@
+{
+  "status": "aborted_on_user_instruction",
+  "method": "full remote GET content hashing was started in error and stopped",
+  "completed_objects": 794,
+  "completed_body_bytes": 343640646,
+  "billing_bytes_unknown": true,
+  "inflight_bytes_not_included": true,
+  "no_full_integrity_claim": true,
+  "followup_policy": "No OSS object downloads, including directory manifests. Use local manifest/cache hashing and remote HEAD metadata only."
+}

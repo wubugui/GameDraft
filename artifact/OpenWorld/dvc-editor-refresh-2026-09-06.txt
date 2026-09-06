@@ -1,0 +1,8 @@
+
+To track the changes with git, run:
+
+	git add 'resources\editor_projects.dvc'
+
+To enable auto staging, run:
+
+	dvc config core.autostage true

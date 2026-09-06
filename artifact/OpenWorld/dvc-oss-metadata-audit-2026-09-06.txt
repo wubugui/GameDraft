@@ -1,0 +1,42 @@
+DVC / OSS metadata audit (HTTP HEAD only)
+Result: PASS
+Started UTC: 2026-09-06T04:52:04.711469+00:00
+Elapsed seconds: 10.523
+Git HEAD at audit: fe25e00b08710d3232e42b25b8440c8688d84534
+Pointer source: current worktree; uncommitted pointer changes are reported separately.
+Manifest source: existing local cache only.
+Objects checked: 3585/3585
+Object-body bytes transferred: 0
+ETag recorded only; remote content hashes were NOT verified.
+No remote/cache/resource/pointer writes.
+
+public/resources/runtime.dvc
+Pointer matches Git HEAD: True
+Root object: 8944eae1191e913e92a9e280621313d8.dir
+Files: 2707 / declared 2707
+Cache file bytes: 3175111241 / declared 3175111241
+Remote files with matching metadata: 2707
+
+resources/audio_sources.dvc
+Pointer matches Git HEAD: True
+Root object: 7aeef641f1379c9172a935ac2176d728.dir
+Files: 18 / declared 18
+Cache file bytes: 70564819 / declared 70564819
+Remote files with matching metadata: 18
+
+resources/editor_projects.dvc
+Pointer matches Git HEAD: False
+Root object: 1bce47090bb33497aadb5128c3bc8e0f.dir
+Files: 1087 / declared 1087
+Cache file bytes: 586651704 / declared 586651704
+Remote files with matching metadata: 1087
+
+resources/vendor_archives.dvc
+Pointer matches Git HEAD: True
+Root object: 0216b5ffb69cf253552e978ddf71ecee.dir
+Files: 4 / declared 4
+Cache file bytes: 770018942 / declared 770018942
+Remote files with matching metadata: 4
+
+Pending pointer commits: ["resources/editor_projects.dvc"]
+Issues: 0

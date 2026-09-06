@@ -1,0 +1,87 @@
+DVC local exhaustive audit
+HEAD: fe25e00b08710d3232e42b25b8440c8688d84534
+Started UTC: 2026-09-06T04:47:05.283726+00:00
+Result: FAIL
+Elapsed seconds: 30.375
+No OSS access. No pointer/media/cache mutations.
+All 4 pointers match HEAD after CRLF/LF normalization; YAML semantics identical.
+
+public/resources/runtime.dvc
+Elapsed seconds: 18.413
+nfiles: 2707 / declared 2707
+bytes: 3175111241 / declared 3175111241
+missing: 0
+changed: 0
+unstable: 0
+extra_files: 0
+cache_missing: 0
+cache_corrupt: 0
+ignored_extra_files: 10
+  .DS_Store
+  images/.DS_Store
+  images/illustrations/.DS_Store
+  images/illustrations/李天狗神仙岭大战旱魃/.DS_Store
+  images/illustrations/李天狗神仙岭大战旱魃/redraw_round2/.DS_Store
+  scenes/.DS_Store
+  scenes/teahouse/.DS_Store
+  scenes/梦_里屋/.DS_Store
+  scenes/深潭绝地/.DS_Store
+  scene_background_backups/.DS_Store
+anomalies: []
+
+resources/audio_sources.dvc
+Elapsed seconds: 0.208
+nfiles: 18 / declared 18
+bytes: 70564819 / declared 70564819
+missing: 0
+changed: 0
+unstable: 0
+extra_files: 0
+cache_missing: 0
+cache_corrupt: 0
+ignored_extra_files: 0
+anomalies: []
+
+resources/editor_projects.dvc
+Elapsed seconds: 7.41
+nfiles: 1087 / declared 1087
+bytes: 586651704 / declared 586598406
+missing: 0
+changed: 2
+  editor_data/production_workbench/runtime_debug_snapshot.json
+  editor_data/runtime_lighting.json
+unstable: 0
+extra_files: 0
+cache_missing: 0
+cache_corrupt: 0
+ignored_extra_files: 4
+  .DS_Store
+  editor_data/.DS_Store
+  editor_data/production_workbench/console_logs/ [ignored directory]
+  editor_data/scene/.DS_Store
+anomalies: ["changed: 2", "workspace bytes mismatch"]
+
+resources/vendor_archives.dvc
+Elapsed seconds: 4.127
+nfiles: 4 / declared 4
+bytes: 770018942 / declared 770018942
+missing: 0
+changed: 0
+unstable: 0
+extra_files: 0
+cache_missing: 0
+cache_corrupt: 0
+ignored_extra_files: 0
+anomalies: []
+
+Unique cache objects hashed: 3585
+Cache bytes hashed: 4165529014
+Workspace bytes hashed: 4602346706
+
+Interpretation:
+All four pointers equal HEAD after CRLF/LF normalization.
+The two editor differences are runtime-generated session files, not unique authored source.
+runtime_lighting.json: lighting, sceneId and selectedId unchanged; only phase, timestamp, rev and writer differ.
+runtime_debug_snapshot.json: current observation and capturedAt changed; preserve separately only if useful as diagnostic evidence.
+Producer evidence: vite.config.ts:61 and :295; tools/production_workbench/runtime_debug.py:35.
+No OSS request was made by this audit.

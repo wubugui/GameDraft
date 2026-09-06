@@ -1,0 +1,41 @@
+Local manifest expanded: public/resources/runtime.dvc, 2707 files
+Local manifest expanded: resources/audio_sources.dvc, 18 files
+Local manifest expanded: resources/editor_projects.dvc, 1087 files
+Local manifest expanded: resources/vendor_archives.dvc, 4 files
+Checking metadata only: 3585 unique objects, HTTP HEAD, zero body transfer
+HEAD checked 100/3585 objects; 0 issues; 2.1s
+HEAD checked 200/3585 objects; 0 issues; 2.3s
+HEAD checked 300/3585 objects; 0 issues; 2.5s
+HEAD checked 400/3585 objects; 0 issues; 2.8s
+HEAD checked 500/3585 objects; 0 issues; 3.0s
+HEAD checked 600/3585 objects; 0 issues; 3.2s
+HEAD checked 700/3585 objects; 0 issues; 3.5s
+HEAD checked 800/3585 objects; 0 issues; 3.7s
+HEAD checked 900/3585 objects; 0 issues; 3.9s
+HEAD checked 1000/3585 objects; 0 issues; 4.2s
+HEAD checked 1100/3585 objects; 0 issues; 4.4s
+HEAD checked 1200/3585 objects; 0 issues; 4.6s
+HEAD checked 1300/3585 objects; 0 issues; 4.8s
+HEAD checked 1400/3585 objects; 0 issues; 5.1s
+HEAD checked 1500/3585 objects; 0 issues; 5.3s
+HEAD checked 1600/3585 objects; 0 issues; 5.6s
+HEAD checked 1700/3585 objects; 0 issues; 5.8s
+HEAD checked 1800/3585 objects; 0 issues; 6.0s
+HEAD checked 1900/3585 objects; 0 issues; 6.3s
+HEAD checked 2000/3585 objects; 0 issues; 6.5s
+HEAD checked 2100/3585 objects; 0 issues; 6.7s
+HEAD checked 2200/3585 objects; 0 issues; 7.0s
+HEAD checked 2300/3585 objects; 0 issues; 7.2s
+HEAD checked 2400/3585 objects; 0 issues; 7.7s
+HEAD checked 2500/3585 objects; 0 issues; 8.2s
+HEAD checked 2600/3585 objects; 0 issues; 8.5s
+HEAD checked 2700/3585 objects; 0 issues; 8.7s
+HEAD checked 2800/3585 objects; 0 issues; 9.0s
+HEAD checked 2900/3585 objects; 0 issues; 9.2s
+HEAD checked 3000/3585 objects; 0 issues; 9.4s
+HEAD checked 3100/3585 objects; 0 issues; 9.6s
+HEAD checked 3200/3585 objects; 0 issues; 9.8s
+HEAD checked 3300/3585 objects; 0 issues; 9.9s
+HEAD checked 3400/3585 objects; 0 issues; 10.1s
+HEAD checked 3500/3585 objects; 0 issues; 10.3s
+{"ok": true, "objects": 3585, "issues": 0, "elapsed_seconds": 10.523, "report": "D:\\GameDraft\\artifact\\OpenWorld\\dvc-oss-metadata-audit-2026-09-06.json", "object_body_bytes_transferred": 0}

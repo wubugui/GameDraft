@@ -1,0 +1,16 @@
+Manifest verified: public/resources/runtime.dvc, 2707 files
+Manifest verified: resources/audio_sources.dvc, 18 files
+Manifest verified: resources/editor_projects.dvc, 1087 files
+Manifest verified: resources/vendor_archives.dvc, 4 files
+Reading every remote byte: 3581 file objects + 4 manifests
+Verified 100/3585 objects; 14736850 bytes; 0 issues; 6.2s
+Verified 200/3585 objects; 39916211 bytes; 0 issues; 8.6s
+Verified 300/3585 objects; 58649093 bytes; 0 issues; 10.1s
+Verified 400/3585 objects; 80766247 bytes; 0 issues; 12.6s
+Verified 500/3585 objects; 91947621 bytes; 0 issues; 14.7s
+Verified 566/3585 objects; 170296372 bytes; 0 issues; 24.9s
+Verified 600/3585 objects; 191932765 bytes; 0 issues; 26.6s
+Verified 700/3585 objects; 246720020 bytes; 0 issues; 32.2s
+
+ABORTED on user instruction. Not a completed remote content audit.
+{"status": "aborted_on_user_instruction", "method": "full remote GET content hashing was started in error and stopped", "completed_objects": 794, "completed_body_bytes": 343640646, "billing_bytes_unknown": true, "inflight_bytes_not_included": true, "no_full_integrity_claim": true, "followup_policy": "No OSS object downloads, including directory manifests. Use local manifest/cache hashing and remote HEAD metadata only."}
