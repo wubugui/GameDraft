@@ -77,6 +77,30 @@ describe('sockets 解析', () => {
   });
 });
 
+describe('落脚帧 contactSlots（与挂点同住 sidecar、同一份指纹）', () => {
+  it('去重、升序、只收合法槽位；单个坏项跳过', () => {
+    const set = parseSocketSet(socketsJson({ contactSlots: [20, 12, 12, -1, 2.5, '30', 999, 38] }));
+    expect(set!.contactSlots).toEqual([12, 20, 38]);
+  });
+
+  it('没写 / 不是数组 ⇒ 空 = 这个包没有脚步（不按帧数猜）', () => {
+    expect(parseSocketSet(socketsJson())!.contactSlots).toEqual([]);
+    expect(parseSocketSet(socketsJson({ contactSlots: 'x' }))!.contactSlots).toEqual([]);
+  });
+
+  it('只标了落脚帧、一个挂点都没有的 sidecar 是合法的', () => {
+    const set = parseSocketSet({ atlas: { cols: 9, rows: 10, slotCount: 89 }, contactSlots: [12] });
+    expect(set).not.toBeNull();
+    expect(set!.sockets).toEqual({});
+    expect(set!.contactSlots).toEqual([12]);
+  });
+
+  it('指纹对不上时整份 stale——落脚帧跟挂点一起作废，宁可无声也不响在漂移后的格上', () => {
+    const r = resolveSockets(socketsJson({ contactSlots: [12] }), { ...ANIM, cols: 10 });
+    expect(r.stale).toBe(true);
+  });
+});
+
 describe('图集指纹失效判定', () => {
   it('对得上时不 stale', () => {
     const r = resolveSockets(socketsJson(), ANIM);

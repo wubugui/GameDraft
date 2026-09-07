@@ -118,6 +118,8 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
         ...(existing?.sockets ?? {}),
         [TEMP_SOCKET]: { label: '调试临时挂点', poses },
       },
+      // 落脚帧原样带过去：注入临时挂点不该让脚步声跟着消失
+      contactSlots: existing?.contactSlots ?? [],
     };
   }
 

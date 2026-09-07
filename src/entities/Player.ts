@@ -560,7 +560,14 @@ export class Player implements ICutsceneActor, ITrajectoryTarget {
           this.sprite.playAnimation(ANIM_WALK);
         }
       }
-      // 步速匹配：状态未声明 referenceSpeed 时内部回落 1 倍速（现状全部包如此，行为不变）
+      /**
+       * 步速匹配：状态未声明 `referenceSpeed` 时内部回落**恒 1 倍速**。
+       *
+       * ⚠ 这里原来的注释写「现状全部包如此,行为不变」,**那是错的**:
+       * `player_anim` 的 walk 写着 `referenceSpeed: 50`、slow_walk 写 40,只有 run 没写。
+       * 所以 run 恒 12fps(不跟移动速度),而 walk 在 100 wu/s 下倍率顶到 2、有效 16fps。
+       * 这是**动画表现**的现状,照那条旧注释推理会算错步频。
+       */
       this.sprite.applyLocomotionSpeed(speed);
     } else if (!this.animationOwned) {
       this.sprite.playAnimation(ANIM_IDLE);

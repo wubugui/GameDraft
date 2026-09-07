@@ -422,6 +422,13 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       const sid = shared.play();
       const channelVolume = channel === 'voice' ? this.voiceVolume : this.sfxVolume;
       shared.volume(this.clamp01(baseVolume * channelVolume), sid);
+      // 声像**一律带 soundId**：共享 Howl 上的组级写入会被后续所有实例继承且清不掉
+      // （Howler 的 Sound.init/reset 每次从 parent 复制 _stereo）。见 TransientSfxOptions。
+      if (typeof options.pan === 'number' && Number.isFinite(options.pan)) {
+        // 在 play() 之后立刻调：Howler 建 panner 时会对已在播的实例 pause().play()，
+        // 此刻 seek≈0，等于重头播——听不出来。晚调（声音已经放出去一截）才会咔哒。
+        shared.stereo(Math.max(-1, Math.min(1, options.pan)), sid);
+      }
       howl = shared;
       soundId = sid;
       // 结束事件绑到本次 soundId：只在本实例自然播完时触发一次（手动 stop 不会走到这里）。

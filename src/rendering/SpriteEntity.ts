@@ -247,6 +247,8 @@ export class SpriteEntity {
 
   /** 挂点集（stale 时置 null，等于没有挂点） */
   private socketSet: SocketSetDef | null = null;
+  /** 落脚帧的图集槽位（来自 socketSet.contactSlots；stale/无 sidecar 时为空 = 无脚步） */
+  private contactSlots: Set<number> = new Set();
   /** 已挂载的东西：挂点名 → 挂件；每帧按当前帧的位姿重摆 */
   private attachments: Map<string, SocketAttachment> = new Map();
 
@@ -903,8 +905,24 @@ export class SpriteEntity {
       );
     }
     this.socketSet = resolved && !resolved.stale ? resolved.set : null;
+    this.contactSlots = new Set(this.socketSet?.contactSlots ?? []);
     // 换包后旧挂点大概率不存在了：先藏起来，下一次 syncAttachments 再决定去留
     for (const at of this.attachments.values()) at.view.visible = false;
+  }
+
+  /**
+   * 当前片段的第 `frameIndex` 帧是不是**落脚帧**（脚触地 → 该播脚步声）。
+   *
+   * 判据是「这一帧画的是图集哪一格」∈ `sockets.json.contactSlots`——按槽位不按帧下标，
+   * 所以同一格在几个片段里复用时只标一次。没有 sidecar / 指纹失效 / 该格没标 ⇒ false，
+   * 于是**没标过的片段一律无声**（不按帧数猜"0 与中点"：猜错半步声音就响在脚还在空中时）。
+   */
+  isContactFrameAt(frameIndex: number): boolean {
+    if (this.contactSlots.size === 0) return false;
+    const seq = this.currentFrameDef?.frames;
+    if (!seq || seq.length === 0) return false;
+    const slot = seq[((frameIndex % seq.length) + seq.length) % seq.length];
+    return slot !== undefined && this.contactSlots.has(slot);
   }
 
   /** 只读：本包有哪些挂点（编辑器/调试用）。 */

@@ -45,11 +45,27 @@ import { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager
 import { SignalCueManager } from '../systems/SignalCueManager';
 import { HealthSystem } from '../systems/HealthSystem';
 import { SmellSystem } from '../systems/SmellSystem';
+import { FootstepSystem, type FootstepEmitter, type FootstepSpatialContext } from '../systems/FootstepSystem';
+import {
+  DEFAULT_PLANAR_DEPTH_SCALE,
+  DEFAULT_SPATIAL_PARAMS,
+  cameraListener,
+  isSuspectWuPerQUnit,
+  planarResolver,
+  targetListener,
+  type AudioListener,
+  type AudioSpaceResolver,
+  type SpatialParams,
+} from '../utils/audioSpace';
 import { PlaneReconciler } from '../systems/PlaneReconciler';
 import { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
 import { TrajectorySystem } from '../systems/TrajectorySystem';
 import { HUD } from '../ui/HUD';
 import type { SmellProfilesRaw } from '../ui/smell/SmellIndicatorRenderer';
+import type {
+  AudioListenerConfig,
+  FootstepConfig as FootstepConfigData,
+} from '../data/types';
 import { NotificationUI } from '../ui/NotificationUI';
 import { QuestPanelUI } from '../ui/QuestPanelUI';
 import { QuestBannerUI } from '../ui/QuestBannerUI';
@@ -295,6 +311,14 @@ declare global {
       getMinigameDebugState(): Record<string, unknown>;
       playAudioProbe(id: string, fadeMs: number): void;
       getAudioDebugState(): Record<string, unknown>;
+      /**
+       * 脚步与空间化音频的可判定状态。**脚步靠听没法做回归**——
+       * 「走过木栈道那段响的是不是栈道音」「有没有连续两次同一变体」
+       * 「镜头拉远是不是变轻了」「这个场景是 field 还是 planar」全靠这份。
+       */
+      getFootstepDebugState(): Record<string, unknown>;
+      /** 改听者（`{mode:'camera'|'player'|'npc'|'fixed', ...}`）；null 回到配置缺省。 */
+      setAudioListener(cfg: AudioListenerConfig | null): void;
       suppressSceneEnterForVisualCapture(): void;
       /**
        * 编辑器气泡锚控件的「同步到游戏」：在真场景真透视里把气泡摆到 anchorY 看一眼。
@@ -508,6 +532,18 @@ export class Game {
    */
   private trajectoryAssets = new Map<string, TrajectoryAsset | null>();
   private smellProfilesData: SmellProfilesRaw | null = null;
+  private footstepSystem: FootstepSystem;
+  /** `footstep_sets.json`；缺文件 = 全局无脚步声（不是错误，只是没配）。 */
+  private footstepConfig: FootstepConfigData | null = null;
+  /** 运行时听者设置。缺省取配置里的，可被调试命令改写；**不入存档**（它是表现设置不是玩法状态）。 */
+  private audioListenerConfig: AudioListenerConfig | null = null;
+  /** 上一帧解出的听者与精度级别，只供调试输出（不参与任何计算）。 */
+  private audioSpaceDebug: {
+    mode: 'field' | 'planar';
+    listenerMode: string;
+    listenerFallback: boolean;
+    backWu: number;
+  } | null = null;
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
   private playerDepthFilter: IEntityShadingFilter | null = null;
@@ -803,6 +839,17 @@ export class Game {
       random: this.presentationRandom,
     });
     this.zoneSystem = new ZoneSystem(this.eventBus, this.flagStore, this.actionExecutor, this.ruleOfferRegistry);
+    /**
+     * 脚步声。依赖一律走构造函数窄回调注入（分层律 11：禁全局单例与跨模块直接 import 其它系统实例）。
+     * 回调都是惰性的，所以这里可以早于 player / camera 的创建。
+     */
+    this.footstepSystem = new FootstepSystem({
+      // 必须是 per-soundId 的那条：`playSfx` 的音量是 Howl 组级，会追溯改掉还在响的上一步
+      playSfx: (id, options) => this.audioManager.playTransientSfx(id, options),
+      getSpatialContext: () => this.buildFootstepSpatialContext(),
+      resolveSetAt: (x, y) => this.resolveFootstepSetAt(x, y),
+      getConfig: () => this.footstepConfig,
+    });
     this.sceneDepthSystem = new SceneDepthSystem();
     this.characterLighting = new CharacterLightingSystem();
     this.sceneLighting = new SceneLightingSystem();
@@ -868,6 +915,8 @@ export class Game {
       { name: 'clueManager', system: this.clueManager },
       { name: 'gameLogManager', system: this.gameLogManager },
       { name: 'zoneSystem', system: this.zoneSystem },
+      // 脚步是表现态：serialize 恒为空桶，deserialize = 作废在途尾音（旧时间线不写新状态）
+      { name: 'footstepSystem', system: this.footstepSystem },
       { name: 'emoteBubbleManager', system: this.emoteBubbleManager },
       { name: 'bubbleChatterSystem', system: this.bubbleChatterSystem },
       { name: 'playerIdleBehaviorSystem', system: this.playerIdleBehaviorSystem },
@@ -2743,6 +2792,7 @@ export class Game {
       this.loadFlagRegistry(),
       this.loadCharacterRegistry(),
       this.loadSmellProfiles(),
+      this.loadFootstepSets(),
       this.inventoryManager.loadDefs(),
       this.rulesManager.loadDefs(),
       this.questManager.loadDefs(),
@@ -3347,6 +3397,201 @@ export class Game {
     }
   }
 
+  // =========================================================================
+  // 脚步声与空间化音频
+  // =========================================================================
+
+  /** `footstep_sets.json`。缺文件 = 全局无脚步声，不是错误。 */
+  private async loadFootstepSets(): Promise<void> {
+    try {
+      const data = await this.assetManager.loadJson<FootstepConfigData>(TEXT_URLS.footstepSets);
+      this.footstepConfig = { ...data, sets: data.sets ?? {} };
+      this.audioListenerConfig = data.listener ?? null;
+    } catch {
+      this.footstepConfig = null;
+    }
+  }
+
+  /**
+   * 空间解算器：**每帧现建，不缓存**。
+   *
+   * 不缓存是刻意的：光照载荷是异步到达的（`characterLighting.onReady` 可能晚于场景 id 落定），
+   * 按场景 id 缓存会把「载荷到达前解出的 planar」一直用到下一次换场景——那是典型的静默陈旧，
+   * 表现为「这个场景的脚步永远是近似的」，而没有任何报错。每帧多建一个小对象，代价可忽略。
+   *
+   * `wuPerQUnit === 1` 一律当**可疑值**拒绝：真值逐场景 154–880，
+   * `SceneLightingSystem` 在没有载荷时 `?? 1` 静默回落。拿 1 去算，坐标会缩在 ±2 的 q 尺度上，
+   * 任何按 wu 定的参考距离都会让整场声音要么全满幅要么全静音。同族事故在光照侧已发生过两次。
+   */
+  private buildAudioSpaceResolver(): AudioSpaceResolver {
+    const geo = this.buildLightSpaceGeometry();
+    if (geo && !isSuspectWuPerQUnit(this.sceneLighting.wuPerQUnit)) {
+      return { mode: 'field', geo };
+    }
+    return planarResolver(
+      this.footstepConfig?.spatial?.planarDepthScale ?? DEFAULT_PLANAR_DEPTH_SCALE,
+    );
+  }
+
+  private buildSpatialParams(): SpatialParams {
+    const s = this.footstepConfig?.spatial ?? {};
+    return {
+      refDistanceWu: s.refDistanceWu ?? DEFAULT_SPATIAL_PARAMS.refDistanceWu,
+      rolloff: s.rolloff ?? DEFAULT_SPATIAL_PARAMS.rolloff,
+      maxDistanceWu: s.maxDistanceWu ?? DEFAULT_SPATIAL_PARAMS.maxDistanceWu,
+      panWidth: s.panWidth ?? DEFAULT_SPATIAL_PARAMS.panWidth,
+    };
+  }
+
+  /**
+   * 听者。**不写死是谁**：`camera`（缺省）/ `player` / `npc` / `fixed` 四种。
+   *
+   * 相机听者的视距用 **zoom 比值**算，不用可视宽度：
+   * `getViewWidth() = screenWidth / (ppu × zoom × worldScale)` 里只有 `screenWidth` 随窗口变，
+   * 拿它当视距会让玩家拉大窗口时全场声音突然变远——那是窗口变大，不是镜头后退。
+   *
+   * 指定的目标找不到时**回落到相机并在调试状态里标出来**，不静默假装成功。
+   */
+  private buildAudioListener(r: AudioSpaceResolver): {
+    listener: AudioListener; mode: string; fallback: boolean; backWu: number;
+  } {
+    const cfg = this.audioListenerConfig ?? this.footstepConfig?.listener ?? { mode: 'camera' as const };
+    const backBase = this.footstepConfig?.spatial?.listenerBackAtBaseZoomWu ?? 600;
+    const zoom = this.camera.getZoom();
+    const baseZoom = this.camera.getSceneBaseZoom();
+    const ratio = zoom > 1e-6 && baseZoom > 1e-6 ? baseZoom / zoom : 1;
+    const backWu = backBase * ratio;
+    const toCamera = (fallback: boolean) => ({
+      listener: cameraListener(r, this.camera.getX(), this.camera.getY(), backWu),
+      mode: fallback ? `${cfg.mode}→camera` : 'camera',
+      fallback,
+      backWu,
+    });
+
+    if (cfg.mode === 'player') {
+      const h = cfg.heightWu ?? this.player.sprite.getWorldSize().height * 0.9;
+      return {
+        listener: targetListener(r, {
+          contactX: this.player.contactX, contactY: this.player.contactY, heightWu: h,
+        }),
+        mode: 'player', fallback: false, backWu: 0,
+      };
+    }
+    if (cfg.mode === 'npc') {
+      const npc = this.sceneManager.getCurrentNpcs().find((n) => n.id === cfg.targetId);
+      if (!npc) return toCamera(true);
+      const h = cfg.heightWu ?? npc.getWorldSize().height * 0.9;
+      return {
+        listener: targetListener(r, {
+          contactX: npc.contactX, contactY: npc.contactY, heightWu: h,
+        }),
+        mode: `npc:${cfg.targetId}`, fallback: false, backWu: 0,
+      };
+    }
+    if (cfg.mode === 'fixed') {
+      if (typeof cfg.x !== 'number' || typeof cfg.y !== 'number') return toCamera(true);
+      return {
+        listener: targetListener(r, {
+          contactX: cfg.x, contactY: cfg.y, heightWu: cfg.heightWu ?? 150,
+        }),
+        mode: 'fixed', fallback: false, backWu: 0,
+      };
+    }
+    return toCamera(false);
+  }
+
+  private buildFootstepSpatialContext(): FootstepSpatialContext | null {
+    if (!this.footstepConfig) return null;
+    const resolver = this.buildAudioSpaceResolver();
+    const l = this.buildAudioListener(resolver);
+    this.audioSpaceDebug = {
+      mode: resolver.mode,
+      listenerMode: l.mode,
+      listenerFallback: l.fallback,
+      backWu: l.backWu,
+    };
+    return { resolver, listener: l.listener, params: this.buildSpatialParams() };
+  }
+
+  /**
+   * 脚点处该用哪个脚步集：**zone 覆盖 → 场景默认 → 无**。
+   *
+   * ⚠ 按位置直接查多边形，**不吃 `zone:enter/exit` 事件**：`ZoneSystem.update` 只对玩家做
+   * point-in-polygon，那两个事件天生只描述玩家；而脚步要支持任意实体。
+   *
+   * 多个 zone 重叠时**后声明者赢**（与 SmellSystem「取最后进入者」同向），
+   * 这样内容侧可以先铺一块大区、再在上面叠小区。
+   */
+  private resolveFootstepSetAt(x: number, y: number): string | null {
+    let hit: string | null = null;
+    for (const z of this.zoneSystem.getZones()) {
+      if (z.zoneKind === 'depth_floor') continue;
+      const set = z.footstepSet?.trim();
+      if (!set) continue;
+      if (isValidZonePolygon(z.polygon) && isPointInPolygon(z.polygon, x, y)) hit = set;
+    }
+    if (hit) return hit;
+    return this.sceneManager.currentSceneData?.footstepSet?.trim() || null;
+  }
+
+  /** 玩家与 NPC 走**同一个**适配器工厂：玩家不是特例，这一条是架构约束不是风格。 */
+  private makeFootstepEmitter(
+    id: string,
+    contact: () => { x: number; y: number },
+    sprite: () => SpriteEntity | null,
+    visible: () => boolean,
+  ): FootstepEmitter {
+    return {
+      id,
+      getContactX: () => contact().x,
+      getContactY: () => contact().y,
+      getClip: () => sprite()?.getCurrentState() ?? '',
+      getFrameIndex: () => sprite()?.getFrameIndex() ?? 0,
+      getFrameCount: () => sprite()?.getFrameCount() ?? 0,
+      // 触地与否由精灵自己按「这一帧画的是图集哪一格」回答（sockets.json 的 contactSlots）
+      isContactFrame: (frame) => sprite()?.isContactFrameAt(frame) ?? false,
+      isVisible: visible,
+    };
+  }
+
+  /** 实体表换了就重挂发声体（场景装载、过场重建实体都会走到）。 */
+  private refreshFootstepEmitters(): void {
+    this.footstepSystem.clearEmitters();
+    const p = this.player;
+    this.footstepSystem.registerEmitter(this.makeFootstepEmitter(
+      'player',
+      () => ({ x: p.contactX, y: p.contactY }),
+      () => p.sprite,
+      () => p.sprite.container.visible,
+    ));
+    for (const npc of this.sceneManager.getCurrentNpcs()) {
+      this.footstepSystem.registerEmitter(this.makeFootstepEmitter(
+        npc.id,
+        () => ({ x: npc.contactX, y: npc.contactY }),
+        () => npc.spriteEntity,
+        () => npc.container.visible,
+      ));
+    }
+  }
+
+  /** 无头验证入口：空间化的全部可判定量。听感判不了，这份能判。 */
+  private getFootstepDebugState(): Record<string, unknown> {
+    return {
+      configLoaded: this.footstepConfig !== null,
+      setCount: Object.keys(this.footstepConfig?.sets ?? {}).length,
+      sceneDefaultSet: this.sceneManager.currentSceneData?.footstepSet ?? null,
+      space: this.audioSpaceDebug,
+      wuPerQUnit: this.sceneLighting.wuPerQUnit,
+      camera: { zoom: this.camera.getZoom(), sceneBaseZoom: this.camera.getSceneBaseZoom() },
+      ...this.footstepSystem.getDebugOutputState(),
+    };
+  }
+
+  /** 调试/内容侧改听者。传 null 回到配置缺省。 */
+  setAudioListenerConfig(cfg: AudioListenerConfig | null): void {
+    this.audioListenerConfig = cfg ?? this.footstepConfig?.listener ?? null;
+  }
+
   /**
    * 菜单拿到的存档数据源。
    *
@@ -3859,6 +4104,14 @@ export class Game {
     this.sceneManager.setInteractionSetter((hotspots, npcs) => {
       this.interactionSystem.setHotspots(hotspots);
       this.interactionSystem.setNpcs(npcs);
+      /**
+       * 脚步发声体跟着实体表一起换。
+       *
+       * 挂在这里而不是 `rebuildEntityShadows`：那条被 `isLightingEnabled` 门控，
+       * 而背尸上山那六个场景根本没有光照载荷——挂错地方就是「在最需要它的关卡里静默没有」。
+       * 本钩子既在场景装载时触发，也在过场重建实体时触发，与实体表的生命周期严格同步。
+       */
+      this.refreshFootstepEmitters();
     });
 
     // 过场重建 / 卸载实体时，先把其滤镜从深度系统的每帧驱动列表摘除再销毁，
@@ -5551,6 +5804,8 @@ export class Game {
       }),
       playAudioProbe: (id, fadeMs) => this.audioManager.playBgm(id, fadeMs),
       getAudioDebugState: () => this.audioManager.getDebugOutputState(),
+      getFootstepDebugState: () => this.getFootstepDebugState(),
+      setAudioListener: (cfg) => this.setAudioListenerConfig(cfg),
       suppressSceneEnterForVisualCapture: () => this.sceneManager.setSceneEnterRunner(null),
       previewBubbleAnchor: (req) => {
         const target = String(req?.target ?? '').trim();
@@ -7267,6 +7522,12 @@ export class Game {
       this.trajectorySystem.update(dt);
     }
     this.camera.update(dt);
+    /**
+     * 脚步 **必须排在 `camera.update` 之后**：听者是本帧定稿的相机位姿，
+     * 而实体位置在上面（`player.update` / NPC `cutsceneUpdate` / `trajectorySystem.update`）
+     * 已全部写完。排在前面就是拿上一帧的相机配这一帧的实体，快速平移镜头时声像会拖尾。
+     */
+    this.footstepSystem.update(dt);
     this.debugTools?.update(dt);
     this.depthDebugVisualizer?.update();
 

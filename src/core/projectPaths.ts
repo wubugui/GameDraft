@@ -32,6 +32,7 @@ export const TEXT_URLS = {
   characterRegistry: '/assets/data/character_registry.json',
   flagRegistry: '/assets/data/flag_registry.json',
   smellProfiles: '/assets/data/smell_profiles.json',
+  footstepSets: '/assets/data/footstep_sets.json',
   overlayImages: '/assets/data/overlay_images.json',
   propPresets: '/assets/data/prop_presets.json',
   scenarios: '/assets/data/scenarios.json',

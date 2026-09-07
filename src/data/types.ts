@@ -563,6 +563,13 @@ export interface SceneData {
   entityGroups?: SceneEntityGroupDef[];
   bgm?: string;
   ambientSounds?: string[];
+  /**
+   * 本场景的默认脚步集（`footstep_sets.json` 的集 id）。zone 上的
+   * {@link ZoneDef.footstepSet} 覆盖它；两者都没有 = 本场景不发脚步声。
+   *
+   * **必须有场景级默认**：背尸上山那六个场景 `zones` 全为空，只按区配等于在目标关卡里没有。
+   */
+  footstepSet?: string;
   /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
   filterId?: string;
   depthConfig?: SceneDepthConfig;
@@ -2019,6 +2026,15 @@ export interface SocketSetDef {
   schemaVersion: number;
   atlas: SocketAtlasFingerprint;
   sockets: Record<string, SocketDef>;
+  /**
+   * **落脚帧**：脚触地的那些**图集槽位**（升序、去重）。走到这些槽位就播一声脚步。
+   *
+   * 与挂点同住 sidecar、同一份图集指纹：它们都是"看着这一格画的是什么"逐帧标出来的，
+   * 重导出图集槽位漂移时一起判失效（stale ⇒ 整份忽略 ⇒ 不发声，而不是响在错的帧上）。
+   * 按**槽位**而不是按片段帧下标：同一张图在几个片段里复用（背尸包的 walk/run/carry_walk
+   * 共用 12 格）时只标一次，且片段帧序改了标注不漂。空数组 = 这个包没有脚步。
+   */
+  contactSlots: number[];
 }
 
 export interface AnimationStateDef {
@@ -3095,6 +3111,16 @@ export interface ZoneDef {
   interactLabel?: string;
   /** 进入本区自动呈现的环境气味（zone 层；离开自动撤回；被 action 层 setSmell 压过）。 */
   smell?: ZoneSmellConfig;
+  /**
+   * 走在本区上是什么声（`footstep_sets.json` 的集 id）；省略 = 跟场景的
+   * {@link SceneData.footstepSet}。
+   *
+   * ⚠ 与 {@link smell} 的驱动方式**不同**：气味走 `zone:enter/exit` 事件（只对玩家判定，
+   * 因为 `ZoneSystem` 只对玩家做 point-in-polygon），而脚步要支持**任意实体**发声，
+   * 所以 `FootstepSystem` 按发声体的脚点**直接查多边形**，不吃 zone 事件。
+   * 也因此本字段对 `zoneKind: 'depth_floor'` 的区无意义。
+   */
+  footstepSet?: string;
 }
 
 export interface ZoneRuleSlot {
@@ -3531,6 +3557,98 @@ export interface IZoneDataProvider {
  */
 export type AudioChannel = 'bgm' | 'sfx' | 'ambient' | 'voice';
 
+// ===========================================================================
+// 脚步声与空间化音频（`public/assets/data/footstep_sets.json`）
+// ===========================================================================
+
+/**
+ * 一个**脚步集** = 「走在这块地上是什么声」。
+ *
+ * ⚠ 刻意**不叫「材质」、也不按材质查表**：素材本身就已经把空间烘进去了
+ * （`sfx_step_plank_hollow` 那个「发空」是空间不是材质）。硬拆成
+ * `材质 × 空间 × 步态` 三维表只会得到一张永远填不满的表。一个集 id 编码
+ * 「地面 + 空间」，步态是唯一的第二轴。
+ */
+export interface FootstepSetDef {
+  /** 策划备注，运行时不读 */
+  label?: string;
+  /**
+   * 按**动画片段名**给一条音效 id。键就是 `SpriteEntity.getCurrentState()`
+   * 返回的片段名（`walk` / `run` / `carry_walk` / `carry_heavy_walk` / `crouchWalk` …），
+   * 值是 `audio_config.json` **sfx 区的全局 key**——脚步与其它音效一样在 Audio 页登记，
+   * 本表只引用。
+   *
+   * **一个片段一条，确定性播放**：没有随机轮换、没有变速/音量抖动。地面换了声音就换
+   * 是靠场景 / zone 选不同的脚步集，不是靠在一个集里掷骰子。
+   *
+   * 用片段名而不是「逻辑状态」：片段名已经区分了装扮（背尸的 `carry_walk` 与常态的
+   * `walk` 是两个片段），一个轴就够，不必再引入装扮轴。
+   */
+  sfx: Record<string, string>;
+  /** 整集增益（dB），缺省 0。用来把某块地整体压低/抬高。 */
+  gainDb?: number;
+}
+
+/** 空间化参数（全部 wu；角色高 150 wu 是尺度锚）。 */
+export interface SpatialAudioConfig {
+  /** 参考距离：近于此不再变响。 */
+  refDistanceWu?: number;
+  /** 衰减系数（WebAudio `inverse` 模型的 rolloffFactor）。 */
+  rolloff?: number;
+  /** 超过此距离一律不播。⚠ 必须显著大于 {@link listenerBackAtBaseZoomWu}。 */
+  maxDistanceWu?: number;
+  /** 声像宽度上限 0..1。1 = 允许全左/全右。 */
+  panWidth?: number;
+  /**
+   * 相机听者在**场景基准 zoom** 下站在画面后方多远（wu）。
+   * 实际视距 = 本值 × (sceneBaseZoom / 当前 zoom)——所以推拉镜头会改变听感远近，
+   * 而**改窗口大小不会**。
+   */
+  listenerBackAtBaseZoomWu?: number;
+  /** 无 depthConfig 场景的纵深近似系数；缺省 √2（假定 45° 俯角）。 */
+  planarDepthScale?: number;
+}
+
+/**
+ * 听者是谁。**不写死**：
+ * - `camera`（缺省）：站在画面后方沿视线看进画面。唯一能正确表达推拉镜头的那个。
+ * - `player`：玩家的耳朵。
+ * - `npc`：场景里某个 NPC 的耳朵（`targetId` 是 NPC id）。
+ * - `fixed`：钉在场景里某个点（`x`/`y` 场景坐标 wu，`heightWu` 离地高度）。
+ *
+ * 目标找不到时**回落到 camera 并在调试状态里报出来**，不静默。
+ */
+export interface AudioListenerConfig {
+  mode: 'camera' | 'player' | 'npc' | 'fixed';
+  /** mode='npc' 时的 NPC id。 */
+  targetId?: string;
+  /** mode='fixed' 时的场景坐标 wu。 */
+  x?: number;
+  y?: number;
+  /** 听者耳朵离地高度 wu；`player`/`npc` 省略时取该实体身高的 0.9。 */
+  heightWu?: number;
+}
+
+export interface FootstepConfig {
+  sets: Record<string, FootstepSetDef>;
+  /**
+   * 片段名的回落表：某集没给这个片段的音效时，改用哪个片段的。
+   * 例：`{ "carry_walk": "walk", "carry_heavy_walk": "run", "crouchWalk": "walk" }`。
+   * 可链式；链走到头还没命中就**不发声**（不瞎凑，绝无隐式回落到 walk）。
+   *
+   * **触地帧不在这份配置里**：那是"看着图标的"，住在动画包的 `sockets.json`
+   * （{@link SocketSetDef.contactSlots}），在动画浏览页逐帧标，与挂点同一套机制。
+   */
+  clipFallback?: Record<string, string>;
+  defaults?: {
+    /** 脚步相对 sfx 通道的整体增益（dB）。脚步是全程最高频的声音，缺省压低。 */
+    gainDb?: number;
+  };
+  spatial?: SpatialAudioConfig;
+  /** 缺省听者。运行时可被 `setAudioListener` 动作或调试命令改写。 */
+  listener?: AudioListenerConfig;
+}
+
 export interface IAudioSettingsProvider {
   getVolume(channel: AudioChannel): number;
   setVolume(channel: AudioChannel, vol: number): void;
@@ -3572,6 +3690,17 @@ export interface TransientSfxOptions {
    * （调用方据此把"跟随配音结束"安全退化为等待点击，而非闪切）。
    */
   onEnd?: () => void;
+  /**
+   * 声像 −1(全左) .. +1(全右)。**逐实例**生效（走 `howl.stereo(pan, soundId)`）。
+   *
+   * ⚠ 绝不允许改成组级 `howl.stereo(pan)`：Howl 是按 src 共享缓存的，组级值会写进
+   * `parent._stereo`，而 Howler 的 `Sound.init`/`reset` 每次都从 parent 复制，
+   * 于是**这个音效以后每一次播放都继承那个声像且再也清不掉**（清理分支只在组级为 null 时才走）。
+   *
+   * 首次设置会让 Howler 建 StereoPannerNode，而它的 `setupPanner` 结尾对**已在播放**的实例
+   * 做一次 `pause().play()`。我们在 `play()` 之后立刻设，seek 还是 0，听感上是重头播＝没变化。
+   */
+  pan?: number;
 }
 
 /**

@@ -350,6 +350,7 @@ const SOCKETS: ResolvedSockets = {
     schemaVersion: 1,
     atlas: { cols: 2, rows: 1, slotCount: 2 },
     sockets: { hand: { poses: { '0': { x: 1, y: 0.5, angle: 10, front: true } } } },
+    contactSlots: [],
   },
 };
 

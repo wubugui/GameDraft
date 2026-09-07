@@ -84,7 +84,9 @@ export function parseSocketSet(raw: unknown): SocketSetDef | null {
   const rows = finiteNum(a.rows);
   const slotCount = finiteNum(a.slotCount);
   if (cols === null || rows === null || slotCount === null) return null;
-  const socketsRaw = m.sockets;
+  // `sockets` 可以缺省（一份只标了落脚帧、一个挂点都没有的 sidecar 是合法的）；
+  // 但写了却不是对象就是结构坏了。
+  const socketsRaw = m.sockets === undefined ? {} : m.sockets;
   if (typeof socketsRaw !== 'object' || socketsRaw === null) return null;
 
   const sockets: Record<string, SocketDef> = {};
@@ -108,7 +110,23 @@ export function parseSocketSet(raw: unknown): SocketSetDef | null {
     schemaVersion: Math.trunc(version),
     atlas: { cols, rows, slotCount },
     sockets,
+    contactSlots: parseContactSlots(m.contactSlots, slotCount),
   };
+}
+
+/**
+ * 落脚帧槽位：只收 `0 <= 整数 < slotCount`，去重升序；不是数组/整份坏掉 ⇒ 空（无脚步）。
+ * 单个坏项跳过——与 pose 同一口径：标注是表现层增益，任何时候不该把角色本身弄挂。
+ */
+function parseContactSlots(raw: unknown, slotCount: number): number[] {
+  if (!Array.isArray(raw)) return [];
+  const out = new Set<number>();
+  for (const v of raw) {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 0) continue;
+    if (slotCount > 0 && v >= slotCount) continue;
+    out.add(v);
+  }
+  return Array.from(out).sort((a, b) => a - b);
 }
 
 /** 解算挂点局部位姿要的宿主状态（SpriteEntity 与编辑器画布共用同一套输入）。 */

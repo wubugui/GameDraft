@@ -1,14 +1,13 @@
-import { sampleGroundField, type GroundDepthField } from '../utils/groundDepthField';
+import type { GroundDepthField } from '../utils/groundDepthField';
 import {
-  WR_EPS_PROJ,
-  wrQToWorldRow,
-  wrQx,
-  wrQxToPx,
-  wrQy,
-  wrQyToPx,
-  wrWorldToPxDiv,
-  wrWorldToQComponent,
-} from '../utils/worldReconstruct';
+  groundDepthAtQ as ssGroundDepthAtQ,
+  groundWorldAt as ssGroundWorldAt,
+  qToWorld as ssQToWorld,
+  raise as ssRaise,
+  worldToQ as ssWorldToQ,
+  worldToScene as ssWorldToScene,
+  type SceneSpaceGeometry,
+} from '../utils/sceneSpace';
 
 /**
  * 运行时摆灯用的坐标换算：**场景坐标 ↔ 灯的世界坐标**。
@@ -41,65 +40,29 @@ import {
  * 在**灯世界的 Y** 上直接加减。与 `scene_lights.raise_world` 同口径。
  */
 
-export type Vec3 = [number, number, number];
+export type { Vec3 } from '../utils/sceneSpace';
+import type { Vec3 } from '../utils/sceneSpace';
 
-export interface LightSpaceGeometry {
-  /** 照明载荷的工作分辨率（`meta.work`）。地面场就是这个尺寸。 */
-  work: { w: number; h: number };
-  /** work 栅格的标定（`meta.cal`）。**不是** `depthConfig.M`。 */
-  cal: { ppu: number; cx: number; cy: number };
-  /** 场景世界宽高（wu，NPC/热点那套 frame） */
-  sceneWorld: { w: number; h: number };
-  /** q → M-world 的基，行主 r00..r22（det=+1 的**游戏约定** R，取自 `shadowBasisRows`） */
-  basisRows: ArrayLike<number>;
-  /** 1 个伪世界 q 单位 = 多少 wu（逐场景不同：雾津街头 880、teahouse 154） */
-  wuPerQUnit: number;
-  /** 行走面深度场（work 分辨率） */
-  ground: GroundDepthField;
-}
+/**
+ * 与 {@link SceneSpaceGeometry} 同一份形状。
+ *
+ * ⚠ 保留这个别名只为不动既有调用点（`AuthoringMode` / `lightGizmos` / `shapeGizmos` 与它们的单测）；
+ * **它不是第二份定义**——换算全部委托给 `src/utils/sceneSpace.ts`，这里一行数学都没有。
+ */
+export type LightSpaceGeometry = SceneSpaceGeometry;
+export type { GroundDepthField };
 
 export class LightSpace {
   constructor(private readonly geo: LightSpaceGeometry) {}
 
-  /** 场景 wu → work px。先除后乘、eps 取 `WR_EPS_PROJ`——与既有地面采样站点逐位一致。 */
-  private sceneToWorkPx(sceneX: number, sceneY: number): [number, number] {
-    const { sceneWorld, work } = this.geo;
-    return [
-      wrWorldToPxDiv(sceneX, sceneWorld.w, work.w, WR_EPS_PROJ),
-      wrWorldToPxDiv(sceneY, sceneWorld.h, work.h, WR_EPS_PROJ),
-    ];
-  }
-
-  /** work px → 场景 wu（上者的逆）。 */
-  private workPxToScene(px: number, py: number): { x: number; y: number } {
-    const { sceneWorld, work } = this.geo;
-    return {
-      x: (px / Math.max(work.w, 1e-6)) * sceneWorld.w,
-      y: (py / Math.max(work.h, 1e-6)) * sceneWorld.h,
-    };
-  }
-
-  /** 伪世界 q → 灯世界（wu）。转一次朝向（R），再折一次尺度。 */
+  /** 伪世界 q → 灯世界（wu）。见 `sceneSpace.qToWorld`。 */
   qToWorld(q: Vec3): Vec3 {
-    const r = this.geo.basisRows;
-    const k = this.geo.wuPerQUnit;
-    return [
-      wrQToWorldRow(r[0], r[1], r[2], q[0], q[1], q[2]) * k,
-      wrQToWorldRow(r[3], r[4], r[5], q[0], q[1], q[2]) * k,
-      wrQToWorldRow(r[6], r[7], r[8], q[0], q[1], q[2]) * k,
-    ];
+    return ssQToWorld(this.geo, q);
   }
 
   /** 灯世界 → 伪世界 q（上者的逆）。 */
   worldToQ(w: Vec3): Vec3 {
-    const r = this.geo.basisRows;
-    const k = 1 / Math.max(this.geo.wuPerQUnit, 1e-9);
-    const wq: Vec3 = [w[0] * k, w[1] * k, w[2] * k];
-    return [
-      wrWorldToQComponent(r, 0, wq[0], wq[1], wq[2]),
-      wrWorldToQComponent(r, 1, wq[0], wq[1], wq[2]),
-      wrWorldToQComponent(r, 2, wq[0], wq[1], wq[2]),
-    ];
+    return ssWorldToQ(this.geo, w);
   }
 
   /**
@@ -108,10 +71,7 @@ export class LightSpace {
    * 这正是作者模型要的：先落地，再拉高。
    */
   groundWorldAt(sceneX: number, sceneY: number): Vec3 {
-    const { cal, ground, work } = this.geo;
-    const [px, py] = this.sceneToWorkPx(sceneX, sceneY);
-    const d = sampleGroundField(ground.data, work.w, work.h, px, py);
-    return this.qToWorld([wrQx(px, cal.ppu, cal.cx), wrQy(py, cal.ppu, cal.cy), d]);
+    return ssGroundWorldAt(this.geo, sceneX, sceneY);
   }
 
   /**
@@ -121,12 +81,7 @@ export class LightSpace {
    * 调用方再走 `camera.worldToScreen` 就是屏幕像素。
    */
   worldToScene(w: Vec3): { x: number; y: number } {
-    const { cal } = this.geo;
-    const q = this.worldToQ(w);
-    return this.workPxToScene(
-      wrQxToPx(q[0], cal.ppu, cal.cx),
-      wrQyToPx(q[1], cal.ppu, cal.cy),
-    );
+    return ssWorldToScene(this.geo, w);
   }
 
   /**
@@ -138,7 +93,7 @@ export class LightSpace {
    * 也因此「离地高度」必须记住**落笔时的地面锚点**，见 {@link heightAbove}。
    */
   raise(ground: Vec3, heightWu: number): Vec3 {
-    return [ground[0], ground[1] + heightWu, ground[2]];
+    return ssRaise(ground, heightWu);
   }
 
   /**
@@ -257,11 +212,6 @@ export class LightSpace {
 
   /** 给定 q 的 xy（不含深度）处的行走面深度。 */
   private groundDepthAtQ(qx: number, qy: number): number {
-    const { cal, ground, work } = this.geo;
-    return sampleGroundField(
-      ground.data, work.w, work.h,
-      wrQxToPx(qx, cal.ppu, cal.cx),
-      wrQyToPx(qy, cal.ppu, cal.cy),
-    );
+    return ssGroundDepthAtQ(this.geo, qx, qy);
   }
 }

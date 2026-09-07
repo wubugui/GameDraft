@@ -80,6 +80,17 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
    * 两条调用路径语义都成立：切场景全清（unloadScene 传 []）= 全部活跃 zone 正常退出 + 供给清空；
    * 运行期开关（refreshZonesAfterRuntimeChange）= 纯差分。
    */
+  /**
+   * 当前生效的 zone（已过位面/时段过滤）。只读快照式访问，**给按位置查区的消费者**用。
+   *
+   * ⚠ 为什么不让消费者去听 `zone:enter/exit`：本系统的 `update` 只对**玩家**做
+   * point-in-polygon（`playerPosGetter`），所以那两个事件天生只描述玩家。
+   * 要按**任意实体**的位置查区（脚步声就是），必须拿到区表自己算。
+   */
+  getZones(): readonly ZoneDef[] {
+    return this.zones;
+  }
+
   setZones(zones: ZoneDef[]): void {
     const nextIds = new Set<string>();
     for (const z of zones) nextIds.add(z.id);
