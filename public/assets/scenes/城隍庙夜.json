@@ -36,6 +36,7 @@
   },
   "id": "城隍庙夜",
   "name": "城隍庙 · 夜",
+  "footstepSet": "石地",
   "worldWidth": 1376.0,
   "worldHeight": 768.0,
   "camera": {

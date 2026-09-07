@@ -40,6 +40,7 @@
     "pixelsPerUnit": 1.0
   },
   "id": "河边",
+  "footstepSet": "石地",
   "worldWidth": 1376.0,
   "worldHeight": 768.0,
   "backgrounds": [

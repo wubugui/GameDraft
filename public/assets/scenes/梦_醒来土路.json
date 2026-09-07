@@ -36,6 +36,7 @@
   },
   "id": "梦_醒来土路",
   "name": "两天后·城外土路",
+  "footstepSet": "石地",
   "worldWidth": 2400.0,
   "camera": {
     "zoom": 0.9,

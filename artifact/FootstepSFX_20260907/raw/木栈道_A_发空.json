@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "木栈道_A_发空",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。一个人在悬空搭建的旧木栈道上缓慢行走的脚步声。每一步落在木板上都发出低沉的空鼓声，因为板下是悬空的，伴随木头轻微的吱呀声。近距离干声录制。每一步之间有明显停顿，能清楚数出一步一步。安静的背景，只有脚步。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。一个人在悬空搭建的旧木栈道上缓慢行走的脚步声。每一步落在木板上都发出低沉的空鼓声，因为板下是悬空的，伴随木头轻微的吱呀声。近距离干声录制。每一步之间有明显停顿，能清楚数出一步一步。安静的背景，只有脚步。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 7.5,
+    "original_duration": 7.5,
+    "url": "https://lf11-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/e5158108-e7c0-4319-b74a-5ef4b05280cb?x-expires=1789387938&x-signature=AroO4Oxvms0W%2Byy4V8Jke4%2BWRO8%3D"
+  }
+}

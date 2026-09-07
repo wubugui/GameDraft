@@ -119,6 +119,66 @@
     }
   },
   "sfx": {
+    "sfx_step_paper_money_1": {
+      "src": "/resources/runtime/audio/edited/footstep_paper_money_02_87caa148.wav"
+    },
+    "sfx_step_paper_money_2": {
+      "src": "/resources/runtime/audio/edited/footstep_paper_money_03_15ea8bba.wav"
+    },
+    "sfx_step_paper_money_3": {
+      "src": "/resources/runtime/audio/edited/footstep_paper_money_07_2f7792f3.wav"
+    },
+    "sfx_step_paper_money_4": {
+      "src": "/resources/runtime/audio/edited/footstep_paper_money_05_6f1da1a3.wav"
+    },
+    "sfx_step_paper_money_5": {
+      "src": "/resources/runtime/audio/edited/footstep_paper_money_18_a4504745.wav"
+    },
+    "sfx_step_plank_hollow_1": {
+      "src": "/resources/runtime/audio/edited/footstep_plank_hollow_11_38f477dc.wav"
+    },
+    "sfx_step_plank_hollow_2": {
+      "src": "/resources/runtime/audio/edited/footstep_plank_hollow_15_b7ece729.wav"
+    },
+    "sfx_step_plank_hollow_3": {
+      "src": "/resources/runtime/audio/edited/footstep_plank_hollow_12_e609b18c.wav"
+    },
+    "sfx_step_plank_hollow_4": {
+      "src": "/resources/runtime/audio/edited/footstep_plank_hollow_13_be588e10.wav"
+    },
+    "sfx_step_plank_hollow_5": {
+      "src": "/resources/runtime/audio/edited/footstep_plank_hollow_02_ede96e10.wav"
+    },
+    "sfx_step_stone_1": {
+      "src": "/resources/runtime/audio/edited/footstep_stone_17_8f427139.wav"
+    },
+    "sfx_step_stone_2": {
+      "src": "/resources/runtime/audio/edited/footstep_stone_15_56c54fa2.wav"
+    },
+    "sfx_step_stone_3": {
+      "src": "/resources/runtime/audio/edited/footstep_stone_23_be37a87d.wav"
+    },
+    "sfx_step_stone_4": {
+      "src": "/resources/runtime/audio/edited/footstep_stone_18_5ba04dc5.wav"
+    },
+    "sfx_step_stone_5": {
+      "src": "/resources/runtime/audio/edited/footstep_stone_16_b499aa0a.wav"
+    },
+    "sfx_step_burnt_paper_1": {
+      "src": "/resources/runtime/audio/edited/footstep_burnt_paper_37_776596c5.wav"
+    },
+    "sfx_step_burnt_paper_2": {
+      "src": "/resources/runtime/audio/edited/footstep_burnt_paper_32_c3ec8ecd.wav"
+    },
+    "sfx_step_burnt_paper_3": {
+      "src": "/resources/runtime/audio/edited/footstep_burnt_paper_09_3c579626.wav"
+    },
+    "sfx_step_burnt_paper_4": {
+      "src": "/resources/runtime/audio/edited/footstep_burnt_paper_04_dbc349c1.wav"
+    },
+    "sfx_step_burnt_paper_5": {
+      "src": "/resources/runtime/audio/edited/footstep_burnt_paper_18_bd13df76.wav"
+    },
     "minigame_lose": {
       "src": "/resources/runtime/audio/edited/minigame_lose.wav"
     },

@@ -1,6 +1,7 @@
 {
   "id": "崖墓前段",
   "name": "崖墓前段",
+  "footstepSet": "木栈道",
   "worldWidth": 1404.44,
   "worldHeight": 790.0,
   "backgrounds": [

@@ -36,6 +36,7 @@
   },
   "id": "梦_夜路",
   "name": "梦·夜路",
+  "footstepSet": "石地",
   "worldWidth": 3000.0,
   "camera": {
     "zoom": 0.9,

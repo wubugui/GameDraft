@@ -36,6 +36,7 @@
   },
   "id": "野道",
   "name": "城外野道",
+  "footstepSet": "石地",
   "worldWidth": 2000,
   "camera": {
     "zoom": 0.8,

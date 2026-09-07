@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "纸灰_B_碾",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。一个人在厚厚一层焚烧后的纸灰与炭屑上缓慢行走，每一步都把酥脆的灰烬压碎并碾开，发出干燥细碎的噼啪与沙沙声。近距离干声录制，每一步之间有明显停顿。安静的背景，只有踩灰的声音。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。一个人在厚厚一层焚烧后的纸灰与炭屑上缓慢行走，每一步都把酥脆的灰烬压碎并碾开，发出干燥细碎的噼啪与沙沙声。近距离干声录制，每一步之间有明显停顿。安静的背景，只有踩灰的声音。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 14,
+    "original_duration": 14,
+    "url": "https://lf3-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/961c233f-3c51-4a93-b324-dd3909b3f92f?x-expires=1789388069&x-signature=RIka7XrdtWzpCwbh76650iQVPaI%3D"
+  }
+}

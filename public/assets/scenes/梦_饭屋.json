@@ -36,6 +36,7 @@
   },
   "id": "梦_饭屋",
   "name": "梦·一·吃饭",
+  "footstepSet": "石地",
   "worldWidth": 800.0,
   "camera": {
     "zoom": 1.1,

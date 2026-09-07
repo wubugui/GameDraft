@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "石地_C_单步",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。一只鞋底踏在干燥岩石地面上，发出一声干硬短促的叩击。**每踏一下之后停顿两到三秒的完全安静**，再踏下一下。整段只有四五下，每一下孤立干净，绝不连续。近距离干声，无回音。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。一只鞋底踏在干燥岩石地面上，发出一声干硬短促的叩击。**每踏一下之后停顿两到三秒的完全安静**，再踏下一下。整段只有四五下，每一下孤立干净，绝不连续。近距离干声，无回音。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 14.5,
+    "original_duration": 14.5,
+    "url": "https://lf11-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/4ce2c8b9-2809-4bb0-b7d2-f1ec022efda8?x-expires=1789391062&x-signature=lW9sGisZ80X%2Bf%2FNkVPvpFMutZ9I%3D"
+  }
+}

@@ -1,6 +1,7 @@
 {
   "id": "雾津街头",
   "name": "雾津街头",
+  "footstepSet": "纸灰",
   "worldWidth": 4000.0,
   "worldHeight": 2251.2,
   "camera": {

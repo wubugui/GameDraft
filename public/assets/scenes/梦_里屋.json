@@ -36,6 +36,7 @@
   },
   "id": "梦_里屋",
   "name": "梦·三四·睡觉与收束",
+  "footstepSet": "石地",
   "worldWidth": 1050.0,
   "camera": {
     "zoom": 1.1,

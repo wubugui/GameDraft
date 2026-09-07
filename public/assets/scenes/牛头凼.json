@@ -1,6 +1,7 @@
 {
   "id": "牛头凼",
   "name": "牛头凼",
+  "footstepSet": "石地",
   "worldWidth": 912.36,
   "worldHeight": 513.2,
   "backgrounds": [

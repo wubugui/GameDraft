@@ -1,6 +1,7 @@
 {
   "id": "崖墓后段",
   "name": "崖墓后段",
+  "footstepSet": "石地",
   "worldWidth": 2048.0,
   "worldHeight": 1152.0,
   "backgrounds": [

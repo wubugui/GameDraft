@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "纸钱_B_干脆",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写录制：一只脚反复踩在一叠散落的黄纸钱上，纸被压皱、撕裂、摩擦的清脆窸窣声，间夹落脚在硬土地上的短促闷响。每次踩踏之间留有安静的空隙。干声，无回音，无混响。安静的背景，只有踩踏声。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写录制：一只脚反复踩在一叠散落的黄纸钱上，纸被压皱、撕裂、摩擦的清脆窸窣声，间夹落脚在硬土地上的短促闷响。每次踩踏之间留有安静的空隙。干声，无回音，无混响。安静的背景，只有踩踏声。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 11.5,
+    "original_duration": 11.5,
+    "url": "https://lf3-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/346d5cd8-3c94-4609-b205-85f8c15cd95f?x-expires=1789387919&x-signature=0NPduv5TS%2F3M7oLGsGz6vjyDwKE%3D"
+  }
+}

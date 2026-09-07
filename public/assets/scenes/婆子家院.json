@@ -36,6 +36,7 @@
   },
   "id": "婆子家院",
   "name": "婆子家小院",
+  "footstepSet": "石地",
   "worldWidth": 1376.0,
   "worldHeight": 768.0,
   "camera": {

@@ -36,6 +36,7 @@
   },
   "id": "城门口",
   "name": "城门口 · 拂晓",
+  "footstepSet": "石地",
   "worldWidth": 2000,
   "camera": {
     "zoom": 0.8,

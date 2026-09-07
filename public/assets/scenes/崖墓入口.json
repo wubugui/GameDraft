@@ -1,6 +1,7 @@
 {
   "id": "崖墓入口",
   "name": "崖墓入口",
+  "footstepSet": "纸钱路",
   "worldWidth": 759.46,
   "worldHeight": 427.2,
   "backgrounds": [

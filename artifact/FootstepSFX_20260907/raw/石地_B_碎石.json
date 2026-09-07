@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "石地_B_碎石",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写录制：鞋底反复踏在覆着薄薄一层碎石屑的岩石地面上，每次落脚是短促干硬的叩击声，紧跟着碎石粒被碾动的沙沙摩擦。每次之间留有安静的空隙。干声，无混响。安静的背景。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写录制：鞋底反复踏在覆着薄薄一层碎石屑的岩石地面上，每次落脚是短促干硬的叩击声，紧跟着碎石粒被碾动的沙沙摩擦。每次之间留有安静的空隙。干声，无混响。安静的背景。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 9,
+    "original_duration": 9,
+    "url": "https://lf11-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/755cde5f-3afb-4c3f-b275-8c6f46ee2591?x-expires=1789388022&x-signature=AgtP%2BBVYSUNZSLIe4oZ3qJs3t1U%3D"
+  }
+}

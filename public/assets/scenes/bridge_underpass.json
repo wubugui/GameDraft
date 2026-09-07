@@ -36,6 +36,7 @@
   },
   "id": "bridge_underpass",
   "name": "桥下",
+  "footstepSet": "石地",
   "worldWidth": 4000.0,
   "camera": {
     "zoom": 1.0,

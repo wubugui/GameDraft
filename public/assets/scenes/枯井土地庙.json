@@ -36,6 +36,7 @@
   },
   "id": "枯井土地庙",
   "name": "土地庙后 · 枯井",
+  "footstepSet": "石地",
   "worldWidth": 1376.0,
   "worldHeight": 768.0,
   "camera": {

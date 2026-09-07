@@ -36,6 +36,7 @@
   },
   "id": "梦_农家院",
   "name": "梦·农家院",
+  "footstepSet": "石地",
   "worldWidth": 1376.0,
   "camera": {
     "zoom": 1.2,

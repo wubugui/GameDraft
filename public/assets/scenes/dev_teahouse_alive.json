@@ -36,6 +36,7 @@
   },
   "id": "dev_teahouse_alive",
   "name": "茶馆·会动版(dev)",
+  "footstepSet": "木栈道",
   "worldWidth": 700.0,
   "camera": {
     "zoom": 1.5,

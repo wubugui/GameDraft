@@ -1,0 +1,3 @@
+# 火山引擎生成的候选/切片 wav（36 MB，可由 gen.py + slice.py 重跑）：
+# 入选的 20 条已走音频加工台进了 DVC（runtime/audio/edited），这里只留脚本与台账。
+*.wav

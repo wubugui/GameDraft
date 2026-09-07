@@ -36,6 +36,7 @@
   },
   "id": "teahouse",
   "name": "茶馆",
+  "footstepSet": "木栈道",
   "worldWidth": 700.0,
   "camera": {
     "zoom": 1.5,

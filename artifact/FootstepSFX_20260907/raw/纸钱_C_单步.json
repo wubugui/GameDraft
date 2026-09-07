@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "纸钱_C_单步",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写：一只脚踩在一叠黄纸钱上，纸被压皱发出一声窸窣脆响并伴随落在土地上的闷响。**然后完全安静三秒**，再踩下一下。整段只有四五下，每一下孤立干净，绝不连续。近距离干声，无回音。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写：一只脚踩在一叠黄纸钱上，纸被压皱发出一声窸窣脆响并伴随落在土地上的闷响。**然后完全安静三秒**，再踩下一下。整段只有四五下，每一下孤立干净，绝不连续。近距离干声，无回音。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 21.0951,
+    "original_duration": 21.0951,
+    "url": "https://lf11-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/672a91a0-2ffb-4a25-befe-f3add6a384b0?x-expires=1789391234&x-signature=tAAG0ncZmKeMZaO22oZM8yATNCc%3D"
+  }
+}

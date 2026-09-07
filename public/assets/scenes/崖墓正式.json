@@ -1,6 +1,7 @@
 {
   "id": "崖墓正式",
   "name": "崖墓",
+  "footstepSet": "纸灰",
   "worldWidth": 1591.47,
   "worldHeight": 895.2,
   "backgrounds": [

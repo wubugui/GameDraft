@@ -36,6 +36,7 @@
   },
   "id": "破屋",
   "name": "破屋",
+  "footstepSet": "石地",
   "worldWidth": 1048.0,
   "camera": {
     "zoom": 0.9,

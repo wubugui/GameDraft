@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "纸灰_A_脆",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写录制：脚缓慢踩在一大片烧尽的纸灰上，灰烬被压碎，发出极其干燥、酥脆、细碎的破裂声，像踩碎薄脆的焦叶，随后是灰末被碾散的细微摩擦。每次踩踏之间留有安静的空隙。近距离干声，无回音。安静的背景。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写录制：脚缓慢踩在一大片烧尽的纸灰上，灰烬被压碎，发出极其干燥、酥脆、细碎的破裂声，像踩碎薄脆的焦叶，随后是灰末被碾散的细微摩擦。每次踩踏之间留有安静的空隙。近距离干声，无回音。安静的背景。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 11.5,
+    "original_duration": 11.5,
+    "url": "https://lf3-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/0824ab01-dac6-44ae-afdf-f49c40354ef3?x-expires=1789388049&x-signature=UQXDM5mBsrRpLDhAjJSxQ4ZF8J8%3D"
+  }
+}

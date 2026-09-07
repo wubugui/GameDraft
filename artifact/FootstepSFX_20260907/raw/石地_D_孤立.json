@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "石地_D_孤立",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写：单独一下鞋底叩击石灰岩地面的清脆短响，尾随极少量碎石粒的沙沙，然后完全安静三秒。如此重复四次。每一下都是单独一声，中间彻底静音。干声，无混响。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写：单独一下鞋底叩击石灰岩地面的清脆短响，尾随极少量碎石粒的沙沙，然后完全安静三秒。如此重复四次。每一下都是单独一声，中间彻底静音。干声，无混响。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 19.33715,
+    "original_duration": 19.33715,
+    "url": "https://lf11-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/7cddc435-955c-44bf-84b6-decb04024523?x-expires=1789391109&x-signature=K5vP6UGq7FWIDILeaUuwZsdsH5Y%3D"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "纸钱_A_慢走",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。一个人赤脚在铺满纸钱的干燥土路上缓慢行走的脚步声，近距离干声录制，没有回音没有混响。每一步之间有明显的停顿间隔，能清楚听出一步、一步、一步。每一步都是纸张被踩下时的窸窣脆响加上落脚在土地上的闷响。安静的背景，只有脚步。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。一个人赤脚在铺满纸钱的干燥土路上缓慢行走的脚步声，近距离干声录制，没有回音没有混响。每一步之间有明显的停顿间隔，能清楚听出一步、一步、一步。每一步都是纸张被踩下时的窸窣脆响加上落脚在土地上的闷响。安静的背景，只有脚步。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 7.5,
+    "original_duration": 7.5,
+    "url": "https://lf26-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/3e50597d-56a0-412c-960f-e1c283d919fe?x-expires=1789387902&x-signature=Rg1QFB2Om%2FsLis4ZuWe4KLVSBLc%3D"
+  }
+}

@@ -36,6 +36,7 @@
   },
   "id": "test_scene",
   "name": "测试场景",
+  "footstepSet": "石地",
   "worldWidth": 1600,
   "worldHeight": 1200,
   "camera": {

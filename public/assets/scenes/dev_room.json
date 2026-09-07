@@ -1,6 +1,7 @@
 {
   "id": "dev_room",
   "name": "Dev Room",
+  "footstepSet": "石地",
   "worldWidth": 1024,
   "worldHeight": 768,
   "backgrounds": [],

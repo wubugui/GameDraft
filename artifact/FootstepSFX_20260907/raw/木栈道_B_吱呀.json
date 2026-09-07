@@ -1,0 +1,27 @@
+{
+  "spec": {
+    "id": "木栈道_B_吱呀",
+    "model": "openspeech",
+    "format": "wav",
+    "sample_rate": 48000,
+    "prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写录制：脚踩在一块架空的旧木板上，木板受力发出咚的空心闷响并伴随嘎吱的木材摩擦声，然后抬脚，木板轻微回弹。重复若干次，每次之间留有安静的空隙。干声，无回音。安静的背景，只有木板受力声。"
+  },
+  "endpoint": "https://openspeech.bytedance.com/api/v3/tts/create",
+  "request": {
+    "model": "seed-audio-1.0",
+    "text_prompt": "音效素材，全程没有任何人声、说话、旁白、音乐、歌声、风声、雨声。特写录制：脚踩在一块架空的旧木板上，木板受力发出咚的空心闷响并伴随嘎吱的木材摩擦声，然后抬脚，木板轻微回弹。重复若干次，每次之间留有安静的空隙。干声，无回音。安静的背景，只有木板受力声。",
+    "audio_config": {
+      "format": "wav",
+      "sample_rate": 48000,
+      "pitch_rate": 0,
+      "speech_rate": 0,
+      "loudness_rate": 0
+    },
+    "watermark": {}
+  },
+  "response_meta": {
+    "duration": 11,
+    "original_duration": 11,
+    "url": "https://lf11-speech-sign.bytednsdoc.com/volcengine-speech/cdn/20260907/9efc2023-2f63-415f-9c50-ae2b98b73593?x-expires=1789387956&x-signature=3j0RWG%2Fnqj0louP4SUtxQbED6CY%3D"
+  }
+}
