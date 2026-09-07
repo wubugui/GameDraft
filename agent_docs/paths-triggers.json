@@ -485,6 +485,12 @@
       ]
     },
     {
+      "glob": "src/data/animationSockets.ts",
+      "docs": [
+        "footstep-and-spatial-audio"
+      ]
+    },
+    {
       "glob": "src/data/characterRegistry.ts",
       "docs": [
         "character-registry"
@@ -1167,6 +1173,12 @@
       ]
     },
     {
+      "glob": "tools/editor/shared/animation_sockets.py",
+      "docs": [
+        "footstep-and-spatial-audio"
+      ]
+    },
+    {
       "glob": "tools/editor/shared/audio_picker_dialog.py",
       "docs": [
         "shared-widget-value-fidelity"
@@ -1250,6 +1262,12 @@
       "glob": "tools/editor/shared/scene_view_filters.py",
       "docs": [
         "scene-view-filter-axes"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/socket_panel.py",
+      "docs": [
+        "footstep-and-spatial-audio"
       ]
     },
     {
