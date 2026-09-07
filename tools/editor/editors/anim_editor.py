@@ -365,9 +365,12 @@ class AnimEditor(QWidget):
         dl.addLayout(f)
 
         # 保存/放弃改动（仅写 anim.json 的 states 与世界尺寸；图集不动）
-        socket_sec = CollapsibleSection("挂点（逐帧标注 · 写 sockets.json）", start_open=False)
+        socket_sec = CollapsibleSection("挂点 / 落脚帧（逐帧标注 · 写 sockets.json）", start_open=False)
         socket_sec.set_header_tool_tip(
-            "给这个动画包标命名挂点（右手/头顶/腰…），运行时可以往上挂任意东西。\n"
+            "给这个动画包逐帧标两样东西：\n"
+            "· 挂点（右手/头顶/腰…）——运行时可以往上挂任意东西；\n"
+            "· 落脚帧——脚触地的那几格，运行时走到这一格就播一声脚步"
+            "（声音本身在「脚步集」页配，这里只管哪一帧响）。\n"
             "数据写同目录的 sockets.json sidecar，**不进 anim.json**——重导出图集不会带走它，\n"
             "但槽位会漂移：指纹对不上时游戏整份忽略并在此提示重标。")
         self._socket_panel = SocketPanel(self._model)
@@ -1801,9 +1804,14 @@ class AnimEditor(QWidget):
         pos = self._preview_seq_i + 1
         base = f"{state_name}  第 {pos}/{max(1, n_frames)} 帧"
         if interval_ms > 0:
-            self._lbl_preview_info.setText(f"{base}  ·  {interval_ms}ms/帧")
-        else:
-            self._lbl_preview_info.setText(base)
+            base = f"{base}  ·  {interval_ms}ms/帧"
+        # 播放预览里也把落脚帧标出来：作者看着动画走，哪一帧会响脚步一目了然
+        frames = self._preview_frames
+        panel = getattr(self, "_socket_panel", None)
+        if panel is not None and frames and 0 <= self._preview_seq_i < len(frames) \
+                and panel.is_contact_slot(int(frames[self._preview_seq_i])):
+            base = f"{base}  ·  ▶ 落脚帧（播脚步声）"
+        self._lbl_preview_info.setText(base)
 
     def _advance_preview_frame(self) -> None:
         row = self._state_table.currentRow()

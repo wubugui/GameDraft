@@ -5,7 +5,9 @@
 - 清空全部挂点 → 保存 → 文件被删（不留空壳）；
 - Discard → UI 回滚到磁盘值（否则关闭路径的统一 flush 会把已放弃的编辑写回）；
 - 指纹对不上 → 面板亮失效横幅（游戏侧会整份忽略，这里必须让人看见）；
-- 挂点面板的脏态并进 AnimEditor 的 confirm_close 门（两者都直写盘，不进 ProjectModel dirty）。
+- 挂点面板的脏态并进 AnimEditor 的 confirm_close 门（两者都直写盘，不进 ProjectModel dirty）；
+- 落脚帧（contactSlots）走同一面板同一份文件：勾选 → 置脏 → 保存落 contactSlots，
+  只有落脚帧的文件保留、两样都没了才删，Discard 回滚，播放预览信息行标出落脚帧。
 """
 from __future__ import annotations
 
@@ -212,6 +214,97 @@ class SocketPanelFlowTests(unittest.TestCase):
         self.assertGreaterEqual(len(poses), 3, "中间空帧应被插值补上")
         self.assertAlmostEqual(poses[str(slots[0])]["x"], 0.0, msg="端点不许被插值改写")
         self.assertAlmostEqual(poses[str(slots[-1])]["x"], 1.0, msg="端点不许被插值改写")
+
+    # ---- 落脚帧（与挂点同一面板、同一份文件、同一条保存门） ----
+
+    def test_contact_toggle_marks_dirty_and_saves_contact_slots(self) -> None:
+        ed, key = self._panel()
+        panel = ed._socket_panel
+        panel._frame_list.setCurrentRow(0)
+        slot = panel._current_slot()
+        self.assertIsNotNone(slot)
+        self.assertFalse(panel.is_contact_slot(slot))
+
+        panel._contact.setChecked(True)     # 用户勾「本帧落脚」
+        self.assertTrue(panel.is_contact_slot(slot))
+        self.assertTrue(panel.is_dirty(), "标了落脚帧就该置脏")
+        self.assertTrue(ed._dirty, "脏态必须并进 AnimEditor 的保存/关闭门")
+        self.assertIn("落脚", panel._frame_list.item(0).text(), "帧条里必须一眼看见这一格会响")
+        self.assertIn(str(slot), panel._contact_summary.text())
+
+        self.assertIsNone(panel.save())
+        path = sockets_path_for_bundle(self._model.animation_bundles_path, key)
+        self.assertTrue(path.is_file(), "只有落脚帧、没有挂点的 sidecar 必须保留")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["contactSlots"], [slot])
+        self.assertEqual(data["sockets"], {})
+        self.assertEqual(data["atlas"]["slotCount"], len(self._model.animations[key]["atlasFrames"]))
+        self.assertFalse(panel.is_dirty())
+
+        # 重新载入后标记仍在，且切帧时勾选框跟着帧走
+        ed._on_select(key)
+        panel = ed._socket_panel
+        panel._frame_list.setCurrentRow(0)
+        self.assertTrue(panel._contact.isChecked())
+        if panel._frame_list.count() > 1:
+            panel._frame_list.setCurrentRow(1)
+            self.assertFalse(panel._contact.isChecked())
+
+    def test_unmarking_last_contact_deletes_contact_only_file(self) -> None:
+        ed, key = self._panel()
+        panel = ed._socket_panel
+        panel._frame_list.setCurrentRow(0)
+        panel._contact.setChecked(True)
+        panel.save()
+        path = sockets_path_for_bundle(self._model.animation_bundles_path, key)
+        self.assertTrue(path.is_file())
+        panel._contact.setChecked(False)
+        panel.save()
+        self.assertFalse(path.is_file(), "既没挂点也没落脚帧时不留空壳")
+
+    def test_discard_rolls_back_contact_marks(self) -> None:
+        ed, _key = self._panel()
+        panel = ed._socket_panel
+        panel._frame_list.setCurrentRow(0)
+        slot = panel._current_slot()
+        panel._contact.setChecked(True)
+        self.assertTrue(panel.is_dirty())
+        panel.discard()
+        self.assertFalse(panel.is_dirty())
+        self.assertFalse(panel.is_contact_slot(slot), "Discard 后必须与磁盘一致")
+        self.assertFalse(panel._contact.isChecked())
+
+    def test_contact_marks_survive_socket_edits_in_same_file(self) -> None:
+        """落脚帧与挂点同一份文件：标了挂点再保存，落脚帧不能被冲掉，反之亦然。"""
+        ed, key = self._panel()
+        panel = ed._socket_panel
+        panel._frame_list.setCurrentRow(0)
+        slot = panel._current_slot()
+        panel._contact.setChecked(True)
+        panel._sockets()["right_hand"] = {"poses": {}}
+        panel._rebuild_sockets()
+        panel._socket_list.setCurrentRow(0)
+        panel._on_pos_moved(0.6, 0.5)
+        panel.save()
+        data = json.loads(sockets_path_for_bundle(
+            self._model.animation_bundles_path, key).read_text(encoding="utf-8"))
+        self.assertEqual(data["contactSlots"], [slot])
+        self.assertIn("right_hand", data["sockets"])
+
+    def test_preview_info_flags_contact_frame(self) -> None:
+        """播放预览的信息行也要标出落脚帧：作者看着动画走就知道哪一帧会响。"""
+        ed, _key = self._panel()
+        panel = ed._socket_panel
+        panel._frame_list.setCurrentRow(0)
+        slot = panel._current_slot()
+        panel._contact.setChecked(True)
+        ed._preview_frames = [slot, slot + 1]
+        ed._preview_seq_i = 0
+        ed._update_preview_info("walk", 2, 0)
+        self.assertIn("落脚帧", ed._lbl_preview_info.text())
+        ed._preview_seq_i = 1
+        ed._update_preview_info("walk", 2, 0)
+        self.assertNotIn("落脚帧", ed._lbl_preview_info.text())
 
 
 if __name__ == "__main__":

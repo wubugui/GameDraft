@@ -1,8 +1,9 @@
-"""动画挂点（sockets）的编辑器侧读写与几何。
+"""动画挂点（sockets）与落脚帧（contactSlots）的编辑器侧读写与几何。
 
 数据是 sidecar：``<动画包目录>/sockets.json``，**产线永不触碰**（导出器从零拼 anim.json，
-挂点跟它生命周期不同）。按**图集槽位**索引——同一张图＝同一个手的位置，导出的去重合并
-还强化了这一点。
+挂点跟它生命周期不同）。按**图集槽位**索引——同一张图＝同一个手的位置＝同一只脚落地，
+导出的去重合并还强化了这一点。落脚帧（``contactSlots``）与挂点同住一份文件、同一份指纹，
+在同一个面板里看着图逐帧标；运行时据它决定哪一帧播脚步声。
 
 ``atlas`` 是图集指纹：重导出后槽位会漂移，对不上就整份判失效（stale），拒绝使用并提示重标。
 盲用漂移后的槽位号会静默挂错位置，比不挂更坏。
@@ -27,6 +28,11 @@ SOCKETS_FILENAME = "sockets.json"
 
 #: 一条 pose 允许出现的键（写盘时按此顺序，缺省值不落键）
 POSE_KEYS = ("x", "y", "angle", "front", "frame")
+
+#: 落脚帧：脚触地的图集槽位（升序去重）。与挂点同住 sidecar、同一份指纹——
+#: 都是"看着这一格画的是什么"逐帧标出来的，重导出槽位漂移时一起判失效。
+#: 运行时 `SpriteEntity.isContactFrameAt` 按它决定哪一帧播脚步声；空 = 这个包没有脚步。
+CONTACT_SLOTS_KEY = "contactSlots"
 
 
 def sockets_path_for_bundle(animation_bundles_path: Path, bundle_id: str) -> Path:
@@ -83,18 +89,67 @@ def load_socket_set(path: Path) -> dict[str, Any] | None:
 def save_socket_set(path: Path, data: dict) -> Path:
     """写 sockets.json（走 write_json：UTF-8 / 2 空格 / 中文不转义 / 保留键序 / 末尾换行）。
 
-    **整份为空时删文件**：没有任何挂点就不该在包目录里留一个空壳，
-    否则每个动画包都多一个永远是 `{}` 的文件。
+    **整份为空时删文件**：既没有挂点、也没有落脚帧，就不该在包目录里留一个空壳，
+    否则每个动画包都多一个永远是 `{}` 的文件。只标了落脚帧、一个挂点都没有的
+    sidecar 是合法且常见的（绝大多数会走路的包都这样），必须保留。
     """
     p = Path(path)
     sockets = data.get("sockets")
-    if not isinstance(sockets, dict) or not sockets:
+    has_sockets = isinstance(sockets, dict) and bool(sockets)
+    if not has_sockets and not contact_slots_of(data):
         if p.is_file():
             p.unlink()
         return p
     p.parent.mkdir(parents=True, exist_ok=True)
     write_json(p, data)
     return p
+
+
+def normalize_contact_slots(raw: object, slot_count: int = 0) -> list[int]:
+    """落脚帧槽位规整：只收 `0 <= 整数 < slot_count`（slot_count<=0 时不查上界），去重升序。
+
+    与 TS 侧 `parseContactSlots` 同口径：bool 不算整数（`True` 落成 JSON 是 `true`，
+    运行时 `Number.isInteger(true)` 为 false），坏项跳过而不是整份作废。
+    """
+    if not isinstance(raw, list):
+        return []
+    out: set[int] = set()
+    for v in raw:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        if isinstance(v, float) and not float(v).is_integer():
+            continue
+        s = int(v)
+        if s < 0 or (slot_count > 0 and s >= slot_count):
+            continue
+        out.add(s)
+    return sorted(out)
+
+
+def contact_slots_of(data: dict | None) -> list[int]:
+    """读一份（内存态或磁盘态）挂点集里的落脚帧槽位；缺省/坏形状 = 空。"""
+    if not isinstance(data, dict):
+        return []
+    return normalize_contact_slots(data.get(CONTACT_SLOTS_KEY))
+
+
+def set_contact_slot(data: dict, slot: int, on: bool) -> bool:
+    """把某个图集槽位标成/取消落脚帧（就地改 data）。返回是否真的变了。"""
+    cur = set(contact_slots_of(data))
+    s = int(slot)
+    if on:
+        if s in cur:
+            return False
+        cur.add(s)
+    else:
+        if s not in cur:
+            return False
+        cur.discard(s)
+    if cur:
+        data[CONTACT_SLOTS_KEY] = sorted(cur)
+    else:
+        data.pop(CONTACT_SLOTS_KEY, None)
+    return True
 
 
 def normalize_pose(raw: dict) -> dict[str, Any] | None:
@@ -126,6 +181,14 @@ def sanitize_socket_set(data: dict, anim: dict) -> dict[str, Any]:
         "atlas": fingerprint_of_anim(anim),
         "sockets": {},
     }
+    # 落脚帧：只在非空时落键（没标过的包不该多出一个 `[]`，往返干净）；
+    # 指纹已按当前图集刷新，所以槽位上界也按当前图集裁——超出的必然是漂移后的垃圾。
+    contact = normalize_contact_slots(
+        data.get(CONTACT_SLOTS_KEY) if isinstance(data, dict) else None,
+        int(out["atlas"].get("slotCount") or 0),
+    )
+    if contact:
+        out[CONTACT_SLOTS_KEY] = contact
     raw_sockets = data.get("sockets") if isinstance(data, dict) else None
     if not isinstance(raw_sockets, dict):
         return out

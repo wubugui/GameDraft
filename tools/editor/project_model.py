@@ -108,6 +108,11 @@ class ProjectModel(QObject):
         self.narrative_packages: dict = {}
         self.document_reveals: list = []
         self.smell_profiles: dict = {}
+        # footstep_sets.json：脚步集 + 空间化音频配置（TS 权威类型 FootstepConfig，
+        # src/data/types.ts）。形状 {sets,clipFallback,defaults,spatial,listener}；每集
+        # {label?,sfx:{片段名:音效key},gainDb?}。触地帧**不在这里**——住在动画包 sockets.json
+        # 的 contactSlots（动画浏览页逐帧标）。缺文件时按空表处理。
+        self.footstep_sets: dict = {}
         self.pressure_holds: list[dict] = []
         self.signal_cues: list[dict] = []
         # 头顶闲聊台词本：{tuning, lineSets}；缺文件时按空表处理（整个特性可以一条都不配）
@@ -324,6 +329,7 @@ class ProjectModel(QObject):
         self.signal_cues = self._load(dp / "signal_cues.json", [])
         self.bubble_lines = self._load(dp / "bubble_lines.json", {})
         self.smell_profiles = self._load(dp / "smell_profiles.json", {})
+        self.footstep_sets = self._load(dp / "footstep_sets.json", {})
         raw_planes = self._load(dp / "planes.json", [])
         if isinstance(raw_planes, list):
             self.planes = [x for x in raw_planes if isinstance(x, dict)]
@@ -853,6 +859,8 @@ class ProjectModel(QObject):
             out.append(dp / "document_reveals.json")
         if "smell_profiles" in dty:
             out.append(dp / "smell_profiles.json")
+        if "footstep_sets" in dty:
+            out.append(dp / "footstep_sets.json")
         if "pressure_holds" in dty:
             out.append(dp / "pressure_holds.json")
         if "signal_cues" in dty:
@@ -1083,6 +1091,8 @@ class ProjectModel(QObject):
                 w.add(dp / "document_reveals.json", self.document_reveals)
             if "smell_profiles" in dty:
                 w.add(dp / "smell_profiles.json", self.smell_profiles)
+            if "footstep_sets" in dty:
+                w.add(dp / "footstep_sets.json", self.footstep_sets)
             if "pressure_holds" in dty:
                 w.add(dp / "pressure_holds.json", self.pressure_holds)
             if "signal_cues" in dty:
@@ -1256,7 +1266,8 @@ class ProjectModel(QObject):
         "rules", "shop", "map", "cutscene", "audio", "strings", "archive", "clues", "scene",
         "flag_registry", "overlay_images", "prop_presets",
         "scenarios", "narrative_graphs", "narrative_packages",
-        "document_reveals", "smell_profiles", "pressure_holds", "signal_cues", "bubble_lines",
+        "document_reveals", "smell_profiles", "footstep_sets",
+        "pressure_holds", "signal_cues", "bubble_lines",
         "planes", "npc_schedules", "narrative_templates", "narrative_categories", "dialogue_stubs",
         "dialogue_graph_edits", "dialogue_graph_deletes",
         "water_minigames", "sugar_wheel", "paper_craft", "filter",
@@ -1935,6 +1946,18 @@ class ProjectModel(QObject):
             for pid, p in profs.items():
                 name = (p.get("name") if isinstance(p, dict) else "") or pid
                 out.append((str(pid), str(name)))
+        return out
+
+    def all_footstep_set_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：footstep_sets.json 的 sets 词条（供 scene.footstepSet /
+        zone.footstepSet 选择器）。label 缺省回落到 id 本身。"""
+        data = self.footstep_sets if isinstance(self.footstep_sets, dict) else {}
+        sets = data.get("sets", {})
+        out: list[tuple[str, str]] = []
+        if isinstance(sets, dict):
+            for sid, s in sets.items():
+                label = (s.get("label") if isinstance(s, dict) else "") or sid
+                out.append((str(sid), str(label)))
         return out
 
     def all_filter_ids(self) -> list[str]:

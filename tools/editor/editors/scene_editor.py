@@ -4733,8 +4733,8 @@ class ScenePropertyPanel(QScrollArea):
     group_anchor_reset_requested = Signal(str)
 
     def reload_refs_from_model(self) -> None:
-        """重拉跨域引用候选(filter/item/encounter/bgm/animFile/立绘,均为别处可新增的全局列表),
-        保留各选择器当前选中值。供切页激活时调用。
+        """重拉跨域引用候选(filter/item/encounter/bgm/脚步集/animFile/立绘,均为别处可新增的
+        全局列表),保留各选择器当前选中值。供切页激活时调用。
 
         animFile 的候选面还要**先把磁盘上新出现的动画包补进内存**:产线刚发布一批包时,
         编辑器不重启也得能在这里选到它们(2026-08-06:静态占位包批量上线时发现这条断着,
@@ -4747,6 +4747,9 @@ class ScenePropertyPanel(QScrollArea):
             ("_hs_pickup_item", self._model.all_item_ids),
             ("_hs_enc_id", self._model.all_encounter_ids),
             ("_sc_bgm", lambda: [(a, a) for a in self._model.all_audio_ids("bgm")]),
+            # 脚步集在「脚步集」页里新增，切回本页要能立刻选到（场景级 + zone 级同一份候选）
+            ("_sc_footstep", self._model.all_footstep_set_ids),
+            ("_zn_footstep", self._model.all_footstep_set_ids),
             ("_npc_anim", self._model.anim_asset_path_choices),
             ("_npc_portrait", lambda: [
                 (s, s) for s in load_portrait_sets(self._model.project_path)
@@ -5848,6 +5851,32 @@ class ScenePropertyPanel(QScrollArea):
         amb_g.add_body(amb_inner)
         outer.addWidget(amb_g)
 
+        fs_g = self._section("脚步声 footstepSet", start_open=True)
+        fs_inner = QWidget()
+        fs_lay = QVBoxLayout(fs_inner)
+        fs_form = compact_form(QFormLayout())
+        # 候选来自 footstep_sets.json 的 sets；editable：素材还没入库时（sets 为空）
+        # 作者也得能先把 id 填进去，否则这一格永远只有「(none)」。
+        self._sc_footstep = IdRefSelector(allow_empty=True, editable=True)
+        self._sc_footstep.setMinimumWidth(160)
+        self._sc_footstep.setToolTip(
+            "本场景的默认脚步集（footstep_sets.json 里的集 id）。\n"
+            "区域（zone）上填了 footstepSet 就在那块地上盖过它。",
+        )
+        self._sc_footstep.value_changed.connect(lambda _x: self._emit_props_changed())
+        fs_form.addRow("footstepSet", self._sc_footstep)
+        fs_lay.addLayout(fs_form)
+        fs_hint = QLabel(
+            "留空＝本场景不发脚步声。\n"
+            "⚠ 只按区配 ≠ 配了：背尸上山那六个场景 zones 全为空，区上根本没地方填 —— "
+            "在目标关卡里能生效的就是这一格场景级默认。",
+        )
+        fs_hint.setWordWrap(True)
+        fs_hint.setStyleSheet("color: #888;")   # 字号交给全局皮肤，本地不写死
+        fs_lay.addWidget(fs_hint)
+        fs_g.add_body(fs_inner)
+        outer.addWidget(fs_g)
+
         enter_g = CollapsibleSection("进入场景时执行（onEnter）", start_open=False)
         enter_g.set_header_tool_tip(
             "与 Zone 的 onEnter 不同：此处绑定场景根，每次成功加载本场景顺序执行一次。",
@@ -6277,6 +6306,9 @@ class ScenePropertyPanel(QScrollArea):
             if not isinstance(raw_amb, list):
                 raw_amb = []
             self._load_ambient_widgets([str(x) for x in raw_amb])
+            # 先填候选再设值（候选重建会带着当前值走保值分支）
+            self._sc_footstep.set_items(self._model.all_footstep_set_ids())
+            self._sc_footstep.set_current(str(st.get("footstepSet", "") or "").strip())
             self._sc_on_enter.set_project_context(self._model, self._editing_scene_id or None)
             raw_oe = st.get("onEnter", [])
             if not isinstance(raw_oe, list):
@@ -6843,6 +6875,11 @@ class ScenePropertyPanel(QScrollArea):
             sc["ambientSounds"] = ambs
         elif "ambientSounds" in sc:
             del sc["ambientSounds"]
+        sc_fs = self._sc_footstep.current_id().strip()
+        if sc_fs:
+            sc["footstepSet"] = sc_fs
+        elif "footstepSet" in sc:
+            del sc["footstepSet"]   # 空值删键，不写空串
         oe = self._sc_on_enter.to_list()
         if oe:
             sc["onEnter"] = oe
@@ -11239,6 +11276,26 @@ class ScenePropertyPanel(QScrollArea):
         smell_g.add_body(smell_inner)
         lay.addWidget(smell_g)
 
+        fs_g = self._section("区域脚步声（走在本区上·zone 层）", start_open=False)
+        self._zn_footstep_fold = fs_g
+        fs_g.set_header_tool_tip(
+            "本区盖过场景级 footstepSet；留空＝跟随场景默认。",
+        )
+        fs_inner = QWidget()
+        fs_form = compact_form(QFormLayout(fs_inner))
+        # 候选来自 footstep_sets.json 的 sets（进 load 时按 model 填充）；
+        # editable：脚步素材还没入库时（sets 为空）作者也得能先把 id 填进去。
+        self._zn_footstep = IdRefSelector(allow_empty=True, editable=True)
+        self._zn_footstep.setMinimumWidth(160)
+        self._zn_footstep.setToolTip(
+            "走在本区上用哪套脚步声（footstep_sets.json 里的集 id）。\n"
+            "留空＝用场景级 footstepSet；场景级也没填就不发脚步声。",
+        )
+        self._zn_footstep.value_changed.connect(lambda _x: self._emit_props_changed())
+        fs_form.addRow("脚步集 footstepSet", self._zn_footstep)
+        fs_g.add_body(fs_inner)
+        lay.addWidget(fs_g)
+
         lay.addStretch(1)
         self._append_entity_delete_footer(lay)
         return w
@@ -11252,6 +11309,8 @@ class ScenePropertyPanel(QScrollArea):
         # depth_floor 仅参与遮挡、无进出触发，按 E 交互与气味同样无意义 → 一并禁用
         self._zn_interact_fold.setEnabled(not is_depth)
         self._zn_smell_fold.setEnabled(not is_depth)
+        # 脚步集同理：depth_floor 不做区域判定，谁踩上去都不会查到它
+        self._zn_footstep_fold.setEnabled(not is_depth)
 
     def _on_zone_kind_changed(self, _idx: int) -> None:
         new_kind = self._zn_kind.currentData() or "standard"
@@ -11277,7 +11336,7 @@ class ScenePropertyPanel(QScrollArea):
 
     def _confirm_zone_kind_switch(self, prev: str, new_kind: str) -> bool:
         """切换区域类型会丢字段时先确认（审查 P3）。
-        → depth_floor：清空 onEnter/onStay/onExit/smell；← depth_floor：丢 floorOffsetBoost。"""
+        → depth_floor：清空 onEnter/onStay/onExit/smell/footstepSet；← depth_floor：丢 floorOffsetBoost。"""
         if new_kind == "depth_floor":
             # onPlayerAct 也算（确认文案里本来就写了它会丢，判据却漏了 → 只配了动词的区
             # 切类型时会静默丢数据）
@@ -11285,13 +11344,17 @@ class ScenePropertyPanel(QScrollArea):
                 self._zn_enter.to_list() or self._zn_stay.to_list() or self._zn_exit.to_list()
                 or self._zn_interact.to_list() or self._zn_player_act.to_dict())
             has_smell = bool(self._zn_smell_scent.committed_type().strip())
-            if not (has_actions or has_smell):
+            # 只配了脚步集的区同理：判据漏了它就是切一下类型静默丢数据
+            has_footstep = bool(self._zn_footstep.current_id().strip())
+            if not (has_actions or has_smell or has_footstep):
                 return True
             lost = []
             if has_actions:
                 lost.append("onEnter / onStay / onExit / onInteract / onPlayerAct 动作")
             if has_smell:
                 lost.append("区域气味 smell")
+            if has_footstep:
+                lost.append("区域脚步集 footstepSet")
             return QMessageBox.question(
                 self, "切换区域类型",
                 "切到「深度 floor 修正」会清空本区的：\n· " + "\n· ".join(lost)
@@ -11517,6 +11580,12 @@ class ScenePropertyPanel(QScrollArea):
                 self._zn_smell_dir.setValue(0.0)
             self._zn_smell_flicker.setChecked(bool(sm.get("flicker", False)))
             self._zn_smell_fold.set_expanded(bool(sm.get("scent")))
+            # 先填候选再设值：候选重建会带着当前值走一遍保值分支，反过来会把未知 id 洗掉
+            self._zn_footstep.set_items(
+                self._model.all_footstep_set_ids() if self._model else [])
+            zn_fs = str(st.get("footstepSet", "") or "").strip()
+            self._zn_footstep.set_current(zn_fs)
+            self._zn_footstep_fold.set_expanded(bool(zn_fs))
             self._apply_zone_kind_ui()
             oe = st.get("onEnter") or []
             oy = st.get("onStay") or []
@@ -11556,7 +11625,7 @@ class ScenePropertyPanel(QScrollArea):
             zone["zoneKind"] = "depth_floor"
             zone["floorOffsetBoost"] = self._zn_boost.value()
             for k in ("onEnter", "onStay", "onExit", "smell", "onPlayerAct",
-                      "onInteract", "interactLabel"):
+                      "onInteract", "interactLabel", "footstepSet"):
                 zone.pop(k, None)
         else:
             zone.pop("zoneKind", None)
@@ -11614,6 +11683,11 @@ class ScenePropertyPanel(QScrollArea):
                 zone["smell"] = sm
             elif "smell" in zone:
                 del zone["smell"]
+            zn_fs = self._zn_footstep.current_id().strip()
+            if zn_fs:
+                zone["footstepSet"] = zn_fs
+            elif "footstepSet" in zone:
+                del zone["footstepSet"]   # 空值删键，不写空串
         c = self._zn_cond.to_list()
         if c:
             zone["conditions"] = c

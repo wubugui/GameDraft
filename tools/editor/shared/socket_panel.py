@@ -1,7 +1,11 @@
-"""挂点标注面板：挂点列表 + 帧条 + 标注画布 + 省力工具，落盘到 sockets.json sidecar。
+"""挂点 / 落脚帧标注面板：挂点列表 + 帧条 + 标注画布 + 省力工具，落盘到 sockets.json sidecar。
 
 挂在 anim 编辑器里。**只写 sidecar，不碰 anim.json**——挂点是人工逐帧标的，
 anim.json 是产线产物，两者生命周期不同（见 animation_sockets 模块头）。
+
+落脚帧（``contactSlots``）与挂点同一个面板、同一份文件、同一个脏态与保存门：
+帧条里选中一格 → 勾「落脚帧」→ 这一格在帧条里带标记、画布脚线变橙条。
+运行时走到这一格就播一声脚步；声音本身在「脚步集」页配，这里只管**哪一帧响**。
 
 逐帧标注的现实：全库 46 个包、3176 个图集槽位。所以省力手段是可行性前提而不是锦上添花：
 - 按 state 过帧（只标这个动作用到的那些槽位）
@@ -16,12 +20,13 @@ from pathlib import Path
 from typing import Any, Callable
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QBrush, QColor, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -35,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from .animation_sockets import (
+    contact_slots_of,
     copy_pose_between_slots,
     empty_socket_set,
     fingerprint_matches,
@@ -43,12 +49,16 @@ from .animation_sockets import (
     load_socket_set,
     sanitize_socket_set,
     save_socket_set,
+    set_contact_slot,
     sockets_path_for_bundle,
 )
 from .anim_atlas_preview import crop_atlas_cell, frame_slots_of_state
 from .collapsible_section import CollapsibleSection
 from .form_layout import compact_form
 from .socket_canvas import SocketCanvas
+
+#: 帧条里落脚帧那一行的底色：不靠 emoji 字形（离屏 / 缺字体会成方块），靠颜色也能一眼看见
+_CONTACT_BRUSH = QBrush(QColor(255, 150, 40, 70))
 
 
 class SocketPanel(QWidget):
@@ -134,6 +144,23 @@ class SocketPanel(QWidget):
         self._frame_list.setMaximumHeight(180)
         self._frame_list.currentItemChanged.connect(lambda *_: self._refresh_canvas())
         f.addRow("帧（图集槽位）", self._frame_list)
+
+        # -- 落脚帧：与挂点无关的逐帧布尔标注，放在挂点参数上面、自成一组 --
+        contact_box = QGroupBox("脚步 · 落脚帧")
+        contact_box.setToolTip(
+            "勾上 = 这一格画的是脚触地的瞬间，运行时走到这一格就播一声脚步。\n"
+            "按图集槽位标：同一格在几个动作里复用时只标一次。\n"
+            "没标过的动作一律不响（不按帧数猜）。声音本身在「脚步集」页配。")
+        cl = QVBoxLayout(contact_box)
+        cl.setContentsMargins(6, 4, 6, 4)
+        self._contact = QCheckBox("本帧落脚（脚触地 → 播脚步声）")
+        self._contact.toggled.connect(self._on_contact_toggled)
+        cl.addWidget(self._contact)
+        self._contact_summary = QLabel("")
+        self._contact_summary.setStyleSheet("color:#888;")
+        self._contact_summary.setWordWrap(True)
+        cl.addWidget(self._contact_summary)
+        f.addRow(contact_box)
 
         self._front = QCheckBox("画在身前")
         self._front.setToolTip("勾 = 挂件排在角色之后（身前）；不勾 = 插到最前（身后）。转身时可以逐帧翻")
@@ -266,8 +293,8 @@ class SocketPanel(QWidget):
             self._banner.setVisible(False)
             return
         self._banner.setText(
-            "⚠ 这份挂点标注与当前图集对不上（重导出过？）。游戏里会**整份忽略**——"
-            "宁可不挂也不照漂移的槽位号挂错位置。请重标后保存，保存即刷新指纹。")
+            "⚠ 这份挂点 / 落脚帧标注与当前图集对不上（重导出过？）。游戏里会**整份忽略**——"
+            "挂件不挂、脚步不响，宁可没有也不照漂移的槽位号出错。请重标后保存，保存即刷新指纹。")
         self._banner.setVisible(True)
 
     def _sockets(self) -> dict[str, Any]:
@@ -283,6 +310,52 @@ class SocketPanel(QWidget):
         if it is None:
             return None
         return int(it.data(Qt.ItemDataRole.UserRole))
+
+    # ---- 落脚帧 --------------------------------------------------------
+
+    def is_contact_slot(self, slot: int) -> bool:
+        """某图集槽位是否已标为落脚帧（宿主的播放预览也靠它标「这一帧会响」）。"""
+        return int(slot) in contact_slots_of(self._data)
+
+    def contact_slots(self) -> list[int]:
+        return contact_slots_of(self._data)
+
+    def _on_contact_toggled(self, on: bool) -> None:
+        if self._loading:
+            return
+        slot = self._current_slot()
+        if slot is None:
+            return
+        if set_contact_slot(self._data, slot, bool(on)):
+            self._decorate_frame_items()
+            self._refresh_canvas()
+            self.dirtyChanged.emit(self.is_dirty())
+
+    def _decorate_frame_items(self) -> None:
+        """帧条每一行：落脚帧带「落脚」后缀 + 橙底，一眼看出这个动作在哪几帧响。"""
+        for i in range(self._frame_list.count()):
+            it = self._frame_list.item(i)
+            if it is None:
+                continue
+            slot = int(it.data(Qt.ItemDataRole.UserRole))
+            order = it.data(Qt.ItemDataRole.UserRole + 1)
+            base = f"#{order}  槽位 {slot}"
+            if self.is_contact_slot(slot):
+                it.setText(f"{base}   ● 落脚")
+                it.setBackground(_CONTACT_BRUSH)
+                it.setToolTip("落脚帧：运行时走到这一格播一声脚步")
+            else:
+                it.setText(base)
+                it.setBackground(QBrush())
+                it.setToolTip("")
+        marked = [s for s in dict.fromkeys(self._slots) if self.is_contact_slot(s)]
+        if not self._slots:
+            self._contact_summary.setText("")
+        elif marked:
+            self._contact_summary.setText(
+                f"本动作 {len(marked)} 个落脚帧：槽位 {', '.join(str(s) for s in marked)}")
+        else:
+            self._contact_summary.setText("本动作还没标落脚帧——走它的时候**不会**响脚步")
 
     def _rebuild_sockets(self) -> None:
         keep = self._current_socket()
@@ -322,7 +395,9 @@ class SocketPanel(QWidget):
             seen.add(slot)
             it = QListWidgetItem(f"#{order}  槽位 {slot}")
             it.setData(Qt.ItemDataRole.UserRole, slot)
+            it.setData(Qt.ItemDataRole.UserRole + 1, order)
             self._frame_list.addItem(it)
+        self._decorate_frame_items()
         self._frame_list.blockSignals(False)
         if keep is not None:
             for i in range(self._frame_list.count()):
@@ -367,7 +442,18 @@ class SocketPanel(QWidget):
         cur = self._current_socket()
         self._canvas.set_marks(marks, cur)
         self._canvas.set_ghost(self._prev_pose_xy(cur, slot))
+        self._canvas.set_contact(slot is not None and self.is_contact_slot(slot))
+        self._sync_contact_field(slot)
         self._sync_fields(marks.get(cur))
+
+    def _sync_contact_field(self, slot: int | None) -> None:
+        was = self._loading
+        self._loading = True
+        try:
+            self._contact.setEnabled(slot is not None)
+            self._contact.setChecked(slot is not None and self.is_contact_slot(slot))
+        finally:
+            self._loading = was
 
     def _prev_pose_xy(self, socket: str, slot: int | None) -> tuple[float, float] | None:
         """洋葱皮：本动作里上一个已标注帧的位置。"""

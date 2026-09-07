@@ -344,7 +344,14 @@ def apply_src_updates(path: Path, updates: list[dict], *,
     """
     # newline="":关掉 universal newlines。不关的话 CRLF 文件读进来变 LF、写回去就是
     # 整份换行符被改写 ——「一个字节都不多动」当场破功,而且备份也是改过的版本。
-    original = path.read_text(encoding="utf-8", newline="")
+    #
+    # ⚠ 必须走 `path.open(...)` 而不是 `path.read_text(newline="")`:
+    # `read_text` 的 `newline` 参数是 **Python 3.13** 才加的,而本项目 venv 是 3.11
+    # (`.tools/venv` = 3.11.9)。写成 read_text 的话导出这一步在本机**必炸**
+    # (TypeError: unexpected keyword argument 'newline'),而且是整批导出的最后一步才炸。
+    # `write_text` 的同名参数 3.10 就有,所以下面那处不受影响。
+    with path.open(encoding="utf-8", newline="") as fh:
+        original = fh.read()
     st = path.stat()
     if expect_stat is not None and (st.st_size, st.st_mtime_ns) != tuple(expect_stat):
         return {"ok": False, "applied": [], "noop": [], "blocked": [],

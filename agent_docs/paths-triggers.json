@@ -86,6 +86,12 @@
       ]
     },
     {
+      "glob": "public/assets/data/footstep_sets.json",
+      "docs": [
+        "footstep-and-spatial-audio"
+      ]
+    },
+    {
       "glob": "public/assets/data/narrative_graphs.json",
       "docs": [
         "narrative-flow-authoring",
@@ -629,6 +635,12 @@
       ]
     },
     {
+      "glob": "src/systems/FootstepSystem.ts",
+      "docs": [
+        "footstep-and-spatial-audio"
+      ]
+    },
+    {
       "glob": "src/systems/GraphDialogueManager.ts",
       "docs": [
         "dialogue-end-payload",
@@ -802,6 +814,12 @@
       ]
     },
     {
+      "glob": "src/utils/audioSpace.ts",
+      "docs": [
+        "footstep-and-spatial-audio"
+      ]
+    },
+    {
       "glob": "src/utils/dayTime.ts",
       "docs": [
         "day-night-npc-schedule"
@@ -818,6 +836,12 @@
       "glob": "src/utils/sceneAppearance.ts",
       "docs": [
         "scene-lighting"
+      ]
+    },
+    {
+      "glob": "src/utils/sceneSpace.ts",
+      "docs": [
+        "footstep-and-spatial-audio"
       ]
     },
     {
@@ -872,6 +896,12 @@
       "glob": "tools/animation_pipeline/bake_normal_atlas.py",
       "docs": [
         "character-lighting"
+      ]
+    },
+    {
+      "glob": "tools/animation_pipeline/contact_frames.py",
+      "docs": [
+        "footstep-and-spatial-audio"
       ]
     },
     {
@@ -981,6 +1011,12 @@
       "glob": "tools/editor/editors/dialogue_graph_editor_tab.py",
       "docs": [
         "dialogue-graph-editor"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/footstep_sets_editor.py",
+      "docs": [
+        "footstep-and-spatial-audio"
       ]
     },
     {

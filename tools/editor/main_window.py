@@ -1658,6 +1658,7 @@ class MainWindow(QMainWindow):
         from .editors.pressure_signal_editor import PressureHoldEditor, SignalCueEditor
         from .editors.bubble_lines_editor import BubbleLinesEditor
         from .editors.smell_profile_editor import SmellProfileEditor
+        from .editors.footstep_sets_editor import FootstepSetsEditor
         from .editors.plane_editor import PlaneEditor
         from .editors.npc_schedule_editor import NpcScheduleEditor
         from tools.task_orchestration_editor.editor import TaskOrchestrationEditor
@@ -1702,6 +1703,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "资源与本地化"], "挂件预设", PropPresetEditor),
             (["数据编辑", "资源与本地化"], "文档揭示", DocumentRevealsEditor),
             (["数据编辑", "资源与本地化"], "气味Profile", SmellProfileEditor),
+            (["数据编辑", "资源与本地化"], "脚步集", FootstepSetsEditor),
             (["数据编辑", "工程与全局"], "Config", GameConfigEditor),
             (["数据编辑", "工程与全局"], "构建", BuildConfigEditor),
             (["运行与预览"], "Game", _GAME_BROWSER_SENTINEL),
@@ -3612,6 +3614,11 @@ class MainWindow(QMainWindow):
         if rel == "smell_profiles.json":
             pid = segs[1] if len(segs) >= 2 and segs[0] == "profiles" else ""
             return self._nav_hit_generic("气味Profile", pid)
+        if rel == "footstep_sets.json":
+            # /sets/<id>/… → 直落那一集；其余（clipFallback / contactFrames / spatial…）
+            # 只跳页，本页的全局配置不是按 id 编址的。
+            fid = segs[1] if len(segs) >= 2 and segs[0] == "sets" else ""
+            return self._nav_hit_generic("脚步集", fid)
         if rel == "pressure_holds.json":
             return self._nav_hit_generic("临场长按", outer_id)
         if rel == "signal_cues.json":

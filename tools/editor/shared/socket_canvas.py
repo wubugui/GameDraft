@@ -44,6 +44,8 @@ class SocketCanvas(QWidget):
         self._drag: str = ""   # '' / 'pos' / 'angle'
         #: 上一帧的标记（洋葱皮，帮着对齐连续帧）
         self._ghost: tuple[float, float] | None = None
+        #: 本帧是不是落脚帧（脚触地 → 播脚步声）：在脚线上画一条醒目的实心横条
+        self._contact = False
 
     # ---- 数据入口 ----------------------------------------------------
 
@@ -59,6 +61,11 @@ class SocketCanvas(QWidget):
     def set_ghost(self, ghost: tuple[float, float] | None) -> None:
         """洋葱皮：上一帧同挂点的位置，逐帧标注时用来对齐。"""
         self._ghost = ghost
+        self.update()
+
+    def set_contact(self, on: bool) -> None:
+        """本帧是否落脚帧。落脚帧要一眼看得出：脚线变成粗实心橙条并标「落脚」。"""
+        self._contact = bool(on)
         self.update()
 
     # ---- 几何 --------------------------------------------------------
@@ -115,6 +122,12 @@ class SocketCanvas(QWidget):
             p.drawLine(QPointF(o.x(), o.y() + ch), QPointF(o.x() + cw, o.y() + ch))
             # 中线（x=0.5，脚点所在竖线）
             p.drawLine(QPointF(o.x() + cw / 2, o.y()), QPointF(o.x() + cw / 2, o.y() + ch))
+            if self._contact:
+                # 落脚帧：脚线上压一条粗实心橙条 + 文字。不靠 emoji（离屏/缺字体会成方块）
+                p.setPen(QPen(QColor(255, 150, 40, 230), 5))
+                p.drawLine(QPointF(o.x(), o.y() + ch), QPointF(o.x() + cw, o.y() + ch))
+                p.setPen(QPen(QColor(255, 150, 40), 1))
+                p.drawText(QPointF(o.x() + 4, o.y() + ch - 8), "落脚帧 · 播脚步声")
 
         # 洋葱皮：上一帧位置
         if self._ghost is not None:

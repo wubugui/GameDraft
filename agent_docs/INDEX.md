@@ -29,6 +29,7 @@
 - [实体位移的朝向语义(faceTowardMovement)](runtime/mechanisms/entity-move-facing.md) — 不勾选=完全不碰朝向(勿回退成"起点偷改一次");需要转身的内部调用必须显式传 true;朝向只有左右镜像,up/down 不存在
 - [实体轨迹动画(烘焙式 · 独立资产)运行时语义](runtime/mechanisms/entity-trajectory.md) — 一条轨迹一个资产文件、帧相对播放锚点;playTrajectory 按全局 id 装资产、挂任何实体、在任何位置起播;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;不驱动相机
 - [实体显隐四通道合成](runtime/mechanisms/entity-visibility-channels.md) — 四个独立通道(派生基底/条件/会话覆盖/拾取位)在实体内单点合成;任何一方只写自己的通道,禁止直接 setEnabled 冲掉运行态
+- [脚步声与空间化音频(帧驱动 + 两级精度 + 可插拔听者)](runtime/mechanisms/footstep-and-spatial-audio.md) — 脚步由动画落脚帧驱动不由计时器,落脚帧住动画包 sockets.json 的 contactSlots(动画浏览页看图标);脚步集一片段一条音效 key 无随机;空间量一律在 M-world(wu)算;八个场景没有 depthConfig 必须两级降级;听者可设成任意目标且推拉镜头必须用 zoom 比值不是可视宽度
 - [背包槽上限与 critical 给予](runtime/mechanisms/inventory-capacity-critical.md) — 背包有槽上限,giveItem 返回值必须消费;关键道具用 critical=true 绕上限,拾取失败走 inventory:full 不消耗热点
 - [运行时摆灯的可视化手柄(聚光靶点/锥角、面光尺寸/朝向)](runtime/mechanisms/light-authoring-gizmos.md) — 判据只有一条——三维朝向/尺寸必须能拖,标量数字框就够;聚光靶点落行走面(正向求交要粗扫+二分),面光正面判据必须用真视线不能写 n.z<0;面板兜底值要与 packLights 逐字对齐
 - [光照参数的空间与单位(世界空间 wu ↔ 伪世界 q)](runtime/mechanisms/lighting-scale-reference.md) — 灯摆在世界空间、单位 wu(与 NPC/热区/spawn 同尺,角色高 150 wu 恒定);shader 里 march 走伪世界 q,两者差一个逐场景的 wuPerQUnit,transform 只在打包处折一次

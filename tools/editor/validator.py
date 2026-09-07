@@ -1259,6 +1259,7 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_pressure_holds(model, issues)
     _validate_document_reveals(model, issues)
     _validate_signal_cues(model, issues)
+    _validate_footstep_sets(model, issues)
     _validate_bubble_lines(model, issues)
     _validate_water_minigames(model, issues)
     _validate_paper_craft(model, issues)
@@ -5907,11 +5908,14 @@ def _player_avatar_states(model: ProjectModel) -> tuple[set[str], str] | None:
 
 
 def _validate_animation_sockets(model: ProjectModel, issues: list[Issue]) -> None:
-    """挂点 sidecar：指纹对不上 = 游戏侧整份忽略，必须报出来。
+    """挂点 / 落脚帧 sidecar：指纹对不上 = 游戏侧整份忽略，必须报出来。
 
     只在**已经存在** sockets.json 的包上报——绝大多数包没有挂点，那是常态不是问题。
+    落脚帧（`contactSlots`）与挂点同一份文件：槽位越界 / 不是整数一律报，
+    运行时 `parseContactSlots` 会把坏项静默丢掉，那一步就没声了。
     """
     from .shared.animation_sockets import (
+        CONTACT_SLOTS_KEY,
         fingerprint_matches,
         fingerprint_of_anim,
         load_socket_set,
@@ -5927,20 +5931,44 @@ def _validate_animation_sockets(model: ProjectModel, issues: list[Issue]) -> Non
         if raw is None:
             continue
         sockets = raw.get("sockets")
-        if not isinstance(sockets, dict) or not sockets:
+        has_sockets = isinstance(sockets, dict) and bool(sockets)
+        contact_raw = raw.get(CONTACT_SLOTS_KEY)
+        if contact_raw is not None and not isinstance(contact_raw, list):
+            # 形状坏了要先报（写成字符串 / 对象）：运行时按空处理，这个包一步都不响。
+            # 放在「空壳」判定之前，否则会被当成没标而报成"删掉即可"——那是反向建议。
+            issues.append(Issue(
+                "error", "animation", bundle,
+                f"sockets.json 的 contactSlots 须为槽位数组（当前 {type(contact_raw).__name__}）"
+                "——运行时按空处理，这个包一步都不响",
+            ))
+            continue
+        has_contact = isinstance(contact_raw, list) and bool(contact_raw)
+        if not has_sockets and not has_contact:
             issues.append(Issue(
                 "warning", "animation", bundle,
-                "sockets.json 里一个挂点都没有——空壳文件，删掉即可",
+                "sockets.json 里既没有挂点也没有落脚帧——空壳文件，删掉即可",
             ))
             continue
         if not fingerprint_matches(raw.get("atlas"), fingerprint_of_anim(anim)):
             issues.append(Issue(
                 "error", "animation", bundle,
                 "sockets.json 的图集指纹与 anim.json 对不上（重导出过图集？）——"
-                "游戏里会整份忽略这些挂点，请在动画编辑器的「挂点」区重标后保存",
+                "游戏里会整份忽略这些挂点与落脚帧（挂件不挂、脚步不响），"
+                "请在动画编辑器的「挂点 / 落脚帧」区重标后保存",
             ))
             continue
         slot_count = len(anim.get("atlasFrames") or [])
+        if isinstance(contact_raw, list):
+            bad = [repr(s) for s in contact_raw
+                   if not _is_nonneg_int(s) or (slot_count and int(s) >= slot_count)]
+            if bad:
+                issues.append(Issue(
+                    "error", "animation", bundle,
+                    f"落脚帧 contactSlots 里有不存在的图集槽位：{'、'.join(bad)}"
+                    f"（共 {slot_count} 个槽位，只能是非负整数）——运行时这些项被静默丢掉",
+                ))
+        if not has_sockets:
+            continue
         for name, sock in sockets.items():
             poses = sock.get("poses") if isinstance(sock, dict) else None
             if not isinstance(poses, dict) or not poses:
@@ -7105,6 +7133,274 @@ def _validate_audio_config_ids(model: ProjectModel, issues: list[Issue]) -> None
                 f"id {aid!r} 同时登记在 {'、'.join(channels)} 里——各区彼此独立、"
                 "运行时按区查表不回落，同名两条极易改错一边",
             ))
+
+
+#: `spatial.maxDistanceWu` 至少要是 `listenerBackAtBaseZoomWu` 的这么多倍才算「显著大于」。
+#: 与 `editors/footstep_sets_editor.py::_sync_spatial_warning` 的实时橙字**同一个数**——
+#: 两边各写一个必然漂开（编辑器让存、校验器报警，或者反过来，谁也不知道该信哪个）。
+_FOOTSTEP_MAX_DISTANCE_MIN_RATIO = 1.5
+
+#: `listener.mode` 的四档；权威在 `src/data/types.ts` 的 `AudioListenerConfig`。
+#: 运行时 `Game.buildAudioListener` 对四档之外的值**静默按 camera 处理**（末行 `toCamera(false)`），
+#: 连 fallback 标记都不置——所以拼错的 mode 在调试面板里也看不出来。
+_AUDIO_LISTENER_MODES = ("camera", "player", "npc", "fixed")
+
+
+def _is_nonneg_int(v: object) -> bool:
+    """非负整数。**排除 bool**：`True` 在 Python 里 `isinstance(int)` 为真，
+    但写进 JSON 是 `true`，运行时 `Number.isInteger(true)` 为 false、永远不命中。"""
+    return isinstance(v, int) and not isinstance(v, bool) and v >= 0
+
+
+def _footstep_clip_fallback_cycles(fb: dict) -> list[list[str]]:
+    """`clipFallback` 里的环，每个环只报一次（按最小元素旋转归一，多入口进同一个环不重复报）。
+
+    镜像 `FootstepSystem.resolveSfx` 的走法：`<clip>` → `clipFallback[clip]` → …，
+    它自带 `seen` 集合所以**不会死循环**——但走一圈回到起点就返回 null，
+    作者写的那条回落链等于没写。
+    """
+    out: list[list[str]] = []
+    reported: set[tuple[str, ...]] = set()
+    for start in fb:
+        path: list[str] = []
+        index: dict[str, int] = {}
+        key: object = start
+        while isinstance(key, str) and key in fb:
+            if key in index:
+                cyc = path[index[key]:]
+                m = cyc.index(min(cyc))
+                norm = tuple(cyc[m:] + cyc[:m])
+                if norm not in reported:
+                    reported.add(norm)
+                    out.append(list(norm))
+                break
+            index[key] = len(path)
+            path.append(key)
+            key = fb.get(key)
+    return out
+
+
+def _validate_footstep_sets(model: ProjectModel, issues: list[Issue]) -> None:
+    """`footstep_sets.json` 自身 + 场景/zone 对脚步集的引用完整性。
+
+    **整条全是 warning 级**：整套脚步特性可以一条都不配（素材没入库时 `sets` 就是空的，
+    现状即如此），配错的代价是"安静地没声音"而不是崩——报成 error 会把收尾门拦在
+    与本次内容无关的地方。
+
+    最要命的是**音效 key 没在 `audio_config.sfx` 里登记**：`AudioManager.playSfx`
+    对未知 id 是 `if (!entry) return;` ——没有 warn、没有事件、调试面板也看不出来，
+    只是那块地永远不响。运行时其余的静默口径同源：
+    - 集 id 悬垂 → `warnOnce` 一次就再不提（`FootstepSystem.tryEmit`）；
+    - `clipFallback` 成环 → `resolveSfx` 走一圈返回 null，那个片段整个不发声；
+    - `listener` 目标解不出 → 回落 camera；
+    - `maxDistanceWu` 太小 → `spatialize` 判 `inaudible`，一步都不播。
+
+    每集的形状是 `{label?, sfx:{片段名: 音效key}, gainDb?}`——**一个片段一条 key**，
+    没有变体表、没有抖动（确定性播放，换声靠 zone 切集）。触地帧**不在这份文件里**
+    （住在动画包 sockets.json 的 contactSlots，由 `_validate_animation_sockets` 查）。
+
+    场景/zone 的引用查在这里而不是塞进那个几百行的场景循环：脚步的全部判据集中一处，
+    改的时候一次就能看全（`_validate_bubble_lines` / `_validate_object_examine` 同样自己走场景）。
+    """
+    raw = model.footstep_sets
+    if raw and not isinstance(raw, dict):
+        issues.append(Issue(
+            "warning", "footstep_sets", "footstep_sets.json",
+            f"顶层须为对象（当前 {type(raw).__name__}）——运行时整份配置读不出来，全场无脚步声",
+        ))
+        return
+    data = raw if isinstance(raw, dict) else {}
+
+    _sets_raw = data.get("sets")
+    if _sets_raw is not None and not isinstance(_sets_raw, dict):
+        issues.append(Issue(
+            "warning", "footstep_sets", "footstep_sets.json",
+            f"sets 须为对象（当前 {type(_sets_raw).__name__}）",
+        ))
+    sets = _sets_raw if isinstance(_sets_raw, dict) else {}
+    known_sets = {str(k) for k in sets}
+
+    _audio = model.audio_config if isinstance(model.audio_config, dict) else {}
+    _sfx = _audio.get("sfx")
+    sfx_ids = {str(k) for k in _sfx} if isinstance(_sfx, dict) else set()
+
+    # --- 每个集：片段 → 音效 key，key 必须在 sfx 区登记 ---
+    for raw_sid, sdef in sets.items():
+        sid = str(raw_sid)
+        if not isinstance(sdef, dict):
+            issues.append(Issue(
+                "warning", "footstep_set", sid,
+                f"该集须为对象（当前 {type(sdef).__name__}）——整集被跳过，走在上面不发声",
+            ))
+            continue
+        if "variants" in sdef and "sfx" not in sdef:
+            issues.append(Issue(
+                "warning", "footstep_set", sid,
+                "还是旧形状 variants（变体数组）——已改为 sfx:{片段名: 一条音效key}，"
+                "运行时不读 variants，这一集永远不发声；请在「脚步集」页重新给每个片段选 key",
+            ))
+            continue
+        sfx = sdef.get("sfx")
+        if sfx is None:
+            issues.append(Issue(
+                "warning", "footstep_set", sid,
+                "缺少 sfx——这一集永远不发声（运行时 resolveSfx 直接返回 null）",
+            ))
+            continue
+        if not isinstance(sfx, dict):
+            issues.append(Issue(
+                "warning", "footstep_set", sid,
+                f"sfx 须为对象（当前 {type(sfx).__name__}）",
+            ))
+            continue
+        for raw_clip, aid_raw in sfx.items():
+            clip = str(raw_clip)
+            if not isinstance(aid_raw, str):
+                issues.append(Issue(
+                    "warning", "footstep_set", sid,
+                    f"sfx.{clip} 须为一条字符串音效 key（当前 {type(aid_raw).__name__}）——"
+                    "一个片段只有一条，没有变体数组",
+                ))
+                continue
+            if not aid_raw.strip():
+                issues.append(Issue(
+                    "warning", "footstep_set", sid,
+                    f"片段 {clip!r} 没选音效（空串）——登记了却没声，走这个片段时不发声",
+                ))
+                continue
+            problem = audio_id_problem(aid_raw)
+            if problem:
+                issues.append(Issue(
+                    "warning", "footstep_set", sid,
+                    f"sfx.{clip} 音效 key {aid_raw!r} 不合法：{problem}",
+                ))
+            elif aid_raw not in sfx_ids:
+                issues.append(Issue(
+                    "warning", "footstep_set", sid,
+                    f"sfx.{clip} 音效 key {aid_raw!r} 没登记在 audio_config.json 的 "
+                    "sfx 区——AudioManager.playSfx 对未知 id 是 `if (!entry) return;`，"
+                    "完全静默：没有 warn、没有事件，只是这一步永远不响",
+                ))
+
+    # --- contactFrames 已迁走：留在这里的只会被静默忽略 ---
+    if "contactFrames" in data:
+        issues.append(Issue(
+            "warning", "footstep_sets", "contactFrames",
+            "contactFrames 已不在本文件里配置——触地帧住在动画包 sockets.json 的 contactSlots"
+            "（动画浏览页逐帧标）。这一键运行时不读，请删掉，免得以后有人以为改它有用",
+        ))
+
+    # --- clipFallback：不许成环 ---
+    fb = data.get("clipFallback")
+    if fb is not None and not isinstance(fb, dict):
+        issues.append(Issue(
+            "warning", "footstep_sets", "clipFallback",
+            f"clipFallback 须为对象（当前 {type(fb).__name__}）",
+        ))
+    elif isinstance(fb, dict):
+        for raw_from, raw_to in fb.items():
+            if not isinstance(raw_to, str) or not raw_to.strip():
+                issues.append(Issue(
+                    "warning", "footstep_sets", "clipFallback",
+                    f"clipFallback.{str(raw_from)} 的回落目标须为非空片段名（当前 {raw_to!r}）",
+                ))
+        for cyc in _footstep_clip_fallback_cycles({str(k): v for k, v in fb.items()}):
+            chain = " → ".join(cyc + [cyc[0]])
+            issues.append(Issue(
+                "warning", "footstep_sets", "clipFallback",
+                f"clipFallback 成环：{chain}——resolveSfx 走一圈就返回 null，"
+                "作者写的回落意图整条丢掉（不会死循环，只是这些片段一律不发声）",
+            ))
+
+    # --- spatial：maxDistanceWu 必须显著大于 listenerBackAtBaseZoomWu ---
+    sp = data.get("spatial")
+    if sp is not None and not isinstance(sp, dict):
+        issues.append(Issue(
+            "warning", "footstep_sets", "spatial",
+            f"spatial 须为对象（当前 {type(sp).__name__}）",
+        ))
+    elif isinstance(sp, dict):
+        far = sp.get("maxDistanceWu")
+        back = sp.get("listenerBackAtBaseZoomWu")
+        for key, v in (("maxDistanceWu", far), ("listenerBackAtBaseZoomWu", back)):
+            if v is not None and not _is_num(v):
+                issues.append(Issue(
+                    "warning", "footstep_sets", "spatial",
+                    f"spatial.{key} 须为数值 wu（当前 {v!r}）",
+                ))
+        if _is_num(far) and _is_num(back) \
+                and float(far) <= float(back) * _FOOTSTEP_MAX_DISTANCE_MIN_RATIO:
+            issues.append(Issue(
+                "warning", "footstep_sets", "spatial",
+                f"spatial.maxDistanceWu({far:g}) 必须显著大于 "
+                f"listenerBackAtBaseZoomWu({back:g})：相机听者本来就站在画面后方那么远，"
+                "max 比它小（或差不多大）的话，连玩家脚下的声音都会被判成听不见，一步都不播",
+            ))
+
+    # --- listener：npc 要有 targetId，fixed 要有 x/y ---
+    listener = data.get("listener")
+    if listener is not None and not isinstance(listener, dict):
+        issues.append(Issue(
+            "warning", "footstep_sets", "listener",
+            f"listener 须为对象（当前 {type(listener).__name__}）",
+        ))
+    elif isinstance(listener, dict):
+        mode_raw = listener.get("mode")
+        mode = mode_raw.strip() if isinstance(mode_raw, str) else ""
+        if mode not in _AUDIO_LISTENER_MODES:
+            issues.append(Issue(
+                "warning", "footstep_sets", "listener",
+                f"listener.mode {mode_raw!r} 不是 "
+                f"{'/'.join(_AUDIO_LISTENER_MODES)} 之一——运行时四档都不匹配时"
+                "静默按 camera 处理，连 fallback 标记都不置，调试面板里也看不出来",
+            ))
+        elif mode == "npc":
+            if not str(listener.get("targetId") or "").strip():
+                issues.append(Issue(
+                    "warning", "footstep_sets", "listener",
+                    "listener.mode='npc' 却没有 targetId——运行时找不到那个 NPC 就回落到 camera，"
+                    "这份配置等于白写",
+                ))
+        elif mode == "fixed":
+            missing = [k for k in ("x", "y") if not _is_num(listener.get(k))]
+            if missing:
+                issues.append(Issue(
+                    "warning", "footstep_sets", "listener",
+                    f"listener.mode='fixed' 却没有数值的 {'、'.join(missing)}"
+                    "（场景坐标 wu）——运行时判 `typeof !== 'number'` 直接回落到 camera",
+                ))
+
+    # --- 场景 / zone 的引用完整性 ---
+    # ⚠ 这里**不加** smell 那条 `if known_smells and ...` 的空表护栏：脚步集空表是常态
+    #   （素材未入库），而此时任何 footstepSet 引用都确确实实是悬垂的——运行时
+    #   warnOnce 一次就再不提，正是要靠这条报出来。
+    for sid, sc in model.scenes.items():
+        scene_ref = str(sc.get("footstepSet") or "").strip()
+        if scene_ref and scene_ref not in known_sets:
+            issues.append(Issue(
+                "warning", "scene", sid,
+                f"footstepSet {scene_ref!r} 不在 footstep_sets.json 的 sets 里——"
+                "本场景全程不发脚步声（运行时只在控制台 warnOnce 一次）",
+            ))
+        for zone in sc.get("zones", []) or []:
+            if not isinstance(zone, dict):
+                continue
+            zone_ref = str(zone.get("footstepSet") or "").strip()
+            if not zone_ref:
+                continue
+            zid = str(zone.get("id", "") or "?")
+            if zone_ref not in known_sets:
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"Zone '{zid}' footstepSet {zone_ref!r} 不在 footstep_sets.json 的 sets 里——"
+                    "走在这块区上不发脚步声（运行时只在控制台 warnOnce 一次）",
+                ))
+            if (zone.get("zoneKind") or "standard") == "depth_floor":
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"Zone '{zid}' 为 depth_floor，footstepSet 不会生效"
+                    "（FootstepSystem 查多边形时直接跳过纯遮挡区）",
+                ))
 
 
 def _audio_id_known(model: ProjectModel, audio_id: str) -> bool:
