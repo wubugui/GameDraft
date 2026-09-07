@@ -1,5 +1,18 @@
 """把场景接进统一光影，**画面零变化**。
 
+⛔ **已完成使命并停用（2026-09-07）**。28 个场景当年都迁完了，而它写出来的那份
+「恒等配置」是照着**已被否的统一光影模型**（`原画 × S_new / S_day`）构造的：
+
+- 运行时 2026-08-30 起是「原画 + 加性实体灯」，根本没有 `S_new`；
+- `lighting.day` 整块 2026-09-07 下线（albedo 现在是烘出来的贴图，见
+  `tools/character_lighting_lab/scene_fields.py` 的 `build_albedo`）；
+- `placeholder` / `ratioMax` / `giGain` 早已零消费者。
+
+再跑它只会把这些已下线的键重新灌回 28 个场景的 JSON，而**运行时一个都不读**——
+这正是 scene-bake-downstream 机制卡说的"旁支工具依赖已废字段"那一类。所以入口
+当场抛，不留静默写坏数据的路。文件保留作沿革；下面的原始说明是它当年的语境。
+
+
 ## 这一步在做什么
 
 给每个还没有 `lighting` 块的场景写一份**恒等配置**：让新管线算出来的
@@ -239,6 +252,13 @@ def verify_identity(sid: str) -> dict:
 
 
 def main() -> int:
+    raise SystemExit(
+        'scene_relight.migrate 已停用（2026-09-07）：它写的是已被否的统一光影模型那套'
+        '恒等配置，其中 lighting.day / placeholder / ratioMax 现在运行时一个都不读，'
+        '再跑只会把下线的键灌回场景 JSON。'
+        '要改场景反照率：改 lighting/<背景基名>/albedo.png（重生成 '
+        '`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene <id> '
+        '--albedo-only`）；要摆灯：编辑器场景光照面板。')
     # Windows 控制台默认 GBK，打中文/勾号会 UnicodeEncodeError 直接崩在最后一行输出上
     for stream in (sys.stdout, sys.stderr):
         try:

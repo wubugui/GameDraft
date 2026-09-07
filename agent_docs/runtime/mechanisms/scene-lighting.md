@@ -3,7 +3,7 @@ id: scene-lighting
 title: 场景背景受光(原画 + 加性实体灯)
 domain: runtime
 type: mechanism
-summary: 原画就是最终的光照,运行时只把作者摆的实体灯加上去(先反解 albedo 再乘);天光与太阳的运行时加光项已删,「夜」靠换一张夜原画;两级 RT 缓存,稳态每帧零光照计算
+summary: 原画就是最终的光照,运行时只把作者摆的实体灯加上去(乘在**烘出来的 albedo 贴图**上);天光与太阳的运行时加光项已删,「夜」靠换一张夜原画;两级 RT 缓存,稳态每帧零光照计算
 status: active
 authority:
   - src/rendering/lighting/SceneLightingPass.ts
@@ -13,29 +13,43 @@ authority:
   - src/utils/sceneAppearance.ts
   - tools/character_lighting_lab/scene_fields.py
 triggers:
-  paths: ["src/rendering/lighting/**", "src/core/SceneLightingSystem.ts", "src/utils/sceneAppearance.ts", "tools/scene_relight/**"]
-  topics: [场景光照, 重打光, 原画, 实体灯, 加性灯, 夜景, 时段外观, timeVariants, 光晕, 统一光影]
-  tasks: [摆灯, 调场景光照, 做夜景, 改光照 shader]
+  paths: ["src/rendering/lighting/**", "src/core/SceneLightingSystem.ts", "src/core/lightingPayloadFiles.ts", "src/utils/sceneAppearance.ts", "tools/scene_relight/**"]
+  topics: [场景光照, 重打光, 原画, 实体灯, 加性灯, 夜景, 时段外观, timeVariants, 光晕, 统一光影, albedo, 反照率, 材质底色]
+  tasks: [摆灯, 调场景光照, 做夜景, 改光照 shader, 改 albedo, 烘 albedo]
 verified_by:
   - src/rendering/lighting/worldSpaceShading.test.ts
   - src/rendering/lighting/fog.test.ts
   - src/rendering/lighting/dehaze.test.ts
   - src/utils/sceneAppearance.test.ts
-last_governed: 2026-09-03
+last_governed: 2026-09-07
 ---
 
 ## 是什么(一句话)
 
 **原画就是最终的光照结果**(制作人 2026-08-30 定调),运行时不重新照亮它,
-只把作者摆的**实体灯**加上去 —— 加之前先把 albedo 从原画里反解出来,
-灯才乘在正确的反照率上:
+只把作者摆的**实体灯**加上去 —— 灯乘在**烘出来的 albedo 贴图**上:
 
 ```
-surf = painting + clamp(painting / S_day, 0, 1) × Σ实体灯照度      (+ 灯体自发光/光晕)
+surf = painting + albedo贴图 × Σ实体灯照度      (+ 灯体自发光/光晕)
 ```
 
-**没有灯 ⇒ surf 恒等于 painting**,原画分毫不动。`S_day`(原画自带的自然光)
-只剩"albedo 除数"这一个语义,**不再**是「参考光 vs 当前光」的比值。
+**没有灯 ⇒ surf 恒等于 painting**,原画分毫不动。
+
+**albedo 是一张烘出来的图**(制作人 2026-09-07 定),不再是 shader 里现除的
+`painting / S_day`:
+
+```
+albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis), 0, 1)   # 离线
+```
+
+- 默认值与旧的现除**逐字同式**(太阳项恒 0——实测 28/28 个场景 `day.sunIntensity`
+  都填 0,那一项从来没生效过),所以切过来那一刻**画面等价**;变的是**作者能改它了**。
+- **全时段共用主背景那一张**:材质不随时段变,夜里灯照到墙上要显出墙本来的颜色,
+  而不是夜原画里那层暗蓝。时段目录里放的是同一份字节。
+- **作者手改的不会被重烘覆盖**:`geometry.json` 的 `albedo_map.authored=true` 时
+  烘焙器跳过并出声,要覆盖得显式 `--force-albedo`。
+- `S_day` 与它的两个输入(`skyvis.png`、拟合出的 `day_hemi`)**整段搬去了离线端**;
+  `lighting.sky` / `lighting.day` 两块数据字段随之下线(`sky.intensity` 除外,见下)。
 
 角色侧是另一套(probe 底光 + 同一次打包的加性灯),见 [character-lighting](character-lighting.md);
 阴影/遮挡/色调见 [entity-lighting](entity-lighting.md);单位与空间见 [lighting-scale-reference](lighting-scale-reference.md)。
@@ -47,8 +61,12 @@ surf = painting + clamp(painting / S_day, 0, 1) × Σ实体灯照度      (+ 灯
 - `lightingCore.glsl` —— 各类灯的闭式解,场景与角色共用的唯一实现。
 - `SceneLightingSystem.ts` —— 载荷装载、脏时重算、`wuPerQUnit` / `radianceScale`。
 - `sceneAppearance.ts` —— 「此刻该显示哪张原画、配哪份参数」的纯解析。
-- 离线端 `tools/character_lighting_lab/scene_fields.py` → `lighting/<背景基名>/`(几何项)。
+- 离线端 `tools/character_lighting_lab/scene_fields.py` → `lighting/<背景基名>/`
+  (几何项 + **albedo 贴图**,后者见 `build_albedo` / `bake_albedo_only`)。
   **烘焙只有这一个工具**(2026-08-31 收束):probe/体素/行走面与法线/天穹可见性同出同住。
+- `src/core/lightingPayloadFiles.ts` —— **运行时到底读哪些文件**的唯一真相源
+  (打包与验收各有一份镜像,契约测试逐字比对)。场景侧现在是
+  `geometry.json` / `normal.png` / `albedo.png`;`skyvis.png` 已不在其中。
 
 ## 硬契约(违反即 bug 的机制约束)
 
@@ -68,6 +86,9 @@ surf = painting + clamp(painting / S_day, 0, 1) × Σ实体灯照度      (+ 灯
 - **烘焙产物按第一层背景图名索引**。换时段 = 换主背景 = 换一整套烘焙目录
   (`lighting/<背景基名>/`,probe 与几何场同住)。**每张时段原画都要各烘一份**,
   只烘白天那张的话夜里就是"没烘载荷",整套安静禁用。
+  ⚠ **`albedo.png` 是这条规则的唯一例外**:它按**主背景**算一次,各时段目录里放的是
+  同一份字节(材质不随时段变)。所以它由 `albedo_map.from_background` 说清来历,
+  新鲜度门比的也是**主背景**的哈希,不是本目录那张背景的。
 - **烘焙只有一个工具、一个目录**(制作人 2026-08-31 定):`tools/character_lighting_lab`
   产出一张背景图的**全部**派生物,落 `lighting/<背景基名>/`。别再另起一个 baker 或
   另开一个目录——同一份东西分两处放,打包规则、校验器、迁移脚本就要各写一套路径,
@@ -87,8 +108,19 @@ surf = painting + clamp(painting / S_day, 0, 1) × Σ实体灯照度      (+ 灯
 - **几何场必须从运行时实际 march 的那份深度烘**(`raw_depth_rg.png`),不是实验室内部
   精度更高的 `front_depth.bin`。用未量化的源反而与运行时对不上。深度重导后没重烘,
   靠 `geometry.json` 的 `depth_sha1` 抓(画面上只表现为"光的走向有点怪")。
-- **albedo 反解必须钳到 1**。原画暗部除以一个小 `S_day` 会炸出巨大的假反照率,
-  一盏灯扫过去就是一片过曝;上限 1.0 = 物理上反照率不可能超过 1。
+- **albedo 反解必须钳到 1**(现在这条约束住在**离线端** `build_albedo`)。原画暗部
+  除以一个小 `S_day` 会炸出巨大的假反照率,一盏灯扫过去就是一片过曝;
+  上限 1.0 = 物理上反照率不可能超过 1。
+- **albedo 存 sRGB8,不存线性 8 位**。反照率的暗部占掉大半个值域,线性量化在那里丢档;
+  sRGB 编码感知均匀,而且用图像软件打开就是"看起来正常的材质图"——**作者手改这张图
+  时看到的是自己认得的东西**。运行时读回时过 `lcSrgbToLinear`,与原画同一条解码路径。
+- **烘 albedo 用的 skyvis 必须是落盘那张 `skyvis.png`**,不是内存里那份未量化的 float 场。
+  同一条教训在几何场那边已经写着(必须从运行时实际 march 的那份深度烘):拿更精确的源
+  反而与消费端对不上。
+- **作者手改过的 albedo 不许被重烘悄悄覆盖**。`albedo_map.authored=true` 时烘焙器跳过
+  并打印一行;要覆盖只能显式 `--force-albedo`。配套的 `albedo_map.source_sha1` 记的是
+  生成它时**主背景**的哈希——背景重画而 albedo 没跟上是一种只有校验器抓得住的静默错,
+  画面上只表现为"灯照上去颜色有点怪"。
 - **灯体自发光不乘 albedo**(发光不是反射),单独累加。辐射场的 **alpha 存的是
   "灯体自发光占该像素的比例"**(0..1),不是绝对亮度——绝对阈值会随灯的强度漂。
 - **显示变换绝不能进第一级**。缓存 RT 必须 RGBA16F 线性 HDR:把 ev 与 clamp 烤进 8bit
@@ -123,13 +155,25 @@ surf = painting + clamp(painting / S_day, 0, 1) × Σ实体灯照度      (+ 灯
   正常渲染路径(切调试视图 + 取屏)。
 - **背景重画了不重烘,不会报错到画面上**,只在 `validate-data` 的 `[lighting-bake]`
   与发行前的 `checkBakeFreshness` 里说话(见 [build-pipeline](build-pipeline.md))。
+- **`lighting.sky` 整块看着像死料,但 `sky.intensity` 是活的**:它是**实体影子浓度**
+  自动解算时的环境照度分母(`Game.resolveLightEnv` → `entityShadowBinding`,F2 里那条
+  滑条叫"影子环境照度")。2026-09-07 清理时数了一遍 shader uniform 的引用数就断定
+  "sky 整块没人读"——错的,那条路根本不经 shader。删它影子浓度会跟着变。
+  同块的 `hemi`/`color`/`kelvin` 确实只剩停用的统一角色路径在读。
 
 ## 怎么验证
 
 - `npx vitest run src/rendering/lighting src/utils/sceneAppearance.test.ts`
 - `sh scripts/py.sh -m pytest tools/character_lighting_lab/tests tools/build/tests -p no:cacheprovider`
 - 重烘一个场景:`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene <id>`
-- 调试视图(`SceneLightingPass` 的 `uDebug`)逐项看:天穹可见性 / 法线 / `S_day` /
-  纯灯照度 / 反解 albedo / 原画。**"没灯时与原画逐像素相等"是这套模型的恒等锚**,
-  改合成式后必须先验它。
+- 只补/刷新 albedo(不重跑任何 march,29 份载荷全量 40 秒):
+  `... scene_fields --all --albedo-only`(加 `--force-albedo` 才覆盖作者手改的)
+- 调试视图(`SceneLightingPass` 的 `uDebug`,F2 那个循环按钮)逐项看:
+  0=正常 1=法线 2=**albedo 贴图** 3=灯的辐照度 4=线性化原画 5..9=GI/skyao 体。
+  ⚠ 2026-09-07 **重编号**(「天穹可见性」与「S_day」两档随 skyvis 退出运行时删掉),
+  编号在三处必须一致:shader 的 `if (uDebug == n)` / `DebugTools.DEBUG_NAMES` 的下标 /
+  `Game.setSceneLightingDebug` 的范围判断。
+  **"没灯时与原画逐像素相等"是这套模型的恒等锚**,改合成式后必须先验它。
+- 编辑器侧:场景属性面板「统一光影 lighting」块里有 albedo 的状态行(烘的/作者手改/
+  与主背景是否同步)、「重生成默认 albedo」按钮与「画布底图看 albedo」开关。
 - 画面取证走 [headless-visual-verification](../recipes/headless-visual-verification.md)。

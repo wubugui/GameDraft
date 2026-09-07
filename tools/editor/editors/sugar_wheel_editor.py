@@ -516,7 +516,7 @@ class SugarWheelCanvas(QWidget):
         self._fit()
 
     def viewport_size(self) -> tuple[float, float]:
-        """游戏视口尺寸（与运行时一致，让预览所见=游戏所得）。读不到则回退 1280×720。"""
+        """游戏视口尺寸（与运行时一致，让预览所见=游戏所得）。读不到则回退标准的 1024×768。"""
         cfg = getattr(self._model, "game_config", None)
         if isinstance(cfg, dict):
             for key in ("windowSize", "viewport"):
@@ -525,7 +525,7 @@ class SugarWheelCanvas(QWidget):
                     w, h = d.get("width"), d.get("height")
                     if isinstance(w, (int, float)) and isinstance(h, (int, float)) and w > 0 and h > 0:
                         return (float(w), float(h))
-        return (1280.0, 720.0)
+        return (1024.0, 768.0)
 
     def _on_toggle_sectors(self, on: bool) -> None:
         self._show_sectors = bool(on)

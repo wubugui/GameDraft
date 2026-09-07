@@ -13,7 +13,7 @@
 ### 机制卡
 - [加 Action 的登记面](runtime/mechanisms/action-registration-registry-surfaces.md) — 新 action 要同步的登记面不止一处(运行时注册 / TS 参数清单 / 编辑器授权面 / 校验器 / 条件性的实体引用表);漏哪一处的报错通道各不相同,有一处漏了 tsc 与 validate-data 全绿、只有编辑器测试红
 - [档案系统解锁语义](runtime/mechanisms/archive-unlock-semantics.md) — 人物档案解锁唯一入口=addArchiveEntry(幂等);lore/doc/book 走声明式条件;totalPages 只认 pages.length
-- [打包管线(只读抽取 · dev/发行双档 · 产物验收门)](runtime/mechanisms/build-pipeline.md) — 打包只从开发树只读抽取,绝不改动开发数据;裁剪一律写成"不抽取";清单=JSON引用闭包+传递闭包+id约定+显式规则;输出目录是每次传的参数、不进配置(编辑器与自动化共用 release.mjs);静态检查证明不了能玩,靠产物验收门真跑
+- [打包管线(只读抽取 · dev/发行双档 · 产物验收门)](runtime/mechanisms/build-pipeline.md) — 打包只从开发树只读抽取,绝不改动开发数据;裁剪一律写成"不抽取";清单=JSON引用闭包+传递闭包+id约定+显式规则(光照载荷按载荷自己的 shading.mode 展开,文件名表与运行时共用一份);输出目录是每次传的参数、不进配置;静态清单证明不了完备——release.mjs 默认无头真跑每个场景反向核对清单(scene_sweep),verify 再做开发树→产物的光照载荷平价
 - [角色逐像素照明(probe 底光 + 加性实体灯)](runtime/mechanisms/character-lighting.md) — 只有一条活路径——probe 烘死的 GI 底光 + 与场景同一次打包的加性实体灯 + 与背景同一组显示变换;统一角色路径被 Game 里的常量开关整条关死(留码不删);着色核心单一 GLSL 源,法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐
 - [角色注册表(characterId 合并)](runtime/mechanisms/character-registry.md) — 角色身份(name/animFile/portraitSlug)一处定义,NpcDef.characterId 引用,实例化时合并且 own 字段赢过注册表
 - [坐标空间总表(屏幕→场景 wu→像素栅格→伪世界 q→M-world)](runtime/mechanisms/coordinate-spaces.md) — 全项目六个坐标空间的单位/原点/住户/权威源与逐条可验判据;两个 M(det ±1)、两套像素栅格(比例非恒定 4)、着色在 M-world 而 march 在 q——混用一律不报错只是效果不对
@@ -25,6 +25,7 @@
 - [对话图 owner 归属(四档优先级与注入点登记面)](runtime/mechanisms/dialogue-owner-origin.md) — ownerState 认谁当 owner 由唯一判定源按四档优先级裁;每条能开对话图的路径都必须显式线程化来源上下文,漏注入无红字、只是静默走 missingWrapperNext
 - [对话头像(立绘)运行时](runtime/mechanisms/dialogue-portrait-runtime.md) — 头像跟「装扮配置」走不跟实体走;跟随说话人要求这行的说话人实体解析得出来,UI 收到的 portrait 恒带 slug
 - [台词配音通道(voice/autoAdvance · 跨拍留声)](runtime/mechanisms/dialogue-voice-channel.md) — 全部台词面共用一条单声道配音通道;默认跟本拍停、hold 留声给后面、声明跟随配音的那拍接管并收尾
+- [显示链:逻辑视口 · 等比信箱 · 宿主窗口(4:3 标准)](runtime/mechanisms/display-viewport-and-window.md) — 标准视口 1024×768(4:3)定义在 game_config.viewport;app.screen 恒为它,显示只许等比缩放(Renderer.layoutMount 在 #game-stage 里放最大同比例盒);windowSize 只是宿主窗口期望尺寸,编辑器 F5 与 exe(main.rs 启动时读同一份 JSON)按它开窗;三个布局元素的尺寸规则只住在 index.html
 - [场景光环境 / 实体阴影 / 深度遮挡](runtime/mechanisms/entity-lighting.md) — 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影但形状量从灯位现算;角色阴影**手动绑灯,禁止自动 resolve**;接触斑与灯无关;深度自比较必须留容差;色调与阴影解耦
 - [实体位移的朝向语义(faceTowardMovement)](runtime/mechanisms/entity-move-facing.md) — 不勾选=完全不碰朝向(勿回退成"起点偷改一次");需要转身的内部调用必须显式传 true;朝向只有左右镜像,up/down 不存在
 - [实体轨迹动画(烘焙式 · 独立资产)运行时语义](runtime/mechanisms/entity-trajectory.md) — 一条轨迹一个资产文件、帧相对播放锚点;playTrajectory 按全局 id 装资产、挂任何实体、在任何位置起播;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;不驱动相机
@@ -47,7 +48,7 @@
 - [存读档硬契约](runtime/mechanisms/save-restore-contracts.md) — load 坏档先拒+快照回滚、save 返 Promise<boolean>(落盘是文件 I/O);查询走内存镜像保持同步;读档静默清 zone、清位面 manual override;新游戏=净化 URL 整页 reload
 - [scenarios.json 运行时消费语义(退役中)](runtime/mechanisms/scenario-catalog-semantics.md) — 一等公民 scenario 已数据侧退役、零数据喂养;新内容一律走 narrative scenario_* 子图,别把活儿写进 Scenarios 面板
 - [场景声学（实时回音）](runtime/mechanisms/scene-acoustics.md) — 声学空间→IR→ConvolverNode 的实时回音；活听者可绑玩家/相机/实体；高程与水平反射面、二维遮挡；与视觉几何解耦、逐条 spatial 开关、F2 就地摆崖壁；三条硬判据（首回晚于干声时长 / 晚期尾延后 / 不套点源 1/r）
-- [场景背景受光(原画 + 加性实体灯)](runtime/mechanisms/scene-lighting.md) — 原画就是最终的光照,运行时只把作者摆的实体灯加上去(先反解 albedo 再乘);天光与太阳的运行时加光项已删,「夜」靠换一张夜原画;两级 RT 缓存,稳态每帧零光照计算
+- [场景背景受光(原画 + 加性实体灯)](runtime/mechanisms/scene-lighting.md) — 原画就是最终的光照,运行时只把作者摆的实体灯加上去(乘在**烘出来的 albedo 贴图**上);天光与太阳的运行时加光项已删,「夜」靠换一张夜原画;两级 RT 缓存,稳态每帧零光照计算
 - [场景 onEnter 揭幕时机契约](runtime/mechanisms/scene-onenter-reveal-timing.md) — loadScene 尾序=scene:ready → 揭幕(onReveal) → onEnter;初始进场同样先遮罩后揭幕;主 tick 必须先于任何场景装载挂载
 - [气味系统(双层 action/zone)](runtime/mechanisms/smell-system.md) — action 层永远压过 zone 层;zone 气味声明式挂 ZoneDef.smell,SmellSystem 听 zone:enter 驱动,ZoneSystem 不动
 - [首启手势门 + 音频解锁快路径](runtime/mechanisms/start-gate-audio-unlock.md) — 「点击开始」遮罩给页面 sticky 激活;AudioManager init 时按 hasBeenActive 直接解锁——救开场首句配音音画同步

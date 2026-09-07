@@ -12,6 +12,7 @@ import math
 import os
 import re
 import shutil
+import sys
 import time
 from contextlib import contextmanager
 from collections.abc import Callable, Iterator
@@ -47,6 +48,7 @@ from PySide6.QtCore import (
     QPointF,
     Signal,
     Slot,
+    QProcess,
     QTimer,
     QElapsedTimer,
 )
@@ -3700,6 +3702,22 @@ class SceneCanvas(QGraphicsView):
     def background_item(self):
         return self._bg_item
 
+    def swap_background_pixmap(self, img_path: Path) -> bool:
+        """只把底图**像素**换掉（原画 ↔ albedo 视图），图元、z、场景其余部分都不动。
+
+        几何按新图尺寸重算——albedo 与原画同尺寸，但不假设它一定是（换过背景、
+        改过分辨率的场景都存在），算一遍比"看着好像没歪"可靠。
+        """
+        if self._bg_item is None or not img_path.exists():
+            return False
+        pm = QPixmap(str(img_path))
+        if pm.isNull() or pm.width() <= 0 or pm.height() <= 0:
+            return False
+        self._bg_item.setPixmap(pm)
+        self._bg_item.setTransform(QTransform.fromScale(
+            self._world_w / pm.width(), self._world_h / pm.height()))
+        return True
+
     def clear_background(self) -> None:
         """摘掉当前背景图元并清句柄（换背景前调；`load_background` 负责装新的）。"""
         old = self._bg_item
@@ -4717,6 +4735,8 @@ class ScenePropertyPanel(QScrollArea):
     light_place_mode_changed = Signal(bool)
     # 光环境曲线数据变化→请求画布重建 overlay
     lightcurve_overlay_refresh_requested = Signal()
+    #: 画布底图在「原画 ↔ albedo 贴图」之间切（True=看 albedo）。纯查看，不碰数据。
+    albedo_view_changed = Signal(bool)
     # npc_id, enabled — 仅编辑器内沿路径预览精灵
     npc_patrol_preview_changed = Signal(str, bool)
     # 当前面板存在未 Apply 的 staging 修改（True）或已与 source 一致（False）
@@ -4894,6 +4914,8 @@ class ScenePropertyPanel(QScrollArea):
         self._sl_updating: bool = False
         self._sl_placing: bool = False
         self._sl_space = None
+        #: 正在跑的「重生成默认 albedo」子进程（同时只许一个）
+        self._albedo_proc: QProcess | None = None
         self._lc_selected: int = -1
         self._lc_table_updating: bool = False
         self._props_changed_suppressed: int = 0
@@ -5998,6 +6020,37 @@ class ScenePropertyPanel(QScrollArea):
         self._sl_status.setWordWrap(True)
         lay.addWidget(self._sl_status)
 
+        # ---- albedo 贴图（灯乘的反照率）----
+        #
+        # 灯不是加在原画上的，是乘在**这张图**上再加。它由烘焙器产出（默认 =
+        # 原画 ÷ S_day），**作者可以直接用画图软件改它**——改完标 authored，
+        # 重烘不会覆盖。这里只做三件事：说清当前是哪一种、能一键退回默认、
+        # 能在画布上直接看这张图（比在 F2 里切调试视图快得多）。
+        self._sl_albedo_status = QLabel("")
+        self._sl_albedo_status.setWordWrap(True)
+        self._sl_albedo_status.setToolTip(
+            "lighting/<背景基名>/albedo.png —— 运行时把灯乘在它上面。\n"
+            "全时段共用主背景那一张（材质不随时段变，夜里灯照到墙上要显出墙本来的颜色）。\n"
+            "要手改：直接用画图软件改这个文件，然后把 geometry.json 的 "
+            "albedo_map.authored 置 true，重烘就不会覆盖它。")
+        lay.addWidget(self._sl_albedo_status)
+        arow = QHBoxLayout()
+        self._sl_albedo_view = QCheckBox("画布底图看 albedo")
+        self._sl_albedo_view.setToolTip(
+            "把画布底图临时换成 albedo 贴图（只是看，不改任何数据）。\n"
+            "判据：同一种材质在屋檐阴影里与在开阔处应当是同一个颜色。")
+        self._sl_albedo_view.toggled.connect(self._on_albedo_view_toggled)
+        arow.addWidget(self._sl_albedo_view)
+        self._sl_albedo_regen = QPushButton("重生成默认 albedo")
+        self._sl_albedo_regen.setToolTip(
+            "跑 scene_fields --albedo-only，用当前主背景重新反解一张默认 albedo。\n"
+            "⚠ 若这张是作者手改的，默认会被跳过并保留；要真的覆盖手改内容，"
+            "按住不放的那条路是命令行加 --force-albedo。")
+        self._sl_albedo_regen.clicked.connect(self._on_albedo_regen)
+        arow.addWidget(self._sl_albedo_regen)
+        arow.addStretch(1)
+        lay.addLayout(arow)
+
         self._sl_table = QTableWidget(0, 5)
         self._sl_table.setHorizontalHeaderLabels(["id", "类型", "启用", "投影", "强度"])
         hh = self._sl_table.horizontalHeader()
@@ -7017,6 +7070,154 @@ class ScenePropertyPanel(QScrollArea):
         if issues:
             head += "<br>" + "<br>".join(f"• {t}" for t in issues[:6])
         self._sl_status.setText(head)
+        self._sync_albedo_status()
+
+    # ------------------------------------------------------------ albedo 贴图
+    #
+    # 运行时的灯乘在 `lighting/<背景基名>/albedo.png` 上（不是乘在原画上）。
+    # 这张图默认由烘焙器反解（原画 ÷ S_day），**作者可以手改**——手改过的标
+    # `albedo_map.authored`，重烘不覆盖。面板这一小块只负责让作者知道
+    # "现在这张是谁的、还新不新鲜"，以及一键退回默认 / 在画布上直接看。
+
+    def _albedo_main_background(self) -> str:
+        """albedo 的来源背景 = 顶层 `backgrounds[0].image`（全时段共用它）。"""
+        sc = self._albedo_scene() or {}
+        bgs = sc.get("backgrounds") or []
+        img = bgs[0].get("image") if bgs and isinstance(bgs[0], dict) else None
+        return img if isinstance(img, str) and img.strip() else "background.png"
+
+    def _albedo_scene(self) -> dict | None:
+        sid = (self._editing_scene_id or "").strip()
+        return self._model.scenes.get(sid) if sid else None
+
+    def _albedo_dir(self) -> Path | None:
+        """主背景那份载荷目录。取不到背景磁盘路径时返回 None（场景还没配背景）。"""
+        sc = self._albedo_scene()
+        if sc is None:
+            return None
+        img_path = _scene_background_disk_path(
+            self._model, (self._editing_scene_id or "").strip(), sc)
+        if not img_path:
+            return None
+        base = self._albedo_main_background().replace("\\", "/").rsplit("/", 1)[-1]
+        key = base[:base.rfind(".")] if base.rfind(".") > 0 else base
+        return img_path.parent / "lighting" / key
+
+    def _sync_albedo_status(self) -> None:
+        d = self._albedo_dir()
+        sid = (self._editing_scene_id or "").strip()
+        cmd = ("sh scripts/py.sh -m tools.character_lighting_lab.scene_fields "
+               f"--scene {sid} --albedo-only")
+        if d is None or not (d / "albedo.png").exists():
+            self._sl_albedo_status.setText(
+                "albedo 贴图：<span style='color:#e06c4a'>没有</span>"
+                "（灯乘不到反照率上，场景光照整份不启用）　跑：<code>" + cmd + "</code>")
+            self._sl_albedo_view.setEnabled(False)
+            return
+        self._sl_albedo_view.setEnabled(True)
+        meta: dict = {}
+        try:
+            meta = json.loads((d / "geometry.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        am = meta.get("albedo_map") or {}
+        src = am.get("from_background") or self._albedo_main_background()
+        who = ("<b>作者手改</b>（重烘不会覆盖）" if am.get("authored")
+               else f"烘的（反解自 {src}）")
+        stale = ""
+        want = am.get("source_sha1")
+        src_p = (d.parent.parent / src) if isinstance(src, str) else None
+        if isinstance(want, str) and want and src_p is not None and src_p.exists():
+            import hashlib as _hl
+            try:
+                got = _hl.sha1(src_p.read_bytes()).hexdigest()[:12]
+            except OSError:
+                got = None
+            if got and got != want:
+                stale = ("　<span style='color:#e06c4a'>⚠ 背景已重画，这张 albedo 还是旧的"
+                         "（灯会乘在过时的反照率上，画面只表现为颜色有点怪）</span>")
+        size_kb = (d / "albedo.png").stat().st_size / 1024
+        self._sl_albedo_status.setText(
+            f"albedo 贴图：{who}　{size_kb:.0f} KB{stale}")
+        # 场景重载会把画布底图贴回原画，勾选状态就与画面对不上了 —— 每次刷新状态
+        # 时重发一次，让"勾着"永远意味着"画布上是 albedo"。
+        if self._sl_albedo_view.isChecked():
+            self.albedo_view_changed.emit(True)
+
+    def _on_albedo_view_toggled(self, on: bool) -> None:
+        """画布底图在「原画 ↔ albedo」之间切。**只是看**，不碰任何数据、不入脏。
+
+        面板不直接摸画布（它连引用都没有，这是这一层刻意的边界）——发信号，
+        由页面那一层落到画布上，与光曲线 overlay 同一条路。
+        """
+        if on and self.albedo_path_for_canvas() is None:
+            self._sl_albedo_view.setChecked(False)
+            return
+        self.albedo_view_changed.emit(bool(on))
+
+    def albedo_path_for_canvas(self) -> Path | None:
+        """页面那一层要贴的那张 albedo（没有就 None）。"""
+        d = self._albedo_dir()
+        if d is None:
+            return None
+        f = d / "albedo.png"
+        return f if f.exists() else None
+
+    def _on_albedo_regen(self) -> None:
+        """重生成默认 albedo（跑 scene_fields --albedo-only）。
+
+        ⚠ 走子进程而不是在编辑器进程里 import 烘焙器：那边拉 numpy/PIL 还要读原尺寸
+        原画，在 UI 线程里跑会把编辑器卡住几秒；而且失败要能原样把 stderr 摆给人看。
+        """
+        sid = (self._editing_scene_id or "").strip()
+        if self._albedo_proc is not None or not sid:
+            return
+        self._sl_albedo_regen.setEnabled(False)
+        self._sl_albedo_regen.setText("重生成中…")
+        proc = QProcess(self)
+        proc.setWorkingDirectory(str(Path(__file__).resolve().parents[3]))
+        proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        proc.setProgram(sys.executable)
+        proc.setArguments(["-m", "tools.character_lighting_lab.scene_fields",
+                           "--scene", sid, "--albedo-only"])
+        proc.finished.connect(self._on_albedo_regen_finished)
+        proc.errorOccurred.connect(self._on_albedo_regen_error)
+        self._albedo_proc = proc
+        proc.start()
+
+    def _on_albedo_regen_error(self, error) -> None:
+        if error != QProcess.ProcessError.FailedToStart:
+            return          # 起来之后才出的错交给 finished，避免双弹框
+        self._albedo_proc = None
+        self._reset_albedo_button()
+        QMessageBox.warning(
+            self, "重生成失败",
+            "启动不了烘焙器。请在项目根目录手动运行：\n\n"
+            f"sh scripts/py.sh -m tools.character_lighting_lab.scene_fields "
+            f"--scene {(self._editing_scene_id or '').strip()} --albedo-only")
+
+    def _on_albedo_regen_finished(self, code: int, _status) -> None:
+        proc = self._albedo_proc
+        self._albedo_proc = None
+        self._reset_albedo_button()
+        out = ""
+        if proc is not None:
+            try:
+                out = bytes(proc.readAllStandardOutput()).decode("utf-8", "replace")
+            except Exception:      # noqa: BLE001 —— 取日志失败不该盖掉结果
+                out = ""
+        if code != 0:
+            QMessageBox.warning(self, "重生成失败", out[-2000:] or f"退出码 {code}")
+            return
+        self._sync_albedo_status()
+        # 正在看 albedo 的话把画布上那张也换成新的（否则看到的还是旧图，
+        # 而"看着没变"与"根本没重生成"在画面上完全无法区分）
+        if self._sl_albedo_view.isChecked():
+            self.albedo_view_changed.emit(True)
+
+    def _reset_albedo_button(self) -> None:
+        self._sl_albedo_regen.setEnabled(True)
+        self._sl_albedo_regen.setText("重生成默认 albedo")
 
     def _sync_sl_form(self) -> None:
         l = self._sl_current()
@@ -12551,6 +12752,7 @@ class SceneEditor(QWidget):
             self._refresh_npc_patrol_overlay)
         self._props.lightcurve_overlay_refresh_requested.connect(
             self._refresh_lightcurve_overlay)
+        self._props.albedo_view_changed.connect(self._on_albedo_view_changed)
         self._props.npc_patrol_preview_changed.connect(
             self._on_npc_patrol_preview_changed)
         self._props._multi_group_btn.clicked.connect(self._assign_group_to_selection)
@@ -12933,6 +13135,25 @@ class SceneEditor(QWidget):
         rw, _rh = _npc_reference_world_size(self._model)  # 代表性角色宽,使接触椭圆与实际站位一致
         self._canvas.set_lightcurve_overlay(
             pts, selected=self._props._lc_selected, ref_width=rw)
+
+    def _on_albedo_view_changed(self, on: bool) -> None:
+        """把画布底图换成 albedo 贴图 / 换回原画。纯查看：不写模型、不标脏。
+
+        ⚠ 场景重载会重新贴原画（`load_background`），勾选状态就跟画面对不上了——
+        所以重载后由面板的状态刷新再发一次这个信号（见 `_sync_albedo_status` 的调用链）。
+        """
+        if on:
+            p = self._props.albedo_path_for_canvas()
+            if p is not None and self._canvas.swap_background_pixmap(p):
+                return
+            return
+        sid = self._current_scene_id or ""
+        sc = self._model.scenes.get(sid) if sid else None
+        if sc is None:
+            return
+        img_path = _scene_background_disk_path(self._model, sid, sc)
+        if img_path:
+            self._canvas.swap_background_pixmap(img_path)
 
     def _on_lightcurve_committed(self, points: object) -> None:
         # apply_lightcurve_committed 只写面板 pending；capture 出口的统一提交把它

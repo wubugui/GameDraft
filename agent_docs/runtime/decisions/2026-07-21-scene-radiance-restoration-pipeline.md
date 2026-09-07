@@ -21,6 +21,15 @@ last_governed: 2026-08-31
 机制正文在 [scene-lighting](../mechanisms/scene-lighting.md) 与
 [character-lighting](../mechanisms/character-lighting.md),本卡只记"为什么是这样"。
 
+**2026-09-07 的一次细化(不是第四代)**:`albedo` 从 shader 里现除的中间量变成
+**一张烘出来、作者可手改的贴图**(`lighting/<背景基名>/albedo.png`,全时段共用主背景
+那一份)。模型式子没变(`surf = painting + albedo × Σ灯`),默认值与现除逐字同式,
+所以落地那天画面等价;换来的是作者第一次能直接改"这面墙是什么颜色"。
+连带下线:`skyvis.png` 退出运行时(只作烘 albedo 的离线输入)、`lighting.day` 整块删除
+(`day.sunIntensity` 实测 28/28 个场景都是 0,从来没生效过)。
+⚠ **`lighting.sky` 不在下线之列**——`sky.intensity` 是实体影浓度解算的环境照度分母,
+那条路不经 shader,只数 uniform 引用会误判它是死料。
+
 三代路线的差别:
 
 | | ① 离线辐射还原(2026-07) | ② 统一光影(2026-08-20) | ③ 原画 + 加性灯(2026-08-30,**现行**) |

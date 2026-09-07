@@ -19,7 +19,6 @@ const DOC: LightingSyncDoc = {
   sceneId: 'wujin',
   lighting: {
     sky: { intensity: 1, hemi: 0.7 },
-    day: { sunIntensity: 0, sunElevationDeg: 50, sunAzimuthDeg: 180 },
     lights: [],
     display: { ev: 0, tonemap: 'filmic', whiteKelvin: 7000, contrast: 1, saturation: 1, lift: 0, liftKelvin: 10000 },
   },

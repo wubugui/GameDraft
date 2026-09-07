@@ -39,6 +39,17 @@ v2 **默认 false 且不注入 `window.__TAURI__`**（v1 该字段在 `build` �
 JSON 只能写死一种，写错那种在目标平台上 webview 根本不认识这个 scheme，导航失败给你
 一张白页。改由 `src/main.rs` 的 `window_url()` 用 `cfg!` 按平台拼，窗口在 `setup()` 里建。
 
+### 窗口尺寸跟 `game_config.json` 走，不写死
+
+`setup()` 里建窗前先读 exe 旁 `game/assets/data/game_config.json` 的 `windowSize`
+（没有则 `viewport`；读不到回落 1024×768），`inner_size` 按它开、`min_inner_size` 取一半同比例，
+并 `prevent_overflow()`（150% 缩放的 1080p 屏逻辑高只有 720，放不下 768 就缩进工作区）。
+
+编辑器 F5 的预览窗按**同一个字段**开——这样两边是同一份真相。2026-09-06 之前这里写死
+1280×720（16:9），而游戏的逻辑视口是 1024×768（4:3）：编辑器里比例对、exe 里横向拉宽 25%。
+比例本身由前端保证（`src/rendering/Renderer.ts` 的 `layoutMount` 按视口比例做等比信箱），
+壳只负责"首开就是标准比例、放得进屏幕"；用户拖窗/最大化后画面等比放大、余下黑边。
+
 ### `build.frontendDist: "shell"` —— 一个占位空壳
 
 真正的前端由 `scripts/package.mjs` 抽取到 `release/release/game/`，运行时经自定义协议

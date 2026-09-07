@@ -64,6 +64,8 @@ UISTATE = HERE / "ui_state.json"
 #: 导出台账(进 git,要能 review diff)与本次会话的分配(工作态,改得飞快)分开存
 EXPORTS = HERE / "exports.json"
 ASSIGNMENTS = HERE / "assignments.json"
+#: 回收站标记(哪些料被"删"了)。名字里那个删是加引号的:见 ledger.load_trash
+TRASH = HERE / "trash.json"
 BACKUPS = HERE / ".backups"
 
 # src <-> 磁盘的双向转换只有这一个权威,绝不自己拼字符串:
@@ -904,6 +906,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": str(ex)}, 400)
         if p == "/api/assign":
             return self._json(self.do_assign())
+        if p == "/api/trash":
+            return self._json(self.do_trash())
         if p == "/api/import":
             return self._json(self.do_import())
         if p == "/api/render":
@@ -939,6 +943,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def library(self) -> dict:
         edits = load_edits()
+        trash = led.load_trash(TRASH)
+        seen: set[str] = set()
         items = []
         for src, root in SOURCES.items():
             if not root.exists():
@@ -948,6 +954,7 @@ class Handler(BaseHTTPRequestHandler):
                     continue
                 rel = f.relative_to(root).as_posix()
                 key = f"{src}/{rel}"
+                seen.add(key)
                 ed = edits.get(key, {})
                 items.append({
                     "key": key, "source": src, "rel": rel,
@@ -960,8 +967,17 @@ class Handler(BaseHTTPRequestHandler):
                     # 源清单里混着本工具自己的成品(project 源根目录**包含**导出目录),
                     # 不标出来的话「来料出处」会出现自指的环
                     "product": is_product_file(f),
+                    # 回收站里的料照样出现在 items 里(带这个标),过滤在前端做:
+                    # 一次扫描同时喂「素材」和「回收站」两个列表,两边不会各自漂。
+                    "trashed": key in trash,
+                    "trashedAt": (trash.get(key) or {}).get("at", ""),
                 })
-        return {"items": items, "sources": list(SOURCES)}
+        # 标记指向的料现在不在盘上(源目录换了、tmp 被清了、DVC 没 checkout)。
+        # 不悄悄丢掉这条标记 —— 料哪天回来了它还生效,不报出来就成了"看不见却在
+        # 起作用"的静默态,和悬空分配是同一类坑。
+        orphans = [{"key": k, "at": (v or {}).get("at", "")}
+                   for k, v in sorted(trash.items()) if k not in seen]
+        return {"items": items, "sources": list(SOURCES), "trashOrphans": orphans}
 
     def do_assign(self) -> dict:
         """给 key 分配/取消分配一份料。key 必须来自实时扫描的清单,不接受手写。"""
@@ -1006,6 +1022,51 @@ class Handler(BaseHTTPRequestHandler):
         assignments[key] = rec
         led.save_assignments(ASSIGNMENTS, assignments)
         return {"ok": True, "assignments": assignments}
+
+    def do_trash(self) -> dict:
+        """把料收进回收站 / 放回来。**只动标记,一个文件都不碰。**
+
+        入站方向有两道闸:
+
+        * 料必须是实时扫出来的那份(和分配同一条规矩,不接受手写 key);
+        * **正被分配着的料不许收** —— 收进回收站却照样跟着这次导出走,就是"界面上
+          看不见、导出时仍在生效"的静默态。要收先取消分配,让它在界面上说清楚。
+
+        出站(恢复)不校验任何东西:陈年标记指向的料早就不在盘上也照样能撤,
+        撤一个不存在的标记没有任何坏处,拦住它反而会留下永远清不掉的残留。
+        """
+        req = json.loads(self._body().decode("utf-8") or "{}")
+        raw = req.get("keys", req.get("key"))
+        keys = [raw] if isinstance(raw, str) else raw
+        if not isinstance(keys, list) or not keys:
+            return {"ok": False, "error": "没给素材 key"}
+        keys = [str(k) for k in keys]
+        want = bool(req.get("trashed", True))
+        trash = led.load_trash(TRASH)
+
+        if not want:
+            for k in keys:
+                trash.pop(k, None)
+            led.save_trash(TRASH, trash)
+            return {"ok": True, "trash": trash, "restored": keys}
+
+        for k in keys:
+            path = source_path(k)
+            if path is None or not path.is_file():
+                return {"ok": False, "error": f"找不到这份料: {k}"}
+        assignments = led.load_assignments(ASSIGNMENTS)
+        busy = sorted(key for key, asn in assignments.items()
+                      if (asn or {}).get("sourceKey") in set(keys))
+        if busy:
+            return {"ok": False,
+                    "error": "这份料还分配给了 " + "、".join(busy)
+                             + ";先取消分配再收进回收站"}
+
+        at = time.strftime("%Y-%m-%dT%H:%M:%S")
+        for k in keys:
+            trash[k] = {"at": at}
+        led.save_trash(TRASH, trash)
+        return {"ok": True, "trash": trash, "trashed": keys}
 
     def do_import(self) -> dict:
         name = urllib.parse.unquote(self.headers.get("X-Filename") or "")

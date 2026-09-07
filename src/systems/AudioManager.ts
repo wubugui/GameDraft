@@ -127,11 +127,11 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         voice?: Record<string, { src: string }>;
         systemSfx?: Record<string, string>;
       }>(TEXT_URLS.audioConfig);
-      const resolveSrc = (obj: Record<string, { src: string; volume?: number }>) => {
-        const out: Record<string, { src: string; volume?: number }> = {};
+      const resolveSrc = (obj: Record<string, { src: string; volume?: number; spatial?: unknown }>) => {
+        const out: Record<string, AudioEntry> = {};
         for (const [k, v] of Object.entries(obj)) {
           const volume = typeof v.volume === 'number' ? v.volume : undefined;
-          out[k] = { src: resolveAssetPath(v.src), volume };
+          out[k] = { src: resolveAssetPath(v.src), volume, spatial: normalizeSpatial(v.spatial) };
         }
         return out;
       };

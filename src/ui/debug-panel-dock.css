@@ -1,20 +1,7 @@
-/* 调试侧栏：DOM 层，与 Canvas 并列于 #app-shell */
-
-#app-shell {
-  display: flex;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
-#game-mount {
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 0;
-  position: relative;
-  overflow: hidden;
-}
+/* 调试侧栏：DOM 层，与游戏舞台并列于 #app-shell。
+ * ⚠ #app-shell / #game-stage / #game-mount 的尺寸规则**只**住在 index.html 里，这里不许再写：
+ *   2026-09-06 之前这里给 #game-mount 写了 flex:1 1 auto，把画面盒横向撑满窗口，
+ *   4:3 的画在 1280×720 的 exe 窗里被拉成 16:9（这份 CSS 随 DebugPanelUI 进了发行包）。 */
 
 #debug-dock {
   flex: 0 0 0;
@@ -27,7 +14,7 @@
   box-sizing: border-box;
   background: #0d0d14;
   color: #ccd;
-  border-left: 1px solid #334466;
+  border-left: 0 solid #334466;
   font-family: system-ui, 'Segoe UI', sans-serif;
   font-size: 0.875rem;
   line-height: 1.4;
@@ -38,6 +25,7 @@
 }
 
 #debug-dock.is-open {
+  border-left-width: 1px;
   flex: 0 0 clamp(17.5rem, 32vw, 27.5rem);
   width: clamp(17.5rem, 32vw, 27.5rem);
   min-width: clamp(17.5rem, 32vw, 27.5rem);

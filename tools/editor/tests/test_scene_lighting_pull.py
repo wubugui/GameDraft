@@ -28,7 +28,6 @@ def _scene() -> dict:
         "worldHeight": 2251.2,
         "lighting": {
             "sky": {"intensity": 0.05, "hemi": 0.85},
-            "day": {"sunIntensity": 0.0, "sunElevationDeg": 50.0, "sunAzimuthDeg": 180.0},
             "lights": [{"id": "old_1", "kind": "point", "intensity": 1.0, "pos": [0, 0, 0]}],
             "display": {"ev": 0.0, "tonemap": "filmic"},
             "fog": {"sigma": 0.25},
@@ -38,7 +37,6 @@ def _scene() -> dict:
 
 RUNTIME_LIGHTING = {
     "sky": {"intensity": 0.09, "hemi": 0.7},
-    "day": {"sunIntensity": 0.0, "sunElevationDeg": 50.0, "sunAzimuthDeg": 180.0},
     "lights": [
         {"id": "lamp_1", "kind": "point", "intensity": 2.5, "pos": [1.0, 2.0, 3.0]},
         {"id": "lamp_2", "kind": "spot", "intensity": 4.0, "pos": [4.0, 5.0, 6.0]},

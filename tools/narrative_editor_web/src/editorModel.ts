@@ -301,16 +301,20 @@ export function setStateEditorPosition(state: NarrativeStateNodeDef, x: number, 
   };
 }
 
-export function createState(graph: NarrativeGraphDef, data?: NarrativeGraphsFileDef): string {
+/** 新建对象的画布落点（meta.editor / element.x,y 语义的坐标，已是该对象所在坐标系）。 */
+export type EditorPlacement = { x: number; y: number };
+
+export function createState(graph: NarrativeGraphDef, data?: NarrativeGraphsFileDef, placement?: EditorPlacement): string {
   // data 可选只为兼容无文档上下文的调用；有文档时必须传，否则避不开状态墓碑（见 tombstoneStateIds）。
   const id = uniqueId('state', [
     ...Object.keys(graph.states ?? {}),
     ...tombstoneStateIds(data, String(graph.id ?? '')),
   ]);
   // 不播 label=id（显示名回退到 id；磁盘 182 个状态 0 个 label==id——默认键注入是字节噪音）
+  // placement 由调用方按当前视口算好（见 canvas/viewportPlacement.ts）；缺省值只给无画布上下文的调用兜底。
   graph.states[id] = {
     id,
-    meta: { editor: { x: 120, y: 260 } },
+    meta: { editor: { x: Math.round(placement?.x ?? 120), y: Math.round(placement?.y ?? 260) } },
   };
   if (!graph.initialState) graph.initialState = id;
   return id;
@@ -391,6 +395,7 @@ export function createElement(comp: NarrativeCompositionDef, kind: ElementKind, 
           transitions: [],
         };
   }
+  // 上面按 kind 写死的 x,y 只是无画布上下文时的兜底；编辑器创建后会按当前视口改写（见 canvas/viewportPlacement.ts）。
   elements.push(element);
   return element;
 }

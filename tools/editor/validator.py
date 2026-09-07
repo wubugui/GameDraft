@@ -1032,7 +1032,7 @@ def validate(model: ProjectModel) -> list[Issue]:
             if not isinstance(lit, dict):
                 issues.append(Issue("error", "scene", sid, "lighting 须为对象"))
             else:
-                for key in ("sky", "day", "display"):
+                for key in ("sky", "display"):
                     if not isinstance(lit.get(key), dict):
                         issues.append(Issue(
                             "error", "scene", sid, f"lighting.{key} 缺失或不是对象"))
@@ -1048,14 +1048,16 @@ def validate(model: ProjectModel) -> list[Issue]:
                         "warning", "scene", sid,
                         "配了 lighting 但没有 depthConfig —— 统一光影依赖深度场，运行时不会启用",
                     ))
-                # day.hemi 手填几乎必错：它是原画自己的遮蔽响应，由烘焙拟合
-                day = lit.get("day")
-                if isinstance(day, dict) and "hemi" in day:
+                # lighting.day 整块 2026-09-07 下线：它描述的是"原画自带的自然光"，
+                # 唯一用途是把 albedo 从原画里反解出来，而 albedo 现在是烘出来的贴图
+                # （lighting/<背景基名>/albedo.png），那个除数整段搬去了离线端。
+                # 留在数据里没有任何消费者，只会让人以为改它能影响画面。
+                if "day" in lit:
                     issues.append(Issue(
                         "warning", "scene", sid,
-                        "lighting.day.hemi 是手填的；它是**原画自己的遮蔽响应**，"
-                        "应交给烘焙期拟合（删掉这个键即可）。填错会让画里的遮蔽与夜里的"
-                        "遮蔽叠加，角落黑两遍、地面却几乎没变暗",
+                        "lighting.day 已下线（2026-09-07）——它是 albedo 反解的除数，"
+                        "而 albedo 现在是烘出来的贴图。这个键运行时零消费，删掉即可；"
+                        "要改反照率请改 lighting/<背景基名>/albedo.png",
                     ))
                 # 阴影 march 的偏置与厚度窗(**wu**)。这两个曾经写死在 shader 的
                 # uniform 初值里且没有写入方，F2 与场景 JSON 都够不着；现在能写了，
@@ -1357,7 +1359,7 @@ _CLOCK_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 #: 几何场载荷代次。改产物布局要同步
 #: `character_lighting_lab/scene_fields.py#PAYLOAD_VERSION` 与
 #: `SceneLightingSystem.LIGHTING_GEOMETRY_VERSION`——三处必须一致，否则运行时整包忽略。
-_LIGHTING_GEOMETRY_VERSION = 3   # v3(2026-09-01):新增 skyao_probe.bin —— 每格 4 个 f32 的天穹遮蔽矩,角色按任意法线求值。旧的 skyvis_grid.bin 降为它的派生标量。
+_LIGHTING_GEOMETRY_VERSION = 4   # v4(2026-09-07):新增 albedo.png(灯乘的反照率贴图,作者可手改);skyvis.png 退出运行时,只作它的离线输入。
 
 
 def _shadow_bias_issues(sb: object) -> list[str]:
@@ -1476,10 +1478,46 @@ def _lighting_geometry_issues(sid: str) -> list[tuple[str, str]]:
                         f"{rel} 几何场载荷代次 {ver} ≠ 运行时认的 {_LIGHTING_GEOMETRY_VERSION}，"
                         f"整包会被忽略"))
 
-        for name in ("normal.png", "skyvis.png", "skyao_probe.bin",
+        for name in ("normal.png", "albedo.png", "skyvis.png", "skyao_probe.bin",
                      "skyvis_grid.bin", "gi_hitmap.bin"):
             if not (d / name).exists():
                 out.append(("error", f"{rel}/{name} 缺失"))
+
+        # ---- albedo 贴图:灯乘的反照率。**作者可以手改它** ----
+        #
+        # 手改过的那张标 authored=true,重烘不覆盖(要 --force-albedo)。于是多出一种
+        # 只有这里抓得住的静默错:**主背景重画了,而手里这张 albedo 还是照旧画反解的**
+        # ——文件在、版本对、运行时照常装,画面上只是"灯照上去颜色有点怪"。
+        # source_sha1 记的是生成它时主背景的哈希,对不上就报。
+        am = meta.get("albedo_map") or {}
+        src_bg = am.get("from_background")
+        want_sha = am.get("source_sha1")
+        if not am:
+            out.append(("error", f"{rel}/geometry.json 缺 albedo_map —— 补烘:"
+                                 f"`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields "
+                                 f"--scene {sid} --albedo-only`"))
+        elif isinstance(src_bg, str) and isinstance(want_sha, str) and want_sha:
+            src_p = scene_rt / src_bg
+            if not src_p.exists():
+                # 背景图本身不见了是**另一条**校验的事（scene 的背景缺失），这里再报一次
+                # 只是噪音；本门唯一能判的"新鲜不新鲜"此时判不了，如实说跳过。
+                out.append(("warning", f"{rel}/albedo_map 的来源图 {src_bg} 不在，"
+                                       f"albedo 新鲜度门本轮跳过"))
+            else:
+                try:
+                    got_sha = _hl.sha1(src_p.read_bytes()).hexdigest()[:12]
+                except OSError as exc:
+                    got_sha = None
+                    out.append(("warning", f"{src_bg} 读不出来（{exc}），albedo 新鲜度门本轮跳过"))
+                if got_sha and got_sha != want_sha:
+                    how = ("--albedo-only --force-albedo`（⚠ 这张是**作者手改**的，"
+                           "重生成会覆盖掉手改内容）" if am.get("authored") else "--albedo-only`")
+                    out.append(("error",
+                                f"{rel}/albedo.png 是从旧的 {src_bg} 反解的"
+                                f"（载荷 {want_sha} vs 现况 {got_sha}）—— 灯会乘在过时的反照率上，"
+                                f"画面只表现为'颜色有点怪'而不报错。重生成："
+                                f"`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields "
+                                f"--scene {sid} {how}"))
 
         # skyao probe:角色的天穹遮蔽体(乘在 GI 上)。字节数对不上 = 运行时按尺寸门
         # 跳过整份 ⇒ **静默降级成不遮蔽**,画面上只是"角色有点太亮",不报任何错。

@@ -234,6 +234,30 @@ def save_assignments(path: Path, data: dict) -> None:
     _atomic_write_json(path, data)
 
 
+def load_trash(path: Path) -> dict:
+    """回收站标记:``{"<source>/<rel>": {"at": "..."}}``。
+
+    **只是标记,从不删文件** —— 素材清单按它过滤、回收站页签按它列,盘上那份原样躺着,
+    随时能恢复。所以这份文件坏了/丢了的后果只有一个:废料重新出现在素材列表里,
+    绝不能因此把工具打不开,读不出来一律退回空。
+    """
+    if not path.exists():
+        return {}
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(doc, dict):
+        return {}
+    # 逐条过滤:手改过/旧版本写的一条坏记录不该把整个 /api/library 打成 500
+    return {k: (v if isinstance(v, dict) else {})
+            for k, v in doc.items() if isinstance(k, str)}
+
+
+def save_trash(path: Path, data: dict) -> None:
+    _atomic_write_json(path, data)
+
+
 def _atomic_write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")

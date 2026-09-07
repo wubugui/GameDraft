@@ -302,36 +302,35 @@ export interface LightDef {
   enabled?: boolean;
 }
 
-/** 天光（半球环境光）。经**烘出来的**天穹可见性场调制。 */
+/**
+ * 「天光」——**名字是历史遗留**。运行时的天光加光项 2026-08-30 就删了，这一块如今
+ * 只剩 `intensity` 一个活消费者：**实体影子浓度自动解算时的环境照度分母**
+ * （`Game.resolveLightEnv` → `entityShadowBinding`，F2 里那条滑条叫"影子环境照度"）。
+ * 别因为"天光已删"就把它当死字段清掉——影子浓度会跟着变。
+ *
+ * `hemi` / `color` / `kelvin` 只剩已停用的统一角色路径（`UnifiedCharacterShader`）在读，
+ * 那条路整条关死（`Game.UNIFIED_CHAR_PATH_ENABLED = false`），留码不删。
+ */
 export interface SkyLightDef {
   kelvin?: number;
   color?: RgbColor;
+  /** ★ 唯一的活语义：实体影浓度解算的环境照度分母。 */
   intensity: number;
-  /** 半球梯度权重 0..1：越大则"朝上面亮、立面暗"越明显。 */
+  /** 半球梯度权重 0..1。⛔ 当前无活消费者（只剩停用的统一角色路径在读）。 */
   hemi: number;
 }
 
 /**
- * 白天参考光 `S_day`——决定"除掉多少白天光"。
- * 与 `S_new` **同式**（天穹可见性 + 定向光），只是取白天的参数。
- * ⚠ 干活的是天穹可见性与投影；除/乘只是最后一步算术。**只用法线朝上项、不做 march
- *   的写法已被否**（那是逐像素调色，画不出遮蔽结构）。
- */
-export interface DayReferenceDef {
-  /**
-   * 原画自己的**遮蔽响应**。缺省 = 用 `lighting/<背景基名>/geometry.json` 里烘焙期拟合出来的值。
-   *
-   * ⚠ **别手填**。填小了 → 画里的遮蔽没除净，夜里的 `sky.hemi` 再加一份，
-   * 遮蔽被算两遍：角落黑得不合理、开阔地却几乎没变暗（症状是"地面还那么亮、
-   * 角落又那么黑"）。实测各场景真实值在 0.00–0.96 之间，差别极大，拍脑袋必错。
-   */
-  hemi?: number;
-  sunIntensity: number;
-  sunElevationDeg: number;
-  sunAzimuthDeg: number;
-}
-
-/**
+ * ⛔ `DayReferenceDef`（`lighting.day`）**2026-09-07 整块下线**，
+ * 类型、数据键与编辑器表单一并删除。
+ *
+ * 它描述的是"原画自带的自然光"，唯一用途是把 albedo 从原画里反解出来
+ * （`S_day = (1-day.hemi) + day.hemi × skyvis + sunIntensity·N·L`）。albedo 现在是
+ * **烘出来的贴图**（`lighting/<背景基名>/albedo.png`），那个除数整段搬去了离线端
+ * （`tools/character_lighting_lab/scene_fields.py` 的 `build_albedo`，`day_hemi` 由
+ * 烘焙期拟合、存在 `geometry.json` 里）。
+ * `sunIntensity` 更是**从来没生效过**——实测 28/28 个场景都填的 0。
+ *
  * 雾：按**消光系数 σ** 定义，不按"最终混合系数"。
  * 这样将来上体积雾时，已调好的浓度/高度/颜色全部继续有效。
  * 本期只实现高度雾（正交相机 ⇒ 积分有闭式解，无需 march）。
@@ -391,7 +390,6 @@ export interface SceneLightingDef {
    */
   _migration?: string;
   sky: SkyLightDef;
-  day: DayReferenceDef;
   lights: LightDef[];
   fog?: FogDef;
   display: DisplayTransformDef;
@@ -566,6 +564,11 @@ export interface SceneData {
   /**
    * 本场景的默认脚步集（`footstep_sets.json` 的集 id）。zone 上的
    * {@link ZoneDef.footstepSet} 覆盖它；两者都没有 = 本场景不发脚步声。
+   *
+   * **必须有场景级默认**：背尸上山那六个场景 `zones` 全为空，只按区配等于在目标关卡里没有。
+   */
+  footstepSet?: string;
+  /**
    * 声学空间 id，取自 `assets/data/acoustic_spaces.json` 的 `spaces` 键。
    * 缺省＝没有空间，空间音退化为纯干声。
    *
@@ -577,11 +580,9 @@ export interface SceneData {
   /**
    * 听者绑到谁身上。缺省＝玩家。
    *
-   * **必须有场景级默认**：背尸上山那六个场景 `zones` 全为空，只按区配等于在目标关卡里没有。
    * 听者不动的话「实时回音」没有意义 —— 走到崖边和站在路中间该是两个声音。
    * `fixed` ＝ 钉在声学空间作者摆的那个点上（旧行为）。
    */
-  footstepSet?: string;
   acousticListener?: {
     mode: 'player' | 'camera' | 'entity' | 'fixed';
     /** mode='entity' 时的目标 NPC/实体 id */
@@ -3224,9 +3225,16 @@ export interface GameConfig {
   initialCutsceneDoneFlag?: string;
   /** 开局写入 FlagStore，用于跳过开场演出时补齐地图等依赖的标记 */
   startupFlags?: Record<string, boolean | number>;
-  /** 逻辑视口大小，所有游戏元素限制在此分辨率内，渲染结果缩放铺满窗口 */
+  /**
+   * 逻辑视口大小（1024×768，4:3）：所有游戏元素在此分辨率内布局与渲染，`app.screen` 恒为它。
+   * 显示时**只许等比缩放**（`Renderer.layoutMount`：宿主可用区里最大的同比例盒，余下黑边）。
+   */
   viewport?: { width: number; height: number };
-  /** 游戏窗口大小（容器 CSS 尺寸），不影响视口逻辑分辨率 */
+  /**
+   * 宿主窗口的期望尺寸：编辑器 F5 按它开预览窗，exe 启动时读它开 Tauri 窗
+   * （`src-tauri/src/main.rs`）。不影响逻辑分辨率，也**不**决定画面盒尺寸——
+   * 窗口被拖大/最大化后画面按视口比例等比放大。通常与 viewport 相同。
+   */
   windowSize?: { width: number; height: number };
   /**
    * 玩家化身：动画资源与状态映射（见 PlayerAvatarConfig）。

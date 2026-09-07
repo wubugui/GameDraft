@@ -2,6 +2,9 @@ import { BufferImageSource, type Shader, type TextureSource, type UniformGroup }
 import type { IGameSystem, GameContext, SceneLightingDef } from '../data/types';
 import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 import { depthLog, depthError } from './depthLog';
+import {
+  fetchPayloadBlob, fetchPayloadBytes, probeAtlasFileForMode, probeModeOf,
+} from './lightingPayloadFiles';
 import { sampleGroundField, type GroundDepthField } from '../utils/groundDepthField';
 import type {
   CharShadingParams,
@@ -460,8 +463,8 @@ export class CharacterLightingSystem implements IGameSystem {
     const task = (async (): Promise<boolean> => {
       try {
         const [rad, emit] = await Promise.all([
-          fetch(`${base}/vol_rad.bin`).then((r) => r.arrayBuffer()),
-          fetch(`${base}/vol_emit.bin`).then((r) => r.arrayBuffer()),
+          fetchPayloadBytes(`${base}/vol_rad.bin`),
+          fetchPayloadBytes(`${base}/vol_emit.bin`),
         ]);
         // 旧时间线不写新状态:拉取期间切了场景/重载了载荷 → 整批丢弃
         if (myEpoch !== this.epoch) return false;
@@ -493,11 +496,15 @@ export class CharacterLightingSystem implements IGameSystem {
     depthLog(T, this.loadedSceneId ?? '?', ': RT 体素卷已卸');
   }
 
-  /** cache mode → probe 图集规格(v3 固化:L1=4列 / SH=shK 列(L2=9/L4=25) / BIN=binOb² 方向)。 */
+  /**
+   * cache mode → probe 图集规格(v3 固化:L1=4列 / SH=shK 列(L2=9/L4=25) / BIN=binOb² 方向)。
+   * 文件名一律查 `lightingPayloadFiles.ts` 的表——打包清单按同一张表抽取,别在这里写死。
+   */
   private static probeCfg(mode: number, shK = 9, binOb = 8): { col: number; file: string } {
-    if (mode === 1) return { col: 4, file: 'atlas_l1.bin' };
-    if (mode === 2) return { col: shK, file: 'atlas_l2.bin' };  // 'l2' 是槽名,列数按 probes.sh_k
-    return { col: binOb * binOb, file: 'atlas_bin.bin' };       // 3 及缺省 = 八面体(正式档)
+    const file = probeAtlasFileForMode(mode);
+    if (mode === 1) return { col: 4, file };
+    if (mode === 2) return { col: shK, file };          // 'l2' 是槽名,列数按 probes.sh_k
+    return { col: binOb * binOb, file };                // 3 及缺省 = 八面体(正式档)
   }
 
   /** 载荷的球谐系数数:老载荷没记 sh_k 就是 9(L2)。 */
@@ -587,7 +594,7 @@ export class CharacterLightingSystem implements IGameSystem {
                                                  CharacterLightingSystem.binObOf(meta));
     const task = (async (): Promise<boolean> => {
       try {
-        const buf = await fetch(`${base}/${cfg.file}`).then((r) => r.arrayBuffer());
+        const buf = await fetchPayloadBytes(`${base}/${cfg.file}`);
         if (myEpoch !== this.epoch) return false;   // 旧时间线不写新状态
         this.swapProbeAtlas(m, buf, rows);
         depthLog(T, sceneId, `: probe 图集切至 mode ${m} (${(buf.byteLength / 1048576).toFixed(2)}MB)`);
@@ -708,18 +715,23 @@ export class CharacterLightingSystem implements IGameSystem {
       // probe 图集**按需加载**:进场景只拉当前 mode 那一种(游戏默认 L2=9列);另两种 F2 切档
       // 才由 ensureProbeAtlas 现拉。省掉白加载(尤其 BIN 那份;固化后 L2 仅 ~0.12MB)。
       const shMode0 = (meta.shading as { mode?: number } | undefined)?.mode;
-      // 载荷 shading.mode 说了算(1=L1 Geomerics / 2=SH 线性 / 3=八面体);缺省八面体(2026-09-02 正式档)
-      const targetProbeMode = shMode0 === 1 || shMode0 === 2 ? shMode0 : 3;
+      // 载荷 shading.mode 说了算(1=L1 Geomerics / 2=SH 线性 / 3=八面体);缺省八面体(2026-09-02 正式档)。
+      // 判定在 lightingPayloadFiles.probeModeOf —— 打包清单按同一条规则决定抽哪张图集。
+      const targetProbeMode = probeModeOf(shMode0);
       const probeCfg0 = CharacterLightingSystem.probeCfg(targetProbeMode,
                                                           CharacterLightingSystem.shKOf(meta),
                                                           CharacterLightingSystem.binObOf(meta));
       // skyao probe 的网格与坐标系在 **geometry.json**(几何场那侧产的),
       // 不在 lighting.json 里 —— 两个文件同住一个目录,但由两条烘焙路径分别产出。
       // 缺文件不算错(老载荷没有这一份):skyao 静默降级为「不遮蔽」。
+      //
+      // ⚠ 前三个走 fetchPayloadBytes/Blob:缺文件**必须抛**。以前是裸 `r.arrayBuffer()`,
+      //   发行包漏抽 atlas_bin.bin 时 404 正文被当图集吃进去——偶数字节补零成全黑,
+      //   奇数字节 Uint16Array 抛 RangeError 整份作废,28 个场景就这么黑了一轮而零报错。
       const [atlasBuf, valid, groundBuf, geomRes, skyaoRes] = await Promise.all([
-        fetch(`${base}/${probeCfg0.file}`).then((r) => r.arrayBuffer()),
-        fetch(`${base}/probes_valid.bin`).then((r) => r.arrayBuffer()),
-        fetch(`${base}/ground_d.png`).then((r) => r.blob()),
+        fetchPayloadBytes(`${base}/${probeCfg0.file}`),
+        fetchPayloadBytes(`${base}/probes_valid.bin`),
+        fetchPayloadBlob(`${base}/ground_d.png`),
         fetch(`${base}/geometry.json`).then((r) => (r.ok ? r.json() : null)).catch(() => null),
         fetch(`${base}/skyao_probe.bin`).then((r) => (r.ok ? r.arrayBuffer() : null))
           .catch(() => null),

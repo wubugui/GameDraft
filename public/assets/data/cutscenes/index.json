@@ -4108,7 +4108,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "今黑了三更，去牛头梁梁上背个死人去义庄。",
+        "text": "今黑了三更，去牛头凼背个尸体去义庄。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
@@ -4168,7 +4168,7 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "在梁梁上哪个凼？",
+        "text": "在牛头凼哪点也？",
         "scriptedNpcId": "player",
         "portrait": {
           "emotion": "smirk"
@@ -4177,20 +4177,22 @@
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "从跑马梁上去，到了牛头凼你去找有亮的地方，人就在那点。",
+        "text": "从跑马梁上去，到了牛头凼你去找有亮的地方，人就在那点等到起的。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "三更准时起尸，不能早也不能晚。",
-        "scriptedNpcId": "崖墓任务发布者"
+        "text": "三更准时走，不能早也不能晚。",
+        "scriptedNpcId": "崖墓任务发布者",
+        "disabled": true
       },
       {
         "kind": "present",
         "type": "showDialogue",
-        "text": "背起来就走，途中莫回头，莫灭灯，有人喊你莫张视。",
-        "scriptedNpcId": "崖墓任务发布者"
+        "text": "途中莫回头，莫灭灯，有人喊你莫张视。",
+        "scriptedNpcId": "崖墓任务发布者",
+        "disabled": true
       },
       {
         "kind": "present",
@@ -4320,6 +4322,12 @@
         "kind": "present",
         "type": "showDialogue",
         "text": "到了义庄有人晓得给你另外一半。",
+        "scriptedNpcId": "崖墓任务发布者"
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "text": "三更准时走，不能早也不能晚。",
         "scriptedNpcId": "崖墓任务发布者"
       },
       {

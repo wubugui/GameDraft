@@ -66,11 +66,20 @@ npm run manifest:dev
 npm run package:dev        # 调试设施齐全、不压缩
 npm run package:release    # 剥调试、裁素材、音频转 ogg（要 ffmpeg）
 
-# 验收产物
+# 全场景抓取扫描：无头把每个场景真跑一遍，运行时实际请求的每个文件反向核对清单
+#   （唯一能证明"清单没漏"的门；release.mjs 默认跑，报告 .build/sweep-<档>.json）
+npm run verify:sweep          # 对发行清单
+npm run verify:sweep:dev      # 对 dev 清单
+node scripts/scene_sweep.mjs --scenes 城门口,雾津街头   # 只扫几个（会开一个真窗口，跑完自动关）
+
+# 验收产物（含开发树→产物的光照载荷平价、上一次扫描报告按清单哈希对账）
 npm run verify:dev
 npm run verify:release
 
-# 真跑一遍找漏抽（静态检查证明不了"能玩"）
+# 一条龙：package:release → verify:sweep → verify:release
+npm run build
+
+# 交互才拉的资源（对话立绘、小游戏贴图）扫描盖不到，真玩一段找漏抽：
 node scripts/verify_build.mjs --target dev --serve
 #   浏览器打开 http://127.0.0.1:5199/ 走一段流程
 #   随时 GET /__verify/404 看当前漏了什么
@@ -79,6 +88,15 @@ node scripts/verify_build.mjs --target dev --serve
 # 出 exe（需要 Rust 工具链）
 npm run tauri:build
 ```
+
+## 光照载荷：运行时读什么只在一处定义
+
+`src/core/lightingPayloadFiles.ts` 是真相源（mode→probe 图集、必读/几何/可选/调试专用四组文件名）。
+`asset_manifest.py` 的展开器按每份 `lighting.json` 自己的 `shading.mode` 抽对应那张图集，
+规则文件只登记 `lighting.json` / `geometry.json` 两个入口。Python 与 `scripts/lib/build_helpers.mjs`
+各持一份镜像，`tests/test_asset_manifest.py::RuntimeContractTests` 与
+`src/core/lightingPayloadFiles.test.ts` 逐字比对——改运行时那份，测试会告诉你另外两份要跟。
+2026-09-05 之前这里逐个文件写死 glob，运行时切档后没跟上，发行包 28 个场景角色照明整份失效。
 
 ## 外部工具
 
@@ -96,6 +114,7 @@ npm run tauri:build
 tools/build/
   asset_manifest.py     抽取清单生成器（只读；反向能力复用素材审计的引用语义）
   manifest_rules.json   显式抽取规则（每条都注明了 src 里的出处）
+  scene_sweep.py        全场景抓取扫描（QtWebEngine 无头驱动 + 请求拦截 + 清单核对；编排在 scripts/scene_sweep.mjs）
   tests/                回归测试，含"生成清单不动工程里任何文件"这条
 scripts/
   package.mjs           装配器：清单 → staging → 转码 → 报告

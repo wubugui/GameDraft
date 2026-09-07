@@ -26,6 +26,12 @@
       ]
     },
     {
+      "glob": "index.html",
+      "docs": [
+        "display-viewport-and-window"
+      ]
+    },
+    {
       "glob": "public/assets/animations/**",
       "docs": [
         "asset-pipeline-norms"
@@ -297,6 +303,12 @@
       ]
     },
     {
+      "glob": "scripts/scene_sweep.mjs",
+      "docs": [
+        "build-pipeline"
+      ]
+    },
+    {
       "glob": "scripts/verify_build.mjs",
       "docs": [
         "build-pipeline"
@@ -312,6 +324,12 @@
       "glob": "src-tauri/src/gamedata.rs",
       "docs": [
         "runtime-persistence"
+      ]
+    },
+    {
+      "glob": "src-tauri/src/main.rs",
+      "docs": [
+        "display-viewport-and-window"
       ]
     },
     {
@@ -441,6 +459,13 @@
       ]
     },
     {
+      "glob": "src/core/lightingPayloadFiles.ts",
+      "docs": [
+        "build-pipeline",
+        "scene-lighting"
+      ]
+    },
+    {
       "glob": "src/core/narrativeGraphValidation.ts",
       "docs": [
         "private-narrative-signal"
@@ -556,6 +581,7 @@
     {
       "glob": "src/rendering/Renderer.ts",
       "docs": [
+        "display-viewport-and-window",
         "scene-onenter-reveal-timing"
       ]
     },
@@ -598,6 +624,12 @@
       "glob": "src/rendering/spriteNormalAtlas.ts",
       "docs": [
         "character-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/viewportFit.ts",
+      "docs": [
+        "display-viewport-and-window"
       ]
     },
     {
@@ -779,6 +811,7 @@
     {
       "glob": "src/ui/TouchMobileControls.ts",
       "docs": [
+        "display-viewport-and-window",
         "ui-component-layer"
       ]
     },
@@ -805,6 +838,12 @@
       "docs": [
         "ui-component-layer",
         "ui-panel-skin"
+      ]
+    },
+    {
+      "glob": "src/ui/debug-panel-dock.css",
+      "docs": [
+        "display-viewport-and-window"
       ]
     },
     {

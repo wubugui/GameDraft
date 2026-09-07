@@ -247,6 +247,12 @@ class TestLightingGeometryPayloadValidation:
         dst = tmp_path / 'public' / 'resources' / 'runtime' / 'scenes' / 'X' / 'lighting' / key
         dst.parent.mkdir(parents=True)
         shutil.copytree(src, dst)
+        # 背景图也要拷:albedo 的新鲜度门要拿它算哈希(albedo_map.source_sha1)。
+        # 不拷的话那道门判不了、只能出一条"来源图不在"的 warning —— 那是这个
+        # fixture 不真实，不是被测行为。
+        real_bg = real / 'teahouse' / (key + '.png')
+        if real_bg.exists():
+            shutil.copy2(real_bg, dst.parent.parent / (key + '.png'))
         sj = tmp_path / 'public' / 'assets' / 'scenes'
         sj.mkdir(parents=True)
         (sj / 'X.json').write_text(_json.dumps(

@@ -9,11 +9,18 @@ import {
   applyEdgeChanges,
   applyNodeChanges,
   useReactFlow,
+  useStoreApi,
   type Connection,
   type OnConnect,
   type OnEdgesChange,
   type OnNodesChange,
 } from '@xyflow/react';
+import {
+  placeElement,
+  placeInlineSubgraphState,
+  placeTopLevelState,
+  viewportCenterInFlow,
+} from './canvas/viewportPlacement';
 import {
   applyFocusIssueResult,
   issueBelongsToActiveGraph,
@@ -1289,6 +1296,14 @@ function NarrativeEditorInner() {
     }
   }, [composition, graph, projection]);
 
+  // 新建节点落在当前视口中央：从 xyflow store 现取容器尺寸 + 平移缩放，不订阅（只在点击瞬间读一次，
+  // 不因平移/缩放重渲染）。画布尚未测量时返回 null，创建函数退回写死的默认落点。
+  const flowStore = useStoreApi();
+  const viewportCenter = useCallback(() => {
+    const { width, height, transform } = flowStore.getState();
+    return viewportCenterInFlow(width, height, transform);
+  }, [flowStore]);
+
   const addState = useCallback(() => {
     let newId = '';
     let inlineElementId = '';
@@ -1299,11 +1314,14 @@ function NarrativeEditorInner() {
       const element = composition?.elements?.find((el) => el.id === eid);
       if (element && isSubgraphElement(element) && expandedElementIds.includes(eid)) inlineElementId = eid;
     }
+    const center = viewportCenter();
     if (inlineElementId && graphRef === 'main') {
       updateData((next) => {
         const comp = getComposition(next, composition?.id ?? compositionId);
         const element = comp?.elements?.find((el) => el.id === inlineElementId);
-        if (element?.graph) newId = createState(element.graph, next);
+        if (!element?.graph) return;
+        const placement = center ? placeInlineSubgraphState(center, element, element.graph) : undefined;
+        newId = createState(element.graph, next, placement);
       });
       if (newId) {
         setSelectedId(inlineSubgraphStateId(inlineElementId, newId));
@@ -1311,12 +1329,14 @@ function NarrativeEditorInner() {
       }
       return;
     }
-    updateCurrentGraph((g, next) => { newId = createState(g, next); });
+    updateCurrentGraph((g, next) => {
+      newId = createState(g, next, center ? placeTopLevelState(center, g) : undefined);
+    });
     if (newId) {
       setSelectedId(`state:${newId}`);
       setStatus(`已创建状态 ${newId}`);
     }
-  }, [composition, compositionId, expandedElementIds, graphRef, selectedId, updateCurrentGraph, updateData]);
+  }, [composition, compositionId, expandedElementIds, graphRef, selectedId, updateCurrentGraph, updateData, viewportCenter]);
 
   const addCompositionAction = useCallback(() => {
     let compId = '';
@@ -1338,18 +1358,28 @@ function NarrativeEditorInner() {
   const addElementAction = useCallback((kind: ElementKind) => {
     if (!composition || graphRef !== 'main') return;
     let id = '';
+    const center = viewportCenter();
+    const expandsOnCreate = kind === 'wrapperGraph' || kind === 'scenarioSubgraph';
     updateData((next) => {
       const comp = getComposition(next, composition.id);
       if (!comp) return;
-      id = createElement(comp, kind, next).id;
+      const element = createElement(comp, kind, next);
+      id = element.id;
+      if (center) {
+        // 落在当前视口中央；创建即展开的元素按展开后的分组框尺寸居中，否则按折叠节点尺寸。
+        const others = (comp.elements ?? []).filter((el) => el.id !== element.id);
+        const placement = placeElement(center, element, others, expandsOnCreate);
+        element.x = placement.x;
+        element.y = placement.y;
+      }
     });
     if (id) {
       setSelectedId(`element:${id}`);
-      if (kind === 'wrapperGraph' || kind === 'scenarioSubgraph') {
+      if (expandsOnCreate) {
         setExpandedElementIds((ids) => (ids.includes(id) ? ids : [...ids, id]));
       }
     }
-  }, [composition, graphRef, updateData]);
+  }, [composition, graphRef, updateData, viewportCenter]);
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;

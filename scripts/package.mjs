@@ -238,7 +238,19 @@ function viteBuild() {
 async function stage(manifest) {
   step(`装配产物 → ${relative(ROOT, STAGING)}`);
   const gameDir = join(STAGING, 'game');
-  rmSync(STAGING, { recursive: true, force: true });
+  try {
+    rmSync(STAGING, { recursive: true, force: true });
+  } catch (e) {
+    // 目录删不掉几乎只有一种原因：有进程持着里面的目录句柄——Windows 上最常见的是某个
+    // dev 服 / 编辑器 / 静态服务器在 watch 或 cwd 在里面（文件都能改名，目录一个都删不掉，
+    // 就是 watcher 的形状）。vite 的 watch 已排除 release/**（vite.config.ts DEV_WATCH_IGNORED），
+    // 别的占用者要自己找：`python -c "import psutil; ..."` 按 cwd / open_files 扫一遍。
+    throw new Error(
+      `清不掉上一次的产物目录 ${relative(ROOT, STAGING)}：${e.code ?? ''} ${e.message}\n`
+      + '  有进程占着它（常见：cwd 在里面的静态服务器、在 watch 它的 dev 服或编辑器）。'
+      + '关掉那个进程再跑；vite 的 watch 名单已排除 release/**，旧的 dev 服要重启才生效。',
+    );
+  }
   mkdirSync(gameDir, { recursive: true });
 
   // 3a. vite 产物（JS/CSS/index.html）

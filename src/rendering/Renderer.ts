@@ -1,6 +1,7 @@
 import { Application, Container, type Filter } from 'pixi.js';
 import { WorldFilterPipeline, loadFilter } from './filter';
 import { entitySortZ, type EntitySortBand } from './entitySortRule';
+import { containBox } from './viewportFit';
 import { describeError, reportDevError } from '../core/devErrorOverlay';
 import type { AssetManager } from '../core/AssetManager';
 
@@ -30,12 +31,18 @@ export class Renderer {
   private initialized = false;
   /** Application 已 destroy 后为 true，尺寸访问需降级避免异常 */
   private tornDown = false;
-  private mountObserver: ResizeObserver | null = null;
+  /**
+   * 盯的是 **舞台**（`#game-stage`，宿主给游戏的可用区域），不是画面盒 `#game-mount`：
+   * 画面盒的尺寸是本类按舞台算出来的，盯它自己会自激。
+   */
+  private stageObserver: ResizeObserver | null = null;
   /** app.resize() 之后通知（此时 app.screen 已更新），供 Camera 等与画布像素对齐 */
   private afterResizeCallbacks = new Set<() => void>();
 
   private viewportWidth = 0;
   private viewportHeight = 0;
+  /** `game_config.windowSize`：宿主窗口的期望尺寸（编辑器预览窗 / exe 窗按它开）。只记录，不参与布局。 */
+  private preferredWindowSize: { width: number; height: number } | null = null;
 
   constructor() {
     this.app = new Application();
@@ -132,21 +139,51 @@ export class Renderer {
     this.app.stage.addChild(this.uiLayer);
 
     if (mount) {
-      this.mountObserver = new ResizeObserver(() => {
+      // 舞台 = 画面盒的父元素（index.html 的 #game-stage：#app-shell 里除 F2 调试坞之外的全部区域）。
+      // 没有父元素的异常挂载（测试/裸页）退回盯画面盒自己，行为与旧版一致。
+      const stage = mount.parentElement ?? mount;
+      this.stageObserver = new ResizeObserver(() => {
+        if (!this.initialized || this.tornDown) return;
+        if (this.viewportWidth > 0 && this.viewportHeight > 0) {
+          // 固定视口：逻辑分辨率不变（app.screen 不动，UI/相机不需要重算），只按舞台的新尺寸
+          // 重摆等比显示盒。**同步做**，不等 rAF：这只是改两条 CSS，ResizeObserver 回调本就在
+          // 布局之后、绘制之前；推到 rAF 会多画一帧旧尺寸，隐藏页（rAF 停摆）更是永远不更新。
+          // 以前这里直接 return，画面盒跟着 CSS 走 = 非等比拉伸。
+          this.layoutMount();
+          return;
+        }
         requestAnimationFrame(() => {
-          if (this.initialized && !this.tornDown) {
-            if (this.viewportWidth > 0 && this.viewportHeight > 0) {
-              return;
-            }
-            this.app.resize();
-            this.notifyAfterResize();
-          }
+          if (!this.initialized || this.tornDown) return;
+          this.app.resize();
+          this.notifyAfterResize();
         });
       });
-      this.mountObserver.observe(mount);
+      this.stageObserver.observe(stage);
     }
 
     this.initialized = true;
+  }
+
+  /**
+   * 把画面盒 `#game-mount` 摆成舞台里**最大的同比例盒**（固定视口时），或铺满舞台（自由视口时）。
+   *
+   * 这是"逻辑分辨率固定、显示只许等比缩放"这条规则唯一的落地点。canvas 始终 100%×100% 填画面盒，
+   * DOM 覆盖层（触屏 HUD、F2 常驻卡、编辑模式 HUD）都挂在画面盒上，跟着它一起居中、一起缩放。
+   */
+  private layoutMount(): void {
+    const mount = document.getElementById('game-mount');
+    if (!mount) return;
+    if (!(this.viewportWidth > 0 && this.viewportHeight > 0)) {
+      mount.style.width = '100%';
+      mount.style.height = '100%';
+      return;
+    }
+    const stage = mount.parentElement ?? mount;
+    const rect = stage.getBoundingClientRect();
+    const box = containBox(rect.width, rect.height, this.viewportWidth, this.viewportHeight);
+    if (box.scale <= 0) return;   // 舞台还没布局出来（0×0）：等 ResizeObserver 下一拍
+    mount.style.width = `${box.width}px`;
+    mount.style.height = `${box.height}px`;
   }
 
   /**
@@ -169,9 +206,10 @@ export class Renderer {
   }
 
   /**
-   * 设置逻辑视口大小（内部渲染分辨率）。
-   * 游戏在此分辨率下渲染，canvas 通过 CSS 铺满容器 --
-   * 纯粹是渲染完成后的显示变换，不干预 Camera/Stage 等游戏内坐标管线。
+   * 设置逻辑视口大小（内部渲染分辨率，`game_config.viewport`）。
+   * 游戏在此分辨率下渲染；canvas 铺满画面盒 `#game-mount`，而画面盒由 {@link layoutMount}
+   * 按舞台尺寸**等比**摆放（信箱/柱箱）——纯粹是渲染完成后的显示变换，
+   * 不干预 Camera/Stage 等游戏内坐标管线，`app.screen` 恒为这个尺寸。
    * 传 0,0 取消固定视口，恢复跟随容器自动 resize。
    */
   setViewportSize(width: number, height: number): void {
@@ -189,7 +227,9 @@ export class Renderer {
       const canvas = this.app.canvas as HTMLCanvasElement;
       canvas.style.width = '100%';
       canvas.style.height = '100%';
+      this.layoutMount();
     } else {
+      this.layoutMount();   // 画面盒回到 100%×100%
       const mount = document.getElementById('game-mount');
       if (mount) {
         try { setAppResizeTo(this.app, mount); } catch { /* ignore */ }
@@ -208,28 +248,23 @@ export class Renderer {
   }
 
   /**
-   * 设置游戏容器（#game-mount）的 CSS 尺寸，作为"窗口大小"。
-   * 纯 CSS 层面，不影响渲染分辨率或游戏内坐标。
-   * 传 0,0 恢复为填满浏览器窗口。
+   * 记录 `game_config.windowSize`——**宿主窗口**的期望尺寸。
+   *
+   * 它由宿主消费：编辑器 F5 按它开预览窗（`tools/editor/main_window.py`），exe 按它开 Tauri 窗
+   * （`src-tauri/src/main.rs` 启动时读同一份 game_config.json）。前端**不再**据此改画面盒的 CSS：
+   * 画面盒永远由舞台尺寸 + 视口比例算出（{@link layoutMount}），窗口是多大就在里面等比放多大。
+   *
+   * 以前这里把 `#game-mount` 写死成 `windowSize` 像素并 `max-height:100vh` 封顶，配上 F2 调试坞
+   * CSS 的 `flex:1 1 auto`，画面盒实际是"横向撑满窗口、竖向封顶 768"——任何非 4:3 窗口都非等比拉伸。
+   * 传 0,0 = 没配 windowSize。
    */
   setWindowSize(width: number, height: number): void {
-    const mount = document.getElementById('game-mount');
-    if (!mount) return;
-    if (width > 0 && height > 0) {
-      mount.style.width = `${width}px`;
-      mount.style.height = `${height}px`;
-      mount.style.maxWidth = '100vw';
-      mount.style.maxHeight = '100vh';
-    } else {
-      mount.style.width = '100%';
-      mount.style.height = '100%';
-      mount.style.maxWidth = '';
-      mount.style.maxHeight = '';
-    }
-    if (this.initialized && !this.tornDown && !(this.viewportWidth > 0 && this.viewportHeight > 0)) {
-      this.app.resize();
-      this.notifyAfterResize();
-    }
+    this.preferredWindowSize = width > 0 && height > 0 ? { width, height } : null;
+  }
+
+  /** `game_config.windowSize`（宿主窗口期望尺寸）；没配返回 null。 */
+  getPreferredWindowSize(): { width: number; height: number } | null {
+    return this.preferredWindowSize;
   }
 
   /**
@@ -303,9 +338,9 @@ export class Renderer {
     this.initialized = false;
     this.afterResizeCallbacks.clear();
 
-    if (this.mountObserver) {
-      this.mountObserver.disconnect();
-      this.mountObserver = null;
+    if (this.stageObserver) {
+      this.stageObserver.disconnect();
+      this.stageObserver = null;
     }
 
     this.worldFilterPipeline.clear();

@@ -9,11 +9,6 @@
       "intensity": 1.0,
       "hemi": 0.62
     },
-    "day": {
-      "sunIntensity": 0.0,
-      "sunElevationDeg": 50.0,
-      "sunAzimuthDeg": 180.0
-    },
     "lights": [],
     "display": {
       "ev": 0.0,

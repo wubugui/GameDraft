@@ -31,9 +31,23 @@ export interface LightingGeometryMeta {
    */
   scale: { char_wu: number; scene_per_wu: number };
   depth_range: [number, number];
-  /** 烘焙期拟合出的原画遮蔽响应。场景没写 day.hemi 时用它——手填必错。 */
+  /**
+   * 烘焙期拟合出的原画遮蔽响应。**运行时 2026-09-07 起不再读它**——它是离线烘
+   * `albedo.png` 那个除数 `S_day` 的输入，留在 meta 里给烘焙器与校验器看。
+   */
   day_hemi?: number;
   day_hemi_residual_corr?: number;
+  /**
+   * albedo 贴图的身份证（v4 起）。`authored=true` 表示这张是**作者手改的**，
+   * 重烘不会覆盖它；`source_sha1` 是生成它时主背景的哈希，校验器靠它抓
+   * "背景重画了而 albedo 还是旧的"。运行时不判它，只装图。
+   */
+  albedo_map?: {
+    file?: string;
+    from_background?: string;
+    source_sha1?: string;
+    authored?: boolean;
+  };
   /**
    * 烘焙期拟合出的**画内白天大气散射**。不除掉它，远景在夜里会继续发亮，
    * 而"远处一片亮灰"是判定"这是白天"最强的信号之一（实测远/近亮度比 4.32）。
@@ -102,8 +116,12 @@ export const CHARACTER_ALBEDO_REFERENCE = 0.0381;
  * `(a0, a1x, a1y, a1z)`，角色按**任意法线**求值 `V(N)=clamp((a0+a1·N)/cap0(N),0,1)`，
  * 乘在 GI 上。旧的 `skyvis_grid.bin` 降级为它的派生标量 `T(up)`（按法线求值做不到，
  * 竖直面偏高约 50%），只等旧代码改完就删。
+ *
+ * v4（2026-09-07）：新增 `albedo.png` —— 灯乘的反照率贴图（此前是 shader 里现除的
+ * `painting / S_day`）。`skyvis.png` 随之**退出运行时**：它只剩离线端那个除数的输入。
+ * 载荷里同时多了 `albedo_map`（这张图是烘的还是作者手改的、从哪张背景来）。
  */
-export const LIGHTING_GEOMETRY_VERSION = 3;
+export const LIGHTING_GEOMETRY_VERSION = 4;
 
 /**
  * 统一光影系统的场景侧协调者。
@@ -420,10 +438,12 @@ export class SceneLightingSystem {
     }
 
     let normal: Texture;
-    let skyvis: Texture;
+    let albedo: Texture;
     try {
       normal = await assetManager.loadTexture(`${this.bakeBase}/normal.png`);
-      skyvis = await assetManager.loadTexture(`${this.bakeBase}/skyvis.png`);
+      // albedo：灯乘的反照率。**作者可以手改这张图**，所以它跟法线一样是必读项——
+      // 缺了就整份载荷不启用，而不是回落到"现除一个"（那会让手改静默失效）。
+      albedo = await assetManager.loadTexture(`${this.bakeBase}/albedo.png`);
     } catch (e) {
       depthError(T, `${sceneId}: 几何场贴图装载失败`, e);
       return false;
@@ -452,7 +472,7 @@ export class SceneLightingSystem {
 
     const geo: SceneLightingGeometry = {
       normal,
-      skyvis,
+      albedo,
       depth: depthTex,
       depthSize: [meta.native.w, meta.native.h],
       cal: [depthCfg.M.ppu, depthCfg.M.cx, depthCfg.M.cy],
@@ -481,7 +501,7 @@ export class SceneLightingSystem {
     this.meta = meta;
     this.def = def;
     this.pass = new SceneLightingPass(paintingTexture, geo);
-    this.pass.applyParams(def, meta.day_hemi, this.filterPhase());
+    this.pass.applyParams(def, this.filterPhase());
     this.pass.markDirty();
 
     // LitBackground 采样 pass 的 RT，所以必须先让 pass 建出 RT
@@ -532,7 +552,7 @@ export class SceneLightingSystem {
    */
   applyParams(def: SceneLightingDef): void {
     this.def = def;
-    this.pass?.applyParams(def, this.meta?.day_hemi, this.filterPhase());
+    this.pass?.applyParams(def, this.filterPhase());
     this.pass?.markDirty();
     this.litBg?.applyParams(def);
   }

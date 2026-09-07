@@ -654,7 +654,6 @@ export class Game {
   private readonly runtimeBootId = Math.random().toString(36).slice(2, 10);
   private runtimeDebugSnapshotErrorLogged = false;
   private runtimeDebugSnapshotOversizeLogged = false;
-  /** 「GI体」调试视图(场景光照 uDebug==7)当前是否开着,及进入前的角色太阳开关。 */
   /** 「GI体」调试视图(场景光照 uDebug==5)当前是否开着,及进入前的角色太阳开关。 */
   private giVolumeDebugOn = false;
   private giVolumeDebugSunWas = false;
@@ -2644,27 +2643,26 @@ export class Game {
       },
       setSceneLightingDebug: (mode) => {
         this.sceneLighting.setDebug(mode);
-        // 角色的调试视图与场景共用一个旋钮：1=天穹可见性 2=法线在两边都成立，
-        // 其余档角色回正常显示（场景那几档是重打光中间量，角色没有对应物）。
-        // 1=天穹可见性 2=法线 在两边都成立；5=GI 反弹只有角色侧有对应物，
-        // 其余档是场景重打光的中间量，角色回正常显示。
-        this.unifiedCharLighting.setDebug(
-          mode === 1 || mode === 2 || mode === 5 ? mode : 0);
-        // ---- 7=「GI体」:场景与角色同吃 probe 体,肉眼对账 GI 数据 ----
+        // 角色的调试视图与场景共用一个旋钮：只有「法线」两边都成立（场景 1 ↔ 统一角色
+        // 那条路自己的 2），其余档角色回正常显示。
+        // ⚠ 2026-09-07 重编号：场景的「天穹可见性」与「S_day」两档随 skyvis 退出运行时
+        //   一起删了，所以这里也不再有它们的对应项。（统一角色路径本身早已整条关死。）
+        this.unifiedCharLighting.setDebug(mode === 1 ? 2 : 0);
+        // ---- 5=「GI体」:场景与角色同吃 probe 体,肉眼对账 GI 数据 ----
         //
         // 场景侧要角色的 probe 图集(按需加载、可热替换),所以**开启那一刻现取现喂**,
         // 关闭即退回占位——不做常驻绑定,免得跟角色纹理生命周期耦合。
         // 角色侧掐掉实体灯与太阳(纯 probe E),场景侧本来就只画 albedo×probeE:
         // 两边只剩同一份体的光,哪里对不上哪里就是体数据的问题。
-        // 7=albedo×E 8=纯E(albedo≡1) 9=纯E×probe棋盘 10=最近邻原始值 —— 四档同一套
-        // probe 装配,只是 shader 端展示不同;8/9/10 额外让角色也 albedo≡1(uEOnly)。
-        const wantGiVol = mode >= 7 && mode <= 11;
-        // 11=「skyao体」:场景直采 skyao probe 只算 AO;角色同步切 V 灰度档 ——
+        // 5=albedo×E 6=纯E(albedo≡1) 7=纯E×probe棋盘 8=最近邻原始值 —— 四档同一套
+        // probe 装配,只是 shader 端展示不同;6/7/8 额外让角色也 albedo≡1(uEOnly)。
+        const wantGiVol = mode >= 5 && mode <= 9;
+        // 9=「skyao体」:场景直采 skyao probe 只算 AO;角色同步切 V 灰度档 ——
         // 人与场景同一份数据同一个式子,灰度无缝续接才算 AO 数据对。
-        this.characterLighting.setCharDebugView(mode === 11 ? 2 : 0);
-        this.characterLighting.eOnlyDebug = mode >= 8 && mode <= 10;
+        this.characterLighting.setCharDebugView(mode === 9 ? 2 : 0);
+        this.characterLighting.eOnlyDebug = mode >= 6 && mode <= 8;
         // 棋盘档角色同画(诊断判据:格边穿脚连续/走动同帧翻转/竖向格高与邻墙一致)
-        this.characterLighting.eCheckerDebug = mode === 9;
+        this.characterLighting.eCheckerDebug = mode === 7;
         // 离开 GI体档:诊断参数(定法线/quad放大)必须自动复位——它们只该在诊断时活着
         if (!wantGiVol) this.setGiDiagnostics(0, 1);
         if (wantGiVol !== this.giVolumeDebugOn) {
@@ -2692,7 +2690,7 @@ export class Game {
           }
         }
       },
-      // GI体档的诊断参数(F2 诊断组,只在 7-10 档显示):定法线 + 主角 quad 放大
+      // GI体档的诊断参数(F2 诊断组,只在 5-8 档显示):定法线 + 主角 quad 放大
       setGiDiagnostics: (fixedN, quadScale) => this.setGiDiagnostics(fixedN, quadScale),
       setLightingSyncHooks: (hooks) => { this.lightingSyncHooks = hooks; },
       // 同步连接状态：断了必须在界面上看得见，不能只在 console 里
@@ -2982,7 +2980,11 @@ export class Game {
       this.menuUI.openMainMenu();
     } else if (await this.tryBootFromSaveSlot(options.loadSlot)) {
       /* 存档已读进来（场景也由 SaveManager 装好），不再走任何开局引导 */
-    } else if (this.isDevMode) {
+    } else if (import.meta.env.DEV && this.isDevMode) {
+      // `import.meta.env.DEV &&` 不是多余的：main.ts 在 prod 下已把 devMode 折叠成 false，
+      // 但这里若只判运行时字段，startDevMode 连同 DevModeUI 整棵会原样留在发行包里
+      // （验收门曾按类名断言"已剥净"，而类名早被压缩器改掉——恒真的假安全网）。
+      // 加上编译期常量后这一支被静态剔除，verify_build.mjs 才能按 DevModeUI 的文案真判。
       /** 走字段而非再加一个位置参数：startDevMode 的形参已过长，且此值只在直达路由用一次。 */
       const rawFrom = Number(options.playCutsceneFrom);
       this.devPlayCutsceneFromStep = Number.isFinite(rawFrom) && rawFrom > 0 ? Math.floor(rawFrom) : 0;
@@ -5662,6 +5664,11 @@ export class Game {
     narrativeWarp?: string,
     visualCapture: boolean = false,
   ): Promise<void> {
+    // 编译期常量在**方法体内**再挡一次：类方法不会因为没人调用就被摇掉，只在 start() 的
+    // 调用点加门的话，这个方法连同它 new 的 DevModeUI 仍原样留在发行包里
+    // （2026-09-06 实测：发行 bundle 里 DevModeUI 的文案还在）。常量 return 之后的死代码
+    // 压缩器会整段删掉，DevModeUI 的引用才真正消失。
+    if (!import.meta.env.DEV) return;
     const DEV_SCENE = 'dev_room';
     await this.sceneManager.loadScene(DEV_SCENE);
 

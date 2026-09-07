@@ -4,10 +4,9 @@ import {
 } from 'pixi.js';
 
 import type { SceneLightingDef } from '../../data/types';
-import { resolveLightColor } from './kelvin';
 import {
   LIGHT_KIND_CODE,
-  MAX_STATIC_LIGHTS, type PackedLights, directionFromAngles, packEmissive, packLights,
+  MAX_STATIC_LIGHTS, type PackedLights, packEmissive, packLights,
   packShadowBias,
 } from './lightPacking';
 import { LIGHTS_PER_SLAB, type PrefixLight, ShadowPrefixPass } from './shadowPrefix';
@@ -23,18 +22,22 @@ import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
  * **原画就是最终的光照结果**，运行时不再动它。灯是加上去的：
  *
  * ```
- * surf = painting + (painting / S_day) × Σ实体灯
+ * surf = painting + albedo × Σ实体灯
  * ```
  *
- * 没有灯时 surf 恒等于 painting，原画分毫不动。`S_day`（原画自带的自然光）
- * 只剩一个用途：把 albedo 反解出来。**不能**直接 painting + 灯 —— 灯返回的是
- * 辐照度、painting 是辐射亮度（已含 albedo），直接加等于不乘反照率，黑石板会
- * 被照成白墙。「夜」不靠调暗天光实现，靠换一张夜原画 + 夜的 probe + 该时段的灯。
+ * 没有灯时 surf 恒等于 painting，原画分毫不动。**不能**直接 painting + 灯 —— 灯返回的
+ * 是辐照度、painting 是辐射亮度（已含 albedo），直接加等于不乘反照率，黑石板会被照成
+ * 白墙。「夜」不靠调暗天光实现，靠换一张夜原画 + 夜的 probe + 该时段的灯。
+ *
+ * `albedo` 是**烘出来的一张贴图**（2026-09-07 起，`lighting/<背景基名>/albedo.png`），
+ * 不再是 shader 里现除的 `painting / S_day` —— 那个除数只能是那一个近似的样子、
+ * 作者也改不动它。烘焙器产的默认值与旧式子逐字同式，所以切过来那一刻画面等价；
+ * 变的是从此这张图可以被作者改。全时段共用主背景那一张（材质不随时段变）。
  *
  * ## 两级结构（效率的关键）
  *
  * ```
- * ①【脏时重算】原画 + albedo×灯 → RGBA16F 缓存 RT
+ * ①【脏时重算】原画 + albedo贴图×灯 → RGBA16F 缓存 RT
  * ②【逐帧】    采样① → 雾 → 显示变换 → 屏幕
  * ```
  *
@@ -49,10 +52,11 @@ import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
  *
  * ## 干活的是什么
  *
- * `S_day` 由**天穹可见性场**（烘出来的几何项）与**定向光的 N·L** 构成，只当 albedo 除数。
  * 灯的遮挡走线扫前缀最小（`lightVisibilityPrefix`），不是逐像素 march。
- * ⚠ **被否**（2026-08-20 制作人当场否决）：S 只用法线朝上项、不做任何遮蔽的写法
- * ——那是逐像素调色，画不出巷道与屋檐下的遮蔽结构，看着就是贴滤镜。勿回退。
+ * ⚠ 烘 albedo 的那个除数 `S_day` 由**天穹可见性场**构成，**被否**（2026-08-20 制作人
+ * 当场否决）的是"只用法线朝上项、不做任何遮蔽"的写法——那是逐像素调色，画不出巷道与
+ * 屋檐下的遮蔽结构，看着就是贴滤镜。那条判据现在住在离线端（scene_fields.build_albedo），
+ * 勿在任何一侧回退。
  */
 
 /** GLSL 切片器：与项目既有范式同一行代码（CharacterShadingFilter 的 `__CLC_*__`）。 */
@@ -101,7 +105,7 @@ void main(void) {
 /**
  * 光照 shader。**只产线性 HDR 辐射，不做雾、不做显示变换**——那两样在逐帧那一级。
  * 一个像素的完整链路：
- *   原画 → 线性化 →（去霾）→ + (原画/S_day) × Σ实体灯 → + 灯体自发光 → 输出
+ *   原画 → 线性化 →（去霾）→ + albedo贴图 × Σ实体灯 → + 灯体自发光 → 输出
  */
 // 与 lightingCore.glsl 的 LC_* 宏同值，拼进 shader 时做常量替换
 const LC_POINT = 0;
@@ -117,7 +121,7 @@ out vec4 fragColor;
 
 uniform sampler2D uPainting;     // 原画（sRGB）
 uniform sampler2D uNormal;       // lighting/<背景基名>/normal.png
-uniform sampler2D uSkyvis;       // lighting/<背景基名>/skyvis.png（R 通道）
+uniform sampler2D uAlbedo;       // lighting/<背景基名>/albedo.png（sRGB8，灯乘在它上面）
 uniform sampler2D uDepth;        // raw_depth_rg.png
 
 uniform vec2  uDepthTexSize;
@@ -130,23 +134,24 @@ uniform vec3  uMRow2;
 /** 1 个 q 单位 = 多少 wu。铁律 0：光照的长度一律 wu，q 进来先乘它。 */
 uniform float uWuPerQUnit;
 
-uniform vec3  uSkyColor;
-uniform float uSkyIntensity;
-uniform float uSkyHemi;
 uniform float uAoStrength;
 
-uniform float uDayHemi;
-uniform float uDaySunIntensity;
-uniform vec3  uDaySunDir;        // 指向光源（世界）
-
-uniform vec3  uSunColor;
-uniform float uSunIntensity;
-uniform vec3  uSunDir;           // 指向光源（世界）
+// ⛔ 2026-09-07 删:uSkyColor/uSkyIntensity/uSkyHemi(def.sky)、uDayHemi/uDaySunIntensity/
+//   uDaySunDir(def.day)、uSunColor/uSunIntensity/uSunDir(packed.sun)。
+//   前六个是 albedo 反解的除数 S_day 的输入 —— albedo 现在是烘出来的贴图，除数整段
+//   搬去了离线端；后三个自 2026-08-30 删掉天光/太阳加光项起就零引用。
+//   数据字段与编辑器表单同步下线（见 SceneLightingDef）。
 uniform vec4  uShadow;           // strength, len, steps, soft(未用于 march)
 uniform vec2  uShadowBias;       // bias0, thick
 
 uniform float uRatioMax;
-/** 0=正常 1=天穹可见性 2=法线 3=S_day 4=灯的辐照度 5=反解 albedo。调试可视化，F2 也用它。 */
+/**
+ * 调试可视化档（F2 那个循环按钮就是它）。**2026-09-07 重编号**：随 skyvis 与 S_day
+ * 退出运行时，「天穹可见性」与「S_day」两档一并删除，后面的档依次前移。
+ * 0=正常 1=法线 2=albedo 贴图 3=灯的辐照度 4=线性化原画 5..9=GI/skyao 体（见下）。
+ * 编号在三处必须一致：本文件的 if (uDebug == n)、DebugTools.DEBUG_NAMES 的下标、
+ * Game.setSceneLightingDebug 的范围判断。
+ */
 uniform int   uDebug;
 uniform int   uGiFixedN;         // 诊断·定法线(GI体档):0=正常 1=世界水平 2=世界向上
 
@@ -164,14 +169,14 @@ uniform vec4 uCore;
 uniform sampler2D uPrefix0;
 uniform sampler2D uPrefix1;
 
-// ---- 「GI体」调试视图(uDebug==7)专用:角色 probe 体的采样面 ----
+// ---- 「GI体」调试视图(uDebug==5)专用:角色 probe 体的采样面 ----
 // 采样数学拼接自角色共用块(PROBE_SAMPLING_GLSL,单一真相源);这四张图集与角色
 // shader 绑的是**同一批纹理**(Game 在开启该视图时从 CharacterLightingSystem 现取现喂)。
 uniform sampler2D uPL1;
 uniform sampler2D uPL2;
 uniform sampler2D uPBin;
 uniform sampler2D uValid;
-uniform sampler2D uSkyaoTex;     // 「skyao体」视图(uDebug==11):与角色绑同一张遮蔽矩图集
+uniform sampler2D uSkyaoTex;     // 「skyao体」视图(uDebug==9):与角色绑同一张遮蔽矩图集
 uniform float uProbeBeta;        // 2^β,与角色同一个曝光补偿 —— 两边同尺才可比
 // 每盏灯在**图像**上的位置 xy 与在 q 里的深度 z;w = 这盏灯有没有前缀解（0 = 回落）
 uniform vec4 uLightPx[${MAX_STATIC_LIGHTS}];
@@ -268,7 +273,19 @@ void main(void) {
     vec3 n = normalize(vec3(nrmTex.r * 2.0 - 1.0,
                             nrmTex.g * 2.0 - 1.0,
                             -max(nrmTex.b, 0.05)));
-    float skyvis = texture(uSkyvis, vUv).r;
+    // ---- 反照率：**烘出来的一张贴图**（2026-09-07 制作人定）----
+    //
+    // 灯返回的是辐照度，而 painting 是辐射亮度（已经是 albedo × 光）。直接把灯加到
+    // painting 上就是不乘反照率——黑石板会被照得像白墙。所以灯必须乘在 albedo 上。
+    //
+    // 这张图此前是 shader 里现除出来的（painting / S_day）：只能是那个近似的样子，
+    // 作者也改不动。现在它是 lighting/<背景基名>/albedo.png，由
+    // tools/character_lighting_lab/scene_fields.py 烘出、**作者可以手改**。
+    // 默认值与旧的现除逐字同式，所以换过来那一刻画面等价。
+    //
+    // ⚠ 与原画同一条解码路径（sRGB → 线性）。存的是 sRGB8 不是线性 8 位：反照率的
+    //   暗部占掉大半个值域，线性量化会在那里丢档。
+    vec3 albedo = lcSrgbToLinear(texture(uAlbedo, vUv).rgb);
 
     // 该像素的伪世界 q（供 march 起点用）
     vec2 px = vec2(vUv.x, vUv.y) * uDepthTexSize;
@@ -316,22 +333,6 @@ void main(void) {
         // ⚠ 占位场景 dehaze = 0，整段跳过 —— 27 个场景的"背景逐像素零变化"不受影响。
         painting = (painting - min(hazeAmt, painting * (1.0 - HAZE_KEEP))) / max(T, 0.15);
     }
-
-    // ---- S_day：原画自带的自然光。**只用作 albedo 除数**（2026-08-30 起）----
-    //
-    // 制作人定调：原画就是最终的光照结果，运行时不再重打光。于是这一项不再有
-    // 「参考光 vs 当前光」的比值语义，只剩一个用途——把 albedo 从原画里反解出来：
-    //
-    //     albedo ≈ painting / S_day
-    //
-    // 为什么非要它：lcPointLight 这些返回的是**辐照度**，而 painting 是**辐射亮度**
-    // （已经是 albedo × 光）。直接把灯加到 painting 上就是不乘 albedo——黑石板会
-    // 被照得像白墙。反解出 albedo 再乘灯，黑的地方才还是黑。
-    //
-    // 太阳项的 n 与 uDaySunDir 同为世界量（后者由 directionFromAngles 按 +Y=世界上
-    // 构造），点乘合法。半球项 sDayHemi 不吃法线。
-    float sDayHemi = (1.0 - uDayHemi) + uDayHemi * skyvis;
-    float sDay = sDayHemi + uDaySunIntensity * max(dot(n, uDaySunDir), 0.0);
 
     // ---- 实体灯的辐照度累加（天光/太阳的运行时项已删）----
     //
@@ -444,12 +445,10 @@ void main(void) {
         }
     }
 
-    if (uDebug == 1) { fragColor = vec4(vec3(skyvis), 1.0); return; }
-    if (uDebug == 2) { fragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
-    if (uDebug == 3) { fragColor = vec4(vec3(sDay), 1.0); return; }
-    if (uDebug == 4) { fragColor = vec4(lampE, 1.0); return; }
-    if (uDebug == 5) { fragColor = vec4(clamp(painting / max(sDay, 1e-4), 0.0, 1.0), 1.0); return; }
-    if (uDebug == 6) { fragColor = vec4(painting, 1.0); return; }
+    if (uDebug == 1) { fragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
+    if (uDebug == 2) { fragColor = vec4(albedo, 1.0); return; }
+    if (uDebug == 3) { fragColor = vec4(lampE, 1.0); return; }
+    if (uDebug == 4) { fragColor = vec4(painting, 1.0); return; }
 
     // 发光体不乘 albedo（发光不是反射），所以加在重打光结果之外。
     // ★ alpha 存**灯体自发光占该像素的比例**（0..1）：GI gather 据此跳过打在灯本体上
@@ -467,12 +466,9 @@ void main(void) {
     // 定的口径「原画就是最终的光照」。有灯时 painting / S_day 把 albedo 反解出来，
     // 灯才乘在正确的反照率上：黑石板照样是黑的，不会被照成白墙。
     //
-    // ⚠ 反解出的 albedo 要钳。原画暗部除以一个小 sDay 会炸出巨大的假反照率，
-    //   一盏灯扫过去就是一片过曝。上限 1.0 = 物理上反照率不可能超过 1。
-    vec3 albedo = clamp(painting / max(sDay, 1e-4), 0.0, 1.0);
-    // ---- uDebug==7「GI体」:场景与角色吃同一套 probe 体,肉眼对账 GI 数据 ----
+    // ---- uDebug==5「GI体」:场景与角色吃同一套 probe 体,肉眼对账 GI 数据 ----
     //
-    // 场景 = 反解 albedo × probeE(q, n_q) × 2^β;角色本来就是 color × probeE × 2^β
+    // 场景 = albedo 贴图 × probeE(q, n_q) × 2^β;角色本来就是 color × probeE × 2^β
     // (它的常规路径)。两边同一份体、同一把曝光尺 ⇒ 若 GI 体大体正确,此视图下
     // 场景应当**近似回到原画**(E 重建出画里的光),角色与场景浑然一体;
     // 哪里对不上,哪里就是体数据/尺度的问题。这同时是 E 绝对尺度的对账工具
@@ -483,7 +479,7 @@ void main(void) {
     //   位置实参是**本像素**深度重建的 q(上面 wrPixelToQ 那行,march 用的同一个),
     //   probeE 内部经 uM(det=−1 的 lighting.json world.M,与角色同一份 mCol)
     //   映到 probe 网格做 8 角三线性 —— 逐像素插值,不是每 cell 一个色块。
-    if (uDebug >= 7 && uDebug <= 11) {
+    if (uDebug >= 5 && uDebug <= 9) {
         vec3 nQ = normalize(wrWorldToQ(uMRow0, uMRow1, uMRow2, n));
         // 诊断·定法线:与角色侧 uFixedNQ 同一约定(0=正常 1=世界水平朝相机 2=世界向上)。
         // 双方同方向后,人与场景的亮度差 100% 是采样位置差。
@@ -491,19 +487,19 @@ void main(void) {
         // 与角色侧 det=+1 转出来的方向整个相反 —— 「同一档两侧各查各的」(2026-09-01)。
         if (uGiFixedN == 1) nQ = vec3(0., 0., -1.);
         else if (uGiFixedN == 2) nQ = normalize(wrWorldToQ(uMRow0, uMRow1, uMRow2, vec3(0., 1., 0.)));
-        // 10=最近邻原始值:无插值,每个像素显示最近那颗 probe 的原始 E,数据糊在
+        // 8=最近邻原始值:无插值,每个像素显示最近那颗 probe 的原始 E,数据糊在
         // 采样它的表面上(固定视角下把点阵投到屏幕会自遮挡,这才是能看的原始值视图)。
-        // 与 8 档来回切 = 插值前后对照;invalid 格亮品红。
-        // 11=「skyao体」:场景直采**角色的 skyao probe**,只算 AO(V 灰度,不乘画)。
+        // 与 6 档来回切 = 插值前后对照;invalid 格亮品红。
+        // 9=「skyao体」:场景直采**角色的 skyao probe**,只算 AO(V 灰度,不乘画)。
         // 与角色 setCharDebugView(2) 同一份纹理、同一个 skyaoAt —— 灰度在人与
         // 场景之间应无缝续接;对不上就是 AO 数据/装配的问题,与光照无关。
-        if (uDebug == 11) { fragColor = vec4(vec3(skyaoAt(q, nQ)), 1.0); return; }
-        if (uDebug == 10) { fragColor = vec4(probeENearest(q, nQ) * uProbeBeta, 1.0); return; }
+        if (uDebug == 9) { fragColor = vec4(vec3(skyaoAt(q, nQ)), 1.0); return; }
+        if (uDebug == 8) { fragColor = vec4(probeENearest(q, nQ) * uProbeBeta, 1.0); return; }
         vec3 Ep = probeE(q, nQ) * uProbeBeta;
-        if (uDebug == 7) { fragColor = vec4(albedo * Ep, 1.0); return; }
-        // 8=纯E:albedo≡1,直接看 E×2^β 的样子(角色侧同式,见 uEOnly)。
-        if (uDebug == 8) { fragColor = vec4(Ep, 1.0); return; }
-        // 9=纯E×probe棋盘:按 cell 奇偶压暗一半格子。用途是**校对采样位置**:
+        if (uDebug == 5) { fragColor = vec4(albedo * Ep, 1.0); return; }
+        // 6=纯E:albedo≡1,直接看 E×2^β 的样子(角色侧同式,见 uEOnly)。
+        if (uDebug == 6) { fragColor = vec4(Ep, 1.0); return; }
+        // 7=纯E×probe棋盘:按 cell 奇偶压暗一半格子。用途是**校对采样位置**:
         // 格边必须落在相邻 probe 正中间、格子尺寸/走向必须贴着几何透视缩放;
         // 轴序错/尺度错/uM 喂错,棋盘立刻歪给你看。映射与采样共用 probeGridT,零漂移。
         ivec3 cell = ivec3(probeGridT(q));
@@ -521,8 +517,8 @@ void main(void) {
 export interface SceneLightingGeometry {
   /** lighting/<背景基名>/normal.png */
   normal: Texture;
-  /** lighting/<背景基名>/skyvis.png */
-  skyvis: Texture;
+  /** lighting/<背景基名>/albedo.png —— 灯乘的反照率，**作者可手改**。 */
+  albedo: Texture;
   /** raw_depth_rg.png（与 SceneDepthSystem 同一张） */
   depth: Texture;
   /** 深度图尺寸（native px） */
@@ -614,7 +610,7 @@ export class SceneLightingPass {
         uPrefix0: this.geo.depth.source,
         uPrefix1: this.geo.depth.source,
         uNormal: this.geo.normal.source,
-        uSkyvis: this.geo.skyvis.source,
+        uAlbedo: this.geo.albedo.source,
         uDepth: this.geo.depth.source,
         // 「GI体」视图的 probe 图集:创建期占位白图,开启视图时由 setProbeResources 换真图
         uPL1: Texture.WHITE.source,
@@ -626,16 +622,7 @@ export class SceneLightingPass {
           uDepthTexSize: { value: new Float32Array(this.geo.depthSize), type: 'vec2<f32>' },
           uCal: { value: new Float32Array(this.geo.cal), type: 'vec3<f32>' },
           uDepthMap: { value: new Float32Array(this.geo.depthMapping), type: 'vec3<f32>' },
-          uSkyColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
-          uSkyIntensity: { value: 1, type: 'f32' },
-          uSkyHemi: { value: 0.35, type: 'f32' },
           uAoStrength: { value: 1, type: 'f32' },
-          uDayHemi: { value: 0.35, type: 'f32' },
-          uDaySunIntensity: { value: 0, type: 'f32' },
-          uDaySunDir: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
-          uSunColor: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
-          uSunIntensity: { value: 0, type: 'f32' },
-          uSunDir: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
           uShadow: { value: new Float32Array([0.9, 3.5, 48, 2]), type: 'vec4<f32>' },
           uShadowBias: { value: new Float32Array([0.035, 2]), type: 'vec2<f32>' },
           uRatioMax: { value: 8, type: 'f32' },
@@ -657,7 +644,7 @@ export class SceneLightingPass {
           uLightB: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
           uLightC: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
           uLightD: { value: new Float32Array(MAX_STATIC_LIGHTS * 4), type: 'vec4<f32>', size: MAX_STATIC_LIGHTS },
-          // ---- 「GI体」视图(uDebug==7) ----
+          // ---- 「GI体」视图(uDebug==5) ----
           uM: { value: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), type: 'mat3x3<f32>' },
           uWMin: { value: new Float32Array(3), type: 'vec3<f32>' },
           uWScale: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
@@ -670,7 +657,7 @@ export class SceneLightingPass {
           uMode: { value: 2, type: 'f32' },
           uAmbStrength: { value: 1, type: 'f32' },
           uProbeBeta: { value: 1, type: 'f32' },
-          // ---- 「skyao体」视图(uDebug==11) ----
+          // ---- 「skyao体」视图(uDebug==9) ----
           uSkyaoN: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
           uSkyaoTiles: { value: new Float32Array([1, 1]), type: 'vec2<f32>' },
           uSkyaoMin: { value: new Float32Array(3), type: 'vec3<f32>' },
@@ -699,22 +686,13 @@ export class SceneLightingPass {
    * `phase` = 当前时段 id，用于按 `LightDef.phases` 过滤灯（缺省全时段）。
    * 传空串 = 不过滤（场景没开日夜，或调用方拿不到时刻）。
    */
-  applyParams(def: SceneLightingDef, bakedDayHemi?: number, phase = ''): void {
+  applyParams(def: SceneLightingDef, phase = ''): void {
     this.ensure();
     const u = this.shader?.resources.sceneLight?.uniforms;
     if (!u) return;
 
-    const sky = resolveLightColor(def.sky.color, def.sky.kelvin);
-    u.uSkyColor.set(sky);
-    u.uSkyIntensity = def.sky.intensity;
-    u.uSkyHemi = def.sky.hemi;
     u.uAoStrength = def.aoStrength ?? 1;
     u.uRatioMax = def.ratioMax ?? 8;
-
-    // 缺省用烘焙期拟合值——这个量必须与原画匹配，手填必错（见 DayReferenceDef.hemi）
-    u.uDayHemi = def.day.hemi ?? bakedDayHemi ?? 0.9;
-    u.uDaySunIntensity = def.day.sunIntensity;
-    u.uDaySunDir.set(directionFromAngles(def.day.sunElevationDeg, def.day.sunAzimuthDeg));
 
     u.uWuPerQUnit = this.geo.wuPerQUnit;
     const M = this.geo.mRows;
@@ -732,9 +710,8 @@ export class SceneLightingPass {
         + ' —— 静默截断会让美术以为灯没生效，这里必须响',
       );
     }
-    u.uSunColor.set(packed.sunColor);
-    u.uSunIntensity = packed.sunIntensity;
-    u.uSunDir.set(packed.sunDir);
+    // ⚠ packed.sunColor/sunIntensity/sunDir 不再往 shader 送 —— 那个全局太阳项
+    //   2026-08-30 就从着色里删了，uniform 也已随 def.day/def.sky 一并下线。
     u.uShadow.set(packed.shadow);
     u.uShadowBias.set(packShadowBias(def, 1 / Math.max(this.geo.wuPerQUnit, 1e-9)));
 
