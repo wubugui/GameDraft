@@ -626,7 +626,7 @@ class SandboxProject:
     """
 
     FIELDS = ("PATHS", "PROJECT_AUDIO", "AUDIO_CONFIG", "EXPORT_DIR", "SOURCES",
-              "EDITS", "EXPORTS", "ASSIGNMENTS", "BACKUPS", "UISTATE", "HASHES")
+              "EDITS", "EXPORTS", "ASSIGNMENTS", "TRASH", "BACKUPS", "UISTATE", "HASHES")
 
     def __init__(self):
         self.root = Path(tempfile.mkdtemp(prefix="ae_sandbox_"))
@@ -646,6 +646,7 @@ class SandboxProject:
         server.EDITS = self.root / "edits.json"
         server.EXPORTS = self.root / "exports.json"
         server.ASSIGNMENTS = self.root / "assignments.json"
+        server.TRASH = self.root / "trash.json"
         server.BACKUPS = self.root / "backups"
         server.UISTATE = self.root / "ui_state.json"
         server.HASHES = led.HashCache()
@@ -1026,6 +1027,85 @@ class AssignEndpointTests(unittest.TestCase):
         self._assign(key="sfx/real_key", sourceKey="src/a.wav")
         self.box.write_config({"bgm": {}, "ambient": {}, "sfx": {}, "systemSfx": {}})
         self.assertEqual([o["key"] for o in self.box.scan()["orphans"]], ["sfx/real_key"])
+
+
+class TrashEndpointTests(unittest.TestCase):
+    """回收站是**标记**,不是删除。这组锁的就是这句话:文件必须一直在盘上。"""
+
+    def setUp(self):
+        self.box = SandboxProject()
+        self.box.write_config({
+            "bgm": {}, "ambient": {}, "sfx": {"real_key": {"src": ""}}, "systemSfx": {}})
+        (self.box.src_dir / "a.wav").write_bytes(b"RIFFa")
+        (self.box.src_dir / "b.wav").write_bytes(b"RIFFb")
+        self.body = b"{}"
+
+        outer = self
+
+        class _H(server.Handler):
+            def __init__(_s):
+                pass
+
+            def _body(_s):
+                return outer.body
+
+        self.h = _H()
+
+    def tearDown(self):
+        self.box.close()
+
+    def _post(self, **payload):
+        self.body = json.dumps(payload).encode()
+        return self.h.do_trash()
+
+    def _lib(self):
+        return {i["key"]: i for i in self.h.library()["items"]}
+
+    def test_mark_never_touches_the_file(self):
+        res = self._post(keys=["src/a.wav"], trashed=True)
+        self.assertTrue(res["ok"], res.get("error"))
+        self.assertTrue((self.box.src_dir / "a.wav").is_file(), "回收站绝不许删文件")
+        self.assertTrue(self._lib()["src/a.wav"]["trashed"])
+        self.assertFalse(self._lib()["src/b.wav"]["trashed"])
+
+    def test_restore_clears_the_mark(self):
+        self._post(keys=["src/a.wav"], trashed=True)
+        res = self._post(keys=["src/a.wav"], trashed=False)
+        self.assertTrue(res["ok"], res.get("error"))
+        self.assertFalse(self._lib()["src/a.wav"]["trashed"])
+
+    def test_mark_survives_restart(self):
+        """标记存在盘上,重开工具还在 —— 不然回收站只是一次会话的错觉。"""
+        self._post(keys=["src/a.wav"], trashed=True)
+        self.assertEqual(list(led.load_trash(server.TRASH)), ["src/a.wav"])
+
+    def test_rejects_key_not_in_library(self):
+        """和分配同一条规矩:key 只能来自实时扫描,手写的/穿越的一律拒。"""
+        for bad in ("src/typed_by_hand.wav", "src/../../pwn.wav", "nosuch/x.wav", ""):
+            with self.subTest(key=bad):
+                self.assertFalse(self._post(keys=[bad], trashed=True)["ok"], bad)
+
+    def test_refuses_while_assigned(self):
+        """收进回收站却照样跟着导出走 = 界面上看不见但仍在生效,必须拦。"""
+        self.box.assign("sfx/real_key", "src/a.wav")
+        res = self._post(keys=["src/a.wav"], trashed=True)
+        self.assertFalse(res["ok"])
+        self.assertIn("sfx/real_key", res["error"])
+        self.assertFalse(self._lib()["src/a.wav"]["trashed"])
+
+    def test_restore_works_for_material_no_longer_on_disk(self):
+        """料不在盘上时标记仍在,必须报出来且能撤 —— 否则料回来那天会莫名不见。"""
+        self._post(keys=["src/a.wav"], trashed=True)
+        (self.box.src_dir / "a.wav").unlink()
+        lib = self.h.library()
+        self.assertEqual([o["key"] for o in lib["trashOrphans"]], ["src/a.wav"])
+        self.assertTrue(self._post(keys=["src/a.wav"], trashed=False)["ok"])
+        self.assertEqual(led.load_trash(server.TRASH), {})
+
+    def test_broken_trash_file_does_not_break_the_library(self):
+        """标记只是标记,坏了最多是废料重新冒出来,不许把工具打不开。"""
+        server.TRASH.write_text("{ not json", encoding="utf-8")
+        self.assertFalse(self._lib()["src/a.wav"]["trashed"])
 
 
 if __name__ == "__main__":

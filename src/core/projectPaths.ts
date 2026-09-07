@@ -38,6 +38,7 @@ export const TEXT_URLS = {
   narrativePackages: '/assets/data/narrative_packages.json',
   documentReveals: '/assets/data/document_reveals.json',
   audioConfig: '/assets/data/audio_config.json',
+  acousticSpaces: '/assets/data/acoustic_spaces.json',
   strings: '/assets/data/strings.json',
   items: '/assets/data/items.json',
   quests: '/assets/data/quests.json',

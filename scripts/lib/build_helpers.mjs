@@ -249,3 +249,81 @@ export function swapWavRef(s, renamedRels) {
     || renamedRels.has(`resources/runtime/${norm}`);
   return hit ? `${s.slice(0, -4)}.ogg` : s;
 }
+
+// ------------------------------------------------------ 光照烘焙载荷文件表
+
+/**
+ * **镜像自 `src/core/lightingPayloadFiles.ts`**（运行时的唯一真相源）。
+ *
+ * `src/core/lightingPayloadFiles.test.ts` 逐字比对这几张表与运行时那份：一个名字/缺省值
+ * 不同就红。别在这里"顺手改一下"——改运行时那份，然后让测试告诉你这里也要改。
+ *
+ * 为什么不直接 import 运行时那份：验收门是 node 直跑的 .mjs，不经 vite/tsc；
+ * 而运行时那份是 TS。两份 + 契约测试，比一份 + 一条 TS 加载器链路更稳。
+ */
+export const PROBE_ATLAS_FILE_BY_MODE = { 1: 'atlas_l1.bin', 2: 'atlas_l2.bin', 3: 'atlas_bin.bin' };
+export const DEFAULT_PROBE_MODE = 3;
+export const LIGHTING_PAYLOAD_CORE = ['lighting.json', 'probes_valid.bin', 'ground_d.png'];
+export const LIGHTING_GEOMETRY_FILES = ['geometry.json', 'normal.png', 'albedo.png'];
+export const LIGHTING_PAYLOAD_OPTIONAL = ['skyao_probe.bin'];
+export const LIGHTING_PAYLOAD_DEBUG_ONLY = ['vol_rad.bin', 'vol_emit.bin'];
+
+export function probeModeOf(shadingMode) {
+  return shadingMode === 1 || shadingMode === 2 ? shadingMode : DEFAULT_PROBE_MODE;
+}
+
+export function probeAtlasFileForMode(shadingMode) {
+  return PROBE_ATLAS_FILE_BY_MODE[probeModeOf(shadingMode)];
+}
+
+/** 一份载荷在正常游玩路径上必读的全部文件名（不含可选与调试专用）。 */
+export function requiredLightingPayloadFiles(meta) {
+  return [
+    ...LIGHTING_PAYLOAD_CORE,
+    probeAtlasFileForMode(meta?.shading?.mode),
+    ...LIGHTING_GEOMETRY_FILES,
+  ];
+}
+
+/**
+ * 光照载荷的**平价核对**：开发树里每一份载荷，产物里是不是一个不少。
+ *
+ * 这是"运行时会要什么 → 包里有没有"那个**反向**：既有的清单比对只做"清单承诺 → 实际落地"，
+ * 清单本身漏了什么它永远看不见（2026-09-05 atlas_bin 就是这么带着双 PASS 发出去的）。
+ *
+ * @param target `'dev' | 'release'`
+ * @param devPayloads `Map<目录相对路径, { files: Set<文件名>, meta: lighting.json 内容|null }>`
+ *   —— 开发树里每个 `lighting/<背景基名>/` 目录
+ * @param landed 产物里实际有的相对路径集合
+ * @returns `{ missing: [{ dir, file, why, inDevTree }], leaked: [{ dir, file }] }`
+ *   `inDevTree=false` 的 missing 是烘焙缺件（开发树里本来就没有，运行时两边同样降级），
+ *   不是打包漏抽；调用方按此分级。
+ */
+export function lightingPayloadParity(target, devPayloads, landed) {
+  const missing = [];
+  const leaked = [];
+  for (const [dir, { files, meta }] of devPayloads) {
+    const want = new Map();
+    for (const f of requiredLightingPayloadFiles(meta)) want.set(f, '进场景必读');
+    for (const f of LIGHTING_PAYLOAD_OPTIONAL) {
+      if (files.has(f)) want.set(f, '可选载荷：开发树有就必须带（缺了静默降级）');
+    }
+    if (target === 'dev') {
+      for (const f of Object.values(PROBE_ATLAS_FILE_BY_MODE)) {
+        if (files.has(f) && !want.has(f)) want.set(f, 'dev 档：F2 切档要读');
+      }
+      for (const f of LIGHTING_PAYLOAD_DEBUG_ONLY) {
+        if (files.has(f)) want.set(f, 'dev 档：F2 切 RT 要读');
+      }
+    }
+    for (const [file, why] of want) {
+      if (!landed.has(`${dir}/${file}`)) missing.push({ dir, file, why, inDevTree: files.has(file) });
+    }
+    if (target === 'release') {
+      for (const file of LIGHTING_PAYLOAD_DEBUG_ONLY) {
+        if (landed.has(`${dir}/${file}`)) leaked.push({ dir, file });
+      }
+    }
+  }
+  return { missing, leaked };
+}

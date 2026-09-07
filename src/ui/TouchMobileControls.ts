@@ -31,11 +31,29 @@ function deviceShortSide(): number {
   return w > 0 && h > 0 ? Math.min(w, h) : 0;
 }
 
+/** 判据的原始输入，从 window/navigator 上读一次（`readTouchUiSignals`），判断本身是纯函数好测。 */
+export interface TouchUiSignals {
+  /** 设备屏幕短边（CSS px）；0 = 取不到 */
+  shortSide: number;
+  /** `(any-pointer: fine)`：系统里存在精确指针 */
+  anyPointerFine: boolean;
+  /** `(pointer: coarse)`：主指针是粗指针 */
+  pointerCoarse: boolean;
+  /** `ontouchstart` 或 `maxTouchPoints > 0` */
+  hasTouch: boolean;
+  /** UA-CH `navigator.userAgentData.mobile === true` */
+  uaMobile: boolean;
+  userAgent: string;
+}
+
 /**
  * 「这一局出触屏 UI 还是桌面 UI」的唯一判据。判错的症状是**整套 HUD 换成另一套**
  * （桌面右下角入口条 vs 顶部文字条 + 虚拟摇杆 + 动作网格），离根因极远，所以判据集中在这里、
- * 三段顺序不可调换：
+ * 段落顺序不可调换：
  *
+ * 0. **QtWebEngine 一律桌面**：它只承载编辑器内嵌预览与打包验收扫描（都是桌面工具），而
+ *    Qt 6.11 在带触摸数字化仪的 PC 上把主指针报成 coarse、`any-pointer: fine` 报 false，
+ *    连第 1 条都够不着（2026-09-06 实测：预览窗任何尺寸都出触屏方向键，与 exe 不一致）。
  * 1. **硬否决**：桌面尺寸的屏幕 + 系统里存在精确指针 → 桌面。挡内嵌 Chromium 把主指针报成 coarse。
  * 2. `(pointer: coarse)` 快车道，**原样保留、不加任何附加条件**——真手机与 DevTools 设备模拟走这条。
  *    曾改用 `(hover: none)` + 排除 `fine`（`562335a` 之后），在大量手机浏览器上得到 false
@@ -46,10 +64,10 @@ function deviceShortSide(): number {
  *
  * 导出给 HUD 桌面入口条做互斥判据（触屏有整套 chip，桌面条只在非触屏出现，见 buildEntryStrip）——
  * 两边必须用同一个判断，各写一份迟早漂移出「两套都显示/都不显示」。
+ * 纯函数，`TouchMobileControls.test.ts` 钉死各分支。
  */
-function computeTouchUi(): boolean {
-  if (typeof window === 'undefined') return false;
-  const shortSide = deviceShortSide();
+export function decideTouchUi(s: TouchUiSignals): boolean {
+  if (/QtWebEngine/i.test(s.userAgent)) return false;
 
   // 【硬否决，优先于下面所有判据】设备屏幕明显是桌面尺寸 + 系统里存在精确指针（鼠标/触控板）
   // → 一律桌面 UI。放在 coarse 之前是有意的：内嵌 Chromium（Electron 壳、触屏一体机）
@@ -58,18 +76,33 @@ function computeTouchUi(): boolean {
   // 同样踩不到——所以这条不会把任何真触屏场景误伤成桌面。
   // 用 `any-pointer: fine`（系统里**存在**精确指针）而不是 `hover`/`pointer`：
   // 后两者问的是「主指针是什么」，正是 562335a 之后翻车过的那条路。
-  if (shortSide > TOUCH_UI_MAX_SHORT_SIDE && matchesSafe('(any-pointer: fine)')) return false;
+  if (s.shortSide > TOUCH_UI_MAX_SHORT_SIDE && s.anyPointerFine) return false;
 
-  if (matchesSafe('(pointer: coarse)')) return true;
+  if (s.pointerCoarse) return true;
 
-  const hasTouch = 'ontouchstart' in window || (navigator?.maxTouchPoints ?? 0) > 0;
-  if (!hasTouch) return false;
+  if (!s.hasTouch) return false;
   // 到这一步说明：有触摸能力，但主指针是鼠标。这条兜底支存在的唯一理由是
   // 「coarse 漏报的真手机」，所以要求拿出**是手机**的正面证据，而不是「能触摸」。
+  if (s.uaMobile) return true;
+  if (/Android|iPhone|iPod|iPad|Mobile|Silk|Kindle/i.test(s.userAgent)) return true;
+  return s.shortSide > 0 && s.shortSide <= TOUCH_UI_MAX_SHORT_SIDE;
+}
+
+function readTouchUiSignals(): TouchUiSignals {
   const uaData = (navigator as { userAgentData?: { mobile?: boolean } }).userAgentData;
-  if (uaData?.mobile === true) return true;
-  if (/Android|iPhone|iPod|iPad|Mobile|Silk|Kindle/i.test(navigator.userAgent)) return true;
-  return shortSide > 0 && shortSide <= TOUCH_UI_MAX_SHORT_SIDE;
+  return {
+    shortSide: deviceShortSide(),
+    anyPointerFine: matchesSafe('(any-pointer: fine)'),
+    pointerCoarse: matchesSafe('(pointer: coarse)'),
+    hasTouch: 'ontouchstart' in window || (navigator?.maxTouchPoints ?? 0) > 0,
+    uaMobile: uaData?.mobile === true,
+    userAgent: navigator?.userAgent ?? '',
+  };
+}
+
+function computeTouchUi(): boolean {
+  if (typeof window === 'undefined') return false;
+  return decideTouchUi(readTouchUiSignals());
 }
 
 /** dev 下把判据的原始输入打一次。这个判断出错时症状是「整套 HUD 换了一套」，

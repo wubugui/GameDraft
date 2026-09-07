@@ -57,6 +57,61 @@ fn window_url() -> WebviewUrl {
     WebviewUrl::External(raw.parse().expect("窗口 URL 拼错了"))
 }
 
+/// `game_config.json` 读不到 / 没配时的窗口尺寸。与游戏的标准视口一致（4:3）。
+const FALLBACK_WINDOW_SIZE: (f64, f64) = (1024.0, 768.0);
+
+/// 从 `game_config.json` 的文本里取窗口尺寸：`windowSize`，没有则 `viewport`。
+///
+/// 只认合理范围内的正数（320×240 … 8192×8192），别的一律当没配——一个手滑写成 0 或负数的
+/// 配置不该让窗口开成一条线。
+fn window_size_from_config(text: &str) -> Option<(f64, f64)> {
+    let root: serde_json::Value = serde_json::from_str(text).ok()?;
+    for key in ["windowSize", "viewport"] {
+        let Some(node) = root.get(key) else { continue };
+        let w = node.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let h = node.get("height").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        if (320.0..=8192.0).contains(&w) && (240.0..=8192.0).contains(&h) {
+            return Some((w, h));
+        }
+    }
+    None
+}
+
+/// 窗口初始尺寸**跟 game_config.json 的 `windowSize` 走**，不写死在这里。
+///
+/// 编辑器 F5 的预览窗按同一个字段开（`tools/editor/main_window.py`），两边才是同一份真相。
+/// 2026-09-06 之前这里写死 1280×720（16:9），而游戏的逻辑视口是 1024×768（4:3）——
+/// 编辑器里比例对、exe 里横向拉宽 25%，"打包出来比例不对"就是这么来的。
+///
+/// 读的是 exe 旁 `game/assets/data/game_config.json`（`web_root` 已经知道内容根在哪），
+/// 读不到就回落并 `eprintln!`（dev 构建有控制台能看见）；绝不 panic——窗口尺寸不该挡住开局。
+fn preferred_window_size(app: &tauri::AppHandle) -> (f64, f64) {
+    let cfg = web_root::resolve_web_root(app)
+        .join("assets")
+        .join("data")
+        .join("game_config.json");
+    match std::fs::read_to_string(&cfg) {
+        Ok(text) => window_size_from_config(&text).unwrap_or_else(|| {
+            eprintln!(
+                "[window] {} 里没有可用的 windowSize/viewport，窗口按 {}×{} 开",
+                cfg.display(),
+                FALLBACK_WINDOW_SIZE.0,
+                FALLBACK_WINDOW_SIZE.1
+            );
+            FALLBACK_WINDOW_SIZE
+        }),
+        Err(e) => {
+            eprintln!(
+                "[window] 读不到 {}（{e}），窗口按 {}×{} 开",
+                cfg.display(),
+                FALLBACK_WINDOW_SIZE.0,
+                FALLBACK_WINDOW_SIZE.1
+            );
+            FALLBACK_WINDOW_SIZE
+        }
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .register_uri_scheme_protocol(SCHEME, |ctx, request| {
@@ -69,15 +124,60 @@ fn main() {
             gamedata::gamedata_root,
         ])
         .setup(|app| {
+            // 逻辑像素（Windows 缩放 125%/150% 下 WebView 的 CSS px 也是逻辑像素，比例不受影响）。
+            // 前端按视口比例做等比信箱（src/rendering/Renderer.ts layoutMount），所以窗口被拖成
+            // 任何形状都不失真；这里只负责"首开就是标准比例、能放进屏幕"。
+            let (w, h) = preferred_window_size(app.handle());
             WebviewWindowBuilder::new(app, "main", window_url())
                 .title("GameDraft")
-                .inner_size(1280.0, 720.0)
-                .min_inner_size(960.0, 540.0)
+                .inner_size(w, h)
+                // 与主尺寸同比例；再小画面就看不清了
+                .min_inner_size(w / 2.0, h / 2.0)
                 .resizable(true)
                 .center()
+                // 150% 缩放的 1080p 屏逻辑高只有 720，放不下 768：缩进工作区而不是溢出屏幕
+                .prevent_overflow()
                 .build()?;
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("GameDraft 启动失败");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_size_prefers_window_size_then_viewport() {
+        let both = r#"{"viewport":{"width":1024,"height":768},"windowSize":{"width":1280,"height":960}}"#;
+        assert_eq!(window_size_from_config(both), Some((1280.0, 960.0)));
+        let only_viewport = r#"{"viewport":{"width":1024,"height":768}}"#;
+        assert_eq!(window_size_from_config(only_viewport), Some((1024.0, 768.0)));
+    }
+
+    #[test]
+    fn window_size_rejects_garbage_and_falls_through() {
+        assert_eq!(window_size_from_config("{not json"), None);
+        assert_eq!(window_size_from_config(r#"{"initialScene":"x"}"#), None);
+        // 0 / 负数 / 超范围 / 字符串：当没配，落到下一个键或 None
+        assert_eq!(window_size_from_config(r#"{"windowSize":{"width":0,"height":768}}"#), None);
+        assert_eq!(window_size_from_config(r#"{"windowSize":{"width":-1024,"height":768}}"#), None);
+        assert_eq!(window_size_from_config(r#"{"windowSize":{"width":"1024","height":"768"}}"#), None);
+        assert_eq!(
+            window_size_from_config(r#"{"windowSize":{"width":99999,"height":768},"viewport":{"width":1024,"height":768}}"#),
+            Some((1024.0, 768.0))
+        );
+    }
+
+    #[test]
+    fn real_game_config_in_repo_is_4_by_3() {
+        // 仓库里那份就是运行时读的那份（打包原样抽取）：钉住它是 4:3，改了要有人知道
+        let text = std::fs::read_to_string(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../public/assets/data/game_config.json"),
+        )
+        .expect("public/assets/data/game_config.json 应当存在");
+        let (w, h) = window_size_from_config(&text).expect("game_config 应配了 windowSize/viewport");
+        assert!((w / h - 4.0 / 3.0).abs() < 0.01, "标准视口比例应为 4:3，现在是 {w}×{h}");
+    }
 }

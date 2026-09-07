@@ -107,7 +107,44 @@ class Window(QMainWindow):
         self._act(m, "开发者工具", self.dev_tools, "F12")
 
         self.url = url
+        self._loaded = False
+        self._load_tries = 0
+        self.view.loadFinished.connect(self._on_load_finished)
+        # 首屏必须带看门狗:2026-09-08 实测这台机器上开窗那一次的请求会被掐掉
+        # (服务端 GET / 写到一半抛 WinError 10053 "本机软件中止了已建立的连接"),
+        # 表现是**整窗白屏**。关键在于这种掐法**连 loadFinished 都不发** ——
+        # 加载卡死在 loadProgress 0 —— 所以"监听失败信号再重试"救不了,只能靠超时。
+        # 隔 0.8s 重发一次就能成(实测第一次重发即 ok=True)。
+        self._watchdog = QTimer(self)
+        self._watchdog.timeout.connect(self._retry_load)
+        self._watchdog.start(800)
         self.view.load(QUrl(url))
+
+    #: 重发上限。到顶还没成说明不是这条时序问题,别无限刷请求,把话说清楚交给人。
+    MAX_LOAD_TRIES = 15
+
+    def _on_load_finished(self, ok: bool) -> None:
+        if not ok:
+            return                      # 失败不在这儿处理,交给看门狗统一重发
+        self._loaded = True
+        self._watchdog.stop()
+        if self._load_tries:
+            self.statusBar().showMessage(f"首屏被掐掉了,重发 {self._load_tries} 次后载入成功", 6000)
+
+    def _retry_load(self) -> None:
+        if self._loaded:
+            self._watchdog.stop()
+            return
+        self._load_tries += 1
+        if self._load_tries > self.MAX_LOAD_TRIES:
+            self._watchdog.stop()
+            self.statusBar().showMessage(
+                f"页面一直载不进来(已重试 {self.MAX_LOAD_TRIES} 次)。"
+                "服务本身是好的,按 Ctrl+R 再试,或看终端里的报错。")
+            return
+        self.statusBar().showMessage(f"首屏没载进来,重发第 {self._load_tries} 次…")
+        self.view.stop()
+        self.view.load(QUrl(self.url))
 
     def _act(self, menu, text, slot, shortcut=None):
         a = QAction(text, self)
@@ -120,6 +157,10 @@ class Window(QMainWindow):
 
     def hard_reload(self):
         self.profile.clearHttpCache()
+        # 手动重载同样可能被掐,所以把看门狗重新武装起来
+        self._loaded = False
+        self._load_tries = 0
+        self._watchdog.start(800)
         self.page.triggerAction(QWebEnginePage.WebAction.ReloadAndBypassCache)
         self.statusBar().showMessage("已丢弃缓存并重新载入", 3000)
 
@@ -127,6 +168,8 @@ class Window(QMainWindow):
         """page 必须先于 profile 析构,否则 Qt 报
         "Release of profile requested but WebEnginePage still not deleted" 并可能崩。"""
         try:
+            # 看门狗先停:关窗后它再开一枪就是往已析构的 page 上发请求
+            self._watchdog.stop()
             if getattr(self, "_dev", None) is not None:
                 self.page.setDevToolsPage(None)
                 self._dev.close()

@@ -26,6 +26,12 @@
       ]
     },
     {
+      "glob": "index.html",
+      "docs": [
+        "display-viewport-and-window"
+      ]
+    },
+    {
       "glob": "public/assets/animations/**",
       "docs": [
         "asset-pipeline-norms"
@@ -45,6 +51,12 @@
         "content-validation-gate",
         "editor-roundtrip-contract",
         "production-mode-workflow"
+      ]
+    },
+    {
+      "glob": "public/assets/data/acoustic_spaces.json",
+      "docs": [
+        "scene-acoustics"
       ]
     },
     {
@@ -285,6 +297,12 @@
       ]
     },
     {
+      "glob": "scripts/scene_sweep.mjs",
+      "docs": [
+        "build-pipeline"
+      ]
+    },
+    {
       "glob": "scripts/verify_build.mjs",
       "docs": [
         "build-pipeline"
@@ -303,9 +321,21 @@
       ]
     },
     {
+      "glob": "src-tauri/src/main.rs",
+      "docs": [
+        "display-viewport-and-window"
+      ]
+    },
+    {
       "glob": "src/**",
       "docs": [
         "runtime-norms"
+      ]
+    },
+    {
+      "glob": "src/audio/**",
+      "docs": [
+        "scene-acoustics"
       ]
     },
     {
@@ -420,6 +450,13 @@
       "glob": "src/core/devRuntimeCommands.ts",
       "docs": [
         "runtime-command-channel"
+      ]
+    },
+    {
+      "glob": "src/core/lightingPayloadFiles.ts",
+      "docs": [
+        "build-pipeline",
+        "scene-lighting"
       ]
     },
     {
@@ -538,6 +575,7 @@
     {
       "glob": "src/rendering/Renderer.ts",
       "docs": [
+        "display-viewport-and-window",
         "scene-onenter-reveal-timing"
       ]
     },
@@ -580,6 +618,12 @@
       "glob": "src/rendering/spriteNormalAtlas.ts",
       "docs": [
         "character-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/viewportFit.ts",
+      "docs": [
+        "display-viewport-and-window"
       ]
     },
     {
@@ -755,6 +799,7 @@
     {
       "glob": "src/ui/TouchMobileControls.ts",
       "docs": [
+        "display-viewport-and-window",
         "ui-component-layer"
       ]
     },
@@ -781,6 +826,18 @@
       "docs": [
         "ui-component-layer",
         "ui-panel-skin"
+      ]
+    },
+    {
+      "glob": "src/ui/debug-panel-dock.css",
+      "docs": [
+        "display-viewport-and-window"
+      ]
+    },
+    {
+      "glob": "src/ui/debugAcousticSection.ts",
+      "docs": [
+        "scene-acoustics"
       ]
     },
     {

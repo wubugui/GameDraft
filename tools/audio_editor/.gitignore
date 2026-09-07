@@ -4,6 +4,7 @@ imported/
 .backups/
 edits.json
 assignments.json
+trash.json
 ui_state.json
 server.log
 app.log

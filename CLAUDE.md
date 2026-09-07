@@ -10,9 +10,9 @@
 > `src/systems/graphDialogue/evaluateGraphCondition.ts`。架构文档
 > (`docs/游戏架构设计文档.md`)里的清单会漂,不要照抄任何文档里的表。
 >
-> **光影是「原画 + 加性实体灯」**(2026-08-30 制作人定调,取代 08-20 的统一光影重打光):**原画就是最终的光照**,运行时不重新照亮场景,只把作者摆的实体灯加上去(加之前先从原画反解 albedo)。**「夜」靠换一张夜原画**(`timeVariants` 整套时段外观)+ 该时段的 probe + 该时段的灯,不靠调暗天光——天光与太阳的**运行时加光项已删**。角色一律走 probe 底光 + 与场景**同一次打包**的加性灯。⚠ 统一角色路径已被 `Game.UNIFIED_CHAR_PATH_ENABLED = false` 整条关死,`UnifiedCharacterShader` / GI 反弹 / 3D 天穹可见性网格 / `lighting.placeholder` / `radianceScale` **全部无消费者**(留码不删,读代码别被它们误导;`placeholder` 尤其不能再拿来判断"这个场景走哪条")。正文见 `agent_docs/runtime/mechanisms/scene-lighting.md`。
+> **光影是「原画 + 加性实体灯」**(2026-08-30 制作人定调,取代 08-20 的统一光影重打光):**原画就是最终的光照**,运行时不重新照亮场景,只把作者摆的实体灯加上去(灯**乘在一张烘出来的 albedo 贴图**上 —— 2026-09-07 起不再是 shader 里现除的 `原画/S_day`,那张图**作者可以手改**,全时段共用主背景那一份)。**「夜」靠换一张夜原画**(`timeVariants` 整套时段外观)+ 该时段的 probe + 该时段的灯,不靠调暗天光——天光与太阳的**运行时加光项已删**。角色一律走 probe 底光 + 与场景**同一次打包**的加性灯。⚠ 统一角色路径已被 `Game.UNIFIED_CHAR_PATH_ENABLED = false` 整条关死,`UnifiedCharacterShader` / GI 反弹 / 3D 天穹可见性网格 / `lighting.placeholder` / `radianceScale` **全部无消费者**(留码不删,读代码别被它们误导;`placeholder` 尤其不能再拿来判断"这个场景走哪条")。正文见 `agent_docs/runtime/mechanisms/scene-lighting.md`。
 >
-> **光照烘焙只有一个工具、一个目录**(制作人 2026-08-31 收束):`tools/character_lighting_lab` 产出一张背景图的**全部**派生物(深度/标定/probe/体素/行走面 + 法线/天穹可见性),统一落 `runtime/scenes/<id>/lighting/<背景基名>/`。烘几何场:`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene <id>`。⚠ 别再另起 baker 或另开目录——同一份东西分两处放,打包规则/校验器/审计各写一套路径,少写一层就是**整批静默失效**(已发生过四次)。
+> **光照烘焙只有一个工具、一个目录**(制作人 2026-08-31 收束):`tools/character_lighting_lab` 产出一张背景图的**全部**派生物(深度/标定/probe/体素/行走面 + 法线/天穹可见性/**albedo 贴图**),统一落 `runtime/scenes/<id>/lighting/<背景基名>/`。烘几何场:`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene <id>`;只补 albedo 加 `--albedo-only`(不重跑任何 march)。⚠ 别再另起 baker 或另开目录——同一份东西分两处放,打包规则/校验器/审计各写一套路径,少写一层就是**整批静默失效**(已发生过四次)。
 >
 > **🔴 铁律 0 · 光照一律在世界空间算**(制作人 2026-08-30 定死,无例外):
 > **所有的光照必须在世界空间计算;任何 q 空间的量都必须先转换到世界空间,再参与光照计算。**

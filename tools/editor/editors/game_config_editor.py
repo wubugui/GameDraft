@@ -159,20 +159,23 @@ class GameConfigEditor(QWidget):
         disp_lay = QVBoxLayout(disp_inner)
         disp_lay.setContentsMargins(0, 0, 0, 0)
 
+        # 缺省值与游戏的标准视口一致（4:3）。以前这里是 1280×720：没勾时一按勾就把标准换成 16:9，
+        # 与 exe 窗口写死 16:9 是同一类漂移（2026-09-06 「打包出来比例不对」）。
         vp_row, self._vp_chk, self._vp_w, self._vp_h = _make_size_row("Viewport")
-        self._vp_w.setValue(1280)
-        self._vp_h.setValue(720)
+        self._vp_w.setValue(1024)
+        self._vp_h.setValue(768)
         self._vp_chk.setToolTip(
-            "Logical rendering resolution. Game elements are rendered at this "
-            "size and the result is scaled to fill the window via CSS."
+            "逻辑渲染分辨率（标准 1024×768，4:3）：所有游戏元素在这个尺寸内布局与渲染。\n"
+            "显示时只做等比缩放（信箱/柱箱），窗口是什么形状都不会拉伸变形。"
         )
         disp_lay.addLayout(vp_row)
 
         ws_row, self._ws_chk, self._ws_w, self._ws_h = _make_size_row("Window Size")
-        self._ws_w.setValue(1280)
-        self._ws_h.setValue(720)
+        self._ws_w.setValue(1024)
+        self._ws_h.setValue(768)
         self._ws_chk.setToolTip(
-            "CSS size of the game container. Independent of viewport resolution."
+            "宿主窗口的期望尺寸：编辑器 F5 预览窗与打包 exe 的窗口都按它开。\n"
+            "不影响逻辑分辨率，也不决定画面比例（画面按 Viewport 比例等比放进窗口）。通常与 Viewport 相同。"
         )
         disp_lay.addLayout(ws_row)
 

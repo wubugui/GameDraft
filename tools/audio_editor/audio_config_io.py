@@ -344,7 +344,11 @@ def apply_src_updates(path: Path, updates: list[dict], *,
     """
     # newline="":关掉 universal newlines。不关的话 CRLF 文件读进来变 LF、写回去就是
     # 整份换行符被改写 ——「一个字节都不多动」当场破功,而且备份也是改过的版本。
-    original = path.read_text(encoding="utf-8", newline="")
+    # ⚠ 别写成 path.read_text(..., newline=""):那个参数 3.13 才有,本仓的 .tools/venv
+    # 是 3.11 —— 写成那样时**每一次导出**都在这里 TypeError,而这一行的测试也一起红,
+    # 于是"红了很久的存量失败"其实是导出按钮整个是坏的。
+    with path.open(encoding="utf-8", newline="") as fh:
+        original = fh.read()
     st = path.stat()
     if expect_stat is not None and (st.st_size, st.st_mtime_ns) != tuple(expect_stat):
         return {"ok": False, "applied": [], "noop": [], "blocked": [],

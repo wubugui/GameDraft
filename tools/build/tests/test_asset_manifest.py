@@ -5,8 +5,10 @@
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -16,7 +18,16 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from tools.build.asset_manifest import (  # noqa: E402
+    DEFAULT_PROBE_MODE,
+    LIGHTING_GEOMETRY_FILES,
+    LIGHTING_PAYLOAD_CORE,
+    LIGHTING_PAYLOAD_DEBUG_ONLY,
+    LIGHTING_PAYLOAD_OPTIONAL,
+    PROBE_ATLAS_FILE_BY_MODE,
+    _load_rules,
     build_manifest,
+    probe_atlas_file_for_mode,
+    probe_mode_of,
     unpicked_summary,
 )
 
@@ -142,6 +153,25 @@ class ManifestBaseTests(unittest.TestCase):
         rep = self.run_manifest()
         self.assertNotIn("resources/runtime/images/orphan.png", rep.files)
 
+    def test_注册表登记即引用_overlay_与道具预设(self) -> None:
+        """登记在 overlay_images / prop_presets 里、但暂时没有哪条动作引用的图也要进包：
+        注册表是作者写的内容，dev 服能显示它（整个 public/ 都在），包里不能静默缺。"""
+        img = self.root / "public" / "resources" / "runtime" / "images" / "illustrations" / "lamp.png"
+        _write_png(img)
+        _write_png(self.root / "public" / "resources" / "runtime" / "images" / "icons" / "sword.png")
+        _write(self.root / "public" / "assets" / "data" / "overlay_images.json", json.dumps({
+            "lamp": "/resources/runtime/images/illustrations/lamp.png",
+            "ghost": "/resources/runtime/images/illustrations/not_there.png",
+        }))
+        _write(self.root / "public" / "assets" / "data" / "prop_presets.json", json.dumps({
+            "sword": {"label": "剑", "image": "/resources/runtime/images/icons/sword.png"},
+        }))
+        rep = self.run_manifest()
+        self.assertIn("resources/runtime/images/illustrations/lamp.png", rep.files)
+        self.assertIn("resources/runtime/images/icons/sword.png", rep.files)
+        self.assertNotIn("resources/runtime/images/illustrations/not_there.png", rep.files)
+        self.assertTrue(rep.origin["resources/runtime/images/illustrations/lamp.png"].startswith("注册表"))
+
     # -------------------------------------------------------------- 规则
 
     def test_always_extract_捞进代码写死的资源(self) -> None:
@@ -250,27 +280,232 @@ class RealRulesTests(unittest.TestCase):
 
         always = list(rules["always_extract"])
         never = list(rules["never_extract"])
-        # 运行时**必读**的那几个：漏掉任何一个都是"进游戏光照静默失效"
-        # (atlas_l1/l2.bin 是运行时真正 fetch 的 SH 图集,2026-08-31 审计补上)
-        must = {"lighting.json", "probes_valid.bin", "ground_d.png",
-                "normal.png", "skyvis.png", "geometry.json",
-                "atlas_l1.bin", "atlas_l2.bin"}
-        # 刻意不进包的（统一角色路径已停用，运行时不读）
-        must_not = {"skyvis_grid.bin", "gi_hitmap.bin"}
+        # 规则只登记两个**入口**文件；其余由展开器按载荷推导（见下面 LightingPayloadExpanderTests
+        # 与 RealTreeLightingTests）。入口没被 glob 接上 = 展开器根本没机会跑。
+        entries = {"lighting.json", "geometry.json"}
+        # 刻意不进包的（统一角色路径已停用 / 派生标量 / 只作离线烘 albedo 的输入）
+        must_not = {"skyvis_grid.bin", "gi_hitmap.bin", "skyvis.png"}
 
         seen: set[str] = set()
         for f in real:
             rel = f.relative_to(_ROOT / "public").as_posix()
             name = f.name
             seen.add(name)
-            hit = any(fnmatch.fnmatch(rel, p) for p in always)
-            if name in must:
-                self.assertTrue(hit, f"运行时必读却没被 always_extract 匹配：{rel}")
+            if name in entries:
+                self.assertTrue(any(fnmatch.fnmatch(rel, p) for p in always),
+                                f"载荷入口没被 always_extract 匹配（布局又变了？）：{rel}")
             if name in must_not:
                 self.assertTrue(any(fnmatch.fnmatch(rel, p) for p in never),
                                 f"该排除的载荷没被 never_extract 匹配：{rel}")
-        self.assertTrue(must <= seen,
-                        f"磁盘上缺这些烘焙产物，护栏形同虚设：{sorted(must - seen)}")
+        self.assertTrue(entries <= seen,
+                        f"磁盘上缺这些烘焙产物，护栏形同虚设：{sorted(entries - seen)}")
+
+    def test_发行档不许把任何_probe_图集写进_never_extract(self) -> None:
+        """2026-09-05 的事故形状：atlas_bin.bin 被当"只有 F2 才读"排除，而它是正式档。
+        哪张图集是正式的由载荷说了算（展开器抽），规则里排除任何一张都是推翻展开器。"""
+        rules = _load_rules()
+        for pat in rules["targets"]["release"].get("never_extract", []):
+            for atlas in PROBE_ATLAS_FILE_BY_MODE.values():
+                self.assertFalse(
+                    fnmatch.fnmatch(f"resources/runtime/scenes/x/lighting/bg/{atlas}", pat),
+                    f"发行档 never_extract 会排掉 probe 图集 {atlas}：{pat}",
+                )
+        for pat in rules["never_extract"]:
+            for atlas in PROBE_ATLAS_FILE_BY_MODE.values():
+                self.assertFalse(
+                    fnmatch.fnmatch(f"resources/runtime/scenes/x/lighting/bg/{atlas}", pat),
+                    f"公共 never_extract 会排掉 probe 图集 {atlas}：{pat}",
+                )
+
+
+class RuntimeContractTests(unittest.TestCase):
+    """Python 侧的文件名表是 ``src/core/lightingPayloadFiles.ts`` 的镜像——逐字比对。
+
+    运行时改了 mode→图集的对应（或加了一个必读文件）而这里没跟上，就是发行包
+    静默失效的那条老路。解析 TS 源码而不是 import 它：Python 跑不了 TS，而 grep 一份
+    形状固定的常量声明足够稳，声明形状变了这里也会红（那就一起改）。
+    """
+
+    TS_PATH = _ROOT / "src" / "core" / "lightingPayloadFiles.ts"
+
+    def _ts(self) -> str:
+        return self.TS_PATH.read_text(encoding="utf-8")
+
+    def _ts_array(self, name: str) -> tuple[str, ...]:
+        m = re.search(r"export const " + name + r"[^=]*=\s*\[([^\]]*)\]", self._ts())
+        self.assertIsNotNone(m, f"TS 里找不到 export const {name} = [...]")
+        return tuple(re.findall(r"'([^']+)'", m.group(1)))
+
+    def test_probe_图集表与缺省_mode_逐字相同(self) -> None:
+        src = self._ts()
+        m = re.search(r"export const PROBE_ATLAS_FILE_BY_MODE[^=]*=\s*\{([^}]*)\}", src)
+        self.assertIsNotNone(m, "TS 里找不到 PROBE_ATLAS_FILE_BY_MODE")
+        table = {int(k): v for k, v in re.findall(r"(\d+)\s*:\s*'([^']+)'", m.group(1))}
+        self.assertEqual(table, PROBE_ATLAS_FILE_BY_MODE)
+        d = re.search(r"export const DEFAULT_PROBE_MODE\s*=\s*(\d+)", src)
+        self.assertIsNotNone(d)
+        self.assertEqual(int(d.group(1)), DEFAULT_PROBE_MODE)
+
+    def test_四组文件名单逐字相同(self) -> None:
+        self.assertEqual(self._ts_array("LIGHTING_PAYLOAD_CORE"), tuple(LIGHTING_PAYLOAD_CORE))
+        self.assertEqual(self._ts_array("LIGHTING_GEOMETRY_FILES"), tuple(LIGHTING_GEOMETRY_FILES))
+        self.assertEqual(self._ts_array("LIGHTING_PAYLOAD_OPTIONAL"), tuple(LIGHTING_PAYLOAD_OPTIONAL))
+        self.assertEqual(self._ts_array("LIGHTING_PAYLOAD_DEBUG_ONLY"), tuple(LIGHTING_PAYLOAD_DEBUG_ONLY))
+
+    def test_mode_判定与运行时同一条规则(self) -> None:
+        """TS：``shadingMode === 1 || shadingMode === 2 ? shadingMode : DEFAULT``。"""
+        self.assertEqual(probe_mode_of(1), 1)
+        self.assertEqual(probe_mode_of(2), 2)
+        self.assertEqual(probe_mode_of(3), DEFAULT_PROBE_MODE)
+        self.assertEqual(probe_mode_of(None), DEFAULT_PROBE_MODE)
+        self.assertEqual(probe_mode_of("2"), DEFAULT_PROBE_MODE)
+        self.assertEqual(probe_mode_of(True), DEFAULT_PROBE_MODE)   # bool 是 int 子类，不能误判成 1
+        self.assertEqual(probe_mode_of(2.0), DEFAULT_PROBE_MODE)    # JS 里 2.0 === 2，但载荷里写的是整数
+        self.assertEqual(probe_atlas_file_for_mode(None), "atlas_bin.bin")
+
+
+class LightingPayloadExpanderTests(ManifestBaseTests):
+    """展开器按每份载荷自己的 ``shading.mode`` 抽图集——对着**真实规则文件**验。"""
+
+    def _payload(self, scene: str, bg: str, *, mode: object = 3, files: tuple[str, ...] = (), meta_json: str | None = None) -> str:
+        d = self.root / "public" / "resources" / "runtime" / "scenes" / scene / "lighting" / bg
+        d.mkdir(parents=True, exist_ok=True)
+        if meta_json is not None:
+            _write(d / "lighting.json", meta_json)
+        else:
+            body = {"version": 3, "background_sha1": "x"}
+            if mode is not None:
+                body["shading"] = {"mode": mode}
+            _write(d / "lighting.json", json.dumps(body))
+        for name in files:
+            (d / name).write_bytes(b"0" * 8)
+        return f"resources/runtime/scenes/{scene}/lighting/{bg}"
+
+    def run_real(self, target: str = "release"):
+        return build_manifest(self.root, _load_rules(), target=target)
+
+    ALL_SIBLINGS = (
+        "probes_valid.bin", "ground_d.png", "geometry.json", "normal.png", "albedo.png", "skyvis.png",
+        "skyao_probe.bin",
+        "atlas_l1.bin", "atlas_l2.bin", "atlas_bin.bin", "vol_rad.bin", "vol_emit.bin",
+        "skyvis_grid.bin", "gi_hitmap.bin", "lighting.json.bak",
+    )
+
+    def test_发行档只抽当前_mode_那张图集(self) -> None:
+        d3 = self._payload("s1", "background", mode=3, files=self.ALL_SIBLINGS)
+        d2 = self._payload("s1", "background-night", mode=2, files=self.ALL_SIBLINGS)
+        d1 = self._payload("s1", "bg3", mode=1, files=self.ALL_SIBLINGS)
+        d0 = self._payload("s1", "bg4", mode=None, files=self.ALL_SIBLINGS)
+        rep = self.run_real("release")
+        self.assertEqual(rep.problems, [])
+        for d, want in ((d3, "atlas_bin.bin"), (d2, "atlas_l2.bin"), (d1, "atlas_l1.bin"), (d0, "atlas_bin.bin")):
+            self.assertIn(f"{d}/{want}", rep.files, d)
+            for other in PROBE_ATLAS_FILE_BY_MODE.values():
+                if other != want:
+                    self.assertNotIn(f"{d}/{other}", rep.files, f"{d} 不该带 {other}")
+
+    def test_核心_几何_可选旁挂都抽_调试专用与派生标量不抽(self) -> None:
+        d = self._payload("s1", "background", mode=3, files=self.ALL_SIBLINGS)
+        rep = self.run_real("release")
+        for name in (*LIGHTING_PAYLOAD_CORE, *LIGHTING_GEOMETRY_FILES, *LIGHTING_PAYLOAD_OPTIONAL):
+            self.assertIn(f"{d}/{name}", rep.files, name)
+        for name in (*LIGHTING_PAYLOAD_DEBUG_ONLY, "skyvis_grid.bin", "gi_hitmap.bin", "lighting.json.bak"):
+            self.assertNotIn(f"{d}/{name}", rep.files, name)
+
+    def test_dev_档三张图集与体积档全带(self) -> None:
+        d = self._payload("s1", "background", mode=3, files=self.ALL_SIBLINGS)
+        rep = self.run_real("dev")
+        for name in (*PROBE_ATLAS_FILE_BY_MODE.values(), *LIGHTING_PAYLOAD_DEBUG_ONLY):
+            self.assertIn(f"{d}/{name}", rep.files, name)
+        for name in ("skyvis_grid.bin", "gi_hitmap.bin"):
+            self.assertNotIn(f"{d}/{name}", rep.files, name)
+
+    def test_旁挂缺席不算问题_只抽有的(self) -> None:
+        d = self._payload("s1", "background", mode=3, files=("probes_valid.bin", "ground_d.png", "atlas_bin.bin"))
+        rep = self.run_real("release")
+        self.assertEqual(rep.problems, [])
+        self.assertIn(f"{d}/atlas_bin.bin", rep.files)
+        self.assertNotIn(f"{d}/geometry.json", rep.files)
+
+    def test_mode_要的图集不在磁盘上是硬伤(self) -> None:
+        """带着这种状态打出去的包进场景必 404、角色照明整份作废——清单生成就得停。"""
+        d = self._payload("s1", "background", mode=3, files=("probes_valid.bin", "ground_d.png", "atlas_l2.bin"))
+        rep = self.run_real("release")
+        self.assertEqual(len(rep.problems), 1, rep.problems)
+        self.assertIn("atlas_bin.bin", rep.problems[0])
+        self.assertIn(d, rep.problems[0])
+        # 同一份载荷从 lighting.json / geometry.json 两个入口各展开一次，问题只记一条
+        self._payload("s2", "background", mode=3, files=("probes_valid.bin", "ground_d.png", "geometry.json"))
+        rep2 = self.run_real("release")
+        self.assertEqual(len(rep2.problems), 2, rep2.problems)
+
+    def test_lighting_json_坏了也是硬伤(self) -> None:
+        self._payload("s1", "background", files=("atlas_bin.bin",), meta_json="{not json")
+        rep = self.run_real("release")
+        self.assertTrue(any("读不出来" in p for p in rep.problems), rep.problems)
+
+    def test_只有几何场入口时也能带出法线与albedo(self) -> None:
+        d = self.root / "public" / "resources" / "runtime" / "scenes" / "s1" / "lighting" / "bg"
+        d.mkdir(parents=True)
+        _write(d / "geometry.json", "{}")
+        (d / "normal.png").write_bytes(b"0")
+        (d / "albedo.png").write_bytes(b"0")
+        # skyvis.png 在开发树里照旧存在（离线烘 albedo 的输入），但**不许进发行包**
+        (d / "skyvis.png").write_bytes(b"0")
+        rep = self.run_real("release")
+        rel = "resources/runtime/scenes/s1/lighting/bg"
+        self.assertIn(f"{rel}/geometry.json", rep.files)
+        self.assertIn(f"{rel}/normal.png", rep.files)
+        self.assertIn(f"{rel}/albedo.png", rep.files)
+        self.assertNotIn(f"{rel}/skyvis.png", rep.files)
+        self.assertEqual(rep.problems, [])
+
+
+class RealTreeLightingTests(unittest.TestCase):
+    """对着**真实开发树**跑一遍清单：每份载荷按自己的 mode 要读的文件必须全在发行清单里。
+
+    这是"运行时会要什么 → 清单里有没有"那个反向；2026-09-05 之前只有正向比对，
+    atlas_bin 就是从这个盲区漏出去的。跑真清单要十几秒，值。
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        rt = _ROOT / "public" / "resources" / "runtime" / "scenes"
+        payloads = list(rt.rglob("lighting.json")) if rt.is_dir() else []
+        if not payloads:
+            raise unittest.SkipTest("场景运行时目录里没有光照载荷（DVC 没拉）")
+        cls.payloads = payloads
+        cls.release = build_manifest(_ROOT, target="release")
+        cls.dev = build_manifest(_ROOT, target="dev")
+
+    def _dir_rel(self, p: Path) -> str:
+        return p.parent.relative_to(_ROOT / "public").as_posix()
+
+    def test_展开器对真实载荷零硬伤(self) -> None:
+        self.assertEqual(self.release.problems, [])
+
+    def test_每份真实载荷_发行清单含其_mode_的图集与必读旁挂(self) -> None:
+        files = set(self.release.files)
+        for meta_path in self.payloads:
+            d = self._dir_rel(meta_path)
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            mode = (meta.get("shading") or {}).get("mode")
+            atlas = probe_atlas_file_for_mode(mode)
+            self.assertIn(f"{d}/{atlas}", files, f"{d}：shading.mode={mode!r} 要读 {atlas}，发行清单里没有")
+            for name in (*LIGHTING_PAYLOAD_CORE, *LIGHTING_GEOMETRY_FILES, *LIGHTING_PAYLOAD_OPTIONAL):
+                if (meta_path.parent / name).is_file():
+                    self.assertIn(f"{d}/{name}", files, f"{d}/{name} 在磁盘上却没进发行清单")
+
+    def test_发行清单不含体积档_dev_清单含全部图集与体积档(self) -> None:
+        rel_files = set(self.release.files)
+        dev_files = set(self.dev.files)
+        for meta_path in self.payloads:
+            d = self._dir_rel(meta_path)
+            for name in LIGHTING_PAYLOAD_DEBUG_ONLY:
+                self.assertNotIn(f"{d}/{name}", rel_files, f"发行清单不该带 {d}/{name}")
+            for name in (*PROBE_ATLAS_FILE_BY_MODE.values(), *LIGHTING_PAYLOAD_DEBUG_ONLY):
+                if (meta_path.parent / name).is_file():
+                    self.assertIn(f"{d}/{name}", dev_files, f"dev 清单缺 {d}/{name}（F2 切档会静默失败）")
 
 
 if __name__ == "__main__":

@@ -279,12 +279,14 @@ def default_light(index: int, kind: str = 'point') -> dict:
 def default_lighting_block() -> dict:
     """一个场景第一次启用统一光影时的缺省 `lighting` 块。
 
-    ⚠ `day.hemi` **刻意不写** —— 它是原画自己的遮蔽响应，由烘焙期拟合，手填必错
-    （填小了会让画里的遮蔽与夜里的遮蔽叠加，角落黑两遍）。
+    ⚠ 没有 `day` 块 —— 它 2026-09-07 整块下线了。它描述的是"原画自带的自然光"，
+    唯一用途是把 albedo 从原画里反解出来，而 albedo 现在是**烘出来的贴图**
+    （`lighting/<背景基名>/albedo.png`），那个除数整段搬去了离线端。
+    ⚠ `sky` 留着，但它如今只剩 `intensity` 一个活消费者：**实体影浓度**解算时的
+    环境照度分母（不是天光——运行时的天光加光项 2026-08-30 就删了）。
     """
     return {
         'sky': {'kelvin': 9000.0, 'intensity': 0.05, 'hemi': 0.85},
-        'day': {'sunIntensity': 0.0, 'sunElevationDeg': 50.0, 'sunAzimuthDeg': 180.0},
         'lights': [],
         'fog': {'sigma': 0.0, 'scaleHeight': 530.0, 'baseHeight': 0.0,
                 'kelvin': 7000.0, 'scatter': 0.15},
@@ -997,7 +999,7 @@ def validate_pulled_lighting(payload: Any, expect_scene_id: str) -> tuple[dict |
     lit = payload.get('lighting')
     if not isinstance(lit, dict):
         return None, '「%s」没有 lighting 块' % (sid,)
-    missing = [k for k in ('sky', 'day', 'lights', 'display') if k not in lit]
+    missing = [k for k in ('sky', 'lights', 'display') if k not in lit]
     if missing:
         return None, 'lighting 块缺少必需键 %s——半个对象不能覆盖已调好的参数' % (missing,)
     if not isinstance(lit.get('lights'), list):

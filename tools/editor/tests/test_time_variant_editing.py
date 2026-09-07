@@ -29,7 +29,6 @@ from tools.editor.tests.save_test_utils import write_minimal_loadable_project
 _SID = "夜街"
 _BASE_LIGHTING = {
     "sky": {"kelvin": 9000, "intensity": 0.05, "hemi": 0.85},
-    "day": {"sunIntensity": 0.0, "sunElevationDeg": 50.0, "sunAzimuthDeg": 180.0},
     "lights": [{"id": "lamp_a", "kind": "point", "pos": [100.0, 20.0, 100.0], "range": 300.0,
                 "intensity": 1.0, "kelvin": 3000.0}],
     "fog": {"sigma": 0.0, "scaleHeight": 530.0, "baseHeight": 0.0, "kelvin": 7000.0,

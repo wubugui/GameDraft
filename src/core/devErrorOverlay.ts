@@ -3,19 +3,21 @@
  *
  * 约定：任何运行时问题（加载/解码失败、未知动作、悬垂叙事引用等内容错误）都不能静默——
  * 除了写控制台，还要直接糊到游戏画面顶部，让人一眼看见。
- * 生产构建（import.meta.env.DEV 为 false）或无 DOM 环境（测试/node）下整体降级为无操作。
+ *
+ * **控制台那一半两档都写；浮层只在 dev 构建装。** 以前整个函数在 prod 下直接 return，
+ * 于是发行包里素材 404 连一行 console.error 都没有——AssetManager 的加载咽喉是
+ * 「清单漏抽 → 素材 404 → 那块功能不出现」这条链唯一的上报点，压死它等于把发行包
+ * 变成不可诊断的黑箱（2026-09-05 排查 atlas_bin 漏抽时正是这样）。运行时规范律 7：
+ * dev 下必须响、prod 下留痕。
  *
  * 主要接入点是 AssetManager 的加载咽喉（texture/json/text/bitmap/audio/filter 全经过），
  * 以及 ActionExecutor 未知动作、depthError、叙事悬垂信号/条件等显式失败上报。
  */
 
-const isDev = (() => {
-  try {
-    return typeof import.meta !== 'undefined' && !!import.meta.env?.DEV;
-  } catch {
-    return false;
-  }
-})();
+// 直接用 import.meta.env.DEV：vite 编译期替换成字面量，prod 下浮层那一支被整段摇掉。
+// （以前包在 try/IIFE 里"防 import.meta 不存在"，代价是常量折叠失效、浮层代码原样进发行包。
+//  vitest 与 vite 都定义 import.meta.env，不需要那层保护。）
+const isDev = import.meta.env.DEV;
 
 const hasDom = typeof document !== 'undefined';
 
@@ -84,10 +86,9 @@ function ensureOverlay(): void {
  * consoleTag 仅影响控制台前缀（便于按来源过滤），默认保持历史的 [load-failure]。
  */
 export function reportDevError(message: string, consoleTag = '[load-failure]'): void {
-  if (!isDev) return;
-  // 控制台优先，保证即使无 DOM（测试/无头）也不丢信息。
+  // 控制台优先，两档都写：保证即使无 DOM（测试/无头）也不丢信息，发行包里也留痕。
   console.error(consoleTag + ' ' + message);
-  if (!hasDom) return;
+  if (!isDev || !hasDom) return;
   ensureOverlay();
   if (!listEl) return;
   const existing = seen.get(message);

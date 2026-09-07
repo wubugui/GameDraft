@@ -2461,7 +2461,8 @@ class MainWindow(QMainWindow):
         vp = cfg.get("viewport")
         if isinstance(vp, dict) and vp.get("width") and vp.get("height"):
             return (int(vp["width"]), int(vp["height"]))
-        return (1280, 720)
+        # 与 src-tauri/src/main.rs 的 FALLBACK_WINDOW_SIZE 同值：两边回落也要同比例
+        return (1024, 768)
 
     def _focus_game_tab_and_load(self, url: str | None = None,
                                 extra_params: str = "") -> None:

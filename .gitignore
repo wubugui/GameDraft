@@ -93,3 +93,13 @@ onboarding-app/
 
 # 配音原始音源库：大文件、不可再生素材。不进 Git，改由 DVC 托管
 # （见 resources/audio_sources.dvc，忽略规则在 resources/.gitignore），工具见 tools/voice_workbench
+
+# artifact/ 整个目录留在本地,不进版本(制作人 2026-09-08 定):
+# 这里放的是设计稿/盘点/评审报告/生成脚本与中间音频,属于工作过程,不是交付物。
+# 交付用的音频在 public/resources/runtime/audio/ 下,由 DVC 管。
+# 注:历史上已入库的那批(含脚步声 artifact/FootstepSFX_20260907/)不受影响——
+# gitignore 管不到已跟踪的文件；要退版本得另行 git rm --cached。
+artifact/
+
+# 声学空间编辑器存盘时写的旧版备份，本地保留即可
+public/assets/data/*.json.bak

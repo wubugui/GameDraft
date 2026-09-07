@@ -135,14 +135,17 @@ class TestValidate:
 
 
 class TestDefaults:
-    def test_缺省块刻意不写_day_hemi(self) -> None:
-        """day.hemi 是原画自己的遮蔽响应，由烘焙拟合。手填必错（角落会黑两遍）。"""
-        block = default_lighting_block()
-        assert 'hemi' not in block['day']
+    def test_缺省块不写已下线的_day(self) -> None:
+        """`lighting.day` 2026-09-07 整块下线（它是 albedo 反解的除数，那件事搬去了离线端）。
 
-    def test_缺省块四个必需键齐全(self) -> None:
+        写出来的话运行时零消费、校验器还会报警告 —— 新建场景一开就带一条黄。
+        """
         block = default_lighting_block()
-        for k in ('sky', 'day', 'lights', 'display'):
+        assert 'day' not in block
+
+    def test_缺省块三个必需键齐全(self) -> None:
+        block = default_lighting_block()
+        for k in ('sky', 'lights', 'display'):
             assert k in block, k
 
     def test_平行光不带位置与半径(self) -> None:
@@ -358,7 +361,6 @@ GOOD_PAYLOAD = {
     'sceneId': 'wujin',
     'lighting': {
         'sky': {'intensity': 0.05, 'hemi': 0.85},
-        'day': {'sunIntensity': 0.0, 'sunElevationDeg': 50.0, 'sunAzimuthDeg': 180.0},
         'lights': [{'id': 'lamp_1', 'kind': 'point', 'intensity': 2.5}],
         'display': {'ev': 0.0, 'tonemap': 'filmic'},
         'fog': {'sigma': 0.0},
@@ -375,7 +377,7 @@ def test_pull_accepts_full_block():
     assert len(lit['lights']) == 1
 
 
-@pytest.mark.parametrize('drop', ['sky', 'day', 'lights', 'display'])
+@pytest.mark.parametrize('drop', ['sky', 'lights', 'display'])
 def test_pull_rejects_missing_required_key(drop):
     payload = {'sceneId': 'wujin',
                'lighting': {k: v for k, v in GOOD_PAYLOAD['lighting'].items() if k != drop}}

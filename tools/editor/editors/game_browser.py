@@ -245,10 +245,11 @@ class GamePlayWindow(QWidget):
 
     closed = Signal()
 
-    def __init__(self, width: int = 1280, height: int = 720,
+    def __init__(self, width: int = 1024, height: int = 768,
                  parent: QWidget | None = None) -> None:
         super().__init__(parent, Qt.WindowType.Window)
         self.setWindowTitle("GameDraft")
+        # 缺省与游戏标准视口同比例（4:3）；正常调用方传的是 game_config.windowSize
         self.resize(width, height)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         self._native_close_armed = False

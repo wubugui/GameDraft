@@ -9,23 +9,23 @@
     "  (c) 场景 id + 背景图名 + 固定文件名（光照烘焙载荷 lighting/<背景基名>/…）。",
     "  每一条后面都注明了 src 里的唯一实现源，改代码时照着这里对。",
     "",
+    "⚠ 光照载荷**只登记入口文件**（lighting.json / geometry.json）。它旁边要抽哪些文件由",
+    "  tools/build/asset_manifest.py 的 _expand_lighting_payload 按载荷自己的 shading.mode 推导，",
+    "  文件名表与运行时共用一份（src/core/lightingPayloadFiles.ts，两边有契约测试钉死）。",
+    "  2026-09-05 之前这里逐个文件写死 glob：09-02 运行时把 probe 正式档切到 atlas_bin.bin，",
+    "  规则没跟上、还把它当调试载荷排除在发行档之外 → 发行包 28 个场景角色照明整体失效，",
+    "  构建/验收/审计三道门全绿。同一份东西两处维护，改一处漏一处——所以现在只有一处。",
+    "",
     "never_extract：明确不进包的 authoring-only 内容。兜底用——正常情况下它们本来",
     "  就没被引用到，不会进清单；写在这里是防止哪天被某条 JSON 误引用后悄悄进包。",
     "",
     "targets：在公共规则之上叠加。dev 与 release 的**游戏内容完全一致**，",
-    "  差别只在调试设施（F2 光影切档的体积档，每场景 20-27MB）。"
+    "  差别只在调试设施（F2 光影切档：另两种 probe 图集 + 体积档，每场景 20-27MB）。"
   ],
 
   "always_extract": [
     "resources/runtime/scenes/*/lighting/*/lighting.json",
-    "resources/runtime/scenes/*/lighting/*/probes_valid.bin",
-    "resources/runtime/scenes/*/lighting/*/ground_d.png",
-    "resources/runtime/scenes/*/lighting/*/atlas_l1.bin",
-    "resources/runtime/scenes/*/lighting/*/atlas_l2.bin",
-    "resources/runtime/scenes/*/lighting/*/normal.png",
-    "resources/runtime/scenes/*/lighting/*/skyvis.png",
     "resources/runtime/scenes/*/lighting/*/geometry.json",
-    "resources/runtime/scenes/*/lighting/*/skyao_probe.bin",
 
     "resources/runtime/images/dialogue_portraits/*/*.png",
 
@@ -45,11 +45,10 @@
   ],
 
   "_always_extract_出处": {
-    "scenes/*/lighting/*/<probe 那几个>": "CharacterLightingSystem.ts —— 角色照明，进场景必读；atlas_l1/l2 按 lighting.json 的 shading.mode 二选一（实测 27 场 l2、1 场 l1），两个都带",
-    "scenes/*/lighting/*/{normal,skyvis,geometry}": "SceneLightingSystem.ts —— 场景受光的几何场，进场景必读（S_day 与每盏灯的 N·L）",
-    "scenes/*/lighting/*/skyao_probe.bin": "CharacterLightingSystem.ts —— 角色的天穹遮蔽体（乘在 GI 上），进场景必读。⚠ 漏抽的后果是发行版 fetch 404、skyao **静默降级成不遮蔽**，画面上只是「角色有点太亮」而无任何报错（2026-09-01 接运行时时差点漏掉）。",
+    "scenes/*/lighting/*/lighting.json": "CharacterLightingSystem.load —— 角色照明载荷入口，进场景必读。旁边的 probes_valid.bin / ground_d.png / 当前 mode 的 probe 图集 / skyao_probe.bin 由 asset_manifest._expand_lighting_payload 按这份 JSON 的 shading.mode 推导抽取（文件名表 = src/core/lightingPayloadFiles.ts）",
+    "scenes/*/lighting/*/geometry.json": "SceneLightingSystem.load —— 场景受光的几何场入口（每盏灯的 N·L 与 march 起点）。normal.png / albedo.png 同样由展开器带出",
     "⚠ 中间那个 * 是背景图名": "2026-08-30 起烘焙产物按背景图名分目录（lighting/<背景基名>/…）。规则少写这一层的话 fnmatch 接不上——2026-08-31 发现 probe 载荷因此**整整一批没进过包**。tools/build/tests 里有一条护栏对着真实磁盘布局验，别删。",
-    "⛔ skyvis_grid.bin / gi_hitmap.bin 刻意不抽": "gi_hitmap 服务于已停用的统一角色路径（Game.UNIFIED_CHAR_PATH_ENABLED = false），运行时不读。skyvis_grid.bin 是 skyao_probe.bin 的**派生标量** T(up)，按任意法线求值做不到（竖直面偏高约 50%），2026-09-01 起已被 skyao_probe.bin 取代，只等旧运行时代码改完就删。两者继续烘、不进包。",
+    "⛔ skyvis_grid.bin / gi_hitmap.bin / skyvis.png 刻意不抽": "gi_hitmap 服务于已停用的统一角色路径（Game.UNIFIED_CHAR_PATH_ENABLED = false），运行时不读。skyvis_grid.bin 是 skyao_probe.bin 的**派生标量** T(up)，2026-09-01 起已被 skyao_probe.bin 取代。skyvis.png 2026-09-07 起退出运行时——它只是离线烘 albedo.png 那个除数的输入。三者继续烘、不进包（展开器不认识它们，never_extract 再兜一层）。",
     "images/dialogue_portraits/*/*.png": "DialogueUI.ts:122、CutsceneRenderer.ts:624、CharacterBookUI.ts:68 —— 路径 = <slug>/<slug>_<emotion>.png，JSON 里只有 slug 和 emotion，没有路径。同目录的 *_portrait_meta.json / *_qa_contact_sheet.png 运行时不读，故只带 png 且由下面的 never 兜底",
     "images/ui/**": "UITextures.ts:14-19（frame_wood/paper_tile）、UIIcons.ts:14-24（ICON_FILES 名单写死）",
     "images/backgrounds/menu_wujin_dock.png": "MenuUI.ts:95,1412 —— 主菜单背景，硬编码，public/assets 里零引用",
@@ -63,6 +62,7 @@
     "resources/runtime/scenes/*/lighting/*/lighting.json.bak",
 
     "resources/runtime/scenes/*/lighting/*/skyvis_grid.bin",
+    "resources/runtime/scenes/*/lighting/*/skyvis.png",
     "resources/runtime/scenes/*/lighting/*/gi_hitmap.bin",
     "resources/runtime/scene_background_backups/*",
     "resources/runtime/scene_background_backups/**/*",
@@ -90,6 +90,8 @@
   "targets": {
     "dev": {
       "always_extract": [
+        "resources/runtime/scenes/*/lighting/*/atlas_l1.bin",
+        "resources/runtime/scenes/*/lighting/*/atlas_l2.bin",
         "resources/runtime/scenes/*/lighting/*/atlas_bin.bin",
         "resources/runtime/scenes/*/lighting/*/vol_rad.bin",
         "resources/runtime/scenes/*/lighting/*/vol_emit.bin"
@@ -99,7 +101,6 @@
     "release": {
       "always_extract": [],
       "never_extract": [
-        "resources/runtime/scenes/*/lighting/*/atlas_bin.bin",
         "resources/runtime/scenes/*/lighting/*/vol_rad.bin",
         "resources/runtime/scenes/*/lighting/*/vol_emit.bin"
       ]
@@ -107,6 +108,8 @@
   },
 
   "_targets_出处": {
-    "atlas_bin / vol_rad / vol_emit": "只有 F2 调试面板切档时才读（Game.ts:4840,4846 → CharacterLightingSystem.ts:355-356,450）。正常游玩路径不碰。发行包排除；dev 包保留，否则 F2 切档会静默失败（代码只 depthPanel.log 一行，不弹错）"
+    "dev 的三张 probe 图集": "F2 调试面板可以在 L1 / SH / 八面体三种 cache mode 之间切档（Game.ts → CharacterLightingSystem.ensureProbeAtlas），切到哪种就现拉哪张。正常游玩只拉载荷 shading.mode 指定的那一张（展开器已带），另两张只有 dev 档带。",
+    "vol_rad / vol_emit": "只有 F2 切 RT 才读（CharacterLightingSystem.ensureVolumes）。正常游玩路径不碰。发行包排除；dev 包保留，否则 F2 切档会静默失败（代码只 depthPanel.log 一行，不弹错）",
+    "⛔ 发行档不许再把任何 atlas_*.bin 写进 never_extract": "2026-09-05 的事故就是这么来的：atlas_bin.bin 被当成『只有 F2 才读』排除，而它自 09-02 起是正式档。哪张图集是正式的由载荷说了算，展开器会抽对的那张；这里排除等于把展开器的结论推翻。tools/build/tests/test_asset_manifest.py 对着真实载荷验这一条。"
   }
 }

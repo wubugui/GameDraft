@@ -1444,8 +1444,7 @@ export class DebugTools {
         const over = s.shadowLightCount > 6 ? '  ⚠超预算' : '';
         lines.push(
           `场景:灯 ${s.lightCount} 盏(带影 ${s.shadowLightCount}/6${over})　世界宽 ${s.backgroundWu.toFixed(0)} wu　角色高 150 wu`,
-          `　albedo反解 day.hemi ${p.day.hemi === undefined ? '(烘焙拟合值)' : p.day.hemi.toFixed(2)}`
-          + `　灯体发光 ${(p.emissive?.gain ?? 0).toFixed(2)}　雾 σ ${(p.fog?.sigma ?? 0).toFixed(4)}/wu`,
+          `　灯体发光 ${(p.emissive?.gain ?? 0).toFixed(2)}　雾 σ ${(p.fog?.sigma ?? 0).toFixed(4)}/wu`,
           `　显示 EV ${p.display.ev.toFixed(2)}　tonemap ${p.display.tonemap}　`
           + `对比 ${p.display.contrast.toFixed(2)}　饱和 ${p.display.saturation.toFixed(2)}　`
           + `白平衡 ${Math.round(p.display.whiteKelvin)}K`,
@@ -1525,7 +1524,11 @@ export class DebugTools {
 
     // ---------------- ⓪ 共用:调试视图 / β / E色度 / 显示变换 ----------------
     group('⓪ 共用(场景与角色同一把尺)');
-    const DEBUG_NAMES = ['正常', '天穹可见性', '法线', 'S_day', 'S_new', '比值', '线性化原画',
+    // ⚠ 下标 = shader 的 uDebug 档号，三处必须一致（这里 / SceneLightingPass 的
+    //   `if (uDebug == n)` / Game.setSceneLightingDebug 的范围判断）。
+    //   2026-09-07 重编号：「天穹可见性」与「S_day」随 skyvis 退出运行时一并删除，
+    //   「比值」变成直接显示烘出来的 albedo 贴图。
+    const DEBUG_NAMES = ['正常', '法线', 'albedo贴图(烘的;作者可手改)', '灯的辐照度', '线性化原画',
       'GI体(场景=albedo×E·角色=color×E)',
       'GI体·纯E(albedo≡1,场景与角色同式 E×2^β)',
       'GI体·棋盘(纯E×probe cell 奇偶,校对采样位置)',
@@ -1574,7 +1577,7 @@ export class DebugTools {
       paintFixed();
     });
     // 制作人 2026-09-01:「统一法线做成 F2 循环视图里的一个选项,默认不要开」——
-    // 提为与「调试视图」同行的一等循环项;非对照档(0-6)置灰并由 updateDiag 强制归零,
+    // 提为与「调试视图」同行的一等循环项;非对照档(0-4)置灰并由 updateDiag 强制归零,
     // 保证它永远不可能漏进正常渲染。
     r0.appendChild(fixedBtn);
     const scaleRow = mkSlider('quad放大×(窗户;脚点不动)', 1, 6, 0.5,
@@ -1583,11 +1586,11 @@ export class DebugTools {
     diagWrap.appendChild(scaleRow);
     wrap.appendChild(diagWrap);
     const updateDiag = (): void => {
-      const gi = this.sceneDebugViewMode >= 7 && this.sceneDebugViewMode <= 11;
+      const gi = this.sceneDebugViewMode >= 5 && this.sceneDebugViewMode <= 9;
       diagWrap.style.display = gi ? '' : 'none';
       fixedBtn.disabled = !gi;
       fixedBtn.style.opacity = gi ? '' : '0.4';
-      fixedBtn.title = gi ? '' : '仅 GI体/skyao体 对照档(7-11)可用;其余档强制「正常」';
+      fixedBtn.title = gi ? '' : '仅 GI体/skyao体 对照档(5-9)可用;其余档强制「正常」';
       if (!gi && (this.giDiagFixedN !== 0 || this.giDiagQuadScale !== 1)) {
         this.giDiagFixedN = 0;
         this.giDiagQuadScale = 1;

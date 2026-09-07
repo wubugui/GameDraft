@@ -36,6 +36,7 @@ import {
   classify404,
   classifyLeak,
   decodeUrlPath,
+  lightingPayloadParity,
   manifestEntryLanded,
   safeStaticPath,
 } from './lib/build_helpers.mjs';
@@ -153,17 +154,24 @@ async function checkIntegrity() {
  *
  * - `import.meta.env` **必须消失**。它是 vite 的编译期替换目标；还能搜到就说明
  *   define 那一趟没跑，`isDevBuild` 在运行时不是 false —— 那才是后门真的活着。
- * - dev 专属 UI 的类名**必须消失**。它们只在 `isDevBuild` 分支里被构造，
+ * - dev 专属 UI 的**文案**必须消失。它们只在 `import.meta.env.DEV` 分支里被构造，
  *   常量折叠 + 摇树之后应当整棵不见。还在 = 死代码没消掉，包白胖一圈，
  *   而且说明剥离没有按预期发生。
+ *
+ * ⚠ 判据必须是**字符串字面量**，不能是类名。以前这里写的是 `DevModeUI` / `DebugPanelUI`
+ *   —— 类标识符被 oxc mangle 之后**永远不可能**出现在产物里，那两条断言恒真：
+ *   2026-09-05 实测 DevModeUI 的代码原封不动留在发行包里（`Game.startDevMode` 只判运行时
+ *   字段，没有编译期常量），而验收门一直打印"dev 设施已剥净"。文案不会被改名，才能作数。
  *
  * 行为层面的证明（发行包开 `?mode=dev` 应当**没有**任何 dev UI）只能靠真跑，
  * 见文件头 `--serve` 那一段。
  */
 const RELEASE_MUST_NOT_CONTAIN = [
   { lit: 'import.meta.env', why: 'vite 的编译期替换没跑——dev 门在运行时不是 false' },
-  { lit: 'DevModeUI', why: 'dev 跳场景面板没被摇掉' },
-  { lit: 'DebugPanelUI', why: 'F2 调试面板没被摇掉' },
+  // src/ui/DevModeUI.ts 的面板文案：只有 Game.startDevMode（import.meta.env.DEV 门后）构造它
+  { lit: '本场景已开日夜', why: 'dev 跳场景面板（DevModeUI）没被摇掉——Game.startDevMode 的 DEV 门丢了？' },
+  // src/core/devErrorOverlay.ts 的浮层标题：只在 isDev 分支里建 DOM
+  { lit: '运行时问题 (dev)', why: 'dev 错误浮层（devErrorOverlay.ensureOverlay）没被摇掉——isDev 不再是编译期常量？' },
 ];
 
 async function checkHygiene(relSet) {
@@ -304,6 +312,110 @@ async function checkBakeFreshness(relSet) {
   else note('重烘那几个场景，或把 background.png 恢复到烘焙时那一版');
 }
 
+// ------------------------------------------- 2c. 光照载荷平价（开发树 → 产物，反向核对）
+
+/**
+ * 开发树里每一份光照载荷，运行时会读的文件产物里是不是一个不少。
+ *
+ * 这是与"清单承诺 → 实际落地"**相反方向**的检查。清单比对只能证明"清单说要的都在"，
+ * 清单本身漏了什么它永远看不见——2026-09-05 的 atlas_bin 就是这么带着双 PASS 发出去的：
+ * 规则把它当调试载荷排除，清单里根本没有它，比对必然全绿，而 29 份载荷 100% 要读它。
+ *
+ * 判据以**开发树**为准（`public/resources/runtime/scenes/<id>/lighting/<背景基名>/`）：
+ * 每个目录按它自己 `lighting.json` 的 `shading.mode` 算出运行时必读的文件名
+ * （表在 lib/build_helpers.mjs，镜像自 src/core/lightingPayloadFiles.ts，有契约测试钉死），
+ * 逐个查产物。开发树里本来就没有的文件（老载荷缺 skyao 之类）不算漏抽，只记 note。
+ */
+async function checkLightingPayloadParity(relSet) {
+  step('光照载荷平价（开发树 → 产物）');
+  const scenesRoot = join(ROOT, 'public', 'resources', 'runtime', 'scenes');
+  if (!existsSync(scenesRoot)) {
+    fail(`开发树里没有 ${relative(ROOT, scenesRoot)} —— DVC 没拉？没有开发树就无从核对`);
+    return;
+  }
+  const devPayloads = new Map();
+  for (const f of await walkFiles(scenesRoot)) {
+    const rel = relative(join(ROOT, 'public'), f).split(sep).join('/');
+    const m = /^(resources\/runtime\/scenes\/[^/]+\/lighting\/[^/]+)\/([^/]+)$/.exec(rel);
+    if (!m) continue;
+    const [, dir, name] = m;
+    if (!devPayloads.has(dir)) devPayloads.set(dir, { files: new Set(), meta: null });
+    const entry = devPayloads.get(dir);
+    entry.files.add(name);
+    if (name === 'lighting.json') {
+      try {
+        entry.meta = JSON.parse(readFileSync(f, 'utf-8'));
+      } catch {
+        entry.meta = null;
+      }
+    }
+  }
+  // 只核对真有载荷（有 lighting.json 或 geometry.json）的目录
+  for (const [dir, entry] of [...devPayloads]) {
+    if (!entry.files.has('lighting.json') && !entry.files.has('geometry.json')) devPayloads.delete(dir);
+  }
+  if (devPayloads.size === 0) {
+    // "一个载荷都没找到"必须判失败不能判跳过（scene-lighting 卡：降级必须出声）
+    fail('开发树里一个光照载荷目录都没找到 —— 布局又变了？本门与打包规则都要跟上');
+    return;
+  }
+  const { missing, leaked } = lightingPayloadParity(TARGET, devPayloads, relSet);
+  const real = missing.filter((m) => m.inDevTree);
+  const bakeGaps = missing.filter((m) => !m.inDevTree);
+  for (const m of real) fail(`漏抽：${m.dir}/${m.file}（${m.why}）`);
+  for (const m of leaked) fail(`发行档不该带调试载荷：${m.dir}/${m.file}`);
+  if (bakeGaps.length) {
+    const dirs = new Set(bakeGaps.map((m) => m.dir.split('/')[3]));
+    note(`${bakeGaps.length} 个运行时会读的文件开发树里本来就没有（${[...dirs].slice(0, 5).join(', ')}${dirs.size > 5 ? '…' : ''}）—— 是烘焙缺件不是漏抽，运行时两边同样降级`);
+  }
+  if (!real.length && !leaked.length) {
+    pass(`${devPayloads.size} 份光照载荷按各自 shading.mode 要读的文件全部落地`);
+  }
+}
+
+// ---------------------------------------------------- 2d. 全场景抓取扫描的结果
+
+/**
+ * 静态检查证明不了"能玩"；`scripts/scene_sweep.mjs` 无头把每个场景真跑一遍、记下运行时
+ * **实际请求**的每个资源反向核对清单，结果落 `.build/sweep-<target>.json`。
+ * 本门只认**对着当前这份清单**跑出来的报告（按清单文件哈希对账）：清单一变旧报告作废。
+ * 没有报告只 note 不 fail——`release.mjs` 会在验收之后真跑一遍；这里是给
+ * 单独 `npm run verify:*` 的人一个诚实的提示。
+ */
+function checkSweepReport() {
+  step('全场景抓取扫描');
+  const manifestPath = join(ROOT, '.build', `manifest-${TARGET}.json`);
+  const sweepPath = join(ROOT, '.build', `sweep-${TARGET}.json`);
+  if (!existsSync(sweepPath)) {
+    note(`没有 ${relative(ROOT, sweepPath)} —— 还没跑过全场景扫描：node scripts/scene_sweep.mjs --target ${TARGET}`);
+    return;
+  }
+  let sweep;
+  try {
+    sweep = JSON.parse(readFileSync(sweepPath, 'utf-8'));
+  } catch (e) {
+    fail(`扫描报告读不出来：${e.message}`);
+    return;
+  }
+  const manifestSha1 = existsSync(manifestPath)
+    ? createHash('sha1').update(readFileSync(manifestPath)).digest('hex') : null;
+  if (!manifestSha1 || sweep.manifestSha1 !== manifestSha1) {
+    note(`扫描报告对的是另一份清单（${String(sweep.manifestSha1).slice(0, 8)} ≠ ${String(manifestSha1).slice(0, 8)}），已作废 —— 重跑 node scripts/scene_sweep.mjs --target ${TARGET}`);
+    return;
+  }
+  if (sweep.verdict === 'PASS') {
+    pass(`全场景扫描通过：${sweep.summary?.scenes ?? '?'} 个场景、${sweep.summary?.requests ?? '?'} 次请求，清单零漏项`);
+  } else {
+    const gaps = Array.isArray(sweep.gaps) ? sweep.gaps : [];
+    const failed = (sweep.scenes ?? []).filter((s) => s.error);
+    if (gaps.length) {
+      fail(`全场景扫描不通过：${gaps.length} 个运行时真会请求、清单却没有的文件，例如 ${gaps.slice(0, 3).map((g) => g.path ?? g).join(', ')}`);
+    }
+    for (const s of failed) fail(`全场景扫描：场景 ${s.id} 没跑起来：${s.error}`);
+    if (!gaps.length && !failed.length) fail(`全场景扫描报告 verdict=${sweep.verdict}，但既无漏抽也无失败场景——报告格式对不上，重跑一次`);
+  }
+}
+
 // -------------------------------------------------------- 3. 起服 + 404 记录
 
 const MIME = {
@@ -406,6 +518,8 @@ async function main() {
   if (relSet.size) {
     await checkHygiene(relSet);
     await checkBakeFreshness(relSet);
+    await checkLightingPayloadParity(relSet);
+    checkSweepReport();
   }
 
   let server = null;

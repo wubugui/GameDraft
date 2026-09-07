@@ -3,7 +3,7 @@ id: build-pipeline
 title: 打包管线(只读抽取 · dev/发行双档 · 产物验收门)
 domain: runtime
 type: mechanism
-summary: 打包只从开发树只读抽取,绝不改动开发数据;裁剪一律写成"不抽取";清单=JSON引用闭包+传递闭包+id约定+显式规则;输出目录是每次传的参数、不进配置(编辑器与自动化共用 release.mjs);静态检查证明不了能玩,靠产物验收门真跑
+summary: 打包只从开发树只读抽取,绝不改动开发数据;裁剪一律写成"不抽取";清单=JSON引用闭包+传递闭包+id约定+显式规则(光照载荷按载荷自己的 shading.mode 展开,文件名表与运行时共用一份);输出目录是每次传的参数、不进配置;静态清单证明不了完备——release.mjs 默认无头真跑每个场景反向核对清单(scene_sweep),verify 再做开发树→产物的光照载荷平价
 status: active
 authority:
   - scripts/release.mjs
@@ -12,19 +12,27 @@ authority:
   - tools/build/build_config.json
   - scripts/package.mjs
   - scripts/verify_build.mjs
+  - scripts/scene_sweep.mjs
+  - tools/build/scene_sweep.py
+  - src/core/lightingPayloadFiles.ts
 triggers:
-  paths: ["tools/build/**", "scripts/release.mjs", "scripts/package.mjs", "scripts/verify_build.mjs", "scripts/lib/**", "src-tauri/**", "vite.config.ts"]
-  topics: [打包, 构建, 发行, build, package, release, 抽取清单, manifest, Tauri, exe, ffmpeg, ogg, 输出目录, 自动化构建]
-  tasks: [出发行版, 改打包, 加素材类别, 接自动化构建]
-last_governed: 2026-09-03
+  paths: ["tools/build/**", "scripts/release.mjs", "scripts/package.mjs", "scripts/verify_build.mjs", "scripts/scene_sweep.mjs", "scripts/lib/**", "src-tauri/**", "vite.config.ts", "src/core/lightingPayloadFiles.ts"]
+  topics: [打包, 构建, 发行, build, package, release, 抽取清单, manifest, Tauri, exe, ffmpeg, ogg, 输出目录, 自动化构建, 漏抽, 全场景扫描, sweep, atlas_bin]
+  tasks: [出发行版, 改打包, 加素材类别, 接自动化构建, 排查包里失效]
+last_governed: 2026-09-06
 ---
 
 ## 是什么(一句话)
 
 把开发树里的东西**抽取**成一个能独立跑的游戏产物。
 出一个可发布的绿色版走 `node scripts/release.mjs --out-dir <目录>`
-(抽取 → 验收 → 编译 exe → 装配);分步调试走
-`npm run package:<档>` / `npm run verify:<档>`;要 NSIS 安装包走 `npm run tauri:build`。
+(抽取 → **全场景抓取扫描** → 验收 → 编译 exe → 装配);分步调试走
+`npm run package:<档>` / `npm run verify:sweep` / `npm run verify:<档>`;
+`npm run build` = 这三步串起来;要 NSIS 安装包走 `npm run tauri:build`。
+
+**"编辑器里好的、包里坏的"第一嫌疑永远是清单漏抽**:dev 服直接托管整个 `public/`,
+清单漏一条 dev 下毫无症状、包里就 404,而运行时对缺素材大多静默降级。2026-09-05 那次
+(下面「已知坑」)28 个场景角色照明整份失效,三道门全绿。先查 `.build/sweep-<档>.json`。
 
 ## 输出目录是参数,不是配置
 
@@ -49,7 +57,10 @@ dev 档 1359 MB。省下来的两个大头:未引用/authoring-only 的素材,�
 ## 权威源(读代码从哪进)
 
 清单:`tools/build/asset_manifest.py` + `manifest_rules.json`(规则里每条都注明了 src 出处)。
-装配:`scripts/package.mjs`。验收:`scripts/verify_build.mjs`。桌面壳:`src-tauri/`。
+装配:`scripts/package.mjs`。验收:`scripts/verify_build.mjs`。全场景抓取扫描:
+`scripts/scene_sweep.mjs`(编排:起隔离 dev 服)→ `tools/build/scene_sweep.py`(QtWebEngine 驱动
++ 请求拦截 + 清单核对)。光照载荷文件名表:`src/core/lightingPayloadFiles.ts`(运行时真相源;
+Python/mjs 两份镜像各有契约测试钉死)。桌面壳:`src-tauri/`。
 
 ## 硬契约
 
@@ -63,9 +74,42 @@ dev 档 1359 MB。省下来的两个大头:未引用/authoring-only 的素材,�
 - **清单有四个来源,少一个就是运行时 404**:
   1. `public/assets/**` 全量(文本配置,~1 MB;运行期按 id 动态加载,静态闭包不可能完备);
   2. JSON 引用闭包(复用 `asset_reference_audit` 的 `resolved_media/resolved_text`,**同一套引用语义**);
-  3. 传递闭包(`anim.json`→`spritesheet`;`<img>.png`→`<img>.normal.png`;`anim.json`→同目录 `sockets.json`);
+  3. 传递闭包(`anim.json`→`spritesheet`;`<img>.png`→`<img>.normal.png`;`anim.json`→同目录 `sockets.json`;
+     `lighting/<背景基名>/lighting.json`→同目录**它的 `shading.mode` 要读的那张 probe 图集** + 核心/几何/可选旁挂);
   4. `manifest_rules.json` 的显式规则——**代码写死路径或运行期拼出来的**那些,静态扫描永远抓不到。
-  另有 id 约定扫描(`bundleId` → `animation/<id>/anim.json`)。
+  另有 id 约定扫描(`bundleId` → `animation/<id>/anim.json`)与**注册表闭包**(2026-09-06:
+  `overlay_images.json` / `prop_presets.json` 里登记的每张图,登记即引用——素材审计只在某条
+  动作真用了那个短 id 时才解析它,登记但暂未引用的 14 张原本进不了包,dev 服能显示、包里静默缺)。
+- **光照载荷"运行时读什么"只在一处定义**(2026-09-06):`src/core/lightingPayloadFiles.ts`
+  (mode→图集表、必读/几何/可选/调试专用四组文件名、缺省 mode)。运行时按它选图集、按它的
+  `fetchPayloadBytes` 取文件(缺文件**必抛**,不再把 404 正文当数据);打包展开器
+  `_expand_lighting_payload` 与验收门 `lightingPayloadParity` 各持一份镜像,
+  `tools/build/tests/test_asset_manifest.py::RuntimeContractTests`(解析 TS 源码)与
+  `src/core/lightingPayloadFiles.test.ts`(import 两边)逐字比对。规则文件只登记
+  `lighting.json` / `geometry.json` 两个**入口**;dev 档另带三张图集 + `vol_*`(F2 切档)。
+  **发行档的 `never_extract` 不许再出现任何 `atlas_*.bin`**——哪张是正式档由载荷说了算,
+  测试对着真实规则验这一条。
+  ⚠ 2026-09-07 场景侧那三件改成 `geometry.json` / `normal.png` / **`albedo.png`**:
+  灯乘的反照率成了一张烘出来的贴图(见 [scene-lighting](scene-lighting.md)),而
+  `skyvis.png` 退出运行时、进了 `never_extract`——它现在只是烘 albedo 的离线输入,
+  开发树里照旧有、发行包里不许有。
+- **两道反向门**(清单说"要的都在" ≠ 运行时"要的都在清单里";2026-09-05 之前只有正向):
+  1. `verify_build.mjs` 的**光照载荷平价**:遍历开发树 `scenes/*/lighting/*/`,按每份
+     `lighting.json` 的 mode 算出必读文件,逐个查产物;开发树里有而产物没有 = fail,
+     开发树本来就没有 = note(烘焙缺件,两边同样降级);发行档里出现 `vol_*` 也 fail。
+  2. **全场景抓取扫描**(`scene_sweep`):起一个 `GAMEDRAFT_SWEEP_ISOLATED=1` 的 dev 服
+     (命令队列恒空、快照不落盘、存档落 `local/gamedata_sweep/`——不碰人手里那份),
+     QtWebEngine 逐个以 `?mode=dev&devScene=<id>` 进每个场景、对开了日夜且配了 `timeVariants`
+     的场景再在页内 `advanceTimeTo` 切到每个时段,`QWebEngineUrlRequestInterceptor` 拦下
+     **全部**请求,归一化后问清单:清单没有、开发树有 = **漏抽**(FAIL);开发树也没有 =
+     数据缺件(只记);`sockets.json` / `*.normal.png` 的探测 = 按设计 404。
+     报告 `.build/sweep-<档>.json` 记清单哈希 + `src/` 指纹;`verify_build.mjs` 只认对着**当前清单**
+     跑出的报告。`release.mjs` 默认跑;清单与 `src/` 都没变、上一次全量 PASS 时**复用**上一次报告
+     (全量扫描 36 场十来分钟;"网络静默"只看游戏内容请求——dev 游戏每 600ms 轮询一次命令通道,
+     连它一起算的话每场都干等到上限,实测一场 5 分钟;`--force-sweep` 强制重扫,
+     `--skip-sweep` 显式跳过并在标记里记 `swept:false`)。它对代码怎么拼路径
+     一无所知——新加一条运行期拼出来的资源,下一次扫描就会看见。这是本管线里唯一能证明
+     "清单没漏"的东西;只覆盖**进场景**这一拍(对话立绘、小游戏贴图等要交互才拉的,仍靠规则)。
 - **产物里有一个不在清单里的派生文件:`assets/scene_index.json`**(2026-09-03)。它不是从开发树
   抽取的,是 `package.mjs` 装配完素材之后按**已落地**的 `assets/scenes/*.json` 现算写出的
   (`scripts/lib/scene_index.mjs`,与 vite 开发服中间件共用同一份生成器——开发服按请求现算同名 URL)。
@@ -112,6 +156,10 @@ dev 档 1359 MB。省下来的两个大头:未引用/authoring-only 的素材,�
   Tauri 模块。关着的话:存档探测挑不到 Tauri → 退到 HTTP → 打不通 → **降级内存**,
   玩家存了档关掉就没。而且**验收门看不出来**——它把 `/__gamedraft-api/` 的 404 列为预期
   (那是给静态托管场景的豁免),坏掉的 exe 长得跟正常一模一样。
+- **窗口尺寸不写死在壳里**(2026-09-06):`main.rs` 启动时读 exe 旁 `game/assets/data/game_config.json`
+  的 `windowSize` 开窗(编辑器 F5 读同一字段),读不到回落 1024×768。以前写死 1280×720(16:9)而游戏
+  视口是 1024×768(4:3)⇒ exe 里画面横向拉宽 25%。比例本身由前端等比信箱保证,见
+  [display-viewport-and-window](display-viewport-and-window.md)。
 - **窗口 URL 不写在 tauri.conf.json 里**。同一个自定义协议在
   Windows/Android 上是 `http://<scheme>.localhost/`,在 macOS/iOS/Linux 上是
   `<scheme>://localhost/`——JSON 只能写死一种,写错那种在目标平台上 webview 根本不认识
@@ -213,11 +261,37 @@ Windows 上跑通了一整轮 `tauri build`,几条原本只能靠文档推断的
   的「降级必须出声」),换背景格式那天会静默失效。
 - **静态清单证明不了完备**。它是"四来源并集减不抽取"的计算结果,漏了什么它自己不知道;
   真正的验收是**起真实产物跑一遍、把所有 404 收进报告**。清单绿 ≠ 游戏能玩。
+- **2026-09-05:发行包 28 个场景角色照明整份失效,三道门全绿**。运行时 09-02 把 probe 正式档
+  从 SH(mode 2 → `atlas_l2.bin`)切到八面体(mode 3 → `atlas_bin.bin`)并重烘了 29 份载荷,
+  `manifest_rules.json` 停在 09-01 的口径:`atlas_bin.bin` 被当"只有 F2 才读"排除在发行档外,
+  而它压根没进过候选集。运行时 `fetch(...).then(r => r.arrayBuffer())` 没判 `r.ok`,Tauri 的
+  404 正文(`404 找不到:<path>`)被当图集吃进去:字节数为偶 → 补零成全黑图集 → **角色纯黑剪影、
+  背景照常**(21 场);为奇 → `Uint16Array` 抛 RangeError → 整份载荷 catch 作废 → **角色不打光
+  + 行走面深度场一起丢**(8 场)。两种互相矛盾的坏法同根。三道门为何全绿:清单护栏的必检名单是
+  硬编码字面量、验收只做"清单→落地"单向比对、`--serve` 门从没人跑过(`verify-report.json`
+  里没有 `expected404` 字段就是"没跑过"的判据),而 `npm run build` / `tauri:build` 连 verify
+  都不含。修法即上面两条硬契约:文件名表收成一处 + 两道反向门 + 缺文件必抛。
+  **判定包里"很多东西失效"时先看 `.build/sweep-<档>.json` 与 verify 的平价段,别先怀疑包旧了**
+  (那次五个面全部 0 个文件晚于打包时刻,内容逐字节同源)。
+- **验收门里"dev 设施已剥净"曾是恒真断言**:判据是类名 `DevModeUI` / `DebugPanelUI`,
+  而类标识符被 oxc mangle 后永远不会出现在产物里。实测 DevModeUI 原封不动留在发行包里
+  (`Game.startDevMode` 只判运行时字段)。现在判**文案字面量**,且 `Game.start` 的 dev 分支
+  加了 `import.meta.env.DEV &&` 让那一支真被摇掉。
+- **`release/<档>/` 清不掉(EBUSY/EPERM,文件全能改名、目录一个都删不掉)= 有进程持着目录句柄**
+  (2026-09-06)。两种真实来源:① 某个 dev 服在 watch 它——`vite.config.ts` 的 `DEV_WATCH_IGNORED`
+  此前没排除 `release/**`,编辑器 F5 开着就打不了包(现已排除,连同 `dist/ .build/ local/ src-tauri/target/`;
+  旧的 dev 服要重启才生效);② 有人 `cd release/release/game` 起了静态服务器(cwd 锁目录)。
+  找占用者:psutil 按 `cwd()` 扫一遍最快,`open_files()` 全进程扫要几分钟。`package.mjs` 现在会把这句话报出来。
 - **刚装完 ffmpeg 找不到 ffmpeg**:winget 改了 PATH 但**已经在跑的 shell 拿不到新值**。
   `package.mjs` 的 `which()` 因此在 PATH 之外还会翻几个已知安装位置,省掉一次重启 shell。
 
 ## 怎么验证
 
-`npm run package:dev && npm run verify:dev` 应当全绿;
-再 `node scripts/verify_build.mjs --target dev --serve`,真跑一段流程后取
-`http://127.0.0.1:5199/__verify/404`,清单为空才算清单完备。
+`npm run build`(= package:release → verify:sweep → verify:release)应当全绿;
+`verify-report.json` 里光照载荷平价与全场景扫描两段都 PASS 才算清单完备。
+改了展开器/规则/文件名表还要跑 `sh scripts/py.sh -m pytest tools/build/tests -p no:cacheprovider`
+与 `npx vitest run src/core/lightingPayloadFiles.test.ts scripts/lib/build_helpers.test.mjs`
+(两条契约测试)。只扫几个场景:`node scripts/scene_sweep.mjs --scenes 城门口`(扫描开的是
+**真窗口**,跑完自动关;离屏 QPA 下 GPU 上下文会丢、rAF 停摆、切场永远收不了尾,`--offscreen` 只作实验)。
+交互才拉的资源(对话立绘、小游戏贴图)扫描覆盖不到,仍走
+`node scripts/verify_build.mjs --target dev --serve` 真玩一段后取 `/__verify/404`。

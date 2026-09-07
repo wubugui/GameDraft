@@ -128,11 +128,15 @@ function runtimeLightingApi(): Plugin {
           const writer = String(parsed.writer ?? '').trim();
           const lt = parsed.lighting as Record<string, unknown> | null;
           // 形状闸门与两侧同口径：半个对象进了槽，对面看着像"同步到了"却是残缺的
+          // ⚠ 2026-09-07 `lighting.day` 整块下线后这里一起去掉了对它的要求。
+          //   漏改的后果实测过：游戏每次发布都被拒 400 ⇒ **编辑器↔游戏的光照实时同步
+          //   整条断掉**，而唯一的痕迹是控制台里一串没人看的 "400 (Bad Request)"。
+          //   对侧的同一道闸在 `scene_lights.validate_pulled_lighting`，两边必须同口径。
           const ok = !!sceneId && !!writer && !!lt && typeof lt === 'object'
-            && !!lt.sky && !!lt.day && Array.isArray(lt.lights) && !!lt.display;
+            && !!lt.sky && Array.isArray(lt.lights) && !!lt.display;
           if (!ok) {
             res.statusCode = 400;
-            res.end('bad payload: 需要 sceneId + writer + lighting{sky,day,lights,display}');
+            res.end('bad payload: 需要 sceneId + writer + lighting{sky,lights,display}');
             return;
           }
           const prev = await readDoc();
@@ -156,6 +160,93 @@ function runtimeLightingApi(): Plugin {
 `, 'utf-8');
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ ok: true, rev }));
+          return;
+        }
+        res.statusCode = 405;
+        res.end();
+      });
+    },
+  };
+}
+
+
+/**
+ * 开发服：读写 `public/assets/data/acoustic_spaces.json`，供 F2「声学」页**直接保存**。
+ *
+ * 为什么要写真文件而不是复制粘贴：声学是靠耳朵调的，一轮要改几十次；
+ * 每次都手动粘一遍 JSON，人不会用第二次。
+ *
+ * 安全：只接受 `spaces` 是对象的整份文档，且**逐个空间做结构闸门**——
+ * 半个对象落盘的后果是运行时整份加载失败、所有场景一起没回音，
+ * 而唯一痕迹是控制台一行没人看的 warn（光照那条槽踩过同类的坑）。
+ * 写前先备份到同目录 `.bak`，改坏了能退。
+ */
+function acousticSpacesApi(): Plugin {
+  return {
+    name: 'gamedraft-acoustic-spaces-api',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url ?? '').split('?')[0] ?? '';
+        if (pathOnly !== '/__gamedraft-api/acoustic-spaces') {
+          next();
+          return;
+        }
+        const filePath = resolve(
+          server.config.root, 'public/assets/data/acoustic_spaces.json');
+        if (req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            res.end((await readFile(filePath, 'utf-8')).trim() || '{"spaces":{}}');
+          } catch {
+            res.end('{"spaces":{}}');
+          }
+          return;
+        }
+        if (req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          for await (const ch of req) chunks.push(ch as Buffer);
+          let parsed: { spaces?: unknown; _comment?: unknown };
+          try {
+            parsed = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+          } catch {
+            res.statusCode = 400;
+            res.end('invalid json');
+            return;
+          }
+          const spaces = parsed.spaces as Record<string, unknown> | undefined;
+          if (!spaces || typeof spaces !== 'object' || Array.isArray(spaces)) {
+            res.statusCode = 400;
+            res.end('bad payload: 需要 spaces 对象');
+            return;
+          }
+          for (const [id, raw] of Object.entries(spaces)) {
+            const sp = raw as Record<string, unknown> | null;
+            const refs = sp?.reflectors as unknown[] | undefined;
+            if (!sp || typeof sp !== 'object' || !sp.listener || !Array.isArray(refs)) {
+              res.statusCode = 400;
+              res.end(`bad space "${id}": 需要 listener + reflectors[]`);
+              return;
+            }
+            for (const r of refs as Array<Record<string, unknown>>) {
+              const a = r?.a as unknown[] | undefined;
+              const b = r?.b as unknown[] | undefined;
+              if (!Array.isArray(a) || a.length !== 2 || !Array.isArray(b) || b.length !== 2
+                  || typeof r.height !== 'number' || !(r.height > 0)) {
+                res.statusCode = 400;
+                res.end(`bad reflector in "${id}": 需要 a[2] / b[2] / height>0`);
+                return;
+              }
+            }
+          }
+          try {
+            const old = await readFile(filePath, 'utf-8');
+            await writeFile(`${filePath}.bak`, old, 'utf-8');
+          } catch { /* 首次写、没有旧文件：不备份也不算错 */ }
+          await mkdir(dirname(filePath), { recursive: true });
+          await writeFile(filePath, `${JSON.stringify(parsed, null, 2)}
+`, 'utf-8');
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true, count: Object.keys(spaces).length }));
           return;
         }
         res.statusCode = 405;
@@ -293,6 +384,15 @@ function narrativeDebugBridgeApi(): Plugin {
   };
 }
 
+/**
+ * **隔离模式**：打包验收的全场景抓取扫描（`scripts/scene_sweep.mjs`）会另起一个 dev 服
+ * 把游戏跑一遍。那份游戏跟人手里的 dev 服共用**同一批**磁盘状态：命令队列、快照单槽、
+ * `local/gamedata/` 存档——扫描期间它会把别人排队的命令消费掉、把快照盖掉、往存档目录写东西
+ * （runtime-command-channel 卡里"别的 dev server 在轮询时会把你的命令消费掉"那条坑）。
+ * 设了这个环境变量的 dev 服：命令队列恒空且不碰文件、快照不落盘、存档落 `local/gamedata_sweep/`。
+ */
+const SWEEP_ISOLATED = process.env.GAMEDRAFT_SWEEP_ISOLATED === '1';
+
 /** 开发服：接收运行中浏览器上报的 runtime debug snapshot，供独立生产工作台读取。 */
 function runtimeDebugSnapshotApi(): Plugin {
   return {
@@ -302,6 +402,12 @@ function runtimeDebugSnapshotApi(): Plugin {
         const pathOnly = (req.url ?? '').split('?')[0] ?? '';
         if (pathOnly !== '/__gamedraft-api/runtime-debug-snapshot') {
           next();
+          return;
+        }
+        if (SWEEP_ISOLATED) {
+          // 快照是单槽、最后写者赢：扫描实例不许盖掉人手里那份
+          res.setHeader('Content-Type', 'application/json');
+          res.end(req.method === 'GET' ? '{"ok":false,"reason":"isolated sweep server"}' : '{"ok":true}');
           return;
         }
         const root = server.config.root;
@@ -402,6 +508,12 @@ function runtimeCommandApi(): Plugin {
         const pathOnly = (req.url ?? '').split('?')[0] ?? '';
         if (pathOnly !== '/__gamedraft-api/runtime-command') {
           next();
+          return;
+        }
+        if (SWEEP_ISOLATED) {
+          // 队列文件跨会话共享：扫描实例的轮询器不许消费别人排队的命令
+          res.setHeader('Content-Type', 'application/json');
+          res.end(req.method === 'POST' ? '{"ok":true,"count":0}' : '{"ok":true,"commands":[]}');
           return;
         }
         const root = server.config.root;
@@ -617,6 +729,14 @@ const DEV_WATCH_IGNORED = [
   '**/logs/**',
   '**/.claude/**',
   '**/asset-backups/**',
+  // 打包产物与本机数据：dev 服没有任何理由盯它们，而**盯着就锁住**——chokidar 在 Windows 上
+  // 对每个被 watch 的目录持有句柄，`scripts/package.mjs` 清空 release/<档>/ 时 rmdir 报
+  // EBUSY/EPERM（2026-09-06 实测：编辑器 F5 开着就打不了包，文件全能改名、目录一个都删不掉）。
+  '**/release/**',
+  '**/dist/**',
+  '**/.build/**',
+  '**/local/**',
+  '**/src-tauri/target/**',
 ];
 
 /**
@@ -696,7 +816,8 @@ function persistentStoreApi(): Plugin {
           return;
         }
         const ns = segs[0];
-        const nsDir = resolve(root, 'local/gamedata', ns);
+        // 隔离模式（打包验收的全场景扫描）落到旁边一个目录，不碰真实存档
+        const nsDir = resolve(root, SWEEP_ISOLATED ? 'local/gamedata_sweep' : 'local/gamedata', ns);
 
         // GET /<ns> —— 一次读出整个命名空间，供启动水化
         if (segs.length === 1 && req.method === 'GET') {
@@ -820,6 +941,7 @@ export default defineConfig({
     debugFlagFavoritesApi(),
     debugDockPinsApi(),
     runtimeLightingApi(),
+    acousticSpacesApi(),
     narrativeDebugBridgeApi(),
     runtimeDebugSnapshotApi(),
     runtimeCommandApi(),

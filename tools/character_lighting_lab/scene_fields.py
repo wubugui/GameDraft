@@ -6,14 +6,34 @@
 
 | 产物 | 内容 | 消费方 |
 |---|---|---|
-| `normal.png` | 场景法线 RGB8(xy 映射到 0..1,z 取 \\|z\\|) | 场景光照 pass(灯的 N·L 与 S_day) |
-| `skyvis.png` | 逐像素天穹可见性 R8 | 场景光照 pass(S_day 的半球项) |
+| `normal.png` | 场景法线 RGB8(xy 映射到 0..1,z 取 \\|z\\|) | 场景光照 pass(每盏灯的 N·L 与 march 起点) |
+| `albedo.png` | **反照率贴图** sRGB8,原生分辨率 | 场景光照 pass(灯乘在它上面);**作者可手改** |
+| `skyvis.png` | 逐像素天穹可见性 R8 | ⛔ 运行时不再读(2026-09-07);只作 albedo 的离线输入 |
 | `skyao_probe.bin` | **skyao probe**:遮蔽矩 `(nx,ny,nz,4)` f32 = (a0,a1x,a1y,a1z) | 角色天穹遮蔽(⚠ 运行时尚未接) |
 | `skyvis_grid.bin` | ⛔ 已弃:上面那份矩的派生标量 `T(up)`,按任意法线求值做不到 | 旧运行时代码,改完即删 |
 | `gi_hitmap.bin` | **3D 网格逐方向的命中点**,RGBA8(u,v,命中标志,255) | ⛔ 当前无消费者(见下) |
 | `geometry.json` | 网格参数 / 世界 AABB / M / 标定 / 背景与深度哈希 / 版本 | 场景光照 + 摆灯 |
 
-⛔ **后两个当前零消费者**:它们服务的是统一角色路径(`Game.UNIFIED_CHAR_PATH_ENABLED`),
+## albedo 贴图(2026-09-07 制作人定)
+
+运行时把实体灯加到原画上时,灯要乘的是**反照率**,不是原画本身。此前那个反照率是
+shader 里现除出来的(`原画 / S_day`),于是它只能是那个近似的样子、作者也改不动它。
+现在它是**一张烘出来的贴图**:
+
+    albedo = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis), 0, 1)
+
+三条要记住的:
+
+- **默认值与旧的现除逐字同式**(除数里的太阳项恒 0——实测 28/28 个场景
+  `lighting.day.sunIntensity` 都是 0,所以这一项从来没生效过,已随 `day` 块一起下线)。
+  所以第一次烘出来是**画面等价**的,改的是"从此可以改它"。
+- **全时段共用主背景那一张**:材质不随时段变。夜里灯照到墙上要显出墙**本来的**颜色,
+  而不是夜原画里那层暗蓝(那是夜的光照,不是墙的材质)。时段目录里放的是同一份字节。
+- **作者可以手改**。手改过的那张标 `albedo_map.authored=true`,重烘**不覆盖**它
+  (要覆盖得显式 `--force-albedo`),`albedo_map.source_sha1` 让校验器抓"背景重画了
+  而手改的 albedo 还是旧的"。
+
+⛔ **`skyvis_grid.bin` 与 `gi_hitmap.bin` 当前零消费者**:它们服务的是统一角色路径(`Game.UNIFIED_CHAR_PATH_ENABLED`),
 该路径 2026-08-30 起整条关死。制作人 2026-08-31 定:**继续烘、运行时不读、不进发行包**
 ——将来复活那条路时数据现成,不用把 28 个场景重烘一遍。别因为"没人读"就删掉这两段。
 
@@ -49,7 +69,7 @@ from .const import GATHER_SEED                                    # noqa: E402
 from .scene_geometry import sky_field  # noqa: E402
 
 #: 载荷代次。改任何产物布局都要 +1,并同步 validate.py 与运行时消费端。
-PAYLOAD_VERSION = 3   # v3:新增 skyao_probe.bin(每格 4 个 f32 的遮蔽矩)
+PAYLOAD_VERSION = 4   # v4:新增 albedo.png(灯乘的反照率贴图);skyvis.png 退出运行时
 
 #: 烘焙工作分辨率(宽);天穹可见性是低频量,不需要原生分辨率。
 WORK_W = 512
@@ -68,11 +88,14 @@ DEFAULT_GRID = (24, 10, 16)
 
 #: 本模块产出的全部文件。**唯一清单**——校验器、打包规则、迁移脚本都对着它写,
 #: 别在三处各抄一份(probe 载荷与它同住一个目录,靠这张表区分谁是谁的产物)。
-FIELD_FILES = ('normal.png', 'skyvis.png', 'skyao_probe.bin', 'skyvis_grid.bin',
-               'gi_hitmap.bin', 'geometry.json')
+FIELD_FILES = ('normal.png', 'albedo.png', 'skyvis.png', 'skyao_probe.bin',
+               'skyvis_grid.bin', 'gi_hitmap.bin', 'geometry.json')
 
-#: 其中**运行时当前真正读**的那几个。另外两个见模块头注释的 ⛔ 段。
-FIELD_FILES_LIVE = ('normal.png', 'skyvis.png', 'geometry.json')
+#: 其中**运行时当前真正读**的那几个 —— 必须与 `src/core/lightingPayloadFiles.ts` 的
+#: `LIGHTING_GEOMETRY_FILES` 一致(那边是打包与运行时共用的真相源)。
+#: ⚠ `skyvis.png` 2026-09-07 起不在其中:它的唯一运行时用途(S_day 的半球项)随
+#:   albedo 烘成贴图而消失,现在它只是 albedo 的离线输入,照旧烘、不进发行包。
+FIELD_FILES_LIVE = ('normal.png', 'albedo.png', 'geometry.json')
 
 
 def _atomic_bytes(dest: Path, data: bytes) -> None:
@@ -250,6 +273,185 @@ def fit_albedo_mean(scene: Scene, sky: np.ndarray, day_hemi: float,
     }
 
 
+def upsample_like_gpu(small: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """把低分辨率的场按 **GPU `texture()` 的双线性** 放大到 `size=(w,h)`。
+
+    ## 为什么不用 `PIL.resize(BILINEAR)`
+
+    2026-09-07 起 albedo 是离线算的,而它的除数 `S_day` 用的 `skyvis` 场是 512 宽的
+    低频图 —— **旧的现除版本是 GPU 在 shader 里采样它**。两条路只要采样约定差一点,
+    烘出来的 albedo 就与"改之前的画面"对不上,而那正是这次改动唯一要守的判据。
+
+    实测 PIL 与 GPU 差在**最外 3 像素边框**(clamp 行为不同):全图 0.098% 的像素、
+    skyvis 差最大 0.23、折进 albedo 最大 0.0115。数字不大,但它是**可以构造性消除**的
+    误差——消除它,"画面等价"就是证明出来的,不是"看着差不多"。
+
+    约定:目标像素中心 `(i+0.5)/dst` 映回源坐标 `u*src-0.5`,四角双线性,越界 clamp。
+    """
+    h, w = small.shape
+    W, H = size
+    xs = (np.arange(W, dtype=np.float32) + 0.5) / W * w - 0.5
+    ys = (np.arange(H, dtype=np.float32) + 0.5) / H * h - 0.5
+    x0 = np.floor(xs)
+    y0 = np.floor(ys)
+    fx = (xs - x0)[None, :]
+    fy = (ys - y0)[:, None]
+    x0i = np.clip(x0.astype(np.int64), 0, w - 1)
+    x1i = np.clip(x0i + 1, 0, w - 1)
+    y0i = np.clip(y0.astype(np.int64), 0, h - 1)
+    y1i = np.clip(y0i + 1, 0, h - 1)
+    top = small[np.ix_(y0i, x0i)] * (1.0 - fx) + small[np.ix_(y0i, x1i)] * fx
+    bot = small[np.ix_(y1i, x0i)] * (1.0 - fx) + small[np.ix_(y1i, x1i)] * fx
+    return (top * (1.0 - fy) + bot * fy).astype(np.float32)
+
+
+def load_skyvis_for_albedo(bake_dir: Path, native: tuple[int, int]) -> np.ndarray:
+    """读**落盘那张** `skyvis.png` 并按 GPU 约定放到原生尺寸。
+
+    ⚠ 必须是落盘的那张(量化成 8 位之后的),不是内存里的 float 场:运行时读的就是它,
+    拿更精确的源反解出来的 albedo 反而与画面对不上。同一条教训在几何场那边写着。
+    """
+    f = bake_dir / 'skyvis.png'
+    if not f.exists():
+        raise FileNotFoundError(f)
+    small = np.asarray(Image.open(f).convert('L'), np.float32) / 255.0
+    return upsample_like_gpu(small, native)
+
+
+def build_albedo(bg_srgb: np.ndarray, sky_native: np.ndarray, day_hemi: float) -> bytes:
+    """把一张原画反解成 **albedo 贴图**(PNG 字节,原生分辨率)。
+
+    ## 式子
+
+        albedo = clamp(linear(原画) / S_day, 0, 1)
+        S_day  = (1 - day_hemi) + day_hemi × skyvis
+
+    与 2026-09-07 之前 shader 里现除的那一版**逐字同式**——太阳项不在里面,因为
+    实测 28/28 个场景的 `lighting.day.sunIntensity` 都是 0,那一项从来没生效过。
+    所以第一次烘出来是画面等价的;变的是从此这张图可以被作者改。
+
+    ## 三个不许动的细节
+
+    - **上限钳 1**:原画暗部除以一个小 `S_day` 会炸出巨大的假反照率,一盏灯扫过去
+      就是一片过曝。1.0 = 物理上反照率不可能超过 1。
+    - **`sky_native` 必须来自落盘的 `skyvis.png`、且按 GPU 约定放大**
+      (`load_skyvis_for_albedo`):运行时读的就是量化成 8 位的那张图,而旧的现除版本是
+      GPU 在采样它。拿未量化的源、或换一种重采样,albedo 就与"改之前的画面"对不上
+      (同一条教训在几何场那边写着:"必须从运行时实际 march 的那份深度烘")。
+    - **存 sRGB8 而不是线性 8 位**:反照率的暗部占掉大半个值域,线性量化会在那里丢档;
+      sRGB 编码感知均匀,而且用图像软件打开就是"看起来正常的材质图"——作者手改这张图
+      时看到的是自己认得的东西。运行时读回时过 `lcSrgbToLinear`,与原画同一条解码路径。
+    """
+    import io
+    from .scene_geometry import linear_to_srgb, srgb_to_linear
+    if sky_native.shape[:2] != bg_srgb.shape[:2]:
+        raise ValueError('skyvis 与原画尺寸对不上: %s vs %s'
+                         % (sky_native.shape[:2], bg_srgb.shape[:2]))
+    s_day = (1.0 - day_hemi) + day_hemi * sky_native
+    a = np.clip(srgb_to_linear(bg_srgb) / np.maximum(s_day, 1e-4)[..., None], 0.0, 1.0)
+    buf = io.BytesIO()
+    Image.fromarray(np.round(linear_to_srgb(a) * 255).astype(np.uint8)) \
+        .save(buf, format='PNG', optimize=True)
+    return buf.getvalue()
+
+
+def albedo_meta_of(bake_dir: Path) -> dict:
+    """读一份载荷已记的 `albedo_map`(没有就空 dict)。用来认出"这张是作者手改的"。"""
+    f = bake_dir / 'geometry.json'
+    if not f.exists():
+        return {}
+    try:
+        return json.loads(f.read_text(encoding='utf-8')).get('albedo_map') or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def albedo_source(sid: str) -> tuple[str, np.ndarray, float]:
+    """albedo 的唯一来源:**主背景**(顶层 `backgrounds[0]`)那张原画。
+
+    返回 `(主背景图名, 该场景的 albedo PNG 字节, 主背景 sha1)`。
+
+    全时段共用它——材质不随时段变。⚠ 依赖主背景**已经烘过**几何场
+    (要 `skyvis.png` 与 `geometry.json` 的 `day_hemi`);没烘就抛,别静默换个近似值
+    继续——那正是这套载荷历史上四次静默失效的形状。
+    """
+    from .scene_geometry import scene_backgrounds
+    main_bg = scene_backgrounds(sid)[0]
+    scene = Scene(sid, background=main_bg)
+    try:
+        sky = load_skyvis_for_albedo(scene.bake_dir, scene.native)
+    except FileNotFoundError:
+        raise RuntimeError(
+            '场景 %s 的主背景 %s 还没烘过几何场(缺 skyvis.png),albedo 无从算起。'
+            '先跑:sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene %s'
+            % (sid, main_bg, sid)) from None
+    meta_f = scene.bake_dir / 'geometry.json'
+    if not meta_f.exists():
+        raise RuntimeError('场景 %s 的主背景载荷缺 geometry.json,拿不到 day_hemi' % sid)
+    day_hemi = json.loads(meta_f.read_text(encoding='utf-8')).get('day_hemi')
+    if not isinstance(day_hemi, (int, float)):
+        raise RuntimeError('场景 %s 的 geometry.json 没有 day_hemi(旧载荷?先整体重烘)' % sid)
+    return (main_bg,
+            build_albedo(scene.bg_srgb, sky, float(day_hemi)),
+            hashlib.sha1(scene_bg_bytes(scene)).hexdigest()[:12])
+
+
+def write_albedo(bake_dir: Path, data: bytes, *, force: bool,
+                 status=print) -> bool:
+    """把 albedo 写进一份载荷目录。**作者手改过的那张默认不覆盖**。
+
+    返回"这张现在是不是作者的"。降级(跳过写)必须出声——一条静默的跳过,与"这一级
+    根本没在跑"在现象上完全无法区分。
+    """
+    authored = bool(albedo_meta_of(bake_dir).get('authored')) and (bake_dir / 'albedo.png').exists()
+    if authored and not force:
+        status('[albedo] %s 是作者手改的,跳过(要重生成:--force-albedo)' % bake_dir.name)
+        return True
+    _atomic_bytes(bake_dir / 'albedo.png', data)
+    return False
+
+
+def albedo_map_meta(main_bg: str, source_sha1: str, authored: bool) -> dict:
+    """`geometry.json` 里 albedo 贴图的身份证。**两条写入路径共用这一份**
+    (整体烘 `bake` 与只补 albedo 的 `bake_albedo_only`),否则两边会各写各的字段。"""
+    return {
+        'file': 'albedo.png',
+        'from_background': main_bg,
+        'source_sha1': source_sha1,
+        'authored': authored,
+        'encoding': 'sRGB8（线性反照率过 sRGB 传函编码，运行时读回时过 lcSrgbToLinear）',
+        'formula': 'clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi*skyvis), 0, 1)',
+    }
+
+
+def bake_albedo_only(sid: str, *, force: bool = False, status=print) -> list[dict]:
+    """**只**补/刷新 albedo 贴图,不重跑任何 march。
+
+    用途:①给已有载荷补上这张图(第一次上线);②把作者手改的那张退回默认(配 `force`)。
+    其余产物一个字节都不动;`geometry.json` 只改 `albedo_map` 与 `version`。
+
+    ⚠ 要求每张时段原画都**已经烘过**几何场——缺 `geometry.json` 就抛,不新建半份载荷。
+    """
+    from .scene_geometry import scene_backgrounds
+    main_bg, data, src_sha1 = albedo_source(sid)
+    rows = []
+    for bg in scene_backgrounds(sid):
+        d = Scene(sid, background=bg).bake_dir
+        f = d / 'geometry.json'
+        if not f.exists():
+            raise RuntimeError(
+                '场景 %s 的背景 %s 还没烘过几何场(缺 %s),不能只补 albedo。'
+                '先整体烘一遍那张背景。' % (sid, bg, f))
+        authored = write_albedo(d, data, force=force, status=status)
+        meta = json.loads(f.read_text(encoding='utf-8'))
+        meta['version'] = PAYLOAD_VERSION
+        meta['albedo_map'] = albedo_map_meta(main_bg, src_sha1, authored)
+        _atomic_bytes(f, (json.dumps(meta, ensure_ascii=False, indent=1) + '\n').encode('utf-8'))
+        rows.append({'key': d.name, 'authored': authored,
+                     'bytes': (d / 'albedo.png').stat().st_size})
+    return rows
+
+
 def fit_haze(scene: Scene, geo: dict, size: tuple[int, int]) -> dict:
     """拟合原画里的**白天大气散射**(aerial perspective)。
 
@@ -411,7 +613,7 @@ def _moment_spp(spp: int | None) -> int:
 
 def bake(sid: str, grid: tuple[int, int, int] | None = None,
          band: float | None = DEFAULT_BAND, work_w: int = WORK_W,
-         background: str | None = None) -> dict:
+         background: str | None = None, force_albedo: bool = False) -> dict:
     """烘**一张背景图**的几何场。band 缺省由角色真实高度推出。
 
     `background` 缺省 = 场景当前生效的第一层背景;日夜场景要把每张时段原画各烘一遍
@@ -462,6 +664,24 @@ def bake(sid: str, grid: tuple[int, int, int] | None = None,
 
     # ---- 反解反射率（角色标定常数的地基，见 fit_albedo_mean）----
     alb = fit_albedo_mean(scene, sky, day['day_hemi'], haze, (w, h))
+
+    # ---- albedo 贴图（运行时的灯乘在它上面，见 build_albedo）----
+    #
+    # 全时段共用**主背景**那一张：材质不随时段变，夜里灯照到墙上要显出墙本来的颜色。
+    # 所以时段目录里放的是同一份字节，不是各算各的。
+    from .scene_geometry import bake_key, scene_backgrounds
+    main_bg = scene_backgrounds(sid)[0]
+    if bake_key(scene.bg_name) == bake_key(main_bg):
+        # 主背景：用**刚落盘的** skyvis.png（运行时读的就是量化成 8 位的那张）
+        # 与本次拟合出的 day_hemi —— 两个输入都与运行时逐字节同源。
+        # 用**刚落盘的**那张(量化后),并按 GPU 的双线性约定放大 —— 两个输入都与
+        # 运行时旧路径逐字节同源,"画面等价"才是构造出来的。
+        sky_native = load_skyvis_for_albedo(out, scene.native)
+        alb_png = build_albedo(scene.bg_srgb, sky_native, day['day_hemi'])
+        alb_src_sha1 = hashlib.sha1(scene_bg_bytes(scene)).hexdigest()[:12]
+    else:
+        main_bg, alb_png, alb_src_sha1 = albedo_source(sid)
+    alb_authored = write_albedo(out, alb_png, force=force_albedo)
 
     # ---- skyao probe:能按**任意法线**求值的天穹遮蔽体 ----
     # ⚠ `grid` 是**覆写**:缺省 None = 按角色高度推密度(与 probe 图集同一条规则)。
@@ -546,6 +766,13 @@ def bake(sid: str, grid: tuple[int, int, int] | None = None,
         #   （除数是角色图集的**实测**平均反射率 0.0381，不是教科书的 0.25）。
         #   缺它角色会**系统性**偏亮/偏暗，且怎么调灯都对不上——错的是尺度不是光。
         'albedo': alb,
+        # ★ albedo 贴图的身份证（2026-09-07）。运行时把灯乘在这张图上。
+        #   `from_background` 恒是**主背景**——全时段共用它（材质不随时段变），
+        #   所以时段目录里这三个字段与主背景那份完全相同。
+        #   `authored=true` 表示这张是作者手改的：重烘不覆盖它（要 --force-albedo），
+        #   而 `source_sha1` 让校验器抓得住"主背景重画了、手改的 albedo 还是旧的"
+        #   ——那种错不报任何错，只表现为"灯照上去颜色有点怪"。
+        'albedo_map': albedo_map_meta(main_bg, alb_src_sha1, alb_authored),
         # 天穹遮蔽的真实估计口径。2026-09-01 之前这里写的是 `sky_dirs`
         # (6 方位 x 2 仰角的固定方向组)—— 那组方向已随旧算法一起删掉,
         # 继续写它就是**假的产物出处**:字段说用了这 12 个方向,实际根本没用。
@@ -571,6 +798,9 @@ def bake(sid: str, grid: tuple[int, int, int] | None = None,
         'day': day,
         'haze': haze,
         'albedo': alb,
+        'albedo_map': {'from_background': main_bg, 'authored': alb_authored,
+                       'source_sha1': alb_src_sha1,
+                       'bytes': (out / 'albedo.png').stat().st_size},
         'gi': {'ndir': len(gi['dirs']), 'hit_rate': gi['hit_rate'],
                'bytes': int(gi['data'].nbytes)},
         'skyvis_px': {'min': float(sky.min()), 'max': float(sky.max()),
@@ -624,6 +854,10 @@ def main() -> None:
     ap.add_argument('--band', type=float, default=None,
                     help='角色可达高度带(wu)。缺省由角色真实高度推出,别手填 1.6')
     ap.add_argument('--work-w', type=int, default=WORK_W)
+    ap.add_argument('--albedo-only', action='store_true',
+                    help='只补/刷新 albedo.png(不重跑任何 march);其余产物一字节不动')
+    ap.add_argument('--force-albedo', action='store_true',
+                    help='连**作者手改过**的 albedo.png 一起重生成(缺省会跳过它们)')
     args = ap.parse_args()
 
     from .scene_geometry import list_scenes
@@ -635,6 +869,20 @@ def main() -> None:
         raise SystemExit('要 --scene <id> 还是 --all ?')
 
     from .scene_geometry import scene_backgrounds
+    if args.albedo_only:
+        # 只补 albedo:全时段共用主背景那一张,所以这条路径按**场景**走,不按背景走。
+        for sid in sids:
+            try:
+                rows = bake_albedo_only(sid, force=args.force_albedo)
+            except Exception as e:                   # noqa: BLE001
+                print(f'{sid}: albedo 失败 {type(e).__name__}: {e}')
+                continue
+            for r in rows:
+                mark = '(作者手改，保留)' if r['authored'] else ''
+                print(f"{sid}: → lighting/{r['key']}/albedo.png "
+                      f"({r['bytes']/1024:.0f} KB) {mark}")
+        return
+
     for sid in sids:
         try:
             bgs = [args.background] if args.background else scene_backgrounds(sid)
@@ -645,7 +893,8 @@ def main() -> None:
             print(f'{sid}: {len(bgs)} 张时段原画,各烘一套 —— ' + ', '.join(bgs))
         for bg in bgs:
             try:
-                r = bake(sid, band=args.band, work_w=args.work_w, background=bg)
+                r = bake(sid, band=args.band, work_w=args.work_w, background=bg,
+                         force_albedo=args.force_albedo)
             except Exception as e:                   # noqa: BLE001
                 print(f'{sid} [{bg}]: 失败 {type(e).__name__}: {e}')
                 continue
@@ -661,6 +910,9 @@ def main() -> None:
             print(f"   skyao probe {sp['grid'][0]}x{sp['grid'][1]}x{sp['grid'][2]}"
                   f" = {sp['cells']:,} 格 x4 f32  格边 {sp['cell_wu'][0]:.4f} wu"
                   f"  有效 {sp['coverage']*100:.0f}%  a0上界 {sp['a0_max']:.3f}(无遮挡=0.5)")
+            am = r['albedo_map']
+            print(f"   albedo 贴图 {am['bytes']/1024:.0f} KB ← {am['from_background']}"
+                  + ('（作者手改，保留）' if am['authored'] else ''))
             print(f"   画内遮蔽响应 day_hemi={r['day']['day_hemi']:.2f}"
                   f"  白天大气散射 k={hz['k']:.2f} H={hz['strength']:.4f}"
                   f"  反解反射率中位 {r['albedo']['albedo_mean']:.4f}")

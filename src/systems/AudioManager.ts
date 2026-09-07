@@ -2,12 +2,24 @@ import { Howl, Howler } from 'howler';
 import type { EventBus } from '../core/EventBus';
 import type { AssetManager, AssetRef } from '../core/AssetManager';
 import { resolveAssetPath } from '../core/assetPath';
+import { SpatialAudioBus } from '../audio/SpatialAudioBus';
+import type { AcousticSpaceDef } from '../audio/acousticSpace';
 import { TEXT_URLS } from '../core/projectPaths';
 import type { AudioChannel, DialogueEndPayload, IGameSystem, GameContext, IAudioSettingsProvider, AudioPlaybackHandle, TransientSfxOptions } from '../data/types';
 
 interface AudioEntry {
   src: string;
   volume?: number;
+  /**
+   * 走不走场景声学空间。缺省＝不走（继续从 Howler 出，行为与以前完全一致）。
+   *
+   * 写了就改走**并行的空间音通道**：原生 Web Audio 播放，干湿分开送，
+   * 湿信号进场景的卷积器。sfx 与 voice 两区都支持——喊叫要不要带场景回音，
+   * 逐条自己决定。
+   *
+   * ⚠ 环境底噪不要开：底噪本身就是这个空间，再加混响是重复。
+   */
+  spatial?: { wet?: number; dry?: number };
 }
 
 interface AudioConfig {
@@ -21,12 +33,28 @@ interface AudioConfig {
 
 type EventCallback = (payload?: any) => void;
 
+/** JSON 里的 spatial 字段可能是任何东西（策划手写/编辑器旧版），一律收敛成合法值或 undefined。 */
+function normalizeSpatial(raw: unknown): { wet?: number; dry?: number } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const num = (v: unknown): number | undefined =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : undefined;
+  const wet = num(o.wet);
+  const dry = num(o.dry);
+  if (wet === undefined && dry === undefined) return undefined;
+  return { wet, dry };
+}
+
 /** UI 切换/悬停音的最小间隔（毫秒）；理由见 installSystemSfxListeners 里的 ui:hover */
 const UI_HOVER_SFX_MIN_GAP_MS = 60;
 
 export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private eventBus: EventBus;
   private config: AudioConfig = { bgm: {}, ambient: {}, sfx: {}, voice: {}, systemSfx: {} };
+  /** 声学空间库（acoustic_spaces.json）；空表＝没有任何空间，空间音退化为干声。 */
+  private acousticSpaces: Record<string, AcousticSpaceDef> = {};
+  /** 空间音总线，首次用到才建（拿不到 Howler.ctx 时保持 null，安静降级）。 */
+  private spatialBus: SpatialAudioBus | null = null;
   private loaded = false;
 
   private currentBgm: Howl | null = null;
@@ -99,11 +127,11 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         voice?: Record<string, { src: string }>;
         systemSfx?: Record<string, string>;
       }>(TEXT_URLS.audioConfig);
-      const resolveSrc = (obj: Record<string, { src: string; volume?: number }>) => {
-        const out: Record<string, { src: string; volume?: number }> = {};
+      const resolveSrc = (obj: Record<string, { src: string; volume?: number; spatial?: unknown }>) => {
+        const out: Record<string, AudioEntry> = {};
         for (const [k, v] of Object.entries(obj)) {
           const volume = typeof v.volume === 'number' ? v.volume : undefined;
-          out[k] = { src: resolveAssetPath(v.src), volume };
+          out[k] = { src: resolveAssetPath(v.src), volume, spatial: normalizeSpatial(v.spatial) };
         }
         return out;
       };
@@ -123,6 +151,121 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       console.warn('AudioManager: audio_config.json not found, running silent');
       this.loaded = true;
     }
+    await this.loadAcousticSpaces();
+  }
+
+  /** 声学空间库。缺文件不是错——没有空间就退化为干声，与加这套之前完全一致。 */
+  private async loadAcousticSpaces(): Promise<void> {
+    try {
+      const raw = await this.assetManager.loadJson<{
+        spaces?: Record<string, AcousticSpaceDef>;
+      }>(TEXT_URLS.acousticSpaces);
+      const out: Record<string, AcousticSpaceDef> = {};
+      for (const [k, v] of Object.entries(raw.spaces ?? {})) {
+        if (v && Array.isArray(v.reflectors) && v.listener) out[k] = v;
+        else console.warn(`[AudioManager] 声学空间 "${k}" 结构不合法，已跳过`);
+      }
+      this.acousticSpaces = out;
+    } catch {
+      this.acousticSpaces = {};
+    }
+  }
+
+  // ================= 空间音（场景声学） =================
+
+  /**
+   * 换场景声学空间。`null` / 未知 id ＝ 没有空间，空间音退化为纯干声。
+   *
+   * IR 由 JS 现算（毫秒级），不预存文件 —— 这也是实时联动能成立的前提：
+   * 改一个数字立刻重算，不用等烘焙。
+   */
+  setAcousticSpace(id: string | null | undefined): void {
+    const bus = this.ensureSpatialBus();
+    if (!bus) return;
+    const def = id ? this.acousticSpaces[id] : null;
+    if (id && !def) {
+      console.warn(`[AudioManager] 未知声学空间 "${id}"，本场景按无空间处理`);
+    }
+    bus.setSpace(def ? id! : null, def ?? null);
+  }
+
+  /** 当前挂着的声学空间 id；调试面板与实时联动用。 */
+  getAcousticSpaceId(): string | null {
+    return this.spatialBus?.getSpaceId() ?? null;
+  }
+
+  /**
+   * 移动听者（**声学米制**，原点＝空间的 anchor）。回音随之改变。
+   * 内部带节流：挪动不足 3 米或距上次重算不足 250ms 就跳过。返回是否真重算了。
+   */
+  setAcousticListener(pos: { x: number; z: number; y?: number }, force = false): boolean {
+    return this.spatialBus?.setListener(pos, force) ?? false;
+  }
+
+  /** 当前听者（声学米制）。 */
+  getAcousticListener(): { x: number; z: number; y?: number } | null {
+    return this.spatialBus?.getListener() ?? null;
+  }
+
+  /** 上次重算 IR 的耗时（毫秒），性能诊断用。 */
+  getAcousticBuildCostMs(): number {
+    return this.spatialBus?.getLastBuildCostMs() ?? 0;
+  }
+
+  /** 当前移动阈值（米）：挪够这么远才重算 IR，按空间尺度与重算代价自适应。 */
+  getAcousticMoveThresholdM(): number {
+    return this.spatialBus?.getMoveThresholdM() ?? 0;
+  }
+
+  /** 当前 IR 的抽头表（距离/延迟/方位/增益），编辑器与调试面板直接显示。 */
+  getAcousticTaps(): unknown[] {
+    return this.spatialBus?.getTaps() ?? [];
+  }
+
+  /** 库里全部空间 id（F2「声学」页的下拉）。 */
+  listAcousticSpaceIds(): string[] {
+    return Object.keys(this.acousticSpaces);
+  }
+
+  /** 取一份空间定义。调用方要改就自己深拷贝 —— 这里给的是库里那份的引用。 */
+  getAcousticSpaceDef(id: string): AcousticSpaceDef | null {
+    return this.acousticSpaces[id] ?? null;
+  }
+
+  /**
+   * 直接喂一份声学空间定义（不经过库）。实时联动改的就是这条：
+   * 工作台或游戏内编辑模式改了参数 → 推进来 → 立刻重算 IR → 下一声就是新的。
+   */
+  applyAcousticSpaceDef(id: string, def: AcousticSpaceDef | null): void {
+    const bus = this.ensureSpatialBus();
+    if (!bus) return;
+    if (def) this.acousticSpaces[id] = def;
+    bus.setSpace(def ? id : null, def);
+  }
+
+  private ensureSpatialBus(): SpatialAudioBus | null {
+    if (this.spatialBus) return this.spatialBus;
+    // Howler 的 AudioContext 与主增益就是汇入点：两条通道共用同一条音量总线。
+    // 够不到就安静降级 —— 空间音退化成走 Howler 的普通音效，不该整条崩掉。
+    const ctx = (Howler as unknown as { ctx?: AudioContext }).ctx;
+    const master = (Howler as unknown as { masterGain?: GainNode }).masterGain;
+    if (!ctx || !master) return null;
+    this.spatialBus = new SpatialAudioBus({ ctx, destination: master });
+    return this.spatialBus;
+  }
+
+  /** 返回 true 表示已由空间通道接管；false 表示回落到 Howler。 */
+  private playViaSpatial(entry: AudioEntry, volume?: number): boolean {
+    const bus = this.ensureSpatialBus();
+    if (!bus) return false;
+    const optionVolume = typeof volume === 'number' && Number.isFinite(volume) ? volume : undefined;
+    const base = optionVolume ?? entry.volume ?? 1.0;
+    void bus.play(entry.src, {
+      volume: this.clamp01(base * this.sfxVolume),
+      wet: entry.spatial?.wet ?? 0.6,
+      dry: entry.spatial?.dry ?? 1.0,
+    });
+    return true;
   }
 
   playBgm(id: string, fadeMs: number = 1000): void {
@@ -262,6 +405,10 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.runWhenAudioAllowed(async () => {
       const entry = this.config.sfx[id];
       if (!entry) return;
+
+      // 标了 spatial 的走并行的空间音通道（原生 Web Audio + 卷积），不进 Howler。
+      // 没标的行为与以前完全一致。
+      if (entry.spatial && this.playViaSpatial(entry, volume)) return;
 
       const howl = this.sfxCache.get(id)
         ?? this.assetManager.getAudio(entry.src, { loop: false })
@@ -787,6 +934,9 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.removeAudioGestureListeners();
     this.audioUnlocking = false;
     this.pendingPlayback = [];
+    // 空间音通道：断开卷积器与所有在飞的 BufferSource，不留残留（runtime 规范红线）
+    this.spatialBus?.destroy();
+    this.spatialBus = null;
     if (this.currentBgm) {
       const bgm = this.currentBgm;
       this.currentBgm = null;

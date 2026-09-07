@@ -24,8 +24,6 @@ from tools.editor.editors import scene_lights  # noqa: E402
 
 FULL_BLOCK = {
     "sky": {"kelvin": 9000.0, "intensity": 0.045, "hemi": 0.92},
-    # day.hemi 刻意不写：由烘焙拟合
-    "day": {"sunIntensity": 0.0, "sunElevationDeg": 50.0, "sunAzimuthDeg": 180.0},
     "lights": [
         {"id": "lamp_1", "kind": "point", "pos": [0.1, 0.4, -0.2], "kelvin": 2400.0,
          "intensity": 2.88, "range": 0.6016, "castShadow": True, "enabled": True},
