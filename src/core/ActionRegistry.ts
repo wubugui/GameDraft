@@ -40,6 +40,7 @@ import type { PressureHoldManager } from '../systems/pressureHold/PressureHoldMa
 import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { HealthSystem } from '../systems/HealthSystem';
 import type { SmellSystem } from '../systems/SmellSystem';
+import type { SwarmSystem } from '../systems/swarm/SwarmSystem';
 import {
   readVoiceSpec,
   readVoiceAdvanceSpec,
@@ -397,6 +398,8 @@ export interface ActionRegistryDeps {
   signalCueManager: SignalCueManager;
   healthSystem: HealthSystem;
   smellSystem: SmellSystem;
+  /** 鸟群 / 虫群（玩法文档 B5） */
+  swarmSystem: SwarmSystem;
   planeReconciler: PlaneReconciler;
   /** 配音通道（与过场字幕、世界对话共用同一条）；未注入时气泡配音整体退化为不发声。 */
   voiceChannel?: VoiceChannel;
@@ -1030,6 +1033,27 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('sniff', () => {
     d.smellSystem.sniff();
   }, []);
+
+  // 鸟群 / 虫群（SwarmSystem，玩法文档 B5）：纯表演，不入档，切场景即散。
+  // spawnBirdFlock：在受控者周围放出一群盘旋的鸟（count 缺省 12；radius/height 世界单位，缺省见 DEFAULT_SWARM_CONFIG）。
+  executor.register('spawnBirdFlock', (p) => {
+    d.swarmSystem.spawnFlock({
+      count: parseFiniteNumberParam(p.count) ?? undefined,
+      radius: parseFiniteNumberParam(p.radius) ?? undefined,
+      height: parseFiniteNumberParam(p.height) ?? undefined,
+    });
+  }, ['count', 'radius', 'height']);
+  executor.register('clearBirdFlock', () => {
+    d.swarmSystem.clearFlock();
+  }, []);
+  // releaseBugs：从受控者身边（或 x/y 指定的世界点）放出一把虫；鸟见虫惊飞，虫散尽后慢慢回来。
+  executor.register('releaseBugs', (p) => {
+    d.swarmSystem.releaseBugs({
+      count: parseFiniteNumberParam(p.count) ?? undefined,
+      x: parseFiniteNumberParam(p.x) ?? undefined,
+      y: parseFiniteNumberParam(p.y) ?? undefined,
+    });
+  }, ['count', 'x', 'y']);
 
   // 位面（PlaneReconciler）：手动覆盖激活位面 / 清覆盖回叙事点名。
   // 调试与特例演出用；任务逻辑的主路径 = 叙事状态节点 activePlane 点名。

@@ -244,5 +244,26 @@
     "type": "consumable",
     "description": "偷来的一只肥鸡，扑腾得厉害。烤了顶饱，卖了换钱。",
     "maxStack": 3
+  },
+  {
+    "id": "bug_jar",
+    "name": "一罐活虫",
+    "type": "consumable",
+    "description": "巴掌大的粗陶罐，罐口蒙着一层麻布，里头窸窸窣窣地响。谁家鸡鸭闻见都要来抢，鸟雀却怕它——虫子一撒开，乌鸦麻雀立时四散。",
+    "buyPrice": 2,
+    "maxStack": 5,
+    "use": {
+      "label": "撒一把",
+      "consume": true,
+      "actions": [
+        {
+          "type": "releaseBugs",
+          "params": {
+            "count": 40
+          }
+        }
+      ],
+      "resultText": "揭开麻布往脚边一撒，黑压压一片虫子四下爬开。头顶那群鸟叫得撕心裂肺，扑棱棱散了。"
+    }
   }
 ]

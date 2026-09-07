@@ -714,6 +714,12 @@
       ]
     },
     {
+      "glob": "src/systems/swarm/**",
+      "docs": [
+        "swarm-flock"
+      ]
+    },
+    {
       "glob": "src/ui/**",
       "docs": [
         "debug-ui-persistence",

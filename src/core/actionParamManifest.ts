@@ -130,6 +130,10 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   setSmell: { required: ['scent'], nonEmpty: ['scent'], optional: ['intensity', 'dir', 'flicker'] },
   clearSmell: { required: [] },
   sniff: { required: [] },
+  // 鸟群 / 虫群（B5）：全部可选，缺省值在 SwarmSystem
+  spawnBirdFlock: { required: [], optional: ['count', 'radius', 'height'] },
+  clearBirdFlock: { required: [] },
+  releaseBugs: { required: [], optional: ['count', 'x', 'y'] },
 
   // ---- 位面 ----
   activatePlane: { required: ['id'], nonEmpty: ['id'] },

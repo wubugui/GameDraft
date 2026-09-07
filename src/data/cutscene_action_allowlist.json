@@ -43,5 +43,8 @@
   "activatePlane",
   "deactivatePlane",
   "showBlackout",
-  "hideBlackout"
+  "hideBlackout",
+  "spawnBirdFlock",
+  "clearBirdFlock",
+  "releaseBugs"
 ]

@@ -314,6 +314,7 @@ ACTION_TYPES = [
     "setBubbleLineSet", "clearBubbleLineSet",
     "damagePlayer", "healPlayer", "resetHealth", "setHealth", "incHealth", "decHealth", "triggerDeathTether",
     "setSmell", "clearSmell", "sniff",
+    "spawnBirdFlock", "clearBirdFlock", "releaseBugs",
     "activatePlane", "deactivatePlane",
     "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
     "sugarWheelResetPointer",
@@ -582,6 +583,10 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "setSmell": "save",
     "clearSmell": "save",
     "sniff": "save",
+    # 鸟群 / 虫群：表演态，不入存档（SwarmSystem.serialize 恒空桶）
+    "spawnBirdFlock": "memory",
+    "clearBirdFlock": "memory",
+    "releaseBugs": "memory",
     # 位面：激活位面从叙事状态重派生（PlaneReconciler 零持久化），不入存档
     "activatePlane": "memory",
     "deactivatePlane": "memory",
@@ -745,6 +750,9 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "setSmell": [("scent", "str"), ("intensity", "int"), ("dir", "float"), ("flicker", "bool")],
     "clearSmell": [],
     "sniff": [],
+    "spawnBirdFlock": [("count", "int"), ("radius", "float"), ("height", "float")],
+    "clearBirdFlock": [],
+    "releaseBugs": [("count", "int"), ("x", "float"), ("y", "float")],
     "activatePlane": [("id", "str")],
     "deactivatePlane": [],
     "giveItem": [("id", "str"), ("count", "int"), ("critical", "bool")],

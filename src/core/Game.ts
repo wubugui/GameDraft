@@ -45,6 +45,7 @@ import { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager
 import { SignalCueManager } from '../systems/SignalCueManager';
 import { HealthSystem } from '../systems/HealthSystem';
 import { SmellSystem } from '../systems/SmellSystem';
+import { SwarmSystem } from '../systems/swarm/SwarmSystem';
 import { PlaneReconciler } from '../systems/PlaneReconciler';
 import { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
 import { TrajectorySystem } from '../systems/TrajectorySystem';
@@ -498,6 +499,8 @@ export class Game {
   private playerIdleBehaviorSystem: PlayerIdleBehaviorSystem;
   private healthSystem: HealthSystem;
   private smellSystem: SmellSystem;
+  /** 鸟群 / 虫群（玩法文档 B5）：表演态、不入档、切场景即散 */
+  private swarmSystem: SwarmSystem;
   private planeReconciler: PlaneReconciler;
   private npcScheduleSystem: NpcScheduleSystem;
   /** 烘焙式实体轨迹动画的播放系统（表演态，不入档；切场景/读档由本类显式 cancelAll） */
@@ -747,6 +750,12 @@ export class Game {
     this.signalCueManager = new SignalCueManager(this.actionExecutor);
     this.healthSystem = new HealthSystem(this.eventBus, this.flagStore, this.actionExecutor);
     this.smellSystem = new SmellSystem(this.eventBus, this.flagStore);
+    this.swarmSystem = new SwarmSystem({
+      eventBus: this.eventBus,
+      // 鸟绕**接地点**盘旋（与阴影 / 透视采样同一口径）
+      getPlayerFoot: () => ({ x: this.player.contactX, y: this.player.contactY }),
+      getPerspectiveScale: () => this.perspectiveScaleResolver,
+    });
     this.planeReconciler = new PlaneReconciler(this.eventBus);
     this.npcScheduleSystem = new NpcScheduleSystem(this.eventBus);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
@@ -863,6 +872,7 @@ export class Game {
       { name: 'signalCueManager', system: this.signalCueManager },
       { name: 'healthSystem', system: this.healthSystem },
       { name: 'smellSystem', system: this.smellSystem },
+      { name: 'swarmSystem', system: this.swarmSystem },
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
       { name: 'clueManager', system: this.clueManager },
@@ -1393,6 +1403,7 @@ export class Game {
     /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
     if (this.tearDownComplete) return;
     this.emoteBubbleManager.setEntityAttachLayer(this.renderer.entityLayer);
+    this.swarmSystem.setLayers(this.renderer.entityLayer, this.renderer.shadowLayer);
 
     // UI 皮肤素材（做旧木框九宫格 + 纸纹）必须赶在任何面板首次构建之前到位，
     // 否则那一次会画成纯色降级版、且不会自动重画。单张失败只降级该张，不阻断启动。
@@ -2165,6 +2176,7 @@ export class Game {
       bubbleChatterSystem: this.bubbleChatterSystem,
       healthSystem: this.healthSystem,
       smellSystem: this.smellSystem,
+      swarmSystem: this.swarmSystem,
       planeReconciler: this.planeReconciler,
       voiceChannel: this.voiceChannel,
     });
@@ -7265,6 +7277,9 @@ export class Game {
     if (this.stateController.currentState !== GameState.SceneTransition
       && this.stateController.currentState !== GameState.MainMenu) {
       this.trajectorySystem.update(dt);
+      // 鸟群 / 虫群与轨迹同一窗口跑：对话、过场里也照飞（是场景里的活物，不是玩家动作），
+      // 且必须在 sortEntityLayer 之前把 entitySortFootY 落定。
+      this.swarmSystem.update(dt);
     }
     this.camera.update(dt);
     this.debugTools?.update(dt);
