@@ -22,8 +22,8 @@ last_governed: 2026-08-05
 ```bash
 ./dev.sh pull              # = git pull + DVC pull(内部走 scripts/sync-dvc-cache.py)
 ./dev.sh pull --editor     # 同时拉编辑器工程资源
-./dev.sh pull --audio      # 同时拉配音原始音源(~70MB)
-./dev.sh init-audio        # 只补音源(不 git pull),等价于换机后单独补这一份
+./dev.sh pull --audio      # 同时拉两份音频素材库(~270MB)
+./dev.sh init-audio        # 只补这两份(不 git pull),等价于换机后单独补它们
 # 等价壳:./scripts/pull-all.sh --editor(壳里已带 --editor,再加 --audio 即可)
 ```
 
@@ -33,11 +33,14 @@ last_governed: 2026-08-05
 |---|---|---|
 | 默认 | — | 跑游戏、改数据 |
 | `--editor` | `resources/editor_projects` | 开编辑器工程(`pull-all.sh` 无条件带) |
-| `--audio` | `resources/audio_sources`(~70MB,不可再生) | 用 `tools/voice_workbench` 重录/重导配音 |
+| `--audio` | `resources/audio_sources`(~70MB,不可再生)<br>`tools/audio_editor/imported`(~200MB,抽卡产物,重生成要花钱且不可复现) | 用 `tools/voice_workbench` 重录/重导配音;用 `tools/audio_editor` 挑音效候选 |
 
-音源单独一挡而不是并进 `--editor`:后者被 `pull-all.sh` 无条件带上,并进去就等于
-把 70MB 变成事实上的默认拉取。工作台在源库缺席时按设计如实报「源不在本机」而非坏掉,
-所以缺它不是故障态。
+这两份单独一挡而不是并进 `--editor`:后者被 `pull-all.sh` 无条件带上,并进去就等于
+把 270MB 变成事实上的默认拉取。两个工作台在源库缺席时按设计如实报「源不在本机」而非坏掉,
+所以缺它们不是故障态。
+
+两份共用一个开关而不是各开一个:都是"只有音频工作侧要"的大素材,拆开只会让人记不住
+哪个开关带哪个。
 
 ## 通则:接进写侧就必须同时接进读侧
 

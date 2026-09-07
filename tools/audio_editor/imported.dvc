@@ -1,0 +1,6 @@
+outs:
+- md5: c18220fa6cb7c46ca7f7ddd0f7b00930.dir
+  size: 209261941
+  nfiles: 105
+  hash: md5
+  path: imported

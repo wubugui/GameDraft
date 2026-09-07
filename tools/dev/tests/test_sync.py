@@ -59,6 +59,7 @@ def test_pull_leaves_audio_sources_out_of_the_editor_flag(monkeypatch):
     assert sync.pull(editor=True) == 0
 
     assert sync.AUDIO_SOURCES_TARGET not in _pulled(calls)
+    assert sync.AUDIO_IMPORTED_TARGET not in _pulled(calls)
 
 
 def test_pull_fetches_audio_sources_only_with_its_own_flag(monkeypatch):
@@ -72,6 +73,7 @@ def test_pull_fetches_audio_sources_only_with_its_own_flag(monkeypatch):
         sync.RUNTIME_TARGET,
         sync.EDITOR_TARGET,
         sync.AUDIO_SOURCES_TARGET,
+        sync.AUDIO_IMPORTED_TARGET,
     ]
 
 
@@ -85,6 +87,7 @@ def test_audio_can_be_pulled_without_the_editor_projects(monkeypatch):
         sync.VENDOR_TARGET,
         sync.RUNTIME_TARGET,
         sync.AUDIO_SOURCES_TARGET,
+        sync.AUDIO_IMPORTED_TARGET,
     ]
 
 
@@ -96,7 +99,11 @@ def test_init_audio_pulls_vendor_and_the_source_library(monkeypatch):
 
     assert sync.init_audio() == 0
 
-    assert calls == [sync.VENDOR_TARGET, sync.AUDIO_SOURCES_TARGET]
+    assert calls == [
+        sync.VENDOR_TARGET,
+        sync.AUDIO_SOURCES_TARGET,
+        sync.AUDIO_IMPORTED_TARGET,
+    ]
 
 
 def test_init_editor_does_not_drag_in_the_audio_sources(monkeypatch):
@@ -108,6 +115,7 @@ def test_init_editor_does_not_drag_in_the_audio_sources(monkeypatch):
     assert sync.init_editor() == 0
 
     assert calls == [sync.VENDOR_TARGET, sync.EDITOR_TARGET]
+    assert sync.AUDIO_IMPORTED_TARGET not in calls
 
 
 def test_push_checks_and_uploads_all_dvc_targets(monkeypatch):
@@ -138,6 +146,7 @@ def test_push_checks_and_uploads_all_dvc_targets(monkeypatch):
         sync.EDITOR_TARGET,
         sync.VENDOR_TARGET,
         sync.AUDIO_SOURCES_TARGET,
+        sync.AUDIO_IMPORTED_TARGET,
     ]
     assert calls[-1] == ("git", ["push"], "http://proxy:7")
 
@@ -156,14 +165,15 @@ def test_push_skips_targets_this_machine_never_pulled(monkeypatch, capsys):
     """没拉过 --audio 的机器上,盲目 push 会炸在缺失的 .dir 缓存 blob 上。"""
     calls = []
     _stub_push_environment(monkeypatch, calls)
-    monkeypatch.setattr(
-        sync, "target_is_in_local_cache", lambda target: target != sync.AUDIO_SOURCES_TARGET
-    )
+    optional = {sync.AUDIO_SOURCES_TARGET, sync.AUDIO_IMPORTED_TARGET}
+    monkeypatch.setattr(sync, "target_is_in_local_cache", lambda target: target not in optional)
 
     assert sync.push() == 0
 
     assert calls == [("push", (sync.RUNTIME_TARGET, sync.EDITOR_TARGET, sync.VENDOR_TARGET))]
-    assert sync.AUDIO_SOURCES_TARGET in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert sync.AUDIO_SOURCES_TARGET in out
+    assert sync.AUDIO_IMPORTED_TARGET in out
 
 
 def test_push_skips_the_cache_transfer_entirely_when_nothing_is_local(monkeypatch):
@@ -224,6 +234,7 @@ def test_commit_adds_all_dvc_roots_and_git_paths(monkeypatch, tmp_path):
         "resources/editor_projects",
         "resources/vendor_archives",
         "resources/audio_sources",
+        "tools/audio_editor/imported",
     ]
     git_add_calls = [call for call in calls if call[0] == "run" and call[1][:2] == ["git", "add"]]
     assert any("public/assets" in call[1] for call in git_add_calls)

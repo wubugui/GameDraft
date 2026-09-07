@@ -23,7 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_initrt = sub.add_parser("init-runtime", help="Sync game runtime resources")
     p_initrt.add_argument("--install-deps", action="store_true")
     sub.add_parser("init-editor", help="Sync editor project resources")
-    sub.add_parser("init-audio", help="Sync the voice source library (tools/voice_workbench)")
+    sub.add_parser("init-audio", help="Sync the audio source libraries (voice sources + workbench candidates)")
 
     p_cfg = sub.add_parser("configure-oss", help="Configure DVC OSS remote")
     p_cfg.add_argument("--bucket", required=True)
@@ -35,7 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_pull.add_argument(
         "--audio",
         action="store_true",
-        help="Also pull the voice source library (~70MB, only tools/voice_workbench needs it)",
+        help="Also pull the audio source libraries (~270MB: voice sources + audio workbench candidates)",
     )
     p_pull.add_argument("--git-proxy", default="")
 

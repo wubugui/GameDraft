@@ -1,5 +1,4 @@
 # 会话工作态与本地素材:不进 git
-imported/
 .cache/
 .backups/
 edits.json
@@ -13,3 +12,8 @@ app.log
 # 它记的是「哪个 key 挂的是哪份内容、什么时候挂的、料从哪来」,是项目事实的账本,
 # 要能 review diff。会话工作态(分配/界面现场)已经拆到上面那几个文件里,
 # 所以台账的 diff 是干净的。
+
+# imported/(工作台的候选素材池,~200MB)改由 DVC 托管:tools/audio_editor/imported.dvc。
+# 下面这行是 `dvc add` 自己写的,别手删——删了 dvc 会认为它没被忽略而拒绝跟踪。
+# 拉取:`./dev.sh init-audio` 或 `./dev.sh pull --audio`(与配音音源同一个开关)。
+/imported

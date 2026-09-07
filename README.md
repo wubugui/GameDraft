@@ -31,9 +31,9 @@ DVC，并检查 Node 20+。之后用 `./dev.sh <任务>` 运行各工具。
 | 安装依赖 | `./dev.sh install-deps` |
 | 拉取运行资源 | `./dev.sh init-runtime` |
 | 拉取编辑器资源 | `./dev.sh init-editor` |
-| 拉取配音音源（~70MB，只配音工作台用） | `./dev.sh init-audio` |
+| 拉取音频素材库（~270MB，只两个音频工作台用） | `./dev.sh init-audio` |
 | 配置 OSS remote | `./dev.sh configure-oss --bucket B` |
-| 拉取代码+资源 | `./dev.sh pull --editor`（加 `--audio` 才带配音音源） |
+| 拉取代码+资源 | `./dev.sh pull --editor`（加 `--audio` 才带音频素材库） |
 | 推送代码+资源 | `./dev.sh push` |
 | 提交 | `./dev.sh commit -m "说明"` |
 | 控制台 | `./dev.sh console` |
@@ -74,6 +74,7 @@ public/resources/runtime.dvc        # 游戏运行时媒体资源
 resources/editor_projects.dvc       # 编辑器工程/中间工程资源
 resources/vendor_archives.dvc       # 离线依赖/运行环境归档
 resources/audio_sources.dvc         # 配音原始音源（不可再生）
+tools/audio_editor/imported.dvc     # 音频工作台候选素材池（抽卡产物，重生成要花钱且不可复现）
 ```
 
 对应目录：
@@ -83,18 +84,20 @@ public/resources/runtime/
 resources/editor_projects/
 resources/vendor_archives/
 resources/audio_sources/
+tools/audio_editor/imported/
 ```
 
 拉取分三挡：默认（vendor + runtime，跑游戏就够）、`--editor`（加编辑器工程）、
-`--audio`（加配音音源）。音源 70MB 且只有 `tools/voice_workbench` 用，所以不在
-`pull-all.sh` 的默认集里；没拉过它的机器照样能 `push` / `commit`（那一份会被跳过并打印）。
+`--audio`（加两份音频素材库：配音音源 70MB + 工作台候选池 200MB）。它们只有
+`tools/voice_workbench` 与 `tools/audio_editor` 用，所以不在 `pull-all.sh` 的默认集里；
+没拉过的机器照样能 `push` / `commit`（缺的那几份会被跳过并打印）。
 
 ## 日常开发
 
 ```bash
 git status
 ./scripts/pull-all.sh --editor
-./scripts/pull-all.sh --audio           # 要动配音时才加（--editor 壳里已带）
+./scripts/pull-all.sh --audio           # 要动配音/音效素材时才加（--editor 壳里已带）
 ```
 
 ## 创作声明

@@ -22,6 +22,7 @@ CLEAN_PATHS = [
     "resources/editor_projects",
     "resources/vendor_archives",
     "resources/audio_sources",
+    "tools/audio_editor/imported",
 ]
 
 

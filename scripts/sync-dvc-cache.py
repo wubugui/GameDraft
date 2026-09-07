@@ -23,6 +23,7 @@ DEFAULT_DVCFILES = [
     "resources/editor_projects.dvc",
     "resources/vendor_archives.dvc",
     "resources/audio_sources.dvc",
+    "tools/audio_editor/imported.dvc",
 ]
 PROXY_ENV_NAMES = [
     "HTTP_PROXY",
