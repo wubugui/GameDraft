@@ -1,4 +1,5 @@
 import { EventBus } from './EventBus';
+import { sceneToAcoustic } from '../audio/acousticSpace';
 import { FlagStore, type FlagRegistryJson } from './FlagStore';
 import { applyDevRuntimeCommand } from './devRuntimeCommands';
 import { fetchSceneIndex } from '../dev/sceneIndex';
@@ -641,6 +642,12 @@ export class Game {
   private webglContextRestoredHandler: (() => void) | null = null;
   private runtimeDebugLogCleanup: (() => void) | null = null;
   private runtimeDebugSnapshotTimer: number | null = null;
+  /** 当前场景的声学空间 id 与听者绑定；每帧按它把听者位置喂给 AudioManager。 */
+  private acousticSpaceId: string | null = null;
+  private acousticListenerBinding: SceneData['acousticListener'] | null = null;
+  /** 场景中心（wu），声学空间没写 anchor 时的兜底原点 */
+  private acousticAnchorFallback: { x: number; y: number } = { x: 0, y: 0 };
+
   private runtimeCommandPollTimer: number | null = null;
   private runtimeCommandPollInFlight = false;
   /** 本次页面会话的实例 id；快照携带，命令可用 targetBootId 指向特定实例（多开页签时避免互抢） */
@@ -648,6 +655,7 @@ export class Game {
   private runtimeDebugSnapshotErrorLogged = false;
   private runtimeDebugSnapshotOversizeLogged = false;
   /** 「GI体」调试视图(场景光照 uDebug==7)当前是否开着,及进入前的角色太阳开关。 */
+  /** 「GI体」调试视图(场景光照 uDebug==5)当前是否开着,及进入前的角色太阳开关。 */
   private giVolumeDebugOn = false;
   private giVolumeDebugSunWas = false;
 
@@ -2834,6 +2842,24 @@ export class Game {
         },
         log: (m) => this.debugPanelUI.log(m),
       });
+      /** F2「声学」页：就地摆崖壁 + 试听，改一下立刻重算 IR。 */
+      this.debugPanelUI.attachAcousticDebug({
+        getCurrentSceneId: () => this.sceneManager.currentSceneData?.id,
+        getSpaceId: () => this.audioManager.getAcousticSpaceId(),
+        getSpaceDef: (id) => this.audioManager.getAcousticSpaceDef(id),
+        listSpaceIds: () => this.audioManager.listAcousticSpaceIds(),
+        applyDef: (id, def) => this.audioManager.applyAcousticSpaceDef(id, def),
+        setSpace: (id) => this.audioManager.setAcousticSpace(id),
+        getTaps: () => this.audioManager.getAcousticTaps() as never[],
+        playProbe: (sfxId) => this.audioManager.playSfx(sfxId),
+        getRuntimeListener: () => this.audioManager.getAcousticListener(),
+        getListenerBinding: () => this.acousticListenerBinding,
+        getPerf: () => ({
+          costMs: this.audioManager.getAcousticBuildCostMs(),
+          thresholdM: this.audioManager.getAcousticMoveThresholdM(),
+        }),
+        log: (m) => this.debugPanelUI.log(m),
+      });
     }
     this.setupCutsceneStepHud();
     this.setupPlaneDebugSection();
@@ -4092,8 +4118,19 @@ export class Game {
       this.camera.setBounds(boundsW, boundsH);
     });
 
-    this.sceneManager.setAudioApplier((bgm, ambient) => {
+    this.sceneManager.setAudioApplier((bgm, ambient, acousticSpace) => {
       this.audioManager.applySceneAudio(bgm, ambient);
+      // 场景声学：换 IR。缺省/未知 id = 无空间，空间音退化为干声。
+      this.audioManager.setAcousticSpace(acousticSpace);
+      this.acousticSpaceId = acousticSpace ?? null;
+      const sd = this.sceneManager.currentSceneData;
+      this.acousticListenerBinding = sd?.acousticListener ?? null;
+      // 空间没写 anchor 时以场景中心为原点：这样作者摆的米制坐标默认围着画面中心
+      this.acousticAnchorFallback = {
+        x: (sd?.worldWidth ?? 0) / 2,
+        y: (sd?.worldHeight ?? 0) / 2,
+      };
+      this.updateAcousticListener(true);
     });
     this.sceneManager.setAudioManifestResolver((bgm, ambient) => this.audioManager.getSceneAudioRefs(bgm, ambient));
 
@@ -7387,6 +7424,35 @@ export class Game {
     this.assetManager.dispose();
   }
 
+  /**
+   * 把绑定的听者位置换算成声学米制喂给 AudioManager。
+   *
+   * 没有这一步，听者永远钉在作者摆的那个点上，玩家走到崖边和站在路中间是同一个
+   * 回音 —— 那实时就没有意义了。
+   */
+  private updateAcousticListener(force: boolean): void {
+    if (!this.acousticSpaceId) return;
+    const space = this.audioManager.getAcousticSpaceDef(this.acousticSpaceId);
+    if (!space) return;
+    const mode = this.acousticListenerBinding?.mode ?? 'player';
+    if (mode === 'fixed') return;          // 钉死在作者摆的点上
+    let at: { x: number; y: number } | null = null;
+    if (mode === 'camera') {
+      at = { x: this.camera.getX(), y: this.camera.getY() };
+    } else if (mode === 'entity') {
+      const id = this.acousticListenerBinding?.entityId ?? '';
+      const npc = id ? this.sceneManager.getNpcById(id) : null;
+      at = npc ? { x: npc.x, y: npc.y } : null;
+      // 绑的实体不在这个场景（换场/条件隐藏）：回落到玩家，别静默变哑
+      if (!at) at = { x: this.player.x, y: this.player.y };
+    } else {
+      at = { x: this.player.x, y: this.player.y };
+    }
+    if (!at) return;
+    const m = sceneToAcoustic(at, space, this.acousticAnchorFallback);
+    this.audioManager.setAcousticListener(m, force);
+  }
+
   private tick(dt: number): void {
     this.lastFps = dt > 0 ? 1 / dt : 0;
     this.playTimeMs += dt * 1000;
@@ -7396,6 +7462,9 @@ export class Game {
     // 位面对账先于 Exploring 分支：回 Exploring 边沿挂起的 zone 重注册（pendingZoneRefresh）
     // 必须在本帧 zoneSystem.update 之前补刷，否则旧位面 zone 会以过期集合多跑一帧 enter/stay。
     this.planeReconciler.update(dt);
+    // 声学听者跟随（玩家/相机/指定实体）：走动就改变回音。
+    // 内部两道节流（挪 3 米 + 250ms），不是每帧都重算 IR。
+    this.updateAcousticListener(false);
     // 时段换装：等一个"没人在演、也没在切场"的安全窗口再动场景（见 pendingPhaseSwap）。
     this.drainPendingPhaseSwap();
     // 日程演出（离场/入场走位）：内部自判探索态，非探索态原地挂起。

@@ -165,6 +165,93 @@ function runtimeLightingApi(): Plugin {
   };
 }
 
+
+/**
+ * 开发服：读写 `public/assets/data/acoustic_spaces.json`，供 F2「声学」页**直接保存**。
+ *
+ * 为什么要写真文件而不是复制粘贴：声学是靠耳朵调的，一轮要改几十次；
+ * 每次都手动粘一遍 JSON，人不会用第二次。
+ *
+ * 安全：只接受 `spaces` 是对象的整份文档，且**逐个空间做结构闸门**——
+ * 半个对象落盘的后果是运行时整份加载失败、所有场景一起没回音，
+ * 而唯一痕迹是控制台一行没人看的 warn（光照那条槽踩过同类的坑）。
+ * 写前先备份到同目录 `.bak`，改坏了能退。
+ */
+function acousticSpacesApi(): Plugin {
+  return {
+    name: 'gamedraft-acoustic-spaces-api',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url ?? '').split('?')[0] ?? '';
+        if (pathOnly !== '/__gamedraft-api/acoustic-spaces') {
+          next();
+          return;
+        }
+        const filePath = resolve(
+          server.config.root, 'public/assets/data/acoustic_spaces.json');
+        if (req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json');
+          try {
+            res.end((await readFile(filePath, 'utf-8')).trim() || '{"spaces":{}}');
+          } catch {
+            res.end('{"spaces":{}}');
+          }
+          return;
+        }
+        if (req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          for await (const ch of req) chunks.push(ch as Buffer);
+          let parsed: { spaces?: unknown; _comment?: unknown };
+          try {
+            parsed = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+          } catch {
+            res.statusCode = 400;
+            res.end('invalid json');
+            return;
+          }
+          const spaces = parsed.spaces as Record<string, unknown> | undefined;
+          if (!spaces || typeof spaces !== 'object' || Array.isArray(spaces)) {
+            res.statusCode = 400;
+            res.end('bad payload: 需要 spaces 对象');
+            return;
+          }
+          for (const [id, raw] of Object.entries(spaces)) {
+            const sp = raw as Record<string, unknown> | null;
+            const refs = sp?.reflectors as unknown[] | undefined;
+            if (!sp || typeof sp !== 'object' || !sp.listener || !Array.isArray(refs)) {
+              res.statusCode = 400;
+              res.end(`bad space "${id}": 需要 listener + reflectors[]`);
+              return;
+            }
+            for (const r of refs as Array<Record<string, unknown>>) {
+              const a = r?.a as unknown[] | undefined;
+              const b = r?.b as unknown[] | undefined;
+              if (!Array.isArray(a) || a.length !== 2 || !Array.isArray(b) || b.length !== 2
+                  || typeof r.height !== 'number' || !(r.height > 0)) {
+                res.statusCode = 400;
+                res.end(`bad reflector in "${id}": 需要 a[2] / b[2] / height>0`);
+                return;
+              }
+            }
+          }
+          try {
+            const old = await readFile(filePath, 'utf-8');
+            await writeFile(`${filePath}.bak`, old, 'utf-8');
+          } catch { /* 首次写、没有旧文件：不备份也不算错 */ }
+          await mkdir(dirname(filePath), { recursive: true });
+          await writeFile(filePath, `${JSON.stringify(parsed, null, 2)}
+`, 'utf-8');
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ ok: true, count: Object.keys(spaces).length }));
+          return;
+        }
+        res.statusCode = 405;
+        res.end();
+      });
+    },
+  };
+}
+
 /** 开发服：读写 resources/editor_projects/editor_data/debug_dock_pins.json，供 F2 区块 pin
  *（快捷页 ★ / 画面常驻 📌）跨端口、跨浏览器持久化（localStorage 按 origin 隔离，换端口会"失忆"）。 */
 function debugDockPinsApi(): Plugin {
@@ -820,6 +907,7 @@ export default defineConfig({
     debugFlagFavoritesApi(),
     debugDockPinsApi(),
     runtimeLightingApi(),
+    acousticSpacesApi(),
     narrativeDebugBridgeApi(),
     runtimeDebugSnapshotApi(),
     runtimeCommandApi(),

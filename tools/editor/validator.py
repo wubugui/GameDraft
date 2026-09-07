@@ -118,6 +118,64 @@ def _anim_bundle_id_from_ref(raw: object) -> str:
     return ""
 
 
+
+def check_acoustic_space_ref(
+    sid: str, scene: dict, acoustic_ids: set[str],
+) -> list["Issue"]:
+    """场景 acousticSpace 是否指向一个已定义的声学空间。
+
+    **记 error 不是 warning**：这层引用运行时不报错、不回落，写错一个字只是
+    这个场景彻底没有回音，没有任何痕迹。抽成纯函数是为了让"能不能真抓到错"
+    本身可被单测断言 —— 抓不到的门等于没有。
+    """
+    out: list[Issue] = []
+    # 听者绑定：mode 必须合法；entity 模式必须给 entityId，否则运行时会静默回落到玩家
+    lis = scene.get("acousticListener")
+    if lis is not None:
+        if not isinstance(lis, dict):
+            out.append(Issue("error", "scene", sid, "acousticListener 须为对象"))
+        else:
+            mode = str(lis.get("mode") or "")
+            if mode not in ("player", "camera", "entity", "fixed"):
+                out.append(Issue(
+                    "error", "scene", sid,
+                    f"acousticListener.mode {mode!r} 非法（player / camera / entity / fixed）"))
+            elif mode == "entity":
+                ent = str(lis.get("entityId") or "").strip()
+                if not ent:
+                    out.append(Issue(
+                        "error", "scene", sid,
+                        "acousticListener.mode=entity 但没给 entityId；"
+                        "运行时会静默回落到玩家"))
+                else:
+                    known = {str(n.get("id")) for n in (scene.get("npcs") or [])
+                             if isinstance(n, dict) and n.get("id")}
+                    if known and ent not in known:
+                        out.append(Issue(
+                            "warning", "scene", sid,
+                            f"acousticListener.entityId {ent!r} 不在本场景 npcs 里"))
+
+    ref = scene.get("acousticSpace")
+    if ref is None:
+        return out
+    text = str(ref).strip()
+    if not text:
+        out.append(Issue("error", "scene", sid,
+                         "acousticSpace 为空字符串；不需要就删掉这个字段"))
+    elif not acoustic_ids:
+        out.append(Issue("error", "scene", sid,
+                         f"acousticSpace '{text}' 无法校验："
+                         f"acoustic_spaces.json 缺失或没有 spaces 表"))
+    elif text not in acoustic_ids:
+        out.append(Issue(
+            "error", "scene", sid,
+            f"acousticSpace '{text}' 不在 acoustic_spaces.json 的 spaces 里"
+            f"（现有: {', '.join(sorted(acoustic_ids))}）；"
+            f"运行时会安静地按无空间处理，回音整个消失",
+        ))
+    return out
+
+
 def validate(model: ProjectModel) -> list[Issue]:
     issues: list[Issue] = []
     from .shared.ref_validator import REF_WARNING_PREFIX, validate_all_embedded_refs
@@ -149,6 +207,19 @@ def validate(model: ProjectModel) -> list[Issue]:
     cutscene_ids = _ids(model.cutscenes)
     shop_ids = _ids(model.shops)
     filter_ids = set(model.all_filter_ids())
+    # 声学空间键集合。场景的 acousticSpace 指向它；这层引用运行时**不报错**，
+    # 只是安静地按「无空间」处理（回音整个消失而无任何痕迹），所以必须在作者期拦。
+    _acoustic_ids: set[str] = set()
+    try:
+        _ap = (model.project_path or Path(".")) / "public" / "assets" / "data" / "acoustic_spaces.json"
+        if _ap.exists():
+            _ad = json.loads(_ap.read_text(encoding="utf-8"))
+            _spaces = _ad.get("spaces")
+            if isinstance(_spaces, dict):
+                _acoustic_ids = {str(k) for k in _spaces}
+    except Exception as _e:  # 文件坏了要报出来，不能静默当成"没有空间"
+        issues.append(Issue("error", "acoustic", "acoustic_spaces.json",
+                            f"解析失败: {_e}"))
 
     # 过场 index 重复 id（照 planes 样板）：运行时按 id 建表 first-wins，同名两条会
     # 静默遮蔽后者；改名亦无查重护栏（timeline_editor _add 已防撞、改名裸奔）。
@@ -809,6 +880,8 @@ def validate(model: ProjectModel) -> list[Issue]:
         if fid and fid not in filter_ids:
             issues.append(Issue("warning", "scene", sid,
                                 f"filterId '{fid}' has no matching filter JSON"))
+
+        issues.extend(check_acoustic_space_ref(sid, sc, _acoustic_ids))
 
         for zone in sc.get("zones", []) or []:
             zid = str(zone.get("id", "")) or "?"

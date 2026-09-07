@@ -48,6 +48,12 @@
       ]
     },
     {
+      "glob": "public/assets/data/acoustic_spaces.json",
+      "docs": [
+        "scene-acoustics"
+      ]
+    },
+    {
       "glob": "public/assets/data/audio_config.json",
       "docs": [
         "audio-workbench-config-write",
@@ -312,6 +318,12 @@
       "glob": "src/**",
       "docs": [
         "runtime-norms"
+      ]
+    },
+    {
+      "glob": "src/audio/**",
+      "docs": [
+        "scene-acoustics"
       ]
     },
     {
@@ -793,6 +805,12 @@
       "docs": [
         "ui-component-layer",
         "ui-panel-skin"
+      ]
+    },
+    {
+      "glob": "src/ui/debugAcousticSection.ts",
+      "docs": [
+        "scene-acoustics"
       ]
     },
     {

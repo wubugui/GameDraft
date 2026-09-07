@@ -206,7 +206,7 @@ export class SceneManager implements IGameSystem {
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
   private boundsOnlySetter: ((boundsW: number, boundsH: number) => void) | null = null;
-  private audioApplier: ((bgm?: string, ambient?: string[]) => void) | null = null;
+  private audioApplier: ((bgm?: string, ambient?: string[], acousticSpace?: string) => void) | null = null;
   private audioManifestResolver: ((bgm?: string, ambient?: string[]) => AssetRef[]) | null = null;
   private zoneSetter: ((zones: import('../data/types').ZoneDef[]) => void) | null = null;
   private interactionSetter: ((hotspots: Hotspot[], npcs: Npc[]) => void) | null = null;
@@ -275,7 +275,7 @@ export class SceneManager implements IGameSystem {
     this.boundsOnlySetter = fn;
   }
 
-  setAudioApplier(fn: (bgm?: string, ambient?: string[]) => void): void {
+  setAudioApplier(fn: (bgm?: string, ambient?: string[], acousticSpace?: string) => void): void {
     this.audioApplier = fn;
   }
 
@@ -1747,7 +1747,7 @@ export class SceneManager implements IGameSystem {
 
     this.applyPlayerSpawnAndCamera(sceneData, spawnPointId, cameraPosition);
 
-    this.audioApplier?.(sceneData.bgm, sceneData.ambientSounds);
+    this.audioApplier?.(sceneData.bgm, sceneData.ambientSounds, sceneData.acousticSpace);
     this.zoneSetter?.(this.computeEffectiveZones(sceneId, sceneData.zones));
 
     if (this.depthLoader) {

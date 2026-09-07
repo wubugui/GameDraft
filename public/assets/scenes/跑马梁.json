@@ -1,5 +1,7 @@
 {
   "id": "跑马梁",
+  "acousticSpace": "山谷_大",
+  "acousticListener": { "mode": "camera" },
   "name": "跑马梁",
   "footstepSet": "纸钱路",
   "worldWidth": 2048.0,

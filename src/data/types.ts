@@ -566,10 +566,27 @@ export interface SceneData {
   /**
    * 本场景的默认脚步集（`footstep_sets.json` 的集 id）。zone 上的
    * {@link ZoneDef.footstepSet} 覆盖它；两者都没有 = 本场景不发脚步声。
+   * 声学空间 id，取自 `assets/data/acoustic_spaces.json` 的 `spaces` 键。
+   * 缺省＝没有空间，空间音退化为纯干声。
+   *
+   * ⚠ **与视觉几何解耦**：`worldWidth` 是可行走范围，不是画里的世界
+   * （跑马梁世界盒约 23 米，画上对岸在几百米外）。声学空间是作者数据，
+   * 按听感调，不从碰撞盒反推。多个场景可共用同一个空间。
+   */
+  acousticSpace?: string;
+  /**
+   * 听者绑到谁身上。缺省＝玩家。
    *
    * **必须有场景级默认**：背尸上山那六个场景 `zones` 全为空，只按区配等于在目标关卡里没有。
+   * 听者不动的话「实时回音」没有意义 —— 走到崖边和站在路中间该是两个声音。
+   * `fixed` ＝ 钉在声学空间作者摆的那个点上（旧行为）。
    */
   footstepSet?: string;
+  acousticListener?: {
+    mode: 'player' | 'camera' | 'entity' | 'fixed';
+    /** mode='entity' 时的目标 NPC/实体 id */
+    entityId?: string;
+  };
   /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
   filterId?: string;
   depthConfig?: SceneDepthConfig;

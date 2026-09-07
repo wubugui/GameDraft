@@ -615,3 +615,36 @@ details[open] > summary.debug-dock__section-title::before {
   border: 1px solid #334466;
   border-radius: 6px;
 }
+
+/* ---- F2「声学」页：就地摆崖壁 ---- */
+.debug-acoustic__bar {
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin: 4px 0;
+}
+.debug-acoustic__bar button { font-size: 11px; padding: 3px 7px; }
+.debug-acoustic__bar select { font-size: 11px; max-width: 12em; }
+.debug-acoustic__status { font-size: 11px; color: #8d8172; margin: 2px 0 4px; }
+.debug-acoustic__map {
+  width: 100%; max-width: 340px; aspect-ratio: 1; display: block; margin: 6px 0;
+  background: #14120e; border: 1px solid #3a332a; border-radius: 6px;
+  cursor: crosshair; touch-action: none;
+}
+.debug-acoustic__list { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.debug-acoustic__card {
+  border: 1px solid #332f27; border-radius: 5px; padding: 5px 7px;
+  background: color-mix(in srgb, #d9a05b 4%, transparent); cursor: pointer;
+}
+.debug-acoustic__card.is-selected {
+  border-color: #7fd8ff; background: color-mix(in srgb, #7fd8ff 8%, transparent);
+}
+.debug-acoustic__cardhead {
+  display: flex; align-items: center; gap: 6px; justify-content: space-between;
+  font-size: 11px; color: #d9a05b; margin-bottom: 3px;
+}
+.debug-acoustic__cardhead input[type=text] {
+  font-size: 11px; width: 8em; background: #1a1712; color: #d8cdb8;
+  border: 1px solid #3a332a; border-radius: 3px; padding: 1px 4px;
+}
+.debug-acoustic__slider { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+.debug-acoustic__slider > span:first-child { min-width: 3.6em; font-size: 11px; }
+.debug-acoustic__slider input[type=range] { flex: 1; }
+.debug-acoustic__num { min-width: 3.4em; text-align: right; font-size: 11px; }

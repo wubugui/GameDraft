@@ -1963,6 +1963,23 @@ class ProjectModel(QObject):
     def all_filter_ids(self) -> list[str]:
         return list(self.filter_defs.keys())
 
+    def all_acoustic_space_ids(self) -> list[str]:
+        """`public/assets/data/acoustic_spaces.json` 的 spaces 键。
+
+        场景属性页的 `acousticSpace` 用它做下拉——引用字段不许用裸输入框
+        （写错一个字运行时不报错、不回落，那个场景就彻底没有回音）。
+        现读现取：这份文件由游戏内 F2「声学」页写，编辑器开着的时候它会变。
+        """
+        try:
+            import json as _json
+            p = self.project_path / "public" / "assets" / "data" / "acoustic_spaces.json"
+            if not p.exists():
+                return []
+            spaces = _json.loads(p.read_text(encoding="utf-8")).get("spaces")
+            return sorted(str(k) for k in spaces) if isinstance(spaces, dict) else []
+        except Exception:
+            return []
+
     def all_audio_ids(self, channel: str) -> list[str]:
         return list(self.audio_config.get(channel, {}).keys())
 

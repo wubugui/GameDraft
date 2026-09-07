@@ -119,6 +119,90 @@
     }
   },
   "sfx": {
+    "sfx_scree_slide_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_scree_slide_dry.wav",
+      "spatial": { "wet": 0.55, "dry": 1.0 }
+    },
+    "sfx_rock_bounce_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_rock_bounce_dry.wav",
+      "spatial": { "wet": 0.65, "dry": 1.0 }
+    },
+    "sfx_rockfall_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_rockfall_dry.wav",
+      "spatial": { "wet": 0.6, "dry": 1.0 }
+    },
+    "sfx_plank_step_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_plank_step_dry.wav",
+      "spatial": { "wet": 0.4, "dry": 1.0 }
+    },
+    "sfx_rail_creak_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_rail_creak_dry.wav",
+      "spatial": { "wet": 0.35, "dry": 1.0 }
+    },
+    "sfx_beam_groan_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_beam_groan_dry.wav",
+      "spatial": { "wet": 0.4, "dry": 1.0 }
+    },
+    "sfx_wood_crack_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_wood_crack_dry.wav",
+      "spatial": { "wet": 0.55, "dry": 1.0 }
+    },
+    "sfx_jump_runup_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_jump_runup_dry.wav",
+      "spatial": { "wet": 0.35, "dry": 1.0 }
+    },
+    "sfx_jump_slip_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_jump_slip_dry.wav",
+      "spatial": { "wet": 0.35, "dry": 1.0 }
+    },
+    "sfx_land_stagger_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_land_stagger_dry.wav",
+      "spatial": { "wet": 0.5, "dry": 1.0 }
+    },
+    "sfx_land_scree_fall_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_land_scree_fall_dry.wav",
+      "spatial": { "wet": 0.6, "dry": 1.0 }
+    },
+    "sfx_bird_startle_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_bird_startle_dry.wav",
+      "spatial": { "wet": 0.7, "dry": 1.0 }
+    },
+    "sfx_owl_hoot_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_owl_hoot_dry.wav",
+      "spatial": { "wet": 0.7, "dry": 1.0 }
+    },
+    "sfx_heron_croak_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_heron_croak_dry.wav",
+      "spatial": { "wet": 0.7, "dry": 1.0 }
+    },
+    "sfx_boulder_splash_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_boulder_splash_dry.wav",
+      "spatial": { "wet": 0.65, "dry": 1.0 }
+    },
+    "sfx_splash_surge_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_splash_surge_dry.wav",
+      "spatial": { "wet": 0.6, "dry": 1.0 }
+    },
+    "sfx_gibbon_dry_a": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_gibbon_dry_a.wav",
+      "spatial": { "wet": 0.85, "dry": 1.0 }
+    },
+    "sfx_gibbon_dry_b": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_gibbon_dry_b.wav",
+      "spatial": { "wet": 0.85, "dry": 1.0 }
+    },
+    "sfx_pebble_scatter_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_pebble_scatter_dry.wav",
+      "spatial": { "wet": 0.55, "dry": 1.0 }
+    },
+    "sfx_jump_takeoff_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_jump_takeoff_dry.wav",
+      "spatial": { "wet": 0.35, "dry": 1.0 }
+    },
+    "sfx_land_scree_dry": {
+      "src": "/resources/runtime/audio/beishi_20260907/sfx_land_scree_dry.wav",
+      "spatial": { "wet": 0.55, "dry": 1.0 }
+    },
     "sfx_step_paper_money_1": {
       "src": "/resources/runtime/audio/edited/footstep_paper_money_02_87caa148.wav"
     },

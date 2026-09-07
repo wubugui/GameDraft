@@ -5506,6 +5506,27 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_filter = IdRefSelector(allow_empty=True, editable=True)
         self._sc_filter.value_changed.connect(lambda _x: self._emit_props_changed())
         form.addRow("filterId", self._sc_filter)
+        # 声学空间：引用字段，走选择器不走裸输入框。写错一个字运行时不报错也不回落，
+        # 那个场景就彻底没有回音、毫无痕迹（validate-data 会记 error 兜底）。
+        self._sc_acoustic = IdRefSelector(allow_empty=True, editable=True)
+        self._sc_acoustic.value_changed.connect(lambda _x: self._emit_props_changed())
+        self._sc_acoustic.setToolTip(
+            "场景的声学空间（回音）。清单来自 assets/data/acoustic_spaces.json；"
+            "留空＝没有空间，空间音退化为干声。\n"
+            "崖壁怎么摆、多远、多吸音，在游戏里按 F2 →「声学」页边拖边听。")
+        form.addRow("acousticSpace", self._sc_acoustic)
+        # 听者绑给谁。听者不动＝走到崖边和站在路中间是同一个回音，实时就没意义了。
+        self._sc_acoustic_listener = QComboBox()
+        for _v, _t in (("player", "玩家（默认）"), ("camera", "相机"),
+                       ("entity", "指定实体"), ("fixed", "固定点（作者摆的位置）")):
+            self._sc_acoustic_listener.addItem(_t, _v)
+        self._sc_acoustic_listener.currentIndexChanged.connect(
+            lambda _i: (self._sync_acoustic_listener_target(), self._emit_props_changed()))
+        form.addRow("acousticListener", self._sc_acoustic_listener)
+        self._sc_acoustic_entity = IdRefSelector(allow_empty=True, editable=True)
+        self._sc_acoustic_entity.value_changed.connect(lambda _x: self._emit_props_changed())
+        self._sc_acoustic_entity.setToolTip("mode=指定实体 时，听者跟着这个 NPC 走。")
+        form.addRow("　└ 实体", self._sc_acoustic_entity)
         # 这批控件此前不接 changed 信号 → 永不置 pending-dirty → 不点 Apply 切场景即丢（审查 P1-1）
         self._sc_zoom = QDoubleSpinBox(); self._sc_zoom.setRange(0.01, 20); self._sc_zoom.setSingleStep(0.1)
         self._sc_zoom.valueChanged.connect(lambda _v: self._emit_props_changed())
@@ -6256,6 +6277,19 @@ class ScenePropertyPanel(QScrollArea):
             self._sc_bgm.set_current(str(st.get("bgm", "") or ""))
             self._sc_filter.set_items(self._model.all_filter_ids())
             self._sc_filter.set_current(st.get("filterId", ""))
+            self._sc_acoustic.set_items(self._model.all_acoustic_space_ids())
+            self._sc_acoustic.set_current(str(st.get("acousticSpace", "") or ""))
+            _al = st.get("acousticListener")
+            _mode = str((_al or {}).get("mode", "") or "player")
+            _idx = self._sc_acoustic_listener.findData(_mode)
+            self._sc_acoustic_listener.blockSignals(True)
+            self._sc_acoustic_listener.setCurrentIndex(_idx if _idx >= 0 else 0)
+            self._sc_acoustic_listener.blockSignals(False)
+            self._sc_acoustic_entity.set_items(
+                [(str(n.get("id", "")), str(n.get("name", "") or n.get("id", "")))
+                 for n in (st.get("npcs") or []) if n.get("id")])
+            self._sc_acoustic_entity.set_current(str((_al or {}).get("entityId", "") or ""))
+            self._sync_acoustic_listener_target()
             dn = st.get("dayNight")
             self._sc_daynight.blockSignals(True)
             self._sc_daynight.setChecked(isinstance(dn, dict) and dn.get("enabled") is True)
@@ -6804,6 +6838,15 @@ class ScenePropertyPanel(QScrollArea):
             return old_val
         return new_val
 
+    def _sync_acoustic_listener_target(self) -> None:
+        """只有 mode=entity 时那个实体选择器才有意义，其余禁用——
+        免得填了个 id 却不生效（静默失效是这一域最贵的一类 bug）。"""
+        try:
+            enabled = (self._sc_acoustic_listener.currentData() == "entity")
+            self._sc_acoustic_entity.setEnabled(enabled)
+        except Exception:
+            pass
+
     def _flush_scene_widgets_into(self, sc: dict) -> None:
         sc["name"] = self._sc_name.text()
         ww = self._sc_width.value()
@@ -6822,6 +6865,21 @@ class ScenePropertyPanel(QScrollArea):
             sc["filterId"] = fid
         elif "filterId" in sc:
             del sc["filterId"]
+        aspace = self._sc_acoustic.current_id().strip()
+        if aspace:
+            sc["acousticSpace"] = aspace
+        elif "acousticSpace" in sc:
+            del sc["acousticSpace"]
+        _mode = self._sc_acoustic_listener.currentData() or "player"
+        _ent = self._sc_acoustic_entity.current_id().strip()
+        # player 是缺省语义：不落键，旧场景零字节变化
+        if _mode != "player":
+            _al = {"mode": _mode}
+            if _mode == "entity" and _ent:
+                _al["entityId"] = _ent
+            sc["acousticListener"] = _al
+        elif "acousticListener" in sc:
+            del sc["acousticListener"]
         # 日夜：不勾＝不落键（缺省就是"不参与"，旧场景零字节变化）
         if self._sc_daynight.isChecked():
             dn = sc.setdefault("dayNight", {})
