@@ -93,3 +93,7 @@ onboarding-app/
 
 # 配音原始音源库：大文件、不可再生素材。不进 Git，改由 DVC 托管
 # （见 resources/audio_sources.dvc，忽略规则在 resources/.gitignore），工具见 tools/voice_workbench
+
+# 运行期日志与其审计清单：MCP/dev console/planner GUI 产物，每次跑都变，不入库
+# （原只忽略 *.log，漏了 .log.gz 与 .<hash>-audit.json，后者每次轮转都脏工作区）
+logs/
