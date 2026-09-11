@@ -12190,92 +12190,92 @@
     },
     {
       "id": "flow_ow_rule_air_composition",
-      "label": "火与灰：当前掌握与信法",
-      "description": "C06/C08 的亲历投影。搬灰不等于堵风；清灶也不是把进风口堵上。只从既成行为派生知识，不发授予 flag。",
+      "label": "风路规矩：见闻与验证",
+      "description": "读取庙前与街灶的实际经历，更新规矩正文。上路：察风→挡缝复查／搬盘；下路：清灰→修灶试火；两处经历汇合后辨明风路。已有证据不回退，搬盘与挡缝互斥；initial 的直达边用于进入时已有经历的恢复。",
       "mainGraph": {
         "id": "flow_ow_rule_air",
-        "label": "火与灰：当前掌握与信法",
+        "label": "风路规矩：见闻与验证",
         "ownerType": "rule",
         "ownerId": "ow_air_path",
         "initialState": "initial",
         "states": {
           "initial": {
             "id": "initial",
-            "label": "initial",
+            "label": "入场：按已有经历定位",
             "meta": {
               "editor": {
                 "x": 0,
-                "y": 0
+                "y": -350
               }
             }
           },
           "heard": {
             "id": "heard",
-            "label": "heard",
+            "label": "听到疑问，尚未查证",
             "meta": {
               "editor": {
-                "x": 270,
-                "y": 0
+                "x": 0,
+                "y": 50
               }
             }
           },
           "ash": {
             "id": "ash",
-            "label": "ash",
+            "label": "灶口清灰，尚未试火",
             "meta": {
               "editor": {
-                "x": 540,
-                "y": 0
+                "x": 350,
+                "y": 340
               }
             }
           },
           "wind": {
             "id": "wind",
-            "label": "wind",
+            "label": "看清风向，提出办法",
             "meta": {
               "editor": {
-                "x": 810,
-                "y": 0
+                "x": 350,
+                "y": -120
               }
             }
           },
           "moved": {
             "id": "moved",
-            "label": "moved",
+            "label": "搬盘收灰，未证挡风",
             "meta": {
               "editor": {
-                "x": 0,
-                "y": 180
+                "x": 700,
+                "y": 100
               }
             }
           },
           "sheltered": {
             "id": "sheltered",
-            "label": "sheltered",
+            "label": "挡缝复查，确认有效",
             "meta": {
               "editor": {
-                "x": 270,
-                "y": 180
+                "x": 700,
+                "y": -200
               }
             }
           },
           "stove": {
             "id": "stove",
-            "label": "stove",
+            "label": "修灶试火，确认进风",
             "meta": {
               "editor": {
-                "x": 540,
-                "y": 180
+                "x": 1050,
+                "y": 340
               }
             }
           },
           "compared": {
             "id": "compared",
-            "label": "compared",
+            "label": "两处对照，分清风路",
             "meta": {
               "editor": {
-                "x": 810,
-                "y": 180
+                "x": 1400,
+                "y": 50
               }
             }
           }
@@ -12289,18 +12289,14 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  }
-                ]
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
               }
             ]
           },
@@ -12312,33 +12308,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense_wind",
+                  "state": "seen",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12350,38 +12329,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "sheltered",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense",
+                "state": "sheltered",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12393,43 +12350,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "moved",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense",
+                "state": "moved",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12441,48 +12371,30 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "moved",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "sheltered",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12494,53 +12406,37 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove_ash",
-                    "state": "done",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_stove_ash",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense_wind",
+                  "state": "seen",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "moved",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "sheltered",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12552,69 +12448,55 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
+                "any": [
                   {
-                    "any": [
-                      {
-                        "not": {
-                          "narrative": "flow_ow_incense",
-                          "state": "initial"
-                        }
-                      },
-                      {
-                        "not": {
-                          "narrative": "flow_ow_stove",
-                          "state": "initial"
-                        }
-                      }
-                    ]
+                    "not": {
+                      "narrative": "flow_ow_incense",
+                      "state": "initial"
+                    }
                   },
                   {
                     "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_stove_ash",
-                          "state": "done",
-                          "reached": true
-                        }
-                      ]
+                      "narrative": "flow_ow_stove",
+                      "state": "initial"
                     }
                   }
                 ]
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove_ash",
+                  "state": "done",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense_wind",
+                  "state": "seen",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "moved",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "sheltered",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12626,18 +12508,14 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  }
-                ]
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
               }
             ]
           },
@@ -12649,33 +12527,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense_wind",
+                  "state": "seen",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12687,38 +12548,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "sheltered",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense",
+                "state": "sheltered",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12730,43 +12569,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "moved",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense",
+                "state": "moved",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12778,48 +12590,30 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "moved",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "sheltered",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12831,53 +12625,37 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove_ash",
-                    "state": "done",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_stove_ash",
+                "state": "done",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense_wind",
+                  "state": "seen",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "moved",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "sheltered",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12889,18 +12667,14 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  }
-                ]
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
               }
             ]
           },
@@ -12912,33 +12686,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense_wind",
+                  "state": "seen",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12950,38 +12707,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "sheltered",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense",
+                "state": "sheltered",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
               }
             ]
           },
@@ -12993,43 +12728,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "moved",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense",
+                "state": "moved",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
               }
             ]
           },
@@ -13041,122 +12749,30 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "ash_heard",
-            "from": "ash",
-            "to": "heard",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
+              },
               {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "not": {
-                          "narrative": "flow_ow_incense",
-                          "state": "initial"
-                        }
-                      },
-                      {
-                        "not": {
-                          "narrative": "flow_ow_stove",
-                          "state": "initial"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_stove_ash",
-                          "state": "done",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "moved",
+                  "reached": true
+                }
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_incense",
+                  "state": "sheltered",
+                  "reached": true
+                }
               }
             ]
           },
@@ -13168,56 +12784,14 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "wind_stove",
-            "from": "wind",
-            "to": "stove",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
               }
             ]
           },
@@ -13229,38 +12803,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "sheltered",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense",
+                "state": "sheltered",
+                "reached": true
+              },
+              {
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
               }
             ]
           },
@@ -13272,175 +12824,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "moved",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "wind_ash",
-            "from": "wind",
-            "to": "ash",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
+                "narrative": "flow_ow_incense",
+                "state": "moved",
+                "reached": true
+              },
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove_ash",
-                    "state": "done",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "wind_heard",
-            "from": "wind",
-            "to": "heard",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "not": {
-                          "narrative": "flow_ow_incense",
-                          "state": "initial"
-                        }
-                      },
-                      {
-                        "not": {
-                          "narrative": "flow_ow_stove",
-                          "state": "initial"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_stove_ash",
-                          "state": "done",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "not": {
+                  "narrative": "flow_ow_stove",
+                  "state": "repaired",
+                  "reached": true
+                }
               }
             ]
           },
@@ -13452,18 +12845,14 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  }
-                ]
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
               }
             ]
           },
@@ -13475,261 +12864,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "moved_sheltered",
-            "from": "moved",
-            "to": "sheltered",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "sheltered",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "moved_wind",
-            "from": "moved",
-            "to": "wind",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "moved_ash",
-            "from": "moved",
-            "to": "ash",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove_ash",
-                    "state": "done",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "moved_heard",
-            "from": "moved",
-            "to": "heard",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "not": {
-                          "narrative": "flow_ow_incense",
-                          "state": "initial"
-                        }
-                      },
-                      {
-                        "not": {
-                          "narrative": "flow_ow_stove",
-                          "state": "initial"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_stove_ash",
-                          "state": "done",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "not": {
+                  "narrative": "flow_ow_incense_wind",
+                  "state": "seen",
+                  "reached": true
+                }
               }
             ]
           },
@@ -13741,18 +12885,14 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  }
-                ]
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
+              {
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
               }
             ]
           },
@@ -13764,266 +12904,16 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "sheltered_moved",
-            "from": "sheltered",
-            "to": "moved",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "moved",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "sheltered_wind",
-            "from": "sheltered",
-            "to": "wind",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "sheltered_ash",
-            "from": "sheltered",
-            "to": "ash",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove_ash",
-                    "state": "done",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "sheltered_heard",
-            "from": "sheltered",
-            "to": "heard",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "not": {
-                          "narrative": "flow_ow_incense",
-                          "state": "initial"
-                        }
-                      },
-                      {
-                        "not": {
-                          "narrative": "flow_ow_stove",
-                          "state": "initial"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_stove_ash",
-                          "state": "done",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "not": {
+                  "narrative": "flow_ow_incense_wind",
+                  "state": "seen",
+                  "reached": true
+                }
               }
             ]
           },
@@ -14035,608 +12925,14 @@
             "signal": "__draft__",
             "conditions": [
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "stove_sheltered",
-            "from": "stove",
-            "to": "sheltered",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
+                "narrative": "flow_ow_stove",
+                "state": "repaired",
+                "reached": true
+              },
               {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "sheltered",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "stove_moved",
-            "from": "stove",
-            "to": "moved",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "moved",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "stove_wind",
-            "from": "stove",
-            "to": "wind",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "stove_ash",
-            "from": "stove",
-            "to": "ash",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove_ash",
-                    "state": "done",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "stove_heard",
-            "from": "stove",
-            "to": "heard",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "not": {
-                          "narrative": "flow_ow_incense",
-                          "state": "initial"
-                        }
-                      },
-                      {
-                        "not": {
-                          "narrative": "flow_ow_stove",
-                          "state": "initial"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_stove_ash",
-                          "state": "done",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "compared_stove",
-            "from": "compared",
-            "to": "stove",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove",
-                    "state": "repaired",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "compared_sheltered",
-            "from": "compared",
-            "to": "sheltered",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "sheltered",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "compared_moved",
-            "from": "compared",
-            "to": "moved",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense",
-                    "state": "moved",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "compared_wind",
-            "from": "compared",
-            "to": "wind",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_incense_wind",
-                    "state": "seen",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "compared_ash",
-            "from": "compared",
-            "to": "ash",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "narrative": "flow_ow_stove_ash",
-                    "state": "done",
-                    "reached": true
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "id": "compared_heard",
-            "from": "compared",
-            "to": "heard",
-            "trigger": "reactive",
-            "signal": "__draft__",
-            "conditions": [
-              {
-                "all": [
-                  {
-                    "any": [
-                      {
-                        "not": {
-                          "narrative": "flow_ow_incense",
-                          "state": "initial"
-                        }
-                      },
-                      {
-                        "not": {
-                          "narrative": "flow_ow_stove",
-                          "state": "initial"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "not": {
-                      "any": [
-                        {
-                          "all": [
-                            {
-                              "narrative": "flow_ow_stove",
-                              "state": "repaired",
-                              "reached": true
-                            },
-                            {
-                              "narrative": "flow_ow_incense_wind",
-                              "state": "seen",
-                              "reached": true
-                            }
-                          ]
-                        },
-                        {
-                          "narrative": "flow_ow_stove",
-                          "state": "repaired",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "sheltered",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense",
-                          "state": "moved",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_incense_wind",
-                          "state": "seen",
-                          "reached": true
-                        },
-                        {
-                          "narrative": "flow_ow_stove_ash",
-                          "state": "done",
-                          "reached": true
-                        }
-                      ]
-                    }
-                  }
-                ]
+                "narrative": "flow_ow_incense_wind",
+                "state": "seen",
+                "reached": true
               }
             ]
           }
