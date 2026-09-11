@@ -5503,11 +5503,10 @@
     "targetSpawnPoint": "spawn_0"
   },
   {
-    "id": "验证_铜钱脱落滚走",
+    "id": "主线_铜钱脱落滚走",
     "targetScene": "雾津街头",
     "targetX": 975.1,
     "targetY": 1491.9,
-    "restoreState": true,
     "steps": [
       {
         "kind": "present",
@@ -5519,6 +5518,22 @@
         "type": "cameraZoom",
         "scale": 1.9,
         "duration": 500
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "x": 1666.25,
+          "y": 1877.38,
+          "at": {
+            "kind": "slot",
+            "trajectoryId": "coin_drop_demo",
+            "slotId": "slot_1"
+          },
+          "moveAnimState": "walk",
+          "arriveAnimState": "idle"
+        }
       },
       {
         "kind": "action",
