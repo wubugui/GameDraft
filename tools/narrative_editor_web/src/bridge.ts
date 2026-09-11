@@ -65,6 +65,8 @@ declare global {
       cb: (channel: { objects: { narrativeBridge?: QtBridge } }) => void,
     ) => void;
     __narrativeEditor?: {
+      /** 宿主双保险：API 只在真数据进 state 后才挂，故恒 true；老壳按三态读它。 */
+      isLoaded?: () => boolean;
       getCurrentDataJson: () => string;
       getCurrentDataHash: () => string;
       isDirty: () => boolean;
@@ -103,6 +105,21 @@ function waitForBridge(): Promise<QtBridge | null> {
 
 const emptyData: NarrativeGraphsFileDef = { schemaVersion: 2, compositions: [] };
 
+/** 加载来源里唯一不是"真数据"的那一种：桥回了个解析不了的 payload 时的兜底。 */
+export const EMPTY_FALLBACK_SOURCE = 'empty fallback';
+
+/**
+ * 宿主（PySide 壳）能不能把当前 React 文档当成"网页的草稿"收走。
+ *
+ * 2026-09-09 事故：页面一挂载就把 `window.__narrativeEditor` 挂上，而 `data` 在异步加载
+ * 完成前还是 `defaultFile`（空白初始文档）。桥没通/getData 没回的那几秒里宿主 Save All
+ * 读到空文档、当合法内容写进工程，8 个编排整批抹掉。所以：来源为空（还没加载完）或是
+ * `empty fallback`（加载失败兜底）时，一律不对宿主暴露 API——宿主看不到 API 就当"无内容"。
+ */
+export function isHostDataLoaded(source: string): boolean {
+  return source !== '' && source !== EMPTY_FALLBACK_SOURCE;
+}
+
 export async function loadNarrativeData(): Promise<NarrativeGraphsFileDef> {
   return (await loadNarrativeDataWithSource()).data;
 }
@@ -122,7 +139,7 @@ export async function loadNarrativeDataWithSource(): Promise<{ data: NarrativeGr
       const res = await fetch('/assets/data/narrative_graphs.json');
       return { data: (await res.json()) as NarrativeGraphsFileDef, source: 'runtime file' };
     } catch {
-      return { data: emptyData, source: 'empty fallback' };
+      return { data: emptyData, source: EMPTY_FALLBACK_SOURCE };
     }
   }
   return new Promise((resolve) => {
@@ -130,7 +147,7 @@ export async function loadNarrativeDataWithSource(): Promise<{ data: NarrativeGr
       try {
         resolve({ data: JSON.parse(payload) as NarrativeGraphsFileDef, source: 'ProjectModel' });
       } catch {
-        resolve({ data: emptyData, source: 'empty fallback' });
+        resolve({ data: emptyData, source: EMPTY_FALLBACK_SOURCE });
       }
     });
   });

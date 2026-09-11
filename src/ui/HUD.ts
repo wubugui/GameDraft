@@ -1,5 +1,7 @@
-import { Container, Graphics, Rectangle, Text, type FederatedPointerEvent } from 'pixi.js';
+import { Assets, Container, Graphics, Rectangle, Sprite, Text, Texture, type FederatedPointerEvent } from 'pixi.js';
+import { mediaUrlForRoot } from '../core/projectPaths';
 import { SmellIndicatorRenderer, type SmellProfilesRaw, type SmellRenderState, type SmellFormParams } from './smell/SmellIndicatorRenderer';
+import { HudDebut } from './HudDebut';
 import { UITheme } from './UITheme';
 import { createPanel, SKINS, WOOD_CHIP } from './PanelSkin';
 import { createChip, createIcon, createKeyCap } from './components/UIDecor';
@@ -130,6 +132,44 @@ function lerpColor(a: number, b: number, t: number): number {
 
 const FLAME_RATIO_EASE_PER_SECOND = 12;
 const FLAME_RATIO_SNAP_EPSILON = 0.001;
+/**
+ * 三把火的帧动画图集（`images/ui/three_fires_sheet.png`，Seedance 图生视频拆帧，2026-09-10 制作人定稿）：
+ * 64 帧 · 12 列 · 每帧 27×56 · 24fps 循环 · 火体高 44px（= 游戏 1× 的 22px）。
+ * 帧动画只管"火在烧"；大小 / 轻微旋转 / 透明度 / 冷暖仍由 drawFlame 那套公式驱动——
+ * 换的只是"画那一笔"，图集没加载到就退回矢量画法。
+ */
+const FLAME_SHEET_PATH = 'ui/three_fires_sheet.png';
+const FLAME_SHEET_FRAMES = 64;
+const FLAME_SHEET_COLS = 12;
+/** 4× 图集（每帧 49×102，火体 88px）：常态缩到 1/4 靠 mipmap 抗闪，首次仪式放大 4.5× 也不糊 */
+const FLAME_SHEET_FW = 49;
+const FLAME_SHEET_FH = 102;
+const FLAME_SHEET_BODY_PX = 88;
+const FLAME_SHEET_FPS = 24;
+/** 图集火体 88px 对应矢量满火的名义高 20×0.96：scale = h / 19.2 × (22 / 88) */
+const FLAME_SHEET_SCALE_PER_H = (22 / FLAME_SHEET_BODY_PX) / (20 * 0.96);
+/** 轻微旋转上限（弧度）：歪斜只做"晃一晃"，不做剪切形变 */
+const FLAME_SPRITE_MAX_TILT = 0.2;
+/** 出场「轰一下」：整簇放大这么多再在这么多秒内落回原尺寸（只动整层 scale，火的画法不动） */
+const FLAME_FLARE_SCALE = 0.55;
+const FLAME_FLARE_SECONDS = 0.6;
+/** 平时出场「点燃」：从一点弹到 1.45× 过冲再落回 1×，同时暖光爆开、光晕连打两圈 */
+const FLAME_SHOW_SECONDS = 0.9;
+const FLAME_SHOW_POP_PORTION = 0.3;
+const FLAME_SHOW_OVERSHOOT = 1.45;
+/** 平时退场：前半段「将熄」（簌簌抖着缩），后半段「吹灭」（上飘、收窄、淡出、冒一口烟） */
+const FLAME_HIDE_SECONDS = 0.75;
+const FLAME_SMOKE_PATH = 'ui/three_fires_smoke.png';
+/** 平时出场的光晕外扩时长 */
+const FLAME_PULSE_SECONDS = 0.7;
+/** 首次出场仪式（debut，见 HudDebut）屏心放大倍数（相对 HUD 常态尺寸） */
+const DEBUT_SCALE_MULT = 4.5;
+/** 气味丝的首次出场：气缕本来就高（riseH 72），放大倍数比火小 */
+const SMELL_DEBUT_SCALE_MULT = 3.2;
+
+function easeInOutQuad(p: number): number {
+  return p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2;
+}
 
 export class HUD {
   private renderer: Renderer;
@@ -180,18 +220,55 @@ export class HUD {
   private flameLayer: Container;
   private flames: Graphics[] = [];
   private flamePhase: number[] = [];
+  /** 帧动画版（图集到位后建）；空 = 退回矢量 drawFlame */
+  private flameSprites: Sprite[] = [];
+  private flameFrames: Texture[] | null = null;
   private flameRafId: number | null = null;
   private flameLastT: number = 0;
   private flameTime: number = 0;
   private flameTargetRatio: number = 1;
   private flameDisplayRatio: number = 1;
   private fixedTickMode = false;
+  /**
+   * 三把火显隐（玩法清单 G.5：默认不显、动作控显、入存档）。真相在 flag，这里只是投影：
+   * latch + 渐变权重（整层 alpha）+ 出场「轰一下」余量。三簇火各自的画法一个字不动。
+   */
+  private flamesVisible = false;
+  private flameFade = 0;
+  private flameFadeTarget = 0;
+  private flameFlare = 0;
+  private flamesDebugVisibleCb: (p: { visible?: boolean }) => void;
+  private smellDebugVisibleCb: (p: { visible?: boolean }) => void;
+  /** 平时出场的强调：火簇后面一圈光晕外扩淡去（HUD 惯用的"这里有新东西"手法） */
+  private flamePulse: Graphics;
+  private flamePulseT = 0;
+  private flamePulseCenter = { x: 18, y: -10 };
+  /** 平时出场「点燃」序列：-1 = 不在跑；否则为已进行秒数（弹出带过冲 + 光晕爆开 + 双圈） */
+  private flameShowT = -1;
+  private flameShowPulse2 = false;
+  /** 平时退场「将熄→吹灭」序列：-1 = 不在跑（先簌簌抖着缩，再上飘吹散，冒一口烟） */
+  private flameHideT = -1;
+  private flameGlow: Graphics;
+  private flameSmoke: Sprite | null = null;
+  /**
+   * 首次出场仪式（G.5 debut，通用件 HudDebut）：压暗 → 火在屏心大起（配音）→ 缩回角落 → 亮回来。
+   * 进行中 flameLayer 暂住仪式 root（uiLayer 顶层），结束搬回 metaColumn；
+   * 状态机在 stepFlames 里推进，rAF / 固定步两种时钟都走同一条路。
+   */
+  private debut: HudDebut | null = null;
 
-  // 气味系统（方案 E·双层·基线+浮现）：HUD 层常驻气味指示器，由 SmellSystem 经 player:smellChanged 驱动。
+  // 气味系统（方案 E·双层·基线+浮现）：HUD 层气味指示器，由 SmellSystem 经 player:smellChanged 驱动。
   // 渲染器在 setSmellProfiles（Game 异步加载 smell_profiles.json 后）创建。
   private smellRenderer: SmellIndicatorRenderer | null = null;
-  private smellLast: SmellRenderState = { scent: '', intensity: 0, dir: 0, flicker: false };
-  private smellCb: (p: { scent?: string; intensity?: number; dir?: number; flicker?: boolean }) => void;
+  private smellLast: SmellRenderState = { scent: '', intensity: 0, dir: 0, dirDepth: 0, flicker: false };
+  /**
+   * 气味指示器显隐（玩法清单 G.6：默认不显、动作控显、入存档）。真相在 flag，这里只是投影；
+   * 渲染器可能晚于第一条显隐指令建好（profiles 异步），所以 latch 在 HUD 这边，建好时再投过去。
+   */
+  private smellVisible = false;
+  /** 气味丝的首次出场仪式（G.6 debut，与三把火共用 HudDebut） */
+  private smellDebut: HudDebut | null = null;
+  private smellCb: (p: { scent?: string; intensity?: number; dir?: number; dirDepth?: number; flicker?: boolean }) => void;
   private sniffCb: () => void;
 
   /** 底部中央提示带：内容取自 strings，建一次、resize 只重定位 */
@@ -285,6 +362,15 @@ export class HUD {
     // 关二狗自己看不见、玩家看得见（冥冥之中，不进 world、不上全屏、不喊注意）。
     this.metaColumn = new Container();
     this.container.addChild(this.metaColumn);
+    // 出场的暖光爆开（最底）、光晕环（其上）都垫在火簇后面（先加先画）
+    this.flameGlow = new Graphics();
+    this.flameGlow.x = FLAME_ORIGIN_X;
+    this.flameGlow.y = 0;
+    this.metaColumn.addChild(this.flameGlow);
+    this.flamePulse = new Graphics();
+    this.flamePulse.x = FLAME_ORIGIN_X;
+    this.flamePulse.y = 0;
+    this.metaColumn.addChild(this.flamePulse);
     this.flameLayer = new Container();
     this.flameLayer.x = FLAME_ORIGIN_X;
     this.flameLayer.y = 0;
@@ -297,6 +383,20 @@ export class HUD {
       this.flames.push(g);
       this.flamePhase.push(i * 2.1 + 0.7);
     }
+    // 帧动画图集 fire-and-forget 预载：晚到就晚到，到之前矢量画法照旧
+    void this.loadFlameSheet();
+    // 默认不显（G.5）：火只在动作明确控显时出现；读档由组装层按 flag 钉回来
+    this.flameLayer.visible = false;
+    this.flameLayer.alpha = 0;
+    // F2 调试：只影响显示、不写 flag（与 hudHealthOverride 同款），下次读档按 flag 复位
+    this.flamesDebugVisibleCb = (p) => {
+      this.setThreeFiresVisible(p?.visible === true, 'instant');
+    };
+    this.eventBus.on('debug:threeFiresVisibleChanged', this.flamesDebugVisibleCb);
+    this.smellDebugVisibleCb = (p) => {
+      this.setSmellVisible(p?.visible === true, 'instant');
+    };
+    this.eventBus.on('debug:smellVisibleChanged', this.smellDebugVisibleCb);
 
     this.startFlameLoop();
 
@@ -387,6 +487,7 @@ export class HUD {
         scent: p.scent || '',
         intensity: Number.isFinite(p.intensity) ? (p.intensity as number) : 0,
         dir: Number.isFinite(p.dir) ? (p.dir as number) : 0,
+        dirDepth: Number.isFinite(p.dirDepth) ? (p.dirDepth as number) : 0,
         flicker: !!p.flicker,
       };
       this.smellRenderer?.setState(this.smellLast);
@@ -871,18 +972,293 @@ export class HUD {
     this.syncEntryDots();
     const healthRatio = this.healthMax > 0 ? Math.max(0, Math.min(1, this.healthCurrent / this.healthMax)) : 0;
     this.flameTargetRatio = this.healthDebugOverrideEnabled ? this.healthDebugOverrideRatio : healthRatio;
+    // 首次出场仪式进行中：整层位置/缩放/透明度全归仪式状态机
+    if (this.debut) {
+      this.debut.step(dt);
+      return;
+    }
+    // 显隐权重：显/隐都是渐变（instant 由 setThreeFiresVisible 直接钉到位），整层 alpha 走它
+    if (this.flameFade !== this.flameFadeTarget) {
+      const step = (dt * 1000) / UITheme.motion.slow;
+      this.flameFade = this.flameFade < this.flameFadeTarget
+        ? Math.min(this.flameFadeTarget, this.flameFade + step)
+        : Math.max(this.flameFadeTarget, this.flameFade - step);
+    }
+    if (this.flameShowT >= 0) {
+      // 平时出场「点燃」：弹出带过冲 → 落回；暖光爆开；光晕连打两圈；alpha 0.15s 内拉满
+      this.flameShowT += dt;
+      const u = Math.min(1, this.flameShowT / FLAME_SHOW_SECONDS);
+      let s: number;
+      if (u < FLAME_SHOW_POP_PORTION) {
+        const p = u / FLAME_SHOW_POP_PORTION;
+        s = 0.15 + (FLAME_SHOW_OVERSHOOT - 0.15) * UITheme.motion.easeOut(p);
+      } else {
+        const p = (u - FLAME_SHOW_POP_PORTION) / (1 - FLAME_SHOW_POP_PORTION);
+        s = FLAME_SHOW_OVERSHOOT + (1 - FLAME_SHOW_OVERSHOOT) * easeInOutQuad(p);
+      }
+      this.flameLayer.scale.set(s);
+      this.flameLayer.y = 0;
+      this.flameFade = Math.min(1, u / 0.15);
+      this.drawGlow(u);
+      if (!this.flameShowPulse2 && u >= 0.25) {
+        this.flameShowPulse2 = true;
+        this.flamePulseT = 1;
+      }
+      if (u >= 1) {
+        this.flameShowT = -1;
+        this.flameLayer.scale.set(1);
+        this.drawGlow(0);
+      }
+    } else if (this.flameHideT >= 0) {
+      // 平时退场：前 45% 「将熄」（簌簌抖着缩、微暗），后 55% 「吹灭」（上飘、收窄、淡出、冒烟）
+      this.flameHideT += dt;
+      const u = Math.min(1, this.flameHideT / FLAME_HIDE_SECONDS);
+      if (u < 0.45) {
+        const p = u / 0.45;
+        const jitter = Math.sin(this.flameTime * 38) * 0.08 * p;
+        this.flameLayer.scale.set(1 - 0.08 * p, 1 - 0.3 * p + jitter);
+        this.flameLayer.y = 0;
+        this.flameFade = 1 - 0.15 * p;
+      } else {
+        const p = (u - 0.45) / 0.55;
+        const e = UITheme.motion.easeOut(p);
+        this.flameLayer.scale.set(0.92 - 0.5 * e, 0.7 + 0.35 * e);
+        this.flameLayer.y = -16 * e;
+        this.flameFade = 0.85 * (1 - p);
+        this.stepSmoke(p);
+      }
+      if (u >= 1) {
+        this.flameHideT = -1;
+        this.flameFade = 0;
+        this.flameLayer.scale.set(1);
+        this.flameLayer.y = 0;
+        this.stepSmoke(1);
+      }
+    } else {
+      // 其余（instant / fade 风格）：显隐权重渐变；轰一下 / 吹灭走旧的简式
+      if (this.flameFade !== this.flameFadeTarget) {
+        const step = (dt * 1000) / UITheme.motion.slow;
+        this.flameFade = this.flameFade < this.flameFadeTarget
+          ? Math.min(this.flameFadeTarget, this.flameFade + step)
+          : Math.max(this.flameFadeTarget, this.flameFade - step);
+      }
+      const hiding = this.flameFadeTarget === 0 && this.flameFade > 0;
+      const blow = hiding ? 1 - this.flameFade : 0;
+      this.flameLayer.y = -14 * blow;
+      if (this.flameFlare > 0) {
+        this.flameFlare = Math.max(0, this.flameFlare - dt / FLAME_FLARE_SECONDS);
+        this.flameLayer.scale.set(1 + FLAME_FLARE_SCALE * UITheme.motion.easeOut(this.flameFlare));
+      } else if (blow > 0) {
+        this.flameLayer.scale.set(1 - 0.35 * blow, 1 + 0.15 * blow);
+      } else if (this.flameLayer.scale.x !== 1 || this.flameLayer.scale.y !== 1) {
+        this.flameLayer.scale.set(1);
+      }
+    }
+    // 显的光晕外扩
+    if (this.flamePulseT > 0) {
+      this.flamePulseT = Math.max(0, this.flamePulseT - dt / FLAME_PULSE_SECONDS);
+      this.drawPulse(this.flamePulseT);
+    }
+    this.flameLayer.alpha = this.flameFade;
+    this.flameLayer.visible = this.flameFade > 0.001;
+    // 隐着就不画也不追读数——再显的一瞬由 setThreeFiresVisible 把读数钉到真值
+    if (!this.flameLayer.visible) return;
     const ratioDelta = this.flameTargetRatio - this.flameDisplayRatio;
     const ease = 1 - Math.exp(-dt * FLAME_RATIO_EASE_PER_SECOND);
     this.flameDisplayRatio += ratioDelta * ease;
     if (Math.abs(this.flameTargetRatio - this.flameDisplayRatio) < FLAME_RATIO_SNAP_EPSILON) {
       this.flameDisplayRatio = this.flameTargetRatio;
     }
-    const ratio = this.flameDisplayRatio;
+    this.drawFlamesAtRatio(this.flameDisplayRatio);
+  }
+
+  private drawFlamesAtRatio(ratio: number): void {
     for (let i = 0; i < this.flames.length; i++) {
       // 每簇火的强度：从右往左熄，flame0（最左）最后灭 = 那颗残星
       const inten = Math.max(0, Math.min(1, ratio * 3 - i));
-      this.drawFlame(this.flames[i], inten, this.flamePhase[i], ratio);
+      if (this.flameFrames && this.flameSprites[i]) {
+        this.drawFlameSprite(this.flameSprites[i], inten, this.flamePhase[i], ratio);
+      } else {
+        this.drawFlame(this.flames[i], inten, this.flamePhase[i], ratio);
+      }
     }
+  }
+
+  /**
+   * 装帧动画图集并切帧；到位后建三个 Sprite（锚点底部中心，落在矢量火的原位），矢量层清空让位。
+   * 失败只 warn：矢量画法一直在，不阻断。destroy 后到货的直接丢弃（资源有主，律 10）。
+   */
+  private async loadFlameSheet(): Promise<void> {
+    let tex: Texture;
+    try {
+      tex = await Assets.load<Texture>(mediaUrlForRoot('images', FLAME_SHEET_PATH));
+    } catch (e) {
+      console.warn('HUD: 三把火帧动画图集装载失败，沿用矢量画法', e);
+      return;
+    }
+    if (this.container.destroyed || this.flameFrames) return;
+    // 常态是 1/4 缩放：开 mipmap + 线性采样，不然细刻线一动就闪
+    tex.source.autoGenerateMipmaps = true;
+    tex.source.scaleMode = 'linear';
+    tex.source.update();
+    const frames: Texture[] = [];
+    for (let k = 0; k < FLAME_SHEET_FRAMES; k++) {
+      const frame = new Rectangle((k % FLAME_SHEET_COLS) * FLAME_SHEET_FW, Math.floor(k / FLAME_SHEET_COLS) * FLAME_SHEET_FH, FLAME_SHEET_FW, FLAME_SHEET_FH);
+      frames.push(new Texture({ source: tex.source, frame }));
+    }
+    for (let i = 0; i < this.flames.length; i++) {
+      const sp = new Sprite(frames[0]);
+      sp.anchor.set(0.5, 1);
+      // 矢量火以各自 Graphics 原点为底（烛芯画到 y≈2.4），Sprite 底也压在那条线上
+      sp.position.set(this.flames[i].x, 2);
+      sp.visible = false;
+      this.flameLayer.addChild(sp);
+      this.flameSprites.push(sp);
+      this.flames[i].clear();
+      this.flames[i].visible = false;
+    }
+    this.flameFrames = frames;
+    this.stepFlames(0);
+    // 吹灭时那口烟（同一批生成的烟晕贴图）；缺了只是不冒烟
+    try {
+      const smokeTex = await Assets.load<Texture>(mediaUrlForRoot('images', FLAME_SMOKE_PATH));
+      if (this.container.destroyed) return;
+      const sm = new Sprite(smokeTex);
+      sm.anchor.set(0.5, 1);
+      sm.visible = false;
+      sm.alpha = 0;
+      this.flameSmokeScale = 52 / Math.max(1, smokeTex.width);
+      // 烟挂在 metaColumn（不在 flameLayer 里）：吹灭时火整层在淡出，烟不能跟着一起淡
+      this.metaColumn.addChildAt(sm, this.metaColumn.getChildIndex(this.flameLayer));
+      this.flameSmoke = sm;
+    } catch (e) {
+      console.warn('HUD: 三把火烟晕贴图装载失败，吹灭时不冒烟', e);
+    }
+  }
+
+  /**
+   * 帧动画版的「画那一笔」：帧循环只管火在烧；大小（h）、轻微旋转（tipSway）、透明度（alpha·wink）、
+   * 冷暖（inten 决定 tint）全部沿用 drawFlame 的同一套公式与常数，逻辑一字不动。
+   */
+  private drawFlameSprite(sp: Sprite, inten: number, phase: number, ratio: number): void {
+    if (inten <= 0.015) { sp.visible = false; return; } // 灭
+    const frames = this.flameFrames!;
+    const t = this.flameTime;
+    const dying = 1 - inten;
+    const unrest = Math.max(dying, (1 - ratio) * 0.78);
+    const flickFreq = 9;
+    const flickAmp = 0.04 + unrest * 0.46;
+    const flick = 0.96 + Math.sin(t * flickFreq + phase) * flickAmp + Math.sin(t * flickFreq * 1.7 + phase * 1.3) * flickAmp * 0.28;
+    const wink = inten < 0.32 ? 0.28 + 0.72 * Math.abs(Math.sin(t * 7 + phase * 2)) : 1;
+    const tipSway = Math.sin(t * 2.2 + phase) * (0.12 + unrest * 4.9);
+    const eff = Math.max(inten, 0.13);
+    const h = Math.max(2.2, 20 * eff * flick);
+    const alpha = (0.5 + 0.34 * inten) * wink;
+
+    sp.visible = true;
+    sp.texture = frames[Math.floor(t * FLAME_SHEET_FPS + phase * 7) % frames.length];
+    const s = h * FLAME_SHEET_SCALE_PER_H;
+    sp.scale.set(s);
+    // 歪斜只做轻微旋转（绕底部），幅度随公式的 tipSway 走
+    sp.rotation = Math.max(-FLAME_SPRITE_MAX_TILT, Math.min(FLAME_SPRITE_MAX_TILT, Math.atan2(tipSway, h)));
+    sp.alpha = Math.min(1, alpha + 0.25);
+    // 冷暖：旺时原色，近死时压向灰青（与矢量外焰的两端色同源）
+    sp.tint = lerpColor(0x8fa7a2, 0xffffff, inten);
+  }
+
+  /** 平时出场的光晕：一圈琥珀细环从火簇中心外扩淡去，内里一层极淡的暖晕 */
+  private drawPulse(t: number): void {
+    const g = this.flamePulse;
+    g.clear();
+    if (t <= 0) return;
+    const k = 1 - t;
+    const { x: cx, y: cy } = this.flamePulseCenter;
+    const r = 10 + 34 * k;
+    g.circle(cx, cy, r);
+    g.stroke({ width: 2 + 2 * t, color: 0xffcc66, alpha: 0.55 * t });
+    g.circle(cx, cy, r * 0.6);
+    g.fill({ color: 0xffb060, alpha: 0.12 * t });
+  }
+
+  /** 出场的暖光爆开：从火簇中心一团琥珀软光胀开、淡去（u 0→1） */
+  private drawGlow(u: number): void {
+    const g = this.flameGlow;
+    g.clear();
+    if (u <= 0 || u >= 1) return;
+    const { x: cx, y: cy } = this.flamePulseCenter;
+    const r = 10 + 44 * UITheme.motion.easeOut(u);
+    const a = Math.pow(1 - u, 1.6) * 0.55;
+    for (let i = 5; i >= 1; i--) {
+      g.circle(cx, cy, r * (i / 5));
+      g.fill({ color: 0xffb060, alpha: a * 0.28 });
+    }
+  }
+
+  /** 吹灭时冒的那口烟：从火簇底升起、胀开、淡去（p 0→1；1 = 收起） */
+  private stepSmoke(p: number): void {
+    const sm = this.flameSmoke;
+    if (!sm) return;
+    if (p >= 1) { sm.visible = false; return; }
+    const { x: cx } = this.flamePulseCenter;
+    sm.visible = true;
+    sm.position.set(FLAME_ORIGIN_X + cx, 4 - 22 * p);
+    const s = (0.35 + 0.45 * p) * this.flameSmokeScale;
+    sm.scale.set(s);
+    sm.alpha = 0.7 * (1 - p) * (1 - 0.6 * p);
+  }
+  private flameSmokeScale = 1;
+
+  /** 火簇此刻的几何中心（局部坐标）；还没画出来时给名义值 */
+  private flameClusterCenter(): { x: number; y: number } {
+    const lb = this.flameLayer.getLocalBounds();
+    if (lb.width > 0 && lb.height > 0) return { x: lb.x + lb.width / 2, y: lb.y + lb.height / 2 };
+    return { x: 18, y: -10 };
+  }
+
+  /**
+   * 首次出场仪式（玩法清单 G.5）：压暗世界 → 三把火在屏心大起（这一帧发 threeFires:debut 给音效表）
+   * → 停一拍 → 缩着飞回角落常态位 → 亮回来。返回整段仪式的 Promise（动作批要等它）。
+   */
+  playThreeFiresDebut(): Promise<void> {
+    if (this.debut) return this.debut.promise;
+    this.flamesVisible = true;
+    this.flameFadeTarget = 1;
+    this.flameFade = 0;
+    this.flameFlare = 0;
+    this.flamePulseT = 0;
+    this.drawPulse(0);
+    const healthRatio = this.healthMax > 0 ? Math.max(0, Math.min(1, this.healthCurrent / this.healthMax)) : 0;
+    this.flameTargetRatio = this.healthDebugOverrideEnabled ? this.healthDebugOverrideRatio : healthRatio;
+    this.flameDisplayRatio = this.flameTargetRatio;
+    // 先按当前读数画一帧，量出火簇几何中心当支点——缩放、位移都绕它转
+    this.drawFlamesAtRatio(this.flameDisplayRatio);
+    const pivot = this.flameClusterCenter();
+    const lb = this.flameLayer.getLocalBounds();
+    this.flameLayer.y = 0;
+    this.debut = new HudDebut({
+      renderer: this.renderer,
+      layer: this.flameLayer,
+      homeParent: this.metaColumn,
+      homePos: { x: FLAME_ORIGIN_X, y: 0 },
+      homeScale: () => this.metaScale(),
+      pivot,
+      clusterWidth: Math.max(1, lb.width),
+      scaleMult: DEBUT_SCALE_MULT,
+      onFrame: () => this.drawFlamesAtRatio(this.flameDisplayRatio),
+      onPop: () => this.eventBus.emit('threeFires:debut', {}),
+      onFinish: () => {
+        this.debut = null;
+        this.flameFade = 1;
+        this.flameFadeTarget = 1;
+      },
+    });
+    this.stepFlames(0);
+    return this.debut.promise;
+  }
+
+  /** 仪式收尾（正常结束 / 中途被改显隐 / destroy）：火搬回常态位，罩层销毁，Promise 封口 */
+  private finishDebut(): void {
+    this.debut?.finish();
   }
 
   /** 一簇活的阳火：更接近暗场里的烛火/纸火，旺时旧琥珀，近死时灰青冷白、细瘦偏斜。 */
@@ -938,7 +1314,101 @@ export class HUD {
   }
 
   private stepSmell(dt: number): void {
+    // 首次出场仪式进行中气缕照常在烧，位置/缩放/罩层归仪式状态机
     this.smellRenderer?.update(dt);
+    if (this.smellDebut) this.smellDebut.step(dt);
+  }
+
+  /**
+   * 气味指示器显隐（玩法清单 G.6）。纯开关：不碰气味系统的两层状态、不自动触发；
+   * 真相在 flag（组装层落），这里只是投影。渲染器可能还没建（profiles 异步）：先记 latch，建好再投。
+   * style 缺省：显 = flare（雾从散到聚、浮出来 + 吸气声）/ 隐 = fade（散开上飘淡出 + 呼气声）；
+   * instant 直接钉到位（读档恢复、调试用）；debut = 首次出场仪式（返回整段 Promise）。
+   * 显的一瞬把气缕钉到当前真值——隐着的时候不做换味交叉淡，别让它从空白慢慢浮上来。
+   */
+  setSmellVisible(visible: boolean, style?: 'flare' | 'fade' | 'instant' | 'debut'): Promise<void> | void {
+    if (style === 'debut' && visible) return this.playSmellDebut();
+    // 仪式中途被改显隐：先落地再按新指令走（Promise 照常封口）
+    if (this.smellDebut) this.smellDebut.finish();
+    const s = style ?? (visible ? 'flare' : 'fade');
+    const wasVisible = this.smellVisible;
+    this.smellVisible = visible;
+    const r = this.smellRenderer;
+    if (!r) return;
+    if (s === 'instant') {
+      r.setVisible(visible, 'instant');
+      return;
+    }
+    if (visible) {
+      if (!wasVisible) {
+        // 平时出场的强调（读档 instant 恢复不走这里）：flare = 聚拢浮现 + 吸气声；fade = 只淡入
+        r.setVisible(true, s === 'flare' ? 'gather' : 'fade');
+        this.eventBus.emit('smell:show', {});
+      }
+    } else if (wasVisible) {
+      // fade（隐的缺省）= 散开上飘淡出 + 呼气声；flare 当隐用 = 只淡出
+      r.setVisible(false, s === 'fade' ? 'disperse' : 'fade');
+      this.eventBus.emit('smell:hide', {});
+    }
+  }
+
+  isSmellVisible(): boolean {
+    return this.smellVisible;
+  }
+
+  /**
+   * 气味丝的首次出场仪式（玩法清单 G.6，通用件 HudDebut）：压暗世界 → 气缕在屏心大起
+   * （这一帧发 smell:debut 给音效表）→ 停一拍 → 缩着飞回三把火下方的常态位 → 亮回来。
+   * 渲染器还没建（profiles 没到）就退化成直出并立刻封口——仪式是锦上添花，不能卡住动作批。
+   */
+  playSmellDebut(): Promise<void> {
+    if (this.smellDebut) return this.smellDebut.promise;
+    this.smellVisible = true;
+    const r = this.smellRenderer;
+    if (!r) {
+      console.warn('HUD: 气味渲染器未就绪，首次出场仪式退化为直出');
+      return Promise.resolve();
+    }
+    // 先按当前真值画一帧，量出气缕几何中心当支点——缩放、位移都绕它转
+    r.setVisible(true, 'instant');
+    r.update(0);
+    const L = r.getLayer();
+    const lb = L.getLocalBounds();
+    const pivot = lb.width > 0 && lb.height > 0 ? { x: lb.x + lb.width / 2, y: lb.y + lb.height / 2 } : { x: 0, y: -20 };
+    this.smellDebut = new HudDebut({
+      renderer: this.renderer,
+      layer: L,
+      homeParent: this.metaColumn,
+      homePos: { x: SMELL_ORIGIN_X, y: SMELL_ORIGIN_Y - FLAME_ORIGIN_Y },
+      homeScale: () => this.metaScale(),
+      pivot,
+      clusterWidth: Math.max(1, lb.width),
+      scaleMult: SMELL_DEBUT_SCALE_MULT,
+      maxWidthFrac: 0.3,
+      onPop: () => this.eventBus.emit('smell:debut', {}),
+      onFinish: () => { this.smellDebut = null; },
+    });
+    return this.smellDebut.promise;
+  }
+
+  /**
+   * 气味指示器在屏幕上的包围盒（带一圈留白）；隐着 / 整层硬隐 / 渲染器未建时 null。
+   * 说明卡压暗全屏时拿它留个口子——被说明的那个读数不压。
+   */
+  getSmellScreenRect(): Rectangle | null {
+    if (!this.smellVisible || !this.container.visible || !this.smellRenderer) return null;
+    const pad = UITheme.spacing.md;
+    const L = this.smellRenderer.getLayer();
+    const b = L.getBounds().rectangle;
+    if (b.width > 0 && b.height > 0) {
+      return new Rectangle(b.x - pad, b.y - pad, b.width + pad * 2, b.height + pad * 2);
+    }
+    // 刚控显、还没画出第一帧：按气缕的名义尺寸给一个口子（底盘宽 ~50、往上 riseH 72、名字在下 ~30）
+    const s = this.metaColumn.scale.x;
+    const origin = L.toGlobal({ x: 0, y: 0 });
+    const w = 60 * s;
+    const h = 110 * s;
+    return new Rectangle(origin.x - w / 2 - pad, origin.y - 80 * s - pad, w + pad * 2, h + pad * 2);
   }
 
   private getFlameDebugState(inten: number, phase: number, ratio: number): Record<string, unknown> {
@@ -1023,12 +1493,15 @@ export class HUD {
    *  位置：三把火（FLAME_ORIGIN 起、组中心约 x:34）**正下方**、居中同宽；方案 E 是竖向（高>>宽），气缕从基线往上升。
    *  挂在 metaColumn 里（相对火焰基线 90px），芯片列变高时随整列让位。 */
   setSmellProfiles(data: SmellProfilesRaw): void {
+    if (this.smellDebut) this.smellDebut.finish();
     if (this.smellRenderer) this.smellRenderer.destroy();
     this.smellRenderer = new SmellIndicatorRenderer(this.metaColumn, data, {
       x: SMELL_ORIGIN_X,
       y: SMELL_ORIGIN_Y - FLAME_ORIGIN_Y,
     });
     this.smellRenderer.setState(this.smellLast);
+    // 默认不显（G.6）：把 latch 投过去；读档由组装层按 flag 钉回来
+    this.smellRenderer.setVisible(this.smellVisible, 'instant');
   }
 
   /** F2 调试：读当前烟形参数；渲染器未就绪返回 null。 */
@@ -1041,8 +1514,96 @@ export class HUD {
     this.smellRenderer?.setFormParam(key, value);
   }
 
+  /**
+   * 三把火显隐（玩法清单 G.5）。纯开关：不碰血量、不自动触发；真相在 flag（组装层落），这里只是投影。
+   * style 缺省：显 = flare（轰一下）/ 隐 = fade；instant 直接钉到位（读档恢复、调试用）。
+   * 显的一瞬把读数钉到当前真值——隐着的时候不追血量，别让它从满火慢慢滑过去。
+   */
+  setThreeFiresVisible(visible: boolean, style?: 'flare' | 'fade' | 'instant' | 'debut'): Promise<void> | void {
+    if (style === 'debut' && visible) return this.playThreeFiresDebut();
+    // 仪式中途被改显隐：先落地再按新指令走（Promise 照常封口）
+    if (this.debut) this.finishDebut();
+    const s = style ?? (visible ? 'flare' : 'fade');
+    const wasVisible = this.flamesVisible;
+    this.flamesVisible = visible;
+    this.flameFadeTarget = visible ? 1 : 0;
+    if (visible) {
+      const healthRatio = this.healthMax > 0 ? Math.max(0, Math.min(1, this.healthCurrent / this.healthMax)) : 0;
+      this.flameTargetRatio = this.healthDebugOverrideEnabled ? this.healthDebugOverrideRatio : healthRatio;
+      this.flameDisplayRatio = this.flameTargetRatio;
+    }
+    if (s === 'instant') {
+      this.flameFade = this.flameFadeTarget;
+      this.flameFlare = 0;
+      this.flamePulseT = 0;
+      this.flameShowT = -1;
+      this.flameHideT = -1;
+      this.flameLayer.scale.set(1);
+      this.flameLayer.y = 0;
+      this.drawPulse(0);
+      this.drawGlow(0);
+      this.stepSmoke(1);
+    } else if (visible) {
+      if (!wasVisible) {
+        // 平时出场的强调（读档 instant 恢复不走这里）：flare = 点燃序列（弹出过冲 + 暖光爆开 + 双圈光晕 + 出场音）
+        this.drawFlamesAtRatio(this.flameDisplayRatio);
+        this.flamePulseCenter = this.flameClusterCenter();
+        this.flameHideT = -1;
+        this.stepSmoke(1);
+        if (s === 'flare') {
+          this.flameShowT = 0;
+          this.flameShowPulse2 = false;
+          this.flameFade = 0;
+        }
+        this.flamePulseT = 1;
+        this.eventBus.emit('threeFires:show', {});
+      } else if (s === 'flare') {
+        this.flameFlare = 1;
+      }
+    } else if (wasVisible) {
+      this.flamePulseT = 0;
+      this.drawPulse(0);
+      this.drawGlow(0);
+      this.flameShowT = -1;
+      if (s === 'fade') {
+        // 将熄→吹灭序列（吹熄音在开头）
+        this.flameHideT = 0;
+        this.flameFade = 1;
+      }
+      this.eventBus.emit('threeFires:hide', {});
+    }
+    this.stepFlames(0);
+  }
+
+  isThreeFiresVisible(): boolean {
+    return this.flamesVisible;
+  }
+
+  /**
+   * 三把火在屏幕上的包围盒（带一圈留白）；隐着 / 整层硬隐 / 三簇全灭时 null。
+   * 说明卡压暗全屏时拿它留个口子——被说明的那个读数不压。
+   */
+  getThreeFiresScreenRect(): Rectangle | null {
+    if (!this.flamesVisible || !this.container.visible) return null;
+    const pad = UITheme.spacing.md;
+    const b = this.flameLayer.getBounds().rectangle;
+    if (b.width > 0 && b.height > 0) {
+      return new Rectangle(b.x - pad, b.y - pad, b.width + pad * 2, b.height + pad * 2);
+    }
+    // 刚控显、还没画出第一帧（淡入从 0 起）：按火簇的名义尺寸给一个口子，别让说明卡把它整个压掉
+    const s = this.metaColumn.scale.x;
+    const origin = this.flameLayer.toGlobal({ x: 0, y: 0 });
+    const w = (3 * 18 + 16) * s;
+    const h = 48 * s;
+    return new Rectangle(origin.x - 8 * s - pad, origin.y - h + 12 * s - pad, w + pad * 2, h + pad * 2);
+  }
+
   destroy(): void {
     if (this.flameRafId !== null && typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(this.flameRafId);
+    if (this.debut) this.finishDebut();
+    if (this.smellDebut) this.smellDebut.finish();
+    this.eventBus.off('debug:threeFiresVisibleChanged', this.flamesDebugVisibleCb);
+    this.eventBus.off('debug:smellVisibleChanged', this.smellDebugVisibleCb);
     this.unsubscribeResize?.();
     this.unsubscribeResize = null;
     if (this.hudFadeRaf) { cancelAnimationFrame(this.hudFadeRaf); this.hudFadeRaf = 0; }

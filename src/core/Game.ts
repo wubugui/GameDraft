@@ -1,5 +1,8 @@
 import { EventBus } from './EventBus';
-import { sceneToAcoustic } from '../audio/acousticSpace';
+import { earHeightWu, type AcousticTap } from '../audio/acousticSpace';
+import { RuntimeAcousticsSync } from '../dev/runtimeAcousticsSync';
+import { RuntimeVfxSync } from '../dev/runtimeVfxSync';
+import type { SceneSpaceGeometry, Vec3 } from '../utils/sceneSpace';
 import { FlagStore, type FlagRegistryJson } from './FlagStore';
 import { applyDevRuntimeCommand } from './devRuntimeCommands';
 import { fetchSceneIndex } from '../dev/sceneIndex';
@@ -28,6 +31,9 @@ import { CutsceneManager } from '../systems/CutsceneManager';
 import { CutsceneRenderer } from '../rendering/CutsceneRenderer';
 import { ArchiveManager } from '../systems/ArchiveManager';
 import { ClueManager } from '../systems/ClueManager';
+import { SystemNoteManager } from '../systems/SystemNoteManager';
+import { openSystemNote, isSystemNoteOpen } from '../ui/SystemNoteUI';
+import { FlagKeys } from './FlagKeys';
 import { GameLogManager } from '../systems/GameLogManager';
 import { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
 import { ZoneSystem } from '../systems/ZoneSystem';
@@ -48,15 +54,16 @@ import { HealthSystem } from '../systems/HealthSystem';
 import { SmellSystem } from '../systems/SmellSystem';
 import { FootstepSystem, type FootstepEmitter, type FootstepSpatialContext } from '../systems/FootstepSystem';
 import {
+  DEFAULT_LISTENER_BACK_AT_BASE_ZOOM_WU,
   DEFAULT_PLANAR_DEPTH_SCALE,
-  DEFAULT_SPATIAL_PARAMS,
+  cameraBackWu,
   cameraListener,
   isSuspectWuPerQUnit,
   planarResolver,
-  targetListener,
-  type AudioListener,
+  resolveWorld,
+  type AudioListenerSnapshot,
+  type AudioPerspective,
   type AudioSpaceResolver,
-  type SpatialParams,
 } from '../utils/audioSpace';
 import { PlaneReconciler } from '../systems/PlaneReconciler';
 import { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
@@ -66,6 +73,12 @@ import type { SmellProfilesRaw } from '../ui/smell/SmellIndicatorRenderer';
 import type {
   AudioListenerConfig,
   FootstepConfig as FootstepConfigData,
+  LightDef,
+  NpcDef,
+  VfxFieldDef,
+  VfxFlockState,
+  TrajectoryPlayOptions,
+  TrajectorySpawnSpec,
 } from '../data/types';
 import { NotificationUI } from '../ui/NotificationUI';
 import { QuestPanelUI } from '../ui/QuestPanelUI';
@@ -126,6 +139,14 @@ import { buildCharacterRegistry } from '../data/characterRegistry';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { loadSocketsForAnim, type ResolvedSockets } from '../data/animationSockets';
+import {
+  DEFAULT_OVERLAY_SFX_CUE,
+  overlayImagePath,
+  overlayImageSfxCue,
+  parseOverlayImages,
+  type OverlayImageTable,
+  type OverlaySfxCue,
+} from '../data/overlayImages';
 import {
   parsePropPresets,
   resolvePropAttach,
@@ -201,6 +222,10 @@ import { hotspotCollisionPolygonToWorld, npcCollisionPolygonToWorld } from '../u
 import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { resolveText, type ResolveContext } from './resolveText';
+import { VfxSystem } from '../systems/vfx/VfxSystem';
+import { createFieldVfxSpace, createPlanarVfxSpace, type VfxSpace } from '../systems/vfx/vfxSpace';
+import { VfxRenderer } from '../rendering/vfx/VfxRenderer';
+import { viewDirWorld } from '../utils/sceneSpace';
 import { mergeGameConfig } from './gameConfigMerge';
 import { BubbleChatterSystem, type BubbleSpeakerRef } from '../systems/BubbleChatterSystem';
 import { PlayerIdleBehaviorSystem } from '../systems/PlayerIdleBehaviorSystem';
@@ -230,6 +255,7 @@ import {
   flipTrajectoryKeyframes,
   projectWorldKeyframes,
 } from '../utils/trajectoryProjection';
+import { parsePositionRef, resolvePositionRef as resolvePositionRefPure, trajectoryBinding, trajectoryOrigin } from '../utils/positionRef';
 import { makeOwnerOrigin, resolveDialogueOwner } from './actionOrigin';
 import {
   coerceRuntimeFieldValue,
@@ -351,6 +377,8 @@ type DevNarrativeWarp = {
   id: string;
   label: string;
   scene: string;
+  /** 落地出生点（场景 spawnPoints 的键）；不写 = 场景缺省出生点 */
+  spawn?: string;
   flowGraph?: string;
   flowState?: string;
   set?: Array<{ graph: string; state: string }>;
@@ -387,6 +415,25 @@ type EntityShadowEntry = {
  * · `authoring` = 进了运行时编辑模式（`src/authoring`），DEV 专用
  */
 type LogicFreezeReason = 'narrative' | 'authoring';
+
+/** `AudioListenerConfig`（脚步配置 / 动作 / 调试命令那套）→ 统一听者绑定。 */
+/** 正数才算数：0 / 负数 / NaN 一律当"没给"，回落到下一层——否则一个手写的 0 会把视距钉在耳朵上。 */
+function positiveOrUndefined(v: unknown): number | undefined {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined;
+}
+
+function mapListenerConfig(c: AudioListenerConfig): {
+  mode: 'player' | 'camera' | 'entity' | 'fixed'; entityId?: string; heightWu?: number;
+  at?: { x: number; y: number };
+} {
+  if (c.mode === 'npc') return { mode: 'entity', entityId: c.targetId, heightWu: c.heightWu };
+  if (c.mode === 'fixed') {
+    return typeof c.x === 'number' && typeof c.y === 'number'
+      ? { mode: 'fixed', at: { x: c.x, y: c.y }, heightWu: c.heightWu }
+      : { mode: 'camera', heightWu: c.heightWu };
+  }
+  return { mode: c.mode, heightWu: c.heightWu };
+}
 
 export class Game {
   private eventBus: EventBus;
@@ -432,6 +479,7 @@ export class Game {
   private npcDisplayNameById = new Map<string, string>();
   private archiveManager: ArchiveManager;
   private clueManager!: ClueManager;
+  private systemNoteManager!: SystemNoteManager;
   private gameLogManager!: GameLogManager;
   private emoteBubbleManager: EmoteBubbleManager;
   private ruleOfferRegistry: RuleOfferRegistry;
@@ -493,6 +541,9 @@ export class Game {
   private lightingSyncHooks: LightingSyncHooks | null = null;
   /** 场景光照的双向实时同步（DEV 专用，走 dev server 的同步槽） */
   private lightingSync: RuntimeLightingSync | null = null;
+  /** 声学工作台 ↔ 游戏的实时联动（游戏只是预览器）。DEV 专用。 */
+  private acousticsSync: RuntimeAcousticsSync | null = null;
+  private vfxSync: RuntimeVfxSync | null = null;
   /** 运行时编辑模式（DEV 专用）。null = 生产构建，或还没装配到。 */
   private authoringMode: AuthoringMode | null = null;
   private unsubAuthoringHotkey: (() => void) | null = null;
@@ -536,14 +587,19 @@ export class Game {
   private footstepSystem: FootstepSystem;
   /** `footstep_sets.json`；缺文件 = 全局无脚步声（不是错误，只是没配）。 */
   private footstepConfig: FootstepConfigData | null = null;
-  /** 运行时听者设置。缺省取配置里的，可被调试命令改写；**不入存档**（它是表现设置不是玩法状态）。 */
-  private audioListenerConfig: AudioListenerConfig | null = null;
+  /**
+   * 运行时对听者绑定的**覆盖**（动作 `setAudioListener` / 调试命令）；null = 没覆盖，按
+   * 场景 → 空间 → 脚步配置 → 相机 的顺序取。**不入存档**（它是表现设置不是玩法状态）。
+   */
+  private audioListenerOverride: AudioListenerConfig | null = null;
   /** 上一帧解出的听者与精度级别，只供调试输出（不参与任何计算）。 */
   private audioSpaceDebug: {
     mode: 'field' | 'planar';
     listenerMode: string;
     listenerFallback: boolean;
     backWu: number;
+    /** 脚步走没走空间化（`footstep_sets.json` 的 `defaults.spatialized`） */
+    footstepSpatialized: boolean;
   } | null = null;
   private pressureHoldUI!: PressureHoldUI;
   private depthDebugVisualizer!: DepthDebugVisualizer;
@@ -560,6 +616,9 @@ export class Game {
   private charModeSwitching = false;
   /** 场景透视缩放（近大远小）句柄：scene:ready 从场景数据构建、beforeUnload 清空；实体注入共享同一实例 */
   private perspectiveScaleResolver: ScenePerspectiveScaleResolver | null = null;
+  /** 世界空间粒子 / 群体（蝙蝠、滴水、香火烟、萤火）：模拟在系统层，画在实体层的批网格里 */
+  private vfxSystem: VfxSystem;
+  private vfxRenderer: VfxRenderer | null = null;
 
   /** 当前场景辐照度探针 RT（逐 entity 色调融入），场景卸载时销毁 */
   private currentProbe: RenderTexture | null = null;
@@ -642,11 +701,10 @@ export class Game {
   private webglContextRestoredHandler: (() => void) | null = null;
   private runtimeDebugLogCleanup: (() => void) | null = null;
   private runtimeDebugSnapshotTimer: number | null = null;
-  /** 当前场景的声学空间 id 与听者绑定；每帧按它把听者位置喂给 AudioManager。 */
+  /** 当前场景绑定的声学空间 id；每帧把解出来的听者喂给 AudioManager。 */
   private acousticSpaceId: string | null = null;
-  private acousticListenerBinding: SceneData['acousticListener'] | null = null;
-  /** 场景中心（wu），声学空间没写 anchor 时的兜底原点 */
-  private acousticAnchorFallback: { x: number; y: number } = { x: 0, y: 0 };
+  /** 最近一次解出来的听者（脚步 / 试听 / 回音共用这一个）；实时联动把它回传给工作台画在 3D 里 */
+  private acousticListenerLast: AudioListenerSnapshot | null = null;
 
   private runtimeCommandPollTimer: number | null = null;
   private runtimeCommandPollInFlight = false;
@@ -698,8 +756,8 @@ export class Game {
   private smellDebugGlobalKeys: string[] = [];
   private devModeUI: DevModeUI | null = null;
   private touchMobileControls: TouchMobileControls | null = null;
-  /** `overlay_images.json`：可写短 id，避免 action 参数里塞长路径 */
-  private overlayImageRegistry: Record<string, string> = {};
+  /** `overlay_images.json`：可写短 id，避免 action 参数里塞长路径；一条还可带自己的叠图音配置 */
+  private overlayImageRegistry: OverlayImageTable = {};
   /** `prop_presets.json`：挂件的支点/自转/缩放登记一次，attachToSocket 用 prop 引用 */
   private propPresetRegistry: PropPresetTable = {};
 
@@ -795,6 +853,8 @@ export class Game {
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
     // 线索系统（K7）：真相在 flag（clue_<id>），本体只管注册表/采集口/查询口
     this.clueManager = new ClueManager(this.eventBus, this.flagStore);
+    // 系统说明卡（K4）：真相在 flag（sysnote_<id>），本体只管注册表/每档一次/关卡落 flag；卡由 UI 层画
+    this.systemNoteManager = new SystemNoteManager(this.eventBus, this.flagStore);
     // 事件日志（K3）：监听领域事件攒时间线；面板（DialogueLogUI）只是它的只读视图
     this.gameLogManager = new GameLogManager(this.eventBus);
     this.emoteBubbleManager = new EmoteBubbleManager();
@@ -851,15 +911,39 @@ export class Game {
      * 回调都是惰性的，所以这里可以早于 player / camera 的创建。
      */
     this.footstepSystem = new FootstepSystem({
-      // 必须是 per-soundId 的那条：`playSfx` 的音量是 Howl 组级，会追溯改掉还在响的上一步
-      playSfx: (id, options) => this.audioManager.playTransientSfx(id, options),
-      getSpatialContext: () => this.buildFootstepSpatialContext(),
+      // 脚步是有物理位置的声源：脚点世界坐标进空间音总线，距离 / 声像 / 回音按听者与脚点的几何算
+      playAt: (id, world, options) => {
+        // 脚步落地也是群体的刺激源（`sfx:footstep` 标签，物种档案决定怕不怕）
+        this.vfxSystem?.emitField({ kind: 'fear', tag: 'sfx:footstep', radius: 220, strength: 0.6, duration: 0.25 }, world);
+        return this.audioManager.playSfxAt(id, { x: world[0], y: world[1], z: world[2] }, options);
+      },
+      // 音频没解锁时不发声：发了只会排队，解锁那一刻按过时的位置一齐放出来
+      getSpatialContext: () => (this.footstepConfig && this.audioManager.isAudioUnlocked()
+        ? { resolver: this.buildAudioSpaceResolver() } : null),
       resolveSetAt: (x, y) => this.resolveFootstepSetAt(x, y),
       getConfig: () => this.footstepConfig,
     });
     this.sceneDepthSystem = new SceneDepthSystem();
     this.characterLighting = new CharacterLightingSystem();
     this.sceneLighting = new SceneLightingSystem();
+    /**
+     * 世界空间粒子 / 群体。依赖全部走窄回调：空间（行走面 + 壳 + 基）由照明载荷与深度系统给，
+     * 载荷异步到达时 onReady 里再让它重建；玩家脚点 / 时段 / 灯表 / 条件工厂 / 空间音各取一口。
+     */
+    this.vfxSystem = new VfxSystem({
+      assetManager: this.assetManager,
+      getSceneData: () => this.sceneManager.currentSceneData ?? null,
+      buildSpace: () => this.buildVfxSpace(),
+      // 便宜的自愈判据：载荷到了没（不建高度场）。真 3D 与平面近似的差别不是"精度"，
+      // 是平面近似下**所有几何判据都空成立**（没有地面高低、没有墙）。
+      hasFieldGeometry: () => this.buildAudioSceneGeometry() !== null,
+      getPlayerContact: () => (this.player ? { x: this.player.contactX, y: this.player.contactY } : null),
+      getTimePhase: () => this.dayManager.currentPhase,
+      getActiveLights: () => this.activeSceneLightsForVfx(),
+      conditionContext: () => this.buildConditionEvalContext(),
+      playSfxAt: (id, at) => { this.audioManager.playSfxAt(id, { x: at[0], y: at[1], z: at[2] }); },
+      log: (m) => { if (import.meta.env.DEV) console.warn(`[vfx] ${m}`); this.debugPanelUI?.log(`[vfx] ${m}`); },
+    });
     // 载荷就绪(depthLoader 内已 await,先于 scene:ready):把行走面深度场交给深度系统——
     // 遮挡脚点/碰撞反投影/影子落地面从此以它为真值,不再用 floor_depth_A/B 全图拟合直线
     // (见 entity-lighting「脚点锚必须同源」)。滤镜由随后的 scene:ready 权威挂载(此时
@@ -870,6 +954,11 @@ export class Game {
         this.characterLighting.groundDepthTexture,
       );
       this.refreshPlayerWorldCollision();
+      // 载荷刚落地：听者立刻按**这个场景**的行走面重算。进场时 setAudioApplier 那次强制重算跑在载荷之前，
+      // 拿的是上一个场景的场与基（grounded 照样 true），不在这里重来一次就得等玩家走出阈值
+      this.updateAcousticListener(true);
+      // 粒子空间同理：载荷落地前 scene:ready 只建得出 planar 近似，这里换成真行走面 + 壳
+      this.vfxSystem.onSpaceMaybeChanged();
       // 调试可视化排最后 + 单独兜错：本回调跑在 load() 的 try 里，从这里抛出去会被
       // load() 的 catch 当成"载荷坏了"整包丢弃（连带销毁纹理，深度系统随即采到已销毁
       // 的源而崩）。**F2 调试链路失手绝不能连坐玩法照明。**
@@ -920,6 +1009,7 @@ export class Game {
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
       { name: 'clueManager', system: this.clueManager },
+      { name: 'systemNoteManager', system: this.systemNoteManager },
       { name: 'gameLogManager', system: this.gameLogManager },
       { name: 'zoneSystem', system: this.zoneSystem },
       // 脚步是表现态：serialize 恒为空桶，deserialize = 作废在途尾音（旧时间线不写新状态）
@@ -930,6 +1020,8 @@ export class Game {
       { name: 'sceneDepthSystem', system: this.sceneDepthSystem },
       // 轨迹是表演态：serialize 恒为空桶，deserialize = 作废在途表演（旧时间线不写新状态）
       { name: 'trajectorySystem', system: this.trajectorySystem },
+      // 粒子 / 群体是表演态：serialize 恒为空桶，deserialize = 整批散掉
+      { name: 'vfxSystem', system: this.vfxSystem },
     ];
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.init(ctx);
@@ -1209,21 +1301,105 @@ export class Game {
   async playTrajectoryAsset(
     trajectoryId: string,
     ref: TrajectoryTargetRef | string,
-    opts: { anchor?: { x: number; y: number }; flipX?: boolean } = {},
+    opts: TrajectoryPlayOptions = {},
   ): Promise<TrajectoryEndReason> {
     const asset = await this.loadTrajectoryAsset(trajectoryId);
     if (!asset || this.tearDownComplete) return 'cancelled';
-    const target = this.resolveTrajectoryTarget(ref);
-    if (!target) {
-      console.warn(`[trajectory] 目标解析失败："${typeof ref === 'string' ? ref : JSON.stringify(ref)}"（轨迹 "${trajectoryId}"）`);
-      return 'cancelled';
+    const binding = trajectoryBinding(asset);
+    const curScene = this.sceneManager.currentSceneData?.id ?? '';
+    if (binding === 'scene' && asset.authoring?.sceneId && curScene && asset.authoring.sceneId !== curScene) {
+      console.warn(`[trajectory] 场景曲线 "${trajectoryId}" 绑定的是 "${asset.authoring.sceneId}"，当前是 "${curScene}"：位置按作者场景给`);
+    }
+    // 播放位置：at（位置引用）→ 老写法 anchor → 场景曲线原地（origin）→ 相对曲线退到目标此刻位置（warn）
+    let anchor: { x: number; y: number } | undefined = opts.anchor;
+    if (opts.at) {
+      const p = await this.resolvePositionRef(opts.at);
+      if (this.tearDownComplete) return 'cancelled';
+      if (p) anchor = p;
+      else console.warn(`[trajectory] 轨迹 "${trajectoryId}" 的播放位置解析不出来，按曲线类型缺省处理`);
+    }
+    const origin = trajectoryOrigin(asset);
+    if (!anchor) {
+      if (binding === 'scene' && origin) anchor = origin;
+      else if (binding === 'free') console.warn(`[trajectory] 相对曲线 "${trajectoryId}" 没给播放位置（at），退到目标此刻位置`);
+    }
+    let target: ITrajectoryTarget | null = null;
+    let spawnedId: string | null = null;
+    if (opts.spawn) {
+      const at = anchor ?? origin;
+      if (!at) {
+        console.warn(`[trajectory] 轨迹 "${trajectoryId}" 要临时生成运动对象，但既没给播放位置也没有曲线原点`);
+        return 'cancelled';
+      }
+      const npc = await this.spawnTrajectoryActor(opts.spawn, at);
+      if (!npc || this.tearDownComplete) return 'cancelled';
+      spawnedId = npc.id;
+      anchor = anchor ?? at;
+      if (opts.animState) npc.playAnimation(opts.animState);
+      target = npc;
+    } else {
+      target = this.resolveTrajectoryTarget(ref);
+      if (!target) {
+        console.warn(`[trajectory] 目标解析失败："${typeof ref === 'string' ? ref : JSON.stringify(ref)}"（轨迹 "${trajectoryId}"）`);
+        return 'cancelled';
+      }
     }
     const frames = this.resolveTrajectoryFrames(asset, opts.flipX === true);
-    return this.trajectorySystem.play(
+    const reason = await this.trajectorySystem.play(
       { id: asset.id || trajectoryId, keyframes: frames },
       target,
-      { anchor: opts.anchor },
+      { anchor },
     );
+    if (spawnedId && !this.tearDownComplete) {
+      // 临时生成的对象：播完缺省移除；keep = 留在终点，成为这个场景真正的实体（随存档 / 实例化走）
+      if (opts.spawn?.keep) this.sceneManager.commitSpawnedNpcPosition(spawnedId);
+      else this.sceneManager.removeRuntimeNpc(spawnedId);
+    }
+    return reason;
+  }
+
+  /**
+   * 位置引用求值（数字 / 实体此刻位置 / 场景曲线插槽）。实体按 `resolveActorFn`（临时演员 → 场景 NPC → player），
+   * 再退到当前场景热点——与气泡说话人定位同一条解析路。解析不出来 warn + null。
+   */
+  async resolvePositionRef(raw: unknown): Promise<{ x: number; y: number } | null> {
+    const ref = parsePositionRef(raw);
+    if (!ref) return null;
+    return resolvePositionRefPure(ref, {
+      entityPosition: (id) => {
+        const actor = this.resolveActorFn(id);
+        if (actor) return { x: actor.x, y: actor.y };
+        const hs = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === id);
+        return hs ? { x: hs.def.x, y: hs.def.y } : null;
+      },
+      loadTrajectory: (id) => this.loadTrajectoryAsset(id),
+      currentSceneId: () => this.sceneManager.currentSceneData?.id ?? '',
+      // "曲线上的点"的实时档：那条轨迹正在播就按**这次**播放算（见 TrajectorySystem.livePlay）
+      liveTrajectoryPlay: (id) => this.trajectorySystem.livePlay(id),
+    });
+  }
+
+  private trajectorySpawnCounter = 0;
+  /**
+   * `playTrajectory.spawn`：临时生成运动对象。图片 = "道具 = 没有动画包的普通 NPC"（`displayImage` 合成单帧动画包），
+   * 角色模板 = `characterId`（动画包从角色注册表继承）。与场景 JSON 里的 NPC 走同一条实例化管线。
+   * id 已存在于场景时直接用现有实体（不重复生成）。
+   */
+  private async spawnTrajectoryActor(spec: TrajectorySpawnSpec, at: { x: number; y: number }): Promise<Npc | null> {
+    const id = spec.id || `_traj_${++this.trajectorySpawnCounter}`;
+    const existing = this.sceneManager.getNpcById(id);
+    if (existing) {
+      console.warn(`[trajectory] 临时生成的 id "${id}" 已在场景里，直接用它`);
+      return existing;
+    }
+    const def: NpcDef = { id, name: spec.name ?? id, x: at.x, y: at.y, interactionRange: 0 };
+    if (spec.kind === 'image' && spec.src) {
+      def.displayImage = { image: spec.src, worldWidth: spec.worldWidth ?? 0, worldHeight: spec.worldHeight ?? 0 };
+    } else if (spec.kind === 'character' && spec.characterId) {
+      def.characterId = spec.characterId;
+    }
+    if (spec.anchor) def.anchor = { x: spec.anchor.x, y: spec.anchor.y };
+    return this.sceneManager.spawnRuntimeNpc(def, { persistent: spec.keep === true });
   }
 
   /**
@@ -1449,6 +1625,22 @@ export class Game {
     /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
     if (this.tearDownComplete) return;
     this.emoteBubbleManager.setEntityAttachLayer(this.renderer.entityLayer);
+    this.vfxRenderer = new VfxRenderer({
+      entityLayer: this.renderer.entityLayer,
+      createLitShader: (program, colorTex, extra) => this.characterLighting.createCustomLitShader(program, colorTex, extra),
+      releaseLitShader: (sh) => this.characterLighting.releaseEntityLitShader(sh),
+      getDepth: () => {
+        const tex = this.sceneDepthSystem.currentDepthTexture;
+        const cfg = this.sceneDepthSystem.currentConfig;
+        return tex && cfg ? { tex, cfg } : null;
+      },
+      getSceneSize: () => {
+        const sd = this.sceneManager.currentSceneData;
+        return { w: sd?.worldWidth ?? 1, h: sd?.worldHeight ?? 1 };
+      },
+      perspective: (fx, fy) => this.perspectiveScaleResolver?.scaleAt(fx, fy) ?? 1,
+    });
+    this.vfxSystem.setRenderer(this.vfxRenderer);
 
     // UI 皮肤素材（做旧木框九宫格 + 纸纹）必须赶在任何面板首次构建之前到位，
     // 否则那一次会画成纯色降级版、且不会自动重画。单张失败只降级该张，不阻断启动。
@@ -1563,6 +1755,20 @@ export class Game {
     this.hud = new HUD(this.renderer, this.eventBus, this.stringsProvider);
     // HUD 的当前任务芯片是**查询式**的：quest:changed 只喊"该查了"，真相在 QuestManager
     this.hud.setQuestDataProvider(this.questManager);
+    // 系统说明卡的开卡函数（UI 归 ui 层，系统层不 import 它）：压暗全屏但给被说明的读数留口子。
+    // 卡开着 = UI 覆盖态（与压力小游戏 runSegment 同一把锁）：探索输入整体停住，关卡恢复原状态。
+    this.systemNoteManager.setOpener((def) =>
+      this.runInGameState(GameState.UIOverlay, () =>
+        openSystemNote(this.renderer, this.assetManager, def, {
+          strings: this.stringsProvider,
+          spotlight: def.hudAnchor === 'threeFires'
+            ? this.hud.getThreeFiresScreenRect()
+            : def.hudAnchor === 'smell'
+              ? this.hud.getSmellScreenRect()
+              : null,
+        }),
+      ),
+    );
     this.notificationUI = new NotificationUI(this.renderer, this.eventBus);
     // **只有过场与切场加载**压住提示条出队（电影化静默；priority='system' 的过场跳过确认
     // 仍越过静默）。面板开着时提示必须**立即、最顶层**弹出——玩家在册子里点词条采集，
@@ -1688,6 +1894,8 @@ export class Game {
       setFastForward: (on) => this.trajectorySystem.setFastForward(on),
     });
     this.cutsceneManager.setEmoteTargetResolver((raw) => this.resolveEmoteTarget(raw));
+    // cameraMove 的可选 `at`：与动作侧同一份位置引用求值（一次性摆位，不是跟随）
+    this.cutsceneManager.setPositionRefResolver((raw) => this.resolvePositionRef(raw));
     this.cutsceneManager.setSceneSwitcher(async (params) => {
       this.pickupNotification.forceCleanup();
       if (this.inspectBox.isOpen) this.inspectBox.close();
@@ -1702,6 +1910,9 @@ export class Game {
     });
     this.cutsceneManager.setSceneIdGetter(() => this.sceneManager.currentSceneData?.id ?? null);
     this.cutsceneManager.setPlayerPositionGetter(() => ({ x: this.player.x, y: this.player.y }));
+    // 气味飘向按玩家相对气味源现算（G.6）：同一套 getter 注入，系统不持有玩家/场景管理器引用
+    this.smellSystem.setSceneIdGetter(() => this.sceneManager.currentSceneData?.id ?? null);
+    this.smellSystem.setPlayerPositionGetter(() => ({ x: this.player.x, y: this.player.y }));
     this.cutsceneManager.setPlayerPositionSetter((x, y) => { this.player.x = x; this.player.y = y; });
     this.cutsceneManager.setCameraAccessor(this.camera);
     this.cutsceneManager.setSceneManager(this.sceneManager);
@@ -2039,6 +2250,15 @@ export class Game {
         if (bindings.length === 0) this.entityShadowBindings.delete(key);
         else this.entityShadowBindings.set(key, bindings);
       },
+      vfx: {
+        play: (opts) => this.vfxSystem.playVfx(opts),
+        stop: (id) => this.vfxSystem.stopVfx(id),
+        setState: (id, state) => this.vfxSystem.setVfxState(id, state),
+        emitField: (def, sceneX, sceneY, h) => {
+          const w = this.vfxSystem.sceneToWorld(sceneX, sceneY, h);
+          if (w) this.vfxSystem.emitField(def, w);
+        },
+      },
       ruleOfferRegistry: this.ruleOfferRegistry,
       inventoryManager: this.inventoryManager,
       rulesManager: this.rulesManager,
@@ -2049,6 +2269,9 @@ export class Game {
       npcScheduleSystem: this.npcScheduleSystem,
       archiveManager: this.archiveManager,
       clueManager: this.clueManager,
+      systemNoteManager: this.systemNoteManager,
+      setThreeFiresVisible: (visible, style) => this.applyThreeFiresVisible(visible, style),
+      setSmellVisible: (visible, style) => this.applySmellVisible(visible, style),
       cutsceneManager: this.cutsceneManager,
       sceneManager: this.sceneManager,
       emoteBubbleManager: this.emoteBubbleManager,
@@ -2095,6 +2318,7 @@ export class Game {
       },
       // 轨迹：注入**能力**而不是系统实例（分层律 11）。装资产 / 投影 / 目标解析都在 Game 侧。
       playTrajectory: (trajectoryId, ref, opts) => this.playTrajectoryAsset(trajectoryId, ref, opts),
+      resolvePositionRef: (raw) => this.resolvePositionRef(raw),
       stopTrajectory: (ref, opts) => {
         const t = this.resolveTrajectoryTarget(ref);
         return t ? this.trajectorySystem.stopFor(t.trajectoryKey, 'stopped', opts) : false;
@@ -2102,6 +2326,7 @@ export class Game {
       showOverlayImage: (id, image, xPct, yPct, wPct) =>
         this.cutsceneManager.showOverlayImage(id, image, xPct, yPct, wPct),
       resolveOverlayImagePath: (img) => this.resolveOverlayImageIdToPath(img),
+      resolveOverlayImageSfx: (img) => this.resolveOverlayImageSfxCue(img),
       hideOverlayImage: (id) => {
         this.cutsceneManager.hideOverlayImage(id);
       },
@@ -2467,6 +2692,81 @@ export class Game {
       }, `game:${this.runtimeBootId}`);
       this.lightingSync.start();
 
+      /**
+       * 声学的实时联动：工作台（`tools/acoustic_workbench`）是唯一作者面，
+       * 这里只是预览器——工作台每动一下下一拍就重算 IR，按试听键这里播干声；
+       * 反向把场景 / 听者 / 抽头 / 耗时回传给工作台画在 3D 里。同样走 dev server 的槽。
+       */
+      this.acousticsSync = new RuntimeAcousticsSync({
+        getSceneId: () => this.sceneManager.currentSceneData?.id ?? null,
+        getBoundSpaceId: () => this.acousticSpaceId,
+        getActiveSpaceId: () => this.audioManager.getAcousticSpaceId(),
+        applyDef: (spaceId, def) => {
+          this.audioManager.applyAcousticSpaceDef(spaceId, def);
+          // 听者立刻按新空间重算一次：工作台改了距离缩放，阈值也跟着变了
+          this.updateAcousticListener(true);
+        },
+        playProbe: (sfxId, at, onStarted) => {
+          if (!this.audioManager.isAudioUnlocked()) return false;
+          // 试听也是有位置的声源：工作台给了发声点就从那里播，没给就是听者自己喊
+          return this.audioManager.playSfxAt(sfxId, at ?? null, { onStart: onStarted }) !== null;
+        },
+        getListenerMode: () => this.acousticListenerLast?.mode ?? 'player',
+        getListener: () => this.acousticListenerLast,
+        getOutputPeakDb: () => this.audioManager.getRecentOutputPeakDb(),
+        getTaps: () => this.audioManager.getAcousticTaps() as AcousticTap[],
+        getPerf: () => ({
+          costMs: this.audioManager.getAcousticBuildCostMs(),
+          thresholdM: this.audioManager.getAcousticMoveThresholdM(),
+        }),
+        isAudioUnlocked: () => this.audioManager.isAudioUnlocked(),
+        hasPendingSpace: () => this.audioManager.hasPendingAcoustic(),
+        // 多开页签时工作台只指挥这一页（命令队列的 targetBootId），并据此判断这页是不是免手势的预览窗
+        getBootId: () => this.runtimeBootId,
+        isAutoplayAllowed: () => this.audioManager.isAudioAutoUnlocked(),
+        log: (m) => this.debugPanelUI?.log(m),
+      }, `game:${this.runtimeBootId}`);
+      this.acousticsSync.start();
+
+      /**
+       * 粒子 / 群体的实时联动：粒子工作台（`tools/vfx_workbench`）是效果资产唯一的作者面，
+       * 这里只是预览器——工作台改一个参数下一拍就用工作态定义重建引用它的实例，按「发一个刺激」
+       * 就在那个画面点发一个场；反向把场景 / 实例状态 / stats / 玩家脚点回传给工作台画在 3D 里。
+       * 同样走 dev server 的两个单向槽（`vite.config.ts` 的 `runtimeVfxApi`）。
+       */
+      this.vfxSync = new RuntimeVfxSync({
+        getSceneId: () => this.sceneManager.currentSceneData?.id ?? null,
+        applyPreview: (effectId, def) => this.vfxSystem.applyPreviewEffect(effectId, def),
+        clearPreview: (effectId) => this.vfxSystem.applyPreviewEffect(effectId, null),
+        // 工作台给的是画面点 + 离地高（它那边不知道本场景的基与尺）；解成 M-world 的是 VfxSystem
+        emitField: (def, at) => {
+          const w = this.vfxSystem.sceneToWorld(at.x, at.y, at.h ?? 0);
+          if (!w) return false;
+          this.vfxSystem.emitField(def, w);
+          return true;
+        },
+        getStatus: (effectId) => {
+          const snap = this.vfxSystem.debugSnapshot();
+          const pc = this.player ? { x: this.player.contactX, y: this.player.contactY } : null;
+          const st = this.vfxSystem.stats;
+          return {
+            sceneId: this.sceneManager.currentSceneData?.id ?? null,
+            instances: snap.filter((x) => x.effect === effectId)
+              .map((x) => ({ id: x.id, state: x.state, live: x.live, eligible: x.eligible })),
+            allInstances: snap.length,
+            // simMs 取整到 0.1：不然每一拍都算「内容变了」，状态槽被写爆
+            stats: { ...st, simMs: Math.round(st.simMs * 10) / 10 },
+            playerScene: pc,
+            playerWorld: pc ? this.vfxSystem.sceneToWorld(pc.x, pc.y, 0) : null,
+            // 真 3D 还是平面近似：与 VfxSystem 的 hasFieldGeometry 同一条判据
+            spaceKind: this.vfxSystem.currentSpace?.kind ?? 'planar',
+            bootId: this.runtimeBootId,
+          };
+        },
+        log: (m) => this.debugPanelUI?.log(m),
+      }, `game:${this.runtimeBootId}`);
+      this.vfxSync.start();
+
       this.unsubAuthoringHotkey = this.inputManager.subscribeKeyDown((e) => {
         // F3 进/出。**刻意不走 registerPanel**：它不是面板——退出要问存盘、要重载场景，
         // 塞进面板的 open/close 语义里会把那些副作用藏起来。
@@ -2739,6 +3039,10 @@ export class Game {
         sniff: () => this.smellSystem.sniff(),
         getForm: () => this.hud?.getSmellForm() ?? null,
         setFormParam: (key, value) => this.hud?.setSmellFormParam(key, value),
+        setSourceAtPlayerOffset: (dx) => this.smellSystem.setSource(this.player.x + dx, this.player.y),
+        clearSource: () => this.smellSystem.clearSource(),
+        setTracking: (enabled) => this.smellSystem.setTracking(enabled),
+        isTracking: () => this.smellSystem.isTracking(),
       },
       objectExamineDebug: {
         getStatusText: () => this.objectExamineManager.getDebugStatusText(),
@@ -2815,6 +3119,7 @@ export class Game {
       }),
       this.archiveManager.loadDefs(),
       this.clueManager.loadDefs(),
+      this.systemNoteManager.loadDefs(),
       this.shopUI.loadDefs(),
       this.mapUI.loadConfig(),
     ]);
@@ -2840,22 +3145,38 @@ export class Game {
         },
         log: (m) => this.debugPanelUI.log(m),
       });
-      /** F2「声学」页：就地摆崖壁 + 试听，改一下立刻重算 IR。 */
+      /** F2「声学」页：只看状态、按试听；编辑与保存在声学工作台。 */
+      /** F2「粒子」页：只看状态、按刺激；效果在粒子工作台调、实例在主编辑器场景页摆。 */
+      this.debugPanelUI.attachVfxDebug({
+        getSceneId: () => this.sceneManager.currentSceneData?.id,
+        getSpaceInfo: () => {
+          const sp = this.vfxSystem.currentSpace;
+          return sp ? { kind: sp.kind, hasShell: sp.hasShell, wuPerQ: sp.wuPerQ } : null;
+        },
+        getSnapshot: () => this.vfxSystem.debugSnapshot(),
+        getStats: () => this.vfxSystem.stats,
+        emitAtPlayer: (def: VfxFieldDef, h: number) => {
+          const w = this.vfxSystem.sceneToWorld(this.player.contactX, this.player.contactY, h);
+          if (w) this.vfxSystem.emitField(def, w);
+        },
+        setState: (id: string, st: VfxFlockState) => this.vfxSystem.setVfxState(id, st),
+        log: (m: string) => this.debugPanelUI.log(m),
+      });
       this.debugPanelUI.attachAcousticDebug({
         getCurrentSceneId: () => this.sceneManager.currentSceneData?.id,
         getSpaceId: () => this.audioManager.getAcousticSpaceId(),
+        getBoundSpaceId: () => this.acousticSpaceId,
         getSpaceDef: (id) => this.audioManager.getAcousticSpaceDef(id),
-        listSpaceIds: () => this.audioManager.listAcousticSpaceIds(),
-        applyDef: (id, def) => this.audioManager.applyAcousticSpaceDef(id, def),
-        setSpace: (id) => this.audioManager.setAcousticSpace(id),
-        getTaps: () => this.audioManager.getAcousticTaps() as never[],
-        playProbe: (sfxId) => this.audioManager.playSfx(sfxId),
-        getRuntimeListener: () => this.audioManager.getAcousticListener(),
-        getListenerBinding: () => this.acousticListenerBinding,
+        getTaps: () => this.audioManager.getAcousticTaps() as AcousticTap[],
+        playProbe: (sfxId) => { this.audioManager.playSfxAt(sfxId, null); },
+        getRuntimeListener: () => this.acousticListenerLast,
+        getOutputPeakDb: () => this.audioManager.getRecentOutputPeakDb(),
         getPerf: () => ({
           costMs: this.audioManager.getAcousticBuildCostMs(),
           thresholdM: this.audioManager.getAcousticMoveThresholdM(),
         }),
+        getSyncStatus: () => this.acousticsSync?.statusLine() ?? '',
+        hasPendingSpace: () => this.audioManager.hasPendingAcoustic(),
         log: (m) => this.debugPanelUI.log(m),
       });
     }
@@ -3434,7 +3755,6 @@ export class Game {
     try {
       const data = await this.assetManager.loadJson<FootstepConfigData>(TEXT_URLS.footstepSets);
       this.footstepConfig = { ...data, sets: data.sets ?? {} };
-      this.audioListenerConfig = data.listener ?? null;
     } catch {
       this.footstepConfig = null;
     }
@@ -3452,94 +3772,45 @@ export class Game {
    * 任何按 wu 定的参考距离都会让整场声音要么全满幅要么全静音。同族事故在光照侧已发生过两次。
    */
   private buildAudioSpaceResolver(): AudioSpaceResolver {
-    const geo = this.buildLightSpaceGeometry();
-    if (geo && !isSuspectWuPerQUnit(this.sceneLighting.wuPerQUnit)) {
-      return { mode: 'field', geo };
-    }
-    return planarResolver(
-      this.footstepConfig?.spatial?.planarDepthScale ?? DEFAULT_PLANAR_DEPTH_SCALE,
-    );
-  }
-
-  private buildSpatialParams(): SpatialParams {
-    const s = this.footstepConfig?.spatial ?? {};
+    const persp = this.buildAudioPerspective();
+    const geo = this.buildAudioSceneGeometry();
+    if (geo) return { mode: 'field', geo, persp };
     return {
-      refDistanceWu: s.refDistanceWu ?? DEFAULT_SPATIAL_PARAMS.refDistanceWu,
-      rolloff: s.rolloff ?? DEFAULT_SPATIAL_PARAMS.rolloff,
-      maxDistanceWu: s.maxDistanceWu ?? DEFAULT_SPATIAL_PARAMS.maxDistanceWu,
-      panWidth: s.panWidth ?? DEFAULT_SPATIAL_PARAMS.panWidth,
+      ...planarResolver(this.footstepConfig?.spatial?.planarDepthScale ?? DEFAULT_PLANAR_DEPTH_SCALE),
+      persp,
     };
   }
 
   /**
-   * 听者。**不写死是谁**：`camera`（缺省）/ `player` / `npc` / `fixed` 四种。
+   * 场景的透视纵深标定（喂给音频解算器）。**没配 `perspectiveScale` 的场景返回 undefined**，
+   * 音频完全走正交老路、逐位零变化——全仓 36 个场景里只有 6 个配了透视线。
    *
-   * 相机听者的视距用 **zoom 比值**算，不用可视宽度：
-   * `getViewWidth() = screenWidth / (ppu × zoom × worldScale)` 里只有 `screenWidth` 随窗口变，
-   * 拿它当视距会让玩家拉大窗口时全场声音突然变远——那是窗口变大，不是镜头后退。
-   *
-   * 指定的目标找不到时**回落到相机并在调试状态里标出来**，不静默假装成功。
+   * 基准视距与相机听者共用同一个数（`f=1` 处 = `backAtBaseZoomWu`），两者必须同源：
+   * 分开取的话「玩家在画面中心时离相机 D0/f」这条自洽性就断了，而断了不报错，
+   * 只是声音的远近与画面的缩放对不上（正是 2026-09-08 抓到的那类视听脱节）。
    */
-  private buildAudioListener(r: AudioSpaceResolver): {
-    listener: AudioListener; mode: string; fallback: boolean; backWu: number;
-  } {
-    const cfg = this.audioListenerConfig ?? this.footstepConfig?.listener ?? { mode: 'camera' as const };
-    const backBase = this.footstepConfig?.spatial?.listenerBackAtBaseZoomWu ?? 600;
-    const zoom = this.camera.getZoom();
-    const baseZoom = this.camera.getSceneBaseZoom();
-    const ratio = zoom > 1e-6 && baseZoom > 1e-6 ? baseZoom / zoom : 1;
-    const backWu = backBase * ratio;
-    const toCamera = (fallback: boolean) => ({
-      listener: cameraListener(r, this.camera.getX(), this.camera.getY(), backWu),
-      mode: fallback ? `${cfg.mode}→camera` : 'camera',
-      fallback,
-      backWu,
-    });
-
-    if (cfg.mode === 'player') {
-      const h = cfg.heightWu ?? this.player.sprite.getWorldSize().height * 0.9;
-      return {
-        listener: targetListener(r, {
-          contactX: this.player.contactX, contactY: this.player.contactY, heightWu: h,
-        }),
-        mode: 'player', fallback: false, backWu: 0,
-      };
-    }
-    if (cfg.mode === 'npc') {
-      const npc = this.sceneManager.getCurrentNpcs().find((n) => n.id === cfg.targetId);
-      if (!npc) return toCamera(true);
-      const h = cfg.heightWu ?? npc.getWorldSize().height * 0.9;
-      return {
-        listener: targetListener(r, {
-          contactX: npc.contactX, contactY: npc.contactY, heightWu: h,
-        }),
-        mode: `npc:${cfg.targetId}`, fallback: false, backWu: 0,
-      };
-    }
-    if (cfg.mode === 'fixed') {
-      if (typeof cfg.x !== 'number' || typeof cfg.y !== 'number') return toCamera(true);
-      return {
-        listener: targetListener(r, {
-          contactX: cfg.x, contactY: cfg.y, heightWu: cfg.heightWu ?? 150,
-        }),
-        mode: 'fixed', fallback: false, backWu: 0,
-      };
-    }
-    return toCamera(false);
-  }
-
-  private buildFootstepSpatialContext(): FootstepSpatialContext | null {
-    if (!this.footstepConfig) return null;
-    const resolver = this.buildAudioSpaceResolver();
-    const l = this.buildAudioListener(resolver);
-    this.audioSpaceDebug = {
-      mode: resolver.mode,
-      listenerMode: l.mode,
-      listenerFallback: l.fallback,
-      backWu: l.backWu,
+  private buildAudioPerspective(): AudioPerspective | undefined {
+    const ps = this.perspectiveScaleResolver;
+    if (!ps) return undefined;
+    return {
+      scaleAt: (x, y) => ps.scaleAt(x, y),
+      baseDepthWu: this.listenerBackAtBaseZoomWu(),
     };
-    return { resolver, listener: l.listener, params: this.buildSpatialParams() };
   }
+
+  /**
+   * 基准视距（wu），**全局唯一来源**：运行时覆盖 > 场景 `acousticListener.backAtBaseZoomWu` >
+   * `footstep_sets.json` 的 `spatial.listenerBackAtBaseZoomWu` > 600。
+   *
+   * 相机听者的视距与透视标定的 `baseDepthWu` 都读它——两处必须同源，见 `buildAudioPerspective`。
+   */
+  private listenerBackAtBaseZoomWu(): number {
+    return positiveOrUndefined(this.audioListenerOverride?.backAtBaseZoomWu)
+      ?? positiveOrUndefined(this.sceneManager.currentSceneData?.acousticListener?.backAtBaseZoomWu)
+      ?? positiveOrUndefined(this.footstepConfig?.spatial?.listenerBackAtBaseZoomWu)
+      ?? DEFAULT_LISTENER_BACK_AT_BASE_ZOOM_WU;
+  }
+
 
   /**
    * 脚点处该用哪个脚步集：**zone 覆盖 → 场景默认 → 无**。
@@ -3615,9 +3886,9 @@ export class Game {
     };
   }
 
-  /** 调试/内容侧改听者。传 null 回到配置缺省。 */
+  /** 调试/内容侧改听者（覆盖场景 / 空间 / 配置里的绑定）。传 null 撤掉覆盖。 */
   setAudioListenerConfig(cfg: AudioListenerConfig | null): void {
-    this.audioListenerConfig = cfg ?? this.footstepConfig?.listener ?? null;
+    this.audioListenerOverride = cfg;
   }
 
   /**
@@ -3711,8 +3982,8 @@ export class Game {
       console.warn('Game: game_config.json not found, using defaults');
     }
     try {
-      const ov = await this.assetManager.loadJson<Record<string, string>>(TEXT_URLS.overlayImages);
-      this.overlayImageRegistry = ov && typeof ov === 'object' ? { ...ov } : {};
+      const ov = await this.assetManager.loadJson<unknown>(TEXT_URLS.overlayImages);
+      this.overlayImageRegistry = parseOverlayImages(ov);
     } catch {
       this.overlayImageRegistry = {};
     }
@@ -3732,10 +4003,23 @@ export class Game {
     const raw = image.trim();
     if (!raw) return raw;
     if (raw.startsWith('/')) return raw;
-    const path = this.overlayImageRegistry[raw];
+    const path = overlayImagePath(this.overlayImageRegistry[raw]);
     if (path) return path;
     console.warn(`Game: overlay 图 id「${raw}」未在 overlay_images.json 中登记，将按原文字符串当路径`);
     return raw;
+  }
+
+  /**
+   * 这张叠图叠上来时该怎么发声：短 id 查 overlay_images.json 的逐条配置。
+   *
+   * 直接给完整路径（以 / 开头）的调用点没有登记条目可查，一律走全局默认叠图音。
+   * 这里**只解析意图、不播**——发声统一由音频管理器那张系统音效事件表负责
+   * （分散播放会做出双响，见 system-sfx-event-table 机制卡）。
+   */
+  private resolveOverlayImageSfxCue(image: string): OverlaySfxCue {
+    const raw = image.trim();
+    if (!raw || raw.startsWith('/')) return DEFAULT_OVERLAY_SFX_CUE;
+    return overlayImageSfxCue(this.overlayImageRegistry[raw]);
   }
 
   /** 从磁盘加载玩家动画资源；失败返回 null（由调用方决定占位图集）。 */
@@ -4125,14 +4409,12 @@ export class Game {
       // 场景声学：换 IR。缺省/未知 id = 无空间，空间音退化为干声。
       this.audioManager.setAcousticSpace(acousticSpace);
       this.acousticSpaceId = acousticSpace ?? null;
-      const sd = this.sceneManager.currentSceneData;
-      this.acousticListenerBinding = sd?.acousticListener ?? null;
-      // 空间没写 anchor 时以场景中心为原点：这样作者摆的米制坐标默认围着画面中心
-      this.acousticAnchorFallback = {
-        x: (sd?.worldWidth ?? 0) / 2,
-        y: (sd?.worldHeight ?? 0) / 2,
-      };
+      this.acousticListenerLast = null;
       this.updateAcousticListener(true);
+      // 总线刚被换成场景绑定：工作台那份工作态若仍新鲜，下一拍重新套上
+      this.acousticsSync?.onSceneChanged();
+      // 换场景 = 实例整批重建：工作台那份工作态若仍新鲜，下一拍重新套上
+      this.vfxSync?.onSceneChanged();
     });
     this.sceneManager.setAudioManifestResolver((bgm, ambient) => this.audioManager.getSceneAudioRefs(bgm, ambient));
 
@@ -4390,6 +4672,49 @@ export class Game {
    * ⚠ 全部取 **work** 栅格（照明载荷的 `cal` 与地面场），不是 `depthConfig.M` 那套 native。
    * 两套栅格的比例逐场景不同（实测 1.95–4.0），混用不报错、只是位置差一截。
    */
+  /**
+   * 声音用的场景几何：**只要照明载荷在**（行走面场 + det=+1 基 + work 标定）就有，
+   * 不要求统一光影启用——六个崖墓场景 / 跑马梁没配 `lighting` 块，脚步与回音照样要落到真地面
+   * （2026-09-08 实测：按 `sceneLighting.active` 门控会把这些场景全打回平面近似，听者 z 差 800 wu）。
+   * 1 q = 多少 wu 用 `worldWidth × ppu_work / work.w`，与工作台同一条式子（逐点 Δ0）。
+   */
+  private buildAudioSceneGeometry(): SceneSpaceGeometry | null {
+    const ground = this.characterLighting.groundDepthField;
+    const rows = this.characterLighting.shadowBasisRows;
+    const uni = this.characterLighting.unifiedGeometry;
+    if (!ground || !rows || !uni) return null;
+    const wuPerQUnit = (uni.sceneWorld[0] * uni.cal.ppu) / Math.max(ground.w, 1);
+    if (isSuspectWuPerQUnit(wuPerQUnit)) return null;
+    return {
+      work: { w: ground.w, h: ground.h },
+      cal: { ppu: uni.cal.ppu, cx: uni.cal.cx, cy: uni.cal.cy },
+      sceneWorld: { w: uni.sceneWorld[0], h: uni.sceneWorld[1] },
+      basisRows: rows,
+      wuPerQUnit,
+      ground,
+    };
+  }
+
+  /**
+   * 粒子 / 群体的模拟空间。有照明载荷（行走面场 + det=+1 基 + work 标定）就是真 3D：
+   * 地面 = 行走面反投影的高度场，墙 = 深度壳的 CPU 副本；没有就退到平面近似（不遮挡、不受光、没墙）。
+   * 与音频侧同一份 `SceneSpaceGeometry`，不另立换算。
+   */
+  private buildVfxSpace(): VfxSpace {
+    const geo = this.buildAudioSceneGeometry();
+    if (!geo) return createPlanarVfxSpace(this.footstepConfig?.spatial?.planarDepthScale ?? DEFAULT_PLANAR_DEPTH_SCALE);
+    return createFieldVfxSpace({ geo, shell: this.sceneDepthSystem.depthShellField, viewDir: viewDirWorld(geo) });
+  }
+
+  /** 当前时段亮着的、有位置的实体灯（群体拿它们当恐惧源） */
+  private activeSceneLightsForVfx(): readonly LightDef[] {
+    const sd = this.sceneManager.currentSceneData;
+    const lights = sd?.lighting?.lights ?? [];
+    if (!sd?.dayNight?.enabled) return lights;
+    const phase = this.dayManager.currentPhase;
+    return lights.filter((l) => !l.phases?.length || l.phases.includes(phase));
+  }
+
   private buildLightSpaceGeometry(): LightSpaceGeometry | null {
     const ground = this.characterLighting.groundDepthField;
     const rows = this.characterLighting.shadowBasisRows;
@@ -5093,6 +5418,8 @@ export class Game {
       getPlayerPosture: () => this.playerActionSystem.getPosture(),
       // 时段同理（由 DayManager 的时刻派生，不是独立状态）
       getTimePhase: () => this.dayManager.currentPhase,
+      // 粒子 / 群体实例状态（roosting / airborne / fleeing …）：不在场 → null → 叶子恒假
+      getVfxState: (id) => this.vfxSystem?.getInstanceState(id) ?? null,
     };
   }
 
@@ -5145,7 +5472,9 @@ export class Game {
     // HUD 右下入口条 / 芯片点击 → 面板开关（关旧开新的「换过去」语义，见 switchToPanel）
     this.hud.setPanelOpener((name) => this.stateController.switchToPanel(name));
     // 确认框在场时控制器整帧不吃键盘（Esc 双消费修复，见 UIConfirmDialog.isConfirmDialogOpen）
-    this.stateController.setKeySuppressor(() => isConfirmDialogOpen());
+    // 说明卡是模态：与确认框同款整帧让路（面板快捷键不许在卡上叠开）。仪式/卡的"世界停住"走状态机
+    // （runInGameState：仪式 Cutscene、卡 UIOverlay），不靠这里。
+    this.stateController.setKeySuppressor(() => isConfirmDialogOpen() || isSystemNoteOpen());
     // 全部探索面板共用「玩家自由可控」闸（2026-08-18 拍板）：切场/加载遮罩下 state
     // 仍是 Exploring，不加闸的话面板会被按到加载画面上。
     const freeControl = (): boolean => this.isPlayerFreeControl();
@@ -5605,7 +5934,7 @@ export class Game {
     } else {
       console.info(`enterNarrativeWarp「${warp.label}」铺垫全部到位`);
     }
-    await this.devLoadScene(warp.scene);
+    await this.devLoadScene(warp.scene, warp.spawn);
   }
 
   /** warp 单张图的推进 + 落地复核；失败/降级写进 issues 供收尾汇总。 */
@@ -6073,6 +6402,57 @@ export class Game {
       this.narrativePackageDirector.setRestoring(false);
       this.gameLogManager.setRestoring(false);
     }
+    // 三把火 / 气味指示器显隐是 flag 的投影：读档后按 flag 直接钉回来（不走出场动画）
+    this.syncThreeFiresFromFlags();
+    this.syncSmellVisibleFromFlags();
+  }
+
+  /**
+   * 气味指示器显隐（玩法清单 G.6）：与三把火同款——flag 是真相（入存档），HUD 只是投影。
+   * 纯开关——不碰气味系统两层状态、不自动触发，谁要它出现谁写动作。
+   */
+  private applySmellVisible(visible: boolean, style?: 'flare' | 'fade' | 'instant' | 'debut'): Promise<void> | void {
+    this.flagStore.set(FlagKeys.smellHudVisible, visible);
+    if (style === 'debut' && visible) {
+      // 首次出场仪式 = 一段演出：整段切到 Cutscene 态，演完恢复原状态（同三把火）
+      return this.runInGameState(GameState.Cutscene, () => Promise.resolve(this.hud.setSmellVisible(visible, style)));
+    }
+    return this.hud.setSmellVisible(visible, style);
+  }
+
+  private syncSmellVisibleFromFlags(): void {
+    this.hud.setSmellVisible(this.flagStore.get(FlagKeys.smellHudVisible) === true, 'instant');
+  }
+
+  /**
+   * 三把火 HUD 读数显隐（玩法清单 G.5）：flag 是真相（入存档），HUD 只是投影。
+   * 纯开关——不碰血量、不自动触发，谁要它出现谁写动作。
+   */
+  private applyThreeFiresVisible(visible: boolean, style?: 'flare' | 'fade' | 'instant' | 'debut'): Promise<void> | void {
+    this.flagStore.set(FlagKeys.threeFiresVisible, visible);
+    if (style === 'debut' && visible) {
+      // 首次出场仪式 = 一段演出：整段切到 Cutscene 态（与 startCutscene 同一把锁），演完恢复原状态
+      return this.runInGameState(GameState.Cutscene, () => Promise.resolve(this.hud.setThreeFiresVisible(visible, style)));
+    }
+    return this.hud.setThreeFiresVisible(visible, style);
+  }
+
+  /**
+   * 把一段异步的 UI/演出跑在指定游戏状态里：进入前记住原状态，结束（含抛错）恢复。
+   * 与 startCutscene 动作、压力小游戏 runSegment 同一套纪律——中途别人已把状态切走则不抢回。
+   */
+  private async runInGameState<T>(state: GameState, run: () => Promise<T>): Promise<T> {
+    const prev = this.stateController.currentState;
+    this.stateController.setState(state);
+    try {
+      return await run();
+    } finally {
+      if (this.stateController.currentState === state) this.stateController.setState(prev);
+    }
+  }
+
+  private syncThreeFiresFromFlags(): void {
+    this.hud.setThreeFiresVisible(this.flagStore.get(FlagKeys.threeFiresVisible) === true, 'instant');
   }
 
   /** 读档待落位的玩家坐标：由 distribute 收下、由紧随其后的场景重载消费（见 restorePlayerPose）。 */
@@ -7358,6 +7738,10 @@ export class Game {
     // 直接拆监听/ticker/DOM 并解冻——生命周期对称，不留残留。
     this.lightingSync?.stop();
     this.lightingSync = null;
+    this.acousticsSync?.stop();
+    this.acousticsSync = null;
+    this.vfxSync?.stop();
+    this.vfxSync = null;
     this.unsubAuthoringHotkey?.();
     this.unsubAuthoringHotkey = null;
     this.authoringMode?.destroy();
@@ -7432,32 +7816,141 @@ export class Game {
   }
 
   /**
-   * 把绑定的听者位置换算成声学米制喂给 AudioManager。
+   * 听者绑定**只有一条链**（脚步 / 试听 / 回音全用同一个听者）：
+   * 运行时覆盖 > 场景 JSON `acousticListener` > 声学空间 `listenerBinding` > `footstep_sets.json` 的 `listener` > 相机。
+   */
+  private effectiveListenerBinding(): {
+    mode: 'player' | 'camera' | 'entity' | 'fixed';
+    entityId?: string;
+    heightWu?: number;
+    at?: { x: number; y: number };
+    from: AudioListenerSnapshot['from'];
+  } {
+    const rt = this.audioListenerOverride;
+    if (rt) return { ...mapListenerConfig(rt), from: 'runtime' };
+    const sc = this.sceneManager.currentSceneData?.acousticListener;
+    if (sc) return { mode: sc.mode, entityId: sc.entityId, from: 'scene' };
+    const space = this.audioManager.getActiveAcousticSpaceDef();
+    if (space) {
+      // 有声学空间就按空间的绑定；空间没写 = 空间级缺省「跟玩家」（作者摆的是玩家站的地方的回音）
+      const sp = space.listenerBinding;
+      return sp ? { mode: sp.mode, entityId: sp.entityId, from: 'space' } : { mode: 'player', from: 'space' };
+    }
+    const fc = this.footstepConfig?.listener;
+    if (fc) return { ...mapListenerConfig(fc), from: 'footstep' };
+    return { mode: 'camera', from: 'default' };
+  }
+
+  /**
+   * 解出这一帧的听者：耳点 + 朝向 + 它落在哪。
+   *
+   * - `player` / `entity`：脚点（**contactX/Y**，不是 x/y——NPC 可配锚点）落到行走面，抬耳高。
+   * - `camera`：**镜头本身**——画面中心地面点沿视线反方向退 `backAtBaseZoomWu × (基准 zoom / 当前 zoom)`，
+   *   推拉镜头因此有远近感，而改窗口大小没有。视距按 场景 `acousticListener.backAtBaseZoomWu` >
+   *   `footstep_sets.json` 的 `spatial.listenerBackAtBaseZoomWu` > 600 取。
+   *   ⚠ **相机听者不叠耳高**（镜头不是人），数学全在 `audioSpace.cameraListener` 一处，这里不许重算。
+   * - `fixed`：钉在覆盖 / 配置给的场景点上；空间绑定的 `fixed` = 钉在作者摆的听者上。
+   *
+   * 耳高一律取**空间的 `earHeight`**（工作台里那一个数），绑定自带 `heightWu` 时才用它。
+   *
+   * 配了 `perspectiveScale` 的场景里 `world` / `ear` 已经**按透视重整过**（见 `AudioPerspective`），
+   * 与作者摆的反射面不在同一个空间。所以额外回一份没重整的 `worldOrtho` 给作者面画图用——
+   * 不回的话声学工作台会把听者画到坑里且不报错。
+   */
+  private resolveAudioListener(): AudioListenerSnapshot | null {
+    if (!this.sceneManager.currentSceneData) return null;
+    const resolver = this.buildAudioSpaceResolver();
+    const grounded = resolver.mode === 'field';
+    const space = this.audioManager.getActiveAcousticSpaceDef();
+    const b = this.effectiveListenerBinding();
+    const earH = b.heightWu ?? earHeightWu(space ?? {});
+    const forward = cameraListener(resolver, 0, 0, 0).forward;
+    const groundAt = (x: number, y: number): Vec3 => resolveWorld(resolver, { contactX: x, contactY: y, heightWu: 0 });
+    // 作者面画图用的正交地面点：同一条解算链，只拔掉透视重整。
+    const orthoResolver: AudioSpaceResolver = resolver.persp ? { ...resolver, persp: undefined } : resolver;
+    const orthoGroundAt = (x: number, y: number): Vec3 =>
+      resolveWorld(orthoResolver, { contactX: x, contactY: y, heightWu: 0 });
+    const raise = (g: Vec3, h: number): Vec3 => [g[0], g[1] + h, g[2]];
+    let scene: { x: number; y: number } | null = null;
+    let world: Vec3;
+    let ear: Vec3;
+    let targetMissing = false;
+    let backWu: number | undefined;
+    if (b.mode === 'camera') {
+      scene = { x: this.camera.getX(), y: this.camera.getY() };
+      const zoom = this.camera.getZoom();
+      const baseZoom = this.camera.getSceneBaseZoom();
+      // 视距 = 基准 × zoom 比 ÷ f(画面中心)：zoom 是运行时推拉镜头，f 是这张画本身的透视纵深，
+      // 两者相乘不相干。没配 perspectiveScale 的场景 f 恒 1，退化成原来的纯 zoom 比。
+      backWu = cameraBackWu(
+        resolver, scene.x, scene.y, this.listenerBackAtBaseZoomWu(),
+        zoom > 1e-6 && baseZoom > 1e-6 ? baseZoom / zoom : 1,
+      );
+      world = groundAt(scene.x, scene.y);
+      // 听者 = 镜头本身，**不叠耳高**：`ear` 到 `world` 的距离恰好是 backWu（单测锁着）。
+      // 数学只有 `audioSpace.cameraListener` 一份——这里曾经自己抄过一遍并多加了耳高，
+      // 结果作者旋钮写 600 而实际视距 707 wu，旋钮读数与几何对不上。
+      ear = cameraListener(resolver, scene.x, scene.y, backWu, forward).pos;
+    } else if (b.mode === 'fixed' && !b.at) {
+      // 空间作者摆的听者：本来就是 M-world 地面点
+      const L = space?.listener;
+      if (!L) {
+        scene = { x: this.player.contactX, y: this.player.contactY };
+        world = groundAt(scene.x, scene.y);
+      } else {
+        world = [L.x, L.y ?? 0, L.z];
+      }
+      ear = raise(world, earH);
+    } else {
+      let x = this.player.contactX;
+      let y = this.player.contactY;
+      if (b.mode === 'entity') {
+        const npc = b.entityId ? this.sceneManager.getNpcById(b.entityId) : null;
+        if (npc) { x = npc.contactX; y = npc.contactY; } else targetMissing = true;   // 不在场：回落玩家，别静默变哑
+      } else if (b.mode === 'fixed' && b.at) {
+        x = b.at.x; y = b.at.y;
+      }
+      scene = { x, y };
+      world = groundAt(x, y);
+      ear = raise(world, earH);
+    }
+    const persp = resolver.persp;
+    return {
+      scene, world, ear, forward, grounded, mode: b.mode, from: b.from,
+      entityId: b.entityId, targetMissing, backWu,
+      // 钉在作者点上的 fixed 听者本来就没过解算链（scene === null），不存在重整一说
+      worldOrtho: persp && scene ? orthoGroundAt(scene.x, scene.y) : undefined,
+      perspF: persp && scene ? persp.scaleAt(scene.x, scene.y) : undefined,
+    };
+  }
+
+  /** 实时联动回传用：最近一次喂给声学的听者。 */
+  getAcousticListenerSnapshot(): AudioListenerSnapshot | null {
+    return this.acousticListenerLast;
+  }
+
+  /**
+   * 每帧把解出来的听者喂给 AudioManager（内部按尺度节流重算 IR；直达声逐声音现算不受节流）。
    *
    * 没有这一步，听者永远钉在作者摆的那个点上，玩家走到崖边和站在路中间是同一个
-   * 回音 —— 那实时就没有意义了。
+   * 回音 —— 那实时就没有意义了。**不看有没有空间**：没空间也有直达声要按听者算。
    */
   private updateAcousticListener(force: boolean): void {
-    if (!this.acousticSpaceId) return;
-    const space = this.audioManager.getAcousticSpaceDef(this.acousticSpaceId);
-    if (!space) return;
-    const mode = this.acousticListenerBinding?.mode ?? 'player';
-    if (mode === 'fixed') return;          // 钉死在作者摆的点上
-    let at: { x: number; y: number } | null = null;
-    if (mode === 'camera') {
-      at = { x: this.camera.getX(), y: this.camera.getY() };
-    } else if (mode === 'entity') {
-      const id = this.acousticListenerBinding?.entityId ?? '';
-      const npc = id ? this.sceneManager.getNpcById(id) : null;
-      at = npc ? { x: npc.x, y: npc.y } : null;
-      // 绑的实体不在这个场景（换场/条件隐藏）：回落到玩家，别静默变哑
-      if (!at) at = { x: this.player.x, y: this.player.y };
-    } else {
-      at = { x: this.player.x, y: this.player.y };
-    }
-    if (!at) return;
-    const m = sceneToAcoustic(at, space, this.acousticAnchorFallback);
-    this.audioManager.setAcousticListener(m, force);
+    // 音频要用户手势才有上下文：进场景时挂不上的空间在这里补挂（每帧一次极便宜的检查）
+    if (this.audioManager.flushPendingAcoustic()) force = true;
+    const L = this.resolveAudioListener();
+    if (!L) return;
+    this.acousticListenerLast = L;
+    this.audioSpaceDebug = {
+      mode: L.grounded ? 'field' : 'planar',
+      listenerMode: L.mode + (L.targetMissing ? '→player' : ''),
+      listenerFallback: !!L.targetMissing,
+      backWu: L.backWu ?? 0,
+      footstepSpatialized: this.footstepConfig?.defaults?.spatialized !== false,
+    };
+    this.audioManager.setAcousticListener(
+      { x: L.ear[0], y: L.ear[1], z: L.ear[2] }, L.forward, force,
+    );
   }
 
   private tick(dt: number): void {
@@ -7469,9 +7962,8 @@ export class Game {
     // 位面对账先于 Exploring 分支：回 Exploring 边沿挂起的 zone 重注册（pendingZoneRefresh）
     // 必须在本帧 zoneSystem.update 之前补刷，否则旧位面 zone 会以过期集合多跑一帧 enter/stay。
     this.planeReconciler.update(dt);
-    // 声学听者跟随（玩家/相机/指定实体）：走动就改变回音。
-    // 内部两道节流（挪 3 米 + 250ms），不是每帧都重算 IR。
-    this.updateAcousticListener(false);
+    // 气缕飘向按玩家相对气味源每帧现算（G.6）：不分探索/演出态——演出里走位也该跟着歪
+    this.smellSystem.update(dt);
     // 时段换装：等一个"没人在演、也没在切场"的安全窗口再动场景（见 pendingPhaseSwap）。
     this.drainPendingPhaseSwap();
     // 日程演出（离场/入场走位）：内部自判探索态，非探索态原地挂起。
@@ -7596,13 +8088,17 @@ export class Game {
     if (this.stateController.currentState !== GameState.SceneTransition
       && this.stateController.currentState !== GameState.MainMenu) {
       this.trajectorySystem.update(dt);
+      // 粒子 / 群体：同一约束——实体位置已全部写完、排序与相机之前（它写桶网格的 entitySortFootY）
+      this.vfxSystem.update(dt);
     }
     this.camera.update(dt);
     /**
-     * 脚步 **必须排在 `camera.update` 之后**：听者是本帧定稿的相机位姿，
+     * 听者与脚步 **必须排在 `camera.update` 之后**：听者是本帧定稿的相机位姿，
      * 而实体位置在上面（`player.update` / NPC `cutsceneUpdate` / `trajectorySystem.update`）
      * 已全部写完。排在前面就是拿上一帧的相机配这一帧的实体，快速平移镜头时声像会拖尾。
+     * 听者跟随（玩家/相机/指定实体）：走动就改变回音；内部按尺度节流，不是每帧都重算 IR。
      */
+    this.updateAcousticListener(false);
     this.footstepSystem.update(dt);
     this.debugTools?.update(dt);
     this.depthDebugVisualizer?.update();

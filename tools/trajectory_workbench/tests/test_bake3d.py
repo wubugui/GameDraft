@@ -156,9 +156,12 @@ class TestBakeAssetWorld:
         assert len(wf) == len(kf) >= 2
         assert [f["atMs"] for f in wf] == [f["atMs"] for f in kf]
         assert wf[0]["atMs"] == 0 and kf[0]["atMs"] == 0
-        assert (wf[0]["x"], wf[0]["y"], wf[0]["z"]) == (0, 0, 0), "首帧相对锚点应为原点"
-        assert abs(wf[0]["h"] - r["authoring"]["anchorHeight"]) < 0.011, "h 取 2 位、anchorHeight 取 3 位"
-        assert r["authoring"]["anchorHeight"] == pytest.approx(7 / math.sqrt(0.5), abs=1e-3)
+        assert (wf[0]["x"], wf[0]["y"], wf[0]["z"]) == (0, 0, 0), "首帧相对曲线起点应为原点"
+        # 曲线没有锚点：起点 = 第一帧；旧 contactOffsetY 回落成 restHeight = 7/cosθ（贴地抛体的 h）
+        assert abs(wf[0]["h"] - 7 / math.sqrt(0.5)) < 0.011, "h 取 2 位"
+        assert r["authoring"]["originWorld"] and r["authoring"]["origin"], "烘焙机回填曲线起点"
+        assert "anchorHeight" not in r["authoring"] and "anchor" not in r["authoring"], "旧锚点键不再写"
+        assert r["binding"] == "scene"
         assert len(r["segments"]) == 2 and r["segments"][1]["startMs"] == r["segments"][0]["endMs"]
         assert len(r["preview"]["world"]) == len(r["preview"]["screen"]) > len(wf)
 
@@ -173,3 +176,70 @@ class TestBakeAssetWorld:
         g.has_depth = False
         r = bake_asset(self._doc(), g)
         assert r["keyframes"] == [] and any("深度" in w for w in r["warnings"])
+
+
+class TestCurveOriginIsAuthored:
+    """曲线原点是**作者摆的点**，不是第一帧（2026-09-11 制作人第二轮打回）。
+
+    第一版把原点钉死成第一帧：作者调一下运动起点，整条曲线在播放时就整体位移了
+    ——因为帧是相对原点写的，而原点跟着起点跑。判据：**摆了原点就以它为准**，
+    调起点只改"起点相对原点的偏移"，曲线其余部分与原点的关系一个 wu 都不许动。
+    """
+
+    def _doc(self, **authoring) -> dict:
+        au = {"sceneId": "fake", "contactOffsetY": 7}
+        au.update(authoring)
+        return {
+            "id": "t", "space": "world",
+            "source": {"segments": [_phys()], "bake": {"sampleHz": 60}},
+            "authoring": au,
+        }
+
+    def test_authored_origin_is_kept_and_frames_are_relative_to_it(self) -> None:
+        g = FakeGeom()
+        base = bake_asset(self._doc(), g)
+        o = base["authoring"]["originWorld"]
+        assert (base["worldKeyframes"][0]["x"], base["worldKeyframes"][0]["z"]) == (0, 0), \
+            "没摆原点：回填成曲线起点，首帧仍是 (0,0)"
+
+        # 作者把原点挪到起点旁边 100 / −50 wu 处
+        moved = bake_asset(self._doc(originWorld={"x": o["x"] + 100, "y": o["y"], "z": o["z"] - 50}), g)
+        assert moved["authoring"]["originWorld"]["x"] == o["x"] + 100, "作者摆的原点不许被第一帧顶掉"
+        wf0, wf1 = base["worldKeyframes"], moved["worldKeyframes"]
+        assert len(wf0) == len(wf1)
+        # 形状一个 wu 都不动：每一帧都整体平移了同一个量
+        for a, b in zip(wf0, wf1):
+            assert abs((b["x"] - a["x"]) - (-100)) < 0.011, (a, b)
+            assert abs((b["z"] - a["z"]) - 50) < 0.011, (a, b)
+            assert abs(b["h"] - a["h"]) < 1e-9, "离地高与原点无关"
+
+    def test_moving_the_start_does_not_move_the_origin(self) -> None:
+        """制作人那句话的直接判据：调运动起点，原点与曲线其余部分的关系不变。"""
+        g = FakeGeom()
+        doc = self._doc()
+        first = bake_asset(doc, g)
+        origin = first["authoring"]["originWorld"]
+
+        # 把第 0 段起点往前挪 40 wu（作者"调整运动起点"），原点原样带上
+        doc2 = self._doc(originWorld=origin)
+        doc2["source"]["segments"][0] = _phys(startFrom="explicit", start={"x": 40.0, "z": 0.0, "h": 10.0})
+        moved = bake_asset(doc2, g)
+        assert moved["authoring"]["originWorld"] == origin, "原点不许跟着起点跑"
+        # 起点相对原点的偏移变了（这才是作者要的），且正是他挪的那 40 wu
+        assert abs(moved["worldKeyframes"][0]["x"] - first["worldKeyframes"][0]["x"] - 40) < 0.011
+
+    def test_screen_space_authored_origin(self) -> None:
+        g = FakeGeom()
+        doc = {
+            "id": "t", "space": "screen",
+            "source": {"segments": [{"id": "m", "kind": "manual", "startFrom": "explicit",
+                                     "start": {"x": 100, "y": 200},
+                                     "path": {"points": [{"x": 100, "y": 200}, {"x": 180, "y": 200}]},
+                                     "timing": {"durationMs": 500, "keys": []}}],
+                       "bake": {"sampleHz": 60}},
+            "authoring": {"sceneId": "fake", "origin": {"x": 60, "y": 200}},
+        }
+        r = bake_asset(doc, g)
+        assert r["authoring"]["origin"] == {"x": 60, "y": 200}
+        assert r["keyframes"][0]["x"] == 40, "首帧 = 起点 − 原点，不再恒为 0"
+        assert abs(r["keyframes"][-1]["x"] - 120) < 0.011

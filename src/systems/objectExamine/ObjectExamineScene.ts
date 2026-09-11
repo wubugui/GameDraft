@@ -3,6 +3,7 @@ import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { EventBus } from '../../core/EventBus';
 import type { Renderer } from '../../rendering/Renderer';
 import type { ActionDef } from '../../data/types';
+import { audioCueId, audioCueVolume } from '../../data/audioCue';
 import { MinigameActionPlaybackGate } from '../minigameSession';
 import { canvasPointFromEvent } from '../../ui/uiPointerCoords';
 import type {
@@ -17,7 +18,9 @@ import type {
 import {
   OBJECT_EXAMINE_BG_COVER_BASE,
   OBJECT_EXAMINE_CINNABAR_MARK_URL,
+  OBJECT_EXAMINE_CLICK_SFX_DEFAULT_VOLUME,
   OBJECT_EXAMINE_FLY_BUZZ_AMBIENT_ID,
+  OBJECT_EXAMINE_HOVER_SFX_DEFAULT_VOLUME,
   OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM,
   isObjectExamineRealHotspot,
   resolveObjectExamineAmbience,
@@ -1397,7 +1400,8 @@ export class ObjectExamineScene {
     ) {
       return;
     }
-    const sfx = this.instance?.audio?.hoverSfx?.trim();
+    const hoverCue = this.instance?.audio?.hoverSfx;
+    const sfx = audioCueId(hoverCue);
     if (!sfx) return;
     const { x: vx, y: vy, w: vw, h: vh } = this.viewRect;
     if (
@@ -1415,15 +1419,22 @@ export class ObjectExamineScene {
     if (id !== this.hoveredHotspotId) {
       this.hoveredHotspotId = id;
       if (id && this.hoverSfxCooldown <= 0) {
-        this.runtime.playSfx?.(sfx, 0.35);
+        // 本处音量优先于内置默认——检视是安静场景，作者要再压一档就写在数据里，不改这行。
+        this.runtime.playSfx?.(
+          sfx,
+          audioCueVolume(hoverCue) ?? OBJECT_EXAMINE_HOVER_SFX_DEFAULT_VOLUME,
+        );
         this.hoverSfxCooldown = HOVER_SFX_COOLDOWN;
       }
     }
   }
 
   private playClickSfx(): void {
-    const sfx = this.instance?.audio?.clickSfx?.trim();
-    if (sfx) this.runtime.playSfx?.(sfx, 0.55);
+    const cue = this.instance?.audio?.clickSfx;
+    const sfx = audioCueId(cue);
+    if (sfx) {
+      this.runtime.playSfx?.(sfx, audioCueVolume(cue) ?? OBJECT_EXAMINE_CLICK_SFX_DEFAULT_VOLUME);
+    }
   }
 
   private async handleClickAt(sx: number, sy: number): Promise<void> {

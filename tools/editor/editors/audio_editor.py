@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 from .. import theme
 from ..project_model import ProjectModel
 from ..shared import audio_library as lib
+from ..shared import audio_cue
 from ..shared.audio_preview_selector import AudioIdPreviewSelector
 from ..shared.audio_transport import AudioTransportBar
 from ..shared.dialog_geometry import remember_dialog_geometry
@@ -817,14 +818,25 @@ class _SystemSfxTab(QWidget):
         it = self._table.item(row, 0)
         return it.text().strip() if it else ""
 
-    def _make_sfx_selector(self, initial_id: str) -> AudioIdPreviewSelector:
+    def _make_sfx_selector(self, raw: object) -> AudioIdPreviewSelector:
+        """一行一条系统音：id + **本处音量**。
+
+        同一条素材当确认音要清脆、当悬停音就得压到三分之一——以前只能在音频目录里
+        复制一份改 volume（于是同一个 wav 在目录里有两三个 id）。
+        """
+        initial_id = audio_cue.cue_id(raw)
         items = [(sid, sid) for sid in self._model.all_audio_ids("sfx")]
         if initial_id and all(x[0] != initial_id for x in items):
             items = [(initial_id, initial_id)] + items
-        sel = AudioIdPreviewSelector(self._model, "sfx", self, allow_empty=True, editable=True)
+        sel = AudioIdPreviewSelector(
+            self._model, "sfx", self, allow_empty=True, editable=True, with_volume=True,
+        )
         sel.set_items(items)
-        sel.set_current(initial_id)
-        sel.setToolTip("systemSfx 使用的 sfx id；点开可搜索试听，右侧 ▶ 直接听当前值。")
+        sel.set_cue(raw)
+        sel.setToolTip(
+            "systemSfx 使用的 sfx id；点开可搜索试听，右侧 ▶ 直接听当前值。\n"
+            "中间那格是**本处音量**：只压这一条事件音，不影响这条素材在别处的响度。",
+        )
         return sel
 
     def _refresh(self) -> None:
@@ -832,9 +844,9 @@ class _SystemSfxTab(QWidget):
         if not isinstance(entries, dict):
             entries = {}
         self._table.setRowCount(len(entries))
-        for i, (key, sfx_id) in enumerate(entries.items()):
+        for i, (key, raw) in enumerate(entries.items()):
             self._table.setCellWidget(i, 0, self._make_key_selector(str(key)))
-            self._table.setCellWidget(i, 1, self._make_sfx_selector(str(sfx_id or "")))
+            self._table.setCellWidget(i, 1, self._make_sfx_selector(raw))
         # 重新套用搜索过滤，使 setRowHidden 与新内容一致
         self._filter_rows(self._search.text())
 
@@ -858,7 +870,7 @@ class _SystemSfxTab(QWidget):
         r = self._table.rowCount()
         self._table.insertRow(r)
         self._table.setCellWidget(r, 0, self._make_key_selector(""))
-        self._table.setCellWidget(r, 1, self._make_sfx_selector(""))
+        self._table.setCellWidget(r, 1, self._make_sfx_selector(None))
 
     def _delete(self) -> None:
         r = self._table.currentRow()
@@ -883,18 +895,22 @@ class _SystemSfxTab(QWidget):
             return True
         return super().eventFilter(obj, event)
 
-    def _build_mapping(self) -> dict[str, str]:
-        out: dict[str, str] = {}
+    def _build_mapping(self) -> dict:
+        """值 = 裸 id 或 ``{id, volume}``（本处音量非中性时）。未知键原样保留。"""
+        out: dict = {}
         for i in range(self._table.rowCount()):
             key = self._key_at(i)
+            if not key:
+                continue
             sel = self._table.cellWidget(i, 1)
-            sfx_id = (
-                sel.current_id().strip()
-                if isinstance(sel, (IdRefSelector, AudioIdPreviewSelector))
-                else ""
-            )
-            if key:
-                out[key] = sfx_id
+            if isinstance(sel, AudioIdPreviewSelector):
+                built = sel.cue_for_write()
+                # 清空 id = 这一行留着但没有音（与旧行为一致：写空串而不是删行）
+                out[key] = "" if built is None else built
+            elif isinstance(sel, IdRefSelector):
+                out[key] = sel.current_id().strip()
+            else:
+                out[key] = ""
         return out
 
     def _is_dirty(self) -> bool:
@@ -917,7 +933,7 @@ class _SystemSfxTab(QWidget):
             if cur and all(x[0] != cur for x in row_items):
                 row_items = [(cur, cur)] + row_items
             sel.set_items(row_items)
-            sel.set_current(cur)
+            sel.set_current(cur)   # 音量不动：刷候选不该碰用户刚调的响度
 
     def _apply(self) -> None:
         out = self._build_mapping()

@@ -1,0 +1,6 @@
+# 制作人手册(本地文档站,handbook/)。三件都在 .tools/wheelhouse_py311 里有离线 wheel:
+#   sh scripts/py.sh -m pip install --no-index --find-links .tools/wheelhouse_py311 -r tools/handbook/requirements.txt
+mkdocs-material>=9.7
+pymdown-extensions>=10.0
+# 中文分词:search 插件 lang: zh 的实现;jieba 只有 sdist,wheelhouse 里那份是本机打的
+jieba>=0.42

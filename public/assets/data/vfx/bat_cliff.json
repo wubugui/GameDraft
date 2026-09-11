@@ -1,0 +1,70 @@
+{
+  "id": "bat_cliff",
+  "label": "崖墓蝙蝠群",
+  "emitters": [
+    {
+      "id": "bats",
+      "appearance": {
+        "animFile": "/resources/runtime/animation/fx_bat/anim.json",
+        "state": "fly",
+        "restState": "hang",
+        "sizeWu": 34,
+        "sizeJitter": [
+          0.85,
+          1.15
+        ],
+        "blend": "normal",
+        "lit": true,
+        "faceVelocity": true
+      },
+      "spawn": {
+        "max": 180
+      },
+      "behavior": {
+        "cruise": 400,
+        "max": 700,
+        "maxAccel": 2600,
+        "minAltitude": 60,
+        "senseRadius": 170,
+        "separation": 42,
+        "accel": {
+          "separation": 2000,
+          "alignment": 800,
+          "cohesion": 600
+        },
+        "orbit": {
+          "radius": 320,
+          "height": 210,
+          "handedness": "mixed"
+        },
+        "home": {
+          "nestRadius": 120,
+          "rangeRadius": 620,
+          "startleRadius": 430
+        },
+        "attitude": {
+          "fear": {
+            "item:bug": 1.0,
+            "player:motion": 0.35,
+            "light": 0.6,
+            "sfx:footstep": 0.15
+          },
+          "reactionDelay": [
+            0.05,
+            0.25
+          ],
+          "fearDecay": 0.35,
+          "fleeThreshold": 0.25,
+          "calmSeconds": 6
+        },
+        "initialState": "roosting",
+        "wingFlap": {
+          "atCruise": 8,
+          "atMax": 14
+        },
+        "speedJitter": 0.15,
+        "wander": 300
+      }
+    }
+  ]
+}

@@ -308,7 +308,12 @@ _REGISTRY_FILES: tuple[tuple[str, str, object], ...] = (
     (
         "assets/data/overlay_images.json",
         "注册表 overlay_images（短 id → 图，Game.ts resolveOverlayImage）",
-        lambda data: list(data.values()) if isinstance(data, dict) else [],
+        # 一条有两种形态：老写法值即路径；带叠图音配置的写成对象，路径在 image。
+        # 只认字符串会让所有带音效的条目静默不进包（dev 服看得见、包里没图）。
+        lambda data: [
+            (v if isinstance(v, str) else v.get("image") if isinstance(v, dict) else None)
+            for v in data.values()
+        ] if isinstance(data, dict) else [],
     ),
     (
         "assets/data/prop_presets.json",

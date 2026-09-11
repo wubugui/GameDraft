@@ -26,6 +26,13 @@ for p in (str(REPO), str(HERE)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+from tools.webengine_cache_policy import (  # noqa: E402
+    apply_no_cache, disable_all_caches,
+)
+
+# 必须排在任何 WebEngine import 之前:Chromium 的开关只在初始化时读一次。
+disable_all_caches()
+
 from PySide6.QtCore import QUrl, Qt, QTimer  # noqa: E402
 from PySide6.QtGui import QAction, QKeySequence  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
@@ -73,7 +80,7 @@ class Window(QMainWindow):
 
         # off-the-record:不落磁盘、不留 cookie
         self.profile = QWebEngineProfile(self)
-        self.profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+        apply_no_cache(self.profile)          # 全仓统一口径,含 setCachePath('')
         self.profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
         self.profile.setHttpCacheMaximumSize(1)

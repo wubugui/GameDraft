@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GameDraft「JSON=语言」工具链:启动刷新式 schema 生成器。
 
-    python3 tools/json_lang/build.py [--watch] [--validate] [--check]
+    sh scripts/py.sh -m tools.json_lang.build [--watch] [--validate] [--check]
 
 像 IDE 建索引一样:从权威代码 + 真实数据现场重算,输出
 tools/json_lang/out/gamedraft-data.schema.json(生成物,不入库)。
@@ -22,10 +22,17 @@ import os
 import sys
 import time
 from pathlib import Path
+
+if __package__ in (None, ""):
+    # 直接按路径跑(python tools/json_lang/build.py)时,sys.path 上只有本文件所在
+    # 目录,仓库根不在其中 → 下面的 `from tools.atomic_io import …` 会
+    # ModuleNotFoundError。两条都补上,脚本模式与 -m 模式等价。
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from tools.atomic_io import retry_transient
 
 if __package__ in (None, ""):
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
     import extract as _extract_mod
     from extract import extract_language_spec
     from id_universes import collect_id_universes

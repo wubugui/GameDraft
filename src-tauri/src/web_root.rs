@@ -144,16 +144,29 @@ pub fn handle_request(
         return not_found(&format!("找不到：{path}"));
     }
     match fs::read(&disk) {
-        Ok(bytes) => tauri::http::Response::builder()
-            .status(200)
-            .header("Content-Type", content_type_for(&disk))
-            // 内容随 exe 一起发，版本固定；这里可以放心长缓存
-            .header("Cache-Control", "public, max-age=31536000, immutable")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(bytes)
-            .unwrap_or_else(|_| not_found("构造响应失败")),
+        Ok(bytes) => ok_response(bytes, content_type_for(&disk)),
         Err(e) => not_found(&format!("读取失败 {}: {e}", disk.display())),
     }
+}
+
+/// 一个字节都不许进 webview 的缓存(制作人 2026-09-08 定死:桌面窗口一律禁缓存)。
+///
+/// 这里原来发的是 `public, max-age=31536000, immutable`，理由写的是"内容随 exe 一起发、
+/// 版本固定"。两处站不住：
+///
+/// 1. 内容在 **exe 旁边的 `game/` 文件夹**里(见模块头),换一张图不换文件名正是这套设计的
+///    卖点——`immutable` 等于允许 WebView2 在一年内理直气壮地喂旧字节;
+/// 2. 缓存在这里买不到任何东西:文件本来就躺在本机磁盘上,走一层缓存只是把同一份数据抄进
+///    WebView2 的缓存目录再读回来,却换来一整类**"缓存烂了 → 玩家一屏黑、且毫无线索"**
+///    的故障(2026-09-08 编辑器预览窗被 Chromium 那份磁盘缓存坑掉一整天,就是这一类)。
+fn ok_response(bytes: Vec<u8>, content_type: &'static str) -> tauri::http::Response<Vec<u8>> {
+    tauri::http::Response::builder()
+        .status(200)
+        .header("Content-Type", content_type)
+        .header("Cache-Control", "no-store")
+        .header("Access-Control-Allow-Origin", "*")
+        .body(bytes)
+        .unwrap_or_else(|_| not_found("构造响应失败"))
 }
 
 fn not_found(msg: &str) -> tauri::http::Response<Vec<u8>> {
@@ -177,8 +190,16 @@ fn not_found(msg: &str) -> tauri::http::Response<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{content_type_for, percent_decode, safe_join};
+    use super::{content_type_for, ok_response, percent_decode, safe_join};
     use std::path::Path;
+
+    #[test]
+    fn 游戏内容一律不进缓存() {
+        // 桌面窗口禁缓存是规矩,不是优化选项:这条头一旦变回 max-age/immutable,
+        // 玩家机器上就会再长出一份能烂掉、且烂了没有任何线索的游戏副本。
+        let res = ok_response(b"x".to_vec(), "text/plain");
+        assert_eq!(res.headers().get("Cache-Control").unwrap(), "no-store");
+    }
 
     #[test]
     fn 空路径落到_index_html() {

@@ -66,6 +66,9 @@ def test_reference_catalog_reload_isolates_one_broken_editor():
             owner, inst, **kw,
         )
     )
+    owner._refresh_open_pages_after_disk_change = (
+        lambda: main_window.MainWindow._refresh_open_pages_after_disk_change(owner)
+    )
 
     main_window.MainWindow._reload_all_reference_catalogs(owner)
 
@@ -157,6 +160,9 @@ def test_catalog_reload_only_force_refreshes_the_visible_page():
             owner, inst, **kw,
         )
     )
+    owner._refresh_open_pages_after_disk_change = (
+        lambda: main_window.MainWindow._refresh_open_pages_after_disk_change(owner)
+    )
 
     main_window.MainWindow._reload_all_reference_catalogs(owner)
 
@@ -183,15 +189,21 @@ def test_dialogue_process_exit_refreshes_and_stops_watch_timer():
         # 音频加工台也登记在这张监视表里：它退出时必须重读 audio_config.json，
         # 否则它改好的 src 会被主编辑器下一次 Save All 用内存里的旧值盖掉。
         _resync_audio_config_from_disk=lambda: events.append("audio"),
+        # 轨迹工作台同表登记（2026-09-11）：它退出时必须重读 assets/data/trajectories/，
+        # 且**排在目录刷新之前**——控件重建要用的就是那份刚换上的只读镜像。
+        _resync_trajectories_from_disk=lambda: events.append("traj"),
+        # 粒子工作台同理（2026-09-11）：它是 assets/data/vfx/ 的唯一写者，退出时不重读，
+        # 它新建的效果在场景页 vfx 实例的 effect 下拉里永远不出现，且不报任何错。
+        _resync_vfx_from_disk=lambda: events.append("vfx"),
     )
 
     main_window.MainWindow._poll_dialogue_external_processes(owner)
     assert len(owner._dialogue_external_processes) == 1
-    assert events == ["reload", "audio"]
+    assert events == ["traj", "vfx", "reload", "audio"]
 
     owner._dialogue_external_processes[0].running = False
     main_window.MainWindow._poll_dialogue_external_processes(owner)
-    assert events == ["reload", "audio", "reload", "audio", "stop"]
+    assert events == ["traj", "vfx", "reload", "audio", "traj", "vfx", "reload", "audio", "stop"]
 
 
 def test_voice_workbench_launches_the_right_module_with_the_project_root(tmp_path):

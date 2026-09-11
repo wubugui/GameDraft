@@ -24,6 +24,25 @@ function findRoot() {
   return null;
 }
 
+// 解析 python 解释器:优先项目 venv(与 scripts/py.sh 同口径),其次 PATH 上
+// 真能执行的 python3/python。背景:部分 Windows 机上 python3 是 MS Store 占位
+// stub,spawn 出来静默失败,LSP 就永远起不来且看不出原因。
+function resolvePython(root) {
+  const fs = require('fs');
+  const venv = [
+    path.join(root, '.tools', 'venv', 'Scripts', 'python.exe'),
+    path.join(root, '.tools', 'venv', 'bin', 'python'),
+  ];
+  for (const p of venv) {
+    if (fs.existsSync(p)) return p;
+  }
+  for (const cand of ['python3', 'python']) {
+    const probe = cp.spawnSync(cand, ['-c', ''], { stdio: 'ignore' });
+    if (!probe.error && probe.status === 0) return cand;
+  }
+  return null;
+}
+
 function send(msg) {
   if (!child || child.killed) return;
   const body = Buffer.from(JSON.stringify(msg), 'utf8');
@@ -107,9 +126,21 @@ function docParams(document, position) {
 
 async function startServer(context, root) {
   out = vscode.window.createOutputChannel('GameDraft JSON');
-  child = cp.spawn('python3', [path.join(root, SERVER_REL)], { cwd: root });
+  const py = resolvePython(root);
+  if (!py) {
+    out.appendLine('找不到可用的 python:.tools/venv 缺失,且 python3/python 均不可真实执行');
+    out.show(true);
+    return false;
+  }
+  out.appendLine(`lsp_server 解释器:${py}`);
+  child = cp.spawn(py, [path.join(root, SERVER_REL)], { cwd: root });
   child.stdout.on('data', onData);
   child.stderr.on('data', (d) => out.appendLine(String(d)));
+  child.on('error', (err) => {
+    initialized = false;
+    out.appendLine(`lsp_server 启动失败(${py}):${err && err.message}`);
+    out.show(true);
+  });
   child.on('exit', (code) => {
     initialized = false;
     out.appendLine(`lsp_server 退出 code=${code}(reload window 可重启)`);

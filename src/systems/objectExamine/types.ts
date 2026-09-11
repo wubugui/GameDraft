@@ -1,4 +1,4 @@
-import type { ActionDef } from '../../data/types';
+import type { ActionDef, AudioCueRef } from '../../data/types';
 
 /** index.json 条目（与纸扎/转盘同形）。 */
 export interface ObjectExamineIndexEntry {
@@ -278,12 +278,22 @@ export interface ObjectExamineSmellConfig {
   flicker?: boolean;
 }
 
-/** 检视音效；缺省全静音。id 须在 audio_config 登记。 */
+/**
+ * 检视音效；缺省全静音。id 须在 audio_config 登记。
+ *
+ * `hoverSfx` / `clickSfx` 可写 `{ id, volume }` 定**本处音量**；不写就用下面这两个内置默认
+ * （检视是安静场景，悬停/点击音一律压得比常规 UI 音低，否则扫一遍热点就是一串敲击）。
+ */
 export interface ObjectExamineAudioConfig {
   ambient?: string;
-  hoverSfx?: string;
-  clickSfx?: string;
+  hoverSfx?: AudioCueRef;
+  clickSfx?: AudioCueRef;
 }
+
+/** `hoverSfx` 没写本处音量时的默认（历史写死值，提出来避免两处漂）。 */
+export const OBJECT_EXAMINE_HOVER_SFX_DEFAULT_VOLUME = 0.35;
+/** `clickSfx` 没写本处音量时的默认。 */
+export const OBJECT_EXAMINE_CLICK_SFX_DEFAULT_VOLUME = 0.55;
 
 /** 托底默认铺开：相对 max(物件宽,高) 的倍数（再乘 presentation.backgroundScale）。 */
 export const OBJECT_EXAMINE_BG_COVER_BASE = 1.28;

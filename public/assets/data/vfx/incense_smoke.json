@@ -1,0 +1,106 @@
+{
+  "id": "incense_smoke",
+  "label": "香火烟",
+  "emitters": [
+    {
+      "id": "smoke",
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/smoke_puff.png",
+        "sizeWu": 26,
+        "sizeJitter": [
+          0.7,
+          1.3
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.3
+          ],
+          [
+            0.4,
+            1
+          ],
+          [
+            1,
+            2.1
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.08,
+            0.75
+          ],
+          [
+            0.55,
+            0.6
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.85,
+          0.85,
+          0.88
+        ],
+        "lit": true,
+        "softEdgeWu": 25,
+        "spin": {
+          "rate": [
+            -20,
+            20
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 110,
+        "rate": 16,
+        "shape": {
+          "kind": "disc",
+          "radius": 3
+        },
+        "speed": [
+          8,
+          18
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 12
+      },
+      "motion": {
+        "drag": 0.9,
+        "wind": [
+          6,
+          0,
+          0
+        ],
+        "buoyancy": 40,
+        "turbulence": {
+          "strength": 60,
+          "scale": 60,
+          "speed": 0.25
+        },
+        "maxSpeed": 60
+      },
+      "life": {
+        "seconds": [
+          5,
+          7.5
+        ]
+      },
+      "collision": {
+        "shell": "slide",
+        "radiusWu": 4
+      }
+    }
+  ]
+}

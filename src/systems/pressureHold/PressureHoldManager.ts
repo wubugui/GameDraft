@@ -2,6 +2,7 @@ import type { ActionExecutor } from '../../core/ActionExecutor';
 import type { AssetManager } from '../../core/AssetManager';
 import type { GameContext, IGameSystem } from '../../data/types';
 import { TEXT_URLS } from '../../core/projectPaths';
+import { normalizeAudioCue } from '../../data/audioCue';
 import { clamp01, validateInterruptChain } from './holdProgress';
 import type { PressureHoldDef, PressureHoldInterruptDef, PressureHoldOutcome } from './types';
 
@@ -136,8 +137,15 @@ export class PressureHoldManager implements IGameSystem {
     const barColor = parseHexColor(def.barColor);
     const decay = def.decayPerSecond ?? DEFAULT_DECAY_PER_SECOND;
 
-    if (def.holdSfx) {
-      await this.actionExecutor.executeAwait({ type: 'playSfx', params: { id: def.holdSfx } });
+    // 本处音量直接透传给 playSfx（同一条参数，不另开通道）；没写就不写这个键。
+    const holdCue = normalizeAudioCue(def.holdSfx);
+    if (holdCue) {
+      await this.actionExecutor.executeAwait({
+        type: 'playSfx',
+        params: holdCue.volume === undefined
+          ? { id: holdCue.id }
+          : { id: holdCue.id, volume: holdCue.volume },
+      });
     }
 
     let startRatio = 0;

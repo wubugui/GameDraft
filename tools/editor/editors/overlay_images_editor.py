@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QScrollArea,
+    QCheckBox,
     QLineEdit,
     QPushButton,
     QLabel,
@@ -17,12 +18,41 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
+from ..shared.audio_preview_selector import AudioIdPreviewSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
 
 
+def _sfx_pairs(model: ProjectModel) -> list[tuple[str, str]]:
+    """audio_config.sfx 的 (id, 显示名) 列表，喂给音效选择器。"""
+    cfg = getattr(model, "audio_config", None) or {}
+    sfx = cfg.get("sfx") if isinstance(cfg, dict) else None
+    if not isinstance(sfx, dict):
+        return []
+    return [(str(k), str(k)) for k in sfx.keys()]
+
+
+def _is_overlay_def(value: Any) -> bool:
+    """这个对象是不是本页认得的叠图条目（``{image, playSfx, sfx}``）。
+
+    判据只看有没有字符串 ``image``。形状不认识的对象（agent 手写、未来 schema）
+    仍走透传：本页不显示、不碰，原样并回——否则会给别人的结构塞进 ``image: ""``。"""
+    return isinstance(value, dict) and isinstance(value.get("image"), str)
+
+
+def _entry_path(value: Any) -> str:
+    """一条登记的图片路径。值有两种形态：老写法是字符串（值即路径），
+    带音效配置的写成对象（路径在 ``image``）。两种都合法，见 src/data/overlayImages.ts。"""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        img = value.get("image")
+        return img.strip() if isinstance(img, str) else ""
+    return ""
+
+
 def _rows_to_dict(
-    rows: list[tuple[str, str]], *, tolerant: bool = False,
-) -> tuple[dict[str, str] | None, str | None]:
+    rows: list[tuple[str, Any]], *, tolerant: bool = False,
+) -> tuple[dict[str, Any] | None, str | None]:
     """从表格行生成 dict；若短 id 重复或为空则返回 (None, 错误说明)。
 
     - 短 id 与路径均为空的行始终忽略（未填完的占位行）。
@@ -31,11 +61,11 @@ def _rows_to_dict(
     - tolerant=False（用户在本页 Apply 时）：短 id 为空但填了路径的行报错，给在场反馈。
     - 两种模式都对「短 id 重复」报错——重复会静默覆盖丢数据，必须拦。"""
     seen: set[str] = set()
-    out: dict[str, str] = {}
+    out: dict[str, Any] = {}
     logical_i = 0
-    for kid, pth in rows:
+    for kid, val in rows:
         k = (kid or "").strip()
-        pt = (pth or "").strip()
+        pt = _entry_path(val)
         if not k and not pt:
             continue
         if not k:
@@ -47,22 +77,26 @@ def _rows_to_dict(
         if k in seen:
             return None, f"短 id 重复：「{k}」（每一行的短 id 必须唯一）"
         seen.add(k)
-        out[k] = pt
+        out[k] = val
     return out, None
 
 
 class _OneRow(QWidget):
-    """单行：短 id + 图片路径 + 删除。"""
+    """单行：短 id + 图片路径 + 叠图音（播不播 / 播哪条） + 删除。"""
 
     def __init__(
         self,
         model: ProjectModel,
         short_id: str,
-        path: str,
+        value: Any,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._model = model
+        #: 这条原本的形态。原来就是对象的，回写仍写对象并保留本页管不到的字段
+        #: （往返保真：编辑器绝不因为"我不认识"就把作者写的键删掉）。
+        self._orig: Any = deepcopy(value) if isinstance(value, dict) else None
+        path = _entry_path(value)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 4, 0, 4)
         lay.addWidget(QLabel("短 id"))
@@ -89,6 +123,37 @@ class _OneRow(QWidget):
             "路径以 / 开头（/assets/… 或 /resources/…）；改完别忘 Apply + Ctrl+S。",
         )
         lay.addWidget(self._path_row, stretch=1)
+
+        # —— 叠图音：这张图叠上来（show / blend 的目标图）时响什么 ——
+        # 勾上 + 不选具体音 = 走全局默认叠图音；勾上 + 选了音 = 只响这条（不叠全局）；
+        # 不勾 = 这一条永远不响（连全局默认也跳过）。真正发声在运行时的系统音效事件表里。
+        cfg = value if isinstance(value, dict) else {}
+        self._play_sfx = QCheckBox("音效")
+        self._play_sfx.setChecked(cfg.get("playSfx") is not False)
+        self._play_sfx.setToolTip(
+            "这张图叠上来时响不响。\n"
+            "勾上、右边不选 = 播全局默认叠图音（systemSfx.overlayShow / overlayBlend）。\n"
+            "勾上、右边选一条 = 只播这条，不再叠全局默认音。\n"
+            "不勾 = 这一条永远不响，连全局默认也跳过。\n"
+            "叠化（blendOverlayImage）按**目标图**这一条的设置发声。",
+        )
+        lay.addWidget(self._play_sfx)
+
+        self._sfx = AudioIdPreviewSelector(
+            model, "sfx", self, allow_empty=True, editable=True,
+        )
+        self._sfx.setMinimumWidth(150)
+        sfx_cfg = cfg.get("sfx")
+        self._sfx.set_items(_sfx_pairs(model))
+        self._sfx.set_current(sfx_cfg.strip() if isinstance(sfx_cfg, str) else "")
+        self._sfx.setToolTip(
+            "这一条专属的音效 id（来自 audio_config.sfx）。留空 = 用全局默认叠图音。\n"
+            "右侧按钮可直接试听。",
+        )
+        lay.addWidget(self._sfx)
+        self._play_sfx.toggled.connect(self._sync_sfx_enabled)
+        self._sync_sfx_enabled()
+
         self._del = QPushButton("删除")
         self._del.setFixedWidth(56)
         self._del.setToolTip("删除此条短 id 映射")
@@ -100,11 +165,37 @@ class _OneRow(QWidget):
         if self._delete_handler is not None:
             self._delete_handler()
 
+    def _sync_sfx_enabled(self) -> None:
+        """不播音效时把选择器灰掉——留着值但明确它不生效，比清空更少丢东西。"""
+        self._sfx.setEnabled(self._play_sfx.isChecked())
+
     def id_text(self) -> str:
         return self._id_edit.text()
 
     def path_text(self) -> str:
         return self._path_row.path()
+
+    def value(self) -> Any:
+        """回写这一条：**没有任何音效配置时仍写字符串**。
+
+        这样既有的几十条老登记打开-保存不会集体变成对象（往返保真），
+        只有真配了音效的那几条才升级成对象形态。"""
+        path = self._path_row.path().strip()
+        play = self._play_sfx.isChecked()
+        sfx = (self._sfx.current_id() or "").strip()
+        if self._orig is None and play and not sfx:
+            return path
+        out: dict[str, Any] = deepcopy(self._orig) if isinstance(self._orig, dict) else {}
+        out["image"] = path
+        if play:
+            out.pop("playSfx", None)
+        else:
+            out["playSfx"] = False
+        if sfx and play:
+            out["sfx"] = sfx
+        else:
+            out.pop("sfx", None)
+        return out
 
     def set_delete_handler(self, fn: Callable[[], None]) -> None:
         self._delete_handler = fn
@@ -135,7 +226,7 @@ class OverlayImagesEditor(QWidget):
         self._status.setWordWrap(True)
         root.addWidget(self._status)
 
-        # 非字符串值条目（agent 手写/未来 schema）：本页不显示、不 str() 摧毁，
+        # 既不是字符串也不是对象的条目（agent 手写/未来 schema）：本页不显示、不 str() 摧毁，
         # Apply / 保存时按原键序原样透传。
         self._passthrough_values: dict[str, Any] = {}
         self._model_key_order: list[str] = []
@@ -213,14 +304,14 @@ class OverlayImagesEditor(QWidget):
         if not isinstance(ov, dict):
             ov = {}
         # 保留模型(=磁盘文件)的既有键序，避免「打开即重排」改动导出 JSON 的键顺序。
-        # 非字符串值不铺行（str() 会把 dict/list/数值/null 摧毁成字符串再写回），
+        # 字符串与「认得出的叠图条目对象」铺行；其余（形状不认识的对象/list/数值/null）不铺，
         # 记入透传表，Apply / flush 时按原键序原样并回。
         self._passthrough_values = {}
         self._model_key_order = []
         for k in ov.keys():
             v = ov.get(k)
             self._model_key_order.append(str(k))
-            if isinstance(v, str):
+            if isinstance(v, str) or _is_overlay_def(v):
                 self._append_row(str(k), v)
             else:
                 self._passthrough_values[str(k)] = deepcopy(v)
@@ -228,7 +319,7 @@ class OverlayImagesEditor(QWidget):
             names = "、".join(list(self._passthrough_values)[:8])
             more = "…" if len(self._passthrough_values) > 8 else ""
             self._passthrough_note.setText(
-                f"{len(self._passthrough_values)} 条非字符串值条目未在本页显示"
+                f"{len(self._passthrough_values)} 条本页不认识形状的条目未在本页显示"
                 f"（{names}{more}），Apply / 保存时按原样保留。")
             self._passthrough_note.setVisible(True)
         else:
@@ -253,8 +344,8 @@ class OverlayImagesEditor(QWidget):
             else:
                 w.setHidden(q not in (w.id_text() or "").lower())
 
-    def _append_row(self, short_id: str, path: str) -> None:
-        row = _OneRow(self._model, short_id, path)
+    def _append_row(self, short_id: str, value: Any) -> None:
+        row = _OneRow(self._model, short_id, value)
         insert_at = self._rows_layout.count() - 1
         self._rows_layout.insertWidget(insert_at, row)
         self._row_widgets.append(row)
@@ -283,8 +374,8 @@ class OverlayImagesEditor(QWidget):
         self._apply_filter()
         self._update_empty_hint()
 
-    def _collect_rows(self) -> list[tuple[str, str]]:
-        return [(w.id_text(), w.path_text()) for w in self._row_widgets]
+    def _collect_rows(self) -> list[tuple[str, Any]]:
+        return [(w.id_text(), w.value()) for w in self._row_widgets]
 
     def _check_duplicate_hint(self) -> None:
         ids = []
@@ -306,8 +397,8 @@ class OverlayImagesEditor(QWidget):
             return
         self._status.setText("")
 
-    def _merged_with_passthrough(self, data: dict[str, str]) -> dict:
-        """把非字符串值条目按模型原键序原样并回（本页只编辑字符串条目）。"""
+    def _merged_with_passthrough(self, data: dict[str, Any]) -> dict:
+        """把本页管不了的条目按模型原键序原样并回（本页只编辑字符串/对象条目）。"""
         if not self._passthrough_values:
             return data
         rest = dict(data)
@@ -320,7 +411,7 @@ class OverlayImagesEditor(QWidget):
         out.update(rest)  # 新增/改名的行按行序补在末尾
         return out
 
-    def _passthrough_clash(self, data: dict[str, str]) -> list[str]:
+    def _passthrough_clash(self, data: dict[str, Any]) -> list[str]:
         return sorted(set(data) & set(self._passthrough_values))
 
     def _apply(self) -> None:
@@ -333,7 +424,7 @@ class OverlayImagesEditor(QWidget):
         if clash:
             QMessageBox.warning(
                 self, "overlay_images",
-                "短 id 与本页未显示的非字符串条目重复：" + "、".join(clash))
+                "短 id 与本页未显示的条目重复：" + "、".join(clash))
             return
         self._model.overlay_images = self._merged_with_passthrough(data)
         self._model.mark_dirty("overlay_images")
@@ -350,7 +441,7 @@ class OverlayImagesEditor(QWidget):
         clash = self._passthrough_clash(data)
         if clash:
             raise ValueError(
-                "overlay_images: 短 id 与非字符串条目重复：" + "、".join(clash))
+                "overlay_images: 短 id 与本页未显示的条目重复：" + "、".join(clash))
         merged = self._merged_with_passthrough(data)
         if merged != (self._model.overlay_images or {}):
             self._model.overlay_images = merged

@@ -950,9 +950,18 @@ function spawnWorld(){
 }
 
 // ------------------------------------------------------------- scene load
+/** 某场景烘焙产物的 URL 根。服务端回带 `dir`(= out/<场景>/<背景基名>),
+ *  因为 2026-08-30 起同一场景的每张背景各有一个工作目录 —— 前端再按
+ *  `/out/<场景名>/` 硬拼就是整片 404(画布空白、地形图打不开)。 */
+function outBase(nameOrMan){
+  const man=(typeof nameOrMan==='string')
+    ? ((S.scenes||[]).find(m=>m.name===nameOrMan)||{name:nameOrMan}) : nameOrMan;
+  const d=man.dir||man.name;
+  return '/out/'+String(d).split('/').map(encodeURIComponent).join('/');
+}
 async function loadScene(man){
   S.man=man;
-  const base=`/out/${encodeURIComponent(man.name)}`;
+  const base=outBase(man);
   // 每次 load 一个新 cache-bust 令牌:重烘后同名 png 被覆盖,Image 元素无法用 fetch 的 no-store,
   // 必须靠 query 破缓存,否则背景/gain/mask/hidden 图与几何一样喂旧帧(3D 不更新的姊妹坑)。
   const cb=`?t=${Date.now()}`;
@@ -1146,14 +1155,17 @@ async function loadScene(man){
   setSlider('rb_relief',man.params.relief??1.8);
   setSlider('rb_objthr',man.params.object_score_min??0.35);
   S.objScoreMin=+(man.params.object_score_min??0.35);
-  const rbf=$('rb_fold'); if(rbf) rbf.checked=!!(man.params.fold??1);
   const rbs=$('rb_sem'); if(rbs) rbs.checked=!!(man.params.semantic_gate??1);
   // HDR 恢复方法/参数:同步到烘焙值(否则 reload 后下拉回 method0,看着像"白改了")
   const hm=$('hdr_method'); if(hm){ S.hdrMethod=man.params.hdr_method??0; hm.value=String(S.hdrMethod); }
   setSlider('hdr_pa',man.params.hdr_pa??0.7); S.hdrPA=man.params.hdr_pa??0.7;
   const rf=$('fold'); if(rf){ rf.checked=!!(man.params.fold??1); S.fold=rf.checked?1:0; }
-  setSlider('rb_px',man.params.probe_nx); setSlider('rb_py',man.params.probe_ny);
-  setSlider('rb_pz',man.params.probe_nz); setSlider('rb_band',man.params.probe_band??1.6);
+  // probe 分布:2026-09-01 起 nx/ny/nz 与 band 全部由**角色实高**推出,
+  // 面板上留的是密度/盒高/采样数这三个真正被消费的旋钮。
+  setSlider('rb_cxz',man.params.probe_cells_per_char_xz??4);
+  setSlider('rb_cy',man.params.probe_cells_per_char_y??4);
+  setSlider('rb_hch',man.params.probe_height_chars??2);
+  setSlider('rb_spp',man.params.probe_spp??256);
   refreshDirtyMarks();     // 控件刚与已烘参数对齐 → 清掉全部改动标记与计数
   // 着色参数(非 bake)不在 manifest 里,得从**已导出的载荷**读回,否则面板显示的是
   // 写死初值 → 既看不到真值,存盘时还会把之前调好的覆盖掉。
@@ -1907,6 +1919,7 @@ async function refreshGeoStatus(name){
   }catch(e){ S.geoStale=false; }
   $('geo_warn').style.display=S.geoStale?'block':'none';
   refreshDirtyMarks();     // 几何过期与"参数未应用"合成同一个 dirty 信号
+  syncFieldsStale();       // 几何场过期是**另一条**线(深度导出的下游),按场景跟随
 }
 function encodeEditPngs(){
   const {w,h}=S.work;
@@ -1979,7 +1992,7 @@ function showTerrainImage(idx){
     updateKeyHelp();                               // 这条路径不经过 setView,提示要自己刷
   };
   img.onerror=()=>{ setLog('✗ 还没有这张图,先点「重算地形+体检」','warn'); };
-  img.src=`out/${encodeURIComponent(name)}/${files[terrainImgIdx]}?t=`+Date.now();
+  img.src=`${outBase(name)}/${files[terrainImgIdx]}?t=`+Date.now();
 }
 $('terrain_show').onclick=()=>{ showTerrainImage(terrainImgIdx+1); };
 $('img_exit').onclick=()=>{ setView(0); canvas.focus(); };
@@ -2039,7 +2052,50 @@ $('export_depth').onclick=async()=>{
     const r=await (await fetch('/api/export_depth?scene='+encodeURIComponent(name))).json();
     idle(btn, r.ok?'✓ 场景深度已导出(depthConfig+RG16+碰撞已写入游戏)':('✗ '+(r.err||'')),
          r.ok?'ok':'err');
+    // 服务端回带的 fields_stale:几何场读的是**刚被换掉的**那份深度,现在对不上了。
+    // 不在导出里同步重烘(那会让这个按钮卡上几分钟),改成把作者领到下一个按钮跟前。
+    if(r.ok&&r.fields_stale){
+      markFieldsStale(name);
+      setLog('⚠ 几何场(法线/天穹可见性/3D网格/GI命中图)还是按旧深度烘的,运行时会拿它去照新深度——'+
+             '点下面「烘几何场」重烘一次(每张时段原画约 3 分钟)','warn');
+    }
   }catch(err){ idle(btn,'✗ 导出场景深度失败:'+err,'err'); }
+};
+
+// ------------------------------------------------- 几何场(深度的下游产物)
+// 顺序是硬的:几何场读的是**已导出的** raw_depth_rg.png + depthConfig,所以必须
+// 「先导出深度、再烘几何场」。反过来就是拿旧深度烘新场,运行时不报错、只是光走向错。
+// 过期标记只活在本次会话(刷新即忘)——它是**提醒**,不是权威;权威是载荷里的
+// depth_sha1 防腐门。所以宁可少提醒一次,也不在这里假装自己知道磁盘上的真实状态。
+const _fieldsStale=new Set();
+function markFieldsStale(name){ _fieldsStale.add(name); syncFieldsStale(); }
+function syncFieldsStale(){
+  const cur=S.man&&S.man.name;
+  const stale=!!(cur&&_fieldsStale.has(cur));
+  const btn=$('bake_fields'); if(btn) btn.classList.toggle('dirty',stale);
+  const w=$('fields_warn'); if(w) w.style.display=stale?'block':'none';
+}
+$('bake_fields').onclick=async()=>{
+  const name=activeScene(); if(!name) return;
+  const btn=$('bake_fields');
+  // B-1:这个端口是**同步**的(服务端故意不开线程:并发烘同一场景会互相覆盖产物),
+  // 单张原画约 3 分钟 —— 不提前说清楚,任何人第一次点都会以为页面死了。
+  busy(btn,`烘 ${name} 的几何场中 —— 全部时段原画各烘一套,每张约 3 分钟,期间此按钮不可点`);
+  try{
+    const r=await (await fetch('/api/bake_fields?scene='+encodeURIComponent(name))).json();
+    if(r.ok){
+      _fieldsStale.delete(name);
+      const rows=r.result||[];
+      idle(btn,`✓ 几何场已烘(${rows.length} 张时段原画)\n`+rows.map(x=>
+        `  ${x.key}:天穹可见性均 ${x.skyvis_px.mean.toFixed(2)}`+
+        ` · GI命中率 ${(x.gi.hit_rate*100).toFixed(0)}%`+
+        ` · ${Math.round(x.bytes/1024)} KB`+
+        (x.albedo_map.authored?' · albedo 作者手改,已保留':'')).join('\n'),'ok');
+    }else{
+      idle(btn,'✗ 烘几何场失败:'+(r.err||''),'err');
+    }
+  }catch(err){ idle(btn,'✗ 烘几何场失败:'+err,'err'); }
+  syncFieldsStale();
 };
 $('brush').addEventListener('change',e=>{
   S.brush=+e.target.value;
@@ -2959,7 +3015,7 @@ bindSlider('hdr_pa',null,v=>v.toFixed(2),v=>{ S.hdrPA=v;
 $('pc_mesh').addEventListener('change',e=>{ S.meshMode=e.target.checked?1:0; });
 
 const RB_IDS=['rb_pitch','rb_az','rb_ppu','rb_dscale','rb_doff','rb_chlo','rb_chhi',
-              'rb_ev','rb_gain','rb_tau','rb_relief','rb_px','rb_py','rb_pz','rb_band'];
+              'rb_ev','rb_gain','rb_tau','rb_relief','rb_cxz','rb_cy','rb_hch','rb_spp'];
 // E-2:控件 → 已烘 manifest 里的参数键。有了它就能回答两个问题:
 //   ①「N 项参数未应用」到底是哪几项(给 label 打左边框,一眼定位);
 //   ② 折叠块里藏着几项改动(summary 上的静态计数,免得"折起来就忘了")。
@@ -2967,9 +3023,10 @@ const RB_PARAM_KEY={
   rb_pitch:'pitch_deg', rb_az:'azimuth_deg', rb_ppu:'ppu_ratio', rb_ev:'ev',
   rb_model:'depth_model', rb_dscale:'depth_scale_adj', rb_doff:'depth_offset_adj',
   rb_chlo:'col_h_lo', rb_chhi:'col_h_hi', rb_gain:'max_gain_ev', rb_tau:'occluder_tau',
-  rb_relief:'relief', rb_fold:'fold', rb_objthr:'object_score_min', rb_sem:'semantic_gate',
+  rb_relief:'relief', rb_objthr:'object_score_min', rb_sem:'semantic_gate',
   hdr_method:'hdr_method', hdr_pa:'hdr_pa',
-  rb_px:'probe_nx', rb_py:'probe_ny', rb_pz:'probe_nz', rb_band:'probe_band',
+  rb_cxz:'probe_cells_per_char_xz', rb_cy:'probe_cells_per_char_y',
+  rb_hch:'probe_height_chars', rb_spp:'probe_spp',
 };
 function _ctlValue(el){
   if(el.type==='checkbox') return el.checked?1:0;
@@ -2987,8 +3044,12 @@ function refreshDirtyMarks(){
     if(baked && key in baked){
       const cur=_ctlValue(el), was=baked[key];
       const wasN=parseFloat(was);
+      // 容差 = 半个 step:滑条只能停在 step 的整数倍上,比它还小的差**表达不出来**,
+      // 算成"未应用"就是永远消不掉的假警报(实测:HDR最大EV 烘的是 log2(10)=3.3219,
+      // 滑条 step 0.25 只能停 3.25,于是每个场景一进来就挂着「1 项参数未应用」)。
+      const st=parseFloat(el.step), tol=Number.isFinite(st)&&st>0?st/2:1e-9;
       diff=(typeof cur==='number'&&Number.isFinite(wasN))
-            ? Math.abs(cur-wasN)>1e-9
+            ? Math.abs(cur-wasN)>tol
             : String(cur)!==String(was);
     }
     if(lab) lab.classList.toggle('touched',diff);
@@ -3011,7 +3072,7 @@ function refreshDirtyMarks(){
 $('rb_model').addEventListener('change',()=>{ if(S.man)refreshDirtyMarks(); });
 function markDirty(d){ $('rebuild').classList.toggle('dirty',d); }
 RB_IDS.forEach(id=>bindSlider(id,null,v=>(''+v).slice(0,5),()=>{ if(S.man)refreshDirtyMarks(); }));
-for(const id of ['rb_fold','rb_sem'])
+for(const id of ['rb_sem'])
   $(id).addEventListener('change',()=>{ if(S.man)refreshDirtyMarks(); });
 // HDR最大EV 拖动即实时刷新 HDR/光源缩略图(只缩放已烘 gain 场,无需重烘)
 $('rb_gain').addEventListener('input',()=>{ if(S.man)refreshThumbs(); });
@@ -3024,13 +3085,16 @@ function rbParams(){
     depth_scale_adj:$('rb_dscale').value, depth_offset_adj:$('rb_doff').value,
     col_h_lo:$('rb_chlo').value, col_h_hi:$('rb_chhi').value,
     max_gain_ev:$('rb_gain').value, occluder_tau:$('rb_tau').value,
-    relief:$('rb_relief').value, fold:$('rb_fold').checked?1:0,
+    relief:$('rb_relief').value,
     object_score_min:$('rb_objthr').value,
     semantic_gate:$('rb_sem').checked?1:0,
     // 当前选中的 HDR 恢复法/参数(④显示 的下拉与滑条)→ 烘焙用同一方法,预览即所烘
     hdr_method:S.hdrMethod??0, hdr_pa:S.hdrPA??0.7,
-    probe_nx:$('rb_px').value, probe_ny:$('rb_py').value, probe_nz:$('rb_pz').value,
-    probe_band:($('rb_band')||{value:1.6}).value};
+    // ⚠ 不送 probe_band:它缺省由**角色实高**推出(char_wu*1.15)。写死 1.6 是
+    //   「角色高 1.5 wu」的遗留假设,实测角色 0.17~0.97 wu —— 送过去就是 6 层里
+    //   5 层烘在够不着的空中。probe_nx/ny/nz 同理,已无消费者。
+    probe_cells_per_char_xz:$('rb_cxz').value, probe_cells_per_char_y:$('rb_cy').value,
+    probe_height_chars:$('rb_hch').value, probe_spp:$('rb_spp').value};
 }
 // ---------------------------------------------------- 场景清单(扫游戏工程)
 // 场景身份只认**游戏场景 id**(public/assets/scenes/<id>.json 的文件名):背景图、
@@ -3102,6 +3166,10 @@ function activeScene(){
   return S.man.name;
 }
 
+// 重烘队列跑起来时要压住的按钮。**不含 bake_fields**:重烘写的是 out/<场景>/(实验室
+// 工作台),几何场读写的是游戏侧已导出的深度与 lighting/<背景基名>/,两者不碰同一个文件;
+// 而把它列进来反倒会出事——watchJob 收尾会无条件放开这一组,正在跑的几何场烘焙会被
+// 重新点亮,于是同一场景并发烘两遍、互相覆盖产物。
 const BAKE_BTNS=['rebuild','rebuild_all'];
 // B-2:阶段清单标签。渲染成静态勾选行 —— 已过=✓绿,当前=▸橙,未到=○灰,
 // 越过但没出现(如无编辑时的 edit)=· 跳过。全程没有任何东西在动,变的只有数据。

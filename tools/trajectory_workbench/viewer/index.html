@@ -98,8 +98,11 @@
     <div class="grp"><b>空间</b>
       <select id="space"><option value="screen">画面空间 (2D)</option><option value="world">世界空间 (3D)</option></select>
     </div>
-    <div class="grp"><b>烘焙场景</b>
-      <select id="sceneSel" style="min-width:150px"></select>
+    <div class="grp"><b>类型</b>
+      <select id="binding" title="只有一种曲线，只是配置不同：场景曲线绑定作者场景、只能在那里打开、播放可不给位置；相对曲线不绑场景、可在任何场景里打开、播放必须给位置"><option value="scene">场景曲线</option><option value="free">相对曲线</option></select>
+    </div>
+    <div class="grp"><b>场景</b>
+      <select id="sceneSel" style="min-width:150px" title="场景曲线：绑定的作者场景（锁定）；相对曲线：只是这次画在哪（不写进数据）"></select>
       <select id="bgSel" style="min-width:110px"></select>
     </div>
     <div class="grp"><b>预览实体</b>
@@ -115,8 +118,13 @@
     <button id="toolSelect" data-tool="select" title="选择 / 移动（V）：拖点、拖把手、点曲线选段、框选、Shift 多选">⬚</button>
     <button id="toolPen" data-tool="pen" title="加点（P）：点击追加控制点，点线上插点">✎</button>
     <button id="toolPhysics" data-tool="physics" title="抛体（T）：按住拖动，把落点拖到目标处（没有抛体段就新建一段）">⤴</button>
-    <button id="toolAnchor" data-tool="anchor" title="锚点（A）：点击放置播放锚点">⌖</button>
-    <button id="toolPan" data-tool="pan" title="平移（H）；任何工具下：中键 / 空格+左键 / 右键拖 也是平移">✋</button>
+    <button id="toolSlot" data-tool="slot" title="插槽（S）：在画布上点一下放一个命名插槽点——曲线暴露给场景的位置，其他动作可以把实体挪到那里">⌖</button>
+    <button id="toolOrigin" data-tool="origin" title="曲线原点（O）：在画布上点一下把曲线原点放到那儿——播放时给的位置对齐的就是它，挪它不动曲线">✛</button>
+    <button id="toolPan" data-tool="pan" title="手形 / 平移（H 或 Q）；任何工具下：中键 / 空格+左键 也是平移（2D 里右键拖也是；3D 里右键拖 = 环视）">✋</button>
+    <div class="sep"></div>
+    <button id="gizmoMove" data-gizmo="move" class="on" title="移动 gizmo（W）：3D 里选中点 / 整段 / 整条后出现——箭头沿轴、小方块沿面、中心贴地走；Ctrl 吸附 10 wu">✥</button>
+    <button id="gizmoRotate" data-gizmo="rotate" title="旋转 gizmo（E）：拖圆环绕竖直轴转（≥2 点 / 整段 / 整条）；Ctrl 吸附 15°">↻</button>
+    <button id="gizmoScale" data-gizmo="scale" title="缩放 gizmo（R）：轴末端单轴、中心等比；Ctrl 吸附 ×0.1">⤢</button>
     <div class="sep"></div>
     <button id="btnFit" title="视图复位（Home）：整个场景">▣</button>
     <button id="btnFitCurve" title="框住轨迹（F）">◎</button>
@@ -155,20 +163,25 @@
       <div class="row scope"><span class="lbl">范围</span>
         <button id="scopePoints" title="只动选中的控制点">选中点</button>
         <button id="scopeSegment" title="整段（含起点/初速）">整段</button>
-        <button id="scopeAll" title="整条轨迹（以锚点为轴）">整条</button>
+        <button id="scopeAll" title="整条轨迹（以曲线起点为轴）">整条</button>
       </div>
       <div class="row"><span class="lbl">平移</span><input id="txDx" type="number" step="1" value="0"><input id="txDy" type="number" step="1" value="0"><button id="btnTxMove">应用</button></div>
       <div class="row"><span class="lbl">旋转 °</span><input id="txRot" type="number" step="5" value="0"><button id="btnTxRot">应用</button><span class="dim" id="txRotHint"></span></div>
       <div class="row"><span class="lbl">缩放 ×</span><input id="txScale" type="number" step="0.1" value="1"><button id="btnTxScale">应用</button></div>
       <div class="row"><span class="lbl">镜像</span><button id="btnMirrorX">↔ 左右</button><button id="btnMirrorY">↕ 上下/前后</button></div>
-      <div class="dim" id="txHint">画布上：选中 2 个以上点或选整段/整条时出现变换框：拖中心方块移动、拖角缩放、拖上方圆点旋转（Shift 吸附）。</div>
+      <div class="dim" id="txHint">画布上选中任何东西（一个点也算、整段、整条、点幽灵 = 整条）就出现 gizmo：W 移动（沿轴箭头 / 面片 / 中心）· E 旋转（圆环）· R 缩放（轴末端单轴 / 中心等比），2D 与 3D 视图同一套；拖动时按住 Ctrl 吸附。这里的数值框是精修用。</div>
     </div>
     <div class="box">
-      <h3>锚点（播放位置）</h3>
-      <div class="row"><input id="anchorX" type="number" step="1"> <input id="anchorY" type="number" step="1">
-        <button id="btnAnchorEntity" title="把锚点放到预览实体此刻的位置">取实体位置</button>
-        <button id="btnAnchorPick" title="在画面上点一下放锚点（A）">画布放置</button></div>
-      <div class="dim">轨迹相对锚点存盘；播放时 playTrajectory 的 anchorX/anchorY 缺省 = 目标实体的位置。拖锚点 = 整条轨迹跟着走。</div>
+      <h3>曲线原点</h3>
+      <div id="originbox"></div>
+      <div class="dim">原点 = 这条曲线自己的参考点：帧相对它写，<b>播放时给的位置对齐的就是它</b>；场景曲线不给位置就在它这儿原地播。
+        它<b>不是第一帧</b>——调运动起点只改"起点相对原点的偏移"，曲线其余部分与播放位置的关系一个 wu 都不动。拖它不会动曲线；"整条"变换会带着它一起走。</div>
+    </div>
+    <div class="box">
+      <h3>命名插槽 <span class="dim" id="slotCount"></span></h3>
+      <div class="row"><button id="btnSlotPlace" title="在画布上点一下放一个插槽（S）">+ 画布放置 (S)</button><span class="dim">点行选中；拖它或拖 gizmo 挪位置；Delete 删</span></div>
+      <div id="slotlist"></div>
+      <div class="dim">插槽 = 这条曲线暴露给场景的位置（人站位、接钱的人站位……）。其他动作（角色移动 / 瞬移 / 临时演员生成点）用"曲线 X 的插槽 Y"引用它，引用是活的。播放曲线本身不挪任何东西。曲线<b>没有锚点</b>：播放位置在播放时给。</div>
     </div>
     <div class="box">
       <h3>图层</h3>
@@ -190,6 +203,11 @@
         角度 <input id="tolRot" type="number" step="0.05" style="width:60px">
         缩放 <input id="tolScale" type="number" step="0.001" style="width:60px">
         透明 <input id="tolAlpha" type="number" step="0.001" style="width:60px">
+      </div>
+      <div class="row"><span class="lbl">尺寸参数</span>
+        静止离地高 <input id="restHeight" type="number" step="0.5" min="0" style="width:66px" title="骑在曲线上那个东西静止时支点离地高（世界 wu；圆心锚的铜钱 = 半径）：抛体贴地高度">
+        接地偏移 <input id="contactOffsetY" type="number" step="0.5" style="width:66px" title="支点 → 接地线的画面偏移（wu，Y 向下为正）：画面空间烘焙用它把 sortY 落在接地线">
+        <button id="btnBakeFromEntity" title="按预览实体的尺寸填这两项（换实体不会自动改，曲线永远不动）">取自预览实体</button>
       </div>
       <div class="row"><span class="lbl">产物</span><span id="bakeInfo" class="mono">—</span></div>
       <div id="warnings"></div>
@@ -218,6 +236,7 @@
 <script src="/viewer/common.js"></script>
 <script src="/viewer/history.js"></script>
 <script src="/viewer/edit.js"></script>
+<script src="/viewer/gizmo.js"></script>
 <script src="/viewer/view2d.js"></script>
 <script src="/viewer/view3d.js"></script>
 <script src="/viewer/app.js"></script>

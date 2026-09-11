@@ -34,12 +34,13 @@ _NON_LEAF_TRACE_KINDS = {"all", "any", "not", "unknown"}
 # 本工具已建模的叶子;提取出新 kind → warning "有新条件叶子,json_lang 需要跟进"
 _MODELED_LEAVES = {
     "flag", "quest", "scenario", "scenarioLine", "narrative", "narrativeCount",
-    "plane", "posture", "timePhase",
+    "plane", "posture", "timePhase", "vfxState",
 }
 # ENTITY_REF_PARAMS 已知 kind;出现新 kind → warning
 _KNOWN_REF_KINDS = {
     "actor", "emote_subject", "npc", "npc_soft", "owner", "bubble_speaker",
     "scene", "scene_hint", "spawn", "scene_entity", "scene_hotspot", "scene_zone",
+    "position_ref",
 }
 
 

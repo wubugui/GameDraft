@@ -74,9 +74,12 @@ def list_assets() -> list[dict]:
             continue
         au = doc.get("authoring") if isinstance(doc.get("authoring"), dict) else {}
         kf = doc.get("keyframes")
+        sl = doc.get("slots") if isinstance(doc.get("slots"), list) else []
         row.update({
             "label": str(doc.get("label") or ""),
             "space": str(doc.get("space") or "screen"),
+            "binding": str(doc.get("binding") or ("scene" if str(au.get("sceneId") or "").strip() else "free")),
+            "slots": [{"id": str(x.get("id") or ""), "label": str(x.get("label") or ""), "x": x.get("x"), "y": x.get("y")} for x in sl if isinstance(x, dict) and x.get("id")],
             "frames": len(kf) if isinstance(kf, list) else 0,
             "sceneId": str(au.get("sceneId") or ""),
             "background": str(au.get("background") or ""),
@@ -128,7 +131,7 @@ def rename_asset(old: str, new: str) -> Path:
     return dst
 
 
-_ORDER = ("id", "label", "space", "keyframes", "worldKeyframes", "source", "authoring")
+_ORDER = ("id", "label", "space", "binding", "keyframes", "worldKeyframes", "slots", "source", "authoring")
 
 
 def normalize_asset_order(doc: dict) -> dict:
@@ -144,6 +147,8 @@ def normalize_asset_order(doc: dict) -> dict:
         del out["label"]
     if "worldKeyframes" in out and not out["worldKeyframes"]:
         del out["worldKeyframes"]
+    if "slots" in out and not out["slots"]:
+        del out["slots"]
     return out
 
 

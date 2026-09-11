@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { FootstepSystem, type FootstepEmitter, type FootstepSystemDeps } from './FootstepSystem';
-import type { AudioPlaybackHandle, FootstepConfig, TransientSfxOptions } from '../data/types';
-import { DEFAULT_SPATIAL_PARAMS, cameraListener, planarResolver } from '../utils/audioSpace';
+import type { AudioPlaybackHandle, FootstepConfig } from '../data/types';
+import { planarResolver } from '../utils/audioSpace';
 
 /**
  * 「声音绑帧」与「脚步节奏」是**两件事**，这份测试把它们分开钉死。
@@ -90,14 +90,10 @@ function run(def: { frames: number; fps: number; ref: number | null; speed: numb
   const fired: Array<{ t: number; frame: number }> = [];
   let now = 0;
   const deps: FootstepSystemDeps = {
-    playSfx(_id: string, _o: TransientSfxOptions): AudioPlaybackHandle | null {
+    playAt(_id: string, _world: [number, number, number], _o: { volume?: number }): AudioPlaybackHandle | null {
       return { stop: () => {} };
     },
-    getSpatialContext: () => ({
-      resolver: planarResolver(),
-      listener: cameraListener(planarResolver(), 500, 500, 600),
-      params: DEFAULT_SPATIAL_PARAMS,
-    }),
+    getSpatialContext: () => ({ resolver: planarResolver() }),
     resolveSetAt: () => 's',
     getConfig: () => cfg,
   };

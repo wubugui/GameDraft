@@ -417,6 +417,7 @@ class CaseVerdictTests(unittest.TestCase):
             "isPlaneLeaf": {"plane": "yin"},
             "isPostureLeaf": {"posture": "crouch"},
             "isTimePhaseLeaf": {"timePhase": "night"},
+            "isVfxStateLeaf": {"vfx": "vfx_bats", "vfxState": "airborne"},
         }
         self.assertEqual(
             guards,

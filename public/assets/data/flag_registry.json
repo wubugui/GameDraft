@@ -371,6 +371,30 @@
     {
       "key": "GameConfig_线外内容",
       "valueType": "bool"
+    },
+    {
+      "key": "sysnote_three_fires",
+      "valueType": "bool"
+    },
+    {
+      "key": "three_fires_visible",
+      "valueType": "bool"
+    },
+    {
+      "key": "sysnote_smell",
+      "valueType": "bool"
+    },
+    {
+      "key": "smell_hud_visible",
+      "valueType": "bool"
+    },
+    {
+      "key": "smell_tracking",
+      "valueType": "bool"
+    },
+    {
+      "key": "current_smell_dir_depth",
+      "valueType": "float"
     }
   ],
   "patterns": [

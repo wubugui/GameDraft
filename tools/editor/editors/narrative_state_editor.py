@@ -530,6 +530,22 @@ class NarrativeEditorBridge(QObject):
         )
         self._pending_web_signal_ids = None
 
+    def host_data_served(self) -> bool:
+        """网页有没有从本桥拿过工程数据（getData 至少成功一次）。
+
+        2026-09-09 事故：叙事页半加载（React 挂好、桥没通、getData 没回）时，网页内存里
+        是空白初始文档 `{signals:[], compositions:[]}`；宿主把它当合法内容收下，把 8 个
+        编排整批抹掉落盘。凡 getData 从未交付过，网页手里的就绝不可能是工程数据——
+        这种 payload 一律拒收，不进合并、不进校验、不进模型。
+        """
+        return self._loaded_signal_ids is not None
+
+    NOT_LOADED_MESSAGE = (
+        "叙事页尚未从工程模型加载数据（桥的 getData 从未被调用），网页手里只有空白初始文档"
+        "——本次未写入叙事图数据，工程模型里的叙事图保持不变。"
+        "请到叙事状态机页等页面加载完成，或点顶栏「刷新页面」重载后再保存。"
+    )
+
     @Slot(str, result=str)
     def saveData(self, payload: str) -> str:  # noqa: N802 - Qt slot name
         try:
@@ -538,6 +554,9 @@ class NarrativeEditorBridge(QObject):
             return f"invalid json: {exc}"
         if not isinstance(parsed, dict):
             return "invalid narrative data: root must be an object"
+        if not self.host_data_served():
+            # 协议前缀 "save blocked:" 被网页正则依赖，不可改动。
+            return "save blocked: " + self.NOT_LOADED_MESSAGE
         try:
             normalized = _normalize_file(parsed)
             self.merge_host_signals_into(normalized)
@@ -1757,7 +1776,10 @@ class NarrativeStateEditor(QWidget):
         "var out={"
         "hasApi:!!(api&&api.getCurrentDataJson),"
         "crashed:window.__narrativeEditorCrashed===true,"
-        "hasDraft:(typeof draft==='string'&&draft.length>0)"
+        "hasDraft:(typeof draft==='string'&&draft.length>0),"
+        # 三态：true 已把工程数据灌进 React state / false 明确还没有 / null 老 bundle 不会说。
+        # 网页在 hostReady 之前根本不挂 API，这里只是双保险（旧 dist 仍可能挂早）。
+        "loaded:(api&&typeof api.isLoaded==='function')?(api.isLoaded()===true):null"
         "};"
         "if(out.hasApi){try{out.json=api.getCurrentDataJson();}catch(e){out.error=String(e);}}"
         "else if(out.hasDraft){out.draft=draft;}"
@@ -1800,6 +1822,11 @@ class NarrativeStateEditor(QWidget):
         if getattr(self, "_model_projection_reload_pending", False):
             return True
         state = self._read_editor_state()
+        if isinstance(state, dict) and state.get("loaded") is False:
+            # 网页明确说"工程数据还没灌进来"：它手里只有空白初始文档，无内容可 flush。
+            # 放行（return True）而不是拒绝——此时用户不可能在页面上编辑过任何东西，
+            # 工程模型里的叙事图就是真相；绝不能把那份空白文档当草稿收下。
+            return True
         payload = state.get("json") if isinstance(state, dict) else None
         if not isinstance(payload, str) or not payload.strip():
             # 取不到当前文档：必须区分「页面崩溃/白屏（有草稿或崩溃标志）」与「页面未
@@ -1836,6 +1863,15 @@ class NarrativeStateEditor(QWidget):
             self._last_flush_error = f"叙事编辑器返回了无效 JSON：{exc}"
             if not for_save_all:
                 QMessageBox.warning(self, "叙事保存", self._last_flush_error)
+            return False
+        bridge = getattr(self, "_bridge", None)
+        if bridge is not None and not bridge.host_data_served():
+            # 2026-09-09 事故的确切形状：API 挂上了、桥没通、getData 从未交付，读回的
+            # 是网页的空白初始文档。老 dist 不带 isLoaded，上面的 loaded 门拦不住，
+            # 这里按"桥有没有交付过数据"再拦一道：拒收 + 可读原因，绝不进模型。
+            self._last_flush_error = bridge.NOT_LOADED_MESSAGE
+            if not for_save_all:
+                QMessageBox.warning(self, "叙事保存被拦截", self._last_flush_error)
             return False
         normalized = _normalize_file(parsed)
         # 与桥 saveData 同一补丁点：网页文档是加载期快照，原样回写会抹掉加载后

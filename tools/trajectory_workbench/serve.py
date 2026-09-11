@@ -2,6 +2,8 @@
 """轨迹工作台本地服务。
 
   GET  /                                  viewer
+  GET  /gen/runtime.bundle.js             运行时 sceneSpace + trajectoryProjection 打成的 ESM
+                                          （页面拿它跟自己的 SceneCal 对一次坐标，见 bundle.py）
   GET  /api/boot                          启动参数（--open 的资产 id，只发一次）
   GET  /api/scenes                        工程场景清单（深度 / 时段背景 / 行走面场状态）
   GET  /api/scene?id=&bg=                 场景描述：标定、尺寸、NPC 清单、时段背景
@@ -36,7 +38,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.trajectory_workbench import assets                                   # noqa: E402
-from tools.trajectory_workbench.baking import bake_asset                         # noqa: E402
+from tools.trajectory_workbench import bundle                                   # noqa: E402
+from tools.trajectory_workbench.baking import bake_asset, binding_of             # noqa: E402
 from tools.trajectory_workbench.geometry import (                                # noqa: E402
     SCENES_RT,
     SceneGeometry,
@@ -107,39 +110,53 @@ def get_geometry(sid: str, bg: str | None) -> SceneGeometry:
     return g
 
 
-def _doc_geometry(doc: dict) -> SceneGeometry | None:
+def _doc_geometry(doc: dict, backdrop: dict | None = None) -> SceneGeometry | None:
+    """场景曲线用 ``authoring.sceneId``；相对曲线不绑场景，用前端此刻的背景场景 ``backdrop={scene,bg}``（不写进数据）。"""
     au = doc.get("authoring") if isinstance(doc.get("authoring"), dict) else {}
     sid = str(au.get("sceneId") or "").strip()
+    bg = str(au.get("background") or "").strip() or None
+    if binding_of(doc) == "free" or not sid:
+        bd = backdrop if isinstance(backdrop, dict) else {}
+        if str(bd.get("scene") or "").strip():
+            sid = str(bd.get("scene") or "").strip()
+            bg = str(bd.get("bg") or "").strip() or None
     if not sid:
         return None
-    bg = str(au.get("background") or "").strip() or None
     return get_geometry(sid, bg)
 
 
-def bake_document(doc: dict) -> dict:
+def bake_document(doc: dict, backdrop: dict | None = None) -> dict:
     """烘一份资产文档（不写盘）。场景装不上时返回带告警的空产物。"""
+    empty = {"keyframes": [], "authoring": dict(doc.get("authoring") or {}), "slots": doc.get("slots") or [],
+             "source": doc.get("source") or {}, "binding": binding_of(doc), "segments": [], "totalMs": 0.0,
+             "preview": {"screen": [], "world": []}}
     try:
-        geom = _doc_geometry(doc)
+        geom = _doc_geometry(doc, backdrop)
     except FileNotFoundError as e:
-        return {"keyframes": [], "authoring": dict(doc.get("authoring") or {}),
-                "warnings": [f"场景装不上：{e}"], "segments": [], "totalMs": 0.0,
-                "preview": {"screen": [], "world": []}}
+        return {**empty, "warnings": [f"场景装不上：{e}"]}
     if geom is None:
-        return {"keyframes": [], "authoring": dict(doc.get("authoring") or {}),
-                "warnings": ["authoring.sceneId 为空：不知道在哪个场景烘"], "segments": [], "totalMs": 0.0,
-                "preview": {"screen": [], "world": []}}
+        return {**empty, "warnings": ["不知道在哪个场景烘：场景曲线要有 authoring.sceneId，相对曲线要带当前背景场景"]}
     return bake_asset(doc, geom)
 
 
-def save_document(doc: dict) -> dict:
-    """烘一次再写盘。烘不出帧时**保留旧帧**（磁盘上的那份），绝不拿空表清盘。"""
+def save_document(doc: dict, backdrop: dict | None = None) -> dict:
+    """烘一次再写盘。烘不出帧时**保留旧帧**（磁盘上的那份），绝不拿空表清盘。
+    相对曲线（``binding:'free'``）落盘时剥掉 ``authoring.sceneId / background``——它不绑场景，画在哪只是这一次的背景。"""
     tid = str(doc.get("id") or "").strip()
     if not assets.valid_id(tid):
         raise ValueError(f"非法轨迹 id: {tid!r}")
-    baked = bake_document(doc)
+    baked = bake_document(doc, backdrop)
     out = dict(doc)
     out["id"] = tid
-    out["authoring"] = baked["authoring"]
+    out["binding"] = baked["binding"]
+    out["slots"] = baked["slots"]
+    out["source"] = baked["source"]   # 迁移过的副本（bake 参数回填、第 0 段起点明写）
+    out["authoring"] = dict(baked["authoring"])
+    if out["binding"] == "free":
+        out["authoring"].pop("sceneId", None)
+        out["authoring"].pop("background", None)
+    elif not str(out["authoring"].get("sceneId") or "").strip():
+        raise ValueError("场景曲线必须绑定作者场景（authoring.sceneId 为空）")
     if baked["keyframes"]:
         out["keyframes"] = baked["keyframes"]
         if baked.get("worldKeyframes"):
@@ -224,9 +241,16 @@ class H(SimpleHTTPRequestHandler):
             if u.path == "/":
                 self.path = "/viewer/index.html"
                 return super().do_GET()
+            if u.path == "/gen/runtime.bundle.js":
+                p, err = bundle.ensure_bundle()
+                if not p or not p.exists():
+                    return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
+                return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
             if u.path == "/api/boot":
                 open_id = BOOT_OPEN.pop() if BOOT_OPEN else ""
-                return self._json({"ok": True, "open": open_id})
+                p, err = bundle.ensure_bundle()
+                return self._json({"ok": True, "open": open_id,
+                                   "bundle": {"ok": bool(p and not err), "err": err}})
             if u.path == "/api/scenes":
                 return self._json({"ok": True, "scenes": list_scenes()})
             if u.path == "/api/scene":
@@ -293,10 +317,10 @@ class H(SimpleHTTPRequestHandler):
             body = self._body_json()
             if u.path == "/api/bake":
                 doc = body.get("doc") if isinstance(body.get("doc"), dict) else body
-                return self._json({"ok": True, **bake_document(doc)})
+                return self._json({"ok": True, **bake_document(doc, body.get("backdrop"))})
             if u.path == "/api/save":
                 doc = body.get("doc") if isinstance(body.get("doc"), dict) else body
-                return self._json({"ok": True, **save_document(doc)})
+                return self._json({"ok": True, **save_document(doc, body.get("backdrop"))})
             if u.path == "/api/delete":
                 tid = str(body.get("id") or "")
                 return self._json({"ok": True, "deleted": assets.delete_asset(tid)})

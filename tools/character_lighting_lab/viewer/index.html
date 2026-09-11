@@ -90,6 +90,9 @@ button#rebuild:disabled{background:var(--s1);color:var(--mut);border-color:var(-
 /* A-1:参数未应用 = 静态描边。旧版是一个 1.2s 无限循环的亮度呼吸 —— 那是「正在忙」的
    视觉语言被拿来表达「有未应用改动」,且永不停,直接读成「程序在卡顿」。已删。 */
 button#rebuild.dirty{box-shadow:inset 0 0 0 2px var(--dirty)}
+/* 「几何场按旧深度烘的」用同一套静态描边语言(同样是"有未应用的改动",不是"正在忙") */
+button#bake_fields{margin-top:6px}
+button#bake_fields.dirty{box-shadow:inset 0 0 0 2px var(--dirty)}
 /* 破坏性操作(写进游戏工程,不可撤销) */
 button.danger{border-color:var(--bd-danger)}
 button.danger:hover{background:var(--s-danger);border-color:var(--err)}
@@ -158,7 +161,7 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
 #hist{width:100%;height:64px;background:var(--s-plot);border:1px solid var(--bd-soft);border-radius:4px}
 #terrain_stats{font:var(--fs-val)/1.6 ui-monospace,monospace;color:var(--mut);
   white-space:pre-wrap;margin:6px 0}
-#geo_warn{display:none;color:var(--warn);font-size:var(--fs-body);font-weight:700;margin-top:8px;
+#geo_warn,#fields_warn{display:none;color:var(--warn);font-size:var(--fs-body);font-weight:700;margin-top:8px;
   border:1px solid var(--warn);border-radius:4px;padding:5px 8px;background:var(--s-warn)}
 #scene_info{font-size:var(--fs-aux);color:var(--mut);line-height:1.6;margin:5px 0 0}
 #scene_info b{color:var(--acc)}
@@ -235,6 +238,8 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
       <button id="export_rt" class="danger" title="重新产出 probe 数据:固化 E 图集(L1/L2/BIN)+地面场+标定+哈希防腐门,连同当前着色参数一并写入 public/resources/runtime/scenes/&lt;场景&gt;/lighting/(约 25MB)。改了 nee/amb/miss不计入 必须走这里。不可撤销">导出照明 →游戏</button>
       <button id="export_depth" class="danger" title="导出深度图(RG16)+depthConfig(M/floor线/碰撞网格)写进 public/assets/scenes/&lt;场景&gt;.json,遮挡/阴影/碰撞全部改用实验室重建。不可撤销">导出深度 →游戏</button>
     </div>
+    <button id="bake_fields" title="按**已导出的**深度重烘几何场:法线 / 天穹可见性(逐像素+probe)/ 3D 网格 / GI 命中图 / albedo 贴图,写进 public/resources/runtime/scenes/&lt;场景&gt;/lighting/&lt;背景基名&gt;/。该场景**全部时段原画**各烘一套(漏了夜那张就是拿白天的法线去照夜原画)。端口是同步的,每张原画约 3 分钟,期间此按钮不可点。作者手改过的 albedo.png 会保留">烘几何场(法线/天穹可见性/3D网格/GI命中图)</button>
+    <div id="fields_warn">⚠ 深度已重新导出,几何场还是按旧深度烘的——点上面「烘几何场」重烘一次</div>
     <div id="bake_stages"></div>
     <div id="log"></div>
 
@@ -272,13 +277,13 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
     </details>
 
     <details class="fold" id="fold_probe">
-      <summary>probe 烘焙 <span class="hint">irradiance 网格与折叠</span><span class="cnt"></span></summary>
+      <summary>probe 烘焙 <span class="hint">网格密度按角色高度推</span><span class="cnt"></span></summary>
       <div class="foldbody">
-        <label title="烘焙 probe 时是否用双面折叠填补朝相机的洞。关掉后 miss 闭包旋钮(③区)才有可见效果"><span class="tm bake">○</span><span class="k">烘焙折叠</span><input type="checkbox" id="rb_fold" checked style="flex:none"><span class="v">A7</span></label>
-        <label title="probe 网格 X 数量(世界空间)"><span class="tm bake">○</span><span class="k">probe X</span><input type="range" id="rb_px" min="8" max="40" step="1" value="20"><span class="v" id="rb_px_v"></span></label>
-        <label title="probe 网格 高度层数"><span class="tm bake">○</span><span class="k">probe 高</span><input type="range" id="rb_py" min="3" max="16" step="1" value="6"><span class="v" id="rb_py_v"></span></label>
-        <label title="probe 网格 深度数量"><span class="tm bake">○</span><span class="k">probe 深</span><input type="range" id="rb_pz" min="6" max="30" step="1" value="14"><span class="v" id="rb_pz_v"></span></label>
-        <label title="角色最大活动高度(中位地面往上),= probe 盒顶。人只在地上活动,头顶以上没人——盒顶贴着头顶时那 ny 层竖直分辨率才用在刀刃上。默认 1.6 ≈ 角色身高 1.5 + 余量;实测(6层)盒顶 1.35~1.6 平均误差 8.4%,摊到 2.45/2.85 反而是 12.4%/11.1%。地面起伏大时会自动抬一点兜底"><span class="tm bake">○</span><span class="k">角色活动高</span><input type="range" id="rb_band" min="0.8" max="3.0" step="0.1" value="1.6"><span class="v" id="rb_band_v"></span></label>
+        <div class="sd" style="margin:2px 0 6px">格数不再手填:盒高 = <b>角色实高 × 盒高倍数</b>,格数 = 盒尺寸 ÷ (角色高 ÷ 每角色高格数)。角色实高从场景 <b>worldWidth</b> 推出,烘焙日志里的 <code>[scale]</code> 一行会打印它与实际格数。</div>
+        <label title="横向(XZ)密度:一个角色身高摆几格。实测横向加倍收益不如纵向,先动纵向"><span class="tm bake">○</span><span class="k">横向格/角色高</span><input type="range" id="rb_cxz" min="2" max="8" step="0.5" value="4"><span class="v" id="rb_cxz_v"></span></label>
+        <label title="纵向(Y)密度:一个角色身高摆几层。近地表辐照的竖直梯度最陡,层数是瓶颈——2026-09-02 实测 2→4 把平坦区低通残差 58.1%→42.2%"><span class="tm bake">○</span><span class="k">纵向层/角色高</span><input type="range" id="rb_cy" min="2" max="8" step="0.5" value="4"><span class="v" id="rb_cy_v"></span></label>
+        <label title="probe 盒总高 = 角色身高 × 这个数。**不覆盖全场景最高点**——上面没有角色,烘了也查不到"><span class="tm bake">○</span><span class="k">盒高/角色高</span><input type="range" id="rb_hch" min="1.5" max="4" step="0.25" value="2"><span class="v" id="rb_hch_v"></span></label>
+        <label title="每颗 probe 的方向样本数(分层 QMC)。256 是缺省;调高线性变慢,NEE+自适应细化开着时收益递减"><span class="tm bake">○</span><span class="k">每probe采样</span><input type="range" id="rb_spp" min="64" max="1024" step="64" value="256"><span class="v" id="rb_spp_v"></span></label>
       </div>
     </details>
   </div>

@@ -1,0 +1,117 @@
+{
+  "id": "water_drip",
+  "label": "崖壁滴水",
+  "emitters": [
+    {
+      "id": "drop",
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/drop.png",
+        "sizeWu": 12,
+        "alphaOverLife": [
+          [
+            0,
+            0.9
+          ],
+          [
+            1,
+            0.9
+          ]
+        ],
+        "lit": true,
+        "emissive": 0.45,
+        "stretchByVelocity": 0.035
+      },
+      "spawn": {
+        "max": 12,
+        "rate": 0.7,
+        "shape": {
+          "kind": "disc",
+          "radius": 6
+        },
+        "speed": [
+          0,
+          0
+        ]
+      },
+      "motion": {
+        "gravity": 865
+      },
+      "life": {
+        "seconds": [
+          6,
+          6
+        ]
+      },
+      "collision": {
+        "ground": "kill",
+        "shell": "kill",
+        "radiusWu": 4,
+        "onHit": {
+          "emitter": "splash",
+          "count": 14
+        }
+      }
+    },
+    {
+      "id": "splash",
+      "subOnly": true,
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/splash.png",
+        "sizeWu": 10,
+        "sizeOverLife": [
+          [
+            0,
+            0.6
+          ],
+          [
+            0.3,
+            1
+          ],
+          [
+            1,
+            0.7
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0.9
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "lit": true,
+        "emissive": 0.45
+      },
+      "spawn": {
+        "max": 60,
+        "speed": [
+          90,
+          180
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 55
+      },
+      "motion": {
+        "gravity": 865,
+        "drag": 0.8
+      },
+      "life": {
+        "seconds": [
+          0.3,
+          0.45
+        ]
+      },
+      "collision": {
+        "ground": "kill",
+        "radiusWu": 2
+      }
+    }
+  ]
+}

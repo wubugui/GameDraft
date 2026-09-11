@@ -71,6 +71,8 @@ _COLLISION_KINDS: dict[str, tuple[str, ...]] = {
 #   scene_entity  实体 id，由同 action 的 sceneId + entityKind 限定
 #   scene_hotspot 热点 id，由同 action 的 sceneId 限定
 #   scene_zone    zone id，由同 action 的 sceneId 限定
+#   position_ref  位置引用对象 `at`（{kind:'point'|'entity'|'slot'}，src/utils/positionRef.ts）：
+#                 只有 entity 档的 `at.id` 是实体引用（NPC / 热点 / player / _cut_，运行时按当前场景解析）
 ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "playNpcAnimation": {"target": "actor"},
     "attachToSocket": {"target": "actor"},
@@ -83,15 +85,22 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "clearBubbleLineSet": {"target": "bubble_speaker"},
     # 轨迹播放：target 必填，与 moveEntityTo 同一命中面（NPC / 临时演员 / player）。
     # trajectoryId 指全局轨迹资产（assets/data/trajectories/*.json），不是实体引用。
-    "playTrajectory": {"target": "actor"},
+    # 播放位置 `at`（2026-09-11 曲线无锚点：位置在播放时给；entity 档是实体引用）
+    "playTrajectory": {"target": "actor", "at": "position_ref"},
     "stopTrajectory": {"target": "actor"},
-    "moveEntityTo": {"target": "actor", "sceneId": "scene_hint"},
-    "jumpEntityTo": {"target": "actor", "sceneId": "scene_hint"},
-    "teleportEntityTo": {"target": "actor", "sceneId": "scene_hint"},
+    # 粒子 / 群体：位置参数是位置引用（实体此刻位置 / 曲线插槽 / 数字点）。
+    # instanceId / effect 不是实体引用（前者是场景 vfx[] 的 id，后者是全局资产 id）。
+    "playVfx": {"at": "position_ref"},
+    "emitVfxField": {"at": "position_ref"},
+    "moveEntityTo": {"target": "actor", "sceneId": "scene_hint", "at": "position_ref"},
+    "jumpEntityTo": {"target": "actor", "sceneId": "scene_hint", "at": "position_ref"},
+    "teleportEntityTo": {"target": "actor", "sceneId": "scene_hint", "at": "position_ref"},
+    # 过场临时演员的生成点也可以引用别的实体 / 插槽；id 本身是它自己的新 id，不是引用
+    "cutsceneSpawnActor": {"at": "position_ref"},
     "faceEntity": {"target": "actor", "faceTarget": "actor"},
     "cameraFollowActor": {"target": "actor"},
     "persistNpcEntityEnabled": {"target": "actor"},
-    "persistNpcAt": {"target": "actor"},
+    "persistNpcAt": {"target": "actor", "at": "position_ref"},
     "persistNpcAnimState": {"target": "actor"},
     "persistPlayNpcAnimation": {"target": "actor"},
     # 角色阴影绑定（setEntityShadow）：target 命中面与 showEmote 完全一致
@@ -114,7 +123,7 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "setZoneEnabled": {"zoneId": "scene_zone", "sceneId": "scene"},
     "persistZoneEnabled": {"zoneId": "scene_zone", "sceneId": "scene"},
     "setEntityField": {"entityId": "scene_entity", "sceneId": "scene"},
-    "setSceneEntityPosition": {"entityId": "scene_entity", "sceneId": "scene"},
+    "setSceneEntityPosition": {"entityId": "scene_entity", "sceneId": "scene", "at": "position_ref"},
     "setHotspotDisplayImage": {"hotspotId": "scene_hotspot", "sceneId": "scene"},
     "tempSetHotspotDisplayFacing": {"hotspotId": "scene_hotspot", "sceneId": "scene"},
     "persistHotspotEnabled": {"hotspotId": "scene_hotspot", "sceneId": "scene"},
@@ -417,6 +426,18 @@ def _bare_hit(spec_kind: str, value: Any, kind: str, entity_id: str) -> bool:
     return kind in _BARE_KIND_SCOPE.get(spec_kind, ())
 
 
+def position_ref_entity_id(value: Any) -> str:
+    """位置引用对象里的实体 id（只有 ``{kind:'entity', id}`` 这一档才是实体引用；其它档返回空串）。"""
+    if not isinstance(value, dict) or str(value.get("kind") or "").strip() != "entity":
+        return ""
+    return str(value.get("id") or "").strip()
+
+
+def _position_ref_hit(value: Any, kind: str, entity_id: str) -> bool:
+    """``at.id`` 命中：运行时 resolvePositionRef 先按演员（NPC / player / _cut_）再按热点解析，两种都算。"""
+    return position_ref_entity_id(value) == entity_id and kind in ("npc", "hotspot")
+
+
 def _qualified_hit(
     act_type: str, spec_kind: str, params: dict[str, Any],
     scene_id: str, kind: str, entity_id: str,
@@ -456,6 +477,9 @@ def _count_entity_refs(
                     bare += 1
             elif spec_kind in _BARE_KIND_SCOPE:
                 if _bare_hit(spec_kind, value, kind, entity_id):
+                    bare += 1
+            elif spec_kind == "position_ref":
+                if _position_ref_hit(value, kind, entity_id):
                     bare += 1
     _walk_ref_actions(node, visit)
     return bare, qualified, soft
@@ -1415,6 +1439,10 @@ def _rewrite_bare_in_tree(
             elif spec_kind in _BARE_KIND_SCOPE:
                 if _bare_hit(spec_kind, value, kind, old):
                     params[param] = new
+                    count += 1
+            elif spec_kind == "position_ref":
+                if _position_ref_hit(value, kind, old):
+                    value["id"] = new
                     count += 1
     _walk_ref_actions(node, visit)
     count += _rewrite_npc_data_refs(node, kind, old, new)

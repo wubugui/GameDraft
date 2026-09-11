@@ -391,9 +391,22 @@ function perspective(fovy, aspect, near, far) {
   const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far);
   return new Float32Array([f / aspect, 0, 0, 0, 0, f, 0, 0, 0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0]);
 }
+/** 正交投影（3D 视图的"正交"模式：顶视 / 侧视摆点用）。halfH = 画面半高对应的世界长度。 */
+function ortho(halfH, aspect, near, far) {
+  const r = halfH * aspect, t = halfH;
+  return new Float32Array([1 / r, 0, 0, 0, 0, 1 / t, 0, 0, 0, 0, -2 / (far - near), 0, 0, 0, -(far + near) / (far - near), 1]);
+}
+/**
+ * **左手系** lookAt。M-world 是 x 画面右、Y 上、**Z 进画**（q 翻过 Y 之后 z 仍是纵深，
+ * `depthConfig.M.R` det=+1 保手性），也就是 DirectX / Unity 那种左手系。用 OpenGL 的
+ * 右手 lookAt（x = up × z）画它，整张画面**左右镜像**、环绕 / 平移全反，而且**一处都不报错**：
+ * 投影与拾取都经同一个 mvp 及其逆，所以自洽，只有拿原画对着看才发现（2026-09-08 制作人在
+ * 声学工作台抓到，2026-09-10 在这里抓到第二次）。这里 x = z × up，基的 det = −1，
+ * 正好把左手世界摆正到屏幕上。相机的 forward / right 见 view3d.js。
+ */
 function lookAt(eye, target, up) {
   const z = norm3([eye[0] - target[0], eye[1] - target[1], eye[2] - target[2]]);
-  const x = norm3(cross3(up, z)), y = cross3(z, x);
+  const x = norm3(cross3(z, up)), y = cross3(x, z);
   return new Float32Array([x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0,
     -(x[0] * eye[0] + x[1] * eye[1] + x[2] * eye[2]), -(y[0] * eye[0] + y[1] * eye[1] + y[2] * eye[2]), -(z[0] * eye[0] + z[1] * eye[1] + z[2] * eye[2]), 1]);
 }
@@ -445,6 +458,24 @@ function rayPlane(ray, p0, n) {
   const t = dot3([p0[0] - ray.o[0], p0[1] - ray.o[1], p0[2] - ray.o[2]], n) / dn;
   if (t < 0) return null;
   return [ray.o[0] + ray.d[0] * t, ray.o[1] + ray.d[1] * t, ray.o[2] + ray.d[2] * t];
+}
+/** 射线与直线 p0 + a·t 的最近点参数 t（沿轴拖 gizmo 用：鼠标射线离轴最近处就是手指到的位置）。
+ *  轴几乎与视线平行时（两线夹角 < ~0.6°）无解返回 null，调用方退回屏幕投影法。 */
+function rayLineParam(ray, p0, a) {
+  const w0 = [p0[0] - ray.o[0], p0[1] - ray.o[1], p0[2] - ray.o[2]];
+  const A = dot3(a, a), B = dot3(a, ray.d), C = dot3(ray.d, ray.d), D = dot3(a, w0), E = dot3(ray.d, w0);
+  const denom = A * C - B * B;
+  if (denom <= 1e-4 * A * C) return null;
+  return (B * E - C * D) / denom;
+}
+/** 四边形（屏幕多边形）内含判定，偶奇法。 */
+function pointInPoly(px, py, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], yi = poly[i][1], xj = poly[j][0], yj = poly[j][1];
+    if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
 }
 /** 射线 vs 高度场地面：沿射线步进找首次 y ≤ 地面，再二分。bounds=[x0,x1,z0,z1]。 */
 function rayGround(ray, cal, maxDist) {
@@ -532,6 +563,6 @@ function distToSeg(px, py, a, b) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { SceneCal, sampleScreen, sampleWorld, perspectiveScaleAt, catmullRom, densePath, worldCurveSamples,
     flight2D, solveLanding2D, solveApex2D, flight3D, solveLanding3D, solveApex3D,
-    perspective, lookAt, mul4, inv4, xform4, projectPoint, unprojectRay, rayPlane, rayGround, rayShell,
+    perspective, ortho, lookAt, mul4, inv4, xform4, projectPoint, unprojectRay, rayPlane, rayLineParam, pointInPoly, rayGround, rayShell,
     num, clamp, round2, fmt, deepClone, distToSeg };
 }

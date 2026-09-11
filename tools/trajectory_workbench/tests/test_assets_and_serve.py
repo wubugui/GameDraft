@@ -152,7 +152,9 @@ def test_real_coin_asset_rebakes_bitwise_and_world_roundtrip(server) -> None:
     saved = json.loads((tmp / "w.json").read_text(encoding="utf-8"))
     assert saved["space"] == "world" and len(saved["worldKeyframes"]) == len(saved["keyframes"]) >= 2
     assert [f["atMs"] for f in saved["worldKeyframes"]] == [f["atMs"] for f in saved["keyframes"]]
-    assert saved["authoring"]["anchorWorld"] and saved["authoring"]["anchorHeight"] == pytest.approx(7 / 0.7071, abs=1e-2)
+    # 曲线没有锚点：烘焙机回填曲线起点（origin / originWorld），类型缺省按 sceneId 推成场景曲线
+    assert saved["authoring"]["originWorld"] and saved["authoring"]["origin"] and saved["binding"] == "scene"
+    assert "anchorWorld" not in saved["authoring"] and "anchorHeight" not in saved["authoring"]
     doc, _ = get("/api/trajectory?id=w")
     assert doc["doc"]["id"] == "w"
     assert post("/api/delete", {"id": "w"}) == {"ok": True, "deleted": True}

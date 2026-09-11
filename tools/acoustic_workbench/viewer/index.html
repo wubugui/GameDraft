@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>声学工作台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #1b1d22; --panel: #23262d; --panel2: #2a2e36; --line: #3a3f4a; --fg: #e6e8ec; --dim: #9aa1ad;
+    --accent: #6cb4ff; --warn: #ffb454; --err: #ff6b6b; --ok: #7ed492; --purple: #c792ea;
+    --font: 13px/1.45 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  /* hidden 属性必须压过下面所有按 id 写的 display:flex —— 不然 #busy / #dialog 从开页起就一直盖在画布上：
+     两层压暗 + 正中一个空框，画布一个点都点不到（2026-09-08 制作人抓到）。 */
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font: var(--font); overflow: hidden; user-select: none; }
+  input, textarea { user-select: text; }
+  button, select, input { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 3px 7px; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #2c4f7a; border-color: #3f6ea8; }
+  button.danger { border-color: #7a3c3c; }
+  button.on { background: #2c4f7a; border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  input[type=number] { width: 84px; }
+  input[type=range] { flex: 1; min-width: 80px; }
+  /* 中列永远留得住：窄窗口下右栏先让（最窄 280），左栏其次，3D 视图至少 240px */
+  #app { display: grid; grid-template-rows: auto 1fr auto; grid-template-columns: 46px minmax(160px, 220px) minmax(240px, 1fr) minmax(280px, 400px); height: 100%; }
+  #app[inert] { filter: saturate(.5) brightness(.8); }
+  #top { grid-column: 1 / span 4; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 6px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #top .grp { display: inline-flex; gap: 6px; align-items: center; }
+  #top .grp b { color: var(--dim); font-weight: 500; }
+  #tools { display: flex; flex-direction: column; gap: 4px; padding: 6px 4px; background: var(--panel); border-right: 1px solid var(--line); align-items: center; }
+  #tools button { width: 36px; height: 34px; padding: 0; font-size: 15px; }
+  #tools .sep { height: 1px; width: 28px; background: var(--line); margin: 4px 0; }
+  #left { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; }
+  #left h3, #side h3 { margin: 8px 10px 4px; font-size: 12px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  #reflList .item { display: flex; gap: 6px; align-items: center; padding: 4px 10px; cursor: pointer; border-left: 3px solid transparent; }
+  #reflList .item:hover { background: var(--panel2); }
+  #reflList .item.on { background: #2c4f7a; border-left-color: var(--accent); }
+  #reflList .ic { width: 14px; color: var(--warn); }
+  #reflList .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #center { position: relative; overflow: hidden; background: #111; }
+  #center canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+  #overlay3d { pointer-events: none; }
+  #coords { position: absolute; left: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 4px; font: 12px Consolas, "Cascadia Mono", monospace; white-space: pre; pointer-events: none; }
+  /* 放右下：左上是场景芯片（带坐标自证那一长串），窄窗口时两者在顶上会叠 */
+  #legend { position: absolute; right: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; line-height: 1.5; }
+  #viewbtns { position: absolute; left: 8px; top: 8px; z-index: 5; display: flex; gap: 4px; }
+  #side { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 0 0 10px; display: flex; flex-direction: column; gap: 4px; }
+  .sec { padding: 4px 10px 6px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 5px; }
+  .sec h3 { margin: 4px 0 2px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > span:first-child { width: 68px; color: var(--dim); flex: none; }
+  .row .val { width: 48px; text-align: right; color: var(--dim); font-variant-numeric: tabular-nums; }
+  .row .unit { color: var(--dim); }
+  .row input[type=text], .row select { flex: 1; min-width: 0; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .dim { color: var(--dim); }
+  .pad { padding: 8px 10px; }
+  .kv { display: flex; gap: 8px; padding: 1px 10px; }
+  .kv > span:first-child { width: 40px; color: var(--dim); flex: none; }
+  #taps table { border-collapse: collapse; width: 100%; font: 11px Consolas, "Cascadia Mono", monospace; }
+  #taps th, #taps td { text-align: right; padding: 1px 4px; border-bottom: 1px solid var(--line); }
+  #taps th:nth-child(2), #taps td:nth-child(2) { text-align: left; }
+  #taps tr.occ td { color: var(--err); }
+  #irCanvas { width: 100%; height: 90px; display: block; border-radius: 4px; background: #12151b; }
+  #probes { display: flex; gap: 6px; flex-wrap: wrap; }
+  #bottom { grid-column: 1 / span 4; display: flex; gap: 14px; align-items: center; padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--line); font-size: 12px; }
+  #status { flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #status.err { color: var(--err); } #status.warn { color: var(--warn); } #status.ok { color: var(--ok); }
+  .chip { padding: 2px 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); }
+  .chip.ok { color: var(--ok); border-color: #3f7a4a; } .chip.warn { color: var(--warn); border-color: #7a5a2c; } .chip.bad { color: var(--err); border-color: #7a3c3c; } .chip.off { color: var(--dim); }
+  #busy { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  #dialog { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; }
+  #dialogForm { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; min-width: 360px; display: flex; flex-direction: column; gap: 8px; }
+  #dialogForm h3 { margin: 0 0 4px; } #dialogForm p { margin: 0; color: var(--dim); }
+  #dialogForm .row > span:first-child { width: 130px; }
+  #dialogForm .btns { justify-content: flex-end; }
+  label.chk { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <span class="grp"><b>空间</b><select id="spaceSel"></select>
+      <button id="btnNew" title="新建一个空间（在当前展开的场景里摆）">新建</button>
+      <button id="btnDup" title="复制当前空间">复制</button>
+      <button id="btnRename" title="改名（被场景绑定着的不能改）">改名</button>
+      <button id="btnDelete" class="danger" title="删除当前空间">删除</button></span>
+    <span class="grp"><b>场景</b><select id="sceneSel" title="在哪个场景的 3D 展开里摆（逻辑上一份几何一个空间）"></select><select id="bgSel" hidden title="时段背景"></select>
+      <button id="btnLaunchGame" class="primary" title="一键拉起游戏进这个场景：游戏在跑就切场景；dev server 在跑就打开游戏页；都没有就让开发控制台起游戏服务（没开控制台就工作台自己起）">▶ 拉起游戏进本场景</button>
+      <button id="btnReopenGame" hidden title="游戏页现在跑在普通浏览器里（音频要点一下才解锁、没焦点会被降级）：另开一个专用预览窗（免手势音频、不后台降级、不缓存）进本场景。开了之后把旧页关掉">⧉ 专用窗重开</button></span>
+    <span class="grp"><button id="btnUndo" disabled>↶</button><button id="btnRedo" disabled>↷</button><button id="btnSave" class="primary" title="Ctrl+S">保存</button></span>
+    <span class="grp"><b>试听</b><span id="probes"></span></span>
+    <span class="grp" style="margin-left:auto"><label class="chk"><input type="checkbox" id="linkOn" checked> 联动</label><input type="text" id="gameUrl" style="width:170px" title="游戏 dev server 地址（localhost 会换成 127.0.0.1）"><span id="linkChip" class="chip">…</span></span>
+  </div>
+  <div id="tools">
+    <button data-tool="select" title="选择（Q）：点选 / 拖框">⬚</button>
+    <button data-tool="move" title="移动（W）">✥</button>
+    <button data-tool="rotate" title="旋转（E）">↻</button>
+    <button data-tool="scale" title="缩放长度（R）">⤢</button>
+    <div class="sep"></div>
+    <button data-tool="addWall" title="加崖壁（B）：在场景表面上按下拖一段">▮</button>
+    <button data-tool="addPlane" title="加水平面（N）：水面 / 岩檐，在地面上拖一条边">▬</button>
+    <button data-tool="placeListener" title="放听者（L）：点地面">●</button>
+    <button data-tool="placeSource" title="加声源（P）：点地面放一个有物理位置的发声点，可放多个；试听从选中的声源发出，不放 = 听者自己喊">◆</button>
+    <div class="sep"></div>
+    <button id="btnFocus" title="聚焦选中（F）">⌖</button>
+    <button id="btnFit" title="看全景（Home）">⛶</button>
+  </div>
+  <div id="left">
+    <h3>反射面</h3>
+    <div id="reflList"></div>
+    <h3>图层</h3>
+    <div class="pad" style="display:flex;flex-direction:column;gap:3px">
+      <label class="chk"><input type="checkbox" id="layer_mesh"> 场景</label>
+      <label class="chk"><input type="checkbox" id="layer_dimMesh"> 场景压暗</label>
+      <label class="chk"><input type="checkbox" id="layer_grid"> 地面网格（2 m）</label>
+      <label class="chk"><input type="checkbox" id="layer_taps"> 抽头路径</label>
+      <label class="chk"><input type="checkbox" id="layer_gameListener"> 游戏听者</label>
+      <label class="chk"><input type="checkbox" id="layer_marks"> 出生点 / NPC</label>
+    </div>
+    <h3>游戏</h3>
+    <div id="gamePanel"></div>
+  </div>
+  <div id="center">
+    <canvas id="view3d"></canvas>
+    <canvas id="overlay3d"></canvas>
+    <div id="coords"></div>
+    <div id="legend">Q 选择 · W/E/R 移动/旋转/缩放 gizmo（Ctrl 吸附）· B 加崖壁 · N 加水平面 · L 放听者 · P 加声源<br>F 对准 · Home 全景 · 双击 对准 · 右上坐标架 = 正交视角（相机手势见画布左下）</div>
+    <div id="viewbtns"><span id="sceneNote" class="chip"></span></div>
+  </div>
+  <div id="side">
+    <div id="inspector"></div>
+    <div class="sec"><h3>抽头（与游戏同一份实现）</h3><div id="taps"></div></div>
+    <div class="sec"><h3>IR</h3><canvas id="irCanvas"></canvas></div>
+  </div>
+  <div id="bottom"><span id="docState"></span><span id="status"></span></div>
+</div>
+<div id="busy" hidden><span id="busyText"></span></div>
+<div id="dialog" hidden><form id="dialogForm"></form></div>
+<script src="/viewer/mathx.js"></script>
+<script src="/viewer/history.js"></script>
+<script src="/viewer/view3d.js"></script>
+<script src="/viewer/app.js"></script>
+</body>
+</html>

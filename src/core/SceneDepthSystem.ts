@@ -13,6 +13,8 @@ import {
 import type { ResolvedLightEnv } from '../rendering/lightEnv';
 import type { ShadowSceneContext, IEntityShadow } from '../rendering/entityShadowTypes';
 import { depthLog, depthError } from './depthLog';
+import { decodeDepthShellField, type DepthShellField } from '../utils/depthShellField';
+import { basisRowsFromDepthConfigR } from '../utils/trajectoryProjection';
 import { sceneRuntimeAssetUrl } from './projectPaths';
 import { sampleGroundFieldWorld, type GroundDepthField } from '../utils/groundDepthField';
 import {
@@ -30,6 +32,11 @@ export class SceneDepthSystem implements IGameSystem {
     private config: SceneDepthConfig | null = null;
     private depthTexture: Texture | null = null;
     private collisionData: Uint8Array | null = null;
+    /**
+     * 深度壳的 CPU 侧场（`raw_depth_rg.png` 解码 + 降采样 + 世界法线），给世界空间粒子撞墙 / 摆巢用。
+     * 与 GPU 纹理是同一张图的两种读法；没有 depthConfig 的场景为 null。
+     */
+    private depthShell: DepthShellField | null = null;
     private collisionTexture: Texture | null = null;
     private collisionW = 0;
     private collisionH = 0;
@@ -198,6 +205,14 @@ export class SceneDepthSystem implements IGameSystem {
             this.enabled = false;
             return;
         }
+        try {
+            this.depthShell = await this.decodeDepthShell(sceneRuntimeAssetUrl(sceneId, depthConfig.depth_map), depthConfig, assetManager, sceneW * worldToPixelX, sceneH * worldToPixelY);
+            depthLog(T, 'depth shell (CPU) OK:', this.depthShell ? `${this.depthShell.w}x${this.depthShell.h}` : 'null');
+        } catch (e) {
+            // 壳的 CPU 副本只服务粒子系统；解不出来不拖垮遮挡 / 碰撞
+            depthError(T, 'depth shell (CPU) FAILED（粒子撞墙 / 落壳退化为无墙）', e);
+            this.depthShell = null;
+        }
 
         if (depthConfig.collision_map) {
             try {
@@ -255,6 +270,7 @@ export class SceneDepthSystem implements IGameSystem {
 
     unload(): void {
         this.depthTexture = null;
+        this.depthShell = null;
         this.collisionData = null;
         this.collisionTexture = null;
         this.collisionW = 0; this.collisionH = 0;
@@ -338,6 +354,34 @@ export class SceneDepthSystem implements IGameSystem {
             colGridW: this.collisionW,
             colGridH: this.collisionH,
         };
+    }
+
+    /** 深度壳 CPU 场（粒子系统读）；无 depthConfig / 解码失败为 null */
+    get depthShellField(): DepthShellField | null { return this.depthShell; }
+
+    /**
+     * 把深度 PNG 解成 CPU 壳：目标栅格 512 宽（与照明载荷 / 工作台同宽），标定 = `depthConfig.M × 缩放`。
+     * 背景原生尺寸由「场景世界尺寸 × 世界→像素比」给出（深度图与背景可能差几行，按归一化 uv 铺满）。
+     */
+    private async decodeDepthShell(
+        path: string,
+        cfg: SceneDepthConfig,
+        assetManager: AssetManager,
+        nativeW: number,
+        nativeH: number,
+    ): Promise<DepthShellField | null> {
+        const rows = basisRowsFromDepthConfigR(cfg.M?.R);
+        if (!rows) return null;
+        const bitmap = await assetManager.loadBitmap(path);
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(bitmap, 0, 0);
+        const img = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+        return decodeDepthShellField(
+            img.data, bitmap.width, bitmap.height,
+            Math.max(1, Math.round(nativeW)), Math.max(1, Math.round(nativeH)),
+            cfg.depth_mapping, { ppu: cfg.M.ppu, cx: cfg.M.cx, cy: cfg.M.cy }, rows,
+        );
     }
 
     private async loadCollisionBitmap(path: string, assetManager: AssetManager): Promise<void> {

@@ -398,6 +398,9 @@ class MainWindow(QMainWindow):
                   QKeySequence("Ctrl+Shift+F"))
         self._act(tools_menu, "查引用(JSON 语言)…", self._open_lsp_refs_dialog)
         tools_menu.addSeparator()
+        # 制作人手册(本地文档站):另起 `python -m tools.handbook`,与编辑器零耦合——删掉这一行手册照常用
+        self._act(tools_menu, "打开手册（文档站）", self._launch_handbook_external, QKeySequence("F1"))
+        tools_menu.addSeparator()
         ext = tools_menu.addMenu("External tools (new process)")
         self._act(ext, "Graph Editor", self._launch_graph_editor_external)
         self._act(ext, "Dialogue Graph Editor", self._launch_dialogue_graph_editor_external)
@@ -413,6 +416,11 @@ class MainWindow(QMainWindow):
         # 轨迹工作台是 assets/data/trajectories/ 的唯一写者；主编辑器只读那份，存盘后手动重读
         self._act(ext, "轨迹工作台…", self.open_trajectory_workbench)
         self._act(ext, "重读轨迹资产", self._reload_trajectories_from_disk)
+        # 声学工作台是 assets/data/acoustic_spaces.json 的唯一写者；场景属性页的 acousticSpace 选择器只读它
+        self._act(ext, "声学工作台…", self.open_acoustic_workbench)
+        # 粒子工作台是 assets/data/vfx/ 的唯一写者；场景页的 vfx 实例与 playVfx 选择器只读那份
+        self._act(ext, "粒子工作台…", self.open_vfx_workbench)
+        self._act(ext, "重读粒子资产", self._reload_vfx_from_disk)
 
         view_menu = mb.addMenu("View")
         self._act(view_menu, "编辑器设置…", self._open_editor_settings, "Ctrl+,")
@@ -1172,6 +1180,10 @@ class MainWindow(QMainWindow):
         before = list(self._dialogue_external_processes)
         self._dialogue_external_processes = [p for p in before if p.poll() is None]
         if len(before) != len(self._dialogue_external_processes):
+            # 顺序要紧：先把磁盘侧的只读镜像换成新的（轨迹资产），再重建控件候选——
+            # 反过来就是"拿旧模型重建了一遍"，看起来刷新了其实没有。
+            self._resync_trajectories_from_disk()
+            self._resync_vfx_from_disk()
             self._reload_all_reference_catalogs()
             self._resync_audio_config_from_disk()
         if not self._dialogue_external_processes:
@@ -1186,6 +1198,9 @@ class MainWindow(QMainWindow):
         ):
             # 外置编辑器可能仍开着且刚保存：主窗口重新获得焦点就是最可靠的
             # 跨进程刷新边界。目录刷新只读且逐面板异常隔离。
+            # 轨迹资产排在目录刷新**之前**：它换的是只读镜像，控件重建要用到新镜像。
+            QTimer.singleShot(0, self, self._resync_trajectories_from_disk)
+            QTimer.singleShot(0, self, self._resync_vfx_from_disk)
             QTimer.singleShot(0, self, self._reload_all_reference_catalogs)
             # 音频加工台改的是 audio_config.json 的 src，不属于「引用目录」那一路，
             # 所以单独挂：那边只在打开工程时读一次，不重读就会被下一次 Save All 盖掉。
@@ -1201,6 +1216,13 @@ class MainWindow(QMainWindow):
             "Image Resizer",
             root=self._external_tool_cwd(),
         )
+
+    def _launch_handbook_external(self) -> None:
+        """制作人手册:handbook/docs 的 md 渲成本地网站(全站搜索/公式/表格),默认浏览器打开。
+
+        不登记、不等它、不共享任何状态;它连 src 与 tools.editor 都不 import。
+        """
+        self._launch_external_tool("tools.handbook", [], "手册")
 
     def _launch_copy_manager_external(self) -> None:
         self._launch_external_tool("tools.copy_manager", [], "Copy Manager")
@@ -1804,6 +1826,18 @@ class MainWindow(QMainWindow):
         # 外置编辑器可能只改了标题/场景归属而没改变文件名；仅靠 id 签名无法
         # 识别这种跨进程变化，刷新边界上必须先清目录缓存。
         clear_dialogue_graph_reference_cache(self._model)
+        self._refresh_open_pages_after_disk_change()
+
+    def _refresh_open_pages_after_disk_change(self) -> None:
+        """磁盘侧目录变了 → 让**已经打开**的页把跨域候选重拉一遍。
+
+        为什么只重读模型不够(这条是踩出来的,2026-09-11 轨迹侧):``ActionRow`` 的候选是
+        ``_rebuild_params()`` 那一刻的静态快照,而 ``set_project_context`` 在 model/scene 未变时短路
+        —— 只把新数据读进 ``ProjectModel`` 而不重建控件,下拉里就永远看不见别的进程刚存的东西
+        (轨迹的 id / 命名插槽 / 曲线类型全在这一族)。
+        """
+        from .shared.action_editor import bump_reference_refresh_epoch
+
         # 一次目录变更 = 一轮刷新代号：同一页里顶层钩子与子控件兜底扫描重叠时只重建一次。
         bump_reference_refresh_epoch()
         # 目录变了 = 所有页的候选都过期。但一次把十几页的动作行全重建会明显卡顿
@@ -3313,8 +3347,10 @@ class MainWindow(QMainWindow):
         轨迹是全局资产 `assets/data/trajectories/<id>.json`，**唯一写者**是工作台进程；
         主编辑器对该目录只读（候选 / 校验），所以这里只负责起进程：
         - **不等它**（detached；Windows 上另开进程组，关主编辑器不连带杀它）；
-        - 不登记进外置进程监视表——它写的目录不归 save_all 管，没有可被静默盖掉的东西；
-          要刷新候选走「工具 → 重读轨迹资产」（`_reload_trajectories_from_disk`）。
+        - **登记进外置进程监视表**：主窗回到前台、或工作台退出时自动重读那个目录
+          （2026-09-11 起。它写的东西 save_all 盖不掉,但作者在工作台里新加的命名插槽 /
+          刚改的曲线类型,不重读就在 playTrajectory 与位置引用的下拉里根本不存在——
+          "编辑器中途开着就同步不到"正是这条）。手动那一下仍在「工具 → 重读轨迹资产」。
         """
         root = self._ensure_valid_tool_root()
         if root is None:
@@ -3327,20 +3363,120 @@ class MainWindow(QMainWindow):
                 subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
             )
         try:
-            subprocess.Popen(cmd, **kwargs)
+            proc = subprocess.Popen(cmd, **kwargs)
         except OSError as e:
             QMessageBox.critical(self, "External tools", f"Failed to start 轨迹工作台:\n{e}")
             return
+        self._dialogue_external_processes.append(proc)
+        self._dialogue_process_watch_timer.start()
         self._status.showMessage(
             f"Started in new process: 轨迹工作台{f'（{tid}）' if tid else ''}", 4000)
 
-    def _reload_trajectories_from_disk(self) -> None:
-        """重读 `assets/data/trajectories/`（工作台存盘后刷新 playTrajectory 候选；不标脏）。"""
+    def open_vfx_workbench(self, effect_id: str = "") -> None:
+        """另起独立进程打开「粒子工作台」（场景页 vfx 实例的「在粒子工作台中打开…」落点）。
+
+        效果是全局资产 `assets/data/vfx/<id>.json`，**唯一写者**是工作台进程；主编辑器对该目录
+        只读（场景 vfx 实例的 effect 候选、playVfx 选择器、`validate-data` 的结构校验都读它）。
+        起法与轨迹工作台逐条相同：detached、不等它、**登记进外置进程监视表**——作者在工作台里
+        新建的效果，不重读就在那些下拉里根本不存在（"编辑器中途开着就同步不到"正是这条）。
+        手动那一下在「工具 → 重读粒子资产」。
+        """
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        eid = (effect_id or "").strip()
+        cmd = [sys.executable, "-m", "tools.vfx_workbench", *(["--open", eid] if eid else [])]
+        kwargs: dict = {"cwd": str(root.resolve())}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        try:
+            proc = subprocess.Popen(cmd, **kwargs)
+        except OSError as e:
+            QMessageBox.critical(self, "External tools", f"Failed to start 粒子工作台:\n{e}")
+            return
+        self._dialogue_external_processes.append(proc)
+        self._dialogue_process_watch_timer.start()
+        self._status.showMessage(
+            f"Started in new process: 粒子工作台{f'（{eid}）' if eid else ''}", 4000)
+
+    def _reload_vfx_from_disk(self) -> None:
+        """重读 `assets/data/vfx/` 并让**当前页**立刻用上（工具菜单的「重读粒子资产」）。
+
+        与轨迹那条同构：先换只读镜像（场景 vfx 实例的 effect 候选、playVfx 选择器、校验都读它），
+        再把已经打开的页的候选重拉一遍。用户显式点菜单时**无条件**刷当前页。
+        """
         if self._model.project_path is None:
             return
-        self._model.reload_trajectories_from_disk()
+        changed = self._model.reload_vfx_from_disk()
+        self._refresh_open_pages_after_disk_change()
         self._status.showMessage(
-            f"已重读轨迹资产：{len(self._model.trajectories)} 条", 4000)
+            f"已重读粒子资产：{len(self._model.vfx_effects)} 份效果"
+            + ("（有变化，候选与校验已同步）" if changed else "（与内存里的一致）"),
+            4000)
+
+    def _resync_vfx_from_disk(self) -> None:
+        """静默重读效果资产（工作台还开着时主窗回到前台 / 工作台退出时自动走这条）。"""
+        if self._model.project_path is None:
+            return
+        if self._model.reload_vfx_from_disk():
+            self._refresh_open_pages_after_disk_change()
+
+    def open_acoustic_workbench(self, space_id: str = "") -> None:
+        """另起独立进程打开「声学工作台」（场景属性页「在声学工作台中打开…」的落点）。
+
+        声学空间库 `assets/data/acoustic_spaces.json` 的**唯一写者**是工作台进程（在场景的 3D 展开里摆
+        反射面、实时推给游戏预览、保存）；主编辑器只拿它做场景属性页的候选与校验。
+        起法与轨迹工作台同：detached、不等它。**但它不登记进外置进程监视表**——那边有
+        `_resync_trajectories_from_disk` 这条重读只读镜像的路，声学这边还没有（模型没有对应的重读入口、
+        菜单也没有「重读声学空间」）。后果与轨迹 2026-09-11 之前一样：编辑器开着时在工作台里新加的
+        声学空间，要重开工程才在场景属性页的下拉里出现。要补就照轨迹那条来（见 mainwindow-editor-hooks 契约 6）。
+        """
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        sid = (space_id or "").strip()
+        cmd = [sys.executable, "-m", "tools.acoustic_workbench", *(["--open", sid] if sid else [])]
+        kwargs: dict = {"cwd": str(root.resolve())}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        try:
+            subprocess.Popen(cmd, **kwargs)
+        except OSError as e:
+            QMessageBox.critical(self, "External tools", f"Failed to start 声学工作台:\n{e}")
+            return
+        self._status.showMessage(
+            f"Started in new process: 声学工作台{f'（{sid}）' if sid else ''}", 4000)
+
+    def _reload_trajectories_from_disk(self) -> None:
+        """重读 `assets/data/trajectories/` 并让**当前页**立刻用上（工具菜单的「重读轨迹资产」）。
+
+        两步缺一不可：重读磁盘换掉只读镜像(playTrajectory 候选、命名插槽、曲线类型、校验都读它),
+        再把已经打开的页的候选重拉一遍(控件候选是构造期快照,只换模型看不见)。
+        用户显式点菜单时**无条件**刷当前页:哪怕盘上没变,这一下也是他用来"确认现在是最新的"。
+        """
+        if self._model.project_path is None:
+            return
+        changed = self._model.reload_trajectories_from_disk()
+        self._refresh_open_pages_after_disk_change()
+        self._status.showMessage(
+            f"已重读轨迹资产：{len(self._model.trajectories)} 条"
+            + ("（有变化，候选与校验已同步）" if changed else "（与内存里的一致）"),
+            4000)
+
+    def _resync_trajectories_from_disk(self) -> None:
+        """静默重读轨迹资产（工作台还开着时主窗回到前台 / 工作台退出时自动走这条）。
+
+        与菜单那条的差别只有两点：不报状态、**盘上没变就什么都不做**——每激活一次窗口
+        就重建一遍全页动作行会让人明显感觉到卡，而工作台多数时候并没有存盘。
+        """
+        if self._model.project_path is None:
+            return
+        if self._model.reload_trajectories_from_disk():
+            self._refresh_open_pages_after_disk_change()
 
     def _on_task_scene_layout_requested(
         self, scene_id: str, entity_kind: str, entity_id: str,

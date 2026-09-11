@@ -172,6 +172,30 @@
         "5321"
       ],
       "port": 5323
+    },
+    {
+      "name": "acoustic-workbench",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/pytool.cjs",
+        "acoustic_workbench",
+        "--serve",
+        "--port",
+        "5331"
+      ],
+      "port": 5331
+    },
+    {
+      "name": "vfx-workbench",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/pytool.cjs",
+        "vfx_workbench",
+        "--serve",
+        "--port",
+        "5341"
+      ],
+      "port": 5341
     }
   ]
 }

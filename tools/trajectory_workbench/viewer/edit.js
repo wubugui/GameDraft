@@ -14,20 +14,114 @@ const Edit = {
   segs(doc) { doc.source = doc.source || { segments: [] }; doc.source.segments = doc.source.segments || []; return doc.source.segments; },
   startMode(doc, seg) {
     const i = Edit.segs(doc).indexOf(seg);
-    const m = seg.startFrom === 'entity' ? 'anchor' : seg.startFrom;
-    return m === 'anchor' || m === 'previous' || m === 'explicit' ? m : (i === 0 ? 'anchor' : 'previous');
+    if (i === 0) return 'explicit';   // 曲线没有锚点：第 0 段的起点就是曲线起点（自定，可拖）
+    const m = seg.startFrom === 'entity' || seg.startFrom === 'anchor' ? 'explicit' : seg.startFrom;   // 旧的"锚点"起点：曲线不再有锚点，按自定
+    return m === 'previous' || m === 'explicit' ? m : 'previous';
   },
   isPinned(doc, seg) { return Edit.startMode(doc, seg) !== 'explicit'; },
   isWorld(host) { return host.doc.space === 'world'; },
 
-  // ---------------------------------------------------------------- 起点
-  /** 锚点的世界位置（画面锚点脚下地面点抬 restH）。 */
-  anchorWorld(host) {
-    const au = host.doc.authoring, cal = host.cal;
+  // ---------------------------------------------------------------- 曲线原点 / 曲线起点（两回事）
+  /** **曲线原点** = 作者摆的参考点：播放时给的位置对齐的就是它，帧相对它写（2026-09-11 第二轮）。
+   *  世界空间的真相是 `authoring.originWorld`（绝对世界点），`authoring.origin` 是它的投影；画面空间只有 `origin`。
+   *  没摆过（新曲线 / 老资产）**退到曲线起点**——保持"原点就在起点上"的老观感，作者一拖两者就分开。
+   *  ⚠ 别再把它当成"第一帧"：原点钉死在起点上时，调一下运动起点整条曲线在播放时就整体位移了（制作人打回过）。 */
+  originWorld(host) {
+    const au = host.doc.authoring || {};
+    if (!host.cal) return null;
+    if (au.originWorld && Number.isFinite(num(au.originWorld.x, NaN))) {
+      return [num(au.originWorld.x, 0), num(au.originWorld.y, 0), num(au.originWorld.z, 0)];
+    }
+    return Edit.curveStartWorld(host);
+  },
+  originScreen(host) {
+    const au = host.doc.authoring || {};
+    if (Edit.isWorld(host)) {
+      const w = Edit.originWorld(host);
+      if (w && host.cal) { const f = host.cal.worldToScene(w[0], w[1], w[2]); return [f[0], f[1]]; }
+    }
+    if (au.origin && Number.isFinite(num(au.origin.x, NaN))) return [num(au.origin.x, 0), num(au.origin.y, 0)];
+    return Edit.curveStartScreen(host);
+  },
+  /** 作者到底摆过原点没有（没摆过 = 跟着曲线起点走，UI 上要说清楚）。 */
+  hasOrigin(host) {
+    const au = host.doc.authoring || {};
+    const o = Edit.isWorld(host) ? au.originWorld : au.origin;
+    return !!(o && Number.isFinite(num(o.x, NaN)));
+  },
+  /** 写原点（世界绝对点）：同时把画面投影写上，右栏 / 画布不必等烘焙回填。 */
+  setOriginWorld(host, w) {
+    if (!w || !Number.isFinite(w[0]) || !host.cal) return false;
+    const au = host.doc.authoring;
+    au.originWorld = { x: round3(w[0]), y: round3(w[1]), z: round3(w[2]) };
+    const f = host.cal.worldToScene(au.originWorld.x, au.originWorld.y, au.originWorld.z);
+    au.origin = { x: round2(f[0]), y: round2(f[1]) };
+    return true;
+  },
+  /** 写原点（画面点）。世界空间：落到该画面点脚下的地面，**保持原来的离地高**（与拖点同式）。 */
+  setOriginScreen(host, s) {
+    if (!s || !Number.isFinite(s[0]) || !Number.isFinite(s[1])) return false;
+    if (!Edit.isWorld(host)) { host.doc.authoring.origin = { x: round2(s[0]), y: round2(s[1]) }; return true; }
+    const cal = host.cal; if (!cal) return false;
+    const cur = Edit.originWorld(host);
+    const h = cur ? Math.max(0, cur[1] - cal.groundHeight(cur[0], cur[2])) : 0;
+    const g = cal.sceneToWorldGround(s[0], s[1]);
+    return Edit.setOriginWorld(host, [g[0], g[1] + h, g[2]]);
+  },
+  /** 原点的离地高（世界空间；画面空间没有这个概念） */
+  originHeight(host) {
+    const w = Edit.originWorld(host), cal = host.cal;
+    if (!w || !cal) return 0;
+    return Math.max(0, w[1] - cal.groundHeight(w[0], w[2]));
+  },
+  setOriginHeight(host, h) {
+    const w = Edit.originWorld(host), cal = host.cal;
+    if (!w || !cal) return false;
+    return Edit.setOriginWorld(host, [w[0], cal.groundHeight(w[0], w[2]) + Math.max(0, num(h, 0)), w[2]]);
+  },
+  /** 原点回到曲线起点（右栏按钮；也是新曲线的缺省关系）。 */
+  originToCurveStart(host) {
+    if (Edit.isWorld(host)) { const w = Edit.curveStartWorld(host); return w ? Edit.setOriginWorld(host, w) : false; }
+    return Edit.setOriginScreen(host, Edit.curveStartScreen(host));
+  },
+  /** 整条变换把原点一起带走（不带的话"整条挪开"在播放时等于没挪：播放位置对齐的是原点）。 */
+  transformOrigin(host, T) {
+    if (Edit.isWorld(host)) {
+      const cal = host.cal, w = Edit.originWorld(host);
+      if (!cal || !w) return;
+      const h = Math.max(0, w[1] - cal.groundHeight(w[0], w[2]));
+      const o = T.pos([w[0], w[2], h]);
+      const nh = Math.max(0, o.length > 2 ? o[2] : h);
+      Edit.setOriginWorld(host, [o[0], cal.groundHeight(o[0], o[1]) + nh, o[1]]);
+      return;
+    }
+    const s = Edit.originScreen(host);
+    Edit.setOriginScreen(host, T.pos([s[0], s[1]]));
+  },
+  /** **曲线起点** = 第 0 段的起点（运动从哪儿开始）；没有分段时退到原点 / 出生点。 */
+  curveStartWorld(host) {
+    const segs = Edit.segs(host.doc);
+    if (segs.length) { const w = Edit.segStartWorld(host, segs[0]); if (w) return w; }
+    return Edit._originFallbackWorld(host);
+  },
+  curveStartScreen(host) {
+    const segs = Edit.segs(host.doc);
+    if (segs.length) return Edit.segStartScreen(host, segs[0]);
+    return Edit._originFallbackScreen(host);
+  },
+  _originFallbackWorld(host) {
+    const au = host.doc.authoring || {}, cal = host.cal;
     if (!cal) return null;
-    if (au.anchorWorld && Number.isFinite(au.anchorWorld.x)) return [au.anchorWorld.x, au.anchorWorld.y, au.anchorWorld.z];
-    const g = cal.sceneToWorldGround(au.anchor.x, au.anchor.y + (au.contactOffsetY || 0));
+    if (au.originWorld && Number.isFinite(au.originWorld.x)) return [au.originWorld.x, au.originWorld.y, au.originWorld.z];
+    const o = au.origin || au.anchor || (host.scene && host.scene.spawnPoint) || null;
+    if (!o) return null;
+    const g = cal.sceneToWorldGround(num(o.x, 0), num(o.y, 0));
     return [g[0], g[1] + host.restH(), g[2]];
+  },
+  _originFallbackScreen(host) {
+    const au = host.doc.authoring || {};
+    const o = au.origin || au.anchor || (host.scene && host.scene.spawnPoint) || null;
+    return o ? [num(o.x, 0), num(o.y, 0)] : [0, 0];
   },
   /** 段起点（世界坐标）：自定起点 / 锚点 本地算（拖锚点时才能实时跟手）；"上一段末点"才需要上次烘焙的段边界。 */
   segStartWorld(host, seg) {
@@ -39,8 +133,9 @@ const Edit = {
     if (mode === 'explicit') {
       if (seg.start && seg.start.z != null) return cal.xzhToWorld(num(seg.start.x, 0), num(seg.start.z, 0), num(seg.start.h, 0));
       if (bs && bs.start && bs.start.length === 3) return bs.start.slice();
+      const pts = (seg.path && seg.path.points) || [];   // 没写 start 的自定起点 = 画在哪就在哪（path[0]）
+      if (pts.length) return cal.xzhToWorld(num(pts[0].x, 0), num(pts[0].z, 0), num(pts[0].h, 0));
     }
-    if (mode === 'anchor') { const a = Edit.anchorWorld(host); if (a) return a; }
     if (mode === 'previous' && i > 0) {
       if (bs && bs.start && bs.start.length === 3) return bs.start.slice();
       const pb = host.bakeSegment(i - 1);
@@ -53,7 +148,7 @@ const Edit = {
       const ps = Edit.segStartWorld(host, prev);
       if (ps) return ps;
     }
-    return Edit.anchorWorld(host);
+    return Edit._originFallbackWorld(host);
   },
   segStartXZH(host, seg) {
     const w = Edit.segStartWorld(host, seg);
@@ -66,7 +161,7 @@ const Edit = {
     const doc = host.doc;
     if (Edit.isWorld(host)) {
       const w = Edit.segStartWorld(host, seg);
-      return w && host.cal ? host.cal.worldToScene(w[0], w[1], w[2]) : [doc.authoring.anchor.x, doc.authoring.anchor.y];
+      return w && host.cal ? host.cal.worldToScene(w[0], w[1], w[2]) : Edit._originFallbackScreen(host);
     }
     const segs = Edit.segs(doc), i = segs.indexOf(seg);
     const bs = host.bakeSegment(i);
@@ -74,8 +169,9 @@ const Edit = {
     if (mode === 'explicit') {
       if (seg.start) return [num(seg.start.x, 0), num(seg.start.y, 0)];
       if (bs && bs.start) return [bs.start[0], bs.start[1]];
+      const pts = (seg.path && seg.path.points) || [];
+      if (pts.length) return [num(pts[0].x, 0), num(pts[0].y, 0)];
     }
-    if (mode === 'anchor') return [doc.authoring.anchor.x, doc.authoring.anchor.y];
     if (mode === 'previous' && i > 0) {
       if (bs && bs.start) return [bs.start[0], bs.start[1]];
       const pb = host.bakeSegment(i - 1);
@@ -87,7 +183,7 @@ const Edit = {
       }
       return Edit.segStartScreen(host, prev);
     }
-    return [doc.authoring.anchor.x, doc.authoring.anchor.y];
+    return Edit._originFallbackScreen(host);
   },
 
   // ---------------------------------------------------------------- 有效点
@@ -149,19 +245,22 @@ const Edit = {
     const o = opts || {};
     let seg;
     if (kind === 'manual') {
-      seg = { id: Edit.newSegId(doc, 'manual'), kind: 'manual', startFrom: first ? 'anchor' : 'previous', path: { points: [], smooth: true },
+      seg = { id: Edit.newSegId(doc, 'manual'), kind: 'manual', startFrom: first ? 'explicit' : 'previous', path: { points: [], smooth: true },
         timing: { durationMs: 1000, keys: [{ atMs: 0, progress: 0 }, { atMs: 1000, progress: 1 }] } };
       segs.push(seg);
       const st = world ? Edit.segStartXZH(host, seg) : Edit.segStartScreen(host, seg);
       if (st) seg.path.points.push(world ? { x: round2(st.x), z: round2(st.z), h: round2(Math.max(0, st.h)) } : Edit._mk(host, st));
     } else {
       const r = o.radius != null ? o.radius : (host.entityRadius ? host.entityRadius() : 7);
-      seg = { id: Edit.newSegId(doc, 'physics'), kind: 'physics', startFrom: first ? 'anchor' : 'previous',
+      seg = { id: Edit.newSegId(doc, 'physics'), kind: 'physics', startFrom: first ? 'explicit' : 'previous',
         v0: world ? { x: -120, y: 260, z: 40 } : { x: -120, y: -260 }, gravity: world ? 865 : 1500, restitution: 0.45, tangentialDamping: 0.1, rollingFriction: 150,
         stop: { minSpeed: 40, maxMs: 4000 }, spin: { radius: r } };
       segs.push(seg);
-      // 画面空间地面线：不能高于这一段真正的起点（setGroundY 的不变量），锚点+接地偏移只是下限
-      if (world) seg.radius = r; else seg.groundY = round2(Math.max(Edit.segStartScreen(host, seg)[1], doc.authoring.anchor.y + (doc.authoring.contactOffsetY || 0)));
+      // 画面空间地面线：不能高于这一段真正的起点（setGroundY 的不变量），曲线起点+接地偏移只是下限
+      if (world) seg.radius = r; else seg.groundY = round2(Math.max(Edit.segStartScreen(host, seg)[1], Edit._originFallbackScreen(host)[1] + host.contactOffsetY()));
+      // 第一段从**原点**起（新曲线的原点就在这儿；作者之后拖开两者才分家）
+      if (first && !world) seg.start = (() => { const o = Edit.originScreen(host); return { x: round2(o[0]), y: round2(o[1]) }; })();
+      if (first && world) { const o = Edit.originWorld(host); if (o) { const q = host.cal.worldToXZH(o[0], o[1], o[2]); seg.start = { x: round2(q.x), z: round2(q.z), h: round2(Math.max(0, q.h)) }; } }
     }
     return segs.length - 1;
   },
@@ -169,13 +268,13 @@ const Edit = {
     const segs = Edit.segs(host.doc);
     if (i < 0 || i >= segs.length) return;
     segs.splice(i, 1);
-    if (segs[0] && Edit.startMode(host.doc, segs[0]) === 'previous') segs[0].startFrom = 'anchor';
+    if (segs[0] && segs[0].startFrom !== 'explicit') Edit.setStartMode(host, segs[0], 'explicit');   // 新的第 0 段：起点就是它现在的位置
   },
   moveSegment(host, i, d) {
     const segs = Edit.segs(host.doc); const j = i + d;
     if (i < 0 || j < 0 || j >= segs.length) return i;
     [segs[i], segs[j]] = [segs[j], segs[i]];
-    if (segs[0] && Edit.startMode(host.doc, segs[0]) === 'previous') segs[0].startFrom = 'anchor';
+    if (segs[0] && segs[0].startFrom !== 'explicit') Edit.setStartMode(host, segs[0], 'explicit');
     return j;
   },
   duplicateSegment(host, i) {
@@ -191,7 +290,7 @@ const Edit = {
     const segs = Edit.segs(host.doc);
     const copy = deepClone(segObj);
     copy.id = Edit.newSegId(host.doc, copy.kind || 'manual');
-    copy.startFrom = segs.length ? 'previous' : 'anchor';
+    copy.startFrom = segs.length ? 'previous' : 'explicit';
     segs.push(copy);
     return segs.length - 1;
   },
@@ -199,9 +298,10 @@ const Edit = {
     const world = Edit.isWorld(host);
     Edit.normalize(host, seg);
     const cur = Edit.startMode(host.doc, seg);
-    if (mode === 'explicit' && cur !== 'explicit') {
+    if (mode === 'explicit' && (cur !== 'explicit' || !seg.start)) {
+      // 从"它现在的绝对起点"补 start：cur 仍按旧 startFrom 算（previous → 上一段末点；第 0 段 → path[0] / 回落）
       const st = world ? Edit.segStartXZH(host, seg) : Edit.segStartScreen(host, seg);
-      seg.start = world ? { x: round2(st.x), z: round2(st.z), h: round2(Math.max(0, st.h)) } : { x: round2(st[0]), y: round2(st[1]) };
+      if (st) seg.start = world ? { x: round2(st.x), z: round2(st.z), h: round2(Math.max(0, st.h)) } : { x: round2(st[0]), y: round2(st[1]) };
     }
     seg.startFrom = mode;
     if (mode !== 'explicit') { delete seg.start; Edit.normalize(host, seg); }   // 残留的 start 会误导读文件的人
@@ -266,32 +366,47 @@ const Edit = {
   /** 平滑 / 折线 */
   setSmooth(host, seg, smooth) { seg.path = seg.path || { points: [] }; seg.path.smooth = !!smooth; },
 
-  // ---------------------------------------------------------------- 锚点
-  /** 锚点换位 = 整条轨迹整体挪（形状相对锚点）：钉住的段靠规范化跟着走；**自定起点的段也一起平移**
-   *  （carry=false 时只改锚点本身，换场景时用——那里由 applyRelative 负责搬形状）。 */
-  setAnchorScreen(host, x, y, carry) {
-    const au = host.doc.authoring, world = Edit.isWorld(host);
-    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-    if (round2(x) === au.anchor.x && round2(y) === au.anchor.y) return;   // 没动：什么都不碰（不标脏、不删 anchorWorld）
-    // carry=false 是换场景中途（cal 已是新场景、锚点还是旧坐标）：此时规范化会拿跨场景的垃圾 delta 平移形状，绝不能做
-    if (carry !== false) for (const seg of Edit.segs(host.doc)) Edit.normalize(host, seg);
-    const old = { x: au.anchor.x, y: au.anchor.y };
-    let dWorld = null;
-    if (carry !== false && world && host.cal && host.cal.ground) {
-      const a = host.cal.sceneToWorldGround(old.x, old.y), b = host.cal.sceneToWorldGround(x, y);
-      dWorld = [b[0] - a[0], b[2] - a[2]];
-    }
-    au.anchor = { x: round2(x), y: round2(y) };
-    delete au.anchorWorld;
-    if (carry === false) return;
-    const dx = au.anchor.x - old.x, dy = au.anchor.y - old.y;
-    for (const seg of Edit.segs(host.doc)) {
-      if (Edit.startMode(host.doc, seg) !== 'explicit' || !seg.start) continue;
-      if (world) { if (dWorld) { seg.start.x = round2(num(seg.start.x, 0) + dWorld[0]); seg.start.z = round2(num(seg.start.z, 0) + dWorld[1]); } }
-      else { seg.start.x = round2(num(seg.start.x, 0) + dx); seg.start.y = round2(num(seg.start.y, 0) + dy); if (typeof seg.groundY === 'number') seg.groundY = round2(seg.groundY + dy); }
-      // 自定起点的存储点跟起点走（规范化到新起点）
-      const pts = seg.path && seg.path.points;
-      if (pts && pts.length) { if (world) { const d = [seg.start.x - num(pts[0].x, 0), seg.start.z - num(pts[0].z, 0)]; for (const p of pts) { p.x = r4(num(p.x, 0) + d[0]); p.z = r4(num(p.z, 0) + d[1]); } } else { const d = [seg.start.x - num(pts[0].x, 0), seg.start.y - num(pts[0].y, 0)]; for (const p of pts) { p.x = r4(num(p.x, 0) + d[0]); p.y = r4(num(p.y, 0) + d[1]); } } }
+  // ---------------------------------------------------------------- 命名插槽（曲线暴露给场景的位置）
+  /** 插槽存画面坐标（作者场景 wu）；世界空间烘焙机回填脚下地面的世界坐标 `world`。 */
+  slots(doc) { doc.slots = Array.isArray(doc.slots) ? doc.slots : []; return doc.slots; },
+  findSlot(doc, id) { return Edit.slots(doc).find((q) => q.id === id) || null; },
+  newSlotId(doc) { const used = new Set(Edit.slots(doc).map((q) => q.id)); let i = 1; while (used.has(`slot_${i}`)) i++; return `slot_${i}`; },
+  addSlot(host, x, y, label) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const s = { id: Edit.newSlotId(host.doc), x: round2(x), y: round2(y) };
+    if (label) s.label = label;
+    Edit.slots(host.doc).push(s);
+    return s.id;
+  },
+  setSlot(host, id, pos) {
+    const s = Edit.findSlot(host.doc, id); if (!s) return false;
+    if (pos.x != null && Number.isFinite(pos.x)) s.x = round2(pos.x);
+    if (pos.y != null && Number.isFinite(pos.y)) s.y = round2(pos.y);
+    delete s.world;   // 世界坐标是烘焙派生量，挪了就作废，等下次烘焙回填
+    return true;
+  },
+  renameSlot(host, id, newId) {
+    const s = Edit.findSlot(host.doc, id); const nid = String(newId || '').trim();
+    if (!s || !nid || nid === id) return false;
+    if (Edit.findSlot(host.doc, nid)) return false;
+    s.id = nid; return true;
+  },
+  setSlotLabel(host, id, label) { const s = Edit.findSlot(host.doc, id); if (!s) return false; const l = String(label || '').trim(); if (l) s.label = l; else delete s.label; return true; },
+  deleteSlot(host, id) { const arr = Edit.slots(host.doc); const i = arr.findIndex((q) => q.id === id); if (i < 0) return false; arr.splice(i, 1); return true; },
+  /** 插槽脚下的地面世界点（本地算；与烘焙机回填的 `world` 同式） */
+  slotWorld(host, s) { const cal = host.cal; if (!cal) return null; return cal.sceneToWorldGround(num(s.x, 0), num(s.y, 0)); },
+  /** 整条变换连插槽一起（插槽是地面上的站位：世界按 (x,z) 变换再落回地面，画面直接变换） */
+  transformSlots(host, T) {
+    const cal = host.cal;
+    for (const s of Edit.slots(host.doc)) {
+      if (Edit.isWorld(host)) {
+        if (!cal) continue;
+        const g = cal.sceneToWorldGround(num(s.x, 0), num(s.y, 0));
+        const o = T.pos([g[0], g[2], 0]);
+        const f = cal.worldToScene(o[0], cal.groundHeight(o[0], o[1]), o[1]);
+        s.x = round2(f[0]); s.y = round2(f[1]);
+      } else { const o = T.pos([num(s.x, 0), num(s.y, 0)]); s.x = round2(o[0]); s.y = round2(o[1]); }
+      delete s.world;
     }
   },
 
@@ -426,21 +541,19 @@ const Edit = {
     const probes = world ? [[0, 0, 0], [100, 37, 5]] : [[0, 0], [100, 37]];
     return probes.every((p) => { const q = T.pos(p); return q.every((v, i) => Math.abs(v - p[i]) < 1e-9); });
   },
-  /** 整条：平移 = 挪锚点（帧相对锚点，语义天然正确，自定起点的段由 setAnchorScreen 一起带走）；其余变换逐段以锚点为轴。 */
+  /** 整条：平移 = 每个自定起点的段整体挪（钉在上一段末点的段由规范化跟着走）+ 插槽 + **原点**一起挪；
+   *  旋转 / 缩放逐段以原点为轴，插槽与原点也跟着。原点必须一起走——播放位置对齐的是原点，
+   *  不带它的话"把整条挪开"在播放时等于什么都没发生。 */
   transformAll(host, T) {
-    if (Edit.isIdentity(T, Edit.isWorld(host))) return { anchorMoved: false };
-    if (T.kind === 'translate') {
-      const au = host.doc.authoring;
-      if (Edit.isWorld(host)) {
-        const a = Edit.anchorWorld(host); if (!a) return { anchorMoved: false };
-        const o = T.pos([a[0], a[2], 0]);
-        const f = host.cal.worldToScene(o[0], host.cal.groundHeight(o[0], o[1]), o[1]);   // 新锚点脚下地面点 → 画面
-        Edit.setAnchorScreen(host, f[0], f[1] - (au.contactOffsetY || 0), true);
-      } else { const o = T.pos([au.anchor.x, au.anchor.y]); Edit.setAnchorScreen(host, o[0], o[1], true); }
-      return { anchorMoved: true };
+    const world = Edit.isWorld(host);
+    if (Edit.isIdentity(T, world)) return { allMoved: false };
+    for (const seg of Edit.segs(host.doc)) {
+      if (T.kind === 'translate' && Edit.isPinned(host.doc, seg)) continue;   // 接上一段的：起点跟着上一段走，别促升
+      Edit.transformSegment(host, seg, T, null);
     }
-    for (const seg of Edit.segs(host.doc)) Edit.transformSegment(host, seg, T, null);
-    return { anchorMoved: false };
+    Edit.transformSlots(host, T);
+    if (Edit.hasOrigin(host)) Edit.transformOrigin(host, T);   // 没摆过的跟着曲线起点走，不用动
+    return { allMoved: true };
   },
   /** 常用变换构造。pivot：画面 [px,py] / 世界 [px,pz]。 */
   T: {
@@ -495,52 +608,13 @@ const Edit = {
           // 地面线不能高于这段的起点：自定起点用它，钉住的段起点估计 = 上一段末点（转换后）或锚点
           const i = Edit.segs(doc).indexOf(seg); const prev = i > 0 ? Edit.segs(doc)[i - 1] : null;
           const prevPts = prev && prev.path && prev.path.points; const prevEnd = prevPts && prevPts.length ? prevPts[prevPts.length - 1] : null;
-          const sy = seg.start ? num(seg.start.y, 0) : (Edit.startMode(doc, seg) === 'previous' && prevEnd ? num(prevEnd.y, doc.authoring.anchor.y) : doc.authoring.anchor.y);
-          seg.groundY = round2(Math.max(sy, doc.authoring.anchor.y + (doc.authoring.contactOffsetY || 0))); delete seg.radius;
+          const oy = Edit._originFallbackScreen(host)[1];
+          const sy = seg.start ? num(seg.start.y, 0) : (Edit.startMode(doc, seg) === 'previous' && prevEnd ? num(prevEnd.y, oy) : oy);
+          seg.groundY = round2(Math.max(sy, oy + host.contactOffsetY())); delete seg.radius;
         }
       }
     }
   },
-  /** 换预览实体后静止离地高变了：存储的绝对 h 整体跟着挪（离地高度不变）。 */
-  shiftRestHeight(host, dRest) {
-    if (!Edit.isWorld(host) || !dRest) return;
-    for (const seg of Edit.segs(host.doc)) {
-      for (const p of ((seg.path && seg.path.points) || [])) p.h = round2(Math.max(0, num(p.h, 0) + dRest));
-      if (seg.start && seg.start.h != null) seg.start.h = round2(Math.max(0, num(seg.start.h, 0) + dRest));
-    }
-  },
-  /** 换场景前：把所有段的坐标记成"相对锚点"。返回给 applyRelative 用的数据。 */
-  captureRelative(host) {
-    const doc = host.doc, world = Edit.isWorld(host);
-    for (const seg of Edit.segs(doc)) Edit.normalize(host, seg);
-    let base;
-    if (world) { const aw = Edit.anchorWorld(host); base = aw && host.cal ? host.cal.worldToXZH(aw[0], aw[1], aw[2]) : null; }
-    else base = { x: doc.authoring.anchor.x, y: doc.authoring.anchor.y };
-    return { world, base };
-  },
-  /** 换场景后：按新锚点把 x/z（画面：x/y）加回去（形状与锚点的相对关系不变）。
-   *  世界空间的 h 是"锚点离地面的绝对高度"，与场景无关，**故意不动**（restH 只在换实体时变，由 shiftRestHeight 管）。 */
-  applyRelative(host, cap) {
-    const doc = host.doc, world = Edit.isWorld(host);
-    if (!cap || !cap.base || cap.world !== world) return;
-    let nb;
-    if (world) { const aw = Edit.anchorWorld(host); nb = aw && host.cal ? host.cal.worldToXZH(aw[0], aw[1], aw[2]) : null; }
-    else nb = { x: doc.authoring.anchor.x, y: doc.authoring.anchor.y };
-    if (!nb) return;
-    const d = world ? [nb.x - cap.base.x, nb.z - cap.base.z] : [nb.x - cap.base.x, nb.y - cap.base.y];
-    for (const seg of Edit.segs(doc)) {
-      const pts = (seg.path && seg.path.points) || [];
-      if (world) {
-        for (const p of pts) { p.x = round2(num(p.x, 0) + d[0]); p.z = round2(num(p.z, 0) + d[1]); }
-        if (seg.start) { seg.start.x = round2(num(seg.start.x, 0) + d[0]); seg.start.z = round2(num(seg.start.z, 0) + d[1]); }
-      } else {
-        for (const p of pts) { p.x = round2(num(p.x, 0) + d[0]); p.y = round2(num(p.y, 0) + d[1]); }
-        if (seg.start) { seg.start.x = round2(num(seg.start.x, 0) + d[0]); seg.start.y = round2(num(seg.start.y, 0) + d[1]); }
-        if (typeof seg.groundY === 'number') seg.groundY = round2(seg.groundY + d[1]);
-      }
-    }
-  },
-  /** 所有段的有效点包围盒（画面）。scope: 'points'(seg+set) | 'segment'(seg) | 'all' */
   bounds(host, scope, seg, set) {
     const pts = [];
     const push = (s, only) => {
@@ -556,5 +630,6 @@ const Edit = {
   },
 };
 function r4(v) { return Math.round(v * 10000) / 10000; }
+function round3(v) { return Math.round(v * 1000) / 1000; }   // 世界坐标落盘取 3 位（与烘焙机同）
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { Edit };

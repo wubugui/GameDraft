@@ -259,6 +259,48 @@ class ListenerBindingTests(unittest.TestCase):
             panel.deleteLater()
             QApplication.processEvents()
 
+    def test_base_depth_round_trips_and_stays_off_by_default(self) -> None:
+        """\u57fa\u51c6\u89c6\u8ddd\uff1a\u5f80\u8fd4\u4e0d\u4e22\u3001\u7f3a\u7701\u4e0d\u843d\u952e\u3002
+
+        \u5b83\u6709\u4e24\u91cd\u8eab\u4efd\uff08\u76f8\u673a\u542c\u8005\u7684\u89c6\u8ddd + \u900f\u89c6\u573a\u666f\u7684\u57fa\u51c6\u6df1\u5ea6\uff09\uff0c
+        \u6240\u4ee5 player \u6a21\u5f0f\u4e0b\u4e5f\u8981\u80fd\u843d\u952e\u2014\u2014\u914d\u4e86\u900f\u89c6\u7ebf\u7684\u573a\u666f\u91cc\u5b83\u5bf9 player \u542c\u8005\u4e00\u6837\u751f\u6548\u3002
+        """
+        from PySide6.QtWidgets import QApplication
+
+        panel = self._panel()
+        try:
+            # camera + \u663e\u5f0f\u89c6\u8ddd\uff1a\u539f\u6837\u5f80\u8fd4
+            panel.load_scene_props({
+                "id": "s", "acousticListener": {"mode": "camera", "backAtBaseZoomWu": 900},
+            })
+            QApplication.processEvents()
+            self.assertEqual(panel._sc_acoustic_back.value(), 900)
+            out: dict = {"id": "s"}
+            panel._flush_scene_widgets_into(out)
+            self.assertEqual(out.get("acousticListener"),
+                             {"mode": "camera", "backAtBaseZoomWu": 900})
+
+            # player + \u89c6\u8ddd\uff1a\u4e5f\u8981\u843d\u952e\uff08\u900f\u89c6\u573a\u666f\u7684\u4e16\u754c\u5c3a\u5ea6\u9760\u5b83\uff09
+            panel.load_scene_props({
+                "id": "s", "acousticListener": {"mode": "player", "backAtBaseZoomWu": 450},
+            })
+            QApplication.processEvents()
+            out2: dict = {"id": "s"}
+            panel._flush_scene_widgets_into(out2)
+            self.assertEqual(out2.get("acousticListener"),
+                             {"mode": "player", "backAtBaseZoomWu": 450})
+
+            # \u6ca1\u5199\u5c31\u662f 0\uff0c\u4e0d\u843d\u952e\uff08\u65e7\u573a\u666f\u96f6\u5b57\u8282\u53d8\u5316\uff09
+            panel.load_scene_props({"id": "s", "acousticListener": {"mode": "camera"}})
+            QApplication.processEvents()
+            self.assertEqual(panel._sc_acoustic_back.value(), 0)
+            out3: dict = {"id": "s"}
+            panel._flush_scene_widgets_into(out3)
+            self.assertEqual(out3.get("acousticListener"), {"mode": "camera"})
+        finally:
+            panel.deleteLater()
+            QApplication.processEvents()
+
     def test_entity_picker_disabled_unless_entity_mode(self) -> None:
         """非 entity 模式禁用实体选择器 —— 免得填了 id 却不生效（静默失效）。"""
         from PySide6.QtWidgets import QApplication

@@ -1,6 +1,5 @@
 {
   "id": "崖墓后段",
-  "acousticSpace": "棺龛墙",
   "name": "崖墓后段",
   "footstepSet": "石地",
   "worldWidth": 2048.0,
@@ -13,8 +12,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 742.5,
-    "y": 645.2
+    "x": 679.26,
+    "y": 578.17
   },
   "hotspots": [
     {
@@ -62,8 +61,8 @@
   "zones": [],
   "spawnPoints": {
     "spawn_0": {
-      "x": 80.7,
-      "y": 1025.4
+      "x": 118.75,
+      "y": 1059.66
     },
     "spawn_1": {
       "x": 1781.1,
@@ -73,5 +72,101 @@
   "camera": {
     "zoom": 0.68,
     "pixelsPerUnit": 1.0
-  }
+  },
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          -0.7071067811865476
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      ],
+      "ppu": 450.56,
+      "cx": 1024.0,
+      "cy": 576.0
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 6.35384431142807,
+      "offset": -5.85575710067749
+    },
+    "shader": {
+      "depth_per_sy": 0.002219460227272727
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -2.832595448063918,
+      "cell_size": 0.029268237083188948,
+      "grid_width": 156,
+      "grid_height": 160,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  },
+  "dayNight": {
+    "enabled": true
+  },
+  "timeVariants": {
+    "夜": {
+      "backgrounds": [
+        {
+          "image": "background_night.png",
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "ambientSounds": [
+        "缓慢的冒泡滴水"
+      ]
+    }
+  },
+  "ambientSounds": [
+    "风声"
+  ],
+  "onEnter": [
+    {
+      "type": "setThreeFiresVisible",
+      "params": {
+        "visible": true,
+        "style": "fade"
+      }
+    }
+  ],
+  "vfx": [
+    {
+      "id": "vfx_bats",
+      "effect": "bat_cliff",
+      "anchor": {
+        "x": 395,
+        "y": 593,
+        "h": 10,
+        "surface": "shell"
+      },
+      "countScale": 1.2
+    },
+    {
+      "id": "vfx_drip",
+      "effect": "water_drip",
+      "anchor": {
+        "x": 1185,
+        "y": 237,
+        "h": 12,
+        "surface": "shell"
+      }
+    }
+  ]
 }

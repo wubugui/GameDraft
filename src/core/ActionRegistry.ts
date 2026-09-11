@@ -10,6 +10,7 @@
  * 所有调用方（zone onEnter、图对话 runActions、热区 inspect、任务奖励等）共用同一条解算链路：
  * `ActionExecutor.executeAwait`，顺序 await handler 返回的 Promise。
  */
+import { parsePositionRef } from '../utils/positionRef';
 import type { ActionExecutor } from './ActionExecutor';
 import type { RuleOfferRegistry } from './RuleOfferRegistry';
 import type { EventBus } from './EventBus';
@@ -23,7 +24,9 @@ import type { AudioManager } from '../systems/AudioManager';
 import type { DayManager } from '../systems/DayManager';
 import type { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
 import type { ArchiveManager } from '../systems/ArchiveManager';
+import type { OverlaySfxCue } from '../data/overlayImages';
 import type { ClueManager } from '../systems/ClueManager';
+import type { SystemNoteManager } from '../systems/SystemNoteManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
 import type { SceneManager } from '../systems/SceneManager';
 import type { EmoteBubbleManager } from '../systems/EmoteBubbleManager';
@@ -52,7 +55,7 @@ import type {
   TrajectoryEndReason,
   TrajectoryStopOptions,
 } from '../systems/TrajectorySystem';
-import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, EntityShadowBinding, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, TrajectoryTargetRef, ZoneRuleSlot, RuleLayerKey } from '../data/types';
+import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, EntityShadowBinding, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, TrajectoryTargetRef, ZoneRuleSlot, RuleLayerKey, TrajectoryPlayOptions, PositionRef, TrajectorySpawnSpec, VfxAnchorDef, VfxFieldDef, VfxFlockState} from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
@@ -199,6 +202,13 @@ export interface ActionRegistryDeps {
    * 传空数组 = 回到手调单影。覆盖不入存档，切场景即清。
    */
   setEntityShadowBindings: (target: string, bindings: EntityShadowBinding[]) => void;
+  /** 世界空间粒子 / 群体（VfxSystem）：开 / 停 / 改群状态 / 发刺激场。位置一律画面点 + 离地高。 */
+  vfx: {
+    play: (opts: { instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number }) => void;
+    stop: (instanceId: string) => void;
+    setState: (instanceId: string, state: VfxFlockState) => void;
+    emitField: (def: VfxFieldDef, sceneX: number, sceneY: number, h: number) => void;
+  };
   ruleOfferRegistry: RuleOfferRegistry;
   inventoryManager: InventoryManager;
   rulesManager: RulesManager;
@@ -288,8 +298,13 @@ export interface ActionRegistryDeps {
   playTrajectory: (
     trajectoryId: string,
     ref: TrajectoryTargetRef | string,
-    opts?: { anchor?: { x: number; y: number }; flipX?: boolean },
+    opts?: TrajectoryPlayOptions,
   ) => Promise<TrajectoryEndReason>;
+  /**
+   * 位置引用求值（`PositionRef`：数字 / 实体此刻位置 / 场景曲线的命名插槽）；解析不出来 warn + null。
+   * 所有带 `at` 的位置动作共用；形状不对也走这里（先 `parsePositionRef`）。
+   */
+  resolvePositionRef: (raw: unknown) => Promise<{ x: number; y: number } | null>;
   /** 停掉某目标身上在跑的轨迹（`stopTrajectory`）；没有在跑返回 false。 */
   stopTrajectory: (
     ref: TrajectoryTargetRef | string,
@@ -310,6 +325,11 @@ export interface ActionRegistryDeps {
    * 若以 / 开头则视为已是完整路径，不查表。
    */
   resolveOverlayImagePath: (image: string) => string;
+  /**
+   * 该短 id 在 `overlay_images.json` 里的逐条叠图音配置（静音 / 专属音 / 走全局默认）。
+   * 只解析意图，发声由音频管理器那张系统音效事件表统一负责。
+   */
+  resolveOverlayImageSfx: (image: string) => OverlaySfxCue;
   hideOverlayImage: (id: string) => void;
   /** 双图叠化（与 showOverlayImage 同布局与 id，durationMs 结束后保留目标图） */
   blendOverlayImage: (
@@ -337,6 +357,12 @@ export interface ActionRegistryDeps {
   playScriptedDialogue: (lines: DialogueLine[]) => Promise<void>;
   /** 显示「点击继续」类提示并阻塞直至任意键或鼠标 */
   waitClickContinue: (hintOverride?: string) => Promise<void>;
+  /** 三把火 HUD 读数显隐（G.5）：组装层落 flag（真相、入存档）+ 通知 HUD（投影） */
+  setThreeFiresVisible: (visible: boolean, style?: 'flare' | 'fade' | 'instant' | 'debut') => Promise<void> | void;
+  /** 气味指示器显隐（G.6）：同三把火——组装层落 flag（真相、入存档）+ 通知 HUD（投影） */
+  setSmellVisible: (visible: boolean, style?: 'flare' | 'fade' | 'instant' | 'debut') => Promise<void> | void;
+  /** 系统说明卡（K4）：注册表 + 每档一次判定 + 关卡落 flag；卡本身由组装层注入的开卡函数画 */
+  systemNoteManager: SystemNoteManager;
   /** 统一解析 JSON 字符串中的 [tag:…] */
   resolveDisplayText: (raw: string) => string;
   /** 与 resolveDisplayText 同解析但**保留** `[c:…]` 样式标记；只给用 createStyledText 渲染的展示点 */
@@ -796,7 +822,16 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.encounterManager.startEncounter(id);
   }, ['id']);
 
-  executor.register('playBgm', (p) => { void d.audioManager.playBgm(p.id as string, (p.fadeMs as number) ?? 1000); }, ['id', 'fadeMs']);
+  // volume = 本处音量（覆盖素材级 audio_config volume，口径见 data/audioCue.ts）；不写 = 沿用素材级。
+  executor.register('playBgm', (p) => {
+    const rawVol = p.volume;
+    const vol = typeof rawVol === 'number' ? rawVol : Number(rawVol);
+    void d.audioManager.playBgm(
+      p.id as string,
+      (p.fadeMs as number) ?? 1000,
+      Number.isFinite(vol) ? vol : undefined,
+    );
+  }, ['id', 'fadeMs', 'volume']);
   executor.register('stopBgm', (p) => { void d.audioManager.stopBgm((p.fadeMs as number) ?? 1000); }, ['fadeMs']);
   executor.register('playSfx', (p) => {
     const rawVol = p.volume;
@@ -889,6 +924,51 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       p.entryId as string,
     );
   }, ['bookType', 'entryId']);
+
+  /**
+   * 三把火 HUD 读数显隐（玩法清单 G.5）：纯开关，不碰血量、不自动触发。
+   * style：flare（轰一下，显的缺省）/ fade（淡入淡出，隐的缺省）/ instant（直出直没）。
+   */
+  executor.register('setThreeFiresVisible', (p) => {
+    const visible = p.visible === true || p.visible === 'true';
+    const rawStyle = String(p.style ?? '').trim();
+    const style = rawStyle === 'flare' || rawStyle === 'fade' || rawStyle === 'instant' || rawStyle === 'debut'
+      ? rawStyle
+      : undefined;
+    if (rawStyle && !style) console.warn(`setThreeFiresVisible: 未知 style ${JSON.stringify(rawStyle)}，按缺省出场`);
+    // debut（首次出场仪式）返回整段仪式的 Promise：后面接的说明卡要等火落回角落
+    return d.setThreeFiresVisible(visible, style) ?? undefined;
+  }, ['visible', 'style']);
+
+  /**
+   * 气味指示器显隐（玩法清单 G.6）：纯开关，不碰气味系统的两层状态、不自动触发。
+   * style 与三把火同一套词：flare（聚拢浮现 + 吸气声，显的缺省）/ fade（散开淡出，隐的缺省）/
+   * instant（直出直没）/ debut（首次出场仪式：压暗→屏心大起→缩回常态位，返回整段 Promise）。
+   */
+  executor.register('setSmellVisible', (p) => {
+    const visible = p.visible === true || p.visible === 'true';
+    const rawStyle = String(p.style ?? '').trim();
+    const style = rawStyle === 'flare' || rawStyle === 'fade' || rawStyle === 'instant' || rawStyle === 'debut'
+      ? rawStyle
+      : undefined;
+    if (rawStyle && !style) console.warn(`setSmellVisible: 未知 style ${JSON.stringify(rawStyle)}，按缺省出场`);
+    return d.setSmellVisible(visible, style) ?? undefined;
+  }, ['visible', 'style']);
+
+  /**
+   * 系统说明卡（玩法清单 K4）：压暗 + 小图 + 两三行，点一下关；关卡即落 flag `sysnote_<id>`。
+   * 每档一次，force 重弹。返回整段等待的 Promise（后面接的对话不能压在卡上）。
+   */
+  executor.register('showSystemNote', (p) => {
+    const noteId = String(p.noteId ?? '').trim();
+    if (!noteId) {
+      console.warn('showSystemNote: 需要 noteId（system_notes.json 条目 id）');
+      return;
+    }
+    return d.systemNoteManager.show(noteId, p.force === true).catch((e) => {
+      console.warn('ActionRegistry: showSystemNote failed', e);
+    });
+  }, ['noteId', 'force']);
 
   /**
    * 采集线索（K7）：等价于玩家点击文本里的 `[clue:id]`，供任务/对话/热区等编排面直接给线索。
@@ -1030,6 +1110,25 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('sniff', () => {
     d.smellSystem.sniff();
   }, []);
+  // 气味源（G.6）：放了源，气缕就被从源那边"吹"过来——飘向的反方向 = 源。scene 缺省当前场景，只在那个场景里指向。
+  executor.register('setSmellSource', (p) => {
+    const x = Number(p.x);
+    const y = Number(p.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn('setSmellSource: x/y 需为数字', p);
+      return;
+    }
+    const scene = p.scene === undefined ? undefined : String(p.scene);
+    d.smellSystem.setSource(x, y, scene);
+  }, ['x', 'y', 'scene']);
+  executor.register('clearSmellSource', () => {
+    d.smellSystem.clearSource();
+  }, []);
+  // 飘向追踪开关：关了气缕一律直的；开了也得放了源才歪（缺省开）。
+  executor.register('setSmellTracking', (p) => {
+    const enabled = !(p.enabled === false || p.enabled === 'false');
+    d.smellSystem.setTracking(enabled);
+  }, ['enabled']);
 
   // 位面（PlaneReconciler）：手动覆盖激活位面 / 清覆盖回叙事点名。
   // 调试与特例演出用；任务逻辑的主路径 = 叙事状态节点 activePlane 点名。
@@ -1594,8 +1693,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const rawKind = String(p.entityKind ?? '').trim().toLowerCase();
     const entityKind: SceneEntityKind = rawKind === 'hotspot' ? 'hotspot' : 'npc';
     const entityId = String(p.entityId ?? '').trim();
-    const x = typeof p.x === 'number' ? p.x : Number(p.x);
-    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    let x = typeof p.x === 'number' ? p.x : Number(p.x);
+    let y = typeof p.y === 'number' ? p.y : Number(p.y);
+    const atPos = p.at != null ? await d.resolvePositionRef(p.at) : null;   // 位置引用（实体此刻位置 / 曲线插槽）覆盖 x/y
+    if (atPos) { x = atPos.x; y = atPos.y; }
+    else if (p.at != null) console.warn(`setSceneEntityPosition: at 解析不出位置，已忽略、按 x/y 走`);
     if (!sceneId || !entityId || !Number.isFinite(x) || !Number.isFinite(y)) {
       console.warn('setSceneEntityPosition: 需要 sceneId、entityId 与有限数值 x/y');
       return;
@@ -1607,13 +1709,16 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (entityKind === 'npc') d.stopTrajectory(entityId);
     await d.setSceneEntityField(sceneId, entityKind, entityId, 'x', rx);
     await d.setSceneEntityField(sceneId, entityKind, entityId, 'y', ry);
-  }, ['sceneId', 'entityKind', 'entityId', 'x', 'y']);
+  }, ['sceneId', 'entityKind', 'entityId', 'x', 'y', 'at']);
 
   /** 写入场景记忆并立即移动 NPC */
-  executor.register('persistNpcAt', (p) => {
+  executor.register('persistNpcAt', async (p) => {
     const target = String(p.target ?? '').trim();
-    const x = typeof p.x === 'number' ? p.x : Number(p.x);
-    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    let x = typeof p.x === 'number' ? p.x : Number(p.x);
+    let y = typeof p.y === 'number' ? p.y : Number(p.y);
+    const atPos = p.at != null ? await d.resolvePositionRef(p.at) : null;   // 位置引用（实体此刻位置 / 曲线插槽）覆盖 x/y
+    if (atPos) { x = atPos.x; y = atPos.y; }
+    else if (p.at != null) console.warn(`persistNpcAt: at 解析不出位置，已忽略、按 x/y 走`);
     if (!target || !Number.isFinite(x) || !Number.isFinite(y)) {
       console.warn('persistNpcAt: 需要 target、有限数值 x/y');
       return;
@@ -1628,7 +1733,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     } else {
       console.warn(`persistNpcAt:当前场景无 NPC "${target}"`);
     }
-  }, ['target', 'x', 'y']);
+  }, ['target', 'x', 'y', 'at']);
 
   /** 写入场景记忆并立即 playAnimation（进入场景时在 loadSprite 后也会套用） */
   const persistNpcAnimStateHandler = (p: Record<string, unknown>) => {
@@ -1695,6 +1800,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('showOverlayImage: xPercent / yPercent / widthPercent 须为数值');
       return;
     }
+    // 叠图音：负载只带"该怎么响"，真正发声在音频管理器的系统音效事件表里（不在这儿播，
+    // 分散播放会与全局默认音做出双响）。事件与图同步发出，不等贴图加载完。
+    d.eventBus.emit('overlay:show', d.resolveOverlayImageSfx(rawImage));
     return d.showOverlayImage(id, image, x, y, w).catch((e) => {
       console.warn('ActionRegistry: showOverlayImage failed', e);
     });
@@ -1782,6 +1890,81 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    * ⚠ 覆盖**不入存档**，且切场景即清空——它是演出态。存进档会造成
    * 「改了场景数据但老档还是旧影子」这类无从下手的错。
    */
+  // ---- 世界空间粒子 / 群体（见 [[vfx-system]]）----
+  const numOr = (v: unknown, dflt: number): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  /** 位置参数：`at`（位置引用：实体此刻位置 / 曲线插槽 / 数字）或散写 x/y；`h` 另给离地高。返回画面点 + 离地高 */
+  const resolveVfxAt = async (p: Record<string, unknown>, label: string): Promise<{ x: number; y: number; h: number } | null> => {
+    const h = numOr(p.h, 0);
+    if (p.at != null) {
+      const at = await d.resolvePositionRef(p.at);
+      if (!at) { console.warn(`${label}: at 解析不出位置，已跳过`); return null; }
+      return { x: at.x, y: at.y, h };
+    }
+    const x = Number(p.x), y = Number(p.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) return { x, y, h };
+    console.warn(`${label}: 需要 at（位置引用）或 x/y`);
+    return null;
+  };
+  /**
+   * `playVfx`：开一个场景实例（`instanceId`，被 stopVfx 停过的重开；条件不满足仍不开），
+   * 或现场生成一个临时实例（`effect` + 位置；不在场景 JSON 里，切场景即散）。
+   */
+  executor.register('playVfx', async (p) => {
+    const instanceId = String(p.instanceId ?? '').trim();
+    if (instanceId) { d.vfx.play({ instanceId }); return; }
+    const effect = String(p.effect ?? '').trim();
+    if (!effect) { console.warn('playVfx: 需要 instanceId，或 effect + 位置'); return; }
+    const at = await resolveVfxAt(p, 'playVfx');
+    if (!at) return;
+    const surface = p.surface === 'shell' ? 'shell' : 'ground';
+    d.vfx.play({
+      effect,
+      anchor: { x: at.x, y: at.y, h: at.h, surface },
+      seed: Number.isFinite(Number(p.seed)) ? Number(p.seed) : undefined,
+      countScale: Number.isFinite(Number(p.countScale)) ? Number(p.countScale) : undefined,
+    });
+  }, ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale']);
+  /** `stopVfx`：停一个实例（在飞的粒子自然老化；永生的群整批清掉；临时实例直接移除）。 */
+  executor.register('stopVfx', (p) => {
+    const instanceId = String(p.instanceId ?? '').trim();
+    if (!instanceId) { console.warn('stopVfx: 需要 instanceId'); return; }
+    d.vfx.stop(instanceId);
+  }, ['instanceId']);
+  /** `setVfxState`：强制群状态（roosting / airborne / fleeing / returning）。 */
+  executor.register('setVfxState', (p) => {
+    const instanceId = String(p.instanceId ?? '').trim();
+    const state = String(p.state ?? '').trim();
+    if (!instanceId || !state) { console.warn('setVfxState: 需要 instanceId 与 state'); return; }
+    if (state !== 'roosting' && state !== 'airborne' && state !== 'fleeing' && state !== 'returning') {
+      console.warn(`setVfxState: state「${state}」不认识（roosting / airborne / fleeing / returning）`);
+      return;
+    }
+    d.vfx.setState(instanceId, state);
+  }, ['instanceId', 'state']);
+  /**
+   * `emitVfxField`：发一个刺激场（恐惧 / 吸引 / 风）。`tag` 是作者标签，群体按它查自己的权重
+   * （`item:bug` / `player:motion` / `light` / `sfx:footstep` / 任意）；不认识的标签 = 没发。
+   * 位置 `at`（'player' / NPC id / {x,y,h}）或 x/y/h；`duration` 不写 = 瞬时脉冲。
+   */
+  executor.register('emitVfxField', async (p) => {
+    const kindRaw = String(p.kind ?? 'fear').trim();
+    const kind = kindRaw === 'attract' ? 'attract' : kindRaw === 'wind' ? 'wind' : 'fear';
+    const tag = String(p.tag ?? '').trim();
+    const radius = numOr(p.radius, 0);
+    const strength = numOr(p.strength, 1);
+    if (!tag || !(radius > 0)) { console.warn('emitVfxField: 需要 tag 与 radius > 0'); return; }
+    const at = await resolveVfxAt(p, 'emitVfxField');
+    if (!at) return;
+    const dirRaw = p.direction as unknown[] | undefined;
+    const direction = Array.isArray(dirRaw) && dirRaw.length === 3
+      ? [numOr(dirRaw[0], 0), numOr(dirRaw[1], 0), numOr(dirRaw[2], 0)] as [number, number, number]
+      : undefined;
+    d.vfx.emitField({ kind, tag, radius, strength, duration: numOr(p.duration, 0), direction }, at.x, at.y, at.h);
+  }, ['kind', 'tag', 'radius', 'strength', 'duration', 'at', 'x', 'y', 'h', 'direction']);
+
   executor.register('setEntityShadow', (p) => {
     const target = String(p.target ?? '').trim();
     const source = String(p.source ?? '').trim();
@@ -1844,6 +2027,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const delRaw = p.delayMs ?? 0;
     const delayParsed = typeof delRaw === 'number' ? delRaw : Number(delRaw);
     const delayMs = Number.isFinite(delayParsed) && delayParsed >= 0 ? delayParsed : 0;
+    // 叠化音按**目标图**（正在露出来的那张）的配置发；起手就响，与淡化同步而不是等它走完。
+    d.eventBus.emit('overlay:blend', d.resolveOverlayImageSfx(rawTo));
     return d.blendOverlayImage(id, fromImage, toImage, x, y, w, ms, delayMs).catch((e) => {
       console.warn('ActionRegistry: blendOverlayImage failed', e);
     });
@@ -1998,8 +2183,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
 
   executor.register('moveEntityTo', async (p) => {
     const target = String(p.target ?? '').trim();
-    const x = typeof p.x === 'number' ? p.x : Number(p.x);
-    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    let x = typeof p.x === 'number' ? p.x : Number(p.x);
+    let y = typeof p.y === 'number' ? p.y : Number(p.y);
+    const atPos = p.at != null ? await d.resolvePositionRef(p.at) : null;   // 位置引用（实体此刻位置 / 曲线插槽）覆盖 x/y
+    if (atPos) { x = atPos.x; y = atPos.y; }
+    else if (p.at != null) console.warn(`moveEntityTo: at 解析不出位置，已忽略、按 x/y 走`);
     const speedRaw = p.speed;
     const speed = typeof speedRaw === 'number' ? speedRaw : (speedRaw !== undefined ? Number(speedRaw) : 80);
     const spd = Number.isFinite(speed) && speed > 0 ? speed : 80;
@@ -2028,12 +2216,15 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       await actor.moveTo(pt.x, pt.y, spd, moveAnim, faceTowardMovement, arrive);
     }
     // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
-  }, ['target', 'x', 'y', 'speed', 'waypoints', 'moveAnimState', 'arriveAnimState', 'faceTowardMovement']);
+  }, ['target', 'x', 'y', 'at', 'speed', 'waypoints', 'moveAnimState', 'arriveAnimState', 'faceTowardMovement']);
 
   executor.register('jumpEntityTo', async (p) => {
     const target = String(p.target ?? '').trim();
-    const x = typeof p.x === 'number' ? p.x : Number(p.x);
-    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    let x = typeof p.x === 'number' ? p.x : Number(p.x);
+    let y = typeof p.y === 'number' ? p.y : Number(p.y);
+    const atPos = p.at != null ? await d.resolvePositionRef(p.at) : null;   // 位置引用（实体此刻位置 / 曲线插槽）覆盖 x/y
+    if (atPos) { x = atPos.x; y = atPos.y; }
+    else if (p.at != null) console.warn(`jumpEntityTo: at 解析不出位置，已忽略、按 x/y 走`);
     const durationRaw = p.durationMs;
     const durationMs =
       typeof durationRaw === 'number' ? durationRaw : durationRaw !== undefined ? Number(durationRaw) : 600;
@@ -2061,17 +2252,20 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     // 脚点沿弧线落到 (x,y)、起跳动画按移动进度插帧只播一次、落地切 landAnimState（缺省回 rest/idle）。
     await actor.jumpTo(x, y, dur, arc, jumpAnim, landAnim, faceTowardMovement);
     // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
-  }, ['target', 'x', 'y', 'durationMs', 'arcHeight', 'jumpAnimState', 'landAnimState', 'faceTowardMovement']);
+  }, ['target', 'x', 'y', 'at', 'durationMs', 'arcHeight', 'jumpAnimState', 'landAnimState', 'faceTowardMovement']);
 
   /**
    * 瞬移：一帧到位，不插值、不切动画、**不碰朝向**（要转身就接一条 `faceEntity`——
    * 与 `faceTowardMovement` 不勾选时"完全不碰朝向"同一套语义）。
    * 想要走过去用 `moveEntityTo`，想要跳过去用 `jumpEntityTo`。
    */
-  executor.register('teleportEntityTo', (p) => {
+  executor.register('teleportEntityTo', async (p) => {
     const target = String(p.target ?? '').trim();
-    const x = typeof p.x === 'number' ? p.x : Number(p.x);
-    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    let x = typeof p.x === 'number' ? p.x : Number(p.x);
+    let y = typeof p.y === 'number' ? p.y : Number(p.y);
+    const atPos = p.at != null ? await d.resolvePositionRef(p.at) : null;   // 位置引用（实体此刻位置 / 曲线插槽）覆盖 x/y
+    if (atPos) { x = atPos.x; y = atPos.y; }
+    else if (p.at != null) console.warn(`teleportEntityTo: at 解析不出位置，已忽略、按 x/y 走`);
     if (!target || !Number.isFinite(x) || !Number.isFinite(y)) {
       console.warn('teleportEntityTo: 需要 target、有限数值 x/y');
       return;
@@ -2091,7 +2285,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     // 揭幕那一刻镜头还在半路 = 画面从旧机位滑向新机位。
     d.snapCameraToActorIfFollowed(target);
     // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
-  }, ['target', 'x', 'y']);
+  }, ['target', 'x', 'y', 'at']);
 
   executor.register('faceEntity', (p) => {
     const target = String(p.target ?? '').trim();
@@ -2151,26 +2345,35 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     const target = String(p.target ?? '').trim();
-    if (!target) {
-      console.warn(`playTrajectory: 需要非空 target（轨迹 "${trajectoryId}"）`);
+    const spawn = parseTrajectorySpawnSpec(p.spawn);
+    if (p.spawn != null && !spawn) {
+      console.warn(`playTrajectory: spawn 形状不对（轨迹 "${trajectoryId}"），已忽略`);
+    }
+    if (!target && !spawn) {
+      console.warn(`playTrajectory: 需要 target 或 spawn（轨迹 "${trajectoryId}"）`);
       return;
     }
-    const ax = parseFiniteNumberParam(p.anchorX);
-    const ay = parseFiniteNumberParam(p.anchorY);
+    // 播放位置：`at`（位置引用）优先；老写法 anchorX/anchorY 成对当 point；都没给由 Game 按曲线类型定
+    let at: PositionRef | undefined = parsePositionRef(p.at) ?? undefined;
+    if (p.at != null && !at) console.warn(`playTrajectory: at 形状不对（轨迹 "${trajectoryId}"），已按"没给位置"处理`);
     let anchor: { x: number; y: number } | undefined;
-    if (ax !== null && ay !== null) {
-      anchor = { x: ax, y: ay };
-    } else if (ax !== null || ay !== null) {
-      console.warn(`playTrajectory: anchorX / anchorY 要成对给，已按"目标此刻位置"处理（轨迹 "${trajectoryId}"）`);
+    if (!at) {
+      const ax = parseFiniteNumberParam(p.anchorX);
+      const ay = parseFiniteNumberParam(p.anchorY);
+      if (ax !== null && ay !== null) {
+        anchor = { x: ax, y: ay };
+      } else if (ax !== null || ay !== null) {
+        console.warn(`playTrajectory: anchorX / anchorY 要成对给，已按"没给位置"处理（轨迹 "${trajectoryId}"）`);
+      }
     }
     const flipX = parseLooseBooleanParam(p.flipX) === true;
     const animState = String(p.animState ?? '').trim();
-    if (animState) {
+    if (animState && target && !spawn) {
       const actor = d.resolveActor(target);
       if (actor) actor.playAnimation(animState);
       else console.warn(`playTrajectory: 找不到实体 "${target}"，animState 已忽略`);
     }
-    const promise = d.playTrajectory(trajectoryId, target, { anchor, flipX });
+    const promise = d.playTrajectory(trajectoryId, target, { anchor, flipX, at, spawn: spawn ?? undefined, animState: animState || undefined });
     if (parseLooseBooleanParam(p.wait) === false) {
       // 不等：Promise 仍必然封口，这里只负责别让未捕获拒绝冒出来
       void promise.catch((e) => {
@@ -2179,7 +2382,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     await promise;
-  }, ['trajectoryId', 'target', 'anchorX', 'anchorY', 'flipX', 'wait', 'animState']);
+  }, ['trajectoryId', 'target', 'spawn', 'at', 'anchorX', 'anchorY', 'flipX', 'wait', 'animState']);
 
   /**
    * 停掉某目标身上在跑的轨迹。`toEnd` = 停前先落末帧姿态（"停在终点"而不是"停在半路"）；
@@ -2199,11 +2402,14 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     // 目标身上没有在跑的轨迹是**常态**（轨迹可能刚好播完），不告警
   }, ['target', 'toEnd', 'reset']);
 
-  executor.register('cutsceneSpawnActor', (p) => {
+  executor.register('cutsceneSpawnActor', async (p) => {
     const id = String(p.id ?? '').trim();
     const name = String(p.name ?? id).trim();
-    const x = typeof p.x === 'number' ? p.x : Number(p.x);
-    const y = typeof p.y === 'number' ? p.y : Number(p.y);
+    let x = typeof p.x === 'number' ? p.x : Number(p.x);
+    let y = typeof p.y === 'number' ? p.y : Number(p.y);
+    const atPos = p.at != null ? await d.resolvePositionRef(p.at) : null;   // 位置引用（实体此刻位置 / 曲线插槽）覆盖 x/y
+    if (atPos) { x = atPos.x; y = atPos.y; }
+    else if (p.at != null) console.warn(`cutsceneSpawnActor: at 解析不出位置，已忽略、按 x/y 走`);
     if (!id) {
       console.warn('cutsceneSpawnActor: missing id');
       return;
@@ -2213,7 +2419,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     d.spawnCutsceneActor(id, name, x, y);
-  }, ['id', 'name', 'x', 'y']);
+  }, ['id', 'name', 'x', 'y', 'at']);
 
   executor.register('cutsceneRemoveActor', (p) => {
     const id = String(p.id ?? '').trim();
@@ -2322,4 +2528,43 @@ export function auditActionRegistrationsAgainstManifest(executor: ActionExecutor
     }
   }
   return problems;
+}
+
+/**
+ * `playTrajectory.spawn`：播放时临时生成一个运动对象（图片 / 角色模板），对象可以根本不在场景里。
+ * 形状不对返回 null（handler warn 并当没给）。
+ */
+export function parseTrajectorySpawnSpec(raw: unknown): TrajectorySpawnSpec | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const kind = typeof o.kind === 'string' ? o.kind.trim() : '';
+  const num = (v: unknown): number | undefined => {
+    if (v == null || v === '') return undefined;
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const out: TrajectorySpawnSpec = { kind: kind as TrajectorySpawnSpec['kind'] };
+  if (kind === 'image') {
+    const src = String(o.src ?? '').trim();
+    if (!src) return null;
+    out.src = src;
+    const w = num(o.worldWidth), h = num(o.worldHeight);
+    if (w !== undefined) out.worldWidth = w;
+    if (h !== undefined) out.worldHeight = h;
+  } else if (kind === 'character') {
+    const cid = String(o.characterId ?? '').trim();
+    if (!cid) return null;
+    out.characterId = cid;
+  } else return null;
+  const id = String(o.id ?? '').trim();
+  if (id) out.id = id;
+  const name = String(o.name ?? '').trim();
+  if (name) out.name = name;
+  if (o.anchor && typeof o.anchor === 'object') {
+    const a = o.anchor as Record<string, unknown>;
+    const ax = num(a.x), ay = num(a.y);
+    if (ax !== undefined && ay !== undefined) out.anchor = { x: ax, y: ay };
+  }
+  if (parseLooseBooleanParam(o.keep) === true) out.keep = true;
+  return out;
 }

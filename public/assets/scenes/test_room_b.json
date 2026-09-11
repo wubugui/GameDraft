@@ -337,5 +337,16 @@
   ],
   "dayNight": {
     "enabled": true
+  },
+  "timeVariants": {
+    "夜": {
+      "backgrounds": [
+        {
+          "image": "background_night.png",
+          "x": 0,
+          "y": 0
+        }
+      ]
+    }
   }
 }

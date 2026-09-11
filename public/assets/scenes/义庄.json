@@ -9,7 +9,21 @@
       "intensity": 1.0,
       "hemi": 0.0
     },
-    "lights": [],
+    "lights": [
+      {
+        "id": "altar_candles",
+        "kind": "point",
+        "pos": [
+          110.0,
+          95.0,
+          110.0
+        ],
+        "kelvin": 1900,
+        "intensity": 3.2,
+        "range": 380.0,
+        "softeningRadius": 12.0
+      }
+    ],
     "display": {
       "ev": 0.0,
       "tonemap": "none",
@@ -512,5 +526,26 @@
     },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0
-  }
+  },
+  "vfx": [
+    {
+      "id": "vfx_incense",
+      "effect": "incense_smoke",
+      "anchor": {
+        "x": 610,
+        "y": 150,
+        "h": 0,
+        "surface": "shell"
+      }
+    },
+    {
+      "id": "vfx_dust",
+      "effect": "dust_motes",
+      "anchor": {
+        "x": 488,
+        "y": 310,
+        "h": 110
+      }
+    }
+  ]
 }

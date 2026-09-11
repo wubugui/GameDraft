@@ -35,7 +35,8 @@ from PySide6.QtWidgets import (
 )
 
 from tools.editor.project_model import ProjectModel
-from tools.editor.shared.audio_preview_selector import AudioIdPreviewSelector
+from tools.editor.shared import audio_cue
+from tools.editor.shared.audio_preview_selector import AudioIdPreviewSelector, AudioPreviewControls
 from tools.editor.shared.collapsible_section import CollapsibleSection
 from tools.editor.shared.form_layout import compact_form
 from tools.editor.shared.id_ref_selector import IdRefSelector
@@ -276,6 +277,26 @@ class TimeVariantForm(QWidget):
         for b in (self._amb_add, self._amb_del, self._amb_up, self._amb_down):
             b.setMaximumWidth(32)
             btns.addWidget(b)
+        # 选中层的本处音量 + 按它试听：同一条环境音在夜里要轻一半，靠这一格而不是复制素材。
+        self._amb_volume = QDoubleSpinBox()
+        self._amb_volume.setRange(0.0, audio_cue.MAX_SITE_VOLUME)
+        self._amb_volume.setDecimals(2)
+        self._amb_volume.setSingleStep(0.05)
+        self._amb_volume.setValue(audio_cue.NEUTRAL_VOLUME)
+        self._amb_volume.setPrefix("× ")
+        self._amb_volume.setMaximumWidth(76)
+        self._amb_volume.setToolTip(
+            "选中那一层在该时段的音量：运行时按它播，▶ 也按它试听。\n"
+            "1 = 素材原始音量（不写进数据）；0 = 该时段这层就是要哑。",
+        )
+        self._amb_volume.valueChanged.connect(self._on_amb_volume_changed)
+        btns.addWidget(self._amb_volume)
+        self._amb_preview = AudioPreviewControls(
+            self._model, "ambient",
+            lambda: str((self._amb_list.currentItem() or QListWidgetItem()).data(0x0100) or ""),
+            site_volume_fn=self._amb_current_volume,
+        )
+        btns.addWidget(self._amb_preview)
         btns.addStretch(1)
         al.addLayout(btns)
         self._amb_body.setEnabled(False)
@@ -284,10 +305,17 @@ class TimeVariantForm(QWidget):
         misc = compact_form(QFormLayout())
         self._bgm_cb = QCheckBox("覆盖 BGM（勾上留空 = 该时段无 BGM）")
         self._bgm_cb.toggled.connect(self._on_bgm_toggled)
-        self._bgm = AudioIdPreviewSelector(self._model, "bgm", allow_empty=True, editable=True)
-        self._bgm.setMinimumWidth(160)
+        self._bgm = AudioIdPreviewSelector(
+            self._model, "bgm", allow_empty=True, editable=True, with_volume=True,
+        )
+        self._bgm.setMinimumWidth(250)
         self._bgm.setEnabled(False)
-        self._bgm.value_changed.connect(lambda v: self._on_scalar_key("bgm", v))
+        # 接 changed（而不只是 value_changed）：夜里把白天那首压半档也得写进变体。
+        self._bgm.changed.connect(self._on_bgm_cue_changed)
+        self._bgm.setToolTip(
+            "该时段的 BGM。中间那格是**本处音量**——夜里同一首曲子压低半档就靠它，\n"
+            "不必再复制一条素材；▶ 试听按同一个数放。",
+        )
         misc.addRow(self._bgm_cb, self._bgm)
         self._filter_cb = QCheckBox("覆盖滤镜（勾上留空 = 该时段无滤镜）")
         self._filter_cb.toggled.connect(self._on_filter_toggled)
@@ -347,12 +375,14 @@ class TimeVariantForm(QWidget):
             self._amb_cb.setChecked(isinstance(amb, list))
             self._amb_body.setEnabled(isinstance(amb, list))
             self._amb_list.clear()
-            for aid in (amb if isinstance(amb, list) else []):
-                self._amb_list.addItem(self._amb_item(str(aid)))
+            for raw in (amb if isinstance(amb, list) else []):
+                if audio_cue.cue_id(raw):
+                    self._amb_list.addItem(self._amb_item(raw))
             self._sync_amb_buttons()
             self._bgm_cb.setChecked("bgm" in v)
             self._bgm.setEnabled("bgm" in v)
-            self._bgm.set_current(str(v.get("bgm") or ""))
+            # 盘上可能是裸 id 也可能是 { id, volume }
+            self._bgm.set_cue(v.get("bgm"))
             self._filter_cb.setChecked("filterId" in v)
             self._filter.setEnabled("filterId" in v)
             self._filter.set_current(str(v.get("filterId") or ""))
@@ -550,9 +580,14 @@ class TimeVariantForm(QWidget):
     # ---- 编辑：环境音 / BGM / 滤镜 ------------------------------------------
 
     @staticmethod
-    def _amb_item(aid: str) -> QListWidgetItem:
-        it = QListWidgetItem(aid)
+    def _amb_item(raw: object) -> QListWidgetItem:
+        """一行一层。0x0100=id，0x0101=盘上原件（写回保未知键），0x0102=本处音量。"""
+        aid = audio_cue.cue_id(raw)
+        vol = audio_cue.cue_volume(raw)
+        it = QListWidgetItem(aid if vol is None else f"{aid}   × {float(vol):g}")
         it.setData(0x0100, aid)              # Qt.ItemDataRole.UserRole
+        it.setData(0x0101, raw)
+        it.setData(0x0102, vol)
         return it
 
     def _amb_ids(self) -> list[str]:
@@ -564,16 +599,73 @@ class TimeVariantForm(QWidget):
                 out.append(aid)
         return out
 
+    def _amb_cues(self) -> list:
+        """写盘用：裸 id 或 ``{id, volume}``（未知键原样保留）。"""
+        seen: set[str] = set()
+        out: list = []
+        for i in range(self._amb_list.count()):
+            it = self._amb_list.item(i)
+            if it is None:
+                continue
+            aid = str(it.data(0x0100) or "").strip()
+            if not aid or aid in seen:
+                continue
+            seen.add(aid)
+            built = audio_cue.make_cue(aid, it.data(0x0102), it.data(0x0101))
+            if built is not None:
+                out.append(built)
+        return out
+
+    def _amb_current_volume(self) -> float | None:
+        it = self._amb_list.currentItem()
+        if it is None:
+            return None
+        v = it.data(0x0102)
+        return None if v is None else float(v)
+
+    def _on_amb_volume_changed(self, value: float) -> None:
+        it = self._amb_list.currentItem()
+        if it is None or self._loading:
+            return
+        neutral = abs(float(value) - audio_cue.NEUTRAL_VOLUME) < 1e-9
+        aid = str(it.data(0x0100) or "")
+        it.setData(0x0102, None if neutral else float(value))
+        it.setText(aid if neutral else f"{aid}   × {float(value):g}")
+        self._write_amb()
+        self._sync_amb_volume_widget()
+
+    def _sync_amb_volume_widget(self) -> None:
+        """音量格跟着选中行走；**必须 blockSignals**，否则换行时会把上一行的值写到新行。"""
+        w = getattr(self, "_amb_volume", None)
+        if w is None:
+            return
+        it = self._amb_list.currentItem()
+        w.setEnabled(it is not None and self._amb_body.isEnabled())
+        v = it.data(0x0102) if it is not None else None
+        blocked = w.blockSignals(True)
+        try:
+            w.setValue(audio_cue.NEUTRAL_VOLUME if v is None else float(v))
+        finally:
+            w.blockSignals(blocked)
+
+    def _on_bgm_cue_changed(self) -> None:
+        """id 或本处音量任一改动都落回变体（只接 value_changed 会漏掉纯音量改动）。"""
+        if self._loading or self._v is None or "bgm" not in self._v:
+            return
+        self._v["bgm"] = self._bgm.cue_for_write(self._v.get("bgm")) or ""
+        self.changed.emit()
+
     def _sync_amb_buttons(self) -> None:
         row = self._amb_list.currentRow()
         self._amb_del.setEnabled(row >= 0)
         self._amb_up.setEnabled(row > 0)
         self._amb_down.setEnabled(0 <= row < self._amb_list.count() - 1)
+        self._sync_amb_volume_widget()
 
     def _write_amb(self) -> None:
         if self._v is None:
             return
-        self._v["ambientSounds"] = self._amb_ids()
+        self._v["ambientSounds"] = self._amb_cues()
         self.changed.emit()
 
     def _on_amb_toggled(self, on: bool) -> None:
@@ -582,10 +674,12 @@ class TimeVariantForm(QWidget):
         if on:
             if not isinstance(self._v.get("ambientSounds"), list):
                 base = (self._base_provider() or {}).get("ambientSounds")
-                self._v["ambientSounds"] = [str(a) for a in base] if isinstance(base, list) else []
+                # 基底元素可能带本处音量，整条 deepcopy 搬过来——str() 会把一层变成垃圾 id
+                self._v["ambientSounds"] = copy.deepcopy(base) if isinstance(base, list) else []
             self._amb_list.clear()
-            for aid in self._v["ambientSounds"]:
-                self._amb_list.addItem(self._amb_item(str(aid)))
+            for raw in self._v["ambientSounds"]:
+                if audio_cue.cue_id(raw):
+                    self._amb_list.addItem(self._amb_item(raw))
         else:
             self._v.pop("ambientSounds", None)
             self._amb_list.clear()
@@ -608,6 +702,7 @@ class TimeVariantForm(QWidget):
         self._amb_list.addItem(self._amb_item(aid))
         self._amb_list.setCurrentRow(self._amb_list.count() - 1)
         self._write_amb()
+        self._sync_amb_volume_widget()
 
     def _remove_ambient(self) -> None:
         row = self._amb_list.currentRow()
@@ -639,8 +734,13 @@ class TimeVariantForm(QWidget):
         if on:
             if key not in self._v:
                 base = (self._base_provider() or {}).get(key)
-                self._v[key] = str(base or "")
-            widget.set_current(str(self._v.get(key) or ""))
+                # bgm 的基底可能是 { id, volume }：str() 会把它变成 "{'id': ...}" 这种垃圾值
+                self._v[key] = copy.deepcopy(base) if isinstance(base, dict) else str(base or "")
+            cur = self._v.get(key)
+            if hasattr(widget, "set_cue"):
+                widget.set_cue(cur)
+            else:
+                widget.set_current(str(cur or ""))
         else:
             self._v.pop(key, None)
         widget.setEnabled(on)

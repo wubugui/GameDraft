@@ -366,5 +366,9 @@
     "holding": "手里捏着：{item}",
     "noUse": "使不上……",
     "shadeTitle": "隐约觉着不对"
+  },
+  "systemNote": {
+    "closeHint": "点一下继续",
+    "archived": "已记入见闻录·民俗"
   }
 }

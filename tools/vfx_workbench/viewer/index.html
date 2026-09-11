@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>粒子工作台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #1b1d22; --panel: #23262d; --panel2: #2a2e36; --line: #3a3f4a; --fg: #e6e8ec; --dim: #9aa1ad;
+    --accent: #6cb4ff; --warn: #ffb454; --err: #ff6b6b; --ok: #7ed492; --purple: #c792ea;
+    --font: 13px/1.45 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  /* hidden 属性必须压过下面所有按 id 写的 display:flex —— 不然 #busy / #dialog 从开页起就一直盖在画布上：
+     两层压暗 + 正中一个空框，画布一个点都点不到，而 el.hidden 读出来照样是 true（声学工作台 2026-09-08 踩过）。 */
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font: var(--font); overflow: hidden; user-select: none; }
+  input, textarea { user-select: text; }
+  button, select, input { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 3px 7px; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #2c4f7a; border-color: #3f6ea8; }
+  button.danger { border-color: #7a3c3c; }
+  button.on { background: #2c4f7a; border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  input[type=number] { width: 72px; }
+  input.v3 { width: 56px; }
+  input.v2 { width: 62px; }
+  #app { display: grid; grid-template-rows: auto auto 1fr auto; grid-template-columns: 46px minmax(170px, 230px) minmax(240px, 1fr) minmax(300px, 420px); height: 100%; }
+  #app[inert] { filter: saturate(.5) brightness(.8); }
+  #top, #simbar { grid-column: 1 / span 4; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 5px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #top .grp, #simbar .grp { display: inline-flex; gap: 6px; align-items: center; }
+  #top .grp b, #simbar .grp b { color: var(--dim); font-weight: 500; }
+  #tools { display: flex; flex-direction: column; gap: 4px; padding: 6px 4px; background: var(--panel); border-right: 1px solid var(--line); align-items: center; }
+  #tools button { width: 36px; height: 34px; padding: 0; font-size: 15px; }
+  #tools .sep { height: 1px; width: 28px; background: var(--line); margin: 4px 0; }
+  #left { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; }
+  #left h3, #side h3 { margin: 8px 10px 4px; font-size: 12px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .item { display: flex; gap: 6px; align-items: center; padding: 3px 10px; cursor: pointer; border-left: 3px solid transparent; }
+  .item:hover { background: var(--panel2); }
+  .item.on { background: #2c4f7a; border-left-color: var(--accent); }
+  .item.sub { padding-left: 24px; font-size: 12px; }
+  .item .ic { width: 16px; color: var(--warn); }
+  .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item button { padding: 0 5px; font-size: 11px; }
+  #center { position: relative; overflow: hidden; background: #111; }
+  #center canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+  #overlay3d { pointer-events: none; }
+  #coords { position: absolute; left: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 4px; font: 12px Consolas, "Cascadia Mono", monospace; white-space: pre; pointer-events: none; }
+  #legend { position: absolute; right: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; line-height: 1.5; }
+  #viewbtns { position: absolute; left: 8px; top: 8px; z-index: 5; display: flex; gap: 4px; max-width: calc(100% - 16px); }
+  #side { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 0 0 10px; display: flex; flex-direction: column; }
+  .sec { padding: 2px 10px 6px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
+  .secHead { display: flex; gap: 6px; align-items: center; cursor: pointer; padding: 5px 0 3px; }
+  .secHead .caret { color: var(--dim); width: 10px; }
+  .sec h4 { margin: 6px 0 2px; font-size: 12px; color: var(--dim); font-weight: 600; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row > span:first-child { width: 76px; color: var(--dim); flex: none; font-size: 12px; }
+  .row .tag { width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row select, .row input[type=text] { flex: 1; min-width: 0; }
+  .numwrap { display: inline-flex; gap: 3px; align-items: center; }
+  .unit { color: var(--dim); font-size: 11px; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .dim { color: var(--dim); }
+  .warn { color: var(--warn); }
+  .mono { font: 12px Consolas, "Cascadia Mono", monospace; }
+  .pad { padding: 4px 0; font-size: 12px; }
+  .kv { display: flex; gap: 8px; padding: 1px 10px; font-size: 12px; }
+  .kv > span:first-child { width: 72px; color: var(--dim); flex: none; }
+  .curverow canvas { border-radius: 4px; cursor: crosshair; }
+  label.chk { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 12px; }
+  #bottom { grid-column: 1 / span 4; display: flex; gap: 14px; align-items: center; padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--line); font-size: 12px; }
+  #status { flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #status.err { color: var(--err); } #status.warn { color: var(--warn); } #status.ok { color: var(--ok); }
+  .chip { padding: 2px 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); white-space: pre-line; }
+  .chip.ok { color: var(--ok); border-color: #3f7a4a; } .chip.warn { color: var(--warn); border-color: #7a5a2c; }
+  .chip.bad { color: var(--err); border-color: #7a3c3c; } .chip.off { color: var(--dim); }
+  #busy { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  #dialog { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.5); display: flex; align-items: center; justify-content: center; }
+  #dialogForm { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; min-width: 360px; display: flex; flex-direction: column; gap: 8px; }
+  #dialogForm h3 { margin: 0 0 4px; } #dialogForm p { margin: 0; color: var(--dim); }
+  #dialogForm .row > span:first-child { width: 120px; }
+  #dialogForm .btns { justify-content: flex-end; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <span class="grp"><b>效果</b><select id="effectSel" title="assets/data/vfx/ 下的效果资产（本工作台是它唯一的写入者）"></select>
+      <button id="btnNew" title="新建一份效果（带一个最小发射器）">新建</button>
+      <button id="btnDup" title="复制当前效果">复制</button>
+      <button id="btnRename" title="改名（连内部 id 一起改）">改名</button>
+      <button id="btnDelete" class="danger" title="删除当前效果">删除</button></span>
+    <span class="grp"><b>场景</b><select id="sceneSel" title="在哪个场景的 3D 伪世界里预览（效果本身不绑场景）"></select><select id="bgSel" hidden title="时段背景"></select>
+      <button id="btnBindScene" title="把当前场景记进 authoring（下次打开自动装这个场景；运行时忽略）">记为作者场景</button>
+      <button id="btnLaunchGame" class="primary" title="一键拉起游戏进这个场景：游戏在跑就切场景；dev server 在跑就打开游戏页；都没有就让开发控制台起">▶ 拉起游戏进本场景</button></span>
+    <span class="grp"><button id="btnUndo" disabled>↶</button><button id="btnRedo" disabled>↷</button><button id="btnSave" class="primary" title="Ctrl+S">保存</button></span>
+    <span class="grp" style="margin-left:auto"><label class="chk"><input type="checkbox" id="linkOn" checked> 联动</label><input type="text" id="gameUrl" style="width:160px" title="游戏 dev server 地址（localhost 会换成 127.0.0.1）"><span id="linkChip" class="chip">…</span></span>
+  </div>
+  <div id="simbar">
+    <span class="grp"><b>本地预览</b><button id="btnPlay" title="空格">▶ 播放</button><button id="btnStep" title="单步 1/60 s（. 键）">⏭ 单步</button><button id="btnReset" title="重置（回 t=0，按当前种子重来）">↺ 重置</button></span>
+    <span class="grp"><b>种子</b><input type="number" id="seed" value="1234" step="1" title="同一份定义 + 同一个种子 ⇒ 逐帧相同"></span>
+    <span class="grp"><b>倍速</b><input type="number" id="speed" value="1" step="0.25" title="0.05–8"></span>
+    <span class="grp"><b>刺激</b>
+      <select id="fieldKind" title="fear / attract 按标签查群体的权重；wind 是加速度"><option value="fear">fear</option><option value="attract">attract</option><option value="wind">wind</option></select>
+      <input type="text" id="fieldTag" style="width:120px" placeholder="item:bug" title="作者标签：群体按它查 attitude.fear / attract">
+      <input type="number" id="fieldRadius" value="260" title="半径 wu"><span class="unit">wu</span>
+      <input type="number" id="fieldStrength" value="1" step="0.1" title="强度（wind 时是 wu/s²）">
+      <input type="number" id="fieldDuration" value="0" step="0.1" title="持续秒数；0 = 瞬时脉冲"><span class="unit">s</span>
+      <button id="btnClearFields" title="清掉所有在飞的刺激场">清场</button></span>
+    <span class="grp" style="margin-left:auto"><span id="simInfo" class="dim"></span></span>
+  </div>
+  <div id="tools">
+    <button data-tool="select" title="选择 / 变换（V）：点物体选中，W/E/R 切移动·旋转·缩放，拖动 Ctrl 吸附">⬚</button>
+    <button data-tool="anchor" title="放预览锚点（A）：点场景表面；写 authoring.anchor，切 ground/shell 落到对应面">⊕</button>
+    <button data-tool="player" title="放玩家（M）：点地面放一个可拖的玩家标记，走动时自动带出 player:motion 场">🚶</button>
+    <button data-tool="field" title="发一个刺激（K）：点任意处，按上面那排参数发 fear / attract / wind">⚡</button>
+    <button data-tool="pan" title="平移（H）">✋</button>
+    <div class="sep"></div>
+    <button id="btnView3" title="3D 视图（1）">3D</button>
+    <button id="btnView2" title="2D 原画视图（2）">2D</button>
+    <div class="sep"></div>
+    <button id="btnFocus" title="对准选中（F）">⌖</button>
+    <button id="btnFit" title="整场（Home）">⛶</button>
+  </div>
+  <div id="left">
+    <h3>发射器</h3>
+    <div id="emList"></div>
+    <div class="btns" style="padding:4px 8px">
+      <button id="btnAddEmitter" title="加一个发射器">+</button>
+      <button id="btnDupEmitter" title="复制选中的">⧉</button>
+      <button id="btnRenameEmitter" title="改名（onHit 引用会跟着改）">改名</button>
+      <button id="btnUpEmitter" title="上移">↑</button>
+      <button id="btnDownEmitter" title="下移">↓</button>
+      <button id="btnDelEmitter" class="danger" title="删除">×</button>
+    </div>
+    <h3>玩家</h3>
+    <div id="playerRow"></div>
+    <h3>刺激点</h3>
+    <div id="probeList"></div>
+    <h3>图层</h3>
+    <div class="pad" style="display:flex;flex-direction:column;gap:3px;padding:0 10px">
+      <label class="chk"><input type="checkbox" id="layer_mesh"> 场景</label>
+      <label class="chk"><input type="checkbox" id="layer_dimMesh"> 场景压暗</label>
+      <label class="chk"><input type="checkbox" id="layer_grid"> 地面网格（2 m）</label>
+      <label class="chk"><input type="checkbox" id="layer_particles"> 粒子</label>
+      <label class="chk"><input type="checkbox" id="layer_rings"> 群体半径</label>
+      <label class="chk"><input type="checkbox" id="layer_marks"> 出生点 / NPC</label>
+    </div>
+    <h3>本场景的实例</h3>
+    <div class="pad dim" id="sceneUse" style="padding:0 10px"></div>
+    <h3>游戏</h3>
+    <div id="gamePanel"></div>
+    <div class="pad dim" style="padding:6px 10px">游戏里还会有**灯**与**脚步**的恐惧场，本地预览只喂玩家动静与你手发的刺激。</div>
+  </div>
+  <div id="center">
+    <canvas id="view3d"></canvas>
+    <canvas id="overlay3d"></canvas>
+    <canvas id="view2d" hidden></canvas>
+    <div id="coords"></div>
+    <div id="legend">V 选择 · A 锚点 · M 玩家 · K 刺激 · W/E/R gizmo（Ctrl 吸附）· 1/2 切 3D / 原画<br>右键拖 环视（按住 WASD/QE 飞）· Alt+左键 环绕 · 中键 平移 · 滚轮 朝光标缩放 · F 对准 · Home 整场</div>
+    <div id="viewbtns"><span id="sceneNote" class="chip"></span></div>
+  </div>
+  <div id="side">
+    <div id="inspector"></div>
+  </div>
+  <div id="bottom"><span id="docState"></span><span id="status"></span></div>
+</div>
+<div id="busy" hidden><span id="busyText"></span></div>
+<div id="dialog" hidden><form id="dialogForm"></form></div>
+<!-- 与轨迹工作台共用的三份（经 serve 的 /vendor 路由原样提供，不 fork） -->
+<script src="/vendor/common.js"></script>
+<script src="/vendor/history.js"></script>
+<script src="/vendor/gizmo.js"></script>
+<script src="/viewer/view3d.js"></script>
+<script src="/viewer/view2d.js"></script>
+<script src="/viewer/inspector.js"></script>
+<script src="/viewer/app.js"></script>
+</body>
+</html>

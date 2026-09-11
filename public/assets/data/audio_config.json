@@ -116,92 +116,188 @@
     },
     "闹市": {
       "src": "/resources/runtime/audio/背景音/人声嘈杂4.wav"
+    },
+    "可怕的呼啸风声": {
+      "src": "/resources/runtime/audio/edited/A_1e6e5a1f.mp3"
+    },
+    "可怕的呼啸风声2": {
+      "src": "/resources/runtime/audio/edited/B_8bab861b.mp3"
+    },
+    "可怕的呼啸风声3": {
+      "src": "/resources/runtime/audio/edited/C_5251cf19.mp3"
+    },
+    "风声": {
+      "src": "/resources/runtime/audio/edited/audio_f2c64a54.mp3"
+    },
+    "恐怖低呜": {
+      "src": "/resources/runtime/audio/edited/audio_0e55b88d.mp3"
+    },
+    "灌风": {
+      "src": "/resources/runtime/audio/edited/audio_a412a285.mp3"
+    },
+    "嘈杂滴水": {
+      "src": "/resources/runtime/audio/edited/audio_610975be.mp3"
+    },
+    "回音滴水": {
+      "src": "/resources/runtime/audio/edited/audio_73e9ac8c.mp3"
+    },
+    "呼呼的风": {
+      "src": "/resources/runtime/audio/edited/audio_359f7b0c.mp3"
+    },
+    "冒泡滴水": {
+      "src": "/resources/runtime/audio/edited/audio_5f25655a.mp3"
+    },
+    "缓慢的冒泡滴水": {
+      "src": "/resources/runtime/audio/edited/audio_2362b811.mp3"
     }
   },
   "sfx": {
     "sfx_scree_slide_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_scree_slide_dry.wav",
-      "spatial": { "wet": 0.55, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.55,
+        "dry": 1.0
+      }
     },
     "sfx_rock_bounce_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_rock_bounce_dry.wav",
-      "spatial": { "wet": 0.65, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.65,
+        "dry": 1.0
+      }
     },
     "sfx_rockfall_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_rockfall_dry.wav",
-      "spatial": { "wet": 0.6, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.6,
+        "dry": 1.0
+      }
     },
     "sfx_plank_step_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_plank_step_dry.wav",
-      "spatial": { "wet": 0.4, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.4,
+        "dry": 1.0
+      }
     },
     "sfx_rail_creak_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_rail_creak_dry.wav",
-      "spatial": { "wet": 0.35, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.35,
+        "dry": 1.0
+      }
     },
     "sfx_beam_groan_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_beam_groan_dry.wav",
-      "spatial": { "wet": 0.4, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.4,
+        "dry": 1.0
+      }
     },
     "sfx_wood_crack_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_wood_crack_dry.wav",
-      "spatial": { "wet": 0.55, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.55,
+        "dry": 1.0
+      }
     },
     "sfx_jump_runup_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_jump_runup_dry.wav",
-      "spatial": { "wet": 0.35, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.35,
+        "dry": 1.0
+      }
     },
     "sfx_jump_slip_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_jump_slip_dry.wav",
-      "spatial": { "wet": 0.35, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.35,
+        "dry": 1.0
+      }
     },
     "sfx_land_stagger_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_land_stagger_dry.wav",
-      "spatial": { "wet": 0.5, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.5,
+        "dry": 1.0
+      }
     },
     "sfx_land_scree_fall_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_land_scree_fall_dry.wav",
-      "spatial": { "wet": 0.6, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.6,
+        "dry": 1.0
+      }
     },
     "sfx_bird_startle_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_bird_startle_dry.wav",
-      "spatial": { "wet": 0.7, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.7,
+        "dry": 1.0
+      }
     },
     "sfx_owl_hoot_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_owl_hoot_dry.wav",
-      "spatial": { "wet": 0.7, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.7,
+        "dry": 1.0
+      }
     },
     "sfx_heron_croak_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_heron_croak_dry.wav",
-      "spatial": { "wet": 0.7, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.7,
+        "dry": 1.0
+      }
     },
     "sfx_boulder_splash_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_boulder_splash_dry.wav",
-      "spatial": { "wet": 0.65, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.65,
+        "dry": 1.0
+      }
     },
     "sfx_splash_surge_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_splash_surge_dry.wav",
-      "spatial": { "wet": 0.6, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.6,
+        "dry": 1.0
+      }
     },
     "sfx_gibbon_dry_a": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_gibbon_dry_a.wav",
-      "spatial": { "wet": 0.85, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.85,
+        "dry": 1.0
+      }
     },
     "sfx_gibbon_dry_b": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_gibbon_dry_b.wav",
-      "spatial": { "wet": 0.85, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.85,
+        "dry": 1.0
+      }
     },
     "sfx_pebble_scatter_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_pebble_scatter_dry.wav",
-      "spatial": { "wet": 0.55, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.55,
+        "dry": 1.0
+      }
     },
     "sfx_jump_takeoff_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_jump_takeoff_dry.wav",
-      "spatial": { "wet": 0.35, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.35,
+        "dry": 1.0
+      }
     },
     "sfx_land_scree_dry": {
       "src": "/resources/runtime/audio/beishi_20260907/sfx_land_scree_dry.wav",
-      "spatial": { "wet": 0.55, "dry": 1.0 }
+      "spatial": {
+        "wet": 0.55,
+        "dry": 1.0
+      }
     },
     "sfx_step_paper_money_1": {
       "src": "/resources/runtime/audio/edited/footstep_paper_money_02_87caa148.wav"
@@ -643,6 +739,24 @@
     },
     "sfx_well_cry_childdog_c": {
       "src": "/resources/runtime/audio/demo/generated_20260808/candidates/sfx_well_cry_childdog_c.wav"
+    },
+    "sfx_three_fires_debut": {
+      "src": "/resources/runtime/audio/hud_20260910/sfx_three_fires_debut.wav"
+    },
+    "sfx_three_fires_show": {
+      "src": "/resources/runtime/audio/hud_20260910/sfx_three_fires_show.wav"
+    },
+    "sfx_three_fires_hide": {
+      "src": "/resources/runtime/audio/hud_20260910/sfx_three_fires_hide.wav"
+    },
+    "sfx_smell_debut": {
+      "src": "/resources/runtime/audio/hud_20260910/sfx_smell_debut.wav"
+    },
+    "sfx_smell_show": {
+      "src": "/resources/runtime/audio/hud_20260910/sfx_smell_show.wav"
+    },
+    "sfx_smell_hide": {
+      "src": "/resources/runtime/audio/hud_20260910/sfx_smell_hide.wav"
     }
   },
   "voice": {
@@ -864,6 +978,21 @@
     "shopOpen": "shop_open",
     "shopClose": "shop_close",
     "minigameResult": "minigame_result",
-    "documentReveal": "document_reveal"
+    "documentReveal": "document_reveal",
+    "threeFiresDebut": "sfx_three_fires_debut",
+    "threeFiresShow": "sfx_three_fires_debut",
+    "threeFiresHide": {
+      "id": "sfx_three_fires_hide",
+      "volume": 0.7
+    },
+    "smellDebut": "sfx_smell_debut",
+    "smellShow": {
+      "id": "sfx_smell_show",
+      "volume": 0.8
+    },
+    "smellHide": {
+      "id": "sfx_smell_hide",
+      "volume": 0.7
+    }
   }
 }

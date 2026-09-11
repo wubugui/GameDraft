@@ -115,6 +115,8 @@ def condition_expr_text(expr: Any, depth: int = 0) -> str:
         return f"姿态={_value_text(expr.get('posture'))}"
     if isinstance(expr.get("timePhase"), str):
         return f"时段={expr['timePhase'].strip() or '?'}"
+    if isinstance(expr.get("vfx"), str) and isinstance(expr.get("vfxState"), str):
+        return f"效果「{expr['vfx'].strip() or '?'}」状态={expr['vfxState'].strip() or '?'}"
 
     return _compact(expr)
 
@@ -155,6 +157,16 @@ def _is_recognized_leaf(expr: dict[str, Any]) -> bool:
     if isinstance(expr.get("narrativeCount"), str) and isinstance(
         expr.get("value"), (int, float)
     ) and not isinstance(expr.get("value"), bool):
+        return True
+    # isVfxStateLeaf（两键都得是字符串；与 plane/posture/timePhase 同一组排除项）
+    if (
+        isinstance(expr.get("vfx"), str)
+        and isinstance(expr.get("vfxState"), str)
+        and not flag_is_str
+        and not has("quest")
+        and not has("scenario")
+        and not has("narrative")
+    ):
         return True
     # isPlaneLeaf / isPostureLeaf / isTimePhaseLeaf
     for key in ("plane", "posture", "timePhase"):

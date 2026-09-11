@@ -3,9 +3,11 @@ import type { EventBus } from '../core/EventBus';
 import type { AssetManager, AssetRef } from '../core/AssetManager';
 import { resolveAssetPath } from '../core/assetPath';
 import { SpatialAudioBus } from '../audio/SpatialAudioBus';
-import type { AcousticSpaceDef } from '../audio/acousticSpace';
+import type { AcousticPoint, AcousticSpaceDef, DirectPath } from '../audio/acousticSpace';
 import { TEXT_URLS } from '../core/projectPaths';
-import type { AudioChannel, DialogueEndPayload, IGameSystem, GameContext, IAudioSettingsProvider, AudioPlaybackHandle, TransientSfxOptions } from '../data/types';
+import type { AudioChannel, AudioCueRef, DialogueEndPayload, IGameSystem, GameContext, IAudioSettingsProvider, AudioPlaybackHandle, TransientSfxOptions } from '../data/types';
+import { audioCueId, audioCueIds, audioCueVolume, normalizeAudioCues } from '../data/audioCue';
+import type { OverlaySfxCue } from '../data/overlayImages';
 
 interface AudioEntry {
   src: string;
@@ -28,7 +30,11 @@ interface AudioConfig {
   sfx: Record<string, AudioEntry>;
   /** 对白配音。独立一区（配音会长到近千条，混进 sfx 就没法管）；**不与 sfx 互相回落** */
   voice: Record<string, AudioEntry>;
-  systemSfx: Record<string, string>;
+  /**
+   * 事件 → sfx 引用。值可写 `{ id, volume }` 给**这一条系统音**单独定音量：
+   * 同一声"叮"用作确认音要清脆、用作悬停音就得压到三分之一，靠这里而不是复制素材。
+   */
+  systemSfx: Record<string, AudioCueRef>;
 }
 
 type EventCallback = (payload?: any) => void;
@@ -61,6 +67,10 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private currentBgmId: string | null = null;
   /** 数据/动作层要求的 BGM；不受浏览器手势门、解码时序和输出设备状态影响。 */
   private requestedBgmId: string | null = null;
+  /** 同上，但记的是**本处音量**（undefined = 沿用素材级）；过场基线快照要连音量一起记。 */
+  private requestedBgmVolume: number | undefined = undefined;
+  /** 已提交的当前 BGM 的本处音量；幂等守卫按 (id, 本处音量) 判，只比 id 会吞掉"同曲换音量"。 */
+  private currentBgmSiteVolume: number | undefined = undefined;
   /** 每次 playBgm/stopBgm 自增；await loadAudio 期间若被更新的请求取代，旧请求放弃播放，避免泄漏正在播放的 Howl。 */
   private bgmRequestSeq = 0;
   /** 当前 BGM 的基础音量乘数（配置 entry.volume ?? 1）；setVolume('bgm') 按 base×全局 重算而非直接覆盖 */
@@ -102,6 +112,15 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private audioUnlocking = false;
   private pendingPlayback: Array<() => void | Promise<void>> = [];
   private gestureListenersInstalled = false;
+  /** 音频保活：每秒看一眼 AudioContext（见 installAudioKeepAlive） */
+  private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+  private keepAliveOff: (() => void) | null = null;
+  private resumeInFlight = false;
+  private forcedUnlockDone = false;
+  /** 最近一次喂给总线的听者：总线重建 / 首次建出来时立刻喂回去，别让第一声按原点算 */
+  private lastListener: { ear: AcousticPoint; forward: [number, number, number] | null } | null = null;
+  /** 音频没靠任何手势就解锁了（免手势的专用预览窗 / 桌面客户端）；普通浏览器页签里永远 false */
+  private audioAutoUnlocked = false;
   private sfxEventListeners: Array<{ event: string; callback: EventCallback }> = [];
   private lastMapTravelSfxAt = 0;
   /** UI 切换/悬停音的上次发声时刻（节流，见 installSystemSfxListeners 的 ui:hover） */
@@ -114,6 +133,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   init(ctx: GameContext): void {
     this.assetManager = ctx.assetManager;
     this.installAudioGestureGate();
+    this.installAudioKeepAlive();
     this.installSystemSfxListeners();
   }
   update(_dt: number): void {}
@@ -125,7 +145,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         ambient?: Record<string, { src: string }>;
         sfx?: Record<string, { src: string }>;
         voice?: Record<string, { src: string }>;
-        systemSfx?: Record<string, string>;
+        systemSfx?: Record<string, unknown>;
       }>(TEXT_URLS.audioConfig);
       const resolveSrc = (obj: Record<string, { src: string; volume?: number; spatial?: unknown }>) => {
         const out: Record<string, AudioEntry> = {};
@@ -142,8 +162,12 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         // 按键名逐个装配的白名单：新增一个区必须同步加这一行，
         // 否则 JSON 里写了、运行时是空的，而且一声不吭（踩过）。
         voice: resolveSrc(raw.voice ?? {}),
+        // 值可以是裸 id 也可以是 { id, volume }；解析不出 id 的条目一律丢掉
+        // （丢掉而不是留个空 id：空 id 会在每次事件上走一遍查表未命中，白烧且掩盖配置错误）。
         systemSfx: Object.fromEntries(
-          Object.entries(raw.systemSfx ?? {}).filter(([, v]) => typeof v === 'string' && v.trim()),
+          Object.entries(raw.systemSfx ?? {})
+            .map(([k, v]) => [k, v as AudioCueRef] as const)
+            .filter(([, v]) => audioCueId(v) !== ''),
         ),
       };
       this.loaded = true;
@@ -180,13 +204,41 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    * 改一个数字立刻重算，不用等烘焙。
    */
   setAcousticSpace(id: string | null | undefined): void {
-    const bus = this.ensureSpatialBus();
-    if (!bus) return;
     const def = id ? this.acousticSpaces[id] : null;
     if (id && !def) {
       console.warn(`[AudioManager] 未知声学空间 "${id}"，本场景按无空间处理`);
     }
+    const bus = this.ensureSpatialBus();
+    if (!bus) {
+      // 音频上下文要用户手势才有：先记账，`flushPendingAcoustic` 每帧补挂。
+      // 不记的话「进场景 → 点一下解锁」之后这个场景永远没有回音，而且毫无痕迹。
+      this.pendingAcoustic = { id: def ? id! : null, def: def ?? null };
+      return;
+    }
+    this.pendingAcoustic = null;
     bus.setSpace(def ? id! : null, def ?? null);
+  }
+
+  /** 总线建不出来时欠着的那份空间（音频尚未解锁）。 */
+  private pendingAcoustic: { id: string | null; def: AcousticSpaceDef | null } | null = null;
+
+  /**
+   * 音频上下文晚于场景就绪（要用户手势）：每帧问一次，能建总线了就把欠着的空间挂上。
+   * 返回 true 表示这一帧真挂上了（调用方据此强制重算一次听者）。
+   */
+  flushPendingAcoustic(): boolean {
+    if (!this.pendingAcoustic) return false;
+    const bus = this.ensureSpatialBus();
+    if (!bus) return false;
+    const p = this.pendingAcoustic;
+    this.pendingAcoustic = null;
+    bus.setSpace(p.id, p.def);
+    return true;
+  }
+
+  /** 是否还有欠着没挂上的空间（状态回传用，别让"已套用"看起来像在响）。 */
+  hasPendingAcoustic(): boolean {
+    return this.pendingAcoustic !== null;
   }
 
   /** 当前挂着的声学空间 id；调试面板与实时联动用。 */
@@ -195,16 +247,40 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   /**
-   * 移动听者（**声学米制**，原点＝空间的 anchor）。回音随之改变。
-   * 内部带节流：挪动不足 3 米或距上次重算不足 250ms 就跳过。返回是否真重算了。
+   * 移动听者（**耳点**，M-world wu，已含耳高；`forward` = 视线方向，方位角以它为正前）。回音随之改变。
+   * 内部带节流：挪动不足阈值（按空间距离缩放折成米）或距上次重算不足 300ms 就跳过；直达声逐声音现算不受节流。
+   * 返回是否真重算了。
    */
-  setAcousticListener(pos: { x: number; z: number; y?: number }, force = false): boolean {
-    return this.spatialBus?.setListener(pos, force) ?? false;
+  setAcousticListener(ear: AcousticPoint, forward: [number, number, number] | null, force = false): boolean {
+    this.lastListener = { ear, forward };
+    return this.spatialBus?.setListener(ear, forward, force) ?? false;
   }
 
-  /** 当前听者（声学米制）。 */
-  getAcousticListener(): { x: number; z: number; y?: number } | null {
+  /** 当前听者耳点（wu，M-world）。 */
+  getAcousticListener(): AcousticPoint | null {
     return this.spatialBus?.getListener() ?? null;
+  }
+
+  /** 总线上实际挂着的空间定义（可能是工作台推来的工作态，不在库里）。 */
+  getActiveAcousticSpaceDef(): AcousticSpaceDef | null {
+    return this.spatialBus?.getSpaceDef() ?? null;
+  }
+
+  /** 某个发声点相对当前听者的直达声（诊断 / 面板）。 */
+  getAcousticDirect(at: AcousticPoint | null): DirectPath | null {
+    return this.spatialBus?.getDirect(at) ?? null;
+  }
+
+  /**
+   * 最近 `windowMs` 内**空间音总线输出**的峰值（dBFS；总线还没建时量主输出）。**这是"真出声了"的证据**：
+   * 试听发出去后工作台问这个，而不是相信「播放函数返回了 true」。只量空间音——BGM / 环境 / UI 在响不会
+   * 冒充试听出声。没有上下文 / 电平表还没装时返回 -Infinity。
+   */
+  getRecentOutputPeakDb(windowMs = 3000): number {
+    const now = Date.now();
+    let pk = 0;
+    for (const s of this.meterSamples) if (now - s.at <= windowMs && s.peak > pk) pk = s.peak;
+    return pk > 0 ? 20 * Math.log10(pk) : -Infinity;
   }
 
   /** 上次重算 IR 的耗时（毫秒），性能诊断用。 */
@@ -237,20 +313,54 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    * 工作台或游戏内编辑模式改了参数 → 推进来 → 立刻重算 IR → 下一声就是新的。
    */
   applyAcousticSpaceDef(id: string, def: AcousticSpaceDef | null): void {
-    const bus = this.ensureSpatialBus();
-    if (!bus) return;
     if (def) this.acousticSpaces[id] = def;
+    const bus = this.ensureSpatialBus();
+    if (!bus) {
+      this.pendingAcoustic = { id: def ? id : null, def };
+      return;
+    }
+    this.pendingAcoustic = null;
     bus.setSpace(def ? id : null, def);
   }
 
+  /**
+   * 浏览器音频是否已被用户手势解锁。没解锁时任何播放都是静默的——
+   * 实时联动的试听要据此回报「没播出去」，而不是假装播了。
+   */
+  isAudioUnlocked(): boolean {
+    // ⚠ 不能只看 ctx.state：Howler 的 autoSuspend 会在 30s 没声音后把 ctx 挂起，播放时再自动 resume。
+    //   挂起 ≠ 没解锁。见过一次 running 就算解锁；Howler 自己的 _audioUnlocked 也作数。
+    const h = Howler as unknown as { ctx?: AudioContext; _audioUnlocked?: boolean };
+    if (h.ctx && h.ctx.state === 'running') this.audioUnlockedSeen = true;
+    return this.audioUnlockedSeen || h._audioUnlocked === true;
+  }
+  private audioUnlockedSeen = false;
+
+  /** 音频是不是没靠任何手势就解锁了（跑在免手势的专用预览窗 / 桌面客户端里）。工作台据此判断这页是不是普通浏览器页签。 */
+  isAudioAutoUnlocked(): boolean {
+    return this.audioAutoUnlocked;
+  }
+
   private ensureSpatialBus(): SpatialAudioBus | null {
-    if (this.spatialBus) return this.spatialBus;
+    const H = Howler as unknown as { ctx?: AudioContext; masterGain?: GainNode };
+    const ctx = H.ctx, master = H.masterGain;
+    if (this.spatialBus) {
+      // 总线挂在一个已关掉 / 被换掉的 AudioContext 上 = 所有空间音全哑而毫无报错
+      // （2026-09-08 「试听一点声音都没有」的根因：总线的 ctx 是 closed 的，Howler 早换了一个新的）。
+      // 拆掉重建；挂着的空间记回账，下一拍 flushPendingAcoustic 补挂，Game 随即强制重喂听者。
+      const stale = this.spatialBus.context.state === 'closed' || (!!ctx && this.spatialBus.context !== ctx);
+      if (!stale) return this.spatialBus;
+      console.warn('[AudioManager] 空间音总线的 AudioContext 已失效（closed 或被换掉），重建总线并重挂空间');
+      const old = this.spatialBus;
+      this.pendingAcoustic = { id: old.getSpaceId(), def: old.getSpaceDef() };
+      old.destroy();
+      this.spatialBus = null;
+    }
     // Howler 的 AudioContext 与主增益就是汇入点：两条通道共用同一条音量总线。
     // 够不到就安静降级 —— 空间音退化成走 Howler 的普通音效，不该整条崩掉。
-    const ctx = (Howler as unknown as { ctx?: AudioContext }).ctx;
-    const master = (Howler as unknown as { masterGain?: GainNode }).masterGain;
-    if (!ctx || !master) return null;
+    if (!ctx || !master || ctx.state === 'closed') return null;
     this.spatialBus = new SpatialAudioBus({ ctx, destination: master });
+    if (this.lastListener) this.spatialBus.setListener(this.lastListener.ear, this.lastListener.forward, true);
     return this.spatialBus;
   }
 
@@ -260,7 +370,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     if (!bus) return false;
     const optionVolume = typeof volume === 'number' && Number.isFinite(volume) ? volume : undefined;
     const base = optionVolume ?? entry.volume ?? 1.0;
-    void bus.play(entry.src, {
+    bus.playAt(entry.src, null, {
       volume: this.clamp01(base * this.sfxVolume),
       wet: entry.spatial?.wet ?? 0.6,
       dry: entry.spatial?.dry ?? 1.0,
@@ -268,13 +378,81 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     return true;
   }
 
-  playBgm(id: string, fadeMs: number = 1000): void {
+  /** 没标 `spatial` 的素材（脚步等）从有位置的发声点播时的缺省湿量。 */
+  static DEFAULT_POSITIONAL_WET = 0.5;
+
+  /**
+   * 从 M-world 里的一个发声点播一条音效（**有物理位置的声源**：脚步、NPC、试听声源……）。
+   * `at = null` = 声源在听者耳朵上（自己喊）。直达声按几何算延迟 / 衰减 / 声像，反射按镜像声源法，
+   * 全在 `SpatialAudioBus`。没有 AudioContext（音频还没建起来）时退成不带位置的一次性音。
+   *
+   * 句柄只停本次实例。id 查不到当场 warn + 返回 null，**不回落**（同 playTransientSfx 的理由）。
+   */
+  playSfxAt(
+    id: string,
+    at: AcousticPoint | null,
+    options: {
+      volume?: number; onEnd?: () => void; onStart?: () => void;
+      /**
+       * `false` = 绕开整条空间音通道，就播一个声音（无距离 / 声像 / 延迟 / 空气低通 / 回音）。
+       * 与"没有 AudioContext"走的是**同一条**退路，所以音量口径天然一致
+       * （两边都是 `volume × sfxVolume`）——另起一条播放路径才会出现"关了空间化顺便变响了"。
+       */
+      spatialized?: boolean;
+    } = {},
+  ): AudioPlaybackHandle | null {
+    const entry = this.config.sfx[id];
+    if (!entry) {
+      console.warn(`AudioManager: audio_config.sfx 里没有 "${id}"——这条不发声`);
+      return null;
+    }
+    if (options.spatialized === false) {
+      return this.playTransientSfx(id, { volume: options.volume, onEnd: options.onEnd });
+    }
+    const bus = this.ensureSpatialBus();
+    if (!bus) return this.playTransientSfx(id, { volume: options.volume, onEnd: options.onEnd });
+    // 播放门还关着（还没解锁）：有位置的声音**丢掉**，不排队——排队会在解锁那一刻把攒下的几十步脚步
+    // 按早已过时的位置一齐放出来
+    if (!this.audioUnblocked) return null;
+    let stopped = false;
+    let inner: { stop(): void } | null = null;
+    const handle: AudioPlaybackHandle = {
+      stop: () => { stopped = true; inner?.stop(); inner = null; },
+    };
+    const optionVolume = typeof options.volume === 'number' && Number.isFinite(options.volume) ? options.volume : undefined;
+    const base = optionVolume ?? entry.volume ?? 1.0;
+    this.runWhenAudioAllowed(() => {
+      if (stopped) return;
+      const b = this.ensureSpatialBus() ?? bus;
+      inner = b.playAt(entry.src, at, {
+        volume: this.clamp01(base * this.sfxVolume),
+        wet: entry.spatial?.wet ?? AudioManager.DEFAULT_POSITIONAL_WET,
+        dry: entry.spatial?.dry ?? 1.0,
+        onEnd: options.onEnd,
+        onStart: options.onStart,
+      });
+    });
+    return handle;
+  }
+
+  /**
+   * `volume` = **本处音量**（逐处覆盖素材级 `entry.volume`，口径见 `data/audioCue.ts`）。
+   * 缺省沿用素材级；最终 `clamp01(base × bgmVolume)`。
+   *
+   * ⚠ 幂等守卫按 (id, 本处音量) 判：只比 id 的话，同一首曲子换了音量的请求会被当成
+   * "已经在播这首了"直接吞掉——夜里想把白天那首压半档就静默不生效。
+   */
+  playBgm(id: string, fadeMs: number = 1000, volume?: number): void {
+    const requestedVolume = typeof volume === 'number' && Number.isFinite(volume) && volume >= 0
+      ? volume
+      : undefined;
     this.requestedBgmId = id;
+    this.requestedBgmVolume = requestedVolume;
     const myReq = ++this.bgmRequestSeq;
     this.runWhenAudioAllowed(async () => {
       // 排队期间已被更新的请求取代：放弃。
       if (myReq !== this.bgmRequestSeq) return;
-      if (this.currentBgmId === id && this.currentBgm) return;
+      if (this.currentBgmId === id && this.currentBgm && this.currentBgmSiteVolume === requestedVolume) return;
 
       const entry = this.config.bgm[id];
       if (!entry) {
@@ -287,7 +465,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       const howl = this.assetManager.getAudio(entry.src, { loop: true })
         ?? await this.assetManager.loadAudio(entry.src, { loop: true });
       if (myReq !== this.bgmRequestSeq) return;
-      if (this.currentBgmId === id && this.currentBgm === howl) return;
+      if (this.currentBgmId === id && this.currentBgm === howl && this.currentBgmSiteVolume === requestedVolume) return;
 
       // 提交切换：仅当旧 BGM 与新实例不同才淡出（避免重复请求同一缓存 Howl 时把自己停掉）；
       // currentBgm 与 currentBgmId 一起更新，无中间空窗。
@@ -303,17 +481,20 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       howl.loop(true);
       howl.volume(0);
       howl.play();
-      const baseVol = entry.volume ?? 1.0;
+      // 本处音量**替换**素材级（不是相乘）——与 playSfx / addAmbient 同口径。
+      const baseVol = requestedVolume ?? entry.volume ?? 1.0;
       howl.fade(0, this.clamp01(baseVol * this.bgmVolume), fadeMs);
 
       this.currentBgm = howl;
       this.currentBgmId = id;
       this.currentBgmBaseVolume = baseVol;
+      this.currentBgmSiteVolume = requestedVolume;
     });
   }
 
   stopBgm(fadeMs: number = 1000): void {
     this.requestedBgmId = null;
+    this.requestedBgmVolume = undefined;
     // 使任何在途的 playBgm 失效（其 myReq 将不再匹配），避免 stop 后旧加载又把 BGM 拉起。
     ++this.bgmRequestSeq;
     this.runWhenAudioAllowed(() => {
@@ -324,6 +505,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       this.scheduleCleanup(() => { if (this.currentBgm !== bgm) bgm.stop(); }, fadeMs);
       this.currentBgm = null;
       this.currentBgmId = null;
+      this.currentBgmSiteVolume = undefined;
     });
   }
 
@@ -339,7 +521,6 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     const myReq = this.bumpAmbientSeq(id);
     this.runWhenAudioAllowed(async () => {
       if (myReq !== this.ambientRequestSeq.get(id)) return;
-      if (this.ambientLayers.has(id)) return;
 
       const entry = this.config.ambient[id];
       if (!entry) {
@@ -347,7 +528,20 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         return;
       }
 
+      // 本处音量**替换**素材级（不是相乘）——与 playSfx / playBgm 同口径。
       const baseVol = volume ?? entry.volume ?? 1.0;
+
+      // 该层已在播：不重放（重放会有一次爆音/相位跳），但**要认新音量**——
+      // 幂等守卫写成"已在播就整个返回"的话，「同一层换个音量」这条指令会静默丢掉。
+      const playing = this.ambientLayers.get(id);
+      if (playing) {
+        if (this.ambientBaseVolume.get(id) !== baseVol) {
+          playing.volume(this.clamp01(baseVol * this.ambientVolume));
+          this.ambientBaseVolume.set(id, baseVol);
+        }
+        return;
+      }
+
       const howl = this.assetManager.getAudio(entry.src, { loop: true })
         ?? await this.assetManager.loadAudio(entry.src, { loop: true });
       // 加载期间被 removeAmbient/clearAmbient/更新的 addAmbient 取代：放弃，不 play 不入 Map
@@ -450,14 +644,25 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.cutsceneSfxSounds = [];
   }
 
-  /** 当前 BGM id（无则 null）——供过场快照音频基线。 */
-  getCurrentBgmId(): string | null {
-    return this.currentBgmId;
+  /**
+   * 当前 BGM 的**带音量引用**（无则 null）——供过场快照音频基线。
+   *
+   * ⚠ 刻意**不提供**只返回 id 的版本：还原路径拿到裸 id 就会按素材原音量重播，
+   * 场景特意压低的那半档静默丢掉（只在真机听得出来）。要纯 id 的调试信息走
+   * `getDebugOutputState()` / `getRequestedBgmId()`。
+   */
+  getCurrentBgmCue(): AudioCueRef | null {
+    if (!this.currentBgmId) return null;
+    const vol = this.currentBgmSiteVolume;
+    return vol === undefined ? this.currentBgmId : { id: this.currentBgmId, volume: vol };
   }
 
-  /** 当前活跃环境层 id 列表——供过场快照音频基线。 */
-  getActiveAmbientIds(): string[] {
-    return Array.from(this.ambientLayers.keys());
+  /** 当前活跃环境层的**带音量引用**列表——供过场快照音频基线（理由同上）。 */
+  getActiveAmbientCues(): AudioCueRef[] {
+    return Array.from(this.ambientLayers.keys()).map((id) => {
+      const vol = this.ambientBaseVolume.get(id);
+      return vol === undefined ? id : { id, volume: vol };
+    });
   }
 
   /** 与设备实际是否已获准发声解耦的确定性音频意图。 */
@@ -488,13 +693,14 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   /**
-   * 还原到过场前音频基线：BGM 切回 bgmId（null=停），并补回 ambientIds。
-   * playBgm/addAmbient 自带幂等守卫（同 id 已在播即返回），故基线未被过场改动时全为 no-op。
+   * 还原到过场前音频基线：BGM 切回 `bgm`（null=停），并补回环境层——**连本处音量一起还原**。
+   * playBgm/addAmbient 自带幂等守卫（同 id 同音量已在播即返回），故基线未被过场改动时全为 no-op。
    */
-  restoreAudioBaseline(bgmId: string | null, ambientIds: string[]): void {
-    if (bgmId) this.playBgm(bgmId);
+  restoreAudioBaseline(bgm: AudioCueRef | null, ambient: AudioCueRef[]): void {
+    const bgmId = audioCueId(bgm);
+    if (bgmId) this.playBgm(bgmId, 1000, audioCueVolume(bgm));
     else this.stopBgm();
-    for (const id of ambientIds) this.addAmbient(id);
+    for (const cue of normalizeAudioCues(ambient)) this.addAmbient(cue.id, cue.volume);
   }
 
   /**
@@ -639,22 +845,25 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     if (channel === 'bgm' && this.currentBgm?.playing() === true) return;
     if (channel === 'ambient' && this.ambientLayers.size > 0) return;
 
-    const cueId = (
-      this.config.systemSfx.volumePreview
-      || this.config.systemSfx.uiConfirm
-      || this.config.systemSfx.uiHover
-      || ''
-    ).trim();
+    // 同 playAudioUnlockCue：值可能是 { id, volume } 对象，不能 `||` 串起来再 .trim()。
+    const cueRef = [
+      this.config.systemSfx.volumePreview,
+      this.config.systemSfx.uiConfirm,
+      this.config.systemSfx.uiHover,
+    ].find((r) => audioCueId(r) !== '');
+    const cueId = audioCueId(cueRef);
     const entry = cueId ? this.config.sfx[cueId] : undefined;
     if (!entry) return;
     const channelVolume = this.getVolume(channel);
+    // 本处音量（表里给这条样本单独配的）优先于素材级——与 playSystemSfx 同口径。
+    const cueBaseVolume = audioCueVolume(cueRef) ?? entry.volume ?? 1.0;
 
     this.runWhenAudioAllowed(async () => {
       const howl = this.sfxCache.get(cueId)
         ?? this.assetManager.getAudio(entry.src, { loop: false })
         ?? await this.assetManager.loadAudio(entry.src, { loop: false });
       if (!this.sfxCache.has(cueId)) this.sfxCache.set(cueId, howl);
-      howl.volume(this.clamp01((entry.volume ?? 1.0) * channelVolume));
+      howl.volume(this.clamp01(cueBaseVolume * channelVolume));
       howl.play();
     });
   }
@@ -668,18 +877,18 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     }
   }
 
-  applySceneAudio(bgmId?: string, ambientIds?: string[]): void {
+  /** 套用场景音频。`bgm` / `ambient` 逐项可带**本处音量**（同一条环境音在两个场景不同响度）。 */
+  applySceneAudio(bgm?: AudioCueRef, ambient?: AudioCueRef[]): void {
+    const bgmId = audioCueId(bgm);
     if (bgmId) {
-      this.playBgm(bgmId);
+      this.playBgm(bgmId, 1000, audioCueVolume(bgm));
     } else {
       this.stopBgm();
     }
 
     this.clearAmbient();
-    if (ambientIds) {
-      for (const id of ambientIds) {
-        this.addAmbient(id);
-      }
+    for (const cue of normalizeAudioCues(ambient)) {
+      this.addAmbient(cue.id, cue.volume);
     }
   }
 
@@ -714,12 +923,13 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.pendingTimers.add(id);
   }
 
-  getSceneAudioRefs(bgmId?: string, ambientIds?: string[]): AssetRef[] {
+  getSceneAudioRefs(bgm?: AudioCueRef, ambient?: AudioCueRef[]): AssetRef[] {
     const refs: AssetRef[] = [];
+    const bgmId = audioCueId(bgm);
     if (bgmId && this.config.bgm[bgmId]) {
       refs.push({ type: 'audio', path: this.config.bgm[bgmId].src, options: { loop: true }, label: `BGM: ${bgmId}` });
     }
-    for (const id of ambientIds ?? []) {
+    for (const id of audioCueIds(ambient)) {
       const entry = this.config.ambient[id];
       if (entry) refs.push({ type: 'audio', path: entry.src, options: { loop: true }, label: `环境音: ${id}` });
     }
@@ -735,12 +945,14 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   private playAudioUnlockCue(): void {
-    const cueId = (
-      this.config.systemSfx.audioUnlock
-      || this.config.systemSfx.uiHover
-      || this.config.systemSfx.uiConfirm
-      || ''
-    ).trim();
+    // 三个候选按顺序取第一条**解析得出 id** 的（值可能是 { id, volume } 对象，
+    // 直接 `||` 串起来会把对象当真值，再 .trim() 就崩）。
+    const cueRef = [
+      this.config.systemSfx.audioUnlock,
+      this.config.systemSfx.uiHover,
+      this.config.systemSfx.uiConfirm,
+    ].find((r) => audioCueId(r) !== '');
+    const cueId = audioCueId(cueRef);
     const entry = cueId ? this.config.sfx[cueId] : undefined;
     if (!entry) return;
 
@@ -752,7 +964,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       h.unload();
       cue = null;
     };
-    const baseVolume = typeof entry.volume === 'number' ? entry.volume : 1.0;
+    // 本处音量（表里给这条系统音单独配的）优先于素材级——与 playSystemSfx 同口径。
+    const baseVolume = audioCueVolume(cueRef) ?? (typeof entry.volume === 'number' ? entry.volume : 1.0);
     cue = new Howl({
       src: [entry.src],
       loop: false,
@@ -765,10 +978,10 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.scheduleCleanup(cleanup, 3000);
   }
 
-  private flushPendingPlayback(): void {
+  private flushPendingPlayback(playCue = true): void {
     this.audioUnblocked = true;
     this.audioUnlocking = false;
-    this.playAudioUnlockCue();
+    if (playCue) this.playAudioUnlockCue();
     const queued = this.pendingPlayback.splice(0);
     for (const fn of queued) {
       void fn();
@@ -810,6 +1023,157 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     window.addEventListener('touchstart', this._onFirstGesture, capActive);
   }
 
+  /**
+   * 音频保活——这是桌面游戏，不是网页（制作人 2026-09-08：浏览器那套"没点过不出声、没焦点就掐掉"一律禁止）。
+   *
+   * - `Howler.autoSuspend = false`：Howler 缺省 30s 没声音就把 AudioContext 挂起、下次播放再 resume。叠上浏览器对
+   *   没焦点 / 被盖住的窗口的后台降级，就是"播着播着断了、点回窗口再播一下才续上"。进程活着上下文就活着。
+   * - 每秒看一眼上下文：挂起就 resume。同一时刻只挂一个 resume 在飞——浏览器不放行时那个 promise 会一直等到手势
+   *   才落（Chrome 的行为），不会堆积；放行了（专用预览窗 / Tauri 客户端带 `--autoplay-policy=no-user-gesture-required`）
+   *   下一拍就是 running。
+   * - 上下文已 running 而播放门还关着：直接开门放队列，**不放解锁提示音**（那是给"你点了一下"的回应；这里根本没人点）。
+   *   没有这一步，自动播放放行的窗口里 `playSfx` 照样排队等一个永远不来的首次手势——工作台的试听就是这么静默丢掉的。
+   * - visibilitychange / focus 也立刻看一眼，不等下一秒。
+   */
+  private installAudioKeepAlive(): void {
+    if (typeof window === 'undefined' || this.keepAliveTimer) return;
+    Howler.autoSuspend = false;
+    this.detectAutoplayAllowed();
+    const tick = () => this.keepAudioAlive();
+    this.keepAliveTimer = setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick);
+    window.addEventListener('focus', tick);
+    this.keepAliveOff = () => {
+      document.removeEventListener('visibilitychange', tick);
+      window.removeEventListener('focus', tick);
+    };
+    tick();
+  }
+
+  /** 电平表：AnalyserNode 挂在空间音总线的汇合节点上（没总线时挂 Howler.masterGain），每 100ms 记一次峰值，留最近 5 秒。 */
+  private meterAnalyser: AnalyserNode | null = null;
+  private meterCtx: AudioContext | null = null;
+  private meterNode: AudioNode | null = null;
+  private meterTimer: ReturnType<typeof setInterval> | null = null;
+  private meterBuf: Float32Array<ArrayBuffer> = new Float32Array(0);
+  private meterSamples: Array<{ at: number; peak: number }> = [];
+
+  private ensureOutputMeter(ctx: AudioContext): void {
+    const master = (Howler as unknown as { masterGain?: GainNode }).masterGain;
+    const bus = this.spatialBus && this.spatialBus.context === ctx ? this.spatialBus : null;
+    const target: AudioNode | undefined = bus?.output ?? master;
+    if (this.meterAnalyser && this.meterCtx === ctx && this.meterNode === target) return;
+    this.dropOutputMeter();   // 换了目标节点 / 上下文：先把旧的从源头拔掉（源 → 分析器这条边不会自己消失）
+    if (!target || target.context !== ctx || typeof ctx.createAnalyser !== 'function') return;
+    try {
+      const an = ctx.createAnalyser();
+      an.fftSize = 2048;
+      target.connect(an);
+      this.meterAnalyser = an;
+      this.meterCtx = ctx;
+      this.meterNode = target;
+      this.meterBuf = new Float32Array(an.fftSize);
+      this.meterTimer = setInterval(() => this.sampleOutputMeter(), 100);
+    } catch { /* 拿不到电平表就没有证据，但不影响出声 */ }
+  }
+
+  private sampleOutputMeter(): void {
+    const an = this.meterAnalyser;
+    if (!an) return;
+    an.getFloatTimeDomainData(this.meterBuf);
+    let pk = 0;
+    const b = this.meterBuf;
+    for (let i = 0; i < b.length; i++) { const a = b[i] < 0 ? -b[i] : b[i]; if (a > pk) pk = a; }
+    const now = Date.now();
+    this.meterSamples.push({ at: now, peak: pk });
+    while (this.meterSamples.length && now - this.meterSamples[0].at > 5000) this.meterSamples.shift();
+  }
+
+  private dropOutputMeter(): void {
+    if (this.meterTimer) { clearInterval(this.meterTimer); this.meterTimer = null; }
+    if (this.meterAnalyser) {
+      // AnalyserNode.disconnect() 只断它的**出边**；源 → 分析器这条边要从源头断，否则每次重建都在 masterGain 上多挂一个
+      try { this.meterNode?.disconnect(this.meterAnalyser); } catch { /* 已断开 */ }
+      try { this.meterAnalyser.disconnect(); } catch { /* 已断开 */ }
+    }
+    this.meterAnalyser = null;
+    this.meterCtx = null;
+    this.meterNode = null;
+    this.meterSamples = [];
+  }
+
+  /**
+   * 这页是不是免手势（专用预览窗 / 桌面客户端带 `--autoplay-policy=no-user-gesture-required`）：
+   * 开一个探针 AudioContext 看它生下来是不是 running。**只在页面还没有任何用户激活时判**——有过手势的页
+   * 新上下文本来就 running，判不出来（那种情况留给 keepAudioAlive 的自动开门分支）。
+   */
+  private detectAutoplayAllowed(): void {
+    if (this.pageHasUserActivation()) return;
+    try {
+      const AC = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext });
+      const Ctor = AC.AudioContext ?? AC.webkitAudioContext;
+      if (!Ctor) return;
+      const probe = new Ctor();
+      // 构造后 state 可能还是 suspended、几毫秒后才 running（渲染线程异步起）：等一次 statechange，最多 1.5s
+      let done = false;
+      const settle = () => {
+        if (done) return;
+        done = true;
+        probe.onstatechange = null;
+        if (probe.state === 'running' && !this.pageHasUserActivation()) this.audioAutoUnlocked = true;
+        void probe.close?.().catch(() => {});
+      };
+      if (probe.state === 'running') settle();
+      else {
+        probe.onstatechange = () => { if (probe.state === 'running') settle(); };
+        setTimeout(settle, 1500);
+      }
+    } catch { /* 拿不到就当普通页 */ }
+  }
+
+  private keepAudioAlive(): void {
+    const H = Howler as unknown as {
+      ctx?: AudioContext | null; volume: () => number; noAudio?: boolean;
+      _mobileUnloaded?: boolean; _unlockAudio?: () => void;
+    };
+    // Howler 到第一个 Howl 才建 AudioContext：场景里一时没有声音要放，上下文就一直不存在，
+    // 空间总线建不出来、解锁也无从谈起（实测：免手势预览窗开着 15 秒还是「未解锁 / 欠着空间」）。
+    // Howler.volume()（取值）会在没有 ctx 时顺手 setupAudioContext —— 借它把上下文先建出来。
+    if (!H.ctx && !H.noAudio) { try { H.volume(); } catch { /* 没有 WebAudio 就算了 */ } }
+    // 🔴 Howler 在**第一个 Howl** 创建时跑 `_unlockAudio`，里面若发现 ctx.sampleRate ≠ 44100（本机 48k）
+    //    就 `Howler.unload()`：把 AudioContext **关掉重建**。此前建在旧 ctx 上的一切（空间总线、卷积器）
+    //    从此全哑而不报错——2026-09-08 「试听一点声音都没有」的根因（栈：Howl.init → _unlockAudio → unload → ctx.close）。
+    //    这里在任何 Howl 出现之前先把这一步逼出来，让 ctx 稳定下来，总线才建在最终那个上下文上。
+    //    （ensureSpatialBus 另有一道「ctx 已关 / 被换 ⇒ 重建总线」的兜底，两道都要。）
+    // 只逼一次：44.1k 设备上 Howler 不会置 _mobileUnloaded，每次调用都会再挂一组 document 监听（泄漏）
+    if (H.ctx && !this.forcedUnlockDone && typeof H._unlockAudio === 'function') {
+      this.forcedUnlockDone = true;
+      try { H._unlockAudio(); } catch { /* 走不通就交给兜底 */ }
+    }
+    const ctx = H.ctx;
+    if (!ctx || ctx.state === 'closed') return;
+    // 总线若挂在已关掉 / 被换掉的上下文上，这里主动重建（不等下一次播放才发现全哑）
+    if (this.spatialBus) this.ensureSpatialBus();
+    this.ensureOutputMeter(ctx);
+    if (ctx.state === 'running') {
+      this.audioUnlockedSeen = true;
+      // 门还关着、也没有手势在解锁途中，而上下文已经 running：没有手势它就自己开了 = 免手势环境
+      if (!this.audioUnblocked && !this.audioUnlocking) {
+        if (!this.pageHasUserActivation()) this.audioAutoUnlocked = true;
+        this.removeAudioGestureListeners();
+        this.flushPendingPlayback(false);
+      }
+      return;
+    }
+    if (this.resumeInFlight) return;
+    let p: Promise<void> | undefined;
+    try { p = ctx.resume(); } catch { return; }
+    if (p && typeof p.then === 'function') {
+      this.resumeInFlight = true;
+      void p.catch(() => {}).finally(() => { this.resumeInFlight = false; });
+    }
+  }
+
   /** 页面是否已有过用户手势（sticky）。老 WebView 无 navigator.userActivation 时回退 false（走原手势门）。 */
   private pageHasUserActivation(): boolean {
     try {
@@ -829,10 +1193,31 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     window.removeEventListener('touchstart', this._onFirstGesture, true);
   }
 
+  /**
+   * 播一条系统音。表里的值可带**本处音量**——同一条素材当确认音要清脆、当悬停音要压低，
+   * 靠这一条而不是在音频目录里复制一份改 volume。
+   */
   private playSystemSfx(key: string): void {
-    const id = this.config.systemSfx[key];
+    const ref = this.config.systemSfx[key];
+    const id = audioCueId(ref);
     if (!id) return;
-    this.playSfx(id);
+    this.playSfx(id, audioCueVolume(ref));
+  }
+
+  /**
+   * 叠图音的三态：这条明确静音 → 什么都不响；这条配了专属音 → 只响它；
+   * 都没配 → 响该事件的全局默认（`systemSfx.overlayShow` / `overlayBlend`，没配条目就自然不响）。
+   *
+   * 专属音也在这里播、不在动作层播：全表只此一个发声点，才不会做出双响。
+   */
+  private playOverlaySfx(cue: OverlaySfxCue | undefined, defaultKey: string): void {
+    if (cue?.silent) return;
+    const own = (cue?.sfx ?? '').trim();
+    if (own) {
+      this.playSfx(own);
+      return;
+    }
+    this.playSystemSfx(defaultKey);
   }
 
   private onSfx(event: string, callback: EventCallback): void {
@@ -885,7 +1270,20 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       this.playSystemSfx('uiNotification');
     });
 
+    // 叠图（showOverlayImage / blendOverlayImage）：负载来自 overlay_images.json 的逐条配置。
+    // 逐条与全局二选一 —— 该条配了专属音就只播专属音，配了「不播」就连全局默认也跳过。
+    this.onSfx('overlay:show', (p?: OverlaySfxCue) => this.playOverlaySfx(p, 'overlayShow'));
+    this.onSfx('overlay:blend', (p?: OverlaySfxCue) => this.playOverlaySfx(p, 'overlayBlend'));
+
     this.onSfx('hotspot:interact', () => this.playSystemSfx('hotspotInteract'));
+    // 三把火（G.5）：首次出场仪式 / 平时显 / 平时隐。事件由 HUD 在火真出现那一帧发；读档 instant 恢复不发
+    this.onSfx('threeFires:debut', () => this.playSystemSfx('threeFiresDebut'));
+    this.onSfx('threeFires:show', () => this.playSystemSfx('threeFiresShow'));
+    this.onSfx('threeFires:hide', () => this.playSystemSfx('threeFiresHide'));
+    // 气味指示器（G.6）：首次出场仪式（深吸一口气）/ 平时显（轻嗅）/ 平时隐（呼气）。同三把火由 HUD 在真出现那一帧发
+    this.onSfx('smell:debut', () => this.playSystemSfx('smellDebut'));
+    this.onSfx('smell:show', () => this.playSystemSfx('smellShow'));
+    this.onSfx('smell:hide', () => this.playSystemSfx('smellHide'));
     this.onSfx('scene:transition', () => {
       if (Date.now() - this.lastMapTravelSfxAt < 500) return;
       this.playSystemSfx('sceneTransition');
@@ -939,6 +1337,9 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     }
     this.sfxEventListeners = [];
     this.removeAudioGestureListeners();
+    if (this.keepAliveTimer) { clearInterval(this.keepAliveTimer); this.keepAliveTimer = null; }
+    this.keepAliveOff?.(); this.keepAliveOff = null;
+    this.dropOutputMeter();
     this.audioUnlocking = false;
     this.pendingPlayback = [];
     // 空间音通道：断开卷积器与所有在飞的 BufferSource，不留残留（runtime 规范红线）

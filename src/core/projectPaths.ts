@@ -25,6 +25,7 @@ export const TEXT_URLS = {
   dialoguesDir: '/assets/dialogues',
   filtersDir: '/assets/data/filters',
   trajectoriesDir: '/assets/data/trajectories',
+  vfxDir: '/assets/data/vfx',
   archiveDir: '/assets/data/archive',
   cutscenesIndex: '/assets/data/cutscenes/index.json',
   parallaxScenes: '/assets/data/parallax_scenes.json',
@@ -127,6 +128,13 @@ export function trajectoryJsonUrl(trajectoryId: string): string {
   const id = (trajectoryId ?? '').trim();
   if (!id) throw new Error('trajectoryJsonUrl: trajectoryId required');
   return `${TEXT_URLS.trajectoriesDir}/${id}.json`;
+}
+
+/** 效果资产 JSON URL：`/assets/data/vfx/<effectId>.json`（一个效果一个文件，id = 文件名；粒子工作台唯一写者）。 */
+export function vfxEffectJsonUrl(effectId: string): string {
+  const id = (effectId ?? '').trim();
+  if (!id) throw new Error('vfxEffectJsonUrl: effectId required');
+  return `${TEXT_URLS.vfxDir}/${id}.json`;
 }
 
 /** data 子目录下的 JSON URL；entry.file 已是绝对路径时原样返回。 */

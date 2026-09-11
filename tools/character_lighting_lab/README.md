@@ -28,8 +28,8 @@
 
 ```
 场景 id ─┬─ 背景图     public/resources/runtime/scenes/<id>/<backgrounds[0].image>
-         ├─ 烘焙工作目录 tools/character_lighting_lab/out/<id>/
-         ├─ 导出照明   public/resources/runtime/scenes/<id>/lighting/
+         ├─ 烘焙工作目录 tools/character_lighting_lab/out/<id>/<背景基名>/
+         ├─ 导出照明   public/resources/runtime/scenes/<id>/lighting/<背景基名>/
          └─ 导出深度   public/assets/scenes/<id>.json(+ 同场景运行时目录)
 ```
 
@@ -82,7 +82,12 @@ sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene 雾津街�
 ./dev.sh char-lighting -- --fields 雾津街头     # 同上(POSIX 机)
 ```
 
-页内也能点(`GET /api/bake_fields?scene=`)。产物与 probe 载荷同住
+页内也能点:查看器 ① 区「导出深度 →游戏」下面的**「烘几何场」**按钮
+(`GET /api/bake_fields?scene=`,同步跑,与 CLI 缺省同口径 = 该场景全部时段原画各烘一套)。
+导出深度成功后回包带 `fields_stale`,查看器据此把这个按钮描边、并在日志里点名要重烘。
+(2026-09-09 前这行只有一句"页内也能点",而页面上根本没有这个按钮 —— 端口接着、
+测试绿着、作者点不到。入口的判据是**按钮能 grep 到**,不是路由能 grep 到。)
+产物与 probe 载荷同住
 `runtime/scenes/<id>/lighting/<背景基名>/`:
 
 | 文件 | 谁在读 |
@@ -126,8 +131,15 @@ sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene 雾津街�
    196 Fibonacci 方向 gather → 同时产 L1 / L2 / bins 三种 cache。
 8. **可走/碰撞**:地面掩码 − 膨胀的凸出物脚印,PNG 输出,查看器洪泛取最大连通域出生。
 
-产物在 `out/<场景>/`:manifest.json、volume.bin、probes_*.bin、front_depth.bin、
-walk_depth.bin、walkable.png、audit.png(标定/分层/体素审计图)。
+产物在 `out/<场景>/<背景基名>/`:manifest.json、volume.bin、probes_*.bin、
+front_depth.bin、walk_depth.bin、walkable.png、audit.png(标定/分层/体素审计图)。
+
+⚠ **背景是烘焙的一等参数**(2026-08-30):同一场景的白天/夜晚两张背景各有一个
+工作目录,基名与导出照明目录同一口径(`pipeline._bake_key`)。谁都别再自己拼
+`out/<场景>/` —— serve 这侧曾经漏跟这一层,后果是清单里每个场景都显示未烘焙、
+点下去画布空白、笔刷编辑存进没人读的目录(2026-09-08 修,契约锁在
+`tests/test_lab_server_contract.py`)。`out/<场景>/<背景图名>` 那张平铺的图是
+**烘焙输入**(游戏背景的字节副本),不是产物。
 
 ## 已知边界
 
@@ -376,7 +388,7 @@ bridge 实测:盒 y[-0.28,2.85]→**[-0.28,1.61]**,层距 0.62→**0.38m**,全�
   全量对齐:方位角/深度模型(small|base)/深度缩放·偏移手动微调/碰撞高度阈值。
 - **几何编辑**:圆刷(抬高/压低/抹平到地面/平滑/碰撞可走/阻挡/擦除)+
   **多边形选区**(单击加顶点、双击闭合填充、Esc 取消);编辑存
-  out/<scene>/{depth_edit,collision_edit}.png(RG16 / 红通道 0/1/2),随场景持久、
+  out/<scene>/<背景基名>/{depth_edit,collision_edit}.png(RG16 / 红通道 0/1/2),随场景持久、
   重烘自动应用。⚠ collision_edit 解码必须直读红通道(convert('L') 亮度加权
   会把 2 压成 1,踩过)。
 - **几何过期门**:geometry_sig=sha1(背景+全部几何参数+编辑文件);编辑保存或参数

@@ -54,7 +54,8 @@ from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pi
 from ..shared.fonts import MONO_FONT_FAMILY
 from ..shared.form_layout import compact_form
 from ..shared.numeric_roundtrip import preserve_numeric_repr
-from .scene_editor import CutsceneCameraPointPickerDialog, TargetSpawnPickerDialog
+from .scene_editor import TargetSpawnPickerDialog
+from ..shared.position_ref_field import PositionRefField, params_xy, parse_position_ref
 
 _MONO_FONT_QSS = f'"{MONO_FONT_FAMILY}", "Cascadia Code", "Consolas", monospace'
 
@@ -384,9 +385,26 @@ def step_summary_line(d: dict, names: Mapping | None = None) -> str:
             tid = str(p.get("trajectoryId") or "").strip() or "(未选)"
             who = str(p.get("target") or "").strip()
             bits = [tid]
-            bits.append(f"→{who}" if who else "→(缺 target)")
+            spawn = p.get("spawn") if isinstance(p.get("spawn"), dict) else None
+            if spawn:
+                sk = str(spawn.get("kind") or "").strip()
+                what = str(spawn.get("characterId") or "").strip() if sk == "character" else str(spawn.get("src") or "").strip().rsplit("/", 1)[-1]
+                bits.append(f"→生成{'角色' if sk == 'character' else '图片'}:{what or '?'}" + ("·留下" if spawn.get("keep") in (True, "true", 1) else ""))
+            else:
+                bits.append(f"→{who}" if who else "→(缺 target)")
+            at = p.get("at") if isinstance(p.get("at"), dict) else None
             ax, ay = p.get("anchorX"), p.get("anchorY")
-            if ax is not None or ay is not None:
+            if at:
+                ak = str(at.get("kind") or "")
+                if ak == "entity":
+                    bits.append(f"@实体:{at.get('id') or '?'}")
+                elif ak == "slot":
+                    bits.append(f"@插槽:{at.get('trajectoryId') or '?'}.{at.get('slotId') or '?'}")
+                elif ak == "point":
+                    bits.append(f"@({at.get('x', '?')},{at.get('y', '?')})")
+                else:
+                    bits.append("@(?)")
+            elif ax is not None or ay is not None:
                 bits.append(f"锚({ax if ax is not None else '?'},{ay if ay is not None else '?'})")
             if p.get("flipX") in (True, "true", "True", 1):
                 bits.append("翻转")
@@ -976,81 +994,59 @@ class StepWidget(QFrame):
             d["easing"] = ez
 
     def _build_camera_move_present_params(self) -> None:
-        """cameraMove：x/y 可手输，也可用绑定场景地图点选。"""
-        val_x = self._step_data.get("x", "")
-        val_y = self._step_data.get("y", "")
+        """cameraMove：目标点走统一的位置引用选择器。
+
+        四种来源同动作侧（`shared/position_ref_field.py`）：数字坐标（可在绑定场景的地图上拾取）、
+        某个实体此刻的位置、场景曲线的命名插槽、**曲线上的点**（按时刻 / 进度取值；那条曲线正在播时
+        取的是这次播放的实际位置）。
+
+        ⚠ 这是**一次性求值**：把镜头摆到那个点。要镜头**跟着**动的东西走，用 `cameraFollowActor`
+        指那个实体（每帧按 id 重解析）——轨迹临时生成的运动对象也在它的候选里。
+        """
         val_dur = self._step_data.get("duration", "")
-        sx = QDoubleSpinBox()
-        sx.setRange(-99999, 99999)
-        sx.setDecimals(2)
-        sx.setValue(float(val_x) if val_x != "" else 0.0)
-        sx.valueChanged.connect(self._emit_dirty)
-        sy = QDoubleSpinBox()
-        sy.setRange(-99999, 99999)
-        sy.setDecimals(2)
-        sy.setValue(float(val_y) if val_y != "" else 0.0)
-        sy.valueChanged.connect(self._emit_dirty)
         sd = QDoubleSpinBox()
         sd.setRange(0, 999999)
         sd.setDecimals(2)
         sd.setValue(float(val_dur) if val_dur != "" else 1000.0)
         sd.valueChanged.connect(self._emit_dirty)
 
-        row = QWidget()
-        hl = QHBoxLayout(row)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.addWidget(QLabel("x"))
-        hl.addWidget(sx, 1)
-        hl.addWidget(QLabel("y"))
-        hl.addWidget(sy, 1)
-        pick = QPushButton("地图选点…")
-        pick.setToolTip(
-            "在过场顶部「targetScene」绑定的场景背景上点击，写入 x / y 世界坐标。"
-        )
-        pick.clicked.connect(self._on_pick_camera_move_point)
-        hl.addWidget(pick)
-        self._widgets["x"] = sx
-        self._widgets["y"] = sy
+        field = PositionRefField(self._model, self._camera_move_scene_id, parent=self)
+        field.load(self._step_data.get("at"), params_xy(self._step_data))
+        field.changed.connect(self._emit_dirty)
+        self._widgets["__cameraMoveAt__"] = field
         self._widgets["duration"] = sd
-        self._present_params_layout.addRow("目标位置（世界坐标）", row)
+        self._present_params_layout.addRow("目标位置（世界坐标）", field)
         self._present_params_layout.addRow("duration (ms)", sd)
         self._add_camera_easing_row()
 
-    def _on_pick_camera_move_point(self) -> None:
+    def _camera_move_scene_id(self) -> str:
+        """位置引用用的场景上下文 = 过场绑定的 targetScene（选点底图、实体候选都按它）。"""
         ed = self._editor
-        model = self._model
-        if ed is None or model is None:
-            QMessageBox.warning(self, "选点", "未绑定编辑器或工程模型。")
-            return
-        sid = ""
-        if hasattr(ed, "cutscene_binding_target_scene"):
-            sid = ed.cutscene_binding_target_scene()
-        sid = str(sid or "").strip()
-        if not sid:
-            QMessageBox.information(
-                self,
-                "过场",
-                "请先在过场表单中设置「targetScene」，再在地图上选取镜头目标点。",
-            )
-            return
-        if sid not in model.scenes:
-            QMessageBox.warning(
-                self,
-                "选点",
-                f"场景「{sid}」未载入工程，无法打开预览。请检查 ID 或过场绑定。",
-            )
-            return
-        wx_w = self._widgets.get("x")
-        wy_w = self._widgets.get("y")
-        if not isinstance(wx_w, QDoubleSpinBox) or not isinstance(wy_w, QDoubleSpinBox):
-            return
-        dlg = CutsceneCameraPointPickerDialog(
-            model, sid, float(wx_w.value()), float(wy_w.value()), self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            px, py = dlg.picked_xy()
-            wx_w.setValue(float(px))
-            wy_w.setValue(float(py))
-            self._emit_dirty()
+        if ed is not None and hasattr(ed, "cutscene_binding_target_scene"):
+            return str(ed.cutscene_binding_target_scene() or "").strip()
+        return ""
+
+    def _camera_move_to_dict(self) -> dict:
+        """键序固定 kind, type, x, y, [at], duration, [easing]。
+
+        `x`/`y` 恒写（运行时与跳过路径的回落，也是老数据的形状）；数字模式**不写 at**，
+        所以只有数字坐标的老过场打开→保存一个字节不动。
+        """
+        d: dict = {"kind": "present", "type": "cameraMove"}
+        field = self._widgets.get("__cameraMoveAt__")
+        if isinstance(field, PositionRefField):
+            xy = field.snapshot_xy() or (0.0, 0.0)
+            d["x"] = round(float(xy[0]), 2)
+            d["y"] = round(float(xy[1]), 2)
+            ref = field.value()
+            if ref is not None and ref.get("kind") != "point":
+                orig = self._original_data.get("at") if isinstance(self._original_data, dict) else None
+                d["at"] = deepcopy(orig) if isinstance(orig, dict) and parse_position_ref(orig) == ref else ref
+        sd = self._widgets.get("duration")
+        if isinstance(sd, QDoubleSpinBox):
+            d["duration"] = float(sd.value())
+        self._merge_camera_easing_optional(d)
+        return self._preserve_present_numbers(d)
 
     def refresh_subtitle_emote_target_items(self) -> None:
         """过场 targetScene 变更时刷新 showSubtitle 表情锚点下拉候选项。"""
@@ -2049,6 +2045,8 @@ class StepWidget(QFrame):
                 return self._anim_layer_to_dict()
             if ptype == "parallaxScene":
                 return self._parallax_scene_to_dict()
+            if ptype == "cameraMove":
+                return self._camera_move_to_dict()
             if ptype == "showDialogue":
                 wdg = self._widgets.get("__showDialogue__")
                 if isinstance(wdg, CutsceneShowDialogueFields):

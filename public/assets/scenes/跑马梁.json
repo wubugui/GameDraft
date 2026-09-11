@@ -1,7 +1,5 @@
 {
   "id": "跑马梁",
-  "acousticSpace": "山谷_大",
-  "acousticListener": { "mode": "camera" },
   "name": "跑马梁",
   "footstepSet": "纸钱路",
   "worldWidth": 2048.0,
@@ -75,5 +73,84 @@
   "camera": {
     "zoom": 0.68,
     "pixelsPerUnit": 1.0
-  }
+  },
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          -0.7071067811865476
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      ],
+      "ppu": 450.56,
+      "cx": 1024.0,
+      "cy": 576.0
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 2.679281678390503,
+      "offset": -1.593144400215149
+    },
+    "shader": {
+      "depth_per_sy": 0.002219460227272727
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -1.8033310537957403,
+      "cell_size": 0.02857698051215673,
+      "grid_width": 160,
+      "grid_height": 156,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  },
+  "dayNight": {
+    "enabled": true
+  },
+  "timeVariants": {
+    "夜": {
+      "backgrounds": [
+        {
+          "image": "跑马梁－深夜.png",
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "ambientSounds": [
+        "可怕的呼啸风声3"
+      ]
+    }
+  },
+  "ambientSounds": [
+    "呼呼的风"
+  ],
+  "onEnter": [
+    {
+      "type": "setThreeFiresVisible",
+      "params": {
+        "visible": false,
+        "style": "instant"
+      }
+    },
+    {
+      "type": "startDialogueGraph",
+      "params": {
+        "graphId": "主线_初上跑马梁"
+      }
+    }
+  ]
 }

@@ -244,5 +244,36 @@
     "type": "consumable",
     "description": "偷来的一只肥鸡，扑腾得厉害。烤了顶饱，卖了换钱。",
     "maxStack": 3
+  },
+  {
+    "id": "bug_jar",
+    "name": "虫罐",
+    "type": "consumable",
+    "description": "一只塞着草团的瓦罐，里头装着一把活的灶马和蠓虫，凑近了能听见沙沙的。山里人说崖上的蝙蝠最见不得这个。",
+    "maxStack": 3,
+    "tags": [
+      "驱赶"
+    ],
+    "use": {
+      "label": "放虫",
+      "actions": [
+        {
+          "type": "emitVfxField",
+          "params": {
+            "kind": "fear",
+            "tag": "item:bug",
+            "radius": 900,
+            "strength": 2.5,
+            "duration": 4,
+            "at": {
+              "kind": "entity",
+              "id": "player"
+            },
+            "h": 100
+          }
+        }
+      ],
+      "resultText": "草团一拔，罐里的虫子哗地涌出来，绕着人头顶乱撞。头顶上那一片扑棱声先是一紧，接着就散了。"
+    }
   }
 ]

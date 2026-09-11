@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -86,6 +87,7 @@ class ProjectModel(QObject):
         # clues.json：线索注册表（K7）。形状 {categories:{key:显示名}, clues:[{id,title,desc,category}]}；
         # 缺文件时按空表处理（[clue:] 引用会在 embeddedRef 面报未知）。独立脏桶 "clues"。
         self.clues_registry: dict = {}
+        self.system_notes: dict = {}
         self.animations: dict[str, dict] = {}
         self.scenes: dict[str, dict] = {}
         self.filter_defs: dict[str, dict] = {}
@@ -93,8 +95,15 @@ class ProjectModel(QObject):
         #: 唯一写者是独立的轨迹工作台（tools/trajectory_workbench）；主编辑器只拿它做
         #: 候选 / 校验——没有脏桶、不进 save_all、不进外部改动基线、不淘汰孤儿文件。
         self.trajectories: dict[str, dict] = {}
+        #: `playTrajectory.spawn.id` 的全工程缓存（`collect_trajectory_spawn_ids`）；`mark_dirty` 清
+        self._trajectory_spawn_ids_cache: list[tuple[str, str]] | None = None
+        #: 效果资产 `assets/data/vfx/<stem>.json` 的**只读镜像**（stem → 文档）。
+        #: 唯一写者是独立的粒子工作台（tools/vfx_workbench）；与 trajectories 同一待遇——
+        #: 没有脏桶、不进 save_all、不进外部改动基线、不淘汰孤儿文件。
+        self.vfx_effects: dict[str, dict] = {}
         self.flag_registry: dict = {}
-        self.overlay_images: dict[str, str] = {}
+        #: 叠图登记：短 id → 路径字符串，或 {image, playSfx, sfx}（带叠图音配置的形态）
+        self.overlay_images: dict[str, object] = {}
         #: 挂件预设：id → {label,image/images,anchorX,anchorY,rotation,scale,lit}
         self.prop_presets: dict[str, dict] = {}
         self.scenarios_catalog: dict = {}
@@ -325,6 +334,8 @@ class ProjectModel(QObject):
         self.archive_books = self._load(dp / "archive" / "books.json", [])
         self.archive_documents = self._load(dp / "archive" / "documents.json", [])
         self.clues_registry = self._load(dp / "clues.json", {})
+        # 系统说明卡（K4）：只读镜像，供 showSystemNote 选择器与校验器取 id；编辑器不写它
+        self.system_notes = self._load(dp / "system_notes.json", {})
         self.pressure_holds = self._load(dp / "pressure_holds.json", [])
         self.signal_cues = self._load(dp / "signal_cues.json", [])
         self.bubble_lines = self._load(dp / "bubble_lines.json", {})
@@ -427,6 +438,7 @@ class ProjectModel(QObject):
                 self.filter_defs[p.stem] = self._load(p, {})
 
         self._scan_trajectories_from_disk()
+        self._scan_vfx_from_disk()
 
         from .flag_registry import flag_registry_path, load_flag_registry
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
@@ -510,7 +522,13 @@ class ProjectModel(QObject):
         轨迹工作台（另一个进程）——登记了基线，下一次 Save All 就会把工作台刚存的东西
         当成"外部并发改动"拦下来。这里只 ``json.loads`` 字节、不碰基线。
         坏文件记 ``load_anomalies`` 跳过（validator 另按目录重扫补成 error）。
+
+        **可重复调用**：窗口每次回到前台都会重扫一次（工作台可能刚存盘），所以先把上一轮
+        属于本目录的告警清掉——不清就会每激活一次窗口给同一个坏文件多记一条。
         """
+        self.load_anomalies[:] = [
+            a for a in self.load_anomalies if not str(a).startswith("trajectories/")
+        ]
         self.trajectories = {}
         if self.project_path is None:
             return
@@ -533,12 +551,67 @@ class ProjectModel(QObject):
                 continue
             self.trajectories[path.stem] = doc
 
-    def reload_trajectories_from_disk(self) -> None:
-        """重读轨迹资产目录（轨迹工作台存盘后同步候选；**不标脏、不动基线**）。"""
+    def _scan_vfx_from_disk(self) -> None:
+        """重扫 `assets/data/vfx/*.json` 进只读镜像 `self.vfx_effects`。
+
+        与 :meth:`_scan_trajectories_from_disk` 同一条理由**刻意不走 ``_load``**：那个入口会
+        登记外部改动基线，而这个目录的唯一写者是粒子工作台（另一个进程）——登记了基线，
+        下一次 Save All 就把工作台刚存的东西当"外部并发改动"拦下来。
+        坏文件记 ``load_anomalies`` 跳过（validator 另按目录重扫补成 error）。
+        """
+        self.vfx_effects = {}
         if self.project_path is None:
             return
+        vdir = self.paths.vfx_dir
+        if not vdir.is_dir():
+            return
+        for path in list_json_files(vdir):
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                self.load_anomalies.append(
+                    f"vfx/{path.name}: 无法解析（{type(exc).__name__}），载入时被跳过"
+                    f"（磁盘文件保持不动；该目录由粒子工作台维护）",
+                )
+                continue
+            if not isinstance(doc, dict):
+                self.load_anomalies.append(
+                    f"vfx/{path.name}: 根不是 JSON 对象，载入时被跳过（磁盘文件保持不动）",
+                )
+                continue
+            self.vfx_effects[path.stem] = doc
+
+    def reload_vfx_from_disk(self) -> bool:
+        """重读效果资产目录（粒子工作台存盘后同步候选；**不标脏、不动基线**）。
+
+        返回「盘上那份与内存这份是不是真的不一样」，口径与 :meth:`reload_trajectories_from_disk`
+        完全一致——自动路径（工作台还开着时主窗回到前台、工作台退出）每次都会调它，
+        内容没变就不发 ``data_changed``，免得每激活一次窗口白重建一遍全页动作行。
+        """
+        if self.project_path is None:
+            return False
+        before = self.vfx_effects
+        self._scan_vfx_from_disk()
+        if self.vfx_effects == before:
+            return False
+        self.data_changed.emit("vfx", "")
+        return True
+
+    def reload_trajectories_from_disk(self) -> bool:
+        """重读轨迹资产目录（轨迹工作台存盘后同步候选；**不标脏、不动基线**）。
+
+        返回「盘上那份与内存这份是不是真的不一样」。自动路径（工作台还开着时主窗回到前台、
+        工作台退出）每次都会调它,**内容没变就不发 ``data_changed``**：那个信号会把全编辑器的
+        引用候选水位清一遍,每激活一次窗口白重建一次动作行,用户正打字时尤其能感觉到。
+        """
+        if self.project_path is None:
+            return False
+        before = self.trajectories
         self._scan_trajectories_from_disk()
+        if self.trajectories == before:
+            return False
         self.data_changed.emit("trajectory", "")
+        return True
 
     def audio_config_differs_on_disk(self) -> bool:
         """磁盘上的 audio_config.json 与内存这份是否已经不一样。
@@ -1281,6 +1354,7 @@ class ProjectModel(QObject):
                 "ProjectModel.KNOWN_DIRTY_BUCKETS 与 save_all 的写盘分支。"
             )
         was_dirty = self.is_dirty
+        self._trajectory_spawn_ids_cache = None   # 编排改了 → 轨迹生成物的 id 表作废（候选与校验都读它）
         self._dirty.add(data_type)
         if data_type == "scene":
             sid = (item_id or "").strip()
@@ -1347,6 +1421,12 @@ class ProjectModel(QObject):
             return [""]
         keys = sorted(str(k) for k in raw.keys())
         return [""] + keys
+
+    def system_note_rows(self) -> list[dict]:
+        """system_notes.json 的 notes[] 行（K4 系统说明卡；showSystemNote 候选）。"""
+        raw = self.system_notes
+        rows = raw.get("notes") if isinstance(raw, dict) else raw
+        return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
     def archive_entry_ids_for_book_type(self, book_type: str) -> list[tuple[str, str]]:
         """Ids for addArchiveEntry ``entryId`` picker by ``bookType``."""
@@ -1695,6 +1775,41 @@ class ProjectModel(QObject):
             out.append((sid, f"{sid} · {n} 层"))
         return out
 
+    def all_vfx_effect_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：全局效果资产（`assets/data/vfx/*.json`），供 playVfx 选择器 / 校验用。
+
+        资产与场景无关（锚点在实例上给），所以候选是全工程一张表，按 id 排序。
+        label 带上发射器数（如 `崖墓蝙蝠群（1 发射器）`）。id 取文档里的 `id`，
+        缺了回落文件名 stem（validator 会把不一致报成 error）。
+        """
+        out: list[tuple[str, str]] = []
+        for stem, doc in self.vfx_effects.items():
+            if not isinstance(doc, dict):
+                continue
+            eid = str(doc.get("id") or "").strip() or str(stem)
+            label = str(doc.get("label") or "").strip() or eid
+            ems = doc.get("emitters")
+            n = len(ems) if isinstance(ems, list) else 0
+            out.append((eid, f"{label}（{n} 发射器）"))
+        out.sort(key=lambda r: r[0])
+        return out
+
+    def vfx_instance_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """场景里摆的效果实例 `(id, label)`。playVfx / stopVfx / setVfxState 的 instanceId 候选。"""
+        if not scene_id:
+            return []
+        sc = self.scenes.get(scene_id) or {}
+        out: list[tuple[str, str]] = []
+        for row in sc.get("vfx") or []:
+            if not isinstance(row, dict):
+                continue
+            iid = str(row.get("id", "") or "").strip()
+            if not iid:
+                continue
+            eff = str(row.get("effect", "") or "").strip()
+            out.append((iid, f"{iid}（{eff or '未指定效果'}）"))
+        return out
+
     def all_trajectory_ids(self) -> list[tuple[str, str]]:
         """`(id, label)`：全局轨迹资产（`assets/data/trajectories/*.json`），供 playTrajectory 选择器/校验用。
 
@@ -1711,9 +1826,194 @@ class ProjectModel(QObject):
             space = str(doc.get("space") or "?")
             frames = doc.get("keyframes")
             n = len(frames) if isinstance(frames, list) else 0
-            out.append((tid, f"{label}（{space} · {n} 帧）"))
+            binding = self.trajectory_binding(tid)
+            bound = f"场景曲线·{self.trajectory_scene_id(tid) or '?'}" if binding == "scene" else "相对曲线"
+            slots = self.trajectory_slots(tid)
+            extra = f" · {len(slots)} 插槽" if slots else ""
+            out.append((tid, f"{label}（{space} · {n} 帧 · {bound}{extra}）"))
         out.sort(key=lambda r: r[0])
         return out
+
+    # ---- 轨迹资产的几个只读面（binding / 绑定场景 / 命名插槽）：位置引用选择器与校验器共用 ----
+
+    def trajectory_doc(self, trajectory_id: str) -> dict | None:
+        """按 id（= 文件名 stem）取只读镜像里的资产文档；没有返回 None。"""
+        tid = str(trajectory_id or "").strip()
+        if not tid:
+            return None
+        doc = self.trajectories.get(tid)
+        if isinstance(doc, dict):
+            return doc
+        for stem, d in self.trajectories.items():
+            if isinstance(d, dict) and str(d.get("id") or "").strip() == tid:
+                return d
+        return None
+
+    def trajectory_binding(self, trajectory_id: str) -> str:
+        """``scene``（场景曲线，绑定作者场景）/ ``free``（相对曲线）。缺省按老资产推：写了 authoring.sceneId 的当场景曲线。"""
+        doc = self.trajectory_doc(trajectory_id)
+        if not isinstance(doc, dict):
+            return ""
+        b = str(doc.get("binding") or "").strip()
+        if b in ("scene", "free"):
+            return b
+        au = doc.get("authoring") if isinstance(doc.get("authoring"), dict) else {}
+        return "scene" if str(au.get("sceneId") or "").strip() else "free"
+
+    def trajectory_scene_id(self, trajectory_id: str) -> str:
+        """场景曲线绑定的作者场景 id；相对曲线 / 未知资产返回空串。"""
+        doc = self.trajectory_doc(trajectory_id)
+        if not isinstance(doc, dict) or self.trajectory_binding(trajectory_id) != "scene":
+            return ""
+        au = doc.get("authoring") if isinstance(doc.get("authoring"), dict) else {}
+        return str(au.get("sceneId") or "").strip()
+
+    def trajectory_slots(self, trajectory_id: str) -> list[dict]:
+        """资产暴露的命名插槽 ``[{id, label, x, y}]``（作者场景的画面坐标）；坏行跳过。"""
+        doc = self.trajectory_doc(trajectory_id)
+        raw = doc.get("slots") if isinstance(doc, dict) else None
+        out: list[dict] = []
+        if not isinstance(raw, list):
+            return out
+        seen: set[str] = set()
+        for s in raw:
+            if not isinstance(s, dict):
+                continue
+            sid = str(s.get("id") or "").strip()
+            if not sid or sid in seen:
+                continue
+            try:
+                x, y = float(s.get("x")), float(s.get("y"))
+            except (TypeError, ValueError):
+                continue
+            if not (math.isfinite(x) and math.isfinite(y)):
+                continue
+            seen.add(sid)
+            out.append({"id": sid, "label": str(s.get("label") or "").strip(), "x": x, "y": y})
+        return out
+
+    def trajectory_origin(self, trajectory_id: str) -> tuple[float, float] | None:
+        """曲线原点（作者场景的画面坐标）：帧相对它写，播放位置对齐的就是它。老资产退到 `anchor`。"""
+        doc = self.trajectory_doc(trajectory_id)
+        au = doc.get("authoring") if isinstance(doc, dict) else None
+        if not isinstance(au, dict):
+            return None
+        o = au.get("origin") if isinstance(au.get("origin"), dict) else au.get("anchor")
+        if not isinstance(o, dict):
+            return None
+        try:
+            x, y = float(o.get("x")), float(o.get("y"))
+        except (TypeError, ValueError):
+            return None
+        return (x, y) if math.isfinite(x) and math.isfinite(y) else None
+
+    def trajectory_duration_ms(self, trajectory_id: str) -> float:
+        """烘好的总时长（末帧 atMs）；没帧返回 0。"""
+        doc = self.trajectory_doc(trajectory_id)
+        frames = doc.get("keyframes") if isinstance(doc, dict) else None
+        if not isinstance(frames, list) or not frames:
+            return 0.0
+        try:
+            return max(0.0, float((frames[-1] or {}).get("atMs") or 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def trajectory_curve_point(
+        self, trajectory_id: str, point: str = "end",
+        at_ms: float | None = None, progress: float | None = None,
+    ) -> tuple[float, float] | None:
+        """「曲线上的点」的**编辑期快照**：在烘好的帧上取值 + 曲线原点。
+
+        与运行时 `sampleTrajectoryOffset` 同口径（钳两端、段长下限 1ms、线性插值）——
+        烘焙产物恒不写 `easing`，所以线性就是全部。运行时还有"这条曲线正在播就按这次播放算"
+        的一档，编辑期当然看不到：快照只能给作者场景里的那个点（写进 x/y 当回落）。
+        """
+        origin = self.trajectory_origin(trajectory_id)
+        doc = self.trajectory_doc(trajectory_id)
+        frames = doc.get("keyframes") if isinstance(doc, dict) else None
+        if origin is None or not isinstance(frames, list) or not frames:
+            return None
+        rows: list[tuple[float, float, float]] = []
+        for f in frames:
+            if not isinstance(f, dict):
+                continue
+            try:
+                t, x, y = float(f.get("atMs") or 0.0), float(f.get("x") or 0.0), float(f.get("y") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(t) and math.isfinite(x) and math.isfinite(y):
+                rows.append((t, x, y))
+        if not rows:
+            return None
+        total = rows[-1][0]
+        if point == "start":
+            t = rows[0][0]
+        elif point == "time":
+            t = float(at_ms or 0.0)
+        elif point == "progress":
+            t = total * min(1.0, max(0.0, float(progress if progress is not None else 1.0)))
+        else:
+            t = total
+        if t <= rows[0][0]:
+            ox, oy = rows[0][1], rows[0][2]
+        elif t >= total:
+            ox, oy = rows[-1][1], rows[-1][2]
+        else:
+            ox, oy = rows[-1][1], rows[-1][2]
+            for a, b in zip(rows, rows[1:]):
+                if a[0] <= t <= b[0]:
+                    span = max(1.0, b[0] - a[0])
+                    u = min(1.0, max(0.0, (t - a[0]) / span))
+                    ox, oy = a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u
+                    break
+        return (origin[0] + ox, origin[1] + oy)
+
+    def trajectory_curve_rows(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """「曲线上的点」的轨迹候选：**烘过帧的**曲线都能取值。
+
+        场景曲线按原点算得出绝对位置（编辑期就能预览）；相对曲线只有正在播时才有绝对位置，
+        标出来让作者知道自己在配什么。绑在当前场景的排前面。
+        """
+        sid = str(scene_id or "").strip()
+        here: list[tuple[str, str]] = []
+        other: list[tuple[str, str]] = []
+        for stem, doc in sorted(self.trajectories.items(), key=lambda kv: str(kv[0])):
+            if not isinstance(doc, dict):
+                continue
+            tid = str(doc.get("id") or "").strip() or str(stem)
+            frames = doc.get("keyframes")
+            if not isinstance(frames, list) or not frames:
+                continue
+            label = str(doc.get("label") or "").strip() or tid
+            if self.trajectory_binding(tid) != "scene":
+                other.append((tid, f"{label}（相对曲线 · 只有正在播时才有位置）"))
+                continue
+            tscene = self.trajectory_scene_id(tid)
+            row = (tid, f"{label}（{len(frames)} 帧 · 场景 {tscene or '?'}）")
+            (here if sid and tscene == sid else other).append(row)
+        return here + other
+
+    def trajectory_slot_rows(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """「曲线插槽」位置引用的轨迹候选：有插槽的**场景曲线**，绑在 ``scene_id`` 的排前面，别的场景标出来。"""
+        sid = str(scene_id or "").strip()
+        here: list[tuple[str, str]] = []
+        other: list[tuple[str, str]] = []
+        for stem, doc in sorted(self.trajectories.items(), key=lambda kv: str(kv[0])):
+            if not isinstance(doc, dict):
+                continue
+            tid = str(doc.get("id") or "").strip() or str(stem)
+            if self.trajectory_binding(tid) != "scene":
+                continue
+            slots = self.trajectory_slots(tid)
+            if not slots:
+                continue
+            label = str(doc.get("label") or "").strip() or tid
+            tscene = self.trajectory_scene_id(tid)
+            if sid and tscene == sid:
+                here.append((tid, f"{label}（{len(slots)} 插槽）"))
+            else:
+                other.append((tid, f"{label}（{len(slots)} 插槽 · 场景 {tscene or '?'}）"))
+        return here + other
 
     def all_dev_narrative_warp_ids(self) -> list[tuple[str, str]]:
         """`(id, label)`：dev_narrative_warps.json 的跳转锚点，供构建页「从叙事锚点开始」选。
@@ -2358,14 +2658,59 @@ class ProjectModel(QObject):
         return out
 
     def actor_id_items_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
-        """与 Game.resolveActor 一致：过场临时演员 + 当前场景 NPC + player。"""
+        """与 Game.resolveActor 一致：过场临时演员 + **轨迹临时生成的对象** + 当前场景 NPC + player。
+
+        轨迹那一档（`playTrajectory.spawn.id`）2026-09-11 补进来：那个东西在运行时就是一个真 NPC
+        （`SceneManager.spawnRuntimeNpc` → `getNpcById` 找得到），所以 `cameraFollowActor` 能跟着它走、
+        别的动作也能指它；漏在候选外的后果是**严格下拉里根本选不到**（不能手输），
+        "镜头跟着刚生成的铜钱"在编辑器里配不出来。
+        """
         items: list[tuple[str, str]] = []
         for tid, disp in self.collect_cutscene_temp_actor_ids():
+            items.append((tid, disp))
+        for tid, disp in self.collect_trajectory_spawn_ids():
             items.append((tid, disp))
         for nid, label in self.npc_ids_for_scene(scene_id):
             items.append((nid, label))
         items.append(("player", "player"))
         return items
+
+    def collect_trajectory_spawn_ids(self) -> list[tuple[str, str]]:
+        """全工程 `playTrajectory.spawn.id`（作者显式命名的那些）。
+
+        只扫**内存里**的过场与场景：这两处覆盖了绝大多数编排，且都是已载入的 dict，扫一遍很便宜
+        （结果按编辑缓存，`mark_dirty` 清）。对话图是按需读盘的独立文件，不在这里扫——
+        真要在图里生成再跟随，先在过场里也写一条同 id 的 spawn，或直接跟随场景实体。
+        """
+        cache = getattr(self, "_trajectory_spawn_ids_cache", None)
+        if cache is not None:
+            return list(cache)
+        found: dict[str, str] = {}
+
+        def visit(node) -> None:
+            if isinstance(node, dict):
+                if str(node.get("type") or "") == "playTrajectory":
+                    p = node.get("params")
+                    spawn = p.get("spawn") if isinstance(p, dict) else None
+                    if isinstance(spawn, dict):
+                        sid = str(spawn.get("id") or "").strip()
+                        if sid:
+                            name = str(spawn.get("name") or "").strip()
+                            kind = str(spawn.get("kind") or "").strip()
+                            found.setdefault(sid, f"{name or sid}（轨迹生成{'·角色' if kind == 'character' else '·图片' if kind == 'image' else ''}）")
+                for v in node.values():
+                    visit(v)
+            elif isinstance(node, list):
+                for v in node:
+                    visit(v)
+
+        for cs in self.cutscenes or []:
+            visit(cs)
+        for sc in (self.scenes or {}).values():
+            visit(sc)
+        out = [(k, found[k]) for k in sorted(found, key=lambda x: (x.lower(), x))]
+        self._trajectory_spawn_ids_cache = out
+        return list(out)
 
     def npc_actor_items_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
         """仅场景 NPC（persistNpc* / stopNpcPatrol 等，不含 player 与 _cut_）。"""

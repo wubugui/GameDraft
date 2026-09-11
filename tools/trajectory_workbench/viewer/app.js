@@ -9,11 +9,13 @@ const S = {
   doc: null, dirty: false, cleanKey: null,   // cleanKey：上次落盘 / 打开时的快照键，撤销回到它就重新算干净
   scene: null, cal: null, bgImage: null, entity: null,
   bake: null, segIndex: -1,
-  sel: { points: new Set(), scope: 'points' },
-  tMs: 0, playing: false, view: '2d', tool: 'select',
+  sel: { points: new Set(), scope: 'points', handle: null },   // handle：选中的把手（'v0'|'apex'|'landing'|'start'|'anchor'），它们也有自己的 gizmo
+  tMs: 0, playing: false, view: '2d', tool: 'select', gizmoMode: 'move',   // gizmoMode：3D 变换 gizmo 的 W/E/R（移动/旋转/缩放）
   layers: { allCurves: true, ghost: true, persp: true, npcs: false, obstacles: false, grid: false, axis: true },
   bakeTimer: 0, bakeSeq: 0, rev: 0, loadingScene: null, sceneOp: 0, entityOp: 0, entityLoad: 0, envSync: 0, busy: 0, envBroken: null, io: null,
   npcImgs: new Map(), obstacleCanvas: null, clipboard: null, txSnap: null,
+  runtime: null, bundleErr: '', align: null,   // 运行时打来的 sceneSpace / trajectoryProjection + 坐标对齐自证
+  backdrop: null,   // 相对曲线（binding:'free'）此刻画在哪个场景 {scene,bg}：纯 UI 态，不写进数据
 };
 let v2, v3, history;
 
@@ -21,16 +23,15 @@ let v2, v3, history;
 const host = {
   get scene() { return S.scene; }, get cal() { return S.cal; }, get bgImage() { return S.bgImage; }, get entity() { return S.entity; },
   get doc() { return S.doc; }, get bake() { return S.bake; }, get tMs() { return S.tMs; }, get tool() { return S.tool; },
-  get layers() { return S.layers; }, get sel() { return S.sel; }, get segIndex() { return S.segIndex; },
+  get layers() { return S.layers; }, get sel() { return S.sel; }, get segIndex() { return S.segIndex; }, get gizmoMode() { return S.gizmoMode; },
   get obstacleCanvas() { return S.obstacleCanvas; },
   activeSeg() { const segs = S.doc && S.doc.source && S.doc.source.segments; return segs && segs[S.segIndex] || null; },
   bakeSegment(i) { return S.bake && S.bake.segments && S.bake.segments[i] || null; },
-  restH() {
-    const au = S.doc && S.doc.authoring || {};
-    if (S.bake && S.bake.authoring && Number.isFinite(S.bake.authoring.anchorHeight)) return S.bake.authoring.anchorHeight;
-    if (Number.isFinite(au.anchorHeight)) return au.anchorHeight;
-    return (au.contactOffsetY || 0) / Math.max(1e-6, S.cal ? S.cal.cosTheta : 1);
-  },
+  /** 骑在曲线上那个东西静止时支点离地高（世界 wu）：`source.bake.restHeight`，是烘焙参数不是实体属性——换预览实体曲线不动 */
+  restH() { const b = S.doc && S.doc.source && S.doc.source.bake || {}; return Number.isFinite(b.restHeight) ? b.restHeight : 0; },
+  /** 支点 → 接地线的画面偏移：`source.bake.contactOffsetY` */
+  contactOffsetY() { const b = S.doc && S.doc.source && S.doc.source.bake || {}; return Number.isFinite(b.contactOffsetY) ? b.contactOffsetY : 0; },
+  binding() { return S.doc && S.doc.binding === 'free' ? 'free' : 'scene'; },
   entityRadius() { return S.entity ? Math.max(1, round2(S.entity.meta.worldWidth * S.entity.meta.scale / 2)) : 7; },
   pinned(seg) { return Edit.isPinned(S.doc, seg); },
   effPoints(seg) { return Edit.effPoints(host, seg); },
@@ -97,19 +98,54 @@ const host = {
     const box = Edit.bounds(host, scope, seg, S.sel.points);
     if (!box) return null;
     let pivot;
-    if (scope === 'all') pivot = [S.doc.authoring.anchor.x, S.doc.authoring.anchor.y];
+    if (scope === 'all') pivot = Edit.originScreen(host);
     else if (scope === 'segment' && Edit.isPinned(S.doc, seg)) pivot = Edit.segStartScreen(host, seg);
     else if (scope === 'segment' && seg.kind === 'physics') pivot = Edit.segStartScreen(host, seg);
     else pivot = [(box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2];
     return { box, pivot, scope };
   },
-  /** gizmo 轴在该空间的表示：画面 [x,y]；世界 [x,z]。变换进行中用开始时记下的轴（点动了包围盒中心会漂）。 */
-  _pivotNative() {
-    if (S.txPivot) return S.txPivot;
+  /** 变换 gizmo 的轴心（两个视图共用）：模型点（世界 xyz / 画面 [x,y]）与选中数 n（< 2 只给移动）；null = 不显示。
+   *  选中点 → 质心（单点也给；只选了钉住的 0 号点不给假把手）；整段 / 整条 → 现算的变换轴（落在那个东西本身上）。 */
+  gizmoPivot() {
+    if (!S.doc) return null;
+    const world = S.doc.space === 'world', scope = S.sel.scope, seg = host.activeSeg();
+    if (world && !S.cal) return null;
+    // 把手：gizmo 就落在把手上（初速箭尖 / 最高点 / 落点 / 自定起点 / 插槽）
+    if (S.sel.handle) {
+      const k = S.sel.handle, b = host.handleBase(k); if (!b) return null;
+      let pivot = null;
+      if (k === 'apex') { const seg2 = host.activeSeg(); const pi = seg2 && host.physicsInfo(seg2); pivot = pi ? (world ? pi.apexW : pi.apex) : null; }
+      else if (k === 'start') { const pi = host.physicsInfo(seg); pivot = pi ? (world ? pi.startW : pi.start) : null; }
+      else pivot = world ? b.w : b.s;
+      return pivot ? { pivot: pivot.slice(), n: 1, kind: k, label: host.handleLabel(k) } : null;
+    }
+    if (scope === 'points') {
+      if (!seg || seg.kind !== 'manual' || !S.sel.points.size) return null;
+      const eff = host.effPoints(seg); const list = [...S.sel.points].filter((i) => eff[i]);
+      if (!list.length) return null;
+      if (list.length === 1 && list[0] === 0 && Edit.isPinned(S.doc, seg)) return null;
+      const dim = world ? 3 : 2, pivot = new Array(dim).fill(0);
+      for (const i of list) { const p = world ? eff[i].pos : [eff[i].sx, eff[i].sy]; for (let k = 0; k < dim; k++) pivot[k] += p[k] / list.length; }
+      return { pivot, n: list.length, kind: 'points', label: list.length === 1 ? `点 ${list[0]}` : `${list.length} 个点` };
+    }
+    if (scope === 'segment' && !seg) return null;
+    const label = scope === 'all' ? '整条轨迹' : `整段 · ${seg.id}`;
+    if (!world) { const pv = host._pivotNative(true); return pv ? { pivot: [pv[0], pv[1]], n: 2, kind: scope, label } : null; }
+    // 世界：轴心就是那个东西本身的位置（整条 = 曲线起点；钉住 / 抛体的段 = 段起点；自定起点的手绘段 = 点的质心），不抬高——悬在半空谁都不知道选了什么
+    let pivot = null;
+    if (scope === 'all') pivot = Edit.originWorld(host);
+    else if (Edit.isPinned(S.doc, seg) || seg.kind === 'physics') pivot = Edit.segStartWorld(host, seg);
+    else { const pts = Edit.effPointsWorld(host, seg); if (pts.length) { pivot = [0, 0, 0]; for (const p of pts) for (let k = 0; k < 3; k++) pivot[k] += p.pos[k] / pts.length; } }
+    return pivot ? { pivot: pivot.slice(), n: 2, kind: scope, label } : null;
+  },
+  /** gizmo 轴在该空间的表示：画面 [x,y]；世界 [x,z]。变换进行中用开始时记下的轴（点动了包围盒中心会漂）；
+   *  `live` = 要现算的（3D gizmo 画在哪：拖的时候把手跟着几何走，算变换仍用记下的轴）。 */
+  _pivotNative(live) {
+    if (S.txPivot && !live) return S.txPivot;
     const gz = host.gizmo(); if (!gz) return null;
     if (S.doc.space !== 'world') return gz.pivot;
     const scope = S.sel.scope, seg = host.activeSeg();
-    if (scope === 'all') { const a = Edit.anchorWorld(host); return [a[0], a[2]]; }
+    if (scope === 'all') { const a = Edit.originWorld(host); return a ? [a[0], a[2]] : null; }
     if (scope === 'segment') { const w = Edit.segStartWorld(host, seg); if (Edit.isPinned(S.doc, seg) || seg.kind === 'physics') return [w[0], w[2]]; }
     const pts = Edit.effPointsWorld(host, seg).filter((_, i) => scope === 'segment' || S.sel.points.has(i));
     if (!pts.length) { const g = S.cal.sceneToWorldGround(gz.pivot[0], gz.pivot[1]); return [g[0], g[2]]; }
@@ -117,27 +153,65 @@ const host = {
   },
   makeTranslate(dxWu, dyWu) {
     if (S.doc.space !== 'world') return Edit.T.translate2(dxWu, dyWu);
-    const gz = S.txGizmo || host.gizmo(); const p = gz ? gz.pivot : [S.doc.authoring.anchor.x, S.doc.authoring.anchor.y];
+    const gz = S.txGizmo || host.gizmo(); const p = gz ? gz.pivot : Edit.originScreen(host);
     const a = S.cal.sceneToWorldGround(p[0], p[1]), b = S.cal.sceneToWorldGround(p[0] + dxWu, p[1] + dyWu);
     return Edit.T.translate3(b[0] - a[0], b[2] - a[2], 0);
   },
   makeRotate(deg) { const pv = host._pivotNative(); if (!pv) return null; return S.doc.space === 'world' ? Edit.T.rotateY(pv, -deg) : Edit.T.rotate2(pv, deg); },
   makeScale(k) { const pv = host._pivotNative(); if (!pv) return null; return S.doc.space === 'world' ? Edit.T.scale3(pv, k, k, k) : Edit.T.scale2(pv, k, k); },
-  makeMirror(axis) { const pv = host._pivotNative() || (S.doc.space === 'world' ? (() => { const a = Edit.anchorWorld(host); return [a[0], a[2]]; })() : [S.doc.authoring.anchor.x, S.doc.authoring.anchor.y]); return S.doc.space === 'world' ? Edit.T.mirror3(pv, axis === 'x' ? 'x' : 'z') : Edit.T.mirror2(pv, axis); },
+  makeMirror(axis) { const pv = host._pivotNative() || (S.doc.space === 'world' ? (() => { const a = Edit.originWorld(host); return a ? [a[0], a[2]] : [0, 0]; })() : Edit.originScreen(host)); return S.doc.space === 'world' ? Edit.T.mirror3(pv, axis === 'x' ? 'x' : 'z') : Edit.T.mirror2(pv, axis); },
   // ---- 选择
-  selectPoint(i, add) { if (!add) S.sel.points = new Set(); S.sel.points.add(i); S.sel.scope = 'points'; renderInspector(); updateScopeButtons(); },
-  togglePoint(i) { if (S.sel.points.has(i)) S.sel.points.delete(i); else S.sel.points.add(i); S.sel.scope = 'points'; renderInspector(); updateScopeButtons(); },
-  selectPoints(list, add) { if (!add) S.sel.points = new Set(); for (const i of list) S.sel.points.add(i); S.sel.scope = 'points'; renderInspector(); updateScopeButtons(); },
+  selectPoint(i, add) { if (!add) S.sel.points = new Set(); S.sel.points.add(i); S.sel.scope = 'points'; S.sel.handle = null; renderInspector(); updateScopeButtons(); },
+  togglePoint(i) { if (S.sel.points.has(i)) S.sel.points.delete(i); else S.sel.points.add(i); S.sel.scope = 'points'; S.sel.handle = null; renderInspector(); updateScopeButtons(); },
+  selectPoints(list, add) { if (!add) S.sel.points = new Set(); for (const i of list) S.sel.points.add(i); S.sel.scope = 'points'; S.sel.handle = null; renderInspector(); updateScopeButtons(); },
+  /** 选中一个把手（初速箭尖 / 最高点 / 落点 / 自定起点 / 插槽）：它就是"那个物体"，gizmo 落在它上面 */
+  selectHandle(kind) { S.sel.points = new Set(); S.sel.scope = 'points'; S.sel.handle = kind; renderInspector(); updateScopeButtons(); },
   /** Ctrl+A：全选。起点钉住的段"全选点"不能整体挪（0 号点不动会拉变形），所以直接等于"整段"范围。 */
   selectAllPoints() {
     const seg = host.activeSeg(); if (!seg) return;
-    if (seg.kind !== 'manual' || Edit.isPinned(S.doc, seg)) { host.selectSegmentScope(S.segIndex); setStatus('已切到"整段"范围：拖变换框移动（会把起点改成"自定"）'); return; }
-    S.sel.points = new Set((seg.path.points || []).map((_, i) => i)); S.sel.scope = 'points'; renderInspector(); updateScopeButtons(); draw();
+    if (seg.kind !== 'manual' || Edit.isPinned(S.doc, seg)) { host.selectSegmentScope(S.segIndex); setStatus('已切到"整段"范围：拖 gizmo 移动（会把起点改成"自定"）'); return; }
+    S.sel.points = new Set((seg.path.points || []).map((_, i) => i)); S.sel.scope = 'points'; S.sel.handle = null; renderInspector(); updateScopeButtons(); draw();
   },
-  selectSegment(i) { S.segIndex = i; S.sel.points = new Set(); S.sel.scope = 'points'; renderSegList(); renderInspector(); updateScopeButtons(); draw(); },
-  selectSegmentScope(i) { S.segIndex = i; S.sel.points = new Set(); S.sel.scope = 'segment'; renderSegList(); renderInspector(); updateScopeButtons(); draw(); },
-  setScope(scope) { S.sel.scope = scope; if (scope !== 'points') S.sel.points = new Set(); updateScopeButtons(); renderInspector(); draw(); },
-  clearSelection() { S.sel.points = new Set(); S.sel.scope = 'points'; renderInspector(); updateScopeButtons(); draw(); },
+  selectSegment(i) { S.segIndex = i; S.sel.points = new Set(); S.sel.scope = 'points'; S.sel.handle = null; renderSegList(); renderInspector(); updateScopeButtons(); draw(); },
+  selectSegmentScope(i) { S.segIndex = i; S.sel.points = new Set(); S.sel.scope = 'segment'; S.sel.handle = null; renderSegList(); renderInspector(); updateScopeButtons(); draw(); },
+  setScope(scope) { S.sel.scope = scope; S.sel.handle = null; if (scope !== 'points') S.sel.points = new Set(); updateScopeButtons(); renderInspector(); draw(); },
+  clearSelection() { S.sel.points = new Set(); S.sel.scope = 'points'; S.sel.handle = null; renderInspector(); updateScopeButtons(); draw(); },
+  /** 把手 gizmo 的基准值（拖拽开始时记下；模型量：世界 xyz / 画面 [x,y]） */
+  handleBase(kind) {
+    const seg = host.activeSeg(), world = S.doc.space === 'world', au = S.doc.authoring;
+    if (kind.startsWith('slot:')) { const sl = Edit.findSlot(S.doc, kind.slice(5)); if (!sl) return null; return world ? { w: Edit.slotWorld(host, sl) } : { s: [num(sl.x, 0), num(sl.y, 0)] }; }
+    if (kind === 'origin') { const w = Edit.originWorld(host); const s = Edit.originScreen(host); return world ? (w ? { w: w.slice() } : null) : { s: s.slice() }; }
+    if (!seg || seg.kind !== 'physics') return null;
+    const pi = host.physicsInfo(seg); if (!pi) return null;
+    if (kind === 'v0') return world ? { w: pi.tipW.slice() } : { s: pi.tip.slice() };
+    if (kind === 'apex') return { y: world ? (pi.apexW ? pi.apexW[1] : null) : (pi.apex ? pi.apex[1] : null) };
+    if (kind === 'landing') return world ? { w: pi.landingW.slice() } : { s: pi.landing.slice() };
+    if (kind === 'start') return world ? { xzh: S.cal.worldToXZH(pi.startW[0], pi.startW[1], pi.startW[2]) } : { s: pi.start.slice() };
+    return null;
+  },
+  /** 把手 gizmo 拖动：基准 + 模型位移 → 各自的设置器（与直接拖把手同一套设置器，只是位移被约束在轴 / 面上） */
+  applyHandle(kind, b, v) {
+    const seg = host.activeSeg(), world = S.doc.space === 'world', au = S.doc.authoring;
+    const vx = v.x || 0, vy = v.y || 0, vz = v.z || 0;
+    if (kind === 'origin') {
+      // 原点可以离地（抛体从半空出手时常在出手点上），所以三根轴都作用在它自己身上
+      if (world) { if (!b.w) return; Edit.setOriginWorld(host, [b.w[0] + vx, b.w[1] + vy, b.w[2] + vz]); }
+      else Edit.setOriginScreen(host, [b.s[0] + vx, b.s[1] + vy]);
+      return;
+    }
+    if (kind.startsWith('slot:')) {
+      const id = kind.slice(5);
+      if (world) { if (!b.w) return; const x = b.w[0] + vx, z = b.w[2] + vz; const f = S.cal.worldToScene(x, S.cal.groundHeight(x, z), z); Edit.setSlot(host, id, { x: f[0], y: f[1] }); }
+      else Edit.setSlot(host, id, { x: b.s[0] + vx, y: b.s[1] + vy });
+      return;
+    }
+    if (!seg || seg.kind !== 'physics') return;
+    if (kind === 'v0') Edit.setTip(host, seg, world ? [b.w[0] + vx, b.w[1] + vy, b.w[2] + vz] : [b.s[0] + vx, b.s[1] + vy]);
+    else if (kind === 'apex') { if (b.y != null) Edit.setApex(host, seg, b.y + vy); }
+    else if (kind === 'landing') Edit.setLanding(host, seg, world ? [b.w[0] + vx, b.w[2] + vz] : [b.s[0] + vx]);
+    else if (kind === 'start') Edit.setExplicitStart(host, seg, world ? { x: b.xzh.x + vx, z: b.xzh.z + vz, h: b.xzh.h + vy } : [b.s[0] + vx, b.s[1] + vy]);
+  },
+  handleLabel(kind) { if (kind && kind.startsWith('slot:')) { const sl = Edit.findSlot(S.doc, kind.slice(5)); return '插槽 · ' + (sl ? (sl.label || sl.id) : kind.slice(5)); } return { v0: '初速（箭尖）', apex: '最高点', landing: '落点', start: '起点', origin: '曲线原点' }[kind] || kind; },
   setTool(t) { setTool(t); },
   status(msg, cls) { setStatus(msg, cls); },
   // ---- 编辑管线（只有真的改了 doc 才标脏：纯点一下把手不能把资产标成"未保存"）
@@ -149,7 +223,7 @@ const host = {
   beginTransform() { S.txSnap = deepClone(S.doc.source.segments); S.txAuthoring = deepClone(S.doc.authoring); S.txDoc = S.doc; S.txGizmo = host.gizmo(); S.txPivot = host._pivotNative(); S.txNote = ''; history.beginDrag('变换'); },
   applyTransform(T) {
     if (!T || !S.txSnap || S.doc !== S.txDoc) return;   // 手势开始时的那份 doc 已被换掉（外部 --open）：这一发作废
-    // 每 tick 从快照重来（段 + 整份 authoring：锚点、anchorWorld 都回到起点，零位移就真的什么都不变）
+    // 每 tick 从快照重来（段 + 插槽 + 整份 authoring 都回到起点，零位移就真的什么都不变）
     S.doc.source.segments = deepClone(S.txSnap);
     S.doc.authoring = deepClone(S.txAuthoring);
     const seg = host.activeSeg();
@@ -157,8 +231,8 @@ const host = {
     if (S.sel.scope === 'all') r = Edit.transformAll(host, T);
     else if (S.sel.scope === 'segment' && seg) r = Edit.transformSegment(host, seg, T, null);
     else if (seg) r = Edit.transformSegment(host, seg, T, S.sel.points);
-    if (r && r.promoted) S.txNote = '整段平移：起点已改成"自定"（脱离锚点 / 上一段末点）';
-    else if (r && r.anchorMoved) S.txNote = '整条平移 = 挪锚点（帧相对锚点）';
+    if (r && r.promoted) S.txNote = '整段平移：起点已改成"自定"（脱离上一段末点）';
+    else if (r && r.allMoved && T.kind === 'translate') S.txNote = '整条平移：起点、各段与插槽一起挪';
     afterEdit({ quick: true, dirty: false });
   },
   endTransform(label) {
@@ -201,12 +275,21 @@ const host = {
     afterEdit({ quick: true }); renderSegList();
     return seg;
   },
-  /** 3D 视图：地面点 → 锚点（脚下地面点 = 该处；锚点画面 y = 脚点 y − 接地偏移） */
-  setAnchorFromGround(g) {
-    const au = S.doc.authoring;
-    const f = S.cal.worldToScene(g[0], g[1], g[2]);
-    Edit.setAnchorScreen(host, f[0], f[1] - (au.contactOffsetY || 0));
+  /** 插槽工具：在画面点 / 3D 地面点放一个命名插槽（曲线暴露给场景的位置），放完选中它 */
+  placeSlotScreen(sx, sy) {
+    let id = null;
+    host.op('放置插槽', () => { id = Edit.addSlot(host, sx, sy); });
+    if (id) { host.selectHandle('slot:' + id); renderSlots(); renderOrigin(); setStatus(`插槽 ${id} 已放下：右栏改名字；其他动作可以把实体挪到它这里`); }
+    return id;
   },
+  placeSlotFromGround(g) { const f = S.cal.worldToScene(g[0], g[1], g[2]); return host.placeSlotScreen(f[0], f[1]); },
+  /** 原点工具：把曲线原点放到画面点 / 3D 地面点上（放完选中它）。 */
+  placeOriginScreen(sx, sy) {
+    host.op('放置曲线原点', () => Edit.setOriginScreen(host, [sx, sy]));
+    host.selectHandle('origin'); renderOrigin();
+    setStatus('曲线原点已放下：播放时给的位置对齐的就是它（曲线的形状与它的相对关系不变）');
+  },
+  placeOriginFromGround(g) { host.op('放置曲线原点', () => Edit.setOriginWorld(host, [g[0], g[1], g[2]])); host.selectHandle('origin'); renderOrigin(); setStatus('曲线原点已放下（贴地）'); },
   contextSegment(i, cx, cy) { showCtxMenu(i, cx, cy); },
   onCursor(s) {
     const e = el('coords');
@@ -238,8 +321,8 @@ function afterEdit(o) {
   const quick = o && o.quick;
   S.rev++;
   if (!o || o.dirty !== false) markDirty();
-  if (!quick) { renderSegList(); renderInspector(); syncAnchorInputs(); }
-  else { renderInspectorLive(); syncAnchorInputs(); }
+  if (!quick) { renderSegList(); renderInspector(); renderSlots(); renderOrigin(); }
+  else { renderInspectorLive(); renderSlotsLive(); renderOriginLive(); }
   scheduleBake(quick ? 90 : 0);
   draw();
 }
@@ -247,6 +330,13 @@ function setTool(t) {
   S.tool = t;
   for (const b of document.querySelectorAll('#tools button[data-tool]')) b.classList.toggle('on', b.dataset.tool === t);
   draw();
+}
+/** 3D 变换 gizmo 的模式（Unity 的 W/E/R）；顺手切回选择工具。2D 视图的变换框三种把手常显，不看这个。 */
+function setGizmoMode(m) {
+  S.gizmoMode = m;
+  for (const b of document.querySelectorAll('#tools button[data-gizmo]')) b.classList.toggle('on', b.dataset.gizmo === m);
+  if (S.tool !== 'select') setTool('select'); else draw();
+  if (S.view === '3d') setStatus({ move: '移动 gizmo：箭头 = 沿轴 · 小方块 = 沿面 · 中心 / 拖点 = 贴地走 · Ctrl 吸附', rotate: '旋转 gizmo：拖圆环 = 绕竖直轴（Ctrl 吸附 15°）', scale: '缩放 gizmo：轴末端 = 单轴 · 中心 = 等比（Ctrl 吸附 ×0.1）' }[m]);
 }
 function updateScopeButtons() {
   el('scopePoints').classList.toggle('on', S.sel.scope === 'points');
@@ -276,6 +366,10 @@ async function boot() {
   window.addEventListener('resize', () => { v2.resize(); v3.resize(); });
   v2.resize(); v3.resize();
   updateHistoryButtons(); updateScopeButtons();
+  // 运行时的换算 / 投影（同一份 TS 打的包）。装不上不拦着干活，但场景芯片会说明"对不了"——
+  // 页面画的形状与游戏开播的形状没人核过，这件事必须让作者看见。
+  try { S.runtime = await import('/gen/runtime.bundle.js?t=' + Date.now()); }
+  catch (e) { S.runtime = null; S.bundleErr = e.message; console.warn('运行时包装不上', e); }
   try {
     const [sc, tr] = await Promise.all([API.json('/api/scenes'), API.json('/api/trajectories')]);
     S.scenes = sc.scenes; S.assets = tr.trajectories;
@@ -314,7 +408,52 @@ function fillEntitySel() {
   const e = S.doc && S.doc.authoring.entity;
   sel.value = e ? (e.kind === 'player' ? 'player' : e.id || '') : '';
 }
-function syncAnchorInputs() { if (!S.doc) return; const a = S.doc.authoring.anchor; el('anchorX').value = a.x; el('anchorY').value = a.y; }
+/** 右栏"插槽"列表：id / 名字 / 坐标 / 删；点行选中它（gizmo 落上去）。渲染只读，改动经 host.op。 */
+function renderSlots() {
+  const box = el('slotlist'); if (!box) return; box.innerHTML = '';
+  if (!S.doc) return;
+  const slots = Edit.slots(S.doc);
+  el('slotCount').textContent = slots.length ? `${slots.length} 个` : '还没有插槽：按 S 在画布上点一下放一个';
+  for (const sl of slots) {
+    const on = S.sel.handle === 'slot:' + sl.id;
+    const idInp = h('input', { type: 'text', value: sl.id, style: 'width:96px', title: '插槽 id（其他动作引用它）' });
+    idInp.addEventListener('change', () => host.op('改插槽 id', () => { if (!Edit.renameSlot(host, sl.id, idInp.value)) { idInp.value = sl.id; setStatus('插槽 id 不能为空或重复', 'err'); } else if (S.sel.handle === 'slot:' + sl.id) S.sel.handle = 'slot:' + idInp.value.trim(); }));
+    const lbInp = h('input', { type: 'text', value: sl.label || '', placeholder: '名字（策划看的）', style: 'width:110px' });
+    lbInp.addEventListener('change', () => host.op('改插槽名', () => Edit.setSlotLabel(host, sl.id, lbInp.value)));
+    const xy = h('span', { class: 'mono dim' }, `${fmt(sl.x, 0)}, ${fmt(sl.y, 0)}`);
+    const del = h('button', { class: 'danger', title: '删除这个插槽（引用它的动作会悬空）', onclick: (e) => { e.stopPropagation(); host.op('删插槽', () => Edit.deleteSlot(host, sl.id)); if (S.sel.handle === 'slot:' + sl.id) host.clearSelection(); } }, '×');
+    const row = h('div', { class: 'seg' + (on ? ' on' : ''), onclick: (e) => { if (e.target.tagName === 'INPUT') return; host.selectHandle('slot:' + sl.id); draw(); renderSlots(); renderOrigin(); } }, idInp, lbInp, xy, del);
+    for (const inp of [idInp, lbInp]) inp.addEventListener('mousedown', (e) => e.stopPropagation());
+    box.append(row);
+  }
+}
+/** 右栏"曲线原点"：坐标 + 两个常用动作。原点是作者摆的参考点，不是第一帧（2026-09-11 第二轮）。 */
+function renderOrigin() {
+  const box = el('originbox'); if (!box) return; box.innerHTML = '';
+  if (!S.doc) return;
+  const world = S.doc.space === 'world';
+  const o = Edit.originScreen(host);
+  const w = world ? Edit.originWorld(host) : null;
+  const on = S.sel.handle === 'origin';
+  const txt = world && w
+    ? `x ${fmt(w[0], 0)} · z ${fmt(w[2], 0)} · 离地 ${fmt(Edit.originHeight(host), 1)}`
+    : `x ${fmt(o[0], 0)} · y ${fmt(o[1], 0)}`;
+  const row = h('div', { class: 'seg' + (on ? ' on' : ''), onclick: () => { host.selectHandle('origin'); draw(); renderOrigin(); } },
+    h('span', { class: 'mono' }, txt),
+    h('span', { class: 'dim' }, Edit.hasOrigin(host) ? '' : '（还没单独摆过：跟着曲线起点）'));
+  const place = h('button', { title: '在画布上点一下放原点（O）', onclick: () => setTool('origin') }, '画布放置 (O)');
+  const toStart = h('button', { title: '把原点放回曲线起点（第 0 段的起点）', onclick: () => { host.op('原点放到曲线起点', () => Edit.originToCurveStart(host)); renderOrigin(); draw(); setStatus('原点已放到曲线起点'); } }, '放到曲线起点');
+  const acts = h('div', { class: 'row' }, place, toStart);
+  if (world) {
+    const hInp = h('input', { type: 'number', step: '1', value: String(fmt(Edit.originHeight(host), 2)), style: 'width:70px', title: '原点离地高（wu）' });
+    hInp.addEventListener('change', () => { host.op('改原点离地高', () => Edit.setOriginHeight(host, parseFloat(hInp.value) || 0)); renderOrigin(); draw(); });
+    hInp.addEventListener('mousedown', (e) => e.stopPropagation());
+    acts.append(h('span', { class: 'lbl' }, '离地'), hInp);
+  }
+  box.append(row, acts);
+}
+function renderOriginLive() { const box = el('originbox'); if (!box || !S.doc) return; const m = box.querySelector('span.mono'); if (!m) return; const world = S.doc.space === 'world'; const w = world ? Edit.originWorld(host) : null; const o = Edit.originScreen(host); m.textContent = world && w ? `x ${fmt(w[0], 0)} · z ${fmt(w[2], 0)} · 离地 ${fmt(Edit.originHeight(host), 1)}` : `x ${fmt(o[0], 0)} · y ${fmt(o[1], 0)}`; }
+function renderSlotsLive() { const box = el('slotlist'); if (!box || !S.doc) return; const rows = box.children; Edit.slots(S.doc).forEach((sl, i) => { const r = rows[i]; if (!r) return; const xy = r.querySelector('span.mono'); if (xy) xy.textContent = `${fmt(sl.x, 0)}, ${fmt(sl.y, 0)}`; }); }
 
 function wireUI() {
   el('assetSel').addEventListener('change', async (e) => { if (e.target.value) { if (!(await confirmDiscard())) { e.target.value = S.doc ? S.doc.id : ''; return; } openAsset(e.target.value).catch((x) => setStatus(x.message, 'err')); } });
@@ -331,15 +470,15 @@ function wireUI() {
   el('sceneSel').addEventListener('change', () => { fillBgSel(); changeScene(el('sceneSel').value, el('bgSel').value).catch((e) => setStatus('换场景失败: ' + e.message, 'err')); });
   el('bgSel').addEventListener('change', () => changeScene(el('sceneSel').value, el('bgSel').value).catch((e) => setStatus('换时段失败: ' + e.message, 'err')));
   el('entitySel').addEventListener('change', (e) => changeEntity(e.target.value));
-  el('anchorX').addEventListener('change', () => host.op('改锚点', () => Edit.setAnchorScreen(host, num(el('anchorX').value, 0), S.doc.authoring.anchor.y)));
-  el('anchorY').addEventListener('change', () => host.op('改锚点', () => Edit.setAnchorScreen(host, S.doc.authoring.anchor.x, num(el('anchorY').value, 0))));
-  el('btnAnchorEntity').addEventListener('click', () => anchorToEntity(true));
-  el('btnAnchorPick').addEventListener('click', () => setTool('anchor'));
+  el('binding').addEventListener('change', (e) => changeBinding(e.target.value));
+  el('btnSlotPlace').addEventListener('click', () => setTool('slot'));
+  el('btnBakeFromEntity').addEventListener('click', () => takeBakeParamsFromEntity(true));
   for (const b of document.querySelectorAll('#tools button[data-tool]')) b.addEventListener('click', () => setTool(b.dataset.tool));
+  for (const b of document.querySelectorAll('#tools button[data-gizmo]')) b.addEventListener('click', () => setGizmoMode(b.dataset.gizmo));
   el('tab2d').addEventListener('click', () => setView('2d'));
   el('tab3d').addEventListener('click', () => setView('3d'));
   el('btnFit').addEventListener('click', () => { if (S.view === '2d') v2.fit(); else v3.fit(); });
-  el('btnFitCurve').addEventListener('click', () => { if (S.view === '2d') v2.fitCurve(); else v3.fitCurve(); });
+  el('btnFitCurve').addEventListener('click', () => { if (S.view === '2d') v2.fitCurve(); else v3.frameSelection(); });
   el('btnHelp').addEventListener('click', showHelp);
   el('btnAddManual').addEventListener('click', () => { host.op('新建手绘段', () => { S.segIndex = Edit.addSegment(host, 'manual'); S.sel.points = new Set(); S.sel.scope = 'points'; }); setTool('pen'); setStatus('手绘段：在画布上点击追加控制点（Enter 结束）'); });
   el('btnAddPhysics').addEventListener('click', () => { host.op('新建抛体段', () => { S.segIndex = Edit.addSegment(host, 'physics'); S.sel.points = new Set(); S.sel.scope = 'segment'; }); setTool('select'); setStatus('抛体段：拖橙色箭尖改初速，拖绿色落点直接定落点，拖紫色最高点改弧高'); });
@@ -356,7 +495,7 @@ function wireUI() {
   el('btnMirrorX').addEventListener('click', () => applyNumericTransform('mx'));
   el('btnMirrorY').addEventListener('click', () => applyNumericTransform('my'));
   for (const cb of document.querySelectorAll('input[data-layer]')) { cb.checked = !!S.layers[cb.dataset.layer]; cb.addEventListener('change', () => { S.layers[cb.dataset.layer] = cb.checked; if (cb.dataset.layer === 'npcs' && cb.checked) loadNpcImages(); draw(); }); }
-  for (const id of ['sampleHz', 'tolPos', 'tolRot', 'tolScale', 'tolAlpha']) el(id).addEventListener('change', readBakeSettings);
+  for (const id of ['sampleHz', 'tolPos', 'tolRot', 'tolScale', 'tolAlpha', 'restHeight', 'contactOffsetY']) el(id).addEventListener('change', readBakeSettings);
   el('btnPlay').addEventListener('click', togglePlay);
   el('btnStepBack').addEventListener('click', () => stepTime(-1000 / 60));
   el('btnStepFwd').addEventListener('click', () => stepTime(1000 / 60));
@@ -374,6 +513,7 @@ function onKey(e) {
     if (isTyping(e)) { e.target.blur(); setTimeout(() => saveAsset(), 0); } else saveAsset();
     return;
   }
+  if (S.view === '3d' && v3.ok && v3.capturesKeys()) return;   // 按住右键飞行中：W/A/S/D/Q/E 归相机（view3d 在捕获阶段已吃掉，这里是保险）
   if (S.busy > 0) { e.preventDefault(); return; }   // 装载中：一切键盘编辑作废（含停在下拉 / 输入框上的焦点）
   if (S.envBroken) {   // 现场没对上：只放行撤销 / 重做（它们会再触发一次重装）
     if (ctrl && (k === 'z' || k === 'y')) { e.preventDefault(); if (k === 'y' || e.shiftKey) doRedo(); else doUndo(); }
@@ -394,16 +534,20 @@ function onKey(e) {
     case 'v': case 'V': setTool('select'); return;
     case 'p': case 'P': setTool('pen'); return;
     case 't': case 'T': setTool('physics'); return;
-    case 'a': case 'A': setTool('anchor'); return;
-    case 'h': case 'H': setTool('pan'); return;
+    case 's': case 'S': setTool('slot'); return;
+    case 'o': case 'O': setTool('origin'); return;
+    case 'h': case 'H': case 'q': case 'Q': setTool('pan'); return;   // Q = Unity 的手形工具
+    case 'w': case 'W': setGizmoMode('move'); return;
+    case 'e': case 'E': setGizmoMode('rotate'); return;
+    case 'r': case 'R': setGizmoMode('scale'); return;
     case 'Escape': if (S.tool !== 'select') setTool('select'); else host.clearSelection(); return;
-    case 'Enter': if (S.tool === 'pen' || S.tool === 'physics' || S.tool === 'anchor') setTool('select'); return;
+    case 'Enter': if (S.tool === 'pen' || S.tool === 'physics' || S.tool === 'slot' || S.tool === 'origin') setTool('select'); return;
     case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); return;
     case 'k': case 'K': togglePlay(); return;
     case ',': stepTime(-1000 / 60); return;
     case '.': stepTime(1000 / 60); return;
     case 'Home': if (S.view === '2d') v2.fit(); else v3.fit(); return;
-    case 'f': case 'F': if (S.view === '2d') v2.fitCurve(); else v3.fitCurve(); return;
+    case 'f': case 'F': if (S.view === '2d') v2.fitCurve(); else v3.frameSelection(); return;   // 3D：对准选中（Unity 的 F）
     case '[': if (S.segIndex > 0) host.selectSegment(S.segIndex - 1); return;
     case ']': if (S.segIndex < S.doc.source.segments.length - 1) host.selectSegment(S.segIndex + 1); return;
     case '1': setView('2d'); return;
@@ -424,8 +568,8 @@ function doRedo() { const l = history.redo(); if (l) setStatus('重做：' + l);
 /** 现场对得上时同步直接放行（不升门：升门再降门要过一个微任务，连按 Ctrl+Z / Ctrl+Y 的第二下会被门吃掉） */
 function envMismatch() {
   if (!S.doc) return false;
-  const au = S.doc.authoring, wantBg = au.background || '', wantKey = au.sceneId + '|' + wantBg;
-  const sceneMismatch = !S.scene || S.loadingScene !== wantKey || S.scene.id !== au.sceneId || (wantBg && S.scene.background !== wantBg);
+  const au = S.doc.authoring, ref = docSceneRef(), wantBg = ref.bg || '', wantKey = ref.scene + '|' + wantBg;
+  const sceneMismatch = !S.scene || S.loadingScene !== wantKey || S.scene.id !== ref.scene || (wantBg && S.scene.background !== wantBg);
   const entId = au.entity ? (au.entity.kind === 'player' ? 'player' : au.entity.id || '') : '';
   return sceneMismatch || (S.entity ? S.entity.id : '') !== entId;
 }
@@ -440,16 +584,16 @@ async function _syncEnvWithDoc() {
   const au = S.doc.authoring;
   // 判据同时看"已装载的"和"正在装载的"（loadScene 同步设 S.loadingScene）：撤销→重做落在装载途中时，
   // 已装载的还是旧场景、正在装的却是另一个，不重装就会画着 A 写着 B
-  const wantBg = au.background || '';
-  const wantKey = au.sceneId + '|' + wantBg;
-  const sceneMismatch = !S.scene || S.loadingScene !== wantKey || S.scene.id !== au.sceneId || (wantBg && S.scene.background !== wantBg);
+  const ref = docSceneRef(), wantBg = ref.bg || '';
+  const wantKey = ref.scene + '|' + wantBg;
+  const sceneMismatch = !S.scene || S.loadingScene !== wantKey || S.scene.id !== ref.scene || (wantBg && S.scene.background !== wantBg);
   const entId = au.entity ? (au.entity.kind === 'player' ? 'player' : au.entity.id || '') : '';
   const entMismatch = (S.entity ? S.entity.id : '') !== entId;
   try {
     if (sceneMismatch) {
-      setStatus('doc 指向 ' + au.sceneId + '，重新装载现场…');
-      el('sceneSel').value = au.sceneId; fillBgSel(); if (wantBg) el('bgSel').value = wantBg;
-      await loadScene(au.sceneId, wantBg || el('bgSel').value);
+      setStatus('doc 指向 ' + ref.scene + '，重新装载现场…');
+      el('sceneSel').value = ref.scene; fillBgSel(); if (wantBg) el('bgSel').value = wantBg;
+      await loadScene(ref.scene, wantBg || el('bgSel').value);
       if (op !== S.envSync) return;
       fillEntitySel();
     }
@@ -458,7 +602,7 @@ async function _syncEnvWithDoc() {
   } catch (e) {
     if (op !== S.envSync) return;
     S.loadingScene = S.scene ? S.scene.id + '|' + (S.scene.background || '') : null;
-    const msg = '重新装载现场失败：' + e.message + '（画布仍是 ' + (S.scene ? S.scene.id : '空') + '，doc 指向 ' + au.sceneId + '）。点"重试装载"，或 Ctrl+Z / Ctrl+Y 换一个状态';
+    const msg = '重新装载现场失败：' + e.message + '（画布仍是 ' + (S.scene ? S.scene.id : '空') + '，doc 指向 ' + ref.scene + '）。点"重试装载"，或 Ctrl+Z / Ctrl+Y 换一个状态';
     setStatus(msg, 'err');
     setEnvBroken(msg);
     return;
@@ -473,8 +617,11 @@ function clampSelection() {
   const seg = host.activeSeg();
   const n = seg && seg.path && seg.path.points ? seg.path.points.length : 0;
   S.sel.points = new Set([...S.sel.points].filter((i) => i < n));
+  if (S.sel.handle && S.sel.handle !== 'anchor' && !(seg && seg.kind === 'physics')) S.sel.handle = null;   // 撤销把抛体段撤没了：把手选择作废
 }
 function deleteSelection() {
+  if (S.sel.handle === 'origin') { setStatus('曲线原点删不掉（每条曲线都有一个）：拖它、或右栏「放到曲线起点」', 'err'); return; }
+  if (S.sel.handle && S.sel.handle.startsWith('slot:')) { const id = S.sel.handle.slice(5); host.op('删插槽', () => Edit.deleteSlot(host, id)); host.clearSelection(); setStatus(`已删除插槽 ${id}（Ctrl+Z 撤销）`); return; }
   const seg = host.activeSeg(); if (!seg) return;
   if (S.sel.scope === 'segment') { deleteSegment(); setStatus('已删除段 ' + seg.id + '（Ctrl+Z 撤销）'); return; }
   if (S.sel.scope === 'all') { setStatus('范围是"整条"：要删整条轨迹用顶栏"删除…"', 'err'); return; }
@@ -546,11 +693,14 @@ function modal(spec) {
 async function confirmModal(message, okLabel, danger) { return !!(await modal({ title: '确认', message, ok: okLabel || '确定', danger: !!danger })); }
 function showHelp() {
   modal({ title: '快捷键与手势', message:
-    '工具：V 选择 · P 加点 · T 抛体（拖落点）· A 锚点 · H 平移 · Esc 回选择/取消选择 · Enter 结束加点\n' +
-    '画布：滚轮缩放 · 中键/空格+左键/右键拖 平移 · Home 复位 · F 框住轨迹 · 1/2 切 2D/3D\n' +
-    '选择：点点/拖点 · Shift+点 多选 · 框选 · 点曲线选段 · 双击曲线 插点 · Ctrl+A 全选点 · [ ] 上/下一段\n' +
+    '工具：V 选择 · P 加点 · T 抛体（拖落点）· S 插槽（放命名插槽点）· H/Q 手形（平移）· W/E/R 移动/旋转/缩放 gizmo · Esc 回选择/取消选择 · Enter 结束加点\n' +
+    '2D 画布：滚轮缩放 · 中键/空格+左键/右键拖 平移 · Home 复位 · F 框住轨迹 · 1/2 切 2D/3D\n' +
+    '3D 相机（Unity 习惯）：右键拖 环视 · 按住右键 W/A/S/D 前左后右、Q/E 下上飞行（Shift ×3，滚轮调速）· Alt+左键 环绕 · 中键/空格+左键 平移 · 滚轮 缩放到光标 · Alt+右键 推拉 · F 对准选中 · Home 整场 · 双击点 对准它 · 右上角坐标架：点 X/Y/Z 臂 = 从那一侧正交看，点中心 = 透视⇄正交\n' +
+    '选择：点点/拖点 · Shift/Ctrl+点 加减选 · 左键空白拖 框选（Shift 追加）· 点曲线选段 · 点幽灵（预览实体）选整条 · 点插槽选它 · 双击曲线 插点（2D）· Ctrl+A 全选点 · [ ] 上/下一段\n' +
+    '曲线：没有锚点——播放位置在播放时给；场景曲线绑定作者场景、不给位置就在画的地方播；相对曲线不绑场景、播放必须给位置。插槽 = 曲线暴露给场景的位置，其他动作可以把实体挪到那里。换预览实体曲线不动。\n' +
+    '变换 gizmo（2D / 3D 视图都有，选中任何东西就出现在轴心，一个点也算）：W 移动——世界空间 红X（画面右）/ 绿Y 改离地高度 / 蓝Z 沿地面往远处（2D 里与 Y 重叠，错开画成虚线）、绿面片 / 中心贴地走；画面空间 X/Y 箭头 + 中心自由挪；E 旋转：拖圆环；R 缩放：轴末端单轴、中心等比；拖动时按住 Ctrl 吸附（10 wu / 15° / ×0.1）\n' +
     '编辑：Delete 删点（整段范围时删段）· 方向键微移（Shift ×10）· Ctrl+Z/Y 撤销重做 · Ctrl+D 复制段 · Ctrl+C/V 复制/粘贴段\n' +
-    '世界空间：拖点沿地面走；选中点上方 ▲ 或 Alt+拖 改离地高度；加点时点在桌面/台阶上会落在其表面（Alt 强制落地面）\n' +
+    '世界空间：拖点沿地面走；选中点上方 ▲ 或 Alt+拖 改离地高度；加点时点在桌面/台阶上会落在其表面（Alt 强制落地面）；右键点点 删点\n' +
     '抛体：拖橙色箭尖 = 初速（Alt = 竖直分量）· 拖绿色落点 = 直接定落点 · 拖紫色最高点 = 弧高 · 2D 拖绿色虚线 = 地面线\n' +
     '播放：K 播放/暂停 · , . 逐帧 · Ctrl+S 保存', ok: '知道了' });
 }
@@ -569,13 +719,20 @@ function showCtxMenu(i, cx, cy) {
 function hideCtxMenu() { el('ctxmenu').style.display = 'none'; }
 
 // ---------------------------------------------------------------- 资产
-function blankDoc(id, space, sceneId, bg) {
+function blankDoc(id, space, binding, sceneId, bg) {
   return {
-    id, label: '', space: space || 'screen', keyframes: [],
+    id, label: '', space: space || 'screen', binding: binding === 'free' ? 'free' : 'scene', keyframes: [], slots: [],
     source: { segments: [], bake: { sampleHz: 60, tolerance: { pos: 0.5, rot: 0.5, scale: 0.005, alpha: 0.005 } } },
-    authoring: { sceneId, background: bg || '', anchor: { x: 0, y: 0 }, contactOffsetY: 0 },
+    authoring: binding === 'free' ? {} : { sceneId, background: bg || '' },
   };
 }
+/** doc 此刻画在哪个场景：场景曲线 = 绑定的作者场景；相对曲线 = 背景场景（UI 态） */
+function docSceneRef() {
+  if (!S.doc) return { scene: '', bg: '' };
+  if (host.binding() === 'scene') return { scene: S.doc.authoring.sceneId || '', bg: S.doc.authoring.background || '' };
+  return { scene: (S.backdrop && S.backdrop.scene) || '', bg: (S.backdrop && S.backdrop.bg) || '' };
+}
+function backdropBody() { return host.binding() === 'free' ? { scene: docSceneRef().scene, bg: docSceneRef().bg } : undefined; }
 async function newAssetDialog() {
   const sc0 = S.scenes.find((s) => s.depth) || S.scenes[0];
   if (!sc0) { setStatus('工程里没有场景', 'err'); return; }
@@ -586,7 +743,8 @@ async function newAssetDialog() {
       { key: 'id', label: 'id（文件名）', value: 'traj_' + Date.now().toString(36), hint: '全局唯一' },
       { key: 'label', label: '名称', value: '', placeholder: '策划看的名字' },
       { key: 'space', label: '空间', type: 'select', value: sc0.depth ? 'world' : 'screen', options: [{ value: 'screen', label: '画面空间 (2D)' }, { value: 'world', label: '世界空间 (3D，需要深度)' }] },
-      { key: 'scene', label: '烘焙场景', type: 'select', value: sc0.id, options: sceneOpts, onchange: (inputs) => { const bs = inputs.bg; bs.innerHTML = ''; for (const o of bgOpts(inputs.scene.value)) bs.append(h('option', { value: o.value }, o.label)); } },
+      { key: 'binding', label: '类型', type: 'select', value: 'scene', options: [{ value: 'scene', label: '场景曲线（定死在这个场景里，播放可不给位置）' }, { value: 'free', label: '相对曲线（不绑场景，播放时必须给位置）' }], hint: '只有一种曲线，只是配置不同' },
+      { key: 'scene', label: '场景', type: 'select', value: sc0.id, options: sceneOpts, hint: '场景曲线：绑定的作者场景；相对曲线：只是这次画在哪（不写进数据）', onchange: (inputs) => { const bs = inputs.bg; bs.innerHTML = ''; for (const o of bgOpts(inputs.scene.value)) bs.append(h('option', { value: o.value }, o.label)); } },
       { key: 'bg', label: '时段背景', type: 'select', value: (sc0.backgrounds[0] || {}).image || '', options: bgOpts(sc0.id) },
     ],
     validate: (v) => {
@@ -602,18 +760,17 @@ async function newAssetDialog() {
   });
   if (!vals) return;
   const prev = captureSession();
-  S.doc = blankDoc(vals.id.trim(), vals.space, vals.scene, vals.bg); S.doc.label = vals.label.trim();
+  S.doc = blankDoc(vals.id.trim(), vals.space, vals.binding, vals.scene, vals.bg); S.doc.label = vals.label.trim();
+  S.backdrop = { scene: vals.scene, bg: vals.bg };
   S.bake = null; S.segIndex = -1; S.sel = { points: new Set(), scope: 'points' }; S.tMs = 0; S.rev++;
   dropGestures(); history.clear();
   el('label').value = S.doc.label; el('space').value = S.doc.space;
   try { await loadAuthoringScene(); }
   catch (e) { await restoreSession(prev, `新建失败：装载场景 ${vals.scene} 出错（${e.message}），半成品已丢弃`); return; }
-  const sp = S.scene && S.scene.spawnPoint;
-  S.doc.authoring.anchor = sp ? { x: round2(sp.x), y: round2(sp.y) } : { x: round2(S.scene.worldWidth / 2), y: round2(S.scene.worldHeight * 0.7) };
   markDirty(); renderAll(); v2.fit(); if (v3.ok) v3.fit();
   el('assetSel').value = '';
   setTool('pen');
-  setStatus('新轨迹（未保存）：直接在画布上点击开始画线；顶栏可换预览实体（锚点会跟到它身上）');
+  setStatus(host.binding() === 'free' ? '新的相对曲线（未保存）：直接在画布上点击开始画线；它不绑场景，换场景只是换背景' : '新的场景曲线（未保存）：直接在画布上点击开始画线；按 S 放命名插槽');
 }
 /** 打开 / 新建失败时要能整个退回：把"当前编辑现场"拍下来 */
 function captureSession() {
@@ -639,17 +796,43 @@ async function openAsset(id) {
   S.doc = r.doc; S.bake = null; S.segIndex = (S.doc.source && S.doc.source.segments && S.doc.source.segments.length) ? 0 : -1;
   S.sel = { points: new Set(), scope: 'points' }; S.tMs = 0; S.rev++;
   S.doc.source = S.doc.source || { segments: [] }; S.doc.source.bake = S.doc.source.bake || {};
-  S.doc.authoring = S.doc.authoring || { sceneId: '', anchor: { x: 0, y: 0 } };
+  S.doc.authoring = S.doc.authoring || {};
+  if (S.doc.binding !== 'free' && S.doc.binding !== 'scene') S.doc.binding = S.doc.authoring.sceneId ? 'scene' : 'free';
+  if (S.doc.binding === 'free') { delete S.doc.authoring.sceneId; delete S.doc.authoring.background; }
+  S.doc.slots = Array.isArray(S.doc.slots) ? S.doc.slots : [];
+  const migrated = migrateLegacyAnchor(S.doc);
   dropGestures(); history.clear();
-  el('label').value = S.doc.label || ''; el('space').value = S.doc.space || 'screen';
+  el('label').value = S.doc.label || ''; el('space').value = S.doc.space || 'screen'; el('binding').value = S.doc.binding;
   el('assetSel').value = id;
   try { await loadAuthoringScene(); }
-  catch (e) { await restoreSession(prev, `打开 ${id} 失败：装载场景 ${S.doc && S.doc.authoring ? S.doc.authoring.sceneId : '?'} 出错（${e.message}），已退回 ${prev.doc ? prev.doc.id : '空'}`); return; }
-  clearDirty(); renderAll(); v2.fitCurve(); if (v3.ok) v3.fitCurve();
+  catch (e) { await restoreSession(prev, `打开 ${id} 失败：装载场景 ${docSceneRef().scene || '?'} 出错（${e.message}），已退回 ${prev.doc ? prev.doc.id : '空'}`); return; }
+  if (migrated) markDirty(); else clearDirty();
+  renderAll(); v2.fitCurve(); if (v3.ok) v3.fitCurve();
   setTool('select');
   await bakeNow();
   v2.fitCurve();
-  setStatus(`已打开 ${id}（${S.doc.keyframes ? S.doc.keyframes.length : 0} 帧在盘上）`, 'ok');
+  setStatus(`已打开 ${id}（${S.doc.keyframes ? S.doc.keyframes.length : 0} 帧在盘上）` + (migrated ? '；旧资产的锚点已迁成曲线起点，保存一次落盘' : ''), 'ok');
+}
+/** 2026-09-11 前的资产：`authoring.anchor` 是"实体锚点"，第 0 段钉在它上面。曲线不再有锚点：
+ *  第 0 段的起点改成自定、钉在原来锚点的位置（曲线一个像素不动）；anchorHeight / contactOffsetY 挪进烘焙参数。 */
+function migrateLegacyAnchor(doc) {
+  const au = doc.authoring || {}; let changed = false;
+  const bk = doc.source.bake = doc.source.bake || {};
+  if (Number.isFinite(au.anchorHeight) && bk.restHeight == null) { bk.restHeight = au.anchorHeight; changed = true; }
+  if (Number.isFinite(au.contactOffsetY) && bk.contactOffsetY == null) { bk.contactOffsetY = au.contactOffsetY; changed = true; }
+  const segs = Edit.segs(doc);
+  if (au.anchor && segs[0] && !segs[0].start && (segs[0].startFrom === 'anchor' || segs[0].startFrom === 'entity' || segs[0].startFrom == null)) {
+    if (doc.space === 'world') {
+      // 世界空间：锚点世界坐标（服务端回填过）→ {x,z,h}；没回填过就等装完场景由 originWorld 回落算（authoring.anchor 保留到那时）
+      if (au.anchorWorld && Number.isFinite(au.anchorWorld.x)) { S.pendingLegacyAnchorWorld = au.anchorWorld; }
+      else S.pendingLegacyAnchor = { x: au.anchor.x, y: au.anchor.y };
+    } else segs[0].start = { x: round2(au.anchor.x), y: round2(au.anchor.y) };
+    segs[0].startFrom = 'explicit'; changed = true;
+  }
+  for (const seg of segs) if (seg.startFrom === 'anchor' || seg.startFrom === 'entity') { seg.startFrom = 'explicit'; changed = true; }
+  if (!au.origin && au.anchor) au.origin = { x: au.anchor.x, y: au.anchor.y };
+  for (const k of ['anchor', 'anchorWorld', 'anchorHeight', 'contactOffsetY']) if (k in au) { delete au[k]; changed = true; }
+  return changed;
 }
 /** 保存。返回 'ok' | 'conflict'（写盘了但期间又有改动，仍是脏态）| 'error' | 'skipped'。 */
 async function saveAsset() {
@@ -666,7 +849,7 @@ async function saveAssetNow() {
     setStatus('保存中…');
     clearTimeout(S.bakeTimer); S.bakeSeq++; S.rev++;   // 在飞的预览烘焙作废：保存返回的那份才是真相
     const rev = S.rev, doc = S.doc;
-    const r = await API.post('/api/save', { doc });
+    const r = await API.post('/api/save', { doc, backdrop: backdropBody() });
     if (doc !== S.doc || rev !== S.rev) {
       // 保存在飞期间又改了：盘上是发出时那份，内存这份更新——绝不能用旧的覆盖新的、更不能标成"已保存"
       const tr0 = await API.json('/api/trajectories'); S.assets = tr0.trajectories; fillAssetSel();
@@ -728,15 +911,33 @@ async function deleteAsset() {
 }
 
 // ---------------------------------------------------------------- 场景 / 实体
-async function loadAuthoringScene() { setBusy(1, '装载场景 ' + (S.doc && S.doc.authoring ? S.doc.authoring.sceneId : '') + '…'); try { return await _loadAuthoringScene(); } finally { setBusy(-1); } }
+async function loadAuthoringScene() { setBusy(1, '装载场景 ' + docSceneRef().scene + '…'); try { return await _loadAuthoringScene(); } finally { setBusy(-1); } }
 async function _loadAuthoringScene() {
   const au = S.doc.authoring;
-  if (!au.sceneId || !S.scenes.some((s) => s.id === au.sceneId)) { const sc = S.scenes.find((s) => s.depth) || S.scenes[0]; au.sceneId = sc ? sc.id : ''; }
-  el('sceneSel').value = au.sceneId; fillBgSel();
-  if (au.background && [...el('bgSel').options].some((o) => o.value === au.background)) el('bgSel').value = au.background; else au.background = el('bgSel').value;
-  await loadScene(au.sceneId, au.background);
+  const free = host.binding() === 'free';
+  // 场景曲线：绑定的作者场景（缺 / 无效就退到第一个有深度的场景并写回——旧数据）；相对曲线：背景场景，缺省 = 当前画布 / 第一个有深度的场景
+  let sid = free ? ((S.backdrop && S.backdrop.scene) || (S.scene && S.scene.id) || '') : (au.sceneId || '');
+  if (!sid || !S.scenes.some((s) => s.id === sid)) { const sc = S.scenes.find((s) => s.depth) || S.scenes[0]; sid = sc ? sc.id : ''; }
+  el('sceneSel').value = sid; fillBgSel();
+  let bg = free ? ((S.backdrop && S.backdrop.scene === sid && S.backdrop.bg) || '') : (au.background || '');
+  if (bg && [...el('bgSel').options].some((o) => o.value === bg)) el('bgSel').value = bg; else bg = el('bgSel').value;
+  if (free) { S.backdrop = { scene: sid, bg }; delete au.sceneId; delete au.background; }
+  else { au.sceneId = sid; au.background = bg; }
+  el('sceneSel').disabled = !free; el('sceneSel').title = free ? '相对曲线：换背景场景（不写进数据）' : '场景曲线绑定这个场景，只能在这里打开；要换场景就新建一条';
+  await loadScene(sid, bg);
   fillEntitySel();
   await loadEntity(au.entity ? (au.entity.kind === 'player' ? 'player' : au.entity.id) : '');
+  // 旧资产的世界空间锚点：装完场景才有标定，这时把第 0 段起点钉到它上面
+  if (S.pendingLegacyAnchorWorld || S.pendingLegacyAnchor) {
+    const seg0 = Edit.segs(S.doc)[0];
+    if (seg0 && S.cal) {
+      const w = S.pendingLegacyAnchorWorld ? [S.pendingLegacyAnchorWorld.x, S.pendingLegacyAnchorWorld.y, S.pendingLegacyAnchorWorld.z]
+        : (() => { const g = S.cal.sceneToWorldGround(S.pendingLegacyAnchor.x, S.pendingLegacyAnchor.y + host.contactOffsetY()); return [g[0], g[1] + host.restH(), g[2]]; })();
+      const q = S.cal.worldToXZH(w[0], w[1], w[2]);
+      seg0.start = { x: round2(q.x), z: round2(q.z), h: round2(Math.max(0, q.h)) };
+    }
+    S.pendingLegacyAnchorWorld = null; S.pendingLegacyAnchor = null;
+  }
 }
 /** 装场景：所有数据（描述 + 背景图 + 行走面 + 高度场 + 壳 + 网格）**全部到齐后一次性提交**——
  *  中途失败时上一个场景原封不动（否则会留下"新标定 + 空行走面 + 旧底图"的混态画布）。 */
@@ -771,6 +972,7 @@ async function loadScene(sid, bg) {
     if (v3.ok) { v3.setMesh(res[4]); v3.setTexture(S.bgImage); }
   } else if (v3.ok) v3.mesh = null;
   if (S.layers.npcs) loadNpcImages();
+  refreshAlignment();
   renderSceneInfo();
   setStatus('场景就绪：' + S.scene.name + (S.cal ? `（${S.cal.ground ? '有' : '无'}行走面 · 俯角 ${fmt(Math.acos(S.cal.cosTheta) * 180 / Math.PI)}°）` : '（无深度：只能画面空间）'));
 }
@@ -827,21 +1029,28 @@ function changeScene(sid, bg) { if (!S.doc) return Promise.resolve(); return cha
 async function _changeScene(sid, bg) {
   if (!S.doc) return;
   const op = ++S.sceneOp;   // 连续快换场景：后一次进来前一次就整个作废（每个 await 之后核对）
-  const cap = Edit.captureRelative(host);
-  const before = history.snapshot();
-  const prevScene = { sceneId: S.doc.authoring.sceneId, background: S.doc.authoring.background };
+  const free = host.binding() === 'free';
+  const au = S.doc.authoring;
+  const prevRef = docSceneRef();
+  if (!free && sid !== prevRef.scene) {
+    // 场景曲线绑定作者场景：只能在这里打开；换时段可以，换场景不行（要换就新建一条相对曲线或另存）
+    el('sceneSel').value = prevRef.scene;
+    setStatus('场景曲线绑定在 ' + prevRef.scene + '，只能在那里打开；要在别的场景用，把类型改成"相对曲线"或新建一条', 'err');
+    return;
+  }
+  const before = free ? null : history.snapshot();
   S.rev++; S.bakeSeq++; clearTimeout(S.bakeTimer);
-  S.doc.authoring.sceneId = sid; S.doc.authoring.background = bg; delete S.doc.authoring.anchorWorld; delete S.doc.authoring.anchorHeight;
+  if (free) S.backdrop = { scene: sid, bg }; else { au.background = bg; delete au.originWorld; }
   try {
     await loadScene(sid, bg);
   } catch (e) {
     if (op !== S.sceneOp) return;
-    // 装不上（深度图缺失 / 后端错 / 断连）：doc 回滚到原场景，下拉同步回去，"正在装载"的键也回到已装载的那个，出声
-    S.doc.authoring.sceneId = prevScene.sceneId; S.doc.authoring.background = prevScene.background;
+    // 装不上（深度图缺失 / 后端错 / 断连）：退回原场景，下拉同步回去，"正在装载"的键也回到已装载的那个，出声
+    if (free) S.backdrop = { scene: prevRef.scene, bg: prevRef.bg }; else au.background = prevRef.bg;
     S.loadingScene = S.scene ? S.scene.id + '|' + (S.scene.background || '') : null;
-    el('sceneSel').value = prevScene.sceneId; fillBgSel(); if (prevScene.background) el('bgSel').value = prevScene.background;
-    const what = sid === prevScene.sceneId ? `时段 ${bg}` : `场景 ${sid}`;
-    setStatus(`装载${what} 失败：${e.message}（已留在 ${prevScene.sceneId}${prevScene.background ? ' · ' + prevScene.background : ''}）`, 'err');
+    el('sceneSel').value = prevRef.scene; fillBgSel(); if (prevRef.bg) el('bgSel').value = prevRef.bg;
+    const what = sid === prevRef.scene ? `时段 ${bg}` : `场景 ${sid}`;
+    setStatus(`装载${what} 失败：${e.message}（已留在 ${prevRef.scene}${prevRef.bg ? ' · ' + prevRef.bg : ''}）`, 'err');
     scheduleBake(0);
     return;
   }
@@ -853,23 +1062,25 @@ async function _changeScene(sid, bg) {
   S.bake = null;
   await changeEntity(el('entitySel').value, true, true, false);
   if (op !== S.sceneOp) return;
-  // 锚点必须落在新场景画面里、且脚下有行走面：否则起点离地高会算错，整条 h 跟着塌。找不到实体位置就放到出生点。
-  const au = S.doc.authoring;
-  const anchorOk = () => {
-    if (!S.scene || au.anchor.x < 0 || au.anchor.y < 0 || au.anchor.x > S.scene.worldWidth || au.anchor.y > S.scene.worldHeight) return false;
-    if (!S.cal || !S.cal.ground) return true;
-    const g = S.cal.sceneToWorldGround(au.anchor.x, au.anchor.y + (au.contactOffsetY || 0));
-    return S.cal.inGroundBounds(g[0], g[2]);
-  };
-  if (!anchorOk()) {
-    const sp = S.scene.spawnPoint || { x: S.scene.worldWidth / 2, y: S.scene.worldHeight * 0.7 };
-    Edit.setAnchorScreen(host, sp.x, sp.y, false);
-    note += `锚点在新场景里没有落脚点，已放到出生点 (${fmt(sp.x, 0)}, ${fmt(sp.y, 0)})；`;
-  }
-  Edit.applyRelative(host, cap);
-  history._push({ label: '换场景', before, after: history.snapshot() });
-  markDirty(); renderAll(); v2.fitCurve(); if (v3.ok) v3.fitCurve(); scheduleBake(0);
-  if (note) setStatus(note + '控制点按锚点相对量换算，形状不变', 'err');
+  if (before) { history._push({ label: '换时段', before, after: history.snapshot() }); markDirty(); }
+  renderAll(); v2.fitCurve(); if (v3.ok) v3.fitCurve(); scheduleBake(0);
+  if (note) setStatus(note, 'err');
+  else if (free) setStatus('背景换成 ' + sid + '（相对曲线不绑场景，曲线的坐标原样；整条 gizmo 可以把它挪到想要的地方）');
+}
+/** 曲线类型切换：场景曲线 ⇄ 相对曲线。相对 → 场景：绑定当前背景场景；场景 → 相对：把绑定丢掉（当前场景变成背景）。 */
+function changeBinding(v) {
+  if (!S.doc) return;
+  const to = v === 'free' ? 'free' : 'scene';
+  if (host.binding() === to) return;
+  const cur = docSceneRef();
+  host.op(to === 'free' ? '改成相对曲线' : '改成场景曲线', () => {
+    S.doc.binding = to;
+    if (to === 'free') { delete S.doc.authoring.sceneId; delete S.doc.authoring.background; }
+    else { S.doc.authoring.sceneId = cur.scene; S.doc.authoring.background = cur.bg; }
+  });
+  S.backdrop = { scene: cur.scene, bg: cur.bg };
+  el('sceneSel').disabled = to === 'scene';
+  setStatus(to === 'free' ? '已改成相对曲线：不绑场景，可以在任何场景里打开；播放时必须给位置' : `已改成场景曲线：绑定 ${cur.scene}，只能在那里打开；播放可不给位置`);
 }
 async function loadEntity(id) {
   const op = ++S.entityLoad;   // 后一次装载进来，前一次的结果作废（否则慢的那发最后落地，幽灵与 doc 对不上）
@@ -892,37 +1103,38 @@ async function _changeEntity(id, noHistory, silent, carry) {
   const op = ++S.entityOp;   // 连续快换实体：后一次进来前一次作废
   const before = history.snapshot();
   const au = S.doc.authoring;
-  const oldRest = host.restH();
   S.rev++; S.bakeSeq++; clearTimeout(S.bakeTimer);
   if (!id) delete au.entity; else au.entity = id === 'player' ? { kind: 'player' } : { kind: 'npc', id };
   await loadEntity(id);
   if (op !== S.entityOp) return;
-  au.contactOffsetY = S.entity ? round2(S.entity.meta.contactOffsetY) : 0;
-  delete au.anchorWorld; delete au.anchorHeight; S.bake = null;
-  Edit.shiftRestHeight(host, host.restH() - oldRest);
-  anchorToEntity(false, carry);
+  // 预览实体只是骑在曲线上的那个东西：曲线一个像素不动。尺寸参数（restHeight / contactOffsetY）只在还没设过时从它取一次
+  const took = takeBakeParamsFromEntity(false, true);
+  S.bake = null;
   if (!noHistory) history._push({ label: '换预览实体', before, after: history.snapshot() });
-  markDirty(); renderAll(); scheduleBake(0);
-  if (!silent && S.entity) setStatus('锚点已放到 ' + (id === 'player' ? '玩家出生点' : id) + '；轨迹相对锚点，整体跟着走了');
+  if (cleanKey() === S.cleanKey) clearDirty(); else markDirty();   // 相对曲线换背景后同步实体：doc 没变（同一个预览实体）就不脏
+  renderAll(); scheduleBake(0);
+  if (!silent && S.entity) setStatus('预览实体换成 ' + (id === 'player' ? '玩家' : id) + '（曲线不动）' + (took ? '；烘焙参数按它的尺寸填了一次' : ''));
 }
-function anchorToEntity(withHistory, carry) {
-  if (!S.doc) return;
-  const au = S.doc.authoring;
-  let pos = null;
-  if (au.entity && au.entity.kind === 'player') pos = S.scene.spawnPoint;
-  else if (au.entity && au.entity.id) { const n = S.scene.npcs.find((x) => x.id === au.entity.id); if (n) pos = { x: n.x, y: n.y }; }
-  if (!pos) { if (withHistory) setStatus('这个预览实体在场景里没有位置'); return; }
-  // carry=false 只在换场景过程中用（形状由 applyRelative 搬）；平时锚点换位带着整条走（含自定起点的段）
-  if (withHistory) host.op('锚点取实体位置', () => Edit.setAnchorScreen(host, pos.x, pos.y, true));
-  else Edit.setAnchorScreen(host, pos.x, pos.y, carry !== false);
+/** 从预览实体取"骑在曲线上那个东西"的尺寸参数：restHeight（世界，支点离地高 = contactOffsetY / cosθ）、contactOffsetY（画面）。
+ *  onlyIfUnset = 只在还没设过时填（换实体时的一次性缺省）；显式按钮则覆盖。 */
+function takeBakeParamsFromEntity(withHistory, onlyIfUnset) {
+  if (!S.doc || !S.entity) return false;
+  const b = S.doc.source.bake = S.doc.source.bake || {};
+  const contact = round2(S.entity.meta.contactOffsetY || 0);
+  const rest = round2(contact / Math.max(1e-6, S.cal ? S.cal.cosTheta : 1));
+  const apply = () => { if (!onlyIfUnset || b.contactOffsetY == null) b.contactOffsetY = contact; if (!onlyIfUnset || b.restHeight == null) b.restHeight = rest; };
+  if (onlyIfUnset && b.contactOffsetY != null && b.restHeight != null) return false;
+  if (withHistory) host.op('烘焙参数取自预览实体', apply); else apply();
+  if (withHistory) setStatus(`已按 ${S.entity.id} 的尺寸填烘焙参数：接地偏移 ${contact}、静止离地高 ${rest}`);
+  return true;
 }
 async function changeSpace(space) {
   if (!S.doc || S.doc.space === space) return;
   if (space === 'world' && !S.cal) { setStatus('这个场景没有深度，世界空间无法还原；先在角色照明实验室烘该场景深度', 'err'); el('space').value = 'screen'; return; }
-  if (Edit.segs(S.doc).length && !(await confirmModal('切换空间会把现有分段的坐标按当前锚点换算到新空间（形状尽量保留）。继续？', '切换'))) { el('space').value = S.doc.space; return; }
+  if (Edit.segs(S.doc).length && !(await confirmModal('切换空间会把现有分段的坐标换算到新空间（形状尽量保留）。继续？', '切换'))) { el('space').value = S.doc.space; return; }
   host.op('切换空间', () => {
     Edit.convertSpace(host, S.doc.space, space);
-    S.doc.space = space; delete S.doc.authoring.anchorWorld; delete S.doc.authoring.anchorHeight; delete S.doc.worldKeyframes;
+    S.doc.space = space; delete S.doc.authoring.originWorld; delete S.doc.worldKeyframes;
   });
   S.bake = null; renderAll(); scheduleBake(0);
 }
@@ -985,9 +1197,10 @@ function renderInspector() {
   const idInp = h('input', { type: 'text', value: seg.id, style: 'width:130px' });
   idInp.addEventListener('change', () => host.op('改段 id', () => { seg.id = idInp.value.trim() || seg.id; }));
   const mode = Edit.startMode(S.doc, seg);
-  const sf = h('select', {}, h('option', { value: 'anchor' }, '锚点（播放位置）'), h('option', { value: 'previous' }, '上一段末点'), h('option', { value: 'explicit' }, '自定（可拖）'));
-  sf.value = mode;
-  sf.addEventListener('change', () => host.op('改起点方式', () => Edit.setStartMode(host, seg, sf.value)));
+  const sf = i === 0
+    ? h('span', { class: 'dim' }, '曲线起点（可拖；播放位置就落在这里）')
+    : h('select', {}, h('option', { value: 'previous' }, '上一段末点'), h('option', { value: 'explicit' }, '自定（可拖）'));
+  if (i > 0) { sf.value = mode; sf.addEventListener('change', () => host.op('改起点方式', () => Edit.setStartMode(host, seg, sf.value))); }
   box.append(row('段 id', idInp), row('起点', sf));
   if (mode === 'explicit') {
     // 渲染只读：没有 start 的（手改 / 旧文件）按现算的起点显示，写入才走 Edit.setExplicitStart（它会先补齐 start）
@@ -1038,7 +1251,10 @@ function renderManualForm(box, seg, world) {
     box.append(pr);
   } else if (selIdx.length > 1) box.append(row('选中', h('span', {}, `${selIdx.length} 个点`), h('button', { class: 'danger', onclick: deleteSelection }, '删点'), h('span', { class: 'dim' }, '画布上有变换框')));
   box.append(row('时长 ms', liveInput(() => (seg.timing || timing).durationMs, (v) => { ensureManual(seg).timing.durationMs = Math.max(1, v); }, { step: 10, label: '改时长' }), h('span', { class: 'dim' }, '整段走完用时')));
-  box.append(h('div', { class: 'dim', style: 'margin-top:4px' }, '时间曲线（横：时间 · 纵：路径进度 0→1）：拖键改节奏；双击加键；右键删键；首键钉在 t=0'));
+  box.append(h('div', { class: 'dim', style: 'margin-top:4px' }, '时间曲线（横：时间 · 纵：路径进度 0→1）只管快慢，不改路径形状：拖键改节奏；双击加键；右键删键；首键钉在 t=0'));
+  { const ks = timing.keys || []; const last = ks.length ? ks[ks.length - 1] : null;
+    if (last && Math.abs(num(last.progress, 1) - 1) > 1e-6) box.append(h('div', { class: 'dim', style: 'color:var(--warn)' }, `末键进度 ${fmt(num(last.progress, 0), 2)} ≠ 1：实体停在路径 ${fmt(num(last.progress, 0) * 100, 0)}% 处不走完，下一段若接"上一段末点"会从那里起（不是路径末端）`));
+    if (ks.length && Math.abs(num(ks[0].atMs, 0)) > 1e-6) box.append(h('div', { class: 'dim', style: 'color:var(--warn)' }, `首键在 ${fmt(ks[0].atMs, 0)}ms 而不是 0：开头会保持首键进度不动`)); }
   const tc = h('canvas', { id: 'timing' }); box.append(tc); setTimeout(() => timingEditor(tc, seg), 0);
   const kt = h('table', { class: 'keys' }, h('tr', {}, h('th', {}, 'atMs'), h('th', {}, 'progress'), h('th', {}, 'easing'), h('th', {})));
   (timing.keys || []).forEach((k, ki) => {
@@ -1178,12 +1394,15 @@ function readBakeSettings() {
     const b = S.doc.source.bake = S.doc.source.bake || {};
     b.sampleHz = num(el('sampleHz').value, 60);
     b.tolerance = { pos: num(el('tolPos').value, 0.5), rot: num(el('tolRot').value, 0.5), scale: num(el('tolScale').value, 0.005), alpha: num(el('tolAlpha').value, 0.005) };
+    b.restHeight = Math.max(0, num(el('restHeight').value, 0));
+    b.contactOffsetY = num(el('contactOffsetY').value, 0);
   });
 }
 function writeBakeSettings() {
   const b = (S.doc && S.doc.source.bake) || {}; const t = b.tolerance || {};
   el('sampleHz').value = b.sampleHz != null ? b.sampleHz : 60;
   el('tolPos').value = t.pos != null ? t.pos : 0.5; el('tolRot').value = t.rot != null ? t.rot : 0.5; el('tolScale').value = t.scale != null ? t.scale : 0.005; el('tolAlpha').value = t.alpha != null ? t.alpha : 0.005;
+  el('restHeight').value = b.restHeight != null ? b.restHeight : 0; el('contactOffsetY').value = b.contactOffsetY != null ? b.contactOffsetY : 0;
 }
 function scheduleBake(ms) {
   clearTimeout(S.bakeTimer);
@@ -1194,18 +1413,19 @@ function scheduleBake(ms) {
 async function bakeNow() {
   if (!S.doc) return;
   const seq = ++S.bakeSeq, rev = S.rev, doc = S.doc;
-  const r = await API.post('/api/bake', { doc });
+  const r = await API.post('/api/bake', { doc, backdrop: backdropBody() });
   if (seq !== S.bakeSeq || rev !== S.rev || doc !== S.doc) return;
   applyBake(r);
 }
 function applyBake(r) {
   S.bake = r;
-  // 只合并服务端**算出来**的派生量；anchor / sceneId / entity 等作者面字段以本地为准，绝不整份覆盖
+  // 只合并服务端**算出来**的派生量（曲线起点 origin / originWorld、插槽脚下的世界点）；sceneId / entity 等作者面字段以本地为准，绝不整份覆盖
   if (r.authoring) {
     const au = S.doc.authoring;
-    if (r.authoring.anchorWorld) au.anchorWorld = r.authoring.anchorWorld; else delete au.anchorWorld;
-    if (Number.isFinite(r.authoring.anchorHeight)) au.anchorHeight = r.authoring.anchorHeight; else delete au.anchorHeight;
+    if (r.authoring.origin) au.origin = r.authoring.origin;
+    if (r.authoring.originWorld) au.originWorld = r.authoring.originWorld; else delete au.originWorld;
   }
+  if (Array.isArray(r.slots)) { const mine = Edit.slots(S.doc); for (const rs of r.slots) { const sl = mine.find((q) => q.id === rs.id); if (sl && rs.world) sl.world = rs.world; } }
   if (r.keyframes && r.keyframes.length) { S.doc.keyframes = r.keyframes; if (r.worldKeyframes) S.doc.worldKeyframes = r.worldKeyframes; else delete S.doc.worldKeyframes; }
   const total = r.totalMs || 0;
   if (S.tMs > total) S.tMs = total;
@@ -1239,16 +1459,80 @@ function updateTime() {
 }
 
 // ---------------------------------------------------------------- 渲染
+// ---------------------------------------------------------------- 坐标对齐自证（工作台的世界 = 游戏的世界）
+/**
+ * 运行时那份 `SceneSpaceGeometry`：把工作台装到的标定与行走面场按运行时 `sceneSpace.ts` 的形状喂回去，
+ * 于是运行时的 `groundWorldAt` 可以在页面里**原样跑**——同一份代码，不是"照着写的"。
+ */
+function runtimeGeo() {
+  const cal = S.cal, rt = S.runtime;
+  if (!cal || !cal.ground || !rt) return null;
+  return {
+    work: { w: cal.work.w, h: cal.work.h },
+    cal: { ppu: cal.ppu, cx: cal.cx, cy: cal.cy },
+    sceneWorld: { w: cal.worldW, h: cal.worldH },
+    basisRows: cal.rows, wuPerQUnit: cal.wuPerQ,
+    ground: { data: cal.ground.data, w: cal.ground.w, h: cal.ground.h },
+  };
+}
+/**
+ * 对齐自证：把"作者摆点"与"游戏开播"两条口径分别拿运行时的函数跑一遍，和工作台自己的 SceneCal 比。
+ *   dPts  画面点 → M-world 地面点（`sceneSpace.groundWorldAt`）：作者点的那里 == 运行时认为的那里
+ *   dProj 3D 相对位移 → 画面偏移（`trajectoryProjection.projectWorldOffset`）：预览里的形状 == 开播时的形状
+ *   dRound 世界点 → 画面 → 世界的往返（这条只用工作台自己，抓标定自身退化）
+ * 镜像 / 错基 / 错尺任何一环，Δ 就是几十上百 wu。**这道自证是必须的**：坐标错了从来不报错，
+ * 投影与拾取共用同一套换算所以自洽（2026-09-08 声学、2026-09-10 这里，制作人各抓到一次）。
+ */
+function checkAlignment() {
+  const geo = runtimeGeo(); if (!geo) return null;
+  const rt = S.runtime, cal = S.cal;
+  const d3 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  let dPts = 0, n = 0;
+  for (let i = 1; i <= 5; i++) for (let j = 1; j <= 5; j++) {
+    const sx = cal.worldW * i / 6, sy = cal.worldH * j / 6;
+    dPts = Math.max(dPts, d3(rt.sceneSpace.groundWorldAt(geo, sx, sy), cal.sceneToWorldGround(sx, sy))); n++;
+  }
+  // 投影：拿一批 3D 位移过运行时的 projectWorldOffset 与工作台的 projectOffset（预览曲线就是它画的）
+  let dProj = 0, nProj = 0;
+  const rows = cal.rows;
+  for (const d of [[100, 0, 0], [0, 100, 0], [0, 0, 100], [-70, 40, 25], [33, -110, -60], [12, 7, -3]]) {
+    const a = rt.trajectoryProjection.projectWorldOffset(rows, d[0], d[1], d[2]);
+    const b = cal.projectOffset(d[0], d[1], d[2]);
+    dProj = Math.max(dProj, Math.hypot(a.x - b[0], a.y - b[1])); nProj++;
+  }
+  // 往返：世界点 → 画面 → 世界（地面上的点应当原样回来）
+  let dRound = 0;
+  for (let i = 1; i <= 3; i++) for (let j = 1; j <= 3; j++) {
+    const sx = cal.worldW * i / 4, sy = cal.worldH * j / 4;
+    const w = cal.sceneToWorldGround(sx, sy);
+    const s2 = cal.worldToScene(w[0], w[1], w[2]);
+    dRound = Math.max(dRound, Math.hypot(s2[0] - sx, s2[1] - sy));
+  }
+  const ok = dPts < 0.5 && dProj < 1e-6 && dRound < 0.5;
+  return { ok, dPts, dProj, dRound, n, nProj };
+}
+function refreshAlignment() { S.align = checkAlignment(); }
+function alignText() {
+  const a = S.align;
+  if (!a) return S.runtime ? '' : '\n⚠ 坐标自证：没有运行时包，对不了（页面画的可能不是游戏要播的）';
+  return a.ok
+    ? `\n坐标：与运行时同一套 ✓（${a.n + a.nProj} 点 Δ${fmt(a.dPts, 2)} wu · 投影 Δ${a.dProj.toExponential(0)}）`
+    : `\n⚠ 坐标与运行时不一致：地面 Δ${fmt(a.dPts, 1)} wu · 投影 Δ${fmt(a.dProj, 3)}`;
+}
 function renderSceneInfo() {
   const s = S.scene; if (!s) { el('sceneInfo').textContent = '—'; return; }
   const c = s.cal;
   el('sceneInfo').textContent = `${s.id} · ${s.background}\n世界 ${fmt(s.worldWidth, 0)}×${fmt(s.worldHeight, 0)} wu · 原生 ${s.native.w}×${s.native.h}px`
-    + (c ? `\n俯角 ${fmt(Math.acos(c.cosTheta) * 180 / Math.PI)}° · wuPerQ ${fmt(c.wuPerQUnit, 1)} · 地面：${c.groundSource === 'ground_d' ? '行走面场' : '深度壳(近似)'}` : '\n无深度（不能用世界空间）');
+    + (c ? `\n俯角 ${fmt(Math.acos(c.cosTheta) * 180 / Math.PI)}° · wuPerQ ${fmt(c.wuPerQUnit, 1)} · 地面：${c.groundSource === 'ground_d' ? '行走面场' : '深度壳(近似)'}` : '\n无深度（不能用世界空间）')
+    + (c ? alignText() : '');
+  // 对不上是"别信这个页面"级别的事，直接把整块信息染红（芯片本身是 mono/dim，别把类洗掉）
+  const broken = !!(S.align && !S.align.ok) || (!!c && !S.runtime);
+  el('sceneInfo').style.color = broken ? 'var(--err, #f66)' : 'var(--dim)';
 }
 function renderAll() {
   const hasDoc = !!S.doc;
-  for (const id of ['btnSave', 'btnRename', 'btnDup', 'btnDelete', 'btnAddManual', 'btnAddPhysics', 'btnSegUp', 'btnSegDown', 'btnSegDup', 'btnSegDel', 'btnAnchorEntity', 'btnAnchorPick']) el(id).disabled = !hasDoc;
-  if (hasDoc) { writeBakeSettings(); fillEntitySel(); syncAnchorInputs(); el('label').value = S.doc.label || ''; el('space').value = S.doc.space || 'screen'; }
+  for (const id of ['btnSave', 'btnRename', 'btnDup', 'btnDelete', 'btnAddManual', 'btnAddPhysics', 'btnSegUp', 'btnSegDown', 'btnSegDup', 'btnSegDel', 'btnSlotPlace', 'btnBakeFromEntity']) el(id).disabled = !hasDoc;
+  if (hasDoc) { writeBakeSettings(); fillEntitySel(); renderSlots(); renderOrigin(); el('label').value = S.doc.label || ''; el('space').value = S.doc.space || 'screen'; el('binding').value = host.binding(); el('sceneSel').disabled = host.binding() === 'scene'; }
   clampSelection();
   renderSegList(); renderInspector(); updateScopeButtons(); updateHistoryButtons(); updateTime(); draw();
 }

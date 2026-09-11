@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  DEFAULT_SPATIAL_PARAMS,
+  cameraBackWu,
   cameraListener,
   isSuspectWuPerQUnit,
   makeListener,
   planarResolver,
   resolveWorld,
-  spatialize,
-  targetListener,
   type AudioSpaceResolver,
 } from './audioSpace';
 import type { SceneSpaceGeometry, Vec3 } from './sceneSpace';
@@ -120,140 +118,6 @@ describe('cameraListener：听者站在画面后方', () => {
   });
 });
 
-describe('spatialize：增益', () => {
-  const L = cameraListener(FIELD, CX, CY, 600);
-  const at = (dxWu: number, dyWu: number) =>
-    resolveWorld(FIELD, { contactX: CX + dxWu, contactY: CY + dyWu, heightWu: 0 });
-
-  it('远的比近的轻，且单调', () => {
-    const gains = [0, 300, 800, 1500].map(
-      (d) => spatialize(L, at(d, 0), DEFAULT_SPATIAL_PARAMS).gain,
-    );
-    for (let i = 1; i < gains.length; i++) expect(gains[i]).toBeLessThan(gains[i - 1]);
-  });
-
-  it('增益恒在 (0,1]，且参考距离以内不再变响', () => {
-    const p = { ...DEFAULT_SPATIAL_PARAMS, refDistanceWu: 1200 };
-    // backWu=600 < ref=1200 ⇒ 中心点与稍偏的点都在参考距离内，增益应当都是满的
-    const a = spatialize(L, at(0, 0), p);
-    const b = spatialize(L, at(100, 0), p);
-    expect(a.gain).toBeCloseTo(1, 9);
-    expect(b.gain).toBeCloseTo(1, 9);
-  });
-
-  it('照 WebAudio inverse 模型原式：d = 2·ref 时增益恰为 1/(1+rolloff)', () => {
-    const l = makeListener([0, 0, 0], [0, 0, 1], [0, 1, 0]);
-    const p = { ...DEFAULT_SPATIAL_PARAMS, refDistanceWu: 150, rolloff: 1 };
-    const r = spatialize(l, [300, 0, 0], p);
-    expect(r.distanceWu).toBeCloseTo(300, 9);
-    expect(r.gain).toBeCloseTo(0.5, 9);
-  });
-
-  it('超过 maxDistanceWu 报 inaudible', () => {
-    const p = { ...DEFAULT_SPATIAL_PARAMS, maxDistanceWu: 1000 };
-    expect(spatialize(L, at(0, 0), p).inaudible).toBe(false);
-    expect(spatialize(L, at(5000, 0), p).inaudible).toBe(true);
-  });
-
-  it('相机听者下，画面正中的声源距离恰是 backWu —— 故 maxDistanceWu 必须大于它', () => {
-    // 这条锁住一个真实的踩点：max 设得比 backWu 小，脚下的声音也会被判成听不见
-    expect(spatialize(L, at(0, 0), DEFAULT_SPATIAL_PARAMS).distanceWu).toBeCloseTo(600, 6);
-    const tooSmall = { ...DEFAULT_SPATIAL_PARAMS, maxDistanceWu: 500 };
-    expect(spatialize(L, at(0, 0), tooSmall).inaudible).toBe(true);
-  });
-});
-
-describe('spatialize：声像', () => {
-  const L = cameraListener(FIELD, CX, CY, 600);
-  const at = (dxWu: number) =>
-    resolveWorld(FIELD, { contactX: CX + dxWu, contactY: CY, heightWu: 0 });
-
-  it('左边的声源 pan < 0，右边的 pan > 0，正中为 0', () => {
-    expect(spatialize(L, at(-600), DEFAULT_SPATIAL_PARAMS).pan).toBeLessThan(0);
-    expect(spatialize(L, at(600), DEFAULT_SPATIAL_PARAMS).pan).toBeGreaterThan(0);
-    expect(spatialize(L, at(0), DEFAULT_SPATIAL_PARAMS).pan).toBeCloseTo(0, 9);
-  });
-
-  it('pan 绝对值不超过 panWidth', () => {
-    const p = { ...DEFAULT_SPATIAL_PARAMS, panWidth: 0.7 };
-    for (const d of [-100000, -1000, -10, 10, 1000, 100000]) {
-      expect(Math.abs(spatialize(L, at(d), p).pan)).toBeLessThanOrEqual(0.7 + 1e-12);
-    }
-  });
-
-  it('声源贴到听者位置时声像不乱跳（听者后撤 backWu 保证了这一点）', () => {
-    const r = spatialize(L, [...L.pos] as Vec3, DEFAULT_SPATIAL_PARAMS);
-    expect(Number.isFinite(r.pan)).toBe(true);
-    expect(r.pan).toBe(0);
-  });
-});
-
-describe('推拉镜头：唯一正确的听感变化', () => {
-  const SRC = resolveWorld(FIELD, { contactX: CX + 500, contactY: CY, heightWu: 0 });
-  // backWu = backAtBaseZoom × (sceneBaseZoom / zoom)
-  const backAt = (zoomRatio: number) => 600 * zoomRatio;
-
-  it('镜头拉远 ⇒ 更轻', () => {
-    const near = spatialize(cameraListener(FIELD, CX, CY, backAt(1)), SRC, DEFAULT_SPATIAL_PARAMS);
-    const far = spatialize(cameraListener(FIELD, CX, CY, backAt(2)), SRC, DEFAULT_SPATIAL_PARAMS);
-    expect(far.gain).toBeLessThan(near.gain);
-    expect(far.distanceWu).toBeGreaterThan(near.distanceWu);
-  });
-
-  it('镜头拉远 ⇒ 声像收窄（同一个世界偏移张的角变小）', () => {
-    const near = spatialize(cameraListener(FIELD, CX, CY, backAt(1)), SRC, DEFAULT_SPATIAL_PARAMS);
-    const far = spatialize(cameraListener(FIELD, CX, CY, backAt(2)), SRC, DEFAULT_SPATIAL_PARAMS);
-    expect(Math.abs(far.pan)).toBeLessThan(Math.abs(near.pan));
-  });
-
-  it('镜头拉近 ⇒ 更响、声像更开', () => {
-    const base = spatialize(cameraListener(FIELD, CX, CY, backAt(1)), SRC, DEFAULT_SPATIAL_PARAMS);
-    const close = spatialize(cameraListener(FIELD, CX, CY, backAt(0.5)), SRC, DEFAULT_SPATIAL_PARAMS);
-    expect(close.gain).toBeGreaterThan(base.gain);
-    expect(Math.abs(close.pan)).toBeGreaterThan(Math.abs(base.pan));
-  });
-});
-
-describe('听者不写死：换成任意目标都走同一条式子', () => {
-  it('听者设成实体时，声像变成那个实体的左右', () => {
-    // 听者站在场景中心；声源在它右边 500 wu
-    const l = targetListener(FIELD, { contactX: CX, contactY: CY, heightWu: 150 });
-    const right = resolveWorld(FIELD, { contactX: CX + 500, contactY: CY, heightWu: 0 });
-    const left = resolveWorld(FIELD, { contactX: CX - 500, contactY: CY, heightWu: 0 });
-    expect(spatialize(l, right, DEFAULT_SPATIAL_PARAMS).pan).toBeGreaterThan(0);
-    expect(spatialize(l, left, DEFAULT_SPATIAL_PARAMS).pan).toBeLessThan(0);
-  });
-
-  it('听者就在声源上时距离 ≈ 0 而不是 NaN', () => {
-    const t = { contactX: CX, contactY: CY, heightWu: 0 };
-    const l = targetListener(FIELD, t);
-    const r = spatialize(l, resolveWorld(FIELD, t), DEFAULT_SPATIAL_PARAMS);
-    expect(r.distanceWu).toBeCloseTo(0, 9);
-    expect(r.gain).toBeCloseTo(1, 9);
-    expect(r.pan).toBe(0);
-  });
-});
-
-describe('planar 降级：横向精确、纵深近似，但方向全对', () => {
-  it('左右与远近的符号与 field 级一致', () => {
-    const l = cameraListener(PLANAR, CX, CY, 600);
-    const right = resolveWorld(PLANAR, { contactX: CX + 500, contactY: CY, heightWu: 0 });
-    const left = resolveWorld(PLANAR, { contactX: CX - 500, contactY: CY, heightWu: 0 });
-    const far = resolveWorld(PLANAR, { contactX: CX, contactY: CY - 900, heightWu: 0 });
-    const near = resolveWorld(PLANAR, { contactX: CX, contactY: CY, heightWu: 0 });
-    expect(spatialize(l, right, DEFAULT_SPATIAL_PARAMS).pan).toBeGreaterThan(0);
-    expect(spatialize(l, left, DEFAULT_SPATIAL_PARAMS).pan).toBeLessThan(0);
-    expect(spatialize(l, far, DEFAULT_SPATIAL_PARAMS).gain)
-      .toBeLessThan(spatialize(l, near, DEFAULT_SPATIAL_PARAMS).gain);
-  });
-
-  it('planar 级的距离仍然是 wu —— 所以 refDistanceWu 在两级里意思相同', () => {
-    const l = cameraListener(PLANAR, CX, CY, 0);
-    const src = resolveWorld(PLANAR, { contactX: CX + 300, contactY: CY, heightWu: 0 });
-    expect(spatialize(l, src, DEFAULT_SPATIAL_PARAMS).distanceWu).toBeCloseTo(300, 6);
-  });
-});
-
 describe('wuPerQUnit 的可疑值判据', () => {
   it('1 一律当可疑（真值逐场景 154–880；?? 1 的静默回落已在光照侧出过两次事故）', () => {
     expect(isSuspectWuPerQUnit(1)).toBe(true);
@@ -266,5 +130,81 @@ describe('wuPerQUnit 的可疑值判据', () => {
 
   it('真实取值全部放行', () => {
     for (const v of [154, 220, 573, 880]) expect(isSuspectWuPerQUnit(v)).toBe(false);
+  });
+});
+
+describe('透视纵深重整（perspectiveScale 进音频距离）', () => {
+  // f 只沿 x 变：near(0,·) f=2 → far(4000,·) f=0.5，中点 f=1.25
+  const persp = (baseDepthWu = 600) => ({
+    scaleAt: (x: number) => 2 + (0.5 - 2) * Math.min(1, Math.max(0, x / 4000)),
+    baseDepthWu,
+  });
+  const FIELD_P: AudioSpaceResolver = {
+    mode: 'field', geo: { ...WUJIN, ground: ground() }, persp: persp(),
+  };
+  const FWD: Vec3 = [0, -Math.SQRT1_2, Math.SQRT1_2];   // R·(0,0,1)，45° 俯角
+  const depthOf = (p: Vec3) => p[0] * FWD[0] + p[1] * FWD[1] + p[2] * FWD[2];
+
+  it('没有 persp 的解算器逐位不变——36 个场景里 30 个不配透视线，那 30 个必须零变化', () => {
+    for (const [x, y] of [[0, 0], [1234, 567], [4000, 2251.2]]) {
+      const a = resolveWorld(FIELD, { contactX: x, contactY: y, heightWu: 150 });
+      const b = resolveWorld(
+        { mode: 'field', geo: { ...WUJIN, ground: ground() } },
+        { contactX: x, contactY: y, heightWu: 150 },
+      );
+      expect(a).toEqual(b);
+    }
+  });
+
+  it('沿视线深度恰为 baseDepthWu / f —— 这是 f ∝ 1/d 的投影定义式，不是拟合出来的曲线', () => {
+    for (const x of [0, 1000, 2000, 3000, 4000]) {
+      const f = persp().scaleAt(x);
+      const p = resolveWorld(FIELD_P, { contactX: x, contactY: 1125, heightWu: 0 });
+      expect(depthOf(p)).toBeCloseTo(600 / f, 4);
+    }
+  });
+
+  it('画面上人缩小 k 倍 ⇒ 深度就远 k 倍（视听不脱节的硬判据）', () => {
+    const near = resolveWorld(FIELD_P, { contactX: 0, contactY: 1125, heightWu: 0 });
+    const far = resolveWorld(FIELD_P, { contactX: 4000, contactY: 1125, heightWu: 0 });
+    expect(depthOf(far) / depthOf(near)).toBeCloseTo(2 / 0.5, 4);   // f 从 2 掉到 0.5 = 4 倍
+  });
+
+  it('离地高度不吃透视缩放：远处的人仍是 150 wu 高，只是看着小', () => {
+    for (const x of [0, 4000]) {
+      const g = resolveWorld(FIELD_P, { contactX: x, contactY: 1125, heightWu: 0 });
+      const h = resolveWorld(FIELD_P, { contactX: x, contactY: 1125, heightWu: 150 });
+      expect(h[1] - g[1]).toBeCloseTo(150, 6);
+      expect(h[0]).toBeCloseTo(g[0], 6);
+      expect(h[2]).toBeCloseTo(g[2], 6);
+    }
+  });
+
+  it('相机听者的视距 = 基准 × zoom比 ÷ f；两个因子相乘不相干', () => {
+    expect(cameraBackWu(FIELD_P, 0, 1125, 600, 1)).toBeCloseTo(600 / 2, 6);
+    expect(cameraBackWu(FIELD_P, 4000, 1125, 600, 1)).toBeCloseTo(600 / 0.5, 6);
+    expect(cameraBackWu(FIELD_P, 4000, 1125, 600, 0.5)).toBeCloseTo(600 * 0.5 / 0.5, 6);
+    // 没有透视标定 ⇒ 只剩 zoom 比（旧行为）
+    expect(cameraBackWu(FIELD, 4000, 1125, 600, 2)).toBeCloseTo(1200, 6);
+  });
+
+  it('玩家站画面中心时，他到相机听者的距离恰是 backWu —— 透视场景里这条自洽性也不许断', () => {
+    for (const x of [0, 2000, 4000]) {
+      const back = cameraBackWu(FIELD_P, x, 1125, 600, 1);
+      const ear = cameraListener(FIELD_P, x, 1125, back).pos;
+      const foot = resolveWorld(FIELD_P, { contactX: x, contactY: 1125, heightWu: 0 });
+      expect(Math.hypot(foot[0] - ear[0], foot[1] - ear[1], foot[2] - ear[2]))
+        .toBeCloseTo(back, 4);
+    }
+  });
+
+  it('planar 级也吃透视：没烘深度的场景（牛头凼）配了透视线一样要算', () => {
+    const p: AudioSpaceResolver = { ...planarResolver(), persp: persp() };
+    const near = resolveWorld(p, { contactX: 0, contactY: 400, heightWu: 0 });
+    const far = resolveWorld(p, { contactX: 4000, contactY: 400, heightWu: 0 });
+    const dNear = near[0] * FWD[0] + near[1] * FWD[1] + near[2] * FWD[2];
+    const dFar = far[0] * FWD[0] + far[1] * FWD[1] + far[2] * FWD[2];
+    expect(dNear).toBeCloseTo(600 / 2, 4);
+    expect(dFar).toBeCloseTo(600 / 0.5, 4);
   });
 });

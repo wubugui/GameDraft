@@ -1,0 +1,140 @@
+{
+ "schemaVersion": 1,
+ "id": "验证_龛前叠图",
+ "entry": "root",
+ "meta": {
+  "title": "验证 · 龛前假图→真图叠化（可整条删）"
+ },
+ "nodes": {
+  "root": {
+   "type": "line",
+   "speaker": {
+    "kind": "literal",
+    "name": "旁白"
+   },
+   "text": "验收：龛前「假图 → 真图」叠化。点继续，先出假图（他看见的）。",
+   "next": "a_假长"
+  },
+  "a_假长": {
+   "type": "runActions",
+   "actions": [
+    {
+     "type": "showOverlayImage",
+     "params": {
+      "id": "验证_龛前",
+      "image": "龛前_烟长_假",
+      "xPercent": 50,
+      "yPercent": 50,
+      "widthPercent": 100
+     }
+    }
+   ],
+   "next": "n_假长"
+  },
+  "n_假长": {
+   "type": "line",
+   "speaker": {
+    "kind": "literal",
+    "name": "旁白"
+   },
+   "text": "假图（烟长）：龛里黑着，看得出立着个东西，认不出是哪路神。点继续，叠化到真图。",
+   "next": "a_叠长"
+  },
+  "a_叠长": {
+   "type": "runActions",
+   "actions": [
+    {
+     "type": "blendOverlayImage",
+     "params": {
+      "id": "验证_龛前",
+      "fromImage": "龛前_烟长_假",
+      "toImage": "龛前_烟长",
+      "xPercent": 50,
+      "yPercent": 50,
+      "widthPercent": 100,
+      "durationMs": 2500,
+      "delayMs": 0
+     }
+    }
+   ],
+   "next": "n_真长"
+  },
+  "n_真长": {
+   "type": "line",
+   "speaker": {
+    "kind": "literal",
+    "name": "旁白"
+   },
+   "text": "真图（烟长）：风帽、僧面、宝珠、断了的锡杖——地藏。除龛内以外逐像素与假图相同。点继续，换烟短那一对。",
+   "next": "a_假短"
+  },
+  "a_假短": {
+   "type": "runActions",
+   "actions": [
+    {
+     "type": "showOverlayImage",
+     "params": {
+      "id": "验证_龛前",
+      "image": "龛前_烟短_假",
+      "xPercent": 50,
+      "yPercent": 50,
+      "widthPercent": 100
+     }
+    }
+   ],
+   "next": "n_假短"
+  },
+  "n_假短": {
+   "type": "line",
+   "speaker": {
+    "kind": "literal",
+    "name": "旁白"
+   },
+   "text": "假图（烟短）。点继续，叠化到真图。",
+   "next": "a_叠短"
+  },
+  "a_叠短": {
+   "type": "runActions",
+   "actions": [
+    {
+     "type": "blendOverlayImage",
+     "params": {
+      "id": "验证_龛前",
+      "fromImage": "龛前_烟短_假",
+      "toImage": "龛前_烟短",
+      "xPercent": 50,
+      "yPercent": 50,
+      "widthPercent": 100,
+      "durationMs": 2500,
+      "delayMs": 0
+     }
+    }
+   ],
+   "next": "n_真短"
+  },
+  "n_真短": {
+   "type": "line",
+   "speaker": {
+    "kind": "literal",
+    "name": "旁白"
+   },
+   "text": "真图（烟短）。点继续收工。",
+   "next": "a_收"
+  },
+  "a_收": {
+   "type": "runActions",
+   "actions": [
+    {
+     "type": "hideOverlayImage",
+     "params": {
+      "id": "验证_龛前"
+     }
+    }
+   ],
+   "next": "end"
+  },
+  "end": {
+   "type": "end"
+  }
+ }
+}

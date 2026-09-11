@@ -1,0 +1,107 @@
+# GameDraft 手册 —— 制作人自己维护、自己看的文档站。
+#
+# 这份配置写死之后不再动:正文全部在 docs/ 下的 .md 里,写什么由制作人决定。
+# 站点是纯静态渲染器:没有任何一个字只存在于站里;不提供网页编辑。
+# 与 agent_docs/ 无关——那是 agent 自己维护自己看的库,治理与索引一律不碰本目录。
+#
+# 起站:  sh scripts/py.sh -m tools.handbook          (构建 → 本地 http → 开浏览器)
+# 静态导出: sh scripts/py.sh -m tools.handbook --build (产物在 handbook/site/,整个文件夹拷走就能看)
+
+site_name: GameDraft 手册
+docs_dir: docs
+site_dir: site
+# 每页一个 .html 而不是 目录/index.html:双击 site/index.html 走 file:// 也能翻页。
+# (全站搜索仍需 http 服务——浏览器不让 file:// 下的 worker 拉索引,任何 http.server 一行即可)
+use_directory_urls: false
+# nav 不手写:mkdocs 按 docs/ 的目录结构与文件名自动生成;要排序在文件名前加数字前缀即可。
+
+theme:
+  name: material
+  language: zh
+  # 不去 Google Fonts 拉字体——离线零外网请求,用系统字体
+  font: false
+  features:
+    - navigation.sections
+    - navigation.expand
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - content.tooltips
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: brown
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: 切到深色
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: brown
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: 切到浅色
+
+plugins:
+  - search:
+      # zh 走 jieba 分词(装在项目 venv 里),en 走默认;两者并存,中英混排都能搜
+      lang:
+        - zh
+        - en
+
+markdown_extensions:
+  # 结构
+  - toc:
+      permalink: "¶"
+      toc_depth: 4
+  - attr_list
+  - md_in_html
+  - def_list
+  - footnotes
+  - tables
+  - admonition
+  - pymdownx.details
+  # 代码:高亮 + 行号(按块开:```py linenums="1")+ 一键复制(theme features)
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  # 数学:$...$ 行内、$$...$$ 块;渲染用本地 KaTeX(extra_javascript)
+  - pymdownx.arithmatex:
+      generic: true
+  # 行内标记:==高亮== ^^下划线^^ ~~删除~~ ++ctrl+c++ 任务列表
+  - pymdownx.mark
+  - pymdownx.caret
+  - pymdownx.tilde
+  - pymdownx.keys
+  - pymdownx.critic
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.smartsymbols
+
+extra_javascript:
+  - assets/vendor/katex/katex.min.js
+  - assets/vendor/katex/contrib/auto-render.min.js
+  - assets/javascripts/katex-init.js
+  # Material 自己会去 unpkg 拉 mermaid;先把本地那份挂成全局 window.mermaid 它就不再外联
+  - assets/vendor/mermaid/mermaid.min.js
+
+extra_css:
+  - assets/vendor/katex/katex.min.css
+  - assets/stylesheets/handbook.css

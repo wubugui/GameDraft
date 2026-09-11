@@ -61,6 +61,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote, unquote, urlsplit
 
+from tools.webengine_cache_policy import disable_all_caches
+
 _THIS = Path(__file__).resolve()
 _PROJECT_ROOT_DEFAULT = _THIS.parent.parent.parent
 
@@ -265,6 +267,8 @@ def run_sweep(
         # 没有 GPU 的环境退到 SwiftShader 软 WebGL；自动播放不等手势（音频请求也要看见）
         "--ignore-gpu-blocklist --enable-unsafe-swiftshader --autoplay-policy=no-user-gesture-required",
     )
+    # 禁缓存的开关要**并进**上面这份、且排在 WebEngine import 之前（顺序反了会把上面的开关吃掉）
+    disable_all_caches()
     from PySide6.QtCore import QEventLoop, Qt, QTimer, QUrl
     from PySide6.QtWebEngineCore import (
         QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineSettings,

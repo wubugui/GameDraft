@@ -134,6 +134,10 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 
 ## 已知坑
 
+- **2026-08-30 ~ 09-10 所有点光/聚光对背景与角色全灭,零报错**:铁律 0 把 shader 的 r 换成 wu 后
+  intensity 没跟着换尺(差 `wuPerQUnit²`)、线扫前缀灯位没除 `wuPerQUnit`,两处叠着,
+  载荷/打包/uniform 全部正常。正文与取证办法见 [lighting-scale-reference](lighting-scale-reference.md)
+  已知坑 ⑦。快速判据:uDebug=3(灯的辐照度)一片黑 = 灯根本没算出来,**先查尺,别查载荷**。
 - **大气光晕沿视线积分,不是"表面点到灯的距离"**;而且**必须配高斯包络**——
   闭式解是 1/r⊥ 长尾,只积分不加包络会让光晕铺满 ≈100% 的像素。两条的实测数字与验尸
   在 [lighting-scale-reference](lighting-scale-reference.md) 的光晕两节,勿重犯。

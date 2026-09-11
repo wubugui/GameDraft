@@ -16,8 +16,10 @@ import {
   packEmissive,
   packLights,
   packShadowBias,
+  pointIntensityWu,
   shadowLightCount,
   softeningWu2,
+  worldWuToQ,
 } from './lightPacking';
 
 /**
@@ -433,5 +435,72 @@ describe('灯的时段归属（2026-08-30「灯就是实体」）', () => {
   it('空 phases 数组当作没写（不是"一个时段都不亮"）', () => {
     const d = def([{ id: 'a', kind: 'point', intensity: 1, pos: [0, 0, 0], phases: [] }]);
     expect(packLights(d, 880, '夜').count).toBe(1);
+  });
+});
+
+describe('packLights · 强度的尺（2026-09-10）', () => {
+  // 作者面 intensity 相对 q 定义（照度 = I / r_q²），shader 的 r 是 wu（铁律 0）。
+  // 同一个照度 ⇒ I_wu = I_q × wuPerQUnit²。2026-08-30 ~ 09-10 这一项缺席，
+  // 雾津街头的灯笼在射程边缘只剩 3e-5 的照度 —— 全灭而零报错。
+  it('点光 / 聚光的 B.w = intensity × wuPerQUnit²', () => {
+    const p = packLights(def([
+      point({ id: 'p', intensity: 2 }),
+      { id: 's', kind: 'spot', intensity: 3, pos: [0, 1, 0], dir: [0, -1, 0] },
+    ]), MPQ);
+    expect(p.b[3]).toBeCloseTo(2 * MPQ * MPQ, 3);
+    expect(p.b[7]).toBeCloseTo(3 * MPQ * MPQ, 3);
+    expect(pointIntensityWu(2, MPQ)).toBe(2 * MPQ * MPQ);
+  });
+
+  it('面光（辐亮度）与平行光（照度）的强度与长度单位无关，原样', () => {
+    const p = packLights(def([
+      { id: 'w', kind: 'area', intensity: 3, pos: [0, 1, 0], size: [2, 3], dir: [0, 0, -1] },
+      { id: 'moon', kind: 'directional', intensity: 0.4, elevationDeg: 60, azimuthDeg: 200 },
+    ]), MPQ);
+    expect(p.b[3]).toBe(3);
+    expect(p.b[7]).toBeCloseTo(0.4, 6);
+  });
+
+  it('折完之后 wu 里的 1/r² 与 q 里的逐位相等（换尺是零行为变化）', () => {
+    const I = 8.636119106706895;       // 雾津街头 lamp_1 的真实值
+    const rQ = 0.6016;                 // 射程边缘（q）
+    const soft = softeningWu2(10.5881602252);
+    const eQ = I / (rQ * rQ + soft / (MPQ * MPQ));
+    const rWu = rQ * MPQ;
+    const eWu = pointIntensityWu(I, MPQ) / (rWu * rWu + soft);
+    expect(eWu / eQ).toBeCloseTo(1, 9);
+  });
+});
+
+describe('worldWuToQ · 线扫前缀用的灯位（世界 wu → q）', () => {
+  // 雾津街头真实标定：R = 绕 X 轴 45°，wuPerQUnit = 880，native ppu/cx/cy = 450.56/1024/576。
+  const C = 0.7071067690849304;
+  const R: [[number, number, number], [number, number, number], [number, number, number]] =
+    [[1, 0, 0], [0, C, -C], [0, C, C]];
+
+  it('朝向过 Rᵀ、尺度除 wuPerQUnit，两样都做（雾津街头 lamp_1 落回画内）', () => {
+    const q = worldWuToQ([-484, 369.6, -264], R, MPQ);
+    expect(q[0]).toBeCloseTo(-484 / MPQ, 6);
+    expect(q[1]).toBeCloseTo((C * 369.6 + C * -264) / MPQ, 6);
+    expect(q[2]).toBeCloseTo((-C * 369.6 + C * -264) / MPQ, 6);
+    // 像素落点必须在 2048×1152 的图内（修复前实测是 −217047, −33067）
+    const px = 1024 + q[0] * 450.56;
+    const py = 576 - q[1] * 450.56;
+    expect(px).toBeGreaterThan(0); expect(px).toBeLessThan(2048);
+    expect(py).toBeGreaterThan(0); expect(py).toBeLessThan(1152);
+  });
+
+  it('与 shader 的 P = R·q × wuPerQUnit 互逆', () => {
+    const w: [number, number, number] = [123.4, -56.7, 890.1];
+    const q = worldWuToQ(w, R, MPQ);
+    const back = [
+      (R[0][0] * q[0] + R[0][1] * q[1] + R[0][2] * q[2]) * MPQ,
+      (R[1][0] * q[0] + R[1][1] * q[1] + R[1][2] * q[2]) * MPQ,
+      (R[2][0] * q[0] + R[2][1] * q[1] + R[2][2] * q[2]) * MPQ,
+    ];
+    // R 是 geometry.json 里 float32 圆过的 0.70710677,RᵀR 与 I 差 ~1e-8,乘回 890 wu 剩 1e-6 级尾巴
+    expect(back[0]).toBeCloseTo(w[0], 3);
+    expect(back[1]).toBeCloseTo(w[1], 3);
+    expect(back[2]).toBeCloseTo(w[2], 3);
   });
 });

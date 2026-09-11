@@ -493,3 +493,74 @@ class MoveEntityToMapPickerDialog(QDialog):
 
     def result_destination(self) -> tuple[float, float]:
         return self._view.destination()
+
+
+class WorldPointPickDialog(QDialog):
+    """通用「在场景底图上点一个世界坐标」弹窗（位置引用选择器的地图拾取）。
+
+    与 moveEntityTo 的终点选点、过场 setSceneEntityPosition 的选点同一张底图、同一套手势
+    （左键设点 / 中键平移 / 滚轮缩放）；只出一个点，不碰任何数据。
+    """
+
+    def __init__(
+        self,
+        model: ProjectModel,
+        scene_id: str,
+        initial_x: float,
+        initial_y: float,
+        parent: QWidget | None = None,
+        *,
+        title: str = "",
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._scene_id = scene_id
+        sc0 = model.scenes.get(scene_id, {}) if isinstance(getattr(model, "scenes", None), dict) else {}
+        title_nm = sc0.get("name", scene_id) if isinstance(sc0, dict) else scene_id
+        self.setWindowTitle(title or f"地图拾取 — {scene_id}（{title_nm}）")
+        self.resize(940, 580)
+        self._px = round(float(initial_x), 2)
+        self._py = round(float(initial_y), 2)
+
+        root = QVBoxLayout(self)
+        hint = QLabel("左键在地图上点击取世界坐标；中键平移，滚轮缩放。确定后写回位置字段（不改场景 JSON）。")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#888;")
+        theme.set_editor_font_role(hint, theme.FONT_ROLE_HINT)
+        root.addWidget(hint)
+
+        self._lbl = QLabel("", self)
+        self._lbl.setStyleSheet(f"font-family: {MONO_FONT_FAMILY};")
+        theme.set_editor_font_role(self._lbl, theme.FONT_ROLE_SECONDARY)
+        root.addWidget(self._lbl)
+
+        self._view = WorldPointPickView(self)
+        self._view.picked.connect(self._on_picked)
+        root.addWidget(self._view, 1)
+
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+        )
+        bbox.accepted.connect(self.accept)
+        bbox.rejected.connect(self.reject)
+        fit_btn = bbox.addButton("适配", QDialogButtonBox.ButtonRole.ActionRole)
+        fit_btn.setToolTip("把整张地图适配回视口（缩放到全览）")
+        fit_btn.clicked.connect(lambda: self._view.fit_scene())
+        root.addWidget(bbox)
+
+        self._view.setup_from_scene_json(model, scene_id)
+        self._view.set_marker_world(self._px, self._py)
+        self._sync_lbl()
+        QTimer.singleShot(0, self._view, self._view.fit_scene)
+        remember_dialog_geometry(self, "world_point_pick")
+
+    def _sync_lbl(self) -> None:
+        self._lbl.setText(f"x = {self._px:.2f}   y = {self._py:.2f}  （世界单位 wu）")
+
+    def _on_picked(self, x: float, y: float) -> None:
+        self._px = round(float(x), 2)
+        self._py = round(float(y), 2)
+        self._sync_lbl()
+
+    def picked_xy(self) -> tuple[float, float]:
+        return self._px, self._py

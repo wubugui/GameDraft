@@ -56,6 +56,7 @@
     {
       "glob": "public/assets/data/acoustic_spaces.json",
       "docs": [
+        "acoustic-workbench",
         "scene-acoustics"
       ]
     },
@@ -183,6 +184,13 @@
       "docs": [
         "entity-trajectory",
         "trajectory-workbench"
+      ]
+    },
+    {
+      "glob": "public/assets/data/vfx/**",
+      "docs": [
+        "vfx-system",
+        "vfx-workbench"
       ]
     },
     {
@@ -491,6 +499,12 @@
       ]
     },
     {
+      "glob": "src/data/audioCue.ts",
+      "docs": [
+        "per-site-audio-volume"
+      ]
+    },
+    {
       "glob": "src/data/characterRegistry.ts",
       "docs": [
         "character-registry"
@@ -500,6 +514,18 @@
       "glob": "src/dev/**",
       "docs": [
         "debug-ui-persistence"
+      ]
+    },
+    {
+      "glob": "src/dev/runtimeAcousticsSync.ts",
+      "docs": [
+        "scene-acoustics"
+      ]
+    },
+    {
+      "glob": "src/dev/runtimeVfxSync.ts",
+      "docs": [
+        "vfx-workbench"
       ]
     },
     {
@@ -633,6 +659,12 @@
       ]
     },
     {
+      "glob": "src/rendering/vfx/**",
+      "docs": [
+        "vfx-system"
+      ]
+    },
+    {
       "glob": "src/rendering/viewportFit.ts",
       "docs": [
         "display-viewport-and-window"
@@ -654,6 +686,7 @@
       "glob": "src/systems/AudioManager.ts",
       "docs": [
         "cutscene-audio-reclamation",
+        "per-site-audio-volume",
         "start-gate-audio-unlock",
         "system-sfx-event-table"
       ]
@@ -776,6 +809,12 @@
       ]
     },
     {
+      "glob": "src/systems/vfx/**",
+      "docs": [
+        "vfx-system"
+      ]
+    },
+    {
       "glob": "src/ui/**",
       "docs": [
         "debug-ui-persistence",
@@ -800,6 +839,12 @@
       "glob": "src/ui/HUD.ts",
       "docs": [
         "ui-component-layer"
+      ]
+    },
+    {
+      "glob": "src/ui/HudDebut.ts",
+      "docs": [
+        "smell-system"
       ]
     },
     {
@@ -889,6 +934,18 @@
       ]
     },
     {
+      "glob": "src/utils/depthShellField.ts",
+      "docs": [
+        "vfx-system"
+      ]
+    },
+    {
+      "glob": "src/utils/groundHeightfield.ts",
+      "docs": [
+        "vfx-system"
+      ]
+    },
+    {
       "glob": "src/utils/keyframeSampler*",
       "docs": [
         "entity-trajectory",
@@ -896,8 +953,15 @@
       ]
     },
     {
+      "glob": "src/utils/positionRef*",
+      "docs": [
+        "entity-trajectory"
+      ]
+    },
+    {
       "glob": "src/utils/sceneAppearance.ts",
       "docs": [
+        "per-site-audio-volume",
         "scene-lighting"
       ]
     },
@@ -929,6 +993,12 @@
       "glob": "tools/**",
       "docs": [
         "atomic-write-windows"
+      ]
+    },
+    {
+      "glob": "tools/acoustic_workbench/**",
+      "docs": [
+        "acoustic-workbench"
       ]
     },
     {
@@ -1179,9 +1249,21 @@
       ]
     },
     {
+      "glob": "tools/editor/shared/audio_cue.py",
+      "docs": [
+        "per-site-audio-volume"
+      ]
+    },
+    {
       "glob": "tools/editor/shared/audio_picker_dialog.py",
       "docs": [
         "shared-widget-value-fidelity"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/audio_preview_selector.py",
+      "docs": [
+        "per-site-audio-volume"
       ]
     },
     {
@@ -1207,6 +1289,12 @@
       "glob": "tools/editor/shared/lsp_client.py",
       "docs": [
         "json-lang-schema-tooling"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/move_entity_map_picker.py",
+      "docs": [
+        "shared-widget-value-fidelity"
       ]
     },
     {
@@ -1238,6 +1326,12 @@
       "glob": "tools/editor/shared/numeric_roundtrip.py",
       "docs": [
         "numeric-roundtrip-fidelity"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/position_ref_field.py",
+      "docs": [
+        "shared-widget-value-fidelity"
       ]
     },
     {
@@ -1337,6 +1431,12 @@
       "glob": "tools/trajectory_workbench/**",
       "docs": [
         "trajectory-workbench"
+      ]
+    },
+    {
+      "glob": "tools/vfx_workbench/**",
+      "docs": [
+        "vfx-workbench"
       ]
     },
     {

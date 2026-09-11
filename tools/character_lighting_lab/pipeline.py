@@ -1052,7 +1052,7 @@ def stage_probes(cal: dict, lay: dict, hdr: dict, wb: dict, lights: list[dict],
     # ---- 逐颗 SH 去环(Sloan 窗,见 dering.py):负瓣深的 probe 亮度解窗、
     #      三通道同窗;治运行时逐通道截负翻出的翡翠伪色 + 格边界块状走样。
     #      四个 SH 场各自去环(膨胀填充后做,补出来的格同样要非负)。----
-    from .dering import dering_sh
+    from tools.character_lighting_lab.dering import dering_sh
     # L1 图集取**去环之前**的系数:去环窗是给线性 L2/L4 求值防截负设计的,会削 L1 向量;
     # L1 走 Geomerics 非线性求值(永不为负),要的是真向量。
     l1_pre = {k: v[:, :4].copy() for k, v in (('base', sh_base), ('emit', sh_emit),
@@ -1956,7 +1956,7 @@ def build_radiance_field(bg_path: Path, work_wh: tuple[int, int], P: dict) -> di
     所以:**只有这一个函数造辐射场**,两边共用。再加一道哈希门(见
     `radiance_sha1`)—— 对齐这件事要能被**证明**,不能靠"我保证"。
     """
-    from .scene_geometry import resize_rgb
+    from tools.character_lighting_lab.scene_geometry import resize_rgb
     img = Image.open(bg_path).convert('RGB')
     rgb = np.asarray(img, np.float32) / 255.0
     if img.size != tuple(work_wh):
@@ -2212,11 +2212,18 @@ def main():
             continue
         ap.add_argument(f'--{k}', type=type(v), default=None)
 
+    # ⚠ 下面三个手写参数**必须同时接受下划线拼写**。上面自动生成的那批是 `--probe_spp`
+    #   这种下划线名(直接来自 DEFAULTS 的键),而 serve.py 的 `_extra_from_query` 也按
+    #   键名拼 `--<key>` —— 只声明 `--probe-band` 的话,查看器每次烘焙都会送来
+    #   `--probe_band`,argparse 当场 `unrecognized arguments` 退出,**每一次烘焙都失败**
+    #   (2026-09-08 实测:实验室里点任何场景的烘焙按钮都是这条错)。
+    #   规则一句话:程序化调用一律用下划线,两种拼写都收。
     g = ap.add_argument_group('probe 分布(烘焙期可调,见 probe_layout.py)')
-    g.add_argument('--probe-dims', dest='probe_dims', default=None,
+    g.add_argument('--probe-dims', '--probe_dims', dest='probe_dims', default=None,
                    help='显式格数 "nx,ny,nz"(缺省 20,6,14 = 现役载荷大小);'
                         '传 auto 则按角色高度推密度')
-    g.add_argument('--probe-band', dest='probe_band', type=float, default=None,
+    g.add_argument('--probe-band', '--probe_band', dest='probe_band', type=float,
+                   default=None,
                    help='角色可达高度带(wu)。缺省由**角色实高**推出(char_wu*1.15)。'
                         '⚠ 别再手填 1.6,那是"角色高 1.5 wu"的遗留假设,'
                         '实测角色 0.17~0.97 wu')
@@ -2225,8 +2232,8 @@ def main():
     e.add_argument('--escape', default=None,
                    help='black(缺省) | white | "r,g,b" | 某张 equirect 天空图路径 | '
                         'scene_derived ⚠(从画面反推,慎用)')
-    e.add_argument('--escape-intensity', dest='escape_intensity', type=float,
-                   default=1.0)
+    e.add_argument('--escape-intensity', '--escape_intensity', dest='escape_intensity',
+                   type=float, default=1.0)
 
     args = ap.parse_args()
     params = {k: getattr(args, k) for k in DEFAULTS

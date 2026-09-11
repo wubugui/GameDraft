@@ -1,17 +1,13 @@
 import type {
+  AudioCueRef,
   AudioPlaybackHandle,
   FootstepConfig,
   GameContext,
   IGameSystem,
-  TransientSfxOptions,
 } from '../data/types';
-import {
-  resolveWorld,
-  spatialize,
-  type AudioListener,
-  type AudioSpaceResolver,
-  type SpatialParams,
-} from '../utils/audioSpace';
+import { audioCueId, audioCueVolume } from '../data/audioCue';
+import { resolveWorld, type AudioSpaceResolver } from '../utils/audioSpace';
+import type { Vec3 } from '../utils/sceneSpace';
 
 /**
  * 脚步声：由**动画落脚帧**驱动、经**空间化**播出的一次性音效。
@@ -69,15 +65,22 @@ export interface FootstepEmitter {
 }
 
 export interface FootstepSpatialContext {
+  /** 场景坐标 + 高度 → M-world 的解算器（field / planar） */
   resolver: AudioSpaceResolver;
-  listener: AudioListener;
-  params: SpatialParams;
 }
 
 export interface FootstepSystemDeps {
-  /** 播一条一次性音效。必须是 per-soundId 的那条（`AudioManager.playTransientSfx`）。 */
-  playSfx(id: string, options: TransientSfxOptions): AudioPlaybackHandle | null;
-  /** 本帧的解算器 + 听者 + 参数；返回 null = 本帧不发声（场景没就绪/音频没解锁）。 */
+  /**
+   * 从 M-world 里的一个发声点播一条一次性音效（`AudioManager.playSfxAt`）。
+   * 脚步是**有物理位置的声源**：距离衰减、声像、崖壁回音全由空间音总线按听者与脚点的几何算，
+   * 本系统只负责"哪一帧、哪块地、哪条音效、多响"。
+   */
+  playAt(
+    id: string,
+    world: Vec3,
+    options: { volume?: number; onEnd?: () => void; spatialized?: boolean },
+  ): AudioPlaybackHandle | null;
+  /** 本帧的解算器；返回 null = 本帧不发声（场景没就绪/音频没解锁）。 */
   getSpatialContext(): FootstepSpatialContext | null;
   /** 脚点处该用哪个脚步集：zone 覆盖 → 场景默认 → null（本处不发脚步）。 */
   resolveSetAt(sceneX: number, sceneY: number): string | null;
@@ -113,10 +116,17 @@ export interface FootstepDebugRecord {
   clip: string;
   frame: number;
   audioId: string;
+  /** 配置增益（集 + 缺省，dB 折线性）；距离衰减 / 声像在空间音总线里，不在这 */
   gain: number;
-  pan: number;
-  distanceWu: number;
+  /** 脚点，M-world wu */
+  world: Vec3;
   mode: 'field' | 'planar';
+  /**
+   * 这一步走没走空间化。`false` = `defaults.spatialized` 关着，声音绕开了空间总线,
+   * `world` / `mode` 这一行仍照常记（脚点还是算出来了），但**它们没参与发声**——
+   * 不记这一条就会出现"调试状态里坐标好好的、听感却完全没有空间感"而查不出原因。
+   */
+  spatialized: boolean;
 }
 
 const DEBUG_RING = 16;
@@ -252,7 +262,8 @@ export class FootstepSystem implements IGameSystem {
       return;
     }
 
-    const audioId = resolveSfx(set.sfx, cfg.clipFallback, clip);
+    const cue = resolveSfx(set.sfx, cfg.clipFallback, clip);
+    const audioId = audioCueId(cue);
     if (!audioId) {
       // 只有**登记过**的片段（= 被认定为移动片段）查不到音效才算配置错误，值得报。
       // 没登记的片段本来就不该发声，静默是正解——对它们 warn 只会把控制台刷满。
@@ -262,26 +273,25 @@ export class FootstepSystem implements IGameSystem {
       return;
     }
 
-    // 空间化：脚步恒在行走面上 ⇒ 高度 0
+    // 脚点 → M-world：脚步恒在行走面上 ⇒ 高度 0。距离 / 声像 / 回音全交给空间音总线按这个点算
     const world = resolveWorld(ctx.resolver, { contactX: x, contactY: y, heightWu: 0 });
-    const sp = spatialize(ctx.listener, world, ctx.params);
-    if (sp.inaudible) {
-      // 事件已消费：走出可听范围再走回来不该把攒下的步数一次补齐
-      st.framesSinceStep = 0;
-      return;
-    }
 
     st.framesSinceStep = 0;
 
+    // 两级：dB 管“这块地整体多响”，本条 volume 管“这个片段相对本集多响”（相乘，不是替换）。
+    // ≠ playSfx 的“替换素材级”口径：脚步根本不读素材级 volume，它的基准就是 gainDb。
     const gainDb = firstNum(set.gainDb, 0, 0) + firstNum(cfg.defaults?.gainDb, 0, 0);
-    const volume = sp.gain * dbToLin(gainDb);
+    const volume = dbToLin(gainDb) * (audioCueVolume(cue) ?? 1);
+    // 缺省走空间化；只有显式写 false 才退成"就播一个声音"（作者面的对照开关）。
+    // 用 !== false 而不是 === true：这个键在绝大多数文件里根本不存在。
+    const spatialized = cfg.defaults?.spatialized !== false;
 
     // 句柄要在 onEnd 闭包里被摘掉，而句柄本身是这次调用的返回值——先声明一个可变槽，
     // 别在闭包里引用尚未初始化的 const（那是 TDZ，只在 onEnd 被同步调用时才炸，最难查的那种）。
     let handle: AudioPlaybackHandle | null = null;
-    handle = this.deps.playSfx(audioId, {
+    handle = this.deps.playAt(audioId, world, {
       volume,
-      pan: sp.pan,
+      spatialized,
       onEnd: () => { if (handle) this.live.delete(handle); },
     });
     if (handle) this.live.add(handle);
@@ -294,9 +304,9 @@ export class FootstepSystem implements IGameSystem {
       frame,
       audioId,
       gain: volume,
-      pan: sp.pan,
-      distanceWu: sp.distanceWu,
+      world,
       mode: ctx.resolver.mode,
+      spatialized,
     });
   }
 
@@ -427,17 +437,18 @@ export function framesBetween(from: number, to: number, count: number): number[]
  * 比「站着不动响脚步」好得多，而且校验器会把它报出来。
  */
 export function resolveSfx(
-  sfx: Record<string, string> | undefined,
+  sfx: Record<string, AudioCueRef> | undefined,
   clipFallback: Record<string, string> | undefined,
   clip: string,
-): string | null {
+): AudioCueRef | null {
   if (!sfx) return null;
   const seen = new Set<string>();
   let key: string | undefined = clip;
   while (key && !seen.has(key)) {
     seen.add(key);
     const hit = sfx[key];
-    if (typeof hit === 'string' && hit.trim()) return hit.trim();
+    // 值可能是裸 id，也可能是带本处音量的 { id, volume }——一律走 audioCueId 判“算不算登记过”。
+    if (audioCueId(hit)) return hit;
     key = clipFallback?.[key];
   }
   return null;

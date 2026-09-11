@@ -1,7 +1,8 @@
 import type {
-  BackgroundLayer, SceneData, SceneDepthConfig, SceneLightingDef, SceneTimeVariant,
+  AudioCueRef, BackgroundLayer, SceneData, SceneDepthConfig, SceneLightingDef, SceneTimeVariant,
   TimeTransition,
 } from '../data/types';
+import { sameAudioCue, sameAudioCueList } from '../data/audioCue';
 
 /**
  * 这个表现档是否**声明了画面遮挡** —— 换装那一拍据此决定盖不盖黑幕。
@@ -35,8 +36,8 @@ export interface ResolvedSceneAppearance {
   primaryBackgroundImage: string;
   lighting: SceneLightingDef | undefined;
   depthConfig: SceneDepthConfig | undefined;
-  ambientSounds: string[] | undefined;
-  bgm: string | undefined;
+  ambientSounds: AudioCueRef[] | undefined;
+  bgm: AudioCueRef | undefined;
   filterId: string | undefined;
   /** 实际命中的时段 id；空串 = 用的是顶层基底（没开日夜 / 该时段没配变体）。 */
   phase: string;
@@ -119,8 +120,10 @@ export function sameAppearance(a: ResolvedSceneAppearance, b: ResolvedSceneAppea
     if (a.backgrounds[i]?.image !== b.backgrounds[i]?.image) return false;
   }
   if (a.filterId !== b.filterId) return false;
-  if (a.bgm !== b.bgm) return false;
-  if (JSON.stringify(a.ambientSounds ?? null) !== JSON.stringify(b.ambientSounds ?? null)) return false;
+  // ⚠ 不能用 `!==` 比：带本处音量的引用每次解析都是新对象，
+  //   引用比恒判成「变了」→ 每次时段推进都白赔一次全场景重载（背景闪一下）。
+  if (!sameAudioCue(a.bgm, b.bgm)) return false;
+  if (!sameAudioCueList(a.ambientSounds, b.ambientSounds)) return false;
   if (JSON.stringify(a.lighting ?? null) !== JSON.stringify(b.lighting ?? null)) return false;
   if (JSON.stringify(a.depthConfig ?? null) !== JSON.stringify(b.depthConfig ?? null)) return false;
   return true;

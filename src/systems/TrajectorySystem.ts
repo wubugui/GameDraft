@@ -389,6 +389,24 @@ export class TrajectorySystem implements IGameSystem {
     return this.plays.size;
   }
 
+  /**
+   * 这条**轨迹资产**此刻在跑的那次播放：这次用的 2D 相对帧 + 播放位置。没在跑返回 null。
+   *
+   * 给位置引用的"曲线上的点"用（`PositionRef` 的 `curve` 档）：铜钱还在飞的时候，
+   * "它的落点"指的是**这次**播放会落的地方，而不是作者场景里那条曲线的落点；这次播放的帧
+   * 还是按当前场景投影过的，跨场景也准。同一条资产同时挂在多个目标上时给**第一条**
+   * （谁在前由 Map 的插入序定）——真要区分是哪一个，用 `kind:'entity'` 指名那个实体。
+   */
+  livePlay(trajectoryId: string): { keyframes: readonly TrajectoryKeyframe[]; anchor: { x: number; y: number } } | null {
+    const id = String(trajectoryId || '').trim();
+    if (!id) return null;
+    for (const play of this.plays.values()) {
+      if (play.def.id !== id) continue;
+      return { keyframes: play.def.keyframes, anchor: { x: play.anchorX, y: play.anchorY } };
+    }
+    return null;
+  }
+
   // ———————————————————— 内部 ————————————————————
 
   /**

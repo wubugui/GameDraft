@@ -212,6 +212,7 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
     entity_labels: dict[str, str] = {}
     scene_spawns: dict[str, list[str]] = {}
     scene_zones: dict[str, list[str]] = {}
+    scene_vfx: dict[str, list[str]] = {}
     scene_hotspots: dict[str, list[str]] = {}
     scene_entities: dict[str, list[str]] = {}
     scene_npcs: dict[str, list[str]] = {}
@@ -238,6 +239,10 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
         spawn_keys.update(keys)
         scene_spawns[sid] = keys
         scene_zones[sid] = sorted(zones)
+        scene_vfx[sid] = sorted(
+            str(r.get("id")).strip() for r in (doc.get("vfx") or [])
+            if isinstance(r, dict) and str(r.get("id") or "").strip()
+        )
         scene_hotspots[sid] = sorted(hots)
         scene_entities[sid] = sorted(set(npcs) | set(hots))
         scene_npcs[sid] = sorted(npcs)
@@ -278,6 +283,7 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
 
     scoped["scene_spawns"] = scene_spawns
     scoped["scene_zones"] = scene_zones
+    scoped["scene_vfx"] = scene_vfx
     scoped["scene_hotspots"] = scene_hotspots
     scoped["scene_entities"] = scene_entities
     scoped["scene_actors"] = {
@@ -299,11 +305,34 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
     u["trajectories"] = sorted(trajectory_ids)
     labels["trajectories"] = trajectory_labels
 
+    # ---- 效果资产(assets/data/vfx/<id>.json,一文件一个效果,id 全局唯一 = 文件名) ----
+    # playVfx.effect 直接按这张全局表补全;唯一写者是粒子工作台,这里只读。
+    vfx_ids: set[str] = set()
+    vfx_labels: dict[str, str] = {}
+    for f in iter_content_files(root, ("public/assets/data/vfx/*.json",), extra_paths):
+        doc = _load(f, read)
+        if not isinstance(doc, dict):
+            continue
+        vid = doc.get("id")
+        vid = vid if isinstance(vid, str) and vid.strip() else f.stem
+        vfx_ids.add(vid)
+        if isinstance(doc.get("label"), str) and doc["label"].strip():
+            vfx_labels[vid] = _trunc(doc["label"])
+    u["vfx_effects"] = sorted(vfx_ids)
+    # 场景效果实例 id 的全局并集。实例是**场景作用域**的（同名实例可以出现在多个场景），
+    # 这张表只作兜底候选，真正的收窄读 scoped["scene_vfx"]——与 zones / hotspots 同待遇。
+    u["vfx_instances"] = sorted({i for ids in scene_vfx.values() for i in ids})
+    labels["vfx_effects"] = vfx_labels
+
     # ---- 数据表(id + 中文名) ----
     # 线索注册表(K7):collectClue.clueId 与 [clue:] 标记的引用宇宙
     clue_doc = _load(data / "clues.json", read)
     clue_rows = clue_doc.get("clues") if isinstance(clue_doc, dict) else clue_doc
     u["clues"], labels["clues"] = _ids_and_labels(clue_rows, "title")
+    # 系统说明卡(K4):showSystemNote.noteId 的引用宇宙
+    note_doc = _load(data / "system_notes.json", read)
+    note_rows = note_doc.get("notes") if isinstance(note_doc, dict) else note_doc
+    u["system_notes"], labels["system_notes"] = _ids_and_labels(note_rows, "title")
 
     for name, path, label_key in (
         ("items", data / "items.json", "name"),

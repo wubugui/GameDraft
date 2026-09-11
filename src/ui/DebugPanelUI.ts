@@ -13,6 +13,11 @@ import {
   type DebugAcousticDeps,
   type DebugAcousticSectionHandle,
 } from './debugAcousticSection';
+import {
+  createDebugVfxSection,
+  type DebugVfxDeps,
+  type DebugVfxSectionHandle,
+} from './debugVfxSection';
 
 /** 可注册的 debug 区块内容：纯文本或带操作按钮；可选附加 DOM（如滑条） */
 export type DebugSectionContent =
@@ -47,6 +52,7 @@ const TAB_FLAGS = 'flags';
 const TAB_LIGHTING = 'lighting';
 const TAB_SCENE = 'scene';
 const TAB_ACOUSTIC = 'acoustic';
+const TAB_VFX = 'vfx';
 const TAB_LOG = 'log';
 
 /** 与 DebugTools.setupDebugPanelSections 注册的区块 id 一致 */
@@ -97,6 +103,7 @@ type TabId =
   | typeof TAB_LIGHTING
   | typeof TAB_SCENE
   | typeof TAB_ACOUSTIC
+  | typeof TAB_VFX
   | typeof TAB_LOG;
 
 /** 区块渲染上下文：tools / screen 默认折叠；其余默认展开。screen=游戏画面常驻卡（只有 ✕ 取消常驻） */
@@ -156,6 +163,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private panelScene: HTMLElement;
   private panelAcoustic: HTMLElement;
   private acousticSectionHandle: DebugAcousticSectionHandle | null = null;
+  private panelVfx!: HTMLElement;
+  private vfxSectionHandle: DebugVfxSectionHandle | null = null;
   private panelLog: HTMLElement;
   private logPre: HTMLElement;
   private tabButtons: Map<TabId, HTMLButtonElement> = new Map();
@@ -236,6 +245,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     mkTab(TAB_LIGHTING, '光影');
     mkTab(TAB_FLAGS, 'Flag');
     mkTab(TAB_ACOUSTIC, '声学');
+    mkTab(TAB_VFX, '粒子');
     mkTab(TAB_SCENE, '场景');
     mkTab(TAB_LOG, '日志');
 
@@ -253,6 +263,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelFlags = this.mkPanel('flags-panel');
     this.panelScene = this.mkPanel('scene-panel');
     this.panelAcoustic = this.mkPanel('acoustic-panel');
+    this.panelVfx = this.mkPanel('vfx-panel');
     this.panelLog = this.mkPanel('log-panel');
 
     const logScroll = document.createElement('div');
@@ -284,6 +295,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     panels.appendChild(this.panelFlags);
     panels.appendChild(this.panelScene);
     panels.appendChild(this.panelAcoustic);
+    panels.appendChild(this.panelVfx);
     panels.appendChild(this.panelLog);
 
     this.root.appendChild(header);
@@ -338,10 +350,12 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelFlags.classList.toggle('is-active', id === TAB_FLAGS);
     this.panelScene.classList.toggle('is-active', id === TAB_SCENE);
     this.panelAcoustic.classList.toggle('is-active', id === TAB_ACOUSTIC);
+    this.panelVfx.classList.toggle('is-active', id === TAB_VFX);
     this.panelLog.classList.toggle('is-active', id === TAB_LOG);
     // 切到「场景」页时重取清单：改了场景 JSON / 换了当前场景都不必刷页面
     if (id === TAB_SCENE) this.sceneSectionHandle?.refresh();
     if (id === TAB_ACOUSTIC) this.acousticSectionHandle?.refresh();
+    if (id === TAB_VFX) this.vfxSectionHandle?.refresh();
     this.updateSystemLiveLoop();
   }
 
@@ -374,6 +388,13 @@ export class DebugPanelUI implements IDebugPanelAPI {
   attachAcousticDebug(deps: DebugAcousticDeps): void {
     if (this.acousticSectionHandle) return;
     this.acousticSectionHandle = createDebugAcousticSection(deps);
+    if (this._isOpen) this.render();
+  }
+
+  /** 挂载「粒子」页（世界空间粒子 / 群体的状态与刺激）；仅 dev 构建调用一次 */
+  attachVfxDebug(deps: DebugVfxDeps): void {
+    if (this.vfxSectionHandle) return;
+    this.vfxSectionHandle = createDebugVfxSection(deps);
     if (this._isOpen) this.render();
   }
 
@@ -538,6 +559,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.renderFlags();
     this.renderScene();
     this.renderAcoustic();
+    this.renderVfx();
     this.renderLogOnly();
     this.restorePanelScrollState(scrollState);
   }
@@ -943,6 +965,18 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelAcoustic.appendChild(scroll);
   }
 
+  private renderVfx(): void {
+    this.panelVfx.replaceChildren();
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+    if (this.vfxSectionHandle) {
+      scroll.appendChild(this.vfxSectionHandle.root);
+    } else {
+      scroll.appendChild(this.p('（粒子调试仅在 npm run dev 的开发构建挂载）'));
+    }
+    this.panelVfx.appendChild(scroll);
+  }
+
   private renderScene(): void {
     this.panelScene.replaceChildren();
     const scroll = document.createElement('div');
@@ -1023,6 +1057,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.sceneSectionHandle?.destroy();
     this.acousticSectionHandle?.destroy();
     this.acousticSectionHandle = null;
+    this.vfxSectionHandle?.destroy();
+    this.vfxSectionHandle = null;
     this.sceneSectionHandle = null;
     this.close();
     this.sections.clear();

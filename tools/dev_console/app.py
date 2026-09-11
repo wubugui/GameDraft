@@ -17,12 +17,14 @@ import time
 import uuid
 import webbrowser
 from dataclasses import dataclass
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlsplit, urlunsplit
 
+from tools.dev.game_preview import open_game_preview
 from tools.dev.paths import env_with_node_path, npm_command, project_python, repo_root
 from tools.skill_workflow_governance.skill_workflow_governance.agent import (
     answer_governance_chat,
@@ -92,6 +94,8 @@ class GovernanceJob:
 
 TOOLS: tuple[ToolAction, ...] = (
     ToolAction("主编辑器", "editor", "内容、场景、资源索引"),
+    ToolAction("手册", "handbook",
+               "制作人自己维护的本地文档站（handbook/docs 下的 md 渲成网站：全站中文搜索、公式、表格、代码），与游戏/编辑器零耦合"),
     ToolAction("生产工作台", "workbench", "每日检查、剧情单元、素材任务"),
     ToolAction("构建管理工作台", "build-workbench", "发行版 ship 定时构建、归档与留档"),
     ToolAction("对话图", "dialogue-graph", "Graph 对话和节点关系"),
@@ -111,6 +115,12 @@ TOOLS: tuple[ToolAction, ...] = (
     ToolAction("轨迹工作台", "trajectory-workbench",
                "实体轨迹动画：加载场景（可还原 3D 伪世界）拉线 / 抛体物理烘成独立资产，"
                "playTrajectory 在任何场景挂任何实体播（独立窗口，零浏览器缓存）"),
+    ToolAction("声学工作台", "acoustic-workbench",
+               "场景回音：把场景在世界空间展开成 3D，反射面 / 听者贴着画里的崖壁摆，像 Unity 那样漫游操作；"
+               "一键拉起游戏进当前场景实时预览、试听；它是 acoustic_spaces.json 的唯一写者（独立窗口，零浏览器缓存）"),
+    ToolAction("粒子工作台", "vfx-workbench",
+               "世界空间粒子 / 群体：发射器与模块按 types.ts 逐字建，3D 里摆发射器原点 / 巢半径 / 锚点，"
+               "本地预览跑的就是运行时那份模拟核心；一键拉起游戏实时预览、发刺激；它是 assets/data/vfx/ 的唯一写者（独立窗口，零浏览器缓存）"),
     ToolAction("动画资源工作台", "anim-preview", "A→H 版本图 / 人工 R 装配 / 游戏真实渲染终验(Web IDE)"),
     ToolAction("Parallax 编辑器", "parallax-editor", "过场视差场景可视化编辑：图层/关键帧/轨迹，存 parallax_scenes.json(Web)"),
     ToolAction("Skill/Workflow 治理", "skill-governance", "扫描 skill、workflow 和 agent 入口，生成报告并打开 dashboard"),
@@ -123,6 +133,156 @@ TOOLS: tuple[ToolAction, ...] = (
 GAME_SERVER_PORTS = (5173, 5174, 5175, 5176)
 DEFAULT_GAME_URL = "http://localhost:5173/"
 GAME_URL_RE = re.compile(r"https?://(?:localhost|127\.0\.0\.1|\[::1\]):\d+/?")
+
+TOOL_LABELS: dict[str, str] = {tool.task: tool.label for tool in TOOLS}
+
+# 工具进程的存活/孤儿检测缓存周期。页面每秒 poll 一次，枚举全机进程（要读每个 python 的
+# 命令行）在 Windows 上要几十到几百毫秒，不能每次 poll 都扫。
+TOOL_SCAN_TTL_SECONDS = 5.0
+
+
+def tool_cmdline_matches(argv: list[str], task: str) -> bool:
+    """这条命令行是不是 ``task`` 这个工具的一份实例。
+
+    两种形态都算：控制台拉起的外层 ``python -m tools.dev <task>``，以及它再拉起的
+    内层 ``python -m <该工具模块>``（见 tools/dev/launch.py 的 TOOL_MODULES）。
+    只按 token 精确匹配：``tools.editor.validate`` 不是 ``editor``。
+    """
+    from tools.dev.launch import TOOL_MODULES
+
+    module = TOOL_MODULES.get(task, ("", []))[0]
+    for i, tok in enumerate(argv):
+        if tok != "-m" or i + 1 >= len(argv):
+            continue
+        target = argv[i + 1]
+        if target == "tools.dev" and i + 2 < len(argv) and argv[i + 2] == task:
+            return True
+        if module and target == module:
+            return True
+    return False
+
+
+def _split_cmdline(cmd: str) -> list[str]:
+    try:
+        return shlex.split(cmd, posix=platform.system() != "Windows")
+    except ValueError:
+        return cmd.split()
+
+
+def list_python_processes() -> list[dict[str, Any]]:
+    """枚举本机 python 进程：``[{pid, ppid, argv, started}]``（started 为 datetime 或 None）。
+
+    优先 psutil（项目 venv 自带）；没有就退到 PowerShell / ps。任何一步失败都返回空表——
+    检测只是护栏，绝不能把控制台本身拖死。
+    """
+    try:
+        import psutil  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001 - 缺库就走系统命令
+        psutil = None
+    if psutil is not None:
+        out: list[dict[str, Any]] = []
+        # 先只拿便宜的字段按名字筛，命令行（Windows 上要逐进程查询，全机 300+ 个进程要
+        # 好几秒）只对 python 进程取。
+        # 实测（Windows，438 个进程）：pid+name 枚举 0.02s；给每个进程取 ppid/create_time 要 4s。
+        # 所以 ppid / create_time / cmdline 三项都只对筛出来的 python 进程取。
+        for proc in psutil.process_iter(["pid", "name"]):
+            info = proc.info
+            name = str(info.get("name") or "").lower()
+            if not name.startswith("python"):
+                continue
+            try:
+                argv = list(proc.cmdline() or [])
+                ppid = int(proc.ppid() or 0)
+                created = float(proc.create_time() or 0)
+            except (psutil.Error, OSError):
+                continue
+            started = None
+            try:
+                started = datetime.fromtimestamp(created)
+            except (TypeError, ValueError, OSError, OverflowError):
+                started = None
+            out.append({"pid": int(info["pid"]), "ppid": ppid, "argv": argv, "started": started})
+        return out
+    return _list_python_processes_fallback()
+
+
+def _list_python_processes_fallback() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    try:
+        if platform.system() == "Windows":
+            script = (
+                "Get-CimInstance Win32_Process -Filter \"Name LIKE 'python%'\" | ForEach-Object {"
+                " $c = if ($_.CreationDate) { $_.CreationDate.ToString('s') } else { '' };"
+                " \"$($_.ProcessId)`t$($_.ParentProcessId)`t$c`t$($_.CommandLine)\" }"
+            )
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True, text=True, errors="replace", timeout=20, check=False,
+            )
+            for line in result.stdout.splitlines():
+                parts = line.split("\t", 3)
+                if len(parts) < 4 or not parts[0].strip().isdigit():
+                    continue
+                started = None
+                try:
+                    started = datetime.fromisoformat(parts[2].strip()) if parts[2].strip() else None
+                except ValueError:
+                    started = None
+                out.append({
+                    "pid": int(parts[0]), "ppid": int(parts[1] or 0),
+                    "argv": _split_cmdline(parts[3]), "started": started,
+                })
+        else:
+            result = subprocess.run(
+                ["ps", "-eo", "pid=,ppid=,lstart=,args="],
+                capture_output=True, text=True, errors="replace", timeout=20, check=False,
+            )
+            for line in result.stdout.splitlines():
+                fields = line.split(None, 7)  # pid ppid + lstart 的 5 个字段 + args
+                if len(fields) < 8 or not fields[0].isdigit():
+                    continue
+                started = None
+                try:
+                    started = datetime.strptime(" ".join(fields[2:7]), "%a %b %d %H:%M:%S %Y")
+                except ValueError:
+                    started = None
+                argv = _split_cmdline(fields[7])
+                if not argv or "python" not in os.path.basename(argv[0]).lower():
+                    continue
+                out.append({"pid": int(fields[0]), "ppid": int(fields[1]), "argv": argv, "started": started})
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    return out
+
+
+def tool_instance_roots(processes: list[dict[str, Any]], task: str, exclude_pids: set[int]) -> list[dict[str, Any]]:
+    """从进程表里挑出 ``task`` 的实例，并折成"树根"（父进程不在匹配集里的那些）。
+
+    ``exclude_pids``：本控制台自己拉起的实例（连同它们的后代）不算孤儿。后代按 ppid 链判。
+    """
+    by_pid = {p["pid"]: p for p in processes}
+
+    def owned(pid: int) -> bool:
+        seen: set[int] = set()
+        cur = pid
+        while cur and cur not in seen:
+            if cur in exclude_pids:
+                return True
+            seen.add(cur)
+            cur = int(by_pid.get(cur, {}).get("ppid") or 0)
+        return False
+
+    matched = {p["pid"]: p for p in processes if tool_cmdline_matches(p["argv"], task) and not owned(p["pid"])}
+    roots = [p for pid, p in matched.items() if int(p.get("ppid") or 0) not in matched]
+    roots.sort(key=lambda p: p["pid"])
+    return [
+        {
+            "pid": p["pid"],
+            "started": p["started"].strftime("%m-%d %H:%M:%S") if isinstance(p["started"], datetime) else None,
+            "cmd": " ".join(p["argv"]),
+        }
+        for p in roots
+    ]
 GOVERNANCE_PATH = "/governance/"
 GOVERNANCE_AGENT_SHELL_PORT = 8790
 GOVERNANCE_AGENT_SHELL_PACKAGE = "claude-code-web@3.4.0"
@@ -215,6 +375,13 @@ class ConsoleState:
         self.game_process: subprocess.Popen[str] | None = None
         self.game_url = ""
         self.stopping_game_pids: set[int] = set()
+        # 本控制台拉起的工具进程（task → Popen）。2026-09-09 事故：控制台重开时旧编辑器
+        # 没被回收，孤儿进程拿启动那一刻的旧代码往现网数据上写。凡启动都登记、退出都回收、
+        # 重复启动先拦。
+        self.tool_processes: dict[str, subprocess.Popen[str]] = {}
+        self._tool_scan_lock = threading.Lock()
+        self._tool_scan_at = 0.0
+        self._tool_scan_result: dict[str, list[dict[str, Any]]] = {}
         self.governance_jobs: dict[str, GovernanceJob] = {}
         self.governance_shell_process: subprocess.Popen[str] | None = None
         self.governance_shell_port = 0
@@ -265,6 +432,12 @@ class ConsoleState:
                 "seq": self.seq,
             }
 
+    def snapshot_with_tools(self, since: int = 0) -> dict[str, Any]:
+        """snapshot + 工具进程状态（含孤儿）。进程扫描带 TTL 缓存，不在 self.lock 里做。"""
+        data = self.snapshot(since)
+        data["tools"] = self.tools_status()
+        return data
+
     def run_action(self, action: str, payload: dict[str, Any]) -> tuple[bool, str]:
         if action == "pull":
             return self._run_exclusive(
@@ -300,6 +473,8 @@ class ConsoleState:
             return self._start_game()
         if action == "stop_game":
             return self._stop_game()
+        if action == "stop_tool":
+            return self.stop_tool(str(payload.get("task") or ""))
         if action == "open_dev_entry":
             return self._open_dev_entry(
                 str(payload.get("kind") or ""),
@@ -324,10 +499,209 @@ class ConsoleState:
             return False, f"Unknown tool: {task}"
         if task == "skill-governance":
             return self.refresh_governance_dashboard()
+        label = TOOL_LABELS.get(task, task)
+        with self.lock:
+            own = self.tool_processes.get(task)
+        if own is not None and own.poll() is None:
+            return False, (
+                f"「{label}」已在运行（PID {own.pid}，本控制台启动）。不再开第二份——"
+                "两份编辑器交替写同一批文件必丢数据；要重开先点「结束」或关掉它。"
+            )
+        orphans = self.find_tool_instances(task, fresh=True)
+        if orphans:
+            desc = "、".join(f"PID {o['pid']}（起于 {o['started'] or '未知'}）" for o in orphans)
+            return False, (
+                f"「{label}」还有上一个控制台留下的实例在跑：{desc}。它跑的是启动那一刻的旧代码，"
+                "保存会用旧格式覆盖现网数据。先点「结束」（走它自己的关闭确认）或手动关掉，再启动。"
+            )
         proc = self._start_process(f"Launch {task}", self._dev_argv(task), exclusive=False)
         if proc is None:
             return False, f"Failed to launch {task}."
+        with self.lock:
+            self.tool_processes[task] = proc
         return True, "ok"
+
+    # ------------------------------------------------------------------ #
+    # 工具进程生命周期：登记 / 孤儿检测 / 结束 / 退出回收
+    # ------------------------------------------------------------------ #
+    def _scan_tool_instances(self, *, fresh: bool = False) -> dict[str, list[dict[str, Any]]]:
+        """全部工具的"非本控制台所有"实例（孤儿）。
+
+        ``fresh=False``（页面 poll）只读缓存、绝不阻塞——缓存由 ``tool_scan_loop`` 后台线程
+        每 TOOL_SCAN_TTL_SECONDS 刷一次；``fresh=True``（启动/结束按钮）同步真扫一次。
+        """
+        if not fresh:
+            with self._tool_scan_lock:
+                return self._tool_scan_result
+        with self._tool_scan_lock:
+            processes = list_python_processes()
+            with self.lock:
+                exclude = {p.pid for p in self.tool_processes.values() if p.poll() is None}
+            exclude.add(os.getpid())
+            result = {
+                tool.task: tool_instance_roots(processes, tool.task, exclude)
+                for tool in TOOLS
+                if tool.task != "skill-governance"
+            }
+            self._tool_scan_result = result
+            self._tool_scan_at = time.monotonic()
+            return result
+
+    def find_tool_instances(self, task: str, *, fresh: bool = False) -> list[dict[str, Any]]:
+        return list(self._scan_tool_instances(fresh=fresh).get(task, []))
+
+    def tools_status(self) -> dict[str, dict[str, Any]]:
+        """给页面的每个工具按钮：running / pid / owned / started。"""
+        orphans = self._scan_tool_instances()
+        status: dict[str, dict[str, Any]] = {}
+        with self.lock:
+            owned = {task: proc for task, proc in self.tool_processes.items() if proc.poll() is None}
+        for tool in TOOLS:
+            own = owned.get(tool.task)
+            if own is not None:
+                status[tool.task] = {"running": True, "owned": True, "pid": own.pid, "started": None}
+                continue
+            roots = orphans.get(tool.task) or []
+            if roots:
+                status[tool.task] = {
+                    "running": True, "owned": False,
+                    "pid": roots[0]["pid"], "started": roots[0]["started"], "count": len(roots),
+                }
+            else:
+                status[tool.task] = {"running": False, "owned": False, "pid": None, "started": None}
+        return status
+
+    def _process_tree_pids(self, pid: int) -> set[int]:
+        """pid 及其全部后代（psutil；没有就退到 python 进程表的 ppid 链——非 python 子进程
+        如 QtWebEngineProcess 本来就不拥有顶层窗口，漏掉无妨）。"""
+        try:
+            import psutil  # type: ignore[import-not-found]
+
+            root = psutil.Process(pid)
+            return {pid} | {c.pid for c in root.children(recursive=True)}
+        except Exception:  # noqa: BLE001 - 缺库 / 进程已退出都走退路
+            pass
+        pids = {pid}
+        procs = list_python_processes()
+        changed = True
+        while changed:
+            changed = False
+            for p in procs:
+                if p["pid"] not in pids and int(p.get("ppid") or 0) in pids:
+                    pids.add(p["pid"])
+                    changed = True
+        return pids
+
+    def _windows_of_process_tree(self, pid: int) -> list[int]:
+        """进程树名下所有**可见顶层窗口**的 HWND（仅 Windows）。"""
+        import ctypes
+        from ctypes import wintypes
+
+        pids = self._process_tree_pids(pid)
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        found: list[int] = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+        def _visit(hwnd, _lparam):  # noqa: ANN001
+            owner = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+            if owner.value in pids and user32.IsWindowVisible(hwnd):
+                found.append(int(hwnd))
+            return True
+
+        user32.EnumWindows(_visit, 0)
+        return found
+
+    def _post_wm_close(self, hwnd: int) -> None:
+        import ctypes
+
+        WM_CLOSE = 0x0010
+        ctypes.windll.user32.PostMessageW(hwnd, WM_CLOSE, 0, 0)  # type: ignore[attr-defined]
+
+    def _close_process_gracefully(self, pid: int) -> None:
+        """请进程树自己关。
+
+        Windows：给它名下每个可见顶层窗口 PostMessage(WM_CLOSE)——Qt 收到就走 closeEvent，
+        编辑器的"未保存改动"确认照常弹。**不能用 `taskkill /T`（不带 /F）**：实测它一看到
+        进程还有子进程（QtWebEngine 渲染子进程永远在）就直接拒绝，连 WM_CLOSE 都不发。
+        一个可见窗口都没有 = 还没起来或已在退出，没有任何未保存的东西可丢 → 才强杀整棵树。
+        POSIX：SIGTERM 进程组。
+        """
+        if self.is_windows:
+            try:
+                hwnds = self._windows_of_process_tree(pid)
+            except Exception as exc:  # noqa: BLE001 - ctypes 出错不能拖死控制台
+                self.add_log(f"枚举进程 {pid} 的窗口失败：{exc}", "err")
+                hwnds = []
+            if hwnds:
+                for hwnd in hwnds:
+                    self._post_wm_close(hwnd)
+                self.add_log(f"已向 PID {pid} 的 {len(hwnds)} 个窗口发出关闭（WM_CLOSE），等它自己收尾。", "ok")
+                return
+            self.add_log(f"PID {pid} 没有任何可见窗口（未起完或正在退出），直接结束整棵进程树。", "cmd")
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/T", "/F"],
+                    capture_output=True, text=True, errors="replace", check=False,
+                )
+            except OSError as exc:
+                self.add_log(f"Failed to terminate process tree {pid}: {exc}", "err")
+            return
+        try:
+            os.killpg(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError, OSError):
+                return
+
+    def stop_tool(self, task: str) -> tuple[bool, str]:
+        if task not in TOOL_LABELS:
+            return False, f"Unknown tool: {task}"
+        label = TOOL_LABELS.get(task, task)
+        with self.lock:
+            own = self.tool_processes.get(task)
+        if own is not None and own.poll() is None:
+            self.add_log(f"请求关闭「{label}」（PID {own.pid}）…有未保存改动时它会自己弹确认。", "cmd")
+            self._close_process_gracefully(own.pid)
+            return True, f"已向「{label}」发出关闭请求。"
+        orphans = self.find_tool_instances(task, fresh=True)
+        if not orphans:
+            return False, f"「{label}」没有在运行。"
+        for root in orphans:
+            self.add_log(
+                f"请求关闭上一个控制台留下的「{label}」（PID {root['pid']}，起于 {root['started'] or '未知'}）…", "cmd",
+            )
+            self._close_process_gracefully(int(root["pid"]))
+        self._scan_tool_instances(fresh=True)
+        return True, f"已向 {len(orphans)} 个「{label}」旧实例发出关闭请求。"
+
+    def tool_scan_loop(self) -> None:
+        """后台刷新工具进程缓存：先报一次启动时的孤儿，之后每个 TTL 周期真扫一次。"""
+        self.warn_about_orphans_on_startup()
+        while True:
+            time.sleep(TOOL_SCAN_TTL_SECONDS)
+            try:
+                self._scan_tool_instances(fresh=True)
+            except Exception:  # noqa: BLE001 - 护栏线程绝不能因一次枚举失败而死
+                continue
+
+    def warn_about_orphans_on_startup(self) -> None:
+        """控制台一起来就把上一个实例留下的工具进程报出来——沉默才是事故的温床。"""
+        try:
+            orphans = self._scan_tool_instances(fresh=True)
+        except Exception as exc:  # noqa: BLE001 - 护栏不能拖死控制台
+            self.add_log(f"启动时扫描旧工具进程失败：{exc}", "err")
+            return
+        for task, roots in orphans.items():
+            if not roots:
+                continue
+            label = TOOL_LABELS.get(task, task)
+            desc = "、".join(f"PID {r['pid']}（起于 {r['started'] or '未知'}）" for r in roots)
+            self.add_log(
+                f"⚠ 发现上一个控制台留下的「{label}」还在跑：{desc}。它用的是启动那一刻的旧代码，"
+                "保存会覆盖现网数据；建议在工具区点「结束」关掉后再重开。", "err",
+            )
 
     def governance_dashboard_path(self) -> Path:
         return self.root / "tools" / "skill_workflow_governance" / "out" / "dashboard.html"
@@ -932,14 +1306,26 @@ class ConsoleState:
             if proc is self.game_process:
                 self.game_process = None
                 self.game_url = ""
+            for task, tracked in list(self.tool_processes.items()):
+                if tracked is proc:
+                    del self.tool_processes[task]
         if expected_game_stop:
             self.add_log(f"{title} stopped.", "ok")
         else:
             self.add_log(f"{title} finished with exit code {code}.", "ok" if code == 0 else "err")
 
-    def stop_game_on_exit(self) -> None:
+    def stop_children_on_exit(self) -> None:
+        """控制台退出：回收游戏服务、治理 shell，**以及本控制台拉起的所有工具**。
+
+        工具走礼貌关闭（WM_CLOSE / SIGTERM），编辑器有未保存改动会自己弹确认；
+        不回收它们就是 2026-09-09 那种"旧代码孤儿进程接着往现网写"的事故源。
+        """
         with self.lock:
             shell_proc = self.governance_shell_process
+            tools = [(task, proc) for task, proc in self.tool_processes.items() if proc.poll() is None]
+        for task, proc in tools:
+            self.add_log(f"控制台退出，请求关闭「{TOOL_LABELS.get(task, task)}」（PID {proc.pid}）", "cmd")
+            self._close_process_gracefully(proc.pid)
         if shell_proc is not None and shell_proc.poll() is None:
             self._terminate_process_group(shell_proc)
         if self.game_process is not None and self.game_process.poll() is None:
@@ -1001,13 +1387,14 @@ class ConsoleState:
             base = self._detect_game_url()
             if base:
                 url = self._build_game_url(params, base)
-                self.add_log(f"Open URL: {url}", "ok")
-                webbrowser.open(url)
+                # 游戏页开在专用预览窗（免手势音频、不后台降级、不缓存），不丢给系统浏览器——见 tools/dev/game_preview.py
+                note = open_game_preview(url)
+                self.add_log(f"Open URL: {url} → {note}", "ok")
                 return
             time.sleep(0.25)
         url = self._build_game_url(params)
-        self.add_log(f"Game URL not detected; opening fallback: {url}", "err")
-        webbrowser.open(url)
+        note = open_game_preview(url)
+        self.add_log(f"Game URL not detected; opening fallback: {url} → {note}", "err")
 
     def _build_game_url(self, params: dict[str, str], base_url: str = DEFAULT_GAME_URL) -> str:
         parts = urlsplit(base_url or DEFAULT_GAME_URL)
@@ -1061,7 +1448,7 @@ class ConsoleHandler(BaseHTTPRequestHandler):
                 return
         if parsed.path == "/api/state":
             since = int(parse_qs(parsed.query).get("since", ["0"])[0] or "0")
-            self._send_json(STATE.snapshot(since))
+            self._send_json(STATE.snapshot_with_tools(since))
             return
         if parsed.path == "/api/governance/agents":
             self._send_json(list_governance_agents())
@@ -1270,9 +1657,10 @@ def main(argv: list[str] | None = None) -> int:
 
     port = _free_port(args.port)
     server = ThreadingHTTPServer(("127.0.0.1", port), ConsoleHandler)
-    atexit.register(STATE.stop_game_on_exit)
+    atexit.register(STATE.stop_children_on_exit)
     url = f"http://127.0.0.1:{port}/"
     STATE.add_log(f"Console listening at {url}", "ok")
+    threading.Thread(target=STATE.tool_scan_loop, name="tool-scan", daemon=True).start()
     print(url, flush=True)
     if not args.no_open:
         webbrowser.open(url)
@@ -1310,6 +1698,10 @@ input{min-height:36px;border:1px solid #9ca3af;border-radius:5px;padding:0 10px;
 .sep{height:1px;background:#e5e7eb;margin:12px 0}
 .tool{display:grid;grid-template-columns:1fr;gap:3px;margin-bottom:8px}
 .note{font-size:12px;color:#6b7280}
+.toolStatus{display:flex;align-items:center;gap:6px;font-size:12px;color:#065f46}
+.toolStatus[hidden]{display:none}
+.toolStatus.orphan{color:#b45309}
+.toolStatus .toolStop{padding:2px 8px;font-size:12px}
 .wide{margin-top:12px}
 .shortcut-row{display:grid;grid-template-columns:52px minmax(0,1fr) 76px;gap:8px;align-items:center;margin-bottom:8px}
 .debug-row{grid-template-columns:52px auto minmax(0,1fr)}
@@ -1418,6 +1810,7 @@ async function poll(){
   const mcp = data.governanceMcp || {};
   mcpStateEl.textContent = mcp.status ? `MCP: ${mcp.status}${mcp.resourceCount ? " · " + mcp.resourceCount + " resources" : ""}` : "";
   for(const entry of data.logs){ append(entry); seq = Math.max(seq, entry.seq); }
+  renderToolStatus(data.tools);
   document.querySelectorAll("button[data-action],#commitBtn").forEach(btn=>{
     if(btn.dataset.gameStart === "1"){
       btn.disabled = data.gameRunning;
@@ -1436,6 +1829,7 @@ document.querySelector("#commitBtn").addEventListener("click",()=>{
 });
 document.querySelector("#clearLog").addEventListener("click",()=>{logEl.innerHTML=""});
 const toolsEl = document.querySelector("#tools");
+const toolStatusEls = {};
 for(const tool of tools){
   const wrap = document.createElement("div");
   wrap.className = "tool";
@@ -1461,8 +1855,37 @@ for(const tool of tools){
   const note = document.createElement("div");
   note.className = "note";
   note.textContent = tool.note;
-  wrap.append(btn,note);
+  // 运行状态行：本控制台启动的 / 上一个控制台留下的孤儿（旧代码在跑，保存会覆盖现网数据）
+  const status = document.createElement("div");
+  status.className = "toolStatus";
+  status.hidden = true;
+  const statusText = document.createElement("span");
+  const stopBtn = document.createElement("button");
+  stopBtn.className = "toolStop";
+  stopBtn.textContent = "结束";
+  stopBtn.title = "请它自己关闭（有未保存改动会弹确认），不是强杀";
+  stopBtn.addEventListener("click",()=>post("/api/action",{action:"stop_tool",task:tool.task}));
+  status.append(statusText, stopBtn);
+  toolStatusEls[tool.task] = {status, statusText, launchBtn: btn};
+  wrap.append(btn,status,note);
   toolsEl.appendChild(wrap);
+}
+function renderToolStatus(toolsState){
+  for(const [task, els] of Object.entries(toolStatusEls)){
+    const st = toolsState && toolsState[task];
+    if(!st || !st.running){
+      els.status.hidden = true;
+      els.status.classList.remove("orphan");
+      els.launchBtn.title = "";
+      continue;
+    }
+    els.status.hidden = false;
+    els.status.classList.toggle("orphan", !st.owned);
+    els.statusText.textContent = st.owned
+      ? `运行中 · PID ${st.pid}`
+      : `⚠ 上一个控制台留下的实例在跑 · PID ${st.pid}${st.started ? " · 起于 " + st.started : ""}${st.count > 1 ? " 等 " + st.count + " 个" : ""}（旧代码，保存会覆盖现网数据）`;
+    els.launchBtn.title = st.owned ? "已在运行；再点会被拒绝" : "有旧实例在跑；先「结束」再启动";
+  }
 }
 function fillDevSelect(select, items){
   for(const item of items){

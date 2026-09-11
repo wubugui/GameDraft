@@ -10,3 +10,11 @@ asset-backups/
 
 # 生产工作台运行日志：数量大、可再生成，不作为共享资源同步
 resources/editor_projects/editor_data/production_workbench/console_logs/
+
+# 声学工作台 ↔ 游戏的实时联动槽：会话工作态，重启即弃，不作为共享资源同步
+resources/editor_projects/editor_data/runtime_acoustics.json
+resources/editor_projects/editor_data/runtime_acoustics_status.json
+
+# 粒子工作台 ↔ 游戏的实时联动槽：与上面声学那对同一套形状，同样是会话工作态
+resources/editor_projects/editor_data/runtime_vfx.json
+resources/editor_projects/editor_data/runtime_vfx_status.json

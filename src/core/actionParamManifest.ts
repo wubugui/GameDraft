@@ -85,7 +85,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
 
   // ---- 遭遇 / 音频 / 日程 ----
   startEncounter: { required: ['id'], nonEmpty: ['id'] },
-  playBgm: { required: ['id'], nonEmpty: ['id'], optional: ['fadeMs'] },
+  playBgm: { required: ['id'], nonEmpty: ['id'], optional: ['fadeMs', 'volume'] },
   stopBgm: { required: [], optional: ['fadeMs'] },
   playSfx: { required: ['id'], nonEmpty: ['id'], optional: ['volume'] },
   stopSceneAmbient: { required: [], optional: ['id', 'fadeMs'] },
@@ -104,6 +104,10 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   addArchiveEntry: { required: ['bookType', 'entryId'], nonEmpty: ['bookType', 'entryId'] },
   // 线索采集（K7）：clueId=clues.json 词条引用；幂等/回执由 ClueManager.collect 统一处理
   collectClue: { required: ['clueId'], nonEmpty: ['clueId'] },
+  // 三把火 HUD 读数显隐（G.5）：纯开关；style=flare|fade|instant，缺省显=flare / 隐=fade
+  setThreeFiresVisible: { required: ['visible'], optional: ['style'] },
+  // 系统说明卡（K4）：noteId=system_notes.json 引用；force 缺省 false（每档一次）
+  showSystemNote: { required: ['noteId'], nonEmpty: ['noteId'], optional: ['force'] },
   startCutscene: { required: ['id'], nonEmpty: ['id'] },
   startWaterMinigame: { required: ['id'], nonEmpty: ['id'] },
   startSugarWheelMinigame: { required: ['id'], nonEmpty: ['id'] },
@@ -129,6 +133,12 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   triggerDeathTether: { required: [] },
   setSmell: { required: ['scent'], nonEmpty: ['scent'], optional: ['intensity', 'dir', 'flicker'] },
   clearSmell: { required: [] },
+  // 气味指示器显隐（G.6）：与三把火同一套 style 词汇 flare|fade|instant|debut（显缺省 flare=聚拢浮现 / 隐缺省 fade=散开）
+  setSmellVisible: { required: ['visible'], optional: ['style'] },
+  // 气味源 / 飘向追踪（G.6）：气缕飘向的反方向 = 源；scene 缺省当前场景；追踪可随时开关，缺省开
+  setSmellSource: { required: ['x', 'y'], optional: ['scene'] },
+  clearSmellSource: { required: [] },
+  setSmellTracking: { required: ['enabled'] },
   sniff: { required: [] },
 
   // ---- 位面 ----
@@ -215,9 +225,9 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   setSceneEntityPosition: {
     required: ['sceneId', 'entityId', 'x', 'y'],
     nonEmpty: ['sceneId', 'entityId'],
-    optional: ['entityKind'],
+    optional: ['entityKind', 'at'],
   },
-  persistNpcAt: { required: ['target', 'x', 'y'], nonEmpty: ['target'] },
+  persistNpcAt: { required: ['target', 'x', 'y'], nonEmpty: ['target'], optional: ['at'] },
   persistNpcAnimState: { required: ['target', 'state'], nonEmpty: ['target', 'state'] },
   persistPlayNpcAnimation: { required: ['target', 'state'], nonEmpty: ['target', 'state'] },
 
@@ -269,7 +279,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     nonEmpty: ['target'],
     // sceneId 仅编辑器复现地图用，运行时忽略。arriveAnimState 只作用于终点段末
     //（缺省=回 rest/idle 旧语义；途经点段末一律不切动画）。
-    optional: ['speed', 'waypoints', 'moveAnimState', 'arriveAnimState', 'faceTowardMovement', 'sceneId'],
+    optional: ['speed', 'waypoints', 'moveAnimState', 'arriveAnimState', 'faceTowardMovement', 'sceneId', 'at'],
   },
   jumpEntityTo: {
     required: ['target', 'x', 'y'],
@@ -277,28 +287,39 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     // 脚点沿抛物线弧线落到 x/y；durationMs 缺省 600、arcHeight 缺省 120（世界 px 峰高）。
     // jumpAnimState 只播一次且帧游标按移动进度插值；landAnimState 缺省回 rest/idle。
     // sceneId 仅编辑器复现地图用，运行时忽略。
-    optional: ['durationMs', 'arcHeight', 'jumpAnimState', 'landAnimState', 'faceTowardMovement', 'sceneId'],
+    optional: ['durationMs', 'arcHeight', 'jumpAnimState', 'landAnimState', 'faceTowardMovement', 'sceneId', 'at'],
   },
   teleportEntityTo: {
     required: ['target', 'x', 'y'],
     nonEmpty: ['target'],
     // 一帧到位：无时长、无动画、不碰朝向（要转身接 faceEntity）。
     // sceneId 仅编辑器复现地图用，运行时忽略（同 moveEntityTo / jumpEntityTo）。
-    optional: ['sceneId'],
+    optional: ['sceneId', 'at'],
   },
   playTrajectory: {
-    // trajectoryId = 独立资产 assets/data/trajectories/<id>.json；target = 'player' / NPC id（资产与实体无关，挂谁由动作定）。
-    required: ['trajectoryId', 'target'],
-    nonEmpty: ['trajectoryId', 'target'],
-    // anchorX/anchorY 成对可选（场景坐标 wu），缺省 = 目标此刻位置；flipX 缺省 false；
-    // wait 缺省 **true**（等播完）；animState 开播时切目标动画状态。
-    optional: ['anchorX', 'anchorY', 'flipX', 'wait', 'animState'],
+    // trajectoryId = 独立资产 assets/data/trajectories/<id>.json。运动对象二选一（运行时校验至少一个）：
+    // target = 'player' / NPC id（场景里的实体），或 spawn = 播放时临时生成（图片 / 角色模板，可不在场景里；keep = 播完留在终点）。
+    required: ['trajectoryId'],
+    nonEmpty: ['trajectoryId'],
+    // at = 播放位置引用（数字 / 实体此刻位置 / 场景曲线插槽）；场景曲线不给就原地播，相对曲线不给退到目标此刻位置并 warn。
+    // anchorX/anchorY 是 2026-09-11 前的成对写法（= at point）。flipX 缺省 false；wait 缺省 **true**；animState 开播时切目标动画状态。
+    optional: ['target', 'spawn', 'at', 'anchorX', 'anchorY', 'flipX', 'wait', 'animState'],
   },
   // toEnd / reset 运行时缺省均为 false（就停在当前姿态、不还原叠加量）。
   stopTrajectory: { required: ['target'], nonEmpty: ['target'], optional: ['toEnd', 'reset'] },
+
+  // ---- 世界空间粒子 / 群体（VfxSystem）----
+  // playVfx：instanceId（场景实例）或 effect + 位置（临时实例）二选一，运行时校验至少一个。
+  // 位置 = at（'player' / NPC id / {x,y,h}）或 x/y/h；surface 缺省 ground；seed / countScale 可选。
+  playVfx: { required: [], optional: ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale'] },
+  stopVfx: { required: ['instanceId'], nonEmpty: ['instanceId'] },
+  // state ∈ roosting / airborne / fleeing / returning
+  setVfxState: { required: ['instanceId', 'state'], nonEmpty: ['instanceId', 'state'] },
+  // kind 缺省 fear；duration 缺省 0 = 瞬时脉冲；direction 只给 wind
+  emitVfxField: { required: ['tag', 'radius'], nonEmpty: ['tag'], optional: ['kind', 'strength', 'duration', 'at', 'x', 'y', 'h', 'direction'] },
   // direction / faceTarget 二选一（运行时校验至少一个），条件必填不在缺参检查建模。
   faceEntity: { required: ['target'], nonEmpty: ['target'], optional: ['direction', 'faceTarget'] },
-  cutsceneSpawnActor: { required: ['id', 'x', 'y'], nonEmpty: ['id'], optional: ['name'] },
+  cutsceneSpawnActor: { required: ['id', 'x', 'y'], nonEmpty: ['id'], optional: ['name', 'at'] },
   cutsceneRemoveActor: { required: ['id'], nonEmpty: ['id'] },
 
   // ---- 规矩供给（zone 上下文动作）----

@@ -7,6 +7,25 @@
   },
   "lineSets": [
     {
+      "id": "雾津街头_拉客女_招呼",
+      "description": "街口招手的女人：玩家一走拢就喊一嗓子",
+      "speaker": {
+        "kind": "entity",
+        "id": "npc_街头拉客女"
+      },
+      "scenes": [
+        "雾津街头"
+      ],
+      "trigger": "approach",
+      "approachRange": 150,
+      "cooldownMs": 8000,
+      "lines": [
+        {
+          "text": "哥二，日批不。"
+        }
+      ]
+    },
+    {
       "id": "关二狗_普通状态_通用",
       "speaker": {
         "kind": "player"

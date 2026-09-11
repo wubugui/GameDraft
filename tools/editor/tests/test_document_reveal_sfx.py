@@ -208,9 +208,17 @@ class DocumentRevealSfxValidatorTests(unittest.TestCase):
         self.assertEqual([i.severity for i in orphan], ["warning"])
         self.assertIn("revealSfx", orphan[0].message)
 
-        loud = self._issues([_reveal(revealSfx="paper_reveal", revealSfxVolume=3)])
+        # >1 是**合法**的（“这一处要比素材原音更响”，与别处的本处音量同口径），
+        # 最终只是被运行时钳到满幅——不能因为作者想调响就报一条。
+        self.assertEqual(
+            self._issues([_reveal(revealSfx="paper_reveal", revealSfxVolume=1.5)]), [],
+        )
+        loud = self._issues([_reveal(revealSfx="paper_reveal", revealSfxVolume=40)])
         self.assertEqual([i.severity for i in loud], ["warning"])
-        self.assertIn("0..1", loud[0].message)
+        self.assertIn("大得离谱", loud[0].message)
+
+        bad = self._issues([_reveal(revealSfx="paper_reveal", revealSfxVolume=-1)])
+        self.assertEqual([i.severity for i in bad], ["error"])
 
 
 if __name__ == "__main__":

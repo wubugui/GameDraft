@@ -5,7 +5,7 @@ import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer, ShowSubtitleLayout, CutsceneCameraEasing } from '../rendering/CutsceneRenderer';
 import type { Camera } from '../rendering/Camera';
-import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep, CutsceneKenBurns, ICutsceneAudioPlayer, ParallaxSceneDef, DialoguePortraitRef } from '../data/types';
+import type { ICutsceneActor, IEmoteBubbleAnchor, IEmoteBubbleProvider, EmoteBubbleOffsetOpts, NpcDef, IGameSystem, GameContext, NewCutsceneDef, CutsceneStep, PresentStep, CutsceneKenBurns, ICutsceneAudioPlayer, ParallaxSceneDef, DialoguePortraitRef, AudioCueRef } from '../data/types';
 import { CUTSCENE_ACTION_WHITELIST, CUTSCENE_ANON_SHOT_ID } from '../data/types';
 import { Npc } from '../entities/Npc';
 import { splitSpeakerBodyAfterResolve } from '../core/resolveText';
@@ -219,9 +219,14 @@ interface CutsceneSnapshot {
   cameraX: number;
   cameraY: number;
   cameraZoom: number;
-  /** 过场前音频基线：当前 BGM id（无则 null）与活跃环境层 id 列表，供同场景过场结束后还原。 */
-  bgmId: string | null;
-  ambientIds: string[];
+  /**
+   * 过场前音频基线：当前 BGM 与活跃环境层，供同场景过场结束后还原。
+   *
+   * 存的是**带本处音量的引用**而不是裸 id：场景把某层环境音压到 0.3、过场里把它停了，
+   * 只按 id 还原会让它以素材原音量回来（变响一大截，且只在真机听得出来）。
+   */
+  bgmCue: AudioCueRef | null;
+  ambientCues: AudioCueRef[];
 }
 
 /** {@link CutsceneManager.showDialogueText} 的入参（对象而非位置参数，见该方法注释）。 */
@@ -293,6 +298,7 @@ export class CutsceneManager implements IGameSystem {
   private playerPositionGetter: (() => { x: number; y: number }) | null = null;
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraAccessor: Camera | null = null;
+  private positionRefResolver: ((raw: unknown) => Promise<{ x: number; y: number } | null>) | null = null;
   private spawnPointResolver: ((spawnKey: string) => { x: number; y: number } | null) | null = null;
   private scriptedSpeakerResolver: ScriptedSpeakerResolver | null = null;
   private scriptedPortraitResolver: ScriptedPortraitResolver | null = null;
@@ -391,6 +397,15 @@ export class CutsceneManager implements IGameSystem {
 
   setEmoteBubbleProvider(provider: IEmoteBubbleProvider): void {
     this.emoteBubbleProvider = provider;
+  }
+
+  /**
+   * 位置引用求值口（组装层注入 `Game.resolvePositionRef`）：`cameraMove` 的可选 `at`
+   * （数字 / 实体此刻位置 / 曲线插槽 / 曲线上的点）。**一次性求值**——把镜头摆到那个点，
+   * 不是持续跟随；跟着动的东西走是 `cameraFollowActor`（每帧按 id 重解析）。
+   */
+  setPositionRefResolver(resolver: ((raw: unknown) => Promise<{ x: number; y: number } | null>) | null): void {
+    this.positionRefResolver = resolver;
   }
 
   /**
@@ -737,7 +752,7 @@ export class CutsceneManager implements IGameSystem {
           if (!this.destroyed && def.restoreState !== false) {
             await this.restoreSnapshot();
           } else if (!this.destroyed && wasSkipping) {
-            this.applyFinalCameraPoseForSkip(def);
+            await this.applyFinalCameraPoseForSkip(def);
           }
           this.sceneManagerAPI?.endCutsceneStaging();
         } else {
@@ -750,7 +765,7 @@ export class CutsceneManager implements IGameSystem {
           if (!this.destroyed && def.restoreState !== false) {
             await this.restoreSnapshot();
           } else if (!this.destroyed && wasSkipping) {
-            this.applyFinalCameraPoseForSkip(def);
+            await this.applyFinalCameraPoseForSkip(def);
           }
           // 音频基线还原**不受 restoreState 门控**（理由见 restoreAudioBaseline 注释）：
           // 过场借用的 BGM / 环境音不得渗进场景。默认路径上 restoreSnapshot 已还原过，此处幂等重入。
@@ -842,8 +857,8 @@ export class CutsceneManager implements IGameSystem {
       cameraX: this.cameraAccessor?.getX() ?? 0,
       cameraY: this.cameraAccessor?.getY() ?? 0,
       cameraZoom: this.cameraAccessor?.getZoom() ?? 1,
-      bgmId: this.audioManager?.getCurrentBgmId() ?? null,
-      ambientIds: this.audioManager?.getActiveAmbientIds() ?? [],
+      bgmCue: this.audioManager?.getCurrentBgmCue() ?? null,
+      ambientCues: this.audioManager?.getActiveAmbientCues() ?? [],
     };
   }
 
@@ -878,7 +893,7 @@ export class CutsceneManager implements IGameSystem {
    */
   private restoreAudioBaseline(): void {
     if (!this.snapshot) return;
-    this.audioManager?.restoreAudioBaseline(this.snapshot.bgmId, this.snapshot.ambientIds);
+    this.audioManager?.restoreAudioBaseline(this.snapshot.bgmCue, this.snapshot.ambientCues);
   }
 
   /**
@@ -891,9 +906,9 @@ export class CutsceneManager implements IGameSystem {
    * （规范·不变量 6：拒绝/取消路径也要恢复一致性）。restoreState 默认(true)路径由
    * restoreSnapshot 兜底，不经此处。
    */
-  private applyFinalCameraPoseForSkip(def: NewCutsceneDef): void {
+  private async applyFinalCameraPoseForSkip(def: NewCutsceneDef): Promise<void> {
     if (!Array.isArray(def.steps)) return;
-    let move: { x: number; y: number } | null = null;
+    let move: PresentStep | null = null;
     let zoom: number | null = null;
     const walk = (steps: CutsceneStep[]): void => {
       for (const s of steps) {
@@ -904,8 +919,8 @@ export class CutsceneManager implements IGameSystem {
           continue;
         }
         if (s.kind !== 'present') continue;
-        if (s.type === 'cameraMove' && typeof s.x === 'number' && typeof s.y === 'number') {
-          move = { x: s.x, y: s.y };
+        if (s.type === 'cameraMove') {
+          move = s;
         } else if (s.type === 'cameraZoom') {
           // 与 executePresent 同一语义：scale 缺省/≤0 = 场景基线缩放
           const raw = s.scale;
@@ -916,12 +931,48 @@ export class CutsceneManager implements IGameSystem {
       }
     };
     walk(def.steps);
+    // 终姿也要按 `at` 求值（与正常播完落在同一处）：跳过时求的是**此刻**的那个点，
+    // 正是"一步落终态"的本意。求不出来退到 x/y 快照。
+    // 没给 `at` 的（= 所有老数据）**保持同步**：这是过场收尾链，凭空插一个微任务会把
+    // setZoom / snapTo 推到 endCutsceneStaging 之后，顺序敏感的东西没道理为一个用不上的分支买单。
+    const moveTo = move === null
+      ? null
+      : (move as PresentStep).at == null
+        ? this.cameraTargetFallback(move)
+        : await this.resolveCameraTarget(move);
     // 先 zoom 后 snap：snapTo 按当前 zoom 的视口夹紧世界边界，顺序反了会以旧视口尺寸夹出错误中心
     if (zoom !== null) this.cameraAccessor?.setZoom(zoom);
-    if (move !== null) {
-      const m = move as { x: number; y: number };
-      this.cameraAccessor?.snapTo(m.x, m.y);
+    if (moveTo !== null) this.cameraAccessor?.snapTo(moveTo.x, moveTo.y);
+  }
+
+  /**
+   * `cameraMove` 的目标点：`at`（位置引用）优先，退到 `x`/`y`。
+   *
+   * `at` 是**一次性求值**——把镜头摆到那个点（如"铜钱这次的落点"），不是持续跟随；
+   * 要镜头跟着动的东西走用 `cameraFollowActor`（每帧按 id 重解析实体位置）。
+   * 求不出来（资产缺 / 实体不在 / 相对曲线没在播）就退回 x/y 并 warn：内容错不该把运镜炸掉。
+   */
+  /** `x` / `y` 那份回落（编辑期快照 / 老数据的唯一形状）。 */
+  private cameraTargetFallback(step: PresentStep): { x: number; y: number } {
+    return {
+      x: typeof step.x === 'number' && Number.isFinite(step.x) ? step.x : 0,
+      y: typeof step.y === 'number' && Number.isFinite(step.y) ? step.y : 0,
+    };
+  }
+
+  private async resolveCameraTarget(step: PresentStep): Promise<{ x: number; y: number }> {
+    const { x: fx, y: fy } = this.cameraTargetFallback(step);
+    if (step.at == null) return { x: fx, y: fy };
+    if (!this.positionRefResolver) {
+      console.warn('[cutscene] cameraMove 给了 at，但没有注入位置引用求值口，退回 x/y');
+      return { x: fx, y: fy };
     }
+    const p = await this.positionRefResolver(step.at);
+    if (!p) {
+      console.warn('[cutscene] cameraMove 的 at 解析不出来，退回 x/y 快照');
+      return { x: fx, y: fy };
+    }
+    return p;
   }
 
   // ================================================================
@@ -1297,13 +1348,16 @@ export class CutsceneManager implements IGameSystem {
         );
         break;
       }
-      case 'cameraMove':
+      case 'cameraMove': {
+        // `at` 有值就用它覆盖 x/y（x/y 是编辑期快照 / 老数据）；解析不出来 warn 一句退回 x/y
+        const to = step.at == null ? this.cameraTargetFallback(step) : await this.resolveCameraTarget(step);
         await this.cutsceneRenderer.cameraMove(
-          step.x as number, step.y as number,
+          to.x, to.y,
           dur(step.duration, 1000),
           parseCameraEasing(step.easing),
         );
         break;
+      }
       case 'cameraZoom': {
         // scale 缺省/≤0 = 恢复场景配置基线缩放（scene.camera.zoom）。内容侧不写字面量，
         // 场景改配置过场自动跟随；编辑器泛型 float 对缺键写 0，两种形态语义一致。

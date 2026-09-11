@@ -215,3 +215,45 @@ describe('transitionIsCovered', () => {
     expect(transitionIsCovered(undefined)).toBe(false);
   });
 });
+
+describe('时段外观判等：带本处音量的音频引用', () => {
+  const base = (over: Partial<SceneData> = {}): SceneData => ({
+    id: 's', name: 's', worldWidth: 100, worldHeight: 100,
+    backgrounds: [{ image: 'a.png', x: 0, y: 0 }],
+    spawnPoint: { x: 0, y: 0 },
+    ...over,
+  } as SceneData);
+
+  it('🔴 同一条引用解析两次判等必须成立——否则每次时段推进都白赔一次全场景重载', () => {
+    const s = base({ bgm: { id: 'theme', volume: 0.5 }, ambientSounds: [{ id: 'w', volume: 0.2 }] });
+    const a = resolveSceneAppearance(s, '');
+    const b = resolveSceneAppearance(s, '');
+    expect(sameAppearance(a, b)).toBe(true);
+  });
+
+  it('音量真的变了要判成"变了"（夜里压半档得重放）', () => {
+    const day = resolveSceneAppearance(base({ bgm: { id: 'theme', volume: 1 } }), '');
+    const night = resolveSceneAppearance(base({ bgm: { id: 'theme', volume: 0.5 } }), '');
+    expect(sameAppearance(day, night)).toBe(false);
+  });
+
+  it('裸 id 与带同值音量的对象不等价（写了就是写了）', () => {
+    const bare = resolveSceneAppearance(base({ bgm: 'theme' }), '');
+    const obj = resolveSceneAppearance(base({ bgm: { id: 'theme', volume: 1 } }), '');
+    expect(sameAppearance(bare, obj)).toBe(false);
+  });
+
+  it('时段变体里的 bgm/环境音整套替换，音量跟着 id 一起走', () => {
+    const s = base({
+      bgm: 'day_theme',
+      ambientSounds: ['amb_day'],
+      dayNight: { enabled: true } as never,
+      timeVariants: {
+        夜: { bgm: { id: 'day_theme', volume: 0.4 }, ambientSounds: [{ id: 'amb_night', volume: 0.6 }] },
+      } as never,
+    });
+    const night = resolveSceneAppearance(s, '夜');
+    expect(night.bgm).toEqual({ id: 'day_theme', volume: 0.4 });
+    expect(night.ambientSounds).toEqual([{ id: 'amb_night', volume: 0.6 }]);
+  });
+});

@@ -9,12 +9,9 @@ import {
   type FootstepSpatialContext,
   type FootstepSystemDeps,
 } from './FootstepSystem';
-import type { AudioPlaybackHandle, FootstepConfig, TransientSfxOptions } from '../data/types';
-import {
-  DEFAULT_SPATIAL_PARAMS,
-  cameraListener,
-  planarResolver,
-} from '../utils/audioSpace';
+import type { AudioPlaybackHandle, FootstepConfig } from '../data/types';
+import { planarResolver } from '../utils/audioSpace';
+import type { Vec3 } from '../utils/sceneSpace';
 
 // ===========================================================================
 // 纯函数
@@ -126,20 +123,19 @@ class FakeEmitter implements FootstepEmitter {
   isVisible() { return this.visible; }
 }
 
-interface Played { id: string; opts: TransientSfxOptions }
+interface Played {
+  id: string; world: Vec3;
+  opts: { volume?: number; onEnd?: () => void; spatialized?: boolean };
+}
 
 function harness(over: Partial<FootstepSystemDeps> = {}) {
   const played: Played[] = [];
   const stopped: string[] = [];
-  const ctx: FootstepSpatialContext = {
-    resolver: planarResolver(),
-    listener: cameraListener(planarResolver(), 100, 100, 600),
-    params: DEFAULT_SPATIAL_PARAMS,
-  };
+  const ctx: FootstepSpatialContext = { resolver: planarResolver() };
   let setId: string | null = 'plank';
   const deps: FootstepSystemDeps = {
-    playSfx(id, opts) {
-      played.push({ id, opts });
+    playAt(id, world, opts) {
+      played.push({ id, world, opts });
       const h: AudioPlaybackHandle = { stop: () => { stopped.push(id); } };
       return h;
     },
@@ -342,7 +338,7 @@ describe('FootstepSystem：玩家不是特例', () => {
     expect(ids).toEqual(['npc_1', 'player']);
   });
 
-  it('NPC 离得远 ⇒ 增益比玩家低（声像与衰减对所有发声体一视同仁）', () => {
+  it('NPC 与玩家走同一条路：都交出脚点世界坐标，配置音量一视同仁（距离衰减在空间音总线里，不在这）', () => {
     const h = harness();
     const p = new FakeEmitter('player');
     const n = new FakeEmitter('npc_far');
@@ -352,11 +348,11 @@ describe('FootstepSystem：玩家不是特例', () => {
     h.sys.registerEmitter(p);
     h.sys.registerEmitter(n);
     h.sys.update(0.2);
-    const byId = new Map(h.played.map((x, i) => [
-      (h.sys.getDebugOutputState().recent as Array<{ emitterId: string }>)[i].emitterId,
-      x.opts.volume ?? 0,
-    ]));
-    expect(byId.get('npc_far')!).toBeLessThan(byId.get('player')!);
+    const rec = h.sys.getDebugOutputState().recent as Array<{ emitterId: string; world: [number, number, number]; gain: number }>;
+    const byId = new Map(rec.map((r) => [r.emitterId, r]));
+    expect(byId.get('npc_far')!.world[0]).toBeGreaterThan(byId.get('player')!.world[0] + 1000);
+    expect(byId.get('npc_far')!.gain).toBe(byId.get('player')!.gain);
+    expect(h.played.every((x) => x.world.length === 3)).toBe(true);
   });
 
   it('声像跟着发声体的左右走', () => {
@@ -370,9 +366,10 @@ describe('FootstepSystem：玩家不是特例', () => {
     h.sys.registerEmitter(l);
     h.sys.registerEmitter(r);
     h.sys.update(0.2);
-    const rec = h.sys.getDebugOutputState().recent as Array<{ emitterId: string; pan: number }>;
-    expect(rec.find((x) => x.emitterId === 'left')!.pan).toBeLessThan(0);
-    expect(rec.find((x) => x.emitterId === 'right')!.pan).toBeGreaterThan(0);
+    // 声像不在本系统里算了：本系统交出去的是脚点的世界坐标，左边的发声体 X 更小
+    const rec = h.sys.getDebugOutputState().recent as Array<{ emitterId: string; world: [number, number, number] }>;
+    expect(rec.find((x) => x.emitterId === 'left')!.world[0]).toBeLessThan(rec.find((x) => x.emitterId === 'right')!.world[0]);
+    expect(h.played.find((p) => p.world[0] < 100)).toBeTruthy();
   });
 });
 
@@ -395,7 +392,7 @@ describe('FootstepSystem：确定性 —— 没有轮换、没有抖动', () => 
     for (const p of h.played) {
       expect('rate' in p.opts).toBe(false);
       expect(p.opts.volume).toBe(h.played[0].opts.volume);
-      expect(p.opts.pan).toBe(h.played[0].opts.pan);
+      expect(p.world).toEqual(h.played[0].world);
     }
   });
 
@@ -463,14 +460,6 @@ describe('FootstepSystem：没有配置就安静，不瞎凑', () => {
     expect(h.played).toHaveLength(0);
   });
 
-  it('超出可听距离 ⇒ 不发声', () => {
-    const h = harness();
-    h.ctx.params = { ...DEFAULT_SPATIAL_PARAMS, maxDistanceWu: 700 };
-    const e = new FakeEmitter('far');
-    e.x = 100000;
-    startOnContact(h, e);
-    expect(h.played).toHaveLength(0);
-  });
 });
 
 describe('FootstepSystem：生命周期 —— 谁播的谁停', () => {
@@ -532,10 +521,129 @@ describe('FootstepSystem：调试状态可断言', () => {
     expect(rec.emitterId).toBe('player');
     expect(rec.mode).toBe('planar');
     expect(typeof rec.gain).toBe('number');
-    expect(typeof rec.pan).toBe('number');
-    expect(typeof rec.distanceWu).toBe('number');
+    expect(Array.isArray(rec.world) && (rec.world as number[]).length === 3).toBe(true);
     const live = st.emitterState as Array<{ id: string; contact: boolean }>;
     expect(live[0].id).toBe('player');
     expect(live[0].contact).toBe(true);
+  });
+});
+
+describe('FootstepSystem：全局空间化总闸 defaults.spatialized', () => {
+  const withDefaults = (defaults: Record<string, unknown>) =>
+    harness({ getConfig: () => ({ ...CFG, defaults } as typeof CFG) });
+
+  it('缺省（键不存在）走空间化 —— 现网 footstep_sets.json 里根本没这个键,不许因此变哑或变干', () => {
+    const h = harness();
+    startOnContact(h, new FakeEmitter('player'));
+    expect(h.played[0].opts.spatialized).toBe(true);
+  });
+
+  it('写 false ⇒ 就播一个声音（AudioManager 据此绕开整条空间音通道）', () => {
+    const h = withDefaults({ gainDb: 0, spatialized: false });
+    startOnContact(h, new FakeEmitter('player'));
+    expect(h.played[0].opts.spatialized).toBe(false);
+    // 脚点照算照记：关的是"参不参与发声",不是"算不算得出来"
+    expect(Array.isArray(h.played[0].world)).toBe(true);
+  });
+
+  it('写 true 与不写等价', () => {
+    const h = withDefaults({ gainDb: 0, spatialized: true });
+    startOnContact(h, new FakeEmitter('player'));
+    expect(h.played[0].opts.spatialized).toBe(true);
+  });
+
+  it('🔴 只认真布尔 false：0 / "false" 一律当"没关"', () => {
+    for (const bad of [0, 'false', null] as unknown[]) {
+      const h = withDefaults({ gainDb: 0, spatialized: bad });
+      startOnContact(h, new FakeEmitter('player'));
+      expect(h.played[0].opts.spatialized).toBe(true);
+    }
+  });
+
+  it('总闸不动全局音量：gainDb 照常参与,关空间化不该顺便变响', () => {
+    const on = withDefaults({ gainDb: -6 });
+    const off = withDefaults({ gainDb: -6, spatialized: false });
+    startOnContact(on, new FakeEmitter('player'));
+    startOnContact(off, new FakeEmitter('player'));
+    expect(off.played[0].opts.volume).toBeCloseTo(on.played[0].opts.volume as number, 12);
+  });
+
+  it('调试记录里报出来 —— 不报的话"坐标好好的却没有空间感"查不出原因', () => {
+    const h = withDefaults({ gainDb: 0, spatialized: false });
+    startOnContact(h, new FakeEmitter('player'));
+    const rec = (h.sys.getDebugOutputState().recent as Array<Record<string, unknown>>)[0];
+    expect(rec.spatialized).toBe(false);
+  });
+
+  it('全局音量缩放：defaults.gainDb 与每集 gainDb 相加后折线性', () => {
+    const h = harness({
+      getConfig: () => ({
+        ...CFG, defaults: { gainDb: -6 },
+        sets: { plank: { ...CFG.sets.plank, gainDb: -6 } },
+      } as typeof CFG),
+    });
+    startOnContact(h, new FakeEmitter('player'));
+    expect(h.played[0].opts.volume).toBeCloseTo(Math.pow(10, -12 / 20), 10);
+  });
+});
+
+describe('FootstepSystem：逐条本处音量（乘在 gainDb 之上）', () => {
+  it('值写成 { id, volume } 时仍取得出音效 key', () => {
+    expect(resolveSfx({ walk: { id: 'step_a', volume: 0.4 } }, undefined, 'walk'))
+      .toEqual({ id: 'step_a', volume: 0.4 });
+  });
+
+  it('回落链对对象形态一样管用（有 id 就算登记过）', () => {
+    const sfx = { walk: { id: 'step_a', volume: 0.4 } };
+    const fallback = { carry_walk: 'walk' };
+    expect(resolveSfx(sfx, fallback, 'carry_walk')).toEqual({ id: 'step_a', volume: 0.4 });
+  });
+
+  it('对象形态里 id 为空 = 没登记，回落链继续往下走', () => {
+    expect(resolveSfx({ walk: { id: '  ' } }, undefined, 'walk')).toBeNull();
+  });
+
+  it('🔴 本处音量是**乘**在 gainDb 之上，不是替换（dB 管地面、volume 管片段）', () => {
+    const cfg: FootstepConfig = {
+      ...CFG,
+      sets: { plank: { sfx: { walk: { id: 'step_plank', volume: 0.5 } } } },
+    };
+    const a = harness();
+    const b = harness({ getConfig: () => cfg });
+    for (const h of [a, b]) {
+      const e = new FakeEmitter('player');
+      startOnContact(h, e);
+    }
+    expect(b.played[0].id).toBe('step_plank');
+    expect(b.played[0].opts.volume!).toBeCloseTo(a.played[0].opts.volume! * 0.5, 6);
+  });
+
+  it('与集级 gainDb 叠加：dB 转线性后再乘本条 volume', () => {
+    const cfg: FootstepConfig = {
+      ...CFG,
+      sets: { plank: { sfx: { walk: { id: 'step_plank', volume: 0.5 } }, gainDb: -6 } },
+    };
+    const a = harness();
+    const b = harness({ getConfig: () => cfg });
+    for (const h of [a, b]) {
+      const e = new FakeEmitter('player');
+      startOnContact(h, e);
+    }
+    expect(b.played[0].opts.volume!)
+      .toBeCloseTo(a.played[0].opts.volume! * 0.5011872336 * 0.5, 6);
+  });
+
+  it('没写本处音量的条目行为一字不变（旧数据零迁移）', () => {
+    const cfg: FootstepConfig = {
+      ...CFG,
+      sets: { plank: { sfx: { walk: { id: 'step_plank' } } } },
+    };
+    const a = harness();
+    const b = harness({ getConfig: () => cfg });
+    for (const h of [a, b]) {
+      const e = new FakeEmitter('player');
+      startOnContact(h, e);
+    }
+    expect(b.played[0].opts.volume!).toBeCloseTo(a.played[0].opts.volume!, 6);
   });
 });

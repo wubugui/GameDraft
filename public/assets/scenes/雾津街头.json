@@ -440,17 +440,17 @@
       {
         "id": "lamp_4",
         "kind": "point",
-        "intensity": 0,
-        "kelvin": 850,
+        "intensity": 0.92,
+        "kelvin": 1000.0,
         "castShadow": false,
         "enabled": true,
         "pos": [
           754.3774434936443,
-          328.9815256246355,
+          328.97552562463545,
           -756.0350276826549
         ],
-        "range": 200,
-        "softeningRadius": 7,
+        "range": 200.0,
+        "softeningRadius": 7.0,
         "phases": [
           "夜"
         ]
@@ -566,6 +566,18 @@
     }
   ],
   "npcs": [
+    {
+      "id": "npc_街头拉客女",
+      "name": "街口招手的女人",
+      "x": 1105.0,
+      "y": 1620.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "线外_雾津街头_拉客女",
+      "dialogueCameraZoom": 1.5
+    },
     {
       "id": "npc_零工工头",
       "name": "挑空担的汉子",
@@ -1130,6 +1142,18 @@
         "x": 0.5,
         "y": 0.5
       }
+    },
+    {
+      "id": "npc_验证龛前叠图",
+      "name": "验证·龛前叠图",
+      "x": 880.0,
+      "y": 1470.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "dialogueGraphId": "验证_龛前叠图",
+      "dialogueCameraZoom": 1.5
     }
   ],
   "zones": [
@@ -1287,7 +1311,10 @@
       "smell": {
         "scent": "yin",
         "intensity": 32,
-        "dir": -0.6
+        "source": {
+          "x": 200.0,
+          "y": 660.0
+        }
       }
     },
     {
@@ -1316,7 +1343,10 @@
       "smell": {
         "scent": "yin",
         "intensity": 58,
-        "dir": -0.75
+        "source": {
+          "x": 200.0,
+          "y": 660.0
+        }
       }
     },
     {
@@ -1345,7 +1375,10 @@
       "smell": {
         "scent": "yin",
         "intensity": 85,
-        "dir": -0.9,
+        "source": {
+          "x": 200.0,
+          "y": 660.0
+        },
         "flicker": true
       },
       "onEnter": [
@@ -1594,6 +1627,80 @@
       }
     },
     {
+      "id": "z_包子铺_香",
+      "polygon": [
+        {
+          "x": 2020.0,
+          "y": 700.0
+        },
+        {
+          "x": 2640.0,
+          "y": 700.0
+        },
+        {
+          "x": 2640.0,
+          "y": 1060.0
+        },
+        {
+          "x": 2020.0,
+          "y": 1060.0
+        }
+      ],
+      "smell": {
+        "scent": "baozi",
+        "intensity": 55,
+        "source": {
+          "x": 2326.1,
+          "y": 871.4
+        }
+      },
+      "group": "主线_吃饭点"
+    },
+    {
+      "id": "z_包子铺_初闻",
+      "polygon": [
+        {
+          "x": 2020.0,
+          "y": 700.0
+        },
+        {
+          "x": 2640.0,
+          "y": 700.0
+        },
+        {
+          "x": 2640.0,
+          "y": 1060.0
+        },
+        {
+          "x": 2020.0,
+          "y": 1060.0
+        }
+      ],
+      "conditions": [
+        {
+          "not": {
+            "flag": "sysnote_smell"
+          }
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "setSmellVisible",
+          "params": {
+            "visible": true,
+            "style": "debut"
+          }
+        },
+        {
+          "type": "showSystemNote",
+          "params": {
+            "noteId": "smell"
+          }
+        }
+      ],
+      "group": "主线_吃饭点"
+    },
+    {
       "id": "z_袍哥秒怂",
       "polygon": [
         {
@@ -1726,20 +1833,20 @@
       "id": "Zone_路遇私铸钱",
       "polygon": [
         {
-          "x": 1150.0,
-          "y": 2090.0
+          "x": 1367.5,
+          "y": 1947.0
         },
         {
-          "x": 1340.0,
-          "y": 1880.0
+          "x": 1557.5,
+          "y": 1737.0
         },
         {
-          "x": 1620.0,
-          "y": 2000.0
+          "x": 1837.5,
+          "y": 1857.0
         },
         {
-          "x": 1420.0,
-          "y": 2200.0
+          "x": 1637.5,
+          "y": 2057.0
         }
       ],
       "onEnter": [

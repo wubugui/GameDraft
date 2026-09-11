@@ -52,8 +52,11 @@ shader 里 march 走的是**伪世界 q**(深度重建出来的),两者差一个
 
 ## 权威源(读代码从哪进)
 
-- `lightPacking.ts`:`packLights(def, wuPerQUnit)` / `packEmissive(def, wuPerQUnit)` /
-  `packShadowBias(def, quPerWu)` —— **transform 就这三处**,别的地方不许再折。
+- `lightPacking.ts`:`packLights(def, wuPerQUnit)`(内含点/聚光强度的 `pointIntensityWu`)/
+  `packEmissive(def, wuPerQUnit)` / `packShadowBias(def, quPerWu)` /
+  `worldWuToQ(w, mRows, wuPerQUnit)`(线扫前缀那几个**必须留在 q** 的灯位)
+  —— **transform 就这几处**,别的地方不许再折(shader 里 `P = R·q × wuPerQUnit` 是铁律 0
+  落地清单点名的那一次,不算"别的地方")。
 - `SceneLightingSystem.wuPerQUnit`。
 - `entityShadowBinding.ts`:CPU 侧的影子浓度估算,**在 q 里算**(见下 §③)。
 - `scene_lights.SceneLightSpace`:编辑器侧的同一条链(`q_to_world` / `world_to_q`)。
@@ -97,10 +100,17 @@ shader 里 march 走的是**伪世界 q**(深度重建出来的),两者差一个
 
 ### ③ intensity 的量纲绑在距离单位上
 
-照度 = `I / r²`。shader 里 march 走 q,所以 `intensity` 是**相对 q 定义**的。
-`entityShadowBinding` 那份 CPU 估算因此也必须**在 q 里算**——一度把它改成在 wu 里算,
-同一个 `intensity` 给出的照度差了 `wuPerQUnit²`(雾津街头 **774400 倍**),
-影子浓度会整片归零,**而且不报错**。
+照度 = `I / r²`,所以 `intensity` 的尺跟着 r 的尺走。**作者面的 intensity 相对 q 定义**
+(编辑器缺省 2.5、雾津街头的灯笼 8.6 都是这把尺),`entityShadowBinding` 那份 CPU 估算
+因此**在 q 里算**——一度把它改成在 wu 里算,同一个 `intensity` 给出的照度差了
+`wuPerQUnit²`(雾津街头 **774400 倍**),影子浓度会整片归零,**而且不报错**。
+
+铁律 0(2026-08-30)之后 shader 里的 r 是 **wu**,同一个照度要求 `I_wu = I_q × wuPerQUnit²`
+——这一折在**打包处**做(`lightPacking.pointIntensityWu`,只折走 1/r² 的点光/聚光;
+面光的 intensity 是辐亮度、平行光的是照度,与长度单位无关,原样)。灯体/光晕的 gain
+是按作者面的数调的,`SceneLightingPass` 里除回去用。
+⚠ 2026-08-30 ~ 09-10 这一折**缺席**:同一盏灯笼在射程边缘的照度从 ≈24 掉到 3e-5,
+所有点光/聚光对背景、对角色**全灭而零报错**(见下 ⑦)。
 
 ### ④ 两套标定别混用:`meta.cal` 是 **work** 分辨率的
 
@@ -139,6 +149,20 @@ native 那套在 `depthConfig.M` 里(ppu 450.56、cx 1024、cy 576),shader 用�
 
 复查办法:按 `SceneLightingDef`/`LightDef` 的字段表逐个 grep「运行时消费者 / F2 /
 编辑器」三面,任一字段运行时那面为空 = 死字段。
+
+### ⑦ 换了 r 的尺,忘了换 I 的尺;抽了转朝向的函数,忘了它还得转尺度(2026-09-10)
+
+2026-08-30 铁律 0 把 shader 的 r 从 q 换成 wu、灯位/半径原样 wu 进载荷,两处没跟上,
+**都不报错,画面上就是"灯全灭"**(F2 调什么都没反应):
+
+- 点/聚光 intensity 没 × `wuPerQUnit²`(数据只 ×3),射程边缘照度 3e-5 对夜原画 0.02;
+- `SceneLightingPass` 线扫前缀的 `toQ` 只转朝向、没除尺度,灯位落到像素图 ±20 万 px 外
+  (实测 uLightPx = −217047),带影灯的可见性全判成被挡。
+
+两处叠着,单修一处看不出来(实测:只放开前缀仍一片黑;只把强度 ×1e4 只剩零星亮斑)。
+取证办法:uDebug=3(灯的辐照度)一片黑 = 灯根本没算出来 → 在内存里分别把 `uLightPx.w`
+清零 / `uLightB.w` 放大做 A/B。现在由 `lightPacking.test.ts`(强度的尺、worldWuToQ)与
+`worldSpaceShading.test.ts`(前缀灯位必须走 worldWuToQ、光晕用作者面强度)机械锁住。
 
 ## 已知坑:光晕(灯体自发光)
 

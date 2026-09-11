@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "id": "线外_雾津街头_拉客女",
+  "entry": "root",
+  "meta": {
+    "title": "雾津街头·街口招手的女人"
+  },
+  "nodes": {
+    "root": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "哥二，日批不。",
+      "next": "q",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "q": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "a",
+          "text": "啥子？",
+          "next": "a1"
+        },
+        {
+          "id": "b",
+          "text": "老子找狗，不找勒个",
+          "next": "b1"
+        },
+        {
+          "id": "c",
+          "text": "好多钱葛？",
+          "next": "c1"
+        }
+      ]
+    },
+    "a1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "聋了索？我说——日、批、不。",
+      "next": "p_walk",
+      "portrait": {
+        "emotion": "laugh"
+      }
+    },
+    "b1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "找狗索？狗不进我勒道门，人才进。",
+      "next": "p_walk",
+      "portrait": {
+        "emotion": "smirk"
+      }
+    },
+    "c1": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "看你身上勒身皮，怕是连碗茶钱都摸不出来。",
+      "next": "p_broke",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "p_broke": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "锤子哦。老子扒死人子都比你勒个来钱快。",
+      "next": "n_last",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "n_last": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "那你去扒嘛。莫站到起挡老娘的生意。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "angry"
+      }
+    },
+    "p_walk": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "……没得啥事，我随便转哈。",
+      "next": "end1",
+      "portrait": {
+        "emotion": "calm"
+      }
+    },
+    "end1": {
+      "type": "end"
+    }
+  }
+}

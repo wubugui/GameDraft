@@ -1,4 +1,4 @@
-import type { ActionDef } from '../../data/types';
+import type { ActionDef, AudioCueRef } from '../../data/types';
 
 /**
  * 临场长按（Pressure Hold）配置。
@@ -36,8 +36,11 @@ export interface PressureHoldDef {
   decayPerSecond?: number;
   /** 松手瞬间闪现的提示文案（如「差点应了声」），可选 */
   releaseHint?: string;
-  /** 按住期间播放的氛围音效 id（一次性播放，文件本身可较长），可选 */
-  holdSfx?: string;
+  /**
+   * 按住期间播放的氛围音效（一次性播放，文件本身可较长），可选。
+   * 可写 `{ id, volume }` 定**本处音量**——同一条喘息在不同长按里该多重并不一样。
+   */
+  holdSfx?: AudioCueRef;
   /** 进度条主题色（十六进制字符串，如 "#7a1f1f"），缺省用 UITheme 默认 */
   barColor?: string;
   interrupts?: PressureHoldInterruptDef[];

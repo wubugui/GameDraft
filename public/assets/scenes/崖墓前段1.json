@@ -1,6 +1,5 @@
 {
   "id": "崖墓前段1",
-  "acousticSpace": "峡谷_窄深",
   "name": "崖墓前段后",
   "footstepSet": "木栈道",
   "worldWidth": 1395.91,
@@ -104,5 +103,97 @@
   "camera": {
     "zoom": 1.01,
     "pixelsPerUnit": 1.0
-  }
+  },
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          -0.7071067811865476
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          0.7071067811865476
+        ]
+      ],
+      "ppu": 450.56,
+      "cx": 1024.0,
+      "cy": 576.0
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 8.33399316329956,
+      "offset": -5.5852411819458005
+    },
+    "shader": {
+      "depth_per_sy": 0.002219460227272727
+    },
+    "collision": {
+      "x_min": -2.2727272510528564,
+      "z_min": -1.8356552420863825,
+      "cell_size": 0.028666179014684576,
+      "grid_width": 160,
+      "grid_height": 129,
+      "height_offset": 0.0
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  },
+  "dayNight": {
+    "enabled": true
+  },
+  "timeVariants": {
+    "夜": {
+      "backgrounds": [
+        {
+          "image": "background_night.png",
+          "x": 0,
+          "y": 0
+        }
+      ]
+    }
+  },
+  "ambientSounds": [
+    "呼呼的风"
+  ],
+  "onEnter": [
+    {
+      "type": "setThreeFiresVisible",
+      "params": {
+        "visible": true,
+        "style": "fade"
+      }
+    }
+  ],
+  "vfx": [
+    {
+      "id": "vfx_bats",
+      "effect": "bat_cliff",
+      "anchor": {
+        "x": 1167,
+        "y": 333,
+        "h": 10,
+        "surface": "shell"
+      }
+    },
+    {
+      "id": "vfx_drip",
+      "effect": "water_drip",
+      "anchor": {
+        "x": 1087,
+        "y": 533,
+        "h": 12,
+        "surface": "shell"
+      }
+    }
+  ]
 }

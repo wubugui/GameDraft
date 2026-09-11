@@ -73,6 +73,18 @@ last_governed: 2026-08-05
     **100% FailedToStart,而同一条命令在命令行一次过**;症状是"这个按钮永远起不来",
     用户只会报"自动 rebuild 总是不行"。别再手搓 program/args。
 
+12. **宿主只能在网页"真数据已进 state"之后读它的文档,两侧各守一道门**(2026-09-09 事故加):
+    网页挂载瞬间 `data` 是 `defaultFile`(空白初始文档),真实数据靠异步 `getData` 灌;桥没通/
+    getData 没回的那几秒里,宿主 Save All 读到空文档、当合法内容收下,8 个编排整批抹掉落盘
+    (信号反而被 `merge_host_only_author_signals` 全补回来,所以看起来像"只删了编排")。
+    **网页侧**:`hostReady`(来源非空且非 `empty fallback`)之前**不挂** `window.__narrativeEditor`、
+    不写 `__narrativeEditorLastDraft`;API 带 `isLoaded()`。**宿主侧**:`_READ_EDITOR_STATE_JS` 读
+    `loaded` 三态,false 按"无内容"放行不写;`flush_to_model` / `saveData` 在桥
+    `host_data_served()`(getData 至少交付过一次)为假时**一律拒收**并留可读原因——老 dist 不带
+    isLoaded 也拦得住。护栏:`test_narrative_state_editor.py` 的事故重放测试 + `hostDataGate.test.ts`。
+    判事故形状:数据文件"整块字段消失、别的字段完好、键序变成代码里的 EMPTY 常量"= 半加载
+    全量写回,先查有没有起于旧代码的编辑器进程(`tools/dev_console` 现在会报孤儿),别先找会话。
+
 ## 已知坑
 
 - 同一事件连打两次 `updateData` = 第二次赢、第一次被静默丢弃(根因:绕过持有串行基线的撤销核,直接读渲染期 data 再 setData);直接 `setDataInternal` 的路径(初次加载、adopt 重构结果)必须同 tick 追平基线。

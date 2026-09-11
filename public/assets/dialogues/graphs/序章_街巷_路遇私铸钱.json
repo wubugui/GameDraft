@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "序章_街巷_路遇私铸钱",
-  "entry": "open",
+  "entry": "n_1",
   "meta": {
     "title": "序章·去赌坊路上：那一文自己滚走，怪人来过又走（zone 一次性）"
   },
@@ -13,7 +13,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "next": "q_dodge",
+      "next": "open_man",
       "lines": [
         {
           "speaker": {
@@ -44,7 +44,18 @@
             "name": "旁白"
           },
           "text": "关二狗蹲下去掏。一文也是钱嘛。"
-        },
+        }
+      ],
+      "text": "那一文钱不晓得啷个从身上滑出去的。落地，滚。"
+    },
+    "open_man": {
+      "type": "line",
+      "speaker": {
+        "kind": "literal",
+        "name": "？？？"
+      },
+      "next": "fires_note",
+      "lines": [
         {
           "speaker": {
             "kind": "literal",
@@ -60,7 +71,26 @@
           "text": "身后头站到起一个人。啥子时候来的，他没听到。"
         }
       ],
-      "text": "那一文钱不晓得啷个从身上滑出去的。落地，滚。"
+      "text": "掏啥子？"
+    },
+    "fires_note": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setThreeFiresVisible",
+          "params": {
+            "visible": true,
+            "style": "debut"
+          }
+        },
+        {
+          "type": "showSystemNote",
+          "params": {
+            "noteId": "three_fires"
+          }
+        }
+      ],
+      "next": "q_dodge"
     },
     "q_dodge": {
       "type": "choice",
@@ -286,7 +316,7 @@
         "kind": "literal",
         "name": "旁白"
       },
-      "next": "luck",
+      "next": "fires_hide",
       "lines": [
         {
           "speaker": {
@@ -329,6 +359,19 @@
         }
       ],
       "text": "他转身就走，再没得看关二狗一眼。"
+    },
+    "fires_hide": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "setThreeFiresVisible",
+          "params": {
+            "visible": false,
+            "style": "fade"
+          }
+        }
+      ],
+      "next": "luck"
     },
     "luck": {
       "type": "line",
@@ -398,6 +441,43 @@
     },
     "done": {
       "type": "end"
+    },
+    "n_1": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "moveEntityTo",
+          "params": {
+            "target": "player",
+            "x": 1682.95,
+            "y": 1877.68,
+            "at": {
+              "kind": "slot",
+              "trajectoryId": "coin_drop_demo",
+              "slotId": "slot_1"
+            },
+            "moveAnimState": "walk",
+            "faceTowardMovement": true
+          }
+        },
+        {
+          "type": "playTrajectory",
+          "params": {
+            "trajectoryId": "coin_drop_demo",
+            "spawn": {
+              "kind": "image",
+              "src": "/resources/runtime/images/props/copper_coin.png",
+              "worldWidth": 7.0,
+              "worldHeight": 7.0,
+              "anchor": {
+                "x": 0.5,
+                "y": 0.5
+              }
+            }
+          }
+        }
+      ],
+      "next": "open"
     }
   }
 }

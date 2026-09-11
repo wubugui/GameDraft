@@ -127,8 +127,14 @@ class VoiceSpecField(QWidget):
         self._volume.setDecimals(3)
         self._volume.setSingleStep(0.05)
         self._volume.setValue(volume)
-        self._volume.setToolTip("仅本条配音的相对音量；1.0 = 不额外衰减。")
+        self._volume.setToolTip(
+            "仅本条配音的相对音量；1.0 = 不额外衰减。\n"
+            "▶ 试听按它放（与运行时同口径）。",
+        )
         self._volume.valueChanged.connect(self.changed)
+        # 音量改了就同步给选择器，让试听跟着变——不同步的话作者在盲调
+        self._volume.valueChanged.connect(self._push_preview_volume)
+        self._push_preview_volume()
 
         self._hold = QCheckBox("播完不停，留给后面的台词", self)
         self._hold.setChecked(hold)
@@ -214,6 +220,20 @@ class VoiceSpecField(QWidget):
         self.changed.emit()
 
     # ------------------------------------------------------------------ 取值
+    def _push_preview_volume(self, _v: float = 0.0) -> None:
+        """把本条配音的音量同步给 id 选择器，使 ▶ 试听与运行时一致。
+
+        判据与 :meth:`voice_value` 写不写 ``volume`` 键同一条：没配过且仍是 1.0 时传 None
+        （= 沿用素材级音量）。一律传 1.0 会把素材级那条 volume 顶掉，试听就比游戏里响。
+        """
+        w = self._id_widget
+        setter = getattr(w, "set_volume", None)
+        if not callable(setter):
+            return
+        v = float(self._volume.value())
+        configured = self._had_volume or abs(v - 1.0) > 1e-9
+        setter(v if configured else None)
+
     def current_id(self) -> str:
         w = self._id_widget
         if isinstance(w, QLineEdit):

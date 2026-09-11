@@ -10,9 +10,10 @@ authority:
   - tools/editor/shared/qt_combo_wheel_guard.py
   - tools/editor/shared/audio_picker_dialog.py
   - tools/editor/shared/qt_icon_buttons.py
+  - tools/editor/shared/position_ref_field.py
 triggers:
-  paths: ["tools/editor/shared/id_ref_selector.py", "tools/editor/shared/action_editor.py", "tools/editor/shared/qt_combo_wheel_guard.py", "tools/editor/shared/audio_picker_dialog.py", "tools/editor/shared/qt_icon_buttons.py"]
-  topics: [IdRefSelector, 悬垂引用, select_only, 保值, 滚轮误改, 候选去重, 弹窗选择器]
+  paths: ["tools/editor/shared/id_ref_selector.py", "tools/editor/shared/action_editor.py", "tools/editor/shared/qt_combo_wheel_guard.py", "tools/editor/shared/audio_picker_dialog.py", "tools/editor/shared/qt_icon_buttons.py", "tools/editor/shared/position_ref_field.py", "tools/editor/shared/move_entity_map_picker.py"]
+  topics: [IdRefSelector, 悬垂引用, select_only, 保值, 滚轮误改, 候选去重, 弹窗选择器, 位置引用, PositionRefField, at, 地图拾取]
   tasks: [改共享选择器控件, 把裸输入框换成选择器, 做弹窗选择器]
 last_governed: 2026-08-05
 ---
@@ -23,7 +24,10 @@ last_governed: 2026-08-05
 
 ## 权威源(读代码从哪进)
 
-`id_ref_selector.py`(id 引用选择器)/ `action_editor.py`(`FilterableTypeCombo(select_only)` 的未知值注入)/ `qt_combo_wheel_guard.py`(全局滚轮误改防护,`__main__.py` 安装)。控件选型对照表见 `.cursor/skills/editor-tools-iteration/SKILL.md`。
+`id_ref_selector.py`(id 引用选择器)/ `action_editor.py`(`FilterableTypeCombo(select_only)` 的未知值注入)/ `qt_combo_wheel_guard.py`(全局滚轮误改防护,`__main__.py` 安装)/
+`position_ref_field.py`(**位置引用 `at` 的统一复合控件**,2026-09-11:数字坐标(手输 / `WorldPointPickDialog` 地图拾取)/ 实体此刻位置 / 场景曲线插槽三选一,
+六条位置动作 + playTrajectory 共用;数字模式不写 `at`、老数据一个字节不动;实体 / 插槽写 `at`,x/y 写编辑期快照当回落,引用没动就保留磁盘 x/y;
+候选全部取自 ProjectModel(`actor_id_items_for_scene / hotspot_ids_for_scene / trajectory_slot_rows / trajectory_slots`),悬垂值经 IdRefSelector 保值)。控件选型对照表见 `.cursor/skills/editor-tools-iteration/SKILL.md`。
 
 ## 硬契约
 

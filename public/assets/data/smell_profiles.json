@@ -18,6 +18,14 @@
     "baseW": 50
   },
   "profiles": {
+    "baozi": {
+      "name": "包子香",
+      "color": "#e6c78c",
+      "rise": 0.9,
+      "sway": 1.6,
+      "swayFreq": 0.6,
+      "jitter": 0.03
+    },
     "incense": {
       "name": "香火",
       "color": "#d6a24e",

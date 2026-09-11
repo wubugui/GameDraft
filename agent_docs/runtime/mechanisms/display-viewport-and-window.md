@@ -52,6 +52,14 @@ last_governed: 2026-09-06
   打包验收扫描,而 Qt 6.11 在带触摸数字化仪的 PC 上把主指针报成 coarse、`any-pointer:fine` 报 false,
   原有硬否决够不着,预览窗任何尺寸都出触屏方向键、与 exe 不一致。
 
+### WebView2 启动参数（Windows，`main.rs` `WEBVIEW2_ARGS`）
+
+桌面客户端不许有浏览器那套「没点过页面不出声、窗口没焦点 / 被盖住就把页面降成后台」（制作人 2026-09-08）：
+`additional_browser_args` 带 `--autoplay-policy=no-user-gesture-required` + `--disable-background-timer-throttling
+--disable-renderer-backgrounding --disable-backgrounding-occluded-windows`，并**自己带上** wry 的缺省项
+`--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`（一自定义就不再自动加）。开发期预览窗同一套开关在
+`tools/dev/game_preview.py`。`cargo check` 过；未在真机装包验过（改的是启动参数，不是行为代码）。
+
 ## 已知坑
 
 - **2026-09-06「打包出来比例不对」**:exe 写死 1280×720(16:9)+ 画面盒被 flex 撑满 + canvas 纯 CSS

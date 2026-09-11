@@ -24,6 +24,7 @@ import type {
   NpcDef,
   ConditionExpr,
   SceneEntityGroupDef,
+  AudioCueRef,
 } from '../data/types';
 import { isCutsceneOnlyEntity, isEntityBoundToCutscene } from '../data/types';
 import { applyCharacterDefaults, type CharacterRegistry } from '../data/characterRegistry';
@@ -93,6 +94,11 @@ interface SceneMemory {
   inspectedHotspots: string[];
   pickedUpHotspots: string[];
   entityOverrides: SceneEntityRuntimeOverrides;
+  /**
+   * 演出里临时生成、播完**留在场景**的对象（`playTrajectory.spawn.keep`）：完整的 NpcDef，
+   * 随场景实例化与存档走——留在终点就意味着场景变了，它必须是真正的场景实体（2026-09-11 制作人定）。
+   */
+  spawnedNpcs: Record<string, NpcDef>;
 }
 
 interface CutsceneStaging {
@@ -206,8 +212,8 @@ export class SceneManager implements IGameSystem {
   private playerPositionSetter: ((x: number, y: number) => void) | null = null;
   private cameraSetter: ((boundsW: number, boundsH: number, snapX: number, snapY: number, cameraConfig?: SceneCameraConfig, worldScale?: number) => void) | null = null;
   private boundsOnlySetter: ((boundsW: number, boundsH: number) => void) | null = null;
-  private audioApplier: ((bgm?: string, ambient?: string[], acousticSpace?: string) => void) | null = null;
-  private audioManifestResolver: ((bgm?: string, ambient?: string[]) => AssetRef[]) | null = null;
+  private audioApplier: ((bgm?: AudioCueRef, ambient?: AudioCueRef[], acousticSpace?: string) => void) | null = null;
+  private audioManifestResolver: ((bgm?: AudioCueRef, ambient?: AudioCueRef[]) => AssetRef[]) | null = null;
   private zoneSetter: ((zones: import('../data/types').ZoneDef[]) => void) | null = null;
   private interactionSetter: ((hotspots: Hotspot[], npcs: Npc[]) => void) | null = null;
   /** 由 Game 注入：从深度系统摘除并销毁实体滤镜（Game 持有 SceneDepthSystem）。
@@ -275,11 +281,11 @@ export class SceneManager implements IGameSystem {
     this.boundsOnlySetter = fn;
   }
 
-  setAudioApplier(fn: (bgm?: string, ambient?: string[], acousticSpace?: string) => void): void {
+  setAudioApplier(fn: (bgm?: AudioCueRef, ambient?: AudioCueRef[], acousticSpace?: string) => void): void {
     this.audioApplier = fn;
   }
 
-  setAudioManifestResolver(fn: ((bgm?: string, ambient?: string[]) => AssetRef[]) | null): void {
+  setAudioManifestResolver(fn: ((bgm?: AudioCueRef, ambient?: AudioCueRef[]) => AssetRef[]) | null): void {
     this.audioManifestResolver = fn;
   }
 
@@ -876,6 +882,7 @@ export class SceneManager implements IGameSystem {
       inspectedHotspots: [],
       pickedUpHotspots: [],
       entityOverrides: this.emptyEntityOverrides(),
+      spawnedNpcs: {},
     };
   }
 
@@ -886,6 +893,7 @@ export class SceneManager implements IGameSystem {
     if (!mem.entityOverrides.zones) mem.entityOverrides.zones = {};
     if (!mem.inspectedHotspots) mem.inspectedHotspots = [];
     if (!mem.pickedUpHotspots) mem.pickedUpHotspots = [];
+    if (!mem.spawnedNpcs) mem.spawnedNpcs = {};
     return mem;
   }
 
@@ -1743,6 +1751,15 @@ export class SceneManager implements IGameSystem {
         }
       }
     }
+    // 演出里临时生成、播完留在场景的对象（sceneMemory.spawnedNpcs）：与场景 JSON 里的 NPC 同一条实例化管线
+    for (const npcDef of Object.values(this.getCommittedMemory(sceneId)?.spawnedNpcs ?? {})) {
+      if (this.currentNpcs.some((n) => n.def.id === npcDef.id)) continue;
+      const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', npcDef.id, npcDef, 'outer') as NpcRuntimeOverride | undefined;
+      report(`NPC ${npcDef.id} · 演出留下`);
+      const npc = await this.instantiateNpc(npcDef, snap);
+      this.currentNpcs.push(npc);
+      advance(`NPC ${npcDef.id} ✓`);
+    }
     this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
 
     this.applyPlayerSpawnAndCamera(sceneData, spawnPointId, cameraPosition);
@@ -2283,6 +2300,73 @@ export class SceneManager implements IGameSystem {
     });
   }
 
+  /**
+   * 演出临时生成一个 NPC（图片道具 / 角色模板），走与场景 JSON 同一条实例化管线（阴影 / 透视 / 排序 / 光照全在）。
+   * `persistent` = 播完留在场景：进 `sceneMemory.spawnedNpcs`，随存档与之后每次实例化走。
+   * 生成期间切了场景：销毁半成品、返回 null（孤儿容器不许进层）。图片没给世界尺寸就按贴图像素尺寸。
+   */
+  async spawnRuntimeNpc(def: NpcDef, opts: { persistent: boolean }): Promise<Npc | null> {
+    const scene = this.currentScene;
+    if (!scene) return null;
+    const sceneId = scene.id;
+    const epoch = this.sceneEpoch;
+    if (def.displayImage && !(def.displayImage.worldWidth > 0 && def.displayImage.worldHeight > 0)) {
+      try {
+        const tex = await this.assetManager.loadTexture(def.displayImage.image);
+        def.displayImage = {
+          ...def.displayImage,
+          worldWidth: def.displayImage.worldWidth > 0 ? def.displayImage.worldWidth : tex.width,
+          worldHeight: def.displayImage.worldHeight > 0 ? def.displayImage.worldHeight : tex.height,
+        };
+      } catch (_e) {
+        // 图装不上：instantiateNpc 会再试一次并退到占位外观
+      }
+      if (epoch !== this.sceneEpoch) return null;
+    }
+    const snap = this.getRuntimeOverrideForContext(sceneId, 'npc', def.id, def, 'outer') as NpcRuntimeOverride | undefined;
+    const npc = await this.instantiateNpc(def, snap);
+    if (epoch !== this.sceneEpoch || this.currentScene?.id !== sceneId) {
+      npc.destroy();
+      return null;
+    }
+    this.currentNpcs.push(npc);
+    if (opts.persistent) {
+      const mem = this.getWritableMemory(sceneId);
+      if (mem) mem.spawnedNpcs[def.id] = { ...def };
+    }
+    this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
+    return npc;
+  }
+
+  /** 移除一个运行时生成的 NPC（连同 spawnedNpcs 里的定义）；不在当前场景返回 false。 */
+  removeRuntimeNpc(id: string): boolean {
+    const idx = this.currentNpcs.findIndex((n) => n.id === id);
+    if (idx < 0) return false;
+    const npc = this.currentNpcs[idx]!;
+    this.releaseNpcFilters(npc);
+    npc.destroy();
+    this.currentNpcs.splice(idx, 1);
+    const sid = this.currentScene?.id;
+    if (sid) {
+      const mem = this.getWritableMemory(sid);
+      if (mem) delete mem.spawnedNpcs[id];
+    }
+    this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
+    return true;
+  }
+
+  /** 留在场景的临时对象：把它此刻的位置写回 spawnedNpcs 的定义（下次实例化就在终点） */
+  commitSpawnedNpcPosition(id: string): void {
+    const sid = this.currentScene?.id;
+    if (!sid) return;
+    const mem = this.getWritableMemory(sid);
+    const def = mem?.spawnedNpcs[id];
+    const npc = this.getNpcById(id);
+    if (!mem || !def || !npc) return;
+    def.x = Math.round(npc.x * 100) / 100;
+    def.y = Math.round(npc.y * 100) / 100;
+  }
+
   serialize(): object {
     // 存档前 flush 当前场景运行态（幂等；运行态本身已即时入 memory，此处兜底建桶）
     this.saveCurrentSceneMemory();
@@ -2292,14 +2376,22 @@ export class SceneManager implements IGameSystem {
         inspected: string[];
         pickedUp: string[];
         entityOverrides: SceneEntityRuntimeOverrides;
+        spawned?: Record<string, NpcDef>;
       }
     > = {};
     this.sceneMemory.forEach((mem, sceneId) => {
-      data[sceneId] = {
+      const row: {
+        inspected: string[];
+        pickedUp: string[];
+        entityOverrides: SceneEntityRuntimeOverrides;
+        spawned?: Record<string, NpcDef>;
+      } = {
         inspected: mem.inspectedHotspots,
         pickedUp: mem.pickedUpHotspots,
         entityOverrides: mem.entityOverrides ?? this.emptyEntityOverrides(),
       };
+      if (mem.spawnedNpcs && Object.keys(mem.spawnedNpcs).length) row.spawned = mem.spawnedNpcs;
+      data[sceneId] = row;
     });
     return { currentSceneId: this.currentScene?.id ?? null, memory: data };
   }
@@ -2314,6 +2406,7 @@ export class SceneManager implements IGameSystem {
         entityOverrides?: SceneEntityRuntimeOverrides;
         npcSnapshots?: Record<string, NpcPersistentSnapshot>;
         hotspotDisplayImageOverrides?: Record<string, HotspotDisplayImage>;
+        spawned?: Record<string, NpcDef>;
       }
     >;
   }): void {
@@ -2345,6 +2438,7 @@ export class SceneManager implements IGameSystem {
         inspectedHotspots: mem.inspected,
         pickedUpHotspots: mem.pickedUp,
         entityOverrides,
+        spawnedNpcs: { ...(mem.spawned ?? {}) },
       });
     }
   }

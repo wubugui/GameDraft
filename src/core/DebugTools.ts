@@ -41,6 +41,11 @@ export interface SmellDebugController {
   sniff: () => void;
   getForm: () => SmellFormParams | null;
   setFormParam: (key: keyof SmellFormParams, value: number) => void;
+  /** 气味源 / 飘向追踪（G.6）：在玩家左右某处放个源看气缕歪不歪。 */
+  setSourceAtPlayerOffset: (dx: number) => void;
+  clearSource: () => void;
+  setTracking: (enabled: boolean) => void;
+  isTracking: () => boolean;
 }
 
 /** 调试缩放下限。原先 0.25 过小幅度就顶死，表现为「只能放大不能缩小」 */
@@ -1831,6 +1836,27 @@ export class DebugTools {
     for (const p of sd.listProfiles()) mkScentBtn(p.id, p.name);
     wrap.appendChild(scentRow);
 
+    // 气味源 / 飘向追踪（G.6）：在玩家左/右 300px 放个源，气缕该往反方向歪；关追踪立刻直
+    const srcRow = document.createElement('div');
+    srcRow.className = 'debug-dock__btn-row';
+    const mkSrcBtn = (label: string, fn: () => void): void => {
+      const b = document.createElement('button');
+      b.className = 'debug-dock__btn';
+      b.textContent = label;
+      b.addEventListener('click', () => { fn(); syncTrackingBtn(); });
+      srcRow.appendChild(b);
+    };
+    mkSrcBtn('源放左 300px', () => sd.setSourceAtPlayerOffset(-300));
+    mkSrcBtn('源放右 300px', () => sd.setSourceAtPlayerOffset(300));
+    mkSrcBtn('撤源', () => sd.clearSource());
+    const trackBtn = document.createElement('button');
+    trackBtn.className = 'debug-dock__btn';
+    const syncTrackingBtn = (): void => { trackBtn.textContent = sd.isTracking() ? '追踪：开' : '追踪：关'; };
+    trackBtn.addEventListener('click', () => { sd.setTracking(!sd.isTracking()); syncTrackingBtn(); });
+    syncTrackingBtn();
+    srcRow.appendChild(trackBtn);
+    wrap.appendChild(srcRow);
+
     // 浓度 / 方位 / 波动 / 嗅
     const stateHint = document.createElement('div');
     stateHint.className = 'debug-dock__slider-hint';
@@ -2258,6 +2284,40 @@ export class DebugTools {
             fn: () => {
               this.hudHealthDebugOverrideRatio = 1;
               sync();
+            },
+          },
+          // 显隐开关（G.5：默认不显、动作控显）。只影响显示、不写 flag；下次读档按 flag 复位
+          {
+            label: '显三把火',
+            noRefresh: true,
+            fn: () => {
+              this.deps.eventBus.emit('debug:threeFiresVisibleChanged', { visible: true });
+              debugPanelUI.log('三把火 HUD: 显（调试，不写 flag）');
+            },
+          },
+          {
+            label: '隐三把火',
+            noRefresh: true,
+            fn: () => {
+              this.deps.eventBus.emit('debug:threeFiresVisibleChanged', { visible: false });
+              debugPanelUI.log('三把火 HUD: 隐（调试，不写 flag）');
+            },
+          },
+          // 气味指示器显隐（G.6：同三把火，默认不显、动作控显）。只影响显示、不写 flag
+          {
+            label: '显气味',
+            noRefresh: true,
+            fn: () => {
+              this.deps.eventBus.emit('debug:smellVisibleChanged', { visible: true });
+              debugPanelUI.log('气味指示器: 显（调试，不写 flag）');
+            },
+          },
+          {
+            label: '隐气味',
+            noRefresh: true,
+            fn: () => {
+              this.deps.eventBus.emit('debug:smellVisibleChanged', { visible: false });
+              debugPanelUI.log('气味指示器: 隐（调试，不写 flag）');
             },
           },
         ],

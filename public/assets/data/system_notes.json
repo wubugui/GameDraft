@@ -1,0 +1,21 @@
+{
+  "_comment": "系统说明卡（玩法清单 K4「系统说明卡」）：showSystemNote{noteId} 发起；每档每条只自动弹一次（flag sysnote_<id>）；关卡同时按 loreEntryId 解锁见闻录条目（lore.json 该条 unlockConditions 引用同一 flag）。",
+  "notes": [
+    {
+      "id": "three_fires",
+      "title": "三把火",
+      "image": "images/illustrations/three_fires.png",
+      "body": "[c:emphasis]看见火，就是过了界。[/c]\n受惊、回头、应声——火要灭。",
+      "loreEntryId": "lore_three_fires",
+      "hudAnchor": "threeFires"
+    },
+    {
+      "id": "smell",
+      "title": "鼻子",
+      "image": "images/illustrations/smell_nose.png",
+      "body": "[c:emphasis]鼻子比眼睛先知道。[/c]\n烟是味，字是名；烟往哪边飘，东西在另一边。\n按 Q 闻一闻。",
+      "loreEntryId": "lore_smell_nose",
+      "hudAnchor": "smell"
+    }
+  ]
+}

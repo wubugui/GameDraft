@@ -4,10 +4,15 @@
  *   select  左键：点/把手拖动、点曲线选段、框选、Shift 多选；双击曲线插点；Delete 删点
  *   pen     左键：给活动手绘段追加点（按下即可拖动定位）；点线上插点；Esc/Enter 回 select
  *   physics 左键按下拖动：拖落点（活动段不是抛体就新建一段）
- *   anchor  左键：放锚点（放完回 select）
+ *   slot    左键：放一个命名插槽（放完回 select）
+ *   origin  左键：把曲线原点放到这儿（放完回 select）
  *   pan     左键拖平移
  *   任何模式：中键 / 空格+左键 / 右键拖 = 平移；滚轮 = 缩放；右键点在控制点上 = 删点
- *   世界空间：拖点 = 沿地面挪（射线打地面场）；点上方的 ▲ 把手 / Alt+拖 = 改离地高度
+ *   世界空间：拖点 = 沿地面挪（射线打地面场）；点上方的 ▲ 把手（多选时）/ Alt+拖 = 改离地高度
+ *   变换 gizmo（gizmo.js，与 3D 视图共用；选中 ≥1 点 / 整段 / 整条时立刻出现在轴心，加点模式下也在）：
+ *     世界空间：X（画面右）/ Y(h)（竖直）/ Z（沿地面往远处，画上与 Y 重叠所以错开 16px 画成虚线）三根轴 + XZ 贴地面片 + 中心贴地走；
+ *     画面空间：X / Y 两根轴 + 中心自由挪；W/E/R 切移动 / 旋转 / 缩放；拖动时 Ctrl 吸附；读数跟光标
+ *   点幽灵（预览实体）= 选整条（幽灵就是"那个物体"，gizmo 落在曲线起点上）；点插槽 = 选它
  * 视图不写数据：一切改动经 host（app.js）落进 doc、进历史栈、触发重烘。 */
 
 const HIT_R = 9;
@@ -16,7 +21,7 @@ class View2D {
   constructor(canvas, host) {
     this.c = canvas; this.g = canvas.getContext('2d'); this.host = host;
     this.zoom = 0.5; this.ox = 0; this.oy = 0;           // 画面 wu → 画布 px：cx = ox + sx*zoom
-    this.drag = null; this.spaceDown = false; this.box = null;
+    this.drag = null; this.spaceDown = false; this.box = null; this.hover = null; this.readout = null;
     this.mouse = null;
     this.dpr = window.devicePixelRatio || 1;
     this._bind();
@@ -37,7 +42,10 @@ class View2D {
   /** 把整条轨迹（或活动段）框进视口。 */
   fitCurve() {
     const host = this.host;
-    const b = Edit.bounds(host, 'all') || (host.doc ? { x0: host.doc.authoring.anchor.x - 100, y0: host.doc.authoring.anchor.y - 100, x1: host.doc.authoring.anchor.x + 100, y1: host.doc.authoring.anchor.y + 100 } : null);
+    let b = Edit.bounds(host, 'all');
+    if (!b && host.doc) { const o = Edit.originScreen(host); b = { x0: o[0] - 100, y0: o[1] - 100, x1: o[0] + 100, y1: o[1] + 100 }; }
+    if (b && host.doc) for (const sl of Edit.slots(host.doc)) { b.x0 = Math.min(b.x0, num(sl.x, 0)); b.x1 = Math.max(b.x1, num(sl.x, 0)); b.y0 = Math.min(b.y0, num(sl.y, 0)); b.y1 = Math.max(b.y1, num(sl.y, 0)); }
+    if (b && host.doc) { const o = Edit.originScreen(host); b.x0 = Math.min(b.x0, o[0]); b.x1 = Math.max(b.x1, o[0]); b.y0 = Math.min(b.y0, o[1]); b.y1 = Math.max(b.y1, o[1]); }
     if (!b) return this.fit();
     const pad = 120;
     const W = this.c.clientWidth, H = this.c.clientHeight;
@@ -75,14 +83,21 @@ class View2D {
     const doc = host.doc;
     if (!doc) return;
     this._curves();
-    this._activeSegment();
-    this._gizmo();
-    this._anchor();
+    const gz = this._gizmo();
+    this._activeSegment(gz);
+    this._slots();
+    this._origin();
     if (L.ghost) { const prev = host.bake && host.bake.preview && host.bake.preview.screen; if (prev && prev.length) { const pose = sampleScreen(prev, host.tMs); if (pose) this._ghost(pose); } }
+    if (gz) Gizmo.draw(g, gz, this._hotPart());
     if (this.box) { const b = this.box; g.strokeStyle = 'rgba(108,180,255,.9)'; g.fillStyle = 'rgba(108,180,255,.12)'; g.lineWidth = 1; g.setLineDash([4, 3]); g.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); g.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); g.setLineDash([]); }
-    if (host.tool === 'anchor') { g.fillStyle = '#7ed492'; g.font = '12px sans-serif'; g.fillText('点击画面放置锚点（Esc 取消）', 12, H - 30); }
-    else if (host.tool === 'pen') { g.fillStyle = '#6cb4ff'; g.font = '12px sans-serif'; g.fillText('点击追加控制点 · 点在线上插点 · Enter/Esc 结束', 12, H - 30); }
-    else if (host.tool === 'physics') { g.fillStyle = '#ffb454'; g.font = '12px sans-serif'; g.fillText('按住拖动：把抛体落点拖到目标处', 12, H - 30); }
+    Gizmo.drawReadout(g, this.readout);
+    g.font = '12px sans-serif';
+    if (host.tool === 'slot') { g.fillStyle = '#5ad9cc'; g.fillText('点击画面放置一个命名插槽（曲线暴露给场景的位置）· Enter/Esc 结束', 12, H - 30); }
+    if (host.tool === 'origin') { g.fillStyle = '#ffb454'; g.fillText('点击画面把曲线原点放到那儿（播放时给的位置对齐的就是它）· Enter/Esc 结束', 12, H - 30); }
+    else if (host.tool === 'pen') { g.fillStyle = '#6cb4ff'; g.fillText('点击追加控制点 · 点在线上插点 · 刚加的点带着 gizmo，可直接拖轴 · Enter/Esc 结束', 12, H - 30); }
+    else if (host.tool === 'physics') { g.fillStyle = '#ffb454'; g.fillText('按住拖动：把抛体落点拖到目标处', 12, H - 30); }
+    else if (gz) { g.fillStyle = 'rgba(255,255,255,.6)'; const world = host.doc.space === 'world'; g.fillText({ move: world ? '移动（W）：红 X 沿画面右 · 绿 Y 改离地高度 · 蓝 Z 沿地面往远处 · 绿面片 / 中心 = 贴地走 · 拖点 = 贴地走' : '移动（W）：X / Y 箭头沿轴 · 中心 = 自由挪', rotate: world ? '旋转（E）：拖圆环 = 绕竖直轴' : '旋转（E）：拖圆环', scale: '缩放（R）：轴末端 = 单轴 · 中心 = 等比' }[gz.mode] + ' · 按住 Ctrl 吸附 · W/E/R 切模式', 12, H - 30); }
+    else if (host.tool === 'select') { g.fillStyle = 'rgba(255,255,255,.45)'; g.fillText('点点 / 框选 = 选点 · 点曲线 = 选整段 · 点幽灵 = 选整条 · 点插槽 = 选它 · 选中即出现 gizmo（W/E/R 移动/旋转/缩放）', 12, H - 30); }
   }
   _grid(W, H) {
     const g = this.g, z = this.zoom;
@@ -123,15 +138,24 @@ class View2D {
       g.fillStyle = 'rgba(255,255,255,.75)'; g.font = '11px sans-serif'; g.fillText(n.name, c[0] + 7, c[1] + 12);
     }
   }
-  /** 全部段的烘焙曲线（按段切片；活动段粗、其余细），落点线，硬帧刻度，时间刻度。 */
+  /** 全部段的曲线（按段切片；活动段粗、其余细），落点线，硬帧刻度，时间刻度。
+   *  手绘段画的是**几何路径**（控制点过样条的密折线），不是烘焙采样：烘焙采样按时间等距，时间曲线一改，
+   *  快的地方采样稀、折线切角，看起来像"时间曲线把曲线位置改了"（2026-09-11 制作人抓到）。采样只留刻度。
+   *  抛体段的位置本来就是时间积分出来的，仍画烘焙采样。 */
   _curves() {
     const g = this.g, host = this.host;
     const slices = host.previewSlices();
-    for (const sl of slices) {
-      const on = sl.i === host.segIndex;
+    const segsAll = Edit.segs(host.doc);
+    // 烘焙没回来之前也要有形状：按段走，手绘段的几何不吃烘焙；抛体段等烘焙
+    for (let i = 0; i < segsAll.length; i++) {
+      const on = i === host.segIndex;
       if (!on && !host.layers.allCurves) continue;
+      const segI = segsAll[i];
+      const sl = slices.find((s) => s.i === i) || { i, pts: [], foot: [], hard: [], ticks: [], start: host.segStartScreen(segI), label: segI.id };
+      const geo = segI.kind === 'manual' ? host.localCurve(segI) : null;
+      const line = geo && geo.length > 1 ? geo : sl.pts;
       g.lineWidth = on ? 2.5 : 1.5; g.strokeStyle = on ? '#6cb4ff' : 'rgba(108,180,255,.45)'; g.beginPath();
-      sl.pts.forEach((p, k) => { const c = this.toCanvas(p[0], p[1]); if (k) g.lineTo(c[0], c[1]); else g.moveTo(c[0], c[1]); });
+      line.forEach((p, k) => { const c = this.toCanvas(p[0], p[1]); if (k) g.lineTo(c[0], c[1]); else g.moveTo(c[0], c[1]); });
       g.stroke();
       if (on || host.layers.allCurves) {
         g.lineWidth = 1; g.strokeStyle = on ? 'rgba(255,180,84,.8)' : 'rgba(255,180,84,.3)'; g.beginPath();
@@ -150,19 +174,14 @@ class View2D {
       if (host.layers.allCurves && !on) { g.fillStyle = 'rgba(255,255,255,.6)'; g.font = '10px sans-serif'; g.fillText(sl.label, st[0] + 5, st[1] - 5); }
     }
   }
-  _activeSegment() {
+  _activeSegment(gz) {
     const g = this.g, host = this.host;
     const seg = host.activeSeg(); if (!seg) return;
+    const soloGizmo = !!(gz && gz.n === 1);   // 单选：gizmo 的 Y 箭头就在 ▲ 的位置，不重复画
     const world = host.doc.space === 'world';
     if (seg.kind === 'manual') {
       const pts = host.effPoints(seg);
-      // 本地即时曲线（烘焙没回来之前就能看到形状）
-      const local = host.localCurve(seg);
-      if (local && local.length > 1) {
-        g.strokeStyle = 'rgba(108,180,255,.55)'; g.lineWidth = 1.5; g.setLineDash([6, 4]); g.beginPath();
-        local.forEach((p, k) => { const c = this.toCanvas(p[0], p[1]); if (k) g.lineTo(c[0], c[1]); else g.moveTo(c[0], c[1]); });
-        g.stroke(); g.setLineDash([]);
-      }
+      // 几何路径已在 _curves 里画成实线（烘焙没回来之前也在：它不吃烘焙）；这里只画控制多边形和点
       // 控制多边形
       g.strokeStyle = 'rgba(255,255,255,.3)'; g.lineWidth = 1; g.setLineDash([3, 4]); g.beginPath();
       pts.forEach((p, i) => { const c = this.toCanvas(p.sx, p.sy); if (i) g.lineTo(c[0], c[1]); else g.moveTo(c[0], c[1]); });
@@ -177,7 +196,7 @@ class View2D {
         g.strokeStyle = '#000'; g.lineWidth = 1; g.stroke();
         g.fillStyle = '#ddd'; g.font = '10px sans-serif'; g.fillText(String(i), c[0] + 7, c[1] + 11);
         if (world) { g.fillStyle = sel ? '#fff' : '#bbb'; g.font = '11px sans-serif'; g.fillText('h ' + fmt(p.h), c[0] + 7, c[1] - 6); }
-        if (world && sel) { // 高度把手 ▲
+        if (world && sel && !soloGizmo) { // 高度把手 ▲
           const hy = c[1] - 18; g.fillStyle = '#ffb454'; g.beginPath(); g.moveTo(c[0], hy - 6); g.lineTo(c[0] - 5, hy + 3); g.lineTo(c[0] + 5, hy + 3); g.closePath(); g.fill();
           g.strokeStyle = 'rgba(255,180,84,.6)'; g.beginPath(); g.moveTo(c[0], hy + 3); g.lineTo(c[0], c[1] - 7); g.stroke();
         }
@@ -225,44 +244,100 @@ class View2D {
     g.fillStyle = color; g.beginPath(); g.moveTo(b[0], b[1]);
     g.lineTo(b[0] - 11 * Math.cos(ang - 0.4), b[1] - 11 * Math.sin(ang - 0.4)); g.lineTo(b[0] - 11 * Math.cos(ang + 0.4), b[1] - 11 * Math.sin(ang + 0.4)); g.closePath(); g.fill();
   }
-  _gizmoGeom() {
-    const host = this.host, gz = host.gizmo();
-    if (!gz) return null;
-    const p0 = this.toCanvas(gz.box.x0, gz.box.y0), p1 = this.toCanvas(gz.box.x1, gz.box.y1);
-    const x0 = Math.min(p0[0], p1[0]) - 14, y0 = Math.min(p0[1], p1[1]) - 14, x1 = Math.max(p0[0], p1[0]) + 14, y1 = Math.max(p0[1], p1[1]) + 14;
-    const pv = this.toCanvas(gz.pivot[0], gz.pivot[1]);
-    const cx = (x0 + x1) / 2;
-    return { x0, y0, x1, y1, pivot: pv, rot: [cx, y0 - 26], move: [cx, (y0 + y1) / 2], corners: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], scope: gz.scope };
-  }
-  _gizmo() {
-    const gg = this._gizmoGeom(); if (!gg) return;
-    const g = this.g;
-    g.strokeStyle = 'rgba(108,180,255,.8)'; g.lineWidth = 1; g.setLineDash([5, 4]); g.strokeRect(gg.x0, gg.y0, gg.x1 - gg.x0, gg.y1 - gg.y0); g.setLineDash([]);
-    for (const c of gg.corners) { g.fillStyle = '#fff'; g.fillRect(c[0] - 4, c[1] - 4, 8, 8); g.strokeStyle = '#000'; g.strokeRect(c[0] - 4, c[1] - 4, 8, 8); }
-    g.strokeStyle = 'rgba(108,180,255,.8)'; g.beginPath(); g.moveTo((gg.x0 + gg.x1) / 2, gg.y0); g.lineTo(gg.rot[0], gg.rot[1] + 6); g.stroke();
-    g.fillStyle = '#6cb4ff'; g.beginPath(); g.arc(gg.rot[0], gg.rot[1], 6, 0, Math.PI * 2); g.fill(); g.strokeStyle = '#000'; g.stroke();
-    g.fillStyle = 'rgba(108,180,255,.9)'; g.fillRect(gg.move[0] - 5, gg.move[1] - 5, 10, 10); g.strokeStyle = '#000'; g.strokeRect(gg.move[0] - 5, gg.move[1] - 5, 10, 10);
-    g.strokeStyle = '#ffb454'; g.lineWidth = 1.5; g.beginPath(); g.arc(gg.pivot[0], gg.pivot[1], 7, 0, Math.PI * 2); g.stroke();
-    g.beginPath(); g.moveTo(gg.pivot[0] - 10, gg.pivot[1]); g.lineTo(gg.pivot[0] + 10, gg.pivot[1]); g.moveTo(gg.pivot[0], gg.pivot[1] - 10); g.lineTo(gg.pivot[0], gg.pivot[1] + 10); g.stroke();
-    g.fillStyle = '#9fd0ff'; g.font = '11px sans-serif';
-    g.fillText(gg.scope === 'all' ? '整条轨迹' : gg.scope === 'segment' ? '整段' : '选中的点', gg.x0, gg.y0 - 5);
-    g.fillText('↻', gg.rot[0] - 4, gg.rot[1] - 9);
-  }
-  _anchor() {
-    const g = this.g, host = this.host, an = host.doc.authoring.anchor, c = this.toCanvas(an.x, an.y);
-    // 首段起点不在锚点上（自定起点）：把"播放偏移"画出来，别让作者以为曲线从锚点起
-    const first = Edit.segs(host.doc)[0];
-    if (first && !host.pinned(first)) {
-      const st = host.segStartScreen(first); const s = this.toCanvas(st[0], st[1]);
-      if (Math.hypot(s[0] - c[0], s[1] - c[1]) > 4) {
-        g.strokeStyle = 'rgba(126,212,146,.7)'; g.lineWidth = 1; g.setLineDash([3, 3]); g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(s[0], s[1]); g.stroke(); g.setLineDash([]);
-        g.fillStyle = 'rgba(126,212,146,.9)'; g.font = '10px sans-serif'; g.fillText(`起点偏移 ${fmt(st[0] - an.x, 0)}, ${fmt(st[1] - an.y, 0)}`, (c[0] + s[0]) / 2 + 4, (c[1] + s[1]) / 2 - 3);
-      }
+  // ------------------------------------------------------------- 变换 gizmo（gizmo.js 共用；这里只提供 projector）
+  /** 原画视图的 projector：世界空间走场景标定（R 投影，正交，1 wu = 1 画面 wu × zoom）；画面空间就是画布本身。 */
+  _proj() {
+    const host = this.host, cal = host.cal, v = this;
+    if (host.doc && host.doc.space === 'world' && cal) {
+      const R = cal.rows;
+      const axisPx = (a) => { const o = cal.projectOffset(a[0], a[1], a[2]); return [o[0] * v.zoom, o[1] * v.zoom]; };
+      const project = (p) => { const s = cal.worldToScene(p[0], p[1], p[2]); return v.toCanvas(s[0], s[1]); };
+      return {
+        dim: 3, project, worldPerPx: () => 1 / v.zoom,
+        axisParam: (mx, my, p0, a) => { const c = project(p0), s = axisPx(a), l2 = s[0] * s[0] + s[1] * s[1]; return l2 < 1e-6 ? null : ((mx - c[0]) * s[0] + (my - c[1]) * s[1]) / l2; },
+        planePoint: (mx, my, p0, a, b) => {
+          const c = project(p0), A = axisPx(a), B = axisPx(b), det = A[0] * B[1] - A[1] * B[0];
+          if (Math.abs(det) < 1e-3) return null;   // 面对着视线（原画里的 YZ 面）
+          const dx = mx - c[0], dy = my - c[1]; const u = (dx * B[1] - dy * B[0]) / det, w = (A[0] * dy - A[1] * dx) / det;
+          return [p0[0] + a[0] * u + b[0] * w, p0[1] + a[1] * u + b[1] * w, p0[2] + a[2] * u + b[2] * w];
+        },
+        groundPoint: (mx, my) => { const s = v.toScene(mx, my); return cal.inScene(s[0], s[1]) ? cal.sceneToWorldGround(s[0], s[1]) : null; },
+        viewPlanePoint: (mx, my, p0) => { const c = project(p0), r = cal.screenRightWorld(), u = cal.screenUpWorld(); const dx = (mx - c[0]) / v.zoom, dy = -(my - c[1]) / v.zoom; return [p0[0] + r[0] * dx + u[0] * dy, p0[1] + r[1] * dx + u[1] * dy, p0[2] + r[2] * dx + u[2] * dy]; },
+        eyeAbove: () => R[5] < 0,   // 视线（q 的 +z 过 R）朝下 = 相机在上
+      };
     }
-    g.strokeStyle = '#7ed492'; g.lineWidth = 2;
-    g.beginPath(); g.moveTo(c[0] - 10, c[1]); g.lineTo(c[0] + 10, c[1]); g.moveTo(c[0], c[1] - 10); g.lineTo(c[0], c[1] + 10); g.stroke();
+    const project = (p) => v.toCanvas(p[0], p[1]);
+    return {
+      dim: 2, project, worldPerPx: () => 1 / v.zoom,
+      axisParam: (mx, my, p0, a) => { const c = project(p0), s = [a[0] * v.zoom, a[1] * v.zoom], l2 = s[0] * s[0] + s[1] * s[1]; return l2 < 1e-6 ? null : ((mx - c[0]) * s[0] + (my - c[1]) * s[1]) / l2; },
+      planePoint: (mx, my) => v.toScene(mx, my),   // 画面就是那个面
+      groundPoint: (mx, my) => v.toScene(mx, my),
+      viewPlanePoint: (mx, my) => v.toScene(mx, my),
+      eyeAbove: () => true,
+    };
+  }
+  /** gizmo 几何；null = 不显示（没选中 / 不在选择、加点工具） */
+  _gizmo() {
+    const host = this.host;
+    if (!host.doc || (host.tool !== 'select' && host.tool !== 'pen')) return null;
+    const pv = host.gizmoPivot(); if (!pv) return null;
+    return Gizmo.geom(this._proj(), GZ_CFG.build(host.doc.space === 'world' ? GZ_CFG.world2 : GZ_CFG.screen, pv.kind), pv.pivot, host.gizmoMode, pv.n, pv.label);
+  }
+  _hotPart() { return this.drag && this.drag.kind === 'gz' ? this.drag.part : (this.hover && this.hover.kind === 'gz' ? this.hover.part : null); }
+  /** 按下 gizmo 把手：选中的是把手（初速 / 最高点 / 落点 / 起点 / 锚点）→ 走它自己的设置器；否则走变换管线 */
+  _gzDown(part, mx, my) {
+    const g = this._gizmo(); if (!g) return;
+    const host = this.host;
+    const d = Gizmo.dragBegin(this._proj(), g, part, mx, my);
+    if (host.sel.handle) { d.handle = host.sel.handle; d.base = host.handleBase(d.handle); if (!d.base) return; this.drag = d; host.dragBegin('移动' + host.handleLabel(d.handle)); return; }
+    this.drag = d; host.beginTransform();
+  }
+  _gzMove(d, mx, my, e) {
+    const host = this.host;
+    const res = Gizmo.dragUpdate(this._proj(), d, mx, my, e.ctrlKey || e.metaKey); if (!res) return;
+    this.readout = { x: mx + 16, y: my + 22, text: res.text };
+    if (d.handle) { if (res.kind === 'move') host.dragTick(() => host.applyHandle(d.handle, d.base, res.v)); return; }
+    const T = Gizmo.toTransform(res, host.doc.space === 'world', host._pivotNative()); if (!T) return;
+    host.applyTransform(T);
+  }
+  /** 幽灵（预览实体）在画布上的矩形（点它 = 选整条）；没画幽灵时 null */
+  _ghostRect() {
+    const host = this.host, ent = host.entity;
+    const prev = host.layers.ghost && host.bake && host.bake.preview && host.bake.preview.screen;
+    if (!prev || !prev.length) return null;
+    const pose = sampleScreen(prev, host.tMs); if (!pose) return null;
+    const c = this.toCanvas(pose.x, pose.y);
+    const persp = host.layers.persp ? perspectiveScaleAt(host.scene.perspectiveScale, pose.x, pose.sortY) : 1;
+    if (ent && ent.img) {
+      const w = ent.meta.worldWidth * ent.meta.scale * persp * this.zoom * Math.abs(pose.sx), hgt = ent.meta.worldHeight * ent.meta.scale * persp * this.zoom * Math.abs(pose.sy);
+      const ax = ent.meta.anchor.x, ay = ent.meta.anchor.y;
+      return { x0: c[0] - ax * w, y0: c[1] - ay * hgt, x1: c[0] + (1 - ax) * w, y1: c[1] + (1 - ay) * hgt };
+    }
+    const r = Math.max(6, 8 * this.zoom * persp);
+    return { x0: c[0] - r, y0: c[1] - r, x1: c[0] + r, y1: c[1] + r };
+  }
+  /** 命名插槽：地面上的站位（青绿菱形 + 名字）。曲线没有锚点了；首段起点就是曲线起点，可拖。 */
+  _slots() {
+    const g = this.g, host = this.host;
+    for (const sl of Edit.slots(host.doc)) {
+      const c = this.toCanvas(num(sl.x, 0), num(sl.y, 0));
+      const on = host.sel.handle === 'slot:' + sl.id;
+      g.fillStyle = on ? '#ffe44d' : '#5ad9cc'; g.beginPath(); g.moveTo(c[0], c[1] - 9); g.lineTo(c[0] + 9, c[1]); g.lineTo(c[0], c[1] + 9); g.lineTo(c[0] - 9, c[1]); g.closePath(); g.fill();
+      g.strokeStyle = '#000'; g.lineWidth = 1; g.stroke();
+      g.fillStyle = on ? '#ffe44d' : '#5ad9cc'; g.font = '11px sans-serif'; g.fillText('插槽 ' + (sl.label || sl.id), c[0] + 12, c[1] - 6);
+    }
+  }
+  /** 曲线原点：橙色十字 + 圈。播放位置对齐的就是它，所以必须一眼看得见、能单独拖。 */
+  _origin() {
+    const g = this.g, host = this.host;
+    const o = Edit.originScreen(host); if (!o) return;
+    const c = this.toCanvas(o[0], o[1]);
+    const on = host.sel.handle === 'origin';
+    g.strokeStyle = on ? '#ffe44d' : '#ffb454'; g.lineWidth = on ? 2.5 : 2;
+    g.beginPath(); g.moveTo(c[0] - 11, c[1]); g.lineTo(c[0] + 11, c[1]); g.moveTo(c[0], c[1] - 11); g.lineTo(c[0], c[1] + 11); g.stroke();
     g.beginPath(); g.arc(c[0], c[1], 6, 0, Math.PI * 2); g.stroke();
-    g.fillStyle = '#7ed492'; g.font = '11px sans-serif'; g.fillText('锚点（播放位置）', c[0] + 12, c[1] - 6);
+    g.fillStyle = on ? '#ffe44d' : '#ffb454'; g.font = '11px sans-serif';
+    g.fillText(Edit.hasOrigin(host) ? '原点' : '原点（跟着起点）', c[0] + 13, c[1] + 13);
   }
   _ghost(pose) {
     const g = this.g, host = this.host, ent = host.entity;
@@ -287,45 +362,57 @@ class View2D {
     g.strokeStyle = '#ffb454'; g.lineWidth = 1; g.beginPath(); g.moveTo(f[0] - 10, f[1]); g.lineTo(f[0] + 10, f[1]); g.stroke();
   }
   // ------------------------------------------------------------- 拾取
-  /** 返回 {kind, ...}。优先级：gizmo 把手 > 锚点 > 活动段把手 > 任一段曲线。 */
+  /** 返回 {kind, ...}。优先级：gizmo 轴 / 面 / 环 > 地面线把手 > 锚点 > 活动段把手 > gizmo 中心（单点选中时它压在点上，拖点得还是拖点）> 幽灵 > 任一段曲线。 */
   _hit(mx, my) {
     const host = this.host, seg = host.activeSeg();
     if (!host.doc) return null;
     const near = (p, r) => Math.hypot(p[0] - mx, p[1] - my) <= (r || HIT_R);
-    if (host.tool === 'select') {
-      const gg = this._gizmoGeom();
-      if (gg) {
-        if (near(gg.rot, 9)) return { kind: 'gz-rot', gg };
-        for (let i = 0; i < 4; i++) if (near(gg.corners[i], 7)) return { kind: 'gz-scale', corner: i, gg };
-        if (near(gg.move, 8)) return { kind: 'gz-move', gg };
-      }
-    }
-    const an = this.toCanvas(host.doc.authoring.anchor.x, host.doc.authoring.anchor.y);
+    const gz = this._gizmo(); const part = gz ? Gizmo.hit(gz, mx, my) : null;
     const world = host.doc.space === 'world';
+    const slotHit = () => {
+      for (const sl of Edit.slots(host.doc)) { if (near(this.toCanvas(num(sl.x, 0), num(sl.y, 0)), 10)) return { kind: 'slot', id: sl.id }; }
+      const o = Edit.originScreen(host);
+      if (o && near(this.toCanvas(o[0], o[1]), 10)) return { kind: 'origin' };
+      return null;
+    };
     // 地面线左缘把手（画面空间抛体段）：优先级最高，曲线躺在线上也抓得到
     if (seg && seg.kind === 'physics' && !world && typeof seg.groundY === 'number') { const y = this.toCanvas(0, seg.groundY)[1]; if (mx >= 10 && mx <= 44 && Math.abs(my - y) <= 9) return { kind: 'ground' }; }
+    // 1. 小目标（控制点 / 抛体把手 / 锚点）先于 gizmo 的轴、面：别的点正好躺在轴线上时点它得选它——
+    //    不然"选这个点，动的是另一个点"（2026-09-11 制作人抓到）。中心与小目标重合时见下面的规则。
+    let small = null;
     if (seg && seg.kind === 'manual') {
       const pts = host.effPoints(seg);
-      if (world) for (let i = pts.length - 1; i >= 0; i--) { if (host.sel.points.has(i)) { const c = this.toCanvas(pts[i].sx, pts[i].sy); if (Math.abs(c[0] - mx) <= 7 && my >= c[1] - 26 && my <= c[1] - 12) return { kind: 'height', i }; } }
-      // 控制点先于锚点（锚点常压在 0 号点上；可拖的点不能被它挡住）；0 号点与锚点重合时让给锚点（拖锚点会带着它走）
-      for (let i = pts.length - 1; i >= 0; i--) { const p = this.toCanvas(pts[i].sx, pts[i].sy); if (near(p) && !(i === 0 && near(an, 10) && Math.hypot(p[0] - an[0], p[1] - an[1]) <= 6)) return { kind: 'point', i }; }
-      if (near(an, 10)) return { kind: 'anchor' };
+      if (world && !(gz && gz.n === 1)) for (let i = pts.length - 1; i >= 0 && !small; i--) { if (host.sel.points.has(i)) { const c = this.toCanvas(pts[i].sx, pts[i].sy); if (Math.abs(c[0] - mx) <= 7 && my >= c[1] - 26 && my <= c[1] - 12) small = { kind: 'height', i }; } }
+      for (let i = pts.length - 1; i >= 0 && !small; i--) { const p = this.toCanvas(pts[i].sx, pts[i].sy); if (near(p)) small = { kind: 'point', i }; }
+      if (!small) small = slotHit();
+    } else if (seg && seg.kind === 'physics') {
+      const pi = host.physicsInfo(seg);
+      if (pi) {
+        if (near(this.toCanvas(pi.tip[0], pi.tip[1]), HIT_R + 2)) small = { kind: 'v0' };
+        else if (!pi.grounded && near(this.toCanvas(pi.landing[0], pi.landing[1]), 11)) small = { kind: 'landing' };
+        else if (pi.apex && near(this.toCanvas(pi.apex[0], pi.apex[1]), 9)) small = { kind: 'apex' };
+        else { const sc = this.toCanvas(pi.start[0], pi.start[1]); if (near(sc, 9)) small = { kind: 'start' }; }
+      }
+      if (!small) small = slotHit();
+    } else small = slotHit();
+    if (small) {
+      // 整段 / 整条的轴心就压在起点 / 锚点上：中心必须赢（钉住的起点本来也拖不动）；选中点 / 把手时中心让给小目标（同一个操作）
+      if (part && Gizmo.isCenter(part) && (host.sel.scope === 'segment' || host.sel.scope === 'all') && !host.sel.handle) return { kind: 'gz', part };
+      return small;
+    }
+    if (part) return { kind: 'gz', part };   // 两点的质心正好躺在控制多边形的边上：gizmo 先于边
+    if (seg && seg.kind === 'manual') {
+      const pts = host.effPoints(seg);
       for (let i = 0; i < pts.length - 1; i++) {
         const a = this.toCanvas(pts[i].sx, pts[i].sy), b = this.toCanvas(pts[i + 1].sx, pts[i + 1].sy);
         if (distToSeg(mx, my, a, b) <= 6) return { kind: 'edge', i };
       }
       const local = host.localCurve(seg);
       if (local && local.length > 1) for (let i = 0; i < local.length - 1; i++) { const a = this.toCanvas(local[i][0], local[i][1]), b = this.toCanvas(local[i + 1][0], local[i + 1][1]); if (distToSeg(mx, my, a, b) <= 6) return { kind: 'edge', i: host.localEdgeToPointIndex(seg, i) }; }
-    } else if (seg && seg.kind === 'physics') {
-      const pi = host.physicsInfo(seg);
-      if (pi) {
-        if (near(this.toCanvas(pi.tip[0], pi.tip[1]), HIT_R + 2)) return { kind: 'v0' };
-        if (!pi.grounded && near(this.toCanvas(pi.landing[0], pi.landing[1]), 11)) return { kind: 'landing' };
-        if (pi.apex && near(this.toCanvas(pi.apex[0], pi.apex[1]), 9)) return { kind: 'apex' };
-        { const sc = this.toCanvas(pi.start[0], pi.start[1]); if (near(sc, 9) && !(near(an, 10) && Math.hypot(sc[0] - an[0], sc[1] - an[1]) <= 6)) return { kind: 'start' }; }
-      }
-      if (near(an, 10)) return { kind: 'anchor' };
-    } else if (near(an, 10)) return { kind: 'anchor' };
+    }
+    // 幽灵 = "那个物体"：点它选整条
+    const gr = this._ghostRect();
+    if (gr && mx >= gr.x0 && mx <= gr.x1 && my >= gr.y0 && my <= gr.y1) return { kind: 'ghost' };
     // 任一段的烘焙曲线
     for (const sl of host.previewSlices()) {
       for (let k = 0; k < sl.pts.length - 1; k++) {
@@ -372,23 +459,23 @@ class View2D {
     }
     if (e.button !== 0) return;
     const tool = host.tool;
-    if (tool === 'anchor') { host.op('放置锚点', () => Edit.setAnchorScreen(host, s[0], s[1])); host.setTool('select'); return; }
+    if (tool === 'slot') { host.placeSlotScreen(s[0], s[1]); host.setTool('select'); this.draw(); return; }
+    if (tool === 'origin') { host.placeOriginScreen(s[0], s[1]); host.setTool('select'); this.draw(); return; }
+    if (hit && hit.kind === 'gz' && (tool === 'select' || tool === 'pen')) { this._gzDown(hit.part, mx, my); return; }
     if (tool === 'pen') { this._penDown(mx, my, s, hit, e); return; }
     if (tool === 'physics') { this._physicsDown(s); return; }
     // select
-    if (hit && hit.kind === 'gz-rot') { this.drag = { kind: 'gz-rot', pivot: hit.gg.pivot, a0: Math.atan2(my - hit.gg.pivot[1], mx - hit.gg.pivot[0]), mx, my }; host.beginTransform(); return; }
-    if (hit && hit.kind === 'gz-scale') { const gg = hit.gg; this.drag = { kind: 'gz-scale', pivot: gg.pivot, d0: Math.max(4, Math.hypot(mx - gg.pivot[0], my - gg.pivot[1])), shift: e.shiftKey, mx, my }; host.beginTransform(); return; }
-    if (hit && hit.kind === 'gz-move') { this.drag = { kind: 'gz-move', mx, my }; host.beginTransform(); return; }
-    if (hit && hit.kind === 'anchor') { this.drag = { kind: 'anchor', mx, my, a0: [host.doc.authoring.anchor.x, host.doc.authoring.anchor.y] }; host.dragBegin('移动锚点'); return; }
+    if (hit && hit.kind === 'slot') { const sl = Edit.findSlot(host.doc, hit.id); host.selectHandle('slot:' + hit.id); this.drag = { kind: 'slot', id: hit.id, mx, my, s0: [num(sl.x, 0), num(sl.y, 0)] }; host.dragBegin('移动插槽'); this.draw(); return; }
+    if (hit && hit.kind === 'origin') { host.selectHandle('origin'); this.drag = { kind: 'origin', mx, my, s0: Edit.originScreen(host).slice() }; host.dragBegin('移动曲线原点'); this.draw(); return; }
     const seg = host.activeSeg();
     if (hit && hit.kind === 'height') { const p = host.effPoints(seg)[hit.i]; this.drag = { kind: 'height', i: hit.i, my, h0: p.h }; host.dragBegin('改离地高度'); return; }
     if (hit && hit.kind === 'point') {
-      if (e.shiftKey) { host.togglePoint(hit.i); this.draw(); return; }
+      if (e.shiftKey || e.ctrlKey || e.metaKey) { host.togglePoint(hit.i); this.draw(); return; }
       if (!host.sel.points.has(hit.i)) host.selectPoint(hit.i, false);
       const n = host.effPoints(seg).length;
       if (host.pinned(seg) && host.sel.points.has(0)) {
-        if (host.sel.points.size === 1) { host.status('起点被锚住（锚点 / 上一段末点），拖不动；要整段挪用变换框（会把起点改成"自定"），要自由起点在右栏把起点改成"自定"'); this.draw(); return; }
-        if (host.sel.points.size === n) { host.selectSegmentScope(host.segIndex); const gg = this._gizmoGeom(); if (gg) { this.drag = { kind: 'gz-move', mx, my }; host.beginTransform(); } return; }
+        if (host.sel.points.size === 1) { host.status('起点被锚住（锚点 / 上一段末点），拖不动；要整段挪切"整段"范围拖 gizmo（会把起点改成"自定"），要自由起点在右栏把起点改成"自定"'); this.draw(); return; }
+        if (host.sel.points.size === n) { host.selectSegmentScope(host.segIndex); this._gzDown('c', mx, my); return; }
         host.status('选中的点里有锁定的起点：它不跟着动（要整段挪选"整段"范围）');
       }
       const starts = [...host.sel.points].filter((i) => !(i === 0 && host.pinned(seg))).map((i) => { const p = host.effPoints(seg)[i]; return { i, sx: p.sx, sy: p.sy, h: p.h }; });
@@ -396,15 +483,16 @@ class View2D {
       host.dragBegin(e.altKey ? '改离地高度' : '移动控制点');
       this.draw(); return;
     }
-    if (hit && hit.kind === 'v0') { this.drag = { kind: 'v0', alt: e.altKey, my, v0: Object.assign({}, seg.v0 || {}) }; host.dragBegin('改初速'); return; }
-    if (hit && hit.kind === 'landing') { const pi = host.physicsInfo(seg); this.drag = { kind: 'landing', my, l0: pi.landing.slice(), gy: seg.groundY }; host.dragBegin('拖落点'); return; }
-    if (hit && hit.kind === 'apex') { const pi = host.physicsInfo(seg); this.drag = { kind: 'apex', my, a0: pi.apex.slice() }; host.dragBegin('改最高点'); return; }
+    if (hit && hit.kind === 'v0') { host.selectHandle('v0'); this.drag = { kind: 'v0', alt: e.altKey, my, v0: Object.assign({}, seg.v0 || {}) }; host.dragBegin('改初速'); this.draw(); return; }
+    if (hit && hit.kind === 'landing') { host.selectHandle('landing'); const pi = host.physicsInfo(seg); this.drag = { kind: 'landing', my, l0: pi.landing.slice(), gy: seg.groundY }; host.dragBegin('拖落点'); this.draw(); return; }
+    if (hit && hit.kind === 'apex') { host.selectHandle('apex'); const pi = host.physicsInfo(seg); this.drag = { kind: 'apex', my, a0: pi.apex.slice() }; host.dragBegin('改最高点'); this.draw(); return; }
     if (hit && hit.kind === 'start') {
-      if (host.pinned(seg)) { host.status('起点被锚住（锚点 / 上一段末点）；要自由起点把起点改成"自定"'); host.selectSegment(host.segIndex); this.draw(); return; }
-      const pi = host.physicsInfo(seg); this.drag = { kind: 'start', mx, my, s0: pi.start.slice() }; host.dragBegin('移动起点'); return;
+      if (host.pinned(seg)) { host.status('起点被锚住（锚点 / 上一段末点）；要自由起点把起点改成"自定"'); host.selectSegmentScope(host.segIndex); this.draw(); return; }
+      host.selectHandle('start'); const pi = host.physicsInfo(seg); this.drag = { kind: 'start', mx, my, s0: pi.start.slice() }; host.dragBegin('移动起点'); this.draw(); return;
     }
     if (hit && hit.kind === 'ground') { this.drag = { kind: 'ground', my, gy: seg.groundY }; host.dragBegin('改地面线'); return; }
     if (hit && hit.kind === 'edge') { host.selectSegmentScope(host.segIndex); this.draw(); return; }
+    if (hit && hit.kind === 'ghost') { host.setScope('all'); host.status('已选中整条轨迹（幽灵 = 那个物体）：gizmo 在锚点上，移动 = 挪锚点、旋转 / 缩放以锚点为轴'); this.draw(); return; }
     if (hit && hit.kind === 'curve') { host.selectSegmentScope(hit.i); this.draw(); return; }
     // 还没有任何分段：直接在画布上点 = 开始画线（自动建手绘段，进入加点模式）
     if (!Edit.segs(host.doc).length) { host.setTool('pen'); this._penDown(mx, my, s, null, e); return; }
@@ -415,7 +503,8 @@ class View2D {
   _penDown(mx, my, s, hit, e) {
     const host = this.host;
     if (hit && hit.kind === 'point') { host.selectPoint(hit.i, false); const seg = host.activeSeg(); const p = host.effPoints(seg)[hit.i]; this.drag = { kind: 'points', mx, my, starts: [{ i: hit.i, sx: p.sx, sy: p.sy, h: p.h }], alt: e.altKey, moved: false }; host.dragBegin('移动控制点'); this.draw(); return; }
-    if (hit && hit.kind === 'anchor') { this.drag = { kind: 'anchor', mx, my, a0: [host.doc.authoring.anchor.x, host.doc.authoring.anchor.y] }; host.dragBegin('移动锚点'); return; }
+    if (hit && hit.kind === 'slot') { const sl = Edit.findSlot(host.doc, hit.id); host.selectHandle('slot:' + hit.id); this.drag = { kind: 'slot', id: hit.id, mx, my, s0: [num(sl.x, 0), num(sl.y, 0)] }; host.dragBegin('移动插槽'); return; }
+    if (hit && hit.kind === 'origin') { host.selectHandle('origin'); this.drag = { kind: 'origin', mx, my, s0: Edit.originScreen(host).slice() }; host.dragBegin('移动曲线原点'); return; }
     const r = host.penAdd(s[0], s[1], hit && hit.kind === 'edge' ? hit.i : null, e.altKey);
     if (!r) return;
     const seg = host.activeSeg(); const p = host.effPoints(seg)[r.i];
@@ -445,10 +534,12 @@ class View2D {
       const inside = mx >= 0 && my >= 0 && mx <= this.c.clientWidth && my <= this.c.clientHeight;
       host.onCursor(inside ? s : null);
       const hit = host.doc && inside ? this._hit(mx, my) : null;
+      const hv = hit && hit.kind === 'gz' ? { kind: 'gz', part: hit.part } : null;
+      if (JSON.stringify(hv) !== JSON.stringify(this.hover)) { this.hover = hv; this.draw(); }
       const t = host.tool;
-      this.c.style.cursor = t === 'pan' ? 'grab' : t === 'anchor' ? 'crosshair' : t === 'pen' ? (hit && (hit.kind === 'point') ? 'grab' : hit && hit.kind === 'edge' ? 'copy' : 'crosshair')
+      this.c.style.cursor = t === 'pan' ? 'grab' : hit && hit.kind === 'gz' && (t === 'select' || t === 'pen') ? Gizmo.cursor(hit.part) : t === 'slot' || t === 'origin' ? 'crosshair' : t === 'pen' ? (hit && (hit.kind === 'point') ? 'grab' : hit && hit.kind === 'edge' ? 'copy' : 'crosshair')
         : t === 'physics' ? 'crosshair'
-          : hit ? (hit.kind === 'gz-rot' ? 'alias' : hit.kind === 'gz-scale' ? 'nwse-resize' : hit.kind === 'height' || hit.kind === 'apex' || hit.kind === 'ground' ? 'ns-resize' : hit.kind === 'curve' || hit.kind === 'edge' ? 'pointer' : 'grab') : 'default';
+          : hit ? (hit.kind === 'height' || hit.kind === 'apex' || hit.kind === 'ground' ? 'ns-resize' : hit.kind === 'curve' || hit.kind === 'edge' || hit.kind === 'ghost' ? 'pointer' : 'grab') : 'default';
       return;
     }
     const d = this.drag;
@@ -456,7 +547,8 @@ class View2D {
     if (d.kind === 'box') { this.box = { x0: Math.min(d.mx, mx), y0: Math.min(d.my, my), x1: Math.max(d.mx, mx), y1: Math.max(d.my, my) }; this.draw(); return; }
     const dxWu = (mx - d.mx) / this.zoom, dyWu = (my - d.my) / this.zoom;
     const seg = host.activeSeg();
-    if (d.kind === 'anchor') { host.dragTick(() => Edit.setAnchorScreen(host, d.a0[0] + dxWu, d.a0[1] + dyWu)); return; }
+    if (d.kind === 'slot') { host.dragTick(() => Edit.setSlot(host, d.id, { x: d.s0[0] + dxWu, y: d.s0[1] + dyWu })); return; }
+    if (d.kind === 'origin') { host.dragTick(() => Edit.setOriginScreen(host, [d.s0[0] + dxWu, d.s0[1] + dyWu])); return; }
     if (d.kind === 'points') {
       d.moved = true;
       const alt = d.alt || e.altKey;
@@ -491,9 +583,7 @@ class View2D {
     }
     if (d.kind === 'start') { host.dragTick(() => Edit.setExplicitStart(host, seg, host.posFromScreen(d.s0[0] + dxWu, d.s0[1] + dyWu, seg, 0))); return; }
     if (d.kind === 'ground') { host.dragTick(() => { if (Edit.setGroundY(host, seg, d.gy + dyWu)) host.status('画面空间的地面线不能高于起点（要抛到高处用世界空间）'); }); return; }
-    if (d.kind === 'gz-move') { if (!d.moved && Math.hypot(mx - d.mx, my - d.my) < 3) return; d.moved = true; host.applyTransform(host.makeTranslate(dxWu, dyWu)); return; }   // 3px 死区：点一下不算挪
-    if (d.kind === 'gz-rot') { if (!d.moved && Math.hypot(mx - d.mx, my - d.my) < 3) return; d.moved = true; const a1 = Math.atan2(my - d.pivot[1], mx - d.pivot[0]); let deg = (a1 - d.a0) * 180 / Math.PI; if (e.shiftKey) deg = Math.round(deg / 15) * 15; host.applyTransform(host.makeRotate(deg)); return; }
-    if (d.kind === 'gz-scale') { if (!d.moved && Math.hypot(mx - d.mx, my - d.my) < 3) return; d.moved = true; const d1 = Math.hypot(mx - d.pivot[0], my - d.pivot[1]); let k = d1 / d.d0; if (e.shiftKey) k = Math.round(k * 4) / 4; k = clamp(k, 0.05, 20); host.applyTransform(host.makeScale(k)); return; }
+    if (d.kind === 'gz') { this._gzMove(d, mx, my, e); return; }
   }
   _dragLanding(s) {
     const host = this.host, seg = host.activeSeg(); if (!seg) return;
@@ -507,7 +597,7 @@ class View2D {
   }
   _up(e) {
     if (!this.drag) return;
-    const d = this.drag; this.drag = null;
+    const d = this.drag; this.drag = null; this.readout = null;
     const host = this.host;
     if (d.kind === 'pan') {
       if (d.rightHit && !d.moved) {
@@ -530,7 +620,7 @@ class View2D {
       } else if (!d.shift) host.clearSelection();
       this.draw(); return;
     }
-    if (d.kind === 'gz-move' || d.kind === 'gz-rot' || d.kind === 'gz-scale') { host.endTransform(d.kind === 'gz-move' ? '移动' : d.kind === 'gz-rot' ? '旋转' : '缩放'); return; }
+    if (d.kind === 'gz') { if (d.handle) host.dragEnd(); else host.endTransform(Gizmo.label(d.mode)); this.draw(); return; }
     if (d.kind === 'points' && !d.moved && !d.fresh) { host.selectPoint(d.starts[0].i, false); }
     host.dragEnd();
     if (d.fresh && host.tool === 'physics') host.setTool('select');

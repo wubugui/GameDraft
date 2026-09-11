@@ -3,7 +3,7 @@ id: entity-trajectory
 title: 实体轨迹动画(烘焙式 · 独立资产)运行时语义
 domain: runtime
 type: mechanism
-summary: 一条轨迹一个资产文件、帧相对播放锚点;playTrajectory 按全局 id 装资产、挂任何实体、在任何位置起播;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;不驱动相机
+summary: 一条轨迹一个资产文件、帧相对**曲线原点**(作者摆的参考点,不是第一帧);曲线没有锚点,播放位置在播放时给(at 位置引用:数字 / 实体此刻位置 / 场景曲线插槽 / 曲线上的点);运动对象是场景实体(target)或播放时临时生成的图片 / 角色模板(spawn,keep = 播完留下成场景实体进存档);场景曲线可原地播、相对曲线必须给位置;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;不驱动相机
 status: active
 authority:
   - src/data/types.ts#TrajectoryAsset
@@ -13,13 +13,16 @@ authority:
   - src/utils/keyframeSampler.ts
   - src/utils/keyframeSampler.golden.json
   - src/core/Game.ts#playTrajectoryAsset
+  - src/core/Game.ts#resolvePositionRef
   - src/core/ActionRegistry.ts#playTrajectory
+  - src/utils/positionRef.ts
+  - src/systems/SceneManager.ts#spawnRuntimeNpc
   - src/core/projectPaths.ts#trajectoryJsonUrl
   - src/rendering/SpriteEntity.ts#setTrajectoryOverlay
 triggers:
-  paths: ["src/systems/TrajectorySystem.ts", "src/utils/keyframeSampler*", "src/utils/trajectoryProjection*", "src/entities/Npc.ts", "src/entities/Player.ts", "public/assets/data/trajectories/**"]
-  topics: [轨迹, trajectory, playTrajectory, 烘焙动画, 关键帧, sortY, 道具, 抛体, 世界空间, 投影, flipX, 锚点]
-  tasks: [编排物件飞行, 让道具动起来, 在别的场景复用轨迹, 改关键帧采样, 改投影]
+  paths: ["src/systems/TrajectorySystem.ts", "src/utils/keyframeSampler*", "src/utils/trajectoryProjection*", "src/utils/positionRef*", "src/entities/Npc.ts", "src/entities/Player.ts", "public/assets/data/trajectories/**"]
+  topics: [轨迹, trajectory, playTrajectory, 烘焙动画, 关键帧, sortY, 道具, 抛体, 世界空间, 投影, flipX, 播放位置, at, PositionRef, 位置引用, 命名插槽, slot, 曲线原点, origin, 曲线上的点, curve, spawn, 临时生成, keep, spawnedNpcs]
+  tasks: [编排物件飞行, 让道具动起来, 在别的场景复用轨迹, 改关键帧采样, 改投影, 把实体挪到曲线插槽, 播放时临时生成道具]
 verified_by:
   - src/systems/TrajectorySystem.test.ts
   - src/utils/keyframeSampler.test.ts
@@ -27,9 +30,10 @@ verified_by:
   - src/entities/TrajectoryTargets.test.ts
   - src/rendering/SpriteEntityTrajectoryOverlay.test.ts
   - src/core/ActionRegistryTrajectory.test.ts
+  - src/utils/positionRef.test.ts
   - src/core/ActionRegistryTrajectoryPreempt.test.ts
   - src/systems/CutsceneTrajectorySkip.test.ts
-last_governed: 2026-09-04
+last_governed: 2026-09-11
 ---
 
 ## 是什么(一句话)
@@ -56,14 +60,45 @@ last_governed: 2026-09-04
 - **资产文件是唯一真相,只有工作台写它。** `id == 文件名`,全局唯一;运行时按 id 惰性装载并整会话缓存,
   缺文件 warn 一次、播放以 `'cancelled'` 封口。构建期由校验器拦(`playTrajectory.trajectoryId` 悬垂 = 警告)。
   主编辑器对这个目录**只读**(选择器候选、校验),没有脏桶——它若也写,两个写入者就会互删。
-- **帧是相对播放锚点的偏移,不是绝对坐标。** `keyframes[].x/y/sortY` 都是相对量;开播时定一次锚点
-  (`playTrajectory.anchorX/anchorY` 显式给,否则 = 目标此刻位置 `readTrajectoryAnchor()`,
-  读在同键旧轨迹被收掉**之后**,所以接着上一条的终姿播),之后每帧姿态 = 采样 + 锚点(x / y / sortY 三处)。
+- **帧是相对曲线原点的偏移,不是绝对坐标;曲线没有锚点,播放位置在播放时给(2026-09-11 制作人定案)。** `keyframes[].x/y/sortY` 都是相对量;
+  原点是**作者在工作台里摆的参考点**,不是第一帧,所以**第一帧不恒为 (0,0)**(第一版钉死成第一帧,调一下运动起点整条曲线在播放时就位移,已被打回);
+  开播时定一次"曲线原点放哪"(`Game.playTrajectoryAsset` 的 `resolveAnchor`),优先级:
+  `at`(位置引用,见下)→ 老写法 `anchorX/anchorY`(= at point)→ **场景曲线**(`binding:'scene'`,`trajectoryBinding()`)退到
+  资产里的 `authoring.origin`(缺了退到老资产的 `anchor`,`trajectoryOrigin()`)= **原地播** → **相对曲线**(`free`)退到运动对象此刻位置并 `console.warn`
+  (相对曲线不绑场景,"必须给位置"是数据契约,校验器拦)。之后每帧姿态 = 采样 + 起点(x / y / sortY 三处)。
   `flipX` 把 x 与叠加旋转取反("往右抛"的资产在朝左的实体上播)。
-- **`target` 必填**(`'player'` 或 NPC id)。资产与实体无关,挂谁由动作说;资产里的 `authoring.entity`
-  只是工作台重开现场用的软引用,运行时不看、重构引擎也不跟随。
+- **位置引用 `PositionRef`(`src/utils/positionRef.ts`,所有引用某个点的动作共用)**:`{kind:'point',x,y}` / `{kind:'entity',id}`(执行那一刻该实体的位置,
+  演员 → 热点)/ `{kind:'slot',trajectoryId,slotId}`(**场景曲线**暴露的命名插槽 `slots[]`,画面坐标就是作者场景的坐标;相对曲线的插槽解析为 null;
+  曲线绑定的场景 ≠ 当前场景时 warn 但仍给坐标)/ **`{kind:'curve',trajectoryId,point,atMs?/progress?}`**(曲线上的点:
+  `point` = `start|end|time|progress`,在烘好的帧上取值 `sampleTrajectoryOffset`,**加上这条曲线此刻的播放位置**——
+  那条轨迹**正在播**就用那次播放的锚点与那次的帧(`TrajectorySystem.livePlay`,帧已按当前场景投影,所以跨场景也准;
+  这就是"实时点":铜钱还在飞,`end` 取到的是它**这次**要落的地方),没在播就按场景曲线的原点算;
+  相对曲线又没在播 = 没有绝对位置(内容错)。同一条资产同时挂在多个目标上时取 Map 里的第一条——要指名就用 `entity` 档)。
+  `resolvePositionRef` 是 async(要装资产)。
+  `moveEntityTo / jumpEntityTo / teleportEntityTo / persistNpcAt / cutsceneSpawnActor / setSceneEntityPosition` 都接 optional `at`:解析到就覆盖 x/y,
+  解析不到 warn 一句退回 x/y(x/y 仍是 manifest 必填,编辑器写的是编辑期快照)。**挪实体到插槽是这些动作的事,播放轨迹从不挪任何实体到插槽。**
+- **运动对象二选一**:`target`(`'player'` / 本场景 NPC id / 过场 `_cut_*`)或 `spawn`(`TrajectorySpawnSpec`:`kind:'image'`(`src` + 可选 `worldWidth/Height`)
+  / `kind:'character'`(`characterId`,角色注册表)+ 可选 `anchor`(精灵锚点,缺省底中)/ `id` / `name` / `keep`)。**spawn 可以根本不在场景里**:
+  `Game.spawnTrajectoryActor` 就地拼一个 `NpcDef`(图片 = `displayImage` 单帧动画包)经 `SceneManager.spawnRuntimeNpc(def,{persistent:keep})` 生成;
+  两个都没有 = 整步跳过(校验器 error)。`animState` 只对场景实体生效。
+- **临时生成的东西默认播完移除;`keep:true` = 播完留在终点,场景从此改变**:`commitSpawnedNpcPosition` 把它登记进 `sceneMemory.spawnedNpcs`
+  (随存档序列化,`normalizeMemory` 认它),下次进场景 `SceneManager` 装完场景 NPC 后照 `spawnedNpcs` 再实例化一遍——它已是这个场景的实体,
+  重构引擎 / 校验器按运行时实体看待(数据文件里没有它的 def)。不 keep 的走 `removeRuntimeNpc`,一切照旧。
+  资产里的 `authoring.entity` 只是工作台重开现场用的软引用,运行时不看、重构引擎也不跟随。
 - **轨迹不驱动相机。** 运镜走 `cameraFollowActor` / `cameraMove` 那一族;`kind:'camera'` 已不存在,
   过场跳过终姿的相机竞争里也没有轨迹这一项。
+- **"镜头跟着运动的东西走"= `cameraFollowActor` 指那个实体**,不是位置引用(2026-09-11 制作人问过):
+  位置引用是**动作执行那一瞬求一次值**,拿它当相机 target 只会把镜头摆过去然后不动;
+  `cameraFollowActor` 每帧按 id 重解析实体位置(`applyCameraFollow`),而轨迹每帧写实体位置、
+  且 `trajectorySystem.update` 排在相机之前,所以跟得住(镜头取的是上一帧末的位置,`snapTo` 下看不出)。
+  **临时生成的运动对象也能跟**:它在运行时就是一个真 NPC(`spawnRuntimeNpc` → `getNpcById`),
+  但得在 `spawn.id` 里自己给名字——留空是自动生成的 `_traj_N`,引用不了。编辑器的 actor 候选面
+  已把全工程的 `spawn.id` 收进来(`ProjectModel.collect_trajectory_spawn_ids`,校验器同口径放行)。
+  ⚠ 跟随只在过场 / 动作链态生效,回到探索态自动解除。
+- **`cameraMove`(present 步)可选 `at`**:把镜头**摆到**位置引用给的点(数字 / 实体此刻位置 / 曲线插槽 /
+  曲线上的点),一次性求值。`x`/`y` 恒在(编辑期快照 + 老数据形状),解析不出来就退回它们并 warn。
+  正常播与**跳过落终姿**(`applyFinalCameraPoseForSkip`)两条路都按 `at` 求值——只做一条就是
+  "播完对、跳过错"。求值口由组装层注入(`CutsceneManager.setPositionRefResolver` ← `Game.resolvePositionRef`)。
 - **世界空间资产(`space:'world'`)的运行时真相是 `worldKeyframes`**(3D 相对偏移 + 离地高度 `h`),
   开播时按当前场景 `depthConfig.M.R` 投影成 2D 帧:`Δx = (RᵀΔw).x`,`Δy = −(RᵀΔw).y`,`sortY` 取落点
   `(x, y−h, z)`。**只要 R**:伪世界相机正交、q ↔ M-world 是纯旋转,ppu / cx / cy / wuPerQUnit / 分辨率全部约掉,
@@ -101,7 +136,9 @@ last_governed: 2026-09-04
 
 - **`moveEntityTo` 与轨迹是两个工具,不迁移。** 角色**走路**继续用 `moveEntityTo`(步速匹配 + 透视步长补偿,轨迹一概没有);
   走路之外(飞、抛、滚、被推、道具位移)一律轨迹。
-- **道具 = 没有动画包的普通 NPC**(`NpcDef.displayImage` 就地合成单帧动画包)。别为"一口箱子"新造实体类型。
+- **道具 = 没有动画包的普通 NPC**(`NpcDef.displayImage` 就地合成单帧动画包)。别为"一口箱子"新造实体类型;`spawn.kind:'image'` 走的就是这条路。
+- **资产层的两种配置**:`binding:'scene'`(场景曲线,`authoring.sceneId` 必有;可原地播;可有 `slots`)/ `'free'`(相对曲线,数据里没有场景;必须给 `at`;插槽无意义)。
+  缺省按 `authoring.sceneId` 有无推(老资产)。编辑器侧一律经统一的位置引用选择器(`tools/editor/shared/position_ref_field.py`,见 [[trajectory-workbench]] / [[shared-widget-value-fidelity]])配 `at`。
 
 ## 已知坑
 
@@ -130,6 +167,7 @@ last_governed: 2026-09-04
   (`tools/trajectory_workbench/tests/test_bake.py` / `test_projection.py` 逐 case 读同一份金标)。
 - 真机:先 `validate-data` 过构建期结构校验(轨迹的内容错在运行时**一律静默跳过**);再走
   [runtime-command-channel](../recipes/runtime-command-channel.md) 用 `debugExecuteAction` 直发
-  `playTrajectory {trajectoryId, target}`,配 `debugSetFixedTickMode` + `debugStepTicks` 做定步长复现;
+  `playTrajectory {trajectoryId, target | spawn, at?}`,配 `debugSetFixedTickMode` + `debugStepTicks` 做定步长复现;
+  曲线点的"实时"档要在轨迹**在播的那几帧里**发下一条动作才看得出来(定步长 + 分步发最稳);
   要看画面按 [headless-visual-verification](../recipes/headless-visual-verification.md) 出帧。
 - 判"轨迹到底在不在跑"别只看位置:位置对而旋转/透明/排序没动,是"喂进采样器前没填满通道"的典型相。

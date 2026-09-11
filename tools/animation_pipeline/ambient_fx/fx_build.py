@@ -6,11 +6,12 @@ Run: .tools/venv/bin/python fx_build.py steam|glow
 """
 from __future__ import annotations
 import sys, os, math, json
+from pathlib import Path
 import numpy as np
 from PIL import Image
 
-OUT_ANIM_DIR = "/Users/dannyteng/AIWork/GameDraft/public/resources/runtime/animation"
 HERE = os.path.dirname(os.path.abspath(__file__))
+OUT_ANIM_DIR = str(Path(__file__).resolve().parents[3] / 'public' / 'resources' / 'runtime' / 'animation')
 
 
 def lum_to_rgba(img: Image.Image, warm=(255, 248, 236), gain=1.18, floor=10, gamma=0.92, warp=0.5):
@@ -52,11 +53,14 @@ def _pack(cells, out_id, world_w, world_h, fps, cols=None):
 
 def build_steam(src=os.path.join(HERE, 'steam_v1.png'), out_id='fx_teapot_steam',
                 frames=10, cell_h=340, sway_px=8, wavelength=150,
-                world_w=30, world_h=58, fps=12, alpha_scale=0.72):
+                world_w=30, world_h=58, fps=12, alpha_scale=0.72,
+                warm=(255, 248, 236), gain=1.18, warp=0.5,
+                floor=10, gamma=0.92):
     img = Image.open(src)
     scale = cell_h / img.height
     img = img.resize((max(1, int(img.width * scale)), cell_h), Image.LANCZOS)
-    base = lum_to_rgba(img)
+    base = lum_to_rgba(img, warm=warm, gain=gain, warp=warp,
+                       floor=floor, gamma=gamma)
     H, W, _ = base.shape
     pad = sway_px + 4
     canvasW = W + 2 * pad
@@ -75,6 +79,28 @@ def build_steam(src=os.path.join(HERE, 'steam_v1.png'), out_id='fx_teapot_steam'
         cell[..., 3] = np.clip(cell[..., 3].astype(np.float32) * alpha_scale * breathe, 0, 255).astype(np.uint8)
         cells.append(cell)
     _pack(cells, out_id, world_w, world_h, fps, cols=5)
+
+
+def build_cyan_smoke(src=os.path.join(HERE, 'stills', 'steam_v1.png'),
+                     out_id='fx_cyan_smoke'):
+    """Build a cool cyan smoke variation from the approved steam source."""
+    build_steam(
+        src=src,
+        out_id=out_id,
+        frames=12,
+        cell_h=340,
+        sway_px=10,
+        wavelength=150,
+        world_w=34,
+        world_h=70,
+        fps=12,
+        alpha_scale=0.68,
+        warm=(56, 208, 224),
+        gain=1.0,
+        warp=0.9,
+        floor=18,
+        gamma=1.28,
+    )
 
 
 def build_glow(src=os.path.join(HERE, 'glow_v1.png'), out_id='fx_lantern_glow',
@@ -149,9 +175,11 @@ if __name__ == '__main__':
     which = sys.argv[1] if len(sys.argv) > 1 else 'steam'
     if which == 'steam':
         build_steam()
+    elif which == 'cyan':
+        build_cyan_smoke()
     elif which == 'glow':
         build_glow()
     elif which == 'curtain':
         build_curtain()
     else:
-        print('usage: fx_build.py steam|glow|curtain')
+        print('usage: fx_build.py steam|cyan|glow|curtain')

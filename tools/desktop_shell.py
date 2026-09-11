@@ -133,6 +133,11 @@ def run_desktop(handler_cls, title: str, app_id: str,
     先跑它，别拿审查员当回归测试。selftest 与 smoke 一样无头（offscreen）、不参与单实例。
     """
     smoke = smoke or bool(selftest)
+    # 禁缓存的 Chromium 开关必须排在 WebEngine import 之前(见 tools/webengine_cache_policy.py);
+    # 本壳原本就是 OTR + NoCache,这一句补上 profile 之外的那几层(code cache / shader cache)。
+    from tools.webengine_cache_policy import apply_no_cache, disable_all_caches
+    disable_all_caches()
+
     from PySide6.QtCore import Qt, QTimer, QUrl
     from PySide6.QtGui import QKeySequence, QShortcut
     from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
@@ -164,8 +169,8 @@ def run_desktop(handler_cls, title: str, app_id: str,
     view = QWebEngineView(win)
     # ① off-the-record:不给 storageName → 纯内存 profile,零磁盘缓存
     profile = QWebEngineProfile(view)
-    # ② 显式双保险
-    profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+    # ② 显式双保险(全仓统一口径,含 setCachePath('') )
+    apply_no_cache(profile)
     profile.setPersistentCookiesPolicy(
         QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
     if smoke:

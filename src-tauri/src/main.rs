@@ -22,6 +22,16 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 /// 自定义协议名。改这里要同时改 `tauri.conf.json` 的 CSP。
 const SCHEME: &str = "gamedraft";
 
+/// WebView2（= Chromium）的启动参数，只在 Windows 上有这回事。
+///
+/// 缺省的 WebView2 带着浏览器那套行为：没点过页面 AudioContext 不出声；窗口没焦点 / 被别的窗口盖住就把页面
+/// 降成"后台"（定时器节流、rAF 停）。**这是桌面客户端，一律关掉**（制作人 2026-09-08）。
+/// 第一项是 wry 的缺省参数——一旦自定义 `additional_browser_args` 就得自己带上（tauri 文档如是说）。
+#[cfg(windows)]
+const WEBVIEW2_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+    --autoplay-policy=no-user-gesture-required \
+    --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows";
+
 /// 窗口该开在哪个 URL。
 ///
 /// # 平台形态
@@ -128,7 +138,7 @@ fn main() {
             // 前端按视口比例做等比信箱（src/rendering/Renderer.ts layoutMount），所以窗口被拖成
             // 任何形状都不失真；这里只负责"首开就是标准比例、能放进屏幕"。
             let (w, h) = preferred_window_size(app.handle());
-            WebviewWindowBuilder::new(app, "main", window_url())
+            let builder = WebviewWindowBuilder::new(app, "main", window_url())
                 .title("GameDraft")
                 .inner_size(w, h)
                 // 与主尺寸同比例；再小画面就看不清了
@@ -136,8 +146,11 @@ fn main() {
                 .resizable(true)
                 .center()
                 // 150% 缩放的 1080p 屏逻辑高只有 720，放不下 768：缩进工作区而不是溢出屏幕
-                .prevent_overflow()
-                .build()?;
+                .prevent_overflow();
+            // 桌面客户端不许有浏览器的"没点过不出声、没焦点就降级"（见 WEBVIEW2_ARGS）
+            #[cfg(windows)]
+            let builder = builder.additional_browser_args(WEBVIEW2_ARGS);
+            builder.build()?;
             Ok(())
         })
         .run(tauri::generate_context!())

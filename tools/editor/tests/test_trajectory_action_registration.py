@@ -96,7 +96,7 @@ def test_runtime_register_param_names_match_manifest() -> None:
     man = (REPO / "src/core/actionParamManifest.ts").read_text("utf-8")
     for act, expect in (
         ("playTrajectory",
-         {"trajectoryId", "target", "anchorX", "anchorY", "flipX", "wait", "animState"}),
+         {"trajectoryId", "target", "spawn", "at", "anchorX", "anchorY", "flipX", "wait", "animState"}),
         ("stopTrajectory", {"target", "toEnd", "reset"}),
     ):
         assert f"executor.register('{act}'" in reg, f"{act} 未在 ActionRegistry 注册"
@@ -175,6 +175,22 @@ def scene_id(model) -> str:
     # 三态字符串写法（过场老数据的形状）必须原样保真，不许归一成真 bool
     {"type": "playTrajectory", "params": {
         "trajectoryId": "coin_drop_demo", "target": "player", "wait": "false"}},
+    # 播放位置的三种活引用（2026-09-11 无锚点模型）：数字 / 实体此刻位置 / 场景曲线插槽
+    {"type": "playTrajectory", "params": {
+        "trajectoryId": "coin_drop_demo", "target": "player", "at": {"kind": "point", "x": 120, "y": 88.5}}},
+    {"type": "playTrajectory", "params": {
+        "trajectoryId": "coin_drop_demo", "target": "player", "at": {"kind": "entity", "id": "player"}}},
+    {"type": "playTrajectory", "params": {
+        "trajectoryId": "coin_drop_demo", "target": "player",
+        "at": {"kind": "slot", "trajectoryId": "coin_drop_demo", "slotId": "slot_1"}}},
+    # 临时生成的运动对象：图片 / 角色模板（target 不写）；keep = 播完留下
+    {"type": "playTrajectory", "params": {
+        "trajectoryId": "coin_drop_demo",
+        "spawn": {"kind": "image", "src": "/resources/runtime/images/trajectory/coin.png", "worldWidth": 24, "worldHeight": 24,
+                  "anchor": {"x": 0.5, "y": 0.5}, "id": "coin_1", "name": "铜钱", "keep": True},
+        "at": {"kind": "entity", "id": "player"}, "wait": False}},
+    {"type": "playTrajectory", "params": {
+        "trajectoryId": "coin_drop_demo", "spawn": {"kind": "character", "characterId": "绝不存在的角色_probe"}}},
     # stopTrajectory：最小 / 填满
     {"type": "stopTrajectory", "params": {"target": "player"}},
     {"type": "stopTrajectory", "params": {"target": "player", "toEnd": True, "reset": True}},
@@ -185,12 +201,16 @@ def test_roundtrip_no_drift(model, scene_id, action: dict) -> None:
 
 
 def test_roundtrip_key_order(model, scene_id) -> None:
-    """键序固定 trajectoryId, target, anchorX, anchorY, flipX, wait, animState。"""
+    """键序固定 trajectoryId, target | spawn, at | anchorX+anchorY, flipX, wait, animState。"""
     out = _roundtrip(model, {"type": "playTrajectory", "params": {
         "animState": "walk", "wait": False, "flipX": True, "anchorY": 2, "anchorX": 1,
         "target": "player", "trajectoryId": "coin_drop_demo"}}, scene_id)
     assert list(out["params"]) == [
         "trajectoryId", "target", "anchorX", "anchorY", "flipX", "wait", "animState"]
+    out = _roundtrip(model, {"type": "playTrajectory", "params": {
+        "animState": "walk", "wait": False, "at": {"kind": "entity", "id": "player"}, "flipX": True,
+        "spawn": {"kind": "character", "characterId": "c"}, "trajectoryId": "coin_drop_demo"}}, scene_id)
+    assert list(out["params"]) == ["trajectoryId", "spawn", "at", "flipX", "wait", "animState"]
 
 
 def test_scene_id_is_never_written(model, scene_id) -> None:
@@ -239,25 +259,84 @@ def test_target_selector_is_not_a_bare_line_edit(model, scene_id) -> None:
         assert "camera" not in ids, f"{act}.target 还给得出 camera（相机已不是轨迹目标）"
 
 
-def test_anchor_pair_widgets_follow_the_checkbox(model, scene_id, qt_app) -> None:
-    """锚点成对：不勾＝两个键都不写；勾了＝两个都写。"""
-    from PySide6.QtWidgets import QCheckBox
-    from tools.editor.shared.action_editor import ActionEditor, ActionRow
+def _play_row(ed):
+    from tools.editor.shared.action_editor import ActionRow
+    rows = [r for r in ed.findChildren(ActionRow) if "at" in r._param_widgets]
+    assert len(rows) == 1
+    return rows[0]
+
+
+def test_position_field_modes_write_at_or_legacy_anchor(model, scene_id, qt_app) -> None:
+    """播放位置走统一的位置引用控件：不指定 = 不写；数字 = at point（老 anchorX/Y 没动就原样保真）；
+    实体 / 插槽 = at 对象。"""
+    from tools.editor.shared.action_editor import ActionEditor
+    from tools.editor.shared.position_ref_field import MODE_ENTITY, MODE_NONE, MODE_POINT, MODE_SLOT, PositionRefField
 
     ed = ActionEditor("t")
     ed.set_project_context(model, scene_id)
     ed.set_data([{"type": "playTrajectory", "params": {
         "trajectoryId": "coin_drop_demo", "target": "player", "anchorX": 10, "anchorY": 20}}])
-    rows = [r for r in ed.findChildren(ActionRow) if "_anchorEnabled" in r._param_widgets]
-    assert len(rows) == 1
-    cb = rows[0]._param_widgets.get("_anchorEnabled")
-    assert isinstance(cb, QCheckBox) and cb.isChecked()
-    cb.setChecked(False)
+    f = _play_row(ed)._param_widgets["at"]
+    assert isinstance(f, PositionRefField)
+    assert f.mode() == MODE_POINT and f.x_spin.value() == 10 and f.y_spin.value() == 20, "老锚点读成数字坐标"
     out = ed.to_list()[0]["params"]
-    assert "anchorX" not in out and "anchorY" not in out
-    cb.setChecked(True)
+    assert out["anchorX"] == 10 and out["anchorY"] == 20 and "at" not in out, "没动 → 老写法原样保真"
+    f.set_point(11, 20)
     out = ed.to_list()[0]["params"]
-    assert out["anchorX"] == 10 and out["anchorY"] == 20   # 未改动 → 恢复磁盘 int 表示
+    assert "anchorX" not in out and out["at"] == {"kind": "point", "x": 11, "y": 20}, "动了 → 写成 at point"
+    f.mode_combo.setCurrentIndex(f.mode_combo.findData(MODE_ENTITY))
+    f.entity_sel.set_current("player")
+    out = ed.to_list()[0]["params"]
+    assert out["at"] == {"kind": "entity", "id": "player"} and "anchorX" not in out
+    f.mode_combo.setCurrentIndex(f.mode_combo.findData(MODE_SLOT))
+    f.traj_sel.set_current("绝不存在的轨迹_probe")
+    f.slot_sel.set_current("s9")
+    out = ed.to_list()[0]["params"]
+    assert out["at"] == {"kind": "slot", "trajectoryId": "绝不存在的轨迹_probe", "slotId": "s9"}, "悬垂插槽引用保值"
+    f.mode_combo.setCurrentIndex(f.mode_combo.findData(MODE_NONE))
+    out = ed.to_list()[0]["params"]
+    assert "at" not in out and "anchorX" not in out and "anchorY" not in out, "不指定 = 什么位置键都不写"
+
+
+def test_mover_switch_between_target_and_spawn(model, scene_id, qt_app) -> None:
+    """运动对象三选一：切到临时生成写 spawn 不写 target；切回来写 target 不写 spawn。"""
+    from PySide6.QtWidgets import QCheckBox, QComboBox
+    from tools.editor.shared.action_editor import ActionEditor
+
+    ed = ActionEditor("t")
+    ed.set_project_context(model, scene_id)
+    ed.set_data([{"type": "playTrajectory", "params": {"trajectoryId": "coin_drop_demo", "target": "player"}}])
+    row = _play_row(ed)
+    mover = row._param_widgets["_moverMode"]
+    assert isinstance(mover, QComboBox) and mover.currentData() == "target"
+    mover.setCurrentIndex(mover.findData("image"))
+    row._param_widgets["_spawnSrc"].set_path("/resources/runtime/images/trajectory/coin.png")
+    keep = row._param_widgets["_spawnKeep"]
+    assert isinstance(keep, QCheckBox)
+    keep.setChecked(True)
+    out = ed.to_list()[0]["params"]
+    assert "target" not in out
+    assert out["spawn"] == {"kind": "image", "src": "/resources/runtime/images/trajectory/coin.png", "keep": True}, out
+    mover.setCurrentIndex(mover.findData("character"))
+    out = ed.to_list()[0]["params"]
+    assert out["spawn"]["kind"] == "character" and "src" not in out["spawn"]
+    mover.setCurrentIndex(mover.findData("target"))
+    out = ed.to_list()[0]["params"]
+    assert out.get("target") == "player" and "spawn" not in out
+
+
+def test_trajectory_info_line_reports_binding(model, scene_id, qt_app) -> None:
+    """轨迹选择器旁边的说明行：场景曲线报绑定场景与插槽数，相对曲线报"必须给位置"。"""
+    from PySide6.QtWidgets import QLabel
+    from tools.editor.shared.action_editor import ActionEditor
+
+    ed = ActionEditor("t")
+    ed.set_project_context(model, scene_id)
+    ed.set_data([{"type": "playTrajectory", "params": {"trajectoryId": "coin_drop_demo", "target": "player"}}])
+    row = _play_row(ed)
+    labels = [w.text() for w in row.findChildren(QLabel)]
+    want = "场景曲线" if model.trajectory_binding("coin_drop_demo") == "scene" else "相对曲线"
+    assert any(want in t for t in labels), labels
 
 
 # --------------------------------------------------------------------------- #
@@ -294,6 +373,22 @@ class _MiniModel:
 
     def all_trajectory_ids(self):
         return [(str((d or {}).get("id") or k), k) for k, d in self.trajectories.items()]
+
+    def trajectory_binding(self, tid):
+        from tools.editor.project_model import ProjectModel
+        return ProjectModel.trajectory_binding(self, tid)
+
+    def trajectory_doc(self, tid):
+        from tools.editor.project_model import ProjectModel
+        return ProjectModel.trajectory_doc(self, tid)
+
+    def trajectory_scene_id(self, tid):
+        from tools.editor.project_model import ProjectModel
+        return ProjectModel.trajectory_scene_id(self, tid)
+
+    def trajectory_slots(self, tid):
+        from tools.editor.project_model import ProjectModel
+        return ProjectModel.trajectory_slots(self, tid)
 
 
 def _validate(trajectories: dict, **kw) -> list:
@@ -415,6 +510,36 @@ def test_validator_authoring_refs_are_soft() -> None:
     assert ok == []
 
 
+def test_validator_binding_and_slots() -> None:
+    """binding / slots / origin：场景曲线要 sceneId（error）、要 origin（warning）；相对曲线不该绑场景、不该有插槽（warning）；
+    插槽 id 空 / 重复 / 坐标坏 = error；binding 写了别的值 = error。"""
+    ok = _validate({"t1": _traj(binding="scene", slots=[{"id": "a", "x": 1, "y": 2, "label": "甲"}],
+                                authoring={"sceneId": "s1", "origin": {"x": 0, "y": 0}})})
+    assert ok == []
+    assert _validate({"t1": _traj(binding="free")}) == []
+    msgs = _issue_texts(_validate({"t1": _traj(binding="scene")}), "error")
+    assert any("authoring.sceneId 为空" in m for m in msgs)
+    msgs = _issue_texts(_validate({"t1": _traj(binding="scene", authoring={"sceneId": "s1"})}), "warning")
+    assert any("authoring.origin" in m for m in msgs)
+    msgs = _issue_texts(_validate({"t1": _traj(binding="free", authoring={"sceneId": "s1"})}), "warning")
+    assert any("相对曲线" in m and "sceneId" in m for m in msgs)
+    msgs = _issue_texts(_validate({"t1": _traj(binding="free", slots=[{"id": "a", "x": 1, "y": 2}])}), "warning")
+    assert any("相对曲线带了命名插槽" in m for m in msgs)
+    msgs = _issue_texts(_validate({"t1": _traj(binding="orbit")}), "error")
+    assert any("binding" in m for m in msgs)
+    bad = _validate({"t1": _traj(binding="scene", authoring={"sceneId": "s1", "origin": {"x": 0, "y": 0}},
+                                 slots=[{"id": "", "x": 1, "y": 2}, {"id": "a", "x": "nope", "y": 2}, {"id": "a", "x": 1, "y": 2}, "x"])})
+    errs = _issue_texts(bad, "error")
+    assert any("缺少非空 id" in m for m in errs)
+    assert any("slots[1].x" in m for m in errs)
+    assert any("重复" in m for m in errs)
+    assert any("slots[3] 须为对象" in m for m in errs)
+    # 老资产：没写 binding，按 authoring.sceneId 推成场景曲线；老锚点就是曲线起点（运行时 trajectoryOrigin 回落）→ 零问题
+    assert _validate({"t1": _traj(authoring={"sceneId": "s1", "anchor": {"x": 0, "y": 0}})}) == []
+    msgs = _issue_texts(_validate({"t1": _traj(authoring={"sceneId": "s1"})}), "warning")
+    assert any("authoring.origin" in m for m in msgs)
+
+
 def test_validator_reports_unparseable_files_as_errors(tmp_path: Path) -> None:
     """读不进模型的资产文件按目录重扫补成 error（引用它的 playTrajectory 运行时整步跳过）。"""
     from tools.editor.shared.project_paths import ProjectPaths
@@ -489,6 +614,65 @@ def test_play_trajectory_anchor_pair_and_flip_shape(model, scene_id) -> None:
     assert any(i.severity == "warning" and "flipX" in i.message for i in issues)
 
 
+def test_play_trajectory_needs_target_or_spawn(model, scene_id) -> None:
+    """运动对象二选一：都没有 = error；spawn 给了就不再要 target；坏 spawn 形状 = error。"""
+    from tools.editor.validator import _append_action_param_ref_issues
+    issues: list = []
+    _append_action_param_ref_issues(
+        model, issues, {"type": "playTrajectory", "params": {"trajectoryId": "coin_drop_demo"}}, "parity", "probe", scene_id)
+    assert any(i.severity == "error" and "运动对象" in i.message for i in issues)
+    issues = []
+    _append_action_param_ref_issues(
+        model, issues, {"type": "playTrajectory", "params": {
+            "trajectoryId": "coin_drop_demo",
+            "spawn": {"kind": "image", "src": "/resources/runtime/images/trajectory/绝不存在.png", "worldWidth": -1}}},
+        "parity", "probe", scene_id)
+    assert not any(i.severity == "error" for i in issues), [i.message for i in issues]
+    assert any("找不到文件" in i.message for i in issues)
+    assert any("worldWidth" in i.message for i in issues)
+    issues = []
+    _append_action_param_ref_issues(
+        model, issues, {"type": "playTrajectory", "params": {
+            "trajectoryId": "coin_drop_demo", "spawn": {"kind": "character"}}},
+        "parity", "probe", scene_id)
+    assert any(i.severity == "error" and "characterId" in i.message for i in issues)
+    issues = []
+    _append_action_param_ref_issues(
+        model, issues, {"type": "playTrajectory", "params": {
+            "trajectoryId": "coin_drop_demo", "spawn": {"kind": "character", "characterId": "绝不存在的角色_probe"}}},
+        "parity", "probe", scene_id)
+    assert any(i.severity == "warning" and "character_registry" in i.message for i in issues)
+    issues = []
+    _append_action_param_ref_issues(
+        model, issues, {"type": "playTrajectory", "params": {"trajectoryId": "coin_drop_demo", "spawn": "coin"}},
+        "parity", "probe", scene_id)
+    assert any(i.severity == "error" and "spawn 须为对象" in i.message for i in issues)
+
+
+def test_play_trajectory_at_shape_and_resolution(model, scene_id) -> None:
+    """at：坏形状 error；实体解析不到 warning；插槽悬垂轨迹 warning、缺插槽 error。"""
+    from tools.editor.validator import _append_action_param_ref_issues
+
+    def run(at):
+        issues: list = []
+        _append_action_param_ref_issues(
+            model, issues, {"type": "playTrajectory", "params": {"trajectoryId": "coin_drop_demo", "target": "player", "at": at}},
+            "parity", "probe", scene_id)
+        return issues
+
+    assert run({"kind": "point", "x": 1, "y": 2}) == []
+    assert run({"kind": "entity", "id": "player"}) == []
+    assert any(i.severity == "error" for i in run("player"))
+    assert any(i.severity == "error" and "at.kind" in i.message for i in run({"kind": "camera"}))
+    assert any(i.severity == "error" and "at.y" in i.message for i in run({"kind": "point", "x": 1, "y": "nope"}))
+    assert any(i.severity == "warning" and "绝不存在的实体_probe" in i.message for i in run({"kind": "entity", "id": "绝不存在的实体_probe"}))
+    assert any(i.severity == "error" for i in run({"kind": "slot", "trajectoryId": "coin_drop_demo"}))
+    dangling = run({"kind": "slot", "trajectoryId": "绝不存在的轨迹_probe", "slotId": "s"})
+    assert dangling and all(i.severity == "warning" for i in dangling)
+    missing = run({"kind": "slot", "trajectoryId": "coin_drop_demo", "slotId": "绝不存在的插槽_probe"})
+    assert any(i.severity == "error" and "插槽" in i.message for i in missing)
+
+
 def test_camera_target_is_now_a_dangling_actor(model, scene_id) -> None:
     """`target: camera` 不再是合法档：按普通悬垂 actor 引用出 warning，且不崩。"""
     from tools.editor.validator import _append_action_param_ref_issues
@@ -529,3 +713,15 @@ def test_timeline_summary_line_reads_the_key_fields() -> None:
     assert "缺 target" in step_summary_line({
         "kind": "action", "type": "playTrajectory", "params": {"trajectoryId": "t"},
     })
+    line = step_summary_line({
+        "kind": "action", "type": "playTrajectory",
+        "params": {"trajectoryId": "t", "spawn": {"kind": "image", "src": "/a/b/coin.png", "keep": True},
+                   "at": {"kind": "slot", "trajectoryId": "t", "slotId": "落点"}},
+    })
+    for frag in ("生成图片", "coin.png", "留下", "插槽", "落点"):
+        assert frag in line, (frag, line)
+    line = step_summary_line({
+        "kind": "action", "type": "playTrajectory",
+        "params": {"trajectoryId": "t", "target": "npc_x", "at": {"kind": "entity", "id": "npc_y"}},
+    })
+    assert "实体:npc_y" in line

@@ -24,5 +24,21 @@
   "well_nonhuman_face": "/resources/runtime/images/illustrations/demo/well_nonhuman_face.png",
   "yizhuang_corpses": "/resources/runtime/images/illustrations/demo/yizhuang_corpses.png",
   "zombie_suppression_kit": "/resources/runtime/images/illustrations/demo/zombie_suppression_kit.png",
-  "码头抓水猴子告示": "/resources/runtime/images/illustrations/告示-抓水猴子.png"
+  "码头抓水猴子告示": "/resources/runtime/images/illustrations/告示-抓水猴子.png",
+  "龛前_烟短": {
+    "image": "/resources/runtime/images/illustrations/背尸上山/01_龛前_烟短.png",
+    "sfx": "reveal_sting"
+  },
+  "龛前_烟短_假": {
+    "image": "/resources/runtime/images/illustrations/背尸上山/01_龛前_烟短_假.png",
+    "playSfx": false
+  },
+  "龛前_烟长": {
+    "image": "/resources/runtime/images/illustrations/背尸上山/01_龛前_烟长.png",
+    "sfx": "reveal_sting"
+  },
+  "龛前_烟长_假": {
+    "image": "/resources/runtime/images/illustrations/背尸上山/01_龛前_烟长_假.png",
+    "playSfx": false
+  }
 }

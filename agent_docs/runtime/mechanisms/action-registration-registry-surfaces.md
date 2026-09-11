@@ -44,7 +44,8 @@ last_governed: 2026-09-03
 **条件性(参数含实体/场景/出生点引用时必填)**
 
 `entity_refactor.py` 的 `ENTITY_REF_PARAMS`:实体重构、引用扫描、validator 可达性检查
-共同消费这张表,漏登记 = 该引用对重构与校验**双双隐形**。parity 测试拦 `_PARAM_SCHEMAS`
+共同消费这张表,漏登记 = 该引用对重构与校验**双双隐形**。参数是**对象**(如位置引用 `at:{kind:'entity',id}`)时登记 kind `position_ref`
+(2026-09-11):计数 / 改名只认 entity 档的 `at.id`,json_lang 的 `REF_KIND_UNIVERSE` / `_KNOWN_REF_KINDS` 也要同步(parity 测试拦)。parity 测试拦 `_PARAM_SCHEMAS`
 内的漏网;走自定义参数分支的 action 由 `test_custom_branch_actions_pinned` 钉死清单,新增要补钉单。
 
 ## 硬契约(违反即 bug)

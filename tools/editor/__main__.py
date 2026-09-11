@@ -7,6 +7,14 @@ import sys
 import traceback
 from pathlib import Path
 
+from tools.webengine_cache_policy import (
+    apply_no_cache_to_default_profile, disable_all_caches,
+)
+
+# 桌面窗口一律禁缓存(制作人 2026-09-08 定死,缘由见该模块)。Chromium 的开关只在
+# WebEngine 初始化时读一次,所以必须排在下面的 WebEngine import / QApplication 之前。
+disable_all_caches()
+
 try:
     import PySide6.QtWebEngineWidgets  # noqa: F401 — WebEngine before QApplication
 except ImportError:
@@ -63,6 +71,11 @@ def main() -> None:
     install_global_combo_wheel_block(app)
     install_global_spin_drag(app)
     app.setApplicationName("GameDraft Editor")
+    # 没自己造 profile 的内嵌页(叙事状态机、气味档案)吃的是共享默认 profile,一并收口。
+    try:
+        apply_no_cache_to_default_profile()
+    except ImportError:  # pragma: no cover - 没装 WebEngine 的环境不该因此起不来
+        pass
 
     theme.apply_application_theme(app, theme.settings_load_theme())
 

@@ -66,5 +66,34 @@
   "camera": {
     "zoom": 1.68,
     "pixelsPerUnit": 1.0
-  }
+  },
+  "dayNight": {
+    "enabled": true
+  },
+  "timeVariants": {
+    "夜": {
+      "backgrounds": [
+        {
+          "image": "牛头凼－深夜.png",
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "ambientSounds": [
+        "可怕的呼啸风声"
+      ]
+    }
+  },
+  "ambientSounds": [
+    "灌风"
+  ],
+  "onEnter": [
+    {
+      "type": "setThreeFiresVisible",
+      "params": {
+        "visible": true,
+        "style": "flare"
+      }
+    }
+  ]
 }

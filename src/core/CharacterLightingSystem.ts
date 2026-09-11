@@ -1,4 +1,4 @@
-import { BufferImageSource, type Shader, type TextureSource, type UniformGroup } from 'pixi.js';
+import { BufferImageSource, GlProgram, Shader, Texture, type TextureSource, UniformGroup } from 'pixi.js';
 import type { IGameSystem, GameContext, SceneLightingDef } from '../data/types';
 import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 import { depthLog, depthError } from './depthLog';
@@ -1144,6 +1144,45 @@ export class CharacterLightingSystem implements IGameSystem {
       atlasL1: r.atlasL1, atlasL2: r.atlasL2, atlasBin: r.atlasBin,
       valid: r.valid, volRad: r.volRad, volEmit: r.volEmit,
       skyao: r.skyao?.tex ?? null,
+    });
+    this.litShaders.add(sh);
+    return sh;
+  }
+
+  /**
+   * 给**非角色**的世界空间着色（粒子批）建 shader：自带 GlProgram，但吃与角色**同一套**三组 uniform
+   * （sceneShade / frameShade / charLights）与同一批场景纹理。载荷不在 / 关闭时返回 null，调用方走 unlit。
+   *
+   * 进 `litShaders` 注册表：换场景 `parkLitShaders` 会把场景纹理槽位退回白图，所以 `extra` 里
+   * **不许**再绑第二份按场景销毁的纹理而不自己回收——粒子系统在 `scene:beforeUnload` 先销毁自己的
+   * shader（`releaseEntityLitShader`），顺序上早于纹理销毁。
+   */
+  createCustomLitShader(program: GlProgram, colorTex: TextureSource, extra: Record<string, unknown>): Shader | null {
+    const r = this.resources;
+    if (!r || !this.sceneLit || !this.groundTex || !this.enabled) return null;
+    const sh = new Shader({
+      glProgram: program,
+      resources: {
+        sceneShade: this.sceneLit,
+        frameShade: this.frameLit,
+        charLights: this.charLights,
+        entityShade: new UniformGroup({
+          uHasNrm: { value: 0, type: 'f32' },
+          uL2W0: { value: new Float32Array([1, 0, 0]), type: 'vec3<f32>' },
+          uL2W1: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
+        }),
+        uColorTex: colorTex,
+        uNrm: Texture.WHITE.source,
+        uGround: this.groundTex,
+        uPL1: r.atlasL1,
+        uPL2: r.atlasL2,
+        uPBin: r.atlasBin,
+        uValid: r.valid,
+        uVolRad: r.volRad,
+        uVolEmit: r.volEmit,
+        uSkyaoTex: r.skyao?.tex ?? Texture.WHITE.source,
+        ...extra,
+      },
     });
     this.litShaders.add(sh);
     return sh;

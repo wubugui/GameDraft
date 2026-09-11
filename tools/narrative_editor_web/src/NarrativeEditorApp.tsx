@@ -134,6 +134,7 @@ import {
   loadAuthoringCatalog,
   loadCategories,
   loadNarrativeDataWithSource,
+  isHostDataLoaded,
   loadTaskIndex,
   loadTemplates,
   navigateTo,
@@ -351,6 +352,10 @@ function NarrativeEditorInner() {
   const [dirty, setDirty] = useState(false);
   const [savedDataHash, setSavedDataHash] = useState('');
   const [dataSource, setDataSource] = useState('');
+  // 宿主可见门：只有把真实来源的数据灌进 `data` 之后才对 PySide 壳暴露 window.__narrativeEditor。
+  // 挂载瞬间 `data` 还是 defaultFile（空白初始文档），2026-09-09 宿主 Save All 就是在这一段
+  // 把它当草稿收走、抹掉了全部编排。见 bridge.ts isHostDataLoaded。
+  const [hostReady, setHostReady] = useState(false);
   const [dialogueRelations, setDialogueRelations] = useState<DialogueRelationIndex>(emptyDialogueRelationIndex);
 
   const { wrapUpdater, undo, redo, resetHistory, syncExternalData } = useEditorHistory(data, setDataInternal, (next) => {
@@ -647,6 +652,9 @@ function NarrativeEditorInner() {
       const next = normalizeFile(loaded.data);
       setDataInternal(next);
       syncExternalData(next);
+      // 真数据已进 state：从这一刻起宿主才允许把画布文档当草稿读走。
+      // `empty fallback`（桥回了解析不了的东西）不算加载成功——那份仍是空白文档。
+      setHostReady(isHostDataLoaded(loaded.source));
       setCompositionId(next.compositions?.[0]?.id ?? '');
       setSignalKey(collectKnownSignals(next)[0] ?? '');
       const loadedCatalog = await loadAuthoringCatalog();
@@ -680,7 +688,12 @@ function NarrativeEditorInner() {
   }, [taskBusOpen, compositionId]);
 
   useEffect(() => {
+    // 未就绪（数据还没灌进来 / 加载失败兜底）：不挂 API、不留 lastDraft。宿主读不到 API
+    // 就按"无内容"放行，绝不会拿到空白初始文档。
+    if (!hostReady) return;
     const api = {
+      /** 宿主双保险：老壳读 loaded 三态用；挂上来的 API 一定是已加载的。 */
+      isLoaded: () => true,
       getCurrentDataJson: () => currentDataJson,
       getCurrentDataHash: () => currentDataHash,
       isDirty: () => editorDirty,
@@ -730,7 +743,7 @@ function NarrativeEditorInner() {
         delete window.__narrativeEditor;
       }
     };
-  }, [currentDataHash, currentDataJson, editorDirty, data, refreshCatalog, refreshProjectionAndValidation]);
+  }, [hostReady, currentDataHash, currentDataJson, editorDirty, data, refreshCatalog, refreshProjectionAndValidation]);
 
   useEffect(() => {
     void flushRemoteSync(data);

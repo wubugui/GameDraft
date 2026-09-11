@@ -3,15 +3,20 @@ from __future__ import annotations
 
 import html
 import os
+import shutil
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QUrl, QSize, QTimer, QEventLoop, QStandardPaths
+from PySide6.QtCore import (
+    Qt, QObject, Signal, QUrl, QSize, QTimer, QEventLoop, QStandardPaths,
+)
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QLineEdit, QStyle, QSizePolicy,
 )
+
+from tools.webengine_cache_policy import apply_no_cache
 
 from .. import theme
 
@@ -47,11 +52,12 @@ def _safe_placeholder(message: str) -> str:
 
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWebEngineCore import QWebEngineProfile
+    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 
     from ..web_engine_page import QuietWebEnginePage
 except ImportError:  # pragma: no cover
     QWebEngineView = None  # type: ignore[assignment,misc]
+    QWebEnginePage = None  # type: ignore[assignment,misc]
     QWebEngineProfile = None  # type: ignore[assignment,misc]
     QuietWebEnginePage = None  # type: ignore[assignment,misc]
 
@@ -69,30 +75,48 @@ def _default_app_data_dir() -> Path:
     return base / "GameDraft"
 
 
+def _legacy_profile_dir() -> Path:
+    """2026-09-08 之前那份落盘 profile 的位置(现已废弃,只用来删)。"""
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+    if not base:
+        base = str(_default_app_data_dir())
+    return Path(base) / "webengine_game_preview"
+
+
+def _purge_legacy_profile_dir() -> None:
+    """把旧版留在磁盘上的缓存/存储整个删掉——它正是那次黑屏的载体,留着只会误导下一个人。
+
+    尽力而为:删不掉(权限/被别的实例占着)也绝不能拦住编辑器启动。
+    """
+    root = _legacy_profile_dir()
+    if not root.exists():
+        return
+    try:
+        shutil.rmtree(root)
+        print(f"[game-preview] 已删除废弃的落盘 profile:{root}", file=sys.stderr, flush=True)
+    except OSError as e:  # pragma: no cover - 占用/权限,和预览本身无关
+        print(f"[game-preview] 废弃 profile 删不掉({e}),不影响运行:{root}",
+              file=sys.stderr, flush=True)
+
+
 def _game_webengine_profile():
-    """Persistent profile for game preview; default Qt profile is off-the-record here."""
+    """游戏预览的 profile:**off-the-record + NoCache,一个字节都不落盘。**
+
+    制作人 2026-09-08 定死"任何 desktop 窗口都不许留缓存"(缘由与全仓口径见
+    `tools/webengine_cache_policy.py`)。这里连 `setPersistentStoragePath` 一起去掉,
+    走无名构造 = off-the-record:HTTP 缓存、V8 code cache、GPUCache、localStorage 统统不落地。
+    预览不丢任何东西——存档与设置早就走 dev server 的文件后端
+    (`src/core/storage/persistentStore.ts` 优先选 HttpFileStore),localStorage 只是它的兜底。
+    """
     global _GAME_WEB_PROFILE
     if QWebEngineProfile is None:
         return None
     if _GAME_WEB_PROFILE is not None:
         return _GAME_WEB_PROFILE
 
-    profile = QWebEngineProfile("GameDraftGamePreview")
-    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
-    if not base:
-        base = str(_default_app_data_dir())
-    root = Path(base) / "webengine_game_preview"
-    cache = root / "cache"
-    storage = root / "storage"
-    cache.mkdir(parents=True, exist_ok=True)
-    storage.mkdir(parents=True, exist_ok=True)
-
-    profile.setCachePath(str(cache))
-    profile.setPersistentStoragePath(str(storage))
-    profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
-    profile.setPersistentCookiesPolicy(
-        QWebEngineProfile.PersistentCookiesPolicy.AllowPersistentCookies,
-    )
+    _purge_legacy_profile_dir()
+    profile = QWebEngineProfile()          # 无名 = off-the-record,不落磁盘
+    apply_no_cache(profile)
     _GAME_WEB_PROFILE = profile
     return profile
 
@@ -104,6 +128,149 @@ def _make_game_page(parent):
     if profile is not None:
         return QuietWebEnginePage(profile, parent)
     return QuietWebEnginePage(parent)
+
+
+#: 页面自证"`src/main.ts` 真的跑过"的探针。`__GAMEDRAFT_BUILD__` 是 main.ts 顶层
+#: 无条件写的常量,模块图一断就绝不会出现;游戏自己的两块错误屏(启动失败 / 入口卫兵
+#: 拦截)也算"活着",那是人能读的画面,别拿缓存去砸它。
+_BOOT_PROBE_JS = """(function(){
+  try {
+    if (window.__GAMEDRAFT_BUILD__) return 'booted';
+    if (document.getElementById('game-fatal-error')) return 'fatal';
+    if (document.getElementById('game-entry-blocked')) return 'blocked';
+    return 'blank:' + document.readyState;
+  } catch (e) { return 'blank:throw'; }
+})()"""
+
+
+class _GameBootWatchdog(QObject):
+    """首屏看门狗:载入后若干秒内页面必须自证 `main.ts` 跑过,否则重载一次并把话说清楚。
+
+    起因是 2026-09-08 那次"整窗纯黑、点不动":当时预览用的持久磁盘缓存烂了,坏条目在
+    revalidate 时被当响应体喂回渲染进程,`/src/ui/debugLightingSection.ts` 变成
+    `Uncaught SyntaxError`,模块图断掉、`main.ts` 一行没跑,页面停在 index.html 的 `#111` 上。
+    那条根因**已经被连根拔掉**(桌面窗口一律不留缓存,见 `tools/webengine_cache_policy.py`),
+    这里留下来是因为那次暴露的**失效形状**本身还在:
+
+    - `loadFinished` 照样 `True`(HTML 本身载入成功了),"加载失败"类的重试救不了;
+    - 渲染进程 CPU 归零(没有 rAF),看起来像卡死,其实是根本没启动;
+    - 页面停在宿主壳的 `#111` 上,和"游戏画了一帧黑"肉眼分不出来。
+
+    任何让模块图断掉的东西(改坏的 import、dev server 半路挂掉)都长这个样。所以判据只有
+    一条:**页面自己证明 `main.ts` 跑过了**;证明不了就重载一次,再不行就把话打进日志交给人,
+    别无限刷请求。
+    """
+
+    #: 探针节奏。两拍(≈5s)还是白的就动手——首屏几百个模块在慢机上也就 2~3s。
+    _TICK_MS = 2500
+    _GRACE_TICKS = 2
+    #: 补救之后再给的观察拍数;到顶就闭嘴,不再动缓存。
+    _MAX_TICKS = 6
+
+    def __init__(self, view, label: str, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._view = view
+        self._label = label
+        self._ticks = 0
+        self._recovered = False
+        self._done = True
+        self._timer = QTimer(self)
+        self._timer.setInterval(self._TICK_MS)
+        self._timer.timeout.connect(self._tick)
+
+    def arm(self) -> None:
+        """每次真正去载游戏页时调用(占位页不要武装,它本来就没有 main.ts)。"""
+        self._ticks = 0
+        self._recovered = False
+        self._done = False
+        self._timer.start()
+
+    def disarm(self) -> None:
+        self._done = True
+        self._timer.stop()
+
+    # ---- internals --------------------------------------------------------
+
+    def _log(self, message: str) -> None:
+        # 编辑器的 stderr 被 dev_console 收着;这里是黑屏时唯一的线索,不能因为编码炸掉。
+        try:
+            sys.stderr.write(f"[game-preview:{self._label}] {message}\n")
+            sys.stderr.flush()
+        except Exception:  # pragma: no cover - 控制台编码/句柄异常不该拖垮预览
+            pass
+
+    def _tick(self) -> None:
+        if self._done or self._view is None:
+            self._timer.stop()
+            return
+        self._ticks += 1
+        if self._ticks > self._MAX_TICKS:
+            self.disarm()
+            return
+        page = self._view.page()
+        if page is None:
+            self.disarm()
+            return
+        page.runJavaScript(_BOOT_PROBE_JS, self._on_probe)
+
+    def _on_probe(self, verdict: object) -> None:
+        if self._done:
+            return
+        if isinstance(verdict, str) and not verdict.startswith("blank"):
+            # booted / fatal / blocked:页面已经能自己说话了,收工。
+            self.disarm()
+            return
+        if self._ticks < self._GRACE_TICKS:
+            return
+        if not self._recovered:
+            self._recover()
+            return
+        if self._ticks >= self._MAX_TICKS:
+            self._log(
+                "重载后页面仍然没起来(main.ts 没执行)。往上翻这条日志里的 js 报错——"
+                "模块图断了(改坏的 import / dev server 半路挂掉)最常见。",
+            )
+            self.disarm()
+
+    def _recover(self) -> None:
+        """清一遍缓存(现在本就是空的)再绕过缓存重载一次。
+
+        profile 已经是 off-the-record + `NoCache`,这一手是**兜底**:万一哪天有人给某个壳
+        重新接上缓存,这条路径仍然能自愈,不必再查一遍 2026-09-08 那场。
+
+        ⚠ **两件事的先后不能颠倒**:`clearHttpCache()` 是异步的,清理**在飞的时候发起重载
+        会把这次加载整个吊死**(2026-09-08 实测:`loadStarted` 之后 `loadFinished` 再也不来,
+        页面永远停在旧文档上)。等 `clearHttpCacheCompleted` 再重载则实测能救回来。
+        老 Qt 上没有这个信号,就退化成只绕缓存重载。
+        """
+        self._recovered = True
+        self._ticks = 0
+        self._log(
+            "首屏没起来(main.ts 未执行、页面停在空壳上)——重载一次试试。",
+        )
+        profile = _game_webengine_profile()
+        signal = getattr(profile, "clearHttpCacheCompleted", None) if profile else None
+        if signal is None:
+            self._reload_bypassing_cache()
+            return
+
+        def on_cleared() -> None:
+            try:
+                signal.disconnect(on_cleared)
+            except (RuntimeError, TypeError):  # pragma: no cover - 已断开/已析构
+                pass
+            self._reload_bypassing_cache()
+
+        signal.connect(on_cleared)
+        profile.clearHttpCache()
+
+    def _reload_bypassing_cache(self) -> None:
+        if self._done or self._view is None:
+            return
+        page = self._view.page()
+        if page is None or QWebEnginePage is None:
+            return
+        page.triggerAction(QWebEnginePage.WebAction.ReloadAndBypassCache)
 
 
 class GameBrowserTab(QWidget):
@@ -175,12 +342,14 @@ class GameBrowserTab(QWidget):
                 QSizePolicy.Policy.Ignored,
                 QSizePolicy.Policy.Ignored,
             )
+            self._boot_watchdog = _GameBootWatchdog(self._view, "tab", self)
             root.addWidget(self._view, stretch=1)
             self.show_message(
                 "Press Run (F5) to start the dev server and load the game here.",
             )
         else:
             self._view = None
+            self._boot_watchdog = None
             tip = QLabel(
                 "PySide6 Qt WebEngine is not available. "
                 "Install the full PySide6 extras or use Run with an external browser.",
@@ -199,6 +368,8 @@ class GameBrowserTab(QWidget):
             target += "/"
         self._url_line.setText(target)
         self._placeholder_message = None
+        if self._boot_watchdog is not None:
+            self._boot_watchdog.arm()
         self._view.load(QUrl(target))
 
     def reload_dev_url(self) -> None:
@@ -208,6 +379,9 @@ class GameBrowserTab(QWidget):
     def show_message(self, message: str) -> None:
         if not self._view:
             return
+        # 占位页没有 main.ts,看门狗必须先撤,否则它会拿占位页当"没起来"去清缓存。
+        if self._boot_watchdog is not None:
+            self._boot_watchdog.disarm()
         self._placeholder_message = message
         self._view.setHtml(_safe_placeholder(message))
 
@@ -234,6 +408,9 @@ class GameBrowserTab(QWidget):
     def _reload(self) -> None:
         if not self._view:
             return
+        # 占位页上按 Reload 不该武装看门狗(重载出来的还是占位页)。
+        if self._boot_watchdog is not None and self._placeholder_message is None:
+            self._boot_watchdog.arm()
         self._view.reload()
 
     def _open_external(self) -> None:
@@ -267,15 +444,21 @@ class GamePlayWindow(QWidget):
                 QSizePolicy.Policy.Ignored,
             )
             lay.addWidget(self._view)
+            self._boot_watchdog = _GameBootWatchdog(self._view, "window", self)
         else:
             self._view = None
+            self._boot_watchdog = None
 
     def load_url(self, url: str) -> None:
         if self._view:
+            if self._boot_watchdog is not None:
+                self._boot_watchdog.arm()
             self._view.load(QUrl(url))
 
     def reload(self) -> None:
         if self._view:
+            if self._boot_watchdog is not None:
+                self._boot_watchdog.arm()
             self._view.reload()
 
     def is_available(self) -> bool:
@@ -316,6 +499,9 @@ class GamePlayWindow(QWidget):
         return result["value"]
 
     def closeEvent(self, event) -> None:
+        # 关窗流程里视图随时会被销毁,看门狗的下一拍不能再去碰 page()。
+        if self._boot_watchdog is not None:
+            self._boot_watchdog.disarm()
         # WebEngine 关窗口默认不触发 pagehide/beforeunload，必须先停 Howler 再关视图
         if self._native_close_armed:
             self.closed.emit()

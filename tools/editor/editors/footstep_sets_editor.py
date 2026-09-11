@@ -59,6 +59,7 @@ from PySide6.QtWidgets import (
 from ..project_model import ProjectModel
 from ..shared import confirm
 from ..shared.audio_library import AudioMetaCache, audio_config_file_for_id, format_duration
+from ..shared import audio_cue
 from ..shared.audio_preview_selector import AudioIdPreviewSelector
 from ..shared.form_layout import compact_form
 from ..shared.id_ref_selector import IdRefSelector
@@ -82,16 +83,17 @@ _DEFAULT_FIELDS: tuple[tuple[str, str, float, float, int, float, float, str], ..
 )
 
 #: spatial：键 → 同上。单位一律 wu；角色高 150 wu 是尺度锚。
+#: v3（2026-09-08）起运行时不读的四项：直达声参数在声学空间的 direct 里（声学工作台调）
+_SPATIAL_DEAD_KEYS = ("refDistanceWu", "rolloff", "maxDistanceWu", "panWidth")
 _SPATIAL_FIELDS: tuple[tuple[str, str, float, float, int, float, float, str], ...] = (
-    ("refDistanceWu", "refDistanceWu", 0.0, 1_000_000.0, 4, 10.0, 150.0,
-     "参考距离（wu）：近于此不再变响。150 wu ≈ 一个角色的身高。"),
-    ("rolloff", "rolloff", 0.0, 100.0, 4, 0.1, 1.0,
-     "衰减系数（WebAudio inverse 模型的 rolloffFactor）；越大越快听不见。"),
-    ("maxDistanceWu", "maxDistanceWu", 0.0, 10_000_000.0, 4, 100.0, 3000.0,
-     "超过此距离（wu）一律不播。⚠ 必须显著大于 listenerBackAtBaseZoomWu，"
-     "否则连脚下的声音都会被判成听不见。"),
-    ("panWidth", "panWidth", 0.0, 1.0, 4, 0.05, 0.7,
-     "声像宽度上限 0..1；1 = 允许全左 / 全右。"),
+    ("refDistanceWu", "refDistanceWu（已停用）", 0.0, 1_000_000.0, 4, 10.0, 150.0,
+     "运行时不读。直达声参考距离在声学空间 direct.refDistanceM（声学米）里，去声学工作台调。"),
+    ("rolloff", "rolloff（已停用）", 0.0, 100.0, 4, 0.1, 1.0,
+     "运行时不读。见声学空间 direct.rolloff。"),
+    ("maxDistanceWu", "maxDistanceWu（已停用）", 0.0, 10_000_000.0, 4, 100.0, 3000.0,
+     "运行时不读。见声学空间 direct.maxDistanceM。"),
+    ("panWidth", "panWidth（已停用）", 0.0, 1.0, 4, 0.05, 0.7,
+     "运行时不读。见声学空间 direct.panWidth。"),
     ("listenerBackAtBaseZoomWu", "listenerBackAtBaseZoomWu", 0.0, 10_000_000.0, 4, 50.0, 600.0,
      "相机听者在**场景基准 zoom** 下站在画面后方多远（wu）。"
      "实际视距 = 本值 ×(基准 zoom / 当前 zoom)：推拉镜头改变听感，改窗口大小不会。"),
@@ -114,6 +116,16 @@ _LISTENER_NUM_FIELDS: tuple[tuple[str, str, float, float, int, float, float, str
     ("heightWu", "heightWu", -10_000_000.0, 10_000_000.0, 4, 10.0, 135.0,
      "耳朵离地高度（wu）；player / npc 省略时取该实体身高的 0.9。"),
 )
+
+
+def _is_editable_cue(raw: object) -> bool:
+    """本页能不能编这条片段值。
+
+    认两种形状：裸 key（含空串 = 还没选）与 ``{id, volume}``。别的（数组 / 数字 / null）
+    一律判为"不认识"，右侧禁用、只读透传——`audio_cue.cue_id` 对它们也返回空串，
+    所以**不能**拿"解析不出 id"当判据（那会把"还没选音效"也误判成异形数据）。
+    """
+    return isinstance(raw, str) or isinstance(raw, dict)
 
 
 def _keep_num(new_val: float, old_val: object, decimals: int) -> object:
@@ -199,6 +211,57 @@ class _OptionalNumRow(QWidget):
         if not self.check.isChecked():
             return None
         return _keep_num(self.spin.value(), self._orig, self._decimals)
+
+
+class _OptionalBoolRow(QWidget):
+    """`[勾选] [开/关]  说明`：**不勾选＝不写这个键**（运行时取缺省），与 {@link _OptionalNumRow} 同语义。
+
+    布尔单独做一行而不是塞进数值行：`0/1` 当布尔用会在 JSON 里落成数字，
+    运行时 `!== false` 判不出来（`0 !== false` 为真），静默变成"关了却还在响空间化"。
+    """
+
+    def __init__(self, *, fallback: bool, on_text: str, off_text: str,
+                 hint: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._fallback = bool(fallback)
+        self._orig: object = _MISSING
+
+        self.check = QCheckBox(self)
+        self.check.setToolTip("不勾选＝数据里不写这个键（运行时用缺省值）")
+        self.value = QCheckBox(on_text, self)
+        self._on_text, self._off_text = on_text, off_text
+        self.value.setChecked(self._fallback)
+        self.value.setEnabled(False)
+        self.check.toggled.connect(self.value.setEnabled)
+        self.value.toggled.connect(
+            lambda on: self.value.setText(self._on_text if on else self._off_text))
+        self.value.setText(self._on_text if self._fallback else self._off_text)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        lay.addWidget(self.check)
+        lay.addWidget(self.value)
+        if hint:
+            lbl = QLabel(hint, self)
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet("color: #888;")
+            lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            lay.addWidget(lbl, stretch=1)
+            self.setToolTip(hint)
+        else:
+            lay.addStretch(1)
+
+    def load(self, value: object) -> None:
+        """按原值载入；非布尔（含 0/1 这种写错的）一律当"该键不存在"。"""
+        self._orig = value if isinstance(value, bool) else _MISSING
+        on = bool(self._orig) if self._orig is not _MISSING else self._fallback
+        self.check.setChecked(self._orig is not _MISSING)
+        self.value.setChecked(on)
+        self.value.setText(self._on_text if on else self._off_text)
+
+    def value_or_none(self) -> object | None:
+        return self.value.isChecked() if self.check.isChecked() else None
 
 
 class FootstepSetsEditor(QWidget):
@@ -326,9 +389,16 @@ class FootstepSetsEditor(QWidget):
         self._clip_name_label = QLabel("")
         self._clip_name_label.setStyleSheet("font-weight: bold;")
         sf.addRow("片段", self._clip_name_label)
-        self._sfx_selector = AudioIdPreviewSelector(self._model, "sfx", allow_empty=True, editable=True)
-        self._sfx_selector.setToolTip("这一片段落脚时播的音效 key（可搜索 / 试听；可手填还没登记的 key）")
-        self._sfx_selector.value_changed.connect(self._on_sfx_changed)
+        self._sfx_selector = AudioIdPreviewSelector(
+            self._model, "sfx", allow_empty=True, editable=True, with_volume=True,
+        )
+        self._sfx_selector.setToolTip(
+            "这一片段落脚时播的音效 key（可搜索 / 试听；可手填还没登记的 key）。\n"
+            "中间那格是**本条音量**：同一条素材挂在 walk 与 crouchWalk 上、后者要轻一半，\n"
+            "靠它而不是复制一条素材。它**乘在**本集/全局 gainDb 之上（dB 管这块地整体多响，\n"
+            "本条 volume 管这个片段相对本集多响）。",
+        )
+        self._sfx_selector.changed.connect(self._on_sfx_changed)
         sf.addRow("音效 key", self._sfx_selector)
         sl.addLayout(sf)
         self._sfx_hint = QLabel("")
@@ -392,6 +462,13 @@ class FootstepSetsEditor(QWidget):
                                   fallback=fb, hint=hint)
             self._default_rows[key] = row
             df.addRow(label, row)
+        # 空间化总闸：关掉就只播一个声音，用来把脚步素材本身听清楚
+        self._spatialized_row = _OptionalBoolRow(
+            fallback=True, on_text="开（走空间化）", off_text="关（只播声音）",
+            hint="关＝脚步不进空间音总线：没有距离衰减 / 声像 / 传播延迟 / 空气低通 / 回音，"
+                 "只吃上面的 gainDb 与 sfx 通道音量。判断素材本身对不对时先关掉对比一遍最快。"
+                 "只管脚步，环境音 / NPC / 试听声源不受影响。")
+        df.addRow("spatialized", self._spatialized_row)
         outer.addWidget(d_box)
 
         # ---- spatial
@@ -409,9 +486,8 @@ class FootstepSetsEditor(QWidget):
         self._spatial_warn.setStyleSheet("color: #e8590c;")
         self._spatial_warn.setVisible(False)
         sf.addRow("", self._spatial_warn)
-        for key in ("maxDistanceWu", "listenerBackAtBaseZoomWu"):
+        for key in _SPATIAL_DEAD_KEYS:
             r = self._spatial_rows[key]
-            r.spin.valueChanged.connect(lambda _v: self._sync_spatial_warning())
             r.check.toggled.connect(lambda _on: self._sync_spatial_warning())
         outer.addWidget(s_box)
 
@@ -514,7 +590,8 @@ class FootstepSetsEditor(QWidget):
             sfx = s.get("sfx")
             if isinstance(sfx, dict):
                 n_clips = len(sfx)
-                unset = sum(1 for v in sfx.values() if not (isinstance(v, str) and v.strip()))
+                # 值可能是裸 key 也可能是 { id, volume }：一律按解析得出的 id 判"选没选"
+                unset = sum(1 for v in sfx.values() if not audio_cue.cue_id(v))
         head = f"{sid}  [{label[:18]}]" if label else sid
         tail = f"  {n_clips} 片段"
         if unset:
@@ -527,6 +604,7 @@ class FootstepSetsEditor(QWidget):
         defaults = data.get("defaults") if isinstance(data.get("defaults"), dict) else {}
         for key, row in self._default_rows.items():
             row.load(defaults.get(key))
+        self._spatialized_row.load(defaults.get("spatialized"))
         spatial = data.get("spatial") if isinstance(data.get("spatial"), dict) else {}
         for key, row in self._spatial_rows.items():
             row.load(spatial.get(key))
@@ -600,6 +678,7 @@ class FootstepSetsEditor(QWidget):
             for k, v in sfx.items():
                 # 值按身份保留：本页不认识的形状（数组 / 数字）**原样透传**，
                 # 绝不静默重写成 "" 或把数字 5 改写成 "5"（那会在 Save All 里无声毁数据）。
+                # 认识的两种是裸 key 与 { id, volume }。
                 self._sfx[str(k)] = v
         # 换集时片段选中从头来：否则上一集也叫 walk 时 _refresh_clip_list 会原位保住同名行、
         # currentRowChanged 不触发，右侧选择器就还挂着上一集的 key（截图里抓到过）。
@@ -641,23 +720,32 @@ class FootstepSetsEditor(QWidget):
                     break
 
     @staticmethod
-    def _clip_row_text(clip: str, aid: object) -> str:
-        if not isinstance(aid, str):
-            return f"⚠ {clip}   数据不是字符串（本页只透传、不改它）"
-        if not aid.strip():
+    def _clip_row_text(clip: str, raw: object) -> str:
+        if not _is_editable_cue(raw):
+            return f"⚠ {clip}   数据形状不认识（本页只透传、不改它）"
+        aid = audio_cue.cue_id(raw)
+        if not aid:
             return f"⚠ {clip}   没选音效（走这个片段时不响）"
-        return f"{clip}   →  {aid.strip()}"
+        vol = audio_cue.cue_volume(raw)
+        tail = "" if vol is None else f"   × {float(vol):g}"
+        return f"{clip}   →  {aid}{tail}"
 
-    def _clip_tooltip(self, aid: object) -> str:
-        if not isinstance(aid, str) or not aid.strip():
+    def _clip_tooltip(self, raw: object) -> str:
+        aid = audio_cue.cue_id(raw)
+        if not aid:
             return ""
-        path = audio_config_file_for_id(self._model, "sfx", aid.strip())
+        vol = audio_cue.cue_volume(raw)
+        vol_line = "" if vol is None else f"\n本条音量 × {float(vol):g}（乘在 gainDb 之上）"
+        path = audio_config_file_for_id(self._model, "sfx", aid)
         if path is None:
             return f"{aid}\n⚠ 没登记在 audio_config.json 的 sfx 区或找不到文件——运行时这一条是静音的"
-        return f"{aid}\n{path.name}\n时长 {format_duration(self._audio_meta.duration(path))}"
+        return (
+            f"{aid}\n{path.name}\n时长 {format_duration(self._audio_meta.duration(path))}"
+            f"{vol_line}"
+        )
 
     def _current_value(self) -> object:
-        """当前片段条目的值：正常是 str；非 str = 本页不动的异形数据。"""
+        """当前片段条目的值：裸 key 或 ``{id, volume}``；别的形状本页只透传不改。"""
         if not self._current_clip:
             return None
         return self._sfx.get(self._current_clip)
@@ -671,10 +759,10 @@ class FootstepSetsEditor(QWidget):
         """右侧：把当前片段的 key 灌进选择器（程序性设值，不触发 value_changed）。"""
         self._reload_sfx_items()
         value = self._current_value()
-        editable = isinstance(value, str)
+        editable = _is_editable_cue(value)
         self._clip_name_label.setText(self._current_clip or "（左边选一个片段）")
         self._sfx_selector.setEnabled(bool(self._current_clip) and editable)
-        self._sfx_selector.set_current(value.strip() if isinstance(value, str) else "")
+        self._sfx_selector.set_cue(value if editable else None)
         self._sync_sfx_hint()
 
     def _sync_sfx_hint(self) -> None:
@@ -684,14 +772,15 @@ class FootstepSetsEditor(QWidget):
             self._sfx_hint.setStyleSheet("color: #888;")
             return
         value = self._current_value()
-        if not isinstance(value, str):
+        if not _is_editable_cue(value):
             self._sfx_hint.setText(
-                f"⚠「{self._current_clip}」在数据里不是字符串（{type(value).__name__}）。"
-                "本页只把它原样透传，不在这里改——请直接改 JSON 或删掉这一条重建。",
+                f"⚠「{self._current_clip}」在数据里既不是音效 key 也不是 {{id, volume}}"
+                f"（{type(value).__name__}）。本页只把它原样透传，不在这里改——"
+                "请直接改 JSON 或删掉这一条重建。",
             )
             self._sfx_hint.setStyleSheet("color: #e8590c;")
             return
-        aid = value.strip()
+        aid = audio_cue.cue_id(value)
         if not aid:
             self._sfx_hint.setText(
                 f"⚠「{self._current_clip}」还没选音效——走这个片段时**不响**"
@@ -707,16 +796,25 @@ class FootstepSetsEditor(QWidget):
             )
             self._sfx_hint.setStyleSheet("color: #e8590c;")
             return
+        vol = audio_cue.cue_volume(value)
+        vol_note = "" if vol is None else f" 本条音量 × {float(vol):g}（乘在 gainDb 之上）。"
         self._sfx_hint.setText(
             f"「{self._current_clip}」→ {aid}（{path.name}，"
-            f"{format_duration(self._audio_meta.duration(path))}）。每一步都是这一条，确定性播放。",
+            f"{format_duration(self._audio_meta.duration(path))}）。每一步都是这一条，确定性播放。"
+            f"{vol_note}",
         )
         self._sfx_hint.setStyleSheet("color: #888;")
 
-    def _on_sfx_changed(self, aid: str) -> None:
-        if not self._current_clip or not isinstance(self._current_value(), str):
+    def _on_sfx_changed(self) -> None:
+        """id 或本条音量任一改动都落回本集（只接 value_changed 会漏掉纯音量改动）。"""
+        if not self._current_clip:
             return
-        self._sfx[self._current_clip] = (aid or "").strip()
+        old = self._current_value()
+        if not _is_editable_cue(old):
+            return
+        built = self._sfx_selector.cue_for_write(old)
+        # 清空 id：保留这一条但写空串（与旧行为一致——删条目走「删除」按钮，不靠清空）
+        self._sfx[self._current_clip] = "" if built is None else built
         self._refresh_clip_row(self._current_clip)
         self._sync_sfx_hint()
 
@@ -826,14 +924,12 @@ class FootstepSetsEditor(QWidget):
 
     # ------------------------------------------------------------ 显隐联动
     def _sync_spatial_warning(self) -> None:
-        far = self._spatial_rows["maxDistanceWu"]
-        back = self._spatial_rows["listenerBackAtBaseZoomWu"]
-        if far.check.isChecked() and back.check.isChecked() \
-                and far.spin.value() <= back.spin.value() * 1.5:
+        # v3（2026-09-08）起脚步走空间音总线：这四项运行时不读，直达声参数在声学空间 direct 里
+        dead = [k for k in _SPATIAL_DEAD_KEYS if self._spatial_rows[k].check.isChecked()]
+        if dead:
             self._spatial_warn.setText(
-                "⚠ maxDistanceWu 必须**显著大于** listenerBackAtBaseZoomWu"
-                f"（现在 {far.spin.value():g} vs {back.spin.value():g}）——"
-                "否则相机听者离画面本来就有这么远，连脚下的声音都会被判成听不见。",
+                f"⚠ {' / '.join(dead)} 运行时已不读：脚步是有位置的声源，直达声的参考距离 / 衰减 / 最远 / 声像宽"
+                "在**声学空间**的「直达声」里（声学工作台调）。这几项取消勾选即可。",
             )
             self._spatial_warn.setVisible(True)
         else:
@@ -900,6 +996,11 @@ class FootstepSetsEditor(QWidget):
                 defaults.pop(key, None)
             else:
                 defaults[key] = v
+        sp = self._spatialized_row.value_or_none()
+        if sp is None:
+            defaults.pop("spatialized", None)
+        else:
+            defaults["spatialized"] = sp
         _put_map(data, "defaults", defaults)
 
         orig_spatial = data.get("spatial")

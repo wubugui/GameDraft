@@ -113,7 +113,7 @@ class _Base(unittest.TestCase):
     def _pick_sfx(ed: FootstepSetsEditor, aid: str) -> None:
         """模拟在选择窗里选了一条 key（弹窗本身在 offscreen 下会挂住，直接走它的回调）。"""
         ed._sfx_selector.set_current(aid)
-        ed._on_sfx_changed(aid)
+        ed._on_sfx_changed()
 
 
 class GoldenRoundtripTests(_Base):
@@ -167,7 +167,7 @@ class GoldenRoundtripTests(_Base):
         self.assertTrue(ed.flush_to_model())
         self.assertEqual(self._blob(model.footstep_sets), before)
         # 异形条目在 UI 上说得明明白白，且改不动
-        self.assertTrue(any("数据不是字符串" in t for t in self._clip_texts(ed)))
+        self.assertTrue(any("数据形状不认识" in t for t in self._clip_texts(ed)))
         ed._clip_list.setCurrentRow(self._clip_texts(ed).index(
             next(t for t in self._clip_texts(ed) if "oops" in t)))
         self.assertFalse(ed._sfx_selector.isEnabled())
@@ -342,12 +342,43 @@ class FieldEditingTests(_Base):
         self.assertNotIn("panWidth", spatial)
         self.assertEqual(model.footstep_sets["defaults"]["gainDb"], -8)
 
-    def test_max_distance_warning_fires_when_too_close_to_listener_back(self) -> None:
+    def test_spatialized_switch_round_trips_and_defaults_to_absent(self) -> None:
+        """空间化总闸：不勾＝不落键(缺省走空间化);勾上关掉＝落 false。
+
+        必须是**真布尔**——运行时判据是 `!== false`,落成 0 会被当成"没关"而静默照旧空间化。
+        """
+        ed, model = self._editor()
+        # 夹具没写这个键 ⇒ 不勾、显示缺省"开"
+        self.assertFalse(ed._spatialized_row.check.isChecked())
+        self.assertTrue(ed._spatialized_row.value.isChecked())
+        self.assertTrue(ed._apply())
+        self.assertNotIn("spatialized", model.footstep_sets.get("defaults", {}))
+
+        # 勾上并关掉 ⇒ 落 false(且是 bool 不是 0)
+        ed._spatialized_row.check.setChecked(True)
+        ed._spatialized_row.value.setChecked(False)
+        self.assertTrue(ed._apply())
+        got = model.footstep_sets["defaults"]["spatialized"]
+        self.assertIs(got, False)
+
+        # 重开一次:原样读回来
+        ed2, model = self._editor(model.footstep_sets)
+        self.assertTrue(ed2._spatialized_row.check.isChecked())
+        self.assertFalse(ed2._spatialized_row.value.isChecked())
+
+        # 取消勾选 ⇒ 删键
+        ed2._spatialized_row.check.setChecked(False)
+        self.assertTrue(ed2._apply())
+        self.assertNotIn("spatialized", model.footstep_sets.get("defaults", {}))
+
+    def test_dead_spatial_keys_show_deprecation_note(self) -> None:
+        """v3 起这四项运行时不读：勾着就橙字说清去哪调，全取消就没话。"""
         ed, _model = self._editor()
-        self.assertEqual(ed._spatial_warn.text(), "", "3000 wu 远大于 600 wu，不该报警")
-        ed._spatial_rows["maxDistanceWu"].spin.setValue(600)
+        self.assertIn("运行时已不读", ed._spatial_warn.text())   # 夹具里 maxDistanceWu 勾着
         self.assertIn("maxDistanceWu", ed._spatial_warn.text())
-        self.assertFalse(ed._spatial_warn.isHidden())
+        for key in ("refDistanceWu", "rolloff", "maxDistanceWu", "panWidth"):
+            ed._spatial_rows[key].check.setChecked(False)
+        self.assertTrue(ed._spatial_warn.isHidden())
 
     def test_listener_mode_switch_writes_target_and_keeps_unknown(self) -> None:
         ed, model = self._editor()

@@ -97,6 +97,7 @@ from .scene_time_variant_form import TimeVariantForm, variant_summary
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor, FilterableTypeCombo
+from ..shared import audio_cue
 from ..shared.audio_library import (
     AudioMetaCache,
     audio_config_file_for_id,
@@ -168,6 +169,12 @@ _ZONE_PICK_FROZEN_FILL = QColor(150, 150, 150, 88)
 _ZONE_PICK_FROZEN_PEN = QColor(95, 95, 95, 220)
 # 叠放实体循环点选「同一落点」的视口像素容差（见 SceneCanvas.mousePressEvent）
 _PICK_CYCLE_PX_TOL = 4
+
+#: 环境音行携带的两份附加数据（UserRole 已被 id 占了）。
+#: `RAW` = 盘上那条引用的原件——写回时在它上面改，作者手写的未来字段不会被静默抹掉；
+#: `VOLUME` = 本处音量（None = 未配，用素材原音）。
+_AMBIENT_RAW_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+_AMBIENT_VOLUME_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 
 # 深度遮挡半透明混合系数的场景默认（与运行时 SceneDepthSystem._occlusionBlendFactor 对齐）。
 # 实体缺省不写 occlusionBlendFactor 键 → 运行时用此默认；仅「自定义」勾选才落显式值。
@@ -5118,14 +5125,14 @@ class ScenePropertyPanel(QScrollArea):
         """时段表单预填用的「白天基底」：光照取工作副本、其余取面板上此刻的值。"""
         # 一律 getattr：表单在面板构造中途就会建好，那时这些属性未必都在。
         st = getattr(self, "_staging_scene", None) or {}
-        amb = self._ambient_ids_from_widgets() if hasattr(self, "_sc_ambient_list") else []
+        amb = self._ambient_cues_from_widgets() if hasattr(self, "_sc_ambient_list") else []
         bgm = getattr(self, "_sc_bgm", None)
         flt = getattr(self, "_sc_filter", None)
         return {
             "lighting": getattr(self, "_sc_lighting", None),
             "depthConfig": st.get("depthConfig"),
             "ambientSounds": amb,
-            "bgm": bgm.current_id().strip() if bgm is not None else "",
+            "bgm": (bgm.cue_for_write(getattr(self, "_sc_bgm_raw", None)) or "") if bgm is not None else "",
             "filterId": flt.current_id() if flt is not None else "",
         }
 
@@ -5361,39 +5368,244 @@ class ScenePropertyPanel(QScrollArea):
 
         table.keyPressEvent = _key_press  # type: ignore[method-assign]
 
-    def _load_ambient_widgets(self, ambient_ids: list[str]) -> None:
-        """列表只装**本场景实际用的** id，按编排顺序。
+    def _load_ambient_widgets(self, ambient_refs: list) -> None:
+        """列表只装**本场景实际用的**层，按编排顺序。
 
         旧写法是把整个 ambient 目录铺成 110px 的勾选框列表 + 一个逗号串输入框：
         候选越多越难用，两个输入面还得让人猜该填哪个；而且保存时按目录字母序
         回写，作者写的顺序会被静默重排（当前数据恰好都已是字母序，没爆出来）。
+
+        入参是**引用**（裸 id 或 ``{id, volume}``），原始元素随行存下来供写回。
         """
         lst = self._sc_ambient_list
         lst.blockSignals(True)
         lst.clear()
-        for aid in ambient_ids:
-            lst.addItem(self._make_ambient_item(aid))
+        for raw in ambient_refs:
+            aid = audio_cue.cue_id(raw)
+            if not aid:
+                continue
+            lst.addItem(self._make_ambient_item(aid, raw))
         lst.blockSignals(False)
         self._sync_ambient_buttons()
+        self._sync_ambient_volume_widget()
 
-    def _make_ambient_item(self, aid: str) -> QListWidgetItem:
+    # ------------------------------------------------------------ vfx 实例
+    #
+    # 一行 = 一条实例；UserRole 存**盘上原始 dict**（写回时保未知键——形状会长，
+    # 面板不该成为"编辑器没这一栏就把它删掉"的那种损坏源）。
+
+    def _load_vfx_widgets(self, rows: list) -> None:
+        lst = self._sc_vfx_list
+        lst.blockSignals(True)
+        lst.clear()
+        for raw in rows:
+            if not isinstance(raw, dict):
+                continue
+            it = QListWidgetItem()
+            it.setData(Qt.ItemDataRole.UserRole, dict(raw))
+            self._decorate_vfx_item(it)
+            lst.addItem(it)
+        lst.blockSignals(False)
+        # 候选随场景刷新（跨面板刷新约定）
+        self._sc_vfx_effect.set_items(self._model.all_vfx_effect_ids())
+        if lst.count():
+            lst.setCurrentRow(0)
+        self._on_vfx_row_changed()
+        self._sync_vfx_fold()
+
+    def _sync_vfx_fold(self) -> None:
+        """有实例就展开、标题带条数——与本页灯光 / on_enter 同一条约定
+        （`set_expanded(bool(有数据))`）。默认折叠 + 标题不带条数 = 场景里明明配了东西，
+        作者在属性页上什么也看不见，只能去翻 JSON。2026-09-11 制作人点名的就是这条。
+        """
+        fold = getattr(self, "_sc_vfx_fold", None)
+        if fold is None:
+            return
+        n = self._sc_vfx_list.count()
+        fold.set_title(
+            f"世界空间效果 vfx（粒子 / 群体）· {n} 个实例" if n
+            else "世界空间效果 vfx（粒子 / 群体）")
+        if n:
+            fold.set_expanded(True)
+
+    @staticmethod
+    def _decorate_vfx_item(it: QListWidgetItem) -> None:
+        d = it.data(Qt.ItemDataRole.UserRole) or {}
+        a = d.get("anchor") or {}
+        phases = d.get("timePhases") or []
+        tail = ("　[%s]" % "/".join(str(p) for p in phases)) if phases else ""
+        it.setText("%s　「%s」　(%.0f, %.0f) h=%.0f %s%s" % (
+            d.get("id") or "(无 id)", d.get("effect") or "(未选效果)",
+            float(a.get("x") or 0), float(a.get("y") or 0), float(a.get("h") or 0),
+            str(a.get("surface") or "ground"), tail))
+
+    def _current_vfx_item(self) -> QListWidgetItem | None:
+        r = self._sc_vfx_list.currentRow()
+        return self._sc_vfx_list.item(r) if r >= 0 else None
+
+    def _on_vfx_row_changed(self) -> None:
+        it = self._current_vfx_item()
+        self._sc_vfx_form_host.setEnabled(it is not None)
+        for b in (self._vfx_btn_del, self._vfx_btn_up, self._vfx_btn_down):
+            b.setEnabled(it is not None)
+        if it is None:
+            return
+        d = it.data(Qt.ItemDataRole.UserRole) or {}
+        a = d.get("anchor") or {}
+        self._vfx_loading = True
+        try:
+            self._sc_vfx_id.setText(str(d.get("id") or ""))
+            self._sc_vfx_effect.set_current(str(d.get("effect") or ""))
+            self._sc_vfx_x.setValue(float(a.get("x") or 0.0))
+            self._sc_vfx_y.setValue(float(a.get("y") or 0.0))
+            self._sc_vfx_h.setValue(float(a.get("h") or 0.0))
+            surf = str(a.get("surface") or "ground")
+            i = self._sc_vfx_surface.findData(surf)
+            self._sc_vfx_surface.setCurrentIndex(i if i >= 0 else 0)
+            self._sc_vfx_seed.setValue(int(d.get("seed") or 0))
+            self._sc_vfx_count.setValue(float(d.get("countScale") if d.get("countScale") is not None else 1.0))
+            auto = d.get("autoStart")
+            key = "" if auto is None else ("true" if auto else "false")
+            j = self._sc_vfx_autostart.findData(key)
+            self._sc_vfx_autostart.setCurrentIndex(j if j >= 0 else 0)
+            ph = d.get("timePhases") or []
+            self._sc_vfx_phases.setText("，".join(str(p) for p in ph) if isinstance(ph, list) else "")
+        finally:
+            self._vfx_loading = False
+
+    def _on_vfx_field_changed(self) -> None:
+        """把表单写回**选中行的原始 dict**：缺省值不落键（打开→不改→保存零漂移）。"""
+        if getattr(self, "_vfx_loading", False):
+            return
+        it = self._current_vfx_item()
+        if it is None:
+            return
+        d = dict(it.data(Qt.ItemDataRole.UserRole) or {})
+        d["id"] = self._sc_vfx_id.text().strip()
+        d["effect"] = self._sc_vfx_effect.current_id().strip()
+        a = dict(d.get("anchor") or {})
+        a["x"] = self._keep_num(float(self._sc_vfx_x.value()), a.get("x"))
+        a["y"] = self._keep_num(float(self._sc_vfx_y.value()), a.get("y"))
+        h = float(self._sc_vfx_h.value())
+        if h or "h" in a:
+            a["h"] = self._keep_num(h, a.get("h"))
+        surf = str(self._sc_vfx_surface.currentData() or "ground")
+        # ground 是运行时缺省：原本没这个键就别凭空写出来
+        if surf != "ground" or "surface" in a:
+            a["surface"] = surf
+        d["anchor"] = a
+        seed = int(self._sc_vfx_seed.value())
+        if seed:
+            d["seed"] = seed
+        else:
+            d.pop("seed", None)
+        cs = float(self._sc_vfx_count.value())
+        if abs(cs - 1.0) > 1e-9:
+            d["countScale"] = self._keep_num(cs, d.get("countScale"))
+        else:
+            d.pop("countScale", None)
+        auto = str(self._sc_vfx_autostart.currentData() or "")
+        if auto == "":
+            d.pop("autoStart", None)
+        else:
+            d["autoStart"] = (auto == "true")
+        raw_ph = self._sc_vfx_phases.text().replace("，", ",")
+        ph = [p.strip() for p in raw_ph.split(",") if p.strip()]
+        if ph:
+            d["timePhases"] = ph
+        else:
+            d.pop("timePhases", None)
+        it.setData(Qt.ItemDataRole.UserRole, d)
+        self._decorate_vfx_item(it)
+        self._emit_props_changed()
+
+    def _add_vfx_instance(self) -> None:
+        effects = self._model.all_vfx_effect_ids()
+        if not effects:
+            QMessageBox.information(
+                self, "没有效果资产",
+                "assets/data/vfx/ 里还没有效果。先在粒子工作台里做一个：\n"
+                "sh scripts/py.sh -m tools.vfx_workbench")
+            return
+        st = getattr(self, "_staging_scene", None) or {}
+        used = {str((r or {}).get("id") or "") for r in (st.get("vfx") or []) if isinstance(r, dict)}
+        for it0 in range(self._sc_vfx_list.count()):
+            used.add(str((self._sc_vfx_list.item(it0).data(Qt.ItemDataRole.UserRole) or {}).get("id") or ""))
+        n = 1
+        while ("vfx_%d" % n) in used:
+            n += 1
+        row = {
+            "id": "vfx_%d" % n,
+            "effect": effects[0][0],
+            "anchor": {"x": round(float(st.get("worldWidth") or 800) / 2, 1),
+                       "y": round(float(st.get("worldHeight") or 450) / 2, 1)},
+        }
+        it = QListWidgetItem()
+        it.setData(Qt.ItemDataRole.UserRole, row)
+        self._decorate_vfx_item(it)
+        self._sc_vfx_list.addItem(it)
+        self._sc_vfx_list.setCurrentItem(it)
+        self._sync_vfx_fold()
+        self._emit_props_changed()
+
+    def _remove_vfx_instance(self) -> None:
+        r = self._sc_vfx_list.currentRow()
+        if r < 0:
+            return
+        self._sc_vfx_list.takeItem(r)
+        self._on_vfx_row_changed()
+        self._sync_vfx_fold()
+        self._emit_props_changed()
+
+    def _move_vfx_instance(self, delta: int) -> None:
+        r = self._sc_vfx_list.currentRow()
+        if r < 0:
+            return
+        t = r + delta
+        if t < 0 or t >= self._sc_vfx_list.count():
+            return
+        it = self._sc_vfx_list.takeItem(r)
+        self._sc_vfx_list.insertItem(t, it)
+        self._sc_vfx_list.setCurrentRow(t)
+        self._emit_props_changed()
+
+    def _vfx_rows_from_widgets(self) -> list:
+        out: list = []
+        for i in range(self._sc_vfx_list.count()):
+            d = self._sc_vfx_list.item(i).data(Qt.ItemDataRole.UserRole)
+            if isinstance(d, dict):
+                out.append(d)
+        return out
+
+    def _make_ambient_item(self, aid: str, raw: object = None) -> QListWidgetItem:
+        """一行 = 一层环境音。UserRole 存 id，+1 存**盘上原始引用**（写回时保未知键），
+        +2 存本处音量。三份都得随行走——只存 id 的话，上下移一行音量就不跟着走。"""
         it = QListWidgetItem()
         it.setData(Qt.ItemDataRole.UserRole, aid)
+        it.setData(_AMBIENT_RAW_ROLE, raw)
+        it.setData(_AMBIENT_VOLUME_ROLE, audio_cue.cue_volume(raw))
         self._decorate_ambient_item(it)
         return it
 
     def _decorate_ambient_item(self, it: QListWidgetItem) -> None:
-        """行文本直接把「多长 / 在不在」写出来——以前只在 tooltip 里，得逐条悬停才知道。"""
+        """行文本直接把「多长 / 在不在 / 本处音量」写出来——以前只在 tooltip 里，得逐条悬停才知道。"""
         aid = str(it.data(Qt.ItemDataRole.UserRole) or "")
+        vol = it.data(_AMBIENT_VOLUME_ROLE)
+        # 非中性音量直接写进行文本：一屏好几层，得能一眼看出哪几层被单独调过。
+        vol_tag = "" if vol is None else f"   × {float(vol):g}"
+        vol_text = "未配（素材原音）" if vol is None else f"× {float(vol):g}"
         path = audio_config_file_for_id(self._model, "ambient", aid)
         if path is None:
-            it.setText(f"⚠ {aid}   找不到音频文件")
+            it.setText(f"⚠ {aid}{vol_tag}   找不到音频文件")
             it.setToolTip(f"{aid}\n⚠ 找不到音频文件，运行时这层是静音的")
             return
         cache = getattr(self, "_ambient_meta", None)
         duration = cache.duration(path) if cache is not None else None
-        it.setText(f"{aid}   {format_duration(duration)}")
-        it.setToolTip(f"{aid}\n{path.name}\n时长 {format_duration(duration)}\n（双击试听）")
+        it.setText(f"{aid}   {format_duration(duration)}{vol_tag}")
+        it.setToolTip(
+            f"{aid}\n{path.name}\n时长 {format_duration(duration)}\n"
+            f"本处音量 {vol_text}\n（双击试听，按本处音量放）",
+        )
 
     def _refresh_ambient_tooltips(self) -> None:
         """后台时长探测出结果后回填显示（只改文本/提示，不动条目与顺序）。"""
@@ -5419,11 +5631,39 @@ class ScenePropertyPanel(QScrollArea):
                 out.append(aid)
         return out
 
+    def _ambient_cues_from_widgets(self) -> list:
+        """写盘用的引用列表：裸 id 或 ``{id, volume}``（未知键原样保留）。"""
+        lst = self._sc_ambient_list
+        seen: set[str] = set()
+        out: list = []
+        for i in range(lst.count()):
+            it = lst.item(i)
+            if it is None:
+                continue
+            aid = str(it.data(Qt.ItemDataRole.UserRole) or "").strip()
+            if not aid or aid in seen:
+                continue
+            seen.add(aid)
+            built = audio_cue.make_cue(
+                aid, it.data(_AMBIENT_VOLUME_ROLE), it.data(_AMBIENT_RAW_ROLE),
+            )
+            if built is not None:
+                out.append(built)
+        return out
+
     def _current_ambient_preview_id(self) -> str:
         it = self._sc_ambient_list.currentItem()
         if it is None:
             return ""
         return str(it.data(Qt.ItemDataRole.UserRole) or "").strip()
+
+    def _current_ambient_preview_volume(self) -> float | None:
+        """选中层的本处音量——试听就按它放（不然调了也听不出来）。"""
+        it = self._sc_ambient_list.currentItem()
+        if it is None:
+            return None
+        v = it.data(_AMBIENT_VOLUME_ROLE)
+        return None if v is None else float(v)
 
     def _sync_ambient_buttons(self) -> None:
         lst = self._sc_ambient_list
@@ -5432,6 +5672,35 @@ class ScenePropertyPanel(QScrollArea):
         self._amb_btn_del.setEnabled(has)
         self._amb_btn_up.setEnabled(has and row > 0)
         self._amb_btn_down.setEnabled(has and row < lst.count() - 1)
+        self._sync_ambient_volume_widget()
+
+    def _sync_ambient_volume_widget(self) -> None:
+        """音量格跟着选中行走。**必须 blockSignals**：不挡的话换行时 setValue 会触发
+        `_on_ambient_volume_changed`，把上一行的音量写到新选中的行上（换个选中就改数据）。"""
+        w = getattr(self, "_sc_ambient_volume", None)
+        if w is None:
+            return
+        it = self._sc_ambient_list.currentItem()
+        w.setEnabled(it is not None)
+        v = it.data(_AMBIENT_VOLUME_ROLE) if it is not None else None
+        blocked = w.blockSignals(True)
+        try:
+            w.setValue(audio_cue.NEUTRAL_VOLUME if v is None else float(v))
+        finally:
+            w.blockSignals(blocked)
+        off = v is not None and abs(float(v) - audio_cue.NEUTRAL_VOLUME) > 1e-9
+        w.setStyleSheet("font-weight:bold; color:#0b7285;" if off else "")
+
+    def _on_ambient_volume_changed(self, value: float) -> None:
+        it = self._sc_ambient_list.currentItem()
+        if it is None:
+            return
+        # 中性值 = 不写这个键（回到"素材原始音量"），别在数据里留一地 volume: 1
+        neutral = abs(float(value) - audio_cue.NEUTRAL_VOLUME) < 1e-9
+        it.setData(_AMBIENT_VOLUME_ROLE, None if neutral else float(value))
+        self._decorate_ambient_item(it)
+        self._sync_ambient_volume_widget()
+        self._emit_props_changed()
 
     def _add_ambient(self) -> None:
         """走统一的弹窗选择器（可搜索、可试听、能看时长与缺失状态）。"""
@@ -5454,7 +5723,7 @@ class ScenePropertyPanel(QScrollArea):
         if aid in used:
             QMessageBox.information(self, "环境音", f"「{aid}」已经在列表里了。")
             return
-        self._sc_ambient_list.addItem(self._make_ambient_item(aid))
+        self._sc_ambient_list.addItem(self._make_ambient_item(aid, aid))
         self._sc_ambient_list.setCurrentRow(self._sc_ambient_list.count() - 1)
         self._sync_ambient_buttons()
         self._emit_props_changed()
@@ -5520,10 +5789,17 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("", self._sc_lock_aspect)
         self._sc_width.valueChanged.connect(self._on_world_width_changed)
         self._sc_height.valueChanged.connect(self._on_world_height_changed)
-        self._sc_bgm = AudioIdPreviewSelector(self._model, "bgm", allow_empty=True, editable=True)
-        self._sc_bgm.setMinimumWidth(160)
-        self._sc_bgm.value_changed.connect(lambda _x: self._emit_props_changed())
-        self._sc_bgm.setToolTip("场景背景音乐 id；右侧按钮可试听当前选择。")
+        self._sc_bgm = AudioIdPreviewSelector(
+            self._model, "bgm", allow_empty=True, editable=True, with_volume=True,
+        )
+        self._sc_bgm.setMinimumWidth(250)
+        # 接 changed 而不只接 value_changed：只改了音量也必须标脏，否则切场景就丢。
+        self._sc_bgm.changed.connect(self._emit_props_changed)
+        self._sc_bgm.setToolTip(
+            "场景背景音乐 id；右侧按钮可试听当前选择。\n"
+            "中间那格是**本处音量**：同一首曲子在别的场景多响不受影响，"
+            "试听也按它放。",
+        )
         form.addRow("bgm", self._sc_bgm)
         self._sc_filter = IdRefSelector(allow_empty=True, editable=True)
         self._sc_filter.value_changed.connect(lambda _x: self._emit_props_changed())
@@ -5535,8 +5811,14 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_acoustic.setToolTip(
             "场景的声学空间（回音）。清单来自 assets/data/acoustic_spaces.json；"
             "留空＝没有空间，空间音退化为干声。\n"
-            "崖壁怎么摆、多远、多吸音，在游戏里按 F2 →「声学」页边拖边听。")
+            "崖壁怎么摆、多远、多吸音，在「声学工作台」里对着场景的 3D 展开摆，游戏实时预览；"
+            "逻辑上一份场景几何一个空间，绑别的场景摆的空间不保证效果对（validate-data 记 warning）。")
         form.addRow("acousticSpace", self._sc_acoustic)
+        # 摆几何的入口在独立的声学工作台（它是 acoustic_spaces.json 的唯一写者）；这里只起进程
+        self._sc_acoustic_open = QPushButton("在声学工作台中打开…")
+        self._sc_acoustic_open.setToolTip("另起声学工作台进程，直接打开这个空间（没选空间就打开工作台新建）")
+        self._sc_acoustic_open.clicked.connect(self._open_acoustic_workbench)
+        form.addRow("　└ 工作台", self._sc_acoustic_open)
         # 听者绑给谁。听者不动＝走到崖边和站在路中间是同一个回音，实时就没意义了。
         self._sc_acoustic_listener = QComboBox()
         for _v, _t in (("player", "玩家（默认）"), ("camera", "相机"),
@@ -5549,6 +5831,24 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_acoustic_entity.value_changed.connect(lambda _x: self._emit_props_changed())
         self._sc_acoustic_entity.setToolTip("mode=指定实体 时，听者跟着这个 NPC 走。")
         form.addRow("　└ 实体", self._sc_acoustic_entity)
+        # 基准视距。**两重身份，所以不按 mode 禁用**：
+        #   ① mode=相机 时是听者退到画面后方多远（基准 zoom 下）；
+        #   ② 场景配了 perspectiveScale 时，它同时是透视纵深的基准深度（f=1 处到相机多远），
+        #      对 player / entity 听者一样生效——那时它决定的是整个场景的世界尺度。
+        # 两处必须同源，分开取就会「声音的远近与画面的缩放对不上」且不报错。
+        self._sc_acoustic_back = QDoubleSpinBox()
+        self._sc_acoustic_back.setRange(0, 20000)
+        self._sc_acoustic_back.setSingleStep(50)
+        self._sc_acoustic_back.setDecimals(0)
+        self._sc_acoustic_back.setSpecialValueText("（用全局 600）")
+        self._sc_acoustic_back.valueChanged.connect(lambda _v: self._emit_props_changed())
+        self._sc_acoustic_back.setToolTip(
+            "基准 zoom 下的视距（wu，角色高 150 wu）。0＝用 footstep_sets.json 的全局值（600）。\n"
+            "· mode=相机：听者站在画面中心后方这么远。推拉镜头按 zoom 比折算，改窗口大小不影响。\n"
+            "· 本场景配了「透视线」(perspectiveScale) 时：它同时是透视纵深的基准——\n"
+            "  f=1 处离相机这么远，f=0.5 处就是两倍远。此时**所有听者模式**都受它影响。\n"
+            "这个数推不出来（游戏投影是正交的，相机在无穷远没有位置），只能听着定。")
+        form.addRow("　└ 基准视距", self._sc_acoustic_back)
         # 这批控件此前不接 changed 信号 → 永不置 pending-dirty → 不点 Apply 切场景即丢（审查 P1-1）
         self._sc_zoom = QDoubleSpinBox(); self._sc_zoom.setRange(0.01, 20); self._sc_zoom.setSingleStep(0.1)
         self._sc_zoom.valueChanged.connect(lambda _v: self._emit_props_changed())
@@ -5833,6 +6133,127 @@ class ScenePropertyPanel(QScrollArea):
         move_g.add_body(move_inner)
         outer.addWidget(move_g)
 
+        # ---- 世界空间效果 vfx（蝙蝠群 / 滴水 / 香火烟 / 萤火）----
+        # 默认折叠：多数场景没有；重块折叠 + 懒建是本编辑器的布局纪律。
+        # 折起来时标题就是这条的唯一辨识依据：带上条数，否则"这场景到底有没有粒子"要点开才知道
+        vfx_g = self._section("世界空间效果 vfx（粒子 / 群体）", start_open=False)
+        self._sc_vfx_fold = vfx_g
+        vfx_inner = QWidget()
+        vfx_lay = QVBoxLayout(vfx_inner)
+        vfx_tip = QLabel(
+            "效果本身（发射器 / 运动 / 群体行为）在**粒子工作台**里调："
+            "sh scripts/py.sh -m tools.vfx_workbench；这里只摆实例：用哪个效果、摆在哪、什么条件下在场。\n"
+            "锚点是**画面点 + 离表面高度**：先落到那一点正下方的行走面（或可见深度壳），再沿表面法线抬 h。")
+        vfx_tip.setWordWrap(True)
+        vfx_lay.addWidget(vfx_tip)
+        self._sc_vfx_list = QListWidget()
+        self._sc_vfx_list.setMaximumHeight(96)
+        self._sc_vfx_list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self._sc_vfx_list.currentRowChanged.connect(lambda _r: self._on_vfx_row_changed())
+        vfx_lay.addWidget(self._sc_vfx_list)
+
+        vfx_btns = QHBoxLayout()
+        _vb_add = QPushButton("添加")
+        _vb_add.setToolTip("新增一条实例（默认挂第一个效果，锚点放在场景中心）")
+        _vb_add.clicked.connect(self._add_vfx_instance)
+        vfx_btns.addWidget(_vb_add)
+        self._vfx_btn_del = QPushButton("移除")
+        self._vfx_btn_del.clicked.connect(self._remove_vfx_instance)
+        vfx_btns.addWidget(self._vfx_btn_del)
+        self._vfx_btn_up = QPushButton("↑")
+        self._vfx_btn_up.clicked.connect(lambda: self._move_vfx_instance(-1))
+        vfx_btns.addWidget(self._vfx_btn_up)
+        self._vfx_btn_down = QPushButton("↓")
+        self._vfx_btn_down.clicked.connect(lambda: self._move_vfx_instance(1))
+        vfx_btns.addWidget(self._vfx_btn_down)
+        vfx_btns.addStretch(1)
+        vfx_lay.addLayout(vfx_btns)
+
+        self._sc_vfx_form_host = QWidget()
+        vfx_form = compact_form(QFormLayout(self._sc_vfx_form_host))
+        self._sc_vfx_id = QLineEdit()
+        self._sc_vfx_id.setMaximumWidth(200)
+        self._sc_vfx_id.setToolTip("实例 id（本场景内唯一）。playVfx / stopVfx / setVfxState 与条件叶 {vfx:…} 按它点名。")
+        self._sc_vfx_id.editingFinished.connect(self._on_vfx_field_changed)
+        vfx_form.addRow("id", self._sc_vfx_id)
+        # 效果是跨文件引用：选择器，禁裸输入（norms 选择器铁律）
+        self._sc_vfx_effect = IdRefSelector(allow_empty=False, editable=True)
+        self._sc_vfx_effect.setToolTip(
+            "效果资产 assets/data/vfx/<id>.json。唯一写者是粒子工作台；这里只选不改。")
+        self._sc_vfx_effect.value_changed.connect(lambda _x: self._on_vfx_field_changed())
+        vfx_form.addRow("effect", self._sc_vfx_effect)
+        # 调效果的入口在独立的粒子工作台（它是 assets/data/vfx/ 的唯一写者）；这里只起进程
+        self._sc_vfx_open = QPushButton("在粒子工作台中打开…")
+        self._sc_vfx_open.setToolTip("另起粒子工作台进程，直接打开这份效果（没选效果就打开工作台新建）")
+        self._sc_vfx_open.clicked.connect(self._open_vfx_workbench)
+        vfx_form.addRow("　└ 工作台", self._sc_vfx_open)
+        _anchor_row = QWidget()
+        _anchor_lay = QHBoxLayout(_anchor_row)
+        _anchor_lay.setContentsMargins(0, 0, 0, 0)
+        self._sc_vfx_x = QDoubleSpinBox()
+        self._sc_vfx_y = QDoubleSpinBox()
+        for _w, _lab in ((self._sc_vfx_x, "x"), (self._sc_vfx_y, "y")):
+            # 量程给足世界坐标：泛型小量程会把几千的坐标 clamp 掉（numeric-roundtrip 已知坑）
+            _w.setRange(-100000.0, 100000.0)
+            _w.setDecimals(1)
+            _w.setMaximumWidth(96)
+            _w.setPrefix(_lab + " ")
+            _w.valueChanged.connect(lambda _v: self._on_vfx_field_changed())
+            _anchor_lay.addWidget(_w)
+        self._sc_vfx_h = QDoubleSpinBox()
+        self._sc_vfx_h.setRange(-100000.0, 100000.0)
+        self._sc_vfx_h.setDecimals(1)
+        self._sc_vfx_h.setMaximumWidth(96)
+        self._sc_vfx_h.setPrefix("h ")
+        self._sc_vfx_h.setToolTip("离表面高度（wu）。角色高 150 wu。")
+        self._sc_vfx_h.valueChanged.connect(lambda _v: self._on_vfx_field_changed())
+        _anchor_lay.addWidget(self._sc_vfx_h)
+        self._sc_vfx_surface = QComboBox()
+        for _v, _t in (("ground", "ground · 行走面"), ("shell", "shell · 深度壳（崖壁 / 台面）")):
+            self._sc_vfx_surface.addItem(_t, _v)
+        self._sc_vfx_surface.setToolTip(
+            "锚点落在哪张面上。崖壁上的巢 / 檐下的滴水选 shell；地面上的烟与萤火选 ground。")
+        self._sc_vfx_surface.currentIndexChanged.connect(lambda _i: self._on_vfx_field_changed())
+        _anchor_lay.addWidget(self._sc_vfx_surface)
+        _anchor_lay.addStretch(1)
+        vfx_form.addRow("anchor", _anchor_row)
+        _opt_row = QWidget()
+        _opt_lay = QHBoxLayout(_opt_row)
+        _opt_lay.setContentsMargins(0, 0, 0, 0)
+        self._sc_vfx_seed = QSpinBox()
+        self._sc_vfx_seed.setRange(0, 2147483647)
+        self._sc_vfx_seed.setMaximumWidth(110)
+        self._sc_vfx_seed.setPrefix("seed ")
+        self._sc_vfx_seed.setToolTip("确定性种子；0 = 不写这个键，运行时按实例 id 哈希。")
+        self._sc_vfx_seed.valueChanged.connect(lambda _v: self._on_vfx_field_changed())
+        _opt_lay.addWidget(self._sc_vfx_seed)
+        self._sc_vfx_count = QDoubleSpinBox()
+        self._sc_vfx_count.setRange(0.0, 20.0)
+        self._sc_vfx_count.setDecimals(2)
+        self._sc_vfx_count.setSingleStep(0.1)
+        self._sc_vfx_count.setValue(1.0)
+        self._sc_vfx_count.setMaximumWidth(110)
+        self._sc_vfx_count.setPrefix("× ")
+        self._sc_vfx_count.setToolTip("数量倍率（乘每个发射器的 max / burst / rate）；1 = 不写这个键。")
+        self._sc_vfx_count.valueChanged.connect(lambda _v: self._on_vfx_field_changed())
+        _opt_lay.addWidget(self._sc_vfx_count)
+        # autoStart 运行时缺省 **true** ⇒ 勾选框的中性值配不出 false，走三态
+        self._sc_vfx_autostart = QComboBox()
+        for _v, _t in (("", "autoStart 缺省（进场景就开）"), ("true", "autoStart 是"), ("false", "autoStart 否（等 playVfx）")):
+            self._sc_vfx_autostart.addItem(_t, _v)
+        self._sc_vfx_autostart.currentIndexChanged.connect(lambda _i: self._on_vfx_field_changed())
+        _opt_lay.addWidget(self._sc_vfx_autostart)
+        _opt_lay.addStretch(1)
+        vfx_form.addRow("", _opt_row)
+        self._sc_vfx_phases = QLineEdit()
+        self._sc_vfx_phases.setToolTip(
+            "只在这些时段存在，逗号分隔（留空 = 全时段）。值须是 game_config.dayNight.phases 里的 id。")
+        self._sc_vfx_phases.editingFinished.connect(self._on_vfx_field_changed)
+        vfx_form.addRow("timePhases", self._sc_vfx_phases)
+        vfx_lay.addWidget(self._sc_vfx_form_host)
+        vfx_g.add_body(vfx_inner)
+        outer.addWidget(vfx_g)
+
         amb_g = self._section("环境音效 ambientSounds", start_open=True)
         amb_inner = QWidget()
         amb_lay = QVBoxLayout(amb_inner)
@@ -5878,12 +6299,29 @@ class ScenePropertyPanel(QScrollArea):
         self._ambient_meta = AudioMetaCache(self)
         self._ambient_meta.updated.connect(self._refresh_ambient_tooltips)
         amb_preview_row = QHBoxLayout()
+        amb_preview_row.addWidget(QLabel("选中层音量"))
+        # 逐层音量：同一条环境音在别的场景要多响完全不受影响（不必再复制一条素材改 id）。
+        self._sc_ambient_volume = QDoubleSpinBox()
+        self._sc_ambient_volume.setRange(0.0, audio_cue.MAX_SITE_VOLUME)
+        self._sc_ambient_volume.setDecimals(2)
+        self._sc_ambient_volume.setSingleStep(0.05)
+        self._sc_ambient_volume.setValue(audio_cue.NEUTRAL_VOLUME)
+        self._sc_ambient_volume.setPrefix("× ")
+        self._sc_ambient_volume.setMaximumWidth(84)
+        self._sc_ambient_volume.setToolTip(
+            "选中那一层在本场景的音量：运行时就按它播，▶ 试听也按它放。\n"
+            "1 = 素材原始音量（不写进数据）；0.5 = 减半；0 = 这层在本场景就是要哑。\n"
+            "⚠ 它覆盖的是「音频」页那条素材级音量，不是相乘。",
+        )
+        self._sc_ambient_volume.valueChanged.connect(self._on_ambient_volume_changed)
+        amb_preview_row.addWidget(self._sc_ambient_volume)
         amb_preview_row.addWidget(QLabel("试听当前 ambient"))
         self._sc_ambient_preview = AudioPreviewControls(
             self._model,
             "ambient",
             self._current_ambient_preview_id,
             self,
+            site_volume_fn=self._current_ambient_preview_volume,
         )
         amb_preview_row.addWidget(self._sc_ambient_preview)
         amb_preview_row.addStretch(1)
@@ -6327,7 +6765,9 @@ class ScenePropertyPanel(QScrollArea):
             self._updating_world_dims = False
             self._update_bg_label_from(st)
             self._sc_bgm.set_items([(a, a) for a in self._model.all_audio_ids("bgm")])
-            self._sc_bgm.set_current(str(st.get("bgm", "") or ""))
+            # 盘上可能是裸 id 也可能是 { id, volume }，一律走 set_cue 解两半
+            self._sc_bgm_raw = st.get("bgm")
+            self._sc_bgm.set_cue(self._sc_bgm_raw)
             self._sc_filter.set_items(self._model.all_filter_ids())
             self._sc_filter.set_current(st.get("filterId", ""))
             self._sc_acoustic.set_items(self._model.all_acoustic_space_ids())
@@ -6342,6 +6782,11 @@ class ScenePropertyPanel(QScrollArea):
                 [(str(n.get("id", "")), str(n.get("name", "") or n.get("id", "")))
                  for n in (st.get("npcs") or []) if n.get("id")])
             self._sc_acoustic_entity.set_current(str((_al or {}).get("entityId", "") or ""))
+            _back = (_al or {}).get("backAtBaseZoomWu")
+            self._sc_acoustic_back.blockSignals(True)
+            self._sc_acoustic_back.setValue(
+                float(_back) if isinstance(_back, (int, float)) and _back > 0 else 0.0)
+            self._sc_acoustic_back.blockSignals(False)
             self._sync_acoustic_listener_target()
             dn = st.get("dayNight")
             self._sc_daynight.blockSignals(True)
@@ -6389,10 +6834,13 @@ class ScenePropertyPanel(QScrollArea):
                 self._sc_depth_tol.blockSignals(False)
                 self._sc_floor_offset.blockSignals(False)
             self._load_persp_widgets(st)
+            raw_vfx = st.get("vfx", [])
+            self._load_vfx_widgets(list(raw_vfx) if isinstance(raw_vfx, list) else [])
             raw_amb = st.get("ambientSounds", [])
             if not isinstance(raw_amb, list):
                 raw_amb = []
-            self._load_ambient_widgets([str(x) for x in raw_amb])
+            # 不能 str(x)：元素可能是 { id, volume } 对象，强转字符串会把一层变成垃圾 id
+            self._load_ambient_widgets(list(raw_amb))
             # 先填候选再设值（候选重建会带着当前值走保值分支）
             self._sc_footstep.set_items(self._model.all_footstep_set_ids())
             self._sc_footstep.set_current(str(st.get("footstepSet", "") or "").strip())
@@ -6891,6 +7339,26 @@ class ScenePropertyPanel(QScrollArea):
             return old_val
         return new_val
 
+    def _open_acoustic_workbench(self) -> None:
+        """场景属性页「在声学工作台中打开…」：另起工作台进程并直接切到当前选的空间。
+
+        起进程的落点在主窗口（与轨迹工作台同一套 detached 起法），这里只负责把当前值递过去。
+        """
+        opener = getattr(self.window(), "open_acoustic_workbench", None)
+        if not callable(opener):
+            return
+        opener(str(self._sc_acoustic.current_id() or "").strip())
+
+    def _open_vfx_workbench(self) -> None:
+        """场景页 vfx 实例的「在粒子工作台中打开…」：另起工作台进程并直接切到当前选的效果。
+
+        起进程的落点在主窗口（与轨迹 / 声学工作台同一套 detached 起法），这里只负责把当前值递过去。
+        """
+        opener = getattr(self.window(), "open_vfx_workbench", None)
+        if not callable(opener):
+            return
+        opener(str(self._sc_vfx_effect.current_id() or "").strip())
+
     def _sync_acoustic_listener_target(self) -> None:
         """只有 mode=entity 时那个实体选择器才有意义，其余禁用——
         免得填了个 id 却不生效（静默失效是这一域最贵的一类 bug）。"""
@@ -6908,9 +7376,10 @@ class ScenePropertyPanel(QScrollArea):
         wh = self._sc_height.value()
         if wh > 0:
             sc["worldHeight"] = self._keep_num(wh, sc.get("worldHeight"))
-        bgm = self._sc_bgm.current_id().strip()
-        if bgm:
-            sc["bgm"] = bgm
+        # 带本处音量：中性值写裸 id，非中性写 { id, volume }（未知键原样保留）
+        bgm_cue = self._sc_bgm.cue_for_write(sc.get("bgm"))
+        if bgm_cue is not None:
+            sc["bgm"] = bgm_cue
         elif "bgm" in sc:
             del sc["bgm"]
         fid = self._sc_filter.current_id()
@@ -6925,11 +7394,15 @@ class ScenePropertyPanel(QScrollArea):
             del sc["acousticSpace"]
         _mode = self._sc_acoustic_listener.currentData() or "player"
         _ent = self._sc_acoustic_entity.current_id().strip()
-        # player 是缺省语义：不落键，旧场景零字节变化
-        if _mode != "player":
+        _back = float(self._sc_acoustic_back.value())
+        # player + 无基准视距 是缺省语义：不落键，旧场景零字节变化。
+        # 但 player 配了基准视距要落——透视场景里那个数对 player 听者一样生效。
+        if _mode != "player" or _back > 0:
             _al = {"mode": _mode}
             if _mode == "entity" and _ent:
                 _al["entityId"] = _ent
+            if _back > 0:
+                _al["backAtBaseZoomWu"] = _back
             sc["acousticListener"] = _al
         elif "acousticListener" in sc:
             del sc["acousticListener"]
@@ -6981,7 +7454,12 @@ class ScenePropertyPanel(QScrollArea):
             dc_save["floor_offset"] = self._keep_num(
                 float(self._sc_floor_offset.value()), dc_save.get("floor_offset"))
         self._flush_persp_into(sc)
-        ambs = self._ambient_ids_from_widgets()
+        vfx_rows = self._vfx_rows_from_widgets() if hasattr(self, "_sc_vfx_list") else []
+        if vfx_rows:
+            sc["vfx"] = vfx_rows
+        elif "vfx" in sc:
+            del sc["vfx"]
+        ambs = self._ambient_cues_from_widgets()
         if ambs:
             sc["ambientSounds"] = ambs
         elif "ambientSounds" in sc:
@@ -11526,9 +12004,31 @@ class ScenePropertyPanel(QScrollArea):
         self._zn_smell_dir.setRange(-1.0, 1.0)
         self._zn_smell_dir.setSingleStep(0.1)
         self._zn_smell_dir.setDecimals(3)  # 与写回 round(...,3) 精度一致，载入 0.125 不被控件截断
-        self._zn_smell_dir.setToolTip("方位偏向 -1..1（0=居中；气缕拖向来源那侧）。")
+        self._zn_smell_dir.setToolTip(
+            "【已废】静态方位 -1..1。2026-09-10 起飘向只按下面的「气味源」与玩家位置现算，此值不生效；"
+            "旧数据保值展示，改配气味源后请归零。")
         self._zn_smell_dir.valueChanged.connect(lambda _v: self._emit_props_changed())
-        smell_form.addRow("方位偏向 dir", self._zn_smell_dir)
+        smell_form.addRow("方位偏向 dir（已废）", self._zn_smell_dir)
+        # 气味源（G.6）：气缕被从源那边吹过来，飘向的反方向 = 源；不配 = 一直直的
+        self._zn_smell_has_source = QCheckBox("配气味源 source（气缕飘向的反方向指向它；不配=直的）")
+        self._zn_smell_has_source.toggled.connect(lambda _v: self._emit_props_changed())
+        smell_form.addRow("", self._zn_smell_has_source)
+        src_row = QWidget()
+        src_lay = QHBoxLayout(src_row)
+        src_lay.setContentsMargins(0, 0, 0, 0)
+        self._zn_smell_src_x = QDoubleSpinBox()
+        self._zn_smell_src_x.setRange(-100000.0, 100000.0)
+        self._zn_smell_src_x.setDecimals(2)
+        self._zn_smell_src_x.valueChanged.connect(lambda _v: self._emit_props_changed())
+        self._zn_smell_src_y = QDoubleSpinBox()
+        self._zn_smell_src_y.setRange(-100000.0, 100000.0)
+        self._zn_smell_src_y.setDecimals(2)
+        self._zn_smell_src_y.valueChanged.connect(lambda _v: self._emit_props_changed())
+        src_lay.addWidget(QLabel("x"))
+        src_lay.addWidget(self._zn_smell_src_x)
+        src_lay.addWidget(QLabel("y"))
+        src_lay.addWidget(self._zn_smell_src_y)
+        smell_form.addRow("气味源坐标", src_row)
         self._zn_smell_flicker = QCheckBox("波动 flicker（不稳的味在 HUD 上明灭跳）")
         self._zn_smell_flicker.toggled.connect(lambda _v: self._emit_props_changed())
         smell_form.addRow("", self._zn_smell_flicker)
@@ -11838,6 +12338,14 @@ class ScenePropertyPanel(QScrollArea):
             except (TypeError, ValueError):
                 self._zn_smell_dir.setValue(0.0)
             self._zn_smell_flicker.setChecked(bool(sm.get("flicker", False)))
+            src = sm.get("source") if isinstance(sm.get("source"), dict) else None
+            self._zn_smell_has_source.setChecked(src is not None)
+            try:
+                self._zn_smell_src_x.setValue(float(src.get("x", 0)) if src else 0.0)
+                self._zn_smell_src_y.setValue(float(src.get("y", 0)) if src else 0.0)
+            except (TypeError, ValueError):
+                self._zn_smell_src_x.setValue(0.0)
+                self._zn_smell_src_y.setValue(0.0)
             self._zn_smell_fold.set_expanded(bool(sm.get("scent")))
             # 先填候选再设值：候选重建会带着当前值走一遍保值分支，反过来会把未知 id 洗掉
             self._zn_footstep.set_items(
@@ -11935,9 +12443,15 @@ class ScenePropertyPanel(QScrollArea):
                     sm["dir"] = dval
                 if self._zn_smell_flicker.isChecked():
                     sm["flicker"] = True
+                if self._zn_smell_has_source.isChecked():
+                    old_src = old_sm.get("source") if isinstance(old_sm.get("source"), dict) else {}
+                    sm["source"] = {
+                        "x": self._keep_num(round(float(self._zn_smell_src_x.value()), 2), old_src.get("x")),
+                        "y": self._keep_num(round(float(self._zn_smell_src_y.value()), 2), old_src.get("y")),
+                    }
                 # 保留未知键
                 for k, v in old_sm.items():
-                    if k not in ("scent", "intensity", "dir", "flicker"):
+                    if k not in ("scent", "intensity", "dir", "flicker", "source"):
                         sm[k] = v
                 zone["smell"] = sm
             elif "smell" in zone:

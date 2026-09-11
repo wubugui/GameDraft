@@ -1428,6 +1428,159 @@
     "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
    },
    "duration": 0.22
+  },
+  "5f25655a7f74f1618374b99ed18508219822984762afdf082dd1bedc0716ecc3": {
+   "src": "/resources/runtime/audio/edited/audio_5f25655a.mp3",
+   "bytes": 532844,
+   "firstSeen": "2026-09-09T00:37:18",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/底噪_崖墓入口_滴水_很密.wav",
+    "sourceHash": "a5866ca5c3ee2f086c673d0610abe460b161aeb62bce0ece31296f63ba6f0b4a",
+    "params": {
+     "gainDb": 13.5
+    },
+    "fingerprint": "1a87bd3ba3f9380c6b91d2e5839d982b1bb0956396e1ba5b1a60e9b91f5de719",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 22.146
+  },
+  "1e6e5a1f6b89282803b5d550f5abf882ba4a27dfcfa6d93781dc36210ec9fa2c": {
+   "src": "/resources/runtime/audio/edited/A_1e6e5a1f.mp3",
+   "bytes": 529388,
+   "firstSeen": "2026-09-09T00:37:18",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/风_呜咽_A_绕崖长嚎.wav",
+    "sourceHash": "3636d9dcb7fe309bbb40b6d5332047fb393589c3f970e67a442c3efedef86aee",
+    "params": {},
+    "fingerprint": "2a4999ca0bb8a2312ceedf7165cbae2df350b4a0d5835c30b461ed78f3ed6493",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 22.0
+  },
+  "8bab861bc77235b45d8e74334b5d8925d881b4c2295dd250702d063913a50892": {
+   "src": "/resources/runtime/audio/edited/B_8bab861b.mp3",
+   "bytes": 673388,
+   "firstSeen": "2026-09-09T00:37:18",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/风_呜咽_B_洞口低鸣.wav",
+    "sourceHash": "e57f99b34d3d7bdc1a20a9de359aa1b1f3b1439cd46a55987613ba904937067c",
+    "params": {
+     "gainDb": 12.5
+    },
+    "fingerprint": "658ddcfa9f3e77d2a9302a0cfe1c08b35aa0fe08edf918ab9df3eb2d9c89c840",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 28.0
+  },
+  "5251cf198157db64494edc5c6745ab14c8b1f1df993ce5f7ef019434e1a5be49": {
+   "src": "/resources/runtime/audio/edited/C_5251cf19.mp3",
+   "bytes": 577196,
+   "firstSeen": "2026-09-09T00:37:18",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/风_呜咽_C_崖道穿堂.wav",
+    "sourceHash": "849333eb2f52daf50ffd296fa72047368afbe68091d44d751414e65e486a1d02",
+    "params": {},
+    "fingerprint": "11bc045e5e8a7111448d6d17379d3363a825d8ce30a9a29ea804f2109c7ffb5f",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 24.0
+  },
+  "359f7b0c96029f1dd9d849ebf44acb7b7be77d9f589ad3abea6f0adc04819378": {
+   "src": "/resources/runtime/audio/edited/audio_359f7b0c.mp3",
+   "bytes": 565676,
+   "firstSeen": "2026-09-09T00:37:18",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/底噪_崖墓_回头风.wav",
+    "sourceHash": "73bd8d332bb2ad764b71ccba7995d4d677aa1a50cfdb41bdcac3cf54586aa491",
+    "params": {},
+    "fingerprint": "3f5f01df8ebdac91caa533dad15927a2e71dd01b2dfbd68d5dafb5ad4b7f939f",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 23.5
+  },
+  "610975be42f4e2d05d5e2207a5be98ecae6f6748dea76aa440e37b89254bdd0b": {
+   "src": "/resources/runtime/audio/edited/audio_610975be.mp3",
+   "bytes": 1081196,
+   "firstSeen": "2026-09-09T00:37:18",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/底噪_崖墓入口_蕨叶滴水.wav",
+    "sourceHash": "cdae0fc8858e73493f5c080425b2d0c5560e82b9c5a12293776d4fa5047d8b9d",
+    "params": {
+     "gainDb": 8.5
+    },
+    "fingerprint": "5284ed4ce02cfa8b6e05568519503cbf7ce6ca15646e677b6a921f999de97b89",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 45.0
+  },
+  "73e9ac8c157bd94efd42fa6fe247b48f3a3bc41143a67ee951e75868b0fd0623": {
+   "src": "/resources/runtime/audio/edited/audio_73e9ac8c.mp3",
+   "bytes": 565676,
+   "firstSeen": "2026-09-09T00:37:18",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/底噪_崖墓入口_滴水_密版.wav",
+    "sourceHash": "9715a579f5a0a3cba1c714ad667d1337d86353970f08d1fe02cf81a92ebe325c",
+    "params": {
+     "gainDb": 13.0
+    },
+    "fingerprint": "cb944ab04086782827d22e952af73984839e648505f5c85320aed1cbdd645145",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 23.5
+  },
+  "0e55b88dbe7d3c19c4f225fa1986820c1103cf2d344d6324e8af1e79e3148bbd": {
+   "src": "/resources/runtime/audio/edited/audio_0e55b88d.mp3",
+   "bytes": 673388,
+   "firstSeen": "2026-09-09T00:37:18",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/底噪_崖墓后段_棺龛低呜.wav",
+    "sourceHash": "cdc6fc8e82ad46b76f8df6d9c1fc472905280ab0c61582f918bdf1270f4d3725",
+    "params": {},
+    "fingerprint": "c7c8e9f0707cc0be1ba950a25270aa06645d5607dc090cd603559233652aa9b4",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 28.0
+  },
+  "a412a28537b9f2069c5ada60b40e7a834444821e28d775e706f9c13fdc7f6d5e": {
+   "src": "/resources/runtime/audio/edited/audio_a412a285.mp3",
+   "bytes": 469484,
+   "firstSeen": "2026-09-09T00:37:19",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/底噪_崖墓前段_潭上灌风.wav",
+    "sourceHash": "09ce78602ba7c217e8a7d47bf6e03d11faa6207ac08d30cb94fd32c582607495",
+    "params": {},
+    "fingerprint": "c38e1f14bb680a8545352821063fe4ad1e8ebaef4b146091d7c8a0979bf725a4",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 19.5
+  },
+  "2362b811a79165952c012345b327c5b913ebdd55e2dec981f8fe7a91315512cd": {
+   "src": "/resources/runtime/audio/edited/audio_2362b811.mp3",
+   "bytes": 532844,
+   "firstSeen": "2026-09-09T00:37:19",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/底噪_崖墓入口_滴水_较密.wav",
+    "sourceHash": "82c25cfe7a9ed36051a61d43c76a0b9f60379788b702fbfb4778c6388a22e65f",
+    "params": {
+     "gainDb": 14.5
+    },
+    "fingerprint": "13a2270019b7e30c05baf9b6a9549b0416338e1b6beff188f4559b00c7d6c400",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 22.146
+  },
+  "f2c64a54977539c89c02fbf2f484e26e7b85dd9a2b3d840a7dd0e4ddd0ae07de": {
+   "src": "/resources/runtime/audio/edited/audio_f2c64a54.mp3",
+   "bytes": 1081196,
+   "firstSeen": "2026-09-09T00:37:19",
+   "origin": {
+    "sourceKey": "imported/20260907_底噪_SeedAudio_48k/底噪_跑马梁_脊背风.wav",
+    "sourceHash": "5bb3240e51be224fbdfbc9189eec48ada07f91bf0c864360d5f4b0d833d6455d",
+    "params": {},
+    "fingerprint": "01cfb4781fd06cda1613583b2e6f3228c8718da3b041fe86c5db68aa82e727e7",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 45.0
   }
  },
  "keys": {
@@ -1794,6 +1947,61 @@
    "hash": "b499aa0a4c2fa2dca0c2cf5768f3b1ae888bb9fb0f53e4c824846f6833f2c44e",
    "src": "/resources/runtime/audio/edited/footstep_stone_16_b499aa0a.wav",
    "exportedAt": "2026-09-07T21:31:18"
+  },
+  "ambient/冒泡滴水": {
+   "hash": "5f25655a7f74f1618374b99ed18508219822984762afdf082dd1bedc0716ecc3",
+   "src": "/resources/runtime/audio/edited/audio_5f25655a.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/可怕的呼啸风声": {
+   "hash": "1e6e5a1f6b89282803b5d550f5abf882ba4a27dfcfa6d93781dc36210ec9fa2c",
+   "src": "/resources/runtime/audio/edited/A_1e6e5a1f.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/可怕的呼啸风声2": {
+   "hash": "8bab861bc77235b45d8e74334b5d8925d881b4c2295dd250702d063913a50892",
+   "src": "/resources/runtime/audio/edited/B_8bab861b.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/可怕的呼啸风声3": {
+   "hash": "5251cf198157db64494edc5c6745ab14c8b1f1df993ce5f7ef019434e1a5be49",
+   "src": "/resources/runtime/audio/edited/C_5251cf19.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/呼呼的风": {
+   "hash": "359f7b0c96029f1dd9d849ebf44acb7b7be77d9f589ad3abea6f0adc04819378",
+   "src": "/resources/runtime/audio/edited/audio_359f7b0c.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/嘈杂滴水": {
+   "hash": "610975be42f4e2d05d5e2207a5be98ecae6f6748dea76aa440e37b89254bdd0b",
+   "src": "/resources/runtime/audio/edited/audio_610975be.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/回音滴水": {
+   "hash": "73e9ac8c157bd94efd42fa6fe247b48f3a3bc41143a67ee951e75868b0fd0623",
+   "src": "/resources/runtime/audio/edited/audio_73e9ac8c.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/恐怖低呜": {
+   "hash": "0e55b88dbe7d3c19c4f225fa1986820c1103cf2d344d6324e8af1e79e3148bbd",
+   "src": "/resources/runtime/audio/edited/audio_0e55b88d.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/灌风": {
+   "hash": "a412a28537b9f2069c5ada60b40e7a834444821e28d775e706f9c13fdc7f6d5e",
+   "src": "/resources/runtime/audio/edited/audio_a412a285.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/缓慢的冒泡滴水": {
+   "hash": "2362b811a79165952c012345b327c5b913ebdd55e2dec981f8fe7a91315512cd",
+   "src": "/resources/runtime/audio/edited/audio_2362b811.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
+  },
+  "ambient/风声": {
+   "hash": "f2c64a54977539c89c02fbf2f484e26e7b85dd9a2b3d840a7dd0e4ddd0ae07de",
+   "src": "/resources/runtime/audio/edited/audio_f2c64a54.mp3",
+   "exportedAt": "2026-09-09T00:37:19"
   }
  },
  "fingerprints": {
@@ -1816,6 +2024,17 @@
   "3e820cec0978ab173288896ab06585cbfa08a3eed14de30990a635f6b1086427": "56c54fa2e5019e06ee47d08f9cdc353af42bcf880a582c07dc4c983d6746b302",
   "ed78a6d4a6a7e4d15825287d4005c6194ad87fc7b1cee9cdac7634d7f293ac15": "be37a87d5f0c9837f743d497677f28db3311fde2731db9f7a6d6a189f1f32312",
   "68bf20cf262e5a826e88cbeb8d59ac04166767a7c00af042f63bbc8873a0305b": "5ba04dc5618eb6c20e34477a06672075bacc26359af63d6a078c0c5fddcfa22c",
-  "49cb14645544d5116d9993688382f2df56b5571a74becdbedfacea33c45b611b": "b499aa0a4c2fa2dca0c2cf5768f3b1ae888bb9fb0f53e4c824846f6833f2c44e"
+  "49cb14645544d5116d9993688382f2df56b5571a74becdbedfacea33c45b611b": "b499aa0a4c2fa2dca0c2cf5768f3b1ae888bb9fb0f53e4c824846f6833f2c44e",
+  "1a87bd3ba3f9380c6b91d2e5839d982b1bb0956396e1ba5b1a60e9b91f5de719": "5f25655a7f74f1618374b99ed18508219822984762afdf082dd1bedc0716ecc3",
+  "2a4999ca0bb8a2312ceedf7165cbae2df350b4a0d5835c30b461ed78f3ed6493": "1e6e5a1f6b89282803b5d550f5abf882ba4a27dfcfa6d93781dc36210ec9fa2c",
+  "658ddcfa9f3e77d2a9302a0cfe1c08b35aa0fe08edf918ab9df3eb2d9c89c840": "8bab861bc77235b45d8e74334b5d8925d881b4c2295dd250702d063913a50892",
+  "11bc045e5e8a7111448d6d17379d3363a825d8ce30a9a29ea804f2109c7ffb5f": "5251cf198157db64494edc5c6745ab14c8b1f1df993ce5f7ef019434e1a5be49",
+  "3f5f01df8ebdac91caa533dad15927a2e71dd01b2dfbd68d5dafb5ad4b7f939f": "359f7b0c96029f1dd9d849ebf44acb7b7be77d9f589ad3abea6f0adc04819378",
+  "5284ed4ce02cfa8b6e05568519503cbf7ce6ca15646e677b6a921f999de97b89": "610975be42f4e2d05d5e2207a5be98ecae6f6748dea76aa440e37b89254bdd0b",
+  "cb944ab04086782827d22e952af73984839e648505f5c85320aed1cbdd645145": "73e9ac8c157bd94efd42fa6fe247b48f3a3bc41143a67ee951e75868b0fd0623",
+  "c7c8e9f0707cc0be1ba950a25270aa06645d5607dc090cd603559233652aa9b4": "0e55b88dbe7d3c19c4f225fa1986820c1103cf2d344d6324e8af1e79e3148bbd",
+  "c38e1f14bb680a8545352821063fe4ad1e8ebaef4b146091d7c8a0979bf725a4": "a412a28537b9f2069c5ada60b40e7a834444821e28d775e706f9c13fdc7f6d5e",
+  "13a2270019b7e30c05baf9b6a9549b0416338e1b6beff188f4559b00c7d6c400": "2362b811a79165952c012345b327c5b913ebdd55e2dec981f8fe7a91315512cd",
+  "01cfb4781fd06cda1613583b2e6f3228c8718da3b041fe86c5db68aa82e727e7": "f2c64a54977539c89c02fbf2f484e26e7b85dd9a2b3d840a7dd0e4ddd0ae07de"
  }
 }

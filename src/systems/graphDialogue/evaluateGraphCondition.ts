@@ -1,4 +1,4 @@
-import type { Condition, ScenarioLineConditionLeaf } from '../../data/types';
+import type { Condition, ScenarioLineConditionLeaf, VfxStateConditionLeaf } from '../../data/types';
 import type { ConditionExpr } from '../../data/types';
 import type { QuestManager } from '../QuestManager';
 import type { FlagStore } from '../../core/FlagStore';
@@ -20,6 +20,7 @@ export type ConditionTrace =
   | { kind: 'plane'; result: boolean; label: string }
   | { kind: 'posture'; result: boolean; label: string }
   | { kind: 'timePhase'; result: boolean; label: string }
+  | { kind: 'vfxState'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
 const questStatusMap: Record<string, QuestStatus> = {
@@ -71,6 +72,11 @@ export interface ConditionEvalContext {
    * ——与 posture 同一条安全侧口径：取不到就当"不在那个时段"。
    */
   getTimePhase?: () => string;
+  /**
+   * 世界空间粒子 / 群体实例的当前状态（`roosting / airborne / fleeing / returning / active / inactive`）。
+   * 未注入或实例不在当前场景时返回 null → vfxState 叶子恒为假（表演态取不到就当"不在那个状态"）。
+   */
+  getVfxState?: (instanceId: string) => string | null;
 }
 
 /**
@@ -168,6 +174,26 @@ function evalTimePhaseLeaf(expr: { timePhase: string }, ctx: ConditionEvalContex
   const want = expr.timePhase.trim();
   if (!want) return false;
   return (ctx.getTimePhase?.() ?? '') === want;
+}
+
+function isVfxStateLeaf(x: ConditionExpr): x is VfxStateConditionLeaf {
+  const m = x as { vfx?: unknown; vfxState?: unknown; flag?: unknown; quest?: unknown; scenario?: unknown; narrative?: unknown };
+  return (
+    typeof m.vfx === 'string' &&
+    typeof m.vfxState === 'string' &&
+    typeof m.flag !== 'string' &&
+    m.quest === undefined &&
+    m.scenario === undefined &&
+    m.narrative === undefined
+  );
+}
+
+function evalVfxStateLeaf(expr: VfxStateConditionLeaf, ctx: ConditionEvalContext): boolean {
+  const id = expr.vfx.trim();
+  const want = expr.vfxState.trim();
+  if (!id || !want) return false;
+  const now = ctx.getVfxState?.(id) ?? null;
+  return now !== null && now === want;
 }
 
 function isPlaneLeaf(x: ConditionExpr): x is { plane: string } {
@@ -393,6 +419,10 @@ export function evaluateConditionExpr(
     return evalTimePhaseLeaf(expr, ctx);
   }
 
+  if (isVfxStateLeaf(expr)) {
+    return evalVfxStateLeaf(expr, ctx);
+  }
+
   if (isQuestLeaf(expr)) {
     const m = expr as { quest: string; questStatus?: string; status?: string };
     return evalQuestLeaf(m.quest, m.questStatus ?? m.status, ctx);
@@ -516,6 +546,13 @@ export function evaluateConditionExprWithTrace(
     const now = ctx.getTimePhase?.() ?? '';
     const label = `timePhase 期望=${expr.timePhase.trim() || '—'} 实际=${now || '—'}`;
     return { result: ok, trace: { kind: 'timePhase', result: ok, label } };
+  }
+
+  if (isVfxStateLeaf(expr)) {
+    const ok = evalVfxStateLeaf(expr, ctx);
+    const now = ctx.getVfxState?.(expr.vfx.trim()) ?? null;
+    const label = `vfx「${expr.vfx.trim() || '—'}」期望=${expr.vfxState.trim() || '—'} 实际=${now ?? '不在场'}`;
+    return { result: ok, trace: { kind: 'vfxState', result: ok, label } };
   }
 
   if (isQuestLeaf(expr)) {

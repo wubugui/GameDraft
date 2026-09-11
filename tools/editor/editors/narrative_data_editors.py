@@ -1549,6 +1549,9 @@ class DocumentRevealsEditor(QWidget):
         self._dr_sfx_vol_chk.toggled.connect(self._dr_sfx_vol.setEnabled)
         self._dr_sfx_vol_chk.toggled.connect(self._dr_on_edit)
         self._dr_sfx_vol.valueChanged.connect(self._dr_on_edit)
+        # 两个控件任一变动都把当前音量喉回选择器，让 ▶ 按运行时音量试听
+        self._dr_sfx_vol_chk.toggled.connect(lambda _on: self._dr_push_preview_volume())
+        self._dr_sfx_vol.valueChanged.connect(lambda _v: self._dr_push_preview_volume())
         _sfx_vol_row = QWidget(rh)
         _svl = QHBoxLayout(_sfx_vol_row)
         _svl.setContentsMargins(0, 0, 0, 0)
@@ -1932,6 +1935,8 @@ class DocumentRevealsEditor(QWidget):
             self._dr_sfx_vol.setValue(float(raw_vol) if has_vol else 1.0)
             self._dr_sfx_vol.blockSignals(False)
             self._dr_sfx_vol.setEnabled(bool(has_vol))
+            # 试听要按这一处的音量放（不然调了音量点 ▶ 还是原音，等于盲调）
+            self._dr_sfx.set_volume(raw_vol if has_vol else None)
 
             expr = d.get("revealCondition")
             kind = self._dr_infer_cond_kind(expr)
@@ -2139,6 +2144,12 @@ class DocumentRevealsEditor(QWidget):
         it = self._dr_list.item(row)
         if it is not None:
             it.setText(d.get("id") or "(无 id)")
+
+    def _dr_push_preview_volume(self) -> None:
+        """把「这一处的音量」喉给选择器，使 ▶ 试听与运行时一致（未勾自定义 = 素材原音）。"""
+        self._dr_sfx.set_volume(
+            float(self._dr_sfx_vol.value()) if self._dr_sfx_vol_chk.isChecked() else None,
+        )
 
     def _dr_sfx_volume_for_write(self) -> float | int:
         """勾了「自定义音量」时该写什么值。

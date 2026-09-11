@@ -3,19 +3,19 @@
     "纸钱路": {
       "label": "撒了纸钱的干土路（跑马梁 / 崖墓入口）",
       "sfx": {
-        "walk": "sfx_step_paper_money_1"
+        "walk": "sfx_step_paper_money_5"
       }
     },
     "木栈道": {
       "label": "悬空木栈道，落脚发空（崖墓前段 / 前段1）",
       "sfx": {
-        "walk": "sfx_step_plank_hollow_1"
+        "walk": "sfx_step_paper_money_5"
       }
     },
     "石地": {
       "label": "崖墓龛道的石灰岩地面，带碎石粒（崖墓后段）",
       "sfx": {
-        "walk": "sfx_step_stone_1"
+        "walk": "sfx_step_paper_money_5"
       }
     },
     "纸灰": {
@@ -32,18 +32,12 @@
     "carry_walk": "walk",
     "carry_heavy_walk": "walk"
   },
-  "defaults": {
-    "gainDb": -15
-  },
   "spatial": {
-    "refDistanceWu": 600,
-    "rolloff": 1,
-    "maxDistanceWu": 3000,
-    "panWidth": 0.7,
     "listenerBackAtBaseZoomWu": 600,
     "planarDepthScale": 1.4142135623730951
   },
-  "listener": {
-    "mode": "camera"
+  "defaults": {
+    "spatialized": false,
+    "gainDb": -31.0
   }
 }

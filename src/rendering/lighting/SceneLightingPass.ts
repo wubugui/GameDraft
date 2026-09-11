@@ -7,7 +7,7 @@ import type { SceneLightingDef } from '../../data/types';
 import {
   LIGHT_KIND_CODE,
   MAX_STATIC_LIGHTS, type PackedLights, packEmissive, packLights,
-  packShadowBias,
+  packShadowBias, worldWuToQ,
 } from './lightPacking';
 import { LIGHTS_PER_SLAB, type PrefixLight, ShadowPrefixPass } from './shadowPrefix';
 import { PROBE_SAMPLING_GLSL, SKYAO_SAMPLING_GLSL } from '../CharacterShadingFilter';
@@ -441,7 +441,12 @@ void main(void) {
             //   分工：**积分管遮挡与深度，包络管范围**。两者相乘。
             float core = visC * exp(-r2 / max(uCore.y * uCore.y, 1e-9));
             float halo = visH * exp(-r2 / max(uCore.z * uCore.z, 1e-9));
-            emissive += B.rgb * (B.w * uCore.x * (core + halo * uCore.w));
+            // 灯体/光晕的亮度用**作者面的强度数**（gain 是按它调的，与 2026-08-30 之前逐字同式），
+            // 不是折到 wu 的 1/r² 强度：点/聚光的 B.w 在打包处已 × uWuPerQUnit²
+            // （lightPacking.pointIntensityWu），这里除回去；面光没折，原样。
+            float iAuthor = (kind == ${LC_POINT} || kind == ${LC_SPOT})
+                ? B.w / (uWuPerQUnit * uWuPerQUnit) : B.w;
+            emissive += B.rgb * (iAuthor * uCore.x * (core + halo * uCore.w));
         }
     }
 
@@ -716,13 +721,12 @@ export class SceneLightingPass {
     u.uShadowBias.set(packShadowBias(def, 1 / Math.max(this.geo.wuPerQUnit, 1e-9)));
 
     // ---- 线扫前缀要用的灯位（折进 q）与它们在图像上的落点 ----
-    // 世界 → q：M 正交，转置即逆（与 GLSL 的 wrWorldToQ 同式，CPU 上做一次就够）
+    // 世界 wu → q：**朝向过 Rᵀ、尺度除 wuPerQUnit，两样都要**（铁律 0 豁免①：前缀是深度域
+    // 的量，与 march 的 q 深度直接比较，所以留在 q）。走 lightPacking.worldWuToQ 这一处，
+    // 别在这儿自己拼 —— 2026-08-30 ~ 09-10 这里只转了朝向没除尺度（灯位 wu 当 q 用），
+    // 灯落到像素图 ±20 万 px 之外、q 深度 −448 对着 [−2.2, 1.4] 的像素深度比，
+    // 带影灯全被判成被挡，画面上就是"灯全灭"而零报错。
     const mr = this.geo.mRows;
-    const toQ = (w: readonly number[]): [number, number, number] => [
-      mr[0][0] * w[0] + mr[1][0] * w[1] + mr[2][0] * w[2],
-      mr[0][1] * w[0] + mr[1][1] * w[1] + mr[2][1] * w[2],
-      mr[0][2] * w[0] + mr[1][2] * w[1] + mr[2][2] * w[2],
-    ];
     const [ppu, cx, cy] = this.geo.cal;
     const lpx = new Float32Array(MAX_STATIC_LIGHTS * 4);
     this.prefixLights = [];
@@ -734,7 +738,7 @@ export class SceneLightingPass {
       //（带影灯预算本来就是 SHADOW_LIGHT_BUDGET=6，超了编辑器会标红）
       const usable = cast && kind !== LIGHT_KIND_CODE.directional
         && i < LIGHTS_PER_SLAB * 2;
-      const q = toQ([packed.a[o], packed.a[o + 1], packed.a[o + 2]]);
+      const q = worldWuToQ([packed.a[o], packed.a[o + 1], packed.a[o + 2]], mr, this.geo.wuPerQUnit);
       this.prefixLights.push({ q, castShadow: usable });
       if (!usable) continue;
       lpx[o] = cx + q[0] * ppu;

@@ -44,6 +44,27 @@ AUDIO_CHANNELS: tuple[str, ...] = ("bgm", "ambient", "sfx", "voice")
 #: "这里没有就去那里找"会让配置写错在某些路径上表现正常、只在别处露馅。
 VOICE_CHANNEL = "voice"
 
+#: 各通道的**出厂音量**（玩家没动过设置时的值），镜像自 ``src/systems/AudioManager.ts``
+#: 的 ``bgmVolume`` / ``sfxVolume`` / ``ambientVolume`` / ``voiceVolume`` 字段初值。
+#:
+#: 试听要按"游戏里实际多响"放，就必须乘上它——否则作者在编辑器里把某条环境音调到
+#: 听着刚好，进游戏一听轻了一多半（环境音通道出厂就只有 0.4）。
+#:
+#: ⚠ 这是一份**跨语言镜像**，漂了不会报错、只会让试听说谎。
+#: ``tools/editor/tests/test_audio_site_volume.py`` 直接从 TS 源里抠出那四个初值比对。
+CHANNEL_DEFAULT_VOLUME: dict[str, float] = {
+    "bgm": 0.6,
+    "sfx": 0.8,
+    "ambient": 0.4,
+    "voice": 1.0,
+}
+
+
+def channel_default_volume(channel: str) -> float:
+    """通道出厂音量；未知通道按满档（宁可试听偏响，也不要凭空猜一个衰减）。"""
+    return CHANNEL_DEFAULT_VOLUME.get(channel, 1.0)
+
+
 #: 编辑器认得的音频扩展名（与 audio_editor 的文件选择过滤器同源）。
 AUDIO_SUFFIXES: frozenset[str] = frozenset(
     {".wav", ".ogg", ".mp3", ".m4a", ".flac", ".aif", ".aiff"},

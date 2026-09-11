@@ -56,6 +56,15 @@ native px ─────────────┐                └──> w
 | **伪世界 q** | q(无名) | 画面中心、深度 0 | 深度场、march |
 | **M-world** | 同 q | 同 q | 着色:法线、N·L、1/r²、天光半球 |
 | **灯的作者面** | **wu** | **画面中心**、Y 朝上 | `LightDef.pos` / `range` / 面光 `size` |
+| **音频世界(仅 6 个透视场景)** | 同 M-world | 同 M-world | 空间音的听者 / 声源(已按 `f` 重整纵深) |
+
+⚠ **「音频世界」与 M-world 共用尺、原点、朝向,但点的位置不同**(2026-09-08 起,只在配了
+`perspectiveScale` 的 6 个场景:雾津街头 / 跑马梁 / 崖墓前段1 / test_room_a / teahouse / 牛头凼)。
+`ground_d` 是正交斜平面、纵深不含透视,而画面上人缩小 6.76 倍时声音只降 3.8 dB——视听脱节。
+所以音频侧把由场景坐标解出的点按 `f ∝ 1/d` 重整了纵深(**只重整听者/声源,不动声学空间的反射面**)。
+后果:**这 6 个场景里,同一个 NPC 的"摆灯坐标"与"发声坐标"不是同一个点**,两边不许互相借用。
+判据与式子在 [footstep-and-spatial-audio](footstep-and-spatial-audio.md) 硬契约 13;
+其余 30 个场景 `persp === undefined`,两者逐位相同。
 
 ⚠ **灯的作者面与 NPC 坐标只共用「wu」这把尺,不共用原点与朝向。**
 `q_to_world`(编辑器)与 `packLights`(运行时)都是**纯旋转 + 缩放、零平移**,
@@ -167,6 +176,8 @@ q ↔ M-world 之间就是一个**纯旋转 R**,这一点全项目逐场景验�
 | 角色 GI(`probeE` / `gatherRT`) | ✅ 用 `nQ = Rᵀ·n`,与 q 空间烘的球谐对齐 |
 | 角色太阳项 | ✅ 用 `nQ` 配 `uSunDirQ` —— 它与 probe 同源,同在 q |
 | 长度单位 | ✅ 灯位 / range / 软化 / 面光尺寸 / 灯体与光晕半径全是 **wu**;`P = R·q × wuPerQUnit` |
+| 点/聚光 intensity | ✅ 作者面相对 q,打包处 × `wuPerQUnit²`(`lightPacking.pointIntensityWu`)。**2026-08-30 ~ 09-10 缺席**:r 换了尺、I 没换,灯全灭零报错 |
+| 线扫前缀的灯位 | ✅ `lightPacking.worldWuToQ`(朝向过 Rᵀ **且**除 `wuPerQUnit`)。**2026-08-30 ~ 09-10 只转朝向**:带影灯全被判成被挡 |
 | `packShadowBias` | ⚪ **刻意留在 q**:深度域的量,与 march 的 q 深度直接比较,不是光照量 |
 | `UnifiedCharacterShader` | ✅ 一并归位(该路径 `UNIFIED_CHAR_PATH_ENABLED = false` 停用中) |
 

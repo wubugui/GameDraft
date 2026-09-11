@@ -165,6 +165,7 @@ class TestNarrativeStateEditor(unittest.TestCase):
             m = ProjectModel()
             m.load_project(root)
             bridge = NarrativeEditorBridge(m)
+            bridge.getData()  # 模拟网页加载：桥交付过数据，saveData 才收
             result = bridge.saveData(json.dumps({
                 "schemaVersion": 2,
                 "compositions": [
@@ -305,6 +306,7 @@ class TestNarrativeStateEditor(unittest.TestCase):
             m = ProjectModel()
             m.load_project(root)
             bridge = NarrativeEditorBridge(m)
+            bridge.getData()  # 模拟网页加载：桥交付过数据，saveData 才收
             result = bridge.saveData(json.dumps(payload, ensure_ascii=False))
             self.assertIn("saved", result)
             saved_state = (
@@ -409,6 +411,7 @@ class TestNarrativeStateEditor(unittest.TestCase):
             m = ProjectModel()
             m.load_project(root)
             bridge = NarrativeEditorBridge(m)
+            bridge.getData()  # 模拟网页加载：桥交付过数据，saveData 才收
             before = m.narrative_graphs
             result = bridge.saveData(json.dumps({
                 "schemaVersion": 2,
@@ -1184,6 +1187,104 @@ class TestNarrativeStateEditor(unittest.TestCase):
         self.assertTrue(fake.flush_to_model(for_save_all=True),
                         "已加载但无内容的合法路径不应被 J 修复误伤")
 
+    # ------------------------------------------------------------------ #
+    # 2026-09-09 事故重放：叙事页半加载（React 挂好 API、桥没通、getData 没回）时
+    # 网页内存里是空白初始文档；宿主 Save All 把它当合法内容收下，8 个编排整批抹掉落盘。
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _model_with_composition(root: Path) -> ProjectModel:
+        write_minimal_loadable_project(root)
+        m = ProjectModel()
+        m.load_project(root)
+        m.narrative_graphs = {
+            "schemaVersion": 3,
+            "signals": [{"id": "sig_a", "label": "A"}],
+            "compositions": [{
+                "id": "comp",
+                "mainGraph": {
+                    "id": "flow",
+                    "ownerType": "flow",
+                    "initialState": "initial",
+                    "states": {"initial": {"id": "initial"}},
+                    "transitions": [],
+                },
+                "elements": [],
+            }],
+        }
+        return m
+
+    @staticmethod
+    def _flushing_fake(model: ProjectModel, state: dict):
+        class FakeEditor:
+            flush_to_model = NarrativeStateEditor.flush_to_model
+            pop_flush_error = NarrativeStateEditor.pop_flush_error
+
+            def __init__(self) -> None:
+                self._view = object()
+                self._last_flush_error = None
+                self._model = model
+                self._bridge = NarrativeEditorBridge(model)
+                self.js_calls: list[str] = []
+
+            def _read_editor_state(self, *a, **k):  # noqa: ANN002, ANN003
+                return state
+
+            def _run_editor_js_result(self, code: str, timeout_ms: int = 5000):  # noqa: ANN001
+                self.js_calls.append(code)
+                return True
+
+        return FakeEditor()
+
+    def test_flush_refuses_blank_web_document_when_bridge_never_served_getdata(self) -> None:
+        """事故原样重放：桥从未 getData、网页交回 EMPTY 初始文档 → 拒收，模型一字不动。"""
+        blank = json.dumps({"schemaVersion": 3, "signals": [], "compositions": []})
+        with TemporaryDirectory() as td:
+            m = self._model_with_composition(Path(td) / "p")
+            before = json.loads(json.dumps(m.narrative_graphs))
+            fake = self._flushing_fake(m, {"hasApi": True, "loaded": None, "json": blank})
+            self.assertFalse(fake.flush_to_model(for_save_all=True),
+                             "桥从未交付数据时读回的只能是空白文档，必须拒收")
+            reason = fake.pop_flush_error()
+            self.assertTrue(reason and "未" in reason and "加载" in reason, reason)
+            self.assertEqual(m.narrative_graphs, before, "8 个编排不能再被空文档抹掉")
+            self.assertFalse(m.is_dirty, "拒收不得标脏，否则 Save All 照样落盘")
+            self.assertFalse(any("markSaved" in c for c in fake.js_calls),
+                             "拒收之后不得对网页喊 markSaved（会把空文档标成已保存）")
+
+    def test_flush_skips_silently_when_web_reports_not_loaded(self) -> None:
+        """网页明确报 loaded:false：无内容可 flush，放行（True）但绝不进模型。"""
+        blank = json.dumps({"schemaVersion": 3, "signals": [], "compositions": []})
+        with TemporaryDirectory() as td:
+            m = self._model_with_composition(Path(td) / "p")
+            before = json.loads(json.dumps(m.narrative_graphs))
+            fake = self._flushing_fake(m, {"hasApi": True, "loaded": False, "json": blank})
+            json.loads(fake._bridge.getData())  # 即便桥交付过，网页说没灌进 state 也不收
+            self.assertTrue(fake.flush_to_model(for_save_all=True))
+            self.assertIsNone(fake.pop_flush_error())
+            self.assertEqual(m.narrative_graphs, before)
+            self.assertFalse(m.is_dirty)
+
+    def test_flush_accepts_real_document_after_getdata(self) -> None:
+        """不误伤：桥交付过数据、网页 loaded:true、交回真实文档 → 正常进模型。"""
+        with TemporaryDirectory() as td:
+            m = self._model_with_composition(Path(td) / "p")
+            fake = self._flushing_fake(m, {"hasApi": True, "loaded": True, "json": ""})
+            served = fake._bridge.getData()
+            doc = json.loads(served)
+            doc["signals"].append({"id": "sig_b", "label": "B"})
+            fake._read_editor_state = lambda *a, **k: {"hasApi": True, "loaded": True, "json": json.dumps(doc)}
+            self.assertTrue(fake.flush_to_model(for_save_all=True))
+            self.assertEqual([s["id"] for s in m.narrative_graphs["signals"]], ["sig_a", "sig_b"])
+            self.assertEqual(len(m.narrative_graphs["compositions"]), 1)
+            self.assertTrue(m.is_dirty)
+
+    def test_read_editor_state_js_asks_web_whether_data_is_loaded(self) -> None:
+        """宿主读状态的 JS 必须带 loaded 三态，且缺 isLoaded 的老 bundle 判 null 而非 true。"""
+        js = NarrativeStateEditor._READ_EDITOR_STATE_JS
+        self.assertIn("isLoaded", js)
+        self.assertIn("loaded:", js)
+        self.assertIn(":null", js)
+
     def test_validate_accepts_minimal_legal_action_forms(self) -> None:
         """P1-10：保持默认值的合法最小形态不得被兜底校验拦（此前 _PARAM_SCHEMAS 全项当必填）。"""
         # waitMs（全可选）、stopSceneAmbient（全可选）、giveItem（仅 id 必填，count/critical 可选）
@@ -1457,7 +1558,9 @@ class TestReview20260717Regressions(unittest.TestCase):
         write_minimal_loadable_project(root)
         m = ProjectModel()
         m.load_project(root)
-        return NarrativeEditorBridge(m), m
+        bridge = NarrativeEditorBridge(m)
+        bridge.getData()  # 模拟网页加载
+        return bridge, m
 
     def test_bridge_save_accepts_plane_condition_leaf(self) -> None:
         """P-F1：plane 是第 6 类合法条件叶子，Python 兜底不得拦（曾拦=比 TS 严红线再犯）。"""
@@ -1667,16 +1770,31 @@ class TestHostSignalRegistryNotClobberedByWebSnapshot(unittest.TestCase):
             self.assertIn("saved", bridge.saveData(json.dumps(self._doc([{"id": "已有信号"}]))))
             self.assertEqual([s["id"] for s in m.narrative_graphs["signals"]], ["已有信号"])
 
-    def test_no_getdata_means_fail_safe_merge_all_host_rows(self) -> None:
+    def test_no_getdata_means_save_is_refused_and_model_untouched(self) -> None:
+        """2026-09-09 事故：桥从未交付过 getData 时，网页手里只可能是空白初始文档。
+
+        原先按"基线未知 → 全部补回宿主信号"兜底，结果信号是补回来了、8 个编排却被空文档
+        整批抹掉落盘。现在改成拒收：模型一个字节不动、返回 "save blocked:" 协议串。
+        """
         with TemporaryDirectory() as td:
             root = Path(td) / "p"
             write_minimal_loadable_project(root)
             m = ProjectModel()
             m.load_project(root)
             m.narrative_graphs = self._doc([{"id": "宿主信号"}])
-            bridge = NarrativeEditorBridge(m)  # 从未 getData：基线未知
-            self.assertIn("saved", bridge.saveData(json.dumps(self._doc([]))))
-            self.assertEqual([s["id"] for s in m.narrative_graphs["signals"]], ["宿主信号"])
+            before = json.loads(json.dumps(m.narrative_graphs))
+            bridge = NarrativeEditorBridge(m)  # 从未 getData：网页不可能持有工程数据
+            self.assertFalse(bridge.host_data_served())
+            blank = {"schemaVersion": 3, "signals": [], "compositions": []}
+            result = bridge.saveData(json.dumps(blank))
+            self.assertTrue(result.startswith("save blocked:"), result)
+            self.assertIn("未", result)
+            self.assertEqual(m.narrative_graphs, before, "拒收之后模型必须原封不动")
+            self.assertFalse(m.is_dirty, "拒收不得标脏")
+            # 桥交付过一次数据之后，同一份网页 payload 才按正常路径收
+            json.loads(bridge.getData())
+            self.assertTrue(bridge.host_data_served())
+            self.assertIn("saved", bridge.saveData(json.dumps(self._doc([{"id": "宿主信号"}]))))
 
     def test_host_signal_survives_repeated_saves_not_just_the_first(self) -> None:
         """基线只能记"网页自己知道的"，不能记合并后的集合。

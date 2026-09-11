@@ -44,14 +44,64 @@ def _exported_lighting_json(sid: str):
     return (base / k / 'lighting.json') if k else (base / 'lighting.json')
 
 
+def _wd(sid: str):
+    """场景的烘焙工作目录 = `out/<id>/<背景基名>/`。
+
+    ⚠ 别再自己拼 `out/<id>/` —— 2026-08-30 pipeline.work_dir 改成**按背景分目录**
+    (同一场景要能同时存白天与夜晚两套),serve 这侧整套路径没跟上。
+    后果(2026-09-08 实测):清单里**每个场景都显示未烘焙**、点下去画布空白、
+    笔刷编辑存到没人读的目录。work_dir 自带旧扁平布局回落。"""
+    from tools.character_lighting_lab.pipeline import work_dir
+    return work_dir(sid)
+
+
+def _staged_bg(sid: str, ref: str | None = None):
+    """烘焙输入(游戏背景的本机字节副本)落点:`out/<id>/<背景图名>`。
+
+    按**真实图名**存,不是一律叫 background.png:pipeline 由图名推出工作目录与
+    导出目录的基名(_bake_key),名字丢了,同一场景的两张背景就会烘进同一个目录。"""
+    if ref is None:
+        j = SCENES_JSON / f'{sid}.json'
+        try:
+            data = json.loads(j.read_text(encoding='utf-8'))
+        except Exception:                          # noqa: BLE001 — 孤儿/坏 JSON:老口径
+            data = {}
+        ref, _ = _scene_bg(sid, data)
+    base = (ref or 'background.png').replace(chr(92), '/').split('/')[-1]
+    return TOOL / 'out' / sid / base
+
+
+def _baked_scenes() -> list:
+    """[(场景 id, 工作目录)] —— 扁平与按背景分目录两种布局都收。
+
+    同一场景只出一条,且目录一律取 `_wd()` 选中的那个 —— 与其他所有路径同一口径,
+    不会出现"清单里有、点下去又读另一份"。"""
+    root = TOOL / 'out'
+    sids = {m.parent.name for m in root.glob('*/manifest.json')}
+    sids |= {m.parent.parent.name for m in root.glob('*/*/manifest.json')}
+    out = []
+    for sid in sorted(sids):
+        wd = _wd(sid)
+        if (wd / 'manifest.json').exists():
+            out.append((sid, wd))
+    return out
+
+
 PORT = 5311
 
+# ⚠ 只列**真被 pipeline 消费**的键。曾经列过 probe_nx/ny/nz、probe_dirs、fold ——
+#   它们 2026-09-01 probe 重构后已**无消费者**(见 pipeline.DEFAULTS 的废弃标注),
+#   查看器上那几根滑条拖了等于没拖。现在换成 probe_dims=None 下的真旋钮:
+#   每角色高几格(横/纵)、盒高几倍角色高、每颗 probe 采样数。
+#   `probe_band` 也不在列中:它缺省由**角色实高**推出,查看器再送一个写死的 1.6
+#   就是把已经修好的假设又绑回去(6 层里 5 层烘在够不着的空中)。
 REBUILD_KEYS = {'pitch_deg', 'azimuth_deg', 'ppu_ratio', 'ev', 'max_gain_ev',
                 'hdr_method', 'hdr_pa',
                 'depth_model', 'depth_scale_adj', 'depth_offset_adj',
                 'col_h_lo', 'col_h_hi', 'vol_nx', 'vol_nz',
-                'probe_nx', 'probe_ny', 'probe_nz', 'probe_dirs', 'probe_band',
-                'fold', 'relief', 'semantic_gate', 'occluder_tau', 'thickness_k',
+                'probe_cells_per_char_xz', 'probe_cells_per_char_y',
+                'probe_height_chars', 'probe_spp',
+                'relief', 'semantic_gate', 'occluder_tau', 'thickness_k',
                 'bg_thickness_q', 'ground_up_dot', 'walk_res',
                 'object_score_min', 'object_groups', 'object_prompts_extra'}
 
@@ -143,8 +193,8 @@ def _scene_index() -> list[dict]:
         seen.add(sid)
         ref, bg = _scene_bg(sid, data)
         bg_hash = _file_hash(bg) if bg else None
-        man_p = TOOL / 'out' / sid / 'manifest.json'
-        lab_bg = TOOL / 'out' / sid / 'background.png'
+        man_p = _wd(sid) / 'manifest.json'
+        lab_bg = _staged_bg(sid, ref)
         out.append({
             'id': sid,
             'name': data.get('name') or sid,
@@ -158,8 +208,7 @@ def _scene_index() -> list[dict]:
             'depth': 'depthConfig' in data,
         })
     # 实验室里有、游戏里没有的:多半是历史错位命名,列出来别让它藏着
-    for m in sorted((TOOL / 'out').glob('*/manifest.json')):
-        sid = m.parent.name
+    for sid, _wdir in _baked_scenes():
         if sid not in seen:
             out.append({'id': sid, 'name': sid, 'bg': None, 'bg_ok': False,
                         'baked': True, 'bg_stale': False, 'lighting': False,
@@ -178,9 +227,8 @@ def _stage_scene_bg(sid: str) -> Path:
     ref, bg = _scene_bg(sid, json.loads(j.read_text(encoding='utf-8')))
     if not bg or not bg.exists():
         raise FileNotFoundError(f'场景 {sid} 的背景图不在盘上: {bg}')
-    dest_dir = TOOL / 'out' / sid
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / 'background.png'
+    dest = _staged_bg(sid, ref)
+    dest.parent.mkdir(parents=True, exist_ok=True)
     if not dest.exists() or _file_hash(dest) != _file_hash(bg):
         shutil.copyfile(bg, dest)
         _hash_cache.pop(str(dest), None)
@@ -207,7 +255,9 @@ _STAGE_RE = re.compile(r'^\[([a-z_]+)\]')
 
 def _run_bake(job: dict) -> None:
     for scene, extra in job['builds']:
-        src = TOOL / 'out' / scene / 'background.png'
+        src = _staged_bg(scene)
+        if not src.exists():                       # 存量副本的老口径
+            src = TOOL / 'out' / scene / 'background.png'
         # ⚠ `-u` 不可省:pipeline 的阶段 print 多数没写 flush=True,而子进程 stdout 是
         # 管道时默认**块缓冲** —— 不加 -u 的话所有阶段标签会憋到进程退出才一次性吐出,
         # 阶段清单全程停在"未开始",等于白做(实测就是这个现象)。
@@ -316,11 +366,15 @@ class H(SimpleHTTPRequestHandler):
             return
         if u.path == '/api/scenes':
             scenes = []
-            for m in sorted((TOOL / 'out').glob('*/manifest.json')):
+            for sid, wd in _baked_scenes():
                 try:
-                    scenes.append(json.loads(m.read_text(encoding='utf-8')))
-                except Exception:
-                    pass
+                    man = json.loads((wd / 'manifest.json').read_text(encoding='utf-8'))
+                except Exception:                  # noqa: BLE001
+                    continue
+                # 查看器拿它拼 `/out/<dir>/xxx.bin`。不能再让前端自己拼
+                # `/out/<场景名>/` —— 那是按背景分目录之前的布局,现在全 404。
+                man['dir'] = wd.relative_to(TOOL / 'out').as_posix()
+                scenes.append(man)
             return self._json(scenes)
         if u.path == '/api/game_scenes':
             return self._json(_scene_index())
@@ -351,21 +405,21 @@ class H(SimpleHTTPRequestHandler):
                                'log': job['log'][-3000:]})
         if u.path == '/api/geo_status':
             name = q.get('scene', [''])[0]
-            mp = TOOL / 'out' / name / 'manifest.json'
+            wd = _wd(name)
+            mp = wd / 'manifest.json'
             if not mp.exists():
                 return self._json({'ok': False, 'err': 'unknown scene'}, 400)
             man = json.loads(mp.read_text(encoding='utf-8'))
             sys.path.insert(0, str(TOOL.parents[1]))
             from tools.character_lighting_lab.pipeline import geometry_signature
-            cur = geometry_signature(TOOL / 'out' / name, man['hash'],
-                                     {**man['params']})
+            cur = geometry_signature(wd, man['hash'], {**man['params']})
             baked = man.get('geometry_sig', '')
             return self._json({'ok': True, 'stale': cur != baked,
                                'baked': baked, 'current': cur})
         if u.path == '/api/terrain':
             # 秒级地形预览 + 站位体检(跳过标定网格搜索;不含可走掩膜——那要重烘)
             name = q.get('scene', [''])[0]
-            if not (TOOL / 'out' / name).is_dir():
+            if not _wd(name).is_dir():
                 return self._json({'ok': False, 'err': 'no such baked scene'}, 400)
             try:
                 from tools.character_lighting_lab.pipeline import terrain_preview
@@ -374,14 +428,15 @@ class H(SimpleHTTPRequestHandler):
                 return self._json({'ok': False, 'err': f'{type(e).__name__}: {e}'}, 500)
         if u.path == '/api/export_depth':
             name = q.get('scene', [''])[0]
-            if not name or not (TOOL / 'out' / name / 'manifest.json').exists():
+            wd = _wd(name) if name else None
+            if not name or not (wd / 'manifest.json').exists():
                 return self._json({'ok': False, 'err': 'unknown scene'}, 400)
             try:
                 sys.path.insert(0, str(TOOL.parents[1]))
                 from tools.character_lighting_lab.pipeline import (
                     export_scene_depth, geometry_signature)
-                man = json.loads((TOOL / 'out' / name / 'manifest.json').read_text(encoding='utf-8'))
-                cur = geometry_signature(TOOL / 'out' / name, man['hash'], {**man['params']})
+                man = json.loads((wd / 'manifest.json').read_text(encoding='utf-8'))
+                cur = geometry_signature(wd, man['hash'], {**man['params']})
                 if cur != man.get('geometry_sig', ''):
                     return self._json({'ok': False,
                                        'err': '几何已改动但未重烘——先重烘再导出'}, 409)
@@ -400,28 +455,32 @@ class H(SimpleHTTPRequestHandler):
             # 几何场烘焙(2026-08-31 从 tools/scene_relight 收束进来)。
             # 读的是**已导出的** raw_depth_rg.png + depthConfig —— 与运行时 march 的
             # 是同一份量化深度,所以必须先「导出深度」再烘,顺序反了就是拿旧深度烘新场。
-            # 同步跑(单场景约 3 分钟):本服务是本机单用户的桌面壳后端,并发烘同一场景
+            # 同步跑(每张原画约 3 分钟):本服务是本机单用户的桌面壳后端,并发烘同一场景
             # 会互相覆盖产物,开线程只会让"跑到哪了"更难看清。
+            # 走 bake_scene 而非 bake:烘的是该场景**全部时段原画**,与 CLI 缺省同口径。
+            # 只烘当前那张的话,夜原画的几何场就还是旧深度那份 —— 运行时白天一切正常、
+            # 夜里静默拿错法线,而查看器上"烘过了"的回执照样是绿的。
             name = q.get('scene', [''])[0]
             try:
                 sys.path.insert(0, str(TOOL.parents[1]))
-                from tools.character_lighting_lab.scene_fields import bake as _bake_fields
-                r = _bake_fields(name)
-                return self._json({'ok': True, 'result': {
-                    k: v for k, v in r.items() if k != 'dest'}})
+                from tools.character_lighting_lab.scene_fields import bake_scene as _bake_scene
+                rows = _bake_scene(name)
+                return self._json({'ok': True, 'result': [
+                    {k: v for k, v in r.items() if k != 'dest'} for r in rows]})
             except Exception as e:                     # noqa: BLE001
                 return self._json({'ok': False, 'err': f'{type(e).__name__}: {e}'}, 500)
         if u.path == '/api/export':
             name = q.get('scene', [''])[0]
-            if not name or not (TOOL / 'out' / name / 'manifest.json').exists():
+            wd = _wd(name) if name else None
+            if not name or not (wd / 'manifest.json').exists():
                 return self._json({'ok': False, 'err': 'unknown scene'}, 400)
-            if not (TOOL / 'out' / name / 'walk_depth.bin').exists():
+            if not (wd / 'walk_depth.bin').exists():
                 return self._json({'ok': False, 'err': '该场景需先重烘一次(缺 walk_depth.bin)'}, 400)
             try:
                 sys.path.insert(0, str(TOOL.parents[1]))
                 from tools.character_lighting_lab.pipeline import geometry_signature as _gs
-                _man = json.loads((TOOL / 'out' / name / 'manifest.json').read_text(encoding='utf-8'))
-                if _gs(TOOL / 'out' / name, _man['hash'], {**_man['params']}) != _man.get('geometry_sig', ''):
+                _man = json.loads((wd / 'manifest.json').read_text(encoding='utf-8'))
+                if _gs(wd, _man['hash'], {**_man['params']}) != _man.get('geometry_sig', ''):
                     return self._json({'ok': False,
                                        'err': '几何已改动但未重烘——先重烘再导出'}, 409)
             except Exception:                          # noqa: BLE001 — 状态查失败不拦导出
@@ -464,20 +523,22 @@ class H(SimpleHTTPRequestHandler):
                 return self._json({'ok': False, 'err': str(e)}, 400)
         if u.path == '/api/rebuild':
             name = q.get('scene', [''])[0]
-            if not name or not (TOOL / 'out' / name / 'background.png').exists():
-                return self._json({'ok': False, 'err': 'unknown scene'}, 400)
             try:      # 重烘顺带从工程重取背景:游戏里重画过就自动跟上,不用手动重导入
                 _stage_scene_bg(name)
             except Exception:                      # noqa: BLE001 — 孤儿场景/无背景:沿用本地副本
                 pass
+            # 先补背景再判存在:反过来的话,只有载荷、本机没工作台的场景会被
+            # 'unknown scene' 拦在门外,而它本来就差这一拷
+            if not name or not _staged_bg(name).exists():
+                return self._json({'ok': False, 'err': 'unknown scene'}, 400)
             return self._json(_enqueue([(name, _extra_from_query(q))], f'重烘 {name}'))
         if u.path == '/api/rebuild_all':
             extra = _extra_from_query(q)
             builds = []
-            for m in sorted((TOOL / 'out').glob('*/manifest.json')):
+            for sid, wd in _baked_scenes():
                 try:
-                    man = json.loads(m.read_text(encoding='utf-8'))
-                except Exception:
+                    man = json.loads((wd / 'manifest.json').read_text(encoding='utf-8'))
+                except Exception:                  # noqa: BLE001
                     continue
                 per = list(extra)
                 # keep each scene's own baked params for anything not overridden
@@ -500,7 +561,8 @@ class H(SimpleHTTPRequestHandler):
         if u.path == '/api/save_edit':
             name = q.get('scene', [''])[0]
             kind = q.get('kind', [''])[0]
-            if kind not in ('depth', 'collision', 'object') or not (TOOL / 'out' / name).is_dir():
+            wd = _wd(name) if name else None
+            if kind not in ('depth', 'collision', 'object') or not (wd and wd.is_dir()):
                 return self._json({'ok': False, 'err': 'bad scene/kind'}, 400)
             length = int(self.headers.get('Content-Length', 0))
             if length <= 0 or length > 8 * 1024 * 1024:
@@ -509,9 +571,9 @@ class H(SimpleHTTPRequestHandler):
             fname = {'depth': 'depth_edit.png', 'collision': 'collision_edit.png',
                      'object': 'object_edit.png'}[kind]
             if length <= 8 and data[:5] == b'CLEAR':          # clear-all sentinel
-                (TOOL / 'out' / name / fname).unlink(missing_ok=True)
+                (wd / fname).unlink(missing_ok=True)
             else:
-                (TOOL / 'out' / name / fname).write_bytes(data)
+                (wd / fname).write_bytes(data)
             return self._json({'ok': True, 'stale': True})
         # /api/build_new(上传图片建场景)已废除:场景名从文件名猜 → 三条落点全错位
         # (真踩过:选了 teahouse/background.png,建出叫 "background" 的场景,

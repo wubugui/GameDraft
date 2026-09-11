@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import spacesJson from '../../public/assets/data/acoustic_spaces.json';
 import {
-  buildImpulseResponse, collectTaps, nearestGapSeconds,
+  buildImpulseResponse, collectTaps, metersPerWu, nearestGapSeconds,
   type AcousticSpaceDef,
 } from './acousticSpace';
 
@@ -143,14 +143,22 @@ describe('线上数据用上了新能力', () => {
   it.each(spaces)('%s 听者挪动会改变回音（实时的前提）', (_n, space) => {
     const base = collectTaps(space);
     if (!base.length) return;
-    const moved = collectTaps(space, { listener: { ...space.listener, z: (space.listener.z ?? 0) + 40 } });
+    // 挪 40 米（按该空间的距离缩放折回 wu）
+    const dz = 40 / metersPerWu(space);
+    const moved = collectTaps(space, { listener: { ...space.listener, z: (space.listener.z ?? 0) + dz } });
     const same = base.length === moved.length
       && base.every((t, i) => Math.abs(t.delay - moved[i].delay) < 1e-6);
     expect(same).toBe(false);
   });
 
-  it.each(spaces)('%s 每个空间都显式写了遮挡开关与 wuPerMeter', (_n, space) => {
+  it.each(spaces)('%s 每个空间都显式写了遮挡开关、距离缩放与作者场景（v2 形状）', (_n, space) => {
     expect(typeof space.occlusion).toBe('boolean');
-    expect(space.wuPerMeter).toBeGreaterThan(0);
+    expect(space.distanceScale).toBeGreaterThan(0);
+    expect(typeof space.authoring?.sceneId).toBe('string');
+    expect(space.authoring!.sceneId.length).toBeGreaterThan(0);
+    // v1 的字段不许残留：留着就是两套坐标系
+    expect((space as unknown as Record<string, unknown>).anchor).toBeUndefined();
+    expect((space as unknown as Record<string, unknown>).wuPerMeter).toBeUndefined();
+    // 作者场景是否真的存在、是否绑了它：在 tools/editor/validator.py 里查（那边两份文件都在手上）
   });
 });

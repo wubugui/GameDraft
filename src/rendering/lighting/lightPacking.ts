@@ -43,11 +43,58 @@ export function softeningWu2(radiusWu: number | undefined): number {
 }
 
 /**
+ * 点光 / 聚光的 `intensity` → shader 里 1/r² 用的强度（**wu**）。
+ *
+ * 作者面的 intensity 是**相对 q 定义**的（照度 = I / r_q²，lighting-scale-reference §③；
+ * 编辑器缺省 2.5、雾津街头的灯笼 8.6 都是这把尺；CPU 侧 `entityShadowBinding` 的照度估算
+ * 也在 q 里算，与它同口径）。铁律 0（2026-08-30）之后 shader 的 r 是 wu
+ * （P = R·q × wuPerQUnit），r_wu = r_q × wuPerQUnit，所以同一个照度要求
+ * I_wu = I_q × wuPerQUnit²。这是**打包处那一次 transform**的一项。
+ *
+ * ⚠ 只有走 1/r² 的点光 / 聚光要折。面光的 intensity 是辐亮度（Lambert 闭式解给出的是
+ *   投影立体角，无量纲、随长度单位不变），平行光的 intensity 直接就是照度 —— 两者不折。
+ *
+ * 2026-08-30 ~ 09-10 这一项缺席：雾津街头 lamp_1（I=8.6）在自己射程边缘的照度只剩
+ * 8.6/529² ≈ 3e-5，夜原画线性亮度 ~0.02，肉眼为零 —— 所有点/聚光对背景、对角色
+ * "全灭"而零报错（F2 怎么调都没反应）。灯体/光晕的 gain 是按作者面的数调的，
+ * `SceneLightingPass` 里除回去用，别拿这个 wu 强度去乘光晕。
+ */
+export function pointIntensityWu(intensityQ: number, wuPerQUnit: number): number {
+  const k = Math.max(wuPerQUnit, 1e-9);
+  return intensityQ * k * k;
+}
+
+/**
+ * 世界 wu → 伪世界 q：**朝向过 Rᵀ、尺度除 wuPerQUnit，两样都要**。
+ *
+ * 给铁律 0 允许留在 q 的那几类量用（深度域：线扫前缀的灯位要与 march 的 q 深度直接比较）。
+ * 与 GLSL 的 wrWorldToQ 同式（M 正交，转置即逆），再除一次尺度；与 shader 的
+ * `P = R·q × wuPerQUnit` 互逆。
+ *
+ * 2026-08-30 ~ 09-10 `SceneLightingPass` 自己拼的那份只转了朝向没除尺度（wu 当 q 用）：
+ * 灯位落到像素图 ±20 万 px 之外、q 深度 −448 对着 [−2.2, 1.4] 的像素深度比，
+ * 带影灯的可见性全判成被挡 —— 画面上就是"灯全灭"，零报错。
+ */
+export function worldWuToQ(
+  w: readonly [number, number, number],
+  mRows: readonly [readonly number[], readonly number[], readonly number[]],
+  wuPerQUnit: number,
+): [number, number, number] {
+  const s = 1 / Math.max(wuPerQUnit, 1e-9);
+  const m = mRows;
+  return [
+    (m[0][0] * w[0] + m[1][0] * w[1] + m[2][0] * w[2]) * s,
+    (m[0][1] * w[0] + m[1][1] * w[1] + m[2][1] * w[2]) * s,
+    (m[0][2] * w[0] + m[1][2] * w[1] + m[2][2] * w[2]) * s,
+  ];
+}
+
+/**
  * 打包好的灯载荷。**四组 vec4**，省 uniform 槽位：
  *
  * ```
  * A = pos.xyz,   kind
- * B = color.rgb, intensity
+ * B = color.rgb, intensity（点/聚光已折成 **wu 强度** = I_q × wuPerQUnit²，见 pointIntensityWu；面光/平行光原样）
  * C = range, softening, [spot: cosInner, cosOuter] | [area: halfW, halfH]
  * D = dir.xyz,   flags（bit0=castShadow bit1=twoSided）
  * ```
@@ -97,7 +144,10 @@ export function directionFromAngles(elevationDeg: number, azimuthDeg: number): [
  * 是"每个 q 单位多少原生像素"）。两者差一个**逐场景的**比例
  * `wuPerQUnit = worldWidth / (native_w / ppu)`（雾津街头 880、teahouse 154）。
  *
- * 这里就是那一次 transform。`quPerWu = 1 / wuPerQUnit`。
+ * 这里就是那一次 transform。铁律 0（2026-08-30）之后**长度类原样是 wu**（q→wu 由 shader 的
+ * `P = R·q × wuPerQUnit` 一次转到底），这里剩下要折的是：点/聚光的 **intensity**
+ * （作者面相对 q，× wuPerQUnit²，见 `pointIntensityWu`），以及必须留在 q 的深度域量
+ * （`packShadowBias`、线扫前缀灯位 `worldWuToQ`）。
  *
  * ⚠ 别再把 q 单位叫成 wu —— 那是两个空间。q 的尺度随相机标定走，
  *   wu 不随；角色在 q 里从 0.17 变到 0.97，在 wu 里**恒为 150**。
@@ -166,7 +216,12 @@ export function packLights(
     out.a[o + 3] = kind;
 
     const col = resolveLightColor(l.color, l.kelvin);
-    out.b[o] = col[0]; out.b[o + 1] = col[1]; out.b[o + 2] = col[2]; out.b[o + 3] = l.intensity;
+    out.b[o] = col[0]; out.b[o + 1] = col[1]; out.b[o + 2] = col[2];
+    // 强度：作者面相对 q 定义（照度 = I / r_q²），shader 的 r 是 wu ⇒ 点/聚光在这里折成
+    // I_wu = I_q × wuPerQUnit²（见 pointIntensityWu）。面光是辐亮度、平行光直接是照度，不折。
+    out.b[o + 3] = (l.kind === 'point' || l.kind === 'spot')
+      ? pointIntensityWu(l.intensity, wuPerQUnit)
+      : l.intensity;
 
     out.c[o] = l.range ?? DEFAULT_LIGHT_RANGE_WU;   // wu，不缩放（铁律 0）
     // ⚠ C.y 是**按 kind 复用**的一格：

@@ -431,11 +431,16 @@ def audit_project_assets(project_root: Path) -> AuditReport:
     if overlay_path.is_file():
         overlay_data = _load_json_for_audit(overlay_path, report, paths)
         if isinstance(overlay_data, dict):
-            report.overlay_images = {
-                str(k): str(v)
-                for k, v in overlay_data.items()
-                if isinstance(k, str) and isinstance(v, str)
-            }
+            # 一条有两种形态：老写法值即路径；带叠图音配置的写成对象，路径在 image。
+            # 只认字符串的话，带音效那些条目会被当成"没登记"，短 id 被拿去当路径解析。
+            report.overlay_images = {}
+            for k, v in overlay_data.items():
+                if not isinstance(k, str):
+                    continue
+                if isinstance(v, str):
+                    report.overlay_images[str(k)] = v
+                elif isinstance(v, dict) and isinstance(v.get("image"), str):
+                    report.overlay_images[str(k)] = v["image"]
 
     _audit_map_scene_nodes(paths, report)
 

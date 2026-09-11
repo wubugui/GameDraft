@@ -171,82 +171,269 @@ function runtimeLightingApi(): Plugin {
 
 
 /**
- * 开发服：读写 `public/assets/data/acoustic_spaces.json`，供 F2「声学」页**直接保存**。
+ * 开发服：运行时声学的**实时联动槽**（两个文件槽，同一条插件）。
  *
- * 为什么要写真文件而不是复制粘贴：声学是靠耳朵调的，一轮要改几十次；
- * 每次都手动粘一遍 JSON，人不会用第二次。
+ * | 路径 | 方向 | 内容 |
+ * |---|---|---|
+ * | `/__gamedraft-api/runtime-acoustics` | 声学工作台 → 游戏 | 正在编辑的空间定义 + 要预览的空间 id + 试听请求。`rev` **服务端**自增 |
+ * | `/__gamedraft-api/runtime-acoustics-status` | 游戏 → 工作台 | 场景 / 听者 / 抽头 / 耗时 / 音频是否解锁。整份覆盖 |
  *
- * 安全：只接受 `spaces` 是对象的整份文档，且**逐个空间做结构闸门**——
- * 半个对象落盘的后果是运行时整份加载失败、所有场景一起没回音，
- * 而唯一痕迹是控制台一行没人看的 warn（光照那条槽踩过同类的坑）。
- * 写前先备份到同目录 `.bak`，改坏了能退。
+ * 与光照的 `runtimeLightingApi` 同一形态、同一批理由（两边都始终可达的只有 dev server；
+ * 不新增端口；写的是 `editor_data/` 的会话工作态，不是工程数据）。
+ *
+ * ⚠ **`acoustic_spaces.json` 不再从这里写**（2026-09-08 起唯一写入者是声学工作台，
+ * Python 侧直接原子写盘）。F2「声学」页只剩状态与试听。
+ *
+ * 形状闸门：半个对象进了槽，对面看着像"同步到了"却是残缺的。
+ * 与游戏侧 `shouldApplyAcousticsDoc` 同口径。
  */
-function acousticSpacesApi(): Plugin {
+/**
+ * 状态槽按游戏页分开存（`{pages: {writer: doc}}`）：多开页签时每页各写各的，不再互相覆盖打架
+ * （实测：作者的旧页签 + 工作台拉起的专用预览窗一起回传，工作台芯片每秒在"已解锁 9 抽头 / 锁着 0 抽头"之间跳）。
+ * GET 挑一页当 `doc`：6s 内有心跳的里面**最新开的**那页（作者刚拉起的那个），都没有就最近写过的那页；
+ * `pages` 把每页的摘要都给出去，工作台据此提示"另有 N 个游戏页也在回传"。旧格式（整份就是一页）照读。
+ */
+function pickAcousticsStatusPage(raw: Record<string, unknown> | null): { doc: unknown; ageMs: number | null; pages: unknown[] } {
+  const now = Date.now();
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const pagesObj = raw && typeof raw === 'object' && raw.pages && typeof raw.pages === 'object'
+    ? raw.pages as Record<string, Record<string, unknown>>
+    : raw && typeof raw.writer === 'string' ? { [raw.writer]: raw } : {};
+  const list = Object.values(pagesObj).filter((p) => p && typeof p === 'object');
+  const summaries = list.map((p) => ({
+    writer: p.writer, bootId: p.bootId, href: p.href, startedAt: p.startedAt, sceneId: p.sceneId,
+    audioUnlocked: p.audioUnlocked, autoplayAllowed: p.autoplayAllowed, ageMs: Math.max(0, now - num(p.ts)),
+  }));
+  const alive = list.filter((p) => now - num(p.ts) < 6000);
+  const pool = alive.length ? alive : list;
+  const chosen = pool.slice().sort((a, b) => (num(b.startedAt) - num(a.startedAt)) || (num(b.ts) - num(a.ts)))[0] ?? null;
+  return { doc: chosen, ageMs: chosen ? Math.max(0, now - num(chosen.ts)) : null, pages: summaries };
+}
+
+function runtimeAcousticsApi(): Plugin {
+  const DOC_PATH = '/__gamedraft-api/runtime-acoustics';
+  const STATUS_PATH = '/__gamedraft-api/runtime-acoustics-status';
   return {
-    name: 'gamedraft-acoustic-spaces-api',
+    name: 'gamedraft-runtime-acoustics-api',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         const pathOnly = (req.url ?? '').split('?')[0] ?? '';
-        if (pathOnly !== '/__gamedraft-api/acoustic-spaces') {
+        if (pathOnly !== DOC_PATH && pathOnly !== STATUS_PATH) {
           next();
           return;
         }
+        const isStatus = pathOnly === STATUS_PATH;
         const filePath = resolve(
-          server.config.root, 'public/assets/data/acoustic_spaces.json');
+          server.config.root,
+          isStatus
+            ? 'resources/editor_projects/editor_data/runtime_acoustics_status.json'
+            : 'resources/editor_projects/editor_data/runtime_acoustics.json');
+        const readDoc = async (): Promise<Record<string, unknown> | null> => {
+          try {
+            const raw = (await readFile(filePath, 'utf-8')).trim();
+            return raw ? JSON.parse(raw) as Record<string, unknown> : null;
+          } catch {
+            return null;
+          }
+        };
         if (req.method === 'GET') {
           res.setHeader('Content-Type', 'application/json');
-          try {
-            res.end((await readFile(filePath, 'utf-8')).trim() || '{"spaces":{}}');
-          } catch {
-            res.end('{"spaces":{}}');
+          res.setHeader('Cache-Control', 'no-store');
+          const doc = await readDoc();
+          if (isStatus) {
+            res.end(JSON.stringify(pickAcousticsStatusPage(doc)));
+            return;
           }
+          let ageMs: number | null = null;
+          try {
+            ageMs = Math.max(0, Date.now() - (await stat(filePath)).mtimeMs);
+          } catch { /* 没这个文件 = 还没人发过 */ }
+          res.end(JSON.stringify({ doc, ageMs }));
           return;
         }
         if (req.method === 'POST') {
           const chunks: Buffer[] = [];
           for await (const ch of req) chunks.push(ch as Buffer);
-          let parsed: { spaces?: unknown; _comment?: unknown };
+          let parsed: Record<string, unknown>;
           try {
-            parsed = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+            parsed = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as Record<string, unknown>;
           } catch {
             res.statusCode = 400;
             res.end('invalid json');
             return;
           }
-          const spaces = parsed.spaces as Record<string, unknown> | undefined;
-          if (!spaces || typeof spaces !== 'object' || Array.isArray(spaces)) {
+          const writer = String(parsed.writer ?? '').trim();
+          if (!writer) {
             res.statusCode = 400;
-            res.end('bad payload: 需要 spaces 对象');
+            res.end('bad payload: 需要 writer');
             return;
           }
-          for (const [id, raw] of Object.entries(spaces)) {
-            const sp = raw as Record<string, unknown> | null;
-            const refs = sp?.reflectors as unknown[] | undefined;
-            if (!sp || typeof sp !== 'object' || !sp.listener || !Array.isArray(refs)) {
+          await mkdir(dirname(filePath), { recursive: true });
+          if (isStatus) {
+            // 游戏 → 工作台：按页存（writer 就是页的实例 id），只盖个服务端时间戳；60s 没心跳的页清掉
+            const prev = await readDoc();
+            const pages: Record<string, unknown> = prev && prev.pages && typeof prev.pages === 'object'
+              ? { ...(prev.pages as Record<string, unknown>) } : {};
+            const t = Date.now();
+            for (const [k, v] of Object.entries(pages)) {
+              const ts = Number((v as Record<string, unknown> | null)?.ts ?? 0);
+              if (!(t - ts < 60_000)) delete pages[k];
+            }
+            pages[writer] = { ...parsed, writer, ts: t };
+            await writeFile(filePath, `${JSON.stringify({ pages })}\n`, 'utf-8');
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          const spaceId = String(parsed.spaceId ?? '').trim();
+          const def = parsed.def as Record<string, unknown> | null;
+          const refs = def?.reflectors as unknown[] | undefined;
+          if (!spaceId || !def || typeof def !== 'object' || !Array.isArray(refs) || !def.listener) {
+            res.statusCode = 400;
+            res.end('bad payload: 需要 spaceId + def{listener, reflectors[]}');
+            return;
+          }
+          for (const r of refs as Array<Record<string, unknown>>) {
+            const a = r?.a as unknown[] | undefined;
+            const b = r?.b as unknown[] | undefined;
+            if (!Array.isArray(a) || a.length !== 2 || !Array.isArray(b) || b.length !== 2
+                || typeof r.height !== 'number' || !(r.height > 0)) {
               res.statusCode = 400;
-              res.end(`bad space "${id}": 需要 listener + reflectors[]`);
+              res.end(`bad reflector in "${spaceId}": 需要 a[2] / b[2] / height>0`);
               return;
             }
-            for (const r of refs as Array<Record<string, unknown>>) {
-              const a = r?.a as unknown[] | undefined;
-              const b = r?.b as unknown[] | undefined;
-              if (!Array.isArray(a) || a.length !== 2 || !Array.isArray(b) || b.length !== 2
-                  || typeof r.height !== 'number' || !(r.height > 0)) {
-                res.statusCode = 400;
-                res.end(`bad reflector in "${id}": 需要 a[2] / b[2] / height>0`);
-                return;
-              }
+          }
+          const prev = await readDoc();
+          const rev = (typeof prev?.rev === 'number' ? prev.rev : 0) + 1;
+          const out: Record<string, unknown> = { rev, writer, spaceId, def, ts: Date.now() };
+          if (parsed.probe && typeof parsed.probe === 'object') out.probe = parsed.probe;
+          if (typeof parsed.sceneId === 'string') out.sceneId = parsed.sceneId;
+          await writeFile(filePath, `${JSON.stringify(out)}\n`, 'utf-8');
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ rev }));
+          return;
+        }
+        res.statusCode = 405;
+        res.end();
+      });
+    },
+  };
+}
+
+/**
+ * 开发服：粒子工作台 ↔ 游戏的一对槽（与上面声学那对同一套形状，见 `src/dev/runtimeVfxSync.ts` 文件头）。
+ *
+ * | 路径 | 方向 | 内容 |
+ * |---|---|---|
+ * | `runtime-vfx` | 工作台 → 游戏 | 正在编辑的效果 id + 工作态定义 + 刺激请求。`rev` 服务端自增 |
+ * | `runtime-vfx-status` | 游戏 → 工作台 | 场景、实例状态、stats、玩家脚点、bootId、心跳。**按页分桶** |
+ *
+ * 状态槽按页存 + GET 挑一页的规则与声学逐字相同，所以直接借 `pickAcousticsStatusPage`——
+ * 它只认 `pages` / `writer` / `ts` / `startedAt`，其余字段照抄摘要，不是声学专有逻辑。
+ * 第二份拷贝就是第二处会漂的地方。
+ */
+function runtimeVfxApi(): Plugin {
+  const DOC_PATH = '/__gamedraft-api/runtime-vfx';
+  const STATUS_PATH = '/__gamedraft-api/runtime-vfx-status';
+  return {
+    name: 'gamedraft-runtime-vfx-api',
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        const pathOnly = (req.url ?? '').split('?')[0] ?? '';
+        if (pathOnly !== DOC_PATH && pathOnly !== STATUS_PATH) {
+          next();
+          return;
+        }
+        const isStatus = pathOnly === STATUS_PATH;
+        const filePath = resolve(
+          server.config.root,
+          isStatus
+            ? 'resources/editor_projects/editor_data/runtime_vfx_status.json'
+            : 'resources/editor_projects/editor_data/runtime_vfx.json');
+        const readDoc = async (): Promise<Record<string, unknown> | null> => {
+          try {
+            const raw = (await readFile(filePath, 'utf-8')).trim();
+            return raw ? JSON.parse(raw) as Record<string, unknown> : null;
+          } catch {
+            return null;
+          }
+        };
+        if (req.method === 'GET') {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Cache-Control', 'no-store');
+          const doc = await readDoc();
+          if (isStatus) {
+            res.end(JSON.stringify(pickAcousticsStatusPage(doc)));
+            return;
+          }
+          let ageMs: number | null = null;
+          try {
+            ageMs = Math.max(0, Date.now() - (await stat(filePath)).mtimeMs);
+          } catch { /* 没这个文件 = 还没人发过 */ }
+          res.end(JSON.stringify({ doc, ageMs }));
+          return;
+        }
+        if (req.method === 'POST') {
+          const chunks: Buffer[] = [];
+          for await (const ch of req) chunks.push(ch as Buffer);
+          let parsed: Record<string, unknown>;
+          try {
+            parsed = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as Record<string, unknown>;
+          } catch {
+            res.statusCode = 400;
+            res.end('invalid json');
+            return;
+          }
+          const writer = String(parsed.writer ?? '').trim();
+          if (!writer) {
+            res.statusCode = 400;
+            res.end('bad payload: 需要 writer');
+            return;
+          }
+          await mkdir(dirname(filePath), { recursive: true });
+          if (isStatus) {
+            // 游戏 → 工作台：按页存（writer 就是页的实例 id），只盖个服务端时间戳；60s 没心跳的页清掉
+            const prev = await readDoc();
+            const pages: Record<string, unknown> = prev && prev.pages && typeof prev.pages === 'object'
+              ? { ...(prev.pages as Record<string, unknown>) } : {};
+            const t = Date.now();
+            for (const [k, v] of Object.entries(pages)) {
+              const ts = Number((v as Record<string, unknown> | null)?.ts ?? 0);
+              if (!(t - ts < 60_000)) delete pages[k];
+            }
+            pages[writer] = { ...parsed, writer, ts: t };
+            await writeFile(filePath, `${JSON.stringify({ pages })}\n`, 'utf-8');
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+          const effectId = String(parsed.effectId ?? '').trim();
+          const def = parsed.def as Record<string, unknown> | null;
+          const emitters = def?.emitters as unknown[] | undefined;
+          if (!effectId || !def || typeof def !== 'object' || !Array.isArray(emitters)) {
+            res.statusCode = 400;
+            res.end('bad payload: 需要 effectId + def{emitters[]}');
+            return;
+          }
+          for (const e of emitters as Array<Record<string, unknown>>) {
+            const ap = e?.appearance as Record<string, unknown> | undefined;
+            const sp = e?.spawn as Record<string, unknown> | undefined;
+            if (!e?.id || typeof e.id !== 'string' || !ap || typeof ap !== 'object'
+                || typeof ap.sizeWu !== 'number' || !(ap.sizeWu > 0)
+                || !sp || typeof sp !== 'object' || typeof sp.max !== 'number' || !(sp.max >= 1)) {
+              res.statusCode = 400;
+              res.end(`bad emitter in "${effectId}": 需要 id / appearance.sizeWu>0 / spawn.max>=1`);
+              return;
             }
           }
-          try {
-            const old = await readFile(filePath, 'utf-8');
-            await writeFile(`${filePath}.bak`, old, 'utf-8');
-          } catch { /* 首次写、没有旧文件：不备份也不算错 */ }
-          await mkdir(dirname(filePath), { recursive: true });
-          await writeFile(filePath, `${JSON.stringify(parsed, null, 2)}
-`, 'utf-8');
+          const prev = await readDoc();
+          const rev = (typeof prev?.rev === 'number' ? prev.rev : 0) + 1;
+          const out: Record<string, unknown> = { rev, writer, effectId, def, ts: Date.now() };
+          if (parsed.probe && typeof parsed.probe === 'object') out.probe = parsed.probe;
+          if (typeof parsed.sceneId === 'string') out.sceneId = parsed.sceneId;
+          await writeFile(filePath, `${JSON.stringify(out)}\n`, 'utf-8');
           res.setHeader('Content-Type', 'application/json');
-          res.end(JSON.stringify({ ok: true, count: Object.keys(spaces).length }));
+          res.end(JSON.stringify({ rev }));
           return;
         }
         res.statusCode = 405;
@@ -941,7 +1128,8 @@ export default defineConfig({
     debugFlagFavoritesApi(),
     debugDockPinsApi(),
     runtimeLightingApi(),
-    acousticSpacesApi(),
+    runtimeAcousticsApi(),
+    runtimeVfxApi(),
     narrativeDebugBridgeApi(),
     runtimeDebugSnapshotApi(),
     runtimeCommandApi(),

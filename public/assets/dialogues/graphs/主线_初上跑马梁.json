@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "主线_初上跑马梁",
+  "entry": "n_start",
+  "meta": {
+    "title": "主线_初上跑马梁"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_start": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_1",
+      "text": "？？？？"
+    },
+    "n_1": {
+      "type": "end"
+    }
+  },
+  "defaultLayout": "bubble"
+}

@@ -101,5 +101,8 @@ onboarding-app/
 # gitignore 管不到已跟踪的文件；要退版本得另行 git rm --cached。
 artifact/
 
+# 制作人手册(handbook/)的静态构建产物;源是 handbook/docs/*.md,产物随时可重生成
+handbook/site/
+
 # 声学空间编辑器存盘时写的旧版备份，本地保留即可
 public/assets/data/*.json.bak

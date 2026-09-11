@@ -155,6 +155,30 @@
           "reached": true
         }
       ]
+    },
+    {
+      "id": "lore_three_fires",
+      "title": "人有三把火",
+      "content": "人身上有三把火：头上一把，两肩各一把。火旺，那些东西不敢近身；火弱了，它们就敢挨过来。\n\n平常这火看不见。到了[c:emphasis]它们的地界[/c]，火才显出来——[c:emphasis]看见火，就是过了界[/c]。\n\n受惊灭火，[clue:fire_huitou]回头[/clue]吹的是肩上那把，[clue:fire_yingsheng]应声[/clue]走的是头上那把。\n\n[c:danger]三把全灭，老话说，人就没了。[/c]\n\n[img:images/illustrations/three_fires.png|wide]\n[caption]头一把，肩两把",
+      "source": "背尸行老话",
+      "category": "folklore",
+      "unlockConditions": [
+        {
+          "flag": "sysnote_three_fires"
+        }
+      ]
+    },
+    {
+      "id": "lore_smell_nose",
+      "title": "背尸匠的鼻子",
+      "content": "背尸这一行，鼻子是本钱。进门先不看，先闻：[c:emphasis]鼻子比眼睛先知道事[/c]。\n\n闻到的味在眼角上现一缕烟，[c:emphasis]烟的颜色是味，烟下的字是名[/c]。烟是从东西那边吹过来的：[c:emphasis]烟往哪边飘，东西就在另一边[/c]；走到跟前，烟就直了。按 Q 使劲闻一口，烟会清一阵。\n\n常闻的几种：[c:emphasis]尸臭[/c]，附近有死人，停得越久越冲；[c:emphasis]阴腥[/c]，凉飕飕带水腥，是[clue:smell_yin_fangwei]不干净的地界[/clue]，看烟就晓得东西在哪边；[c:emphasis]香火[/c]，庙、灵堂、路祭，有规矩的场子；[c:emphasis]血腥[/c]，刚死的、刚伤的；[c:emphasis]霉土[/c]，久没人住的屋、棺木、地窖。\n\n[c:danger]停了好几天的尸，该臭不臭，反而要怕。[/c]老话说，[clue:smell_gaichoubuchou]该臭不臭[/clue]，是那东西还没走。\n\n[img:images/illustrations/smell_nose.png|wide]\n[caption]先闻，再看",
+      "source": "背尸行老话",
+      "category": "folklore",
+      "unlockConditions": [
+        {
+          "flag": "sysnote_smell"
+        }
+      ]
     }
   ]
 }

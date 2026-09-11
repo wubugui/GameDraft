@@ -49,11 +49,8 @@ _CLEAN: dict[str, Any] = {
     },
     "clipFallback": {"carry_walk": "walk", "crouchWalk": "walk"},
     "defaults": {"gainDb": -6},
+    # v3 起直达声参数在声学空间 direct 里，这里只剩相机后退（旧的四项写了会报「运行时已不读」）
     "spatial": {
-        "refDistanceWu": 150,
-        "rolloff": 1,
-        "maxDistanceWu": 3000,
-        "panWidth": 0.7,
         "listenerBackAtBaseZoomWu": 600,
     },
     "listener": {"mode": "camera"},
@@ -132,6 +129,30 @@ class FootstepCleanDataTests(unittest.TestCase):
         self.assertTrue(all(m.startswith("[warning] ") for m in msgs), msgs)
 
 
+class FootstepDefaultsTests(unittest.TestCase):
+    """`defaults`:全局音量缩放 gainDb + 空间化总闸 spatialized。"""
+
+    def test_valid_defaults_are_silent(self) -> None:
+        self.assertEqual(_issues(_mutate(defaults={"gainDb": -6, "spatialized": False})), [])
+        self.assertEqual(_issues(_mutate(defaults={"gainDb": 0, "spatialized": True})), [])
+        self.assertEqual(_issues(_mutate(defaults={})), [])
+
+    def test_non_bool_spatialized_is_reported(self) -> None:
+        """运行时判据是 `!== false`:写 0 / "false" 判不出来,作者以为关了其实没关。"""
+        for bad in (0, 1, "false", "off", None if False else "true"):
+            with self.subTest(bad=bad):
+                msgs = _issues(_mutate(defaults={"spatialized": bad}))
+                self.assertTrue(any("spatialized" in m for m in msgs), (bad, msgs))
+
+    def test_non_num_gain_is_reported(self) -> None:
+        msgs = _issues(_mutate(defaults={"gainDb": "-6"}))
+        self.assertTrue(any("gainDb" in m for m in msgs), msgs)
+
+    def test_defaults_wrong_shape(self) -> None:
+        msgs = _issues(_mutate(defaults=[1, 2]))
+        self.assertTrue(any("defaults" in m for m in msgs), msgs)
+
+
 class FootstepSfxKeyTests(unittest.TestCase):
     def test_unregistered_sfx_key_is_reported(self) -> None:
         d = _clone(_CLEAN)
@@ -162,14 +183,31 @@ class FootstepSfxKeyTests(unittest.TestCase):
         self.assertIn("不合法", msgs[0])
 
     def test_non_string_value(self) -> None:
-        """一个片段只有一条 key：数组（旧变体形状的残留）与数字都报，且说明「没有变体数组」。"""
+        """一个片段只有一条 key：数组（旧变体形状的残留）与数字都报，且说明「没有变体数组」。
+
+        （合法形状现在有两种：裸 key 与带本处音量的 ``{id, volume}``。）
+        """
         for bad in (["step_mud_1", "step_mud_2"], 42, None):
             with self.subTest(bad=bad):
                 d = _clone(_CLEAN)
                 d["sets"]["泥地"]["sfx"]["walk"] = bad
                 msgs = _issues(d)
                 self.assertEqual(len(msgs), 1, msgs)
-                self.assertIn("一条字符串音效 key", msgs[0])
+                self.assertIn("没有变体数组", msgs[0])
+
+    def test_object_form_with_site_volume_is_accepted(self) -> None:
+        """带本处音量的 ``{id, volume}`` 是合法形状（同一条素材挂两个片段、其中一个要轻一半）。"""
+        d = _clone(_CLEAN)
+        walk = d["sets"]["泥地"]["sfx"]["walk"]
+        d["sets"]["泥地"]["sfx"]["walk"] = {"id": walk, "volume": 0.5}
+        self.assertEqual(_issues(d), [])
+
+    def test_object_form_with_unknown_id_still_warns(self) -> None:
+        d = _clone(_CLEAN)
+        d["sets"]["泥地"]["sfx"]["walk"] = {"id": "没登记过的", "volume": 0.5}
+        msgs = _issues(d)
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn("audio_config.sfx", msgs[0])
 
     def test_empty_key_means_unset(self) -> None:
         d = _clone(_CLEAN)
@@ -249,41 +287,33 @@ class FootstepClipFallbackTests(unittest.TestCase):
 
 
 class FootstepSpatialTests(unittest.TestCase):
-    def test_max_distance_smaller_than_listener_back(self) -> None:
+    """v3（2026-09-08）起脚步走空间音总线：直达声参数住在声学空间 `direct` 里，
+    `spatial.refDistanceWu / rolloff / maxDistanceWu / panWidth` 运行时不读——写了要说它们已经死了。"""
+
+    def test_dead_keys_warn_once_and_name_them(self) -> None:
         msgs = _issues(_mutate(spatial={
             "maxDistanceWu": 300, "listenerBackAtBaseZoomWu": 600,
         }))
         self.assertEqual(len(msgs), 1, msgs)
-        self.assertIn("显著大于", msgs[0])
-
-    def test_barely_larger_still_warns(self) -> None:
-        """听者本来就在画面后方 600 wu，max=700 时画面正中的声源已经贴着静音边界。"""
-        msgs = _issues(_mutate(spatial={
-            "maxDistanceWu": 700, "listenerBackAtBaseZoomWu": 600,
-        }))
+        self.assertIn("运行时已不读", msgs[0])
+        self.assertIn("maxDistanceWu", msgs[0])
+        msgs = _issues(_mutate(spatial={"refDistanceWu": 150, "panWidth": 0.7}))
         self.assertEqual(len(msgs), 1, msgs)
-        self.assertIn("显著大于", msgs[0])
+        self.assertIn("refDistanceWu/panWidth", msgs[0])
 
-    def test_ratio_threshold_matches_editor(self) -> None:
-        """判据与 `footstep_sets_editor._sync_spatial_warning` 的实时橙字同一个数。"""
-        back = 600.0
-        at = back * _FOOTSTEP_MAX_DISTANCE_MIN_RATIO
-        self.assertEqual(len(_issues(_mutate(spatial={
-            "maxDistanceWu": at, "listenerBackAtBaseZoomWu": back,
-        }))), 1)  # 恰好等于阈值仍报（判据是 <=）
-        self.assertEqual(_issues(_mutate(spatial={
-            "maxDistanceWu": at + 1, "listenerBackAtBaseZoomWu": back,
-        })), [])
-
-    def test_only_one_side_present_is_silent(self) -> None:
-        """另一半没写时运行时取缺省（3000 / 600）；比不了就不比，别瞎报。"""
-        self.assertEqual(_issues(_mutate(spatial={"maxDistanceWu": 300})), [])
+    def test_live_keys_alone_are_silent(self) -> None:
+        """还有用的两项（相机后退 / 平面纵深系数）单独写不报。"""
         self.assertEqual(_issues(_mutate(spatial={"listenerBackAtBaseZoomWu": 600})), [])
+        self.assertEqual(_issues(_mutate(spatial={"planarDepthScale": 1.4142})), [])
+        self.assertEqual(_issues(_mutate(spatial={})), [])
+
+    def test_ratio_constant_still_importable(self) -> None:
+        self.assertGreater(_FOOTSTEP_MAX_DISTANCE_MIN_RATIO, 1)
 
     def test_non_numeric_values(self) -> None:
-        msgs = _issues(_mutate(spatial={"maxDistanceWu": "3000"}))
+        msgs = _issues(_mutate(spatial={"listenerBackAtBaseZoomWu": "600"}))
         self.assertEqual(len(msgs), 1, msgs)
-        self.assertIn("须为数值 wu", msgs[0])
+        self.assertIn("须为数值", msgs[0])
         self.assertTrue(any("spatial 须为对象" in m
                             for m in _issues(_mutate(spatial=[3000]))))
 

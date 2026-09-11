@@ -33,10 +33,22 @@ export interface SmellFormParams {
   curveAmp: number;  // 基础弯幅（两个弯的摆幅）
   swayGain: number;  // 各味 sway 叠加到弯幅的增益
   baseW: number;     // 底盘宽度（对齐三把火约 50）
+  // ---- 飘向（G.6：烟往哪边飘，源在另一边）----
+  leanDeg: number;      // 横向满偏时整缕烟绕底部倾倒的角度
+  leanTipPx: number;    // 横向满偏时烟尖额外拖出的像素
+  towardGrowH: number;  // 源在后（烟朝镜头扑来）：高度乘 (1 - towardGrowH)
+  towardGrowD: number;  // 源在后：顶端团子直径增大比例
+  towardSpread: number; // 源在后：顶端摆幅放大比例
+  awayGrowH: number;    // 源在前（烟被吹向深处）：高度增大比例
+  awayShrinkD: number;  // 源在前：顶端团子直径缩小比例
+  awayFade: number;     // 源在前：顶端额外变淡比例
 }
 export const DEFAULT_SMELL_FORM: SmellFormParams = {
   riseH: 72, stemDia: 5, plumeGrow: 30, plumeExp: 1.6,
   topFade: 0.88, alphaBase: 0.95, curveAmp: 3.2, swayGain: 0.6, baseW: 50,
+  leanDeg: 30, leanTipPx: 14,
+  towardGrowH: 0.3, towardGrowD: 1.1, towardSpread: 0.6,
+  awayGrowH: 0.4, awayShrinkD: 0.5, awayFade: 0.5,
 };
 
 export interface SmellProfilesRaw {
@@ -47,8 +59,13 @@ export interface SmellProfilesRaw {
 }
 interface Profile extends Omit<SmellProfileRaw, 'color'> { color: number }
 
-/** 编排层下发的持续状态。intensity 0–100；dir -1..1（方位偏向，0=居中）；flicker=波动。 */
-export interface SmellRenderState { scent: string; intensity: number; dir: number; flicker: boolean }
+/**
+ * 编排层下发的持续状态。intensity 0–100；flicker=波动。
+ * dir -1..1 = **横向飘向**（正=往右飘，源在左）；dirDepth -1..1 = **纵深飘向**：
+ * 负=被吹向画面深处（源在前面/更靠镜头），正=朝镜头扑来（源在后面/更远）。0=直的。
+ * 两轴合起来就是一个二维指向（G.6：烟往哪边飘，东西在另一边）。
+ */
+export interface SmellRenderState { scent: string; intensity: number; dir: number; flicker: boolean; dirDepth?: number }
 
 function hexToNum(hex: string): number {
   const h = (hex || '').replace('#', '');
@@ -106,12 +123,24 @@ export class SmellIndicatorRenderer {
 
   private t = 0;
   private dispIntensity = 0; // 0..1
-  private dispDir = 0;       // -1..1
-  private target: SmellRenderState = { scent: '', intensity: 0, dir: 0, flicker: false };
+  private dispDir = 0;       // -1..1（横向）
+  private dispDepth = 0;     // -1..1（纵深）
+  private target: SmellRenderState = { scent: '', intensity: 0, dir: 0, flicker: false, dirDepth: 0 };
   private renderScent = '';
   private pendingScent: string | null = null;
   private fade = 0;         // 0..1
   private envStartT = -1;
+  /**
+   * 显隐（玩法清单 G.6）：整个指示器（含常驻基线雾）显不显示。缺省显——编辑器预览要直接看见；
+   * 游戏 HUD 建好后立刻按 latch 钉成隐。vis = 显隐权重 0..1；visT ≥ 0 表示显隐动画进行中。
+   *   gather   显：雾从一团散云聚拢、沉到基线、浮出气缕（0.9s）
+   *   disperse 隐：整团往上飘、散开、淡出（0.7s）
+   *   fade     显/隐：只做透明度渐变（0.4s）
+   */
+  private vis = 1;
+  private visTarget = 1;
+  private visMode: 'instant' | 'gather' | 'disperse' | 'fade' = 'instant';
+  private visT = -1;
 
   constructor(parent: Container, data: SmellProfilesRaw, opts?: { x?: number; y?: number }) {
     this.layer = new Container();
@@ -157,6 +186,7 @@ export class SmellIndicatorRenderer {
     if (s.scent !== undefined) this.target.scent = s.scent || '';
     if (s.intensity !== undefined) this.target.intensity = Math.max(0, Math.min(1, s.intensity / 100));
     if (s.dir !== undefined) this.target.dir = Math.max(-1, Math.min(1, s.dir));
+    if (s.dirDepth !== undefined) this.target.dirDepth = Math.max(-1, Math.min(1, s.dirDepth));
     if (s.flicker !== undefined) this.target.flicker = !!s.flicker;
     if (this.target.scent !== this.renderScent) {
       this.pendingScent = this.target.scent;
@@ -168,6 +198,56 @@ export class SmellIndicatorRenderer {
   /** 主动嗅一下：当前气缕短暂拔高一截强度（几秒内回落由编排侧把 intensity 调回）。这里只做即时拔高的视觉缓冲。 */
   pulseBoost(): void {
     this.dispIntensity = Math.min(1, this.dispIntensity + 0.35);
+  }
+
+  /** 指示器根容器（HUD 首次出场仪式要把它暂时搬到屏心；说明卡要量它的屏幕包围盒）。 */
+  getLayer(): Container {
+    return this.layer;
+  }
+
+  isVisible(): boolean {
+    return this.visTarget > 0;
+  }
+
+  /**
+   * 显隐（G.6）。显的一瞬把气缕钉到当前真值（换味交叉淡、浓度缓动全部跳过）——
+   * 隐着的时候玩家看不见任何过渡，再显时不该从空白慢慢浮上来；显隐动画本身就是过渡。
+   */
+  setVisible(visible: boolean, style: 'instant' | 'gather' | 'disperse' | 'fade' = 'instant'): void {
+    const target = visible ? 1 : 0;
+    if (visible && this.visTarget === 0) this.pinToTruth();
+    this.visTarget = target;
+    if (style === 'instant') {
+      this.vis = target;
+      this.visT = -1;
+      this.visMode = 'instant';
+    } else {
+      this.visMode = style;
+      this.visT = 0;
+    }
+    this.draw();
+  }
+
+  private pinToTruth(): void {
+    this.renderScent = this.target.scent;
+    this.pendingScent = null;
+    this.fade = this.renderScent ? 1 : 0;
+    this.dispIntensity = this.target.intensity;
+    this.dispDir = this.target.dir;
+    this.dispDepth = this.target.dirDepth ?? 0;
+    if (this.renderScent && this.profiles[this.renderScent]?.special?.envelope) this.envStartT = this.t;
+  }
+
+  /** 显隐动画时长（秒） */
+  private visDuration(): number {
+    return this.visMode === 'gather' ? 0.9 : this.visMode === 'disperse' ? 0.7 : 0.4;
+  }
+
+  /** 每个 puff 的固定散布向量（聚拢从哪来 / 散开往哪去），按下标定死，不随机、可复现。 */
+  private scatterOf(i: number): { x: number; y: number } {
+    const a = i * 2.399 + 0.7;
+    const m = 0.45 + ((i * 7) % 5) / 5;
+    return { x: Math.cos(a) * m, y: Math.sin(a) * m * 0.7 };
   }
 
   /** F2 调试：实时改一个烟形参数（不写盘；满意后把数值抄进 smell_profiles.json 的 form 块）。 */
@@ -182,6 +262,7 @@ export class SmellIndicatorRenderer {
     const k = 1 - Math.exp(-dt * 6);
     this.dispIntensity += (this.target.intensity - this.dispIntensity) * k;
     this.dispDir += (this.target.dir - this.dispDir) * k;
+    this.dispDepth += ((this.target.dirDepth ?? 0) - this.dispDepth) * k;
 
     if (this.pendingScent !== null && this.pendingScent !== this.renderScent) {
       this.fade -= dt / (this.fadeS * 0.6);
@@ -195,6 +276,16 @@ export class SmellIndicatorRenderer {
       const tgt = this.renderScent ? 1 : 0;
       this.fade += (tgt - this.fade) * (1 - Math.exp(-dt / this.fadeS));
       if (Math.abs(tgt - this.fade) < 0.002) this.fade = tgt;
+    }
+
+    if (this.visT >= 0) {
+      this.visT += dt;
+      const p = Math.min(1, this.visT / this.visDuration());
+      this.vis = this.visTarget > 0 ? p : 1 - p;
+      if (p >= 1) {
+        this.vis = this.visTarget;
+        this.visT = -1;
+      }
     }
 
     this.draw();
@@ -221,11 +312,17 @@ export class SmellIndicatorRenderer {
     });
     return {
       time: this.t,
+      visible: this.visTarget > 0,
+      visWeight: this.vis,
+      visMode: this.visMode,
+      visAnimating: this.visT >= 0,
+      layerVisible: this.layer.visible,
       target: { ...this.target },
       renderScent: this.renderScent,
       pendingScent: this.pendingScent,
       displayIntensity: this.dispIntensity,
       displayDirection: this.dispDir,
+      displayDepth: this.dispDepth,
       fade: this.fade,
       envelopeStartTime: this.envStartT,
       root: { x: this.layer.x, y: this.layer.y },
@@ -259,6 +356,58 @@ export class SmellIndicatorRenderer {
   private hide(arr: Sprite[]): void { for (const s of arr) s.visible = false; }
 
   private draw(): void {
+    // 隐着（且不在显隐动画里）：整层不画。显隐权重与散布在 drawAll 之后统一叠上去（applyVisibility）。
+    if (this.vis <= 0.001 && this.visT < 0) {
+      this.layer.visible = false;
+      return;
+    }
+    this.layer.visible = true;
+    this.drawAll();
+    this.applyVisibility();
+  }
+
+  /**
+   * 显隐动画叠在正常绘制结果之上：
+   *   gather：所有 puff 从各自的散布方向飘拢、由大而虚变小而实（雾从散到聚）；名字最后才浮出来
+   *   disperse：整团往上飘、往外散、变大变淡（一口气吹散）
+   *   fade / instant：只乘透明度
+   */
+  private applyVisibility(): void {
+    const w = this.vis;
+    if (w >= 0.999) return;
+    const ease = w * w * (3 - 2 * w);
+    const showing = this.visTarget > 0;
+    const gatherK = this.visMode === 'gather' && showing ? 1 - ease : 0;
+    const disperseK = this.visMode === 'disperse' && !showing ? 1 - ease : 0;
+    const R = this.form.baseW * 0.7;
+    const all: Sprite[] = [this.bloom, ...this.baseSprites, ...this.wispSprites, ...this.reachSprites];
+    for (let i = 0; i < all.length; i++) {
+      const s = all[i];
+      if (!s.visible) continue;
+      const sc = this.scatterOf(i);
+      if (gatherK > 0) {
+        s.x += sc.x * R * gatherK;
+        s.y += sc.y * R * gatherK - 10 * gatherK;
+        s.scale.set(s.scale.x * (1 + 0.9 * gatherK), s.scale.y * (1 + 0.9 * gatherK));
+        s.alpha *= (0.25 + 0.75 * ease);
+      } else if (disperseK > 0) {
+        s.x += sc.x * R * 0.6 * disperseK;
+        s.y += -34 * disperseK + sc.y * R * 0.3 * disperseK;
+        s.scale.set(s.scale.x * (1 + 1.1 * disperseK), s.scale.y * (1 + 1.1 * disperseK));
+        s.alpha *= ease;
+      } else {
+        s.alpha *= ease;
+      }
+    }
+    if (this.label.visible) {
+      // 名字不参与散布：聚拢时最后浮出，散开时先走
+      const k = showing ? Math.max(0, (w - 0.55) / 0.45) : Math.max(0, (w - 0.3) / 0.7);
+      this.label.alpha *= k * k;
+      this.label.visible = this.label.alpha > 0.004;
+    }
+  }
+
+  private drawAll(): void {
     const prof = this.renderScent ? this.profiles[this.renderScent] : null;
     const glow = !!prof?.special?.glow;
     const env = prof?.special?.envelope ? this.envelope(prof) : 1;
@@ -289,7 +438,7 @@ export class SmellIndicatorRenderer {
     }
     this.label.visible = true;
     this.label.tint = prof.color;
-    this.label.x = this.dispDir * 4; // 跟随方位轻微偏移，与气缕一致
+    this.label.x = this.dispDir * 10; // 跟随飘向偏移，与气缕同向
     this.label.alpha = Math.min(1, strength * 1.6);
   }
 
@@ -322,7 +471,7 @@ export class SmellIndicatorRenderer {
     s.visible = true;
     s.blendMode = 'add';
     s.tint = lerpC(prof.color, 0xffffff, 0.3);
-    s.x = this.dispDir * 6; s.y = -this.form.riseH * 0.42;
+    s.x = this.dispDir * 18; s.y = -this.form.riseH * 0.42;
     const w = 110 / TEX;
     s.scale.set(w, w * 1.05);
     s.alpha = 0.16 * strength;
@@ -332,8 +481,16 @@ export class SmellIndicatorRenderer {
     const t = this.t;
     const F = this.form;
     const heavy = prof.heavy ? 0.5 : 1;
-    const h = F.riseH * heavy * (0.55 + 0.45 * Math.min(1, this.dispIntensity));
     const lean = this.dispDir;
+    const depth = this.dispDepth;
+    // 纵深飘向（G.6）：被吹向深处 = 升得更高更细、越往上越淡（远去）；朝镜头扑来 = 矮、粗、越往上团子越大越开（迎面）
+    const away = Math.max(0, -depth);
+    const toward = Math.max(0, depth);
+    const h = F.riseH * heavy * (0.55 + 0.45 * Math.min(1, this.dispIntensity)) * (1 + F.awayGrowH * away - F.towardGrowH * toward);
+    // 横向飘向：整缕烟绕底部往飘向倒（满偏 leanDeg），烟尖再多拖一截
+    const tilt = lean * (F.leanDeg * Math.PI) / 180;
+    const sinT = Math.sin(tilt);
+    const cosT = Math.cos(tilt);
     const scroll = t * (0.6 + prof.rise * 1.3);
     const coil = prof.wrong || prof.special?.coil;
     // 发亮味：只往白略提亮（保留色相），靠 add 混合发光，不冲淡到白——这样"浓粉红"仍是浓的。
@@ -348,12 +505,17 @@ export class SmellIndicatorRenderer {
       let wob = Math.sin(prog * 6.3 - scroll) * curveAmp * (0.25 + prog * 0.95);
       if (prof.jitter) wob += Math.sin(t * 4.0 + i * 1.5) * prof.jitter * 2.5 * prog;
       if (coil) wob += Math.sin(prog * 9 - t * 1.0) * 3 * (0.4 + prog);
-      const x = wob + lean * prog * prog * 9;
-      const y = -prog * h;
+      // 朝镜头扑来时顶部散得更开（摆幅放大），被吹远时收拢
+      const along = prog * h;
+      const across = wob * (1 + F.towardSpread * toward - 0.3 * away);
+      const x = across * cosT + along * sinT + lean * prog * prog * F.leanTipPx;
+      const y = -along * cosT + across * sinT;
       // 底部细而聚成一根"茎"、越往上越宽越散，顶端化成一团软羽淡开 —— 浓→散的密度梯度才像烟。
-      const dia = F.stemDia + Math.pow(prog, F.plumeExp) * (prof.heavy ? F.plumeGrow * 0.7 : F.plumeGrow);
-      // 茎部亮而实（场景里看得清），往上快速变淡留一缕薄羽（消散感）。
-      const a = Math.min(prog * 6, 1) * (1 - prog * F.topFade) * (glow ? F.alphaBase * 0.44 : F.alphaBase) * strength * (glow ? 1.5 : 1);
+      const dia = (F.stemDia + Math.pow(prog, F.plumeExp) * (prof.heavy ? F.plumeGrow * 0.7 : F.plumeGrow))
+        * (1 + F.towardGrowD * toward * prog - F.awayShrinkD * away * prog);
+      // 茎部亮而实（场景里看得清），往上快速变淡留一缕薄羽（消散感）。远去的烟顶端更淡，扑来的更实。
+      const a = Math.min(prog * 6, 1) * (1 - prog * F.topFade * (1 + F.awayFade * away - 0.35 * toward))
+        * (glow ? F.alphaBase * 0.44 : F.alphaBase) * strength * (glow ? 1.5 : 1) * (1 + 0.2 * toward);
       s.visible = a > 0.004;
       s.tint = tintBase;
       s.blendMode = glow ? 'add' : 'normal';
@@ -369,7 +531,7 @@ export class SmellIndicatorRenderer {
       const s = this.reachSprites[i];
       const ph = (t * 0.35 + i / this.reachSprites.length) % 1;
       const y = -4 + ph * 22;
-      const x = Math.sin(t * 1.05 + i * 1.3) * 8 * (0.5 + ph) + this.dispDir * 4;
+      const x = Math.sin(t * 1.05 + i * 1.3) * 8 * (0.5 + ph) + this.dispDir * 10;
       const dia = (3 + ph * 3) * 2.1;
       s.visible = true;
       s.blendMode = 'add';

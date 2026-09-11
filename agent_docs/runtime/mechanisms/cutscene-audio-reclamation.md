@@ -32,6 +32,9 @@ last_governed: 2026-08-05
   停尾音;**自然播完传 `false`**,只关作用域、让末拍音效按作者编排收尾。
 - BGM/环境音基线:**只在同场景恢复分支**调 restoreAudioBaseline——跨场景由
   loadScene→applySceneAudio 重建,勿重复;受 `restoreState!==false` 门控;playBgm/addAmbient 幂等。
+- **快照存的是带本处音量的引用**(`getCurrentBgmCue` / `getActiveAmbientCues`),不是裸 id。
+  只记 id 的话,场景把某层环境音压到 0.3、过场里停掉它,还原时会按素材原音量回来——变响
+  一大截,且只在真机听得出来。口径见[逐处音量](per-site-audio-volume.md)。
 - 手动 stop 一次性 SFX 必须 `off('end')`,防死闭包累积。
 
 ## 已知坑

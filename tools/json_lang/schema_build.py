@@ -43,6 +43,8 @@ REF_KIND_UNIVERSE: dict[str, str | None] = {
     "scene_hotspot": "hotspots",
     "scene_zone": "zones",
     "owner": None,
+    # 位置引用 `at`（{kind:'point'|'entity'|'slot'}）：对象不是裸 id，实体档的 id 在对象里，无法静态套宇宙
+    "position_ref": None,
 }
 
 # 内容 id 参数 → 宇宙(ENTITY_REF_PARAMS 之外的裸 id 引用;这是本工具唯一一张
@@ -84,8 +86,12 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("completeScenario", "scenarioId"): "scenarios",
     ("addArchiveEntry", "entryId"): "archive_entries",
     ("collectClue", "clueId"): "clues",
+    # 系统说明卡(K4):showSystemNote.noteId 的引用宇宙 = system_notes.json
+    ("showSystemNote", "noteId"): "system_notes",
     # 轨迹资产是全局独立文件(assets/data/trajectories/<id>.json),id 全局唯一 → 直接烤成枚举
     ("playTrajectory", "trajectoryId"): "trajectories",
+    # 效果资产是全局独立文件(assets/data/vfx/<id>.json),id 全局唯一 → 直接烤成枚举
+    ("playVfx", "effect"): "vfx_effects",
     ("emitNarrativeSignal", "signal"): "narrative_signals",
     # 叙事活计生命周期（S1）：目标是活计图；宇宙沿用 narrative 条件叶的图 id 集合
     ("startNarrativeRun", "graphId"): "narrative_graph_ids",
@@ -120,6 +126,9 @@ _WIDGET_JSON_TYPE: dict[str, dict] = {
     # 气泡头顶锚 / 大小：控件是可视化舞台，落盘仍是数（缺省不写键=继承）
     "bubble_anchor": {"type": "number"},
     "bubble_scale": {"type": "number", "exclusiveMinimum": 0},
+    # 位置引用 / 临时生成规格：复合对象（形状由 src/utils/positionRef.ts、TrajectorySpawnSpec 定义）
+    "position_ref": {"type": "object"},
+    "spawn_spec": {"type": "object"},
 }
 
 # 脚手架占位值:必填参数按控件类型给默认
@@ -270,6 +279,7 @@ def _condition_snippets(spec: LanguageSpec) -> list[dict]:
         "plane": {"plane": "$1"},
         "posture": {"posture": spec.player_postures[0] if spec.player_postures else "crouch"},
         "timePhase": {"timePhase": "$1"},
+        "vfxState": {"vfx": "$1", "vfxState": "airborne"},
     }
     snippets = [
         {"label": f"条件: {k}", "body": [body]}
@@ -404,10 +414,17 @@ def _condition_expr(spec: LanguageSpec, ud: UniverseData) -> dict:
     if "timePhase" in modeled:
         # 时段枚举权威 = game_config.dayNight.phases(没配时回落缺省四段,见 id_universes)
         branches.append(leaf(["timePhase"], {"timePhase": _universe_schema("time_phases", ud)}))
+    if "vfxState" in modeled:
+        # 世界空间粒子 / 群体实例的状态。实例 id 是**场景作用域**的(scene.vfx[].id),
+        # 一条对话可能在任何场景播,所以不给 id 宇宙枚举——只锁状态枚举(validator 另做跨场景提醒)。
+        branches.append(leaf(["vfx", "vfxState"], {
+            "vfx": {"type": "string"},
+            "vfxState": {"enum": ["roosting", "airborne", "fleeing", "returning", "active", "inactive"]},
+        }))
     # 提取到未建模叶子时(extract 已出 warning)加一条兜底,免得新叶子全量报错
     for extra_leaf in modeled - {
         "flag", "quest", "scenario", "scenarioLine", "narrative", "narrativeCount",
-        "plane", "posture", "timePhase",
+        "plane", "posture", "timePhase", "vfxState",
     }:
         branches.append(leaf([extra_leaf], {extra_leaf: {}}))
     return {"anyOf": branches}

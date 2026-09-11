@@ -559,8 +559,13 @@ export interface SceneData {
    * 旧场景里的 group 字符串继续按无条件分组工作（读取兼容，不要求运行时迁移）。
    */
   entityGroups?: SceneEntityGroupDef[];
-  bgm?: string;
-  ambientSounds?: string[];
+  /** 本场景 BGM。可写 `{ id, volume }` 给这一处单独定音量（见 {@link AudioCueRef}）。 */
+  bgm?: AudioCueRef;
+  /**
+   * 本场景同时循环的环境音层（BGS）。逐层可写 `{ id, volume }` ——
+   * 同一条环境音在两个场景里要不同响度是常态，别再复制素材条目。
+   */
+  ambientSounds?: AudioCueRef[];
   /**
    * 本场景的默认脚步集（`footstep_sets.json` 的集 id）。zone 上的
    * {@link ZoneDef.footstepSet} 覆盖它；两者都没有 = 本场景不发脚步声。
@@ -587,6 +592,15 @@ export interface SceneData {
     mode: 'player' | 'camera' | 'entity' | 'fixed';
     /** mode='entity' 时的目标 NPC/实体 id */
     entityId?: string;
+    /**
+     * 仅 `mode='camera'`：本场景在**基准 zoom** 下把听者退到画面后方多少 wu。
+     * 缺省＝用 `footstep_sets.json` 的 `spatial.listenerBackAtBaseZoomWu`（600）。
+     *
+     * 为什么逐场景可调：正交投影下相机没有位置，这个视距是**作者约定**（推不出来，
+     * 只能听着定），而各场景的景别差得远——大远景该退得多、贴脸特写该退得少。
+     * 实际视距 = 本值 × (sceneBaseZoom / 当前 zoom)，**与窗口大小无关**。
+     */
+    backAtBaseZoomWu?: number;
   };
   /** 氛围滤镜 ID，对应 assets/data/filters/{filterId}.json，未写则不应用滤镜 */
   filterId?: string;
@@ -645,6 +659,13 @@ export interface SceneData {
    * 因此这里发起的成段演出（过场/对话）落在**可见**场景之上，不会被加载遮罩盖住，长演出也不阻塞揭幕。
    */
   onEnter?: ActionDef[];
+  /**
+   * 世界空间粒子 / 群体效果的实例（蝙蝠群、滴水、香火烟、萤火虫……）。
+   * 每条引用一份效果资产 `assets/data/vfx/<effect>.json`，锚点是画面点 + 离表面高度
+   * （先落地 / 落壳再抬 h，与轨迹控制点同一作者模型）。表演态，不入档，切场景即散。
+   * 见 [[vfx-system]]。
+   */
+  vfx?: VfxInstanceDef[];
 }
 
 /** 场景内实体分组；conditions 与成员自身条件按 AND 合成。 */
@@ -1089,7 +1110,8 @@ export type GraphConditionLeaf =
   | NarrativeRunCountConditionLeaf
   | PlaneConditionLeaf
   | PostureConditionLeaf
-  | TimePhaseConditionLeaf;
+  | TimePhaseConditionLeaf
+  | VfxStateConditionLeaf;
 
 /**
  * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
@@ -2650,23 +2672,117 @@ export interface TrajectoryTargetRef {
 }
 
 /**
- * 工作台的**重开现场**信息：烘焙时用的场景 / 时段背景 / 预览实体 / 锚点。
- * **运行时完全忽略**；场景或实体后来没了也只影响工作台的预览，不影响播放。
+ * 曲线的类型（2026-09-11 制作人定）：**只有一种曲线**，配置不同、播放参数不同。
+ * - `scene`：场景曲线，绑定作者场景（`authoring.sceneId`），只能在该场景里打开 / 播放；
+ *   播放时可以不给位置——就在画的地方（`authoring.origin`）播。
+ * - `free`：相对曲线，不绑场景（数据里不记 sceneId），可以在任何场景里打开制作；
+ *   播放时**必须**给播放位置。
+ */
+export type TrajectoryBinding = 'scene' | 'free';
+
+/**
+ * 曲线的**命名插槽点**：曲线暴露给场景的位置（人站位、接钱的人站位……），
+ * 其他动作以 {@link PositionRef} `kind:'slot'` 引用它（引用是活的：曲线改了插槽跟着动）。
+ * 播放曲线之前谁挪到哪个插槽、怎么挪，全由演出脚本调度；播放曲线本身不挪任何东西。
+ * 坐标是作者场景的画面坐标（wu）；世界空间资产另带脚下地面的 M-world 坐标 `world`（烘焙机回填）。
+ */
+export interface TrajectorySlot {
+  id: string;
+  label?: string;
+  x: number;
+  y: number;
+  world?: { x: number; y: number; z: number };
+}
+
+/**
+ * "一个位置从哪来"——所有引用一个点的动作参数共用的形状：
+ * - `curve`：**曲线上的点**（按时刻 / 进度在烘好的帧上取值，加上曲线此刻的播放位置）——
+ *   那条轨迹正在播就取**这次播放**的位置（"实时点"：铜钱还在飞，落点就是它这次要落的地方），
+ *   没在播就按场景曲线的原点算。相对曲线且没在播 = 没有绝对位置（内容错）。
+ * - `point`：一对场景坐标数字；
+ * - `entity`：某个实体此刻的位置（`'player'` / NPC id / 过场临时演员 id / 热点 id）；
+ * - `slot`：某条**场景曲线**的命名插槽（相对曲线的插槽没有绝对位置，不能这样引用）。
+ * 动作里写作 `at`；有 `at` 时覆盖同动作的 `x/y`。
+ */
+export type PositionRef =
+  | { kind: 'point'; x: number; y: number }
+  | { kind: 'entity'; id: string }
+  | { kind: 'slot'; trajectoryId: string; slotId: string }
+  | { kind: 'curve'; trajectoryId: string; point?: CurvePointPick; atMs?: number; progress?: number };
+
+/**
+ * "曲线上的哪个点"（{@link PositionRef} 的 `curve` 档，2026-09-11 制作人要的"曲线 eval 的实时点"）：
+ * - `start` / `end`：首帧 / 末帧（末帧最常用 = 落点）；
+ * - `time`：配 `atMs`（毫秒，超出两端按钳位取）；
+ * - `progress`：配 `progress`（0..1，按总时长折算）。
+ * 省略 `point` 时：给了 `atMs` 按 `time`、给了 `progress` 按 `progress`、都没给按 `end`。
+ */
+export type CurvePointPick = 'start' | 'end' | 'time' | 'progress';
+
+/**
+ * `playTrajectory` 播放时**临时生成**一个运动对象（对象可以根本不在场景里）：
+ * - `image`：一张图片（`src` 资源路径 + 世界尺寸），按"道具 = 没有动画包的普通 NPC"合成单帧动画包；
+ * - `character`：角色注册表里的一个角色模板（`characterId`，动画包从注册表继承）。
+ * `keep`：播完留在终点——它就成了这个场景真正的实体（进 sceneMemory.spawnedNpcs，随存档与场景实例化走）；
+ * 缺省播完移除。`id` 缺省自动分配（`_traj_<n>`），要在别的动作里引用它就自己起名。
+ */
+export interface TrajectorySpawnSpec {
+  kind: 'image' | 'character';
+  /** `image`：资源路径，如 `/resources/runtime/images/...` */
+  src?: string;
+  worldWidth?: number;
+  worldHeight?: number;
+  /** `character`：character_registry.json 的角色 id */
+  characterId?: string;
+  /** 精灵锚点（哪个点贴到曲线上；缺省底中，圆形物件设圆心 {0.5,0.5}） */
+  anchor?: { x: number; y: number };
+  id?: string;
+  name?: string;
+  keep?: boolean;
+}
+
+/** `playTrajectory` 交给 Game 的播放选项（handler 只做参数规范化）。 */
+export interface TrajectoryPlayOptions {
+  /** 播放位置引用；缺省：场景曲线原地（`origin`）、相对曲线退到目标此刻位置 */
+  at?: PositionRef;
+  /** @deprecated 老写法 anchorX/anchorY（= at point） */
+  anchor?: { x: number; y: number };
+  flipX?: boolean;
+  /** 临时生成运动对象（有它时 target 可空） */
+  spawn?: TrajectorySpawnSpec;
+  /** 开播时切目标动画状态（临时生成的对象在生成后切） */
+  animState?: string;
+}
+
+/**
+ * 工作台的**重开现场**信息与曲线的原点：烘焙时用的场景 / 时段背景 / 预览实体 / 原点位置。
+ * 运行时只读 `origin` / `originWorld`（场景曲线原地播放的位置）；其余只影响工作台。
  */
 export interface TrajectoryAuthoring {
-  /** 烘焙时装载的场景 id */
-  sceneId: string;
+  /** 场景曲线：绑定的作者场景 id；相对曲线**没有**这个键 */
+  sceneId?: string;
   /** 时段背景图名（`timeVariants` 那一套）；缺省 = 场景顶层背景 */
   background?: string;
-  /** 预览用实体（NPC id / 玩家）；缺省 = 只画锚点 */
+  /** 预览用实体（NPC id / 玩家）；只是骑在曲线上看效果的那个东西，换它曲线不动 */
   entity?: TrajectoryTargetRef;
-  /** 烘焙时的播放锚点（画面空间绝对坐标 wu）；`keyframes` = 绝对姿态 − 它 */
-  anchor: { x: number; y: number };
-  /** 世界空间资产：锚点的 M-world 绝对坐标（wu）；`worldKeyframes` = 绝对位置 − 它 */
+  /**
+   * **曲线原点**：作者在工作台里摆的参考点（作者场景的画面坐标 wu）。`keyframes` = 绝对姿态 − 它，
+   * 播放时给的位置对齐的就是它；场景曲线不给播放位置时就在这里播。
+   *
+   * ⚠ 它**不是第一帧**（2026-09-11 制作人第二轮定）：第一版把它钉死成第一帧，于是作者调一下运动起点，
+   * 整条曲线在播放时就整体位移了。所以第一帧**不恒为 (0,0)**，别拿这个当不变量。
+   * 作者没单独摆过时，烘焙机回填成曲线起点（老资产与新曲线的缺省关系）。
+   */
+  origin?: { x: number; y: number };
+  /** 世界空间资产：原点的 M-world 绝对坐标（wu）；`worldKeyframes` = 绝对位置 − 它。作者摆，烘焙机缺省回填 */
+  originWorld?: { x: number; y: number; z: number };
+  /** @deprecated 2026-09-11 前的锚点；读到按 `origin` 用，工作台打开即迁移 */
+  anchor?: { x: number; y: number };
+  /** @deprecated 同上 */
   anchorWorld?: { x: number; y: number; z: number };
-  /** 锚点离地高度（世界空间 wu；圆心锚的铜钱 = 半径）。画面空间用 `contactOffsetY` */
+  /** @deprecated 现在是 `source.bake.restHeight` */
   anchorHeight?: number;
-  /** 锚点 → 接地线的画面空间偏移（wu，Y 向下为正）；烘焙用它把 `sortY` 落在真实接地线 */
+  /** @deprecated 现在是 `source.bake.contactOffsetY` */
   contactOffsetY?: number;
 }
 
@@ -2676,16 +2792,20 @@ export interface TrajectoryAsset {
   id: string;
   label?: string;
   space: TrajectorySpace;
+  /** 曲线类型；缺省按老资产推：有 `authoring.sceneId` 的当场景曲线 */
+  binding?: TrajectoryBinding;
   /**
-   * 画面空间帧（相对锚点）。`screen` 资产的**运行时唯一真相**；
+   * 画面空间帧（相对曲线起点）。`screen` 资产的**运行时唯一真相**；
    * `world` 资产里它是**烘焙场景投好的回落帧**（目标场景没有 `depthConfig` 时用）。
    */
   keyframes: TrajectoryKeyframe[];
   /** `world` 资产的运行时真相：3D 相对帧，开播时按目标场景投影 */
   worldKeyframes?: TrajectoryWorldKeyframe[];
+  /** 命名插槽点（曲线暴露给场景的位置） */
+  slots?: TrajectorySlot[];
   /** 编辑器工作态（怎么烘出上面那串帧），**运行时完全忽略** */
   source?: TrajectorySource;
-  /** 工作台重开现场用，**运行时完全忽略** */
+  /** 工作台重开现场 + 曲线原点 */
   authoring?: TrajectoryAuthoring;
 }
 
@@ -2697,6 +2817,10 @@ export interface TrajectorySource {
     sampleHz?: number;
     /** 抽稀容差：各通道各自一档，超过才留帧 */
     tolerance?: { pos?: number; rot?: number; scale?: number; alpha?: number };
+    /** 骑在曲线上那个东西静止时支点离地高（世界空间 wu；圆心锚的铜钱 = 半径）：抛体贴地高度 */
+    restHeight?: number;
+    /** 支点 → 接地线的画面偏移（wu，Y 向下为正）：画面空间烘焙用它把 `sortY` 落在接地线 */
+    contactOffsetY?: number;
   };
 }
 
@@ -2846,6 +2970,24 @@ export interface LoreEntry {
   unlockConditions: ConditionExpr[];
   /** 玩家第一次在档案中点开该条目时执行（仅一次） */
   firstViewActions?: ActionDef[];
+}
+
+/**
+ * 系统说明卡（玩法需求清单 K4「系统说明卡」；`system_notes.json`）。
+ * 动作 `showSystemNote{noteId}` 发起：压暗 + 小图 + 两三行有重点的字，点一下关；
+ * 关的同时落 flag `sysnote_<id>`，对应见闻录条目的 `unlockConditions` 引用该 flag 即解锁。
+ */
+export interface SystemNoteDef {
+  id: string;
+  title: string;
+  /** 小图短路径（`images/illustrations/...`，与 `[img:]` 同一解析） */
+  image?: string;
+  /** 正文（支持 `[c:…]` 样式标记；两三行，有重点） */
+  body: string;
+  /** 关卡时要解锁的见闻录条目 id（仅供校验/文档；解锁本身走该条目的 unlockConditions flag） */
+  loreEntryId?: string;
+  /** 压暗时不压的 HUD 读数（被说明的那个东西留着让玩家看）；缺省全压 */
+  hudAnchor?: 'threeFires' | 'smell';
 }
 
 /**
@@ -3070,8 +3212,11 @@ export type ZoneKind = 'standard' | 'depth_floor';
 export interface ZoneSmellConfig {
   scent: string;
   intensity?: number;
+  /** @deprecated 静态方位已废（G.6，2026-09-10）：飘向只按 {@link source} 与玩家位置现算；留字段不报错、不生效。 */
   dir?: number;
   flicker?: boolean;
+  /** 气味源（本场景世界坐标）：气缕被从它那边吹过来，飘向的反方向就是它。不配 = 直的。 */
+  source?: { x: number; y: number };
 }
 
 export interface ZoneDef {
@@ -3363,8 +3508,10 @@ export interface SceneTimeVariant {
   filterId?: string;
   lightEnv?: SceneLightEnv;
   backgrounds?: BackgroundLayer[];
-  ambientSounds?: string[];
-  bgm?: string;
+  /** 该时段的环境音层（整套替换，不与顶层合并）；逐层可带本处音量。 */
+  ambientSounds?: AudioCueRef[];
+  /** 该时段的 BGM；可带本处音量——夜里同一条曲子压低半档就靠它。 */
+  bgm?: AudioCueRef;
   /**
    * 该时段的**环境参数覆盖**，合并到场景顶层 `lighting` 之上（2026-08-30）。
    *
@@ -3582,6 +3729,18 @@ export interface IZoneDataProvider {
  */
 export type AudioChannel = 'bgm' | 'sfx' | 'ambient' | 'voice';
 
+/**
+ * 一处音频引用：裸 id，或带**本处音量**的对象。
+ *
+ * 同一条素材在不同地方要的响度不同（近景推门要满、隔壁当氛围只要一半），
+ * 素材级的 `audio_config[...].volume` 表达不了这件事——所以每个引用点都能带一个
+ * `volume` 覆盖它。口径、解析入口与为什么不用兄弟键，见 `data/audioCue.ts`。
+ *
+ * ⚠ **不要直接 `ref.id` / `ref === other`**：裸字符串形态会漏、对象形态判等恒 false。
+ * 一律走 `audioCueId` / `audioCueVolume` / `sameAudioCue`。
+ */
+export type AudioCueRef = string | { id: string; volume?: number };
+
 // ===========================================================================
 // 脚步声与空间化音频（`public/assets/data/footstep_sets.json`）
 // ===========================================================================
@@ -3608,26 +3767,44 @@ export interface FootstepSetDef {
    *
    * 用片段名而不是「逻辑状态」：片段名已经区分了装扮（背尸的 `carry_walk` 与常态的
    * `walk` 是两个片段），一个轴就够，不必再引入装扮轴。
+   *
+   * 逐条可写 `{ id, volume }`：同一条素材挂在 `walk` 与 `crouchWalk` 上、后者要轻一半，
+   * 靠本处音量而不是复制一条素材。**它乘在集/全局 `gainDb` 之上**（见 {@link gainDb}）。
    */
-  sfx: Record<string, string>;
-  /** 整集增益（dB），缺省 0。用来把某块地整体压低/抬高。 */
+  sfx: Record<string, AudioCueRef>;
+  /**
+   * 整集增益（dB），缺省 0。用来把某块地整体压低/抬高。
+   *
+   * 与逐条音量是**两级**：最终 = `dbToLin(集 gainDb + 全局 gainDb) × 本条 volume`。
+   * dB 管"这块地整体多响"，本条 volume 管"这个片段相对本集多响"。
+   */
   gainDb?: number;
 }
 
-/** 空间化参数（全部 wu；角色高 150 wu 是尺度锚）。 */
+/**
+ * 空间化参数（全部 wu；角色高 150 wu 是尺度锚）。
+ *
+ * ⚠ 2026-09-08 v3 起，直达声的参考距离 / 衰减 / 最远 / 声像宽住在**声学空间**的 `direct`（声学米，
+ * 工作台里调），本表的那四项运行时**不再读**，只留着不让旧文件报错。还有用的是 `listenerBackAtBaseZoomWu`
+ * 与 `planarDepthScale`。
+ */
 export interface SpatialAudioConfig {
-  /** 参考距离：近于此不再变响。 */
+  /** @deprecated 运行时不读；直达声参数在声学空间 `direct.refDistanceM`。 */
   refDistanceWu?: number;
-  /** 衰减系数（WebAudio `inverse` 模型的 rolloffFactor）。 */
+  /** @deprecated 运行时不读；见 `direct.rolloff`。 */
   rolloff?: number;
-  /** 超过此距离一律不播。⚠ 必须显著大于 {@link listenerBackAtBaseZoomWu}。 */
+  /** @deprecated 运行时不读；见 `direct.maxDistanceM`。 */
   maxDistanceWu?: number;
-  /** 声像宽度上限 0..1。1 = 允许全左/全右。 */
+  /** @deprecated 运行时不读；见 `direct.panWidth`。 */
   panWidth?: number;
   /**
-   * 相机听者在**场景基准 zoom** 下站在画面后方多远（wu）。
+   * 相机听者在**场景基准 zoom** 下站在画面后方多远（wu，缺省 600）。
    * 实际视距 = 本值 × (sceneBaseZoom / 当前 zoom)——所以推拉镜头会改变听感远近，
    * 而**改窗口大小不会**。
+   *
+   * 这是**全局兜底**；逐场景覆盖写在场景 JSON 的 `acousticListener.backAtBaseZoomWu`
+   * （景别差得远的场景该有不同视距）。这个数推不出来只能听着定，理由见
+   * `audioSpace.ts` 的 `DEFAULT_LISTENER_BACK_AT_BASE_ZOOM_WU`。
    */
   listenerBackAtBaseZoomWu?: number;
   /** 无 depthConfig 场景的纵深近似系数；缺省 √2（假定 45° 俯角）。 */
@@ -3650,8 +3827,13 @@ export interface AudioListenerConfig {
   /** mode='fixed' 时的场景坐标 wu。 */
   x?: number;
   y?: number;
-  /** 听者耳朵离地高度 wu；`player`/`npc` 省略时取该实体身高的 0.9。 */
+  /** 听者耳朵离地高度 wu；`player`/`npc` 省略时取该实体身高的 0.9。**`camera` 不吃这一项**（镜头不是人）。 */
   heightWu?: number;
+  /**
+   * 仅 `camera`：基准 zoom 下的视距（wu）。覆盖 `footstep_sets.json` 的
+   * `spatial.listenerBackAtBaseZoomWu`。调试 / 工作台调参用。
+   */
+  backAtBaseZoomWu?: number;
 }
 
 export interface FootstepConfig {
@@ -3666,8 +3848,23 @@ export interface FootstepConfig {
    */
   clipFallback?: Record<string, string>;
   defaults?: {
-    /** 脚步相对 sfx 通道的整体增益（dB）。脚步是全程最高频的声音，缺省压低。 */
+    /**
+     * 脚步相对 sfx 通道的整体增益（dB）——**全局音量缩放**就是这一项。
+     * 与每集 `gainDb` 相加后折成线性倍数。脚步是全程最高频的声音，通常压低。
+     */
     gainDb?: number;
+    /**
+     * 脚步走不走空间化（缺省 `true`）。
+     *
+     * `false` = **就播一个声音**：不进空间音总线，因此没有距离衰减、没有声像、没有传播延迟、
+     * 没有空气低通、没有早期反射、没有晚期尾——退成一条普通的 Howler 一次性音效，
+     * 只吃 `gainDb` 与 sfx 通道音量。
+     *
+     * 给的是「先把脚步声本身听清楚」这件事：空间化 + 回音一起上时，判断素材本身
+     * 对不对（选错了 key、素材太长、电平不对）非常困难。关掉它对比一遍最快。
+     * ⚠ 只管**脚步**——环境音 / NPC / 试听声源仍走空间总线，那些是各自的配置。
+     */
+    spatialized?: boolean;
   };
   spatial?: SpatialAudioConfig;
   /** 缺省听者。运行时可被 `setAudioListener` 动作或调试命令改写。 */
@@ -3741,11 +3938,16 @@ export interface ICutsceneAudioPlayer {
    */
   beginCutsceneSfxCapture(): void;
   endCutsceneSfxCapture(stopPlaying: boolean): void;
-  /** 过场前音频基线快照：当前 BGM id（无则 null）与活跃环境层 id 列表，供同场景过场结束后还原。 */
-  getCurrentBgmId(): string | null;
-  getActiveAmbientIds(): string[];
-  /** 把音频还原到过场前基线：BGM 切回 bgmId（null=停），并补回 ambientIds（幂等，未变即 no-op）。 */
-  restoreAudioBaseline(bgmId: string | null, ambientIds: string[]): void;
+  /**
+   * 过场前音频基线快照：当前 BGM（无则 null）与活跃环境层，供同场景过场结束后还原。
+   *
+   * ⚠ 返回的是**带本处音量的引用**而不是裸 id：只快照 id 的话，过场里被停掉的那层
+   * 还原时会按素材原音量回来——场景特意压到 0.3 的环境音过场后突然变响，且只在真机听得出来。
+   */
+  getCurrentBgmCue(): AudioCueRef | null;
+  getActiveAmbientCues(): AudioCueRef[];
+  /** 把音频还原到过场前基线：BGM 切回 bgm（null=停），并补回环境层（幂等，未变即 no-op）。 */
+  restoreAudioBaseline(bgm: AudioCueRef | null, ambient: AudioCueRef[]): void;
 }
 
 export interface ISaveDataProvider {
@@ -3764,4 +3966,288 @@ export interface ISaveDataProvider {
   /** 跨运行壳互通：导出/导入原始 v1 JSON 信封；不改变 systems 桶。 */
   exportSlotPayload(slot: number): string | null;
   importSlotPayload(slot: number, raw: string): Promise<boolean>;
+}
+
+// ============================================================================
+// 世界空间粒子 / 群体效果（VFX）—— 数据形状（见 agent_docs [[vfx-system]]）
+//
+// 三件正交的东西：
+//   · 效果资产 `VfxEffectDef`（`assets/data/vfx/<id>.json`，粒子工作台唯一写入者）：
+//     若干发射器 + 各自的模块（外观 / 发射 / 运动 / 寿命 / 碰撞 / 群体行为 / 声音）；
+//   · 场景实例 `VfxInstanceDef`（场景 JSON `vfx[]`，主编辑器写）：效果 + 锚点 + 条件；
+//   · 刺激场（运行时事件 `emitVfxField`，不落盘）：世界点 + 半径 + 种类 + 强度 + 时长。
+// 所有长度 wu、速度 wu/s、加速度 wu/s²、时间秒；角色高 150 wu，g ≈ 865 wu/s²。
+// ============================================================================
+
+/** 画面点 + 离表面高度：先落地（`ground`）或落壳（`shell`）再沿世界 +Y 抬 `h`。 */
+export interface VfxAnchorDef {
+  x: number;
+  y: number;
+  /** 离表面高度（wu），缺省 0 */
+  h?: number;
+  /** 落在哪张面上：行走面（缺省）或可见深度壳（崖壁裂缝上的巢） */
+  surface?: 'ground' | 'shell';
+}
+
+/** 随寿命变化的标量曲线：`[t01, value]` 关键点，线性插值；缺省恒 1 */
+export type VfxCurve = [number, number][];
+
+export type VfxBlendMode = 'normal' | 'add';
+
+export interface VfxAppearanceDef {
+  /** 动画包 `anim.json`（cols/rows/states；帧动画）二选一 */
+  animFile?: string;
+  /** 单张图（静态粒子）二选一 */
+  image?: string;
+  /** 用动画包里哪个状态；缺省第一个 */
+  state?: string;
+  /** 群体栖息（挂着）时用的状态（取其第一帧）；缺省停在 `state` 第一帧 */
+  restState?: string;
+  /**
+   * 帧率：数字 = 固定；对象 = 按速度插值（扑翼随飞得快慢）；缺省用动画包自带 frameRate。
+   */
+  frameRate?: number | { atSpeed0: number; atSpeedMax: number };
+  /** 粒子世界宽度（wu）；高按贴图长宽比 */
+  sizeWu: number;
+  /** 大小随机倍率区间，缺省 [1,1] */
+  sizeJitter?: [number, number];
+  sizeOverLife?: VfxCurve;
+  alphaOverLife?: VfxCurve;
+  /** 乘色（0..1），缺省白 */
+  tint?: [number, number, number];
+  /** 混合：normal / add（火星、萤火） */
+  blend?: VfxBlendMode;
+  /** 吃 probe 底光 + 场景实体灯（烟、蝙蝠）；自发光的东西 false。缺省 true */
+  lit?: boolean;
+  /**
+   * 镜面 / 自发光比例（0..1，缺省 0，只对 `lit` 有意义）：这一份亮度**不吃**本地漫反射着色。
+   *
+   * 为什么要有：`lit` 走的是纯漫反射（probe 底光 + 实体灯 × N·L）。水滴这类电介质的漫反射
+   * 反照率近乎 0——它看得见全靠镜面反射远处的天光和折射背景，而我们不追镜面瓣。只用漫反射
+   * 画水滴，结果就是洞里一团比岩壁还黑的疙瘩（实测崖墓前段：滴水 23/255，背景 68/255）。
+   * 这个系数就是"其中多少份额来自那条我们算不出来的镜面项"，不是亮度拉杆。
+   */
+  emissive?: number;
+  /** 沿速度拉伸（雨、火星）：1 = 长度 = 速度 × 该秒数；0 = 纯 billboard（缺省） */
+  stretchByVelocity?: number;
+  /** 左右镜像随速度 x 分量（侧视贴图的蝙蝠 / 鸟）。缺省 false */
+  faceVelocity?: boolean;
+  /** 软粒子：与壳的深度差在此宽度内线性淡出（烟贴墙不切硬边）。缺省 0 = 关 */
+  softEdgeWu?: number;
+  /** 自转（度/秒）区间 + 初始随机相位。缺省不转 */
+  spin?: { rate: [number, number]; randomPhase?: boolean };
+}
+
+export type VfxSpawnShapeDef =
+  | { kind: 'point' }
+  | { kind: 'sphere'; radius: number }
+  | { kind: 'disc'; radius: number }
+  | { kind: 'box'; size: [number, number, number] }
+  | { kind: 'line'; to: [number, number, number] };
+
+export interface VfxSpawnDef {
+  /** 池容量（同时存活上限） */
+  max: number;
+  /** 持续发射速率（个/秒）；不写 = 只有 burst */
+  rate?: number;
+  /** 开播时一次性发多少 */
+  burst?: number;
+  /** 发射形状（相对发射器原点，M-world） */
+  shape?: VfxSpawnShapeDef;
+  /** 初速大小区间（wu/s），缺省 [0,0] */
+  speed?: [number, number];
+  /** 初速方向（M-world 向量，会归一化）；缺省各向同性随机 */
+  direction?: [number, number, number];
+  /** 围绕 direction 的圆锥半角（度），缺省 0；direction 缺省时无意义 */
+  spread?: number;
+  /** 发射器活跃时长（秒）；不写 = 一直发（loop） */
+  duration?: number;
+}
+
+export interface VfxMotionDef {
+  /** 重力（wu/s²，正值向下）。缺省 0。水滴 865 */
+  gravity?: number;
+  /** 线性阻力系数（1/s）：dv = −drag·v·dt */
+  drag?: number;
+  /** 恒定风（wu/s²，M-world） */
+  wind?: [number, number, number];
+  /** 浮力（wu/s²，向上；烟） */
+  buoyancy?: number;
+  /** 湍流：三维 curl 噪声场的加速度幅值 / 空间尺度（wu）/ 时间变化速率 */
+  turbulence?: { strength: number; scale: number; speed?: number };
+  /** 速度上限（wu/s） */
+  maxSpeed?: number;
+  /**
+   * 对刺激场的反应（**非群体**发射器用；群体走 `behavior.attitude`，两者不叠加）。
+   *
+   * 没有这一项时，普通粒子只认 `wind` 场——`fear` / `attract` 一律穿过去不起作用。
+   * 萤火虫"玩家走近就轻轻散开"靠的就是这条：玩家动静场是常驻的、强度随速度
+   * （站着不动强度 0 = 它们自己飘回来），所以不需要任何事件，走过去就散、走开就聚。
+   */
+  stimulus?: VfxStimulusResponseDef;
+}
+
+/** 普通粒子怎么看待刺激场。标签与群体那份 `attitude` 同一套词汇（`player:motion` / `item:bug` / …）。 */
+export interface VfxStimulusResponseDef {
+  /** 标签 → 权重（0..1）：怕它，沿"场心 → 粒子"方向加速 */
+  fear?: Record<string, number>;
+  /** 标签 → 权重（0..1）：被它吸引，反方向加速 */
+  attract?: Record<string, number>;
+  /**
+   * 权重 1、场强 1、粒子正在场心时的加速度（wu/s²）。实际加速度 = 权重 × 场强 ×
+   * `(1−r/R)²` × 这个数 —— 与群体三力同一口径：作者填的是**真加速度**，不是无量纲权重。
+   */
+  accel: number;
+}
+
+export interface VfxLifeDef {
+  /** 寿命区间（秒）；不写 = 永生（群体） */
+  seconds?: [number, number];
+}
+
+export type VfxCollisionResponse = 'none' | 'kill' | 'bounce' | 'stick' | 'slide';
+
+export interface VfxCollisionDef {
+  /** 撞行走面 */
+  ground?: VfxCollisionResponse;
+  /** 撞可见深度壳（墙、前景） */
+  shell?: VfxCollisionResponse;
+  /** 弹性 0..1 */
+  restitution?: number;
+  /** 切向摩擦 0..1（撞时切向速度乘 1−friction） */
+  friction?: number;
+  /** 粒子碰撞半径（wu） */
+  radiusWu?: number;
+  /** 撞地 / 撞壳时在撞点发子发射器（同效果内的发射器 id）；每次发 `count` 个 */
+  onHit?: { emitter: string; count: number };
+}
+
+export type VfxFlockState = 'roosting' | 'airborne' | 'fleeing' | 'returning';
+
+/**
+ * 群体行为模块（挂了它的发射器 = 一群会互相看见的个体）。三项经典力全部写成
+ * **加速度上限 × 方向**（wu/s²），没有无量纲权重。
+ */
+export interface VfxFlockBehaviorDef {
+  /** 巡航速度 / 最大速度（wu/s）、最大加速度（wu/s²） */
+  cruise: number;
+  max: number;
+  maxAccel: number;
+  /** 离地最低高度（wu） */
+  minAltitude: number;
+  /** 感知半径 / 期望分离距离（wu） */
+  senseRadius: number;
+  separation: number;
+  /** 三项力各自的加速度上限（wu/s²） */
+  accel: { separation: number; alignment: number; cohesion: number };
+  /** 绕目标的轨道：半径、离目标脚点的高度（wu）、转向 */
+  orbit: { radius: number; height: number; handedness?: 'cw' | 'ccw' | 'mixed' };
+  /** 巢体积半径 / 活动域半径 / 惊起半径（wu，相对发射器原点） */
+  home: { nestRadius: number; rangeRadius: number; startleRadius: number };
+  attitude: {
+    /** 对各类刺激标签的恐惧权重（`item:bug` / `player:motion` / `light` / `sfx:footstep` / 任意作者标签） */
+    fear: Record<string, number>;
+    /** 吸引权重（同上） */
+    attract?: Record<string, number>;
+    /** 个体反应延迟区间（秒） */
+    reactionDelay: [number, number];
+    /** 恐惧每秒衰减比例（0..1） */
+    fearDecay: number;
+    /** 群恐惧均值超过它 → fleeing */
+    fleeThreshold: number;
+    /** 安静这么久 → 回巢 */
+    calmSeconds: number;
+  };
+  /** 开播时是栖息还是已在飞 */
+  initialState?: VfxFlockState;
+  /** 扑翼频率随速度：巡航 / 最大速度时的帧率（Hz） */
+  wingFlap?: { atCruise: number; atMax: number };
+  /** 个性：速度倍率抖动幅度（0.2 = ±20%） */
+  speedJitter?: number;
+  /** 游走扰动加速度（wu/s²） */
+  wander?: number;
+  /** 首次惊起时自动发一个 `startle` 标签的恐惧脉冲（半径、强度、时长） */
+  startlePulse?: { radius: number; strength: number; duration: number };
+}
+
+export interface VfxSoundDef {
+  /** 循环环境声（audio_config sfx id），从群质心 / 发射器原点空间播 */
+  loop?: string;
+  /** 惊起 / 开播时播一次 */
+  start?: string;
+  /** 撞击时播（撞地水花） */
+  hit?: string;
+}
+
+export interface VfxEmitterDef {
+  id: string;
+  /** 相对实例锚点的 M-world 偏移（wu），缺省 [0,0,0] */
+  offset?: [number, number, number];
+  /** 只由 `onHit` 触发、不自己发（子发射器） */
+  subOnly?: boolean;
+  appearance: VfxAppearanceDef;
+  spawn: VfxSpawnDef;
+  motion?: VfxMotionDef;
+  life?: VfxLifeDef;
+  collision?: VfxCollisionDef;
+  behavior?: VfxFlockBehaviorDef;
+  sound?: VfxSoundDef;
+}
+
+/** 效果资产：`public/assets/data/vfx/<id>.json`，`id == 文件名`。 */
+export interface VfxEffectDef {
+  id: string;
+  label?: string;
+  emitters: VfxEmitterDef[];
+  /** 工作台重开现场用（运行时忽略） */
+  authoring?: {
+    sceneId?: string;
+    background?: string;
+    anchor?: VfxAnchorDef;
+    note?: string;
+  };
+}
+
+/** 场景里摆的一个效果实例（`SceneData.vfx[]`）。 */
+export interface VfxInstanceDef {
+  id: string;
+  /** 效果资产 id */
+  effect: string;
+  anchor: VfxAnchorDef;
+  /** 确定性种子；不写按实例 id 哈希 */
+  seed?: number;
+  /** 数量倍率（乘每个发射器的 max / burst / rate），缺省 1 */
+  countScale?: number;
+  /** 进场景就开；false = 等 `playVfx`。缺省 true */
+  autoStart?: boolean;
+  /** 组内 AND；与 NPC / 热区的 `conditions` 同一条通道 */
+  conditions?: ConditionExpr[];
+  /** 只在这些时段存在（缺省全时段） */
+  timePhases?: string[];
+}
+
+export type VfxFieldKind = 'fear' | 'attract' | 'wind';
+
+/** 刺激场（运行时事件，不落盘）。位置由 `VfxFieldAt` 解析。 */
+export interface VfxFieldDef {
+  kind: VfxFieldKind;
+  /** 作者标签：群体按它查 `attitude.fear/attract` 的权重；`wind` 忽略 */
+  tag: string;
+  /** 半径（wu）。场强 = strength × (1 − r/radius)²（截断到半径） */
+  radius: number;
+  /** 强度（无量纲；wind 时是 wu/s²） */
+  strength: number;
+  /** 持续时长（秒）；0 / 不写 = 瞬时脉冲（一拍） */
+  duration?: number;
+  /** wind 的方向（M-world） */
+  direction?: [number, number, number];
+}
+
+/** 效果实例的群体状态（条件叶 `vfxState` 用）；没有群体模块的实例只有 active / inactive */
+export type VfxInstanceState = VfxFlockState | 'active' | 'inactive';
+
+/** 条件叶：`{ vfx: 实例 id, vfxState: 'fleeing' }` */
+export interface VfxStateConditionLeaf {
+  vfx: string;
+  vfxState: VfxInstanceState;
 }

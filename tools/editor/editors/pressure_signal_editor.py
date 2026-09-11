@@ -31,6 +31,7 @@ from ..project_model import ProjectModel
 from ..shared import confirm
 from ..shared.list_affordances import wire_list_affordances
 from ..shared.action_editor import ActionEditor
+from ..shared import audio_cue
 from ..shared.audio_preview_selector import AudioIdPreviewSelector
 from ..shared.hex_color_pick_row import HexColorPickRow
 from ..shared.form_layout import compact_form
@@ -175,8 +176,13 @@ class PressureHoldEditor(QWidget):
         self._f_decay.setSingleStep(0.1)
         self._f_decay.setToolTip("松手后每秒回落的进度量")
         ft.addRow("decayPerSecond", self._f_decay)
-        self._f_sfx = AudioIdPreviewSelector(self._model, "sfx", allow_empty=True, editable=True)
-        self._f_sfx.setToolTip("长按时循环的音效 id（可空）；右侧按钮可试听当前选择。")
+        self._f_sfx = AudioIdPreviewSelector(
+            self._model, "sfx", allow_empty=True, editable=True, with_volume=True,
+        )
+        self._f_sfx.setToolTip(
+            "长按时循环的音效 id（可空）；右侧按钮可试听当前选择。\n"
+            "中间那格是**本处音量**：同一条喘息在不同长按里该多重并不一样。",
+        )
         ft.addRow("holdSfx", self._f_sfx)
         self._f_color_chk = QCheckBox("自定义")
         self._f_color_chk.setToolTip("勾选则覆盖进度条默认颜色")
@@ -333,12 +339,14 @@ class PressureHoldEditor(QWidget):
         self._f_release.setText(h.get("releaseHint", ""))
         self._f_fill.setValue(float(h.get("fillSeconds") or 3.0))
         self._f_decay.setValue(float(h.get("decayPerSecond") or 0.6))
-        _sfx_cur = h.get("holdSfx", "") or ""
+        # 盘上可能是裸 id 也可能是 { id, volume }
+        _sfx_raw = h.get("holdSfx")
+        _sfx_cur = audio_cue.cue_id(_sfx_raw)
         _sfx_ids = list(self._model.all_audio_ids("sfx"))
         if _sfx_cur and _sfx_cur not in _sfx_ids:
             _sfx_ids = [_sfx_cur] + _sfx_ids
         self._f_sfx.set_items(_sfx_ids)
-        self._f_sfx.set_current(_sfx_cur)
+        self._f_sfx.set_cue(_sfx_raw)
         _bc = str(h.get("barColor", "") or "")
         self._f_color_chk.setChecked(bool(_bc))
         self._f_color.setEnabled(bool(_bc))
@@ -395,9 +403,9 @@ class PressureHoldEditor(QWidget):
             h.pop("releaseHint", None)
         h["fillSeconds"] = round(self._f_fill.value(), 4)
         h["decayPerSecond"] = round(self._f_decay.value(), 4)
-        sfx = self._f_sfx.current_id().strip()
-        if sfx:
-            h["holdSfx"] = sfx
+        sfx_cue = self._f_sfx.cue_for_write(h.get("holdSfx"))
+        if sfx_cue is not None:
+            h["holdSfx"] = sfx_cue
         else:
             h.pop("holdSfx", None)
         if self._f_color_chk.isChecked():

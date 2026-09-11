@@ -161,13 +161,15 @@ describe('公理①续：强度大到一定程度必须过曝成白（clamp 行�
   it('贴身强灯的着色输出超过 1（shader 端 clamp 到纯白）', () => {
     // 制作人原话:"灯强度很大的时候,旁边的角色早就应该过曝成一片白"。
     // 输出无上限地随 I 线性涨,唯一的封顶是 shader 末端的 clamp —— 所以
-    // 必然存在一个 I 让输出 ≥1。当前尺度体系下贴身(50wu)过曝阈值 ≈ I=11000
-    // (中位反照率 0.0381 的暗色美术,想烧白确实要很硬的光)。断言 2 万必白;
-    // 阈值若因尺度重构漂了,这条会替人记住新数。
-    const E = shaderSideIrradiance([lampInFront(50, 20000)]);
+    // 必然存在一个 I 让输出 ≥1。作者面 intensity 相对 q 定义(打包处 × wuPerQUnit²
+    // 折成 wu,见 lightPacking.pointIntensityWu),雾津街头贴身(50wu)过曝阈值
+    // ≈ I=0.015(wu 侧 ≈ 11700;2026-08-31 记的"≈11000"是那一折缺席时量的,
+    // 当时同一盏灯的照度差 880² 倍)。断言 0.05 必白;阈值若因尺度重构漂了,
+    // 这条会替人记住新数。
+    const E = shaderSideIrradiance([lampInFront(50, 0.05)]);
     expect(shadedOut(E)).toBeGreaterThan(1);
     // 且在过曝前是严格线性的(不是被什么东西软压着)
-    const half = shaderSideIrradiance([lampInFront(50, 10000)]);
+    const half = shaderSideIrradiance([lampInFront(50, 0.025)]);
     expect(E / half).toBeCloseTo(2, 5);
   });
 });
@@ -193,7 +195,10 @@ describe('公理③：灯在法线反方向 ⇒ 完全不受光（制作人点�
     const chest = qToWorld(CHEST_Q, WU_PER_Q);
     const inPlaneAbove = { ...lampInFront(60, 1000),
       pos: [chest[0], chest[1] + 80, chest[2]] as [number, number, number] };
-    expect(shaderSideIrradiance([inPlaneAbove])).toBeLessThan(1e-6);   // 浮点尾巴容差
+    // 浮点尾巴容差按**同一盏灯放正前方等距处**的照度做相对量:强度折成 wu 之后
+    // (× wuPerQUnit²)绝对值 1e-6 早被浮点尾巴 × 880² 越过,相对量才是"几何上为零"的判据。
+    const frontSameDist = shaderSideIrradiance([lampInFront(80, 1000)]);
+    expect(shaderSideIrradiance([inPlaneAbove]) / frontSameDist).toBeLessThan(1e-5);
     const lowButInFront = { ...lampInFront(60, 1000),
       pos: [chest[0], chest[1] - 50, chest[2] - 40] as [number, number, number] };
     expect(shaderSideIrradiance([lowButInFront])).toBeGreaterThan(0);

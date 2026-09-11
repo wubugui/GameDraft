@@ -29,6 +29,10 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
         os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
                               "--use-gl=angle --use-angle=swiftshader-webgl --enable-unsafe-swiftshader")
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    # 并进禁缓存开关(顺序:先 setdefault 上面那份,再并,否则上面的会被吃掉)。
+    # run_desktop 里还会再调一次,幂等。
+    from tools.webengine_cache_policy import disable_all_caches
+    disable_all_caches()
     from tools.desktop_shell import run_desktop
     from tools.trajectory_workbench import serve
 

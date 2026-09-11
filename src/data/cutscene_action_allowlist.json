@@ -43,5 +43,11 @@
   "activatePlane",
   "deactivatePlane",
   "showBlackout",
-  "hideBlackout"
+  "hideBlackout",
+  "setThreeFiresVisible",
+  "setSmellVisible",
+  "playVfx",
+  "stopVfx",
+  "setVfxState",
+  "emitVfxField"
 ]

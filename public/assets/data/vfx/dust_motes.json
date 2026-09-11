@@ -1,0 +1,74 @@
+{
+  "id": "dust_motes",
+  "label": "光柱里的尘埃",
+  "emitters": [
+    {
+      "id": "dust",
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/dust.png",
+        "sizeWu": 9,
+        "sizeJitter": [
+          0.6,
+          1.2
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.2,
+            0.85
+          ],
+          [
+            0.8,
+            0.85
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1.0,
+          0.78,
+          0.5
+        ],
+        "blend": "add",
+        "lit": false
+      },
+      "spawn": {
+        "max": 120,
+        "rate": 12,
+        "shape": {
+          "kind": "box",
+          "size": [
+            300,
+            180,
+            240
+          ]
+        },
+        "speed": [
+          2,
+          6
+        ]
+      },
+      "motion": {
+        "gravity": 3,
+        "drag": 1.2,
+        "turbulence": {
+          "strength": 12,
+          "scale": 50,
+          "speed": 0.2
+        },
+        "maxSpeed": 12
+      },
+      "life": {
+        "seconds": [
+          8,
+          12
+        ]
+      }
+    }
+  ]
+}

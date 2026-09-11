@@ -32,6 +32,14 @@
 - 发现库内文档与现实打架:收尾往 `agent_docs/_meta/inbox/` 丢一条三行偏差记录(零门槛)。
 <!-- agent-docs-gate:end -->
 
+## §H `handbook/` 是制作人的手册,agent 不得擅写
+
+`handbook/docs/*.md` 是制作人**自己维护、自己看**的文档站(与 `agent_docs/` 无关——那是 agent 自己维护
+自己看的库,两边互不搬运)。agent **只在制作人明确要求时、按其指定的内容**写入;不主动新增、不整理、
+不同步、不生成、不把 agent_docs 的东西搬进去——制作人没要的每一个字都是他阅读时的噪音。
+agent_docs 治理与索引一律不触碰该目录。**往里写一律走 `handbook-mode` 技能(文档模式)**:只写他说的、
+拿不准就问、结构由 agent 规划先过目。开站:`sh scripts/py.sh -m tools.handbook`(console / 主编辑器 F1 同一入口)。
+
 ## §0 先分类,再动手
 
 先判断这次改动**会不会改变玩家可见的规则 / 结果 / 资源流 / 进度 / 玩法体验**,按下表选规则。
@@ -69,6 +77,6 @@ sh scripts/py.sh -B tools/skill_workflow_governance/govern.py audit
 
 `.cursor/skills/` 与 `.claude/skills/`:feature-iteration、gameplay-iteration、production-mode、
 pure-data-iteration、editor-tools-iteration、add-game-action、add-text-ref、
-core-framework-architecture-review、agent-docs-cli。
+core-framework-architecture-review、agent-docs-cli、**handbook-mode**(文档模式:往制作人手册写东西,见 §H)。
 
 **壳只留"怎么做",知识("是什么/为什么")一律在 agent_docs**——两边打架时以库为准。

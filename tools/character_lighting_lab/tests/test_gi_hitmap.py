@@ -144,8 +144,34 @@ class TestEntryPoints:
 
     def test_端口用到的实现可导入(self) -> None:
         """路由里写的是延迟 import;模块名写错要到点击那一刻才炸。"""
-        from tools.character_lighting_lab.scene_fields import bake
-        assert callable(bake)
+        from tools.character_lighting_lab.scene_fields import bake, bake_scene
+        assert callable(bake) and callable(bake_scene)
+
+    def test_端口烘的是全部时段原画(self) -> None:
+        """端口必须走 bake_scene(全部时段原画),不是 bake(只当前那张)。
+
+        只烘当前那张不会报错:白天一切正常,夜里静默拿白天的法线去照夜原画,
+        而查看器上的回执照样是绿的。
+        """
+        import inspect
+        from tools.character_lighting_lab import serve
+        src = inspect.getsource(serve.H.do_GET)
+        branch = src.split("u.path == '/api/bake_fields'")[1].split("u.path ==")[0]
+        assert 'bake_scene' in branch, '几何场端口只烘了当前那张背景——夜原画会被漏掉'
+
+    def test_查看器里有烘几何场的按钮(self) -> None:
+        """端口接上 ≠ 作者点得到。2026-09-09 之前就是:路由在、测试绿,
+        但 viewer 里没有任何按钮 fetch 它,「导出深度 → 几何场过期 → 重烘」
+        这条流程在软件内走不完,只能去敲 CLI。
+        """
+        from pathlib import Path
+        v = Path(__file__).resolve().parents[1] / 'viewer'
+        html = (v / 'index.html').read_text(encoding='utf-8')
+        js = (v / 'app.js').read_text(encoding='utf-8')
+        assert 'id="bake_fields"' in html, '查看器没有「烘几何场」按钮'
+        assert "$('bake_fields').onclick" in js, '「烘几何场」按钮没绑处理函数'
+        assert '/api/bake_fields?scene=' in js, '「烘几何场」按钮没打到端口'
+        assert 'fields_stale' in js, '导出深度后没读 fields_stale——作者不会知道几何场过期了'
 
     def test_CLI_入口在(self) -> None:
         import inspect

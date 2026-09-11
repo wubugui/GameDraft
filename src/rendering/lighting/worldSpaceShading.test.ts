@@ -122,6 +122,17 @@ describe('铁律 0 · 光照一律在世界空间、单位 wu', () => {
     expect(CHAR_SRC).toMatch(/wrWorldToQ\(uSMRow0, uSMRow1, uSMRow2, n\)/);
   });
 
+  it('线扫前缀的灯位必须经 worldWuToQ 折回 q（朝向 + 尺度），光晕用作者面的强度', () => {
+    // 2026-08-30 ~ 09-10：前缀灯位只转朝向没除 wuPerQUnit ⇒ 带影灯全被判成被挡；
+    // 点/聚光强度在打包处折成 wu（× wuPerQUnit²），光晕的 gain 是按作者面的数调的，要除回去。
+    // 两处叠着，画面上就是"灯全灭"而零报错。
+    expect(SCENE_SRC).toContain(
+      'worldWuToQ([packed.a[o], packed.a[o + 1], packed.a[o + 2]], mr, this.geo.wuPerQUnit)');
+    expect(SCENE_SRC, 'SceneLightingPass 又自己拼了一份 toQ —— 走 lightPacking.worldWuToQ')
+      .not.toContain('const toQ =');
+    expect(SCENE_SRC).toContain('B.w / (uWuPerQUnit * uWuPerQUnit)');
+  });
+
   it('GLSL 模板字面量里不许出现反引号（会当场截断字符串）', () => {
     // 本会话被这条坑了四次：在 /* glsl */ ` ... ` 里的中文注释里写 `foo`，
     // 反引号直接闭合模板字符串，报错信息指向一个看着毫不相干的行。
