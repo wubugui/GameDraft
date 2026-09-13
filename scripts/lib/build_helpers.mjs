@@ -265,7 +265,7 @@ export const PROBE_ATLAS_FILE_BY_MODE = { 1: 'atlas_l1.bin', 2: 'atlas_l2.bin', 
 export const DEFAULT_PROBE_MODE = 3;
 export const LIGHTING_PAYLOAD_CORE = ['lighting.json', 'probes_valid.bin', 'ground_d.png'];
 export const LIGHTING_GEOMETRY_FILES = ['geometry.json', 'normal.png', 'albedo.png'];
-export const LIGHTING_PAYLOAD_OPTIONAL = ['skyao_probe.bin'];
+export const LIGHTING_PAYLOAD_OPTIONAL = ['skyao_probe.bin', 'sway.json', 'sway_plate.png', 'sway_matte.png', 'sway_ids.png', 'sway_rigid.png', 'sway_plate_normal.png', 'sway_plate_albedo.png', 'sway_plate_depth.png'];
 export const LIGHTING_PAYLOAD_DEBUG_ONLY = ['vol_rad.bin', 'vol_emit.bin'];
 
 export function probeModeOf(shadingMode) {

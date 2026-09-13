@@ -19,6 +19,7 @@ triggers:
 verified_by:
   - tools/editor/tests/test_anim_editor_save_fidelity.py
   - tools/editor/tests/test_anim_reexport_preserves_manual_fields.py
+  - tools/animation_pipeline/tests/test_normal_bake_discovery.py
 last_governed: 2026-08-05
 ---
 
@@ -50,8 +51,14 @@ last_governed: 2026-08-05
   id;解析 id 先剥前缀(编辑器 `_anim_bundle_id_from_ref`)。
 - **法线图必须离线烘焙**:新增/重导图集后跑 `./dev.sh bake-normals` 产 `<图集名>.normal.png`;
   运行时只做同步缓存读、取不到走 shader 平面法线兜底。**禁止改回运行时现算**——曾在
-  `scene:ready` 里从 alpha 现算(EDT+高斯),单场景同步阻塞主线程 9.6s。热点
-  `displayImage.image` 是同一约定的第二类消费方(按 1×1 烘)。
+  `scene:ready` 里从 alpha 现算(EDT+高斯),单场景同步阻塞主线程 9.6s。
+- **展示图(`displayImage.image`)是同一约定的第二类消费方**(按 1×1 烘),且烘焙的发现口径
+  必须 = **运行时预载清单请求 `<图名>.normal.png` 的那一组**:热点 + **没有 animFile 的 NPC**
+  (`SceneManager` 建 manifest 时两个分支各加一条,`bake_normal_atlas.discover_display_images`
+  照着扫)。漏一类不是"降级成平面法线"而是**进场弹红条**——dev server 对不存在的文件回
+  200+HTML,Pixi 拿 HTML 去解码抛 `InvalidStateError`(2026-09-03 铜钱实测,当时 NPC 那一类
+  整个在发现口径外)。`renderRaw` 不影响是否烘:那是**这一处摆放**不受光,同一张图在轨迹
+  spawn 里照样受光,法线是图的派生物、不是摆放的派生物。
 - **人工字段必须扛得住重导出**:导出器"从零拼 dict"整份覆盖 anim.json,人手填的值靠
   `merge_preserved_anim_fields` 并回——per-state 走白名单 `PRESERVED_STATE_FIELDS`
   (`referenceSpeed`/`bubbleAnchor`),顶层走"导出器自产键"黑名单取反(`normalBake` 即此类)。

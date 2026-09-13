@@ -58,17 +58,17 @@ async function main(): Promise<void> {
     renderer.setState({ scent: curScent, intensity: curIntensity, dir: curDir, dirDepth: curDepth, flicker: curFlicker });
   };
 
-  /** 九宫格：行 = 纵深（上：源在后/朝镜头扑来 +1；中 0；下：源在前/吹向深处 -1），列 = 横向（左：源在右 -1；中 0；右：源在左 +1） */
+  /** 九宫格：行 = 纵深（上：源在后/吹向深处 -1；中 0；下：源在前/朝镜头扑来 +1），列 = 横向（左：源在左 -1；中 0；右：源在右 +1）——格子的上下左右与世界一致 */
   const buildGrid = (scent: string, intensity: number): void => {
     if (!profiles) return;
     for (const r of grid) r.destroy();
     grid = [];
     gridRoot.removeChildren().forEach((c) => c.destroy({ children: true }));
     if (renderer) { renderer.destroy(); renderer = null; }
-    const depths = [1, 0, -1];
+    const depths = [-1, 0, 1];
     const dirs = [-1, 0, 1];
-    const rowLabel = ['源在后（烟朝镜头扑来）', '源在同一排', '源在前（烟被吹向深处）'];
-    const colLabel = ['源在右', '源正对', '源在左'];
+    const rowLabel = ['源在后（烟被吹向深处）', '源在同一排', '源在前（烟朝镜头扑来）'];
+    const colLabel = ['源在左', '源正对', '源在右'];
     for (let ri = 0; ri < 3; ri++) {
       for (let ci = 0; ci < 3; ci++) {
         const cell = new Container();

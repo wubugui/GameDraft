@@ -26,6 +26,10 @@
 不许"第二次保存曲线自己挪走"）。
 
 命名插槽 ``slots``（曲线暴露给场景的位置）原样透传；世界空间给每个插槽补脚下地面的世界坐标 ``world``。
+
+音效关键点 ``cues``（播到那一刻播一条音效）不参与任何烘焙数学——它是**时间轴**上的事，
+与空间、投影、播放位置全无关；这一层只做落形：id 去重、按时刻升序、时刻钳进 ``[0, 总时长]``
+（总时长烘完才知道，所以钳位必须在这里而不是前端）。
 """
 from __future__ import annotations
 
@@ -39,7 +43,7 @@ from .bake3d import bake_world_samples, decimate_world_samples
 from .model import as_number, write_keyframe
 from .projection import project_world_keyframes
 
-__all__ = ["bake_asset", "bake_params", "binding_of"]
+__all__ = ["bake_asset", "bake_params", "binding_of", "clean_cues"]
 
 BINDINGS: tuple[str, ...] = ("scene", "free")
 
@@ -145,7 +149,69 @@ def _clean_slots(doc: dict) -> list[dict]:
     return out
 
 
+def _clean_audio_cue(raw: Any) -> Any:
+    """一处音频引用（裸 id 或 ``{id, volume}``，口径见 ``src/data/audioCue.ts``）落形。
+
+    没选音效时写空串 **而不是删掉整条关键点**：作者是"先在曲线上点一下、再挑音效"，
+    中间存一次盘不该把刚放下的标记吞了。空引用运行时 warn 跳过、校验器 warning。
+    """
+    if isinstance(raw, str):
+        return raw.strip()
+    if isinstance(raw, dict):
+        aid = str(raw.get("id") or "").strip()
+        vol = raw.get("volume")
+        if aid and isinstance(vol, (int, float)) and not isinstance(vol, bool) and math.isfinite(float(vol)) and vol >= 0:
+            return {"id": aid, "volume": round(float(vol), 3)}
+        return aid
+    return ""
+
+
+def clean_cues(doc: dict, total_ms: float = 0.0) -> list[dict]:
+    """音效关键点（``cues``）落形：id 唯一非空、按时刻升序、时刻钳进 ``[0, total_ms]``。
+
+    ``total_ms <= 0``（这次没烘出帧）时**不钳上界**——否则一次烘焙失败就把全部关键点压到 0，
+    而这种破坏在画面上与"音效时机被改了"完全无法区分。
+
+    与运行时 ``TrajectorySystem.normalizeCues`` 同口径（那边也是钳 + 升序），
+    这里多做的只有"写盘形"那部分：id 去重、取整、省掉空 label。
+    """
+    raw = doc.get("cues")
+    if not isinstance(raw, list):
+        return []
+    cap = float(total_ms) if total_ms and total_ms > 0 else None
+    out: list[dict] = []
+    seen: set[str] = set()
+    for c in raw:
+        if not isinstance(c, dict):
+            continue
+        cid = str(c.get("id") or "").strip()
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        at = max(0.0, as_number(c.get("atMs"), 0.0))
+        if cap is not None:
+            at = min(at, cap)
+        row: dict = {"id": cid, "atMs": int(round(at)), "sound": _clean_audio_cue(c.get("sound"))}
+        label = str(c.get("label") or "").strip()
+        if label:
+            row["label"] = label
+        out.append(row)
+    out.sort(key=lambda r: r["atMs"])
+    return out
+
+
 def bake_asset(doc: dict, geom) -> dict:
+    """烘焙 + 音效关键点落形。产物形状见 :func:`_bake_asset`，另有 ``cues``。
+
+    关键点不参与任何烘焙数学（它是时间轴上的事），但**时长要等烘完才知道**，
+    所以钳位放在这一层：一条 500 ms 的曲线被改成 300 ms 时，落在 420 ms 的那一声落到末帧。
+    """
+    out = _bake_asset(doc, geom)
+    out["cues"] = clean_cues(doc, as_number(out.get("totalMs"), 0.0))
+    return out
+
+
+def _bake_asset(doc: dict, geom) -> dict:
     """返回 ``{keyframes, worldKeyframes?, authoring, source, slots, binding, warnings, segments, totalMs, preview}``。
 
     ``preview``：给前端画曲线的**绝对**密采样（画面空间 ``screen`` 恒有；世界空间另给 ``world``）。

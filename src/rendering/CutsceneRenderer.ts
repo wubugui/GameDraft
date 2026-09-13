@@ -152,6 +152,22 @@ interface TypewriterEntry {
   setContinueMarkVisible: ((visible: boolean) => void) | null;
 }
 
+/** 叠图 / 文档揭示共用的层记录 */
+type CutsceneLayerEntry = {
+  sprite: Sprite | Graphics | Container | Mesh;
+  /** 与 Assets.load 使用的解析路径一致，仅作记录；不在 hideLayer 里 unload，避免与 Pixi 缓存键/共享 Texture 冲突。 */
+  imagePath: string;
+  isPlaceholder?: boolean;
+  /** 自建 Mesh（叠化）的 geometry/shader 释放钩子：Pixi 8 Mesh.destroy 只解引用不销毁两者 */
+  disposeGpu?: () => void;
+};
+
+/**
+ * 层的归属表。`overlay` = 叠图动作的作者句柄；`document` = 文档揭示（键 documentId）。
+ * 两者**永不互访**：作者的 hideOverlayImage 收不到文档揭示，反之亦然。
+ */
+type CutsceneLayerKind = 'overlay' | 'document';
+
 export class CutsceneRenderer {
   private resolveDisplay: ((s: string) => string) | null = null;
   private dialoguePanelStyle: CutsceneDialoguePanelStyle | null = null;
@@ -168,14 +184,14 @@ export class CutsceneRenderer {
   /** 仅遮住世界与 cutsceneOverlay 内容，不遮住 uiLayer（供对话期间「游戏画面渐黑」、台词仍用 DialogueUI 显示）。 */
   private worldFadeOverlay: Graphics | null = null;
   private titleContainer: Container | null = null;
-  private images: Map<string, {
-    sprite: Sprite | Graphics | Container | Mesh;
-    /** 与 Assets.load 使用的解析路径一致，仅作记录；不在 hideImg 里 unload，避免与 Pixi 缓存键/共享 Texture 冲突。 */
-    imagePath: string;
-    isPlaceholder?: boolean;
-    /** 自建 Mesh（blendPercentImg）的 geometry/shader 释放钩子：Pixi 8 Mesh.destroy 只解引用不销毁两者 */
-    disposeGpu?: () => void;
-  }> = new Map();
+  /** 叠图动作（show/blend/hideOverlayImage）的句柄表：键是作者起的 id */
+  private images: Map<string, CutsceneLayerEntry> = new Map();
+  /**
+   * 文档揭示的显示层，键是 **documentId**。与上面那张表**分开**是刻意的：
+   * 作者的 `hideOverlayImage` 只能寻址 `images`，永远碰不到文档揭示这一层，
+   * 也就不存在"句柄撞名把别人的图收掉"这类静默事故（2026-09-12 解耦）。
+   */
+  private documentLayers: Map<string, CutsceneLayerEntry> = new Map();
   private movieBarContainer: Container | null = null;
   /** 单边电影黑边高度（像素），供 showSubtitle 槽位布局；hideMovieBar / cleanup 时归零 */
   private movieBarHeightPx: number = 0;
@@ -198,6 +214,8 @@ export class CutsceneRenderer {
   private opEpoch = 0;
   /** 逐 id 的图片请求序号：同 id 并发时后发覆盖先发（晚 resolve 的旧请求丢弃） */
   private imageRequestSeq = new Map<string, number>();
+  /** 同上，文档揭示那张表自己的序号空间（与叠图 id 不共享，避免互相判过期） */
+  private documentRequestSeq = new Map<string, number>();
   private unsubscribeResize: (() => void) | null = null;
   /** 屏上还活着的过场对白框数量：供屏底提示语让开那一条（不让就横穿它的底部木框） */
   private liveDialogueBoxes = 0;
@@ -785,16 +803,37 @@ export class CutsceneRenderer {
     for (const f of pending) f();
   }
 
+  private layerMap(kind: CutsceneLayerKind): Map<string, CutsceneLayerEntry> {
+    return kind === 'document' ? this.documentLayers : this.images;
+  }
+
+  private layerSeqMap(kind: CutsceneLayerKind): Map<string, number> {
+    return kind === 'document' ? this.documentRequestSeq : this.imageRequestSeq;
+  }
+
+  /** 逐 id 递进请求序号并返回本次序号 */
+  private nextLayerSeq(kind: CutsceneLayerKind, id: string): number {
+    const m = this.layerSeqMap(kind);
+    const seq = (m.get(id) ?? 0) + 1;
+    m.set(id, seq);
+    return seq;
+  }
+
+  /** 层类演出在 await 后的过期判定：代际被 abort 递进，或同 id 已有更晚请求 */
+  private layerOpStale(
+    kind: CutsceneLayerKind, epoch: number, id: string, seq: number,
+  ): boolean {
+    return epoch !== this.opEpoch || this.layerSeqMap(kind).get(id) !== seq;
+  }
+
   /** 逐 id 递进图片请求序号并返回本次序号 */
   private nextImageRequestSeq(id: string): number {
-    const seq = (this.imageRequestSeq.get(id) ?? 0) + 1;
-    this.imageRequestSeq.set(id, seq);
-    return seq;
+    return this.nextLayerSeq('overlay', id);
   }
 
   /** 图片类演出在 await 后的过期判定：代际被 abort 递进，或同 id 已有更晚请求 */
   private imageOpStale(epoch: number, id: string, seq: number): boolean {
-    return epoch !== this.opEpoch || this.imageRequestSeq.get(id) !== seq;
+    return this.layerOpStale('overlay', epoch, id, seq);
   }
 
   async cameraMove(x: number, y: number, duration: number, easing?: CutsceneCameraEasing): Promise<void> {
@@ -958,7 +997,32 @@ export class CutsceneRenderer {
    * 按屏幕百分比定位显示图片：中心在 (xPercent,yPercent)，宽度为屏宽的 widthPercent%；
    * 高度由纹理宽高比推出。与 `hideImg` 共用 id 句柄。
    */
-  async showPercentImg(
+  showPercentImg(
+    imagePath: string,
+    id: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+  ): Promise<void> {
+    return this.percentImgInto('overlay', imagePath, id, xPercent, yPercent, widthPercent);
+  }
+
+  /**
+   * 文档揭示的瞬时显示（无动画）：键是 documentId，进独立的 documentLayers 表。
+   * 布局口径与 showPercentImg 完全一致。
+   */
+  showDocumentImage(
+    documentId: string,
+    imagePath: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+  ): Promise<void> {
+    return this.percentImgInto('document', imagePath, documentId, xPercent, yPercent, widthPercent);
+  }
+
+  private async percentImgInto(
+    kind: CutsceneLayerKind,
     imagePath: string,
     id: string,
     xPercent: number,
@@ -966,8 +1030,8 @@ export class CutsceneRenderer {
     widthPercent: number,
   ): Promise<void> {
     const ep = this.opEpoch;
-    const seq = this.nextImageRequestSeq(id);
-    this.hideImg(id);
+    const seq = this.nextLayerSeq(kind, id);
+    this.hideLayer(kind, id);
     // 同 showImg：解析统一在 AssetManager 内部，冗余 resolveAssetPath 已删
     const resolvedPath = imagePath;
     const sw = this.screenWidth;
@@ -984,7 +1048,7 @@ export class CutsceneRenderer {
       texture = await this.assetManager.loadTexture(resolvedPath);
     } catch (err) {
       console.error(`[CutsceneRenderer] 图片加载失败: ${resolvedPath}`, err);
-      if (this.imageOpStale(ep, id, seq)) return;
+      if (this.layerOpStale(kind, ep, id, seq)) return;
       const dispH = Math.max(8, dispW * 0.75);
       const placeholder = new Graphics();
       placeholder.rect(-dispW / 2, -dispH / 2, dispW, dispH);
@@ -993,10 +1057,10 @@ export class CutsceneRenderer {
       placeholder.y = cy;
       placeholder.label = id;
       this.renderer.cutsceneOverlay.addChild(placeholder);
-      this.images.set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true });
+      this.layerMap(kind).set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true });
       return;
     }
-    if (this.imageOpStale(ep, id, seq)) return;
+    if (this.layerOpStale(kind, ep, id, seq)) return;
     if (!texture || texture.width <= 0 || texture.height <= 0) {
       console.warn(`[CutsceneRenderer] 图片尺寸异常: ${resolvedPath} (${texture?.width}x${texture?.height})`);
     }
@@ -1011,7 +1075,7 @@ export class CutsceneRenderer {
     sprite.y = cy;
     sprite.label = id;
     this.renderer.cutsceneOverlay.addChild(sprite);
-    this.images.set(id, { sprite, imagePath: resolvedPath });
+    this.layerMap(kind).set(id, { sprite, imagePath: resolvedPath });
   }
 
   /**
@@ -1235,21 +1299,68 @@ export class CutsceneRenderer {
    * 导致 WebGL `bindSource` 读到 null 的 `alphaMode` / `addressModeU`。贴图留在全局 Assets 缓存即可。
    */
   hideImg(id: string): void {
-    const entry = this.images.get(id);
+    this.hideLayer('overlay', id);
+  }
+
+  /** 文档揭示的显示层：键是 documentId，与叠图句柄互不可见 */
+  hideDocumentLayer(documentId: string): void {
+    this.hideLayer('document', documentId);
+  }
+
+  private hideLayer(kind: CutsceneLayerKind, id: string): void {
+    const map = this.layerMap(kind);
+    const entry = map.get(id);
     if (!entry) return;
     if (entry.sprite.parent) entry.sprite.parent.removeChild(entry.sprite);
     entry.sprite.destroy({ children: true, texture: false, textureSource: false });
     // 自建 Mesh 的 geometry/shader 不随 destroy 释放（Pixi 8 语义），须显式补销
     entry.disposeGpu?.();
-    this.images.delete(id);
+    map.delete(id);
   }
 
   /**
    * 与 showPercentImg 相同中心点与宽度（屏宽百分比）；高度按 **目标图 to** 宽高比推算。
    * 片元 shader 内 mix(from, to, t)；delayMs 内 t恒为 0，之后 durationMs 内 t 由 0 线性增至 1。
-   * 结束后改为单 Sprite 仅显示 to，与 showOverlayImage 共用 id / hideImg。
+   * 结束后改为单 Sprite 仅显示 to；`kind` 决定进哪张登记表（叠图句柄 / 文档揭示）。
    */
-  async blendPercentImg(
+  blendPercentImg(
+    fromImagePath: string,
+    toImagePath: string,
+    id: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+    durationMs: number,
+    delayMs: number,
+  ): Promise<void> {
+    return this.blendPercentInto(
+      'overlay', fromImagePath, toImagePath, id,
+      xPercent, yPercent, widthPercent, durationMs, delayMs,
+    );
+  }
+
+  /**
+   * 文档揭示的揭示动画（模糊 → 清晰）：键是 documentId，进独立的 documentLayers 表。
+   * 时序与片元语义同 blendPercentImg。
+   */
+  blendDocumentImage(
+    documentId: string,
+    fromImagePath: string,
+    toImagePath: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+    durationMs: number,
+    delayMs: number,
+  ): Promise<void> {
+    return this.blendPercentInto(
+      'document', fromImagePath, toImagePath, documentId,
+      xPercent, yPercent, widthPercent, durationMs, delayMs,
+    );
+  }
+
+  private async blendPercentInto(
+    kind: CutsceneLayerKind,
     fromImagePath: string,
     toImagePath: string,
     id: string,
@@ -1260,8 +1371,8 @@ export class CutsceneRenderer {
     delayMs: number,
   ): Promise<void> {
     const ep = this.opEpoch;
-    const seq = this.nextImageRequestSeq(id);
-    this.hideImg(id);
+    const seq = this.nextLayerSeq(kind, id);
+    this.hideLayer(kind, id);
     // 同 showImg：解析统一在 AssetManager 内部，冗余 resolveAssetPath 已删
     const resolvedFrom = fromImagePath;
     const resolvedTo = toImagePath;
@@ -1288,7 +1399,7 @@ export class CutsceneRenderer {
         return undefined;
       }),
     ]);
-    if (this.imageOpStale(ep, id, seq)) return;
+    if (this.layerOpStale(kind, ep, id, seq)) return;
     if (!texFrom && !texTo) return;
     if (!texFrom) texFrom = texTo;
     if (!texTo) texTo = texFrom;
@@ -1315,14 +1426,14 @@ export class CutsceneRenderer {
       disposeGpu();
 
       this.renderer.cutsceneOverlay.addChild(sprite);
-      this.images.set(id, { sprite, imagePath: resolvedTo });
+      this.layerMap(kind).set(id, { sprite, imagePath: resolvedTo });
     };
 
     // 中途被 hideImg / cleanup / 同 id 新请求接管时，由 disposeGpu 钩子释放自建 geometry/shader
-    this.images.set(id, { sprite: mesh, imagePath: resolvedTo, disposeGpu });
+    this.layerMap(kind).set(id, { sprite: mesh, imagePath: resolvedTo, disposeGpu });
 
     await this.wait(delay);
-    if (this.imageOpStale(ep, id, seq)) return;
+    if (this.layerOpStale(kind, ep, id, seq)) return;
     if (dur <= 0) {
       setT(1);
       finalizeStill();
@@ -1334,7 +1445,7 @@ export class CutsceneRenderer {
       const start = performance.now();
       const tick = (): void => {
         // 中途过期（skip / 同 id 后发请求已销毁 mesh）：立即收束，不再驱动 uniform
-        if (this.imageOpStale(ep, id, seq)) { finish(); return; }
+        if (this.layerOpStale(kind, ep, id, seq)) { finish(); return; }
         const u = Math.min((performance.now() - start) / dur, 1);
         setT(u);
         if (u < 1) this.trackRaf(tick);
@@ -1342,7 +1453,7 @@ export class CutsceneRenderer {
       };
       this.trackRaf(tick);
     });
-    if (this.imageOpStale(ep, id, seq)) return;
+    if (this.layerOpStale(kind, ep, id, seq)) return;
 
     finalizeStill();
   }
@@ -1555,7 +1666,13 @@ export class CutsceneRenderer {
     for (const id of Array.from(this.images.keys())) {
       this.hideImg(id);
     }
+    // 文档揭示那张表同样必须在这里收干净：它不在 images 里，漏掉就是换场景后
+    // 上一场的告示还挂在覆盖层上（拆除顺序卡：destroy 不许留残留）。
+    for (const id of Array.from(this.documentLayers.keys())) {
+      this.hideDocumentLayer(id);
+    }
     this.imageRequestSeq.clear();
+    this.documentRequestSeq.clear();
     this.hideMovieBar();
     // 字幕容器本身由 CutsceneManager 在其 finally 中 dismissSubtitle 销毁，此处仅停止 resize 重排跟踪
     this.activeSubtitles.clear();

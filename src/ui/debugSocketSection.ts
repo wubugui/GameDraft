@@ -45,6 +45,22 @@ export interface DebugSocketDeps {
   getTargetLabel: () => string;
   /** 工程里登记的挂件预设（prop_presets.json）——按预设挂才是内容真正走的那条路 */
   getPropPresets: () => PropPresetTable;
+  /**
+   * 手持挂件系统（自带灯 / 自带效果 / 状态表）。
+   *
+   * 有这一口时，**带灯或带状态的预设一律走它**——否则本页只把贴图挂上去，
+   * 灯与火焰一个都不会出现，而作者会以为"预设配错了"。
+   */
+  heldProp?: {
+    attach: (target: string, socket: string, prop: string, state?: string) => Promise<void>;
+    setState: (target: string, socket: string, state: string, fadeMs: number) => boolean;
+    detach: (target: string, socket: string) => void;
+    snapshot: () => { target: string; socket: string; prop: string; state: string; lightIntensity: number }[];
+    /** 闪烁推送率（观感 × 帧时的取舍，当场换着看；调试态不落盘） */
+    getFlickerPushHz: () => number;
+    setFlickerPushHz: (hz: number) => void;
+    flickerPushHzChoices: readonly number[];
+  };
   log: (message: string) => void;
 }
 
@@ -70,6 +86,8 @@ interface TempState {
   rotation: number;
   /** 当前挂着的那个 attachment 对象；改它的字段 SpriteEntity 下一帧就吃到，不用重挂 */
   live: SocketAttachment | null;
+  /** 走手持挂件系统挂上去的那个挂点（卸下与切状态要用）；空串 = 本页没走那条路 */
+  heldSocket: string;
 }
 
 export interface DebugSocketSectionHandle {
@@ -82,7 +100,7 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
   const st: TempState = {
     x: 0.68, y: 0.45, angle: 0, front: true, injected: false, view: null, propLabel: '',
     target: '', lit: true,
-    propScale: 0.5, anchorX: 0.5, anchorY: 0.5, rotation: 0, live: null,
+    propScale: 0.5, anchorX: 0.5, anchorY: 0.5, rotation: 0, live: null, heldSocket: '',
   };
 
   /** 当前要挂的挂点：优先用户选的真挂点，其次包里第一个，最后才落到临时挂点 */
@@ -132,6 +150,9 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
   }
 
   function detach(): void {
+    // 走手持挂件系统挂的那份要从那边收（灯与效果都在它手上），否则贴图没了灯还亮着
+    if (st.heldSocket && deps.heldProp) deps.heldProp.detach('player', st.heldSocket);
+    st.heldSocket = '';
     const sprite = deps.getTargetSprite();
     if (sprite) for (const n of [...sprite.listSocketNames(), TEMP_SOCKET]) sprite.detachFromSocket(n);
     if (st.view) {
@@ -187,6 +208,22 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
     const def = deps.getPropPresets()[id];
     if (!def) {
       deps.log(`挂点调试：挂件预设「${id}」不在 prop_presets.json 里`);
+      return;
+    }
+    const sprite0 = deps.getTargetSprite();
+    /**
+     * 带灯 / 带效果 / 带状态表的预设必须走手持挂件系统：那条路才会点灯、起火焰、认状态。
+     * 本页自己那条只挂贴图的直路留给没有这些东西的老挂件（桃木剑）。
+     */
+    if (deps.heldProp && sprite0 && (def.light || def.vfx?.length || def.states)) {
+      const socket = activeSocket(sprite0);
+      if (socket === TEMP_SOCKET && !st.injected) reinject();
+      detach();
+      st.heldSocket = socket;
+      await deps.heldProp.attach('player', socket, id);
+      st.propLabel = `${def.label || id}（手持挂件系统）`;
+      deps.log(`挂点调试：按预设「${id}」走手持挂件系统挂到 ${socket}（灯与效果一并）`);
+      deps.refresh();
       return;
     }
     const urls = propPresetImages(def);
@@ -282,6 +319,23 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
       : '本包还没有 sockets.json（正常——挂点是人工在动画编辑器里逐帧标的）');
     lines.push(`当前挂到：${socket === TEMP_SOCKET ? '临时挂点（恒定位姿，测不出逐帧动没动）' : socket}`);
     if (st.propLabel) lines.push(`挂着：${st.propLabel}　光照：${st.lit ? '吃' : '不吃（自发光）'}`);
+    // 手持挂件系统那条路的实时读数：状态与灯的当前强度（含闪烁）——调好抄回挂件预设页
+    const held = st.heldSocket && deps.heldProp
+      ? deps.heldProp.snapshot().find((h) => h.socket === st.heldSocket)
+      : undefined;
+    if (held && deps.heldProp) {
+      const hz = deps.heldProp.getFlickerPushHz();
+      lines.push(
+        `手持挂件：${held.prop}　状态 ${held.state || '（无状态表）'}　`
+        + `灯强度 ${held.lightIntensity.toFixed(2)}（基准，闪烁乘在上面）`,
+      );
+      // 推送率是"灯摆多深 × 多贵"的取舍，只能看动的判——所以摆在这里当场换
+      lines.push(
+        `闪烁推送 ${hz} Hz　`
+        + `摆幅保留 ≈ ${hz >= 60 ? '1.0' : hz >= 40 ? '0.85' : hz >= 30 ? '0.79' : '0.65'}　`
+        + `光照重算 ≈ ${Math.min(100, Math.round((hz / 60) * 100))}% 的帧`,
+      );
+    }
 
     const pose = sprite.getSocketPose(socket);
     if (pose) {
@@ -350,6 +404,29 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
         label: `预设：${deps.getPropPresets()[id]?.label || id}`,
         fn: () => { void attachPreset(id); },
       })),
+      // 手持挂件的状态切换：按钮直接就是 setPropState 那条路（400ms 渐变，看灯怎么过去）
+      ...(held && deps.heldProp
+        ? Object.keys(deps.getPropPresets()[held.prop]?.states ?? {}).map((name) => ({
+          label: `状态：${name}`,
+          fn: () => {
+            deps.heldProp!.setState('player', st.heldSocket, name, 400);
+            deps.refresh();
+          },
+        }))
+        : []),
+      // 闪烁推送率轮换：20 → 30 → 40 → 60，看着动的挑一档（定了改常量，别把调试值写进数据）
+      ...(held && deps.heldProp
+        ? [{
+          label: `闪烁推送 ${deps.heldProp.getFlickerPushHz()} Hz →`,
+          fn: () => {
+            const hp = deps.heldProp!;
+            const list = hp.flickerPushHzChoices;
+            const i = list.indexOf(hp.getFlickerPushHz());
+            hp.setFlickerPushHz(list[(i + 1) % list.length] ?? list[0]);
+            deps.refresh();
+          },
+        }]
+        : []),
       ...PROP_PRESETS.map((p) => ({
         label: `挂${p.label}`,
         fn: () => { void attachProp(p.label, [p.url]); },

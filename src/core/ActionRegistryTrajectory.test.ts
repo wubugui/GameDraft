@@ -223,6 +223,14 @@ describe('playTrajectory · at / spawn', () => {
     expect(playTrajectory.mock.calls[1]![2].spawn).toEqual({ kind: 'character', characterId: 'cat', id: 'cat_1', name: '猫' });
   });
 
+  it('spawn.renderRaw：宽松真值 → true；不给就整键不写（缺省 = 正常受光被挡）', async () => {
+    const { executor, playTrajectory } = harness();
+    await run(executor, 'playTrajectory', { trajectoryId: 't', spawn: { kind: 'image', src: '/resources/runtime/images/paper.png', renderRaw: 'true' } });
+    await run(executor, 'playTrajectory', { trajectoryId: 't', spawn: { kind: 'image', src: '/resources/runtime/images/coin.png' } });
+    expect(playTrajectory.mock.calls[0]![2].spawn).toEqual({ kind: 'image', src: '/resources/runtime/images/paper.png', renderRaw: true });
+    expect(playTrajectory.mock.calls[1]![2].spawn).not.toHaveProperty('renderRaw');
+  });
+
   it('spawn 形状不对（缺 src / 未知 kind）：warn，且没有 target 时整条跳过', async () => {
     const { executor, playTrajectory } = harness();
     await run(executor, 'playTrajectory', { trajectoryId: 't', spawn: { kind: 'image' } });

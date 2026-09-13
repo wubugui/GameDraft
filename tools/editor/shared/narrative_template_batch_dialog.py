@@ -44,6 +44,7 @@ from .narrative_templates import (
     template_produces,
 )
 from .reference_picker import ReferencePickerField
+from .widget_discard import discard_layout_widgets
 
 _VALUE_ROLE = Qt.ItemDataRole.UserRole
 
@@ -206,12 +207,7 @@ class NarrativeTemplateBatchDialog(QDialog):
 
     def _clear_form(self) -> None:
         self._fields.clear()
-        while self._form.count():
-            row = self._form.takeAt(0)
-            widget = row.widget() if row is not None else None
-            if widget is not None:
-                widget.setParent(None)
-                widget.deleteLater()
+        discard_layout_widgets(self._form)
 
     def _on_wire_toggled(self) -> None:
         self._visible_state.setEnabled(self._wire_vis.isChecked())

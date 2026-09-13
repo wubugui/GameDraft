@@ -6,10 +6,21 @@
  * - `entity`：某个实体此刻的位置（player / NPC / 过场临时演员 / 热点）；
  * - `slot`：某条**场景曲线**的命名插槽——曲线暴露给场景的位置，引用是活的（曲线改了插槽跟着动）。
  *   相对曲线（`binding:'free'`）的插槽没有绝对位置，引用它是内容错（构建期校验拦，运行时 warn + null）。
- * - `curve`：**曲线上的点**（制作人要的"曲线 eval 的实时点"）：在烘好的帧上按时刻 / 进度取值，
- *   再加上"这条曲线此刻在哪播"。那条轨迹**正在播**就用这次播放的位置（铜钱还在飞时，末帧点就是它
- *   这次真要落的地方，且那次播放用的是当前场景投影过的帧）；没在播就按场景曲线的原点算。
- *   相对曲线又没在播 = 没有绝对位置（内容错）。用它可以不必为"落点"专门摆一个插槽。
+ * - `curve`：**曲线上的点**：在烘好的帧上按时刻 / 进度取值，再加上"这条曲线此刻在哪播"。
+ *   那条轨迹**正在播**就用这次播放的位置（铜钱还在飞时，末帧点就是它这次真要落的地方，且那次播放
+ *   用的是当前场景投影过的帧）；没在播就按场景曲线的原点算。用它可以不必为"落点"专门摆一个插槽。
+ *   `point:'current'`（2026-09-12）是**播放头 = 曲线此刻播到的点**，唯一会随时间动的一档：
+ *   在播 = 这次播放此刻的位置；播完 / 被停 = 停在它结束的那一点；本场景还没开播过 = 没有这个点。
+ *   ⚠ 09-11 那一版把制作人要的"曲线 eval 的实时点"做成了"按这次播放位置算的**固定点**"，播放头根本没有——
+ *   `start/end/time/progress` 四档至今仍是固定点，要跟着动的只有 `current`。
+ *
+ * **只认场景曲线**（2026-09-12 制作人定）：相对曲线（`binding:'free'`）是资源，每次播放都是一次实例化、
+ * 可以同时播多个，"它的点"指哪一次说不清——插槽和曲线点都不接受相对曲线（warn + null，构建期校验拦）。
+ * 场景曲线按定义同一时刻只有一个实例，所以"这条曲线此刻在哪播"是唯一的。
+ *
+ * 两种求值时机：一次性动作（moveEntityTo 的 `at`…）走 async 的 {@link resolvePositionRef}，求不出就 warn；
+ * 每帧跟随（cameraFollowActor 的 `at`）走同步的 {@link evaluatePositionRefNow}，求不出**不出声**
+ * （"曲线还没开播"是常态，每帧 warn 会刷屏）——资产层的错在绑定那一刻由 {@link positionRefAssetProblem} 报一次。
  *
  * 这里不碰 Game / SceneManager：谁能查实体位置、谁能装资产由调用方以 {@link PositionRefLookups} 注入，
  * 所以可以在 vitest 里用假查找钉住每一条路径。动作侧的约定：`at` 有值就覆盖同动作的 `x/y`。
@@ -19,21 +30,42 @@ import type {
 } from '../data/types';
 import { sampleKeyframeTrack } from './keyframeSampler';
 
-export interface PositionRefLookups {
+/** 一条曲线某次播放的快照：这次的 2D 相对帧（已按当前场景投影）+ 播放位置 + 播到哪了。 */
+export interface CurvePlayhead {
+  keyframes: readonly TrajectoryKeyframe[];
+  anchor: { x: number; y: number };
+  /** 已播毫秒（夹到 [0, 总时长]）。只有 `current` 档读它；缺省按 0。 */
+  tMs?: number;
+}
+
+/** 曲线档两种求值共用的同步查找。 */
+interface CurveLookups {
+  /** 当前场景 id（场景曲线拿到别的场景用要出声；不给就不查） */
+  currentSceneId?: () => string;
+  /**
+   * 这条轨迹**此刻在跑**的那次播放。`curve` 档的"实时"就靠它；没在跑返回 null。
+   * 不给这个查找 = 只按作者场景的原点算（`current` 档则永远求不出）。
+   */
+  liveTrajectoryPlay?: (trajectoryId: string) => CurvePlayhead | null;
+  /**
+   * 这条轨迹在本场景**最近一次结束**的播放（播完 = tMs 在末帧；被停 = 停下那一刻）；没播过返回 null。
+   * 只有 `current` 档用：播完了播放头就停在那儿。
+   */
+  endedTrajectoryPlay?: (trajectoryId: string) => CurvePlayhead | null;
+}
+
+export interface PositionRefLookups extends CurveLookups {
   /** 实体此刻的位置；找不到返回 null */
   entityPosition: (id: string) => { x: number; y: number } | null;
   /** 装一条轨迹资产（缺失返回 null）；实现方自己缓存 */
   loadTrajectory: (trajectoryId: string) => Promise<TrajectoryAsset | null>;
-  /** 当前场景 id（场景曲线拿到别的场景用要出声；不给就不查） */
-  currentSceneId?: () => string;
-  /**
-   * 这条轨迹**此刻在跑**的那次播放：这次用的 2D 相对帧（已按当前场景投影）+ 播放位置。
-   * `curve` 档的"实时"就靠它；没在跑返回 null。不给这个查找 = 只按作者场景的原点算。
-   */
-  liveTrajectoryPlay?: (trajectoryId: string) => {
-    keyframes: readonly TrajectoryKeyframe[];
-    anchor: { x: number; y: number };
-  } | null;
+}
+
+/** {@link evaluatePositionRefNow} 的查找：资产必须同步拿得到（调用方在绑定时预先装好）。 */
+export interface PositionRefNowLookups extends CurveLookups {
+  entityPosition: (id: string) => { x: number; y: number } | null;
+  /** 已装好的轨迹资产：缺失 = null，还没装完 = undefined（两者都求不出来） */
+  trajectory: (trajectoryId: string) => TrajectoryAsset | null | undefined;
 }
 
 const finite = (v: unknown): number | null => {
@@ -70,7 +102,7 @@ export function parsePositionRef(raw: unknown): PositionRef | null {
     const progress = finite(o.progress);
     const raw = typeof o.point === 'string' ? o.point.trim() : '';
     let point: CurvePointPick;
-    if (raw === 'start' || raw === 'end' || raw === 'time' || raw === 'progress') point = raw;
+    if (raw === 'start' || raw === 'end' || raw === 'time' || raw === 'progress' || raw === 'current') point = raw;
     else if (atMs !== null) point = 'time';
     else if (progress !== null) point = 'progress';
     else point = 'end';
@@ -122,16 +154,39 @@ export function sampleTrajectoryOffset(
   let t: number;
   if (pick === 'start') t = finite(frames[0]?.atMs) ?? 0;
   else if (pick === 'end') t = totalMs;
-  else if (pick === 'time') t = finite(ref.atMs) ?? 0;
+  // current 的"此刻"由调用方从播放头换成 atMs 传进来（见 evaluateCurvePoint）
+  else if (pick === 'time' || pick === 'current') t = finite(ref.atMs) ?? 0;
   else t = totalMs * Math.min(1, Math.max(0, finite(ref.progress) ?? 1));
   // 采样器自己钳两端（t ≤ 首帧 → 首帧、t ≥ 末帧 → 末帧），所以越界的 atMs 不用另外判
   const s = sampleKeyframeTrack(frames, t, { channels: { x: 0, y: 0 } });
   return { x: s.x, y: s.y };
 }
 
+type TrajectoryRef = Extract<PositionRef, { kind: 'slot' | 'curve' }>;
+type Warn = (msg: string) => void;
+const SILENT: Warn = () => {};
+const CONSOLE_WARN: Warn = (msg) => console.warn(msg);
+
 /**
- * 求值。失败一律 `null` + `console.warn`（动作侧按"没给位置"处理），绝不抛：位置引用错是内容错，
- * 不该把整段演出炸掉。
+ * 插槽 / 曲线点引用的**资产层**错误（与播没播无关、改数据才修得好的那种）；没问题返回 null。
+ * 每帧跟随在绑定那一刻用它报一次（求值本身不出声）；一次性求值也先过它。
+ */
+export function positionRefAssetProblem(ref: TrajectoryRef, asset: TrajectoryAsset | null): string | null {
+  const what = ref.kind === 'slot' ? `插槽 "${ref.slotId}"` : '曲线点';
+  if (!asset) return `轨迹 "${ref.trajectoryId}" 装不上，${what}作废`;
+  if (trajectoryBinding(asset) !== 'scene') {
+    return `轨迹 "${ref.trajectoryId}" 是相对曲线：每次播放都是一次实例化、可以同时播多个，`
+      + `暂不支持引用它的${ref.kind === 'slot' ? '插槽' : '点'}（改成场景曲线，或改用实体位置）`;
+  }
+  if (ref.kind === 'slot' && !findTrajectorySlot(asset, ref.slotId)) {
+    return `轨迹 "${ref.trajectoryId}" 没有插槽 "${ref.slotId}"`;
+  }
+  return null;
+}
+
+/**
+ * 一次性求值（动作执行那一刻）。失败一律 `null` + `console.warn`（动作侧按"没给位置"处理），
+ * 绝不抛：位置引用错是内容错，不该把整段演出炸掉。
  */
 export async function resolvePositionRef(
   ref: PositionRef | null | undefined,
@@ -144,78 +199,107 @@ export async function resolvePositionRef(
     if (!p) console.warn(`[positionRef] 找不到实体 "${ref.id}"，位置引用作废`);
     return p;
   }
-  if (ref.kind === 'curve') return resolveCurvePoint(ref, lookups);
   const asset = await lookups.loadTrajectory(ref.trajectoryId);
-  if (!asset) {
-    console.warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 装不上，插槽 "${ref.slotId}" 作废`);
-    return null;
-  }
-  if (trajectoryBinding(asset) !== 'scene') {
-    console.warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 是相对曲线，它的插槽没有绝对位置，不能当位置引用`);
-    return null;
-  }
-  const slot = findTrajectorySlot(asset, ref.slotId);
-  if (!slot) {
-    console.warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 没有插槽 "${ref.slotId}"`);
-    return null;
-  }
-  const x = finite(slot.x);
-  const y = finite(slot.y);
-  if (x === null || y === null) {
-    console.warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 插槽 "${ref.slotId}" 坐标不是有限数`);
+  return evaluateTrajectoryRef(ref, asset, lookups, CONSOLE_WARN);
+}
+
+/**
+ * **每帧**求值（镜头跟随用）：同步、不出声。求不出返回 null——曲线还没开播、资产还没装完、
+ * 实体暂时不在，调用方一律当"这一帧没有这个点"（镜头原地不动），不当错误。
+ * 资产层的错请在绑定时用 {@link positionRefAssetProblem} 报一次。
+ */
+export function evaluatePositionRefNow(
+  ref: PositionRef | null | undefined,
+  lookups: PositionRefNowLookups,
+): { x: number; y: number } | null {
+  if (!ref) return null;
+  if (ref.kind === 'point') return { x: ref.x, y: ref.y };
+  if (ref.kind === 'entity') return lookups.entityPosition(ref.id);
+  const asset = lookups.trajectory(ref.trajectoryId);
+  if (!asset) return null;
+  return evaluateTrajectoryRef(ref, asset, lookups, SILENT);
+}
+
+function evaluateTrajectoryRef(
+  ref: TrajectoryRef,
+  asset: TrajectoryAsset | null,
+  lookups: CurveLookups,
+  warn: Warn,
+): { x: number; y: number } | null {
+  const problem = positionRefAssetProblem(ref, asset);
+  if (problem || !asset) {
+    warn(`[positionRef] ${problem}`);
     return null;
   }
   const scene = lookups.currentSceneId?.();
-  if (scene && asset.authoring?.sceneId && asset.authoring.sceneId !== scene) {
-    console.warn(`[positionRef] 场景曲线 "${ref.trajectoryId}" 绑定的是 "${asset.authoring.sceneId}"，当前是 "${scene}"：插槽坐标按作者场景给`);
+  const authorScene = asset.authoring?.sceneId;
+  const foreignScene = scene && authorScene && authorScene !== scene ? authorScene : '';
+  if (ref.kind === 'curve') return evaluateCurvePoint(ref, asset, lookups, warn, foreignScene, scene ?? '');
+  const slot = findTrajectorySlot(asset, ref.slotId)!;
+  const x = finite(slot.x);
+  const y = finite(slot.y);
+  if (x === null || y === null) {
+    warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 插槽 "${ref.slotId}" 坐标不是有限数`);
+    return null;
+  }
+  if (foreignScene) {
+    warn(`[positionRef] 场景曲线 "${ref.trajectoryId}" 绑定的是 "${foreignScene}"，当前是 "${scene}"：插槽坐标按作者场景给`);
   }
   return { x, y };
 }
 
 /**
- * `curve` 档：曲线上的点 = 帧上取的偏移 + 这条曲线此刻的播放位置。
+ * `curve` 档：曲线上的点 = 帧上取的偏移 + 这条曲线此刻的播放位置（资产已确认是场景曲线）。
  *
- * 播放位置的两档，顺序不能反：
- * 1. **正在播** → 用那次播放的锚点与那次的帧（帧已按当前场景投影，世界空间资产跨场景也准）——
- *    这就是"实时点"：铜钱还在飞，`end` 取到的就是它这次真要落的地方；
- * 2. 没在播 → 场景曲线按作者摆的原点算（静态引用，曲线在工作台里改了它跟着变）。
- *    相对曲线不绑场景、又没在播，就是没有绝对位置可言（内容错，构建期校验拦）。
+ * - `current`（播放头）：正在播 → 这次播放此刻的 tMs；没在播 → 本场景最近一次结束的那次（停在它结束的点）；
+ *   都没有 → 本场景还没开播过，这个点**还没产生**（null）。
+ * - 固定点四档，播放位置两档、顺序不能反：
+ *   1. **正在播** → 用那次播放的锚点与那次的帧（帧已按当前场景投影，世界空间资产跨场景也准）——
+ *      铜钱还在飞，`end` 取到的就是它这次真要落的地方；
+ *   2. 没在播 → 场景曲线按作者摆的原点算（静态引用，曲线在工作台里改了它跟着变）。
  */
-async function resolveCurvePoint(
+function evaluateCurvePoint(
   ref: Extract<PositionRef, { kind: 'curve' }>,
-  lookups: PositionRefLookups,
-): Promise<{ x: number; y: number } | null> {
+  asset: TrajectoryAsset,
+  lookups: CurveLookups,
+  warn: Warn,
+  foreignScene: string,
+  scene: string,
+): { x: number; y: number } | null {
   const live = lookups.liveTrajectoryPlay?.(ref.trajectoryId) ?? null;
+  if (ref.point === 'current') {
+    const head = live ?? lookups.endedTrajectoryPlay?.(ref.trajectoryId) ?? null;
+    if (!head) {
+      warn(`[positionRef] 曲线 "${ref.trajectoryId}" 本场景还没开播过：它此刻播到的点还没产生`);
+      return null;
+    }
+    const off = sampleTrajectoryOffset(head.keyframes, { point: 'current', atMs: head.tMs ?? 0 });
+    if (!off) {
+      warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 这次播放没有帧，播放头作废`);
+      return null;
+    }
+    return { x: head.anchor.x + off.x, y: head.anchor.y + off.y };
+  }
   if (live) {
     const off = sampleTrajectoryOffset(live.keyframes, ref);
     if (!off) {
-      console.warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 这次播放没有帧，曲线点作废`);
+      warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 这次播放没有帧，曲线点作废`);
       return null;
     }
     return { x: live.anchor.x + off.x, y: live.anchor.y + off.y };
   }
-  const asset = await lookups.loadTrajectory(ref.trajectoryId);
-  if (!asset) {
-    console.warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 装不上，曲线点作废`);
-    return null;
-  }
-  if (trajectoryBinding(asset) !== 'scene') {
-    console.warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 是相对曲线：不在播的时候它的点没有绝对位置`);
-    return null;
-  }
   const origin = trajectoryOrigin(asset);
   if (!origin) {
-    console.warn(`[positionRef] 场景曲线 "${ref.trajectoryId}" 没有 authoring.origin，曲线点算不出来（在轨迹工作台重存一次会回填）`);
+    warn(`[positionRef] 场景曲线 "${ref.trajectoryId}" 没有 authoring.origin，曲线点算不出来（在轨迹工作台重存一次会回填）`);
     return null;
   }
   const off = sampleTrajectoryOffset(asset.keyframes, ref);
   if (!off) {
-    console.warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 没有 keyframes（没烘过？），曲线点作废`);
+    warn(`[positionRef] 轨迹 "${ref.trajectoryId}" 没有 keyframes（没烘过？），曲线点作废`);
     return null;
   }
-  const scene = lookups.currentSceneId?.();
-  if (scene && asset.authoring?.sceneId && asset.authoring.sceneId !== scene) {
-    console.warn(`[positionRef] 场景曲线 "${ref.trajectoryId}" 绑定的是 "${asset.authoring.sceneId}"，当前是 "${scene}"：曲线点按作者场景给`);
+  if (foreignScene) {
+    warn(`[positionRef] 场景曲线 "${ref.trajectoryId}" 绑定的是 "${foreignScene}"，当前是 "${scene}"：曲线点按作者场景给`);
   }
   return { x: origin.x + off.x, y: origin.y + off.y };
 }

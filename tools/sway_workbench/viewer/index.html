@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>草木工作台</title>
+<style>
+  :root { color-scheme: dark; --bg:#15171b; --panel:#1d2026; --line:#333a44; --ink:#dde3ea; --dim:#8b95a3;
+          --veg:#5fd07a; --freeze:#e0b25c; --rigid:#6aa8ff; --unrigid:#ff6e8c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.5 "Microsoft YaHei",system-ui,sans-serif;
+         height:100vh; display:flex; overflow:hidden; }
+  #side { width:268px; flex:0 0 268px; background:var(--panel); border-right:1px solid var(--line);
+          display:flex; flex-direction:column; overflow:auto; }
+  #side h1 { font-size:14px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); }
+  .box { padding:10px 12px; border-bottom:1px solid var(--line); }
+  .box h2 { font-size:12px; color:var(--dim); margin:0 0 8px; font-weight:normal; }
+  select, button { background:#252a32; color:var(--ink); border:1px solid var(--line); border-radius:4px;
+                   padding:5px 8px; font:inherit; cursor:pointer; }
+  button:hover { border-color:#5a6472; }
+  button.on { background:#2f3a4c; border-color:#5a8ac0; }
+  button:disabled { opacity:.45; cursor:default; }
+  select { width:100%; }
+  .row { display:flex; gap:6px; align-items:center; margin:6px 0; }
+  .row > label { color:var(--dim); min-width:4.2em; }
+  .row input[type=range] { flex:1; }
+  .tool { flex:1; text-align:center; }
+  .sw { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+  #stage { flex:1; position:relative; overflow:hidden; background:#0d0f12; }
+  canvas { position:absolute; left:0; top:0; transform-origin:0 0; image-rendering:auto; }
+  #cursor { position:absolute; border:1px solid #fff8; border-radius:50%; pointer-events:none; display:none; }
+  #log { padding:8px 12px; font:11px/1.45 Consolas,monospace; color:var(--dim); white-space:pre-wrap;
+         max-height:190px; overflow:auto; }
+  .hint { color:var(--dim); font-size:11px; line-height:1.5; }
+  kbd { background:#252a32; border:1px solid var(--line); border-radius:3px; padding:0 4px; font:11px monospace; }
+</style>
+</head>
+<body>
+<div id="side">
+  <h1>草木工作台</h1>
+
+  <div class="box">
+    <h2>场景</h2>
+    <select id="scene"></select>
+    <div class="row"><span id="state" class="hint">—</span></div>
+    <div class="row"><span id="badges" class="hint">—</span></div>
+    <div class="row"><span id="hover" class="hint" style="color:#ffe08a"></span></div>
+  </div>
+
+  <div class="box">
+    <h2>画什么（分割认不出的，手动补）</h2>
+    <div class="row">
+      <button class="tool" id="t-veg"><i class="sw" style="background:var(--veg)"></i>补植被</button>
+      <button class="tool" id="t-rigid"><i class="sw" style="background:var(--rigid)"></i>刚体</button>
+    </div>
+    <div class="row">
+      <button class="tool" id="t-freeze"><i class="sw" style="background:var(--freeze)"></i>锁死不动</button>
+      <button class="tool" id="t-unrigid"><i class="sw" style="background:var(--unrigid)"></i>减刚体</button>
+    </div>
+    <div class="row">
+      <button class="tool" id="t-erase">橡皮</button>
+    </div>
+    <div class="row">
+      <button class="tool" id="undo">撤销 <kbd>Ctrl+Z</kbd></button>
+      <button class="tool" id="clear-ch">清空本层 <kbd>X</kbd></button>
+    </div>
+    <div class="row">
+      <button class="tool" id="t-anchor">锚点</button>
+      <button class="tool" id="t-coherent">整体摆</button>
+    </div>
+    <div class="hint" id="plant-hint">
+      <b>锚点</b>：左键放、右键删最近的一个。刚体部分绕<b>离它最近的锚点</b>转——点在竿底 / 树干底；
+      一丛竹子可以每根竿点一个。没点就绕自动算出的根。<br>
+      <b>整体摆</b>：点一株切换。标了的整株一起弯，不会被扭成波浪（全场的波浪尺寸在游戏 F2 里调）。<br>
+      这两样和涂层一起 <kbd>Ctrl+S</kbd> 保存，改完要重烘。
+    </div>
+    <div class="row"><label>笔刷</label><input id="size" type="range" min="4" max="240" value="48"><span id="size-v">48</span></div>
+    <div class="row"><label>软硬</label><input id="hard" type="range" min="0" max="100" value="70"><span id="hard-v">70</span></div>
+    <div class="hint">
+      刚体 = 竹竿 / 树干这类只能整体摇晃、不许跟着扭的部位。<b>分割认出的木质已自动算刚体</b>，
+      「减刚体」用来抹掉认错的那些。<br>
+      四层各画各的：<b>橡皮只擦当前这一层</b>，<b>右键拖</b>随时擦，不会碰到别的层。<br>
+      <kbd>1</kbd>植被 <kbd>2</kbd>刚体 <kbd>3</kbd>锁死 <kbd>4</kbd>减刚体　<kbd>E</kbd>橡皮 <kbd>X</kbd>清空本层
+      <kbd>Ctrl+Z</kbd>撤销 <kbd>[</kbd><kbd>]</kbd>笔刷 <kbd>F</kbd>复位 <kbd>B</kbd>重烘　Shift+拖=平移
+      　<b>Alt+点</b>=检视这一点属于哪株
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>看什么</h2>
+    <div class="row">
+      <button class="tool on" id="v-paint">我画的</button>
+      <button class="tool on" id="v-veg">已抠出的植被</button>
+    </div>
+    <div class="row">
+      <button class="tool" id="v-ids">实例分区</button>
+      <button class="tool" id="v-free">自由度</button>
+    </div>
+    <div class="row">
+      <button class="tool" id="v-rigid">已判定的刚体</button>
+    </div>
+    <div class="row"><label>叠加</label><input id="alpha" type="range" min="10" max="100" value="55"><span id="alpha-v">55</span></div>
+    <div class="row"><button class="tool" id="fit">视图复位 <kbd>F</kbd></button></div>
+  </div>
+
+  <div class="box">
+    <div class="row">
+      <button id="save" style="flex:1">保存涂层 <kbd>Ctrl+S</kbd></button>
+      <button id="history">历史…</button>
+    </div>
+    <div id="history-box" style="display:none;max-height:200px;overflow:auto;border:1px solid var(--line);
+         border-radius:4px;padding:6px 8px;margin:6px 0"></div>
+    <div class="row">
+      <button id="bake" style="flex:1">重烘拆层</button>
+      <button id="push" style="flex:1">推给游戏</button>
+    </div>
+    <div class="hint">动起来什么样去游戏里看——工作台只管抠图与标注，<b>游戏是预览器</b>。</div>
+  </div>
+
+  <div id="log"></div>
+</div>
+
+<div id="stage">
+  <canvas id="bg"></canvas>
+  <canvas id="ov"></canvas>
+  <div id="cursor"></div>
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

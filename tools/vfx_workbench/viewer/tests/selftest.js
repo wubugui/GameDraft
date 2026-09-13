@@ -398,6 +398,277 @@
       ok('S14 link status answers even with no game (workbench keeps working)', st.ok === true && st.connected === false, { connected: st.connected });
       ok('S14 the link chip says so instead of pretending', /连不上|没收到/.test(el('linkChip').textContent), { chip: el('linkChip').textContent });
     }
+
+    // ------------------------------------------------------------------ S16 锚点模式「角色挂点」（手持挂件自带效果那条）
+    // 运行时：`HeldPropSystem` 每帧 `moveVfx(挂点世界点)` → `VfxInstanceSim.moveAnchor`
+    //（锚点跟着手走、**已发射的粒子留在原地**）。这里逐条钉住工作台跑的是同一条，且这一档只是工作态。
+    {
+      const modeSel = () => [...el('inspector').querySelectorAll('select')].find((s) => [...s.options].some((o) => o.value === 'socket'));
+      const setMode = (v) => { const s = modeSel(); if (!s) return false; s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); return true; };
+      // 场上放一个角色（走最外层入口：M 工具点地面）
+      setTool('player');
+      const cw = cv().clientWidth, ch = cv().clientHeight;
+      click(R(cw * 0.45), R(ch * 0.62));
+      setTool('select');
+      ok('S16 a character proxy is on stage (the socket anchor hangs off it)', S.player.on && !!S.player.scene, { scene: S.player.scene && S.player.scene.map(R) });
+      ok('S16 the inspector offers the anchor-mode selector (scene surface / character socket)', !!modeSel(),
+        { options: modeSel() && [...modeSel().options].map((o) => o.value) });
+      // ---- 开关一次：关掉之后 doc 必须逐字回到原样（这一档不许改已有资产的字节）
+      const before = JSON.stringify(S.doc);
+      setMode('socket');
+      ok('S16 turning it on writes only authoring.attach (heightWu defaults to the flame-head height)',
+        !!(S.doc.authoring && S.doc.authoring.attach) && S.doc.authoring.attach.heightWu === 110,
+        { attach: S.doc.authoring && S.doc.authoring.attach });
+      setMode('surface');
+      ok('S16 turning it off deletes that key again: the doc is byte-for-byte what it was',
+        JSON.stringify(S.doc) === before && !(S.doc.authoring && S.doc.authoring.attach), { same: JSON.stringify(S.doc) === before });
+      setMode('socket');
+      // 新加的行必须真的排出来（布局塌陷：控件在 DOM 里、高度是 0，看过去"这功能不存在"）
+      {
+        const ms = modeSel(), box = el('playerRow').querySelector('input[type=checkbox]');
+        const rows = [...el('inspector').querySelectorAll('.row')].filter((r) => /挂点高|左右偏移/.test(r.textContent));
+        ok('S16 the socket rows and the walk toggle are really laid out (height > 0, not collapsed to a seam)',
+          !!ms && ms.offsetHeight > 0 && rows.length === 2 && rows.every((r) => r.offsetHeight > 0) && !!box && box.offsetHeight > 0,
+          { sel: ms && ms.offsetHeight, rows: rows.map((r) => r.offsetHeight), box: box && box.offsetHeight });
+      }
+      // ---- 锚点 = 角色脚点画面点 + 离脚点高度：与运行时 `VfxSystem.sceneToWorld` 逐字同式
+      {
+        const ps = S.player.scene, aw = anchorWorld();
+        const g = S.space.groundWorldAtScene(ps[0], ps[1]);
+        const want = [g[0], g[1] + 110, g[2]];
+        ok('S16 the socket anchor resolves exactly like the runtime (groundWorldAtScene(foot) + heightWu)',
+          !!aw && Math.hypot(aw[0] - want[0], aw[1] - want[1], aw[2] - want[2]) < 0.01, { got: aw && aw.map(R), want: want.map(R) });
+        const an = effectiveAnchor();
+        ok('S16 the effective anchor is the foot screen point + offsetX, never authoring.anchor',
+          Math.abs(an.x - ps[0]) < 0.01 && Math.abs(an.y - ps[1]) < 0.01 && an.h === 110, { anchor: an });
+      }
+      // ---- 高度 / 左右偏移改得动（gizmo 与数值框同一条写入口）
+      {
+        const y0 = anchorWorld()[1];
+        edit('自检改挂点高', () => { host.ensureAttach().heightWu = 40; });
+        const y1 = anchorWorld()[1];
+        ok('S16 the socket height really lowers the anchor (110 → 40 wu above the foot)', y0 - y1 > 60, { y0: R(y0), y1: R(y1) });
+        edit('自检改挂点高回去', () => { host.ensureAttach().heightWu = 110; });
+        select('anchor');
+        const g = v3._gizmo();
+        ok('S16 selecting the anchor in socket mode still gives a gizmo immediately, labelled as the socket',
+          !!g && g.axes.length === 3 && /挂点/.test(g.label), g && { mode: g.mode, label: g.label });
+      }
+      // ---- 拖着挂点不许双倍位移：`patchSim` 必须把 `sim.anchorWorld` 一起同步，
+      //      否则下一拍 `moveAnchor` 按旧锚点再算一次增量，整批发射器被挪两倍（而且不报错）
+      {
+        const c = v3.project(anchorWorld());
+        if (!c) { log.push('WARN S16 skipped the drag check: the anchor is off screen'); } else {
+          select('anchor');
+          const keepAnchor = JSON.stringify(S.doc.authoring.anchor);
+          ev('mousedown', R(c[0]), R(c[1]));
+          ev('mousemove', R(c[0]) + 40, R(c[1]) - 30);
+          stepSim(1 / 120);
+          const e0 = S.sim.emitters[0], off = e0.def.offset || [0, 0, 0], aw = anchorWorld();
+          const d = Math.hypot(e0.origin[0] - (aw[0] + off[0]), e0.origin[1] - (aw[1] + off[1]), e0.origin[2] - (aw[2] + off[2]));
+          ok('S16 dragging the socket while the preview runs never double-moves the emitters (sim.anchorWorld stays in sync)',
+            d < 1, { d: +d.toFixed(3) });
+          ev('mouseup', R(c[0]) + 40, R(c[1]) - 30);
+          ok('S16 that drag wrote the socket (attach), never the scene anchor',
+            JSON.stringify(S.doc.authoring.anchor) === keepAnchor && !!host.attach, { attach: host.attach });
+          edit('自检把挂点摆回火头高度', () => { const o = host.ensureAttach(); o.heightWu = 110; delete o.offsetX; });
+        }
+      }
+      // ---- 已发射的粒子留在原地：放一个 burst 8、寿命 30 s、零初速的探针发射器，它只会待在出生点
+      {
+        edit('自检加挂点探针发射器', () => {
+          S.doc.emitters.push({
+            id: 'zz_hold', appearance: { image: '/resources/runtime/images/vfx/dust.png', sizeWu: 4 },
+            spawn: { max: 8, burst: 8, shape: { kind: 'point' } }, life: { seconds: [30, 30] },
+          });
+        });
+        resetSim();
+        for (let i = 0; i < 12; i++) stepSim(1 / 60);
+        const hold = () => S.sim.emitters.find((e) => e.def.id === 'zz_hold');
+        const snapHold = () => { const e = hold(), p = e.p, out = []; for (let k = 0; k < p.cap; k++) if (p.alive[k]) out.push([p.x[k], p.y[k], p.z[k]]); return out; };
+        const born = snapHold();
+        const o0 = hold().origin.slice(), a0 = anchorWorld().slice(), px0 = S.player.scene[0];
+        ok('S16 the probe emitter really burst a batch that will not respawn (8 alive, 30 s life)', born.length === 8, { live: born.length });
+        // 让角色来回走（左栏那个开关，不是内部函数）
+        const box = el('playerRow').querySelector('input[type=checkbox]');
+        box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true }));
+        ok('S16 the walk toggle in the left rail really starts the character walking', S.walk.on === true);
+        for (let i = 0; i < 60; i++) stepSim(1 / 60);
+        const moved = Math.abs(S.player.scene[0] - px0);
+        const a1 = anchorWorld().slice(), o1 = hold().origin.slice();
+        const dAnchor = Math.hypot(a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]);
+        const dOrigin = Math.hypot(o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]);
+        const now = snapHold();
+        let dPart = 0;
+        for (let k = 0; k < Math.min(born.length, now.length); k++) {
+          dPart = Math.max(dPart, Math.hypot(now[k][0] - born[k][0], now[k][1] - born[k][1], now[k][2] - born[k][2]));
+        }
+        // 走速 100 wu/s × 1 s = 100 wu（撞上半幅 / 场景边缘会提前折返，所以下限放宽）
+        ok('S16 walking 1 s moves the character across the picture at walking speed', moved > 40 && moved < 160, { moved: R(moved) });
+        ok('S16 the anchor and every emitter origin follow the socket (runtime moveAnchor, not a JS copy)',
+          dAnchor > 30 && Math.abs(dOrigin - dAnchor) < 1, { dAnchor: R(dAnchor), dOrigin: R(dOrigin) });
+        ok('S16 already-emitted particles stay where they were (that is the whole point of moveAnchor)',
+          now.length === 8 && dPart < 1 && dAnchor > 30, { dPart: +dPart.toFixed(3), dAnchor: R(dAnchor) });
+        ok('S16 a walking character feeds the player:motion field at walking strength (speed, not drag distance)',
+          S.fields.some((f) => f.handle === 'player:motion' && f.def.strength > 0.15 && f.def.strength < 0.35),
+          { strength: (S.fields.find((f) => f.handle === 'player:motion') || { def: {} }).def.strength });
+        box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true }));
+        ok('S16 switching the walk off parks the character (no motion field strength left)', S.walk.on === false && S.player.speed === 0);
+        // 挂点模式下没有角色 ⇒ 退回场景锚点，而且状态栏黄字说（不静默假装挂上了）
+        clearPlayer();
+        renderSimBar();
+        ok('S16 with no character on stage the sim bar warns instead of silently pretending',
+          /没有角色/.test(el('simInfo').textContent) && el('simInfo').className === 'warn', { info: el('simInfo').textContent });
+        setTool('player'); click(R(cw * 0.45), R(ch * 0.62)); setTool('select');
+        delEmitter('zz_hold');
+      }
+      // ---- 存盘往返 + 护栏
+      {
+        await saveEffect();
+        const back = await API.json(`/api/effect?id=${encodeURIComponent(TMP)}`);
+        const au = back.doc.authoring || {};
+        ok('S16 authoring.attach survives the save round-trip and sits right after anchor',
+          !!au.attach && au.attach.heightWu === 110 && Object.keys(au).indexOf('attach') === Object.keys(au).indexOf('anchor') + 1,
+          { authoring: Object.keys(au), attach: au.attach });
+        const bad = JSON.parse(JSON.stringify(back.doc));
+        bad.authoring.attach = { heightWu: -5 };
+        const r1 = await post('/api/validate', { doc: bad });
+        bad.authoring.attach = { offsetX: 3 };
+        const r2 = await post('/api/validate', { doc: bad });
+        ok('S16 guard rejects a negative / missing socket height', r1.ok === false && r2.ok === false, { r1: r1.err, r2: r2.err });
+      }
+      setMode('surface');
+      ok('S16 back on the scene surface, the anchor is authoring.anchor again',
+        !host.attach && !!(S.doc.authoring && S.doc.authoring.anchor) && !!anchorWorld(), { anchor: S.doc.authoring && S.doc.authoring.anchor });
+    }
+
+    // ------------------------------------------------------------------ S15 薄片（纸钱）：本地预览喂的输入与 VfxSystem 同形
+    // 2026-09-12：工作台不喂场景风、不传实例区域、空间不带透视 —— 纸钱 520 张躺着一张不动，且不报错。
+    // 只读真资产 paper_money（不 edit、不存）；它的作者场景跑马梁有 wind + perspectiveScale + 圈了区域的实例。
+    {
+      const PM = 'paper_money', SC = '跑马梁';
+      if (!S.effects.some((r) => r.id === PM) || !S.scenes.some((s) => s.id === SC && s.depth)) {
+        log.push(`WARN S15 skipped: needs effect ${PM} and scene ${SC} with depth`);
+      } else {
+        S.dirty = false;
+        await openEffect(PM);
+        const inst = (S.sceneVfx || []).find((v) => v.effect === PM && Array.isArray(v.area) && v.area.length >= 3);
+        ok('S15 opening paper_money brings up its authoring scene (wind + an instance that fences an area)',
+          S.doc.id === PM && S.scene.id === SC && !!S.scene.wind && !!inst, { doc: S.doc.id, scene: S.scene.id, inst: inst && inst.id });
+        ok('S15 the scene wind reaches the sim through the runtime SceneWindState (not a JS copy)',
+          !!S.wind && S.wind instanceof S.rt.sceneWind.SceneWindState && !!S.wind.params && S.wind.params.speed === S.scene.wind.speed,
+          { speed: S.wind && S.wind.params && S.wind.params.speed });
+        const pe = S.sim && S.sim.emitters.find((e) => e.plate);
+        ok('S15 the plate emitter scatters over the instance polygon, not a disc around the preview anchor',
+          !!pe && !!S.area && S.area.id === inst.id && pe.plate.area.poly === inst.area, { area: S.area && S.area.id, poly: !!(pe && pe.plate.area.poly) });
+        // 透视：与实体同一根轴（Game.buildVfxSpace 传的就是 perspectiveScaleResolver.scaleAt）
+        const probe = [[S.cal.worldW * 0.8, S.cal.worldH * 0.2], [S.cal.worldW * 0.2, S.cal.worldH * 0.85]].map(([sx, sy]) => {
+          const g = S.cal.sceneToWorldGround(sx, sy);
+          return { got: S.space.metricAt(g[0], g[2]), want: S.rt.perspectiveScale.perspectiveScaleAt(S.scene.perspectiveScale, sx, sy) };
+        });
+        ok('S15 the preview space carries the scene perspective (metricAt == perspectiveScaleAt at the foot point, not 1)',
+          probe.every((q) => Math.abs(q.got - q.want) < 0.02) && probe.some((q) => Math.abs(q.want - 1) > 0.1),
+          probe.map((q) => [+q.got.toFixed(3), +q.want.toFixed(3)]));
+        // 比的是**实例多边形**的包围盒，不是模拟自己的 area（没传区域时那是锚点圆盘，拿它比等于自证）
+        const a = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+        for (const [x, y] of inst.area) { a.minX = Math.min(a.minX, x); a.minY = Math.min(a.minY, y); a.maxX = Math.max(a.maxX, x); a.maxY = Math.max(a.maxY, y); }
+        const run = () => {
+          resetSim();
+          stepSim(1 / 60);
+          const e = S.sim.emitters.find((x) => x.plate), p = e.p, s = { x: 0, y: 0 };
+          let outside = 0;
+          const a0 = [];
+          for (let k = 0; k < p.cap; k++) {
+            a0.push(p.alive[k] ? [p.x[k], p.y[k], p.z[k]] : null);
+            if (!p.alive[k]) continue;
+            S.space.toScene([p.x[k], p.y[k], p.z[k]], s);
+            if (s.x < a.minX - 30 || s.x > a.maxX + 30 || s.y < a.minY - 30 || s.y > a.maxY + 30) outside++;
+          }
+          for (let i = 0; i < 360; i++) stepSim(1 / 60);
+          let moved = 0;
+          for (let k = 0; k < p.cap; k++) { const v = a0[k]; if (v && p.alive[k] && Math.hypot(p.x[k] - v[0], p.y[k] - v[1], p.z[k] - v[2]) > 2) moved++; }
+          renderSimBar();
+          return { moved, outside, live: S.sim.liveCount, info: el('simInfo').textContent, cls: el('simInfo').className };
+        };
+        const windy = run();
+        ok('S15 at birth every plate lies inside the instance polygon (bbox + 30)', windy.outside === 0 && windy.live > 0, { outside: windy.outside, live: windy.live });
+        const keep = S.scene.wind;
+        S.scene.wind = null;
+        const calm = run();
+        S.scene.wind = keep;
+        resetSim();
+        ok('S15 the wind really blows the paper: many more plates move with the scene wind than without (6 s, same seed)',
+          windy.moved >= 60 && windy.moved > calm.moved * 3, { windy: windy.moved, calm: calm.moved });
+        ok('S15 the sim bar reports the wind, the plates and where the area came from',
+          /风 \d+ wu\/s/.test(windy.info) && /薄片 离地/.test(windy.info) && windy.info.includes(`区域=实例「${inst.id}」`) && windy.cls !== 'warn', { info: windy.info });
+        ok('S15 no wind is never silent: the sim bar warns that plates will not be blown',
+          /⚠ 本场景没有 wind/.test(calm.info) && calm.cls === 'warn', { info: calm.info, cls: calm.cls });
+      }
+    }
+
+    // ------------------------------------------------------------------ S17 下拉框走页内列表，不走系统原生弹窗
+    // 2026-09-12 制作人实拍：Qt 的原生 <select> 弹窗在 150% 缩放屏上框比内容大一圈、**每开一次再乘一次**，
+    // 白边越开越大，而且不吃页面配色。页内自绘那一份的判据就是下面这几条（见 /vendor/dropdown.js）。
+    {
+      const selDown = (el2) => {
+        const r = el2.getBoundingClientRect();
+        return el2.dispatchEvent(new MouseEvent('mousedown', {
+          bubbles: true, cancelable: true, button: 0, buttons: 1,
+          clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2),
+        }));
+      };
+      const list = () => document.getElementById('ddlist');
+      const kind = el('fieldKind');
+      const delivered = selDown(kind);
+      const l1 = list();
+      ok('S17 mousedown on a select is cancelled (the native popup never opens) and the in-page list shows up',
+        delivered === false && !!l1 && l1.children.length === kind.options.length,
+        { defaultPrevented: delivered === false, items: l1 && l1.children.length, opts: kind.options.length });
+      // 框不许比控件大一圈：页内列表宽度以控件为下限，最多比它宽一点点（文字本来就更长时才宽）
+      const rs = kind.getBoundingClientRect(), rl = l1 ? l1.getBoundingClientRect() : null;
+      ok('S17 the list is not a 1.5x oversized box: it starts at the control width, never scales with it',
+        !!rl && rl.width >= rs.width - 1 && rl.width <= rs.width + 60 && rl.height <= window.innerHeight,
+        { sel: +rs.width.toFixed(1), list: rl && +rl.width.toFixed(1) });
+      // 反复开关不许越开越大（原生那条就是死在这里）
+      const sizes = [];
+      for (let i = 0; i < 5; i++) {
+        Dropdown.close();
+        selDown(kind);
+        const r = list().getBoundingClientRect();
+        sizes.push([+r.width.toFixed(1), +r.height.toFixed(1)]);
+      }
+      ok('S17 opening it five times in a row gives the exact same box every time (no growth)',
+        sizes.every((s) => s[0] === sizes[0][0] && s[1] === sizes[0][1]), { sizes });
+      // 选一项：值变了、change 发了、列表关了
+      let changed = 0;
+      const onCh = () => { changed++; };
+      kind.addEventListener('change', onCh);
+      const before = kind.value;
+      const idx = [...kind.options].findIndex((o) => o.value !== before);
+      list().children[idx].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+      ok('S17 picking an item sets the value, fires one change and closes the list',
+        kind.value === kind.options[idx].value && changed === 1 && !list(),
+        { before, after: kind.value, changed, open: !!list() });
+      kind.removeEventListener('change', onCh);
+      kind.value = before;
+      // Esc 关，而且不漏给页面的快捷键表
+      selDown(kind);
+      const toolBefore = S.tool;
+      const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.dispatchEvent(esc);
+      ok('S17 Escape closes the list and does not leak to the page keymap', !list() && S.tool === toolBefore,
+        { open: !!list(), tool: S.tool });
+      // 顶栏那两个（效果 / 场景）也走同一条路
+      for (const id of ['effectSel', 'sceneSel']) {
+        Dropdown.close();
+        const e2 = el(id);
+        const cancelled = selDown(e2) === false;
+        const l2 = list();
+        ok(`S17 ${id} uses the in-page list too`, cancelled && !!l2 && l2.children.length === e2.options.length,
+          { cancelled, items: l2 && l2.children.length, opts: e2.options.length });
+        Dropdown.close();
+      }
+    }
   } catch (e) {
     log.push('EXC ' + ((e && e.stack) || e));
   } finally {

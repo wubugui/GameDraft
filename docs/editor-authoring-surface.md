@@ -20,6 +20,7 @@
 - **能嵌套子动作**(可无限层):`runActions`、`chooseAction`(每选项)、`randomBranch`(aboveActions/belowActions)、`addDelayedEvent`、`enableRuleOffers`(每槽 resultActions)。
 - **有专用复杂表单**的(约 20 个):`setPlayerAvatar`、`setEntityField`、`setSceneEntityPosition`、`moveEntityTo`、`playTrajectory`(轨迹本身在独立的轨迹工作台里做,表单只选资产 / 目标 / 锚点,并能一键打开工作台)、`setHotspotDisplayImage`、`showOverlayImage`/`blendOverlayImage`、`setScenarioPhase`、`startDialogueGraph`、`playScriptedDialogue` 等;大量 id 字段是下拉选择器(scene/item/rule/quest/encounter/cutscene/audio/actor…)。
 - 动作内**没有**内嵌条件控件——条件只在外层面板独立编辑。
+- 手持光源那三个(2026-09-12):`attachToSocket`(多了可选 `state` = 挂件预设里的状态名)、`setPropState`(切状态 + 可选 `fadeMs`,只作用于灯)、`fadeLight`(场景灯的强度**倍率**渐变,`lightId` 走场景灯选择器)。⚠ `setPropState` **进存档**(手持物的状态是玩法事实),`fadeLight` 只是演出态;所以目前只有 `fadeLight` 在过场白名单里。
 
 ### 条件 `ConditionEditor`(`condition_editor.py` + `condition_expr_tree.py`)
 - 挂载点:`preconditions`/`completionConditions`/`unlockConditions`/`discoverConditions`/option 门控/dynamicDescriptions/nextQuests 边/热区·区域·NPC conditions 等。
@@ -59,6 +60,8 @@
 - 重建区:`hotspot.data`(尤其 inspect `data.text`)、`npc.patrol`(只 route/speed/moveAnimState)、`spawnPoint`(只 `{x,y}`)。
 - 主动删除:`zone.x/y/width/height/ruleSlots`、`npc.dialogueFile/dialogueKnot`;切 depth_floor 会删 zone 的 onEnter/onStay/onExit。
 - 盲区:`backgrounds`(主编辑器不可编辑,只「角色照明实验室」或手写)、`depthConfig` 主体(M/shader/collision/depth_map…只实验室烘焙导出;`tools/scene_depth_editor` 已于 2026-07-23 整体删除)。
+- 盲区(2026-09-12 新增):场景顶层 `wind`(场景风:方向/风速/阵风/湍流/粗糙度/粒子与草木两路增益,顶层键手写安全、Apply 保留;游戏里 F2「粒子」页可临时拖风速倍率与两路增益、不落盘,读数抄回 JSON)。见 agent_docs `scene-wind`。
+- vfx 实例的两块区域(2026-09-13 起可编辑,原为盲区):场景页 vfx 那一栏「拉发射区域」(`area`,在哪生 / 从哪补回)与「拉范围区域」(`confine.area`,粒子被关在哪;不拉就用发射区域),画布上改顶点;「粒子限定在区域里」+ 边带宽 + 限高写 `confine`。实例行未知键透传、键序保持(原先 Apply 会把行内键按字母重排,已修)。见 agent_docs `vfx-system`「粒子区域」、`vfx-workbench`「场景页的粒子区域」。
 - 透视缩放深度轴:场景面板启用后画布出现橙色箭头(近端■大→远端○小),拖两端手柄设任意方向的深度轴;等缩放等值线自动垂直于轴。竖直轴=普通上下纵深,斜轴=斜街。
 - 透视缩放下的碰撞多边形:可编辑多边形按 authored 空间显示(顶点拖拽/表格写回零换算);参与透视且系数≠1 时另画**只读虚线幽灵轮廓**=运行时实际命中面(authored 多边形绕锚点×f,与 anchorCollisionPolygonToWorld 同口径)。展示图/交互圈/NPC 精灵预览直接按系数缩放。
 - 无复制、无列表重排;`anim.json` 场景编辑器内只读(states 等廉价参数去「动画」面板改,图集像素布局靠 video_to_atlas 导出)。
@@ -77,7 +80,8 @@
 
 ## Cutscene 过场(`timeline_editor.py`)
 
-- 顶层:id / targetScene / targetSpawnPoint / targetX / targetY / restoreState(旧 `commands` 被 pop)。
+- 顶层:id / targetScene / targetSpawnPoint / targetX / targetY / restoreState / hideMetaHud(旧 `commands` 被 pop)。
+  `hideMetaHud` = 这段过场里连三把火/气味一起淡出;**缺省不写 = 不隐藏**,勾上才写 `true`(不写 `false`)。
 - 15 种 present:fadeToBlack / fadeIn / flashWhite / waitTime / waitClick / showTitle / showDialogue(speaker+text+scriptedNpcId) / showImg(id+image) / hideImg / showMovieBar / hideMovieBar / showSubtitle(classic position 或 movie band+align+可选 subtitleVoice/subtitleEmote) / cameraMove(x/y/duration+可选easing,可地图点选) / cameraZoom(scale/duration+可选easing) / showCharacter(visible)。easing 下拉:linear/easeIn/easeOut/easeInOut,缺省=运行时默认曲线。
 - 台词两类(showDialogue / showSubtitle)另带「逐字显示」勾选(`typewriter`):**缺省分家**——对白框逐字、字幕整句;**只写偏离缺省的那一侧**(对白框取消勾选写 `false`,字幕勾上写 `true`),回到缺省即删键。
 - action 步:type 来自 33 项白名单(`src/data/cutscene_action_allowlist.json`),白名单外+改存档的被拒。
@@ -108,11 +112,12 @@
 | 面板 | 文件 | 可编辑字段(节选) | 操作 / 危险区 |
 |---|---|---|---|
 | **位面** `plane_editor` | planes.json | id/label/movement(driftX/driftY/speedScale/allowRun)/interaction(canPickup/canInteractHotspots/canTalkNpcs)/camera.zoom/healthDrainPerSec/lighting(专家 JSON) | 增删;**normal 拒删、id 只读**;数值往返保真(6 位小数) |
-| **任务** `quest_editor` | quests.json + questGroups.json | 任务:id/group/type/sideType/title/description/preconditions/completionConditions/acceptActions/rewards/nextQuests(边:目标+bypassPreconditions+条件);分组:id/name/type/parentGroup | 增删、拖拽改父子(带环检测)、无复制;**删 nextQuestId(deprecated)** |
+| **任务** `quest_editor` | quests.json + questGroups.json | 任务:id/group/type/sideType/title/description/preconditions/completionConditions/acceptActions/rewards/nextQuests(边:目标+bypassPreconditions+条件)/objectives(id/文案/可选/完成条件 completeWhen/显示条件 visibleConditions/本目标引导)/guidance/announce/autoFocus;分组:id/name/type/parentGroup | 增删、拖拽改父子(带环检测)、无复制;**删 nextQuestId(deprecated)** |
 | **遭遇** `encounter_editor` | encounters.json | id/narrative/options(text/type/requiredRuleId/requiredRuleLayers 象理术/conditions/consumeItems/resultActions/resultText) | 增删、选项上下移、生成唯一 id |
 | **规矩** `rule_editor` | rules.json | 规矩:id/name/incompleteName/category/三层(text/lockedHint/verified);碎片:id/text/ruleId(只读)/layer/source | 增删;**删旧 verified/description/source...**;空层回填 |
 | **物品** `item_editor` | items.json | id/name/type/description/maxStack/buyPrice/**icon**(资源路径选择器,自动入 runtime/images/icons)/dynamicDescriptions(conditions+text) | 增删;dynamicDesc **只能加不能删单条**;icon 留空即删字段,背包退回文字显示 |
 | **商店** `shop_editor` | shops.json | id/name/items(itemId+price 表) | 增删行;price 总会写出 |
+| **挂件预设** `prop_preset_editor` | prop_presets.json | id/label/贴图(单张或多帧)/支点 anchorX·Y/自转/缩放/吃不吃光(三态);**自带光源**(挂点·偏移·色温或颜色·强度·作用半径·软化半径·投不投影·闪烁 amp/hz/windAmp);**自带效果**(效果资产 id 列表);**状态表**(点着/护火/残炭/灭:每态各自的贴图·摆放·灯·效果)+ 初始状态;persistent(手持物,入档);**有试挂预览**(可切状态看) | 灯与状态表两块默认折叠·懒建;状态里的"灯"是**三态**(沿用基础块 / 本态没有灯 / 本态自己一盏),别做成两态;灯的数值在游戏 F2「挂点」页调好回填(编辑器里凭空填不准) |
 | **地图** `map_editor` | map_config.json | sceneId/name/x/y/unlockConditions | 增删、**画布拖坐标** |
 | **档案** `archive_editor` | archive/{characters,lore,slang,documents,books}.json | 人物:name/title/unlock/firstViewActions/impressions+knownInfo(条件+文);见闻/文档:title/content(可插图)/source/category;**怪话册:title/content/example/source/note/category+分类与集齐评语**;书籍:三级 Book→Page→Entry | 增删条目;**book page 不能删、impressions 只能加不能删;切换未 Apply 会丢** |
 

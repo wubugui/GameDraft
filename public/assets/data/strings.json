@@ -50,6 +50,9 @@
     "textSpeed": "文字速度",
     "toggleOn": "开",
     "toggleOff": "关",
+    "smellDirection": "气味指向",
+    "smellDirToward": "烟指着东西",
+    "smellDirAway": "烟背着东西",
     "saveFailed": "存档失败",
     "loadFailed": "读档失败，进度未改变"
   },

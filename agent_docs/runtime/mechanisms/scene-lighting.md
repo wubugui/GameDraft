@@ -67,6 +67,8 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 - `src/core/lightingPayloadFiles.ts` —— **运行时到底读哪些文件**的唯一真相源
   (打包与验收各有一份镜像,契约测试逐字比对)。场景侧现在是
   `geometry.json` / `normal.png` / `albedo.png`;`skyvis.png` 已不在其中。
+  同目录的可选件还有背景草木摆动拆层 `sway.json` / `sway_plate.png` / `sway_matte.png` / `sway_ids.png`
+  (不是光照量,是结构派生物;全时段共用主背景那份,见 [scene-wind](scene-wind.md))。
 
 ## 硬契约(违反即 bug 的机制约束)
 
@@ -86,9 +88,14 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 - **烘焙产物按第一层背景图名索引**。换时段 = 换主背景 = 换一整套烘焙目录
   (`lighting/<背景基名>/`,probe 与几何场同住)。**每张时段原画都要各烘一份**,
   只烘白天那张的话夜里就是"没烘载荷",整套安静禁用。
-  ⚠ **`albedo.png` 是这条规则的唯一例外**:它按**主背景**算一次,各时段目录里放的是
+  ⚠ **`albedo.png` 是这条规则在烘焙侧的唯一例外**:它按**主背景**算一次,各时段目录里放的是
   同一份字节(材质不随时段变)。所以它由 `albedo_map.from_background` 说清来历,
   新鲜度门比的也是**主背景**的哈希,不是本目录那张背景的。
+  ⚠ **运行时侧还有一条兜底**(2026-09-12):时段原画**没烘**、且变体**没换深度图**时,
+  `CharacterLightingSystem.loadGeometryOnly` 借主背景那份的**几何项**(行走面 + 标定;
+  "各时段必须共享几何"本来就是校验器的硬规则),**光照项一概不借**(`resources` 保持 null,
+  角色退 EntityLightingFilter、粒子退色调融入)。它只让脚点遮挡 / 粒子的地面与墙 / 空间音不再
+  退平面近似,**不是**"可以不烘夜图"——夜里的 probe 仍要给那张原画单独烘。
 - **烘焙只有一个工具、一个目录**(制作人 2026-08-31 定):`tools/character_lighting_lab`
   产出一张背景图的**全部**派生物,落 `lighting/<背景基名>/`。别再另起一个 baker 或
   另开一个目录——同一份东西分两处放,打包规则、校验器、迁移脚本就要各写一套路径,

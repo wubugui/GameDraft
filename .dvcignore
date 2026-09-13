@@ -18,3 +18,9 @@ resources/editor_projects/editor_data/runtime_acoustics_status.json
 # 粒子工作台 ↔ 游戏的实时联动槽：与上面声学那对同一套形状，同样是会话工作态
 resources/editor_projects/editor_data/runtime_vfx.json
 resources/editor_projects/editor_data/runtime_vfx_status.json
+
+# 草木工作台 → 游戏的实时联动槽（单向，只有一行 rev）：同样是会话工作态
+resources/editor_projects/editor_data/runtime_sway.json
+
+# 草木工作台的涂层历史(本机撤销记录,每场景 20 份):不进 DVC 推送体积
+public/resources/runtime/scenes/*/lighting/*/sway_paint_history/

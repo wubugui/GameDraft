@@ -93,6 +93,12 @@
       ]
     },
     {
+      "glob": "public/assets/data/document_reveals.json",
+      "docs": [
+        "document-reveal-three-states"
+      ]
+    },
+    {
       "glob": "public/assets/data/encounters.json",
       "docs": [
         "narrative-flow-authoring"
@@ -150,6 +156,12 @@
       "docs": [
         "plane-editor-slot-inheritance",
         "plane-system"
+      ]
+    },
+    {
+      "glob": "public/assets/data/prop_presets.json",
+      "docs": [
+        "held-prop-lights"
       ]
     },
     {
@@ -511,6 +523,12 @@
       ]
     },
     {
+      "glob": "src/data/propPresets.ts",
+      "docs": [
+        "held-prop-lights"
+      ]
+    },
+    {
       "glob": "src/dev/**",
       "docs": [
         "debug-ui-persistence"
@@ -618,6 +636,12 @@
       ]
     },
     {
+      "glob": "src/rendering/backgroundSway.ts",
+      "docs": [
+        "scene-wind"
+      ]
+    },
+    {
       "glob": "src/rendering/charShadeCore.glsl",
       "docs": [
         "character-lighting"
@@ -662,6 +686,12 @@
       "glob": "src/rendering/vfx/**",
       "docs": [
         "vfx-system"
+      ]
+    },
+    {
+      "glob": "src/rendering/vfx/VfxPlateBatchMesh.ts",
+      "docs": [
+        "scene-wind"
       ]
     },
     {
@@ -714,6 +744,7 @@
     {
       "glob": "src/systems/DocumentRevealManager.ts",
       "docs": [
+        "document-reveal-three-states",
         "overlay-image-handle-semantics"
       ]
     },
@@ -790,6 +821,12 @@
       ]
     },
     {
+      "glob": "src/systems/heldProp/**",
+      "docs": [
+        "held-prop-lights"
+      ]
+    },
+    {
       "glob": "src/systems/minigameSession.ts",
       "docs": [
         "minigame-session-lifecycle"
@@ -812,6 +849,12 @@
       "glob": "src/systems/vfx/**",
       "docs": [
         "vfx-system"
+      ]
+    },
+    {
+      "glob": "src/systems/vfx/vfxPlate.ts",
+      "docs": [
+        "scene-wind"
       ]
     },
     {
@@ -972,6 +1015,12 @@
       ]
     },
     {
+      "glob": "src/utils/sceneWind.ts",
+      "docs": [
+        "scene-wind"
+      ]
+    },
+    {
       "glob": "src/utils/scriptedDialogueSpeaker.ts",
       "docs": [
         "dialogue-portrait-runtime"
@@ -1070,6 +1119,13 @@
       ]
     },
     {
+      "glob": "tools/character_lighting_lab/sway_field.py",
+      "docs": [
+        "scene-wind",
+        "sway-workbench"
+      ]
+    },
+    {
       "glob": "tools/desktop_shell.py",
       "docs": [
         "trajectory-workbench"
@@ -1091,7 +1147,8 @@
     {
       "glob": "tools/dialogue_graph_editor/**",
       "docs": [
-        "editor-tools-norms"
+        "editor-tools-norms",
+        "widget-teardown-orphan-window"
       ]
     },
     {
@@ -1111,7 +1168,8 @@
       "glob": "tools/editor/**",
       "docs": [
         "editor-tools-norms",
-        "live-editor-forensics"
+        "live-editor-forensics",
+        "widget-teardown-orphan-window"
       ]
     },
     {
@@ -1162,6 +1220,12 @@
       "glob": "tools/editor/editors/plane_editor.py",
       "docs": [
         "plane-editor-slot-inheritance"
+      ]
+    },
+    {
+      "glob": "tools/editor/editors/prop_preset_editor.py",
+      "docs": [
+        "held-prop-lights"
       ]
     },
     {
@@ -1418,6 +1482,12 @@
       ]
     },
     {
+      "glob": "tools/production_workbench/**",
+      "docs": [
+        "widget-teardown-orphan-window"
+      ]
+    },
+    {
       "glob": "tools/scene_relight/**",
       "docs": [
         "coordinate-spaces",
@@ -1425,6 +1495,12 @@
         "scene-lighting",
         "scene-radiance-restoration-pipeline",
         "scene-relight-tool"
+      ]
+    },
+    {
+      "glob": "tools/sway_workbench/**",
+      "docs": [
+        "sway-workbench"
       ]
     },
     {

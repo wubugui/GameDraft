@@ -81,6 +81,16 @@ export interface DebugToolsDeps {
   assetManager: AssetManager;
   /** 挂点调试页按预设试挂（走内容侧真正那条路） */
   getPropPresets: () => PropPresetTable;
+  /** 手持挂件系统（带灯 / 带状态的预设经它挂，F2 才看得到灯与火焰） */
+  heldProp: {
+    attach: (target: string, socket: string, prop: string, state?: string) => Promise<void>;
+    setState: (target: string, socket: string, state: string, fadeMs: number) => boolean;
+    detach: (target: string, socket: string) => void;
+    snapshot: () => { target: string; socket: string; prop: string; state: string; lightIntensity: number }[];
+    getFlickerPushHz: () => number;
+    setFlickerPushHz: (hz: number) => void;
+    flickerPushHzChoices: readonly number[];
+  };
   camera: Camera;
   eventBus: EventBus;
   player: Player;
@@ -1836,7 +1846,7 @@ export class DebugTools {
     for (const p of sd.listProfiles()) mkScentBtn(p.id, p.name);
     wrap.appendChild(scentRow);
 
-    // 气味源 / 飘向追踪（G.6）：在玩家左/右 300px 放个源，气缕该往反方向歪；关追踪立刻直
+    // 气味源 / 飘向追踪（G.6）：在玩家左/右 300px 放个源，气缕该往源那边歪；关追踪立刻直
     const srcRow = document.createElement('div');
     srcRow.className = 'debug-dock__btn-row';
     const mkSrcBtn = (label: string, fn: () => void): void => {
@@ -2126,6 +2136,7 @@ export class DebugTools {
       getTargetSprite: () => this.deps.player.sprite,
       getTargetLabel: () => '玩家',
       getPropPresets: () => this.deps.getPropPresets(),
+      heldProp: this.deps.heldProp,
       refresh: () => debugPanelUI.refresh(),
       log: (m) => debugPanelUI.log(m),
     });

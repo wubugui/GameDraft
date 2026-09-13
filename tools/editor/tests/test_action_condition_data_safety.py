@@ -8,6 +8,11 @@
 - 未登记 flag 的数值条件不得被 bool 化、op== 不得丢 value 键；
 - 条件层 int 不得漂 float；scenario outcome 字符串不得经 json.loads 变类型；
 - "(非枚举) xxx" 展示文案不得写回 JSON；
+- 可选枚举串（showNotification.type）缺省不得凭空长出空串键；
+- 「最小形态打开→不改→保存」不得凭空长键（2026-09-12 全量扫描收口的 8 个 action：
+  setEntityShadow / playVfx / emitVfxField 是行为级，pickup / runActionsIf / randomBranch /
+  debugAlertActionParams / setSceneEntityPosition 是格式级）；
+- 位置引用 `at`（dict 形态）不得被泛型裸输入框存成 Python repr 字符串；
 - IdRefSelector：未知值保值、空值不落第一项、editable 手打发信号/清空返回空。
 """
 from __future__ import annotations
@@ -76,6 +81,31 @@ class ActionDataSafetyTests(unittest.TestCase):
             for issue in issues
         ))
 
+    def test_run_actions_if_full_form_roundtrip(self) -> None:
+        """填满形态：条件树 + 两条子动作列表都要原样存回。"""
+        self._assert_roundtrip({
+            "type": "runActionsIf",
+            "params": {
+                "condition": {"timePhase": "夜"},
+                "actions": [
+                    {"type": "setThreeFiresVisible", "params": {"visible": True, "style": "fade"}},
+                ],
+                "elseActions": [
+                    {"type": "setThreeFiresVisible", "params": {"visible": False, "style": "instant"}},
+                ],
+            },
+        })
+
+    def test_run_actions_if_minimal_form_does_not_grow_else_key(self) -> None:
+        """最小形态：没写 elseActions 的，打开→什么都不改→保存不得凭空多出该键。"""
+        self._assert_roundtrip({
+            "type": "runActionsIf",
+            "params": {
+                "condition": {"all": [{"timePhase": "夜"}, {"flag": "three_fires_visible", "op": "==", "value": False}]},
+                "actions": [{"type": "setThreeFiresVisible", "params": {"visible": True, "style": "flare"}}],
+            },
+        })
+
     def test_add_flag_value_large_delta_not_clamped(self) -> None:
         self._assert_roundtrip(
             {"type": "addFlagValue", "params": {"key": "some_counter", "delta": 100}},
@@ -133,6 +163,22 @@ class ActionDataSafetyTests(unittest.TestCase):
             {"type": "setFlag", "params": {"key": "unreg_key_xyz", "value": 3}},
         )
 
+    def test_show_notification_minimal_form_does_not_grow_type_key(self) -> None:
+        """最小形态（只写 text）：打开→什么都不改→保存不得凭空多出 type:""。
+
+        type 在 actionParamManifest 里是 optional，泛型 str 控件的中性值是空串；
+        不登记 omit 表的话全项目 showNotification 条目会被批量注入这个空键。
+        """
+        self._assert_roundtrip({"type": "showNotification", "params": {"text": "提示"}})
+
+    def test_show_notification_explicit_type_survives(self) -> None:
+        """显式写过的档（含显式空串）一律保留——omit 只针对"原本就没这个键"。"""
+        for tv in ("", "info", "warning"):
+            with self.subTest(type=tv):
+                self._assert_roundtrip(
+                    {"type": "showNotification", "params": {"text": "提示", "type": tv}},
+                )
+
     def test_show_notification_non_enum_type_not_polluted(self) -> None:
         out = _roundtrip_action(
             self.model,
@@ -140,6 +186,184 @@ class ActionDataSafetyTests(unittest.TestCase):
             self.scene_id,
         )
         self.assertEqual(out["params"].get("type"), "fancy_custom")
+
+    # ---- 最小形态不得凭空长键（2026-09-12 全量扫描的 8 个漏网 action）----
+    # 判据统一：只填 actionParamManifest.ts 的 required/nonEmpty，可选参数一律不写，
+    # 打开→什么都不改→保存必须逐字节回原样。复扫脚本见
+    # tools/editor/tests/scan_action_minimal_roundtrip.py。
+
+    def test_set_entity_shadow_minimal_form_does_not_grow_virtual_params(self) -> None:
+        """虚拟灯五个量的运行时默认全是非 0（135/50/0.6/0.35/0）——凭空写 0 是行为级：
+        darkness:0 影子直接不可见、azimuth/elevation 归 0 方向错。"""
+        for source in ("virtual", "light:lamp_1", "none"):
+            with self.subTest(source=source):
+                self._assert_roundtrip(
+                    {"type": "setEntityShadow", "params": {"target": "player", "source": source}},
+                )
+
+    def test_set_entity_shadow_explicit_values_survive(self) -> None:
+        """显式写过的一律保留——含"显式 0"（绑真实灯时运行时按 `p.darkness !== undefined`
+        判断要不要覆盖，把显式 0 剔掉会让"覆盖成全黑"变成"沿用灯的 0.6"）。"""
+        self._assert_roundtrip({
+            "type": "setEntityShadow",
+            "params": {
+                "target": "player", "source": "virtual",
+                "azimuthDeg": 135, "elevationDeg": 50,
+                "darkness": 0.6, "softness": 0.35, "length": 40,
+            },
+        })
+        self._assert_roundtrip({
+            "type": "setEntityShadow",
+            "params": {"target": "player", "source": "light:lamp_1", "darkness": 0, "softness": 0},
+        })
+
+    def test_play_vfx_minimal_form_does_not_grow_optional_params(self) -> None:
+        """seed 凭空写 0 = 随机种子被钉死；countScale 凭空写 0 = **粒子一颗都不出**；
+        at 凭空写 "" = parsePositionRef 解析不出 → 整个动作静默跳过。"""
+        for params in (
+            {"instanceId": "fog_1"},
+            {"effect": "dust", "x": 120, "y": 340},
+            {"effect": "dust", "at": {"kind": "entity", "id": "player"}},
+            {"effect": "dust", "at": "player"},
+        ):
+            with self.subTest(params=params):
+                self._assert_roundtrip({"type": "playVfx", "params": params})
+
+    def test_play_vfx_explicit_values_survive(self) -> None:
+        """显式写过的值一律保留，含显式 seed:0 / countScale:0（作者真要钉种子/关粒子）。"""
+        self._assert_roundtrip({
+            "type": "playVfx",
+            "params": {
+                "effect": "dust", "at": "player", "h": 12.5,
+                "surface": "shell", "seed": 0, "countScale": 0,
+            },
+        })
+        self._assert_roundtrip({
+            "type": "playVfx",
+            "params": {"effect": "dust", "x": 0, "y": 0, "surface": "ground", "seed": 7, "countScale": 1.5},
+        })
+
+    def test_emit_vfx_field_minimal_form_does_not_grow_optional_params(self) -> None:
+        """strength 运行时缺省 1（`numOr(p.strength, 1)`）——凭空写 0 = 刺激场强度归零；
+        at:"" 同 playVfx，会让整个 emit 静默跳过。"""
+        for params in (
+            {"tag": "item:bug", "radius": 900},
+            {"tag": "gust", "radius": 600, "x": 12, "y": 34},
+            {"tag": "gust", "radius": 600, "at": {"kind": "entity", "id": "player"}},
+        ):
+            with self.subTest(params=params):
+                self._assert_roundtrip({"type": "emitVfxField", "params": params})
+
+    def test_emit_vfx_field_explicit_values_survive(self) -> None:
+        """显式值保留（含显式 strength:0 与等于运行时缺省的 kind:"fear"）；
+        direction 三元组不在 _PARAM_SCHEMAS 里，走「未登记参数原值透传」不得被保存即删。"""
+        self._assert_roundtrip({
+            "type": "emitVfxField",
+            "params": {
+                "kind": "wind", "tag": "gust", "radius": 600, "strength": 900,
+                "duration": 1.2, "at": {"kind": "entity", "id": "player"},
+                "direction": [1, 0, 0],
+            },
+        })
+        self._assert_roundtrip({
+            "type": "emitVfxField",
+            "params": {"kind": "fear", "tag": "item:bug", "radius": 900, "strength": 0, "h": 30},
+        })
+
+    def test_pickup_minimal_form_does_not_grow_item_id(self) -> None:
+        """铜钱档（isCurrency + itemName + count）本就不填 itemId，运行时也不读它。"""
+        self._assert_roundtrip(
+            {"type": "pickup", "params": {"itemName": "铜钱", "count": 5, "isCurrency": True}},
+        )
+
+    def test_pickup_explicit_values_survive(self) -> None:
+        self._assert_roundtrip({"type": "pickup", "params": {"itemId": "yellow_paper", "count": 2}})
+        self._assert_roundtrip({"type": "pickup", "params": {"itemId": "", "itemName": "铜钱"}})
+
+    def test_run_actions_if_minimal_form_does_not_grow_actions_key(self) -> None:
+        """只写 condition 的（等价 runActions 的空壳 / 只用 elseActions 的）不得长出 actions:[]。"""
+        self._assert_roundtrip({"type": "runActionsIf", "params": {"condition": {"timePhase": "夜"}}})
+        self._assert_roundtrip({
+            "type": "runActionsIf",
+            "params": {
+                "condition": {"timePhase": "夜"},
+                "elseActions": [{"type": "showNotification", "params": {"text": "白天"}}],
+            },
+        })
+
+    def test_run_actions_if_explicit_empty_actions_survive(self) -> None:
+        """盘上原本写着空列表的，原样留着不动（omit 只针对"原本就没这个键"）。"""
+        self._assert_roundtrip({
+            "type": "runActionsIf",
+            "params": {"condition": {"timePhase": "夜"}, "actions": [], "elseActions": []},
+        })
+
+    def test_random_branch_minimal_form_does_not_grow_optional_params(self) -> None:
+        """probability 缺键 = 运行时 0.5；两条分支列表缺键同义于空列表。"""
+        self._assert_roundtrip({"type": "randomBranch", "params": {}})
+        self._assert_roundtrip({
+            "type": "randomBranch",
+            "params": {"aboveActions": [{"type": "showNotification", "params": {"text": "上"}}]},
+        })
+
+    def test_random_branch_explicit_values_survive(self) -> None:
+        self._assert_roundtrip({
+            "type": "randomBranch",
+            "params": {"probability": 0.5, "aboveActions": [], "belowActions": []},
+        })
+        self._assert_roundtrip({
+            "type": "randomBranch",
+            "params": {
+                "probability": 0.25,
+                "aboveActions": [{"type": "showNotification", "params": {"text": "上"}}],
+                "belowActions": [{"type": "showNotification", "params": {"text": "下"}}],
+            },
+        })
+
+    def test_debug_alert_action_params_minimal_form_does_not_grow_title(self) -> None:
+        self._assert_roundtrip({"type": "debugAlertActionParams", "params": {}})
+
+    def test_debug_alert_action_params_explicit_title_survives(self) -> None:
+        for tv in ("", "看参数"):
+            with self.subTest(title=tv):
+                self._assert_roundtrip({"type": "debugAlertActionParams", "params": {"title": tv}})
+
+    def test_set_scene_entity_position_minimal_form_does_not_grow_entity_kind(self) -> None:
+        """entityKind 在 manifest 里是 optional，缺键 = 运行时 'npc'；专用表单恒写它。"""
+        self._assert_roundtrip({
+            "type": "setSceneEntityPosition",
+            "params": {"sceneId": self.scene_id or "", "entityId": "ghost_npc_不存在", "x": 12, "y": 34},
+        })
+
+    def test_set_scene_entity_position_explicit_entity_kind_survives(self) -> None:
+        for kind in ("npc", "hotspot"):
+            with self.subTest(entityKind=kind):
+                self._assert_roundtrip({
+                    "type": "setSceneEntityPosition",
+                    "params": {
+                        "sceneId": self.scene_id or "", "entityKind": kind,
+                        "entityId": "ghost_不存在", "x": 12, "y": 34,
+                    },
+                })
+
+    def test_vfx_dict_position_ref_not_stringified(self) -> None:
+        """泛型面的 `at` 是裸 QLineEdit（装的是 str(原值)）：dict 形态必须按磁盘原值回写，
+        否则会存成 Python repr 字符串（"{'kind': 'entity', 'id': 'player'}"），运行时
+        parsePositionRef 拿它当实体 id 解析不出来 → 动作静默跳过（崖墓那阵风的真实死法）。"""
+        for act_type, base in (
+            ("playVfx", {"effect": "dust"}),
+            ("emitVfxField", {"tag": "gust", "radius": 600}),
+        ):
+            for ref in (
+                {"kind": "entity", "id": "player"},
+                {"kind": "point", "x": 120.5, "y": 340},
+                {"kind": "slot", "trajectoryId": "coin_drop_demo", "slotId": "s1"},
+            ):
+                with self.subTest(action=act_type, at=ref):
+                    out = _roundtrip_action(
+                        self.model, {"type": act_type, "params": {**base, "at": ref}}, self.scene_id,
+                    )
+                    self.assertEqual(out["params"].get("at"), ref)
 
     def test_set_scenario_phase_non_enum_status_not_polluted(self) -> None:
         out = _roundtrip_action(

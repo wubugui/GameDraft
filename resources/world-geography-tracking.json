@@ -1,0 +1,1814 @@
+{
+  "version": 1,
+  "scope": "Map geography production, approved world map, runtime markers and validation evidence",
+  "gitFiles": [
+    "src/ui/MapUI.ts",
+    "src/ui/UITheme.ts",
+    "public/assets/data/map_config.json",
+    "public/resources/runtime.dvc",
+    "resources/editor_projects.dvc",
+    "resources/world-geography-tracking.json"
+  ],
+  "dvcArchive": "resources/editor_projects/misc_media/world-geography",
+  "runtimeMap": "public/resources/runtime/images/maps/wujin-paper-map-v2.png",
+  "runtimeMapSha256": "3d478270900f87addd48513e333d7e1b4e6bcd7880577818ef0196e6c998386b",
+  "restore": "Restore resources/editor_projects with the existing dev pull --editor workflow. The archived world-geography directory is a complete snapshot of artifact/world-geography; copy it back there to serve the original review pages. Local logs, PID files and Python caches are excluded.",
+  "originalConflictBackup": "resources/editor_projects/misc_media/world-geography/tracking-history/2026-09-13",
+  "missingTempAttachments": [],
+  "files": [
+    {
+      "source": "artifact/world-geography/approval/cliffs.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/cliffs.png",
+      "bytes": 3061502,
+      "sha256": "70981f3461ad8fe9b9b21128af77583c049ba100e1c47e863c36d61d4d23c200"
+    },
+    {
+      "source": "artifact/world-geography/approval/completion-audit.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/completion-audit.json",
+      "bytes": 3230,
+      "sha256": "c88ad11dc662ae28238db0a0e5b049a94e92816dddaac87d7a72d81d3f4a1c1c"
+    },
+    {
+      "source": "artifact/world-geography/approval/direction-review-v3.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/direction-review-v3.png",
+      "bytes": 271087,
+      "sha256": "7c03d254c9730ca28ff9766f813cf3b7374d85883ef9d63fae9f23ebe59cf4fd"
+    },
+    {
+      "source": "artifact/world-geography/approval/dream.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/dream.png",
+      "bytes": 1198342,
+      "sha256": "59f4515e5766c5e9b188d271aff31a1317ae1b7909839b918eb63a9daecaac62"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v4/00-world.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v4/00-world.png",
+      "bytes": 3916477,
+      "sha256": "1e3945af140daefca6babb9b99051742b1701193a0061059bfa4ef7dcc777bb0"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v4/01-town-candidate.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v4/01-town-candidate.png",
+      "bytes": 3855505,
+      "sha256": "4b7dba26e68c2da5c482b91a4d4636f531140ea01dacd07cf408b5e181b021a9"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v4/01-town.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v4/01-town.png",
+      "bytes": 3287981,
+      "sha256": "b40373c7edac38dc5fc562a75dd6cb37eea57217c46795bd25a3f1e8f4ddf50b"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v4/02-cliffs-candidate.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v4/02-cliffs-candidate.png",
+      "bytes": 3258298,
+      "sha256": "e1bbc4d3eb5723606adc103c59c89a20b0fd10b313d8341c2b3d2ecca5500429"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v4/02-cliffs.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v4/02-cliffs.png",
+      "bytes": 3157272,
+      "sha256": "0e059ce5a1085f0f4906e3ce7c99860f99bea87707339874849f3cb6ceb89d4a"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v4/03-northwest.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v4/03-northwest.png",
+      "bytes": 3723075,
+      "sha256": "fe6aa52be5b562ac6a9edb82f3e7f972dc538235b32a51ae83af3857d448c24c"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/01-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/01-0-v1.json",
+      "bytes": 3950,
+      "sha256": "55f65d400073ba1e8d56c6cd39b3fa503a45296398b9bddf79a18475bccb3f8b"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/01-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/01-0-v1.png",
+      "bytes": 3498876,
+      "sha256": "a29632bd49fee5798fc919aadf7df873231f77257d3cc933fb290b8d4358e73d"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/02-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/02-0-v1.json",
+      "bytes": 3631,
+      "sha256": "53bb7044ba4eab6bf3bebe37f874f565162cb14928135d595709737136606bd6"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/02-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/02-0-v1.png",
+      "bytes": 3107813,
+      "sha256": "123962963bffc5cc535b0681d93b5ba5329aca13506ece871d6434b1e77acbba"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/03-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/03-0-v1.json",
+      "bytes": 3683,
+      "sha256": "dbf43c231ab275e21ad7dd6326d3f522c638e2b15a96290d71b030653099b9fa"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/03-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/03-0-v1.png",
+      "bytes": 3275969,
+      "sha256": "1a102c2f750bfac20a1853246adc2ead8f2e9d2a3f4a50480066a3407cacfc18"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/03-0-v2.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/03-0-v2.json",
+      "bytes": 3712,
+      "sha256": "d71c4e848279c602bb4bd295ecd382cc70019437c3473f0a85ea50f73bfa4113"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/03-0-v2.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/03-0-v2.png",
+      "bytes": 2862646,
+      "sha256": "d518b2350616bf97fa6f53c8d1a001946d1db36aff15f5b11e732368d57e5555"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/04-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/04-0-v1.json",
+      "bytes": 3694,
+      "sha256": "87a279c43291338b03d89f47950981ea224566f97b5ed1b45f7ae6979b37b00d"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/04-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/04-0-v1.png",
+      "bytes": 2835876,
+      "sha256": "ba318d477c60d425a1952cffbc5e6716515d8c4434e5c63d0ecc105a881b2d71"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/05-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/05-0-v1.json",
+      "bytes": 3750,
+      "sha256": "2a1cd51b28f3d03ded789c20c553058f0283cfcdfe68fbcfc4626e5bf9ab5e6f"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/05-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/05-0-v1.png",
+      "bytes": 3125948,
+      "sha256": "5ac76ba1149d2a7e2e456c7a33eeeeaaa4bf5da84debf3653f86cbaa6b1f9d6b"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/06-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/06-0-v1.json",
+      "bytes": 3706,
+      "sha256": "a33af6c877aa2ebd6a66ec1ac38a62dde70becdef52c7ef0a47ee5087487a9a2"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/06-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/06-0-v1.png",
+      "bytes": 2973444,
+      "sha256": "f833c170775c73e5e2336f7271594935898c6f38f113311e3d2ef26d400c5fc8"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/07-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/07-0-v1.json",
+      "bytes": 3694,
+      "sha256": "9185baf7a24bef0418227fe95156e4b3acadad54e9c102e15419104e9bea2463"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/07-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/07-0-v1.png",
+      "bytes": 3066907,
+      "sha256": "4ae236d5df63993e4fce4f9eda3e1d75e9dd0c0dbd0e9a7f1d752e44c75aee8d"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/08-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/08-0-v1.json",
+      "bytes": 3691,
+      "sha256": "f01113bd1da11355313096d3d2ed85bc437cf28cf410443932e8ee4a1407fc75"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/08-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/08-0-v1.png",
+      "bytes": 2881512,
+      "sha256": "be3b00140648a0750ef9045f69a65af3dc977a28489d33ded04fff1077d9a466"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/09-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/09-0-v1.json",
+      "bytes": 3792,
+      "sha256": "a1cd4d2d2b90be8ea6b5ee2a9caf6ba249ba5820676dbcdf7f86a4eb568eb1f2"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/09-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/09-0-v1.png",
+      "bytes": 3578007,
+      "sha256": "ceff82d4dfd799dffd073c51b3703dc0a87db1e2a5290f0c9c2d11c182b9d972"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/09-0-v2.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/09-0-v2.json",
+      "bytes": 3792,
+      "sha256": "ad52f9bfc13d077856b868d7df19bfb0513c2514ca27ac37e83580f475089c15"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/09-0-v2.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/09-0-v2.png",
+      "bytes": 3337918,
+      "sha256": "abce3c172394417873506baa27a547f1b4af486a6fc7afb70859506f99a517f4"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/10-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/10-0-v1.json",
+      "bytes": 3757,
+      "sha256": "0ae21af7735c462dbda310c359e8177d5dc901ffe837ca03abc4364ab53f635f"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/10-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/10-0-v1.png",
+      "bytes": 3504770,
+      "sha256": "eaa7f4b5759913a3e1e037c56258086f7cf1e889fa77df3d07cd1405d70af6bd"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/11-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/11-0-v1.json",
+      "bytes": 3712,
+      "sha256": "564fe26629ef3b1ca5e7dbcb1aa4de431dee841a04f017bdb182c195f9d5cce6"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/11-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/11-0-v1.png",
+      "bytes": 3201877,
+      "sha256": "56058ef4b0faf9eb8049c9b96ed55484cf67d81f107497a096acfd9526535880"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/12-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/12-0-v1.json",
+      "bytes": 3694,
+      "sha256": "fdb6dbcb018063f5759e6573add177899e92b037124a64a41fca8d7ca6555768"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/12-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/12-0-v1.png",
+      "bytes": 3211776,
+      "sha256": "53adf535beb64450b1214d7a9d14a873221a5a054ea85879c87c4b9117b7858d"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/13-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/13-0-v1.json",
+      "bytes": 3785,
+      "sha256": "35c0c4597ae39b01d24053c6cfa8ae0fb5ac15307d2b1f0cebe7cd17d06522b0"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/13-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/13-0-v1.png",
+      "bytes": 2724682,
+      "sha256": "54b2d02358ae55106c337c32b85cf59a7a709fa37edac53936e4d30906a63af8"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/18-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/18-0-v1.json",
+      "bytes": 3859,
+      "sha256": "24a41ceb1f26840745571b9b51608cb59d8a9c3ff970f42ecf05fdf43e3d3a22"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/18-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/18-0-v1.png",
+      "bytes": 3519803,
+      "sha256": "8b685475894201d6123a2a4c33d3f6d73ef807e6e7f1b11efab93e4b992e194c"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/24-0-v1.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/24-0-v1.json",
+      "bytes": 4044,
+      "sha256": "804e456e86e7c7846cbeeb0ae156c0735c2286eca651b56cd7fc6e3e8affa47c"
+    },
+    {
+      "source": "artifact/world-geography/approval/expansion-v5/24-0-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/expansion-v5/24-0-v1.png",
+      "bytes": 3505662,
+      "sha256": "ee967002b8901fe7943676049062d190905e7e38e6a9b9aa5ef7097488af59b1"
+    },
+    {
+      "source": "artifact/world-geography/approval/index.html",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/index.html",
+      "bytes": 34322,
+      "sha256": "25fc87aa381bf4a070583ec47618f2c983a63412d65cadaaf532b8e4a742459b"
+    },
+    {
+      "source": "artifact/world-geography/approval/manifest.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/manifest.json",
+      "bytes": 27241,
+      "sha256": "8d33865bc4381a6774a9bc30fa6675ea60fb739b84263edc0311751d83d83c73"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/app.js",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/app.js",
+      "bytes": 8165,
+      "sha256": "9a8e77fac3836eac1d97f8094ddc31e5c9092e01f17d6746181c37de4eee6e35"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/audit-data.js",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/audit-data.js",
+      "bytes": 26861,
+      "sha256": "6d8ee17d8f5cffbbe51882ca35c9432e4dd5937622523324644c4bca05e2b057"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/audit.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/audit.json",
+      "bytes": 36215,
+      "sha256": "3894af62270102e21496c40ebe843541ff4589d9beb4d8f49dfea5eefcc4990e"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/build_audit.py",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/build_audit.py",
+      "bytes": 14836,
+      "sha256": "f7300f1cbc14fdd08957bfac7b1ea4284ca6cd1a903b4b30e54c133b20b64b15"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/game-map-all-nodes-qa.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/game-map-all-nodes-qa.png",
+      "bytes": 3833964,
+      "sha256": "31db8684b2bc12742a252ef4bfd7c6332db2d7997daf9f3cfba5789cd9262a04"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/game-map-ink-normal.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/game-map-ink-normal.png",
+      "bytes": 3894937,
+      "sha256": "bcc3f84de267e45e0885071135886511f0fc3ff0086e37d6e388cd3fc4ff6c2b"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/game-map-ink-style.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/game-map-ink-style.png",
+      "bytes": 3753757,
+      "sha256": "4082c9f411b69ce1d53e1b0f232cd47db8e791a092a5c426ed491b642093031f"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/game-map-normal.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/game-map-normal.png",
+      "bytes": 3853873,
+      "sha256": "df89df9d2697e4c49ac80a801f03ba0bd9b0d349008a64e5f4268bd9195245ed"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/index.html",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/index.html",
+      "bytes": 4959,
+      "sha256": "9a2ed5e27c5bfcca8ec1cb441727ff589aaa056a52e77d0dab32c02268c2d95e"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/map-config-before.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/map-config-before.json",
+      "bytes": 5886,
+      "sha256": "3b59929da2149c6d5e81f41ee276ddf762cea1ed3769f9133a3c0ab8cbe6ab2f"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/map-style-verification.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/map-style-verification.json",
+      "bytes": 1216,
+      "sha256": "dbd4b8e4427883a50cf4c17143c2650677f1e24e89517ec72779ef32b0acedfa"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/map.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/map.png",
+      "bytes": 3695119,
+      "sha256": "3d478270900f87addd48513e333d7e1b4e6bcd7880577818ef0196e6c998386b"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/runtime-map-install.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/runtime-map-install.json",
+      "bytes": 5377,
+      "sha256": "50366d1d123d3141b9f90c0a8c539574e04e6fc975615e950a19fe71c8d113ae"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/runtime-map-migration-plan.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/runtime-map-migration-plan.json",
+      "bytes": 27205,
+      "sha256": "b9b5da953c32096dfbce86489867bacc609612f4aa908955ad197499ee5da56f"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/runtime-verification.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/runtime-verification.json",
+      "bytes": 2885,
+      "sha256": "04d642de76a06c3e0db83a0a8f37e52a5a704b4816463d6b9b790c2d43fb8e63"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/source-check.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/source-check.json",
+      "bytes": 17149,
+      "sha256": "845051d64e371ccae3504ca4738d3beb459abe4565c587fbd1309a5668ade3a4"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/style-validation-after.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/style-validation-after.json",
+      "bytes": 72081,
+      "sha256": "a26bcde994e1272630532e8ddf63bb2384f603aae923043f0e1255d8ab2f3a09"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/style-validation-before.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/style-validation-before.json",
+      "bytes": 72078,
+      "sha256": "6bcb9939eec7d2ab5384459472005b9243f20d418118d852ff404608889566d8"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/style.css",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/style.css",
+      "bytes": 8233,
+      "sha256": "5d4abe53a76556f2c27929e93a155ca1ab2afff1fab2dbff32c7adee6054c85e"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/user-cliff-plan.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/user-cliff-plan.png",
+      "bytes": 71185,
+      "sha256": "35650e84f6651f25257c374c996a303c84c62c4e1ca1f23faecfe07b65e3f554"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/validation-after.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/validation-after.json",
+      "bytes": 72171,
+      "sha256": "6a4cfbc1be87fc1e66053d6f9cbf144e361342945cbdef40564e64a00a2bce17"
+    },
+    {
+      "source": "artifact/world-geography/approval/new-map-audit/validation-before.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/new-map-audit/validation-before.json",
+      "bytes": 72137,
+      "sha256": "74d0c3ae0bbde177067d51d039f015bf60654229759e96c4f93a9bb30bc9c5ed"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/01-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/01-0.png",
+      "bytes": 5451748,
+      "sha256": "86c50b512105767e59475866107c868f5efa84c77161600734ab5cf850e4583e"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/01-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/01-1.png",
+      "bytes": 4226424,
+      "sha256": "97d6e8caff0076e000777e6ab62a05fa6b9ecff9a4253c51aa59b9ffcfda2dfe"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/02-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/02-0.png",
+      "bytes": 5304349,
+      "sha256": "ce4face5167ad64e236999c1f9ee2f8de59979ebc9fb590729d7367032d025f4"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/03-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/03-0.png",
+      "bytes": 1865691,
+      "sha256": "543869d05254965dc2308813b7b0d4e8d9a7b73fb1d70a4efd085897b42a5215"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/03-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/03-1.png",
+      "bytes": 2365175,
+      "sha256": "b7848cffc1471b080339bb3764975069f8054df9cca27b1701914df79edda0c1"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/04-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/04-0.png",
+      "bytes": 3837916,
+      "sha256": "d5d3b9566078c5b8228f4ee093d5e572cf7264642d4e44a995c4ac639c817b5c"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/05-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/05-0.png",
+      "bytes": 4033595,
+      "sha256": "f7d79cf1247c9c46da27de424e1fc67ffbc6d4b912ea7a82b3ae6a25d8b0f881"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/05-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/05-1.png",
+      "bytes": 3202525,
+      "sha256": "c4967a988748a5c0734a58a9eed22cb9cc0b0cb668fc9673bd9ffc8aaa776c0b"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/06-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/06-0.png",
+      "bytes": 4042344,
+      "sha256": "351134ec2885f786198eb06187e249f216fd41d2b0100633be1c96bcf8081264"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/07-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/07-0.png",
+      "bytes": 3660706,
+      "sha256": "5e27467bfde77b6c6253ea89477912d97ffc7ad10a6cbd6266e155dbc49bf3e2"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/08-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/08-0.png",
+      "bytes": 3928218,
+      "sha256": "34315e10164008d0977a40e08140ce040aeaaf973e565b9150f9899554496608"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/09-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/09-0.png",
+      "bytes": 5509336,
+      "sha256": "2aa8a3cdd12deac5f15874126b1ee6e5b54b248f49f133d5bde13cbce0a1b1f3"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/10-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/10-0.png",
+      "bytes": 3560186,
+      "sha256": "9d3e89beb092e7334ea961a16b7ba1dac9ef336509e96fa119e88de4e45b58b7"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/11-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/11-0.png",
+      "bytes": 2769512,
+      "sha256": "4e6a565ec4fa71bf9d9375a344d85afb6556250c0e25d57fce84bc506405c1ff"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/12-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/12-0.png",
+      "bytes": 2800189,
+      "sha256": "308ef4ce0facca2b9f46910cbddf3fa17344cf89dfb7ed5ddca80138a011be96"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/13-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/13-0.png",
+      "bytes": 4019292,
+      "sha256": "92f2f322961a84ccffa7bbec47baef342de7441098081cbb7120ab3236a11410"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/13-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/13-1.png",
+      "bytes": 3426841,
+      "sha256": "3d7ab10a816ad2bb197f8069828be0a30379df79b6c72d652163e3d05f223189"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/14-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/14-0.png",
+      "bytes": 4722577,
+      "sha256": "6db0d647e21460bb6f4e4da748c64789b05b2e2acd7f950eed85f0cc134e833a"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/14-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/14-1.png",
+      "bytes": 3153381,
+      "sha256": "1e7b23eb148f92cea7f89a17e68d198eb6b4c26ef82a30905fa620163a256023"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/15-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/15-0.png",
+      "bytes": 3848070,
+      "sha256": "82c3848e0a30016db74d51c2a3ad6cdd55af97b90e4ad6f6a9086cdb176b0aa7"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/15-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/15-1.png",
+      "bytes": 2957765,
+      "sha256": "923e469b410ad7cecd03feb8d7138cdabdc0ff9888dd4593e2d354e345efc694"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/16-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/16-0.png",
+      "bytes": 3689436,
+      "sha256": "76064f1b5e3de6ce0740c42ee764c8ed45fb26fccb1d285ce811ea716eec8c0b"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/16-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/16-1.png",
+      "bytes": 2692317,
+      "sha256": "bd2f39f38bf64ce65efb874ae4a096665e6bc29e310e35cdfc7f434b70f9ad33"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/17-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/17-0.png",
+      "bytes": 3910925,
+      "sha256": "bffbed1b07dd4208fd3f90ffd7bcf7b2b0fe704102ebde0aac05e52a6fe3babe"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/17-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/17-1.png",
+      "bytes": 2708770,
+      "sha256": "cf4094af063a346380a0a6a674681db1a66cf47ce45dc84fc11d237cfd8c3419"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/18-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/18-0.png",
+      "bytes": 4322795,
+      "sha256": "79a9639852a9a7b319acacaa081b2bad335283a31bd09fa7c57ce6c7125a6e33"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/18-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/18-1.png",
+      "bytes": 3132718,
+      "sha256": "f42217f9b83535497a5c3229585ff75e78a2335a72d9d308683f5fb28334b438"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/19-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/19-0.png",
+      "bytes": 4336736,
+      "sha256": "35e9dccc0b138752e8521eb6522161b1aae3b98ee9745870c4a85245c82e8940"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/19-1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/19-1.png",
+      "bytes": 2877652,
+      "sha256": "d7697319ce81a8941b3d3deb19a11d0552c34cc8861315ae29448364c09abcc4"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/20-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/20-0.png",
+      "bytes": 3217645,
+      "sha256": "99159c053c860b327e746d14f8bb1b6f74e8f08d81c8b20a270607cdfb17fc2a"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/21-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/21-0.png",
+      "bytes": 3853421,
+      "sha256": "20b84b19da340be9089835b82eed27b38067ddfeba17d7a1795dc7e65857a2a7"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/22-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/22-0.png",
+      "bytes": 4289550,
+      "sha256": "f875a1d85da1c48a3be3a93e20720d66c4092e33915fd07bc6dfcd0776fce46c"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/23-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/23-0.png",
+      "bytes": 2648866,
+      "sha256": "a0cdc5b9dfad1ed01d343971bfd49ee849449d43fe23e41dc22007263d81769a"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/24-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/24-0.png",
+      "bytes": 4748913,
+      "sha256": "dd9b96c3008150596142cd1fca6cd92332d724892b1f50be1d8dce8dbc315bcb"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/25-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/25-0.png",
+      "bytes": 1940848,
+      "sha256": "093bb1a2d8689226eba4d02a81c4d7c92ef3162d4a5f1911bf553fddb84e93f4"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/26-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/26-0.png",
+      "bytes": 1602250,
+      "sha256": "cf2057ce5577ced65d7ad68111779c957bcdc12e282a987d4336d0d05ee4f630"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/27-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/27-0.png",
+      "bytes": 4061065,
+      "sha256": "43a73f5c405a09b6449d3e73da8fb2894084b306e1bed818d71d1a72f6eefbd8"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/28-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/28-0.png",
+      "bytes": 2600732,
+      "sha256": "6d0b278b80e8a8b9b9c1eda715d799b7d939cecd2af09efbfcacd44d67ffbc01"
+    },
+    {
+      "source": "artifact/world-geography/approval/originals/29-0.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/originals/29-0.png",
+      "bytes": 3234492,
+      "sha256": "98f6b5df53089c844745f5617f8c6306b7f0486dabf5d2e99c89fe47e5942971"
+    },
+    {
+      "source": "artifact/world-geography/approval/outside.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/outside.png",
+      "bytes": 1885368,
+      "sha256": "64329df4d67c4e8d68cb69dddb9ea1669d665d650a5b5efc9c837c836a3ea269"
+    },
+    {
+      "source": "artifact/world-geography/approval/pending.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/pending.png",
+      "bytes": 1921982,
+      "sha256": "ff412e07988893e939895f31b0c4ac39b37798954ce50645ecbb6f1e1210b65a"
+    },
+    {
+      "source": "artifact/world-geography/approval/placement-proposals.html",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/placement-proposals.html",
+      "bytes": 3750,
+      "sha256": "cfca78c32b3106cb552f65fb728ce18f092fbb22329f3e6aebce8f7a0e8fe40d"
+    },
+    {
+      "source": "artifact/world-geography/approval/placement-proposals.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/placement-proposals.json",
+      "bytes": 2059,
+      "sha256": "f21e1a3b8ddd8b2a866e78a94d98d9d64ed4b3653944d91c1f827f29e7851551"
+    },
+    {
+      "source": "artifact/world-geography/approval/qa.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/qa.json",
+      "bytes": 488,
+      "sha256": "168d75ebfa01df67762bad323930680abff8d213be03c60a3ced438367f162dd"
+    },
+    {
+      "source": "artifact/world-geography/approval/README.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/README.md",
+      "bytes": 2945,
+      "sha256": "675fafe8e3bcd5f913a6e23f663b28ec5eb9606e263c9f7d070dd1e1d6d56302"
+    },
+    {
+      "source": "artifact/world-geography/approval/street-exits.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/street-exits.png",
+      "bytes": 7169849,
+      "sha256": "185a1c5b7ae1112130aff659b938120ab8384c9120892f9451c93ad10407fc64"
+    },
+    {
+      "source": "artifact/world-geography/approval/style-transfer/comparison-qa.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/style-transfer/comparison-qa.json",
+      "bytes": 1802,
+      "sha256": "1f04b58fad359a5a24016a1fcb3ed25e824937f3df7d6ada80507a9d44aa9136"
+    },
+    {
+      "source": "artifact/world-geography/approval/style-transfer/index.html",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/style-transfer/index.html",
+      "bytes": 2288,
+      "sha256": "2204f76399c4898a12a6fb84e2ad3d751d5894f2e90d213eca5510f6143dbc4e"
+    },
+    {
+      "source": "artifact/world-geography/approval/style-transfer/layout-original.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/style-transfer/layout-original.png",
+      "bytes": 3020092,
+      "sha256": "fcccb39588bfacc5a62a3fe223e28199a085e817efb9aa40006861a397fb5c57"
+    },
+    {
+      "source": "artifact/world-geography/approval/style-transfer/style-reference.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/style-transfer/style-reference.png",
+      "bytes": 3122937,
+      "sha256": "465ba8c4f447b58849cd5dea233b7d4ae1260f0f47d4367c54bade60bab6a848"
+    },
+    {
+      "source": "artifact/world-geography/approval/style-transfer/wujin-world-ink-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/style-transfer/wujin-world-ink-v1.png",
+      "bytes": 3389575,
+      "sha256": "9900771ab7b67db0bb4235768b4eb23cc8fcb39f4d543ecaa1a6f476a6f304f1"
+    },
+    {
+      "source": "artifact/world-geography/approval/style-transfer/wujin-world-ink-v2.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/style-transfer/wujin-world-ink-v2.png",
+      "bytes": 3351644,
+      "sha256": "3fd237c544a8d5fbfa1d5dff3ac61494c48bfafb907d976352febca3bd5ddb75"
+    },
+    {
+      "source": "artifact/world-geography/approval/teleport-map-correspondence.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/teleport-map-correspondence.json",
+      "bytes": 6283,
+      "sha256": "f0fa0a03d42f261b32a780f24cc7c79ee19965f4e7ac3b7cebb1d586ea9db18e"
+    },
+    {
+      "source": "artifact/world-geography/approval/teleport-map-qa.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/teleport-map-qa.json",
+      "bytes": 465,
+      "sha256": "8957f5cfe0464da60155ae69e478299f6723d371ba0d50bbf840049207f52ec1"
+    },
+    {
+      "source": "artifact/world-geography/approval/town.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/town.png",
+      "bytes": 2427036,
+      "sha256": "1a9f8fcb4193d6221342014b22d841849b59456cef1b906d4859b946819d3ea9"
+    },
+    {
+      "source": "artifact/world-geography/approval/viewer-template.html",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/viewer-template.html",
+      "bytes": 7122,
+      "sha256": "7440eda5f96f4620c5eb689c166aca89a092016bd7d22fd96109273540ded6f4"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-cliffs-v2.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-cliffs-v2.json",
+      "bytes": 3805,
+      "sha256": "52f24f92c7b164ff23f93bf13fbf3e3df6467fc278e456114f17d33bd106ae4e"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-cliffs-v2.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-cliffs-v2.png",
+      "bytes": 3549587,
+      "sha256": "b5b046f8d84bd853095e30c1f3958670faf5d80089c875b006b9a633ddedb638"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-cliffs.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-cliffs.json",
+      "bytes": 5409,
+      "sha256": "55dc042d6c016b62c591516673822f02adfb725cca8dbbe60a16a955be13640f"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-cliffs.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-cliffs.png",
+      "bytes": 3380320,
+      "sha256": "98b8d608886954cd59129200399fa296972fdd26675623a26d03a2487fb189ae"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-dream.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-dream.json",
+      "bytes": 3881,
+      "sha256": "36f8793124c2c37d6a7840798859a437470c3cbdf901b316b177ff99ec18c4ef"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-dream.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-dream.png",
+      "bytes": 3279532,
+      "sha256": "039e3224c2bae47dfc47a41e7e671a47bad84c0de41b7092539b44f683b5f9fb"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-northwest.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-northwest.json",
+      "bytes": 4740,
+      "sha256": "da8de3e2dc4ceb45a0c41d8995a534a73429cee711ebe7de211bc5e9f6fc8003"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-northwest.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-northwest.png",
+      "bytes": 3897765,
+      "sha256": "11f70ee657a3dd0034ba5ba851fb68dd17d532cb3852fb63f26a162c52b40c17"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-town.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-town.json",
+      "bytes": 5418,
+      "sha256": "2c98f1ac5ff11d2f01fbafc93e99125ac3368bdd1c604443ee56ebd14cb11c9f"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/region-town.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/region-town.png",
+      "bytes": 3905701,
+      "sha256": "66ea5beded67f087ba22d65e17e8ac0d85f5cf6fa13d4c672408c80b614d9ef0"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v10.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v10.json",
+      "bytes": 1686,
+      "sha256": "b46c22c8da748da43fa572e85f0e9a078f5ed406bd38b557708daaf949e577ed"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v10.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v10.png",
+      "bytes": 3273027,
+      "sha256": "7ccf86fadb66efe6e1f47165e8f86df070f0a66f08d6137ccb922ffe71100962"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v11.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v11.json",
+      "bytes": 4081,
+      "sha256": "8540fe5367c1af4d5f6f32b359d15634075b41b2222c7daa57ab18e3bfa3f62a"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v11.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v11.png",
+      "bytes": 3153047,
+      "sha256": "3334c8feccb7b52a9d54dceb8f619b6368e43ef028c4d9b4ebb0468df1da843a"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v12-paper.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v12-paper.json",
+      "bytes": 6967,
+      "sha256": "54f445249a3580a02b146bf8d513005eb1a5f7ec065bd3354cdb21053f4e4a21"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v12-paper.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v12-paper.png",
+      "bytes": 3537891,
+      "sha256": "341c17e7ad52175eca01480a4c8a2c7baa2da1eb527eaf585a52d6433c897e65"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v13-paper.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v13-paper.json",
+      "bytes": 2614,
+      "sha256": "02c3b28cbf2cd4d1e67ad9f73eccdc640430149d123078647b059ea5d6edfecc"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v13-paper.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v13-paper.png",
+      "bytes": 3270589,
+      "sha256": "8a572b42b6cef794b0d79065151cd6821b840701a0ebdc2a279b02a8adfcc2e6"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v15-paper.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v15-paper.json",
+      "bytes": 2105,
+      "sha256": "90e9664b17fd74ef5e18e88434bc23ca2f81d42416322f4f91b9d2bc889b9bec"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v15-paper.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v15-paper.png",
+      "bytes": 3020092,
+      "sha256": "fcccb39588bfacc5a62a3fe223e28199a085e817efb9aa40006861a397fb5c57"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v7.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v7.json",
+      "bytes": 7896,
+      "sha256": "66ab7551a4a597e46caa06d19e6cc7fc332f4ba803a21cfc573210449ad350a9"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v7.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v7.png",
+      "bytes": 3681527,
+      "sha256": "ebab1fa45373d04d86427c2ccaf8fb9ae086d1100aaa790d14b20f3480e58c24"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v8.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v8.json",
+      "bytes": 5557,
+      "sha256": "710d8eb89e6505ff791679837b535206930707e074ad76ae625616cd8a376218"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v8.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v8.png",
+      "bytes": 3777900,
+      "sha256": "9d63428903df4f8afb4a71a99ea9aeda594f3b90adc74963583ca9577a6bfcb1"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v9.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v9.json",
+      "bytes": 5175,
+      "sha256": "cb3451880831e9fa640959a695548b72a7485bfe01db15788fc10d9d110a5a6d"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-candidates/world-v9.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-candidates/world-v9.png",
+      "bytes": 3726565,
+      "sha256": "6f24b3a0611452c63cbd433cec000bed91a98b9b360a1c29fd79829d006b9431"
+    },
+    {
+      "source": "artifact/world-geography/approval/world-review.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world-review.json",
+      "bytes": 978,
+      "sha256": "294790c4c593b8610a327d3fafe05a27857c76987f3588952531c5665996557a"
+    },
+    {
+      "source": "artifact/world-geography/approval/world.html",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/world.html",
+      "bytes": 6240,
+      "sha256": "9f6ad8146078508152b13180ea0c2c47ca79abec487149e5c96f73e5a0052443"
+    },
+    {
+      "source": "artifact/world-geography/approval/wujin-teleport-world-map.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval/wujin-teleport-world-map.png",
+      "bytes": 3020092,
+      "sha256": "fcccb39588bfacc5a62a3fe223e28199a085e817efb9aa40006861a397fb5c57"
+    },
+    {
+      "source": "artifact/world-geography/approval-scenes.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/approval-scenes.json",
+      "bytes": 6064,
+      "sha256": "19817955cf748a57e0467e1e957a75328f0327ac4014a47129e38520576d3e7d"
+    },
+    {
+      "source": "artifact/world-geography/build-approval.ps1",
+      "archived": "resources/editor_projects/misc_media/world-geography/build-approval.ps1",
+      "bytes": 12358,
+      "sha256": "6b7a1a587108da902f717b47480cc443de79649c38273a9e37838cd3123fb259"
+    },
+    {
+      "source": "artifact/world-geography/candidates/wujin-geography-reference-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/candidates/wujin-geography-reference-v1.png",
+      "bytes": 3440801,
+      "sha256": "9ed76637d909459e1d81292e8eb086f6298c30054550e025d8c5cbea7f5e29e3"
+    },
+    {
+      "source": "artifact/world-geography/candidates/wujin-locked-attempt-v2.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/candidates/wujin-locked-attempt-v2.png",
+      "bytes": 3325827,
+      "sha256": "25af025e8feeadfe4bac128badd87f2fdc994844ffa8fe3e8604a7e4b5557412"
+    },
+    {
+      "source": "artifact/world-geography/direction-review-v2.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/direction-review-v2.md",
+      "bytes": 9494,
+      "sha256": "0558b9d8151a0f2a2efa0dee75952ef7a028c83671d54cf5367a570b0503c56b"
+    },
+    {
+      "source": "artifact/world-geography/direction-review-v2.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/direction-review-v2.png",
+      "bytes": 219581,
+      "sha256": "d3f1c83617ffebf938254aa196899fc637e748cfb38c4a0755bb47938934bf3c"
+    },
+    {
+      "source": "artifact/world-geography/direction-review-v3.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/direction-review-v3.md",
+      "bytes": 3919,
+      "sha256": "0b50fd2c4dc41e2864e241758ce8f81f0565657556f24cedd41697365e485acf"
+    },
+    {
+      "source": "artifact/world-geography/direction-review-v3.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/direction-review-v3.png",
+      "bytes": 271087,
+      "sha256": "7c03d254c9730ca28ff9766f813cf3b7374d85883ef9d63fae9f23ebe59cf4fd"
+    },
+    {
+      "source": "artifact/world-geography/direction-review.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/direction-review.md",
+      "bytes": 9440,
+      "sha256": "a3fb481b435ca6464e11a2b083751a856bac583a66b11a14e142f812c5fd25ad"
+    },
+    {
+      "source": "artifact/world-geography/direction-review.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/direction-review.png",
+      "bytes": 211440,
+      "sha256": "216566f6d93996778cf6ddd3caa92235af51a43f173d540290553ab874538398"
+    },
+    {
+      "source": "artifact/world-geography/draw-direction-review-v2.ps1",
+      "archived": "resources/editor_projects/misc_media/world-geography/draw-direction-review-v2.ps1",
+      "bytes": 6165,
+      "sha256": "f9d536aa593232921778aa921acdf45047220b75475d3e7621045d5e2672389c"
+    },
+    {
+      "source": "artifact/world-geography/draw-direction-review-v3.ps1",
+      "archived": "resources/editor_projects/misc_media/world-geography/draw-direction-review-v3.ps1",
+      "bytes": 7355,
+      "sha256": "3af2586093a0ea446fe1afd7f01a9f4c2f473834676270dbfc0ff0d632da4dbf"
+    },
+    {
+      "source": "artifact/world-geography/draw-direction-review.ps1",
+      "archived": "resources/editor_projects/misc_media/world-geography/draw-direction-review.ps1",
+      "bytes": 6928,
+      "sha256": "4e7721c62bf84367130129d201e3296be69b6a95ed95f05fa13da0fa82c02a38"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/jobs.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/jobs.json",
+      "bytes": 16500,
+      "sha256": "191b73834fe0dd9c4d553981c577caa167444143b01be3955e8855379bd1c76c"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/00-world.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/00-world.txt",
+      "bytes": 3924,
+      "sha256": "4c8a77e3c41144c13be90cb4921d1be2e4250b1fb7ffa5680abd22a40a777c38"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/01-town-fix.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/01-town-fix.txt",
+      "bytes": 566,
+      "sha256": "96aec64d3de7848b387469526d1368f8adff025b5a072b6fcaeae06a8f1b3468"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/01-town.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/01-town.txt",
+      "bytes": 2989,
+      "sha256": "c8d785f14ec428e496f46671ec8146d8da2df99d03481caafa695cca2db43c67"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/02-cliffs-fix.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/02-cliffs-fix.txt",
+      "bytes": 1230,
+      "sha256": "01c3be6607c4cfcedb775429e54398f8032335794a7ea3b7bf4a659ce0b69975"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/02-cliffs.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/02-cliffs.txt",
+      "bytes": 3322,
+      "sha256": "eb728fe028d16ad5c014d022b8f293ee4c28da8ffcb71042161baa468570aa4a"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/03-northwest.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/03-northwest.txt",
+      "bytes": 2659,
+      "sha256": "5077248a1e0a5b10730269b8ff3bfeb82dba015d966ac2304d5f2176aff54a3d"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/04-south-fix.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/04-south-fix.txt",
+      "bytes": 1055,
+      "sha256": "75b98411a56682a5a3b7433d831282717286a8166cd88241b02e42018e11221b"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/04-south.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/04-south.txt",
+      "bytes": 2441,
+      "sha256": "4e24601d775f754e4fa69ed39c50fd8e42abcdd9042664baf7ca7db8760415f9"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/05-dream.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/05-dream.txt",
+      "bytes": 2229,
+      "sha256": "32501cc8c81d530d6d2bdbade672167484be5409e3e3e60ce2e5958a634b238f"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/06-bamboo.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/06-bamboo.txt",
+      "bytes": 1443,
+      "sha256": "62d1e41d40ade8fc17756c6a3cd1530c9518a7b25ab0d50a68a18b609e8a7a09"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/07-calling.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/07-calling.txt",
+      "bytes": 1401,
+      "sha256": "c17550b3fb9a27a0a4513082d364c2c8121461500a3bdd292f994b10bd33bad9"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/08-earth-temple.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/08-earth-temple.txt",
+      "bytes": 1438,
+      "sha256": "6a64a9326f5d436d4407e602d2e73d1529407525c068c33126ed6ac568bab6fa"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/09-shabby-room.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/09-shabby-room.txt",
+      "bytes": 1523,
+      "sha256": "46d15afa722fe41552be370a07b432ca09bb764fcc67e3ae04e28f4d9cedb909"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/10-forest-unassigned.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/10-forest-unassigned.txt",
+      "bytes": 1440,
+      "sha256": "1ed96bc0e1f83ded3213576ad6c1c640c92c3844bf65a42bfd5b319e1c69bdab"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/prompts/11-underwater.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/prompts/11-underwater.txt",
+      "bytes": 1585,
+      "sha256": "cad332fc5d0728634a21c079092bc5d20c7887796083218c105bc530b5688148"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v4/solo-jobs.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v4/solo-jobs.json",
+      "bytes": 10195,
+      "sha256": "5dbe6ea4571e04b36318ac347169eeaaa50ba99ccd7100894996022b3d9a89ef"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/check-correspondence.py",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/check-correspondence.py",
+      "bytes": 1877,
+      "sha256": "dbda869a3c694c1636ac5b33a9142a2ca51a260ee68c8149d334b1f7270b4e2a"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/CONTRACT.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/CONTRACT.md",
+      "bytes": 2539,
+      "sha256": "23ea23ac85d7066823a5c77ed4cc3eb7bdb97e10c904a853e2a00635012d34de"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/finalize-teleport-map.py",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/finalize-teleport-map.py",
+      "bytes": 4711,
+      "sha256": "a864aad6d8b6dbad1524cdbbb73602b19d5e87781a9a1d730a02fdd44612a25f"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/ingest-region.py",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/ingest-region.py",
+      "bytes": 818,
+      "sha256": "4beda81e349bf99f60714b2112e3fcf6398865034273e2b272c73b6ffc028666"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/ingest.py",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/ingest.py",
+      "bytes": 1304,
+      "sha256": "2ce37e88a41d0c129f9e84013496d3f564a0c14a10b9c053018d1420c8395ff9"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/jobs.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/jobs.json",
+      "bytes": 83521,
+      "sha256": "62cd3ed512b47a68d89cdc09dc9bfbe3400917951a714680374b04fa106b9b41"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/01-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/01-0.txt",
+      "bytes": 1959,
+      "sha256": "eafa6c0d489cacbd1e456d529afea3c20620f99de835ef9216a8afbd2ec38798"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/01-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/01-1.txt",
+      "bytes": 1960,
+      "sha256": "f7a551d53b9ab6783159c0f41db2ba0e9fc0a12a012bc05d32bcb63f40172068"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/02-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/02-0.txt",
+      "bytes": 1683,
+      "sha256": "2a2545c55f32a48000e03edb3a4e072ea309e6aa78839b05534dfe5d078f3329"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/03-0-fix2.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/03-0-fix2.txt",
+      "bytes": 378,
+      "sha256": "c2d58c471e967a205ffad66858d57879378bee2ee7883854e58d0fdde675005c"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/03-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/03-0.txt",
+      "bytes": 1740,
+      "sha256": "e284a3a007a70bb911cdbaff2d908174b6f73e2da38e05b78620db05b7219b35"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/03-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/03-1.txt",
+      "bytes": 1741,
+      "sha256": "826bd366f451114f2d07741ebc0705236166a1459086eb17b4f4285a358b9c08"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/04-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/04-0.txt",
+      "bytes": 1718,
+      "sha256": "da308d3e3d5c908f5d2b0e36f4b59eb8b5a2ccba4d29c50b370df9e406c2d7b6"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/05-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/05-0.txt",
+      "bytes": 1761,
+      "sha256": "fba75abc029b397975b6511fff979156a7bee85d8f21e87b993766e94135c68f"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/05-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/05-1.txt",
+      "bytes": 1762,
+      "sha256": "65db424824fe81b6c5fbcee9ae5ebc20bc022892590507303a5f4ceac4232fb4"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/06-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/06-0.txt",
+      "bytes": 1723,
+      "sha256": "7ad87c727cb81ae53dd83725f4c52ca3b187f7b7c3eb190af8121a16a643ef07"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/07-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/07-0.txt",
+      "bytes": 1721,
+      "sha256": "0018148269268aa9e2d81cb3a02ef6a20611327a22922928a3883a3e597b9d58"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/08-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/08-0.txt",
+      "bytes": 1704,
+      "sha256": "4abaf9f4f4667d4c16ffeaa6aa26be9547030e32df12290f537267696b856f43"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/09-0-fix2.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/09-0-fix2.txt",
+      "bytes": 482,
+      "sha256": "1f898492a7914a4b4f54bded90fbadd4a2707e1f08a48c221edf25885325a391"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/09-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/09-0.txt",
+      "bytes": 1781,
+      "sha256": "72ab6f8a790db23aac0919312e7ef06c6cf0c55fab89d8f3663c30025cbb5d22"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/10-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/10-0.txt",
+      "bytes": 1757,
+      "sha256": "242586f356c211bc0a2847a11376dbac6090b8e93554d39a60050dac725a79f7"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/11-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/11-0.txt",
+      "bytes": 1739,
+      "sha256": "e3ddfdffbb54a1ad16a61836c26bb7dc9a79e1f0fde59ffdfa44db02bd565d56"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/12-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/12-0.txt",
+      "bytes": 1722,
+      "sha256": "6fb9cba9f921e1ff819f2f73f737aacce2478cfeebe4db62c8f57af9ef18eaea"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/13-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/13-0.txt",
+      "bytes": 1787,
+      "sha256": "fd2370787ccb5bce307ba6888f857243e6b0852f403a07cf95fdad8b2a725663"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/13-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/13-1.txt",
+      "bytes": 1788,
+      "sha256": "292855006c3f4018a41a9a73f4b764aec80cd01d98da462766d28d3ffa5a53ed"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/14-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/14-0.txt",
+      "bytes": 1765,
+      "sha256": "201ec154ed73861fcd87a7d4d2c5fd15d9f8c7de3cb2fe5967a8ce2a56d0f99b"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/14-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/14-1.txt",
+      "bytes": 1766,
+      "sha256": "a4e1a7c9b505dd509908228b1a3cf1862391326719292329b330f28cadc850ca"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/15-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/15-0.txt",
+      "bytes": 1752,
+      "sha256": "0943ebe88347183a3176f4b01a08b7e3b3a30aac84c994e8f4f9f9e0c6b63d3d"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/15-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/15-1.txt",
+      "bytes": 1753,
+      "sha256": "27df75bf7ac748468e9901496611a36eee4e8ed3d2e1aef278190d0d6753bf08"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/16-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/16-0.txt",
+      "bytes": 1694,
+      "sha256": "d91e71cdfe04bc1c04490bc8a7500b70c5a4895b3462351a8268db699edd1f65"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/16-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/16-1.txt",
+      "bytes": 1695,
+      "sha256": "0a9eeb984cd2f5eb0315826f81f1aa6b0a2d89934da89abb537057d042487f87"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/17-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/17-0.txt",
+      "bytes": 1690,
+      "sha256": "6565b8d61dacb93d6ffa13281d93236869a2963ab9e4376a78b20cc8d0a66286"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/17-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/17-1.txt",
+      "bytes": 1691,
+      "sha256": "4cb97a1e31cc8db4edf09ecdc58fc3045b87da6e89e67c2401477b9aa4851b79"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/18-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/18-0.txt",
+      "bytes": 1865,
+      "sha256": "216a1eed365935772375c856cfac5cb636a8e382092608bfd3398a231958b0dc"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/18-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/18-1.txt",
+      "bytes": 1866,
+      "sha256": "9be46a8bc99e9d79d2731fe33065d61bfd15e2a6aec0523ee30d718c1ac2e953"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/19-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/19-0.txt",
+      "bytes": 1855,
+      "sha256": "d5c2e6cd86ec7ed207843bba4bad0356248550f7d1782a095132924196047deb"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/19-1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/19-1.txt",
+      "bytes": 1856,
+      "sha256": "8580500499ba96bf981cbf74d6718ba0e74d95c46d65f43fcf4a046e10edc5f5"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/20-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/20-0.txt",
+      "bytes": 1591,
+      "sha256": "07aaaa33d3f0135888b58dafc1e5fea0d78293d8bfd0e7fb5cf7da2abf1928a4"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/21-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/21-0.txt",
+      "bytes": 1567,
+      "sha256": "2269479fb0bd5786504310fd4f241a5426895b5505b75e8a67604c6d4d5741b7"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/22-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/22-0.txt",
+      "bytes": 1601,
+      "sha256": "052ce08ea70b878a90b91b5d4cc43cd1654cccd348eef32560e9f503401df8f8"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/23-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/23-0.txt",
+      "bytes": 1650,
+      "sha256": "7b8aff47e6678f35fdef9078a2a117efffb9a054e5fa7d768b5786defad3ef43"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/24-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/24-0.txt",
+      "bytes": 2050,
+      "sha256": "84adc0623d026a0a137d96f3ce1a37d73f207edcec1237145ba454b51a26b4f9"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/25-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/25-0.txt",
+      "bytes": 1634,
+      "sha256": "95f87879cf78211f1b0a01bc288f265cc8dccb9a2b9a608890e298ada3377954"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/26-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/26-0.txt",
+      "bytes": 1627,
+      "sha256": "a28d2052731bd2f2fc130be7e3541b2e0144ebc951d4b2227256f121db06a77e"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/27-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/27-0.txt",
+      "bytes": 1655,
+      "sha256": "9278eeb3337b9825367df6145a26ab5ebf37437b72bfafb4cf196e7999c8e1f3"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/28-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/28-0.txt",
+      "bytes": 1618,
+      "sha256": "2349d4f448e7884e81f66d459f95f5f49151e6231c4d3fe86aeca5330e6e1466"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/29-0.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/29-0.txt",
+      "bytes": 1596,
+      "sha256": "c459cc1a9d04dc2e5c223e1f8d4ae10eeb2f0f67ab8abc90f41ec0640baf8bc7"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/region-cliffs-v6-fix2.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/region-cliffs-v6-fix2.txt",
+      "bytes": 1988,
+      "sha256": "5c522fb8f9ed15ac8d4bf1d5dde837b29b8acc22b2c6dc71e54b5d70314e00a2"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/region-cliffs-v6.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/region-cliffs-v6.txt",
+      "bytes": 3714,
+      "sha256": "767c092c06c3ae6a2a023b2f51896141412f9a0d0421d704661ba2df7f8d80fb"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/region-dream-v6.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/region-dream-v6.txt",
+      "bytes": 2448,
+      "sha256": "925a05348892991bb7dd8c521664923212d5bc6463b383f70b890e11b4b4c2e8"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/region-northwest-v6.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/region-northwest-v6.txt",
+      "bytes": 2928,
+      "sha256": "767379d809b0891eba73139a6216c65d50db0a24138bf10841bcc01df604dc3d"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/region-town-v6.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/region-town-v6.txt",
+      "bytes": 3767,
+      "sha256": "3f7627902ba9d1e5c03486980b8fd6676144e1f3b56d30935a8794bab856850d"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/world-v10.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/world-v10.txt",
+      "bytes": 908,
+      "sha256": "a57c10d65bebefa00092eabca1744d8b22514555f2e443ea84099aec4c27a501"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/world-v11.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/world-v11.txt",
+      "bytes": 2282,
+      "sha256": "86398d3253089feef8e79f54e1ca0240c98fcbc23f0553d0205aa53ab20b230a"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/world-v12-paper.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/world-v12-paper.txt",
+      "bytes": 5034,
+      "sha256": "757545c42fa39fa3f1110b1792fe91a508e8de566788b599906b60508d368ab0"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/world-v13-paper.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/world-v13-paper.txt",
+      "bytes": 1547,
+      "sha256": "00988f304fdeca2336142c991620f51d97de70258a00ac4060984b5686e1c0bc"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/world-v7.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/world-v7.txt",
+      "bytes": 6122,
+      "sha256": "d7abefa52c4e59503c64f9147e4008b89716005c1e6caae50522c28521419862"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/world-v8.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/world-v8.txt",
+      "bytes": 3642,
+      "sha256": "1728934e25c51d82341245ef71f2645add67f10997a3a834d6334236e46ef3b8"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/prompts/world-v9.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/prompts/world-v9.txt",
+      "bytes": 3347,
+      "sha256": "3593e944a8353b4adf43dee683fa324a8950336f247ae7c053ce373329fb74d2"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/region-jobs.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/region-jobs.json",
+      "bytes": 49678,
+      "sha256": "95f40f888e0c0d35ace54bc897eb25256cc54bd92b2abe01b6ea7a438aa110ef"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/REGIONAL-PIVOT.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/REGIONAL-PIVOT.md",
+      "bytes": 504,
+      "sha256": "e27d45130d97145aff4c4f66b9f07c2a467acd0c773622c499a20f766eae418b"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/TELEPORT-MAP-CONTRACT.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/TELEPORT-MAP-CONTRACT.md",
+      "bytes": 881,
+      "sha256": "a3f51ada022971fd8be2fd51f587089dd2842d2753ab6d731e29ee21450a95dd"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/verify-delivery.py",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/verify-delivery.py",
+      "bytes": 1096,
+      "sha256": "a8be6f5a78e98d5c91c99049ac8bd268228a6532b75742d12e483c5f89030b58"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/WORLD-OBJECTIVE.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/WORLD-OBJECTIVE.md",
+      "bytes": 557,
+      "sha256": "47a78fab2799c94091dd33e9a29e0990e93e454ff1eb193e5095f40cee806997"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/world-v14-job.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/world-v14-job.json",
+      "bytes": 4000,
+      "sha256": "fc3d9f638412517fa56ae17aa69975fee49f8dc6317ed8ead492da9d1170b2fa"
+    },
+    {
+      "source": "artifact/world-geography/expansion-v5/world-v15-job.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/expansion-v5/world-v15-job.json",
+      "bytes": 1783,
+      "sha256": "1d4abe8b90af92c2a443a6cb77ee7a915732e5a113b8f0fa039673b85da6ff80"
+    },
+    {
+      "source": "artifact/world-geography/geography-plan.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/geography-plan.json",
+      "bytes": 52198,
+      "sha256": "0ecc42dc51e8adc44d448ae1fa9da167e46431a7e0506cb5dc57aeab9c2cf65e"
+    },
+    {
+      "source": "artifact/world-geography/maps/00-world-overview.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/maps/00-world-overview.png",
+      "bytes": 3376733,
+      "sha256": "d782bdbcfac10d7af1e884d9eecc9b3d2e0ee5b71fb2f5a65e9e1eaa1075214a"
+    },
+    {
+      "source": "artifact/world-geography/production/crop-after.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/crop-after.png",
+      "bytes": 45270,
+      "sha256": "2a4485755102098b923335e009301342e836656c978cbb9da8f8dfec3f7b65dd"
+    },
+    {
+      "source": "artifact/world-geography/production/crop-before.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/crop-before.png",
+      "bytes": 45755,
+      "sha256": "2b1aad39c3fc45cfef84670b2d1587cd47b55cb92563780bd603453288ab105e"
+    },
+    {
+      "source": "artifact/world-geography/production/index.html",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/index.html",
+      "bytes": 8414,
+      "sha256": "9a46e47ce173b879043916502c37378f4c03ede86fbde8b9595bbea87396720a"
+    },
+    {
+      "source": "artifact/world-geography/production/map-anchors-v2.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/map-anchors-v2.json",
+      "bytes": 5320,
+      "sha256": "d359a376c115c0f07a5178bde40c5d228dd7f1db3be4f70faa81a1807c19b3ca"
+    },
+    {
+      "source": "artifact/world-geography/production/map-anchors-v3.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/map-anchors-v3.json",
+      "bytes": 5320,
+      "sha256": "d359a376c115c0f07a5178bde40c5d228dd7f1db3be4f70faa81a1807c19b3ca"
+    },
+    {
+      "source": "artifact/world-geography/production/map-anchors-v4.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/map-anchors-v4.json",
+      "bytes": 5320,
+      "sha256": "94af836b516aea0d2131eaa989c8030812b7109b467161f7a0d8e3a89b74d368"
+    },
+    {
+      "source": "artifact/world-geography/production/map-anchors-v5.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/map-anchors-v5.json",
+      "bytes": 5357,
+      "sha256": "5daa1cc01ab366c8e2b8c59609133e9bb1bdd3484b1779732e54ebbb688ae496"
+    },
+    {
+      "source": "artifact/world-geography/production/map-anchors-v6.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/map-anchors-v6.json",
+      "bytes": 5356,
+      "sha256": "f89b0b1f51bfab652514de8b91ef5ab90e8089eb949b7cd417390cce7fd24a85"
+    },
+    {
+      "source": "artifact/world-geography/production/map-anchors-v7.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/map-anchors-v7.json",
+      "bytes": 5376,
+      "sha256": "59b86b9c97055341bae5a8f5c4c954af554c36cabfcb0c90ab5205424550910d"
+    },
+    {
+      "source": "artifact/world-geography/production/reference-atlases/atlas-outside-roads.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/reference-atlases/atlas-outside-roads.png",
+      "bytes": 4110294,
+      "sha256": "adfd61df8a6f61b141b3703ee027a379ed870291b0e808d557f44f70c38cf44a"
+    },
+    {
+      "source": "artifact/world-geography/production/reference-atlases/atlas-paomaliang.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/reference-atlases/atlas-paomaliang.png",
+      "bytes": 6524892,
+      "sha256": "1c06f76afc5ccdc4db058a62c51650344fbdb25cc724f13b12cf19bce6656798"
+    },
+    {
+      "source": "artifact/world-geography/production/reference-atlases/atlas-town-gates.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/reference-atlases/atlas-town-gates.png",
+      "bytes": 4801622,
+      "sha256": "383e0e1af2dbbfa6498e3b770c2370746ffc6943b19e96fea6ea3de6f2585a94"
+    },
+    {
+      "source": "artifact/world-geography/production/user-removal-mask-v6.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/user-removal-mask-v6.png",
+      "bytes": 3884,
+      "sha256": "640ff0e7f1da0d67c22edc82074df588eaadb7908290c5b93e9f5bc6ba2a9bbc"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-base-v1-4k.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-base-v1-4k.png",
+      "bytes": 11130549,
+      "sha256": "f92ac3b785dbdcbd37a3e71a972b07d70fffd4c7ec2d3c5c9c037f26ce3bc86c"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-base-v1.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-base-v1.png",
+      "bytes": 3039456,
+      "sha256": "a9a2dc3b4768d3a1546b4f8075bbf0d546d9c3dbcefad383d362e34fa33ef375"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-base-v2-4k.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-base-v2-4k.png",
+      "bytes": 11271205,
+      "sha256": "41a8dd8318322a93fdcf2d27cf3837027bac9c38d33e1f844f0cdf504cd149c8"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-base-v2.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-base-v2.png",
+      "bytes": 3059410,
+      "sha256": "c76d8eca7785754763068729c40b2aa5a29ba847db87642dff3991dec6d1753d"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-base-v3-4k.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-base-v3-4k.png",
+      "bytes": 10767986,
+      "sha256": "816fc750f37d5a7b10b34383287a108440129b4988f71ee4c9c948469fbb0600"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-base-v3.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-base-v3.png",
+      "bytes": 2966833,
+      "sha256": "b2c9f914fc072b759612e960cd9323241874a00aafc7961254654db84883108c"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-base-v4-4k.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-base-v4-4k.png",
+      "bytes": 10247070,
+      "sha256": "538c3c7d46edc3147d51df10616fb9dfd66bb5c372dfd945476df61724b199b1"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-base-v4.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-base-v4.png",
+      "bytes": 2856457,
+      "sha256": "9b934efeb8f7abac8fbd0da1f291831434ea89bf877625b90db4deef1800ee22"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-mask-remove-v7.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-mask-remove-v7.png",
+      "bytes": 3494809,
+      "sha256": "4af4fb0734786fce10ed31359452c72bf0d8dab02d3f580967a52408f17d702a"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-paper-style-v8.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-paper-style-v8.png",
+      "bytes": 3493102,
+      "sha256": "f19468776f01fcfb4d6601aefc55f00b6ce4eb56efb069f26b26b50df2d012ad"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-redraw-v5.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-redraw-v5.png",
+      "bytes": 3521887,
+      "sha256": "28506d3101722b776d7486b1c7ce9b26ba0f48af616d294cc0fbf009a6dc2105"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-redraw-v6.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-redraw-v6.png",
+      "bytes": 3554382,
+      "sha256": "9f9102c85ebc95ea25bdd33555a8f7205f5a110622a5915cbadfeb5cd73364c2"
+    },
+    {
+      "source": "artifact/world-geography/production/wujin-world-map-scene-vignette-v9.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/production/wujin-world-map-scene-vignette-v9.png",
+      "bytes": 3501172,
+      "sha256": "adf7e5ade22cb66eae6d5f12c3b5a17826eaab3bbdd1d58861e4674553510198"
+    },
+    {
+      "source": "artifact/world-geography/prompts/00-world-overview.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/prompts/00-world-overview.txt",
+      "bytes": 3783,
+      "sha256": "4e3274c5300838d4e597a64058cff49caabcaa90d47147c1d389fffcc9a8ac5c"
+    },
+    {
+      "source": "artifact/world-geography/prompts/wujin-v1.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/prompts/wujin-v1.txt",
+      "bytes": 2680,
+      "sha256": "f0fd63004d24a014f8b4e40eda5b2d162903bb9b3cc5ce02fb07f5c7ea48c6b6"
+    },
+    {
+      "source": "artifact/world-geography/prompts/wujin-v2-locked-canvas.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/prompts/wujin-v2-locked-canvas.txt",
+      "bytes": 1942,
+      "sha256": "154f4dd311f81386fed70d04393eb6a0d4229bd5c8990d6c82d1bc85d8de0c1e"
+    },
+    {
+      "source": "artifact/world-geography/qa.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/qa.json",
+      "bytes": 669,
+      "sha256": "22589e2611ae29f80d1f4f69c795e7cf9e1182d6335c7765576445d43f16bd40"
+    },
+    {
+      "source": "artifact/world-geography/README.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/README.md",
+      "bytes": 3003,
+      "sha256": "8fc939ecd364031826def16d26bfb7605d4ed43ed2829b5ea1038f9acf6fd0d9"
+    },
+    {
+      "source": "artifact/world-geography/references/city-labels.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/city-labels.png",
+      "bytes": 955163,
+      "sha256": "20fd1d96da1cdfbf871dea9275ab9754184d932d8f6c5d35ee66d213eaa678bb"
+    },
+    {
+      "source": "artifact/world-geography/references/user-geography-original.jpg",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/user-geography-original.jpg",
+      "bytes": 101054,
+      "sha256": "a6eec3cc6c2a477337193c132a275add4e7d6972f8ad4afa7bf08eaf012596b3"
+    },
+    {
+      "source": "artifact/world-geography/references/user-geography-readable.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/user-geography-readable.png",
+      "bytes": 455246,
+      "sha256": "af5a1ddf8d52f68cf72bc36a885960730ab1c768c7db8f6f582b545f62a95d9c"
+    },
+    {
+      "source": "artifact/world-geography/references/user-geography-river-marked.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/user-geography-river-marked.png",
+      "bytes": 750625,
+      "sha256": "fe65871da1a4068ceb0828c3b6a4be848e5923241e0721365b9befbc33628b67"
+    },
+    {
+      "source": "artifact/world-geography/references/user-paomaliang-topdown.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/user-paomaliang-topdown.png",
+      "bytes": 71185,
+      "sha256": "35650e84f6651f25257c374c996a303c84c62c4e1ca1f23faecfe07b65e3f554"
+    },
+    {
+      "source": "artifact/world-geography/references/west-labels.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/west-labels.png",
+      "bytes": 1373788,
+      "sha256": "2ab3a4161f56123bc3dc14a0aef77e3bcde124001e56c1425eae7e5d5611cac3"
+    },
+    {
+      "source": "artifact/world-geography/references/wujin-locked-canvas.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/wujin-locked-canvas.png",
+      "bytes": 5854564,
+      "sha256": "322d6f1ae5099229a416d2c9660e63956243cd62db5a05c7f37e723c5800762a"
+    },
+    {
+      "source": "artifact/world-geography/style-transfer/save-and-check.py",
+      "archived": "resources/editor_projects/misc_media/world-geography/style-transfer/save-and-check.py",
+      "bytes": 2092,
+      "sha256": "09d8771c7a61ecd6155eed0f81c546478411067b5baf53c78796f2d33f23a832"
+    },
+    {
+      "source": "artifact/world-geography/style-transfer/style-transfer-v1-job.json",
+      "archived": "resources/editor_projects/misc_media/world-geography/style-transfer/style-transfer-v1-job.json",
+      "bytes": 3151,
+      "sha256": "8b2d1642de5f9f9652f3142690e603921e1bf9c90cb84a85f481876bf78ef933"
+    },
+    {
+      "source": "artifact/world-geography/style-transfer/style-transfer-v2-prompt.txt",
+      "archived": "resources/editor_projects/misc_media/world-geography/style-transfer/style-transfer-v2-prompt.txt",
+      "bytes": 1986,
+      "sha256": "b8c3c632dfdafecba58cbe4fef5b01e83a1bfd5ec07b36a682fcef345ffa96d2"
+    },
+    {
+      "source": "artifact/world-geography/unresolved-geography.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/unresolved-geography.md",
+      "bytes": 5189,
+      "sha256": "7e79d35aab60e93da5cf53c8c5cd876437292e4dcfa39c29568c43b6f1585320"
+    },
+    {
+      "source": "artifact/world-geography/USER_MAP_CONTRACT.md",
+      "archived": "resources/editor_projects/misc_media/world-geography/USER_MAP_CONTRACT.md",
+      "bytes": 5457,
+      "sha256": "1cb2f384413aab9d09d35155798ac66307d4ff8e81e963646f09cd3a7d3d7bfa"
+    },
+    {
+      "source": "C:\\Users\\wubugui\\AppData\\Local\\Temp\\codex-clipboard-90ec1517-005b-4592-a745-f5211556758d.jpg",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/user-inputs/codex-clipboard-90ec1517-005b-4592-a745-f5211556758d.jpg",
+      "bytes": 101054,
+      "sha256": "a6eec3cc6c2a477337193c132a275add4e7d6972f8ad4afa7bf08eaf012596b3"
+    },
+    {
+      "source": "C:\\Users\\wubugui\\AppData\\Local\\Temp\\codex-clipboard-faaf510d-f093-4c57-a215-b7f6a7d4df36.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/user-inputs/codex-clipboard-faaf510d-f093-4c57-a215-b7f6a7d4df36.png",
+      "bytes": 750625,
+      "sha256": "fe65871da1a4068ceb0828c3b6a4be848e5923241e0721365b9befbc33628b67"
+    },
+    {
+      "source": "C:\\Users\\wubugui\\AppData\\Local\\Temp\\codex-clipboard-c967ca72-94dd-4df1-bb80-01a7e02ab3f3.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/user-inputs/codex-clipboard-c967ca72-94dd-4df1-bb80-01a7e02ab3f3.png",
+      "bytes": 71185,
+      "sha256": "35650e84f6651f25257c374c996a303c84c62c4e1ca1f23faecfe07b65e3f554"
+    },
+    {
+      "source": "C:\\Users\\wubugui\\AppData\\Local\\Temp\\codex-clipboard-712883b5-5861-490a-9e7c-e491e592e9ec.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/user-inputs/codex-clipboard-712883b5-5861-490a-9e7c-e491e592e9ec.png",
+      "bytes": 3020092,
+      "sha256": "fcccb39588bfacc5a62a3fe223e28199a085e817efb9aa40006861a397fb5c57"
+    },
+    {
+      "source": "C:\\Users\\wubugui\\AppData\\Local\\Temp\\codex-clipboard-7c0f729c-6752-4ff1-8b62-450f7f1bd01c.png",
+      "archived": "resources/editor_projects/misc_media/world-geography/references/user-inputs/codex-clipboard-7c0f729c-6752-4ff1-8b62-450f7f1bd01c.png",
+      "bytes": 3695119,
+      "sha256": "3d478270900f87addd48513e333d7e1b4e6bcd7880577818ef0196e6c998386b"
+    }
+  ]
+}

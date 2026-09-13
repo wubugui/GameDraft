@@ -29,6 +29,7 @@ from ..shared.condition_expr_tree import ConditionExprTreeRootWidget
 from ..shared.num_fields import float_or as _float_or, int_or as _int_or
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.portrait_catalog import load_portrait_sets
+from ..shared.widget_discard import discard_widget
 
 _DEFAULT_MANIFEST = "/resources/runtime/animation/player_anim/anim.json"
 _IDENTITY = "（与逻辑名相同，不映射）"
@@ -378,8 +379,7 @@ class PlayerAvatarEditor(QWidget):
         if row not in self._idle_rows:
             return
         self._idle_rows.remove(row)
-        row["box"].setParent(None)
-        row["box"].deleteLater()
+        discard_widget(row["box"])
         for i, r in enumerate(self._idle_rows):
             box = r.get("box")
             if isinstance(box, QGroupBox):

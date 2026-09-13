@@ -1,6 +1,6 @@
 import { BufferImageSource, type Renderer, type Texture, type TextureSource } from 'pixi.js';
 
-import type { SceneData, SceneDepthConfig, SceneLightingDef } from '../data/types';
+import type { LightDef, SceneData, SceneDepthConfig, SceneLightingDef } from '../data/types';
 import { LitBackground } from '../rendering/lighting/LitBackground';
 import { SceneLightingPass, type SceneLightingGeometry } from '../rendering/lighting/SceneLightingPass';
 import { GiBouncePass } from '../rendering/lighting/GiBouncePass';
@@ -140,7 +140,17 @@ export class SceneLightingSystem {
   private meta: LightingGeometryMeta | null = null;
   private pass: SceneLightingPass | null = null;
   private litBg: LitBackground | null = null;
+  /**
+   * 草木摆动：植物挪开露出来的地方要的那份光照缓存——同一套灯、同一套参数，
+   * 输入换成"扣掉植物"的原画 / 法线 / albedo / 深度。与主缓存同脏同算，稳态同样零成本。
+   */
+  private passPlate: SceneLightingPass | null = null;
+  private geo: SceneLightingGeometry | null = null;
   private def: SceneLightingDef | null = null;
+  /** 运行时灯（跟随灯等）。见 {@link setDynamicLights} —— 不落盘、不进 `params` */
+  private dynamicLights: LightDef[] = [];
+  /** 作者灯的运行时强度倍率。见 {@link setLightIntensityScales} */
+  private intensityScales: Map<string, number> = new Map();
   private skyvisGrid: Float32Array | null = null;
   private skyvisTex: BufferImageSource | null = null;
   private giHitmapTex: BufferImageSource | null = null;
@@ -500,6 +510,7 @@ export class SceneLightingSystem {
 
     this.meta = meta;
     this.def = def;
+    this.geo = geo;
     this.pass = new SceneLightingPass(paintingTexture, geo);
     this.pass.applyParams(def, this.filterPhase());
     this.pass.markDirty();
@@ -552,35 +563,134 @@ export class SceneLightingSystem {
    */
   applyParams(def: SceneLightingDef): void {
     this.def = def;
-    this.pass?.applyParams(def, this.filterPhase());
-    this.pass?.markDirty();
+    this.pushEffective();
     this.litBg?.applyParams(def);
   }
 
+  /**
+   * 作者写的那份（**不含**运行时灯）。编辑器实时同步、F2 与摆灯都读写这一份 ——
+   * 跟随灯与渐灭覆盖绝不能混进来，混进来就会被回写进场景 JSON。
+   */
   get params(): SceneLightingDef | null {
     return this.def;
+  }
+
+  /**
+   * 运行时灯（挂件自带的跟随灯等）。**不落盘、不进 `params`**、切场景由组装层清空。
+   *
+   * 为什么另开一条而不是往 `def.lights` 里塞：那份 `def` 是作者数据，编辑器实时同步
+   * 会把它回写到场景 JSON（见 `dev/runtimeLightingSync.ts`）——一盏跟着玩家走的灯
+   * 被写进场景文件，作者下次打开就会看到一盏莫名的灯钉在某个坐标上。
+   */
+  setDynamicLights(lights: readonly LightDef[]): void {
+    // 逐帧调（跟随灯每帧动）：数量与内容都没变就别标脏，否则"稳态零光照计算"退化成每帧全屏重算
+    if (this.dynamicLights.length === 0 && lights.length === 0) return;
+    this.dynamicLights = lights.map((l) => ({ ...l }));
+    this.pushEffective();
+  }
+
+  /**
+   * 作者灯的运行时强度倍率（`fadeLight` 动作：门口的灯笼被吹灭）。
+   * key = 灯 id，value = 0..1+ 的倍率；倍率 ≤ 0 的那盏按熄灭处理（不占灯槽）。
+   * 同样**不落盘**、切场景清空。
+   */
+  setLightIntensityScales(scales: ReadonlyMap<string, number>): void {
+    if (this.intensityScales.size === 0 && scales.size === 0) return;
+    this.intensityScales = new Map(scales);
+    this.pushEffective();
+  }
+
+  /**
+   * 作者灯 + 运行时灯（带强度倍率）。粒子把灯当恐惧源、影子绑灯都该看这一份。
+   *
+   * ⚠ **运行时灯排在最前面**，这不是随意的顺序：`packLights` 超过 `MAX_STATIC_LIGHTS`
+   * 时按数组顺序截断，带影灯也是按顺序取前几盏。手上举着的那盏按定义是离玩家最近、
+   * 最该生效的一盏 —— 排在后面就会在灯摆满的场景里被第一个丢掉（且只有一行告警）。
+   */
+  effectiveLights(): LightDef[] {
+    const authored = this.def?.lights ?? [];
+    const out: LightDef[] = [...this.dynamicLights];
+    for (const l of authored) {
+      // 跟随灯由 HeldPropSystem 每帧解成一盏运行时灯（`dynamicLights` 里那份带解出来的 pos）。
+      // 这里必须跳过原件，否则同一盏灯会有两份：一份钉在作者写的 pos 上不动。
+      if (l.follow) continue;
+      const k = this.intensityScales.get(l.id);
+      if (k === undefined) { out.push(l); continue; }
+      if (!(k > 0)) { out.push({ ...l, enabled: false }); continue; }
+      out.push({ ...l, intensity: l.intensity * k });
+    }
+    return out;
+  }
+
+  /** 把「作者灯 + 运行时灯」推进 pass 并标脏。`def` 本身一个字节都不动。 */
+  private pushEffective(): void {
+    const def = this.def;
+    if (!def || !this.pass) return;
+    const effective = (this.dynamicLights.length > 0 || this.intensityScales.size > 0)
+      ? { ...def, lights: this.effectiveLights() }
+      : def;
+    this.pass.applyParams(effective, this.filterPhase());
+    this.pass.markDirty();
+    if (this.passPlate) {
+      this.passPlate.applyParams(effective, this.filterPhase());
+      this.passPlate.markDirty();
+    }
+  }
+
+  /**
+   * 接上草木摆动（打光场景）。露出来的地方用"扣掉植物"那一套几何件另算一份光照缓存，
+   * 显示端先读位移图再取两份缓存（`LitBackground.setSway`）。灯怎么变两份一起跟。
+   */
+  attachSway(sw: { uvMap: Texture; plate: Texture; normal: Texture; albedo: Texture; depth: Texture }): boolean {
+    if (!this.pass || !this.litBg || !this.geo) return false;
+    this.detachSway();
+    this.passPlate = new SceneLightingPass(sw.plate, { ...this.geo, normal: sw.normal, albedo: sw.albedo, depth: sw.depth });
+    this.pushEffective();
+    const rad = this.passPlate.radiance;
+    if (!rad) {
+      depthError(T, '草木摆动：露出处的光照缓存没建起来，草木不接');
+      this.detachSway();
+      return false;
+    }
+    this.litBg.setSway({ uvMap: sw.uvMap, radiancePlate: rad, depthPlate: sw.depth });
+    return true;
+  }
+
+  /**
+   * 拆下草木摆动。**必须在销毁位移图之前调**：先让显示端绑回占位，再销毁那份光照缓存
+   * （顺序反了 BindGroup 自毁、下一帧渲染即抛，整局卡死——pixi-v8-traps）。
+   */
+  detachSway(): void {
+    this.litBg?.setSway(null);
+    this.passPlate?.destroy();
+    this.passPlate = null;
   }
 
   /** 调试可视化：0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值 6=线性化原画 7=GI体。 */
   setDebug(mode: number): void {
     this.pass?.setDebug(mode);
+    this.passPlate?.setDebug(mode);
   }
 
   /** 诊断·定法线转发(GI体档,F2 诊断组)。 */
   setGiFixedN(n: number): void {
     this.pass?.setGiFixedN(n);
+    this.passPlate?.setGiFixedN(n);
   }
 
   /** 「GI体」视图(7/8/9)的 probe 资源转发;null = 退回占位。见 SceneLightingPass.setProbeResources。 */
   setProbeResources(res: Parameters<SceneLightingPass['setProbeResources']>[0]): void {
     this.pass?.setProbeResources(res);
+    this.passPlate?.setProbeResources(res);
     // 喂完必须重算:视图开着时改 β/mode(F2 滑块)走的就是这条,不脏 RT 就冻着旧画面
     this.pass?.markDirty();
+    this.passPlate?.markDirty();
   }
 
   /** 逐帧调。脏才重算，稳态零成本。返回是否真的重算了（供性能观测）。 */
   update(renderer: Renderer): boolean {
     const recomputed = this.pass?.update(renderer) ?? false;
+    this.passPlate?.update(renderer);
     // ⚠ 顺序即正确性：GI 读的是**这一次**重算出来的辐射场，必须排在它之后。
     //   反过来会让反弹光永远落后一次改动——F2 拖滑杆时表现为"角色慢半拍"。
     if (recomputed) this.giPass?.render(renderer);
@@ -589,16 +699,21 @@ export class SceneLightingSystem {
 
   unload(): void {
     // ⚠ Pixi 坑②：先拆显示端再销毁它引用的 RT，顺序反了会把 shader 的 BindGroup 永久烧毁
+    this.detachSway();
     this.litBg?.destroy();
     this.litBg = null;
     this.pass?.destroy();
     this.pass = null;
+    this.geo = null;
     this.meta = null;
     this.def = null;
     // 跨场景残留会让新场景吃到旧场景的口径：bakeBase 会让按需加载去拉上一个场景的
     // 目录，dayNightOn 会让没开日夜的场景照旧过滤灯（=某些灯莫名不亮）。
     this.bakeBase = '';
     this.dayNightOn = false;
+    // 运行时灯与渐灭覆盖是**演出态**：跨场景残留会让新场景凭空多一盏灯 / 某盏灯莫名半暗
+    this.dynamicLights = [];
+    this.intensityScales = new Map();
     this.skyvisGrid = null;
     this.giPass?.destroy();
     this.giPass = null;

@@ -154,10 +154,29 @@
   ],
   "onEnter": [
     {
-      "type": "setThreeFiresVisible",
+      "type": "runActionsIf",
       "params": {
-        "visible": true,
-        "style": "fade"
+        "condition": {
+          "timePhase": "夜"
+        },
+        "actions": [
+          {
+            "type": "setThreeFiresVisible",
+            "params": {
+              "visible": true,
+              "style": "fade"
+            }
+          }
+        ],
+        "elseActions": [
+          {
+            "type": "setThreeFiresVisible",
+            "params": {
+              "visible": false,
+              "style": "instant"
+            }
+          }
+        ]
       }
     }
   ],
@@ -182,5 +201,27 @@
         "surface": "shell"
       }
     }
-  ]
+  ],
+  "wind": {
+    "direction": [
+      -1,
+      0,
+      -0.25
+    ],
+    "speed": 400,
+    "gust": {
+      "amount": 0.8,
+      "period": 7
+    },
+    "veer": 14,
+    "turbulence": {
+      "intensity": 0.35,
+      "scale": 140
+    },
+    "roughness": 1,
+    "gain": {
+      "vfx": 1,
+      "sway": 1
+    }
+  }
 }

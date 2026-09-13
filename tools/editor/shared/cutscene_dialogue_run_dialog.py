@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from .widget_discard import discard_widget
 
 
 def _has_speaker_field(step: dict) -> bool:
@@ -222,8 +223,7 @@ class _DialogueLineRow(QFrame):
                 except Exception:  # noqa: BLE001 — 收起失败不该吞掉这一句
                     pass
                 self._detail_lay.removeWidget(self._step)
-                self._step.setParent(None)
-                self._step.deleteLater()
+                discard_widget(self._step)
                 self._step = None
             self._detail.setVisible(False)
             self._btn_expand.setArrowType(Qt.ArrowType.RightArrow)
@@ -362,8 +362,7 @@ class DialogueRunEditorDialog(QDialog):
             return
         self._rows.remove(row)
         self._host_lay.removeWidget(row)
-        row.setParent(None)
-        row.deleteLater()
+        discard_widget(row)
         self._renumber()
 
     def _current_row(self) -> _DialogueLineRow | None:
@@ -415,8 +414,7 @@ class DialogueRunEditorDialog(QDialog):
         templates = [row.to_dict() for row in self._rows]
         for row in list(self._rows):
             self._host_lay.removeWidget(row)
-            row.setParent(None)
-            row.deleteLater()
+            discard_widget(row)
         self._rows.clear()
         for i, (spk, txt) in enumerate(rows):
             base = deepcopy(templates[i] if i < len(templates)

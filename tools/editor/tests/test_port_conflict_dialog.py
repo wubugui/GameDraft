@@ -41,6 +41,19 @@ def _listen_localhost() -> tuple[socket.socket, int]:
     return srv, srv.getsockname()[1]
 
 
+# ⚠ 打 PortConflictDialog.exec 的桩必须是普通函数,不能是 MagicMock
+# (`patch.object(..., return_value=...)` / `side_effect=...` 都会挂 MagicMock)。
+# PySide6 6.11 在 `signal.connect(self.<方法>)` 时会扫接收者**自己的类字典**,
+# 读每个可调用物的 `_slots`(@Slot 标记);MagicMock 对任意属性都回一个子 Mock,
+# C++ 侧当 list 读 → access violation,崩在弹窗 __init__ 的第一处 connect。
+def _exec_returning(code):
+    return lambda _dlg: code
+
+
+def _exec_forbidden(_dlg):
+    raise AssertionError("预热不应弹窗")
+
+
 class TestDescribePortOccupants(unittest.TestCase):
     def test_probe_finds_own_listener_and_frees_after_close(self) -> None:
         srv, port = _listen_localhost()
@@ -125,14 +138,13 @@ class TestStartGameBackendGate(unittest.TestCase):
                                  lambda self_, *a, **k: started.append(a)):
                 # 用户取消 → 不起任何进程
                 with patch.object(PortConflictDialog, "exec",
-                                  return_value=QDialog.DialogCode.Rejected):
+                                  _exec_returning(QDialog.DialogCode.Rejected)):
                     win._start_game_backend(open_when_ready=True)
                 self.assertIsNone(win._game_proc)
                 self.assertEqual(started, [])
 
                 # 预热路径不弹窗(exec 被调是失败),静默跳过
-                with patch.object(PortConflictDialog, "exec",
-                                  side_effect=AssertionError("预热不应弹窗")):
+                with patch.object(PortConflictDialog, "exec", _exec_forbidden):
                     win._start_game_backend(open_when_ready=False)
                 self.assertIsNone(win._game_proc)
                 self.assertEqual(started, [])
@@ -140,7 +152,7 @@ class TestStartGameBackendGate(unittest.TestCase):
                 # 用户选「结束占用进程」:杀口被替换为关掉测试自己的 socket,
                 # 复探端口空闲后应继续启动
                 with patch.object(PortConflictDialog, "exec",
-                                  return_value=QDialog.DialogCode.Accepted), \
+                                  _exec_returning(QDialog.DialogCode.Accepted)), \
                         patch("tools.dev.game.stop_dev_ports",
                               side_effect=lambda ports: srv.close()):
                     win._start_game_backend(open_when_ready=True)
@@ -159,7 +171,7 @@ class TestStartGameBackendGate(unittest.TestCase):
                     patch.object(mw.QProcess, "start",
                                  lambda self_, *a, **k: started.append(a)), \
                     patch.object(PortConflictDialog, "exec",
-                                 return_value=QDialog.DialogCode.Accepted), \
+                                 _exec_returning(QDialog.DialogCode.Accepted)), \
                     patch("tools.dev.game.stop_dev_ports",
                           side_effect=lambda ports: None), \
                     patch("tools.dev.game.wait_ports_free",

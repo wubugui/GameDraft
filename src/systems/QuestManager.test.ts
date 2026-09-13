@@ -440,6 +440,45 @@ describe('QuestManager 目标与引导（D7 / D8）', () => {
     flagStore.set('a_done', true);
     expect(qm.getQuestObjectives('main_a').map((o) => o.done)).toEqual([true, true]);
   });
+
+  describe('visibleConditions：条件不满足的目标整条不存在', () => {
+    const VIS_DEFS: QuestDef[] = [{
+      id: 'prep', group: 'g', type: 'main', title: '备东西', description: '',
+      preconditions: [{ flag: 'prep_ok' } as never], completionConditions: [{ flag: 'prep_done' } as never], rewards: [],
+      objectives: [
+        { id: 'rice', text: '糯米', optional: true, visibleConditions: [{ flag: 'knows_rice' } as never], completeWhen: [{ flag: 'has_rice' } as never],
+          guidance: [{ kind: 'mapMarker', sceneId: 'shop' }] },
+        { id: 'rope', text: '麻绳', completeWhen: [{ flag: 'has_rope' } as never] },
+      ],
+    }];
+
+    it('没满足时面板不列、不参与当前目标；满足后出现', async () => {
+      const { qm, flagStore } = await makeQuestManager(VIS_DEFS);
+      flagStore.set('prep_ok', true);
+      expect(qm.getQuestObjectives('prep').map((o) => o.def.id)).toEqual(['rope']);
+      expect(qm.getCurrentObjective('prep')?.id).toBe('rope');
+      flagStore.set('knows_rice', true);
+      expect(qm.getQuestObjectives('prep').map((o) => o.def.id)).toEqual(['rice', 'rope']);
+      expect(qm.getCurrentObjective('prep')?.id).toBe('rope');
+    });
+
+    it('白天就拿到的东西，一出现就是勾掉的', async () => {
+      const { qm, flagStore } = await makeQuestManager(VIS_DEFS);
+      flagStore.set('has_rice', true);
+      flagStore.set('prep_ok', true);
+      flagStore.set('knows_rice', true);
+      expect(qm.getQuestObjectives('prep').find((o) => o.def.id === 'rice')?.done).toBe(true);
+    });
+
+    it('目标出现（勾选位不变）也广播 quest:changed', async () => {
+      const { qm, flagStore, events } = await makeQuestManager(VIS_DEFS);
+      flagStore.set('prep_ok', true);
+      expect(qm.getFocusedQuestId()).toBe('prep');
+      events.length = 0;
+      flagStore.set('knows_rice', true);
+      expect(events.filter((e) => e.name === 'quest:changed').length).toBeGreaterThan(0);
+    });
+  });
 });
 
 describe('QuestManager 接取提示（D9）', () => {

@@ -440,7 +440,7 @@ describe('narrative condition context injection', () => {
     );
     manager.setConditionEvalContextFactory(() => ctx);
     const blend = vi.fn(async () => {});
-    manager.setBlendExecutor(blend);
+    manager.setLayerPresenter({ show: vi.fn(async () => {}), blend, hide: vi.fn() });
     await manager.loadDefinitions();
     await manager.checkAndReveal('doc');
     expect(blend).toHaveBeenCalledOnce();

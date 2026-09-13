@@ -36,7 +36,8 @@ _EMITTER_ID_RE = re.compile(r'^[^\s./\\:*?"<>|\x00-\x1f]{1,60}$')
 #: 顶层键序（运行时真相在前、工作态在后）
 _ORDER = ("id", "label", "emitters", "authoring")
 #: 发射器键序（与 types.ts 的 VfxEmitterDef 逐字同序）
-_EMITTER_ORDER = ("id", "offset", "subOnly", "appearance", "spawn", "motion", "life", "collision", "behavior", "sound")
+_EMITTER_ORDER = ("id", "offset", "subOnly", "appearance", "spawn", "motion", "life", "collision", "behavior",
+                  "plate", "sound")
 #: 各模块的键序（同上，按 types.ts）
 _MODULE_ORDER = {
     "appearance": ("animFile", "image", "state", "restState", "frameRate", "sizeWu", "sizeJitter",
@@ -49,10 +50,16 @@ _MODULE_ORDER = {
     "behavior": ("cruise", "max", "maxAccel", "minAltitude", "senseRadius", "separation", "accel",
                  "orbit", "home", "attitude", "initialState", "wingFlap", "speedJitter", "wander",
                  "startlePulse"),
+    "plate": ("size", "terminalSpeed", "edgeDrag", "pressureOffset", "friction", "adhere", "bend", "segments",
+              "replenish"),
     "sound": ("loop", "start", "hit"),
 }
-_AUTHORING_ORDER = ("sceneId", "background", "anchor", "note")
+_AUTHORING_ORDER = ("sceneId", "background", "anchor", "attach", "note")
 _ANCHOR_ORDER = ("x", "y", "h", "surface")
+#: ``authoring.attach`` 的键序。**工作台独有的工作态**（运行时忽略整个 ``authoring``），
+#: 所以 ``types.ts`` 的 ``VfxEffectDef.authoring`` 里暂时没有它 —— 见
+#: ``agent_docs/_meta/inbox/`` 2026-09-12 那条偏差记录。
+_ATTACH_ORDER = ("heightWu", "offsetX")
 
 _RESPONSES = ("none", "kill", "bounce", "stick", "slide")
 _FLOCK_STATES = ("roosting", "airborne", "fleeing", "returning")
@@ -173,11 +180,13 @@ def _spawn(sp: Any, where: str) -> dict:
     shape = out.get("shape")
     if isinstance(shape, dict):
         kind = shape.get("kind")
-        if kind not in ("point", "sphere", "disc", "box", "line"):
+        if kind not in ("point", "sphere", "disc", "box", "line", "area"):
             raise ValueError(f"{where}.spawn.shape.kind 未知：{kind!r}")
         shape = dict(shape)
         if kind in ("sphere", "disc") and not _is_num(shape.get("radius")):
             raise ValueError(f"{where}.spawn.shape.radius 要是数")
+        if kind == "area" and "radius" in shape and not _is_num(shape.get("radius")):
+            raise ValueError(f"{where}.spawn.shape.radius（area 在没有实例区域时的预览圆盘半径）要是数")
         if kind == "box":
             shape["size"] = _vec3(shape.get("size"), f"{where}.spawn.shape.size")
         if kind == "line":
@@ -275,6 +284,22 @@ def _behavior(be: Any, where: str) -> dict:
     return _order(out, _MODULE_ORDER["behavior"])
 
 
+def _plate(pl: Any, where: str) -> dict:
+    """薄片模块（纸钱 / 落叶）：与 validator._validate_vfx_plate 同口径的最低形状闸门。"""
+    if not isinstance(pl, dict):
+        raise ValueError(f"{where}.plate 要是对象")
+    out = dict(pl)
+    size = out.get("size")
+    if not isinstance(size, list) or len(size) != 2 or not all(_is_num(v) and v > 0 for v in size):
+        raise ValueError(f"{where}.plate.size 要是 [宽, 高]（正数，真实尺寸 wu）")
+    if not _is_num(out.get("terminalSpeed")) or out["terminalSpeed"] <= 0:
+        raise ValueError(f"{where}.plate.terminalSpeed 要是正数（平着自由下落的终端速度 wu/s）")
+    for key in ("friction", "adhere", "bend"):
+        if key in out and not isinstance(out[key], dict):
+            raise ValueError(f"{where}.plate.{key} 要是对象")
+    return _order(out, _MODULE_ORDER["plate"])
+
+
 def _emitter(em: Any, idx: int, warn: list[str]) -> dict:
     if not isinstance(em, dict):
         raise ValueError(f"emitters[{idx}] 不是对象")
@@ -302,6 +327,8 @@ def _emitter(em: Any, idx: int, warn: list[str]) -> dict:
             raise ValueError(f"{where}.{key} 要是对象")
     if "behavior" in out:
         out["behavior"] = _behavior(out["behavior"], where)
+    if "plate" in out:
+        out["plate"] = _plate(out["plate"], where)
     if isinstance(out.get("sound"), dict):
         out["sound"] = _order(dict(out["sound"]), _MODULE_ORDER["sound"])
     if not sub and not _is_num(out["spawn"].get("rate")) and not _is_num(out["spawn"].get("burst")) \
@@ -319,6 +346,25 @@ def _anchor(a: Any) -> dict:
     if "surface" in out and out["surface"] not in ("ground", "shell"):
         raise ValueError("authoring.anchor.surface 只能是 ground / shell")
     return _order(out, _ANCHOR_ORDER)
+
+
+def _attach(a: Any) -> dict:
+    """``authoring.attach``：**锚点模式取「角色挂点」**时的工作态（手持挂件那条的预览）。
+
+    在 = 预览时锚点每帧挪到场上角色的挂点上（``heightWu`` 是离脚点的高度、``offsetX`` 是画面横向
+    偏移，与运行时 ``HeldPropSystem.resolveAnchorWorld`` 的 ``contact.x + pose.x`` / ``-pose.y``
+    逐字同口径）；不在 = 老样子按 ``anchor`` 落场景面 —— 所以**关掉这一档的资产字节不变**。
+    与 ``anchor`` 同一块待遇：运行时忽略整个 ``authoring``，这里只是"重开现场"。
+    """
+    if not isinstance(a, dict):
+        raise ValueError("authoring.attach 要是对象 {heightWu, offsetX}")
+    out = dict(a)
+    hw = out.get("heightWu")
+    if not _is_num(hw) or hw < 0:
+        raise ValueError("authoring.attach.heightWu 要是 ≥ 0 的数（挂点离脚点的高度 wu；角色高 150）")
+    if "offsetX" in out and not _is_num(out["offsetX"]):
+        raise ValueError("authoring.attach.offsetX 要是数（画面横向偏移 wu）")
+    return _order(out, _ATTACH_ORDER)
 
 
 def normalize_effect(doc: Any, warnings: list[str] | None = None) -> dict:
@@ -368,6 +414,8 @@ def normalize_effect(doc: Any, warnings: list[str] | None = None) -> dict:
                     au.pop(k, None)
         if "anchor" in au:
             au["anchor"] = _anchor(au["anchor"])
+        if "attach" in au:
+            au["attach"] = _attach(au["attach"])
         if au:
             out["authoring"] = _order(au, _AUTHORING_ORDER)
         else:

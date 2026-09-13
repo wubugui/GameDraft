@@ -15,8 +15,8 @@ function make(): { s: SmellSystem; flags: FlagStore; bus: EventBus; player: { x:
   return { s, flags, bus, player, scene };
 }
 
-describe('SmellSystem 飘向 = 气味源的反方向（G.6）', () => {
-  it('没放源就是直的；放了源后源在左 → 往右飘、源在右 → 往左飘、到跟前归零', () => {
+describe('SmellSystem 飘向 = 指向气味源（G.6）', () => {
+  it('没放源就是直的；放了源后源在左 → 往左飘、源在右 → 往右飘、到跟前归零', () => {
     const { s, player } = make();
     s.setSmell('baozi', 60);
     s.update(0.016);
@@ -24,10 +24,10 @@ describe('SmellSystem 飘向 = 气味源的反方向（G.6）', () => {
     s.setSource(100, 0);
     player.x = 260; // 源在左 160px
     s.update(0.016);
-    expect(s.getDir()).toBeCloseTo(0.5, 2);
+    expect(s.getDir()).toBeCloseTo(-0.5, 2);
     player.x = -220; // 源在右 320px → 歪到底
     s.update(0.016);
-    expect(s.getDir()).toBe(-1);
+    expect(s.getDir()).toBe(1);
     player.x = 100;
     s.update(0.016);
     expect(s.getDir()).toBe(0);
@@ -39,13 +39,13 @@ describe('SmellSystem 飘向 = 气味源的反方向（G.6）', () => {
     s.setSource(0, 0);
     player.x = 320;
     s.update(0.016);
-    expect(s.getDir()).toBe(1);
+    expect(s.getDir()).toBe(-1);
     s.setTracking(false);
     expect(s.getDir()).toBe(0);
     expect(flags.get('smell_tracking')).toBe(false);
     expect(flags.get('current_smell_dir')).toBe(0);
     s.setTracking(true);
-    expect(s.getDir()).toBe(1);
+    expect(s.getDir()).toBe(-1);
   });
 
   it('动作源只在它所属场景生效；无味时也不歪', () => {
@@ -57,7 +57,7 @@ describe('SmellSystem 飘向 = 气味源的反方向（G.6）', () => {
     expect(s.getDir()).toBe(0);
     scene.id = '崖墓';
     s.update(0.016);
-    expect(s.getDir()).toBe(1);
+    expect(s.getDir()).toBe(-1);
     s.clearSmell();
     expect(s.getDir()).toBe(0);
   });
@@ -68,13 +68,13 @@ describe('SmellSystem 飘向 = 气味源的反方向（G.6）', () => {
     bus.emit('zone:enter', { zoneId: 'z1', zone: { id: 'z1', smell: { scent: 'baozi', intensity: 50, source: { x: 300, y: 0 } } } });
     s.update(0.016);
     expect(s.getScent()).toBe('baozi');
-    expect(s.getDir()).toBeCloseTo(0.625, 3);
-    s.setSource(900, 0); // 动作源在右边 400px → 往左歪到底
+    expect(s.getDir()).toBeCloseTo(-0.625, 3);
+    s.setSource(900, 0); // 动作源在右边 400px → 往右歪到底
     s.update(0.016);
-    expect(s.getDir()).toBe(-1);
+    expect(s.getDir()).toBe(1);
     s.clearSource();
     s.update(0.016);
-    expect(s.getDir()).toBeCloseTo(0.625, 3);
+    expect(s.getDir()).toBeCloseTo(-0.625, 3);
     bus.emit('zone:exit', { zoneId: 'z1' });
     s.update(0.016);
     expect(s.getScent()).toBe('');

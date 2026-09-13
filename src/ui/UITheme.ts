@@ -104,15 +104,15 @@ export const UITheme = {
     progressBg: 0x261e14,
     progressFill: 0xccaa44,
 
-    // 地图节点：原来「已解锁」是冷蓝（557799/6688aa/aabbcc），在这套暖木配色里
-    // 是全屏最跳的一处。改成旧木色系，只留「当前」用琥珀点亮。
-    mapCurrent: 0xffcc44,
-    mapCurrentBorder: 0xffee88,
-    mapUnlocked: 0x4a3a24,
-    mapUnlockedBorder: 0x6b5a3e,
-    mapUnlockedText: 0xccbbaa,
-    mapLocked: 0x241d16,
-    mapLockedText: 0x4f4538,
+    // 纸质地图上的墨记：普通地点用深墨，当前位置用暗朱红，不套木盘或发光按钮。
+    mapCurrent: 0x913f32,
+    mapCurrentBorder: 0x6e3028,
+    mapUnlocked: 0x383127,
+    mapUnlockedBorder: 0x574a38,
+    mapUnlockedText: 0x332b21,
+    mapLocked: 0x776a55,
+    mapLockedText: 0x756a5a,
+    mapGuidance: 0x82633a,
 
     questMain: 0xffcc66,
     /** 支线：留一点青以便与主线拉开，但压暗压灰，不再是发亮的薄荷色 */

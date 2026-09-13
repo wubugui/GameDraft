@@ -71,12 +71,15 @@ _COLLISION_KINDS: dict[str, tuple[str, ...]] = {
 #   scene_entity  实体 id，由同 action 的 sceneId + entityKind 限定
 #   scene_hotspot 热点 id，由同 action 的 sceneId 限定
 #   scene_zone    zone id，由同 action 的 sceneId 限定
-#   position_ref  位置引用对象 `at`（{kind:'point'|'entity'|'slot'}，src/utils/positionRef.ts）：
+#   position_ref  位置引用对象 `at`（{kind:'point'|'entity'|'slot'|'curve'}，src/utils/positionRef.ts）：
 #                 只有 entity 档的 `at.id` 是实体引用（NPC / 热点 / player / _cut_，运行时按当前场景解析）
 ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "playNpcAnimation": {"target": "actor"},
     "attachToSocket": {"target": "actor"},
     "detachFromSocket": {"target": "actor"},
+    # 挂件状态机：target 是挂点宿主（与 attachToSocket 同一命中面）。
+    # socket / state 不是实体引用——前者是动画包 sockets.json 的键，后者是挂件预设 states 的键。
+    "setPropState": {"target": "actor"},
     "setEntityEnabled": {"target": "actor"},
     # 头顶闲聊说话人：运行时走 resolveEmoteTarget（NPC / 热点 / player / 过场演员），
     # 所以命中面与 emote_subject 同宽；另外多认一档 `character:<角色id>`（不是实体引用，
@@ -97,8 +100,9 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "teleportEntityTo": {"target": "actor", "sceneId": "scene_hint", "at": "position_ref"},
     # 过场临时演员的生成点也可以引用别的实体 / 插槽；id 本身是它自己的新 id，不是引用
     "cutsceneSpawnActor": {"at": "position_ref"},
-    "faceEntity": {"target": "actor", "faceTarget": "actor"},
-    "cameraFollowActor": {"target": "actor"},
+    # faceTarget / target 是老写法（实体）；at 是位置引用那一档（2026-09-12：曲线此刻播到的点等），entity 档的 at.id 也跟随改名
+    "faceEntity": {"target": "actor", "faceTarget": "actor", "at": "position_ref"},
+    "cameraFollowActor": {"target": "actor", "at": "position_ref"},
     "persistNpcEntityEnabled": {"target": "actor"},
     "persistNpcAt": {"target": "actor", "at": "position_ref"},
     "persistNpcAnimState": {"target": "actor"},
@@ -732,6 +736,74 @@ def _rewrite_quest_guidance_targets(
     return total
 
 
+def _iter_scene_light_follows(model: Any, scene_id: str) -> Iterator[tuple[str, dict[str, Any]]]:
+    """产出 (灯 id, follow 块)：某个场景 `lighting.lights[*].follow` 里配了目标的那些。"""
+    scene = (getattr(model, "scenes", None) or {}).get(scene_id)
+    if not isinstance(scene, dict):
+        return
+    lit = scene.get("lighting")
+    lights = (lit.get("lights") if isinstance(lit, dict) else None) or []
+    for light in lights if isinstance(lights, list) else []:
+        if not isinstance(light, dict):
+            continue
+        follow = light.get("follow")
+        if isinstance(follow, dict) and str(follow.get("target") or "").strip():
+            yield str(light.get("id") or "?"), follow
+
+
+def _scene_light_follow_hits(model: Any, kind: str, scene_id: str, entity_id: str) -> list[dict[str, Any]]:
+    """扫描用：本场景哪几盏灯跟着这个实体走（按灯 id 分组）。
+
+    ⚠ 必须给到**灯粒度**，不能只回一个总数：重构确认弹窗要能说出「是哪盏灯跟着它」，
+    否则删除/迁移前根本判不了风险（"灯还在，只是从此永远不亮"是查不出来的那类症状）。
+    """
+    if kind != "npc":
+        return []
+    hits: list[dict[str, Any]] = []
+    for lid, follow in _iter_scene_light_follows(model, scene_id):
+        if str(follow.get("target") or "").strip() == entity_id:
+            hits.append({"bucket": "sceneLight", "itemId": lid, "count": 1})
+    return hits
+
+
+def _rewrite_scene_light_follow_targets(
+    model: Any, kind: str, old_scene: str, old_id: str,
+    new_scene: str, new_id: str, *, count_only: bool = False,
+) -> int:
+    """改写场景灯的跟随绑定（`scenes/<id>.json` 的 `lighting.lights[*].follow.target`）。
+
+    这是**数据文件自身**的实体引用，`ENTITY_REF_PARAMS`（action 参数登记面）够不到——
+    灯不是 action，没有 `type`/`params` 那层壳，`_walk_ref_actions` 看不见它
+    （先例：`bubble_lines` 的 speaker、`quests` 的 worldMarker 引导）。
+
+    **场景限定、零歧义**：这条引用长在某个场景的 JSON 里，运行时也只在**那个场景**解析
+    （`Game.entityContactOf` → `sceneManager.getNpcById`，见 `HeldPropSystem.resolveFollowLight`），
+    所以改名可以机械跟随，不必像 bubble_lines 的裸 speaker 那样只在全局唯一时才改。
+    命中面只有 **npc**（`player` 或本场景 NPC id——热点/zone/出生点都解析不出接触点）。
+
+    **迁移（old_scene ≠ new_scene）只报不改**，与轨迹资产那条同一个道理：灯是场景的家具，
+    跟不着实体换场景去。此时这条引用变成悬垂，调用方把它放进报告让作者自己决定
+    （删掉这盏灯 / 换个跟随目标 / 在新场景另摆一盏），validator 会把它报成 error
+    —— 静默改写才是错的：把 target 改成别的名字等于替作者瞎猜。
+
+    不跟改的后果：改完名那盏灯**永远不亮**（`resolveFollowLight` 解不出目标就这一帧不发光，
+    也不回落到作者写的 pos），画面上与"这盏灯坏了"完全无法区分。
+    """
+    if kind != "npc":
+        return 0
+    total = 0
+    for _lid, follow in _iter_scene_light_follows(model, old_scene):
+        if str(follow.get("target") or "").strip() != old_id:
+            continue
+        total += 1
+        if count_only or new_scene != old_scene:
+            continue
+        follow["target"] = new_id
+    if total and not count_only and new_scene == old_scene:
+        model.mark_dirty("scene", old_scene)
+    return total
+
+
 # ---- 轨迹资产（assets/data/trajectories/*.json）**刻意不进重构引擎** ---------------
 #
 # 轨迹已迁出场景 JSON，成为与场景 / 实体无关的独立资产：运行时只认 `keyframes`
@@ -932,6 +1004,10 @@ def scan_entity_usages(model: Any, scene_id: str, kind: str, entity_id: str) -> 
     # 按任务分组给出，重构弹窗要能显示「是哪条任务的引导指着它」。
     report["questGuidance"] = _quest_guidance_hits(model, kind, sid, eid)
 
+    # 场景灯的跟随绑定（`lighting.lights[*].follow.target`）：场景限定引用，按灯分组给出。
+    # 断了的表现是"那盏灯永远不亮"，与"灯坏了"在画面上分不开，所以必须在弹窗里点名。
+    report["sceneLightFollows"] = _scene_light_follow_hits(model, kind, sid, eid)
+
     # 头顶闲聊台词本的 speaker.id。钉死本场景的按 qualified 档机械跟随，没钉场景的
     # 与 globalRefs 同歧义规则；报告只回答"有多少条指着它"，故两类都算。
     report["bubbleLineSpeakers"] = _rewrite_bubble_line_speakers(
@@ -948,6 +1024,7 @@ def scan_entity_usages(model: Any, scene_id: str, kind: str, entity_id: str) -> 
         + sum(h["count"] for h in tag_hits)
         + sum(h["count"] for h in report["questGuidance"])
         + report["bubbleLineSpeakers"]
+        + sum(h["count"] for h in report["sceneLightFollows"])
     )
 
     # emitNarrativeSignal 溯源复合串 "场景:实体"（trace-only,不进 totalRefs）
@@ -1063,6 +1140,9 @@ def move_entity(
 
     rewritten = _rewrite_qualified_scene_refs(model, kind, eid, src, dst)
     guidance_moved = _rewrite_quest_guidance_targets(model, kind, src, eid, dst, eid)
+    # 场景灯的跟随绑定：**只报不改**（灯是源场景的家具，跟不着实体换场景去）。
+    # 这些引用迁完就悬垂了 —— 报告里点名，validator 报 error，作者自己决定怎么办。
+    light_follows = _scene_light_follow_hits(model, kind, src, eid)
 
     summary = {
         "op": "moveEntity", "kind": kind, "entityId": eid,
@@ -1071,6 +1151,9 @@ def move_entity(
         # ⚠ 键名与 scan 报告的 `questGuidance` **刻意不同名**：那边是按任务分组的明细 list，
         # 这边是本次改写的条数 int。同名不同形状是下一个人照抄时必炸的陷阱。
         "questGuidanceRewritten": guidance_moved,
+        # 与 scan 报告同名同形状（都是按灯分组的 list）：这一处**没有**改写条数可报，
+        # 因为正向 move 刻意不改写（见上）。
+        "sceneLightFollows": light_follows,
         "danglingSceneLocal": report["sceneLocal"],
         "dialogues": report["dialogues"],
         "globalRefs": report["globalRefs"],
@@ -1108,6 +1191,9 @@ def _move_spawn(
         "op": "moveEntity", "kind": SPAWN_KIND, "entityId": key,
         "srcScene": src, "dstScene": dst, "srcIndex": src_index,
         "qualifiedRewritten": rewritten,
+        # 出生点不可能是灯的跟随目标（只认 player / NPC），恒空；键在两条 move 路径上
+        # 都存在，消费方不必分支判断。
+        "sceneLightFollows": [],
         "danglingSceneLocal": [], "dialogues": [], "globalRefs": [], "ownerBindings": [],
         "needsReview": report.get("needsReview") or [],
     }
@@ -1321,6 +1407,10 @@ def rename_entity(
     # 不看 uniqueGlobal——它已经把场景写死了，不存在"指的是哪个同名实体"的歧义。
     # 键名与 scan 报告的 `questGuidance`（按任务分组的 list）刻意区分开，见 move_entity 的注释。
     counts["questGuidanceRewritten"] = _rewrite_quest_guidance_targets(model, kind, sid, old, sid, new)
+
+    # 场景灯的跟随绑定：同上一档（场景限定、零歧义机械跟随，不看 uniqueGlobal）。
+    counts["sceneLightFollowsRewritten"] = _rewrite_scene_light_follow_targets(
+        model, kind, sid, old, sid, new)
 
     # [tag:npc:old] 文本引用（全局解析）：全局唯一时安全跟随；非唯一但调用方确认
     # 跟随（tagFollowForced，见上）时也改写——撤销按 scope 反向回放同一作用域。
@@ -2268,5 +2358,10 @@ def _undo_move(model: Any, entry: dict[str, Any]) -> None:
     model.mark_dirty("scene", dst)
     _rewrite_qualified_scene_refs(model, kind, eid, dst, src)
     _rewrite_quest_guidance_targets(model, kind, dst, eid, src, eid)
+    # 场景灯的跟随绑定（`lighting.lights[*].follow.target`）**刻意不反向改写**：正向 move
+    # 就没动过它（只报不改，见 move_entity 里那段），撤销这一侧必须对称地什么都不做——
+    # 否则会凭空往回"修"一处从未被改过的引用（与轨迹资产同一个道理）。实体搬回源场景后
+    # 那些灯自然又能解析到它，数据本来就没变。护栏：
+    # test_entity_refactor.py::test_scene_light_follow_move_then_undo_is_byte_identical
     # 轨迹无需反向改写：正向 move 就没动过它（只报不改，见 move_entity 的注释），
     # 撤销这一侧对称地什么都不做——不然会凭空往回"修"一处从未被改过的引用。

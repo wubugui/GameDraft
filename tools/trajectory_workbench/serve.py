@@ -14,6 +14,8 @@
   GET  /api/scene_heightfield?id=&bg=     世界 XZ 地面高度场（前端把 {x,z,h} 控制点抬到地面用）
   GET  /api/entity?scene=&bg=&npc=        实体预览元信息（世界尺寸 / 锚点 / 接地偏移）
   GET  /api/entity_png?scene=&bg=&npc=    实体首帧 PNG
+  GET  /api/sfx                           音效 id 清单（音效关键点的选择器候选，只读 audio_config.sfx）
+  GET  /api/sfx_file?id=                  一条音效的音频文件（工作台试听用；只放行 audio_config 里登记过的）
   GET  /api/trajectories                  资产清单
   GET  /api/trajectory?id=                一份资产
   POST /api/bake        body=资产文档     只烘不存：帧 + 预览曲线 + 告警（前端每次改动都调）
@@ -39,7 +41,7 @@ if str(ROOT) not in sys.path:
 
 from tools.trajectory_workbench import assets                                   # noqa: E402
 from tools.trajectory_workbench import bundle                                   # noqa: E402
-from tools.trajectory_workbench.baking import bake_asset, binding_of             # noqa: E402
+from tools.trajectory_workbench.baking import bake_asset, binding_of, clean_cues   # noqa: E402
 from tools.trajectory_workbench.geometry import (                                # noqa: E402
     SCENES_RT,
     SceneGeometry,
@@ -110,6 +112,50 @@ def get_geometry(sid: str, bg: str | None) -> SceneGeometry:
     return g
 
 
+_AUDIO_CONFIG = ROOT / "public" / "assets" / "data" / "audio_config.json"
+_PUBLIC = ROOT / "public"
+#: 试听只放行这些扩展名（audio_config 里登记的就是这几种；别让一个 src 把任意文件读出去）
+_AUDIO_SUFFIX = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".m4a": "audio/mp4", ".flac": "audio/flac"}
+
+
+def _sfx_config() -> dict:
+    """``audio_config.json`` 的 sfx 区（本工作台只读它，绝不写）。读不出来当空表。"""
+    try:
+        cfg = json.loads(_AUDIO_CONFIG.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    sfx = cfg.get("sfx") if isinstance(cfg, dict) else None
+    return sfx if isinstance(sfx, dict) else {}
+
+
+def sfx_ids() -> list[dict]:
+    """音效关键点的选择器候选（按 id 排序）。``volume`` 是素材级音量，前端拿它当"没写本处音量"的显示值。"""
+    rows: list[dict] = []
+    for k, v in _sfx_config().items():
+        e = v if isinstance(v, dict) else {}
+        rows.append({"id": str(k), "src": str(e.get("src") or ""), "volume": e.get("volume")})
+    return sorted(rows, key=lambda r: r["id"])
+
+
+def sfx_file(sid: str) -> tuple[bytes, str]:
+    """一条音效的音频文件（试听用）。
+
+    **只认 audio_config 里登记过的 id**，路径再逐段核回 ``public/`` 之内——
+    这个服务只绑 127.0.0.1，但"把查询串当文件路径直出"仍然是不该留的形状。
+    """
+    entry = _sfx_config().get(str(sid or "").strip())
+    src = str((entry or {}).get("src") or "") if isinstance(entry, dict) else ""
+    if not src:
+        raise FileNotFoundError(f"audio_config.sfx 里没有 {sid!r}")
+    f = (_PUBLIC / src.lstrip("/")).resolve()
+    if not f.is_file() or _PUBLIC.resolve() not in f.parents:
+        raise FileNotFoundError(f"音频文件不在: {src}")
+    ctype = _AUDIO_SUFFIX.get(f.suffix.lower())
+    if not ctype:
+        raise ValueError(f"不认识的音频格式: {f.suffix}")
+    return f.read_bytes(), ctype
+
+
 def _doc_geometry(doc: dict, backdrop: dict | None = None) -> SceneGeometry | None:
     """场景曲线用 ``authoring.sceneId``；相对曲线不绑场景，用前端此刻的背景场景 ``backdrop={scene,bg}``（不写进数据）。"""
     au = doc.get("authoring") if isinstance(doc.get("authoring"), dict) else {}
@@ -128,8 +174,8 @@ def _doc_geometry(doc: dict, backdrop: dict | None = None) -> SceneGeometry | No
 def bake_document(doc: dict, backdrop: dict | None = None) -> dict:
     """烘一份资产文档（不写盘）。场景装不上时返回带告警的空产物。"""
     empty = {"keyframes": [], "authoring": dict(doc.get("authoring") or {}), "slots": doc.get("slots") or [],
-             "source": doc.get("source") or {}, "binding": binding_of(doc), "segments": [], "totalMs": 0.0,
-             "preview": {"screen": [], "world": []}}
+             "cues": clean_cues(doc), "source": doc.get("source") or {}, "binding": binding_of(doc),
+             "segments": [], "totalMs": 0.0, "preview": {"screen": [], "world": []}}
     try:
         geom = _doc_geometry(doc, backdrop)
     except FileNotFoundError as e:
@@ -150,6 +196,7 @@ def save_document(doc: dict, backdrop: dict | None = None) -> dict:
     out["id"] = tid
     out["binding"] = baked["binding"]
     out["slots"] = baked["slots"]
+    out["cues"] = baked["cues"]       # 音效关键点：已按这次烘出的时长钳位 + 升序
     out["source"] = baked["source"]   # 迁移过的副本（bake 参数回填、第 0 段起点明写）
     out["authoring"] = dict(baked["authoring"])
     if out["binding"] == "free":
@@ -299,6 +346,14 @@ class H(SimpleHTTPRequestHandler):
                 meta = {k: v for k, v in pv.items() if k != "png"}
                 meta["contactOffsetY"] = contact_offset_y(pv)
                 return self._json({"ok": True, "entity": meta})
+            if u.path == "/api/sfx":
+                return self._json({"ok": True, "sfx": sfx_ids()})
+            if u.path == "/api/sfx_file":
+                try:
+                    data, ctype = sfx_file(arg("id"))
+                except (FileNotFoundError, ValueError) as e:
+                    return self._json({"ok": False, "err": str(e)}, 404)
+                return self._bytes(data, ctype)
             if u.path == "/api/trajectories":
                 return self._json({"ok": True, "trajectories": assets.list_assets()})
             if u.path == "/api/trajectory":

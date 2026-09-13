@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -86,6 +87,49 @@ def test_default_valued_optionals_are_scoped_omitted() -> None:
     from tools.editor.shared.action_editor import _OMIT_WHEN_ABSENT_AND_DEFAULT
     for name in ("surface", "kind", "duration", "h"):
         assert name not in _OMIT_WHEN_ABSENT_AND_DEFAULT, f"{name} 不该进全局剔除表"
+
+
+def test_every_optional_with_a_widget_is_covered_by_a_roundtrip_table() -> None:
+    """**每个**建了控件的可选参数都得被两张往返表之一盖住，不是只盖已知的那几个。
+
+    ⚠ 本条只查"有没有登记"，查不出"登记的值对不对"——`("playVfx","surface")` 曾按运行时默认
+    登记成 `"ground"`（控件中性值其实是空串），键在表里、却**永不命中**，最小形态照样漂出
+    `surface:""`。值那一侧只能实跑控件验，锁在
+    `test_action_condition_data_safety.py::test_play_vfx_minimal_form_does_not_grow_optional_params`
+    一族（2026-09-12 全量扫描收口）。
+    """
+    from tools.editor.shared.action_editor import (
+        _ACTION_PARAM_RUNTIME_DEFAULTS,
+        _OMIT_WHEN_ABSENT_AND_DEFAULT,
+    )
+
+    man = (REPO / "src/core/actionParamManifest.ts").read_text("utf-8")
+    for act in ACTS:
+        head = man.index(f"  {act}: {{")
+        i = man.index("{", head)
+        depth, j = 0, i
+        while j < len(man):  # 括号配平取条目块（条目里有嵌套对象/注释，正则截不准）
+            if man[j] == "{":
+                depth += 1
+            elif man[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        block = man[i:j + 1]
+        om = re.search(r"optional\s*:\s*\[([^\]]*)\]", block)
+        optionals = set(re.findall(r"'([^']+)'", om.group(1))) if om else set()
+        widgets = {n for n, _k in _PARAM_SCHEMAS[act]}
+        for pname in sorted(optionals & widgets):
+            covered = (
+                (act, pname) in _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT
+                or (act, pname) in _ACTION_PARAM_RUNTIME_DEFAULTS
+                or pname in _OMIT_WHEN_ABSENT_AND_DEFAULT
+            )
+            assert covered, (
+                f"{act}.{pname} 是可选参数且建了控件，但两张往返表都没登记："
+                "缺省值会被「打开→不改→保存」凭空写进全项目数据"
+            )
 
 
 def test_selector_kinds_map_to_real_universes() -> None:

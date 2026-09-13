@@ -38,6 +38,6 @@
   },
   "defaults": {
     "spatialized": false,
-    "gainDb": -31.0
+    "gainDb": -24.667
   }
 }

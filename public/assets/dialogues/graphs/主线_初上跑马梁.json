@@ -12,8 +12,22 @@
       "speaker": {
         "kind": "player"
       },
-      "next": "n_1",
+      "next": "n_signal",
       "text": "？？？？"
+    },
+    "n_signal": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "paomaliang_arrived",
+            "sourceType": "dialogue",
+            "sourceId": "主线_初上跑马梁"
+          }
+        }
+      ],
+      "next": "n_1"
     },
     "n_1": {
       "type": "end"

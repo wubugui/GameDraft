@@ -10,7 +10,7 @@ import type { CutsceneStep } from '../data/types';
  * 2. **跳过**（`restoreState:false`）：`applyFinalCameraPoseForSkip` 落终姿。
  *
  * 语义边界（写在这里免得下次又被当成跟随）：`at` 是**一次性求值**——镜头摆过去就不动了。
- * 要镜头跟着动的东西走是 `cameraFollowActor`（每帧按 id 重解析实体位置）。
+ * 要镜头跟着动的东西走是 `cameraFollowActor`（`target` 实体 / `at` 位置引用，每帧求值）。
  */
 
 function makeManager() {

@@ -318,6 +318,16 @@ class View3D {
       }
     }
     for (const sl of Edit.slots(host.doc)) { const w = Edit.slotWorld(host, sl); const c = w ? this.project([w[0], w[1] + 40, w[2]]) : null; if (c) { g.fillStyle = host.sel.handle === 'slot:' + sl.id ? '#ffe44d' : '#5ad9cc'; g.fillText('插槽 ' + (sl.label || sl.id), c[0] + 6, c[1] - 4); } }
+    // 音效关键点：存的是时间，画在"那一刻曲线走到哪"（与 2D 视图同一口）
+    for (const c0 of Edit.cues(host.doc)) {
+      const w = host.cueWorldPos(c0); const c = w ? this.project(w) : null; if (!c) continue;
+      const on = host.sel.handle === 'cue:' + c0.id; const sid = Edit.cueSound(c0);
+      g.fillStyle = on ? '#ffe44d' : sid ? '#ff9ad5' : '#9a9a9a';
+      g.beginPath(); g.arc(c[0], c[1], on ? 7 : 6, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = '#000'; g.lineWidth = 1; g.stroke();
+      g.fillStyle = on ? '#ffe44d' : '#ff9ad5';
+      g.fillText(`♪ ${Math.round(num(c0.atMs, 0))}ms ${c0.label || sid || '（没选音效）'}`, c[0] + 10, c[1] + 4);
+    }
     { const ow = Edit.originWorld(host); const c = ow ? this.project(ow) : null; if (c) { g.fillStyle = host.sel.handle === 'origin' ? '#ffe44d' : '#ffb454'; g.fillText(Edit.hasOrigin(host) ? '原点' : '原点（跟着起点）', c[0] + 8, c[1] + 14); } }
     if (gz) Gizmo.draw(g, gz, this._hotPart());
     if (this.box) { const b = this.box; g.strokeStyle = 'rgba(108,180,255,.9)'; g.fillStyle = 'rgba(108,180,255,.12)'; g.setLineDash([4, 3]); g.lineWidth = 1; g.fillRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); g.strokeRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0); g.setLineDash([]); }
@@ -325,6 +335,7 @@ class View3D {
     if (host.tool === 'pen') { g.fillStyle = '#6cb4ff'; g.fillText('点击场景表面加点（桌面/台阶会落在其上）· 刚加的点带着 gizmo，可直接拖轴 · Enter/Esc 结束', 12, H - 30); }
     else if (host.tool === 'physics') { g.fillStyle = '#ffb454'; g.fillText('按住拖动：把落点拖到目标地面处', 12, H - 30); }
     else if (host.tool === 'slot') { g.fillStyle = '#5ad9cc'; g.fillText('点击地面放置一个命名插槽（曲线暴露给场景的位置）· Enter/Esc 结束', 12, H - 30); }
+    else if (host.tool === 'cue') { g.fillStyle = '#ff9ad5'; g.fillText('点在曲线上放一个音效关键点（存的是那一刻的时间）· Enter/Esc 结束', 12, H - 30); }
     else if (host.tool === 'pan') { g.fillStyle = 'rgba(255,255,255,.6)'; g.fillText('手形工具：左键拖 = 平移', 12, H - 30); }
     else if (gz) { g.fillStyle = 'rgba(255,255,255,.6)'; g.fillText({ move: '移动（W）：箭头 = 沿轴 · 小方块 = 沿面 · 中心 = 贴地走 · 拖点 = 贴地走 · Alt+拖点 = 离地高度', rotate: '旋转（E）：拖圆环 = 绕竖直轴', scale: '缩放（R）：轴末端 = 单轴 · 中心 = 等比' }[gz.mode] + ' · 按住 Ctrl 吸附 · E/R/W 切模式', 12, H - 30); }
     else if (host.tool === 'select') { g.fillStyle = 'rgba(255,255,255,.45)'; g.fillText('点点 / 框选 = 选点 · 点曲线 = 选整段 · 点幽灵 = 选整条 · 点插槽 = 选它 · 选中即出现 gizmo（W/E/R 移动/旋转/缩放）', 12, H - 30); }
@@ -480,6 +491,33 @@ class View3D {
     this._lines(mvp, [p[0], p[1], p[2], p[0], p[1] - p[3], p[2]], [1, 0.7, 0.33, 1], gl.LINES, 1);
     this._marker(mvp, [p[0], p[1] - p[3], p[2]], [1, 0.7, 0.33, 1], 9);
   }
+  /**
+   * 屏幕点落在曲线的哪一刻（3D 视图的取时口）：把世界密采样逐点投到屏幕上找最近的一段，
+   * 段内按屏幕距离线性插值。没有密采样返回 null。与 2D 的 `nearestOnScreenCurve` 同一件事，
+   * 只是"曲线在屏幕上的样子"这一步走的是 3D 投影。
+   */
+  _cueTimeAt(mx, my) {
+    const prev = this.host.bake && this.host.bake.preview && this.host.bake.preview.world;
+    if (!prev || !prev.length) return null;
+    let best = null, prevC = null;
+    for (const w of prev) {
+      const c = this.project([w[1], w[2], w[3]]);
+      if (c) {
+        const d = Math.hypot(c[0] - mx, c[1] - my);
+        if (!best || d < best.d) best = { d, t: w[0] };
+        if (prevC) {
+          const vx = c[0] - prevC.c[0], vy = c[1] - prevC.c[1], lenSq = vx * vx + vy * vy;
+          if (lenSq > 1e-6) {
+            const u = clamp(((mx - prevC.c[0]) * vx + (my - prevC.c[1]) * vy) / lenSq, 0, 1);
+            const dd = Math.hypot(prevC.c[0] + vx * u - mx, prevC.c[1] + vy * u - my);
+            if (dd < best.d) best = { d: dd, t: prevC.t + (w[0] - prevC.t) * u };
+          }
+        }
+      }
+      prevC = c ? { c, t: w[0] } : null;
+    }
+    return best ? best.t : null;
+  }
   // ------------------------------------------------------------- 拾取（把手）
   /** 优先级：gizmo 轴 / 面 / 环 > 锚点 > 活动段把手 > gizmo 中心（单点选中时它压在点上，拖点得还是拖点）> 幽灵 > 任一段曲线 */
   _hit(mx, my) {
@@ -490,7 +528,9 @@ class View3D {
     // 1. 小目标（锚点 / 控制点 / 抛体把手）先于 gizmo 的轴、面：别的点正好躺在轴线上时点它得选它——
     //    不然"选这个点，动的是另一个点"（2026-09-11 制作人抓到：铜钱那条的点挤在几 wu 内，全在上一个点的轴上）
     let small = null;
-    for (const sl of Edit.slots(host.doc)) { const w = Edit.slotWorld(host, sl); if (w && (near([w[0], w[1] + 2, w[2]], 10) || near([w[0], w[1] + 40, w[2]], 8))) { small = { kind: 'slot', id: sl.id }; break; } }
+    // 关键点先于插槽：它更小、常压在曲线上，让插槽赢就点不中了
+    for (const c of Edit.cues(host.doc)) { const w = host.cueWorldPos(c); if (w && near(w, 9)) { small = { kind: 'cue', id: c.id }; break; } }
+    if (!small) for (const sl of Edit.slots(host.doc)) { const w = Edit.slotWorld(host, sl); if (w && (near([w[0], w[1] + 2, w[2]], 10) || near([w[0], w[1] + 40, w[2]], 8))) { small = { kind: 'slot', id: sl.id }; break; } }
     if (!small) { const ow = Edit.originWorld(host); if (ow && near(ow, 11)) small = { kind: 'origin' }; }
     if (!small && seg && seg.kind === 'manual') {
       const pts = host.effPoints(seg);
@@ -620,6 +660,7 @@ class View3D {
     const hit = this._hit(mx, my);
     if (tool === 'slot') { const g = this.pickGround(mx, my); if (g) { host.placeSlotFromGround(g); host.setTool('select'); } return; }
     if (tool === 'origin') { const g = this.pickGround(mx, my); if (g) { host.placeOriginFromGround(g); host.setTool('select'); } return; }
+    if (tool === 'cue') { const t = this._cueTimeAt(mx, my); if (t != null) { host.placeCueAtMs(t); host.setTool('select'); } else host.status('还没烘出曲线：先画一段，再在曲线上放音效关键点', 'err'); return; }
     if (hit && hit.kind === 'gz' && (tool === 'select' || tool === 'pen')) { this._gzDown(hit.part, mx, my); return; }
     if (tool === 'pen') {
       if (hit && hit.kind === 'point') { host.selectPoint(hit.i, false); this.drag = this._pointDrag([hit.i], mx, my, e.altKey); host.dragBegin('移动控制点'); return; }
@@ -631,6 +672,7 @@ class View3D {
     }
     if (tool === 'physics') { const seg = host.physicsBegin(); if (!seg) return; this.drag = { kind: 'landing', fresh: true }; this._dragLanding(mx, my); return; }
     const seg = host.activeSeg();
+    if (hit && hit.kind === 'cue') { host.selectHandle('cue:' + hit.id); this.drag = { kind: 'cue', id: hit.id }; host.dragBegin('改关键点时机'); this.draw(); return; }
     if (hit && hit.kind === 'slot') { host.selectHandle('slot:' + hit.id); this.drag = { kind: 'slot', id: hit.id }; host.dragBegin('移动插槽'); this.draw(); return; }
     if (hit && hit.kind === 'origin') { host.selectHandle('origin'); this.drag = { kind: 'origin', h: Edit.originHeight(host) }; host.dragBegin('移动曲线原点'); this.draw(); return; }
     if (hit && hit.kind === 'height') { const p = host.effPoints(seg)[hit.i]; this.drag = { kind: 'height', i: hit.i, p: p.pos.slice(), h0: p.h, y0: this.pickVertical(mx, my, p.pos) }; host.dragBegin('改离地高度'); return; }
@@ -682,7 +724,7 @@ class View3D {
       else if (e.altKey) cur = 'grab';
       else if (t === 'pan' || this.spaceDown) cur = 'grab';
       else if (hit && hit.kind === 'gz') cur = Gizmo.cursor(hit.part);
-      else if (t === 'slot' || t === 'pen' || t === 'physics') cur = 'crosshair';
+      else if (t === 'slot' || t === 'cue' || t === 'pen' || t === 'physics') cur = 'crosshair';
       else if (hit) cur = hit.kind === 'height' || hit.kind === 'apex' ? 'ns-resize' : hit.kind === 'curve' || hit.kind === 'ghost' ? 'pointer' : hit.kind === 'slot' || hit.kind === 'origin' ? 'move' : 'grab';
       this.c.style.cursor = cur;
       return;
@@ -712,6 +754,7 @@ class View3D {
     }
     if (d.kind === 'gz') { this._gzMove(d, mx, my, e); return; }
     const seg = host.activeSeg();
+    if (d.kind === 'cue') { const t = this._cueTimeAt(mx, my); if (t != null) host.dragTick(() => { Edit.setCueTime(host, d.id, t); }); return; }
     if (d.kind === 'slot') { const g = this.pickGround(mx, my); if (g) { const f = cal.worldToScene(g[0], g[1], g[2]); host.dragTick(() => Edit.setSlot(host, d.id, { x: f[0], y: f[1] })); } return; }
     if (d.kind === 'origin') { const g = this.pickGround(mx, my); if (g) host.dragTick(() => Edit.setOriginWorld(host, [g[0], g[1] + d.h, g[2]])); return; }
     if (d.kind === 'points') {

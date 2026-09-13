@@ -7,9 +7,11 @@
 - 数字坐标 ``{kind:'point', x, y}``：手输，或「地图拾取…」在场景底图上点一下；
 - 实体此刻位置 ``{kind:'entity', id}``：运行时取该实体**执行那一刻**的位置（NPC / player / 热点 / 过场临时演员）；
 - 曲线插槽 ``{kind:'slot', trajectoryId, slotId}``：**场景曲线**暴露的命名插槽（轨迹工作台里摆的站位）；
-- 曲线上的点 ``{kind:'curve', trajectoryId, point, atMs?/progress?}``：在烘好的帧上按时刻 / 进度取值
-  （2026-09-11 制作人要的"曲线 eval 的实时点"）。**那条曲线正在播就按这次播放算**——铜钱还在飞时，
-  "终点"就是它这次真要落的地方；没在播就按场景曲线的原点算。省掉了"为落点专门摆一个插槽"。
+- 曲线上的点 ``{kind:'curve', trajectoryId, point, atMs?/progress?}``：在烘好的帧上按时刻 / 进度取值。
+  **那条曲线正在播就按这次播放算**——铜钱还在飞时，"终点"就是它这次真要落的地方；没在播就按场景曲线的
+  原点算。省掉了"为落点专门摆一个插槽"。``point:'current'``（2026-09-12）是**播放头 = 曲线此刻播到的点**，
+  唯一会随时间动的一档：镜头跟随每帧跟着它走；播完停在终点；本场景还没开播 = 没有这个点。
+  **只列场景曲线**：相对曲线每次播放都是一次实例化、可以同时播多个，制作人定了暂不支持引用。
 
 宿主动作里 ``x`` / ``y`` 仍是 manifest 的必填键（moveEntityTo / jumpEntityTo / teleportEntityTo /
 persistNpcAt / cutsceneSpawnActor / setSceneEntityPosition）：本控件同时给出一份**编辑期快照**
@@ -54,6 +56,7 @@ CURVE_POINTS: tuple[tuple[str, str], ...] = (
     ("start", "起点"),
     ("time", "指定时刻（毫秒）"),
     ("progress", "指定进度（0~1）"),
+    ("current", "此刻播到的点（播放头，会动）"),
 )
 
 _MODE_LABELS: tuple[tuple[str, str], ...] = (
@@ -231,7 +234,7 @@ def slot_rows(model: Any, trajectory_id: str) -> list[tuple[str, str]]:
 
 
 def curve_rows(model: Any, scene_id: str) -> list[tuple[str, str]]:
-    """「曲线上的点」的轨迹候选：烘过帧的曲线（场景曲线在前）。"""
+    """「曲线上的点」的轨迹候选：烘过帧的**场景曲线**（绑在当前场景的在前）。"""
     fn = getattr(model, "trajectory_curve_rows", None) if model else None
     if not callable(fn):
         return []
@@ -242,7 +245,7 @@ def curve_rows(model: Any, scene_id: str) -> list[tuple[str, str]]:
 
 
 def curve_xy(model: Any, ref: dict) -> tuple[float, float] | None:
-    """「曲线上的点」的编辑期快照（作者场景里的那个点）。运行时的"正在播就按这次播放算"这里看不到。"""
+    """「曲线上的点」的编辑期快照（作者场景里的那个点；播放头取起点）。运行时的"正在播就按这次播放算"这里看不到。"""
     fn = getattr(model, "trajectory_curve_point", None) if model else None
     if not callable(fn) or not isinstance(ref, dict):
         return None
@@ -276,6 +279,10 @@ class PositionRefField(QWidget):
     ``scene_provider``：宿主此刻的地图场景 id（moveEntityTo 的「地图 sceneId」下拉、过场的 targetScene…）。
     实体候选、地图拾取的底图、插槽的场景一致性检查都按它来；宿主换场景后调 :meth:`refresh_candidates`。
     ``optional`` = 允许「不指定」（playTrajectory 的播放位置：场景曲线原地播）。
+    ``entity_rows`` = 覆盖「实体」档的候选（``scene_id -> [(id, 显示名)]``）：宿主的实体档若映射到只认演员的
+    老键（cameraFollowActor.target / faceEntity.faceTarget 走 resolveActor，不认热点），就只给演员。
+    ``curve_point`` = 切到「曲线上的点」时缺省取哪个点（镜头跟随缺省播放头 ``current``，其余缺省终点）。
+    ``none_hint`` = 「不指定」档的说明（缺省是 playTrajectory 播放位置那一句）。
     """
 
     changed = Signal()
@@ -287,6 +294,9 @@ class PositionRefField(QWidget):
         *,
         optional: bool = False,
         cutscene_id: str | None = None,
+        entity_rows: Callable[[str], list[tuple[str, str]]] | None = None,
+        curve_point: str = "end",
+        none_hint: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -294,6 +304,9 @@ class PositionRefField(QWidget):
         self._scene_provider = scene_provider
         self._optional = bool(optional)
         self._cutscene_id = (cutscene_id or "") or None
+        self._entity_rows = entity_rows
+        self._curve_point_default = curve_point if curve_point in {k for k, _ in CURVE_POINTS} else "end"
+        self._none_hint = none_hint or "不指定：场景曲线在它画的位置原地播；相对曲线会退到运动对象此刻位置并在控制台 warn。"
         self._loaded_xy: tuple[float, float] | None = None
         self._loading = False
 
@@ -313,7 +326,8 @@ class PositionRefField(QWidget):
             "这个点从哪来：\n"
             "· 数字坐标：世界坐标 wu，可手输，或「地图拾取」在场景底图上点；\n"
             "· 实体此刻位置：运行时取该实体执行那一刻的位置（不是场景里的初始摆放）；\n"
-            "· 曲线插槽：场景曲线在轨迹工作台里配的命名站位（插槽属于曲线绑定的那个场景）。"
+            "· 曲线插槽：场景曲线在轨迹工作台里配的命名站位（插槽属于曲线绑定的那个场景）；\n"
+            "· 曲线上的点：场景曲线的起点 / 终点 / 某时刻 / 某进度，或「此刻播到的点」（播放头，跟着曲线动）。"
         )
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         top.addWidget(self.mode_combo, 1)
@@ -370,12 +384,19 @@ class PositionRefField(QWidget):
         cl = QHBoxLayout(self._row_curve)
         cl.setContentsMargins(0, 0, 0, 0)
         self.curve_sel = IdRefSelector(self._row_curve, allow_empty=False)
-        self.curve_sel.setToolTip("在这条曲线烘好的帧上取值；它正在播时按**这次播放**算（实时点）。")
+        self.curve_sel.setToolTip(
+            "场景曲线（相对曲线每次播放都是一次实例化，暂不支持引用）。\n"
+            "在这条曲线烘好的帧上取值；它正在播时按**这次播放**的位置算。")
         self.curve_sel.value_changed.connect(self._on_curve_changed)
         self.point_combo = QComboBox(self._row_curve)
         for key, label in CURVE_POINTS:
             self.point_combo.addItem(label, key)
-        self.point_combo.setToolTip("取曲线上的哪个点。终点 = 落点，最常用。")
+        self.point_combo.setCurrentIndex(max(0, self.point_combo.findData(self._curve_point_default)))
+        self.point_combo.setToolTip(
+            "取曲线上的哪个点。终点 = 落点，最常用。\n"
+            "「此刻播到的点」是播放头：曲线播到哪它就在哪，播完停在终点；"
+            "本场景还没开播时这个点还不存在（镜头跟随原地不动，一次性动作退回 x/y）。"
+        )
         self.point_combo.currentIndexChanged.connect(self._on_curve_point_changed)
         self.at_spin = QDoubleSpinBox(self._row_curve)
         self.at_spin.setRange(0.0, 3_600_000.0)
@@ -513,7 +534,12 @@ class PositionRefField(QWidget):
         """宿主的地图场景变了：重灌实体 / 轨迹候选（当前值保值）。"""
         sid = self.scene_id()
         cur_e = self.entity_sel.current_id()
-        self.entity_sel.set_items(entity_rows_for_position(self._model, sid))
+        rows_fn = self._entity_rows or (lambda s: entity_rows_for_position(self._model, s))
+        try:
+            e_rows = [(str(i), str(lab)) for i, lab in rows_fn(sid)]
+        except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+            e_rows = []
+        self.entity_sel.set_items(e_rows)
         self.entity_sel.set_current(cur_e)
         cur_t = self.traj_sel.current_id()
         self.traj_sel.set_items(trajectory_slot_source_rows(self._model, sid))
@@ -583,6 +609,23 @@ class PositionRefField(QWidget):
         if not self._loading:
             self.changed.emit()
 
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._fit_height()
+
+    def _fit_height(self) -> None:
+        """最小高度钉到"当前宽度下"要的高度。
+
+        宿主表单是 FieldsStayAtSizeHint：行高按可用宽度算 heightForWidth，控件却被压回 sizeHint 宽——
+        说明行（自动换行）在窄模式（实体档）下折成两行时，行高还按一行给，文字被下一行压住（布局塌陷）。
+        """
+        lay = self.layout()
+        if lay is None or self.width() <= 0:
+            return
+        need = lay.totalHeightForWidth(self.width()) if lay.hasHeightForWidth() else lay.totalMinimumSize().height()
+        if need > 0 and need != self.minimumHeight():
+            self.setMinimumHeight(need)
+
     def _sync_rows(self) -> None:
         m = self.mode()
         self._row_point.setVisible(m == MODE_POINT)
@@ -604,9 +647,13 @@ class PositionRefField(QWidget):
         return None
 
     def _sync_info(self) -> None:
+        self._set_info_text_for_mode()
+        self._fit_height()
+
+    def _set_info_text_for_mode(self) -> None:
         m = self.mode()
         if m == MODE_NONE:
-            self.info_lbl.setText("不指定：场景曲线在它画的位置原地播；相对曲线会退到运动对象此刻位置并在控制台 warn。")
+            self.info_lbl.setText(self._none_hint)
             return
         if m == MODE_POINT:
             self.info_lbl.setText("世界坐标（wu）。")
@@ -651,13 +698,7 @@ class PositionRefField(QWidget):
     def _curve_info(self) -> str:
         tid = self.curve_sel.current_id().strip()
         if not tid:
-            return "选一条烘过的曲线，再选取哪个点。"
-        bits: list[str] = []
-        xy = curve_xy(self._model, self.value() or {})
-        if xy:
-            bits.append(f"作者场景里 ≈ ({xy[0]:.0f}, {xy[1]:.0f})")
-        else:
-            bits.append("这条曲线在工程里取不到值（没烘过 / 缺原点 / 是相对曲线）")
+            return "选一条烘过的场景曲线，再选取哪个点。"
         bf = getattr(self._model, "trajectory_binding", None) if self._model else None
         binding = ""
         if callable(bf):
@@ -666,9 +707,19 @@ class PositionRefField(QWidget):
             except Exception:  # noqa: BLE001
                 binding = ""
         if binding == "free":
-            bits.append("⚠ 相对曲线：只有它正在播时这个点才有位置，否则运行时解析不出来")
+            return "⚠ 相对曲线不支持引用：它每次播放都是一次实例化、可以同时播多个（改成场景曲线，或改用实体位置）。"
+        pick = str(self.point_combo.currentData() or "end")
+        xy = curve_xy(self._model, self.value() or {})
+        if pick == "current":
+            start = f"（起点 ≈ ({xy[0]:.0f}, {xy[1]:.0f})）" if xy else ""
+            return (f"播放头{start}：曲线播到哪它就在哪，播完停在终点；"
+                    "本场景还没开播时这个点还不存在——镜头跟随原地等着，一次性动作退回 x/y。")
+        bits: list[str] = []
+        if xy:
+            bits.append(f"作者场景里 ≈ ({xy[0]:.0f}, {xy[1]:.0f})")
         else:
-            bits.append("它正在播时按**这次播放**算（实时点），没在播就按曲线原点算")
+            bits.append("这条曲线在工程里取不到值（没烘过 / 缺原点）")
+        bits.append("它正在播时按**这次播放**的位置算，没在播就按曲线原点算（固定点，不跟着动）")
         return "；".join(bits) + "。"
 
     def _open_map_pick(self) -> None:

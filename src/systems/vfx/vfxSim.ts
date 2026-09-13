@@ -15,6 +15,7 @@
 import type {
   VfxAnchorDef,
   VfxCollisionResponse,
+  VfxConfineDef,
   VfxEffectDef,
   VfxEmitterDef,
   VfxFieldDef,
@@ -23,9 +24,18 @@ import type {
   VfxInstanceState,
 } from '../../data/types';
 import type { Vec3 } from '../../utils/sceneSpace';
+import { sampleSceneWind, type SceneWindParams } from '../../utils/sceneWind';
+import {
+  buildConfineField, CONFINE_EXIT_FADE_S, CONFINE_EXIT_WEIGHT, confineHeightWeight, confineWeightAt,
+  type ConfineField,
+} from './vfxConfine';
 import { curlNoise3 } from './vfxNoise';
+import {
+  createPlateArrays, launchPlate, pickAreaSurface, placePlateOnSurface, resolvePlateArea, resolvePlateParams,
+  stepPlates, type PlateArea, type PlateArrays, type PlateParams,
+} from './vfxPlate';
 import { VfxRng } from './vfxRandom';
-import type { VfxSpace } from './vfxSpace';
+import { ShellSide, spawnsBehindShell, thinShellSide, type VfxSpace } from './vfxSpace';
 
 export const VFX_SUBSTEP = 1 / 120;
 export const VFX_MAX_SUBSTEPS = 12;
@@ -73,6 +83,12 @@ export interface VfxParticles {
   hx: Float32Array; hy: Float32Array; hz: Float32Array;
   /** 上一子步的恐惧输入是否为零（用于重置反应延迟） */
   quietFor: Float32Array;
+  /** 1 = 在遮挡物背后的空处（薄壳判据的滞回位，见 `thinShellSide`） */
+  behind: Uint8Array;
+  /** 粒子区域的淡入淡出系数（0..1，乘到透明度上）；不限定区域的实例恒 1 */
+  fade: Float32Array;
+  /** 每秒淡掉多少：> 0 淡出（淡完即回收）、< 0 淡入、0 不动 */
+  fadeRate: Float32Array;
   liveCount: number;
 }
 
@@ -86,6 +102,8 @@ export function createParticles(cap: number): VfxParticles {
     fear: f(), reactLeft: f(), cruiseMul: f(),
     hand: new Int8Array(cap), mode: new Uint8Array(cap),
     hx: f(), hy: f(), hz: f(), quietFor: f(),
+    behind: new Uint8Array(cap),
+    fade: new Float32Array(cap).fill(1), fadeRate: f(),
     liveCount: 0,
   };
 }
@@ -114,6 +132,22 @@ export interface VfxStepContext {
   player: VfxPlayerContext | null;
   /** 累计时间（秒），只给噪声做相位 */
   time: number;
+  /**
+   * 场景风（空气速度场，见 `utils/sceneWind`）；没有风的场景不给。
+   * 普通粒子按自己的 `drag` 被它带着走（drag 就是对空气的线性阻力系数：dv = −drag·(v − u)），
+   * 薄片按平板气动；群体不吃（它们自己会飞）。
+   */
+  wind?: SceneWindParams | null;
+  /** 风的钟（秒）——与背景摆动同一个，所以两边同一拍 */
+  windTime?: number;
+}
+
+/** 实例级的额外输入（场景实例 JSON 里带的） */
+export interface VfxInstanceOptions {
+  /** 发射区域（画面坐标多边形）：`spawn.shape.kind = 'area'` 的发射器铺在这里、回收的从这里补回 */
+  area?: [number, number][] | null;
+  /** 范围区域的软边界（见 `VfxConfineDef`；范围区域 = `confine.area`，没写用发射区域） */
+  confine?: VfxConfineDef | null;
 }
 
 export type VfxSimEvent =
@@ -160,6 +194,8 @@ export interface VfxEmitterRuntime {
   burstDone: boolean;
   /** 效果内 id → 发射器（子发射） */
   onHit: { emitter: string; count: number } | null;
+  /** 薄片模块（纸钱 / 落叶）：挂了就走 `vfxPlate` 的模拟，不走通用粒子那条 */
+  plate: { P: PlateParams; arr: PlateArrays; area: PlateArea } | null;
 }
 
 interface HitEvent {
@@ -171,7 +207,9 @@ interface HitEvent {
 
 const tmpV = [0, 0, 0];
 const tmpN = new Float32Array(3);
+const tmpWind: Vec3 = [0, 0, 0];
 const tmpScene = { x: 0, y: 0 };
+const tmpFoot: Vec3 = [0, 0, 0];
 
 function clampLen3(v: number[], max: number): void {
   const l = Math.hypot(v[0], v[1], v[2]);
@@ -200,8 +238,14 @@ export class VfxInstanceSim {
   readonly events: VfxSimEvent[] = [];
   private acc = 0;
   private hits: HitEvent[] = [];
+  /** 发射率倍率（见 {@link setRateScale}）。1 = 按资产里写的速率发 */
+  private rateScale = 1;
+  /** 全局子步序号（薄片据此错开刷度量 / 查唤醒） */
+  private substep = 0;
   /** 自起播累计秒 */
   time = 0;
+  /** 粒子区域的权重网格（实例配了 `area` + `confine` 才有）；群体不吃 */
+  readonly confine: ConfineField | null;
 
   constructor(
     readonly id: string,
@@ -210,16 +254,21 @@ export class VfxInstanceSim {
     seed: number,
     readonly space: VfxSpace,
     readonly countScale = 1,
+    readonly options: VfxInstanceOptions = {},
   ) {
+    this.confine = buildConfineField(options.area ?? null, options.confine ?? null);
     effect.emitters.forEach((def, i) => {
       const cs = Math.max(0, countScale);
       const cap = Math.max(1, Math.round(def.spawn.max * cs));
       const off = def.offset ?? [0, 0, 0];
       const m = def.motion ?? {};
       const beh = def.behavior ?? null;
+      const origin: Vec3 = [anchorWorld[0] + off[0], anchorWorld[1] + off[1], anchorWorld[2] + off[2]];
+      const plateDef = !beh && def.plate ? def.plate : null;
+      const shape = def.spawn.shape;
       const rt: VfxEmitterRuntime = {
         def,
-        origin: [anchorWorld[0] + off[0], anchorWorld[1] + off[1], anchorWorld[2] + off[2]],
+        origin,
         p: createParticles(cap),
         rng: new VfxRng((seed + i * 7919) >>> 0),
         elapsed: 0,
@@ -251,6 +300,12 @@ export class VfxInstanceSim {
         radius: def.collision?.radiusWu ?? Math.max(1, def.appearance.sizeWu * 0.5),
         burstDone: false,
         onHit: def.collision?.onHit ?? null,
+        plate: plateDef ? {
+          P: resolvePlateParams(plateDef),
+          arr: createPlateArrays(cap),
+          area: resolvePlateArea(space, origin, options.area ?? null,
+            shape?.kind === 'area' ? (shape.radius ?? 200) : 200, this.confine),
+        } : null,
       };
       this.emitters.push(rt);
       // 群体：起播即把整群摆进巢（roosting）或直接放飞（airborne）
@@ -268,6 +323,32 @@ export class VfxInstanceSim {
     let n = 0;
     for (const e of this.emitters) n += e.p.liveCount;
     return n;
+  }
+
+  /**
+   * 粒子区域的现场统计（调试面板 / 无头验证读；没限定区域 ⇒ null）。
+   * 分档看的是正下方地面点的权重：深处 = 1，边带 = (出框阈值, 1)，框外 = 其余。
+   * "框外可见"只数淡出系数 > 0.05 的——淡出中的纸压在框线外一点点是设计内的。
+   */
+  confineStats(): { inner: number; band: number; outsideVisible: number; fading: number } | null {
+    const cf = this.confine;
+    if (!cf) return null;
+    let inner = 0, band = 0, outsideVisible = 0, fading = 0;
+    for (const e of this.emitters) {
+      if (e.flock) continue;
+      const p = e.p;
+      for (let i = 0; i < p.cap; i++) {
+        if (!p.alive[i]) continue;
+        tmpFoot[0] = p.x[i]; tmpFoot[1] = this.space.groundY(p.x[i], p.z[i]); tmpFoot[2] = p.z[i];
+        this.space.toScene(tmpFoot, tmpScene);
+        const w = confineWeightAt(cf, tmpScene.x, tmpScene.y);
+        if (p.fadeRate[i] > 0) fading++;
+        if (w >= 1) inner++;
+        else if (w >= CONFINE_EXIT_WEIGHT) band++;
+        else if (p.fade[i] > 0.05) outsideVisible++;
+      }
+    }
+    return { inner, band, outsideVisible, fading };
   }
 
   /** 群质心（声源位置用）；没活粒子返回锚点 */
@@ -289,6 +370,42 @@ export class VfxInstanceSim {
   /** 外部强制群状态（`setVfxState` 动作 / 调试） */
   setFlockState(state: VfxFlockState): void {
     for (const e of this.emitters) if (e.flock) this.transition(e, state);
+  }
+
+  /**
+   * 跟随：把锚点整体挪到 `world`（手持火把的火焰跟着手走）。
+   *
+   * **已经发射出去的粒子留在原地**——烟和火星离手就归空气管，跟着人跑才是错的。
+   * 挪的只有各发射器的原点（与巢心），所以下一颗生在新位置。
+   *
+   * ⚠ 薄片（`plate`）的 `area` 是构造时按原点解出来的贴附面，这里**不重解**：
+   * 薄片是躺在地上的纸钱那一档，本来就不该挂在会动的东西上。
+   */
+  moveAnchor(world: Vec3): void {
+    const dx = world[0] - this.anchorWorld[0];
+    const dy = world[1] - this.anchorWorld[1];
+    const dz = world[2] - this.anchorWorld[2];
+    if (dx === 0 && dy === 0 && dz === 0) return;
+    this.anchorWorld[0] = world[0];
+    this.anchorWorld[1] = world[1];
+    this.anchorWorld[2] = world[2];
+    for (const e of this.emitters) {
+      e.origin[0] += dx; e.origin[1] += dy; e.origin[2] += dz;
+      if (e.flock) {
+        e.flock.center[0] += dx; e.flock.center[1] += dy; e.flock.center[2] += dz;
+      }
+    }
+  }
+
+  /**
+   * 发射率倍率（火焰输出 `L(t)` 驱动：火苗一窜，火星跟着多蹦几颗）。
+   *
+   * 为什么不做成 `countScale`：那个是构造时折进池容量的，改不动；
+   * 这个只乘在**每一拍的发射速率**上，池容量不变（所以不会突然申请一大块）。
+   * 非有限值或负数一律当 1 —— 一个 NaN 进来会让发射器**永远不再发**且零报错。
+   */
+  setRateScale(k: number): void {
+    this.rateScale = Number.isFinite(k) && k > 0 ? k : 1;
   }
 
   /** 停：所有发射器不再发（在飞的自然老化；永生的整批清掉） */
@@ -375,6 +492,9 @@ export class VfxInstanceSim {
       : 1;
     p.mode[i] = VfxParticleMode.Flying;
     p.hx[i] = 0; p.hy[i] = 0; p.hz[i] = 0;
+    p.behind[i] = spawnsBehindShell(this.space, sx, sy, sz) ? 1 : 0;
+    p.fade[i] = 1;
+    p.fadeRate[i] = 0;
     p.liveCount++;
     return i;
   }
@@ -410,6 +530,7 @@ export class VfxInstanceSim {
         p.vx[i] = tmpV[0] * beh.cruise; p.vy[i] = Math.abs(tmpV[1]) * beh.cruise * 0.3; p.vz[i] = tmpV[2] * beh.cruise;
         p.mode[i] = VfxParticleMode.Flying;
       }
+      p.behind[i] = spawnsBehindShell(this.space, p.x[i], p.y[i], p.z[i]) ? 1 : 0;
     }
     fl.stateTime = 0;
     fl.calm = 0;
@@ -424,15 +545,34 @@ export class VfxInstanceSim {
     if (!e.burstDone) {
       e.burstDone = true;
       const n = Math.round((s.burst ?? 0) * this.countScale);
-      for (let k = 0; k < n; k++) if (this.spawnOne(e, e.origin[0], e.origin[1], e.origin[2], null) < 0) break;
+      for (let k = 0; k < n; k++) if (this.spawnEmit(e) === -1) break;
     }
     if (s.rate) {
-      e.rateAcc += s.rate * this.countScale * h;
+      e.rateAcc += s.rate * this.countScale * this.rateScale * h;
       while (e.rateAcc >= 1) {
         e.rateAcc -= 1;
-        if (this.spawnOne(e, e.origin[0], e.origin[1], e.origin[2], null) < 0) { e.rateAcc = 0; break; }
+        if (this.spawnEmit(e) === -1) { e.rateAcc = 0; break; }
       }
     }
+  }
+
+  /** 发一只：普通粒子走 `spawnOne`；薄片另外把朝向 / 接触 / 贴附摆好。-1 = 池满；-2 = 这一只没找到落点 */
+  private spawnEmit(e: VfxEmitterRuntime): number {
+    const pl = e.plate;
+    if (!pl) return this.spawnOne(e, e.origin[0], e.origin[1], e.origin[2], null);
+    if (e.def.spawn.shape?.kind === 'area') {
+      const surf = pickAreaSurface(this.space, pl.area, e.rng);
+      if (!surf) return -2;
+      const i = this.spawnOne(e, surf.p[0], surf.p[1], surf.p[2], null);
+      if (i < 0) return -1;
+      placePlateOnSurface(pl.P, pl.arr, e.p, i, this.space, e.rng, surf);
+      return i;
+    }
+    const i = this.spawnOne(e, e.origin[0], e.origin[1], e.origin[2], null);
+    if (i < 0) return -1;
+    const p = e.p;
+    launchPlate(pl.P, pl.arr, p, i, this.space, e.rng, [p.x[i], p.y[i], p.z[i]], [p.vx[i], p.vy[i], p.vz[i]]);
+    return i;
   }
 
   // ------------------------------------------------------------------ 主步
@@ -445,15 +585,41 @@ export class VfxInstanceSim {
     if (n > VFX_MAX_SUBSTEPS) { n = VFX_MAX_SUBSTEPS; this.acc = 0; } else this.acc -= n * VFX_SUBSTEP;
     for (let k = 0; k < n; k++) {
       this.time += VFX_SUBSTEP;
+      this.substep++;
       for (const e of this.emitters) {
         e.elapsed += VFX_SUBSTEP;
         this.emitStep(e, VFX_SUBSTEP);
         if (e.flock) this.stepFlock(e, VFX_SUBSTEP, ctx);
+        else if (e.plate) this.stepPlate(e, VFX_SUBSTEP, ctx);
         else this.stepGeneric(e, VFX_SUBSTEP, ctx);
       }
       this.flushHits();
     }
     for (const e of this.emitters) if (e.flock) this.flockStateMachine(e, dt, ctx);
+  }
+
+  // ------------------------------------------------------------------ 薄片
+
+  private stepPlate(e: VfxEmitterRuntime, h: number, ctx: VfxStepContext): void {
+    const p = e.p;
+    const pl = e.plate!;
+    if (e.def.life?.seconds) {
+      for (let i = 0; i < p.cap; i++) {
+        if (!p.alive[i]) continue;
+        p.age[i] += h;
+        if (p.life[i] > 0 && p.age[i] >= p.life[i]) { p.alive[i] = 0; p.liveCount--; }
+      }
+    }
+    p.liveCount -= stepPlates(pl.P, pl.arr, p.alive, p, p.cap, h, {
+      space: this.space,
+      wind: ctx.wind ?? null,
+      windTime: ctx.windTime ?? this.time,
+      turb: e.turb,
+      time: this.time,
+      substep: this.substep,
+      area: pl.area,
+      rng: e.rng,
+    });
   }
 
   // ------------------------------------------------------------------ 通用粒子
@@ -468,15 +634,48 @@ export class VfxInstanceSim {
     const fric = col?.friction ?? 0.2;
     const r = e.radius;
     const useShell = shellResp !== 'none' && sp.hasShell;
+    const sceneWind = ctx.wind ?? null;
+    const windTime = ctx.windTime ?? this.time;
+    const cf = this.confine;
     for (let i = 0; i < p.cap; i++) {
       if (!p.alive[i]) continue;
       p.age[i] += h;
       if (p.life[i] > 0 && p.age[i] >= p.life[i]) { p.alive[i] = 0; p.liveCount--; continue; }
+      // 粒子区域：淡完即回收。普通粒子没有补回——发射器自己会接着发
+      if (cf && p.fadeRate[i] !== 0) {
+        p.fade[i] -= p.fadeRate[i] * h;
+        if (p.fade[i] <= 0) { p.alive[i] = 0; p.liveCount--; continue; }
+        if (p.fade[i] >= 1) { p.fade[i] = 1; p.fadeRate[i] = 0; }
+      }
       p.rot[i] += p.spin[i] * h;
       if (p.mode[i] === VfxParticleMode.Stuck) continue;
+      // 权重看的是**正下方地面点**落在画面上的位置（区域是地上的一块）
+      let cw = 1, chw = 1;
+      if (cf) {
+        const gy0 = sp.groundY(p.x[i], p.z[i]);
+        tmpFoot[0] = p.x[i]; tmpFoot[1] = gy0; tmpFoot[2] = p.z[i];
+        sp.toScene(tmpFoot, tmpScene);
+        cw = confineWeightAt(cf, tmpScene.x, tmpScene.y);
+        if (cf.ceiling !== null) chw = confineHeightWeight(cf, Math.max(0, p.y[i] - gy0) / Math.max(sp.metricAt(p.x[i], p.z[i]), 1e-6));
+        if (cw < CONFINE_EXIT_WEIGHT && p.fadeRate[i] <= 0) p.fadeRate[i] = 1 / CONFINE_EXIT_FADE_S;
+      }
       let ax = 0, ay = -e.gravity + e.buoyancy, az = 0;
       if (e.wind) { ax += e.wind[0]; ay += e.wind[1]; az += e.wind[2]; }
-      if (e.drag > 0) { ax -= e.drag * p.vx[i]; ay -= e.drag * p.vy[i]; az -= e.drag * p.vz[i]; }
+      if (e.drag > 0) {
+        ax -= e.drag * p.vx[i]; ay -= e.drag * p.vy[i]; az -= e.drag * p.vz[i];
+        // 场景风：阻力是相对空气的（dv = −drag·(v − u)），所以有风就被带着走，没风一字不变
+        if (sceneWind) {
+          const hAbove = Math.max(0, p.y[i] - sp.groundY(p.x[i], p.z[i]));
+          sampleSceneWind(sceneWind, windTime, p.x[i], p.z[i], hAbove, tmpWind);
+          // 竖直分量来自湍流的涡（上升 / 下沉气流）——丢掉它，粒子就只会朝一个方向平推。
+          // 粒子区域：边带里风按权重弱下去；过了高度上限，上升气流不再托它
+          const g = sceneWind.gainVfx * cw;
+          const uy = tmpWind[1] > 0 ? tmpWind[1] * chw : tmpWind[1];
+          ax += e.drag * tmpWind[0] * g;
+          ay += e.drag * uy * g;
+          az += e.drag * tmpWind[2] * g;
+        }
+      }
       if (e.turb) {
         const t = e.turb;
         curlNoise3(p.x[i] * t.invScale, p.y[i] * t.invScale, p.z[i] * t.invScale, ctx.time * t.speed + p.seed[i] * 3, tmpN);
@@ -531,10 +730,12 @@ export class VfxInstanceSim {
           }
         }
       }
-      // 壳（墙、前景）
+      // 壳（墙、前景）：薄壳——只有面后一个壳厚以内算撞上；更深的是遮挡物背后的空处
       if (useShell) {
         const c = sp.shellContact(p.x[i], p.y[i], p.z[i]);
-        if (c && !c.groundLike && c.penWu > -r) {
+        const side = c ? thinShellSide(c.penWu, r, p.behind[i] === 1) : ShellSide.Front;
+        if (c) p.behind[i] = side === ShellSide.Behind ? 1 : 0;
+        if (c && !c.groundLike && side === ShellSide.Contact) {
           const n = c.normal;
           if (shellResp === 'kill') {
             this.queueHit(e, p.x[i], p.y[i], p.z[i], n[0], n[1], n[2]);
@@ -769,10 +970,10 @@ export class VfxInstanceSim {
       const alt = py - gy;
       if (alt < beh.minAltitude) acc[1] += maxA * (1 - Math.max(0, alt) / beh.minAltitude);
 
-      // ---- 避墙（前瞻）
+      // ---- 避墙（前瞻）：前瞻点落在遮挡物背后的空处（薄壳）不算墙，照飞过去
       if (sp.hasShell) {
         const la = sp.shellContact(px + p.vx[i] * FLOCK_LOOKAHEAD_S, py + p.vy[i] * FLOCK_LOOKAHEAD_S, pz + p.vz[i] * FLOCK_LOOKAHEAD_S);
-        if (la && !la.groundLike && la.penWu > -margin) {
+        if (la && !la.groundLike && thinShellSide(la.penWu, margin, p.behind[i] === 1) === ShellSide.Contact) {
           const n = la.normal;
           const k = maxA * Math.min(1.5, (la.penWu + margin) / margin);
           acc[0] += n[0] * k; acc[1] += n[1] * k; acc[2] += n[2] * k;
@@ -794,10 +995,12 @@ export class VfxInstanceSim {
       // 硬约束：不入地
       const gy2 = sp.groundY(p.x[i], p.z[i]) + e.radius;
       if (p.y[i] < gy2) { p.y[i] = gy2; if (p.vy[i] < 0) p.vy[i] = -p.vy[i] * 0.2; }
-      // 硬约束：不进壳
+      // 硬约束：不进壳（薄壳：面后一个壳厚以内推回；更深的是飞到了遮挡物背后）
       if (sp.hasShell) {
         const c = sp.shellContact(p.x[i], p.y[i], p.z[i]);
-        if (c && !c.groundLike && c.penWu > -e.radius) {
+        const side = c ? thinShellSide(c.penWu, e.radius, p.behind[i] === 1) : ShellSide.Front;
+        if (c) p.behind[i] = side === ShellSide.Behind ? 1 : 0;
+        if (c && !c.groundLike && side === ShellSide.Contact) {
           const n = c.normal;
           const push = c.penWu + e.radius;
           p.x[i] += n[0] * push; p.y[i] += n[1] * push; p.z[i] += n[2] * push;
@@ -851,6 +1054,7 @@ export class VfxInstanceSim {
         p.mode[i] = VfxParticleMode.Roosting;
         p.x[i] = e.origin[0] + p.hx[i]; p.y[i] = e.origin[1] + p.hy[i]; p.z[i] = e.origin[2] + p.hz[i];
         p.vx[i] = 0; p.vy[i] = 0; p.vz[i] = 0;
+        p.behind[i] = spawnsBehindShell(this.space, p.x[i], p.y[i], p.z[i]) ? 1 : 0;
       }
     }
   }

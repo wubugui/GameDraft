@@ -33,7 +33,7 @@ export interface SmellFormParams {
   curveAmp: number;  // 基础弯幅（两个弯的摆幅）
   swayGain: number;  // 各味 sway 叠加到弯幅的增益
   baseW: number;     // 底盘宽度（对齐三把火约 50）
-  // ---- 飘向（G.6：烟往哪边飘，源在另一边）----
+  // ---- 飘向（G.6：烟往哪边飘，源就在那边）----
   leanDeg: number;      // 横向满偏时整缕烟绕底部倾倒的角度
   leanTipPx: number;    // 横向满偏时烟尖额外拖出的像素
   towardGrowH: number;  // 源在后（烟朝镜头扑来）：高度乘 (1 - towardGrowH)
@@ -61,9 +61,9 @@ interface Profile extends Omit<SmellProfileRaw, 'color'> { color: number }
 
 /**
  * 编排层下发的持续状态。intensity 0–100；flicker=波动。
- * dir -1..1 = **横向飘向**（正=往右飘，源在左）；dirDepth -1..1 = **纵深飘向**：
- * 负=被吹向画面深处（源在前面/更靠镜头），正=朝镜头扑来（源在后面/更远）。0=直的。
- * 两轴合起来就是一个二维指向（G.6：烟往哪边飘，东西在另一边）。
+ * dir -1..1 = **横向飘向**（正=往右飘，源在右）；dirDepth -1..1 = **纵深飘向**：
+ * 正=朝镜头扑来（源在前面/更靠镜头），负=被吹向画面深处（源在后面/更远）。0=直的。
+ * 两轴合起来就是一个二维指向（G.6：烟往哪边飘，东西就在那边）。
  */
 export interface SmellRenderState { scent: string; intensity: number; dir: number; flicker: boolean; dirDepth?: number }
 

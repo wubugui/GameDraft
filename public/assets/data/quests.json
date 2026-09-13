@@ -675,8 +675,8 @@
     "id": "主线_夜路",
     "group": "xungou",
     "type": "main",
-    "title": "摸黑回去",
-    "description": "输洗白咯。天黑完了，街上一个人都没得。",
+    "title": "找个地方睡",
+    "description": "输洗白咯。天黑完了，今黑了睡哪点都还没得着落。",
     "preconditions": [
       {
         "narrative": "flow_xungou_main",
@@ -693,11 +693,182 @@
     ],
     "acceptActions": [],
     "rewards": [],
-    "nextQuests": [],
+    "nextQuests": [
+      {
+        "questId": "主线_备上山",
+        "conditions": []
+      }
+    ],
     "objectives": [
       {
         "id": "obj1",
-        "text": "摸黑往回走"
+        "text": "街上逛一圈，找个睡得的地方"
+      }
+    ],
+    "announce": "banner",
+    "autoFocus": true
+  },
+  {
+    "id": "主线_备上山",
+    "group": "xungou",
+    "type": "main",
+    "title": "备上山的家伙",
+    "description": "应了癞子，牛头梁梁今黑了非去不可。背死人子上山，身上总得备几样东西——白天听来的那些规矩，这哈都想起来了。",
+    "preconditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_7",
+        "reached": true
+      }
+    ],
+    "completionConditions": [
+      {
+        "narrative": "flow_xungou_main",
+        "state": "state_9",
+        "reached": true
+      }
+    ],
+    "acceptActions": [],
+    "rewards": [],
+    "nextQuests": [],
+    "objectives": [
+      {
+        "id": "o_zhiqian",
+        "text": "纸钱",
+        "completeWhen": [
+          {
+            "flag": "has_item_zhiqian"
+          }
+        ]
+      },
+      {
+        "id": "o_zhaoming",
+        "text": "照亮的家伙",
+        "completeWhen": [
+          {
+            "flag": "has_item_torch"
+          }
+        ]
+      },
+      {
+        "id": "o_mashen",
+        "text": "麻绳",
+        "completeWhen": [
+          {
+            "flag": "has_item_mashen"
+          }
+        ]
+      },
+      {
+        "id": "o_xiangzhu",
+        "text": "香烛",
+        "completeWhen": [
+          {
+            "flag": "has_item_xiangzhu"
+          }
+        ]
+      },
+      {
+        "id": "o_nuomi",
+        "text": "糯米——揣起稳当些",
+        "completeWhen": [
+          {
+            "flag": "has_item_nuomi"
+          }
+        ],
+        "optional": true,
+        "visibleConditions": [
+          {
+            "flag": "rule_rule_nuomi_ya_shiqi_acquired"
+          }
+        ]
+      },
+      {
+        "id": "o_gongji",
+        "text": "公鸡——压得住阳气",
+        "completeWhen": [
+          {
+            "flag": "has_item_gongji"
+          }
+        ],
+        "optional": true,
+        "visibleConditions": [
+          {
+            "flag": "rule_rule_gongji_qiling_acquired"
+          }
+        ]
+      },
+      {
+        "id": "o_taomu",
+        "text": "桃木——压得住百鬼",
+        "completeWhen": [
+          {
+            "flag": "has_item_taomu"
+          }
+        ],
+        "optional": true,
+        "visibleConditions": [
+          {
+            "flag": "rule_rule_taomu_yaxie_acquired"
+          }
+        ]
+      },
+      {
+        "id": "o_caoxi",
+        "text": "草席——裹死人子",
+        "completeWhen": [
+          {
+            "flag": "has_item_caoxi"
+          }
+        ],
+        "optional": true,
+        "visibleConditions": [
+          {
+            "flag": "rule_rule_caoxi_guoshi_acquired"
+          }
+        ]
+      },
+      {
+        "id": "o_nanmen",
+        "text": "出南门，顺到小路往南边走",
+        "completeWhen": [
+          {
+            "narrative": "scenario_夜出南门",
+            "state": "望山",
+            "reached": true
+          }
+        ],
+        "guidance": [
+          {
+            "kind": "worldMarker",
+            "sceneId": "雾津街头",
+            "label": "南门",
+            "entityKind": "hotspot",
+            "entityId": "T_出南门",
+            "offscreenArrow": true,
+            "showDistance": true
+          },
+          {
+            "kind": "worldMarker",
+            "sceneId": "梦_醒来土路",
+            "label": "往南",
+            "entityKind": "zone",
+            "entityId": "z_南门小路_南头",
+            "offscreenArrow": true,
+            "showDistance": true
+          }
+        ]
+      },
+      {
+        "id": "o_paomaliang",
+        "text": "打开地图，去跑马梁",
+        "guidance": [
+          {
+            "kind": "mapMarker",
+            "sceneId": "跑马梁",
+            "label": "跑马梁"
+          }
+        ]
       }
     ],
     "announce": "banner",

@@ -186,3 +186,78 @@ def test_scene_endpoints(server) -> None:
     assert np.isfinite(s_arr).all() and (s_arr < g_arr - 1e-3).any(), "场景里总该有东西立在地面上"
     e, _ = get(f"/api/entity?scene={q}&npc=player")
     assert e["entity"]["worldHeight"] == 150.0
+
+
+# ---------------------------------------------------------------------------
+# 音效关键点（cues）
+# ---------------------------------------------------------------------------
+
+class TestCues:
+    """落形口径：id 唯一非空、按时刻升序、时刻钳进 [0, 总时长]、音效引用两形态。
+
+    钳位那条最要紧：``total_ms <= 0``（这次没烘出帧）时**不许**钳——否则一次烘焙失败
+    就把整串关键点压到 0，而这种破坏与"音效时机被人改了"在画面上完全无法区分。
+    """
+
+    def test_clean_sorts_dedupes_and_clamps(self) -> None:
+        from tools.trajectory_workbench.baking import clean_cues
+        doc = {"cues": [
+            {"id": "b", "atMs": 900, "sound": "s2"},
+            {"id": "a", "atMs": -10, "sound": "  s1  ", "label": " 落地 "},
+            {"id": "a", "atMs": 300, "sound": "dup"},          # id 重复：后来的丢掉
+            {"id": "", "atMs": 10, "sound": "s"},              # 空 id：丢掉
+            "nope",                                             # 不是对象：丢掉
+        ]}
+        out = clean_cues(doc, 500.0)
+        assert [c["id"] for c in out] == ["a", "b"]
+        assert out[0] == {"id": "a", "atMs": 0, "sound": "s1", "label": "落地"}
+        assert out[1]["atMs"] == 500                            # 超出时长 → 末帧
+        # 没烘出帧（总时长 0）：只夹下界，不许把大家压到 0
+        assert [c["atMs"] for c in clean_cues(doc, 0.0)] == [0, 900]
+
+    def test_clean_audio_cue_shapes(self) -> None:
+        from tools.trajectory_workbench.baking import clean_cues
+        rows = clean_cues({"cues": [
+            {"id": "a", "atMs": 0, "sound": {"id": "s", "volume": 0.25}},
+            {"id": "b", "atMs": 1, "sound": {"id": "s", "volume": "响"}},   # 坏音量 → 退成裸 id
+            {"id": "c", "atMs": 2, "sound": {"id": "s", "volume": 0}},      # 0 合法（这里就是要哑）
+            {"id": "d", "atMs": 3, "sound": None},                          # 还没选音效：留着这条
+        ]})
+        assert [r["sound"] for r in rows] == [{"id": "s", "volume": 0.25}, "s", {"id": "s", "volume": 0}, ""]
+
+    @pytest.mark.skipif(not (_HAS_SCENE and _HAS_COIN), reason="缺工程真数据")
+    def test_save_roundtrip_clamps_to_baked_duration(self, server) -> None:
+        _get, post, tmp = server
+        coin = json.loads((_ROOT / "public" / "assets" / "data" / "trajectories" / f"{COIN}.json").read_text(encoding="utf-8"))
+        total = coin["keyframes"][-1]["atMs"]
+        doc = json.loads(json.dumps(coin))
+        doc["id"] = "cue_rt"
+        doc["cues"] = [{"id": "late", "atMs": total + 9999, "sound": "sfx_ok"},
+                       {"id": "start", "atMs": 0, "sound": {"id": "sfx_ok", "volume": 0.3}}]
+        r = post("/api/save", {"doc": doc})
+        assert r["ok"], r
+        saved = json.loads((tmp / "cue_rt.json").read_text(encoding="utf-8"))
+        assert [c["id"] for c in saved["cues"]] == ["start", "late"]        # 升序
+        assert saved["cues"][1]["atMs"] == int(round(r["bake"]["totalMs"]))  # 钳到末帧
+        # 键序：运行时真相（帧 / 插槽 / 关键点）在工作态之前
+        keys = [k for k in saved if k in ("keyframes", "slots", "cues", "source", "authoring")]
+        assert keys.index("cues") < keys.index("source")
+        # 一个关键点都没有时不写这个键（老资产逐字节不变）
+        doc2 = json.loads(json.dumps(coin)); doc2["id"] = "cue_none"; doc2["cues"] = []
+        assert post("/api/save", {"doc": doc2})["ok"]
+        assert "cues" not in json.loads((tmp / "cue_none.json").read_text(encoding="utf-8"))
+
+    def test_sfx_endpoints(self, server) -> None:
+        get, _post, _ = server
+        j, _ = get("/api/sfx")
+        assert j["ok"] and isinstance(j["sfx"], list)
+        if not j["sfx"]:
+            pytest.skip("工程里没有 audio_config.sfx")
+        assert [r["id"] for r in j["sfx"]] == sorted(r["id"] for r in j["sfx"])
+        first = j["sfx"][0]["id"]
+        data, hd = get("/api/sfx_file?id=" + urllib.parse.quote(first))
+        assert hd.get("Content-Type", "").startswith("audio/") and len(data) > 0
+        # 没登记过的 id 一律 404（{ok:false}），不拿查询串当文件路径
+        with pytest.raises(urllib.error.HTTPError) as ex:
+            get("/api/sfx_file?id=" + urllib.parse.quote("../../package.json"))
+        assert ex.value.code == 404 and json.loads(ex.value.read())["ok"] is False

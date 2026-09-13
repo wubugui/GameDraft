@@ -32,6 +32,7 @@ import SCENE_SRC from './SceneLightingPass.ts?raw';
 import UNIFIED_SRC from './UnifiedCharacterShader.ts?raw';
 import CORE_GLSL from './lightingCore.glsl?raw';
 import CHAR_SRC from '../CharacterLitSprite.ts?raw';
+import VFX_SRC from '../vfx/vfxShaders.ts?raw';
 
 /** 参与光照计算的 shader。新增一个就往这儿加一行，否则它不受这条闸约束。 */
 const SHADERS: ReadonlyArray<readonly [string, string]> = [
@@ -133,17 +134,36 @@ describe('铁律 0 · 光照一律在世界空间、单位 wu', () => {
     expect(SCENE_SRC).toContain('B.w / (uWuPerQUnit * uWuPerQUnit)');
   });
 
+  it('粒子受光不许自己写灯循环：拼角色那段 ENTITY_SCENE_LIGHTS_GLSL（同一份数、同一个式子）', () => {
+    // 2026-09-12 之前粒子 FRAG 里抄了一份角色的实体灯循环，而且不在上面 SHADERS 的闸里——
+    // "粒子与角色吃同一套灯"只是两处写得像。抽成共享段之后，这里钉住别再抄回去。
+    expect(CHAR_SRC).toContain('export const ENTITY_SCENE_LIGHTS_GLSL');
+    expect(CHAR_SRC).toContain('E += entitySceneLightsE(q, n);');
+    expect(VFX_SRC).toContain('${ENTITY_SCENE_LIGHTS_GLSL}');
+    expect(VFX_SRC).toContain('E += entitySceneLightsE(q, n);');
+    expect(
+      /(lcPointLight|lcSpotLight|lcAreaLight|lcDirectionalLight)\s*\(/.test(VFX_SRC),
+      'vfxShaders.ts 里又出现了 lc*Light 调用 —— 灯循环只许在 ENTITY_SCENE_LIGHTS_GLSL 里有一份',
+    ).toBe(false);
+  });
+
   it('GLSL 模板字面量里不许出现反引号（会当场截断字符串）', () => {
     // 本会话被这条坑了四次：在 /* glsl */ ` ... ` 里的中文注释里写 `foo`，
     // 反引号直接闭合模板字符串，报错信息指向一个看着毫不相干的行。
     const all: ReadonlyArray<readonly [string, string]> = [
       ...SHADERS, ['src/rendering/lighting/lightingCore.glsl', CORE_GLSL],
+      ['src/rendering/vfx/vfxShaders.ts', VFX_SRC],
     ];
+    // 模板的"真结尾" = 第一个后面紧跟 `;` / 换行 / `:` `,` `)` 的反引号（三元式里的短片段就是
+    // 这么收尾的，只认 "\n`;" 会一路扫到下一个大模板、把中间正常的收尾反引号误报）。
+    // 注释里的 `foo` 这种，第一个反引号后面紧跟字母，不算结尾 ⇒ 仍落在 body 里被抓。
+    const closeRe = /`(?=;|[ \t]*\r?\n|\s*[:,)])/g;
     for (const [rel, src] of all) {
       const marks = [...src.matchAll(/\/\* glsl \*\/ `/g)];
       for (const mk of marks) {
         const start = mk.index! + mk[0].length;
-        const end = src.indexOf('\n`;', start);
+        closeRe.lastIndex = start;
+        const end = closeRe.exec(src)?.index ?? -1;
         if (end < 0) continue;
         const body = src.slice(start, end);
         expect(

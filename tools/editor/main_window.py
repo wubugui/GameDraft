@@ -50,6 +50,13 @@ _VITE_DEV_URL_RE = re.compile(
 # 所以「被占」恒等于「起不来」,预检才有意义)。
 _GAME_DEV_PORT = urlsplit(GAME_DEV_URL).port or 5173
 
+# F5「运行游戏」的缺省引导参数:**停在标题界面**,不直接开一局主线。
+# 参数名与 src/core/EventBridge.ts 的 TITLE_BOOT_PARAM 同源,取值与发行档烘进产物的
+# 启动缺省一致(tools/build/build_config.json 的 release.bootQuery = "screen_title=1")——
+# 于是编辑器里按 F5 看到的开局与玩家双击 exe 看到的是同一条路(标题 → 新游戏/继续)。
+# 直达路径(Ctrl+F5 开发模式、过场/小游戏预览)各自显式给 launch_params,不吃这条缺省。
+_TITLE_BOOT_LAUNCH_PARAMS = "screen_title=1"
+
 
 def _log_mentions_port_conflict(log: str) -> bool:
     """vite/node 因端口被占失败的输出指纹(strictPort: "Port 5173 is already in use")。"""
@@ -290,6 +297,10 @@ class MainWindow(QMainWindow):
         self._ensure_lighting_sync_timer()
         self._nav_tree.currentItemChanged.connect(self._on_nav_tree_current_changed)
 
+        # 图对话目录的磁盘签名：主窗回到前台这条自动刷新路径的闸（见
+        # _resync_dialogue_catalog_if_changed）。None = 还没测过，下一次当作"变了"。
+        self._dialogue_catalog_signature: tuple | None = None
+
         # 导航历史栈（浏览器式后退/前进）——见 _record_nav / _replay_nav。
         self._nav_history: list[_NavLocation] = []
         self._nav_cursor: int = -1
@@ -370,6 +381,7 @@ class MainWindow(QMainWindow):
             self,
         )
         a_run.setShortcut(QKeySequence("F5"))
+        a_run.setToolTip("启动并停在标题界面（与发行版开局同一条路）")
         a_run.triggered.connect(self._run_game)
         run_menu.addAction(a_run)
         a_run_dev = QAction(
@@ -421,6 +433,8 @@ class MainWindow(QMainWindow):
         # 粒子工作台是 assets/data/vfx/ 的唯一写者；场景页的 vfx 实例与 playVfx 选择器只读那份
         self._act(ext, "粒子工作台…", self.open_vfx_workbench)
         self._act(ext, "重读粒子资产", self._reload_vfx_from_disk)
+        # 草木工作台是 lighting/<背景基名>/sway_paint.png 的唯一写者；拆层产物由它按需重烘
+        self._act(ext, "草木工作台…", self.open_sway_workbench)
 
         view_menu = mb.addMenu("View")
         self._act(view_menu, "编辑器设置…", self._open_editor_settings, "Ctrl+,")
@@ -518,7 +532,7 @@ class MainWindow(QMainWindow):
 
         icon_btn(
             st.standardIcon(QStyle.StandardPixmap.SP_MediaPlay),
-            "运行游戏 (F5)",
+            "运行游戏 (F5) — 从标题界面开始",
             self._run_game,
         )
         icon_btn(
@@ -847,6 +861,8 @@ class MainWindow(QMainWindow):
         self._refresh_window_title()
         self._status.showMessage(f"Loaded: {path}", 5000)
         self._populate_tabs()
+        # 面板刚按这份磁盘内容铺完 ⇒ 记下基准，第一次 alt-tab 回来不必白重建一遍。
+        self._dialogue_catalog_signature = self._dialogue_graph_catalog_signature()
         QTimer.singleShot(500, self, self._prewarm_game_backend)
         # 换工程/重开工程一律重启 LSP:旧 client 的 root/overlay 都是上一工程的,
         # 复用会让搜索/查引用继续搜旧工程、丢新工程 overlay(对抗审查确认项)。
@@ -1201,7 +1217,9 @@ class MainWindow(QMainWindow):
             # 轨迹资产排在目录刷新**之前**：它换的是只读镜像，控件重建要用到新镜像。
             QTimer.singleShot(0, self, self._resync_trajectories_from_disk)
             QTimer.singleShot(0, self, self._resync_vfx_from_disk)
-            QTimer.singleShot(0, self, self._reload_all_reference_catalogs)
+            # 图对话目录**真变了才重建**（轨迹/vfx/音频那三条各自已经这么门控了）：
+            # 这条路每 alt-tab 一次就跑一次，而一次全页重建实测 218~1105ms。
+            QTimer.singleShot(0, self, self._resync_dialogue_catalog_if_changed)
             # 音频加工台改的是 audio_config.json 的 src，不属于「引用目录」那一路，
             # 所以单独挂：那边只在打开工程时读一次，不重读就会被下一次 Save All 盖掉。
             QTimer.singleShot(0, self, self._resync_audio_config_from_disk)
@@ -1818,6 +1836,42 @@ class MainWindow(QMainWindow):
             self._ensure_cutscene_playback_timer()
         QTimer.singleShot(0, self, self._apply_nav_tree_width_from_content)
 
+    def _dialogue_graph_catalog_signature(self) -> tuple | None:
+        """图对话目录的廉价签名（文件名 + mtime_ns + 大小）。取不到返回 None。
+
+        只 stat 不读内容：一次几毫秒，和它挡下来的那次全页重建（0.2~1.1s）不是一个量级。
+        """
+        base = getattr(self._model, "dialogues_path", None)
+        if base is None:
+            return None
+        try:
+            rows: list[tuple[str, int, int]] = []
+            with os.scandir(Path(base) / "graphs") as it:
+                for entry in it:
+                    if not entry.name.endswith(".json") or not entry.is_file():
+                        continue
+                    st = entry.stat()
+                    rows.append((entry.name, st.st_mtime_ns, st.st_size))
+            return tuple(sorted(rows))
+        except OSError:
+            return None      # 目录没了/读不了：当作"变了"，宁可多刷一次
+
+    def _resync_dialogue_catalog_if_changed(self) -> None:
+        """自动路径（主窗回到前台）用的目录刷新：**图对话目录真变了才重建**。
+
+        契约见 agent_docs 的 mainwindow-editor-hooks 契约 6（"自动路径必须在镜像真变了
+        才重建，否则每激活一次窗口白冻一下"）。这条路此前是无条件重建的，实测代价：
+        场景页一次 218 / 255 / 320 / 864 / 1105ms（本页 8 棵最外层 ActionEditor 全拆全建），
+        而只要外置工具还开着，**每一次 alt-tab 回来都要付一遍**——用户感受就是"编辑器
+        一点就卡死"。外置进程**退出**那条路仍然无条件重建（那是真正的写盘边界，且一次性）。
+        """
+        signature = self._dialogue_graph_catalog_signature()
+        previous = self._dialogue_catalog_signature
+        self._dialogue_catalog_signature = signature
+        if signature is not None and previous is not None and signature == previous:
+            return
+        self._reload_all_reference_catalogs()
+
     def _reload_all_reference_catalogs(self) -> None:
         """A disk graph catalog mutation must be visible in every open editor now."""
         from .shared.action_editor import bump_reference_refresh_epoch
@@ -2321,6 +2375,9 @@ class MainWindow(QMainWindow):
         self._start_game_backend(open_when_ready=False)
 
     def _run_game(self, *, launch_params: str | None = None) -> None:
+        # 没指定引导参数 = F5/Play 这条"就照玩家的样子跑一遍",停标题不直接进主线。
+        if launch_params is None:
+            launch_params = _TITLE_BOOT_LAUNCH_PARAMS
         if self._model.project_path is None:
             return
         if not self._save_all():
@@ -3371,6 +3428,32 @@ class MainWindow(QMainWindow):
         self._dialogue_process_watch_timer.start()
         self._status.showMessage(
             f"Started in new process: 轨迹工作台{f'（{tid}）' if tid else ''}", 4000)
+
+    def open_sway_workbench(self, scene_id: str = "") -> None:
+        """另起独立进程打开「草木工作台」(抠植被 / 标刚体 / 重烘拆层)。
+
+        它写的是**烘焙的输入** `lighting/<背景基名>/sway_paint.png`,产物(sway_*.png / sway.json)由它
+        按需重烘;主编辑器对这些只读。起法与轨迹 / 粒子两台逐条相同:detached、不等它。
+        没给场景 id 就让它自己挑一个烘过的。
+        """
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        sid = (scene_id or "").strip()
+        cmd = [sys.executable, "-m", "tools.sway_workbench", *(["--open", sid] if sid else [])]
+        kwargs: dict = {"cwd": str(root.resolve())}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        try:
+            proc = subprocess.Popen(cmd, **kwargs)
+        except OSError as e:
+            self._status.showMessage(f"草木工作台起不来：{e}", 6000)
+            return
+        self._dialogue_external_processes.append(proc)
+        self._dialogue_process_watch_timer.start()
+        self._status.showMessage(f"Started in new process: 草木工作台{f'（{sid}）' if sid else ''}", 4000)
 
     def open_vfx_workbench(self, effect_id: str = "") -> None:
         """另起独立进程打开「粒子工作台」（场景页 vfx 实例的「在粒子工作台中打开…」落点）。

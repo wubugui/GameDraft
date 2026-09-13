@@ -267,9 +267,9 @@
           }
         },
         {
-          "type": "hideOverlayImage",
+          "type": "hideDocument",
           "params": {
-            "id": "blend"
+            "documentId": "告示-水猴子-官差线"
           }
         },
         {

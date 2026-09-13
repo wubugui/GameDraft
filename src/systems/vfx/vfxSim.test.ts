@@ -7,7 +7,7 @@ import type { VfxEffectDef, VfxFieldDef, VfxFlockBehaviorDef } from '../../data/
 import type { ShellContact } from '../../utils/depthShellField';
 import type { Vec3 } from '../../utils/sceneSpace';
 import { VfxInstanceSim, VfxParticleMode, createFieldRuntime, type VfxFieldRuntime, type VfxStepContext } from './vfxSim';
-import type { VfxSpace } from './vfxSpace';
+import { SHELL_THICKNESS_WU, ShellSide, thinShellSide, type VfxSpace } from './vfxSpace';
 
 const WALL_X = 300;
 
@@ -27,6 +27,11 @@ class TestSpace implements VfxSpace {
   toQ(w: Vec3, out: Vec3): void { out[0] = w[0]; out[1] = w[1]; out[2] = w[2]; }
   anchorToWorld(a: { x: number; y: number; h?: number }): Vec3 { return [a.x, a.h ?? 0, -a.y]; }
   groundWorldAtScene(x: number, y: number): Vec3 { return [x, 0, -y]; }
+  groundNormal(_x: number, _z: number, out: Vec3): Vec3 { out[0] = 0; out[1] = 1; out[2] = 0; return out; }
+  metricAt(): number { return 1; }
+  surfaceAtScene(x: number, y: number): { p: Vec3; normal: Vec3; kind: 'ground' } {
+    return { p: [x, 0, -y], normal: [0, 1, 0], kind: 'ground' };
+  }
 }
 
 const BAT: VfxFlockBehaviorDef = {
@@ -142,6 +147,152 @@ describe('vfxSim · 通用粒子', () => {
     run(sim, 10, () => ctx());
     expect(sim.emitters[0].p.liveCount).toBeLessThanOrEqual(20);
     expect(sim.emitters[0].p.liveCount).toBeGreaterThan(10);   // 4/s × 5s 寿命 = 20 稳态
+  });
+});
+
+/**
+ * 画面上一根柱子挡在远墙前面：画面 x ∈ [100, 140] 处可见面是柱子（深度 `front(x)`），
+ * 其余是 z = 1000 的远墙。视线 = +z（深度就是 z），法线朝相机（−z）。
+ * 这是"粒子能不能藏到遮挡物背后"的最小现场——此前的判据把面后面全当实心，粒子到不了柱子背后。
+ */
+const PILLAR_X0 = 100, PILLAR_X1 = 140, FAR_WALL_Z = 1000;
+
+class PillarSpace implements VfxSpace {
+  readonly kind = 'field' as const;
+  readonly hasShell = true;
+  readonly wuPerQ = 1;
+  readonly viewDir: Vec3 = [0, 0, 1];
+  constructor(private readonly front: (x: number) => number = () => 0) {}
+  groundY(): number { return 0; }
+  groundObserved(): boolean { return true; }
+  shellContact(x: number, y: number, z: number): ShellContact | null {
+    void y;
+    const d = x >= PILLAR_X0 && x <= PILLAR_X1 ? this.front(x) : FAR_WALL_Z;
+    return { penWu: z - d, normal: [0, 0, -1], px: 0, py: 0, groundLike: false };
+  }
+  shellDepthWu(): number | null { return null; }
+  toScene(w: Vec3, out: { x: number; y: number }): void { out.x = w[0]; out.y = -w[2] - w[1]; }
+  toQ(w: Vec3, out: Vec3): void { out[0] = w[0]; out[1] = w[1]; out[2] = w[2]; }
+  anchorToWorld(a: { x: number; y: number; h?: number }): Vec3 { return [a.x, a.h ?? 0, -a.y]; }
+  groundWorldAtScene(x: number, y: number): Vec3 { return [x, 0, -y]; }
+  groundNormal(_x: number, _z: number, out: Vec3): Vec3 { out[0] = 0; out[1] = 1; out[2] = 0; return out; }
+  metricAt(): number { return 1; }
+  surfaceAtScene(x: number, y: number): { p: Vec3; normal: Vec3; kind: 'ground' } {
+    return { p: [x, 0, -y], normal: [0, 1, 0], kind: 'ground' };
+  }
+}
+
+/** 一颗匀速直飞、会贴壳滑的粒子（没有重力 / 阻力，轨迹一眼可算） */
+function oneMover(dir: Vec3, speed: number): VfxEffectDef {
+  return {
+    id: 'mover',
+    emitters: [{
+      id: 'm',
+      appearance: { image: 'x', sizeWu: 8 },
+      spawn: { max: 1, burst: 1, speed: [speed, speed], direction: dir, spread: 0 },
+      life: { seconds: [30, 30] },
+      collision: { shell: 'slide', radiusWu: 4 },
+    }],
+  };
+}
+
+describe('vfxSim · 薄壳：遮挡物背后是空处，不是实心', () => {
+  it('判据本身：面前 / 贴上 / 背后，背后位滞回', () => {
+    expect(thinShellSide(-10, 4, false)).toBe(ShellSide.Front);
+    expect(thinShellSide(-3, 4, false)).toBe(ShellSide.Contact);
+    expect(thinShellSide(SHELL_THICKNESS_WU - 1, 4, false)).toBe(ShellSide.Contact);
+    expect(thinShellSide(SHELL_THICKNESS_WU, 4, false)).toBe(ShellSide.Behind);
+    // 已在背后：只要仍在面后就一直是背后（哪怕穿深落回一个壳厚以内）
+    expect(thinShellSide(5, 4, true)).toBe(ShellSide.Behind);
+    expect(thinShellSide(0, 4, true)).toBe(ShellSide.Behind);
+    // 回到面前才解除
+    expect(thinShellSide(-2, 4, true)).toBe(ShellSide.Contact);
+    expect(thinShellSide(-9, 4, true)).toBe(ShellSide.Front);
+  });
+
+  it('侧着飘到柱子背后：不被推到柱子前面，照直穿过去', () => {
+    const sim = new VfxInstanceSim('p', oneMover([1, 0, 0], 120), [40, 100, 200], 1, new PillarSpace());
+    const p = sim.emitters[0].p;
+    let sawBehind = false;
+    for (let k = 0; k < 90; k++) {
+      sim.step(1 / 64, ctx());
+      expect(p.z[0]).toBeCloseTo(200, 6);
+      if (p.x[0] > PILLAR_X0 + 1 && p.x[0] < PILLAR_X1 - 1) {
+        expect(p.behind[0]).toBe(1);
+        sawBehind = true;
+      }
+    }
+    expect(sawBehind).toBe(true);
+    expect(p.x[0]).toBeGreaterThan(PILLAR_X1);
+    expect(p.behind[0]).toBe(0);               // 出了柱子，远墙在它后面
+  });
+
+  it('深度在壳厚以内从侧面进来 = 撞上柱子侧面：推回柱面前，推出量不超过一个壳厚', () => {
+    const sim = new VfxInstanceSim('p', oneMover([1, 0, 0], 120), [40, 100, 20], 1, new PillarSpace());
+    const p = sim.emitters[0].p;
+    for (let k = 0; k < 90; k++) {
+      const z0 = p.z[0];
+      sim.step(1 / 64, ctx());
+      expect(z0 - p.z[0]).toBeLessThanOrEqual(SHELL_THICKNESS_WU + 4 + 1e-3);
+    }
+    expect(p.z[0]).toBeCloseTo(-4, 3);
+  });
+
+  it('正面迎上去：挡在面前，不隧穿', () => {
+    const sim = new VfxInstanceSim('p', oneMover([0, 0, 1], 300), [120, 100, -300], 1, new PillarSpace());
+    const p = sim.emitters[0].p;
+    run(sim, 2, () => ctx());
+    expect(p.z[0]).toBeCloseTo(-4, 3);
+    expect(p.x[0]).toBeCloseTo(120, 6);
+    expect(p.behind[0]).toBe(0);
+  });
+
+  it('滞回：在背后横挪到斜面更深处（穿深落回壳厚以内）也不被一把推到前面', () => {
+    // 柱面左浅右深：x=100 处深 0、x=140 处深 120
+    const sim = new VfxInstanceSim('p', oneMover([1, 0, 0], 120), [40, 100, 100], 1,
+      new PillarSpace((x) => (x - PILLAR_X0) * 3));
+    const p = sim.emitters[0].p;
+    let checked = 0;
+    for (let k = 0; k < 60; k++) {
+      sim.step(1 / 64, ctx());
+      // x=125 处面深 75、穿深 25 < 壳厚：无状态的判据会把它推到 z = 71
+      if (p.x[0] > 118 && p.x[0] < 130) { expect(p.z[0]).toBeCloseTo(100, 6); checked++; }
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it('出生就在遮挡物背后：原地待着，不被推到前面来', () => {
+    const sim = new VfxInstanceSim('p', oneMover([1, 0, 0], 0), [120, 100, 300], 1, new PillarSpace());
+    const p = sim.emitters[0].p;
+    sim.step(1 / 64, ctx());                    // burst 在第一个子步里发
+    expect(p.alive[0]).toBe(1);
+    expect(p.behind[0]).toBe(1);
+    run(sim, 1, () => ctx());
+    expect(p.z[0]).toBeCloseTo(300, 6);
+  });
+
+  it('薄片（纸钱）同一条：被风卷着横穿柱子背后时不被推到前面', () => {
+    const eff: VfxEffectDef = {
+      id: 'paper',
+      emitters: [{
+        id: 'paper',
+        appearance: { image: 'x', sizeWu: 16 },
+        spawn: { max: 1, burst: 1, speed: [300, 300], direction: [1, 0, 0], spread: 0 },
+        // 终端速度取大（重纸），气动减速小，保证 0.6 s 内横穿柱子
+        plate: { size: [16, 16], terminalSpeed: 400, replenish: false },
+      }],
+    };
+    const sim = new VfxInstanceSim('p', eff, [90, 200, 250], 3, new PillarSpace());
+    const p = sim.emitters[0].p;
+    let minZ = Infinity, crossed = false;
+    for (let k = 0; k < 40; k++) {
+      sim.step(1 / 64, ctx());
+      if (!p.alive[0]) break;
+      minZ = Math.min(minZ, p.z[0]);
+      if (p.x[0] > PILLAR_X0 && p.x[0] < PILLAR_X1) crossed = true;
+    }
+    expect(crossed).toBe(true);
+    expect(minZ).toBeGreaterThan(150);
   });
 });
 

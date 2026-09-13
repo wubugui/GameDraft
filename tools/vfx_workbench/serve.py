@@ -4,10 +4,10 @@
   GET  /                                  viewer
   GET  /vendor/<name>.js                  轨迹工作台 viewer 下的共用件原样转发（common.js / gizmo.js / history.js）
                                           —— 不 fork：声学台内联抄过一份 GZ，那是已知欠账，不加第三份
-  GET  /gen/vfx.bundle.js                 运行时 vfxSim + vfxSpace + sceneSpace + 两个场打成的 ESM
+  GET  /gen/vfx.bundle.js                 运行时 vfxSim + vfxSpace + sceneSpace + 两个场 + 场景风 + 透视打成的 ESM
   GET  /api/boot                          启动参数（--open 的效果 id，只发一次；游戏地址；打包状态）
   GET  /api/scenes                        工程场景清单（深度 / 时段背景 / 行走面场状态）
-  GET  /api/scene?id=&bg=                 场景描述：标定、尺寸、NPC、出生点 / NPC 脚下的世界点
+  GET  /api/scene?id=&bg=                 场景描述：标定、尺寸、NPC、出生点 / NPC 脚下的世界点、实例、风、透视
   GET  /api/scene_bg?id=&bg=[&w=1600]     背景图（服务端缩放缓存）
   GET  /api/scene_mesh|scene_ground|scene_shell|scene_heightfield?id=&bg=   3D 数据（与轨迹工作台同格式、同一份几何）
   POST /api/shell_probe {id, bg, points}  服务端 SceneGeometry.shell_contact（页面拿它跟运行时 shellContactAt 对）
@@ -58,6 +58,8 @@ VENDOR = {
     "common.js": "tools/trajectory_workbench/viewer/common.js",
     "gizmo.js": "tools/trajectory_workbench/viewer/gizmo.js",
     "history.js": "tools/trajectory_workbench/viewer/history.js",
+    # 页内下拉（不走系统原生弹窗：Qt 在高 DPI 下那个弹窗每开一次再乘一次缩放，白边越开越大）
+    "dropdown.js": "tools/trajectory_workbench/viewer/dropdown.js",
 }
 
 
@@ -82,8 +84,10 @@ def scene_summary(sid: str, bg: str | None) -> dict:
         marks.append({"kind": "npc", "id": str(n.get("id") or "?"), "scene": [float(n.get("x", 0)), float(n.get("y", 0))],
                       "world": [float(w[0]), float(w[1]), float(w[2])]})
     s["marks"] = marks
-    # 场景里已经摆着的实例（主编辑器写的），工作台左栏显示"这个效果被谁用着"
+    # 场景里已经摆着的实例（主编辑器写的）：左栏显示"这个效果被谁用着"，本地预览借它的铺撒区域
     s["vfx"] = [v for v in (d.get("vfx") or []) if isinstance(v, dict)]
+    # 场景风原样给（页面用打包进来的 SceneWindState 解析，与游戏同一份）：薄片只吃它，没有就吹不动
+    s["wind"] = d.get("wind") if isinstance(d.get("wind"), dict) else None
     return s
 
 

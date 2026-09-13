@@ -46,6 +46,9 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   runActions: { required: ['actions'] },
   chooseAction: { required: ['options'], optional: ['prompt', 'allowCancel'] },
   randomBranch: { required: [], optional: ['probability', 'aboveActions', 'belowActions'] },
+  // condition 是统一条件表达式（与热区/zone 的 conditions 同一套叶子）；不写 = 恒真。
+  // elseActions 为空时不写键（往返保真）。
+  runActionsIf: { required: ['condition'], optional: ['actions', 'elseActions'] },
 
   // ---- 叙事 / scenario ----
   emitNarrativeSignal: { required: ['signal'], nonEmpty: ['signal'], optional: ['sourceType', 'sourceId', 'ownerType', 'ownerId'] },
@@ -65,7 +68,8 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   startScenario: { required: ['scenarioId'], nonEmpty: ['scenarioId'] },
   activateScenario: { required: ['scenarioId'], nonEmpty: ['scenarioId'] },
   completeScenario: { required: ['scenarioId'], nonEmpty: ['scenarioId'] },
-  revealDocument: { required: ['documentId'], nonEmpty: ['documentId'] },
+  revealDocument: { required: ['documentId'], nonEmpty: ['documentId'], optional: ['force'] },
+  hideDocument: { required: ['documentId'], nonEmpty: ['documentId'] },
 
   // ---- 背包 / 货币 / 规矩 / 任务 ----
   giveItem: { required: ['id'], nonEmpty: ['id'], optional: ['count', 'critical'] },
@@ -135,7 +139,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   clearSmell: { required: [] },
   // 气味指示器显隐（G.6）：与三把火同一套 style 词汇 flare|fade|instant|debut（显缺省 flare=聚拢浮现 / 隐缺省 fade=散开）
   setSmellVisible: { required: ['visible'], optional: ['style'] },
-  // 气味源 / 飘向追踪（G.6）：气缕飘向的反方向 = 源；scene 缺省当前场景；追踪可随时开关，缺省开
+  // 气味源 / 飘向追踪（G.6）：气缕飘向的方向 = 源；scene 缺省当前场景；追踪可随时开关，缺省开
   setSmellSource: { required: ['x', 'y'], optional: ['scene'] },
   clearSmellSource: { required: [] },
   setSmellTracking: { required: ['enabled'] },
@@ -192,7 +196,21 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     optional: [
       'prop', 'image', 'images', 'scale', 'mirror',
       'anchorX', 'anchorY', 'rotation', 'lit',
+      // state 只在给了 prop 时有意义（状态表住在挂件预设里）
+      'state',
     ],
+  },
+  // 挂件状态机（火把：点着 / 护火 / 残炭 / 灭）。fadeMs 只作用于灯的强度
+  setPropState: {
+    required: ['target', 'socket', 'state'],
+    nonEmpty: ['target', 'socket', 'state'],
+    optional: ['fadeMs'],
+  },
+  // 场景灯的运行时强度倍率（0 = 吹灭）。手持火把不走这条，走 setPropState
+  fadeLight: {
+    required: ['lightId', 'scale'],
+    nonEmpty: ['lightId'],
+    optional: ['fadeMs'],
   },
   detachFromSocket: { required: ['target', 'socket'] },
   setSceneDepthFloorOffset: { required: ['floor_offset'] },
@@ -207,8 +225,10 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   hideBlackout: { required: [], optional: ['durationMs', 'duration'] },
   // 相机跟随实体（仅过场态生效，过场结束自动复位回玩家）：smooth 缺省=硬锁居中（逐帧
   // snapTo），true=平滑跟随（camera.follow 插值）。target 为实体引用，登记 ENTITY_REF_PARAMS。
-  cameraFollowActor: { required: ['target'], nonEmpty: ['target'], optional: ['smooth'] },
+  // 跟谁二选一（运行时校验至少一个）：target = 实体 id（老语义）/ at = 位置引用（每帧求值，可以是曲线此刻播到的点）。
+  cameraFollowActor: { required: [], optional: ['target', 'at', 'smooth'] },
   cameraStopFollow: { required: [] },
+  openMap: { required: [] },
 
   // ---- NPC 巡逻 / 持久化 override ----
   stopNpcPatrol: { required: ['npcId'], nonEmpty: ['npcId'] },
@@ -317,8 +337,9 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   setVfxState: { required: ['instanceId', 'state'], nonEmpty: ['instanceId', 'state'] },
   // kind 缺省 fear；duration 缺省 0 = 瞬时脉冲；direction 只给 wind
   emitVfxField: { required: ['tag', 'radius'], nonEmpty: ['tag'], optional: ['kind', 'strength', 'duration', 'at', 'x', 'y', 'h', 'direction'] },
-  // direction / faceTarget 二选一（运行时校验至少一个），条件必填不在缺参检查建模。
-  faceEntity: { required: ['target'], nonEmpty: ['target'], optional: ['direction', 'faceTarget'] },
+  // at / faceTarget / direction 三选一（运行时校验至少一个），条件必填不在缺参检查建模。
+  // at = 朝向一个位置引用所在的一侧（执行那一刻求值），解析不出来退回 faceTarget / direction。
+  faceEntity: { required: ['target'], nonEmpty: ['target'], optional: ['direction', 'faceTarget', 'at'] },
   cutsceneSpawnActor: { required: ['id', 'x', 'y'], nonEmpty: ['id'], optional: ['name', 'at'] },
   cutsceneRemoveActor: { required: ['id'], nonEmpty: ['id'] },
 

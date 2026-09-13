@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "id": "序章_夜巡官差_宵禁",
+  "entry": "n_hail",
+  "meta": {
+    "title": "夜里巡街的官差：撞见关二狗骂宵禁（应下上山前找地方睡 / 应下后说出城两种回话）"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_hail": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_curfew",
+      "text": "嘿！站到起！"
+    },
+    "n_curfew": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_branch",
+      "text": "更都打过了，宵禁晓不晓得？半夜三更在街上晃，你娃想爪子？"
+    },
+    "n_branch": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_out",
+          "conditions": [
+            {
+              "narrative": "flow_xungou_main",
+              "state": "state_7",
+              "reached": true
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_sleep"
+    },
+    "n_sleep": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_scold_sleep",
+      "text": "官爷，我……找个地方睡。"
+    },
+    "n_scold_sleep": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_end",
+      "text": "睡街沿？睡班房要不要？爬爬爬！个龟儿死叫花，再遭老子撞到，锁起走！"
+    },
+    "n_out": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_scold_out",
+      "text": "官爷，我出城，有桩活路。"
+    },
+    "n_scold_out": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_end",
+      "text": "半夜出城？怕是去偷鸡摸狗！滚远点，莫在老子眼前晃！"
+    },
+    "n_end": {
+      "type": "end"
+    }
+  }
+}

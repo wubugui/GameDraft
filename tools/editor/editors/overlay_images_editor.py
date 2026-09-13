@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from ..project_model import ProjectModel
 from ..shared.audio_preview_selector import AudioIdPreviewSelector
 from ..shared.image_path_picker import CutsceneImagePathRow
+from ..shared.widget_discard import discard_widget
 
 
 def _sfx_pairs(model: ProjectModel) -> list[tuple[str, str]]:
@@ -294,8 +295,7 @@ class OverlayImagesEditor(QWidget):
     def _clear_rows(self) -> None:
         for w in list(self._row_widgets):
             self._rows_layout.removeWidget(w)
-            w.setParent(None)
-            w.deleteLater()
+            discard_widget(w)
         self._row_widgets.clear()
 
     def _reload_from_model(self) -> None:
@@ -358,9 +358,8 @@ class OverlayImagesEditor(QWidget):
         if index < 0 or index >= len(self._row_widgets):
             return
         w = self._row_widgets.pop(index)
-        w.setParent(None)
-        w.deleteLater()
         self._rows_layout.removeWidget(w)
+        discard_widget(w)
         # 重建删除回调索引
         for i, rw in enumerate(self._row_widgets):
             rw.set_delete_handler(lambda _c=False, ii=i: self._remove_row_at(ii))

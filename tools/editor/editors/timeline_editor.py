@@ -80,6 +80,7 @@ if TYPE_CHECKING:
     pass
 
 from ..shared.cutscene_action_allowlist_io import load_cutscene_action_allowlist_ordered
+from ..shared.widget_discard import discard_widget
 
 # ---------------------------------------------------------------
 # Cutscene Action whitelist：与 src/data/cutscene_action_allowlist.json（及运行时 Set）同源
@@ -3760,6 +3761,18 @@ class TimelineEditor(QWidget):
         self._restore_chk.setToolTip("过场结束后是否恢复进入前的场景与玩家位置")
         bind_form.addRow(self._restore_chk)
 
+        # 默认不勾 = 三把火/气味在本过场里照常亮着（2026-09-12 制作人定调）。
+        # 勾上才写 hideMetaHud=true，不写 false —— 缺省语义留在运行时那一处。
+        self._hide_meta_chk = QCheckBox("过场中隐藏三把火 / 气味（hideMetaHud）")
+        self._hide_meta_chk.setChecked(False)
+        self._hide_meta_chk.setToolTip(
+            "默认不勾：过场里三把火与气味照常亮着（铜钱/任务条/场景名/入口条一律淡出，不受本项影响）。\n"
+            "要纯净镜头（片头、片尾、纯插画段）才勾上。\n"
+            "⚠ 本过场里编排了三把火/气味的首现仪式（setThreeFiresVisible / setSmellVisible 的 debut）时勾了它，"
+            "等于那段仪式演给空气看。"
+        )
+        bind_form.addRow(self._hide_meta_chk)
+
         rl.addLayout(bind_form)
 
         hint_row = QHBoxLayout()
@@ -3929,6 +3942,7 @@ class TimelineEditor(QWidget):
         self._target_x.valueChanged.connect(self.mark_pending_changes)
         self._target_y.valueChanged.connect(self.mark_pending_changes)
         self._restore_chk.toggled.connect(self.mark_pending_changes)
+        self._hide_meta_chk.toggled.connect(self.mark_pending_changes)
 
         # 撤销/重做快捷键（作用域限本编辑器控件树，不干扰全局）。
         for seq, slot in (
@@ -4531,8 +4545,7 @@ class TimelineEditor(QWidget):
                       for h in getattr(self, "_dialogue_groups", [])}
         for h in getattr(self, "_dialogue_groups", []):
             self._steps_layout.removeWidget(h)
-            h.setParent(None)
-            h.deleteLater()
+            discard_widget(h)
         self._dialogue_groups = []
 
         # 过滤激活时不分组：过滤本身就是另一种视图，组头会和命中集打架
@@ -4950,6 +4963,7 @@ class TimelineEditor(QWidget):
             self._target_x.setValue(float(cs.get("targetX", 0)))
             self._target_y.setValue(float(cs.get("targetY", 0)))
             self._restore_chk.setChecked(cs.get("restoreState", True))
+            self._hide_meta_chk.setChecked(cs.get("hideMetaHud", False) is True)
             new_cid = str(cs.get("id", "")).strip() or None
             self._rebuild_steps(
                 cs.get("steps", []),
@@ -5351,6 +5365,11 @@ class TimelineEditor(QWidget):
             cs["restoreState"] = False
         else:
             cs.pop("restoreState", None)
+
+        if self._hide_meta_chk.isChecked():
+            cs["hideMetaHud"] = True
+        else:
+            cs.pop("hideMetaHud", None)
 
         cs["steps"] = steps
         cs.pop("commands", None)

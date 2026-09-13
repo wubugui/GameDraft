@@ -1,10 +1,12 @@
 /**
  * 世界空间粒子的两套着色程序：
  *
- * - **unlit**：贴图 × 顶点色，只做深度遮挡 / 软边（自发光的萤火、火星走这条；没有照明载荷的场景一切走这条）；
+ * - **unlit**：贴图 × 顶点色，只做深度遮挡 / 软边 + 显示变换；外观要受光而场景没有照明载荷时
+ *   再叠 NPC 那时走的色调融入（见 `FRAG_UNLIT` 头注释）；
  * - **lit**：在 unlit 之上叠角色那套照明——probe 底光（q 空间查表）+ 场景实体灯（M-world、wu，
- *   与场景 / 角色吃**同一次** packLights）+ 与背景同一组显示变换。公共块 `CHAR_LIGHT_COMMON_GLSL`
- *   与 `charShadeCore` **原样拼接**，不内联重写（character-lighting 硬契约）。
+ *   与场景 / 角色吃**同一次** packLights）+ 与背景同一组显示变换。公共块 `CHAR_LIGHT_COMMON_GLSL`、
+ *   `charShadeCore` 与实体灯循环 `ENTITY_SCENE_LIGHTS_GLSL` **原样拼接**，不内联重写
+ *   （character-lighting 硬契约；`worldSpaceShading.test.ts` 钉着"粒子不许自己写灯循环"）。
  *
  * ## 遮挡：拿粒子自己的纵深比壳
  *
@@ -22,6 +24,7 @@
  */
 import { GlProgram } from 'pixi.js';
 
+import { ENTITY_SCENE_LIGHTS_GLSL } from '../CharacterLitSprite';
 import { CHAR_LIGHT_COMMON_GLSL } from '../CharacterShadingFilter';
 import { MAX_STATIC_LIGHTS } from '../lighting/lightPacking';
 import LIGHTING_CORE from '../lighting/lightingCore.glsl?raw';
@@ -39,14 +42,19 @@ function sliceGlsl(src: string, tag: string): string {
 const WR_CORE = sliceGlsl(WORLD_RECONSTRUCT, 'WR_CORE');
 const LC = sliceGlsl(LIGHTING_CORE, 'LIGHTING_CORE');
 
-const VERT = /* glsl */ `#version 300 es
+/**
+ * 顶点程序。`plate` = 薄片（纸钱）：多一条逐顶点世界法线 `aNrm`（片能弯能翻，法线不是朝相机的那根）。
+ * 非薄片那一份的源码与改动前逐字相同。
+ */
+function vertSource(plate: boolean): string {
+  return /* glsl */ `#version 300 es
 in vec2 aPosition;   // 场景坐标 wu（网格挂在 entityLayer 下，容器变换 = 相机）
 in vec2 aUV;
 in vec4 aColor;      // 预乘 rgba
 in vec3 aQ;          // 粒子中心的伪世界 q（遮挡 / 照明）
 in vec2 aLocal;      // 帧内局部 [0,1]²
 in vec2 aMisc;       // x = 软边宽（q）；y = 留空
-
+${plate ? 'in vec3 aNrm;        // 薄片：逐顶点世界法线（已翻到朝相机那一面）\n' : ''}
 uniform mat3 uProjectionMatrix;
 uniform mat3 uWorldTransformMatrix;
 uniform mat3 uTransformMatrix;
@@ -58,7 +66,7 @@ out vec3 vQ;
 out vec2 vWorld;
 out vec2 vLocal;
 out vec2 vMisc;
-
+${plate ? 'out vec3 vNrm;\n' : ''}
 void main(void) {
     mat3 model = uWorldTransformMatrix * uTransformMatrix;
     vec2 screen = (model * vec3(aPosition, 1.0)).xy;
@@ -69,8 +77,11 @@ void main(void) {
     vWorld = aPosition;
     vLocal = aLocal;
     vMisc = aMisc;
-}
+${plate ? '    vNrm = aNrm;\n' : ''}}
 `;
+}
+
+const VERT = vertSource(false);
 
 /** 遮挡 / 软边共用段（两套片元都拼它）。返回可见度 0..1，-1 = 完全被挡（调用方 discard）。 */
 const OCCLUSION_GLSL = /* glsl */ `
@@ -97,8 +108,24 @@ float vfxVisibility(vec2 world, float qz, float softQ) {
 }
 `;
 
+/**
+ * 无光片元（两条路共用一个程序，逐视图 `uToneOn` 分）：
+ *
+ * - **tone**（`uToneOn = 1`）：外观要受光、但本场景 / 本时段没有照明载荷。NPC 此时走的是
+ *   `EntityLightingFilter` 的**色调融入**——拿运行时从原画建的辐照 probe 做保亮度白平衡；
+ *   粒子吃同一张图、同一组数、同一个式子（逐字对照那边的 FRAG），才叫"和 NPC 一样"。
+ * - **unlit**（`uToneOn = 0`）：`lit:false`——自发光的萤火、按原画标定 tint 的纸钱，不染。
+ *
+ * ⚠ `LC` 切片里的遮挡步进函数调用 `WR_CORE` 的函数：只拼 `LC` 不拼 `WR_CORE` 编译失败，
+ *   Pixi 只报一句 "Could not initialize shader"、整批粒子不画（本次改动当场踩到）。
+ *
+ * 两条都过显示变换（与背景 / 角色同一组 `uDisp*`）：显示恒等时 `srgb → 线性 → 显示变换`
+ * 逐位回到原色（所有资产 tint ≤ 1，不会被收尾的 [0,1] 钳掉），所以对今天的场景画面不变；
+ * 场景一旦配了 ev / tonemap，粒子与背景同一个曝光。
+ */
 const FRAG_UNLIT = /* glsl */ `#version 300 es
 precision highp float;
+precision highp int;
 in vec2 vUV;
 in vec4 vColor;
 in vec3 vQ;
@@ -108,16 +135,64 @@ in vec2 vMisc;
 out vec4 finalColor;
 
 uniform sampler2D uColorTex;
+uniform sampler2D uProbe;
+uniform float uToneOn;
+uniform float uToneStrength;
+uniform vec3  uKeyColor;
+uniform float uKeyIntensity;
+uniform vec3  uAmbientColor;
+uniform float uAmbientIntensity;
+
+uniform float uDispEv;
+uniform int   uDispTonemap;
+uniform vec3  uDispWhite;
+uniform float uDispSaturation;
+uniform float uDispContrast;
+uniform float uDispLift;
+uniform vec3  uDispLiftColor;
 ${OCCLUSION_GLSL}
+${WR_CORE}
+${LC}
 
 void main(void) {
     vec4 c = texture(uColorTex, vUV) * vColor;
     if (c.a < 0.004) { discard; }
     float vis = vfxVisibility(vWorld, vQ.z, vMisc.x);
     if (vis <= 0.0) { discard; }
-    finalColor = c * vis;
+    vec3 rgb = c.rgb / max(c.a, 1e-4);
+    // ---- 色调融入（EntityLightingFilter 同式；粒子在哪就采哪，没有"脚点上抬"那一步）
+    float tone = uToneOn * uToneStrength;
+    if (tone > 1e-4) {
+        vec2 su = clamp(vWorld / max(uSceneSize, vec2(1e-3)), 0.0, 1.0);
+        vec3 amb = texture(uProbe, su).rgb;
+        vec3 net = amb * uAmbientIntensity + uKeyColor * (uKeyIntensity * 0.5);
+        float l = max(dot(net, LC_LUMA), 0.04);
+        vec3 wb = clamp(net / l, vec3(0.5), vec3(1.7));
+        rgb = min(rgb * mix(vec3(1.0), wb, tone), vec3(1.0));
+    }
+    vec3 outRgb = clamp(lcDisplayTransform(lcSrgbToLinear(rgb),
+        uDispEv, uDispTonemap, uDispWhite,
+        uDispSaturation, uDispContrast, uDispLift, uDispLiftColor), 0.0, 1.0);
+    finalColor = vec4(outRgb * c.a, c.a) * vis;
 }
 `;
+
+/**
+ * 受光片元。`plate` = 薄片：法线用顶点插值来的世界法线 `vNrm`（查 probe 的 nQ = Rᵀ·n，灯循环用世界 n，
+ * 与角色 / 普通粒子同口径）；非薄片仍是"朝相机 + 球面鼓包"，那一份源码与改动前逐字相同。
+ */
+function fragLitSource(plate: boolean): string {
+  const normalGlsl = plate
+    ? /* glsl */ `    // ---- 法线：薄片自己的世界法线（CPU 已翻到朝相机那一面）；probe 查表用 nQ = Rᵀ·n
+    vec3 n = normalize(vNrm);
+    vec3 nQ = normalize(uSMRow0 * n.x + uSMRow1 * n.y + uSMRow2 * n.z);`
+    : /* glsl */ `    // ---- 法线：q 空间朝相机 + 球面鼓包
+    vec2 sl = vec2(vLocal.x - 0.5, 0.5 - vLocal.y) * 2.0;
+    vec3 nQ = normalize(vec3(sl.x * uSphere, sl.y * uSphere, -1.0));
+    // 世界法线 = R·nQ（纯旋转；灯循环世界对世界）
+    vec3 n = normalize(wrQToWorld(uSMRow0, uSMRow1, uSMRow2, nQ));`;
+  return FRAG_LIT.replace('__VFX_PLATE_IN__', plate ? 'in vec3 vNrm;\n' : '').replace('__VFX_NORMAL__', normalGlsl);
+}
 
 const FRAG_LIT = /* glsl */ `#version 300 es
 precision highp float;
@@ -128,7 +203,7 @@ in vec3 vQ;
 in vec2 vWorld;
 in vec2 vLocal;
 in vec2 vMisc;
-out vec4 finalColor;
+__VFX_PLATE_IN__out vec4 finalColor;
 
 uniform sampler2D uColorTex;
 uniform sampler2D uGround;
@@ -170,15 +245,7 @@ ${OCCLUSION_GLSL}
 ${CHAR_LIGHT_COMMON_GLSL}
 ${WR_CORE}
 ${LC}
-
-void litAreaAxes(vec3 n, float halfW, float halfH, float roll, out vec3 halfU, out vec3 halfV) {
-    vec3 up = abs(n.y) > 0.95 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
-    vec3 u = normalize(cross(up, n));
-    vec3 v = cross(n, u);
-    float c = cos(roll), s = sin(roll);
-    halfU = (u * c + v * s) * halfW;
-    halfV = (v * c - u * s) * halfH;
-}
+${ENTITY_SCENE_LIGHTS_GLSL}
 
 void main(void) {
     vec4 c = texture(uColorTex, vUV) * vColor;
@@ -186,39 +253,15 @@ void main(void) {
     float vis = vfxVisibility(vWorld, vQ.z, vMisc.x);
     if (vis <= 0.0) { discard; }
 
-    // ---- 法线：q 空间朝相机 + 球面鼓包
-    vec2 sl = vec2(vLocal.x - 0.5, 0.5 - vLocal.y) * 2.0;
-    vec3 nQ = normalize(vec3(sl.x * uSphere, sl.y * uSphere, -1.0));
-    // 世界法线 = R·nQ（纯旋转；灯循环世界对世界）
-    vec3 n = normalize(wrQToWorld(uSMRow0, uSMRow1, uSMRow2, nQ));
+__VFX_NORMAL__
 
     vec3 q = vQ;
     vec3 E = ((uMode < 0.5) ? gatherRT(q + nQ * 0.02, nQ) : probeE(q, nQ)) * uGiStrength;
     E *= mix(1.0, skyaoAt(q, nQ), clamp(uSkyaoBlend, 0.0, 1.0));
     if (uSunOn > 0.5) { E += uSunColor * max(dot(nQ, uSunDirQ), 0.0); }
 
-    if (uSceneLightCount > 0) {
-        vec3 P = wrQToWorld(uSMRow0, uSMRow1, uSMRow2, q) * uSMWuPerQUnit;
-        for (int i = 0; i < ${MAX_STATIC_LIGHTS}; i++) {
-            if (i >= uSceneLightCount) break;
-            vec4 A = uSceneLightA[i], B = uSceneLightB[i];
-            vec4 C = uSceneLightC[i], D = uSceneLightD[i];
-            if (B.w <= 0.0) continue;
-            int kind = int(A.w + 0.5);
-            int flags = int(D.w + 0.5);
-            if (kind == LC_POINT) {
-                E += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, 1.0);
-            } else if (kind == LC_SPOT) {
-                E += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, 1.0);
-            } else if (kind == LC_AREA) {
-                vec3 hu, hv;
-                litAreaAxes(normalize(D.xyz), C.z, C.w, C.y, hu, hv);
-                E += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, 1.0);
-            } else {
-                E += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
-            }
-        }
-    }
+    // 实体灯：与角色同一段循环（ENTITY_SCENE_LIGHTS_GLSL），同一次 packLights 的数
+    E += entitySceneLightsE(q, n);
     vec3 alb = c.rgb / max(c.a, 1e-4);
     vec3 litLin = shadeCharacterLinear(alb, E, uEChroma, uBeta);
     // 镜面/自发光份额（appearance.emissive）：这一份不吃漫反射着色，按比例混入原色（线性）。
@@ -233,6 +276,7 @@ void main(void) {
 
 let unlitProgram: GlProgram | null = null;
 let litProgram: GlProgram | null = null;
+let plateLitProgram: GlProgram | null = null;
 
 export function getVfxUnlitProgram(): GlProgram {
   if (!unlitProgram) unlitProgram = new GlProgram({ vertex: VERT, fragment: FRAG_UNLIT });
@@ -240,6 +284,15 @@ export function getVfxUnlitProgram(): GlProgram {
 }
 
 export function getVfxLitProgram(): GlProgram {
-  if (!litProgram) litProgram = new GlProgram({ vertex: VERT, fragment: FRAG_LIT });
+  if (!litProgram) litProgram = new GlProgram({ vertex: VERT, fragment: fragLitSource(false) });
   return litProgram;
+}
+
+/**
+ * 薄片（纸钱）的受光程序：声明了 `aNrm`，**只能**配 `VfxPlateBatchMesh`。
+ * 无光的薄片直接用 {@link getVfxUnlitProgram}（多出来的 `aNrm` 顶点流 Pixi 会跳过）。
+ */
+export function getVfxPlateLitProgram(): GlProgram {
+  if (!plateLitProgram) plateLitProgram = new GlProgram({ vertex: vertSource(true), fragment: fragLitSource(true) });
+  return plateLitProgram;
 }

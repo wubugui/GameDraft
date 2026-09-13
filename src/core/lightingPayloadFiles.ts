@@ -56,8 +56,16 @@ export const LIGHTING_PAYLOAD_CORE: readonly string[] = ['lighting.json', 'probe
  */
 export const LIGHTING_GEOMETRY_FILES: readonly string[] = ['geometry.json', 'normal.png', 'albedo.png'];
 
-/** 可选：老载荷没有；缺了**静默降级**（skyao 不遮蔽）。所以开发树里有就必须进包。 */
-export const LIGHTING_PAYLOAD_OPTIONAL: readonly string[] = ['skyao_probe.bin'];
+/**
+ * 可选：老载荷没有；缺了**静默降级**（skyao 不遮蔽 / 场景配了风但草木不摆）。所以开发树里有就必须进包。
+ * `sway*` 是背景草木随风动的拆层（底板 / 植被 alpha 与叶度 / 实例 id；`tools/character_lighting_lab/sway_field.py`
+ * 产出，`rendering/backgroundSway.ts` 按 `sway.json` 探测后装三张图）。
+ */
+export const LIGHTING_PAYLOAD_OPTIONAL: readonly string[] = [
+  'skyao_probe.bin', 'sway.json', 'sway_plate.png', 'sway_matte.png', 'sway_ids.png', 'sway_rigid.png',
+  // 打光场景：植物挪开露出来的地方，光照用的几何件的"扣掉植物"版本（backgroundSway 按 sway.json.litPlate 探测）
+  'sway_plate_normal.png', 'sway_plate_albedo.png', 'sway_plate_depth.png',
+];
 
 /** 只有 F2 调试面板切 RT 才读（20–27 MB/场景）；发行档刻意不带。 */
 export const LIGHTING_PAYLOAD_DEBUG_ONLY: readonly string[] = ['vol_rad.bin', 'vol_emit.bin'];

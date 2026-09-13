@@ -298,8 +298,39 @@ export interface LightDef {
   /** 投不投影。缺省 false。 */
   castShadow?: boolean;
 
-  /** 初始是否点亮，缺省 true。运行时可由 action 改。 */
+  /** 初始是否点亮，缺省 true。运行时由 `fadeLight` 动作改（强度倍率降到 0 = 熄）。 */
   enabled?: boolean;
+
+  /**
+   * 跟随绑定（2026-09-12）：这盏灯不待在 `pos`，而是每帧跟着某个实体走
+   * （更夫提的灯笼、推车上的马灯）。
+   *
+   * 语义：`HeldPropSystem` 每帧把它解成一盏**运行时灯**（作者数据一个字节不动），
+   * 所以 `pos` 在配了 follow 之后**不再参与光照**，只留给编辑器画一个"没跟上时在哪"的参考点。
+   * 目标不在场（NPC 换班走了 / 名字改错了）⇒ 这一帧这盏灯不发光，**不回落到 `pos`**
+   * ——回落会让一盏灯莫名钉在半空，比不亮更难查。
+   *
+   * ⚠ 手上举着的火把**不走这里**：那是挂件自带的灯（`prop_presets.json` 的 `light` 块），
+   * 随挂随有、随卸随无。这里是"场景里本来就有、但会动"的那种灯。
+   */
+  follow?: LightFollowDef;
+}
+
+/**
+ * 灯的跟随绑定。`target` 是**本场景内**的实体：`'player'` 或 NPC id
+ * （改名跟随由编辑器的重构引擎管，见 entity-refactor-engine）。
+ */
+export interface LightFollowDef {
+  target: string;
+  /**
+   * 跟哪个挂点（灯笼在手上就给 `right_hand`）。不给 = 跟实体脚点。
+   * 给了而该帧挂点没有标注 ⇒ 这一帧不发光（与挂件一起隐）。
+   */
+  socket?: string;
+  /** 离地高度（**wu**）。不给挂点时靠它把灯抬到该有的高度；给了挂点则叠加在挂点高度上 */
+  heightWu?: number;
+  /** 世界空间偏移（wu），加在解出来的位置上 */
+  offset?: [number, number, number];
 }
 
 /**
@@ -666,6 +697,54 @@ export interface SceneData {
    * 见 [[vfx-system]]。
    */
   vfx?: VfxInstanceDef[];
+  /**
+   * 场景风：**一份**空气速度场、一个钟。世界空间粒子与背景草木摆动读的是同一份，所以一阵风过来
+   * 纸钱掀起与枝叶一甩是同一拍；两边各自的强度倍率在 `gain` 里分开调。见 [[scene-wind]]。
+   */
+  wind?: SceneWindDef;
+}
+
+// ============================================================================
+// 场景风（空气速度场）—— 见 agent_docs [[scene-wind]]
+// ============================================================================
+
+/**
+ * 场景风描述的是**空气的速度**（M-world，wu/s），不是加速度：受力的一方按自己的气动参数去"感受"它
+ * （纸片法向阻力大、几乎贴着风走；没有阻力项的水滴风对它无效）。
+ *
+ * 近地风速按对数廓线衰减（`roughness` = 地表粗糙长度 z0）：平躺在地上的纸片只吃到很小一截风，
+ * 边角翘起来才兜得住——"大部分纸钱躺着不动、阵风来了才掀起几张"来自这条廓线，不是阈值调出来的。
+ * 阵风随平均风顺流推进（冻结湍流假设），所以一阵风是**扫过**场景的，而不是全场同时起落。
+ */
+export interface SceneWindDef {
+  /** 风往哪吹（M-world 方向；只取水平分量）。 */
+  direction: [number, number, number];
+  /** 离地 2 m（176 wu）处的平均风速（wu/s；1 m/s ≈ 88 wu/s）。 */
+  speed: number;
+  /** 阵风：阵风顶峰比平均风速多出的比例（0.8 = 顶到 1.8 倍）、阵风平均周期（秒）。缺省 0.6 / 6 */
+  gust?: { amount?: number; period?: number };
+  /** 风向随阵风摆动的幅度（度），缺省 12 */
+  veer?: number;
+  /** 湍流：脉动风速 / 平均风速（0..1，缺省 0.3）、涡的空间尺度（wu，缺省 140） */
+  turbulence?: { intensity?: number; scale?: number };
+  /** 地表粗糙长度 z0（wu），缺省 1（≈ 1 cm，土路 / 短草） */
+  roughness?: number;
+  /**
+   * 各消费者对这份风的倍率（1 = 如实）：粒子 / 背景草木摆动分开调，缺省都是 1。
+   *
+   * ⚠ `sway > 1` 还会**按倍数放开草木的位移上限**（最多 4 倍）：1 是安全档（位移压在底板补带里，
+   * 不可能露馅），再往上是作者自己掌握的越界档——摆得更狠，代价是植物挪开处会露出底板上没补过的内容。
+   * 想要"摆得大又不露馅"，正路是加宽补带重烘（`sway_field.py` 的 `PLATE_MARGIN`）。
+   */
+  gain?: { vfx?: number; sway?: number };
+  /**
+   * 草木的"波浪尺寸"（wu，缺省 20）：同一株上相距小于它的点一起动。
+   * 调大 ⇒ 大植物整株一起弯（只按离根远近决定弯多少）；调小 ⇒ 成片草坡被风一阵阵扫过的起伏。
+   * 单株要整株一起弯、不受这个数影响的，在草木工作台里标"整体摆"。
+   */
+  waveSize?: number;
+  /** 叶片细抖：波长（wu，缺省 22）与频率（Hz，缺省 3.2） */
+  leaf?: { size?: number; speed?: number };
 }
 
 /** 场景内实体分组；conditions 与成员自身条件按 AND 合成。 */
@@ -1292,7 +1371,10 @@ export interface DocumentRevealDef {
   revealCondition: ConditionExpr;
   animation: { durationMs: number; delayMs: number };
   revealedFlag?: string;
-  /**与 blendOverlayImage 共用 overlay id，缺省为 docReveal_{id} */
+  /**
+   * @deprecated 2026-09-12 解耦后**运行时忽略**：文档揭示的显示层以 `id`（documentId）为键，
+   * 与叠图动作的 overlay 句柄分属两张表。老数据里的这个键保留不动，但不再有任何效果。
+   */
   overlayId?: string;
   xPercent?: number;
   yPercent?: number;
@@ -1797,6 +1879,11 @@ export interface QuestObjectiveDef {
   guidance?: QuestGuidanceDef[];
   /** 可选目标：不参与「当前目标」选取，也不阻塞后面的目标 */
   optional?: boolean;
+  /**
+   * 显示条件（同一套条件表达式）：不满足时这条目标**整条不存在**——面板不列、不算当前目标、
+   * 不出引导。留空 = 恒显示。用于「白天听到过那条规矩，晚上才会想起要备这样东西」。
+   */
+  visibleConditions?: ConditionExpr[];
 }
 
 /** 接取/设为当前任务时的提示档位（玩法文档 D9）。缺省按类型派生：main=banner，其余=toast。 */
@@ -2565,6 +2652,14 @@ export interface NewCutsceneDef {
   targetY?: number;
   /** 默认 true——演出结束后恢复快照（场景、玩家位置、镜头）。 */
   restoreState?: boolean;
+  /**
+   * 过场期间是否连三把火 / 气味（HUD 的 metaColumn）一起淡出。
+   * **默认 false = 不隐藏**（2026-09-12 制作人定调）：这两样是"冥冥之中被感觉到"的体感读数，
+   * 演出里照样该亮着——且首现仪式（`setThreeFiresVisible/setSmellVisible` 的 `debut`）常被
+   * 编排在过场里，整层淡出等于那段仪式演给空气看。要纯净镜头（片头/片尾）的过场自己勾这面旗。
+   * 铜钱 / 任务条 / 场景名 / 入口条那一层仍旧无条件淡出，不受本字段影响。
+   */
+  hideMetaHud?: boolean;
 }
 
 /**
@@ -2697,8 +2792,9 @@ export interface TrajectorySlot {
 /**
  * "一个位置从哪来"——所有引用一个点的动作参数共用的形状：
  * - `curve`：**曲线上的点**（按时刻 / 进度在烘好的帧上取值，加上曲线此刻的播放位置）——
- *   那条轨迹正在播就取**这次播放**的位置（"实时点"：铜钱还在飞，落点就是它这次要落的地方），
- *   没在播就按场景曲线的原点算。相对曲线且没在播 = 没有绝对位置（内容错）。
+ *   那条轨迹正在播就取**这次播放**的位置（铜钱还在飞，落点就是它这次要落的地方），
+ *   没在播就按场景曲线的原点算；`point:'current'` 是**播放头**（见 {@link CurvePointPick}）。
+ *   **只认场景曲线**：相对曲线每次播放都是一次实例化、可以同时播多个，暂不支持引用（2026-09-12 制作人定）。
  * - `point`：一对场景坐标数字；
  * - `entity`：某个实体此刻的位置（`'player'` / NPC id / 过场临时演员 id / 热点 id）；
  * - `slot`：某条**场景曲线**的命名插槽（相对曲线的插槽没有绝对位置，不能这样引用）。
@@ -2711,13 +2807,16 @@ export type PositionRef =
   | { kind: 'curve'; trajectoryId: string; point?: CurvePointPick; atMs?: number; progress?: number };
 
 /**
- * "曲线上的哪个点"（{@link PositionRef} 的 `curve` 档，2026-09-11 制作人要的"曲线 eval 的实时点"）：
+ * "曲线上的哪个点"（{@link PositionRef} 的 `curve` 档）：
  * - `start` / `end`：首帧 / 末帧（末帧最常用 = 落点）；
  * - `time`：配 `atMs`（毫秒，超出两端按钳位取）；
- * - `progress`：配 `progress`（0..1，按总时长折算）。
+ * - `progress`：配 `progress`（0..1，按总时长折算）；
+ * - `current`：**曲线此刻播到的点**（播放头，2026-09-12 制作人定）。这是唯一会随时间动的一档：
+ *   正在播 = 这次播放此刻的位置；播完 / 被停 = 停在它结束的那一点；本场景里还没开播过 = **没有这个点**
+ *   （求不出来：镜头跟随原地不动，一次性动作退回 x/y）。前面四档都是曲线上的固定点。
  * 省略 `point` 时：给了 `atMs` 按 `time`、给了 `progress` 按 `progress`、都没给按 `end`。
  */
-export type CurvePointPick = 'start' | 'end' | 'time' | 'progress';
+export type CurvePointPick = 'start' | 'end' | 'time' | 'progress' | 'current';
 
 /**
  * `playTrajectory` 播放时**临时生成**一个运动对象（对象可以根本不在场景里）：
@@ -2739,6 +2838,38 @@ export interface TrajectorySpawnSpec {
   id?: string;
   name?: string;
   keep?: boolean;
+  /**
+   * 按贴图原像素画：不挂逐实体光照 / 深度遮挡，也不吃透视缩放与像素密度低通。
+   * 与 `NpcDef.renderRaw` **是同一个开关、同一套语义**（就地拼 def 时原样传下去），
+   * 用于自发光或贴图里已经把光烤进去的道具（纸钱、灯笼、鬼火）。缺省 false = 正常受光被挡。
+   *
+   * ⚠ 「要发光、但仍要被前景几何挡住」今天表达不了——不受光与不被挡绑在这一个开关上。
+   */
+  renderRaw?: boolean;
+}
+
+/**
+ * 轨迹上的一个**音效关键点**：曲线播到 `atMs` 这一刻播一条音效（铜钱落地的"当"、
+ * 门板砸地的"砰"）。作者在轨迹工作台里点在曲线上放它，存的是**时间**——
+ * "曲线上的位置"只是作者面的取时手段，运行时按时间轴触发，与播放位置 / 投影 / `flipX` 全无关。
+ *
+ * 语义（都在 `TrajectorySystem`）：
+ * - **只在正常按时间播的那条路上响**。一步落终态（过场跳过 / dev 快进 / 零时长 / `immediate`）
+ *   一律**不响**——跳过一段演出不该把攒下的五声一起砸出来；被停 / 被抢 / 整批作废之后也不再响。
+ * - 一次播放里每个关键点**至多响一次**（按 `atMs` 升序，播放头扫过即触发）。
+ * - `atMs` 超出轨迹时长时**按末帧处理**（钳到 [0, 时长]）：缩短曲线不会让关键点悄悄消失。
+ * - **不带位置**（2026-09-12 制作人定）：走 `AudioManager.playSfx`，没有距离衰减 / 声像 / 回音。
+ *   要"从那个物件所在处发声"是另一件事（空间音总线），今天不做。
+ */
+export interface TrajectoryCue {
+  /** 资产内唯一（工作台生成 `cue_1`…）；只用于作者面定位与去重，运行时不按它索引 */
+  id: string;
+  /** 距轨迹开始的毫秒 */
+  atMs: number;
+  /** 音效引用（裸 id 或 `{ id, volume }`，见 {@link AudioCueRef}）；id 空 = 这条关键点不发声 */
+  sound: AudioCueRef;
+  /** 作者看的名字（"落地"、"擦过瓦片"）；运行时不读 */
+  label?: string;
 }
 
 /** `playTrajectory` 交给 Game 的播放选项（handler 只做参数规范化）。 */
@@ -2803,6 +2934,8 @@ export interface TrajectoryAsset {
   worldKeyframes?: TrajectoryWorldKeyframe[];
   /** 命名插槽点（曲线暴露给场景的位置） */
   slots?: TrajectorySlot[];
+  /** 音效关键点（播到那一刻播一条音效）；与帧同为运行时真相 */
+  cues?: TrajectoryCue[];
   /** 编辑器工作态（怎么烘出上面那串帧），**运行时完全忽略** */
   source?: TrajectorySource;
   /** 工作台重开现场 + 曲线原点 */
@@ -3215,7 +3348,7 @@ export interface ZoneSmellConfig {
   /** @deprecated 静态方位已废（G.6，2026-09-10）：飘向只按 {@link source} 与玩家位置现算；留字段不报错、不生效。 */
   dir?: number;
   flicker?: boolean;
-  /** 气味源（本场景世界坐标）：气缕被从它那边吹过来，飘向的反方向就是它。不配 = 直的。 */
+  /** 气味源（本场景世界坐标）：气缕飘向的方向就是它，顺着烟走能摸到源。不配 = 直的。 */
   source?: { x: number; y: number };
 }
 
@@ -3900,6 +4033,19 @@ export interface ITextDisplaySettingsProvider {
   setTypewriterSpeedScale(scale: number): void;
 }
 
+/**
+ * 气味指示器的呈现偏好（玩法清单 G.6）。实现在 `src/core/SmellDisplaySettings.ts`。
+ *
+ * **只改画法、不改玩法**：气味源在哪、离多远是 SmellSystem 广播的玩法真值
+ * （flag `current_smell_dir` 恒为规范值＝指向源）；这条偏好只决定 HUD 把那条真值
+ * 画成"烟指着东西"还是"烟背着东西"，条件判定与存档都不受它影响。
+ */
+export interface ISmellDisplaySettingsProvider {
+  /** true = 气缕背着气味源飘（像真烟被风从源那边吹过来）；缺省 false = 指着源 */
+  isDirectionInverted(): boolean;
+  setDirectionInverted(on: boolean): void;
+}
+
 /** 一次性短音频的调用方句柄：stop() 停止当前实例（不 unload 共享缓存 Howl）。 */
 export interface AudioPlaybackHandle {
   stop(): void;
@@ -4043,7 +4189,13 @@ export type VfxSpawnShapeDef =
   | { kind: 'sphere'; radius: number }
   | { kind: 'disc'; radius: number }
   | { kind: 'box'; size: [number, number, number] }
-  | { kind: 'line'; to: [number, number, number] };
+  | { kind: 'line'; to: [number, number, number] }
+  /**
+   * 铺在实例的 `area` 多边形里（画面坐标）：逐点落到**那一点看得见的表面**上——地面就躺在地面，
+   * 画面上那里是石头 / 树 / 灌丛就挂在它表面，看过去是崖下虚空就不放。实例没给 `area` 时退成
+   * 以原点为心、半径 `radius`（wu，缺省 200）的圆盘（粒子工作台预览用）。只对 `burst` 生效。
+   */
+  | { kind: 'area'; radius?: number };
 
 export interface VfxSpawnDef {
   /** 池容量（同时存活上限） */
@@ -4191,7 +4343,47 @@ export interface VfxEmitterDef {
   life?: VfxLifeDef;
   collision?: VfxCollisionDef;
   behavior?: VfxFlockBehaviorDef;
+  /** 薄片模块（纸钱 / 落叶）：挂了它，`motion` 里只有 `turbulence` 仍起作用，碰撞由本模块自己管 */
+  plate?: VfxPlateDef;
   sound?: VfxSoundDef;
+}
+
+/**
+ * 薄片模块：挂了它的发射器，每颗粒子是一张**有朝向、会弯的薄片**（纸钱、落叶、布片）。
+ *
+ * 气动按准定常平板：法向压差力 ∝ (w·n)|w·n|（w = 空气速度 − 片速度），切向摩擦小一个量级；
+ * 压心偏在迎风一侧 → 翻转力矩让片横对来流；转动阻尼由片的尺度现算。翻飞、滑翔、飘落都是这几项
+ * 的结果，没有"飘动动画"。长度一律真实尺寸（wu）；透视场景的近大远小按脚点那一点的系数乘到
+ * 位移与画面尺寸上（与实体同一根透视轴），所以远处的纸既小、走得也慢。
+ */
+export interface VfxPlateDef {
+  /** 片的宽 × 高（wu，真实尺寸） */
+  size: [number, number];
+  /** 平着自由下落的终端速度（wu/s）：定出法向气动系数 kₙ = g / v²。薄纸 ≈ 90（≈ 1 m/s） */
+  terminalSpeed: number;
+  /** 切向摩擦 / 法向阻力之比（0..1），缺省 0.08 */
+  edgeDrag?: number;
+  /** 压心偏移（占弦长的比例，0..0.25）——翻转力矩的来源，缺省 0.12 */
+  pressureOffset?: number;
+  /** 与地面 / 物面的库仑摩擦：静 / 动，缺省 0.6 / 0.45 */
+  friction?: { static?: number; kinetic?: number };
+  /**
+   * 贴附。`pinned`：出生时就贴死的比例（湿了、被石子压住），缺省 0.15；
+   * `onObjects`：出生在物件表面（石头 / 树 / 灌丛）上的那批贴死的概率（挂住了），缺省 1；
+   * `hold`：其余纸片的附着力上限（wu/s²，逐张均匀抽样），缺省 250。
+   * 贴死的纸吹不走，但照样被风掀动边角（形变只看风，不看贴没贴）。
+   */
+  adhere?: { pinned?: number; onObjects?: number; hold?: number };
+  /**
+   * 形变。`stiffness`：弯到 1（边缘翘起半个宽度）所需的法向气动加速度（wu/s²），缺省 1400；
+   * `freq`：固有频率（Hz），缺省 7；`damping`：阻尼比，缺省 0.25；`max`：弯曲上限，缺省 0.7；
+   * `rest`：躺着时自带的卷曲（逐张在 ±rest 里抽样），缺省 0.25。
+   */
+  bend?: { stiffness?: number; freq?: number; damping?: number; max?: number; rest?: number };
+  /** 渲染细分：沿宽度的段数（≥1），缺省 4 */
+  segments?: number;
+  /** 被刮下崖 / 出画的纸片从上风处的空中补回来（常驻效果保持总数），缺省 true */
+  replenish?: boolean;
 }
 
 /** 效果资产：`public/assets/data/vfx/<id>.json`，`id == 文件名`。 */
@@ -4224,6 +4416,34 @@ export interface VfxInstanceDef {
   conditions?: ConditionExpr[];
   /** 只在这些时段存在（缺省全时段） */
   timePhases?: string[];
+  /**
+   * **发射区域**（画面坐标多边形，wu）：发射形状为 `area` 的发射器在这里铺满、被回收的纸从这里补回。
+   * 粒子被关在哪是另一块，见 `confine.area`（没画就用这一块）。
+   */
+  area?: [number, number][];
+  /** 有这一项 = 粒子被限定在**范围区域**里（软边界）。范围区域 = `confine.area`，没画就用 `area`；两块都没有时不生效。 */
+  confine?: VfxConfineDef;
+}
+
+/**
+ * 粒子区域的软边界。判据是**粒子正下方的地面点**落在画面上的位置（区域是地上的一块，
+ * 纸在它上空飞是对的），不是粒子自己的画面位置。
+ *
+ * 从框线往里一条宽 `feather` 的边带，边带里的权重从 1 平滑降到框线上的 0，三件事都按它来：
+ * 粒子感受到的场景风按权重衰减（飞到边上风弱了、自己落下）；边带里躺着的按 (1−权重) 慢慢淡出、
+ * 从区域深处补回；越过框线的很快淡出。补回点按权重挑，所以边上天然稀。**没有推回力、没有硬裁剪。**
+ * 群体发射器不吃这一项（它们有自己的活动域）。
+ */
+export interface VfxConfineDef {
+  /**
+   * **范围区域**（画面坐标多边形，wu），与发射区域（实例的 `area`）分开配：纸钱铺在一小片地上、
+   * 被风吹着能飞满一大片——那就是发射区域小、范围区域大。不写 = 用发射区域。
+   */
+  area?: [number, number][];
+  /** 边带宽（画面坐标 wu，从框线往里量）。缺省 120；0 = 硬边 */
+  feather?: number;
+  /** 离地高度上限（真实 wu）。到了这个高度往上的气流不再托它，自己落回来。缺省不限 */
+  ceiling?: number;
 }
 
 export type VfxFieldKind = 'fear' | 'attract' | 'wind';

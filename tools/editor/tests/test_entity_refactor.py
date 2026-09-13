@@ -83,6 +83,9 @@ def test_custom_branch_actions_pinned() -> None:
         # trajectoryId 指全局轨迹资产（不是实体引用），刻意不在这张表里。
         "playTrajectory": ("target",),
         "stopTrajectory": ("target",),
+        # 专用表单（2026-09-12）：一个 PositionRefField，实体档写老键、其余档写 at——两面都要登记
+        "cameraFollowActor": ("target", "at"),
+        "faceEntity": ("target", "faceTarget", "at"),
     }.items():
         for param in params:
             assert param in ENTITY_REF_PARAMS.get(act, {}), f"{act}.{param} 未登记"

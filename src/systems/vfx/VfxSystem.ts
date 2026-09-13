@@ -39,10 +39,26 @@ import type {
 import { vfxEffectJsonUrl } from '../../core/projectPaths';
 import type { VfxRenderer, VfxSpriteSheet } from '../../rendering/vfx/VfxRenderer';
 import type { Vec3 } from '../../utils/sceneSpace';
+import type { SceneWindParams } from '../../utils/sceneWind';
 import { evaluateConditionExpr, type ConditionEvalContext } from '../graphDialogue/evaluateGraphCondition';
+import type { ConfineField } from './vfxConfine';
 import { hashSeed } from './vfxRandom';
 import { VfxInstanceSim, createFieldRuntime, type VfxFieldRuntime } from './vfxSim';
 import type { VfxSpace } from './vfxSpace';
+
+/** 调试面板的一行 */
+export interface VfxInstanceDebugRow {
+  id: string;
+  effect: string;
+  state: string;
+  live: number;
+  eligible: boolean;
+  /** 限定了粒子区域才有：边带宽 / 高度上限 + 现场分档只数 */
+  confine: {
+    feather: number; ceiling: number | null;
+    inner: number; band: number; outsideVisible: number; fading: number;
+  } | null;
+}
 
 /** 玩家动静场：半径 / 满强度对应的速度（wu/s） */
 const PLAYER_MOTION_RADIUS_WU = 320;
@@ -82,6 +98,11 @@ export interface VfxSystemDeps {
   /** 空间音：从世界点播一条 sfx */
   playSfxAt: (id: string, at: Vec3) => void;
   log: (msg: string) => void;
+  /**
+   * 场景风（组装层持有的那一份 + 它的钟；背景摆动读同一份）。没有风的场景返回 null 或 params 为 null。
+   * 可不注入（旧调用方 / 测试）＝ 没有风。
+   */
+  getWind?: () => { params: SceneWindParams | null; time: number } | null;
 }
 
 interface InstanceRuntime {
@@ -96,6 +117,11 @@ interface InstanceRuntime {
   loopAt: number;
   /** 临时实例（`playVfx` 现场生成的，不在场景 JSON 里） */
   transient: boolean;
+  /**
+   * 跟随锚点（世界，wu）：非 null 时**它**才是锚，`def.anchor` 不再参与解算。
+   * 由 `moveInstanceAnchor` 逐帧写（手持光源的火焰），见 `systems/heldProp`。
+   */
+  followWorld: Vec3 | null;
 }
 
 export class VfxSystem implements IGameSystem {
@@ -216,7 +242,7 @@ export class VfxSystem implements IGameSystem {
     const defs = sd.vfx ?? [];
     for (const def of defs) {
       if (!def?.id || !def.effect) continue;
-      this.instances.set(def.id, { def, effect: null, sim: null, eligible: false, stopped: def.autoStart === false, loopAt: -Infinity, transient: false });
+      this.instances.set(def.id, { def, effect: null, sim: null, eligible: false, stopped: def.autoStart === false, loopAt: -Infinity, transient: false, followWorld: null });
     }
     this.conditionsDirty = true;
     // 资产并行装；装完各自建 sim（条件在 update 里评）
@@ -309,8 +335,16 @@ export class VfxSystem implements IGameSystem {
   private ensureSim(inst: InstanceRuntime): void {
     if (inst.sim || !inst.effect || !this.space) return;
     const seed = typeof inst.def.seed === 'number' ? (inst.def.seed >>> 0) : hashSeed(inst.def.id);
-    const anchor = this.space.anchorToWorld(inst.def.anchor);
-    inst.sim = new VfxInstanceSim(inst.def.id, inst.effect, anchor, seed, this.space, inst.def.countScale ?? 1);
+    // 跟随实例（手持火把的火焰）的锚点是**世界点**、每帧在动，不能再从 def.anchor 解一遍：
+    // 那份是场景坐标的静态锚，sim 被条件刷新 / 换空间重建时会把火焰弹回作者摆的地方。
+    const anchor = inst.followWorld
+      ? ([inst.followWorld[0], inst.followWorld[1], inst.followWorld[2]] as Vec3)
+      : this.space.anchorToWorld(inst.def.anchor);
+    inst.sim = new VfxInstanceSim(inst.def.id, inst.effect, anchor, seed, this.space, inst.def.countScale ?? 1,
+      {
+        area: Array.isArray(inst.def.area) ? inst.def.area : null,
+        confine: inst.def.confine && typeof inst.def.confine === 'object' ? inst.def.confine : null,
+      });
   }
 
   private refreshConditions(): void {
@@ -336,19 +370,30 @@ export class VfxSystem implements IGameSystem {
    * `playVfx`：按实例 id 开（被 stop 过的重开；条件不满足仍不开），或现场生成一个临时实例
    * （`effect` + `anchor`，不在场景 JSON 里，切场景即散）。
    */
-  playVfx(opts: { instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number }): void {
+  playVfx(opts: {
+    instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number;
+    /** 跟随锚点（世界 wu）：给了就用它当锚，随后由 `moveInstanceAnchor` 逐帧挪 */
+    followWorld?: Vec3;
+  }): string | null {
     if (opts.instanceId) {
       const inst = this.instances.get(opts.instanceId);
-      if (!inst) { this.deps.log(`playVfx: 当前场景没有实例「${opts.instanceId}」`); return; }
+      if (!inst) { this.deps.log(`playVfx: 当前场景没有实例「${opts.instanceId}」`); return null; }
       inst.stopped = false;
       if (inst.sim) inst.sim.start();
       this.conditionsDirty = true;
-      return;
+      return opts.instanceId;
     }
-    if (!opts.effect || !opts.anchor) { this.deps.log('playVfx: 需要 instanceId，或 effect + anchor'); return; }
+    if (!opts.effect || !(opts.anchor || opts.followWorld)) {
+      this.deps.log('playVfx: 需要 instanceId，或 effect + anchor/followWorld');
+      return null;
+    }
     const id = `__vfx_${opts.effect}_${++this.transientSeq}`;
-    const def: VfxInstanceDef = { id, effect: opts.effect, anchor: opts.anchor, seed: opts.seed, countScale: opts.countScale, autoStart: true };
-    const inst: InstanceRuntime = { def, effect: null, sim: null, eligible: true, stopped: false, loopAt: -Infinity, transient: true };
+    const anchor: VfxAnchorDef = opts.anchor ?? { x: 0, y: 0 };
+    const def: VfxInstanceDef = { id, effect: opts.effect, anchor, seed: opts.seed, countScale: opts.countScale, autoStart: true };
+    const inst: InstanceRuntime = {
+      def, effect: null, sim: null, eligible: true, stopped: false, loopAt: -Infinity, transient: true,
+      followWorld: opts.followWorld ? [opts.followWorld[0], opts.followWorld[1], opts.followWorld[2]] : null,
+    };
     this.instances.set(id, inst);
     const gen = this.generation;
     void this.loadEffect(opts.effect).then(async (effect) => {
@@ -358,6 +403,24 @@ export class VfxSystem implements IGameSystem {
       if (gen !== this.generation) return;
       this.conditionsDirty = true;
     });
+    return id;
+  }
+
+  /**
+   * 跟随实例：把锚点挪到世界点（手持光源逐帧调）。已发射的粒子留在原地（见 `VfxInstanceSim.moveAnchor`）。
+   * 实例不在场（切场景散了 / 还没装完）时安静返回 false —— 调用方据此知道要不要重开。
+   */
+  moveInstanceAnchor(instanceId: string, world: Vec3): boolean {
+    const inst = this.instances.get(instanceId);
+    if (!inst) return false;
+    inst.followWorld = [world[0], world[1], world[2]];
+    inst.sim?.moveAnchor(world);
+    return true;
+  }
+
+  /** 发射率倍率（火焰输出 `L(t)` 驱动）。实例不在场时忽略。 */
+  setInstanceRateScale(instanceId: string, k: number): void {
+    this.instances.get(instanceId)?.sim?.setRateScale(k);
   }
 
   private transientSeq = 0;
@@ -366,9 +429,27 @@ export class VfxSystem implements IGameSystem {
     const inst = this.instances.get(instanceId);
     if (!inst) return;
     inst.stopped = true;
+    this.softStopped.delete(instanceId);
     if (inst.transient) { this.instances.delete(instanceId); return; }
     inst.sim?.stop();
   }
+
+  /**
+   * 软停：**不再发射**，在飞的粒子照自己的寿命飞完，空了才删（临时实例）。
+   *
+   * 火把从"点着"切到"残炭"要的就是这个：火舌停了，空中那几点火星该飞完再灭，
+   * `stopVfx` 对临时实例是当场删除（整团凭空消失），演出上是假的。
+   */
+  stopVfxSoft(instanceId: string): void {
+    const inst = this.instances.get(instanceId);
+    if (!inst) return;
+    inst.stopped = true;
+    inst.sim?.stop();
+    if (inst.transient) this.softStopped.add(instanceId);
+  }
+
+  /** 软停待收的临时实例 id（等在飞的粒子老化完） */
+  private softStopped = new Set<string>();
 
   setVfxState(instanceId: string, state: VfxFlockState): void {
     const inst = this.instances.get(instanceId);
@@ -434,11 +515,28 @@ export class VfxSystem implements IGameSystem {
     return this.lastStats;
   }
 
-  /** 调试面板读：每个实例的状态 */
-  debugSnapshot(): { id: string; effect: string; state: string; live: number; eligible: boolean }[] {
-    const out: { id: string; effect: string; state: string; live: number; eligible: boolean }[] = [];
+  /** 调试面板读：每个实例的状态（限定了粒子区域的另带区域统计） */
+  debugSnapshot(): VfxInstanceDebugRow[] {
+    const out: VfxInstanceDebugRow[] = [];
     for (const inst of this.instances.values()) {
-      out.push({ id: inst.def.id, effect: inst.def.effect, state: this.getInstanceState(inst.def.id) ?? 'n/a', live: inst.sim?.liveCount ?? 0, eligible: inst.eligible });
+      const cf = inst.sim?.confine ?? null;
+      out.push({
+        id: inst.def.id, effect: inst.def.effect, state: this.getInstanceState(inst.def.id) ?? 'n/a',
+        live: inst.sim?.liveCount ?? 0, eligible: inst.eligible,
+        confine: cf ? { feather: cf.feather, ceiling: cf.ceiling, ...inst.sim!.confineStats()! } : null,
+      });
+    }
+    return out;
+  }
+
+  /** 在场实例的范围区域（权重场）与发射区域（F2 叠加层画框线、边带内沿、发射区域用） */
+  confineFields(): { id: string; field: ConfineField; emit: [number, number][] | null }[] {
+    const out: { id: string; field: ConfineField; emit: [number, number][] | null }[] = [];
+    for (const inst of this.instances.values()) {
+      const cf = inst.sim?.confine;
+      // 范围区域没单独画时就是发射区域本身：不再重复画一遍青线
+      const separate = Array.isArray(inst.def.area) && Array.isArray(inst.def.confine?.area);
+      if (cf) out.push({ id: inst.def.id, field: cf, emit: separate ? inst.def.area! : null });
     }
     return out;
   }
@@ -494,7 +592,8 @@ export class VfxSystem implements IGameSystem {
     }
     // ---- 模拟
     const t0 = performance.now();
-    const ctx = { fields: this.fields, player, time: this.time };
+    const wind = this.deps.getWind?.() ?? null;
+    const ctx = { fields: this.fields, player, time: this.time, wind: wind?.params ?? null, windTime: wind?.time ?? 0 };
     const sims: VfxInstanceSim[] = [];
     let live = 0;
     for (const inst of this.instances.values()) {
@@ -506,6 +605,17 @@ export class VfxSystem implements IGameSystem {
       this.handleEvents(inst, sim);
     }
     const simMs = performance.now() - t0;
+    // ---- 收尸：软停的临时实例等在飞的粒子老化完再删（火舌停了，空中那几点火星该飞完）
+    if (this.softStopped.size > 0) {
+      for (const id of [...this.softStopped]) {
+        const inst = this.instances.get(id);
+        if (!inst) { this.softStopped.delete(id); continue; }
+        if (!inst.sim || inst.sim.liveCount === 0) {
+          this.instances.delete(id);
+          this.softStopped.delete(id);
+        }
+      }
+    }
     // ---- 渲染
     if (this.renderer) this.renderer.render(sims, this.sheets);
     this.lastStats = {

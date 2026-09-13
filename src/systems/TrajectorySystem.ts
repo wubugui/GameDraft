@@ -31,6 +31,9 @@
  *   停法走注入的 `suspendPatrol`（= `Game.stopNpcPatrol`：取消在途位移 + 巡逻代际自增）。
  * - `Npc.steerBy`（同伴跟随自走位）**不触发抢占**，会与轨迹同时写 x/y。当前运行时无调用方；
  *   将来接同伴跟随时，要么让它也走抢占，要么在跟随侧判 `isDriving(npc.trajectoryKey)` 回避。
+ * - **音效关键点只在"时间真的流过去"的那条路上响**（`TrajectoryCue`）：一步落终态、被停、被抢、
+ *   整批作废都不补声。本系统只管"什么时候、恰好一次"，发声本身经注入的 `deps.playCue`——
+ *   它不认识 AudioManager（律 11）。
  *
  * 依赖一律构造函数注入（律 11），不 import 任何系统实例。
  */
@@ -38,6 +41,7 @@ import type {
   GameContext,
   IGameSystem,
   ITrajectoryTarget,
+  TrajectoryCue,
   TrajectoryEasing,
   TrajectoryKeyframe,
   TrajectoryPose,
@@ -54,10 +58,12 @@ import { sampleKeyframeTrack } from '../utils/keyframeSampler';
  */
 export type TrajectoryEndReason = 'completed' | 'finished' | 'preempted' | 'stopped' | 'cancelled';
 
-/** 播放系统认的"一条轨迹"：只有 id（日志用）和 2D 相对帧。资产的其它字段到不了这里。 */
+/** 播放系统认的"一条轨迹"：只有 id（日志用）、2D 相对帧和音效关键点。资产的其它字段到不了这里。 */
 export interface TrajectoryPlayDef {
   id: string;
   keyframes: readonly TrajectoryKeyframe[];
+  /** 音效关键点（见 `TrajectoryCue`）：只在正常按时间播的那条路上触发 */
+  cues?: readonly TrajectoryCue[];
 }
 
 export interface TrajectoryPlayOptions {
@@ -78,10 +84,15 @@ export interface TrajectoryStopOptions {
   reset?: boolean;
 }
 
-/** 本系统需要外部提供的能力。只有一件事，但这件事漏了就是"轨迹与巡逻对着写"。 */
+/** 本系统需要外部提供的能力。全走构造函数注入（律 11），本系统不认识音频 / NPC 的任何实现。 */
 export interface TrajectorySystemDeps {
   /** 停掉某 NPC 的巡逻（取消在途位移 + 巡逻代际自增）。接 `Game.stopNpcPatrol`。 */
   suspendPatrol(npcId: string): void;
+  /**
+   * 播放头扫过一个音效关键点。接 `Game` → `AudioManager.playSfx`（不带位置）。
+   * 本系统只负责"什么时候、恰好一次"；发不发得出声、音量口径全在实现侧。
+   */
+  playCue(cue: TrajectoryCue, trajectoryId: string): void;
 }
 
 /** `Npc.trajectoryKey` 的前缀；靠它从 key 反推 NPC id（key 才是"我在驱动谁"的真相）。 */
@@ -145,6 +156,29 @@ export function normalizeFrames(kf: readonly TrajectoryKeyframe[] | undefined): 
   return out;
 }
 
+/**
+ * 把资产上的音效关键点摊成"按时刻升序、时刻已钳进 [0, 时长]"的一串。
+ *
+ * 两条缺省都不报错，所以写在这里而不是指望调用方：
+ * - **`atMs` 超出时长按末帧处理**（钳位）——作者把曲线改短了，关键点不该悄悄消失；
+ * - **id 空的、sound 空的原样留着**：发不发得出声是实现侧（`deps.playCue`）的事，
+ *   本系统只管"扫过就叫一次"。真要静音，作者面 / 校验器那一层会说话。
+ */
+function normalizeCues(
+  cues: readonly TrajectoryCue[] | undefined,
+  durationMs: number,
+): TrajectoryCue[] {
+  if (!Array.isArray(cues) || cues.length === 0) return [];
+  const cap = Math.max(0, num(durationMs, 0));
+  const out: TrajectoryCue[] = [];
+  for (const c of cues) {
+    if (!c || typeof c !== 'object') continue;
+    out.push({ ...c, atMs: Math.min(cap, Math.max(0, num(c.atMs, 0))) });
+  }
+  // 稳定排序：同一时刻的两条按作者面的先后响
+  return out.sort((a, b) => a.atMs - b.atMs);
+}
+
 /** 一条在跑的播放。`epoch` 是世代号快照，用于"旧时间线不写新状态"（律 4）。 */
 interface Play {
   def: TrajectoryPlayDef;
@@ -156,6 +190,10 @@ interface Play {
   durationMs: number;
   /** 顺播游标：每个播放实例独占一个，给不给采样结果都一样，只影响复杂度 */
   cursor: { i: number };
+  /** 本次播放的音效关键点（按时刻升序，时刻已钳进 [0, 时长]） */
+  cues: TrajectoryCue[];
+  /** 已响过的关键点数：顺播单调推进，所以"每条至多一次"是这个游标的性质，不靠额外集合 */
+  cueIndex: number;
   /** 播放锚点：帧的相对偏移加上它才是场景坐标 */
   anchorX: number;
   anchorY: number;
@@ -164,10 +202,24 @@ interface Play {
   epoch: number;
 }
 
+/** 某次播放的播放头快照（位置引用的"曲线此刻播到的点"用）：这次的 2D 相对帧 + 播放位置 + 播到哪了。 */
+export interface TrajectoryPlayhead {
+  keyframes: readonly TrajectoryKeyframe[];
+  anchor: { x: number; y: number };
+  /** 已播毫秒，夹到 [0, 总时长] */
+  tMs: number;
+}
+
 export class TrajectorySystem implements IGameSystem {
   private readonly deps: TrajectorySystemDeps;
   /** 按 `trajectoryKey` 索引的在途播放：一目标一驱动 */
   private readonly plays = new Map<string, Play>();
+  /**
+   * 按**资产 id** 记最近一次结束的播放（播完 / 一步落终态 = 末帧；被停 / 被抢 = 停下那一刻）。
+   * 只给"曲线此刻播到的点"用：播完了播放头就停在那儿。`cancelAll`（切场景 / 读档 / 销毁）清空——
+   * 旧时间线的播放头不许漏进新场景（律 4）。
+   */
+  private readonly ended = new Map<string, TrajectoryPlayhead>();
   /** 世代号；`cancelAll` 自增即"上一批全部作废"（见 [[teardown-ordering]]） */
   private epoch = 0;
   private fastForward = false;
@@ -201,8 +253,12 @@ export class TrajectorySystem implements IGameSystem {
       if (this.plays.get(play.key) !== play) continue;
       play.tMs += stepMs;
       this.applyPose(play, Math.min(play.tMs, play.durationMs));
+      this.fireCues(play, play.tMs);
+      // 关键点回调是同步的：它若顺手掀了桌子（停轨迹 / 切场景 / 又播一条），这一条已经封过口，别再收一次
+      if (this.plays.get(play.key) !== play) continue;
       if (play.tMs >= play.durationMs) {
         this.plays.delete(play.key);
+        this.noteEnded(play, play.durationMs);
         play.target.endTrajectory(false);
         play.settle('completed');
       }
@@ -234,8 +290,9 @@ export class TrajectorySystem implements IGameSystem {
    * 2. 定锚点：显式给的用显式的，否则读目标此刻位置（此刻已是上一条轨迹的终姿，正好接上）；
    * 3. `beginTrajectory` 登记抢占回调（内部会掐断在途 `moveTo`/`jumpTo` 并 resolve 它们）；
    * 4. NPC 目标停巡逻——不停的话巡逻协程会把实体抢回去；
-   * 5. 快进态 / `immediate` / 零时长 ⇒ 一步落终姿并 resolve `'finished'`；
-   * 6. 否则登记进 map，并**当帧**落首帧姿态（不等下一次 `update`，免得错位一帧）。
+   * 5. 快进态 / `immediate` / 零时长 ⇒ 一步落终姿并 resolve `'finished'`——**音效关键点一个都不响**
+   *    （跳过一段演出不该把攒下的五声一齐砸出来）；
+   * 6. 否则登记进 map，并**当帧**落首帧姿态（不等下一次 `update`，免得错位一帧）+ 放掉 0 毫秒处的关键点。
    */
   play(
     def: TrajectoryPlayDef,
@@ -275,14 +332,17 @@ export class TrajectorySystem implements IGameSystem {
     // 2. 锚点：显式 > 目标此刻位置。读锚点必须在 stopFor 之后（要的是上一条的终姿）
     const anchor = opts.anchor ?? target.readTrajectoryAnchor();
 
+    const durationMs = Math.max(0, frames[frames.length - 1].atMs);
     const play: Play = {
       def,
       target,
       key,
       frames,
       tMs: 0,
-      durationMs: Math.max(0, frames[frames.length - 1].atMs),
+      durationMs,
       cursor: { i: 0 },
+      cues: normalizeCues(def?.cues, durationMs),
+      cueIndex: 0,
       anchorX: num(anchor?.x, 0),
       anchorY: num(anchor?.y, 0),
       settle,
@@ -301,14 +361,16 @@ export class TrajectorySystem implements IGameSystem {
     // 5. 一步到终态
     if (opts.immediate || this.fastForward || play.durationMs <= 0) {
       this.applyPose(play, play.durationMs);
+      this.noteEnded(play, play.durationMs);
       target.endTrajectory(false);
       settle('finished');
       return promise;
     }
 
-    // 6. 正常播：登记 + 当帧落首帧
+    // 6. 正常播：登记 + 当帧落首帧 + 放掉 0 毫秒处的音效关键点（"开播就响"的那一声不能等到下一帧）
     this.plays.set(key, play);
     this.applyPose(play, 0);
+    this.fireCues(play, 0);
     return promise;
   }
 
@@ -325,6 +387,7 @@ export class TrajectorySystem implements IGameSystem {
     if (!play) return false;
     this.plays.delete(key);
     if (opts.toEnd) this.applyPose(play, play.durationMs);
+    this.noteEnded(play, opts.toEnd ? play.durationMs : play.tMs);
     play.target.endTrajectory(opts.reset ?? false);
     play.settle(reason);
     return true;
@@ -339,6 +402,7 @@ export class TrajectorySystem implements IGameSystem {
       if (this.plays.get(play.key) !== play) continue;
       this.plays.delete(play.key);
       this.applyPose(play, play.durationMs);
+      this.noteEnded(play, play.durationMs);
       play.target.endTrajectory(false);
       play.settle('finished');
     }
@@ -355,6 +419,7 @@ export class TrajectorySystem implements IGameSystem {
     this.epoch++;
     const pending = [...this.plays.values()];
     this.plays.clear();
+    this.ended.clear();
     for (const play of pending) {
       try {
         play.target.endTrajectory(reset);
@@ -390,24 +455,68 @@ export class TrajectorySystem implements IGameSystem {
   }
 
   /**
-   * 这条**轨迹资产**此刻在跑的那次播放：这次用的 2D 相对帧 + 播放位置。没在跑返回 null。
+   * 这条**轨迹资产**此刻在跑的那次播放：这次用的 2D 相对帧 + 播放位置 + 播到哪了。没在跑返回 null。
    *
    * 给位置引用的"曲线上的点"用（`PositionRef` 的 `curve` 档）：铜钱还在飞的时候，
    * "它的落点"指的是**这次**播放会落的地方，而不是作者场景里那条曲线的落点；这次播放的帧
-   * 还是按当前场景投影过的，跨场景也准。同一条资产同时挂在多个目标上时给**第一条**
-   * （谁在前由 Map 的插入序定）——真要区分是哪一个，用 `kind:'entity'` 指名那个实体。
+   * 还是按当前场景投影过的，跨场景也准。`tMs` 给播放头（`point:'current'`）用。
+   * 位置引用只认场景曲线，而场景曲线按定义同一时刻只有一个实例；万一同一条资产同时挂在多个
+   * 目标上，给**第一条**（Map 的插入序）。
    */
-  livePlay(trajectoryId: string): { keyframes: readonly TrajectoryKeyframe[]; anchor: { x: number; y: number } } | null {
+  livePlay(trajectoryId: string): TrajectoryPlayhead | null {
     const id = String(trajectoryId || '').trim();
     if (!id) return null;
     for (const play of this.plays.values()) {
       if (play.def.id !== id) continue;
-      return { keyframes: play.def.keyframes, anchor: { x: play.anchorX, y: play.anchorY } };
+      return {
+        keyframes: play.def.keyframes,
+        anchor: { x: play.anchorX, y: play.anchorY },
+        tMs: Math.min(Math.max(play.tMs, 0), play.durationMs),
+      };
     }
     return null;
   }
 
+  /**
+   * 这条轨迹资产在本场景**最近一次结束**的播放（播完 = 末帧；被停 / 被抢 = 停下那一刻）；没播过返回 null。
+   * "曲线此刻播到的点"在不播的时候就停在这儿（2026-09-12 制作人定：播完停在终点）。切场景 / 读档清空。
+   */
+  endedPlay(trajectoryId: string): TrajectoryPlayhead | null {
+    const id = String(trajectoryId || '').trim();
+    return id ? this.ended.get(id) ?? null : null;
+  }
+
   // ———————————————————— 内部 ————————————————————
+
+  /** 记下一次播放的结束点（旧世代的播放不记：律 4）。 */
+  private noteEnded(play: Play, tMs: number): void {
+    if (play.epoch !== this.epoch || !play.def.id) return;
+    this.ended.set(play.def.id, {
+      keyframes: play.def.keyframes,
+      anchor: { x: play.anchorX, y: play.anchorY },
+      tMs: Math.min(Math.max(tMs, 0), play.durationMs),
+    });
+  }
+
+  /**
+   * 播放头推进到 `tMs` 时，把这一段里所有音效关键点按序放出去（每条至多一次，靠 `cueIndex` 单调推进）。
+   *
+   * **只有正常按时间播的那条路调它**：一步落终态（`immediate` / 快进 / 零时长 / `finishAll`）、
+   * 被停、被抢、整批作废一律不叫——那些路径上"时间"根本没流过去，补一串声音只会变成一团杂音。
+   *
+   * 一条回调抛错不许连坐后面的（与 `cancelAll` 同一个理由：拆除 / 内容错不该让整条播放崩掉）。
+   */
+  private fireCues(play: Play, tMs: number): void {
+    if (play.epoch !== this.epoch) return;
+    while (play.cueIndex < play.cues.length && play.cues[play.cueIndex].atMs <= tMs) {
+      const cue = play.cues[play.cueIndex++];
+      try {
+        this.deps.playCue(cue, play.def.id);
+      } catch (e) {
+        console.warn('[TrajectorySystem] 音效关键点回调抛错，已忽略并继续', play.def.id, cue?.id, e);
+      }
+    }
+  }
 
   /**
    * 采样 + 落姿。世代号不符就整个跳过 —— 律 4「旧时间线不写新状态」的落点。
@@ -444,6 +553,7 @@ export class TrajectorySystem implements IGameSystem {
   private onTargetPreempt(play: Play): void {
     if (this.plays.get(play.key) === play) {
       this.plays.delete(play.key);
+      this.noteEnded(play, play.tMs);
       play.target.endTrajectory(false);
     }
     play.settle('preempted');

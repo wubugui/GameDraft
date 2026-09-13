@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from .image_path_picker import CutsceneImagePathRow
+from .widget_discard import discard_widget
 
 
 class SocketImageListField(QWidget):
@@ -82,8 +83,7 @@ class SocketImageListField(QWidget):
     def _remove(self, picker: CutsceneImagePathRow, row_w: QWidget) -> None:
         if picker in self._rows:
             self._rows.remove(picker)
-        row_w.setParent(None)
-        row_w.deleteLater()
+        discard_widget(row_w)
         self.changed.emit()
 
     def set_paths(self, paths) -> None:

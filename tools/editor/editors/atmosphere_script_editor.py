@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from ..shared.widget_discard import discard_layout_widgets, discard_widget
 
 _OPS = ["say", "pick", "wait", "chance", "when_near_sector"]
 _OP_LABELS = {
@@ -176,12 +177,7 @@ class _AtmosStepRow(QFrame):
         self._emit_changed()
 
     def _clear_layout(self, lay) -> None:  # noqa: ANN001
-        while lay.count():
-            it = lay.takeAt(0)
-            w = it.widget()
-            if w is not None:
-                w.setParent(None)
-                w.deleteLater()
+        discard_layout_widgets(lay)
 
     def _make_role_combo(self, current: str) -> QComboBox:
         cb = QComboBox()
@@ -519,8 +515,7 @@ class AtmosphereScriptEditor(QWidget):
     def _clear(self) -> None:
         for r in self._rows:
             self._rows_lay.removeWidget(r)
-            r.setParent(None)
-            r.deleteLater()
+            discard_widget(r)
         self._rows.clear()
 
     def _append_row(self, step: dict, at: int | None = None) -> _AtmosStepRow:
@@ -581,8 +576,7 @@ class AtmosphereScriptEditor(QWidget):
         except ValueError:
             return
         self._rows_lay.removeWidget(row)
-        row.setParent(None)
-        row.deleteLater()
+        discard_widget(row)
         self._update_empty()
         self._on_changed()
 

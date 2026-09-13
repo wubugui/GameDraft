@@ -283,8 +283,17 @@ class RealRulesTests(unittest.TestCase):
         # 规则只登记两个**入口**文件；其余由展开器按载荷推导（见下面 LightingPayloadExpanderTests
         # 与 RealTreeLightingTests）。入口没被 glob 接上 = 展开器根本没机会跑。
         entries = {"lighting.json", "geometry.json"}
-        # 刻意不进包的（统一角色路径已停用 / 派生标量 / 只作离线烘 albedo 的输入）
-        must_not = {"skyvis_grid.bin", "gi_hitmap.bin", "skyvis.png"}
+        # 刻意不进包的（统一角色路径已停用 / 派生标量 / 只作离线烘 albedo 的输入 /
+        # 作者手画给拆层用的涂层与锁定掩码）
+        must_not = {"skyvis_grid.bin", "gi_hitmap.bin", "skyvis.png", "sway_lock.png", "sway_paint.png",
+                    "sway_overrides.json"}
+        # ⚠ 上面那份是"盘上有才验"的。作者面的输入随时可能在某台机器上一个都不存在
+        # （sway_lock.png 已经被工作台迁移光了），那样规则写错也不会红 —— 所以规则串本身也钉一遍。
+        for pat in ("resources/runtime/scenes/*/lighting/*/skyvis.png",
+                    "resources/runtime/scenes/*/lighting/*/sway_lock.png",
+                    "resources/runtime/scenes/*/lighting/*/sway_paint.png",
+                    "resources/runtime/scenes/*/lighting/*/sway_overrides.json"):
+            self.assertIn(pat, never, f"作者面的输入必须钉在 never_extract 里：{pat}")
 
         seen: set[str] = set()
         for f in real:
@@ -386,7 +395,8 @@ class LightingPayloadExpanderTests(ManifestBaseTests):
 
     ALL_SIBLINGS = (
         "probes_valid.bin", "ground_d.png", "geometry.json", "normal.png", "albedo.png", "skyvis.png",
-        "skyao_probe.bin",
+        "skyao_probe.bin", "sway.json", "sway_plate.png", "sway_matte.png", "sway_ids.png", "sway_rigid.png",
+        "sway_plate_normal.png", "sway_plate_albedo.png", "sway_plate_depth.png",
         "atlas_l1.bin", "atlas_l2.bin", "atlas_bin.bin", "vol_rad.bin", "vol_emit.bin",
         "skyvis_grid.bin", "gi_hitmap.bin", "lighting.json.bak",
     )

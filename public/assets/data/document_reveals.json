@@ -33,5 +33,22 @@
     "yPercent": 50,
     "widthPercent": 40,
     "revealedFlag": "document_revealed_告示-水猴子"
+  },
+  {
+    "id": "主线_和尚嘴神龛",
+    "blurredImagePath": "/resources/runtime/images/illustrations/背尸上山/01_龛前_烟长_假.png",
+    "clearImagePath": "/resources/runtime/images/illustrations/背尸上山/01_龛前_烟长.png",
+    "revealCondition": {
+      "all": []
+    },
+    "animation": {
+      "durationMs": 2000,
+      "delayMs": 0
+    },
+    "xPercent": 50,
+    "yPercent": 50,
+    "widthPercent": 100,
+    "revealSfx": "document_reveal",
+    "overlayId": "_img"
   }
 ]

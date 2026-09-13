@@ -367,6 +367,7 @@ def test_trajectory_spawn_ids_enter_the_actor_universe(curve_model, qt_app) -> N
     """"镜头跟着刚生成的铜钱走"要配得出来：spawn.id 必须进 actor 候选（严格下拉不能手输）。"""
     from tools.editor.shared.action_editor import ActionRow
     from tools.editor.shared.id_ref_selector import IdRefSelector
+    from tools.editor.shared.position_ref_field import MODE_ENTITY, PositionRefField
 
     m, sid = curve_model
     m.cutscenes.append({
@@ -381,9 +382,10 @@ def test_trajectory_spawn_ids_enter_the_actor_universe(curve_model, qt_app) -> N
     assert "coin_1" in [i for i, _ in m.actor_id_items_for_scene(sid)]
 
     row = ActionRow({"type": "cameraFollowActor", "params": {}}, model=m, scene_id=sid)
-    w = row._param_widgets.get("target")
-    assert isinstance(w, IdRefSelector)
-    assert "coin_1" in list(getattr(w, "_ids", [])), "相机跟随目标下拉里选不到轨迹生成物"
+    w = row._param_widgets.get("at")
+    assert isinstance(w, PositionRefField) and isinstance(w.entity_sel, IdRefSelector)
+    assert w.mode() == MODE_ENTITY, "新建的跟随缺省在「实体」档（写 target）"
+    assert "coin_1" in list(getattr(w.entity_sel, "_ids", [])), "相机跟随目标下拉里选不到轨迹生成物"
 
 
 def test_validator_accepts_spawn_ids_as_actors(curve_model) -> None:
@@ -436,3 +438,149 @@ def test_camera_move_step_roundtrip_and_position_ref(curve_model, qt_app) -> Non
     assert out["at"] == {"kind": "curve", "trajectoryId": "zz_curve_probe", "point": "end"}
     assert (out["x"], out["y"]) == (1120, 2010), out
     assert list(out) == ["kind", "type", "x", "y", "at", "duration"], list(out)
+
+
+# --------------------------------------------------------------------------- #
+# 镜头跟随曲线播放头（制作人 2026-09-12）：cameraFollowActor / faceEntity 接位置引用，
+# 新增"曲线此刻播到的点"（point:'current'），相对曲线（实例曲线）一律不许引用
+# --------------------------------------------------------------------------- #
+
+FREE_ASSET = {
+    "id": "zz_free_probe", "label": "相对探针", "space": "screen", "binding": "free",
+    "keyframes": [{"atMs": 0, "x": 0, "y": 0}, {"atMs": 400, "x": 30, "y": 0}],
+    "authoring": {},
+}
+
+CURRENT = {"kind": "curve", "trajectoryId": "zz_curve_probe", "point": "current"}
+
+
+@pytest.fixture()
+def curve_free_model(curve_model):
+    import json as _json
+
+    m, sid = curve_model
+    (m.paths.trajectories_dir / "zz_free_probe.json").write_text(_json.dumps(FREE_ASSET), encoding="utf-8")
+    m.reload_trajectories_from_disk()
+    return m, sid
+
+
+def _row_roundtrip(m, sid, action: dict) -> dict:
+    from tools.editor.shared.action_editor import ActionRow
+    row = ActionRow(json.loads(json.dumps(action)), model=m, scene_id=sid)
+    out = row.to_dict()
+    row.deleteLater()
+    return out
+
+
+@pytest.mark.parametrize("action", [
+    {"type": "cameraFollowActor", "params": {"target": "player", "smooth": True}},
+    {"type": "cameraFollowActor", "params": {"target": "player", "smooth": False}},   # 对话图里的真实形状
+    {"type": "cameraFollowActor", "params": {"target": "player"}},
+    {"type": "cameraFollowActor", "params": {"at": CURRENT, "smooth": True}},
+    {"type": "cameraFollowActor", "params": {"at": {"kind": "curve", "trajectoryId": "zz_curve_probe", "point": "end"}}},
+    {"type": "faceEntity", "params": {"target": "player", "faceTarget": "player"}},
+    {"type": "faceEntity", "params": {"target": "player", "direction": "left"}},
+    {"type": "faceEntity", "params": {"target": "player", "at": CURRENT}},
+    {"type": "faceEntity", "params": {"target": "player", "direction": "right", "at": {"kind": "point", "x": 10, "y": 20}}},
+])
+def test_follow_and_face_roundtrip_byte_identical(curve_model, qt_app, action: dict) -> None:
+    """老写法（target / faceTarget）与新写法（at）打开→不动→保存一个字节不动（含不凭空长 smooth / direction）。"""
+    m, sid = curve_model
+    assert _row_roundtrip(m, sid, action) == action
+
+
+def test_camera_follow_switch_to_playhead_writes_at_and_drops_target(curve_model, qt_app) -> None:
+    """从「实体」切到「曲线上的点」：缺省就是播放头（current），写 at、不再写 target；切回实体写回 target。"""
+    from tools.editor.shared.action_editor import ActionRow
+    from tools.editor.shared.position_ref_field import MODE_CURVE, MODE_ENTITY
+
+    m, sid = curve_model
+    row = ActionRow({"type": "cameraFollowActor", "params": {"target": "player", "smooth": True}}, model=m, scene_id=sid)
+    f = row._param_widgets["at"]
+    f.mode_combo.setCurrentIndex(f.mode_combo.findData(MODE_CURVE))
+    f.curve_sel.set_current("zz_curve_probe")
+    f._on_curve_changed("")
+    assert row.to_dict() == {"type": "cameraFollowActor", "params": {"at": CURRENT, "smooth": True}}
+    f.mode_combo.setCurrentIndex(f.mode_combo.findData(MODE_ENTITY))
+    assert row.to_dict()["params"] == {"target": "player", "smooth": True}
+    row.deleteLater()
+
+
+def test_follow_entity_candidates_are_actors_only(curve_model, qt_app) -> None:
+    """实体档映射老键 target / faceTarget（运行时走 resolveActor，不认热点）：候选只给演员。"""
+    from tools.editor.shared.action_editor import ActionRow
+
+    m, sid = curve_model
+    actors = [i for i, _ in m.actor_id_items_for_scene(sid)]
+    for act in ("cameraFollowActor", "faceEntity"):
+        row = ActionRow({"type": act, "params": {"target": "player"}}, model=m, scene_id=sid)
+        ids = [i for i in getattr(row._param_widgets["at"].entity_sel, "_ids", []) if i]
+        assert ids == actors, (act, ids, actors)
+        row.deleteLater()
+
+
+def test_playhead_pick_and_instance_curves_excluded(curve_free_model, qt_app) -> None:
+    """控件：「此刻播到的点」可选、往返；相对曲线不进曲线候选（实例曲线暂不支持引用）。"""
+    from tools.editor.shared.position_ref_field import (
+        MODE_CURVE, PositionRefField, curve_rows, parse_position_ref,
+    )
+
+    m, sid = curve_free_model
+    assert [i for i, _ in curve_rows(m, sid)] == ["zz_curve_probe"], "相对曲线不该出现在曲线点候选里"
+    assert parse_position_ref(CURRENT) == CURRENT
+    f = PositionRefField(m, lambda: sid)
+    f.load(CURRENT, None)
+    assert f.mode() == MODE_CURVE and f.value() == CURRENT
+    assert not f.at_spin.isVisibleTo(f) and not f.prog_spin.isVisibleTo(f), "播放头不带时刻 / 进度"
+    assert "播放头" in f.info_lbl.text()
+    # 编辑期快照：播放头没有"此刻"，取起点（一次性动作求不出时的回落）
+    assert f.snapshot_xy() == (1000, 2000)
+
+
+@pytest.mark.parametrize("action", [
+    {"type": "cameraFollowActor", "params": {"at": CURRENT, "smooth": True}},
+    {"type": "cameraFollowActor", "params": {"target": "player"}},
+    {"type": "moveEntityTo", "params": {"target": "player", "x": 1, "y": 2, "at": {"kind": "entity", "id": "player"}}},
+])
+def test_wrapped_info_line_is_not_squashed(curve_model, qt_app, action: dict) -> None:
+    """布局塌陷护栏：宿主表单 FieldsStayAtSizeHint 下，说明行折成两行时行高曾按一行给（文字被下一行压住）。"""
+    from PySide6.QtTest import QTest
+    from tools.editor.shared.action_editor import ActionRow
+
+    m, sid = curve_model
+    row = ActionRow(json.loads(json.dumps(action)), model=m, scene_id=sid)
+    row.apply_fold_policy(True)
+    row.resize(640, 480)
+    row.show()
+    for _ in range(6):
+        qt_app.processEvents()
+        QTest.qWait(10)
+    lbl = row._param_widgets["at"].info_lbl
+    assert lbl.height() >= lbl.heightForWidth(lbl.width()), (lbl.text(), lbl.height(), lbl.heightForWidth(lbl.width()))
+    row.close()
+    row.deleteLater()
+
+
+def test_validator_playhead_and_instance_curves(curve_free_model) -> None:
+    from tools.editor.validator import _append_action_param_ref_issues
+
+    m, sid = curve_free_model
+
+    def run(action: dict) -> list:
+        issues: list = []
+        _append_action_param_ref_issues(m, issues, action, "parity", "probe", sid)
+        return issues
+
+    assert run({"type": "cameraFollowActor", "params": {"at": CURRENT}}) == []
+    assert run({"type": "faceEntity", "params": {"target": "player", "at": CURRENT}}) == []
+    assert run({"type": "moveEntityTo", "params": {"target": "player", "x": 1, "y": 2, "at": CURRENT}}) == []
+    free_curve = {"kind": "curve", "trajectoryId": "zz_free_probe", "point": "current"}
+    assert any(i.severity == "error" and "相对曲线" in i.message
+               for i in run({"type": "cameraFollowActor", "params": {"at": free_curve}}))
+    assert any(i.severity == "error" and "相对曲线" in i.message
+               for i in run({"type": "teleportEntityTo", "params": {
+                   "target": "player", "x": 1, "y": 2, "at": {**free_curve, "point": "end"}}}))
+    assert any(i.severity == "error" and "缺跟随对象" in i.message
+               for i in run({"type": "cameraFollowActor", "params": {"smooth": True}}))
+    assert any(i.severity == "error" and "at.point" in i.message
+               for i in run({"type": "cameraFollowActor", "params": {"at": {**CURRENT, "point": "apex"}}}))

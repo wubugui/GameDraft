@@ -16,6 +16,7 @@ const S = {
   npcImgs: new Map(), obstacleCanvas: null, clipboard: null, txSnap: null,
   runtime: null, bundleErr: '', align: null,   // 运行时打来的 sceneSpace / trajectoryProjection + 坐标对齐自证
   backdrop: null,   // 相对曲线（binding:'free'）此刻画在哪个场景 {scene,bg}：纯 UI 态，不写进数据
+  sfx: [], cueAudio: new Map(), auditionIndex: 0,   // 音效候选（audio_config.sfx）/ 试听用的 <audio> 缓存 / 试听游标（时间轴顺播扫到哪了）
 };
 let v2, v3, history;
 
@@ -25,6 +26,10 @@ const host = {
   get doc() { return S.doc; }, get bake() { return S.bake; }, get tMs() { return S.tMs; }, get tool() { return S.tool; },
   get layers() { return S.layers; }, get sel() { return S.sel; }, get segIndex() { return S.segIndex; }, get gizmoMode() { return S.gizmoMode; },
   get obstacleCanvas() { return S.obstacleCanvas; },
+  get sfx() { return S.sfx; },
+  /** 某个关键点在曲线上的画面位置（画标记用）；没烘出曲线返回 null */
+  cueScreenPos(cue) { const prev = S.bake && S.bake.preview && S.bake.preview.screen; const pose = prev && prev.length ? sampleScreen(prev, num(cue && cue.atMs, 0)) : null; return pose ? [pose.x, pose.y] : null; },
+  cueWorldPos(cue) { const prev = S.bake && S.bake.preview && S.bake.preview.world; const w = prev && prev.length ? sampleWorld(prev, num(cue && cue.atMs, 0)) : null; return w ? [w[0], w[1], w[2]] : null; },
   activeSeg() { const segs = S.doc && S.doc.source && S.doc.source.segments; return segs && segs[S.segIndex] || null; },
   bakeSegment(i) { return S.bake && S.bake.segments && S.bake.segments[i] || null; },
   /** 骑在曲线上那个东西静止时支点离地高（世界 wu）：`source.bake.restHeight`，是烘焙参数不是实体属性——换预览实体曲线不动 */
@@ -211,7 +216,7 @@ const host = {
     else if (kind === 'landing') Edit.setLanding(host, seg, world ? [b.w[0] + vx, b.w[2] + vz] : [b.s[0] + vx]);
     else if (kind === 'start') Edit.setExplicitStart(host, seg, world ? { x: b.xzh.x + vx, z: b.xzh.z + vz, h: b.xzh.h + vy } : [b.s[0] + vx, b.s[1] + vy]);
   },
-  handleLabel(kind) { if (kind && kind.startsWith('slot:')) { const sl = Edit.findSlot(S.doc, kind.slice(5)); return '插槽 · ' + (sl ? (sl.label || sl.id) : kind.slice(5)); } return { v0: '初速（箭尖）', apex: '最高点', landing: '落点', start: '起点', origin: '曲线原点' }[kind] || kind; },
+  handleLabel(kind) { if (kind && kind.startsWith('cue:')) { const c = Edit.findCue(S.doc, kind.slice(4)); return '音效关键点 · ' + (c ? (c.label || Edit.cueSound(c) || c.id) : kind.slice(4)); } if (kind && kind.startsWith('slot:')) { const sl = Edit.findSlot(S.doc, kind.slice(5)); return '插槽 · ' + (sl ? (sl.label || sl.id) : kind.slice(5)); } return { v0: '初速（箭尖）', apex: '最高点', landing: '落点', start: '起点', origin: '曲线原点' }[kind] || kind; },
   setTool(t) { setTool(t); },
   status(msg, cls) { setStatus(msg, cls); },
   // ---- 编辑管线（只有真的改了 doc 才标脏：纯点一下把手不能把资产标成"未保存"）
@@ -283,6 +288,26 @@ const host = {
     return id;
   },
   placeSlotFromGround(g) { const f = S.cal.worldToScene(g[0], g[1], g[2]); return host.placeSlotScreen(f[0], f[1]); },
+  /** 音效关键点：存的是**时间**。曲线上点一下 = 找最近的密采样取它的 atMs（放完选中它）。 */
+  placeCueAtScreen(sx, sy) {
+    const prev = S.bake && S.bake.preview && S.bake.preview.screen;
+    const hit = prev && prev.length ? nearestOnScreenCurve(prev, sx, sy) : null;
+    if (!hit) { setStatus('还没烘出曲线：先画一段，再在曲线上放音效关键点', 'err'); return null; }
+    return host.placeCueAtMs(hit.atMs);
+  },
+  /** 在某个时刻放一个关键点（曲线上点一下 / 「+ 当前时刻」共用这一条）。 */
+  placeCueAtMs(atMs) {
+    const total = (S.bake && S.bake.totalMs) || 0;
+    const t = clamp(num(atMs, 0), 0, total);
+    let id = null;
+    host.op('放置音效关键点', () => { id = Edit.addCue(host, t); });
+    if (id) {
+      S.tMs = t; host.selectHandle('cue:' + id);
+      renderCues(); updateTime();
+      setStatus(`音效关键点 ${id} 放在 ${Math.round(t)} ms：右栏挑一条音效`);
+    }
+    return id;
+  },
   /** 原点工具：把曲线原点放到画面点 / 3D 地面点上（放完选中它）。 */
   placeOriginScreen(sx, sy) {
     host.op('放置曲线原点', () => Edit.setOriginScreen(host, [sx, sy]));
@@ -321,8 +346,8 @@ function afterEdit(o) {
   const quick = o && o.quick;
   S.rev++;
   if (!o || o.dirty !== false) markDirty();
-  if (!quick) { renderSegList(); renderInspector(); renderSlots(); renderOrigin(); }
-  else { renderInspectorLive(); renderSlotsLive(); renderOriginLive(); }
+  if (!quick) { renderSegList(); renderInspector(); renderSlots(); renderCues(); renderOrigin(); }
+  else { renderInspectorLive(); renderSlotsLive(); renderCuesLive(); renderOriginLive(); }
   scheduleBake(quick ? 90 : 0);
   draw();
 }
@@ -373,6 +398,8 @@ async function boot() {
   try {
     const [sc, tr] = await Promise.all([API.json('/api/scenes'), API.json('/api/trajectories')]);
     S.scenes = sc.scenes; S.assets = tr.trajectories;
+    // 音效候选装不上不拦着干活：下拉里只剩磁盘上写着的那条（保值展示），照样能编曲线
+    try { const sx = await API.json('/api/sfx'); S.sfx = sx.sfx || []; } catch (e) { S.sfx = []; console.warn('音效清单装不上', e); }
     fillSceneSel(); fillAssetSel();
     const b = await API.json('/api/boot');
     if (b.open) await openAsset(b.open);
@@ -453,7 +480,100 @@ function renderOrigin() {
   box.append(row, acts);
 }
 function renderOriginLive() { const box = el('originbox'); if (!box || !S.doc) return; const m = box.querySelector('span.mono'); if (!m) return; const world = S.doc.space === 'world'; const w = world ? Edit.originWorld(host) : null; const o = Edit.originScreen(host); m.textContent = world && w ? `x ${fmt(w[0], 0)} · z ${fmt(w[2], 0)} · 离地 ${fmt(Edit.originHeight(host), 1)}` : `x ${fmt(o[0], 0)} · y ${fmt(o[1], 0)}`; }
+/** 拖拽中的轻量刷新：只更新时刻数字与滑块刻度（整份重建会把焦点从输入框上抢走）。 */
+function renderCuesLive() {
+  const box = el('cuelist'); if (!box || !S.doc) return;
+  // 按 id 找行,不按下标——改时刻会重排数组,按下标刷就串行了
+  for (const c of Edit.cues(S.doc)) {
+    const row = box.querySelector(`[data-cue="${CSS.escape(c.id)}"]`);
+    const inp = row && row.querySelector('input[type=number]');
+    if (inp && document.activeElement !== inp) inp.value = String(Math.round(num(c.atMs, 0)));
+  }
+  renderCueTicks();
+}
 function renderSlotsLive() { const box = el('slotlist'); if (!box || !S.doc) return; const rows = box.children; Edit.slots(S.doc).forEach((sl, i) => { const r = rows[i]; if (!r) return; const xy = r.querySelector('span.mono'); if (xy) xy.textContent = `${fmt(sl.x, 0)}, ${fmt(sl.y, 0)}`; }); }
+
+/** 右栏"音效关键点"列表：时刻 / 音效 / 本处音量 / 试听 / 删。点行 = 把播放头跳过去并选中它。 */
+function renderCues() {
+  const box = el('cuelist'); if (!box) return; box.innerHTML = '';
+  if (!S.doc) return;
+  const cues = Edit.cues(S.doc);
+  const total = (S.bake && S.bake.totalMs) || 0;
+  el('cueCount').textContent = cues.length ? `${cues.length} 个` : '还没有：按 A 在曲线上点一下';
+  const known = new Set(S.sfx.map((r) => r.id));
+  for (const c of cues) {
+    const on = S.sel.handle === 'cue:' + c.id;
+    const sid = Edit.cueSound(c);
+    const tIn = h('input', { type: 'number', step: '10', min: '0', value: String(Math.round(num(c.atMs, 0))), style: 'width:72px', title: '距轨迹开始的毫秒' });
+    tIn.addEventListener('change', () => { host.op('改关键点时刻', () => Edit.setCueTime(host, c.id, parseFloat(tIn.value))); renderCues(); draw(); });
+    const sel = h('select', { title: '音效 id（audio_config.sfx）' });
+    sel.append(h('option', { value: '' }, '（还没选音效）'));
+    // 悬垂值保值展示：磁盘上写着一条 audio_config 里已经没有的 id 时，照样列出来并标出来，绝不静默顶替
+    if (sid && !known.has(sid)) sel.append(h('option', { value: sid }, sid + '（已不在 audio_config）'));
+    for (const r of S.sfx) sel.append(h('option', { value: r.id }, r.id));
+    sel.value = sid;
+    sel.addEventListener('change', () => { host.op('改关键点音效', () => Edit.setCueSound(host, c.id, sel.value)); renderCues(); draw(); });
+    const vol = Edit.cueVolume(c);
+    const vIn = h('input', { type: 'number', step: '0.1', min: '0', max: '2', value: vol == null ? '' : String(vol), placeholder: '音量', style: 'width:56px', title: '本处音量：留空 = 用素材本身的音量；0 = 这里就是要哑' });
+    vIn.addEventListener('change', () => { host.op('改关键点音量', () => Edit.setCueVolume(host, c.id, vIn.value === '' ? NaN : parseFloat(vIn.value))); renderCues(); });
+    const lbIn = h('input', { type: 'text', value: c.label || '', placeholder: '备注', style: 'width:72px', title: '作者看的名字（运行时不读）' });
+    lbIn.addEventListener('change', () => host.op('改关键点备注', () => Edit.setCueLabel(host, c.id, lbIn.value)));
+    const play = h('button', { title: '试听这一条', onclick: (e) => { e.stopPropagation(); auditionCue(c, true); } }, '♪');
+    const del = h('button', { class: 'danger', title: '删掉这个关键点', onclick: (e) => { e.stopPropagation(); host.op('删音效关键点', () => Edit.deleteCue(host, c.id)); if (S.sel.handle === 'cue:' + c.id) host.clearSelection(); renderCues(); draw(); } }, '×');
+    const bad = !sid || (sid && !known.has(sid)) || (total > 0 && num(c.atMs, 0) > total + 0.5);
+    const row = h('div', {
+      class: 'seg' + (on ? ' on' : '') + (bad ? ' bad' : ''),
+      'data-cue': c.id,
+      onclick: (e) => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'BUTTON') return; S.tMs = clamp(num(c.atMs, 0), 0, total); host.selectHandle('cue:' + c.id); resetAudition(); updateTime(); renderCues(); draw(); },
+    }, tIn, h('span', { class: 'dim' }, 'ms'), sel, vIn, lbIn, play, del);
+    for (const inp of [tIn, vIn, lbIn]) inp.addEventListener('mousedown', (e) => e.stopPropagation());
+    box.append(row);
+  }
+  renderCueTicks();
+}
+/** 时间轴滑块上的关键点刻度（只作指示，不吃鼠标）。 */
+function renderCueTicks() {
+  const box = el('cueticks'); if (!box) return; box.innerHTML = '';
+  const total = (S.bake && S.bake.totalMs) || 0;
+  if (!S.doc || total <= 0) return;
+  for (const c of Edit.cues(S.doc)) {
+    const f = clamp(num(c.atMs, 0) / total, 0, 1);
+    box.append(h('i', { style: `left:${(f * 100).toFixed(3)}%` }));
+  }
+}
+
+// ---------------------------------------------------------------- 试听（只在工作台里；游戏里响不响与它无关）
+/**
+ * 试听一条关键点的音效。
+ *
+ * 为什么**不**按时间轴拖拽触发：拖着滑块扫过五个关键点会变成一串机枪声。所以只在
+ * **时间轴顺播**（`tick`）扫过时、以及作者显式点「♪」时出声；跳时刻（点行、步进、拖滑块）
+ * 一律只把游标重排（`resetAudition`），不发声。
+ */
+function auditionCue(cue, force) {
+  if (!force && !el('cueAudition').checked) return;
+  const id = Edit.cueSound(cue);
+  if (!id) { if (force) setStatus('这条关键点还没选音效', 'err'); return; }
+  let a = S.cueAudio.get(id);
+  if (!a) { a = new Audio('/api/sfx_file?id=' + encodeURIComponent(id)); a.preload = 'auto'; S.cueAudio.set(id, a); }
+  const vol = Edit.cueVolume(cue);
+  a.volume = clamp(vol == null ? 1 : vol, 0, 1);
+  try { a.currentTime = 0; } catch (e) { /* 还没装完：play() 自己会从头放 */ }
+  // 试听失败（文件缺 / 格式不认）只报一句，不拦着作者继续编
+  a.play().catch((e) => setStatus('试听不了 ' + id + '：' + (e && e.message || e), 'err'));
+}
+/** 把试听游标重排到当前时刻之前（跳时刻之后调；不发声）。 */
+function resetAudition() {
+  const cues = S.doc ? Edit.cues(S.doc) : [];
+  let i = 0;
+  while (i < cues.length && num(cues[i].atMs, 0) <= S.tMs) i++;
+  S.auditionIndex = i;
+}
+/** 时间轴从 `from` 顺播到 `to`：把这中间的关键点按序放出来（与运行时同一条"扫过即响"语义）。 */
+function auditionAdvance(to) {
+  const cues = S.doc ? Edit.cues(S.doc) : [];
+  while (S.auditionIndex < cues.length && num(cues[S.auditionIndex].atMs, 0) <= to) auditionCue(cues[S.auditionIndex++]);
+}
 
 function wireUI() {
   el('assetSel').addEventListener('change', async (e) => { if (e.target.value) { if (!(await confirmDiscard())) { e.target.value = S.doc ? S.doc.id : ''; return; } openAsset(e.target.value).catch((x) => setStatus(x.message, 'err')); } });
@@ -472,6 +592,8 @@ function wireUI() {
   el('entitySel').addEventListener('change', (e) => changeEntity(e.target.value));
   el('binding').addEventListener('change', (e) => changeBinding(e.target.value));
   el('btnSlotPlace').addEventListener('click', () => setTool('slot'));
+  el('btnCuePlace').addEventListener('click', () => setTool('cue'));
+  el('btnCueAtTime').addEventListener('click', () => host.placeCueAtMs(S.tMs));
   el('btnBakeFromEntity').addEventListener('click', () => takeBakeParamsFromEntity(true));
   for (const b of document.querySelectorAll('#tools button[data-tool]')) b.addEventListener('click', () => setTool(b.dataset.tool));
   for (const b of document.querySelectorAll('#tools button[data-gizmo]')) b.addEventListener('click', () => setGizmoMode(b.dataset.gizmo));
@@ -499,7 +621,7 @@ function wireUI() {
   el('btnPlay').addEventListener('click', togglePlay);
   el('btnStepBack').addEventListener('click', () => stepTime(-1000 / 60));
   el('btnStepFwd').addEventListener('click', () => stepTime(1000 / 60));
-  el('scrub').addEventListener('input', (e) => { const total = S.bake ? S.bake.totalMs : 0; S.tMs = total * e.target.value / 1000; S.playing = false; el('btnPlay').textContent = '▶ 播放'; updateTime(); draw(); });
+  el('scrub').addEventListener('input', (e) => { const total = S.bake ? S.bake.totalMs : 0; S.tMs = total * e.target.value / 1000; S.playing = false; el('btnPlay').textContent = '▶ 播放'; resetAudition(); updateTime(); draw(); });
   window.addEventListener('keydown', onKey);
   window.addEventListener('beforeunload', (e) => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
   document.addEventListener('mousedown', (e) => { if (!el('ctxmenu').contains(e.target)) hideCtxMenu(); });
@@ -536,12 +658,13 @@ function onKey(e) {
     case 't': case 'T': setTool('physics'); return;
     case 's': case 'S': setTool('slot'); return;
     case 'o': case 'O': setTool('origin'); return;
+    case 'a': case 'A': setTool('cue'); return;
     case 'h': case 'H': case 'q': case 'Q': setTool('pan'); return;   // Q = Unity 的手形工具
     case 'w': case 'W': setGizmoMode('move'); return;
     case 'e': case 'E': setGizmoMode('rotate'); return;
     case 'r': case 'R': setGizmoMode('scale'); return;
     case 'Escape': if (S.tool !== 'select') setTool('select'); else host.clearSelection(); return;
-    case 'Enter': if (S.tool === 'pen' || S.tool === 'physics' || S.tool === 'slot' || S.tool === 'origin') setTool('select'); return;
+    case 'Enter': if (S.tool === 'pen' || S.tool === 'physics' || S.tool === 'slot' || S.tool === 'origin' || S.tool === 'cue') setTool('select'); return;
     case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); return;
     case 'k': case 'K': togglePlay(); return;
     case ',': stepTime(-1000 / 60); return;
@@ -621,6 +744,7 @@ function clampSelection() {
 }
 function deleteSelection() {
   if (S.sel.handle === 'origin') { setStatus('曲线原点删不掉（每条曲线都有一个）：拖它、或右栏「放到曲线起点」', 'err'); return; }
+  if (S.sel.handle && S.sel.handle.startsWith('cue:')) { const id = S.sel.handle.slice(4); host.op('删音效关键点', () => Edit.deleteCue(host, id)); host.clearSelection(); renderCues(); setStatus(`已删除音效关键点 ${id}（Ctrl+Z 撤销）`); return; }
   if (S.sel.handle && S.sel.handle.startsWith('slot:')) { const id = S.sel.handle.slice(5); host.op('删插槽', () => Edit.deleteSlot(host, id)); host.clearSelection(); setStatus(`已删除插槽 ${id}（Ctrl+Z 撤销）`); return; }
   const seg = host.activeSeg(); if (!seg) return;
   if (S.sel.scope === 'segment') { deleteSegment(); setStatus('已删除段 ' + seg.id + '（Ctrl+Z 撤销）'); return; }
@@ -1426,6 +1550,8 @@ function applyBake(r) {
     if (r.authoring.originWorld) au.originWorld = r.authoring.originWorld; else delete au.originWorld;
   }
   if (Array.isArray(r.slots)) { const mine = Edit.slots(S.doc); for (const rs of r.slots) { const sl = mine.find((q) => q.id === rs.id); if (sl && rs.world) sl.world = rs.world; } }
+  // 关键点的时刻由服务端按这次烘出的时长钳过（曲线改短了，落在外面的那一声落到末帧）：只回写时刻，音效 / 备注以本地为准
+  if (Array.isArray(r.cues)) { for (const rc of r.cues) { const c = Edit.findCue(S.doc, rc.id); if (c && Number.isFinite(rc.atMs)) c.atMs = rc.atMs; } Edit.sortCues(S.doc); }
   if (r.keyframes && r.keyframes.length) { S.doc.keyframes = r.keyframes; if (r.worldKeyframes) S.doc.worldKeyframes = r.worldKeyframes; else delete S.doc.worldKeyframes; }
   const total = r.totalMs || 0;
   if (S.tMs > total) S.tMs = total;
@@ -1433,22 +1559,24 @@ function applyBake(r) {
     ? `${r.keyframes.length} 帧${r.worldKeyframes ? '（3D ' + r.worldKeyframes.length + '）' : ''} · ${fmt(total, 0)} ms · ${r.preview.screen.length} 密采样`
     : '（没烘出帧）';
   el('warnings').textContent = (r.warnings || []).join('\n');
-  renderSegList(); renderInspectorLive(); updateTime(); draw();
+  renderSegList(); renderInspectorLive(); renderCues(); updateTime(); draw();
 }
 
 // ---------------------------------------------------------------- 播放
 function togglePlay() {
   if (!S.bake || !S.bake.totalMs) return;
   S.playing = !S.playing; el('btnPlay').textContent = S.playing ? '❚❚ 暂停' : '▶ 播放';
-  if (S.playing) { if (S.tMs >= S.bake.totalMs) S.tMs = 0; lastT = 0; requestAnimationFrame(tick); }
+  // 从头起播时 0 毫秒处的关键点要响：游标排到"还没到 0"，让第一次 tick 扫到它
+  if (S.playing) { if (S.tMs >= S.bake.totalMs) S.tMs = 0; resetAudition(); if (S.tMs <= 0) S.auditionIndex = 0; lastT = 0; requestAnimationFrame(tick); }
 }
-function stepTime(d) { if (!S.bake) return; S.playing = false; el('btnPlay').textContent = '▶ 播放'; S.tMs = clamp(S.tMs + d, 0, S.bake.totalMs); updateTime(); draw(); }
+function stepTime(d) { if (!S.bake) return; S.playing = false; el('btnPlay').textContent = '▶ 播放'; S.tMs = clamp(S.tMs + d, 0, S.bake.totalMs); resetAudition(); updateTime(); draw(); }
 let lastT = 0;
 function tick(now) {
   if (!S.playing || !S.bake) return;
   const dt = lastT ? (now - lastT) : 0; lastT = now;
   S.tMs += dt;
-  if (S.tMs >= S.bake.totalMs) { if (el('loop').checked) S.tMs = 0; else { S.tMs = S.bake.totalMs; S.playing = false; el('btnPlay').textContent = '▶ 播放'; } }
+  auditionAdvance(S.tMs);
+  if (S.tMs >= S.bake.totalMs) { if (el('loop').checked) { S.tMs = 0; S.auditionIndex = 0; } else { S.tMs = S.bake.totalMs; S.playing = false; el('btnPlay').textContent = '▶ 播放'; } }
   updateTime(); draw();
   if (S.playing) requestAnimationFrame(tick);
 }
@@ -1531,8 +1659,8 @@ function renderSceneInfo() {
 }
 function renderAll() {
   const hasDoc = !!S.doc;
-  for (const id of ['btnSave', 'btnRename', 'btnDup', 'btnDelete', 'btnAddManual', 'btnAddPhysics', 'btnSegUp', 'btnSegDown', 'btnSegDup', 'btnSegDel', 'btnSlotPlace', 'btnBakeFromEntity']) el(id).disabled = !hasDoc;
-  if (hasDoc) { writeBakeSettings(); fillEntitySel(); renderSlots(); renderOrigin(); el('label').value = S.doc.label || ''; el('space').value = S.doc.space || 'screen'; el('binding').value = host.binding(); el('sceneSel').disabled = host.binding() === 'scene'; }
+  for (const id of ['btnSave', 'btnRename', 'btnDup', 'btnDelete', 'btnAddManual', 'btnAddPhysics', 'btnSegUp', 'btnSegDown', 'btnSegDup', 'btnSegDel', 'btnSlotPlace', 'btnCuePlace', 'btnCueAtTime', 'btnBakeFromEntity']) el(id).disabled = !hasDoc;
+  if (hasDoc) { writeBakeSettings(); fillEntitySel(); renderSlots(); renderCues(); renderOrigin(); el('label').value = S.doc.label || ''; el('space').value = S.doc.space || 'screen'; el('binding').value = host.binding(); el('sceneSel').disabled = host.binding() === 'scene'; }
   clampSelection();
   renderSegList(); renderInspector(); updateScopeButtons(); updateHistoryButtons(); updateTime(); draw();
 }

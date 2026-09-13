@@ -86,6 +86,7 @@ class View2D {
     const gz = this._gizmo();
     this._activeSegment(gz);
     this._slots();
+    this._cues();
     this._origin();
     if (L.ghost) { const prev = host.bake && host.bake.preview && host.bake.preview.screen; if (prev && prev.length) { const pose = sampleScreen(prev, host.tMs); if (pose) this._ghost(pose); } }
     if (gz) Gizmo.draw(g, gz, this._hotPart());
@@ -93,6 +94,7 @@ class View2D {
     Gizmo.drawReadout(g, this.readout);
     g.font = '12px sans-serif';
     if (host.tool === 'slot') { g.fillStyle = '#5ad9cc'; g.fillText('点击画面放置一个命名插槽（曲线暴露给场景的位置）· Enter/Esc 结束', 12, H - 30); }
+    if (host.tool === 'cue') { g.fillStyle = '#ff9ad5'; g.fillText('点在曲线上放一个音效关键点（存的是那一刻的时间）· Enter/Esc 结束', 12, H - 30); }
     if (host.tool === 'origin') { g.fillStyle = '#ffb454'; g.fillText('点击画面把曲线原点放到那儿（播放时给的位置对齐的就是它）· Enter/Esc 结束', 12, H - 30); }
     else if (host.tool === 'pen') { g.fillStyle = '#6cb4ff'; g.fillText('点击追加控制点 · 点在线上插点 · 刚加的点带着 gizmo，可直接拖轴 · Enter/Esc 结束', 12, H - 30); }
     else if (host.tool === 'physics') { g.fillStyle = '#ffb454'; g.fillText('按住拖动：把抛体落点拖到目标处', 12, H - 30); }
@@ -327,6 +329,24 @@ class View2D {
       g.fillStyle = on ? '#ffe44d' : '#5ad9cc'; g.font = '11px sans-serif'; g.fillText('插槽 ' + (sl.label || sl.id), c[0] + 12, c[1] - 6);
     }
   }
+  /** 音效关键点：曲线上的粉色 ♪。存的是**时间**，画在"那一刻曲线走到哪"——所以曲线一改它就跟着挪。 */
+  _cues() {
+    const g = this.g, host = this.host;
+    for (const c of Edit.cues(host.doc)) {
+      const p = host.cueScreenPos(c); if (!p) continue;
+      const cv = this.toCanvas(p[0], p[1]);
+      const on = host.sel.handle === 'cue:' + c.id;
+      const sid = Edit.cueSound(c);
+      g.fillStyle = on ? '#ffe44d' : sid ? '#ff9ad5' : '#9a9a9a';
+      g.beginPath(); g.arc(cv[0], cv[1], on ? 7 : 6, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = '#000'; g.lineWidth = 1; g.stroke();
+      g.fillStyle = '#1a1a1a'; g.font = 'bold 10px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('♪', cv[0], cv[1] + 0.5);
+      g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+      g.fillStyle = on ? '#ffe44d' : '#ff9ad5'; g.font = '11px sans-serif';
+      g.fillText(`${Math.round(num(c.atMs, 0))}ms ${c.label || sid || '（没选音效）'}`, cv[0] + 10, cv[1] + 4);
+    }
+  }
   /** 曲线原点：橙色十字 + 圈。播放位置对齐的就是它，所以必须一眼看得见、能单独拖。 */
   _origin() {
     const g = this.g, host = this.host;
@@ -370,6 +390,8 @@ class View2D {
     const gz = this._gizmo(); const part = gz ? Gizmo.hit(gz, mx, my) : null;
     const world = host.doc.space === 'world';
     const slotHit = () => {
+      // 关键点先于插槽：它更小、常压在曲线上，让插槽赢就点不中了
+      for (const c of Edit.cues(host.doc)) { const p = host.cueScreenPos(c); if (p && near(this.toCanvas(p[0], p[1]), 9)) return { kind: 'cue', id: c.id }; }
       for (const sl of Edit.slots(host.doc)) { if (near(this.toCanvas(num(sl.x, 0), num(sl.y, 0)), 10)) return { kind: 'slot', id: sl.id }; }
       const o = Edit.originScreen(host);
       if (o && near(this.toCanvas(o[0], o[1]), 10)) return { kind: 'origin' };
@@ -460,11 +482,13 @@ class View2D {
     if (e.button !== 0) return;
     const tool = host.tool;
     if (tool === 'slot') { host.placeSlotScreen(s[0], s[1]); host.setTool('select'); this.draw(); return; }
+    if (tool === 'cue') { host.placeCueAtScreen(s[0], s[1]); host.setTool('select'); this.draw(); return; }
     if (tool === 'origin') { host.placeOriginScreen(s[0], s[1]); host.setTool('select'); this.draw(); return; }
     if (hit && hit.kind === 'gz' && (tool === 'select' || tool === 'pen')) { this._gzDown(hit.part, mx, my); return; }
     if (tool === 'pen') { this._penDown(mx, my, s, hit, e); return; }
     if (tool === 'physics') { this._physicsDown(s); return; }
     // select
+    if (hit && hit.kind === 'cue') { host.selectHandle('cue:' + hit.id); this.drag = { kind: 'cue', id: hit.id, mx, my }; host.dragBegin('改关键点时机'); this.draw(); return; }
     if (hit && hit.kind === 'slot') { const sl = Edit.findSlot(host.doc, hit.id); host.selectHandle('slot:' + hit.id); this.drag = { kind: 'slot', id: hit.id, mx, my, s0: [num(sl.x, 0), num(sl.y, 0)] }; host.dragBegin('移动插槽'); this.draw(); return; }
     if (hit && hit.kind === 'origin') { host.selectHandle('origin'); this.drag = { kind: 'origin', mx, my, s0: Edit.originScreen(host).slice() }; host.dragBegin('移动曲线原点'); this.draw(); return; }
     const seg = host.activeSeg();
@@ -537,7 +561,7 @@ class View2D {
       const hv = hit && hit.kind === 'gz' ? { kind: 'gz', part: hit.part } : null;
       if (JSON.stringify(hv) !== JSON.stringify(this.hover)) { this.hover = hv; this.draw(); }
       const t = host.tool;
-      this.c.style.cursor = t === 'pan' ? 'grab' : hit && hit.kind === 'gz' && (t === 'select' || t === 'pen') ? Gizmo.cursor(hit.part) : t === 'slot' || t === 'origin' ? 'crosshair' : t === 'pen' ? (hit && (hit.kind === 'point') ? 'grab' : hit && hit.kind === 'edge' ? 'copy' : 'crosshair')
+      this.c.style.cursor = t === 'pan' ? 'grab' : hit && hit.kind === 'gz' && (t === 'select' || t === 'pen') ? Gizmo.cursor(hit.part) : t === 'slot' || t === 'origin' || t === 'cue' ? 'crosshair' : t === 'pen' ? (hit && (hit.kind === 'point') ? 'grab' : hit && hit.kind === 'edge' ? 'copy' : 'crosshair')
         : t === 'physics' ? 'crosshair'
           : hit ? (hit.kind === 'height' || hit.kind === 'apex' || hit.kind === 'ground' ? 'ns-resize' : hit.kind === 'curve' || hit.kind === 'edge' || hit.kind === 'ghost' ? 'pointer' : 'grab') : 'default';
       return;
@@ -547,6 +571,13 @@ class View2D {
     if (d.kind === 'box') { this.box = { x0: Math.min(d.mx, mx), y0: Math.min(d.my, my), x1: Math.max(d.mx, mx), y1: Math.max(d.my, my) }; this.draw(); return; }
     const dxWu = (mx - d.mx) / this.zoom, dyWu = (my - d.my) / this.zoom;
     const seg = host.activeSeg();
+    if (d.kind === 'cue') {
+      // 关键点沿曲线走：鼠标点投到曲线上，取那一处的时刻（存的一直是时间，不是位置）
+      const prev = host.bake && host.bake.preview && host.bake.preview.screen;
+      const near2 = prev && prev.length ? nearestOnScreenCurve(prev, ...this.toScene(mx, my)) : null;
+      if (near2) host.dragTick(() => { Edit.setCueTime(host, d.id, near2.atMs); });
+      return;
+    }
     if (d.kind === 'slot') { host.dragTick(() => Edit.setSlot(host, d.id, { x: d.s0[0] + dxWu, y: d.s0[1] + dyWu })); return; }
     if (d.kind === 'origin') { host.dragTick(() => Edit.setOriginScreen(host, [d.s0[0] + dxWu, d.s0[1] + dyWu])); return; }
     if (d.kind === 'points') {

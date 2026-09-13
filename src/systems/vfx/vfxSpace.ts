@@ -40,13 +40,87 @@ export interface VfxSpace {
   groundWorldAtScene(sceneX: number, sceneY: number): Vec3;
   /** 视线方向（M-world 单位向量，往画面里去） */
   readonly viewDir: Vec3;
+  /** 世界 XZ 处的地面法线（单位向量，写进 out） */
+  groundNormal(x: number, z: number, out: Vec3): Vec3;
+  /**
+   * 透视度量：世界 XZ 正下方地面点那一处的**近大远小系数**（与实体同一根透视轴，按脚点求）。
+   * 伪世界是正交重建的，横向 1 wu 恒等于 1 画面 wu；而透视场景里远处的 1 wu 真实长度画出来更小——
+   * 真实尺寸 / 真实位移 × 这个系数 = 伪世界里的尺寸 / 位移。没配透视恒 1。
+   */
+  metricAt(x: number, z: number): number;
+  /**
+   * 画面点处**看得见的那张表面**：`ground` = 地面本身；`object` = 地面前面挡着东西（石头 / 树 / 灌丛），
+   * 点落在它的表面上；`void` = 看过去比行走面还远（崖下虚空 / 天）。`normal` 是该表面的世界法线。
+   */
+  surfaceAtScene(sceneX: number, sceneY: number): { p: Vec3; normal: Vec3; kind: 'ground' | 'object' | 'void' };
 }
+
+/** 画面点（场景 wu）→ 该脚点的透视系数；没配透视的场景不传 */
+export type VfxPerspectiveFn = (sceneX: number, sceneY: number) => number;
 
 export interface FieldSpaceInput {
   geo: SceneSpaceGeometry;
   shell: DepthShellField | null;
   viewDir: Vec3;
+  perspective?: VfxPerspectiveFn | null;
 }
+
+/**
+ * 壳的"厚度"（wu）：可见表面背后这么深以内算实心（从侧面滑进来 = 撞上它的侧面），
+ * 再往后就是"藏在它背后的空处"。
+ *
+ * 深度壳只记了**看得见的那一层面**，背面在哪不知道。此前按"面后面全是实心"处理：粒子横着
+ * 飘进一根柱子所在的像素、深度又在柱子后面时，被沿柱面法线整段推到柱子前面（推出量 = 穿深，
+ * 能上百 wu）——于是粒子**永远到不了会被挡住的位置**，渲染侧逐片元的深度遮挡从来没机会生效
+ * （2026-09-12 实测义庄 / 跑马梁 / 崖墓前段约 1000 颗粒子，处在被挡位置的 0 颗）。
+ * 角色没有这个问题：它的位置由行走面约束，而行走面在遮挡物背后是连续的。
+ *
+ * 取 60 wu（≈ 0.4 个角色高，柱子 / 檐檩 / 树干的量级）：
+ * - 大于所有场景的 GPU 遮挡容差（`depth_tolerance × wuPerQUnit`，实测 7.7–44 wu）——
+ *   模拟判"在背后"的，渲染一定藏得住；
+ * - 远大于一个子步的位移（最快的群体 700 wu/s × 1/120 s ≈ 6 wu）——正面迎上去的不会隧穿。
+ */
+export const SHELL_THICKNESS_WU = 60;
+
+/** 粒子相对可见壳的处境（`thinShellSide` 的结果） */
+export const enum ShellSide {
+  /** 在可见表面前面、离它超过碰撞半径：不碰 */
+  Front = 0,
+  /** 贴上 / 撞进可见表面（面后不到一个壳厚）：按碰撞响应处理 */
+  Contact = 1,
+  /** 在遮挡物背后的空处：不碰，渲染侧的深度遮挡把它藏掉 */
+  Behind = 2,
+}
+
+/**
+ * **薄壳 + 滞回**判据。`wasBehind` 是该粒子上一子步的结果（每粒子一位，存池里）。
+ *
+ * 滞回是必须的：已经在遮挡物背后的粒子横着挪向遮挡物边缘时，那里的面往往更深，
+ * 穿深会落回一个壳厚以内——无状态的判据会把它当成"撞进面里"，从背后一把推到前面（瞬移）。
+ * 所以一旦在背后，只要仍在当前像素那层面之后（penWu ≥ 0）就一直算背后；
+ * 回到任何可见表面之前（penWu < 0）才解除。
+ *
+ * 朝上的像素（`groundLike`）由调用方把 `Contact` 当 `Front`（碰撞交给地面高度场），
+ * 但背后位照样按结果记——粒子也会藏到一道坡脊后面。
+ */
+export function thinShellSide(penWu: number, radiusWu: number, wasBehind: boolean): ShellSide {
+  if (wasBehind && penWu >= 0) return ShellSide.Behind;
+  if (penWu <= -radiusWu) return ShellSide.Front;
+  if (penWu < SHELL_THICKNESS_WU) return ShellSide.Contact;
+  return ShellSide.Behind;
+}
+
+/** 出生点是否已在遮挡物背后（出生即在背后的粒子不该被推到前面来） */
+export function spawnsBehindShell(space: VfxSpace, x: number, y: number, z: number): boolean {
+  if (!space.hasShell) return false;
+  const c = space.shellContact(x, y, z);
+  return !!c && c.penWu >= SHELL_THICKNESS_WU;
+}
+
+/** 表面分类的深度容差（wu）：可见壳与行走面相差不到它就算"看见的就是地面" */
+const SURFACE_TOLERANCE_WU = 12;
+/** 地面法线的有限差分步长（wu） */
+const GROUND_NORMAL_EPS = 4;
 
 class FieldSpace implements VfxSpace {
   readonly kind = 'field' as const;
@@ -56,6 +130,7 @@ class FieldSpace implements VfxSpace {
   private readonly geo: SceneSpaceGeometry;
   private readonly shell: DepthShellField | null;
   private readonly hf: GroundHeightfield;
+  private readonly perspective: VfxPerspectiveFn | null;
 
   constructor(inp: FieldSpaceInput) {
     this.geo = inp.geo;
@@ -64,6 +139,37 @@ class FieldSpace implements VfxSpace {
     this.wuPerQ = inp.geo.wuPerQUnit;
     this.viewDir = inp.viewDir;
     this.hf = buildGroundHeightfield(inp.geo);
+    this.perspective = inp.perspective ?? null;
+  }
+
+  groundNormal(x: number, z: number, out: Vec3): Vec3 {
+    const e = GROUND_NORMAL_EPS;
+    const gx = (groundHeightAt(this.hf, x + e, z) - groundHeightAt(this.hf, x - e, z)) / (2 * e);
+    const gz = (groundHeightAt(this.hf, x, z + e) - groundHeightAt(this.hf, x, z - e)) / (2 * e);
+    const l = Math.hypot(gx, 1, gz);
+    out[0] = -gx / l; out[1] = 1 / l; out[2] = -gz / l;
+    return out;
+  }
+
+  metricAt(x: number, z: number): number {
+    if (!this.perspective) return 1;
+    const s = worldToScene(this.geo, [x, groundHeightAt(this.hf, x, z), z]);
+    return this.perspective(s.x, s.y);
+  }
+
+  surfaceAtScene(sceneX: number, sceneY: number): { p: Vec3; normal: Vec3; kind: 'ground' | 'object' | 'void' } {
+    const g = groundWorldAt(this.geo, sceneX, sceneY);
+    const gn = this.groundNormal(g[0], g[2], [0, 1, 0]);
+    if (!this.shell) return { p: g, normal: gn, kind: 'ground' };
+    const c = shellContactAt(this.shell, this.geo, g[0], g[1], g[2]);
+    if (!c) return { p: g, normal: gn, kind: 'ground' };
+    // penWu > 0：地面点在可见壳后面 ⇒ 画面上这一点挡着东西，落到那东西的表面上
+    if (c.penWu > SURFACE_TOLERANCE_WU) {
+      const p = this.anchorToWorld({ x: sceneX, y: sceneY, surface: 'shell' });
+      return { p, normal: [c.normal[0], c.normal[1], c.normal[2]], kind: 'object' };
+    }
+    if (c.penWu < -SURFACE_TOLERANCE_WU) return { p: g, normal: gn, kind: 'void' };
+    return { p: g, normal: gn, kind: 'ground' };
   }
 
   groundY(x: number, z: number): number {
@@ -127,7 +233,19 @@ class PlanarSpace implements VfxSpace {
   readonly hasShell = false;
   readonly wuPerQ = 1;
   readonly viewDir: Vec3 = [0, 0, 1];
-  constructor(private readonly depthScale: number) {}
+  constructor(private readonly depthScale: number, private readonly perspective: VfxPerspectiveFn | null = null) {}
+
+  groundNormal(_x: number, _z: number, out: Vec3): Vec3 {
+    out[0] = 0; out[1] = 1; out[2] = 0;
+    return out;
+  }
+  metricAt(x: number, z: number): number {
+    if (!this.perspective) return 1;
+    return this.perspective(x, -z / this.depthScale);
+  }
+  surfaceAtScene(sceneX: number, sceneY: number): { p: Vec3; normal: Vec3; kind: 'ground' | 'object' | 'void' } {
+    return { p: this.groundWorldAtScene(sceneX, sceneY), normal: [0, 1, 0], kind: 'ground' };
+  }
 
   groundY(): number { return 0; }
   groundObserved(): boolean { return true; }
@@ -154,6 +272,9 @@ export function createFieldVfxSpace(inp: FieldSpaceInput): VfxSpace {
 
 export const DEFAULT_PLANAR_VFX_DEPTH_SCALE = Math.SQRT2;
 
-export function createPlanarVfxSpace(depthScale = DEFAULT_PLANAR_VFX_DEPTH_SCALE): VfxSpace {
-  return new PlanarSpace(depthScale);
+export function createPlanarVfxSpace(
+  depthScale = DEFAULT_PLANAR_VFX_DEPTH_SCALE,
+  perspective: VfxPerspectiveFn | null = null,
+): VfxSpace {
+  return new PlanarSpace(depthScale, perspective);
 }

@@ -122,6 +122,37 @@
         key('z', { ctrlKey: true }); key('z', { ctrlKey: true }); key('z', { ctrlKey: true }); key('z', { ctrlKey: true });   // 删 / X 轴 / 拖 / 放置
         ok('S4 undo walks the slot edits back', Edit.slots(S.doc).length === n0, { n: Edit.slots(S.doc).length });
         key('z', { ctrlKey: true }); }   // 撤掉最开始 host.op('slot') 那个
+      // 音效关键点：A 工具点在曲线上 → 存的是**那一刻的时间**（不是位置）；拖 ♪ 沿曲线改时机；Delete 删；曲线一动不动
+      { host.clearSelection(); const pts0 = host.effPoints(segs()[0]).map((p) => [p.sx, p.sy]);
+        const prev = S.bake.preview.screen; const mid = prev[Math.floor(prev.length * 0.4)];
+        const n0 = Edit.cues(S.doc).length;
+        setTool('cue'); const tc = TC(mid[1], mid[2]); click(tc[0], tc[1]);
+        const c1 = Edit.cues(S.doc)[n0];
+        ok('S4 cue tool puts an audio cue at the time of the clicked point on the curve (not a position)',
+          Edit.cues(S.doc).length === n0 + 1 && !!c1 && Math.abs(c1.atMs - mid[0]) < 40 && c1.sound === ''
+          && S.sel.handle === 'cue:' + c1.id && S.tool === 'select' && Math.abs(S.tMs - c1.atMs) < 1
+          && host.effPoints(segs()[0]).every((p, k) => Math.abs(p.sx - pts0[k][0]) < 1e-6),
+          { cue: c1, want: R(mid[0]), tMs: R(S.tMs), tool: S.tool });
+        // 关键点画在"那一刻曲线走到哪"，所以拖它 = 沿曲线换时刻
+        const at1 = c1.atMs;   // c1 是数组里那个对象本身，拖完会被就地改掉：先把旧值抄出来
+        const far = prev[Math.floor(prev.length * 0.8)];
+        const from = TC(host.cueScreenPos(c1)[0], host.cueScreenPos(c1)[1]); const to = TC(far[1], far[2]);
+        drag(from[0], from[1], to[0], to[1]);
+        const c2 = Edit.cues(S.doc)[n0];
+        ok('S4 dragging the ♪ slides it along the curve (changes atMs only, curve untouched)',
+          Math.abs(c2.atMs - far[0]) < 60 && c2.atMs !== at1 && history.peekUndo() === '改关键点时机'
+          && host.effPoints(segs()[0]).every((p, k) => Math.abs(p.sx - pts0[k][0]) < 1e-6),
+          { atMs: R(c2.atMs), want: R(far[0]), undo: history.peekUndo() });
+        // 右栏那一行就是它：选中态 + 时刻数字 + 音效下拉（不是裸输入框）
+        const row = el('cuelist').children[n0];
+        ok('S4 the cue panel row mirrors the cue and offers a picker (not a bare text field)',
+          !!row && row.classList.contains('on') && row.querySelector('input[type=number]').value === String(Math.round(c2.atMs))
+          && !!row.querySelector('select'), { rows: el('cuelist').children.length });
+        ok('S4 the scrub bar shows a tick per cue', el('cueticks').children.length === Edit.cues(S.doc).length);
+        key('Delete');
+        ok('S4 Delete removes the selected cue', Edit.cues(S.doc).length === n0 && !S.sel.handle, { n: Edit.cues(S.doc).length });
+        key('z', { ctrlKey: true }); key('z', { ctrlKey: true }); key('z', { ctrlKey: true });   // 删 / 拖 / 放置
+        ok('S4 undo walks the cue edits back', Edit.cues(S.doc).length === n0, { n: Edit.cues(S.doc).length }); }
       // 曲线原点（2026-09-11 第二轮）：原点是作者摆的点，不是第一帧——调运动起点绝不许动它
       { host.clearSelection(); const pts0 = host.effPoints(segs()[0]).map((p) => [p.sx, p.sy]);
         const st0 = Edit.curveStartScreen(host).slice();

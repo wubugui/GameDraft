@@ -166,6 +166,17 @@ class View2D {
       g.fillStyle = m.kind === 'spawn' ? 'rgba(128,230,140,.9)' : 'rgba(180,180,205,.8)';
       g.beginPath(); g.arc(c[0], c[1], 4, 0, Math.PI * 2); g.fill();
     }
+    // 角色代理的身体线（尺度参考：角色高 150 wu）+ 挂点横杆
+    for (const b of host.bodyLines()) {
+      g.strokeStyle = `rgba(${Math.round(b.color[0] * 255)},${Math.round(b.color[1] * 255)},${Math.round(b.color[2] * 255)},${b.color[3]})`;
+      g.lineWidth = 1.5;
+      for (let i = 0; i + 5 < b.pts.length; i += 6) {
+        const p = this.projectWorld([b.pts[i], b.pts[i + 1], b.pts[i + 2]]);
+        const q = this.projectWorld([b.pts[i + 3], b.pts[i + 4], b.pts[i + 5]]);
+        if (!p || !q) continue;
+        g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke();
+      }
+    }
     // 物体标记 + 名字
     g.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
     for (const o of host.objects()) {

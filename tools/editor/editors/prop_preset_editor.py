@@ -5,8 +5,21 @@
 把它们写在每个 attachToSocket 调用点上，既要重敲又必然发散（五处挂剑迟早有一处不一样）。
 所以：这里登记一次，动作只写 `prop: "taomu_jian"`。
 
-骨架照主从列表样板（`_refresh` / `_on_select` / `_apply`），右侧详情分三组
-（基本 / 摆放 / 试挂预览）。试挂预览与运行时同一套位姿数学，见 `prop_tryon_canvas`。
+手持光源（2026-09-12）按**同一个理由**扩到这里：一支点着的火把不只是一张图，
+它还带一盏跟着手走的灯、一团火焰粒子、一串状态（点着 / 护火 / 残炭 / 灭）——
+这些同样是火把**自己**的属性，不是调用点的属性。于是本页多出四块：
+
+- `light` 自带光源（挂上就有、卸下就没，每帧跟着挂点走）；
+- `vfx` 自带效果（效果资产 id；火焰的**声音住在效果资产自己的 `sound.loop`** 里，
+  本表刻意**不开音频字段**——开了就是第二个真相源）；
+- `persistent` 手持物（玩法事实，入档、跨场景自动重挂）；
+- `states` + `defaultState` 状态表（每个状态覆盖上面这些块）。
+
+骨架照主从列表样板（`_refresh` / `_on_select` / `_apply`），右侧详情分组
+（基本 / 摆放 / 自带效果 / 自带光源 / 状态表 / 试挂预览）。**光源块与状态表默认折叠
+且懒建**（布局纪律：重块首次展开才造控件；没展开过的块原样透传磁盘值）。
+控件本体在 `prop_preset_blocks.py`——`light` 那张表单在基础块与每个状态里各出现一次，
+写两遍必然发散。试挂预览与运行时同一套位姿数学，见 `prop_tryon_canvas`。
 """
 from __future__ import annotations
 
@@ -47,6 +60,12 @@ from ..shared.numeric_roundtrip import preserve_numeric_repr
 from ..shared.prop_preset_refs import rename_prop_references, scan_prop_usages
 from ..shared.prop_tryon_canvas import PropTryOnCanvas
 from ..shared.socket_image_list import SocketImageListField
+from .prop_preset_blocks import (
+    PropLightBlock,
+    PropStatesEditor,
+    VfxIdListField,
+    reorder_like,
+)
 
 #: 摆放字段的运行时缺省（与 SpriteEntity.syncAttachments / propPresets.ts 一致）
 DEFAULTS: dict[str, float] = {"anchorX": 0.5, "anchorY": 0.5, "rotation": 0.0, "scale": 1.0}
@@ -191,7 +210,34 @@ class PropPresetEditor(QWidget):
             "自发光的东西（灯笼火苗、符纸微光）取消勾选，避免被暗环境压黑。")
         self._lit.toggled.connect(self._on_field_changed)
         pf.addRow("光照", self._lit)
+        self._persistent = QCheckBox("手持物（入档、跨场景自动重挂）")
+        self._persistent.setToolTip(
+            "勾上＝这是**玩法事实**：存进档、切场景自动重挂（手里的火把）。\n"
+            "不勾（缺省）＝演出挂件，切场景即散（与既有行为一致）。\n"
+            "⚠ 只有勾了这个的挂件，setPropState 切出来的状态才会跟着存档走。")
+        self._persistent.toggled.connect(self._on_field_changed)
+        pf.addRow("持久化", self._persistent)
         rl.addWidget(place)
+
+        vfx_box = QGroupBox("自带效果")
+        vf = compact_form(QFormLayout(vfx_box))
+        self._vfx_field = VfxIdListField(model, [], self)
+        self._vfx_field.changed.connect(self._on_field_changed)
+        self._vfx_field.setToolTip(
+            "挂上就一起放的效果资产（火焰、火星…），候选来自 assets/data/vfx/*.json。\n"
+            "⚠ 火焰的**声音住在效果资产自己的 sound.loop 里**（那条本来就从发射器原点空间播、\n"
+            "跟着锚点走），所以本页刻意没有音频字段——开了就是第二个真相源。")
+        vf.addRow("效果", self._vfx_field)
+        rl.addWidget(vfx_box)
+
+        # 重块：默认折叠 + 懒建（布局纪律）。没展开过的块 dump() 原样回吐磁盘值。
+        # 只接 `changed` 信号，不再另传 on_changed 回调——两条都接会让一次编辑走两遍。
+        self._light_block = PropLightBlock(None, self)
+        self._light_block.changed.connect(self._on_block_changed)
+        rl.addWidget(self._light_block)
+        self._states_editor = PropStatesEditor(model, None, self)
+        self._states_editor.changed.connect(self._on_block_changed)
+        rl.addWidget(self._states_editor)
 
         tryon = QGroupBox("试挂预览")
         tf = QVBoxLayout(tryon)
@@ -225,6 +271,14 @@ class PropPresetEditor(QWidget):
         self._facing.setToolTip("切朝左看镜像对不对：支点该翻到另一侧、角度与自转一起取反。")
         self._facing.currentIndexChanged.connect(self._refresh_preview)
         pk.addRow("朝向", self._facing)
+        self._state_combo = _sized(QComboBox())
+        self._state_combo.setMaximumWidth(220)
+        self._state_combo.setToolTip(
+            "按哪个状态预览：切过去就看到该状态的贴图与摆放（状态里没写的项沿用基础块，\n"
+            "合并口径与运行时 `resolvePropAttach` 一致）。\n"
+            "「基础块」＝没有状态表时的样子。")
+        self._state_combo.currentIndexChanged.connect(self._on_preview_state_changed)
+        pk.addRow("状态", self._state_combo)
         tf.addWidget(pick)
         self._canvas = PropTryOnCanvas()
         tf.addWidget(self._canvas, stretch=1)
@@ -295,10 +349,25 @@ class PropPresetEditor(QWidget):
                 spin.setValue(v)
                 self._sliders[k].setValue(int(round(v * 100)))
             self._lit.setChecked(entry.get("lit") is not False)
+            self._persistent.setChecked(entry.get("persistent") is True)
+            self._vfx_field.set_ids(entry.get("vfx"))
+            self._light_block.set_socket_items(self._socket_items())
+            self._light_block.set_data(entry.get("light"))
+            self._states_editor.set_socket_items(self._socket_items())
+            self._states_editor.set_data(entry.get("states"), entry.get("defaultState"))
         finally:
             self._loading = False
+        self._refresh_state_combo()
         self._load_prop_pixmap()
         self._refresh_preview()
+
+    def _socket_items(self) -> list[tuple[str, str]]:
+        """灯挂点的候选：当前试挂动画包 sockets.json 里标过的挂点。
+
+        挂件预设本身与动画包无关（同一把刀能挂任何角色），所以这里没有"唯一正确"的候选面；
+        取当前试挂的那个包是**能给出候选的唯一口径**，取不到就允许手打（控件 editable）。
+        """
+        return [(name, name) for name in sorted(self._sockets)]
 
     def _on_field_changed(self) -> None:
         if self._loading:
@@ -306,6 +375,41 @@ class PropPresetEditor(QWidget):
         self._dirty = True
         self._load_prop_pixmap()
         self._refresh_preview()
+
+    def _on_block_changed(self) -> None:
+        """光源块 / 状态表里改了东西：状态下拉要跟着变，其余与普通字段同。"""
+        if self._loading:
+            return
+        self._refresh_state_combo()
+        self._on_field_changed()
+
+    def _refresh_state_combo(self) -> None:
+        """试挂预览的状态下拉。当前选择尽量保留（改一个状态名不该把预览跳回基础块）。"""
+        names = self._states_editor.state_names()
+        cur = str(self._state_combo.currentData() or "")
+        was = self._loading
+        self._loading = True
+        try:
+            self._state_combo.clear()
+            self._state_combo.addItem("基础块（没有状态表时的样子）", "")
+            for n in names:
+                self._state_combo.addItem(n, n)
+            idx = self._state_combo.findData(cur) if cur else 0
+            self._state_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        finally:
+            self._loading = was
+
+    def _on_preview_state_changed(self, *_a: object) -> None:
+        """切预览状态**不是**数据改动——绝不标脏（打开即脏是红线）。"""
+        if self._loading:
+            return
+        self._load_prop_pixmap()
+        self._refresh_preview()
+
+    def _preview_state(self) -> dict:
+        """当前预览选的那个状态的暂存值（空 dict = 按基础块预览）。"""
+        name = str(self._state_combo.currentData() or "")
+        return self._states_editor.state_data(name) if name else {}
 
     def _on_spin_changed(self, key: str) -> None:
         if self._loading:
@@ -352,20 +456,44 @@ class PropPresetEditor(QWidget):
                 out[k] = v
         if not self._lit.isChecked() or "lit" in original:
             out["lit"] = self._lit.isChecked()
+        # 自带光源：None = 不写 `light` 键（没展开过的折叠块原样回吐磁盘值）
+        light = self._light_block.dump()
+        if isinstance(light, dict):
+            out["light"] = light
+        # 自带效果：空列表**原本没有该键时**才不落键（磁盘上写着 `vfx: []` 的要原样保住）
+        vfx = self._vfx_field.to_list()
+        if vfx or "vfx" in original:
+            out["vfx"] = vfx
+        # 手持物：运行时只认 `=== true`，但磁盘上显式写着 false 的要保住
+        if self._persistent.isChecked() or "persistent" in original:
+            out["persistent"] = self._persistent.isChecked()
+        states, default_state = self._states_editor.dump()
+        if isinstance(states, dict) and states:
+            out["states"] = states
+        if default_state:
+            out["defaultState"] = default_state
         # 数值表示保真：磁盘上的 `rotation: 0`(int) 不得因为过了一趟 QDoubleSpinBox
         # 就漂成 `0.0`(float)——那是纯格式噪音，会把无关改动混进 diff。
         return preserve_numeric_repr(out, original)
+
+    #: `_collect` 负责产出的键。其余键（将来给 PropPresetDef 加字段）原样透传。
+    _MANAGED_KEYS = (
+        "label", "image", "images", "anchorX", "anchorY", "rotation", "scale", "lit",
+        "light", "vfx", "persistent", "states", "defaultState",
+    )
 
     def _staged(self) -> dict[str, dict]:
         """把当前表单并回 _data 的一份拷贝（未知键透传）。"""
         data = copy.deepcopy(self._data)
         if self._current:
-            merged = dict(data.get(self._current) or {})
-            managed = ("label", "image", "images", "anchorX", "anchorY", "rotation", "scale", "lit")
-            for k in managed:
+            original = data.get(self._current) or {}
+            merged = dict(original)
+            for k in self._MANAGED_KEYS:
                 merged.pop(k, None)
             merged.update(self._collect())
-            data[self._current] = merged
+            # 键序按磁盘原序：原有键回原位置，只有新增键才追加（numeric-roundtrip 契约 4）。
+            # 不重排的话，一打开旧条目就把 label/image/… 整批挪到末尾 = 往返改字节。
+            data[self._current] = reorder_like(merged, original)
         return data
 
     def _apply(self) -> None:
@@ -487,6 +615,9 @@ class PropPresetEditor(QWidget):
             self._socket_combo.addItems(sorted(self._sockets))
         finally:
             self._loading = False
+        # 灯挂点的候选跟着试挂包走（当前值保值，见 IdRefSelector）
+        self._light_block.set_socket_items(self._socket_items())
+        self._states_editor.set_socket_items(self._socket_items())
         self._refresh_slots()
         self._refresh_preview()
 
@@ -504,12 +635,41 @@ class PropPresetEditor(QWidget):
         finally:
             self._loading = False
 
+    def _preview_images(self) -> list[str]:
+        """预览用的贴图列表。合并口径与运行时 `resolvePropAttach` **逐字一致**：
+
+        状态给了图就**整体替换**（不是与基础块拼起来——拼出来的序列谁也没想要），
+        状态没给才用基础块的；两处内部都是 `image` 在前、`images` 在后。
+        """
+        st = self._preview_state()
+        for src in (st, None):
+            if src is None:
+                one = self._image_row.path().strip()
+                many = self._images_field.to_list()
+            else:
+                one = str(src.get("image") or "").strip()
+                many = [x for x in (src.get("images") or []) if isinstance(x, str) and x.strip()]
+            out = ([one] if one else []) + list(many)
+            if out:
+                return out
+        return []
+
+    def _preview_placement(self) -> tuple[float, float, float, float]:
+        """支点/自转/缩放：状态里写了的赢，没写的沿用基础块（同 `resolvePropAttach`）。"""
+        st = self._preview_state()
+        out: list[float] = []
+        for key in ("anchorX", "anchorY", "rotation", "scale"):
+            v = st.get(key)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                out.append(float(v))
+            else:
+                out.append(float(self._spins[key].value()))
+        return out[0], out[1], out[2], out[3]
+
     def _load_prop_pixmap(self) -> None:
-        """预览用的挂件贴图：优先单张 image，没有就用帧列表第一张。"""
-        path = self._image_row.path().strip()
-        if not path:
-            imgs = self._images_field.to_list()
-            path = imgs[0] if imgs else ""
+        """预览用的挂件贴图：按当前预览状态解析（状态没给图就回落基础块）。"""
+        imgs = self._preview_images()
+        path = imgs[0] if imgs else ""
         self._prop_pix = None
         if not path:
             return
@@ -562,21 +722,24 @@ class PropPresetEditor(QWidget):
                     pose = None
         self._canvas.set_pose(pose)
         self._canvas.set_prop(self._prop_pix)
-        self._canvas.set_placement(
-            self._spins["anchorX"].value(), self._spins["anchorY"].value(),
-            self._spins["rotation"].value(), self._spins["scale"].value(),
-        )
+        self._canvas.set_placement(*self._preview_placement())
         self._canvas.set_facing(-1 if self._facing.currentIndex() == 1 else 1)
 
         notes = []
+        state_name = str(self._state_combo.currentData() or "")
         if not self._current:
             notes.append("左边先选/新建一个挂件预设。")
         elif self._prop_pix is None:
-            notes.append("这条预设还没有贴图（或路径找不到文件）。")
+            if state_name:
+                notes.append(f"状态「{state_name}」与基础块都没有能用的贴图（或路径找不到文件）。")
+            else:
+                notes.append("这条预设还没有贴图（或路径找不到文件）。")
         if world_w <= 0:
             notes.append("该动画包缺 worldWidth，缩放没有可信基准。")
         if pose is None and self._current:
             notes.append("这一帧该挂点没有标注——游戏里挂件在这一帧会隐藏。")
+        if state_name:
+            notes.append(f"按状态「{state_name}」预览（状态没写的项沿用基础块）。")
         self._canvas.set_note("　".join(notes))
 
     # ---- 主窗钩子 ----------------------------------------------------
@@ -588,13 +751,16 @@ class PropPresetEditor(QWidget):
             self._refresh(keep=target)
 
     def reload_refs_from_model(self) -> None:
-        """别处新增动画包/挂点后，试挂下拉要能看见（本页表单字段不动）。"""
+        """别处新增动画包/挂点/效果资产后，候选要能看见（本页表单字段值不动）。"""
         current = self._bundle_combo.currentText()
         self._fill_bundles()
         if current:
             idx = self._bundle_combo.findText(current)
             if idx >= 0:
                 self._bundle_combo.setCurrentIndex(idx)
+        # 效果资产是独立进程（粒子工作台）写的，切页回来必须重拉候选；当前值保值
+        self._vfx_field.reload_refs()
+        self._states_editor.reload_refs()
 
     def flush_to_model(self, for_save_all: bool = False) -> None:
         """保存工程前：仅在内容确有变化时写回并标脏（禁无条件 mark_dirty）。"""

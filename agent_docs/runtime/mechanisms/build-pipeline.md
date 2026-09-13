@@ -212,6 +212,13 @@ Windows 上跑通了一整轮 `tauri build`,几条原本只能靠文档推断的
 `boot.js`),运行时当**缺省**用(`src/core/bootParams.ts`)。配置在
 `tools/build/build_config.json`:dev 档 `mode=dev&devScene=dev_room`,发行档 `screen_title=1`。
 
+**编辑器主窗 F5 是这串参数的第三个消费者**(2026-09-12):dev server 上没有烘进来的缺省,
+不显式带参数就是"干净 URL = 直接开一局主线",于是策划按 F5 看到的开局与玩家双击 exe 看到的
+根本不是同一条路(标题上的「继续」永远试不到)。主窗因此把发行档那一串写成
+`tools/editor/main_window.py` 的 `_TITLE_BOOT_LAUNCH_PARAMS`,`_run_game` 在调用方没给
+`launch_params` 时套用;Ctrl+F5(`mode=dev`)与各预览按钮自带 dev 直达参数,不吃这条缺省。
+三处同源由 `tools/editor/tests/test_run_game_boot_params.py` 守着(改 TS 侧参数名会当场红)。
+
 三条硬约束:
 
 - **缺省只在地址栏一个引导参数都没有时生效。** 否则玩家点「新游戏」→ URL 被清空 →

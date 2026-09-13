@@ -49,5 +49,6 @@
   "playVfx",
   "stopVfx",
   "setVfxState",
-  "emitVfxField"
+  "emitVfxField",
+  "fadeLight"
 ]

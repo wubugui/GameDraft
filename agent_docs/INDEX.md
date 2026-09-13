@@ -26,11 +26,13 @@
 - [对话头像(立绘)运行时](runtime/mechanisms/dialogue-portrait-runtime.md) — 头像跟「装扮配置」走不跟实体走;跟随说话人要求这行的说话人实体解析得出来,UI 收到的 portrait 恒带 slug
 - [台词配音通道(voice/autoAdvance · 跨拍留声)](runtime/mechanisms/dialogue-voice-channel.md) — 全部台词面共用一条单声道配音通道;默认跟本拍停、hold 留声给后面、声明跟随配音的那拍接管并收尾
 - [显示链:逻辑视口 · 等比信箱 · 宿主窗口(4:3 标准)](runtime/mechanisms/display-viewport-and-window.md) — 标准视口 1024×768(4:3)定义在 game_config.viewport;app.screen 恒为它,显示只许等比缩放(Renderer.layoutMount 在 #game-stage 里放最大同比例盒);windowSize 只是宿主窗口期望尺寸,编辑器 F5 与 exe(main.rs 启动时读同一份 JSON)按它开窗;三个布局元素的尺寸规则只住在 index.html
+- [文档揭示是「一个入口三态」,且自己一张显示层](runtime/mechanisms/document-reveal-three-states.md) — revealDocument 三态(条件不满足出模糊图/未揭示播动画/已揭示瞬时出清晰图)+force 只跳条件;显示层键是 documentId、与叠图句柄两张表永不互访;收图走 hideDocument
 - [场景光环境 / 实体阴影 / 深度遮挡](runtime/mechanisms/entity-lighting.md) — 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影但形状量从灯位现算;角色阴影**手动绑灯,禁止自动 resolve**;接触斑与灯无关;深度自比较必须留容差;色调与阴影解耦
 - [实体位移的朝向语义(faceTowardMovement)](runtime/mechanisms/entity-move-facing.md) — 不勾选=完全不碰朝向(勿回退成"起点偷改一次");需要转身的内部调用必须显式传 true;朝向只有左右镜像,up/down 不存在
-- [实体轨迹动画(烘焙式 · 独立资产)运行时语义](runtime/mechanisms/entity-trajectory.md) — 一条轨迹一个资产文件、帧相对**曲线原点**(作者摆的参考点,不是第一帧);曲线没有锚点,播放位置在播放时给(at 位置引用:数字 / 实体此刻位置 / 场景曲线插槽 / 曲线上的点);运动对象是场景实体(target)或播放时临时生成的图片 / 角色模板(spawn,keep = 播完留下成场景实体进存档);场景曲线可原地播、相对曲线必须给位置;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;不驱动相机
+- [实体轨迹动画(烘焙式 · 独立资产)运行时语义](runtime/mechanisms/entity-trajectory.md) — 一条轨迹一个资产文件、帧相对**曲线原点**(作者摆的参考点,不是第一帧);曲线没有锚点,播放位置在播放时给(at 位置引用:数字 / 实体此刻位置 / 场景曲线插槽 / 曲线上的点,含播放头 current);位置引用只认场景曲线(相对曲线是资源、每次播放一个实例,不许引用);运动对象是场景实体(target)或播放时临时生成的图片 / 角色模板(spawn,keep = 播完留下成场景实体进存档);场景曲线可原地播、相对曲线必须给位置;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;轨迹不驱动相机,镜头跟曲线走 = cameraFollowActor 的 at 引用播放头;音效关键点 cues 按时间轴触发(不带位置,跳过/被停不补声)
 - [实体显隐四通道合成](runtime/mechanisms/entity-visibility-channels.md) — 四个独立通道(派生基底/条件/会话覆盖/拾取位)在实体内单点合成;任何一方只写自己的通道,禁止直接 setEnabled 冲掉运行态
 - [脚步声与空间化音频(帧驱动 + 两级精度 + 可插拔听者)](runtime/mechanisms/footstep-and-spatial-audio.md) — 脚步由动画落脚帧驱动不由计时器,落脚帧住动画包 sockets.json 的 contactSlots(动画浏览页看图标);脚步集一片段一条音效 key 无随机;空间量一律在 M-world(wu)算;八个场景没有 depthConfig 必须两级降级;听者可设成任意目标且推拉镜头必须用 zoom 比值不是可视宽度
+- [手持光源(挂件状态机 · 跟随灯 · 运行时灯那一层)](runtime/mechanisms/held-prop-lights.md) — 火把/灯笼是"挂件预设自带灯与效果 + 离散状态机"；灯位每帧从挂点解出来，作为**运行时灯**加在作者灯之外（作者数据一个字节不动）；闪烁是一个信号 L(t) 同时驱动灯强度与发射率；灯每动一次就重烘整张光照缓存，所以闪烁推送必须限速
 - [背包槽上限与 critical 给予](runtime/mechanisms/inventory-capacity-critical.md) — 背包有槽上限,giveItem 返回值必须消费;关键道具用 critical=true 绕上限,拾取失败走 inventory:full 不消耗热点
 - [运行时摆灯的可视化手柄(聚光靶点/锥角、面光尺寸/朝向)](runtime/mechanisms/light-authoring-gizmos.md) — 判据只有一条——三维朝向/尺寸必须能拖,标量数字框就够;聚光靶点落行走面(正向求交要粗扫+二分),面光正面判据必须用真视线不能写 n.z<0;面板兜底值要与 packLights 逐字对齐
 - [光照参数的空间与单位(世界空间 wu ↔ 伪世界 q)](runtime/mechanisms/lighting-scale-reference.md) — 灯摆在世界空间、单位 wu(与 NPC/热区/spawn 同尺,角色高 150 wu 恒定);shader 里 march 走伪世界 q,两者差一个逐场景的 wuPerQUnit,transform 只在打包处折一次
@@ -39,7 +41,7 @@
 - [信号驱动 5 层编排脊椎](runtime/mechanisms/narrative-signal-spine.md) — 世界→对话(只演+打信号)→scenario子图→主线里程碑图→quest镜像+一个玩家意图槽;主线叙事图是唯一进度真相源
 - [物件检视场景(物理单位制 + 伪形体)](runtime/mechanisms/object-examine-scene.md) — 一张静帧撑起的可看场景;长度类参数一律真实单位并由实例声明物理标尺,alpha 只给边界、形体要另烘高度场
 - [可选资源存在性探测(content-type 判据)](runtime/mechanisms/optional-asset-probe.md) — 本仓库 dev server 上文件不存在不是 404 而是 200+HTML;可选 sidecar 一律走 loadOptionalJson,判据看 content-type 不看状态码
-- [叠图动作 id=句柄、image 才是图引用](runtime/mechanisms/overlay-image-handle-semantics.md) — show/blend/hideOverlayImage 的 id 是图层实例句柄;引用 overlay_images.json 的是 image/fromImage/toImage;校验别搞反
+- [叠图动作 id=句柄、image 才是图引用](runtime/mechanisms/overlay-image-handle-semantics.md) — show/blend/hideOverlayImage 的 id 是图层实例句柄;引用 overlay_images.json 的是 image/fromImage/toImage;校验别搞反。文档揭示 2026-09-12 已与这套解耦,不再有句柄
 - [parallaxScene 运行时语义](runtime/mechanisms/parallax-scene-runtime.md) — 运行时只播 layers[].keyframes,camera/depth/sourceKeyframes 是编辑器工作态被完全忽略;烘出的帧必须 linear
 - [逐处音量(音频引用的对象形态)](runtime/mechanisms/per-site-audio-volume.md) — 每个引用音频 id 的地方都能带 volume;它**替换**素材级音量再乘通道音量;判等/合并/快照一律走 audioCue 助手,别 `ref.id`、别 `a === b`
 - [Pixi v8 静默陷阱](runtime/mechanisms/pixi-v8-traps.md) — 一批"写法看着对、行为静默错"的引擎事实:渲染抛一次异常=整局死透(ticker 再不排帧)、实际编译在 GLSL ES 1.00、clear 不认 target、BindGroup 见死即自毁、解码期预乘吃掉 alpha 数据、leading 裁末行、Container 无 hitArea 恒不命中
@@ -51,13 +53,14 @@
 - [场景声学（实时回音）](runtime/mechanisms/scene-acoustics.md) — 声学空间→IR→ConvolverNode 的实时回音；v2 几何一律 M-world wu + 全局距离缩放；听者=玩家/相机/实体脚下的 3D 地面点；作者面是独立的声学工作台，游戏只是预览器（dev server 双槽实时联动）；三条硬判据（首回晚于干声时长 / 晚期尾延后 / 不套点源 1/r）
 - [场景背景受光(原画 + 加性实体灯)](runtime/mechanisms/scene-lighting.md) — 原画就是最终的光照,运行时只把作者摆的实体灯加上去(乘在**烘出来的 albedo 贴图**上);天光与太阳的运行时加光项已删,「夜」靠换一张夜原画;两级 RT 缓存,稳态每帧零光照计算
 - [场景 onEnter 揭幕时机契约](runtime/mechanisms/scene-onenter-reveal-timing.md) — loadScene 尾序=scene:ready → 揭幕(onReveal) → onEnter;初始进场同样先遮罩后揭幕;主 tick 必须先于任何场景装载挂载
+- [场景风(一份空气速度场 · 粒子与背景草木同一个钟)](runtime/mechanisms/scene-wind.md) — 场景 JSON 的 wind 是空气的速度场(不是加速度)——一份参数一个钟,粒子(普通粒子经 drag、纸钱走薄片气动)与背景草木摆动同读、两路增益分开调;近地对数廓线决定"躺着的纸大多不动";草木摆动是离线拆层(静态底板 + 逐株植被网格:树整株刚转、灌丛草根部钉住弯、石头在底板上永不动),位移封顶在底板补带内;摆幅透视按视深查表(不按透视轴);透视场景里真实位移×脚点透视系数
 - [气味系统(双层 action/zone)](runtime/mechanisms/smell-system.md) — action 层永远压过 zone 层;zone 气味声明式挂 ZoneDef.smell,SmellSystem 听 zone:enter 驱动,ZoneSystem 不动
 - [首启手势门 + 音频解锁快路径](runtime/mechanisms/start-gate-audio-unlock.md) — 「点击开始」遮罩给页面 sticky 激活;AudioManager init 时按 hasBeenActive 直接解锁——救开场首句配音音画同步
 - [系统音效事件表(横切,挂在音频管理器上)](runtime/mechanisms/system-sfx-event-table.md) — 系统音效统一挂音频管理器的事件映射表、不在各功能自己的 manager 里;判"某功能有没有声音"必须先读那张表,靠 grep 功能模块必漏、必做出双响
 - [拆除顺序与世代作废](runtime/mechanisms/teardown-ordering.md) — 拆一局/拆一个场景是强排序不是清单;跨 await 的异步流程靠世代号自杀,不靠"记得取消"
 - [UI 组件层(窗体/按钮/滚动区)](runtime/mechanisms/ui-component-layer.md) — 面板不再各自手搭遮罩·标题栏·滚动·按钮,统一走 src/ui/components;重绘用 attach 不用 open、量高前必须摘 mask、行内点击必须消费
 - [UI 面板皮肤单一入口](runtime/mechanisms/ui-panel-skin.md) — 面板底/边只经 PanelSkin 的 createPanel(有木框)或 drawPanelBase(只有底+细边);拿木框皮肤调 drawPanelBase 会静默丢框;「暗角」实为一层均匀黑纱,暗底配色是连着它一起量的
-- [世界空间粒子 / 群体系统(效果资产 · 场景实例 · 刺激场)](runtime/mechanisms/vfx-system.md) — 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本;三件正交的东西(全局效果资产 / 场景实例 / 运行时刺激场);表演态不入档;渲染一批一张网格、按接地锚在实体之间分桶
+- [世界空间粒子 / 群体系统(效果资产 · 场景实例 · 刺激场)](runtime/mechanisms/vfx-system.md) — 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 场景实例 / 运行时刺激场);表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源
 - [zone 生命周期与上下文契约](runtime/mechanisms/zone-lifecycle-contracts.md) — 触发载体两路(进出即触发 / 按键才触发);zone 上下文按参数线程化(executeBatchInZoneContext),禁回退全局栈;位面重注册仅 Exploring
 
 ### 配方
@@ -101,9 +104,11 @@
 - [场景轨迹的作者面(画布拉线 + 烘焙)](editor-tools/mechanisms/scene-trajectory-authoring.md)〔superseded〕 — 线在画布拉、节奏在面板调;松手即重烘,source 与 keyframes 必须同一条命令落地;空分段返回的空表绝不许拿去清盘
 - [场景编辑器的三条视图轴(过场 / 位面 / 时段)](editor-tools/mechanisms/scene-view-filter-axes.md) — 过场轴决定实体存不存在,位面与时段轴决定已加载实体显不显;后两条必须合成一个判定再落显隐,分开各贴各的会互相冲掉
 - [共享选择器控件的保值契约](editor-tools/mechanisms/shared-widget-value-fidelity.md) — IdRefSelector 等共享控件被约 40 处调用点依赖——未知/悬垂值必须保值展示而非静默顶替或清空,候选去重不得让一部分数据在 UI 上不可达;一处控件破坏 = 全编辑器数据面污染
+- [草木工作台(抠植被 · 标刚体 · 重烘拆层)](editor-tools/mechanisms/sway-workbench.md) — 背景草木拆层的作者面:自动分割打底 + 手涂三个通道(补植被 / 锁死不动 / 刚体)→ sway_paint.png 是烘焙的**输入** → 页面上点重烘 → 推给游戏看真效果;刚体度是逐像素的,同一株里可以竿刚叶弯;工作台不重写拆层的任何一步
 - [过场步骤编辑器(TimelineEditor)契约](editor-tools/mechanisms/timeline-editor-contracts.md) — UI/交互改动不得改 StepWidget.to_dict 序列化输出;已有搜索/撤销/剪贴板等能力勿重复造;含一个 PySide takeAt 布局级深坑
 - [轨迹工作台(独立桌面应用 · 画面/世界两种空间 · 烘成独立资产)](editor-tools/mechanisms/trajectory-workbench.md) — 轨迹资产唯一的作者面与唯一写入者;曲线没有锚点(播放位置在播放时给),只有一种曲线两种配置(场景曲线绑作者场景 / 相对曲线不绑),命名插槽是曲线暴露给场景的站位;加载任一场景(可把 q 空间还原成 3D 伪世界)拉线/抛体,保存=烘一次再原子写盘(保存即迁移老锚点资产);世界空间物理与地面高度场+深度壳碰撞、控制点是 {x,z,h};投影与运行时同一份金标;桌面壳零浏览器缓存
 - [粒子工作台(独立桌面应用 · 页内跑同一份运行时模拟 · 效果资产唯一写入者)](editor-tools/mechanisms/vfx-workbench.md) — 效果资产唯一的作者面与唯一写入者;3D 里摆发射器 / 巢与活动域 / 锚点 / 玩家 / 刺激,页内跑的是打包进来的运行时 vfxSim 本体(不是镜像);相机与 gizmo 经 /vendor 原样复用轨迹台那两份、不 fork;双槽实时推给游戏预览;桌面壳零缓存
+- [控件丢弃：摘 parent 之前必须先 hide](editor-tools/mechanisms/widget-teardown-orphan-window.md) — 对可见控件直接 setParent(None) 会让它变成一个真顶层窗口并被 Qt 显示出来（屏幕中央光速开关的小窗）；销毁走 discard_widget/discard_layout_widgets，重新安家走 detach_widget 且必须同回合安家
 
 ### 配方
 - [改编辑器后的验证门](editor-tools/recipes/editor-change-verification-gate.md) — 三件套(全树测试+素材审计+validate-data)+ 挂死分流 + 测试环境三条硬规矩 + 已知盲区对策 + "输出字节不变"强验收;跨机绿灯必须在验收机重放

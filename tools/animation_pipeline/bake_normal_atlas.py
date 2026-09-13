@@ -18,13 +18,13 @@
 
 覆盖两类消费方(与运行时三个挂滤镜的调用点一一对应):
   - 动画图集 `animation/<id>/atlas.png`,按 anim.json 的 cols×rows 逐格烘;
-  - 热点展示图 `hotspot.displayImage.image`,单张静图按 1×1 格烘。
+  - 展示图(热点 `displayImage` + 没有动画包的 NPC `displayImage`),单张静图按 1×1 格烘。
 
 用法:
     ./dev.sh bake-normals                # 全烘(跳过已最新的)
     ./dev.sh bake-normals --force        # 全部重烘
     ./dev.sh bake-normals <anim_id> ...  # 只烘指定动画图集
-    ./dev.sh bake-normals --only-images  # 只烘热点展示图
+    ./dev.sh bake-normals --only-images  # 只烘展示图
 """
 
 from __future__ import annotations
@@ -232,28 +232,46 @@ def normal_path_for(image_path: Path) -> Path:
     return image_path.with_name(image_path.with_suffix("").name + NORMAL_SUFFIX)
 
 
-def discover_hotspot_images(root: Path) -> list[Path]:
-    """场景 JSON 里所有热点展示图(单张静图,运行时按 1×1 格取法线)。"""
+def discover_display_images(root: Path) -> list[Path]:
+    """场景 JSON 里所有展示图(单张静图,运行时按 1×1 格取法线)。
+
+    口径 = **运行时预载清单请求 `<图名>.normal.png` 的那一组**(`SceneManager` 建 manifest 时
+    热点分支与 NPC 静态贴图分支各加一条),两侧必须一一对应:
+      - 这里漏掉一类 → 那张图没烘 → dev server 对不存在的文件回 200+HTML,Pixi 解码失败,
+        进场弹红条(2026-09-03 铜钱实测,当时只扫 `hotspots[]`,`npcs[].displayImage` 整类漏掉);
+      - 这里多扫一类 → 烘出没人加载的死文件,白占发行包体积。
+
+    `npcs[]` 只取**没有 animFile** 的静态贴图实体(有动画包的走图集那一路,见 `bake_one`)。
+    `renderRaw` 不看:那是**这一处摆放**不受光,同一张图在别处(如轨迹 spawn)照样受光,
+    法线是图的派生物、不是摆放的派生物。
+    """
     seen: dict[Path, None] = {}
+
+    def take(image: object) -> None:
+        if not image:
+            return
+        path = root / "public" / str(image).lstrip("/")
+        if path.is_file():
+            seen.setdefault(path, None)
+
     for scene in sorted((root / "public/assets/scenes").glob("*.json")):
         try:
             data = json.loads(scene.read_text(encoding="utf-8"))
         except Exception:
             continue
         for hotspot in data.get("hotspots", []) or []:
-            image = (hotspot.get("displayImage") or {}).get("image")
-            if not image:
+            take((hotspot.get("displayImage") or {}).get("image"))
+        for npc in data.get("npcs", []) or []:
+            if npc.get("animFile"):
                 continue
-            path = root / "public" / str(image).lstrip("/")
-            if path.is_file():
-                seen.setdefault(path, None)
+            take((npc.get("displayImage") or {}).get("image"))
     return list(seen)
 
 
 def bake_image_file(
     image_path: Path, force: bool, downscale: int | None = None
 ) -> str:
-    # 热点展示图无 anim.json/per-image 配置 → 用 CLI 覆盖值或默认
+    # 展示图无 anim.json/per-image 配置 → 用 CLI 覆盖值或默认
     downscale = downscale if downscale is not None else DEFAULT_DOWNSCALE
     out_path = normal_path_for(image_path)
     if (
@@ -276,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="bake-normals", description=__doc__)
     p.add_argument("anim_ids", nargs="*", help="只烘这些动画图集目录名(缺省=全部)")
     p.add_argument("--force", action="store_true", help="忽略 mtime,全部重烘")
-    p.add_argument("--only-images", action="store_true", help="只烘热点展示图")
+    p.add_argument("--only-images", action="store_true", help="只烘展示图(热点 + 静态贴图 NPC)")
     p.add_argument("--only-atlases", action="store_true", help="只烘动画图集")
     p.add_argument(
         "--downscale",
@@ -310,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
             print(msg)
 
     if not args.only_atlases and not args.anim_ids:
-        images = discover_hotspot_images(root)
+        images = discover_display_images(root)
         total += len(images)
         for image in images:
             try:

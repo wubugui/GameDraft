@@ -13,7 +13,7 @@ authority:
 triggers:
   paths: ["src/systems/SmellSystem.ts", "src/ui/smell/**", "src/ui/HudDebut.ts", "public/assets/data/smell_profiles.json"]
   topics: [气味, smell, 香粉味, 嗅, 气味显隐, 鼻子教程]
-last_governed: 2026-09-10
+last_governed: 2026-09-12
 ---
 
 ## 是什么(一句话)
@@ -47,11 +47,19 @@ last_governed: 2026-09-10
   世界停住靠状态机,**不许**再加按键抑制那类补丁(制作人 2026-09-10 骂过)。
   仪式由 `src/ui/HudDebut.ts` 通用件驱动(三把火共用),音效走 systemSfx 表
   `smell:debut/show/hide`。渲染器(`SmellIndicatorRenderer.setVisible`)缺省仍是显——编辑器预览要直接看见。
-- **飘向 = 气味源的反方向,每帧现算**(G.6):`dir` 不再是作者静态值——`setSmell.dir` / `ZoneSmellConfig.dir`
-  **已废、不生效**。源 = zone `smell.source{x,y}` 或动作 `setSmellSource{x,y,scene?}`(action 源压 zone 源、
-  只在所属场景生效、入存档);开关 `setSmellTracking`(flag `smell_tracking`,缺省开)。关/无源/源不在本场景/
-  无味 → dir=0。玩家位置与场景 id 由组装层 getter 注入(`setPlayerPositionGetter/setSceneIdGetter`),
-  `update()` 里算、变化 ≥0.01 才广播。源在左 → 往右飘(dir>0)。
+- **飘向 = 指向气味源,每帧现算**(G.6,2026-09-12 改;原「气味源反方向」2026-09-10 拍板已推翻):
+  `dir` 不再是作者静态值——`setSmell.dir` / `ZoneSmellConfig.dir` **已废、不生效**。源 = zone
+  `smell.source{x,y}` 或动作 `setSmellSource{x,y,scene?}`(action 源压 zone 源、只在所属场景生效、
+  入存档);开关 `setSmellTracking`(flag `smell_tracking`,缺省开)。关/无源/源不在本场景/无味 → dir=0。
+  玩家位置与场景 id 由组装层 getter 注入(`setPlayerPositionGetter/setSceneIdGetter`),`update()` 里算、
+  变化 ≥0.01 才广播。源在右 → 往右飘(dir>0)、顺着烟走能摸到源。
+- **指向可被玩家设置翻转,但翻转只在 HUD**(G.6,2026-09-12):设置页「气味指向」两个值——
+  `烟指着东西`(缺省)/`烟背着东西`,落 `settings/smellDisplay.json`(`SmellDisplaySettings`,
+  不进存档)。**SmellSystem 广播的与 flag 里的 dir/dirDepth 恒为规范值(指向源),永远不受设置影响**——
+  翻转发生在 `HUD.pushSmellState()`(`smellLast` 存规范值,投给渲染器时乘 ±1)。想在这里"省一步"
+  直接在 `computeDir()` 里乘设置,会让一条显示偏好改写玩法状态:将来任何读 `current_smell_dir`
+  的条件都会跟着玩家的设置走。偏好是拉模型(无事件),`stepSmell()` 每帧比对 `smellInvertApplied`
+  发现设置被改/刚水化完就地重投——站着不动时 SmellSystem 不再广播,不重投就得等玩家迈步才翻过来。
 
 ## 已知坑
 

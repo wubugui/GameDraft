@@ -14,6 +14,7 @@ from tools.dialogue_graph_editor.dialogue_condition_text import (
     case_verdict as _dialogue_case_verdict,
 )
 
+from .editors.scene_lights import shadow_budget_status as _shadow_budget_status
 from .editors.scene_lights import validate_lights as _validate_scene_lights
 from .editors.scene_lights import validate_shadow_bindings as _validate_shadow_bindings
 from .file_io import read_json
@@ -177,6 +178,51 @@ def check_acoustic_space_defs(spaces: dict, scene_ids: set[str] | None = None) -
         if "source" in sp:
             out.append(Issue("warning", "acoustic", str(name),
                              "v2 的单个 source 残留：用声学工作台重新保存一次会迁成 sources[]"))
+    return out
+
+
+def check_scene_wind(sid: str, scene: dict) -> list["Issue"]:
+    """场景风 ``wind``(TS 权威 ``SceneWindDef``,运行时 ``src/utils/sceneWind.ts``)的形状。
+
+    运行时对坏形状一律按"这个场景没有风"处理(``resolveSceneWind`` 返回 null):
+    纸钱一动不动、草木不摆,没有任何报错。所以只能在这里拦。
+    """
+    out: list[Issue] = []
+    w = scene.get("wind")
+    if w is None:
+        return out
+    if not isinstance(w, dict):
+        return [Issue("error", "scene", sid, "wind 须为对象 {direction, speed, …}")]
+    d = w.get("direction")
+    if not isinstance(d, list) or len(d) != 3 or not all(_is_num(v) for v in d):
+        out.append(Issue("error", "scene", sid, "wind.direction 须为三个数 [x, y, z](M-world 方向)"))
+    elif math.hypot(float(d[0]), float(d[2])) < 1e-6:
+        out.append(Issue("error", "scene", sid,
+                         "wind.direction 没有水平分量(只取 x/z);运行时当作没有风"))
+    sp = w.get("speed")
+    if not _is_num(sp) or float(sp) <= 0:
+        out.append(Issue("error", "scene", sid,
+                         f"wind.speed {sp!r} 须为正数(离地 2 m 的平均风速 wu/s;1 m/s ≈ 88);运行时当作没有风"))
+    for key, fields in (("gust", ("amount", "period")), ("turbulence", ("intensity", "scale")),
+                        ("gain", ("vfx", "sway")), ("leaf", ("size", "speed"))):
+        sub = w.get(key)
+        if sub is None:
+            continue
+        if not isinstance(sub, dict):
+            out.append(Issue("error", "scene", sid, f"wind.{key} 须为对象"))
+            continue
+        for f in fields:
+            v = sub.get(f)
+            if v is not None and (not _is_num(v) or float(v) < 0):
+                out.append(Issue("error", "scene", sid, f"wind.{key}.{f} {v!r} 须为非负数"))
+    ws = w.get("waveSize")
+    if ws is not None and (not _is_num(ws) or float(ws) <= 0):
+        out.append(Issue("error", "scene", sid,
+                         f"wind.waveSize {ws!r} 须为正数(草木波浪尺寸 wu;缺省 20,调大 = 大植物整株一起弯)"))
+    for key in ("veer", "roughness"):
+        v = w.get(key)
+        if v is not None and (not _is_num(v) or float(v) < 0):
+            out.append(Issue("error", "scene", sid, f"wind.{key} {v!r} 须为非负数"))
     return out
 
 
@@ -976,6 +1022,7 @@ def validate(model: ProjectModel) -> list[Issue]:
                                 f"filterId '{fid}' has no matching filter JSON"))
 
         issues.extend(check_acoustic_space_ref(sid, sc, _acoustic_ids, _acoustic_spaces))
+        issues.extend(check_scene_wind(sid, sc))
 
         for zone in sc.get("zones", []) or []:
             zid = str(zone.get("id", "")) or "?"
@@ -1152,6 +1199,11 @@ def validate(model: ProjectModel) -> list[Issue]:
                 else:
                     for t in _validate_scene_lights(lights):
                         issues.append(Issue("error", "scene", sid, f"lighting: {t}"))
+                    # 跟随绑定（`LightDef.follow`）：目标必须能在**本场景**解析到。
+                    # 解析不到的表现是那盏灯**永远不亮**（resolveFollowLight 解不出目标就
+                    # 这一帧不发光，也不回落到作者写的 pos），画面上与"灯坏了"分不开。
+                    for _t in _scene_light_follow_issues(model, sid, lights):
+                        issues.append(Issue("error", "scene", sid, _t))
                 # 统一光影依赖深度场；没有 depthConfig 时运行时会安静不启用
                 if not sc.get("depthConfig"):
                     issues.append(Issue(
@@ -1435,6 +1487,7 @@ def validate(model: ProjectModel) -> list[Issue]:
 
     _validate_items(model, issues)
     _validate_overlay_images(model, issues)
+    _validate_prop_presets(model, issues)
     _validate_parallax_scenes(model, issues)
 
     _validate_flags(model, issues)
@@ -1503,6 +1556,76 @@ def _shadow_bias_issues(sb: object) -> list[str]:
     for k in sb:
         if k not in ("bias", "thickness"):
             out.append(f"lighting.shadowBias 不认识的键 {k!r}（运行时会忽略）")
+    return out
+
+
+#: `LightFollowDef` 认识的键（权威 `src/data/types.ts`）。别的键留在 JSON 里是**静默失效**。
+_LIGHT_FOLLOW_KEYS = ("target", "socket", "heightWu", "offset")
+
+
+def _scene_light_follow_issues(
+    model: ProjectModel, sid: str, lights: object,
+) -> list[str]:
+    """场景灯的跟随绑定（`LightDef.follow`，TS 权威 `LightFollowDef`）。
+
+    命中面是**本场景**的 `player` 或 NPC id（运行时 `Game.entityContactOf` →
+    `sceneManager.getNpcById`；热点 / zone / 出生点都解不出接触点）。解析不到 ⇒
+    那盏灯**永远不亮**：`HeldPropSystem.resolveFollowLight` 拿不到目标就这一帧不发光，
+    而且**刻意不回落**到作者写的 `pos`（回落 = 一盏灯莫名钉在半空，比不亮更难查）。
+    画面上与"这盏灯坏了"完全无法区分 ⇒ **error**。
+
+    带影灯预算按 `scene_lights.shadow_budget_status` 那一份口径算，配了 `follow` 的灯
+    **照旧算一盏**：它进的是同一批灯槽、同一份阴影预算（原件被 `effectiveLights` 跳过，
+    换成 `HeldPropSystem` 每帧推进来的那盏运行时灯）。这里只在超预算时把
+    "其中几盏是跟随灯" 这件事说出来 —— 跟随灯每帧都在动，开了投影就是每帧重解线扫前缀，
+    是同一预算里最贵的那几盏，先关它们最划算。
+    """
+    out: list[str] = []
+    if not isinstance(lights, list):
+        return out
+    npc_ids = _npc_ids_in_scene(model, sid)
+    follow_rows: list[dict] = []
+    for i, light in enumerate(lights):
+        if not isinstance(light, dict):
+            continue
+        follow = light.get("follow")
+        if follow is None:
+            continue
+        lid = str(light.get("id") or f"#{i + 1}")
+        if not isinstance(follow, dict):
+            out.append(f"{lid}: follow 须为对象 {{target, socket?, heightWu?, offset?}}")
+            continue
+        follow_rows.append(light)
+        target = str(follow.get("target") or "").strip()
+        if not target:
+            out.append(
+                f"{lid}: follow 缺 target —— 解不出跟随目标，这盏灯每一帧都不发光"
+                "（也不会回落到 pos）；不想跟随就整块删掉 follow")
+        elif target != "player" and target not in npc_ids:
+            out.append(
+                f"{lid}: follow.target {target!r} 在本场景解析不到（只能是 player 或本场景 NPC id）"
+                " —— 这盏灯永远不亮，画面上与「灯坏了」分不开")
+        if follow.get("heightWu") is not None and not _is_num(follow.get("heightWu")):
+            out.append(f"{lid}: follow.heightWu 须为数（离地高度，单位 **wu**）")
+        off = follow.get("offset")
+        if off is not None and not (
+                isinstance(off, list) and len(off) >= 3
+                and all(_is_num(v) and math.isfinite(float(v)) for v in off[:3])):
+            out.append(f"{lid}: follow.offset 须为 3 个有限数的数组（世界空间偏移，单位 **wu**）")
+        for k in follow:
+            if k not in _LIGHT_FOLLOW_KEYS:
+                out.append(f"{lid}: follow 不认识的键 {k!r}（运行时会忽略 = 静默失效）")
+    if follow_rows:
+        n, budget, over = _shadow_budget_status(lights)
+        shadow_follows = [
+            str(l.get("id") or "?") for l in follow_rows
+            if l.get("castShadow") and l.get("enabled", True) and l.get("kind") != "directional"
+        ]
+        if over and shadow_follows:
+            out.append(
+                f"带阴影的灯 {n} 盏超过预算 {budget}，其中跟随灯 {len(shadow_follows)} 盏"
+                f"（{'、'.join(shadow_follows)}）—— 跟随灯每帧都在动，开了投影就是每帧重解"
+                "线扫前缀，是这批里最贵的；先关它们的 castShadow")
     return out
 
 
@@ -1986,6 +2109,18 @@ def _validate_npc_schedules(model: ProjectModel, issues: list[Issue]) -> None:
                 issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 countScale 须 > 0"))
             if row.get("autoStart") is not None and not isinstance(row.get("autoStart"), bool):
                 issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 autoStart 须为布尔"))
+            area = row.get("area")
+            if area is not None and (
+                not isinstance(area, list) or len(area) < 3
+                or not all(isinstance(p, list) and len(p) == 2 and _is_num(p[0]) and _is_num(p[1]) for p in area)
+            ):
+                issues.append(Issue(
+                    "error", "scene", sid,
+                    f"vfx 实例 {iid!r} 的 area 须为 ≥3 个 [x, y] 的多边形（场景坐标 wu）；"
+                    f"运行时读不懂就退成原点周围的圆盘",
+                ))
+                area = None
+            _check_vfx_confine(model, issues, sid, iid, row, area)
             if row.get("timePhases") is not None:
                 _check_phases_field(issues, sid, f"vfx:{iid}", row.get("timePhases"),
                                     known_phases, scene_daynight_on)
@@ -2352,6 +2487,8 @@ def _append_quest_objective_issues(
                                 f"objectives[{index}] 的 text 为空（面板与 HUD 会显示一条空目标）"))
         if obj.get("optional") is not None and not isinstance(obj.get("optional"), bool):
             issues.append(Issue("error", "quest", qid, f"objectives[{index}].optional 须为布尔"))
+        if obj.get("visibleConditions") is not None and not isinstance(obj.get("visibleConditions"), list):
+            issues.append(Issue("error", "quest", qid, f"objectives[{index}].visibleConditions 须为数组"))
         _append_quest_guidance_issues(
             model, issues, obj.get("guidance"), qid, f"objectives[{index}].guidance",
         )
@@ -5194,6 +5331,38 @@ def _append_action_param_ref_issues(
                 issues.append(Issue(
                     "warning", data_type, item_id,
                     f"attachToSocket 的 scale={p['scale']!r} 非正数——运行时按未设处理"))
+        # 初始状态：给了 prop 才解析得出状态表（状态住在预设里，不在调用点）
+        _append_prop_state_issues(model, issues, str(p.get("prop") or "").strip(),
+                                  str(p.get("state") or "").strip(),
+                                  "attachToSocket", data_type, item_id)
+
+    if t == "setPropState":
+        # 这个 action **没有 prop 参数**：挂的是哪个挂件要运行时按 (target, socket) 查那一次
+        # 挂载才知道，编辑期解析不出来。所以不猜是哪个预设，只查一件必要条件——
+        # 这个状态名在**任何**挂件预设里出现过吗？没出现过就一定是错的（笔误 / 改名没跟上）。
+        # 全工程一个 states 都还没配的时候整段跳过（否则刚起步的工程满屏误报）。
+        _append_prop_state_issues(model, issues, "", str(p.get("state") or "").strip(),
+                                  "setPropState", data_type, item_id)
+
+    if t == "fadeLight":
+        lid = str(p.get("lightId") or "").strip()
+        if lid and scene_id:
+            known = {x[0] for x in model.scene_light_ids_for_scene(scene_id)}
+            # ⚠ **warning 而不是 error**：灯表可能写在别的时段组里、也可能这一段内容在
+            # 别的场景里复用（注册动作 / 任务动作没有静态场景上下文，那时 scene_id 是 None、
+            # 整段跳过）。报成 error 会把合法数据打红，把 error 通道淹掉。
+            if known and lid not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"fadeLight 的 lightId {lid!r} 不在场景 {scene_id!r} 的 lighting.lights 里"
+                    "（运行时找不到这盏灯就是安静无操作）",
+                ))
+        sc = p.get("scale")
+        if sc is not None and (not _is_num(sc) or not math.isfinite(float(sc)) or float(sc) < 0):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"fadeLight 的 scale 须为 ≥0 的有限数（当前 {sc!r}）；0 = 吹灭、1 = 原亮度",
+            ))
 
     if t == "faceEntity":
         d = str(p.get("direction") or "").strip()
@@ -5491,6 +5660,13 @@ def _append_action_param_ref_issues(
 
     if t in _POSITION_REF_ACTIONS:
         _position_ref_issues(model, issues, t, p, data_type, item_id, scene_id, temp)
+
+    if t == "cameraFollowActor" and not str(p.get("target") or "").strip() and p.get("at") is None:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "cameraFollowActor 缺跟随对象：给 target（实体 id）或 at（位置引用，如曲线此刻播到的点）"
+            "——两个都没有运行时整步跳过，镜头不动",
+        ))
 
     if t == "stopTrajectory" and not str(p.get("target") or "").strip():
         issues.append(Issue(
@@ -7015,6 +7191,27 @@ def _walk_action_defs(
                 data_type, item_id, scene_id,
                 cutscene_temp_ids=cutscene_temp_ids,
             )
+        elif t == "runActionsIf":
+            cond = p.get("condition")
+            if not isinstance(cond, dict) or not cond:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "runActionsIf 缺少 params.condition——运行时按恒真处理，"
+                    "等于写了个没有分支的 runActions",
+                ))
+            else:
+                # 条件走与热区/NPC/区域 conditions 同一条扫描链（flag 登记、叙事图/任务引用可达性）
+                _walk_conditions(model, issues, [cond], data_type, item_id, scene_id)
+            _walk_action_defs(
+                model, issues, p.get("actions"),
+                data_type, item_id, scene_id,
+                cutscene_temp_ids=cutscene_temp_ids,
+            )
+            _walk_action_defs(
+                model, issues, p.get("elseActions"),
+                data_type, item_id, scene_id,
+                cutscene_temp_ids=cutscene_temp_ids,
+            )
         elif t == "setScenarioPhase":
             scen = _scenario_definitions(model)
             sid = str(p.get("scenarioId") or "").strip()
@@ -7075,17 +7272,17 @@ def _walk_action_defs(
                     "error", data_type, item_id,
                     f"completeScenario scenarioId {sid!r} 不在 scenarios.json",
                 ))
-        elif t == "revealDocument":
+        elif t in ("revealDocument", "hideDocument"):
             doc_id = str(p.get("documentId") or "").strip()
             if not doc_id:
                 issues.append(Issue(
                     "error", data_type, item_id,
-                    "revealDocument 缺少 documentId",
+                    f"{t} 缺少 documentId",
                 ))
             elif doc_id not in set(model.document_reveal_ids()):
                 issues.append(Issue(
                     "error", data_type, item_id,
-                    f"revealDocument documentId {doc_id!r} 未在 document_reveals.json 注册",
+                    f"{t} documentId {doc_id!r} 未在 document_reveals.json 注册",
                 ))
 
 
@@ -7101,9 +7298,12 @@ _TRAJECTORY_FRAME_WARN_LIMIT = 500
 _TRAJECTORY_SPACES: frozenset[str] = frozenset({"screen", "world"})
 
 
-# 顶层 x/y 之外还接受位置引用 `at` 的动作（TS 权威 actionParamManifest 的 optional 'at'）
+# 接受位置引用 `at` 的动作（TS 权威 actionParamManifest 的 optional 'at'）：前六个是顶层 x/y 之外的活引用；
+# cameraFollowActor（每帧求值，跟曲线播放头就靠它）/ faceEntity（朝向那一侧）是 target / faceTarget 之外的另一种写法。
+# playTrajectory / playVfx / emitVfxField 在各自分支里调。
 _POSITION_REF_ACTIONS: frozenset[str] = frozenset({
     "moveEntityTo", "jumpEntityTo", "teleportEntityTo", "persistNpcAt", "cutsceneSpawnActor", "setSceneEntityPosition",
+    "cameraFollowActor", "faceEntity",
 })
 
 
@@ -7216,8 +7416,9 @@ def _curve_point_issues(
 ) -> None:
     """`at: {kind:'curve'}`（曲线上的点）：形状 + 能不能真的取到值。
 
-    取值 = 帧上按时刻 / 进度取的偏移 + 曲线此刻的播放位置。播放位置有两档（正在播 = 这次播放的位置，
-    没在播 = 场景曲线的原点），所以**相对曲线**只在"它正好在播"时有位置——那是合法但脆的写法，给 warning。
+    取值 = 帧上按时刻 / 进度取的偏移 + 曲线此刻的播放位置（正在播 = 这次播放的位置，没在播 = 场景曲线的原点）；
+    `point:'current'` 是播放头（曲线此刻播到的点）。**相对曲线一律不许引用**（2026-09-12 制作人定：它每次播放
+    都是一次实例化、可以同时播多个，"它的点"指哪一次说不清）——error，运行时同样拒绝（warn + 按没给处理）。
     """
     tid = str(at.get("trajectoryId") or "").strip()
     if not tid:
@@ -7225,10 +7426,10 @@ def _curve_point_issues(
         return
     pick = str(at.get("point") or "").strip() or (
         "time" if at.get("atMs") is not None else "progress" if at.get("progress") is not None else "end")
-    if pick not in ("start", "end", "time", "progress"):
+    if pick not in ("start", "end", "time", "progress", "current"):
         issues.append(Issue(
             "error", data_type, item_id,
-            f"{t} at.point 须为 start / end / time / progress（当前 {at.get('point')!r}）",
+            f"{t} at.point 须为 start / end / time / progress / current（当前 {at.get('point')!r}）",
         ))
         return
     if pick == "time":
@@ -7269,9 +7470,9 @@ def _curve_point_issues(
         return
     if binding == "free":
         issues.append(Issue(
-            "warning", data_type, item_id,
-            f"{t} at 引用的是相对曲线 {tid!r} 上的点：只有它**正在播**时才有绝对位置，"
-            f"没在播运行时解析不出来（要稳的话引用场景曲线，或改用实体位置）",
+            "error", data_type, item_id,
+            f"{t} at 引用的是相对曲线 {tid!r} 上的点：相对曲线每次播放都是一次实例化、可以同时播多个，"
+            f"暂不支持引用（运行时解析不到、按没给处理）——改成场景曲线，或改用实体位置",
         ))
         return
     if origin is None:
@@ -7339,6 +7540,9 @@ def _spawn_spec_issues(model: ProjectModel, issues: list[Issue], spawn: dict, da
     keep = spawn.get("keep")
     if keep is not None and keep not in (True, False):
         issues.append(Issue("warning", data_type, item_id, "playTrajectory spawn.keep 建议使用 JSON 布尔 true/false（缺省=播完移除）"))
+    raw = spawn.get("renderRaw")
+    if raw is not None and raw not in (True, False):
+        issues.append(Issue("warning", data_type, item_id, "playTrajectory spawn.renderRaw 建议使用 JSON 布尔 true/false（缺省=正常受光被挡）"))
     sid = spawn.get("id")
     if sid is not None and (not isinstance(sid, str) or not sid.strip()):
         issues.append(Issue("warning", data_type, item_id, "playTrajectory spawn.id 给了就要是非空字符串（空 = 运行时自动生成）"))
@@ -7362,6 +7566,85 @@ _VFX_INSTANCE_STATES = _VFX_FLOCK_STATES | frozenset({"active", "inactive"})
 _VFX_FIELD_KINDS = frozenset({"fear", "attract", "wind"})
 _VFX_COLLISION_RESPONSES = frozenset({"none", "kill", "bounce", "stick", "slide"})
 _VFX_BLEND_MODES = frozenset({"normal", "add"})
+
+
+def _check_vfx_confine(
+    model: ProjectModel, issues: list[Issue], sid: str, iid: str, row: dict, area: object,
+) -> None:
+    """粒子区域（`confine`，TS 权威 `VfxConfineDef`）。
+
+    运行时对这一块一律静默：没 `area` 就整条忽略、形状读不懂就当不限定、群体发射器不吃——
+    画面上的表现都是"区域没生效"，与"作者没配"长得一模一样，只能在这里拦。
+    """
+    confine = row.get("confine")
+    if confine is None:
+        return
+    if not isinstance(confine, dict):
+        issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 confine 须为对象（feather / ceiling）"))
+        return
+    feather = confine.get("feather")
+    if feather is not None and (not _is_num(feather) or float(feather) < 0):
+        issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 confine.feather 须为 ≥ 0 的数值（边带宽，画面 wu）"))
+    ceiling = confine.get("ceiling")
+    if ceiling is not None and (not _is_num(ceiling) or float(ceiling) <= 0):
+        issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 confine.ceiling 须为 > 0 的数值（离地高度上限，wu）"))
+    from tools.editor.shared.vfx_confine import (
+        is_polygon, point_in_polygon, polygon_self_intersects, polygons_overlap,
+    )
+
+    own = confine.get("area")
+    if own is not None and not is_polygon(own):
+        issues.append(Issue(
+            "error", "scene", sid,
+            f"vfx 实例 {iid!r} 的 confine.area（范围区域）须为 ≥3 个 [x, y] 的多边形（场景坐标 wu）；"
+            f"运行时读不懂就退回用发射区域",
+        ))
+        own = None
+    emit = area if isinstance(area, list) else None
+    region = own if own is not None else emit
+    if region is None:
+        issues.append(Issue(
+            "error", "scene", sid,
+            f"vfx 实例 {iid!r} 配了 confine 但既没有范围区域（confine.area）也没有发射区域（area）："
+            f"运行时整条忽略，粒子不受任何限定",
+        ))
+        return
+    if polygon_self_intersects(region):
+        issues.append(Issue(
+            "warning", "scene", sid,
+            f"vfx 实例 {iid!r} 的范围区域自相交：交叉围出来的那块会被当成框外（纸钱进去就淡出）",
+        ))
+    if own is not None and emit is not None and not polygons_overlap(emit, own):
+        issues.append(Issue(
+            "warning", "scene", sid,
+            f"vfx 实例 {iid!r} 的发射区域和范围区域不相交：出生 / 补回的落点全在范围外，一张纸钱都不会有",
+        ))
+    area = region
+    effects = getattr(model, "vfx_effects", None) or {}
+    eff = effects.get(str(row.get("effect") or "").strip()) if isinstance(effects, dict) else None
+    ems = eff.get("emitters") if isinstance(eff, dict) else None
+    if not isinstance(ems, list):
+        return
+    ems = [e for e in ems if isinstance(e, dict)]
+    if ems and all(e.get("behavior") is not None for e in ems):
+        issues.append(Issue(
+            "warning", "scene", sid,
+            f"vfx 实例 {iid!r} 的效果全是群体发射器，群体不吃粒子区域（用 behavior.home.rangeRadius 管活动域）",
+        ))
+        return
+    anchor = row.get("anchor") if isinstance(row.get("anchor"), dict) else {}
+    ax, ay = anchor.get("x"), anchor.get("y")
+    # 从锚点发射的普通粒子（非薄片、非群体）：锚点在框外 = 一出生就在淡出，画面上什么都没有
+    from_anchor = [
+        e for e in ems
+        if e.get("behavior") is None and e.get("plate") is None and not e.get("subOnly")
+    ]
+    if from_anchor and _is_num(ax) and _is_num(ay) and not point_in_polygon(area, float(ax), float(ay)):
+        issues.append(Issue(
+            "warning", "scene", sid,
+            f"vfx 实例 {iid!r} 的锚点在粒子区域外：从锚点发射的粒子"
+            f"（{', '.join(str(e.get('id')) for e in from_anchor)}）一出生就在淡出，画面上看不见",
+        ))
 
 
 def _known_vfx_effect_ids(model: ProjectModel) -> set[str]:
@@ -7417,6 +7700,331 @@ def _validate_vfx_curve(raw: object, stem: str, where: str, issues: list[Issue])
         if last is not None and t < last:
             issues.append(Issue("error", "vfx", stem, f"{where}[{i}] 的 t 比上一点小；关键点须按 t 递增"))
         last = t
+
+
+def _prop_preset_image_issues(
+    model: ProjectModel, issues: list[Issue], raw: object, pid: str, where: str,
+) -> None:
+    """挂件贴图路径：不可解析 / 文件不存在都报（口径照 `items.icon`，那是本库最严的一档）。
+
+    挂不出图的表现是**挂点上什么都没有**（运行时 `images.length===0` 就放弃这次挂载，
+    只在 DEV 打一行），与"这个挂点没标注"在画面上分不开 —— 必须在这儿说出来。
+    """
+    for one in (raw if isinstance(raw, list) else [raw]):
+        if one is None:
+            continue
+        if not isinstance(one, str) or not one.strip():
+            issues.append(Issue("error", "prop_preset", pid, f"{where} 必须是非空字符串"))
+            continue
+        ref = one.strip()
+        if ref.startswith("http://") or ref.startswith("https://"):
+            continue  # 远端资源不验证（与素材审计同口径）
+        disk = model.paths.url_to_disk(ref, kind=URL_KIND_MEDIA)
+        if disk is None:
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where} 不可解析为媒体路径（媒体必须落在 public/resources/runtime 下）：{ref!r}",
+            ))
+        elif not disk.is_file():
+            issues.append(Issue("error", "prop_preset", pid, f"{where} 指向的图片文件不存在：{disk}"))
+
+
+def _prop_light_issues(
+    light: object, pid: str, where: str, issues: list[Issue],
+) -> None:
+    """一盏挂件灯（TS 权威 `PropLightDef` / `parsePropLight`）。
+
+    ⚠ 这里报的每一条，运行时的行为都是**静默丢弃**：`intensity` 拿不到正数就整盏灯不要
+    （零强度的灯只白占一个灯槽，而灯槽是 24 个的硬上限），`flicker` 少一个量就整块不要
+    （灯不闪，而作者以为自己配了）。画面上全都表现为"我配的东西没生效"，没有任何报错。
+    """
+    if not isinstance(light, dict):
+        issues.append(Issue("error", "prop_preset", pid, f"{where} 须为对象"))
+        return
+    intensity = light.get("intensity")
+    if not _is_num(intensity) or not math.isfinite(float(intensity)) or float(intensity) <= 0:
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where}.intensity 必须是 > 0 的数（当前 {intensity!r}）——"
+            "运行时 parsePropLight 会把这盏灯整盏丢掉，不亮也不报错",
+        ))
+    for key, n in (("offset", 3), ("color", 3)):
+        v = light.get(key)
+        if v is None:
+            continue
+        if not isinstance(v, list) or len(v) < n or not all(
+                _is_num(x) and math.isfinite(float(x)) for x in v[:n]):
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where}.{key} 须为 {n} 个有限数的数组（当前 {v!r}）——运行时读不到就当没写",
+            ))
+    for key in ("range", "softeningRadius"):
+        v = light.get(key)
+        if v is None:
+            continue
+        if not _is_num(v) or not math.isfinite(float(v)) or float(v) <= 0:
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where}.{key} 须为 > 0 的数（当前 {v!r}）——运行时当没写处理",
+            ))
+    cs = light.get("castShadow")
+    if cs is not None and not isinstance(cs, bool):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where}.castShadow 必须是 true/false（当前 {cs!r}）——运行时只认真 bool",
+        ))
+    flk = light.get("flicker")
+    if flk is None:
+        return
+    if not isinstance(flk, dict):
+        issues.append(Issue("error", "prop_preset", pid, f"{where}.flicker 须为对象 {{amp, hz}}"))
+        return
+    bad: list[str] = []
+    for key in ("amp", "hz"):
+        v = flk.get(key)
+        if not _is_num(v) or not math.isfinite(float(v)) or float(v) <= 0:
+            bad.append(f"{key}={v!r}")
+    if bad:
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where}.flicker 的 amp 与 hz 必须同时是 > 0 的数（{'、'.join(bad)}）——"
+            "少一个运行时就把整块 flicker 丢掉：灯不闪，而数据里看着像配了",
+        ))
+    wind = flk.get("windAmp")
+    if wind is not None and (not _is_num(wind) or not math.isfinite(float(wind))):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where}.flicker.windAmp 须为有限数（当前 {wind!r}）",
+        ))
+
+
+def _validate_prop_presets(model: ProjectModel, issues: list[Issue]) -> None:
+    """挂件预设（`prop_presets.json`，TS 权威 `src/data/propPresets.ts`）。
+
+    这张表 2026-09-12 从"贴图 + 支点 + 缩放"扩到了手持光源（自带灯 / 自带效果 /
+    状态表 / 入档标记）。**运行时对错值一律静默降级**（坏条目逐条丢弃、灯整盏丢、
+    flicker 整块丢、状态名对不上只 warn 一行），所以这一整段是唯一能看见这些错的地方。
+    """
+    table = getattr(model, "prop_presets", None)
+    if not isinstance(table, dict):
+        return
+    known_vfx = _known_vfx_effect_ids(model)
+    for key, entry in table.items():
+        pid = str(key).strip()
+        if not pid:
+            issues.append(Issue(
+                "error", "prop_preset", "prop_presets",
+                "存在无效的键（空字符串），请在「挂件预设」页修正并保存",
+            ))
+            continue
+        if not isinstance(entry, dict):
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                "条目须为对象——运行时 parsePropPresets 逐条丢弃坏条目，"
+                "引用它的 attachToSocket 会挂不出任何东西",
+            ))
+            continue
+        _prop_preset_image_issues(model, issues, entry.get("image"), pid, "image")
+        if entry.get("images") is not None:
+            if not isinstance(entry.get("images"), list):
+                issues.append(Issue("error", "prop_preset", pid, "images 须为数组"))
+            else:
+                _prop_preset_image_issues(model, issues, entry.get("images"), pid, "images")
+        if entry.get("light") is not None:
+            _prop_light_issues(entry.get("light"), pid, "light", issues)
+        if entry.get("persistent") is not None and not isinstance(entry.get("persistent"), bool):
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"persistent 必须是 true/false（当前 {entry.get('persistent')!r}）——"
+                "运行时只认 `=== true`，别的值一律当演出挂件（切场景即散）",
+            ))
+        vfx_raw = entry.get("vfx")
+        if vfx_raw is not None and not isinstance(vfx_raw, list):
+            issues.append(Issue("error", "prop_preset", pid, "vfx 须为效果资产 id 的数组"))
+            vfx_raw = None
+        _prop_preset_vfx_issues(issues, vfx_raw, known_vfx, pid, "vfx")
+
+        states = entry.get("states")
+        if states is not None and not isinstance(states, dict):
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                "states 须为对象 {状态名: {...}}——运行时读不到就当这个挂件没有状态表",
+            ))
+            states = None
+        if isinstance(states, dict):
+            for sk, sv in states.items():
+                sname = str(sk).strip()
+                if not sname:
+                    issues.append(Issue(
+                        "error", "prop_preset", pid,
+                        "states 里有空状态名——运行时跳过该条，setPropState 永远切不到它",
+                    ))
+                    continue
+                if not isinstance(sv, dict):
+                    issues.append(Issue(
+                        "error", "prop_preset", pid,
+                        f"states[{sname!r}] 须为对象——运行时跳过该条",
+                    ))
+                    continue
+                _prop_preset_image_issues(
+                    model, issues, sv.get("image"), pid, f"states[{sname}].image")
+                if sv.get("images") is not None:
+                    if not isinstance(sv.get("images"), list):
+                        issues.append(Issue(
+                            "error", "prop_preset", pid, f"states[{sname}].images 须为数组"))
+                    else:
+                        _prop_preset_image_issues(
+                            model, issues, sv.get("images"), pid, f"states[{sname}].images")
+                # `light: null` 是**有意义的值**（这个状态没有灯，火把灭了），不是错
+                if "light" in sv and sv.get("light") is not None:
+                    _prop_light_issues(sv.get("light"), pid, f"states[{sname}].light", issues)
+                if sv.get("lit") is not None and not isinstance(sv.get("lit"), bool):
+                    issues.append(Issue(
+                        "error", "prop_preset", pid,
+                        f"states[{sname}].lit 必须是 true/false（当前 {sv.get('lit')!r}）",
+                    ))
+                sv_vfx = sv.get("vfx")
+                if "vfx" in sv and not isinstance(sv_vfx, list):
+                    issues.append(Issue(
+                        "error", "prop_preset", pid,
+                        f"states[{sname}].vfx 须为数组（空数组 = 这个状态没有效果）",
+                    ))
+                    sv_vfx = None
+                _prop_preset_vfx_issues(
+                    issues, sv_vfx, known_vfx, pid, f"states[{sname}].vfx")
+
+        ds = entry.get("defaultState")
+        if ds is not None:
+            dss = str(ds).strip()
+            if not isinstance(ds, str) or not dss:
+                issues.append(Issue(
+                    "error", "prop_preset", pid,
+                    f"defaultState 必须是非空状态名（当前 {ds!r}）；不指定就直接删掉这个键",
+                ))
+            elif not isinstance(states, dict) or dss not in states:
+                have = "、".join(sorted(states)) if isinstance(states, dict) and states else "（没有状态表）"
+                issues.append(Issue(
+                    "error", "prop_preset", pid,
+                    f"defaultState {dss!r} 不在 states 里（现有：{have}）——"
+                    "运行时 resolvePropStateName 返回空串，这个挂件挂上去就没有状态",
+                ))
+
+
+def _append_prop_state_issues(
+    model: ProjectModel, issues: list[Issue], prop_id: str, state: str,
+    action: str, data_type: str, item_id: str,
+) -> None:
+    """`attachToSocket.state` / `setPropState.state`：状态名对得上挂件预设的 `states` 吗。
+
+    两种解析力度，都**不硬猜**：
+
+    - 给了 `prop`（attachToSocket）⇒ 就查那个预设的 `states`，对不上报 error；
+    - 没有 `prop`（setPropState 压根没这个参数）⇒ 只查一个必要条件：这个名字在**任何**
+      挂件预设里出现过吗。出现过就放行（到底是哪个挂件，要运行时按 (target, socket) 查
+      那次挂载才知道——编辑期猜必猜错）；一个都没出现过就一定是错的。
+
+    全工程还没有任何预设配过 `states` 时整段跳过：那说明这个特性刚起步，
+    报出来只会满屏误报，把 error 通道淹掉。
+    """
+    if not state:
+        return
+    table = getattr(model, "prop_presets", None)
+    if not isinstance(table, dict) or not table:
+        return
+    if prop_id:
+        entry = table.get(prop_id)
+        if not isinstance(entry, dict):
+            return  # prop 悬垂由 attachToSocket 那段单独报，别报两遍
+        states = entry.get("states")
+        if not isinstance(states, dict) or not states:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{action} 的 state {state!r} 无处可去：挂件预设 {prop_id!r} 没有状态表"
+                "（运行时 resolvePropStateName 返回空串 = 这次挂载没有状态）",
+            ))
+            return
+        if state not in states:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{action} 的 state {state!r} 不在挂件预设 {prop_id!r} 的 states 里"
+                f"（现有：{'、'.join(sorted(states))}）",
+            ))
+        return
+    all_names: set[str] = set()
+    for entry in table.values():
+        states = entry.get("states") if isinstance(entry, dict) else None
+        if isinstance(states, dict):
+            all_names |= {str(k) for k in states}
+    if not all_names:
+        return
+    if state not in all_names:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"{action} 的 state {state!r} 在任何挂件预设的 states 里都不存在"
+            f"（全工程现有状态名：{'、'.join(sorted(all_names))}）——"
+            "运行时 warn 一行然后不切状态",
+        ))
+
+
+def _prop_preset_vfx_issues(
+    issues: list[Issue], raw: object, known: set[str], pid: str, where: str,
+) -> None:
+    """效果资产 id 存在性。缺席＝运行时那团火**根本不放**（只在 DEV 打一行）。"""
+    if not isinstance(raw, list):
+        return
+    for i, one in enumerate(raw):
+        if not isinstance(one, str) or not one.strip():
+            issues.append(Issue("error", "prop_preset", pid, f"{where}[{i}] 必须是非空效果 id"))
+            continue
+        eid = one.strip()
+        if known and eid not in known:
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where}[{i}] 的效果 {eid!r} 不在 assets/data/vfx/ 里——"
+                "运行时找不到资产就不放这团效果（火把只剩一张图）",
+            ))
+
+
+def _validate_vfx_plate(pl: object, stem: str, eid: str, issues: list[Issue]) -> None:
+    """薄片模块（TS 权威 ``VfxPlateDef``，模拟 ``src/systems/vfx/vfxPlate.ts``）。
+
+    运行时对数值错一律夹到合法范围继续跑（不报错），夹出来的纸往往"不像纸"——只能在这里说。
+    """
+    if not isinstance(pl, dict):
+        issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} plate 须为对象"))
+        return
+    size = pl.get("size")
+    if not isinstance(size, list) or len(size) != 2 or not all(_is_num(v) and float(v) > 0 for v in size):
+        issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} plate.size 须为 [宽, 高]（正数，真实尺寸 wu）"))
+    ts = pl.get("terminalSpeed")
+    if not _is_num(ts) or float(ts) <= 0:
+        issues.append(Issue("error", "vfx", stem,
+                            f"发射器 {eid!r} plate.terminalSpeed 须为正数（平着自由下落的终端速度 wu/s，薄纸 ≈ 90）"))
+
+    def rng(v: object, lo: float, hi: float, label: str) -> None:
+        if v is not None and (not _is_num(v) or not (lo <= float(v) <= hi)):
+            issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} plate.{label} {v!r} 须在 {lo}..{hi}"))
+
+    rng(pl.get("edgeDrag"), 0.0, 1.0, "edgeDrag")
+    rng(pl.get("pressureOffset"), 0.0, 0.25, "pressureOffset")
+    for key, fields in (("friction", (("static", 0.0, 5.0), ("kinetic", 0.0, 5.0))),
+                        ("adhere", (("pinned", 0.0, 1.0), ("onObjects", 0.0, 1.0), ("hold", 0.0, 1e6))),
+                        ("bend", (("stiffness", 1.0, 1e7), ("freq", 0.1, 60.0), ("damping", 0.0, 10.0),
+                                  ("max", 0.0, 1.5), ("rest", 0.0, 1.0)))):
+        sub = pl.get(key)
+        if sub is None:
+            continue
+        if not isinstance(sub, dict):
+            issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} plate.{key} 须为对象"))
+            continue
+        for f, lo, hi in fields:
+            rng(sub.get(f), lo, hi, f"{key}.{f}")
+    seg = pl.get("segments")
+    if seg is not None and (not _is_num(seg) or not (1 <= int(seg) <= 16)):
+        issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} plate.segments 须为 1..16"))
+    rep = pl.get("replenish")
+    if rep is not None and not isinstance(rep, bool):
+        issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} plate.replenish 须为布尔"))
 
 
 def _validate_vfx_behavior(beh: object, stem: str, eid: str, issues: list[Issue]) -> None:
@@ -7576,10 +8184,16 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                         issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} spawn.{key} 须为 [最小, 最大]"))
                 shape = sp.get("shape")
                 if shape is not None:
-                    if not isinstance(shape, dict) or str(shape.get("kind") or "") not in ("point", "sphere", "disc", "box", "line"):
+                    if not isinstance(shape, dict) or str(shape.get("kind") or "") not in ("point", "sphere", "disc", "box", "line", "area"):
                         issues.append(Issue(
                             "error", "vfx", stem,
-                            f"发射器 {eid!r} spawn.shape.kind 须为 point / sphere / disc / box / line",
+                            f"发射器 {eid!r} spawn.shape.kind 须为 point / sphere / disc / box / line / area",
+                        ))
+                    elif shape.get("kind") == "area" and e.get("plate") is None:
+                        issues.append(Issue(
+                            "warning", "vfx", stem,
+                            f"发射器 {eid!r} 的 spawn.shape 是 area，但只有薄片（plate）发射器会按区域铺撒；"
+                            f"普通粒子会全部生在原点上",
                         ))
 
             life = e.get("life")
@@ -7663,6 +8277,15 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                     ))
                 _validate_vfx_behavior(beh, stem, eid, issues)
 
+            pl = e.get("plate")
+            if pl is not None:
+                _validate_vfx_plate(pl, stem, eid, issues)
+                if beh is not None:
+                    issues.append(Issue(
+                        "warning", "vfx", stem,
+                        f"发射器 {eid!r} 既有群体 behavior 又有薄片 plate：运行时群体优先，plate 被忽略",
+                    ))
+
 
 def _report_unparseable_trajectory_files(
     model: ProjectModel, loaded: dict, issues: list[Issue],
@@ -7742,6 +8365,7 @@ def _validate_trajectories(model: ProjectModel, issues: list[Issue]) -> None:
                 f"轨迹资产 space 须为 screen / world（当前 {space!r}）",
             ))
         _validate_trajectory_binding_and_slots(row, stem, scene_ids, issues)
+        _validate_trajectory_cues(model, row, stem, issues)
 
         # ---- keyframes：screen 资产的唯一真相 / world 资产的回落帧 ----
         frames = row.get("keyframes")
@@ -7822,6 +8446,63 @@ def _validate_trajectories(model: ProjectModel, issues: list[Issue]) -> None:
                             f"authoring.entity npc {eid!r} 已不在场景 {a_sid!r}"
                             f"（只影响工作台重开现场，运行时不读）",
                         ))
+
+
+def _validate_trajectory_cues(model: ProjectModel, row: dict, stem: str, issues: list[Issue]) -> None:
+    """音效关键点（``cues``，TS 权威 ``TrajectoryCue``）：曲线播到 ``atMs`` 那一刻播一条音效。
+
+    为什么非查不可：这一族的错**全是静默**——`sound` 写了个 audio_config 里没有的 id，
+    `AudioManager.playSfx` 对未知 id 直接 return；`atMs` 写成字符串，运行时按 0 处理（开播就响）。
+    两种都是"画面照常、就是不对"，只能在构建期抓。
+
+    - `id` 非空唯一（作者面按它定位；重了在工作台里改一个就改两个）；
+    - `atMs` 有限非负；超出末帧 = warning（运行时按末帧处理，不是丢掉）；
+    - `sound` 走 ``audio_config.sfx``（与 `playSfx` 动作同一区，**不回落别的区**）。
+    """
+    cues = row.get("cues")
+    if cues is None:
+        return
+    if not isinstance(cues, list):
+        issues.append(Issue("error", "trajectory", stem, f"轨迹资产 cues 须为数组（当前 {type(cues).__name__}）"))
+        return
+    frames = row.get("keyframes")
+    last_ms = None
+    if isinstance(frames, list) and frames and isinstance(frames[-1], dict):
+        v = frames[-1].get("atMs")
+        if _is_num(v) and math.isfinite(float(v)):
+            last_ms = float(v)
+    seen: set[str] = set()
+    for i, c in enumerate(cues):
+        if not isinstance(c, dict):
+            issues.append(Issue("error", "trajectory", stem, f"cues[{i}] 须为对象 {{id, atMs, sound, label?}}"))
+            continue
+        cid = str(c.get("id") or "").strip()
+        if not cid:
+            issues.append(Issue("error", "trajectory", stem, f"cues[{i}] 缺少非空 id"))
+        elif cid in seen:
+            issues.append(Issue("error", "trajectory", stem, f"cues[{i}] id {cid!r} 重复"))
+        seen.add(cid)
+        at = c.get("atMs")
+        if not _is_num(at) or not math.isfinite(float(at)):
+            issues.append(Issue(
+                "error", "trajectory", stem,
+                f"cues[{i}].atMs 须为有限数（当前 {at!r}；运行时把非数当 0——开播那一刻就响）",
+            ))
+        elif float(at) < 0:
+            issues.append(Issue("error", "trajectory", stem, f"cues[{i}].atMs 不能为负（当前 {at!r}）"))
+        elif last_ms is not None and float(at) > last_ms + 0.5:
+            issues.append(Issue(
+                "warning", "trajectory", stem,
+                f"cues[{i}].atMs={at} 超出轨迹时长 {last_ms:.0f} ms（运行时按末帧处理，在轨迹工作台重存一次会钳回去）",
+            ))
+        # 缺键与空串同义（都是"还没选音效"）：_check_audio_cue 对 None 是直接 return 的，不替它兜底就漏了
+        _check_audio_cue(
+            model, issues, "" if c.get("sound") is None else c.get("sound"), "sfx", "trajectory", stem,
+            f"cues[{i}]（{cid or i}）的 sound", allow_empty=False,
+        )
+        label = c.get("label")
+        if label is not None and not isinstance(label, str):
+            issues.append(Issue("warning", "trajectory", stem, f"cues[{i}].label 须为字符串（当前 {type(label).__name__}）"))
 
 
 def _validate_trajectory_binding_and_slots(row: dict, stem: str, scene_ids: set[str], issues: list[Issue]) -> None:
@@ -8034,6 +8715,7 @@ def _validate_flags(model: ProjectModel, issues: list[Issue]) -> None:
         for obj in q.get("objectives") or []:
             if isinstance(obj, dict):
                 _walk_conditions(model, issues, obj.get("completeWhen"), "quest", qid, None)
+                _walk_conditions(model, issues, obj.get("visibleConditions"), "quest", qid, None)
 
     for enc in model.encounters:
         eid = str(enc.get("id", ""))

@@ -107,6 +107,17 @@ interface CutsceneStaging {
   memory: SceneMemory;
 }
 
+/**
+ * 运行时生成 / 移除 NPC 的生命周期钩子（Game 装配期注入，见 {@link SceneManager.setRuntimeNpcHooks}）。
+ * 两侧**必须成对**：生成侧建的东西（滤镜之外还有阴影 entry）移除侧不拆，就是残留。
+ */
+export interface RuntimeNpcHooks {
+  /** 实体已进 `currentNpcs`、贴图已就绪之后调用：补挂场景滤镜 / 透视 / 阴影 / 像素密度。 */
+  onSpawned?: (npc: Npc) => void;
+  /** 实体被移除之前调用（此时它还在实体表里）：拆掉生成侧建的、不随实体自毁的东西。 */
+  onRemoved?: (id: string) => void;
+}
+
 export class SceneManager implements IGameSystem {
   private assetManager: AssetManager;
   private eventBus: EventBus;
@@ -219,6 +230,16 @@ export class SceneManager implements IGameSystem {
   /** 由 Game 注入：从深度系统摘除并销毁实体滤镜（Game 持有 SceneDepthSystem）。
    *  实体在过场重建 / 卸载时若不摘除，已 destroy 的滤镜仍留在每帧驱动列表里。 */
   private entityFilterReleaser: ((filters: Array<{ destroy(): void }>) => void) | null = null;
+  /**
+   * 由 Game 注入：运行时生成 / 移除 NPC 的生命周期钩子。
+   *
+   * 为什么非要这一钩：`instantiateNpc` 只做到 `addChild` 为止，**逐实体光照 / 深度遮挡 /
+   * 透视缩放 / 投影阴影 / 像素密度低通全挂在 Game 的 `scene:ready` 循环里**——演出中途
+   * 生成的实体不经过那一趟。漏了不报错，只是画面不对：2026-09-12 实测 `playTrajectory`
+   * spawn 的铜钱 `filters` 为空、按贴图原像素画、不被木桶挡，而同一枚铜钱 `keep` 下来
+   * 重进场景反而正常（装载循环把它塞进 `currentNpcs`，`scene:ready` 顺手就给挂上了）。
+   */
+  private runtimeNpcHooks: RuntimeNpcHooks | null = null;
   private depthLoader: ((sceneId: string, sceneData: SceneData, worldToPixelX: number, worldToPixelY: number) => Promise<void>) | null = null;
   /**
    * 统一光影的装载钩子。在 `depthLoader` **之后**调用（那时深度纹理才就绪），
@@ -228,6 +249,14 @@ export class SceneManager implements IGameSystem {
     | ((sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>)
     | null = null;
   private lightingUnloader: (() => void) | null = null;
+  /**
+   * 背景草木摆动的装载钩子（场景风 + 摆动图，见 `rendering/backgroundSway`）。在统一光影**之后**调用：
+   * 背景仍是平铺 Sprite 时返回一个替代它的 mesh；点亮的背景自己在 shader 里摆，这里返回 null。
+   */
+  private swayLoader:
+    | ((sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>)
+    | null = null;
+  private swayUnloader: (() => void) | null = null;
   /** 主背景 Sprite 与其纹理（统一光影启用时要把它换掉）。 */
   private primaryBgSprite: Sprite | null = null;
   private primaryBgTexture: Texture | null = null;
@@ -301,6 +330,11 @@ export class SceneManager implements IGameSystem {
     this.entityFilterReleaser = fn;
   }
 
+  /** 见 {@link runtimeNpcHooks}。 */
+  setRuntimeNpcHooks(hooks: RuntimeNpcHooks): void {
+    this.runtimeNpcHooks = hooks;
+  }
+
   /** 摘除并销毁热点的深度滤镜（先从深度系统列表移除，再销毁 GPU 资源）。重复调用安全（detach 返回 null）。 */
   private releaseHotspotFilters(h: Hotspot): void {
     const f = h.detachDepthOcclusionFilter();
@@ -332,6 +366,18 @@ export class SceneManager implements IGameSystem {
     fn: (sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>,
   ): void {
     this.lightingLoader = fn;
+  }
+
+  /** 见 {@link swayLoader}。 */
+  setSwayLoader(
+    fn: (sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>,
+  ): void {
+    this.swayLoader = fn;
+  }
+
+  /** 卸载场景时与光影同一拍拆摆动 mesh（先于背景容器与纹理）。 */
+  setSwayUnloader(fn: () => void): void {
+    this.swayUnloader = fn;
   }
 
   /** 卸载场景时先拆光影（顺序见 unloadScene 的注释）。 */
@@ -538,6 +584,15 @@ export class SceneManager implements IGameSystem {
     const b = this.appearanceBase;
     if (!b) return false;
     return !sameAppearance(b.applied, resolveSceneAppearance(b.scene, nextPhase));
+  }
+
+  /**
+   * 本场景**不带时段覆盖**的外观（顶层白天基底）。场景加载一开始就留好，所以加载链上的
+   * 各个装载器（深度 / 光照 / 摆动）都能拿它比"这个时段到底换了哪几样"。没进过场景 null。
+   */
+  get baseAppearance(): ResolvedSceneAppearance | null {
+    const b = this.appearanceBase;
+    return b ? resolveSceneAppearance(b.scene, '') : null;
   }
 
   /**
@@ -1790,6 +1845,20 @@ export class SceneManager implements IGameSystem {
       advance('统一光影 ✓');
     }
 
+    // 背景草木摆动：只有背景还是平铺 Sprite（没点亮）时由这里换成摆动 mesh
+    if (this.swayLoader && this.primaryBgTexture && this.primaryBgSprite?.renderable && this.sceneContainerBg) {
+      try {
+        const swayMesh = await this.swayLoader(sceneId, sceneData, this.primaryBgTexture);
+        if (swayMesh && this.primaryBgSprite?.renderable && this.sceneContainerBg) {
+          const idx = this.sceneContainerBg.getChildIndex(this.primaryBgSprite);
+          this.sceneContainerBg.addChildAt(swayMesh, idx);
+          this.primaryBgSprite.renderable = false;
+        }
+      } catch (e) {
+        console.warn('[SceneManager] 背景摆动装载失败，回落原背景', e);
+      }
+    }
+
     if (sceneData.filterId) {
       report(`世界滤镜 · ${sceneData.filterId}`);
       try {
@@ -1930,6 +1999,7 @@ export class SceneManager implements IGameSystem {
     //   反了会命中 Pixi 坑②——绑着按场景销毁纹理的对象若在纹理之后才解绑,
     //   BindGroup 见资源已 destroyed 就自作废,那个 shader 从此永久烧毁(不是泄漏,是坏掉)。
     this.lightingUnloader?.();
+    this.swayUnloader?.();
     this.primaryBgSprite = null;
     this.primaryBgTexture = null;
 
@@ -2301,7 +2371,10 @@ export class SceneManager implements IGameSystem {
   }
 
   /**
-   * 演出临时生成一个 NPC（图片道具 / 角色模板），走与场景 JSON 同一条实例化管线（阴影 / 透视 / 排序 / 光照全在）。
+   * 演出临时生成一个 NPC（图片道具 / 角色模板），走与场景 JSON 同一条实例化管线。
+   * 「同一条」= `instantiateNpc`（合角色注册表默认 / 装贴图 / 进实体层）**加上** `runtimeNpcHooks.onSpawned`
+   * 补的那一半（逐实体光照 / 深度遮挡 / 透视缩放 / 投影阴影 / 像素密度）——后一半住在 Game 的
+   * `scene:ready` 循环里，不经钩子就一样都没有（2026-09-12 之前正是如此，见 {@link runtimeNpcHooks}）。
    * `persistent` = 播完留在场景：进 `sceneMemory.spawnedNpcs`，随存档与之后每次实例化走。
    * 生成期间切了场景：销毁半成品、返回 null（孤儿容器不许进层）。图片没给世界尺寸就按贴图像素尺寸。
    */
@@ -2334,6 +2407,8 @@ export class SceneManager implements IGameSystem {
       const mem = this.getWritableMemory(sceneId);
       if (mem) mem.spawnedNpcs[def.id] = { ...def };
     }
+    // 必须在 push 之后：钩子那侧按实体表寻址（阴影定向重建走 getNpcById，像素密度遍历全表）
+    this.runtimeNpcHooks?.onSpawned?.(npc);
     this.interactionSetter?.(this.currentHotspots, this.currentNpcs);
     return npc;
   }
@@ -2343,6 +2418,8 @@ export class SceneManager implements IGameSystem {
     const idx = this.currentNpcs.findIndex((n) => n.id === id);
     if (idx < 0) return false;
     const npc = this.currentNpcs[idx]!;
+    // 先于 destroy：生成侧建的阴影 entry 不随实体自毁，留着就是地上一坨冻住的鬼影
+    this.runtimeNpcHooks?.onRemoved?.(id);
     this.releaseNpcFilters(npc);
     npc.destroy();
     this.currentNpcs.splice(idx, 1);

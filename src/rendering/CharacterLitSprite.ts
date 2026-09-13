@@ -46,6 +46,62 @@ function sliceGlsl(src: string, tag: string): string {
 const WR_CORE = sliceGlsl(WORLD_RECONSTRUCT, 'WR_CORE');
 const LC = sliceGlsl(LIGHTING_CORE, 'LIGHTING_CORE');
 
+/**
+ * 场景实体灯的加性照度 —— 角色 mesh 路径与粒子受光**共用这一份**（逐字拼接，不内联重写；
+ * 与 `charShadeCore` 同一待遇）。两处各写一份循环，"粒子与角色吃同一套灯"就只是写得像。
+ *
+ * 宿主要先声明 `uSceneLightCount / uSceneLightA..D / uSMRow0..2 / uSMWuPerQUnit`（`charLights` 组），
+ * 并拼好 `WR_CORE` 与 `LC`；本段放在它们之后。
+ */
+export const ENTITY_SCENE_LIGHTS_GLSL = /* glsl */ `
+/** 面光两条半轴。与 SceneLightingPass 的同名函数同式（绕法线自转 roll）。 */
+void litAreaAxes(vec3 n, float halfW, float halfH, float roll, out vec3 halfU, out vec3 halfV) {
+    vec3 up = abs(n.y) > 0.95 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+    vec3 u = normalize(cross(up, n));
+    vec3 v = cross(n, u);
+    float c = cos(roll), s = sin(roll);
+    halfU = (u * c + v * s) * halfW;
+    halfV = (v * c - u * s) * halfH;
+}
+
+/**
+ * q = 伪世界点；n = **世界**法线（已在 M-world）。返回各盏灯的照度之和。
+ *
+ * 铁律 0（制作人 2026-08-30 定死）：光照一律在**世界空间、单位 wu**。
+ * 朝向过 R、尺度过 uWuPerQUnit，一次转到底 —— 不许停在「世界朝向 + q 尺度」
+ * 那个没有名字的中间态：那会让 range / 软化半径 / 面光尺寸在 shader 里不是 wu，
+ * 而作者面明明按 wu 填，读代码的人无法判断某个长度是哪把尺。
+ * 法线直接用 n：调用方交进来的**已经是世界法线** —— 世界对世界，谁都不用转。
+ */
+vec3 entitySceneLightsE(vec3 q, vec3 n) {
+    vec3 E = vec3(0.0);
+    if (uSceneLightCount <= 0) return E;
+    vec3 P = wrQToWorld(uSMRow0, uSMRow1, uSMRow2, q) * uSMWuPerQUnit;
+    for (int i = 0; i < ${MAX_STATIC_LIGHTS}; i++) {
+        if (i >= uSceneLightCount) break;
+        vec4 A = uSceneLightA[i], B = uSceneLightB[i];
+        vec4 C = uSceneLightC[i], D = uSceneLightD[i];
+        if (B.w <= 0.0) continue;                 // 强度 0 的灯贡献恒等于 0
+        int kind = int(A.w + 0.5);
+        int flags = int(D.w + 0.5);               // bit0=castShadow bit1=twoSided
+        // 实体不吃灯的阴影：投影解是场景那一级按背景像素栅格解的前缀最小，
+        // 角色 / 粒子是动的、不在那张图里。vis 恒 1，宁可多一点光也不要错位的黑块。
+        if (kind == LC_POINT) {
+            E += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, 1.0);
+        } else if (kind == LC_SPOT) {
+            E += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, 1.0);
+        } else if (kind == LC_AREA) {
+            vec3 hu, hv;
+            litAreaAxes(normalize(D.xyz), C.z, C.w, C.y, hu, hv);
+            E += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, 1.0);
+        } else {
+            E += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
+        }
+    }
+    return E;
+}
+`;
+
 const VERT = /* glsl */ `#version 300 es
 in vec2 aPosition;   // sprite 局部坐标(帧像素空间,锚点已含)
 in vec2 aUV;         // 图集 UV —— 与 color 帧同一套(法线采样直接用它)
@@ -154,16 +210,7 @@ uniform vec3  uDispLiftColor;
 ${CHAR_LIGHT_COMMON_GLSL}
 ${WR_CORE}
 ${LC}
-
-/** 面光两条半轴。与 SceneLightingPass 的同名函数同式（绕法线自转 roll）。 */
-void litAreaAxes(vec3 n, float halfW, float halfH, float roll, out vec3 halfU, out vec3 halfV) {
-    vec3 up = abs(n.y) > 0.95 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
-    vec3 u = normalize(cross(up, n));
-    vec3 v = cross(n, u);
-    float c = cos(roll), s = sin(roll);
-    halfU = (u * c + v * s) * halfW;
-    halfV = (v * c - u * s) * halfH;
-}
+${ENTITY_SCENE_LIGHTS_GLSL}
 
 void main(void) {
     vec4 color = texture(uColorTex, vUV);
@@ -263,45 +310,20 @@ void main(void) {
     // 灯来自同一次 packLights ⇒「灯对角色和场景一视同仁」是构造性的，不是两处写得像。
     //
     // 着色在 M-world（q 经 det=+1 的 R 旋过去），不是裸 q —— 裸 q 的 Y 是屏幕上、
-    // 不是世界上，灯的仰角与 1/r² 会全错（coordinate-spaces 铁律 4）。
-    if (uSceneLightCount > 0) {
-    // 铁律 0（制作人 2026-08-30 定死）：光照一律在**世界空间、单位 wu**。
-    // 朝向过 R、尺度过 uWuPerQUnit，一次转到底 —— 不许停在「世界朝向 + q 尺度」
-    // 那个没有名字的中间态：那会让 range / 软化半径 / 面光尺寸在 shader 里不是 wu，
-    // 而作者面明明按 wu 填，读代码的人无法判断某个长度是哪把尺。
-        vec3 P = wrQToWorld(uSMRow0, uSMRow1, uSMRow2, q) * uSMWuPerQUnit;
-        // 法线直接用 n：它**已经是世界法线**（中性=水平，见上面"法线只有一个约定"段），
-        // 灯位/P 也在世界 wu —— 世界对世界，谁都不用转。
-        //
-        // ⚠ 这里曾留过一段相反的注释（"n 是 q 空间的量、必须转到 M-world、正面的
-        //   世界朝向是 (0,+0.707,−0.707)"）—— 那是错的：把中性法线说成上仰 45° 意味着
-        //   直立的人像躺着的地面一样迎接头顶光、又拒收水平来的灯光。直立 quad 的
-        //   面法线是**水平**的（制作人 2026-08-31 点破），worldSpaceShading 测试锁的
-        //   就是这一约定。那段错注释误导过一整轮排查（照它摆的"贴脸灯"全在法线
-        //   背面），删除防再骗。几何推论：**低于人的灯照不亮躯干正面是错觉**——
-        //   水平法线下只要灯在 quad 平面靠相机一侧，脚边的火同样照亮胸口。
-        for (int i = 0; i < ${MAX_STATIC_LIGHTS}; i++) {
-            if (i >= uSceneLightCount) break;
-            vec4 A = uSceneLightA[i], B = uSceneLightB[i];
-            vec4 C = uSceneLightC[i], D = uSceneLightD[i];
-            if (B.w <= 0.0) continue;                 // 强度 0 的灯贡献恒等于 0
-            int kind = int(A.w + 0.5);
-            int flags = int(D.w + 0.5);               // bit0=castShadow bit1=twoSided
-            // 角色不吃灯的阴影：投影解是场景那一级按背景像素栅格解的前缀最小，
-            // 角色是动的、不在那张图里。vis 恒 1，宁可多一点光也不要错位的黑块。
-            if (kind == LC_POINT) {
-                E += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, 1.0);
-            } else if (kind == LC_SPOT) {
-                E += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, 1.0);
-            } else if (kind == LC_AREA) {
-                vec3 hu, hv;
-                litAreaAxes(normalize(D.xyz), C.z, C.w, C.y, hu, hv);
-                E += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, 1.0);
-            } else {
-                E += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
-            }
-        }
-    }
+    // 不是世界上，灯的仰角与 1/r² 会全错（coordinate-spaces 铁律 4）。循环本体在
+    // ENTITY_SCENE_LIGHTS_GLSL（粒子受光拼的是同一段）。
+    //
+    // 法线直接用 n：它**已经是世界法线**（中性=水平，见上面"法线只有一个约定"段），
+    // 灯位/P 也在世界 wu —— 世界对世界，谁都不用转。
+    //
+    // ⚠ 这里曾留过一段相反的注释（"n 是 q 空间的量、必须转到 M-world、正面的
+    //   世界朝向是 (0,+0.707,−0.707)"）—— 那是错的：把中性法线说成上仰 45° 意味着
+    //   直立的人像躺着的地面一样迎接头顶光、又拒收水平来的灯光。直立 quad 的
+    //   面法线是**水平**的（制作人 2026-08-31 点破），worldSpaceShading 测试锁的
+    //   就是这一约定。那段错注释误导过一整轮排查（照它摆的"贴脸灯"全在法线
+    //   背面），删除防再骗。几何推论：**低于人的灯照不亮躯干正面是错觉**——
+    //   水平法线下只要灯在 quad 平面靠相机一侧，脚边的火同样照亮胸口。
+    E += entitySceneLightsE(q, n);
     // ---- 「GI体·纯E」调试(F2 循环 8/9 档):albedo≡1,输出 E×2^β ----
     // 与场景侧 uDebug==8 逐字同式(不走 /π、eChroma 与显示变换):这是校验 probe 体
     // 的尺子,不是美术视图 —— 两边同式,人与地面的 E 才能逐像素直接比。

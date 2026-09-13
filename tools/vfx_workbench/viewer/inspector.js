@@ -248,11 +248,13 @@ const Inspector = {
         this.row('开播爆发', this.num(() => sp.burst, (v) => E('改爆发', () => { if (v == null) delete sp.burst; else sp.burst = Math.round(v); }), '个', { int: true })),
         this.row('形状', this.sel(() => shape && shape.kind, (v) => E('改发射形状', () => {
           if (!v) { delete sp.shape; return; }
-          const d = { point: {}, sphere: { radius: 20 }, disc: { radius: 20 }, box: { size: [100, 50, 100] }, line: { to: [100, 0, 0] } }[v] || {};
+          const d = { point: {}, sphere: { radius: 20 }, disc: { radius: 20 }, box: { size: [100, 50, 100] }, line: { to: [100, 0, 0] }, area: { radius: 200 } }[v] || {};
           sp.shape = Object.assign({ kind: v }, d);
-        }), ['point', 'sphere', 'disc', 'box', 'line'], true)),
+        }), ['point', 'sphere', 'disc', 'box', 'line', 'area'], true)),
         shape && (shape.kind === 'sphere' || shape.kind === 'disc')
           ? this.row('半径', this.num(() => shape.radius, (v) => E('改发射半径', () => { shape.radius = v == null ? 1 : Math.max(0, v); }), 'wu')) : null,
+        shape && shape.kind === 'area'
+          ? this.row('预览半径', this.num(() => shape.radius, (v) => E('改区域预览半径', () => { shape.radius = v == null ? 200 : Math.max(1, v); }), 'wu', { title: '铺在场景实例的 area 多边形里；没有实例区域时（本地预览）退成这个半径的圆盘' })) : null,
         shape && shape.kind === 'box' ? this.row('盒尺寸', this.vec3(() => shape.size || [0, 0, 0], (v) => E('改发射盒', () => { shape.size = v; }), 'wu')) : null,
         shape && shape.kind === 'line' ? this.row('线终点', this.vec3(() => shape.to || [0, 0, 0], (v) => E('改发射线', () => { shape.to = v; }), 'wu')) : null,
         this.row('初速', this.pair(() => sp.speed || [0, 0], (v) => E('改初速', () => { sp.speed = v; }), 'wu/s')),
@@ -387,6 +389,38 @@ const Inspector = {
       ];
     }));
 
+    // ---------------- 薄片（纸钱 / 落叶）
+    container.appendChild(this.section('plate', '薄片（纸钱）', () => {
+      const pl = em.plate;
+      if (em.behavior) return [h('div', { class: 'pad dim' }, '群体发射器不能是薄片（运行时群体优先）')];
+      if (!pl) return [h('div', { class: 'pad dim' }, '挂上它，每颗粒子就是一张有朝向、会弯的薄片：吃场景风、躺地贴物、能被吹走'),
+        h('div', { class: 'btns' }, h('button', { onclick: () => E('加薄片模块', () => { ensure('plate', { size: [16, 16], terminalSpeed: 90 }); }) }, '+ 加薄片模块'))];
+      const sub = (key) => pl[key] || (pl[key] = {});
+      const numIn = (label, key, field, unit, title, lo, hi) => this.row(label, this.num(
+        () => (pl[key] || {})[field],
+        (v) => E(`改${label}`, () => { const o = sub(key); if (v == null) delete o[field]; else o[field] = clamp(v, lo, hi); if (!Object.keys(o).length) delete pl[key]; }),
+        unit, { title }));
+      return [
+        this.row('尺寸', this.pair(() => pl.size || [16, 16], (v) => E('改薄片尺寸', () => { pl.size = [Math.max(0.5, v[0]), Math.max(0.5, v[1])]; }), 'wu（真实）')),
+        this.row('终端速度', this.num(() => pl.terminalSpeed, (v) => E('改终端速度', () => { pl.terminalSpeed = Math.max(5, v == null ? 90 : v); }), 'wu/s', { title: '平着自由下落的终端速度；薄纸 ≈ 90（≈ 1 m/s）' })),
+        this.row('切向阻力比', this.num(() => pl.edgeDrag, (v) => E('改切向阻力比', () => { if (v == null) delete pl.edgeDrag; else pl.edgeDrag = clamp(v, 0, 1); }), '0–1')),
+        this.row('压心偏移', this.num(() => pl.pressureOffset, (v) => E('改压心偏移', () => { if (v == null) delete pl.pressureOffset; else pl.pressureOffset = clamp(v, 0, 0.25); }), '弦长比例', { title: '翻转力矩的来源：越大越爱翻' })),
+        numIn('静摩擦', 'friction', 'static', 'μ', '', 0, 5),
+        numIn('动摩擦', 'friction', 'kinetic', 'μ', '', 0, 5),
+        numIn('贴死比例', 'adhere', 'pinned', '0–1', '出生就贴死的比例（湿了 / 被石子压住）：吹不走，但边角照样被风掀', 0, 1),
+        numIn('物件上贴死', 'adhere', 'onObjects', '0–1', '生在石头 / 树 / 灌丛表面的那批挂住的概率', 0, 1),
+        numIn('附着力上限', 'adhere', 'hold', 'wu/s²', '其余纸片逐张在 0..它 之间抽', 0, 1e6),
+        numIn('弯曲刚度', 'bend', 'stiffness', 'wu/s²', '弯到边缘翘起半个宽度所需的法向气动加速度', 1, 1e7),
+        numIn('弯曲频率', 'bend', 'freq', 'Hz', '', 0.1, 60),
+        numIn('弯曲上限', 'bend', 'max', '', '', 0, 1.5),
+        numIn('静卷曲', 'bend', 'rest', '', '躺着时自带的卷曲（逐张在 ±它 里抽）', 0, 1),
+        this.row('渲染段数', this.num(() => pl.segments, (v) => E('改渲染段数', () => { if (v == null) delete pl.segments; else pl.segments = Math.max(1, Math.min(16, Math.round(v))); }), '段', { int: true })),
+        h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => pl.replenish !== false, (v) => E('改补回', () => { if (v) delete pl.replenish; else pl.replenish = false; }), '刮丢的从上风空中补回（常驻）')),
+        h('div', { class: 'pad dim' }, '风来自场景 JSON 的 wind（本地预览同样吃它；场景没配 wind 就吹不动，状态栏黄字提示）；铺撒区域取本场景圈了 area 的实例；工作台 3D 视图按点画，片的朝向与弯曲在游戏里看'),
+        h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删薄片模块', () => { delete em.plate; }) }, '删薄片模块')),
+      ];
+    }));
+
     // ---------------- 声音
     container.appendChild(this.section('sound', '声音', () => {
       const so = em.sound;
@@ -407,14 +441,32 @@ const Inspector = {
     return this.section('effect', '效果', () => {
       const au = doc.authoring || null;
       const a = au && au.anchor ? au.anchor : null;
+      const at = host.attach;
       return [
         this.row('id', h('span', { class: 'mono' }, doc.id)),
         this.row('标签', this.txt(() => doc.label, (v) => E('改标签', () => { if (v) doc.label = v; else delete doc.label; }), '崖墓蝙蝠群')),
         this.row('备注', this.txt(() => au && au.note, (v) => E('改备注', () => { const o = host.ensureAuthoring(); if (v) o.note = v; else delete o.note; }), '给自己看的')),
         h('h4', {}, '预览锚点（只给工作台重开现场，运行时忽略）'),
-        a ? this.row('画面点', h('span', { class: 'mono' }, `${fmt(a.x)} , ${fmt(a.y)}`)) : h('div', { class: 'pad dim' }, '还没有锚点：按 A 在场景表面上点一下'),
-        a ? this.row('离面高', this.num(() => a.h == null ? 0 : a.h, (v) => E('改锚点高度', () => { const o = host.ensureAnchor(); o.h = v == null ? 0 : Math.max(0, v); }), 'wu')) : null,
-        a ? this.row('落在', this.sel(() => a.surface || 'ground', (v) => E('改锚点表面', () => { const o = host.ensureAnchor(); if (v === 'shell') o.surface = 'shell'; else delete o.surface; host.reanchor(); }), [{ value: 'ground', label: '行走面' }, { value: 'shell', label: '深度壳（崖壁 / 桌面）' }])) : null,
+        this.row('锚在', this.sel(() => (at ? 'socket' : 'surface'), (v) => host.setAttachMode(v === 'socket'),
+          [{ value: 'surface', label: '场景面（行走面 / 深度壳）' }, { value: 'socket', label: '角色挂点（手持：火把 / 灯笼）' }])),
+        // ---- 角色挂点那一档：两个量与运行时挂点同口径（画面横向偏移 + 离脚点高度）
+        at ? this.row('挂点高', this.num(() => at.heightWu, (v) => E('改挂点高', () => { const o = host.ensureAttach(); o.heightWu = Math.max(0, v == null ? 110 : v); }), 'wu',
+          { title: '离脚点的高度：角色高 150 wu，火把火头大约 100–120 wu' })) : null,
+        at ? this.row('左右偏移', this.num(() => (at.offsetX == null ? 0 : at.offsetX), (v) => E('改挂点左右偏移', () => {
+          const o = host.ensureAttach();
+          if (!v) delete o.offsetX; else o.offsetX = v;
+        }), 'wu（画面横向）', { title: '手伸在身侧 / 身前：与运行时挂点的画面横向偏移（contact.x + pose.x）同口径' })) : null,
+        at ? h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => host.walk.on, (v) => host.setWalk(v),
+          '让角色来回走（看锚点在动、已发射的粒子留在原地）')) : null,
+        at && !host.player.on ? h('div', { class: 'pad warn' }, '场上还没有角色：按 M 点一下地面放一个（挂点跟着它走；没有角色时锚点暂时落在场景面上）') : null,
+        at ? h('div', { class: 'pad dim' }, '运行时就是这条：挂件预设的 vfx 由 HeldPropSystem 每帧把锚点挪到挂点上（moveAnchor），已发射的粒子留在原地——本地预览跑的是同一份函数。A 工具点一下 = 把火头摆到那里')
+          : null,
+        // ---- 场景面那一档
+        at ? h('div', { class: 'pad dim' }, `场景锚点（切回「场景面」才用）：${a ? `${fmt(a.x)} , ${fmt(a.y)}` : '还没有'}`) : null,
+        !at && a ? this.row('画面点', h('span', { class: 'mono' }, `${fmt(a.x)} , ${fmt(a.y)}`)) : null,
+        !at && !a ? h('div', { class: 'pad dim' }, '还没有锚点：按 A 在场景表面上点一下') : null,
+        !at && a ? this.row('离面高', this.num(() => a.h == null ? 0 : a.h, (v) => E('改锚点高度', () => { const o = host.ensureAnchor(); o.h = v == null ? 0 : Math.max(0, v); }), 'wu')) : null,
+        !at && a ? this.row('落在', this.sel(() => a.surface || 'ground', (v) => E('改锚点表面', () => { const o = host.ensureAnchor(); if (v === 'shell') o.surface = 'shell'; else delete o.surface; host.reanchor(); }), [{ value: 'ground', label: '行走面' }, { value: 'shell', label: '深度壳（崖壁 / 桌面）' }])) : null,
         h('div', { class: 'pad dim' }, '发射器一览：' + (doc.emitters || []).map((x) => x.id).join(' / ')),
       ];
     });

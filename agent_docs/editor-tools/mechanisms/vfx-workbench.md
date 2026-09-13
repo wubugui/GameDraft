@@ -23,7 +23,8 @@ verified_by:
   - tools/vfx_workbench/tests/test_bundle.py
   - tools/vfx_workbench/tests/test_selftest.py
   - tools/vfx_workbench/viewer/tests/selftest.js
-last_governed: 2026-09-11
+  - tools/editor/tests/test_scene_vfx_area.py
+last_governed: 2026-09-13
 ---
 
 ## 是什么(一句话)
@@ -41,7 +42,7 @@ last_governed: 2026-09-11
 
 | 复用的东西 | 怎么复用 |
 |---|---|
-| `viewer/common.js`(SceneCal、**左手 lookAt**、射线与投影)、`gizmo.js`(GZ / Gizmo 全套)、`history.js` | 经 `serve.VENDOR` 白名单路由 **`/vendor/*` 原样直供页面**——不拷贝、不 fork。声学台内联 fork 过一份 GZ,那是已知欠账,这里没有加第三份 |
+| `viewer/common.js`(SceneCal、**左手 lookAt**、射线与投影)、`gizmo.js`(GZ / Gizmo 全套)、`history.js`、`dropdown.js` | 经 `serve.VENDOR` 白名单路由 **`/vendor/*` 原样直供页面**——不拷贝、不 fork。声学台内联 fork 过一份 GZ,那是已知欠账,这里没有加第三份 |
 | `trajectory_workbench.geometry`(SceneGeometry / list_scenes)与 `serve.get_geometry / scaled_background` | Python 侧直接 import,几何路由与轨迹台同一套、共用同一份 LRU 缓存 |
 | `acoustic_workbench.game_link` 的地址发现 / 拉起 / 切场景 | 直接 import,不做第三份 |
 | `tools/desktop_shell.py` / `atomic_io.py` / `dev.game_preview` | 原样 |
@@ -53,15 +54,35 @@ last_governed: 2026-09-11
 
 ## 本地预览 = **运行时模拟本体**,不是镜像
 
-`bundle.py` 用仓库自带 rolldown 把 `vfxSim.ts` + `vfxSpace.ts` + `vfxNoise.ts` + `vfxRandom.ts` +
-`sceneSpace.ts` + `depthShellField.ts` + `groundHeightfield.ts` + `worldReconstruct.ts` +
-`groundDepthField.ts` 打成 ESM(`/gen/vfx.bundle.js`,落 `viewer/_gen/`,不入库)。
+`bundle.py` 用仓库自带 rolldown 把 `ENTRY_MODULES`(`vfxSim` / `vfxSpace` / `sceneSpace` /
+`depthShellField` / `groundHeightfield` / `sceneWind` / `perspectiveScale`)打成 ESM
+(`/gen/vfx.bundle.js`,落 `viewer/_gen/`,不入库)。**缓存戳顺着值 import 现场扫整棵依赖树**
+(`bundle.sources()`,`import type` 不算),不是手抄清单——手抄清单漏过 `vfxPlate.ts` / `sceneWind.ts`,
+只改它俩页面就一直跑旧包。
 页面装完场景后用 `/api/scene_ground` + `/api/scene_shell` 在 JS 里建 `SceneSpaceGeometry` 与
 `DepthShellField`,`createFieldVfxSpace`,然后 `new VfxInstanceSim(...)` **真跑**。
 **别在 JS 里另写一份模拟**:两份必然漂,而且漂了一处都不报错。
 
+**喂给模拟的输入也必须与 `VfxSystem` 同形**(模拟是同一份,输入少一样照样"不是游戏里那个"):
+
+| 输入 | 游戏 | 工作台 |
+|---|---|---|
+| 场景风 + 风的钟 | `Game.sceneWind`(`SceneWindState`)→ `ctx.wind / windTime` | 场景描述带 `wind`,页面 `new rt.sceneWind.SceneWindState()`;钟随本地预览推进,重建 / 重置归零(确定性含风) |
+| 粒子区域 | 实例 `area` + `confine` → `VfxInstanceSim` 第 7 参 `{area, confine}` | 本场景里引用该效果、圈了 `area` 的第一个实例,**`confine` 一起带上**(2026-09-13 补:只带 `area` 时工作台里纸钱照样飞出框,和游戏不一样);没有 = 锚点周围圆盘(状态栏写明) |
+| 透视度量 | `perspectiveScaleResolver.scaleAt` → `createFieldVfxSpace({perspective})` | 同一个 `createPerspectiveScaleResolver(scene.perspectiveScale)` |
+
+⚠ 2026-09-12 实测:三样都没接时,纸钱(薄片只吃场景风)520 张在工作台里 **0 张动**、铺在出生点周围而不是
+实例圈的山顶、尺寸不按透视折——制作人原话"本地预览根本没效果"。接上后跑马梁 6 s 内 123 张被吹动、
+阵风顶上 13 张离地(与游戏实测同量级);**无风时仍有 ~27 张**在坡上自己滑,那是重力,不是 bug。
+状态栏:`风 N wu/s` / `无风`、`薄片 离地 / 醒`、`区域=实例「…」`;有薄片而本场景没有 wind 时整行变黄警告。
+
 ⚠ **打包必须在子进程里做**:`tools/testing/repo_write_guard.py` 装在 pytest 进程里,而 bundle 要往
 工作树内的 `viewer/_gen/` 写 —— 测试里直接 `ensure_bundle(force=True)` 必被 `RepositoryWriteBlocked` 拦。
+
+⚠ **Windows 上 `--serve` 同端口能起第二个**:`ThreadingHTTPServer` 开着 `allow_reuse_address`,
+Windows 的 `SO_REUSEADDR` 允许两个进程同时 LISTEN 同一端口,「端口已被占用」那条永远不触发,
+请求落到**旧进程**上——改完服务端代码"重启"验证,看到的还是旧行为。重起前先
+`netstat -ano | grep :<端口>` 确认旧的死了。
 
 ## 坐标对齐自证(不许绕过)
 
@@ -90,6 +111,29 @@ M-world 是左手系,右手 lookAt 画它**整张镜像且不报错**——轨�
   默认折叠 + 标题不带条数 = 场景里明明摆了东西、属性页上看过去只有一行折起来的标题,
   作者的结论是"这编辑器根本没有粒子配置"(2026-09-11 制作人原话)。本页灯光 / on_enter
   早就是 `set_expanded(bool(有数据))`,照那条来。
+- **场景页的「粒子区域」**(2026-09-13,老画布 `scene_editor.py`):**两块区域分开配**——
+  「拉发射区域」(青色虚线,写 `area`)与「拉范围区域」(黄色实线 + 边带,写 `confine.area` 并打开限定),
+  两个按钮互斥;画布上拖出一个框 = 那一块区域,之后拖顶点 / 双击边线加点 / 右键、Shift+点、Del 删点。
+  「粒子限定在区域里」勾选框 + 边带宽 + 限高写 `confine`;边带只画在实际起限定作用的那块上。
+  删范围区域 = 退回用发射区域(限定照开);两块都没了 `confine` 才一起删(没有区域的 confine 运行时整条忽略、
+  校验器报 error)。**去掉「限定」勾 / 删掉最后一块区域时,confine(含拉好的范围区域)收进
+  `_vfx_confine_stash`,本次会话里再勾上原样回来**——拉好的范围区域是手工活,一个勾选框点掉就没了不行
+  (换场景清空;撤销照样可用)。
+  数据的单一真相源是面板里 vfx 列表的行 dict,画布图元 `_VfxAreaPolygon`(按 `(实例 id, role)` 登记)是它的投影
+  (同光环境曲线那套:面板发 `vfx_area_overlay_refresh_requested` → 单发定时器 → `set_vfx_area_overlay`)。
+  🔴 **行 dict 存成 JSON 文本**(`_vfx_row` / `_set_vfx_row`),不存 dict:PySide 把 dict 转成 QVariantMap,
+  **键被按字母重排**——场景页改一下 vfx 实例、盘上这一行的键序就全变(作者面文档里记过这个盲区,2026-09-13 修)。
+  运行时语义见 [[vfx-system]]「粒子区域」。几条刻意的限制,改之前读 `_VfxAreaPolygon` 的 docstring:
+  ① **图元没有 `entity_kind`**——叠放循环点选、选中集合、批量删除 / 复制 / 指派分组全按它认人;
+  ② **框内不吃鼠标、不能整体拖**——跑马梁那圈几乎盖满整张图,框内可点 = 点哪都先点到它、
+  在空白处一拖就把整个区域挪走;只认顶点与边线附近,边线附近但不在顶点上的按下放给下面;
+  ③ **只有面板里选中的那条实例的区域能改**,点别的实例的边线 = 切到那条;
+  ④ **提交与切行都排到下一拍**(图元 release 里改面板 = 画布手势安全卡点名的段错误);
+  不在场景页时拖了区域,先 commit-on-leave 再装场景页、选中那条实例,再落数据(一次手势一条撤销)。
+  同一场景重装(点空白 / 撤销 / 提交)时 `_load_vfx_widgets` 按 id 保住选中行——不保的话拖完一个顶点,
+  选中跳回第一行,画布上"能改的区域"也跟着换人。护栏 `tools/editor/tests/test_scene_vfx_area.py`
+  (真鼠标事件进视口;①②③、"先回场景页"、去勾收着范围区域、删范围区域退回发射区域各变异一次确认会红;
+  键序比 JSON 文本不比 dict)。
 - **保存前过同一道形状闸门**(`assets.normalize_effect`,与 `validator._validate_vfx_effects` 同口径):
   `id == 文件名`、`spawn.max ≥ 1`、`appearance.sizeWu > 0`、`onHit.emitter` 必须指向本效果内
   **别的**发射器、`subOnly` 不得带 behavior、发射器 id 不重复、`appearance.emissive ∈ [0,1]`
@@ -100,6 +144,14 @@ M-world 是左手系,右手 lookAt 画它**整张镜像且不报错**——轨�
   又改了就不清脏、状态栏说再按一次);磁盘操作一条链;装载门(换场景期间遮罩 + `#app` inert +
   序号守卫,期间拒存盘)——逐条照 [[trajectory-workbench]] 的硬契约。
 - **检视器渲染只读**:缺省容器只在写入闭包里补,别在渲染时往 doc 里塞空容器。
+- **下拉框一律走页内列表,不许用系统原生 `<select>` 弹窗**(`/vendor/dropdown.js`,`mousedown` 里
+  `preventDefault()` 掐死原生弹窗,DOM 里的 `<select>` 原样留着所以读写与 `change` 全不变)。
+  ⚠ 2026-09-12 制作人实拍:150% 缩放屏上 QtWebEngine 的原生弹窗**框按设备像素、内容按 CSS 像素**画,
+  弹出来比控件大一圈、右下一大块白边,而且**每开一次再乘一次**,白边越开越大;它还不吃页面配色
+  (页面暗色、弹窗系统色)。Qt 侧没有开关能关,只能不让它开。判据在自检 S17(开五次像素完全一致、
+  列表宽度以控件为下限、选中发一次 `change`、Esc 不漏给页面键表)。
+  另一条独立的坑:**Ctrl+滚轮会把整页缩放**(Ctrl 是 gizmo 吸附键,右栏又常滚),缩放一直累加、
+  Qt 壳里没有 Ctrl+0 复位,只能关窗重开 —— 尚未修(桌面壳层面的事)。
 - **自检的游戏地址钉在 `127.0.0.1:9`**,绝不会往真在跑的游戏里发临时效果;临时资产一律
   `zz_selftest_*` 前缀并在结束时删掉,**绝不在 `bat_cliff` 等真资产上保存**。
 
@@ -112,11 +164,14 @@ M-world 是左手系,右手 lookAt 画它**整张镜像且不报错**——轨�
 - 3D 里可选中并用 gizmo 操作的:发射器原点(`offset`)、群体的**巢半径 / 活动域半径 / 惊起半径**
   三个线框球(缩放 gizmo 改半径)、预览锚点(写 `authoring.anchor`,切 `surface` 落到对应面)、
   玩家标记(拖着走会自动带出 `player:motion` 场)、刺激点。
-- 右栏按模块折叠:外观 / 发射 / 运动 / 寿命 / 碰撞 / 群体行为 / 声音;数值框带单位提示
+- 右栏按模块折叠:外观 / 发射 / 运动 / 寿命 / 碰撞 / 群体行为 / 薄片(纸钱)/ 声音;数值框带单位提示
   (wu / wu/s / wu/s²);`sizeOverLife` / `alphaOverLife` 有小折线编辑器;群体那块有一组
   「刺激权重」行——**标签不在 `attitude.fear` 表里 = 权重 0 = 完全没反应且不报错**,
   那组行就是为这条准备的。
 - 控制条:播放 / 暂停 / 单步 / 重置 / 种子 / 倍速。**同种子 + 同 dt 串两次跑逐帧相同**(自检 S9)。
+- **薄片(纸钱)**:风、铺撒区域、透视在本地预览里与游戏同口径(2026-09-12 接上,见上「喂给模拟的输入」;
+  区域要本场景里有实例圈了 `area`,否则退成锚点周围圆盘、状态栏会写)。仍看不到的只有**片的朝向与弯曲**——
+  3D 视图按点画,那部分去游戏里看,见 [[scene-wind]]。
 - **它是桌面应用**:入口是桌面窗口(纯内存 profile、NoCache、服务端 `no-store`),单实例,
   第二次 `--open <id>` 把已开着的窗口切到那条资产;`--serve` 只是给自动化的裸服务。
 
@@ -135,8 +190,8 @@ M-world 是左手系,右手 lookAt 画它**整张镜像且不报错**——轨�
 ## 怎么验证
 
 ```bash
-sh scripts/py.sh -m pytest tools/vfx_workbench -q -p no:cacheprovider   # 34 条:资产读写 / 归一化 / 护栏 / 进程内真 HTTP / 打包
-sh scripts/py.sh -m tools.vfx_workbench --selftest                       # 交互层 71 条,~7 s,有 FAIL 退出码 1
+sh scripts/py.sh -m pytest tools/vfx_workbench -q -p no:cacheprovider   # 36 条:资产读写 / 归一化 / 护栏 / 进程内真 HTTP / 打包(含依赖树扫描)
+sh scripts/py.sh -m tools.vfx_workbench --selftest                       # 交互层 79 条,~8 s,有 FAIL 退出码 1
 sh scripts/py.sh -m tools.vfx_workbench --check                          # 命令行跑一遍形状闸门(五份真资产)
 ```
 
@@ -145,7 +200,10 @@ sh scripts/py.sh -m tools.vfx_workbench --check                          # 命�
 朝光标缩放光标下点不动、飞行键不漏给工具键表、正交仍能拾取)/ gizmo(单轴只动一个分量、
 Ctrl 吸附是整数倍、纯点一下不入历史、选中单个东西立刻有 gizmo、2D 视图同一份 gizmo)/
 巢与活动域三球缩放 / 锚点落地与落壳 / 玩家与刺激 / 群体真的对刺激起反应 / 本地预览确定性 /
-保存往返与键序 / 保存锁 / 装载门 / 六条护栏拒绝 / 联动软失败。
+保存往返与键序 / 保存锁 / 装载门 / 六条护栏拒绝 / 联动软失败 / **下拉框(S17)**:原生弹窗一个都不开、
+开五次像素一致、选中与 Esc 的语义 / **薄片(S15,只读 paper_money @ 跑马梁)**:
+风经运行时 `SceneWindState` 进模拟、按实例多边形铺撒、`metricAt` == 透视系数、有风比无风多动 3 倍以上、
+无风时状态栏黄字警告(三处输入各拔掉一次,对应判据都红过)。
 **改 viewer 下任何东西先跑它**;新抓到的坑往里加一条 `ok()`;改相机基要顺手变异一次确认判据会红。
 
 ## 相关

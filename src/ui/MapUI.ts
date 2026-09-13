@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
+import { Circle, Container, Graphics, Rectangle, Sprite, Text, type Texture } from 'pixi.js';
 import { UITheme } from './UITheme';
 import { markPointerConsumed } from './uiPointerCoords';
 import { UIFocus, type FocusItem } from './components/UIFocus';
@@ -14,7 +14,9 @@ import { evaluateConditionExprList } from '../systems/graphDialogue/conditionEva
 import { TEXT_URLS } from '../core/projectPaths';
 import { createStyledText } from '../core/styledText';
 
-const NODE_R = 11;
+const NODE_R = 4;
+/** 墨点虽小，鼠标/触屏仍可点击周围及整块地名。 */
+const NODE_HIT_R = 18;
 const DEFAULT_MAP_ASPECT = 16 / 9;
 const MAX_SHEET_W = 1120;
 const MAX_SHEET_H = 700;
@@ -30,11 +32,11 @@ const LABEL_WRAP_W = 130;
 /** 从当前位置画出的路线条数上限 */
 const MAX_ROUTES = 8;
 /** 路线弧线的笔触：drawRoutes 与图例样例共用这一份，颜色不抄第二遍 */
-const ROUTE_STROKE = { color: UITheme.colors.borderSubtle, alpha: 0.42, width: 1.5 };
-/** 图例：样例统一走真实地点那段绘制逻辑再整体缩小；行高与样例列宽是图例自己的几何 */
-const LEGEND_SCALE = 0.62;
-const LEGEND_SAMPLE_W = 30;
-const LEGEND_ROW_H = 26;
+const ROUTE_STROKE = { color: UITheme.colors.mapUnlockedBorder, alpha: 0.23, width: 0.8 };
+/** 图例样例与真实地点同尺寸；行高与样例列宽是图例自己的几何。 */
+const LEGEND_SCALE = 1;
+const LEGEND_SAMPLE_W = 22;
+const LEGEND_ROW_H = 20;
 /** 地图比遮罩通常更暗一档（纸面亮，底下不压住会晃眼），仍留上限 */
 const DIM_BOOST = 0.18;
 const DIM_MAX = 0.74;
@@ -53,10 +55,7 @@ const PAPER = {
   river: 0x36555e,
   road: 0x2e281c,
   ink: 0x5b412a,
-  /** 标记外圈的墨边：纸上任何一点都得先有这圈墨才立得住 */
-  markerEdge: 0x321b0d,
   labelBg: 0xe5c894,
-  labelBorder: 0x5d3c22,
   labelText: 0x2b1b12,
   labelTextCurrent: 0x8d2117,
 } as const;
@@ -376,7 +375,7 @@ export class MapUI {
       body.addChild(empty);
     }
 
-    const project = this.buildProjection(layoutNodes.length ? layoutNodes : visibleNodes, mapRect);
+    const project = this.buildProjection(layoutNodes.length ? layoutNodes : visibleNodes, mapRect, sheetRect);
     const projectedNodes: ProjectedMapNode[] = visibleNodes.map((item) => {
       const p = project(item);
       return { ...item, sx: p.x, sy: p.y };
@@ -387,7 +386,11 @@ export class MapUI {
     this.drawRoutes(routeLayer, projectedNodes, currentNode);
     body.addChild(routeLayer);
 
-    const placedLabels: Rect[] = [];
+    // 地名同时避开所有墨点，不能只避开之前画出的文字而压住下一处地点。
+    const placedLabels: Rect[] = projectedNodes.map((item) => ({
+      x: item.sx - NODE_R - 4, y: item.sy - NODE_R - 4,
+      w: (NODE_R + 4) * 2, h: (NODE_R + 4) * 2,
+    }));
     this.focusItems = [];
     projectedNodes.forEach((item, i) => {
       this.drawPlace(body, item, mapRect, placedLabels, i);
@@ -444,7 +447,17 @@ export class MapUI {
     return !sceneId;
   }
 
-  private buildProjection(nodes: ResolvedMapNode[], rect: Rect): (item: ResolvedMapNode) => { x: number; y: number } {
+  private buildProjection(nodes: ResolvedMapNode[], rect: Rect, sheetRect: Rect = rect): (item: ResolvedMapNode) => { x: number; y: number } {
+    const imageWidth = Number(this.mapBackgroundTexture?.width);
+    const imageHeight = Number(this.mapBackgroundTexture?.height);
+    if (Number.isFinite(imageWidth) && imageWidth > 0 && Number.isFinite(imageHeight) && imageHeight > 0) {
+      // 有底图时 x/y 是原图像素坐标，与贴图共享 sheetRect；节点增减、解锁及当前场景不改变地理位置。
+      return (item) => ({
+        x: sheetRect.x + item.x / imageWidth * sheetRect.w,
+        y: sheetRect.y + item.y / imageHeight * sheetRect.h,
+      });
+    }
+
     let minX = Infinity;
     let maxX = -Infinity;
     let minY = Infinity;
@@ -476,12 +489,16 @@ export class MapUI {
   private placeLabel(width: number, height: number, nx: number, ny: number, radius: number, bounds: Rect, placed: Rect[]): Rect {
     const w = Math.max(24, width);
     const h = Math.max(14, height);
-    const gap = UITheme.spacing.xs + 2;
+    const gap = UITheme.spacing.sm;
     const candidates: Rect[] = [
       { x: nx - w / 2, y: ny + radius + gap, w, h },
       { x: nx - w / 2, y: ny - radius - gap - h, w, h },
       { x: nx + radius + gap, y: ny - h / 2, w, h },
       { x: nx - radius - gap - w, y: ny - h / 2, w, h },
+      { x: nx + radius + gap, y: ny - radius - gap - h, w, h },
+      { x: nx - radius - gap - w, y: ny - radius - gap - h, w, h },
+      { x: nx + radius + gap, y: ny + radius + gap, w, h },
+      { x: nx - radius - gap - w, y: ny + radius + gap, w, h },
     ].map((r) => ({
       x: clamp(r.x, bounds.x + 4, bounds.x + bounds.w - w - 4),
       y: clamp(r.y, bounds.y + 4, bounds.y + bounds.h - h - 4),
@@ -529,43 +546,34 @@ export class MapUI {
     }
   }
 
-  /**
-   * 一枚地点标记的三笔（暗底盘 / 盘心 / 外圈墨边；不含命中圈）。
-   * 图上的真实地点与图例样例共用这一段——状态色只写这一份，缩样例不抄第二遍颜色。
-   */
+  /** 地名旁的小墨记：朱红当前位置、实心可达点、空心未达点；图例同源。 */
   private drawMarkerGlyph(g: Graphics, nx: number, ny: number, radius: number, state: 'current' | 'unlocked' | 'locked'): void {
     const current = state === 'current';
     const unlocked = state === 'unlocked';
-    // 底盘一律是旧木色的暗盘（未解锁再压暗一层）——纸面浅，先有暗盘才立得住；
-    // "当前"靠**盘心那点琥珀 + 一圈亮边**说话，不是把整枚标记涂成一轮太阳。
-    g.circle(nx, ny, radius + 3);
-    g.fill({
-      color: current || unlocked ? UITheme.colors.mapUnlocked : UITheme.colors.mapLocked,
-      alpha: current || unlocked ? 0.86 : 0.5,
-    });
-    g.circle(nx, ny, Math.max(3, radius - 5));
-    g.fill({
-      color: current ? UITheme.colors.mapCurrent : UITheme.colors.mapUnlockedBorder,
-      alpha: current ? 0.95 : (unlocked ? 0.85 : 0.35),
-    });
-    // 外圈墨边：纸面是浅色，任何标记不描一圈墨都会糊在纸里
-    g.circle(nx, ny, radius + 3);
-    g.stroke({
-      color: current ? UITheme.colors.mapCurrentBorder : PAPER.markerEdge,
-      alpha: current ? 0.9 : 0.68,
-      width: 1.5,
-    });
+    const ink = current ? UITheme.colors.mapCurrent : unlocked ? UITheme.colors.mapUnlocked : UITheme.colors.mapLocked;
+    g.ellipse(nx, ny, radius, radius * 0.9);
+    g.fill({ color: PAPER.labelBg, alpha: 0.88 });
+    g.stroke({ color: ink, alpha: current || unlocked ? 0.95 : 0.65, width: current ? 1.3 : 1 });
+    if (current || unlocked) {
+      g.ellipse(nx + 0.15, ny, radius * 0.45, radius * 0.4);
+      g.fill({ color: ink, alpha: 0.95 });
+    }
+    if (current) {
+      g.moveTo(nx + Math.cos(Math.PI * 0.15) * (radius + 2), ny + Math.sin(Math.PI * 0.15) * (radius + 2));
+      g.arc(nx, ny, radius + 2, Math.PI * 0.15, Math.PI * 1.85);
+      g.stroke({ color: UITheme.colors.mapCurrentBorder, alpha: 0.8, width: 0.8 });
+    }
   }
 
-  /** 任务引导的琥珀八段虚环（整圈实线会读成"又一个底盘"）。地点与图例样例共用。 */
+  /** 任务地点用四处短墨线圈注，保留与当前位置朱红墨记的区别。 */
   private drawGuidanceRing(g: Graphics, nx: number, ny: number, rr: number): void {
-    for (let i = 0; i < 8; i++) {
-      const a0 = (i / 8) * Math.PI * 2;
-      const a1 = a0 + Math.PI / 8;
+    for (let i = 0; i < 4; i++) {
+      const a0 = (i / 4) * Math.PI * 2;
+      const a1 = a0 + Math.PI / 5;
       g.moveTo(nx + Math.cos(a0) * rr, ny + Math.sin(a0) * rr);
       g.arc(nx, ny, rr, a0, a1);
     }
-    g.stroke({ color: UITheme.colors.questMain, alpha: 0.95, width: 2 });
+    g.stroke({ color: UITheme.colors.mapGuidance, alpha: 0.9, width: 1 });
   }
 
   private drawPlace(body: Container, item: ProjectedMapNode, mapRect: Rect, placedLabels: Rect[], index: number): void {
@@ -574,20 +582,16 @@ export class MapUI {
     const ny = item.sy;
     const hiddenLocked = !unlocked && !isCurrent && lockedDisplay === 'hint';
     // 当前地点只比常规大一圈：再大就从"标了一处"变成纸上点了盏灯
-    const radius = isCurrent ? NODE_R + 1 : (hiddenLocked ? NODE_R - 4 : NODE_R);
+    const radius = isCurrent ? NODE_R + 1 : (hiddenLocked ? NODE_R - 1 : NODE_R);
     const canTravel = this.canTravel(item);
 
     const marker = new Graphics();
-    // 第一圈是放大的透明命中区（Pixi 逐子元素命中，光靠可见描边点着太挑）
-    marker.circle(nx, ny, radius + 8);
-    marker.fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
+    marker.hitArea = new Circle(nx, ny, NODE_HIT_R);
     this.drawMarkerGlyph(marker, nx, ny, radius, isCurrent ? 'current' : (unlocked ? 'unlocked' : 'locked'));
-    // 任务引导标记（玩法文档 D8 的地图通道）：当前任务指向这处地点时，在标记外面
-    // 再套一圈琥珀虚环 —— 与「当前所在地」那套（盘心琥珀 + 亮边）**画法不同**，
-    // 两者可以同时出现在同一枚标记上而不打架（人就站在目标地点是很常见的情形）。
+    // 任务圈注与朱红当前位置可同时出现；均不增加底盘或光晕。
     if (this.guidanceScenes.has(node.sceneId)) {
       const ring = new Graphics();
-      this.drawGuidanceRing(ring, nx, ny, radius + 9);
+      this.drawGuidanceRing(ring, nx, ny, radius + 5);
       ring.eventMode = 'none';
       body.addChild(ring);
     }
@@ -609,20 +613,17 @@ export class MapUI {
     }
     body.addChild(marker);
 
-    // 焦点高亮 = 全站选中态那两笔（金描边 + 外扩一圈柔光，见 `createSlot`），只是套在圆标记上。
-    // 地点原本没有任何悬停画法，这是最不岔开观感的一种；平常整枚不画（alpha 0）。
+    // 悬停／键盘焦点是一圈细朱线，不盖住地图，也不使用发光效果。
     const focusRing = new Graphics();
-    focusRing.circle(nx, ny, radius + 5);
-    focusRing.stroke({ color: UITheme.colors.borderSelected, width: 1.5 });
-    focusRing.circle(nx, ny, radius + 8);
-    focusRing.stroke({ color: UITheme.colors.borderSelected, width: 1, alpha: 0.25 });
+    focusRing.circle(nx, ny, radius + 3.5);
+    focusRing.stroke({ color: UITheme.colors.mapCurrent, width: 0.9, alpha: 0.75 });
     focusRing.alpha = 0;
     focusRing.eventMode = 'none';
     body.addChild(focusRing);
 
     this.focusItems.push({
       id: focusId,
-      x: nx - radius - 8, y: ny - radius - 8, w: (radius + 8) * 2, h: (radius + 8) * 2,
+      x: nx - NODE_HIT_R, y: ny - NODE_HIT_R, w: NODE_HIT_R * 2, h: NODE_HIT_R * 2,
       group: 'places',
       // 去不了的地点（未解锁 / 已在此地）不吃焦点；**当前所在地例外**——
       // 它是玩家在纸面上的锚点，默认焦点就落在它上面，方向键从这里往外走。
@@ -643,18 +644,17 @@ export class MapUI {
         fill: isCurrent ? PAPER.labelTextCurrent : PAPER.labelText,
         fontFamily: UITheme.fonts.ui,
         fontWeight: isCurrent ? 'bold' : 'normal',
+        // 纸色细衬托住笔画，不再给每个地点套矩形按钮底牌。
+        stroke: { color: PAPER.labelBg, width: 1.25, alpha: 0.75, join: 'round' },
         wordWrap: true,
         breakWords: true,
         wordWrapWidth: LABEL_WRAP_W,
       },
     });
     const labelRect = this.placeLabel(label.width, label.height, nx, ny, radius, mapRect, placedLabels);
-    // 底牌恒在（不随 hover 显隐），可以安全地当整块命中靶子
+    // 仅保留隐形文字命中区；纸面上没有底牌边框。
     const labelBg = new Graphics();
-    labelBg.roundRect(labelRect.x - 4, labelRect.y - 2, labelRect.w + 8, labelRect.h + 4, 3);
-    labelBg.fill({ color: PAPER.labelBg, alpha: isCurrent ? 0.62 : 0.44 });
-    labelBg.roundRect(labelRect.x - 4, labelRect.y - 2, labelRect.w + 8, labelRect.h + 4, 3);
-    labelBg.stroke({ color: PAPER.labelBorder, alpha: 0.24, width: 1 });
+    labelBg.hitArea = new Rectangle(labelRect.x - 4, labelRect.y - 4, labelRect.w + 8, Math.max(28, labelRect.h + 8));
     if (canTravel) {
       labelBg.eventMode = 'static';
       labelBg.cursor = 'pointer';
@@ -680,7 +680,7 @@ export class MapUI {
     body.addChild(label);
   }
 
-  /** 图例样例：一枚缩小的地点标记（与真实地点同一段绘制，整体缩放） */
+  /** 图例样例：与真实地点同尺寸、同一段绘制的墨记。 */
   private legendMarker(radius: number, state: 'current' | 'unlocked' | 'locked'): Container {
     const g = new Graphics();
     this.drawMarkerGlyph(g, 0, 0, radius, state);
@@ -692,7 +692,7 @@ export class MapUI {
   private legendQuestSample(): Container {
     const g = new Graphics();
     this.drawMarkerGlyph(g, 0, 0, NODE_R, 'unlocked');
-    this.drawGuidanceRing(g, 0, 0, NODE_R + 9);
+    this.drawGuidanceRing(g, 0, 0, NODE_R + 5);
     g.scale.set(LEGEND_SCALE);
     return g;
   }
@@ -707,12 +707,6 @@ export class MapUI {
         fontFamily: UITheme.fonts.ui, fontWeight: 'bold',
       },
     });
-    const bg = new Graphics();
-    bg.roundRect(-t.width / 2 - 4, -t.height / 2 - 2, t.width + 8, t.height + 4, 3);
-    bg.fill({ color: PAPER.labelBg, alpha: 0.9 });
-    bg.roundRect(-t.width / 2 - 4, -t.height / 2 - 2, t.width + 8, t.height + 4, 3);
-    bg.stroke({ color: PAPER.labelBorder, alpha: 0.4, width: 1 });
-    c.addChild(bg);
     t.position.set(-Math.round(t.width / 2), -Math.round(t.height / 2));
     c.addChild(t);
     return c;
@@ -728,7 +722,7 @@ export class MapUI {
   }
 
   /**
-   * 纸面右下角的小图例：六种视觉语义各一行（微缩样例 + small 档说明）。
+   * 纸面右下角的小图例：六种视觉语义排成两列三行，次要说明用 micro 档。
    * 底用画稿自己的纸面色（PAPER），与羊皮纸观感一体；不吃任何事件。
    */
   private buildLegend(body: Container, sheetRect: Rect): void {
@@ -738,7 +732,7 @@ export class MapUI {
     const entries: { label: string; sample: Container }[] = [
       { label: this.strings.get('map', 'legendCurrent'), sample: this.legendMarker(NODE_R + 1, 'current') },
       { label: this.strings.get('map', 'legendUnlocked'), sample: this.legendMarker(NODE_R, 'unlocked') },
-      { label: this.strings.get('map', 'legendLocked'), sample: this.legendMarker(NODE_R - 4, 'locked') },
+      { label: this.strings.get('map', 'legendLocked'), sample: this.legendMarker(NODE_R - 1, 'locked') },
       { label: this.strings.get('map', 'legendUnknown'), sample: this.legendUnknownSample() },
       { label: this.strings.get('map', 'legendQuest'), sample: this.legendQuestSample() },
       { label: this.strings.get('map', 'legendRoute'), sample: this.legendRouteSample() },
@@ -747,39 +741,41 @@ export class MapUI {
     const title = createStyledText({
       text: this.strings.get('map', 'legendTitle'),
       style: {
-        fontSize: UITheme.fontSize.small, fill: PAPER.ink,
+        fontSize: UITheme.fontSize.micro, fill: PAPER.ink,
         fontFamily: UITheme.fonts.ui, fontWeight: 'bold', letterSpacing: UITheme.letterSpacing.hint,
       },
     });
 
     const texts = entries.map((e) => createStyledText({
       text: e.label,
-      style: { fontSize: UITheme.fontSize.small, fill: PAPER.labelText, fontFamily: UITheme.fonts.ui },
+      style: { fontSize: UITheme.fontSize.micro, fill: PAPER.labelText, fontFamily: UITheme.fonts.ui },
     }));
     let textW = title.width;
     for (const t of texts) textW = Math.max(textW, t.width);
 
     const pad = UITheme.spacing.sm;
-    const boxW = pad + LEGEND_SAMPLE_W + UITheme.spacing.sm + textW + pad;
+    const columnW = LEGEND_SAMPLE_W + UITheme.spacing.xs + textW;
+    const boxW = pad * 3 + columnW * 2;
     const titleH = title.height + UITheme.spacing.xs;
-    const boxH = pad + titleH + entries.length * LEGEND_ROW_H + pad;
+    const boxH = pad + titleH + Math.ceil(entries.length / 2) * LEGEND_ROW_H + pad;
 
     const bg = new Graphics();
     bg.roundRect(0, 0, boxW, boxH, 4);
-    bg.fill({ color: PAPER.sheet, alpha: 0.94 });
+    bg.fill({ color: PAPER.sheet, alpha: 0.72 });
     bg.roundRect(0, 0, boxW, boxH, 4);
-    bg.stroke({ color: PAPER.frame, alpha: 0.42, width: 1 });
+    bg.stroke({ color: PAPER.frame, alpha: 0.2, width: 0.8 });
     legend.addChild(bg);
 
     title.position.set(pad, pad);
     legend.addChild(title);
 
     entries.forEach((e, i) => {
-      const cy = pad + titleH + i * LEGEND_ROW_H + LEGEND_ROW_H / 2;
-      e.sample.position.set(pad + LEGEND_SAMPLE_W / 2, cy);
+      const cx = pad + (i % 2) * (columnW + pad);
+      const cy = pad + titleH + Math.floor(i / 2) * LEGEND_ROW_H + LEGEND_ROW_H / 2;
+      e.sample.position.set(cx + LEGEND_SAMPLE_W / 2, cy);
       legend.addChild(e.sample);
       const t = texts[i];
-      t.position.set(pad + LEGEND_SAMPLE_W + UITheme.spacing.sm, Math.round(cy - t.height / 2));
+      t.position.set(cx + LEGEND_SAMPLE_W + UITheme.spacing.xs, Math.round(cy - t.height / 2));
       legend.addChild(t);
     });
 

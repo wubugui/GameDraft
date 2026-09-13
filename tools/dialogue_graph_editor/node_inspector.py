@@ -57,6 +57,7 @@ from .graph_analysis import (
 )
 from .node_picker_dialog import NodePickerDialog
 from .npc_picker_dialog import NpcPickerDialog
+from tools.editor.shared.widget_discard import detach_widget, discard_widget
 
 
 #: 私有信号标记 QLabel 的 objectName——每轮刷新按它复用，不然每次 changed 都会
@@ -1130,7 +1131,7 @@ class NodeInspector(QWidget):
                 it = rows_layout.takeAt(0)
                 w = it.widget()
                 if w is not None:
-                    w.setParent(None)
+                    detach_widget(w)   # 紧接着原样加回布局
             for r in beat_rows:
                 rows_layout.addWidget(r["outer"])
 
@@ -2221,7 +2222,7 @@ class NodeInspector(QWidget):
                 it = rows_layout.takeAt(0)
                 w = it.widget()
                 if w is not None:
-                    w.setParent(None)
+                    detach_widget(w)   # 紧接着原样加回布局
             for r in option_rows:
                 rows_layout.addWidget(r["outer"])
             hint = _choice_hint_ref.get("w")
@@ -2492,8 +2493,7 @@ class NodeInspector(QWidget):
                     if r != QMessageBox.StandardButton.Ok:
                         return
                 option_rows.pop(i)
-                outer.setParent(None)
-                outer.deleteLater()
+                discard_widget(outer)
                 rebuild_choice_rows_layout()  # 同 switch：空状态提示 + 序号都靠它刷新
                 refresh_choice_nav_buttons()
                 refresh_choice_fold_policy()
@@ -2736,7 +2736,7 @@ class NodeInspector(QWidget):
                 it = cases_outer.takeAt(0)
                 w = it.widget()
                 if w is not None:
-                    w.setParent(None)
+                    detach_widget(w)   # 紧接着原样加回布局
             for c in switch_case_rows:
                 cases_outer.addWidget(c["outer"])
             cases_outer.addWidget(empty_hint)
@@ -2849,7 +2849,7 @@ class NodeInspector(QWidget):
                     it = cond_rows_layout.takeAt(0)
                     w = it.widget()
                     if w is not None:
-                        w.setParent(None)
+                        detach_widget(w)   # 紧接着原样加回布局
                 for cr in cond_rows:
                     cond_rows_layout.addWidget(cr["outer"])
 
@@ -3018,8 +3018,7 @@ class NodeInspector(QWidget):
                     it = cond_rows_layout.takeAt(0)
                     w = it.widget()
                     if w is not None:
-                        w.setParent(None)
-                        w.deleteLater()
+                        discard_widget(w)
                 cond_rows.clear()
 
             def _expr_to_and_rows(expr: dict[str, Any]) -> bool:
@@ -3186,8 +3185,7 @@ class NodeInspector(QWidget):
                     if r != QMessageBox.StandardButton.Ok:
                         return
                 switch_case_rows.pop(i)
-                outer.setParent(None)
-                outer.deleteLater()
+                discard_widget(outer)
                 # 必须重排：空状态提示的可见性、以及各行标题里的序号，都只在
                 # rebuild 里刷新。少了它，删完最后一条不提示"这是死开关"，
                 # 删中间一条则剩下各行的序号与数据下标对不上。
@@ -4054,9 +4052,8 @@ class NodeInspector(QWidget):
             # **每次都抛 NameError**：行已从 cond_rows 里 pop 掉，但控件没移除、界面不刷新、
             # 模型不变、也不标脏；策划看着像「按钮坏了」，直到他改点别的触发一次
             # get_node()，这次删除才延迟生效——删除动作与生效时刻错位，最难查的一类。
-            # 用已传入的 rebuild_cond_layout 重排，控件由它 setParent(None) 后再销毁。
-            cow.setParent(None)
-            cow.deleteLater()
+            # 用已传入的 rebuild_cond_layout 重排；本行自己 discard_widget 掉被删的那条。
+            discard_widget(cow)
             rebuild_cond_layout()
             refresh_cond_nav()
             refresh_cond_fold_policy()
@@ -4118,7 +4115,7 @@ class NodeInspector(QWidget):
                 it = cases_outer.takeAt(0)
                 w = it.widget()
                 if w is not None:
-                    w.setParent(None)
+                    detach_widget(w)   # 紧接着原样加回布局
             for c in case_rows:
                 cases_outer.addWidget(c["outer"])
             _hint = _state_hint_ref.get("w")
@@ -4277,8 +4274,7 @@ class NodeInspector(QWidget):
                     if r != QMessageBox.StandardButton.Ok:
                         return
                 case_rows.remove(rec)
-                outer.setParent(None)
-                outer.deleteLater()
+                discard_widget(outer)
                 rebuild_cases_layout()
                 refresh_state_nav()
                 self._emit_structural_changed()

@@ -4,10 +4,14 @@
  * 硬契约（逐条照 agent_docs 的 trajectory-workbench 卡「硬契约」一节）：
  * - **本工作台是 `assets/data/vfx/` 唯一的写入者**，主编辑器只读镜像。
  * - **本地预览 = 同一份运行时模拟**：`/gen/vfx.bundle.js` 打的是 `vfxSim.ts` / `vfxSpace.ts` /
- *   `sceneSpace.ts` / `depthShellField.ts` / `groundHeightfield.ts` **本体**，页面里 `new VfxInstanceSim(...)`
- *   真跑。JS 里**不再写第二份**任何换算或积分——两份必然漂，而且漂了一处都不报错。
+ *   `sceneSpace.ts` / `depthShellField.ts` / `groundHeightfield.ts` / `sceneWind.ts` / `perspectiveScale.ts`
+ *   **本体**，页面里 `new VfxInstanceSim(...)` 真跑，喂的输入也与 `VfxSystem` 同形（风 + 风的钟、实例的铺撒区域、
+ *   透视度量）。JS 里**不再写第二份**任何换算或积分——两份必然漂，而且漂了一处都不报错。
  * - **坐标对齐自证不许绕过**（`checkAlignment`）：25 个画面点过运行时 `groundWorldAt` 对工作台 `SceneCal`，
  *   壳接触点过运行时 `shellContactAt` 对服务端 `SceneGeometry.shell_contact`。Δ 非零 → 场景芯片整块染红。
+ * - **锚点模式的「角色挂点」那一档也只是工作态**：写 `authoring.attach`（与 `authoring.anchor` 同待遇，
+ *   运行时忽略整个 `authoring`），关掉就把那个键删掉 ⇒ 资产字节回到原样；跟随靠的是运行时那份
+ *   `VfxInstanceSim.moveAnchor`，**不在 JS 里另写一套跟随**。
  * - **只有真改 doc 才标脏**（`history.commit` 比前后快照）；`id` 不进历史栈。
  * - **保存锁**：保存在飞期间又改了 doc，返回后不覆盖内存、不清脏，状态栏说再按一次。
  * - **磁盘操作一条链**（`runIO`）：存 / 新建 / 改名 / 复制 / 删串行，谁先谁后由链定。
@@ -26,6 +30,19 @@ const EM_COLORS = [[0.42, 0.72, 1, 1], [1, 0.7, 0.33, 1], [0.78, 0.57, 0.92, 1],
 const PLAYER_MOTION_RADIUS_WU = 320;
 const PLAYER_MOTION_FULL_SPEED = 420;
 const PLAYER_MOTION_HEIGHT_WU = 90;
+/**
+ * 角色挂点预览（锚点模式的第三档）：手持挂件自带的效果在运行时是
+ * `HeldPropSystem` 逐帧 `moveVfx(id, 挂点世界点)` → `VfxInstanceSim.moveAnchor`
+ * （锚点跟着手走、**已发射的粒子留在原地**）。工作台这一档跑的就是那条：
+ * 锚点 = 角色脚点画面 x + `offsetX`、脚点画面 y、离脚点 `heightWu` 高
+ * （与 `resolveAnchorWorld` 的 `contact.x + pose.x` / `contact.y` / `−pose.y` 逐字同口径）。
+ * 尺度锚：角色高 150 wu，火把火头大约 100–120 wu。
+ */
+const CHAR_HEIGHT_WU = 150;
+const ATTACH_DEFAULT_HEIGHT_WU = 110;
+/** 来回走：走速取游戏里的走速（玩家动静场强度 = 100 / 420 ≈ 0.24），半幅 240 wu */
+const WALK_SPEED_WU = 100;
+const WALK_SPAN_WU = 240;
 /** 联动：文档改动防抖发一次；每 3 分钟续一次（槽 5 分钟新鲜期） */
 const PUBLISH_DEBOUNCE_MS = 120;
 const PUBLISH_KEEPALIVE_MS = 180000;
@@ -34,11 +51,12 @@ const STATUS_POLL_MS = 400;
 const S = {
   doc: null, effects: [], sources: { anims: [], images: [] }, sfx: [],
   scenes: [], scene: null, cal: null, marks: [], sceneVfx: [],
-  rt: null, rtErr: '', geo: null, shellField: null, space: null,
+  rt: null, rtErr: '', geo: null, shellField: null, space: null, wind: null, area: null,
   sim: null, simErr: '', simTime: 0, frames: 0, playing: false, speed: 1, seed: 1234,
   evCount: { sound: 0, field: 0, hit: 0, flockState: 0 }, lastFlock: '',
   fields: [], playerField: null,
   player: { on: false, world: null, scene: null, speed: 0 },
+  walk: { on: false, baseX: null, sceneY: 0, dir: 1 },
   probes: [],
   sel: { key: '' }, gizmoMode: 'move', tool: 'select', view: 3,
   dirty: false, cleanKey: '', rev: 0,
@@ -127,8 +145,29 @@ function buildSpace() {
       { ppu: cal.ppu, cx: cal.cx, cy: cal.cy }, cal.rows)
     : null;
   const viewDir = rt.sceneSpace.viewDirWorld(geo);
+  // 透视度量与 `Game.buildVfxSpace` 同一根轴：薄片的尺寸 / 离地高 / 位移都按脚点系数折，不给就恒 1（远处的纸又大又快）
+  const ps = rt.perspectiveScale.createPerspectiveScaleResolver(S.scene && S.scene.perspectiveScale);
   S.geo = geo; S.shellField = shell;
-  S.space = rt.vfxSpace.createFieldVfxSpace({ geo, shell, viewDir });
+  S.space = rt.vfxSpace.createFieldVfxSpace({ geo, shell, viewDir, perspective: ps ? (x, y) => ps.scaleAt(x, y) : null });
+}
+
+/**
+ * 场景风：游戏那份 `SceneWindState`（参数解析 + 钟）原样打包进来。钟跟本地预览的模拟时间走，
+ * 重建 / 重置一起归零（同种子 + 同 dt 串 ⇒ 逐帧相同，风也算在内）。
+ * 薄片（纸钱）**只**吃它：不喂 = 一张也吹不动，而且不报错（2026-09-12 工作台就这么"根本没效果"过）。
+ */
+function resetWind() {
+  if (!S.rt) { S.wind = null; return; }
+  if (!S.wind) S.wind = new S.rt.sceneWind.SceneWindState();
+  S.wind.reset(S.scene ? S.scene.wind : null);
+}
+
+/** 本场景里引用这份效果、而且圈了铺撒区域的实例（`spawn.shape.kind = 'area'` 按它铺）；没有 = 锚点周围圆盘 */
+function previewArea() {
+  if (!S.doc) return null;
+  const inst = (S.sceneVfx || []).find((v) => v.effect === S.doc.id && Array.isArray(v.area) && v.area.length >= 3);
+  // confine 一起带上：粒子区域的软边界是运行时行为，预览不带就和游戏里看到的不一样
+  return inst ? { id: inst.id, poly: inst.area, confine: inst.confine && typeof inst.confine === 'object' ? inst.confine : null } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -223,9 +262,10 @@ async function loadScene(sceneId, bg) {
     buildSpace();
     if (v3 && v3.ok) { v3.setMesh(mesh); v3.setTexture(img); v3.fit(true); }
     if (v2) { v2.setBackground(img); v2.fit(); }
+    S.walk.on = false;                                 // 角色标记还在上一个场景的坐标里，别让它继续走
     rebuildSim();
     await refreshAlignment();
-    renderSceneInfo(); renderScenePickers(); draw();
+    renderSceneInfo(); renderScenePickers(); renderLeft(); draw();
     status(`场景「${sc.name || sceneId}」已装上${sc.cal ? '' : '（没有深度载荷：跑不了本地预览）'}`, sc.cal ? 'ok' : 'warn');
   } catch (e) {
     if (op === S.sceneOp) {
@@ -242,7 +282,34 @@ async function loadScene(sceneId, bg) {
 // ---------------------------------------------------------------------------
 // 本地预览（跑的就是运行时那份模拟）
 // ---------------------------------------------------------------------------
+/** 锚点模式 = 「角色挂点」时的那一块工作态（`authoring.attach` 在 = 这一档开着） */
+function attachDef() {
+  const au = S.doc && S.doc.authoring;
+  const at = au && au.attach;
+  return at && typeof at === 'object' ? at : null;
+}
+function attachOn() { return !!attachDef(); }
+function attachHeight() {
+  const at = attachDef(); if (!at) return 0;
+  return Math.max(0, Number.isFinite(at.heightWu) ? at.heightWu : ATTACH_DEFAULT_HEIGHT_WU);
+}
+/**
+ * 挂点锚点：**角色脚点的画面点 + 横向偏移 + 离脚点高度**——与运行时
+ * `HeldPropSystem.resolveAnchorWorld` 同一条式子（`contact.x + pose.x`, `contact.y`, `−pose.y`），
+ * 解世界点仍走 `VfxSpace.anchorToWorld`（= 游戏的 `VfxSystem.sceneToWorld`）。
+ * 场上没有角色 ⇒ 返回 null，锚点退回场景面那一档，状态栏黄字说明（不静默假装挂上了）。
+ */
+function attachAnchor() {
+  if (!attachOn()) return null;
+  if (!S.player.on || !S.player.scene) return null;
+  const at = attachDef();
+  const dx = Number.isFinite(at.offsetX) ? at.offsetX : 0;
+  return { x: round2(S.player.scene[0] + dx), y: round2(S.player.scene[1]), h: attachHeight() };
+}
+
 function effectiveAnchor() {
+  const att = attachAnchor();
+  if (att) return att;
   const au = S.doc && S.doc.authoring;
   if (au && au.anchor && Number.isFinite(au.anchor.x)) return au.anchor;
   const sp = (S.marks || []).find((m) => m.kind === 'spawn');
@@ -258,12 +325,15 @@ function anchorWorld() {
 function rebuildSim() {
   S.sim = null; S.simErr = ''; S.simTime = 0; S.frames = 0;
   S.evCount = { sound: 0, field: 0, hit: 0, flockState: 0 }; S.lastFlock = '';
+  resetWind();
+  S.area = previewArea();
   if (!S.rt || !S.space || !S.doc) return;
   const a = anchorWorld(); if (!a) return;
   try {
     const snap = JSON.parse(JSON.stringify(S.doc));
     if (!Array.isArray(snap.emitters) || !snap.emitters.length) { S.simErr = '还没有发射器'; return; }
-    S.sim = new S.rt.vfxSim.VfxInstanceSim(snap.id || 'preview', snap, a, S.seed >>> 0, S.space, 1);
+    S.sim = new S.rt.vfxSim.VfxInstanceSim(snap.id || 'preview', snap, a, S.seed >>> 0, S.space, 1,
+      { area: S.area ? S.area.poly : null, confine: S.area ? S.area.confine : null });
   } catch (e) {
     S.simErr = String(e && e.message || e);
   }
@@ -272,6 +342,9 @@ function rebuildSim() {
 function patchSim() {
   if (!S.sim || !S.doc) return;
   const a = anchorWorld(); if (!a) return;
+  // 锚点本体也得跟上：挂点模式每帧调运行时的 `moveAnchor`，它按 `sim.anchorWorld` 算**增量**——
+  // 这里只挪 origin 不同步它，下一拍整批会被再挪一次（双倍位移，且不报错）。
+  S.sim.anchorWorld[0] = a[0]; S.sim.anchorWorld[1] = a[1]; S.sim.anchorWorld[2] = a[2];
   for (const e of S.sim.emitters) {
     const def = (S.doc.emitters || []).find((x) => x.id === e.def.id); if (!def) continue;
     const off = def.offset || [0, 0, 0];
@@ -305,15 +378,22 @@ function updatePlayerField() {
 }
 
 function stepSim(dt) {
+  walkTick(dt);                                          // 角色照走：跑不起来模拟时也看得见锚点在动
   if (!S.sim) return;
   updatePlayerField();
+  // 挂点模式：把锚点挪到角色挂点上，用的就是运行时那份 `VfxInstanceSim.moveAnchor`
+  //（= 游戏里 `HeldPropSystem.syncVfx` → `VfxSystem.moveVfx` 那条）——已发射的粒子留在原地。
+  if (attachOn()) { const a = anchorWorld(); if (a) S.sim.moveAnchor(a); }
   for (let i = S.fields.length - 1; i >= 0; i--) {
     const f = S.fields[i];
     if (f.remaining === Infinity) continue;
     f.remaining -= dt;
     if (f.remaining <= 0) { if (f === S.playerField) S.playerField = null; S.fields.splice(i, 1); }
   }
-  S.sim.step(dt, { fields: S.fields, player: playerCtx(), time: S.simTime });
+  // 与 `Game` 同序：风的钟先推进，再按它跑模拟（`VfxSystem.update` 的 ctx 同形）
+  if (S.wind) S.wind.advance(dt);
+  const wind = S.wind ? S.wind.params : null;
+  S.sim.step(dt, { fields: S.fields, player: playerCtx(), time: S.simTime, wind, windTime: S.wind ? S.wind.time : 0 });
   S.simTime += dt; S.frames++;
   for (const ev of S.sim.events) {
     S.evCount[ev.type] = (S.evCount[ev.type] || 0) + 1;
@@ -428,7 +508,7 @@ function radiusOf(key) {
 function gizmoPivot() {
   const key = S.sel.key; if (!key) return null;
   const a = anchorWorld();
-  if (key === 'anchor') return a ? { pivot: a, kind: 'start', n: 1, label: '预览锚点' } : null;
+  if (key === 'anchor') return a ? { pivot: a, kind: 'start', n: 1, label: attachOn() ? '角色挂点' : '预览锚点' } : null;
   if (key === 'player') return S.player.world ? { pivot: S.player.world.slice(), kind: 'slot', n: 1, label: '玩家标记' } : null;
   const pm = /^probe:(\d+)$/.exec(key);
   if (pm) { const p = S.probes[+pm[1]]; return p ? { pivot: p.at.slice(), kind: 'points', n: 1, label: `刺激 · ${p.field.kind}:${p.field.tag}` } : null; }
@@ -449,7 +529,7 @@ function gizmoPivot() {
 }
 function gizmoLabel() {
   const key = S.sel.key;
-  if (key === 'anchor') return '移动锚点';
+  if (key === 'anchor') return attachOn() ? '挪角色挂点' : '移动锚点';
   if (key === 'player') return '移动玩家';
   if (/^probe:/.test(key)) return '移动刺激点';
   const r = radiusOf(key); if (r) return `改${r.label}`;
@@ -460,6 +540,13 @@ function gizmoBase(key) {
   if (key === 'anchor') {
     if (!a || !S.space) return null;
     const an = effectiveAnchor();
+    if (attachOn()) {
+      // 挂点那一档：拖的不是场景锚点，而是**挂点相对角色的两个量**（离脚点高 + 画面横向偏移）
+      if (!S.player.on || !S.player.scene) return null;
+      let footPos;
+      try { footPos = S.space.anchorToWorld({ x: an.x, y: an.y, h: 0 }); } catch (e) { return null; }
+      return { kind: 'attach', pos: a.slice(), surfPos: footPos.slice(), h: an.h || 0, playerX: S.player.scene[0] };
+    }
     // 落笔那张面上的那一点（h=0）：XZ 拖的是它，h 是它之上的高度
     let surfPos;
     try { surfPos = S.space.anchorToWorld(Object.assign({}, an, { h: 0 })); } catch (e) { return null; }
@@ -507,6 +594,7 @@ function applyGizmo(key, base, res) {
     p.at = [round2(base.pos[0] + v[0]), round2(base.pos[1] + v[1]), round2(base.pos[2] + v[2])];
     return;
   }
+  if (base.kind === 'attach') { setAttachFromDrag(v, base); return; }
   if (base.kind === 'anchor') setAnchorWorld(v, base);
 }
 
@@ -530,7 +618,69 @@ function setAnchorWorld(v, base) {
   a.x = round2(s[0]); a.y = round2(s[1]);
   a.h = Math.max(0, round2((base.h || 0) + v[1]));
 }
+/**
+ * 挂点位移（gizmo 给的是相对手势起点的累计量 v）→ `attach` 的两个量：
+ *   Y 改离脚点高度 `heightWu`（不许负）；XZ 折回**画面横向**偏移 `offsetX`
+ *   （挂点的纵深一律跟角色脚点，与运行时一致：`contact.y` 就是脚点那一行）。
+ */
+function setAttachFromDrag(v, base) {
+  const cal = S.cal; if (!cal || !base) return;
+  const at = ensureAttach();
+  at.heightWu = Math.max(0, round2((base.h || 0) + v[1]));
+  const sp = [base.surfPos[0] + v[0], 0, base.surfPos[2] + v[2]];
+  sp[1] = cal.groundHeight(sp[0], sp[2]);
+  const s = cal.worldToScene(sp[0], sp[1], sp[2]);
+  if (!Number.isFinite(s[0])) return;
+  setAttachOffsetX(at, s[0] - base.playerX);
+}
+/** 世界点 → 挂点两个量（A 工具点一下 / 直接把挂点拖到某处）：横向按**脚点的画面 x** 折 */
+function setAttachTo(world) {
+  const cal = S.cal, at = attachDef();
+  if (!cal || !at || !S.player.scene) return;
+  const gy = cal.groundHeight(world[0], world[2]);
+  const s = cal.worldToScene(world[0], gy, world[2]);
+  if (!Number.isFinite(s[0])) return;
+  setAttachOffsetX(at, s[0] - S.player.scene[0]);
+  at.heightWu = Math.max(0, round2(world[1] - gy));
+}
+function setAttachOffsetX(at, dx) {
+  const v = round2(dx);
+  if (v === 0) delete at.offsetX; else at.offsetX = v;
+}
 function ensureAuthoring() { if (!S.doc.authoring) S.doc.authoring = {}; return S.doc.authoring; }
+function ensureAttach() {
+  const au = ensureAuthoring();
+  if (!au.attach || typeof au.attach !== 'object') au.attach = { heightWu: ATTACH_DEFAULT_HEIGHT_WU };
+  if (!Number.isFinite(au.attach.heightWu)) au.attach.heightWu = ATTACH_DEFAULT_HEIGHT_WU;
+  return au.attach;
+}
+/**
+ * 切锚点模式。开 = 写 `authoring.attach`（场上没角色就顺手在当前锚点放一个）；
+ * 关 = 删掉那个键，**资产字节回到原样**（这一整块与 `anchor` 同待遇：运行时忽略）。
+ */
+function setAttachMode(on) {
+  if (!S.doc) return;
+  if (!!attachDef() === !!on) return;
+  edit(on ? '锚点改挂在角色挂点' : '锚点改回场景面', () => {
+    if (on) { ensureAttach(); return; }
+    const au = S.doc.authoring; if (!au) return;
+    delete au.attach;
+    if (!Object.keys(au).length) delete S.doc.authoring;
+  });
+  if (!on) { setWalk(false); return; }
+  if (!S.player.on && !placePlayerAtAnchor()) {
+    status('锚点模式=角色挂点：场上还没有角色，按 M 点一下地面放一个', 'warn');
+  }
+  rebuildSim(); renderAll();
+}
+/** 把角色放到当前（场景面）锚点的脚下——开挂点模式时省作者一步 */
+function placePlayerAtAnchor() {
+  if (!S.cal) return false;
+  const a = effectiveAnchor();
+  if (!setPlayerSceneAt(a.x, a.y, 0)) return false;
+  status(`放了一个角色在锚点脚下（高 ${CHAR_HEIGHT_WU} wu 是尺度参考）`, 'ok');
+  return true;
+}
 function ensureAnchor() {
   const au = ensureAuthoring();
   if (!au.anchor) au.anchor = JSON.parse(JSON.stringify(effectiveAnchor()));
@@ -547,6 +697,7 @@ function dragObjectTo(key, base, surf, alt) {
     d.offset = [round2(surf.p[0] - a[0]), round2(surf.p[1] - a[1]), round2(surf.p[2] - a[2])];
     return;
   }
+  if (base.kind === 'attach') { setAttachTo(surf.p); return; }
   if (base.kind === 'anchor') { setAnchorAt(alt ? { p: surf.p, onShell: false } : surf); return; }
   if (base.kind === 'player') { setPlayerAt(surf.p, true); return; }
   if (base.kind === 'probe') { const p = S.probes[base.idx]; if (p) p.at = surf.p.map(round2); }
@@ -554,6 +705,11 @@ function dragObjectTo(key, base, surf, alt) {
 /** 2D 原画里直接拖物体：画面点 → 表面点 */
 function dragObjectToScene(key, base, scenePt) {
   const cal = S.cal; if (!cal || !base) return;
+  if (base.kind === 'attach') {
+    const at = attachDef();
+    if (at && S.player.scene) setAttachOffsetX(at, scenePt[0] - S.player.scene[0]);
+    return;
+  }
   const preferShell = base.kind === 'anchor' && (effectiveAnchor().surface === 'shell');
   const w = preferShell ? cal.sceneToWorldShell(scenePt[0], scenePt[1]) : cal.sceneToWorldGround(scenePt[0], scenePt[1]);
   if (base.kind === 'anchor') {
@@ -574,6 +730,14 @@ function nudgeSelected(dx, dy, dz) {
 // ---------------------------------------------------------------------------
 function setAnchorAt(surf) {
   const cal = S.cal; if (!cal || !S.doc) return;
+  if (attachOn()) {
+    // 挂点模式下 A 工具点的是"火头应该在哪"：折成挂点的高度 + 画面横向偏移（不写场景锚点）
+    if (!S.player.scene) { status('锚点模式=角色挂点：先按 M 放一个角色', 'warn'); return; }
+    edit('挪角色挂点', () => setAttachTo(surf.p));
+    S.sel.key = 'anchor';
+    setTool('select');
+    return;
+  }
   edit('放预览锚点', () => {
     const a = ensureAnchor();
     if (surf.onShell) {
@@ -592,6 +756,13 @@ function setAnchorAt(surf) {
 }
 function setAnchorScene(sx, sy) {
   const cal = S.cal; if (!cal || !S.doc) return;
+  if (attachOn()) {
+    if (!S.player.scene) { status('锚点模式=角色挂点：先按 M 放一个角色', 'warn'); return; }
+    edit('挪角色挂点', () => setAttachOffsetX(ensureAttach(), sx - S.player.scene[0]));
+    S.sel.key = 'anchor';
+    setTool('select');
+    return;
+  }
   const a0 = effectiveAnchor();
   edit('放预览锚点', () => {
     const a = ensureAnchor();
@@ -612,10 +783,74 @@ function setPlayerAt(world, keepTool) {
   }
   S.player.on = true; S.player.world = w;
   S.player.scene = cal.worldToScene(w[0], w[1], w[2]);
+  S.walk.baseX = S.player.scene[0]; S.walk.sceneY = S.player.scene[1];   // 手动挪过 = 从这里重新来回走
   if (!keepTool) { S.sel.key = 'player'; setTool('select'); }
   draw(); renderLeft();
 }
-function clearPlayer() { S.player.on = false; S.player.world = null; S.player.speed = 0; if (S.sel.key === 'player') S.sel.key = ''; updatePlayerField(); draw(); renderLeft(); }
+/**
+ * 画面点放 / 挪角色（挂点预览与来回走都走它）：速度是**给定的真速度**，不像拖拽那样按位移猜。
+ * 存的 `scene` 就是要求的那一点（挂点锚点直接读它，不再往返一次）。
+ */
+function setPlayerSceneAt(sx, sy, speed) {
+  const cal = S.cal; if (!cal) return false;
+  const w = cal.sceneToWorldGround(sx, sy);
+  if (!w || !w.every(Number.isFinite)) return false;
+  S.player.on = true;
+  S.player.world = [w[0], w[1], w[2]];
+  S.player.scene = [sx, sy];
+  S.player.speed = Math.max(0, speed || 0);
+  return true;
+}
+function clearPlayer() { S.walk.on = false; S.player.on = false; S.player.world = null; S.player.speed = 0; if (S.sel.key === 'player') S.sel.key = ''; updatePlayerField(); draw(); renderLeft(); renderInspector(); }
+
+/** 让角色来回走（这一档就是为了看"锚点在动、已发射的粒子留在原地"） */
+function setWalk(on) {
+  const want = !!on;
+  if (want && !S.player.on && !placePlayerAtAnchor()) {
+    status('要让角色走动，先按 M 点一下地面放一个角色', 'warn');
+    return;
+  }
+  S.walk.on = want;
+  if (want) { S.walk.baseX = S.player.scene[0]; S.walk.sceneY = S.player.scene[1]; S.walk.dir = 1; }
+  else if (S.player.on) S.player.speed = 0;
+  renderLeft(); renderInspector(); renderSimBar(); draw();
+}
+/**
+ * 走一拍。横向 1 wu 恒等于 1 画面 wu（伪世界是正交重建的），所以画面 x 上走
+ * `WALK_SPEED_WU · dt` 就是真走速；到半幅或场景边缘就折返。
+ * 速度显式喂给 `S.player.speed`（动静场按它算强度：站着不动强度恒 0）。
+ */
+function walkTick(dt) {
+  if (!S.walk.on) return;
+  const cal = S.cal;
+  if (!cal || !S.player.on || !S.player.scene) { S.walk.on = false; return; }
+  if (!Number.isFinite(S.walk.baseX)) { S.walk.baseX = S.player.scene[0]; S.walk.sceneY = S.player.scene[1]; }
+  const lo = Math.max(2, S.walk.baseX - WALK_SPAN_WU), hi = Math.min(cal.worldW - 2, S.walk.baseX + WALK_SPAN_WU);
+  let x = S.player.scene[0] + S.walk.dir * WALK_SPEED_WU * dt;
+  if (x >= hi) { x = hi; S.walk.dir = -1; } else if (x <= lo) { x = lo; S.walk.dir = 1; }
+  setPlayerSceneAt(x, S.walk.sceneY, WALK_SPEED_WU);
+}
+
+/**
+ * 角色代理的身体线（**只是尺度参考，不可选中、不进 doc**）：脚点到头顶 150 wu 的立柱 + 肩线，
+ * 挂点模式下再从身体中线拉一根横杆到挂点——"火头到底在手的高度上吗"靠它一眼看出来。
+ */
+function bodyLines() {
+  const out = [];
+  const cal = S.cal;
+  if (!cal || !S.player.on || !S.player.world) return out;
+  const w = S.player.world;
+  const r = cal.screenRightWorld();
+  const half = 26, sh = w[1] + CHAR_HEIGHT_WU * 0.8;
+  out.push({
+    pts: [w[0], w[1], w[2], w[0], w[1] + CHAR_HEIGHT_WU, w[2],
+      w[0] - r[0] * half, sh - r[1] * half, w[2] - r[2] * half, w[0] + r[0] * half, sh + r[1] * half, w[2] + r[2] * half],
+    color: [0.4, 0.8, 1, 0.5],
+  });
+  const aw = attachAnchor() ? anchorWorld() : null;
+  if (aw) out.push({ pts: [w[0], aw[1], w[2], aw[0], aw[1], aw[2]], color: [1, 0.75, 0.35, 0.8] });
+  return out;
+}
 
 /** 发一个刺激：本地立刻进场总线（预览看得见），同时推给游戏 */
 function addFieldAt(world) {
@@ -785,6 +1020,7 @@ async function openEffect(id) {
     markClean();
     touchDoc();
     S.probes.length = 0; S.fields.length = 0; S.playerField = null;
+    S.walk.on = false;                                 // 走动是上一份资产的工作态，不跟着跨资产
     await syncEnvWithDoc();
     rebuildSim();
     renderAll();
@@ -966,15 +1202,52 @@ function renderDocState() {
   el('btnUndo').title = history.canUndo ? `撤销：${history.peekUndo()}` : '没有可撤销的';
   el('btnRedo').title = history.canRedo ? `重做：${history.peekRedo()}` : '没有可重做的';
 }
+/** 薄片（纸钱）此刻的状况：离开面的 / 醒着的（睡着 = 静摩擦 + 附着顶住了风） */
+function plateStats() {
+  let plates = 0, free = 0, awake = 0;
+  if (!S.sim) return { plates, free, awake };
+  for (const e of S.sim.emitters) {
+    if (!e.plate) continue;
+    const p = e.p, arr = e.plate.arr;
+    for (let k = 0; k < p.cap; k++) {
+      if (!p.alive[k]) continue;
+      plates++;
+      if (arr.contact[k] === 0) free++;
+      if (!arr.sleep[k]) awake++;
+    }
+  }
+  return { plates, free, awake };
+}
 function renderSimBar() {
   el('btnPlay').textContent = S.playing ? '⏸ 暂停' : '▶ 播放';
-  const live = S.sim ? S.sim.liveCount : 0;
-  const st = S.sim ? S.sim.state : '—';
-  el('simInfo').textContent = S.simErr ? `⚠ 跑不起来：${S.simErr}`
-    : !S.sim ? (S.rt ? (S.cal ? '（没有可跑的发射器）' : '这个场景没有深度载荷，跑不了本地预览') : `没有运行时包${S.rtErr ? '：' + S.rtErr : ''}`)
-      : `t=${fmt(S.simTime, 2)}s · ${live} 只 · ${st} · 帧 ${S.frames}`
-        + (S.evCount.hit ? ` · 撞 ${S.evCount.hit}` : '') + (S.evCount.sound ? ` · 声 ${S.evCount.sound}` : '')
-        + (S.lastFlock ? ` · ${S.lastFlock}` : '');
+  const info = el('simInfo');
+  info.className = 'dim';
+  if (S.simErr || !S.sim) {
+    info.textContent = S.simErr ? `⚠ 跑不起来：${S.simErr}`
+      : S.rt ? (S.cal ? '（没有可跑的发射器）' : '这个场景没有深度载荷，跑不了本地预览') : `没有运行时包${S.rtErr ? '：' + S.rtErr : ''}`;
+    return;
+  }
+  const w = S.wind && S.wind.params;
+  const ps = plateStats();
+  const usesArea = (S.doc.emitters || []).some((e) => e.spawn && e.spawn.shape && e.spawn.shape.kind === 'area');
+  let txt = `t=${fmt(S.simTime, 2)}s · ${S.sim.liveCount} 只 · ${S.sim.state} · 帧 ${S.frames}`
+    + (S.evCount.hit ? ` · 撞 ${S.evCount.hit}` : '') + (S.evCount.sound ? ` · 声 ${S.evCount.sound}` : '')
+    + (S.lastFlock ? ` · ${S.lastFlock}` : '')
+    + (w ? ` · 风 ${fmt(w.speed, 0)} wu/s` : ' · 无风');
+  if (ps.plates) txt += ` · 薄片 离地 ${ps.free} / 醒 ${ps.awake}`;
+  if (usesArea) txt += S.area ? ` · 区域=实例「${S.area.id}」` : ' · 区域=锚点周围（本场景没有实例圈区域）';
+  if (attachOn()) {
+    const at = attachDef();
+    if (attachAnchor()) {
+      txt += ` · 锚点=角色挂点（高 ${fmt(attachHeight(), 0)} wu${at.offsetX ? `、偏 ${fmt(at.offsetX, 0)} wu` : ''}）`
+        + (S.walk.on ? ' · 角色在走' : '');
+    } else {
+      txt += ' · ⚠ 锚点模式=角色挂点，但场上没有角色（按 M 放一个）：暂时落在场景锚点上';
+      info.className = 'warn';
+    }
+  }
+  if (ps.plates && !w) { txt += ' · ⚠ 本场景没有 wind：薄片只吃场景风，不会被吹动'; info.className = 'warn'; }
+  info.textContent = txt;
 }
 function renderScenePickers() {
   const sel = el('sceneSel');
@@ -1003,11 +1276,14 @@ function renderLeft() {
   list.textContent = '';
   if (S.doc) {
     const a = effectiveAnchor();
+    const att = attachDef();
     const explicit = !!(S.doc.authoring && S.doc.authoring.anchor);
+    const onChar = !!attachAnchor();
     list.appendChild(h('div', { class: 'item' + (S.sel.key === 'anchor' ? ' on' : ''), onclick: () => select('anchor') },
-      h('span', { class: 'ic' }, '⊕'),
-      h('span', { class: 'name' }, `预览锚点${explicit ? '' : '（默认：出生点）'}`),
-      h('span', { class: 'dim' }, `${fmt(a.x, 0)},${fmt(a.y, 0)}${a.surface === 'shell' ? ' 壳' : ''}`)));
+      h('span', { class: 'ic' }, att ? '🕯' : '⊕'),
+      h('span', { class: 'name' }, att ? (onChar ? '锚点 · 挂在角色挂点' : '锚点 · 挂点模式（场上没角色）') : `预览锚点${explicit ? '' : '（默认：出生点）'}`),
+      h('span', { class: 'dim' }, att ? `高 ${fmt(attachHeight(), 0)}${att.offsetX ? ` 偏 ${fmt(att.offsetX, 0)}` : ''}`
+        : `${fmt(a.x, 0)},${fmt(a.y, 0)}${a.surface === 'shell' ? ' 壳' : ''}`)));
   }
   for (const em of ((S.doc && S.doc.emitters) || [])) {
     const on = S.sel.key === `emitter:${em.id}` || S.sel.key.endsWith(`:${em.id}`);
@@ -1030,6 +1306,12 @@ function renderLeft() {
   pl.appendChild(h('div', { class: 'item' + (S.sel.key === 'player' ? ' on' : ''), onclick: () => S.player.on && select('player') },
     h('span', { class: 'ic' }, '🚶'), h('span', { class: 'name' }, S.player.on ? `玩家（${fmt(S.player.speed, 0)} wu/s）` : '（没放玩家）'),
     S.player.on ? h('button', { class: 'danger', onclick: (e) => { e.stopPropagation(); clearPlayer(); } }, '×') : null));
+  const wk = h('input', { type: 'checkbox' });
+  wk.checked = S.walk.on;
+  wk.addEventListener('change', () => setWalk(wk.checked));
+  pl.appendChild(h('div', { class: 'item sub' }, h('span', { class: 'ic' }, '↔'),
+    h('label', { class: 'chk', title: `沿画面横向来回走 ±${WALK_SPAN_WU} wu（挂点模式下就能看"锚点在动、已发射的粒子留在原地"）` },
+      wk, `来回走（${WALK_SPEED_WU} wu/s）`)));
   const pr = el('probeList');
   pr.textContent = '';
   S.probes.forEach((p, i) => {
@@ -1167,10 +1449,14 @@ const host = {
   get layers() { return S.layers; },
   get sources() { return S.sources; },
   get sfx() { return S.sfx; },
+  get player() { return S.player; },
+  get walk() { return S.walk; },
+  get attach() { return attachDef(); },
   status, select, setTool, edit, dragBegin, dragTick, dragEnd,
-  objects, spheres, particlePoints, fieldMarks, anchorWorld,
+  objects, spheres, particlePoints, fieldMarks, anchorWorld, bodyLines,
   gizmoPivot, gizmoBase, applyGizmo, gizmoLabel, dragObjectTo, dragObjectToScene, nudgeSelected,
   setAnchorAt, setAnchorScene, setPlayerAt, addFieldAt,
+  setAttachMode, ensureAttach, setWalk,
   currentEmitter, renameEmitter, ensureAuthoring, ensureAnchor, reanchor,
   onCursorWorld, onCursorScene, renderInspector,
 };

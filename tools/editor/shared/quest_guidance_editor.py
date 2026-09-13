@@ -30,6 +30,7 @@ from .form_layout import compact_form
 from .id_ref_selector import IdRefSelector
 from .numeric_roundtrip import preserve_numeric_repr
 from .rich_text_field import RichTextLineEdit
+from .widget_discard import discard_layout_widgets, discard_widget
 
 GUIDANCE_KINDS = ("mapMarker", "worldMarker", "sceneHint")
 ENTITY_KINDS = ("", "npc", "hotspot", "zone")
@@ -180,6 +181,11 @@ def normalize_objective(raw: dict) -> dict:
         out["optional"] = True
     else:
         out.pop("optional", None)
+    visible = out.get("visibleConditions") or []
+    if visible:
+        out["visibleConditions"] = visible
+    else:
+        out.pop("visibleConditions", None)
     return out
 
 
@@ -411,12 +417,7 @@ class GuidanceEditor(QWidget):
             r.reload_refs_from_model()
 
     def _clear(self) -> None:
-        while self._rows_layout.count():
-            item = self._rows_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.setParent(None)
-                w.deleteLater()
+        discard_layout_widgets(self._rows_layout)
         self._rows.clear()
 
     def _add_row(self, data: dict) -> _GuidanceRow:
@@ -435,8 +436,7 @@ class GuidanceEditor(QWidget):
         if row in self._rows:
             self._rows.remove(row)
         self._rows_layout.removeWidget(row)
-        row.setParent(None)
-        row.deleteLater()
+        discard_widget(row)
         self.changed.emit()
 
 
@@ -506,6 +506,16 @@ class _ObjectiveRow(QWidget):
         sec_cond.add_body(self.cond)
         outer.addWidget(sec_cond)
 
+        self.visible_cond = ConditionEditor(
+            "显示条件",
+            hint="不满足时这条目标整条不存在：面板不列、不算当前目标、不出引导。\n"
+                 "留空 = 恒显示。例：白天听过那条规矩，晚上才想得起要备这样东西。",
+        )
+        self.visible_cond.set_flag_pattern_context(model, None)
+        sec_visible = CollapsibleSection("显示条件", start_open=False)
+        sec_visible.add_body(self.visible_cond)
+        outer.addWidget(sec_visible)
+
         self.guidance = GuidanceEditor(model)
         self.guidance_section = CollapsibleSection("本目标的引导", start_open=False)
         self.guidance_section.set_header_tool_tip("不配则回落到任务级引导")
@@ -520,6 +530,7 @@ class _ObjectiveRow(QWidget):
         self.text.textChanged.connect(self._on_text_changed)
         self.optional.toggled.connect(self.changed)
         self.cond.changed.connect(self.changed)
+        self.visible_cond.changed.connect(self.changed)
         self.guidance.changed.connect(self.changed)
 
         self._fill(self._orig)
@@ -529,6 +540,7 @@ class _ObjectiveRow(QWidget):
         self.text.setText(str(data.get("text") or ""))
         self.optional.setChecked(data.get("optional") is True)
         self.cond.set_data(list(data.get("completeWhen") or []))
+        self.visible_cond.set_data(list(data.get("visibleConditions") or []))
         self.guidance.set_data(list(data.get("guidance") or []))
         self._sync_title()
 
@@ -543,6 +555,7 @@ class _ObjectiveRow(QWidget):
 
     def reload_refs_from_model(self) -> None:
         self.cond.set_flag_pattern_context(self._model, None)
+        self.visible_cond.set_flag_pattern_context(self._model, None)
         self.guidance.reload_refs_from_model()
 
     def to_dict(self) -> dict:
@@ -552,6 +565,7 @@ class _ObjectiveRow(QWidget):
         out["completeWhen"] = self.cond.to_list()
         out["guidance"] = self.guidance.to_list()
         out["optional"] = self.optional.isChecked()
+        out["visibleConditions"] = self.visible_cond.to_list()
         return normalize_objective(out)
 
 
@@ -595,12 +609,7 @@ class ObjectivesEditor(QWidget):
             r.reload_refs_from_model()
 
     def _clear(self) -> None:
-        while self._rows_layout.count():
-            item = self._rows_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.setParent(None)
-                w.deleteLater()
+        discard_layout_widgets(self._rows_layout)
         self._rows.clear()
 
     def _add_row(self, data: dict) -> _ObjectiveRow:
@@ -631,8 +640,7 @@ class ObjectivesEditor(QWidget):
         if row in self._rows:
             self._rows.remove(row)
         self._rows_layout.removeWidget(row)
-        row.setParent(None)
-        row.deleteLater()
+        discard_widget(row)
         self.changed.emit()
 
     def _move_row(self, row: _ObjectiveRow, delta: int) -> None:

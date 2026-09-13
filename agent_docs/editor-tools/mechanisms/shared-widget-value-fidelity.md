@@ -25,9 +25,12 @@ last_governed: 2026-08-05
 ## 权威源(读代码从哪进)
 
 `id_ref_selector.py`(id 引用选择器)/ `action_editor.py`(`FilterableTypeCombo(select_only)` 的未知值注入)/ `qt_combo_wheel_guard.py`(全局滚轮误改防护,`__main__.py` 安装)/
-`position_ref_field.py`(**位置引用 `at` 的统一复合控件**,2026-09-11:数字坐标(手输 / `WorldPointPickDialog` 地图拾取)/ 实体此刻位置 / 场景曲线插槽三选一,
-六条位置动作 + playTrajectory 共用;数字模式不写 `at`、老数据一个字节不动;实体 / 插槽写 `at`,x/y 写编辑期快照当回落,引用没动就保留磁盘 x/y;
-候选全部取自 ProjectModel(`actor_id_items_for_scene / hotspot_ids_for_scene / trajectory_slot_rows / trajectory_slots`),悬垂值经 IdRefSelector 保值)。控件选型对照表见 `.cursor/skills/editor-tools-iteration/SKILL.md`。
+`position_ref_field.py`(**位置引用 `at` 的统一复合控件**,2026-09-11:数字坐标(手输 / `WorldPointPickDialog` 地图拾取)/ 实体此刻位置 / 场景曲线插槽 / 曲线上的点,
+六条位置动作 + playTrajectory + cameraMove 共用;数字模式不写 `at`、老数据一个字节不动;实体 / 插槽写 `at`,x/y 写编辑期快照当回落,引用没动就保留磁盘 x/y;
+候选全部取自 ProjectModel(`actor_id_items_for_scene / hotspot_ids_for_scene / trajectory_slot_rows / trajectory_slots / trajectory_curve_rows`),悬垂值经 IdRefSelector 保值)。
+2026-09-12 起:曲线点多一档「此刻播到的点」(`current`,播放头,快照取起点);曲线候选**只列场景曲线**(相对曲线不许引用);
+`cameraFollowActor` / `faceEntity` 也用它,但**实体档映射老键**(`target` / `faceTarget`,构造参数 `entity_rows` 把候选收窄到演员),
+其余档写 `at`——见 `ActionRow._add_entity_or_ref_field / _write_entity_or_ref`。控件选型对照表见 `.cursor/skills/editor-tools-iteration/SKILL.md`。
 
 ## 硬契约
 

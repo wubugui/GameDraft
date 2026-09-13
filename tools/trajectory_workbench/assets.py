@@ -131,7 +131,7 @@ def rename_asset(old: str, new: str) -> Path:
     return dst
 
 
-_ORDER = ("id", "label", "space", "binding", "keyframes", "worldKeyframes", "slots", "source", "authoring")
+_ORDER = ("id", "label", "space", "binding", "keyframes", "worldKeyframes", "slots", "cues", "source", "authoring")
 
 
 def normalize_asset_order(doc: dict) -> dict:
@@ -149,6 +149,8 @@ def normalize_asset_order(doc: dict) -> dict:
         del out["worldKeyframes"]
     if "slots" in out and not out["slots"]:
         del out["slots"]
+    if "cues" in out and not out["cues"]:
+        del out["cues"]
     return out
 
 

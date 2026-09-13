@@ -11,6 +11,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
 
 from .file_io import JsonFileError, StagedJsonWriter, read_json, write_json, list_json_files
+from .shared.animation_sockets import load_socket_set, sockets_path_for_bundle
 from .shared.project_paths import ProjectPaths
 
 
@@ -1810,6 +1811,36 @@ class ProjectModel(QObject):
             out.append((iid, f"{iid}（{eff or '未指定效果'}）"))
         return out
 
+    def scene_light_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """场景灯 `(id, label)`。`fadeLight.lightId` 的候选。
+
+        **场景作用域**：灯 id 只在一个场景里唯一（两张地图各有一盏 `door_lantern` 是正常的），
+        所以不进全局 id 宇宙。label 带上时段与"跟不跟随"——同一盏灯白天一组、夜里一组写在
+        同一个 `lights[]` 里是正常形态（灯按各自的 `phases` 过滤），不标出来就得靠猜。
+        """
+        if not scene_id:
+            return []
+        sc = self.scenes.get(scene_id) or {}
+        lit = sc.get("lighting")
+        rows = (lit.get("lights") if isinstance(lit, dict) else None) or []
+        out: list[tuple[str, str]] = []
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            lid = str(row.get("id", "") or "").strip()
+            if not lid:
+                continue
+            bits = [str(row.get("kind") or "point")]
+            ph = row.get("phases")
+            if isinstance(ph, list) and ph:
+                bits.append("时段 " + "/".join(str(p) for p in ph))
+            if isinstance(row.get("follow"), dict):
+                bits.append("跟随 " + str((row.get("follow") or {}).get("target") or "?"))
+            if row.get("enabled") is False:
+                bits.append("已关")
+            out.append((lid, f"{lid}（{' · '.join(bits)}）"))
+        return out
+
     def all_trajectory_ids(self) -> list[tuple[str, str]]:
         """`(id, label)`：全局轨迹资产（`assets/data/trajectories/*.json`），供 playTrajectory 选择器/校验用。
 
@@ -1946,7 +1977,9 @@ class ProjectModel(QObject):
         if not rows:
             return None
         total = rows[-1][0]
-        if point == "start":
+        # 播放头（current）在编辑期没有"此刻"：快照取起点——运行时求不出播放头（本场景还没开播）
+        # 时一次性动作才退回这份 x/y，而那时曲线若开播，播放头就是从起点出发的。
+        if point in ("start", "current"):
             t = rows[0][0]
         elif point == "time":
             t = float(at_ms or 0.0)
@@ -1969,10 +2002,10 @@ class ProjectModel(QObject):
         return (origin[0] + ox, origin[1] + oy)
 
     def trajectory_curve_rows(self, scene_id: str | None) -> list[tuple[str, str]]:
-        """「曲线上的点」的轨迹候选：**烘过帧的**曲线都能取值。
+        """「曲线上的点」的轨迹候选：**烘过帧的场景曲线**，绑在当前场景的排前面。
 
-        场景曲线按原点算得出绝对位置（编辑期就能预览）；相对曲线只有正在播时才有绝对位置，
-        标出来让作者知道自己在配什么。绑在当前场景的排前面。
+        相对曲线不列（2026-09-12 制作人定）：它是资源，每次播放都是一次实例化、可以同时播多个，
+        "它的点"指哪一次说不清，暂不支持引用。场景曲线按定义同一时刻只有一个实例。
         """
         sid = str(scene_id or "").strip()
         here: list[tuple[str, str]] = []
@@ -1986,7 +2019,6 @@ class ProjectModel(QObject):
                 continue
             label = str(doc.get("label") or "").strip() or tid
             if self.trajectory_binding(tid) != "scene":
-                other.append((tid, f"{label}（相对曲线 · 只有正在播时才有位置）"))
                 continue
             tscene = self.trajectory_scene_id(tid)
             row = (tid, f"{label}（{len(frames)} 帧 · 场景 {tscene or '?'}）")
@@ -2630,15 +2662,42 @@ class ProjectModel(QObject):
             for stem in self.all_anim_files()
         ]
 
+    def game_viewport_size(self) -> tuple[float, float]:
+        """游戏逻辑视口（屏幕百分比布局的那块「屏」），供预览画布对齐真实比例。
+
+        口径同运行时 Game.start：配了 `viewport` 就按它渲染（canvas 等比信箱化铺满窗口），
+        没配才跟随窗口，故 viewport 优先、windowSize 兜底、都没有回落 1024x768。
+        """
+        cfg = getattr(self, "game_config", None)
+        if isinstance(cfg, dict):
+            for key in ("viewport", "windowSize"):
+                d = cfg.get(key)
+                if isinstance(d, dict):
+                    w, h = d.get("width"), d.get("height")
+                    if (
+                        isinstance(w, (int, float)) and not isinstance(w, bool)
+                        and isinstance(h, (int, float)) and not isinstance(h, bool)
+                        and w > 0 and h > 0
+                    ):
+                        return (float(w), float(h))
+        return (1024.0, 768.0)
+
     def overlay_short_id_entries(self) -> list[tuple[str, str]]:
-        """overlay_images.json 的短 id 键，供 show/hide/blend 叠图动作 id 下拉。"""
-        if not isinstance(self.overlay_images, dict):
-            return []
+        """叠图动作 id 的候选，**(展示名, 取值)** —— 顺序照 FilterableTypeCombo 的约定。
+
+        ⚠ 与 `IdRefSelector.set_items` 的 (id, 展示名) 正好相反：写反了不会报错，
+        只会把展示串当成取值存进 JSON（2026-09-12 实测存过一条
+        `id: "文档揭示 新揭示_2"`，运行时按这个名字找不到任何图层，收不掉也不报错）。
+
+        只列 overlay_images.json 的短 id。文档揭示**不走这条路**：它自己一套显示层，
+        键是 documentId，由 revealDocument / hideDocument 收发，与叠图句柄互不可见。
+        """
         out: list[tuple[str, str]] = []
-        for k in sorted(self.overlay_images.keys(), key=lambda x: (str(x).lower(), str(x))):
-            ks = str(k).strip()
-            if ks:
-                out.append((ks, ks))
+        if isinstance(self.overlay_images, dict):
+            for k in sorted(self.overlay_images.keys(), key=lambda x: (str(x).lower(), str(x))):
+                ks = str(k).strip()
+                if ks:
+                    out.append((ks, ks))
         return out
 
     def all_prop_preset_ids(self) -> list[tuple[str, str]]:
@@ -2796,6 +2855,65 @@ class ProjectModel(QObject):
             return ""
         am = pa.get("animManifest")
         return str(am).strip() if am is not None else ""
+
+    def light_follow_target_items_for_scene(
+        self, scene_id: str | None,
+    ) -> list[tuple[str, str]]:
+        """场景灯 `LightDef.follow.target` 的候选：**本场景** NPC + `player`。
+
+        比 `actor_id_items_for_scene` 窄一圈，刻意的：跟随灯是**进场景时由组装层挑出来**
+        交给 `HeldPropSystem` 的（`Game` 里那句 `lighting.lights.filter(l => l.follow)`），
+        它只认得当时在场的实体。过场临时演员 / 轨迹生成物的生命周期比场景短，
+        列进来只会让作者配出一盏"大多数时候不亮"的灯。
+        """
+        items: list[tuple[str, str]] = list(self.npc_ids_for_scene(scene_id))
+        items.append(("player", "player"))
+        return items
+
+    def animation_socket_names_for_manifest(
+        self, manifest_path: str,
+    ) -> list[tuple[str, str]]:
+        """动画包 `sockets.json` 里标过的挂点名（`(名字, 显示名)`，按名字排序）。
+
+        没有 sidecar / 读坏 = 空列表（"这个包没标过挂点"）。挂点是编辑器侧的 sidecar，
+        产线重导出不带走它，所以这里直接读盘，不经 `animations` 那份 anim.json。
+        """
+        p = (manifest_path or "").strip()
+        prefix = "/resources/runtime/animation/"
+        if not p.startswith(prefix):
+            return []
+        stem = p[len(prefix):].split("/", 1)[0]
+        if not stem:
+            return []
+        data = load_socket_set(sockets_path_for_bundle(self.animation_bundles_path, stem))
+        socks = data.get("sockets") if isinstance(data, dict) else None
+        if not isinstance(socks, dict):
+            return []
+        out: list[tuple[str, str]] = []
+        for name, sock in socks.items():
+            label = ""
+            if isinstance(sock, dict) and isinstance(sock.get("label"), str):
+                label = sock["label"].strip()
+            nm = str(name)
+            out.append((nm, label or nm))
+        out.sort(key=lambda r: (r[0].lower(), r[0]))
+        return out
+
+    def socket_names_for_actor(
+        self, scene_id: str | None, actor_id: str,
+    ) -> list[tuple[str, str]]:
+        """某个跟随目标身上可用的挂点（player 用配置 animManifest，NPC 用 animFile）。
+
+        与 `animation_state_names_for_actor` 同一条解析链——目标的动画包在哪，
+        挂点就在哪；找不到包或包没标挂点都返回空（调用方据此允许手打自由值）。
+        """
+        aid = (actor_id or "").strip()
+        if not aid:
+            return []
+        if aid == "player":
+            return self.animation_socket_names_for_manifest(self.player_avatar_anim_manifest())
+        return self.animation_socket_names_for_manifest(
+            self.npc_anim_manifest_for_scene(scene_id, aid))
 
     def animation_state_names_for_actor(self, scene_id: str | None, actor_id: str) -> list[str]:
         """resolveActor 目标当前可用的动画 state 名（player 用配置 animManifest，NPC 用 animFile）。"""

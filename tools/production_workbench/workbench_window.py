@@ -130,6 +130,7 @@ from .story_units import (
     story_unit_report,
 )
 from tools.editor.project_model import ProjectModel
+from tools.editor.shared.widget_discard import detach_widget
 
 
 def _repo_root() -> Path:
@@ -142,7 +143,7 @@ def _is_project_root(path: Path) -> bool:
 
 def _inline_console_from_dock(dock: WorkbenchConsoleDock, *, minimum_height: int = 160) -> WorkbenchConsoleWidget:
     console = dock.console
-    console.setParent(None)
+    detach_widget(console)   # 紧接着就地重新安家（下面把它塞进内嵌宿主）
     dock.setProperty("inlineConsole", True)
     dock.setWidget(QWidget(dock))
     console.setMinimumHeight(minimum_height)

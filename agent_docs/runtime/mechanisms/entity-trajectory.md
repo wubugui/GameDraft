@@ -3,7 +3,7 @@ id: entity-trajectory
 title: 实体轨迹动画(烘焙式 · 独立资产)运行时语义
 domain: runtime
 type: mechanism
-summary: 一条轨迹一个资产文件、帧相对**曲线原点**(作者摆的参考点,不是第一帧);曲线没有锚点,播放位置在播放时给(at 位置引用:数字 / 实体此刻位置 / 场景曲线插槽 / 曲线上的点);运动对象是场景实体(target)或播放时临时生成的图片 / 角色模板(spawn,keep = 播完留下成场景实体进存档);场景曲线可原地播、相对曲线必须给位置;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;不驱动相机
+summary: 一条轨迹一个资产文件、帧相对**曲线原点**(作者摆的参考点,不是第一帧);曲线没有锚点,播放位置在播放时给(at 位置引用:数字 / 实体此刻位置 / 场景曲线插槽 / 曲线上的点,含播放头 current);位置引用只认场景曲线(相对曲线是资源、每次播放一个实例,不许引用);运动对象是场景实体(target)或播放时临时生成的图片 / 角色模板(spawn,keep = 播完留下成场景实体进存档);场景曲线可原地播、相对曲线必须给位置;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;轨迹不驱动相机,镜头跟曲线走 = cameraFollowActor 的 at 引用播放头;音效关键点 cues 按时间轴触发(不带位置,跳过/被停不补声)
 status: active
 authority:
   - src/data/types.ts#TrajectoryAsset
@@ -17,12 +17,13 @@ authority:
   - src/core/ActionRegistry.ts#playTrajectory
   - src/utils/positionRef.ts
   - src/systems/SceneManager.ts#spawnRuntimeNpc
+  - src/core/Game.ts#attachNpcSceneBits
   - src/core/projectPaths.ts#trajectoryJsonUrl
   - src/rendering/SpriteEntity.ts#setTrajectoryOverlay
 triggers:
   paths: ["src/systems/TrajectorySystem.ts", "src/utils/keyframeSampler*", "src/utils/trajectoryProjection*", "src/utils/positionRef*", "src/entities/Npc.ts", "src/entities/Player.ts", "public/assets/data/trajectories/**"]
-  topics: [轨迹, trajectory, playTrajectory, 烘焙动画, 关键帧, sortY, 道具, 抛体, 世界空间, 投影, flipX, 播放位置, at, PositionRef, 位置引用, 命名插槽, slot, 曲线原点, origin, 曲线上的点, curve, spawn, 临时生成, keep, spawnedNpcs]
-  tasks: [编排物件飞行, 让道具动起来, 在别的场景复用轨迹, 改关键帧采样, 改投影, 把实体挪到曲线插槽, 播放时临时生成道具]
+  topics: [轨迹, trajectory, playTrajectory, 烘焙动画, 关键帧, sortY, 音效关键点, cues, TrajectoryCue, 轨迹音效, 落地声, playSfx, 道具, 抛体, 世界空间, 投影, flipX, 播放位置, at, PositionRef, 位置引用, 命名插槽, slot, 曲线原点, origin, 曲线上的点, curve, 播放头, current, cameraFollowActor, 镜头跟随, spawn, 临时生成, keep, spawnedNpcs, renderRaw, 不受光, 逐实体光照, 深度遮挡, runtimeNpcHooks]
+  tasks: [编排物件飞行, 让道具动起来, 给轨迹加音效, 在别的场景复用轨迹, 改关键帧采样, 改投影, 把实体挪到曲线插槽, 播放时临时生成道具, 让镜头跟着曲线走]
 verified_by:
   - src/systems/TrajectorySystem.test.ts
   - src/utils/keyframeSampler.test.ts
@@ -33,7 +34,9 @@ verified_by:
   - src/utils/positionRef.test.ts
   - src/core/ActionRegistryTrajectoryPreempt.test.ts
   - src/systems/CutsceneTrajectorySkip.test.ts
-last_governed: 2026-09-11
+  - src/core/ActionRegistryCameraFollow.test.ts
+  - src/systems/SceneManagerRuntimeNpcLifecycle.test.ts
+last_governed: 2026-09-12
 ---
 
 ## 是什么(一句话)
@@ -70,31 +73,77 @@ last_governed: 2026-09-11
 - **位置引用 `PositionRef`(`src/utils/positionRef.ts`,所有引用某个点的动作共用)**:`{kind:'point',x,y}` / `{kind:'entity',id}`(执行那一刻该实体的位置,
   演员 → 热点)/ `{kind:'slot',trajectoryId,slotId}`(**场景曲线**暴露的命名插槽 `slots[]`,画面坐标就是作者场景的坐标;相对曲线的插槽解析为 null;
   曲线绑定的场景 ≠ 当前场景时 warn 但仍给坐标)/ **`{kind:'curve',trajectoryId,point,atMs?/progress?}`**(曲线上的点:
-  `point` = `start|end|time|progress`,在烘好的帧上取值 `sampleTrajectoryOffset`,**加上这条曲线此刻的播放位置**——
+  `point` = `start|end|time|progress|current`,在烘好的帧上取值 `sampleTrajectoryOffset`,**加上这条曲线此刻的播放位置**——
   那条轨迹**正在播**就用那次播放的锚点与那次的帧(`TrajectorySystem.livePlay`,帧已按当前场景投影,所以跨场景也准;
-  这就是"实时点":铜钱还在飞,`end` 取到的是它**这次**要落的地方),没在播就按场景曲线的原点算;
-  相对曲线又没在播 = 没有绝对位置(内容错)。同一条资产同时挂在多个目标上时取 Map 里的第一条——要指名就用 `entity` 档)。
-  `resolvePositionRef` 是 async(要装资产)。
+  铜钱还在飞,`end` 取到的是它**这次**要落的地方),没在播就按场景曲线的原点算)。
+  **`current` = 播放头 = 曲线此刻播到的点**(2026-09-12 制作人定),唯一会随时间动的一档:在播 = 这次播放此刻 tMs 处;
+  播完 / 被停 / 被抢 = 停在它结束的那一点(`TrajectorySystem.endedPlay`,按资产 id 记,`cancelAll` 切场景 / 读档清空);
+  本场景还没开播过 = **没有这个点**(求不出 → 镜头跟随原地不动,一次性动作退回 x/y;编辑期 x/y 快照取起点)。
+  ⚠ 09-11 那一版把制作人要的"曲线 eval 的实时点"做成了"按这次播放位置算的**固定点**",播放头根本没有——
+  `start/end/time/progress` 至今仍是固定点。
+  **位置引用只认场景曲线**(2026-09-12 制作人定):相对曲线是资源,每次播放都是一次实例化、可以同时播多个,
+  "它的点 / 插槽"指哪一次说不清——插槽与曲线点都拒(运行时 warn + 按没给处理;校验器 error;编辑器候选不列)。
+  场景曲线按定义同一时刻只有一个实例(运行时不强制;真撞上 `livePlay` 取 Map 里的第一条)。
+  两条求值口:`resolvePositionRef`(async,一次性,求不出 warn)/ `evaluatePositionRefNow`(同步,每帧,求不出**不出声**——
+  "还没开播"是常态;资产层的错由 `positionRefAssetProblem` 在绑定时报一次)。
   `moveEntityTo / jumpEntityTo / teleportEntityTo / persistNpcAt / cutsceneSpawnActor / setSceneEntityPosition` 都接 optional `at`:解析到就覆盖 x/y,
   解析不到 warn 一句退回 x/y(x/y 仍是 manifest 必填,编辑器写的是编辑期快照)。**挪实体到插槽是这些动作的事,播放轨迹从不挪任何实体到插槽。**
 - **运动对象二选一**:`target`(`'player'` / 本场景 NPC id / 过场 `_cut_*`)或 `spawn`(`TrajectorySpawnSpec`:`kind:'image'`(`src` + 可选 `worldWidth/Height`)
-  / `kind:'character'`(`characterId`,角色注册表)+ 可选 `anchor`(精灵锚点,缺省底中)/ `id` / `name` / `keep`)。**spawn 可以根本不在场景里**:
+  / `kind:'character'`(`characterId`,角色注册表)+ 可选 `anchor`(精灵锚点,缺省底中)/ `id` / `name` / `keep` / `renderRaw`)。**spawn 可以根本不在场景里**:
   `Game.spawnTrajectoryActor` 就地拼一个 `NpcDef`(图片 = `displayImage` 单帧动画包)经 `SceneManager.spawnRuntimeNpc(def,{persistent:keep})` 生成;
   两个都没有 = 整步跳过(校验器 error)。`animState` 只对场景实体生效。
+- **临时生成的对象与场景 NPC 同档受光,靠的是 `runtimeNpcHooks` 那一钩,不是 `instantiateNpc`(2026-09-12 补)。**
+  `instantiateNpc` 只做到"合角色注册表默认 / 装贴图 / 进实体层"为止;**逐实体光照、深度遮挡、透视缩放、投影阴影、
+  像素密度低通这五样全挂在 `Game` 的 `scene:ready` 循环里**(`attachNpcSceneBits` + `rebuildEntityShadows` +
+  `syncEntityPixelDensityMatch`),演出中途生成的实体根本不经过那一趟。所以 `SceneManager.spawnRuntimeNpc` 在
+  push 进实体表之后调 `runtimeNpcHooks.onSpawned`(Game 装配期注入),`removeRuntimeNpc` 在销毁之前调 `onRemoved`
+  ——**两侧必须成对**:生成侧建的阴影 entry 不随实体自毁,`updateEntityShadows` 又只驱动还在实体表里的,
+  漏拆就是地上一坨冻住的鬼影直到切场景(见 [[teardown-ordering]])。
+  ⚠ 这一钩是 09-12 才有的,此前整整五样全漏:实测铜钱 `filters` 为空、按贴图原像素画(亮度 ~79/255,
+  同位置受光的场景 NPC 只有 ~6/255)、该被木桶挡住的地方不被挡;而同一枚铜钱 `keep` 下来**重进场景反而正常**
+  (装载循环把 `spawnedNpcs` 塞进 `currentNpcs` 早于 `scene:ready`,顺手就挂上了)——"飞的时候不对、重进场景才对"
+  就是这一类漏挂的招牌相。新加运行时实体生成路径的,照这个钩子走,别再在别处重挂一遍。
+- **`spawn.renderRaw` = 按贴图原像素画**(2026-09-12 制作人定):原样传给 `NpcDef.renderRaw`,**同一个开关、同一套语义**
+  ——不受光、不被挡、不吃透视缩放、不吃像素密度低通。给自发光或贴图里已经把光烤进去的道具用(纸钱 / 灯笼 / 鬼火)。
+  缺省 false = 正常受光被挡。⚠ **已知缺口**:"要发光、但仍要被前景几何挡住"今天表达不了——不受光与不被挡绑死在这一个开关上
+  (烘焙场景里着色走 sprite 网格、遮挡走 `DepthOcclusionFilter`,技术上本可拆开,但拆开就是给 `NpcDef` 造新语义,
+  制作人选了先不拆)。
 - **临时生成的东西默认播完移除;`keep:true` = 播完留在终点,场景从此改变**:`commitSpawnedNpcPosition` 把它登记进 `sceneMemory.spawnedNpcs`
   (随存档序列化,`normalizeMemory` 认它),下次进场景 `SceneManager` 装完场景 NPC 后照 `spawnedNpcs` 再实例化一遍——它已是这个场景的实体,
   重构引擎 / 校验器按运行时实体看待(数据文件里没有它的 def)。不 keep 的走 `removeRuntimeNpc`,一切照旧。
   资产里的 `authoring.entity` 只是工作台重开现场用的软引用,运行时不看、重构引擎也不跟随。
+- **音效关键点 `cues`(2026-09-12 制作人要的)**:`{id, atMs, sound(AudioCueRef), label?}`,曲线播到 `atMs` 那一刻播一条音效。
+  **存的是时间**——工作台里"在曲线上点一下"只是取时的手段,与播放位置 / 投影 / `flipX` / 空间全无关,所以整份透传给播放系统。
+  **不带位置**(制作人定):走 `AudioManager.playSfx`(经 `Game` 注入的 `TrajectorySystemDeps.playCue`,播放系统不认识 AudioManager),
+  没有距离衰减 / 声像 / 回音;要"从那个物件所在处发声"今天做不到(那是空间音总线 `playSfxAt` 的事,另立项)。
+  触发规则,四条都别改:
+  * **只在时间真的流过去的那条路上响**:一步落终态(过场跳过 / dev 快进 / 零时长 / `immediate` / `finishAll`)一律**不补声**
+    ——跳过一段演出不该把攒下的五声一齐砸出来;被停 / 被抢 / 整批作废之后也不再响。
+  * 一次播放里每条**至多一次**(按 `atMs` 升序,`cueIndex` 单调推进);`atMs=0` 的在**开播那一刻**就响(不等下一次 `update`)。
+  * `atMs` 超出时长**按末帧处理**(`normalizeCues` 钳进 `[0, 时长]`),缩短曲线不让关键点悄悄消失;负数 / NaN 一律按 0。
+  * `sound` 的 id 空 / 不在 `audio_config.sfx` 里 = **静默不响**(`playSfx` 对未知 id 直接 return),只能靠校验器抓
+    (`_validate_trajectory_cues`:未知 id / 还没选音效 / 超出时长 = warning,形状坏 = error)。
 - **轨迹不驱动相机。** 运镜走 `cameraFollowActor` / `cameraMove` 那一族;`kind:'camera'` 已不存在,
   过场跳过终姿的相机竞争里也没有轨迹这一项。
-- **"镜头跟着运动的东西走"= `cameraFollowActor` 指那个实体**,不是位置引用(2026-09-11 制作人问过):
-  位置引用是**动作执行那一瞬求一次值**,拿它当相机 target 只会把镜头摆过去然后不动;
-  `cameraFollowActor` 每帧按 id 重解析实体位置(`applyCameraFollow`),而轨迹每帧写实体位置、
-  且 `trajectorySystem.update` 排在相机之前,所以跟得住(镜头取的是上一帧末的位置,`snapTo` 下看不出)。
-  **临时生成的运动对象也能跟**:它在运行时就是一个真 NPC(`spawnRuntimeNpc` → `getNpcById`),
-  但得在 `spawn.id` 里自己给名字——留空是自动生成的 `_traj_N`,引用不了。编辑器的 actor 候选面
-  已把全工程的 `spawn.id` 收进来(`ProjectModel.collect_trajectory_spawn_ids`,校验器同口径放行)。
-  ⚠ 跟随只在过场 / 动作链态生效,回到探索态自动解除。
+- **"镜头跟着曲线走"= `cameraFollowActor` 的 `at` 引用播放头**(2026-09-12 制作人定,推翻 09-11"只能指实体"那条):
+  `{at:{kind:'curve',trajectoryId,point:'current'}}`,**每帧求值**(`Game.applyCameraFollow` → `evaluatePositionRefNow`),
+  不管曲线上动的是谁、有没有名字。语义:曲线还没开播 → 引用点还没产生 → 镜头**原地不动**(不解除、不回落跟玩家);
+  在播 → 跟播放头;播完 → **停在终点**;`cameraStopFollow` / 回到探索态解除。`at` 也可以是实体 / 插槽 / 固定曲线点 /
+  数字(后三者 = 镜头锁在一点)。绑定时(`Game.bindCameraFollowRef`)装资产、查资产层错,有错 warn 并退回 `target`。
+  老写法 `target`(实体 id)语义不变:每帧按 id 重解析,**解析不到立刻自动解除且不出声**——所以用它跟一个
+  `spawn` 临时生成的对象配不稳(贴图异步装完才登记,开播前那几帧就把跟随清掉了;另开任务卡处理"按曲线引用运动对象")。
+  时序:`applyCameraFollow` 在状态分支里、`trajectorySystem.update` 之前,镜头取的是上一帧末的位置(`snapTo` 下看不出);
+  播完那一帧播放已摘出 `plays`,靠 `endedPlay` 才能恰好落在终点。
+  ⚠ 跟随在过场 / 动作链 / **对话**态生效(对话态 2026-09-12 补上:此前主循环的对话分支漏接,对话图里配的
+  跟随一帧都不执行;制作人定"对话态就是可动相机,对话完复位就行"),回到探索态自动解除、镜头平滑回玩家。
+  对话态没设跟随时镜头不动(不回落跟玩家,普通对话行为不变)。
+  ⚠ 对话图 `runActions` 是逐条 await 的:`cameraFollowActor` 要放在 `playTrajectory` **之前**
+  (先绑定、没开播原地等);放在后面(`wait` 缺省 true)= 轨迹播完才绑定,只剩终点可跟。
+- **`faceEntity` 也接 `at`**(同日):朝向一个位置引用所在的一侧,执行那一刻求一次值(可以是播放头);
+  优先级 `at` > `faceTarget` > `direction`,`at` 求不出退回后两者。
+- **编辑器**:两者走专用表单,一个 `PositionRefField` 管"跟谁 / 朝哪"——**实体档写老键**(`target` / `faceTarget`,
+  候选只给演员,因为老键走 `resolveActor` 不认热点),其余档写 `at`;老数据打开→保存一个字节不动。
+  「曲线上的点」在这两处缺省选播放头。
 - **`cameraMove`(present 步)可选 `at`**:把镜头**摆到**位置引用给的点(数字 / 实体此刻位置 / 曲线插槽 /
   曲线上的点),一次性求值。`x`/`y` 恒在(编辑期快照 + 老数据形状),解析不出来就退回它们并 warn。
   正常播与**跳过落终姿**(`applyFinalCameraPoseForSkip`)两条路都按 `at` 求值——只做一条就是

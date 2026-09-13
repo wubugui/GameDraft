@@ -194,6 +194,12 @@ export class CharacterLightingSystem implements IGameSystem {
   private payloadStale = false;
   /** 载荷是否过期(F2/调试面板读它标注"这个场景的角色光是旧的")。 */
   get isPayloadStale(): boolean { return this.payloadStale; }
+  /**
+   * true = 本时段原画没有自己的载荷,只借了主背景那份的**几何项**(行走面 + 标定),光照项一概没装。
+   * 见 `loadGeometryOnly`。
+   */
+  private geometryOnly = false;
+  get isGeometryOnly(): boolean { return this.geometryOnly; }
   private readonly litShaders = new Set<Shader>();
   private groundRange: [number, number] = [0, 1];
   private aoContact = 0;
@@ -267,6 +273,7 @@ export class CharacterLightingSystem implements IGameSystem {
     this.loadedBakeBase = null;
     this.pendingLights = null;
     this.payloadStale = false;
+    this.geometryOnly = false;
     this.parkLitShaders();
     for (const t of this.ownedTextures) t.destroy();
     this.ownedTextures = [];
@@ -398,7 +405,8 @@ export class CharacterLightingSystem implements IGameSystem {
     return this.enabled ? this.resources : null;
   }
   get loadedInfo(): { probes: number; lights: number } | null {
-    if (!this.meta) return null;
+    // 只借了几何的时段一颗 probe 都没装,别在 F2 上报出主背景那份的数
+    if (!this.meta || this.geometryOnly) return null;
     const p = this.meta.probes;
     return { probes: p.nx * p.ny * p.nz, lights: this.meta.lights.length };
   }
@@ -611,6 +619,91 @@ export class CharacterLightingSystem implements IGameSystem {
   }
 
   /**
+   * 取一个烘焙目录的 `lighting.json`。缺文件 / 不是 JSON(vite dev 的 SPA 回退会给缺失文件回
+   * 200+HTML,`r.ok` 骗人)/ 形状不对(v3 以前的旧版:v2 分账与本运行时列布局不兼容,需重导出)
+   * 一律 null,由调用方去试下一个位置。
+   */
+  private async fetchPayloadMeta(dir: string, sceneId: string): Promise<LightingPayloadMeta | null> {
+    try {
+      const r = await fetch(`${dir}/lighting.json`);
+      if (!r.ok) return null;
+      const meta = await r.json() as LightingPayloadMeta;
+      if (typeof meta?.version !== 'number' || meta.version < 3
+        || !meta.probes || !meta.world || !meta.cal || !meta.vol) {
+        depthLog(T, sceneId, `: ${dir} 的载荷缺字段/旧版(需重导出 v3 固化), ignored`);
+        return null;
+      }
+      return meta;
+    } catch {
+      return null;
+    }
+  }
+
+  /** ground_d.png(RG16)→ CPU 深度场 + GPU 原图纹理(登记进 ownedTextures)。epoch 变了返回 null。 */
+  private async decodeGroundPayload(
+    groundBuf: Blob, meta: LightingPayloadMeta, myEpoch: number,
+  ): Promise<{ g: Float32Array; tex: BufferImageSource } | null> {
+    const bmp = await createImageBitmap(groundBuf);
+    if (myEpoch !== this.epoch) { bmp.close(); return null; }
+    const bw = bmp.width, bh = bmp.height;
+    const cv = new OffscreenCanvas(bw, bh);
+    const ctx2 = cv.getContext('2d')!;
+    ctx2.drawImage(bmp, 0, 0);
+    const id = ctx2.getImageData(0, 0, bw, bh).data;
+    bmp.close();
+    // GPU 版:直接用原始 RG16 位图建纹理,shader 里按 min/max 解码(与 CPU 侧同一份数据)
+    const tex = new BufferImageSource({
+      resource: new Uint8Array(id.buffer.slice(0)), width: bw, height: bh,
+      format: 'rgba8unorm', scaleMode: 'nearest', alphaMode: 'no-premultiply-alpha',
+    });
+    this.ownedTextures.push(tex);
+    const g = new Float32Array(meta.work.w * meta.work.h);
+    const span = meta.ground_d.max - meta.ground_d.min;
+    for (let i = 0; i < g.length; i++) {
+      g[i] = meta.ground_d.min + ((id[i * 4] * 256 + id[i * 4 + 1]) / 65535) * span;
+    }
+    return { g, tex };
+  }
+
+  /**
+   * 只装**几何项**(行走面深度场 + work 标定),光照项一个不装。
+   *
+   * 走这条的是:时段原画没有自己的烘焙目录、而它的深度图就是主背景那张(调用方判过)。
+   * 几何是相机与场景结构的函数,不随时段变——albedo 与摆动图早就按"全时段共用主背景那份"办了,
+   * 这里是同一条规则的第三个用户。以前夜里整份载荷缺席:角色的脚点遮挡、粒子的地面与墙、
+   * 空间音的真实地面全部退回平面近似(崖墓前段「夜」2026-09-12 实测)。
+   *
+   * probe 是**那一张画**的光,借来就是拿白天的光照夜里的人,所以一概不借:`resources` 保持 null,
+   * 角色照旧退 EntityLightingFilter 的色调融入、粒子同。真光照要给这张原画单独烘一份载荷。
+   */
+  private async loadGeometryOnly(
+    sceneId: string, base: string, meta: LightingPayloadMeta, myEpoch: number,
+  ): Promise<void> {
+    try {
+      const groundBuf = await fetchPayloadBlob(`${base}/ground_d.png`);
+      if (myEpoch !== this.epoch) return;
+      const ground = await this.decodeGroundPayload(groundBuf, meta, myEpoch);
+      if (!ground) return;
+      this.meta = meta;
+      this.groundD = ground.g;
+      this.groundTex = ground.tex;
+      this.groundRange = [meta.ground_d.min, meta.ground_d.max];
+      this.loadedSceneId = sceneId;
+      this.loadedBakeBase = base;
+      this.geometryOnly = true;
+      // 降级要出声:几何有了,光照仍缺——这张原画该烘没烘
+      console.warn(`[${T}] ${sceneId}: 本时段原画没有照明载荷——几何项(行走面/标定)借主背景那份`
+        + `(${base}),光照项不借:角色与粒子退色调融入。要真光照就给这张原画烘一份载荷`);
+      this.onReady?.();
+    } catch (e) {
+      depthError(T, `${sceneId}: 借主背景几何项失败`, e);
+      if (myEpoch === this.epoch) {
+        this.meta = null; this.groundD = null; this.geometryOnly = false; this.loadedSceneId = null;
+      }
+    }
+  }
+
+  /**
    * 场景切换时调用;无载荷/哈希失配 → 本场景保持 inactive(回落旧管线)。
    *
    * **从不加载体素卷**:vol_rad/vol_emit 合计 20–27MB/场景,只有 F2 的实时 RT 对比
@@ -629,6 +722,12 @@ export class CharacterLightingSystem implements IGameSystem {
      * 不传 = 老口径 `background.png`，旧调用零影响。
      */
     backgroundImage = 'background.png',
+    /**
+     * 本时段原画没有自己的烘焙目录时，**几何项**借哪张图的载荷（主背景名）。调用方只在
+     * 时段变体**没换深度图**时才给——行走面 / 标定与深度图是同一次烘焙的成对产物，深度图没换，
+     * 几何就没换。光照项一概不借（见 `loadGeometryOnly`）。
+     */
+    geometryFallbackImage?: string,
   ): Promise<void> {
     const myEpoch = ++this.epoch;
     this._hasVolumes = false;
@@ -639,6 +738,7 @@ export class CharacterLightingSystem implements IGameSystem {
     // 把**上一个场景的灯**打到新场景角色身上（审查抓到）。
     this.pendingLights = null;
     this.payloadStale = false;
+    this.geometryOnly = false;
     this.meta = null; this.groundD = null; this.resources = null; this.probeViz = null;
     this.probeAtlasU16 = null; this.validU8 = null;
     this.parkLitShaders();      // 活 shader 先退白图,再销毁旧纹理(防 BindGroup 自毁)
@@ -653,31 +753,28 @@ export class CharacterLightingSystem implements IGameSystem {
     this.loadedProbeMode = 0;
     this.probeInflight = null;
     this.sceneWorldW = worldW; this.sceneWorldH = worldH;
-    // 按背景图名索引；找不到就回落到旧的扁平布局（迁移期两条都认，缺省不影响运行）。
+    // 按背景图名索引；找不到就回落到旧的扁平布局（迁移期两条都认，缺省不影响运行）；
+    // 再找不到、且调用方给了几何借用图，就只借那份的几何项。
     const perBg = sceneBakeDirUrl(sceneId, backgroundImage);
     const legacy = sceneRuntimeAssetUrl(sceneId, 'lighting');
+    const geoDir = geometryFallbackImage && geometryFallbackImage !== backgroundImage
+      ? sceneBakeDirUrl(sceneId, geometryFallbackImage) : null;
     let base = perBg;
-    let meta: LightingPayloadMeta;
-    try {
-      let r = await fetch(`${base}/lighting.json`);
-      if (!r.ok) {
-        base = legacy;
-        r = await fetch(`${base}/lighting.json`);
-        if (r.ok) depthLog(T, sceneId, `: 用旧的扁平烘焙布局(${legacy});迁移后可摘`);
-      }
-      if (!r.ok) { depthLog(T, sceneId, ': no lighting payload'); return; }
-      this.loadedBakeBase = base;
-      meta = await r.json();
-      // vite dev 的 SPA fallback 会给缺失文件回 200+HTML;json() 抛错走 catch,
-      // 但反序列化侥幸成功的畸形体也要挡:验证载荷形状。
-      // v3 起 probe 图集为固化最终 E(单块球谐);v2(分账)与本运行时列布局不兼容 → 需重导出。
-      if (typeof meta?.version !== 'number' || meta.version < 3
-        || !meta.probes || !meta.world || !meta.cal || !meta.vol) {
-        depthLog(T, sceneId, ': lighting payload missing/旧版(需重导出 v3 固化), ignored');
-        return;
-      }
-    } catch { depthLog(T, sceneId, ': no lighting payload'); return; }
+    let found = await this.fetchPayloadMeta(perBg, sceneId);
+    if (!found) {
+      found = await this.fetchPayloadMeta(legacy, sceneId);
+      if (found) { base = legacy; depthLog(T, sceneId, `: 用旧的扁平烘焙布局(${legacy});迁移后可摘`); }
+    }
+    let borrowGeometry = false;
+    if (!found && geoDir) {
+      found = await this.fetchPayloadMeta(geoDir, sceneId);
+      if (found) { base = geoDir; borrowGeometry = true; }
+    }
     if (myEpoch !== this.epoch) return;
+    if (!found) { depthLog(T, sceneId, ': no lighting payload'); return; }
+    const meta: LightingPayloadMeta = found;
+    if (borrowGeometry) { await this.loadGeometryOnly(sceneId, base, meta, myEpoch); return; }
+    this.loadedBakeBase = base;
 
     // 防腐门:背景内容哈希(与 validator 同一契约)。
     //
@@ -767,25 +864,10 @@ export class CharacterLightingSystem implements IGameSystem {
       this._hasVolumes = false;
 
       // ground_d.png:RG16 → 深度场(footQ 的 CPU 采样源)
-      const bmp = await createImageBitmap(groundBuf);
-      if (myEpoch !== this.epoch) { bmp.close(); return; }
-      const bmp0w = bmp.width, bmp0h = bmp.height;
-      const cv = new OffscreenCanvas(bmp.width, bmp.height);
-      const ctx2 = cv.getContext('2d')!;
-      ctx2.drawImage(bmp, 0, 0);
-      const id = ctx2.getImageData(0, 0, bmp.width, bmp.height).data;
-      bmp.close();
-      // GPU 版:直接用原始 RG16 位图建纹理,shader 里按 min/max 解码(与 CPU 侧同一份数据)
-      const gtex = new BufferImageSource({
-        resource: new Uint8Array(id.buffer.slice(0)), width: bmp0w, height: bmp0h,
-        format: 'rgba8unorm', scaleMode: 'nearest', alphaMode: 'no-premultiply-alpha',
-      });
-      this.ownedTextures.push(gtex);
-      const g = new Float32Array(meta.work.w * meta.work.h);
-      const span = meta.ground_d.max - meta.ground_d.min;
-      for (let i = 0; i < g.length; i++) {
-        g[i] = meta.ground_d.min + ((id[i * 4] * 256 + id[i * 4 + 1]) / 65535) * span;
-      }
+      const ground = await this.decodeGroundPayload(groundBuf, meta, myEpoch);
+      if (!ground) return;
+      const g = ground.g;
+      const gtex = ground.tex;
 
       // 光源表:世界 → q(M 正交,逆=转置)
       const M = meta.world.M;
@@ -1068,11 +1150,13 @@ export class CharacterLightingSystem implements IGameSystem {
     sceneWorld: [number, number];
     ground: TextureSource;
   } | null {
-    const r = this.resources;
-    if (!r || !this.groundTex) return null;
+    // 只读几何项(meta 的 work / cal + ground 场),不看 probe 资源:只借了几何的时段也要给得出来
+    // (与 resources 里那份逐值相同——那边也是从同一个 meta 算的)。
+    const m = this.meta;
+    if (!m || !this.groundD || !this.groundTex) return null;
     return {
-      worldToWork: [r.worldToWorkX, r.worldToWorkY],
-      cal: r.cal,
+      worldToWork: [m.work.w / Math.max(this.sceneWorldW, 1e-6), m.work.h / Math.max(this.sceneWorldH, 1e-6)],
+      cal: { ppu: m.cal.ppu, cx: m.cal.cx, cy: m.cal.cy, theta: m.cal.theta },
       groundRange: this.groundRange,
       sceneWorld: [this.sceneWorldW, this.sceneWorldH],
       ground: this.groundTex,
@@ -1159,7 +1243,7 @@ export class CharacterLightingSystem implements IGameSystem {
    */
   createCustomLitShader(program: GlProgram, colorTex: TextureSource, extra: Record<string, unknown>): Shader | null {
     const r = this.resources;
-    if (!r || !this.sceneLit || !this.groundTex || !this.enabled) return null;
+    if (!r || !this.sceneLit || !this.groundTex || !this.canCreateCustomLitShader) return null;
     const sh = new Shader({
       glProgram: program,
       resources: {
@@ -1186,6 +1270,22 @@ export class CharacterLightingSystem implements IGameSystem {
     });
     this.litShaders.add(sh);
     return sh;
+  }
+
+  /**
+   * `createCustomLitShader` 此刻会不会返回 shader(同一条判据)。粒子视图据此在载荷到达 / 着色
+   * 被关掉时重建——那边的视图是逐帧复用的,只在建的那一拍问一次就会一路错到换场景。
+   */
+  get canCreateCustomLitShader(): boolean {
+    return !!this.resources && !!this.sceneLit && !!this.groundTex && this.enabled;
+  }
+
+  /**
+   * 显示变换(与背景 LitBackground 同一组数)所在的 uniform 组。粒子的无光 / 色调路也过它——
+   * 背景 / 角色 / 粒子一个曝光。组里另有实体灯那几项,不声明它们的程序由 Pixi 按名跳过。
+   */
+  get displayUniforms(): UniformGroup {
+    return this.charLights;
   }
 
   /** 实体销毁/关闭着色时回收(shader 归照明系统管,mesh/geometry 归实体)。 */

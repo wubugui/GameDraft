@@ -3,11 +3,12 @@ id: vfx-system
 title: 世界空间粒子 / 群体系统(效果资产 · 场景实例 · 刺激场)
 domain: runtime
 type: mechanism
-summary: 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本;三件正交的东西(全局效果资产 / 场景实例 / 运行时刺激场);表演态不入档;渲染一批一张网格、按接地锚在实体之间分桶
+summary: 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 场景实例 / 运行时刺激场);表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源
 status: active
 authority:
   - src/data/types.ts#VfxEffectDef
   - src/systems/vfx/vfxSim.ts
+  - src/systems/vfx/vfxConfine.ts
   - src/systems/vfx/vfxSpace.ts
   - src/systems/vfx/VfxSystem.ts
   - src/rendering/vfx/VfxRenderer.ts
@@ -22,14 +23,15 @@ triggers:
     - "src/utils/depthShellField.ts"
     - "src/utils/groundHeightfield.ts"
     - "public/assets/data/vfx/**"
-  topics: [粒子, 群体, 蝙蝠, 鸟群, 虫, boids, 刺激场, 烟, 滴水, 萤火, 尘埃, vfx, 发射器, 深度壳]
-  tasks: [加粒子效果, 改群体行为, 摆效果实例, 加刺激源, 改粒子渲染]
+  topics: [粒子, 群体, 蝙蝠, 鸟群, 虫, boids, 刺激场, 烟, 滴水, 萤火, 尘埃, vfx, 发射器, 深度壳, 粒子区域, 发射区域, 范围区域, 软边界]
+  tasks: [加粒子效果, 改群体行为, 摆效果实例, 加刺激源, 改粒子渲染, 限定粒子范围, 配粒子区域]
 verified_by:
   - src/systems/vfx/vfxSim.test.ts
+  - src/systems/vfx/vfxConfine.test.ts
   - src/rendering/vfx/VfxRenderer.test.ts
   - src/utils/vfxGeometry.test.ts
   - tools/editor/tests/test_vfx_action_registration.py
-last_governed: 2026-09-11
+last_governed: 2026-09-13
 ---
 
 ## 是什么(一句话)
@@ -78,10 +80,11 @@ last_governed: 2026-09-11
   所以 `VfxSystem.update` 里有一条**便宜的自愈检查**(`deps.hasFieldGeometry()` 只读几个 getter、
   不建高度场):一旦真 3D 场可用就整批重建。删掉它 = 大部分场景里粒子永远跑在虚空中。
   判断某次验证有没有意义,先看 F2「粒子」页那一行说的是"真 3D 场"还是"平面近似"。
-  ⚠ **时段变体现在整体没有载荷**:2026-09-11 实测,崖墓入口、崖墓前段换到「夜」以后
-  `currentSpace.kind` 都退成 `planar`(载荷是按背景基名烘的,只有主背景那一份)。
-  所以"夜里那一套粒子"的地面 / 壳判据一律作废——不受光、飘在空中的(萤火虫)无所谓,
-  要落地、要贴墙、要撞壳的(滴水、蝙蝠栖息)在夜场景里就是错的,别拿夜场景当验收现场。
+  **时段变体没有自己的载荷目录时**(逐场景看:雾津街头有夜目录,崖墓前段 / 跑马梁没有),
+  只要变体**没换深度图**,运行时借主背景那份的**几何项**(`CharacterLightingSystem.loadGeometryOnly`,
+  "各时段必须共享几何"本来就是校验器的硬规则),粒子照样是真 3D 场;**光照项不借**,
+  受光粒子走 tone 路(见下)。2026-09-12 之前夜里整份缺席、退平面近似(那时的实测:崖墓前段 /
+  崖墓入口换「夜」后 `currentSpace.kind === 'planar'`)。变体自带 depthConfig 时仍不借、仍退平面。
 - **群体的巢要整团推到壳外。** 崖壁上的巢以原点为心取随机球,**有一半埋在石头里**
   (实测崖墓前段 60 只里 11 只),那些个体被遮挡、永远看不见。`populateFlock` 按壳法线
   把整团推出一个巢半径,随机球缩到 0.75 倍。
@@ -91,9 +94,19 @@ last_governed: 2026-09-11
   `wu/s²` 上限,作者面填的是真加速度。不许出现"weight 0.37 调出来好看"这种魔数
   (见 [physical-derivation-over-fitting](../decisions/2026-08-23-physical-derivation-over-fitting.md))。
 - **受光必须吃场景那次 `packLights`**,不许粒子侧再打一遍(第二个真相源,且不报错);
+  灯循环本体是角色那段 `ENTITY_SCENE_LIGHTS_GLSL`(`CharacterLitSprite.ts`)原样拼接,
+  `worldSpaceShading.test.ts` 钉着"`vfxShaders.ts` 里不许出现 `lc*Light` 调用"。
   显示变换与背景同一组参数(`applyDisplay`),少这一条就是"背景很亮、粒子漆黑"。
   probe 查表传 `nQ = Rᵀ·n`、灯循环用世界法线 —— 与角色同口径,别翻案
   (见 [character-lighting](character-lighting.md))。
+- **着色三条路,逐帧校验、条件变了就重建视图**(`VfxRenderer.viewStale`):
+  **lit**(有照明载荷)/ **tone**(外观要受光、但本场景 / 时段没载荷——走 NPC 此时的
+  `EntityLightingFilter` 色调融入:同一张运行时辐照 probe、同一组 key / ambient / toneStrength、同一个式子)/
+  **unlit**(`lit:false`)。三条都过显示变换。视图按"建的那一拍有什么"定 program,载荷晚到、
+  着色开关、深度纹理 / 贴图 / 发射器换了都要重建——以前只在建视图时问一次,晚到的载荷一路错到换场景。
+- **角色 / 粒子那组实体灯与显示变换,换场景时归零**(`Game` 的 lightingUnloader)。装载器只在场景
+  **有** lighting 块时重写它;不清的话下一个没配 lighting 的场景接着用上一个场景的灯与 wuPerQUnit
+  (2026-09-12 实测:义庄 → 崖墓前段后仍是义庄那 1 盏烛火、220 wu/q)。
 - **受光那条路只有漫反射,没有镜面、没有散射相函数。** 所以"靠高光才看得见"的材质
   (水滴、火星)和"靠强前向散射才看得见"的材质(尘埃、雾)用纯 `lit` 画出来一律是黑疙瘩——
   不是 bug,是模型缺项。两个出口,按材质选,别拿 tint 硬提亮:
@@ -106,6 +119,16 @@ last_governed: 2026-09-11
   是作者摆的氛围件。
 - **遮挡拿粒子自己的纵深比壳**,不是角色那套"脚深度 + 直立 quad 代理"(粒子**有**真 3D 位置)。
   同一条 `depth_mapping` 解码、同一个 `depth_tolerance`。
+- **🔴 模拟侧的壳是薄壳,不是"面后面全实心"**(`vfxSpace.thinShellSide`,`SHELL_THICKNESS_WU = 60`):
+  可见面后一个壳厚以内算撞上(按碰撞响应推回,推出量 ≤ 壳厚 + 半径);更深的是**遮挡物背后的空处**,
+  模拟不管、渲染的深度遮挡把它藏掉。每粒子一个滞回位 `p.behind`:进了背后,只要仍在当前像素那层面
+  之后就一直算背后,回到任何可见面之前才解除(否则横挪到遮挡物边缘时会被从背后一把推到前面)。
+  四处消费方同一条判据:通用粒子碰撞、群体避墙前瞻、群体"不进壳"硬约束、薄片接触;
+  出生即在背后的(`spawnsBehindShell`)不推。
+  **为什么**:旧判据 `penWu > −r` 就推回,粒子永远到不了会被挡住的位置——渲染侧的逐片元遮挡
+  从来没机会生效(2026-09-12 实测义庄 / 跑马梁 / 崖墓前段约 1000 颗,处在被挡位置的 0 颗;
+  义庄香火烟 38% 贴在壳面上滑)。改后跑马梁风里 60 s 有 5 张纸钱被卷到遮挡物背后、最多 2 张同时被藏。
+  角色没有这个问题:它的位置由行走面约束,行走面在遮挡物背后是连续的。
 - **一批粒子 = 一张网格,不是 N 个 Sprite。** 实体层的排序器与裁剪器每帧遍历每个子节点,
   逐 Sprite 的遮挡还要逐个 RT;几百个 Sprite 进去要吃两遍。
 - **长活 shader 的场景纹理槽位与 `createLitShader` 同处维护**(`LIT_SHADER_SCENE_TEXTURE_SLOTS`);
@@ -141,14 +164,69 @@ last_governed: 2026-09-11
 推不远——因为 `drag` 把它拉回去、`maxSpeed` 又封顶。**调这条先确认玩家在「走」**：
 动静场强度按速度算，站着不动强度恒 0，瞬移玩家去测一定测不出东西（本会话踩过）。
 
+## 薄片(纸钱)与场景风
+
+- 挂 `plate` 模块的发射器,每颗粒子是一张有朝向、会弯的薄片,走 `vfxPlate.ts`(平板气动 + 库仑接触 +
+  贴附 + 睡眠);`collision` 不读、`motion` 只剩 `turbulence`。渲染是逐顶点投影的条带(`VfxPlateBatchMesh`),
+  受光版 program 声明了 `aNrm`,**只能**配条带网格。
+- 场景有 `wind` 时,**普通粒子只要 `drag > 0` 就被风带着走**(阻力相对空气);没 `wind` 的场景一字不变;群体不吃风。
+- `spawn.shape.kind = 'area'` + 实例 `area` 多边形:逐点落到那一点**看得见的表面**(地面躺、物件上挂、崖下虚空不放),
+  只对薄片的 burst 生效。
+- 风的模型、透视度量、草木摆动拆层、已知坑:[[scene-wind]]。
+- **薄片按毫秒算预算,不按只数**:大部分时间在睡(只做便宜的唤醒检查)。实测跑马梁 520 张:
+  模拟 ≈ 0.3 ms + 顶点填充 ≈ 0.4 ms/帧(下面"普通粒子 ≤ 300 只"那条线是按普通粒子单只成本定的)。
+
+## 粒子区域(发射区域 `area` + 范围区域 `confine.area`,软边界)
+
+**两块区域分开配**(制作人 2026-09-13 点名要求):**发射区域** = 实例的 `area`(纸钱铺在哪、被回收的从哪补回);
+**范围区域** = `confine.area`(粒子被关在哪),没写就用发射区域。发射区域小、范围区域大 = 纸钱铺在一小片、
+被风吹着能飞满一大片。作者面是主编辑器场景页 vfx 那一栏的「拉发射区域」「拉范围区域」
+(见 [[vfx-workbench]]「场景页的粒子区域」)。纯函数在 `vfxConfine.ts`,
+薄片那一半在 `stepPlates` / `replenishPlate` / `pickAreaSurface`,普通粒子那一半在 `stepGeneric`。
+出生 / 补回点先在发射区域里挑、再按**范围区域**的权重拒绝采样——两块不相交时一张都挑不到(校验器 warning)。
+
+- **判据是粒子正下方的地面点**落在画面上的位置,不是粒子自己的画面位置——区域是地上的一块,
+  纸在它上空飞是对的(代价:飞得高的纸在画面上会出现在框线上方)。
+- 多边形烘成一张**权重网格**(实例建一次;框内深处 1、从框线往里 `feather` 宽的边带里 smoothstep 降到 0、
+  框外 0),每子步双线性查一次。**没有推回力、没有硬裁剪**,三件事都按这一个权重:
+  ① 粒子感受到的场景风 × 权重(飞到边上风弱了、自己落下);过了 `ceiling` 上升气流 × 高度权重;
+  ② 边带里**躺着**的薄片在查唤醒的子步上按 `(1−w)·Δt/4 s` 掷骰开始 1.5 s 淡出,淡完从区域深处补回;
+  权重低于 0.02(压线 / 出框)的 0.4 s 淡出——普通粒子没有补回,淡完即死;
+  ③ 出生 / 补回点按权重**拒绝采样**(边上天然稀),补回再从 0 淡入 0.6 s。
+- 淡入淡出系数在通用池 `fade` / `fadeRate`,渲染乘到透明度上;**不限定的实例恒 1、一字不变**
+  (风的乘子是精确的 ×1,确定性不受影响)。`arr.wind` 存的是**没衰减的**真实风——边带里躺着的纸
+  照样跟着旁边的草一起掀边角。
+- 🔴 **限定区域时补回的纸从低处放**(按平着自由下落 1 s 能落地定高度,纸钱 22–90 wu),不是原来的
+  140–340 wu。从高处放的纸要飘好几秒、顺风走上千 wu,边带拦不住:强风合成场景实测每秒 9.4 张在下风边的
+  半空里淡出(看着就是半空一张接一张消失);改后 0.04 张 / 秒。`vfxConfine.test.ts` 钉着(把高度改回去必红)。
+- 🔴 **按权重拒绝采样会拒掉一大半**(两块区域只擦边重叠时九成以上挑空),落点挑不到时**不许回收**——
+  回收就是总数一张张漏光(变异实测 20 s 从 341 掉到 285)。限定区域时挑落点试 96 次;淡完没挑到的隐身留着
+  (`fade = 0`、`fadeRate > 0`)下个子步再试,每子步每发射器最多补回 4 张(稳态每子步 0.04 张,
+  封顶只在两块不相交的退化场景里起作用,免得几百张 × 96 次表面查询打爆一帧)。
+- 调试:F2「粒子」页每个实例带一行「深处 / 边带 / 淡出中 / 框外还看得见」,勾「画出粒子区域」叠加范围区域框线
+  (黄)+ 边带中线(淡黄)+ 边带内沿(白)+ 单独配了范围区域时的发射区域(青),与编辑器画布同色。⚠ 内沿按**离框线的距离**取等值线(`confineDistanceContour`),
+  别在权重网格上取 0.98:smoothstep 在 1 附近是平的,插值误差(≈ 格宽²·6/(8·边带²) = 0.047)大过余量,
+  画出来是一圈坑坑洼洼的噪声(本会话当场踩到)。
+- 群体发射器**不吃**这一项(用 `behavior.home.rangeRadius`),校验器 warning。
+- **实测(2026-09-13,跑马梁,只改内存)**:520 张纸限定进一个 ~800×500 的四边形、边带 120,
+  40 s 稳态框外看得见的平均 0.2 张、最远离框线 54.5(不到半个边带)、总数 520 不漏;
+  整帧 `vfxSystem.update` 中位 0.4 ms / p95 0.8,与不限定时相同。
+  分开配(发射区域是路中间 ~300×250 的一小块、范围区域同上那个四边形):出生 518/520 在发射区域里
+  (另 2 张压线)、稳态 32% 的纸被风带出发射区域但仍在范围里、范围外看得见的 0、等补回的 0、update 中位 0.4 ms。
+
 ## 前后关系怎么定(分桶)
 
-实体层的排序只认脚底 y([entitySortRule](../../src/rendering/entitySortRule.ts) 那套)。
-粒子的"脚" = 它**正下方地面点**投到画面的 y(与轨迹 `sortY` 同一约定)。
-把场上没标静态档位的实体脚点排好序当阈值,粒子按脚 y 落进哪个区间就进哪个桶,
-桶网格的 `entitySortFootY` 取该区间上界 ∓ε —— 于是它排在下一个实体后面、上一个实体前面。
-桶数 = 实体数 + 1,上限 `MAX_BUCKETS`(超了按分位数合并)。
-实测(崖墓前段,玩家脚点 600):放到他身后的个体脚点 416 → 低桶;身前的 784 → 600.001。
+实体层的画序只认脚底 y([entitySortRule](../../src/rendering/entitySortRule.ts) 那套)。
+实体在伪世界里是**立在脚点上的直立 quad**(角色着色 / 遮挡同一个模型),所以
+"粒子在它前面" ⟺ 粒子沿**水平视线轴**(视线去掉竖直分量)比它的脚点近——**与离地多高无关**。
+场上没标静态档位的实体按脚点 y 排好(= 画序)作阈值、各带脚点的水平纵深(脚点经
+`groundWorldAtScene` 落到地面);粒子排在"画序里第一个比它近的实体"之前,桶网格的
+`entitySortFootY` 取那个实体的脚点 y − ε。桶数 = 实体数 + 1,上限 `MAX_BUCKETS`(超了按分位数合并)。
+纯函数 `buildSortThresholds / bucketOfDepth / bucketSortFootY` 在 `VfxRenderer.test.ts` 钉着。
+
+⚠ 2026-09-12 之前比的是"粒子**正下方地面点**投到画面的 y":平地上与上面等价(平面近似下逐位相同),
+但悬在更低地面上方的粒子(崖边的蝙蝠、檐口上的烟)正下方的地面点投到画面很靠下,被整批错排到人前面。
+正下方地面点现在只管透视系数。
 
 ## 群体状态机(整群一个,逐只只有 boids)
 
@@ -175,6 +253,8 @@ returning <──安静 calmSeconds──────────── fleeing
 | **`surface:'shell'` 的锚点 `h=0`** | 粒子正好生在壳面上,第一个子步就被判"撞壳"当场打死(滴水一颗都活不过)。要离面一点 |
 | **拿"壳高出正下方地面"挑檐口,不判地面有没有观测** | 画面顶端行走面是外推的,clearance 算出 1400 wu(九个人高)的假檐。挑锚点必须先查 `groundObserved` |
 | 平面近似当成真 3D 场 | 见上面那条硬契约 |
+| **拿"有没有粒子被挡住"判遮挡坏没坏** | 大多数效果本来就在开阔处(崖墓前段绕人飞的蝙蝠、义庄的尘埃),被挡 0 颗是对的。验薄壳看 `sim.emitters[i].p.behind` 有没有置位、再比 `shellContact(...).penWu > depth_tolerance × wuPerQ` |
+| **粒子 GLSL 只拼 `LC` 不拼 `WR_CORE`** | `LC` 的遮挡步进函数调 `WR_CORE` 的函数:编译失败,Pixi 只报 "Could not initialize shader",整批粒子不画(2026-09-12 当场踩到) |
 | **拿纯漫反射画水 / 尘这类材质** | 粒子比背景还黑(水滴 23 vs 背景 68),或者干脆低于人眼阈值(尘埃均值 3.3/255)。像素 A/B 全是"画了",肉眼全是"没有" —— 判据必须同时看变化像素数**和**截图 |
 | **粒子飘在相机外还在按"看不见 ⇒ 没画"结论** | 全画面 diff 出 0 不等于渲染坏了:先拿 `mesh.parent.toGlobal()` 确认那一团在不在画布里(实测滴水锚点在场景 x≈493,相机跟着玩家在 x≈1046,全局 x 算出 −704) |
 
@@ -197,14 +277,19 @@ draw call ≤ 8。
 
 ## 怎么验证
 
-- 单元:`vfxSim.test.ts`(确定性 / 不入地 / 不进壳 / 惊起 → 惊散 → 回巢 / 子发射 / 大 dt 封顶)、
-  `VfxRenderer.test.ts`(曲线 + 分桶)、`vfxGeometry.test.ts`(与 `geometry.py` 的跨语言金标)。
-- 构建期:`./dev.sh validate-data`(效果资产结构、场景实例、四条 action 的参数、`vfx` 条件叶);
+- 单元:`vfxSim.test.ts`(确定性 / 不入地 / 不进壳 / **薄壳:侧面滑到柱子背后不被推出、壳厚内撞侧面、
+  正面不隧穿、滞回、出生在背后、薄片同一条** / 惊起 → 惊散 → 回巢 / 子发射 / 大 dt 封顶)、
+  `vfxConfine.test.ts`(权重网格几何 / 强风里纸钱被限定、总数不漏、边带渐稀、补回飞不过边带 / 普通粒子出框淡出 / 限高 / 不限定一字不变)、
+  `VfxRenderer.test.ts`(曲线 + 按水平纵深分桶)、`vfxGeometry.test.ts`(与 `geometry.py` 的跨语言金标)、
+  `worldSpaceShading.test.ts`(粒子不许自己写灯循环)。
+- 构建期:`./dev.sh validate-data`(效果资产结构、场景实例含 `confine`、四条 action 的参数、`vfx` 条件叶);
   `asset_reference_audit --strict` 管贴图存在性。
 - 真机:`?mode=dev&devScene=<场景>`,页内直读 `window.__game.vfxSystem`
   (`debugSnapshot()` / `stats` / `currentSpace`),按
   [runtime-command-channel](../recipes/runtime-command-channel.md) 驱动;
   **先确认 `currentSpace.kind === 'field'`**,否则所有几何判据都是空的。
+  着色路直读 `window.__game.vfxRenderer.views`(`lit` / `toneSrc` / `depthGroup.uniforms.uHasDepth`);
+  夜里是不是借了几何看 `characterLighting.isGeometryOnly`。
   画面取证走 [headless-visual-verification](../recipes/headless-visual-verification.md);
   F2「粒子」页有状态、只数、draw call、模拟毫秒与三个刺激按钮。
 

@@ -13,7 +13,7 @@
       "id": "smell",
       "title": "鼻子",
       "image": "images/illustrations/smell_nose.png",
-      "body": "[c:emphasis]鼻子比眼睛先知道。[/c]\n烟是味，字是名；烟往哪边飘，东西在另一边。\n按 Q 闻一闻。",
+      "body": "[c:emphasis]鼻子比眼睛先知道。[/c]\n烟是味，字是名；烟往哪边飘，东西就在那边。\n按 Q 闻一闻。",
       "loreEntryId": "lore_smell_nose",
       "hudAnchor": "smell"
     }

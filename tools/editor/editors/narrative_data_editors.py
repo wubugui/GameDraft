@@ -1292,9 +1292,11 @@ class DocumentRevealsEditor(QWidget):
         # 从磁盘载入时这批条目的 id 快照：用于区分"已有数据"与"新建草稿"，
         # 保存全工程时只跳过新建且未填图的草稿，已有数据一律保留（防数据丢失）。
         self._loaded_ids: set[str] = set()
+        # 与 _reveals 同序的"这一行载入时叫什么"（新建行为 ""）：用于提示改名
+        self._origin_ids: list[str] = []
 
         root = QVBoxLayout(self)
-        tip = QLabel("document_reveals.json：id / quest / revealedFlag 等均从工程清单选择。")
+        tip = QLabel("document_reveals.json：id 自己起名，quest / revealedFlag 等从工程清单选择。")
         tip.setWordWrap(True)
         tip.setToolTip(
             "「文档揭示」= 一条「模糊图→清晰图」的揭示包，带触发条件、会记进存档。\n"
@@ -1332,19 +1334,31 @@ class DocumentRevealsEditor(QWidget):
         self._dr_id_row = QWidget(rh)
         _drl = QHBoxLayout(self._dr_id_row)
         _drl.setContentsMargins(0, 0, 0, 0)
-        self._dr_id_sel = IdRefSelector(
-            self._dr_id_row, allow_empty=True, editable=False, click_opens_popup=True)
+        # 这是「定义自身新 id」——选择器铁律的唯一例外，必须能直接手打名字。
+        # 对齐档案文档 id 的便利保留成右边的弹窗按钮，不占住输入本身。
+        self._dr_id_sel = QLineEdit(self._dr_id_row)
+        self._dr_id_sel.setPlaceholderText("这条揭示的 id（就是列表里显示的名字）")
         self._dr_id_sel.setToolTip(
-            "这条揭示的标识。剧情里靠它触发——在动作 revealDocument 的 documentId 下拉里选这个 id。\n"
-            "下拉可对齐「档案文档」的 id（让一条档案与这条揭示同名联动）；没有就点右边「生成唯一 id」。",
+            "这条揭示的标识，直接输入即可（列表里显示的就是它）。\n"
+            "剧情里靠它触发——在动作 revealDocument 的 documentId 下拉里选这个 id。\n"
+            "想和某条「档案文档」同名联动就点「档案…」挑一个；懒得起名点「生成唯一 id」。",
         )
-        self._dr_id_sel.value_changed.connect(self._dr_on_edit)
+        self._dr_id_sel.textEdited.connect(self._dr_on_edit)
+        self._dr_id_pick = QPushButton("档案…")
+        self._dr_id_pick.setToolTip("从档案文档里挑一个同名 id（让一条档案与这条揭示同名联动）")
+        self._dr_id_pick.clicked.connect(self._dr_on_pick_archive_id)
         self._dr_id_new = QPushButton("生成唯一 id")
         self._dr_id_new.setToolTip("分配未占用的揭示 id")
         self._dr_id_new.clicked.connect(self._dr_on_gen_document_id)
         _drl.addWidget(self._dr_id_sel, stretch=1)
+        _drl.addWidget(self._dr_id_pick)
         _drl.addWidget(self._dr_id_new)
         form.addRow("id", self._dr_id_row)
+        # 重名会被运行时按 id 建表时静默覆盖；改名不跟随 revealDocument 引用。两者都只提示不拦。
+        self._dr_id_status = QLabel("")
+        self._dr_id_status.setWordWrap(True)
+        self._dr_id_status.setStyleSheet("color:#c44;")
+        form.addRow("", self._dr_id_status)
 
         self._dr_blur = CutsceneImagePathRow(
             self._model, "", self, external_copy_subdir="illustrations",
@@ -1591,24 +1605,6 @@ class DocumentRevealsEditor(QWidget):
         opt.addRow("widthPercent", self._dr_w)
         rfl.addWidget(opt_g)
 
-        # overlayId 是 blend 叠图层的「实例句柄」（与 blendOverlayImage 的 id 同义，供后续
-        # 寻址/隐藏该层），不是 overlay_images.json 的图引用；运行时缺省为 docReveal_<id>。
-        # 绝大多数情况无需填，放进默认折叠的高级区，并用自由文本（这是给图层命名，非引用他者）。
-        adv_g = CollapsibleSection("高级：overlay 图层句柄（一般留空）", start_open=False)
-        adv_body = QWidget()
-        adv = compact_form(QFormLayout(adv_body))
-        self._dr_oid = QLineEdit()
-        self._dr_oid.setPlaceholderText("留空＝docReveal_<id>")
-        self._dr_oid.setToolTip(
-            "一般不用填、留空即可（系统自动取 docReveal_<本条 id>）。\n"
-            "它只是这层叠图的内部「把手」名（和 blendOverlayImage 的 id 同义，给程序事后寻址/关闭用）；\n"
-            "不是图片——别在这填图，图填上面的模糊图/清晰图。",
-        )
-        self._dr_oid.textChanged.connect(self._dr_on_edit)
-        adv.addRow("overlayId（图层句柄）", self._dr_oid)
-        adv_g.add_body(adv_body)
-        rfl.addWidget(adv_g)
-
         prev_g = CollapsibleSection(
             "揭示过渡预览（Qt 近似，语义同 blendOverlayImage：模糊图 from → 清晰图 to）",
             start_open=False,
@@ -1728,7 +1724,7 @@ class DocumentRevealsEditor(QWidget):
         if clear_disk is None:
             QMessageBox.warning(self, "涂抹生成模糊图", "clearImagePath 无法解析到磁盘文件。")
             return
-        doc_id = self._dr_id_sel.current_id().strip() or "doc"
+        doc_id = self._dr_id_sel.text().strip() or "doc"
         try:
             dlg = DocumentScribblePainterDialog(
                 self._model, clear_disk, doc_id=doc_id,
@@ -1741,6 +1737,32 @@ class DocumentRevealsEditor(QWidget):
             self._dr_blur.set_path(dlg.result_url())
             self._dr_on_edit()
 
+    def _dr_on_pick_archive_id(self) -> None:
+        """从档案文档 id 里挑一个当本条的 id（同名联动的便利，不是引用绑定）。"""
+        from ..shared.reference_picker import ReferencePickerDialog
+
+        row = self._dr_list.currentRow()
+        if row < 0 or row >= len(self._reveals):
+            return
+        rows = self._dr_document_id_choice_tuples(row)
+        if not rows:
+            QMessageBox.information(self, "挑选 id", "档案文档清单为空，直接在输入框里起名即可。")
+            return
+        dlg = ReferencePickerDialog(
+            rows,
+            current=self._dr_id_sel.text().strip(),
+            title="挑一个 id（档案文档 / 已有揭示）",
+            parent=self,
+            geometry_key="document_reveal_id_picker",
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        picked = dlg.selected_value().strip()
+        if not picked:
+            return
+        self._dr_id_sel.setText(picked)
+        self._dr_on_edit()
+
     def _dr_on_gen_document_id(self) -> None:
         if self._loading_ui:
             return
@@ -1751,10 +1773,7 @@ class DocumentRevealsEditor(QWidget):
         self._reveals[row]["id"] = new_id
         self._loading_ui = True
         try:
-            self._dr_id_sel.blockSignals(True)
-            self._dr_id_sel.set_items(self._dr_document_id_choice_tuples(row))
-            self._dr_id_sel.set_current(new_id)
-            self._dr_id_sel.blockSignals(False)
+            self._dr_id_sel.setText(new_id)
         finally:
             self._loading_ui = False
         it = self._dr_list.item(row)
@@ -1766,7 +1785,34 @@ class DocumentRevealsEditor(QWidget):
         if self._loading_ui:
             return
         self._dr_sync_row_from_ui()
+        self._dr_refresh_id_status()
         self._dr_refresh_json_preview()
+
+    def _dr_refresh_id_status(self) -> None:
+        """id 的重名/改名提示（只提示不拦：拦住等于编辑器比运行时更严）。"""
+        row = self._dr_list.currentRow()
+        if row < 0 or row >= len(self._reveals):
+            self._dr_id_status.setText("")
+            return
+        cur = str(self._reveals[row].get("id", "")).strip()
+        msgs: list[str] = []
+        if not cur:
+            msgs.append("id 为空：revealDocument 找不到这条。")
+        else:
+            dup = next(
+                (i for i, e in enumerate(self._reveals)
+                 if i != row and str(e.get("id", "")).strip() == cur),
+                None,
+            )
+            if dup is not None:
+                msgs.append(f"与第 {dup + 1} 条重名：运行时按 id 建表，同名只留最后一条。")
+        origin = self._origin_ids[row] if row < len(self._origin_ids) else ""
+        if origin and origin != cur:
+            msgs.append(
+                f"已从「{origin}」改名：引用它的 revealDocument 不会自动跟随，"
+                "保存后跑 validate-data 核对悬垂引用。",
+            )
+        self._dr_id_status.setText(" ".join(msgs))
 
     def _dr_flag_key_changed(self) -> None:
         self._dr_fl_val.set_flag_key(self._dr_fl_key.key())
@@ -1820,7 +1866,6 @@ class DocumentRevealsEditor(QWidget):
         scenario = self._dr_sc_scen.current_id()
         phase = self._dr_sc_phase.current_id()
         quest_id = self._dr_q_id.current_id()
-        reveal_id = self._dr_id_sel.current_id()
         self._loading_ui = True
         try:
             scenario_s = scenario if isinstance(scenario, str) else ""
@@ -1829,11 +1874,12 @@ class DocumentRevealsEditor(QWidget):
             self._dr_fill_phase_combo(phase_s, scenario_id=scenario_s)
             self._dr_q_id.set_items(self._model.quest_status_target_ids())
             self._dr_q_id.set_current(quest_id)
-            self._dr_id_sel.set_items(self._dr_document_id_choice_tuples(row))
-            self._dr_id_sel.set_current(reveal_id)
+            # id 是本条自己的名字（自由文本），没有跨域候选要重拉，更不能被目录刷新改写
             self._dr_cond_tree.set_model_refresh()
         finally:
             self._loading_ui = False
+        # 预览的虚拟屏比例取自 game_config，切回本页要跟上刚改过的视口设置
+        self._dr_blend_preview.schedule_refresh_immediate()
 
     def _dr_on_row_changed(self, row: int) -> None:
         if self._loading_ui:
@@ -1851,6 +1897,7 @@ class DocumentRevealsEditor(QWidget):
             for e in self._reveals
             if str(e.get("id", "")).strip()
         }
+        self._origin_ids = [str(e.get("id", "")).strip() for e in self._reveals]
         self._loading_ui = True
         try:
             self._dr_list.clear()
@@ -1874,11 +1921,12 @@ class DocumentRevealsEditor(QWidget):
     def _dr_refresh_right(self) -> None:
         row = self._dr_list.currentRow()
         self._dr_id_sel.setEnabled(row >= 0)
+        self._dr_id_pick.setEnabled(row >= 0)
         self._dr_id_new.setEnabled(row >= 0)
         en = row >= 0
         for w in (
             self._dr_blur, self._dr_clear, self._dr_cond_kind, self._dr_cond_stack,
-            self._dr_cond_tree, self._dr_dur, self._dr_delay, self._dr_rflag, self._dr_oid,
+            self._dr_cond_tree, self._dr_dur, self._dr_delay, self._dr_rflag,
             self._dr_x, self._dr_y, self._dr_w,
             self._dr_sfx, self._dr_sfx_vol_chk,
             self._dr_blend_preview,
@@ -1888,6 +1936,7 @@ class DocumentRevealsEditor(QWidget):
         self._dr_sfx_vol.setEnabled(en and self._dr_sfx_vol_chk.isChecked())
         if row < 0 or row >= len(self._reveals):
             self._dr_json_preview.clear()
+            self._dr_id_status.setText("")
             self._dr_blend_preview.schedule_refresh_immediate()
             return
         d = self._reveals[row]
@@ -1898,10 +1947,7 @@ class DocumentRevealsEditor(QWidget):
             self._dr_q_id.blockSignals(True)
             self._dr_q_id.set_items(self._model.quest_status_target_ids())
             self._dr_q_id.blockSignals(False)
-            self._dr_id_sel.blockSignals(True)
-            self._dr_id_sel.set_items(self._dr_document_id_choice_tuples(row))
-            self._dr_id_sel.set_current(str(d.get("id", "")).strip())
-            self._dr_id_sel.blockSignals(False)
+            self._dr_id_sel.setText(str(d.get("id", "")).strip())
             self._dr_blur.set_path(str(d.get("blurredImagePath", "")))
             self._dr_clear.set_path(str(d.get("clearImagePath", "")))
             anim = d.get("animation") if isinstance(d.get("animation"), dict) else {}
@@ -1910,9 +1956,6 @@ class DocumentRevealsEditor(QWidget):
             self._dr_rflag.blockSignals(True)
             self._dr_rflag.set_key(str(d.get("revealedFlag", "")))
             self._dr_rflag.blockSignals(False)
-            self._dr_oid.blockSignals(True)
-            self._dr_oid.setText(str(d.get("overlayId", "")))
-            self._dr_oid.blockSignals(False)
             self._dr_x.setValue(int(d.get("xPercent", 50) or 50))
             self._dr_y.setValue(int(d.get("yPercent", 50) or 50))
             self._dr_w.setValue(int(d.get("widthPercent", 40) or 40))
@@ -2009,6 +2052,7 @@ class DocumentRevealsEditor(QWidget):
                 self._dr_json_preview.setPlainText("(无法序列化)")
         finally:
             self._loading_ui = False
+            self._dr_refresh_id_status()
             self._dr_blend_preview.schedule_refresh_immediate()
 
     @staticmethod
@@ -2042,7 +2086,7 @@ class DocumentRevealsEditor(QWidget):
         if row < 0 or row >= len(self._reveals):
             return
         d = self._reveals[row]
-        d["id"] = self._dr_id_sel.current_id().strip()
+        d["id"] = self._dr_id_sel.text().strip()
         d["blurredImagePath"] = self._dr_blur.path()
         d["clearImagePath"] = self._dr_clear.path()
         d["animation"] = {
@@ -2054,11 +2098,8 @@ class DocumentRevealsEditor(QWidget):
             d["revealedFlag"] = rf
         elif "revealedFlag" in d:
             del d["revealedFlag"]
-        oid = self._dr_oid.text().strip()
-        if oid:
-            d["overlayId"] = oid
-        elif "overlayId" in d:
-            del d["overlayId"]
+        # overlayId 已作废（运行时忽略，2026-09-12 解耦）：编辑器不再提供入口，
+        # 但老数据里的键**原样留着**——删它等于改用户数据，且往返会掉字节。
         d["xPercent"] = int(self._dr_x.value())
         d["yPercent"] = int(self._dr_y.value())
         d["widthPercent"] = int(self._dr_w.value())
@@ -2189,6 +2230,7 @@ class DocumentRevealsEditor(QWidget):
             "animation": {"durationMs": 2000, "delayMs": 0},
         }
         self._reveals.append(new_e)
+        self._origin_ids.append("")
         self._loading_ui = True
         try:
             self._dr_list.addItem(QListWidgetItem(new_e["id"]))
@@ -2202,6 +2244,8 @@ class DocumentRevealsEditor(QWidget):
         if row < 0:
             return
         self._reveals.pop(row)
+        if row < len(self._origin_ids):
+            self._origin_ids.pop(row)
         self._loading_ui = True
         try:
             self._dr_list.takeItem(row)

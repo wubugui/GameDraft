@@ -192,6 +192,7 @@ export const REPLAY_SILENCED_ACTION_TYPES: ReadonlySet<string> = new Set([
   'startCutscene',
   'showOverlayImage',
   'blendOverlayImage',
+  'openMap',
   // 需要玩家逐句点或做选择
   'playScriptedDialogue',
   'startDialogueGraph',

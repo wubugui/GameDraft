@@ -1,12 +1,14 @@
 /**
- * 粒子渲染侧的两件事：**曲线采样**与**按接地锚在实体之间分桶**。
+ * 粒子渲染侧的两件事：**曲线采样**与**按水平纵深在实体之间分桶**。
  *
  * 分桶是玩家唯一能直接看见的排序结果（蝙蝠飞到关二狗身前还是身后），而它没有任何
- * 画面之外的痕迹——排错了只是"层级有点怪"。真机实测（崖墓前段）已确认：放到玩家身后
- * 的个体脚点 416 落进低桶、身前的 784 落进 `玩家脚点+ε`；这里把那条判据钉成机械门。
+ * 画面之外的痕迹——排错了只是"层级有点怪"。这里直接测渲染器导出的纯函数，不再写镜像。
  */
 import { describe, expect, it } from 'vitest';
-import { MAX_BUCKETS, sampleCurve, vfxParamValues } from './VfxRenderer';
+import {
+  MAX_BUCKETS, bucketOfDepth, bucketSortFootY, buildSortThresholds, horizontalViewAxis, sampleCurve, vfxParamValues,
+  type VfxSortAnchor,
+} from './VfxRenderer';
 
 describe('sampleCurve', () => {
   it('空 / 缺省恒 1', () => {
@@ -29,30 +31,18 @@ describe('sampleCurve', () => {
 });
 
 /**
- * 分桶规则的纯函数镜像（与 `VfxRenderer` 的 `refreshThresholds` / `bucketOf` / `bucketFootY`
- * 同式）。渲染器本体要 Pixi 上下文，这里只锁规则本身——规则错了画面就错，而画面不报错。
+ * 平地（平面近似那条约定：世界 z = −脚点y·k，视线 +z）上的实体：水平纵深 = −footY·k。
+ * 在这种地面上新判据必须与旧的"比脚点 y"逐位一致——下面几条就是旧用例原样搬过来。
  */
-function buckets(entityFootYs: number[]): { of: (y: number) => number; footY: (b: number) => number } {
-  const th = [...entityFootYs].sort((a, b) => a - b);
-  let w = 0;
-  for (let i = 0; i < th.length; i++) if (i === 0 || th[i] !== th[i - 1]) th[w++] = th[i];
-  th.length = w;
-  if (th.length > MAX_BUCKETS - 1) {
-    const keep = MAX_BUCKETS - 1;
-    const out: number[] = [];
-    for (let i = 0; i < keep; i++) out.push(th[Math.floor(((i + 1) * th.length) / (keep + 1))]);
-    th.length = 0;
-    th.push(...out);
-  }
-  return {
-    of: (y) => { let i = 0; while (i < th.length && y >= th[i]) i++; return i; },
-    footY: (b) => (th.length === 0 ? 0 : b < th.length ? th[b] - 1e-3 : th[th.length - 1] + 1e-3),
-  };
+const K = Math.SQRT2;
+function flat(entityFootYs: number[]): { of: (particleFootY: number) => number; footY: (b: number) => number } {
+  const th = buildSortThresholds(entityFootYs.map((y): VfxSortAnchor => ({ footY: y, depthKey: -y * K })));
+  return { of: (y) => bucketOfDepth(th, -y * K), footY: (b) => bucketSortFootY(th, b) };
 }
 
-describe('VfxRenderer · 接地锚分桶', () => {
+describe('VfxRenderer · 按水平纵深分桶', () => {
   it('场上只有玩家时：身后进 0 桶（排在他前面之前）、身前进 1 桶', () => {
-    const b = buckets([600]);
+    const b = flat([600]);
     // 真机实测的两组脚点（崖墓前段，玩家脚点 600）
     expect(b.of(416.2)).toBe(0);
     expect(b.of(783.8)).toBe(1);
@@ -61,7 +51,7 @@ describe('VfxRenderer · 接地锚分桶', () => {
   });
 
   it('多个实体：粒子落进相邻两实体之间，桶数 = 实体数 + 1', () => {
-    const b = buckets([200, 450, 600]);
+    const b = flat([200, 450, 600]);
     expect(b.of(100)).toBe(0);
     expect(b.of(300)).toBe(1);
     expect(b.of(500)).toBe(2);
@@ -72,24 +62,42 @@ describe('VfxRenderer · 接地锚分桶', () => {
     expect(b.footY(3)).toBeGreaterThan(600);
   });
 
-  it('脚点恰好等于某实体时算它前面（>= 判据，与 entitySortZ 的升序同向）', () => {
-    const b = buckets([600]);
+  it('纵深恰好等于某实体时算它前面（与旧 >= 脚点判据同向）', () => {
+    const b = flat([600]);
     expect(b.of(600)).toBe(1);
   });
 
   it('实体重复脚点去重；实体多于上限时按分位数合并，桶数不超 MAX_BUCKETS', () => {
-    const b = buckets([100, 100, 100]);
+    const b = flat([100, 100, 100]);
     expect(b.of(50)).toBe(0);
     expect(b.of(150)).toBe(1);
     const many = Array.from({ length: 40 }, (_, i) => i * 10);
-    const b2 = buckets(many);
+    const b2 = flat(many);
     expect(b2.of(1e9)).toBeLessThanOrEqual(MAX_BUCKETS - 1);
   });
 
   it('场上没有实体时退化成单桶', () => {
-    const b = buckets([]);
+    const b = flat([]);
     expect(b.of(123)).toBe(0);
     expect(b.footY(0)).toBe(0);
+  });
+
+  it('悬在更低地面上方的粒子：按水平纵深排，不按"正下方地面点"的画面 y', () => {
+    // 玩家站在崖边（脚点画面 y 600、水平纵深 −600·k）。一只蝙蝠在他**身后** 100 wu 的空中，
+    // 正下方是崖底——那一点投到画面在 900（很靠下）。旧判据拿 900 比 600 → 错排到人前面。
+    const th = buildSortThresholds([{ footY: 600, depthKey: -600 * K }]);
+    const batDepth = -600 * K + 100;              // 比玩家远 100
+    expect(bucketOfDepth(th, batDepth)).toBe(0);  // 排在玩家之前（身后）
+    expect(bucketSortFootY(th, 0)).toBeLessThan(600);
+  });
+
+  it('水平视线轴：去掉竖直分量再归一；正俯视时退化成 +z', () => {
+    const [x, z] = horizontalViewAxis([0, -0.7071, 0.7071]);
+    expect(x).toBeCloseTo(0, 9);
+    expect(z).toBeCloseTo(1, 9);
+    const [x2, z2] = horizontalViewAxis([0.6, -0.6, 0.8 * 0.6]);
+    expect(Math.hypot(x2, z2)).toBeCloseTo(1, 9);
+    expect(horizontalViewAxis([0, -1, 0])).toEqual([0, 1]);
   });
 });
 

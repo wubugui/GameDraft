@@ -56,6 +56,8 @@ export class GameStateController {
   /** 模态压制钩子（组装层注入，如「确认框开着」）：为真时本控制器整帧不吃键盘 */
   private keySuppressor: (() => boolean) | null = null;
   private unsubKeyDown: (() => void) | null = null;
+  /** requestPanelOpen 在非探索态下挂起的面板：状态回到 Exploring 那一刻开（见 applyCurrentState）。 */
+  private pendingPanelOpen: string | null = null;
 
   constructor(
     private readonly inputManager: InputManager,
@@ -82,6 +84,27 @@ export class GameStateController {
     if (this._currentState === next) return;
     this._currentState = next;
     this.inputManager.clearInputEdges();
+    if (next === GameState.Exploring && this.pendingPanelOpen) {
+      const name = this.pendingPanelOpen;
+      this.pendingPanelOpen = null;
+      if (!this.panels.get(name)?.panel.isOpen) this.togglePanel(name);
+    }
+  }
+
+  /**
+   * 动作链替玩家开面板（openMap 等）。动作执行期状态是 ActionSequence（执行器的探索锁），
+   * `togglePanel` 只认 Exploring，直接调会被静默丢掉——所以非探索态下**挂起**，等状态回到
+   * Exploring 那一刻再开。开的时候照常过 openGuard：那一刻被拒（切场中/位面禁旅行）即作废，不重试。
+   * 只挂一个：后到的请求覆盖先到的。
+   */
+  requestPanelOpen(name: string): void {
+    const entry = this.panels.get(name);
+    if (!entry || entry.panel.isOpen) return;
+    if (this._currentState === GameState.Exploring) {
+      this.togglePanel(name);
+      return;
+    }
+    this.pendingPanelOpen = name;
   }
 
   getDebugState(): { overlayReturnStack: GameState[]; openPanels: string[] } {
@@ -162,6 +185,7 @@ export class GameStateController {
 
   /** 关闭所有已打开的面板，用于销毁前清理 */
   closeAllPanels(): void {
+    this.pendingPanelOpen = null;
     for (const [, entry] of this.panels) {
       if (entry.panel.isOpen) {
         entry.panel.close();

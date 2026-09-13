@@ -11,8 +11,12 @@
   * ``utils/sceneSpace.ts``         —— 画面点 ↔ M-world 的**唯一实现**（坐标对齐自证的裁判）
   * ``utils/depthShellField.ts``    —— CPU 侧深度壳（壳接触，与 geometry.py 的 shell_contact 同式）
   * ``utils/groundHeightfield.ts``  —— 世界 XZ 地面高度场
+  * ``utils/sceneWind.ts``          —— 场景风（与游戏同一份参数解析 + 同一个钟）
+  * ``utils/perspectiveScale.ts``   —— 场景透视系数（薄片的尺寸 / 位移按它折）
 
 缓存：按 TS 源文件 mtime + 大小做戳，落 ``viewer/_gen/vfx.bundle.js``（不入库）。
+戳盖的是**从入口顺着 import 走出来的整棵依赖树**（``sources()`` 现场扫），不是手抄的清单——
+手抄清单漏过 ``vfxPlate.ts`` / ``sceneWind.ts``：只改它俩，页面就一直跑旧包，而且不报错。
 node 不在 PATH 时退回 ``.tools/node``（Windows 便携 node，见记忆 windows-dev-entrypoint）。
 打不出来不是致命错：工作台照样能改参数、能存盘，只是**页面不能本地预览、也做不了坐标自证**
 （场景芯片会说明）——那时候只能靠联动去游戏里看。
@@ -22,6 +26,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,17 +35,15 @@ from pathlib import Path
 TOOL = Path(__file__).resolve().parent
 ROOT = TOOL.parents[1]
 SRC = ROOT / "src"
-# 戳要盖住入口的整棵依赖树：改了 worldReconstruct 而包不重打，页面里的"运行时换算"就是旧的
-SRCS = [
+#: 页面 import 的运行时模块（命名空间名 = 文件名）。入口与戳都从这一张表派生。
+ENTRY_MODULES = [
     SRC / "systems" / "vfx" / "vfxSim.ts",
     SRC / "systems" / "vfx" / "vfxSpace.ts",
-    SRC / "systems" / "vfx" / "vfxNoise.ts",
-    SRC / "systems" / "vfx" / "vfxRandom.ts",
     SRC / "utils" / "sceneSpace.ts",
     SRC / "utils" / "depthShellField.ts",
     SRC / "utils" / "groundHeightfield.ts",
-    SRC / "utils" / "worldReconstruct.ts",
-    SRC / "utils" / "groundDepthField.ts",
+    SRC / "utils" / "sceneWind.ts",
+    SRC / "utils" / "perspectiveScale.ts",
 ]
 GEN_DIR = TOOL / "viewer" / "_gen"
 OUT = GEN_DIR / "vfx.bundle.js"
@@ -48,16 +51,48 @@ STAMP = GEN_DIR / "vfx.bundle.stamp.json"
 BUILD_SCRIPT = GEN_DIR / "build_bundle.cjs"
 ENTRY = GEN_DIR / "entry.ts"
 
-_ENTRY_TS = """// 由 tools/vfx_workbench/bundle.py 生成：粒子模拟核心 + 画面↔M-world 换算，同一份代码打给工作台页面。
-export * as vfxSim from '../../../../src/systems/vfx/vfxSim.ts';
-export * as vfxSpace from '../../../../src/systems/vfx/vfxSpace.ts';
-export * as sceneSpace from '../../../../src/utils/sceneSpace.ts';
-export * as depthShellField from '../../../../src/utils/depthShellField.ts';
-export * as groundHeightfield from '../../../../src/utils/groundHeightfield.ts';
-"""
+#: 相对路径的值 import / re-export（`import type` / `export type` 打包时整条擦掉，不进戳）
+_IMPORT_RE = re.compile(r"""^\s*(?:import|export)\s+(?!type\s)(?:[^'";]*?\sfrom\s+)?['"](\.{1,2}/[^'"]+)['"]""", re.M)
+
+
+def _resolve(base: Path, spec: str) -> Path | None:
+    p = (base.parent / spec).resolve()
+    for cand in (p, p.with_name(p.name + ".ts"), p / "index.ts"):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def sources() -> list[Path]:
+    """入口顺着值 import 走出来的整棵依赖树（入口缺文件也列上，``ensure_bundle`` 据此报错）。"""
+    seen: dict[Path, None] = {}
+    todo = [p.resolve() for p in ENTRY_MODULES]
+    while todo:
+        p = todo.pop(0)
+        if p in seen:
+            continue
+        seen[p] = None
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for spec in _IMPORT_RE.findall(text):
+            dep = _resolve(p, spec)
+            if dep is not None and dep not in seen:
+                todo.append(dep)
+    return list(seen)
+
+
+def _entry_ts() -> str:
+    lines = ["// 由 tools/vfx_workbench/bundle.py 生成：粒子模拟核心 + 画面↔M-world 换算，同一份代码打给工作台页面。"]
+    for p in ENTRY_MODULES:
+        rel = os.path.relpath(p, GEN_DIR).replace(os.sep, "/")
+        lines.append(f"export * as {p.stem} from '{rel}';")
+    return "\n".join(lines) + "\n"
+
 
 _BUILD_JS = r"""
-// 由 tools/vfx_workbench/bundle.py 生成：把 _gen/entry.ts（vfxSim + vfxSpace + sceneSpace + 两个场）打成 ESM。
+// 由 tools/vfx_workbench/bundle.py 生成：把 _gen/entry.ts（ENTRY_MODULES 那几个运行时模块）打成 ESM。
 const { build } = require('rolldown');
 const [,, input, outFile] = process.argv;
 build({
@@ -78,17 +113,19 @@ def node_exe() -> str | None:
     return None
 
 
-def _stamp() -> dict:
-    return {"srcs": [{"src": str(p), "mtime": p.stat().st_mtime, "size": p.stat().st_size} for p in SRCS],
-            "entry": _ENTRY_TS}
+def _stamp(srcs: list[Path], entry: str) -> dict:
+    return {"srcs": [{"src": str(p), "mtime": p.stat().st_mtime, "size": p.stat().st_size} for p in srcs],
+            "entry": entry}
 
 
 def ensure_bundle(force: bool = False) -> tuple[Path | None, str]:
     """返回 (包路径, 错误说明)。包已是最新就不动。"""
-    for p in SRCS:
+    srcs = sources()
+    for p in srcs:
         if not p.exists():
             return None, f"运行时模块不存在: {p}"
-    want = _stamp()
+    entry = _entry_ts()
+    want = _stamp(srcs, entry)
     if not force and OUT.exists() and STAMP.exists():
         try:
             if json.loads(STAMP.read_text(encoding="utf-8")) == want:
@@ -100,7 +137,7 @@ def ensure_bundle(force: bool = False) -> tuple[Path | None, str]:
         return (OUT if OUT.exists() else None), "找不到 node（PATH 与 .tools/node 都没有），无法打包运行时模块"
     GEN_DIR.mkdir(parents=True, exist_ok=True)
     BUILD_SCRIPT.write_text(_BUILD_JS, encoding="utf-8", newline="\n")
-    ENTRY.write_text(_ENTRY_TS, encoding="utf-8", newline="\n")
+    ENTRY.write_text(entry, encoding="utf-8", newline="\n")
     try:
         proc = subprocess.run(
             [node, str(BUILD_SCRIPT), str(ENTRY), str(OUT)],

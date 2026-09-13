@@ -576,10 +576,12 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
     if (!def?.objectives?.length) return [];
     // 已完成的任务：目标一律视为勾掉（避免"任务已了、目标还空着"的自相矛盾）
     const questDone = def.type !== 'repeatable' && this.questStatus.get(questId) === QuestStatus.Completed;
-    return def.objectives.map((o) => ({
-      def: o,
-      done: questDone || (!!o.completeWhen?.length && this.evalConditions(o.completeWhen)),
-    }));
+    return def.objectives
+      .filter((o) => !o.visibleConditions?.length || this.evalConditions(o.visibleConditions))
+      .map((o) => ({
+        def: o,
+        done: questDone || (!!o.completeWhen?.length && this.evalConditions(o.completeWhen)),
+      }));
   }
 
   getCurrentObjective(questId: string): QuestObjectiveDef | null {
@@ -606,7 +608,8 @@ export class QuestManager implements IGameSystem, IQuestDataProvider {
   private computeObjectiveSignature(): string {
     const id = this.focusedQuestId;
     if (!id) return '';
-    return `${id}:${this.getQuestObjectives(id).map((o) => (o.done ? '1' : '0')).join('')}`;
+    // 带目标 id：visibleConditions 让目标会出现/消失，只编勾选位会漏掉「多出一条未勾的」这种变化
+    return `${id}:${this.getQuestObjectives(id).map((o) => `${o.def.id}=${o.done ? '1' : '0'}`).join(',')}`;
   }
 
   private syncObjectiveSignature(): void {

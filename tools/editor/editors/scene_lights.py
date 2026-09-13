@@ -39,6 +39,7 @@ q 要 transform 才能和世界空间对齐,这个类就是干这件事的。
 """
 from __future__ import annotations
 
+import copy
 import json
 import math
 import time
@@ -351,6 +352,12 @@ def retype(src: dict, kind: str) -> dict:
             out['softeningRadius'] = src['softeningRadius']
         else:
             out.pop('softeningRadius', None)
+        # ⚠ `follow` 与 `phases` 同族:**与类型无关的作者意图**(这盏灯跟着谁走),
+        #   换个灯型不该把它丢掉。但**平行光没有位置**,跟随对它毫无意义 ——
+        #   `resolveFollowLight` 解出来的 pos 被 packLights 忽略,留着就是静默失效字段,
+        #   所以只在非平行光之间搬。
+        if isinstance(src.get('follow'), dict):
+            out['follow'] = copy.deepcopy(src['follow'])
     # 编辑器专用的派生量跟着走，免得换型后高度手柄跳回缺省
     if '_editorHeightWu' in src and kind != 'directional':
         out['_editorHeightWu'] = src['_editorHeightWu']
@@ -362,11 +369,23 @@ def shadow_budget_status(lights: list[dict]) -> tuple[int, int, bool]:
 
     带阴影的灯每盏都要沿深度场 march，是**性能预算的唯一约束项**；
     静默超预算的后果是跑起来才掉帧，那时已经摆了一屋子灯。
+
+    ⚠ **配了 `follow` 的灯照旧算一盏。** 运行时它由 `HeldPropSystem` 每帧解成一盏
+    **运行时灯**（`SceneLightingSystem.effectiveLights` 跳过原件、再把运行时那份推进去），
+    进的是同一批灯槽、同一份阴影预算。把它从计数里摘掉 = 面板报的数比真实占用少，
+    而超预算的表现是"跑起来掉帧"，看不出是少算了几盏。
     """
     n = sum(1 for l in lights
             if l.get('castShadow') and l.get('enabled', True)
             and l.get('kind') != 'directional')
     return n, SHADOW_LIGHT_BUDGET, n > SHADOW_LIGHT_BUDGET
+
+
+def follow_light_count(lights: list[dict]) -> int:
+    """配了跟随绑定的灯有几盏（**只用于把这件事说出来**，不从任何计数里扣）。"""
+    return sum(1 for l in lights
+               if isinstance(l.get('follow'), dict)
+               and str((l.get('follow') or {}).get('target') or ''))
 
 
 def lights_in_phase(lights: list[dict], phase: str | None) -> list[dict]:

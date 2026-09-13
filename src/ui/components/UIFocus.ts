@@ -275,9 +275,12 @@ export class UIFocus {
   /**
    * 朝一个方向找最近邻。
    *
-   * 打分 = 主轴距离 + 2×副轴偏移：主轴近的优先，同样近时选正对着的那个。
+   * 打分 = 主轴距离 + 2×副轴**间隙**：主轴近的优先，同样近时选正对着的那个。
    * **同组优先**——先只在本组里找，本组没有才允许跨组，否则上下键会在
    * 「左栏列表」和「右栏按钮」之间乱跳（混排面板最常见的导航手感问题）。
+   *
+   * ⚠ 副轴量的是**矩形间隙**（重叠即 0），不是中心距——中心距会让同一列里的
+   * 窄控件整个被跳过，见 {@link UIFocus.pickIn} 里的注释与 spanGap。
    */
   private pick(dir: Dir): FocusItem | null {
     const cur = this.current;
@@ -291,6 +294,8 @@ export class UIFocus {
     const c = center(cur);
     let best: FocusItem | null = null;
     let bestScore = Infinity;
+    let bestCross = Infinity;
+    const vertical = dir === 'up' || dir === 'down';
     for (const it of pool) {
       const p = center(it);
       const dx = p.x - c.x;
@@ -298,9 +303,25 @@ export class UIFocus {
       // 只看真正落在那个方向上的（用主轴分量判，避免"右边偏上一点"被当成上方）
       const main = dir === 'up' ? -dy : dir === 'down' ? dy : dir === 'left' ? -dx : dx;
       if (main <= 1) continue;
-      const cross = dir === 'up' || dir === 'down' ? Math.abs(dx) : Math.abs(dy);
-      const score = main + cross * 2;
-      if (score < bestScore) { bestScore = score; best = it; }
+      // 副轴量**矩形间隙**：两者在副轴上有重叠就是 0（"正对着"），错开多远才罚多少。
+      //
+      // ⚠ 这里曾经量的是**中心距**，那会让同一列里的窄控件整个被跳过：设置页的
+      // 「逐字显示」开关只有 72px 宽（中心 x≈132），上下都是 660px 宽的滑条
+      // （中心 x≈426）。开关明明就在正下一行，中心却差了 294px，罚 2× 之后
+      // 比"再下一行那条中心完全对齐的滑条"还贵——于是下键从对白音量直接落到文字速度，
+      // 纯键盘/手柄玩家一辈子够不到那个开关。窄一点的「气味指向」（157px）没被跳过，
+      // 纯属它离得近、罚款刚好没超过一行的距离，不是判据对了。
+      // 改量间隙后，窄控件落在宽控件的横向跨度里 = 罚 0，先到先得，与宽窄无关。
+      const gap = vertical
+        ? spanGap(cur.x, cur.w, it.x, it.w)
+        : spanGap(cur.y, cur.h, it.y, it.h);
+      const score = main + gap * 2;
+      // 间隙并列（都正对着）时再比中心偏移：等宽网格里同列格子与斜向格子常常
+      // 边贴边、间隙都是 0，得靠这一手把"正下方"那个挑出来。
+      const cross = vertical ? Math.abs(dx) : Math.abs(dy);
+      if (score < bestScore || (score === bestScore && cross < bestCross)) {
+        bestScore = score; bestCross = cross; best = it;
+      }
     }
     return best;
   }
@@ -320,6 +341,14 @@ function center(i: FocusItem): { x: number; y: number } {
 
 function dist2(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+}
+
+/**
+ * 两段区间在同一条轴上的**间隙**：有重叠（哪怕只沾一点）就是 0，错开才是那段空档的长度。
+ * 空间导航的副轴罚项用它，见 {@link UIFocus.pickIn}。
+ */
+function spanGap(a: number, aLen: number, b: number, bLen: number): number {
+  return Math.max(0, b - (a + aLen), a - (b + bLen));
 }
 
 /** 从显示对象拿命中矩形的便捷式（面板内容坐标系）。 */

@@ -1,4 +1,4 @@
-import { Mesh, MeshGeometry, Shader, type Renderer, type Texture } from 'pixi.js';
+import { Mesh, MeshGeometry, Shader, Texture, type Renderer } from 'pixi.js';
 
 import type { SceneLightingDef } from '../../data/types';
 import { resolveLightColor } from './kelvin';
@@ -61,6 +61,12 @@ out vec4 fragColor;
 
 uniform sampler2D uRadiance;     // 缓存好的线性 HDR 辐射场
 uniform sampler2D uDepth;        // 深度图（雾要用视距与高度）
+// 草木摆动（没接时 uSwayOn = 0，三张图绑的是占位）：先用本像素 uv 读位移图，
+// 植物像素去源 uv 取光照缓存与深度；露出来的地方取"扣掉植物"那份光照缓存与深度
+uniform sampler2D uUvMap;        // RG = (源 uv − 本像素 uv) × 覆盖度，A = 覆盖度
+uniform sampler2D uRadiancePlate;
+uniform sampler2D uDepthPlate;
+uniform int   uSwayOn;
 
 uniform vec3  uCal;              // ppu, cx, cy
 uniform vec3  uDepthMap;         // invert, scale, offset
@@ -86,12 +92,26 @@ ${WR_CORE}
 ${LC}
 
 void main(void) {
-    vec3 lin = texture(uRadiance, vUv).rgb;
+    vec2 src = vUv;
+    float cover = 1.0;
+    if (uSwayOn > 0) {
+        vec4 m = texture(uUvMap, vUv);
+        cover = clamp(m.a, 0.0, 1.0);
+        if (m.a > 0.002) { src = vUv + m.rg / m.a; }
+    }
+    vec3 lin = texture(uRadiance, src).rgb;
+    if (uSwayOn > 0 && cover < 0.999) {
+        lin = mix(texture(uRadiancePlate, vUv).rgb, lin, cover);
+    }
 
     if (uFogSigma > 0.0) {
         // 该像素的伪世界位置 → 世界 Y 与视距（正交相机 ⇒ 视线方向恒定，积分有闭式解）
         vec2 px = vUv * uDepthTexSize;
-        float d = wrDecodeSceneDepth(texture(uDepth, vUv), uDepthMap.x, uDepthMap.y, uDepthMap.z);
+        float d = wrDecodeSceneDepth(texture(uDepth, src), uDepthMap.x, uDepthMap.y, uDepthMap.z);
+        if (uSwayOn > 0 && cover < 0.999) {
+            float dPlate = wrDecodeSceneDepth(texture(uDepthPlate, vUv), uDepthMap.x, uDepthMap.y, uDepthMap.z);
+            d = mix(dPlate, d, cover);
+        }
         vec3 q = wrPixelToQ(px, uCal.x, uCal.y, uCal.z, d);
         float worldY = wrQToWorldRow(uMRow1, q);
         // 视距用深度直接代理（正交相机下深度即沿视轴的行程）
@@ -112,6 +132,8 @@ export class LitBackground {
   readonly mesh: Mesh<MeshGeometry, Shader>;
   private readonly shader: Shader;
   private destroyed = false;
+  /** 没接草木时三张槽位要绑的占位（与创建 shader 的那一处同处维护，见 pixi-v8-traps） */
+  private readonly placeholders: { uvMap: Texture; radiancePlate: Texture; depthPlate: Texture };
 
   /**
    * @param radiance {@link SceneLightingPass} 的缓存 RT
@@ -134,7 +156,11 @@ export class LitBackground {
       resources: {
         uRadiance: radiance.source,
         uDepth: geo.depth.source,
+        uUvMap: Texture.EMPTY.source,
+        uRadiancePlate: radiance.source,
+        uDepthPlate: geo.depth.source,
         litBg: {
+          uSwayOn: { value: 0, type: 'i32' },
           uCal: { value: new Float32Array(geo.cal), type: 'vec3<f32>' },
           uDepthMap: { value: new Float32Array(geo.depthMapping), type: 'vec3<f32>' },
           uDepthTexSize: { value: new Float32Array(geo.depthSize), type: 'vec2<f32>' },
@@ -154,6 +180,22 @@ export class LitBackground {
       },
     });
     this.mesh = new Mesh({ geometry, shader: this.shader });
+    this.placeholders = { uvMap: Texture.EMPTY, radiancePlate: radiance, depthPlate: geo.depth };
+  }
+
+  /**
+   * 接上 / 拆下草木摆动。拆下（`null`）会把三张槽位**先绑回占位**——位移图与扣掉植物的光照缓存
+   * 都归别人销毁，BindGroup 见到已销毁的资源会自毁、下一帧渲染即抛（整局卡死）。
+   * 所以所有者必须在销毁那几张图**之前**调 `setSway(null)`。
+   */
+  setSway(sw: { uvMap: Texture; radiancePlate: Texture; depthPlate: Texture } | null): void {
+    if (this.destroyed) return;
+    const r = this.shader.resources as Record<string, unknown> & { litBg: { uniforms: { uSwayOn: number } } };
+    const use = sw ?? this.placeholders;
+    r.uUvMap = use.uvMap.source;
+    r.uRadiancePlate = use.radiancePlate.source;
+    r.uDepthPlate = use.depthPlate.source;
+    r.litBg.uniforms.uSwayOn = sw ? 1 : 0;
   }
 
   /** 写入雾与显示变换参数。逐帧可调，**不触发场景光照重算**。 */

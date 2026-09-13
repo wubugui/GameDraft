@@ -6,7 +6,7 @@ import { FlagKeys } from '../core/FlagKeys';
 /** 气味来源：action（编排显式 setSmell，优先级高）/ zone（场景触发器，玩家在区内）/ none（无味）。 */
 export type SmellSource = 'action' | 'zone' | 'none';
 
-/** 气味源（世界坐标）：气缕被"吹"离它，飘向的反方向就是它。 */
+/** 气味源（世界坐标）：气缕飘向的方向就是它，顺着烟走能摸到源。 */
 export interface SmellSourcePoint { x: number; y: number }
 
 /** 一层气味状态（scent 空串=该层无味）。source = 这一层自带的气味源（zone 配的 / setSmellSource 配的）。 */
@@ -55,8 +55,8 @@ const DIR_EMIT_EPSILON = 0.01;
  * 生效气味 = action 层非空则取 action，否则取 zone，否则无味（**action 永远压过 zone**）。
  * 这样：剧情用 action 强行覆盖环境气味，结束 clearSmell 后若玩家仍在 zone 内，zone 气味自动浮回。
  *
- * **飘向 = 来源的反方向**（玩法清单 G.6，2026-09-10）：气缕像被从气味源那边吹过来，
- * 飘向哪边、源就在另一边。飘向 `dir` 不再是作者手填的静态值，而是每帧按**玩家位置相对气味源**现算：
+ * **飘向 = 指向气味源**（玩法清单 G.6，2026-09-12 改；原「来源反方向」2026-09-10 拍板已推翻）：
+ * 气缕像被气味源吸过去，飘向哪边、源就在那边，顺着烟走能摸到源。飘向 `dir` 不再是作者手填的静态值，而是每帧按**玩家位置相对气味源**现算：
  *   - 气味源来自 `setSmellSource{x,y[,scene]}`（action 源，入存档、只在那个场景生效）
  *     或 zone 配的 `smell.source`（进区带上、出区撤回）；action 源压过 zone 源；
  *   - 追踪可随时开关（`setSmellTracking{enabled}`，flag `smell_tracking`，缺省开）；
@@ -168,8 +168,8 @@ export class SmellSystem implements IGameSystem {
 
   /**
    * 飘向：追踪开 + 有源 + 有味 → 玩家相对源的位置折到 -1..1；否则 0（直的）。
-   *   x：源在左 → 往右飘（正）；
-   *   depth：源在前面（屏幕下方、更靠镜头，src.y > p.y）→ 被吹向深处（负）；源在后面 → 朝镜头扑来（正）。
+   *   x：源在右 → 往右飘（正）；
+   *   depth：源在前面（屏幕下方、更靠镜头，src.y > p.y）→ 朝镜头扑来（正）；源在后面 → 被吹向深处（负）。
    */
   private computeDir(): { x: number; depth: number } {
     const none = { x: 0, depth: 0 };
@@ -179,8 +179,8 @@ export class SmellSystem implements IGameSystem {
     if (!src) return none;
     const p = this.playerPosGetter?.();
     if (!p) return none;
-    const x = Math.max(-1, Math.min(1, (p.x - src.x) / DIR_SATURATE_PX));
-    const depth = Math.max(-1, Math.min(1, (p.y - src.y) / DEPTH_SATURATE_PX));
+    const x = Math.max(-1, Math.min(1, (src.x - p.x) / DIR_SATURATE_PX));
+    const depth = Math.max(-1, Math.min(1, (src.y - p.y) / DEPTH_SATURATE_PX));
     return { x, depth };
   }
 

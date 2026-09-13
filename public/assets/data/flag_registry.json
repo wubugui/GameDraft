@@ -395,6 +395,10 @@
     {
       "key": "current_smell_dir_depth",
       "valueType": "float"
+    },
+    {
+      "key": "torch_lit",
+      "valueType": "bool"
     }
   ],
   "patterns": [

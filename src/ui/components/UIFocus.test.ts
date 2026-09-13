@@ -183,3 +183,97 @@ describe('UIFocus 三态', () => {
     });
   });
 });
+
+/**
+ * 空间导航的判据（2026-09-13）。
+ *
+ * 起因是设置页的实拍：连按下键，焦点从「对白」音量**直接落到「文字速度」**，
+ * 中间那个「逐字显示」开关整个被跳过——纯键盘/手柄玩家够不到它。
+ * 根因不在设置页而在这里：副轴罚项此前量的是**中心距**，于是 72px 宽的开关
+ * （中心 x≈132）比它下一行 660px 宽、中心完全对齐的滑条（中心 x≈426）还"远"。
+ *
+ * 下面第一组照抄设置页在 1024×768 下的真实几何（controlX=96 / sliderW=660 /
+ * 行高 48 / 开关 72×32 / 气味钮 157×32），后几组钉住"修这条别把别处带坏"。
+ */
+describe('UIFocus 空间导航', () => {
+  const mk = (id: string, x: number, y: number, w: number, h: number, group?: string): FocusItemT =>
+    ({ id, x, y, w, h, group, onFocus: () => {}, onActivate: () => {} });
+
+  /** 从 start 朝一个方向一路走到底，返回经过的 id 序列 */
+  function walk(items: FocusItemT[], start: string, code: string): string[] {
+    const focus = new UIFocus();
+    focus.setItems(items);
+    focus.focusDefault(start);
+    const path = [start];
+    for (let i = 0; i < items.length + 2; i++) {
+      if (!focus.handleKey(code)) break;
+      const id = focus.current?.id;
+      if (!id || path.includes(id)) break;
+      path.push(id);
+    }
+    return path;
+  }
+
+  describe('窄控件夹在宽控件中间时不许被跳过', () => {
+    // 设置页那一跳的最小形：三行同组，中间那行的控件窄得多，但它就在正下一行。
+    // 判据量中心距时，窄行中心（x≈132）离宽行中心（x≈426）294px，罚 2× 之后
+    // 比"再下一行那条中心完全对齐的宽控件"还贵 —— 下键于是整行跳过去。
+    const wide = (id: string, row: number): FocusItemT => mk(id, 96, row * 48, 660, 48, 'settings');
+    const narrow = (id: string, row: number): FocusItemT => mk(id, 96, row * 48 + 8, 72, 32, 'settings');
+    const items = [wide('w0', 0), narrow('n1', 1), wide('w2', 2)];
+
+    it('下键：w0 → n1 → w2，不跳过窄的那个', () => {
+      expect(walk(items, 'w0', 'ArrowDown')).toEqual(['w0', 'n1', 'w2']);
+    });
+
+    it('上键：w2 → n1 → w0，反向同理', () => {
+      expect(walk(items, 'w2', 'ArrowUp')).toEqual(['w2', 'n1', 'w0']);
+    });
+  });
+
+  describe('设置页整页：八个焦点项按行依次走到，一个不漏', () => {
+    // 照抄 MenuUI.buildSettings 在 1024×768 下登记的真实矩形：七行控件一律
+    // 整行矩形（controlX=96 / sliderW=660 / 行高 48，两个开关也走 settingRowRect），
+    // 加上底部居中的「返回」（140×44，另一组）。
+    const row = (id: string, i: number): FocusItemT => mk(id, 96, i * 48, 660, 48, 'settings');
+    const items = [
+      row('slider:bgm', 0), row('slider:sfx', 1), row('slider:ambient', 2), row('slider:voice', 3),
+      row('toggle:typewriter', 4), row('slider:speed', 5), row('toggle:smellDir', 6),
+      mk('back', 340, 368, 140, 44, 'footer'),
+    ];
+    const order = items.map(i => i.id);
+
+    it('下键从第一条音量滑条一路走到「返回」', () => {
+      expect(walk(items, 'slider:bgm', 'ArrowDown')).toEqual(order);
+    });
+
+    it('上键从「返回」原路走回第一条滑条', () => {
+      expect(walk(items, 'back', 'ArrowUp')).toEqual([...order].reverse());
+    });
+  });
+
+  describe('别处不受影响', () => {
+    it('等宽网格：下键走正下方那格，不斜着跑（格子边贴边、副轴间隙并列时靠中心偏移兜底）', () => {
+      const cells: FocusItemT[] = [];
+      for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) cells.push(mk(`c${r}${c}`, c * 72, r * 72, 72, 72, 'grid'));
+      expect(walk(cells, 'c01', 'ArrowDown')).toEqual(['c01', 'c11', 'c21']);
+      expect(walk(cells, 'c10', 'ArrowRight')).toEqual(['c10', 'c11', 'c12', 'c13']);
+    });
+
+    it('左栏列表 + 右栏按钮（同组混排）：上下键留在左栏，右键才跨栏', () => {
+      const items = [
+        mk('row:0', 0, 100, 300, 36, 'body'),
+        mk('row:1', 0, 140, 300, 36, 'body'),
+        mk('row:2', 0, 180, 300, 36, 'body'),
+        mk('detail', 340, 140, 160, 36, 'body'),
+      ];
+      expect(walk(items, 'row:0', 'ArrowDown')).toEqual(['row:0', 'row:1', 'row:2']);
+      expect(walk(items, 'row:1', 'ArrowRight')).toEqual(['row:1', 'detail']);
+    });
+
+    it('单列等宽菜单（标题/暂停页）：一项一项顺着走', () => {
+      const items = [0, 1, 2, 3].map(i => mk(`row:${i}`, 40, i * 60, 280, 48, 'menu'));
+      expect(walk(items, 'row:0', 'ArrowDown')).toEqual(['row:0', 'row:1', 'row:2', 'row:3']);
+    });
+  });
+});

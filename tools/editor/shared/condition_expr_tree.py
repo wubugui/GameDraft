@@ -29,6 +29,7 @@ from .id_ref_selector import IdRefSelector
 from .reference_picker import ReferencePickerField
 from .rich_text_field import RichTextLineEdit
 from .form_layout import compact_form
+from .widget_discard import discard_layout_widgets, discard_widget
 
 # 与 narrative_data_editors /运行时一致
 _SCENARIO_STATUSES = ("pending", "active", "done", "locked")
@@ -249,12 +250,10 @@ class ConditionExprNodeEditor(QWidget):
         self._emit_changed()
 
     def _clear_body(self) -> None:
-        while self._body.count():
-            it = self._body.takeAt(0)
-            w = it.widget()
-            if w is not None:
-                w.setParent(None)
-                w.deleteLater()
+        # 必须走 discard_layout_widgets：直接 setParent(None) 会把**当前可见**的条件体
+        # 变成一个野顶层窗口，在 deleteLater 落地之前被 Qt 显示出来（屏幕中央一闪一个
+        # 「GameDraft Editor」小窗）。见 shared/widget_discard.py 模块文档。
+        discard_layout_widgets(self._body)
         self._container_all_any = None
         self._lay_all_any = None
         self._flag_wrap = None
@@ -807,8 +806,7 @@ class ConditionExprNodeEditor(QWidget):
             if not editor._confirm_destructive_discard("移除此节点"):
                 return
             self._child_editors.remove(editor)
-            editor.setParent(None)
-            editor.deleteLater()
+            discard_widget(editor)
             self._emit_changed()
 
     def set_dict(self, data: dict[str, Any] | None) -> None:

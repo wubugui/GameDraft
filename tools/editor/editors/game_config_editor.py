@@ -24,6 +24,7 @@ from ..shared.text_palette import (
     count_palette_id_uses,
     load_text_palette,
 )
+from ..shared.widget_discard import discard_widget
 
 
 # 玩家身体动词参数表：(verb, 分组标题, [(键, 标签, 类型, 下限, 上限, tooltip)])
@@ -351,8 +352,7 @@ class GameConfigEditor(QWidget):
         if not self._dn_phase_rows:
             return
         row = self._dn_phase_rows.pop()
-        row["widget"].setParent(None)
-        row["widget"].deleteLater()
+        discard_widget(row["widget"])
 
     def _reset_phase_rows(self) -> None:
         while self._dn_phase_rows:

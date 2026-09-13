@@ -727,7 +727,7 @@
                 "y": -154
               }
             },
-            "label": "夜晚自由闲逛（教学）"
+            "label": "东西备齐·出南门"
           },
           "state_9": {
             "id": "state_9",
@@ -855,13 +855,28 @@
             "id": "t_4",
             "from": "state_7",
             "to": "state_8",
-            "signal": "主线_关二狗准备去山上背尸"
+            "signal": "__draft__",
+            "trigger": "reactiveAll",
+            "conditions": [
+              {
+                "flag": "has_item_zhiqian"
+              },
+              {
+                "flag": "has_item_torch"
+              },
+              {
+                "flag": "has_item_mashen"
+              },
+              {
+                "flag": "has_item_xiangzhu"
+              }
+            ]
           },
           {
             "id": "t_6",
             "from": "state_8",
             "to": "state_9",
-            "signal": "__draft__"
+            "signal": "state:scenario_夜出南门:到跑马梁"
           }
         ],
         "label": "寻狗Demo主线"
@@ -1023,6 +1038,162 @@
               }
             ],
             "ownerId": "崖墓任务发布者"
+          }
+        },
+        {
+          "id": "el_scenario_夜出南门",
+          "kind": "wrapperGraph",
+          "label": "夜出南门·上跑马梁",
+          "ownerType": "scenario",
+          "ownerId": "寻狗_夜出南门",
+          "x": 1446,
+          "y": -420,
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          },
+          "graph": {
+            "id": "scenario_夜出南门",
+            "ownerType": "scenario",
+            "ownerId": "寻狗_夜出南门",
+            "label": "夜出南门·上跑马梁",
+            "initialState": "未出城",
+            "entryState": "未出城",
+            "exitStates": [
+              "到跑马梁"
+            ],
+            "states": {
+              "未出城": {
+                "id": "未出城",
+                "label": "还在城头",
+                "meta": {
+                  "editor": {
+                    "x": 30,
+                    "y": 20
+                  }
+                }
+              },
+              "望山": {
+                "id": "望山",
+                "label": "南门小路走到头·地图认得跑马梁",
+                "description": "醒来小路南头触发：跑马梁在地图上解锁（map_config 读本状态 reached），弹地图提示传送。",
+                "meta": {
+                  "editor": {
+                    "x": 260,
+                    "y": 20
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "runActionsIf",
+                    "params": {
+                      "condition": {
+                        "any": [
+                          {
+                            "all": [
+                              {
+                                "flag": "rule_rule_nuomi_ya_shiqi_acquired"
+                              },
+                              {
+                                "not": {
+                                  "flag": "has_item_nuomi"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "flag": "rule_rule_gongji_qiling_acquired"
+                              },
+                              {
+                                "not": {
+                                  "flag": "has_item_gongji"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "flag": "rule_rule_taomu_yaxie_acquired"
+                              },
+                              {
+                                "not": {
+                                  "flag": "has_item_taomu"
+                                }
+                              }
+                            ]
+                          },
+                          {
+                            "all": [
+                              {
+                                "flag": "rule_rule_caoxi_guoshi_acquired"
+                              },
+                              {
+                                "not": {
+                                  "flag": "has_item_caoxi"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      "actions": [
+                        {
+                          "type": "playScriptedDialogue",
+                          "params": {
+                            "lines": [
+                              {
+                                "speaker": "{{player}}",
+                                "text": "（还有几样没备齐……一上跑马梁，就回不了头咯。）"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "showNotification",
+                    "params": {
+                      "text": "地图上认得到跑马梁了，点它过去。",
+                      "type": "info"
+                    }
+                  },
+                  {
+                    "type": "openMap",
+                    "params": {}
+                  }
+                ]
+              },
+              "到跑马梁": {
+                "id": "到跑马梁",
+                "label": "到跑马梁（beat完成）",
+                "broadcastOnEnter": true,
+                "meta": {
+                  "editor": {
+                    "x": 490,
+                    "y": 20
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_望山",
+                "from": "未出城",
+                "to": "望山",
+                "signal": "nanmen_road_end"
+              },
+              {
+                "id": "t_到跑马梁",
+                "from": "望山",
+                "to": "到跑马梁",
+                "signal": "paomaliang_arrived"
+              }
+            ]
           }
         }
       ]
@@ -6895,7 +7066,7 @@
     {
       "id": "路遇私铸钱_完结",
       "label": "路遇私铸钱·那一拍演完",
-      "notes": "去赌坊路上：那一文自己滚走→怪人来过又走→回头钱在脚边。由 序章_街巷_路遇私铸钱 收尾发射，推 wrapper_序章_路遇私铸钱 到「钱回来了」。"
+      "notes": "去赌坊路上：那一文自己滚走→怪人来过又走→回头钱在脚边。由 Zone_路遇私铸钱 在过场「主线_铜钱脱落滚走」播完后发射（之前是对话图 序章_街巷_路遇私铸钱），推 wrapper_序章_路遇私铸钱 到「钱回来了」。"
     },
     {
       "id": "赌坊_输光",
@@ -6908,8 +7079,14 @@
       "notes": "夜里撞见癞子、当场现编「义庄还有二百五」并喊他一路（癞子死活不去）之后发射，推 wrap_癞子 到「应下」，主图进 state_7。"
     },
     {
-      "id": "主线_关二狗准备去山上背尸",
-      "label": "主线_关二狗准备去山上背尸"
+      "id": "nanmen_road_end",
+      "label": "夜出南门·小路走到南头",
+      "notes": "梦_醒来土路（南门外小路）南头 z_南门小路_南头 进区发射，推 scenario_夜出南门 到「望山」：解锁地图跑马梁并弹地图。"
+    },
+    {
+      "id": "paomaliang_arrived",
+      "label": "初上跑马梁·那一拍演完",
+      "notes": "跑马梁进场（scenario_夜出南门=望山 时）起对话 主线_初上跑马梁，演完发射，推 scenario_夜出南门 到「到跑马梁」，主图 state_8→state_9。"
     }
   ]
 }

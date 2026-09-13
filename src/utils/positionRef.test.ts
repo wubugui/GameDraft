@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrajectoryAsset } from '../data/types';
-import type { PositionRefLookups } from './positionRef';
-import { findTrajectorySlot, parsePositionRef, resolvePositionRef, trajectoryBinding, trajectoryOrigin } from './positionRef';
+import type { PositionRefLookups, PositionRefNowLookups } from './positionRef';
+import {
+  evaluatePositionRefNow, findTrajectorySlot, parsePositionRef, positionRefAssetProblem,
+  resolvePositionRef, trajectoryBinding, trajectoryOrigin,
+} from './positionRef';
 
 /**
  * 位置引用（数字 / 实体位置 / 曲线插槽）的解析与求值。
@@ -144,14 +147,17 @@ describe('曲线上的点（curve）', () => {
     expect(p).toEqual({ x: -20, y: 25 });
   });
 
-  it('相对曲线没在播 = 没有绝对位置；正在播就有', async () => {
+  it('相对曲线一律不许引用（2026-09-12：它是资源、每次播放一个实例），在播也不行', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(resolvePositionRef(parsePositionRef({ kind: 'curve', trajectoryId: 't2' }), lookups())).resolves.toBeNull();
-    const live = { keyframes: frames, anchor: { x: 5, y: 5 } };
-    await expect(resolvePositionRef(
-      parsePositionRef({ kind: 'curve', trajectoryId: 't2' }),
-      lookups({ liveTrajectoryPlay: () => live }),
-    )).resolves.toEqual({ x: 125, y: 15 });
+    const live = { keyframes: frames, anchor: { x: 5, y: 5 }, tMs: 500 };
+    for (const point of ['end', 'current'] as const) {
+      await expect(resolvePositionRef(
+        parsePositionRef({ kind: 'curve', trajectoryId: 't2', point }),
+        lookups({ liveTrajectoryPlay: () => live }),
+      )).resolves.toBeNull();
+    }
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('相对曲线'));
     warn.mockRestore();
   });
 
@@ -164,5 +170,95 @@ describe('曲线上的点（curve）', () => {
       lookups({ loadTrajectory: async () => empty }),
     )).resolves.toBeNull();
     warn.mockRestore();
+  });
+
+  // ---- 播放头：曲线此刻播到的点（point:'current'，2026-09-12）----
+  describe("播放头 point:'current'", () => {
+    const cur = parsePositionRef({ kind: 'curve', trajectoryId: 't1', point: 'current' });
+    const livePlay = { keyframes: frames, anchor: { x: 10, y: 20 }, tMs: 750 };
+    const endedPlay = { keyframes: frames, anchor: { x: -100, y: 0 }, tMs: 1000 };
+
+    it('解析认得 current（不带 atMs / progress）', () => {
+      expect(cur).toEqual({ kind: 'curve', trajectoryId: 't1', point: 'current' });
+    });
+
+    it('在播：这次播放此刻的位置（锚点 + 帧在 tMs 处的值）', async () => {
+      // tMs=750 落在 500→1000 段中点：(50,-20)→(120,10) 的中点 = (85,-5)
+      await expect(resolvePositionRef(cur, lookups({
+        liveTrajectoryPlay: () => livePlay, endedTrajectoryPlay: () => endedPlay,
+      }))).resolves.toEqual({ x: 95, y: 15 });
+    });
+
+    it('不在播但本场景播过：停在它结束的那一点（播完停在终点）', async () => {
+      await expect(resolvePositionRef(cur, lookups({ endedTrajectoryPlay: () => endedPlay })))
+        .resolves.toEqual({ x: 20, y: 10 });
+    });
+
+    it('本场景还没开播过：这个点还没产生 → null + warn（一次性动作退回 x/y）', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await expect(resolvePositionRef(cur, lookups())).resolves.toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('还没开播'));
+      warn.mockRestore();
+    });
+
+    it('固定点四档不看结束记录：不在播仍按曲线原点算（语义没变）', async () => {
+      await expect(resolvePositionRef(
+        parsePositionRef({ kind: 'curve', trajectoryId: 't1', point: 'end' }),
+        lookups({ endedTrajectoryPlay: () => endedPlay }),
+      )).resolves.toEqual({ x: 1120, y: 2010 });
+    });
+  });
+});
+
+describe('evaluatePositionRefNow（每帧跟随用：同步、不出声）', () => {
+  const frames = [{ atMs: 0, x: 0, y: 0 }, { atMs: 1000, x: 100, y: 0 }];
+  const scene = {
+    id: 'c', space: 'screen', binding: 'scene', keyframes: frames,
+    authoring: { sceneId: 's', origin: { x: 0, y: 0 } },
+  } as unknown as TrajectoryAsset;
+  const free = { id: 'f', space: 'screen', binding: 'free', keyframes: frames, authoring: {} } as unknown as TrajectoryAsset;
+  const now = (over: Partial<PositionRefNowLookups> = {}): PositionRefNowLookups => ({
+    entityPosition: (id) => (id === 'coin' ? { x: 7, y: 8 } : null),
+    trajectory: (id) => ({ c: scene, f: free } as Record<string, TrajectoryAsset>)[id] ?? null,
+    ...over,
+  });
+  const cur = (id: string) => parsePositionRef({ kind: 'curve', trajectoryId: id, point: 'current' });
+
+  beforeEach(() => { vi.spyOn(console, 'warn').mockImplementation(() => {}); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it('播放头随 tMs 走：同一个引用，每帧求值拿到的是那一帧的位置', () => {
+    let tMs = 0;
+    const lk = now({ liveTrajectoryPlay: () => ({ keyframes: frames, anchor: { x: 1, y: 2 }, tMs }) });
+    const ref = cur('c');
+    const seen = [0, 250, 1000].map((t) => { tMs = t; return evaluatePositionRefNow(ref, lk); });
+    expect(seen).toEqual([{ x: 1, y: 2 }, { x: 26, y: 2 }, { x: 101, y: 2 }]);
+  });
+
+  it('求不出的几种都是 null 且一声不吭：没开播 / 资产没装完 / 相对曲线 / 实体不在', () => {
+    expect(evaluatePositionRefNow(cur('c'), now())).toBeNull();
+    expect(evaluatePositionRefNow(cur('c'), now({ trajectory: () => undefined }))).toBeNull();
+    expect(evaluatePositionRefNow(cur('f'), now({
+      liveTrajectoryPlay: () => ({ keyframes: frames, anchor: { x: 0, y: 0 }, tMs: 10 }),
+    }))).toBeNull();
+    expect(evaluatePositionRefNow({ kind: 'entity', id: 'ghost' }, now())).toBeNull();
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('点 / 实体照常求值', () => {
+    expect(evaluatePositionRefNow({ kind: 'point', x: 3, y: 4 }, now())).toEqual({ x: 3, y: 4 });
+    expect(evaluatePositionRefNow({ kind: 'entity', id: 'coin' }, now())).toEqual({ x: 7, y: 8 });
+  });
+});
+
+describe('positionRefAssetProblem（绑定时报一次的资产层错）', () => {
+  it('资产缺失 / 相对曲线 / 缺插槽 各有一句；场景曲线的合法引用没有', () => {
+    const curve = { kind: 'curve', trajectoryId: 'coin_drop', point: 'current' } as const;
+    expect(positionRefAssetProblem(curve, null)).toContain('装不上');
+    expect(positionRefAssetProblem({ kind: 'curve', trajectoryId: 'toss' }, freeAsset)).toContain('相对曲线');
+    expect(positionRefAssetProblem({ kind: 'slot', trajectoryId: 'toss', slotId: 'a' }, freeAsset)).toContain('相对曲线');
+    expect(positionRefAssetProblem({ kind: 'slot', trajectoryId: 'coin_drop', slotId: 'nope' }, sceneAsset)).toContain('没有插槽');
+    expect(positionRefAssetProblem(curve, sceneAsset)).toBeNull();
+    expect(positionRefAssetProblem({ kind: 'slot', trajectoryId: 'coin_drop', slotId: 'dropper' }, sceneAsset)).toBeNull();
   });
 });

@@ -1,0 +1,63 @@
+{
+  "id": "paper_money",
+  "label": "被风吹着的纸钱（常驻、铺满一片地面）",
+  "emitters": [
+    {
+      "id": "paper",
+      "appearance": {
+        "animFile": "/resources/runtime/animation/fx_paper_money/anim.json",
+        "state": "variants",
+        "sizeWu": 16,
+        "sizeJitter": [
+          0.75,
+          1.15
+        ],
+        "tint": [
+          0.86,
+          0.85,
+          0.83
+        ],
+        "lit": false
+      },
+      "spawn": {
+        "max": 520,
+        "burst": 520,
+        "shape": {
+          "kind": "area",
+          "radius": 260
+        }
+      },
+      "plate": {
+        "size": [
+          16,
+          16
+        ],
+        "terminalSpeed": 90,
+        "edgeDrag": 0.08,
+        "pressureOffset": 0.12,
+        "friction": {
+          "static": 0.45,
+          "kinetic": 0.35
+        },
+        "adhere": {
+          "pinned": 0.15,
+          "onObjects": 1,
+          "hold": 120
+        },
+        "bend": {
+          "stiffness": 1400,
+          "freq": 7,
+          "damping": 0.25,
+          "max": 0.7,
+          "rest": 0.35
+        },
+        "segments": 2,
+        "replenish": true
+      }
+    }
+  ],
+  "authoring": {
+    "sceneId": "跑马梁",
+    "note": "每颗粒子是一张纸钱（薄片模块）：躺在实例 area 圈出的那片地面 / 物件上，被场景风吹动。场景没有 wind 就一动不动。lit:false —— 跑马梁上受光路径把白纸画成深灰（普通 billboard 同样），走无光 + 阴天天穹朝向明暗，tint 按原画路面上那几张纸钱标定。"
+  }
+}

@@ -141,6 +141,83 @@
           }
         }
       ]
+    },
+    {
+      "id": "z_风口",
+      "polygon": [
+        {
+          "x": 420.0,
+          "y": 655.0
+        },
+        {
+          "x": 822.0,
+          "y": 655.0
+        },
+        {
+          "x": 822.0,
+          "y": 688.0
+        },
+        {
+          "x": 420.0,
+          "y": 688.0
+        }
+      ],
+      "conditions": [
+        {
+          "flag": "torch_lit",
+          "value": true
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "playSfx",
+          "params": {
+            "id": "sfx_yinfeng_gust"
+          }
+        },
+        {
+          "type": "emitVfxField",
+          "params": {
+            "kind": "wind",
+            "tag": "gust",
+            "radius": 600,
+            "strength": 900,
+            "duration": 1.2,
+            "at": {
+              "kind": "entity",
+              "id": "player"
+            },
+            "direction": [
+              -1,
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "type": "setPropState",
+          "params": {
+            "target": "player",
+            "socket": "right_hand",
+            "state": "out",
+            "fadeMs": 900
+          }
+        },
+        {
+          "type": "setFlag",
+          "params": {
+            "key": "torch_lit",
+            "value": false
+          }
+        },
+        {
+          "type": "showNotification",
+          "params": {
+            "text": "一股阴风贴着地扫过来，火把「噗」一声就灭了。",
+            "type": "info"
+          }
+        }
+      ]
     }
   ],
   "hotspots": [

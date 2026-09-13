@@ -3,6 +3,9 @@ import { resolve, dirname } from 'path';
 import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'fs/promises';
 // 场景索引生成器与打包脚本共用（同一份形状）；见 sceneIndexApi()
 import { SCENE_INDEX_REL, buildSceneIndex } from './scripts/lib/scene_index.mjs';
+// 草木联动的 dev 槽单独一个模块：从 vite.config 里测它，会把整份配置拖进 TS 程序，
+// 配置自己的历史类型问题全会冒出来（实测过）。模块化之后测试直接测模块。
+import { runtimeSwayApi } from './src/dev/runtimeSwayApiPlugin';
 
 /** 开发服：读写 resources/editor_projects/editor_data/debug_flag_favorites.json，供 F2 Flag 收藏持久化（不使用 localStorage）。 */
 function debugFlagFavoritesApi(): Plugin {
@@ -1130,6 +1133,7 @@ export default defineConfig({
     runtimeLightingApi(),
     runtimeAcousticsApi(),
     runtimeVfxApi(),
+    runtimeSwayApi(),
     narrativeDebugBridgeApi(),
     runtimeDebugSnapshotApi(),
     runtimeCommandApi(),
@@ -1168,10 +1172,16 @@ export default defineConfig({
     // 非零，于是"跑一次 vitest"恒红。排掉它们，两套框架各跑各的。
     // tools/trajectory_workbench/viewer/tests/*.cjs 同理：自带 vm 加载器的裸 node 断言
     // （pytest 的 test_viewer.py 代跑），不是 vitest 用例。
+    // tools/scene_workbench/tests/*.test.cjs 也是 node:test，由该目录自己的 `npm test`
+    // （`node --test`）跑，依赖（three）装在它自己的 node_modules，根目录解析不到。
+    //
+    // **/.tools/** 是便携 Python/venv 与本机临时探针的落脚处（整目录 gitignore），
+    // 探针自带 vitest.config 单独跑；被根 vitest 捡进来就拿当前代码去跑过期的探针。
     exclude: [
-      '**/node_modules/**', '**/dist/**', '**/.claude/**',
+      '**/node_modules/**', '**/dist/**', '**/.claude/**', '**/.tools/**',
       'tools/anim_preview/*.test.mjs',
       'tools/trajectory_workbench/viewer/tests/**',
+      'tools/scene_workbench/tests/**',
     ],
   },
   resolve: {

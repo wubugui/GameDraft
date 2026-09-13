@@ -188,6 +188,13 @@ mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`;
 - **体素卷永不预载**,开 RT 才拉、切离即卸。换卷 / 换 probe 图集纹理时**先重挂滤镜再销毁
   旧纹理**,顺序反了会永久烧毁滤镜(见 [pixi-v8-traps](pixi-v8-traps.md))。
 - 时段换原画 = 换一整套烘焙目录(按第一层背景图名索引),**夜的 probe 要单独烘**。
+  没烘、而变体没换深度图时,运行时只借主背景的**几何项**(见 [scene-lighting](scene-lighting.md)
+  的时段一条),probe 不借——那时 `active === false`,角色走 EntityLightingFilter 的色调融入。
+- **实体灯循环单一真相源**:`ENTITY_SCENE_LIGHTS_GLSL`(`CharacterLitSprite.ts`)是角色 mesh 路径与
+  粒子受光共用的那一段,两边原样拼接(`worldSpaceShading.test.ts` 钉着粒子侧不许再写 `lc*Light`)。
+- **`charLights` 组(实体灯 + 显示变换)换场景时归零**(`Game` 的 lightingUnloader):装载器只在场景
+  **有** lighting 块时重写它,不清的话没配 lighting 的场景(崖墓 / 跑马梁)接着用上一个场景的灯与
+  wuPerQUnit——2026-09-12 实测义庄 → 崖墓前段后仍是义庄那 1 盏烛火、220 wu/q(崖墓前段 309)。
 
 ## 已停用:统一角色路径(留码不删,别当缺陷重报)
 

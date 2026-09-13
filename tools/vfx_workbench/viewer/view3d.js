@@ -258,6 +258,8 @@ class View3D {
     if (host.layers.rings) for (const s of host.spheres()) this._circle(mvp, s.center, s.radius, s.color, s.hot);
     // 刺激场作用半径
     for (const f of host.fieldMarks()) this._circle(mvp, f.at, f.radius, f.color, false);
+    // 角色代理的身体线（尺度参考：角色高 150 wu）+ 挂点横杆；不可选中、不进 doc
+    for (const b of host.bodyLines()) this._lines(mvp, b.pts, b.color, gl.LINES, 1);
     // 物体标记
     for (const o of host.objects()) this._marker(mvp, o.pos, o.color, o.size);
     if (host.layers.marks) for (const m of (host.marks || [])) this._marker(mvp, m.world, m.kind === 'spawn' ? [0.5, 0.9, 0.55, 1] : [0.7, 0.7, 0.8, 0.9], 7);

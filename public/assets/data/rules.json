@@ -116,6 +116,54 @@
           "verified": "effective"
         }
       }
+    },
+    {
+      "id": "rule_nuomi_ya_shiqi",
+      "name": "糯米压尸气",
+      "incompleteName": "背死人子的一条土办法",
+      "category": "ward",
+      "layers": {
+        "xiang": {
+          "text": "背死人子，身上揣把糯米。尸气冲上来，抓一把撒过去，压得住。",
+          "verified": "unverified"
+        }
+      }
+    },
+    {
+      "id": "rule_gongji_qiling",
+      "name": "起灵要抱公鸡",
+      "incompleteName": "抬死人子上路的老规矩",
+      "category": "ward",
+      "layers": {
+        "xiang": {
+          "text": "抬死人子上路，要抱只大红公鸡。公鸡是阳物，有它在，路上的东西不敢近身。",
+          "verified": "unverified"
+        }
+      }
+    },
+    {
+      "id": "rule_taomu_yaxie",
+      "name": "桃木压百鬼",
+      "incompleteName": "走夜路的一样护身",
+      "category": "ward",
+      "layers": {
+        "xiang": {
+          "text": "桃木是五木之精，压得住百鬼。走夜路身上别块桃木，不遭缠。",
+          "verified": "unverified"
+        }
+      }
+    },
+    {
+      "id": "rule_caoxi_guoshi",
+      "name": "死人子要裹草席",
+      "incompleteName": "背死人子的一条忌讳",
+      "category": "taboo",
+      "layers": {
+        "xiang": {
+          "text": "穷人家死了人没得棺材，一张草席裹起走。背死人子也一样，要拿草席裹好，莫让它贴到你的肉。",
+          "verified": "unverified"
+        }
+      }
     }
   ],
   "fragments": [

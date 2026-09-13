@@ -38,6 +38,7 @@ from ..shared.num_fields import float_or as _float_or, int_or as _int_or
 from ..shared.reference_picker import ReferencePickerField
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.scene_entity_picker import SceneEntityPickField
+from ..shared.widget_discard import discard_widget
 
 # 「角色」档里代表主角的那一行。主角不是注册表条目（他是"当前受控的那个人"，
 # 换人了嘴也跟着换），但在策划眼里他就是角色之一，所以并进同一个选择器。
@@ -412,8 +413,7 @@ class BubbleLinesEditor(QWidget):
 
     def _clear_line_rows(self) -> None:
         for row in self._line_rows:
-            row["widget"].setParent(None)
-            row["widget"].deleteLater()
+            discard_widget(row["widget"])
         self._line_rows = []
 
     def _add_line_row(self, line) -> None:
@@ -453,8 +453,7 @@ class BubbleLinesEditor(QWidget):
         if entry not in self._line_rows:
             return
         self._line_rows.remove(entry)
-        entry["widget"].setParent(None)
-        entry["widget"].deleteLater()
+        discard_widget(entry["widget"])
 
     def _read_lines(self) -> list:
         """读台词行。坏元素（非 dict）原样透传；dict 从原件复制，只覆盖本表单管的键。"""
@@ -510,8 +509,7 @@ class BubbleLinesEditor(QWidget):
         if row not in self._scene_rows:
             return
         self._scene_rows.remove(row)
-        row["widget"].setParent(None)
-        row["widget"].deleteLater()
+        discard_widget(row["widget"])
         self._relayout_scene_rows()
 
     def _clear_scene_rows(self) -> None:

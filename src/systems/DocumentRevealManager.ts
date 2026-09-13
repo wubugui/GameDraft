@@ -17,19 +17,42 @@ import { TEXT_URLS } from '../core/projectPaths';
 
 export type DocumentRevealPhase = 'hidden' | 'blurred' | 'revealing' | 'revealed';
 
-type BlendFn = (
-  id: string,
-  fromPath: string,
-  toPath: string,
-  xPercent: number,
-  yPercent: number,
-  widthPercent: number,
-  durationMs: number,
-  delayMs: number,
-) => Promise<void>;
+/**
+ * 文档揭示自己的显示层。键是 **documentId**,与叠图动作(`showOverlayImage` 的 `id` 句柄)
+ * 分属两张登记表、互不可见——作者永远不需要知道任何句柄,也不可能用 `hideOverlayImage`
+ * 误收掉一份文档(2026-09-12 制作人定调:揭示只认揭示对象)。
+ */
+export interface DocumentLayerPresenter {
+  /** 瞬时显示某张图(无动画) */
+  show(
+    documentId: string,
+    imagePath: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+  ): Promise<void>;
+  /** 揭示动画:模糊 → 清晰 */
+  blend(
+    documentId: string,
+    fromPath: string,
+    toPath: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+    durationMs: number,
+    delayMs: number,
+  ): Promise<void>;
+  /** 收掉这份文档的显示层 */
+  hide(documentId: string): void;
+}
 
 /**
- * 文档模糊到清晰的揭示；配置来自 document_reveals.json，条件与图对话共用 evaluateConditionExpr。
+ * 文档揭示。配置来自 document_reveals.json，条件与图对话共用 evaluateConditionExpr。
+ *
+ * **一个入口三态**（`revealDocument` 的全部语义，2026-09-12 制作人定调）：
+ * 条件不满足 → 显示揭示前的图；条件满足且未揭示 → 播揭示动画（记档 / 写 flag / 响音效）；
+ * 已揭示 → 瞬时显示揭示后的图（不重播、不响音效、不发事件）。`force` 只跳过条件判定。
+ * 作者不需要、也不能用叠图动作参与其中——显示与收都走 documentId。
  */
 export class DocumentRevealManager implements IGameSystem {
   private assetManager: AssetManager;
@@ -43,7 +66,7 @@ export class DocumentRevealManager implements IGameSystem {
   private revealing = new Set<string>();
   /** 已排期、尚未起播的揭示音效定时器；destroy / 读档必须清空（旧时间线不得发声） */
   private sfxTimers = new Set<ReturnType<typeof setTimeout>>();
-  private blend: BlendFn | null = null;
+  private presenter: DocumentLayerPresenter | null = null;
   private resolveConditionLiteral: ((raw: string) => string) | null = null;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
 
@@ -64,8 +87,8 @@ export class DocumentRevealManager implements IGameSystem {
   }
 
   /** 须在 Game.start 中于 CutsceneManager 就绪后注入 */
-  setBlendExecutor(fn: BlendFn): void {
-    this.blend = fn;
+  setLayerPresenter(presenter: DocumentLayerPresenter | null): void {
+    this.presenter = presenter;
   }
 
   /** 与 UI 展示一致：Flag 条件 string 型 value 比较前解析 [tag:…]（须与 wireTextResolve 同步） */
@@ -102,7 +125,7 @@ export class DocumentRevealManager implements IGameSystem {
     this.revealing.clear();
     this.clearPendingSfx();
     // 注入的回调闭包持有 CutsceneManager/Game 侧引用，销毁时必须放掉
-    this.blend = null;
+    this.presenter = null;
     this.resolveConditionLiteral = null;
     this.conditionCtxFactory = null;
   }
@@ -154,13 +177,6 @@ export class DocumentRevealManager implements IGameSystem {
     return base;
   }
 
-  private overlayIdFor(def: DocumentRevealDef): string {
-    const o = def.overlayId?.trim();
-    if (o) return o;
-    const id = def.id.trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-    return `docReveal_${id}`;
-  }
-
   getDocumentPhase(documentId: string): DocumentRevealPhase {
     const id = documentId.trim();
     if (!id || !this.defs.has(id)) return 'hidden';
@@ -181,30 +197,44 @@ export class DocumentRevealManager implements IGameSystem {
   }
 
   /**
-   * 条件满足则叠化揭示；已揭示则立即返回。供 Action revealDocument / 对话 runActions 使用。
+   * 显示这份文档：条件不满足显示揭示前的图，该揭示未揭示则播揭示动画，已揭示直接显示清晰图。
+   * 供 Action revealDocument / 对话 runActions 使用。
+   *
+   * @param opts.force 跳过 `revealCondition` 直接揭示；**不**让已揭示的重播动画。
    */
-  async checkAndReveal(documentId: string): Promise<void> {
+  async checkAndReveal(documentId: string, opts?: { force?: boolean }): Promise<void> {
     const id = documentId.trim();
     const def = this.defs.get(id);
     if (!def) {
       console.warn(`DocumentRevealManager: 未知 documentId ${id}`);
       return;
     }
-    if (this.revealed.has(id)) return;
+    const presenter = this.presenter;
+    if (!presenter) {
+      console.warn('DocumentRevealManager: 显示层未注入');
+      return;
+    }
+    const px = def.xPercent ?? 50;
+    const py = def.yPercent ?? 50;
+    const pw = def.widthPercent ?? 40;
+
+    // 已揭示：瞬时显示揭示后的图。不叠化、不响音效、不发 document:revealed
+    // ——这三样只属于「真的在播那一次动画」。
+    if (this.revealed.has(id)) {
+      await presenter.show(id, def.clearImagePath, px, py, pw);
+      return;
+    }
     // 重入守卫：blend 动画期间重复触发同一揭示会双跑叠化并重发 document:revealed；
     // 直接忽略后到的请求（下方 finally 保证集合最终会被清掉）。
     if (this.revealing.has(id)) return;
-    if (!evaluateConditionExpr(def.revealCondition, this.ctx())) return;
-    const blendFn = this.blend;
-    if (!blendFn) {
-      console.warn('DocumentRevealManager: blend 未注入');
+    // 条件不满足：显示揭示前的图，不记档、不写 flag、不响音效、不发事件。
+    // 这一档必须**出图**——早期实现在这里直接 return，于是"没到条件"和"没配这条"
+    // 在画面上都是一片空白，作者无从分辨。
+    if (opts?.force !== true && !evaluateConditionExpr(def.revealCondition, this.ctx())) {
+      await presenter.show(id, def.blurredImagePath, px, py, pw);
       return;
     }
 
-    const oid = this.overlayIdFor(def);
-    const x = def.xPercent ?? 50;
-    const y = def.yPercent ?? 50;
-    const w = def.widthPercent ?? 40;
     const dur = def.animation?.durationMs ?? 2000;
     const delay = def.animation?.delayMs ?? 0;
 
@@ -215,13 +245,13 @@ export class DocumentRevealManager implements IGameSystem {
     this.eventBus.emit('document:revealed', { documentId: id, customSfx: hasCustomSfx });
     this.scheduleRevealSfx(def, delay);
     try {
-      await blendFn(
-        oid,
+      await presenter.blend(
+        id,
         def.blurredImagePath,
         def.clearImagePath,
-        x,
-        y,
-        w,
+        px,
+        py,
+        pw,
         dur,
         delay,
       );
@@ -233,6 +263,20 @@ export class DocumentRevealManager implements IGameSystem {
     } finally {
       this.revealing.delete(id);
     }
+  }
+
+  /**
+   * 收掉这份文档的显示层。只动显示，不碰「已揭示」状态——收掉之后再
+   * `revealDocument` 会直接显示揭示后的图。
+   */
+  hideDocument(documentId: string): void {
+    const id = documentId.trim();
+    if (!id) return;
+    if (!this.defs.has(id)) {
+      console.warn(`DocumentRevealManager: 未知 documentId ${id}`);
+      return;
+    }
+    this.presenter?.hide(id);
   }
 
   /** 供 Debug 面板只读展示（含运行时阶段，非存档形状） */

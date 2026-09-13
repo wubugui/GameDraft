@@ -6,6 +6,7 @@ type: mechanism
 summary: 主窗门控靠 getattr 鸭子协议调 flush_to_model/confirm_close/reload_refs_from_model/commit_pending_on_leave/editor_undo——缺钩子不报错、静默漏网,签名跑偏同样静默,接入时必须逐项对齐
 status: active
 authority:
+  - tools/editor/main_window.py#_resync_dialogue_catalog_if_changed
   - tools/editor/main_window.py#_refresh_page_reference_candidates
   - tools/editor/main_window.py#_refresh_open_pages_after_disk_change
   - tools/editor/main_window.py#_commit_leaving_page
@@ -48,6 +49,10 @@ last_governed: 2026-09-11
    刚存的东西——候选是 `_rebuild_params()` 那一刻的快照,而 `set_project_context` 在 model/scene 未变时短路。
    自动路径(主窗回到前台 / 外置进程退出,`_dialogue_external_processes` 那张监视表)**必须在镜像真变了才重建**,
    否则每激活一次窗口白冻一下;起外置工具时别忘了把 `Popen` 登记进那张表,不然自动路径根本不会跑。
+   **闸要设在调用点上**:轨迹/vfx/音频三条是被调方自己门控的,图对话目录这条不是 —— 它一直无条件重建,
+   实测每次 alt-tab 回来白冻 218~1105ms(2026-09-12 现场,场景页 8 棵最外层 ActionEditor 全拆全建)。
+   现由 `_resync_dialogue_catalog_if_changed` 按图对话目录的磁盘签名(文件名+mtime+大小)挡在前面;
+   **外置进程退出那条仍是无条件重建**(那是真写盘边界,且一次性)。
    重扫函数要能被反复调用:每次重扫前先清掉自己上一轮记进 `load_anomalies` 的告警,不然同一个坏文件会越记越多。
 
 ## 已知坑

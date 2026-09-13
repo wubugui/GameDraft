@@ -395,6 +395,56 @@ const Edit = {
   deleteSlot(host, id) { const arr = Edit.slots(host.doc); const i = arr.findIndex((q) => q.id === id); if (i < 0) return false; arr.splice(i, 1); return true; },
   /** 插槽脚下的地面世界点（本地算；与烘焙机回填的 `world` 同式） */
   slotWorld(host, s) { const cal = host.cal; if (!cal) return null; return cal.sceneToWorldGround(num(s.x, 0), num(s.y, 0)); },
+  // ---------------------------------------------------------------- 音效关键点（时间轴上的事）
+  /** 关键点存的是**时间**（`atMs`）。"在曲线上点一下"只是作者面取时的手段：
+   *  点击 → 最近的密采样 → 那一帧的 atMs。所以整条曲线怎么挪、怎么投影、`flipX` 与否，都与它无关。 */
+  cues(doc) { doc.cues = Array.isArray(doc.cues) ? doc.cues : []; return doc.cues; },
+  findCue(doc, id) { return Edit.cues(doc).find((q) => q.id === id) || null; },
+  newCueId(doc) { const used = new Set(Edit.cues(doc).map((q) => q.id)); let i = 1; while (used.has(`cue_${i}`)) i++; return `cue_${i}`; },
+  /** 加一个关键点（还没选音效：`sound` 空串）。同一时刻允许有多条——一声落地一声碎瓦是常态。 */
+  addCue(host, atMs, sound) {
+    if (!Number.isFinite(atMs)) return null;
+    const c = { id: Edit.newCueId(host.doc), atMs: Math.max(0, Math.round(atMs)), sound: sound || '' };
+    Edit.cues(host.doc).push(c);
+    Edit.sortCues(host.doc);
+    return c.id;
+  },
+  /** 改时刻即重排:试听游标与运行时的"扫过即响"都吃升序,排一次比到处防一次便宜。
+   *  拖拽中数组会重排,所以右栏的轻量刷新按 **id** 找行,别按下标。 */
+  setCueTime(host, id, atMs) {
+    const c = Edit.findCue(host.doc, id); if (!c || !Number.isFinite(atMs)) return false;
+    c.atMs = Math.max(0, Math.round(atMs));
+    Edit.sortCues(host.doc);
+    return true;
+  },
+  /** 音效引用：空串 = 还没选；`volume` 是**本处音量**（覆盖素材级，口径见 src/data/audioCue.ts），不写 = 沿用素材级。 */
+  setCueSound(host, id, sfxId) {
+    const c = Edit.findCue(host.doc, id); if (!c) return false;
+    const sid = String(sfxId || '').trim();
+    const vol = Edit.cueVolume(c);
+    c.sound = sid && vol != null ? { id: sid, volume: vol } : sid;
+    return true;
+  },
+  setCueVolume(host, id, volume) {
+    const c = Edit.findCue(host.doc, id); if (!c) return false;
+    const sid = Edit.cueSound(c);
+    // 0 是合法的（"这里就是要哑"）：只有"没填 / 填了非数"才算沿用素材级
+    c.sound = Number.isFinite(volume) && volume >= 0 ? { id: sid, volume: Math.round(volume * 1000) / 1000 } : sid;
+    return true;
+  },
+  setCueLabel(host, id, label) { const c = Edit.findCue(host.doc, id); if (!c) return false; const l = String(label || '').trim(); if (l) c.label = l; else delete c.label; return true; },
+  renameCue(host, id, newId) {
+    const c = Edit.findCue(host.doc, id); const nid = String(newId || '').trim();
+    if (!c || !nid || nid === id) return false;
+    if (Edit.findCue(host.doc, nid)) return false;
+    c.id = nid; return true;
+  },
+  deleteCue(host, id) { const arr = Edit.cues(host.doc); const i = arr.findIndex((q) => q.id === id); if (i < 0) return false; arr.splice(i, 1); return true; },
+  sortCues(doc) { Edit.cues(doc).sort((a, b) => num(a.atMs, 0) - num(b.atMs, 0)); },
+  /** 引用取 id / 本处音量（裸串与对象两形态，别直接 `.id`——裸串形态会漏） */
+  cueSound(c) { const r = c && c.sound; if (typeof r === 'string') return r.trim(); if (r && typeof r === 'object') return String(r.id || '').trim(); return ''; },
+  cueVolume(c) { const r = c && c.sound; if (!r || typeof r !== 'object') return null; const v = r.volume; return Number.isFinite(v) && v >= 0 ? v : null; },
+
   /** 整条变换连插槽一起（插槽是地面上的站位：世界按 (x,z) 变换再落回地面，画面直接变换） */
   transformSlots(host, T) {
     const cal = host.cal;

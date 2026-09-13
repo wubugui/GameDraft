@@ -23,9 +23,11 @@ from ..project_model import ProjectModel
 from .. import theme
 from .image_path_picker import disk_path_for_runtime_url
 
-# 参考「屏」比例 16:9；预览是辅助查看面板，取较小尺寸（百分比相对 PREVIEW_W，缩放等比）
+# 预览是辅助查看面板，取较小尺寸（百分比相对 PREVIEW_W，缩放等比）。
+# 「屏」的比例**不写死**：百分比布局在运行时是相对 game_config 的逻辑视口算的，
+# 预览按别的比例画，x/y 百分比就摆不准（4:3 的游戏配 16:9 的预览，纵向全是错的）。
 PREVIEW_W = 320
-PREVIEW_H = int(round(PREVIEW_W * 9 / 16))
+DEFAULT_VIEWPORT = (1024.0, 768.0)
 DEBOUNCE_MS = 220
 MAX_PREVIEW_DELAY_MS = 6000
 MAX_PREVIEW_BLEND_MS = 12000
@@ -46,7 +48,8 @@ def _resolve_disk_path(model: ProjectModel | None, url: str) -> Path | None:
 class BlendOverlayPreviewWidget(QWidget):
     """
     双 QGraphicsPixmapItem：底 from、顶 to；顶不透明度 0→1 模拟 shader 的 mix（不透明区域等价）。
-    布局：虚拟屏 PREVIEW_W×PREVIEW_H，widthPercent / 中心百分比与运行时一致；高度按 **to** 图比例。
+    布局：虚拟屏按 game_config 的逻辑视口比例（每次刷新重取，改了配置下一次刷新就跟上），
+    widthPercent / 中心百分比与运行时一致；高度按 **to** 图比例。
     """
 
     def __init__(
@@ -58,10 +61,11 @@ class BlendOverlayPreviewWidget(QWidget):
         super().__init__(parent)
         self._model = model
         self._get_params = get_params
+        self._screen_w = float(PREVIEW_W)
+        self._screen_h = float(PREVIEW_W) * DEFAULT_VIEWPORT[1] / DEFAULT_VIEWPORT[0]
         self._scene = QGraphicsScene(self)
-        self._scene.setSceneRect(QRectF(0, 0, PREVIEW_W, PREVIEW_H))
         self._view = QGraphicsView(self._scene)
-        self._view.setFixedSize(PREVIEW_W, PREVIEW_H)
+        self._sync_screen_size()
         self._view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._view.setFrameShape(QFrame.Shape.StyledPanel)
@@ -119,10 +123,27 @@ class BlendOverlayPreviewWidget(QWidget):
         except Exception:
             return {}
 
+    def _sync_screen_size(self) -> None:
+        """把虚拟屏对齐当前 game_config 的逻辑视口比例（宽固定，高按比例）。"""
+        vw, vh = DEFAULT_VIEWPORT
+        if self._model is not None:
+            try:
+                vw, vh = self._model.game_viewport_size()
+            except Exception:
+                vw, vh = DEFAULT_VIEWPORT
+        if not (vw > 0 and vh > 0):
+            vw, vh = DEFAULT_VIEWPORT
+        w = float(PREVIEW_W)
+        h = float(max(1, round(w * (vh / vw))))
+        self._screen_w, self._screen_h = w, h
+        self._scene.setSceneRect(QRectF(0, 0, w, h))
+        self._view.setFixedSize(int(w), int(h))
+
     def _reload_scene(self) -> None:
         self._cap_note = ""
         self._scene.clear()
-        bg = QGraphicsRectItem(0, 0, PREVIEW_W, PREVIEW_H)
+        self._sync_screen_size()
+        bg = QGraphicsRectItem(0, 0, self._screen_w, self._screen_h)
         bg.setBrush(QBrush(QColor(0x1A, 0x1A, 0x2E)))
         bg.setPen(Qt.PenStyle.NoPen)
         self._scene.addItem(bg)
@@ -159,7 +180,7 @@ class BlendOverlayPreviewWidget(QWidget):
             self._status.setText("无法预览：图片加载失败。")
             return
 
-        disp_w = PREVIEW_W * (w_pct / 100.0)
+        disp_w = self._screen_w * (w_pct / 100.0)
         iw_t = max(1, pm_to.width())
         ih_t = max(1, pm_to.height())
         disp_h = disp_w * (ih_t / iw_t)
@@ -177,8 +198,8 @@ class BlendOverlayPreviewWidget(QWidget):
             Qt.TransformationMode.SmoothTransformation,
         )
 
-        cx = PREVIEW_W * (x_pct / 100.0)
-        cy = PREVIEW_H * (y_pct / 100.0)
+        cx = self._screen_w * (x_pct / 100.0)
+        cy = self._screen_h * (y_pct / 100.0)
         x0 = cx - disp_w / 2.0
         y0 = cy - disp_h / 2.0
 
@@ -192,7 +213,8 @@ class BlendOverlayPreviewWidget(QWidget):
         self._scene.addItem(self._item_to)
 
         note = self._cap_note or (
-            "构图已更新。播放时若 delay/duration 超过上限，预览会自动截断（见状态行）。"
+            f"构图已更新（虚拟屏 {self._screen_w:.0f}×{self._screen_h:.0f}，"
+            f"比例取自 game_config 视口）。播放时若 delay/duration 超过上限，预览会自动截断。"
         )
         self._status.setText(note)
 

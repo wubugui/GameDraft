@@ -325,6 +325,26 @@ def test_mover_switch_between_target_and_spawn(model, scene_id, qt_app) -> None:
     assert out.get("target") == "player" and "spawn" not in out
 
 
+def test_spawn_render_raw_roundtrip(model, scene_id, qt_app) -> None:
+    """`spawn.renderRaw`（按原像素画：不受光也不被挡）：勾了才写，不勾整键不写；打开→保存原样回写。"""
+    from PySide6.QtWidgets import QCheckBox
+    from tools.editor.shared.action_editor import ActionEditor
+
+    disk = {"type": "playTrajectory", "params": {
+        "trajectoryId": "coin_drop_demo",
+        "spawn": {"kind": "image", "src": "/resources/runtime/images/trajectory/coin.png", "renderRaw": True}}}
+    ed = ActionEditor("t")
+    ed.set_project_context(model, scene_id)
+    ed.set_data([disk])
+    row = _play_row(ed)
+    raw = row._param_widgets["_spawnRenderRaw"]
+    assert isinstance(raw, QCheckBox) and raw.isChecked(), "磁盘上 renderRaw=true 要回显成勾上"
+    assert ed.to_list()[0]["params"]["spawn"] == disk["params"]["spawn"], "一个字节不动地回写"
+
+    raw.setChecked(False)
+    assert "renderRaw" not in ed.to_list()[0]["params"]["spawn"], "缺省档（正常受光被挡）不写这个键"
+
+
 def test_trajectory_info_line_reports_binding(model, scene_id, qt_app) -> None:
     """轨迹选择器旁边的说明行：场景曲线报绑定场景与插槽数，相对曲线报"必须给位置"。"""
     from PySide6.QtWidgets import QLabel
@@ -352,6 +372,8 @@ class _MiniModel:
 
     def __init__(self, trajectories: dict, npcs=(("npc_a", "甲"),)) -> None:
         self.trajectories = dict(trajectories)
+        # 音效关键点要查 audio_config.sfx（与 playSfx 同一区，不回落别的区）
+        self.audio_config = {"sfx": {"sfx_ok": {"src": "/a.wav"}}, "bgm": {}, "ambient": {}, "voice": {}}
         self.scenes = {
             "s1": {
                 "id": "s1",
@@ -538,6 +560,41 @@ def test_validator_binding_and_slots() -> None:
     assert _validate({"t1": _traj(authoring={"sceneId": "s1", "anchor": {"x": 0, "y": 0}})}) == []
     msgs = _issue_texts(_validate({"t1": _traj(authoring={"sceneId": "s1"})}), "warning")
     assert any("authoring.origin" in m for m in msgs)
+
+
+def test_validator_cues() -> None:
+    """音效关键点：形状 / id 唯一 / atMs / sound 落在 audio_config.sfx。
+
+    这一族的错**全是静默的**（未知 sfx id 运行时直接 return、atMs 非数按 0 = 开播就响），
+    所以红线在这儿：合法形态零告警，坏形态一条都不许漏过去。
+    """
+    assert _validate({"t1": _traj(cues=[{"id": "c1", "atMs": 250, "sound": "sfx_ok"}])}) == []
+    assert _validate({"t1": _traj(cues=[{"id": "c1", "atMs": 0, "sound": {"id": "sfx_ok", "volume": 0.5}, "label": "落地"}])}) == []
+    assert _validate({"t1": _traj()}) == []          # 没有 cues 键 = 老资产，零成本
+
+    errs = _issue_texts(_validate({"t1": _traj(cues="nope")}), "error")
+    assert any("cues 须为数组" in m for m in errs)
+
+    bad = _validate({"t1": _traj(cues=[
+        {"id": "", "atMs": 0, "sound": "sfx_ok"},
+        {"id": "c", "atMs": "早点", "sound": "sfx_ok"},
+        {"id": "c", "atMs": -5, "sound": "sfx_ok"},
+        "x",
+    ])})
+    errs = _issue_texts(bad, "error")
+    assert any("cues[0] 缺少非空 id" in m for m in errs)
+    assert any("cues[1].atMs 须为有限数" in m for m in errs)
+    assert any("cues[2].atMs 不能为负" in m for m in errs)
+    assert any("id 'c' 重复" in m or "重复" in m for m in errs)
+    assert any("cues[3] 须为对象" in m for m in errs)
+
+    # 未知 sfx id / 还没选音效 / 超出时长：都是 warning（运行时静默，但拦不住保存）
+    warns = _issue_texts(_validate({"t1": _traj(cues=[{"id": "c1", "atMs": 100, "sound": "sfx_不存在"}])}), "warning")
+    assert any("audio_config.sfx" in m for m in warns)
+    warns = _issue_texts(_validate({"t1": _traj(cues=[{"id": "c1", "atMs": 100}])}), "warning")
+    assert any("为空" in m for m in warns)
+    warns = _issue_texts(_validate({"t1": _traj(cues=[{"id": "c1", "atMs": 9000, "sound": "sfx_ok"}])}), "warning")
+    assert any("超出轨迹时长" in m for m in warns)
 
 
 def test_validator_reports_unparseable_files_as_errors(tmp_path: Path) -> None:

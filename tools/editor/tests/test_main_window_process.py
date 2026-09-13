@@ -230,6 +230,81 @@ def test_voice_workbench_launches_the_right_module_with_the_project_root(tmp_pat
     assert passed_root == root
 
 
+def test_草木工作台起的是对的模块并带上工程根(tmp_path, monkeypatch):
+    """与配音台同一类坏法:模块路径打错(点了没反应)、或 cwd 没指到工程根
+    (工具起来了但读的是另一个仓库,看着像"这个场景没烘过")。草木台走 subprocess.Popen 这条,
+    所以从 Popen 的入参钉。"""
+    seen = {}
+    root = tmp_path / "repo"
+    root.mkdir()
+
+    class FakeProc:
+        pass
+
+    def fake_popen(cmd, **kw):
+        seen["cmd"] = cmd
+        seen["kw"] = kw
+        return FakeProc()
+
+    monkeypatch.setattr(main_window.subprocess, "Popen", fake_popen)
+    owner = SimpleNamespace(
+        _ensure_valid_tool_root=lambda: root,
+        _dialogue_external_processes=[],
+        _dialogue_process_watch_timer=SimpleNamespace(start=lambda: None),
+        _status=SimpleNamespace(showMessage=lambda *a: None),
+    )
+
+    main_window.MainWindow.open_sway_workbench(owner, "跑马梁")
+
+    assert seen["cmd"][1:] == ["-m", "tools.sway_workbench", "--open", "跑马梁"]
+    assert seen["kw"]["cwd"] == str(root.resolve()), "工程根必须传下去"
+    assert len(owner._dialogue_external_processes) == 1, "外置进程要登记进监视表"
+
+
+def test_草木工作台没有有效工程根就不起(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main_window.subprocess, "Popen", lambda *a, **k: calls.append(a))
+    owner = SimpleNamespace(_ensure_valid_tool_root=lambda: None)
+
+    main_window.MainWindow.open_sway_workbench(owner)
+
+    assert calls == []
+
+
+def test_场景页那个按钮把当前场景递给起进程入口():
+    """「草木摆动 → 在草木工作台中打开…」只负责把当前场景 id 递给主窗口。
+
+    ⚠ 这个 handler 在钩子缺失时**静默 return**(与粒子那版同一写法):
+    主窗口那个方法哪天被改名,按钮就变成点了没反应、零报错。所以这条必须钉着 ——
+    三种情形各一断言,尤其是"递过去的确实是当前场景"。
+    """
+    from tools.editor.editors.scene_editor import ScenePropertyPanel
+
+    got: list[str] = []
+    owner = SimpleNamespace(
+        _sc_id=SimpleNamespace(text=lambda: "跑马梁"),
+        window=lambda: SimpleNamespace(open_sway_workbench=lambda sid: got.append(sid)),
+    )
+    ScenePropertyPanel._open_sway_workbench(owner)
+    assert got == ["跑马梁"]
+
+    got.clear()
+    owner._sc_id = SimpleNamespace(text=lambda: "  雾津街头  ")
+    ScenePropertyPanel._open_sway_workbench(owner)
+    assert got == ["雾津街头"], "两头的空白要去掉,否则工作台按这个名字找不到场景"
+
+    # 主窗口没有那个入口时静默返回,不许炸掉整个场景页
+    owner.window = lambda: SimpleNamespace()
+    ScenePropertyPanel._open_sway_workbench(owner)
+
+
+def test_开发启动器认识草木工作台():
+    """`tools/dev/launch.py` 的名字表是另一处入口,漏登记 = 命令行起不来(且只报"未知工具")。"""
+    from tools.dev import launch
+
+    assert launch.TOOL_MODULES["sway-workbench"][0] == "tools.sway_workbench"
+
+
 def test_voice_workbench_is_not_launched_without_a_valid_root(tmp_path):
     calls = []
     owner = SimpleNamespace(
@@ -240,3 +315,64 @@ def test_voice_workbench_is_not_launched_without_a_valid_root(tmp_path):
     main_window.MainWindow._launch_voice_workbench_external(owner)
 
     assert calls == []
+
+
+# ============================================================ 目录刷新的"真变了才重建"闸
+def _catalog_owner(tmp_path):
+    """够 _resync_dialogue_catalog_if_changed 跑起来的最小 owner。"""
+    graphs = tmp_path / "dialogues" / "graphs"
+    graphs.mkdir(parents=True)
+    (graphs / "a.json").write_text("{}", encoding="utf-8")
+    calls: list[str] = []
+    owner = SimpleNamespace(
+        _model=SimpleNamespace(dialogues_path=tmp_path / "dialogues"),
+        _dialogue_catalog_signature=None,
+        _reload_all_reference_catalogs=lambda: calls.append("reload"),
+    )
+    owner._dialogue_graph_catalog_signature = (
+        lambda: main_window.MainWindow._dialogue_graph_catalog_signature(owner)
+    )
+    return owner, calls, graphs
+
+
+def _resync(owner):
+    main_window.MainWindow._resync_dialogue_catalog_if_changed(owner)
+
+
+def test_主窗回前台_图对话目录没变就不重建(tmp_path):
+    """每 alt-tab 一次就全页重建 = 每次回来白冻 0.2~1.1 秒（实测场景页）。
+
+    契约见 mainwindow-editor-hooks 契约 6：自动路径必须"镜像真变了才重建"。
+    """
+    owner, calls, _graphs = _catalog_owner(tmp_path)
+
+    _resync(owner)                 # 第一次没有基准 → 允许刷一次
+    assert calls == ["reload"]
+
+    _resync(owner)
+    _resync(owner)
+    assert calls == ["reload"], "目录一个字节没动，却又重建了整页"
+
+
+def test_外置编辑器写了图_下一次回前台必须重建(tmp_path):
+    owner, calls, graphs = _catalog_owner(tmp_path)
+    _resync(owner)
+    calls.clear()
+
+    (graphs / "b.json").write_text("{}", encoding="utf-8")   # 外置编辑器新存了一张图
+    _resync(owner)
+    assert calls == ["reload"], "目录变了却没重建 —— 下拉里就永远看不见新图"
+
+    _resync(owner)
+    assert calls == ["reload"], "变化只该触发一次重建"
+
+
+def test_取不到目录签名时宁可多刷一次(tmp_path):
+    owner, calls, _graphs = _catalog_owner(tmp_path)
+    owner._model = SimpleNamespace(dialogues_path=None)
+    owner._dialogue_graph_catalog_signature = (
+        lambda: main_window.MainWindow._dialogue_graph_catalog_signature(owner)
+    )
+    _resync(owner)
+    _resync(owner)
+    assert calls == ["reload", "reload"], "签名取不到时必须 fail-safe 地重建（不许当成没变）"

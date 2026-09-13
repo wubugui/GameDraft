@@ -543,6 +543,21 @@ export class AssetManager {
     return out;
   }
 
+  /**
+   * 丢掉一张已缓存的纹理（连同显存）。DEV 的热重载专用：草木工作台每推一次都换 `?v=`，
+   * 同一张图会在缓存里各占一份，不主动丢就等着 LRU 把别人的东西挤出去（几 MB 一张、推几十次）。
+   * 被 scope pin 住的不丢（那是场景正在用的）——返回 false 让调用方知道没丢成。
+   */
+  dropTexture(path: string): boolean {
+    const key = resolveAssetPath(path);
+    const bucket = this.buckets.texture;
+    const entry = bucket.entries.get(key);
+    if (!entry || entry.pins.size > 0) return false;
+    this.disposeEntry(entry);
+    bucket.entries.delete(key);
+    return true;
+  }
+
   clearCache(type?: AssetType): void {
     const types = type ? [type] : Object.keys(this.buckets) as AssetType[];
     for (const t of types) {

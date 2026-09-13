@@ -135,6 +135,30 @@ class TestAssets:
             "image": "/x.png", "sizeWu": 4, "lit": False, "emissive": 0.5})]), warn)
         assert any("emissive 没有意义" in w for w in warn), warn
 
+    def test_socket_attach_is_workbench_state_next_to_the_anchor(self) -> None:
+        """``authoring.attach``（锚点模式=角色挂点）：与 anchor 同一块工作态，运行时忽略整个 authoring。
+
+        键序钉在 anchor 之后；**不在的时候一个字节都不加**（关掉这一档的资产必须字节不变）。
+        """
+        doc = _doc()
+        doc["authoring"] = {"note": "n", "attach": {"offsetX": 12, "heightWu": 110}, "sceneId": "s",
+                            "anchor": {"y": 2, "x": 1}}
+        out = assets.normalize_effect(doc)
+        assert list(out["authoring"].keys()) == ["sceneId", "anchor", "attach", "note"]
+        assert list(out["authoring"]["attach"].keys()) == ["heightWu", "offsetX"]
+        hw = out["authoring"]["attach"]["heightWu"]
+        assert hw == 110 and isinstance(hw, int), "整数不许漂成 float"
+        plain = assets.normalize_effect(_doc())
+        assert "authoring" not in plain, "没开这一档 = 一个键都不写"
+        for bad, msg in (({"offsetX": 3}, "heightWu"), ({"heightWu": -1}, "heightWu"),
+                         ({"heightWu": "110"}, "heightWu"), ({"heightWu": 1, "offsetX": "x"}, "offsetX"),
+                         (5, "attach")):
+            d = _doc()
+            d["authoring"] = {"attach": bad}
+            with pytest.raises(ValueError) as e:
+                assets.normalize_effect(d)
+            assert msg in str(e.value), str(e.value)
+
     def test_save_load_rename_duplicate_delete_in_tmp(self, tmp_path, monkeypatch) -> None:
         monkeypatch.setattr(assets, "VFX_DIR", tmp_path)
         p, norm, warn = assets.save_asset(_doc("a", [_emitter()]))
@@ -221,10 +245,13 @@ def test_every_response_is_uncacheable(server) -> None:
 
 
 def test_vendor_route_serves_the_shared_files_and_nothing_else(server) -> None:
-    """与轨迹工作台共用的三份经 /vendor 原样提供（不 fork）；白名单之外一律 404。"""
+    """与轨迹工作台共用的那几份经 /vendor 原样提供（不 fork）；白名单之外一律 404。"""
     get, _post, _ = server
     body, hd = get("/vendor/gizmo.js")
     assert b"const Gizmo" in body and "javascript" in hd.get("Content-Type", "")
+    # 页内下拉：页面靠它掐死系统原生弹窗（高 DPI 下每开一次再乘一次缩放），route 掉了就又变回原生
+    dd, _ = get("/vendor/dropdown.js")
+    assert b"ddlist" in dd and b"preventDefault" in dd
     for name in ("common.js", "history.js"):
         b2, _ = get(f"/vendor/{name}")
         assert len(b2) > 100
@@ -280,6 +307,15 @@ def test_publish_normalizes_before_sending_to_the_game(server) -> None:
     _get, post, _tmp = server
     r = post("/api/link/publish", {"effectId": "zz_a", "def": {"id": "zz_a", "emitters": [{"id": "a", "appearance": {"sizeWu": -1}, "spawn": {"max": 1}}]}})
     assert r["ok"] is False and "sizeWu" in r["err"]
+    # 带着工作态（挂点预览）的那份照样过闸门（游戏那边忽略整个 authoring）。
+    # 地址先钉到死端口：绝不往真在跑的游戏里发临时效果（本机真有 dev server 在跑，实测 connected=True）。
+    from tools.vfx_workbench import serve
+    serve.LINK.set_base("http://127.0.0.1:9")
+    good = _doc("zz_a")
+    good["authoring"] = {"attach": {"heightWu": 110}, "anchor": {"x": 1, "y": 2}}
+    r2 = post("/api/link/publish", {"effectId": "zz_a", "def": good})
+    assert r2["ok"] is False and r2.get("connected") is False, r2            # 连不上 ≠ 形状被拒
+    assert "attach" not in (r2.get("err") or "") and "sizeWu" not in (r2.get("err") or ""), r2
 
 
 def test_link_status_answers_even_without_a_game(server) -> None:
@@ -298,6 +334,8 @@ def test_scene_routes_and_shell_probe(server) -> None:
     assert any(s["id"] == SCENE for s in scenes["scenes"])
     sc, _ = get(f"/api/scene?id={urllib.parse.quote(SCENE)}")
     assert sc["ok"] and sc["scene"]["cal"] and "marks" in sc["scene"]
+    # 本地预览要跟游戏同口径跑：风（薄片只吃它）、实例（铺撒区域）、透视（薄片尺寸 / 位移）一样不少
+    assert {"wind", "vfx", "perspectiveScale"} <= set(sc["scene"])
     ground, _ = get(f"/api/scene_ground?id={SCENE}&bg={sc['scene']['background']}")
     assert len(ground) > 8
     g = sc["scene"]

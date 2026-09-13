@@ -75,6 +75,7 @@ import type {
   FootstepConfig as FootstepConfigData,
   LightDef,
   NpcDef,
+  PositionRef,
   VfxFieldDef,
   VfxFlockState,
   TrajectoryPlayOptions,
@@ -106,6 +107,7 @@ import { DebugPanelUI } from '../ui/DebugPanelUI';
 import { GameStateController } from './GameStateController';
 import { StringsProvider } from './StringsProvider';
 import { TextDisplaySettings } from './TextDisplaySettings';
+import { SmellDisplaySettings } from './SmellDisplaySettings';
 import { GameState, normalizeEmoteBubbleScale } from '../data/types';
 import type {
   ActionDef,
@@ -139,6 +141,7 @@ import { buildCharacterRegistry } from '../data/characterRegistry';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { loadSocketsForAnim, type ResolvedSockets } from '../data/animationSockets';
+import { normalizeAudioCue } from '../data/audioCue';
 import {
   DEFAULT_OVERLAY_SFX_CUE,
   overlayImagePath,
@@ -151,6 +154,7 @@ import {
   parsePropPresets,
   resolvePropAttach,
   type PropPresetTable,
+  type ResolvedPropAttach,
 } from '../data/propPresets';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from './assetPath';
@@ -223,8 +227,13 @@ import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { resolveText, type ResolveContext } from './resolveText';
 import { VfxSystem } from '../systems/vfx/VfxSystem';
+import { FLICKER_PUSH_HZ_CHOICES, HeldPropSystem } from '../systems/heldProp/HeldPropSystem';
 import { createFieldVfxSpace, createPlanarVfxSpace, type VfxSpace } from '../systems/vfx/vfxSpace';
+import { RuntimeSwaySync } from '../dev/runtimeSwaySync';
+import { SceneWindState, sampleSceneWind } from '../utils/sceneWind';
+import { SwayBackground, loadBackgroundSwayInput, swayInsertIndex } from '../rendering/backgroundSway';
 import { VfxRenderer } from '../rendering/vfx/VfxRenderer';
+import { VfxConfineOverlay } from '../rendering/vfx/VfxConfineOverlay';
 import { viewDirWorld } from '../utils/sceneSpace';
 import { mergeGameConfig } from './gameConfigMerge';
 import { BubbleChatterSystem, type BubbleSpeakerRef } from '../systems/BubbleChatterSystem';
@@ -246,8 +255,8 @@ import {
   type ScriptedSpeakerEntity,
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
-import { Culler, Graphics, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
-import { dialogueGraphJsonUrl, sceneJsonUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
+import { Container, Culler, Graphics, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
 import type { TrajectoryAsset, TrajectoryKeyframe } from '../data/types';
 import type { TrajectoryEndReason } from '../systems/TrajectorySystem';
 import {
@@ -255,7 +264,11 @@ import {
   flipTrajectoryKeyframes,
   projectWorldKeyframes,
 } from '../utils/trajectoryProjection';
-import { parsePositionRef, resolvePositionRef as resolvePositionRefPure, trajectoryBinding, trajectoryOrigin } from '../utils/positionRef';
+import {
+  evaluatePositionRefNow, parsePositionRef, positionRefAssetProblem,
+  resolvePositionRef as resolvePositionRefPure, trajectoryBinding, trajectoryOrigin,
+  type PositionRefNowLookups,
+} from '../utils/positionRef';
 import { makeOwnerOrigin, resolveDialogueOwner } from './actionOrigin';
 import {
   coerceRuntimeFieldValue,
@@ -465,13 +478,22 @@ export class Game {
   private dialogueVoiceDirector: DialogueVoiceDirector;
   /** 玩家的文字呈现偏好（逐字显示开关 / 速度）：设置页写、对白框与遭遇框读 */
   private textDisplaySettings: TextDisplaySettings;
+  private smellDisplaySettings: SmellDisplaySettings;
   private dayManager: DayManager;
   private cutsceneManager!: CutsceneManager;
   private cutsceneRenderer!: CutsceneRenderer;
   private resolveActorFn!: (id: string) => ICutsceneActor | null;
-  /** 相机跟随目标实体 id（cameraFollowActor 设、cameraStopFollow 清）：仅过场态每帧锚到该
-   *  实体实时坐标；null=默认锚点（探索/动作链跟玩家）。过场结束由主循环自动解除，不入存档。 */
+  /** 相机跟随目标实体 id（cameraFollowActor 设、cameraStopFollow 清）：过场 / 动作链 / 对话态每帧锚到该
+   *  实体实时坐标；null=默认锚点（探索/动作链跟玩家）。回到自由探索由主循环自动解除，不入存档。 */
   private cameraFollowTargetId: string | null = null;
+  /**
+   * 相机跟随一个**位置引用**（cameraFollowActor 的 `at`，2026-09-12）：每帧求值，与 `cameraFollowTargetId`
+   * 二选一（设一个就清另一个）。求不出（曲线还没开播 / 实体暂不在）= 镜头原地不动、**不解除**——
+   * 引用点还没产生，没东西可跟；播完了播放头停在终点，镜头也就停在终点。解除时机同实体跟随。
+   */
+  private cameraFollowRef: PositionRef | null = null;
+  /** 每帧求值用的查找（一次建好复用，不每帧分配） */
+  private positionRefNowLookups: PositionRefNowLookups | null = null;
   /** 跟随模式：true=硬锁居中（每帧 snapTo，逐帧锁定），false=平滑跟随（camera.follow 插值）。 */
   private cameraFollowSnap = true;
   /** 地图节点 sceneId -> 显示名；供 [tag:scene:…] 与 NPC 全局名缓存扫描 */
@@ -618,7 +640,33 @@ export class Game {
   private perspectiveScaleResolver: ScenePerspectiveScaleResolver | null = null;
   /** 世界空间粒子 / 群体（蝙蝠、滴水、香火烟、萤火）：模拟在系统层，画在实体层的批网格里 */
   private vfxSystem: VfxSystem;
+  /**
+   * 手持挂件（火把 / 灯笼）与运行时灯。手持物入档（玩法事实），表现全是派生的：
+   * 灯与效果每帧跟着挂点走，切场景 / 读档各重派生一次。
+   */
+  private heldPropSystem: HeldPropSystem;
+  /**
+   * 场景风：一份参数 + 一个钟。粒子（经 `VfxSystem.getWind`）与背景草木摆动（`swayBackground`）
+   * 读的是同一个，所以一阵风两边同一拍（见 [[scene-wind]]）。组装层持有，逐帧推钟。
+   */
+  private readonly sceneWind = new SceneWindState();
+  /** 风采样的复用缓冲（热路径零分配，与粒子侧同一习惯） */
+  private readonly windSampleTmp = new Float32Array(3);
+  /** "这个场景没有光照、手持灯不会亮"只报一次的场景 id（见 applySceneDynamicLights） */
+  private dynamicLightMuteWarnedFor = '';
+  /** 没点亮的背景上的草木摆动 mesh（场景级；卸载钩子里先于纹理销毁） */
+  private swayBackground: SwayBackground | null = null;
+  /** 当前这份草木是不是接在打光的背景上（只产位移图、由 LitBackground 读；卸载 / 重装前要先解绑） */
+  private swayLit = false;
+  /** 当前场景的主背景纹理（工作台重烘后原地重装要用它重建拆层） */
+  private swayPrimary: Texture | null = null;
+  /** DEV：草木工作台 → 游戏的实时联动（重烘完原地重装，不切场景） */
+  private swaySync: RuntimeSwaySync | null = null;
+  /** 当前这份拆层装了哪几个纹理 URL（热重载时按它把上一份丢掉，否则每推一次漏一套显存） */
+  private swayTexUrls: string[] = [];
   private vfxRenderer: VfxRenderer | null = null;
+  /** F2「粒子」页勾上才建：粒子区域的框线 + 边带内沿（调试叠加，不入档、不持久） */
+  private vfxConfineOverlay: VfxConfineOverlay | null = null;
 
   /** 当前场景辐照度探针 RT（逐 entity 色调融入），场景卸载时销毁 */
   private currentProbe: RenderTexture | null = null;
@@ -839,6 +887,7 @@ export class Game {
     // 构造期只立起缺省值；真正的偏好在 start() 里 hydrate（文件读盘是异步的），
     // 落点早于任何一次开菜单与首句台词。
     this.textDisplaySettings = new TextDisplaySettings();
+    this.smellDisplaySettings = new SmellDisplaySettings();
     this.dayManager = new DayManager(this.eventBus, this.flagStore, this.actionExecutor);
     this.waterMinigameManager = new WaterMinigameManager();
     this.sugarWheelMinigameManager = new SugarWheelMinigameManager();
@@ -943,6 +992,40 @@ export class Game {
       conditionContext: () => this.buildConditionEvalContext(),
       playSfxAt: (id, at) => { this.audioManager.playSfxAt(id, { x: at[0], y: at[1], z: at[2] }); },
       log: (m) => { if (import.meta.env.DEV) console.warn(`[vfx] ${m}`); this.debugPanelUI?.log(`[vfx] ${m}`); },
+      getWind: () => ({ params: this.sceneWind.params, time: this.sceneWind.time }),
+    });
+    /**
+     * 手持挂件与运行时灯。依赖同样全走窄回调：
+     * - 位置一律经 `vfxSystem.sceneToWorld`（= `utils/sceneSpace` 那**一份**画面点→M-world
+     *   换算，与摆灯、空间音同源）——铁律 0 要求的"一次转到底"就在那里，本系统不自己拼；
+     * - 灯不写作者数据，经 `sceneLighting.setDynamicLights`（另一层）加进去；
+     * - 风取场景风的同一份参数与同一个钟（火焰的波动幅度吃它）。
+     */
+    this.heldPropSystem = new HeldPropSystem({
+      getPreset: (id) => this.propPresetRegistry[id],
+      getSocketLocalPose: (targetId, socket) => {
+        const pose = this.spriteEntityOf(targetId)?.getSocketPose(socket);
+        return pose ? { x: pose.x, y: pose.y } : null;
+      },
+      getEntityContact: (targetId) => this.entityContactOf(targetId),
+      listSockets: (targetId) => this.spriteEntityOf(targetId)?.listSocketNames() ?? null,
+      sceneToLightWorld: (x, y, h) => this.vfxSystem.sceneToWorld(x, y, h),
+      windSpeedAt: (world, heightWu) => {
+        const p = this.sceneWind.params;
+        if (!p) return 0;
+        sampleSceneWind(p, this.sceneWind.time, world[0], world[2], heightWu, this.windSampleTmp);
+        return Math.hypot(this.windSampleTmp[0], this.windSampleTmp[2]);
+      },
+      attachView: (targetId, socket, resolved) => this.attachSocketView(targetId, socket, resolved),
+      detachView: (targetId, socket) => this.detachSocketView(targetId, socket),
+      setDynamicLights: (lights) => this.applySceneDynamicLights(lights),
+      setLightIntensityScales: (scales) => this.applySceneLightIntensityScales(scales),
+      playVfx: (effect, world) => this.vfxSystem.playVfx({ effect, followWorld: world }),
+      moveVfx: (id, world) => this.vfxSystem.moveInstanceAnchor(id, world),
+      stopVfx: (id) => this.vfxSystem.stopVfx(id),
+      softStopVfx: (id) => this.vfxSystem.stopVfxSoft(id),
+      setVfxRate: (id, k) => this.vfxSystem.setInstanceRateScale(id, k),
+      log: (m) => { if (import.meta.env.DEV) console.warn(`[heldProp] ${m}`); this.debugPanelUI?.log(`[heldProp] ${m}`); },
     });
     // 载荷就绪(depthLoader 内已 await,先于 scene:ready):把行走面深度场交给深度系统——
     // 遮挡脚点/碰撞反投影/影子落地面从此以它为真值,不再用 floor_depth_A/B 全图拟合直线
@@ -971,10 +1054,20 @@ export class Game {
     // 章节导演（C2）：按清单在 scene:revealed / narrative:stateChanged 上评估开拍/收工；
     // 自身无状态（live 集在叙事档），控制口与条件工厂在下方统一接线。
     this.narrativePackageDirector = new NarrativePackageDirector(this.eventBus);
-    // 烘焙式轨迹播放：依赖只有一件——NPC 目标开播时要停巡逻，否则巡逻协程会把实体抢回去
-    // （同一个理由见 setupSceneReadyHandler 里 NPC 重建后的 stopNpcPatrol）。
+    // 烘焙式轨迹播放。两件依赖：NPC 目标开播时要停巡逻，否则巡逻协程会把实体抢回去
+    // （同一个理由见 setupSceneReadyHandler 里 NPC 重建后的 stopNpcPatrol）；
+    // 播放头扫过音效关键点时发声——**不带位置**（制作人 2026-09-12 定），
+    // 走与 `playSfx` 动作同一条口（未知 id 静默不响、本处音量覆盖素材级，见 data/audioCue.ts）。
     this.trajectorySystem = new TrajectorySystem({
       suspendPatrol: (npcId) => this.stopNpcPatrol(npcId),
+      playCue: (cue, trajectoryId) => {
+        const sfx = normalizeAudioCue(cue?.sound);
+        if (!sfx) {
+          console.warn(`[trajectory] 轨迹 "${trajectoryId}" 的音效关键点 "${cue?.id ?? ''}" 没有音效 id，跳过`);
+          return;
+        }
+        this.audioManager.playSfx(sfx.id, sfx.volume);
+      },
     });
 
     const ctx = { eventBus: this.eventBus, flagStore: this.flagStore, strings: this.stringsProvider, assetManager: this.assetManager };
@@ -1022,6 +1115,8 @@ export class Game {
       { name: 'trajectorySystem', system: this.trajectorySystem },
       // 粒子 / 群体是表演态：serialize 恒为空桶，deserialize = 整批散掉
       { name: 'vfxSystem', system: this.vfxSystem },
+      // 手持挂件：**只有手持物（persistent 预设）入档**，存的是玩法事实，表现全派生
+      { name: 'heldPropSystem', system: this.heldPropSystem },
     ];
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.init(ctx);
@@ -1346,7 +1441,8 @@ export class Game {
     }
     const frames = this.resolveTrajectoryFrames(asset, opts.flipX === true);
     const reason = await this.trajectorySystem.play(
-      { id: asset.id || trajectoryId, keyframes: frames },
+      // 音效关键点是时间轴上的事，与投影 / flipX / 播放位置全无关：整份透传，播放系统按时间触发
+      { id: asset.id || trajectoryId, keyframes: frames, cues: asset.cues },
       target,
       { anchor },
     );
@@ -1366,17 +1462,60 @@ export class Game {
     const ref = parsePositionRef(raw);
     if (!ref) return null;
     return resolvePositionRefPure(ref, {
-      entityPosition: (id) => {
-        const actor = this.resolveActorFn(id);
-        if (actor) return { x: actor.x, y: actor.y };
-        const hs = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === id);
-        return hs ? { x: hs.def.x, y: hs.def.y } : null;
-      },
+      entityPosition: (id) => this.positionRefEntityPosition(id),
       loadTrajectory: (id) => this.loadTrajectoryAsset(id),
       currentSceneId: () => this.sceneManager.currentSceneData?.id ?? '',
       // "曲线上的点"的实时档：那条轨迹正在播就按**这次**播放算（见 TrajectorySystem.livePlay）
       liveTrajectoryPlay: (id) => this.trajectorySystem.livePlay(id),
+      // 播放头（point:'current'）不播的时候停在本场景最近一次结束的那一点
+      endedTrajectoryPlay: (id) => this.trajectorySystem.endedPlay(id),
     });
+  }
+
+  /** 位置引用的实体档：演员（临时演员 → 场景 NPC → player）→ 当前场景热点。一次性 / 每帧两条求值共用。 */
+  private positionRefEntityPosition(id: string): { x: number; y: number } | null {
+    const actor = this.resolveActorFn(id);
+    if (actor) return { x: actor.x, y: actor.y };
+    const hs = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === id);
+    return hs ? { x: hs.def.x, y: hs.def.y } : null;
+  }
+
+  /**
+   * 位置引用**每帧**求值（镜头跟随用）：同步、不出声，求不出返回 null（见 `evaluatePositionRefNow`）。
+   * 资产只从缓存拿——绑定时（`bindCameraFollowRef`）已经装好；万一没装完，这一帧就当没有这个点。
+   */
+  private evaluatePositionRefNow(ref: PositionRef): { x: number; y: number } | null {
+    if (!this.positionRefNowLookups) {
+      this.positionRefNowLookups = {
+        entityPosition: (id) => this.positionRefEntityPosition(id),
+        trajectory: (id) => this.trajectoryAssets.get(String(id ?? '').trim()),
+        currentSceneId: () => this.sceneManager.currentSceneData?.id ?? '',
+        liveTrajectoryPlay: (id) => this.trajectorySystem.livePlay(id),
+        endedTrajectoryPlay: (id) => this.trajectorySystem.endedPlay(id),
+      };
+    }
+    return evaluatePositionRefNow(ref, this.positionRefNowLookups);
+  }
+
+  /**
+   * 镜头跟随一个位置引用（cameraFollowActor 的 `at`）。绑定这一刻装好资产、查资产层的错
+   * （相对曲线不许引用 / 缺插槽 / 资产缺失）：有错 warn 一次、返回 false（跟随不生效，调用方可退回 target）。
+   * 绑定成功后每帧求值，求不出就镜头不动（曲线还没开播时引用点还没产生）。
+   */
+  private async bindCameraFollowRef(ref: PositionRef, snap: boolean): Promise<boolean> {
+    if (ref.kind === 'slot' || ref.kind === 'curve') {
+      const asset = await this.loadTrajectoryAsset(ref.trajectoryId);
+      if (this.tearDownComplete) return false;
+      const problem = positionRefAssetProblem(ref, asset);
+      if (problem) {
+        console.warn(`cameraFollowActor: ${problem}——跟随没有生效`);
+        return false;
+      }
+    }
+    this.cameraFollowTargetId = null;
+    this.cameraFollowRef = ref;
+    this.cameraFollowSnap = snap;
+    return true;
   }
 
   private trajectorySpawnCounter = 0;
@@ -1399,6 +1538,8 @@ export class Game {
       def.characterId = spec.characterId;
     }
     if (spec.anchor) def.anchor = { x: spec.anchor.x, y: spec.anchor.y };
+    // 自发光 / 贴图已烤好光的道具：原样传给 NpcDef 那一个开关，不新造语义
+    if (spec.renderRaw) def.renderRaw = true;
     return this.sceneManager.spawnRuntimeNpc(def, { persistent: spec.keep === true });
   }
 
@@ -1629,6 +1770,21 @@ export class Game {
       entityLayer: this.renderer.entityLayer,
       createLitShader: (program, colorTex, extra) => this.characterLighting.createCustomLitShader(program, colorTex, extra),
       releaseLitShader: (sh) => this.characterLighting.releaseEntityLitShader(sh),
+      canLight: () => this.characterLighting.canCreateCustomLitShader,
+      displayUniforms: this.characterLighting.displayUniforms,
+      // 没有照明载荷时 NPC 走 EntityLightingFilter 的色调融入：同一张辐照 probe、同一份光照环境
+      // （光环境曲线逐帧原地改 env，这里每帧现取）。toneEnabled 关 ⇒ 强度 0，与 applyShadowAndAO 同口径。
+      getToneEnv: () => {
+        const env = this.currentLightEnv;
+        const probe = this.currentProbe;
+        if (!env || !probe) return null;
+        return {
+          probe: probe.source,
+          strength: env.toneEnabled ? env.toneStrength : 0,
+          key: env.key,
+          ambient: env.ambient,
+        };
+      },
       getDepth: () => {
         const tex = this.sceneDepthSystem.currentDepthTexture;
         const cfg = this.sceneDepthSystem.currentConfig;
@@ -1639,6 +1795,11 @@ export class Game {
         return { w: sd?.worldWidth ?? 1, h: sd?.worldHeight ?? 1 };
       },
       perspective: (fx, fy) => this.perspectiveScaleResolver?.scaleAt(fx, fy) ?? 1,
+      // 躺在草木上的纸钱跟着背景摆动走（同一份风、同一个钟）
+      swayAt: (sx, sy, wx, wz, out) =>
+        this.swayBackground?.offsetAt(this.sceneWind.params, this.sceneWind.time, sx, sy, wx, wz, out) ?? false,
+      // 视口剔除：常驻效果铺满整张场景图，屏外的粒子不必逐顶点投影
+      getScreen: () => ({ w: this.renderer.app.screen.width, h: this.renderer.app.screen.height }),
     });
     this.vfxSystem.setRenderer(this.vfxRenderer);
 
@@ -1753,6 +1914,9 @@ export class Game {
     this.actionChoiceUI = new ActionChoiceUI(this.renderer, this.stringsProvider);
     this.pressureHoldUI = new PressureHoldUI(this.renderer, this.stringsProvider);
     this.hud = new HUD(this.renderer, this.eventBus, this.stringsProvider);
+    // 气缕指向偏好（G.6）：HUD 每帧现读，所以赶在 hydrate 之前注入也不要紧——
+    // 偏好读回来的下一帧就会按新值重画
+    this.hud.setSmellDisplaySettings(this.smellDisplaySettings);
     // HUD 的当前任务芯片是**查询式**的：quest:changed 只喊"该查了"，真相在 QuestManager
     this.hud.setQuestDataProvider(this.questManager);
     // 系统说明卡的开卡函数（UI 归 ui 层，系统层不 import 它）：压暗全屏但给被说明的读数留口子。
@@ -1978,6 +2142,7 @@ export class Game {
     await this.saveManager.hydrate();
     // 玩家偏好同一个存放面，同样要赶在 UI 与首句台词之前落位。
     await this.textDisplaySettings.hydrate();
+    await this.smellDisplaySettings.hydrate();
     // 仅在探索 / UI 覆盖层（暂停菜单打开）可存档；对话/遭遇/演出/小游戏等在途态拒绝存档，
     // 避免半态存档（这些系统不持久化在途状态，读档会丢失或半执行）。
     // 叙事编排排空在飞时同样拒绝：队列/在飞广播不入档，级联中途的档读回后
@@ -1990,7 +2155,7 @@ export class Game {
     });
     this.menuUI = new MenuUI(
       this.renderer, this.eventBus, this.saveDataForMenu(options), this.audioManager,
-      this.textDisplaySettings, this.stringsProvider,
+      this.textDisplaySettings, this.smellDisplaySettings, this.stringsProvider,
       // 标题界面右下角那个 dev 小勾（prod build 里这个三元的另一支被静态剔除）
       import.meta.env.DEV
         ? {
@@ -2209,8 +2374,15 @@ export class Game {
       this.pendingPhaseSwapTransition = (e as { transition?: TimeTransition })?.transition ?? 'timelapse';
     });
 
-    this.documentRevealManager.setBlendExecutor((id, from, to, x, y, w, dur, delay) =>
-      this.cutsceneManager.blendOverlayImage(id, from, to, x, y, w, dur, delay));
+    // 文档揭示的显示层走自己那套（键 documentId），不与叠图动作的句柄表共用——
+    // 作者不需要知道任何句柄，`hideOverlayImage` 也碰不到它。
+    this.documentRevealManager.setLayerPresenter({
+      show: (docId, path, x, y, w) =>
+        this.cutsceneManager.showDocumentImage(docId, path, x, y, w),
+      blend: (docId, from, to, x, y, w, dur, delay) =>
+        this.cutsceneManager.blendDocumentImage(docId, from, to, x, y, w, dur, delay),
+      hide: (docId) => this.cutsceneManager.hideDocumentImage(docId),
+    });
     await this.documentRevealManager.loadDefinitions();
     try {
       const scenarioCat = await this.assetManager.loadJson<ScenarioCatalogFile>(TEXT_URLS.scenarios);
@@ -2223,6 +2395,12 @@ export class Game {
 
     registerActionHandlers(this.actionExecutor, {
       randomValue: () => this.runtimeRandom.next(),
+      // `runActionsIf` 的判据。统一走中央工厂（律5 统一条件源）：手工缩水上下文缺
+      // @scene/@owner/plane/timePhase 叶，同一条件在此入口与对话/zone/热点入口会得出不同结果。
+      evaluateCondition: (expr) =>
+        (expr === undefined || expr === null
+          ? true
+          : evaluateConditionExpr(expr, this.buildConditionEvalContext())),
       resolveScriptedSpeaker: (raw, scriptedNpcId) =>
         resolveScriptedSpeakerDisplay(raw, {
           strings: this.stringsProvider,
@@ -2289,6 +2467,9 @@ export class Game {
       attachToSocket: (targetId, socket, images, opts) =>
         this.attachToSocketFromAction(targetId, socket, images, opts),
       detachFromSocket: (targetId, socket) => this.detachFromSocketFromAction(targetId, socket),
+      setPropState: (targetId, socket, state, fadeMs) =>
+        this.heldPropSystem.setState(targetId, socket, state, fadeMs),
+      fadeLight: (lightId, toScale, fadeMs) => this.heldPropSystem.fadeLight(lightId, toScale, fadeMs),
       setSceneDepthFloorOffset: (v) => { this.sceneDepthSystem.floorOffset = v; },
       resetSceneDepthFloorOffset: () => {
         const cfg = this.sceneDepthSystem.currentConfig;
@@ -2304,10 +2485,13 @@ export class Game {
       },
       setCameraFollowTarget: (targetId, snap) => {
         this.cameraFollowTargetId = targetId;
+        this.cameraFollowRef = null;
         this.cameraFollowSnap = snap;
       },
+      setCameraFollowRef: (ref, snap) => this.bindCameraFollowRef(ref, snap),
       clearCameraFollowTarget: () => {
         this.cameraFollowTargetId = null;
+        this.cameraFollowRef = null;
       },
       snapCameraToActorIfFollowed: (entityId) => this.snapCameraToActorIfFollowed(entityId),
       stopNpcPatrol: (npcId) => {
@@ -2766,6 +2950,16 @@ export class Game {
         log: (m) => this.debugPanelUI?.log(m),
       }, `game:${this.runtimeBootId}`);
       this.vfxSync.start();
+      /**
+       * 草木拆层的实时联动：草木工作台重烘完往槽里写一行，游戏原地把拆层换掉——不切场景、
+       * 玩家不动。推的是"盘上那几张 PNG 变了",所以重装时 URL 带 `?v=rev` 绕开按 URL 的纹理缓存。
+       */
+      this.swaySync = new RuntimeSwaySync({
+        currentSceneId: () => this.sceneManager.currentSceneData?.id ?? null,
+        reload: (bust) => this.reloadSwayInPlace(bust),
+        log: (m) => this.debugPanelUI?.log(m),
+      });
+      this.swaySync.start();
 
       this.unsubAuthoringHotkey = this.inputManager.subscribeKeyDown((e) => {
         // F3 进/出。**刻意不走 registerPanel**：它不是面板——退出要问存盘、要重载场景，
@@ -2780,6 +2974,15 @@ export class Game {
       renderer: this.renderer,
       assetManager: this.assetManager,
       getPropPresets: () => this.propPresetRegistry,
+      heldProp: {
+        attach: (t, s, p, st) => this.heldPropSystem.attach(t, s, p, st),
+        setState: (t, s, st, ms) => this.heldPropSystem.setState(t, s, st, ms),
+        detach: (t, s) => this.heldPropSystem.detach(t, s),
+        snapshot: () => this.heldPropSystem.debugSnapshot(),
+        getFlickerPushHz: () => this.heldPropSystem.flickerPushHz,
+        setFlickerPushHz: (hz) => this.heldPropSystem.setFlickerPushHz(hz),
+        flickerPushHzChoices: FLICKER_PUSH_HZ_CHOICES,
+      },
       camera: this.camera,
       eventBus: this.eventBus,
       player: this.player,
@@ -3155,12 +3358,25 @@ export class Game {
         },
         getSnapshot: () => this.vfxSystem.debugSnapshot(),
         getStats: () => this.vfxSystem.stats,
+        setConfineOverlay: (on: boolean) => {
+          if (on && !this.vfxConfineOverlay) this.vfxConfineOverlay = new VfxConfineOverlay(this.renderer.uiLayer);
+          else if (!on && this.vfxConfineOverlay) { this.vfxConfineOverlay.destroy(); this.vfxConfineOverlay = null; }
+        },
+        getConfineOverlay: () => this.vfxConfineOverlay !== null,
         emitAtPlayer: (def: VfxFieldDef, h: number) => {
           const w = this.vfxSystem.sceneToWorld(this.player.contactX, this.player.contactY, h);
           if (w) this.vfxSystem.emitField(def, w);
         },
         setState: (id: string, st: VfxFlockState) => this.vfxSystem.setVfxState(id, st),
         log: (m: string) => this.debugPanelUI.log(m),
+        getWind: () => ({
+          authored: this.sceneWind.authored, overrides: this.sceneWind.overrides, time: this.sceneWind.time,
+        }),
+        setWindOverride: (o) => this.sceneWind.setOverride(o),
+        getSwayStats: () => {
+          const sb = this.swayBackground;
+          return sb ? { ms: sb.updateMs, verts: sb.vertexCount, insts: sb.instanceCount } : null;
+        },
       });
       this.debugPanelUI.attachAcousticDebug({
         getCurrentSceneId: () => this.sceneManager.currentSceneData?.id,
@@ -4119,6 +4335,67 @@ export class Game {
   }
 
   /** 目标 id → 它的 SpriteEntity（挂点住在精灵上）；找不到返回 null。 */
+  /**
+   * 实体的脚点（场景坐标 wu）。`player` 或 NPC id；不在场 ⇒ null。
+   * 与 `spriteEntityOf` 同一条命中面 —— 手持挂件的灯位与效果锚点从这里起算。
+   */
+  private entityContactOf(targetId: string): { x: number; y: number } | null {
+    const id = targetId.trim();
+    if (!id) return null;
+    if (id === 'player') return this.player ? { x: this.player.contactX, y: this.player.contactY } : null;
+    const npc = this.sceneManager.getNpcById(id);
+    return npc ? { x: npc.contactX, y: npc.contactY } : null;
+  }
+
+  /**
+   * 运行时灯（挂件自带的跟随灯 / 场景里配了 `follow` 的灯）整批落地。
+   *
+   * 走的是与 `applySceneLightingParams` **同一个口径**：场景侧打包完，把**同一份**
+   * packed 推给角色侧 —— 否则会出现"地上那圈光跟着走、人身上的暖光没跟上"。
+   * 作者数据（`sceneLighting.params`）一个字节不动，编辑器实时同步看不见这些灯。
+   */
+  private applySceneDynamicLights(lights: LightDef[]): void {
+    if (!this.sceneLighting.active) {
+      /**
+       * **降级必须出声**（scene-lighting 卡的硬契约）：场景 JSON 没有 `lighting` 块、
+       * 或载荷没烘 ⇒ 整套光照静默禁用，于是手上举着火把也**一点光都没有**。
+       * 2026-09-12 实测崖墓前段1 就是这样（`lighting === null`），现象是"火把不亮"，
+       * 而作者只会以为预设配错了。一个场景只说一次。
+       */
+      if (lights.length > 0) {
+        const sceneId = this.sceneManager.currentSceneData?.id ?? '(无场景)';
+        if (this.dynamicLightMuteWarnedFor !== sceneId) {
+          this.dynamicLightMuteWarnedFor = sceneId;
+          const msg = `[heldProp] ${sceneId}：场景光照未启用（没有 lighting 块 / 载荷未烘），`
+            + `手持光源的 ${lights.length} 盏灯不会出现——挂件贴图与粒子照旧`;
+          console.warn(msg);
+          this.debugPanelUI?.log(msg);
+        }
+      }
+      return;
+    }
+    this.sceneLighting.setDynamicLights(lights);
+    this.pushPackedLightsToCharacters();
+  }
+
+  /** `fadeLight` 的强度倍率整批落地（同上：推完场景再推角色）。 */
+  private applySceneLightIntensityScales(scales: Map<string, number>): void {
+    if (!this.sceneLighting.active) return;
+    this.sceneLighting.setLightIntensityScales(scales);
+    this.pushPackedLightsToCharacters();
+  }
+
+  /** 把场景刚打包好的灯推给角色侧（"一视同仁"靠的就是共用这一份 packed）。 */
+  private pushPackedLightsToCharacters(): void {
+    const packed = this.sceneLighting.packedLights;
+    this.characterLighting.applyLights(packed ?? null, this.sceneLighting.wuPerQUnit);
+    const def = this.sceneLighting.params;
+    if (packed && def) {
+      this.unifiedCharLighting.applyParams(
+        def, packed, this.sceneLighting.wuPerQUnit, this.sceneLighting.radianceScale);
+    }
+  }
+
   private spriteEntityOf(targetId: string): SpriteEntity | null {
     const id = targetId.trim();
     if (!id) return null;
@@ -4143,20 +4420,43 @@ export class Game {
       prop?: string;
       scale?: number; mirror?: boolean;
       anchorX?: number; anchorY?: number; rotation?: number; lit?: boolean;
+      state?: string;
     },
+  ): Promise<void> {
+    const propId = (opts.prop ?? '').trim();
+    if (propId) {
+      const preset = this.propPresetRegistry[propId];
+      if (!preset) {
+        console.warn(`attachToSocket: 挂件预设「${propId}」未在 prop_presets.json 中登记`);
+      }
+      /**
+       * 引了预设就走手持挂件系统：它认状态表、自带灯与自带效果，也管卸下时一起收走。
+       * 只给图不给 prop 的老写法仍走下面那条直路（无状态、无灯，与既有行为逐字一致）。
+       */
+      await this.heldPropSystem.attach(targetId, socket, propId, opts.state, { ...opts, images });
+      return;
+    }
+    if (opts.state) {
+      console.warn('attachToSocket: 给了 state 却没给 prop —— 状态住在挂件预设里，没有预设就没有状态');
+    }
+    const resolved = resolvePropAttach(undefined, { ...opts, images });
+    await this.attachSocketView(targetId, socket, resolved);
+  }
+
+  /**
+   * 真正把贴图挂上去（资源加载 + 建 Sprite + 交给 SpriteEntity 摆位）。
+   * 手持挂件系统把"挂哪张图"算完之后调这里 —— 它不碰资源，资源归组装层。
+   */
+  private async attachSocketView(
+    targetId: string,
+    socket: string,
+    resolved: ResolvedPropAttach,
   ): Promise<void> {
     const sprite = this.spriteEntityOf(targetId);
     if (!sprite) {
       console.warn(`attachToSocket: 找不到实体 "${targetId}"`);
       return;
     }
-    // 挂件预设给缺省（支点/自转/缩放/贴图），动作里显式写的覆盖它
-    const propId = (opts.prop ?? '').trim();
-    const preset = propId ? this.propPresetRegistry[propId] : undefined;
-    if (propId && !preset) {
-      console.warn(`attachToSocket: 挂件预设「${propId}」未在 prop_presets.json 中登记`);
-    }
-    const resolved = resolvePropAttach(preset, { ...opts, images });
     const textures: Texture[] = [];
     for (const url of resolved.images) {
       try {
@@ -4187,8 +4487,18 @@ export class Game {
     });
   }
 
-  /** Action 入口：卸下挂件并销毁它的显示对象（纹理留在 AssetManager 缓存里复用）。 */
+  /**
+   * Action 入口：卸下挂件。手持挂件（引了预设的）连它的灯与效果一起收，
+   * 纯贴图那条路只拆视图。两句都调是**有意的**：`detach` 对没登记的挂点是空操作，
+   * 而视图拆除本身幂等 —— 少调任何一句都会留下半个挂件（有灯没图 / 有图没灯）。
+   */
   private detachFromSocketFromAction(targetId: string, socket: string): void {
+    this.heldPropSystem.detach(targetId, socket);
+    this.detachSocketView(targetId, socket);
+  }
+
+  /** 只拆视图（挂件系统的回调走这条，不要回头再调 `detach`，那是死循环）。 */
+  private detachSocketView(targetId: string, socket: string): void {
     this.spriteEntityOf(targetId)?.detachFromSocket(socket);
     this.destroySocketView(`${targetId}::${socket}`);
   }
@@ -4444,6 +4754,27 @@ export class Game {
       }
     });
 
+    /**
+     * 演出中途生成 / 移除的实体（`playTrajectory.spawn`、`spawnRuntimeNpc`）：补上 `scene:ready`
+     * 那一趟给场景 NPC 挂的**全部**东西。实例化本身只到"进实体层"为止，这四样一样都不在里面。
+     *
+     * 漏了不报错，只是画面不对：2026-09-12 实测铜钱轨迹 spawn 出来的 `curve_coin` filters 为空，
+     * 按贴图原像素画（亮度 ~79，同位置受光的场景 NPC 只有 ~6），且该被木桶挡住的地方不被挡。
+     * 移除侧**必须对称**销毁阴影 entry：`updateEntityShadows` 只驱动还在实体表里的实体，
+     * 留下的 entry 会在地上冻成一坨鬼影，直到下次切场景才消失（见 [[teardown-ordering]]）。
+     */
+    this.sceneManager.setRuntimeNpcHooks({
+      onSpawned: (npc) => {
+        this.attachNpcSceneBits(npc);
+        this.rebuildEntityShadowsForIds([npc.id], []);
+        this.applyShadowAndAO();              // AO 广播补到刚建的滤镜上
+        this.syncEntityPixelDensityMatch();   // 低通叠在 filters 之上，必须排在挂滤镜之后
+      },
+      onRemoved: (id) => {
+        this.destroyEntityShadowEntry(id);
+      },
+    });
+
     this.sceneManager.setDepthLoader(async (sceneId, sceneData, worldToPixelX, worldToPixelY) => {
       if (sceneData.depthConfig) {
         const dc = sceneData.depthConfig;
@@ -4479,11 +4810,12 @@ export class Game {
       // 角色照明烘焙载荷:**必须 await 纳入加载门**——否则进度条/黑屏已撤,这批图集
       // 还在后台 fetch+解码,进场景后卡顿(哈希门失配自动禁用,内部 epoch 防旧时间线写回)。
       // 体素卷(RT gather 用,20–27MB/场景)不在此列:进场景恒不加载,F2 开 RT 时才现拉。
+      // 烘焙按**当前生效的第一层背景**索引（背景与烘焙绑死）。缺 backgrounds 时
+      // 退回 background.png，与旧数据同口径。
+      const primaryBg = sceneData.backgrounds?.[0]?.image ?? 'background.png';
       await this.characterLighting.load(
-        sceneId, sceneData.worldWidth, sceneData.worldHeight,
-        // 烘焙按**当前生效的第一层背景**索引（背景与烘焙绑死）。缺 backgrounds 时
-        // 退回 background.png，与旧数据同口径。
-        sceneData.backgrounds?.[0]?.image ?? 'background.png',
+        sceneId, sceneData.worldWidth, sceneData.worldHeight, primaryBg,
+        this.geometryFallbackBackground(sceneData, primaryBg),
       );
       this.refreshPlayerWorldCollision();
     });
@@ -4505,14 +4837,52 @@ export class Game {
       this.characterLighting.applyLights(
         this.sceneLighting.packedLights ?? null, this.sceneLighting.wuPerQUnit);
       this.setupUnifiedCharacterLighting();
+      // 草木摆动（打光场景）：背景已换成点亮的网格，SceneManager 那一步会跳过；在这里接。
+      // ⚠ 风也要在这里重设——原先只有不打光那条路重设风，打了光的场景粒子会接着吃上一个场景的风。
+      this.sceneWind.reset(sceneData.wind);
+      this.swayPrimary = primary;
+      this.swaySync?.resetSeen();
+      try {
+        await this.buildSway(sceneId, sceneData, primary, undefined, 'lit');
+      } catch (e) {
+        console.warn('[sway] 打光场景的草木装载失败，草木不动', e);
+      }
       return this.sceneLighting.backgroundMesh;
     });
     this.sceneManager.setLightingUnloader(() => {
       // 换场景 = 同步基线作废（新场景的第一份内容不是"已对齐"）
       this.lightingSync?.resetBaseline();
+      // 角色 / 粒子那组实体灯与显示变换退回恒等。上面的装载器只在场景**有** lighting 块时才重写它，
+      // 不清的话下一个没配 lighting 的场景（崖墓 / 跑马梁）会接着用上一个场景的灯与 wuPerQUnit——
+      // 2026-09-12 实测：义庄 → 崖墓前段后仍是义庄那 1 盏烛火、220 wu/q（崖墓前段是 309）。
+      this.characterLighting.applyDisplay(null);
+      this.characterLighting.applyLights(null);
       // 顺序：先拆角色（它的 shader 绑着场景的深度/网格纹理），再卸场景
       this.unifiedCharLighting.teardown();
       this.sceneLighting.unload();
+    });
+
+    // 背景草木摆动（场景风 + 摆动图）：背景没点亮时由这里换成摆动 mesh；缺风 / 缺图就不摆。
+    // 风在这里就按新场景重设——装载期间摆动 mesh 已经在画，别让它吃上一个场景的风。
+    this.sceneManager.setSwayLoader(async (sceneId, sceneData, primary) => {
+      this.sceneWind.reset(sceneData.wind);
+      this.swayPrimary = primary;
+      this.swaySync?.resetSeen();
+      const root = await this.buildSway(sceneId, sceneData, primary);
+      return root;
+    });
+    // 与光影同一拍：先于背景容器与纹理拆（绑着原画 / 深度 / 摆动图三张按场景走的纹理）
+    this.sceneManager.setSwayUnloader(() => {
+      // ⚠ 先解绑再销毁：打光的背景读着位移图（BindGroup 见死即自毁，pixi-v8-traps）
+      if (this.swayLit) this.sceneLighting.detachSway();
+      this.swayLit = false;
+      this.swayBackground?.destroy();
+      this.swayBackground = null;
+      for (const u of this.swayTexUrls) this.assetManager.dropTexture(u);
+      this.swayTexUrls = [];
+      this.swayPrimary = null;
+      this.swaySync?.resetSeen();
+      this.sceneWind.reset(null);
     });
 
     this.sceneManager.setDepthUnloader(() => {
@@ -4696,20 +5066,108 @@ export class Game {
   }
 
   /**
+   * 时段原画没有自己的烘焙目录时，几何项（行走面 / 标定）能不能借主背景那份——**只看深度图换没换**：
+   * 行走面与深度图是同一次烘焙的成对产物；时段变体只换了原画、深度沿用白天那张（崖墓 / 跑马梁的夜
+   * 都是这样），几何就没变。深度图换了（变体自带 depthConfig）就不借，返回 undefined。
+   * 光照项不在这里讨论：`CharacterLightingSystem.loadGeometryOnly` 一概不借。
+   */
+  private geometryFallbackBackground(sceneData: SceneData, primaryBg: string): string | undefined {
+    const base = this.sceneManager.baseAppearance;
+    if (!base || base.primaryBackgroundImage === primaryBg) return undefined;
+    if (JSON.stringify(base.depthConfig ?? null) !== JSON.stringify(sceneData.depthConfig ?? null)) return undefined;
+    return base.primaryBackgroundImage;
+  }
+
+  /**
    * 粒子 / 群体的模拟空间。有照明载荷（行走面场 + det=+1 基 + work 标定）就是真 3D：
    * 地面 = 行走面反投影的高度场，墙 = 深度壳的 CPU 副本；没有就退到平面近似（不遮挡、不受光、没墙）。
    * 与音频侧同一份 `SceneSpaceGeometry`，不另立换算。
    */
+  /** 装一次拆层（进场景、以及工作台重烘后的原地重装走同一条） */
+  private async buildSway(
+    sceneId: string, sceneData: SceneData, primary: Texture, cacheBust?: string,
+    mode: 'composite' | 'lit' = 'composite',
+  ): Promise<Container | null> {
+    const dc = sceneData.depthConfig;
+    if (!this.sceneWind.params || !dc) return null;
+    const inp = await loadBackgroundSwayInput(this.assetManager, sceneData, {
+      bakeDir: sceneBakeDirUrl(sceneId, sceneData.backgrounds?.[0]?.image ?? 'background.png'),
+      depth: sceneRuntimeAssetUrl(sceneId, dc.depth_map),
+      cacheBust,
+    }, (m) => { if (import.meta.env.DEV) console.warn(`[sway] ${sceneId}: ${m}`); this.debugPanelUI?.log(`[sway] ${m}`); });
+    if (!inp) return null;
+    if (mode === 'lit' && !inp.litPlate) {
+      const msg = '打光场景缺补图（sway_plate_normal / albedo / depth），草木不接——重跑 sway_field';
+      if (import.meta.env.DEV) console.warn(`[sway] ${sceneId}: ${msg}`);
+      this.debugPanelUI?.log(`[sway] ${msg}`);
+      return null;
+    }
+    // ⚠ 换之前先解绑：打光的背景读着旧的位移图
+    if (this.swayLit) this.sceneLighting.detachSway();
+    this.swayBackground?.destroy();
+    this.swayBackground = new SwayBackground(primary, inp, { composite: mode === 'composite' });
+    this.swayLit = mode === 'lit';
+    if (mode === 'lit' && inp.litPlate) {
+      const ok = this.sceneLighting.attachSway({
+        uvMap: this.swayBackground.uvMap, plate: inp.plateTex,
+        normal: inp.litPlate.normal, albedo: inp.litPlate.albedo, depth: inp.litPlate.depth,
+      });
+      if (!ok) {
+        this.swayBackground.destroy();
+        this.swayBackground = null;
+        this.swayLit = false;
+        return null;
+      }
+    }
+    this.swayBackground.update(this.sceneWind.params, this.sceneWind.time);
+    // 上一份（`?v=` 不同的同几张图）连同显存丢掉：不丢的话推一次漏一套，几十张 4 MB 的底板能把缓存挤爆
+    const stale = this.swayTexUrls.filter((u) => !inp.urls.includes(u));
+    for (const u of stale) this.assetManager.dropTexture(u);
+    this.swayTexUrls = inp.urls.slice();
+    return this.swayBackground.root;
+  }
+
+  /**
+   * DEV：草木工作台重烘完 → 原地把拆层换掉（不切场景、玩家不动）。
+   * 新的 root 要插回**旧 root 原来的位置**，否则草木会跑到实体层前面 / 后面去。
+   */
+  private async reloadSwayInPlace(cacheBust: string): Promise<boolean> {
+    const sceneId = this.sceneManager.currentSceneData?.id;
+    const sceneData = this.sceneManager.currentSceneData;
+    const primary = this.swayPrimary;
+    if (!sceneId || !sceneData || !primary) return false;
+    if (this.swayLit) {
+      // 打光场景：位移图由点亮的背景读，场景树里没有草木的节点可插
+      return !!(await this.buildSway(sceneId, sceneData, primary, cacheBust, 'lit'));
+    }
+    const old = this.swayBackground?.root ?? null;
+    const parent = old?.parent ?? null;
+    const index = old && parent ? parent.getChildIndex(old) : -1;
+    const root = await this.buildSway(sceneId, sceneData, primary, cacheBust);
+    if (!root) return false;
+    if (parent) parent.addChildAt(root, swayInsertIndex(index, parent.children.length));
+    return true;
+  }
+
   private buildVfxSpace(): VfxSpace {
     const geo = this.buildAudioSceneGeometry();
-    if (!geo) return createPlanarVfxSpace(this.footstepConfig?.spatial?.planarDepthScale ?? DEFAULT_PLANAR_DEPTH_SCALE);
-    return createFieldVfxSpace({ geo, shell: this.sceneDepthSystem.depthShellField, viewDir: viewDirWorld(geo) });
+    // 透视度量按用时取（句柄在 scene:ready 才建，空间可能先建）：与实体同一根透视轴
+    const perspective = (x: number, y: number) => this.perspectiveScaleResolver?.scaleAt(x, y) ?? 1;
+    if (!geo) return createPlanarVfxSpace(this.footstepConfig?.spatial?.planarDepthScale ?? DEFAULT_PLANAR_DEPTH_SCALE, perspective);
+    return createFieldVfxSpace({ geo, shell: this.sceneDepthSystem.depthShellField, viewDir: viewDirWorld(geo), perspective });
   }
 
   /** 当前时段亮着的、有位置的实体灯（群体拿它们当恐惧源） */
   private activeSceneLightsForVfx(): readonly LightDef[] {
     const sd = this.sceneManager.currentSceneData;
-    const lights = sd?.lighting?.lights ?? [];
+    /**
+     * 取**生效**的灯而不是作者写的那份：手上举着的火把会把蝙蝠赶开、被吹灭的灯笼
+     * 立刻不再是恐惧源 —— 两者都只存在于运行时那一层（`effectiveLights`）。
+     * 光照没启用（没烘载荷）时退回作者数据，与旧行为一致。
+     */
+    const lights = this.sceneLighting.active
+      ? this.sceneLighting.effectiveLights()
+      : (sd?.lighting?.lights ?? []);
     if (!sd?.dayNight?.enabled) return lights;
     const phase = this.dayManager.currentPhase;
     return lights.filter((l) => !l.phases?.length || l.phases.includes(phase));
@@ -4733,6 +5191,8 @@ export class Game {
   private applySceneLightingParams(def: SceneLightingDef): void {
     this.sceneLighting.applyParams(def);
     const packed = this.sceneLighting.packedLights;
+    // ⚠ 下面这几行与 `pushPackedLightsToCharacters` 是同一件事（推同一份 packed 给角色）。
+    //   没合并是因为这里还要推 display —— 改其中一处时**两处一起看**，别让两条路分叉。
     // 角色侧吃**同一份**打包（2026-08-30「原画 + 加性灯」）：灯在 probe 的 GI 底光上
     // 直接加。与场景共用一次 packLights 是「一视同仁」的构造性保证。
     this.characterLighting.applyDisplay(def.display ?? null);
@@ -5628,6 +6088,14 @@ export class Game {
       // 旧场景的 NPC 连同它们身上的挂件一起没了：挂件显示对象归 Game 所有，自己收。
       // 玩家身上的挂件例外——玩家跨场景存活，重挂由内容侧决定。
       this.destroySceneSocketViews();
+      /**
+       * 手持挂件重派生：演出挂件散掉，手持物（persistent 预设）按玩法事实重挂 ——
+       * 实体是新建出来的，视图、灯、效果都要重贴。同时换上本场景配了 `follow` 的作者灯。
+       * 与位面对账器同一个形状：每个边界重派生一次，系统自己零表现态持久化。
+       */
+      this.heldPropSystem.onSceneChanged(
+        (this.sceneManager.currentSceneData?.lighting?.lights ?? []).filter((l) => l.follow),
+      );
       // 动词提示要同步答"这张图有没有 kick 入口"，先把本场景的图拉进缓存
       this.preloadSceneDialogueGraphs();
       // 透视缩放注入须在光照滤镜/阴影创建之前：probe 采样高度按**有效**尺寸烘焙
@@ -5635,13 +6103,14 @@ export class Game {
         this.sceneManager.currentSceneData?.perspectiveScale,
       );
       this.player.setPerspectiveScale(this.perspectiveScaleResolver);
+      // 场景风：点亮的场景不走摆动装载钩子，这里保证每个场景都按自己的 wind 重设（没有 = 无风）
+      if (!this.swayBackground) this.sceneWind.reset(this.sceneManager.currentSceneData?.wind);
       this.interactionSystem.update(0);
 
       this.attachPlayerSceneFilter();
 
       for (const npc of this.sceneManager.getCurrentNpcs()) {
-        npc.setPerspectiveScale(this.perspectiveScaleResolver);
-        this.attachNpcSceneFilters(npc);
+        this.attachNpcSceneBits(npc);
         this.startNpcPatrolIfEligible(npc);
       }
 
@@ -5702,8 +6171,7 @@ export class Game {
           if (!npc) continue;
           // 防双协程：旧实例协程按 npcPatrolEpoch 立即失效，再按条件评估重启
           this.stopNpcPatrol(id);
-          npc.setPerspectiveScale(this.perspectiveScaleResolver);
-          this.attachNpcSceneFilters(npc);
+          this.attachNpcSceneBits(npc);
           if (p.phase === 'exit') this.startNpcPatrolIfEligible(npc);
         }
         for (const id of p.hotspotIds ?? []) {
@@ -5807,6 +6275,16 @@ export class Game {
       this.attachHotspotDepthFilter(h);
     }
     this.applyShadowAndAO();   // AO 广播补到新滤镜
+  }
+
+  /**
+   * 单个 NPC 的「场景挂件」：透视缩放 → 逐实体光照 / 深度遮挡滤镜。
+   * **顺序不能反**：透视缩放注入须在光照滤镜创建之前（probe 采样高度按**有效**尺寸烘）。
+   * scene:ready / scene:entitiesRebuilt / spawnRuntimeNpc 三处共用，避免漂移。
+   */
+  private attachNpcSceneBits(npc: Npc): void {
+    npc.setPerspectiveScale(this.perspectiveScaleResolver);
+    this.attachNpcSceneFilters(npc);
   }
 
   private attachNpcSceneFilters(npc: Npc): void {
@@ -7470,7 +7948,8 @@ export class Game {
   }
 
   /**
-   * 过场 / 动作链态每帧的相机锚点决策（cameraFollowActor / cameraStopFollow 驱动）：
+   * 过场 / 动作链 / 对话态每帧的相机锚点决策（cameraFollowActor / cameraStopFollow 驱动）：
+   * 跟的是位置引用（`at`）→ 每帧求值，求不出就原地不动（不解除、不回落玩家）；
    * 有跟随目标且可解析 → 每帧锚到该实体（NPC/临时演员/玩家）实时坐标，snap=硬锁居中、
    * 否则平滑跟随（靠 camera.update 插值）；目标失效（销毁/换场景解析不到）则自动解除。
    * 无跟随目标时：fallbackToPlayer=true 锚玩家（动作链态镜头默认跟玩家），false 不动镜头
@@ -7513,6 +7992,16 @@ export class Game {
   }
 
   private applyCameraFollow(fallbackToPlayer: boolean): void {
+    if (this.cameraFollowRef !== null) {
+      // 跟一个位置引用：这一帧求不出（曲线还没开播 / 实体暂不在）就原地不动，也不回落跟玩家——
+      // 引用点还没产生，没东西可跟（2026-09-12 制作人定）。
+      const p = this.evaluatePositionRefNow(this.cameraFollowRef);
+      if (p) {
+        if (this.cameraFollowSnap) this.camera.snapTo(p.x, p.y);
+        else this.camera.follow(p.x, p.y);
+      }
+      return;
+    }
     if (this.cameraFollowTargetId !== null) {
       const followed = this.resolveActorFn(this.cameraFollowTargetId);
       if (followed) {
@@ -7535,11 +8024,14 @@ export class Game {
    */
   private snapCameraToActorIfFollowed(entityId: string): void {
     const state = this.stateController.currentState;
+    const ref = this.cameraFollowRef;
     const anchored =
-      this.cameraFollowTargetId !== null
-        ? this.cameraFollowTargetId === entityId
-        : entityId === 'player'
-          && (state === GameState.Exploring || state === GameState.ActionSequence);
+      ref !== null
+        ? ref.kind === 'entity' && ref.id === entityId
+        : this.cameraFollowTargetId !== null
+          ? this.cameraFollowTargetId === entityId
+          : entityId === 'player'
+            && (state === GameState.Exploring || state === GameState.ActionSequence);
     if (!anchored) return;
     const actor = this.resolveActorFn(entityId);
     if (actor) this.camera.snapTo(actor.x, actor.y);
@@ -7559,7 +8051,17 @@ export class Game {
   }
 
   private async debugMovePlayerTo(x: number, y: number, speed: number, snapCamera: boolean): Promise<void> {
-    const safeSpeed = Math.max(1, Math.min(5000, speed));
+    /**
+     * ⚠ 三个数都要挡住"没传 / NaN"：`Math.max(1, Math.min(5000, undefined))` 是 NaN，
+     * 夹值夹不住"没传"，NaN 一路写进玩家坐标 ⇒ **这一局不可逆且零报错**
+     * （2026-09-12 无头验证踩到:调用方漏了 speed，人当场消失）。
+     * 这是 agent 与编辑器都会调的入口,失手的代价不该是重开一局。
+     */
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn(`debugMovePlayerTo: 坐标不是有限数 (x=${x}, y=${y})，忽略`);
+      return;
+    }
+    const safeSpeed = Number.isFinite(speed) ? Math.max(1, Math.min(5000, speed)) : 200;
     const dx = x - this.player.x;
     const dy = y - this.player.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
@@ -7741,6 +8243,9 @@ export class Game {
     this.acousticsSync?.stop();
     this.acousticsSync = null;
     this.vfxSync?.stop();
+    this.swaySync?.stop();
+    this.swaySync = null;
+    this.swayPrimary = null;
     this.vfxSync = null;
     this.unsubAuthoringHotkey?.();
     this.unsubAuthoringHotkey = null;
@@ -7784,6 +8289,8 @@ export class Game {
     this.debugTools?.destroy();
     this.debugTools = null;
     this.depthDebugVisualizer?.destroy();
+    this.vfxConfineOverlay?.destroy();
+    this.vfxConfineOverlay = null;
 
     this.stateController.destroy();
 
@@ -7793,6 +8300,9 @@ export class Game {
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.destroy();
     }
+    // 摆动 mesh 通常已随场景卸载拆掉；这里兜一次（幂等），必须早于下面的资产收尾
+    this.swayBackground?.destroy();
+    this.swayBackground = null;
     // 模块级注入复位（生命周期对称：destroy 后再 init 与首启一致；
     // 切换音的钩子还捏着已销毁那局的 eventBus，不摘就是一条跨局的死引用）
     setClueAccess(null);
@@ -7970,11 +8480,13 @@ export class Game {
     this.npcScheduleSystem.update(dt);
 
     // 相机跟随（cameraFollowActor）是"演出期间"的临时行为：Cutscene / ActionSequence（锁玩家的
-    // 动作链）态才消费；一旦回到玩家自由探索态（Exploring）——无论过场播完还是动作链播完——
-    // 立即解除跟随、复位回跟玩家，不必显式 cameraStopFollow。（读档/切场景也会经 Exploring 归零。）
-    if (this.cameraFollowTargetId !== null &&
+    // 动作链）/ Dialogue（对话图）态才消费；一旦回到玩家自由探索态（Exploring）——无论过场、
+    // 动作链还是对话播完——立即解除跟随、复位回跟玩家，不必显式 cameraStopFollow。
+    // （读档/切场景也会经 Exploring 归零。）
+    if ((this.cameraFollowTargetId !== null || this.cameraFollowRef !== null) &&
         this.stateController.currentState === GameState.Exploring) {
       this.cameraFollowTargetId = null;
+      this.cameraFollowRef = null;
     }
 
     // 身体动词每帧都跑（不只 Exploring）：它自己按 canAcceptInput 门控，
@@ -8030,6 +8542,10 @@ export class Game {
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         npc.cutsceneUpdate(dt);
       }
+      // 对话态也能动镜头（2026-09-12 制作人定）：对话图里配的 cameraFollowActor 照常每帧生效；
+      // 没设跟随时不动镜头（同过场态，不回落跟玩家——普通对话的镜头行为不变）。
+      // 复位不用另写：对话完回到 Exploring，上面的清除守卫解除跟随，镜头平滑回到玩家。
+      this.applyCameraFollow(false);
     }
 
     if (this.stateController.currentState === GameState.Encounter) {
@@ -8088,6 +8604,15 @@ export class Game {
     if (this.stateController.currentState !== GameState.SceneTransition
       && this.stateController.currentState !== GameState.MainMenu) {
       this.trajectorySystem.update(dt);
+      // 场景风的钟与粒子同处推进（同暂停语义）；背景摆动读同一个钟
+      this.sceneWind.advance(dt);
+      this.swayBackground?.update(this.sceneWind.params, this.sceneWind.time);
+      /**
+       * 手持挂件 **必须排在粒子之前**：它这一帧才把火焰的锚点挪到手上、把灯推给光照系统。
+       * 反过来的话粒子会拿上一帧的锚点发这一帧的火星（走得快时火焰拖在身后）。
+       * 同样要求实体位置已写完 —— 所以和粒子在同一个守卫里。
+       */
+      this.heldPropSystem.update(dt);
       // 粒子 / 群体：同一约束——实体位置已全部写完、排序与相机之前（它写桶网格的 entitySortFootY）
       this.vfxSystem.update(dt);
     }
@@ -8102,6 +8627,16 @@ export class Game {
     this.footstepSystem.update(dt);
     this.debugTools?.update(dt);
     this.depthDebugVisualizer?.update();
+    // 粒子区域叠加层（调试）：相机本帧已定稿。调试链路的异常不许穿进玩法链路——画失败就关掉它
+    if (this.vfxConfineOverlay) {
+      try {
+        this.vfxConfineOverlay.update(this.camera, this.vfxSystem.confineFields());
+      } catch (e) {
+        console.warn('[vfx] 粒子区域叠加层画失败，已关掉', e);
+        this.vfxConfineOverlay.destroy();
+        this.vfxConfineOverlay = null;
+      }
+    }
 
     // 视锥剔除:先于下方 depth 驱动块——同帧内屏外实体既跳 GPU 渲染,也跳着色驱动。
     this.updateFrustumCulling();
@@ -8225,6 +8760,9 @@ export class Game {
     }
 
     this.updateLightEnvFromCurve();
+    // 草木位移图：这一帧的网格渲进离屏 uv 图（不打光的合成面与打光的背景都读它）。
+    // 必须在主画面渲染之前、与光照缓存同一拍——放进场景树里渲染离屏目标会串台（pixi-v8-traps）。
+    this.swayBackground?.renderUv(this.renderer.app.renderer);
     // 统一光影：脏才重算场景辐射缓存，稳态是一次布尔判断（零光照计算）。
     this.sceneLighting.update(this.renderer.app.renderer);
     this.updateEntityShadows();

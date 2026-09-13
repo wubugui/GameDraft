@@ -6,16 +6,6 @@
     "auditLog": "D:\\GameDraft\\logs\\.a4f1b6912d9cb47ef72be47c9f142fcfaa520342-audit.json",
     "files": [
         {
-            "date": 1788009011963,
-            "name": "D:\\GameDraft\\logs\\mcp-puppeteer-2026-08-29.log",
-            "hash": "c664f922253fdacdf90b812fd6e9ea0e4b0ae114b97ce3b7697ff19f8e7c2c9d"
-        },
-        {
-            "date": 1788090466169,
-            "name": "D:\\GameDraft\\logs\\mcp-puppeteer-2026-08-30.log",
-            "hash": "580a199441a80675ef413a795a997acd4b33935a8ad0591db14b96121c3896d7"
-        },
-        {
             "date": 1789140511649,
             "name": "D:\\GameDraft\\logs\\mcp-puppeteer-2026-09-11.log",
             "hash": "b518a8fd178c465bac2ec367a5dc5ba77c551c896987868df062b164891e4568"
@@ -24,6 +14,11 @@
             "date": 1789143518188,
             "name": "D:\\GameDraft\\logs\\mcp-puppeteer-2026-09-12.log",
             "hash": "ed267aca65677cde3a9e22c6df6f44f2727d160f93461ccde21283707cf5523a"
+        },
+        {
+            "date": 1789300353828,
+            "name": "D:\\GameDraft\\logs\\mcp-puppeteer-2026-09-13.log",
+            "hash": "4c3cd49f2f37028b2211d25fd54988ddc767f51c2b8720b98a4484c1c4370d88"
         }
     ],
     "hashType": "sha256"

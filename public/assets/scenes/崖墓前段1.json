@@ -167,10 +167,29 @@
   ],
   "onEnter": [
     {
-      "type": "setThreeFiresVisible",
+      "type": "runActionsIf",
       "params": {
-        "visible": true,
-        "style": "fade"
+        "condition": {
+          "timePhase": "夜"
+        },
+        "actions": [
+          {
+            "type": "setThreeFiresVisible",
+            "params": {
+              "visible": true,
+              "style": "fade"
+            }
+          }
+        ],
+        "elseActions": [
+          {
+            "type": "setThreeFiresVisible",
+            "params": {
+              "visible": false,
+              "style": "instant"
+            }
+          }
+        ]
       }
     }
   ],

@@ -461,6 +461,17 @@
           }
         },
         {
+          "type": "cameraFollowActor",
+          "params": {
+            "at": {
+              "kind": "curve",
+              "trajectoryId": "coin_drop_demo",
+              "point": "current"
+            },
+            "smooth": true
+          }
+        },
+        {
           "type": "playTrajectory",
           "params": {
             "trajectoryId": "coin_drop_demo",
@@ -476,13 +487,6 @@
               "id": "curve_coin",
               "name": "curve_coin"
             }
-          }
-        },
-        {
-          "type": "cameraFollowActor",
-          "params": {
-            "target": "player",
-            "smooth": false
           }
         }
       ],

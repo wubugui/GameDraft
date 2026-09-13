@@ -173,6 +173,26 @@ function sampleScreen(samples, tMs) {
 }
 function toPose(s) { return { x: s[1], y: s[2], sortY: s[3], rot: s[4], sx: s[5], sy: s[6], alpha: s[7] }; }
 
+/**
+ * 画面上一个点**落在曲线的哪一刻**（音效关键点"在曲线上点一下"的取时口）。
+ * 在密采样上逐段找最近点（段内线性插值取时），返回 `{ atMs, x, y, dist }`；没有采样返回 null。
+ * `dist` 是画面 wu 距离，调用方自己决定"多远算没点在曲线上"。
+ */
+function nearestOnScreenCurve(samples, sx, sy) {
+  if (!samples || samples.length === 0) return null;
+  let best = null;
+  const consider = (t, x, y) => { const d = Math.hypot(x - sx, y - sy); if (!best || d < best.dist) best = { atMs: t, x, y, dist: d }; };
+  consider(samples[0][0], samples[0][1], samples[0][2]);
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1], b = samples[i];
+    const ax = a[1], ay = a[2], bx = b[1], by = b[2];
+    const vx = bx - ax, vy = by - ay, lenSq = vx * vx + vy * vy;
+    const u = lenSq > 1e-9 ? clamp(((sx - ax) * vx + (sy - ay) * vy) / lenSq, 0, 1) : 0;
+    consider(a[0] + (b[0] - a[0]) * u, ax + vx * u, ay + vy * u);
+  }
+  return best;
+}
+
 function sampleWorld(samples, tMs) {
   if (!samples || samples.length === 0) return null;
   if (tMs <= samples[0][0]) return samples[0].slice(1);
@@ -561,7 +581,7 @@ function distToSeg(px, py, a, b) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { SceneCal, sampleScreen, sampleWorld, perspectiveScaleAt, catmullRom, densePath, worldCurveSamples,
+  module.exports = { SceneCal, sampleScreen, sampleWorld, nearestOnScreenCurve, perspectiveScaleAt, catmullRom, densePath, worldCurveSamples,
     flight2D, solveLanding2D, solveApex2D, flight3D, solveLanding3D, solveApex3D,
     perspective, ortho, lookAt, mul4, inv4, xform4, projectPoint, unprojectRay, rayPlane, rayLineParam, pointInPoly, rayGround, rayShell,
     num, clamp, round2, fmt, deepClone, distToSeg };

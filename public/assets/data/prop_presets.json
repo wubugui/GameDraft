@@ -6,5 +6,66 @@
     "anchorY": 0.16,
     "rotation": 0,
     "scale": 0.5
+  },
+  "torch": {
+    "label": "火把（贴图占位，等正式素材）",
+    "image": "/resources/runtime/images/ui/icons/lantern.png",
+    "anchorX": 0.47,
+    "anchorY": 0.0,
+    "rotation": -90.0,
+    "scale": 0.45,
+    "lit": false,
+    "persistent": true,
+    "defaultState": "lit",
+    "light": {
+      "kelvin": 1800,
+      "intensity": 2.4,
+      "range": 500,
+      "softeningRadius": 12,
+      "flicker": {
+        "amp": 0.1,
+        "hz": 0.5,
+        "windAmp": 0.5
+      },
+      "castShadow": true
+    },
+    "states": {
+      "lit": {
+        "label": "点着"
+      },
+      "guarding": {
+        "label": "侧身护着火",
+        "light": {
+          "intensity": 3,
+          "flicker": {
+            "amp": 0.45,
+            "hz": 11,
+            "windAmp": 0.8
+          }
+        }
+      },
+      "ember": {
+        "label": "只剩红炭",
+        "light": {
+          "intensity": 0.6,
+          "range": 120,
+          "flicker": {
+            "amp": 0.35,
+            "hz": 3
+          }
+        },
+        "vfx": [
+          "incense_smoke"
+        ]
+      },
+      "out": {
+        "label": "灭了",
+        "light": null,
+        "lit": true
+      }
+    },
+    "vfx": [
+      "dust_motes"
+    ]
   }
 }

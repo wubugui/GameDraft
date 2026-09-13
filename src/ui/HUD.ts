@@ -11,7 +11,7 @@ import { useCoarsePointerOrTouchDevice } from './TouchMobileControls';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
-import type { IQuestDataProvider } from '../data/types';
+import type { IQuestDataProvider, ISmellDisplaySettingsProvider } from '../data/types';
 import { createStyledText, setStyledText } from '../core/styledText';
 
 // ---------------------------------------------------------------------------
@@ -176,6 +176,15 @@ export class HUD {
   private eventBus: EventBus;
   private strings: StringsProvider;
   private container: Container;
+  /**
+   * 过场淡出层：**除 `metaColumn`（三把火 / 气味）以外**的全部 HUD 都挂这儿。
+   *
+   * 为什么多这一层：过场默认只收铜钱/任务条/场景名/入口条那一堆读数，三把火与气味留着
+   * （见 {@link fadeHudTo}）。而 Pixi 的 alpha 是逐级连乘的——只要把 `container` 压到 0，
+   * 任何子层都救不回来，所以"要淡的"必须与"不淡的"分成兄弟层。
+   * **新加的常驻 HUD 元素一律挂 `fadeLayer`**，挂到 `container` 上等于它在过场里永不淡出。
+   */
+  private fadeLayer: Container;
 
   /** 左上角竖排芯片的宿主：内容变了就整条重建（木框是 Sprite，塞不进 Graphics 原地 clear 重画） */
   private chipLayer: Container;
@@ -260,7 +269,12 @@ export class HUD {
   // 气味系统（方案 E·双层·基线+浮现）：HUD 层气味指示器，由 SmellSystem 经 player:smellChanged 驱动。
   // 渲染器在 setSmellProfiles（Game 异步加载 smell_profiles.json 后）创建。
   private smellRenderer: SmellIndicatorRenderer | null = null;
+  /** SmellSystem 广播的**规范值**（dir 正 = 源在右）；玩家偏好的翻转只在 pushSmellState 里做 */
   private smellLast: SmellRenderState = { scent: '', intensity: 0, dir: 0, dirDepth: 0, flicker: false };
+  /** 气缕指向偏好（G.6：默认指着源，玩家可调成背着源）；组装层注入，null=按缺省不翻 */
+  private smellDisplaySettings: ISmellDisplaySettingsProvider | null = null;
+  /** 上一次投给渲染器时用的翻转态，用来发现设置被改了 */
+  private smellInvertApplied = false;
   /**
    * 气味指示器显隐（玩法清单 G.6：默认不显、动作控显、入存档）。真相在 flag，这里只是投影；
    * 渲染器可能晚于第一条显隐指令建好（profiles 异步），所以 latch 在 HUD 这边，建好时再投过去。
@@ -293,25 +307,40 @@ export class HUD {
   private onResizeBound: () => void;
   private unsubscribeResize: (() => void) | null = null;
   private sceneEnterCb: (p: { sceneId: string; sceneName?: string }) => void;
-  /** 过场期间整层 HUD 淡出：电影化镜头上不该压着铜钱/三把火/场景名/任务条 */
-  private cutsceneStartCb: () => void;
+  /**
+   * 过场期间淡出 HUD：电影化镜头上不该压着铜钱/场景名/任务条/入口条。
+   *
+   * **三把火与气味（`metaColumn`）默认不跟着走**（2026-09-12 制作人定调）：它俩是
+   * "冥冥之中被感觉到"的体感读数，演出里照样该亮着；而且首现仪式（`debut`）常被编排在
+   * 过场里，整层淡出等于那段仪式演给空气看。要纯净镜头的过场自己在数据里勾
+   * `hideMetaHud`（{@link NewCutsceneDef}），经 `cutscene:start` 的载荷传进来。
+   */
+  private cutsceneStartCb: (p?: { hideMetaHud?: boolean }) => void;
   private cutsceneEndCb: () => void;
   private hudFadeRaf = 0;
 
   /**
-   * 整层 HUD 淡入淡出。用 alpha 不用 visible——过场结束要淡回来，
+   * HUD 淡入淡出。用 alpha 不用 visible——过场结束要淡回来，
    * 硬切会在电影化镜头收尾时"啪"地弹出一堆读数。
+   *
+   * 动的是 {@link fadeLayer}（= 除 `metaColumn` 外的整层）与**按需**的 `metaColumn`，
+   * 不是 `this.container`：整层 alpha 一旦压到 0，子层再怎么设 alpha 也乘不回来
+   * （Pixi 的 worldAlpha 是连乘），"只留三把火/气味"就无从实现。
    */
-  private fadeHudTo(target: number): void {
+  private fadeHudTo(target: number, includeMeta: boolean): void {
     if (this.hudFadeRaf) cancelAnimationFrame(this.hudFadeRaf);
-    const from = this.container.alpha;
-    if (from === target) return;
+    const from = this.fadeLayer.alpha;
+    const metaFrom = this.metaColumn.alpha;
+    const metaTarget = includeMeta ? target : 1;
+    if (from === target && metaFrom === metaTarget) return;
     const start = performance.now();
     const dur = UITheme.motion.normal;
     const tick = (): void => {
       if (this.container.destroyed) { this.hudFadeRaf = 0; return; }
       const raw = Math.min((performance.now() - start) / dur, 1);
-      this.container.alpha = from + (target - from) * UITheme.motion.easeOut(raw);
+      const k = UITheme.motion.easeOut(raw);
+      this.fadeLayer.alpha = from + (target - from) * k;
+      this.metaColumn.alpha = metaFrom + (metaTarget - metaFrom) * k;
       if (raw < 1) this.hudFadeRaf = requestAnimationFrame(tick);
       else this.hudFadeRaf = 0;
     };
@@ -349,11 +378,15 @@ export class HUD {
     this.strings = strings;
 
     this.container = new Container();
+    // 先加 fadeLayer、后加 metaColumn：两者无空间重叠（火焰列被 layoutMetaColumn 压在芯片列之下，
+    // 其余成员分居屏幕上中/下沿），这里的先后只决定"谁压谁"，不改任何落位。
+    this.fadeLayer = new Container();
+    this.container.addChild(this.fadeLayer);
 
     this.chipLayer = new Container();
     this.chipLayer.x = CHIP_ORIGIN;
     this.chipLayer.y = CHIP_ORIGIN;
-    this.container.addChild(this.chipLayer);
+    this.fadeLayer.addChild(this.chipLayer);
     this.coinsLabel = `${this.strings.get('hud', 'coins')} 0`;
     this.rebuildChips();
 
@@ -404,7 +437,7 @@ export class HUD {
     this.ruleHintChip = ruleHint.chip;
     this.ruleHintWidth = ruleHint.width;
     this.ruleHintChip.visible = false;
-    this.container.addChild(this.ruleHintChip);
+    this.fadeLayer.addChild(this.ruleHintChip);
 
     this.mapNameText = createStyledText({
       text: '',
@@ -418,13 +451,13 @@ export class HUD {
     });
     this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
     this.mapNameText.y = UITheme.topLanes.sceneName;
-    this.container.addChild(this.mapNameText);
+    this.fadeLayer.addChild(this.mapNameText);
 
     // ⚠ 入口条必须建在 mapNameText **之后**：buildEntryStrip 末尾会调 layout()，
     // 而 layout 要摸场景名——放在前面桌面端构造期必崩（2026-08-17 headless 实机验证抓获,
     // 触屏路径在 strip 里早退不调 layout 所以只有桌面炸）。
     this.entryLayer = new Container();
-    this.container.addChild(this.entryLayer);
+    this.fadeLayer.addChild(this.entryLayer);
     this.buildEntryStrip();
 
     this.renderer.uiLayer.addChild(this.container);
@@ -438,8 +471,10 @@ export class HUD {
     this.onResizeBound = () => this.layout();
     this.unsubscribeResize = this.renderer.subscribeAfterResize(this.onResizeBound);
 
-    this.cutsceneStartCb = () => this.fadeHudTo(0);
-    this.cutsceneEndCb = () => this.fadeHudTo(1);
+    // 过场开演：默认只淡出 fadeLayer；该过场自己声明了 hideMetaHud 才连三把火/气味一起收。
+    // 收尾一律两层都淡回来（没被收过的那层是 1→1 的空动画，不用记状态）。
+    this.cutsceneStartCb = (p) => this.fadeHudTo(0, p?.hideMetaHud === true);
+    this.cutsceneEndCb = () => this.fadeHudTo(1, true);
 
     this.sceneEnterCb = (p) => {
       const raw = p.sceneName ?? p.sceneId ?? '';
@@ -490,7 +525,7 @@ export class HUD {
         dirDepth: Number.isFinite(p.dirDepth) ? (p.dirDepth as number) : 0,
         flicker: !!p.flicker,
       };
-      this.smellRenderer?.setState(this.smellLast);
+      this.pushSmellState();
     };
     this.sniffCb = () => { this.smellRenderer?.pulseBoost(); };
 
@@ -913,7 +948,7 @@ export class HUD {
       return;
     }
     if (this.zoneHintChip) {
-      this.container.removeChild(this.zoneHintChip);
+      this.fadeLayer.removeChild(this.zoneHintChip);
       this.zoneHintChip.destroy({ children: true });
       this.zoneHintChip = null;
     }
@@ -921,7 +956,7 @@ export class HUD {
     this.zoneHintChip = built.chip;
     this.zoneHintWidth = built.width;
     this.zoneHintText = raw;
-    this.container.addChild(this.zoneHintChip);
+    this.fadeLayer.addChild(this.zoneHintChip);
     this.layout();
   }
 
@@ -1314,9 +1349,28 @@ export class HUD {
   }
 
   private stepSmell(dt: number): void {
+    // 设置页里改了指向、或偏好刚水化完 → 这一帧重投一次。偏好是拉模型（无事件），
+    // 而站着不动时 SmellSystem 不会再广播，不主动重投就得等玩家迈步才翻过来。
+    const invert = this.smellDisplaySettings?.isDirectionInverted() ?? false;
+    if (invert !== this.smellInvertApplied) this.pushSmellState();
     // 首次出场仪式进行中气缕照常在烧，位置/缩放/罩层归仪式状态机
     this.smellRenderer?.update(dt);
     if (this.smellDebut) this.smellDebut.step(dt);
+  }
+
+  /**
+   * 把当前气味真值投给渲染器，按玩家偏好决定是否把两个方向轴翻个个儿（G.6）。
+   * `smellLast` 存的始终是 SmellSystem 广播的**规范值**（指向气味源），翻转只发生在这里——
+   * 于是设置一改，原地重投就能立刻改画法，不必惊动气味系统。
+   */
+  private pushSmellState(): void {
+    this.smellInvertApplied = this.smellDisplaySettings?.isDirectionInverted() ?? false;
+    const k = this.smellInvertApplied ? -1 : 1;
+    this.smellRenderer?.setState({
+      ...this.smellLast,
+      dir: this.smellLast.dir * k,
+      dirDepth: (this.smellLast.dirDepth ?? 0) * k,
+    });
   }
 
   /**
@@ -1499,9 +1553,15 @@ export class HUD {
       x: SMELL_ORIGIN_X,
       y: SMELL_ORIGIN_Y - FLAME_ORIGIN_Y,
     });
-    this.smellRenderer.setState(this.smellLast);
+    this.pushSmellState();
     // 默认不显（G.6）：把 latch 投过去；读档由组装层按 flag 钉回来
     this.smellRenderer.setVisible(this.smellVisible, 'instant');
+  }
+
+  /** 组装层注入：气缕指向偏好（G.6）。不注入则一律按缺省「指着源」画。 */
+  setSmellDisplaySettings(s: ISmellDisplaySettingsProvider | null): void {
+    this.smellDisplaySettings = s;
+    this.pushSmellState();
   }
 
   /** F2 调试：读当前烟形参数；渲染器未就绪返回 null。 */

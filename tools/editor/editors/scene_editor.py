@@ -73,6 +73,7 @@ from ..shared.entity_sort_math import (
     sort_foot_y_of,
 )
 from .scene_undo import SceneUndoController, broadcast_external_scene_write
+from ..shared.vfx_confine import CONFINE_FEATHER_DEFAULT as _VFX_CONFINE_FEATHER_DEFAULT
 from ..shared.entity_transform_math import (
     entity_perspective_factor,
     DEFAULT_ENTITY_ANCHOR_X,
@@ -128,6 +129,7 @@ from ..shared.project_paths import ProjectPaths
 from ..shared.fonts import MONO_FONT_FAMILY
 from ..shared.numeric_roundtrip import preserve_numeric_repr
 from . import scene_lights
+from .light_follow_ui import LightFollowEditor
 from .shadow_bindings_ui import ShadowBindingsEditor
 
 def _assert_path_within(path: Path, base: Path) -> Path:
@@ -1284,6 +1286,240 @@ class _EditableZonePolygon(QGraphicsObject):
         self._hover_vertex = None
         self.update()
         super().hoverLeaveEvent(event)
+
+
+def _vfx_row(it: QListWidgetItem) -> dict:
+    """vfx 列表一行的**盘上原始 dict**（新拷贝，保键序）。"""
+    raw = it.data(Qt.ItemDataRole.UserRole)
+    if isinstance(raw, str):
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            return {}
+        return d if isinstance(d, dict) else {}
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _set_vfx_row(it: QListWidgetItem, d: dict) -> None:
+    """⚠ 存 JSON 文本，不存 dict：PySide 把 dict 转成 QVariantMap，**键被按字母重排**，
+    场景页改一下 vfx 实例、盘上这一行的键序就全变了（打开→改一个值→保存出一大片 diff）。"""
+    it.setData(Qt.ItemDataRole.UserRole, json.dumps(d, ensure_ascii=False))
+
+
+#: 粒子区域的画布色：范围区域（``confine.area``）纸钱黄、发射区域（``area``）青
+_VFX_AREA_RGB = (255, 209, 102)
+_VFX_EMIT_RGB = (110, 205, 255)
+#: 两种区域：发射（在哪生 / 从哪补回，写 ``vfx[].area``）、范围（粒子被关在哪，写 ``vfx[].confine.area``）
+VFX_AREA_ROLES = ("emit", "range")
+
+
+class _VfxAreaPolygon(_EditableZonePolygon):
+    """vfx 实例的一块区域（发射区域 ``area`` / 范围区域 ``confine.area``）的画布图元。
+
+    只有**当前选中的那条 vfx 实例**的区域能改：拖顶点、双击边插点、右键 / Shift+点 / Del 删点。
+    别的实例的区域只画出来，点它的边线 = 在属性页里切到那条实例。框内那一圈半透明的带子
+    就是边带（从这往外风变弱、纸变稀），宽度 = ``confine.feather``；只画在"实际起限定作用"的那一块上
+    （范围区域；没画范围区域时就是发射区域）。
+
+    三条刻意的限制，改之前先读：
+
+    * **没有 ``entity_kind``**：它不是实体。叠放循环点选、选中集合、批量删除 / 复制 / 指派分组
+      全都按 ``entity_kind`` 认人，挂上它就会被当成一个实体去删去复制。
+    * **框内不吃鼠标、不能整体拖**：跑马梁那一圈几乎盖满整张图，框内可点 = 画布上点哪儿都先
+      点到它、在空白处拖一下就把整个区域挪走。只认顶点与边线附近。
+    * **提交排到下一拍**：图元的 release 里改面板是画布手势安全卡点名的段错误。
+    """
+
+    def __init__(
+        self,
+        canvas: "SceneCanvas",
+        points: list[tuple[float, float]],
+        iid: str,
+        *,
+        role: str,
+        feather: float,
+        confined: bool,
+        current: bool,
+    ):
+        self.role = role if role in VFX_AREA_ROLES else "emit"
+        r, g, b = _VFX_AREA_RGB if self.role == "range" else _VFX_EMIT_RGB
+        super().__init__(canvas, points, QColor(r, g, b, 20), iid, poly_kind="vfx_area")
+        del self.entity_kind
+        self.setFlag(self.GraphicsItemFlag.ItemIsSelectable, False)
+        # 范围区域压在发射区域下面一点：两块边线重合时先点到的是更常改的发射区域
+        self.setZValue(_Z_DECOR_COLLISION - (2.0 if self.role == "range" else 1.0))
+        self._feather = max(0.0, float(feather))
+        self._confined = bool(confined)
+        self._current = bool(current)
+        self.setToolTip(("范围区域" if self.role == "range" else "发射区域") + f"：{iid}")
+
+    # ---- 数据 ----
+    def set_area_points(self, pts: list) -> None:
+        if self._drag_vertex is not None:
+            return                      # 正拖着：别让一次刷新把手里的顶点拍回去
+        self._points = [[float(p[0]), float(p[1])] for p in pts]
+        self.prepareGeometryChange()
+        self.update()
+
+    def set_region_style(self, *, feather: float, confined: bool, current: bool) -> None:
+        f = max(0.0, float(feather))
+        if (f, bool(confined), bool(current)) == (self._feather, self._confined, self._current):
+            return
+        self.prepareGeometryChange()     # 标签文字（边带宽）变了，包围盒跟着变
+        self._feather, self._confined, self._current = f, bool(confined), bool(current)
+        if not self._current:
+            self._drag_vertex = None
+            self._hover_vertex = None
+        self.update()
+
+    def area_points(self) -> list[list[float]]:
+        return [[round(x, 1), round(y, 1)] for x, y in self._points]
+
+    def is_current(self) -> bool:
+        return self._current
+
+    def _emit_polygon_committed(self) -> None:
+        pts = self.area_points()
+        iid, role = self.entity_id, self.role
+        canvas = self._canvas
+        QTimer.singleShot(0, canvas, lambda: canvas.item_vfx_area_committed.emit(iid, role, pts))
+
+    # ---- 命中 ----
+    def _vertex_at_scene(self, scene_pos: QPointF) -> int | None:
+        if not self._current:
+            return None
+        return super()._vertex_at_scene(scene_pos)
+
+    def _edge_path(self) -> QPainterPath:
+        path = QPainterPath()
+        if len(self._points) >= 2:
+            path.addPolygon(self._polyf())
+            path.closeSubpath()
+        return path
+
+    def shape(self) -> QPainterPath:
+        stroker = QPainterPathStroker()
+        stroker.setWidth(self.HANDLE_WORLD_R * 2.2)
+        out = stroker.createStroke(self._edge_path())
+        if self._current:
+            r = self.HANDLE_WORLD_R
+            for px, py in self._points:
+                out.addEllipse(QPointF(px, py), r, r)
+        return out
+
+    def _label_text(self) -> str:
+        if self.role == "range":
+            return f"范围区域 {self.entity_id} · 边带 {self._feather:.0f}"
+        return f"发射区域 {self.entity_id}" + (
+            f"（兼范围区域）· 边带 {self._feather:.0f}" if self._confined else "")
+
+    def boundingRect(self) -> QRectF:
+        if not self._points:
+            return QRectF()
+        xs = [p[0] for p in self._points]
+        ys = [p[1] for p in self._points]
+        m = self.HANDLE_WORLD_R * 1.2 + 2
+        rect = QRectF(min(xs) - m, min(ys) - m, max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m)
+        metrics = QFontMetricsF(theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_SECONDARY, family=MONO_FONT_FAMILY))
+        return rect.united(QRectF(
+            min(xs) + 2, min(ys) + 11 - metrics.ascent(),
+            metrics.horizontalAdvance(self._label_text()) + 4, metrics.height() + 4))
+
+    # ---- 画 ----
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        del option, widget
+        if len(self._points) < 3:
+            return
+        r, g, b = _VFX_AREA_RGB if self.role == "range" else _VFX_EMIT_RGB
+        painter.save()
+        path = self._edge_path()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(r, g, b, 26 if self._current else 10)))
+        painter.drawPath(path)
+        if self._confined and self._feather > 0:
+            # 边带：裁在框内，三道渐窄的描边叠出"越靠框线越浓"的坡
+            painter.setClipPath(path)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            for k in (1.0, 2.0 / 3.0, 1.0 / 3.0):
+                pen = QPen(QColor(r, g, b, 34 if self._current else 14))
+                pen.setWidthF(2.0 * self._feather * k)
+                pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                painter.setPen(pen)
+                painter.drawPath(path)
+            painter.setClipping(False)
+        edge = QPen(QColor(r, g, b, 235 if self._current else 130), 0)
+        edge.setStyle(Qt.PenStyle.SolidLine if self._confined else Qt.PenStyle.DashLine)
+        painter.setPen(edge)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+        if self._current:
+            hrad = self.HANDLE_WORLD_R * 0.38
+            for i, (px, py) in enumerate(self._points):
+                hot = self._hover_vertex == i or self._drag_vertex == i
+                painter.setBrush(QBrush(QColor(255, 170, 40) if hot else QColor(r, g, b)))
+                painter.setPen(QPen(QColor(90, 60, 0), 0))
+                painter.drawEllipse(QPointF(px, py), hrad, hrad)
+        xs = [p[0] for p in self._points]
+        ys = [p[1] for p in self._points]
+        font = theme.make_editor_font(theme.FONT_ROLE_CANVAS_SECONDARY, family=MONO_FONT_FAMILY)
+        painter.setFont(font)
+        text = self._label_text()
+        metrics = QFontMetricsF(font)
+        tx, ty = min(xs) + 3, min(ys) + 12
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(0, 0, 0, 150)))
+        painter.drawRect(QRectF(tx - 1, ty - metrics.ascent() - 1,
+                                metrics.horizontalAdvance(text) + 2, metrics.height() + 2))
+        painter.setPen(QPen(Qt.GlobalColor.white))
+        painter.drawText(QPointF(tx, ty), text)
+        painter.restore()
+
+    # ---- 鼠标 ----
+    def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        if not self._current:
+            self._canvas._defer_vfx_area_pick(self.entity_id)
+            event.accept()
+            return
+        sp = event.scenePos()
+        vi = self._vertex_at_scene(sp)
+        if vi is None:
+            event.ignore()               # 边线附近但不在顶点上：交给下面的实体 / 橡皮筋
+            return
+        if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if len(self._points) > 3:
+                del self._points[vi]
+                self._hover_vertex = None
+                self.prepareGeometryChange()
+                self.update()
+                self._emit_polygon_committed()
+            event.accept()
+            return
+        self._drag_vertex = vi
+        self._drag_body = False
+        self._last_scene = QPointF(sp)
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event: QGraphicsSceneMouseEvent) -> None:
+        if not self._current:
+            event.ignore()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def contextMenuEvent(self, event: QGraphicsSceneContextMenuEvent) -> None:
+        if not self._current:
+            event.ignore()
+            return
+        super().contextMenuEvent(event)
+
+    def try_delete_hovered_vertex(self) -> bool:
+        if not self._current:
+            return False
+        return super().try_delete_hovered_vertex()
+
 
 class _NpcPatrolPolyline(QGraphicsObject):
     """NPC 巡逻开放折线：仅顶点参与命中，线段中点可选中下层 NPC 圆点。"""
@@ -2444,6 +2680,13 @@ class SceneCanvas(QGraphicsView):
     item_lightcurve_committed = Signal(object)
     # 统一光影：定位模式下点画布 → 把选中的灯落到该处地面
     light_place_requested = Signal(float, float)
+    # vfx 实例的区域：拖 / 插 / 删顶点后提交 (实例 id, role 'emit'|'range', [[x, y], …])。已排到下一拍发
+    item_vfx_area_committed = Signal(str, str, object)
+    # 点到非当前实例的区域边线：请求属性页切到那条实例（已排到下一拍发）
+    vfx_area_pick_requested = Signal(str)
+    # 拉框模式下拖出一个框 (role, x0, y0, x1, y1)；以及模式结束（拉完 / Esc）
+    vfx_area_drawn = Signal(str, float, float, float, float)
+    vfx_area_draw_mode_finished = Signal()
     # 右键菜单：在 (wx, wy) 世界坐标处添加实体；kind: hotspot|npc|zone|spawn
     context_add_entity = Signal(str, float, float)
     # 拖拽中按 Esc 取消：把该实体恢复到按下前坐标（kind, id, orig_x, orig_y）
@@ -2552,6 +2795,12 @@ class SceneCanvas(QGraphicsView):
         )
         self._lightcurve_overlay: _LightCurvePolyline | None = None
         self._light_place_mode: bool = False
+        # 粒子区域（场景级数据的画布投影，不是实体；见 _VfxAreaPolygon）
+        self._vfx_area_items: dict[tuple[str, str], _VfxAreaPolygon] = {}
+        #: 拉框模式：'' = 关；'emit' / 'range' = 这一框拉的是哪种区域
+        self._vfx_area_draw_mode: str = ""
+        self._vfx_area_draw_origin: QPointF | None = None
+        self._vfx_area_draw_preview: QGraphicsRectItem | None = None
         self._world_w: float = 800
         self._world_h: float = 600
         self._project_model: ProjectModel | None = None
@@ -2615,6 +2864,9 @@ class SceneCanvas(QGraphicsView):
         self._entity_view_meta.clear()
         self._patrol_overlays.clear()
         self._lightcurve_overlay = None
+        self._vfx_area_items.clear()          # 图元已随 _gfx.clear() 析构
+        self._vfx_area_draw_origin = None
+        self._vfx_area_draw_preview = None
         self._transform_gizmo = None  # 图元已随 _gfx.clear() 析构
         self._persp_cfg = None
         self._persp_axis_item = None  # 图元已随 _gfx.clear() 析构
@@ -3184,6 +3436,69 @@ class SceneCanvas(QGraphicsView):
 
     def _emit_lightcurve_committed(self, points: list) -> None:
         self.item_lightcurve_committed.emit(points)
+
+    # ---- 粒子区域 overlay ----
+    def set_vfx_area_overlay(self, rows: list[dict]) -> None:
+        """同步全部 vfx 区域图元。rows: ``{id, role, points:[[x,y],…], feather, confined, current}``。
+
+        就地更新优先（拖着的那个顶点不会被刷回去）；不在 rows 里的图元拆掉。
+        调用方必须在鼠标事件栈之外调（编辑器走单发定时器）。
+        """
+        keep: set[tuple[str, str]] = set()
+        for r in rows:
+            iid = str(r.get("id") or "")
+            role = str(r.get("role") or "emit")
+            pts = r.get("points") or []
+            if not iid or len(pts) < 3:
+                continue
+            key = (iid, role)
+            keep.add(key)
+            style = dict(feather=float(r.get("feather") or 0.0),
+                         confined=bool(r.get("confined")), current=bool(r.get("current")))
+            it = self._vfx_area_items.get(key)
+            if it is not None and it.scene() is self._gfx:
+                it.set_area_points(pts)
+                it.set_region_style(**style)
+                continue
+            it = _VfxAreaPolygon(self, [(float(p[0]), float(p[1])) for p in pts], iid, role=role, **style)
+            self._gfx.addItem(it)
+            self._vfx_area_items[key] = it
+        for key in [k for k in self._vfx_area_items if k not in keep]:
+            it = self._vfx_area_items.pop(key)
+            if it.scene() is self._gfx:
+                self._gfx.removeItem(it)
+
+    def vfx_area_item(self, iid: str, role: str = "emit") -> "_VfxAreaPolygon | None":
+        return self._vfx_area_items.get((iid, role))
+
+    def _defer_vfx_area_pick(self, iid: str) -> None:
+        QTimer.singleShot(0, self, lambda: self.vfx_area_pick_requested.emit(iid))
+
+    def set_vfx_area_draw_mode(self, role: str) -> None:
+        """开 / 关拉框模式（'' = 关；'emit' / 'range' = 这一框拉哪种区域）。
+        开着时左键拖出一个框就是新区域，不选实体、不拉橡皮筋。"""
+        self._vfx_area_draw_mode = role if role in VFX_AREA_ROLES else ""
+        if not self._vfx_area_draw_mode:
+            self._drop_vfx_area_preview()
+        self.setCursor(Qt.CursorShape.CrossCursor if self._vfx_area_draw_mode else Qt.CursorShape.ArrowCursor)
+
+    def _drop_vfx_area_preview(self) -> None:
+        self._vfx_area_draw_origin = None
+        pv = self._vfx_area_draw_preview
+        self._vfx_area_draw_preview = None
+        if pv is not None and pv.scene() is self._gfx:
+            self._gfx.removeItem(pv)
+
+    def _finish_vfx_area_draw(self, rect: QRectF | None) -> None:
+        """拉框收尾：关模式，两个通知都排到下一拍（收件方会改面板）。"""
+        self._drop_vfx_area_preview()
+        role = self._vfx_area_draw_mode
+        self._vfx_area_draw_mode = ""
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        if rect is not None and role:
+            x0, y0, x1, y1 = rect.left(), rect.top(), rect.right(), rect.bottom()
+            QTimer.singleShot(0, self, lambda: self.vfx_area_drawn.emit(role, x0, y0, x1, y1))
+        QTimer.singleShot(0, self, self.vfx_area_draw_mode_finished.emit)
 
     def set_lightcurve_overlay(
         self, points: list | None, selected: int = -1, ref_width: float = 0.0,
@@ -3919,6 +4234,22 @@ class SceneCanvas(QGraphicsView):
             self.light_place_requested.emit(float(sp.x()), float(sp.y()))
             event.accept()
             return
+        # 「在画布上拉区域」：同样拦在最前面——按下记起点，拖动画预览框，松手提交
+        if self._vfx_area_draw_mode and event.button() == Qt.MouseButton.LeftButton:
+            sp = self.mapToScene(event.position().toPoint())
+            self._drop_vfx_area_preview()
+            self._vfx_area_draw_origin = QPointF(sp)
+            r, g, b = _VFX_AREA_RGB if self._vfx_area_draw_mode == "range" else _VFX_EMIT_RGB
+            pv = QGraphicsRectItem(QRectF(sp, sp))
+            pen = QPen(QColor(r, g, b), 0, Qt.PenStyle.DashLine)
+            pv.setPen(pen)
+            pv.setBrush(QBrush(QColor(r, g, b, 40)))
+            pv.setZValue(_Z_DECOR_GIZMO + 1.0)
+            pv.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+            self._gfx.addItem(pv)
+            self._vfx_area_draw_preview = pv
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.MiddleButton:
             self._middle_panning = True
             self._pan_last_pos = event.pos()
@@ -4001,9 +4332,18 @@ class SceneCanvas(QGraphicsView):
                     self.verticalScrollBar().value() - delta.y())
                 event.accept()
                 return
+        if self._vfx_area_draw_origin is not None and self._vfx_area_draw_preview is not None:
+            sp = self.mapToScene(event.position().toPoint())
+            self._vfx_area_draw_preview.setRect(QRectF(self._vfx_area_draw_origin, sp).normalized())
+            event.accept()
+            return
         super().mouseMoveEvent(event)
 
     def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape and self._vfx_area_draw_mode:
+            self._finish_vfx_area_draw(None)
+            event.accept()
+            return
         # 拖拽中按 Esc 取消：把被抓取实体恢复到按下前坐标，且不写模型/不标脏（审查 P3）。
         # 仅覆盖可移动实体图元（hotspot/npc/spawn 圆点）；折线/多边形顶点拖拽自有内部处理。
         # Esc 取消 gizmo 手势：复位到按下时的 scale/rot（经 live 信号回滚 staging/预览）
@@ -4077,6 +4417,19 @@ class SceneCanvas(QGraphicsView):
             if self._middle_panning:
                 self._middle_panning = False
                 self.unsetCursor()
+            event.accept()
+            return
+        if event.button() == Qt.MouseButton.LeftButton and self._vfx_area_draw_origin is not None:
+            sp = self.mapToScene(event.position().toPoint())
+            rect = QRectF(self._vfx_area_draw_origin, sp).normalized()
+            r = self._gfx.sceneRect()
+            if not r.isEmpty():
+                rect = rect.intersected(r)
+            # 手一抖点了一下不算：小于 8 wu 的框当没拉（模式保持，接着拉）
+            if rect.width() < 8.0 or rect.height() < 8.0:
+                self._drop_vfx_area_preview()
+            else:
+                self._finish_vfx_area_draw(rect)
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -4742,6 +5095,10 @@ class ScenePropertyPanel(QScrollArea):
     light_place_mode_changed = Signal(bool)
     # 光环境曲线数据变化→请求画布重建 overlay
     lightcurve_overlay_refresh_requested = Signal()
+    # vfx 实例的粒子区域 / 选中行变化 → 请求画布重建区域 overlay
+    vfx_area_overlay_refresh_requested = Signal()
+    # 拉框模式开关：'' = 关，'emit' / 'range' = 拉发射区域 / 范围区域
+    vfx_area_draw_mode_changed = Signal(str)
     #: 画布底图在「原画 ↔ albedo 贴图」之间切（True=看 albedo）。纯查看，不碰数据。
     albedo_view_changed = Signal(bool)
     # npc_id, enabled — 仅编辑器内沿路径预览精灵
@@ -4801,6 +5158,8 @@ class ScenePropertyPanel(QScrollArea):
             "_zn_stay",
             "_zn_exit",
             "_zn_interact",
+            # 跟随目标的候选是「本场景 NPC + player」，NPC 在本页就能新增 ⇒ 切页要重拉
+            "_sl_follow",
         ):
             editor = getattr(self, attr, None)
             reload_refs = getattr(editor, "reload_refs_from_model", None)
@@ -4915,12 +5274,18 @@ class ScenePropertyPanel(QScrollArea):
         self._npc_col_updating: bool = False
         # 光环境曲线：单一真相源(每项 {x,y,env})，表格只读展示 x/y，env 走逐帧编辑器
         self._sc_lightcurve_points: list[dict] = []
+        # vfx 实例：去掉「限定」勾 / 删掉最后一块区域时收着的 confine（按实例 id；换场景清空）。
+        # 拉好的范围区域是半小时的手工活，一个勾选框点掉就没了不行。
+        self._vfx_confine_stash: dict[str, dict] = {}
+        self._vfx_loaded_scene_id: str | None = None
         # 统一光影：灯位
         self._sc_lighting: dict | None = None
         self._sl_selected: int = -1
         self._sl_updating: bool = False
         self._sl_placing: bool = False
         self._sl_space = None
+        #: 跟随块当前填的是**哪一个灯 dict**（按身份，不按行号）。见 `_sync_sl_form`。
+        self._sl_follow_loaded_for: dict | None = None
         #: 正在跑的「重生成默认 albedo」子进程（同时只许一个）
         self._albedo_proc: QProcess | None = None
         self._lc_selected: int = -1
@@ -5396,22 +5761,168 @@ class ScenePropertyPanel(QScrollArea):
 
     def _load_vfx_widgets(self, rows: list) -> None:
         lst = self._sc_vfx_list
+        # 同一个场景重装（点画布空白 / 撤销 / 提交后回场景页）时保住选中的那条实例：
+        # 否则拖完一个区域顶点，选中就跳回第一行，画布上能改的区域也跟着换人。
+        sid = str(getattr(self, "_editing_scene_id", "") or "")
+        same_scene = bool(sid) and sid == self._vfx_loaded_scene_id
+        keep_id = self.current_vfx_id() if same_scene else ""
+        if not same_scene:
+            self._vfx_confine_stash = {}
+        self._vfx_loaded_scene_id = sid
         lst.blockSignals(True)
         lst.clear()
         for raw in rows:
             if not isinstance(raw, dict):
                 continue
             it = QListWidgetItem()
-            it.setData(Qt.ItemDataRole.UserRole, dict(raw))
+            _set_vfx_row(it, raw)
             self._decorate_vfx_item(it)
             lst.addItem(it)
         lst.blockSignals(False)
         # 候选随场景刷新（跨面板刷新约定）
         self._sc_vfx_effect.set_items(self._model.all_vfx_effect_ids())
         if lst.count():
-            lst.setCurrentRow(0)
+            lst.setCurrentRow(max(0, self._vfx_row_of(keep_id)) if keep_id else 0)
         self._on_vfx_row_changed()
         self._sync_vfx_fold()
+        self.finish_vfx_area_draw_mode()
+        self.vfx_area_overlay_refresh_requested.emit()
+
+    def _vfx_row_of(self, iid: str) -> int:
+        for i in range(self._sc_vfx_list.count()):
+            d = _vfx_row(self._sc_vfx_list.item(i))
+            if str(d.get("id") or "") == str(iid):
+                return i
+        return -1
+
+    def current_vfx_id(self) -> str:
+        it = self._current_vfx_item()
+        return str(_vfx_row(it).get("id") or "") if it is not None else ""
+
+    def select_vfx_row_by_id(self, iid: str) -> bool:
+        """把 vfx 列表切到这条实例并展开折叠块（画布上点了它的区域边线）。"""
+        r = self._vfx_row_of(iid)
+        if r < 0:
+            return False
+        fold = getattr(self, "_sc_vfx_fold", None)
+        if fold is not None:
+            fold.set_expanded(True)
+        self._sc_vfx_list.setCurrentRow(r)
+        return True
+
+    @staticmethod
+    def _poly_points(v: object) -> list[list[float]] | None:
+        if not isinstance(v, list) or len(v) < 3:
+            return None
+        try:
+            return [[float(p[0]), float(p[1])] for p in v]
+        except (TypeError, ValueError, IndexError):
+            return None
+
+    def vfx_area_overlay_rows(self) -> list[dict]:
+        """画布区域 overlay 的数据：每条实例的发射区域 / 范围区域各一行（有才有）。
+
+        边带只画在实际起限定作用的那一块上：有范围区域画在范围区域上，没有就画在发射区域上。
+        """
+        cur = self.current_vfx_id()
+        out: list[dict] = []
+        for i in range(self._sc_vfx_list.count()):
+            d = _vfx_row(self._sc_vfx_list.item(i))
+            iid = str(d.get("id") or "")
+            conf = d.get("confine") if isinstance(d.get("confine"), dict) else None
+            feather = _VFX_CONFINE_FEATHER_DEFAULT
+            if conf is not None and isinstance(conf.get("feather"), (int, float)):
+                feather = max(0.0, float(conf["feather"]))
+            emit = self._poly_points(d.get("area"))
+            rng = self._poly_points(conf.get("area")) if conf is not None else None
+            common = {"id": iid, "feather": feather, "current": bool(iid) and iid == cur}
+            if emit is not None:
+                out.append({**common, "role": "emit", "points": emit,
+                            "confined": conf is not None and rng is None})
+            if rng is not None:
+                out.append({**common, "role": "range", "points": rng, "confined": True})
+        return out
+
+    def _on_vfx_area_draw_toggled(self, role: str, on: bool) -> None:
+        # 两个拉框按钮互斥：按下一个就弹起另一个
+        other = self._sc_vfx_range_draw if role == "emit" else self._sc_vfx_area_draw
+        if on and other.isChecked():
+            other.blockSignals(True)
+            other.setChecked(False)
+            other.blockSignals(False)
+        if on:
+            self.vfx_area_draw_mode_changed.emit(role)
+        elif not self._sc_vfx_area_draw.isChecked() and not self._sc_vfx_range_draw.isChecked():
+            self.vfx_area_draw_mode_changed.emit("")
+
+    def finish_vfx_area_draw_mode(self) -> None:
+        """拉完 / 取消 / 换场景：按钮弹起、画布退出拉框模式。"""
+        for name in ("_sc_vfx_area_draw", "_sc_vfx_range_draw"):
+            btn = getattr(self, name, None)
+            if btn is not None and btn.isChecked():
+                btn.setChecked(False)      # toggled → vfx_area_draw_mode_changed('')
+
+    def _on_vfx_area_clear(self, role: str) -> None:
+        iid = self.current_vfx_id()
+        if iid:
+            self.apply_vfx_area(iid, None, role=role)
+
+    def apply_vfx_area(self, iid: str, points: object, *, role: str = "emit", new_region: bool = False) -> bool:
+        """写一条实例的一块区域（画布拉框 / 拖顶点 / 删区域都走这里）。
+
+        * ``role='emit'``（发射区域 → ``area``）：None = 去掉；此时若范围区域也没有，``confine`` 一起去掉
+          （没有任何区域的 confine 运行时整条忽略、校验器报 error）。
+        * ``role='range'``（范围区域 → ``confine.area``）：写入即打开限定（``confine`` 不存在就建，
+          之前去勾时收着的边带 / 限高一并带回来）；None = 去掉 ``confine.area``，退回用发射区域，
+          发射区域也没有就整个 ``confine`` 去掉。
+        ``new_region`` 保留给调用方标记"刚拉出的新框"（目前两种区域都不需要额外动作）。返回是否真的改了。
+        """
+        del new_region
+        r = self._vfx_row_of(iid)
+        if r < 0:
+            return False
+        it = self._sc_vfx_list.item(r)
+        d = _vfx_row(it)
+        before = copy.deepcopy(d)
+        pts: list[list[float]] | None = None
+        if points is not None:
+            try:
+                pts = [[round(float(p[0]), 1), round(float(p[1]), 1)] for p in points]  # type: ignore[union-attr]
+            except (TypeError, ValueError, IndexError):
+                return False
+            if len(pts) < 3:
+                return False
+        conf = d.get("confine") if isinstance(d.get("confine"), dict) else None
+        if role == "range":
+            if pts is not None:
+                c = dict(conf) if conf is not None else dict(self._vfx_confine_stash.pop(iid, {}) or {})
+                c["area"] = pts
+                d["confine"] = c
+            elif conf is not None and "area" in conf:
+                c = dict(conf)
+                c.pop("area", None)
+                if self._poly_points(d.get("area")) is None:
+                    self._vfx_confine_stash[iid] = c
+                    d.pop("confine", None)
+                else:
+                    d["confine"] = c
+        else:
+            if pts is not None:
+                d["area"] = pts
+            else:
+                d.pop("area", None)
+                if conf is not None and self._poly_points(conf.get("area")) is None:
+                    self._vfx_confine_stash[iid] = dict(conf)
+                    d.pop("confine", None)
+        if d == before:
+            return False
+        _set_vfx_row(it, d)
+        self._decorate_vfx_item(it)
+        if r == self._sc_vfx_list.currentRow():
+            self._on_vfx_row_changed()
+        self._emit_props_changed()
+        self.vfx_area_overlay_refresh_requested.emit()
+        return True
 
     def _sync_vfx_fold(self) -> None:
         """有实例就展开、标题带条数——与本页灯光 / on_enter 同一条约定
@@ -5430,7 +5941,7 @@ class ScenePropertyPanel(QScrollArea):
 
     @staticmethod
     def _decorate_vfx_item(it: QListWidgetItem) -> None:
-        d = it.data(Qt.ItemDataRole.UserRole) or {}
+        d = _vfx_row(it)
         a = d.get("anchor") or {}
         phases = d.get("timePhases") or []
         tail = ("　[%s]" % "/".join(str(p) for p in phases)) if phases else ""
@@ -5448,9 +5959,12 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_vfx_form_host.setEnabled(it is not None)
         for b in (self._vfx_btn_del, self._vfx_btn_up, self._vfx_btn_down):
             b.setEnabled(it is not None)
+        # 画布上"能改的区域"跟着选中行走
+        self.vfx_area_overlay_refresh_requested.emit()
         if it is None:
+            self.finish_vfx_area_draw_mode()
             return
-        d = it.data(Qt.ItemDataRole.UserRole) or {}
+        d = _vfx_row(it)
         a = d.get("anchor") or {}
         self._vfx_loading = True
         try:
@@ -5470,6 +5984,39 @@ class ScenePropertyPanel(QScrollArea):
             self._sc_vfx_autostart.setCurrentIndex(j if j >= 0 else 0)
             ph = d.get("timePhases") or []
             self._sc_vfx_phases.setText("，".join(str(p) for p in ph) if isinstance(ph, list) else "")
+            conf = d.get("confine")
+            confined = isinstance(conf, dict)
+            emit = self._poly_points(d.get("area"))
+            rng = self._poly_points(conf.get("area")) if confined else None
+            iid0 = str(d.get("id") or "")
+            stashed = self._vfx_confine_stash.get(iid0)
+            if rng is not None:
+                range_txt = f"范围区域 {len(rng)} 个顶点"
+            elif confined and emit is not None:
+                range_txt = "范围区域 = 发射区域"
+            elif not confined and isinstance(stashed, dict) and self._poly_points(stashed.get("area")):
+                range_txt = "范围区域已收起（勾上「限定」恢复）"
+            else:
+                range_txt = "不限定"
+            self._sc_vfx_area_info.setText(
+                (f"发射区域 {len(emit)} 个顶点" if emit is not None
+                 else "没有发射区域：纸钱铺撒退成锚点周围的圆盘") + "　·　" + range_txt)
+            self._sc_vfx_area_draw.setText("重拉发射区域" if emit is not None else "拉发射区域")
+            self._sc_vfx_range_draw.setText("重拉范围区域" if rng is not None else "拉范围区域")
+            self._sc_vfx_area_clear.setEnabled(emit is not None)
+            self._sc_vfx_range_clear.setEnabled(rng is not None)
+            self._sc_vfx_confine.setChecked(confined)
+            # 一块区域都没有时"限定"无从谈起：勾了运行时也整条忽略（收着的范围区域算有）
+            self._sc_vfx_confine.setEnabled(
+                emit is not None or confined
+                or (isinstance(stashed, dict) and self._poly_points(stashed.get("area")) is not None))
+            fe = conf.get("feather") if confined else None
+            self._sc_vfx_feather.setValue(
+                float(fe) if isinstance(fe, (int, float)) else _VFX_CONFINE_FEATHER_DEFAULT)
+            ce = conf.get("ceiling") if confined else None
+            self._sc_vfx_ceiling.setValue(float(ce) if isinstance(ce, (int, float)) and ce > 0 else 0.0)
+            self._sc_vfx_feather.setEnabled(confined)
+            self._sc_vfx_ceiling.setEnabled(confined)
         finally:
             self._vfx_loading = False
 
@@ -5480,7 +6027,8 @@ class ScenePropertyPanel(QScrollArea):
         it = self._current_vfx_item()
         if it is None:
             return
-        d = dict(it.data(Qt.ItemDataRole.UserRole) or {})
+        d = _vfx_row(it)
+        orig_id = str(d.get("id") or "")
         d["id"] = self._sc_vfx_id.text().strip()
         d["effect"] = self._sc_vfx_effect.current_id().strip()
         a = dict(d.get("anchor") or {})
@@ -5515,9 +6063,39 @@ class ScenePropertyPanel(QScrollArea):
             d["timePhases"] = ph
         else:
             d.pop("timePhases", None)
-        it.setData(Qt.ItemDataRole.UserRole, d)
+        # 「限定」：勾 = 有 confine 对象（缺省值不落键），不勾 = 删键。
+        # ⚠ 去勾不许把拉好的范围区域（confine.area）一起丢掉：先收进 stash，再勾上原样回来。
+        restored = stashed_now = False
+        if self._sc_vfx_confine.isChecked():
+            if isinstance(d.get("confine"), dict):
+                c = dict(d["confine"])
+            else:
+                st = self._vfx_confine_stash.pop(orig_id, None)
+                restored = isinstance(st, dict)
+                c = dict(st) if restored else {}
+            if not restored:
+                fe = float(self._sc_vfx_feather.value())
+                if abs(fe - _VFX_CONFINE_FEATHER_DEFAULT) > 1e-9 or "feather" in c:
+                    c["feather"] = self._keep_num(fe, c.get("feather"))
+                ce = float(self._sc_vfx_ceiling.value())
+                if ce > 0:
+                    c["ceiling"] = self._keep_num(ce, c.get("ceiling"))
+                else:
+                    c.pop("ceiling", None)
+            d["confine"] = c
+        elif isinstance(d.get("confine"), dict):
+            self._vfx_confine_stash[orig_id] = dict(d.pop("confine"))
+            stashed_now = True
+        self._sc_vfx_feather.setEnabled(self._sc_vfx_confine.isChecked())
+        self._sc_vfx_ceiling.setEnabled(self._sc_vfx_confine.isChecked())
+        if d == _vfx_row(it):
+            return                        # 控件值与数据一致（比如刚装载完的回声）：不标脏
+        _set_vfx_row(it, d)
         self._decorate_vfx_item(it)
+        if restored or stashed_now:
+            self._on_vfx_row_changed()    # 恢复出来的边带 / 限高回填到控件；去勾后提示文字跟着变
         self._emit_props_changed()
+        self.vfx_area_overlay_refresh_requested.emit()
 
     def _add_vfx_instance(self) -> None:
         effects = self._model.all_vfx_effect_ids()
@@ -5530,7 +6108,7 @@ class ScenePropertyPanel(QScrollArea):
         st = getattr(self, "_staging_scene", None) or {}
         used = {str((r or {}).get("id") or "") for r in (st.get("vfx") or []) if isinstance(r, dict)}
         for it0 in range(self._sc_vfx_list.count()):
-            used.add(str((self._sc_vfx_list.item(it0).data(Qt.ItemDataRole.UserRole) or {}).get("id") or ""))
+            used.add(str(_vfx_row(self._sc_vfx_list.item(it0)).get("id") or ""))
         n = 1
         while ("vfx_%d" % n) in used:
             n += 1
@@ -5541,7 +6119,7 @@ class ScenePropertyPanel(QScrollArea):
                        "y": round(float(st.get("worldHeight") or 450) / 2, 1)},
         }
         it = QListWidgetItem()
-        it.setData(Qt.ItemDataRole.UserRole, row)
+        _set_vfx_row(it, row)
         self._decorate_vfx_item(it)
         self._sc_vfx_list.addItem(it)
         self._sc_vfx_list.setCurrentItem(it)
@@ -5572,7 +6150,7 @@ class ScenePropertyPanel(QScrollArea):
     def _vfx_rows_from_widgets(self) -> list:
         out: list = []
         for i in range(self._sc_vfx_list.count()):
-            d = self._sc_vfx_list.item(i).data(Qt.ItemDataRole.UserRole)
+            d = _vfx_row(self._sc_vfx_list.item(i))
             if isinstance(d, dict):
                 out.append(d)
         return out
@@ -5819,6 +6397,13 @@ class ScenePropertyPanel(QScrollArea):
         self._sc_acoustic_open.setToolTip("另起声学工作台进程，直接打开这个空间（没选空间就打开工作台新建）")
         self._sc_acoustic_open.clicked.connect(self._open_acoustic_workbench)
         form.addRow("　└ 工作台", self._sc_acoustic_open)
+        # 背景草木怎么摆动:抠植被 / 标刚体 / 重烘拆层都在草木工作台(它是 sway_paint.png 的唯一写者)
+        self._sc_sway_open = QPushButton("在草木工作台中打开…")
+        self._sc_sway_open.setToolTip(
+            "另起草木工作台进程,直接装这个场景:自动分割打底 + 手涂四层(补植被 / 加刚体 / 减刚体 / 锁死),\n"
+            "重烘后自动推给在跑的游戏原地换掉拆层(不切场景)。风本身在场景 JSON 的 wind 里。")
+        self._sc_sway_open.clicked.connect(self._open_sway_workbench)
+        form.addRow("草木摆动", self._sc_sway_open)
         # 听者绑给谁。听者不动＝走到崖边和站在路中间是同一个回音，实时就没意义了。
         self._sc_acoustic_listener = QComboBox()
         for _v, _t in (("player", "玩家（默认）"), ("camera", "相机"),
@@ -6250,6 +6835,80 @@ class ScenePropertyPanel(QScrollArea):
             "只在这些时段存在，逗号分隔（留空 = 全时段）。值须是 game_config.dayNight.phases 里的 id。")
         self._sc_vfx_phases.editingFinished.connect(self._on_vfx_field_changed)
         vfx_form.addRow("timePhases", self._sc_vfx_phases)
+        # ---- 两块区域，分开配：发射区域（在哪生 / 从哪补回）与范围区域（粒子被关在哪，软边界）
+        _draw_tip = ("\n按下后在画布上按住左键拖出一个框（Esc 取消）；之后在画布上改形状："
+                     "拖顶点、双击边线加点、右键 / Shift+点 / Del 删点。已有时重拉 = 整个换掉。")
+        _area_row = QWidget()
+        _area_lay = QHBoxLayout(_area_row)
+        _area_lay.setContentsMargins(0, 0, 0, 0)
+        self._sc_vfx_area_draw = QPushButton("拉发射区域")
+        self._sc_vfx_area_draw.setCheckable(True)
+        self._sc_vfx_area_draw.setToolTip(
+            "发射区域（画布上青色虚线）：纸钱铺在这里、被回收的从这里补回（写 area）。" + _draw_tip)
+        self._sc_vfx_area_draw.toggled.connect(lambda on: self._on_vfx_area_draw_toggled("emit", on))
+        _area_lay.addWidget(self._sc_vfx_area_draw)
+        self._sc_vfx_area_clear = QPushButton("删")
+        self._sc_vfx_area_clear.setMaximumWidth(40)
+        self._sc_vfx_area_clear.setToolTip("去掉发射区域（没有范围区域时连「限定」一起去掉：没有区域可关）")
+        self._sc_vfx_area_clear.clicked.connect(lambda: self._on_vfx_area_clear("emit"))
+        _area_lay.addWidget(self._sc_vfx_area_clear)
+        self._sc_vfx_range_draw = QPushButton("拉范围区域")
+        self._sc_vfx_range_draw.setCheckable(True)
+        self._sc_vfx_range_draw.setToolTip(
+            "范围区域（画布上黄色实线 + 边带）：粒子被关在这里面（写 confine.area，并打开「限定」）。\n"
+            "不拉就用发射区域当范围。发射区域小、范围区域大 = 纸钱铺在一小片、被风吹着能飞满一大片。"
+            + _draw_tip)
+        self._sc_vfx_range_draw.toggled.connect(lambda on: self._on_vfx_area_draw_toggled("range", on))
+        _area_lay.addWidget(self._sc_vfx_range_draw)
+        self._sc_vfx_range_clear = QPushButton("删")
+        self._sc_vfx_range_clear.setMaximumWidth(40)
+        self._sc_vfx_range_clear.setToolTip("去掉范围区域：退回用发射区域当范围（没有发射区域时连「限定」一起去掉）")
+        self._sc_vfx_range_clear.clicked.connect(lambda: self._on_vfx_area_clear("range"))
+        _area_lay.addWidget(self._sc_vfx_range_clear)
+        _area_lay.addStretch(1)
+        vfx_form.addRow("区域", _area_row)
+        self._sc_vfx_area_info = QLabel("")
+        self._sc_vfx_area_info.setWordWrap(True)
+        vfx_form.addRow("", self._sc_vfx_area_info)
+        _conf_row = QWidget()
+        _conf_lay = QHBoxLayout(_conf_row)
+        _conf_lay.setContentsMargins(0, 0, 0, 0)
+        self._sc_vfx_confine = QCheckBox("粒子限定在区域里")
+        self._sc_vfx_confine.setToolTip(
+            "勾上：粒子被关在范围区域里（没拉范围区域就用发射区域），边界是软的——\n"
+            "· 边带里风一路弱下去，飞到边上的纸自己落下（不是撞墙）；\n"
+            "· 边带里躺着的纸越靠外越先慢慢淡出，再从区域深处补回；\n"
+            "· 越过框线的很快淡出。\n"
+            "判的是粒子**正下方地面点**在不在框里：纸在框上空飞是对的。群体（蝙蝠）不吃这一项。\n"
+            "不勾：发射区域只管纸钱铺在哪、补回从哪来，飞出去不管。\n"
+            "去掉勾时拉好的范围区域先替你收着，本次打开编辑器期间再勾上会原样回来（也可以撤销）。")
+        self._sc_vfx_confine.toggled.connect(lambda _c: self._on_vfx_field_changed())
+        _conf_lay.addWidget(self._sc_vfx_confine)
+        self._sc_vfx_feather = QDoubleSpinBox()
+        self._sc_vfx_feather.setRange(0.0, 5000.0)
+        self._sc_vfx_feather.setDecimals(0)
+        self._sc_vfx_feather.setSingleStep(10.0)
+        self._sc_vfx_feather.setValue(_VFX_CONFINE_FEATHER_DEFAULT)
+        self._sc_vfx_feather.setMaximumWidth(120)
+        self._sc_vfx_feather.setPrefix("边带 ")
+        self._sc_vfx_feather.setToolTip(
+            f"从框线往里多宽是过渡带（画面 wu）。缺省 {_VFX_CONFINE_FEATHER_DEFAULT:.0f}；0 = 硬边。\n"
+            "画布上框内那一圈半透明的带子就是它。")
+        self._sc_vfx_feather.valueChanged.connect(lambda _v: self._on_vfx_field_changed())
+        _conf_lay.addWidget(self._sc_vfx_feather)
+        self._sc_vfx_ceiling = QDoubleSpinBox()
+        self._sc_vfx_ceiling.setRange(0.0, 20000.0)
+        self._sc_vfx_ceiling.setDecimals(0)
+        self._sc_vfx_ceiling.setSingleStep(20.0)
+        self._sc_vfx_ceiling.setMaximumWidth(120)
+        self._sc_vfx_ceiling.setPrefix("限高 ")
+        self._sc_vfx_ceiling.setSpecialValueText("限高 不限")
+        self._sc_vfx_ceiling.setToolTip(
+            "离地高度上限（wu，角色高 150）。到这个高度往上，上升气流不再托它，自己落回来。0 = 不限。")
+        self._sc_vfx_ceiling.valueChanged.connect(lambda _v: self._on_vfx_field_changed())
+        _conf_lay.addWidget(self._sc_vfx_ceiling)
+        _conf_lay.addStretch(1)
+        vfx_form.addRow("", _conf_row)
         vfx_lay.addWidget(self._sc_vfx_form_host)
         vfx_g.add_body(vfx_inner)
         outer.addWidget(vfx_g)
@@ -6433,6 +7092,14 @@ class ScenePropertyPanel(QScrollArea):
         return w
 
     # ---- 统一光影：灯位 ------------------------------------------------
+    #: 「在画布上定位选中的灯」按钮的常态文案/提示。配了跟随的灯要换成另一套并禁用——
+    #: 那时 `pos` 不再参与光照，让人接着点等于骗他（light-authoring-gizmos：
+    #: 填错的表现是"灯亮着但地上什么都没有"，与"这盏灯坏了"在画面上无法区分）。
+    _SL_PLACE_TEXT = "在画布上定位选中的灯"
+    _SL_PLACE_TIP = (
+        "点亮后在画布上点一下：取该处地面的伪世界坐标作为灯的落点，"
+        "再用下面的「离地高度」把它抬起来。")
+
     def _build_scene_lights_section(self) -> QWidget:
         """灯位编辑。
 
@@ -6531,11 +7198,9 @@ class ScenePropertyPanel(QScrollArea):
         self._sl_pull.clicked.connect(self._on_sl_pull_runtime)
         lay.addWidget(self._sl_pull)
 
-        self._sl_place = QPushButton("在画布上定位选中的灯")
+        self._sl_place = QPushButton(self._SL_PLACE_TEXT)
         self._sl_place.setCheckable(True)
-        self._sl_place.setToolTip(
-            "点亮后在画布上点一下：取该处地面的伪世界坐标作为灯的落点，"
-            "再用下面的「离地高度」把它抬起来。")
+        self._sl_place.setToolTip(self._SL_PLACE_TIP)
         self._sl_place.toggled.connect(self._on_sl_place_toggled)
         lay.addWidget(self._sl_place)
 
@@ -6632,6 +7297,11 @@ class ScenePropertyPanel(QScrollArea):
         form.addRow("平行光仰角 °", self._sl_elev)
         self._sl_azim = spin(0.0, 359.0, 1.0, 0)
         form.addRow("平行光方位 °", self._sl_azim)
+        # 跟随绑定（`LightDef.follow`，2026-09-12）。**默认折叠 + 懒建**：绝大多数灯不跟随，
+        # 没展开过的块原样透传磁盘值（既保往返保真，又躲开控件数的 O(N²) 成本）。
+        # 平行光没有位置 ⇒ 整行隐藏（见下面 `_sync_sl_form` 的可见性表）。
+        self._sl_follow = LightFollowEditor(self._on_sl_field_changed, self._sl_form)
+        form.addRow(self._sl_follow)
         lay.addWidget(self._sl_form)
 
         # 玩家的阴影绑定。玩家不在场景数据里有自己的 def，所以挂在场景上——
@@ -7349,6 +8019,16 @@ class ScenePropertyPanel(QScrollArea):
             return
         opener(str(self._sc_acoustic.current_id() or "").strip())
 
+    def _open_sway_workbench(self) -> None:
+        """场景页的「在草木工作台中打开…」:另起工作台进程并直接装当前这个场景。
+
+        起进程的落点在主窗口(与轨迹 / 声学 / 粒子三台同一套 detached 起法),这里只负责把场景 id 递过去。
+        """
+        opener = getattr(self.window(), "open_sway_workbench", None)
+        if not callable(opener):
+            return
+        opener(str(self._sc_id.text() or "").strip())
+
     def _open_vfx_workbench(self) -> None:
         """场景页 vfx 实例的「在粒子工作台中打开…」：另起工作台进程并直接切到当前选的效果。
 
@@ -7540,6 +8220,11 @@ class ScenePropertyPanel(QScrollArea):
             count_txt = f"灯 {len(ls)} 盏"
         issues = scene_lights.validate_lights(ls)
         ww = self._sl_space.world_w if self._sl_space else 0.0
+        # 跟随灯**照旧算一盏**（运行时是一盏运行时灯，占同一批灯槽与同一份阴影预算）。
+        # 这里只是把"其中几盏会动"说出来，不从任何计数里扣。
+        n_follow = scene_lights.follow_light_count(ls)
+        if n_follow:
+            count_txt += f"（其中 {n_follow} 盏跟随实体，照旧各算一盏）"
         head = (f"{count_txt}　带影 <b>{n}/{budget}</b>"
                 + (f"（时段「{worst_phase}」）" if worst_phase else "")
                 + ("　<span style='color:#e06c4a'>⚠ 超预算,跑起来会掉帧</span>" if over else "")
@@ -7701,6 +8386,8 @@ class ScenePropertyPanel(QScrollArea):
         l = self._sl_current()
         self._sl_form.setEnabled(l is not None)
         if l is None:
+            self._sl_follow_loaded_for = None
+            self._sync_sl_place_affordance("")
             return
         self._sl_updating = True
         try:
@@ -7730,6 +8417,15 @@ class ScenePropertyPanel(QScrollArea):
             self._sl_roll.setValue(float(l.get("rollDeg", 0) or 0))
             self._sl_elev.setValue(float(l.get("elevationDeg", 45) or 45))
             self._sl_azim.setValue(float(l.get("azimuthDeg", 180) or 180))
+            # 跟随块**按身份只重填一次**（editor-data-sync-paradigm 契约 5：懒回写按身份
+            # 不按行号）。不能每次 `_sync_sl_form` 都重填：这个方法也被"字段改了之后"
+            # 的重刷调用，而"勾了跟随但还没选目标"是一个**数据里表达不出来**的中间态
+            # （那时刻意不写 follow 键）——照数据重填会把用户刚勾上的勾当场弹回去，
+            # 于是那个勾**永远勾不上**。换型/换灯/重载都会换掉 dict 身份，照样会重填。
+            if self._sl_follow_loaded_for is not l:
+                self._sl_follow_loaded_for = l
+                self._sl_follow.set_context(self._model, self._editing_scene_id or None)
+                self._sl_follow.set_data(l.get("follow"))
             # 按灯型只留相关的行，别让作者对着一堆不生效的字段发懵
             # ★ 按灯型**整行隐藏**，不是置灰。
             #
@@ -7748,10 +8444,54 @@ class ScenePropertyPanel(QScrollArea):
                 (self._sl_roll, kind == "area"),
                 (self._sl_two_sided, kind == "area"),
                 (self._sl_elev, kind == "directional"), (self._sl_azim, kind == "directional"),
+                # 平行光没有位置，跟随对它毫无意义（解出来的 pos 被 packLights 忽略）
+                (self._sl_follow, kind != "directional"),
             ):
                 self._set_sl_row_visible(w, on)
         finally:
             self._sl_updating = False
+        self._sync_sl_place_affordance(self._sl_follow_desc(l))
+
+    @staticmethod
+    def _sl_follow_desc(l: dict | None) -> str:
+        """画布定位的门控判据 + 给人看的一句「跟着谁走」（''= 这盏灯不跟随）。
+
+        ⚠ 判据是**`follow` 块在不在**，不是 `target` 填没填：运行时
+        `SceneLightingSystem.effectiveLights` 见 `follow` 就跳过原件，
+        所以只要有这个块，`pos` 就一律不参与光照。
+        ⚠ 取自**数据本身**，不问控件——跟随块是懒建的，没展开过时控件根本不存在。
+        """
+        f = (l or {}).get("follow")
+        if not isinstance(f, dict):
+            return ""
+        tgt = str(f.get("target") or "").strip()
+        return f"「{tgt}」" if tgt else "（follow 还没配 target）"
+
+    def _sync_sl_place_affordance(self, follow_desc: str) -> None:
+        """配了跟随 ⇒ 「在画布上定位」**禁用并当场说明跟着谁走**。
+
+        配了 follow 之后 `pos` 不再参与光照（只是编辑器里的参考点），让作者接着在画布上
+        点位置就是骗他：他会点半天、进游戏一看灯在别处，而画面上"摆错了"与"这盏灯坏了"
+        完全无法区分（light-authoring-gizmos 那条判据）。所以按钮上直接写「跟着 X 走」。
+        """
+        btn = getattr(self, "_sl_place", None)
+        if btn is None:
+            return
+        if follow_desc:
+            if btn.isChecked():
+                # 已经点亮着就熄掉：否则跟随灯选中后画布还在等你点，点了也不算
+                btn.setChecked(False)
+            btn.setEnabled(False)
+            btn.setText(f"⤾ 跟着{follow_desc}走 —— 位置由运行时每帧解算")
+            btn.setToolTip(
+                f"这盏灯配了跟随{follow_desc}：位置由运行时每帧从目标（+挂点+高度+偏移）"
+                "解出来，`pos` **不再参与光照**，只留作编辑器里的参考点。\n"
+                "所以画布定位对它没有效果，已停用。要改高度请用跟随块里的「离地高度 wu」。\n"
+                "要回到「灯钉在一个固定位置」那条老路：把跟随块里的勾去掉。")
+            return
+        btn.setEnabled(True)
+        btn.setText(self._SL_PLACE_TEXT)
+        btn.setToolTip(self._SL_PLACE_TIP)
 
     def _set_sl_row_visible(self, w, on: bool) -> None:
         """整行显示/隐藏（连标签一起）。找不到行就退回置灰，绝不因此崩掉表单。"""
@@ -7868,6 +8608,15 @@ class ScenePropertyPanel(QScrollArea):
         if kind == "directional":
             l["elevationDeg"] = round(self._sl_elev.value(), 1)
             l["azimuthDeg"] = round(self._sl_azim.value(), 1)
+        # 跟随绑定。`None` = **不写 follow 键**（不是 null、不是空对象）。
+        # ⚠ 平行光这一行是隐藏的，但**照样按 dump 写**：隐藏 ≠ 清空，直接 pop 会让
+        #   "把跟随灯换成平行光"之外的任何一次编辑（改个强度）顺手删掉作者的 follow。
+        #   摘掉 follow 是 `scene_lights.retype` 的职责（那才是显式换型那一刻）。
+        fol = self._sl_follow.dump()
+        if fol is None:
+            l.pop("follow", None)
+        else:
+            l["follow"] = fol
         self._fill_sl_table(select_row=self._sl_selected)
         self._emit_props_changed()
 
@@ -7882,6 +8631,15 @@ class ScenePropertyPanel(QScrollArea):
         l = self._sl_current()
         if l is None or str(l.get("kind")) == "directional" or not self._sl_space:
             return False
+        # 配了跟随的灯：`pos` 不再参与光照，落点写进去只会让作者以为摆好了。
+        # 按钮那边已经禁用并改了文案，这里是**同一条门的里侧**——画布工具可能在
+        # 选中切换之前就已点亮，护栏不能只挂在按钮上。
+        desc = self._sl_follow_desc(l)
+        if desc:
+            self._sl_status.setText(
+                f"⚠ 这盏灯配了跟随{desc}：位置由运行时每帧解算，pos 不再参与光照，"
+                "画布定位已停用。要改高度请用跟随块里的「离地高度 wu」。")
+            return True
         g = self._sl_space.ground_world_at_scene(scene_x, scene_y)
         if g is None:
             self._sl_status.setText(
@@ -7900,6 +8658,7 @@ class ScenePropertyPanel(QScrollArea):
         lit = st.get("lighting")
         self._sc_lighting = copy.deepcopy(lit) if isinstance(lit, dict) else None
         self._sl_selected = -1
+        self._sl_follow_loaded_for = None
         self._sl_placing = False
         if hasattr(self, "_sl_place"):
             self._sl_place.setChecked(False)
@@ -12009,8 +12768,8 @@ class ScenePropertyPanel(QScrollArea):
             "旧数据保值展示，改配气味源后请归零。")
         self._zn_smell_dir.valueChanged.connect(lambda _v: self._emit_props_changed())
         smell_form.addRow("方位偏向 dir（已废）", self._zn_smell_dir)
-        # 气味源（G.6）：气缕被从源那边吹过来，飘向的反方向 = 源；不配 = 一直直的
-        self._zn_smell_has_source = QCheckBox("配气味源 source（气缕飘向的反方向指向它；不配=直的）")
+        # 气味源（G.6）：气缕飘向指着源；不配 = 一直直的
+        self._zn_smell_has_source = QCheckBox("配气味源 source（气缕飘向指着它；不配=直的）")
         self._zn_smell_has_source.toggled.connect(lambda _v: self._emit_props_changed())
         smell_form.addRow("", self._zn_smell_has_source)
         src_row = QWidget()
@@ -12924,6 +13683,11 @@ class SceneEditor(QWidget):
         self._lightcurve_overlay_refresh_timer.setSingleShot(True)
         self._lightcurve_overlay_refresh_timer.timeout.connect(
             self._apply_lightcurve_overlay_refresh)
+        # 粒子区域 overlay 同理合并到下一拍：它会拆建图元，不能落在图元自己的鼠标事件里
+        self._vfx_area_overlay_refresh_timer = QTimer(self)
+        self._vfx_area_overlay_refresh_timer.setSingleShot(True)
+        self._vfx_area_overlay_refresh_timer.timeout.connect(
+            self._apply_vfx_area_overlay_refresh)
 
         root = QHBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -13294,6 +14058,13 @@ class SceneEditor(QWidget):
             self._on_npc_patrol_route_committed)
         self._canvas.item_lightcurve_committed.connect(
             self._on_lightcurve_committed)
+        # 粒子区域：面板（单一真相源）←→ 画布 overlay
+        self._props.vfx_area_overlay_refresh_requested.connect(self._refresh_vfx_area_overlay)
+        self._props.vfx_area_draw_mode_changed.connect(self._canvas.set_vfx_area_draw_mode)
+        self._canvas.vfx_area_draw_mode_finished.connect(self._props.finish_vfx_area_draw_mode)
+        self._canvas.vfx_area_drawn.connect(self._on_vfx_area_drawn)
+        self._canvas.item_vfx_area_committed.connect(self._on_vfx_area_committed)
+        self._canvas.vfx_area_pick_requested.connect(self._on_vfx_area_pick_requested)
         # 统一光影：画布定位 ←→ 属性面板的开关，双向接起来
         self._canvas.light_place_requested.connect(self._on_light_place_requested)
         self._props.light_place_mode_changed.connect(self._canvas.set_light_place_mode)
@@ -13677,6 +14448,62 @@ class SceneEditor(QWidget):
             return
         with self._undo.capture("编辑光环境曲线"):
             self._props.apply_lightcurve_committed(points)
+
+    # ---- 粒子区域（vfx[].area + confine） --------------------------------
+
+    def _refresh_vfx_area_overlay(self) -> None:
+        self._vfx_area_overlay_refresh_timer.start(0)
+
+    def _apply_vfx_area_overlay_refresh(self) -> None:
+        """面板里 vfx 实例的区域 → 画布（任何属性页下都显示）。"""
+        self._canvas.set_vfx_area_overlay(self._props.vfx_area_overlay_rows())
+
+    def _ensure_scene_panel_for_vfx(self, iid: str) -> bool:
+        """区域手势要落到场景属性页的那条实例上：不在场景页就先提交离开、再装场景页。
+
+        必须在鼠标事件栈之外调（三个入口都是画布排到下一拍发的信号）。
+        """
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if sc is None:
+            return False
+        props = self._props
+        if props._stack.currentWidget() is not props._scene_panel:
+            if not self._undo_flush_pending_as_command():
+                self._restore_editing_selection_after_block()
+                return False
+            props.load_scene_props(self._model.scenes.get(self._current_scene_id or "") or sc,
+                                   clear_pending_edits=False)
+        return props.select_vfx_row_by_id(iid)
+
+    def _on_vfx_area_pick_requested(self, iid: str) -> None:
+        self._ensure_scene_panel_for_vfx(str(iid))
+
+    def _on_vfx_area_committed(self, iid: str, role: str, points: object) -> None:
+        """画布上拖 / 插 / 删了某块区域的顶点。一次手势 = 一条撤销命令。"""
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            self._refresh_vfx_area_overlay()          # 提交被拦：画布退回面板里那份
+            return
+        if not self._ensure_scene_panel_for_vfx(str(iid)):
+            self._refresh_vfx_area_overlay()
+            return
+        label = "编辑范围区域" if role == "range" else "编辑发射区域"
+        with self._undo.capture(label):
+            self._props.apply_vfx_area(str(iid), points, role=str(role))
+
+    def _on_vfx_area_drawn(self, role: str, x0: float, y0: float, x1: float, y1: float) -> None:
+        """拉框模式拉出一个框：给当前实例换上这块矩形区域（发射 / 范围由按下的是哪个按钮决定）。"""
+        iid = self._props.current_vfx_id()
+        if not iid:
+            return
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return
+        if not self._ensure_scene_panel_for_vfx(iid):
+            return
+        rect = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+        with self._undo.capture("拉范围区域" if role == "range" else "拉发射区域"):
+            self._props.apply_vfx_area(iid, rect, role=str(role), new_region=True)
 
     def _on_light_place_requested(self, sx: float, sy: float) -> None:
         """画布上点了一下 → 把选中的灯落到该处地面（属性面板负责取深度与抬高）。"""

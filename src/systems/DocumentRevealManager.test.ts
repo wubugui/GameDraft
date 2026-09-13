@@ -9,6 +9,8 @@ function makeManager(def: Partial<DocumentRevealDef>): {
   manager: DocumentRevealManager;
   executeAwait: ReturnType<typeof vi.fn>;
   blend: ReturnType<typeof vi.fn>;
+  show: ReturnType<typeof vi.fn>;
+  hide: ReturnType<typeof vi.fn>;
   revealedPayloads: Array<{ documentId?: string; customSfx?: boolean }>;
 } {
   const eventBus = new EventBus();
@@ -31,10 +33,12 @@ function makeManager(def: Partial<DocumentRevealDef>): {
     { executeAwait } as any,
   );
   const blend = vi.fn(async () => {});
-  manager.setBlendExecutor(blend);
+  const show = vi.fn(async () => {});
+  const hide = vi.fn();
+  manager.setLayerPresenter({ show, blend, hide });
   const revealedPayloads: Array<{ documentId?: string; customSfx?: boolean }> = [];
   eventBus.on('document:revealed', (p) => revealedPayloads.push(p ?? {}));
-  return { manager, executeAwait, blend, revealedPayloads };
+  return { manager, executeAwait, blend, show, hide, revealedPayloads };
 }
 
 describe('DocumentRevealManager 揭示音效', () => {
@@ -125,5 +129,107 @@ describe('DocumentRevealManager 揭示音效', () => {
     await manager.checkAndReveal('doc');
     await manager.checkAndReveal('doc');
     expect(executeAwait).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * 三态（2026-09-12 制作人定调）：作者只发「显示这份文档」，由管理器自己判该显示什么。
+ * 关键判据是**任何一态都出图**——早期实现在"条件不满足"和"已揭示"两态都直接 return，
+ * 于是第一次揭示后收掉图，再触发就永远是一片空白（真机踩到）。
+ */
+describe('DocumentRevealManager 三态显示', () => {
+  const 不成立条件 = { flag: 'f_never', op: '==' as const, value: true };
+
+  it('条件不满足：出揭示前的图，不揭示、不记档、不响音效、不发事件', async () => {
+    const { manager, show, blend, executeAwait, revealedPayloads } = makeManager({
+      revealCondition: 不成立条件,
+      revealSfx: 'paper_reveal',
+    });
+    await manager.loadDefinitions();
+    await manager.checkAndReveal('doc');
+    expect(show).toHaveBeenCalledWith('doc', 'blur.png', 50, 50, 40);
+    expect(blend).not.toHaveBeenCalled();
+    expect(manager.isRevealed('doc')).toBe(false);
+    expect(executeAwait).not.toHaveBeenCalled();
+    expect(revealedPayloads).toEqual([]);
+  });
+
+  it('条件满足且未揭示：播揭示动画并记进存档', async () => {
+    const { manager, show, blend } = makeManager({});
+    await manager.loadDefinitions();
+    await manager.checkAndReveal('doc');
+    expect(blend).toHaveBeenCalledWith('doc', 'blur.png', 'clear.png', 50, 50, 40, 100, 0);
+    expect(show).not.toHaveBeenCalled();
+    expect(manager.isRevealed('doc')).toBe(true);
+  });
+
+  it('已揭示：瞬时出揭示后的图，不重播动画、不响音效、不发事件', async () => {
+    const { manager, show, blend, executeAwait, revealedPayloads } = makeManager({
+      revealSfx: 'paper_reveal',
+    });
+    await manager.loadDefinitions();
+    await manager.checkAndReveal('doc');
+    executeAwait.mockClear();
+    revealedPayloads.length = 0;
+    await manager.checkAndReveal('doc');
+    expect(show).toHaveBeenCalledWith('doc', 'clear.png', 50, 50, 40);
+    expect(blend).toHaveBeenCalledTimes(1);
+    expect(executeAwait).not.toHaveBeenCalled();
+    expect(revealedPayloads).toEqual([]);
+  });
+
+  it('收图后再触发：直接出揭示后的图（这就是真机那个"第二次啥都不显示"）', async () => {
+    const { manager, show, blend, hide } = makeManager({});
+    await manager.loadDefinitions();
+    await manager.checkAndReveal('doc');
+    manager.hideDocument('doc');
+    expect(hide).toHaveBeenCalledWith('doc');
+    await manager.checkAndReveal('doc');
+    expect(show).toHaveBeenCalledWith('doc', 'clear.png', 50, 50, 40);
+    expect(blend).toHaveBeenCalledTimes(1);
+  });
+
+  it('force：条件不满足也直接播揭示动画并记档', async () => {
+    const { manager, show, blend } = makeManager({ revealCondition: 不成立条件 });
+    await manager.loadDefinitions();
+    await manager.checkAndReveal('doc', { force: true });
+    expect(blend).toHaveBeenCalledOnce();
+    expect(show).not.toHaveBeenCalled();
+    expect(manager.isRevealed('doc')).toBe(true);
+  });
+
+  it('force 不让已揭示的重播动画：仍是瞬时出清晰图', async () => {
+    const { manager, show, blend } = makeManager({ revealCondition: 不成立条件 });
+    await manager.loadDefinitions();
+    await manager.checkAndReveal('doc', { force: true });
+    await manager.checkAndReveal('doc', { force: true });
+    expect(blend).toHaveBeenCalledTimes(1);
+    expect(show).toHaveBeenCalledWith('doc', 'clear.png', 50, 50, 40);
+  });
+
+  it('同态重复触发是幂等的：只是重贴同一张，不会再叠化', async () => {
+    const { manager, show, blend } = makeManager({ revealCondition: 不成立条件 });
+    await manager.loadDefinitions();
+    await manager.checkAndReveal('doc');
+    await manager.checkAndReveal('doc');
+    expect(show).toHaveBeenCalledTimes(2);
+    expect(show).toHaveBeenNthCalledWith(2, 'doc', 'blur.png', 50, 50, 40);
+    expect(blend).not.toHaveBeenCalled();
+  });
+
+  it('overlayId 已作废：配了也不参与寻址，显示层的键恒为 documentId', async () => {
+    const { manager, blend, hide } = makeManager({ overlayId: '_img' });
+    await manager.loadDefinitions();
+    await manager.checkAndReveal('doc');
+    expect(blend).toHaveBeenCalledWith('doc', 'blur.png', 'clear.png', 50, 50, 40, 100, 0);
+    manager.hideDocument('doc');
+    expect(hide).toHaveBeenCalledWith('doc');
+  });
+
+  it('未知 documentId：收图不抛、只告警', async () => {
+    const { manager, hide } = makeManager({});
+    await manager.loadDefinitions();
+    manager.hideDocument('不存在');
+    expect(hide).not.toHaveBeenCalled();
   });
 });

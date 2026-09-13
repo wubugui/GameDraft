@@ -1818,6 +1818,51 @@
       }
     }
   ],
+  "cues": [
+    {
+      "id": "cue_1",
+      "atMs": 1169,
+      "sound": {
+        "id": "sfx_step_stone_3",
+        "volume": 1.0
+      }
+    },
+    {
+      "id": "cue_2",
+      "atMs": 1995,
+      "sound": "sfx_step_stone_3"
+    },
+    {
+      "id": "cue_3",
+      "atMs": 2496,
+      "sound": "sfx_step_stone_3"
+    },
+    {
+      "id": "cue_4",
+      "atMs": 2832,
+      "sound": "sfx_step_stone_3"
+    },
+    {
+      "id": "cue_5",
+      "atMs": 3003,
+      "sound": "sfx_step_stone_3"
+    },
+    {
+      "id": "cue_6",
+      "atMs": 3128,
+      "sound": "sfx_step_stone_3"
+    },
+    {
+      "id": "cue_7",
+      "atMs": 3217,
+      "sound": "sfx_step_stone_3"
+    },
+    {
+      "id": "cue_8",
+      "atMs": 5216,
+      "sound": "sfx_step_stone_4"
+    }
+  ],
   "source": {
     "segments": [
       {

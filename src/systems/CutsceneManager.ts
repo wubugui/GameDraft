@@ -402,7 +402,7 @@ export class CutsceneManager implements IGameSystem {
   /**
    * 位置引用求值口（组装层注入 `Game.resolvePositionRef`）：`cameraMove` 的可选 `at`
    * （数字 / 实体此刻位置 / 曲线插槽 / 曲线上的点）。**一次性求值**——把镜头摆到那个点，
-   * 不是持续跟随；跟着动的东西走是 `cameraFollowActor`（每帧按 id 重解析）。
+   * 不是持续跟随；跟着动的东西走是 `cameraFollowActor`（`target` 实体 / `at` 位置引用，每帧求值）。
    */
   setPositionRefResolver(resolver: ((raw: unknown) => Promise<{ x: number; y: number } | null>) | null): void {
     this.positionRefResolver = resolver;
@@ -525,6 +525,42 @@ export class CutsceneManager implements IGameSystem {
     this.cutsceneRenderer.hideImg(overlayId);
   }
 
+  // ---- 文档揭示的显示层（键是 documentId，与上面那套 overlay 句柄互不可见）----
+
+  /** 瞬时显示某份文档的某张图（无动画）；布局口径同 showOverlayImage */
+  showDocumentImage(
+    documentId: string,
+    imagePath: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+  ): Promise<void> {
+    return this.cutsceneRenderer.showDocumentImage(
+      documentId, imagePath, xPercent, yPercent, widthPercent,
+    );
+  }
+
+  /** 某份文档的揭示动画：模糊 → 清晰 */
+  blendDocumentImage(
+    documentId: string,
+    fromPath: string,
+    toPath: string,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+    durationMs: number,
+    delayMs: number,
+  ): Promise<void> {
+    return this.cutsceneRenderer.blendDocumentImage(
+      documentId, fromPath, toPath, xPercent, yPercent, widthPercent, durationMs, delayMs,
+    );
+  }
+
+  /** 收掉某份文档的显示层 */
+  hideDocumentImage(documentId: string): void {
+    this.cutsceneRenderer.hideDocumentLayer(documentId);
+  }
+
   /** Action「blendOverlayImage」：同 showOverlayImage 百分比布局；片元 mix(from,to,t)，delayMs 后 t 在 durationMs 内 0→1。 */
   blendOverlayImage(
     overlayId: string,
@@ -635,7 +671,12 @@ export class CutsceneManager implements IGameSystem {
     const stepEpochAtStart = this.stepEpoch;
     const worldEpochAtStart = this.worldEpoch;
     this.playbackCutsceneId = id;
-    this.eventBus.emit('cutscene:start', { id });
+    // hideMetaHud 随开演事件一起发：HUD 层要据此决定「三把火/气味」这一列跟不跟着淡出
+    // （缺省 false = 不淡出）。别改成让 HUD 回头查 def——UI 不认识过场数据源。
+    this.eventBus.emit('cutscene:start', {
+      id,
+      hideMetaHud: def.hideMetaHud === true,
+    });
 
     // 预热本过场用到的全部图片，避免首次切图时按需加载造成停顿/不流畅。
     // loadTexture 自带缓存，重复调用安全；以 fire-and-forget 并行预热，showImg 自身仍会兜底加载。
@@ -949,8 +990,8 @@ export class CutsceneManager implements IGameSystem {
    * `cameraMove` 的目标点：`at`（位置引用）优先，退到 `x`/`y`。
    *
    * `at` 是**一次性求值**——把镜头摆到那个点（如"铜钱这次的落点"），不是持续跟随；
-   * 要镜头跟着动的东西走用 `cameraFollowActor`（每帧按 id 重解析实体位置）。
-   * 求不出来（资产缺 / 实体不在 / 相对曲线没在播）就退回 x/y 并 warn：内容错不该把运镜炸掉。
+   * 要镜头跟着动的东西走用 `cameraFollowActor`（`target` 实体，或 `at` 位置引用——如"曲线此刻播到的点"，每帧求值）。
+   * 求不出来（资产缺 / 实体不在 / 相对曲线 / 播放头还没产生）就退回 x/y 并 warn：内容错不该把运镜炸掉。
    */
   /** `x` / `y` 那份回落（编辑期快照 / 老数据的唯一形状）。 */
   private cameraTargetFallback(step: PresentStep): { x: number; y: number } {

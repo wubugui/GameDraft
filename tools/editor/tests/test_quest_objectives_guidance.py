@@ -162,12 +162,21 @@ class ObjectivesEditorTests(unittest.TestCase):
     def test_roundtrip_full_and_minimal(self) -> None:
         items = [
             {"id": "o1", "text": "去码头", "completeWhen": [{"flag": "at_dock"}],
-             "guidance": [{"kind": "mapMarker", "sceneId": "dock"}], "optional": True},
+             "guidance": [{"kind": "mapMarker", "sceneId": "dock"}], "optional": True,
+             "visibleConditions": [{"flag": "heard_dock"}]},
             {"id": "o2", "text": "找老乡"},
         ]
         w = ObjectivesEditor(self.model)
         w.set_data(items)
         self.assertEqual(w.to_list(), items)
+
+    def test_visible_conditions_edit_and_clear(self) -> None:
+        w = ObjectivesEditor(self.model)
+        w.set_data([{"id": "o1", "text": "甲"}])
+        w._rows[0].visible_cond.set_data([{"flag": "knows"}])
+        self.assertEqual(w.to_list(), [{"id": "o1", "text": "甲", "visibleConditions": [{"flag": "knows"}]}])
+        w._rows[0].visible_cond.set_data([])
+        self.assertEqual(w.to_list(), [{"id": "o1", "text": "甲"}])
 
     def test_move_carries_conditions_and_guidance(self) -> None:
         items = [
@@ -231,7 +240,8 @@ class QuestEditorFormRoundtripTests(unittest.TestCase):
         （整个工程标脏 + 那几个键被抹掉），用户什么都没编辑。
         """
         self.model.quests[0]["objectives"] = [
-            {"id": "o1", "text": "甲", "optional": False, "completeWhen": [], "guidance": []},
+            {"id": "o1", "text": "甲", "optional": False, "completeWhen": [], "guidance": [],
+             "visibleConditions": []},
         ]
         self.model.quests[0]["guidance"] = [
             {"kind": "worldMarker", "sceneId": "dock", "entityKind": "npc",

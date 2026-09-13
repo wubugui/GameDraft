@@ -21,6 +21,7 @@ import type {
   GameContext,
   ITrajectoryTarget,
   NpcDef,
+  TrajectoryCue,
   TrajectoryKeyframe,
   TrajectoryPose,
 } from '../data/types';
@@ -75,11 +76,16 @@ class FakeTarget implements ITrajectoryTarget {
   }
 }
 
-function makeSystem(): { sys: TrajectorySystem; suspendPatrol: ReturnType<typeof vi.fn> } {
+function makeSystem(): {
+  sys: TrajectorySystem;
+  suspendPatrol: ReturnType<typeof vi.fn>;
+  playCue: ReturnType<typeof vi.fn>;
+} {
   const suspendPatrol = vi.fn<(npcId: string) => void>();
-  const sys = new TrajectorySystem({ suspendPatrol });
+  const playCue = vi.fn<(cue: TrajectoryCue, trajectoryId: string) => void>();
+  const sys = new TrajectorySystem({ suspendPatrol, playCue });
   sys.init({} as unknown as GameContext);
-  return { sys, suspendPatrol };
+  return { sys, suspendPatrol, playCue };
 }
 
 const def = (keyframes: TrajectoryKeyframe[], id = 't1'): TrajectoryPlayDef => ({
@@ -625,5 +631,213 @@ describe('TrajectorySystem · 生命周期对称（律 5）', () => {
     sys.update(0.1);
     expect(await outcome(pa)).toBe('completed');
     expect(await outcome(pc)).toBe('completed');
+  });
+});
+
+// ═══════════════════════ 播放头（曲线此刻播到的点的数据源）═══════════════════════
+// 位置引用 `point:'current'` 靠这两个口：在播 = livePlay 的 tMs；不播 = endedPlay（播完停在终点）。
+// 本场景没播过 = 两个都 null（"引用点还没产生"，镜头跟随原地不动）。
+
+describe('TrajectorySystem · 播放头（livePlay / endedPlay）', () => {
+  const D = def([{ atMs: 0, x: 0, y: 0 }, { atMs: 1000, x: 100, y: 50 }], 'coin');
+
+  it('没播过：两个口都是 null', () => {
+    const { sys } = makeSystem();
+    expect(sys.livePlay('coin')).toBeNull();
+    expect(sys.endedPlay('coin')).toBeNull();
+  });
+
+  it('在播：livePlay 给这次的锚点 + 已播毫秒；播完转进 endedPlay 且 tMs 恰在末帧', async () => {
+    const { sys } = makeSystem();
+    const t = new FakeTarget();
+    const p = sys.play(D, t, { anchor: { x: 10, y: 20 } });
+    sys.update(0.25);
+    expect(sys.livePlay('coin')).toMatchObject({ anchor: { x: 10, y: 20 } });
+    expect(sys.livePlay('coin')?.tMs).toBeCloseTo(250, 6);
+    expect(sys.endedPlay('coin')).toBeNull();
+    sys.update(5);                            // 冲过末帧：tMs 夹到总时长
+    expect(await outcome(p)).toBe('completed');
+    expect(sys.livePlay('coin')).toBeNull();
+    expect(sys.endedPlay('coin')).toMatchObject({ anchor: { x: 10, y: 20 }, tMs: 1000 });
+  });
+
+  it('被停在半路：播放头停在停下那一刻；toEnd 则停在末帧', () => {
+    const { sys } = makeSystem();
+    void sys.play(D, new FakeTarget('player'));
+    sys.update(0.3);
+    sys.stopFor('player');
+    expect(sys.endedPlay('coin')?.tMs).toBeCloseTo(300, 6);
+    void sys.play(D, new FakeTarget('player'));
+    sys.update(0.3);
+    sys.stopFor('player', 'stopped', { toEnd: true });
+    expect(sys.endedPlay('coin')?.tMs).toBe(1000);
+  });
+
+  it('被实体抢走（moveTo / destroy）：停在被抢那一刻', () => {
+    const { sys } = makeSystem();
+    const t = new FakeTarget('npc:甲');
+    void sys.play(D, t);
+    sys.update(0.4);
+    t.firePreempt();
+    expect(sys.livePlay('coin')).toBeNull();
+    expect(sys.endedPlay('coin')?.tMs).toBeCloseTo(400, 6);
+  });
+
+  it('一步落终态（immediate / 快进 / finishAll）也记末帧', () => {
+    const { sys } = makeSystem();
+    void sys.play(D, new FakeTarget('player'), { immediate: true });
+    expect(sys.endedPlay('coin')?.tMs).toBe(1000);
+    const { sys: s2 } = makeSystem();
+    void s2.play(D, new FakeTarget('player'));
+    s2.update(0.1);
+    s2.finishAll();
+    expect(s2.endedPlay('coin')?.tMs).toBe(1000);
+  });
+
+  it('cancelAll（切场景 / 读档）清掉结束记录，被作废的播放也不记（律 4）', () => {
+    const { sys } = makeSystem();
+    void sys.play(D, new FakeTarget('player'));
+    sys.update(5);
+    expect(sys.endedPlay('coin')).not.toBeNull();
+    void sys.play(D, new FakeTarget('npc:甲'));
+    sys.update(0.2);
+    sys.cancelAll();
+    expect(sys.livePlay('coin')).toBeNull();
+    expect(sys.endedPlay('coin')).toBeNull();
+  });
+});
+
+// ═══════════════════════════ 音效关键点（TrajectoryCue） ═══════════════════════════
+/**
+ * 关键点的贵处只有两条：**恰好一次**、**只在时间真的流过去的那条路上响**。
+ * 前者错了是"一帧一声"的机枪；后者错了是"跳过过场，攒下的五声一齐砸出来"。
+ */
+describe('TrajectorySystem · 音效关键点', () => {
+  const FRAMES: TrajectoryKeyframe[] = [{ atMs: 0, x: 0, y: 0 }, { atMs: 1000, x: 100, y: 50 }];
+  const withCues = (cues: TrajectoryCue[], id = 'coin'): TrajectoryPlayDef => ({ id, keyframes: FRAMES, cues });
+  const ids = (playCue: ReturnType<typeof vi.fn>): string[] =>
+    playCue.mock.calls.map((c) => (c[0] as TrajectoryCue).id);
+
+  it('播放头扫过即触发，按时刻升序，每条恰一次', () => {
+    const { sys, playCue } = makeSystem();
+    void sys.play(withCues([
+      { id: 'b', atMs: 600, sound: 'sfx_b' },
+      { id: 'a', atMs: 200, sound: { id: 'sfx_a', volume: 0.4 } },
+    ]), new FakeTarget());
+    expect(playCue).not.toHaveBeenCalled();
+    sys.update(0.1);
+    expect(playCue).not.toHaveBeenCalled();
+    sys.update(0.15);                       // 250ms：过了 a
+    expect(ids(playCue)).toEqual(['a']);
+    sys.update(0.1);                        // 350ms：一条都没新过，不许重放
+    expect(ids(playCue)).toEqual(['a']);
+    sys.update(0.5);                        // 850ms：过了 b
+    expect(ids(playCue)).toEqual(['a', 'b']);
+    sys.update(5);                          // 冲过末帧：不再有第三次
+    expect(ids(playCue)).toEqual(['a', 'b']);
+  });
+
+  it('一步吃掉好几个关键点时，一帧内按序全放（不许漏、不许只放最后一个）', () => {
+    const { sys, playCue } = makeSystem();
+    void sys.play(withCues([
+      { id: 'a', atMs: 100, sound: 'x' }, { id: 'b', atMs: 200, sound: 'x' }, { id: 'c', atMs: 300, sound: 'x' },
+    ]), new FakeTarget());
+    sys.update(0.5);
+    expect(ids(playCue)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('0 毫秒处的关键点在开播那一刻就响（不等下一次 update）', () => {
+    const { sys, playCue } = makeSystem();
+    void sys.play(withCues([{ id: 'go', atMs: 0, sound: 'x' }]), new FakeTarget());
+    expect(ids(playCue)).toEqual(['go']);
+    sys.update(0.1);
+    expect(ids(playCue)).toEqual(['go']);
+  });
+
+  it('atMs 超出轨迹时长按末帧处理（缩短曲线不让关键点悄悄消失）', () => {
+    const { sys, playCue } = makeSystem();
+    void sys.play(withCues([{ id: 'late', atMs: 99999, sound: 'x' }]), new FakeTarget());
+    sys.update(0.999);
+    expect(playCue).not.toHaveBeenCalled();
+    sys.update(0.002);
+    expect(ids(playCue)).toEqual(['late']);
+  });
+
+  it('负 atMs / 非有限 atMs 一律按 0（不让 NaN 把比较判成恒假）', () => {
+    const { sys, playCue } = makeSystem();
+    void sys.play(withCues([
+      { id: 'neg', atMs: -500, sound: 'x' },
+      { id: 'nan', atMs: Number.NaN, sound: 'x' },
+    ]), new FakeTarget());
+    expect(ids(playCue).sort()).toEqual(['nan', 'neg']);
+  });
+
+  it('一步落终态（immediate / 快进 / finishAll）一个都不响', async () => {
+    const cues: TrajectoryCue[] = [{ id: 'a', atMs: 0, sound: 'x' }, { id: 'b', atMs: 500, sound: 'x' }];
+    const { sys, playCue } = makeSystem();
+    expect(await sys.play(withCues(cues), new FakeTarget(), { immediate: true })).toBe('finished');
+    expect(playCue).not.toHaveBeenCalled();
+
+    const { sys: s2, playCue: c2 } = makeSystem();
+    s2.setFastForward(true);
+    void s2.play(withCues(cues), new FakeTarget());
+    expect(c2).not.toHaveBeenCalled();
+
+    const { sys: s3, playCue: c3 } = makeSystem();
+    void s3.play(withCues(cues), new FakeTarget());
+    expect(ids(c3)).toEqual(['a']);          // 开播那一声照响
+    s3.finishAll();                          // 跳过：中途那几条不补
+    expect(ids(c3)).toEqual(['a']);
+  });
+
+  it('被停 / 被抢 / 整批作废之后不再响', () => {
+    const cues: TrajectoryCue[] = [{ id: 'late', atMs: 800, sound: 'x' }];
+    const { sys, playCue } = makeSystem();
+    void sys.play(withCues(cues), new FakeTarget('player'));
+    sys.update(0.2);
+    sys.stopFor('player', 'stopped', { toEnd: true });   // 落终姿也不补声
+    sys.update(5);
+    expect(playCue).not.toHaveBeenCalled();
+
+    const { sys: s2, playCue: c2 } = makeSystem();
+    const t = new FakeTarget('npc:甲');
+    void s2.play(withCues(cues), t);
+    s2.update(0.2);
+    t.firePreempt();
+    s2.update(5);
+    expect(c2).not.toHaveBeenCalled();
+
+    const { sys: s3, playCue: c3 } = makeSystem();
+    void s3.play(withCues(cues), new FakeTarget());
+    s3.cancelAll();
+    s3.update(5);
+    expect(c3).not.toHaveBeenCalled();
+  });
+
+  it('同键第二条轨迹开播：旧的那串关键点跟着作废，新的从头算', () => {
+    const { sys, playCue } = makeSystem();
+    void sys.play(withCues([{ id: 'old', atMs: 900, sound: 'x' }], 'old_t'), new FakeTarget('player'));
+    sys.update(0.3);
+    void sys.play(withCues([{ id: 'new', atMs: 100, sound: 'x' }], 'new_t'), new FakeTarget('player'));
+    sys.update(0.2);
+    expect(ids(playCue)).toEqual(['new']);
+    expect(playCue.mock.calls[0][1]).toBe('new_t');      // 第二个参数是资产 id
+  });
+
+  it('一条回调抛错不连坐后面的关键点', () => {
+    const { sys, playCue } = makeSystem();
+    playCue.mockImplementationOnce(() => { throw new Error('音频没起来'); });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    void sys.play(withCues([{ id: 'a', atMs: 100, sound: 'x' }, { id: 'b', atMs: 200, sound: 'x' }]), new FakeTarget());
+    sys.update(0.5);
+    expect(ids(playCue)).toEqual(['a', 'b']);
+    warn.mockRestore();
+  });
+
+  it('没有关键点的轨迹一次都不叫（老资产零成本）', () => {
+    const { sys, playCue } = makeSystem();
+    void sys.play(def(FRAMES), new FakeTarget());
+    sys.update(5);
+    expect(playCue).not.toHaveBeenCalled();
   });
 });

@@ -55,7 +55,7 @@ import type {
   TrajectoryEndReason,
   TrajectoryStopOptions,
 } from '../systems/TrajectorySystem';
-import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, EntityShadowBinding, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, TrajectoryTargetRef, ZoneRuleSlot, RuleLayerKey, TrajectoryPlayOptions, PositionRef, TrajectorySpawnSpec, VfxAnchorDef, VfxFieldDef, VfxFlockState} from '../data/types';
+import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, ConditionExpr, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, EntityShadowBinding, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, TrajectoryTargetRef, ZoneRuleSlot, RuleLayerKey, TrajectoryPlayOptions, PositionRef, TrajectorySpawnSpec, VfxAnchorDef, VfxFieldDef, VfxFlockState} from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
@@ -187,6 +187,13 @@ function parseBubbleDurationParam(params: Record<string, unknown>, fallback = 15
 export interface ActionRegistryDeps {
   /** Shared saveable runtime PRNG used by randomBranch. */
   randomValue: () => number;
+  /**
+   * `runActionsIf` 的判据求值。**必须由宿主接到中央条件上下文工厂**
+   * （`Game.buildConditionEvalContext`）——手搓缩水上下文会缺 `@scene`/`@owner`/plane/
+   * timePhase 叶，同一条件在这个入口与对话/zone/热点入口得出不同结果（律5 统一条件源）。
+   * expr 为 null/undefined 时约定返回 true（没写条件 = 无条件执行）。
+   */
+  evaluateCondition: (expr: ConditionExpr | null | undefined) => boolean;
   /** playScriptedDialogue speaker 中的 {{player}} / {{npc}} 等占位解析；scriptedNpcId 为 params.scriptedNpcId */
   resolveScriptedSpeaker: (raw: string, scriptedNpcId?: string) => string;
   /** 逐行显示名留空时的回落：取「说话 NPC」所指实体的名字（主角=当前主角显示名）；无则空串=旁白 */
@@ -264,10 +271,23 @@ export interface ActionRegistryDeps {
       rotation?: number;
       /** 是否吃角色同一套光照；自发光的东西给 false */
       lit?: boolean;
+      /** 挂上时用预设里的哪个状态（火把的"点着"）；不给走预设的 defaultState */
+      state?: string;
     },
   ) => Promise<void>;
   /** 卸下某挂点上的东西（连同销毁它的显示对象） */
   detachFromSocket: (targetId: string, socket: string) => void;
+  /**
+   * 切挂件状态（火把：点着 → 护火 → 残炭 → 灭）。
+   * `fadeMs` 只作用于**灯的强度**（贴图与粒子是离散的，纹理没法淡入淡出）。
+   * 挂点上没有挂件、或预设里没有这个状态 ⇒ false（调用方报警）。
+   */
+  setPropState: (targetId: string, socket: string, state: string, fadeMs: number) => boolean;
+  /**
+   * 场景灯的运行时**强度倍率**渐变（门口那盏灯笼被风吹灭：`scale` 给 0）。
+   * 存倍率而不是绝对强度，作者后续在编辑器里调那盏灯仍然有效。演出态、不入档。
+   */
+  fadeLight: (lightId: string, toScale: number, fadeMs: number) => void;
   /** 运行时覆盖场景深度遮挡的 floor_offset（脚底衬底偏移，与 depthConfig 同语义） */
   setSceneDepthFloorOffset: (floorOffset: number) => void;
   /** 恢复为当前场景已加载的 depthConfig.floor_offset */
@@ -278,9 +298,15 @@ export interface ActionRegistryDeps {
   restoreSceneCameraZoom: () => void;
   /** 渐变拉远/还原到当前场景 JSON 中的 camera.zoom（durationMs 毫秒） */
   fadingRestoreSceneCameraZoom: (durationMs: number) => Promise<void>;
-  /** 相机跟随实体：仅过场态每帧把镜头锚到该实体实时坐标；snap=true 硬锁居中，false 平滑跟随。
-   *  过场结束由主循环自动解除、复位回玩家（不入存档）。 */
+  /** 相机跟随实体：过场 / 动作链 / 对话态每帧把镜头锚到该实体实时坐标；snap=true 硬锁居中，false 平滑跟随。
+   *  回到自由探索由主循环自动解除、复位回玩家（不入存档）。 */
   setCameraFollowTarget: (targetId: string, snap: boolean) => void;
+  /**
+   * 相机跟随一个**位置引用**（`at`：曲线此刻播到的点 / 曲线点 / 插槽 / 实体位置 / 数字点）：每帧求值，
+   * 求不出（曲线还没开播）就镜头不动、不解除。绑定时装资产、查资产层的错（相对曲线不许引用…），
+   * 有错 warn 并 resolve false（跟随没生效）。
+   */
+  setCameraFollowRef: (ref: PositionRef, snap: boolean) => Promise<boolean>;
   /** 解除相机跟随（回到默认锚点：探索/动作链态跟玩家；过场态改由 cameraMove 摆布）。 */
   clearCameraFollowTarget: () => void;
   /** 瞬移（teleportEntityTo）后的镜头补正：**仅当镜头此刻真锚在该实体上**才 snap，
@@ -647,6 +673,19 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const actions = actionListFromParam(p[key]);
     await executor.executeBatchAwait(actions, zctx);
   }, ['probability', 'aboveActions', 'belowActions']);
+
+  /**
+   * 条件分支容器：`condition` 为真走 `actions`，为假走 `elseActions`（可不写 = 什么都不做）。
+   * 判据是统一条件表达式（与热区/NPC/zone 的 `conditions`、图对话 switch 同一套叶子与
+   * `all/any/not`），求值经 `d.evaluateCondition` 走中央上下文工厂——不在这里另建上下文。
+   * 不写 `condition` = 恒真（等价于 `runActions`）。
+   */
+  executor.register('runActionsIf', async (p, zctx) => {
+    const raw = p.condition;
+    const expr = isParamObject(raw) ? (raw as unknown as ConditionExpr) : null;
+    const key = d.evaluateCondition(expr) ? 'actions' : 'elseActions';
+    await executor.executeBatchAwait(actionListFromParam(p[key]), zctx);
+  }, ['condition', 'actions', 'elseActions']);
 
   executor.register('setScenarioPhase', (p) => {
     const scenarioId = String(p.scenarioId ?? '').trim();
@@ -1110,7 +1149,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('sniff', () => {
     d.smellSystem.sniff();
   }, []);
-  // 气味源（G.6）：放了源，气缕就被从源那边"吹"过来——飘向的反方向 = 源。scene 缺省当前场景，只在那个场景里指向。
+  // 气味源（G.6）：放了源，气缕就被那边"吸"过去——飘向指向源。scene 缺省当前场景，只在那个场景里指向。
   executor.register('setSmellSource', (p) => {
     const x = Number(p.x);
     const y = Number(p.y);
@@ -1364,8 +1403,10 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const scaleRaw = Number(p.scale);
     const mirror = parseLooseBooleanParam(p.mirror);
     const lit = parseLooseBooleanParam(p.lit);
+    const state = String(p.state ?? '').trim();
     return d.attachToSocket(target, socket, list, {
       prop: prop || undefined,
+      state: state || undefined,
       scale: Number.isFinite(scaleRaw) && scaleRaw > 0 ? scaleRaw : undefined,
       mirror: mirror === null ? undefined : mirror,
       anchorX: num(p.anchorX),
@@ -1374,7 +1415,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       lit: lit === null ? undefined : lit,
     }).catch((e) => console.warn('attachToSocket', e));
   }, ['target', 'socket', 'image', 'images', 'scale', 'mirror',
-      'anchorX', 'anchorY', 'rotation', 'lit']);
+      'anchorX', 'anchorY', 'rotation', 'lit', 'state']);
 
   executor.register('detachFromSocket', (p) => {
     const target = String(p.target ?? '').trim();
@@ -1385,6 +1426,42 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     d.detachFromSocket(target, socket);
   }, ['target', 'socket']);
+
+  /**
+   * 切挂件状态（火把被吹得只剩红炭：`state: 'ember'`）。
+   * 连续量不在这里 —— `fadeMs` 只说"灯要多久变过去"，怎么闪由挂件预设里的 flicker 决定。
+   */
+  executor.register('setPropState', (p) => {
+    const target = String(p.target ?? '').trim();
+    const socket = String(p.socket ?? '').trim();
+    const state = String(p.state ?? '').trim();
+    if (!target || !socket || !state) {
+      console.warn('setPropState: 缺 target / socket / state');
+      return;
+    }
+    const fadeRaw = Number(p.fadeMs);
+    const ok = d.setPropState(target, socket, state, Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0);
+    if (!ok) console.warn(`setPropState: ${target}.${socket} 上没有挂件，或预设里没有状态「${state}」`);
+  }, ['target', 'socket', 'state', 'fadeMs']);
+
+  /**
+   * 场景灯渐灭 / 渐亮（`scale` = 强度倍率，0 = 灭、1 = 原样）。
+   * 手上举着的火把不走这条 —— 那是挂件状态（`setPropState`）。
+   */
+  executor.register('fadeLight', (p) => {
+    const lightId = String(p.lightId ?? '').trim();
+    if (!lightId) {
+      console.warn('fadeLight: 缺 lightId');
+      return;
+    }
+    const scaleRaw = Number(p.scale);
+    const fadeRaw = Number(p.fadeMs);
+    d.fadeLight(
+      lightId,
+      Number.isFinite(scaleRaw) ? Math.max(0, scaleRaw) : 0,
+      Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0,
+    );
+  }, ['lightId', 'scale', 'fadeMs']);
 
   executor.register('openShop', (p) => {
     d.stateController.setState(GameState.UIOverlay);
@@ -1556,18 +1633,36 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     await d.fadingRestoreSceneCameraZoom(parseDurationMsParam(p, 600));
   }, ['durationMs']);
 
-  executor.register('cameraFollowActor', (p) => {
+  /**
+   * 镜头跟随。跟谁二选一：`target`（实体 id：每帧锚到它，实体没了自动解除——老语义）或
+   * `at`（位置引用，2026-09-12：每帧求值，**曲线此刻播到的点**就靠它；求不出就镜头不动、不解除）。
+   * 两个都给时 `at` 优先（与位置动作"at 覆盖 x/y"同一约定）；`at` 形状不对或绑定失败（相对曲线 / 缺插槽…）
+   * 退回 `target`。
+   */
+  executor.register('cameraFollowActor', async (p) => {
+    // smooth 缺省/非 true=硬锁居中（每帧 snapTo，逐帧锁定）；smooth===true=平滑跟随（follow 插值）。
+    const snap = p.smooth !== true;
+    const at = parsePositionRef(p.at);
+    if (p.at != null && !at) console.warn('cameraFollowActor: at 形状不对，已按没给处理');
+    if (at && await d.setCameraFollowRef(at, snap)) return;
     const target = typeof p.target === 'string' ? p.target.trim() : '';
     if (!target) {
-      console.warn('cameraFollowActor: params.target 需为非空实体 id');
+      if (!at) console.warn('cameraFollowActor: 需要 target（非空实体 id）或 at（位置引用）');
       return;
     }
-    // smooth 缺省/非 true=硬锁居中（每帧 snapTo，逐帧锁定）；smooth===true=平滑跟随（follow 插值）。
-    d.setCameraFollowTarget(target, p.smooth !== true);
-  }, ['target', 'smooth']);
+    d.setCameraFollowTarget(target, snap);
+  }, ['target', 'at', 'smooth']);
 
   executor.register('cameraStopFollow', (_p) => {
     d.clearCameraFollowTarget();
+  }, []);
+
+  /**
+   * 替玩家弹开世界地图：走面板统一开关（同 M 键的自由可控 + 位面禁旅行闸），已开着则不动。
+   * 动作链里状态是 ActionSequence，面板等动作链放锁、回到探索态才开（requestPanelOpen 挂起）。
+   */
+  executor.register('openMap', (_p) => {
+    d.stateController.requestPanelOpen('map');
   }, []);
 
   executor.register('stopNpcPatrol', (p) => {
@@ -2287,7 +2382,12 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     // runtime 不要求 sceneId；JSON 中带 sceneId 仅编辑器复现地图
   }, ['target', 'x', 'y', 'at']);
 
-  executor.register('faceEntity', (p) => {
+  /**
+   * 转身。朝哪三选一，优先级 `at` > `faceTarget` > `direction`：
+   * `at` = 朝向一个位置引用所在的一侧（2026-09-12；执行那一刻求一次值，可以是曲线此刻播到的点），
+   * 解析不出来退回后两者；`faceTarget` = 朝向某实体所在的一侧；`direction` = left / right。
+   */
+  executor.register('faceEntity', async (p) => {
     const target = String(p.target ?? '').trim();
     if (!target) {
       console.warn('faceEntity: missing target');
@@ -2300,9 +2400,16 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     const faceTarget = p.faceTarget !== undefined ? String(p.faceTarget).trim() : '';
     const direction = p.direction !== undefined ? String(p.direction).trim() : '';
-    if (!faceTarget && !direction) {
-      console.warn('faceEntity: 需要 direction 或 faceTarget（至少一个）');
+    if (!faceTarget && !direction && p.at == null) {
+      console.warn('faceEntity: 需要 at、faceTarget 或 direction（至少一个）');
       return;
+    }
+    if (p.at != null) {
+      const pt = await d.resolvePositionRef(p.at);
+      if (pt) {
+        actor.setFacing(pt.x - actor.x, pt.y - actor.y);
+        return;
+      }
     }
     if (faceTarget) {
       const other = d.resolveActor(faceTarget);
@@ -2322,7 +2429,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         console.warn(`faceEntity: direction "${direction}" 不支持（朝向只有 left/right，无上下朝向），已跳过`);
       }
     }
-  }, ['target', 'direction', 'faceTarget']);
+  }, ['target', 'direction', 'faceTarget', 'at']);
 
   /**
    * 播一条**烘焙好的**轨迹资产（见 [[entity-trajectory]]）。运行时只认资产里烘好的帧，
@@ -2488,8 +2595,19 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale',
     'voice', 'autoAdvance']);
 
+  /**
+   * 显示这份文档：条件不满足出揭示前的图，未揭示且条件满足播揭示动画，已揭示直接出清晰图。
+   * `force` 只跳过条件判定，不会让已揭示的重播动画。
+   */
   executor.register('revealDocument', async (p) => {
-    await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''));
+    await d.documentRevealManager.checkAndReveal(String(p.documentId ?? ''), {
+      force: p.force === true,
+    });
+  }, ['documentId', 'force']);
+
+  /** 收掉这份文档的显示层；不改「已揭示」状态（收掉后再触发直接出清晰图） */
+  executor.register('hideDocument', (p) => {
+    d.documentRevealManager.hideDocument(String(p.documentId ?? ''));
   }, ['documentId']);
 }
 
@@ -2566,5 +2684,6 @@ export function parseTrajectorySpawnSpec(raw: unknown): TrajectorySpawnSpec | nu
     if (ax !== undefined && ay !== undefined) out.anchor = { x: ax, y: ay };
   }
   if (parseLooseBooleanParam(o.keep) === true) out.keep = true;
+  if (parseLooseBooleanParam(o.renderRaw) === true) out.renderRaw = true;
   return out;
 }

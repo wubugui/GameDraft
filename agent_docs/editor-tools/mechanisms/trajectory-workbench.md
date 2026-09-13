@@ -20,8 +20,8 @@ authority:
   - tools/desktop_shell.py
 triggers:
   paths: ["tools/trajectory_workbench/**", "public/assets/data/trajectories/**", "tools/desktop_shell.py"]
-  topics: [轨迹, trajectory, 工作台, 烘焙, 时间曲线, 抛体, 拉线, sampleHz, 抽稀, 世界空间, q 空间, 深度壳, 高度场, 场景曲线, 相对曲线, binding, 命名插槽, slots, 曲线起点, origin]
-  tasks: [编轨迹, 改烘焙机, 改工作台, 加分段类型, 换场景重烘, 批量重烘]
+  topics: [轨迹, trajectory, 工作台, 烘焙, 时间曲线, 抛体, 拉线, sampleHz, 抽稀, 世界空间, q 空间, 深度壳, 高度场, 场景曲线, 相对曲线, binding, 命名插槽, slots, 曲线起点, origin, 音效关键点, cues, 试听, sfx]
+  tasks: [编轨迹, 改烘焙机, 改工作台, 加分段类型, 换场景重烘, 批量重烘, 给轨迹加音效]
 verified_by:
   - tools/trajectory_workbench/tests/test_bake.py
   - tools/trajectory_workbench/tests/test_bake3d.py
@@ -35,7 +35,7 @@ verified_by:
   - tools/trajectory_workbench/viewer/tests/math.test.cjs
   - tools/trajectory_workbench/viewer/tests/selftest.js
   - tools/editor/tests/test_trajectory_action_registration.py
-last_governed: 2026-09-11
+last_governed: 2026-09-12
 ---
 
 ## 是什么(一句话)
@@ -76,10 +76,15 @@ last_governed: 2026-09-11
 ## 作者面怎么用(画布是主入口,右栏只做精修 —— 2026-09-04 制作人打回原型后重做)
 
 - **工具模式**(左侧竖栏 / 快捷键):`V` 选择/移动、`P` 加点、`T` 抛体(按住拖 = 把落点拖到目标处,没有抛体段就新建)、
-  `S` 插槽、`H` 平移。任何模式下中键 / 空格+左键 / 右键拖 = 平移,滚轮 = 缩放,`Home` 复位、`F` 框住轨迹,`1`/`2` 切 2D/3D。
+  `S` 插槽、`A` 音效关键点(点在曲线上)、`H` 平移。任何模式下中键 / 空格+左键 / 右键拖 = 平移,滚轮 = 缩放,`Home` 复位、`F` 框住轨迹,`1`/`2` 切 2D/3D。
   **没有任何分段时左键点画布 = 直接开始画线**(自动建手绘段并进加点模式),不必先去右栏找按钮。
 - **选择集**:点点 / 拖点、`Shift` 多选、框选、**点曲线选段**、双击曲线插点、右键点删点、`Delete` 删点(范围是"整段"时删段)、
   `Ctrl+A` 全选点、`[` `]` 切段、方向键微移(`Shift` ×10)。
+- **下拉框一律走页内列表**(`viewer/dropdown.js`,粒子台经 `/vendor/dropdown.js` 借同一份;2026-09-12 加):
+  `mousedown` 里 `preventDefault()` 掐死系统原生 `<select>` 弹窗,自己在 DOM 里画。
+  ⚠ 原生那条在 150% 缩放屏上**框按设备像素、内容按 CSS 像素**画,弹出来比控件大一圈、右下一大块白边,
+  **每开一次再乘一次**(制作人在粒子台与本台都实拍到),而且不吃页面配色。DOM 里的 `<select>` 原样留着,
+  `.value` / `change` / 现有代码与自检一个字都不用改。
 - **变换 gizmo(`viewer/gizmo.js`,2D 原画视图与 3D 视图共用同一份,Unity 的 W/E/R)**:**选中任何东西就立刻出现在轴心**——一个点也算,
   加点模式下刚加的点也带着(2026-09-11 制作人:"选中物体根本没有 gizmo / 第一次点击没有自动激活,要切换一下才看得到"——他在原画视图里选单点,
   而当时 2D 只有 ≥2 点的包围盒变换框、3D 才有轴)。`W` 移动 / `E` 旋转 / `R` 缩放,拖动时 `Ctrl` 吸附(10 wu / 15° / ×0.1),读数跟光标,悬停变黄;
@@ -160,6 +165,7 @@ binding            'scene'(场景曲线,绑作者场景)| 'free'(相对曲线,�
 keyframes[]        2D 相对帧(相对曲线起点,首帧 (0,0);screen 的真相、world 的回落帧)
 worldKeyframes[]   3D 相对帧 {atMs,x,y,z,h,…}(相对 originWorld;world 的真相)
 slots[]            命名插槽 {id,label?,x,y,world?}(曲线暴露给场景的站位;world 由烘焙机补)
+cues[]             音效关键点 {id,atMs,sound(裸 id 或 {id,volume}),label?}(播到那一刻播一条音效;**运行时真相**,键序排在 source 之前)
 source             分段 + 烘焙参数(工作态;bake.restHeight / contactOffsetY 是"骑在曲线上那个东西"的尺寸,不耦合实体)
 authoring          sceneId / background(场景曲线才有)/ entity(预览实体,软引用)/ origin / originWorld(**作者摆的曲线原点**,缺省回填成曲线起点)
                    老键 anchor / anchorWorld / anchorHeight / contactOffsetY 只读、不再写(运行时 trajectoryOrigin 退到 anchor)
@@ -189,6 +195,19 @@ authoring          sceneId / background(场景曲线才有)/ entity(预览实体
   (画面接地偏移 / cosθ;圆心锚的铜钱 = 半径 / cosθ),缺省从预览实体取一次,之后是资产自己的参数。
 - **场景曲线只能在绑定的场景里打开;相对曲线可以在任何场景里打开、数据里不记场景。** 服务端按 `binding_of(doc)` 决定烘在哪个场景
   (相对曲线拿请求里的 `backdrop`),存盘剥掉相对曲线的 `authoring.sceneId/background`;场景曲线 `sceneId` 为空拒存。
+- **音效关键点存的是时间,不是位置**(2026-09-12 制作人要的,选了"一律不带位置")。`A` 工具点在曲线上 → 找最近的密采样
+  取它的 `atMs`;拖 ♪ 就是沿曲线换时刻;右栏可直接输毫秒、挑音效(`<select>`,候选来自 `/api/sfx` = `audio_config.sfx`)、
+  填**本处音量**(留空 = 沿用素材级,`0` 合法 = 这里就是要哑,口径见 `src/data/audioCue.ts`)。
+  画布上画在"那一刻曲线走到哪",所以**曲线一改它自己就跟着挪**——这正是"存时间"的目的。
+  **落形在服务端**(`baking.clean_cues`,与烘焙同一趟):id 去重、按时刻升序、时刻钳进 `[0, 总时长]`。
+  ⚠ 总时长 `<= 0`(这次没烘出帧)时**不许钳上界**——否则一次烘焙失败就把整串关键点压到 0,
+  而这种破坏在画面上与"音效时机被人改了"完全无法区分。
+  **还没选音效的关键点照样落盘**(`sound: ""`):作者是"先在曲线上点一下、再挑音效",中间存一次盘不该把标记吞了;
+  空引用运行时 warn 跳过、校验器 warning。
+- **试听只在工作台里,且只在时间轴顺播时响**(`auditionCue` / `auditionAdvance`):拖滑块 / 点行 / 步进一律只重排游标不发声
+  ——拖着扫过五个关键点会变成一串机枪声。音频文件走 `/api/sfx_file?id=`,**只放行 `audio_config` 里登记过的 id**
+  且路径核回 `public/` 之内(服务只绑 127.0.0.1,但"把查询串当文件路径直出"不是该留的形状)。
+  游戏里响不响与这个开关无关。
 - **命名插槽是曲线暴露给场景的站位**,只在地面上挪(gizmo X/Z + 贴地);引用它的是别的动作(`at` 位置引用),播放轨迹永远不挪任何实体到插槽。
 - **地面与墙从哪来。** 地面 = 照明载荷的行走面深度场 `lighting/<背景基名>/ground_d.png` 反投影成世界 XZ 高度场
   (栅格化 + 最近邻补洞);没烘过光照的场景退回深度壳当地面(近似,会把墙也当地,状态栏会写"深度壳(近似)")。

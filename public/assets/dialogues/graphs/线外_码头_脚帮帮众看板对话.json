@@ -185,9 +185,9 @@
           }
         },
         {
-          "type": "hideOverlayImage",
+          "type": "hideDocument",
           "params": {
-            "id": "b"
+            "documentId": "告示-水猴子"
           }
         },
         {

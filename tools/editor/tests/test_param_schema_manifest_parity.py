@@ -33,11 +33,14 @@ REPO = Path(__file__).resolve().parents[3]
 #   runActions.actions      → _run_actions_editor
 #   chooseAction.options    → _choice_options_editor
 #   addDelayedEvent.actions → _delayed_editor
+#   runActionsIf.condition  → _cond_if_expr（ConditionExprTreeRootWidget；条件表达式树，
+#                             泛型 schema 表达不了嵌套的 all/any/not + 各类叶子）
 # 新增此类"必填但走专用分支"的参数时在此登记并注明分支，否则反向检查会 FAIL。
 _BESPOKE_BUILT_REQUIRED: set[tuple[str, str]] = {
     ("runActions", "actions"),
     ("chooseAction", "options"),
     ("addDelayedEvent", "actions"),
+    ("runActionsIf", "condition"),
 }
 
 

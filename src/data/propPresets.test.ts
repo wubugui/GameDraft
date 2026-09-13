@@ -103,6 +103,8 @@ describe('预设与显式覆盖的合并', () => {
       scale: 0.5,
       lit: true,
       mirror: undefined,
+      light: null,
+      vfx: [],
     });
   });
 
@@ -132,6 +134,8 @@ describe('预设与显式覆盖的合并', () => {
       scale: 3,
       lit: undefined,
       mirror: undefined,
+      light: null,
+      vfx: [],
     });
   });
 

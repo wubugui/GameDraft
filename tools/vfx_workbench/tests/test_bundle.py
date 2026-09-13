@@ -43,9 +43,10 @@ def built() -> Path:
 def test_bundle_exports_the_runtime_modules(built: Path) -> None:
     src = built.read_text(encoding="utf-8")
     for name in ("VfxInstanceSim", "createFieldRuntime", "createFieldVfxSpace", "groundWorldAt",
-                 "buildDepthShellField", "shellContactAt", "buildGroundHeightfield", "viewDirWorld", "worldToScene"):
+                 "buildDepthShellField", "shellContactAt", "buildGroundHeightfield", "viewDirWorld", "worldToScene",
+                 "SceneWindState", "resolveSceneWind", "createPerspectiveScaleResolver", "stepPlates"):
         assert re.search(rf"\b{name}\b", src), f"包里没有 {name}：本地预览就不是运行时那一份了"
-    for ns in ("vfxSim", "vfxSpace", "sceneSpace", "depthShellField", "groundHeightfield"):
+    for ns in ("vfxSim", "vfxSpace", "sceneSpace", "depthShellField", "groundHeightfield", "sceneWind", "perspectiveScale"):
         assert f"{ns}_exports" in src or f"as {ns}" in src, f"包里没导出 {ns}"
     assert "VFX_SUBSTEP" in src, "定步长常量丢了 = 打的不是模拟核心"
 
@@ -60,13 +61,35 @@ def test_bundle_is_cached_by_source_stamp(built: Path) -> None:
     assert p.stat().st_mtime_ns == before
 
 
-def test_sources_all_exist() -> None:
-    """戳要盖住入口的整棵依赖树——少一个文件，改了它包也不重打，页面里的"运行时"就是旧的。"""
-    missing = [str(s) for s in bundle.SRCS if not s.exists()]
+def test_sources_cover_the_whole_import_tree() -> None:
+    """戳要盖住入口的整棵依赖树——少一个文件，改了它包也不重打，页面里的"运行时"就是旧的。
+    手抄清单漏过 vfxPlate.ts / sceneWind.ts（2026-09-12），所以现在是顺着 import 现场扫。"""
+    srcs = bundle.sources()
+    missing = [str(s) for s in srcs if not s.exists()]
     assert not missing, missing
-    names = {s.name for s in bundle.SRCS}
-    assert {"vfxSim.ts", "vfxSpace.ts", "sceneSpace.ts", "depthShellField.ts",
-            "groundHeightfield.ts", "worldReconstruct.ts", "groundDepthField.ts"} <= names
+    names = {s.name for s in srcs}
+    assert {"vfxSim.ts", "vfxSpace.ts", "vfxPlate.ts", "vfxNoise.ts", "vfxRandom.ts", "sceneSpace.ts",
+            "depthShellField.ts", "groundHeightfield.ts", "worldReconstruct.ts", "groundDepthField.ts",
+            "sceneWind.ts", "perspectiveScale.ts"} <= names, names
+    # 只有类型的 import 打包时整条擦掉：types.ts 天天在改，进了戳就每次开页都白等 rolldown
+    assert "types.ts" not in names
+
+
+def test_import_scan_follows_value_imports_only(tmp_path: Path) -> None:
+    (tmp_path / "a.ts").write_text(
+        "import type { T } from './t';\n"
+        "import {\n  x,\n  type Y,\n} from './b';\n"
+        "export * as c from './c.ts';\n"
+        "export type { Z } from './z';\n", encoding="utf-8")
+    for n in ("b", "c", "t", "z"):
+        (tmp_path / f"{n}.ts").write_text("export const v = 1;\n", encoding="utf-8")
+    old = bundle.ENTRY_MODULES
+    try:
+        bundle.ENTRY_MODULES = [tmp_path / "a.ts"]
+        names = {p.name for p in bundle.sources()}
+    finally:
+        bundle.ENTRY_MODULES = old
+    assert names == {"a.ts", "b.ts", "c.ts"}, names
 
 
 def test_gen_dir_is_gitignored() -> None:

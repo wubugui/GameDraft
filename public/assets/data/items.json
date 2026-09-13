@@ -275,5 +275,111 @@
       ],
       "resultText": "草团一拔，罐里的虫子哗地涌出来，绕着人头顶乱撞。头顶上那一片扑棱声先是一紧，接着就散了。"
     }
+  },
+  {
+    "id": "torch",
+    "name": "旧纤藤",
+    "type": "consumable",
+    "description": "纤夫扔下的一截旧竹篾纤藤，浸透了江水和汗油。点起来就是根火把，耐烧——莫遭风吹熄就好。",
+    "maxStack": 1,
+    "tags": [
+      "引火"
+    ],
+    "use": {
+      "label": "点火 / 收起",
+      "consume": false,
+      "actions": [
+        {
+          "type": "chooseAction",
+          "params": {
+            "prompt": "纤藤怎么办？",
+            "allowCancel": true,
+            "options": [
+              {
+                "text": "点起来",
+                "actions": [
+                  {
+                    "type": "attachToSocket",
+                    "params": {
+                      "target": "player",
+                      "socket": "right_hand",
+                      "prop": "torch",
+                      "state": "lit"
+                    }
+                  },
+                  {
+                    "type": "setFlag",
+                    "params": {
+                      "key": "torch_lit",
+                      "value": true
+                    }
+                  },
+                  {
+                    "type": "playSfx",
+                    "params": {
+                      "id": "sfx_lamp_oil_flame"
+                    }
+                  }
+                ]
+              },
+              {
+                "text": "熄了收进包里",
+                "actions": [
+                  {
+                    "type": "detachFromSocket",
+                    "params": {
+                      "target": "player",
+                      "socket": "right_hand"
+                    }
+                  },
+                  {
+                    "type": "setFlag",
+                    "params": {
+                      "key": "torch_lit",
+                      "value": false
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "zhiqian",
+    "name": "纸钱",
+    "type": "consumable",
+    "description": "一叠粗黄草纸打的纸钱。上山一路撒，是给路上那些东西的买路钱。",
+    "maxStack": 10
+  },
+  {
+    "id": "mashen",
+    "name": "麻绳",
+    "type": "consumable",
+    "description": "一捆粗麻绳。死人子背上身，不拿绳子捆牢，走一步滑一步。",
+    "maxStack": 1
+  },
+  {
+    "id": "xiangzhu",
+    "name": "香烛",
+    "type": "consumable",
+    "description": "一对蜡烛，一把线香。夜里去那种地方，总要先敬一敬。",
+    "maxStack": 1
+  },
+  {
+    "id": "gongji",
+    "name": "公鸡",
+    "type": "consumable",
+    "description": "一只大红公鸡，冠子红得扎眼，夹在胳肢窝底下还在扑腾。",
+    "maxStack": 1
+  },
+  {
+    "id": "caoxi",
+    "name": "草席",
+    "type": "consumable",
+    "description": "一张旧草席，边上脱了线。卷起来，刚好裹得下一个人。",
+    "maxStack": 1
   }
 ]

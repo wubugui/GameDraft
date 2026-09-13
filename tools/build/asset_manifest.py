@@ -85,7 +85,10 @@ LIGHTING_PAYLOAD_CORE = ("lighting.json", "probes_valid.bin", "ground_d.png")
 #: 它只是离线烘 albedo 的输入，运行时不读、发行包不带。
 LIGHTING_GEOMETRY_FILES = ("geometry.json", "normal.png", "albedo.png")
 #: 可选：老载荷没有；缺了**静默降级**——所以开发树里有就必须进包
-LIGHTING_PAYLOAD_OPTIONAL = ("skyao_probe.bin",)
+LIGHTING_PAYLOAD_OPTIONAL = ("skyao_probe.bin", "sway.json", "sway_plate.png", "sway_matte.png", "sway_ids.png",
+                            "sway_rigid.png",
+                            # 打光场景:漏出处光照用的几何件的"扣掉植物"版本
+                            "sway_plate_normal.png", "sway_plate_albedo.png", "sway_plate_depth.png")
 #: 只有 F2 调试面板切 RT 才读；发行档刻意不带
 LIGHTING_PAYLOAD_DEBUG_ONLY = ("vol_rad.bin", "vol_emit.bin")
 

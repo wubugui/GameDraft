@@ -112,8 +112,8 @@
   </div>
   <div id="tools">
     <button data-tool="select" title="选择 / 变换（V）：点物体选中，W/E/R 切移动·旋转·缩放，拖动 Ctrl 吸附">⬚</button>
-    <button data-tool="anchor" title="放预览锚点（A）：点场景表面；写 authoring.anchor，切 ground/shell 落到对应面">⊕</button>
-    <button data-tool="player" title="放玩家（M）：点地面放一个可拖的玩家标记，走动时自动带出 player:motion 场">🚶</button>
+    <button data-tool="anchor" title="放预览锚点（A）：点场景表面；写 authoring.anchor，切 ground/shell 落到对应面。锚点模式=角色挂点时，点的是「火头摆在哪」（写 authoring.attach）">⊕</button>
+    <button data-tool="player" title="放角色（M）：点地面放一个可拖的角色标记（高 150 wu 是尺度参考），走动时自动带出 player:motion 场；左栏「来回走」让它自己来回走">🚶</button>
     <button data-tool="field" title="发一个刺激（K）：点任意处，按上面那排参数发 fear / attract / wind">⚡</button>
     <button data-tool="pan" title="平移（H）">✋</button>
     <div class="sep"></div>
@@ -169,6 +169,7 @@
 <div id="busy" hidden><span id="busyText"></span></div>
 <div id="dialog" hidden><form id="dialogForm"></form></div>
 <!-- 与轨迹工作台共用的三份（经 serve 的 /vendor 路由原样提供，不 fork） -->
+<script src="/vendor/dropdown.js"></script>
 <script src="/vendor/common.js"></script>
 <script src="/vendor/history.js"></script>
 <script src="/vendor/gizmo.js"></script>

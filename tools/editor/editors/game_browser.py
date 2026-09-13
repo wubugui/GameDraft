@@ -295,7 +295,7 @@ class GameBrowserTab(QWidget):
         self._btn_run = QPushButton(
             st.standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "",
         )
-        self._btn_run.setToolTip("运行游戏 (F5)")
+        self._btn_run.setToolTip("运行游戏 (F5) — 从标题界面开始")
         self._btn_run.setIconSize(icon_sz)
         self._btn_run.clicked.connect(self.run_requested.emit)
         bar.addWidget(self._btn_run)

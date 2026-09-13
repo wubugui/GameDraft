@@ -13,7 +13,8 @@ import { clientToCanvas, markPointerConsumed } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
 import type {
-  AudioChannel, ISaveDataProvider, IAudioSettingsProvider, ITextDisplaySettingsProvider, SaveSlotMeta,
+  AudioChannel, ISaveDataProvider, IAudioSettingsProvider, ITextDisplaySettingsProvider,
+  ISmellDisplaySettingsProvider, SaveSlotMeta,
 } from '../data/types';
 import type { StringsProvider } from '../core/StringsProvider';
 import { createStyledText } from '../core/styledText';
@@ -176,6 +177,27 @@ const SETTING_ROW_H = 48;
 /** 设置页开关行的「开 / 关」小按钮尺寸（与滑条同起点，占一行的左半） */
 const TOGGLE_BTN_W = 72;
 const TOGGLE_BTN_H = 32;
+/**
+ * 二选一行（两个值各有名字，不是开/关）的按钮宽度：按最宽的那个标签现量。
+ *
+ * `UIButton` 定宽、标签只做居中（`label.x = (w - label.width) / 2`），标签比框宽就往两边
+ * 溢出去压到邻居——「烟指着东西」这类 5 字标签量到 125px，塞进 72px 的开关档会左溢 26px
+ * 盖住行标题。写死一个够用的常量挡得住今天这两条文案，挡不住明天改文案或本地化多一个字，
+ * 而那是同一个失败模式。量出来的宽度不会因为改字而失效。
+ */
+function choiceButtonWidth(labels: string[]): number {
+  let widest = 0;
+  for (const text of labels) {
+    const probe = createStyledText({
+      // 与 UIButton 内部给标签的字号/字体一致，量出来才作数
+      text,
+      style: { fontSize: UITheme.fontSize.bodyLarge, fontFamily: UITheme.fonts.ui },
+    });
+    widest = Math.max(widest, probe.width);
+    probe.destroy();
+  }
+  return Math.ceil(widest + UITheme.spacing.lg * 2);
+}
 /** 音量滑条几何。组件层没有滑条件，这两个是控件自身的形状（非间距/字号），保留具名常量。 */
 const TRACK_H = 6;
 const HANDLE_R = 8;
@@ -212,6 +234,8 @@ export class MenuUI {
   private audioSettings: IAudioSettingsProvider;
   /** 文字呈现偏好（逐字显示开关 / 速度），设置页里那两行 */
   private textSettings: ITextDisplaySettingsProvider;
+  /** 气缕指向偏好（G.6），设置页里那一行 */
+  private smellSettings: ISmellDisplaySettingsProvider;
   private strings: StringsProvider;
   /** 全屏页（主菜单 / 暂停）的根容器；窗体页用 {@link win}，两者互斥 */
   private container: Container | null = null;
@@ -254,6 +278,7 @@ export class MenuUI {
     saveData: ISaveDataProvider,
     audioSettings: IAudioSettingsProvider,
     textSettings: ITextDisplaySettingsProvider,
+    smellSettings: ISmellDisplaySettingsProvider,
     strings: StringsProvider,
     devHooks?: MenuDevHooks | null,
   ) {
@@ -262,6 +287,7 @@ export class MenuUI {
     this.saveData = saveData;
     this.audioSettings = audioSettings;
     this.textSettings = textSettings;
+    this.smellSettings = smellSettings;
     this.strings = strings;
     this.devHooks = devHooks ?? null;
     this.onKeyBound = (e) => this.onKey(e);
@@ -990,8 +1016,8 @@ export class MenuUI {
       // 对白单独一条：玩家把音效压低时台词必须还听得见
       { label: this.strings.get('menu', 'voice'), channel: 'voice' },
     ];
-    /** 行数 = 四条音量 + 「逐字显示」开关 + 「文字速度」滑条；窗高按它反推 */
-    const rowCount = channels.length + 2;
+    /** 行数 = 四条音量 + 「逐字显示」开关 + 「文字速度」滑条 + 「气味指向」开关；窗高按它反推 */
+    const rowCount = channels.length + 3;
 
     const win = new UIWindow(this.renderer, {
       size: {
@@ -1013,6 +1039,20 @@ export class MenuUI {
       win.bodyWidth - CHANNEL_LABEL_W - PCT_COL_W - UITheme.spacing.md,
     );
     const rowCenterY = (idx: number): number => idx * SETTING_ROW_H + SETTING_ROW_H / 2;
+    /**
+     * 一行的**导航矩形**：整条控件列 × 整行高。
+     *
+     * 设置页的导航单位是**行**，不是行里那枚控件——滑条本来就是这么登记的
+     * （`drawSlider` 里 `w: width, h: SETTING_ROW_H`）。两个开关此前按按钮本身
+     * 的尺寸登记（72×32 / 157×32），于是同一列里混了"通栏"和"左边一小块"两种矩形：
+     * 空间导航按矩形算最近邻，窄的那两行就被判成"偏在左边很远"，上下键整行跳过去。
+     * 统一成行矩形之后，这一页的纵向导航退化成纯粹的"上一行/下一行"。
+     * （判据本身量中心距的那个更深的坑已在 UIFocus.pickIn 修掉，这里是把这一页
+     * 的矩形语义对齐，两者各修一层，缺一条都还会漏。）
+     */
+    const settingRowRect = (idx: number): { x: number; y: number; w: number; h: number } => ({
+      x: controlX, y: Math.round(rowCenterY(idx) - SETTING_ROW_H / 2), w: sliderW, h: SETTING_ROW_H,
+    });
 
     // 行与行之间一条两端渐隐的细线：设计稿里同栏多行都靠这条线断句，不靠间距硬撑
     const addSeparator = (idx: number): void => {
@@ -1083,7 +1123,11 @@ export class MenuUI {
     win.body.addChild(toggle.container);
     this.focusItems.push({
       id: 'toggle:typewriter',
-      x: controlX, y: toggleY, w: TOGGLE_BTN_W, h: TOGGLE_BTN_H,
+      // ⚠ 焦点矩形取**整行**（与滑条同一块 controlX×sliderW×行高），不是按钮那 72×32。
+      // 空间导航比的是矩形，设置页的导航单位是"行"：按钮矩形会让这一行在纵向上
+      // 缩成左边一小块，与上下那些通栏滑条、与底部居中的「返回」都对不上——
+      // 详见 settingRowRect 的注释。
+      ...settingRowRect(typewriterIdx),
       group: 'settings',
       // 焦点高亮 = UIButton 自己的常驻选中态
       onFocus: (on, via) => toggle.setSelected(on && via === 'key'),
@@ -1104,6 +1148,45 @@ export class MenuUI {
         format: (v) => `${Math.round(sliderToTypewriterScale(v) * 100)}%`,
       },
     );
+
+    // ── 气味指向（G.6）：默认「烟指着东西」＝说明卡与见闻录教的那套；
+    // 有人会按真烟的直觉读（烟从东西那边被吹过来），给他们一个调成反的开关。
+    // 只改 HUD 怎么画，不动气味系统算出来的真值。
+    const smellIdx = speedIdx + 1;
+    const smellInverted = this.smellSettings.isDirectionInverted();
+    addSeparator(smellIdx);
+    addLabel(this.strings.get('menu', 'smellDirection'), smellIdx);
+    const toggleSmellDir = (): void => {
+      this.smellSettings.setDirectionInverted(!smellInverted);
+      this.build();
+    };
+    // 两个值都要装得下：切过去标签变宽就溢出的话，等于只有一半时候是对的
+    const smellBtnW = Math.min(sliderW, Math.max(TOGGLE_BTN_W, choiceButtonWidth([
+      this.strings.get('menu', 'smellDirToward'),
+      this.strings.get('menu', 'smellDirAway'),
+    ])));
+    const smellToggle = new UIButton({
+      label: this.strings.get('menu', smellInverted ? 'smellDirAway' : 'smellDirToward'),
+      width: smellBtnW,
+      height: TOGGLE_BTN_H,
+      // 两个都是正常选项（不是开/关），一律次要档：不该让缺省那个看着像"开着的功能"
+      variant: 'secondary',
+      onPress: toggleSmellDir,
+    });
+    const smellToggleY = Math.round(rowCenterY(smellIdx) - TOGGLE_BTN_H / 2);
+    smellToggle.container.position.set(controlX, smellToggleY);
+    smellToggle.container.on('pointerover', () => this.focus.syncHover('toggle:smellDir'));
+    smellToggle.container.on('pointerout', () => this.focus.clearHover('toggle:smellDir'));
+    win.body.addChild(smellToggle.container);
+    this.focusItems.push({
+      id: 'toggle:smellDir',
+      // 同上：导航按行走，焦点矩形就得是行（按钮 157px 宽时，正下方居中的「返回」
+      // 与它横向差着 87px，上键会直接越过这一行落到再上面那条通栏滑条）
+      ...settingRowRect(smellIdx),
+      group: 'settings',
+      onFocus: (on, via) => smellToggle.setSelected(on && via === 'key'),
+      onActivate: toggleSmellDir,
+    });
 
     // 默认焦点落第一个控件（第一条音量滑条）
     this.focusDefaultId = `slider:${channels[0].channel}`;

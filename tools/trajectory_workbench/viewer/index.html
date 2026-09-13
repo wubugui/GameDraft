@@ -7,7 +7,7 @@
 <style>
   :root {
     --bg: #1b1d22; --panel: #23262d; --panel2: #2a2e36; --line: #3a3f4a; --fg: #e6e8ec; --dim: #9aa1ad;
-    --accent: #6cb4ff; --warn: #ffb454; --err: #ff6b6b; --ok: #7ed492; --purple: #c792ea;
+    --accent: #6cb4ff; --warn: #ffb454; --err: #ff6b6b; --ok: #7ed492; --purple: #c792ea; --cue: #ff9ad5;
     --font: 13px/1.45 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   }
   * { box-sizing: border-box; }
@@ -48,7 +48,17 @@
   #seglist .seg .k { color: var(--dim); font-size: 11px; min-width: 34px; }
   #seglist .seg .t { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #bottom { grid-column: 1 / span 3; display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: var(--panel); border-top: 1px solid var(--line); }
-  #scrub { flex: 1; }
+  #scrubwrap { flex: 1; position: relative; }
+  #scrub { width: 100%; display: block; }
+  /* 关键点刻度画在滑块槽上：只作指示，不吃鼠标（点它还是要落到滑块上） */
+  #cueticks { position: absolute; left: 0; right: 0; top: 2px; height: 6px; pointer-events: none; }
+  #cueticks i { position: absolute; top: 0; width: 2px; height: 6px; margin-left: -1px; background: var(--cue, #ff9ad5); border-radius: 1px; }
+  #cuelist { display: flex; flex-direction: column; gap: 3px; }
+  /* 一行放不下五个字段（右栏只有 ~290px）：允许折行，音效下拉吃掉剩余宽度 */
+  #cuelist .seg { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 3px 5px; border-radius: 4px; border: 1px solid transparent; cursor: pointer; }
+  #cuelist .seg select { flex: 1 1 120px; min-width: 0; }
+  #cuelist .seg.on { border-color: var(--cue, #ff9ad5); background: rgba(255,154,213,.12); }
+  #cuelist .seg.bad select { border-color: var(--warn); }
   #status { color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 38%; }
   #status.err { color: var(--err); }
   #status.ok { color: var(--ok); }
@@ -120,6 +130,7 @@
     <button id="toolPhysics" data-tool="physics" title="抛体（T）：按住拖动，把落点拖到目标处（没有抛体段就新建一段）">⤴</button>
     <button id="toolSlot" data-tool="slot" title="插槽（S）：在画布上点一下放一个命名插槽点——曲线暴露给场景的位置，其他动作可以把实体挪到那里">⌖</button>
     <button id="toolOrigin" data-tool="origin" title="曲线原点（O）：在画布上点一下把曲线原点放到那儿——播放时给的位置对齐的就是它，挪它不动曲线">✛</button>
+    <button id="toolCue" data-tool="cue" title="音效关键点（A）：在曲线上点一下放一个——曲线播到那一刻播一条音效">♪</button>
     <button id="toolPan" data-tool="pan" title="手形 / 平移（H 或 Q）；任何工具下：中键 / 空格+左键 也是平移（2D 里右键拖也是；3D 里右键拖 = 环视）">✋</button>
     <div class="sep"></div>
     <button id="gizmoMove" data-gizmo="move" class="on" title="移动 gizmo（W）：3D 里选中点 / 整段 / 整条后出现——箭头沿轴、小方块沿面、中心贴地走；Ctrl 吸附 10 wu">✥</button>
@@ -137,7 +148,7 @@
       <button id="tab2d" class="on" title="1">2D 画面</button>
       <button id="tab3d" title="2">3D 世界</button>
     </div>
-    <div id="legend"><span style="color:#6cb4ff">■</span> 位置 <span style="color:#ffb454">■</span> 落点/深度锚 · <span style="color:#fff">○</span> 控制点 <span style="color:#9a9a9a">▢</span> 锁定起点 · <span style="color:#ffb454">●</span> 初速 <span style="color:#7ed492">◆</span> 落点 <span style="color:#c792ea">●</span> 最高点 · <span style="color:#ff6b6b">|</span> 硬帧</div>
+    <div id="legend"><span style="color:#6cb4ff">■</span> 位置 <span style="color:#ffb454">■</span> 落点/深度锚 · <span style="color:#fff">○</span> 控制点 <span style="color:#9a9a9a">▢</span> 锁定起点 · <span style="color:#ffb454">●</span> 初速 <span style="color:#7ed492">◆</span> 落点 <span style="color:#c792ea">●</span> 最高点 · <span style="color:#ff6b6b">|</span> 硬帧 · <span style="color:#ff9ad5">♪</span> 音效关键点</div>
     <canvas id="view2d" tabindex="0"></canvas>
     <canvas id="view3d" style="display:none" tabindex="0"></canvas>
     <canvas id="overlay3d" style="display:none"></canvas>
@@ -184,6 +195,13 @@
       <div class="dim">插槽 = 这条曲线暴露给场景的位置（人站位、接钱的人站位……）。其他动作（角色移动 / 瞬移 / 临时演员生成点）用"曲线 X 的插槽 Y"引用它，引用是活的。播放曲线本身不挪任何东西。曲线<b>没有锚点</b>：播放位置在播放时给。</div>
     </div>
     <div class="box">
+      <h3>音效关键点 <span class="dim" id="cueCount"></span></h3>
+      <div class="row"><button id="btnCuePlace" title="在曲线上点一下放一个（A）">+ 曲线上放置 (A)</button><button id="btnCueAtTime" title="在时间轴当前时刻放一个">+ 当前时刻</button><span class="dim">点行把播放头跳过去；拖曲线上的 ♪ 改时机</span></div>
+      <div id="cuelist"></div>
+      <div class="dim">关键点存的是<b>时间</b>（"在曲线上点一下"只是取时的手段）：曲线播到那一刻播一条音效。<b>不带位置</b>（没有距离衰减 / 声像 / 回音），与 playSfx 同一条口。
+        过场跳过 / 快进 / 被停 / 被抢一律<b>不补声</b>。音量留空 = 用素材本身的音量。</div>
+    </div>
+    <div class="box">
       <h3>图层</h3>
       <div class="row">
         <label class="chk"><input type="checkbox" data-layer="allCurves" checked>其它段曲线</label>
@@ -223,7 +241,8 @@
     <button id="btnStepBack" title="上一帧（,）">⏮</button>
     <button id="btnStepFwd" title="下一帧（.）">⏭</button>
     <label class="chk"><input id="loop" type="checkbox" checked>循环</label>
-    <input id="scrub" type="range" min="0" max="1000" step="1" value="0">
+    <div id="scrubwrap"><input id="scrub" type="range" min="0" max="1000" step="1" value="0"><div id="cueticks"></div></div>
+    <label class="chk" title="时间轴播放到关键点时在工作台里试听（游戏里一定会响，与这个开关无关）"><input id="cueAudition" type="checkbox" checked>试听音效</label>
     <span id="timeLabel" class="mono">0 / 0 ms</span>
     <span id="status">就绪</span>
   </div>
@@ -233,6 +252,7 @@
 <div id="busy" hidden><div id="busyBox"><span class="spin"></span><span id="busyText">装载场景…</span><button id="busyRetry" hidden>重试装载</button></div></div>
 <div id="ctxmenu"></div>
 
+<script src="/viewer/dropdown.js"></script>
 <script src="/viewer/common.js"></script>
 <script src="/viewer/history.js"></script>
 <script src="/viewer/edit.js"></script>
