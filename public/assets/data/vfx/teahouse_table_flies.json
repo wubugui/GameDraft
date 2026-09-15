@@ -1,0 +1,130 @@
+{
+  "id": "teahouse_table_flies",
+  "label": "茶馆 · 茶渣小飞虫",
+  "emitters": [
+    {
+      "id": "insects",
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/teahouse_moth.png",
+        "sizeWu": 3.1,
+        "sizeJitter": [
+          0.65,
+          1.2
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            1
+          ],
+          [
+            0.2,
+            0.6
+          ],
+          [
+            0.4,
+            1
+          ],
+          [
+            0.6,
+            0.65
+          ],
+          [
+            0.8,
+            1
+          ],
+          [
+            1,
+            0.7
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.06,
+            0.85
+          ],
+          [
+            0.88,
+            0.85
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.1,
+          0.08,
+          0.06
+        ],
+        "lit": false,
+        "faceVelocity": true,
+        "spin": {
+          "rate": [
+            -90,
+            120
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 7,
+        "rate": 1.2,
+        "burst": 7,
+        "shape": {
+          "kind": "box",
+          "size": [
+            22,
+            9,
+            15
+          ]
+        },
+        "speed": [
+          13.0,
+          26
+        ],
+        "direction": [
+          1,
+          0,
+          0
+        ],
+        "spread": 180
+      },
+      "motion": {
+        "drag": 2,
+        "turbulence": {
+          "strength": 78,
+          "scale": 13,
+          "speed": 1.1
+        },
+        "maxSpeed": 26,
+        "stimulus": {
+          "fear": {
+            "player:motion": 1
+          },
+          "accel": 180
+        }
+      },
+      "life": {
+        "seconds": [
+          3,
+          6
+        ]
+      }
+    }
+  ],
+  "authoring": {
+    "sceneId": "teahouse",
+    "background": "background.png",
+    "anchor": {
+      "x": 181,
+      "y": 391,
+      "h": 0,
+      "surface": "shell"
+    },
+    "note": "茶馆氛围；通过粒子工作台维护。无新增音频。"
+  }
+}

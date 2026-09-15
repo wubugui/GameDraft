@@ -73,32 +73,11 @@ class ActionRecord:
 
 def _flatten_actions(actions, prefix: str):
     """展开一个 action 列表（含嵌套容器），yield (路径, action dict)。
-    嵌套口径对齐 validator._walk_action_defs：runActions/addDelayedEvent.params.actions、
-    chooseAction options[].actions、randomBranch above/below、enableRuleOffers slots.resultActions。
-    这样总计数与运行时/校验器实际会执行的动作站点一致（复核 P2 ⑤，"共 N 条"如实）。"""
-    out: list[tuple[str, dict]] = []
-    for i, act in enumerate(actions or []):
-        if not isinstance(act, dict):
-            continue
-        path = f"{prefix}[{i}]"
-        out.append((path, act))
-        p = act.get("params") or {}
-        t = act.get("type")
-        if t in ("runActions", "addDelayedEvent"):
-            out += _flatten_actions(p.get("actions"), f"{path}.actions")
-        elif t == "chooseAction":
-            for oi, opt in enumerate(p.get("options") or []):
-                if isinstance(opt, dict):
-                    out += _flatten_actions(opt.get("actions"), f"{path}.options[{oi}]")
-        elif t == "randomBranch":
-            out += _flatten_actions(p.get("aboveActions"), f"{path}.aboveActions")
-            out += _flatten_actions(p.get("belowActions"), f"{path}.belowActions")
-        elif t == "enableRuleOffers":
-            for si, slot in enumerate(p.get("slots") or []):
-                if isinstance(slot, dict):
-                    out += _flatten_actions(
-                        slot.get("resultActions"), f"{path}.slots[{si}].resultActions")
-    return out
+    嵌套口径读 `shared/action_structure.NESTED_ACTION_SLOTS`（唯一真相源，与运行时容器动作
+    有 parity 护栏）。原先这里手写一份 if/elif，漏了 runActionsIf 的两条分支——"共 N 条"少算。"""
+    from ..shared.action_structure import flatten_actions
+
+    return flatten_actions(actions, prefix)
 
 
 def _emit(records: list, actions, *, source_type: str, source_id: str,

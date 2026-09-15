@@ -26,6 +26,8 @@ export const TEXT_URLS = {
   filtersDir: '/assets/data/filters',
   trajectoriesDir: '/assets/data/trajectories',
   vfxDir: '/assets/data/vfx',
+  /** 粒子布置库（场景 × 时段外观 → 实例表；粒子工作台唯一写者），见 `VfxPlacementLibrary` */
+  vfxPlacements: '/assets/data/vfx_placements.json',
   archiveDir: '/assets/data/archive',
   cutscenesIndex: '/assets/data/cutscenes/index.json',
   parallaxScenes: '/assets/data/parallax_scenes.json',

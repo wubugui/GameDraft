@@ -38,7 +38,8 @@ function parsePose(raw: unknown): SocketFramePose | null {
   const pose: SocketFramePose = { x, y };
   const angle = finiteNum(m.angle);
   if (angle !== null && angle !== 0) pose.angle = angle;
-  if (m.front === true) pose.front = true;
+  // 缺省身前：只有显式 false（身后）才落键，`true` 与不写等价（见 SocketFramePose.front）
+  if (m.front === false) pose.front = false;
   const frame = finiteNum(m.frame);
   if (frame !== null) pose.frame = Math.trunc(frame);
   return pose;
@@ -136,8 +137,16 @@ export interface SocketHostFrame {
   worldHeight: number;
   /** 透视系数（近大远小）；1 = 不缩 */
   depthScale: number;
-  /** 朝向：1 右、-1 左（镜像） */
+  /** 朝向：1 右、-1 左（镜像）。本类自己那一层（Player 转身住在这里） */
   facing: 1 | -1;
+  /**
+   * 宿主**之外**的那一层水平镜像符号（±1）：Npc 的转身住在外层容器 `scale.x` 的符号里，
+   * 内层 `facing` 对 NPC 恒 +1。缺省 1 = 没有外层镜像（Player）。
+   *
+   * **只参与前后判定，不参与位置**：挂件是容器子节点，外层镜像会把它和身体一起翻过去，
+   * 位置再乘一次就翻回来了。前后却必须看「画面上此刻朝哪边」= `facing × hostMirrorX`。
+   */
+  hostMirrorX?: number;
   /** 跳跃视觉抬升（容器局部 px，负=向上）；非跳跃时 0 */
   visualLiftY: number;
   /**
@@ -164,6 +173,19 @@ export interface SocketLocalPose {
 }
 
 /**
+ * 挂件此刻画在身前还是身后（制作人 2026-09-14 定死）：
+ *
+ * **标注是按图集画的朝向（朝右）标的；画面朝左时前后互换。**
+ * 朝右时挂在身前的火把（右手在近侧），人转过去朝左，那只手就到了远侧 ⇒ 火把转到身后；
+ * 朝右时标了身后的，朝左就到身前。`authoredFront` 缺省 true（见 `SocketFramePose.front`）。
+ *
+ * @param visualFacing 画面上此刻的朝向符号 = 内层 `facing` × 外层 `hostMirrorX`
+ */
+export function socketFrontForFacing(authoredFront: boolean, visualFacing: number): boolean {
+  return visualFacing < 0 ? !authoredFront : authoredFront;
+}
+
+/**
  * 把格内归一化标注解算成**容器局部**位姿。运行时与编辑器画布共用这一处，
  * 免得"编辑器里对齐了、游戏里差半个身位"。
  *
@@ -171,6 +193,7 @@ export interface SocketLocalPose {
  * - `x`：格内 0..1 → 以底中锚为原点 → 乘世界宽与透视 → 乘朝向（镜像整体翻到另一侧）
  * - `y`：格内 0=顶 1=底(脚线) → 脚点为 0、向上为负 → 加跳跃视觉抬升
  * - `angle`：朝左时取反（镜像后顺时针变逆时针）
+ * - `front`：画面朝左（`facing × hostMirrorX < 0`）时前后互换，见 `socketFrontForFacing`
  */
 export function socketPoseToLocal(
   raw: SocketFramePose,
@@ -185,7 +208,7 @@ export function socketPoseToLocal(
     x: (raw.x - ax) * host.worldWidth * d * sign,
     y: host.visualLiftY + (raw.y - ay) * host.worldHeight * d,
     angleDeg: (raw.angle ?? 0) * sign,
-    front: raw.front === true,
+    front: socketFrontForFacing(raw.front !== false, sign * (host.hostMirrorX !== undefined && host.hostMirrorX < 0 ? -1 : 1)),
     frame: typeof raw.frame === 'number' ? raw.frame : null,
     scale: d,
     facing: sign,

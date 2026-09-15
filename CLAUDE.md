@@ -23,6 +23,11 @@
 > `agent_docs/runtime/mechanisms/coordinate-spaces.md` 的「铁律 0」一节。
 
 <!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py install 维护,勿手改) -->
+> **🔴 编排铁律 · 不准自己写 flag,派生 flag 只读**(制作人 2026-09-15 定,hook 级强制):
+> 做内容/编排一律走**叙事状态机**——推进走信号、门控/"做过没有"/跨线依赖读 `narrative` 条件叶。
+> `setFlag`/`appendFlag`/`addFlagValue` 默认不写;`has_item_*`、`coins`、`rule_*_acquired` 这类引擎派生 flag
+> 条件里可以读、绝不许写。正文见 `agent_docs/content/norms.md` 第 10 条;强制见 `scripts/agent_hooks/flag_discipline.py`。
+
 ## §A 开工先查公共知识库(agent_docs)
 
 - 动手前按任务域读 `agent_docs/INDEX.md` 对应条目;确定要改的文件后跑
@@ -77,6 +82,7 @@ sh scripts/py.sh -B tools/skill_workflow_governance/govern.py audit
 
 `.cursor/skills/` 与 `.claude/skills/`:feature-iteration、gameplay-iteration、production-mode、
 pure-data-iteration、editor-tools-iteration、add-game-action、add-text-ref、
-core-framework-architecture-review、agent-docs-cli、**handbook-mode**(文档模式:往制作人手册写东西,见 §H)。
+core-framework-architecture-review、agent-docs-cli、**handbook-mode**(文档模式:往制作人手册写东西,见 §H)、
+**mainline-story-progress**(制作人下令时核对/更新 FindingDogStory 的主线故事进度文档)。
 
 **壳只留"怎么做",知识("是什么/为什么")一律在 agent_docs**——两边打架时以库为准。

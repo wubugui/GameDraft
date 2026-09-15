@@ -4,6 +4,11 @@
   "emitters": [
     {
       "id": "paper",
+      "offset": [
+        0,
+        0,
+        0
+      ],
       "appearance": {
         "animFile": "/resources/runtime/animation/fx_paper_money/anim.json",
         "state": "variants",
@@ -12,19 +17,49 @@
           0.75,
           1.15
         ],
+        "alphaOverLife": [
+          [
+            0,
+            1
+          ],
+          [
+            0.5974355844350961,
+            0.9714290073939732
+          ],
+          [
+            1,
+            1
+          ]
+        ],
         "tint": [
           0.86,
           0.85,
           0.83
-        ],
-        "lit": false
+        ]
       },
       "spawn": {
-        "max": 520,
-        "burst": 520,
+        "max": 100,
+        "burst": 100,
         "shape": {
           "kind": "area",
-          "radius": 260
+          "radius": 200
+        },
+        "speed": [
+          1,
+          12
+        ]
+      },
+      "motion": {
+        "gravity": 10,
+        "turbulence": {
+          "scale": 60,
+          "strength": 4
+        },
+        "stimulus": {
+          "fear": {
+            "player:motion": 1
+          },
+          "accel": 700
         }
       },
       "plate": {
@@ -58,6 +93,6 @@
   ],
   "authoring": {
     "sceneId": "跑马梁",
-    "note": "每颗粒子是一张纸钱（薄片模块）：躺在实例 area 圈出的那片地面 / 物件上，被场景风吹动。场景没有 wind 就一动不动。lit:false —— 跑马梁上受光路径把白纸画成深灰（普通 billboard 同样），走无光 + 阴天天穹朝向明暗，tint 按原画路面上那几张纸钱标定。"
+    "note": "每颗粒子是一张纸钱（薄片模块）：躺在实例 area 圈出的那片地面 / 物件上，被场景风吹动。场景没有 wind 就一动不动。受光：与角色同一套 probe 底光 + 实体灯 + 显示变换（亮度随场景角色曝光 shading.beta）；tint 是纸钱反照率，按原画路面上那几张纸钱标定。"
   }
 }

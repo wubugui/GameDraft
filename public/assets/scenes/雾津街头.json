@@ -580,6 +580,20 @@
     "giGain": 1,
     "shadowBias": {
       "bias": 30
+    },
+    "lightFactors": {
+      "character": {
+        "indirectFactor": 5.850272682217821,
+        "directFactor": 1,
+        "totalFactor": 1,
+        "eChroma": 0
+      },
+      "particles": {
+        "indirectFactor": 1.0,
+        "directFactor": 1,
+        "totalFactor": 5.850272682217821,
+        "eChroma": 0
+      }
     }
   },
   "playerShadowBindings": [
@@ -1247,8 +1261,8 @@
     {
       "id": "npc_夜巡_官差乙",
       "name": "巡夜的官差",
-      "x": 3300.0,
-      "y": 880.0,
+      "x": 3205.3,
+      "y": 741.2,
       "interactionRange": 60,
       "animFile": "/resources/runtime/animation/guanchai_anim/anim.json",
       "initialAnimState": "idle",
@@ -1294,7 +1308,7 @@
       "name": "打更的",
       "x": 1160.0,
       "y": 1640.0,
-      "interactionRange": 0,
+      "interactionRange": 64.0,
       "displayImage": {
         "image": "/resources/runtime/images/npcs/wujin_street/night_watchman.png",
         "worldWidth": 48.8,
@@ -1316,7 +1330,8 @@
         }
       ],
       "conditionHidesEntity": true,
-      "group": "序章_夜巡"
+      "group": "序章_夜巡",
+      "dialogueGraphId": "序章_夜巡打更人_备上山"
     }
   ],
   "zones": [
@@ -2189,14 +2204,6 @@
     "shader": {
       "depth_per_sy": 0.002219460227272727
     },
-    "collision": {
-      "x_min": -2.2727272510528564,
-      "z_min": -2.1049800103919694,
-      "cell_size": 0.02853192923203954,
-      "grid_width": 160,
-      "grid_height": 139,
-      "height_offset": 0.1
-    },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0
   },
@@ -2287,7 +2294,23 @@
           "x": 0,
           "y": 0
         }
-      ]
+      ],
+      "lighting": {
+        "lightFactors": {
+          "character": {
+            "indirectFactor": 5.850272682217821,
+            "directFactor": 1,
+            "totalFactor": 1,
+            "eChroma": 0
+          },
+          "particles": {
+            "indirectFactor": 1.0,
+            "directFactor": 1,
+            "totalFactor": 5.850272682217821,
+            "eChroma": 0
+          }
+        }
+      }
     }
   }
 }

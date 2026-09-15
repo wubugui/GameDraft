@@ -739,6 +739,17 @@
           {
             "flag": "has_item_zhiqian"
           }
+        ],
+        "guidance": [
+          {
+            "kind": "worldMarker",
+            "sceneId": "雾津街头",
+            "label": "打更的",
+            "entityKind": "npc",
+            "entityId": "npc_夜巡_打更人",
+            "offscreenArrow": true,
+            "showDistance": true
+          }
         ]
       },
       {
@@ -747,6 +758,17 @@
         "completeWhen": [
           {
             "flag": "has_item_torch"
+          }
+        ],
+        "guidance": [
+          {
+            "kind": "worldMarker",
+            "sceneId": "雾津街头",
+            "label": "打更的",
+            "entityKind": "npc",
+            "entityId": "npc_夜巡_打更人",
+            "offscreenArrow": true,
+            "showDistance": true
           }
         ]
       },
@@ -757,6 +779,17 @@
           {
             "flag": "has_item_mashen"
           }
+        ],
+        "guidance": [
+          {
+            "kind": "worldMarker",
+            "sceneId": "雾津街头",
+            "label": "打更的",
+            "entityKind": "npc",
+            "entityId": "npc_夜巡_打更人",
+            "offscreenArrow": true,
+            "showDistance": true
+          }
         ]
       },
       {
@@ -765,6 +798,17 @@
         "completeWhen": [
           {
             "flag": "has_item_xiangzhu"
+          }
+        ],
+        "guidance": [
+          {
+            "kind": "worldMarker",
+            "sceneId": "雾津街头",
+            "label": "打更的",
+            "entityKind": "npc",
+            "entityId": "npc_夜巡_打更人",
+            "offscreenArrow": true,
+            "showDistance": true
           }
         ]
       },

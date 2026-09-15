@@ -29,6 +29,27 @@ SOCKETS_FILENAME = "sockets.json"
 #: 一条 pose 允许出现的键（写盘时按此顺序，缺省值不落键）
 POSE_KEYS = ("x", "y", "angle", "front", "frame")
 
+
+def pose_is_front(pose: dict | None) -> bool:
+    """这条标注的挂件画在身前还是身后。**缺省（不写）= 身前**，只有显式 ``False`` 才是身后。
+
+    与 TS 侧 `socketPoseToLocal` 的 ``raw.front !== false`` 同口径。缺省必须是身前：
+    身后的挂件会被身体整个挡住，缺省身后时标完忘了勾就是"挂上了却看不见"且零报错
+    （2026-09-14 玩家 idle 火把：41 格全没勾，idle 手贴腰侧，火把在游戏里只露 1.6%）。
+    编辑器里凡是要问"这一格身前还是身后"的地方一律走这里，不各自写 ``is True``。
+    """
+    return not (isinstance(pose, dict) and pose.get("front") is False)
+
+
+def socket_front_for_facing(authored_front: bool, visual_facing: int) -> bool:
+    """挂件此刻画在身前还是身后（制作人 2026-09-14 定死）：**标注按朝右标，画面朝左时前后互换。**
+
+    ``visual_facing`` = 画面上此刻的朝向符号（内层 facing × 外层镜像）。
+    TS 侧 `socketFrontForFacing` 的镜像（`test_socket_pose_parity.py` 对账）。
+    """
+    return (not authored_front) if visual_facing < 0 else bool(authored_front)
+
+
 #: 落脚帧：脚触地的图集槽位（升序去重）。与挂点同住 sidecar、同一份指纹——
 #: 都是"看着这一格画的是什么"逐帧标出来的，重导出槽位漂移时一起判失效。
 #: 运行时 `SpriteEntity.isContactFrameAt` 按它决定哪一帧播脚步声；空 = 这个包没有脚步。
@@ -166,8 +187,9 @@ def normalize_pose(raw: dict) -> dict[str, Any] | None:
     angle = _num("angle")
     if angle is not None and round(angle, 3) != 0:
         out["angle"] = round(angle, 3)
-    if raw.get("front") is True:
-        out["front"] = True
+    # 缺省身前：只有身后（显式 False）落键，`true` 与不写等价（见 pose_is_front）
+    if raw.get("front") is False:
+        out["front"] = False
     frame = _num("frame")
     if frame is not None:
         out["frame"] = int(frame)
@@ -222,11 +244,14 @@ def socket_pose_to_local(
     depth_scale: float = 1.0,
     facing: int = 1,
     visual_lift_y: float = 0.0,
+    host_mirror_x: int = 1,
 ) -> dict[str, Any]:
     """把格内归一化标注解算成**容器局部**位姿。
 
     ⚠ 这是 ``src/data/animationSockets.ts::socketPoseToLocal`` 的跨语言镜像，
     改一处必改两处（`test_socket_pose_parity.py` 逐值对账）。
+
+    ``host_mirror_x``：宿主之外那一层水平镜像（NPC 的转身）。**只参与前后判定，不动位置。**
     """
     d = depth_scale if isinstance(depth_scale, (int, float)) and depth_scale > 0 else 1.0
     try:
@@ -244,7 +269,7 @@ def socket_pose_to_local(
         "x": (x - 0.5) * world_width * d * sign,
         "y": visual_lift_y + (y - 1.0) * world_height * d,
         "angleDeg": angle * sign,
-        "front": pose.get("front") is True,
+        "front": socket_front_for_facing(pose_is_front(pose), sign * (-1 if host_mirror_x < 0 else 1)),
         "frame": int(frame) if isinstance(frame, (int, float)) and not isinstance(frame, bool) else None,
         "scale": d,
         "facing": sign,
@@ -300,8 +325,8 @@ def interpolate_poses(data: dict, socket: str, slots: list[int]) -> int:
             if round(aa, 3) or round(ab, 3):
                 mid["angle"] = round(aa + (ab - aa) * t, 3)
             # front / frame 是离散量，插值无意义：跟起点走
-            if pa.get("front") is True:
-                mid["front"] = True
+            if not pose_is_front(pa):
+                mid["front"] = False
             if isinstance(pa.get("frame"), int):
                 mid["frame"] = pa["frame"]
             poses[str(slots[i])] = mid

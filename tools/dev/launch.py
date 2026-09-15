@@ -31,6 +31,7 @@ TOOL_MODULES: dict[str, tuple[str, list[str]]] = {
     "acoustic-workbench": ("tools.acoustic_workbench", []),
     "vfx-workbench": ("tools.vfx_workbench", []),
     "sway-workbench": ("tools.sway_workbench", []),
+    "terrain-workbench": ("tools.terrain_workbench", []),
     "handbook": ("tools.handbook", []),
     "anim-preview": ("tools.anim_preview", []),
     "parallax-editor": ("tools.parallax_editor", []),

@@ -415,8 +415,10 @@ def _condition_expr(spec: LanguageSpec, ud: UniverseData) -> dict:
         # 时段枚举权威 = game_config.dayNight.phases(没配时回落缺省四段,见 id_universes)
         branches.append(leaf(["timePhase"], {"timePhase": _universe_schema("time_phases", ud)}))
     if "vfxState" in modeled:
-        # 世界空间粒子 / 群体实例的状态。实例 id 是**场景作用域**的(scene.vfx[].id),
-        # 一条对话可能在任何场景播,所以不给 id 宇宙枚举——只锁状态枚举(validator 另做跨场景提醒)。
+        # 世界空间粒子 / 群体实例的状态。实例 id 取自粒子布置库(assets/data/vfx_placements.json,
+        # 按「场景 × 时段外观」摆,同一场景白天 / 夜里各一份同 id 是常态),是**场景作用域**的;
+        # 一条对话可能在任何场景播,所以不给 id 宇宙枚举——只锁状态枚举
+        # (validator 另做"布置库里哪个场景哪套外观都没摆过这个 id"的提醒)。
         branches.append(leaf(["vfx", "vfxState"], {
             "vfx": {"type": "string"},
             "vfxState": {"enum": ["roosting", "airborne", "fleeing", "returning", "active", "inactive"]},

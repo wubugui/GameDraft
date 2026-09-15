@@ -28,7 +28,7 @@ function socketsJson(overrides: Record<string, unknown> = {}): unknown {
     schemaVersion: 1,
     atlas: { cols: 9, rows: 10, slotCount: 89 },
     sockets: {
-      right_hand: { label: '右手', poses: { '0': { x: 0.62, y: 0.55, angle: -12, front: true } } },
+      right_hand: { label: '右手', poses: { '0': { x: 0.62, y: 0.55, angle: -12, front: false } } },
     },
     ...overrides,
   };
@@ -50,7 +50,7 @@ describe('sockets 解析', () => {
   it('读出位姿的四个维度', () => {
     const set = parseSocketSet(socketsJson());
     const pose = set?.sockets.right_hand.poses['0'];
-    expect(pose).toEqual({ x: 0.62, y: 0.55, angle: -12, front: true });
+    expect(pose).toEqual({ x: 0.62, y: 0.55, angle: -12, front: false });
     expect(set?.sockets.right_hand.label).toBe('右手');
   });
 
@@ -69,11 +69,41 @@ describe('sockets 解析', () => {
     expect(Object.keys(set!.sockets.h.poses)).toEqual(['0']);
   });
 
-  it('缺省值不落键（往返干净：angle=0 / front=false 不写）', () => {
+  it('缺省值不落键（往返干净：angle=0 / front=true 不写）', () => {
     const set = parseSocketSet(socketsJson({
-      sockets: { h: { poses: { '0': { x: 0.5, y: 0.5, angle: 0, front: false } } } },
+      sockets: { h: { poses: { '0': { x: 0.5, y: 0.5, angle: 0, front: true } } } },
     }));
     expect(set!.sockets.h.poses['0']).toEqual({ x: 0.5, y: 0.5 });
+  });
+
+  it('front 缺省 = 身前；只有显式 false 才是身后（非布尔的脏值也按身前）', () => {
+    const set = parseSocketSet(socketsJson({
+      sockets: { h: { poses: {
+        '0': { x: 0.5, y: 0.5 },
+        '1': { x: 0.5, y: 0.5, front: false },
+        '2': { x: 0.5, y: 0.5, front: 'no' },
+      } } },
+    }));
+    const host = { worldWidth: 100, worldHeight: 200, depthScale: 1, facing: 1 as const, visualLiftY: 0 };
+    const poses = set!.sockets.h.poses;
+    expect(socketPoseToLocal(poses['0'], host).front).toBe(true);
+    expect(socketPoseToLocal(poses['1'], host).front).toBe(false);
+    expect(poses['2']).toEqual({ x: 0.5, y: 0.5 });
+    expect(socketPoseToLocal(poses['2'], host).front).toBe(true);
+  });
+
+  it('标注按朝右标：画面朝左时前后互换（Player 的 facing 与 Npc 的外层镜像都算）', () => {
+    const host = { worldWidth: 100, worldHeight: 200, depthScale: 1, facing: 1 as const, visualLiftY: 0 };
+    const front = { x: 0.5, y: 0.5 };
+    const behind = { x: 0.5, y: 0.5, front: false };
+    expect(socketPoseToLocal(front, { ...host, facing: -1 }).front).toBe(false);
+    expect(socketPoseToLocal(behind, { ...host, facing: -1 }).front).toBe(true);
+    expect(socketPoseToLocal(front, { ...host, hostMirrorX: -1 }).front).toBe(false);
+    expect(socketPoseToLocal(behind, { ...host, hostMirrorX: -1 }).front).toBe(true);
+    // 两层都翻 = 画面朝右
+    expect(socketPoseToLocal(front, { ...host, facing: -1, hostMirrorX: -1 }).front).toBe(true);
+    // 外层镜像只管前后，不动位置（挂件是容器子节点，外层 Pixi 自己会翻）
+    expect(socketPoseToLocal({ x: 1, y: 1 }, { ...host, hostMirrorX: -1 }).x).toBe(50);
   });
 });
 

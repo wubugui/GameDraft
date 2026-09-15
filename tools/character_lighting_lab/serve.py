@@ -562,7 +562,11 @@ class H(SimpleHTTPRequestHandler):
             name = q.get('scene', [''])[0]
             kind = q.get('kind', [''])[0]
             wd = _wd(name) if name else None
-            if kind not in ('depth', 'collision', 'object') or not (wd and wd.is_dir()):
+            if kind == 'collision':
+                # 2026-09-14:碰撞 / 可走区的作者面搬去了地形工作台(世界 XZ 作者层,入库、可推给游戏)。
+                # 这里的屏幕空间笔刷层烘焙已经不读,收下来只会让作者以为改了。
+                return self._json({'ok': False, 'err': '碰撞改在地形工作台里改(sh scripts/py.sh -m tools.terrain_workbench)'}, 410)
+            if kind not in ('depth', 'object') or not (wd and wd.is_dir()):
                 return self._json({'ok': False, 'err': 'bad scene/kind'}, 400)
             length = int(self.headers.get('Content-Length', 0))
             if length <= 0 or length > 8 * 1024 * 1024:

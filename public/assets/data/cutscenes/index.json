@@ -3057,26 +3057,31 @@
         }
       },
       {
-        "kind": "action",
-        "type": "moveEntityTo",
-        "params": {
-          "target": "player",
-          "x": 105.47,
-          "y": 256.64,
-          "speed": 60.0,
-          "moveAnimState": "walk",
-          "arriveAnimState": "idle",
-          "faceTowardMovement": true
-        }
-      },
-      {
-        "kind": "present",
-        "type": "showDialogue",
-        "text": "来嘛，老子这只手昨天才摸过死人子——给你摸一哈，摸一哈嘛！",
-        "scriptedNpcId": "player",
-        "portrait": {
-          "emotion": "laugh"
-        }
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "moveEntityTo",
+            "params": {
+              "target": "player",
+              "x": 105.47,
+              "y": 256.64,
+              "speed": 60.0,
+              "moveAnimState": "walk",
+              "arriveAnimState": "idle",
+              "faceTowardMovement": true
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showDialogue",
+            "text": "来嘛，老子这只手昨天才摸过死人子——给你摸一哈，摸一哈嘛！",
+            "scriptedNpcId": "player",
+            "portrait": {
+              "emotion": "laugh"
+            }
+          }
+        ]
       },
       {
         "kind": "present",
@@ -3273,47 +3278,57 @@
         ]
       },
       {
-        "kind": "action",
-        "type": "moveEntityTo",
-        "params": {
-          "target": "waiter_xiaoer",
-          "x": 223.83,
-          "y": 193.36,
-          "moveAnimState": "slow_walk",
-          "arriveAnimState": "idle",
-          "faceTowardMovement": true
-        }
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "moveEntityTo",
+            "params": {
+              "target": "waiter_xiaoer",
+              "x": 223.83,
+              "y": 193.36,
+              "moveAnimState": "slow_walk",
+              "arriveAnimState": "idle",
+              "faceTowardMovement": true
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showDialogue",
+            "text": "下回老子背个死人子来和蹲一排~",
+            "scriptedNpcId": "player",
+            "portrait": {
+              "emotion": "laugh"
+            }
+          }
+        ]
       },
       {
-        "kind": "present",
-        "type": "showDialogue",
-        "text": "下回老子背个死人子来和蹲一排~",
-        "scriptedNpcId": "player",
-        "portrait": {
-          "emotion": "laugh"
-        }
-      },
-      {
-        "kind": "action",
-        "type": "moveEntityTo",
-        "params": {
-          "target": "player",
-          "x": 9.38,
-          "y": 8.2,
-          "moveAnimState": "run",
-          "arriveAnimState": "idle",
-          "faceTowardMovement": true
-        }
-      },
-      {
-        "kind": "present",
-        "type": "showDialogue",
-        "text": "赫——呸！你狗日的再来，老子把你龟儿脚杆撇断！",
-        "scriptedNpcId": "waiter_xiaoer",
-        "portrait": {
-          "emotion": "angry"
-        },
-        "voice": "开场茶馆_小二_7"
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "moveEntityTo",
+            "params": {
+              "target": "player",
+              "x": 9.38,
+              "y": 8.2,
+              "moveAnimState": "run",
+              "arriveAnimState": "idle",
+              "faceTowardMovement": true
+            }
+          },
+          {
+            "kind": "present",
+            "type": "showDialogue",
+            "text": "赫——呸！你狗日的再来，老子把你龟儿脚杆撇断！",
+            "scriptedNpcId": "waiter_xiaoer",
+            "portrait": {
+              "emotion": "angry"
+            },
+            "voice": "开场茶馆_小二_7"
+          }
+        ]
       },
       {
         "kind": "action",
@@ -6215,7 +6230,7 @@
           {
             "kind": "present",
             "type": "cameraZoom",
-            "scale": 1.8000000000000003,
+            "scale": 1.8,
             "duration": 800
           },
           {

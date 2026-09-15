@@ -31,16 +31,20 @@ import {
 } from './vfxConfine';
 import { curlNoise3 } from './vfxNoise';
 import {
-  createPlateArrays, launchPlate, pickAreaSurface, placePlateOnSurface, resolvePlateArea, resolvePlateParams,
-  stepPlates, type PlateArea, type PlateArrays, type PlateParams,
+  createPlateArrays, launchPlate, placePlateOnSurface, resolvePlateParams, PLATE_GRAVITY,
+  stepPlates, type PlateArrays, type PlateParams,
 } from './vfxPlate';
 import { VfxRng } from './vfxRandom';
+import { pickAreaSurface, resolvePlateArea, type PlateArea } from './vfxSurface';
+import { VfxParticleLifecycle } from './vfxLifecycle';
+import { accumulateAirflow, accumulateFieldAcceleration, fieldFalloff, type VfxFieldRuntime } from './vfxFields';
+import { emitterProgramErrors, resolveEmitterProgram, type VfxEmitterProgram } from './vfxProgram';
 import { ShellSide, spawnsBehindShell, thinShellSide, type VfxSpace } from './vfxSpace';
 
 export const VFX_SUBSTEP = 1 / 120;
 export const VFX_MAX_SUBSTEPS = 12;
 /** 瞬时刺激至少活这么久（秒），保证至少一批子步看得见它 */
-export const VFX_PULSE_MIN_SECONDS = 0.12;
+export { VFX_PULSE_MIN_SECONDS, createFieldRuntime, type VfxFieldRuntime } from './vfxFields';
 /** 群体避墙的前瞻时间（秒） */
 const FLOCK_LOOKAHEAD_S = 0.35;
 /** 飞行个体的最低速度（巡航的倍数）：蝙蝠不悬停 */
@@ -108,18 +112,6 @@ export function createParticles(cap: number): VfxParticles {
   };
 }
 
-export interface VfxFieldRuntime {
-  def: VfxFieldDef;
-  /** 世界位置（跟随实体的每帧由系统刷新） */
-  pos: Vec3;
-  /** 剩余秒数（Infinity = 常驻） */
-  remaining: number;
-  /** wind 的单位方向 */
-  dir: Vec3 | null;
-  /** 系统给的句柄（常驻场：玩家动静 / 灯 / 作者 id） */
-  handle?: string;
-}
-
 export interface VfxPlayerContext {
   /** 玩家脚点 M-world */
   world: Vec3;
@@ -142,7 +134,7 @@ export interface VfxStepContext {
   windTime?: number;
 }
 
-/** 实例级的额外输入（场景实例 JSON 里带的） */
+/** 实例级的额外输入（布置库里那条实例带的） */
 export interface VfxInstanceOptions {
   /** 发射区域（画面坐标多边形）：`spawn.shape.kind = 'area'` 的发射器铺在这里、回收的从这里补回 */
   area?: [number, number][] | null;
@@ -171,6 +163,9 @@ interface FlockRuntime {
 
 export interface VfxEmitterRuntime {
   def: VfxEmitterDef;
+  program: VfxEmitterProgram;
+  area: PlateArea;
+  lifecycle: VfxParticleLifecycle;
   /** 发射器原点（世界） */
   origin: Vec3;
   p: VfxParticles;
@@ -208,6 +203,7 @@ interface HitEvent {
 const tmpV = [0, 0, 0];
 const tmpN = new Float32Array(3);
 const tmpWind: Vec3 = [0, 0, 0];
+const tmpAcceleration: Vec3 = [0, 0, 0];
 const tmpScene = { x: 0, y: 0 };
 const tmpFoot: Vec3 = [0, 0, 0];
 
@@ -217,14 +213,6 @@ function clampLen3(v: number[], max: number): void {
     const s = max / l;
     v[0] *= s; v[1] *= s; v[2] *= s;
   }
-}
-
-function fieldFalloff(f: VfxFieldRuntime, x: number, y: number, z: number): number {
-  const dx = x - f.pos[0], dy = y - f.pos[1], dz = z - f.pos[2];
-  const r = Math.hypot(dx, dy, dz);
-  if (r >= f.def.radius) return 0;
-  const t = 1 - r / f.def.radius;
-  return f.def.strength * t * t;
 }
 
 /** 效果里挑发射器（子发射引用） */
@@ -262,12 +250,20 @@ export class VfxInstanceSim {
       const cap = Math.max(1, Math.round(def.spawn.max * cs));
       const off = def.offset ?? [0, 0, 0];
       const m = def.motion ?? {};
-      const beh = def.behavior ?? null;
+      const errors = emitterProgramErrors(def);
+      if (errors.length) throw new Error(`VFX ${effect.id}/${def.id}: ${errors.join('; ')}`);
+      const program = resolveEmitterProgram(def);
+      const beh = program.solver === 'flock' ? def.behavior! : null;
       const origin: Vec3 = [anchorWorld[0] + off[0], anchorWorld[1] + off[1], anchorWorld[2] + off[2]];
-      const plateDef = !beh && def.plate ? def.plate : null;
+      const plateDef = program.solver === 'plate' ? def.plate! : null;
       const shape = def.spawn.shape;
+      const area = resolvePlateArea(space, origin, options.area ?? null,
+        program.surfaceRadius ?? (shape?.kind === 'area' ? (shape.radius ?? 200) : 200), this.confine);
       const rt: VfxEmitterRuntime = {
         def,
+        program,
+        area,
+        lifecycle: null!, // wired below, after particle arrays exist
         origin,
         p: createParticles(cap),
         rng: new VfxRng((seed + i * 7919) >>> 0),
@@ -303,10 +299,17 @@ export class VfxInstanceSim {
         plate: plateDef ? {
           P: resolvePlateParams(plateDef),
           arr: createPlateArrays(cap),
-          area: resolvePlateArea(space, origin, options.area ?? null,
-            shape?.kind === 'area' ? (shape.radius ?? 200) : 200, this.confine),
+          area,
         } : null,
       };
+      rt.lifecycle = new VfxParticleLifecycle({
+        space, area, body: rt.p, rng: rt.rng, policy: program.recycle,
+        detectLoss: program.solver === 'plate' || program.recycle.mode !== 'none',
+        clampDeadFade: program.solver === 'plate',
+        fallSpeed: rt.plate ? Math.sqrt(PLATE_GRAVITY / rt.plate.P.kn) : 90,
+        place: (index, surface) => this.placeOnSurface(rt, index, surface),
+        launch: (index, at, velocity) => this.launch(rt, index, at, velocity),
+      });
       this.emitters.push(rt);
       // 群体：起播即把整群摆进巢（roosting）或直接放飞（airborne）
       if (rt.flock) this.populateFlock(rt);
@@ -390,11 +393,22 @@ export class VfxInstanceSim {
     this.anchorWorld[1] = world[1];
     this.anchorWorld[2] = world[2];
     for (const e of this.emitters) {
-      e.origin[0] += dx; e.origin[1] += dy; e.origin[2] += dz;
-      if (e.flock) {
-        e.flock.center[0] += dx; e.flock.center[1] += dy; e.flock.center[2] += dz;
-      }
+      this.translateEmitterOrigin(e, dx, dy, dz);
     }
+  }
+
+  /** Authoring preview changes future emission without rewriting live particle positions. */
+  moveEmitterOrigin(id: string, world: Vec3): void {
+    const e = this.emitters.find(e => e.def.id === id);
+    if (e) this.translateEmitterOrigin(e, world[0] - e.origin[0], world[1] - e.origin[1], world[2] - e.origin[2]);
+  }
+
+  private translateEmitterOrigin(e: VfxEmitterRuntime, dx: number, dy: number, dz: number): void {
+    if (dx === 0 && dy === 0 && dz === 0) return;
+    e.origin[0] += dx; e.origin[1] += dy; e.origin[2] += dz;
+    // Authored polygons stay in scene space. An unplaced disc follows its emitter.
+    if (e.area.disc) Object.assign(e.area, resolvePlateArea(this.space, e.origin, null, e.area.disc.r));
+    if (e.flock) { e.flock.center[0] += dx; e.flock.center[1] += dy; e.flock.center[2] += dz; }
   }
 
   /**
@@ -485,7 +499,7 @@ export class VfxInstanceSim {
     p.fear[i] = 0;
     p.reactLeft[i] = -1;
     p.quietFor[i] = 0;
-    const beh = d.behavior;
+    const beh = e.flock?.def;
     p.cruiseMul[i] = beh ? 1 + rng.range(-1, 1) * (beh.speedJitter ?? 0) : 1;
     p.hand[i] = beh
       ? (beh.orbit.handedness === 'cw' ? 1 : beh.orbit.handedness === 'ccw' ? -1 : (rng.next() < 0.5 ? 1 : -1))
@@ -539,7 +553,7 @@ export class VfxInstanceSim {
   }
 
   private emitStep(e: VfxEmitterRuntime, h: number): void {
-    if (!e.active || e.def.behavior) return;
+    if (!e.active || e.flock) return;
     const s = e.def.spawn;
     if (s.duration !== undefined && e.elapsed > s.duration) { e.active = false; return; }
     if (!e.burstDone) {
@@ -556,23 +570,49 @@ export class VfxInstanceSim {
     }
   }
 
-  /** 发一只：普通粒子走 `spawnOne`；薄片另外把朝向 / 接触 / 贴附摆好。-1 = 池满；-2 = 这一只没找到落点 */
+  /** Emission owns placement; solver initializers only establish physical state. */
   private spawnEmit(e: VfxEmitterRuntime): number {
-    const pl = e.plate;
-    if (!pl) return this.spawnOne(e, e.origin[0], e.origin[1], e.origin[2], null);
-    if (e.def.spawn.shape?.kind === 'area') {
-      const surf = pickAreaSurface(this.space, pl.area, e.rng);
+    if (e.program.spawnPlacement === 'surface') {
+      const surf = pickAreaSurface(this.space, e.area, e.rng);
       if (!surf) return -2;
       const i = this.spawnOne(e, surf.p[0], surf.p[1], surf.p[2], null);
       if (i < 0) return -1;
-      placePlateOnSurface(pl.P, pl.arr, e.p, i, this.space, e.rng, surf);
+      const p = e.p;
+      this.placeOnSurface(e, i, surf, e.program.initialVelocity === 'rest' ? undefined : [p.vx[i], p.vy[i], p.vz[i]]);
       return i;
     }
-    const i = this.spawnOne(e, e.origin[0], e.origin[1], e.origin[2], null);
-    if (i < 0) return -1;
-    const p = e.p;
-    launchPlate(pl.P, pl.arr, p, i, this.space, e.rng, [p.x[i], p.y[i], p.z[i]], [p.vx[i], p.vy[i], p.vz[i]]);
+    return this.spawnAt(e, e.origin[0], e.origin[1], e.origin[2], null);
+  }
+
+  private spawnAt(e: VfxEmitterRuntime, x: number, y: number, z: number, dir: readonly number[] | null): number {
+    const i = this.spawnOne(e, x, y, z, dir);
+    if (i >= 0 && e.program.initialVelocity === 'rest') e.p.vx[i] = e.p.vy[i] = e.p.vz[i] = 0;
+    if (i >= 0 && e.plate) {
+      const p = e.p;
+      this.launch(e, i, [p.x[i], p.y[i], p.z[i]], [p.vx[i], p.vy[i], p.vz[i]]);
+    }
     return i;
+  }
+
+  private placeOnSurface(e: VfxEmitterRuntime, i: number, surf: NonNullable<ReturnType<typeof pickAreaSurface>>, velocity?: Vec3): void {
+    const pl = e.plate;
+    if (pl) { placePlateOnSurface(pl.P, pl.arr, e.p, i, this.space, e.rng, surf, velocity); return; }
+    const p = e.p, n = surf.normal;
+    p.x[i] = surf.p[0] + n[0] * e.radius;
+    p.y[i] = surf.p[1] + n[1] * e.radius;
+    p.z[i] = surf.p[2] + n[2] * e.radius;
+    p.vx[i] = velocity?.[0] ?? 0; p.vy[i] = velocity?.[1] ?? 0; p.vz[i] = velocity?.[2] ?? 0;
+    p.mode[i] = VfxParticleMode.Flying; p.behind[i] = 0;
+  }
+
+  private launch(e: VfxEmitterRuntime, i: number, at: Vec3, velocity: Vec3): void {
+    const pl = e.plate;
+    if (pl) { launchPlate(pl.P, pl.arr, e.p, i, this.space, e.rng, at, velocity); return; }
+    const p = e.p;
+    p.x[i] = at[0]; p.y[i] = at[1]; p.z[i] = at[2];
+    p.vx[i] = velocity[0]; p.vy[i] = velocity[1]; p.vz[i] = velocity[2];
+    p.mode[i] = VfxParticleMode.Flying;
+    p.behind[i] = spawnsBehindShell(this.space, at[0], at[1], at[2]) ? 1 : 0;
   }
 
   // ------------------------------------------------------------------ 主步
@@ -588,6 +628,8 @@ export class VfxInstanceSim {
       this.substep++;
       for (const e of this.emitters) {
         e.elapsed += VFX_SUBSTEP;
+        e.lifecycle.wind = e.program.influences.sceneWind ? ctx.wind ?? null : null;
+        e.lifecycle.windTime = ctx.windTime ?? this.time;
         this.emitStep(e, VFX_SUBSTEP);
         if (e.flock) this.stepFlock(e, VFX_SUBSTEP, ctx);
         else if (e.plate) this.stepPlate(e, VFX_SUBSTEP, ctx);
@@ -612,12 +654,17 @@ export class VfxInstanceSim {
     }
     p.liveCount -= stepPlates(pl.P, pl.arr, p.alive, p, p.cap, h, {
       space: this.space,
-      wind: ctx.wind ?? null,
+      wind: e.program.influences.sceneWind ? ctx.wind ?? null : null,
       windTime: ctx.windTime ?? this.time,
       turb: e.turb,
       time: this.time,
       substep: this.substep,
-      area: pl.area,
+      confine: e.area.confine,
+      lifecycle: e.lifecycle,
+      fields: ctx.fields,
+      fieldWind: e.program.influences.wind,
+      airflow: e.program.influences.airflow,
+      stimulus: e.program.influences.stimulus ? e.stim : null,
       rng: e.rng,
     });
   }
@@ -634,19 +681,15 @@ export class VfxInstanceSim {
     const fric = col?.friction ?? 0.2;
     const r = e.radius;
     const useShell = shellResp !== 'none' && sp.hasShell;
-    const sceneWind = ctx.wind ?? null;
+    const sceneWind = e.program.influences.sceneWind ? ctx.wind ?? null : null;
     const windTime = ctx.windTime ?? this.time;
     const cf = this.confine;
+    e.lifecycle.beginStep();
     for (let i = 0; i < p.cap; i++) {
       if (!p.alive[i]) continue;
       p.age[i] += h;
       if (p.life[i] > 0 && p.age[i] >= p.life[i]) { p.alive[i] = 0; p.liveCount--; continue; }
-      // 粒子区域：淡完即回收。普通粒子没有补回——发射器自己会接着发
-      if (cf && p.fadeRate[i] !== 0) {
-        p.fade[i] -= p.fadeRate[i] * h;
-        if (p.fade[i] <= 0) { p.alive[i] = 0; p.liveCount--; continue; }
-        if (p.fade[i] >= 1) { p.fade[i] = 1; p.fadeRate[i] = 0; }
-      }
+      if (e.lifecycle.beforeParticle(i, h)) continue;
       p.rot[i] += p.spin[i] * h;
       if (p.mode[i] === VfxParticleMode.Stuck) continue;
       // 权重看的是**正下方地面点**落在画面上的位置（区域是地上的一块）
@@ -676,35 +719,22 @@ export class VfxInstanceSim {
           az += e.drag * tmpWind[2] * g;
         }
       }
+      if (e.program.influences.airflow && e.drag > 0) {
+        tmpWind[0] = 0; tmpWind[1] = 0; tmpWind[2] = 0;
+        accumulateAirflow(ctx.fields, p.x[i], p.y[i], p.z[i], tmpWind);
+        if (tmpWind[0] !== 0 || tmpWind[1] !== 0 || tmpWind[2] !== 0) {
+          ax += e.drag * tmpWind[0]; ay += e.drag * tmpWind[1]; az += e.drag * tmpWind[2];
+        }
+      }
       if (e.turb) {
         const t = e.turb;
         curlNoise3(p.x[i] * t.invScale, p.y[i] * t.invScale, p.z[i] * t.invScale, ctx.time * t.speed + p.seed[i] * 3, tmpN);
         ax += tmpN[0] * t.strength; ay += tmpN[1] * t.strength; az += tmpN[2] * t.strength;
       }
-      for (const f of ctx.fields) {
-        if (f.def.kind !== 'wind' || !f.dir) continue;
-        const s = fieldFalloff(f, p.x[i], p.y[i], p.z[i]);
-        if (s <= 0) continue;
-        ax += f.dir[0] * s; ay += f.dir[1] * s; az += f.dir[2] * s;
-      }
-      // 怕 / 被吸引：沿「场心 → 粒子」推开（attract 取反）。没配 stimulus 的发射器一粒也不看。
-      if (e.stim) {
-        for (const f of ctx.fields) {
-          let w = 0;
-          if (f.def.kind === 'fear') w = e.stim.fear?.[f.def.tag] ?? 0;
-          else if (f.def.kind === 'attract') w = -(e.stim.attract?.[f.def.tag] ?? 0);
-          if (w === 0) continue;
-          const s = fieldFalloff(f, p.x[i], p.y[i], p.z[i]);
-          if (s <= 0) continue;
-          let dx = p.x[i] - f.pos[0], dy = p.y[i] - f.pos[1], dz = p.z[i] - f.pos[2];
-          const d = Math.hypot(dx, dy, dz);
-          // 正好压在场心上：没有方向可言，借粒子自己的随机种子给一个固定的横向，免得 NaN
-          if (d < 1e-4) { dx = Math.cos(p.seed[i] * 6.2831853); dy = 0; dz = Math.sin(p.seed[i] * 6.2831853); }
-          else { dx /= d; dy /= d; dz /= d; }
-          const a = w * s * e.stim.accel;
-          ax += dx * a; ay += dy * a; az += dz * a;
-        }
-      }
+      tmpAcceleration[0] = ax; tmpAcceleration[1] = ay; tmpAcceleration[2] = az;
+      accumulateFieldAcceleration(ctx.fields, e.program.influences.wind,
+        e.program.influences.stimulus ? e.stim : null, p.x[i], p.y[i], p.z[i], p.seed[i], tmpAcceleration);
+      ax = tmpAcceleration[0]; ay = tmpAcceleration[1]; az = tmpAcceleration[2];
       p.vx[i] += ax * h; p.vy[i] += ay * h; p.vz[i] += az * h;
       const spd = Math.hypot(p.vx[i], p.vy[i], p.vz[i]);
       if (spd > e.maxSpeed) { const s = e.maxSpeed / spd; p.vx[i] *= s; p.vy[i] *= s; p.vz[i] *= s; }
@@ -759,7 +789,9 @@ export class VfxInstanceSim {
           }
         }
       }
+      e.lifecycle.afterMotion(i, p.x[i], p.y[i], p.z[i]);
     }
+    p.liveCount -= e.lifecycle.killed;
   }
 
   private queueHit(e: VfxEmitterRuntime, x: number, y: number, z: number, nx: number, ny: number, nz: number): void {
@@ -777,7 +809,7 @@ export class VfxInstanceSim {
       if (!target) continue;
       const n = Math.max(1, Math.round(hit.count * this.countScale));
       const dir = target.def.spawn.direction ?? [hit.nx, hit.ny, hit.nz];
-      for (let k = 0; k < n; k++) if (this.spawnOne(target, hit.x, hit.y, hit.z, dir) < 0) break;
+      for (let k = 0; k < n; k++) if (this.spawnAt(target, hit.x, hit.y, hit.z, dir) < 0) break;
     }
   }
 
@@ -827,7 +859,7 @@ export class VfxInstanceSim {
     const away = [0, 0, 0];
     let fearSum = 0, fearN = 0;
     const cx = fl.center[0], cy = fl.center[1], cz = fl.center[2];
-    const fields = ctx.fields;
+    const fields = e.program.influences.stimulus ? ctx.fields : [];
     const fearW = beh.attitude.fear;
     const attractW = beh.attitude.attract;
 
@@ -889,7 +921,7 @@ export class VfxInstanceSim {
       let fearIn = 0;
       away[0] = away[1] = away[2] = 0;
       for (const f of fields) {
-        if (f.def.kind === 'wind') continue;
+        if (f.def.kind !== 'fear' && f.def.kind !== 'attract') continue;
         const w = f.def.kind === 'fear' ? (fearW[f.def.tag] ?? 0) : (attractW?.[f.def.tag] ?? 0);
         if (w <= 0) continue;
         const s = fieldFalloff(f, px, py, pz) * w;
@@ -1080,7 +1112,7 @@ export class VfxInstanceSim {
       case 'roosting': {
         let startle = playerDist <= beh.home.startleRadius;
         if (!startle) {
-          for (const f of ctx.fields) {
+          for (const f of (e.program.influences.stimulus ? ctx.fields : [])) {
             if (f.def.kind !== 'fear' || !(beh.attitude.fear[f.def.tag] > 0)) continue;
             if (fieldFalloff(f, e.origin[0], e.origin[1], e.origin[2]) > 0) { startle = true; break; }
           }
@@ -1112,16 +1144,6 @@ export class VfxInstanceSim {
 }
 
 /** 建刺激场运行态（系统层用）。 */
-export function createFieldRuntime(def: VfxFieldDef, at: Vec3, handle?: string): VfxFieldRuntime {
-  const dur = def.duration && def.duration > 0 ? def.duration : VFX_PULSE_MIN_SECONDS;
-  let dir: Vec3 | null = null;
-  if (def.kind === 'wind' && def.direction) {
-    const l = Math.hypot(def.direction[0], def.direction[1], def.direction[2]) || 1;
-    dir = [def.direction[0] / l, def.direction[1] / l, def.direction[2] / l];
-  }
-  return { def, pos: [at[0], at[1], at[2]], remaining: handle ? Infinity : dur, dir, handle };
-}
-
 /** 作者锚点 → 世界（薄包装，给系统与工作台共用同一条） */
 export function resolveVfxAnchor(space: VfxSpace, a: VfxAnchorDef): Vec3 {
   return space.anchorToWorld(a);

@@ -108,6 +108,15 @@ def _lighting_payload_issues(project_root: Path) -> list[Issue]:
         if missing:
             out.append(Issue("error", "lighting-bake", tag, f"lighting.json 缺字段: {sorted(missing)}"))
             continue
+        # 地面标定失败的哨兵:`stage_calibrate` 找不到地面时 ground_y_p95 = -1。这时深度被网格搜索
+        # 压成一张常数平面、行走面整个落在可见表面后面 —— 碰撞 / 遮挡 / 灯位全错,而运行时照常装载、
+        # 一声不吭(2026-09-14:崖墓前段 09-08 首烘就是这样,火把在那里一点光都照不到地上)。
+        _gyp = (payload.get("cal") or {}).get("ground_y_p95")
+        if isinstance(_gyp, (int, float)) and _gyp < 0:
+            out.append(Issue("error", "lighting-bake", tag,
+                             "地面标定失败(cal.ground_y_p95 < 0):深度被压成平面、行走面不可信,"
+                             "碰撞 / 遮挡 / 手持光源位置都会错。在角色照明实验室里给这张画补地面判据"
+                             "(物体提示词 / 物体涂层)后重烘并导出深度"))
         pr = payload["probes"]
         pn = int(pr.get("nx", 0)) * int(pr.get("ny", 0)) * int(pr.get("nz", 0))
         vol = payload.get("vol") or {}

@@ -192,18 +192,21 @@ def test_dialogue_process_exit_refreshes_and_stops_watch_timer():
         # 轨迹工作台同表登记（2026-09-11）：它退出时必须重读 assets/data/trajectories/，
         # 且**排在目录刷新之前**——控件重建要用的就是那份刚换上的只读镜像。
         _resync_trajectories_from_disk=lambda: events.append("traj"),
-        # 粒子工作台同理（2026-09-11）：它是 assets/data/vfx/ 的唯一写者，退出时不重读，
-        # 它新建的效果在场景页 vfx 实例的 effect 下拉里永远不出现，且不报任何错。
+        # 粒子工作台同理（2026-09-11；09-14 起连布置库一起）：它是 assets/data/vfx/ 与 vfx_placements.json
+        # 的唯一写者，退出时不重读，它新建的效果不进 playVfx 下拉、刚挪的区域在场景画布上还是旧的那圈，且不报任何错。
         _resync_vfx_from_disk=lambda: events.append("vfx"),
+        # 地形工作台同表登记（2026-09-14）：它退出时场景页的「地形 / 碰撞」块与画布红块要重读盘上的产物，
+        # 不重读就是作者刚导出的碰撞在主编辑器里还是旧的那片红。
+        _resync_terrain_from_disk=lambda: events.append("terrain"),
     )
 
     main_window.MainWindow._poll_dialogue_external_processes(owner)
     assert len(owner._dialogue_external_processes) == 1
-    assert events == ["traj", "vfx", "reload", "audio"]
+    assert events == ["traj", "vfx", "terrain", "reload", "audio"]
 
     owner._dialogue_external_processes[0].running = False
     main_window.MainWindow._poll_dialogue_external_processes(owner)
-    assert events == ["traj", "vfx", "reload", "audio", "traj", "vfx", "reload", "audio", "stop"]
+    assert events == ["traj", "vfx", "terrain", "reload", "audio", "traj", "vfx", "terrain", "reload", "audio", "stop"]
 
 
 def test_voice_workbench_launches_the_right_module_with_the_project_root(tmp_path):

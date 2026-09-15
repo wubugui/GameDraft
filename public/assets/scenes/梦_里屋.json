@@ -27,7 +27,21 @@
     },
     "giGain": 0.0,
     "placeholder": true,
-    "_migration": "identity-2026-08-21"
+    "_migration": "identity-2026-08-21",
+    "lightFactors": {
+      "character": {
+        "indirectFactor": 0.3183098861837907,
+        "directFactor": 1,
+        "totalFactor": 1,
+        "eChroma": 0
+      },
+      "particles": {
+        "indirectFactor": 1.0,
+        "directFactor": 1,
+        "totalFactor": 0.3183098861837907,
+        "eChroma": 0
+      }
+    }
   },
   "id": "梦_里屋",
   "name": "梦·三四·睡觉与收束",
@@ -174,14 +188,6 @@
     },
     "shader": {
       "depth_per_sy": 0.002219460227272727
-    },
-    "collision": {
-      "x_min": -2.2727272510528564,
-      "z_min": -1.9335744251758635,
-      "cell_size": 0.02863649733791953,
-      "grid_width": 160,
-      "grid_height": 132,
-      "height_offset": 0.0
     },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0

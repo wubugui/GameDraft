@@ -41,8 +41,25 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
         path = Path(selftest)
         if not path.is_absolute():
             path = ROOT / path
-        return run_desktop(handler_cls=serve.H, title=TITLE + "（自检）", app_id=APP_ID + "-selftest", port=port,
-                           selftest=str(path))
+        # 自检绝不写真实的布置库：拷一份到临时目录，整个进程的布置读写都指过去（跑完连目录删掉）。
+        # 页面经 /api/boot 的 placements.real 自证（S18 钉住）；pytest 那侧再比一次真库的字节。
+        import shutil
+        import tempfile
+        from tools.editor.shared import vfx_placements as vp
+        from tools.vfx_workbench import placements
+        tmp = Path(tempfile.mkdtemp(prefix="vfxwb_selftest_"))
+        try:
+            real = vp.library_path(ROOT)
+            fake = vp.library_path(tmp)
+            fake.parent.mkdir(parents=True, exist_ok=True)
+            if real.is_file():
+                fake.write_bytes(real.read_bytes())
+            placements.LIB_ROOT = tmp
+            return run_desktop(handler_cls=serve.H, title=TITLE + "（自检）", app_id=APP_ID + "-selftest", port=port,
+                               selftest=str(path))
+        finally:
+            placements.LIB_ROOT = ROOT
+            shutil.rmtree(tmp, ignore_errors=True)
 
     def _on_activate(data: bytes, view) -> None:
         if data.startswith(b"open:"):

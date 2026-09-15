@@ -27,7 +27,21 @@
     },
     "giGain": 0.0,
     "placeholder": true,
-    "_migration": "identity-2026-08-21"
+    "_migration": "identity-2026-08-21",
+    "lightFactors": {
+      "character": {
+        "indirectFactor": 2.5464790894703255,
+        "directFactor": 1,
+        "totalFactor": 1,
+        "eChroma": 0
+      },
+      "particles": {
+        "indirectFactor": 1.0,
+        "directFactor": 1,
+        "totalFactor": 2.5464790894703255,
+        "eChroma": 0
+      }
+    }
   },
   "id": "teahouse",
   "name": "茶馆",
@@ -202,6 +216,106 @@
       "conditionHidesEntity": true,
       "data": {
         "graphId": "线外_寻狗_向导传闻"
+      }
+    },
+    {
+      "id": "teahouse_counter_clerk",
+      "type": "inspect",
+      "x": 414,
+      "y": 86,
+      "interactionRange": 0,
+      "label": "柜台账房",
+      "data": {
+        "actions": [
+          {
+            "type": "showSpeechBubble",
+            "params": {
+              "target": "teahouse_counter_clerk",
+              "text": "[tag:string:teahouseAtmosphere:counter_debt]",
+              "duration": 2400
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "teahouse_wall_smoker",
+      "type": "inspect",
+      "x": 428,
+      "y": 175,
+      "interactionRange": 0,
+      "label": "靠墙烟客",
+      "data": {
+        "actions": [
+          {
+            "type": "showSpeechBubble",
+            "params": {
+              "target": "teahouse_wall_smoker",
+              "text": "[tag:string:teahouseAtmosphere:smoker_defend]",
+              "duration": 2400
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "teahouse_middle_woman",
+      "type": "inspect",
+      "x": 405,
+      "y": 302,
+      "interactionRange": 0,
+      "label": "邻桌女客",
+      "data": {
+        "actions": [
+          {
+            "type": "showSpeechBubble",
+            "params": {
+              "target": "teahouse_middle_woman",
+              "text": "[tag:string:teahouseAtmosphere:woman_answer]",
+              "duration": 2400
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "teahouse_blue_patron",
+      "type": "inspect",
+      "x": 599,
+      "y": 224,
+      "interactionRange": 0,
+      "label": "青衣赌客",
+      "data": {
+        "actions": [
+          {
+            "type": "showSpeechBubble",
+            "params": {
+              "target": "teahouse_blue_patron",
+              "text": "[tag:string:teahouseAtmosphere:blue_gamble]",
+              "duration": 2400
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "teahouse_middle_patron",
+      "type": "inspect",
+      "x": 374,
+      "y": 328,
+      "interactionRange": 0,
+      "label": "挤凳茶客",
+      "data": {
+        "actions": [
+          {
+            "type": "showSpeechBubble",
+            "params": {
+              "target": "teahouse_middle_patron",
+              "text": "[tag:string:teahouseAtmosphere:middle_bicker]",
+              "duration": 2400
+            }
+          }
+        ]
       }
     }
   ],
@@ -499,14 +613,6 @@
     },
     "shader": {
       "depth_per_sy": 0.002219460227272727
-    },
-    "collision": {
-      "x_min": -2.2727272510528564,
-      "z_min": -2.437647108737184,
-      "cell_size": 0.030666353932819426,
-      "grid_width": 149,
-      "grid_height": 160,
-      "height_offset": 0.05
     },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0

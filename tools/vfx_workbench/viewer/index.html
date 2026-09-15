@@ -22,6 +22,7 @@
   button.primary { background: #2c4f7a; border-color: #3f6ea8; }
   button.danger { border-color: #7a3c3c; }
   button.on { background: #2c4f7a; border-color: var(--accent); }
+  button.primary.dirty { background: #6a4a16; border-color: var(--warn); color: #ffe2b0; }
   button:disabled { opacity: .45; cursor: default; }
   input[type=number] { width: 72px; }
   input.v3 { width: 56px; }
@@ -31,6 +32,11 @@
   #top, #simbar { grid-column: 1 / span 4; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; padding: 5px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
   #top .grp, #simbar .grp { display: inline-flex; gap: 6px; align-items: center; }
   #top .grp b, #simbar .grp b { color: var(--dim); font-weight: 500; }
+  /* 预览状态那一格吃剩下的宽度、**不参与折行**（弹性基准 0）、字一行放不下就省略号（全文在 title 里）：
+     原来它按字宽排，播放时 t= / 只数 / 撞 N / 群体状态每拍变长变短，跨过折行点整条预览条多一行又少一行，
+     画布跟着一跳一跳（蝙蝠一惊起整个画面往下掉 30 px） */
+  #simbar .grp.simInfoGrp { flex: 1 1 0; min-width: 160px; justify-content: flex-end; }
+  #simInfo { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #tools { display: flex; flex-direction: column; gap: 4px; padding: 6px 4px; background: var(--panel); border-right: 1px solid var(--line); align-items: center; }
   #tools button { width: 36px; height: 34px; padding: 0; font-size: 15px; }
   #tools .sep { height: 1px; width: 28px; background: var(--line); margin: 4px 0; }
@@ -39,7 +45,14 @@
   .item { display: flex; gap: 6px; align-items: center; padding: 3px 10px; cursor: pointer; border-left: 3px solid transparent; }
   .item:hover { background: var(--panel2); }
   .item.on { background: #2c4f7a; border-left-color: var(--accent); }
+  /* 当前发射器（选中的是锚点 / 顶点 / 刺激点时，检视器与发射器按钮作用在它上面）：次级高亮 */
+  .item.cur { border-left-color: var(--accent); background: rgba(44,79,122,.35); }
   .item.sub { padding-left: 24px; font-size: 12px; }
+  .item.other { opacity: .55; cursor: default; }
+  .item.other:hover { background: transparent; }
+  .item.other button { opacity: 1; }
+  #tools button.areaTool.emit { color: rgb(110,205,255); }
+  #tools button.areaTool.range { color: rgb(255,209,102); }
   .item .ic { width: 16px; color: var(--warn); }
   .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item button { padding: 0 5px; font-size: 11px; }
@@ -48,7 +61,9 @@
   #overlay3d { pointer-events: none; }
   #coords { position: absolute; left: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 4px; font: 12px Consolas, "Cascadia Mono", monospace; white-space: pre; pointer-events: none; }
   #legend { position: absolute; right: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; line-height: 1.5; }
-  #viewbtns { position: absolute; left: 8px; top: 8px; z-index: 5; display: flex; gap: 4px; max-width: calc(100% - 16px); }
+  /* 场景芯片只是一块字（没有可点的东西）：不吃鼠标——原来盖在画布左上角约 400×40 px，2D 整场时正好是原画左上角，
+     从那儿起拉区域框 / 点顶点 / 滚轮缩放 / 右键环视全被它吞掉，右键还弹出 QtWebEngine 的页面菜单 */
+  #viewbtns { position: absolute; left: 8px; top: 8px; z-index: 5; display: flex; gap: 4px; max-width: calc(100% - 16px); pointer-events: none; }
   #side { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 0 0 10px; display: flex; flex-direction: column; }
   .sec { padding: 2px 10px 6px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 4px; }
   .secHead { display: flex; gap: 6px; align-items: center; cursor: pointer; padding: 5px 0 3px; }
@@ -91,8 +106,10 @@
       <button id="btnDup" title="复制当前效果">复制</button>
       <button id="btnRename" title="改名（连内部 id 一起改）">改名</button>
       <button id="btnDelete" class="danger" title="删除当前效果">删除</button></span>
-    <span class="grp"><b>场景</b><select id="sceneSel" title="在哪个场景的 3D 伪世界里预览（效果本身不绑场景）"></select><select id="bgSel" hidden title="时段背景"></select>
-      <button id="btnBindScene" title="把当前场景记进 authoring（下次打开自动装这个场景；运行时忽略）">记为作者场景</button>
+    <span class="grp"><b>场景</b><select id="sceneSel" title="在哪个场景的 3D 伪世界里预览（效果本身不绑场景）"></select>
+      <b>时段外观</b><select id="phaseSel" title="时段外观：布置按「场景 × 时段外观」各配各的，互不继承"></select>
+      <button id="btnPhaseRequest" title="让游戏推进到这套外观对应的时段">让游戏切到这个时段</button>
+      <button id="btnBindScene" title="把当前场景与这套外观的背景记进 authoring（下次打开自动装它；运行时忽略）">记为作者场景</button>
       <button id="btnLaunchGame" class="primary" title="一键拉起游戏进这个场景：游戏在跑就切场景；dev server 在跑就打开游戏页；都没有就让开发控制台起">▶ 拉起游戏进本场景</button></span>
     <span class="grp"><button id="btnUndo" disabled>↶</button><button id="btnRedo" disabled>↷</button><button id="btnSave" class="primary" title="Ctrl+S">保存</button></span>
     <span class="grp" style="margin-left:auto"><label class="chk"><input type="checkbox" id="linkOn" checked> 联动</label><input type="text" id="gameUrl" style="width:160px" title="游戏 dev server 地址（localhost 会换成 127.0.0.1）"><span id="linkChip" class="chip">…</span></span>
@@ -102,19 +119,26 @@
     <span class="grp"><b>种子</b><input type="number" id="seed" value="1234" step="1" title="同一份定义 + 同一个种子 ⇒ 逐帧相同"></span>
     <span class="grp"><b>倍速</b><input type="number" id="speed" value="1" step="0.25" title="0.05–8"></span>
     <span class="grp"><b>刺激</b>
-      <select id="fieldKind" title="fear / attract 按标签查群体的权重；wind 是加速度"><option value="fear">fear</option><option value="attract">attract</option><option value="wind">wind</option></select>
+      <select id="fieldKind" title="fear / attract 按标签响应；wind 为加速度，airflow 为空气速度"><option value="fear">fear</option><option value="attract">attract</option><option value="wind">推力 wind（wu/s²）</option><option value="airflow">气流 airflow（wu/s）</option></select>
       <input type="text" id="fieldTag" style="width:120px" placeholder="item:bug" title="作者标签：群体按它查 attitude.fear / attract">
       <input type="number" id="fieldRadius" value="260" title="半径 wu"><span class="unit">wu</span>
-      <input type="number" id="fieldStrength" value="1" step="0.1" title="强度（wind 时是 wu/s²）">
+      <input type="number" id="fieldStrength" value="1" step="0.1" title="强度：wind 为 wu/s²，airflow 为 wu/s，fear / attract 为倍率">
       <input type="number" id="fieldDuration" value="0" step="0.1" title="持续秒数；0 = 瞬时脉冲"><span class="unit">s</span>
       <button id="btnClearFields" title="清掉所有在飞的刺激场">清场</button></span>
-    <span class="grp" style="margin-left:auto"><span id="simInfo" class="dim"></span></span>
+    <span class="grp" id="fieldDirection" hidden><b>方向</b>
+      <input type="number" id="fieldDirX" value="1" step="0.1" aria-label="刺激方向 X" title="M-world X：向右">
+      <input type="number" id="fieldDirY" value="0" step="0.1" aria-label="刺激方向 Y" title="M-world Y：向上">
+      <input type="number" id="fieldDirZ" value="0" step="0.1" aria-label="刺激方向 Z" title="M-world Z：向纵深">
+    </span>
+    <span class="grp simInfoGrp"><span id="simInfo" class="dim"></span></span>
   </div>
   <div id="tools">
     <button data-tool="select" title="选择 / 变换（V）：点物体选中，W/E/R 切移动·旋转·缩放，拖动 Ctrl 吸附">⬚</button>
-    <button data-tool="anchor" title="放预览锚点（A）：点场景表面；写 authoring.anchor，切 ground/shell 落到对应面。锚点模式=角色挂点时，点的是「火头摆在哪」（写 authoring.attach）">⊕</button>
+    <button data-tool="anchor" title="放锚点（A）：有活动布置时改的是这条布置的 anchor（游戏用的）；没有时写 authoring.anchor（仅工作台预览）。点场景表面，切 ground/shell 落到对应面。锚点模式=角色挂点时，点的是「火头摆在哪」（写 authoring.attach）">⊕</button>
     <button data-tool="player" title="放角色（M）：点地面放一个可拖的角色标记（高 150 wu 是尺度参考），走动时自动带出 player:motion 场；左栏「来回走」让它自己来回走">🚶</button>
     <button data-tool="field" title="发一个刺激（K）：点任意处，按上面那排参数发 fear / attract / wind">⚡</button>
+    <button data-tool="areaEmit" class="areaTool emit" title="拉发射区域（写活动布置的 area，青色虚线）：按住拖一个框 = 那块区域；之后拖顶点 / 双击边线加点 / Delete 或右键删点。Esc 退出">▭</button>
+    <button data-tool="areaRange" class="areaTool range" title="拉范围区域（写活动布置的 confine.area 并打开限定，黄色实线 + 边带）：按住拖一个框 = 那块区域。Esc 退出">▣</button>
     <button data-tool="pan" title="平移（H）">✋</button>
     <div class="sep"></div>
     <button id="btnView3" title="3D 视图（1）">3D</button>
@@ -134,6 +158,18 @@
       <button id="btnDownEmitter" title="下移">↓</button>
       <button id="btnDelEmitter" class="danger" title="删除">×</button>
     </div>
+    <h3 id="placeHead">布置</h3>
+    <div id="placeList"></div>
+    <div class="btns" style="padding:4px 8px">
+      <button id="btnPlaceHere" class="primary" title="在当前场景 × 当前时段外观里布置当前效果：新 id 唯一，锚点 = 此刻的预览锚点">把当前效果布置到这里</button>
+      <button id="btnPlaceDel" class="danger" title="删掉选中的布置">删</button>
+      <button id="btnPlaceUp" title="上移">↑</button>
+      <button id="btnPlaceDown" title="下移">↓</button>
+      <button id="btnPlaceRename" title="改布置 id（playVfx / 条件按 id 引用它）">改 id</button>
+      <button id="btnPlaceCopy" title="把选中的布置或这一份整份复制到本场景另一套时段外观">复制到时段…</button>
+    </div>
+    <h3>这个效果还布置在</h3>
+    <div id="placeElsewhere"></div>
     <h3>玩家</h3>
     <div id="playerRow"></div>
     <h3>刺激点</h3>
@@ -147,18 +183,17 @@
       <label class="chk"><input type="checkbox" id="layer_rings"> 群体半径</label>
       <label class="chk"><input type="checkbox" id="layer_marks"> 出生点 / NPC</label>
     </div>
-    <h3>本场景的实例</h3>
-    <div class="pad dim" id="sceneUse" style="padding:0 10px"></div>
     <h3>游戏</h3>
     <div id="gamePanel"></div>
-    <div class="pad dim" style="padding:6px 10px">游戏里还会有**灯**与**脚步**的恐惧场，本地预览只喂玩家动静与你手发的刺激。</div>
+    <div class="pad dim" style="padding:6px 10px">游戏里还会有<b>灯</b>与<b>脚步</b>的恐惧场，本地预览只喂玩家动静与你手发的刺激。</div>
   </div>
   <div id="center">
     <canvas id="view3d"></canvas>
     <canvas id="overlay3d"></canvas>
     <canvas id="view2d" hidden></canvas>
     <div id="coords"></div>
-    <div id="legend">V 选择 · A 锚点 · M 玩家 · K 刺激 · W/E/R gizmo（Ctrl 吸附）· 1/2 切 3D / 原画<br>右键拖 环视（按住 WASD/QE 飞）· Alt+左键 环绕 · 中键 平移 · 滚轮 朝光标缩放 · F 对准 · Home 整场</div>
+    <div id="legend">V 选择 · A 锚点 · M 玩家 · K 刺激 · ▭/▣ 拉发射 / 范围区域 · W/E/R gizmo（Ctrl 吸附）· 1/2 切 3D / 原画<br>
+      区域：拖顶点 · 双击边线加点 · Delete / 右键删点<br>右键拖 环视（按住 WASD/QE 飞）· Alt+左键 环绕 · 中键 平移 · 滚轮 朝光标缩放 · F 对准 · Home 整场</div>
     <div id="viewbtns"><span id="sceneNote" class="chip"></span></div>
   </div>
   <div id="side">

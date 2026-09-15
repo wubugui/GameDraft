@@ -10,6 +10,7 @@ Action 主类型在 ``ActionTypePickerField`` 中通过红圆点标记「会改�
 """
 from __future__ import annotations
 
+import html
 import json
 import math
 import re
@@ -138,6 +139,24 @@ from .dialogue_graph_refs import (
     open_dialogue_graph_from_widget,
 )
 from .widget_discard import discard_widget
+from .action_structure import NESTED_ACTION_SLOTS, summarize_action, summarize_condition
+from tools.editor import theme as _theme
+
+def _glyph_button(text: str, tip: str, parent: QWidget | None = None) -> QToolButton:
+    """行尾 ↑ ↓ − 这类单字形窄按钮。
+
+    必须是 QToolButton：现用主题给 QPushButton 的内边距会把 24px 宽按钮里的字形整个挤没
+    （实测 ↑ ↓ − 连 X 都看不见，只剩三个空色块）；QToolButton 不吃那份内边距。
+    """
+    btn = QToolButton(parent)
+    btn.setText(text)
+    btn.setToolTip(tip)
+    btn.setFixedWidth(24)
+    return btn
+
+
+#: 大纲模式回调的「键不存在」哨兵（与值为 None / [] 区分：缺键与空列表的往返语义不同）。
+OUTLINE_ABSENT = object()
 
 # 这些参数在 schema 里恒会被写出，但语义上"缺省即未设"。当某键原本不在数据里、且当前值
 # 等于其中性默认时，剔除它——避免编辑器"打开即保存"凭空添加 direction:""/anchorOffset:0。
@@ -615,6 +634,7 @@ _VFX_FIELD_KINDS: list[tuple[str, str]] = [
     ("fear", "fear · 恐惧（推开）"),
     ("attract", "attract · 吸引（拉近）"),
     ("wind", "wind · 风（直接给加速度）"),
+    ("airflow", "airflow · 气流（空气速度 wu/s）"),
 ]
 
 
@@ -2757,15 +2777,9 @@ class RuleSlotsParamEditor(QWidget):
         rid.set_current(str(data.get("ruleId", "")))
         rid.value_changed.connect(lambda _v: self.changed.emit())
         hdr.addWidget(rid, stretch=1)
-        up = QPushButton("\u2191")
-        up.setFixedWidth(24)
-        up.setToolTip("上移")
-        dn = QPushButton("\u2193")
-        dn.setFixedWidth(24)
-        dn.setToolTip("下移")
-        rm = QPushButton("\u2212")
-        rm.setFixedWidth(24)
-        rm.setToolTip("删除")
+        up = _glyph_button("\u2191", "上移", box)
+        dn = _glyph_button("\u2193", "下移", box)
+        rm = _glyph_button("\u2212", "删除这个规矩槽", box)
         bl.addWidget(QLabel("resultText"))
         tx = RichTextTextEdit(self._model)
         tx.setMinimumHeight(56)
@@ -2774,7 +2788,7 @@ class RuleSlotsParamEditor(QWidget):
         tx.textChanged.connect(lambda: self.changed.emit())
         bl.addWidget(tx)
         bl.addWidget(QLabel("resultActions"))
-        ae = ActionEditor("resultActions", box)
+        ae = ActionEditor("resultActions", box, nested=True)
         ae.set_project_context(self._model, self._scene_id)
         ra = data.get("resultActions", [])
         ae.set_data(list(ra) if isinstance(ra, list) else [])
@@ -2906,17 +2920,14 @@ class ActionChoiceOptionsEditor(QWidget):
         tl.setToolTip("选项展示文案；工程打开时可点「引用」插入 [tag:…]，运行时经 resolveDisplayText。")
         head.addWidget(tl)
         head.addWidget(text, 1)
-        up_btn = QPushButton("↑", box)
-        up_btn.setFixedWidth(24)
-        down_btn = QPushButton("↓", box)
-        down_btn.setFixedWidth(24)
-        del_btn = QPushButton("−", box)
-        del_btn.setFixedWidth(24)
+        up_btn = _glyph_button("↑", "上移这个选项", box)
+        down_btn = _glyph_button("↓", "下移这个选项", box)
+        del_btn = _glyph_button("−", "删除这个选项", box)
         head.addWidget(up_btn)
         head.addWidget(down_btn)
         head.addWidget(del_btn)
         bl.addLayout(head)
-        ae = ActionEditor("option actions", box)
+        ae = ActionEditor("option actions", box, nested=True)
         ae.set_project_context(self._model, self._scene_id, cutscene_id=self._cutscene_id)
         if self._wheel_speech_role_rows_getter is not None:
             ae.set_wheel_speech_role_rows_getter(self._wheel_speech_role_rows_getter)
@@ -2940,9 +2951,9 @@ class ActionChoiceOptionsEditor(QWidget):
                 box.setTitle(f"选项 {i + 1}")
             up = row.get("up")
             down = row.get("down")
-            if isinstance(up, QPushButton):
+            if isinstance(up, (QPushButton, QToolButton)):
                 up.setEnabled(i > 0)
-            if isinstance(down, QPushButton):
+            if isinstance(down, (QPushButton, QToolButton)):
                 down.setEnabled(i < len(self._rows) - 1)
 
     def _move_row(self, row: dict, delta: int) -> None:
@@ -2999,8 +3010,14 @@ class ActionRow(QWidget):
         *,
         cutscene_id: str | None = None,
         wheel_speech_role_rows_getter: Callable[[], list[tuple[str, str]]] | None = None,
+        outline_children: Callable[[str, str], object] | None = None,
     ):
         super().__init__(parent)
+        # 大纲模式（ActionOutlineEditor 的检查器用）：容器动作的子动作列表不在行内建嵌套
+        # ActionEditor，而是由左侧大纲树增删排序；序列化时经这个回调取**活的**子列表
+        # （(动作类型, 参数键) → 值；键不存在返回 OUTLINE_ABSENT）。其余参数、omit/保真规则
+        # 与内联模式走同一条 to_dict，不另写一套。
+        self._outline_children = outline_children
         self._param_widgets: dict[str, QWidget] = {}
         self._ctx_model = model
         self._ctx_scene_id = scene_id
@@ -3014,6 +3031,10 @@ class ActionRow(QWidget):
         # runActionsIf：条件树住在 _params_layout（随 removeRow 一起销毁），
         # 两条子动作列表住在 _foldable_layout（与 randomBranch 同一套拆除）。
         self._cond_if_expr = None
+        # 内联模式下条件块默认折叠且懒建：未展开时 _cond_if_expr 为 None，
+        # 序列化按这份原值透传（往返保真，也躲开十几个节点的控件树成本）。
+        self._cond_if_raw: object = None
+        self._cond_if_section = None
         self._cond_if_then_editor = None
         self._cond_if_else_editor = None
         self._collapsed = True
@@ -3040,22 +3061,24 @@ class ActionRow(QWidget):
             parent=self,
             orphan_label=_action_type_orphan_label,
         )
-        self._btn_up = QPushButton("\u2191", self)
-        self._btn_up.setFixedWidth(24)
-        self._btn_up.setToolTip("上移")
+        self._btn_up = _glyph_button("\u2191", "上移", self)
         self._btn_up.clicked.connect(self.move_up.emit)
-        self._btn_down = QPushButton("\u2193", self)
-        self._btn_down.setFixedWidth(24)
-        self._btn_down.setToolTip("下移")
+        self._btn_down = _glyph_button("\u2193", "下移", self)
         self._btn_down.clicked.connect(self.move_down.emit)
         self._btn_up.setVisible(show_reorder_buttons)
         self._btn_down.setVisible(show_reorder_buttons)
-        self.del_btn = QPushButton("\u2212", self)
-        self.del_btn.setFixedWidth(24)
-        self.del_btn.setToolTip("删除这条动作")  # 同排的 ↑↓ 都有 tooltip，就它没有
+        self.del_btn = _glyph_button("\u2212", "删除这条动作", self)
         self.del_btn.clicked.connect(lambda: self.removed.emit(self))
         self.del_btn.setVisible(show_delete_button)
-        top.addWidget(self.type_combo, stretch=1)
+        # 折叠态的一行摘要：多行列表默认全折，只剩一排类型名根本分不清哪条是哪条
+        # （以前摘要只在 tooltip 里）。Ignored 横向策略 = 不参与最小宽，窄面板自己截断。
+        self._summary_label = QLabel(self)
+        self._summary_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._summary_label.setStyleSheet(_theme.semantic_text_css("muted"))
+        self._summary_label.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self._summary_label.setVisible(False)
+        top.addWidget(self.type_combo, stretch=0)
+        top.addWidget(self._summary_label, stretch=1)
         top.addWidget(self._btn_up)
         top.addWidget(self._btn_down)
         top.addWidget(self.del_btn)
@@ -3117,6 +3140,20 @@ class ActionRow(QWidget):
         typ = str(d.get("type", "") or "")
         summary = "  ·  ".join(parts)
         self.setToolTip(f"{typ}\n{summary}" if summary else typ)
+        line = summarize_action(d)
+        self._summary_label.setText(line)
+        self._summary_label.setToolTip(line)
+        self._sync_summary_label()
+
+    def _sync_summary_label(self) -> None:
+        # 展开时参数区就在眼前，摘要只会重复一遍；折叠时它是这一行唯一的辨识依据。
+        show = self._collapsed and bool(self._summary_label.text())
+        self._summary_label.setVisible(show)
+        # 摘要在场时类型名保底宽度（封顶，窄面板照样放得下），不被摘要挤成「runActi」。
+        line = getattr(self.type_combo, "_line", None)
+        if isinstance(line, QLineEdit):
+            want = line.fontMetrics().horizontalAdvance(line.text()) + 18
+            line.setMinimumWidth(min(want, 170) if show else 0)
 
     def _on_fold_clicked(self) -> None:
         self._collapsed = not self._collapsed
@@ -3124,9 +3161,17 @@ class ActionRow(QWidget):
         self._fold_toggle.setArrowType(
             Qt.ArrowType.RightArrow if self._collapsed else Qt.ArrowType.DownArrow
         )
+        self._sync_summary_label()
 
     def _sync_foldable_visibility(self) -> None:
         self._foldable_body.setVisible(not self._collapsed)
+
+    def set_collapsed(self, collapsed: bool) -> None:
+        """「全部展开/全部折叠」用；折叠钮被单行策略隐藏时不接受。"""
+        if not self._fold_available:
+            return
+        if bool(collapsed) != self._collapsed:
+            self._on_fold_clicked()
 
     def apply_fold_policy(self, single_row: bool) -> None:
         """仅一行时展开并隐藏折叠钮；多行时默认折叠参数区。"""
@@ -3141,6 +3186,7 @@ class ActionRow(QWidget):
             self._collapsed = True
             self._foldable_body.setVisible(False)
             self._fold_toggle.setArrowType(Qt.ArrowType.RightArrow)
+        self._sync_summary_label()
 
     def restore_fold_state(self, collapsed: bool) -> None:
         """刷新跨域候选导致的整行重建后，恢复用户原本的展开/折叠。
@@ -3155,6 +3201,7 @@ class ActionRow(QWidget):
         self._fold_toggle.setArrowType(
             Qt.ArrowType.RightArrow if self._collapsed else Qt.ArrowType.DownArrow
         )
+        self._sync_summary_label()
 
     def fold_state(self) -> bool:
         return bool(self._collapsed)
@@ -4891,6 +4938,8 @@ class ActionRow(QWidget):
         # 条件树的控件本体随上面那轮 _params_layout.removeRow 一起销毁，这里只断引用，
         # 免得下一轮建表前有人读到已析构的对象。
         self._cond_if_expr = None
+        self._cond_if_section = None
+        self._cond_if_raw = None
         if self._cond_if_then_editor is not None:
             self._foldable_layout.removeWidget(self._cond_if_then_editor)
             self._cond_if_then_editor.deleteLater()
@@ -6068,6 +6117,11 @@ class ActionRow(QWidget):
             return
 
         if act_type == "enableRuleOffers":
+            if self._outline_children is not None:
+                self._params_frame.setVisible(True)
+                self._params_layout.addRow(self._outline_children_hint(act_type))
+                self._sync_foldable_visibility()
+                return
             self._params_frame.setVisible(False)
             slots_raw = params.get("slots", [])
             ed = RuleSlotsParamEditor(
@@ -6083,20 +6137,13 @@ class ActionRow(QWidget):
             return
 
         if act_type == "runActions":
+            if self._outline_children is not None:
+                self._params_frame.setVisible(True)
+                self._params_layout.addRow(self._outline_children_hint(act_type))
+                self._sync_foldable_visibility()
+                return
             self._params_frame.setVisible(False)
-            ed = ActionEditor("actions", self)
-            ed.set_project_context(
-                self._ctx_model,
-                self._ctx_scene_id,
-                cutscene_id=self._ctx_cutscene_id,
-            )
-            if self._wheel_speech_role_rows_getter:
-                ed.set_wheel_speech_role_rows_getter(self._wheel_speech_role_rows_getter)
-            raw_actions = params.get("actions", [])
-            ed.set_data(list(raw_actions) if isinstance(raw_actions, list) else [])
-            ed.changed.connect(self.changed)
-            self._run_actions_editor = ed
-            self._foldable_layout.addWidget(ed)
+            self._run_actions_editor = self._make_nested_action_editor("actions", params.get("actions", []))
             self._sync_foldable_visibility()
             return
 
@@ -6137,6 +6184,10 @@ class ActionRow(QWidget):
             allow_cb.stateChanged.connect(self.changed)
             self._param_widgets["allowCancel"] = allow_cb
             self._params_layout.addRow("allowCancel", allow_cb)
+            if self._outline_children is not None:
+                self._params_layout.addRow(self._outline_children_hint(act_type))
+                self._sync_foldable_visibility()
+                return
             opts_raw = params.get("options", [])
             ed = ActionChoiceOptionsEditor(
                 self._ctx_model,
@@ -6176,34 +6227,17 @@ class ActionRow(QWidget):
             prob_spin.valueChanged.connect(self.changed)
             self._param_widgets["probability"] = prob_spin
             self._params_layout.addRow("probability（阈值）", prob_spin)
+            if self._outline_children is not None:
+                self._params_layout.addRow(self._outline_children_hint(act_type))
+                self._sync_foldable_visibility()
+                return
 
-            ed_a = ActionEditor("分支 A（r > probability）", self)
-            ed_a.set_project_context(
-                self._ctx_model,
-                self._ctx_scene_id,
-                cutscene_id=self._ctx_cutscene_id,
+            self._random_above_editor = self._make_nested_action_editor(
+                "分支 A（r > probability）", params.get("aboveActions", []),
             )
-            if self._wheel_speech_role_rows_getter:
-                ed_a.set_wheel_speech_role_rows_getter(self._wheel_speech_role_rows_getter)
-            raw_a = params.get("aboveActions", [])
-            ed_a.set_data(list(raw_a) if isinstance(raw_a, list) else [])
-            ed_a.changed.connect(self.changed)
-            self._random_above_editor = ed_a
-            self._foldable_layout.addWidget(ed_a)
-
-            ed_b = ActionEditor("分支 B（r ≤ probability）", self)
-            ed_b.set_project_context(
-                self._ctx_model,
-                self._ctx_scene_id,
-                cutscene_id=self._ctx_cutscene_id,
+            self._random_below_editor = self._make_nested_action_editor(
+                "分支 B（r ≤ probability）", params.get("belowActions", []),
             )
-            if self._wheel_speech_role_rows_getter:
-                ed_b.set_wheel_speech_role_rows_getter(self._wheel_speech_role_rows_getter)
-            raw_b = params.get("belowActions", [])
-            ed_b.set_data(list(raw_b) if isinstance(raw_b, list) else [])
-            ed_b.changed.connect(self.changed)
-            self._random_below_editor = ed_b
-            self._foldable_layout.addWidget(ed_b)
             self._sync_foldable_visibility()
             return
 
@@ -6212,47 +6246,69 @@ class ActionRow(QWidget):
 
             self._params_frame.setVisible(True)
             tip = QLabel(
-                "条件为真执行「满足时」，为假执行「不满足时」（可留空＝什么都不做）。"
-                "条件与热区/NPC/区域的 conditions、图对话 switch 是同一套表达式。",
+                "条件为真执行「满足时」，为假执行「不满足时」（可留空＝什么都不做）。",
                 self,
             )
             tip.setWordWrap(True)
+            tip.setToolTip("条件与热区/NPC/区域的 conditions、图对话 switch 是同一套表达式。不写条件 = 恒真。")
+            tip.setStyleSheet(_theme.semantic_text_css("muted"))
             self._params_layout.addRow(tip)
-
-            cond = ConditionExprTreeRootWidget(self, model_getter=lambda: self._ctx_model)
             raw_cond = params.get("condition")
-            cond.set_expr(raw_cond if isinstance(raw_cond, dict) else None)
-            cond.changed.connect(self.changed)
-            self._cond_if_expr = cond
-            self._params_layout.addRow("condition", cond)
+            self._cond_if_raw = deepcopy(raw_cond) if isinstance(raw_cond, dict) else None
 
-            ed_then = ActionEditor("满足时执行", self)
-            ed_then.set_project_context(
-                self._ctx_model,
-                self._ctx_scene_id,
-                cutscene_id=self._ctx_cutscene_id,
-            )
-            if self._wheel_speech_role_rows_getter:
-                ed_then.set_wheel_speech_role_rows_getter(self._wheel_speech_role_rows_getter)
-            raw_then = params.get("actions", [])
-            ed_then.set_data(list(raw_then) if isinstance(raw_then, list) else [])
-            ed_then.changed.connect(self.changed)
-            self._cond_if_then_editor = ed_then
-            self._foldable_layout.addWidget(ed_then)
+            def _make_cond(scroll_mode: str) -> ConditionExprTreeRootWidget:
+                cond = ConditionExprTreeRootWidget(
+                    self, model_getter=lambda: self._ctx_model, scroll_mode=scroll_mode,
+                )
+                cond.set_expr(self._cond_if_raw if isinstance(self._cond_if_raw, dict) else None)
+                cond.changed.connect(self.changed)
+                return cond
 
-            ed_else = ActionEditor("不满足时执行（可留空）", self)
-            ed_else.set_project_context(
-                self._ctx_model,
-                self._ctx_scene_id,
-                cutscene_id=self._ctx_cutscene_id,
+            if self._outline_children is not None:
+                # 大纲检查器：条件是这一页的主角，整棵平铺、不套内层滚动（检查器自己滚）。
+                # 顶上先给整条条件的完整人话（自动换行），树再长也能一眼读完判据。
+                self._cond_if_expr = _make_cond("none")
+                readout = QLabel(self)
+                readout.setWordWrap(True)
+                readout.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+                cond_w = self._cond_if_expr
+
+                def _sync_readout() -> None:
+                    expr = cond_w.get_expr()
+                    text = summarize_condition(expr) if expr else "（未配置 = 恒真）"
+                    readout.setText(f"<b>当前条件：</b>{html.escape(text)}")
+
+                cond_w.changed.connect(_sync_readout)
+                _sync_readout()
+                self._params_layout.addRow(readout)
+                self._params_layout.addRow(self._cond_if_expr)
+                self._params_layout.addRow(self._outline_children_hint(act_type))
+                self._sync_foldable_visibility()
+                return
+
+            # 内联：条件块折成一行摘要（标题即条件本身），首次展开才建控件树。
+            # 旧形态整棵平铺，四组 all+not 就把宿主整个撑满、后面的分支一条都看不见。
+            has_cond = isinstance(self._cond_if_raw, dict) and bool(self._cond_if_raw)
+            section = CollapsibleSection(self._cond_if_section_title(), start_open=not has_cond, parent=self)
+            self._cond_if_section = section
+            self._refresh_cond_if_section_title()
+
+            def _ensure_cond_built(expanded: bool) -> None:
+                if not expanded or self._cond_if_expr is not None or self._cond_if_section is not section:
+                    return
+                self._cond_if_expr = _make_cond("embedded")
+                self._cond_if_expr.changed.connect(self._refresh_cond_if_section_title)
+                section.add_body(self._cond_if_expr)
+                self._cond_if_expr.show()
+
+            section.expanded_changed.connect(_ensure_cond_built)
+            _ensure_cond_built(section.is_expanded())
+            self._params_layout.addRow(section)
+
+            self._cond_if_then_editor = self._make_nested_action_editor("满足时执行", params.get("actions", []))
+            self._cond_if_else_editor = self._make_nested_action_editor(
+                "不满足时执行（可留空）", params.get("elseActions", []),
             )
-            if self._wheel_speech_role_rows_getter:
-                ed_else.set_wheel_speech_role_rows_getter(self._wheel_speech_role_rows_getter)
-            raw_else = params.get("elseActions", [])
-            ed_else.set_data(list(raw_else) if isinstance(raw_else, list) else [])
-            ed_else.changed.connect(self.changed)
-            self._cond_if_else_editor = ed_else
-            self._foldable_layout.addWidget(ed_else)
             self._sync_foldable_visibility()
             return
 
@@ -7288,17 +7344,66 @@ class ActionRow(QWidget):
                 vw.set_value(pval if pval != "" else True)
 
         if act_type == "addDelayedEvent":
-            ed = ActionEditor("delayed actions", self)
-            ed.set_project_context(self._ctx_model, self._ctx_scene_id)
-            if self._wheel_speech_role_rows_getter:
-                ed.set_wheel_speech_role_rows_getter(self._wheel_speech_role_rows_getter)
-            raw_actions = params.get("actions", [])
-            ed.set_data(list(raw_actions) if isinstance(raw_actions, list) else [])
-            ed.changed.connect(self.changed)
-            self._delayed_editor = ed
-            self._foldable_layout.addWidget(ed)
+            if self._outline_children is not None:
+                self._params_layout.addRow(self._outline_children_hint(act_type))
+            else:
+                # 延迟事件在过场之外才触发：子编辑器不继承过场上下文（与旧行为一致）。
+                self._delayed_editor = self._make_nested_action_editor(
+                    "delayed actions", params.get("actions", []), with_cutscene=False,
+                )
 
         self._sync_foldable_visibility()
+
+    def _make_nested_action_editor(
+        self, label: str, raw: object, *, with_cutscene: bool = True,
+    ) -> "ActionEditor":
+        """容器动作的内联子动作列表：左侧色条 + 缩进，一眼看得出属于哪条容器。"""
+        ed = ActionEditor(label, self, nested=True)
+        if with_cutscene:
+            ed.set_project_context(self._ctx_model, self._ctx_scene_id, cutscene_id=self._ctx_cutscene_id)
+        else:
+            ed.set_project_context(self._ctx_model, self._ctx_scene_id)
+        if self._wheel_speech_role_rows_getter:
+            ed.set_wheel_speech_role_rows_getter(self._wheel_speech_role_rows_getter)
+        ed.set_data(list(raw) if isinstance(raw, list) else [])
+        ed.changed.connect(self.changed)
+        self._foldable_layout.addWidget(ed)
+        return ed
+
+    def _outline_children_hint(self, act_type: str) -> QLabel:
+        from .action_structure import action_slots
+
+        names = "、".join(f"「{s.label}」" for s in action_slots(act_type))
+        tip = QLabel(f"子动作（{names}）在左侧大纲树里增删、排序、编辑。", self)
+        tip.setWordWrap(True)
+        tip.setStyleSheet(_theme.semantic_text_css("muted"))
+        return tip
+
+    def _cond_if_full_text(self) -> str:
+        expr = self._cond_if_expr.get_expr() if self._cond_if_expr is not None else self._cond_if_raw
+        if isinstance(expr, dict) and expr:
+            return f"条件：{summarize_condition(expr)}"
+        return "条件：（未配置 = 恒真）"
+
+    def _cond_if_section_title(self) -> str:
+        # 标题是按钮文字：按钮最小宽 = 整段文字宽，长条件会把整个表单顶出横向滚动。
+        # 截到一行能放下的长度，完整条件在悬停提示里。
+        full = self._cond_if_full_text()
+        return full if len(full) <= 48 else full[:47] + "…"
+
+    def _refresh_cond_if_section_title(self) -> None:
+        if self._cond_if_section is not None:
+            self._cond_if_section.set_title(self._cond_if_section_title())
+            self._cond_if_section.set_header_tool_tip(
+                self._cond_if_full_text() + "\n\n点击展开 / 折叠条件编辑。"
+            )
+
+    def _outline_nested_value(self, act_type: str, key: str) -> object:
+        """大纲模式：取活的子列表（深拷贝，行内序列化规则照常作用在副本上）。"""
+        if self._outline_children is None:
+            return OUTLINE_ABSENT
+        v = self._outline_children(act_type, key)
+        return v if v is OUTLINE_ABSENT else deepcopy(v)
 
     def _to_dict_set_hotspot_display_image(self) -> dict:
         scene_w = self._param_widgets.get("sceneId")
@@ -8032,26 +8137,31 @@ class ActionRow(QWidget):
                 params[pname] = w.text()
             else:
                 params[pname] = w.text()
-        if act_type == "enableRuleOffers" and self._rule_slots_editor is not None:
-            params["slots"] = self._rule_slots_editor.to_list()
-        if act_type == "addDelayedEvent" and self._delayed_editor is not None:
-            params["actions"] = self._delayed_editor.to_list()
-        if act_type == "runActions" and self._run_actions_editor is not None:
-            params["actions"] = self._run_actions_editor.to_list()
-        if act_type == "chooseAction" and self._choice_options_editor is not None:
-            params["options"] = self._choice_options_editor.to_list()
+        outline = self._outline_children is not None and act_type in NESTED_ACTION_SLOTS
+
+        def _nested(key: str, editor) -> list:
+            """子列表的值：大纲模式取活数据（缺键当空），内联模式取子编辑器。"""
+            if outline:
+                v = self._outline_nested_value(act_type, key)
+                return v if isinstance(v, list) else []
+            return editor.to_list() if editor is not None else []
+
+        if act_type == "enableRuleOffers" and (outline or self._rule_slots_editor is not None):
+            params["slots"] = _nested("slots", self._rule_slots_editor)
+        if act_type == "addDelayedEvent" and (outline or self._delayed_editor is not None):
+            params["actions"] = _nested("actions", self._delayed_editor)
+        if act_type == "runActions" and (outline or self._run_actions_editor is not None):
+            params["actions"] = _nested("actions", self._run_actions_editor)
+        if act_type == "chooseAction" and (outline or self._choice_options_editor is not None):
+            params["options"] = _nested("options", self._choice_options_editor)
         if act_type == "randomBranch":
             pw = self._param_widgets.get("probability")
             if isinstance(pw, QDoubleSpinBox):
                 params["probability"] = float(pw.value())
             else:
                 params["probability"] = 0.5
-            params["aboveActions"] = (
-                self._random_above_editor.to_list() if self._random_above_editor else []
-            )
-            params["belowActions"] = (
-                self._random_below_editor.to_list() if self._random_below_editor else []
-            )
+            params["aboveActions"] = _nested("aboveActions", self._random_above_editor)
+            params["belowActions"] = _nested("belowActions", self._random_below_editor)
         if act_type == "runActionsIf":
             if self._cond_if_expr is not None:
                 expr = self._cond_if_expr.get_expr()
@@ -8059,13 +8169,20 @@ class ActionRow(QWidget):
                     params["condition"] = expr
                 else:
                     params.pop("condition", None)
-            params["actions"] = (
-                self._cond_if_then_editor.to_list() if self._cond_if_then_editor else []
-            )
+            elif isinstance(self._cond_if_raw, dict) and self._cond_if_raw:
+                # 条件块还没展开过（懒建）：按载入值原样透传。
+                params["condition"] = deepcopy(self._cond_if_raw)
+            else:
+                params.pop("condition", None)
+            params["actions"] = _nested("actions", self._cond_if_then_editor)
             # 空的「不满足时」不写键（往返保真：最小形态打开→保存不得凭空多出 elseActions）；
-            # 盘上原本写着空列表的，原样留着不动。
-            else_list = self._cond_if_else_editor.to_list() if self._cond_if_else_editor else []
-            if else_list or "elseActions" in (self._original_params or {}):
+            # 盘上原本写着空列表的，原样留着不动。大纲模式下「原本」= 活数据里有没有这个键。
+            else_list = _nested("elseActions", self._cond_if_else_editor)
+            if outline:
+                had_else = self._outline_nested_value(act_type, "elseActions") is not OUTLINE_ABSENT
+            else:
+                had_else = "elseActions" in (self._original_params or {})
+            if else_list or had_else:
                 params["elseActions"] = else_list
             else:
                 params.pop("elseActions", None)
@@ -8168,9 +8285,12 @@ class ActionEditor(QWidget):
         parent: QWidget | None = None,
         *,
         show_reorder_buttons: bool = True,
+        nested: bool = False,
     ):
         super().__init__(parent)
         self._rows: list[ActionRow] = []
+        self._label = label
+        self._nested = nested
         self._ctx_model = None
         self._ctx_scene_id: str | None = None
         self._ctx_cutscene_id: str | None = None
@@ -8178,8 +8298,53 @@ class ActionEditor(QWidget):
         self._show_reorder_buttons = show_reorder_buttons
         self._last_reference_refresh_epoch = 0
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.addWidget(QLabel(f"<b>{label}</b>"))
+        if nested:
+            # 嵌套列表：左侧色条 + 缩进。QSS 只画边框，不写字号（字号只归 theme.py）。
+            self.setObjectName("nestedActionList")
+            self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            self.setStyleSheet(
+                "QWidget#nestedActionList { border: none; border-left: 2px solid palette(mid); }"
+            )
+            root.setContentsMargins(10, 2, 0, 2)
+        else:
+            root.setContentsMargins(0, 0, 0, 0)
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(4)
+        title = QLabel(f"<b>{label}</b>", self)
+        title.setToolTip(label)
+        # 标题不参与最小宽（窄面板里宁可截断标题，也不能把整个面板顶出横向滚动）。
+        title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        title.setMinimumWidth(min(120, title.sizeHint().width()))
+        header.addWidget(title, 1)
+        self._count_label = QLabel(self)
+        self._count_label.setStyleSheet(_theme.semantic_text_css("faint"))
+        header.addWidget(self._count_label)
+        self._btn_expand_all = QToolButton(self)
+        self._btn_expand_all.setText("展开")
+        self._btn_expand_all.setAutoRaise(True)
+        self._btn_expand_all.setToolTip("展开本列表全部动作的参数区")
+        self._btn_expand_all.clicked.connect(lambda: self.set_all_collapsed(False))
+        self._btn_collapse_all = QToolButton(self)
+        self._btn_collapse_all.setText("折叠")
+        self._btn_collapse_all.setAutoRaise(True)
+        self._btn_collapse_all.setToolTip("把本列表全部动作折成一行摘要")
+        self._btn_collapse_all.clicked.connect(lambda: self.set_all_collapsed(True))
+        header.addWidget(self._btn_expand_all)
+        header.addWidget(self._btn_collapse_all)
+        self._btn_outline = None
+        if not nested:
+            # 复杂动作（嵌套分支 + 长条件）在窄表单里怎么排都挤：给一个随时可用的大窗口。
+            self._btn_outline = QToolButton(self)
+            self._btn_outline.setText("大纲…")
+            self._btn_outline.setAutoRaise(True)
+            self._btn_outline.setToolTip(
+                "在独立窗口里以「大纲树 + 检查器」编辑这组动作：任意嵌套都一屏看全，"
+                "拖拽排序、复制粘贴、撤销重做。确定后写回这里。",
+            )
+            self._btn_outline.clicked.connect(self.open_outline_editor)
+            header.addWidget(self._btn_outline)
+        root.addLayout(header)
         self._rows_layout = QVBoxLayout()
         self._rows_layout.setSpacing(4)
         root.addLayout(self._rows_layout)
@@ -8188,6 +8353,7 @@ class ActionEditor(QWidget):
         add_btn = QPushButton(f"+ {label}")
         add_btn.clicked.connect(self._add_empty)
         root.addWidget(add_btn)
+        self._refresh_fold_policy()
 
     def _rows_insert_index(self) -> int:
         # Last layout item is the stretch spacer added in __init__.
@@ -8283,6 +8449,7 @@ class ActionEditor(QWidget):
         self._clear()
         for a in actions:
             self._add_row(a)
+        self._refresh_fold_policy()  # 空列表不经 _add_row：计数与「展开/折叠」钮也要落定
 
     def to_list(self) -> list[dict]:
         return [r.to_dict() for r in self._rows]
@@ -8358,6 +8525,41 @@ class ActionEditor(QWidget):
 
     def _refresh_fold_policy(self) -> None:
         n = len(self._rows)
-        single = n <= 1
+        # 顶层列表只有一行时恒展开（旧约定，宿主面板依赖）；嵌套分支里哪怕只有一行也折成
+        # 一行摘要——否则容器一展开，每层分支的唯一一条动作都整块摊开，嵌套几层就是几屏。
+        single = n <= 1 and not self._nested
         for r in self._rows:
             r.apply_fold_policy(single)
+        self._btn_expand_all.setVisible(n > 1)
+        self._btn_collapse_all.setVisible(n > 1)
+        self._count_label.setText(f"{n} 条" if n else "（空）")
+
+    def set_all_collapsed(self, collapsed: bool) -> None:
+        for r in self._rows:
+            r.set_collapsed(collapsed)
+
+    def open_outline_editor(self) -> None:
+        """在「大纲树 + 检查器」大窗口里编辑本列表；确定且内容真有变化才写回并发 changed。"""
+        from .action_outline_editor import ActionOutlineDialog
+
+        current = self.to_list()
+        dlg = ActionOutlineDialog(
+            self._label,
+            current,
+            model=self._ctx_model,
+            scene_id=self._ctx_scene_id,
+            cutscene_id=self._ctx_cutscene_id,
+            parent=self,
+            geometry_key="action_outline_inline",
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = dlg.result_actions()
+        if result == current:
+            return
+        folds = [r.fold_state() for r in self._rows]
+        self.set_data(result)
+        if len(folds) == len(self._rows):
+            for row, collapsed in zip(self._rows, folds):
+                row.restore_fold_state(collapsed)
+        self.changed.emit()

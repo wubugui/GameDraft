@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 
+from tools.editor.shared.action_structure import iter_child_action_lists
 from tools.editor.shared.project_paths import ProjectPaths
 
 from ..model.graph_model import GameGraph
@@ -30,16 +31,33 @@ def _ensure_flag(graph: GameGraph, flag_key: str):
 
 def _extract_flags_from_conditions(graph: GameGraph, owner_id: str, conditions: list[dict]):
     for cond in conditions:
-        fk = cond.get("flag", "")
-        if fk:
-            _ensure_flag(graph, fk)
-            graph.add_edge(fk, owner_id, EdgeType.READS_FLAG)
+        _extract_flags_from_condition_expr(graph, owner_id, cond)
+
+
+def _extract_flags_from_condition_expr(graph: GameGraph, owner_id: str, expr):
+    """ConditionExpr（叶子或 all/any/not 组合）里读的每个 flag 都连一条 READS_FLAG。"""
+    if not isinstance(expr, dict):
+        return
+    for key in ("all", "any"):
+        if isinstance(expr.get(key), list):
+            for sub in expr[key]:
+                _extract_flags_from_condition_expr(graph, owner_id, sub)
+    _extract_flags_from_condition_expr(graph, owner_id, expr.get("not"))
+    fk = expr.get("flag", "")
+    if isinstance(fk, str) and fk:
+        _ensure_flag(graph, fk)
+        graph.add_edge(fk, owner_id, EdgeType.READS_FLAG)
 
 
 def _extract_flags_from_actions(graph: GameGraph, owner_id: str, actions: list[dict]):
-    for act in actions:
+    """动作本身的边在下面按类型连；往哪些子动作列表下钻读唯一真相源 NESTED_ACTION_SLOTS
+    （手写分支曾只下钻 enableRuleOffers / randomBranch，漏了 runActions / chooseAction /
+    addDelayedEvent / runActionsIf）。"""
+    for act in actions if isinstance(actions, list) else []:
+        if not isinstance(act, dict):
+            continue
         atype = act.get("type", "")
-        params = act.get("params", {})
+        params = act.get("params") if isinstance(act.get("params"), dict) else {}
 
         if atype == "setFlag":
             fk = params.get("key", "")
@@ -88,11 +106,12 @@ def _extract_flags_from_actions(graph: GameGraph, owner_id: str, actions: list[d
                 rule_id = slot.get("ruleId", "")
                 if rule_id:
                     graph.add_edge(owner_id, f"rule:{rule_id}", EdgeType.RULE_SLOT)
-                _extract_flags_from_actions(graph, owner_id, slot.get("resultActions") or [])
 
-        elif atype == "randomBranch":
-            _extract_flags_from_actions(graph, owner_id, params.get("aboveActions") or [])
-            _extract_flags_from_actions(graph, owner_id, params.get("belowActions") or [])
+        elif atype == "runActionsIf":
+            _extract_flags_from_condition_expr(graph, owner_id, params.get("condition"))
+
+        for _rel, child in iter_child_action_lists(act):
+            _extract_flags_from_actions(graph, owner_id, child)
 
 
 def parse_quest_groups(graph: GameGraph, project_path: str):

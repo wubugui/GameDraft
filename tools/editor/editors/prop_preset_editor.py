@@ -52,12 +52,14 @@ from ..project_model import ProjectModel
 from ..shared.anim_atlas_preview import crop_atlas_cell
 from ..shared.animation_sockets import (
     load_socket_set,
+    pose_is_front,
     sockets_path_for_bundle,
 )
 from ..shared.form_layout import compact_form
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.numeric_roundtrip import preserve_numeric_repr
 from ..shared.prop_preset_refs import rename_prop_references, scan_prop_usages
+from ..shared.prop_preview import anim_world_size, prop_image_file
 from ..shared.prop_tryon_canvas import PropTryOnCanvas
 from ..shared.socket_image_list import SocketImageListField
 from .prop_preset_blocks import (
@@ -673,17 +675,11 @@ class PropPresetEditor(QWidget):
         self._prop_pix = None
         if not path:
             return
-        base = getattr(self._model, "project_path", None)
-        if base is None:
-            return
-        rel = path.lstrip("/")
-        for root in (base / "public", base):
-            candidate = root / rel
-            if candidate.is_file():
-                pix = QPixmap(str(candidate))
-                if not pix.isNull():
-                    self._prop_pix = pix
-                return
+        candidate = prop_image_file(getattr(self._model, "project_path", None), path)
+        if candidate is not None:
+            pix = QPixmap(str(candidate))
+            if not pix.isNull():
+                self._prop_pix = pix
 
     def _refresh_preview(self) -> None:
         if self._socket_combo.currentText() and not self._slot_combo.count():
@@ -701,12 +697,14 @@ class PropPresetEditor(QWidget):
                 cell_w=int(anim.get("cellWidth") or 0) or None,
                 cell_h=int(anim.get("cellHeight") or 0) or None,
             )
-        world_w = 0.0
-        try:
-            world_w = float(anim.get("worldWidth") or 0.0)
-        except (TypeError, ValueError):
-            world_w = 0.0
-        self._canvas.set_host(cell, world_w)
+        atlas = self._atlas
+        world = anim_world_size(
+            anim,
+            atlas.width() if atlas is not None else 0,
+            atlas.height() if atlas is not None else 0,
+        )
+        world_w, world_h = world if world is not None else (0.0, 0.0)
+        self._canvas.set_host(cell, world_w, world_h)
 
         pose = None
         sock = self._sockets.get(self._socket_combo.currentText())
@@ -716,7 +714,7 @@ class PropPresetEditor(QWidget):
                 try:
                     pose = (
                         float(raw.get("x", 0.5)), float(raw.get("y", 0.5)),
-                        float(raw.get("angle", 0.0) or 0.0), raw.get("front") is True,
+                        float(raw.get("angle", 0.0) or 0.0), pose_is_front(raw),
                     )
                 except (TypeError, ValueError):
                     pose = None
@@ -734,8 +732,8 @@ class PropPresetEditor(QWidget):
                 notes.append(f"状态「{state_name}」与基础块都没有能用的贴图（或路径找不到文件）。")
             else:
                 notes.append("这条预设还没有贴图（或路径找不到文件）。")
-        if world_w <= 0:
-            notes.append("该动画包缺 worldWidth，缩放没有可信基准。")
+        if world_w <= 0 or world_h <= 0:
+            notes.append("该动画包的世界尺寸推不出来（没写 worldWidth/worldHeight 也读不到图集），缩放没有可信基准。")
         if pose is None and self._current:
             notes.append("这一帧该挂点没有标注——游戏里挂件在这一帧会隐藏。")
         if state_name:

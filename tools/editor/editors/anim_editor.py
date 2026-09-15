@@ -641,6 +641,10 @@ class AnimEditor(QWidget):
         if self._model.discover_new_animation_bundles():
             self._anim_list_reload_deferred = True
         self._flush_anim_list_from_model()
+        # 挂点面板的挂件预览候选来自「挂件预设」页：那边新增 / 改贴图后切回来要能看见
+        panel = getattr(self, "_socket_panel", None)
+        if panel is not None:
+            panel.reload_refs()
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)

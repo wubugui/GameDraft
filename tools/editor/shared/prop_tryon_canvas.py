@@ -9,20 +9,71 @@
 两边任一漂了，是 parity 测试红，不是这里悄悄画歪。
 
 **缩放口径**（唯一需要换算的一处）：挂件是 `SpriteEntity.container` 的**兄弟**级子节点，
-不继承 `sprite.scale`（世界尺寸/帧像素）。所以 `scale=1` 意味着"贴图 1 像素 = 1 世界单位"。
-角色帧在画布上占 `k*cellW` 像素、代表 `worldWidth` 个世界单位，
-故挂件在画布上的像素倍率 = `scale * k * cellW / worldWidth`。
+不继承 `sprite.scale`（世界尺寸/帧像素）。所以 `scale=1` 意味着"贴图 1 像素 = 1 世界单位"，
+而且横竖**等比**。角色帧却是按 `worldWidth/cellWidth`、`worldHeight/cellHeight` **分轴**
+拉伸的（两个比值不必相等，玩家包就差 8.6%）。画布上角色帧是按原图等比画的，
+所以挂件要先在世界单位里摆好、再乘"世界 → 画布"那个**分轴**缩放——
+只按 worldWidth 算一个倍率，纵向就会差出那个比值。见 `paint_prop`。
 """
 from __future__ import annotations
-
-import math
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QWidget
 
+from .animation_sockets import socket_front_for_facing
+
 CANVAS_W = 340
 CANVAS_H = 400
+
+
+def paint_prop(
+    p: QPainter,
+    prop: QPixmap,
+    at: QPointF,
+    *,
+    pose_angle: float,
+    facing: int,
+    view_per_world: tuple[float, float],
+    anchor: tuple[float, float],
+    rotation: float,
+    scale: float,
+    outline_only: bool = False,
+) -> None:
+    """把挂件画到挂点上，变换顺序与 `SpriteEntity.syncAttachments` 逐条对齐。
+
+    - ``at``：挂点在画布上的像素位置（已按朝向翻好）；
+    - ``view_per_world``：世界单位 → 画布像素，**分轴**（见模块头「缩放口径」）；
+    - 角度 = 挂点标注 + 挂件自转，朝左时**一起**取反；挂件图横向跟着朝向镜像；
+    - 支点：贴图上的 (anchorX, anchorY) 对准挂点。
+    - ``outline_only``：只描贴图外框（虚线）——挂件排在身后被身体整个挡住时，
+      标注的人仍要看得出它在哪、多大、朝哪歪。
+
+    Qt 与 Pixi 的正角都是屏幕顺时针（y 朝下），所以角度不用换号。
+    """
+    if prop is None or prop.isNull():
+        return
+    sx, sy = view_per_world
+    if not (sx > 0 and sy > 0 and scale > 0):
+        return
+    sign = -1 if facing < 0 else 1
+    w = float(prop.width())
+    h = float(prop.height())
+    rect = QRectF(-anchor[0] * w, -anchor[1] * h, w, h)
+    p.save()
+    p.translate(at)
+    p.scale(sx, sy)
+    p.rotate((pose_angle + rotation) * sign)
+    p.scale(scale * sign, scale)
+    if outline_only:
+        pen = QPen(QColor(255, 196, 84, 220), 1.2, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRect(rect)
+    else:
+        p.drawPixmap(rect, prop, QRectF(prop.rect()))
+    p.restore()
 
 
 class PropTryOnCanvas(QWidget):
@@ -36,6 +87,7 @@ class PropTryOnCanvas(QWidget):
         #: 挂点逐帧标注：(x, y, angle, front)，格内归一化
         self._pose: tuple[float, float, float, bool] | None = None
         self._world_w: float = 0.0
+        self._world_h: float = 0.0
         self._anchor = (0.5, 0.5)
         self._rotation = 0.0
         self._scale = 1.0
@@ -44,9 +96,11 @@ class PropTryOnCanvas(QWidget):
 
     # ---- 数据入口 ----------------------------------------------------
 
-    def set_host(self, cell: QPixmap | None, world_w: float) -> None:
+    def set_host(self, cell: QPixmap | None, world_w: float, world_h: float) -> None:
+        """宿主帧 + 动画包世界宽高（两个都要：角色帧分轴拉伸，见模块头「缩放口径」）。"""
         self._cell = cell
         self._world_w = float(world_w or 0.0)
+        self._world_h = float(world_h or 0.0)
         self.update()
 
     def set_pose(self, pose: tuple[float, float, float, bool] | None) -> None:
@@ -94,7 +148,9 @@ class PropTryOnCanvas(QWidget):
         p.fillRect(self.rect(), QColor(28, 30, 34))
 
         k, o, cw, ch = self._fit()
-        front = bool(self._pose[3]) if self._pose else False
+        # 没有标注时不画挂件，前后无所谓；有标注时 pose[3] 是**标注的**前后（按朝右标，
+        # 已按「缺省身前」解好）。切到朝左预览时前后互换——与运行时同一条规则
+        front = socket_front_for_facing(bool(self._pose[3]), self._facing) if self._pose else True
 
         if not front:
             self._draw_prop(p, k, o, cw, ch)
@@ -112,6 +168,10 @@ class PropTryOnCanvas(QWidget):
                 p.drawPixmap(target, self._cell, QRectF(self._cell.rect()))
         if front:
             self._draw_prop(p, k, o, cw, ch)
+        else:
+            # 身后：真实遮挡照画（所见即游戏所得），再在最上层描一道外框——
+            # 被身体整个挡住时标注的人仍要看得出挂件在哪
+            self._draw_prop(p, k, o, cw, ch, outline_only=True)
 
         self._draw_hud(p, k, o, cw, ch)
         p.end()
@@ -124,32 +184,26 @@ class PropTryOnCanvas(QWidget):
             nx = 1.0 - nx       # 镜像：x 翻到另一侧（与 socket_pose_to_local 的 sign 同效）
         return QPointF(o.x() + nx * cw * k, o.y() + ny * ch * k)
 
-    def _draw_prop(self, p: QPainter, k: float, o: QPointF, cw: float, ch: float) -> None:
+    def _draw_prop(
+        self, p: QPainter, k: float, o: QPointF, cw: float, ch: float, *, outline_only: bool = False,
+    ) -> None:
         if self._prop is None or self._prop.isNull() or not self._pose:
             return
         c = self._socket_view_point(k, o, cw, ch)
         if c is None:
             return
-        if self._world_w <= 0:
+        if self._world_w <= 0 or self._world_h <= 0:
             return
-        # 见模块头「缩放口径」：贴图像素 → 世界单位 → 画布像素
-        px_per_world = (cw * k) / self._world_w
-        mag = self._scale * px_per_world
-        if mag <= 0:
-            return
-        # 角度：挂点标注 + 挂件自转，镜像时**一起**取反（与 syncAttachments 一致）
-        ang = (self._pose[2] + self._rotation) * (1 if self._facing > 0 else -1)
-
-        p.save()
-        p.translate(c)
-        p.rotate(ang)
-        p.scale(mag * (1 if self._facing > 0 else -1), mag)
-        w = float(self._prop.width())
-        h = float(self._prop.height())
-        # 支点：贴图上的 (anchorX, anchorY) 对准挂点
-        p.drawPixmap(QRectF(-self._anchor[0] * w, -self._anchor[1] * h, w, h),
-                     self._prop, QRectF(self._prop.rect()))
-        p.restore()
+        paint_prop(
+            p, self._prop, c,
+            pose_angle=self._pose[2],
+            facing=self._facing,
+            view_per_world=((cw * k) / self._world_w, (ch * k) / self._world_h),
+            anchor=self._anchor,
+            rotation=self._rotation,
+            scale=self._scale,
+            outline_only=outline_only,
+        )
 
     def _draw_hud(self, p: QPainter, k: float, o: QPointF, cw: float, ch: float) -> None:
         # 脚线：挂点 y=1 就是这条线，标注时的基准

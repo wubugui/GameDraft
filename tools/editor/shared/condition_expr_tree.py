@@ -5,7 +5,7 @@ import copy
 import json
 from typing import Any, Callable
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QCheckBox,
     QComboBox,
+    QFrame,
     QPushButton,
     QLineEdit,
     QLabel,
@@ -20,9 +21,11 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QToolButton,
 )
 
 from tools.editor import theme as _theme
+from .action_structure import summarize_condition
 from .flag_key_field import FlagKeyPickField
 from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
@@ -58,6 +61,21 @@ def _is_flag_atom(d: dict[str, Any]) -> bool:
     return set(d.keys()) <= {"flag", "op", "value"}
 
 
+# 组合子左侧色条：嵌套一深，光靠 8px 缩进根本分不清"这条属于哪个 any"。
+# 颜色取 theme 的语义色（不在这里写死色值），all/any/not 三种一眼可辨。
+_GROUP_RAIL_KIND = {"all": "info", "any": "warn", "not": "error"}
+
+
+def _group_rail_frame(kind: str) -> QFrame:
+    frame = QFrame()
+    frame.setObjectName("conditionGroupRail")
+    color = _theme.semantic_text_color(_GROUP_RAIL_KIND.get(kind, "muted"))
+    frame.setStyleSheet(
+        f"QFrame#conditionGroupRail {{ border: none; border-left: 2px solid {color}; }}"
+    )
+    return frame
+
+
 class ConditionExprNodeEditor(QWidget):
     """单节点：可表示组合子或叶子。"""
 
@@ -79,10 +97,23 @@ class ConditionExprNodeEditor(QWidget):
         # 当前生效的节点类型（用于换类型时按"旧类型 + 旧控件"判断子树是否非空，据此弹确认）。
         self._active_kind = "flag"
 
+        # 纵向不吃多余高度：宿主给多了就留在底下，别摊成节点之间一截截空白。
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 2, 0, 2)
+        # 折叠态：body 整块藏起，头行在类型后面给一行摘要（「(A 且 非 B) 或 …」）。
+        # 条件一复杂，展开态每个叶子占三行，十几个节点就把宿主顶爆——折叠是唯一不丢信息的收法。
+        self._collapsed = False
 
         head = QHBoxLayout()
+        head.setSpacing(4)
+        self._fold_btn = QToolButton(self)
+        self._fold_btn.setAutoRaise(True)
+        self._fold_btn.setArrowType(Qt.ArrowType.DownArrow)
+        self._fold_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._fold_btn.setToolTip("折叠 / 展开此条件节点（Ctrl+点击：连同全部子节点一起）")
+        self._fold_btn.clicked.connect(self._on_fold_clicked)
+        head.addWidget(self._fold_btn, 0)
         self._kind = QComboBox()
         for lab, val in (
             ("全部满足 (all)", "all"),
@@ -100,8 +131,16 @@ class ConditionExprNodeEditor(QWidget):
         ):
             self._kind.addItem(lab, val)
         self._kind.currentIndexChanged.connect(self._on_kind_changed)
-        head.addWidget(QLabel("类型"), 0)
+        self._kind_label = QLabel("类型", self)
+        head.addWidget(self._kind_label, 0)
         head.addWidget(self._kind, 1)
+        # 摘要只在折叠态出现；Ignored 横向策略 = 不往外要宽度（窄面板里自己截断）。
+        self._summary = QLabel(self)
+        self._summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._summary.setStyleSheet(_theme.semantic_text_css("muted"))
+        self._summary.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self._summary.setVisible(False)
+        head.addWidget(self._summary, 2)
         if depth > 0:
             # 文案只留「移除」：这颗按钮在每层嵌套里都出现一次，写全称会把
             # 每一行的最小宽顶高，宿主面板（280px）里就横向滚动了。
@@ -110,9 +149,17 @@ class ConditionExprNodeEditor(QWidget):
             self._btn_remove.clicked.connect(lambda: self._request_remove())
             head.addWidget(self._btn_remove)
         root.addLayout(head)
+        self._head = head
+        self._root_layout = root
 
-        self._body = QVBoxLayout()
-        root.addLayout(self._body)
+        self._body_host = QWidget(self)
+        self._body = QVBoxLayout(self._body_host)
+        self._body.setContentsMargins(0, 0, 0, 0)
+        root.addWidget(self._body_host)
+        # 单行叶子（flag / 位面 / 姿态 / 时段）在宽度够时并进头行：一个叶子一行。
+        # 窄宿主（图对话检查器 280px）自动退回上下排。带回滞，拖窗口边不会来回跳。
+        self._inline = False
+        self.changed.connect(self._refresh_summary_if_collapsed)
 
         self._container_all_any: QWidget | None = None
         self._lay_all_any: QVBoxLayout | None = None
@@ -178,6 +225,146 @@ class ConditionExprNodeEditor(QWidget):
     def _request_remove(self) -> None:
         if self._remove_callback:
             self._remove_callback(self)
+
+    # ---- 折叠 ----------------------------------------------------------------
+
+    def _child_nodes(self) -> list["ConditionExprNodeEditor"]:
+        out = list(self._child_editors)
+        if self._not_child is not None:
+            out.append(self._not_child)
+        return out
+
+    def _on_fold_clicked(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        want = not self._collapsed
+        if QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier:
+            self.set_collapsed_recursive(want)
+        else:
+            self.set_collapsed(want)
+
+    def is_collapsed(self) -> bool:
+        return self._collapsed
+
+    def set_collapsed(self, on: bool) -> None:
+        on = bool(on)
+        self._collapsed = on
+        self._body_host.setVisible(not on)
+        self._fold_btn.setArrowType(Qt.ArrowType.RightArrow if on else Qt.ArrowType.DownArrow)
+        self._summary.setVisible(on)
+        if on:
+            self._refresh_summary()
+        self._refresh_ancestor_geometry()
+
+    def _refresh_ancestor_geometry(self) -> None:
+        # 按模式切显隐 / 挪布局 / 增删子节点后自内向外刷新几何，否则外层行高冻在旧 sizeHint
+        # （要么整行压成一条缝，要么多出来的高度被摊成一大截空白）。
+        # body 是独立的宿主控件：父布局按控件项缓存它的 sizeHint，不显式 updateGeometry 就一直是旧值
+        # （控件没显示过时连 LayoutRequest 都不投递，缓存永远不刷——条件树高度因此冻在一行）。
+        self._body.invalidate()
+        self._body_host.updateGeometry()
+        w: QWidget | None = self
+        while w is not None:
+            lay = w.layout()
+            if lay is not None:
+                lay.invalidate()
+            w.updateGeometry()
+            if isinstance(w, ConditionExprTreeRootWidget):
+                w._sync_height_to_content()
+                if w._scroll is not None:
+                    break  # 自带滚动区：高度变化到此为止；无滚动区模式要一路刷到宿主
+            w = w.parentWidget()
+
+    def set_collapsed_recursive(self, on: bool) -> None:
+        for child in self._child_nodes():
+            child.set_collapsed_recursive(on)
+        self.set_collapsed(on)
+
+    def collapse_below_depth(self, depth: int) -> None:
+        """深度 ≥ depth 的组合子折起、其余展开（叶子一律展开）：给「只看骨架」用。"""
+        for child in self._child_nodes():
+            child.collapse_below_depth(depth)
+        is_group = self._active_kind in ("all", "any", "not")
+        self.set_collapsed(is_group and self._depth >= depth)
+
+    # ---- 单行叶子并进头行 -------------------------------------------------------
+
+    _INLINE_KINDS = ("flag", "plane", "posture", "timePhase")
+    # 并排后给主输入（flag 键 / id 选择器）至少留这么宽，否则宁可上下排。
+    _INLINE_FIELD_ROOM = 110
+    _INLINE_HYSTERESIS = 40
+    _INLINE_KIND_MAX_W = 120
+
+    def _available_width(self) -> int:
+        w = self.parentWidget()
+        while w is not None:
+            if isinstance(w, QScrollArea):
+                vp = w.viewport()
+                try:
+                    x = self.mapTo(vp, self.rect().topLeft()).x()
+                except Exception:
+                    x = 0
+                return vp.width() - max(0, x)
+            w = w.parentWidget()
+        return self.width()
+
+    def _schedule_inline_check(self) -> None:
+        """并排与否由整棵树的根统一决定（同一棵树里一半并排一半上下排，读起来更乱）。"""
+        w = self.parentWidget()
+        while w is not None:
+            if isinstance(w, ConditionExprTreeRootWidget):
+                w.schedule_inline_policy()
+                return
+            w = w.parentWidget()
+
+    def _inline_need_width(self) -> int:
+        """并排所需宽度：头行固定件 + 叶子各控件的建议宽 + 给主输入的余量。按内容算，不写死阈值。"""
+        need = self._fold_btn.sizeHint().width() + self._INLINE_KIND_MAX_W + 24
+        rb = getattr(self, "_btn_remove", None)
+        if rb is not None:
+            need += rb.sizeHint().width()
+        item = self._body.itemAt(0) if self._body.count() else None
+        leaf = item.widget() if item is not None else None
+        if leaf is not None:
+            # 叶子控件的最小宽 + 给主输入（flag 键 / id）额外留出的阅读宽度。
+            need += leaf.minimumSizeHint().width() + self._INLINE_FIELD_ROOM
+        return need
+
+    def inline_fits(self, currently_inline: bool) -> bool:
+        slack = self._INLINE_HYSTERESIS if currently_inline else 0
+        return self._available_width() >= self._inline_need_width() - slack
+
+    def is_inline(self) -> bool:
+        return self._inline
+
+    def set_inline(self, on: bool) -> None:
+        on = bool(on) and self._active_kind in self._INLINE_KINDS
+        if on == self._inline:
+            return
+        self._inline = on
+        if on:
+            self._root_layout.removeWidget(self._body_host)
+            idx = self._head.indexOf(self._summary) + 1
+            self._head.insertWidget(idx, self._body_host, 4)
+            self._kind.setMaximumWidth(self._INLINE_KIND_MAX_W)
+            self._head.setStretchFactor(self._kind, 0)
+        else:
+            self._head.removeWidget(self._body_host)
+            self._root_layout.addWidget(self._body_host)
+            self._kind.setMaximumWidth(16777215)
+            self._head.setStretchFactor(self._kind, 1)
+        self._kind_label.setVisible(not on)
+        self._body_host.setVisible(not self._collapsed)
+        self._refresh_ancestor_geometry()
+
+    def _refresh_summary(self) -> None:
+        text = summarize_condition(self.to_dict())
+        self._summary.setText(text)
+        self._summary.setToolTip(text)
+
+    def _refresh_summary_if_collapsed(self) -> None:
+        if self._collapsed:
+            self._refresh_summary()
 
     def _model(self) -> Any:
         return self._model_getter()
@@ -294,15 +481,25 @@ class ConditionExprNodeEditor(QWidget):
         self._pl_id = None
 
     def _rebuild_body(self, kind: str) -> None:
+        self._rebuild_body_impl(kind)
+        self._refresh_ancestor_geometry()
+
+    def _rebuild_body_impl(self, kind: str) -> None:
         self._active_kind = kind
         self._clear_body()
+        if self._inline and kind not in self._INLINE_KINDS:
+            self.set_inline(False)  # 组合子的子树绝不能进头行
+        self._schedule_inline_check()
         if kind in ("all", "any"):
-            wrap = QWidget()
+            wrap = _group_rail_frame(kind)
             vl = QVBoxLayout(wrap)
-            vl.setContentsMargins(8, 4, 0, 4)
+            vl.setContentsMargins(10, 2, 0, 2)
+            vl.setSpacing(2)
             self._container_all_any = wrap
             self._lay_all_any = vl
+            # 按钮放组**末尾**（子条件插在它前面）：加子条件是往后追加，按钮就该在最后一条下面。
             btn = QPushButton("+ 添加子条件")
+            btn.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
             if self._depth >= _MAX_DEPTH - 1:
                 btn.setEnabled(False)
                 btn.setToolTip(f"嵌套深度上限 {_MAX_DEPTH}")
@@ -310,9 +507,9 @@ class ConditionExprNodeEditor(QWidget):
             vl.addWidget(btn)
             self._body.addWidget(wrap)
         elif kind == "not":
-            nw = QWidget()
+            nw = _group_rail_frame("not")
             nl = QVBoxLayout(nw)
-            nl.setContentsMargins(8, 4, 0, 4)
+            nl.setContentsMargins(10, 2, 0, 2)
             self._not_wrap = nw
             # 裸 not（内层未配置）导出 {"not":{"all":[]}} = 恒假，挂条件上"永远不出现"极难排查：
             # 行内红字提示（validator 侧另由数据组补）。
@@ -348,12 +545,14 @@ class ConditionExprNodeEditor(QWidget):
             self._flag_op.addItems(["==", "!=", ">", "<", ">=", "<="])
             self._flag_op.currentTextChanged.connect(lambda _t: self._emit_changed())
             self._flag_val_mode = QComboBox()
-            self._flag_val_mode.addItem("值：按登记表", "registry")
-            self._flag_val_mode.addItem("值：字符串/引用", "string_ref")
+            self._flag_val_mode.addItem("按登记表", "registry")
+            self._flag_val_mode.addItem("文本/引用", "string_ref")
             self._flag_val_mode.currentIndexChanged.connect(self._on_flag_val_mode_changed)
-            row1.addWidget(self._flag_field, stretch=1)
+            self._flag_val_mode.setToolTip("值的写法：按 flag 登记表的类型给控件，或写字符串 / [tag:…] 引用")
+            # 一行排完（key · 运算符 · 值 · 值写法）：旧形态把一个 true 单独放一整行还居中，
+            # 每个叶子白白多占一行高，四组 all+not 的条件因此多出一屏。
+            row1.addWidget(self._flag_field, stretch=2)
             row1.addWidget(self._flag_op)
-            row1.addWidget(self._flag_val_mode)
             main.addLayout(row1)
             self._flag_val_reg = FlagValueEdit(fw, reg)
             self._flag_val_reg.valueChanged.connect(self._emit_changed)
@@ -370,8 +569,9 @@ class ConditionExprNodeEditor(QWidget):
                 fe.setPlaceholderText("纯文本；载入工程后可插入 [tag:…]")
                 fe.textChanged.connect(lambda _s: self._emit_changed())
                 self._flag_free_value = fe
-            main.addWidget(self._flag_val_reg)
-            main.addWidget(self._flag_free_value)
+            row1.addWidget(self._flag_val_reg, stretch=0)
+            row1.addWidget(self._flag_free_value, stretch=1)
+            row1.addWidget(self._flag_val_mode)
             self._flag_wrap = fw
             self._body.addWidget(fw)
             if self._flag_val_reg and self._flag_field:
@@ -797,7 +997,11 @@ class ConditionExprNodeEditor(QWidget):
         ch.set_remove_callback(self._remove_child)
         ch.changed.connect(self._emit_changed)
         self._child_editors.append(ch)
-        self._lay_all_any.addWidget(ch)
+        # 末项是「+ 添加子条件」按钮：子条件一律插在它前面。
+        self._lay_all_any.insertWidget(max(0, self._lay_all_any.count() - 1), ch)
+        ch.show()
+        ch._schedule_inline_check()  # 构造时还没挂进树，找不到根；挂上后再报一次
+        self._refresh_ancestor_geometry()
         self._emit_changed()
 
     def _remove_child(self, editor: ConditionExprNodeEditor) -> None:
@@ -807,6 +1011,7 @@ class ConditionExprNodeEditor(QWidget):
                 return
             self._child_editors.remove(editor)
             discard_widget(editor)
+            self._refresh_ancestor_geometry()
             self._emit_changed()
 
     def set_dict(self, data: dict[str, Any] | None) -> None:
@@ -819,6 +1024,8 @@ class ConditionExprNodeEditor(QWidget):
             self._loading = prev
         # 载入完成后同步一次 not 恒假提示（此期间被抑制的可视状态需要落定）
         self._refresh_not_empty_hint()
+        self._refresh_summary_if_collapsed()
+        self._refresh_ancestor_geometry()
 
     def _set_dict_impl(self, data: dict[str, Any] | None) -> None:
         # 原始形状快照：UI 未实际编辑时 to_dict 逐字返回原 dict
@@ -1142,7 +1349,13 @@ class ConditionExprNodeEditor(QWidget):
 
 
 class ConditionExprTreeRootWidget(QWidget):
-    """根容器：对外 set_expr / get_expr；changed 在子树变更时发出。"""
+    """根容器：对外 set_expr / get_expr；changed 在子树变更时发出。
+
+    scroll_mode:
+      "embedded"（默认）—— 自带一个随内容长高的滚动区（旧宿主：图对话检查器等窄面板）；
+      "none" —— 不套滚动区，整棵树按内容高度排布，由宿主那唯一一层滚动条滚
+      （动作大纲编辑器的检查器用：滚动条里再套滚动条是最难用的形态）。
+    """
 
     changed = Signal()
 
@@ -1151,11 +1364,29 @@ class ConditionExprTreeRootWidget(QWidget):
         parent: QWidget | None = None,
         *,
         model_getter: Callable[[], Any],
+        scroll_mode: str = "embedded",
     ) -> None:
         super().__init__(parent)
         self._model_getter = model_getter
+        # 先占位：构造根节点时它就会沿父链回头找本控件刷几何，此刻滚动区/根节点都还没建。
+        self._scroll: QScrollArea | None = None
+        self._root: ConditionExprNodeEditor | None = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        lay.addLayout(self._build_fold_bar())
+        if scroll_mode == "none":
+            self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+            self._scroll = None
+            self._root = ConditionExprNodeEditor(0, model_getter, self)
+            self._root.set_remove_callback(None)
+            self._root.changed.connect(self.changed.emit)
+            self._root.setToolTip(
+                "与运行时 evaluateConditionExpr 一致；嵌套最深 32 层。"
+                "根节点可为任意类型；留空必填项（flag / scenario / scenarioLine / quest）导出时省略该分支。",
+            )
+            lay.addWidget(self._root)
+            return
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
@@ -1195,8 +1426,70 @@ class ConditionExprTreeRootWidget(QWidget):
         )
         lay.addWidget(scroll, stretch=1)
 
+    def _build_fold_bar(self) -> QHBoxLayout:
+        bar = QHBoxLayout()
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(2)
+        bar.addStretch(1)
+        # 一颗按钮 + 菜单：窄宿主（图对话检查器 280px）里三颗并排按钮就把面板顶出横向滚动。
+        from PySide6.QtWidgets import QMenu
+
+        b = QToolButton(self)
+        b.setText("折叠")
+        b.setToolTip("折叠 / 展开条件树（每个节点左侧箭头也能单独折；Ctrl+点箭头连子节点一起）")
+        b.setAutoRaise(True)
+        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        b.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(b)
+        menu.addAction("全部展开", self.expand_all)
+        menu.addAction("只看骨架（组合子从第二层起折成摘要）", self.collapse_to_skeleton)
+        menu.addAction("全部折叠成一行摘要", self.collapse_all)
+        b.setMenu(menu)
+        self._fold_menu_button = b
+        bar.addWidget(b)
+        return bar
+
+    def root_node(self) -> ConditionExprNodeEditor:
+        return self._root
+
+    # ---- 单行叶子并排：整棵树一个口径 ---------------------------------------------
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        super().resizeEvent(event)
+        self.schedule_inline_policy()
+
+    def schedule_inline_policy(self) -> None:
+        if getattr(self, "_inline_pending", False):
+            return
+        self._inline_pending = True
+        QTimer.singleShot(0, self, self.apply_inline_policy)
+
+    def apply_inline_policy(self) -> None:
+        self._inline_pending = False
+        nodes = [self._root, *self._root.findChildren(ConditionExprNodeEditor)]
+        leaves = [n for n in nodes if n._active_kind in ConditionExprNodeEditor._INLINE_KINDS]
+        currently = bool(leaves) and all(n.is_inline() for n in leaves)
+        # 放不下的叶子里挑最挤的判：只要有一个放不下，整棵树都上下排。
+        fits = bool(leaves) and all(n.inline_fits(currently) for n in leaves)
+        for n in nodes:
+            n.set_inline(fits and n._active_kind in ConditionExprNodeEditor._INLINE_KINDS)
+        self._sync_height_to_content()
+
+    def expand_all(self) -> None:
+        self._root.set_collapsed_recursive(False)
+
+    def collapse_all(self) -> None:
+        self._root.set_collapsed_recursive(False)
+        self._root.set_collapsed(True)
+
+    def collapse_to_skeleton(self) -> None:
+        self._root.collapse_below_depth(1)
+
     def _sync_height_to_content(self) -> None:
         """把可视高度顶到内容实际高度（封顶 MAX），由宿主那层滚动条接管。"""
+        if self._scroll is None or self._root is None:
+            self.updateGeometry()
+            return
         need = self._root.sizeHint().height() + 12
         self._scroll.setMinimumHeight(
             max(
@@ -1219,6 +1512,7 @@ class ConditionExprTreeRootWidget(QWidget):
             self._root.set_dict(expr)
         # set_dict 是程序化回填、刻意不发 changed，所以高度要在这里自己同步一次。
         self._sync_height_to_content()
+        self.schedule_inline_policy()
 
     def get_expr(self) -> dict[str, Any] | None:
         d = self._root.to_dict()

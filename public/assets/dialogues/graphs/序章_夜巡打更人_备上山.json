@@ -1,0 +1,158 @@
+{
+  "schemaVersion": 1,
+  "id": "序章_夜巡打更人_备上山",
+  "entry": "n_branch",
+  "meta": {
+    "title": "夜里打更的：应下上山后找他讨上山的家伙（纸钱/照亮的/麻绳/香烛）"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_branch": {
+      "type": "switch",
+      "cases": [
+        {
+          "next": "n_done",
+          "conditions": [
+            {
+              "narrative": "flow_xungou_main",
+              "state": "state_8",
+              "reached": true
+            }
+          ]
+        },
+        {
+          "next": "n_ask",
+          "conditions": [
+            {
+              "narrative": "flow_xungou_main",
+              "state": "state_7",
+              "reached": true
+            }
+          ]
+        }
+      ],
+      "defaultNext": "n_idle"
+    },
+    "n_idle": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_end",
+      "text": "天干物燥，小心火烛——你娃蹲这点做啥子？回去睡。"
+    },
+    "n_ask": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "next": "n_why",
+      "text": "老哥，借几样家伙。今黑了要上牛头梁梁，背个死人子下来。"
+    },
+    "n_why": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_hand",
+      "text": "半夜三更上那种地方……纸钱香烛我身上有，麻绳拿去，火把也给你一根。莫说是老子给的。"
+    },
+    "n_hand": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "runActionsIf",
+          "params": {
+            "condition": {
+              "not": {
+                "flag": "has_item_zhiqian"
+              }
+            },
+            "actions": [
+              {
+                "type": "giveItem",
+                "params": {
+                  "id": "zhiqian",
+                  "count": 1,
+                  "critical": true
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "runActionsIf",
+          "params": {
+            "condition": {
+              "not": {
+                "flag": "has_item_torch"
+              }
+            },
+            "actions": [
+              {
+                "type": "giveItem",
+                "params": {
+                  "id": "torch",
+                  "count": 1,
+                  "critical": true
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "runActionsIf",
+          "params": {
+            "condition": {
+              "not": {
+                "flag": "has_item_mashen"
+              }
+            },
+            "actions": [
+              {
+                "type": "giveItem",
+                "params": {
+                  "id": "mashen",
+                  "count": 1,
+                  "critical": true
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "runActionsIf",
+          "params": {
+            "condition": {
+              "not": {
+                "flag": "has_item_xiangzhu"
+              }
+            },
+            "actions": [
+              {
+                "type": "giveItem",
+                "params": {
+                  "id": "xiangzhu",
+                  "count": 1,
+                  "critical": true
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "next": "n_end"
+    },
+    "n_done": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "next": "n_end",
+      "text": "东西都给你了，还杵到起？出南门，顺到小路走。"
+    },
+    "n_end": {
+      "type": "end"
+    }
+  }
+}

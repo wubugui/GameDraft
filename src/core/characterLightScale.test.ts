@@ -44,6 +44,22 @@ function groupUniforms(cl: CharacterLightingSystem): Record<string, unknown> {
 }
 
 describe('实体灯的 wuPerQUnit 尺度：暂缓→重放不许丢', () => {
+  it('场景的角色/粒子倍率与色度独立，序列化重载后读回，换场景清除覆盖', () => {
+    const cl = new CharacterLightingSystem();
+    const scene = { character: { indirectFactor: 2, directFactor: 0.8, totalFactor: 1, eChroma: 0.2 },
+      particles: { indirectFactor: 1, directFactor: 0.4, totalFactor: 3, eChroma: 0.9 } };
+    cl.applyLightFactors(JSON.parse(JSON.stringify(scene)));
+    cl.syncFrame(0, 0, 1);
+    const frames = cl as unknown as { frameLit: { uniforms: Record<string, unknown> }; vfxFrameLit: { uniforms: Record<string, unknown> } };
+    expect(frames.frameLit.uniforms.uEChroma).toBe(0.2);
+    expect(frames.vfxFrameLit.uniforms.uEChroma).toBe(0.9);
+    cl.applyLightFactors({ ...scene, character: { ...scene.character, eChroma: 0 } });
+    expect(cl.getLightFactors('particles')).toEqual(scene.particles);
+    expect(frames.vfxFrameLit.uniforms.uEChroma).toBe(0.9);
+    cl.applyLightFactors(undefined);
+    expect(cl.getLightFactors('character').eChroma).toBe(0);
+    expect(cl.getLightFactors('particles').eChroma).toBe(0);
+  });
   it('灯先到、基后到（进场景的真实顺序）：重放后尺度仍是喂进来的那个', () => {
     const cl = new CharacterLightingSystem();
     cl.applyLights(fakePacked(), 880);          // 灯先到：基没注入 → 暂缓

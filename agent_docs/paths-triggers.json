@@ -206,6 +206,13 @@
       ]
     },
     {
+      "glob": "public/assets/data/vfx_placements.json",
+      "docs": [
+        "vfx-system",
+        "vfx-workbench"
+      ]
+    },
+    {
       "glob": "public/assets/dialogues/**",
       "docs": [
         "content-norms"
@@ -507,7 +514,8 @@
     {
       "glob": "src/data/animationSockets.ts",
       "docs": [
-        "footstep-and-spatial-audio"
+        "footstep-and-spatial-audio",
+        "held-prop-lights"
       ]
     },
     {
@@ -538,6 +546,18 @@
       "glob": "src/dev/runtimeAcousticsSync.ts",
       "docs": [
         "scene-acoustics"
+      ]
+    },
+    {
+      "glob": "src/dev/runtimeSway*",
+      "docs": [
+        "sway-workbench"
+      ]
+    },
+    {
+      "glob": "src/dev/runtimeTerrain*",
+      "docs": [
+        "terrain-workbench"
       ]
     },
     {
@@ -1126,6 +1146,12 @@
       ]
     },
     {
+      "glob": "tools/character_lighting_lab/terrain_compose.py",
+      "docs": [
+        "terrain-workbench"
+      ]
+    },
+    {
       "glob": "tools/desktop_shell.py",
       "docs": [
         "trajectory-workbench"
@@ -1309,7 +1335,8 @@
     {
       "glob": "tools/editor/shared/animation_sockets.py",
       "docs": [
-        "footstep-and-spatial-audio"
+        "footstep-and-spatial-audio",
+        "held-prop-lights"
       ]
     },
     {
@@ -1399,6 +1426,18 @@
       ]
     },
     {
+      "glob": "tools/editor/shared/prop_preview.py",
+      "docs": [
+        "held-prop-lights"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/prop_tryon_canvas.py",
+      "docs": [
+        "held-prop-lights"
+      ]
+    },
+    {
       "glob": "tools/editor/shared/qt_combo_wheel_guard.py",
       "docs": [
         "shared-widget-value-fidelity"
@@ -1423,9 +1462,28 @@
       ]
     },
     {
+      "glob": "tools/editor/shared/socket_canvas.py",
+      "docs": [
+        "held-prop-lights"
+      ]
+    },
+    {
       "glob": "tools/editor/shared/socket_panel.py",
       "docs": [
-        "footstep-and-spatial-audio"
+        "footstep-and-spatial-audio",
+        "held-prop-lights"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/terrain_overlay.py",
+      "docs": [
+        "terrain-workbench"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/vfx_placements.py",
+      "docs": [
+        "vfx-system"
       ]
     },
     {
@@ -1438,6 +1496,12 @@
       "glob": "tools/json_lang/**",
       "docs": [
         "json-lang-schema-tooling"
+      ]
+    },
+    {
+      "glob": "tools/migrate_terrain_authoring.py",
+      "docs": [
+        "terrain-workbench"
       ]
     },
     {
@@ -1501,6 +1565,12 @@
       "glob": "tools/sway_workbench/**",
       "docs": [
         "sway-workbench"
+      ]
+    },
+    {
+      "glob": "tools/terrain_workbench/**",
+      "docs": [
+        "terrain-workbench"
       ]
     },
     {

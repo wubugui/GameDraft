@@ -92,7 +92,8 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     "playTrajectory": {"target": "actor", "at": "position_ref"},
     "stopTrajectory": {"target": "actor"},
     # 粒子 / 群体：位置参数是位置引用（实体此刻位置 / 曲线插槽 / 数字点）。
-    # instanceId / effect 不是实体引用（前者是场景 vfx[] 的 id，后者是全局资产 id）。
+    # instanceId / effect 不是实体引用（前者是布置库 vfx_placements.json 里本场景各时段外观的实例 id，
+    # 后者是全局效果资产 id）。
     "playVfx": {"at": "position_ref"},
     "emitVfxField": {"at": "position_ref"},
     "moveEntityTo": {"target": "actor", "sceneId": "scene_hint", "at": "position_ref"},

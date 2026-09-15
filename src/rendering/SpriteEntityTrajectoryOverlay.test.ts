@@ -53,12 +53,14 @@ function animDef(): AnimationSetDef {
 
 /** entityShade 的两行仿射（`LitSpriteQuad.setWorldTransform` 的落点） */
 interface EntityShadeUniforms {
+  uBodyWidthWu: number;
   uL2W0: Float32Array;
   uL2W1: Float32Array;
 }
 
 function fakeLitShader(): Shader & { __u: EntityShadeUniforms } {
   const u: EntityShadeUniforms = {
+    uBodyWidthWu: 0,
     uL2W0: new Float32Array([1, 0, 0]),
     uL2W1: new Float32Array([0, 1, 0]),
   };
@@ -139,6 +141,16 @@ function expectMatrixClose(got: Matrix, want: Matrix, digits = 5): void {
 // ————————————————————————— 叠加缩放 —————————————————————————
 
 describe('叠加缩放：乘在朝向符号 × 透视系数之上（单点闸 applySpriteScale）', () => {
+  it('着色厚度的尺寸取实际格宽，包含透视、外层缩放与镜像', () => {
+    const { e, shade } = makeEntity({ lit: true });
+    expect(shade!.uBodyWidthWu).toBeCloseTo(WORLD_W, 6);
+    e.setDepthScaleFactor(0.5);
+    e.setLitParentTransform(0, 0, -2, 2, 0);
+    e.setTrajectoryOverlay(0, 1.4, 1, 1);
+    expect(shade!.uBodyWidthWu).toBeCloseTo(WORLD_W * 1.4, 6);
+    e.setDirection(-1, 0);
+    expect(shade!.uBodyWidthWu).toBeCloseTo(WORLD_W * 1.4, 6);
+  });
   it('朝右：基础帧缩放 × 叠加量', () => {
     const { e, sprite } = makeEntity();
     e.setTrajectoryOverlay(0, 2, 0.5, 1);

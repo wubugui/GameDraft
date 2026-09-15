@@ -34,6 +34,7 @@ type QtBridge = {
   emitRuntimeSignal?: (payload: string, cb: (result: string) => void) => void;
   setRuntimeNarrativeState?: (graphId: string, stateId: string, cb: (result: string) => void) => void;
   editActions?: (label: string, payload: string, cb: (result: string) => void) => void;
+  summarizeActions?: (payload: string, cb: (result: string) => void) => void;
   editConditions?: (label: string, payload: string, cb: (result: string) => void) => void;
   navigate: (kind: string, id: string) => void;
   getTemplates?: (cb: (result: string) => void) => void;
@@ -546,6 +547,32 @@ export async function editActionsNative(
         resolve(parsed && typeof parsed === 'object' ? parsed : { ok: false, reason: 'Invalid ActionEditor response' });
       } catch (e) {
         resolve({ ok: false, reason: `Invalid ActionEditor response: ${String(e)}` });
+      }
+    });
+  });
+}
+
+export type ActionOutlineRow = {
+  depth: number;
+  kind: 'action' | 'bad' | 'slot' | 'item';
+  label: string;
+  summary: string;
+  type?: string;
+};
+
+/** 动作列表的层级摘要（叫法与原生大纲窗同源，由宿主 shared/action_structure 生成）；无桥时返回 null。 */
+export async function summarizeActionsNative(
+  actions: ActionDef[],
+): Promise<{ rows: ActionOutlineRow[]; total: number } | null> {
+  const bridge = await waitForBridge();
+  if (!bridge?.summarizeActions) return null;
+  return new Promise((resolve) => {
+    bridge.summarizeActions!(JSON.stringify(actions ?? []), (payload) => {
+      try {
+        const parsed = JSON.parse(payload) as { ok?: boolean; rows?: ActionOutlineRow[]; total?: number };
+        resolve(parsed?.ok && Array.isArray(parsed.rows) ? { rows: parsed.rows, total: Number(parsed.total) || 0 } : null);
+      } catch {
+        resolve(null);
       }
     });
   });

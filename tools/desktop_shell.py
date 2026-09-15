@@ -142,7 +142,7 @@ def run_desktop(handler_cls, title: str, app_id: str,
     from PySide6.QtGui import QKeySequence, QShortcut
     from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWidgets import QApplication, QMainWindow
+    from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox
 
     # 单实例:先抢 mutex(内核原子,无竞态窗口),抢不到再尽力把已有实例叫到前台。
     # 叫不叫得动都**必须退出** —— 已有实例可能还在启动、管道尚未 listen,
@@ -164,7 +164,25 @@ def run_desktop(handler_cls, title: str, app_id: str,
     app = QApplication(sys.argv)
     actual_port = start_server(handler_cls, port or 0)
 
-    win = QMainWindow()
+    guard_state = {'asking': False}
+
+    class _ShellWindow(QMainWindow):
+        """关窗前先问页面有没有没存的改动（见 ``_guard_unsaved``）。"""
+
+        close_ok = False
+
+        def closeEvent(self, ev):  # noqa: N802 — Qt 覆写
+            if self.close_ok or smoke:
+                ev.accept()
+                return
+            ev.ignore()
+            _guard_unsaved('关闭', self._really_close)
+
+        def _really_close(self) -> None:
+            self.close_ok = True
+            self.close()
+
+    win = _ShellWindow()
     win.setWindowTitle(title)
     view = QWebEngineView(win)
     # ① off-the-record:不给 storageName → 纯内存 profile,零磁盘缓存
@@ -192,10 +210,101 @@ def run_desktop(handler_cls, title: str, app_id: str,
     else:
         page = QWebEnginePage(profile, view)
     view.setPage(page)
+    # 页面的 document.title 同步到窗口标题栏:工作台用它标「● 有未保存的改动」与当前资产 / 场景,
+    # QWebEngineView 不会自己去改父窗口的标题(原来只在页内生效,标题栏上永远看不到)
+    view.titleChanged.connect(lambda t: win.setWindowTitle(t if t and t.strip() else title))
     win.setCentralWidget(view)
     win.resize(*size)
+
+    def _guard_unsaved(what: str, proceed) -> None:
+        """关窗 / 刷新前问页面还有没有没存的改动，有就让作者选「保存并{what}」「不保存」「取消」。
+
+        ⚠ 不能靠页面的 ``beforeunload``：关 QMainWindow 根本不跑它（窗口直接销毁，改动静默丢掉）；
+        ``RequestClose`` 会跑，但弹的是 Qt 自带的英文框，而且页面卡死时窗口永远关不掉。
+        所以壳自己问：页面挂 ``window.__unsavedSummary()``（返回给人看的一段话，空 = 没有没存的），
+        可选 ``window.__saveUnsaved()``（开始保存，结果写 ``window.__saveUnsavedResult``：
+        ``'pending'`` → ``'ok'`` / 其它文字 = 没存上的原因）。没挂钩子的工具照旧直接关。
+        页面 2.5 秒不应答（渲染进程崩了 / 没装上）就不拦——不许把人锁在窗口里。
+        """
+        if guard_state['asking']:
+            return
+        guard_state['asking'] = True
+        answered = {'v': False}
+
+        def _done() -> None:
+            guard_state['asking'] = False
+
+        def _wait_save(deadline_ms: int) -> None:
+            def _got(v):
+                s = v if isinstance(v, str) else ''
+                if s == 'ok':
+                    _done()
+                    proceed()
+                    return
+                if s in ('', 'pending') and deadline_ms > 0:
+                    QTimer.singleShot(200, lambda: _wait_save(deadline_ms - 200))
+                    return
+                _done()
+                QMessageBox.warning(win, title, f'没存上，窗口没{what}：\n{s or "保存超时"}')
+            page.runJavaScript('String(window.__saveUnsavedResult || "")', _got)
+
+        def _decide(summary) -> None:
+            if answered['v']:
+                return
+            answered['v'] = True
+            text = summary if isinstance(summary, str) else ''
+            if not text.strip():
+                _done()
+                proceed()
+                return
+            has_save = text.startswith('\x01')
+            text = text.lstrip('\x01')
+            box = QMessageBox(win)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle(title)
+            box.setText(f'还有没保存的改动，{what}会丢掉它们。')
+            box.setInformativeText(text)
+            save_btn = box.addButton(f'保存并{what}', QMessageBox.ButtonRole.AcceptRole) if has_save else None
+            discard_btn = box.addButton(f'不保存，直接{what}', QMessageBox.ButtonRole.DestructiveRole)
+            cancel_btn = box.addButton('取消', QMessageBox.ButtonRole.RejectRole)
+            box.setDefaultButton(save_btn or cancel_btn)
+            box.setEscapeButton(cancel_btn)
+            box.exec()
+            clicked = box.clickedButton()
+            if save_btn is not None and clicked is save_btn:
+                page.runJavaScript('window.__saveUnsavedResult = "pending"; window.__saveUnsaved()')
+                # 最多等 5 分钟:草木台的「保存并关闭」要等在跑的导出落完(冷导出几十秒),等待期间窗口照常能用
+                QTimer.singleShot(200, lambda: _wait_save(300000))
+                return
+            if clicked is discard_btn:
+                # 页面自己的 beforeunload 看到这个标记就不再弹第二次;页面挂了 `__onDiscardUnsaved()` 就先让它收尾
+                # (草木台删掉这份活的草稿——作者明说了不要,别下次打开又问要不要恢复),最多等 2 秒
+                page.runJavaScript(
+                    'window.__discardUnsaved = true; window.__discardUnsavedResult = "pending";'
+                    'Promise.resolve().then(function(){ return window.__onDiscardUnsaved ? window.__onDiscardUnsaved() : null; })'
+                    '.catch(function(){}).then(function(){ window.__discardUnsavedResult = "ok"; });')
+
+                def _wait_discard(left_ms: int) -> None:
+                    def _got(v):
+                        if v == 'ok' or left_ms <= 0:
+                            _done()
+                            proceed()
+                        else:
+                            QTimer.singleShot(100, lambda: _wait_discard(left_ms - 100))
+                    page.runJavaScript('String(window.__discardUnsavedResult || "")', _got)
+                QTimer.singleShot(50, lambda: _wait_discard(2000))
+                return
+            _done()
+
+        page.runJavaScript(
+            '(function(){try{if(!window.__unsavedSummary)return "";var s=String(window.__unsavedSummary()||"");'
+            'return s ? (window.__saveUnsaved ? "\\u0001" : "") + s : ""}catch(e){return ""}})()', _decide)
+        QTimer.singleShot(2500, lambda: _decide(''))
+
     for seq in ('F5', 'Ctrl+R', 'Ctrl+Shift+R'):
-        QShortcut(QKeySequence(seq), win, activated=view.reload)
+        QShortcut(QKeySequence(seq), win, activated=lambda: _guard_unsaved('刷新', view.reload))
+    # 页面缩放复位:Ctrl+滚轮 / Ctrl+加减 放大了整页之后,原来只能关窗重开(浏览器那套 Ctrl+0 在壳里不存在)
+    QShortcut(QKeySequence('Ctrl+0'), win, activated=lambda: view.setZoomFactor(1.0))
 
     def _raise_window(data: bytes = b'raise') -> None:
         win.setWindowState(

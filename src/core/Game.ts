@@ -1,7 +1,7 @@
 import { EventBus } from './EventBus';
 import { earHeightWu, type AcousticTap } from '../audio/acousticSpace';
 import { RuntimeAcousticsSync } from '../dev/runtimeAcousticsSync';
-import { RuntimeVfxSync } from '../dev/runtimeVfxSync';
+import { RuntimeVfxSync, phaseRequestNeedsAdvance } from '../dev/runtimeVfxSync';
 import type { SceneSpaceGeometry, Vec3 } from '../utils/sceneSpace';
 import { FlagStore, type FlagRegistryJson } from './FlagStore';
 import { applyDevRuntimeCommand } from './devRuntimeCommands';
@@ -72,6 +72,7 @@ import { HUD } from '../ui/HUD';
 import type { SmellProfilesRaw } from '../ui/smell/SmellIndicatorRenderer';
 import type {
   AudioListenerConfig,
+  CollisionSidecar,
   FootstepConfig as FootstepConfigData,
   LightDef,
   NpcDef,
@@ -229,12 +230,13 @@ import { resolveText, type ResolveContext } from './resolveText';
 import { VfxSystem } from '../systems/vfx/VfxSystem';
 import { FLICKER_PUSH_HZ_CHOICES, HeldPropSystem } from '../systems/heldProp/HeldPropSystem';
 import { createFieldVfxSpace, createPlanarVfxSpace, type VfxSpace } from '../systems/vfx/vfxSpace';
-import { RuntimeSwaySync } from '../dev/runtimeSwaySync';
+import { RuntimeSwaySync, swayPreviewDirUrl } from '../dev/runtimeSwaySync';
+import { RuntimeTerrainSync, terrainPreviewDirUrl } from '../dev/runtimeTerrainSync';
 import { SceneWindState, sampleSceneWind } from '../utils/sceneWind';
-import { SwayBackground, loadBackgroundSwayInput, swayInsertIndex } from '../rendering/backgroundSway';
+import { SwayBackground, findSwayHostSprite, loadBackgroundSwayInput, swayInsertIndex } from '../rendering/backgroundSway';
 import { VfxRenderer } from '../rendering/vfx/VfxRenderer';
 import { VfxConfineOverlay } from '../rendering/vfx/VfxConfineOverlay';
-import { viewDirWorld } from '../utils/sceneSpace';
+import { socketLightWorld, viewDirWorld } from '../utils/sceneSpace';
 import { mergeGameConfig } from './gameConfigMerge';
 import { BubbleChatterSystem, type BubbleSpeakerRef } from '../systems/BubbleChatterSystem';
 import { PlayerIdleBehaviorSystem } from '../systems/PlayerIdleBehaviorSystem';
@@ -256,7 +258,7 @@ import {
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
 import { Container, Culler, Graphics, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
-import { dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
+import { bakeKeyFromBackground, dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
 import type { TrajectoryAsset, TrajectoryKeyframe } from '../data/types';
 import type { TrajectoryEndReason } from '../systems/TrajectorySystem';
 import {
@@ -483,6 +485,8 @@ export class Game {
   private cutsceneManager!: CutsceneManager;
   private cutsceneRenderer!: CutsceneRenderer;
   private resolveActorFn!: (id: string) => ICutsceneActor | null;
+  /** pollEmoteTarget 上次记日志时的结果：`轮询方\0目标 id` → `场景\0hit|miss`（只存串，不攥实体引用） */
+  private emoteTargetPollOutcomes = new Map<string, string>();
   /** 相机跟随目标实体 id（cameraFollowActor 设、cameraStopFollow 清）：过场 / 动作链 / 对话态每帧锚到该
    *  实体实时坐标；null=默认锚点（探索/动作链跟玩家）。回到自由探索由主循环自动解除，不入存档。 */
   private cameraFollowTargetId: string | null = null;
@@ -662,6 +666,14 @@ export class Game {
   private swayPrimary: Texture | null = null;
   /** DEV：草木工作台 → 游戏的实时联动（重烘完原地重装，不切场景） */
   private swaySync: RuntimeSwaySync | null = null;
+  /**
+   * DEV：装完（`scene:ready` 之后）的场景 id；装载中 / 卸载后为 null。草木联动只按它轮询与心跳——
+   * `currentSceneData` 在装载一开始就换成新场景，那时推来的预览会在 `buildSway` 还没装完时原地重装，把草木层弄坏；
+   * 工作台看心跳"游戏进了这个场景"补发推送，正好撞在这段里。
+   */
+  private swayReadySceneId: string | null = null;
+  /** DEV：地形工作台 → 游戏的单向槽（推给游戏 / 导出到游戏后原地换碰撞与行走面；答运行时对齐探测） */
+  private terrainSync: RuntimeTerrainSync | null = null;
   /** 当前这份拆层装了哪几个纹理 URL（热重载时按它把上一份丢掉，否则每推一次漏一套显存） */
   private swayTexUrls: string[] = [];
   private vfxRenderer: VfxRenderer | null = null;
@@ -909,7 +921,8 @@ export class Game {
     this.emoteBubbleManager = new EmoteBubbleManager();
     this.bubbleChatterSystem = new BubbleChatterSystem({
       emoteBubbleManager: this.emoteBubbleManager,
-      resolveEmoteTarget: (id) => this.resolveEmoteTarget(id),
+      // 选人每帧都解析（在判条件之前）：走轮询入口，结果变了才记日志
+      resolveEmoteTarget: (id) => this.pollEmoteTarget('头顶闲聊', id),
       resolveCharacterEntityId: (cid) => this.resolveCharacterEntityId(cid),
       // 与 resolveEmoteTarget 同一条解析路：先演员（含 player），再当前场景热点
       resolveSpeakerPosition: (targetId) => {
@@ -987,7 +1000,8 @@ export class Game {
       // 是平面近似下**所有几何判据都空成立**（没有地面高低、没有墙）。
       hasFieldGeometry: () => this.buildAudioSceneGeometry() !== null,
       getPlayerContact: () => (this.player ? { x: this.player.contactX, y: this.player.contactY } : null),
-      getTimePhase: () => this.dayManager.currentPhase,
+      // 布置按「场景 × 时段外观」各配一份：与背景 / 光照换装同一个判据（没单列外观的时段 = 基底）
+      getAppearancePhase: () => this.sceneManager.appearancePhaseFor(this.dayManager.currentPhase),
       getActiveLights: () => this.activeSceneLightsForVfx(),
       conditionContext: () => this.buildConditionEvalContext(),
       playSfxAt: (id, at) => { this.audioManager.playSfxAt(id, { x: at[0], y: at[1], z: at[2] }); },
@@ -996,20 +1010,27 @@ export class Game {
     });
     /**
      * 手持挂件与运行时灯。依赖同样全走窄回调：
-     * - 位置一律经 `vfxSystem.sceneToWorld`（= `utils/sceneSpace` 那**一份**画面点→M-world
-     *   换算，与摆灯、空间音同源）——铁律 0 要求的"一次转到底"就在那里，本系统不自己拼；
+     * - 挂点经 utils/sceneSpace 按宿主直立面与前后关系解到身体外侧；无挂点的跟随灯仍按地面抬高。
+     *   灯位只在真 3D 空间里解，平面近似时为 null（见下面 `sceneToLightWorld`）；
      * - 灯不写作者数据，经 `sceneLighting.setDynamicLights`（另一层）加进去；
      * - 风取场景风的同一份参数与同一个钟（火焰的波动幅度吃它）。
      */
     this.heldPropSystem = new HeldPropSystem({
       getPreset: (id) => this.propPresetRegistry[id],
-      getSocketLocalPose: (targetId, socket) => {
-        const pose = this.spriteEntityOf(targetId)?.getSocketPose(socket);
-        return pose ? { x: pose.x, y: pose.y } : null;
-      },
+      // 相对接地点、已穿过外层实体变换：NPC 转身只翻外层容器，用本容器局部位姿的话朝左时灯落在另一侧
+      getSocketLocalPose: (targetId, socket) =>
+        this.spriteEntityOf(targetId)?.getSocketOffsetFromContact(socket) ?? null,
       getEntityContact: (targetId) => this.entityContactOf(targetId),
       listSockets: (targetId) => this.spriteEntityOf(targetId)?.listSocketNames() ?? null,
-      sceneToLightWorld: (x, y, h) => this.vfxSystem.sceneToWorld(x, y, h),
+      socketToLightWorld: (contact, pose) => {
+        const geo = this.buildLightSpaceGeometry();
+        return geo ? socketLightWorld(geo, contact, pose, this.characterLighting.shapeParams.bulge) : null;
+      },
+      // 灯位只认真 3D 空间：粒子没载荷时退到平面近似，那份 sceneToWorld 返回的是画面坐标，
+      // 当 M-world 灯位用不报错、只是灯静默落到别处（铁律 0）。平面近似仅供效果降级。
+      sceneToLightWorld: (x, y, h) => (this.vfxSystem.currentSpace?.kind === 'field'
+        ? this.vfxSystem.sceneToWorld(x, y, h) : null),
+      sceneToVfxWorld: (x, y, h) => this.vfxSystem.sceneToWorld(x, y, h),
       windSpeedAt: (world, heightWu) => {
         const p = this.sceneWind.params;
         if (!p) return 0;
@@ -1049,6 +1070,17 @@ export class Game {
         this.depthDebugVisualizer?.setGroundTexture(this.characterLighting.groundDepthTexture);
       } catch (e) {
         console.warn('[Game] 深度调试可视化注入行走面场失败（不影响玩法照明）', e);
+      }
+      // DEV：这一局里地形工作台推过 / 导出过这个场景 ⇒ 载荷落地后按缓存戳再原地换一次。
+      // 进场景那一步装的是 AssetManager 按 URL 缓存的旧碰撞图 / 旧行走面（导出后走出去再进来就还是旧的）。
+      if (import.meta.env.DEV) {
+        const sid = this.sceneManager.currentSceneData?.id ?? null;
+        const bust = sid ? this.terrainSync?.bustFor(sid) : undefined;
+        if (sid && bust) {
+          void this.reloadTerrainInPlace(bust).then((ok) => {
+            if (ok) this.terrainSync?.noteApplied(sid, Number(bust));
+          }).catch((e) => console.warn('[terrain] 进场景后按缓存戳重装地形失败', e));
+        }
       }
     };
     // 章节导演（C2）：按清单在 scene:revealed / narrative:stateChanged 上评估开拍/收工；
@@ -1279,39 +1311,67 @@ export class Game {
 
   /**
    * showEmote / showSpeechBubble / showEmoteAndWait / showSpeechBubbleAndWait / showSubtitle.subtitleEmote 共用：resolveActor 未命中时再匹配当前场景热点 id。
+   *
+   * 这是给**一次性**调用方（动作 / 过场一拍 / dev 预览）的入口：命中、未命中每次都记进 F2 日志——一次动作一组行，
+   * 正是排查要看的。**每帧**都要解析的调用方一律走 {@link pollEmoteTarget}，别接这里：F2 日志只留 50 行，
+   * 每帧一条命中 50 帧就把别的诊断全冲掉（2026-09-14 实测：跑马梁闲逛时头顶闲聊每帧解析一次 player）。
    */
   private resolveEmoteTarget(raw: string): IEmoteBubbleAnchor | null {
+    return this.lookupEmoteTarget(raw, (m) => this.debugPanelUI?.log(`[emote/target] ${m}`));
+  }
+
+  /**
+   * 每帧轮询的调用方（头顶闲聊选人、气泡档对白跟人）用的 {@link resolveEmoteTarget}：解析口径同一份，
+   * 但只在「这个调用方问这个 id」的结果**变了**（命中↔未命中、换了场景）时记一次——未命中照样带热点枚举，
+   * 只是不逐帧重刷；结果没变的帧连诊断串都不拼。
+   */
+  private pollEmoteTarget(source: string, raw: string): IEmoteBubbleAnchor | null {
+    const anchor = this.lookupEmoteTarget(raw, null);
+    const panel = this.debugPanelUI;
+    if (!panel) return anchor;
+    const key = `${source}\u0000${String(raw ?? '').trim()}`;
+    const outcome = `${this.sceneManager.currentSceneData?.id ?? ''}\u0000${anchor ? 'hit' : 'miss'}`;
+    if (this.emoteTargetPollOutcomes.get(key) === outcome) return anchor;
+    this.emoteTargetPollOutcomes.set(key, outcome);
+    // 变了才带日志再走一遍：纯读，与上面同一帧同一结果
+    this.lookupEmoteTarget(raw, (m) => panel.log(`[emote/target] ${source}(变了才记): ${m}`));
+    return anchor;
+  }
+
+  /** 解析本体（上面两个入口共用）。`log` 为 null 时整条诊断都不拼，含未命中时的热点枚举。 */
+  private lookupEmoteTarget(raw: string, log: ((m: string) => void) | null): IEmoteBubbleAnchor | null {
     const id = String(raw ?? '').trim();
-    const log = (m: string) => this.debugPanelUI?.log(`[emote/target] ${m}`);
     if (!id) {
-      log('目标 id 为空');
+      log?.('目标 id 为空');
       return null;
     }
     const actor = this.resolveActorFn(id);
     if (actor) {
-      log(`命中 resolveActor entityId=${JSON.stringify(actor.entityId)}`);
+      log?.(`命中 resolveActor entityId=${JSON.stringify(actor.entityId)}`);
       return actor;
     }
-    const scene = this.sceneManager.currentSceneData?.id ?? '';
     const hs = this.sceneManager.getCurrentHotspots();
-    const enumerate = hs
-      .slice(0, 40)
-      .map((h) => {
-        const hid = h.def.id;
-        const key = `${JSON.stringify(hid)}`;
-        return String(hid ?? '').trim() === id ? `${key}⇐match` : key;
-      })
-      .join(', ');
-    log(
-      `resolveActor 未命中 scene=${scene || '(?)'} ` +
-      `热点数=${hs.length}${hs.length > 40 ? `（以下仅列前40个 id）` : ''}：[${enumerate}]`,
-    );
+    if (log) {
+      const scene = this.sceneManager.currentSceneData?.id ?? '';
+      const enumerate = hs
+        .slice(0, 40)
+        .map((h) => {
+          const hid = h.def.id;
+          const key = `${JSON.stringify(hid)}`;
+          return String(hid ?? '').trim() === id ? `${key}⇐match` : key;
+        })
+        .join(', ');
+      log(
+        `resolveActor 未命中 scene=${scene || '(?)'} ` +
+        `热点数=${hs.length}${hs.length > 40 ? `（以下仅列前40个 id）` : ''}：[${enumerate}]`,
+      );
+    }
     const h = hs.find((x) => String(x.def.id ?? '').trim() === id);
     if (!h) {
-      log(`仍未匹配 query=${JSON.stringify(id)}`);
+      log?.(`仍未匹配 query=${JSON.stringify(id)}`);
       return null;
     }
-    log(
+    log?.(
       `命中热点: def.id=${JSON.stringify(h.def.id)} active=${h.active} ` +
       `container.visible=${h.container.visible} ` +
       `parent=${h.container.parent ? 'yes' : 'no'} y=${Math.round(h.container.y)}`,
@@ -1771,6 +1831,7 @@ export class Game {
       createLitShader: (program, colorTex, extra) => this.characterLighting.createCustomLitShader(program, colorTex, extra),
       releaseLitShader: (sh) => this.characterLighting.releaseEntityLitShader(sh),
       canLight: () => this.characterLighting.canCreateCustomLitShader,
+      getLightFactors: () => this.characterLighting.getLightFactors('particles'),
       displayUniforms: this.characterLighting.displayUniforms,
       // 没有照明载荷时 NPC 走 EntityLightingFilter 的色调融入：同一张辐照 probe、同一份光照环境
       // （光环境曲线逐帧原地改 env，这里每帧现取）。toneEnabled 关 ⇒ 强度 0，与 applyShadowAndAO 同口径。
@@ -1875,7 +1936,8 @@ export class Game {
      */
     this.dialogueUI.setSpeakerScreenAnchorResolver((entity) => {
       if (!entity) return null;
-      const anchor = this.resolveEmoteTarget(entity.kind === 'player' ? 'player' : entity.npcId);
+      // 气泡档每帧都来问：走轮询入口，结果变了才记日志
+      const anchor = this.pollEmoteTarget('对白气泡跟人', entity.kind === 'player' ? 'player' : entity.npcId);
       if (!anchor) return null;
       const displayObj = anchor.getDisplayObject() as { x?: number; y?: number } | null;
       if (!displayObj || typeof displayObj.x !== 'number' || typeof displayObj.y !== 'number') return null;
@@ -2929,6 +2991,21 @@ export class Game {
           this.vfxSystem.emitField(def, w);
           return true;
         },
+        applyPlacements: (library) => this.vfxSystem.applyPreviewPlacementLibrary(library),
+        // 走正常的时段推进（'cut'）：外观真变了才换装重载，布置表跟着外观键换
+        requestTimePhase: (timePhase) => {
+          if (!this.dayManager.phaseList.some((p) => p.id === timePhase)) return false;
+          // 已经是那套外观就不推进：工作台要的是外观不是时刻，往回的时段只能跨午夜推（整整一天、天数加一、延迟事件触发）
+          const cur = this.dayManager.currentPhase;
+          if (!phaseRequestNeedsAdvance(
+            this.sceneManager.appearancePhaseFor(cur), this.sceneManager.appearancePhaseFor(timePhase),
+          )) {
+            this.debugPanelUI?.log(`[粒子] 游戏已经是「${timePhase}」那套外观（此刻时段「${cur}」），不推进`);
+            return true;
+          }
+          void this.dayManager.advanceTimeTo(timePhase, 'cut');
+          return true;
+        },
         getStatus: (effectId) => {
           const snap = this.vfxSystem.debugSnapshot();
           const pc = this.player ? { x: this.player.contactX, y: this.player.contactY } : null;
@@ -2944,6 +3021,9 @@ export class Game {
             playerWorld: pc ? this.vfxSystem.sceneToWorld(pc.x, pc.y, 0) : null,
             // 真 3D 还是平面近似：与 VfxSystem 的 hasFieldGeometry 同一条判据
             spaceKind: this.vfxSystem.currentSpace?.kind ?? 'planar',
+            timePhase: this.dayManager.currentPhase,
+            appearancePhase: this.sceneManager.appearancePhaseFor(this.dayManager.currentPhase),
+            placementsApplied: this.vfxSystem.currentPlacement,
             bootId: this.runtimeBootId,
           };
         },
@@ -2951,15 +3031,29 @@ export class Game {
       }, `game:${this.runtimeBootId}`);
       this.vfxSync.start();
       /**
-       * 草木拆层的实时联动：草木工作台重烘完往槽里写一行，游戏原地把拆层换掉——不切场景、
-       * 玩家不动。推的是"盘上那几张 PNG 变了",所以重装时 URL 带 `?v=rev` 绕开按 URL 的纹理缓存。
+       * 草木拆层的实时联动：草木工作台「推给游戏」（预览，资源不动）/「导出到游戏」（写进资源）烘完往槽里写一行，
+       * 游戏原地把拆层换掉——不切场景、玩家不动。推的是"那几张 PNG 变了",所以重装时 URL 带 `?v=rev`
+       * 绕开按 URL 的纹理缓存；预览从 dev server 的预览口装，见 `buildSway`。
        */
       this.swaySync = new RuntimeSwaySync({
-        currentSceneId: () => this.sceneManager.currentSceneData?.id ?? null,
+        currentSceneId: () => this.swayReadySceneId,
         reload: (bust) => this.reloadSwayInPlace(bust),
         log: (m) => this.debugPanelUI?.log(m),
       });
       this.swaySync.start();
+      this.listenEvent('scene:ready', () => { this.swayReadySceneId = this.sceneManager.currentSceneData?.id ?? null; });
+      /**
+       * 地形的实时联动：地形工作台「推给游戏」（预览，资源不动）/「导出到游戏」（写进资源）合成完往槽里写一行，
+       * 游戏原地把碰撞 + 行走面换掉——不切场景、玩家不动。与草木同一套形状；另答工作台的运行时对齐探测
+       * （用**这里的** `isCollision` 判一批画面点，工作台据此说「运行时对齐 ✓」——真判据，不是页面里抄公式）。
+       */
+      this.terrainSync = new RuntimeTerrainSync({
+        currentSceneId: () => this.swayReadySceneId,
+        reload: (bust) => this.reloadTerrainInPlace(bust),
+        probe: (pts) => this.probeTerrainCollision(pts),
+        log: (m) => this.debugPanelUI?.log(m),
+      });
+      this.terrainSync.start();
 
       this.unsubAuthoringHotkey = this.inputManager.subscribeKeyDown((e) => {
         // F3 进/出。**刻意不走 registerPanel**：它不是面板——退出要问存盘、要重载场景，
@@ -3215,8 +3309,7 @@ export class Game {
           (rows[6] * q[0] + rows[7] * q[1] + rows[8] * q[2]) * k,
         ] as [number, number, number];
       },
-      getCharEChroma: () => this.characterLighting.eChroma,
-      setCharEChroma: (v) => { this.characterLighting.eChroma = v; },
+      getEntityLightResponse: (kind) => this.characterLighting.getLightFactors(kind),
       toggleCharProbeViz: () => this.toggleCharProbeViz(),
       charProbeVizActive: () => this.probeVizGfx !== null,
       entityShadowActive: () => this.entityShadowDebugActive(),
@@ -4357,17 +4450,19 @@ export class Game {
   private applySceneDynamicLights(lights: LightDef[]): void {
     if (!this.sceneLighting.active) {
       /**
-       * **降级必须出声**（scene-lighting 卡的硬契约）：场景 JSON 没有 `lighting` 块、
-       * 或载荷没烘 ⇒ 整套光照静默禁用，于是手上举着火把也**一点光都没有**。
-       * 2026-09-12 实测崖墓前段1 就是这样（`lighting === null`），现象是"火把不亮"，
-       * 而作者只会以为预设配错了。一个场景只说一次。
+       * **降级必须出声**（scene-lighting 卡的硬契约）：当前这张原画没烘几何场载荷
+       * （`lighting/<背景基名>/geometry.json` + normal + albedo）⇒ 整套光照禁用，
+       * 于是手上举着火把也**一点光都没有**，而作者只会以为预设配错了。一个场景只说一次。
+       * （2026-09-14 前"没写 lighting 块"也会走到这里，那条已改成按缺省块启用。）
        */
       if (lights.length > 0) {
         const sceneId = this.sceneManager.currentSceneData?.id ?? '(无场景)';
         if (this.dynamicLightMuteWarnedFor !== sceneId) {
           this.dynamicLightMuteWarnedFor = sceneId;
-          const msg = `[heldProp] ${sceneId}：场景光照未启用（没有 lighting 块 / 载荷未烘），`
-            + `手持光源的 ${lights.length} 盏灯不会出现——挂件贴图与粒子照旧`;
+          const bg = this.sceneManager.currentSceneData?.backgrounds?.[0]?.image ?? 'background.png';
+          const msg = `[heldProp] ${sceneId}：场景光照未启用（${bg} 没烘几何场，或没有 depthConfig），`
+            + `手持光源的 ${lights.length} 盏灯不会出现——挂件贴图与粒子照旧。`
+            + `烘：sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene ${sceneId}`;
           console.warn(msg);
           this.debugPanelUI?.log(msg);
         }
@@ -4834,6 +4929,7 @@ export class Game {
       // 必须挂在这儿而不是 setupUnifiedCharacterLighting 里 —— 那个函数在统一角色路径
       // 停用后整体早退，放进去就是死代码（本次就踩过：日志一条不出）。
       this.characterLighting.applyDisplay(this.sceneLighting.params?.display ?? null);
+      this.characterLighting.applyLightFactors(this.sceneLighting.params?.lightFactors);
       this.characterLighting.applyLights(
         this.sceneLighting.packedLights ?? null, this.sceneLighting.wuPerQUnit);
       this.setupUnifiedCharacterLighting();
@@ -4841,6 +4937,7 @@ export class Game {
       // ⚠ 风也要在这里重设——原先只有不打光那条路重设风，打了光的场景粒子会接着吃上一个场景的风。
       this.sceneWind.reset(sceneData.wind);
       this.swayPrimary = primary;
+      this.swayReadySceneId = null;                 // 装完（scene:ready）之前不收草木推送
       this.swaySync?.resetSeen();
       try {
         await this.buildSway(sceneId, sceneData, primary, undefined, 'lit');
@@ -4856,6 +4953,7 @@ export class Game {
       // 不清的话下一个没配 lighting 的场景（崖墓 / 跑马梁）会接着用上一个场景的灯与 wuPerQUnit——
       // 2026-09-12 实测：义庄 → 崖墓前段后仍是义庄那 1 盏烛火、220 wu/q（崖墓前段是 309）。
       this.characterLighting.applyDisplay(null);
+      this.characterLighting.applyLightFactors(undefined);
       this.characterLighting.applyLights(null);
       // 顺序：先拆角色（它的 shader 绑着场景的深度/网格纹理），再卸场景
       this.unifiedCharLighting.teardown();
@@ -4865,6 +4963,7 @@ export class Game {
     // 背景草木摆动（场景风 + 摆动图）：背景没点亮时由这里换成摆动 mesh；缺风 / 缺图就不摆。
     // 风在这里就按新场景重设——装载期间摆动 mesh 已经在画，别让它吃上一个场景的风。
     this.sceneManager.setSwayLoader(async (sceneId, sceneData, primary) => {
+      this.swayReadySceneId = null;                 // 装完（scene:ready）之前不收草木推送
       this.sceneWind.reset(sceneData.wind);
       this.swayPrimary = primary;
       this.swaySync?.resetSeen();
@@ -4881,6 +4980,7 @@ export class Game {
       for (const u of this.swayTexUrls) this.assetManager.dropTexture(u);
       this.swayTexUrls = [];
       this.swayPrimary = null;
+      this.swayReadySceneId = null;
       this.swaySync?.resetSeen();
       this.sceneWind.reset(null);
     });
@@ -5090,10 +5190,18 @@ export class Game {
   ): Promise<Container | null> {
     const dc = sceneData.depthConfig;
     if (!this.sceneWind.params || !dc) return null;
+    const bg = sceneData.backgrounds?.[0]?.image ?? 'background.png';
+    // DEV：草木工作台「推给游戏」推来的预览（页面上此刻那份，烘在本机，资源没动）——这一局里没导出之前一直用它
+    const preview = import.meta.env.DEV ? this.swaySync?.previewFor(sceneId) ?? null : null;
+    if (preview) this.debugPanelUI?.log(`[sway] ${sceneId} 用的是草木工作台推来的预览（第 ${preview.rev} 次，还没导出到资源）`);
+    // 缓存戳：原地重装给的那个；否则这一局里推过（预览或导出）这个场景就带最近那次 rev。
+    // ⚠ 导出之后不带戳的话，走出场景再进来 JSON 桶按旧 URL 还回导出之前的 sway.json、配上新读的 id 图（#28）
+    const bust = cacheBust
+      ?? (preview ? String(preview.rev) : (import.meta.env.DEV ? this.swaySync?.bustFor(sceneId) : undefined));
     const inp = await loadBackgroundSwayInput(this.assetManager, sceneData, {
-      bakeDir: sceneBakeDirUrl(sceneId, sceneData.backgrounds?.[0]?.image ?? 'background.png'),
+      bakeDir: preview ? swayPreviewDirUrl(sceneId, bakeKeyFromBackground(bg)) : sceneBakeDirUrl(sceneId, bg),
       depth: sceneRuntimeAssetUrl(sceneId, dc.depth_map),
-      cacheBust,
+      cacheBust: bust,
     }, (m) => { if (import.meta.env.DEV) console.warn(`[sway] ${sceneId}: ${m}`); this.debugPanelUI?.log(`[sway] ${m}`); });
     if (!inp) return null;
     if (mode === 'lit' && !inp.litPlate) {
@@ -5124,11 +5232,84 @@ export class Game {
     const stale = this.swayTexUrls.filter((u) => !inp.urls.includes(u));
     for (const u of stale) this.assetManager.dropTexture(u);
     this.swayTexUrls = inp.urls.slice();
+    // 进场景时按推送的缓存戳装上的也算"游戏换上了"（原地重装那条由 RuntimeSwaySync 自己记）
+    if (import.meta.env.DEV && bust && cacheBust === undefined) this.swaySync?.noteApplied(sceneId, Number(bust));
     return this.swayBackground.root;
   }
 
   /**
-   * DEV：草木工作台重烘完 → 原地把拆层换掉（不切场景、玩家不动）。
+   * DEV：地形工作台推给游戏 / 导出到游戏之后 → 原地换碰撞（位图 + 旁挂 + 影子裁切纹理）与行走面（ground_d + 区间），
+   * 不切场景、玩家不动。预览从 dev server 的预览口装（`terrainPreviewDirUrl`），导出从资源装；两种都带 `?v=<rev>`。
+   * 行走面换上之后把依赖它的都拨一遍：深度系统的地面场、玩家碰撞闭包、听者、粒子空间、F2 可视化——与载荷落地时那一段同序。
+   */
+  private async reloadTerrainInPlace(cacheBust: string): Promise<boolean> {
+    const sceneData = this.sceneManager.currentSceneData;
+    const sceneId = sceneData?.id;
+    const dc = sceneData?.depthConfig;
+    if (!sceneId || !dc || !this.sceneDepthSystem.isEnabled) return false;
+    const preview = this.terrainSync?.previewFor(sceneId) ?? null;
+    const v = `?v=${encodeURIComponent(cacheBust)}`;
+    const colDir = preview ? terrainPreviewDirUrl(sceneId) : sceneRuntimeAssetUrl(sceneId, 'collision.json').replace(/\/collision\.json$/, '');
+    const say = (m: string) => { if (import.meta.env.DEV) console.warn(`[terrain] ${sceneId}: ${m}`); this.debugPanelUI?.log(`[terrain] ${m}`); };
+    const getJson = async (url: string): Promise<Record<string, unknown> | null> => {
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok || !(r.headers.get('content-type') ?? '').toLowerCase().includes('json')) return null;
+      return await r.json() as Record<string, unknown>;
+    };
+    const sidecar = await getJson(`${colDir}/collision.json${v}`) as (CollisionSidecar | null);
+    if (!sidecar || typeof sidecar.grid_width !== 'number') { say(`${preview ? '预览目录' : '资源'}里没有 collision.json，换不上`); return false; }
+    const pngUrl = `${colDir}/${sidecar.collision_map || dc.collision_map || 'collision.png'}${v}`;
+    const resp = await fetch(pngUrl, { cache: 'no-store' });
+    if (!resp.ok) { say(`碰撞图取不到：${pngUrl}（HTTP ${resp.status}）`); return false; }
+    const bmp = await createImageBitmap(await resp.blob());
+    let tex: Texture | null = null;
+    try { tex = await this.assetManager.loadTexture(pngUrl); } catch { tex = null; }
+    if (this.sceneManager.currentSceneData?.id !== sceneId) return false;     // 等图的时候换了场景
+    this.sceneDepthSystem.replaceCollision(bmp, sidecar, tex);
+    this.refreshPlayerWorldCollision();
+    if (preview) say(`碰撞用的是地形工作台推来的预览（第 ${preview.rev} 次，还没导出到资源）`);
+    // 行走面：按当前装着的烘焙目录（时段原画各一份）取同名目录里的 ground_d
+    const bakeBase = this.characterLighting.currentBakeBase;
+    if (bakeBase) {
+      const key = bakeBase.split('/').filter(Boolean).pop() ?? '';
+      const gdir = preview ? `${terrainPreviewDirUrl(sceneId)}/ground/${encodeURIComponent(key)}` : bakeBase;
+      let range: { min: number; max: number } | null = null;
+      try {
+        if (preview) {
+          const m = await getJson(`${gdir}/ground_d.json${v}`);
+          if (m && typeof m.min === 'number' && typeof m.max === 'number') range = { min: m.min, max: m.max };
+        } else {
+          const m = await getJson(`${gdir}/lighting.json${v}`);
+          const gd = m?.ground_d as { min?: number; max?: number } | undefined;
+          if (gd && typeof gd.min === 'number' && typeof gd.max === 'number') range = { min: gd.min, max: gd.max };
+        }
+      } catch (e) { say(`行走面区间读不到：${String((e as Error)?.message ?? e)}`); }
+      if (range) {
+        const ok = await this.characterLighting.replaceGround(`${gdir}/ground_d.png${v}`, range);
+        if (ok && this.sceneManager.currentSceneData?.id === sceneId) {
+          this.sceneDepthSystem.setGroundDepthField(this.characterLighting.groundDepthField, this.characterLighting.groundDepthTexture);
+          this.refreshPlayerWorldCollision();
+          this.updateAcousticListener(true);
+          this.vfxSystem.onSpaceMaybeChanged();
+          try { this.depthDebugVisualizer?.setGroundTexture(this.characterLighting.groundDepthTexture); } catch { /* 调试链路失手不连坐 */ }
+        } else if (!ok) say('行走面没换上（尺寸不对或取不到），碰撞已换');
+      } else say(`${preview ? '预览' : '资源'}里没有 ${key} 的行走面区间，只换了碰撞`);
+    }
+    return true;
+  }
+
+  /** 地形工作台的运行时对齐探测：用游戏自己的 isCollision 判一批画面点，回 0/1 串 + 当前网格声明 */
+  private probeTerrainCollision(points: Array<[number, number]>): { blocked: string; grid: unknown } | null {
+    if (!this.sceneDepthSystem.isEnabled) return null;
+    const grid = this.sceneDepthSystem.collisionGrid;
+    if (!grid) return null;
+    let s = '';
+    for (const p of points) s += this.sceneDepthSystem.isCollision(Number(p[0]), Number(p[1])) ? '1' : '0';
+    return { blocked: s, grid };
+  }
+
+  /**
+   * DEV：草木工作台推给游戏 / 导出到游戏之后 → 原地把拆层换掉（不切场景、玩家不动）。
    * 新的 root 要插回**旧 root 原来的位置**，否则草木会跑到实体层前面 / 后面去。
    */
   private async reloadSwayInPlace(cacheBust: string): Promise<boolean> {
@@ -5136,16 +5317,89 @@ export class Game {
     const sceneData = this.sceneManager.currentSceneData;
     const primary = this.swayPrimary;
     if (!sceneId || !sceneData || !primary) return false;
+    if (!this.sceneWind.params) {
+      // 没配风：buildSway 静默返回 null（进场景时不报是对的），原来推送这条路游戏日志只剩"装不上（看上面的原因）"、上面一个字没有
+      const msg = `${sceneId} 没配风（场景 JSON 的 wind），推来的草木不会动`;
+      if (import.meta.env.DEV) console.warn(`[sway] ${msg}`);
+      this.debugPanelUI?.log(`[sway] ${msg}`);
+      return false;
+    }
     if (this.swayLit) {
       // 打光场景：位移图由点亮的背景读，场景树里没有草木的节点可插
-      return !!(await this.buildSway(sceneId, sceneData, primary, cacheBust, 'lit'));
+      if (await this.buildSway(sceneId, sceneData, primary, cacheBust, 'lit')) return true;
+      return this.dropSwayIfResourcesHaveNone(sceneId, primary);
     }
     const old = this.swayBackground?.root ?? null;
     const parent = old?.parent ?? null;
-    const index = old && parent ? parent.getChildIndex(old) : -1;
+    if (!parent) return this.attachFirstSwayInPlace(sceneId, sceneData, primary, cacheBust);
+    const index = parent.getChildIndex(old!);
+    const root = await this.buildSway(sceneId, sceneData, primary, cacheBust);
+    if (!root) return this.dropSwayIfResourcesHaveNone(sceneId, primary);
+    parent.addChildAt(root, swayInsertIndex(index, parent.children.length));
+    return true;
+  }
+
+  /**
+   * 原地重装没装上、而这次是按**资源**装的（这个场景没有推送的预览）⇒ 资源里就是没有可用的草木层
+   * （没导出过 / 版本旧 / 一株都没有 / 打光缺补图；纹理读失败会抛、不走这里）。游戏要与资源一致：拆掉挂着的层，合成模式把主背景露回来。
+   * 否则：新场景推给游戏（预览挂上）→ 工作台里「不保存」放弃 → 撤回预览发导出行 → 旧层留着接着摆，工作台却说撤掉了。
+   * 按预览装不上（预览目录缺料）⇒ 旧层留着、照旧报装不上。
+   */
+  private dropSwayIfResourcesHaveNone(sceneId: string, primary: Texture): boolean {
+    if (import.meta.env.DEV && this.swaySync?.previewFor(sceneId)) return false;
+    if (this.sceneManager.currentSceneData?.id !== sceneId || this.swayPrimary !== primary || !this.swayBackground) return false;
+    const wasLit = this.swayLit;
+    // ⚠ 先解绑再销毁（与装载钩子的拆法同序）
+    if (wasLit) this.sceneLighting.detachSway();
+    this.swayLit = false;
+    this.swayBackground.destroy();
+    this.swayBackground = null;
+    for (const u of this.swayTexUrls) this.assetManager.dropTexture(u);
+    this.swayTexUrls = [];
+    // 打光场景的主背景本来就由点亮的网格顶替着，不动它；合成模式装载时藏起了主背景，还回去
+    if (!wasLit) {
+      const host = findSwayHostSprite(this.renderer.backgroundLayer, primary);
+      if (host) host.renderable = true;
+    }
+    this.debugPanelUI?.log(`[sway] ${sceneId}：资源里没有可用的草木层，挂着的那层已拆掉（与资源一致）`);
+    return true;
+  }
+
+  /**
+   * 原地重装、但场景树里**没有旧草木层**：进场景那次没装上（资源里还没导出过 / `sway.json` 版本旧 ⇒ `buildSway` 返回 null，
+   * 装载钩子什么都没插）。原来照走"替换旧层"那条：新层建好了挂不到树上、主背景 Sprite 照样露着，
+   * 却返回 true——游戏日志「已原地换上」、工作台「✔ 游戏里已换上」，画面一株不动，每推一次都一样，直到走出去再进来；
+   * 打光场景还建成了合成模式的层。现在按装载时的规矩接：
+   * - 背景已经点亮（光照网格在树上）⇒ 按打光模式建（位移图交给点亮的背景读，树里不插节点）；
+   * - 否则找到主背景那张 Sprite，插在它的位置上并藏起它（与 `SceneManager` 装载那步同一个做法）；
+   * - 两样都做不到 ⇒ 不建（免得留一个看不见、却还在给纸钱喂 `offsetAt` 的层），返回 false 如实报装不上。
+   */
+  private async attachFirstSwayInPlace(
+    sceneId: string, sceneData: SceneData, primary: Texture, cacheBust: string,
+  ): Promise<boolean> {
+    const litMesh = this.sceneLighting.backgroundMesh;
+    if (litMesh?.parent) {
+      return !!(await this.buildSway(sceneId, sceneData, primary, cacheBust, 'lit'));
+    }
+    if (!findSwayHostSprite(this.renderer.backgroundLayer, primary)) {
+      this.debugPanelUI?.log(`[sway] ${sceneId}：场景树里找不到主背景，推来的草木层没处接`);
+      return false;
+    }
     const root = await this.buildSway(sceneId, sceneData, primary, cacheBust);
     if (!root) return false;
-    if (parent) parent.addChildAt(root, swayInsertIndex(index, parent.children.length));
+    // 建的这一拍里场景可能已经换了 / 背景被拆了：插之前再找一次
+    const host = findSwayHostSprite(this.renderer.backgroundLayer, primary);
+    const hostParent = host?.parent ?? null;
+    if (!host || !hostParent || this.sceneManager.currentSceneData?.id !== sceneId) {
+      // 只拆自己刚建的这份（这期间新场景的装载可能已经换上了它自己的）
+      if (this.swayBackground?.root === root) {
+        this.swayBackground.destroy();
+        this.swayBackground = null;
+      }
+      return false;
+    }
+    hostParent.addChildAt(root, hostParent.getChildIndex(host));
+    host.renderable = false;
     return true;
   }
 
@@ -5196,6 +5450,7 @@ export class Game {
     // 角色侧吃**同一份**打包（2026-08-30「原画 + 加性灯」）：灯在 probe 的 GI 底光上
     // 直接加。与场景共用一次 packLights 是「一视同仁」的构造性保证。
     this.characterLighting.applyDisplay(def.display ?? null);
+    this.characterLighting.applyLightFactors(def.lightFactors);
     this.characterLighting.applyLights(packed ?? null, this.sceneLighting.wuPerQUnit);
     if (packed) {
       this.unifiedCharLighting.applyParams(
@@ -8245,6 +8500,8 @@ export class Game {
     this.vfxSync?.stop();
     this.swaySync?.stop();
     this.swaySync = null;
+    this.terrainSync?.stop();
+    this.terrainSync = null;
     this.swayPrimary = null;
     this.vfxSync = null;
     this.unsubAuthoringHotkey?.();

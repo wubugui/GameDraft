@@ -1,5 +1,6 @@
 {
   "id": "崖墓前段1",
+  "acousticSpace": "峡谷_窄深",
   "name": "崖墓前段后",
   "footstepSet": "木栈道",
   "worldWidth": 1395.91,
@@ -96,8 +97,8 @@
       "y": 587.8
     },
     "spawn_1": {
-      "x": 1246.2,
-      "y": 105.0
+      "x": 1242.71,
+      "y": 98.96
     }
   },
   "camera": {
@@ -131,19 +132,11 @@
     },
     "depth_mapping": {
       "invert": false,
-      "scale": 8.33399316329956,
-      "offset": -5.5852411819458005
+      "scale": 2.3819901611328125,
+      "offset": -1.5984004570007324
     },
     "shader": {
       "depth_per_sy": 0.002219460227272727
-    },
-    "collision": {
-      "x_min": -2.2727272510528564,
-      "z_min": -1.8356552420863825,
-      "cell_size": 0.028666179014684576,
-      "grid_width": 160,
-      "grid_height": 129,
-      "height_offset": 0.0
     },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0
@@ -159,7 +152,23 @@
           "x": 0,
           "y": 0
         }
-      ]
+      ],
+      "lighting": {
+        "lightFactors": {
+          "character": {
+            "indirectFactor": 0.3183098861837907,
+            "directFactor": 1,
+            "totalFactor": 1,
+            "eChroma": 0
+          },
+          "particles": {
+            "indirectFactor": 1.0,
+            "directFactor": 1,
+            "totalFactor": 0.3183098861837907,
+            "eChroma": 0
+          }
+        }
+      }
     }
   },
   "ambientSounds": [
@@ -193,26 +202,55 @@
       }
     }
   ],
-  "vfx": [
-    {
-      "id": "vfx_bats",
-      "effect": "bat_cliff",
-      "anchor": {
-        "x": 1167,
-        "y": 333,
-        "h": 10,
-        "surface": "shell"
-      }
+  "lighting": {
+    "sky": {
+      "kelvin": 6500.0,
+      "intensity": 1.0,
+      "hemi": 0.0
     },
-    {
-      "id": "vfx_drip",
-      "effect": "water_drip",
-      "anchor": {
-        "x": 1087,
-        "y": 533,
-        "h": 12,
-        "surface": "shell"
+    "lights": [],
+    "fog": {
+      "sigma": 0.0,
+      "scaleHeight": 530.0,
+      "baseHeight": 0.0,
+      "kelvin": 7000.0,
+      "scatter": 0.15
+    },
+    "display": {
+      "ev": 0.0,
+      "tonemap": "none",
+      "whiteKelvin": 6500.0,
+      "contrast": 1.0,
+      "saturation": 1.0,
+      "lift": 0.0,
+      "liftKelvin": 6500.0
+    },
+    "emissive": {
+      "gain": 0.0,
+      "coreRadius": 30.0,
+      "haloRadius": 140.0,
+      "haloGain": 0.18
+    },
+    "dehaze": 0.0,
+    "aoStrength": 1.0,
+    "ratioMax": 8.0,
+    "shadowBias": {
+      "bias": 30.8,
+      "thickness": 264.0
+    },
+    "lightFactors": {
+      "character": {
+        "indirectFactor": 0.3183098861837907,
+        "directFactor": 1,
+        "totalFactor": 1,
+        "eChroma": 0
+      },
+      "particles": {
+        "indirectFactor": 1.0,
+        "directFactor": 1,
+        "totalFactor": 0.3183098861837907,
+        "eChroma": 0
       }
     }
-  ]
+  }
 }

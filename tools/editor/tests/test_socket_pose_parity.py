@@ -26,7 +26,9 @@ from tools.editor.shared.animation_sockets import (
     interpolate_poses as _interp,  # noqa: F401  (可读性：下方按语义各自命名)
     load_socket_set,
     normalize_pose,
+    pose_is_front,
     sanitize_socket_set,
+    socket_front_for_facing,
     save_socket_set,
     socket_pose_to_local,
     sockets_path_for_bundle,
@@ -93,11 +95,35 @@ class SocketSidecarRoundtripTests(unittest.TestCase):
         self.assertEqual(fingerprint_of_anim(no_cell), fingerprint_of_anim(ANIM))
 
     def test_defaults_not_written(self) -> None:
-        """angle=0 / front=False 不落键——往返干净，也与 TS 侧解析一致。"""
-        self.assertEqual(normalize_pose({"x": 0.5, "y": 0.5, "angle": 0, "front": False}),
+        """angle=0 / front=True 不落键——往返干净，也与 TS 侧解析一致。"""
+        self.assertEqual(normalize_pose({"x": 0.5, "y": 0.5, "angle": 0, "front": True}),
                          {"x": 0.5, "y": 0.5})
-        self.assertEqual(normalize_pose({"x": 0.5, "y": 0.5, "angle": -12, "front": True, "frame": 2.0}),
-                         {"x": 0.5, "y": 0.5, "angle": -12.0, "front": True, "frame": 2})
+        self.assertEqual(normalize_pose({"x": 0.5, "y": 0.5, "angle": -12, "front": False, "frame": 2.0}),
+                         {"x": 0.5, "y": 0.5, "angle": -12.0, "front": False, "frame": 2})
+
+    def test_front_defaults_to_in_front_of_body(self) -> None:
+        """缺省 = 身前；只有显式 False 才是身后（与 animationSockets.test.ts 同一组用例）。"""
+        self.assertTrue(socket_pose_to_local({"x": 0.5, "y": 0.5}, **HOST)["front"])
+        self.assertFalse(socket_pose_to_local({"x": 0.5, "y": 0.5, "front": False}, **HOST)["front"])
+        # 非布尔脏值：TS 侧解析丢掉它 ⇒ 身前；这里必须同答案
+        self.assertTrue(socket_pose_to_local({"x": 0.5, "y": 0.5, "front": "no"}, **HOST)["front"])
+        self.assertEqual(normalize_pose({"x": 0.5, "y": 0.5, "front": "no"}), {"x": 0.5, "y": 0.5})
+        self.assertTrue(pose_is_front(None))
+
+    def test_facing_left_swaps_front_and_behind(self) -> None:
+        """标注按朝右标：画面朝左时前后互换（与 animationSockets.test.ts 同一组用例）。"""
+        front = {"x": 0.5, "y": 0.5}
+        behind = {"x": 0.5, "y": 0.5, "front": False}
+        self.assertFalse(socket_pose_to_local(front, **{**HOST, "facing": -1})["front"])
+        self.assertTrue(socket_pose_to_local(behind, **{**HOST, "facing": -1})["front"])
+        self.assertFalse(socket_pose_to_local(front, **{**HOST, "host_mirror_x": -1})["front"])
+        self.assertTrue(socket_pose_to_local(behind, **{**HOST, "host_mirror_x": -1})["front"])
+        self.assertTrue(socket_pose_to_local(front, **{**HOST, "facing": -1, "host_mirror_x": -1})["front"])
+        self.assertEqual(socket_pose_to_local({"x": 1, "y": 1}, **{**HOST, "host_mirror_x": -1})["x"], 50.0)
+        self.assertFalse(socket_front_for_facing(True, -1))
+        self.assertTrue(socket_front_for_facing(True, 1))
+        self.assertTrue(pose_is_front({"x": 0.5, "y": 0.5, "front": True}))
+        self.assertFalse(pose_is_front({"x": 0.5, "y": 0.5, "front": False}))
 
     def test_bad_pose_dropped_not_fatal(self) -> None:
         self.assertIsNone(normalize_pose({"x": "bad", "y": 1}))
@@ -122,7 +148,7 @@ class SocketSidecarRoundtripTests(unittest.TestCase):
             path = sockets_path_for_bundle(Path(td), "player_anim")
             path.parent.mkdir(parents=True, exist_ok=True)
             data = sanitize_socket_set(
-                {"sockets": {"h": {"poses": {"0": {"x": 0.62, "y": 0.55, "angle": -12, "front": True}}}}},
+                {"sockets": {"h": {"poses": {"0": {"x": 0.62, "y": 0.55, "angle": -12, "front": False}}}}},
                 ANIM,
             )
             save_socket_set(path, data)
@@ -148,7 +174,7 @@ class SocketSidecarRoundtripTests(unittest.TestCase):
 class SocketAuthoringHelpersTests(unittest.TestCase):
     def _set(self) -> dict:
         return {"sockets": {"h": {"poses": {
-            "0": {"x": 0.0, "y": 0.0, "angle": 0, "front": True},
+            "0": {"x": 0.0, "y": 0.0, "angle": 0, "front": False},
             "4": {"x": 1.0, "y": 1.0, "angle": 40},
         }}}}
 
@@ -167,8 +193,8 @@ class SocketAuthoringHelpersTests(unittest.TestCase):
         self.assertAlmostEqual(poses["2"]["x"], 0.5)
         self.assertAlmostEqual(poses["2"]["y"], 0.5)
         self.assertAlmostEqual(poses["2"]["angle"], 20.0)
-        # front/frame 是离散量，跟起点走而不是插值
-        self.assertTrue(poses["2"]["front"])
+        # front/frame 是离散量，跟起点走而不是插值（起点身后 ⇒ 中间帧也身后）
+        self.assertIs(poses["2"]["front"], False)
         # 端点不动
         self.assertEqual(poses["0"]["x"], 0.0)
         self.assertEqual(poses["4"]["x"], 1.0)

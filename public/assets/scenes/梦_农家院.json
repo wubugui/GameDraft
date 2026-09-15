@@ -27,7 +27,21 @@
     },
     "giGain": 0.0,
     "placeholder": true,
-    "_migration": "identity-2026-08-21"
+    "_migration": "identity-2026-08-21",
+    "lightFactors": {
+      "character": {
+        "indirectFactor": 0.3183098861837907,
+        "directFactor": 1,
+        "totalFactor": 1,
+        "eChroma": 0
+      },
+      "particles": {
+        "indirectFactor": 1.0,
+        "directFactor": 1,
+        "totalFactor": 0.3183098861837907,
+        "eChroma": 0
+      }
+    }
   },
   "id": "梦_农家院",
   "name": "梦·农家院",
@@ -179,14 +193,6 @@
     },
     "shader": {
       "depth_per_sy": 0.0012669896205450629
-    },
-    "collision": {
-      "x_min": -1.7857142686843872,
-      "z_min": -1.7494419415634104,
-      "cell_size": 0.02241794418238994,
-      "grid_width": 160,
-      "grid_height": 159,
-      "height_offset": 0.0
     },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0

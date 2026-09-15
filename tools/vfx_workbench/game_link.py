@@ -7,8 +7,16 @@
   工作台页 ◀──/api/link/status─── 本服务 ◀──GET  /__gamedraft-api/runtime-vfx-status── vite ◀── 游戏
 
 两个槽方向不同（与声学同一条论述，见 `src/dev/runtimeVfxSync.ts` 文件头）：
-  ``runtime-vfx``        工作台 → 游戏：正在编辑的效果 id + 工作态定义 + 一次刺激请求（序号 + 场 + 画面点）。``rev`` 服务端自增
-  ``runtime-vfx-status`` 游戏 → 工作台：场景、引用该效果的实例 id / 状态 / 只数、stats、玩家脚点、bootId、心跳。按页分桶
+  ``runtime-vfx``        工作台 → 游戏：正在编辑的效果 id + 工作态定义 + 一次刺激请求（序号 + 场 + 画面点）
+                         + **整份工作态布置库**（``placements: {library, sceneId, phase}``）+ 切时段请求
+                         （``phaseRequest: {seq, timePhase}``）。``rev`` 服务端自增
+  ``runtime-vfx-status`` 游戏 → 工作台：场景、引用该效果的实例 id / 状态 / 只数、stats、玩家脚点、bootId、心跳、
+                         此刻时段 / 外观键 / 用的是哪份布置（``timePhase`` / ``appearancePhase`` / ``placementsApplied``）。按页分桶
+
+**两个序号（刺激 / 切时段）是「粘」的**：发过一次以后，之后每一发文档都带着**同一个**序号原样重发，
+直到下一次请求把它加一。槽是整份覆盖的，游戏 400ms 才轮询一次——不粘的话，作者点完「让游戏切到这个时段」
+紧跟着拖一下东西（120ms 防抖就发），那份带请求的文档还没被游戏读到就被盖掉了，而且一点痕迹都没有。
+同一个序号重发不会重做（游戏只认比记住的大的），所以粘着是安全的。
 
 **地址发现、拉起游戏、切场景这三件与声学逐字同一套**，所以直接 import 声学工作台那份
 （`normalize_base / discover_game_url / game_url_for / console_state / console_open_dev_entry /
@@ -61,6 +69,15 @@ def _vfx_slot_alive(base: str) -> bool:
     return _get_json(normalize_base(base) + STATUS_PATH, timeout=0.6) is not None
 
 
+class SlotRejected(ConnectionError):
+    """dev server 连上了、但把这份文档**拒了**（HTTP 4xx/5xx）。文字 = 它回的 body，原样给页面看，别吞。"""
+
+    def __init__(self, code: int, body: str):
+        super().__init__(f"HTTP {code} {body}".strip())
+        self.code = code
+        self.body = body
+
+
 def _boot_id_of(doc) -> str | None:
     """状态文档里那页的实例 id：显式 ``bootId``，没有就从 ``writer``（``game:<bootId>``）里抠。"""
     if not isinstance(doc, dict):
@@ -79,9 +96,15 @@ class VfxLink:
         self.writer = writer or f"vfx-workbench:{os.getpid()}"
         self.published = 0
         self.last_rev = 0
-        #: 刺激序号由服务端发（页面刷新后从 0 数起会被游戏当旧序号吞掉）
+        #: 刺激 / 切时段的序号由服务端发（页面刷新后从 0 数起会被游戏当旧序号吞掉）
         self.probe_seq = 0
+        self.phase_seq = 0
         self._slot_seq_seeded = False
+        #: 最近一次的刺激 / 切时段请求（带着序号）：之后每一发都原样重发（见模块文档「粘」）
+        self.last_probe: dict | None = None
+        self.last_phase_request: dict | None = None
+        #: 每个效果最近一份**过了形状闸门**的定义：作者改到一半效果暂时不合法时推它，布置照推（见 serve 的 publish）
+        self._good_defs: dict[str, dict] = {}
         self.fail_streak = 0
         self.last_error = ""
         self.last_ok_at = 0.0
@@ -109,10 +132,10 @@ class VfxLink:
         except urllib.error.HTTPError as e:
             detail = ""
             try:
-                detail = e.read().decode("utf-8", "replace")[:200]
+                detail = e.read().decode("utf-8", "replace")[:400]
             except Exception:  # noqa: BLE001
                 pass
-            raise ConnectionError(f"HTTP {e.code} {detail}".strip()) from e
+            raise SlotRejected(e.code, detail) from e
         except (urllib.error.URLError, OSError, TimeoutError) as e:
             raise ConnectionError(str(getattr(e, "reason", e))) from e
         try:
@@ -151,23 +174,55 @@ class VfxLink:
             self.fail_streak = 0
 
     # ------------------------------------------------------------------ api
+    def remember_good_def(self, effect_id: str, definition: dict) -> None:
+        """记下这份过了闸门的定义（只留最近一份；进程内，不落盘）。"""
+        if effect_id and isinstance(definition, dict):
+            self._good_defs[effect_id] = definition
+
+    def good_def(self, effect_id: str) -> dict | None:
+        return self._good_defs.get(effect_id)
+
     def publish(self, effect_id: str, definition: dict, probe: dict | None = None,
-                scene_id: str | None = None) -> dict:
-        """把工作态效果推给游戏。``probe`` = 一次刺激：``{field: VfxFieldDef, at: {x, y, h}}``（画面点 + 离地高）。"""
+                scene_id: str | None = None, placements: dict | None = None,
+                phase_request: dict | None = None) -> dict:
+        """把工作态效果推给游戏。
+
+        ``probe`` = 一次刺激：``{field: VfxFieldDef, at: {x, y, h}}``（画面点 + 离地高）；
+        ``placements`` = ``{library, sceneId, phase}``（整份工作态布置库，调用方已过形状闸门）；
+        ``phase_request`` = ``{timePhase}``（「让游戏切到这个时段」，序号这里发）。
+        刺激与切时段请求发过之后一直粘在后续文档里（同一个序号，见模块文档）。
+        """
         payload: dict = {"writer": self.writer, "effectId": effect_id, "def": definition}
         if probe:
-            seq = max(self.probe_seq, self._slot_probe_seq(), int(probe.get("seq", 0) or 0)) + 1
+            self._seed_slot_seqs()
+            seq = max(self.probe_seq, int(probe.get("seq", 0) or 0)) + 1
             self.probe_seq = seq
             at = probe.get("at") if isinstance(probe.get("at"), dict) else {}
-            payload["probe"] = {
+            self.last_probe = {
                 "seq": seq,
                 "field": probe.get("field") or {},
                 "at": {"x": float(at.get("x", 0)), "y": float(at.get("y", 0)), "h": float(at.get("h", 0))},
             }
+        tp = str((phase_request or {}).get("timePhase") or "").strip()
+        if tp:
+            self._seed_slot_seqs()
+            seq = max(self.phase_seq, int((phase_request or {}).get("seq", 0) or 0)) + 1
+            self.phase_seq = seq
+            self.last_phase_request = {"seq": seq, "timePhase": tp}
+        if self.last_probe:
+            payload["probe"] = self.last_probe
+        if self.last_phase_request:
+            payload["phaseRequest"] = self.last_phase_request
         if scene_id:
             payload["sceneId"] = scene_id
+        if isinstance(placements, dict):
+            payload["placements"] = placements
         try:
             res = self._request(DOC_PATH, payload)
+        except SlotRejected as e:
+            # dev server 在、但拒了这份（形状不对）：原样把它说的话给页面，别当成"连不上"
+            self._fail(e)
+            return {"ok": False, "err": e.body or str(e), "connected": True, "rejected": True}
         except ConnectionError as e:
             self._fail(e)
             return {"ok": False, "err": str(e), "connected": False}
@@ -175,23 +230,32 @@ class VfxLink:
         rev = int(res.get("rev") or 0)
         self.last_rev = max(self.last_rev, rev)
         self.published += 1
-        out = {"ok": True, "rev": rev, "connected": True}
+        out: dict = {"ok": True, "rev": rev, "connected": True}
         if probe:
-            out["probeSeq"] = payload["probe"]["seq"]
+            out["probeSeq"] = self.last_probe["seq"]
+        if tp:
+            out["phaseSeq"] = self.last_phase_request["seq"]
         return out
 
-    def _slot_probe_seq(self) -> int:
-        """槽里现有文档的刺激序号（服务刚起时问一次，之后靠自己数）。问不到就 0。"""
+    def _seed_slot_seqs(self) -> None:
+        """槽里现有文档的刺激 / 切时段序号（服务刚起时问一次，之后靠自己数）。问不到就当 0。"""
         if self._slot_seq_seeded:
-            return 0
+            return
         self._slot_seq_seeded = True
         try:
             res = self._request(DOC_PATH)
             doc = res.get("doc") if isinstance(res, dict) else None
-            pr = doc.get("probe") if isinstance(doc, dict) else None
-            return int(pr.get("seq", 0) or 0) if isinstance(pr, dict) else 0
         except (ConnectionError, ValueError, TypeError, AttributeError):
-            return 0
+            return
+        if not isinstance(doc, dict):
+            return
+        for key, attr in (("probe", "probe_seq"), ("phaseRequest", "phase_seq")):
+            pr = doc.get(key)
+            try:
+                seq = int(pr.get("seq", 0) or 0) if isinstance(pr, dict) else 0
+            except (TypeError, ValueError):
+                seq = 0
+            setattr(self, attr, max(getattr(self, attr), seq))
 
     def status(self) -> dict:
         common = {"gameUrl": self.base, "lastRev": self.last_rev, "published": self.published,

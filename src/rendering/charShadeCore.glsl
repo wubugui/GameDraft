@@ -21,3 +21,13 @@ vec3 shadeCharacterLinear(vec3 albSrgb, vec3 E, float eChroma, float beta) {
   E = mix(vec3(lumaE), E, eChroma);   // sprite 缺的是明暗、颜色自带 → 默认只借明暗
   return srgb2lin(albSrgb) * E / 3.14159265 * beta;
 }
+
+// factor 全为 1 时与背景 albedo * lampE 同尺。旧曝光等价折入场景 totalFactor。
+// 色度只由各自路径传入；粒子不再读取角色的运行时调色覆盖。
+vec3 shadeEntityLinear(vec3 albSrgb, vec3 indirectE, vec3 directE,
+                      float indirectFactor, float directFactor, float totalFactor,
+                      float eChroma) {
+  vec3 E = indirectE * indirectFactor + directE * directFactor;
+  float luma = dot(E, vec3(0.2126, 0.7152, 0.0722));
+  return srgb2lin(albSrgb) * mix(vec3(luma), E, eChroma) * totalFactor;
+}

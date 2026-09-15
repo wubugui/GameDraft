@@ -1,0 +1,123 @@
+{
+  "id": "teahouse_haze",
+  "label": "茶馆 · 满堂烟气",
+  "emitters": [
+    {
+      "id": "haze",
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/smoke_puff.png",
+        "sizeWu": 125,
+        "sizeJitter": [
+          0.8,
+          1.2
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.8
+          ],
+          [
+            0.4,
+            1.1
+          ],
+          [
+            1,
+            1.45
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.12,
+            0.22
+          ],
+          [
+            0.7,
+            0.16
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.69,
+          0.72,
+          0.72
+        ],
+        "lit": false,
+        "softEdgeWu": 25,
+        "spin": {
+          "rate": [
+            -3,
+            4
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 24,
+        "rate": 2.3,
+        "burst": 16,
+        "shape": {
+          "kind": "box",
+          "size": [
+            220,
+            18,
+            60
+          ]
+        },
+        "speed": [
+          1,
+          2
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 20
+      },
+      "motion": {
+        "drag": 1.2,
+        "wind": [
+          7,
+          0,
+          -1
+        ],
+        "buoyancy": 3,
+        "turbulence": {
+          "strength": 3,
+          "scale": 65,
+          "speed": 0.12
+        },
+        "maxSpeed": 10
+      },
+      "life": {
+        "seconds": [
+          9,
+          12
+        ]
+      }
+    }
+  ],
+  "authoring": {
+    "sceneId": "teahouse",
+    "background": "background.png",
+    "anchor": {
+      "x": 340,
+      "y": 330,
+      "h": 215,
+      "surface": "ground"
+    },
+    "note": "离地胸口至头顶高度的室内积烟；ground 锚点 h 为真正世界竖直离地高度，避免 shell 法线偏移。"
+  }
+}

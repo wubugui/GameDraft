@@ -11,8 +11,15 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
 
 from .file_io import JsonFileError, StagedJsonWriter, read_json, write_json, list_json_files
+from .shared.action_structure import flatten_actions
 from .shared.animation_sockets import load_socket_set, sockets_path_for_bundle
 from .shared.project_paths import ProjectPaths
+from .shared import vfx_placements as vfx_placements_lib
+
+
+def _dict_rows(value: Any) -> list[dict]:
+    """列表字段里的对象条目；缺键 / 形状不对当空（与运行时跳过非对象条目同口径）。"""
+    return [v for v in value if isinstance(v, dict)] if isinstance(value, list) else []
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +109,13 @@ class ProjectModel(QObject):
         #: 唯一写者是独立的粒子工作台（tools/vfx_workbench）；与 trajectories 同一待遇——
         #: 没有脏桶、不进 save_all、不进外部改动基线、不淘汰孤儿文件。
         self.vfx_effects: dict[str, dict] = {}
+        #: 粒子布置库 `assets/data/vfx_placements.json` 的**只读镜像**（形状见 shared/vfx_placements.py）：
+        #: 哪个效果摆在哪个场景的哪套时段外观里、锚点与发射区域 / 范围区域。唯一写者同样是粒子工作台；
+        #: 主编辑器只拿它在场景画布上**显示**区域、给 playVfx / 条件叶出实例候选——
+        #: 与 vfx_effects 同一待遇：没有脏桶、不进 save_all、不进外部改动基线。
+        self.vfx_placements: dict = vfx_placements_lib.empty_library()
+        #: 布置库读不懂时的错误文本（空 = 正常 / 文件不存在）。读不懂时镜像退成空库，场景页 vfx 块里红字报出来。
+        self.vfx_placements_error: str = ""
         self.flag_registry: dict = {}
         #: 叠图登记：短 id → 路径字符串，或 {image, playSfx, sfx}（带叠图音配置的形态）
         self.overlay_images: dict[str, object] = {}
@@ -440,6 +454,7 @@ class ProjectModel(QObject):
 
         self._scan_trajectories_from_disk()
         self._scan_vfx_from_disk()
+        self._scan_vfx_placements_from_disk()
 
         from .flag_registry import flag_registry_path, load_flag_registry
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
@@ -582,18 +597,35 @@ class ProjectModel(QObject):
                 continue
             self.vfx_effects[path.stem] = doc
 
-    def reload_vfx_from_disk(self) -> bool:
-        """重读效果资产目录（粒子工作台存盘后同步候选；**不标脏、不动基线**）。
+    def _scan_vfx_placements_from_disk(self) -> None:
+        """重读布置库 `assets/data/vfx_placements.json` 进只读镜像 `self.vfx_placements`。
 
-        返回「盘上那份与内存这份是不是真的不一样」，口径与 :meth:`reload_trajectories_from_disk`
+        同 :meth:`_scan_vfx_from_disk` 的理由**不走 ``_load``**（唯一写者是粒子工作台，登记基线 =
+        下一次 Save All 把工作台刚存的布置当外部并发改动拦下）。读盘与形状判定只走共享模块
+        ``shared/vfx_placements.load_library``——校验器 / 工作台读的是同一份，不各写一套路径。
+        文件不存在 = 空库无错；读不懂 = 空库 + ``vfx_placements_error``（场景页 vfx 块里红字报）。
+        """
+        if self.project_path is None:
+            self.vfx_placements = vfx_placements_lib.empty_library()
+            self.vfx_placements_error = ""
+            return
+        self.vfx_placements, self.vfx_placements_error = vfx_placements_lib.load_library(self.project_path)
+
+    def reload_vfx_from_disk(self) -> bool:
+        """重读效果资产目录**与布置库**（粒子工作台存盘后同步；**不标脏、不动基线**）。
+
+        返回「盘上那两份与内存这两份是不是真的不一样」，口径与 :meth:`reload_trajectories_from_disk`
         完全一致——自动路径（工作台还开着时主窗回到前台、工作台退出）每次都会调它，
         内容没变就不发 ``data_changed``，免得每激活一次窗口白重建一遍全页动作行。
+        效果与布置**一起**判、一起发：两样都变了也只发一次 ``data_changed("vfx", "")``
+        （工作台一次保存常常同时写效果与布置，发两次 = 全页候选白重建两遍）。
         """
         if self.project_path is None:
             return False
-        before = self.vfx_effects
+        before = (self.vfx_effects, self.vfx_placements, self.vfx_placements_error)
         self._scan_vfx_from_disk()
-        if self.vfx_effects == before:
+        self._scan_vfx_placements_from_disk()
+        if (self.vfx_effects, self.vfx_placements, self.vfx_placements_error) == before:
             return False
         self.data_changed.emit("vfx", "")
         return True
@@ -1796,20 +1828,34 @@ class ProjectModel(QObject):
         return out
 
     def vfx_instance_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
-        """场景里摆的效果实例 `(id, label)`。playVfx / stopVfx / setVfxState 的 instanceId 候选。"""
+        """本场景布置过的效果实例 `(id, label)`。playVfx / stopVfx / setVfxState / 条件叶 vfx 的 instanceId 候选。
+
+        读**布置库**（场景 JSON 早就没有 ``vfx`` 了）。候选 = 本场景各时段外观 id 的**并集**
+        （``vfx_placements.instance_ids_for_scene``，与运行时"按 id 找当前在场的实例"同口径：
+        白天夜里各摆一条同 id 的，动作两个时段都认）。label 写上效果与出现在哪几份
+        （``bat_cliff · 基底/夜``）——只在夜里摆的实例白天点名找不到，下拉里不写出来就得靠猜。
+        """
         if not scene_id:
             return []
-        sc = self.scenes.get(scene_id) or {}
-        out: list[tuple[str, str]] = []
-        for row in sc.get("vfx") or []:
-            if not isinstance(row, dict):
-                continue
-            iid = str(row.get("id", "") or "").strip()
-            if not iid:
-                continue
-            eff = str(row.get("effect", "") or "").strip()
-            out.append((iid, f"{iid}（{eff or '未指定效果'}）"))
-        return out
+        lib = self.vfx_placements
+        where: dict[str, list[str]] = {}
+        effects: dict[str, list[str]] = {}
+        for ph in vfx_placements_lib.phases_in_library(lib, scene_id):
+            ph_name = "基底" if ph == vfx_placements_lib.BASE else ph
+            for row in vfx_placements_lib.rows_for(lib, scene_id, ph):
+                iid = str(row.get("id") or "").strip()
+                if not iid:
+                    continue
+                eff = str(row.get("effect") or "").strip() or "未指定效果"
+                if ph_name not in where.setdefault(iid, []):
+                    where[iid].append(ph_name)
+                if eff not in effects.setdefault(iid, []):
+                    effects[iid].append(eff)
+        return [
+            (iid, f"{iid}（{'/'.join(effects[iid])} · {'/'.join(where[iid])}）")
+            for iid in vfx_placements_lib.instance_ids_for_scene(lib, scene_id)
+            if iid in where
+        ]
 
     def scene_light_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
         """场景灯 `(id, label)`。`fadeLight.lightId` 的候选。
@@ -2972,39 +3018,26 @@ class ProjectModel(QObject):
         for sc in self.scenes.values():
             self._collect_flags_from_scene(sc, flags)
         # Cutscene 使用新 steps schema（无副作用，不含 set_flag）
-        for it in self.items:
-            for dd in it.get("dynamicDescriptions", []):
-                for cond in dd.get("conditions", []):
-                    if "flag" in cond:
-                        flags.add(cond["flag"])
-        for ch in self.archive_characters:
-            for cond in ch.get("unlockConditions", []):
-                if "flag" in cond:
-                    flags.add(cond["flag"])
-            for imp in ch.get("impressions", []):
-                for cond in imp.get("conditions", []):
-                    if "flag" in cond:
-                        flags.add(cond["flag"])
-            for ki in ch.get("knownInfo", []):
-                for cond in ki.get("conditions", []):
-                    if "flag" in cond:
-                        flags.add(cond["flag"])
+        conds = self._collect_flags_from_condition_list
+        for it in _dict_rows(self.items):
+            for dd in _dict_rows(it.get("dynamicDescriptions")):
+                conds(dd.get("conditions"), flags)
+        for ch in _dict_rows(self.archive_characters):
+            conds(ch.get("unlockConditions"), flags)
+            for imp in _dict_rows(ch.get("impressions")):
+                conds(imp.get("conditions"), flags)
+            for ki in _dict_rows(ch.get("knownInfo")):
+                conds(ki.get("conditions"), flags)
         entries = self.archive_lore
         if isinstance(entries, dict):
             entries = entries.get("entries", [])
-        for le in entries:
-            for cond in le.get("unlockConditions", []):
-                if "flag" in cond:
-                    flags.add(cond["flag"])
-        for doc in self.archive_documents:
-            for cond in doc.get("discoverConditions", []):
-                if "flag" in cond:
-                    flags.add(cond["flag"])
-        for bk in self.archive_books:
-            for pg in bk.get("pages", []):
-                for cond in pg.get("unlockConditions", []):
-                    if "flag" in cond:
-                        flags.add(cond["flag"])
+        for le in _dict_rows(entries):
+            conds(le.get("unlockConditions"), flags)
+        for doc in _dict_rows(self.archive_documents):
+            conds(doc.get("discoverConditions"), flags)
+        for bk in _dict_rows(self.archive_books):
+            for pg in _dict_rows(bk.get("pages")):
+                conds(pg.get("unlockConditions"), flags)
         return flags
 
     def registry_flag_choices(self, scene_id: str | None = None) -> list[str]:
@@ -3015,74 +3048,77 @@ class ProjectModel(QObject):
     # ---- private helpers --------------------------------------------------
 
     @staticmethod
+    def _collect_flags_from_condition_expr(expr: Any, flags: set[str]) -> None:
+        """ConditionExpr（叶子或 all/any/not 组合）里读的每个 flag。
+
+        口径同 graph_editor ``json_parser._extract_flags_from_condition_expr``；
+        叶子形状以 ``src/systems/graphDialogue/evaluateGraphCondition.ts`` 为准。
+        """
+        if not isinstance(expr, dict):
+            return
+        for key in ("all", "any"):
+            sub = expr.get(key)
+            if isinstance(sub, list):
+                for e in sub:
+                    ProjectModel._collect_flags_from_condition_expr(e, flags)
+        ProjectModel._collect_flags_from_condition_expr(expr.get("not"), flags)
+        fk = expr.get("flag")
+        if isinstance(fk, str) and fk:
+            flags.add(fk)
+
+    @staticmethod
+    def _collect_flags_from_condition_list(conds: Any, flags: set[str]) -> None:
+        """``ConditionExpr[]`` 字段（conditions / preconditions / unlockConditions …）。"""
+        for expr in conds if isinstance(conds, list) else []:
+            ProjectModel._collect_flags_from_condition_expr(expr, flags)
+
+    @staticmethod
+    def _collect_flags_from_actions(actions: Any, flags: set[str]) -> None:
+        """动作列表里写的 flag（setFlag.key）与读的 flag（runActionsIf.params.condition）。
+
+        往哪些子动作列表下钻读唯一真相源 ``action_structure.NESTED_ACTION_SLOTS``
+        （``flatten_actions``）；手写分支曾只下钻 enableRuleOffers 一种，漏了 runActions /
+        chooseAction / randomBranch / addDelayedEvent / runActionsIf。
+        """
+        for _path, act in flatten_actions(actions):
+            params = act.get("params") if isinstance(act.get("params"), dict) else {}
+            at = act.get("type")
+            if at == "setFlag":
+                key = params.get("key")
+                if isinstance(key, str) and key:
+                    flags.add(key)
+            elif at == "runActionsIf":
+                ProjectModel._collect_flags_from_condition_expr(params.get("condition"), flags)
+
+    @staticmethod
     def _collect_flags_from_conditions(items: list[dict], flags: set[str]) -> None:
-        for item in items:
+        conds = ProjectModel._collect_flags_from_condition_list
+        acts = ProjectModel._collect_flags_from_actions
+        for item in _dict_rows(items):
             for key in ("preconditions", "completionConditions", "conditions",
                         "unlockConditions", "discoverConditions"):
-                for cond in item.get(key, []):
-                    if "flag" in cond:
-                        flags.add(cond["flag"])
-            for opt in item.get("options", []):
-                for cond in opt.get("conditions", []):
-                    if "flag" in cond:
-                        flags.add(cond["flag"])
-                for act in opt.get("resultActions", []):
-                    p = act.get("params", {})
-                    if act.get("type") == "setFlag" and "key" in p:
-                        flags.add(p["key"])
-            for act in item.get("acceptActions", []):
-                p = act.get("params", {})
-                if act.get("type") == "setFlag" and "key" in p:
-                    flags.add(p["key"])
-            for act in item.get("rewards", []):
-                p = act.get("params", {})
-                if act.get("type") == "setFlag" and "key" in p:
-                    flags.add(p["key"])
-            for edge in item.get("nextQuests", []):
-                for cond in edge.get("conditions", []):
-                    if "flag" in cond:
-                        flags.add(cond["flag"])
+                conds(item.get(key), flags)
+            for opt in _dict_rows(item.get("options")):
+                conds(opt.get("conditions"), flags)
+                acts(opt.get("resultActions"), flags)
+            acts(item.get("acceptActions"), flags)
+            acts(item.get("rewards"), flags)
+            for edge in _dict_rows(item.get("nextQuests")):
+                conds(edge.get("conditions"), flags)
 
     @staticmethod
     def _collect_flags_from_scene(sc: dict, flags: set[str]) -> None:
-        for act in sc.get("onEnter", []) or []:
-            if not isinstance(act, dict):
-                continue
-            p = act.get("params", {}) or {}
-            if act.get("type") == "setFlag" and "key" in p:
-                flags.add(p["key"])
-            elif act.get("type") == "enableRuleOffers":
-                for slot in (p.get("slots") or []):
-                    if not isinstance(slot, dict):
-                        continue
-                    for ract in slot.get("resultActions", []) or []:
-                        rp = ract.get("params", {}) or {}
-                        if ract.get("type") == "setFlag" and "key" in rp:
-                            flags.add(rp["key"])
-        for hs in sc.get("hotspots", []):
-            for cond in hs.get("conditions", []):
-                if "flag" in cond:
-                    flags.add(cond["flag"])
-            data = hs.get("data", {})
-            for act in data.get("actions", []):
-                p = act.get("params", {})
-                if act.get("type") == "setFlag" and "key" in p:
-                    flags.add(p["key"])
-        for zone in sc.get("zones", []):
-            for cond in zone.get("conditions", []):
-                if "flag" in cond:
-                    flags.add(cond["flag"])
+        conds = ProjectModel._collect_flags_from_condition_list
+        acts = ProjectModel._collect_flags_from_actions
+        if not isinstance(sc, dict):
+            return
+        acts(sc.get("onEnter"), flags)
+        for hs in _dict_rows(sc.get("hotspots")):
+            conds(hs.get("conditions"), flags)
+            data = hs.get("data")
+            if isinstance(data, dict):
+                acts(data.get("actions"), flags)
+        for zone in _dict_rows(sc.get("zones")):
+            conds(zone.get("conditions"), flags)
             for ev in ("onEnter", "onStay", "onExit"):
-                for act in zone.get(ev, []) or []:
-                    p = act.get("params", {}) or {}
-                    at = act.get("type")
-                    if at == "setFlag" and "key" in p:
-                        flags.add(p["key"])
-                    elif at == "enableRuleOffers":
-                        for slot in (p.get("slots") or []):
-                            if not isinstance(slot, dict):
-                                continue
-                            for ract in slot.get("resultActions", []) or []:
-                                rp = ract.get("params", {}) or {}
-                                if ract.get("type") == "setFlag" and "key" in rp:
-                                    flags.add(rp["key"])
+                acts(zone.get(ev), flags)

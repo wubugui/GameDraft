@@ -8,6 +8,7 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -1240,6 +1241,25 @@ class NarrativeEditorBridge(QObject):
             "})()",
         ), ensure_ascii=False)
 
+    @Slot(str, result=str)
+    def summarizeActions(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """只读：动作列表 → 带层级的一行摘要（网页「进入时动作」预览用）。
+
+        叫法与原生大纲窗同源（shared/action_structure），网页不另抄一份摘要逻辑；
+        旧预览把 runActionsIf 的条件直接 JSON.stringify，长条件一坨挤满面板。
+        """
+        try:
+            parsed = json.loads(payload or "[]")
+        except Exception as exc:
+            return json.dumps({"ok": False, "reason": f"invalid actions payload: {exc}"}, ensure_ascii=False)
+        from ..shared.action_structure import count_actions_deep, outline_rows
+
+        rows = outline_rows(parsed if isinstance(parsed, list) else [])
+        return json.dumps(
+            {"ok": True, "rows": rows, "total": count_actions_deep(parsed if isinstance(parsed, list) else [])},
+            ensure_ascii=False,
+        )
+
     @Slot(str, str, result=str)
     def editActions(self, label: str, payload: str) -> str:  # noqa: N802 - Qt slot name
         try:
@@ -1250,35 +1270,26 @@ class NarrativeEditorBridge(QObject):
             return json.dumps({"ok": False, "reason": "actions payload must be a list"}, ensure_ascii=False)
 
         try:
-            from PySide6.QtWidgets import QDialog, QDialogButtonBox
-            from ..shared.action_editor import ActionEditor
+            from PySide6.QtWidgets import QDialog
+            from ..shared.action_outline_editor import ActionOutlineDialog
         except Exception as exc:  # pragma: no cover - depends on full editor imports
             return json.dumps({"ok": False, "reason": f"ActionEditor is unavailable: {exc}"}, ensure_ascii=False)
 
         parent = self.parent() if isinstance(self.parent(), QWidget) else None
-        dialog = QDialog(parent)
         title = (label or "Actions").strip() or "Actions"
-        dialog.setWindowTitle(title)
-        dialog.resize(820, 640)  # 略缩以适配 13"，并记忆几何
-
-        layout = QVBoxLayout(dialog)
-        editor = ActionEditor(title, dialog)
-        editor.set_project_context(self._model, None)
-        editor.set_data([a for a in parsed if isinstance(a, dict)])
-        layout.addWidget(editor, 1)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            dialog,
+        # 大纲树 + 检查器（旧形态是把内联 ActionEditor 平铺进无滚动的对话框：一条带长条件的
+        # runActionsIf 就把整个窗口占满、后面的动作全看不见——2026-09-14 制作人打回）。
+        # 工作副本是原样 JSON：只看不改 = 逐字返回，非对象条目也原样保留（运行时自己跳过）。
+        dialog = ActionOutlineDialog(
+            title,
+            parsed,
+            model=self._model,
+            parent=parent,
+            geometry_key="narrative_action_outline",
         )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-        remember_dialog_geometry(dialog, "narrative_action_editor")
-
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return json.dumps({"ok": False, "reason": "cancelled"}, ensure_ascii=False)
-        return json.dumps({"ok": True, "actions": editor.to_list()}, ensure_ascii=False)
+        return json.dumps({"ok": True, "actions": dialog.result_actions()}, ensure_ascii=False)
 
     @Slot(str, str, result=str)
     def editConditions(self, label: str, payload: str) -> str:  # noqa: N802 - Qt slot name
@@ -3038,26 +3049,21 @@ def _validate_action_def(action: dict[str, Any], path: str, issues: list[dict[st
                 owner,
                 target,
             )
-    if action_type in ("runActions", "addDelayedEvent") and "actions" in params:
-        _validate_actions(params.get("actions"), f"{path}.params.actions", issues, owner, target)
-    elif action_type == "chooseAction":
-        options = params.get("options")
-        if options is not None and not isinstance(options, list):
-            _issue(issues, "error", "action.container.shape", f"{owner}: chooseAction params.options must be an array", f"{path}.params.options", owner, target)
-        for idx, option in enumerate(options if isinstance(options, list) else []):
-            if isinstance(option, dict) and "actions" in option:
-                _validate_actions(option.get("actions"), f"{path}.params.options[{idx}].actions", issues, owner, target)
-    elif action_type == "randomBranch":
-        for key in ("aboveActions", "belowActions"):
-            if key in params:
-                _validate_actions(params.get(key), f"{path}.params.{key}", issues, owner, target)
-    elif action_type == "enableRuleOffers":
-        slots = params.get("slots")
-        if slots is not None and not isinstance(slots, list):
-            _issue(issues, "error", "action.container.shape", f"{owner}: enableRuleOffers params.slots must be an array", f"{path}.params.slots", owner, target)
-        for idx, slot in enumerate(slots if isinstance(slots, list) else []):
-            if isinstance(slot, dict) and "resultActions" in slot:
-                _validate_actions(slot.get("resultActions"), f"{path}.params.slots[{idx}].resultActions", issues, owner, target)
+    # 容器下钻读唯一真相源 NESTED_ACTION_SLOTS（手写 if/elif 曾漏 runActionsIf 的两个分支）。
+    # 形状判定与 TS 权威 validateActionDef 同码；None 值放行（TS 报 actions.shape）——兜底只许更松。
+    from ..shared.action_structure import action_slots
+
+    for slot in action_slots(action_type):
+        slot_path = f"{path}.params.{slot.key}"
+        raw = params.get(slot.key)
+        if slot.kind == "list":
+            _validate_actions(raw, slot_path, issues, owner, target)
+            continue
+        if raw is not None and not isinstance(raw, list):
+            _issue(issues, "error", "action.container.shape", f"{owner}: {action_type} params.{slot.key} must be an array", slot_path, owner, target)
+        for idx, item in enumerate(raw if isinstance(raw, list) else []):
+            if isinstance(item, dict):
+                _validate_actions(item.get(slot.item_actions_key), f"{slot_path}[{idx}].{slot.item_actions_key}", issues, owner, target)
 
 
 def _validate_conditions(
@@ -3285,10 +3291,96 @@ def _rebuild_shell_invocation(windows: bool | None = None) -> tuple[str, list[st
     return shell, ["-lc", cmd]
 
 
+# 网页 bundle 的依赖面不止 tools/narrative_editor_web/src：它经 `@/` 别名把游戏侧共享代码
+# （narrativeGraphValidation → actionParamManifest 等）一并打进 dist。只盯网页自己的 src 时，
+# 改了 src/core 里的 manifest 横幅不亮、旧 bundle 照旧把新 action 报 unknown（2026-09-13 实发）。
+# 故从网页源码出发沿 import 追到仓库内所有被打包的文件，一起比 mtime。
+_WEB_SCRIPT_SUFFIXES = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")
+# `from '…'`（import/export 两种）、副作用 `import '…'`、动态 `import('…')`。
+_WEB_IMPORT_SPEC_RE = re.compile(r"""(?:\bfrom|\bimport)\s*\(?\s*['"]([^'"\n]+)['"]""")
+# 纯类型导入（`import type {…} from` / `export type {…} from`）编译期擦除、不进 bundle，
+# 算进来只会让横幅为类型改动空喊。中段只放标识符/花括号/逗号/星号，宁可漏判成「非类型」也不误删真依赖。
+_WEB_TYPE_ONLY_RE = re.compile(r"""\b(?:import|export)\s+type\s+[\w$\s{},*]*?\bfrom\s*['"]([^'"\n]+)['"]""")
+
+
+def _is_web_test_file(p: Path) -> bool:
+    # 测试不进 bundle；且 roundtripIdempotence.test.ts 以 ?raw 引了 narrative_graphs.json，
+    # 从测试出发追依赖 = 每次保存数据都亮横幅。
+    return ".test." in p.name or ".spec." in p.name
+
+
+def _resolve_web_import(spec: str, importer: Path, alias_src: Path) -> Path | None:
+    """按 vite.config.ts 的解析规则把 import 说明符落到仓库内文件；包名（node_modules）返回 None。"""
+    spec = spec.split("?", 1)[0].split("#", 1)[0]
+    if spec.startswith("@/"):
+        base = alias_src / spec[2:]
+    elif spec.startswith("./") or spec.startswith("../"):
+        base = importer.parent / spec
+    else:
+        return None
+    candidates = [base]
+    try:
+        candidates += [base.with_name(base.name + ext) for ext in (*_WEB_SCRIPT_SUFFIXES, ".json")]
+        if base.suffix in (".js", ".jsx"):
+            candidates += [base.with_suffix(ext) for ext in (".ts", ".tsx")]
+    except ValueError:  # 说明符以目录结尾（无文件名段）
+        pass
+    candidates += [base / f"index{ext}" for ext in _WEB_SCRIPT_SUFFIXES]
+    for c in candidates:
+        try:
+            if c.is_file():
+                return c.resolve()
+        except OSError:
+            continue
+    return None
+
+
+def web_bundle_source_files(web_dir: Path) -> list[Path]:
+    """网页构建的全部仓库内输入：网页 src 全部文件 + index.html + vite.config.ts
+    + 从网页非测试源码出发、沿值导入追到的所有外部文件（`@/` → 仓库 src，见 vite.config.ts alias）。"""
+    alias_src = web_dir.parent.parent / "src"  # 与 vite.config.ts 的 path.resolve(__dirname, '../../src') 同源
+    src_dir = web_dir / "src"
+    files: set[Path] = set()
+    for extra in (web_dir / "index.html", web_dir / "vite.config.ts"):
+        if extra.is_file():
+            files.add(extra.resolve())
+    queue: list[Path] = []
+    if src_dir.is_dir():
+        for p in src_dir.rglob("*"):
+            if not p.is_file():
+                continue
+            rp = p.resolve()
+            files.add(rp)
+            if rp.suffix in _WEB_SCRIPT_SUFFIXES and not _is_web_test_file(rp):
+                queue.append(rp)
+    visited: set[Path] = set()
+    while queue:
+        cur = queue.pop()
+        if cur in visited:
+            continue
+        visited.add(cur)
+        try:
+            text = cur.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        type_only = {m.start(1) for m in _WEB_TYPE_ONLY_RE.finditer(text)}
+        for m in _WEB_IMPORT_SPEC_RE.finditer(text):
+            if m.start(1) in type_only:
+                continue
+            dep = _resolve_web_import(m.group(1), cur, alias_src)
+            if dep is None:
+                continue
+            files.add(dep)
+            if dep.suffix in _WEB_SCRIPT_SUFFIXES and not _is_web_test_file(dep):
+                queue.append(dep)
+    return sorted(files)
+
+
 def web_build_staleness(web_dir: Path | None = None) -> tuple[bool, str]:
     """返回 (网页构建是否过期, 提示文案)。
 
-    dist/index.html 比 src 任一源文件旧 ⇒ 编辑器仍在跑旧产物（改了源码没重建）。
+    dist/index.html 比 bundle 任一输入文件旧 ⇒ 编辑器仍在跑旧产物（改了源码没重建）。
+    输入面见 web_bundle_source_files——含经 `@/` 引入的 src/core 等共享代码。
     dev server 模式（设了 env URL）始终读源码，永不过期。web_dir 仅供测试注入。
     """
     if os.environ.get(NARRATIVE_EDITOR_DEV_URL_ENV, "").strip():
@@ -3301,25 +3393,23 @@ def web_build_staleness(web_dir: Path | None = None) -> tuple[bool, str]:
         dist_mtime = index.stat().st_mtime
     except OSError:
         return False, ""
-    src_dir = wd / "src"
     newest = 0.0
-    newest_name = ""
-    candidates: list[Path] = list(src_dir.rglob("*")) if src_dir.is_dir() else []
-    cfg = wd / "vite.config.ts"
-    if cfg.is_file():
-        candidates.append(cfg)
-    for p in candidates:
+    newest_path: Path | None = None
+    for p in web_bundle_source_files(wd):
         try:
-            if not p.is_file():
-                continue
             mt = p.stat().st_mtime
         except OSError:
             continue
         if mt > newest:
-            newest, newest_name = mt, p.name
-    if newest > dist_mtime:
+            newest, newest_path = mt, p
+    if newest_path is not None and newest > dist_mtime:
+        repo = wd.parent.parent.resolve()
+        try:
+            shown = newest_path.relative_to(repo).as_posix()
+        except ValueError:
+            shown = newest_path.name
         return True, (
-            f"网页源码（{newest_name}）比已构建的 dist 新——编辑器仍在跑旧产物，"
+            f"网页源码或其打包进来的共享代码（{shown}）比已构建的 dist 新——编辑器仍在跑旧产物，"
             f"新功能/修复不会出现。点「重建并刷新」或运行 {_WEB_REBUILD_CMD}，完成后重开本页。"
         )
     return False, ""

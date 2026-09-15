@@ -9,8 +9,11 @@
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.5 "Microsoft YaHei",system-ui,sans-serif;
          height:100vh; display:flex; overflow:hidden; }
+  /* 侧栏 = 上面一截可滚动的控件 + 底下常驻的日志：保存 / 推送 / 导出的结果都写在日志里，
+     日志跟着侧栏滚走的话点完按钮看不见结果 */
   #side { width:268px; flex:0 0 268px; background:var(--panel); border-right:1px solid var(--line);
-          display:flex; flex-direction:column; overflow:auto; }
+          display:flex; flex-direction:column; overflow:hidden; }
+  #side-scroll { flex:1 1 auto; overflow:auto; min-height:0; }
   #side h1 { font-size:14px; margin:0; padding:10px 12px; border-bottom:1px solid var(--line); }
   .box { padding:10px 12px; border-bottom:1px solid var(--line); }
   .box h2 { font-size:12px; color:var(--dim); margin:0 0 8px; font-weight:normal; }
@@ -18,6 +21,7 @@
                    padding:5px 8px; font:inherit; cursor:pointer; }
   button:hover { border-color:#5a6472; }
   button.on { background:#2f3a4c; border-color:#5a8ac0; }
+  button.dirty { background:#4a3a1c; border-color:#ffb454; color:#ffd9a0; }
   button:disabled { opacity:.45; cursor:default; }
   select { width:100%; }
   .row { display:flex; gap:6px; align-items:center; margin:6px 0; }
@@ -28,14 +32,23 @@
   #stage { flex:1; position:relative; overflow:hidden; background:#0d0f12; }
   canvas { position:absolute; left:0; top:0; transform-origin:0 0; image-rendering:auto; }
   #cursor { position:absolute; border:1px solid #fff8; border-radius:50%; pointer-events:none; display:none; }
-  #log { padding:8px 12px; font:11px/1.45 Consolas,monospace; color:var(--dim); white-space:pre-wrap;
-         max-height:190px; overflow:auto; }
+  #log { flex:0 0 auto; padding:8px 12px; font:11px/1.45 Consolas,monospace; color:var(--dim); white-space:pre-wrap;
+         max-height:190px; min-height:64px; overflow:auto; border-top:1px solid var(--line); background:#191b20; }
   .hint { color:var(--dim); font-size:11px; line-height:1.5; }
+  details > summary.hint { cursor:pointer; margin-top:6px; }
+  .modal { position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; }
+  .modal-box { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:14px 16px; min-width:340px; max-width:520px; }
+  .modal-box h3 { margin:0 0 6px; font-size:14px; }
+  .modal-box p { margin:0 0 12px; color:var(--dim); white-space:pre-line; }
+  .modal-btns { display:flex; gap:8px; justify-content:flex-end; }
+  button.primary { background:#2c4f7a; border-color:#3f6ea8; }
+  button.danger { border-color:#7a3c3c; }
   kbd { background:#252a32; border:1px solid var(--line); border-radius:3px; padding:0 4px; font:11px monospace; }
 </style>
 </head>
 <body>
 <div id="side">
+  <div id="side-scroll">
   <h1>草木工作台</h1>
 
   <div class="box">
@@ -46,43 +59,81 @@
     <div class="row"><span id="hover" class="hint" style="color:#ffe08a"></span></div>
   </div>
 
+  <!-- 最常用的三个操作放在最上面：原来压在两大段说明底下，要滚下去才找得到 -->
+  <div class="box">
+    <div class="row">
+      <button id="save" style="flex:1">保存涂层 <kbd>Ctrl+S</kbd></button>
+      <button id="history">历史…</button>
+    </div>
+    <div id="history-box" style="display:none;max-height:200px;overflow:auto;border:1px solid var(--line);
+         border-radius:4px;padding:6px 8px;margin:6px 0"></div>
+    <div class="row">
+      <button id="push" style="flex:1" title="页面上此刻的涂层（存没存都算）烘一份预览，在跑着的游戏里原地换上——资源一个字节不动">推给游戏 <kbd>P</kbd></button>
+      <button id="export" style="flex:1" title="先存盘，再烘进资源（各时段照明载荷目录），发行包里就是这一份">导出到游戏 <kbd>B</kbd></button>
+    </div>
+    <details>
+      <summary class="hint">推给游戏 / 导出到游戏有什么区别？</summary>
+      <div class="hint" style="margin-top:6px">
+        <b>推给游戏</b>：页面上<b>此刻</b>的涂层（存没存都算）烘一份预览，在跑着的游戏里原地换上——<b>资源一个字节不动</b>。<br>
+        <b>导出到游戏</b>：先存盘，再烘进资源（各时段照明载荷目录），发行包里就是这一份。<br>
+        动起来什么样去游戏里看——工作台只管抠图与标注，<b>游戏是预览器</b>。
+      </div>
+    </details>
+  </div>
+
   <div class="box">
     <h2>画什么（分割认不出的，手动补）</h2>
     <div class="row">
-      <button class="tool" id="t-veg"><i class="sw" style="background:var(--veg)"></i>补植被</button>
-      <button class="tool" id="t-rigid"><i class="sw" style="background:var(--rigid)"></i>刚体</button>
+      <button class="tool" id="t-veg" title="1"><i class="sw" style="background:var(--veg)"></i>补植被</button>
+      <button class="tool" id="t-rigid" title="2"><i class="sw" style="background:var(--rigid)"></i>刚体</button>
     </div>
     <div class="row">
-      <button class="tool" id="t-freeze"><i class="sw" style="background:var(--freeze)"></i>锁死不动</button>
-      <button class="tool" id="t-unrigid"><i class="sw" style="background:var(--unrigid)"></i>减刚体</button>
+      <button class="tool" id="t-freeze" title="3"><i class="sw" style="background:var(--freeze)"></i>锁死不动</button>
+      <button class="tool" id="t-unrigid" title="4"><i class="sw" style="background:var(--unrigid)"></i>减刚体</button>
     </div>
     <div class="row">
-      <button class="tool" id="t-erase">橡皮</button>
+      <button class="tool" id="t-erase" title="E；右键拖随时擦当前层">橡皮</button>
     </div>
     <div class="row">
       <button class="tool" id="undo">撤销 <kbd>Ctrl+Z</kbd></button>
+      <button class="tool" id="redo" title="Ctrl+Shift+Z 或 Ctrl+Y">重做</button>
+    </div>
+    <div class="row">
       <button class="tool" id="clear-ch">清空本层 <kbd>X</kbd></button>
     </div>
     <div class="row">
-      <button class="tool" id="t-anchor">锚点</button>
-      <button class="tool" id="t-coherent">整体摆</button>
-    </div>
-    <div class="hint" id="plant-hint">
-      <b>锚点</b>：左键放、右键删最近的一个。刚体部分绕<b>离它最近的锚点</b>转——点在竿底 / 树干底；
-      一丛竹子可以每根竿点一个。没点就绕自动算出的根。<br>
-      <b>整体摆</b>：点一株切换。标了的整株一起弯，不会被扭成波浪（全场的波浪尺寸在游戏 F2 里调）。<br>
-      这两样和涂层一起 <kbd>Ctrl+S</kbd> 保存，改完要重烘。
+      <button class="tool" id="t-anchor" title="左键放、右键删最近的一个">锚点</button>
+      <button class="tool" id="t-coherent" title="左键点一株切换：整株一起弯（右键拖照常擦当前层）">整体摆</button>
     </div>
     <div class="row"><label>笔刷</label><input id="size" type="range" min="4" max="240" value="48"><span id="size-v">48</span></div>
     <div class="row"><label>软硬</label><input id="hard" type="range" min="0" max="100" value="70"><span id="hard-v">70</span></div>
     <div class="hint">
-      刚体 = 竹竿 / 树干这类只能整体摇晃、不许跟着扭的部位。<b>分割认出的木质已自动算刚体</b>，
-      「减刚体」用来抹掉认错的那些。<br>
-      四层各画各的：<b>橡皮只擦当前这一层</b>，<b>右键拖</b>随时擦，不会碰到别的层。<br>
       <kbd>1</kbd>植被 <kbd>2</kbd>刚体 <kbd>3</kbd>锁死 <kbd>4</kbd>减刚体　<kbd>E</kbd>橡皮 <kbd>X</kbd>清空本层
-      <kbd>Ctrl+Z</kbd>撤销 <kbd>[</kbd><kbd>]</kbd>笔刷 <kbd>F</kbd>复位 <kbd>B</kbd>重烘　Shift+拖=平移
-      　<b>Alt+点</b>=检视这一点属于哪株
+      <kbd>Ctrl+Z</kbd>撤销 <kbd>Ctrl+Shift+Z</kbd>/<kbd>Ctrl+Y</kbd>重做 <kbd>[</kbd><kbd>]</kbd>笔刷 <kbd>F</kbd>复位 <kbd>P</kbd>推给游戏 <kbd>B</kbd>导出到游戏
+      　右键拖=擦当前层　Shift+拖 / 中键=平移　滚轮=缩放　<b>Alt+点</b>=检视这一点属于哪株
     </div>
+    <details id="plant-hint">
+      <summary class="hint">锚点 / 整体摆怎么用？</summary>
+      <div class="hint" style="margin-top:6px">
+        <b>锚点</b>：左键放、右键删最近的一个。刚体部分绕<b>离它最近的锚点</b>转——点在竿底 / 树干底；
+        一丛竹子可以每根竿点一个。没点就绕自动算出的根。<br>
+        <b>整体摆</b>：左键点一株切换（右键拖照常擦当前层）。标了的整株一起弯，不会被扭成波浪（全场的波浪尺寸在游戏 F2 里调）。<br>
+        这两样和涂层一起 <kbd>Ctrl+S</kbd> 保存；改完不用先存，「推给游戏」就能在游戏里看。
+      </div>
+    </details>
+    <details id="rigid-help">
+      <summary class="hint">刚体到底干什么？</summary>
+      <div class="hint" style="margin-top:6px">
+        刚体 = 竹竿 / 树干这类只能整体摇晃、不许跟着扭的部位。<b>分割认出的木质已自动算刚体</b>，
+        「减刚体」用来抹掉认错的那些。四层各画各的：<b>橡皮只擦当前这一层</b>，<b>右键拖</b>随时擦，不会碰到别的层。<br>
+        <b>刚体 = 不弯，但跟着转</b>：涂了的地方不会被扭成波浪，整块绕<b>离它最近的锚点</b>（没点锚点就绕自动算的根）一起转。
+        想让一块<b>完全不动</b>，用「锁死不动」（石头、崖壁同一待遇，原画那块原样留着）。<br>
+        · 细竿也管用：刚体与叶子的交界处网格会自动加密，<b>过渡带约 6</b>（竿两侧这么宽的叶子跟着竿硬一点），其余地方不加密。<br>
+        · 点了两个以上锚点的株，锚点之间的分界也会加密，两边各绕各的锚点转。<br>
+        · 笔刷软边上的刚体度不是满的（软硬拉到 100 涂得最干净）；涂在没抠出植被的地方（石头 / 锁死区 / 空地）会被丢掉。<br>
+        · 整株刚转的树（Alt+点显示「整株刚转」）本来整株就是刚体，在上面涂刚体只会去掉叶片细抖。
+      </div>
+    </details>
   </div>
 
   <div class="box">
@@ -102,18 +153,22 @@
     <div class="row"><button class="tool" id="fit">视图复位 <kbd>F</kbd></button></div>
   </div>
 
-  <div class="box">
-    <div class="row">
-      <button id="save" style="flex:1">保存涂层 <kbd>Ctrl+S</kbd></button>
-      <button id="history">历史…</button>
+  <details class="box" id="time-help">
+    <summary class="hint" style="cursor:pointer">夜景 / 其他时段怎么处理？</summary>
+    <div class="hint" style="margin-top:6px">
+      <b>夜晚没有单独的 mask，设计上就是用白天这份。</b>这里只显示主背景（白天），涂一次管所有时段。<br>
+      每次推给游戏 / 导出到游戏：<br>
+      1. 抠植被与拆层<b>只按主背景跑一次</b>（自动分割 + 涂层 + 锁定图 + 锚点 / 整体摆），
+      matte / ids / rigid / sway.json <b>逐字节原样</b>写进每个时段的目录——草木长在哪不随时段变，暗的夜图也分割不出来。<br>
+      2. <b>底板每个时段各补各的</b>：白天的 mask 定"补哪些像素、从哪取"，拿该时段自己的原画去填，夜里植物晃开露出来的是夜景颜色。<br>
+      3. 打光场景里，每个时段还会各自重建漏出处的几何件（扣掉植物的法线 / 深度等）。<br>
+      注意：<br>
+      · <b>时段原画必须与主背景同尺寸、逐像素对齐</b>。尺寸不同会跳过并在日志里说；同尺寸但内容错位，夜里 mask 边缘就对不上。<br>
+      · <b>没有照明载荷的时段不出摆动</b>，那个时段草木不动——先给那张图烘 scene_fields 再回来导出。<br>
+      · <b>时段原画里植物本身变了</b>（夜图多画 / 少画 / 形状不同），这套管线不支持，要做成每时段各自的 mask 才行。<br>
+      日志里每个时段写了还是跳过、为什么跳过，都会列出来。
     </div>
-    <div id="history-box" style="display:none;max-height:200px;overflow:auto;border:1px solid var(--line);
-         border-radius:4px;padding:6px 8px;margin:6px 0"></div>
-    <div class="row">
-      <button id="bake" style="flex:1">重烘拆层</button>
-      <button id="push" style="flex:1">推给游戏</button>
-    </div>
-    <div class="hint">动起来什么样去游戏里看——工作台只管抠图与标注，<b>游戏是预览器</b>。</div>
+  </details>
   </div>
 
   <div id="log"></div>
@@ -125,6 +180,8 @@
   <div id="cursor"></div>
 </div>
 
+<!-- 页内下拉列表（轨迹工作台共用件）：必须排在 app.js 前面——它的 Esc 挂在 window 捕获阶段，要先于页面对话框的 Esc -->
+<script src="/vendor/dropdown.js"></script>
 <script type="module" src="./app.js"></script>
 </body>
 </html>

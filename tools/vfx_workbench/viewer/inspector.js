@@ -11,7 +11,7 @@
  * （回到 types.ts 的缺省），不落 0 —— 0 与"没写"在运行时不是一回事（`gravity` 0 = 不受重力，
  * 没写也是；但 `restitution` 0 = 不反弹，没写 = 运行时缺省）。 */
 
-const INS_OPEN = { effect: true, appearance: true, spawn: true, motion: true, life: true, collision: false, behavior: false, sound: false };
+const INS_OPEN = { effect: true, placement: true, appearance: true, spawn: true, motion: true, life: true, collision: false, behavior: false, sound: false };
 
 const Inspector = {
   /** 折叠状态（UI 态，不进历史） */
@@ -21,12 +21,51 @@ const Inspector = {
     const on = this.open[key] !== false;
     const head = h('div', { class: 'secHead', onclick: () => { this.open[key] = !on; this.rerender(); } },
       h('span', { class: 'caret' }, on ? '▾' : '▸'), h('b', {}, title), extra || null);
-    const wrap = h('div', { class: 'sec' }, head);
+    const wrap = h('div', { class: 'sec', 'data-sec': key }, head);
     if (on) for (const el2 of body()) if (el2) wrap.appendChild(el2);
     return wrap;
   },
 
   rerender() { if (this._host) this._host.renderInspector(); },
+
+  /**
+   * 给检视器里每个可聚焦控件盖一个**稳定的身份键** `data-key` = `模块/行名/行内序号`（重名再加 `#n`）。
+   * 重建后按它把焦点放回**同一个参数**（app.js `rebuildInspector`）——原来按"第几个控件"放：
+   * 在「湍流强度」里打了数没回车、直接点「速度上限」，提交让上面多出「湍流尺度 / 湍流速率」两行，
+   * 同一个序号落到了「湍流尺度」上，接着打的 300 写进了 turbulence.scale、状态栏还说"改湍流尺度"。
+   * 新检视器里找不到这个键（那一行没了、按钮换了字）= 不放焦点，绝不猜到别的参数上。
+   */
+  stampKeys(container) {
+    const seen = new Map();
+    for (const n of container.querySelectorAll('input, select, textarea, button')) {
+      const sec = n.closest('.sec');
+      const secKey = (sec && sec.dataset.sec) || 'emitter';
+      const row = n.closest('.row, .btns');
+      let label = '';
+      if (row && row.classList.contains('row')) {
+        const first = row.firstElementChild;
+        if (first && first.tagName === 'SPAN' && !first.contains(n)) label = first.textContent;
+        if (!label) { const lab = n.closest('label'); label = lab ? lab.textContent : ''; }   // 勾选框那几行行名是空的，用勾选框自己的字
+      }
+      if (n.tagName === 'BUTTON') label += `|${n.getAttribute('data-role') || n.textContent}`;
+      const peers = row ? [...row.querySelectorAll(n.tagName)] : [n];
+      let key = `${secKey}/${label}/${n.tagName}${peers.indexOf(n)}`;
+      const k = seen.get(key) || 0;
+      seen.set(key, k + 1);
+      if (k) key += `#${k}`;
+      n.dataset.key = key;
+    }
+  },
+
+  /**
+   * 滚轮落在**有焦点**的数值框上：先让它失焦。Chromium 对有焦点、被悬停的 `<input type=number>` 把滚轮当成步进
+   * （±1 一格）并吞掉事件——作者 Tab 过来之后想滚右栏找下一个参数，右栏不动、数值一格一格变，
+   * 下一次点别处 / Ctrl+S 把被滚过的值当成正常改动提交了。失焦发生在浏览器默认处理之前：打了的值照常经 `change` 提交，滚轮去滚面板。
+   */
+  blurOnWheel(inp) {
+    inp.addEventListener('wheel', () => { if (document.activeElement === inp) inp.blur(); }, { passive: true });
+    return inp;
+  },
 
   // ---------------------------------------------------------------- 控件
   row(label, ...kids) {
@@ -34,9 +73,12 @@ const Inspector = {
   },
   num(get, set, unit, opts) {
     const o = opts || {};
-    const inp = h('input', { type: 'number', step: o.step == null ? 'any' : String(o.step), title: o.title || '' });
+    const inp = h('input', { type: 'number', step: o.step == null ? 'any' : String(o.step), title: o.title || '', placeholder: o.placeholder || null });
+    if (o.disabled) inp.disabled = true;
     const v = get();
     inp.value = v == null ? '' : String(v);
+    inp.dataset.v0 = inp.value;                        // 建出来时的值：没动过的框里 Ctrl+Z 归页面撤销栈（app.js onKey）
+    this.blurOnWheel(inp);
     inp.addEventListener('change', () => {
       const raw = inp.value.trim();
       if (raw === '') { set(null); return; }
@@ -64,15 +106,19 @@ const Inspector = {
     s.addEventListener('change', () => set(s.value === '' ? null : s.value));
     return s;
   },
-  chk(get, set, label) {
+  chk(get, set, label, opts) {
+    const o = opts || {};
     const inp = h('input', { type: 'checkbox' });
     inp.checked = !!get();
+    if (o.disabled) inp.disabled = true;
+    if (o.role) inp.setAttribute('data-role', o.role);
     inp.addEventListener('change', () => set(inp.checked));
-    return h('label', { class: 'chk' }, inp, label || '');
+    return h('label', { class: 'chk', title: o.title || null }, inp, label || '');
   },
   txt(get, set, ph) {
     const inp = h('input', { type: 'text', placeholder: ph || '' });
     inp.value = get() == null ? '' : String(get());
+    inp.dataset.v0 = inp.value;
     inp.addEventListener('change', () => set(inp.value.trim() || null));
     return inp;
   },
@@ -81,6 +127,8 @@ const Inspector = {
     const mk = (i) => {
       const inp = h('input', { type: 'number', step: 'any', class: 'v3' });
       inp.value = String(cur[i]);
+      inp.dataset.v0 = inp.value;
+      this.blurOnWheel(inp);
       inp.addEventListener('change', () => {
         const a = (get() || [0, 0, 0]).slice();
         const n = parseFloat(inp.value);
@@ -96,6 +144,8 @@ const Inspector = {
     const mk = (i) => {
       const inp = h('input', { type: 'number', step: 'any', class: 'v2' });
       inp.value = String(cur[i]);
+      inp.dataset.v0 = inp.value;
+      this.blurOnWheel(inp);
       inp.addEventListener('change', () => {
         const a = (get() || [0, 0]).slice();
         const n = parseFloat(inp.value);
@@ -106,21 +156,40 @@ const Inspector = {
     };
     return h('span', { class: 'numwrap' }, mk(0), h('span', { class: 'unit' }, '…'), mk(1), unit ? h('span', { class: 'unit' }, unit) : null);
   },
-  /** 随寿命的小折线编辑器：点空白加键、拖键、右键删键（首尾 t 钳 0 / 1） */
-  curve(label, get, set) {
+  /**
+   * 随寿命的小折线编辑器：点空白加键、拖键、右键删键（首尾 t 钳 0 / 1）。
+   * 纵轴刻度 = `max(2, 最大值 × 1.5)`（留出往上拖的余量；`opts.cap` 给了就钉死，透明度上限 1），
+   * **拖拽期间刻度冻住**、拖的那个键**按对象引用追**：原来每次 mousemove 都按"刚写回的曲线"重算刻度，
+   * 拖的正是最大那个键时值每动一下再乘一次（2.1 往下拖到 1.6，落手只剩 0.7，点还一直跟着光标）；
+   * 往上钳在当前最大值，永远拖不过 1×；按下标追的话横着拖过邻居，下一拍写进的是邻居那一格。
+   */
+  curve(label, get, set, opts) {
+    const o = opts || {};
     const W = 168, H = 54, PAD = 6;
     const cv = h('canvas', { class: 'curve', width: String(W), height: String(H), title: '左键拖关键点 / 点空白加一个 / 右键删一个（横=寿命 0→1，纵=倍率）' });
     const host = this._host;
-    const pts = () => (get() || []).slice().sort((a, b) => a[0] - b[0]);
-    const vmax = () => Math.max(1, ...pts().map((p) => p[1]));
-    const toPx = (p) => [PAD + p[0] * (W - PAD * 2), H - PAD - (p[1] / vmax()) * (H - PAD * 2)];
-    const toVal = (mx, my) => [clamp((mx - PAD) / (W - PAD * 2), 0, 1), clamp((H - PAD - my) / (H - PAD * 2) * vmax(), 0, vmax())];
+    const pts = () => (get() || []).map((p) => p.slice()).sort((a, b) => a[0] - b[0]);
+    const scaleOf = (ps) => (o.cap ? o.cap : Math.max(2, ...ps.map((p) => p[1] * 1.5)));
+    let drag = null;                                   // { scale, pts, key }：拖拽期间的冻结刻度 / 本地点表 / 拖的那个键（引用）
+    const scale = () => (drag ? drag.scale : scaleOf(pts()));
+    const toPx = (p) => [PAD + p[0] * (W - PAD * 2), H - PAD - (p[1] / scale()) * (H - PAD * 2)];
+    const toVal = (mx, my) => [clamp((mx - PAD) / (W - PAD * 2), 0, 1), clamp((H - PAD - my) / (H - PAD * 2) * scale(), 0, scale())];
+    cv.dataset.curve = label;
+    // 自检用：此刻的像素换算（与画的是同一套）
+    cv._curve = { toPx, toVal, scale, W, H, PAD };
     const draw = () => {
       const g = cv.getContext('2d');
       g.clearRect(0, 0, W, H);
       g.fillStyle = '#12151b'; g.fillRect(0, 0, W, H);
       g.strokeStyle = 'rgba(255,255,255,.12)'; g.strokeRect(0.5, 0.5, W - 1, H - 1);
-      const ps = pts(); if (!ps.length) return;
+      const ps = drag ? drag.pts : pts();
+      if (!ps.length) {
+        // 没写 = 运行时恒 1（`sampleCurve` 空曲线回 1）：画一条虚线把这个缺省摆出来——原来整块空白，作者看不出"不写"是什么
+        const y = toPx([0, 1])[1];
+        g.strokeStyle = 'rgba(108,180,255,.55)'; g.lineWidth = 1; g.setLineDash([4, 3]);
+        g.beginPath(); g.moveTo(PAD, y); g.lineTo(W - PAD, y); g.stroke(); g.setLineDash([]);
+        return;
+      }
       g.strokeStyle = '#6cb4ff'; g.lineWidth = 1.5; g.beginPath();
       ps.forEach((p, i) => { const c = toPx(p); if (i) g.lineTo(c[0], c[1]); else g.moveTo(c[0], c[1]); });
       g.stroke();
@@ -128,28 +197,52 @@ const Inspector = {
       for (const p of ps) { const c = toPx(p); g.beginPath(); g.arc(c[0], c[1], 3, 0, Math.PI * 2); g.fill(); }
     };
     const at = (mx, my) => { const ps = pts(); for (let i = 0; i < ps.length; i++) { const c = toPx(ps[i]); if (Math.hypot(c[0] - mx, c[1] - my) <= 6) return i; } return -1; };
-    let dragI = -1;
     cv.addEventListener('contextmenu', (e) => e.preventDefault());
     cv.addEventListener('mousedown', (e) => {
       const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
       const i = at(mx, my);
       if (e.button === 2) {
-        if (i >= 0) { const ps = pts(); if (ps.length > 1) { ps.splice(i, 1); host.edit(`改${label}`, () => set(ps)); draw(); } }
+        // 右键删最后一个键 = 删掉这条曲线（回到运行时缺省恒 1）。原来剩一个键就拒删、也没有别的按钮能清，
+        // 点错一下只能 Ctrl+Z——连带把之后改的参数一起撤掉
+        if (i >= 0) { const ps = pts(); ps.splice(i, 1); host.edit(`改${label}`, () => set(ps.length ? ps : null)); draw(); }
         return;
       }
       if (e.button !== 0) return;
-      if (i < 0) { const ps = pts(); ps.push(toVal(mx, my)); ps.sort((a, b) => a[0] - b[0]); host.edit(`改${label}`, () => set(ps)); draw(); return; }
-      dragI = i; host.dragBegin(`改${label}`);
-      const onMove = (ev) => {
-        if (dragI < 0) return;
-        const rr = cv.getBoundingClientRect();
-        const ps = pts();
-        ps[dragI] = toVal(ev.clientX - rr.left, ev.clientY - rr.top);
+      if (i < 0) {
+        const v = toVal(mx, my);
+        let ps = pts();
+        if (!ps.length) {
+          // 空曲线 = 运行时恒 1：先铺上缺省的两个端点再加这一个。原来直接存成单键曲线，`sampleCurve` 对单键整段取它的值——
+          // 点一下右下角想做淡出，整个寿命透明度都成了 0，游戏里粒子全没了（工作台 3D 按点画、看不出来）
+          ps = [[0, 1], [1, 1]];
+          // 点在端点那一竖上（与拾取同一个 6 px）：改那个端点的值，不在同一个 t 上叠第二个键（运行时取先排的那个，等于没点）
+          const end = ps.find((p) => Math.abs(toPx(p)[0] - mx) <= 6);
+          if (end) end[1] = v[1]; else ps.push(v);
+        } else ps.push(v);
         ps.sort((a, b) => a[0] - b[0]);
-        host.dragTick(() => set(ps));
+        host.edit(`改${label}`, () => set(ps));
+        draw();
+        return;
+      }
+      const ps0 = pts();
+      drag = { scale: scaleOf(ps0), pts: ps0, key: ps0[i] };
+      host.dragBegin(`改${label}`);
+      const onMove = (ev) => {
+        if (!drag) return;
+        const rr = cv.getBoundingClientRect();
+        const v = toVal(ev.clientX - rr.left, ev.clientY - rr.top);
+        drag.key[0] = v[0]; drag.key[1] = v[1];        // 改的是那个键对象本身：排序换了位置也还是它
+        drag.pts.sort((a, b) => a[0] - b[0]);
+        const out = drag.pts.map((p) => p.slice());
+        host.dragTick(() => set(out));
         draw();
       };
-      const onUp = () => { dragI = -1; host.dragEnd(); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+      const onUp = () => {
+        drag = null;                                   // 松手才按数据重算刻度（值拖大了，余量跟着长）
+        window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp);
+        host.dragEnd();
+        draw();
+      };
       window.addEventListener('mousemove', onMove); window.addEventListener('mouseup', onUp);
     });
     draw();
@@ -158,58 +251,181 @@ const Inspector = {
 
   /** 非群体发射器的「怕 / 被吸引」表（motion.stimulus）。群体走 behavior.attitude，不在这里出现。 */
   stimulusRows(em, mo, E) {
-    if (em.behavior) {
+    if (this._host.programApi?.resolveEmitterProgram(em).solver === 'flock') {
       return [h('div', { class: 'pad dim' }, '这个发射器是群体：刺激反应在「群体行为」里的刺激权重表，不用 motion.stimulus')];
     }
     const st = mo.stimulus;
     if (!st) {
       return [h('div', { class: 'btns' }, h('button', {
+        'data-role': 'stim-on',
         title: '让这个发射器认 fear / attract 场（不加就只认 wind）。萤火虫"人走近就散开"靠的是它',
         onclick: () => E('加刺激反应', () => { mo.stimulus = { fear: { 'player:motion': 1 }, accel: 700 }; }),
       }, '+ 加刺激反应（怕人 / 被引）'))];
     }
     const rows = [];
-    const tbl = (t, label2) => {
+    // 删掉一张表的最后一个标签 = 连这张表一起删（空表过不了闸门：`{}` 不许存、也推不到游戏）；两张都没了 = 删刺激反应。
+    // 原来留下 `fear: {}`：只想要"被吸引"（先加引、再删默认的怕）根本存不了，这期间的布置改动也一起推不出去
+    const prune = (key) => {
+      if (st[key] && typeof st[key] === 'object' && !Object.keys(st[key]).length) delete st[key];
+      if (!st.fear && !st.attract && mo.stimulus === st) delete mo.stimulus;
+    };
+    const tbl = (t, label2, key) => {
       for (const k of Object.keys(t || {})) {
         rows.push(h('div', { class: 'row' },
           h('span', { class: 'tag' }, `${label2}·${k}`),
-          this.num(() => t[k], (v) => E('改刺激权重', () => { if (v == null) delete t[k]; else t[k] = v; }), '', { step: 0.05 }),
-          h('button', { class: 'danger', onclick: () => E('删刺激权重', () => { delete t[k]; }) }, '×')));
+          this.num(() => t[k], (v) => E('改刺激权重', () => { if (v == null) { delete t[k]; prune(key); } else t[k] = v; }), '', { step: 0.05 }),
+          h('button', { class: 'danger', 'data-role': `stim-del:${key}:${k}`, onclick: () => E('删刺激权重', () => { delete t[k]; prune(key); }) }, '×')));
       }
     };
-    tbl(st.fear, '怕');
-    tbl(st.attract, '引');
-    const addTag = h('input', { type: 'text', placeholder: 'player:motion / sfx:footstep / item:bug / 自定标签' });
+    tbl(st.fear, '怕', 'fear');
+    tbl(st.attract, '引', 'attract');
+    const addTag = h('input', { type: 'text', 'data-role': 'stim-tag', placeholder: 'player:motion / sfx:footstep / item:bug / 自定标签' });
     return [
       h('h4', {}, '刺激反应（非群体）'),
       this.row('加速度', this.num(() => st.accel, (v) => E('改刺激加速度', () => { st.accel = v == null ? 0 : Math.max(0, v); }), 'wu/s²',
         { title: '权重 1、场强 1、粒子正在场心时的加速度。实际 = 权重 × 场强 × (1−r/R)² × 它' })),
       ...rows,
       h('div', { class: 'row' }, addTag,
-        h('button', { onclick: () => { const t2 = addTag.value.trim(); if (t2) E('加恐惧标签', () => { st.fear = st.fear || {}; st.fear[t2] = 0.5; }); } }, '+ 怕'),
-        h('button', { onclick: () => { const t2 = addTag.value.trim(); if (t2) E('加吸引标签', () => { st.attract = st.attract || {}; st.attract[t2] = 0.5; }); } }, '+ 引')),
+        h('button', { 'data-role': 'stim-add:fear', onclick: () => { const t2 = addTag.value.trim(); if (t2) E('加恐惧标签', () => { st.fear = st.fear || {}; st.fear[t2] = 0.5; }); } }, '+ 怕'),
+        h('button', { 'data-role': 'stim-add:attract', onclick: () => { const t2 = addTag.value.trim(); if (t2) E('加吸引标签', () => { st.attract = st.attract || {}; st.attract[t2] = 0.5; }); } }, '+ 引')),
       h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删刺激反应', () => { delete mo.stimulus; }) }, '删刺激反应')),
+    ];
+  },
+
+  /**
+   * 发射「方向 / 锥角」。`spawn.direction` 没写 = 运行时**各向同性随机**（vfxSim spawnOne 走 unitVector），
+   * 由别的发射器 onHit 触发时没写 = **沿命中法线**（flushHits）；锥角只在有基准方向时才读。
+   * 原来没写时显示成 0 / 1 / 0（读着像"朝上"，预览却四散）、锥角填了没反应，改一个分量就把显示的缺省整条写进去
+   * （萤火虫成了一束直线），也没有回到"不写"的路，只能 Ctrl+Z 连带撤掉之后改的东西。
+   */
+  directionRows(doc, em, sp, E) {
+    const hasDir = Array.isArray(sp.direction);
+    const hitTarget = (doc.emitters || []).some((x) => x !== em && x.collision && x.collision.onHit && x.collision.onHit.emitter === em.id);
+    const unsetLabel = em.subOnly ? '沿命中法线（不写）' : hitTarget ? '各向同性；被撞击触发时沿命中法线（不写）' : '各向同性（不写）';
+    const spreadUsed = hasDir || !!em.subOnly || hitTarget;
+    const mode = this.sel(() => (hasDir ? 'set' : null), (v) => {
+      if (v === 'set') E('指定初速方向', () => { sp.direction = [0, 1, 0]; });
+      else E(`初速方向改回${unsetLabel.replace('（不写）', '')}`, () => { delete sp.direction; });
+    }, [{ value: '', label: unsetLabel }, { value: 'set', label: '指定方向' }], false);
+    mode.setAttribute('data-role', 'spawnDirMode');
+    mode.title = em.subOnly ? '不写 = 被撞击触发时沿命中面的法线发射（锥角围绕法线）；指定 = 一律朝这个方向'
+      : '不写 = 每个粒子随机朝任意方向（各向同性）；指定 = 围绕这个方向、按锥角散开';
+    const spreadTitle = !spreadUsed ? '未指定方向时锥角无意义（各向同性随机发射，运行时不读它）；先把「方向」切到「指定方向」'
+      : hasDir ? '围绕 direction 的圆锥半角' : '围绕命中法线的圆锥半角';
+    const spreadRow = this.row('锥角', this.num(() => sp.spread, (v) => E('改锥角', () => { if (v == null) delete sp.spread; else sp.spread = v; }), '度',
+      { title: spreadTitle, disabled: !spreadUsed }));
+    if (!spreadUsed) spreadRow.title = spreadTitle;     // 禁用的框不吃鼠标：整行挂同一句提示，悬停在行上就看得到为什么灰着
+    return [
+      this.row('方向', mode),
+      hasDir ? this.row('方向向量', this.vec3(() => sp.direction, (v) => E('改初速方向', () => { sp.direction = v; }), 'M-world')) : null,
+      spreadRow,
     ];
   },
 
   // ---------------------------------------------------------------- 主体
   render(host, container) {
+    this._renderBody(host, container);
+    this.applyCapabilities(host, container);
+    this.stampKeys(container);                         // 焦点按身份键放回（见 stampKeys）
+  },
+
+  programSection(host, em) {
+    const api = host.programApi;
+    if (!api) return h('div', { class: 'pad dim' }, '模拟模块加载后可编辑执行配置');
+    const p = api.resolveEmitterProgram(em);
+    const change = (label, fn) => host.edit(label, () => {
+      // Materialize exactly the current effective plan, only on a real edit. Unknown fields survive.
+      if (!em.simulation) em.simulation = structuredClone(api.resolveEmitterProgram(em));
+      fn(em.simulation);
+    });
+    return this.section('simulation', '模拟与外部影响', () => [
+      this.row('运动模型', this.sel(() => p.solver, (v) => host.edit('切换运动模型', () => {
+        em.simulation = api.switchEmitterProgram(em, v);
+      }), [{ value: 'particle', label: '普通粒子' }, ...(em.plate ? [{ value: 'plate', label: '薄片' }] : []),
+        ...(em.behavior && !em.subOnly ? [{ value: 'flock', label: '群体' }] : [])])),
+      this.row('出生位置', this.sel(() => p.spawnPlacement, (v) => change('改出生位置', (q) => {
+        q.spawnPlacement = v;
+        if (v === 'shape' && em.spawn.shape?.kind === 'area') em.spawn.shape = { ...em.spawn.shape, kind: 'disc' };
+      }),
+        p.solver === 'flock' ? [{ value: 'shape', label: '由群体的巢管理' }]
+          : [{ value: 'shape', label: '发射形状' }, { value: 'surface', label: '发射区域的可见表面' }])),
+      p.solver !== 'flock' ? this.row('出生速度', this.sel(() => p.initialVelocity, (v) => change('改出生速度方式', q => { q.initialVelocity = v; }),
+        [{ value: 'rest', label: '静止' }, { value: 'configured', label: '使用发射初速与方向' }])) : null,
+      p.spawnPlacement === 'surface' || p.recycle.mode !== 'none' ? this.row('无区域时半径', this.num(
+        () => p.surfaceRadius ?? (em.spawn.shape?.kind === 'area' ? em.spawn.shape.radius ?? 200 : 200),
+        v => change('改表面铺撒半径', q => { if (v == null) delete q.surfaceRadius; else q.surfaceRadius = Math.max(1, v); }), 'wu',
+        { title: '未画发射区域时使用的圆盘半径；画了区域则按区域采样。清空恢复原有半径。' })) : null,
+      ...[['sceneWind', '场景风（空气速度）'], ['wind', '局部推力（加速度）'], ['airflow', '局部气流（空气速度）'], ['stimulus', '标签刺激响应']].map(([key, label]) => {
+        const row = this.row(label, this.chk(() => p.influences[key], (v) => change('改' + label, (q) => { q.influences[key] = v; }), '接收'));
+        if (p.solver === 'flock' && key !== 'stimulus') for (const n of row.querySelectorAll('input')) n.disabled = true;
+        return row;
+      }),
+      this.row('出界补回', this.sel(() => p.recycle.mode, (v) => change('改出界补回', (q) => { q.recycle.mode = v; }),
+        p.solver === 'flock' ? [{ value: 'none', label: '由群体返回行为管理' }]
+          : [{ value: 'none', label: '不补回' }, { value: 'surface', label: '在发射区域表面补回' }, { value: 'airborne', label: '从上风空中补回' }])),
+      p.recycle.mode === 'airborne' ? this.row('高度方式', this.sel(() => p.recycle.height ? 'custom' : 'auto', (v) => change('改补回高度方式', q => {
+        if (v === 'auto') delete q.recycle.height; else q.recycle.height = [50, 50];
+      }), [{ value: 'auto', label: '自动（按范围限制与落速）' }, { value: 'custom', label: '指定高度' }])) : null,
+      p.recycle.mode === 'airborne' && p.recycle.height ? this.row('补回高度', this.pair(() => p.recycle.height, (v) => change('改补回高度', (q) => { q.recycle.height = v; }), 'wu')) : null,
+      p.recycle.mode === 'airborne' ? this.row('上风偏移', h('div', { class: 'row' },
+        this.pair(() => p.recycle.upwind || [0, 260], (v) => change('改补回上风偏移', (q) => { q.recycle.upwind = v; }), 'wu'),
+        p.recycle.upwind ? h('button', { onclick: () => change('恢复默认上风偏移', q => { delete q.recycle.upwind; }) }, '默认') : null)) : null,
+      h('div', { class: 'pad dim', title: '仅查看不会改写配置。首次编辑在当前实际行为上修改；切换运动模型使用该模型的默认执行配置，物性参数保留，可撤销。' },
+        '发射、外部影响、运动与补回分别配置。'),
+    ]);
+  },
+
+  applyCapabilities(host, container) {
+    const em = host.currentEmitter();
+    if (!em || !host.programApi) return;
+    const c = host.programApi.emitterCapabilities(em);
+    const disable = (n, why) => {
+      if (!n) return;
+      n.title = why + '；已有数据原样保留';
+      n.dataset.inactive = 'true';
+      for (const input of n.querySelectorAll('input, select, textarea, button')) input.disabled = true;
+    };
+    const row = (sec, label) => [...container.querySelectorAll(`.sec[data-sec="${sec}"] .row`)].find(n => n.firstElementChild?.textContent === label || n.querySelector('label')?.textContent === label);
+    if (!c.initialVelocity) for (const label of ['初速', '方向', '方向向量', '锥角']) disable(row('spawn', label), '当前出生方式不使用初速度');
+    if (!c.genericMotion) for (const label of ['重力', '阻力', '恒定风', '浮力', '速度上限']) disable(row('motion', label), '当前运动模型不使用此通用参数');
+    if (!c.turbulence) for (const label of ['湍流强度', '湍流尺度', '湍流速率']) disable(row('motion', label), '群体运动不使用通用湍流');
+    if (c.spawnPlacement === 'surface') for (const label of ['形状', '半径', '盒尺寸', '线终点']) disable(row('spawn', label), '出生位置取布置的发射区域表面');
+    if (host.areaPoly(host.activePlacement())?.length >= 3) disable(row('simulation', '无区域时半径'), '当前使用已绘制的发射区域');
+    if (c.flock) {
+      for (const label of ['速率', '开播爆发', '形状', '半径', '预览半径', '盒尺寸', '线终点', '活跃时长']) disable(row('spawn', label), '群体出生由巢管理');
+      disable(container.querySelector('.sec[data-sec="life"]'), '群体生命周期由状态机管理');
+    }
+    if (!c.collision) disable(container.querySelector('.sec[data-sec="collision"]'), '接触由当前运动模型处理');
+    if (em.plate && !c.plate) disable(container.querySelector('.sec[data-sec="plate"]'), '薄片参数未启用，可在运动模型中切换');
+    if (em.behavior && !c.flock) disable(container.querySelector('.sec[data-sec="behavior"]'), '群体参数未启用，可在运动模型中切换');
+    if (c.plate) for (const label of ['自转', '初始随机相位', '速度拉伸', '左右镜像随速度 x（侧视贴图）']) disable(row('appearance', label), '薄片朝向由物理模拟决定');
+    if (!c.influences.stimulus) disable(container.querySelector('[data-role="stimulus-controls"]'), '标签刺激响应未启用，在模拟与外部影响中开启');
+    for (const sec of container.querySelectorAll('.sec[data-inactive="true"]')) {
+      sec.firstElementChild?.appendChild(h('span', { class: 'dim' }, ' · 未启用'));
+    }
+    if (c.errors.length) container.prepend(h('div', { class: 'pad warn' }, c.errors.join('；')));
+  },
+
+  _renderBody(host, container) {
     this._host = host;
     container.textContent = '';
     if (!host.doc) { container.appendChild(h('div', { class: 'pad dim' }, '还没打开任何效果')); return; }
     const doc = host.doc;
     const em = host.currentEmitter();
     container.appendChild(this.effectSection(host, doc));
+    container.appendChild(this.placementSection(host, doc));
     if (!em) { container.appendChild(h('div', { class: 'pad dim' }, '左栏选一个发射器')); return; }
     const E = (label, fn) => host.edit(label, fn);
     const ensure = (key, init) => { if (!em[key] || typeof em[key] !== 'object') em[key] = init; return em[key]; };
+    const activate = (solver) => { if (host.programApi) em.simulation = host.programApi.switchEmitterProgram(em, solver); };
+    container.appendChild(this.programSection(host, em));
 
     // ---------------- 发射器本身
     container.appendChild(h('div', { class: 'sec' },
       this.row('发射器 id', this.txt(() => em.id, (v) => { if (v) E('改发射器 id', () => host.renameEmitter(em.id, v)); }, 'bats')),
       this.row('原点偏移', this.vec3(() => em.offset || [0, 0, 0], (v) => E('改发射器偏移', () => { em.offset = v.map(round2); }), 'wu')),
       h('div', { class: 'row' }, h('span', {}, ''),
-        this.chk(() => !!em.subOnly, (v) => E('改子发射器', () => { if (v) { em.subOnly = true; delete em.behavior; } else delete em.subOnly; }),
+        this.chk(() => !!em.subOnly, (v) => E('改子发射器', () => { if (v) { em.subOnly = true; if (host.programApi?.resolveEmitterProgram(em).solver === 'flock') activate('particle'); } else delete em.subOnly; }),
           '只由 onHit 触发（子发射器）')),
     ));
 
@@ -220,16 +436,21 @@ const Inspector = {
       return [
         this.row('动画包', this.sel(() => ap.animFile, (v) => E('改动画包', () => { if (v) { ap.animFile = v; delete ap.image; } else delete ap.animFile; }), src.anims, true)),
         this.row('单图', this.sel(() => ap.image, (v) => E('改贴图', () => { if (v) { ap.image = v; delete ap.animFile; } else delete ap.image; }), src.images, true)),
-        ap.animFile ? this.row('状态', this.txt(() => ap.state, (v) => E('改动画状态', () => { if (v) ap.state = v; else delete ap.state; }), 'fly')) : null,
-        ap.animFile ? this.row('栖息状态', this.txt(() => ap.restState, (v) => E('改栖息状态', () => { if (v) ap.restState = v; else delete ap.restState; }), 'hang')) : null,
+        // 状态名是对动画包的引用（选择器铁律）：下拉候选 = 那个 anim.json 的 states；打错的旧值保值显示成「当前值，候选里没有」。
+        // 原来是裸文本框：打成 fyl 运行时静默退回第一个状态（蝙蝠飞着倒挂），本地预览按点画也看不出来
+        ap.animFile ? this.row('状态', this.sel(() => ap.state, (v) => E('改动画状态', () => { if (v) ap.state = v; else delete ap.state; }), host.animStates(ap.animFile), true)) : null,
+        ap.animFile ? this.row('栖息状态', this.sel(() => ap.restState, (v) => E('改栖息状态', () => { if (v) ap.restState = v; else delete ap.restState; }), host.animStates(ap.animFile), true)) : null,
         this.row('宽度', this.num(() => ap.sizeWu, (v) => E('改粒子大小', () => { ap.sizeWu = v == null ? 1 : Math.max(0.01, v); }), 'wu', { title: '粒子世界宽度；高按贴图长宽比' })),
         this.row('大小抖动', this.pair(() => ap.sizeJitter || [1, 1], (v) => E('改大小抖动', () => { ap.sizeJitter = v; }), '×')),
-        this.curve('大小×寿命', () => ap.sizeOverLife, (v) => { ap.sizeOverLife = v; }),
-        this.curve('透明×寿命', () => ap.alphaOverLife, (v) => { ap.alphaOverLife = v; }),
+        // 空 = 删键（回到运行时缺省恒 1），不落 `[]` / null
+        this.curve('大小×寿命', () => ap.sizeOverLife, (v) => { if (v && v.length) ap.sizeOverLife = v; else delete ap.sizeOverLife; }),
+        this.curve('透明×寿命', () => ap.alphaOverLife, (v) => { if (v && v.length) ap.alphaOverLife = v; else delete ap.alphaOverLife; }, { cap: 1 }),
         this.row('乘色', this.vec3(() => ap.tint || [1, 1, 1], (v) => E('改乘色', () => { ap.tint = v.map((x) => clamp(x, 0, 1)); }), '0–1')),
         this.row('混合', this.sel(() => ap.blend, (v) => E('改混合', () => { if (v) ap.blend = v; else delete ap.blend; }), ['normal', 'add'], true)),
         h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => ap.lit !== false, (v) => E('改受光', () => { if (v) delete ap.lit; else ap.lit = false; }), '吃 probe 底光 + 实体灯（自发光的关掉）')),
         ap.lit !== false ? this.row('镜面/自发光', this.num(() => ap.emissive, (v) => E('改自发光', () => { if (v == null) delete ap.emissive; else ap.emissive = clamp(v, 0, 1); }), '0–1', { title: '这一份亮度不吃漫反射着色。水滴、火星这类靠镜面/自发光才看得见的东西才给；不是亮度拉杆' })) : null,
+        // 空 = 删键（运行时缺省 1）；夹到 0..10（与形状闸门 / 校验器 / 运行时同口径）
+        ap.lit !== false ? this.row('受光强度', this.num(() => ap.lightGain, (v) => E('改受光强度', () => { if (v == null) delete ap.lightGain; else ap.lightGain = clamp(v, 0, 10); }), '0–10', { placeholder: '1', title: '乘在这个发射器接收到的光上（probe 底光 + 实体灯），不乘自发光；1 = 与角色同口径；只在受光（lit）时有意义' })) : null,
         h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => !!ap.faceVelocity, (v) => E('改朝向速度', () => { if (v) ap.faceVelocity = true; else delete ap.faceVelocity; }), '左右镜像随速度 x（侧视贴图）')),
         this.row('速度拉伸', this.num(() => ap.stretchByVelocity, (v) => E('改速度拉伸', () => { if (v == null) delete ap.stretchByVelocity; else ap.stretchByVelocity = v; }), '秒', { title: '长度 = 速度 × 该秒数；0 = 纯 billboard' })),
         this.row('软边', this.num(() => ap.softEdgeWu, (v) => E('改软边', () => { if (v == null) delete ap.softEdgeWu; else ap.softEdgeWu = v; }), 'wu', { title: '与壳的深度差在此宽度内线性淡出（烟贴墙不切硬边）' })),
@@ -250,16 +471,19 @@ const Inspector = {
           if (!v) { delete sp.shape; return; }
           const d = { point: {}, sphere: { radius: 20 }, disc: { radius: 20 }, box: { size: [100, 50, 100] }, line: { to: [100, 0, 0] }, area: { radius: 200 } }[v] || {};
           sp.shape = Object.assign({ kind: v }, d);
+          if (v === 'area' && host.programApi) {
+            em.simulation = structuredClone(host.programApi.resolveEmitterProgram(em));
+            em.simulation.spawnPlacement = 'surface';
+          }
         }), ['point', 'sphere', 'disc', 'box', 'line', 'area'], true)),
         shape && (shape.kind === 'sphere' || shape.kind === 'disc')
           ? this.row('半径', this.num(() => shape.radius, (v) => E('改发射半径', () => { shape.radius = v == null ? 1 : Math.max(0, v); }), 'wu')) : null,
         shape && shape.kind === 'area'
-          ? this.row('预览半径', this.num(() => shape.radius, (v) => E('改区域预览半径', () => { shape.radius = v == null ? 200 : Math.max(1, v); }), 'wu', { title: '铺在场景实例的 area 多边形里；没有实例区域时（本地预览）退成这个半径的圆盘' })) : null,
+          ? this.row('预览半径', this.num(() => shape.radius, (v) => E('改区域预览半径', () => { shape.radius = v == null ? 200 : Math.max(1, v); }), 'wu', { title: '铺在布置的发射区域（area 多边形）里；布置没圈发射区域时退成这个半径的圆盘' })) : null,
         shape && shape.kind === 'box' ? this.row('盒尺寸', this.vec3(() => shape.size || [0, 0, 0], (v) => E('改发射盒', () => { shape.size = v; }), 'wu')) : null,
         shape && shape.kind === 'line' ? this.row('线终点', this.vec3(() => shape.to || [0, 0, 0], (v) => E('改发射线', () => { shape.to = v; }), 'wu')) : null,
         this.row('初速', this.pair(() => sp.speed || [0, 0], (v) => E('改初速', () => { sp.speed = v; }), 'wu/s')),
-        this.row('方向', this.vec3(() => sp.direction || [0, 1, 0], (v) => E('改初速方向', () => { sp.direction = v; }), 'M-world')),
-        this.row('锥角', this.num(() => sp.spread, (v) => E('改锥角', () => { if (v == null) delete sp.spread; else sp.spread = v; }), '度', { title: '围绕 direction 的圆锥半角' })),
+        ...this.directionRows(doc, em, sp, E),
         this.row('活跃时长', this.num(() => sp.duration, (v) => E('改活跃时长', () => { if (v == null) delete sp.duration; else sp.duration = v; }), '秒', { title: '不写 = 一直发' })),
       ];
     }));
@@ -281,7 +505,7 @@ const Inspector = {
         t ? this.row('湍流尺度', this.num(() => t.scale, (v) => E('改湍流尺度', () => { t.scale = v == null ? 60 : Math.max(0.001, v); }), 'wu')) : null,
         t ? this.row('湍流速率', this.num(() => t.speed, (v) => E('改湍流速率', () => { if (v == null) delete t.speed; else t.speed = v; }), '1/s')) : null,
         this.row('速度上限', this.num(() => mo.maxSpeed, (v) => E('改速度上限', () => { if (v == null) delete mo.maxSpeed; else mo.maxSpeed = v; }), 'wu/s')),
-        ...this.stimulusRows(em, mo, E),
+        h('div', { 'data-role': 'stimulus-controls' }, ...this.stimulusRows(em, mo, E)),
         h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删运动模块', () => { delete em.motion; }) }, '删运动模块')),
       ];
     }));
@@ -333,6 +557,7 @@ const Inspector = {
             attitude: { fear: { 'player:motion': 0.35 }, reactionDelay: [0.05, 0.25], fearDecay: 0.6, fleeThreshold: 0.35, calmSeconds: 6 },
             initialState: 'roosting',
           };
+          activate('flock');
         }),
       }, '+ 加群体模块（这一群会互相看见）'))];
       const at = be.attitude, ac = be.accel, ob = be.orbit, hm = be.home;
@@ -385,16 +610,16 @@ const Inspector = {
         h('div', { class: 'row' }, addTag,
           h('button', { onclick: () => { const t2 = addTag.value.trim(); if (t2) E('加恐惧标签', () => { at.fear = at.fear || {}; at.fear[t2] = 0.5; }); } }, '+ 怕'),
           h('button', { onclick: () => { const t2 = addTag.value.trim(); if (t2) E('加吸引标签', () => { at.attract = at.attract || {}; at.attract[t2] = 0.5; }); } }, '+ 引')),
-        h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删群体模块', () => { delete em.behavior; }) }, '删群体模块')),
+        h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删群体模块', () => { delete em.behavior; activate('particle'); }) }, '删群体模块')),
       ];
     }));
 
     // ---------------- 薄片（纸钱 / 落叶）
     container.appendChild(this.section('plate', '薄片（纸钱）', () => {
       const pl = em.plate;
-      if (em.behavior) return [h('div', { class: 'pad dim' }, '群体发射器不能是薄片（运行时群体优先）')];
+      if (host.programApi?.resolveEmitterProgram(em).solver === 'flock' && !pl) return [h('div', { class: 'pad dim' }, '先将运动模型切换为普通粒子，再添加薄片参数')];
       if (!pl) return [h('div', { class: 'pad dim' }, '挂上它，每颗粒子就是一张有朝向、会弯的薄片：吃场景风、躺地贴物、能被吹走'),
-        h('div', { class: 'btns' }, h('button', { onclick: () => E('加薄片模块', () => { ensure('plate', { size: [16, 16], terminalSpeed: 90 }); }) }, '+ 加薄片模块'))];
+        h('div', { class: 'btns' }, h('button', { onclick: () => E('加薄片模块', () => { ensure('plate', { size: [16, 16], terminalSpeed: 90 }); activate('plate'); }) }, '+ 加薄片模块'))];
       const sub = (key) => pl[key] || (pl[key] = {});
       const numIn = (label, key, field, unit, title, lo, hi) => this.row(label, this.num(
         () => (pl[key] || {})[field],
@@ -415,9 +640,8 @@ const Inspector = {
         numIn('弯曲上限', 'bend', 'max', '', '', 0, 1.5),
         numIn('静卷曲', 'bend', 'rest', '', '躺着时自带的卷曲（逐张在 ±它 里抽）', 0, 1),
         this.row('渲染段数', this.num(() => pl.segments, (v) => E('改渲染段数', () => { if (v == null) delete pl.segments; else pl.segments = Math.max(1, Math.min(16, Math.round(v))); }), '段', { int: true })),
-        h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => pl.replenish !== false, (v) => E('改补回', () => { if (v) delete pl.replenish; else pl.replenish = false; }), '刮丢的从上风空中补回（常驻）')),
-        h('div', { class: 'pad dim' }, '风来自场景 JSON 的 wind（本地预览同样吃它；场景没配 wind 就吹不动，状态栏黄字提示）；铺撒区域取本场景圈了 area 的实例；工作台 3D 视图按点画，片的朝向与弯曲在游戏里看'),
-        h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删薄片模块', () => { delete em.plate; }) }, '删薄片模块')),
+        h('div', { class: 'pad dim' }, '受力来源见「模拟与外部影响」；铺撒区域取活动布置的发射区域；本地预览与游戏共用模拟，片的朝向与弯曲在游戏里看'),
+        h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删薄片模块', () => { delete em.plate; activate('particle'); }) }, '删薄片模块')),
       ];
     }));
 
@@ -440,8 +664,28 @@ const Inspector = {
     const E = (label, fn) => host.edit(label, fn);
     return this.section('effect', '效果', () => {
       const au = doc.authoring || null;
-      const a = au && au.anchor ? au.anchor : null;
+      // 预览锚点只在它的作者场景里算数（与 app.js `sceneAnchor` 同一条判据）：记在别的场景的那份不当成这里的值显示，
+      // 否则画面点 / 离面高 / 落在 摆着别的场景的数，预览却在出生点跑；改一下离面高，那份锚点被静默换成出生点
+      const here = !!(au && au.anchor && host.authoringAnchorHere(au));
+      const a = here ? au.anchor : null;
+      const foreign = au && au.anchor && !here ? String(au.sceneId || '') : '';
+      const sp = foreign ? host.sceneAnchor() : null;
+      const foreignTxt = foreign ? `预览锚点记在「${foreign}」；这里用出生点（${fmt(sp.x)} , ${fmt(sp.y)}）——按 A 在这里点一下放一个，或点顶栏「记为作者场景」从出生点起一个` : '';
       const at = host.attach;
+      const ap = host.activePlacement();
+      if (ap && !at) {
+        // 有活动布置：场景锚点就是布置的 anchor（运行时读的就是它），在「布置」一节改；效果里的预览锚点这时不参与
+        return [
+          this.row('id', h('span', { class: 'mono' }, doc.id)),
+          this.row('标签', this.txt(() => doc.label, (v) => E('改标签', () => { if (v) doc.label = v; else delete doc.label; }), '崖墓蝙蝠群')),
+          this.row('备注', this.txt(() => au && au.note, (v) => E('改备注', () => { const o = host.ensureAuthoring(); if (v) o.note = v; else delete o.note; }), '给自己看的')),
+          h('h4', {}, '预览锚点'),
+          this.row('锚在', this.sel(() => 'surface', (v) => host.setAttachMode(v === 'socket'),
+            [{ value: 'surface', label: '场景面（行走面 / 深度壳）' }, { value: 'socket', label: '角色挂点（手持：火把 / 灯笼）' }])),
+          h('div', { class: 'pad dim' }, `锚点跟着活动布置「${ap.id}」走（运行时读的就是它），在下面「布置」一节改；效果自己的预览锚点只在本份没布置它时用`),
+          h('div', { class: 'pad dim' }, '发射器一览：' + (doc.emitters || []).map((x) => x.id).join(' / ')),
+        ];
+      }
       return [
         this.row('id', h('span', { class: 'mono' }, doc.id)),
         this.row('标签', this.txt(() => doc.label, (v) => E('改标签', () => { if (v) doc.label = v; else delete doc.label; }), '崖墓蝙蝠群')),
@@ -462,12 +706,80 @@ const Inspector = {
         at ? h('div', { class: 'pad dim' }, '运行时就是这条：挂件预设的 vfx 由 HeldPropSystem 每帧把锚点挪到挂点上（moveAnchor），已发射的粒子留在原地——本地预览跑的是同一份函数。A 工具点一下 = 把火头摆到那里')
           : null,
         // ---- 场景面那一档
-        at ? h('div', { class: 'pad dim' }, `场景锚点（切回「场景面」才用）：${a ? `${fmt(a.x)} , ${fmt(a.y)}` : '还没有'}`) : null,
+        at ? h('div', { class: 'pad dim' }, `场景锚点（切回「场景面」才用）：${a ? `${fmt(a.x)} , ${fmt(a.y)}` : foreign ? `记在「${foreign}」（这里用出生点）` : '还没有'}`) : null,
         !at && a ? this.row('画面点', h('span', { class: 'mono' }, `${fmt(a.x)} , ${fmt(a.y)}`)) : null,
-        !at && !a ? h('div', { class: 'pad dim' }, '还没有锚点：按 A 在场景表面上点一下') : null,
+        !at && !a && foreign ? h('div', { class: 'pad dim', 'data-role': 'foreignAnchor' }, foreignTxt) : null,
+        !at && !a && !foreign ? h('div', { class: 'pad dim' }, '还没有锚点：按 A 在场景表面上点一下') : null,
         !at && a ? this.row('离面高', this.num(() => a.h == null ? 0 : a.h, (v) => E('改锚点高度', () => { const o = host.ensureAnchor(); o.h = v == null ? 0 : Math.max(0, v); }), 'wu')) : null,
         !at && a ? this.row('落在', this.sel(() => a.surface || 'ground', (v) => E('改锚点表面', () => { const o = host.ensureAnchor(); if (v === 'shell') o.surface = 'shell'; else delete o.surface; host.reanchor(); }), [{ value: 'ground', label: '行走面' }, { value: 'shell', label: '深度壳（崖壁 / 桌面）' }])) : null,
         h('div', { class: 'pad dim' }, '发射器一览：' + (doc.emitters || []).map((x) => x.id).join(' / ')),
+      ];
+    });
+  },
+
+  /**
+   * 「布置」一节 = 活动布置（本份里当前效果被选中的那条）。语义照主编辑器场景页那一栏（已搬过来）：
+   * 删范围区域 = 退回用发射区域（限定照开）；两块都没了 confine 一起删；去掉「限定」勾 = confine（含拉好的
+   * 范围区域）收进本次会话的 stash，再勾上原样回来。conditions 只读（原样保留）。
+   * **渲染只读**：每个写入都经 `host.editPlacement(id, …)` 在写入时按 id 现找那一行。
+   */
+  placementSection(host, doc) {
+    const ap = host.activePlacement();
+    return this.section('placement', ap ? `布置 · ${ap.id}` : '布置', () => {
+      if (!host.scene) return [h('div', { class: 'pad dim' }, '还没装场景')];
+      const where = `${host.scene.name || host.scene.id} · ${host.phaseLabel(host.scene.id, host.phase)}`;
+      if (!ap) {
+        return [
+          h('div', { class: 'pad dim' }, `「${where}」没有布置「${doc.id}」：本地预览用效果里的预览锚点、没有区域（游戏里这一份不会出现它——没配就没有，不继承别的时段）`),
+          h('div', { class: 'btns' }, h('button', { class: 'primary', disabled: !!host.libErr, onclick: () => host.placeHere() }, '把当前效果布置到这里')),
+        ];
+      }
+      const id = ap.id;
+      // 写入时读**行对象此刻的 id**（`ap` 就是库里那一行，改名是原地改它的 id），不拿渲染那一刻的 id：
+      // 在 id 框里改了名没回车、直接去点「自动开」下拉，改名提交了但检视器还没重建（列表开着时不许重建），
+      // 下拉选中走的还是这批闭包——拿旧 id 找行一个都找不到，选了等于没选、状态栏也不说
+      const E = (label, fn) => host.editPlacement(ap.id, label, fn);
+      const a = ap.anchor || {};
+      const emit = host.areaPoly(ap, 'emit'), rng = host.areaPoly(ap, 'range');
+      const conf = ap.confine && typeof ap.confine === 'object' ? ap.confine : null;
+      const stash = host.confineStash[host.stashKey(id)];
+      const stashArea = stash && Array.isArray(stash.area) && stash.area.length >= 3;
+      const rangeTxt = rng ? `范围区域 ${rng.length} 个顶点` : conf && emit ? '范围区域 = 发射区域'
+        : !conf && stashArea ? '范围区域已收起（勾上「限定」恢复）' : '不限定';
+      const hash = host.hashSeedOf(id);
+      const nCond = Array.isArray(ap.conditions) ? ap.conditions.length : 0;
+      return [
+        h('div', { class: 'pad dim' }, `${where}（运行时就按这一条建实例）`),
+        this.row('id', this.txt(() => ap.id, (v) => { if (v && v !== ap.id) host.renamePlacement(ap.id, v); }, 'vfx_…')),
+        this.row('效果', h('span', { class: 'mono' }, ap.effect)),
+        h('h4', {}, '锚点（画面点 + 离表面高）'),
+        this.row('x', this.num(() => a.x, (v) => { if (v != null) E('改布置锚点', (r) => { r.anchor.x = round2(v); }); }, 'wu')),
+        this.row('y', this.num(() => a.y, (v) => { if (v != null) E('改布置锚点', (r) => { r.anchor.y = round2(v); }); }, 'wu')),
+        this.row('离面高', this.num(() => a.h, (v) => E('改布置锚点高度', (r) => { if (v == null) delete r.anchor.h; else r.anchor.h = Math.max(0, v); }), 'wu', { placeholder: '0' })),
+        this.row('落在', this.sel(() => a.surface || 'ground', (v) => E('改布置锚点表面', (r) => { if (v === 'shell') r.anchor.surface = 'shell'; else delete r.anchor.surface; }),
+          [{ value: 'ground', label: '行走面' }, { value: 'shell', label: '深度壳（崖壁 / 桌面）' }])),
+        h('h4', {}, '实例'),
+        this.row('种子', this.num(() => ap.seed, (v) => E('改布置种子', (r) => { if (v == null) delete r.seed; else r.seed = Math.round(v); }), '空 = 按 id 哈希',
+          { int: true, placeholder: hash == null ? '' : String(hash), title: `空 = 按实例 id 哈希（与游戏 VfxSystem 同一个 hashSeed${hash == null ? '' : `，现在是 ${hash}`}）` })),
+        this.row('数量倍率', this.num(() => ap.countScale, (v) => E('改数量倍率', (r) => { if (v == null) delete r.countScale; else r.countScale = Math.max(0.01, v); }), '×',
+          { placeholder: '1', title: '乘每个发射器的 max / burst / rate' })),
+        this.row('自动开', this.sel(() => (ap.autoStart == null ? null : String(ap.autoStart)), (v) => E('改自动开', (r) => { if (v == null) delete r.autoStart; else r.autoStart = v === 'true'; }),
+          [{ value: 'true', label: '进场就放' }, { value: 'false', label: '等 playVfx 才放' }], true)),
+        h('div', { class: 'pad dim' }, nCond ? `条件 ${nCond} 条（原样保留）` : '没有条件（一直在场）'),
+        h('h4', {}, '粒子区域'),
+        h('div', { class: 'pad', 'data-role': 'areaInfo' }, `${emit ? `发射区域 ${emit.length} 个顶点` : '没有发射区域：纸钱铺撒退成锚点周围的圆盘'}　·　${rangeTxt}`),
+        h('div', { class: 'btns' },
+          h('button', { class: 'areaBtn', title: '按住拖一个框 = 发射区域（青色虚线）', onclick: () => host.setTool('areaEmit') }, emit ? '重拉发射区域' : '拉发射区域'),
+          h('button', { class: 'areaBtn', title: '按住拖一个框 = 范围区域（黄色实线，打开限定）', onclick: () => host.setTool('areaRange') }, rng ? '重拉范围区域' : '拉范围区域')),
+        h('div', { class: 'btns' },
+          h('button', { class: 'danger', disabled: !emit, onclick: () => host.clearArea('emit') }, '清除发射区域'),
+          h('button', { class: 'danger', disabled: !rng, onclick: () => host.clearArea('range'), title: '退回用发射区域（限定照开）' }, '清除范围区域')),
+        h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => !!conf, (v) => host.setConfine(v), '粒子限定在区域里',
+          { role: 'confine', disabled: !(emit || conf || stashArea), title: '去勾时范围区域先收着，本次会话里再勾上原样回来' })),
+        this.row('边带宽', this.num(() => (conf ? conf.feather : null), (v) => E('改边带宽', (r) => { if (!r.confine) return; if (v == null) delete r.confine.feather; else r.confine.feather = Math.max(0, v); }), 'wu',
+          { placeholder: '120', disabled: !conf, title: '从框线往里这么宽的一带里风变弱、纸变稀（缺省 120）' })),
+        this.row('限高', this.num(() => (conf ? conf.ceiling : null), (v) => E('改限高', (r) => { if (!r.confine) return; if (v != null && v > 0) r.confine.ceiling = v; else delete r.confine.ceiling; }), 'wu',
+          { placeholder: '不限', disabled: !conf, title: '离地真实高度上限；空 = 不限' })),
       ];
     });
   },

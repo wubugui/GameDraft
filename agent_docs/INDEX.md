@@ -60,7 +60,7 @@
 - [拆除顺序与世代作废](runtime/mechanisms/teardown-ordering.md) — 拆一局/拆一个场景是强排序不是清单;跨 await 的异步流程靠世代号自杀,不靠"记得取消"
 - [UI 组件层(窗体/按钮/滚动区)](runtime/mechanisms/ui-component-layer.md) — 面板不再各自手搭遮罩·标题栏·滚动·按钮,统一走 src/ui/components;重绘用 attach 不用 open、量高前必须摘 mask、行内点击必须消费
 - [UI 面板皮肤单一入口](runtime/mechanisms/ui-panel-skin.md) — 面板底/边只经 PanelSkin 的 createPanel(有木框)或 drawPanelBase(只有底+细边);拿木框皮肤调 drawPanelBase 会静默丢框;「暗角」实为一层均匀黑纱,暗底配色是连着它一起量的
-- [世界空间粒子 / 群体系统(效果资产 · 场景实例 · 刺激场)](runtime/mechanisms/vfx-system.md) — 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 场景实例 / 运行时刺激场);表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源
+- [世界空间粒子 / 群体系统(效果资产 · 布置 · 刺激场)](runtime/mechanisms/vfx-system.md) — 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 按场景×时段外观分份的布置库 / 运行时刺激场),效果与布置唯一写者都是粒子工作台;表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源
 - [zone 生命周期与上下文契约](runtime/mechanisms/zone-lifecycle-contracts.md) — 触发载体两路(进出即触发 / 按键才触发);zone 上下文按参数线程化(executeBatchInZoneContext),禁回退全局栈;位面重注册仅 Exploring
 
 ### 配方
@@ -104,10 +104,11 @@
 - [场景轨迹的作者面(画布拉线 + 烘焙)](editor-tools/mechanisms/scene-trajectory-authoring.md)〔superseded〕 — 线在画布拉、节奏在面板调;松手即重烘,source 与 keyframes 必须同一条命令落地;空分段返回的空表绝不许拿去清盘
 - [场景编辑器的三条视图轴(过场 / 位面 / 时段)](editor-tools/mechanisms/scene-view-filter-axes.md) — 过场轴决定实体存不存在,位面与时段轴决定已加载实体显不显;后两条必须合成一个判定再落显隐,分开各贴各的会互相冲掉
 - [共享选择器控件的保值契约](editor-tools/mechanisms/shared-widget-value-fidelity.md) — IdRefSelector 等共享控件被约 40 处调用点依赖——未知/悬垂值必须保值展示而非静默顶替或清空,候选去重不得让一部分数据在 UI 上不可达;一处控件破坏 = 全编辑器数据面污染
-- [草木工作台(抠植被 · 标刚体 · 重烘拆层)](editor-tools/mechanisms/sway-workbench.md) — 背景草木拆层的作者面:自动分割打底 + 手涂三个通道(补植被 / 锁死不动 / 刚体)→ sway_paint.png 是烘焙的**输入** → 页面上点重烘 → 推给游戏看真效果;刚体度是逐像素的,同一株里可以竿刚叶弯;工作台不重写拆层的任何一步
+- [草木工作台(抠植被 · 标刚体 · 推给游戏 / 导出到游戏)](editor-tools/mechanisms/sway-workbench.md) — 背景草木拆层的作者面:自动分割打底 + 手涂三个通道(补植被 / 锁死不动 / 刚体)→ sway_paint.png 是烘焙的**输入**;**推给游戏** = 页面上此刻那份(存没存都算)烘进 local/ 预览、在跑着的游戏里原地换上、资源不动,**导出到游戏** = 存盘后烘进资源;推送靠进程内内容哈希缓存做到约 1 秒;刚体度是逐像素的,同一株里可以竿刚叶弯;工作台不重写拆层的任何一步
+- [地形工作台(碰撞 · 可走区 · 行走面修补 · 推给游戏 / 导出到游戏)](editor-tools/mechanisms/terrain-workbench.md) — 碰撞 / 可走区 / 行走面的唯一作者面:烘焙器只留自动结果(collision_auto.png),作者层(多边形 / 笔刷 / 高度增量)住 runtime/scenes/<id>/terrain/,唯一合成器 terrain_compose 把两者合成 collision.png + collision.json 旁挂 + 各时段 ground_d.png;推给游戏 = 页面此刻那份合成进 local/ 预览、游戏原地换上、资源不动,导出到游戏 = 先存盘再合成进资源;运行时对齐靠游戏用自己的 isCollision 答探测;文档一律网格单位(没乘 wu/q 的 M-world)
 - [过场步骤编辑器(TimelineEditor)契约](editor-tools/mechanisms/timeline-editor-contracts.md) — UI/交互改动不得改 StepWidget.to_dict 序列化输出;已有搜索/撤销/剪贴板等能力勿重复造;含一个 PySide takeAt 布局级深坑
 - [轨迹工作台(独立桌面应用 · 画面/世界两种空间 · 烘成独立资产)](editor-tools/mechanisms/trajectory-workbench.md) — 轨迹资产唯一的作者面与唯一写入者;曲线没有锚点(播放位置在播放时给),只有一种曲线两种配置(场景曲线绑作者场景 / 相对曲线不绑),命名插槽是曲线暴露给场景的站位;加载任一场景(可把 q 空间还原成 3D 伪世界)拉线/抛体,保存=烘一次再原子写盘(保存即迁移老锚点资产);世界空间物理与地面高度场+深度壳碰撞、控制点是 {x,z,h};投影与运行时同一份金标;桌面壳零浏览器缓存
-- [粒子工作台(独立桌面应用 · 页内跑同一份运行时模拟 · 效果资产唯一写入者)](editor-tools/mechanisms/vfx-workbench.md) — 效果资产唯一的作者面与唯一写入者;3D 里摆发射器 / 巢与活动域 / 锚点 / 玩家 / 刺激,页内跑的是打包进来的运行时 vfxSim 本体(不是镜像);相机与 gizmo 经 /vendor 原样复用轨迹台那两份、不 fork;双槽实时推给游戏预览;桌面壳零缓存
+- [粒子工作台(独立桌面应用 · 页内跑同一份运行时模拟 · 效果资产与布置库唯一写入者)](editor-tools/mechanisms/vfx-workbench.md) — 效果资产与布置库(场景 × 时段外观)唯一的作者面与唯一写入者;3D / 原画里摆发射器 / 巢与活动域 / 布置锚点 / 发射区域与范围区域 / 玩家 / 刺激,页内跑的是打包进来的运行时 vfxSim 本体(不是镜像);相机与 gizmo 经 /vendor 原样复用轨迹台那两份、不 fork;双槽实时推给游戏预览(整份工作态布置库 + 切时段);主编辑器只显示;桌面壳零缓存
 - [控件丢弃：摘 parent 之前必须先 hide](editor-tools/mechanisms/widget-teardown-orphan-window.md) — 对可见控件直接 setParent(None) 会让它变成一个真顶层窗口并被 Qt 显示出来（屏幕中央光速开关的小窗）；销毁走 discard_widget/discard_layout_widgets，重新安家走 detach_widget 且必须同回合安家
 
 ### 配方

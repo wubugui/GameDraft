@@ -299,16 +299,12 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
         <option value="2">深度:压低(推远)</option>
         <option value="3">深度:抹平到地面</option>
         <option value="7">深度:平滑</option>
-        <option value="4">碰撞:改为可走</option>
-        <option value="5">碰撞:改为阻挡</option>
         <option value="12">地形:标为物体(扣掉)</option>
         <option value="13">地形:标为地形(留下)</option>
         <option value="6">擦除编辑</option>
       </optgroup>
       <optgroup label="多边形圈选(左键加点·右键闭合)">
         <option value="8">多边形:抹平到地面</option>
-        <option value="9">多边形:改为可走</option>
-        <option value="10">多边形:改为阻挡</option>
         <option value="11">多边形:擦除</option>
         <option value="14">多边形:标为物体</option>
         <option value="15">多边形:标为地形</option>
@@ -380,7 +376,7 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
     <details class="fold" id="fold_shade">
       <summary>假法线微调 <span class="hint">剪影充气 / 压平</span><span class="cnt"></span></summary>
       <div class="foldbody">
-        <label title="剪影充气的深度幅度(影响法线和采样位置)"><span class="tm now">●</span><span class="k">隆起深度</span><input type="range" id="bulge" min="0" max="0.6" step="0.02" value="0.22"><span class="v" id="bulge_v"></span></label>
+        <label title="相对角色格宽的深度比例；只改变采样位置，法线使用烘焙图"><span class="tm now">●</span><span class="k">隆起/格宽</span><input type="range" id="bulge" min="0" max="0.6" step="0.02" value="0.22"><span class="v" id="bulge_v"></span></label>
         <label title="法线向纯平面(朝相机)插值:1=完全平面法线"><span class="tm now">●</span><span class="k">法线压平</span><input type="range" id="flatten" min="0" max="1" step="0.05" value="0"><span class="v" id="flatten_v"></span></label>
       </div>
     </details>

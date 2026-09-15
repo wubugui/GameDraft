@@ -39,19 +39,35 @@ type Vec3 = [number, number, number];
 export interface HeldPropDeps {
   getPreset: (propId: string) => PropPresetDef | undefined;
   /**
-   * 挂点在**当前帧**的容器局部位姿（场景 wu，y 向上为负）。
+   * 挂点在**当前帧**相对实体接地点的偏移（场景 wu，y 向上为负），**已含实体的左右朝向**
+   * （Player 转身在精灵上、NPC 转身在外层容器上，两种都要算进去 —— 见
+   * `SpriteEntity.getSocketOffsetFromContact`）。
    * 这一帧没标注 ⇒ null（挂件此刻是隐着的，灯也该跟着灭 —— 刀在鞘里手上就没有火）。
    */
-  getSocketLocalPose: (targetId: string, socket: string) => { x: number; y: number } | null;
+  getSocketLocalPose: (targetId: string, socket: string) => { x: number; y: number; front: boolean; clearanceWu: number; bodyWidthWu: number } | null;
+  /** 挂点的实际画面位置 + 前后关系 → 身体外侧 M-world 点；无真 3D 几何时 null。 */
+  socketToLightWorld: (
+    contact: { x: number; y: number },
+    pose: { x: number; y: number; front: boolean; clearanceWu: number; bodyWidthWu: number },
+  ) => Vec3 | null;
   /** 实体脚点（场景坐标 wu）；实体不在场 ⇒ null */
   getEntityContact: (targetId: string) => { x: number; y: number } | null;
   /** 该实体动画包里**已标注**的挂点名；实体不在场 ⇒ null（拼错挂点名要能报出来） */
   listSockets: (targetId: string) => string[] | null;
-  /** 场景点 + 离地高度（wu）→ 灯世界坐标（wu）。没有几何载荷 ⇒ null */
+  /**
+   * 场景点 + 离地高度（wu）→ **M-world** 灯坐标（wu，铁律 0）。
+   * 场景此刻没有真 3D 几何（照明载荷没到 / 没烘）⇒ **null**，绝不能退回别的坐标系：
+   * 粒子的平面近似空间返回的是画面坐标，拿它当灯位不报错，只是灯静默落到别处。
+   */
   sceneToLightWorld: (sceneX: number, sceneY: number, heightWu: number) => Vec3 | null;
   /**
-   * 该点处的空气速度大小（wu/s，场景风）。`heightWu` = 离地高度（风的对数廓线要它）。
-   * 场景没配风 ⇒ 0。
+   * 场景点 + 离地高度（wu）→ **粒子模拟空间**里的坐标（效果锚点用）。
+   * 与灯位分开：粒子在平面近似空间里照样要跑，而灯不能拿那份坐标。还没进场景 ⇒ null。
+   */
+  sceneToVfxWorld: (sceneX: number, sceneY: number, heightWu: number) => Vec3 | null;
+  /**
+   * 该点处的空气速度大小（wu/s，场景风）。`world` 是 M-world 坐标，`heightWu` = 离地高度
+   * （风的对数廓线要它）。场景没配风 ⇒ 0。
    */
   windSpeedAt: (world: Vec3, heightWu: number) => number;
   /** 挂/换贴图（切状态会重挂一次，纹理变了没法淡入淡出） */
@@ -129,7 +145,7 @@ interface HeldEntry {
 const DYNAMIC_LIGHT_PREFIX = '__prop';
 
 /** 位置死区（wu）：1 wu ≈ 角色身高的 1/150，屏幕上远小于一个像素 */
-const POS_EPS_WU = 1;
+const POS_EPS_WU = 1e-4; // 仅滤浮点噪声；动画的细小挂点位移同样要在本帧推送。
 
 /**
  * 闪烁的**推送频率上限**（Hz）。不是表现参数，是性能闸：灯每推一次就重烘一次整张
@@ -425,16 +441,16 @@ export class HeldPropSystem implements IGameSystem {
     if (!f) return null;
     const contact = this.deps.getEntityContact(f.target);
     if (!contact) return null;
-    let sceneX = contact.x;
-    let height = f.heightWu ?? 0;
     const sock = f.socket?.trim();
+    let w: Vec3 | null;
     if (sock) {
       const pose = this.deps.getSocketLocalPose(f.target, sock);
       if (!pose) return null;
-      sceneX += pose.x;
-      height += -pose.y;
+      w = this.deps.socketToLightWorld(contact, pose);
+      if (w) w = [w[0], w[1] + (f.heightWu ?? 0), w[2]];
+    } else {
+      w = this.deps.sceneToLightWorld(contact.x, contact.y, f.heightWu ?? 0);
     }
-    const w = this.deps.sceneToLightWorld(sceneX, contact.y, height);
     if (!w) return null;
     const off = f.offset;
     const pos: [number, number, number] = off
@@ -482,24 +498,25 @@ export class HeldPropSystem implements IGameSystem {
     for (const entry of this.entries.values()) {
       entry.time += dt;
       entry.fadeElapsedMs += dt * 1000;
-      const anchor = this.resolveAnchorWorld(entry);
+      const anchor = this.resolveAnchor(entry);
       // 渐灭到"没有灯"的状态时这里仍是上一盏的形状，强度到 0 之后才撤（见 lightDef 注释）
       if (entry.lightDef && !entry.resolved.light
         && transitionProgress(entry.fadeElapsedMs, entry.fadeMs) >= 1) {
         entry.lightDef = null;
       }
       const light = entry.lightDef;
-      // 挂点这一帧没标注（挂件隐着）或场景没有几何 ⇒ 这一帧不发光、效果原地不动
-      if (anchor && light) {
+      // 挂点这一帧没标注（挂件隐着）或场景没有真 3D 几何 ⇒ 这一帧不发光
+      if (anchor?.lightWorld && light) {
         // 逐帧算真值（发射率吃这一个），累进区间均值（灯吃均值，见 iSum 注释）
-        const instant = this.liveIntensity(entry, anchor.world, anchor.heightWu, light);
+        const instant = this.liveIntensity(entry, anchor.lightWorld, anchor.heightWu, light);
         entry.iSum += instant;
         entry.iCount++;
         const intensity = entry.iSum / entry.iCount;
         if (intensity > 0) {
-          const def = this.buildLightDef(entry, light, anchor.world, intensity);
+          const def = this.buildLightDef(entry, light, anchor.lightWorld, intensity);
           lights.push(def);
-          const now = { pos: anchor.world, intensity };
+          // 与 commitPushed 记录的最终灯同一把尺（含作者偏移）。
+          const now = { pos: def.pos as Vec3, intensity: def.intensity };
           if (lightChangedEnough(entry.lastLight, now, POS_EPS_WU, Infinity)) moved = true;
           else if (lightChangedEnough(entry.lastLight, now)) flickered = true;
         } else if (entry.lastLight) {
@@ -508,10 +525,10 @@ export class HeldPropSystem implements IGameSystem {
       } else if (entry.lastLight) {
         moved = true;
       }
-      if (anchor) {
-        // 挂上时锚点还没解出来（载荷未到 / 挂点那帧没标注）的，这里补开
+      if (anchor?.vfxWorld) {
+        // 挂上时锚点还没解出来（还没进场景 / 挂点那帧没标注）的，这里补开
         if (entry.vfxPending) this.startVfx(entry);
-        this.syncVfx(entry, anchor.world);
+        this.syncVfx(entry, anchor.vfxWorld);
       }
     }
     /**
@@ -580,7 +597,7 @@ export class HeldPropSystem implements IGameSystem {
       id: `${DYNAMIC_LIGHT_PREFIX}_${entry.target}_${entry.socket}`,
       kind: 'point',
       pos,
-      intensity,
+      intensity, // 与普通场景点光同义；此处不另设强度标尺或补偿倍率。
       enabled: true,
     };
     if (light.color) def.color = light.color;
@@ -592,14 +609,16 @@ export class HeldPropSystem implements IGameSystem {
   }
 
   /**
-   * 挂点 → 灯世界坐标（wu）。
+   * 挂点 → 灯位与效果锚点；真 3D 时共享 M-world 点，粒子仍保留平面降级。
    *
-   * 走"画面点正下方地面 + 抬高"这条既有路（与摆灯的作者模型、粒子的 `at + h` 同口径）：
-   * 挂点的画面 x 决定横向、脚点决定纵深、挂点相对脚点的高度就是抬高量。
-   * **铁律 0**：换算一次到底交给组装层注入的 `sceneToLightWorld`（内部走
+   * 宿主脚点锚定直立面，按挂点实际前后关系外推到身体之外；保持投影对准挂点。
+   * **铁律 0**：换算一次到底交给组装层注入的 `socketToLightWorld`（内部走
    * `utils/sceneSpace`，朝向过 R、尺度过 wuPerQUnit），本系统不自己拼矩阵。
+   *
+   * ⚠ 没有照明载荷时效果退到平面近似，那份坐标绝不能当灯位；真 3D 时二者同源。
+   * 挂点这一帧没标注 / 实体不在场 ⇒ 整个 null；只是某一边的空间解不出来 ⇒ 那一边 null。
    */
-  private resolveAnchorWorld(entry: HeldEntry): { world: Vec3; heightWu: number } | null {
+  private resolveAnchor(entry: HeldEntry): { lightWorld: Vec3 | null; vfxWorld: Vec3 | null; heightWu: number } | null {
     const contact = this.deps.getEntityContact(entry.target);
     if (!contact) return null;
     const socketName = entry.resolved.light?.socket?.trim() || entry.socket;
@@ -607,8 +626,14 @@ export class HeldPropSystem implements IGameSystem {
     if (!pose) return null;
     // pose.y 向上为负：离地高度 = −y
     const heightWu = -pose.y;
-    const world = this.deps.sceneToLightWorld(contact.x + pose.x, contact.y, heightWu);
-    return world ? { world, heightWu } : null;
+    const sx = contact.x + pose.x;
+    const lightWorld = this.deps.socketToLightWorld(contact, pose);
+    return {
+      lightWorld,
+      // 真 3D 空间里灯与火焰是同一个挂点；没有几何时效果才走既有平面降级。
+      vfxWorld: lightWorld ?? this.deps.sceneToVfxWorld(sx, contact.y, heightWu),
+      heightWu,
+    };
   }
 
   /**
@@ -620,11 +645,11 @@ export class HeldPropSystem implements IGameSystem {
    */
   private startVfx(entry: HeldEntry): void {
     if (entry.resolved.vfx.length === 0) { entry.vfxPending = false; return; }
-    const anchor = this.resolveAnchorWorld(entry);
-    if (!anchor) { entry.vfxPending = true; return; }
+    const at = this.resolveAnchor(entry)?.vfxWorld ?? null;
+    if (!at) { entry.vfxPending = true; return; }
     entry.vfxPending = false;
     for (const effect of entry.resolved.vfx) {
-      const id = this.deps.playVfx(effect, anchor.world);
+      const id = this.deps.playVfx(effect, at);
       if (id) entry.vfxIds.push(id);
     }
   }

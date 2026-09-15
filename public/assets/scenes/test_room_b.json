@@ -27,7 +27,21 @@
     },
     "giGain": 0.0,
     "placeholder": true,
-    "_migration": "identity-2026-08-21"
+    "_migration": "identity-2026-08-21",
+    "lightFactors": {
+      "character": {
+        "indirectFactor": 0.3183098861837907,
+        "directFactor": 1,
+        "totalFactor": 1,
+        "eChroma": 0
+      },
+      "particles": {
+        "indirectFactor": 1.0,
+        "directFactor": 1,
+        "totalFactor": 0.3183098861837907,
+        "eChroma": 0
+      }
+    }
   },
   "id": "test_room_b",
   "name": "后巷",
@@ -298,14 +312,6 @@
     "shader": {
       "depth_per_sy": 0.0033033826638477794
     },
-    "collision": {
-      "x_min": -2.2727272510528564,
-      "z_min": -2.284802658430488,
-      "cell_size": 0.028543292457631257,
-      "grid_width": 160,
-      "grid_height": 143,
-      "height_offset": 0.0
-    },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0
   },
@@ -346,7 +352,23 @@
           "x": 0,
           "y": 0
         }
-      ]
+      ],
+      "lighting": {
+        "lightFactors": {
+          "character": {
+            "indirectFactor": 0.3183098861837907,
+            "directFactor": 1,
+            "totalFactor": 1,
+            "eChroma": 0
+          },
+          "particles": {
+            "indirectFactor": 1.0,
+            "directFactor": 1,
+            "totalFactor": 0.3183098861837907,
+            "eChroma": 0
+          }
+        }
+      }
     }
   }
 }

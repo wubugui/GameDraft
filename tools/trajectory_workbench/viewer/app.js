@@ -623,7 +623,7 @@ function wireUI() {
   el('btnStepFwd').addEventListener('click', () => stepTime(1000 / 60));
   el('scrub').addEventListener('input', (e) => { const total = S.bake ? S.bake.totalMs : 0; S.tMs = total * e.target.value / 1000; S.playing = false; el('btnPlay').textContent = '▶ 播放'; resetAudition(); updateTime(); draw(); });
   window.addEventListener('keydown', onKey);
-  window.addEventListener('beforeunload', (e) => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+  window.addEventListener('beforeunload', (e) => { if (S.dirty && !window.__discardUnsaved) { e.preventDefault(); e.returnValue = ''; } });
   document.addEventListener('mousedown', (e) => { if (!el('ctxmenu').contains(e.target)) hideCtxMenu(); });
 }
 function onKey(e) {
@@ -1666,3 +1666,18 @@ function renderAll() {
 }
 
 boot();
+
+/**
+ * 关窗 / 刷新前桌面壳来问（`tools/desktop_shell.py` 的 `_guard_unsaved`）：关 QMainWindow 不跑 `beforeunload`，
+ * 没有这两个钩子时壳直接关、改动静默丢掉。输入框里刚打的值先提交（点标题栏 X / 按 F5 都不会让它失焦）。
+ */
+window.__unsavedSummary = () => {
+  const ae = document.activeElement;
+  if (ae && ae !== document.body && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && typeof ae.blur === 'function') ae.blur();
+  return S.dirty && S.doc ? `轨迹「${S.doc.id}」有未保存的改动。` : '';
+};
+window.__saveUnsaved = () => {
+  window.__saveUnsavedResult = 'pending';
+  Promise.resolve(saveAsset()).then(() => { window.__saveUnsavedResult = S.dirty ? '没存上（看状态栏）' : 'ok'; },
+    (e) => { window.__saveUnsavedResult = String((e && e.message) || e); });
+};

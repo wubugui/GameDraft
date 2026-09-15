@@ -27,7 +27,21 @@
     },
     "giGain": 0.0,
     "placeholder": true,
-    "_migration": "identity-2026-08-21"
+    "_migration": "identity-2026-08-21",
+    "lightFactors": {
+      "character": {
+        "indirectFactor": 0.3183098861837907,
+        "directFactor": 1,
+        "totalFactor": 1,
+        "eChroma": 0
+      },
+      "particles": {
+        "indirectFactor": 1.0,
+        "directFactor": 1,
+        "totalFactor": 0.3183098861837907,
+        "eChroma": 0
+      }
+    }
   },
   "id": "破屋",
   "name": "破屋",
@@ -137,14 +151,6 @@
     },
     "shader": {
       "depth_per_sy": 0.002645049699472234
-    },
-    "collision": {
-      "x_min": -2.2727272510528564,
-      "z_min": -1.633438536536655,
-      "cell_size": 0.02868218326876791,
-      "grid_width": 160,
-      "grid_height": 122,
-      "height_offset": 0.0
     },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0

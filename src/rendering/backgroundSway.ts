@@ -28,9 +28,10 @@
  * `mix(底板, 原画(源 uv), 覆盖度)`；打光的背景读的是光照缓存与深度（`LitBackground`），
  * 植物挪开露出来的地方读"补过背景"的那一份。位移图只存 uv 与覆盖度，光照一格都不用重算。
  *
- * 运动全在 CPU（每株一个转角、每顶点一次仿射），片元只做叶片颤动与"只画本株"。网格只铺有本株像素的格子；
+ * 运动全在 CPU（每株一个转角、每顶点一次仿射），片元只做叶片颤动与"只画本株"。网格只铺有本株像素的格子，
+ * **刚体与弯曲的交界、两个锚点的分界处细分**（24 → 6，其余格子不加密；邻格细分了的格子铺成扇形，不留 T 形裂缝）；
  * 场的逐顶点风量按和角公式拆成"只随点"（参数变才重算）与"只随 t"两半，逐帧逐点只剩乘加 + 一次振子积分。
- * 落在草木上的纸钱按本株网格双线性取**这一帧真实画出来的**位移（`offsetAt`），所以不会在竹子上滑、
+ * 落在草木上的纸钱按本株网格的三角形取**这一帧真实画出来的**位移（`offsetAt`），所以不会在竹子上滑、
  * 也不会与画面差一拍。
  *
  * 🔴 **原画没有风**。原画里的草木就是无风时的样子：画面上画的是**此刻的真实弯角**，从原画姿态算起——
@@ -93,6 +94,20 @@ const SWAY_TURB_GAIN = 0.625;
 const SWAY_LEAF_AMP_WU = 0.7;
 /** 植被网格的格子边长（场景 wu） */
 const GRID_CELL = 24;
+/**
+ * 交界格每边细分几份（24 → 4×4 个 6）。格内位移是顶点线性插值：一格里一半竿一半叶，插出来就是半软半硬；
+ * 一根比格子细的竿一个顶点都压不中，整根照弯（制作人 2026-09-14："不然大部分时候刚体没用"）。
+ * **只细分交界格**——刚体与弯曲的交界、两个锚点"管辖区"的分界：整格全刚（刚体转动对位置是线性的）
+ * 或全弯时，线性插值本来就是准的，加密只是白算。必须是偶数（扇形格的中心顶点要落在细格点上）。
+ */
+const GRID_REFINE = 4;
+/** 一格（外扩一个细格）里刚体度最大最小差超过它，就算刚体交界格 */
+const RIGID_MIX_TOL = 0.08;
+/** 格子的铺法：不铺 / 整格两个三角 / 细分成 GRID_REFINE² 小格 / 扇形（邻格细分了，边上带挂点，防 T 形裂缝） */
+const CELL_NONE = 0;
+const CELL_QUAD = 1;
+const CELL_FINE = 2;
+const CELL_FAN = 3;
 
 const f = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
 
@@ -140,8 +155,55 @@ export interface SwayMapMeta {
   litPlate?: { normal?: string; albedo?: string; depth?: string } | null;
 }
 
-/** CPU 副本（降半分辨率 RGBA）：id 图查"这一点属于哪株"、matte.B 取自由度、刚体图取刚体度 */
+/** CPU 副本（降半分辨率 RGBA）：id 图查"这一点属于哪株"、matte.B 取自由度 */
 interface CpuMap { data: Uint8ClampedArray; w: number; h: number }
+
+/**
+ * 单通道 CPU 副本（**原画全分辨率**）：刚体度。建网格时要判"这一格里有没有竿"——
+ * 半分辨率加平滑会把两三像素宽的竿抹成半灰，交界判不出来、顶点也取不满。单通道存，内存与原先半分辨率 RGBA 相同。
+ */
+export interface GrayMap { data: Uint8Array; w: number; h: number }
+
+function readGray(tex: Texture): GrayMap | null {
+  const res = (tex.source as { resource?: unknown }).resource as CanvasImageSource | undefined;
+  if (!res) return null;
+  const w = Math.max(1, Math.round(tex.width)), h = Math.max(1, Math.round(tex.height));
+  const cv = document.createElement('canvas');
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(res, 0, 0, w, h);
+  const rgba = ctx.getImageData(0, 0, w, h).data;
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < out.length; i++) out[i] = rgba[i * 4];
+  return { data: out, w, h };
+}
+
+/**
+ * 场景矩形 [x0, x1) × [y0, y1) 里单通道图的最小 / 最大值（0..1）。`stopAbove` 给了就在差值超过它时提前收工
+ * （建网格只关心"是不是交界"，不关心确切的差）。矩形整个落在图外 ⇒ [0, 0]。
+ */
+export function grayRange(
+  m: GrayMap, sceneW: number, sceneH: number, x0: number, y0: number, x1: number, y1: number, stopAbove = Infinity,
+): [number, number] {
+  const ix0 = Math.max(0, Math.floor((x0 / sceneW) * m.w)), ix1 = Math.min(m.w, Math.ceil((x1 / sceneW) * m.w));
+  const iy0 = Math.max(0, Math.floor((y0 / sceneH) * m.h)), iy1 = Math.min(m.h, Math.ceil((y1 / sceneH) * m.h));
+  if (ix1 <= ix0 || iy1 <= iy0) return [0, 0];
+  let lo = 255, hi = 0;
+  const stop = stopAbove * 255;
+  for (let iy = iy0; iy < iy1; iy++) {
+    const row = iy * m.w;
+    for (let ix = ix0; ix < ix1; ix++) {
+      const v = m.data[row + ix];
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    if (hi - lo > stop) break;
+  }
+  return [lo / 255, hi / 255];
+}
 
 function readCpu(tex: Texture, smooth: boolean): CpuMap | null {
   const res = (tex.source as { resource?: unknown }).resource as CanvasImageSource | undefined;
@@ -181,8 +243,8 @@ export interface BackgroundSwayInput {
   scaleAt: ((sx: number, sy: number) => number) | null;
   ids: CpuMap | null;
   matte: CpuMap | null;
-  /** 刚体度（作者画的竹竿 / 树干）；老载荷没有这张 ⇒ null = 全按弯曲走 */
-  rigid: CpuMap | null;
+  /** 刚体度（作者画的竹竿 / 树干，原画全分辨率单通道）；老载荷没有这张 ⇒ null = 全按弯曲走 */
+  rigid: GrayMap | null;
   /** 打光场景的补图（法线 / albedo / 深度，扣掉植物的版本）；三张齐了才有 */
   litPlate: { normal: Texture; albedo: Texture; depth: Texture } | null;
 }
@@ -198,6 +260,37 @@ export function swayInsertIndex(oldIndex: number, childCount: number): number {
   if (!(childCount >= 0)) return 0;
   if (oldIndex < 0) return childCount;
   return Math.max(0, Math.min(oldIndex, childCount));
+}
+
+/** `findSwayHostSprite` 看的那几样（Pixi 的 Container / Sprite 结构上满足；测试里用普通对象） */
+export interface SwayHostNode {
+  readonly children?: readonly unknown[];
+  readonly texture?: unknown;
+  readonly parent?: unknown;
+  renderable?: boolean;
+}
+
+/**
+ * 原地重装时场景树里**没有旧草木层**可替（进场景那次资源里没有 `sway.json` / 版本旧 ⇒ 装载钩子返回 null、
+ * `SceneManager` 什么都没插）：按原画纹理找到主背景那张 Sprite，新层要像装载时那样插在它的位置上并把它藏起来。
+ * 原来这一步没有：新层建好了却挂不到树上，游戏日志说"已原地换上"、工作台打勾，画面上一株都不动。
+ *
+ * 只往下找 `maxDepth` 层（背景层 → 场景背景容器 → Sprite）；要有 `parent` 才算（不在树上的插不回去）。
+ */
+export function findSwayHostSprite<N extends SwayHostNode>(root: N, primary: unknown, maxDepth = 3): N | null {
+  if (!primary) return null;
+  const walk = (node: SwayHostNode, depth: number): N | null => {
+    if (depth > maxDepth || !Array.isArray(node.children)) return null;
+    for (const c of node.children as SwayHostNode[]) {
+      if (c && c.texture === primary && c.parent) return c as N;
+    }
+    for (const c of node.children as SwayHostNode[]) {
+      const hit = c ? walk(c, depth + 1) : null;
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return walk(root, 1);
 }
 
 /** 视深 → 透视系数：表内线性插值、表外钳两端（与烘焙端 `np.interp` 同口径） */
@@ -276,11 +369,11 @@ export async function loadBackgroundSwayInput(
   const W = sceneData.worldWidth, H = sceneData.worldHeight;
   const depthTex = am.getTexture(urls.depth);
   const nw = plateTex.width, nh = plateTex.height;
-  let ids: CpuMap | null = null, matte: CpuMap | null = null, rigid: CpuMap | null = null;
+  let ids: CpuMap | null = null, matte: CpuMap | null = null, rigid: GrayMap | null = null;
   try {
     ids = readCpu(idsTex, false);
     matte = readCpu(matteTex, true);
-    if (rigidTex) rigid = readCpu(rigidTex, true);
+    if (rigidTex) rigid = readGray(rigidTex);
   } catch (e) { log(`拆层读不出 CPU 副本：${String(e)}`); }
   // 场的逐顶点世界 XZ 与透视系数：从原画深度反算（与光照同一份标定）
   let sceneToWorldXZ: BackgroundSwayInput['sceneToWorldXZ'] = null;
@@ -459,8 +552,19 @@ interface InstRt {
   /** 本株根部的逐点相位（湍流强迫用）的 cos / sin */
   phC: number;
   phS: number;
-  /** 本株的网格（纸钱按它双线性取当前帧真实位移） */
-  grid: { x0: number; y0: number; x1: number; y1: number; nx: number; ny: number; vmap: Int32Array } | null;
+  /** 本株的网格（纸钱按它取当前帧真实画出来的位移） */
+  grid: SwayGrid | null;
+}
+
+/**
+ * 一株的网格：粗格 nx × ny（边长 ≤ GRID_CELL），顶点落在细格点阵上（每粗格 k × k）。
+ * `vmap` 按细格点阵寻址（(nx·k + 1) × (ny·k + 1)，-1 = 没有这个顶点），`mode` 是每个粗格的铺法（CELL_*）。
+ */
+interface SwayGrid {
+  x0: number; y0: number; x1: number; y1: number;
+  nx: number; ny: number; k: number;
+  vmap: Int32Array;
+  mode: Uint8Array;
 }
 
 /** 场一株一帧的常量：驱动（平均风 / 弯角系数 / 湍流钟）+ 振子（ω₀²、2ζω₀）+ 封顶 */
@@ -524,6 +628,51 @@ export function swayPivot(def: Pick<SwayInstanceDef, 'root' | 'anchors'>, sx: nu
     if (d < bd) { bd = d; best = a; }
   }
   return best;
+}
+
+/**
+ * 矩形 [x0, x1] × [y0, y1] 是不是跨了两个锚点的"管辖区"（{@link swayPivot} 取最近锚点的分界）。
+ * "离 A 比离 B 近"是个半平面，矩形是凸的，四个角都在 A 那侧整格就都在 A 那侧——所以查四个角就是精确的。
+ * 恰好压在分界线上的角也算跨（顶点取支点时平局归下标小的那个，不一定是中心那个）。
+ */
+export function swayPivotSplits(
+  anchors: readonly (readonly [number, number])[] | undefined, x0: number, y0: number, x1: number, y1: number,
+): boolean {
+  if (!anchors || anchors.length < 2) return false;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  let a = 0, bd = Infinity;
+  for (let k = 0; k < anchors.length; k++) {
+    const d = (anchors[k][0] - cx) ** 2 + (anchors[k][1] - cy) ** 2;
+    if (d < bd) { bd = d; a = k; }
+  }
+  const [ax, ay] = anchors[a];
+  for (let k = 0; k < anchors.length; k++) {
+    if (k === a) continue;
+    const [bx, by] = anchors[k];
+    for (const [px, py] of [[x0, y0], [x1, y0], [x0, y1], [x1, y1]]) {
+      if ((px - bx) ** 2 + (py - by) ** 2 <= (px - ax) ** 2 + (py - ay) ** 2) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 扇形格的边界点（格内细格坐标），顺序：上边左→右、右边上→下、下边右→左、左边下→上（与整格三角同一绕向）。
+ * 只在**邻格细分了**的那条边上带挂点；四边都没有细分的邻格 ⇒ null（整格两个三角就好）。
+ */
+function fanRing(up: boolean, right: boolean, down: boolean, left: boolean, k: number): [number, number][] | null {
+  if (!up && !right && !down && !left) return null;
+  const ring: [number, number][] = [];
+  for (let t = 0; t < k; t++) if (t === 0 || up) ring.push([t, 0]);
+  for (let t = 0; t < k; t++) if (t === 0 || right) ring.push([k, t]);
+  for (let t = 0; t < k; t++) if (t === 0 || down) ring.push([k - t, k]);
+  for (let t = 0; t < k; t++) if (t === 0 || left) ring.push([0, k - t]);
+  return ring;
+}
+
+/** 细格边长（场景 wu）：粗格按包围盒均分，边长 ≤ GRID_CELL，两个方向取大的那个 */
+function fineCellSize(g: { x0: number; y0: number; x1: number; y1: number; nx: number; ny: number }): number {
+  return Math.max((g.x1 - g.x0) / g.nx, (g.y1 - g.y0) / g.ny) / GRID_REFINE;
 }
 
 /**
@@ -641,14 +790,17 @@ export class SwayBackground {
     const det = ja[0] * jb[1] - jb[0] * ja[1];
     const inv: [number, number, number, number] = Math.abs(det) > 1e-9
       ? [jb[1] / det, -jb[0] / det, -ja[1] / det, ja[0] / det] : [1, 0, 0, 1];
+    const K = GRID_REFINE;
     defs.forEach((d, k) => {
       const G = grids[k];
       const v0 = p0.length / 2;
-      const vmap = new Int32Array((G.nx + 1) * (G.ny + 1)).fill(-1);
-      const vert = (i: number, j: number): number => {
-        const key = j * (G.nx + 1) + i;
+      const FX = G.nx * K, FY = G.ny * K;
+      // 顶点一律落在细格点阵上：整格的四个角就是 (i·K, j·K) 那几个点，与细分格、扇形格的挂点天然共用
+      const vmap = new Int32Array((FX + 1) * (FY + 1)).fill(-1);
+      const vert = (I: number, J: number): number => {
+        const key = J * (FX + 1) + I;
         if (vmap[key] < 0) {
-          const x = G.x0 + ((G.x1 - G.x0) * i) / G.nx, y = G.y0 + ((G.y1 - G.y0) * j) / G.ny;
+          const x = G.x0 + ((G.x1 - G.x0) * I) / FX, y = G.y0 + ((G.y1 - G.y0) * J) / FY;
           vmap[key] = p0.length / 2;
           p0.push(x, y);
           uv.push(x / W, y / H);
@@ -656,11 +808,42 @@ export class SwayBackground {
         }
         return vmap[key];
       };
+      const mode = new Uint8Array(G.nx * G.ny);
       for (let j = 0; j < G.ny; j++) {
         for (let i = 0; i < G.nx; i++) {
-          if (!G.occ[j * G.nx + i]) continue;
-          const a = vert(i, j), b = vert(i + 1, j), c = vert(i, j + 1), e = vert(i + 1, j + 1);
-          idx.push(a, b, e, a, e, c);
+          const c = j * G.nx + i;
+          if (G.occ[c]) mode[c] = this.cellNeedsRefine(d, G, i, j) ? CELL_FINE : CELL_QUAD;
+        }
+      }
+      const fineAt = (i: number, j: number): boolean =>
+        i >= 0 && j >= 0 && i < G.nx && j < G.ny && mode[j * G.nx + i] === CELL_FINE;
+      for (let j = 0; j < G.ny; j++) {
+        for (let i = 0; i < G.nx; i++) {
+          const c = j * G.nx + i;
+          if (mode[c] === CELL_NONE) continue;
+          const I0 = i * K, J0 = j * K;
+          if (mode[c] === CELL_FINE) {
+            for (let fj = 0; fj < K; fj++) {
+              for (let fi = 0; fi < K; fi++) {
+                const a = vert(I0 + fi, J0 + fj), b = vert(I0 + fi + 1, J0 + fj);
+                const cc = vert(I0 + fi, J0 + fj + 1), e = vert(I0 + fi + 1, J0 + fj + 1);
+                idx.push(a, b, e, a, e, cc);
+              }
+            }
+            continue;
+          }
+          const ring = fanRing(fineAt(i, j - 1), fineAt(i + 1, j), fineAt(i, j + 1), fineAt(i - 1, j), K);
+          if (!ring) {
+            const a = vert(I0, J0), b = vert(I0 + K, J0), cc = vert(I0, J0 + K), e = vert(I0 + K, J0 + K);
+            idx.push(a, b, e, a, e, cc);
+            continue;
+          }
+          // ⚠ 邻格细分了，共用的那条边上多出 K−1 个挂点：这一格还按两个三角铺，挂点处就是 T 形接缝，
+          //   两边位移不同时裂开一条缝、露出底板。扇形从格心连到边上的每一个点，与邻格逐点对上。
+          mode[c] = CELL_FAN;
+          const ctr = vert(I0 + K / 2, J0 + K / 2);
+          const ids = ring.map(([di, dj]) => vert(I0 + di, J0 + dj));
+          for (let t = 0; t < ids.length; t++) idx.push(ctr, ids[t], ids[(t + 1) % ids.length]);
         }
       }
       if (p0.length / 2 === v0) return;
@@ -669,7 +852,7 @@ export class SwayBackground {
         cap: SWAY_MARGIN_USE * this.margin, inv, rig: [0, 0, 0, 0],
         fld: { Um: 0, kb: 0, cap: SWAY_MARGIN_USE * this.margin, ti: 0, sa: 0, ca: 1, sb: 0, cb: 1, k1: 0, k2: 0 },
         st: new Float32Array(2), phC: 1, phS: 0,
-        grid: { x0: G.x0, y0: G.y0, x1: G.x1, y1: G.y1, nx: G.nx, ny: G.ny, vmap },
+        grid: { x0: G.x0, y0: G.y0, x1: G.x1, y1: G.y1, nx: G.nx, ny: G.ny, k: K, vmap, mode },
       };
       // 根部相位与逐点相位都按波浪尺寸算，在 refreshGust 里（波浪尺寸可以在 F2 里实时拖）
       this.insts.push(rt);
@@ -696,10 +879,11 @@ export class SwayBackground {
     }
     for (const rt of this.insts) {
       if (rt.def.kind !== 'field') continue;
+      const fine = rt.grid ? fineCellSize(rt.grid) : GRID_CELL / K;
       for (let v = rt.v0; v < rt.v1; v++) {
         const sx = this.p0[v * 2], sy = this.p0[v * 2 + 1];
         this.vFree[v] = this.sampleFree(sx, sy);
-        this.vRigid[v] = this.sampleRigid(sx, sy);
+        this.vRigid[v] = this.rigidCoverage(sx, sy, fine);
         const wxz = inp.sceneToWorldXZ?.(sx, sy) ?? null;
         const px = wxz ? wxz[0] : sx, pz = wxz ? wxz[1] : -sy;
         this.vWorld[v * 2] = px;
@@ -798,14 +982,104 @@ export class SwayBackground {
     return this.sampleMatte(sx, sy, 2, 1);
   }
 
-  /** 刚体度（作者手画：竹竿 / 树干）：1 = 只跟着整株转、一点不弯；缺这张图 ⇒ 0（照旧全弯） */
-  private sampleRigid(sx: number, sy: number): number {
+  /**
+   * 顶点的刚体度（作者手画：竹竿 / 树干；1 = 只跟着整株转、一点不弯）= 以它为中心、半边长一个细格的方块里**最大**的那个。
+   * ⚠ 不许退回"只取顶点那一点"：比格子细的竿会从顶点之间漏过去，整根照弯（制作人 2026-09-14 实测"还有扭曲"）。
+   * 取一个细格内的最大值，竿上每个像素所在细格的四个角都看得见它，竿上插出来的刚体度就是满的；
+   * 代价是竿两侧一个细格（≈ 6 wu）内的叶子跟着变硬——这就是过渡带。缺这张图 ⇒ 0（照旧全弯）。
+   */
+  private rigidCoverage(sx: number, sy: number, reach: number): number {
     const m = this.inp.rigid;
     if (!m) return 0;
     const [W, H] = this.inp.sceneSize;
-    const ix = Math.min(m.w - 1, Math.max(0, Math.floor((sx / W) * m.w)));
-    const iy = Math.min(m.h - 1, Math.max(0, Math.floor((sy / H) * m.h)));
-    return m.data[(iy * m.w + ix) * 4] / 255;
+    return grayRange(m, W, H, sx - reach, sy - reach, sx + reach, sy + reach)[1];
+  }
+
+  /**
+   * 这一粗格要不要细分（见 GRID_REFINE）。两种交界：
+   * - **刚体交界**（只对场：`plant` 整株刚转，不看刚体度）：这一格**外扩一个细格**里刚体度有高有低。
+   *   外扩的窗口与顶点取刚体度的窗口一样大——不外扩的话，整格判成"全弯"、角上的顶点却从隔壁取到了竿，
+   *   这一整格被带硬半边；
+   * - **锚点分界**：刚体部分（`plant` 整株 / 场里有刚体的格）跨了两个锚点的管辖区。两边绕不同的点转，
+   *   同一格里插值就是两种转动搅在一起。
+   */
+  private cellNeedsRefine(d: SwayInstanceDef, G: Grid, i: number, j: number): boolean {
+    const cw = (G.x1 - G.x0) / G.nx, ch = (G.y1 - G.y0) / G.ny;
+    const x0 = G.x0 + i * cw, y0 = G.y0 + j * ch, x1 = x0 + cw, y1 = y0 + ch;
+    let rigidHere = d.kind === 'plant';
+    const m = this.inp.rigid;
+    if (d.kind === 'field' && m) {
+      const e = fineCellSize(G);
+      const [W, H] = this.inp.sceneSize;
+      const [lo, hi] = grayRange(m, W, H, x0 - e, y0 - e, x1 + e, y1 + e, RIGID_MIX_TOL);
+      if (hi - lo > RIGID_MIX_TOL) return true;
+      rigidHere = hi > RIGID_MIX_TOL;
+    }
+    return rigidHere && swayPivotSplits(d.anchors, x0, y0, x1, y1);
+  }
+
+  /**
+   * 场景点 (sx, sy) 这一帧**真实画出来的**位移：找到它落在哪个三角形里，按三个顶点的当前位移线性插值
+   * ——与 GPU 光栅化是同一个插值，所以纸钱拿到的就是画面上那一点（细分格、扇形格一样）。
+   */
+  private drawnOffset(rt: InstRt, sx: number, sy: number, out: { x: number; y: number }): void {
+    out.x = 0;
+    out.y = 0;
+    const g = rt.grid;
+    if (!g) return;
+    const fx = ((sx - g.x0) / Math.max(g.x1 - g.x0, 1e-6)) * g.nx;
+    const fy = ((sy - g.y0) / Math.max(g.y1 - g.y0, 1e-6)) * g.ny;
+    const i = Math.min(g.nx - 1, Math.max(0, Math.floor(fx)));
+    const j = Math.min(g.ny - 1, Math.max(0, Math.floor(fy)));
+    const u = Math.min(1, Math.max(0, fx - i)), q = Math.min(1, Math.max(0, fy - j));
+    const md = g.mode[j * g.nx + i];
+    if (md === CELL_NONE) return;
+    const K = g.k, S = g.nx * K + 1;
+    const at = (I: number, J: number): number => g.vmap[J * S + I];
+    const I0 = i * K, J0 = j * K;
+    if (md === CELL_FINE) {
+      const uf = u * K, qf = q * K;
+      const fi = Math.min(K - 1, Math.floor(uf)), fj = Math.min(K - 1, Math.floor(qf));
+      this.quadOffset(at(I0 + fi, J0 + fj), at(I0 + fi + 1, J0 + fj), at(I0 + fi, J0 + fj + 1),
+        at(I0 + fi + 1, J0 + fj + 1), uf - fi, qf - fj, out);
+      return;
+    }
+    if (md === CELL_QUAD) {
+      this.quadOffset(at(I0, J0), at(I0 + K, J0), at(I0, J0 + K), at(I0 + K, J0 + K), u, q, out);
+      return;
+    }
+    const fineAt = (ii: number, jj: number): boolean =>
+      ii >= 0 && jj >= 0 && ii < g.nx && jj < g.ny && g.mode[jj * g.nx + ii] === CELL_FINE;
+    const ring = fanRing(fineAt(i, j - 1), fineAt(i + 1, j), fineAt(i, j + 1), fineAt(i - 1, j), K);
+    if (!ring) return;
+    const c = at(I0 + K / 2, J0 + K / 2);
+    for (let t = 0; t < ring.length; t++) {
+      const [ai, aj] = ring[t], [bi, bj] = ring[(t + 1) % ring.length];
+      // (u, q) 在三角 (格心, A, B) 里的重心坐标
+      const ax = ai / K - 0.5, ay = aj / K - 0.5, bx = bi / K - 0.5, by = bj / K - 0.5;
+      const px = u - 0.5, py = q - 0.5;
+      const den = ax * by - bx * ay;
+      if (Math.abs(den) < 1e-12) continue;
+      const la = (px * by - bx * py) / den, lb = (ax * py - px * ay) / den;
+      if (la < -1e-9 || lb < -1e-9 || la + lb > 1 + 1e-9) continue;
+      const va = at(I0 + ai, J0 + aj), vb = at(I0 + bi, J0 + bj);
+      const P = this.pos, Q = this.p0, lc = 1 - la - lb;
+      out.x = lc * (P[c * 2] - Q[c * 2]) + la * (P[va * 2] - Q[va * 2]) + lb * (P[vb * 2] - Q[vb * 2]);
+      out.y = lc * (P[c * 2 + 1] - Q[c * 2 + 1]) + la * (P[va * 2 + 1] - Q[va * 2 + 1]) + lb * (P[vb * 2 + 1] - Q[vb * 2 + 1]);
+      return;
+    }
+  }
+
+  /** 整格 / 细格的两个三角 (a,b,e) 与 (a,e,c)（与建网格时同一条对角线）里的线性插值；(u, q) 是格内 0..1 坐标 */
+  private quadOffset(a: number, b: number, c: number, e: number, u: number, q: number, out: { x: number; y: number }): void {
+    if (a < 0 || b < 0 || c < 0 || e < 0) return;
+    const P = this.pos, Q = this.p0;
+    for (let k = 0; k < 2; k++) {
+      const A = P[a * 2 + k] - Q[a * 2 + k], B = P[b * 2 + k] - Q[b * 2 + k];
+      const C = P[c * 2 + k] - Q[c * 2 + k], E = P[e * 2 + k] - Q[e * 2 + k];
+      const v = u >= q ? A + u * (B - A) + q * (E - B) : A + q * (C - A) + u * (E - C);
+      if (k === 0) out.x = v; else out.y = v;
+    }
   }
 
   private sampleMatte(sx: number, sy: number, ch: number, fallback: number): number {
@@ -1033,24 +1307,8 @@ export class SwayBackground {
       out.y = rt.rig[2] * a + rt.rig[3] * b;
       return true;
     }
-    // 场：状态在顶点上，纸钱按本株网格双线性取**这一帧真实画出来的**位移（不再另算一份公式）
-    const gd = rt.grid;
-    if (!gd) { out.x = 0; out.y = 0; return true; }
-    const fx = ((sx - gd.x0) / Math.max(gd.x1 - gd.x0, 1e-6)) * gd.nx;
-    const fy = ((sy - gd.y0) / Math.max(gd.y1 - gd.y0, 1e-6)) * gd.ny;
-    const gi = Math.min(gd.nx - 1, Math.max(0, Math.floor(fx)));
-    const gj = Math.min(gd.ny - 1, Math.max(0, Math.floor(fy)));
-    const u = Math.min(1, Math.max(0, fx - gi)), q = Math.min(1, Math.max(0, fy - gj));
-    const S = gd.nx + 1;
-    const c0 = gd.vmap[gj * S + gi], c1 = gd.vmap[gj * S + gi + 1];
-    const c2 = gd.vmap[(gj + 1) * S + gi], c3 = gd.vmap[(gj + 1) * S + gi + 1];
-    let ox = 0, oy = 0;
-    if (c0 >= 0) { const k = (1 - u) * (1 - q); ox += k * (this.pos[c0 * 2] - this.p0[c0 * 2]); oy += k * (this.pos[c0 * 2 + 1] - this.p0[c0 * 2 + 1]); }
-    if (c1 >= 0) { const k = u * (1 - q); ox += k * (this.pos[c1 * 2] - this.p0[c1 * 2]); oy += k * (this.pos[c1 * 2 + 1] - this.p0[c1 * 2 + 1]); }
-    if (c2 >= 0) { const k = (1 - u) * q; ox += k * (this.pos[c2 * 2] - this.p0[c2 * 2]); oy += k * (this.pos[c2 * 2 + 1] - this.p0[c2 * 2 + 1]); }
-    if (c3 >= 0) { const k = u * q; ox += k * (this.pos[c3 * 2] - this.p0[c3 * 2]); oy += k * (this.pos[c3 * 2 + 1] - this.p0[c3 * 2 + 1]); }
-    out.x = ox;
-    out.y = oy;
+    // 场：状态在顶点上，纸钱取**这一帧真实画出来的**位移（按三角形插值，与光栅化同一个；不再另算一份公式）
+    this.drawnOffset(rt, sx, sy, out);
     return true;
   }
 

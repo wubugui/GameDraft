@@ -5,7 +5,9 @@ import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'fs/pr
 import { SCENE_INDEX_REL, buildSceneIndex } from './scripts/lib/scene_index.mjs';
 // 草木联动的 dev 槽单独一个模块：从 vite.config 里测它，会把整份配置拖进 TS 程序，
 // 配置自己的历史类型问题全会冒出来（实测过）。模块化之后测试直接测模块。
+import { validSceneLightFactors } from './src/data/lightFactors';
 import { runtimeSwayApi } from './src/dev/runtimeSwayApiPlugin';
+import { runtimeTerrainApi } from './src/dev/runtimeTerrainApiPlugin';
 
 /** 开发服：读写 resources/editor_projects/editor_data/debug_flag_favorites.json，供 F2 Flag 收藏持久化（不使用 localStorage）。 */
 function debugFlagFavoritesApi(): Plugin {
@@ -130,6 +132,11 @@ function runtimeLightingApi(): Plugin {
           const sceneId = String(parsed.sceneId ?? '').trim();
           const writer = String(parsed.writer ?? '').trim();
           const lt = parsed.lighting as Record<string, unknown> | null;
+          if (lt && !validSceneLightFactors(lt.lightFactors)) {
+            res.statusCode = 400;
+            res.end('bad lighting.lightFactors: factors must be finite 0..64; eChroma must be finite 0..1');
+            return;
+          }
           // 形状闸门与两侧同口径：半个对象进了槽，对面看着像"同步到了"却是残缺的
           // ⚠ 2026-09-07 `lighting.day` 整块下线后这里一起去掉了对它的要求。
           //   漏改的后果实测过：游戏每次发布都被拒 400 ⇒ **编辑器↔游戏的光照实时同步
@@ -328,8 +335,8 @@ function runtimeAcousticsApi(): Plugin {
  *
  * | 路径 | 方向 | 内容 |
  * |---|---|---|
- * | `runtime-vfx` | 工作台 → 游戏 | 正在编辑的效果 id + 工作态定义 + 刺激请求。`rev` 服务端自增 |
- * | `runtime-vfx-status` | 游戏 → 工作台 | 场景、实例状态、stats、玩家脚点、bootId、心跳。**按页分桶** |
+ * | `runtime-vfx` | 工作台 → 游戏 | 正在编辑的效果 id + 工作态定义 + 整份工作态布置库 + 刺激请求 + 切时段请求。`rev` 服务端自增 |
+ * | `runtime-vfx-status` | 游戏 → 工作台 | 场景、时段 / 外观 / 布置来源、实例状态、stats、玩家脚点、bootId、心跳。**按页分桶** |
  *
  * 状态槽按页存 + GET 挑一页的规则与声学逐字相同，所以直接借 `pickAcousticsStatusPage`——
  * 它只认 `pages` / `writer` / `ts` / `startedAt`，其余字段照抄摘要，不是声学专有逻辑。
@@ -429,11 +436,32 @@ function runtimeVfxApi(): Plugin {
               return;
             }
           }
+          // 只接收显式编辑范围；旧窗口的整库副本不能再进入同步槽。
+          // 剥掉的话工作台以为推过去了、游戏里一直是旧布置，而且两边都不报错
+          const pl = parsed.placements as Record<string, unknown> | undefined;
+          if (pl !== undefined) {
+            const lib = pl?.library as Record<string, unknown> | undefined;
+            if (!pl || typeof pl !== 'object' || pl.mode !== 'scoped' || !lib || typeof lib !== 'object'
+                || !lib.scenes || typeof lib.scenes !== 'object' || Array.isArray(lib.scenes)) {
+              res.statusCode = 400;
+              res.end('bad placements: 需要 {mode:"scoped", library:{scenes:{}}, sceneId, phase}；请刷新粒子工作台');
+              return;
+            }
+          }
+          const pr = parsed.phaseRequest as Record<string, unknown> | undefined;
+          if (pr !== undefined && (!pr || typeof pr !== 'object' || typeof pr.seq !== 'number'
+              || typeof pr.timePhase !== 'string' || !pr.timePhase)) {
+            res.statusCode = 400;
+            res.end('bad phaseRequest: 需要 {seq:number, timePhase:string}');
+            return;
+          }
           const prev = await readDoc();
           const rev = (typeof prev?.rev === 'number' ? prev.rev : 0) + 1;
           const out: Record<string, unknown> = { rev, writer, effectId, def, ts: Date.now() };
           if (parsed.probe && typeof parsed.probe === 'object') out.probe = parsed.probe;
           if (typeof parsed.sceneId === 'string') out.sceneId = parsed.sceneId;
+          if (pl) out.placements = pl;
+          if (pr) out.phaseRequest = pr;
           await writeFile(filePath, `${JSON.stringify(out)}\n`, 'utf-8');
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ rev }));
@@ -1134,6 +1162,7 @@ export default defineConfig({
     runtimeAcousticsApi(),
     runtimeVfxApi(),
     runtimeSwayApi(),
+    runtimeTerrainApi(),
     narrativeDebugBridgeApi(),
     runtimeDebugSnapshotApi(),
     runtimeCommandApi(),

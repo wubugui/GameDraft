@@ -23,6 +23,40 @@
     ]
   },
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/scripts/py.sh\" \"${CLAUDE_PROJECT_DIR:-.}/scripts/agent_hooks/flag_discipline.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/scripts/py.sh\" \"${CLAUDE_PROJECT_DIR:-.}/scripts/agent_hooks/flag_discipline.py\"",
+            "timeout": 10,
+            "statusMessage": "flag 纪律门"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/scripts/py.sh\" \"${CLAUDE_PROJECT_DIR:-.}/scripts/agent_hooks/flag_discipline.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|NotebookEdit",
@@ -32,6 +66,26 @@
             "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/scripts/py.sh\" \"${CLAUDE_PROJECT_DIR:-.}/agent_docs/_meta/hooks/paths_reminder.py\"",
             "timeout": 10,
             "statusMessage": "agent_docs 必读卡检查"
+          }
+        ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/scripts/py.sh\" \"${CLAUDE_PROJECT_DIR:-.}/scripts/agent_hooks/flag_discipline.py\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PROJECT_DIR:-.}/scripts/py.sh\" \"${CLAUDE_PROJECT_DIR:-.}/scripts/agent_hooks/flag_discipline.py\"",
+            "timeout": 10
           }
         ]
       }

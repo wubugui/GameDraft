@@ -239,13 +239,23 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
         spawn_keys.update(keys)
         scene_spawns[sid] = keys
         scene_zones[sid] = sorted(zones)
-        scene_vfx[sid] = sorted(
-            str(r.get("id")).strip() for r in (doc.get("vfx") or [])
-            if isinstance(r, dict) and str(r.get("id") or "").strip()
-        )
         scene_hotspots[sid] = sorted(hots)
         scene_entities[sid] = sorted(set(npcs) | set(hots))
         scene_npcs[sid] = sorted(npcs)
+
+    # ---- 场景效果实例(粒子布置库 assets/data/vfx_placements.json,唯一写者 = 粒子工作台) ----
+    # 场景 JSON 早就没有 vfx 键了(2026-09-14 搬家):实例按「场景 × 时段外观」摆在布置库里,
+    # 白天与夜里各一份同 id 的是常态。playVfx / stopVfx / setVfxState 的 instanceId 与条件叶 vfx
+    # 按 id 找**当前在场**的实例,所以候选 = 本场景各时段外观 id 的并集——与编辑器候选、校验器
+    # 同一个函数(instance_ids_for_scene),路径也取共享模块的,不另写一份。
+    # 读走 _load(path, read):布置库在 CONTENT_GLOBS 疆域里,LSP overlay 里改着的那份要算数。
+    from tools.editor.shared import vfx_placements as _vp
+
+    vfx_lib = _load(_vp.library_path(root), read)
+    if not (isinstance(vfx_lib, dict) and isinstance(vfx_lib.get("scenes"), dict)):
+        vfx_lib = _vp.empty_library()  # 缺文件 / 读不懂 = 没有实例(校验器另报 error)
+    for sid in scene_ids:
+        scene_vfx[sid] = sorted(_vp.instance_ids_for_scene(vfx_lib, sid))
 
     spawned = _cutscene_spawned_actor_ids(root, read, extra_paths)
     u["scenes"] = scene_ids
@@ -319,8 +329,9 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
         if isinstance(doc.get("label"), str) and doc["label"].strip():
             vfx_labels[vid] = _trunc(doc["label"])
     u["vfx_effects"] = sorted(vfx_ids)
-    # 场景效果实例 id 的全局并集。实例是**场景作用域**的（同名实例可以出现在多个场景），
-    # 这张表只作兜底候选，真正的收窄读 scoped["scene_vfx"]——与 zones / hotspots 同待遇。
+    # 场景效果实例 id 的全局并集（取自布置库，见上面 scene_vfx 那段）。实例是**场景作用域**的
+    # （同名实例可以出现在多个场景、同一场景的多套时段外观），这张表只作兜底候选，
+    # 真正的收窄读 scoped["scene_vfx"]——与 zones / hotspots 同待遇。
     u["vfx_instances"] = sorted({i for ids in scene_vfx.values() for i in ids})
     labels["vfx_effects"] = vfx_labels
 

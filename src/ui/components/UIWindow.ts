@@ -65,6 +65,8 @@ export interface UIWindowOptions {
    * 传 'left' 得到活计面板那种压左上角的大标题 + 下方一条通栏横线。
    */
   titleAlign?: 'center' | 'left';
+  /** 地图等以画面为主的窗口使用较紧凑的标题栏；其余窗口保持默认规格。 */
+  compactTitle?: boolean;
   /** 标题栏右侧的次要文字，如「已记 3 / 15」「铜钱: 37」 */
   subtitle?: string;
   /** 副标题色，缺省 section 灰。承载数值时可传主题色（如铺子的铜钱用 goldDim，与价格同色系） */
@@ -220,7 +222,7 @@ export class UIWindow {
     const pad = UITheme.spacing.xl;
     const hasTitle = !!this.opts.title;
     // 无标题时也要给 ✕ 留出行高，否则命中区落进内容区、被 body 抢走指针（body 渲染在 chrome 之上）
-    const topInset = hasTitle ? TITLE_BAR_H : pad + CLOSE_HIT;
+    const topInset = hasTitle ? this.titleBarHeight : pad + CLOSE_HIT;
 
     this.bodyWidth = w - pad * 2;
     this.body.position.set(px + pad, py + topInset);
@@ -254,7 +256,7 @@ export class UIWindow {
         align,
         // 设计稿里面板标题是很大的一块（「行囊」「活计」「暂停」），不是小字条。
         // 居中标题用 display 档，左对齐大标题再抬一档。
-        fontSize: align === 'left' ? UITheme.fontSize.hero * 0.6 : UITheme.fontSize.display,
+        fontSize: this.opts.compactTitle ? UITheme.fontSize.title : align === 'left' ? UITheme.fontSize.hero * 0.6 : UITheme.fontSize.display,
       });
       titleRow.position.set(px + pad, py + UITheme.spacing.md);
       this.chrome.addChild(titleRow);
@@ -279,7 +281,7 @@ export class UIWindow {
       // 居中标题自带两翼横线，不必再来一条通栏分隔；左对齐时 createTitleRow 已在下方挂了一条
       if (align === 'center') {
         const rule = createRule(w - pad * 2);
-        rule.position.set(px + pad, py + TITLE_BAR_H - UITheme.spacing.sm);
+        rule.position.set(px + pad, py + this.titleBarHeight - UITheme.spacing.sm);
         this.chrome.addChild(rule);
       }
     }
@@ -293,6 +295,10 @@ export class UIWindow {
     if (this.opts.closeHint) {
       this.overlay.addChild(this.buildCloseHint(px, py, w, h, pad));
     }
+  }
+
+  private get titleBarHeight(): number {
+    return this.opts.compactTitle ? UITheme.fontSize.title + UITheme.spacing.md * 2 : TITLE_BAR_H;
   }
 
   /**

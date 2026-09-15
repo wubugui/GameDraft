@@ -164,6 +164,10 @@ DEFAULTS = dict(
     thickness_k=0.55,      # occluder thickness = k * min(bbox)/ppu
     bg_thickness_q=0.60,   # default slab thickness for background shell (q units)
     ground_up_dot=0.75,    # world-up cosine threshold for ground candidacy
+    # 地面候选的连通口径:'bottom' = 只收与画面底边连通的块(缺省,挡屋顶);
+    # 'all' = 另收面积 ≥ ground_min_component_frac 的独立块(多层台地构图,见 _ground_mask_from)
+    ground_flood='bottom',
+    ground_min_component_frac=0.01,
     object_score_min=0.35, # 实例采信分数门槛(调它不必重跑推理)
     object_groups='',      # 提示词组,逗号分隔;空=默认组(见 object_seg.DEFAULT_GROUPS)
     object_prompts_extra='',  # 本场景额外提示词,逗号分隔
@@ -224,6 +228,12 @@ def geometry_signature(out_dir: Path, h: str, P: dict) -> str:
                 'bg_thickness_q', 'ground_up_dot', 'vol_nx', 'vol_nz', 'walk_res',
                 'object_score_min', 'object_groups', 'object_prompts_extra')
     parts = [h] + [f'{k}={P[k]}' for k in geo_keys]
+    # 后加的几何参数:**只在偏离缺省时**进签名。老 manifest 里没有这些键(serve.py 直接拿
+    # man['params'] 算签名),照上面那样取会 KeyError;按缺省值补进去又会让全部存量烘焙
+    # 一夜之间都被判"过期"。
+    for k in ('ground_flood', 'ground_min_component_frac'):
+        if P.get(k, DEFAULTS[k]) != DEFAULTS[k]:
+            parts.append(f'{k}={P[k]}')
     for f in ('depth_edit.png', 'collision_edit.png', 'object_edit.png'):
         fp = out_dir / f
         parts.append(f'{f}:{hashlib.sha1(fp.read_bytes()).hexdigest()[:10]}' if fp.exists() else f'{f}:-')
@@ -325,8 +335,21 @@ def stage_depth(img_path: Path, cache_dir: Path, h: str, model: str = 'base') ->
     return raw
 
 
-def _ground_mask_from(d, qy, theta, thresh, prior=None):
+def ground_mask_for(d, qy, theta, P: dict, prior=None):
+    """按场景参数取地面掩膜(三处调用点共用,别各自拼参数)。"""
+    return _ground_mask_from(d, qy, theta, P['ground_up_dot'], prior=prior,
+                             flood=str(P.get('ground_flood', 'bottom')),
+                             min_frac=float(P.get('ground_min_component_frac', 0.01)))
+
+
+def _ground_mask_from(d, qy, theta, thresh, prior=None, flood='bottom', min_frac=0.01):
     """地面掩膜 = 语义(prior) ∩ 几何(朝上 + 从画面底部洪泛)。
+
+    `flood='all'`(按场景开):除了与底边连通的块,另收面积 ≥ `min_frac` 画幅的独立朝上块。
+    为**多层台地构图**而设(2026-09-14 崖墓正式:院坝 / 上栈道 / 下崖台之间隔着竖直崖面,
+    朝上候选断开,只从底边洪泛永远只捡到最下面那层,地面标定就把其余几层当成墙,
+    行走面与可见表面差出 ~230 wu,火把在那里照不亮)。缺省仍是 'bottom':没有物体掩膜兜底时
+    独立的朝上块很可能是屋顶。开 'all' 之前先看物体掩膜有没有把屋顶 / 墓龛这类东西扣干净。
 
     **两路证据缺一不可**(2026-07-23 实测):
     - 只用几何:朝上判据分不开街面与屋顶(都朝上、2D 上还连成一片),屋顶被烘进地形;
@@ -351,6 +374,12 @@ def _ground_mask_from(d, qy, theta, thresh, prior=None):
         cand &= prior
     lab, _ = label(cand)
     bottom = np.unique(lab[-8:, :]); bottom = bottom[bottom != 0]
+    if flood == 'all':
+        sizes = np.bincount(lab.ravel())
+        big = np.nonzero(sizes >= float(min_frac) * cand.size)[0]
+        bottom = np.union1d(bottom, big[big != 0])
+    elif flood != 'bottom':
+        raise ValueError(f'ground_flood 只认 bottom / all,收到 {flood!r}')
     mask = np.isin(lab, bottom)
     mask = binary_closing(mask, np.ones((5, 5)))
     return mask if mask.sum() >= 500 else cand
@@ -404,7 +433,7 @@ def stage_calibrate(raw: np.ndarray, P: dict, ground_prior: np.ndarray | None = 
             lo_a, hi_a = a_best / 2.5, a_best * 2.5
             lo_b, hi_b = b_best / 2.5, b_best * 2.5
         d = (1.0 / (a_best * raw + b_best)).astype(np.float32)
-        mask = _ground_mask_from(d, qy, theta, P['ground_up_dot'], prior=ground_prior)
+        mask = ground_mask_for(d, qy, theta, P, prior=ground_prior)
 
     d = (1.0 / (a_best * raw + b_best)).astype(np.float32)
     o = float(np.median(qy[mask] / math.tan(theta) - d[mask])) if mask.any() else 0.0
@@ -419,7 +448,7 @@ def refresh_ground_mask(cal: dict, objects: np.ndarray, P: dict) -> None:
     """物体掩膜变了之后就地刷新地面掩膜与地面零点(不重跑昂贵的 (a,b) 网格搜索——
     标定是在已经 98%+ 干净的掩膜上拟合的,补判那点残差不足以挪动全局解)。"""
     theta = cal['theta']
-    gm = _ground_mask_from(cal['d'], cal['qy'], theta, P['ground_up_dot'], prior=~objects)
+    gm = ground_mask_for(cal['d'], cal['qy'], theta, P, prior=~objects)
     if not gm.any():
         return
     # 地面中位高度重新归零(与 stage_calibrate 末尾同式,这里补增量)
@@ -1423,6 +1452,15 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
         print(f'[objects] 物体占画面 {objects.mean() * 100:.1f}%,候选地形 {(~objects).mean() * 100:.1f}%')
 
     cal = stage_calibrate(raw, P, ground_prior=None if objects is None else ~objects)
+    if not cal['ground_mask'].any():
+        # **失败必须响**:找不到地面时网格搜索会退化成"深度 ≈ 常数"(s/o 贴在搜索边界上),
+        # 往下烘出来的行走面整个落在可见表面后面,碰撞 / 遮挡 / 灯位全错,而导出照样成功。
+        # 2026-09-08 崖墓前段首烘就这样静默导出了一张平面深度,直到 09-14 火把照不亮才查到。
+        raise RuntimeError(
+            f'{name}: 地面标定失败(地面掩膜为空,s={cal["s"]:.4g} o={cal["o"]:.4g} 贴在搜索边界)。'
+            f'画里没有被识别成地面的区域 —— 常见于"峭壁上一条窄路"这类构图:物体提示词把路本身扣掉了,'
+            f'或崖壁占满了画面下部。在查看器里用物体涂层把路标成地形(或调 object_groups / '
+            f'object_prompts_extra)后重烘')
     cal['objects'] = objects if objects is not None else np.zeros(raw.shape, bool)
     # 手动深度映射微调(叠加在自动解上;旧工具 dm_scale/dm_offset 的对应物)
     dsa, doa = float(P.get('depth_scale_adj', 1.0)), float(P.get('depth_offset_adj', 0.0))
@@ -1485,8 +1523,9 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
                                     hdr=hdr['base'], depth=cal['d'])
     amb = stage_ambient(escape_of, P)
     probes = stage_probes(cal, lay, hdr, wb, lights, P, escape_of, char_wu)
-    walk = stage_walk_world(cal, lay, vol, wb, P,
-                            col_edit=load_collision_edit(out_dir, cal['d'].shape))
+    # 碰撞笔刷 2026-09-14 起不在实验室:作者的可走 / 阻挡改在地形工作台(世界 XZ 作者层),
+    # 由 terrain_compose 叠在自动结果上。老的 collision_edit.png 已由迁移脚本转成世界层。
+    walk = stage_walk_world(cal, lay, vol, wb, P)
     cloud = stage_pointcloud(cal, lay, rgb_srgb, wb)
     mesh = stage_mesh(cal, lay, rgb_srgb, wb, P)
     stage_character(P, out_dir)
@@ -1709,12 +1748,9 @@ def export_runtime(name: str, shading: dict | None = None,
 
     W, Hh = man['work']['w'], man['work']['h']
     d_walk = np.frombuffer((src_dir / 'walk_depth.bin').read_bytes(), np.float32).reshape(Hh, W)
-    d_lo, d_hi = float(d_walk.min()), float(d_walk.max())
-    n16 = np.round((d_walk - d_lo) / max(d_hi - d_lo, 1e-6) * 65535).astype(np.uint16)
-    rg = np.zeros((Hh, W, 3), np.uint8)
-    rg[..., 0] = n16 >> 8
-    rg[..., 1] = n16 & 0xFF
-    _asave(Image.fromarray(rg), dest / 'ground_d.png', optimize=True)
+    from tools.character_lighting_lab import terrain_compose as tc
+    ground_png, d_lo, d_hi = tc.encode_ground(d_walk)
+    _awrite(dest / 'ground_d.png', ground_png)
 
     payload = dict(
         version=3,                             # v3:probe 图集为固化最终 E(单块球谐,非分账)
@@ -1734,6 +1770,10 @@ def export_runtime(name: str, shading: dict | None = None,
     )
     _awrite_text(dest / 'lighting.json',
                  json.dumps(payload, ensure_ascii=False, indent=1) + '\n')
+    # 行走面的**未修补**基底留在旁边(ground_base.png);作者在地形工作台里的高度修补叠在它上面
+    # 重新求交写回 ground_d.png —— 重烘不会吃掉作者的修补(没有修补时 ground_d == 基底)。
+    tc.record_ground_base(dest, ground_png, d_lo, d_hi)
+    tc.export_ground(name)
     print(f'[export] {dest}')
     return dest
 
@@ -1775,7 +1815,7 @@ def terrain_preview(name: str, background: str | None = None) -> dict:
     objects = object_mask(resize_nn(ids_native, (W, Hh)), meta, P,
                           load_object_edit(src_dir, (Hh, W)))
 
-    gm = _ground_mask_from(d, qy, theta, P['ground_up_dot'], prior=~objects)
+    gm = ground_mask_for(d, qy, theta, P, prior=~objects)
     if gm.any():                       # 地面中位高度归零(与 stage_calibrate 末尾同式)
         d = (d + float(np.median(qy[gm] / math.tan(theta) - d[gm]))).astype(np.float32)
     Y = (qy * math.cos(theta) - d * math.sin(theta)).astype(np.float32)
@@ -1913,7 +1953,11 @@ def export_scene_depth(name: str, background: str | None = None) -> dict:
             ok = 0 <= zi < wk['nz'] and 0 <= xi < wk['nx'] and walk[zi, xi]
             col[gj, gi] = 0 if ok else 255            # 255 = blocked(红通道)
     col_name = old_cfg.get('collision_map', 'collision.png')
-    _asave(Image.fromarray(col), scene_media / col_name, optimize=True)
+    # 2026-09-14 起碰撞不再由这里直接落盘:自动结果交给地形合成器(作者层叠在上面),
+    # `collision.png` + `collision.json`(网格旁挂,取代 depthConfig.collision)由它写。
+    from tools.character_lighting_lab import terrain_compose as tc
+    tc.record_auto(name, col > 127, tc.GridMeta(float(gx_min), float(gz_min), cell, gw, gh))
+    tc.export_terrain(name, collision_map=col_name)
 
     # ---- depthConfig 写回场景 JSON(编辑器往返约定,手调参数保值) ----
     c, s = math.cos(theta), math.sin(theta)
@@ -1929,9 +1973,7 @@ def export_scene_depth(name: str, background: str | None = None) -> dict:
               'ppu': ppu_nat, 'cx': nw / 2.0, 'cy': nh / 2.0},
         'depth_mapping': {'invert': False, 'scale': d_hi - d_lo, 'offset': d_lo},
         'shader': {'depth_per_sy': depth_per_sy},
-        'collision': {'x_min': float(gx_min), 'z_min': float(gz_min),
-                      'cell_size': cell, 'grid_width': gw, 'grid_height': gh,
-                      'height_offset': float((old_cfg.get('collision') or {}).get('height_offset', 0.0))},
+        # `collision` 网格块已搬进 runtime/scenes/<id>/collision.json(旁挂);场景 JSON 里不再写
         'depth_tolerance': float(old_cfg.get('depth_tolerance', 0.05)),
         'floor_offset': float(old_cfg.get('floor_offset', 0.0)),
     }
@@ -2144,6 +2186,10 @@ def rebake_lighting(name: str, background: str | None = None,
     bp.pop('probe_layout_note', None)                # 早期版本塞过人话,清掉(见上)
     man['built'] = time.strftime('%Y-%m-%d %H:%M:%S')
     man['rebaked_lighting_only'] = True              # 留痕:这份不是完整 build 产的
+    # 防腐门记的是**这份图集照的是哪张画**。辐射刚从 `bg_name` 重建,哈希必须跟着换:
+    # 夜景目录从白天那份起手(`seed_phase_payload`)时,沿用旧值 = 校验器与运行时都判
+    # "背景改过没重烘",而这份载荷恰恰是刚烘的(原来要烘完手工补写,漏写不报错)。
+    man['background_sha1'] = img_hash(scene_dir / bg_name)
     text = json.dumps(man, ensure_ascii=False, indent=1) + '\n'
     # 硬闸:`lighting.json` 历来是纯 ASCII,而 validator 读它时没指定编码
     # (Windows 按 GBK 解)。写进一个非 ASCII 字符就会让校验器报「解析失败」,
@@ -2157,6 +2203,68 @@ def rebake_lighting(name: str, background: str | None = None,
     _awrite_text(lj, text)
     print(f'[rebake] {dest}')
     return dest
+
+
+#: 时段原画的 probe 载荷从主背景那份起手时拷过去的件。图集 / ambient 随后由 `rebake_lighting`
+#: 按这张画重烘;其余是几何件,与画面无关。
+#: ⚠ 体素卷 `vol_rad/vol_emit` 也拷:它是 lighting.json 的 `vol` 块声明的必备件(校验器按尺寸验、
+#:   F2 切 RT 调试档才读),缺了 RT 档在这个时段直接取不到文件。它的占据(alpha)是几何、对各时段都成立;
+#:   RGB 是主背景的辐射 —— 所以**夜里 F2 的 RT 对比档照的是白天的光**,这是已知局限
+#:   (`rebake_lighting` 不重建体素卷,那要 build 的分层结果),正常游玩路径不读它。
+PHASE_SEED_FILES = ('lighting.json', 'ground_d.png', 'ground_base.png', 'probes_valid.bin', 'vol_rad.bin', 'vol_emit.bin')
+
+
+class PhaseSeedUnavailable(RuntimeError):
+    """时段原画的 probe 载荷**这次建不了**(前提不满足:主背景没烘 probe / 变体自带深度 / 尺寸没对齐)。
+
+    与"烘到一半出错"分开:调用方(`scene_fields` 烘几何场)据此只报一声、照常烘几何场,
+    而不是把整个时段跳过。
+    """
+
+
+def seed_phase_payload(name: str, background: str) -> Path | None:
+    """给一张**还没有 probe 载荷**的时段原画建载荷:白天几何 + 这张画的辐射。
+
+    ## 为什么不走 `build`
+
+    `build` 会用 Depth Anything 对这张画重估深度。暗的夜图估出来的地面是乱的,
+    而运行时各时段共用同一张深度图 / 碰撞图(校验器硬规则)—— 两边不是同一份几何,
+    角色夜里就浮空 / 陷地,且不报错。所以时段原画一律从主背景那份几何起手,
+    只重烘光照(`rebake_lighting`)。
+
+    这条路原来是**手工菜谱**(拷目录 → rebake → 手补 background_sha1),没有入口,
+    于是后来加的时段原画一张都没烘(2026-09-14:崖墓前段1/后段/正式、码头白天的夜)。
+
+    已有载荷 ⇒ 返回 None,一字节不动。前提不满足 ⇒ 抛错说清缺什么。
+    """
+    from tools.character_lighting_lab.scene_geometry import scene_paths
+    main_bg = scene_background(name)
+    if background == main_bg:
+        raise RuntimeError(f'{name}: {background} 是主背景,它的载荷要走完整的 build + export_runtime')
+    scene_dir = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name
+    dest = scene_dir / 'lighting' / _bake_key(background)
+    if (dest / 'lighting.json').exists():
+        return None
+    src = scene_dir / 'lighting' / _bake_key(main_bg)
+    missing = [f for f in PHASE_SEED_FILES if not (src / f).exists()]
+    if missing:
+        raise PhaseSeedUnavailable(f'{name}: 主背景 {main_bg} 的 probe 载荷缺 {"、".join(missing)},'
+                                   f'先把主背景完整烘一遍')
+    data = scene_paths(name)['data']
+    for v in (data.get('timeVariants') or {}).values():
+        bgs = (v or {}).get('backgrounds') or []
+        if bgs and isinstance(bgs[0], dict) and bgs[0].get('image') == background and v.get('depthConfig'):
+            raise PhaseSeedUnavailable(f'{name}: 时段原画 {background} 自带 depthConfig(几何不同),'
+                                       f'不能借主背景的几何,要单独 build')
+    with Image.open(scene_dir / main_bg) as a, Image.open(scene_dir / background) as b:
+        if a.size != b.size:
+            raise PhaseSeedUnavailable(f'{name}: {background} 尺寸 {b.size} ≠ 主背景 {a.size} —— '
+                                       f'时段原画必须与白天逐像素对齐,先把画对齐再烘')
+    dest.mkdir(parents=True, exist_ok=True)
+    for f in PHASE_SEED_FILES:
+        _awrite(dest / f, (src / f).read_bytes())
+    print(f'[phase-seed] {name}: {background} ← {main_bg} 的几何({", ".join(PHASE_SEED_FILES)})')
+    return rebake_lighting(name, background=background)
 
 
 def _parse_escape(spec: str, intensity: float) -> dict:

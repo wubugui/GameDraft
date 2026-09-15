@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { legacyLightFactors, resolveLightFactors, resolveLightResponse, validSceneLightFactors } from '../data/lightFactors';
 
 import type { SceneData } from '../data/types';
 import {
@@ -13,6 +14,40 @@ import {
  * 所以这一层的职责是「顶层白天基底 ⊕ 该时段的差异」，而 `timeVariants` 在此之前
  * 只是 types.ts 里的一个声明 —— 运行时零消费者，写了也不生效。
  */
+
+describe('逐场景受光倍率', () => {
+  it('旧曝光的等价迁移保留开灯/关灯效果，零倍率有真实含义', () => {
+    for (const beta of [-3, 0, 3.1, 4.2, 6]) {
+      for (const gi of [0, 1, 3]) {
+        const f = legacyLightFactors(beta, gi);
+        for (const [indirect, direct] of [[0.03, 0], [0.03, 8], [0, 2]]) {
+          expect((indirect * f.indirectFactor + direct * f.directFactor) * f.totalFactor)
+            .toBeCloseTo((indirect * gi + direct) / Math.PI * 2 ** beta, 11);
+        }
+        expect(resolveLightFactors({ directFactor: 0, totalFactor: 0 }, f))
+          .toEqual({ indirectFactor: gi, directFactor: 0, totalFactor: 0 });
+      }
+    }
+  });
+
+  it('角色与粒子分组、时段覆盖按整块保存，非法倍率被拒绝', () => {
+    const a = scene();
+    const base = { ...a.lighting!, lightFactors: { character: { directFactor: 0.3 }, particles: { directFactor: 0.8 } } };
+    const night = { lightFactors: { character: { directFactor: 0.4, eChroma: 0.2 }, particles: { directFactor: 0, eChroma: 1 } } };
+    expect(mergeSceneLighting(base, night)!.lightFactors).toEqual(night.lightFactors);
+    expect(base.lightFactors.particles.directFactor).toBe(0.8);
+    expect(validSceneLightFactors(night.lightFactors)).toBe(true);
+    const fallback = { ...legacyLightFactors(3.1, 1), eChroma: 0.7 };
+    expect(resolveLightResponse({ eChroma: 0 }, fallback)).toEqual({ ...fallback, eChroma: 0 });
+    expect(resolveLightResponse(undefined, fallback)).toEqual(fallback);
+    for (const eChroma of [-1, 1.01, NaN, Infinity, '1', true]) {
+      expect(validSceneLightFactors({ particles: { eChroma } })).toBe(false);
+    }
+    for (const invalid of [null, [], { particles: { totalFactor: -1 } }, { particles: { totalFactor: NaN } }, { particles: { directFactor: 65 } }]) {
+      expect(validSceneLightFactors(invalid)).toBe(false);
+    }
+  });
+});
 
 function scene(over: Partial<SceneData> = {}): SceneData {
   return {
@@ -100,8 +135,13 @@ describe('mergeSceneLighting：部分覆盖，且 lights 永不参与', () => {
     expect((m as never as Record<string, unknown[]>)['lights']).toHaveLength(1);
   });
 
-  it('没有基底时覆盖也无处可盖', () => {
-    expect(mergeSceneLighting(undefined, { fog: { sigma: 1 } } as never)).toBeUndefined();
+  it('没写基底块：没有覆盖仍是 undefined（运行时按缺省块打光）；有覆盖就盖在缺省块上', () => {
+    expect(mergeSceneLighting(undefined, undefined)).toBeUndefined();
+    const m = mergeSceneLighting(undefined, { fog: { sigma: 1 } } as never)!;
+    expect(m.fog?.sigma).toBe(1);
+    // 缺省块的其余部分都在：少了 display 运行时 LitBackground 直接读空
+    expect(m.display.tonemap).toBe('none');
+    expect(m.lights).toEqual([]);
   });
 });
 

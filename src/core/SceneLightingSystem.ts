@@ -8,6 +8,8 @@ import type { PackedLights } from '../rendering/lighting/lightPacking';
 import { resolveDepthPerSy } from '../utils/worldReconstruct';
 import type { AssetManager } from './AssetManager';
 import { depthError, depthLog } from './depthLog';
+import { defaultSceneLighting } from '../data/sceneLightingDefault';
+import { geometryMetaProblems } from './lightingPayloadFiles';
 import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 
 const T = 'SceneLighting';
@@ -100,28 +102,11 @@ export interface LightingGeometryMeta {
  */
 export const CHARACTER_ALBEDO_REFERENCE = 0.0381;
 
-/**
- * 本系统认得的几何场载荷代次。改产物布局必须 +1，并同步
- * `tools/character_lighting_lab/scene_fields.py#PAYLOAD_VERSION` 与 `validator.py`。
- *
- * v2（2026-08-31）：产物从 `lighting2/<图名>/meta.json` 改住
- * `lighting/<图名>/geometry.json`（与 probe 载荷同目录，同一个工具产出），
- * 并新增 `depth_sha1`（深度重导但几何场没重烘 = 静默错，靠它抓）。
+/*
+ * ⛔ 2026-09-14 起不再有 `LIGHTING_GEOMETRY_VERSION`（原来 `meta.version !== 4` 就整包忽略）。
+ * 装载时按运行时真正读的字段验：`lightingPayloadFiles.geometryMetaProblems`。
+ * 以后改产物布局：让运行时按新读的字段 / 文件验，不要再加一个"代次必须相等"。
  */
-/**
- * 几何场载荷代次。**三处必须一致**（这里 / `validator._LIGHTING_GEOMETRY_VERSION` /
- * `scene_fields.PAYLOAD_VERSION`），否则运行时整包忽略。
- *
- * v3（2026-09-01）：新增 `skyao_probe.bin` —— 每格 4 个 f32 的天穹遮蔽矩
- * `(a0, a1x, a1y, a1z)`，角色按**任意法线**求值 `V(N)=clamp((a0+a1·N)/cap0(N),0,1)`，
- * 乘在 GI 上。旧的 `skyvis_grid.bin` 降级为它的派生标量 `T(up)`（按法线求值做不到，
- * 竖直面偏高约 50%），只等旧代码改完就删。
- *
- * v4（2026-09-07）：新增 `albedo.png` —— 灯乘的反照率贴图（此前是 shader 里现除的
- * `painting / S_day`）。`skyvis.png` 随之**退出运行时**：它只剩离线端那个除数的输入。
- * 载荷里同时多了 `albedo_map`（这张图是烘的还是作者手改的、从哪张背景来）。
- */
-export const LIGHTING_GEOMETRY_VERSION = 4;
 
 /**
  * 统一光影系统的场景侧协调者。
@@ -389,11 +374,12 @@ export class SceneLightingSystem {
     this.bakeBase = sceneBakeDirUrl(
       sceneId, sceneData.backgrounds?.[0]?.image ?? 'background.png');
     this.dayNightOn = sceneData.dayNight?.enabled === true;
-    const def = sceneData.lighting;
-    if (!def) {
-      depthLog(T, `${sceneId}: 场景未配 lighting 块，走旧路径`);
-      return false;
-    }
+    // 没写 lighting 块 ≠ 不打光。块里只装**作者的**灯与显示参数；运行时灯（手持火把、跟随灯）
+    // 与作者写没写这块无关，只要这张画烘了几何场就该照得亮。原来这里直接 return false，
+    // 于是 2026-08-21 那次恒等迁移之后才烘的 6 个场景（崖墓前段 ×4 / 跑马梁 / 牛头凼）
+    // 举着火把一点光都没有，而那次迁移的工具早已停用、再没有别的东西会补这块。
+    const def = sceneData.lighting ?? defaultSceneLighting();
+    if (!sceneData.lighting) depthLog(T, `${sceneId}: 场景没写 lighting 块，按缺省块（无作者灯、画面不变）启用`);
     const depthCfg = sceneData.depthConfig;
     if (!depthCfg) {
       depthError(T, `${sceneId}: 配了 lighting 但没有 depthConfig —— 统一光影依赖深度场`);
@@ -441,9 +427,12 @@ export class SceneLightingSystem {
         }
       }
     }
-    if (meta.version !== LIGHTING_GEOMETRY_VERSION) {
-      depthError(T, `${sceneId}: 几何场载荷版本 ${meta.version} ≠ ${LIGHTING_GEOMETRY_VERSION}，整包忽略`
-        + '（2026-08-31 起产物改住 lighting/<背景基名>/，跑 `python tools/migrate_lighting_payloads.py` 迁移）');
+    // 不按 `version` 整数判真假：它只是烘焙器给自己留的记录。运行时按**自己真正读的东西**验
+    // （下面的 meta 字段 + 紧接着装的 normal / albedo），缺什么就说缺什么。
+    const metaProblems = geometryMetaProblems(meta);
+    if (metaProblems.length > 0) {
+      depthError(T, `${sceneId}: geometry.json 缺运行时要读的字段（${metaProblems.join('；')}），`
+        + `整包不启用。重烘：\`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene ${sceneId}\``);
       return false;
     }
 

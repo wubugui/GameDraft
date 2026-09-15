@@ -427,7 +427,7 @@ void main(){
   float h=(1.-vUV.y)*uCharH;
   vec3 q=vec3(uFootQ.x+(vUV.x-.5)*uCharW,
               uFootQ.y+h*uCosT,
-              uFootQ.z-h*uSinT-ne.a*uBulge);
+              uFootQ.z-h*uSinT-ne.a*uBulge*uCharW);
   vec2 spx=vec2(uCal.z+q.x*uCal.x, uCal.w-q.y*uCal.x);
   ivec2 ip=ivec2(clamp(spx,vec2(0.),vec2(uWork)-1.));
   float dFront=texelFetch(uDepthTex,ip,0).r;
@@ -2444,7 +2444,7 @@ function drawChar3D(mvp){
   }
   gl.uniform1f(u('uBeta'),Math.pow(2,S.beta));
   gl.uniform1f(u('uEChroma'),S.eChroma);
-  gl.uniform1f(u('uBulge'),S.bulge); gl.uniform1f(u('uFlatten'),S.flatten);
+  gl.uniform1f(u('uBulge'),S.bulge*wWu); gl.uniform1f(u('uFlatten'),S.flatten);
   gl.uniform1f(u('uPGain'),S.pgain); gl.uniform1i(u('uShowN'),S.dbg.normal);
   const S32=32;
   gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,S32,0);

@@ -13,6 +13,9 @@
   * ``utils/groundHeightfield.ts``  —— 世界 XZ 地面高度场
   * ``utils/sceneWind.ts``          —— 场景风（与游戏同一份参数解析 + 同一个钟）
   * ``utils/perspectiveScale.ts``   —— 场景透视系数（薄片的尺寸 / 位移按它折）
+  * ``systems/vfx/vfxRandom.ts``    —— ``hashSeed``：布置没写 seed 时按实例 id 派生（与 ``VfxSystem.ensureSim`` 同一个函数）
+  * ``systems/vfx/vfxConfine.ts``   —— 粒子区域的权重网格与 ``confineDistanceContour``（画范围区域的边带内沿；
+                                      别在 JS 里另写一份距离场，F2 叠加层与本台画的是同一条线）
 
 缓存：按 TS 源文件 mtime + 大小做戳，落 ``viewer/_gen/vfx.bundle.js``（不入库）。
 戳盖的是**从入口顺着 import 走出来的整棵依赖树**（``sources()`` 现场扫），不是手抄的清单——
@@ -44,6 +47,10 @@ ENTRY_MODULES = [
     SRC / "utils" / "groundHeightfield.ts",
     SRC / "utils" / "sceneWind.ts",
     SRC / "utils" / "perspectiveScale.ts",
+    SRC / "systems" / "vfx" / "vfxRandom.ts",
+    SRC / "systems" / "vfx" / "vfxConfine.ts",
+    SRC / "systems" / "vfx" / "vfxProgram.ts",
+    SRC / "systems" / "vfx" / "vfxMotionSource.ts",
 ]
 GEN_DIR = TOOL / "viewer" / "_gen"
 OUT = GEN_DIR / "vfx.bundle.js"

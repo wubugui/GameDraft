@@ -1,11 +1,12 @@
-import type { VfxEffectDef, VfxFieldDef, VfxInstanceState } from '../data/types';
+import type { VfxEffectDef, VfxFieldDef, VfxInstanceState, VfxPlacementLibrary } from '../data/types';
 
 /**
  * 世界空间粒子 / 群体的**实时联动**（游戏侧）。DEV 专用。
  *
- * 粒子工作台（`tools/vfx_workbench`）是效果资产 `assets/data/vfx/` **唯一的作者面与写入者**；
- * 游戏在这条通道上只是**预览器**：工作台里每改一个参数，游戏下一拍就用工作态定义重建引用它的
- * 实例；按一下「发一个刺激」游戏就在那个画面点发一个 `fear/attract/wind` 场。反向，游戏把
+ * 粒子工作台（`tools/vfx_workbench`）是效果资产 `assets/data/vfx/` 与布置库 `assets/data/vfx_placements.json`
+ * **唯一的作者面与写入者**；游戏在这条通道上只是**预览器**：工作台里每改一个参数 / 挪一个区域顶点，
+ * 游戏下一拍就用工作态重建受影响的实例；按一下「发一个刺激」游戏就在那个画面点发一个 `fear/attract/wind` 场；
+ * 按「让游戏切到这个时段」游戏就推进到那个时段（布置按时段外观分份，调夜里那份得先让游戏进夜）。反向，游戏把
  * 「现在在哪个场景、这个效果被哪些实例引用着、各自什么状态、活了多少只、模拟花了多久、玩家站在哪」
  * 回传给工作台画在 3D 里。
  *
@@ -68,6 +69,13 @@ export interface VfxSyncDoc {
   sceneId?: string;
   /** 刺激请求：序号递增一次发一次。`at` = 画面点 + 离地高（wu），游戏侧解成 M-world */
   probe?: { seq: number; field: VfxFieldDef; at: { x: number; y: number; h?: number } };
+  /**
+   * 只包含实际修改的场景 × 外观。空数组清空该份，缺席保持磁盘数据。
+   * mode 区分旧窗口的整库副本；旧副本不允许进入预览。
+   */
+  placements?: { mode?: 'scoped'; library: VfxPlacementLibrary; sceneId: string; phase: string };
+  /** 「让游戏切到这个时段」：序号递增一次推进一次（规则同 `probe`）。`timePhase` 是真实时段 id */
+  phaseRequest?: { seq: number; timePhase: string };
 }
 
 /** 游戏 → 工作台：一个实例的现状 */
@@ -99,6 +107,14 @@ export interface VfxStatusDoc {
   spaceKind: string | null;
   /** 最近一次真发出去的刺激序号 */
   probeSeqDone: number;
+  /** 游戏此刻的时段 id（DayManager） */
+  timePhase: string;
+  /** 本场景此刻用哪套时段外观（`timeVariants` 键，`''` = 基底）；没进场景 null */
+  appearancePhase: string | null;
+  /** 实例表取自哪一份布置；`preview` = 用的是工作台推来的工作态库（不是盘上那份） */
+  placementsApplied: { sceneId: string; phase: string; preview: boolean } | null;
+  /** 最近一次真执行的切时段序号 */
+  phaseSeqDone: number;
   /** 这个游戏页的实例 id（= 运行时命令队列的 targetBootId）：多开页签时工作台用它只指挥这一页 */
   bootId?: string;
   /** 页面地址（不含 origin）与开页时刻：几个页同时回传时，槽挑最新开的那页当"游戏" */
@@ -122,6 +138,17 @@ export function shouldApplyVfxDoc(
   if (doc.writer === me) return false;
   if (doc.rev <= lastSeenRev) return false;
   return true;
+}
+
+/**
+ * 「让游戏切到这个时段」要不要真的推进（纯函数）。工作台要的是**那套时段外观**，不是那个时刻：
+ * 当前场景此刻的外观键与目标时段的外观键已经相同（例：游戏在「午」、基底覆盖辰 / 午，工作台发来「辰」），
+ * 推进只会**跨过午夜走一整天**——`endDay` / 天数加一 / 延迟事件触发，作者只是想看基底那份布置，
+ * 却改掉了正在跑的这一局的天数与剧情状态。给不出外观键（没进场景）⇒ 照旧推进。
+ */
+export function phaseRequestNeedsAdvance(currentAppearance: string | null, targetAppearance: string | null): boolean {
+  if (currentAppearance === null || targetAppearance === null) return true;
+  return currentAppearance !== targetAppearance;
 }
 
 export interface VfxSyncStatus {
@@ -148,8 +175,15 @@ export interface RuntimeVfxSyncDeps {
   clearPreview: (effectId: string) => void;
   /** 在画面点 `at`（+ 离地高）发一个刺激场；返回 false = 根本没发（没有模拟空间 / 不在场景里） */
   emitField: (def: VfxFieldDef, at: { x: number; y: number; h?: number }) => boolean;
-  /** 回传给工作台的那一份现状（除 writer / ts / probeSeqDone / appliedRev 之外的全部） */
-  getStatus: (effectId: string) => Omit<VfxStatusDoc, 'writer' | 'ts' | 'appliedRev' | 'effectId' | 'probeSeqDone'>;
+  /** 套用工作台的整份工作态布置库（`VfxSystem.applyPreviewPlacementLibrary`）；null = 撤销、回到盘上那份 */
+  applyPlacements: (library: VfxPlacementLibrary | null) => void;
+  /**
+   * 推进到某个时段（`DayManager.advanceTimeTo`）；返回 false = 没有这个时段 / 推不了。
+   * 游戏已经是目标时段那套外观时不推进、照样返回 true（见 `phaseRequestNeedsAdvance`）。
+   */
+  requestTimePhase: (timePhase: string) => boolean;
+  /** 回传给工作台的那一份现状（除 writer / ts / 各种序号 / appliedRev 之外的全部） */
+  getStatus: (effectId: string) => Omit<VfxStatusDoc, 'writer' | 'ts' | 'appliedRev' | 'effectId' | 'probeSeqDone' | 'phaseSeqDone'>;
   log: (msg: string) => void;
 }
 
@@ -166,6 +200,11 @@ export class RuntimeVfxSync {
   /** 上一份文档的 writer：工作台换了进程 / 重开页（序号从头数）就当第一次看到 */
   private probeWriter = '';
   private lastProbeDoneSeq = 0;
+  /** 切时段序号：与刺激同一套规则（第一次看到只记不做、换 writer 从头数） */
+  private lastPhaseSeq = -1;
+  private lastPhaseDoneSeq = 0;
+  /** 套过工作台的布置库：拆联动时要撤掉 */
+  private placementsApplied = false;
   private lastStatusJson = '';
   private lastStatusAt = 0;
   private lastOkAt = 0;
@@ -204,6 +243,10 @@ export class RuntimeVfxSync {
     if (this.appliedEffect) {
       try { this.deps.clearPreview(this.appliedEffect); } catch { /* 拆的时候游戏可能已经在拆了 */ }
       this.appliedEffect = '';
+    }
+    if (this.placementsApplied) {
+      try { this.deps.applyPlacements(null); } catch { /* 同上 */ }
+      this.placementsApplied = false;
     }
   }
 
@@ -322,13 +365,22 @@ export class RuntimeVfxSync {
     if (!doc) { this.suppressed = '槽是空的'; return; }
     if (isVfxDocStale(body?.ageMs)) {
       this.lastSeenRev = Math.max(this.lastSeenRev, doc.rev);
-      if (this.lastProbeSeq < 0) { this.lastProbeSeq = doc.probe?.seq ?? 0; this.probeWriter = doc.writer; }
+      if (this.lastProbeSeq < 0) {
+        this.lastProbeSeq = doc.probe?.seq ?? 0;
+        this.lastPhaseSeq = doc.phaseRequest?.seq ?? 0;
+        this.probeWriter = doc.writer;
+      }
       this.suppressed = '工作台那份太旧（>5 分钟），不套用';
       return;
     }
     const firstSight = this.lastProbeSeq < 0;
-    if (firstSight) { this.lastProbeSeq = doc.probe?.seq ?? 0; this.probeWriter = doc.writer; }
-    else if (doc.writer !== this.probeWriter) { this.probeWriter = doc.writer; this.lastProbeSeq = 0; }
+    if (firstSight) {
+      this.lastProbeSeq = doc.probe?.seq ?? 0;
+      this.lastPhaseSeq = doc.phaseRequest?.seq ?? 0;
+      this.probeWriter = doc.writer;
+    } else if (doc.writer !== this.probeWriter) {
+      this.probeWriter = doc.writer; this.lastProbeSeq = 0; this.lastPhaseSeq = 0;
+    }
     if (!shouldApplyVfxDoc(doc, this.writerId, this.lastSeenRev)) {
       this.suppressed = '';
       if (doc.rev > this.lastSeenRev && doc.writer === this.writerId) this.lastSeenRev = doc.rev;
@@ -340,6 +392,17 @@ export class RuntimeVfxSync {
         if (this.appliedEffect && this.appliedEffect !== doc.effectId) this.deps.clearPreview(this.appliedEffect);
         this.deps.applyPreview(doc.effectId, doc.def);
         this.appliedEffect = doc.effectId;
+        // 只接受明确按编辑范围发送的预览，旧窗口的整库副本必须失效。
+        const lib = doc.placements?.library;
+        if (doc.placements?.mode === 'scoped' && lib && typeof lib === 'object'
+            && lib.scenes && typeof lib.scenes === 'object' && !Array.isArray(lib.scenes)) {
+          this.deps.applyPlacements(lib);
+          this.placementsApplied = true;
+        } else if (doc.placements) {
+          if (this.placementsApplied) this.deps.applyPlacements(null);
+          this.placementsApplied = false;
+          this.suppressed = '旧版或无效的整库布置未应用，请刷新粒子工作台';
+        }
         this.appliedRev = doc.rev;
         this.appliedCount += 1;
       } catch (e) {
@@ -362,6 +425,17 @@ export class RuntimeVfxSync {
         this.deps.log(`[粒子] 刺激「${doc.probe.field.kind}:${doc.probe.field.tag}」没发出去：当前场景没有模拟空间`);
       }
     }
+    // 切时段：同一套序号规则；推进由 DayManager 走正常换装（外观真变了才重载场景）
+    const pseq = doc.phaseRequest?.seq ?? 0;
+    if (!firstSight && doc.phaseRequest?.timePhase && pseq > this.lastPhaseSeq) {
+      this.lastPhaseSeq = pseq;
+      if (this.deps.requestTimePhase(doc.phaseRequest.timePhase)) {
+        this.lastPhaseDoneSeq = Math.max(this.lastPhaseDoneSeq, pseq);
+        this.lastStatusJson = '';
+      } else {
+        this.deps.log(`[粒子] 工作台要切到时段「${doc.phaseRequest.timePhase}」，游戏里没有这个时段`);
+      }
+    }
   }
 
   private buildStatus(): VfxStatusDoc {
@@ -374,6 +448,7 @@ export class RuntimeVfxSync {
       effectId,
       appliedRev: this.appliedRev,
       probeSeqDone: this.lastProbeDoneSeq,
+      phaseSeqDone: this.lastPhaseDoneSeq,
       href: typeof location !== 'undefined' ? `${location.pathname}${location.search}` : undefined,
       startedAt: this.startedAt,
     };

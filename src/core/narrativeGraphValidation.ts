@@ -1144,31 +1144,43 @@ function validateActionDef(action: ActionLike, path: string, issues: NarrativeVa
       );
     }
   }
-  if (type === 'runActions' || type === 'addDelayedEvent') {
-    validateActions(params.actions, `${path}.params.actions`, issues, owner, target);
-  } else if (type === 'enableRuleOffers') {
-    if (params.slots !== undefined && !Array.isArray(params.slots)) {
-      addIssue(issues, 'error', 'action.container.shape', `${owner}: enableRuleOffers params.slots must be an array`, `${path}.params.slots`, owner, target);
+  const slots = Object.prototype.hasOwnProperty.call(NESTED_ACTION_LIST_SLOTS, type) ? NESTED_ACTION_LIST_SLOTS[type] : [];
+  for (const slot of slots) {
+    const raw = params[slot.key];
+    const slotPath = `${path}.params.${slot.key}`;
+    if (!slot.itemActionsKey) {
+      validateActions(raw, slotPath, issues, owner, target);
+      continue;
     }
-    (Array.isArray(params.slots) ? params.slots : []).forEach((slot, idx) => {
-      if (slot && typeof slot === 'object' && !Array.isArray(slot)) {
-        validateActions((slot as Record<string, unknown>).resultActions, `${path}.params.slots[${idx}].resultActions`, issues, owner, target);
+    if (raw !== undefined && !Array.isArray(raw)) {
+      addIssue(issues, 'error', 'action.container.shape', `${owner}: ${type} params.${slot.key} must be an array`, slotPath, owner, target);
+    }
+    (Array.isArray(raw) ? raw : []).forEach((item, idx) => {
+      if (item && typeof item === 'object' && !Array.isArray(item)) {
+        validateActions((item as Record<string, unknown>)[slot.itemActionsKey!], `${slotPath}[${idx}].${slot.itemActionsKey}`, issues, owner, target);
       }
     });
-  } else if (type === 'chooseAction') {
-    if (params.options !== undefined && !Array.isArray(params.options)) {
-      addIssue(issues, 'error', 'action.container.shape', `${owner}: chooseAction params.options must be an array`, `${path}.params.options`, owner, target);
-    }
-    (Array.isArray(params.options) ? params.options : []).forEach((option, idx) => {
-      if (option && typeof option === 'object' && !Array.isArray(option)) {
-        validateActions((option as Record<string, unknown>).actions, `${path}.params.options[${idx}].actions`, issues, owner, target);
-      }
-    });
-  } else if (type === 'randomBranch') {
-    if (params.aboveActions !== undefined) validateActions(params.aboveActions, `${path}.params.aboveActions`, issues, owner, target);
-    if (params.belowActions !== undefined) validateActions(params.belowActions, `${path}.params.belowActions`, issues, owner, target);
   }
 }
+
+/**
+ * 容器动作的子动作列表槽位：没有 itemActionsKey = `params[key]` 直接是动作列表；
+ * 有 = `params[key]` 是条目列表，每个条目的 `itemActionsKey` 才是动作列表。
+ * 口径 = 运行时 ActionRegistry.ts 里每个 `actionListFromParam(...)` 调用点 + addDelayedEvent +
+ * enableRuleOffers（槽位 resultActions 由规矩面执行）。与编辑器侧唯一真相源
+ * `tools/editor/shared/action_structure.py::NESTED_ACTION_SLOTS` 逐槽对账：
+ * `tools/editor/tests/test_nested_action_walkers.py::test_ts_narrative_validator_slots_match_registry`；
+ * 每个槽位真的被下钻：`src/core/narrativeGraphValidation.nestedActions.test.ts`。
+ * 一行一个动作——对账测试按行解析本表。
+ */
+const NESTED_ACTION_LIST_SLOTS: Readonly<Record<string, ReadonlyArray<{ key: string; itemActionsKey?: string }>>> = {
+  runActions: [{ key: 'actions' }],
+  addDelayedEvent: [{ key: 'actions' }],
+  runActionsIf: [{ key: 'actions' }, { key: 'elseActions' }],
+  randomBranch: [{ key: 'aboveActions' }, { key: 'belowActions' }],
+  chooseAction: [{ key: 'options', itemActionsKey: 'actions' }],
+  enableRuleOffers: [{ key: 'slots', itemActionsKey: 'resultActions' }],
+};
 
 function addDuplicateIssue(
   issues: NarrativeValidationIssue[],

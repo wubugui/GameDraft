@@ -250,12 +250,28 @@ class PhaseSyncSplitTests(_Base):
         self.assertEqual(new_base["fog"], base["fog"], "基底的雾不动")
 
     def test_merge_mirrors_runtime_semantics(self) -> None:
+        factors = {"character": {"indirectFactor": 2, "directFactor": 1, "totalFactor": 1},
+                   "particles": {"indirectFactor": 1, "directFactor": 0, "totalFactor": 2}}
+        pulled = copy.deepcopy(_BASE_LIGHTING)
+        pulled["lightFactors"] = factors
+        day, night = scene_lights.split_phase_pull(pulled, _BASE_LIGHTING, {})
+        self.assertNotIn("lightFactors", day, "夜里改的倍率不能污染白天")
+        self.assertEqual(night["lightFactors"], factors)
+        self.assertEqual(scene_lights.merge_lighting_for_phase(day, night)["lightFactors"], factors)
+        from tools.editor.shared.light_factors import light_factor_issues
+        self.assertEqual(light_factor_issues(factors), [])
+        for bad in ({"particles": {"totalFactor": -1}}, {"particles": {"directFactor": True}},
+                    {"particles": {"directFactor": float("nan")}}, {"particles": {"directFactor": 65}}):
+            self.assertTrue(light_factor_issues(bad))
         merged = scene_lights.merge_lighting_for_phase(
             _BASE_LIGHTING, {"fog": {"sigma": 9}, "lights": [], "aoStrength": None})
         self.assertEqual(merged["fog"], {"sigma": 9}, "整块替换，不深合并")
         self.assertEqual(merged["lights"], _BASE_LIGHTING["lights"], "lights 永远取基底")
         self.assertEqual(merged["aoStrength"], 1.0, "None 不覆盖")
-        self.assertIsNone(scene_lights.merge_lighting_for_phase(None, {"fog": {}}))
+        self.assertIsNone(scene_lights.merge_lighting_for_phase(None, None), "没基底也没覆盖:运行时自己用缺省块")
+        on_default = scene_lights.merge_lighting_for_phase(None, {"fog": {"sigma": 2}})
+        self.assertEqual(on_default["fog"], {"sigma": 2}, "没写基底块时覆盖盖在缺省块上(与运行时同式)")
+        self.assertEqual(on_default["display"], scene_lights.default_lighting_block()["display"])
 
     def test_validate_no_longer_refuses_a_phase_but_reports_it(self) -> None:
         payload = {"sceneId": _SID, "phase": "夜", "lighting": copy.deepcopy(_BASE_LIGHTING)}
@@ -271,6 +287,7 @@ class PhaseSyncSplitTests(_Base):
             panel.load_scene_props(self.model.scenes[_SID])
             pulled = copy.deepcopy(_BASE_LIGHTING)
             pulled["display"]["ev"] = -2.0
+            pulled["lightFactors"] = {"particles": {"indirectFactor": 1, "directFactor": 0.25, "totalFactor": 2.7}}
             pulled["fog"]["sigma"] = 0.0          # 与白天相同 → 变体里原来的 fog 覆盖要被清掉
             pulled["lights"].append({"id": "lamp_night", "kind": "point", "pos": [1.0, 2.0, 3.0],
                                      "range": 100.0, "intensity": 1.0, "kelvin": 2000.0})
@@ -279,17 +296,72 @@ class PhaseSyncSplitTests(_Base):
             panel._flush_scene_widgets_into(sc)
             panel._writeback_scene_lights(sc)
             night = sc["timeVariants"]["夜"]["lighting"]
-            self.assertEqual(night, {"display": pulled["display"]})
+            self.assertEqual(night, {"display": pulled["display"], "lightFactors": pulled["lightFactors"]})
+            self.assertNotIn("lightFactors", sc["lighting"], "夜里倍率不许写进白天基底")
             self.assertEqual(sc["lighting"]["display"]["ev"], 0.0, "白天基底的 ev 不许被夜值灌进来")
             self.assertEqual([l["id"] for l in sc["lighting"]["lights"]], ["lamp_a", "lamp_night"])
             merged = panel.sync_lighting_snapshot("夜")
             self.assertEqual(merged["display"]["ev"], -2.0, "发给夜里的游戏的是合并结果")
+            self.assertEqual(merged["lightFactors"], pulled["lightFactors"])
             self.assertEqual(panel.sync_lighting_snapshot("")["display"]["ev"], 0.0)
         finally:
             panel.deleteLater()
 
 
 class NewCanvasBridgeTests(_Base):
+    def test_light_response_authoring_and_runtime_pull_save_to_disk_and_reload(self) -> None:
+        # 真正走作者表单 → pending/桥 → save_all → 新 model 重载，不 mock 写盘。
+        sc = self.model.scenes[_SID]
+        sc.pop("bgm", None)
+        sc.pop("ambientSounds", None)
+        page = SceneEditorV2(self.model)
+        try:
+            page.load_scene(_SID)
+            panel = page._props
+            self.assertFalse(panel.is_pending_dirty(), "只是装载不能制造作者数据")
+            from PySide6.QtCore import Qt
+            from PySide6.QtTest import QTest
+            base = {"character": {"indirectFactor": 2, "directFactor": 0.6, "totalFactor": 1, "eChroma": 0.2},
+                    "particles": {"indirectFactor": 1.5, "directFactor": 0.3, "totalFactor": 2.7, "eChroma": 0.9}}
+            for kind, values in base.items():
+                for key, value in values.items():
+                    spin = panel._light_response_form._fields[(kind, key)]
+                    spin.setFocus()
+                    spin.selectAll()
+                    QTest.keyClicks(spin, str(value))
+                    QTest.keyClick(spin, Qt.Key.Key_Return)
+                    self._app.processEvents()
+            self.assertEqual(self.model.scenes[_SID]["lighting"]["lightFactors"], base)
+            panel._select_tv_row("夜")
+            tv = panel._tv_form
+            tv._block_cb["lightFactors"].click()
+            tv._light_response_form._fields[("particles", "eChroma")].setValue(0.7)
+            # 模拟 F2 发布的完整实时快照由既有同步入口接收：八项全部保值。
+            pulled = panel.sync_lighting_snapshot("夜")
+            night = copy.deepcopy(base)
+            night["character"]["eChroma"] = 0
+            night["particles"]["eChroma"] = 1
+            night["particles"]["directFactor"] = 0.45
+            pulled["lightFactors"] = night
+            panel.apply_pulled_lighting(pulled, "夜")
+            self._app.processEvents()
+            self.model.save_all()
+            saved = json.loads((self.model.scenes_path / f"{_SID}.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["lighting"]["lightFactors"], base)
+            self.assertEqual(saved["timeVariants"]["夜"]["lighting"]["lightFactors"], night)
+            fresh = ProjectModel()
+            fresh.load_project(self.model.project_path)
+            panel2 = ScenePropertyPanel(fresh)
+            try:
+                panel2.load_scene_props(fresh.scenes[_SID])
+                self.assertEqual(panel2.sync_lighting_snapshot("")["lightFactors"], base)
+                self.assertEqual(panel2.sync_lighting_snapshot("夜")["lightFactors"], night)
+                self.assertFalse(panel2.is_pending_dirty())
+            finally:
+                panel2.deleteLater()
+        finally:
+            page.deleteLater()
+
     def test_variant_edit_becomes_an_undoable_command(self) -> None:
         page = SceneEditorV2(self.model)
         try:

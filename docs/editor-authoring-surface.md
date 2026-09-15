@@ -61,7 +61,7 @@
 - 主动删除:`zone.x/y/width/height/ruleSlots`、`npc.dialogueFile/dialogueKnot`;切 depth_floor 会删 zone 的 onEnter/onStay/onExit。
 - 盲区:`backgrounds`(主编辑器不可编辑,只「角色照明实验室」或手写)、`depthConfig` 主体(M/shader/collision/depth_map…只实验室烘焙导出;`tools/scene_depth_editor` 已于 2026-07-23 整体删除)。
 - 盲区(2026-09-12 新增):场景顶层 `wind`(场景风:方向/风速/阵风/湍流/粗糙度/粒子与草木两路增益,顶层键手写安全、Apply 保留;游戏里 F2「粒子」页可临时拖风速倍率与两路增益、不落盘,读数抄回 JSON)。见 agent_docs `scene-wind`。
-- vfx 实例的两块区域(2026-09-13 起可编辑,原为盲区):场景页 vfx 那一栏「拉发射区域」(`area`,在哪生 / 从哪补回)与「拉范围区域」(`confine.area`,粒子被关在哪;不拉就用发射区域),画布上改顶点;「粒子限定在区域里」+ 边带宽 + 限高写 `confine`。实例行未知键透传、键序保持(原先 Apply 会把行内键按字母重排,已修)。见 agent_docs `vfx-system`「粒子区域」、`vfx-workbench`「场景页的粒子区域」。
+- 粒子布置(2026-09-14 起**不在场景 JSON 里、主编辑器只读**):布置库 `assets/data/vfx_placements.json`(按场景 × 时段外观各一份)的唯一作者面是粒子工作台——布置、锚点、发射区域 `area` / 范围区域 `confine.area`、边带 / 限高都在那里改。主编辑器场景页 vfx 那一栏只剩「显示时段外观」下拉 + 只读摘要 + 「刷新粒子数据」,画布上只读地画出两块区域与锚点(不吃鼠标)。场景 JSON 里残留旧 `vfx` 键 = 校验器 error(运行时不读),场景页给一个删除按钮。见 agent_docs `vfx-system`「布置」、`vfx-workbench`「布置」。
 - 透视缩放深度轴:场景面板启用后画布出现橙色箭头(近端■大→远端○小),拖两端手柄设任意方向的深度轴;等缩放等值线自动垂直于轴。竖直轴=普通上下纵深,斜轴=斜街。
 - 透视缩放下的碰撞多边形:可编辑多边形按 authored 空间显示(顶点拖拽/表格写回零换算);参与透视且系数≠1 时另画**只读虚线幽灵轮廓**=运行时实际命中面(authored 多边形绕锚点×f,与 anchorCollisionPolygonToWorld 同口径)。展示图/交互圈/NPC 精灵预览直接按系数缩放。
 - 无复制、无列表重排;`anim.json` 场景编辑器内只读(states 等廉价参数去「动画」面板改,图集像素布局靠 video_to_atlas 导出)。

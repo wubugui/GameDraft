@@ -3,6 +3,7 @@ import type {
   TimeTransition,
 } from '../data/types';
 import { sameAudioCue, sameAudioCueList } from '../data/audioCue';
+import { defaultSceneLighting } from '../data/sceneLightingDefault';
 
 /**
  * 这个表现档是否**声明了画面遮挡** —— 换装那一拍据此决定盖不盖黑幕。
@@ -56,8 +57,10 @@ export function mergeSceneLighting(
   base: SceneLightingDef | undefined,
   over: SceneTimeVariant['lighting'] | undefined,
 ): SceneLightingDef | undefined {
-  if (!base) return undefined;          // 没有基底就没有统一光影，覆盖也无处可盖
   if (!over) return base;
+  // 没写基底块 ≠ 不打光：运行时按缺省块打光（2026-09-14），时段覆盖就盖在缺省块上。
+  // 原来这里直接 return undefined —— 没写块的场景在夜里改雾 / 显示变换，写进 JSON 却永远不生效。
+  if (!base) return mergeSceneLighting(defaultSceneLighting(), over);
   const merged = { ...base } as Record<string, unknown>;
   for (const [k, v] of Object.entries(over)) {
     if (k === 'lights') continue;       // 见上：灯不走这条路

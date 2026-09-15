@@ -23,6 +23,8 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:               # 当脚本起(./dev.sh audit-*)时 `tools` 不在路径上
+    sys.path.insert(0, str(ROOT))
 
 
 def audit_scene(scene_json: Path) -> tuple[str, list[str]]:
@@ -48,7 +50,10 @@ def audit_scene(scene_json: Path) -> tuple[str, list[str]]:
         issues.append(f"标定主点 ({M['cx']:.0f},{M['cy']:.0f}) ≠ 深度图半幅 "
                       f"({depth[0] / 2:.0f},{depth[1] / 2:.0f}) —— 反投影整体平移,重导深度可修")
 
-    col = cfg.get('collision')
+    # 网格声明:旁挂 collision.json 先,没有才退回 depthConfig.collision(与运行时同一条优先级)
+    from tools.character_lighting_lab.terrain_compose import load_collision_meta
+    gm = load_collision_meta(name, cfg, base)
+    col = gm.to_dict() if gm else None
     col_path = base / cfg.get('collision_map', 'collision.png')
     if col and col_path.exists():
         size = Image.open(col_path).size
@@ -57,6 +62,8 @@ def audit_scene(scene_json: Path) -> tuple[str, list[str]]:
                           f"{col['grid_width']}x{col['grid_height']} —— 会按错误列宽读格子")
     elif col:
         issues.append('缺碰撞图')
+    if col and cfg.get('collision') and (base / 'collision.json').exists():
+        issues.append('depthConfig.collision 残留(网格已搬进 collision.json 旁挂)—— 跑 migrate_terrain_authoring 清掉')
 
     # 烘焙产物按**当前生效的第一层背景**分目录(与运行时 bakeKeyFromBackground 同口径)。
     # ⚠ 这里一度写死成扁平的 `lighting/lighting.json`;2026-08-30 分目录之后就再也命中

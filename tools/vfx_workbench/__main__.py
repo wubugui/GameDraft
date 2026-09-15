@@ -8,10 +8,11 @@
   python -m tools.vfx_workbench --smoke                   # 桌面壳无头自检
   python -m tools.vfx_workbench --selftest                # 交互层端到端回归（无头真页面 + viewer/tests/selftest.js）
   python -m tools.vfx_workbench --list                    # 效果清单
-  python -m tools.vfx_workbench --check [id …]            # 归一化校验（不写盘）：形状 / 护栏 / 告警
+  python -m tools.vfx_workbench --check [id …]            # 归一化校验（不写盘）：效果形状 / 护栏 / 告警 + 布置库形状闸门
   python -m tools.vfx_workbench --bundle                  # 只重打运行时模块包
 
-效果资产库 public/assets/data/vfx/；**本工具是它唯一的写入者**，主编辑器只读镜像
+效果资产库 public/assets/data/vfx/ 与布置库 public/assets/data/vfx_placements.json；
+**本工具是这两样唯一的写入者**，主编辑器只读镜像
 （与 assets/data/trajectories/ 完全同模式）。本地预览用的是打包进来的**运行时模拟核心本体**，
 不是另写一份 JS。
 """
@@ -56,9 +57,14 @@ def main() -> int:
         return 0
 
     if args.check is not None:
-        from tools.vfx_workbench import assets
+        from tools.vfx_workbench import assets, placements
         ids = args.check or [r["id"] for r in assets.list_assets()]
         bad = 0
+        # 布置库同一道形状闸门（与保存 / 联动推送同口径）；盘上那份作 baseline，场景 / 时段问题只告警
+        lib_ok, lib_lines = placements.check_report()
+        print("\n".join(lib_lines))
+        if not lib_ok:
+            bad += 1
         for eid in ids:
             try:
                 doc = assets.load_asset(eid)

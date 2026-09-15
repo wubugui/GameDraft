@@ -303,7 +303,7 @@
                     "params": {
                       "target": "player",
                       "socket": "right_hand",
-                      "prop": "torch",
+                      "prop": "lantern",
                       "state": "lit"
                     }
                   },

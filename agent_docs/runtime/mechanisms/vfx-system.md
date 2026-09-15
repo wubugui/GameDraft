@@ -1,12 +1,13 @@
 ---
 id: vfx-system
-title: 世界空间粒子 / 群体系统(效果资产 · 场景实例 · 刺激场)
+title: 世界空间粒子 / 群体系统(效果资产 · 布置 · 刺激场)
 domain: runtime
 type: mechanism
-summary: 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 场景实例 / 运行时刺激场);表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源
+summary: 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 按场景×时段外观分份的布置库 / 运行时刺激场),效果与布置唯一写者都是粒子工作台;表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源
 status: active
 authority:
   - src/data/types.ts#VfxEffectDef
+  - src/data/types.ts#VfxPlacementLibrary
   - src/systems/vfx/vfxSim.ts
   - src/systems/vfx/vfxConfine.ts
   - src/systems/vfx/vfxSpace.ts
@@ -16,6 +17,8 @@ authority:
   - src/utils/depthShellField.ts
   - src/utils/groundHeightfield.ts
   - src/core/ActionRegistry.ts#playVfx
+  - src/dev/runtimeVfxSync.ts
+  - tools/editor/shared/vfx_placements.py
 triggers:
   paths:
     - "src/systems/vfx/**"
@@ -23,15 +26,19 @@ triggers:
     - "src/utils/depthShellField.ts"
     - "src/utils/groundHeightfield.ts"
     - "public/assets/data/vfx/**"
-  topics: [粒子, 群体, 蝙蝠, 鸟群, 虫, boids, 刺激场, 烟, 滴水, 萤火, 尘埃, vfx, 发射器, 深度壳, 粒子区域, 发射区域, 范围区域, 软边界]
-  tasks: [加粒子效果, 改群体行为, 摆效果实例, 加刺激源, 改粒子渲染, 限定粒子范围, 配粒子区域]
+    - "public/assets/data/vfx_placements.json"
+    - "tools/editor/shared/vfx_placements.py"
+  topics: [粒子, 群体, 蝙蝠, 鸟群, 虫, boids, 刺激场, 烟, 滴水, 萤火, 尘埃, vfx, 发射器, 深度壳, 粒子区域, 发射区域, 范围区域, 软边界, 布置, 布置库, 时段外观, 白天夜里]
+  tasks: [加粒子效果, 改群体行为, 摆效果实例, 布置粒子, 调夜里的粒子, 加刺激源, 改粒子渲染, 限定粒子范围, 配粒子区域]
 verified_by:
   - src/systems/vfx/vfxSim.test.ts
   - src/systems/vfx/vfxConfine.test.ts
   - src/rendering/vfx/VfxRenderer.test.ts
   - src/utils/vfxGeometry.test.ts
+  - src/systems/vfx/VfxSystem.placements.test.ts
+  - src/dev/runtimeVfxSync.test.ts
   - tools/editor/tests/test_vfx_action_registration.py
-last_governed: 2026-09-13
+last_governed: 2026-09-14
 ---
 
 ## 是什么(一句话)
@@ -49,11 +56,15 @@ last_governed: 2026-09-13
 
 | 东西 | 住哪 | 谁写 |
 |---|---|---|
-| **效果资产** `VfxEffectDef` | `public/assets/data/vfx/<id>.json`,`id == 文件名` | **只有粒子工作台**;主编辑器只读镜像(与 `trajectories/` 同一待遇:无脏桶、不进 save_all、不进外部改动基线) |
-| **场景实例** `VfxInstanceDef` | 场景 JSON `vfx[]`(效果 id + 锚点 + 条件 + 时段 + 种子 + 数量倍率) | 主编辑器场景页 |
+| **效果资产** `VfxEffectDef` | `public/assets/data/vfx/<id>.json`,`id == 文件名`;**不绑场景、不绑时段** | **只有粒子工作台**;主编辑器只读镜像(与 `trajectories/` 同一待遇:无脏桶、不进 save_all、不进外部改动基线) |
+| **布置** `VfxInstanceDef` | 布置库 `public/assets/data/vfx_placements.json`(`VfxPlacementLibrary`:场景 → `base` / `variants[时段]` → 实例表;实例 = 效果 id + 锚点 + 种子 + 数量倍率 + 条件 + 发射区域 + 范围区域) | **只有粒子工作台**;主编辑器只读(画布显示区域、动作 / 条件候选、校验) |
 | **刺激场** `VfxFieldDef` | 运行时事件,**不落盘** | 谁都能发:`emitVfxField` 动作 / 玩家动静 / 场景灯 / 脚步 |
 
-**换物种不改场景、加刺激源不改物种、换场景只改实例。** 群体按**作者标签**查自己的
+⚠ 2026-09-14 之前布置在场景 JSON `vfx[]` 里、由主编辑器场景页写,实例带 `timePhases`。制作人定:效果与布置都在
+粒子工作台做,主编辑器只显示;白天和夜里分开配。已一次性迁移(没限时段的实例复制进 base 与该场景每个 variant,
+萤火虫 `timePhases:['夜']` 只进夜)。场景 JSON 再出现 `vfx` = 校验器 error,运行时不读。
+
+**换物种不改场景、加刺激源不改物种、换场景只改布置。** 群体按**作者标签**查自己的
 `attitude.fear/attract` 权重 —— 不认识的标签权重 0 = 等于没发,所以加一种新刺激不用动任何物种。
 
 ## 权威源(读代码从哪进)
@@ -104,6 +115,20 @@ last_governed: 2026-09-13
   `EntityLightingFilter` 色调融入:同一张运行时辐照 probe、同一组 key / ambient / toneStrength、同一个式子)/
   **unlit**(`lit:false`)。三条都过显示变换。视图按"建的那一拍有什么"定 program,载荷晚到、
   着色开关、深度纹理 / 贴图 / 发射器换了都要重建——以前只在建视图时问一次,晚到的载荷一路错到换场景。
+- **受光强度 `appearance.lightGain`(0..10,缺省 1)逐发射器、逐视图**(`VfxRenderer.vfxLightGain`):
+  lit 路 `E = (probeE·skyao·间接factor + entitySceneLightsE·直接factor)·总factor·lightGain`。
+  三项 factor 和独立的 `eChroma` 来自当前场景/时段的 `lighting.lightFactors.particles`，
+  主编辑器可编辑保存，F2「光影→照明」调整实时值并经原有同步通道回写到编辑器工作副本；
+  **Save All 后才正式落盘**，重载从场景数据读取，角色色度修改不能改变粒子色度。
+  **不属于逐效果数据**。缺项按旧载荷 `giStrength / beta` 等价解析以保留原效果，但不跟随角色运行时曝光覆盖。
+  强度乘在着色**之前**,
+  `mix(out, albedo, emissive)` 的自发光份额**不乘**、显示变换不变;tone 路乘在色调融入的光照因子上(同一个 [0,1] 钳位,
+  没有色调可融时因子 = 1 照样乘);unlit(`lit:false`)CPU 恒送 1,片元 `uLightGain != 1.0` 那支不进、输出逐位不变。
+  **为什么挂本视图自己的组**(lit 路 `vfxParams`、无光路 `vfxToneOn`,都是 `ensureView` 里 new 的):
+  `createCustomLitShader` 每个视图 new 一个 Shader，sceneShade / charLights **与角色 / NPC 共用**；
+  frameShade 是粒子独立的场景采样组。逐效果强度都不能写进这些共用组。不用顶点属性(`aMisc.y` 空槽):
+  一个发射器一个值,逐顶点写是白费,且 lit 与无光两个程序都得改顶点流。工作台推来新定义 = 新发射器 → `viewStale`
+  按身份重建；`syncLightGain` 逐帧比对场景三项倍率与效果强度，只更新本视图 uniform，不重启粒子。
 - **角色 / 粒子那组实体灯与显示变换,换场景时归零**(`Game` 的 lightingUnloader)。装载器只在场景
   **有** lighting 块时重写它;不清的话下一个没配 lighting 的场景接着用上一个场景的灯与 wuPerQUnit
   (2026-09-12 实测:义庄 → 崖墓前段后仍是义庄那 1 盏烛火、220 wu/q)。
@@ -134,6 +159,26 @@ last_governed: 2026-09-13
 - **长活 shader 的场景纹理槽位与 `createLitShader` 同处维护**(`LIT_SHADER_SCENE_TEXTURE_SLOTS`);
   切场景前粒子系统先销毁自己的 shader,早于纹理销毁 —— 漏一个槽 = 整局卡死
   (见 [pixi-v8-traps](pixi-v8-traps.md))。
+
+## 布置取哪一份(场景 × 时段外观)
+
+- **分份的键 = 时段外观**,不是时段:`base` = 场景顶层外观(没单列成 `timeVariants` 的时段都用它),
+  `variants[时段 id]` = 那套外观。此刻取哪份 = `SceneManager.appearancePhaseFor(DayManager.currentPhase)`
+  = `resolveSceneAppearance(scene, 时段).phase`(空串 = base)——与背景 / 光照换装**同一个判据**,
+  粒子是对着作者此刻看到的那张原画调的。Python 侧同判据在 `vfx_placements.resolve_appearance_phase`。
+- **没配就没有、互不继承**:夜里没摆 = 夜里没有粒子,不回退到基底(制作人 2026-09-13 选的)。
+- 时段推进 → `VfxSystem` 下一拍核外观键,变了就**按 id 差分换表**:定义逐字没变的实例对象原样留着
+  (蝙蝠不重飞、纸不重铺),变了的 / 新来的重建,不在表里的删掉;临时实例(手持火把的火焰)不归布置表管。
+  ⚠ 不能只靠换装重载:两个时段外观等价时 `appearanceChangesWithPhase` 为 false、不重载,但布置可以不同;
+  也不能读 `appearanceBase.applied.phase`——不重载时它停在前一个时段名上。
+- 布置库会话内装一次(`loadJson` 按 URL 缓存)。缺文件 / 没有 `scenes` 表 = 没有任何布置,log 一句,场景照进。
+- `playVfx {instanceId}` / 条件叶 `vfx` 找的是**当前在场**的那条:白天与夜里各摆一条同 id 的,两个时段都认;
+  只在夜里摆的,白天找不到(log / 读到不在场)。编辑器候选 = 各份 id 的并集。
+- **工作台联动**(DEV):槽里带**整份工作态布置库**,`applyPreviewPlacementLibrary` 整份顶替盘上那份、当前那份差分重建;
+  拆联动撤销。刻意整份而不是只收"工作台正展开的那一份"——只收一份时作者切到另一时段,游戏就退回会话里缓存的
+  旧库(哪怕刚存过盘)。槽还带 `phaseRequest {seq, timePhase}`(「让游戏切到这个时段」,序号规则同刺激),
+  回传带 `timePhase / appearancePhase / placementsApplied`。⚠ vite 槽插件原来会**剥掉不认识的字段**,
+  新字段必须在 `runtimeVfxApi` 里显式透传(形状不对 400,不静默剥)。
 
 ## 普通粒子怎么认刺激场（`motion.stimulus`）
 
@@ -180,8 +225,8 @@ last_governed: 2026-09-13
 
 **两块区域分开配**(制作人 2026-09-13 点名要求):**发射区域** = 实例的 `area`(纸钱铺在哪、被回收的从哪补回);
 **范围区域** = `confine.area`(粒子被关在哪),没写就用发射区域。发射区域小、范围区域大 = 纸钱铺在一小片、
-被风吹着能飞满一大片。作者面是主编辑器场景页 vfx 那一栏的「拉发射区域」「拉范围区域」
-(见 [[vfx-workbench]]「场景页的粒子区域」)。纯函数在 `vfxConfine.ts`,
+被风吹着能飞满一大片。作者面是粒子工作台的布置(见 [[vfx-workbench]]「布置」);主编辑器场景画布只读地画出来。
+纯函数在 `vfxConfine.ts`,
 薄片那一半在 `stepPlates` / `replenishPlate` / `pickAreaSurface`,普通粒子那一半在 `stepGeneric`。
 出生 / 补回点先在发射区域里挑、再按**范围区域**的权重拒绝采样——两块不相交时一张都挑不到(校验器 warning)。
 
@@ -281,8 +326,10 @@ draw call ≤ 8。
   正面不隧穿、滞回、出生在背后、薄片同一条** / 惊起 → 惊散 → 回巢 / 子发射 / 大 dt 封顶)、
   `vfxConfine.test.ts`(权重网格几何 / 强风里纸钱被限定、总数不漏、边带渐稀、补回飞不过边带 / 普通粒子出框淡出 / 限高 / 不限定一字不变)、
   `VfxRenderer.test.ts`(曲线 + 按水平纵深分桶)、`vfxGeometry.test.ts`(与 `geometry.py` 的跨语言金标)、
-  `worldSpaceShading.test.ts`(粒子不许自己写灯循环)。
-- 构建期:`./dev.sh validate-data`(效果资产结构、场景实例含 `confine`、四条 action 的参数、`vfx` 条件叶);
+  `worldSpaceShading.test.ts`(粒子不许自己写灯循环)、
+  `VfxSystem.placements.test.ts`(基底 / 夜取份、没配不回退、时段推进按 id 差分换表、工作态库整份顶替与撤销、临时实例不动;五处变异各红过)、
+  `runtimeVfxSync.test.ts`(布置库套用 / 拆联动撤销、切时段序号规则;四处变异各红过)。
+- 构建期:`./dev.sh validate-data`(效果资产结构、布置库逐条含 `confine`、场景 JSON 残留 `vfx` 键、四条 action 的参数、`vfx` 条件叶);
   `asset_reference_audit --strict` 管贴图存在性。
 - 真机:`?mode=dev&devScene=<场景>`,页内直读 `window.__game.vfxSystem`
   (`debugSnapshot()` / `stats` / `currentSpace`),按

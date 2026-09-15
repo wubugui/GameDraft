@@ -49,7 +49,7 @@ export interface PropFlickerDef {
 }
 
 /**
- * 挂件自带的光源。字段语义与 `LightDef` 同名项**逐字相同**（单位 wu），
+ * 挂件自带的光源。字段语义与 `LightDef` 同名项相同，强度统一由 packLights 换算。
  * 少的那几项由运行时补：`kind` 恒 `point`、`pos` 每帧由挂点算、`enabled` 由状态给。
  */
 export interface PropLightDef {

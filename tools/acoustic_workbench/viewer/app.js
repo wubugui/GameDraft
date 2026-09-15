@@ -1010,5 +1010,19 @@ async function boot() {
   window.__ready = true;
 }
 
-window.addEventListener('beforeunload', (e) => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', (e) => { if (S.dirty && !window.__discardUnsaved) { e.preventDefault(); e.returnValue = ''; } });
+/**
+ * 关窗 / 刷新前桌面壳来问（`tools/desktop_shell.py` 的 `_guard_unsaved`）：关 QMainWindow 不跑 `beforeunload`，
+ * 没有这两个钩子时壳直接关、改动静默丢掉。输入框里刚打的值先提交（点标题栏 X / 按 F5 都不会让它失焦）。
+ */
+window.__unsavedSummary = () => {
+  const ae = document.activeElement;
+  if (ae && ae !== document.body && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName) && typeof ae.blur === 'function') ae.blur();
+  return S.dirty && S.doc ? `声学空间「${S.doc.id}」有未保存的改动。` : '';
+};
+window.__saveUnsaved = () => {
+  window.__saveUnsavedResult = 'pending';
+  Promise.resolve(save()).then(() => { window.__saveUnsavedResult = S.dirty ? '没存上（看状态栏）' : 'ok'; },
+    (e) => { window.__saveUnsavedResult = String((e && e.message) || e); });
+};
 document.addEventListener('DOMContentLoaded', () => { void boot(); });

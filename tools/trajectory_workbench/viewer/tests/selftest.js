@@ -10,6 +10,14 @@
   const ok = (name, cond, extra) => log.push((cond ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' ' + JSON.stringify(extra) : ''));
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const settle = async () => { clearTimeout(S.bakeTimer); await bakeNow(); };   // 把挂着的烘焙立刻跑完（派生量 / 段边界 / 警告都以它为准）
+  // 等装载门落下、推迟的视图复位跑完（再加上 pred）：机器忙时固定 wait 不够，装载途中的点击被装载门吞掉、迟到的 fit 把缩放改掉
+  const idle = async (pred, ms = 30000) => {
+    await wait(50);
+    for (const t0 = performance.now(); performance.now() - t0 < ms; await wait(100)) {
+      if (!(S.busy > 0) && !v2.pendingFit && (!pred || pred())) { await wait(50); if (!(S.busy > 0) && !v2.pendingFit) return true; }
+    }
+    return false;
+  };
   const R = (v) => Math.round(v);
   const c2 = () => el('view2d');
   const ev = (type, cx, cy, opts, target) => { const c = target || c2(); const r = c.getBoundingClientRect(); const e = new MouseEvent(type, Object.assign({ bubbles: true, cancelable: true, clientX: Math.round(r.left + cx), clientY: Math.round(r.top + cy), button: 0, buttons: 1 }, opts || {})); (type === 'mousedown' || type === 'dblclick' ? c : window).dispatchEvent(e); };
@@ -44,6 +52,70 @@
       ok('S2 inspector rendering never writes the doc', JSON.stringify(S.doc) === before && !S.dirty && history.undoStack.length === 0);
       host.selectSegmentScope(1); const c = TC(...Edit.originScreen(host)); click(c[0] + 300, c[1] + 300);
       ok('S2 clicking around does not dirty', !S.dirty && history.undoStack.length === 0); }
+    // ---------------------------------------------------------------- S15 下拉框的键盘：不许弹系统原生弹窗（dropdown.js，粒子工作台共用）
+    // 2026-09-14 审查：焦点停在收起的下拉框上按 Enter / Space / Alt+↓，Chromium 默认弹的就是被禁的 Qt 原生弹窗
+    { const ddl = () => document.getElementById('ddlist');
+      const items = () => (ddl() ? [...ddl().children] : []);
+      const t = h('select', {}, h('option', { value: 'a' }, 'a'), h('option', { value: 'b', disabled: true }, 'b'), h('option', { value: 'c' }, 'c'));
+      document.body.appendChild(t);
+      let changes = 0; t.addEventListener('change', () => { changes++; });
+      let pageSaw = []; const spy = (e) => { pageSaw.push(e.key); }; window.addEventListener('keydown', spy);
+      try {
+        Dropdown.close(); t.focus();
+        const en = key('Enter', {}, t);
+        ok('S15 Enter on a focused closed select: default prevented, in-page list opens (native popup never), page keymap does not see it',
+          en.defaultPrevented && Dropdown.isOpen() && Dropdown.ownerOf() === t && items().length === 3 && !pageSaw.includes('Enter'), { prevented: en.defaultPrevented, open: Dropdown.isOpen(), saw: pageSaw });
+        const d1 = key('ArrowDown', {}, t);
+        const hiIdx = items().findIndex((x) => x.classList.contains('hi'));
+        ok('S15 ArrowDown in a keyboard-opened list moves the highlight (skips disabled) and does not change the value yet',
+          d1.defaultPrevented && hiIdx === 2 && t.value === 'a' && changes === 0 && Dropdown.isOpen(), { hiIdx, value: t.value, changes });
+        key('Enter', {}, t);
+        ok('S15 Enter picks the highlighted item: value set, one change, list closed', t.value === 'c' && changes === 1 && !Dropdown.isOpen(), { value: t.value, changes, open: Dropdown.isOpen() });
+        pageSaw = []; t.focus();
+        const sp = key(' ', {}, t);
+        ok('S15 Space on a focused closed select: default prevented but still reaches the page (no list, no native popup)',
+          sp.defaultPrevented && !Dropdown.isOpen() && pageSaw.includes(' '), { prevented: sp.defaultPrevented, open: Dropdown.isOpen(), saw: pageSaw });
+        const ad = key('ArrowDown', { altKey: true }, t);
+        const f4 = Dropdown.isOpen() && key('F4', {}, t);
+        ok('S15 Alt+ArrowDown opens the in-page list, F4 closes it again (both default prevented)', ad.defaultPrevented && !!f4 && f4.defaultPrevented && !Dropdown.isOpen(), { alt: ad.defaultPrevented, f4: f4 && f4.defaultPrevented });
+        pageSaw = [];
+        key('Enter', {}, t); const es = key('Escape', {}, t);
+        ok('S15 Esc closes a keyboard-opened list without a change and never reaches the page keymap', es.defaultPrevented && !Dropdown.isOpen() && changes === 1 && t.value === 'c' && !pageSaw.includes('Escape'), { open: Dropdown.isOpen(), saw: pageSaw });
+        // 点别处关列表：那一下整个被吃掉（与原生弹窗一致；第七轮复核——植被台点画面关场景列表，画面上多了一笔），下拉框失焦；下一下照常
+        { const pad = h('div', {}, '自检'); document.body.appendChild(pad);
+          let got = 0; const cnt = () => { got++; };
+          for (const ty of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) pad.addEventListener(ty, cnt);
+          const P = (ty) => new PointerEvent(ty, { bubbles: true, cancelable: true, button: 0, buttons: ty === 'pointerdown' ? 1 : 0, pointerId: 7 });
+          const M = (ty) => new MouseEvent(ty, { bubbles: true, cancelable: true, button: 0, buttons: ty === 'mousedown' ? 1 : 0, detail: 1 });
+          const gesture = (target) => { const pd = P('pointerdown'); target.dispatchEvent(pd); target.dispatchEvent(M('mousedown')); target.dispatchEvent(P('pointerup')); target.dispatchEvent(M('mouseup')); target.dispatchEvent(M('click')); return pd; };
+          try {
+            Dropdown.close(); t.focus();
+            t.dispatchEvent(M('mousedown'));
+            const opened = Dropdown.isOpen() && Dropdown.ownerOf() === t;
+            const pd = gesture(pad);
+            ok('S15 clicking elsewhere closes a mouse-opened list and the whole click is consumed (page sees no down / up / click), select loses focus',
+              opened && got === 0 && pd.defaultPrevented && !Dropdown.isOpen() && document.activeElement !== t,
+              { opened, got, prevented: pd.defaultPrevented, open: Dropdown.isOpen(), active: document.activeElement && document.activeElement.tagName });
+            gesture(pad);
+            ok('S15 the click after that reaches the page untouched (nothing later is swallowed)', got === 5 && !Dropdown.isOpen(), { got });
+            t.focus(); t.dispatchEvent(M('mousedown'));
+            const reopened = Dropdown.isOpen();
+            gesture(t);
+            ok('S15 clicking the open select itself only closes the list (no reopen), focus stays on it',
+              reopened && !Dropdown.isOpen() && document.activeElement === t && changes === 1, { reopened, open: Dropdown.isOpen() });
+          } finally { Dropdown.close(); pad.remove(); }
+        }
+        // 弹窗里：Enter 开列表、第一下 Esc 只关列表（原来 modal 的 Esc 先把整个弹窗关了、列表还飘着），第二下才取消弹窗
+        const pm = modal({ title: '自检', fields: [{ key: 'k', label: '选', type: 'select', options: [{ value: 'x', label: 'x' }, { value: 'y', label: 'y' }], value: 'x' }] });
+        await wait(30);
+        const ms = el('modal').querySelector('select'); ms.focus();
+        key('Enter', {}, ms); const mOpen = Dropdown.isOpen();
+        key('Escape', {}, ms); const firstEsc = !Dropdown.isOpen() && el('modalWrap').classList.contains('show');
+        key('Escape', {}, ms); const res = await pm;
+        ok('S15 in a modal: Enter opens the list, first Esc closes only the list, second Esc cancels the modal', mOpen && firstEsc && res === null && !el('modalWrap').classList.contains('show'), { mOpen, firstEsc, res });
+        ok('S15 keyboard dropdown checks left the doc alone', JSON.stringify(S.doc) === coinJson && !S.dirty && history.undoStack.length === 0);
+      } finally { window.removeEventListener('keydown', spy); Dropdown.close(); t.remove(); }
+    }
     // ---------------------------------------------------------------- S3 第一笔手势（新开资产）
     await mkScreen('zz_selftest_a');
     await openAsset('zz_selftest_a'); await wait(200);
@@ -316,13 +388,14 @@
       [...document.querySelectorAll('#modal .btns button')].find((b) => b.textContent === '创建').click();
       for (let i = 0; i < 40 && !(S.doc && S.doc.id === 'zz_selftest_w' && S.cal && S.cal.shell); i++) await wait(250);
       ok('S10 world asset created with shell + heightfield', S.doc && S.doc.id === 'zz_selftest_w' && S.doc.space === 'world' && !!S.cal && !!S.cal.shell && !!S.cal.hf);
-      el('entitySel').value = 'player'; el('entitySel').dispatchEvent(new Event('change')); await wait(600);
+      el('entitySel').value = 'player'; el('entitySel').dispatchEvent(new Event('change')); await wait(600); await idle();
       const an = focusAnchor(); setTool('pen');
       for (const q of [[an.x + 60, an.y - 30], [an.x + 120, an.y - 60], [an.x + 180, an.y - 30]]) { const c = TC(q[0], q[1]); click(c[0], c[1], { altKey: true }); }
       key('Escape'); const seg = () => segs()[0]; const eff = () => host.effPoints(seg());
       host.op('h', () => { Edit.setPoint(host, seg(), 1, { h: 40 }); Edit.setPoint(host, seg(), 2, { h: 80 }); Edit.setPoint(host, seg(), 3, { h: 20 }); }); await settle();
       const maxH0 = Math.max(...S.bake.preview.world.map((w) => w[4]));
       ok('S10 world profile baked', eff().length === 4 && Math.abs(maxH0 - 80) < 1.5 && el('warnings').textContent === '', { maxH0, warn: el('warnings').textContent });
+      await idle(); focusAnchor();   // 高度柄按屏幕像素换算 h：拖之前把缩放钉回 1（迟到的复位会改掉它）
       host.selectPoint(1, false); let c = TC(eff()[1].sx, eff()[1].sy); drag(c[0], c[1] - 18, c[0], c[1] - 18 - 20);
       ok('S10 height handle raises by 20/cosθ', Math.abs(eff()[1].h - 40 - 20 / S.cal.cosTheta) < 1.5, eff()[1].h); key('z', { ctrlKey: true });
       // ---- S14 2D 原画视图里的 3D gizmo（世界空间资产：X / Y(h) / Z 三根轴 + XZ 贴地面片；单点即出现；点幽灵 = 整条）。
@@ -351,11 +424,13 @@
         else log.push('SKIP S14 ghost (no ghost drawn)');
         host.clearSelection(); }
       const hStored = seg().path.points.map((p) => p.h);
-      el('sceneSel').value = '河边'; el('sceneSel').dispatchEvent(new Event('change')); await wait(5000); await settle();
+      const scene0 = S.scene.id;
+      el('sceneSel').value = '河边'; const sceneWant = el('sceneSel').value; el('sceneSel').dispatchEvent(new Event('change'));
+      await idle(() => S.scene && S.scene.id === sceneWant, 60000); await settle();
       const maxH1 = S.bake ? Math.max(...S.bake.preview.world.map((w) => w[4])) : -1;
       ok('S10 scene change keeps the height profile (stored h untouched, bake intact, no warnings)', JSON.stringify(seg().path.points.map((p) => p.h)) === JSON.stringify(hStored) && Math.abs(maxH1 - 80) < 1.5 && el('warnings').textContent === '', { maxH1, warn: el('warnings').textContent, scene: S.scene.id });
-      key('z', { ctrlKey: true }); await wait(4500); await settle();
-      setTool('physics'); const t0 = TC(an.x - 120, an.y + 30); const t1 = [t0[0] - 40, t0[1] + 10]; drag(t0[0], t0[1], t1[0], t1[1]);
+      key('z', { ctrlKey: true }); await idle(() => S.scene && S.scene.id === scene0, 60000); await settle();
+      focusAnchor(); setTool('physics'); const t0 = TC(an.x - 120, an.y + 30); const t1 = [t0[0] - 40, t0[1] + 10]; drag(t0[0], t0[1], t1[0], t1[1]);
       const ps = segs()[1]; const pi = ps && host.physicsInfo(ps); const sm = v2.toScene(t1[0], t1[1]); const g = S.cal.sceneToWorldGround(sm[0], sm[1]);
       ok('S10 world physics landing = ground pick under mouse', ps && ps.kind === 'physics' && pi && !pi.grounded && Math.abs(pi.landingW[0] - g[0]) < 1.5 && Math.abs(pi.landingW[2] - g[2]) < 1.5 && S.tool === 'select', { kind: ps && ps.kind, landingW: pi && pi.landingW.map(R), g: g.map(R), grounded: pi && pi.grounded, v0: ps && ps.v0, scene: S.scene.id });
       const rc = await saveAsset(); tmpIds.push('zz_selftest_w'); await wait(150);

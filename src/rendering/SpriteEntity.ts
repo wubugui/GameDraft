@@ -508,9 +508,18 @@ export class SpriteEntity {
 
   /** 外层容器(实体级)世界仿射。Npc 在位置/缩放/旋转任一变化处推;Player 不用(恒等)。 */
   setLitParentTransform(x: number, y: number, sx: number, sy: number, rot: number): void {
+    const mirrorChanged = (sx < 0) !== (this.litParentSX < 0);
     this.litParentX = x; this.litParentY = y;
     this.litParentSX = sx; this.litParentSY = sy; this.litParentRot = rot;
     this.syncLitQuadWorld();
+    // NPC 转身只翻外层容器（内层 facingX 恒 +1），不走 applySpriteScale。
+    // 挂件前后看的是画面朝向（见 socketFrontForFacing），所以外层镜像一翻就要当场重排
+    if (mirrorChanged) this.syncAttachments();
+  }
+
+  /** 外层实体容器的水平镜像符号（Npc 的转身住在这里；Player 恒 +1） */
+  private hostMirrorX(): 1 | -1 {
+    return this.litParentSX < 0 ? -1 : 1;
   }
 
   private syncLitQuadWorld(): void {
@@ -973,7 +982,8 @@ export class SpriteEntity {
    * - `x/y` 已穿过 帧格归一化 → 世界尺寸 → 透视系数 → 镜像 → 跳跃视觉抬升；
    * - `angleDeg` 朝左时取反（镜像后顺时针变逆时针）；
    * - `scale` 是透视系数（挂件应随远近一起缩）；
-   * - `facing` 供挂件决定自己要不要跟着翻。
+   * - `facing` 供挂件决定自己要不要跟着翻；
+   * - `front` 已按**画面朝向**解好：标注按朝右标，朝左（含 NPC 的外层镜像）时前后互换。
    *
    * 与 `getAuthoredBubbleAnchorLocalY` 同一套换算口径（那条是本方法的一维特例）。
    */
@@ -987,12 +997,42 @@ export class SpriteEntity {
       worldHeight: this.worldHeight,
       depthScale: this.depthScaleFactor,
       facing: this.facingX,
+      // 只参与前后判定：画面朝左时前后互换（NPC 的朝向在外层容器上）
+      hostMirrorX: this.hostMirrorX(),
       visualLiftY: this.sprite.y,
       // 挂件与 sprite 是**兄弟**（同挂 container 下），锚点一变 sprite 的图挪了、
       // 挂件不会自动跟着挪 —— 这两个值就是那道换算
       anchorX: this.anchorX,
       anchorY: this.anchorY,
     });
+  }
+
+  /**
+   * 当前帧挂点**相对接地点**的偏移（场景 wu，y 向上为负），已穿过外层实体变换
+   * （Npc 的实例缩放 / 旋转 / 左右镜像；Player 外层恒等）。挂件自带的灯、跟随灯按它定位。
+   *
+   * 为什么不能直接用 `getSocketPose`：那是**本容器局部**坐标，挂件作为子节点摆位时正合适
+   * （外层变换 Pixi 自己会乘），但拿去和场景里的接地点相加就漏了外层那一层——
+   * NPC 转身只翻外层容器，于是朝左时灯会落在身体另一侧，而且不报错。
+   * 口径与 `Npc._contactOffset` 相同：先缩放（含镜像符号）再旋转。
+   */
+  getSocketOffsetFromContact(name: string): { x: number; y: number; front: boolean; clearanceWu: number; bodyWidthWu: number } | null {
+    const pose = this.getSocketPose(name);
+    if (!pose) return null;
+    const g = this.getGroundContactOffset();
+    const vx = (pose.x - g.x) * this.litParentSX;
+    const vy = (pose.y - g.y) * this.litParentSY;
+    // 与 lit quad 的变换后格宽同源：身体厚度和离身距离均属于实体，不属于场景 q 尺。
+    const rot = this.litParentRot + this.sprite.rotation;
+    const bodyWidthWu = this.getWorldSize().width * Math.abs(this.trajScaleX)
+      * Math.hypot(Math.cos(rot) * this.litParentSX * this.container.scale.x,
+        Math.sin(rot) * this.litParentSY * this.container.scale.y);
+    const clearanceWu = bodyWidthWu * 0.06;
+    const r = this.litParentRot;
+    if (r === 0) return { x: vx, y: vy, front: pose.front, clearanceWu, bodyWidthWu };
+    const c = Math.cos(r);
+    const s = Math.sin(r);
+    return { x: vx * c - vy * s, y: vx * s + vy * c, front: pose.front, clearanceWu, bodyWidthWu };
   }
 
   /**

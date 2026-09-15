@@ -40,6 +40,7 @@ from tools.editor.shared.audio_preview_selector import AudioIdPreviewSelector, A
 from tools.editor.shared.collapsible_section import CollapsibleSection
 from tools.editor.shared.form_layout import compact_form
 from tools.editor.shared.id_ref_selector import IdRefSelector
+from tools.editor.shared.light_response_editor import LightResponseEditor, scene_response_fallback
 from . import scene_lights
 
 __all__ = ["TimeVariantForm", "BLOCK_FIELDS", "SCALAR_BLOCKS", "variant_summary"]
@@ -211,6 +212,14 @@ class TimeVariantForm(QWidget):
             hl.addWidget(sp)
             hl.addStretch(1)
             env_lay.addWidget(row)
+        cb = QCheckBox("覆盖角色 / 粒子受光（倍率与色度）")
+        cb.toggled.connect(lambda on: self._on_block_toggled("lightFactors", on))
+        self._block_cb["lightFactors"] = cb
+        env_lay.addWidget(cb)
+        self._light_response_form = LightResponseEditor(self)
+        self._light_response_form.changed.connect(self._on_light_response)
+        self._block_body["lightFactors"] = self._light_response_form
+        env_lay.addWidget(self._light_response_form)
         env.add_body(env_inner)
         outer.addWidget(env)
 
@@ -362,7 +371,7 @@ class TimeVariantForm(QWidget):
             v = self._v or {}
             self._fill_bg(v)
             lit = v.get("lighting") if isinstance(v.get("lighting"), dict) else {}
-            for key in list(BLOCK_FIELDS) + list(SCALAR_BLOCKS):
+            for key in list(BLOCK_FIELDS) + list(SCALAR_BLOCKS) + ["lightFactors"]:
                 has = key in lit
                 self._block_cb[key].setChecked(has)
                 self._block_body[key].setEnabled(has)
@@ -412,6 +421,11 @@ class TimeVariantForm(QWidget):
             self._bg.blockSignals(False)
 
     def _fill_block(self, key: str, block) -> None:
+        if key == "lightFactors":
+            base = self._base_provider() if self._v is not None else {}
+            value = block if isinstance(block, dict) else (base.get("lighting") or {}).get(key)
+            self._light_response_form.load(value, scene_response_fallback(self._model, base, self._v))
+            return
         if key in SCALAR_BLOCKS:
             sp = self._fields[(key, "")]
             sp.blockSignals(True)
@@ -481,6 +495,7 @@ class TimeVariantForm(QWidget):
                 bgs[0]["image"] = img            # 只换图名，其余层 / x / y 原样
             else:
                 self._v["backgrounds"] = [{"image": img, "x": 0, "y": 0}]
+        self._fill_block("lightFactors", (self._v.get("lighting") or {}).get("lightFactors"))
         self.changed.emit()
 
     # ---- 编辑：环境块 ------------------------------------------------------
@@ -498,7 +513,8 @@ class TimeVariantForm(QWidget):
         if on:
             if key not in lit:
                 base = self._base_lighting()
-                src = base.get(key, scene_lights.default_lighting_block().get(key))
+                src = (self._light_response_form.effective_value() if key == "lightFactors"
+                       else base.get(key, scene_lights.default_lighting_block().get(key)))
                 lit[key] = copy.deepcopy(src) if isinstance(src, (dict, list)) else src
             self._v["lighting"] = lit
             self._fill_block(key, lit[key])
@@ -509,6 +525,12 @@ class TimeVariantForm(QWidget):
             else:
                 self._v.pop("lighting", None)
         self._block_body[key].setEnabled(on)
+        self.changed.emit()
+
+    def _on_light_response(self, value: dict) -> None:
+        if self._loading or self._v is None or not self._block_cb["lightFactors"].isChecked():
+            return
+        self._v.setdefault("lighting", {})["lightFactors"] = copy.deepcopy(value)
         self.changed.emit()
 
     def _on_field(self, key: str, field: str, value) -> None:

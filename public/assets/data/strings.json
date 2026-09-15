@@ -183,7 +183,15 @@
     "legendLocked": "尚不可往",
     "legendUnknown": "未知之地",
     "legendQuest": "任务目标",
-    "legendRoute": "来往路线"
+    "legendRoute": "来往路线",
+    "hereBadge": "此地",
+    "statusCurrent": "{place} · 当前所在",
+    "statusDestination": "{place} · 可前往",
+    "statusIdle": "选择一处地点",
+    "statusQuest": "{status} · 任务目标",
+    "controlsKeyboard": "↑↓←→ 选择 · Enter 前往",
+    "controlsPointer": "点击地名牌或圆点前往",
+    "controlsPressed": "松开前往 · 移出取消"
   },
   "pickup": {
     "acquired": "获得了 {name} x{count}"
@@ -373,5 +381,45 @@
   "systemNote": {
     "closeHint": "点一下继续",
     "archived": "已记入见闻录·民俗"
+  },
+  "teahouseAtmosphere": {
+    "tea_hot": "嘶……烫嘴得很。",
+    "tea_refill": "幺师，掺点开水嘛。",
+    "tea_weak": "这茶都泡白了哟。",
+    "peanuts": "花生壳壳莫丢我碗头。",
+    "flies": "去去去，糖巴鸡屎儿！",
+    "listen": "莫闹，听到要紧处了。",
+    "smoke": "咳咳……烟子熏死人。",
+    "gossip": "你这张嘴哦，没得一句稳当。",
+    "laugh": "哈哈，骡子又变狗了！",
+    "move_cup": "碗挪开，莫给老子打翻了。",
+    "corpse": "也？背死人子的嗦？",
+    "watch": "打归打，莫碰我这桌。",
+    "book": "要得，再摆一段嘛！",
+    "later": "下回又是下回，茶都喝淡了。",
+    "cough": "咳、咳……",
+    "keep_eating": "莫慌，花生还没吃完。",
+    "owner_money": "吵归吵，茶钱莫忘了！",
+    "owner_credit": "赊账？上回那碗还没给！",
+    "waiter_water": "开水来咯，脚收一哈！",
+    "waiter_busy": "催啥子催，我又没长八只手！",
+    "blind_trade": "坐过来，给你摸哈骨。",
+    "blind_mutter": "听你们吹，牛都要飞起了。",
+    "storyteller_rest": "嗓子都摆哑了，等我润一口。",
+    "storyteller_book": "精彩的嘛，留到明朝摆。",
+    "guard_order": "闹归闹，莫掀桌子哈。",
+    "guard_tea": "幺师，这水没烧开嗦？",
+    "player_borrow": "哪个茶没喝完？借我润哈嗓子。",
+    "player_boast": "这也叫凶险？你们没见过世面。",
+    "counter_debt": "账记到起的，莫装不认。",
+    "counter_coins": "又少一文，你当我数不来嗦？",
+    "smoker_defend": "咳啥子嘛，烟又没往你嘴里吹。",
+    "smoker_spit": "这叶子潮得很，抽不起。",
+    "woman_answer": "莫吹了，牛皮都给你吹穿了。",
+    "woman_peanut": "这盘花生你一个人包圆嗦？",
+    "blue_gamble": "昨天输了的，今黑给我赢回来。",
+    "blue_doubt": "你那个骰子，怕是有名堂哦。",
+    "middle_bicker": "莫挤嘛，半边凳子都占完了。",
+    "middle_debt": "欠我的那几文，啥时还嘛？"
   }
 }

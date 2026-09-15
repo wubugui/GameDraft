@@ -148,6 +148,30 @@ class TestDefaults:
         for k in ('sky', 'lights', 'display'):
             assert k in block, k
 
+    def test_缺省块与运行时读的是同一个文件且画面恒等(self) -> None:
+        """运行时对没写 lighting 块的场景按这份启用;编辑器摆第一盏灯落盘的也必须是这份,
+        否则多摆一盏灯整个场景的色调映射跟着变。值只住在 `src/data/scene_lighting_default.json`。"""
+        import json
+        from tools.editor.editors.scene_lights import SCENE_LIGHTING_DEFAULT_JSON
+        ts = (_ROOT / 'src' / 'data' / 'sceneLightingDefault.ts').read_text('utf-8')
+        assert "from './scene_lighting_default.json'" in ts
+        for user in ('src/core/SceneLightingSystem.ts', 'src/utils/sceneAppearance.ts'):
+            assert 'defaultSceneLighting' in (_ROOT / user).read_text('utf-8'), user
+        block = default_lighting_block()
+        assert block == json.loads(SCENE_LIGHTING_DEFAULT_JSON.read_text('utf-8'))
+        assert block['lights'] == []
+        d = block['display']
+        assert (d['tonemap'], d['ev'], d['contrast'], d['saturation'], d['lift'], d['whiteKelvin']) \
+            == ('none', 0.0, 1.0, 1.0, 0.0, 6500.0)
+        assert block['dehaze'] == 0.0 and block['fog']['sigma'] == 0.0
+
+    def test_缺省块每次是新拷贝(self) -> None:
+        a = default_lighting_block()
+        a['lights'].append({'id': 'x'})
+        a['display']['ev'] = 3.0
+        b = default_lighting_block()
+        assert b['lights'] == [] and b['display']['ev'] == 0.0
+
     def test_平行光不带位置与半径(self) -> None:
         d = default_light(1, 'directional')
         assert 'pos' not in d and 'range' not in d and 'softeningRadius' not in d

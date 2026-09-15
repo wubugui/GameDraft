@@ -3,9 +3,16 @@ import {
   parsePropPresets,
   propPresetImages,
   resolvePropAttach,
+  resolvePropStateName,
 } from './propPresets';
 
 describe('挂件预设解析', () => {
+  it('状态强度原样解析，不提供挂件专属强度换算', () => {
+    const table = parsePropPresets({
+      torch: { light: { intensity: 1 }, states: { dim: { light: { intensity: 0.5 } } } },
+    });
+    expect(resolvePropAttach(table.torch, {}, 'dim').light?.intensity).toBe(0.5);
+  });
   it('读出全部字段', () => {
     const t = parsePropPresets({
       taomu_jian: {
@@ -141,5 +148,57 @@ describe('预设与显式覆盖的合并', () => {
 
   it('预设与显式都没图 → 空列表（调用方据此放弃挂载）', () => {
     expect(resolvePropAttach(undefined, {}).images).toEqual([]);
+  });
+});
+
+/**
+ * 状态表下的贴图与摆放。⚠ 编辑器预览（`tools/editor/shared/prop_preview.py`）是这一段的
+ * 跨语言镜像：`tools/editor/tests/test_prop_preview.py` 钉**同一组用例**，改一处必改两处。
+ */
+describe('状态：挂哪个状态、这个状态长什么样', () => {
+  const raw = {
+    torch: {
+      image: '/base.png',
+      anchorX: 0.47,
+      anchorY: 0,
+      rotation: -90,
+      scale: 0.45,
+      defaultState: 'out',
+      states: {
+        lit: { label: '点着' },
+        out: { image: '/out.png', anchorY: 0.2, scale: 0 },
+        anim: { images: ['/f0.png', '', '/f1.png'], rotation: 0, anchorX: 3 },
+      },
+    },
+    no_default: { image: '/a.png', states: { first: {}, second: {} } },
+    bad_default: { image: '/a.png', defaultState: 'ghost', states: { first: {}, second: {} } },
+  };
+  const t = parsePropPresets(raw);
+
+  it('初始状态：显式 → defaultState → 第一个键；不存在的名字给空串', () => {
+    expect(resolvePropStateName(t.torch)).toBe('out');
+    expect(resolvePropStateName(t.torch, 'anim')).toBe('anim');
+    expect(resolvePropStateName(t.torch, 'nope')).toBe('');
+    expect(resolvePropStateName(t.no_default)).toBe('first');
+    expect(resolvePropStateName(t.bad_default)).toBe('first');
+    expect(resolvePropStateName({ image: '/a.png' })).toBe('');
+  });
+
+  it('状态给了图就整体替换；非正缩放当没填，沿用基础块', () => {
+    const r = resolvePropAttach(t.torch, {}, 'out');
+    expect(r.images).toEqual(['/out.png']);
+    expect([r.anchorX, r.anchorY, r.rotation, r.scale]).toEqual([0.47, 0.2, -90, 0.45]);
+  });
+
+  it('状态里写 0 也算写了；支点越界夹到 0..1；空串帧滤掉', () => {
+    const r = resolvePropAttach(t.torch, {}, 'anim');
+    expect(r.images).toEqual(['/f0.png', '/f1.png']);
+    expect([r.anchorX, r.anchorY, r.rotation, r.scale]).toEqual([1, 0, 0, 0.45]);
+  });
+
+  it('状态没给图 / 没写摆放 ⇒ 全用基础块', () => {
+    const r = resolvePropAttach(t.torch, {}, 'lit');
+    expect(r.images).toEqual(['/base.png']);
+    expect([r.anchorX, r.anchorY, r.rotation, r.scale]).toEqual([0.47, 0, -90, 0.45]);
   });
 });

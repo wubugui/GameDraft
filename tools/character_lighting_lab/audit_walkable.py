@@ -20,6 +20,8 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:               # 当脚本起(./dev.sh audit-*)时 `tools` 不在路径上
+    sys.path.insert(0, str(ROOT))
 SCENES = ROOT / 'public' / 'assets' / 'scenes'
 RUNTIME = ROOT / 'public' / 'resources' / 'runtime' / 'scenes'
 
@@ -82,11 +84,14 @@ def _ground_sampler(scene_id: str):
 
 
 def _collision_reader(scene_id: str, cfg: dict):
-    col = cfg.get('collision')
+    # 网格声明与运行时同一条优先级:旁挂 collision.json 先,没有才退回 depthConfig.collision
+    from tools.character_lighting_lab.terrain_compose import load_collision_meta
+    gm = load_collision_meta(scene_id, cfg, RUNTIME / scene_id)
     name = cfg.get('collision_map', 'collision.png')
     p = RUNTIME / scene_id / name
-    if not (col and p.exists()):
+    if not (gm and p.exists()):
         return None
+    col = gm.to_dict()
     img = np.asarray(Image.open(p).convert('RGB'), np.uint8)
     gh, gw = img.shape[0], img.shape[1]
     if (gw, gh) != (col['grid_width'], col['grid_height']):
@@ -242,6 +247,94 @@ def check_scene(scene_json: Path) -> tuple[str, list[str]]:
     return name, issues
 
 
+def reach_issues(scene_json: Path, step_wu: float | None = None) -> list[str]:
+    """连通性(2026-09-14):从每个出生点 flood-fill 可走格,每个出口 / 跨点必须够得着。
+
+    `check_scene` 只查"落点是否阻挡"——重烘或重画碰撞把出口切成孤岛时它是绿的
+    (崖墓前段1 的 spawn_1、崖墓后段的上出口都这样漏过)。判据同样走运行时那条反投影链
+    (`blocked_at`),不另立口径。出生点本身落在阻挡格时从最近可走点起算(那条 `check_scene` 另报)。
+    """
+    from collections import deque
+    name = scene_json.stem
+    data = json.loads(scene_json.read_text(encoding='utf-8'))
+    cfg = data.get('depthConfig')
+    if not cfg:
+        return []
+    g = _scene_geometry(name, data, cfg)
+    if isinstance(g, str):
+        return []
+    step = step_wu or max(g.WW, g.HH) / 240.0
+    nx, ny = int(g.WW / step) + 1, int(g.HH / step) + 1
+    walk = np.zeros((ny, nx), bool)
+    for j in range(ny):
+        wy = (j + 0.5) * step
+        for i in range(nx):
+            walk[j, i] = g.blocked_at((i + 0.5) * step, wy) is False
+
+    def cell(wx: float, wy: float) -> tuple[int, int]:
+        return (min(max(int(wy / step), 0), ny - 1), min(max(int(wx / step), 0), nx - 1))
+
+    def flood(wx: float, wy: float) -> np.ndarray:
+        j0, i0 = cell(wx, wy)
+        if not walk[j0, i0]:
+            n = g.nearest_walkable(wx, wy)
+            if not n:
+                return np.zeros_like(walk)
+            j0, i0 = cell(n[0], n[1])
+        seen = np.zeros_like(walk)
+        seen[j0, i0] = True
+        q = deque([(j0, i0)])
+        while q:
+            j, i = q.popleft()
+            for dj, di in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                a, b = j + dj, i + di
+                if 0 <= a < ny and 0 <= b < nx and walk[a, b] and not seen[a, b]:
+                    seen[a, b] = True
+                    q.append((a, b))
+        return seen
+
+    spawns: list[tuple[str, float, float]] = []
+    sp = data.get('spawnPoint')
+    if isinstance(sp, dict):
+        spawns.append(('spawnPoint', float(sp.get('x', 0)), float(sp.get('y', 0))))
+    for key, v in (data.get('spawnPoints') or {}).items():
+        if isinstance(v, dict):
+            spawns.append((f'spawnPoints[{key}]', float(v.get('x', 0)), float(v.get('y', 0))))
+    # 目标:出口热点(走到就切场景)、跨点的站位 align(玩家要走到那里)。landing 只要可走(另查)。
+    targets: list[tuple[str, float, float, float]] = []
+    for h in data.get('hotspots') or []:
+        if not isinstance(h, dict):
+            continue
+        rng = float(h.get('interactionRange') or 50)
+        if h.get('type') == 'transition':
+            targets.append((f"出口 {h.get('id')}", float(h.get('x', 0)), float(h.get('y', 0)), max(rng, 60.0)))
+        elif h.get('type') == 'act_spot':
+            al = (h.get('data') or {}).get('align')
+            if isinstance(al, dict):
+                targets.append((f"跨点 {h.get('id')} 的站位", float(al.get('x', 0)), float(al.get('y', 0)), max(rng, 60.0)))
+    issues: list[str] = []
+    for h in data.get('hotspots') or []:
+        if isinstance(h, dict) and h.get('type') == 'act_spot':
+            ld = (h.get('data') or {}).get('landing')
+            if isinstance(ld, dict) and g.blocked_at(float(ld.get('x', 0)), float(ld.get('y', 0))) is True:
+                issues.append(f"跨点 {h.get('id')} 的落点 ({float(ld['x']):.0f},{float(ld['y']):.0f}) 落在**阻挡格**内——跳过去就卡死")
+    if not spawns or not targets:
+        return issues
+    jj, ii = np.mgrid[0:ny, 0:nx]
+    cx_w = (ii + 0.5) * step
+    cy_w = (jj + 0.5) * step
+    for label, sx, sy in spawns:
+        seen = flood(sx, sy)
+        if not seen.any():
+            issues.append(f'{label} ({sx:.0f},{sy:.0f}) 附近找不到可走格,连通性无从谈起')
+            continue
+        for tl, tx, ty, r in targets:
+            near = (np.hypot(cx_w - tx, cy_w - ty) <= r) & seen
+            if not near.any():
+                issues.append(f'{label} ({sx:.0f},{sy:.0f}) 走不到{tl} ({tx:.0f},{ty:.0f})——被阻挡格切成了孤岛')
+    return issues
+
+
 def fix_spawns(scene_json: Path, apply: bool, max_move: float = float('inf')) -> tuple[str, list[str]]:
     """把落在阻挡格里的**出生点**挪到最近可走点。只动 spawnPoint / spawnPoints——
     NPC 是作者摆位（靠墙/门口常是有意），过场目标另说，都不在此函数职责内。
@@ -336,6 +429,7 @@ def main(argv: list[str] | None = None) -> int:
             print('\n(dry-run；加 =apply 真写盘：./dev.sh audit-walkable -- --fix-spawns=apply)')
         return 0
     only = {a for a in argv if not a.startswith('-')}
+    reach = '--reach' in argv
     bad: list[str] = []
     skipped: list[str] = []
     checked = 0
@@ -345,6 +439,8 @@ def main(argv: list[str] | None = None) -> int:
         if not json.loads(p.read_text(encoding='utf-8')).get('depthConfig'):
             continue
         name, issues = check_scene(p)
+        if reach and not (issues and all(i.startswith('SKIP:') for i in issues)):
+            issues = list(issues) + reach_issues(p)
         # 跳过 ≠ 通过，也 ≠ 失败：单列一档，免得"没检成"被当成"检过了"
         if issues and all(i.startswith('SKIP:') for i in issues):
             skipped.append(name)

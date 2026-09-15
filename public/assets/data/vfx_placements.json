@@ -1,0 +1,520 @@
+{
+  "_comment": "世界空间粒子的布置库。效果资产（assets/data/vfx/）只有效果本身，不绑场景、不绑时段；这里记它放在哪个场景、哪套时段外观里。base = 场景顶层外观，variants[时段] = timeVariants[时段] 那套外观，各配各的、互不继承、没配就没有。唯一写入者是粒子工作台（tools/vfx_workbench），主编辑器只读。",
+  "scenes": {
+    "义庄": {
+      "base": [
+        {
+          "id": "vfx_incense",
+          "effect": "incense_smoke",
+          "anchor": {
+            "x": 610,
+            "y": 150,
+            "h": 0,
+            "surface": "shell"
+          }
+        },
+        {
+          "id": "vfx_dust",
+          "effect": "dust_motes",
+          "anchor": {
+            "x": 488,
+            "y": 310,
+            "h": 110
+          }
+        }
+      ]
+    },
+    "崖墓入口": {
+      "variants": {
+        "夜": [
+          {
+            "id": "vfx_fireflies",
+            "effect": "fireflies",
+            "anchor": {
+              "x": 352,
+              "y": 299,
+              "h": 40
+            }
+          }
+        ]
+      }
+    },
+    "崖墓前段": {
+      "base": [
+        {
+          "id": "vfx_bats",
+          "effect": "bat_cliff",
+          "anchor": {
+            "x": 772,
+            "y": 521,
+            "h": 10,
+            "surface": "shell"
+          }
+        },
+        {
+          "id": "vfx_drip",
+          "effect": "water_drip",
+          "anchor": {
+            "x": 492,
+            "y": 521,
+            "h": 12,
+            "surface": "shell"
+          }
+        }
+      ],
+      "variants": {
+        "夜": [
+          {
+            "id": "vfx_bats",
+            "effect": "bat_cliff",
+            "anchor": {
+              "x": 772,
+              "y": 521,
+              "h": 10,
+              "surface": "shell"
+            }
+          },
+          {
+            "id": "vfx_drip",
+            "effect": "water_drip",
+            "anchor": {
+              "x": 492,
+              "y": 521,
+              "h": 12,
+              "surface": "shell"
+            }
+          }
+        ]
+      }
+    },
+    "崖墓前段1": {
+      "base": [
+        {
+          "id": "vfx_bats",
+          "effect": "bat_cliff",
+          "anchor": {
+            "x": 1167,
+            "y": 333,
+            "h": 10,
+            "surface": "shell"
+          }
+        },
+        {
+          "id": "vfx_drip",
+          "effect": "water_drip",
+          "anchor": {
+            "x": 1087,
+            "y": 533,
+            "h": 12,
+            "surface": "shell"
+          }
+        }
+      ],
+      "variants": {
+        "夜": [
+          {
+            "id": "vfx_bats",
+            "effect": "bat_cliff",
+            "anchor": {
+              "x": 1167,
+              "y": 333,
+              "h": 10,
+              "surface": "shell"
+            }
+          },
+          {
+            "id": "vfx_drip",
+            "effect": "water_drip",
+            "anchor": {
+              "x": 1087,
+              "y": 533,
+              "h": 12,
+              "surface": "shell"
+            }
+          }
+        ]
+      }
+    },
+    "崖墓后段": {
+      "base": [
+        {
+          "id": "vfx_bats",
+          "effect": "bat_cliff",
+          "anchor": {
+            "x": 395,
+            "y": 593,
+            "h": 10,
+            "surface": "shell"
+          },
+          "countScale": 1.2
+        },
+        {
+          "id": "vfx_drip",
+          "effect": "water_drip",
+          "anchor": {
+            "x": 1185,
+            "y": 237,
+            "h": 12,
+            "surface": "shell"
+          }
+        }
+      ],
+      "variants": {
+        "夜": [
+          {
+            "id": "vfx_bats",
+            "effect": "bat_cliff",
+            "anchor": {
+              "x": 395,
+              "y": 593,
+              "h": 10,
+              "surface": "shell"
+            },
+            "countScale": 1.2
+          },
+          {
+            "id": "vfx_drip",
+            "effect": "water_drip",
+            "anchor": {
+              "x": 1185,
+              "y": 237,
+              "h": 12,
+              "surface": "shell"
+            }
+          }
+        ]
+      }
+    },
+    "跑马梁": {
+      "base": [
+        {
+          "id": "纸钱_山顶",
+          "effect": "paper_money",
+          "anchor": {
+            "x": 700,
+            "y": 800,
+            "h": 0
+          },
+          "countScale": 1,
+          "area": [
+            [
+              325.4,
+              708.4
+            ],
+            [
+              452.6,
+              677.5
+            ],
+            [
+              633.4,
+              710.8
+            ],
+            [
+              852.4,
+              743.5
+            ],
+            [
+              740,
+              807.9
+            ],
+            [
+              656,
+              869.1
+            ],
+            [
+              546.8,
+              983.8
+            ],
+            [
+              407.3,
+              948.4
+            ],
+            [
+              333.8,
+              852.3
+            ],
+            [
+              306,
+              751.7
+            ]
+          ]
+        }
+      ],
+      "variants": {
+        "夜": [
+          {
+            "id": "纸钱_山顶",
+            "effect": "paper_money",
+            "anchor": {
+              "x": 700,
+              "y": 800
+            },
+            "area": [
+              [
+                325.4,
+                708.4
+              ],
+              [
+                415.1,
+                674.4
+              ],
+              [
+                671.3,
+                709.1
+              ],
+              [
+                725.9,
+                815.6
+              ],
+              [
+                650.7,
+                905.7
+              ],
+              [
+                436.5,
+                1119
+              ],
+              [
+                95.5,
+                1114.5
+              ],
+              [
+                142.2,
+                964.4
+              ],
+              [
+                352,
+                825.5
+              ]
+            ]
+          }
+        ]
+      }
+    },
+    "teahouse": {
+      "base": [
+        {
+          "id": "teahouse_tobacco_01",
+          "effect": "teahouse_tobacco",
+          "anchor": {
+            "x": 428,
+            "y": 174,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 915
+        },
+        {
+          "id": "teahouse_dust_01",
+          "effect": "teahouse_dust",
+          "anchor": {
+            "x": 112,
+            "y": 186,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 916,
+          "countScale": 0.25
+        },
+        {
+          "id": "teahouse_lamp_moths_01",
+          "effect": "teahouse_lamp_moths",
+          "anchor": {
+            "x": 338,
+            "y": 44,
+            "h": 10,
+            "surface": "shell"
+          },
+          "seed": 917
+        },
+        {
+          "id": "teahouse_table_flies_01",
+          "effect": "teahouse_table_flies",
+          "anchor": {
+            "x": 181,
+            "y": 391,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 918
+        },
+        {
+          "id": "teahouse_haze_1",
+          "effect": "teahouse_haze",
+          "anchor": {
+            "x": 270,
+            "y": 265,
+            "h": 205,
+            "surface": "ground"
+          },
+          "seed": 927
+        },
+        {
+          "id": "teahouse_haze_2",
+          "effect": "teahouse_haze",
+          "anchor": {
+            "x": 480,
+            "y": 300,
+            "h": 220,
+            "surface": "ground"
+          },
+          "seed": 1025
+        },
+        {
+          "id": "teahouse_haze_3",
+          "effect": "teahouse_haze",
+          "anchor": {
+            "x": 255,
+            "y": 430,
+            "h": 215,
+            "surface": "ground"
+          },
+          "seed": 1123
+        },
+        {
+          "id": "teahouse_haze_4",
+          "effect": "teahouse_haze",
+          "anchor": {
+            "x": 485,
+            "y": 435,
+            "h": 235,
+            "surface": "ground"
+          },
+          "seed": 1221
+        },
+        {
+          "id": "teahouse_tea_wisps_1",
+          "effect": "teahouse_tea_wisps",
+          "anchor": {
+            "x": 179.6,
+            "y": 371.8,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 931
+        },
+        {
+          "id": "teahouse_tea_wisps_2",
+          "effect": "teahouse_tea_wisps",
+          "anchor": {
+            "x": 344.1,
+            "y": 315.1,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 1029
+        },
+        {
+          "id": "teahouse_tea_wisps_3",
+          "effect": "teahouse_tea_wisps",
+          "anchor": {
+            "x": 328.8,
+            "y": 305.9,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 1127
+        },
+        {
+          "id": "teahouse_tea_wisps_4",
+          "effect": "teahouse_tea_wisps",
+          "anchor": {
+            "x": 461.9,
+            "y": 220.2,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 1225
+        },
+        {
+          "id": "teahouse_tea_wisps_5",
+          "effect": "teahouse_tea_wisps",
+          "anchor": {
+            "x": 557.6,
+            "y": 281.8,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 1323
+        },
+        {
+          "id": "teahouse_tea_wisps_6",
+          "effect": "teahouse_tea_wisps",
+          "anchor": {
+            "x": 568.2,
+            "y": 263.7,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 1421
+        },
+        {
+          "id": "teahouse_tea_wisps_7",
+          "effect": "teahouse_tea_wisps",
+          "anchor": {
+            "x": 527.8,
+            "y": 358.2,
+            "h": 2,
+            "surface": "shell"
+          },
+          "seed": 1519
+        },
+        {
+          "id": "teahouse_floor_roaches_1",
+          "effect": "teahouse_floor_roaches",
+          "anchor": {
+            "x": 310,
+            "y": 465,
+            "h": 1.5,
+            "surface": "ground"
+          },
+          "seed": 938
+        },
+        {
+          "id": "teahouse_floor_roaches_2",
+          "effect": "teahouse_floor_roaches",
+          "anchor": {
+            "x": 277,
+            "y": 230,
+            "h": 1.5,
+            "surface": "ground"
+          },
+          "seed": 1036
+        },
+        {
+          "id": "teahouse_floor_roaches_3",
+          "effect": "teahouse_floor_roaches",
+          "anchor": {
+            "x": 441,
+            "y": 427,
+            "h": 1.5,
+            "surface": "ground"
+          },
+          "seed": 1134
+        },
+        {
+          "id": "teahouse_lamp_flicker_1",
+          "effect": "teahouse_lamp_flicker",
+          "anchor": {
+            "x": 339,
+            "y": 37,
+            "h": 1,
+            "surface": "shell"
+          },
+          "seed": 941
+        },
+        {
+          "id": "teahouse_lamp_flicker_2",
+          "effect": "teahouse_lamp_flicker",
+          "anchor": {
+            "x": 145,
+            "y": 105,
+            "h": 1,
+            "surface": "shell"
+          },
+          "seed": 1039
+        }
+      ]
+    }
+  }
+}

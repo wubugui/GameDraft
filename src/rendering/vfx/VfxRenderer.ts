@@ -20,6 +20,7 @@
  *   （`EntityLightingFilter` 的色调融入：运行时从原画建的辐照 probe 做保亮度白平衡）；
  * - **unlit**：外观写了 `lit:false`（自发光的萤火、按原画标定 tint 的纸钱）。
  * 三条都过同一组显示变换（背景 / 角色 / 粒子一个曝光）。
+ * 受光强度 `appearance.lightGain` 走本视图自己的参数组（见 `vfxLightGain`），lit / tone 两路吃、unlit 恒 1。
  *
  * ## 尺寸与透视
  *
@@ -28,6 +29,7 @@
  *
  * 渲染侧不写模拟状态（只读池），不 import 任何系统。
  */
+import { resolveLightFactors, type LightFactors } from '../../data/lightFactors';
 import { Container, type GlProgram, Shader, Texture, type TextureSource, UniformGroup } from 'pixi.js';
 
 import type { SceneDepthConfig, VfxCurve } from '../../data/types';
@@ -65,6 +67,8 @@ export interface VfxToneEnv {
 }
 
 export interface VfxRenderDeps {
+  /** 当前场景的粒子受光倍率（与角色独立）；缺省 1。 */
+  getLightFactors?: () => LightFactors;
   entityLayer: Container;
   /** 有照明载荷时给 lit shader；无则 null → 走 tone / unlit */
   createLitShader: (program: GlProgram, colorTex: TextureSource, extra: Record<string, unknown>) => Shader | null;
@@ -116,6 +120,10 @@ interface EmitterView {
   /** 薄片：本视图复用的一条顶点暂存 */
   plateStrip: VfxPlateStrip | null;
   depthGroup: UniformGroup;
+  /** 本视图自己的参数组（lit 路 `vfxParams`、无光路 `vfxToneOn`），装着 `uLightGain` */
+  paramGroup: UniformGroup;
+  /** 已写进 `paramGroup` 的受光强度（逐帧与外观比对，变了就原地改） */
+  lightGain: number;
 }
 
 /** 参与排序的一个实体：画面脚点 y（画序键）+ 脚点沿水平视线轴的纵深 */
@@ -241,6 +249,23 @@ export function vfxParamValues(ap: { blend?: string; emissive?: number }): { uSp
   };
 }
 
+/** `appearance.lightGain` 的上限（与工作台 / 校验器的 0..10 同口径） */
+export const VFX_LIGHT_GAIN_MAX = 10;
+
+/**
+ * 受光强度（`uLightGain`）：乘在这个发射器**收到的光**上——lit 路乘 E（probe 底光 + 实体灯，着色之前），
+ * tone 路乘色调融入的光照因子；自发光份额不乘。缺省 / 非有限数 = 1，夹到 0..10。
+ * `lit:false` 恒 1：无光路径忽略它（片元里 `uLightGain != 1.0` 那一支不进，输出与改动前逐位相同）。
+ *
+ * ⚠ 它进的是**本视图自己的** UniformGroup（lit 路 `vfxParams`、无光路 `vfxToneOn`），不是
+ * sceneShade / charLights 那几组角色共用的；粒子 frameShade 也不能写逐效果强度。
+ */
+export function vfxLightGain(ap: { lit?: boolean; lightGain?: number }): number {
+  if (ap.lit === false) return 1;
+  const g = ap.lightGain;
+  return typeof g === 'number' && Number.isFinite(g) ? Math.max(0, Math.min(VFX_LIGHT_GAIN_MAX, g)) : 1;
+}
+
 export class VfxRenderer {
   private readonly views = new Map<string, EmitterView>();
   /** 本帧可见的场景矩形（实体层局部坐标 = 场景 wu）；算不出 ⇒ null = 不剔除 */
@@ -298,21 +323,27 @@ export class VfxRenderer {
     const depthTex = depthSrc ?? sheet.texture.source;
     const wantLit = ap.lit !== false;
     const isPlate = !!e.plate;
+    const lightGain = vfxLightGain(ap);
     let shader: Shader | null = null;
     let lit = false;
     let toneSrc: TextureSource | null = null;
+    let paramGroup: UniformGroup | null = null;
     if (wantLit && canLight) {
+      const pv = vfxParamValues(ap);
+      // 逐视图一组：createLitShader 每次 new 一个 Shader，这组只挂在这一个视图上（受光强度不许进角色共用组）
+      paramGroup = new UniformGroup({
+        uSphere: { value: pv.uSphere, type: 'f32' },
+        uEmissive: { value: pv.uEmissive, type: 'f32' },
+        uLightGain: { value: lightGain, type: 'f32' },
+        uVfxIndirectFactor: { value: 1, type: 'f32' },
+        uVfxDirectFactor: { value: 1, type: 'f32' },
+        uVfxTotalFactor: { value: 1, type: 'f32' },
+      });
       // 薄片的受光程序声明了 aNrm，只能配薄片网格（见 VfxPlateBatchMesh 头注释）
       shader = this.deps.createLitShader(isPlate ? getVfxPlateLitProgram() : getVfxLitProgram(), sheet.texture.source, {
         vfxDepth: depthGroup,
         uDepthMap: depthTex,
-        vfxParams: new UniformGroup((() => {
-          const v = vfxParamValues(ap);
-          return {
-            uSphere: { value: v.uSphere, type: 'f32' as const },
-            uEmissive: { value: v.uEmissive, type: 'f32' as const },
-          };
-        })()),
+        vfxParams: paramGroup,
       });
       lit = !!shader;
     }
@@ -320,6 +351,10 @@ export class VfxRenderer {
       // 要受光却没有照明载荷 → NPC 此时走的色调融入；lit:false 的不染（自发光 / 按原画标定的 tint）
       const toneOn = wantLit && !!tone;
       toneSrc = toneOn ? tone!.probe : null;
+      paramGroup = new UniformGroup({
+        uToneOn: { value: toneOn ? 1 : 0, type: 'f32' },
+        uLightGain: { value: lightGain, type: 'f32' },
+      });
       shader = new Shader({
         glProgram: getVfxUnlitProgram(),
         resources: {
@@ -327,7 +362,7 @@ export class VfxRenderer {
           // 显示变换：与背景 / 角色同一组数（这组里其余的灯 uniform 本程序不声明，Pixi 按名跳过）
           charLights: this.deps.displayUniforms,
           vfxTone: this.toneGroup,
-          vfxToneOn: new UniformGroup({ uToneOn: { value: toneOn ? 1 : 0, type: 'f32' } }),
+          vfxToneOn: paramGroup,
           uProbe: toneSrc ?? Texture.WHITE.source,
         },
       });
@@ -336,6 +371,7 @@ export class VfxRenderer {
       key, emitter: e, sheet, shader, lit, wantLit, depthSrc, toneSrc,
       buckets: new Map(), plateBuckets: new Map(),
       plateStrip: e.plate ? createPlateStrip(e.plate.P.segments) : null, depthGroup,
+      paramGroup: paramGroup!, lightGain,
     };
     this.views.set(key, v);
     return v;
@@ -419,6 +455,7 @@ export class VfxRenderer {
           this.views.delete(key);
         }
         const v = this.ensureView(inst.id, e, sheet, canLight, tone);
+        this.syncLightGain(v, this.deps.getLightFactors?.());
         // 深度参数逐帧同步（换场景时纹理由系统重建视图，这里只刷数字）
         const du = v.depthGroup.uniforms as Record<string, unknown>;
         (du['uSceneSize'] as Float32Array).set([size.w, size.h]);
@@ -488,6 +525,34 @@ export class VfxRenderer {
     return this.culling && (sx < this.cullX0 || sx > this.cullX1 || sy < this.cullY0 || sy > this.cullY1);
   }
 
+  /**
+   * 场景的三项倍率与效果受光强度逐帧同步；倍率调整不重建/重启粒子。
+   * 工作台推来的新定义会换掉发射器（`viewStale` 按身份重建视图），
+   * 这里再兜住"同一个发射器的定义被原地改了"——只动本视图自己那组，值没变不写。
+   * ⚠ 外观的原地兜底只管 lightGain；其余外观（lit / blend →
+   * 程序与混合模式、emissive / sphere）不做原地同步，一律靠换发射器重建视图——运行时目前没有任何
+   * 代码原地改定义，推送路径（`applyPreviewEffect`）总是整组重建，所以这不是漏同步。
+   */
+  private syncLightGain(v: EmitterView, lighting?: Partial<LightFactors>): void {
+    const f = resolveLightFactors(lighting);
+    // 缺载荷的 tone 路只存在环境底光；unlit 自发光保持原样。
+    const g = vfxLightGain(v.emitter.def.appearance)
+      * (!v.lit && v.wantLit ? f.indirectFactor * f.totalFactor : 1);
+    const u = v.paramGroup.uniforms as Record<string, unknown>;
+    let changed = g !== v.lightGain;
+    v.lightGain = g;
+    u['uLightGain'] = g;
+    if (v.lit) {
+      for (const [key, value] of [
+        ['uVfxIndirectFactor', f.indirectFactor], ['uVfxDirectFactor', f.directFactor],
+        ['uVfxTotalFactor', f.totalFactor],
+      ] as const) {
+        if (u[key] !== value) { u[key] = value; changed = true; }
+      }
+    }
+    if (changed) v.paramGroup.update();
+  }
+
   /** tone 路参数逐帧跟场景的光照环境（光环境曲线会原地改它，NPC 的滤镜同样逐帧读） */
   private syncTone(tone: VfxToneEnv | null): void {
     const u = this.toneGroup.uniforms as Record<string, unknown>;
@@ -553,7 +618,7 @@ export class VfxRenderer {
       // 帧
       let fi = 0;
       if (nFrames > 1) {
-        const ph = e.def.behavior ? p.phase[i] : p.age[i] * fps + p.seed[i] * nFrames;
+        const ph = e.flock ? p.phase[i] : p.age[i] * fps + p.seed[i] * nFrames;
         fi = ((Math.floor(ph) % nFrames) + nFrames) % nFrames;
       }
       const f = sheet.frames[fi];
@@ -689,4 +754,3 @@ export class VfxRenderer {
     return n;
   }
 }
-

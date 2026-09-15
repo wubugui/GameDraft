@@ -135,6 +135,27 @@ class TestAssets:
             "image": "/x.png", "sizeWu": 4, "lit": False, "emissive": 0.5})]), warn)
         assert any("emissive 没有意义" in w for w in warn), warn
 
+    def test_light_gain_is_0_to_10_sits_after_emissive_and_only_means_something_when_lit(self) -> None:
+        """受光强度：乘在这个发射器收到的光上（运行时夹 0..10）。越界拒存——作者填 30 却只看到 10 是静默失真。"""
+        warn0: list[str] = []
+        ok = assets.normalize_effect(_doc(emitters=[_emitter(appearance={
+            "lightGain": 2.5, "emissive": 0.45, "lit": True, "sizeWu": 4, "image": "/resources/runtime/images/vfx/drop.png"})]), warn0)
+        ap = ok["emitters"][0]["appearance"]
+        assert ap["lightGain"] == 2.5
+        assert list(ap.keys()) == ["image", "sizeWu", "lit", "emissive", "lightGain"], "键序跟着 types.ts 走（紧跟 emissive）"
+        assert not [w for w in warn0 if "lightGain" in w], warn0
+        for edge in (0, 10, 1):
+            assets.normalize_effect(_doc(emitters=[_emitter(appearance={"image": "/x.png", "sizeWu": 4, "lightGain": edge})]))
+        for bad in (-0.1, 10.5, "2", True, None, float("nan")):
+            with pytest.raises(ValueError) as e:
+                assets.normalize_effect(_doc(emitters=[_emitter(appearance={
+                    "image": "/x.png", "sizeWu": 4, "lightGain": bad})]))
+            assert "lightGain" in str(e.value), (bad, str(e.value))
+        warn: list[str] = []
+        assets.normalize_effect(_doc(emitters=[_emitter(appearance={
+            "image": "/x.png", "sizeWu": 4, "lit": False, "lightGain": 3})]), warn)
+        assert any("lightGain 没有意义" in w for w in warn), warn
+
     def test_socket_attach_is_workbench_state_next_to_the_anchor(self) -> None:
         """``authoring.attach``（锚点模式=角色挂点）：与 anchor 同一块工作态，运行时忽略整个 authoring。
 
@@ -202,6 +223,31 @@ def test_real_assets_pass_the_gate_and_normalize_is_idempotent() -> None:
         assert json.dumps(a, ensure_ascii=False) == json.dumps(b, ensure_ascii=False), p.name
         assert a["id"] == p.stem, f"{p.name}: id 与文件名不一致"
         assert not [w for w in warn if "装不到贴图" in w], f"{p.name}: {warn}"
+        assert not [w for w in warn if "不是动画包" in w], f"{p.name}: 状态名打错了（运行时静默退回第一个状态）：{warn}"
+
+
+def test_animation_state_names_are_checked_against_the_anim_pack(tmp_path, monkeypatch) -> None:
+    """「状态 / 栖息状态」是对动画包的引用：打错一个字母运行时不报错——state 退回第一个状态、restState 被忽略。"""
+    anim = tmp_path / "resources" / "runtime" / "animation" / "fx_bat"
+    anim.mkdir(parents=True)
+    (anim / "anim.json").write_text(json.dumps({"spritesheet": "a.png", "states": {"hang": {}, "fly": {}}}), encoding="utf-8")
+    monkeypatch.setattr(assets, "PUBLIC_DIR", tmp_path)
+    url = "/resources/runtime/animation/fx_bat/anim.json"
+    assert assets.anim_states(url) == ["hang", "fly"]
+    assert assets.anim_states("/../../etc/passwd") is None and assets.anim_states("/resources/nope/anim.json") is None
+
+    def warns(**ap) -> list[str]:
+        w: list[str] = []
+        assets.normalize_effect(_doc(emitters=[_emitter(appearance=dict({"animFile": url, "sizeWu": 4}, **ap))]), w)
+        return [x for x in w if "不是动画包" in x]
+
+    assert warns(state="fly", restState="hang") == []
+    bad = warns(state="fyl", restState="hnag")
+    assert len(bad) == 2 and "fyl" in bad[0] and "第一个状态「hang」" in bad[0] and "hnag" in bad[1] and "忽略" in bad[1], bad
+    # 动画包读不到：缺文件归校验器报，这里不猜状态名
+    w2: list[str] = []
+    assets.normalize_effect(_doc(emitters=[_emitter(appearance={"animFile": "/resources/gone/anim.json", "sizeWu": 4, "state": "x"})]), w2)
+    assert not [x for x in w2 if "不是动画包" in x]
 
 
 # ---------------------------------------------------------------------------
@@ -210,8 +256,11 @@ def test_real_assets_pass_the_gate_and_normalize_is_idempotent() -> None:
 
 @pytest.fixture()
 def server(tmp_path, monkeypatch):
-    from tools.vfx_workbench import serve
+    from tools.vfx_workbench import placements, serve
     monkeypatch.setattr(assets, "VFX_DIR", tmp_path)
+    # 布置库一样指到临时目录：删 / 改名效果会连带读写它，绝不碰真库
+    monkeypatch.setattr(placements, "LIB_ROOT", tmp_path / "libroot")
+    monkeypatch.setattr(placements, "REF_ROOT", tmp_path / "refroot")
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.H)
     port = httpd.server_address[1]
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
@@ -233,6 +282,24 @@ def server(tmp_path, monkeypatch):
 
     yield get, post, tmp_path
     httpd.shutdown()
+
+
+def test_save_checks_loaded_base_and_allows_idempotent_retry(server) -> None:
+    get, post, directory = server
+    base = post('/api/save', {'doc': _doc('shared')})['doc']
+    local = {**base, 'label': 'local edit'}
+    external = {**base, 'label': 'external edit', 'future': {'keep': [2, 1]}}
+    post('/api/save', {'doc': external})
+    before = (directory / 'shared.json').read_bytes()
+    rejected = post('/api/save', {'doc': local, 'base': base})
+    assert not rejected['ok'] and '外部修改' in rejected['err']
+    assert (directory / 'shared.json').read_bytes() == before
+    # Reloading acknowledges the external version; a lost response may safely be retried.
+    assert post('/api/save', {'doc': local, 'base': external})['ok']
+    assert post('/api/save', {'doc': local, 'base': external})['ok']
+    assets.delete_asset('shared')
+    assert not post('/api/save', {'doc': local, 'base': local})['ok']
+    assert not (directory / 'shared.json').exists(), 'A stale window cannot resurrect a deleted effect'
 
 
 def test_every_response_is_uncacheable(server) -> None:
@@ -293,6 +360,28 @@ def test_crud_round_trip_over_http(server) -> None:
     assert post("/api/delete", {"id": "zz_c"})["deleted"] is True
 
 
+def test_duplicate_can_carry_the_working_doc_and_leaves_the_source_alone(server) -> None:
+    """「复制」带上页面上没存的改动：副本 = 工作态（过同一道形状闸门、id 换成新的），源文件一个字节不动。
+    （2026-09-14 日常流程审查：原来复制只读盘上那份，作者"在副本上接着改"拿到的是改之前的版本。）"""
+    get, post, tmp = server
+    r = post("/api/create", {"id": "zz_src", "sceneId": SCENE})
+    assert r["ok"]
+    before = (tmp / "zz_src.json").read_bytes()
+    working = json.loads(json.dumps(r["doc"]))
+    working["emitters"][0]["spawn"]["max"] = 77
+    d = post("/api/duplicate", {"id": "zz_src", "to": "zz_dup", "doc": working})
+    assert d["ok"] and d["doc"]["id"] == "zz_dup"
+    back, _ = get("/api/effect?id=zz_dup")
+    assert back["doc"]["emitters"][0]["spawn"]["max"] == 77
+    assert (tmp / "zz_src.json").read_bytes() == before, "源文件不许被复制动过"
+    bad = json.loads(json.dumps(working))
+    bad["emitters"][0]["appearance"]["sizeWu"] = 0
+    rej = post("/api/duplicate", {"id": "zz_src", "to": "zz_dup2", "doc": bad})
+    assert rej["ok"] is False and not (tmp / "zz_dup2.json").exists(), "工作态也要过形状闸门"
+    plain = post("/api/duplicate", {"id": "zz_src", "to": "zz_dup3"})
+    assert plain["ok"] and plain["doc"]["emitters"][0]["spawn"]["max"] == r["doc"]["emitters"][0]["spawn"]["max"]
+
+
 def test_validate_endpoint_is_the_same_gate_as_save(server) -> None:
     _get, post, tmp = server
     bad = {"id": "zz_bad", "emitters": [{"id": "a", "appearance": {"sizeWu": 0}, "spawn": {"max": 1}}]}
@@ -318,6 +407,18 @@ def test_publish_normalizes_before_sending_to_the_game(server) -> None:
     assert "attach" not in (r2.get("err") or "") and "sizeWu" not in (r2.get("err") or ""), r2
 
 
+def test_anims_route_lists_state_names_per_anim_pack(server) -> None:
+    """外观「状态 / 栖息状态」的下拉候选：每个动画包带它 anim.json 的 states 键（真工程只读）。"""
+    get, _post, _ = server
+    body, _hd = get("/api/anims")
+    assert body["ok"] and isinstance(body["images"], list)
+    rows = {a["path"]: a["states"] for a in body["anims"]}
+    assert all(isinstance(a, dict) and set(a) == {"path", "states"} for a in body["anims"])
+    bat = "/resources/runtime/animation/fx_bat/anim.json"
+    if bat in rows:
+        assert "fly" in rows[bat] and "hang" in rows[bat], rows[bat]
+
+
 def test_link_status_answers_even_without_a_game(server) -> None:
     get, _post, _ = server
     from tools.vfx_workbench import serve
@@ -334,8 +435,10 @@ def test_scene_routes_and_shell_probe(server) -> None:
     assert any(s["id"] == SCENE for s in scenes["scenes"])
     sc, _ = get(f"/api/scene?id={urllib.parse.quote(SCENE)}")
     assert sc["ok"] and sc["scene"]["cal"] and "marks" in sc["scene"]
-    # 本地预览要跟游戏同口径跑：风（薄片只吃它）、实例（铺撒区域）、透视（薄片尺寸 / 位移）一样不少
-    assert {"wind", "vfx", "perspectiveScale"} <= set(sc["scene"])
+    # 本地预览要跟游戏同口径跑：风（薄片只吃它）、透视（薄片尺寸 / 位移）、时段外观（布置按它分份）一样不少
+    assert {"wind", "perspectiveScale", "phases", "phase", "timePhase", "dayNight"} <= set(sc["scene"])
+    # 布置搬进了布置库：场景描述里不再有 vfx（残留的 vfx 由校验器报 error，工作台不吞也不用）
+    assert "vfx" not in sc["scene"]
     ground, _ = get(f"/api/scene_ground?id={SCENE}&bg={sc['scene']['background']}")
     assert len(ground) > 8
     g = sc["scene"]

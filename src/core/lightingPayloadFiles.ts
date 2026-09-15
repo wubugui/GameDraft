@@ -57,6 +57,31 @@ export const LIGHTING_PAYLOAD_CORE: readonly string[] = ['lighting.json', 'probe
 export const LIGHTING_GEOMETRY_FILES: readonly string[] = ['geometry.json', 'normal.png', 'albedo.png'];
 
 /**
+ * `geometry.json` 里运行时**真正读的**字段（点路径；值须为正有限数）。缺任何一个 ⇒ 场景侧光照不启用。
+ *
+ * 取代 2026-09-14 之前的"`version` 必须 === 4"：那个 4 手抄在运行时 / 校验器 / 烘焙器三处
+ * （迁移脚本里还躺着一份早停在 3 的），没有测试绑它们；而它挡的东西都有更直接的判据——
+ * 文件在 `LIGHTING_GEOMETRY_FILES`，字段在这里。`version` 仍写进产物，只作烘焙器自己的记录。
+ * 校验器 `validator._LIGHTING_GEOMETRY_META_REQUIRED` 是镜像（`tools/editor/tests` 逐字比对）。
+ */
+export const LIGHTING_GEOMETRY_META_REQUIRED: readonly string[] = [
+  'native.w', 'native.h', 'scale.scene_per_wu', 'scale.char_wu', 'work.w', 'cal.ppu',
+];
+
+/** 按 `LIGHTING_GEOMETRY_META_REQUIRED` 验一份 `geometry.json`；返回缺的 / 不合法的字段（空 = 可用）。 */
+export function geometryMetaProblems(meta: unknown): string[] {
+  const bad: string[] = [];
+  for (const path of LIGHTING_GEOMETRY_META_REQUIRED) {
+    let v: unknown = meta;
+    for (const k of path.split('.')) {
+      v = v !== null && typeof v === 'object' ? (v as Record<string, unknown>)[k] : undefined;
+    }
+    if (!(typeof v === 'number' && Number.isFinite(v) && v > 0)) bad.push(path);
+  }
+  return bad;
+}
+
+/**
  * 可选：老载荷没有；缺了**静默降级**（skyao 不遮蔽 / 场景配了风但草木不摆）。所以开发树里有就必须进包。
  * `sway*` 是背景草木随风动的拆层（底板 / 植被 alpha 与叶度 / 实例 id；`tools/character_lighting_lab/sway_field.py`
  * 产出，`rendering/backgroundSway.ts` 按 `sway.json` 探测后装三张图）。

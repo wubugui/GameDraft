@@ -114,7 +114,9 @@ float vfxVisibility(vec2 world, float qz, float softQ) {
  * - **tone**（`uToneOn = 1`）：外观要受光、但本场景 / 本时段没有照明载荷。NPC 此时走的是
  *   `EntityLightingFilter` 的**色调融入**——拿运行时从原画建的辐照 probe 做保亮度白平衡；
  *   粒子吃同一张图、同一组数、同一个式子（逐字对照那边的 FRAG），才叫"和 NPC 一样"。
- * - **unlit**（`uToneOn = 0`）：`lit:false`——自发光的萤火、按原画标定 tint 的纸钱，不染。
+ *   受光强度 `uLightGain` 乘在这份光照因子上（同一个 [0,1] 钳位）。
+ * - **unlit**（`uToneOn = 0`）：`lit:false`——自发光的萤火、按原画标定 tint 的纸钱，不染；
+ *   这类视图 `uLightGain` 恒送 1（`vfxLightGain`），片元里 `!= 1.0` 那一支不进，输出与改动前逐位相同。
  *
  * ⚠ `LC` 切片里的遮挡步进函数调用 `WR_CORE` 的函数：只拼 `LC` 不拼 `WR_CORE` 编译失败，
  *   Pixi 只报一句 "Could not initialize shader"、整批粒子不画（本次改动当场踩到）。
@@ -137,6 +139,8 @@ out vec4 finalColor;
 uniform sampler2D uColorTex;
 uniform sampler2D uProbe;
 uniform float uToneOn;
+/** 受光强度（appearance.lightGain，逐视图一组）；lit:false 的视图 CPU 恒送 1 */
+uniform float uLightGain;
 uniform float uToneStrength;
 uniform vec3  uKeyColor;
 uniform float uKeyIntensity;
@@ -168,7 +172,10 @@ void main(void) {
         vec3 net = amb * uAmbientIntensity + uKeyColor * (uKeyIntensity * 0.5);
         float l = max(dot(net, LC_LUMA), 0.04);
         vec3 wb = clamp(net / l, vec3(0.5), vec3(1.7));
-        rgb = min(rgb * mix(vec3(1.0), wb, tone), vec3(1.0));
+        rgb = min(rgb * mix(vec3(1.0), wb, tone) * uLightGain, vec3(1.0));
+    } else if (uLightGain != 1.0) {
+        // 没有色调可融（强度 0 / 场景没建 probe）时光照因子 = 1，受光强度照样乘在它上面
+        rgb = min(rgb * uLightGain, vec3(1.0));
     }
     vec3 outRgb = clamp(lcDisplayTransform(lcSrgbToLinear(rgb),
         uDispEv, uDispTonemap, uDispWhite,
@@ -237,9 +244,16 @@ uniform float uDispContrast;
 uniform float uDispLift;
 uniform vec3  uDispLiftColor;
 
-/** 粒子批自己的参数：球面法线混合度、自发光份额（0 = 全靠场景光；1 = 完全自发光不吃光） */
+/**
+ * 粒子批自己的参数（逐视图一组 vfxParams，不是角色共用组）：球面法线混合度、自发光份额
+ * （0 = 全靠场景光；1 = 完全自发光不吃光）、受光强度（乘在收到的光上，缺省 1）
+ */
+uniform float uVfxIndirectFactor;
+uniform float uVfxDirectFactor;
+uniform float uVfxTotalFactor;
 uniform float uSphere;
 uniform float uEmissive;
+uniform float uLightGain;
 
 ${OCCLUSION_GLSL}
 ${CHAR_LIGHT_COMMON_GLSL}
@@ -256,14 +270,15 @@ void main(void) {
 __VFX_NORMAL__
 
     vec3 q = vQ;
-    vec3 E = ((uMode < 0.5) ? gatherRT(q + nQ * 0.02, nQ) : probeE(q, nQ)) * uGiStrength;
+    vec3 E = ((uMode < 0.5) ? gatherRT(q + nQ * 0.02, nQ) : probeE(q, nQ));
     E *= mix(1.0, skyaoAt(q, nQ), clamp(uSkyaoBlend, 0.0, 1.0));
-    if (uSunOn > 0.5) { E += uSunColor * max(dot(nQ, uSunDirQ), 0.0); }
 
     // 实体灯：与角色同一段循环（ENTITY_SCENE_LIGHTS_GLSL），同一次 packLights 的数
-    E += entitySceneLightsE(q, n);
+    vec3 directE = entitySceneLightsE(q, n);
+    // 受光强度（appearance.lightGain）：乘在收到的全部光上（probe 底光 + 实体灯），着色之前；
+    // 下面的自发光份额不乘它。场景三项倍率与逐效果强度组合，不读取角色倍率/曝光。
     vec3 alb = c.rgb / max(c.a, 1e-4);
-    vec3 litLin = shadeCharacterLinear(alb, E, uEChroma, uBeta);
+    vec3 litLin = shadeEntityLinear(alb, E, directE, uVfxIndirectFactor, uVfxDirectFactor, uVfxTotalFactor * uLightGain, uEChroma);
     // 镜面/自发光份额（appearance.emissive）：这一份不吃漫反射着色，按比例混入原色（线性）。
     // 水滴、火星这类靠镜面才看得见的材质用它——漫反射路径没有镜面瓣，只用它画出来是黑疙瘩。
     litLin = mix(litLin, srgb2lin(alb), clamp(uEmissive, 0.0, 1.0));

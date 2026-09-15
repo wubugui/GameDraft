@@ -73,6 +73,382 @@
         "雾津街头",
         "test_room_a"
       ]
+    },
+    {
+      "id": "茶馆_氛围_fx_patron_drinker",
+      "description": "茶馆无声闲聊占位；文案在字符串表 teahouseAtmosphere 修改。",
+      "speaker": {
+        "kind": "entity",
+        "id": "fx_patron_drinker"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6000,
+      "bubbleScale": 1,
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:tea_hot]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:tea_refill]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:tea_weak]"
+        }
+      ],
+      "pickMode": "sequence",
+      "durationMs": 2400
+    },
+    {
+      "id": "茶馆_氛围_fx_patron_eater",
+      "description": "茶馆无声闲聊占位；文案在字符串表 teahouseAtmosphere 修改。",
+      "speaker": {
+        "kind": "entity",
+        "id": "fx_patron_eater"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6000,
+      "bubbleScale": 1,
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:peanuts]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:flies]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:keep_eating]"
+        }
+      ],
+      "pickMode": "sequence",
+      "durationMs": 2400
+    },
+    {
+      "id": "茶馆_氛围_fx_patron_sage",
+      "description": "茶馆无声闲聊占位；文案在字符串表 teahouseAtmosphere 修改。",
+      "speaker": {
+        "kind": "entity",
+        "id": "fx_patron_sage"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6000,
+      "bubbleScale": 1,
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:smoke]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:listen]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:cough]"
+        }
+      ],
+      "pickMode": "sequence",
+      "durationMs": 2400
+    },
+    {
+      "id": "茶馆_氛围_fx_patron_chatA",
+      "description": "茶馆无声闲聊占位；文案在字符串表 teahouseAtmosphere 修改。",
+      "speaker": {
+        "kind": "entity",
+        "id": "fx_patron_chatA"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6000,
+      "bubbleScale": 1,
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:gossip]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:move_cup]"
+        }
+      ],
+      "pickMode": "sequence",
+      "durationMs": 2400
+    },
+    {
+      "id": "茶馆_氛围_fx_patron_laugh",
+      "description": "茶馆无声闲聊占位；文案在字符串表 teahouseAtmosphere 修改。",
+      "speaker": {
+        "kind": "entity",
+        "id": "fx_patron_laugh"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6000,
+      "bubbleScale": 1,
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:book]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:later]"
+        }
+      ],
+      "pickMode": "sequence",
+      "durationMs": 2400
+    },
+    {
+      "id": "茶馆_氛围_npc_掌柜",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "npc_掌柜"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6000,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:owner_money]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:owner_credit]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_waiter_xiaoer",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "waiter_xiaoer"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6500,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:waiter_water]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:waiter_busy]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_blind_li",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "blind_li"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 7000,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:blind_trade]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:blind_mutter]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_storyteller_zhang",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "storyteller_zhang"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6000,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:storyteller_rest]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:storyteller_book]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_new_hotspot_0",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "new_hotspot_0"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6500,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:guard_order]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:guard_tea]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_player",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "player"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 7000,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:player_borrow]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:player_boast]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_teahouse_counter_clerk",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "teahouse_counter_clerk"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6000,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:counter_debt]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:counter_coins]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_teahouse_wall_smoker",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "teahouse_wall_smoker"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6500,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:smoker_defend]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:smoker_spit]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_teahouse_middle_woman",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "teahouse_middle_woman"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 7000,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:woman_answer]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:woman_peanut]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_teahouse_blue_patron",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "teahouse_blue_patron"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6000,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:blue_gamble]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:blue_doubt]"
+        }
+      ]
+    },
+    {
+      "id": "茶馆_氛围_teahouse_middle_patron",
+      "description": "茶馆无声闲聊占位；背景人物用原画上的热区锚点，不新增人物动画。",
+      "speaker": {
+        "kind": "entity",
+        "id": "teahouse_middle_patron"
+      },
+      "scenes": [
+        "teahouse"
+      ],
+      "cooldownMs": 6500,
+      "durationMs": 2400,
+      "bubbleScale": 1,
+      "pickMode": "sequence",
+      "lines": [
+        {
+          "text": "[tag:string:teahouseAtmosphere:middle_bicker]"
+        },
+        {
+          "text": "[tag:string:teahouseAtmosphere:middle_debt]"
+        }
+      ]
     }
   ]
 }

@@ -84,7 +84,7 @@ export function createDebugVfxSection(deps: DebugVfxDeps): DebugVfxSectionHandle
   const hint = document.createElement('div');
   hint.className = 'debug-dock__hint';
   hint.textContent =
-    '效果在粒子工作台里调（sh scripts/py.sh -m tools.vfx_workbench），实例摆在主编辑器的场景页。'
+    '效果与布置（哪个场景、哪套时段外观、发射区域 / 范围区域）都在粒子工作台里做（sh scripts/py.sh -m tools.vfx_workbench）。'
     + ' 这页只看状态、按刺激。';
   sec.appendChild(hint);
 

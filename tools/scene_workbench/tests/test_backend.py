@@ -70,7 +70,7 @@ def test_trajectory_bakes_and_saves_via_original_owner(project, tmp_path, monkey
     backend, _, _ = project
     monkeypatch.setattr(assets, 'TRAJECTORIES_DIR', tmp_path / 'trajectories')
     # Screen-space baking only needs a present geometry; no production scene IO.
-    monkeypatch.setattr(trajectory, '_doc_geometry', lambda doc: object())
+    monkeypatch.setattr(trajectory, '_doc_geometry', lambda doc, backdrop=None: object())
     doc = {'id': 'walk', 'space': 'screen', 'keyframes': [], 'opaque': {'keep': True},
            'authoring': {'sceneId': 'room', 'anchor': {'x': 100, 'y': 100}},
            'source': {'segments': [{'id': 'path', 'kind': 'manual', 'startFrom': 'anchor',

@@ -1581,6 +1581,37 @@
     "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
    },
    "duration": 45.0
+  },
+  "64b9c6e053934589e9ea3f06bfe1d960a03b98bdb509b813fda215e193f5c76e": {
+   "src": "/resources/runtime/audio/edited/shop_trade_64b9c6e0.wav",
+   "bytes": 105580,
+   "firstSeen": "2026-09-14T21:56:51",
+   "origin": {
+    "sourceKey": "project/edited/shop_trade.wav",
+    "sourceHash": "6276de956a1725d9a3165dad596ffd3ac1a113256c6604a7ad8d7f8f109984d7",
+    "params": {},
+    "fingerprint": "46b571fb13c07fdcae6ebee564e9b405a6c30eee9dfb0e8cf463bf6b7addede3",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 0.647
+  },
+  "6aa2ffc146fdbaf270041de26538a6c56e299a1d4da7ddad16c090e736f2a81f": {
+   "src": "/resources/runtime/audio/edited/minigame_win_6aa2ffc1.wav",
+   "bytes": 224252,
+   "firstSeen": "2026-09-14T21:56:51",
+   "origin": {
+    "sourceKey": "project/edited/minigame_win.wav",
+    "sourceHash": "a886d43dce165d2e7f77dcaffb65333c12293f027b167a8a18a20db9fafd36ab",
+    "params": {
+     "trim": {
+      "start": 2.1075,
+      "end": 3.4959
+     }
+    },
+    "fingerprint": "c03a58566f3a10810584f9245e64105ae16eb7f36cff442a1435fc19355c8245",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 1.388
   }
  },
  "keys": {
@@ -1645,10 +1676,9 @@
    "inferred": true
   },
   "sfx/save_done": {
-   "hash": "34578cfcd9ae0168a46ba0fdfb92541d7ce1217d647a860bfe72ffbd0957bbf2",
-   "src": "/resources/runtime/audio/edited/save_done.wav",
-   "exportedAt": "2026-08-10T20:33:31",
-   "inferred": true
+   "hash": "6aa2ffc146fdbaf270041de26538a6c56e299a1d4da7ddad16c090e736f2a81f",
+   "src": "/resources/runtime/audio/edited/minigame_win_6aa2ffc1.wav",
+   "exportedAt": "2026-09-14T21:56:51"
   },
   "sfx/shop_trade": {
    "hash": "6276de956a1725d9a3165dad596ffd3ac1a113256c6604a7ad8d7f8f109984d7",
@@ -1717,10 +1747,9 @@
    "inferred": true
   },
   "sfx/item_pickup": {
-   "hash": "b6251dd5c888f91d7458f45c820770cc286bb828ddfd119c49941574ace23cc2",
-   "src": "/resources/runtime/audio/edited/item_pickup.wav",
-   "exportedAt": "2026-08-10T20:33:33",
-   "inferred": true
+   "hash": "64b9c6e053934589e9ea3f06bfe1d960a03b98bdb509b813fda215e193f5c76e",
+   "src": "/resources/runtime/audio/edited/shop_trade_64b9c6e0.wav",
+   "exportedAt": "2026-09-14T21:56:51"
   },
   "sfx/coin_gain": {
    "hash": "6adc9a6af690ed5df30b9ed7dfdaa40d57fc12499d1537f113ace50f54b243a2",
@@ -2035,6 +2064,8 @@
   "c7c8e9f0707cc0be1ba950a25270aa06645d5607dc090cd603559233652aa9b4": "0e55b88dbe7d3c19c4f225fa1986820c1103cf2d344d6324e8af1e79e3148bbd",
   "c38e1f14bb680a8545352821063fe4ad1e8ebaef4b146091d7c8a0979bf725a4": "a412a28537b9f2069c5ada60b40e7a834444821e28d775e706f9c13fdc7f6d5e",
   "13a2270019b7e30c05baf9b6a9549b0416338e1b6beff188f4559b00c7d6c400": "2362b811a79165952c012345b327c5b913ebdd55e2dec981f8fe7a91315512cd",
-  "01cfb4781fd06cda1613583b2e6f3228c8718da3b041fe86c5db68aa82e727e7": "f2c64a54977539c89c02fbf2f484e26e7b85dd9a2b3d840a7dd0e4ddd0ae07de"
+  "01cfb4781fd06cda1613583b2e6f3228c8718da3b041fe86c5db68aa82e727e7": "f2c64a54977539c89c02fbf2f484e26e7b85dd9a2b3d840a7dd0e4ddd0ae07de",
+  "46b571fb13c07fdcae6ebee564e9b405a6c30eee9dfb0e8cf463bf6b7addede3": "64b9c6e053934589e9ea3f06bfe1d960a03b98bdb509b813fda215e193f5c76e",
+  "c03a58566f3a10810584f9245e64105ae16eb7f36cff442a1435fc19355c8245": "6aa2ffc146fdbaf270041de26538a6c56e299a1d4da7ddad16c090e736f2a81f"
  }
 }

@@ -1,0 +1,91 @@
+{
+  "id": "teahouse_dust",
+  "label": "茶馆 · 门缝浮尘",
+  "emitters": [
+    {
+      "id": "dust",
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/dust.png",
+        "sizeWu": 2.3,
+        "sizeJitter": [
+          0.5,
+          1.6
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.15,
+            0.5
+          ],
+          [
+            0.8,
+            0.4
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.7,
+          0.59,
+          0.4
+        ],
+        "blend": "normal",
+        "lit": false
+      },
+      "spawn": {
+        "max": 24,
+        "rate": 2,
+        "burst": 8,
+        "shape": {
+          "kind": "box",
+          "size": [
+            65,
+            55,
+            12
+          ]
+        },
+        "speed": [
+          0.5,
+          2
+        ]
+      },
+      "motion": {
+        "gravity": 1.5,
+        "drag": 1,
+        "wind": [
+          2,
+          0,
+          0
+        ],
+        "turbulence": {
+          "strength": 4,
+          "scale": 22,
+          "speed": 0.3
+        },
+        "maxSpeed": 6
+      },
+      "life": {
+        "seconds": [
+          7,
+          11
+        ]
+      }
+    }
+  ],
+  "authoring": {
+    "sceneId": "teahouse",
+    "background": "background.png",
+    "anchor": {
+      "x": 112,
+      "y": 186,
+      "h": 0,
+      "surface": "shell"
+    },
+    "note": "茶馆氛围；通过粒子工作台维护。无新增音频。"
+  }
+}

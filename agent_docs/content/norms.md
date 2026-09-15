@@ -44,6 +44,22 @@ last_governed: 2026-08-05
 9. 机制必须高频占用玩家注意力——**判据是"持续自我再生的误差,只有玩家的手能抹平"**;
    "设好就不管/闭眼玩"与"系统替玩家做"是废案红线(只满足"高频点击"不算,刷点击条/QTE 已被否)。
 
+**编排铁律**(制作人 2026-09-15 拍板,hook 级强制)
+10. **不准自己写 flag;派生 flag 只读;编排一律走叙事状态机。**
+    - "自己写 flag" = `setFlag` / `appendFlag` / `addFlagValue`,以及往 flag_registry.static 登记新键。
+      默认一律不做;少数实在需要的,汇报里逐条向制作人写明为什么状态机表达不了。
+    - 推进 / 门控 → 信号驱动状态迁移;读取侧用 `{"narrative": 图id, "state": 状态id}` 条件叶。
+    - "做过没有 / 一次性" → 该段 flow 的状态本身。跨线依赖 → `narrative` 叶直接查对方图的状态。
+    - **引擎派生 / 维护的 flag 只读**:`has_item_*`、`item_count_*`、`coins`、`rule_*_acquired`、
+      `quest_*_status`、`archive_*`、`clue_*`、`picked_up_*`、`sysnote_*`、`current_day`、`player_health` 等
+      (清单以 flag_registry.patterns + `src/core/FlagKeys.ts` + 各系统 `flagStore.set` 为准)。
+      条件里**可以读**;**绝不许写**——写它等于绕过背包/规矩/任务/档案等系统,两边对不上,
+      要改就用对应系统的 action(giveItem、giveCurrency、giveRule、updateQuest…)。
+    *起因*:2026-09-15 制作人指出上跑马梁之前那段编排大量用 flag。
+    *强制*:`scripts/agent_hooks/flag_discipline.py` —— 策划类技能载入即注入本条;
+    `public/assets/**.json` 的 Edit/Write 新增**写只读 flag** 永远拒绝,新增**自己写 flag** 第一次拒绝、
+    原样重试才放行;脚本改 JSON 事后追查。条件里读 flag 不拦。
+
 ## 过程义务
 
 1. **开工先认权威**:寻狗 demo 内容以四权威源为准、废弃归档一律死档勿信
@@ -60,6 +76,7 @@ last_governed: 2026-08-05
 
 ## 红线
 
+- 自己写 flag 来编排推进 / 门控 / 一次性判定;往引擎派生的只读 flag 里写值(见第 10 条);
 - 内容(物件名/规矩名/NPC/任务 ID/对话文本)硬编码进代码;
 - cutscene 内改存档;
 - 写 deprecated 字段、往重建区塞自定义字段;

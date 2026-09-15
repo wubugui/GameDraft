@@ -430,11 +430,14 @@ class MainWindow(QMainWindow):
         self._act(ext, "重读轨迹资产", self._reload_trajectories_from_disk)
         # 声学工作台是 assets/data/acoustic_spaces.json 的唯一写者；场景属性页的 acousticSpace 选择器只读它
         self._act(ext, "声学工作台…", self.open_acoustic_workbench)
-        # 粒子工作台是 assets/data/vfx/ 的唯一写者；场景页的 vfx 实例与 playVfx 选择器只读那份
+        # 粒子工作台是 assets/data/vfx/ 与 vfx_placements.json 的唯一写者；主编辑器只读：
+        # 场景画布显示发射区域 / 范围区域，playVfx 选择器出效果与实例候选
         self._act(ext, "粒子工作台…", self.open_vfx_workbench)
-        self._act(ext, "重读粒子资产", self._reload_vfx_from_disk)
+        self._act(ext, "刷新粒子数据", self._reload_vfx_from_disk)
         # 草木工作台是 lighting/<背景基名>/sway_paint.png 的唯一写者；拆层产物由它按需重烘
         self._act(ext, "草木工作台…", self.open_sway_workbench)
+        # 地形工作台是 runtime/scenes/<id>/terrain/ 作者层的唯一写者；collision.png / collision.json / ground_d.png 由它合成
+        self._act(ext, "地形工作台…", self.open_terrain_workbench)
 
         view_menu = mb.addMenu("View")
         self._act(view_menu, "编辑器设置…", self._open_editor_settings, "Ctrl+,")
@@ -1200,6 +1203,7 @@ class MainWindow(QMainWindow):
             # 反过来就是"拿旧模型重建了一遍"，看起来刷新了其实没有。
             self._resync_trajectories_from_disk()
             self._resync_vfx_from_disk()
+            self._resync_terrain_from_disk()
             self._reload_all_reference_catalogs()
             self._resync_audio_config_from_disk()
         if not self._dialogue_external_processes:
@@ -1217,6 +1221,7 @@ class MainWindow(QMainWindow):
             # 轨迹资产排在目录刷新**之前**：它换的是只读镜像，控件重建要用到新镜像。
             QTimer.singleShot(0, self, self._resync_trajectories_from_disk)
             QTimer.singleShot(0, self, self._resync_vfx_from_disk)
+            QTimer.singleShot(0, self, self._resync_terrain_from_disk)
             # 图对话目录**真变了才重建**（轨迹/vfx/音频那三条各自已经这么门控了）：
             # 这条路每 alt-tab 一次就跑一次，而一次全页重建实测 218~1105ms。
             QTimer.singleShot(0, self, self._resync_dialogue_catalog_if_changed)
@@ -3455,14 +3460,42 @@ class MainWindow(QMainWindow):
         self._dialogue_process_watch_timer.start()
         self._status.showMessage(f"Started in new process: 草木工作台{f'（{sid}）' if sid else ''}", 4000)
 
-    def open_vfx_workbench(self, effect_id: str = "") -> None:
-        """另起独立进程打开「粒子工作台」（场景页 vfx 实例的「在粒子工作台中打开…」落点）。
+    def open_terrain_workbench(self, scene_id: str = "") -> None:
+        """另起独立进程打开「地形工作台」（碰撞 / 可走区 / 行走面修补）。
 
-        效果是全局资产 `assets/data/vfx/<id>.json`，**唯一写者**是工作台进程；主编辑器对该目录
-        只读（场景 vfx 实例的 effect 候选、playVfx 选择器、`validate-data` 的结构校验都读它）。
-        起法与轨迹工作台逐条相同：detached、不等它、**登记进外置进程监视表**——作者在工作台里
-        新建的效果，不重读就在那些下拉里根本不存在（"编辑器中途开着就同步不到"正是这条）。
-        手动那一下在「工具 → 重读粒子资产」。
+        它是 `runtime/scenes/<id>/terrain/` 作者层的唯一写者，游戏读的 `collision.png` / `collision.json` /
+        各时段 `ground_d.png` 由它合成；主编辑器对这些只读（场景页「地形 / 碰撞」块显示 + 画布叠加）。
+        起法与另外四台逐条相同：detached、不等它、登记进外置进程监视表（它退出 / 主窗回前台时场景页的叠加重读）。
+        """
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        sid = (scene_id or "").strip()
+        cmd = [sys.executable, "-m", "tools.terrain_workbench", *(["--open", sid] if sid else [])]
+        kwargs: dict = {"cwd": str(root.resolve())}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        try:
+            proc = subprocess.Popen(cmd, **kwargs)
+        except OSError as e:
+            self._status.showMessage(f"地形工作台起不来：{e}", 6000)
+            return
+        self._dialogue_external_processes.append(proc)
+        self._dialogue_process_watch_timer.start()
+        self._status.showMessage(f"Started in new process: 地形工作台{f'（{sid}）' if sid else ''}", 4000)
+
+    def open_vfx_workbench(self, effect_id: str = "") -> None:
+        """另起独立进程打开「粒子工作台」（「工具 → 粒子工作台…」的落点）。
+
+        粒子的**全部作者工作**都在工作台里（2026-09-14 制作人定）：效果资产 `assets/data/vfx/<id>.json`、
+        布置库 `assets/data/vfx_placements.json`（摆在哪个场景哪套时段外观、锚点、发射区域 / 范围区域），
+        **唯一写者**都是工作台进程。主编辑器对两者只读——场景页 vfx 块只显示、画布只画区域，
+        不再有任何编辑，也不再从场景页起工作台（那一栏的「在粒子工作台中打开…」已拆）。
+        起法与轨迹工作台逐条相同：detached、不等它、**登记进外置进程监视表**——工作台里新建的效果 /
+        刚改的布置，不重读就在 playVfx 下拉与画布区域上根本不出现（"编辑器中途开着就同步不到"正是这条）。
+        手动那一下在「工具 → 刷新粒子数据」（场景页 vfx 块里也有同一个按钮）。
         """
         root = self._ensure_valid_tool_root()
         if root is None:
@@ -3485,26 +3518,43 @@ class MainWindow(QMainWindow):
             f"Started in new process: 粒子工作台{f'（{eid}）' if eid else ''}", 4000)
 
     def _reload_vfx_from_disk(self) -> None:
-        """重读 `assets/data/vfx/` 并让**当前页**立刻用上（工具菜单的「重读粒子资产」）。
+        """重读效果资产 + 布置库并让**当前页**立刻用上（「工具 → 刷新粒子数据」，
+        场景页 vfx 块里的「刷新粒子数据」按钮也落到这里）。
 
-        与轨迹那条同构：先换只读镜像（场景 vfx 实例的 effect 候选、playVfx 选择器、校验都读它），
-        再把已经打开的页的候选重拉一遍。用户显式点菜单时**无条件**刷当前页。
+        与轨迹那条同构：先换只读镜像（playVfx 的效果 / 实例候选、场景画布上的区域、校验都读它），
+        再把已经打开的页的候选重拉一遍——场景页那一拍会顺带重画画布上的发射区域 / 范围区域与 vfx 块摘要。
+        用户显式点菜单时**无条件**刷当前页。
         """
         if self._model.project_path is None:
             return
         changed = self._model.reload_vfx_from_disk()
         self._refresh_open_pages_after_disk_change()
+        from .shared.vfx_placements import iter_rows
+
+        n_rows = sum(1 for _ in iter_rows(self._model.vfx_placements))
+        err = str(getattr(self._model, "vfx_placements_error", "") or "")
         self._status.showMessage(
-            f"已重读粒子资产：{len(self._model.vfx_effects)} 份效果"
-            + ("（有变化，候选与校验已同步）" if changed else "（与内存里的一致）"),
-            4000)
+            f"已刷新粒子数据：{len(self._model.vfx_effects)} 份效果、{n_rows} 条布置"
+            + (f"（布置库读不懂：{err}）" if err
+               else "（有变化，画布区域与候选已同步）" if changed else "（与内存里的一致）"),
+            6000 if err else 4000)
 
     def _resync_vfx_from_disk(self) -> None:
-        """静默重读效果资产（工作台还开着时主窗回到前台 / 工作台退出时自动走这条）。"""
+        """静默重读效果资产与布置库（工作台还开着时主窗回到前台 / 工作台退出时自动走这条）。"""
         if self._model.project_path is None:
             return
         if self._model.reload_vfx_from_disk():
             self._refresh_open_pages_after_disk_change()
+
+    def _resync_terrain_from_disk(self) -> None:
+        """地形工作台存盘 / 导出之后（它退出 / 主窗回前台）：场景页的「地形 / 碰撞」块与画布红块重读。只读，不动模型。"""
+        for ed in getattr(self, "_editor_instances", []):
+            fn = getattr(ed, "refresh_terrain_from_disk", None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:  # noqa: BLE001 — 一页刷新失败不拖垮别的页
+                    pass
 
     def open_acoustic_workbench(self, space_id: str = "") -> None:
         """另起独立进程打开「声学工作台」（场景属性页「在声学工作台中打开…」的落点）。

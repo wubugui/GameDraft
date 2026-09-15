@@ -4,10 +4,14 @@
 （运行时 register / TS manifest / 编辑器 ACTION_TYPES 与 _PARAM_SCHEMAS / ACTION_PERSISTENCE /
 过场白名单 / 校验器 / entity_refactor），漏哪一处报哪种错各不相同
 （见 agent_docs runtime/mechanisms/action-registration-registry-surfaces.md）。
-三方 parity 由既有护栏覆盖，本文件补它们盖不到的那几面，外加效果资产与场景实例的校验。
+三方 parity 由既有护栏覆盖，本文件补它们盖不到的那几面，外加效果资产的校验与实例候选。
 
 效果资产目录 `assets/data/vfx/` 与轨迹同一待遇：**唯一写者是 tools/vfx_workbench**，
 主编辑器只读（候选 / 校验），这里钉死"没有脏桶、不进 save_all"。
+
+实例（`instanceId` 的候选）2026-09-14 起摆在粒子布置库 `assets/data/vfx_placements.json`
+（按「场景 × 时段外观」各配各的，同一场景白天 / 夜里各一份同 id 是常态），场景 JSON 不再有 `vfx`。
+候选 = 本场景各时段外观 id 的**并集**；布置库本身的校验在 `test_vfx_placements_validation.py`。
 """
 from __future__ import annotations
 
@@ -145,15 +149,73 @@ def test_selector_kinds_map_to_real_universes() -> None:
     assert CONTENT_ID_PARAMS.get(("playVfx", "effect")) == "vfx_effects"
 
 
+def test_json_lang_instance_universe_reads_the_placement_library() -> None:
+    """json_lang 的实例宇宙读**布置库**（场景 JSON 已没有 vfx），每个场景 = 各时段外观 id 的并集。
+
+    逐场景与共享模块 `instance_ids_for_scene` 对账（语义级，不只锁存在性），再钉两处真数据：
+    崖墓前段的蝙蝠 / 滴水在基底与夜各一份 → 候选各出现一次；萤火虫只摆在崖墓入口的夜里 → 照样是候选。
+    """
+    from tools.editor.shared import vfx_placements as vp
+    from tools.json_lang.id_universes import collect_id_universes
+
+    ud = collect_id_universes(REPO)
+    lib, err = vp.load_library(REPO)
+    assert err == ""
+    scene_vfx = ud.scoped["scene_vfx"]
+    for sid in ud.ids["scenes"]:
+        assert scene_vfx.get(sid) == sorted(vp.instance_ids_for_scene(lib, sid)), sid
+    assert scene_vfx["崖墓前段"] == ["vfx_bats", "vfx_drip"]
+    assert scene_vfx["崖墓入口"] == ["vfx_fireflies"]
+    assert scene_vfx["跑马梁"] == ["纸钱_山顶"]
+    assert ud.ids["vfx_instances"] == sorted({i for ids in scene_vfx.values() for i in ids})
+    assert {"vfx_bats", "vfx_fireflies", "纸钱_山顶"} <= set(ud.ids["vfx_instances"])
+
+
+def test_json_lang_instance_universe_honours_overlay_and_ignores_scene_vfx(tmp_path: Path) -> None:
+    """LSP overlay 里改着的布置库要算数；场景 JSON 里残留的旧 vfx 不算（运行时不读它）。"""
+    from tools.editor.shared import vfx_placements as vp
+    from tools.json_lang.id_universes import collect_id_universes
+
+    root = tmp_path / "p"
+    sp = root / "public" / "assets" / "scenes"
+    sp.mkdir(parents=True)
+    (sp / "s.json").write_bytes(json.dumps(
+        {"id": "s", "vfx": [{"id": "ghost", "effect": "e", "anchor": {"x": 0, "y": 0}}]},
+        ensure_ascii=False).encode("utf-8"))
+    disk = {"scenes": {"s": {"base": [{"id": "disk", "effect": "e", "anchor": {"x": 0, "y": 0}}]}}}
+    lp = vp.library_path(root)
+    lp.parent.mkdir(parents=True)
+    lp.write_bytes(vp.dumps(disk))
+
+    ud = collect_id_universes(root)
+    assert ud.scoped["scene_vfx"] == {"s": ["disk"]}
+
+    overlay = {"scenes": {"s": {"base": [{"id": "b", "effect": "e", "anchor": {"x": 0, "y": 0}}],
+                                "variants": {"夜": [{"id": "n", "effect": "e", "anchor": {"x": 0, "y": 0}},
+                                                   {"id": "b", "effect": "e", "anchor": {"x": 0, "y": 0}}]}}}}
+
+    def read(path: Path) -> str:
+        if Path(path).resolve() == lp.resolve():
+            return json.dumps(overlay, ensure_ascii=False)
+        return Path(path).read_text(encoding="utf-8")
+
+    ud2 = collect_id_universes(root, read_text=read)
+    assert ud2.scoped["scene_vfx"] == {"s": ["b", "n"]}
+    assert ud2.ids["vfx_instances"] == ["b", "n"]
+
+    lp.write_bytes(b"{ broken")
+    assert collect_id_universes(root).scoped["scene_vfx"] == {"s": []}, "读不懂 = 没有实例（校验器另报 error）"
+
+
 def test_enums_mirror_the_ts_side() -> None:
     """三张短枚举与 TS `types.ts` 逐字对齐（改一处要改两处，这里是那道机械闸）。"""
     types_ts = (REPO / "src/data/types.ts").read_text("utf-8")
     assert "surface?: 'ground' | 'shell'" in types_ts
     assert "export type VfxFlockState = 'roosting' | 'airborne' | 'fleeing' | 'returning';" in types_ts
-    assert "export type VfxFieldKind = 'fear' | 'attract' | 'wind';" in types_ts
+    assert "export type VfxFieldKind = 'fear' | 'attract' | 'wind' | 'airflow';" in types_ts
     assert {v for v, _l in _VFX_SURFACES if v} == {"ground", "shell"}
     assert {v for v, _l in _VFX_FLOCK_STATES} == {"roosting", "airborne", "fleeing", "returning"}
-    assert {v for v, _l in _VFX_FIELD_KINDS if v} == {"fear", "attract", "wind"}
+    assert {v for v, _l in _VFX_FIELD_KINDS if v} == {"fear", "attract", "wind", "airflow"}
 
 
 def test_position_params_are_registered_as_entity_refs() -> None:
@@ -194,10 +256,56 @@ def test_effect_mirror_and_id_providers() -> None:
     ids = dict(m.all_vfx_effect_ids())
     assert "bat_cliff" in ids
     assert "发射器" in ids["bat_cliff"], "候选 label 应带发射器数，下拉里才分得清"
-    rows = dict(m.vfx_instance_ids_for_scene("崖墓前段"))
-    assert "vfx_bats" in rows and "bat_cliff" in rows["vfx_bats"]
+    # 实例候选读布置库：崖墓前段的 vfx_bats / vfx_drip 在基底与夜各摆一份 → 并集里各出现一次
+    pairs = m.vfx_instance_ids_for_scene("崖墓前段")
+    assert [iid for iid, _lab in pairs] == ["vfx_bats", "vfx_drip"], pairs
+    rows = dict(pairs)
+    assert "bat_cliff" in rows["vfx_bats"], "候选 label 要带效果 id"
     assert m.vfx_instance_ids_for_scene(None) == []
     assert m.vfx_instance_ids_for_scene("不存在的场景") == []
+
+
+def test_instance_candidates_are_the_placement_library_union() -> None:
+    """主编辑器候选与共享模块逐场景同口径（语义级对账：候选面必须等于校验面）。"""
+    from tools.editor.shared import vfx_placements as vp
+
+    m = _model_on_repo()
+    lib, err = vp.load_library(REPO)
+    assert err == ""
+    assert lib["scenes"], "布置库是空的？"
+    for sid in lib["scenes"]:
+        got = [iid for iid, _lab in m.vfx_instance_ids_for_scene(sid)]
+        assert got == vp.instance_ids_for_scene(lib, sid), sid
+    # 只摆在夜里的萤火虫照样是候选（动作可能在夜里播）
+    assert [iid for iid, _ in m.vfx_instance_ids_for_scene("崖墓入口")] == ["vfx_fireflies"]
+    # 场景 JSON 已经不带 vfx：候选不许再从那里来
+    for sid, sc in m.scenes.items():
+        assert "vfx" not in (sc or {}), f"{sid} 的场景 JSON 还带着 vfx（运行时不读，校验器会报 error）"
+
+
+def test_instance_candidates_ignore_leftover_scene_vfx(tmp_path: Path) -> None:
+    """临时工程：布置库里 base 一份、夜一份（有重叠），场景 JSON 残留一条旧 vfx——候选只认布置库的并集。"""
+    from tools.editor.project_model import ProjectModel
+    from tools.editor.shared import vfx_placements as vp
+    from tools.editor.tests.save_test_utils import write_minimal_loadable_project
+
+    root = tmp_path / "p"
+    write_minimal_loadable_project(root)
+    sp = root / "public" / "assets" / "scenes" / "sc_a.json"
+    sc = json.loads(sp.read_text(encoding="utf-8"))
+    sc["vfx"] = [{"id": "ghost", "effect": "e", "anchor": {"x": 0, "y": 0}}]
+    sp.write_bytes(json.dumps(sc, ensure_ascii=False, indent=2).encode("utf-8"))
+    anchor = {"x": 1, "y": 2}
+    lib = {"scenes": {"sc_a": {
+        "base": [{"id": "a", "effect": "e1", "anchor": anchor}],
+        "variants": {"夜": [{"id": "n", "effect": "e2", "anchor": anchor},
+                           {"id": "a", "effect": "e1", "anchor": anchor}]},
+    }}}
+    vp.library_path(root).write_bytes(vp.dumps(lib))
+    m = ProjectModel()
+    m.load_project(root)
+    assert [iid for iid, _ in m.vfx_instance_ids_for_scene("sc_a")] == ["a", "n"]
+    assert m.vfx_instance_ids_for_scene("sc_b") == []
 
 
 # --------------------------------------------------------------------------- #
@@ -332,6 +440,78 @@ def test_emissive_gate_matches_the_workbench_gate(tmp_path: Path) -> None:
         wb.normalize_effect(json.loads(json.dumps(d)), warn)
         assert not [w for w in warn if "emissive" in w], warn
         assert _issues_for_effects(tmp_path, {"zz_min": d}) == [], v
+
+
+# --------------------------------------------------------------------------- #
+# 校验器：appearance.lightGain（受光强度，乘在发射器收到的光上）
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("bad", [-0.1, 10.5, "2", True, float("nan")])
+def test_light_gain_out_of_range_is_an_error(tmp_path: Path, bad) -> None:
+    """运行时夹到 0..10：作者填 30 却只看到 10 —— 静默失真，构建期拦。"""
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["appearance"]["lightGain"] = bad
+    issues = _issues_for_effects(tmp_path, {"zz_min": d})
+    assert [i for i in issues if i.severity == "error" and "lightGain" in i.message], \
+        f"lightGain={bad!r} 该报 error 没报：{[i.message for i in issues]!r}"
+
+
+@pytest.mark.parametrize("ok", [0, 1, 2.5, 10])
+def test_light_gain_in_range_is_clean(tmp_path: Path, ok) -> None:
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["appearance"].update(lightGain=ok, lit=True)
+    assert _issues_for_effects(tmp_path, {"zz_min": d}) == []
+
+
+def test_light_gain_null_means_unset(tmp_path: Path) -> None:
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["appearance"]["lightGain"] = None
+    assert _issues_for_effects(tmp_path, {"zz_min": d}) == []
+
+
+def test_light_gain_with_lit_false_is_a_warning_not_an_error(tmp_path: Path) -> None:
+    """关了受光走无光 shader，受光强度恒按 1——填错了地方，但不该拒存。"""
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["appearance"].update(lit=False, lightGain=3)
+    issues = _issues_for_effects(tmp_path, {"zz_min": d})
+    assert [i for i in issues if i.severity == "warning" and "lightGain" in i.message], \
+        [f"{i.severity}:{i.message}" for i in issues]
+    assert not [i for i in issues if i.severity == "error"], [i.message for i in issues]
+
+
+def test_light_gain_gate_matches_the_workbench_gate(tmp_path: Path) -> None:
+    """编辑器兜底与工作台闸门同口径（0..10、lit=false 只警告）。"""
+    from tools.vfx_workbench import assets as wb
+
+    for v in (-0.1, 10.5, "2"):
+        d = json.loads(json.dumps(MINIMAL_EFFECT))
+        d["emitters"][0]["appearance"]["lightGain"] = v
+        with pytest.raises(ValueError):
+            wb.normalize_effect(json.loads(json.dumps(d)))
+        assert [i for i in _issues_for_effects(tmp_path, {"zz_min": d}) if i.severity == "error"], v
+
+    for v in (0, 1, 10):
+        d = json.loads(json.dumps(MINIMAL_EFFECT))
+        d["emitters"][0]["appearance"].update(lightGain=v, lit=True)
+        warn: list[str] = []
+        wb.normalize_effect(json.loads(json.dumps(d)), warn)
+        assert not [w for w in warn if "lightGain" in w], warn
+        assert _issues_for_effects(tmp_path, {"zz_min": d}) == [], v
+
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["appearance"].update(lightGain=3, lit=False)
+    warn2: list[str] = []
+    wb.normalize_effect(json.loads(json.dumps(d)), warn2)
+    assert [w for w in warn2 if "lightGain" in w], warn2
+    assert [i for i in _issues_for_effects(tmp_path, {"zz_min": d}) if i.severity == "warning" and "lightGain" in i.message]
+
+    # 唯一有意的差别：显式 null。工作台是写入者，从不写 null（检查器清空 = 删键），闸门按类型错拒；
+    # 编辑器兜底读的是手改过的文件，null 按"未填"放过（运行时同样按缺省 1）。与 emissive 同一套口径。
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["appearance"]["lightGain"] = None
+    with pytest.raises(ValueError):
+        wb.normalize_effect(json.loads(json.dumps(d)))
+    assert _issues_for_effects(tmp_path, {"zz_min": d}) == []
 
 
 # --------------------------------------------------------------------------- #

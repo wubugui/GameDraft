@@ -44,9 +44,12 @@ def test_bundle_exports_the_runtime_modules(built: Path) -> None:
     src = built.read_text(encoding="utf-8")
     for name in ("VfxInstanceSim", "createFieldRuntime", "createFieldVfxSpace", "groundWorldAt",
                  "buildDepthShellField", "shellContactAt", "buildGroundHeightfield", "viewDirWorld", "worldToScene",
-                 "SceneWindState", "resolveSceneWind", "createPerspectiveScaleResolver", "stepPlates"):
+                 "SceneWindState", "resolveSceneWind", "createPerspectiveScaleResolver", "stepPlates",
+                 # 布置：没写 seed 时按 id 派生的哈希（与 VfxSystem.ensureSim 同一个）、画范围区域边带内沿的距离等值线
+                 "hashSeed", "buildConfineField", "confineDistanceContour"):
         assert re.search(rf"\b{name}\b", src), f"包里没有 {name}：本地预览就不是运行时那一份了"
-    for ns in ("vfxSim", "vfxSpace", "sceneSpace", "depthShellField", "groundHeightfield", "sceneWind", "perspectiveScale"):
+    for ns in ("vfxSim", "vfxSpace", "sceneSpace", "depthShellField", "groundHeightfield", "sceneWind", "perspectiveScale",
+               "vfxRandom", "vfxConfine", "vfxProgram", "vfxMotionSource"):
         assert f"{ns}_exports" in src or f"as {ns}" in src, f"包里没导出 {ns}"
     assert "VFX_SUBSTEP" in src, "定步长常量丢了 = 打的不是模拟核心"
 
@@ -70,7 +73,7 @@ def test_sources_cover_the_whole_import_tree() -> None:
     names = {s.name for s in srcs}
     assert {"vfxSim.ts", "vfxSpace.ts", "vfxPlate.ts", "vfxNoise.ts", "vfxRandom.ts", "sceneSpace.ts",
             "depthShellField.ts", "groundHeightfield.ts", "worldReconstruct.ts", "groundDepthField.ts",
-            "sceneWind.ts", "perspectiveScale.ts"} <= names, names
+            "sceneWind.ts", "perspectiveScale.ts", "vfxConfine.ts", "vfxProgram.ts", "vfxMotionSource.ts", "vfxSimulationContract.json"} <= names, names
     # 只有类型的 import 打包时整条擦掉：types.ts 天天在改，进了戳就每次开页都白等 rolldown
     assert "types.ts" not in names
 

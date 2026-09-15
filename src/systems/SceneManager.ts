@@ -596,6 +596,17 @@ export class SceneManager implements IGameSystem {
   }
 
   /**
+   * 本场景在 `phase` 时段用**哪套外观**：`timeVariants` 的键，空串 = 顶层基底。没进过场景 null。
+   *
+   * 粒子布置按它取份（`VfxPlacementLibrary`）。刻意按**时段现算**而不是读 `appearanceBase.applied.phase`：
+   * 两个时段配了等价外观时换装不重载，`applied` 就停在前一个时段名上，布置会取错那一份。
+   */
+  appearancePhaseFor(phase: string): string | null {
+    const b = this.appearanceBase;
+    return b ? resolveSceneAppearance(b.scene, phase).phase : null;
+  }
+
+  /**
    * 由 Game 注入「NPC 未写 `phases` 时算在哪几段」（DayManager 从 `daylight` 标记派生）。
    * 未注入 / 返回空数组时不施加限制（全时段都在）——宁可街上多几个人，绝不静默清空。
    */

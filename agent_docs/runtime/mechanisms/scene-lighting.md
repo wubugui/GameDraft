@@ -72,6 +72,16 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 
 ## 硬契约(违反即 bug 的机制约束)
 
+- **场景打不打光只看"当前这张原画烘没烘几何场"(+ 有 depthConfig),不看场景 JSON 写没写 `lighting` 块**
+  (2026-09-14)。块里只装**作者的**灯与显示参数;没写块 = 用缺省块 `src/data/scene_lighting_default.json`
+  (无灯、显示恒等、不去霾 ⇒ 画面 = 原画)。运行时灯(手持火把 / 跟随灯)不归作者块管。
+  原来没写块就 `return false`:08-21 恒等迁移之后才烘的 6 个场景(崖墓前段 ×4 / 跑马梁 / 牛头凼)
+  **举着火把一点光都没有**,而那个迁移工具早已停用、再没有东西补这块。
+  同一条判据**三处共用**,改一处要看另外两处:运行时 `SceneLightingSystem.load`、
+  草木烘焙 `sway_field._slot_lit`(决定出不出打光场景的漏出处补图)、校验器 `_lighting_geometry_issues`
+  (有 depthConfig 的场景都查)。缺省块的值**只有一份**:编辑器 `scene_lights.default_lighting_block`
+  读同一个 JSON —— 作者在没写块的场景摆第一盏灯时落盘的就是运行时正在用的那份,
+  不会因为"多了一盏灯"整个场景色调映射跟着变(原编辑器缺省是 filmic + 去霾 1.0,已作废)。
 - **运行时不许再加一遍自然光**。天光与太阳的加光项已从 shader 删除;原画自带自然光,
   再算一遍就是重复计光。想让场景变暗**不要去调天光强度**——那条路已经没有了。
 - **「夜」= 换一张夜原画**,加该时段的 probe 与该时段的灯。数据面是 `timeVariants[时段]`
@@ -88,6 +98,16 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 - **烘焙产物按第一层背景图名索引**。换时段 = 换主背景 = 换一整套烘焙目录
   (`lighting/<背景基名>/`,probe 与几何场同住)。**每张时段原画都要各烘一份**,
   只烘白天那张的话夜里就是"没烘载荷",整套安静禁用。
+  入口只有一条:`scene_fields --scene <id>` 烘该场景**全部**时段原画;时段原画还没有 probe 载荷时,
+  它先调 `pipeline.seed_phase_payload` —— 拷主背景的几何件(`lighting.json` / `ground_d.png` /
+  `probes_valid.bin`)再 `rebake_lighting` 按这张画重烘图集并**自己改写 `background_sha1`**。
+  ⚠ **不许对时段原画跑 `build`**:暗图重估的深度是乱的,而各时段共用一份深度 / 碰撞。
+  ⚠ 时段原画必须与白天**逐像素同尺寸对齐**(`seed_phase_payload` 与校验器都拦);对不齐先修画——
+  2026-09-14 码头白天的夜图同样是白天居中裁掉 9 行(上补 4 / 下补 5,与崖墓入口 / 牛头凼同一个病),
+  test_room_b 的夜图是 1.23 倍大的另一次渲染(缩回白天尺寸后再右移 1、下移 2 像素对齐),
+  原图留在 `*.unaligned.bak`。此前这条路是手工菜谱(拷目录 → rebake → 手补哈希),没有入口,
+  于是崖墓前段1/后段/正式、码头白天、test_room_b 的夜一张都没烘,崖墓前段 / 跑马梁 / 牛头凼的夜只烘了 probe、
+  没烘几何场 —— 全都表现为"夜里火把不亮"。
   ⚠ **`albedo.png` 是这条规则在烘焙侧的唯一例外**:它按**主背景**算一次,各时段目录里放的是
   同一份字节(材质不随时段变)。所以它由 `albedo_map.from_background` 说清来历,
   新鲜度门比的也是**主背景**的哈希,不是本目录那张背景的。
@@ -100,9 +120,14 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
   产出一张背景图的**全部**派生物,落 `lighting/<背景基名>/`。别再另起一个 baker 或
   另开一个目录——同一份东西分两处放,打包规则、校验器、迁移脚本就要各写一套路径,
   其中任何一处少写一层就是**整批载荷静默不进包**(下面「已知坑」有实例)。
-- **改产物布局要同步四处**,少一处就是运行时整包忽略或静默漏抽:
-  `scene_fields.PAYLOAD_VERSION` / `SceneLightingSystem.LIGHTING_GEOMETRY_VERSION` /
-  `validator._LIGHTING_GEOMETRY_VERSION` / `tools/build/manifest_rules.json`。
+- **几何场载荷不按版本号判真假**(2026-09-14)。运行时与校验器按**运行时真正读的东西**验:
+  文件 `lightingPayloadFiles.LIGHTING_GEOMETRY_FILES`、meta 字段 `LIGHTING_GEOMETRY_META_REQUIRED`
+  (Python 镜像在 `validator._LIGHTING_GEOMETRY_META_REQUIRED`,契约测试逐字比)。
+  `scene_fields.PAYLOAD_VERSION` 只剩烘焙器自己的记录、全仓只此一份;`--albedo-only` 不再改写它
+  (它一个 march 都不跑,盖成新代次等于谎报几何是新烘的)。
+  原来是 `version !== 4` 整包忽略:同一个 4 手抄在运行时 / 校验器 / 烘焙器三处、没有测试绑,
+  迁移脚本里还有一份早停在 3;而 v4 唯一的变化是多了 `albedo.png`,运行时本来就会去装它。
+  **改产物布局时改那两张表**(连同 `tools/build/manifest_rules.json`),不要再加"代次必须相等"。
 - **「约定路径被多方消费」是一个缺陷类,必须用结构堵,不许靠"改的时候记得全改"**:
   要么这条路径**由单一函数产出**(运行时侧已经是这样),要么就得有一条
   **对着真实磁盘布局验、而不是对着规则字符串验**的护栏。
@@ -174,7 +199,8 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 
 ## 怎么验证
 
-- `npx vitest run src/rendering/lighting src/utils/sceneAppearance.test.ts`
+- `npx vitest run src/rendering/lighting src/utils/sceneAppearance.test.ts src/core/SceneLightingSystem.defaults.test.ts`
+  (后者还扫一遍盘上每一份 `geometry.json` 过不过得了运行时的字段门)
 - `sh scripts/py.sh -m pytest tools/character_lighting_lab/tests tools/build/tests -p no:cacheprovider`
 - 重烘一个场景:`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene <id>`
 - 只补/刷新 albedo(不重跑任何 march,29 份载荷全量 40 秒):

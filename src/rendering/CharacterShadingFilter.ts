@@ -1,3 +1,4 @@
+import { lightFactor } from '../data/lightFactors';
 import { Filter, GlProgram, Texture, type TextureSource } from 'pixi.js';
 // 角色着色核心 GLSL 的唯一真相源(与灯光实验室共用同一份,消灭 shader 镜像漂移)。
 import CHAR_SHADE_CORE from './charShadeCore.glsl?raw';
@@ -116,8 +117,11 @@ uniform float uMSteps;
 uniform float uMissMode;         // 0=miss→J̄×强度 1=miss不计入(renormalize)
 uniform float uNEE;
 uniform float uStep;
-uniform float uBeta;             // 曝光 2^β(CPU 端已 pow;角色曝光唯一旋钮)
-uniform float uGiStrength;       // GI 底光增益:只乘 probe/RT 的 E(β 乘一切,这个只管 GI 多强)
+uniform float uBeta;             // 旧曝光 2^β(CPU 已 pow)，留给 GI 诊断；正常着色用三个 factor
+uniform float uGiStrength;       // 旧 GI 底光增益，留给诊断；正常着色用 uIndirectFactor
+uniform float uIndirectFactor;
+uniform float uDirectFactor;
+uniform float uTotalFactor;
 uniform float uFixedNQ;          // 诊断·定法线:0=正常 1=强制世界水平朝相机 2=强制世界向上(只改查表方向)
 uniform float uEChecker;         // 诊断:纯E 视图叠 probe 棋盘(与场景 uDebug==9 同一套 cell 奇偶)
 uniform float uBulge;
@@ -580,7 +584,7 @@ void main(void) {
 
     vec3 q = vec3(qx,
                   uFootQ.y + h * uCosT,
-                  uFootQ.z - h * uSinT - ne.a * uBulge);
+                  uFootQ.z - h * uSinT - ne.a * uBulge * uCharW);
 
     // 法线档必须是**独占区间**:uShowN=2 是 skyao 档,写成 >0.5 会被这条
     // 先接住并 return,于是「看 skyao」看到的是法线(2026-09-01 踩过)。
@@ -591,8 +595,8 @@ void main(void) {
         n = uFixedNQ > 1.5 ? normalize(vec3(0., uCosT, -uSinT)) : vec3(0., 0., -1.);
     }
     // ---------- E:RT gather 或 probe 图集 ----------
-    vec3 E = ((uMode < 0.5) ? gatherRT(q + n*0.02, n) : probeE(q, n)) * uGiStrength;
-    vec3 EgiPure = E;   // 纯E 审计快照(同 mesh 路径:不含 skyao/太阳/灯)
+    vec3 E = ((uMode < 0.5) ? gatherRT(q + n*0.02, n) : probeE(q, n));
+    vec3 EgiPure = E * uGiStrength; // 历史 GI 诊断尺，与正常受光的 factor 分开
     // ---- skyao:**乘在 GI 上**,与全白 blend(制作人 2026-09-01)----
     // 天穹遮蔽是几何项,只该衰减 GI 底光;太阳是独立解析直射,不吃它
     // (太阳自己的遮蔽将来要走 V_dir(w) 那条闭式,不是这个各向同性的 V)。
@@ -613,9 +617,10 @@ void main(void) {
     }
 
     // 太阳:独立解析直射(与投影阴影方位解耦)
+    vec3 directE = vec3(0.0);
     if (uSunOn > 0.5) {
         float ndl = max(dot(n, uSunDirQ), 0.0);
-        E += uSunColor * ndl;
+        directE += uSunColor * ndl;
     }
     // ---- 「GI体·纯E」调试(F2 的 8/9/10 档):albedo≡1,输出 E×2^β ----
     // 与 mesh 路径(CharacterLitSprite)同式。此路径没有场景显示变换参数,收尾用
@@ -631,10 +636,10 @@ void main(void) {
         finalColor = vec4(clamp(lin2srgb(pe), 0.0, 1.0) * color.a, color.a);
         return;
     }
-    // ---------- 角色着色核心(共享:charShadeCore.glsl 的 shadeCharacterLinear) ----------
+    // ---------- 角色着色核心(共享:charShadeCore.glsl 的 shadeEntityLinear) ----------
     // E 分解 + albedo×E 在唯一真相源里;游戏不乘实验室 pgain,直接 lin2srgb+clamp。
     vec3 alb = color.rgb / max(color.a, 1e-4);   // Pixi 预乘 → 直通 albedo
-    vec3 outRgb = clamp(lin2srgb(shadeCharacterLinear(alb, E, uEChroma, uBeta)), 0.0, 1.0);
+    vec3 outRgb = clamp(lin2srgb(shadeEntityLinear(alb, E, directE, uIndirectFactor, uDirectFactor, uTotalFactor, uEChroma)), 0.0, 1.0);
 
     // ---------- 保留:游戏侧 sprite 空间 AO ----------
     float vy = clamp(vTextureCoord.y, 0.0, 1.0);
@@ -673,6 +678,9 @@ function getSharedProgram(): GlProgram {
 
 /** 逐帧可调照明参数(F2 全量;与实验室查看器同名同义,默认值同实验室) */
 export interface CharShadingParams {
+  indirectFactor?: number;
+  directFactor?: number;
+  totalFactor?: number;
   mode: number;          // 0=RT 1=L1 2=L2 3=BIN
   spp: number;
   step: number;
@@ -862,6 +870,9 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
           uNEE: { value: 0, type: 'f32' },
           uStep: { value: 0.9, type: 'f32' },
           uBeta: { value: 1, type: 'f32' },
+          uIndirectFactor: { value: 1, type: 'f32' },
+          uDirectFactor: { value: 1, type: 'f32' },
+          uTotalFactor: { value: 1, type: 'f32' },
           uAmbStrength: { value: 1, type: 'f32' },
           uBulge: { value: 0.22, type: 'f32' },
           uFlatten: { value: 0, type: 'f32' },
@@ -1024,6 +1035,9 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
     u['uFlatten'] = p.flatten;
     u['uShowN'] = p.showNormals ? 1 : 0;
     u['uGiStrength'] = p.giStrength;
+    u['uIndirectFactor'] = lightFactor(p.indirectFactor, p.giStrength);
+    u['uDirectFactor'] = lightFactor(p.directFactor);
+    u['uTotalFactor'] = lightFactor(p.totalFactor, Math.pow(2, p.beta) / Math.PI);
     u['uSunOn'] = p.sunEnabled ? 1 : 0;
     const az = (p.sunAzimuthDeg * Math.PI) / 180;
     const el = (p.sunElevationDeg * Math.PI) / 180;

@@ -34,10 +34,12 @@ import type { VfxPlateDef } from '../../data/types';
 import { sampleSceneWind, type SceneWindParams } from '../../utils/sceneWind';
 import type { Vec3 } from '../../utils/sceneSpace';
 import {
-  CONFINE_EXIT_FADE_S, CONFINE_EXIT_WEIGHT, CONFINE_FADE_IN_S, CONFINE_SETTLE_FADE_S, CONFINE_SETTLE_MEAN_S,
-  confineHeightWeight, confineWeightAt, pointInPolygon, type ConfineField,
+  CONFINE_EXIT_FADE_S, CONFINE_EXIT_WEIGHT, CONFINE_SETTLE_FADE_S, CONFINE_SETTLE_MEAN_S,
+  confineHeightWeight, confineWeightAt, type ConfineField,
 } from './vfxConfine';
 import { curlNoise3 } from './vfxNoise';
+import { accumulateAirflow, accumulateFieldAcceleration, type VfxFieldRuntime, type VfxStimulusResponse } from './vfxFields';
+import type { VfxParticleLifecycle } from './vfxLifecycle';
 import type { VfxRng } from './vfxRandom';
 import { ShellSide, spawnsBehindShell, thinShellSide, type VfxSpace } from './vfxSpace';
 
@@ -67,20 +69,6 @@ const CONTACT_SLOP = 0.6;
 const CURL_FRONTAL = 0.5;
 /** 贴地弯曲片的升力：kₙ × 此值 × |弯曲| × |wₜ|²（弯度升力 ~ π × 弯度 / 4） */
 const CAMBER_LIFT = Math.PI / 4;
-/** 丢失判据：比区域最低地面再低这么多（伪世界 wu）就算被刮下崖了 */
-const LOST_DROP_WU = 320;
-/** 补回的片从离地多高落下（真实 wu，区间） */
-const REPLENISH_HEIGHT: [number, number] = [140, 340];
-/** 补回的片往上风方向错开的距离（真实 wu，区间） */
-const REPLENISH_UPWIND: [number, number] = [0, 260];
-/** 限定区域时补回的片按"平着自由下落这么多秒能落地"定高度 */
-const CONFINE_REPLENISH_FALL_S = 1;
-/**
- * 限定区域时每子步（每发射器）最多补回几张。稳态实测每秒 4.5 张 ≈ 每子步 0.04 张，
- * 这个数只在"两块区域不相交、落点永远挑不到"的退化场景里起作用。
- */
-const CONFINE_REPLENISH_PER_SUBSTEP = 4;
-
 export interface PlateParams {
   /** 真实尺寸（wu） */
   w: number;
@@ -103,7 +91,6 @@ export interface PlateParams {
   bendMax: number;
   bendRest: number;
   segments: number;
-  replenish: boolean;
 }
 
 function num(v: unknown, fallback: number): number {
@@ -134,7 +121,6 @@ export function resolvePlateParams(def: VfxPlateDef): PlateParams {
     bendMax: Math.max(0, Math.min(1.5, num(def.bend?.max, 0.7))),
     bendRest: Math.max(0, Math.min(1, num(def.bend?.rest, 0.25))),
     segments: Math.max(1, Math.min(16, Math.round(num(def.segments, 4)))),
-    replenish: def.replenish !== false,
   };
 }
 
@@ -180,90 +166,6 @@ export function createPlateArrays(cap: number): PlateArrays {
   };
 }
 
-/** 区域（画面多边形）的预解析：包围盒、面积采样表、最低地面 */
-export interface PlateArea {
-  poly: [number, number][] | null;
-  /** 没有多边形时：圆盘 */
-  disc: { cx: number; cz: number; y: number; r: number } | null;
-  minX: number; minY: number; maxX: number; maxY: number;
-  /** 区域内地面的最低世界 Y（丢失判据） */
-  floorY: number;
-  /** 粒子区域的软边界（实例配了 `confine` 才有）：出生 / 补回按权重挑、风按权重衰减、出界淡出回收 */
-  confine: ConfineField | null;
-}
-
-const pointInPoly = pointInPolygon;
-
-export function resolvePlateArea(
-  space: VfxSpace, origin: Vec3, poly: [number, number][] | null | undefined, radius: number,
-  confine: ConfineField | null = null,
-): PlateArea {
-  if (poly && poly.length >= 3) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const [x, y] of poly) {
-      minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
-    }
-    // 最低地面：多边形包围盒内粗采样
-    let floorY = Infinity;
-    for (let i = 0; i <= 8; i++) for (let j = 0; j <= 8; j++) {
-      const sx = minX + ((maxX - minX) * i) / 8, sy = minY + ((maxY - minY) * j) / 8;
-      if (!pointInPoly(poly, sx, sy)) continue;
-      floorY = Math.min(floorY, space.groundWorldAtScene(sx, sy)[1]);
-    }
-    if (!Number.isFinite(floorY)) floorY = origin[1];
-    return { poly, disc: null, minX, minY, maxX, maxY, floorY, confine };
-  }
-  const s = { x: 0, y: 0 };
-  space.toScene(origin, s);
-  return {
-    poly: null,
-    disc: { cx: origin[0], cz: origin[2], y: origin[1], r: Math.max(1, radius) },
-    minX: s.x - radius, minY: s.y - radius, maxX: s.x + radius, maxY: s.y + radius,
-    floorY: origin[1],
-    confine: null,
-  };
-}
-
-/** 一个世界点正下方的地面点，在粒子区域里的水平权重 */
-function footWeight(space: VfxSpace, cf: ConfineField, x: number, z: number): number {
-  FOOT[0] = x; FOOT[1] = space.groundY(x, z); FOOT[2] = z;
-  space.toScene(FOOT, FOOT_S);
-  return confineWeightAt(cf, FOOT_S.x, FOOT_S.y);
-}
-const FOOT: Vec3 = [0, 0, 0];
-const FOOT_S = { x: 0, y: 0 };
-/** 限定区域时挑落点多试几次：按权重拒绝采样会多拒掉一大半，挑不到 = 这张纸被回收掉、总数慢慢漏光 */
-const CONFINE_PICK_TRIES = 96;
-
-const tmpS = { x: 0, y: 0 };
-
-/** 在区域里挑一个看得见表面的点（最多试 `tries` 次）；挑不到返回 null */
-export function pickAreaSurface(
-  space: VfxSpace, area: PlateArea, rng: VfxRng, tries = 24,
-): { p: Vec3; normal: Vec3; kind: 'ground' | 'object' } | null {
-  const cf = area.confine;
-  const n = cf ? Math.max(tries, CONFINE_PICK_TRIES) : tries;
-  for (let k = 0; k < n; k++) {
-    let sx: number, sy: number;
-    if (area.poly) {
-      sx = rng.range(area.minX, area.maxX);
-      sy = rng.range(area.minY, area.maxY);
-      if (!pointInPoly(area.poly, sx, sy)) continue;
-    } else {
-      const d = area.disc!;
-      const a = rng.range(0, Math.PI * 2), r = d.r * Math.sqrt(rng.next());
-      space.toScene([d.cx + Math.cos(a) * r, d.y, d.cz + Math.sin(a) * r], tmpS);
-      sx = tmpS.x; sy = tmpS.y;
-    }
-    const surf = space.surfaceAtScene(sx, sy);
-    if (surf.kind === 'void') continue;
-    // 粒子区域：按权重拒绝采样 ⇒ 密度随离边距离平滑变稀（边带里天然少，不靠遮罩）
-    if (cf && rng.next() >= footWeight(space, cf, surf.p[0], surf.p[2])) continue;
-    return { p: surf.p, normal: surf.normal, kind: surf.kind };
-  }
-  return null;
-}
-
 /** 片内切线：与法线垂直的随机单位向量 */
 function randomTangent(n: Vec3, rng: VfxRng, out: Vec3): Vec3 {
   const a = Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
@@ -291,6 +193,7 @@ export interface PlateBody {
 export function placePlateOnSurface(
   P: PlateParams, arr: PlateArrays, b: PlateBody, i: number, space: VfxSpace, rng: VfxRng,
   surf: { p: Vec3; normal: Vec3; kind: 'ground' | 'object' },
+  velocity?: Vec3,
 ): void {
   const s = space.metricAt(surf.p[0], surf.p[2]);
   const n = surf.normal;
@@ -313,6 +216,13 @@ export function placePlateOnSurface(
   arr.still[i] = SLEEP_AFTER_S;
   arr.metric[i] = s;
   arr.wind[i] = 0;
+  if (velocity && (velocity[0] !== 0 || velocity[1] !== 0 || velocity[2] !== 0)) {
+    b.vx[i] = velocity[0]; b.vy[i] = velocity[1]; b.vz[i] = velocity[2];
+    arr.sleep[i] = 0; arr.still[i] = 0;
+    // A launched particle has not established adhesion; collision can establish contact later.
+    arr.hold[i] = 0;
+    if (velocity[0] * n[0] + velocity[1] * n[1] + velocity[2] * n[2] > 0) arr.contact[i] = PlateContact.Free;
+  }
 }
 
 /** 把第 i 张片放进空中（补回 / 普通发射出生）：随机朝向、跟着那里的风走 */
@@ -341,53 +251,6 @@ export function launchPlate(
   arr.wind[i] = 0;
 }
 
-/** 补回：区域里挑一处、往上风错开、抬到半空，带着那里的风速放出去 */
-export function replenishPlate(
-  P: PlateParams, arr: PlateArrays, b: PlateBody, i: number, space: VfxSpace, rng: VfxRng,
-  area: PlateArea, wind: SceneWindParams | null, time: number,
-): boolean {
-  const surf = pickAreaSurface(space, area, rng);
-  if (!surf) return false;
-  const s = space.metricAt(surf.p[0], surf.p[2]);
-  const cf = area.confine;
-  let hReal: number;
-  if (cf) {
-    // 限定区域时从低处放：一秒内落得了地。从 140–340 高处放的纸要飘好几秒、顺风走上千 wu，
-    // 边带根本拦不住，结果是半空里一张接一张淡出（实测强风下每秒 9 张，几乎全在下风边的半空）
-    const vt = Math.sqrt(PLATE_GRAVITY / P.kn);
-    hReal = rng.range(0.25 * vt * CONFINE_REPLENISH_FALL_S, vt * CONFINE_REPLENISH_FALL_S);
-    if (cf.ceiling !== null) hReal = Math.min(hReal, Math.max(0, cf.ceiling - cf.ceilingBand));
-  } else {
-    hReal = rng.pair(REPLENISH_HEIGHT, 200);
-  }
-  const at: Vec3 = [surf.p[0], space.groundY(surf.p[0], surf.p[2]) + hReal * s, surf.p[2]];
-  const vel: Vec3 = [0, 0, 0];
-  if (wind) {
-    let up = rng.pair(REPLENISH_UPWIND, 0) * s;
-    // 粒子区域：往上风错开这一步不许把它错到框外去（那样一补回就在淡出）——按权重接受，不行就减半再试
-    if (cf) up = confinedUpwind(space, cf, at, wind, up, rng);
-    at[0] -= wind.dirX * up; at[2] -= wind.dirZ * up;
-    sampleSceneWind(wind, time, at[0], at[2], hReal, vel);
-    const g = wind.gainVfx * (cf ? footWeight(space, cf, at[0], at[2]) : 1);
-    vel[0] *= g; vel[2] *= g;
-  }
-  launchPlate(P, arr, b, i, space, rng, at, vel);
-  if (cf) {
-    // 半空里凭空冒出一张满不透明的纸就是一种硬边：从 0 淡进来
-    b.fade[i] = 0; b.fadeRate[i] = -1 / CONFINE_FADE_IN_S;
-  } else {
-    b.fade[i] = 1; b.fadeRate[i] = 0;
-  }
-  return true;
-}
-
-function confinedUpwind(space: VfxSpace, cf: ConfineField, at: Vec3, wind: SceneWindParams, up: number, rng: VfxRng): number {
-  for (let k = 0; k < 3 && up > 1; k++, up *= 0.5) {
-    if (rng.next() < footWeight(space, cf, at[0] - wind.dirX * up, at[2] - wind.dirZ * up)) return up;
-  }
-  return 0;
-}
-
 export interface PlateStepEnv {
   space: VfxSpace;
   wind: SceneWindParams | null;
@@ -399,7 +262,12 @@ export interface PlateStepEnv {
   time: number;
   /** 全局子步序号（决定哪些子步刷度量 / 查唤醒） */
   substep: number;
-  area: PlateArea;
+  confine: ConfineField | null;
+  lifecycle: VfxParticleLifecycle;
+  fields: readonly VfxFieldRuntime[];
+  fieldWind: boolean;
+  airflow: boolean;
+  stimulus: VfxStimulusResponse | null;
   rng: VfxRng;
 }
 
@@ -425,31 +293,14 @@ export function stepPlates(
   const refreshMetric = env.substep % METRIC_EVERY === 0;
   const checkWake = env.substep % WAKE_CHECK_EVERY === 0;
   const gainV = wind ? wind.gainVfx : 0;
-  const cf = env.area.confine;
+  const cf = env.confine;
   // 边带里躺着的纸：权重 w 处平均躺 CONFINE_SETTLE_MEAN_S / (1−w) 秒开始淡出（只在查唤醒的子步上掷）
   const settleP = (h * WAKE_CHECK_EVERY) / CONFINE_SETTLE_MEAN_S;
-  let replenishBudget = CONFINE_REPLENISH_PER_SUBSTEP;
-  let killed = 0;
+  env.lifecycle.beginStep();
 
   for (let i = 0; i < cap; i++) {
     if (!alive[i]) continue;
-    // ---- 粒子区域：淡入淡出。睡着的也每子步走——不然躺着淡出的纸会停在半透明
-    if (cf && b.fadeRate[i] !== 0) {
-      b.fade[i] -= b.fadeRate[i] * h;
-      if (b.fade[i] <= 0) {
-        b.fade[i] = 0;
-        if (!P.replenish) { alive[i] = 0; killed++; continue; }
-        // 淡完了等补回。⚠ 挑不到落点**不回收**：发射区域与范围区域重叠很少时，按权重拒绝采样常常挑空，
-        // 回收掉就是总数一张张漏光。隐身留着、下个子步再试；每子步补回次数封顶，退化场景（两块不相交）
-        // 也不会每子步几百张 × 96 次表面查询把帧打爆（校验器另报 warning）。
-        if (replenishBudget > 0) {
-          replenishBudget--;
-          replenishPlate(P, arr, b, i, sp, env.rng, env.area, wind, env.windTime);
-        }
-        continue;
-      }
-      if (b.fade[i] >= 1) { b.fade[i] = 1; b.fadeRate[i] = 0; }
-    }
+    if (env.lifecycle.beforeParticle(i, h)) continue;
     const sleeping = arr.sleep[i] === 1;
     // 睡着的片只在查唤醒的子步上露面（这是常驻几百张也便宜的原因）
     if (sleeping && !checkWake) continue;
@@ -485,6 +336,21 @@ export function stepPlates(
       sampleSceneWind(wind, env.windTime, x, z, hExp, U);
       ux = U[0] * gainV; uy = U[1] * gainV; uz = U[2] * gainV;
     }
+    let hasLocalAirflow = false;
+    if (env.airflow) {
+      U[0] = 0; U[1] = 0; U[2] = 0;
+      accumulateAirflow(env.fields, x, y, z, U);
+      hasLocalAirflow = U[0] !== 0 || U[1] !== 0 || U[2] !== 0;
+      // The public field is in M-world; this solver integrates in local physical wu
+      // and applies metric to position displacements; its stored velocity remains physical wu/s.
+      if (hasLocalAirflow) { ux += U[0] / s; uy += U[1] / s; uz += U[2] / s; }
+    }
+    EXTRA[0] = 0; EXTRA[1] = 0; EXTRA[2] = 0;
+    if (env.fieldWind || env.stimulus) {
+      accumulateFieldAcceleration(env.fields, env.fieldWind, env.stimulus, x, y, z, b.seed[i], EXTRA);
+    }
+    const hasExternalForce = EXTRA[0] !== 0 || EXTRA[1] !== 0 || EXTRA[2] !== 0;
+    if (hasExternalForce) { EXTRA[0] /= s; EXTRA[1] /= s; EXTRA[2] /= s; }
     arr.wind[i] = Math.hypot(ux, uy, uz);
     // 粒子区域：边带里风按权重弱下去（飞到边上自己落下，不是撞墙）；过了高度上限，上升气流不再托它。
     // 放在 `arr.wind` 之后：渲染的边角掀动看真实风，边带里躺着的纸照样跟着旁边的草一起颤
@@ -508,7 +374,19 @@ export function stepPlates(
       const lift = kn * CAMBER_LIFT * bendAbs * wtm * wtm;
       const gIn = g * Math.max(0, cny);                       // 重力压进面里的那一份
       const slide = g * Math.sqrt(Math.max(0, 1 - cny * cny)); // 重力沿坡的那一份
-      if (push + slide > P.muS * Math.max(0, gIn - lift) + arr.hold[i] || lift > gIn + arr.hold[i]) {
+      let wake = push + slide > P.muS * Math.max(0, gIn - lift) + arr.hold[i] || lift > gIn + arr.hold[i];
+      if (hasExternalForce || hasLocalAirflow) {
+        // Include the same external acceleration in contact-space wake and integration.
+        // No arbitrary upward kick: an acceleration into the surface increases the normal load.
+        const pressure = kn * wn * Math.abs(wn);
+        const ax = pressure * nx + ktEff * wtm * wtx + lift * cnx + EXTRA[0];
+        const ay = -g + pressure * ny + ktEff * wtm * wty + lift * cny + EXTRA[1];
+        const az = pressure * nz + ktEff * wtm * wtz + lift * cnz + EXTRA[2];
+        const an = ax * cnx + ay * cny + az * cnz;
+        const tangent = Math.hypot(ax - an * cnx, ay - an * cny, az - an * cnz);
+        wake = tangent > P.muS * Math.max(0, -an) + arr.hold[i] || an > arr.hold[i];
+      }
+      if (wake) {
         arr.sleep[i] = 0;
         arr.still[i] = 0;
       } else continue;
@@ -538,6 +416,7 @@ export function stepPlates(
       curlNoise3(x * t.invScale, y * t.invScale, z * t.invScale, env.time * t.speed + b.seed[i] * 3, N3);
       ax += N3[0] * t.strength; ay += N3[1] * t.strength; az += N3[2] * t.strength;
     }
+    if (hasExternalForce) { ax += EXTRA[0]; ay += EXTRA[1]; az += EXTRA[2]; }
 
     // ---- 力矩（角加速度）
     let ox = arr.ox[i], oy = arr.oy[i], oz = arr.oz[i];
@@ -661,23 +540,7 @@ export function stepPlates(
       }
     } else arr.still[i] = 0;
 
-    // ---- 丢失：刮下崖 / 出区域
-    const a = env.area;
-    let lost = y < a.floorY - LOST_DROP_WU;
-    // 限定区域时出框交给上面的淡出回收；包围盒外扩那条粗判据只管没限定的实例
-    if (!lost && !cf) {
-      P3[0] = x; P3[1] = y; P3[2] = z;
-      sp.toScene(P3, tmpS);
-      const mx = (a.maxX - a.minX) * 0.35 + 60, my = (a.maxY - a.minY) * 0.35 + 60;
-      lost = tmpS.x < a.minX - mx || tmpS.x > a.maxX + mx || tmpS.y < a.minY - my || tmpS.y > a.maxY + my;
-    }
-    if (lost) {
-      if (!P.replenish || !replenishPlate(P, arr, b, i, sp, env.rng, a, wind, env.windTime)) {
-        alive[i] = 0;
-        killed++;
-      }
-      continue;
-    }
+    if (env.lifecycle.afterMotion(i, x, y, z)) continue;
 
     b.x[i] = x; b.y[i] = y; b.z[i] = z;
     b.vx[i] = vx; b.vy[i] = vy; b.vz[i] = vz;
@@ -685,11 +548,13 @@ export function stepPlates(
     arr.nx[i] = nnx; arr.ny[i] = nny; arr.nz[i] = nnz;
     arr.tx[i] = ttx; arr.ty[i] = tty; arr.tz[i] = ttz;
   }
-  return killed;
+  return env.lifecycle.killed;
 }
 
 const GN: Vec3 = [0, 1, 0];
 const P3: Vec3 = [0, 0, 0];
+const tmpS = { x: 0, y: 0 };
+const EXTRA: Vec3 = [0, 0, 0];
 
 /** 弯曲：阻尼振子追"静卷曲 + 法向气动载荷 / 刚度"，封顶 */
 function stepBend(P: PlateParams, arr: PlateArrays, i: number, fn: number, h: number): void {

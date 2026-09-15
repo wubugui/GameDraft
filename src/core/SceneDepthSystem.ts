@@ -1,6 +1,8 @@
 import { Texture, type TextureSource } from 'pixi.js';
 import type { AssetManager } from './AssetManager';
-import type { SceneDepthConfig, IGameSystem, GameContext, RgbColor } from '../data/types';
+import type {
+    SceneDepthConfig, IGameSystem, GameContext, RgbColor, CollisionGridMeta, CollisionSidecar,
+} from '../data/types';
 import { DepthOcclusionFilter } from '../rendering/DepthOcclusionFilter';
 import {
   EntityLightingFilter,
@@ -22,6 +24,20 @@ import {
 } from '../utils/worldReconstruct';
 
 const T = 'DepthSystem';
+
+/** 碰撞网格旁挂的文件名（与 `tools/character_lighting_lab/terrain_compose.SIDECAR_FILE` 同名，契约测试钉着） */
+export const COLLISION_SIDECAR_FILE = 'collision.json';
+
+/** `collision.png` → 每格一个字节（**红通道**；255 = 阻挡）。位图就是网格，不缩放。 */
+export function decodeCollisionBitmap(bitmap: ImageBitmap): { data: Uint8Array; w: number; h: number } {
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(bitmap, 0, 0);
+    const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    const data = new Uint8Array(bitmap.width * bitmap.height);
+    for (let i = 0; i < data.length; i++) data[i] = imgData.data[i * 4];
+    return { data, w: bitmap.width, h: bitmap.height };
+}
 
 /** 实验室 CHAR_FS 的遮挡偏置常数（`dFront < uFootQ.z - .045`）：
  *  脚点深度直接取自行走面场，残差≈0，这点余量用来吃掉采样/量化噪声。 */
@@ -71,7 +87,6 @@ export class SceneDepthSystem implements IGameSystem {
     private R20 = 0; private R21 = 0; private R22 = 0;
     private ppu = 1; private cx = 0; private cy = 0;
     private colXMin = 0; private colZMin = 0; private colCellSize = 1;
-    private colHeightOffset = 0;
 
     private sceneW = 0;
     private sceneH = 0;
@@ -233,14 +248,13 @@ export class SceneDepthSystem implements IGameSystem {
         this.R20 = M.R[2][0]; this.R21 = M.R[2][1]; this.R22 = M.R[2][2];
         this.ppu = M.ppu; this.cx = M.cx; this.cy = M.cy;
 
-        const col = depthConfig.collision;
-        if (col) {
-            this.colXMin = col.x_min; this.colZMin = col.z_min;
-            this.colCellSize = col.cell_size;
-            this.collisionW = col.grid_width; this.collisionH = col.grid_height;
-            this.colHeightOffset = col.height_offset;
-            depthLog(T, 'collision grid:', col);
-        }
+        // 碰撞网格：旁挂 `collision.json` 先（地形工作台唯一写入者，与 collision.png 同一次合成落盘），
+        // 没有才退回场景 JSON 的 `depthConfig.collision`（老场景）。⚠ 网格声明与位图必须是同一次
+        // 写出的：位图尺寸 ≠ 声明就按错误列宽索引，静默错到底——这里直接拒用并出声。
+        const sidecar = await assetManager.loadOptionalJson<CollisionSidecar>(
+            sceneRuntimeAssetUrl(sceneId, COLLISION_SIDECAR_FILE));
+        const col: CollisionGridMeta | null = sidecar ?? depthConfig.collision ?? null;
+        this.applyCollisionGrid(col, sidecar ? 'collision.json' : 'depthConfig.collision');
 
         this._depthTolerance = depthConfig.depth_tolerance;
         this._floorOffset = depthConfig.floor_offset;
@@ -386,18 +400,50 @@ export class SceneDepthSystem implements IGameSystem {
 
     private async loadCollisionBitmap(path: string, assetManager: AssetManager): Promise<void> {
         const bitmap = await assetManager.loadBitmap(path);
+        const { data, w, h } = decodeCollisionBitmap(bitmap);
+        this.collisionData = data;
+        this.collisionW = w;
+        this.collisionH = h;
+    }
 
-        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-        const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(bitmap, 0, 0);
-        const imgData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-
-        this.collisionData = new Uint8Array(bitmap.width * bitmap.height);
-        for (let i = 0; i < this.collisionData.length; i++) {
-            this.collisionData[i] = imgData.data[i * 4];
+    /**
+     * 套上一份碰撞网格声明。位图已装（`collisionData`）时尺寸必须与声明一致，
+     * 否则整份碰撞拒用（`collisionData = null` ⇒ 处处可走）并出声——按错误列宽读格子是最难查的静默错。
+     */
+    private applyCollisionGrid(col: CollisionGridMeta | null, source: string): void {
+        if (!col) return;
+        if (this.collisionData && (this.collisionW !== col.grid_width || this.collisionH !== col.grid_height)) {
+            depthError(T, `碰撞网格声明 ${col.grid_width}x${col.grid_height}（${source}）≠ 位图 `
+                + `${this.collisionW}x${this.collisionH}，整份碰撞拒用（处处可走）。重新导出地形。`);
+            this.collisionData = null;
+            this.collisionTexture = null;
+            return;
         }
-        this.collisionW = bitmap.width;
-        this.collisionH = bitmap.height;
+        this.colXMin = col.x_min; this.colZMin = col.z_min;
+        this.colCellSize = col.cell_size;
+        this.collisionW = col.grid_width; this.collisionH = col.grid_height;
+        depthLog(T, `collision grid (${source}):`, col);
+    }
+
+    /**
+     * 原地换碰撞（地形工作台「推给游戏」/「导出到游戏」）：位图 + 网格声明一起换，
+     * 影子裁切用的 GPU 纹理一并换。深度 / 遮挡不动。
+     */
+    replaceCollision(bitmap: ImageBitmap, col: CollisionGridMeta, texture: Texture | null): void {
+        if (!this.enabled) return;
+        const { data, w, h } = decodeCollisionBitmap(bitmap);
+        this.collisionData = data;
+        this.collisionW = w;
+        this.collisionH = h;
+        this.collisionTexture = texture;
+        this.applyCollisionGrid(col, 'replaceCollision');
+    }
+
+    /** 当前碰撞网格声明（调试面板 / 工作台对账用）；没装 = null */
+    get collisionGrid(): CollisionGridMeta | null {
+        if (!this.collisionData) return null;
+        return { x_min: this.colXMin, z_min: this.colZMin, cell_size: this.colCellSize,
+                 grid_width: this.collisionW, grid_height: this.collisionH };
     }
 
     /**

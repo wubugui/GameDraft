@@ -120,7 +120,16 @@ TOOLS: tuple[ToolAction, ...] = (
                "一键拉起游戏进当前场景实时预览、试听；它是 acoustic_spaces.json 的唯一写者（独立窗口，零浏览器缓存）"),
     ToolAction("粒子工作台", "vfx-workbench",
                "世界空间粒子 / 群体：发射器与模块按 types.ts 逐字建，3D 里摆发射器原点 / 巢半径 / 锚点，"
-               "本地预览跑的就是运行时那份模拟核心；一键拉起游戏实时预览、发刺激；它是 assets/data/vfx/ 的唯一写者（独立窗口，零浏览器缓存）"),
+               "本地预览跑的就是运行时那份模拟核心；按场景 × 时段外观布置、拉发射区域 / 范围区域；一键拉起游戏实时预览、切时段、发刺激；"
+               "它是 assets/data/vfx/ 与 vfx_placements.json 的唯一写者（独立窗口，零浏览器缓存）"),
+    ToolAction("草木工作台", "sway-workbench",
+               "背景草木摆动：自动分割打底，页面上涂补植被 / 锁死不动 / 刚体三个通道 → 推给游戏（立刻在跑着的游戏里看，资源不动）"
+               " → 满意了导出到游戏（写进资源）；"
+               "它是 lighting/<背景图名>/sway_paint.png 的唯一写者（独立窗口，零浏览器缓存）"),
+    ToolAction("地形工作台", "terrain-workbench",
+               "碰撞 / 可走区 / 行走面：在场景的 3D 伪世界与原画上画多边形、涂笔刷、雕行走面，连通性即时报；"
+               "推给游戏（立刻在跑着的游戏里原地换上，资源不动）→ 导出到游戏（合成进 collision.png / collision.json / ground_d.png）；"
+               "它是 runtime/scenes/<id>/terrain/ 作者层的唯一写者（独立窗口，零浏览器缓存）"),
     ToolAction("动画资源工作台", "anim-preview", "A→H 版本图 / 人工 R 装配 / 游戏真实渲染终验(Web IDE)"),
     ToolAction("Parallax 编辑器", "parallax-editor", "过场视差场景可视化编辑：图层/关键帧/轨迹，存 parallax_scenes.json(Web)"),
     ToolAction("Skill/Workflow 治理", "skill-governance", "扫描 skill、workflow 和 agent 入口，生成报告并打开 dashboard"),

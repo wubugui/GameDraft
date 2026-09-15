@@ -1,0 +1,88 @@
+{
+  "id": "teahouse_lamp_flicker",
+  "label": "茶馆 · 灯火明灭",
+  "emitters": [
+    {
+      "id": "glow",
+      "appearance": {
+        "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
+        "state": "idle",
+        "frameRate": 6,
+        "sizeWu": 44,
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.06,
+            0.8
+          ],
+          [
+            0.21,
+            0.55
+          ],
+          [
+            0.34,
+            0.85
+          ],
+          [
+            0.43,
+            0.45
+          ],
+          [
+            0.65,
+            0.7
+          ],
+          [
+            0.8,
+            0.5
+          ],
+          [
+            0.92,
+            0.75
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          0.78,
+          0.43
+        ],
+        "blend": "add",
+        "lit": false
+      },
+      "spawn": {
+        "max": 1,
+        "rate": 0.22,
+        "burst": 1,
+        "shape": {
+          "kind": "point"
+        },
+        "speed": [
+          0,
+          0
+        ]
+      },
+      "life": {
+        "seconds": [
+          4.5,
+          6
+        ]
+      }
+    }
+  ],
+  "authoring": {
+    "sceneId": "teahouse",
+    "background": "background.png",
+    "anchor": {
+      "x": 339,
+      "y": 37,
+      "h": 1,
+      "surface": "shell"
+    }
+  }
+}

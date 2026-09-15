@@ -80,11 +80,20 @@ last_governed: 2026-09-12
   **没有任何分段时左键点画布 = 直接开始画线**(自动建手绘段并进加点模式),不必先去右栏找按钮。
 - **选择集**:点点 / 拖点、`Shift` 多选、框选、**点曲线选段**、双击曲线插点、右键点删点、`Delete` 删点(范围是"整段"时删段)、
   `Ctrl+A` 全选点、`[` `]` 切段、方向键微移(`Shift` ×10)。
-- **下拉框一律走页内列表**(`viewer/dropdown.js`,粒子台经 `/vendor/dropdown.js` 借同一份;2026-09-12 加):
+- **下拉框一律走页内列表**(`viewer/dropdown.js`,粒子台与草木台经各自 `serve.py` 的 `/vendor/dropdown.js` 白名单借同一份;2026-09-12 加,草木台 09-14 接上):
   `mousedown` 里 `preventDefault()` 掐死系统原生 `<select>` 弹窗,自己在 DOM 里画。
   ⚠ 原生那条在 150% 缩放屏上**框按设备像素、内容按 CSS 像素**画,弹出来比控件大一圈、右下一大块白边,
   **每开一次再乘一次**(制作人在粒子台与本台都实拍到),而且不吃页面配色。DOM 里的 `<select>` 原样留着,
   `.value` / `change` / 现有代码与自检一个字都不用改。
+  **键盘同样不许漏到原生弹窗**(2026-09-14):焦点停在收起的下拉框上按 Enter / F4 / Alt+↑↓,Blink 默认弹的也是那个原生列表——
+  现在捕获阶段拦下来打开页内列表(↑↓ / Home / End 移高亮、跳过禁用项、Enter 选、按住的 Enter 自动重复不算);
+  空格只 `preventDefault`、**不拦传播**(页面拿空格做播放);Esc 在 window 捕获阶段只关列表(原来本台对话框里 Esc 把整个对话框关了、列表还飘着)。
+  **点别处关列表的那一下整个被吃掉**(与原生弹窗一致,2026-09-14 第七轮复核):window 捕获阶段的 `pointerdown` / `mousedown`
+  (排在画布 / 舞台 / 页面自己的捕获监听前面)关列表、让下拉框失焦(不然单键快捷键还被它拿着)、`preventDefault` + `stopImmediatePropagation`,
+  同一手势剩下的 `pointerup` / `mouseup` / `click` / `contextmenu` / `auxclick`,以及和它连成的 `dblclick` 一并吞掉;
+  下一次按下、这一下的 `click`、任何按键都结束吞没(键盘触发的 click 不许被吞)。点列表项照常选;点开着的那个下拉框本身 = 只关、不闪一下又开。
+  原来只在 document 的 `mousedown` 上关:画布的 `pointerdown` 先到,草木台点画面关场景列表 = 多涂一笔(锚点工具里放个锚点、列表还关不掉)。
+  列表关闭发 `ddclose`,对已脱离文档的下拉 `pick()` 发 `ddstale`(粒子台据此补重建 / 提示再选一次)。自检 S15。
 - **变换 gizmo(`viewer/gizmo.js`,2D 原画视图与 3D 视图共用同一份,Unity 的 W/E/R)**:**选中任何东西就立刻出现在轴心**——一个点也算,
   加点模式下刚加的点也带着(2026-09-11 制作人:"选中物体根本没有 gizmo / 第一次点击没有自动激活,要切换一下才看得到"——他在原画视图里选单点,
   而当时 2D 只有 ≥2 点的包围盒变换框、3D 才有轴)。`W` 移动 / `E` 旋转 / `R` 缩放,拖动时 `Ctrl` 吸附(10 wu / 15° / ×0.1),读数跟光标,悬停变黄;
@@ -146,6 +155,17 @@ last_governed: 2026-09-12
 **它是桌面应用**(制作人 2026-09-04 定死):入口只有桌面窗口(`tools/desktop_shell`:纯内存 profile、
 NoCache、NoPersistentCookies、服务端 `no-store/no-cache/Pragma/Expires` 三件套),不走系统浏览器、不留任何浏览器缓存。
 `--serve` 只是给无头验证与自动化的裸服务,不会开浏览器。单实例;第二次 `--open <id>` 把已开着的窗口切到那条资产。
+
+**关窗 / 刷新保护在壳里**(2026-09-14,`_ShellWindow.closeEvent` + `_guard_unsaved`,F5 / Ctrl+R 同一条):壳用 `runJavaScript`
+问页面 `window.__unsavedSummary()`(给人看的一段话,空 = 没有没存的),非空就弹「保存并关闭 / 不保存,直接关闭 / 取消」;
+页面挂了 `window.__saveUnsaved()` 才有「保存并关闭」(结果写 `window.__saveUnsavedResult`:`'pending'` → `'ok'` / 没存上的原因,
+没存上就不关并说原因);选「不保存」时壳先设 `window.__discardUnsaved = true`(页面自己的 `beforeunload` 看到它不再弹第二次),
+页面挂了 `window.__onDiscardUnsaved()` 就先调它、最多等 2 s(草木台用它删掉这份活的草稿)。页面还应在 `__unsavedSummary()` 开头
+把焦点所在输入框的值提交掉——点标题栏 X / 按 F5 都不会让页面里的输入框失焦。`Ctrl+0` 复位页面缩放。
+页面 2.5 s 不应答(渲染进程崩了 / 没装上)就照常关——不许把人锁在窗口里。没挂钩子的工具行为不变。
+⚠ **只写 `beforeunload` 不管用**:关 QMainWindow 根本不跑它(窗口直接销毁、改动静默丢掉);`RequestClose` 会跑,但弹的是 Qt 自带的
+英文框,页面卡死时窗口还关不掉。粒子 / 草木 / 本台 / 声学四台都已挂钩子(本台与声学台 2026-09-14 补:保存走各自的 `saveAsset` / `save`,结果以 `S.dirty` 为准)。
+无头 smoke / selftest 不经过这道闸(`smoke` 直接关);四条分支(取消 / 保存成功 / 保存失败 / 不保存)2026-09-14 在 offscreen Qt 里真驱动过。
 
 ## 权威源(读代码从哪进)
 
@@ -296,7 +316,7 @@ sh scripts/py.sh -m tools.trajectory_workbench --selftest
 起点在线下、时间键、保存后改数值 / 保存中改名称 / 三发并发保存 / 改名 + 保存串行 / 输入框里 Ctrl+S、手势跨 doc、换场景 ↔ 撤销重做 ↔
 装载门 ↔ 装载失败回滚 ↔ envBroken 重试、世界空间新建 / 高度把手 / 换场景保高度 / 落点拾取 / 文件往返 / 3D 拖点、
 **S11 投影判据(画面不是镜像的)、S12 对齐判据(工作台的世界 == 运行时的世界)**),一行一条
-PASS/FAIL,有 FAIL 退出码 1,118 条 ~45 s(S4 插槽 + **曲线原点**(工具放置 / 拖它不动曲线 / 调起点不动它) / S9 场景曲线拒换场景 · 换时段进历史 · 相对曲线换背景不进历史 / S10 无锚点往返 / S13 3D 插槽);`pytest` 里 `test_selftest.py` 就是它(没 QtWebEngine 或缺 雾津街头 数据就 skip)。
+PASS/FAIL,有 FAIL 退出码 1,135 条 ~45 s(S4 插槽 + **曲线原点**(工具放置 / 拖它不动曲线 / 调起点不动它) / S9 场景曲线拒换场景 · 换时段进历史 · 相对曲线换背景不进历史 / S10 无锚点往返 / S13 3D 插槽);`pytest` 里 `test_selftest.py` 就是它(没 QtWebEngine 或缺 雾津街头 数据就 skip)。
 **改 viewer 下任何东西先跑它,别拿审查员当回归测试**;新抓到的坑往 `selftest.js` 里加一条 `ok()`。`--selftest <path>` 可换脚本
 (脚本跑完把报告写进 `window.__selftestResult`)。⚠ 脚本里派事件前重新取元素(松手会重画检视器,旧画布是孤儿)、跨撤销从 `S.doc` 重新取段、
 等派生量用 `settle()`(立刻跑完挂着的烘焙)而不是 sleep、绝不在 `coin_drop_demo` 上 `saveAsset`。

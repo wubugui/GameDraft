@@ -390,7 +390,7 @@
       "src": "/resources/runtime/audio/edited/ui_error_denied.wav"
     },
     "save_done": {
-      "src": "/resources/runtime/audio/edited/save_done.wav"
+      "src": "/resources/runtime/audio/edited/minigame_win_6aa2ffc1.wav"
     },
     "shop_trade": {
       "src": "/resources/runtime/audio/edited/shop_trade.wav"
@@ -564,7 +564,7 @@
       "src": "/resources/runtime/audio/edited/ui_notification.wav"
     },
     "item_pickup": {
-      "src": "/resources/runtime/audio/edited/item_pickup.wav"
+      "src": "/resources/runtime/audio/edited/shop_trade_64b9c6e0.wav"
     },
     "coin_gain": {
       "src": "/resources/runtime/audio/edited/coin_gain.wav"
@@ -951,6 +951,7 @@
     "uiPanelOpen": "ui_panel_open",
     "uiPanelClose": "ui_panel_close",
     "uiNotification": "ui_notification",
+    "saveDone": "save_done",
     "uiWarning": "ui_warning",
     "hotspotInteract": "hotspot_interact",
     "sceneTransition": "scene_transition",

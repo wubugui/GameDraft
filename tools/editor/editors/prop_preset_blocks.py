@@ -394,7 +394,7 @@ class PropLightForm(QWidget):
         self._intensity.setToolTip(
             "亮度。**必须 > 0** —— 运行时 `parsePropLight` 把 intensity ≤ 0 的灯整盏丢掉\n"
             "（零强度的灯只白占一个灯槽，而灯槽是 24 个的硬上限）。\n"
-            f"缺省 {LIGHT_DEFAULTS['intensity']}；场景灯的油灯档是 2.5，可拿来比。")
+            f"缺省 {LIGHT_DEFAULTS['intensity']}；与同场景普通点光灯的强度含义相同。")
         self._intensity.valueChanged.connect(self._emit)
         form.addRow("亮度", self._intensity)
 

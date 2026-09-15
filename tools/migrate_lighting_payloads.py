@@ -49,9 +49,11 @@ SCENES_RT = ROOT / 'public' / 'resources' / 'runtime' / 'scenes'
 #: 再来个 meta.json 谁也说不清是谁的 meta)。
 RENAME = {'meta.json': 'geometry.json'}
 
-#: 几何场载荷代次。与 `scene_fields.PAYLOAD_VERSION` /
-#: `SceneLightingSystem.LIGHTING_GEOMETRY_VERSION` / `validator._LIGHTING_GEOMETRY_VERSION` 一致。
-GEOMETRY_VERSION = 3   # v3(2026-09-01):新增 skyao_probe.bin —— 每格 4 个 f32 的天穹遮蔽矩,角色按任意法线求值。旧的 skyvis_grid.bin 降为它的派生标量。
+#: 本脚本当年(2026-09-01)搬家时盖的代次,**冻结的历史值**,只给下面"目标是不是新烘的"那一个判断用。
+#: ⚠ 它**不是**、也不必再与谁一致:2026-09-14 起运行时与校验器都不比版本号,按字段与文件验
+#: (`src/core/lightingPayloadFiles.ts`)。原来的注释要求它与另外三处"一致",而它早就停在 3、
+#: 另外三处是 4 —— 这正是那个版本门被拆掉的理由之一。`lighting2/` 全仓已无存量,本脚本跑了也是空转。
+GEOMETRY_VERSION = 3
 
 
 def _plan_one(scene_dir: Path) -> list[tuple[Path, Path]]:

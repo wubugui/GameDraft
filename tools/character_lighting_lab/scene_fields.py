@@ -68,8 +68,12 @@ from .probe_layout import grid_points as grid_points_             # noqa: E402
 from .const import GATHER_SEED                                    # noqa: E402
 from .scene_geometry import sky_field  # noqa: E402
 
-#: 载荷代次。改任何产物布局都要 +1,并同步 validate.py 与运行时消费端。
-PAYLOAD_VERSION = 4   # v4:新增 albedo.png(灯乘的反照率贴图);skyvis.png 退出运行时
+#: 烘焙器**自己的**产物代次记录(写进 geometry.json,给人和迁移看)。
+#: ⚠ 它不是运行时 / 校验器的门:2026-09-14 起两边都按运行时真正读的字段与文件验
+#: (`src/core/lightingPayloadFiles.ts` 的 `LIGHTING_GEOMETRY_FILES` / `LIGHTING_GEOMETRY_META_REQUIRED`),
+#: 不再有"代次必须相等"。改产物布局时去改那两张表,这个数只在这里有一份。
+#: v2 目录收束 + depth_sha1 / v3 skyao_probe.bin / v4 albedo.png(skyvis.png 退出运行时)
+PAYLOAD_VERSION = 4
 
 #: 烘焙工作分辨率(宽);天穹可见性是低频量,不需要原生分辨率。
 WORK_W = 512
@@ -444,7 +448,8 @@ def bake_albedo_only(sid: str, *, force: bool = False, status=print) -> list[dic
                 '先整体烘一遍那张背景。' % (sid, bg, f))
         authored = write_albedo(d, data, force=force, status=status)
         meta = json.loads(f.read_text(encoding='utf-8'))
-        meta['version'] = PAYLOAD_VERSION
+        # ⚠ 不动 `version`:这条路径一个 march 都没重跑,几何项还是当初那一代烘的。
+        #   原来这里把代次直接盖成当前值,于是"v4"只能说明"补过 albedo",说明不了几何是谁烘的。
         meta['albedo_map'] = albedo_map_meta(main_bg, src_sha1, authored)
         _atomic_bytes(f, (json.dumps(meta, ensure_ascii=False, indent=1) + '\n').encode('utf-8'))
         rows.append({'key': d.name, 'authored': authored,
@@ -828,7 +833,33 @@ def bake_scene(sid: str, **kw) -> list[dict]:
     整套光照安静禁用 —— 而白天一切正常,极难联想到是烘漏了。
     """
     from .scene_geometry import scene_backgrounds
-    return [bake(sid, background=bg, **kw) for bg in scene_backgrounds(sid)]
+    out = []
+    for bg in scene_backgrounds(sid):
+        ensure_phase_payload(sid, bg)
+        out.append(bake(sid, background=bg, **kw))
+    return out
+
+
+def ensure_phase_payload(sid: str, background: str, status=print) -> bool:
+    """时段原画还没有 probe 载荷 ⇒ 用主背景的几何 + 这张画重烘一份(`pipeline.seed_phase_payload`)。
+
+    几何场与 probe 载荷同住 `lighting/<背景基名>/`、运行时一起装;只烘几何场不补 probe,
+    这个时段角色照样没有底光、校验器照样报"没有烘焙数据"。主背景不归这里管(它要完整 build)。
+    返回是否真的烘了。
+    """
+    from .scene_geometry import scene_paths
+    if background == scene_paths(sid)['bg_name']:
+        return False
+    from tools.character_lighting_lab.pipeline import PhaseSeedUnavailable, seed_phase_payload
+    try:
+        done = seed_phase_payload(sid, background)
+    except PhaseSeedUnavailable as e:
+        # 前提不满足只影响 probe 这一半:几何场照烘,但必须出声(这个时段角色没有底光)
+        status(f'⚠ {sid} [{background}]: 时段原画的 probe 载荷建不了 —— {e}')
+        return False
+    if done is not None:
+        status(f'{sid} [{background}]: 时段原画没有 probe 载荷,已用主背景的几何重烘 → lighting/{done.name}/')
+    return done is not None
 
 
 def scene_bg_bytes(scene: Scene) -> bytes:
@@ -893,6 +924,7 @@ def main() -> None:
             print(f'{sid}: {len(bgs)} 张时段原画,各烘一套 —— ' + ', '.join(bgs))
         for bg in bgs:
             try:
+                ensure_phase_payload(sid, bg)
                 r = bake(sid, band=args.band, work_w=args.work_w, background=bg,
                          force_albedo=args.force_albedo)
             except Exception as e:                   # noqa: BLE001

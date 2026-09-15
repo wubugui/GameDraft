@@ -1224,18 +1224,25 @@ def validate(model: ProjectModel) -> list[Issue]:
                 # 阴影 march 的偏置与厚度窗(**wu**)。这两个曾经写死在 shader 的
                 # uniform 初值里且没有写入方，F2 与场景 JSON 都够不着；现在能写了，
                 # 就得挡住写错单位——厚度窗填成"世界单位"的量级会「隔山打影」。
+                from tools.editor.shared.light_factors import light_factor_issues
+                for _t in light_factor_issues(lit.get("lightFactors")):
+                    issues.append(Issue("error", "scene", sid, _t))
                 for _t in _shadow_bias_issues(lit.get("shadowBias")):
                     issues.append(Issue("error", "scene", sid, _t))
 
-        # 几何场载荷。配了 lighting 块却没烘载荷 ⇒ 运行时**安静不启用**，
-        # 画面上只表现为"这个场景的光照没生效"，没有任何报错。
+        # 几何场载荷。没烘 ⇒ 运行时**安静不启用**，画面上只表现为"这个场景的光照没生效"，
+        # 没有任何报错。判据跟运行时走:有 depthConfig 就会去装(2026-09-14 起没写 lighting 块
+        # 也按缺省块打光,原来只查写了块的场景,于是没写块的 6 个场景火把不亮这道门一声不吭)。
         #
         # ⚠ 期望值一律以**运行时消费端**为准（`SceneLightingSystem` / `GiBouncePass`）。
         #   2026-08-06 那次 lighting-bake 校验器自立口径多乘 4、把 28 个场景全量误报，
         #   教训是：校验器另立一套 = 把 error 通道淹掉。
-        if isinstance(lit, dict):
+        if (lit is None or isinstance(lit, dict)) and sc.get("depthConfig"):
             _l2 = _lighting_geometry_issues(sid)
             for _sev, _t in _l2:
+                issues.append(Issue(_sev, "scene", sid, _t))
+            # 地形（碰撞 / 可走区）：旁挂声明、作者层形状、以及从每个出生点到每个出口的连通性
+            for _sev, _t in _terrain_issues(sid, sc):
                 issues.append(Issue(_sev, "scene", sid, _t))
 
         # 角色阴影绑定（**必须手动指定，系统不自动 resolve**）。
@@ -1509,6 +1516,7 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_npc_schedules(model, issues)
     _validate_trajectories(model, issues)
     _validate_vfx_effects(model, issues)
+    _validate_vfx_placements(model, issues)
     _validate_plane_action_pairing(model, issues)
     _validate_narrative_templates(model, issues)
     _validate_entity_reachability(model, issues)
@@ -1520,10 +1528,24 @@ _CLOCK_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
 
 
-#: 几何场载荷代次。改产物布局要同步
-#: `character_lighting_lab/scene_fields.py#PAYLOAD_VERSION` 与
-#: `SceneLightingSystem.LIGHTING_GEOMETRY_VERSION`——三处必须一致，否则运行时整包忽略。
-_LIGHTING_GEOMETRY_VERSION = 4   # v4(2026-09-07):新增 albedo.png(灯乘的反照率贴图,作者可手改);skyvis.png 退出运行时,只作它的离线输入。
+#: `geometry.json` 里运行时**真正读的**字段(点路径,值须为正有限数),缺一个运行时就整包不启用。
+#: 镜像 `src/core/lightingPayloadFiles.ts#LIGHTING_GEOMETRY_META_REQUIRED`(`tests/test_lighting_geometry_meta_contract.py` 逐字比对)。
+#: 取代 2026-09-14 前的"代次必须 == 4":那个 4 手抄三处、没有测试绑,挡的东西都有更直接的判据。
+_LIGHTING_GEOMETRY_META_REQUIRED = (
+    "native.w", "native.h", "scale.scene_per_wu", "scale.char_wu", "work.w", "cal.ppu",
+)
+
+
+def _geometry_meta_problems(meta: object) -> list[str]:
+    """与运行时 `geometryMetaProblems` 同式:返回缺的 / 不是正有限数的字段。"""
+    bad: list[str] = []
+    for path in _LIGHTING_GEOMETRY_META_REQUIRED:
+        v: object = meta
+        for k in path.split("."):
+            v = v.get(k) if isinstance(v, dict) else None
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
+            bad.append(path)
+    return bad
 
 
 def _shadow_bias_issues(sb: object) -> list[str]:
@@ -1629,19 +1651,100 @@ def _scene_light_follow_issues(
     return out
 
 
+def _terrain_issues(sid: str, sc: dict) -> list[tuple[str, str]]:
+    """地形（碰撞 / 可走区 / 行走面修补）的校验。返回 (severity, text)。
+
+    - `collision.json` 旁挂是网格声明的真相（2026-09-14，取代 `depthConfig.collision`）：
+      两份都在 = 残留（warning）；一份都没有而 collision.png 在 = 碰撞整份不生效（error）；
+      声明与位图尺寸不符 = 按错误列宽读格子（error）。
+    - `terrain/terrain.json`（地形工作台的作者层，烘焙输入）形状坏了 = error：合成器会拒绝，
+      下一次实验室重烘就把作者层丢了。
+    - **连通性**：每个出生点都要走得到每个出口 / 跨点站位，跨点落点不能在阻挡格里（error）。
+      落点是否阻挡只是点判据，出口被切成孤岛时它是绿的（2026-09-14 崖墓两处实测）。
+    判据全走运行时那条反投影链（`audit_walkable` 是它的镜像），不另立口径。
+    """
+    from pathlib import Path as _P
+    import json as _json
+    out: list[tuple[str, str]] = []
+    cfg = sc.get("depthConfig") or {}
+    root = _P(__file__).resolve().parents[2]
+    scene_rt = root / "public" / "resources" / "runtime" / "scenes" / sid
+    if not scene_rt.is_dir():
+        return out
+    col_name = cfg.get("collision_map") or "collision.png"
+    col_png = scene_rt / col_name
+    sidecar = scene_rt / "collision.json"
+    legacy = cfg.get("collision")
+    if sidecar.exists():
+        try:
+            sd = _json.loads(sidecar.read_text(encoding="utf-8"))
+            for k in ("x_min", "z_min", "cell_size", "grid_width", "grid_height"):
+                v = sd.get(k)
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                    out.append(("error", f"collision.json 的 {k} 缺失或不是数——碰撞整份不生效"))
+            if col_png.exists() and all(isinstance(sd.get(k), (int, float)) for k in ("grid_width", "grid_height")):
+                from PIL import Image as _Im
+                with _Im.open(col_png) as im:
+                    if im.size != (int(sd["grid_width"]), int(sd["grid_height"])):
+                        out.append(("error", f"{col_name} {im.size[0]}x{im.size[1]} ≠ collision.json 声明 "
+                                             f"{int(sd['grid_width'])}x{int(sd['grid_height'])}——运行时拒用整份碰撞（处处可走）。"
+                                             f"在地形工作台里重新导出"))
+        except Exception as exc:  # noqa: BLE001
+            out.append(("error", f"collision.json 解析失败：{exc}"))
+        if legacy:
+            out.append(("warning", "depthConfig.collision 残留（网格声明已搬进 collision.json 旁挂）——"
+                                   "跑 `sh scripts/py.sh tools/migrate_terrain_authoring.py --scene " + sid + "` 清掉"))
+    elif col_png.exists() and not legacy:
+        out.append(("error", f"有 {col_name} 但没有网格声明（collision.json 旁挂 / depthConfig.collision 都没有）——"
+                             f"碰撞整份不生效。跑 `sh scripts/py.sh tools/migrate_terrain_authoring.py --scene {sid}`"))
+    tj = scene_rt / "terrain" / "terrain.json"
+    if tj.exists():
+        try:
+            from tools.character_lighting_lab import terrain_compose as _tc
+            doc = _json.loads(tj.read_text(encoding="utf-8"))
+            for p in _tc.terrain_problems(doc):
+                out.append(("error", f"terrain/terrain.json：{p}——合成器会拒绝，下次重烘作者层就丢了"))
+            if not out and doc.get("grid"):
+                g = _tc.GridMeta.from_dict(doc["grid"])
+                x1 = g.x_min + g.cell_size * g.grid_width
+                z1 = g.z_min + g.cell_size * g.grid_height
+                for r in doc.get("regions") or []:
+                    xs = [p[0] for p in r["points"]]
+                    zs = [p[1] for p in r["points"]]
+                    if max(xs) < g.x_min or min(xs) > x1 or max(zs) < g.z_min or min(zs) > z1:
+                        out.append(("warning", f"terrain 多边形 {r['id']} 整个落在碰撞网格之外，不起作用"))
+                a = doc.get("auto")
+                if a and not (scene_rt / "terrain" / a["file"]).exists():
+                    out.append(("warning", f"terrain/{a['file']} 不在——自动结果缺失，合成时按全可走"))
+        except Exception as exc:  # noqa: BLE001
+            out.append(("error", f"terrain/terrain.json 读不出来：{exc}"))
+    # 连通性（只在碰撞真的会生效时查：有位图 + 有声明 + 有行走面）
+    if col_png.exists() and (sidecar.exists() or legacy):
+        try:
+            from tools.character_lighting_lab.audit_walkable import reach_issues as _reach
+            sj = root / "public" / "assets" / "scenes" / f"{sid}.json"
+            if sj.exists():
+                for t in _reach(sj):
+                    out.append(("error", f"连通性：{t}"))
+        except Exception as exc:  # noqa: BLE001
+            out.append(("warning", f"连通性检查没跑起来：{exc}"))
+    return out
+
+
 def _lighting_geometry_issues(sid: str) -> list[tuple[str, str]]:
     """校验一个场景的**几何场**烘焙载荷（`lighting/<背景基名>/`）。返回 (severity, text)。
 
     ## 为什么必须校验
 
-    配了 `lighting` 块却没烘载荷（或载荷代次不对、尺寸对不上）时，运行时是
-    **安静地不启用**——不报错、不崩，画面上只表现为"这个场景的光照没生效"。
-    作者第一反应会去调参数，而参数根本没被读。
+    有 depthConfig 的场景却没烘载荷（或 meta 缺字段、尺寸对不上）时，运行时是
+    **安静地不启用**——不报错、不崩，画面上只表现为"这个场景的光照没生效"，
+    手里举着火把也一点光都没有。作者第一反应会去调参数，而参数根本没被读。
+    （2026-09-14 起没写 `lighting` 块的场景也按缺省块打光，所以这道门对它们一样要跑。）
 
     ## 期望值从哪来
 
     一律以**运行时消费端**为准：
-    · 代次 `SceneLightingSystem.LIGHTING_GEOMETRY_VERSION`
+    · meta 字段 `lightingPayloadFiles.LIGHTING_GEOMETRY_META_REQUIRED`（不再比版本号）
     · `skyvis_grid.bin` = nx·ny·nz 个 f32 → 字节数 = 乘积 × 4
     · `gi_hitmap.bin`   = size[0] × size[1] × 4（RGBA8）
 
@@ -1674,8 +1777,8 @@ def _lighting_geometry_issues(sid: str) -> list[tuple[str, str]]:
         hint = ("（旧的 lighting2/ 还在——跑 `python tools/migrate_lighting_payloads.py` 迁移）"
                 if legacy.exists() else "")
         out.append(("warning",
-                    f"配了 lighting 但没烘几何场 —— 运行时会**安静地不启用**，"
-                    f"画面上看着就像'光照没生效'。跑 "
+                    f"主背景没烘几何场 —— 场景光照**安静地不启用**：作者灯不亮、"
+                    f"手持火把也一点光都没有。跑 "
                     f"`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields "
                     f"--scene {sid}`{hint}"))
 
@@ -1706,11 +1809,12 @@ def _lighting_geometry_issues(sid: str) -> list[tuple[str, str]]:
             out.append(("error", f"{rel}/geometry.json 解析失败：{exc}"))
             continue
 
-        ver = meta.get("version")
-        if ver != _LIGHTING_GEOMETRY_VERSION:
+        bad_fields = _geometry_meta_problems(meta)
+        if bad_fields:
             out.append(("error",
-                        f"{rel} 几何场载荷代次 {ver} ≠ 运行时认的 {_LIGHTING_GEOMETRY_VERSION}，"
-                        f"整包会被忽略"))
+                        f"{rel}/geometry.json 缺运行时要读的字段 {'、'.join(bad_fields)}，"
+                        f"整包会被忽略。重烘:`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields "
+                        f"--scene {sid}`"))
 
         for name in ("normal.png", "albedo.png", "skyvis.png", "skyao_probe.bin",
                      "skyvis_grid.bin", "gi_hitmap.bin"):
@@ -2059,76 +2163,18 @@ def _validate_npc_schedules(model: ProjectModel, issues: list[Issue]) -> None:
 
         _validate_scene_group_phases(model, issues, sid, scene, known_phases, scene_daynight_on)
 
-        # ---- 世界空间粒子 / 群体实例（scene.vfx[]）----
-        # 运行时对这一块的内容错一律静默跳过（实例 id 空就不建、效果装不到 warn 一句），
-        # 所以只能在这里拦。效果悬垂只 warning：那个目录由粒子工作台并发写，镜像未必最新。
-        vfx_rows = scene.get("vfx")
-        if vfx_rows is not None and not isinstance(vfx_rows, list):
-            issues.append(Issue("error", "scene", sid, "vfx 须为数组"))
-            vfx_rows = None
-        known_effects = _known_vfx_effect_ids(model)
-        seen_vfx: set[str] = set()
-        for row in vfx_rows or []:
-            if not isinstance(row, dict):
-                issues.append(Issue("error", "scene", sid, "vfx 条目须为 JSON 对象"))
-                continue
-            iid = str(row.get("id") or "").strip()
-            if not iid:
-                issues.append(Issue("error", "scene", sid, "vfx 实例缺 id（运行时按 id 建表，空 id 整条跳过）"))
-                continue
-            if iid in seen_vfx:
-                issues.append(Issue("error", "scene", sid, f"vfx 实例 id {iid!r} 在本场景内重复"))
-            seen_vfx.add(iid)
-            eff = str(row.get("effect") or "").strip()
-            if not eff:
-                issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 缺 effect（引用 assets/data/vfx/<id>.json）"))
-            elif known_effects and eff not in known_effects:
-                issues.append(Issue(
-                    "warning", "scene", sid,
-                    f"vfx 实例 {iid!r} 的 effect {eff!r} 不在 assets/data/vfx/ 里"
-                    f"（运行时装不到只 warn 一句，画面上什么都不发生）",
-                ))
-            anchor = row.get("anchor")
-            if not isinstance(anchor, dict):
-                issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 缺 anchor（画面点 + 离表面高度）"))
-            else:
-                if not _is_num(anchor.get("x")) or not _is_num(anchor.get("y")):
-                    issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 anchor.x/y 须为数值（场景坐标 wu）"))
-                if anchor.get("h") is not None and not _is_num(anchor.get("h")):
-                    issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 anchor.h 须为数值（离表面高度 wu）"))
-                surf = anchor.get("surface")
-                if surf is not None and str(surf) not in _VFX_SURFACES:
-                    issues.append(Issue(
-                        "error", "scene", sid,
-                        f"vfx 实例 {iid!r} 的 anchor.surface {surf!r} 非法（ground / shell）",
-                    ))
-            for key in ("seed", "countScale"):
-                if row.get(key) is not None and not _is_num(row.get(key)):
-                    issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 {key} 须为数值"))
-            if row.get("countScale") is not None and _is_num(row.get("countScale")) and float(row["countScale"]) <= 0:
-                issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 countScale 须 > 0"))
-            if row.get("autoStart") is not None and not isinstance(row.get("autoStart"), bool):
-                issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 autoStart 须为布尔"))
-            area = row.get("area")
-            if area is not None and (
-                not isinstance(area, list) or len(area) < 3
-                or not all(isinstance(p, list) and len(p) == 2 and _is_num(p[0]) and _is_num(p[1]) for p in area)
-            ):
-                issues.append(Issue(
-                    "error", "scene", sid,
-                    f"vfx 实例 {iid!r} 的 area 须为 ≥3 个 [x, y] 的多边形（场景坐标 wu）；"
-                    f"运行时读不懂就退成原点周围的圆盘",
-                ))
-                area = None
-            _check_vfx_confine(model, issues, sid, iid, row, area)
-            if row.get("timePhases") is not None:
-                _check_phases_field(issues, sid, f"vfx:{iid}", row.get("timePhases"),
-                                    known_phases, scene_daynight_on)
-            if row.get("conditions") is not None:
-                if not isinstance(row.get("conditions"), list):
-                    issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 conditions 须为数组"))
-                else:
-                    _walk_conditions(model, issues, row["conditions"], "scene", f"{sid}:vfx:{iid}", sid)
+        # ---- 世界空间粒子：场景 JSON 里的 vfx 已搬走（2026-09-14）----
+        # 布置搬进粒子工作台写的 assets/data/vfx_placements.json（按场景 × 时段外观各配各的），
+        # 运行时**不再读**场景里的 vfx 键——还留着就是作者以为摆了、画面上什么都没有。
+        # 典型来源：开着旧代码的主编辑器 Save All，把内存里的旧 vfx[] 写回场景文件。
+        # 不管值是什么形状（空数组也算）一律报：有这个键本身就说明写入方还是旧口径。
+        # 布置库本身的校验在 `_validate_vfx_placements`。
+        if "vfx" in scene:
+            issues.append(Issue(
+                "error", "scene", sid,
+                "场景 JSON 的 vfx 已搬到 assets/data/vfx_placements.json（粒子工作台布置），"
+                "这一块运行时不再读——到粒子工作台里摆，再把场景文件里的 vfx 键删掉",
+            ))
 
         # ---- timeVariants(时段外观)校验(2026-08-30) ----
         #
@@ -2157,6 +2203,9 @@ def _validate_npc_schedules(model: ProjectModel, issues: list[Issue]) -> None:
                     "error", "scene", sid,
                     f"{tag}.lighting 不许含 lights——灯按各自的 phases 过滤,"
                     "在这儿换整组会有两个真相源(运行时也不读它)"))
+            from tools.editor.shared.light_factors import light_factor_issues
+            for _t in light_factor_issues((variant.get("lighting") or {}).get("lightFactors")):
+                issues.append(Issue("error", "scene", sid, f"{tag}: {_t}"))
             bgs = variant.get("backgrounds")
             if bgs is None:
                 continue
@@ -2172,16 +2221,22 @@ def _validate_npc_schedules(model: ProjectModel, issues: list[Issue]) -> None:
             if not (scene_rt / img).exists():
                 issues.append(Issue("error", "scene", sid, f"{tag} 的背景图 {img} 不在磁盘上"))
                 continue
-            # 该时段背景有没有自己的烘焙?没有 = 进这个时段角色就没有 probe 底光。
+            # 该时段背景有没有自己的烘焙?probe 载荷(lighting.json)没有 = 进这个时段角色没有底光;
+            # 几何场(geometry.json)没有 = 这个时段整套场景光照不启用,作者灯与手持火把都不亮。
+            # ⚠ 修法**不是**对这张画跑 build:暗的夜图重估出来的地面是乱的,而各时段共用一份深度 /
+            #   碰撞。`scene_fields --scene` 会借主背景的几何只重烘光照(`pipeline.seed_phase_payload`)。
             key = img[:img.rfind(".")] if img.rfind(".") > 0 else img
+            _fix = f"`sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene {sid}`"
             if not (scene_rt / "lighting" / key / "lighting.json").exists():
                 issues.append(Issue(
                     "warning", "scene", sid,
                     f"{tag} 的背景 {img} 没有烘焙数据(lighting/{key}/)——"
-                    f"进这个时段角色会失去 probe 底光。跑 "
-                    f"`python -m tools.character_lighting_lab --build "
-                    f"public/resources/runtime/scenes/{sid}/{img} --name {sid} "
-                    f"--background {img} --export-runtime`"))
+                    f"进这个时段角色会失去 probe 底光、场景灯与手持火把都不亮。跑 {_fix}"))
+            elif not (scene_rt / "lighting" / key / "geometry.json").exists() and scene.get("depthConfig"):
+                issues.append(Issue(
+                    "warning", "scene", sid,
+                    f"{tag} 的背景 {img} 只烘了 probe、没烘几何场(lighting/{key}/geometry.json)——"
+                    f"这个时段场景光照不启用,作者灯与手持火把都不亮。跑 {_fix}"))
             # 各时段背景必须同尺寸:collision/raw_depth 是逐场景的玩法几何,
             # 尺寸一变 worldToPixel 就漂,出生点会"白天能走、夜里卡墙"(实测撞过)。
             base_img = ((scene.get("backgrounds") or [{}])[0] or {}).get("image")
@@ -5510,6 +5565,21 @@ def _append_action_param_ref_issues(
                 return True
             return _is_num(p.get("x")) and _is_num(p.get("y"))
 
+        def _warn_unplaced_instance(inst_id: str) -> None:
+            # 与 vfx 条件叶同一口径（`_all_vfx_placement_instance_ids`）：实例 id 场景作用域，不做跨场景解析，
+            # 只在"布置库里没有任何场景、任何时段外观摆过这个 id"时提醒——工作台里删 / 改 id 了一条布置，
+            # 这里是唯一的兜底（运行时只 warn「当前场景没有实例」，这一步画面上什么都不发生）。
+            # 库读不懂时根因已由 `_validate_vfx_placements` 报过，不再逐条刷假告警。
+            if not inst_id:
+                return
+            lib, lib_err = _vfx_placement_library(model)
+            if not lib_err and inst_id not in _all_vfx_placement_instance_ids(lib):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"{t} 引用的实例 {inst_id!r} 没摆在布置库（assets/data/vfx_placements.json）的任何场景 / 时段外观里"
+                    f"（运行时找不到实例，这一步整步跳过）",
+                ))
+
         if t == "playVfx":
             inst = str(p.get("instanceId") or "").strip()
             eff = str(p.get("effect") or "").strip()
@@ -5518,6 +5588,7 @@ def _append_action_param_ref_issues(
                     "error", data_type, item_id,
                     "playVfx 需要 instanceId（场景里摆好的实例）或 effect + 位置（临时实例）；两个都没有 = 整步跳过",
                 ))
+            _warn_unplaced_instance(inst)
             if eff:
                 if inst:
                     issues.append(Issue(
@@ -5542,8 +5613,10 @@ def _append_action_param_ref_issues(
                     f"playVfx surface {surf!r} 非法（ground / shell）",
                 ))
         elif t in ("stopVfx", "setVfxState"):
-            if not str(p.get("instanceId") or "").strip():
+            inst = str(p.get("instanceId") or "").strip()
+            if not inst:
                 issues.append(Issue("error", data_type, item_id, f"{t} 缺 instanceId"))
+            _warn_unplaced_instance(inst)
             if t == "setVfxState":
                 st = str(p.get("state") or "").strip()
                 if not st:
@@ -5576,10 +5649,10 @@ def _append_action_param_ref_issues(
             d3 = p.get("direction")
             if d3 is not None and (not isinstance(d3, list) or len(d3) != 3 or not all(_is_num(v) for v in d3)):
                 issues.append(Issue("error", data_type, item_id, "emitVfxField 的 direction 须为三个数 [x,y,z]（M-world）"))
-            if k == "wind" and d3 is None:
+            if k in ("wind", "airflow") and (d3 is None or d3 == [0, 0, 0]):
                 issues.append(Issue(
                     "warning", data_type, item_id,
-                    "emitVfxField kind=wind 没给 direction：风场没有方向，运行时不产生任何加速度",
+                    f"emitVfxField kind={k} 缺少非零 direction：场没有方向，运行时不产生作用",
                 ))
 
     if t == "playTrajectory":
@@ -6260,13 +6333,14 @@ def _scan_condition_expr(
         return
     if isinstance(expr.get("vfx"), str) or isinstance(expr.get("vfxState"), str):
         # 世界空间粒子 / 群体实例的状态。实例 id 是**场景作用域**的，这里不做跨场景解析——
-        # 一条对话可能在任何场景播；只在"全工程没有任何场景摆过这个 id"时提醒。
+        # 一条对话可能在任何场景播；只在"布置库里没有任何场景、任何时段外观摆过这个 id"时提醒。
+        # 候选口径 = 各场景 `instance_ids_for_scene` 的并集（与 playVfx / 条件叶的编辑器候选同一个函数）。
         vid = str(expr.get("vfx") or "").strip()
         vst = str(expr.get("vfxState") or "").strip()
         if not vid or not vst:
             issues.append(Issue(
                 "error", data_type, item_id,
-                "vfx 条件需要非空 vfx（场景 vfx[] 里的实例 id）与 vfxState",
+                "vfx 条件需要非空 vfx（粒子工作台布置里的实例 id）与 vfxState",
             ))
         else:
             if vst not in _VFX_INSTANCE_STATES:
@@ -6274,20 +6348,13 @@ def _scan_condition_expr(
                     "error", data_type, item_id,
                     f"vfxState {vst!r} 非法（{'、'.join(sorted(_VFX_INSTANCE_STATES))}）",
                 ))
-            seen_anywhere = False
-            for _sid, _sc in (getattr(model, "scenes", None) or {}).items():
-                if not isinstance(_sc, dict):
-                    continue
-                for _row in _sc.get("vfx") or []:
-                    if isinstance(_row, dict) and str(_row.get("id") or "").strip() == vid:
-                        seen_anywhere = True
-                        break
-                if seen_anywhere:
-                    break
-            if not seen_anywhere:
+            lib, lib_err = _vfx_placement_library(model)
+            # 布置库读不懂时那条 error 已由 `_validate_vfx_placements` 报过；这里再逐条报"找不到"
+            # 就是拿一条根因刷一屏假告警（宁可少校验不误报）。
+            if not lib_err and vid not in _all_vfx_placement_instance_ids(lib):
                 issues.append(Issue(
                     "warning", data_type, item_id,
-                    f"vfx 条件引用的实例 {vid!r} 没在任何场景的 vfx[] 里出现"
+                    f"vfx 条件引用的实例 {vid!r} 没摆在布置库（assets/data/vfx_placements.json）的任何场景 / 时段外观里"
                     f"（运行时取不到就恒为假，那些分支永远走不到）",
                 ))
         return
@@ -7563,31 +7630,213 @@ def _known_trajectory_ids(model: ProjectModel) -> set[str]:
 _VFX_SURFACES = frozenset({"ground", "shell"})
 _VFX_FLOCK_STATES = frozenset({"roosting", "airborne", "fleeing", "returning"})
 _VFX_INSTANCE_STATES = _VFX_FLOCK_STATES | frozenset({"active", "inactive"})
-_VFX_FIELD_KINDS = frozenset({"fear", "attract", "wind"})
+_VFX_FIELD_KINDS = frozenset({"fear", "attract", "wind", "airflow"})
 _VFX_COLLISION_RESPONSES = frozenset({"none", "kill", "bounce", "stick", "slide"})
 _VFX_BLEND_MODES = frozenset({"normal", "add"})
 
 
+#: 布置库校验的 Issue.data_type（与场景 JSON 的 "scene" 分开：这份文件的唯一写入者是粒子工作台，
+#: 定位要让人一眼知道去工作台里哪个场景、哪套时段外观找）
+_VFX_PLACEMENTS_DT = "vfx_placements"
+#: 实例上"写 null = 没写"的可选键。运行时一律 `??` 取缺省（TS 权威接受 null），
+#: 形状闸门 `normalize_instance` 是**写侧**闸门、按键存在与否判——工作台自己从不写 null，
+#: 所以写侧更严不算两道门打架；但兜底校验不许比 TS 更严，喂给闸门前先剥掉这些 null。
+_VFX_INSTANCE_NULLABLE = frozenset({"seed", "countScale", "autoStart", "conditions", "area", "confine"})
+_VFX_ANCHOR_NULLABLE = frozenset({"h", "surface"})
+_VFX_CONFINE_NULLABLE = frozenset({"area", "feather", "ceiling"})
+
+
+def _vfx_placement_library(model: ProjectModel) -> tuple[dict, str]:
+    """盘上的布置库 ``(文档, 错误)``。
+
+    唯一写入者是粒子工作台、主编辑器没有它的内存副本（不进脏桶），所以**盘上就是真相**，每次现读——
+    不做缓存：工作台随时在写，缓存命中旧文件时校验结果与画面对不上，还查不出为什么。
+    模型没有 ``project_path``（测试桩）= 空库无错（宁可少校验不误报）。
+    """
+    from .shared import vfx_placements as _vp
+
+    root = getattr(model, "project_path", None)
+    if root is None:
+        return _vp.empty_library(), ""
+    return _vp.load_library(Path(root))
+
+
+def _all_vfx_placement_instance_ids(lib: dict) -> set[str]:
+    """布置库里所有场景、所有时段外观的实例 id 并集（逐场景走 ``instance_ids_for_scene``，不另写一套遍历）。"""
+    from .shared import vfx_placements as _vp
+
+    scenes = lib.get("scenes") if isinstance(lib, dict) else None
+    out: set[str] = set()
+    for sid in (scenes or {}) if isinstance(scenes, dict) else ():
+        out.update(_vp.instance_ids_for_scene(lib, str(sid)))
+    return out
+
+
+def _day_night_phase_rows(model: ProjectModel) -> list[dict]:
+    """``game_config.dayNight.phases``（给 ``phase_label`` 取中文名）；没配时回落内置四段，与运行时同口径。"""
+    cfg = getattr(model, "game_config", None)
+    dn = cfg.get("dayNight") if isinstance(cfg, dict) else None
+    rows = dn.get("phases") if isinstance(dn, dict) else None
+    if isinstance(rows, list) and any(isinstance(r, dict) and str(r.get("id") or "").strip() for r in rows):
+        return [r for r in rows if isinstance(r, dict)]
+    return [
+        {"id": pid, "label": label}
+        for pid, _frm, label, _daylight in (getattr(model, "DEFAULT_TIME_PHASES", None) or ())
+    ]
+
+
+def _drop_vfx_instance_nulls(row: object) -> object:
+    """剥掉实例上写成 null 的可选键（见 `_VFX_INSTANCE_NULLABLE`），不改入参。"""
+    if not isinstance(row, dict):
+        return row
+    out = {k: v for k, v in row.items() if not (v is None and k in _VFX_INSTANCE_NULLABLE)}
+    a = out.get("anchor")
+    if isinstance(a, dict):
+        out["anchor"] = {k: v for k, v in a.items() if not (v is None and k in _VFX_ANCHOR_NULLABLE)}
+    c = out.get("confine")
+    if isinstance(c, dict):
+        out["confine"] = {k: v for k, v in c.items() if not (v is None and k in _VFX_CONFINE_NULLABLE)}
+    return out
+
+
+def _validate_vfx_placements(model: ProjectModel, issues: list[Issue]) -> None:
+    """粒子布置库 ``assets/data/vfx_placements.json``（形状见 ``tools/editor/shared/vfx_placements.py``）。
+
+    布置按「场景 × 时段外观」各配各的、互不继承、没配就没有：``base`` = 场景顶层外观，
+    ``variants[时段]`` = ``timeVariants[时段]`` 那套外观。运行时对这里的内容错一律静默
+    （场景 id 写错 = 永远用不到、时段键写错 = 永远命中不到、实例坏了 = 那条不建），画面上都是
+    "粒子没出来"，与"作者没摆"长得一模一样——只能构建期拦。
+
+    实例形状一律走共享闸门 ``normalize_instance``（工作台写盘用的同一份），抛出的文案原样报 error；
+    效果悬垂只 warning（效果目录由粒子工作台并发写，镜像未必最新）。
+    """
+    from .shared import vfx_placements as _vp
+
+    dt = _VFX_PLACEMENTS_DT
+    lib, err = _vfx_placement_library(model)
+    if err:
+        issues.append(Issue(
+            "error", dt, "vfx_placements.json",
+            f"{err}——运行时读不到布置库，所有场景的粒子一条都不会出现",
+        ))
+        return
+    scenes = lib.get("scenes") if isinstance(lib, dict) else None
+    if not isinstance(scenes, dict):
+        return
+    scene_docs = getattr(model, "scenes", None) or {}
+    day_phases = _day_night_phase_rows(model)
+    known_effects = _known_vfx_effect_ids(model)
+
+    for sid_raw, ent in scenes.items():
+        sid = str(sid_raw)
+        scene_doc = scene_docs.get(sid) if isinstance(scene_docs, dict) else None
+        if not isinstance(scene_doc, dict):
+            scene_doc = None
+            issues.append(Issue(
+                "error", dt, sid,
+                f"布置库里的场景 {sid!r} 不存在（public/assets/scenes/ 里没有这个 id）——这一整块运行时永远用不到",
+            ))
+        if not isinstance(ent, dict):
+            issues.append(Issue(
+                "error", dt, sid,
+                "场景这一项要是 {base, variants} 对象（base = 场景顶层外观，variants = 各时段外观）",
+            ))
+            continue
+
+        lists: list[tuple[str, object]] = []
+        if ent.get("base") is not None:
+            lists.append((_vp.BASE, ent["base"]))
+        variants = ent.get("variants")
+        if variants is not None and not isinstance(variants, dict):
+            issues.append(Issue("error", dt, sid, "variants 要是对象（键 = 时段 id，值 = 那套时段外观的实例数组）"))
+        elif isinstance(variants, dict):
+            if scene_doc is not None:
+                allowed = [k for k in _vp.scene_phase_keys(scene_doc) if k != _vp.BASE]
+                for ph in variants:
+                    if str(ph) not in allowed:
+                        issues.append(Issue(
+                            "error", dt, f"{sid} · {ph}",
+                            f"variants 的时段 {str(ph)!r} 不在场景 timeVariants 里"
+                            f"（本场景单列了外观的时段：{'、'.join(allowed) or '无'}）——运行时取外观永远命中不到这一份",
+                        ))
+                dn = scene_doc.get("dayNight")
+                if variants and not (isinstance(dn, dict) and dn.get("enabled") is True):
+                    issues.append(Issue(
+                        "warning", dt, sid,
+                        f"本场景没开 dayNight.enabled，却配了时段外观的布置（{'、'.join(str(k) for k in variants)}）"
+                        "——这几份整份不生效，运行时恒用基底那份",
+                    ))
+            for ph, raw in variants.items():
+                if raw is not None:
+                    lists.append((str(ph), raw))
+
+        for ph, raw in lists:
+            if scene_doc is None:
+                label = "基底" if ph == _vp.BASE else _vp.phase_label(ph, None, day_phases)
+            else:
+                label = _vp.phase_label(ph, scene_doc, day_phases)
+            loc = f"{sid} · {label}"
+            if not isinstance(raw, list):
+                issues.append(Issue("error", dt, loc, "要是实例数组"))
+                continue
+            raw_ids = [
+                str(r.get("id") or "").strip() for r in raw
+                if isinstance(r, dict) and str(r.get("id") or "").strip()
+            ]
+            for dup in sorted({i for i in raw_ids if raw_ids.count(i) > 1}):
+                issues.append(Issue(
+                    "error", dt, loc,
+                    f"实例 id {dup!r} 重复（同一场景同一套时段外观里 id 必须唯一；运行时按 id 建表，后一条顶掉前一条）",
+                ))
+            for i, row in enumerate(raw):
+                try:
+                    norm = _vp.normalize_instance(_drop_vfx_instance_nulls(row), f"第 {i + 1} 条")
+                except ValueError as exc:
+                    issues.append(Issue("error", dt, loc, str(exc)))
+                    continue
+                iid = norm["id"]
+                eff = norm["effect"]
+                if known_effects and eff not in known_effects:
+                    issues.append(Issue(
+                        "warning", dt, loc,
+                        f"实例 {iid!r} 的 effect {eff!r} 不在 assets/data/vfx/ 里"
+                        f"（运行时装不到只 warn 一句，画面上什么都不发生）",
+                    ))
+                _check_vfx_confine(
+                    model, issues, sid, iid, norm, norm.get("area"),
+                    data_type=dt, item_id=loc,
+                )
+                conds = norm.get("conditions")
+                if isinstance(conds, list):
+                    _walk_conditions(model, issues, conds, dt, f"{loc} · {iid}", sid)
+
+
 def _check_vfx_confine(
     model: ProjectModel, issues: list[Issue], sid: str, iid: str, row: dict, area: object,
+    *, data_type: str = "scene", item_id: str | None = None,
 ) -> None:
     """粒子区域（`confine`，TS 权威 `VfxConfineDef`）。
 
     运行时对这一块一律静默：没 `area` 就整条忽略、形状读不懂就当不限定、群体发射器不吃——
     画面上的表现都是"区域没生效"，与"作者没配"长得一模一样，只能在这里拦。
+
+    定位：布置库那边传 ``data_type="vfx_placements"`` + ``item_id="<场景> · <时段外观>"``，
+    让人一眼知道是哪个场景哪套时段外观；缺省（``"scene"`` + 场景 id）是搬家前的旧口径，只为直接调本函数的调用方兼容。
     """
+    dt = data_type
+    loc = sid if item_id is None else item_id
     confine = row.get("confine")
     if confine is None:
         return
     if not isinstance(confine, dict):
-        issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 confine 须为对象（feather / ceiling）"))
+        issues.append(Issue("error", dt, loc, f"vfx 实例 {iid!r} 的 confine 须为对象（feather / ceiling）"))
         return
     feather = confine.get("feather")
     if feather is not None and (not _is_num(feather) or float(feather) < 0):
-        issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 confine.feather 须为 ≥ 0 的数值（边带宽，画面 wu）"))
+        issues.append(Issue("error", dt, loc, f"vfx 实例 {iid!r} 的 confine.feather 须为 ≥ 0 的数值（边带宽，画面 wu）"))
     ceiling = confine.get("ceiling")
     if ceiling is not None and (not _is_num(ceiling) or float(ceiling) <= 0):
-        issues.append(Issue("error", "scene", sid, f"vfx 实例 {iid!r} 的 confine.ceiling 须为 > 0 的数值（离地高度上限，wu）"))
+        issues.append(Issue("error", dt, loc, f"vfx 实例 {iid!r} 的 confine.ceiling 须为 > 0 的数值（离地高度上限，wu）"))
     from tools.editor.shared.vfx_confine import (
         is_polygon, point_in_polygon, polygon_self_intersects, polygons_overlap,
     )
@@ -7595,7 +7844,7 @@ def _check_vfx_confine(
     own = confine.get("area")
     if own is not None and not is_polygon(own):
         issues.append(Issue(
-            "error", "scene", sid,
+            "error", dt, loc,
             f"vfx 实例 {iid!r} 的 confine.area（范围区域）须为 ≥3 个 [x, y] 的多边形（场景坐标 wu）；"
             f"运行时读不懂就退回用发射区域",
         ))
@@ -7604,19 +7853,19 @@ def _check_vfx_confine(
     region = own if own is not None else emit
     if region is None:
         issues.append(Issue(
-            "error", "scene", sid,
+            "error", dt, loc,
             f"vfx 实例 {iid!r} 配了 confine 但既没有范围区域（confine.area）也没有发射区域（area）："
             f"运行时整条忽略，粒子不受任何限定",
         ))
         return
     if polygon_self_intersects(region):
         issues.append(Issue(
-            "warning", "scene", sid,
+            "warning", dt, loc,
             f"vfx 实例 {iid!r} 的范围区域自相交：交叉围出来的那块会被当成框外（纸钱进去就淡出）",
         ))
     if own is not None and emit is not None and not polygons_overlap(emit, own):
         issues.append(Issue(
-            "warning", "scene", sid,
+            "warning", dt, loc,
             f"vfx 实例 {iid!r} 的发射区域和范围区域不相交：出生 / 补回的落点全在范围外，一张纸钱都不会有",
         ))
     area = region
@@ -7628,7 +7877,7 @@ def _check_vfx_confine(
     ems = [e for e in ems if isinstance(e, dict)]
     if ems and all(e.get("behavior") is not None for e in ems):
         issues.append(Issue(
-            "warning", "scene", sid,
+            "warning", dt, loc,
             f"vfx 实例 {iid!r} 的效果全是群体发射器，群体不吃粒子区域（用 behavior.home.rangeRadius 管活动域）",
         ))
         return
@@ -7641,7 +7890,7 @@ def _check_vfx_confine(
     ]
     if from_anchor and _is_num(ax) and _is_num(ay) and not point_in_polygon(area, float(ax), float(ay)):
         issues.append(Issue(
-            "warning", "scene", sid,
+            "warning", dt, loc,
             f"vfx 实例 {iid!r} 的锚点在粒子区域外：从锚点发射的粒子"
             f"（{', '.join(str(e.get('id')) for e in from_anchor)}）一出生就在淡出，画面上看不见",
         ))
@@ -8131,6 +8380,10 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
             if not isinstance(e, dict):
                 issues.append(Issue("error", "vfx", stem, f"emitters[{i}] 须为对象"))
                 continue
+            from tools.editor.shared.vfx_program import effective_solver, program_errors
+            for problem in program_errors(e):
+                issues.append(Issue("error", "vfx", stem, f"发射器 {e.get('id')!r}: {problem}"))
+            solver = effective_solver(e)
             eid = str(e.get("id") or "").strip()
             if not eid:
                 issues.append(Issue("error", "vfx", stem, f"emitters[{i}] 缺少非空 id"))
@@ -8170,6 +8423,18 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                             "warning", "vfx", stem,
                             f"发射器 {eid!r} 关了受光（lit=false），appearance.emissive 不会被读（渲染走无光路径）",
                         ))
+                gain = ap.get("lightGain")
+                if gain is not None:
+                    if not _is_num(gain) or not (0.0 <= float(gain) <= 10.0):
+                        issues.append(Issue(
+                            "error", "vfx", stem,
+                            f"发射器 {eid!r} appearance.lightGain 须为 0..10（受光强度，超出范围渲染会夹断）",
+                        ))
+                    elif ap.get("lit") is False:
+                        issues.append(Issue(
+                            "warning", "vfx", stem,
+                            f"发射器 {eid!r} 关了受光（lit=false），appearance.lightGain 不会被读（渲染走无光路径）",
+                        ))
 
             sp = e.get("spawn")
             if not isinstance(sp, dict):
@@ -8189,7 +8454,7 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                             "error", "vfx", stem,
                             f"发射器 {eid!r} spawn.shape.kind 须为 point / sphere / disc / box / line / area",
                         ))
-                    elif shape.get("kind") == "area" and e.get("plate") is None:
+                    elif shape.get("kind") == "area" and e.get("plate") is None and not e.get("simulation"):
                         issues.append(Issue(
                             "warning", "vfx", stem,
                             f"发射器 {eid!r} 的 spawn.shape 是 area，但只有薄片（plate）发射器会按区域铺撒；"
@@ -8261,7 +8526,7 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                     if tables == 0:
                         issues.append(Issue("error", "vfx", stem,
                                             f"发射器 {eid!r} motion.stimulus 既没有 fear 也没有 attract，一个场也不会认"))
-                    if e.get("behavior") is not None:
+                    if solver == "flock":
                         issues.append(Issue(
                             "warning", "vfx", stem,
                             f"发射器 {eid!r} 既有群体 behavior 又有 motion.stimulus："
@@ -8269,7 +8534,7 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
 
             beh = e.get("behavior")
             if beh is not None:
-                if e.get("subOnly") is True:
+                if e.get("subOnly") is True and solver == "flock":
                     issues.append(Issue(
                         "error", "vfx", stem,
                         f"发射器 {eid!r} 同时是 subOnly 与群体（behavior）：子发射器由撞击现场生成，"
@@ -8280,7 +8545,7 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
             pl = e.get("plate")
             if pl is not None:
                 _validate_vfx_plate(pl, stem, eid, issues)
-                if beh is not None:
+                if beh is not None and not e.get("simulation"):
                     issues.append(Issue(
                         "warning", "vfx", stem,
                         f"发射器 {eid!r} 既有群体 behavior 又有薄片 plate：运行时群体优先，plate 被忽略",

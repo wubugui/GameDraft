@@ -173,6 +173,7 @@ uniform sampler2D uSkyaoTex;   // skyao probe(共用块里用,sampler 由宿主�
 uniform sampler2D uVolRad;
 uniform sampler2D uVolEmit;
 uniform float uHasNrm;
+uniform float uBodyWidthWu; // 当前精灵格宽（场景 wu），厚度随实体而不是场景标尺缩放
 
 // ---- 场景实体灯（2026-08-30：原画 + 加性灯模型）----
 //
@@ -238,7 +239,8 @@ void main(void) {
     if (vMirror > 0.5) n.x = -n.x;
     n = normalize(mix(n, vec3(0.,0.,-1.), uFlatten));
 
-    vec3 q = vec3(qx, qyF + h * uCosT, footD - h * uSinT - ne.a * uBulge);
+    float bulgeQ = uBulge * uBodyWidthWu / max(uSMWuPerQUnit, 1e-6);
+    vec3 q = vec3(qx, qyF + h * uCosT, footD - h * uSinT - ne.a * bulgeQ);
 
     // 法线档必须是**独占区间**:uShowN=2 是 skyao 档,写成 >0.5 会被这条
     // 先接住并 return,于是「看 skyao」看到的是法线(2026-09-01 踩过)。
@@ -274,10 +276,9 @@ void main(void) {
     }
 
     // ---------- E:RT gather 或 probe 图集(公共块) ----------
-    // uGiStrength 只乘这里的 GI 底光,不乘下面的测试太阳与实体灯——β 是曝光(乘一切),
-    // 这个旋钮回答的是"GI 有多强"(制作人 2026-09-01 点名要独立参数,0~10)。
-    vec3 E = ((uMode < 0.5) ? gatherRT(q + nQ*0.02, nQ) : probeE(q, nQ)) * uGiStrength;
-    vec3 EgiPure = E;   // 纯E 审计快照:GI体 档与场景 uDebug==8 同式 —— 不含 skyao/太阳/灯
+    // 间接 / 直接两路保留到着色末端，分别乘当前场景的 factor，再乘总 factor。
+    vec3 E = ((uMode < 0.5) ? gatherRT(q + nQ*0.02, nQ) : probeE(q, nQ));
+    vec3 EgiPure = E * uGiStrength; // 历史 GI 诊断尺；正常受光的三项 factor 在末端计算
     // ---- skyao:**乘在 GI 上**,与全白 blend(制作人 2026-09-01)----
     // 天穹遮蔽是几何项,只该衰减 GI 底光;太阳是独立解析直射,不吃它
     // (太阳自己的遮蔽将来要走 V_dir(w) 那条闭式,不是这个各向同性的 V)。
@@ -298,9 +299,10 @@ void main(void) {
       finalColor = vec4(vd * color.a, color.a);
       return;
     }
+    vec3 directE = vec3(0.0);
     if (uSunOn > 0.5) {
         // F2 的测试太阳（实验室没有这一项）。uSunDirQ 是 q 空间方向，与 nQ 同基。
-        E += uSunColor * max(dot(nQ, uSunDirQ), 0.0);
+        directE += uSunColor * max(dot(nQ, uSunDirQ), 0.0);
     }
 
     // ---------- 实体灯：加性叠在 probe 的 GI 底光之上 ----------
@@ -323,7 +325,7 @@ void main(void) {
     //   就是这一约定。那段错注释误导过一整轮排查（照它摆的"贴脸灯"全在法线
     //   背面），删除防再骗。几何推论：**低于人的灯照不亮躯干正面是错觉**——
     //   水平法线下只要灯在 quad 平面靠相机一侧，脚边的火同样照亮胸口。
-    E += entitySceneLightsE(q, n);
+    directE += entitySceneLightsE(q, n);
     // ---- 「GI体·纯E」调试(F2 循环 8/9 档):albedo≡1,输出 E×2^β ----
     // 与场景侧 uDebug==8 逐字同式(不走 /π、eChroma 与显示变换):这是校验 probe 体
     // 的尺子,不是美术视图 —— 两边同式,人与地面的 E 才能逐像素直接比。
@@ -380,7 +382,7 @@ void main(void) {
     vec3 alb = color.rgb / max(color.a, 1e-4);   // Pixi 预乘 → 直通 albedo
     // ★ 与背景同一份显示变换（lcDisplayTransform 收尾自带 sRGB，所以不再 lin2srgb）。
     vec3 outRgb = clamp(lcDisplayTransform(
-        shadeCharacterLinear(alb, E, uEChroma, uBeta),
+        shadeEntityLinear(alb, E, directE, uIndirectFactor, uDirectFactor, uTotalFactor, uEChroma),
         uDispEv, uDispTonemap, uDispWhite,
         uDispSaturation, uDispContrast, uDispLift, uDispLiftColor), 0.0, 1.0);
 
@@ -412,6 +414,9 @@ export function createFrameLitUniforms(): UniformGroup {
     uNEE: { value: 0, type: 'f32' },
     uStep: { value: 0.9, type: 'f32' },
     uBeta: { value: 1, type: 'f32' },
+    uIndirectFactor: { value: 1, type: 'f32' },
+    uDirectFactor: { value: 1, type: 'f32' },
+    uTotalFactor: { value: 1, type: 'f32' },
     uAmbStrength: { value: 1, type: 'f32' },
     uBulge: { value: 0.22, type: 'f32' },
     uFlatten: { value: 0, type: 'f32' },
@@ -641,6 +646,7 @@ export function createLitShader(
       charLights: lightGroup,
       entityShade: new UniformGroup({
         uHasNrm: { value: tex.nrm ? 1 : 0, type: 'f32' },
+        uBodyWidthWu: { value: 0, type: 'f32' },
         // local→sceneWorld 仿射(setWorldTransform 每帧喂;缺省恒等防黑屏)
         uL2W0: { value: new Float32Array([1, 0, 0]), type: 'vec3<f32>' },
         uL2W1: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
@@ -732,6 +738,8 @@ export class LitSpriteQuad {
     const u = (this.mesh.shader as Shader).resources.entityShade.uniforms as Record<string, Float32Array>;
     u.uL2W0[0] = a * csx; u.uL2W0[1] = c * csx; u.uL2W0[2] = cx + px * csx;
     u.uL2W1[0] = b * csy; u.uL2W1[1] = d * csy; u.uL2W1[2] = cy + py * csy;
+    ((this.mesh.shader as Shader).resources.entityShade.uniforms as Record<string, unknown>).uBodyWidthWu
+      = Math.abs(this.pos[2] - this.pos[0]) * Math.hypot(a * csx, b * csy);
   }
 
   /** 换帧同步:帧像素尺寸 + 锚点 → 顶点;texture.uvs → 图集 UV(与 color 同源)。 */

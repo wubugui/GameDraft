@@ -558,6 +558,23 @@ export class AssetManager {
     return true;
   }
 
+  /**
+   * 丢掉一份已缓存的 JSON，下次 `loadJson` 重新从盘上读。DEV 联动专用：粒子工作台撤销工作态覆盖时
+   * 要回到**盘上此刻**那份——JSON 桶只在超 32 MB 时才淘汰，不丢的话拿回来的是开局装的那份
+   * （作者 Ctrl+S 存了、换个效果，游戏里那个效果就退回改之前的样子，零报错）。
+   *
+   * 与 `dropTexture` 不同，**被 scope pin 住的也丢**：JSON 不占显存，丢了只是下次重读；
+   * 重读入桶时 pin 按 `scopesForKey` 从 scope 表里原样补回来。返回是否真有这一条。
+   */
+  dropJson(path: string): boolean {
+    const key = resolveAssetPath(path);
+    const bucket = this.buckets.json;
+    if (!bucket.entries.has(key)) return false;
+    bucket.entries.delete(key);
+    bucket.errors.delete(key);
+    return true;
+  }
+
   clearCache(type?: AssetType): void {
     const types = type ? [type] : Object.keys(this.buckets) as AssetType[];
     for (const t of types) {

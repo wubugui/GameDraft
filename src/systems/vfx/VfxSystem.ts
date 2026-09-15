@@ -1,9 +1,15 @@
 /**
- * 世界空间粒子 / 群体系统（VfxSystem）——场景实例的生命周期、刺激场总线、资产装载、驱动渲染。
+ * 世界空间粒子 / 群体系统（VfxSystem）——布置（场景 × 时段外观）的生命周期、刺激场总线、资产装载、驱动渲染。
  *
- * 三件正交的东西（见 types.ts 里 VFX 一节）：效果资产（全局）、场景实例（场景 JSON `vfx[]`）、
- * 刺激场（运行时事件）。本系统 own 后两者的运行态；模拟数学在 `vfxSim.ts`（纯函数）、
- * 画法在 `rendering/vfx/VfxRenderer.ts`。
+ * 三件正交的东西（见 types.ts 里 VFX 一节）：效果资产（全局，不绑场景不绑时段）、布置
+ * （布置库 `assets/data/vfx_placements.json`，按「场景 × 时段外观」各配一份）、刺激场（运行时事件）。
+ * 本系统 own 后两者的运行态；模拟数学在 `vfxSim.ts`（纯函数）、画法在 `rendering/vfx/VfxRenderer.ts`。
+ *
+ * ## 布置取哪一份
+ *
+ * `deps.getAppearancePhase()`（= `resolveSceneAppearance(scene, 当前时段).phase`，空串 = 基底）——与背景 / 光照
+ * 换装同一个判据。**没配就没有、互不继承**：夜里没摆就是没有，不回退到白天那份。时段推进后外观键变了
+ * 就按 id 差分换表（没变的实例不动），不等场景重载——两个时段外观等价时换装不重载，但布置可以不同。
  *
  * 表演态：不入档（serialize 恒空桶），切场景整批散掉（`scene:beforeUnload`），读档 = 换时间线 → 同上。
  * 依赖一律构造函数窄回调注入（律 11），不 import 任何系统实例。
@@ -35,14 +41,16 @@ import type {
   VfxFlockState,
   VfxInstanceDef,
   VfxInstanceState,
+  VfxPlacementLibrary,
 } from '../../data/types';
-import { vfxEffectJsonUrl } from '../../core/projectPaths';
+import { TEXT_URLS, vfxEffectJsonUrl } from '../../core/projectPaths';
 import type { VfxRenderer, VfxSpriteSheet } from '../../rendering/vfx/VfxRenderer';
 import type { Vec3 } from '../../utils/sceneSpace';
 import type { SceneWindParams } from '../../utils/sceneWind';
 import { evaluateConditionExpr, type ConditionEvalContext } from '../graphDialogue/evaluateGraphCondition';
 import type { ConfineField } from './vfxConfine';
 import { hashSeed } from './vfxRandom';
+import { VfxMotionAirflow } from './vfxMotionSource';
 import { VfxInstanceSim, createFieldRuntime, type VfxFieldRuntime } from './vfxSim';
 import type { VfxSpace } from './vfxSpace';
 
@@ -80,8 +88,11 @@ export interface VfxSystemDeps {
   buildSpace: () => VfxSpace;
   /** 玩家脚点（场景坐标） */
   getPlayerContact: () => { x: number; y: number } | null;
-  /** 当前时段 id（时段过滤） */
-  getTimePhase: () => string;
+  /**
+   * 当前场景此刻用哪套时段外观：`timeVariants` 的键，空串 = 顶层基底；没进场景 null。
+   * 布置按它取份（`SceneManager.appearancePhaseFor(当前时段)`）。
+   */
+  getAppearancePhase: () => string | null;
   /** 当前时段激活的实体灯（有 pos 的） */
   getActiveLights: () => readonly LightDef[];
   conditionContext: () => ConditionEvalContext;
@@ -115,13 +126,16 @@ interface InstanceRuntime {
   stopped: boolean;
   /** 上次循环声触发时刻 */
   loopAt: number;
-  /** 临时实例（`playVfx` 现场生成的，不在场景 JSON 里） */
+  /** 临时实例（`playVfx` 现场生成的，不在布置库里；换布置表时不动它） */
   transient: boolean;
   /**
    * 跟随锚点（世界，wu）：非 null 时**它**才是锚，`def.anchor` 不再参与解算。
    * 由 `moveInstanceAnchor` 逐帧写（手持光源的火焰），见 `systems/heldProp`。
    */
   followWorld: Vec3 | null;
+  /** Retry only when the effect changes or the scene space is rebuilt. */
+  failedConstruction?: { effect: VfxEffectDef; space: VfxSpace };
+  loadRevision?: number;
 }
 
 export class VfxSystem implements IGameSystem {
@@ -130,6 +144,8 @@ export class VfxSystem implements IGameSystem {
   private readonly instances = new Map<string, InstanceRuntime>();
   private readonly fields: VfxFieldRuntime[] = [];
   private readonly effectCache = new Map<string, Promise<VfxEffectDef | null>>();
+  /** 粒子工作台联动（DEV）：各效果最近一次套上的工作态定义（JSON 串）；同样的一份再来不重建实例 */
+  private readonly previewEffectJson = new Map<string, string>();
   private readonly sheetCache = new Map<string, Promise<VfxSpriteSheet | null>>();
   private readonly sheets = new Map<string, VfxSpriteSheet>();
   private space: VfxSpace | null = null;
@@ -140,6 +156,7 @@ export class VfxSystem implements IGameSystem {
   private playerPrev: { x: number; y: number } | null = null;
   private playerSpeed = 0;
   private playerField: VfxFieldRuntime | null = null;
+  private readonly playerAirflow = new VfxMotionAirflow('player:motion');
   private lightFields: VfxFieldRuntime[] = [];
   private lightsKey = '';
   private readonly onSceneReady: () => void;
@@ -147,11 +164,25 @@ export class VfxSystem implements IGameSystem {
   private readonly onConditionsMaybeChanged: () => void;
   private enabled = true;
   private lastStats = { instances: 0, live: 0, drawCalls: 0, fields: 0, simMs: 0 };
+  /** 布置库（会话内装一次；DEV 下工作台的工作态走 `placementOverrides`，不改这份） */
+  private library: Promise<VfxPlacementLibrary | null> | null = null;
+  /** 已建的实例表取自哪一份（场景 id + 外观键）；null = 还没建（或正在换场景） */
+  private builtPlacement: { sceneId: string; phase: string } | null = null;
+  /** 时段推进过：下一拍核一次外观键（变了就换布置表） */
+  private placementKeyDirty = false;
+  /**
+   * 粒子工作台联动（DEV）：工作台推来的**整份工作态布置库**（含未保存改动），非 null 时整份顶替盘上那份。
+   * 刻意整份而不是只收"工作台正展开的那一份"：只收一份的话作者切到另一时段，这边就退回会话里
+   * 缓存的旧库——哪怕他刚存过盘（`loadJson` 按 URL 缓存），游戏里看到的就不是工作台里那份。
+   */
+  private libraryOverride: VfxPlacementLibrary | null = null;
+  private readonly onPhaseChanged: () => void;
 
   constructor(private readonly deps: VfxSystemDeps) {
     this.onSceneReady = () => { void this.rebuildScene(); };
     this.onSceneUnload = () => this.clearScene();
     this.onConditionsMaybeChanged = () => { this.conditionsDirty = true; };
+    this.onPhaseChanged = () => { this.conditionsDirty = true; this.placementKeyDirty = true; };
   }
 
   /** 渲染器由组装层建好后注入（渲染层对象；系统层可以依赖渲染层） */
@@ -166,7 +197,7 @@ export class VfxSystem implements IGameSystem {
     ctx.eventBus.on('scene:beforeUnload', this.onSceneUnload);
     ctx.eventBus.on('flag:changed', this.onConditionsMaybeChanged);
     ctx.eventBus.on('narrative:stateChanged', this.onConditionsMaybeChanged);
-    ctx.eventBus.on('time:phaseChanged', this.onConditionsMaybeChanged);
+    ctx.eventBus.on('time:phaseChanged', this.onPhaseChanged);
     ctx.eventBus.on('quest:statusChanged', this.onConditionsMaybeChanged);
   }
 
@@ -185,14 +216,17 @@ export class VfxSystem implements IGameSystem {
       eb.off('scene:beforeUnload', this.onSceneUnload);
       eb.off('flag:changed', this.onConditionsMaybeChanged);
       eb.off('narrative:stateChanged', this.onConditionsMaybeChanged);
-      eb.off('time:phaseChanged', this.onConditionsMaybeChanged);
+      eb.off('time:phaseChanged', this.onPhaseChanged);
       eb.off('quest:statusChanged', this.onConditionsMaybeChanged);
     }
     this.eventBus = null;
     this.renderer?.clear();
     this.renderer = null;
     this.effectCache.clear();
+    this.previewEffectJson.clear();
     this.sheetCache.clear();
+    this.library = null;
+    this.libraryOverride = null;
   }
 
   setEnabled(on: boolean): void {
@@ -224,12 +258,15 @@ export class VfxSystem implements IGameSystem {
     this.instances.clear();
     this.fields.length = 0;
     this.playerField = null;
+    this.playerAirflow.reset();
     this.lightFields = [];
     this.lightsKey = '';
     this.sheets.clear();
     this.space = null;
     this.playerPrev = null;
     this.playerSpeed = 0;
+    this.builtPlacement = null;
+    this.placementKeyDirty = false;
     this.renderer?.clear();
   }
 
@@ -239,27 +276,88 @@ export class VfxSystem implements IGameSystem {
     const sd = this.deps.getSceneData();
     if (!sd) return;
     this.space = this.deps.buildSpace();
-    const defs = sd.vfx ?? [];
-    for (const def of defs) {
+    const lib = await this.loadLibrary();
+    if (gen !== this.generation) return;
+    // 布置库是异步到的：等它的这一拍里时段可能已经推进过，取份放在 await 之后
+    const phase = this.deps.getAppearancePhase() ?? '';
+    this.builtPlacement = { sceneId: sd.id, phase };
+    this.placementKeyDirty = false;
+    this.applyPlacementRows(this.placementRows(lib, sd.id, phase));
+  }
+
+  /**
+   * 布置库（会话内装一次）。缺文件 / 读不懂 = 没有任何布置，log 一句——**不**拖垮场景装载。
+   * 形状只做最低闸门（根要有 `scenes` 表）；逐条的形状错由校验器与工作台的保存闸门拦。
+   */
+  private loadLibrary(): Promise<VfxPlacementLibrary | null> {
+    if (!this.library) {
+      this.library = this.deps.assetManager.loadJson<VfxPlacementLibrary>(TEXT_URLS.vfxPlacements)
+        .then((d) => {
+          if (d && typeof d === 'object' && d.scenes && typeof d.scenes === 'object') return d;
+          this.deps.log('vfx: 布置库 vfx_placements.json 没有 scenes 表，当作没有任何布置');
+          return null;
+        })
+        .catch((e) => { this.deps.log(`vfx: 布置库 vfx_placements.json 装不到（当作没有任何布置）：${String(e)}`); return null; });
+    }
+    return this.library;
+  }
+
+  private previewRows(sceneId: string, phase: string, library = this.libraryOverride): VfxInstanceDef[] | undefined {
+    const ent = library?.scenes?.[sceneId];
+    const rows = phase ? ent?.variants?.[phase] : ent?.base;
+    return Array.isArray(rows) ? rows : undefined;
+  }
+
+  /** 工作态只覆盖明确编辑过的份；未发送的场景 / 外观继续读盘，显式 [] 才清空。 */
+  private placementRows(lib: VfxPlacementLibrary | null, sceneId: string, phase: string): VfxInstanceDef[] {
+    const preview = this.previewRows(sceneId, phase);
+    if (preview !== undefined) return preview;
+    const ent = lib?.scenes?.[sceneId];
+    const rows = phase ? ent?.variants?.[phase] : ent?.base;
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  /**
+   * 把非临时实例换成 `rows`：**按 id 差分**——定义逐字没变的实例原样留着（群不重飞、纸不重铺），
+   * 变了的 / 新来的重建，不在表里的删掉。临时实例（手持火把的火焰）不归布置表管，一律不动。
+   */
+  private applyPlacementRows(rows: readonly VfxInstanceDef[]): void {
+    const want = new Map<string, VfxInstanceDef>();
+    for (const def of rows) {
       if (!def?.id || !def.effect) continue;
+      if (!want.has(def.id)) want.set(def.id, def);
+    }
+    for (const [id, inst] of [...this.instances]) {
+      if (inst.transient) continue;
+      const next = want.get(id);
+      if (next && JSON.stringify(next) === JSON.stringify(inst.def)) { want.delete(id); continue; }
+      inst.sim = null;
+      this.instances.delete(id);
+    }
+    for (const def of want.values()) {
       this.instances.set(def.id, { def, effect: null, sim: null, eligible: false, stopped: def.autoStart === false, loopAt: -Infinity, transient: false, followWorld: null });
     }
     this.conditionsDirty = true;
     // 资产并行装；装完各自建 sim（条件在 update 里评）
-    await Promise.all(defs.map(async (def) => {
-      const effect = await this.loadEffect(def.effect);
+    for (const def of want.values()) this.loadInstanceEffect(this.instances.get(def.id)!);
+  }
+
+  /** 时段推进后核外观键：变了就换布置表（同场景，不等重载）。 */
+  private syncPlacementKey(): void {
+    this.placementKeyDirty = false;
+    const built = this.builtPlacement;
+    const sd = this.deps.getSceneData();
+    if (!built || !sd || sd.id !== built.sceneId) return;
+    const phase = this.deps.getAppearancePhase() ?? '';
+    if (phase === built.phase) return;
+    const gen = this.generation;
+    void this.loadLibrary().then((lib) => {
       if (gen !== this.generation) return;
-      const inst = this.instances.get(def.id);
-      if (!inst) return;
-      if (!effect) {
-        this.deps.log(`vfx: 实例「${def.id}」引用的效果「${def.effect}」装不到，跳过`);
-        return;
-      }
-      inst.effect = effect;
-      await this.ensureSheets(def.id, effect);
-      if (gen !== this.generation) return;
-      this.conditionsDirty = true;
-    }));
+      const now = this.deps.getAppearancePhase() ?? '';
+      if (!this.builtPlacement || this.builtPlacement.phase === now) return;
+      this.builtPlacement = { sceneId: sd.id, phase: now };
+      this.applyPlacementRows(this.placementRows(lib, sd.id, now));
+    });
   }
 
   private async loadEffect(id: string): Promise<VfxEffectDef | null> {
@@ -273,12 +371,26 @@ export class VfxSystem implements IGameSystem {
     return p;
   }
 
-  private async ensureSheets(instanceId: string, effect: VfxEffectDef): Promise<void> {
-    await Promise.all(effect.emitters.map(async (e) => {
-      const sheet = await this.loadSheet(e.appearance);
-      if (sheet) this.sheets.set(`${instanceId}/${e.id}`, sheet);
-      else this.deps.log(`vfx: 发射器「${effect.id}/${e.id}」的贴图装不到（animFile=${e.appearance.animFile ?? ''} image=${e.appearance.image ?? ''}）`);
-    }));
+  private loadInstanceEffect(inst: InstanceRuntime): void {
+    const gen = this.generation, revision = (inst.loadRevision ?? 0) + 1;
+    inst.loadRevision = revision;
+    const current = () => gen === this.generation && inst.loadRevision === revision && this.instances.get(inst.def.id) === inst;
+    void this.loadEffect(inst.def.effect).then(async effect => {
+      if (!current()) return;
+      if (!effect) { this.deps.log(`vfx: 实例「${inst.def.id}」的效果「${inst.def.effect}」装不到，跳过`); return; }
+      const sheets = await Promise.all(effect.emitters.map(async e => [e.id, await this.loadSheet(e.appearance)] as const));
+      if (!current()) return;
+      // Publish one coherent effect and sheet set. Earlier preview requests cannot overwrite it.
+      for (const key of this.sheets.keys()) if (key.startsWith(`${inst.def.id}/`)) this.sheets.delete(key);
+      for (const [id, sheet] of sheets) {
+        if (sheet) this.sheets.set(`${inst.def.id}/${id}`, sheet);
+        else this.deps.log(`vfx: 发射器「${effect.id}/${id}」的贴图装不到`);
+      }
+      inst.effect = effect;
+      this.conditionsDirty = true;
+    }).catch(error => {
+      if (current()) this.deps.log(`vfx: 实例「${inst.def.id}」加载失败：${String(error)}`);
+    });
   }
 
   private loadSheet(ap: VfxAppearanceDef): Promise<VfxSpriteSheet | null> {
@@ -321,10 +433,7 @@ export class VfxSystem implements IGameSystem {
 
   private evalEligible(inst: InstanceRuntime): boolean {
     const d = inst.def;
-    if (d.timePhases?.length) {
-      const ph = this.deps.getTimePhase();
-      if (!d.timePhases.includes(ph)) return false;
-    }
+    // 时段不在这里过滤：分时段 = 布置库里不同的那一份（`applyPlacementRows` 换表），实例本身不带时段
     if (d.conditions?.length) {
       const ctx = this.deps.conditionContext();
       for (const c of d.conditions as ConditionExpr[]) if (!evaluateConditionExpr(c, ctx)) return false;
@@ -334,17 +443,23 @@ export class VfxSystem implements IGameSystem {
 
   private ensureSim(inst: InstanceRuntime): void {
     if (inst.sim || !inst.effect || !this.space) return;
-    const seed = typeof inst.def.seed === 'number' ? (inst.def.seed >>> 0) : hashSeed(inst.def.id);
-    // 跟随实例（手持火把的火焰）的锚点是**世界点**、每帧在动，不能再从 def.anchor 解一遍：
-    // 那份是场景坐标的静态锚，sim 被条件刷新 / 换空间重建时会把火焰弹回作者摆的地方。
-    const anchor = inst.followWorld
-      ? ([inst.followWorld[0], inst.followWorld[1], inst.followWorld[2]] as Vec3)
-      : this.space.anchorToWorld(inst.def.anchor);
-    inst.sim = new VfxInstanceSim(inst.def.id, inst.effect, anchor, seed, this.space, inst.def.countScale ?? 1,
-      {
-        area: Array.isArray(inst.def.area) ? inst.def.area : null,
-        confine: inst.def.confine && typeof inst.def.confine === 'object' ? inst.def.confine : null,
-      });
+    if (inst.failedConstruction?.effect === inst.effect && inst.failedConstruction.space === this.space) return;
+    try {
+      const seed = typeof inst.def.seed === 'number' ? (inst.def.seed >>> 0) : hashSeed(inst.def.id);
+      // 跟随锚点已经是世界点；条件刷新或换空间不能把它弹回静态布置位置。
+      const anchor = inst.followWorld
+        ? ([inst.followWorld[0], inst.followWorld[1], inst.followWorld[2]] as Vec3)
+        : this.space.anchorToWorld(inst.def.anchor);
+      inst.sim = new VfxInstanceSim(inst.def.id, inst.effect, anchor, seed, this.space, inst.def.countScale ?? 1,
+        {
+          area: Array.isArray(inst.def.area) ? inst.def.area : null,
+          confine: inst.def.confine && typeof inst.def.confine === 'object' ? inst.def.confine : null,
+        });
+      inst.failedConstruction = undefined;
+    } catch (error) {
+      inst.failedConstruction = { effect: inst.effect, space: this.space };
+      this.deps.log(`vfx: 实例 ${inst.def.id} / 效果 ${inst.effect.id} 无法创建：${String(error)}`);
+    }
   }
 
   private refreshConditions(): void {
@@ -368,7 +483,7 @@ export class VfxSystem implements IGameSystem {
 
   /**
    * `playVfx`：按实例 id 开（被 stop 过的重开；条件不满足仍不开），或现场生成一个临时实例
-   * （`effect` + `anchor`，不在场景 JSON 里，切场景即散）。
+   * （`effect` + `anchor`，不在布置库里，切场景即散）。
    */
   playVfx(opts: {
     instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number;
@@ -395,14 +510,7 @@ export class VfxSystem implements IGameSystem {
       followWorld: opts.followWorld ? [opts.followWorld[0], opts.followWorld[1], opts.followWorld[2]] : null,
     };
     this.instances.set(id, inst);
-    const gen = this.generation;
-    void this.loadEffect(opts.effect).then(async (effect) => {
-      if (gen !== this.generation || !effect) return;
-      inst.effect = effect;
-      await this.ensureSheets(id, effect);
-      if (gen !== this.generation) return;
-      this.conditionsDirty = true;
-    });
+    this.loadInstanceEffect(inst);
     return id;
   }
 
@@ -481,24 +589,63 @@ export class VfxSystem implements IGameSystem {
 
   /**
    * 粒子工作台联动（DEV）：用工作态的效果定义覆盖缓存，并重建所有引用它的实例（锚点不变）。
-   * `def = null` 撤销覆盖（回到磁盘上那份，下次装载重读）。
+   * 与上一次套上的逐字相同 ⇒ 不动。`def = null` 撤销覆盖：丢掉 JSON 缓存、当场从盘上重读并重建。
    */
   applyPreviewEffect(effectId: string, def: VfxEffectDef | null): void {
-    if (def) this.effectCache.set(effectId, Promise.resolve(def));
-    else this.effectCache.delete(effectId);
+    if (def) {
+      // 定义逐字没变就什么都不动：工作台每次发布（拖布置区域顶点、换场景 / 时段外观、3 分钟保活）都会带着
+      // 同一份效果再来一遍，原来照样把这个效果的所有实例重建一遍——作者只挪了「纸钱_山顶」的一个顶点，
+      // 「纸钱_坡下」也重新铺撒、群重新归巢。换场景不用靠这里重套：覆盖留在 effectCache 里，rebuildScene 自己取到
+      const json = JSON.stringify(def);
+      if (this.previewEffectJson.get(effectId) === json) return;
+      this.previewEffectJson.set(effectId, json);
+      this.effectCache.set(effectId, Promise.resolve(def));
+    } else {
+      this.previewEffectJson.delete(effectId);
+      this.effectCache.delete(effectId);
+      // 撤销覆盖 = 回到**盘上此刻**那份：AssetManager 的 JSON 桶不丢，loadEffect 拿回的是开局缓存的旧版
+      // （作者 Ctrl+S 存了、换去编别的效果，游戏里这个效果就退回改之前的样子，直到刷新页面）
+      this.deps.assetManager.dropJson(vfxEffectJsonUrl(effectId));
+    }
     for (const inst of this.instances.values()) {
       if (inst.def.effect !== effectId) continue;
       inst.sim = null;
       inst.effect = null;
-      const gen = this.generation;
-      void this.loadEffect(effectId).then(async (eff) => {
-        if (gen !== this.generation || !eff) return;
-        inst.effect = eff;
-        await this.ensureSheets(inst.def.id, eff);
-        if (gen !== this.generation) return;
-        this.conditionsDirty = true;
-      });
+      this.loadInstanceEffect(inst);
     }
+  }
+
+  /**
+   * 粒子工作台联动（DEV）：仅覆盖工作台实际编辑的场景 × 外观；当前场景当前外观那一份的实例
+   * 按 id 差分重建（没变的实例不动——作者挪一个顶点，别的群不该重飞）。`lib = null` 撤销（回到盘上那份）。
+   */
+  applyPreviewPlacementLibrary(lib: VfxPlacementLibrary | null): void {
+    const next = lib && typeof lib === 'object' && lib.scenes && typeof lib.scenes === 'object' ? lib : null;
+    if (JSON.stringify(next) === JSON.stringify(this.libraryOverride)) return;
+    // 保存 / 撤销 / 放弃后某份退出预览：重新读取正式资源，不回到游戏会话最初缓存的旧值。
+    const dropped = Object.entries(this.libraryOverride?.scenes ?? {}).some(([sid, ent]) =>
+      (Array.isArray(ent.base) && this.previewRows(sid, '', next) === undefined)
+      || Object.keys(ent.variants ?? {}).some((phase) => this.previewRows(sid, phase, next) === undefined));
+    if (dropped) {
+      this.deps.assetManager.dropJson(TEXT_URLS.vfxPlacements);
+      this.library = null;
+    }
+    this.libraryOverride = next;
+    const built = this.builtPlacement;
+    if (!built) return;
+    const gen = this.generation;
+    void this.loadLibrary().then((disk) => {
+      if (gen !== this.generation) return;
+      const b = this.builtPlacement;
+      if (!b) return;
+      this.applyPlacementRows(this.placementRows(disk, b.sceneId, b.phase));
+    });
+  }
+
+  /** 已建的实例表取自哪一份（工作台回传「游戏此刻用的是哪份布置」）；没进场景 null */
+  get currentPlacement(): { sceneId: string; phase: string; preview: boolean } | null {
+    const b = this.builtPlacement;
+    return b ? { ...b, preview: this.previewRows(b.sceneId, b.phase) !== undefined } : null;
   }
 
   /** 工作台联动：当前场景里引用某效果的实例 id（回传给工作台画状态用） */
@@ -552,6 +699,7 @@ export class VfxSystem implements IGameSystem {
       void this.rebuildScene();
       return;
     }
+    if (this.placementKeyDirty) this.syncPlacementKey();
     this.time += dt;
     this.recheckIn -= dt;
     if (this.conditionsDirty || this.recheckIn <= 0) {
@@ -581,6 +729,10 @@ export class VfxSystem implements IGameSystem {
         this.playerField.def = { ...this.playerField.def, strength };
       }
     }
+    const air = this.playerAirflow.sample(player?.world ?? null, dt,
+      player ? this.space.metricAt(player.world[0], player.world[2]) : 1);
+    if (player) { if (!this.fields.includes(air)) this.fields.push(air); }
+    else { const i = this.fields.indexOf(air); if (i >= 0) this.fields.splice(i, 1); }
     // ---- 灯当恐惧源（时段一变灯表就变，按 key 重建）
     this.refreshLightFields();
     // ---- 场老化

@@ -130,6 +130,8 @@ import {
   reloadNarrativeEditorPage,
   emitRuntimeSignal,
   editActionsNative,
+  summarizeActionsNative,
+  type ActionOutlineRow,
   getRuntimeSnapshot,
   loadAuthoringCatalog,
   loadCategories,
@@ -4445,6 +4447,18 @@ function ActionListField({
   onChange: (actions: ActionDef[]) => void;
 }) {
   const [editError, setEditError] = useState('');
+  // 层级摘要由宿主生成（与原生大纲窗同一套叫法）；没有宿主桥（纯网页调试）时退回旧的平铺摘要。
+  const [outline, setOutline] = useState<{ rows: ActionOutlineRow[]; total: number } | null>(null);
+  const actionsKey = useMemo(() => JSON.stringify(actions ?? []), [actions]);
+  useEffect(() => {
+    let alive = true;
+    void summarizeActionsNative(JSON.parse(actionsKey) as ActionDef[]).then((res) => {
+      if (alive) setOutline(res);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [actionsKey]);
   const editInNativeActionEditor = async () => {
     const result = await editActionsNative(label, actions);
     if (result.ok && Array.isArray(result.actions)) {
@@ -4460,8 +4474,36 @@ function ActionListField({
     <div className="action-editor native-action-editor">
       <div className="action-editor-title">
         <b>{label}</b>
-        <span>使用与主编辑器一致的原生 ActionEditor。</span>
+        <span>
+          {actions.length === 0
+            ? '暂无 Action'
+            : outline && outline.total !== actions.length
+              ? `顶层 ${actions.length} 条 · 含嵌套共 ${outline.total} 条`
+              : `${actions.length} 条`}
+        </span>
       </div>
+      {outline && actions.length > 0 ? (
+        <div className="action-outline-list">
+          {outline.rows.map((row, index) => {
+            const persistence = row.kind === 'action' && catalog.actionPersistence[row.type ?? ''] === 'save' ? 'save' : 'memory';
+            const unsafeStateCommand = row.type === 'setNarrativeState';
+            return (
+              <div
+                className={`action-outline-row kind-${row.kind}${unsafeStateCommand ? ' danger' : ''}`}
+                key={`${index}-${row.label}`}
+                style={{ paddingLeft: 6 + row.depth * 14 }}
+                title={`${row.label}${row.summary ? `\n${row.summary}` : ''}`}
+              >
+                {row.kind === 'action'
+                  ? <span className={`save-dot ${persistence}`} />
+                  : <span className="save-dot-spacer" />}
+                <b>{row.label}{unsafeStateCommand ? ' — 强制设状态' : ''}</b>
+                <span>{row.summary}</span>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
       <div className="action-summary-list">
         {actions.length === 0 ? (
           <div className="action-empty-params">暂无 Action。</div>
@@ -4482,8 +4524,15 @@ function ActionListField({
           );
         })}
       </div>
+      )}
       <div className="inspector-actions">
-        <button type="button" onClick={editInNativeActionEditor}>打开原生 ActionEditor</button>
+        <button
+          type="button"
+          onClick={editInNativeActionEditor}
+          title="在原生大纲窗里编辑：左侧大纲树看全嵌套结构，右侧检查器编辑选中那一条"
+        >
+          编辑动作（大纲窗）…
+        </button>
       </div>
       {editError && <span className="field-error">{editError}</span>}
     </div>

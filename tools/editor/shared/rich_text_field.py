@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStackedWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -51,14 +52,16 @@ def build_color_button(
     owner: QWidget,
     model_getter,
     apply_wrap,
-) -> QPushButton:
+) -> QToolButton:
     """「染色」按钮：点开列出 game_config.textPalette 的档位，选中即把选区裹上 ``[c:id]…[/c]``。
 
     刻意不给自由取色：这套木框/纸纹观感下逐处填色号一定走形，且语义档位改一次全局生效
     （与运行时同读 game_config.textPalette，不存在第二份色表）。
     """
-    btn = QPushButton("染色")
-    btn.setMaximumWidth(44)
+    # QToolButton 而非 QPushButton：现用主题给 QPushButton 的内边距会把 44px 宽按钮里的字挤没。
+    btn = QToolButton(owner)
+    btn.setText("染色")
+    btn.setMaximumWidth(44)  # 与旧宽度同额：窄面板（图对话检查器 280px）的宽度预算按它算
     btn.setToolTip("给选中的文字上色（语义色板 [c:…]，勿手打）")
 
     def popup() -> None:
@@ -205,7 +208,8 @@ class RichTextTextEdit(QWidget):
         self._edit = QTextEdit()
         self._edit.textChanged.connect(self.textChanged.emit)
         row.addWidget(self._edit, 1)
-        btn = QPushButton("引用")
+        btn = QToolButton(self)
+        btn.setText("引用")
         btn.setMaximumWidth(44)
         btn.setToolTip("插入项目引用 [tag:…]（勿手打）")
         btn.clicked.connect(self._insert_ref)
@@ -418,7 +422,8 @@ class RichTextLineEdit(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         self._edit = QLineEdit()
         self._edit.textChanged.connect(self.textChanged.emit)
-        btn = QPushButton("引用")
+        btn = QToolButton(self)
+        btn.setText("引用")
         btn.setMaximumWidth(44)
         btn.setToolTip("插入项目引用 [tag:…]（勿手打）")
         btn.clicked.connect(self._insert_ref)

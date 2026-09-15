@@ -131,6 +131,37 @@ describe('AssetManager unified cache', () => {
     await assets.loadJson('/assets/data/c.json');
     expect(assets.getStats().json.entries).toBe(1);
   });
+
+  it('dropJson：丢掉之后 loadJson 重新读盘（粒子工作台撤销覆盖要的是盘上此刻那份，不是开局缓存的）', async () => {
+    let version = 1;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ version }),
+    } as Response));
+    const assets = new AssetManager();
+    expect(await assets.loadJson('/assets/data/vfx/fx.json')).toEqual({ version: 1 });
+    version = 2;                                          // 作者在工作台里存了盘
+    expect(await assets.loadJson('/assets/data/vfx/fx.json')).toEqual({ version: 1 });   // 不丢就是开局那份
+    expect(assets.dropJson('/assets/data/vfx/fx.json')).toBe(true);
+    expect(assets.getJson('/assets/data/vfx/fx.json')).toBeNull();
+    expect(await assets.loadJson('/assets/data/vfx/fx.json')).toEqual({ version: 2 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(assets.dropJson('/assets/data/vfx/nope.json')).toBe(false);
+  });
+
+  it('dropJson：被 scope pin 住的也丢（JSON 不占显存），重读后 pin 从 scope 表补回来', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (path) => ({
+      ok: true,
+      json: async () => ({ path: String(path) }),
+    } as Response));
+    const assets = new AssetManager();
+    await assets.preloadManifest({ scopeId: 'scene:x', refs: [{ type: 'json', path: '/assets/data/a.json' }] });
+    expect(assets.getStats().json.pinned).toBe(1);
+    expect(assets.dropJson('/assets/data/a.json')).toBe(true);
+    expect(assets.getStats().json.entries).toBe(0);
+    await assets.loadJson('/assets/data/a.json');
+    expect(assets.getStats().json.pinned).toBe(1);
+  });
 });
 
 describe('AssetManager.loadOptionalJson', () => {

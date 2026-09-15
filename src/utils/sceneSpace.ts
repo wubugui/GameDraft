@@ -146,6 +146,36 @@ export function raise(ground: Vec3, heightWu: number): Vec3 {
 }
 
 /**
+ * 挂点画面位置 → 宿主直立面外侧的世界点。
+ * 深度只锚在宿主脚点，不能在横移后的挂点下重新采地面（坡地会把手拉到另一层深度）。
+ * 先求穿过脚点的直立面，再沿视线向 front 指定的一侧外推；q.xy 不变，投影仍对准挂点。
+ * bulge 是角色 shader 的 uBulge（相对精灵格宽）：profile ∈ [0,1]，背面仍是基面。
+ * clearanceWu 是身体之外的离身距离，而不是从身体中心起算的固定偏移。
+ */
+export function socketLightWorld(
+  geo: SceneSpaceGeometry,
+  contact: { x: number; y: number },
+  socket: { x: number; y: number; front: boolean; clearanceWu: number; bodyWidthWu: number },
+  bulge: number,
+): Vec3 | null {
+  const r = geo.basisRows;
+  if (!(geo.wuPerQUnit > 0) || Math.abs(r[8]) < 1e-6) return null;
+  const foot = worldToQ(geo, groundWorldAt(geo, contact.x, contact.y));
+  const [px, py] = sceneToWorkPx(geo, contact.x + socket.x, contact.y + socket.y);
+  const qx = wrQx(px, geo.cal.ppu, geo.cal.cx);
+  const qy = wrQy(py, geo.cal.ppu, geo.cal.cy);
+  // 与人物直立 quad 同一世界 Z 平面；画面高度通过投影反解，不能直接当世界高度。
+  const planeD = foot[2] - (r[6] * (qx - foot[0]) + r[7] * (qy - foot[1])) / r[8];
+  const clearanceQ = Math.max(0, socket.clearanceWu) / geo.wuPerQUnit;
+  const bulgeQ = bulge * socket.bodyWidthWu / geo.wuPerQUnit;
+  // uBulge 的正负两种形状都按实际包络求两侧；不能在背后再虚构同样厚的一半身体。
+  const sideD = socket.front
+    ? Math.min(0, -bulgeQ) - clearanceQ
+    : Math.max(0, -bulgeQ) + clearanceQ;
+  return qToWorld(geo, [qx, qy, planeD + sideD]);
+}
+
+/**
  * M-world → 场景坐标（wu）。**正交投影，丢掉深度分量**——相机是正交的，
  * 同一条视线上不同深度落在同一个像素。
  */

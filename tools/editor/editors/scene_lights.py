@@ -277,32 +277,40 @@ def default_light(index: int, kind: str = 'point') -> dict:
     return base
 
 
-def default_lighting_block() -> dict:
-    """一个场景第一次启用统一光影时的缺省 `lighting` 块。
+#: 缺省 `lighting` 块的**唯一**值:运行时 `SceneLightingSystem.defaultSceneLighting` 读同一个文件。
+SCENE_LIGHTING_DEFAULT_JSON = _ROOT / 'src' / 'data' / 'scene_lighting_default.json'
 
-    ⚠ 没有 `day` 块 —— 它 2026-09-07 整块下线了。它描述的是"原画自带的自然光"，
-    唯一用途是把 albedo 从原画里反解出来，而 albedo 现在是**烘出来的贴图**
-    （`lighting/<背景基名>/albedo.png`），那个除数整段搬去了离线端。
-    ⚠ `sky` 留着，但它如今只剩 `intensity` 一个活消费者：**实体影浓度**解算时的
-    环境照度分母（不是天光——运行时的天光加光项 2026-08-30 就删了）。
+
+def default_lighting_block() -> dict:
+    """场景没写 `lighting` 块时**运行时正在用的**那份(每次一份新拷贝)。
+
+    ## 为什么必须与运行时是同一份
+
+    2026-09-14 起运行时对"没写块"的场景按这份缺省启用光照(否则手持火把一点光都没有)。
+    编辑器在这种场景里摆第一盏灯时落盘的就是这份 —— 两边不一致的话,作者多摆了一盏灯,
+    整个场景的色调映射 / 去霾就跟着变了,而他只动了一盏灯。所以值不在这里写,在
+    `src/data/scene_lighting_default.json`(与 `cutscene_action_allowlist.json` 同一个做法)。
+    原先这里是一份 filmic / 去霾 1.0 的"夜景起手式",不是恒等,已随之作废。
+
+    ⚠ 没有 `day` 块 —— 它 2026-09-07 整块下线了(albedo 现在是烘出来的贴图)。
+    ⚠ `sky` 只剩 `intensity` 一个活消费者:**实体影浓度**解算时的环境照度分母。
+    ⚠ `shadowBias`(**wu**):深度场只有可见壳、没有背面,遮挡体厚度必须人为给——
+    太薄漏挡,太厚「隔山打影」。与 `DEFAULT_SHADOW_*_WU` 同值(测试钉着)。
     """
-    return {
-        'sky': {'kelvin': 9000.0, 'intensity': 0.05, 'hemi': 0.85},
-        'lights': [],
-        'fog': {'sigma': 0.0, 'scaleHeight': 530.0, 'baseHeight': 0.0,
-                'kelvin': 7000.0, 'scatter': 0.15},
-        'display': {'ev': 0.0, 'tonemap': 'filmic', 'whiteKelvin': 7000.0,
-                    'contrast': 0.85, 'saturation': 0.9, 'lift': 0.0, 'liftKelvin': 10000.0},
-        'emissive': {'gain': 2.0, 'coreRadius': 30.0,
-                     'haloRadius': 140.0, 'haloGain': 0.18},
-        'dehaze': 1.0,
-        'aoStrength': 1.0,
-        'ratioMax': 8.0,
-        # 阴影 march 的偏置与遮挡体厚度窗(**wu**)。深度场只有可见壳、没有背面,
-        # 所以遮挡体的厚度必须人为给：太薄漏挡，太厚「隔山打影」（远处的墙挡住近处的地）。
-        'shadowBias': {'bias': DEFAULT_SHADOW_BIAS_WU,
-                       'thickness': DEFAULT_SHADOW_THICKNESS_WU},
-    }
+    return copy.deepcopy(_load_scene_lighting_default())
+
+
+def _load_scene_lighting_default() -> dict:
+    global _SCENE_LIGHTING_DEFAULT
+    if _SCENE_LIGHTING_DEFAULT is None:
+        raw = json.loads(SCENE_LIGHTING_DEFAULT_JSON.read_text(encoding='utf-8'))
+        if not isinstance(raw, dict) or not {'sky', 'lights', 'display'} <= raw.keys():
+            raise ValueError(f'{SCENE_LIGHTING_DEFAULT_JSON} 须为含 sky/lights/display 的对象')
+        _SCENE_LIGHTING_DEFAULT = raw
+    return _SCENE_LIGHTING_DEFAULT
+
+
+_SCENE_LIGHTING_DEFAULT: dict | None = None
 
 
 #: 每种灯型**只**用得上的字段。换型时其余的必须摘掉 ——
@@ -662,17 +670,21 @@ TV_ENV_BLOCKS = (
     ('giGain', 'GI 反弹增益'),
     ('aoStrength', 'AO 强度'),
     ('emissive', '灯体自发光/光晕'),
+    ('lightFactors', '角色 / 粒子受光倍率与色度'),
 )
 
 
 def merge_lighting_for_phase(base: dict | None, variant_lighting: dict | None) -> dict | None:
     """`基底 ⊕ 变体` —— 与运行时 `sceneAppearance.mergeSceneLighting` 同式：
     只盖顶层键、整块替换、`lights` 永远取基底。编辑器要把「游戏此刻该看到的那份」
-    发给正处在某时段的游戏时用它，发裸基底等于把白天灌进夜里。"""
-    if not isinstance(base, dict):
-        return None
+    发给正处在某时段的游戏时用它，发裸基底等于把白天灌进夜里。
+
+    没写基底块时:没有覆盖 ⇒ None(运行时自己按缺省块打光);有覆盖 ⇒ 盖在 `default_lighting_block()`
+    上 —— 与运行时同式(2026-09-14 前两边都是"没基底就丢掉覆盖",写进 JSON 的夜景雾永远不生效)。"""
     if not isinstance(variant_lighting, dict) or not variant_lighting:
-        return base
+        return base if isinstance(base, dict) else None
+    if not isinstance(base, dict):
+        base = default_lighting_block()
     merged = dict(base)
     for k, v in variant_lighting.items():
         if k == 'lights' or v is None:
@@ -1023,6 +1035,10 @@ def validate_pulled_lighting(payload: Any, expect_scene_id: str) -> tuple[dict |
         return None, 'lighting 块缺少必需键 %s——半个对象不能覆盖已调好的参数' % (missing,)
     if not isinstance(lit.get('lights'), list):
         return None, 'lighting.lights 不是数组'
+    from tools.editor.shared.light_factors import light_factor_issues
+    factor_errors = light_factor_issues(lit.get('lightFactors'))
+    if factor_errors:
+        return None, '; '.join(factor_errors)
     # 时段(2026-08-30 审查抓到、2026-09-03 改为拆分):游戏在非基底时段发布的 lighting 是
     # 「顶层基底 ⊕ timeVariants[该时段].lighting」的**合并结果**。这里**不再拒收**——
     # 调用方必须用 `pulled_phase(payload)` 取出时段,经 `split_phase_pull` 把环境块拆进

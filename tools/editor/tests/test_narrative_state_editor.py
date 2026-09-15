@@ -1451,6 +1451,108 @@ class TestWebBuildStaleness(unittest.TestCase):
                 stale, _ = web_build_staleness(wd)
             self.assertFalse(stale)  # dev server 读源码，不打扰
 
+    # ---- 经 `@/` 打包进来的共享代码（2026-09-13：改了 src/core/actionParamManifest.ts 横幅不亮，
+    # 旧 bundle 把新 action 报 unknown）。仿真仓库布局：<repo>/tools/narrative_editor_web + <repo>/src。
+
+    def _make_repo(self, root: Path, files: dict[str, str]) -> Path:
+        import os
+        wd = root / "tools" / "narrative_editor_web"
+        idx = wd / "dist" / "index.html"
+        idx.parent.mkdir(parents=True)
+        idx.write_text("<html>", encoding="utf-8")
+        os.utime(idx, (2000, 2000))
+        for rel, text in files.items():
+            p = root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(text, encoding="utf-8")
+            os.utime(p, (1000, 1000))  # 默认都比 dist 旧
+        return wd
+
+    @staticmethod
+    def _touch_newer(p: Path) -> None:
+        import os
+        os.utime(p, (3000, 3000))
+
+    def test_stale_when_transitively_aliased_core_module_newer(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            wd = self._make_repo(root, {
+                "tools/narrative_editor_web/src/App.tsx": "import { validate } from '@/core/validation';\n",
+                "src/core/validation.ts": "import {\n  getManifest,\n} from './manifest';\n",
+                "src/core/manifest.ts": "export const getManifest = () => 1;\n",
+            })
+            self.assertFalse(web_build_staleness(wd)[0])
+            self._touch_newer(root / "src/core/manifest.ts")
+            stale, msg = web_build_staleness(wd)
+            self.assertTrue(stale)
+            self.assertIn("src/core/manifest.ts", msg)
+
+    def test_unimported_game_source_does_not_trip_banner(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            wd = self._make_repo(root, {
+                "tools/narrative_editor_web/src/App.tsx": "import { validate } from '@/core/validation';\n",
+                "src/core/validation.ts": "export const validate = 1;\n",
+                "src/rendering/Unrelated.ts": "export const x = 1;\n",
+            })
+            self._touch_newer(root / "src/rendering/Unrelated.ts")
+            self.assertFalse(web_build_staleness(wd)[0])
+
+    def test_type_only_import_does_not_trip_banner(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            wd = self._make_repo(root, {
+                "tools/narrative_editor_web/src/App.tsx": (
+                    "import type { GameState } from '@/data/types';\n"
+                    "export type { Foo } from '@/data/foo';\n"
+                    "import { validate } from '@/core/validation';\n"
+                ),
+                "src/core/validation.ts": "export const validate = 1;\n",
+                "src/data/types.ts": "export interface GameState {}\n",
+                "src/data/foo.ts": "export interface Foo {}\n",
+            })
+            self._touch_newer(root / "src/data/types.ts")
+            self._touch_newer(root / "src/data/foo.ts")
+            self.assertFalse(web_build_staleness(wd)[0])
+
+    def test_imports_from_test_files_do_not_trip_banner(self) -> None:
+        # roundtripIdempotence.test.ts 以 ?raw 引 narrative_graphs.json：从测试追依赖 = 每存一次数据亮一次横幅。
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            wd = self._make_repo(root, {
+                "tools/narrative_editor_web/src/roundtrip.test.ts": (
+                    "import raw from '../../../public/assets/data/narrative_graphs.json?raw';\n"
+                ),
+                "public/assets/data/narrative_graphs.json": "{}",
+            })
+            self._touch_newer(root / "public/assets/data/narrative_graphs.json")
+            self.assertFalse(web_build_staleness(wd)[0])
+
+    def test_side_effect_dynamic_and_raw_imports_are_followed(self) -> None:
+        with TemporaryDirectory() as td:
+            root = Path(td)
+            wd = self._make_repo(root, {
+                "tools/narrative_editor_web/src/main.tsx": (
+                    "import './styles.css';\n"
+                    "const m = import('@/core/lazy');\n"
+                    "import shader from '@/rendering/core.glsl?raw';\n"
+                ),
+                "tools/narrative_editor_web/src/styles.css": "",
+                "src/core/lazy/index.ts": "export default 1;\n",
+                "src/rendering/core.glsl": "void main(){}\n",
+            })
+            for rel in ("src/core/lazy/index.ts", "src/rendering/core.glsl"):
+                self._touch_newer(root / rel)
+                self.assertTrue(web_build_staleness(wd)[0], rel)
+                import os
+                os.utime(root / rel, (1000, 1000))
+
+    def test_python_alias_mirror_matches_vite_config(self) -> None:
+        # web_bundle_source_files 把 `@/` 解析到 <web_dir>/../../src，照抄自 vite.config.ts；那边改了这边必须跟。
+        from tools.editor.editors.narrative_state_editor import _web_editor_dir
+        cfg = (_web_editor_dir() / "vite.config.ts").read_text(encoding="utf-8")
+        self.assertRegex(cfg, r"'@'\s*:\s*path\.resolve\(__dirname,\s*'\.\./\.\./src'\)")
+
 
 class TestLoadedPageStalenessBanner(unittest.TestCase):
     """已加载页面落后于磁盘 dist（外部/终端重建过但本页没刷新）时，横幅提示「刷新页面」。"""

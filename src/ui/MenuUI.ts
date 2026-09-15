@@ -920,6 +920,8 @@ export class MenuUI {
           // 开局那条横幅可能早被关掉了，而点保存正是玩家最需要知道这件事的时刻——
           // 让他以为存住了才是最坏的结果。
           const ephemeral = ok && !this.saveData.isPersistent();
+          const persisted = ok && !ephemeral;
+          if (persisted) this.eventBus.emit('save:completed', { slot });
           this.eventBus.emit('notification:show', {
             text: ok
               ? (ephemeral
@@ -927,6 +929,8 @@ export class MenuUI {
                 : this.strings.get('menu', 'saveSlot', { slot: slot + 1 }))
               : this.strings.get('menu', 'saveFailed'),
             type: ok ? (ephemeral ? 'error' : 'info') : 'error',
+            // 成功音由 save:completed 统一播放，提示本身不再叠通用通知音。
+            customSfx: persisted,
           });
           this.build();
         });

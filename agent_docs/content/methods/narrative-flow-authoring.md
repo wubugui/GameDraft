@@ -28,8 +28,9 @@ last_used: 2026-07-16
 - **类型=同一模型上三个正交旋钮,不是选系统**:①**规模**(state 数);②**落位**
   (挂主图=主线拍 / 独立 composition=支线遭遇见闻);③**呈现面**(quest / encounter /
   见闻录 / 无)。
-- **进度真相只有主图/本 flow**;推进走信号,flag 只在 state 的 `onEnterActions` 派生暴露;
-  跨线依赖用 `narrative` 条件叶查任意图状态(一等能力,按图 id 天然命名空间),**不堆全局 flag**。
+- **进度真相只有主图/本 flow**;推进走信号,**不自己写 flag**(引擎派生的 flag 只读,条件里可读);
+  跨线依赖用 `narrative` 条件叶查任意图状态(一等能力,按图 id 天然命名空间)。
+  见 [content-norms](../norms.md) 第 10 条(hook 强制)。
 
 ## 阶段骨架(正交五关;顺序=依赖序非流水线;怎么达成委托 [wire-demo-beat](../recipes/wire-demo-beat.md))
 
@@ -64,7 +65,10 @@ last_used: 2026-07-16
 - **一拍两条并行轨**:抽象替身桩满足主图、真实玩法悬在另一条 composition 不驱动主线
   = 进度真相与玩法脱节(标本:`scenario_码头` 抽象三选 vs `flow_dock_water_monkey` 真捞箱)。
   **真相源必须由真实内容喂**。
-- **对话层 setFlag 推进度**:对话只"演+打信号",flag 只在 state.onEnterActions 派生。
+- **对话层 setFlag 推进度**:对话只"演+打信号",不写 flag。
+- **自己写 flag 串编排 / 往派生 flag 里写值**:门控/一次性/跨线依赖全该是状态 + `narrative` 叶;
+  背包/钱/规矩这类派生 flag 只读,改值走对应系统 action(标本:`addFlagValue coins` 绕过背包)。
+  制作人 2026-09-15 定,见 [content-norms](../norms.md) 第 10 条(hook 强制)。
 - **抽象选择替代真实分支**:分支要做成真实状态,不是抽象平行体。
 
 ## 适用边界(能扛到哪)

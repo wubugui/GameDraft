@@ -1,0 +1,14 @@
+{
+  "sky": { "kelvin": 6500.0, "intensity": 1.0, "hemi": 0.0 },
+  "lights": [],
+  "fog": { "sigma": 0.0, "scaleHeight": 530.0, "baseHeight": 0.0, "kelvin": 7000.0, "scatter": 0.15 },
+  "display": {
+    "ev": 0.0, "tonemap": "none", "whiteKelvin": 6500.0,
+    "contrast": 1.0, "saturation": 1.0, "lift": 0.0, "liftKelvin": 6500.0
+  },
+  "emissive": { "gain": 0.0, "coreRadius": 30.0, "haloRadius": 140.0, "haloGain": 0.18 },
+  "dehaze": 0.0,
+  "aoStrength": 1.0,
+  "ratioMax": 8.0,
+  "shadowBias": { "bias": 30.8, "thickness": 264.0 }
+}

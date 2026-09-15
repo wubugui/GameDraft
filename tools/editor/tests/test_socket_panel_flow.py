@@ -18,6 +18,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from tools.editor.editors.anim_editor import AnimEditor
@@ -305,6 +306,133 @@ class SocketPanelFlowTests(unittest.TestCase):
         ed._preview_seq_i = 1
         ed._update_preview_info("walk", 2, 0)
         self.assertNotIn("落脚帧", ed._lbl_preview_info.text())
+
+    # ---- 前后：缺省身前，勾「画在身后」才落 front:false（2026-09-14） ----
+
+    def _mark_one(self, panel) -> None:
+        panel._sockets()["right_hand"] = {"poses": {}}
+        panel._rebuild_sockets()
+        panel._socket_list.setCurrentRow(0)
+        panel._on_pos_moved(0.52, 0.45)
+
+    def test_new_mark_defaults_in_front_of_body(self) -> None:
+        ed, key = self._panel()
+        panel = ed._socket_panel
+        self._mark_one(panel)
+        self.assertFalse(panel._behind.isChecked(), "新标的一格缺省画在身前")
+        mark = panel._canvas._marks["right_hand"]
+        self.assertTrue(mark[3], "画布上的圆点应是实心（身前）")
+        self.assertIsNone(panel.save())
+        data = json.loads(sockets_path_for_bundle(
+            self._model.animation_bundles_path, key).read_text(encoding="utf-8"))
+        pose = next(iter(data["sockets"]["right_hand"]["poses"].values()))
+        self.assertNotIn("front", pose, "身前是缺省值，不落键")
+
+    def test_behind_checkbox_click_writes_false_and_unclick_removes(self) -> None:
+        ed, key = self._panel()
+        panel = ed._socket_panel
+        self._mark_one(panel)
+        self.assertIsNone(panel.save())
+        path = sockets_path_for_bundle(self._model.animation_bundles_path, key)
+
+        panel._behind.click()   # 真实用户入口
+        self.assertTrue(panel.is_dirty())
+        self.assertFalse(panel._canvas._marks["right_hand"][3], "勾了身后，圆点变空心")
+        self.assertIsNone(panel.save())
+        pose = next(iter(json.loads(path.read_text(encoding="utf-8"))["sockets"]["right_hand"]["poses"].values()))
+        self.assertIs(pose.get("front"), False)
+
+        panel._behind.click()
+        self.assertIsNone(panel.save())
+        pose = next(iter(json.loads(path.read_text(encoding="utf-8"))["sockets"]["right_hand"]["poses"].values()))
+        self.assertNotIn("front", pose, "取消身后 = 回到缺省，键要删掉而不是写 true")
+
+    def test_legacy_front_true_is_not_dirty_and_reads_as_front(self) -> None:
+        """旧数据里显式写的 front:true 与缺省等价：打开不脏、界面显示身前。"""
+        ed, key = self._panel()
+        panel = ed._socket_panel
+        slot = panel._current_slot()
+        self.assertIsNotNone(slot)
+        anim = self._model.animations[key]
+        path = sockets_path_for_bundle(self._model.animation_bundles_path, key)
+        path.write_text(json.dumps({
+            "schemaVersion": 1,
+            "atlas": {"cols": anim["cols"], "rows": anim["rows"], "slotCount": len(anim["atlasFrames"])},
+            "sockets": {"h": {"poses": {str(slot): {"x": 0.5, "y": 0.5, "front": True}}}},
+        }), encoding="utf-8")
+        panel.set_bundle(key, anim, None)
+        self.assertEqual(panel._current_slot(), slot)
+        self.assertFalse(panel.is_dirty())
+        self.assertTrue(panel._canvas._marks["h"][3])
+        self.assertFalse(panel._behind.isChecked())
+
+    # ---- 挂件预览 ----
+
+    def _with_prop_preset(self) -> None:
+        from PySide6.QtGui import QColor, QImage
+        img_dir = self._root / "public/resources/runtime/images/icons"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        img = QImage(16, 32, QImage.Format.Format_ARGB32)
+        img.fill(QColor(255, 0, 0))
+        self.assertTrue(img.save(str(img_dir / "torch_probe.png")))
+        self._model.prop_presets = {
+            "torch_probe": {
+                "label": "探针火把",
+                "image": "/resources/runtime/images/icons/torch_probe.png",
+                "anchorX": 0.5, "anchorY": 0.0, "rotation": -90, "scale": 0.5,
+                "states": {"lit": {"label": "点着"}, "out": {"label": "灭了", "scale": 0.25}},
+            },
+        }
+
+    def test_preview_prop_follows_selected_socket_and_state(self) -> None:
+        self._with_prop_preset()
+        ed, _key = self._panel()
+        panel = ed._socket_panel
+        self.assertEqual(panel._prop_combo.current_id(), "torch_probe", "有预设时缺省就预览一支")
+        self._mark_one(panel)
+        spec = panel._canvas._prop
+        self.assertIsNotNone(spec, "标了点、选了挂件，画布上就该画出挂件")
+        self.assertEqual((spec.anchor_x, spec.anchor_y, spec.rotation, spec.scale), (0.5, 0.0, -90, 0.5))
+        self.assertGreater(spec.world_w, 0)
+        self.assertGreater(spec.world_h, 0)
+
+        idx = panel._prop_state_combo.findData("out")
+        panel._prop_state_combo.setCurrentIndex(idx)
+        self.assertEqual(panel._canvas._prop.scale, 0.25, "换状态要按那个状态的摆放重画")
+
+        panel._behind.click()
+        self.assertIn("身后", panel._prop_note.text(), "身后时要说清楚游戏里会被挡住")
+
+    def test_preview_selection_never_dirties_or_writes(self) -> None:
+        self._with_prop_preset()
+        ed, key = self._panel()
+        panel = ed._socket_panel
+        panel._prop_combo.setCurrentIndex(0)   # (none)
+        panel._prop_combo.setCurrentIndex(1)
+        panel._prop_state_combo.setCurrentIndex(1)
+        self.assertFalse(panel.is_dirty(), "预览选择是界面态，不许置脏")
+        self.assertFalse(ed._dirty)
+        self.assertFalse(sockets_path_for_bundle(self._model.animation_bundles_path, key).is_file())
+
+    def test_preview_none_draws_only_marks(self) -> None:
+        self._with_prop_preset()
+        ed, _key = self._panel()
+        panel = ed._socket_panel
+        self._mark_one(panel)
+        panel._prop_combo.setCurrentIndex(0)   # (none)
+        self.assertIsNone(panel._canvas._prop)
+
+    def test_reload_refs_picks_up_new_presets_and_keeps_choice(self) -> None:
+        ed, _key = self._panel()
+        panel = ed._socket_panel
+        self.assertEqual(panel._prop_combo.current_id(), "")
+        self._with_prop_preset()
+        ed.reload_refs_from_model()
+        idx = panel._prop_combo.findText("torch_probe", flags=Qt.MatchFlag.MatchStartsWith)
+        self.assertGreaterEqual(idx, 0, "别的页新增的挂件预设，切页回来要出现在候选里")
+        panel._prop_combo.setCurrentIndex(idx)
+        ed.reload_refs_from_model()
+        self.assertEqual(panel._prop_combo.current_id(), "torch_probe", "切页回来当前预览选择保值")
 
 
 if __name__ == "__main__":

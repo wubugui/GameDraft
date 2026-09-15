@@ -1480,7 +1480,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     // 满包失败时不弹拾取成功提示（addItem 已弹"包袱满了"）；热点是否消费由
     // InteractionCoordinator.handlePickup 按 inventory:full 事件判定（对齐 B22 遭遇消费语义）。
     if (!d.inventoryManager.addItem(p.itemId as string, p.count as number)) return;
-    d.pickupNotification.show(p.itemName as string, p.count as number);
+    // 成功入包统一由 item:acquired 播报，数量取实际增加量。
   }, ['itemId', 'itemName', 'count', 'isCurrency']);
 
   const prepareSceneSwitch = () => {
@@ -1554,11 +1554,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       d.inventoryManager.addCoins(price);
       return;
     }
-    const def = d.inventoryManager.getItemDef(itemId);
-    d.eventBus.emit('notification:show', {
-      text: d.stringsProvider.get('notifications', 'shopPurchased', { name: def?.name ?? itemId }),
-      type: 'info',
-    });
+    // 购买成功同样由 item:acquired 给出入袋回执，避免两处重复播报。
   }, ['itemId', 'price']);
 
   executor.register('inventoryDiscard', (p) => { void d.inventoryManager.discardItem(p.itemId as string); }, ['itemId']);
@@ -2004,8 +2000,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     return null;
   };
   /**
-   * `playVfx`：开一个场景实例（`instanceId`，被 stopVfx 停过的重开；条件不满足仍不开），
-   * 或现场生成一个临时实例（`effect` + 位置；不在场景 JSON 里，切场景即散）。
+   * `playVfx`：开一处布置（`instanceId`，当前场景当前时段外观里在场的那条；被 stopVfx 停过的重开；条件不满足仍不开），
+   * 或现场生成一个临时实例（`effect` + 位置；不在布置库里，切场景即散）。
    */
   executor.register('playVfx', async (p) => {
     const instanceId = String(p.instanceId ?? '').trim();
@@ -2046,7 +2042,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    */
   executor.register('emitVfxField', async (p) => {
     const kindRaw = String(p.kind ?? 'fear').trim();
-    const kind = kindRaw === 'attract' ? 'attract' : kindRaw === 'wind' ? 'wind' : 'fear';
+    const kind = kindRaw === 'attract' ? 'attract' : kindRaw === 'wind' ? 'wind' : kindRaw === 'airflow' ? 'airflow' : 'fear';
     const tag = String(p.tag ?? '').trim();
     const radius = numOr(p.radius, 0);
     const strength = numOr(p.strength, 1);

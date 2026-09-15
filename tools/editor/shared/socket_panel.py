@@ -12,6 +12,12 @@ anim.json 是产线产物，两者生命周期不同（见 animation_sockets 模
 - 复制上一帧（`[`）、复制到本 state 全部空帧
 - 两端标好后中间线性插值
 - 洋葱皮显示上一帧位置
+
+**前后与预览**（2026-09-14）：新标的一格**缺省画在身前**，只有勾「画在身后」才落
+``front: false``（语义见 `animation_sockets.pose_is_front`）。标注一律按朝右标，
+游戏里画面朝左时前后互换（`socket_front_for_facing`）。选中的挂点上按「挂件预览」
+选的挂件预设把挂件真画出来——不画的话身前身后、会不会被身体挡住，标的时候完全看不出来。
+预览选择是纯界面态：不进 sockets.json、不置脏。
 """
 from __future__ import annotations
 
@@ -47,6 +53,7 @@ from .animation_sockets import (
     fingerprint_of_anim,
     interpolate_poses,
     load_socket_set,
+    pose_is_front,
     sanitize_socket_set,
     save_socket_set,
     set_contact_slot,
@@ -55,7 +62,15 @@ from .animation_sockets import (
 from .anim_atlas_preview import crop_atlas_cell, frame_slots_of_state
 from .collapsible_section import CollapsibleSection
 from .form_layout import compact_form
-from .socket_canvas import SocketCanvas
+from .id_ref_selector import IdRefSelector
+from .prop_preview import (
+    anim_world_size,
+    frame_image_index,
+    prop_image_file,
+    resolve_prop_preview,
+    resolve_prop_state_name,
+)
+from .socket_canvas import PropPreviewSpec, SocketCanvas
 
 #: 帧条里落脚帧那一行的底色：不靠 emoji 字形（离屏 / 缺字体会成方块），靠颜色也能一眼看见
 _CONTACT_BRUSH = QBrush(QColor(255, 150, 40, 70))
@@ -77,6 +92,8 @@ class SocketPanel(QWidget):
         self._stale = False
         self._loading = False
         self._slots: list[int] = []
+        #: 挂件预览贴图缓存（磁盘路径 → QPixmap）；切包不清，挂件贴图与动画包无关
+        self._prop_pixmaps: dict[str, QPixmap] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -117,10 +134,17 @@ class SocketPanel(QWidget):
         self._canvas.angleMoved.connect(self._on_angle_moved)
         self._canvas.clickedAt.connect(self._on_pos_moved)
         mid.addWidget(self._canvas)
-        hint = QLabel("点/拖 = 挪位置；拖橙色手柄 = 转角度；实心圈 = 身前，空心 = 身后")
+        hint = QLabel("点/拖 = 挪位置；拖橙色手柄 = 转角度；实心圈 = 身前，空心 = 身后（虚线框 = 被身体挡住的挂件）")
         hint.setStyleSheet("color:#888;")
         hint.setWordWrap(True)
         mid.addWidget(hint)
+        # 挂件预览的说明行（身后会被挡住 / 这一帧没标注 / 贴图找不到…）放在画布正下方：
+        # 放进右侧折叠区的表单行里，文字一换行第二行就被裁掉（表单行高不跟着长）
+        self._prop_note = QLabel("")
+        self._prop_note.setStyleSheet("color:#d9a441;")
+        self._prop_note.setWordWrap(True)
+        self._prop_note.setMaximumWidth(self._canvas.width())
+        mid.addWidget(self._prop_note)
         # 例行反馈走状态行、不弹模态：模态 exec() 在无人值守环境（测试/无头）会永久阻塞，
         # 本仓库已经有一条测试因此挂死，不再制造第二条。
         self._status = QLabel("")
@@ -162,10 +186,16 @@ class SocketPanel(QWidget):
         cl.addWidget(self._contact_summary)
         f.addRow(contact_box)
 
-        self._front = QCheckBox("画在身前")
-        self._front.setToolTip("勾 = 挂件排在角色之后（身前）；不勾 = 插到最前（身后）。转身时可以逐帧翻")
-        self._front.stateChanged.connect(lambda *_: self._write_current(front=self._front.isChecked()))
-        f.addRow(self._front)
+        self._behind = QCheckBox("画在身后（被身体挡住）")
+        self._behind.setToolTip(
+            "不勾 = 挂件画在角色身前（缺省）。\n"
+            "勾上 = 挂件画在角色身后，与身体重叠的部分会被挡住看不见——\n"
+            "只有这一格里握它的那只手真的在身体后面（远侧的手）才勾。\n"
+            "这里一律按角色朝右（图集画的方向）标：游戏里角色朝左时前后自动互换——\n"
+            "朝右身前的火把，人转过去朝左就到身后。朝左的效果去「挂件预设」页试挂预览切朝向看。")
+        self._behind.toggled.connect(
+            lambda on: self._write_current(front=(False if on else None)))
+        f.addRow(self._behind)
 
         self._angle = QDoubleSpinBox()
         self._angle.setRange(-180.0, 180.0)
@@ -185,6 +215,29 @@ class SocketPanel(QWidget):
             lambda v: self._write_current(frame=(None if int(v) < 0 else int(v))))
         f.addRow("挂件帧号", self._frame_no)
         right.addWidget(fw)
+
+        # -- 挂件预览：纯界面态，不进 sockets.json、不置脏 --
+        preview = CollapsibleSection("挂件预览", start_open=True)
+        pw = QWidget()
+        pf = compact_form(QFormLayout())
+        pw.setLayout(pf)
+        self._prop_combo = IdRefSelector(allow_empty=True)
+        self._prop_combo.setMaximumWidth(200)
+        self._prop_combo.setToolTip(
+            "在选中的挂点上画哪支挂件（候选来自「挂件预设」页）。\n"
+            "摆放与游戏同一套数学：身前压在身体上；身后被身体挡住，另描一道虚线框。\n"
+            "(none) = 只画圆点。只影响这里的显示，不写进挂点数据。")
+        self._prop_combo.value_changed.connect(lambda *_: self._on_preview_prop_changed())
+        pf.addRow("挂件", self._prop_combo)
+        self._prop_state_combo = QComboBox()
+        self._prop_state_combo.setMaximumWidth(200)
+        self._prop_state_combo.setToolTip("按挂件的哪个状态预览（状态可以换贴图 / 支点 / 缩放）；缺省是预设的初始状态")
+        self._prop_state_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._prop_state_combo.currentIndexChanged.connect(lambda *_: self._refresh_canvas())
+        pf.addRow("状态", self._prop_state_combo)
+        preview.add_body(pw)
+        right.addWidget(preview)
+        self._fill_preview_props(first_time=True)
 
         tools = CollapsibleSection("省力工具", start_open=True)
         tw = QWidget()
@@ -437,9 +490,11 @@ class SocketPanel(QWidget):
                     float(pose.get("x", 0.5)),
                     float(pose.get("y", 0.5)),
                     float(pose.get("angle", 0.0) or 0.0),
-                    pose.get("front") is True,
+                    pose_is_front(pose),
                 )
         cur = self._current_socket()
+        cur_pose = self._poses(cur).get(str(slot)) if cur and slot is not None else None
+        self._canvas.set_prop_preview(self._prop_preview_spec(cur_pose if isinstance(cur_pose, dict) else None))
         self._canvas.set_marks(marks, cur)
         self._canvas.set_ghost(self._prev_pose_xy(cur, slot))
         self._canvas.set_contact(slot is not None and self.is_contact_slot(slot))
@@ -472,9 +527,9 @@ class SocketPanel(QWidget):
         self._loading = True
         try:
             has = mark is not None
-            for w in (self._front, self._angle, self._frame_no):
+            for w in (self._behind, self._angle, self._frame_no):
                 w.setEnabled(has)
-            self._front.setChecked(bool(mark[3]) if has else False)
+            self._behind.setChecked((not mark[3]) if has else False)
             self._angle.setValue(float(mark[2]) if has else 0.0)
             slot = self._current_slot()
             pose = self._poses(self._current_socket()).get(str(slot)) if has and slot is not None else None
@@ -482,6 +537,115 @@ class SocketPanel(QWidget):
             self._frame_no.setValue(int(fr) if isinstance(fr, int) else -1)
         finally:
             self._loading = was
+
+    # ---- 挂件预览（纯界面态） -------------------------------------------
+
+    def reload_refs(self) -> None:
+        """切页激活：挂件预设可能在别的页新增 / 改名 / 改了贴图，候选与预览要跟上（当前选择保值）。"""
+        self._prop_pixmaps.clear()
+        self._fill_preview_props(first_time=False)
+
+    def _fill_preview_props(self, *, first_time: bool) -> None:
+        items = self._model.all_prop_preset_ids() if hasattr(self._model, "all_prop_preset_ids") else []
+        keep = self._prop_combo.current_id()
+        self._prop_combo.set_items(items)
+        if first_time and not keep and items:
+            # 缺省就预览一支：不预览时"身后被挡住"又回到看不见（这一页存在的理由）
+            keep = items[0][0]
+        self._prop_combo.set_current(keep)
+        self._fill_prop_states()
+        if not first_time:
+            self._refresh_canvas()
+
+    def _on_preview_prop_changed(self) -> None:
+        self._fill_prop_states()
+        self._refresh_canvas()
+
+    def _preview_preset(self) -> dict | None:
+        table = getattr(self._model, "prop_presets", None)
+        pid = self._prop_combo.current_id()
+        entry = table.get(pid) if pid and isinstance(table, dict) else None
+        return entry if isinstance(entry, dict) else None
+
+    def _fill_prop_states(self) -> None:
+        """状态候选：键序照抄（运行时不写 defaultState 时取第一个键），初始状态标出来并选中。"""
+        preset = self._preview_preset()
+        states = preset.get("states") if preset else None
+        keep = str(self._prop_state_combo.currentData() or "")
+        initial = resolve_prop_state_name(preset)
+        self._prop_state_combo.blockSignals(True)
+        try:
+            self._prop_state_combo.clear()
+            if isinstance(states, dict):
+                for name, st in states.items():
+                    if not isinstance(st, dict) or not str(name).strip():
+                        continue
+                    key = str(name).strip()
+                    label = str(st.get("label") or "").strip()
+                    text = f"{key}  {label}" if label else key
+                    if key == initial:
+                        text += "　· 初始"
+                    self._prop_state_combo.addItem(text, key)
+            want = keep if keep and self._prop_state_combo.findData(keep) >= 0 else initial
+            idx = self._prop_state_combo.findData(want)
+            self._prop_state_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        finally:
+            self._prop_state_combo.blockSignals(False)
+        self._prop_state_combo.setEnabled(self._prop_state_combo.count() > 0)
+
+    def _prop_pixmap(self, url: str) -> QPixmap | None:
+        path = prop_image_file(getattr(self._model, "project_path", None), url)
+        if path is None:
+            return None
+        key = str(path)
+        pix = self._prop_pixmaps.get(key)
+        if pix is None:
+            pix = QPixmap(key)
+            self._prop_pixmaps[key] = pix
+        return None if pix.isNull() else pix
+
+    def _prop_preview_spec(self, pose: dict | None) -> PropPreviewSpec | None:
+        """选中挂点这一格要画的挂件；画不出来时把原因写进预览说明行（不静默）。"""
+        preset = self._preview_preset()
+        if preset is None:
+            self._prop_note.setText("")
+            return None
+        state = str(self._prop_state_combo.currentData() or "")
+        resolved = resolve_prop_preview(preset, state)
+        if not resolved.images:
+            self._prop_note.setText("这支挂件（这个状态）没有贴图，画不出来。")
+            return None
+        url = resolved.images[frame_image_index(len(resolved.images), (pose or {}).get("frame"))]
+        pix = self._prop_pixmap(url)
+        if pix is None:
+            self._prop_note.setText(f"贴图找不到或读不出：{url}")
+            return None
+        atlas = self._atlas
+        world = anim_world_size(
+            self._anim,
+            atlas.width() if atlas is not None and not atlas.isNull() else 0,
+            atlas.height() if atlas is not None and not atlas.isNull() else 0,
+        )
+        if world is None:
+            self._prop_note.setText("这个动画包的世界尺寸推不出来（没写 worldWidth/worldHeight 也读不到图集），没法按比例画挂件。")
+            return None
+        if not self._current_socket():
+            self._prop_note.setText("先在左边选 / 新建一个挂点。")
+        elif pose is None:
+            self._prop_note.setText("这一帧该挂点没有标注——游戏里挂件在这一帧会隐藏。")
+        elif not pose_is_front(pose):
+            self._prop_note.setText("这一帧挂件在身后：与身体重叠的部分游戏里看不见（虚线框是它的位置）。")
+        else:
+            self._prop_note.setText("")
+        return PropPreviewSpec(
+            pixmap=pix,
+            world_w=world[0],
+            world_h=world[1],
+            anchor_x=resolved.anchor_x,
+            anchor_y=resolved.anchor_y,
+            rotation=resolved.rotation,
+            scale=resolved.scale,
+        )
 
     def _write_current(self, **fields) -> None:
         """把一个字段写进当前挂点当前帧的 pose（没有就地新建）。"""

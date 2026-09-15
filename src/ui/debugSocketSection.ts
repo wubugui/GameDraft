@@ -123,7 +123,7 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
     for (let i = 0; i < Math.max(1, slots); i++) {
       const pose: SocketFramePose = { x: st.x, y: st.y };
       if (st.angle !== 0) pose.angle = st.angle;
-      if (st.front) pose.front = true;
+      if (!st.front) pose.front = false;
       // 帧号跟着槽位走：多帧挂件（鸡）于是会随角色动画一起翻页
       pose.frame = i;
       poses[String(i)] = pose;

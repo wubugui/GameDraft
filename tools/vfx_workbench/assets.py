@@ -20,13 +20,29 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
 from tools.atomic_io import retry_transient
+from tools.editor.shared.vfx_program import effective_solver, new_program, program_errors
 
 ROOT = Path(__file__).resolve().parents[2]
 VFX_DIR = ROOT / "public" / "assets" / "data" / "vfx"
+#: ``/resources/...`` 这类运行时 URL 的根（查 ``animFile`` 的 ``states`` 用；测试指到临时目录）
+PUBLIC_DIR = ROOT / "public"
+WRITE_LOCK = threading.RLock()
+UNCHECKED_BASE = object()  # Offline imports/tests may deliberately write without a loaded document.
+
+
+def serialized_write(fn):
+    """All workbench writers share the same read-check-write critical section."""
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        with WRITE_LOCK:
+            return fn(*args, **kwargs)
+    return wrapped
 
 #: 文件名即 id：禁路径分隔符 / Windows 保留字符 / 控制字符；允许中文。与轨迹资产同一条护栏。
 _ID_RE = re.compile(r'^[^\\/:*?"<>|\x00-\x1f]{1,120}$')
@@ -36,12 +52,12 @@ _EMITTER_ID_RE = re.compile(r'^[^\s./\\:*?"<>|\x00-\x1f]{1,60}$')
 #: 顶层键序（运行时真相在前、工作态在后）
 _ORDER = ("id", "label", "emitters", "authoring")
 #: 发射器键序（与 types.ts 的 VfxEmitterDef 逐字同序）
-_EMITTER_ORDER = ("id", "offset", "subOnly", "appearance", "spawn", "motion", "life", "collision", "behavior",
+_EMITTER_ORDER = ("id", "simulation", "offset", "subOnly", "appearance", "spawn", "motion", "life", "collision", "behavior",
                   "plate", "sound")
 #: 各模块的键序（同上，按 types.ts）
 _MODULE_ORDER = {
     "appearance": ("animFile", "image", "state", "restState", "frameRate", "sizeWu", "sizeJitter",
-                   "sizeOverLife", "alphaOverLife", "tint", "blend", "lit", "emissive",
+                   "sizeOverLife", "alphaOverLife", "tint", "blend", "lit", "emissive", "lightGain",
                    "stretchByVelocity", "faceVelocity", "softEdgeWu", "spin"),
     "spawn": ("max", "rate", "burst", "shape", "speed", "direction", "spread", "duration"),
     "motion": ("gravity", "drag", "wind", "buoyancy", "turbulence", "maxSpeed", "stimulus"),
@@ -136,6 +152,23 @@ def _pair(v: Any, where: str) -> list:
     return list(v)
 
 
+def anim_states(anim_file: str) -> list[str] | None:
+    """``animFile``（运行时 URL，如 ``/resources/runtime/animation/fx_bat/anim.json``）里的状态名；
+    读不到 / 路径出了 ``public`` / 不是动画包 = None（缺文件由校验器报，这里不重复）。"""
+    rel = str(anim_file or "").strip().lstrip("/")
+    if not rel:
+        return None
+    try:
+        base = PUBLIC_DIR.resolve()
+        p = (base / rel).resolve()
+        p.relative_to(base)
+        doc = json.loads(p.read_bytes().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    st = doc.get("states") if isinstance(doc, dict) else None
+    return [str(k) for k in st.keys()] if isinstance(st, dict) else None
+
+
 def _appearance(ap: Any, where: str, warn: list[str]) -> dict:
     if not isinstance(ap, dict):
         raise ValueError(f"{where}: 缺 appearance")
@@ -144,6 +177,14 @@ def _appearance(ap: Any, where: str, warn: list[str]) -> dict:
         raise ValueError(f"{where}.appearance.sizeWu 必须 > 0（收到 {size!r}）")
     if not str(ap.get("animFile") or "").strip() and not str(ap.get("image") or "").strip():
         warn.append(f"{where}: 外观既没有 animFile 也没有 image，游戏里装不到贴图（会跳过这个发射器）")
+    # 状态名是对动画包的引用：打错了运行时不报错——state 静默退回第一个状态、restState 直接忽略（VfxSystem.loadTexture）
+    anim = str(ap.get("animFile") or "").strip()
+    states = anim_states(anim) if anim else None
+    if states:
+        for key, how in (("state", f"运行时静默退回第一个状态「{states[0]}」"), ("restState", "运行时忽略它，栖息时不换姿势")):
+            v = ap.get(key)
+            if isinstance(v, str) and v and v not in states:
+                warn.append(f"{where}.appearance.{key}「{v}」不是动画包 {anim} 里的状态（有：{' / '.join(states)}）——{how}")
     out = dict(ap)
     for k in ("sizeOverLife", "alphaOverLife"):
         if k in out:
@@ -160,6 +201,12 @@ def _appearance(ap: Any, where: str, warn: list[str]) -> dict:
             raise ValueError(f"{where}.appearance.emissive 必须是 0..1（收到 {out['emissive']!r}）")
         if out.get("lit") is False:
             warn.append(f"{where}: 关了受光（lit=false）时 emissive 没有意义，渲染会忽略它")
+    if "lightGain" in out:
+        # 受光强度：乘在这个发射器收到的光上（probe 底光 + 实体灯），不乘自发光；运行时夹到 0..10
+        if not _is_num(out["lightGain"]) or not (0.0 <= float(out["lightGain"]) <= 10.0):
+            raise ValueError(f"{where}.appearance.lightGain 必须是 0..10（受光强度，收到 {out['lightGain']!r}）")
+        if out.get("lit") is False:
+            warn.append(f"{where}: 关了受光（lit=false）时 lightGain 没有意义，渲染会忽略它")
     if isinstance(out.get("spin"), dict) and "rate" in out["spin"]:
         out["spin"] = dict(out["spin"])
         out["spin"]["rate"] = _pair(out["spin"]["rate"], f"{where}.appearance.spin.rate")
@@ -316,8 +363,11 @@ def _emitter(em: Any, idx: int, warn: list[str]) -> dict:
         out["subOnly"] = True
     else:
         out.pop("subOnly", None)
-    if sub and isinstance(out.get("behavior"), dict):
+    if sub and effective_solver(out) == "flock":
         raise ValueError(f"{where}: subOnly 的子发射器不能带 behavior（群体状态机永远推不动它）")
+    errors = program_errors(out)
+    if errors:
+        raise ValueError(f"{where}: {'; '.join(errors)}")
     out["appearance"] = _appearance(out.get("appearance"), where, warn)
     out["spawn"] = _spawn(out.get("spawn"), where)
     for key, fn in (("motion", _motion), ("life", _life), ("collision", _collision)):
@@ -332,7 +382,7 @@ def _emitter(em: Any, idx: int, warn: list[str]) -> dict:
     if isinstance(out.get("sound"), dict):
         out["sound"] = _order(dict(out["sound"]), _MODULE_ORDER["sound"])
     if not sub and not _is_num(out["spawn"].get("rate")) and not _is_num(out["spawn"].get("burst")) \
-            and "behavior" not in out:
+            and effective_solver(out) != "flock":
         warn.append(f"{where}: 既没有 rate 也没有 burst、也不是群体 —— 运行时一个粒子都不会发")
     return _order(out, _EMITTER_ORDER)
 
@@ -451,7 +501,7 @@ def list_assets() -> list[dict]:
         row.update({
             "label": str(doc.get("label") or ""),
             "emitters": [str(e.get("id") or "") for e in ems if isinstance(e, dict)],
-            "flock": any(isinstance(e, dict) and isinstance(e.get("behavior"), dict) for e in ems),
+            "flock": any(isinstance(e, dict) and effective_solver(e) == "flock" for e in ems),
             "sceneId": str(au.get("sceneId") or ""),
             "background": str(au.get("background") or ""),
             "idMismatch": str(doc.get("id") or "") != p.stem,
@@ -470,15 +520,25 @@ def load_asset(eid: str) -> dict | None:
     return doc
 
 
-def save_asset(doc: dict) -> tuple[Path, dict, list[str]]:
+@serialized_write
+def save_asset(doc: dict, base: Any = UNCHECKED_BASE) -> tuple[Path, dict, list[str]]:
     """归一化 → 原子写盘。返回 (路径, 落盘形, 告警)。"""
     warn: list[str] = []
     norm = normalize_effect(doc, warn)
     p = asset_path(norm["id"])
+    if base is not UNCHECKED_BASE:
+        if base is not None and (not isinstance(base, dict) or base.get("id") != norm["id"]):
+            raise ValueError("效果保存基线无效，请重新打开效果")
+        disk = load_asset(norm["id"])
+        if disk != base and disk != norm:
+            raise ValueError("效果已被外部修改或删除，未覆盖磁盘；页面改动仍保留，请先核对（可复制当前效果保留改动）")
+        if disk == norm:
+            return p, norm, warn
     atomic_write(p, dumps(norm))
     return p, norm, warn
 
 
+@serialized_write
 def delete_asset(eid: str) -> bool:
     p = asset_path(eid)
     if not p.is_file():
@@ -487,6 +547,7 @@ def delete_asset(eid: str) -> bool:
     return True
 
 
+@serialized_write
 def rename_asset(old: str, new: str) -> Path:
     """改名 = 改文件名 + 改内部 id。目标已存在则拒绝（不静默覆盖别人的资产）。"""
     src = asset_path(old)
@@ -502,8 +563,11 @@ def rename_asset(old: str, new: str) -> Path:
     return dst
 
 
-def duplicate_asset(src_id: str, new_id: str) -> tuple[Path, dict]:
-    doc = load_asset(src_id)
+@serialized_write
+def duplicate_asset(src_id: str, new_id: str, working: dict | None = None) -> tuple[Path, dict]:
+    """复制一份效果。``working`` = 页面上此刻那份（带着没存的改动）：副本就是它，源文件原样不动；
+    缺省取盘上那份。两种都过同一道形状闸门（``save_asset``）。"""
+    doc = working if isinstance(working, dict) else load_asset(src_id)
     if doc is None:
         raise FileNotFoundError(f"效果 {src_id!r} 不存在")
     if asset_path(new_id).exists():
@@ -531,6 +595,7 @@ def new_effect(eid: str, label: str = "", scene_id: str = "", background: str = 
         "id": eid,
         "emitters": [{
             "id": "main",
+            "simulation": new_program("particle"),
             "appearance": {"image": "/resources/runtime/images/vfx/dust.png", "sizeWu": 6,
                            "alphaOverLife": [[0, 0], [0.2, 1], [1, 0]], "lit": True},
             "spawn": {"max": 40, "rate": 8, "shape": {"kind": "sphere", "radius": 20}, "speed": [10, 30]},

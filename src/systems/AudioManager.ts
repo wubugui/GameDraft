@@ -1260,7 +1260,9 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.onSfx('ui:cancel', () => this.playSystemSfx('uiCancel'));
     this.onSfx('ui:panelOpen', () => this.playSystemSfx('uiPanelOpen'));
     this.onSfx('ui:panelClose', () => this.playSystemSfx('uiPanelClose'));
-    this.onSfx('notification:show', (payload?: { type?: string }) => {
+    this.onSfx('save:completed', () => this.playSystemSfx('saveDone'));
+    this.onSfx('notification:show', (payload?: { type?: string; customSfx?: boolean }) => {
+      if (payload?.customSfx) return;
       const type = payload?.type;
       if (type === 'warning') {
         this.playSystemSfx('uiWarning');
@@ -1292,7 +1294,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       this.lastMapTravelSfxAt = Date.now();
       this.playSystemSfx('mapTravel');
     });
-    this.onSfx('item:acquired', () => this.playSystemSfx('itemAcquired'));
+    // 每条入袋提示实际出现时响一次；同批入包的提示排队，声音跟着分开。
+    this.onSfx('notification:itemPresented', () => this.playSystemSfx('itemAcquired'));
     this.onSfx('item:consumed', () => this.playSystemSfx('itemConsumed'));
     this.onSfx('inventory:full', () => this.playSystemSfx('inventoryFull'));
     this.onSfx('currency:changed', (payload?: { amount?: number }) => {

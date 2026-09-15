@@ -105,7 +105,10 @@ interface BubbleChatterFile {
 
 export interface BubbleChatterDeps {
   emoteBubbleManager: EmoteBubbleManager;
-  /** 与 showEmote 同口径的目标解析（NPC / 玩家 / 热点 / 过场演员） */
+  /**
+   * 与 showEmote 同口径的目标解析（NPC / 玩家 / 热点 / 过场演员）。
+   * ⚠ 探索态下可能**每帧**都调（选人在判条件之前：条件一直不满足的组每帧都走到这里）——注入方别每次都记日志。
+   */
   resolveEmoteTarget: (id: string) => IEmoteBubbleAnchor | null;
   /**
    * 角色档说话人 → 当前场景里引用了该角色的那个摆放的实体 id；场上没有该角色返回 null。

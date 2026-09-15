@@ -18,6 +18,12 @@ triggers:
     - "src/data/propPresets.ts"
     - "public/assets/data/prop_presets.json"
     - "tools/editor/editors/prop_preset_editor.py"
+    - "src/data/animationSockets.ts"
+    - "tools/editor/shared/animation_sockets.py"
+    - "tools/editor/shared/socket_panel.py"
+    - "tools/editor/shared/socket_canvas.py"
+    - "tools/editor/shared/prop_preview.py"
+    - "tools/editor/shared/prop_tryon_canvas.py"
   topics: [火把, 手持光源, 挂件, 灯笼, 跟随灯, 挂点, prop, 挂件状态, 闪烁, fadeLight, 运行时灯]
   tasks: [做火把, 加手持道具, 让灯跟着人走, 吹灭灯, 加挂件状态, 调挂件自带灯]
 last_governed: 2026-09-12
@@ -55,6 +61,10 @@ last_governed: 2026-09-12
   被第一个丢掉,而且只有一行告警。
 - **解不出来就不发光,不回落 `pos`**。目标不在场 / 挂点这一帧没标注 / 场景没有几何 ⇒
   这一帧这盏灯不存在。回落 = 一盏灯莫名钉在半空,比不亮更难查。
+- **灯位与效果锚点分两个坐标系解**(`sceneToLightWorld` / `sceneToVfxWorld`)。灯位只认 M-world:
+  粒子空间不是真 3D(照明载荷没到 / 没烘,退平面近似)时 `sceneToLightWorld` 返回 null;
+  效果锚点照旧走粒子空间。原来两者共用 `vfxSystem.sceneToWorld`,平面近似那份返回的是**画面坐标**,
+  拿去当灯位不报错、只是灯静默落到别处(铁律 0)。`HeldPropSystem.test.ts` 钉着。
 - **闪烁必须是一个信号**。`flameOutput(t, amp, hz, seed)` 产的 `L(t)` 同时乘在灯强度与
   粒子发射率上。两处各摇随机数 ⇒ "灯在闪、火苗不动"的穿帮。作者填的是**相对波动幅度与频率**
   (有名字的量),不是"随机 ±20%"的魔数(见 [[2026-08-23-physical-derivation-over-fitting]])。
@@ -84,8 +94,10 @@ last_governed: 2026-09-12
 
 | 坑 | 症状 |
 |---|---|
-| **场景 JSON 没有 `lighting` 块** | 整套光照静默禁用 ⇒ **举着火把一点光都没有**,挂件贴图与粒子照旧。实测崖墓前段1 就是这样(`lighting === null`,午/夜都一样),现象是"火把不亮",而作者只会以为预设配错了。现在这条降级**会出声**(按场景报一次) |
+| **当前这张原画没烘几何场** | 整套光照禁用 ⇒ **举着火把一点光都没有**,挂件贴图与粒子照旧;这条降级**会出声**(按场景报一次,带烘焙命令)。⚠ 2026-09-14 之前"场景 JSON 没写 `lighting` 块"也会走到这里(崖墓前段1 等 6 个场景),那条已改成按缺省块打光,见 [[scene-lighting]] 硬契约第一条。**夜里不亮先查夜图的目录**:时段原画各有各的 `lighting/<背景基名>/`,只烘了 probe、没烘 `geometry.json` 一样不亮(崖墓前段 / 跑马梁 / 牛头凼的夜曾经就是这样) |
 | 挂点名拼错 | 每帧 `getSocketLocalPose` 返回 null ⇒ 不发光、不起效果、**零报错**。现在会报一条带可选挂点名单的警告(只报不拒:读档时序下实体可能还没进场) |
+| **挂上了、灯也亮着,火把图却看不见** | 先查挂点那一格的 `front`。身后的挂件 `setChildIndex(0)` 排在身体后面,手贴腰侧的帧上会被**整个**挡住(玩家 idle 离屏合成只露 1.6%),而灯只看"这一格标没标"、不看前后 ⇒ 有光没火把。2026-09-14 之前 `front` 缺省是**身后**,玩家包 41 格一格没勾就是这样;现在**缺省身前、只有显式 `front:false` 才是身后**(TS `socketPoseToLocal` / Python `pose_is_front` 同口径,parity 测试钉着),编辑器挂点面板也会按「挂件预览」把挂件真画出来(身后=被挡住+虚线框)。**标注一律按朝右(图集画的方向)标,画面朝左时运行时前后互换**(制作人 2026-09-14 定死,`socketFrontForFacing` / `socket_front_for_facing`):朝右身前的火把,人转过去朝左就到身后。⚠ 画面朝向 = 内层 `facingX` × **外层镜像**:NPC 转身只翻外层容器(内层恒 +1),精灵从 `setLitParentTransform` 推进来的外层 `sx` 符号知道自己朝哪边——只看 `facingX` 的话 NPC 前后不换 |
+| NPC 朝左时挂件灯落在身体另一侧 | 挂件灯位 = 接地点 + 挂点偏移。偏移若取 `getSocketPose`(本容器局部)就漏了外层变换:NPC 转身只翻外层容器,局部位姿不变号。现在走 `SpriteEntity.getSocketOffsetFromContact`(先乘外层缩放含镜像、再转外层旋转,与 `Npc._contactOffset` 同口径),`SpriteEntitySocketFacing.test.ts` 钉着 |
 | 预设 id 拼错 | 曾留下一条"幽灵条目"占着那个挂点、还会随 `persistent` 进存档。现在直接不登记 |
 | **"关了灯画面没变"** | 先确认那盏灯**在不在视野里**。实测雾津街头某机位上只有 `lamp_1` 在画面内,单独关掉其余 7 盏全屏均值纹丝不动(9.91) |
 | 拿蝙蝠验"举火把把群轰散" | 灯确实进了恐惧场,但场按 `(1−r/R)²` 衰减:实测 127 wu 外稳态恐惧只到 **0.086**,而 `fleeThreshold` 是 0.25 ⇒ 群始终 `airborne`,**不惊散**。要"举火把轰散"得靠得更近或调物种权重 |

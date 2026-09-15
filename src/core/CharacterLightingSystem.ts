@@ -1,3 +1,4 @@
+import { lightFactor, lightChroma, legacyLightFactors, resolveLightResponse, type EntityLightResponse } from '../data/lightFactors';
 import { BufferImageSource, GlProgram, Shader, Texture, type TextureSource, UniformGroup } from 'pixi.js';
 import type { IGameSystem, GameContext, SceneLightingDef } from '../data/types';
 import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
@@ -168,6 +169,27 @@ export class CharacterLightingSystem implements IGameSystem {
   // (syncFrame,由 Pixi ticker 驱动 —— **不经任何游戏状态分支**,Cutscene 里也照跑);
   // sceneLit 每场景重建。litShaders 用于体素卷/probe 图集热替换时就地重绑纹理。
   private readonly frameLit: UniformGroup = createFrameLitUniforms();
+  /** 粒子只借场景采样资源；角色的曝光、保色、测试太阳与 F2 覆盖不进入这组。 */
+  private readonly vfxFrameLit: UniformGroup = createFrameLitUniforms();
+  private sceneFactors: SceneLightingDef['lightFactors'];
+
+  getLightFactors(kind: 'character' | 'particles'): EntityLightResponse {
+    const sh = this.meta?.shading;
+    const fallback = sh && !this.geometryOnly
+      ? legacyLightFactors(sh.beta, lightFactor((sh as { giStrength?: number }).giStrength))
+      : { indirectFactor: 1, directFactor: 1, totalFactor: 1 };
+    return resolveLightResponse(this.sceneFactors?.[kind], {
+      ...fallback, eChroma: this.geometryOnly ? 0 : lightChroma((sh as { eChroma?: number } | undefined)?.eChroma),
+    });
+  }
+
+  applyLightFactors(value: SceneLightingDef['lightFactors']): void {
+    this.sceneFactors = value;
+    Object.assign(this.params, this.getLightFactors('character'));
+    this.eChroma = this.getLightFactors('character').eChroma;
+    this.vfxFrameLit.uniforms['uEChroma'] = this.getLightFactors('particles').eChroma;
+    this.vfxFrameLit.update();
+  }
   /**
    * skyao 与全白的 blend 系数(制作人 2026-09-01:「加一个 blend 系数」)。
    * 0 = 完全不遮蔽(全白) 1 = 完整天穹遮蔽。乘在 GI 上,不影响太阳与实体灯。
@@ -646,6 +668,12 @@ export class CharacterLightingSystem implements IGameSystem {
     const bmp = await createImageBitmap(groundBuf);
     if (myEpoch !== this.epoch) { bmp.close(); return null; }
     const bw = bmp.width, bh = bmp.height;
+    if (bw !== meta.work.w || bh !== meta.work.h) {
+      // 尺寸对不上就整张拒用：按 work 尺寸去读会越界成 NaN，脚点遮挡 / 碰撞反投影全错且不报错
+      bmp.close();
+      console.error(`[${T}] ground_d.png ${bw}x${bh} ≠ 载荷 work ${meta.work.w}x${meta.work.h}，行走面拒用`);
+      return null;
+    }
     const cv = new OffscreenCanvas(bw, bh);
     const ctx2 = cv.getContext('2d')!;
     ctx2.drawImage(bmp, 0, 0);
@@ -1000,14 +1028,22 @@ export class CharacterLightingSystem implements IGameSystem {
         this.probeViz = pts;
       }
 
-      // 场景配置接管非 bake 着色参数(F2 打开即这些值;F2 改动=运行时测试,
-      // 场景重载即回配置)。太阳为游戏侧参数,载荷不含,保持现值。
+      // 烘焙载荷给采样/调色初值；三项倍率优先取场景作者配置，缺项等价解析旧 beta/GI。
+      // 其余角色诊断旋钮是临时覆盖；粒子保持自己的场景采样初值。
       const sh = meta.shading;
+      Object.assign(this.vfxFrameLit.uniforms, {
+        uMode: sh && sh.mode >= 1 ? sh.mode : 3,
+        uFold: sh?.fold ?? 1,
+        uAmbStrength: sh?.amb ?? 1, uFlatten: sh?.flatten ?? 0,
+        uEChroma: this.getLightFactors('particles').eChroma, uSkyaoBlend: this.skyaoBlend,
+      });
+      this.vfxFrameLit.update();
       if (sh) {
         Object.assign(this.params, {
           mode: sh.mode, spp: sh.spp, step: sh.step, msteps: sh.msteps,
           fold: sh.fold > 0, missMode: sh.miss_mode > 0, nee: sh.nee > 0,
           beta: sh.beta, ambStrength: sh.amb,
+          ...this.getLightFactors('character'),
           bulge: sh.bulge, flatten: sh.flatten,
           // 旧载荷没有 giStrength(2026-09-01 新增)——缺省 1 = 行为不变
           giStrength: (() => {
@@ -1015,9 +1051,8 @@ export class CharacterLightingSystem implements IGameSystem {
             return typeof g === 'number' && Number.isFinite(g) ? g : 1;
           })(),
         });
-        // E 色度权重(实验室调色区导出;缺省 0=只借场景明暗)。F2 旋钮可临时覆盖测试。
-        const ec = (sh as { eChroma?: number }).eChroma;
-        this.eChroma = typeof ec === 'number' && Number.isFinite(ec) ? ec : 0;
+        // 场景角色色度优先；旧载荷仅给缺项提供兼容初值，粒子另取自己的场景参数。
+        this.eChroma = this.getLightFactors('character').eChroma;
       }
       // 进场景恒未载体素卷 → 强制 cache 着色(mode≥1),RT(mode 0)会采样占位卷得黑。
       if (this.params.mode < 1) this.params.mode = 3;
@@ -1080,6 +1115,30 @@ export class CharacterLightingSystem implements IGameSystem {
   get groundDepthField(): GroundDepthField | null {
     const m = this.meta; const g = this.groundD;
     return m && g ? { data: g, w: m.work.w, h: m.work.h } : null;
+  }
+
+  /** 当前装着的烘焙目录 URL（时段原画各一份）；没载荷 = null。DEV 地形联动按它找同名目录里的行走面 */
+  get currentBakeBase(): string | null { return this.loadedBakeBase; }
+
+  /**
+   * DEV：地形工作台推给游戏 / 导出到游戏之后**原地换行走面**（`ground_d.png` + 解码区间），载荷其余项不动。
+   * 尺寸必须与载荷的 work 一致（decodeGroundPayload 里拒用）。旧纹理留在 ownedTextures 里到场景卸载再销毁——
+   * 滤镜 / 影子可能还绑着它，当场销毁会让 BindGroup 自毁（pixi-v8-traps）。
+   */
+  async replaceGround(url: string, range: { min: number; max: number }): Promise<boolean> {
+    const m = this.meta;
+    if (!m || !this.groundD) return false;
+    const myEpoch = this.epoch;
+    const blob = await fetchPayloadBlob(url);
+    if (myEpoch !== this.epoch) return false;
+    const fake = { ...m, ground_d: { min: range.min, max: range.max } } as LightingPayloadMeta;
+    const g = await this.decodeGroundPayload(blob, fake, myEpoch);
+    if (!g || myEpoch !== this.epoch) return false;
+    this.groundD = g.g;
+    this.groundTex = g.tex;
+    this.groundRange = [range.min, range.max];
+    m.ground_d = { min: range.min, max: range.max };
+    return true;
   }
 
   /** 场景世界坐标 → 行走面深度(work-res 双线性);无载荷返回 null */
@@ -1234,8 +1293,9 @@ export class CharacterLightingSystem implements IGameSystem {
   }
 
   /**
-   * 给**非角色**的世界空间着色（粒子批）建 shader：自带 GlProgram，但吃与角色**同一套**三组 uniform
-   * （sceneShade / frameShade / charLights）与同一批场景纹理。载荷不在 / 关闭时返回 null，调用方走 unlit。
+   * 给粒子批建世界空间 shader：场景纹理、sceneShade 与 charLights 共用，frameShade 独立。
+   * 粒子不借角色曝光或调试覆盖；三项倍率由场景提供，效果自己的强度进 vfxParams。
+   * 载荷不在 / 关闭时返回 null，调用方走 tone/unlit。
    *
    * 进 `litShaders` 注册表：换场景 `parkLitShaders` 会把场景纹理槽位退回白图，所以 `extra` 里
    * **不许**再绑第二份按场景销毁的纹理而不自己回收——粒子系统在 `scene:beforeUnload` 先销毁自己的
@@ -1248,7 +1308,7 @@ export class CharacterLightingSystem implements IGameSystem {
       glProgram: program,
       resources: {
         sceneShade: this.sceneLit,
-        frameShade: this.frameLit,
+        frameShade: this.vfxFrameLit,
         charLights: this.charLights,
         entityShade: new UniformGroup({
           uHasNrm: { value: 0, type: 'f32' },
@@ -1348,9 +1408,13 @@ export class CharacterLightingSystem implements IGameSystem {
     u['uMode'] = p.mode; u['uSpp'] = p.spp; u['uMSteps'] = p.msteps;
     u['uFold'] = p.fold ? 1 : 0; u['uMissMode'] = p.missMode ? 1 : 0; u['uNEE'] = p.nee ? 1 : 0;
     u['uStep'] = p.step; u['uBeta'] = Math.pow(2, p.beta); u['uAmbStrength'] = p.ambStrength;
+    // bulge 是精灵格宽的比例；mesh/filter 各自用当前实体尺寸折为 q 深度。
     u['uBulge'] = p.bulge; u['uFlatten'] = p.flatten; u['uShowN'] = this.showNOverride ?? (p.showNormals ? 1 : 0);
     u['uEOnly'] = typeof this.eOnlyDebug === 'number' ? this.eOnlyDebug : (this.eOnlyDebug ? 1 : 0);
     u['uGiStrength'] = p.giStrength;
+    u['uIndirectFactor'] = lightFactor(p.indirectFactor, p.giStrength);
+    u['uDirectFactor'] = lightFactor(p.directFactor);
+    u['uTotalFactor'] = lightFactor(p.totalFactor, Math.pow(2, p.beta) / Math.PI);
     u['uFixedNQ'] = this.giDiagFixedN;
     u['uEChecker'] = this.eCheckerDebug ? 1 : 0;
     u['uSunOn'] = p.sunEnabled ? 1 : 0;

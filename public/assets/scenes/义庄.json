@@ -41,7 +41,21 @@
     },
     "giGain": 0.0,
     "placeholder": true,
-    "_migration": "identity-2026-08-21"
+    "_migration": "identity-2026-08-21",
+    "lightFactors": {
+      "character": {
+        "indirectFactor": 0.3183098861837907,
+        "directFactor": 1,
+        "totalFactor": 1,
+        "eChroma": 0
+      },
+      "particles": {
+        "indirectFactor": 1.0,
+        "directFactor": 1,
+        "totalFactor": 0.3183098861837907,
+        "eChroma": 0
+      }
+    }
   },
   "id": "义庄",
   "name": "义庄",
@@ -516,36 +530,7 @@
     "shader": {
       "depth_per_sy": 0.002219460227272727
     },
-    "collision": {
-      "x_min": -2.2727272510528564,
-      "z_min": -2.1438955443212304,
-      "cell_size": 0.028618474162618993,
-      "grid_width": 160,
-      "grid_height": 142,
-      "height_offset": 0.0
-    },
     "depth_tolerance": 0.05,
     "floor_offset": 0.0
-  },
-  "vfx": [
-    {
-      "id": "vfx_incense",
-      "effect": "incense_smoke",
-      "anchor": {
-        "x": 610,
-        "y": 150,
-        "h": 0,
-        "surface": "shell"
-      }
-    },
-    {
-      "id": "vfx_dust",
-      "effect": "dust_motes",
-      "anchor": {
-        "x": 488,
-        "y": 310,
-        "h": 110
-      }
-    }
-  ]
+  }
 }

@@ -20,6 +20,10 @@
  *   变换 gizmo = 与轨迹工作台共用的 `/vendor/gizmo.js`（W 移动 / E 旋转 / R 缩放，拖动 Ctrl 吸附）：
  *     **选中任何东西立刻出现在轴心上、旁边写着选中了什么**（制作人打回三轮的那条）
  *   工具：A 放预览锚点（点场景表面）· M 放玩家（点地面）· K 发刺激（点任意处）· H 平移
+ *   粒子区域（活动布置）：「拉发射区域 / 拉范围区域」按住拖一个框（两角取**地面拾取点**再投回画面 = 4 个画面点）；
+ *     区域画成贴地折线（边上按步长采样 `sceneToWorldGround`、略抬高，不做深度测试——被地形挡住也得看得见）；
+ *     顶点是可选对象（一选中立刻出 gizmo，只在地上挪）、可直接拖（沿地面拾取）；双击边线加点；
+ *     Delete / 右键（没拖动就松开 = 不是环视）删点
  *
  * 飞行步进用 setInterval(16ms)：rAF 在隐藏页 / 无头壳里不跑，改回 rAF 自检会"卡住"。
  * ⚠ 相机的上向量叫 `_camUp`，别叫 `_up`——mouseup 处理器已经是 `_up(e)`，后定义的会静默盖掉前者。 */
@@ -30,6 +34,31 @@ const KEY2CODE = { w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', q: 'KeyQ', e: 'Ke
 const PITCH_MAX = Math.PI / 2 - 0.02;
 function keyCode3(e) { if (e.code) return e.code; const k = (e.key || '').toLowerCase(); return KEY2CODE[k] || ''; }
 function isTyping3(e) { const t = e.target; return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || !!t.isContentEditable); }
+
+/** 物体标记的拾取半径（px）：**所有点状标记同一个**。原来按标记大小各给各的（锚点 12 / 发射器 13 / 顶点 10），
+ *  叠在一起的锚点与零偏移发射器，点在 12～13 px 之间拿到的是发射器（它的 offset 所有布置共用） */
+const PICK_R = 12;
+/** 视差内算"同样近"的容差（px）：两个标记叠在一起 / 几乎叠着才算并列 */
+const PICK_TIE = 1.5;
+/**
+ * 点物体标记：拿**离光标最近**的那个（2D / 3D 共用）。原来取半径内 `objects()` 序的第一个、选中的还一律优先——
+ * 离布置锚点 12 px 的纸钱区域顶点，正点在它上面拿到的是锚点（拖 = 挪布置、Delete = 删整条布置），
+ * 选中锚点之后这个顶点根本点不到。并列（差 ≤ PICK_TIE）才看选中项 → `objects()` 序（锚点在零偏移发射器前）。
+ * @param project (worldPos) => [x, y] | null
+ */
+function pickObjectAt(objs, project, mx, my, selKey) {
+  let best = Infinity; const cand = [];
+  for (const o of objs) {
+    const c = project(o.pos); if (!c) continue;
+    const d = Math.hypot(c[0] - mx, c[1] - my);
+    if (d > PICK_R) continue;
+    cand.push({ o, d }); if (d < best) best = d;
+  }
+  if (!cand.length) return null;
+  const tied = cand.filter((x) => x.d <= best + PICK_TIE);
+  const keep = tied.find((x) => x.o.key === selKey);
+  return (keep || tied[0]).o;
+}
 
 class View3D {
   constructor(canvas, overlay, host) {
@@ -42,6 +71,8 @@ class View3D {
     this.mesh = null; this.tex = null; this.gridLines = null;
     this.drag = null; this.hover = null; this.readout = null;
     this.fly = null; this.keys = new Set(); this.spaceDown = false;
+    /** 飞行结束（松右键）时还按着的飞行键：它们的自动重复 keydown 在松开之前一律吞掉（见 `_keyDown`） */
+    this.heldAfterFly = new Set();
     this._timer = 0; this._lastT = 0;
     this.progMesh = this._prog(MESH_VS3, MESH_FS3);
     this.progLine = this._prog(LINE_VS3, LINE_FS3);
@@ -86,6 +117,7 @@ class View3D {
   }
   setTexture(img) {
     const gl = this.gl;
+    this.texSrc = img ? img.src : '';                    // 装的是哪张图（自检核"换时段外观 = 换贴图"）
     if (!img) { this.tex = null; return; }
     const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
@@ -256,6 +288,12 @@ class View3D {
     }
     // 线框球：巢 / 活动域 / 惊起
     if (host.layers.rings) for (const s of host.spheres()) this._circle(mvp, s.center, s.radius, s.color, s.hot);
+    // 活动布置的粒子区域：贴地折线，不做深度测试（地形起伏会把一段线埋进网格里）
+    if (cal) {
+      gl.disable(gl.DEPTH_TEST);
+      for (const l of host.areaLines3()) if (l.pts.length) this._lines(mvp, l.pts, l.color, gl.LINES, 1);
+      gl.enable(gl.DEPTH_TEST);
+    }
     // 刺激场作用半径
     for (const f of host.fieldMarks()) this._circle(mvp, f.at, f.radius, f.color, false);
     // 角色代理的身体线（尺度参考：角色高 150 wu）+ 挂点横杆；不可选中、不进 doc
@@ -379,7 +417,11 @@ class View3D {
     c.addEventListener('contextmenu', (e) => e.preventDefault());
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
-      if (this.fly) { this.cam.speed = clamp(this.cam.speed * Math.exp(-e.deltaY * 0.0015), 0.05, 20); this.host.status(`飞行速度 ×${fmt(this.cam.speed, 2)}`); this.draw(); return; }
+      if (this.fly) {
+        this.cam.speed = clamp(this.cam.speed * Math.exp(-e.deltaY * 0.0015), 0.05, 20); this.host.status(`飞行速度 ×${fmt(this.cam.speed, 2)}`);
+        if (this.drag && this.drag.kind === 'look') this.drag.moved = true;   // 飞行里调过速 = 在操作相机，松右键不是"点一下删点"
+        this.draw(); return;
+      }
       const [mx, my] = this._pos(e); this._zoomAt(mx, my, Math.exp(e.deltaY * 0.0012));
     }, { passive: false });
     c.addEventListener('mousedown', (e) => { c.focus(); this._down(e); });
@@ -389,7 +431,7 @@ class View3D {
     // 捕获阶段：飞行键在到达 app 的快捷键表之前就被吃掉（按住右键时 W 是"前进"，不是"移动工具"）
     window.addEventListener('keydown', (e) => this._keyDown(e), true);
     window.addEventListener('keyup', (e) => this._keyUp(e), true);
-    window.addEventListener('blur', () => { this.keys.clear(); this.spaceDown = false; });
+    window.addEventListener('blur', () => { this.keys.clear(); this.heldAfterFly.clear(); this.spaceDown = false; });
   }
   _pos(e) { const r = this.c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
   /** 按住右键期间：键盘归相机（app 的 onKey 也会据此让路） */
@@ -398,14 +440,22 @@ class View3D {
   _keyDown(e) {
     const code = keyCode3(e);
     if (code === 'Space' && !isTyping3(e)) this.spaceDown = true;
-    if (!this.fly) return;
-    if (FLY_KEYS.has(code)) { this.keys.add(code); e.preventDefault(); e.stopImmediatePropagation(); }
+    if (!this.fly) {
+      // 先松右键、A 还按着：它的自动重复不许漏到工具键表（A = 锚点工具，下一次左键就把布置锚点改到点击处）
+      if (e.repeat && this.heldAfterFly.has(code)) { e.preventDefault(); e.stopImmediatePropagation(); }
+      return;
+    }
+    if (FLY_KEYS.has(code)) {
+      this.keys.add(code); e.preventDefault(); e.stopImmediatePropagation();
+      // 按住右键按了飞行键 = 在飞，松右键时不算"没拖动的右键点击"（否则光标下那个区域顶点被删掉）
+      if (this.drag && this.drag.kind === 'look') this.drag.moved = true;
+    }
   }
   _keyUp(e) {
     const code = keyCode3(e);
     if (code === 'Space') this.spaceDown = false;
-    this.keys.delete(code);
-    if (code === 'ShiftLeft' || code === 'ShiftRight') { this.keys.delete('ShiftLeft'); this.keys.delete('ShiftRight'); }
+    this.keys.delete(code); this.heldAfterFly.delete(code);
+    if (code === 'ShiftLeft' || code === 'ShiftRight') { this.keys.delete('ShiftLeft'); this.keys.delete('ShiftRight'); this.heldAfterFly.delete('ShiftLeft'); this.heldAfterFly.delete('ShiftRight'); }
   }
   _orbit(e) { this.drag = { kind: 'orbit', mx: e.clientX, my: e.clientY, cam: Object.assign({}, this.cam), moved: false }; this.c.style.cursor = 'grabbing'; }
   _pan(e) { this.drag = { kind: 'pan', mx: e.clientX, my: e.clientY, cam: Object.assign({}, this.cam), wpp: this._worldPerPx([this.cam.tx, this.cam.ty, this.cam.tz]) }; this.c.style.cursor = 'grabbing'; }
@@ -432,7 +482,7 @@ class View3D {
     if (!mv[0] && !mv[1] && !mv[2] && !(c.ortho && fwd)) return false;
     const step = (c.ortho ? c.orthoH * 2 : c.dist) * 0.9 * gain * dt;
     c.tx += mv[0] * step; c.ty += mv[1] * step; c.tz += mv[2] * step;
-    if (this.drag && this.drag.kind === 'look') this.drag.eye = this._eye(c);   // 飞行中转头：圆心跟着机位走
+    if (this.drag && this.drag.kind === 'look') { this.drag.eye = this._eye(c); this.drag.moved = true; }   // 飞行中转头：圆心跟着机位走；飞过 = 不是点击
     return true;
   }
   /** 按住右键期间以 16ms 定时步进（不用 rAF：页面不可见 / 无头时 rAF 不跑，飞行就"卡住"）；松开即停 */
@@ -449,16 +499,15 @@ class View3D {
   /** 拾取：小目标（物体标记 / 线框球）**先于** gizmo 的轴 / 面（别的东西正好躺在轴线上时点它得选它） */
   _hit(mx, my) {
     const host = this.host;
-    const near = (p, r) => { const c = this.project(p); return c && Math.hypot(c[0] - mx, c[1] - my) <= (r || 9); };
-    // 叠在一起的物体（偏移 0 时锚点与发射器同点）：当前选中的那个优先，否则按 objects() 的序
-    const cand = host.objects().filter((o) => near(o.pos, (o.size || 8) + 3));
-    if (cand.length) {
-      const keep = cand.find((o) => o.key === host.sel.key);
-      return { kind: 'obj', key: (keep || cand[0]).key };
-    }
+    // 选中的是半径：缩放 gizmo 的轴心就在发射器 / 锚点标记上（叠在一起），先拾 gizmo——
+    // 原来点中心方块（整体缩放）拿到的是发射器、gizmo 还切回了移动，只剩三个小轴端改得了半径
+    if (host.radiusSelected()) { const gz0 = this._hitGizmo(mx, my); if (gz0) return gz0; }
+    // 最近的标记；叠在一起的（偏移 0 时锚点与发射器同点）：当前选中的那个优先，否则按 objects() 的序（见 pickObjectAt）
+    const po = pickObjectAt(host.objects(), (p) => this.project(p), mx, my, host.sel.key);
+    if (po) return { kind: 'obj', key: po.key };
     const gz = this._hitGizmo(mx, my); if (gz) return gz;
-    // 线框球：点它的三个大圆
-    for (const s of host.spheres()) {
+    // 线框球：点它的三个大圆（图层藏起来了就不拾——看不见的 900 wu 活动域大圆横穿大半个画面，点空地想取消选择却选中了它）
+    if (host.layers.rings) for (const s of host.spheres()) {
       for (const [ax, az] of [[[1, 0, 0], [0, 0, 1]], [[1, 0, 0], [0, 1, 0]], [[0, 0, 1], [0, 1, 0]]]) {
         for (let i = 0; i < 48; i++) {
           const t0 = i / 48 * Math.PI * 2, t1 = (i + 1) / 48 * Math.PI * 2;
@@ -475,10 +524,25 @@ class View3D {
   _dbl(e) {
     if (!this.ok) return;
     const [mx, my] = this._pos(e);
-    const hit = this._hit(mx, my); if (!hit || hit.kind !== 'obj') return;
-    this.host.select(hit.key);
-    const o = this.host.objects().find((x) => x.key === hit.key) || this.host.spheres().find((x) => x.key === hit.key);
-    if (o) this.focus(o.pos || o.center, o.radius || 150);
+    const host = this.host;
+    const hit = host.doc ? this._hit(mx, my) : null;
+    if (hit && hit.kind === 'obj') {
+      host.select(hit.key);
+      const o = host.objects().find((x) => x.key === hit.key) || host.spheres().find((x) => x.key === hit.key);
+      if (o && !o.vertex) this.focus(o.pos || o.center, o.radius || 150);
+      return;
+    }
+    // 双击在活动布置的边线上 = 插一个顶点（边线按贴地折线投到屏幕上找，与画出来的那条是同一条）
+    if (!host.doc || !host.cal) return;
+    const edge = host.areaEdgeHit((sx, sy) => this.project(host.areaPointWorld(sx, sy)), mx, my, 7);
+    if (edge) host.insertAreaVertex(edge.role, edge.after, edge.pt);
+  }
+  /** 光标下的地面点投回画面（拉区域框 / 拖顶点用）；地面拾取不到 = null */
+  _groundScene(mx, my) {
+    const cal = this.host.cal; if (!cal) return null;
+    const g = this.pickGround(mx, my); if (!g) return null;
+    const s = cal.worldToScene(g[0], g[1], g[2]);
+    return Number.isFinite(s[0]) && Number.isFinite(s[1]) ? s : null;
   }
   _down(e) {
     if (!this.ok) return;
@@ -493,7 +557,10 @@ class View3D {
     const alt = e.altKey;
     if (e.button === 2) {
       if (alt) { this.drag = { kind: 'dolly', mx: e.clientX, my: e.clientY, cam: Object.assign({}, this.cam) }; this.c.style.cursor = 'ns-resize'; return; }
-      this.drag = { kind: 'look', mx: e.clientX, my: e.clientY, cam: Object.assign({}, this.cam), eye: this._eye(), moved: false };
+      // 右键没拖动就松开 + 按在区域顶点上 = 删这个点（拖了就是环视，一个点都不删）
+      const rh = host.doc ? this._hit(mx, my) : null;
+      this.drag = { kind: 'look', mx: e.clientX, my: e.clientY, cam: Object.assign({}, this.cam), eye: this._eye(), moved: false,
+        rightKey: rh && rh.kind === 'obj' && /^area:/.test(rh.key) ? rh.key : null };
       this.keys.clear(); this.fly = { t: performance.now() }; this._flyLoop();
       this.c.style.cursor = 'move'; this.draw(); return;
     }
@@ -503,6 +570,15 @@ class View3D {
     if (this.spaceDown || !host.doc) return this._pan(e);
     const tool = host.tool;
     if (tool === 'pan') return this._pan(e);
+    if (tool === 'areaEmit' || tool === 'areaRange') {
+      const role = tool === 'areaEmit' ? 'emit' : 'range';
+      const s = this._groundScene(mx, my);
+      if (!s) { host.status('点到地面上再拉（光标下拾取不到地面）', 'warn'); return; }
+      if (!host.areaToolBegin(role)) return;
+      this.drag = { kind: 'area', role, a: s, b: s };
+      host.setAreaDraft(role, s, s);
+      return;
+    }
     if (tool === 'anchor') { const s = this.pickSurface(mx, my); if (s) host.setAnchorAt(s); return; }
     if (tool === 'player') { const g = this.pickGround(mx, my); if (g) host.setPlayerAt(g); return; }
     if (tool === 'field') { const s = this.pickSurface(mx, my); if (s) host.addFieldAt(s.p); return; }
@@ -533,7 +609,7 @@ class View3D {
       let cur = 'default';
       if (sg) cur = 'pointer';
       else if (e.altKey || this.spaceDown || host.tool === 'pan') cur = 'grab';
-      else if (host.tool === 'anchor' || host.tool === 'player' || host.tool === 'field') cur = 'crosshair';
+      else if (host.tool === 'anchor' || host.tool === 'player' || host.tool === 'field' || /^area/.test(host.tool)) cur = 'crosshair';
       else if (hit) cur = hit.kind === 'gz' ? Gizmo.cursor(hit.part) : 'move';
       this.c.style.cursor = cur;
       return;
@@ -560,12 +636,29 @@ class View3D {
       this.draw(); return;
     }
     if (d.kind === 'gz') { this._gzMove(d, mx, my, e); return; }
+    if (d.kind === 'area') { d.b = this._groundScene(mx, my) || d.b; host.setAreaDraft(d.role, d.a, d.b); return; }
     if (d.kind === 'obj') {
       if (!d.moved && Math.hypot(mx - d.sx, my - d.sy) < 3) return;
       d.moved = true;
       const base = d.base;
-      const surf = this.pickSurface(mx, my);
-      host.dragTick(() => host.dragObjectTo(d.key, base, surf, e.altKey));
+      // 区域顶点沿**地面**走（区域是地上的一块，光标下的地面点就是它）
+      if (base.kind === 'vertex') {
+        const g = this.pickGround(mx, my);
+        if (g) host.dragTick(() => host.dragObjectTo(d.key, base, { p: g, onShell: false }));
+        return;
+      }
+      // Alt = 显式"扔到光标下的表面上"
+      if (e.altKey) { const surf = this.pickSurface(mx, my); if (surf) host.dragTick(() => host.dragObjectTo(d.key, base, surf)); return; }
+      // 平常：**相对位移**，与 gizmo 中心同语义——按下处所在高度的水平面上、光标走了多少就挪多少。
+      // 原来落到光标下的表面：浮在 120 wu 高的锚点一拖就跳到身后的地面上、h 清零，发射器 150 wu 的 y 偏移拍回地形
+      const q = this.pickPlane(mx, my, base.pos[1]);
+      if (!q || !d.p0) return;
+      if (base.kind === 'radius') {
+        const r0 = Math.hypot(d.p0[0] - base.pos[0], d.p0[2] - base.pos[2]), r1 = Math.hypot(q[0] - base.pos[0], q[2] - base.pos[2]);
+        host.dragTick(() => host.setRadiusValue(d.key, base.radius + (r1 - r0)));   // 抓着线框往外拖 = 半径变大
+        return;
+      }
+      host.dragTick(() => host.applyGizmo(d.key, base, { kind: 'move', v: { x: q[0] - d.p0[0], y: 0, z: q[2] - d.p0[2] } }));
       return;
     }
   }
@@ -573,8 +666,15 @@ class View3D {
     if (!this.drag) return;
     const d = this.drag; this.drag = null; this.readout = null;
     this.c.style.cursor = 'default';
-    if (d.kind === 'look') { this.fly = null; this.keys.clear(); this.draw(); return; }
+    if (d.kind === 'look') {
+      this.heldAfterFly = new Set(this.keys);
+      this.fly = null; this.keys.clear(); this.draw();
+      if (d.rightKey && !d.moved) void this.host.deleteAreaVertexKey(d.rightKey);
+      return;
+    }
     if (d.kind === 'orbit' || d.kind === 'dolly' || d.kind === 'pan') { this.draw(); return; }
+    // 拉区域：工具已经不是区域工具（Esc 退出过）就不提交——草稿作废，一个点都不写
+    if (d.kind === 'area') { if (/^area/.test(this.host.tool)) this.host.commitAreaDraft(); else this.host.setAreaDraft(d.role, null, null); return; }
     this.host.dragEnd();
   }
   /** 键盘微移（世界 x / z，wu） */

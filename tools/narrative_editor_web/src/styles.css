@@ -1493,6 +1493,63 @@ select {
   overflow-wrap: anywhere;
 }
 
+/* 动作层级摘要（宿主 summarizeActions）：一条一行、长条件单行省略，悬停看全文。 */
+.action-outline-list {
+  display: grid;
+  gap: 2px;
+  border: 1px solid #39434d;
+  border-radius: 7px;
+  background: #171b20;
+  padding: 4px 0;
+}
+
+.action-outline-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, max-content) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 3px 8px 3px 6px;
+  min-width: 0;
+}
+
+.action-outline-row b,
+.action-outline-row span:last-child {
+  font-size: var(--editor-host-font-12, 12px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.action-outline-row b {
+  color: #dce5ec;
+  max-width: 22ch;
+}
+
+.action-outline-row span:last-child {
+  color: #91a0ad;
+}
+
+.action-outline-row.kind-slot b,
+.action-outline-row.kind-item b {
+  color: #9fb0bf;
+  font-style: italic;
+  font-weight: normal;
+}
+
+.action-outline-row.kind-bad b {
+  color: #ff6b6b;
+}
+
+.action-outline-row.danger {
+  background: #241719;
+}
+
+.save-dot-spacer {
+  width: 8px;
+  height: 8px;
+}
+
 .action-row-list {
   display: grid;
   gap: 7px;

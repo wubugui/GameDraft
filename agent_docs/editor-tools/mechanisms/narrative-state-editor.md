@@ -35,6 +35,7 @@ last_governed: 2026-08-05
 2. **两侧 normalize 都不代写数据**:归一化只做格式,禁止替作者补派生字段(曾在桥路径代写 broadcastOnEnter,连带把对应校验变成死代码,已整段删除,别重新引入)。
 3. **两步保存**:网页 Ctrl+S 只暂存进 ProjectModel + mark_dirty、**不落盘**,真写盘靠主编辑器"全部保存";桥返回的协议串前缀被网页正则依赖,**不可翻译/改动**。
 4. **dist 是独立构建产物**:改网页源码必须重新 build,且 QWebEngine 不自动刷新——**重建≠页面刷新**(壳有 staleness 横幅,dev server 模式除外)。
+   **"网页源码"不止 `tools/narrative_editor_web/src`**:bundle 经 `@/` 把 `src/core/narrativeGraphValidation.ts`→`actionParamManifest.ts` 一并打进去,改 manifest 新增 action 不重建 = 旧页面把新 action 报 `unknown action type`(2026-09-13 实发,当时横幅只盯网页 src 没亮)。横幅输入面由 `web_bundle_source_files` 沿值导入追出(跳过 `import type` 与 `*.test.*` 出发的依赖);其 `@/` 解析照抄 `vite.config.ts` alias,有护栏测试钉住。
 5. **落盘字节级幂等**:`_json_text(_normalize_file(json.load(disk))) == disk` 逐字节相等,改编辑器后必须保持。
 6. **wrapper owner 双注册表两侧对齐**:不同步 = 某 owner 类型选不到(踩过 web 漏 scene)。
 7. **网页文档是加载期快照,进模型前必须过 `merge_host_only_author_signals`**:React 只在挂载时取一次数据,而原生「信号管理器」直接改模型,原样回写会抹掉加载后新注册的作者信号。判据是**加载基线**——基线里没有的宿主行才补回,基线里有而网页文档没有 = 网页显式删除、尊重不复活;**四条进模型的路(saveData / applySignalRefactor / stampTemplate / 壳 flush)都要打补丁**,暂存成功后推进基线。

@@ -83,6 +83,23 @@ export type SceneDataRaw = Omit<SceneData, 'worldWidth' | 'worldHeight'> & {
   worldHeight?: number;
 };
 
+/**
+ * 碰撞网格（世界 XZ，M-world，wu）。**真相在 `runtime/scenes/<id>/collision.json` 旁挂**
+ * （2026-09-14 起，地形工作台是它唯一的写入者；`collision.png` 与它同目录、同一次合成写出）。
+ * 运行时先读旁挂，没有才退回场景 JSON 里的 `depthConfig.collision`（老场景 / 未迁移）。
+ */
+export interface CollisionGridMeta {
+  x_min: number; z_min: number; cell_size: number;
+  grid_width: number; grid_height: number;
+}
+
+/** `collision.json` 旁挂的形状（网格 + 合成来历，来历只给人看）。 */
+export interface CollisionSidecar extends CollisionGridMeta {
+  version: number;
+  collision_map?: string;
+  composed?: Record<string, unknown>;
+}
+
 export interface SceneDepthConfig {
   depth_map: string;
   collision_map: string;
@@ -92,10 +109,11 @@ export interface SceneDepthConfig {
     /** 直立 quad 的深度梯度 = tanθ/ppu（往上越靠近相机）。遮挡唯一还用的 shader 参数 */
     depth_per_sy: number;
   };
-  collision?: {
-    x_min: number; z_min: number; cell_size: number;
-    grid_width: number; grid_height: number; height_offset: number;
-  };
+  /**
+   * ⛔ 已迁移（2026-09-14）：网格块搬进 `collision.json` 旁挂，这里只作**回落**；
+   * 校验器对同时存在两份的场景报"残留"。`height_offset` 从未被读过，一并下线。
+   */
+  collision?: CollisionGridMeta & { height_offset?: number };
   depth_tolerance: number;
   floor_offset: number;
 }
@@ -395,6 +413,11 @@ export interface DisplayTransformDef {
 
 /** 一个场景的完整光照状态。场景与角色消费**同一份**。 */
 export interface SceneLightingDef {
+  /** 按场景 / 时段保存的角色/粒子受光倍率与色度；旧数据缺项从历史 shading 等价解析。 */
+  lightFactors?: {
+    character?: Partial<import('./lightFactors').EntityLightResponse>;
+    particles?: Partial<import('./lightFactors').EntityLightResponse>;
+  };
   /**
    * **恒等占位**标记（迁移用，作者调过这个场景后应当删掉这个键）。
    *
@@ -690,13 +713,8 @@ export interface SceneData {
    * 因此这里发起的成段演出（过场/对话）落在**可见**场景之上，不会被加载遮罩盖住，长演出也不阻塞揭幕。
    */
   onEnter?: ActionDef[];
-  /**
-   * 世界空间粒子 / 群体效果的实例（蝙蝠群、滴水、香火烟、萤火虫……）。
-   * 每条引用一份效果资产 `assets/data/vfx/<effect>.json`，锚点是画面点 + 离表面高度
-   * （先落地 / 落壳再抬 h，与轨迹控制点同一作者模型）。表演态，不入档，切场景即散。
-   * 见 [[vfx-system]]。
-   */
-  vfx?: VfxInstanceDef[];
+  // ⚠ 世界空间粒子的布置**不在场景 JSON 里**（2026-09-14 搬走）：见 `VfxPlacementLibrary`
+  //   （`assets/data/vfx_placements.json`，粒子工作台唯一写入者，按场景 × 时段外观各配一份）。
   /**
    * 场景风：**一份**空气速度场、一个钟。世界空间粒子与背景草木摆动读的是同一份，所以一阵风过来
    * 纸钱掀起与枝叶一甩是同一拍；两边各自的强度倍率在 `gain` 里分开调。见 [[scene-wind]]。
@@ -2117,7 +2135,15 @@ export interface SocketFramePose {
   y: number;
   /** 角度（度，顺时针为正，屏幕坐标系）；角色朝左时运行时取反 */
   angle?: number;
-  /** true = 挂件画在角色**身前**；缺省 false = 身后 */
+  /**
+   * 挂件画在角色身前还是身后。**缺省（不写）= 身前**；只有显式 `false` 才是身后（被身体挡住）。
+   *
+   * 缺省必须是身前：身后的挂件在编辑器和游戏里都可能被身体整个挡住，
+   * 缺省身后时标一次忘了勾就是"挂上了却看不见"且零报错（2026-09-14 玩家 idle 火把实测）。
+   *
+   * **标注按图集画的朝向（朝右）标；画面朝左时运行时前后互换**（制作人 2026-09-14 定死，
+   * `socketFrontForFacing`）：朝右身前的火把，人转过去朝左就到身后。
+   */
   front?: boolean;
   /**
    * 挂点驱动的帧号（第二档）：挂件自己是一张小序列图时，用这个数选它的第几帧。
@@ -4120,7 +4146,9 @@ export interface ISaveDataProvider {
 // 三件正交的东西：
 //   · 效果资产 `VfxEffectDef`（`assets/data/vfx/<id>.json`，粒子工作台唯一写入者）：
 //     若干发射器 + 各自的模块（外观 / 发射 / 运动 / 寿命 / 碰撞 / 群体行为 / 声音）；
-//   · 场景实例 `VfxInstanceDef`（场景 JSON `vfx[]`，主编辑器写）：效果 + 锚点 + 条件；
+//   · 布置 `VfxInstanceDef`（布置库 `assets/data/vfx_placements.json`，**也是粒子工作台唯一写入者**）：
+//     效果 + 锚点 + 区域 + 条件，按「场景 × 时段外观」各配一份（`VfxPlacementLibrary`）。效果本身不绑场景、不绑时段；
+//     主编辑器只读（场景画布上显示区域）；
 //   · 刺激场（运行时事件 `emitVfxField`，不落盘）：世界点 + 半径 + 种类 + 强度 + 时长。
 // 所有长度 wu、速度 wu/s、加速度 wu/s²、时间秒；角色高 150 wu，g ≈ 865 wu/s²。
 // ============================================================================
@@ -4174,6 +4202,12 @@ export interface VfxAppearanceDef {
    * 这个系数就是"其中多少份额来自那条我们算不出来的镜面项"，不是亮度拉杆。
    */
   emissive?: number;
+  /**
+   * 受光强度（0..10，缺省 1，只对 `lit` 有意义）：乘在这个发射器**接收到的光**上
+   * （probe 底光 + 场景实体灯，着色之前），不乘上面的 `emissive` 份额。1 = 与角色同口径。
+   * 逐发射器、逐视图生效——绝不写进角色 / NPC 共用的那几组 uniform。
+   */
+  lightGain?: number;
   /** 沿速度拉伸（雨、火星）：1 = 长度 = 速度 × 该秒数；0 = 纯 billboard（缺省） */
   stretchByVelocity?: number;
   /** 左右镜像随速度 x 分量（侧视贴图的蝙蝠 / 鸟）。缺省 false */
@@ -4333,6 +4367,8 @@ export interface VfxSoundDef {
 
 export interface VfxEmitterDef {
   id: string;
+  /** 显式模块执行配置。旧资产省略时仅在装载边界解析原有语义；新建资产由工作台写全。 */
+  simulation?: VfxSimulationDef;
   /** 相对实例锚点的 M-world 偏移（wu），缺省 [0,0,0] */
   offset?: [number, number, number];
   /** 只由 `onHit` 触发、不自己发（子发射器） */
@@ -4343,9 +4379,37 @@ export interface VfxEmitterDef {
   life?: VfxLifeDef;
   collision?: VfxCollisionDef;
   behavior?: VfxFlockBehaviorDef;
-  /** 薄片模块（纸钱 / 落叶）：挂了它，`motion` 里只有 `turbulence` 仍起作用，碰撞由本模块自己管 */
+  /** 薄片的气动、接触与形变参数。发射、外部输入和补回由 simulation 独立配置。 */
   plate?: VfxPlateDef;
   sound?: VfxSoundDef;
+}
+
+/** 发射、环境输入、运动模型和回收策略相互独立。
+ * 外部场使用 M-world wu 系；薄片真实尺寸、物理速度及补回高度经 VfxSpace.metricAt 转为世界位移。
+ */
+export interface VfxSimulationDef {
+  solver: 'particle' | 'plate' | 'flock';
+  /** 只决定出生位置。surface 取发射区域的可见表面，速度另配。 */
+  spawnPlacement: 'shape' | 'surface';
+  /** 未布置发射区域时，表面出生 / 补回使用的圆盘半径（M-world wu）。 */
+  surfaceRadius?: number;
+  /** configured 使用 spawn.speed/direction；rest 静止出生。显式配置省略时为 configured。 */
+  initialVelocity?: 'configured' | 'rest';
+  influences: {
+    sceneWind: boolean;
+    /** 历史 wind 场是加速度（wu/s²），保持这一契约。 */
+    wind: boolean;
+    /** airflow 场是空气速度（wu/s），经各自气动计算，不能与加速度直接相加。 */
+    airflow: boolean;
+    /** fear / attract 标签响应：普通与薄片使用 motion.stimulus，群体使用 behavior.attitude。 */
+    stimulus: boolean;
+  };
+  recycle: {
+    mode: 'none' | 'surface' | 'airborne';
+    /** 空中补回高度 / 上风偏移（真实 wu）；省略时保留原有补回与范围限高公式。 */
+    height?: [number, number];
+    upwind?: [number, number];
+  };
 }
 
 /**
@@ -4382,7 +4446,7 @@ export interface VfxPlateDef {
   bend?: { stiffness?: number; freq?: number; damping?: number; max?: number; rest?: number };
   /** 渲染细分：沿宽度的段数（≥1），缺省 4 */
   segments?: number;
-  /** 被刮下崖 / 出画的纸片从上风处的空中补回来（常驻效果保持总数），缺省 true */
+  /** 旧资产兼容字段，仅装载边界消费；新资产使用 simulation.recycle。 */
   replenish?: boolean;
 }
 
@@ -4400,7 +4464,31 @@ export interface VfxEffectDef {
   };
 }
 
-/** 场景里摆的一个效果实例（`SceneData.vfx[]`）。 */
+/**
+ * 布置库 `assets/data/vfx_placements.json` 的根。**唯一写入者是粒子工作台**。
+ *
+ * 效果资产只有效果本身，不绑场景、不绑时段；这里记它放在哪。布置按「场景 × 时段外观」**各配各的、
+ * 互不继承、没配就没有**（制作人 2026-09-13：白天和晚上是分开调的，不能混为一谈）：
+ * `base` = 场景顶层外观（没单列成时段变体的那些时段），`variants[时段 id]` = `timeVariants[时段 id]` 那套外观。
+ * 此刻取哪一份 = `resolveSceneAppearance(scene, 当前时段).phase`（空串 = base），与背景 / 光照换装同一个判据。
+ */
+export interface VfxPlacementLibrary {
+  _comment?: string;
+  /** 键 = 场景 id */
+  scenes: Record<string, VfxScenePlacements>;
+}
+
+export interface VfxScenePlacements {
+  /** 场景顶层外观的布置 */
+  base?: VfxInstanceDef[];
+  /** 键 = 时段 id（必须是该场景 `timeVariants` 的键），值 = 那套外观的布置 */
+  variants?: Record<string, VfxInstanceDef[]>;
+}
+
+/**
+ * 一处布置（布置库里的一条）。`id` 在「同一场景 × 同一时段外观」内唯一；白天与夜里通常各有一条同 id 的，
+ * `playVfx {instanceId}` / 条件叶 `vfx` 找的是**当前在场**的那条。
+ */
 export interface VfxInstanceDef {
   id: string;
   /** 效果资产 id */
@@ -4414,8 +4502,7 @@ export interface VfxInstanceDef {
   autoStart?: boolean;
   /** 组内 AND；与 NPC / 热区的 `conditions` 同一条通道 */
   conditions?: ConditionExpr[];
-  /** 只在这些时段存在（缺省全时段） */
-  timePhases?: string[];
+  // 没有 `timePhases`：分时段 = 摆在布置库里不同的那一份（base / variants），见 `VfxPlacementLibrary`。
   /**
    * **发射区域**（画面坐标多边形，wu）：发射形状为 `area` 的发射器在这里铺满、被回收的纸从这里补回。
    * 粒子被关在哪是另一块，见 `confine.area`（没画就用这一块）。
@@ -4446,7 +4533,7 @@ export interface VfxConfineDef {
   ceiling?: number;
 }
 
-export type VfxFieldKind = 'fear' | 'attract' | 'wind';
+export type VfxFieldKind = 'fear' | 'attract' | 'wind' | 'airflow';
 
 /** 刺激场（运行时事件，不落盘）。位置由 `VfxFieldAt` 解析。 */
 export interface VfxFieldDef {
@@ -4455,11 +4542,11 @@ export interface VfxFieldDef {
   tag: string;
   /** 半径（wu）。场强 = strength × (1 − r/radius)²（截断到半径） */
   radius: number;
-  /** 强度（无量纲；wind 时是 wu/s²） */
+  /** 强度（fear/attract 无量纲；wind 为 wu/s²；airflow 为 wu/s） */
   strength: number;
   /** 持续时长（秒）；0 / 不写 = 瞬时脉冲（一拍） */
   duration?: number;
-  /** wind 的方向（M-world） */
+  /** wind / airflow 的方向（M-world），须为非零向量。 */
   direction?: [number, number, number];
 }
 

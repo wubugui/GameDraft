@@ -153,8 +153,7 @@ export interface DebugToolsDeps {
   /**
    * 场景照明参数接口。场景未配 `lighting` 块或没烘几何场时返回 null。
    * 2026-08-31 起与角色受光参数同住一个「照明」tab(buildSceneLightingSection),
-   * 但数据源仍是两套:这套走 SceneLightingDef(可经编辑器落盘),角色那套走
-   * CharShadingParams(运行时测试,真值在实验室导出的 lighting.json)。
+   * 角色/粒子的倍率与色度也走 SceneLightingDef；其余角色诊断值走 CharShadingParams。
    */
   getSceneLighting: () => {
     active: boolean;
@@ -197,9 +196,8 @@ export interface DebugToolsDeps {
     selectedId: () => string | null;
     select: (id: string | null) => void;
   } | null;
-  /** F2 测试旋钮：E 色度权重 0(只借场景明暗)~1(完整彩色 E) */
-  getCharEChroma: () => number;
-  setCharEChroma: (v: number) => void;
+  /** 当前场景/时段的运行时受光值；修改统一走 setSceneLighting，再由编辑器保存。 */
+  getEntityLightResponse: (kind: 'character' | 'particles') => import('../data/lightFactors').EntityLightResponse;
   /** F2:probe 点云可视化(实验室查看器点云的游戏侧对应物) */
   toggleCharProbeViz: () => boolean;
   charProbeVizActive: () => boolean;
@@ -1404,9 +1402,9 @@ export class DebugTools {
 
   /**
    * F2「照明」——**唯一**的照明参数 tab(制作人 2026-08-31 点名合并):
-   * 场景照明、角色受光、共用参数(β/显示变换/调试视图)全在这一页,不许再分家。
+   * 场景照明、角色/粒子受光倍率、共用参数(显示变换/调试视图)全在这一页。
    *
-   * ⚠ 落盘口径两半不一样:**场景参数**(①②③与显示变换)能落盘——编辑器场景页
+   * ⚠ 落盘口径两半不一样:**场景参数**(两组受光倍率、①②③与显示变换)能落盘——编辑器场景页
    * 「从运行时拉取灯位」把它拿走入脏、Save All 写盘;**角色参数**(④⑤⑥)改动
    * 只是运行时测试,场景重载回配置(真值在实验室「导出照明」的 lighting.json)。
    *
@@ -1471,7 +1469,7 @@ export class DebugTools {
         const pp = c.params;
         lines.push(
           `角色:着色 ${c.enabled ? '开' : '关'}(${c.active ? '生效' : '未生效'})　模式 ${MODE_NAMES[pp.mode] ?? pp.mode}　probe ${c.probes}　光源 ${c.lights}`,
-          `　★β 2^${pp.beta.toFixed(1)}　★E色度 ${this.deps.getCharEChroma().toFixed(2)}　`
+          `　间接 ${(pp.indirectFactor ?? 1).toFixed(2)} · 直接 ${(pp.directFactor ?? 1).toFixed(2)} · 总 ${(pp.totalFactor ?? 1).toFixed(2)}　`
           + `隆起 ${pp.bulge.toFixed(2)}　压平 ${pp.flatten.toFixed(2)}　全局阴影 ${c.shadowStyle.gain.toFixed(2)}`,
         );
       } else {
@@ -1537,7 +1535,7 @@ export class DebugTools {
 
     wrap.appendChild(valLine);
 
-    // ---------------- ⓪ 共用:调试视图 / β / E色度 / 显示变换 ----------------
+    // ---------------- ⓪ 共用:调试视图 / 场景受光倍率 / 显示变换 ----------------
     group('⓪ 共用(场景与角色同一把尺)');
     // ⚠ 下标 = shader 的 uDebug 档号，三处必须一致（这里 / SceneLightingPass 的
     //   `if (uDebug == n)` / Game.setSceneLightingDebug 的范围判断）。
@@ -1621,12 +1619,26 @@ export class DebugTools {
     dbgB.addEventListener('click', updateDiag);
 
     if (charL) {
-      // ★曝光β:上限 6(雾津街头落盘 4.2,旧上限 3 会把 thumb 钳住、一碰滑块静默写回 3)。
-      // GI体档开着时 Game.setCharLighting 会把新 β 同步喂给场景侧,人和地面一起变。
-      wrap.appendChild(mkSlider('★曝光β(2^β·角色+GI体同尺)', -3, 6, 0.1,
-        () => cp().beta, (v) => cpatch({ beta: v }), 1));
-      wrap.appendChild(mkSlider('★E色度(0=只借明暗 1=彩色E)', 0, 1, 0.02,
-        () => this.deps.getCharEChroma(), (v) => this.deps.setCharEChroma(v)));
+      // 两组都是场景作者参数，走与灯/显示变换相同的实时同步与时段保存通道。
+      for (const [kind, title] of [['character', '角色'], ['particles', '粒子']] as const) {
+        group(`${title}受光 · 当前场景 / 时段`);
+        const current = () => this.deps.getEntityLightResponse(kind);
+        for (const [key, label, max, step] of [
+          ['indirectFactor', '间接光 factor', 64, 0.05], ['directFactor', '直接光 factor', 64, 0.05],
+          ['totalFactor', '总 factor', 64, 0.05], ['eChroma', '光色度 eChroma', 1, 0.02],
+        ] as const) {
+          wrap.appendChild(mkSlider(`${title}·${label}`, 0, max, step,
+            () => current()[key], (v) => {
+              if (!this.deps.getSceneLighting()) return;
+              const f = current();
+              patch({ lightFactors: { ...P().lightFactors, [kind]: {
+                indirectFactor: f?.indirectFactor ?? 1, directFactor: f?.directFactor ?? 1,
+                totalFactor: f?.totalFactor ?? 1, eChroma: f.eChroma, [key]: v,
+              } } });
+            }, 2));
+        }
+      }
+      group('以上为运行时实时值；同步到场景编辑器后，Save All 写入当前场景 / 时段。');
     }
     if (sceneL) {
       const TONEMAPS: SceneLightingDef['display']['tonemap'][] = ['none', 'reinhard', 'filmic'];
@@ -1689,8 +1701,7 @@ export class DebugTools {
 
     if (charL) {
       // ---------------- ④ 角色受光(probe 路径,syncFrame 每帧活读) ----------------
-      group('④ 角色受光(E=probe 图集三线性;sprite=albedo,色=albedo×E/π×β。'
-        + '参数初值=场景配置,此处改动纯测试、场景重载回配置)');
+      group('④ 角色诊断（以下为临时测试，场景重载恢复；上方两组受光倍率随场景保存）');
       const r4 = btnRow();
       mkBtn(r4, () => `着色: ${this.deps.getCharLightingDebug()?.enabled ? '开' : '关'}`,
         () => this.deps.setCharLighting({ enabled: !this.deps.getCharLightingDebug()?.enabled }),
@@ -1701,11 +1712,8 @@ export class DebugTools {
       mkBtn(r4, () => `probe点云: ${this.deps.charProbeVizActive() ? '开' : '关'}`,
         () => this.deps.toggleCharProbeViz(),
         () => this.deps.charProbeVizActive());
-      // GI 底光的独立音量旋钮:只乘 probe/RT 的 E,不乘实体灯与测试太阳。
-      // 与 ★β 的分工:β=曝光(乘一切,对齐场景亮度的尺),这个=GI 有多强(创作旋钮)。
-      wrap.appendChild(mkSlider('★GI强度(只乘probe底光)', 0, 10, 0.1,
-        () => cp().giStrength, (v) => cpatch({ giStrength: v }), 1));
-      wrap.appendChild(mkSlider('隆起(查表点前推)', 0, 0.5, 0.01,
+
+      wrap.appendChild(mkSlider('隆起/精灵格宽', 0, 0.5, 0.01,
         () => cp().bulge, (v) => cpatch({ bulge: v })));
       wrap.appendChild(mkSlider('压平(E各向同性化)', 0, 1, 0.05,
         () => cp().flatten, (v) => cpatch({ flatten: v })));

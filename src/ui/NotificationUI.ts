@@ -13,6 +13,15 @@ interface NotificationEntry {
   slotHeight: number;
   /** 本条实际条宽：条宽按内容收，居中要按各自的宽算 */
   slotWidth: number;
+  pickup: boolean;
+}
+
+interface NotificationRequest {
+  text: string;
+  type?: string;
+  priority?: string;
+  pickup?: boolean;
+  playItemSound?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -23,6 +32,9 @@ const DISPLAY_DURATION = 4000;
 const FADE_DURATION = 800;
 const MAX_VISIBLE = 5;
 const STAGGER_DELAY = 400;
+// 入袋回执沿用 1.5s 起淡出、2s 移除；与其它提示共用位置和队列。
+const PICKUP_DISPLAY_DURATION = 1500;
+const PICKUP_FADE_DURATION = 500;
 
 /** 进场淡入：motion 的「提示进出」档（150ms），配 easeOut 收得住 */
 const FADE_IN_DURATION = UITheme.motion.normal;
@@ -51,7 +63,20 @@ export class NotificationUI {
   private entries: NotificationEntry[] = [];
 
   private showCb: (p: { text: string; type?: string; priority?: string }) => void;
-  private queue: { text: string; type?: string; priority?: string }[] = [];
+  private queue: NotificationRequest[] = [];
+  private pickupCb = (p: { text: string; playItemSound?: boolean }): void => {
+    this.queue.push({ text: p.text, type: 'item', pickup: true, playItemSound: p.playItemSound });
+  };
+  private clearPickupsCb = (p?: { includePending?: boolean }): void => {
+    if (p?.includePending) this.queue = this.queue.filter(q => !q.pickup);
+    this.entries = this.entries.filter(entry => {
+      if (!entry.pickup) return true;
+      this.listContainer.removeChild(entry.container);
+      entry.container.destroy({ children: true });
+      return false;
+    });
+    this.layoutEntries();
+  };
   /** 由组装层注入的「压住出队」判据；未注入＝从不压（与历史行为一致） */
   private isSuppressed?: () => boolean;
   private lastAddTime: number = 0;
@@ -74,6 +99,8 @@ export class NotificationUI {
 
     this.showCb = (p) => this.enqueue(p.text, p.type, p.priority);
     this.eventBus.on('notification:show', this.showCb);
+    this.eventBus.on('notification:pickup', this.pickupCb);
+    this.eventBus.on('notification:pickup:clear', this.clearPickupsCb);
   }
 
   private enqueue(text: string, type?: string, priority?: string): void {
@@ -88,12 +115,12 @@ export class NotificationUI {
     this.isSuppressed = fn ?? undefined;
   }
 
-  private addNotification(text: string, type?: string): void {
-    // 视觉件收敛到 components/UIToast（与右上入袋回执同一份实现，审查 P2 双实现漂移）；
+  private addNotification({ text, type, pickup = false, playItemSound = false }: NotificationRequest): void {
+    // 所有短提示共用 components/UIToast 与同一个居中堆叠布局；
     // 剪影与语义色收敛到 eventChannelStyle（与事件日志同一份，见本文件顶部说明）
     const chip = buildToastChip({
       text,
-      color: eventChannelColor(type),
+      color: pickup ? UITheme.colors.pickupText : eventChannelColor(type),
       icon: eventChannelIcon(type),
       maxWidth: TOAST_MAX_W,
       minWidth: TOAST_MIN_W,
@@ -109,6 +136,7 @@ export class NotificationUI {
       fadingOut: false,
       slotHeight: chip.height + SLOT_GAP,
       slotWidth: chip.width,
+      pickup,
     };
 
     this.entries.push(record);
@@ -123,6 +151,8 @@ export class NotificationUI {
     }
 
     this.layoutEntries();
+    // 音效跟随实际出队入场，不在物品入包/提示排队时提前叠播。
+    if (playItemSound) this.eventBus.emit('notification:itemPresented');
   }
 
   private layoutEntries(): void {
@@ -149,7 +179,7 @@ export class NotificationUI {
       const idx = suppressed ? this.queue.findIndex((q) => q.priority === 'system') : 0;
       if (idx >= 0) {
         const item = this.queue.splice(idx, 1)[0];
-        this.addNotification(item.text, item.type);
+        this.addNotification(item);
         this.lastAddTime = now;
       }
     }
@@ -159,17 +189,19 @@ export class NotificationUI {
     for (let i = 0; i < this.entries.length; i++) {
       const entry = this.entries[i];
       const elapsed = now - entry.createdAt;
+      const displayDuration = entry.pickup ? PICKUP_DISPLAY_DURATION : DISPLAY_DURATION;
+      const fadeDuration = entry.pickup ? PICKUP_FADE_DURATION : FADE_DURATION;
 
-      if (elapsed > DISPLAY_DURATION && !entry.fadingOut) {
+      if (elapsed > displayDuration && !entry.fadingOut) {
         entry.fadingOut = true;
       }
 
       if (entry.fadingOut) {
-        const fadeElapsed = elapsed - DISPLAY_DURATION;
+        const fadeElapsed = elapsed - displayDuration;
         // 出场与进场同一条 easeOut 曲线；起止时刻仍是 DISPLAY_DURATION → +FADE_DURATION
-        const t = Math.min(1, Math.max(0, fadeElapsed / FADE_DURATION));
+        const t = Math.min(1, Math.max(0, fadeElapsed / fadeDuration));
         entry.container.alpha = 1 - UITheme.motion.easeOut(t);
-        if (fadeElapsed >= FADE_DURATION) {
+        if (fadeElapsed >= fadeDuration) {
           toRemove.push(i);
         }
       } else if (elapsed < FADE_IN_DURATION) {
@@ -197,6 +229,9 @@ export class NotificationUI {
 
   destroy(): void {
     this.eventBus.off('notification:show', this.showCb);
+    this.eventBus.off('notification:pickup', this.pickupCb);
+    this.eventBus.off('notification:pickup:clear', this.clearPickupsCb);
+    this.queue = [];
     this.unsubscribeResize();
     for (const entry of this.entries) {
       entry.container.destroy({ children: true });

@@ -6,6 +6,7 @@ from typing import Any
 
 from ..file_io import read_json
 from ..project_model import ProjectModel
+from .action_structure import iter_child_action_lists
 from .tag_catalog import TagCatalog
 from .text_palette import (
     has_clue_markup,
@@ -176,7 +177,11 @@ def walk_action_defs_embedded_refs(
     model: ProjectModel,
     errs: list[str],
 ) -> None:
-    """遍历嵌套 Action 列表，校验嵌入 [tag:…]（台词、延迟/嵌套/runActions、chooseAction 提示与选项文案等）。"""
+    """遍历嵌套 Action 列表，校验嵌入 [tag:…]（台词、chooseAction 提示与选项文案等）。
+
+    本函数只管「哪些参数是玩家可见文本」；往哪些子动作列表下钻读唯一真相源
+    ``action_structure.NESTED_ACTION_SLOTS``（手写 if/elif 曾漏 runActionsIf 的两个分支）。
+    """
     if not isinstance(actions, list):
         return
     for ai, act in enumerate(actions):
@@ -194,29 +199,6 @@ def walk_action_defs_embedded_refs(
                     errs.extend(
                         scan_refs(ln.get("text"), f"{prefix}.lines[{li}].text", model),
                     )
-        elif t == "enableRuleOffers":
-            for si, slot in enumerate(p.get("slots") or []):
-                if isinstance(slot, dict):
-                    walk_action_defs_embedded_refs(
-                        slot.get("resultActions"),
-                        f"{prefix}.slots[{si}].resultActions",
-                        model,
-                        errs,
-                    )
-        elif t == "addDelayedEvent":
-            walk_action_defs_embedded_refs(
-                p.get("actions"),
-                f"{prefix}.actions",
-                model,
-                errs,
-            )
-        elif t == "runActions":
-            walk_action_defs_embedded_refs(
-                p.get("actions"),
-                f"{prefix}.actions",
-                model,
-                errs,
-            )
         elif t == "removeCurrency":
             errs.extend(scan_refs(p.get("amount"), f"{prefix}.amount", model))
         elif t == "chooseAction":
@@ -226,25 +208,8 @@ def walk_action_defs_embedded_refs(
                     errs.extend(
                         scan_refs(opt.get("text"), f"{prefix}.options[{oi}].text", model),
                     )
-                    walk_action_defs_embedded_refs(
-                        opt.get("actions"),
-                        f"{prefix}.options[{oi}].actions",
-                        model,
-                        errs,
-                    )
-        elif t == "randomBranch":
-            walk_action_defs_embedded_refs(
-                p.get("aboveActions"),
-                f"{prefix}.aboveActions",
-                model,
-                errs,
-            )
-            walk_action_defs_embedded_refs(
-                p.get("belowActions"),
-                f"{prefix}.belowActions",
-                model,
-                errs,
-            )
+        for rel, child in iter_child_action_lists(act):
+            walk_action_defs_embedded_refs(child, f"{prefix}.{rel}", model, errs)
 
 
 def _walk_cutscene_steps_play_scripted_embedded_refs(

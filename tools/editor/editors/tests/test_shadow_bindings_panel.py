@@ -309,17 +309,22 @@ class TestLightingGeometryPayloadValidation:
         got = V._lighting_geometry_issues('X')
         assert any(s == 'error' and 'skyvis_grid.bin' in t for s, t in got), got
 
-    def test_代次不符报error(self, tmp_path, monkeypatch) -> None:
+    def test_代次不参与判定_缺运行时字段才报error(self, tmp_path, monkeypatch) -> None:
+        """2026-09-14 起不比版本号(那个数手抄三处、没有测试绑,而它挡的东西都有更直接的判据),
+        改按运行时真正读的 meta 字段验:代次写成几都不报;缺 `scale.scene_per_wu` 报 error。"""
         import json as _json
         from tools.editor import validator as V
         dst = self._fake_project(tmp_path)
         m = dst / 'geometry.json'
         j = _json.loads(m.read_text(encoding='utf-8'))
+        monkeypatch.setattr(V, '__file__', str(tmp_path / 'tools' / 'editor' / 'validator.py'))
         j['version'] = 99
         m.write_text(_json.dumps(j, ensure_ascii=False), encoding='utf-8')
-        monkeypatch.setattr(V, '__file__', str(tmp_path / 'tools' / 'editor' / 'validator.py'))
+        assert not any(s == 'error' for s, _ in V._lighting_geometry_issues('X'))
+        j['scale'].pop('scene_per_wu')
+        m.write_text(_json.dumps(j, ensure_ascii=False), encoding='utf-8')
         got = V._lighting_geometry_issues('X')
-        assert any(s == 'error' and '代次' in t for s, t in got), got
+        assert any(s == 'error' and 'scale.scene_per_wu' in t for s, t in got), got
 
     def test_深度换了没重烘报error(self, tmp_path, monkeypatch) -> None:
         """v2 新增的门:法线/天穹可见性是从**旧深度**推的,而运行时 march 新深度。
