@@ -1195,6 +1195,512 @@
               }
             ]
           }
+        },
+        {
+          "id": "el_wrapper_跑马梁_风火引路",
+          "kind": "wrapperGraph",
+          "label": "跑马梁·风火教学与纸钱引路",
+          "ownerType": "scene",
+          "ownerId": "跑马梁",
+          "x": 1650,
+          "y": 50,
+          "graph": {
+            "id": "wrapper_跑马梁_风火引路",
+            "ownerType": "scene",
+            "ownerId": "跑马梁",
+            "label": "跑马梁·风火教学与纸钱引路",
+            "initialState": "initial",
+            "states": {
+              "initial": {
+                "id": "initial",
+                "label": "initial",
+                "meta": {
+                  "editor": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "迎风": {
+                "id": "迎风",
+                "label": "迎风",
+                "meta": {
+                  "editor": {
+                    "x": 200,
+                    "y": 0
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "sceneWindGust",
+                    "params": {
+                      "speedMultiplier": 2.2,
+                      "durationMs": 8000,
+                      "attackMs": 350,
+                      "releaseMs": 700
+                    }
+                  }
+                ]
+              },
+              "护火教学": {
+                "id": "护火教学",
+                "label": "护火教学",
+                "meta": {
+                  "editor": {
+                    "x": 400,
+                    "y": 0
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "sceneWindGust",
+                    "params": {
+                      "speedMultiplier": 1,
+                      "durationMs": 1,
+                      "attackMs": 0,
+                      "releaseMs": 0
+                    }
+                  },
+                  {
+                    "type": "showSystemNote",
+                    "params": {
+                      "noteId": "torch_guard"
+                    }
+                  }
+                ]
+              },
+              "护好": {
+                "id": "护好",
+                "label": "护好",
+                "meta": {
+                  "editor": {
+                    "x": 600,
+                    "y": 0
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "showNotification",
+                    "params": {
+                      "text": "火护稳了，沿路往前走。",
+                      "type": "info"
+                    }
+                  }
+                ]
+              },
+              "阵风": {
+                "id": "阵风",
+                "label": "阵风",
+                "meta": {
+                  "editor": {
+                    "x": 800,
+                    "y": 0
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "runActionsIf",
+                    "params": {
+                      "condition": {
+                        "timePhase": "夜"
+                      },
+                      "actions": [
+                        {
+                          "type": "sceneWindGust",
+                          "params": {
+                            "speedMultiplier": 3.5,
+                            "durationMs": 1300,
+                            "attackMs": 90,
+                            "releaseMs": 650,
+                            "id": "可怕的呼啸风声3",
+                            "volume": 0.95
+                          }
+                        }
+                      ],
+                      "elseActions": [
+                        {
+                          "type": "sceneWindGust",
+                          "params": {
+                            "speedMultiplier": 3.5,
+                            "durationMs": 1300,
+                            "attackMs": 90,
+                            "releaseMs": 650,
+                            "id": "呼呼的风",
+                            "volume": 0.95
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "waitMs",
+                    "params": {
+                      "durationMs": 260
+                    }
+                  },
+                  {
+                    "type": "runActionsIf",
+                    "params": {
+                      "condition": {
+                        "heldProp": "player",
+                        "burning": true
+                      },
+                      "actions": [
+                        {
+                          "type": "setPropState",
+                          "params": {
+                            "target": "player",
+                            "socket": "right_hand",
+                            "state": "out",
+                            "fadeMs": 120
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "signal": "跑马梁_阵风吹灭",
+                      "sourceType": "state",
+                      "sourceId": "wrapper_跑马梁_风火引路"
+                    }
+                  }
+                ]
+              },
+              "点火教学": {
+                "id": "点火教学",
+                "label": "点火教学",
+                "meta": {
+                  "editor": {
+                    "x": 800,
+                    "y": 210
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "lockHealth",
+                    "params": {
+                      "id": "ridge_relight_lesson",
+                      "min": 60,
+                      "scope": "scene"
+                    }
+                  },
+                  {
+                    "type": "waitMs",
+                    "params": {
+                      "durationMs": 800
+                    }
+                  },
+                  {
+                    "type": "showSystemNote",
+                    "params": {
+                      "noteId": "torch_relight"
+                    }
+                  },
+                  {
+                    "type": "unlockHealth",
+                    "params": {
+                      "id": "ridge_relight_lesson"
+                    }
+                  },
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "signal": "跑马梁_点火说明读完",
+                      "sourceType": "state",
+                      "sourceId": "wrapper_跑马梁_风火引路"
+                    }
+                  }
+                ]
+              },
+              "点火选择": {
+                "id": "点火选择",
+                "label": "点火选择",
+                "meta": {
+                  "editor": {
+                    "x": 600,
+                    "y": 210
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "setRetryCheckpoint",
+                    "params": {
+                      "id": "ridge_after_tutorial",
+                      "label": "跑马梁·风口"
+                    }
+                  }
+                ]
+              },
+              "引路": {
+                "id": "引路",
+                "label": "引路",
+                "meta": {
+                  "editor": {
+                    "x": 400,
+                    "y": 210
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "startDialogueGraph",
+                    "params": {
+                      "graphId": "主线_初上跑马梁"
+                    }
+                  }
+                ]
+              },
+              "寻香": {
+                "id": "寻香",
+                "label": "寻香",
+                "meta": {
+                  "editor": {
+                    "x": 200,
+                    "y": 210
+                  }
+                }
+              },
+              "闻到香火": {
+                "id": "闻到香火",
+                "label": "闻到香火",
+                "meta": {
+                  "editor": {
+                    "x": 0,
+                    "y": 210
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "setSmell",
+                    "params": {
+                      "scent": "incense",
+                      "intensity": 80
+                    }
+                  },
+                  {
+                    "type": "setSmellVisible",
+                    "params": {
+                      "visible": true,
+                      "style": "fade"
+                    }
+                  },
+                  {
+                    "type": "setSmellSource",
+                    "params": {
+                      "x": 382.2,
+                      "y": 762.6,
+                      "scene": "跑马梁"
+                    }
+                  },
+                  {
+                    "type": "setSmellTracking",
+                    "params": {
+                      "enabled": true
+                    }
+                  },
+                  {
+                    "type": "showSpeechBubble",
+                    "params": {
+                      "target": "player",
+                      "text": "香火味……从那边飘过来的。",
+                      "duration": 2600
+                    }
+                  },
+                  {
+                    "type": "setRetryCheckpoint",
+                    "params": {
+                      "id": "ridge_incense",
+                      "label": "跑马梁·纸钱堆"
+                    }
+                  }
+                ]
+              }
+            },
+            "transitions": [
+              {
+                "id": "initial_到_迎风",
+                "from": "initial",
+                "to": "迎风",
+                "signal": "跑马梁_进场",
+                "conditions": [
+                  {
+                    "heldProp": "player",
+                    "burning": true
+                  }
+                ]
+              },
+              {
+                "id": "initial_到_点火教学",
+                "from": "initial",
+                "to": "点火教学",
+                "signal": "跑马梁_进场",
+                "conditions": [
+                  {
+                    "not": {
+                      "heldProp": "player",
+                      "burning": true
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "迎风_到_护火教学",
+                "from": "迎风",
+                "to": "护火教学",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "heldProp": "player",
+                    "vitalityOp": "<=",
+                    "vitality": 0.6
+                  }
+                ]
+              },
+              {
+                "id": "迎风_到_点火教学",
+                "from": "迎风",
+                "to": "点火教学",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "not": {
+                      "heldProp": "player"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "护火教学_到_护好",
+                "from": "护火教学",
+                "to": "护好",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "heldProp": "player",
+                    "propState": "guarding"
+                  }
+                ]
+              },
+              {
+                "id": "护火教学_到_点火教学",
+                "from": "护火教学",
+                "to": "点火教学",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "any": [
+                      {
+                        "heldProp": "player",
+                        "propState": "out"
+                      },
+                      {
+                        "not": {
+                          "heldProp": "player"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "id": "护好_到_阵风",
+                "from": "护好",
+                "to": "阵风",
+                "signal": "跑马梁_走进风口"
+              },
+              {
+                "id": "阵风_到_点火教学",
+                "from": "阵风",
+                "to": "点火教学",
+                "signal": "跑马梁_阵风吹灭"
+              },
+              {
+                "id": "点火教学_到_点火选择",
+                "from": "点火教学",
+                "to": "点火选择",
+                "signal": "跑马梁_点火说明读完"
+              },
+              {
+                "id": "点火选择_到_引路",
+                "from": "点火选择",
+                "to": "引路",
+                "signal": "跑马梁_走进引路拍"
+              },
+              {
+                "id": "引路_到_寻香",
+                "from": "引路",
+                "to": "寻香",
+                "signal": "paomaliang_arrived"
+              },
+              {
+                "id": "寻香_到_闻到香火",
+                "from": "寻香",
+                "to": "闻到香火",
+                "signal": "跑马梁_靠近纸钱"
+              }
+            ]
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrapper_跑马梁_路边招呼",
+          "kind": "wrapperGraph",
+          "label": "跑马梁·可选阴间招呼",
+          "ownerType": "npc",
+          "ownerId": "npc_跑马梁_路边身影",
+          "x": 1900,
+          "y": 50,
+          "graph": {
+            "id": "wrapper_跑马梁_路边招呼",
+            "ownerType": "npc",
+            "ownerId": "npc_跑马梁_路边身影",
+            "label": "跑马梁·可选阴间招呼",
+            "initialState": "未交谈",
+            "states": {
+              "未交谈": {
+                "id": "未交谈",
+                "label": "未交谈",
+                "meta": {
+                  "editor": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "说完散去": {
+                "id": "说完散去",
+                "label": "说完散去",
+                "meta": {
+                  "editor": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "未交谈_到_说完散去",
+                "from": "未交谈",
+                "to": "说完散去",
+                "signal": "跑马梁_身影交谈完"
+              }
+            ]
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
         }
       ]
     },
@@ -6548,12 +7054,150 @@
                 "label": "钱回来了",
                 "broadcastOnEnter": true,
                 "description": "那一文自己滚走、怪人来过又走、回头钱在脚边。关二狗读成手气来了。"
+              },
+              "教学中": {
+                "id": "教学中",
+                "label": "怪人靠近·真实损耗与说明卡",
+                "onEnterActions": [
+                  {
+                    "type": "lockHealth",
+                    "params": {
+                      "id": "first_three_fires",
+                      "min": 70,
+                      "scope": "scene"
+                    }
+                  },
+                  {
+                    "type": "startCutscene",
+                    "params": {
+                      "id": "主线_铜钱脱落滚走__part1"
+                    }
+                  },
+                  {
+                    "type": "persistNpcEntityEnabled",
+                    "params": {
+                      "target": "npc_路遇_怪人",
+                      "enabled": true
+                    }
+                  },
+                  {
+                    "type": "setSceneEntityPosition",
+                    "params": {
+                      "sceneId": "雾津街头",
+                      "entityKind": "npc",
+                      "entityId": "npc_路遇_怪人",
+                      "x": 2013,
+                      "y": 1993
+                    }
+                  },
+                  {
+                    "type": "setThreeFiresVisible",
+                    "params": {
+                      "visible": true,
+                      "style": "debut"
+                    }
+                  },
+                  {
+                    "type": "showSystemNote",
+                    "params": {
+                      "noteId": "three_fires"
+                    }
+                  },
+                  {
+                    "type": "startCutscene",
+                    "params": {
+                      "id": "主线_铜钱脱落滚走__part2__part1"
+                    }
+                  },
+                  {
+                    "type": "persistNpcEntityEnabled",
+                    "params": {
+                      "target": "npc_路遇_怪人",
+                      "enabled": false
+                    }
+                  },
+                  {
+                    "type": "unlockHealth",
+                    "params": {
+                      "id": "first_three_fires"
+                    }
+                  },
+                  {
+                    "type": "setThreeFiresVisible",
+                    "params": {
+                      "visible": false,
+                      "style": "instant"
+                    }
+                  },
+                  {
+                    "type": "setEntityEnabled",
+                    "params": {
+                      "target": "npc_验证铜钱",
+                      "enabled": true
+                    }
+                  },
+                  {
+                    "type": "teleportEntityTo",
+                    "params": {
+                      "target": "npc_验证铜钱",
+                      "x": 2150.67,
+                      "y": 1976
+                    }
+                  },
+                  {
+                    "type": "startCutscene",
+                    "params": {
+                      "id": "主线_铜钱脱落滚走__part2__part2"
+                    }
+                  },
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "signal": "路遇私铸钱_完结",
+                      "sourceType": "zone",
+                      "sourceId": "雾津街头:Zone_路遇私铸钱"
+                    }
+                  },
+                  {
+                    "type": "persistZoneEnabled",
+                    "params": {
+                      "sceneId": "雾津街头",
+                      "zoneId": "Zone_路遇私铸钱",
+                      "enabled": false
+                    }
+                  },
+                  {
+                    "type": "persistNpcEntityEnabled",
+                    "params": {
+                      "target": "npc_验证铜钱",
+                      "enabled": false
+                    }
+                  }
+                ],
+                "meta": {
+                  "editor": {
+                    "x": 130,
+                    "y": 150
+                  }
+                }
               }
             },
             "transitions": [
               {
                 "id": "t_1",
                 "from": "initial",
+                "to": "钱回来了",
+                "signal": "路遇私铸钱_完结"
+              },
+              {
+                "id": "t_开始教学",
+                "from": "initial",
+                "to": "教学中",
+                "signal": "路遇私铸钱_开始"
+              },
+              {
+                "id": "t_教学结束",
+                "from": "教学中",
                 "to": "钱回来了",
                 "signal": "路遇私铸钱_完结"
               }
@@ -7087,6 +7731,38 @@
       "id": "paomaliang_arrived",
       "label": "初上跑马梁·那一拍演完",
       "notes": "跑马梁进场（scenario_夜出南门=望山 时）起对话 主线_初上跑马梁，演完发射，推 scenario_夜出南门 到「到跑马梁」，主图 state_8→state_9。"
+    },
+    {
+      "id": "路遇私铸钱_开始",
+      "label": "路遇私铸钱·走进那一拍"
+    },
+    {
+      "id": "跑马梁_进场",
+      "label": "跑马梁_进场"
+    },
+    {
+      "id": "跑马梁_走进风口",
+      "label": "跑马梁_走进风口"
+    },
+    {
+      "id": "跑马梁_阵风吹灭",
+      "label": "跑马梁_阵风吹灭"
+    },
+    {
+      "id": "跑马梁_点火说明读完",
+      "label": "跑马梁_点火说明读完"
+    },
+    {
+      "id": "跑马梁_走进引路拍",
+      "label": "跑马梁_走进引路拍"
+    },
+    {
+      "id": "跑马梁_靠近纸钱",
+      "label": "跑马梁_靠近纸钱"
+    },
+    {
+      "id": "跑马梁_身影交谈完",
+      "label": "跑马梁_身影交谈完"
     }
   ]
 }
