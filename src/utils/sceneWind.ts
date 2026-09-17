@@ -17,6 +17,7 @@
  * 纯函数、零分配热路径、不读挂钟（时间由调用方传）——粒子工作台打包的是同一个文件。
  */
 import type { SceneWindDef } from '../data/types';
+import { windGustErrors, type WindGustDef } from '../data/windGust';
 
 /** 风速的参考高度：离地 2 m */
 export const WIND_REF_HEIGHT_WU = 176;
@@ -323,18 +324,65 @@ export class SceneWindState {
   private base: SceneWindParams | null = null;
   private live: SceneWindParams | null = null;
   private override: SceneWindOverride = {};
+  private gust: { def: WindGustDef; elapsed: number; finish: () => void } | null = null;
+  private gustWeight = 0;
+  constructor(private readonly ambientPulse?: (id: string, volume: number | undefined, weight: number) => void) {}
   /** 自进场景起的秒数（切场景清零） */
   time = 0;
 
   /** 换场景：按新场景数据重设（没有风 ⇒ 之后 `params` 恒 null） */
   reset(def: SceneWindDef | null | undefined): void {
+    this.clearGust();
     this.base = resolveSceneWind(def);
     this.time = 0;
     this.rebuild();
   }
 
   advance(dt: number): void {
-    if (this.live && dt > 0) this.time += dt;
+    if (!Number.isFinite(dt) || dt <= 0) return;
+    if (this.live) this.time += dt;
+    if (this.gust) {
+      this.gust.elapsed += dt * 1000;
+      if (this.gust.elapsed >= this.gust.def.durationMs) this.clearGust();
+      else this.updateGust();
+    }
+  }
+
+  /** 后发覆盖前发；替换、切场景、读档、跳过均会解除等待并恢复音量。 */
+  startGust(def: WindGustDef): Promise<void> {
+    if (windGustErrors(def as unknown as Record<string, unknown>).length) return Promise.resolve();
+    this.clearGust();
+    if (!this.base || this.base.speed <= 0) {
+      console.warn('sceneWindGust: current scene needs a nonzero authored wind');
+      return Promise.resolve();
+    }
+    return new Promise<void>((finish) => {
+      this.gust = { def: { ...def }, elapsed: 0, finish };
+      this.updateGust();
+    });
+  }
+
+  clearGust(): void {
+    const old = this.gust;
+    this.gust = null;
+    this.gustWeight = 0;
+    if (old?.def.id) this.ambientPulse?.(old.def.id, undefined, 0);
+    this.rebuild();
+    old?.finish();
+  }
+
+  get gustSnapshot(): object | null {
+    return this.gust ? { ...this.gust.def, elapsedMs: this.gust.elapsed, weight: this.gustWeight } : null;
+  }
+
+  private updateGust(): void {
+    const g = this.gust!;
+    const attack = g.def.attackMs ?? Math.min(120, g.def.durationMs * 0.1);
+    const release = g.def.releaseMs ?? Math.min(500, g.def.durationMs * 0.25);
+    this.gustWeight = Math.max(0, Math.min(1, attack > 0 ? g.elapsed / attack : 1,
+      release > 0 ? (g.def.durationMs - g.elapsed) / release : 1));
+    this.rebuild();
+    if (g.def.id) this.ambientPulse?.(g.def.id, g.def.volume ?? 1, this.gustWeight);
   }
 
   /** 当前生效的参数（含调试覆盖）；没有风 ⇒ null */
@@ -357,7 +405,7 @@ export class SceneWindState {
     const o = this.override;
     this.live = {
       ...b,
-      speed: b.speed * (o.speedMul ?? 1),
+      speed: b.speed * (o.speedMul ?? 1) * (1 + ((this.gust?.def.speedMultiplier ?? 1) - 1) * this.gustWeight),
       gainVfx: o.gainVfx ?? b.gainVfx,
       gainSway: o.gainSway ?? b.gainSway,
       turbIntensity: b.turbIntensity * (o.turbMul ?? 1),

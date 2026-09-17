@@ -4,6 +4,7 @@
  */
 import type { Vec3 } from '../../utils/sceneSpace';
 import { createFieldRuntime, type VfxFieldRuntime } from './vfxFields';
+export { VfxMotionContact } from './vfxContact';
 
 export class VfxMotionAirflow {
   readonly field: VfxFieldRuntime;

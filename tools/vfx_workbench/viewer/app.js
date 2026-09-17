@@ -51,6 +51,18 @@ const ATTACH_DEFAULT_HEIGHT_WU = 110;
 /** 来回走：走速取游戏里的走速（玩家动静场强度 = 100 / 420 ≈ 0.24），半幅 240 wu */
 const WALK_SPEED_WU = 100;
 const WALK_SPAN_WU = 240;
+/**
+ * 「外部给点」（`spawn.shape.kind = 'external'`）的**预览用假点**：游戏里出生点由燃烧系统每帧交进来（正在烧的格 / 纸，
+ * `VfxSystem.setInstanceSpawnPoints` → `VfxInstanceSim.setSpawnPoints`），工作台里没有燃烧系统，一个点都不给就一颗都不发——
+ * 作者调火苗参数什么都看不见。预览时在锚点周围摆一小圈假点、走的是同一个 `setSpawnPoints`；**只在预览内存里，绝不写盘 / 推游戏**，
+ * 视图里标「预览用假点」。半径取一张燃着纸钱的半尺寸量级。
+ */
+const EXT_PREVIEW_COUNT = 6;
+const EXT_PREVIEW_SPREAD_WU = 24;
+const EXT_PREVIEW_RADIUS_WU = 4;
+/** 火焰调试工具（I）：点一下 = 在光标下的表面上立一段竖直火焰（`VfxFireSegment`，经 `VfxStepContext.fires` 喂给模拟），只在预览内存里 */
+const FIRE_DEBUG_LEN_WU = 40;
+const FIRE_DEBUG_R_WU = 10;
 /** 联动：文档改动防抖发一次；每 3 分钟续一次（槽 5 分钟新鲜期） */
 const PUBLISH_DEBOUNCE_MS = 120;
 const PUBLISH_KEEPALIVE_MS = 180000;
@@ -88,9 +100,20 @@ const S = {
   player: { on: false, world: null, scene: null, speed: 0, movedAt: 0 },
   walk: { on: false, baseX: null, sceneY: 0, dir: 1 },
   probes: [],
+  /** 火焰调试工具放的火焰段（M-world `VfxFireSegment`）：只在预览内存里，不进 doc / 历史 / 联动；换场景、重置清掉 */
+  fires: [],
+  /**
+   * 可燃物模板表（`/api/burnables`，本台只读）：`rows` = 服务端给的 `{id, label, mode, bindable, note, summary, doc}`、
+   * `errors` = 读不懂的 `{id: 原因}`、`map` = 每份 `doc` 过打包进来的运行时 `resolveBurnable(doc, id)` 得到的
+   * `Map<id, ResolvedBurnable>`（建模拟时当 `burnTemplates` 传，与 `VfxSystem` 同形）；`loaded` = 至少读到过一次，
+   * `err` = 最近一次没读到的原因，`key` = 表内容的规范串（内容真变了才重建模拟）。
+   */
+  burn: { loaded: false, err: '', rows: [], errors: {}, map: null, key: '' },
   sel: { key: '' }, gizmoMode: 'move', tool: 'select', view: 3,
   /** 作者最近操作的发射器（检视器与左栏 ⧉ / 改名 / ↑ / ↓ / × 作用在它上面）：选中锚点 / 顶点 / 刺激点时不许退回 emitters[0] */
   emitterId: '',
+  /** 作者最近操作的光柱（左栏光柱那排按钮作用在它上面） */
+  beamId: '',
   /** 布置库之外按 id 用当前效果的地方（挂件预设 / playVfx，服务端只读扫出来的；删 / 改名 / 左栏都看它） */
   extRefs: [],
   /** 鼠标按下时压着的那个 DOM 元素（松开前不许把它从 DOM 里拆掉，否则 Chromium 不发 click，见 `renderLeft`） */
@@ -99,7 +122,7 @@ const S = {
   busy: 0, loadingScene: '', sceneOp: 0, entityOp: 0,
   dragDoc: null, dragLib: null,
   align: null,
-  layers: { mesh: true, dimMesh: false, grid: true, particles: true, rings: true, marks: true },
+  layers: { mesh: true, dimMesh: false, grid: true, particles: true, rings: true, marks: true, beams: true },
   link: { on: true, status: null, gameUrl: '', pubPending: false, lastPub: 0, rejected: '', placementsErr: '', defErr: '',
     /** 游戏页没在跑时点的「让游戏切到这个时段」：游戏页起来后补发（带新序号） */
     pendingPhase: null,
@@ -109,6 +132,8 @@ const S = {
 };
 let v3 = null;
 let v2 = null;
+/** 原画视图里光柱的真实预览层（离屏 WebGL，编译运行时那段 GLSL 核心） */
+let beamPreview = null;
 let history = null;
 let simTimer = 0;
 let pubTimer = 0;
@@ -257,6 +282,15 @@ function libRefs(effectId, lib) {
 function extRefsText(refs) {
   return (refs || []).map((r) => (r.kind === 'action' ? r.label : `${r.label}（${r.file}）`)).join('；');
 }
+/** 去哪改这些引用（与服务端 `placements.refs_fix_hint` 同一句）：挂件预设 / 动作 → 主编辑器；可燃物模板的粒子 → 燃烧工作台里打开那份模板 */
+function extRefsFixHint(refs) {
+  const parts = [];
+  const files = [...new Set((refs || []).filter((r) => r.kind !== 'burnable').map((r) => r.file))].sort();
+  if (files.length) parts.push(`在主编辑器里改掉 ${files.join(' / ')} 里的这些引用`);
+  const tids = [...new Set((refs || []).filter((r) => r.kind === 'burnable').map((r) => String(r.burnable || '')))].sort();
+  if (tids.length) parts.push(`在燃烧工作台里打开模板${tids.map((t) => `「${t}」`).join('/')}改粒子`);
+  return parts.join('、');
+}
 function phasesOf(sid) {
   if (S.scene && S.scene.id === sid && Array.isArray(S.scene.phases)) return S.scene.phases;
   const s = S.scenes.find((x) => x.id === sid);
@@ -355,6 +389,12 @@ function runtimeGeo() {
 function buildSpace() {
   S.geo = null; S.shellField = null; S.space = null;
   const rt = S.rt, cal = S.cal;
+  if (rt && cal && cal.planar) {
+    // 没有深度载荷：与游戏同一个平面近似（`Game.buildVfxSpace` 没几何时那条），2D 光带 / 粒子照样能预览
+    const ps0 = rt.perspectiveScale.createPerspectiveScaleResolver(S.scene && S.scene.perspectiveScale);
+    S.space = rt.vfxSpace.createPlanarVfxSpace(cal.k, ps0 ? (x, y) => ps0.scaleAt(x, y) : null);
+    return;
+  }
   if (!rt || !cal || !cal.ground) return;
   const geo = runtimeGeo();
   // 壳栅格就是 work 栅格（服务端 shell_bytes 给的就是它），标定同 work cal —— 别借别的 cal
@@ -503,6 +543,9 @@ async function loadScene(sceneId, phase, opts) {
       const cal = new SceneCal(sc.cal, sc.worldWidth, sc.worldHeight);
       cal.setGround(ground); cal.setShell(shell); cal.setHeightfield(hf);
       S.cal = cal;
+    } else if (sc.worldWidth > 0 && sc.worldHeight > 0) {
+      // 没有深度载荷：平面近似标定（与运行时平面近似同式）——只能摆 2D 光带，3D 光柱与地形判据在这里都不真
+      S.cal = new PlanarCal(sc.worldWidth, sc.worldHeight, Math.SQRT2);
     }
     buildSpace();
     // 同一场景只换时段外观（几何共用）：机位留着——来回切日 / 夜对比布置时每切一次都被重置镜头没法看
@@ -512,7 +555,7 @@ async function loadScene(sceneId, phase, opts) {
       // 玩家标记 / 刺激点 / 在飞的场都是上一个场景的世界坐标：原来原样留着，标记飘在新场景的半空或画外，
       // 挂点模式下火把按上一个场景的脚点画面坐标发射（常在地图外），看起来"什么都不出"
       S.walk.on = false;
-      S.probes.length = 0; S.fields.length = 0; S.playerField = null;
+      S.probes.length = 0; S.fields.length = 0; S.playerField = null; S.fires.length = 0;
       if (S.sel.key === 'player' || /^probe:/.test(S.sel.key)) S.sel.key = '';
       S.player.on = false; S.player.world = null; S.player.scene = null; S.player.speed = 0;
       // 挂点模式离不开角色：在新场景的锚点脚下重新放一个（与开这一档时同一条）
@@ -525,7 +568,7 @@ async function loadScene(sceneId, phase, opts) {
     // 改那几个框按 id 在新的一份里找不到行、静默什么都不做
     renderSceneInfo(); renderScenePickers(); renderAll();
     schedulePublish();
-    status(`场景「${sc.name || sceneId}」· ${phaseLabel(sc.id, S.phase)} 已装上${sc.cal ? '' : '（没有深度载荷：跑不了本地预览）'}`, sc.cal ? 'ok' : 'warn');
+    status(`场景「${sc.name || sceneId}」· ${phaseLabel(sc.id, S.phase)} 已装上${sc.cal ? '' : '（没有深度载荷：平面近似——只有 2D 光带与原画上的位置是真的）'}`, sc.cal ? 'ok' : 'warn');
   } catch (e) {
     if (op === S.sceneOp) {
       S.scene = prev.scene; S.cal = prev.cal; S.marks = prev.marks; S.geo = prev.geo; S.shellField = prev.shell; S.space = prev.space;
@@ -608,9 +651,12 @@ function rebuildSim() {
   const a = anchorWorld(); if (!a) return;
   try {
     const snap = JSON.parse(JSON.stringify(S.doc));
-    if (!Array.isArray(snap.emitters) || !snap.emitters.length) { S.simErr = '还没有发射器'; return; }
+    const hasBeams = Array.isArray(snap.beams) && snap.beams.length > 0;
+    if (!Array.isArray(snap.emitters)) snap.emitters = [];
+    if (!snap.emitters.length && !hasBeams) { S.simErr = '还没有发射器也没有光柱'; return; }
+    // 薄片绑的可燃物模板：与 VfxSystem 同形（id → resolveBurnable 清洗后的模板）；表没读到 = null（纸不可燃，状态栏说）
     S.sim = new S.rt.vfxSim.VfxInstanceSim(inp.id, snap, a, inp.seed, S.space, inp.countScale,
-      { area: inp.area, confine: inp.confine });
+      { area: inp.area, confine: inp.confine, burnTemplates: S.burn.map });
   } catch (e) {
     S.simErr = String(e && e.message || e);
   }
@@ -627,6 +673,21 @@ function patchSim() {
     const off = def.offset || [0, 0, 0];
     S.sim.moveEmitterOrigin(e.def.id, [a[0] + off[0], a[1] + off[1], a[2] + off[2]]);
   }
+  syncSimBeams();
+}
+/**
+ * 拖光柱把手时的便宜同步：把 doc 里此刻的光柱定义换进模拟里的光柱运行态（形状过得了运行时闸门才换），
+ * 帧标脏让它按新定义重解——光柱跟手走，不重建模拟（尘埃不回 t=0）。
+ */
+function syncSimBeams() {
+  if (!S.sim || !S.rt || !S.rt.vfxBeam || !S.doc) return;
+  for (const b of S.sim.beams) {
+    const def = (S.doc.beams || []).find((x) => x && x.id === b.def.id);
+    if (!def || S.rt.vfxBeam.beamDefErrors(def).length) continue;
+    b.def = clone(def);
+    b.look = S.rt.vfxBeam.resolveBeamLook(b.def);
+    b.frameRev = -1;
+  }
 }
 
 function playerCtx() {
@@ -637,9 +698,12 @@ function playerCtx() {
 function updatePlayerField(dt) {
   if (!S.rt) return;
   if (!S.playerAirflow) S.playerAirflow = new S.rt.vfxMotionSource.VfxMotionAirflow('player:motion');
-  if (!S.fields.includes(S.playerAirflow.field)) S.playerAirflow.reset();
+  if (!S.playerContact) S.playerContact = new S.rt.vfxMotionSource.VfxMotionContact();
+  if (!S.fields.includes(S.playerAirflow.field)) { S.playerAirflow.reset(); S.playerContact.reset(); }
   const foot = S.player.on ? S.player.world : null;
   const air = S.playerAirflow.sample(foot, dt, foot && S.space ? S.space.metricAt(foot[0], foot[2]) : 1);
+  const contact = S.playerContact.sample(foot, dt, foot && S.space ? S.space.metricAt(foot[0], foot[2]) : 1);
+  S.contacts = contact ? [contact] : [];
   if (foot) { if (!S.fields.includes(air)) S.fields.push(air); }
   else { const i = S.fields.indexOf(air); if (i >= 0) S.fields.splice(i, 1); }
   if (!S.player.on || !S.player.world) {
@@ -677,7 +741,10 @@ function stepSim(dt) {
   // 与 `Game` 同序：风的钟先推进，再按它跑模拟（`VfxSystem.update` 的 ctx 同形）
   if (S.wind) S.wind.advance(dt);
   const wind = S.wind ? S.wind.params : null;
-  S.sim.step(dt, { fields: S.fields, player: playerCtx(), time: S.simTime, wind, windTime: S.wind ? S.wind.time : 0 });
+  // 外部给点：游戏里燃烧系统每帧交一次（`BurnSystem.presentPlates`）；这里每帧交预览用假点（同一个 setSpawnPoints）
+  feedExternalPoints();
+  S.sim.step(dt, { fields: S.fields, contacts: S.contacts, player: playerCtx(), time: S.simTime, wind, windTime: S.wind ? S.wind.time : 0,
+    fires: S.fires });
   S.simTime += dt; S.frames++;
   for (const ev of S.sim.events) {
     S.evCount[ev.type] = (S.evCount[ev.type] || 0) + 1;
@@ -704,7 +771,215 @@ function setPlaying(on) {
   }
   renderSimBar();
 }
-function resetSim() { rebuildSim(); S.fields.length = 0; S.playerField = null; draw(); renderSimBar(); }
+function resetSim() {
+  rebuildSim(); S.fields.length = 0; S.playerField = null; S.fires.length = 0; draw(); renderSimBar();
+  // 重置 = 重开本地预览：顺手重读可燃物模板表（燃烧工作台里改了模板没切窗口也能跟上；内容没变什么都不做）
+  void refreshBurnTemplates();
+}
+
+// ---------------------------------------------------------------------------
+// 燃烧预览（外部给点的假点 / 火焰调试）——只在预览内存里
+// ---------------------------------------------------------------------------
+function hasExternalShape(doc) {
+  return !!(doc && Array.isArray(doc.emitters) && doc.emitters.some((e) => e && e.spawn && e.spawn.shape && e.spawn.shape.kind === 'external'));
+}
+/** 预览用假点（世界点 + 半径）：锚点周围一小圈，贴锚点那一高度。没有 external 发射器 = null */
+function externalPreviewPoints() {
+  if (!hasExternalShape(S.doc)) return null;
+  const a = anchorWorld(); if (!a) return null;
+  const out = [];
+  for (let i = 0; i < EXT_PREVIEW_COUNT; i++) {
+    const t = (i / EXT_PREVIEW_COUNT) * Math.PI * 2;
+    out.push({ pos: [a[0] + Math.cos(t) * EXT_PREVIEW_SPREAD_WU, a[1], a[2] + Math.sin(t) * EXT_PREVIEW_SPREAD_WU], r: EXT_PREVIEW_RADIUS_WU });
+  }
+  return out;
+}
+function feedExternalPoints() {
+  if (!S.sim || typeof S.sim.setSpawnPoints !== 'function') return;
+  const pts = externalPreviewPoints();
+  if (!pts) return;
+  const buf = new Float32Array(pts.length * 4);
+  pts.forEach((p, i) => { buf[i * 4] = p.pos[0]; buf[i * 4 + 1] = p.pos[1]; buf[i * 4 + 2] = p.pos[2]; buf[i * 4 + 3] = p.r; });
+  S.sim.setSpawnPoints(buf, pts.length);
+}
+/** 火焰调试：在世界点 `world`（表面上）立一段竖直向上的火焰 */
+function addFireAt(world) {
+  const at = world.map(round2);
+  S.fires.push({ x: at[0], y: at[1], z: at[2], ax: 0, ay: 1, az: 0, len: FIRE_DEBUG_LEN_WU, r: FIRE_DEBUG_R_WU });
+  const hint = fireHint();
+  status(`放了一段调试火焰（高 ${FIRE_DEBUG_LEN_WU} wu、粗 ${FIRE_DEBUG_R_WU} wu，只在本地预览里）：${hint.text}`, hint.kind);
+  setTool('select');                                   // 与发刺激（K）同：放一下就回选择，再放按 I
+  renderSimBar();
+}
+
+// ---------------------------------------------------------------------------
+// 可燃物模板（薄片 plate.burnable 绑的；本台只读，唯一写入者是燃烧工作台）
+// ---------------------------------------------------------------------------
+/** 在飞的那次模板表读取；在飞期间又被叫 = 排一次在它后面（多次合成一次） */
+let burnInFlight = null;
+let burnQueued = null;
+/**
+ * 重取可燃物模板表（`/api/burnables`）。每份原始文档过**打包进来的运行时** `resolveBurnable(doc, id)`（页面不另写清洗 / 缺省）
+ * 装成 `S.burn.map`，建模拟时当 `burnTemplates` 传（与 `VfxSystem` 同形）。
+ * 时机：页面启动、打开效果（`openEffect` 在重建模拟前等它）、「↺ 重置」、窗口重新获得焦点（燃烧工作台里存了盘切回来）。
+ * **内容真变了才动**：表内容（原始文档 + 读不懂清单）一样就什么都不做；变了且当前效果绑着的模板清洗结果变了才重建本地预览
+ * （`opts.rebuild === false` = 调用方自己马上重建 / 重画，这里只换表）。读不到不抛：留着上一份表、`S.burn.err` 记原因。
+ * 返回 promise<bool>：表内容变没变。
+ */
+function refreshBurnTemplates(opts) {
+  const rebuild = !(opts && opts.rebuild === false);
+  if (!burnInFlight) {
+    burnInFlight = loadBurnTemplates(rebuild).finally(() => { burnInFlight = null; });
+    return burnInFlight;
+  }
+  if (!burnQueued) {
+    const q = { rebuild };
+    q.promise = burnInFlight.then(() => { burnQueued = null; return refreshBurnTemplates({ rebuild: q.rebuild }); });
+    burnQueued = q;
+  } else if (rebuild) burnQueued.rebuild = true;
+  return burnQueued.promise;
+}
+async function loadBurnTemplates(rebuild) {
+  let j;
+  try {
+    j = await API.json('/api/burnables');
+  } catch (e) {
+    const err = String((e && e.message) || e);
+    const changed = S.burn.err !== err;
+    S.burn.err = err;
+    if (changed && rebuild) { renderInspector(); renderSimBar(); }
+    return false;
+  }
+  const rows = Array.isArray(j.templates) ? j.templates : [];
+  const errors = j.errors && typeof j.errors === 'object' ? j.errors : {};
+  const key = canonJson({ docs: rows.map((r) => [r.id, r.doc]), errors });
+  const res = S.rt && S.rt.burnables ? S.rt.burnables.resolveBurnable : null;
+  const hadErr = !!S.burn.err;
+  if (S.burn.loaded && key === S.burn.key && (S.burn.map || !res)) {
+    S.burn.err = '';
+    if (hadErr && rebuild) { renderInspector(); renderSimBar(); }
+    return false;
+  }
+  const before = S.doc ? boundBurnKey() : '';
+  let map = null;
+  if (res) {
+    map = new Map();
+    for (const r of rows) { const t = res(r.doc, r.id); if (t) map.set(r.id, t); }
+  }
+  S.burn = { loaded: true, err: '', rows, errors, map, key };
+  if (rebuild) {
+    if (S.doc && boundBurnKey() !== before) { rebuildSim(); draw(); }
+    renderInspector(); renderSimBar();
+  }
+  return true;
+}
+/** 当前效果绑着的模板此刻的清洗结果（规范串）：模板表换了但这几份没变 = 不重建本地预览 */
+function boundBurnKey() {
+  const ids = [...new Set(plateBurnBindings(S.doc).map((b) => b.template))].sort();
+  return canonJson(ids.map((id) => [id, (S.burn.map && S.burn.map.get(id)) || null]));
+}
+/** 效果里绑了可燃模板的薄片：`[{emitter, index, template}]`（template 去空白，与运行时 `plateBurnOf` 同口径；形状坏 / 没写不算） */
+function plateBurnBindings(doc) {
+  const out = [];
+  (doc && Array.isArray(doc.emitters) ? doc.emitters : []).forEach((e, i) => {
+    const b = e && e.plate && e.plate.burnable;
+    const t = b && typeof b === 'object' && !Array.isArray(b) && typeof b.template === 'string' ? b.template.trim() : '';
+    if (t) out.push({ emitter: String(e.id || ''), index: i, template: t });
+  });
+  return out;
+}
+/**
+ * 一个模板 id 能不能让薄片可燃、为什么不能（检视器保值展示的原因、火工具提示、状态栏共用这一份判据）：
+ * `{id, state, short, why, row}`，`state` ∈ ok / missing / unreadable / consume / unresolvable / unresolved / noTable。
+ * 不能绑的原因句取服务端 `note`（形状闸门 `plate_burnable_notes` 同一句）；表里没有的与闸门同一个前缀。
+ */
+function burnTemplateStatus(id) {
+  const B = S.burn;
+  const tid = String(id || '').trim();
+  if (!B.loaded) {
+    return { id: tid, state: 'noTable', short: '模板表没读到', row: null,
+      why: `可燃物模板表没读到${B.err ? `（${B.err}）` : ''}：本地预览里认不出「${tid}」，这张纸在这里不可燃` };
+  }
+  const row = B.rows.find((r) => r.id === tid) || null;
+  if (!row) {
+    return B.errors[tid]
+      ? { id: tid, state: 'unreadable', short: '读不懂', row, why: `plate.burnable.template「${tid}」这份模板读不懂（${B.errors[tid]}）：运行时这张纸不可燃` }
+      : { id: tid, state: 'missing', short: '不存在', row, why: `plate.burnable.template「${tid}」不在 assets/data/burnables/ 里（或读不懂）：运行时这张纸不可燃` };
+  }
+  if (!row.bindable) {
+    const consume = row.mode === 'consume';
+    return { id: tid, state: consume ? 'consume' : 'unresolvable', short: consume ? '消耗燃烧，薄片不能绑' : '装不上', row,
+      why: row.note || `plate.burnable.template「${tid}」薄片绑不了：运行时这张纸不可燃` };
+  }
+  if (B.map && !B.map.has(tid)) {
+    return { id: tid, state: 'unresolved', short: '运行时装不上', row,
+      why: `plate.burnable.template「${tid}」过运行时 resolveBurnable 得到空（没图 / 没正的真实尺寸）：运行时这张纸不可燃` };
+  }
+  return { id: tid, state: 'ok', short: '', why: '', row };
+}
+/**
+ * 当前效果里每个绑了模板的薄片**此刻在本地预览里真的可燃吗**：`[{emitter, index, template, ok, why}]`。
+ * 先看模拟本体（`sim.emitters[i].burn` 非空 = 运行时 `plateBurnOf` 装上了），不可燃再说原因：
+ * 运动模型不是薄片（运行时根本不读 plate）/ 模板的问题（`burnTemplateStatus`）/ 本地预览没在跑。
+ */
+function burnBindingStates() {
+  return plateBurnBindings(S.doc).map((b) => {
+    const rtEm = S.sim ? S.sim.emitters.find((e) => e.def.id === b.emitter) : null;
+    if (rtEm && rtEm.burn) return Object.assign({ ok: true, why: '' }, b);
+    const em = S.doc.emitters[b.index];
+    const solver = S.rt && S.rt.vfxProgram ? S.rt.vfxProgram.resolveEmitterProgram(em).solver : 'plate';
+    if (solver !== 'plate') return Object.assign({ ok: false, why: `发射器「${b.emitter}」的运动模型不是薄片：plate.burnable 运行时不读` }, b);
+    const st = burnTemplateStatus(b.template);
+    if (st.state !== 'ok') return Object.assign({ ok: false, why: `发射器「${b.emitter}」：${st.why}` }, b);
+    return Object.assign({ ok: false, why: S.sim ? `发射器「${b.emitter}」绑的「${b.template}」本地预览没装上（点「↺ 重置」再试）` : '本地预览没在跑' }, b);
+  });
+}
+/** 火工具（I）的提示：这个效果里放火能点着什么（`{kind, text}`） */
+function fireHint() {
+  const states = burnBindingStates();
+  const ok = states.filter((s) => s.ok), bad = states.filter((s) => !s.ok);
+  if (!states.length) return { kind: 'warn', text: '这个效果没有可燃薄片（薄片一节「可燃模板」选一份面燃烧模板），火焰点不着东西' };
+  if (!ok.length) return { kind: 'warn', text: `薄片绑了可燃模板，但本地预览里不可燃——${bad.map((s) => s.why).join('；')}——火焰点不着东西` };
+  const tids = [...new Set(ok.map((s) => s.template))];
+  return { kind: bad.length ? 'warn' : 'ok',
+    text: `碰到的可燃纸片受热够了会着（模板 ${tids.map((t) => `「${t}」`).join(' / ')}）${bad.length ? `；另有不可燃的——${bad.map((s) => s.why).join('；')}` : ''}` };
+}
+/** 检视器「打开燃烧工作台」：另起燃烧工作台进程（带当前模板 id）；那边存盘后切回来靠窗口焦点重读模板表 */
+async function openBurnWorkbench(id) {
+  const tid = String(id || '').trim();
+  try {
+    const r = await API.post('/api/open_burn_workbench', tid ? { id: tid } : {});
+    status(`${r.message || '已另起燃烧工作台'}：那边存盘后切回这里，模板表会重读、本地预览按新模板烧`, 'ok');
+  } catch (e) {
+    status(`燃烧工作台起不来：${(e && e.message) || e}`, 'err');
+  }
+}
+function clearFires() { S.fires.length = 0; draw(); renderSimBar(); status('清掉了调试火焰（已经着了的纸照样烧完）'); }
+/** 视图里画、但不可选中的预览标记：外部给点的假点、调试火焰 */
+function previewMarks() {
+  const out = [];
+  const pts = S.doc && S.sim ? externalPreviewPoints() : null;
+  if (pts) pts.forEach((p, i) => out.push({ pos: p.pos, color: [1, 0.62, 0.2, 0.95], size: 6, label: i === 0 ? '预览用假点（外部给点）' : '' }));
+  S.fires.forEach((f, i) => out.push({ pos: [f.x, f.y, f.z], top: [f.x + f.ax * f.len, f.y + f.ay * f.len, f.z + f.az * f.len],
+    color: [1, 0.35, 0.1, 1], size: 8, label: i === 0 ? '调试火焰（只在预览里）' : '' }));
+  return out;
+}
+/**
+ * 可燃薄片此刻：在烧 / 烧没（永久作废的槽位）；`flammable` = 模拟里真有装上模板的薄片（运行时 `plateBurnOf` 给了燃烧态），
+ * `bound` = 效果里绑了模板的薄片个数（绑了不等于装上，原因见 `burnBindingStates`）。
+ */
+function burnStats() {
+  let burning = 0, burnt = 0, flammable = false;
+  const bound = S.doc ? plateBurnBindings(S.doc).length : 0;
+  if (!S.sim) return { burning, burnt, flammable, bound };
+  for (const e of S.sim.emitters) {
+    if (!e.burn) continue;
+    flammable = true;
+    burning += e.burn.burning;
+    for (let i = 0; i < e.burn.burnt.length; i++) if (e.burn.burnt[i]) burnt++;
+  }
+  return { burning, burnt, flammable, bound };
+}
 
 // ---------------------------------------------------------------------------
 // 给视图看的东西（物体 / 球 / 粒子 / 场）
@@ -715,14 +990,38 @@ function cssOf(c) { return `rgba(${Math.round(c[0] * 255)},${Math.round(c[1] * 2
 function particlePoints() {
   const out = [];
   if (!S.sim) return out;
+  const progressOf = S.rt && S.rt.vfxPlateBurn ? S.rt.vfxPlateBurn.plateBurnProgress : null;
+  const beamApi = S.rt && S.rt.vfxBeam;
+  const loc = { t01: 0, u: 0, v: 0, edge: 0 };
+  const sc = { x: 0, y: 0 };
   S.sim.emitters.forEach((e, i) => {
     const p = e.p, pts = [];
+    // 被光柱照亮（光柱里的尘埃）：柱外的在游戏里看不见，点云里也不画（判据是运行时 vfxBeam 那几个函数本体）
+    const bl = beamApi && e.def.appearance && e.def.appearance.beamLit ? S.sim.beamById(e.def.appearance.beamLit.beam) : null;
+    if (bl) S.sim.beamFrame(bl);
+    const blPulse = bl ? S.sim.beamPulse(bl) : 1;
+    // 可燃薄片：燃着的按运行时 `plateBurnProgress` 分两档画——前半程火色（着了），后半程焦黑（快成灰）；烧没的不在活池里、自然不画
+    const lit = [], charred = [];
     for (let k = 0; k < p.cap; k++) {
       if (!p.alive[k]) continue;
-      pts.push(p.x[k], p.y[k], p.z[k]);
+      if (bl) {
+        let inside = false;
+        if (bl.frame3d) inside = beamApi.beam3dLocal(bl.frame3d, p.x[k], p.y[k], p.z[k], loc);
+        else if (bl.frame2d) { S.space.toScene([p.x[k], p.y[k], p.z[k]], sc); inside = beamApi.beam2dLocal(bl.frame2d, sc.x, sc.y, loc); }
+        const fade = S.simTime > 0 ? bl.fade : 1;
+        if (!inside || beamApi.beamGainAt(bl.def, bl.look, loc, blPulse, fade) <= 0.002) continue;
+      }
+      const prog = e.burn && progressOf ? progressOf(e.burn, k) : -1;
+      (prog < 0 ? pts : prog < 0.5 ? lit : charred).push(p.x[k], p.y[k], p.z[k]);
     }
     const c = emColor(i);
     out.push({ id: e.def.id, pts, color: c, css: cssOf(c), size: 5, sizeWu: e.def.appearance.sizeWu });
+    if (e.burn) {
+      const cc = e.burn.P.charColor;
+      const fire = [1, 0.55, 0.12, 1], ch = [Math.max(0.12, cc[0]), Math.max(0.1, cc[1]), Math.max(0.09, cc[2]), 1];
+      out.push({ id: e.def.id, burn: 'burning', pts: lit, color: fire, css: cssOf(fire), size: 6, sizeWu: e.def.appearance.sizeWu });
+      out.push({ id: e.def.id, burn: 'charred', pts: charred, color: ch, css: cssOf(ch), size: 6, sizeWu: e.def.appearance.sizeWu });
+    }
   });
   return out;
 }
@@ -752,6 +1051,16 @@ function objects() {
         const key = `area:${role}:${i}`, sel = S.sel.key === key;
         out.push({ key, label: sel ? `${AREA_LABEL[role]} · 顶点 ${i + 1}` : '', pos: vertexWorld(pt), color: [c[0] / 255, c[1] / 255, c[2] / 255, 1], size: 7, selected: sel, vertex: true });
       });
+    }
+  }
+  // 光柱的两个把手：起点（带名字）/ 终点（选中时才写名字）。拖起点 / 终点改的是效果里这根光柱的 from / to
+  for (const b of (S.doc.beams || [])) {
+    if (!b || !b.id) continue;
+    for (const which of ['from', 'to']) {
+      const key = `${which === 'from' ? 'beam' : 'beamEnd'}:${b.id}`, sel = S.sel.key === key;
+      const pos = beamPointWorld(b, which); if (!pos) continue;
+      out.push({ key, label: which === 'from' ? `光柱 ${b.id}${b.mode === '2d' ? '（2D）' : ''}` : sel ? `光柱 ${b.id} · 终点` : '',
+        pos, color: which === 'from' ? [1, 0.86, 0.45, 1] : [1, 0.7, 0.3, 1], size: which === 'from' ? 10 : 8, selected: sel });
     }
   }
   if (S.player.on && S.player.world) {
@@ -787,6 +1096,232 @@ function fieldMarks() {
     at: [f.pos[0], f.pos[1], f.pos[2]], radius: f.def.radius,
     color: f.def.kind === 'fear' ? [1, 0.4, 0.4, 1] : f.def.kind === 'attract' ? [0.6, 1, 0.6, 1] : [0.7, 0.8, 1, 1],
   }));
+}
+
+// ---------------------------------------------------------------------------
+// 光柱（体积光）：把手 / 线框 / 原画视图预览
+// ---------------------------------------------------------------------------
+/** 选中键里的光柱：`beam:<id>`（起点）/ `beamEnd:<id>`（终点）；别的键 = null */
+function beamKeyOf(key) {
+  const m = /^(beam|beamEnd):(.+)$/.exec(key || '');
+  return m ? { which: m[1] === 'beam' ? 'from' : 'to', id: m[2] } : null;
+}
+function beamDefOf(id) { return S.doc ? (S.doc.beams || []).find((b) => b && b.id === id) || null : null; }
+/** 检视器与左栏光柱那排按钮作用的光柱：选中的是光柱把手 → 它；否则 null（检视器回到发射器） */
+function currentBeam() { const k = beamKeyOf(S.sel.key); return k ? beamDefOf(k.id) : null; }
+/** 光柱按钮作用的光柱：选中的 → 最近操作的 → 第一根 */
+function focusBeam() {
+  if (!S.doc) return null;
+  const bs = S.doc.beams || [];
+  return currentBeam() || (S.beamId && bs.find((b) => b.id === S.beamId)) || bs[0] || null;
+}
+/** 锚点投到画面上的那一点（2D 光带的原点；与运行时 `beamFrame` 同一条：toScene(锚点世界点)） */
+function beamAnchorScene() {
+  const a = anchorWorld(); if (!a || !S.space) return null;
+  const o = { x: 0, y: 0 }; S.space.toScene(a, o); return [o.x, o.y];
+}
+/** 锚点正下方地面点投到画面（2D 光带立在这里那一深度的直立面上） */
+function beamFootScene() {
+  const a = anchorWorld(); if (!a || !S.space) return null;
+  const o = { x: 0, y: 0 }; S.space.toScene([a[0], S.space.groundY(a[0], a[2]), a[2]], o); return [o.x, o.y];
+}
+/** 画面点 → 2D 光带把手的世界点（锚点脚下直立面上、投影正好对准这一画面点；与尘埃出生同一个 `uprightWorldAtScene`） */
+function beamSceneToWorld(sx, sy) {
+  const foot = beamFootScene();
+  if (foot && S.space && S.space.uprightWorldAtScene) return S.space.uprightWorldAtScene(foot[0], foot[1], sx, sy);
+  return S.cal ? S.cal.sceneToWorldGround(sx, sy) : null;
+}
+function beamPointWorld(b, which) {
+  const a = anchorWorld(); if (!a) return null;
+  if (b.mode === '3d') {
+    const s = b.shape3d || {};
+    const v = which === 'from' ? (Array.isArray(s.from) ? s.from : [0, 0, 0]) : (Array.isArray(s.to) ? s.to : [0, 0, 0]);
+    return [a[0] + v[0], a[1] + v[1], a[2] + v[2]];
+  }
+  const s = b.shape2d || {}, as = beamAnchorScene(); if (!as) return null;
+  const v = which === 'from' ? (Array.isArray(s.from) ? s.from : [0, 0]) : (Array.isArray(s.to) ? s.to : [0, 0]);
+  return beamSceneToWorld(as[0] + v[0], as[1] + v[1]);
+}
+/** 写一个把手（3D = 相对锚点的世界偏移；2D = 相对锚点画面点的画面偏移）。起点与终点挤到 1 wu 以内 = 不写（形状闸门会拒存） */
+function writeBeamPoint(id, which, value) {
+  const b = beamDefOf(id); if (!b || !value.every(Number.isFinite)) return;
+  const is3d = b.mode === '3d';
+  const sh = is3d ? (b.shape3d || (b.shape3d = { to: [0, -100, 0], section: { kind: 'rect', width: 60, height: 20 } })) : (b.shape2d || (b.shape2d = { to: [0, 100], width: [30, 90] }));
+  const v = value.map(round2);
+  const other = which === 'from' ? sh.to : (sh.from || (is3d ? [0, 0, 0] : [0, 0]));
+  if (Array.isArray(other) && Math.hypot(...v.map((x, i) => x - (other[i] || 0))) < 1) return;
+  if (which === 'from') {
+    if (v.every((x) => x === 0)) delete sh.from; else sh.from = v;
+    if (is3d) orderKeys(sh, ['from', 'to', 'section', 'spreadDeg', 'rollDeg']); else orderKeys(sh, ['from', 'to', 'width', 'occludeByDepth']);
+  } else sh.to = v;
+}
+/** 光柱把手的世界位移（gizmo / 微移 / 3D 相对拖）→ 写回 */
+function applyBeamMove(base, v) {
+  if (base.mode === '3d') { writeBeamPoint(base.id, base.which, [0, 1, 2].map((i) => base.value[i] + v[i])); return; }
+  const cal = S.cal, as = beamAnchorScene(); if (!cal || !as) return;
+  const s = cal.worldToScene(base.pos[0] + v[0], base.pos[1] + v[1], base.pos[2] + v[2]);
+  writeBeamPoint(base.id, base.which, [s[0] - as[0], s[1] - as[1]]);
+}
+/** 世界点（表面拾取 / Alt 拖）→ 把手 */
+function setBeamPointToWorld(base, p) {
+  const a = anchorWorld(); if (!a) return;
+  if (base.mode === '3d') { writeBeamPoint(base.id, base.which, [p[0] - a[0], p[1] - a[1], p[2] - a[2]]); return; }
+  const cal = S.cal, as = beamAnchorScene(); if (!cal || !as) return;
+  const s = cal.worldToScene(p[0], p[1], p[2]);
+  writeBeamPoint(base.id, base.which, [s[0] - as[0], s[1] - as[1]]);
+}
+/** 画面点（2D 视图 Alt 拖）→ 把手：2D = 画面偏移；3D = 那一点脚下的地面世界点 */
+function setBeamPointToScene(base, sp) {
+  if (base.mode === '3d') { if (S.cal) setBeamPointToWorld(base, S.cal.sceneToWorldGround(sp[0], sp[1])); return; }
+  const as = beamAnchorScene(); if (!as) return;
+  writeBeamPoint(base.id, base.which, [sp[0] - as[0], sp[1] - as[1]]);
+}
+/** 本地预览模拟里的光柱运行态 + 显示用的淡入淡出（还没播 = 画满，好调形状；播起来按真实淡入淡出） */
+function previewBeamRuntimes() {
+  if (!S.sim || !S.sim.beams) return [];
+  return S.sim.beams.map((b) => {
+    S.sim.beamFrame(b);
+    return { runtime: Object.assign({}, b, { fade: S.simTime > 0 ? b.fade : 1 }), pulse: S.sim.beamPulse(b) };
+  });
+}
+/** 光柱的画面包络（与运行时 `VfxRenderer.renderBeams` 同一条：3D = 两圈截面顶点投到画面的凸包；2D = 四角） */
+function beamHullScene(b) {
+  const api = S.rt && S.rt.vfxBeam; if (!api || !S.space) return null;
+  if (b.frame3d) {
+    const c = b.frame3d.corners, m = c.length / 3, pts = new Float32Array(m * 2), o = { x: 0, y: 0 };
+    for (let k = 0; k < m; k++) { S.space.toScene([c[k * 3], c[k * 3 + 1], c[k * 3 + 2]], o); pts[k * 2] = o.x; pts[k * 2 + 1] = o.y; }
+    const out = new Float32Array(api.VFX_BEAM_MAX_HULL * 2);
+    return { pts: out, count: api.convexHull2d(pts, m, out) };
+  }
+  if (b.frame2d) return { pts: b.frame2d.corners, count: 4 };
+  return null;
+}
+/** 3D 视图：光柱线框（3D = 两圈截面 + 侧棱；2D = 光带四边立在锚点脚下的直立面上） */
+function beamLines3() {
+  const out = [];
+  if (!S.sim || !S.sim.beams) return out;
+  for (const b of S.sim.beams) {
+    S.sim.beamFrame(b);
+    const sel = beamKeyOf(S.sel.key);
+    const color = sel && sel.id === b.def.id ? [1, 0.9, 0.3, 0.95] : [1, 0.82, 0.5, 0.55];
+    const arr = [];
+    if (b.frame3d) {
+      const c = b.frame3d.corners, n = b.frame3d.sides;
+      const P = (ring, k) => [c[(ring * n + k) * 3], c[(ring * n + k) * 3 + 1], c[(ring * n + k) * 3 + 2]];
+      for (let k = 0; k < n; k++) {
+        const k2 = (k + 1) % n;
+        arr.push(...P(0, k), ...P(0, k2), ...P(1, k), ...P(1, k2), ...P(0, k), ...P(1, k));
+      }
+      const f = b.frame3d;
+      arr.push(...f.origin, f.origin[0] + f.axis[0] * f.length, f.origin[1] + f.axis[1] * f.length, f.origin[2] + f.axis[2] * f.length);
+    } else if (b.frame2d) {
+      const c = b.frame2d.corners;
+      const W = [0, 1, 2, 3].map((k) => beamSceneToWorld(c[k * 2], c[k * 2 + 1]));
+      if (W.every(Boolean)) for (let k = 0; k < 4; k++) arr.push(...W[k], ...W[(k + 1) % 4]);
+    }
+    if (arr.length) out.push({ pts: new Float32Array(arr), color });
+  }
+  return out;
+}
+/** 原画视图：光柱真实预览（运行时那段 GLSL 编译出来画）+ 选中的那根描边 */
+function drawBeams2d(g, view) {
+  if (!S.rt || !S.rt.vfxBeamGlsl || !S.sim || !S.cal || !S.layers.beams) return;
+  if (!beamPreview) { beamPreview = new BeamPreview(); beamPreview.onAsset = () => draw(); }
+  const beams = previewBeamRuntimes();
+  if (!beams.length) return;
+  const env = {
+    affine: S.space ? S.rt.vfxBeam.sceneQAffine(S.space) : null,
+    wuPerQ: S.space ? S.space.wuPerQ : 1, time: S.simTime,
+    uprightQz: S.space && S.space.uprightWorldAtScene
+      ? (fx, fy, sx, sy) => { const q = [0, 0, 0]; S.space.toQ(S.space.uprightWorldAtScene(fx, fy, sx, sy), q); return q[2]; } : null,
+    hasDepth: !!(S.cal && S.cal.shell),
+  };
+  const n = beamPreview.draw(g, S.rt, S.cal, env, beams, view, (b) => beamHullScene(b), S.scene ? S.scene.depthTolerance || 0.05 : 0.05);
+  if (n < 0 && beamPreview.err && !S.beamPreviewErrShown) { S.beamPreviewErrShown = true; status(`光柱预览着色器编译失败：${beamPreview.err}`, 'err'); }
+  const sel = beamKeyOf(S.sel.key);
+  if (sel) {
+    const b = beams.find((x) => x.runtime.def.id === sel.id);
+    const hull = b ? beamHullScene(b.runtime) : null;
+    if (hull && hull.count >= 3) {
+      g.strokeStyle = 'rgba(255,230,80,.7)'; g.lineWidth = 1; g.setLineDash([5, 4]);
+      g.beginPath();
+      for (let k = 0; k < hull.count; k++) { const x = hull.pts[k * 2] * view.zoom + view.ox, y = hull.pts[k * 2 + 1] * view.zoom + view.oy; if (k) g.lineTo(x, y); else g.moveTo(x, y); }
+      g.closePath(); g.stroke(); g.setLineDash([]);
+    }
+  }
+}
+
+// ---- 光柱列表操作
+function uniqueBeamId(base) {
+  const used = new Set((S.doc.beams || []).map((b) => b.id));
+  if (!used.has(base)) return base;
+  let n = 2; while (used.has(`${base}_${n}`)) n++;
+  return `${base}_${n}`;
+}
+/**
+ * 加一根光柱。3D 缺省 = 从锚点斜上方打到锚点脚下稍穿进地面的一道窗光（矩形截面、平行光）；
+ * 2D 缺省 = 锚点上方往下张开的一条梯形光带。锚点通常离面有高度，终点按离面高往下找地面。
+ */
+function addBeam(mode) {
+  if (!S.doc) return;
+  const an = effectiveAnchor();
+  const lift = Number.isFinite(an.h) ? an.h : 0;
+  edit(mode === '2d' ? '加 2D 光带' : '加 3D 光柱', () => {
+    S.doc.beams = S.doc.beams || [];
+    const id = uniqueBeamId('beam');
+    const beam = mode === '2d'
+      ? { id, mode: '2d', shape2d: { from: [-60, -240], to: [0, 0], width: [40, 150] }, color: [1, 0.9, 0.7], intensity: 0.4, edgeSoftness: 0.5 }
+      : { id, mode: '3d', shape3d: { from: [-160, 280, 60], to: [30, -(lift + 15), -10], section: { kind: 'rect', width: 110, height: 30 } },
+        color: [1, 0.88, 0.65], intensity: 0.45, noise: { strength: 0.3, scaleWu: 90, velocity: [8, 3, 0] } };
+    S.doc.beams.push(beam);
+    S.sel.key = `beam:${id}`; S.beamId = id;
+  });
+}
+function beamRefs(id) {
+  return (S.doc.emitters || []).filter((e) => (e.spawn && e.spawn.shape && e.spawn.shape.kind === 'beam' && e.spawn.shape.beam === id)
+    || (e.appearance && e.appearance.beamLit && e.appearance.beamLit.beam === id)).map((e) => e.id);
+}
+function dupBeam(id) {
+  edit('复制光柱', () => {
+    const arr = S.doc.beams || [];
+    const i = arr.findIndex((b) => b.id === id); if (i < 0) return;
+    const copy = clone(arr[i]);
+    copy.id = uniqueBeamId(id);
+    arr.splice(i + 1, 0, copy);
+    S.sel.key = `beam:${copy.id}`; S.beamId = copy.id;
+  });
+}
+function delBeam(id) {
+  const users = beamRefs(id);
+  if (users.length) { status(`删不了光柱「${id}」：发射器 ${users.join(' / ')} 还用着它（光柱体积出生 / 被光柱照亮，先改掉）`, 'err'); return; }
+  edit('删光柱', () => {
+    S.doc.beams = (S.doc.beams || []).filter((b) => b.id !== id);
+    if (!S.doc.beams.length) delete S.doc.beams;
+    if (beamKeyOf(S.sel.key) && beamKeyOf(S.sel.key).id === id) S.sel.key = '';
+    if (S.beamId === id) S.beamId = '';
+  });
+}
+function moveBeam(id, dir) {
+  edit('重排光柱', () => {
+    const arr = S.doc.beams || [];
+    const i = arr.findIndex((b) => b.id === id), j = i + dir;
+    if (i < 0 || j < 0 || j >= arr.length) return;
+    const t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+  });
+}
+/** 改光柱 id（写入闭包里调）：尘埃的「光柱体积」出生 / 「被光柱照亮」引用跟着改 */
+function renameBeam(oldId, newId) {
+  const arr = S.doc.beams || [];
+  if (arr.some((b) => b.id === newId)) { status(`已经有一根光柱叫「${newId}」`, 'err'); return; }
+  const b = arr.find((x) => x.id === oldId); if (!b) return;
+  b.id = newId;
+  for (const e of (S.doc.emitters || [])) {
+    if (e.spawn && e.spawn.shape && e.spawn.shape.kind === 'beam' && e.spawn.shape.beam === oldId) e.spawn.shape.beam = newId;
+    if (e.appearance && e.appearance.beamLit && e.appearance.beamLit.beam === oldId) e.appearance.beamLit.beam = newId;
+  }
+  const k = beamKeyOf(S.sel.key);
+  if (k && k.id === oldId) S.sel.key = `${k.which === 'from' ? 'beam' : 'beamEnd'}:${newId}`;
+  if (S.beamId === oldId) S.beamId = newId;
 }
 
 // ---------------------------------------------------------------------------
@@ -835,6 +1370,11 @@ function gizmoPivot() {
   // 顶点只在地上挪：`slot` = X / Z 两根轴 + XZ 面 + 贴地中心（2D 原画里同一份配置投到画上）
   if (ak) return S.cal ? { pivot: vertexWorld(ak.pt), kind: 'slot', n: 1, label: `${AREA_LABEL[ak.role]} · 顶点 ${ak.i + 1} · ${ak.p.id}` } : null;
   if (key === 'player') return S.player.world ? { pivot: S.player.world.slice(), kind: 'slot', n: 1, label: '玩家标记' } : null;
+  const bk = beamKeyOf(key);
+  if (bk) {
+    const b = beamDefOf(bk.id), p = b ? beamPointWorld(b, bk.which) : null;
+    return p ? { pivot: p, kind: 'points', n: 1, label: `光柱 · ${b.id} · ${bk.which === 'from' ? '起点' : '终点'}${b.mode === '2d' ? '（2D 光带）' : ''}` } : null;
+  }
   const pm = /^probe:(\d+)$/.exec(key);
   if (pm) { const p = S.probes[+pm[1]]; return p ? { pivot: p.at.slice(), kind: 'points', n: 1, label: `刺激 · ${p.field.kind}:${p.field.tag}` } : null; }
   const em = /^emitter:(.+)$/.exec(key);
@@ -857,6 +1397,7 @@ function gizmoLabel() {
   if (key === 'anchor') return attachOn() ? '挪角色挂点' : activePlacement() ? '移动布置锚点' : '移动锚点';
   const ak = areaKey(key); if (ak) return `挪${AREA_LABEL[ak.role]}顶点`;
   if (key === 'player') return '移动玩家';
+  const bk = beamKeyOf(key); if (bk) return `挪光柱${bk.which === 'from' ? '起点' : '终点'}`;
   if (/^probe:/.test(key)) return '移动刺激点';
   const r = radiusOf(key); if (r) return `改${r.label}`;
   return '移动发射器';
@@ -883,6 +1424,15 @@ function gizmoBase(key) {
   const ak = areaKey(key);
   if (ak) return S.cal ? { kind: 'vertex', role: ak.role, i: ak.i, id: ak.p.id, pos: vertexWorld(ak.pt).slice(), scene: ak.pt.slice() } : null;
   if (key === 'player') return S.player.world ? { kind: 'player', pos: S.player.world.slice() } : null;
+  const bk = beamKeyOf(key);
+  if (bk) {
+    const b = beamDefOf(bk.id), pos = b ? beamPointWorld(b, bk.which) : null;
+    if (!pos) return null;
+    const sh = (b.mode === '3d' ? b.shape3d : b.shape2d) || {};
+    const zero = b.mode === '3d' ? [0, 0, 0] : [0, 0];
+    const value = (bk.which === 'from' ? (Array.isArray(sh.from) ? sh.from : zero) : (Array.isArray(sh.to) ? sh.to : zero)).slice();
+    return { kind: 'beamPt', id: b.id, which: bk.which, mode: b.mode, pos: pos.slice(), value };
+  }
   const pm = /^probe:(\d+)$/.exec(key || '');
   if (pm) { const p = S.probes[+pm[1]]; return p ? { kind: 'probe', idx: +pm[1], pos: p.at.slice() } : null; }
   const em = /^emitter:(.+)$/.exec(key || '');
@@ -926,6 +1476,7 @@ function applyGizmo(key, base, res) {
     return;
   }
   if (base.kind === 'player') { setPlayerAt([base.pos[0] + v[0], base.pos[1] + v[1], base.pos[2] + v[2]], true); return; }
+  if (base.kind === 'beamPt') { applyBeamMove(base, v); return; }
   if (base.kind === 'probe') {
     const p = S.probes[base.idx]; if (!p) return;
     p.at = [round2(base.pos[0] + v[0]), round2(base.pos[1] + v[1]), round2(base.pos[2] + v[2])];
@@ -1075,6 +1626,7 @@ function dragObjectTo(key, base, surf) {
   }
   if (base.kind === 'attach') { setAttachTo(surf.p); return; }
   if (base.kind === 'anchor') { writeAnchorFromSurface(surf); return; }
+  if (base.kind === 'beamPt') { setBeamPointToWorld(base, surf.p); return; }
   if (base.kind === 'player') { setPlayerAt(surf.p, true); return; }
   if (base.kind === 'probe') { const p = S.probes[base.idx]; if (p) p.at = surf.p.map(round2); return; }
   if (base.kind === 'radius') setRadiusValue(key, Math.hypot(surf.p[0] - base.pos[0], surf.p[2] - base.pos[2]));
@@ -1097,6 +1649,7 @@ function dragObjectToScene(key, base, scenePt) {
     return;
   }
   if (base.kind === 'radius') return;                  // 半径没有"扔到哪"的意思（相对拖见 dragObjectByScene）
+  if (base.kind === 'beamPt') { setBeamPointToScene(base, scenePt); return; }
   dragObjectTo(key, base, { p: cal.sceneToWorldGround(scenePt[0], scenePt[1]), onShell: false });
 }
 /**
@@ -1116,6 +1669,8 @@ function dragObjectByScene(key, base, ds, gv, ratio) {
   if (base.kind === 'attach') { const at = attachDef(); if (at) setAttachOffsetX(at, base.offsetX + ds[0]); return; }
   if (base.kind === 'vertex') { setAreaVertex(base.role, base.i, [base.scene[0] + ds[0], base.scene[1] + ds[1]]); return; }
   if (base.kind === 'radius') { if (Number.isFinite(ratio) && ratio > 0) setRadiusValue(key, base.radius * ratio); return; }
+  // 2D 光带的把手就是画面点：画面上挪多少就挪多少（3D 光柱照发射器那样走地面位移）
+  if (base.kind === 'beamPt' && base.mode === '2d') { writeBeamPoint(base.id, base.which, [base.value[0] + ds[0], base.value[1] + ds[1]]); return; }
   if (gv) applyGizmo(key, base, { kind: 'move', v: { x: gv[0], y: 0, z: gv[2] } });
 }
 
@@ -1574,6 +2129,61 @@ async function copyPlacementsDialog() {
   const r = copyPlacementsTo(pick.phase, pick.scope, mode);
   if (r) status(`复制了 ${r.copied} 条到「${phaseLabel(S.scene.id, pick.phase)}」${r.skipped ? `（跳过 ${r.skipped} 条同 id 的）` : ''}`, 'ok');
 }
+let placeCopyPending = false;
+/**
+ * 把**一条**布置在本场景两套时段外观之间拷（左栏「选中的布置 · 别的时段外观」的「拷过去 / 拷过来」）。
+ * 只动这一个 id：目标里有同 id 的就原位覆盖（先确认，可撤销），没有就加到末尾；同效果的其它条、别的效果一律不动
+ * （制作人 2026-09-16：拷贝只拷左栏选中的那一条——第一版整份替换被打回）。拷完两份照旧各改各的、互不继承。
+ * 目标里同 id 是**别的效果**的布置 → 不拷，状态栏说先改 id。拷进正在看的这一份 → 选中它。
+ * 返回 `true` = 拷了。
+ */
+async function copyPlacementAcrossPhases(id, fromPhase, toPhase) {
+  if (placeCopyPending || !S.scene || !libEditable()) return false;
+  const sid = S.scene.id, from = fromPhase || '', to = toPhase || '';
+  if (from === to || !id) return false;
+  const fromLabel = phaseLabel(sid, from), toLabel = phaseLabel(sid, to);
+  const src = libRows(sid, from).find((r) => r.id === id);
+  if (!src) { status(`「${fromLabel}」里没有「${id}」`, 'warn'); return false; }
+  const dst = libRows(sid, to).find((r) => r.id === id);
+  if (dst && dst.effect !== src.effect) { status(`「${toLabel}」里的「${id}」布置的是别的效果「${dst.effect}」：先把其中一条改 id 再拷`, 'err'); return false; }
+  if (dst && canonJson(dst) === canonJson(src)) { status(`「${toLabel}」里的「${id}」和「${fromLabel}」这条已经一样了`, 'ok'); return false; }
+  if (dst) {
+    const key0 = libKey();
+    placeCopyPending = true;
+    let c;
+    try {
+      c = await choiceDialog(`覆盖「${toLabel}」里的「${id}」`,
+        `「${toLabel}」里的「${id}」会换成「${fromLabel}」这一条（锚点、区域、种子、数量等全部，可撤销）。\n别的布置不动。`,
+        [['cancel', '取消'], ['overwrite', '覆盖']]);
+    } finally { placeCopyPending = false; }
+    if (c !== 'overwrite') { status(`没拷：「${toLabel}」里的「${id}」原样`, ''); return false; }
+    // 对话框期间现场变了（换了场景、库被改过）：不按过期的判断动手
+    if (S.busy || !S.scene || S.scene.id !== sid || libKey() !== key0) {
+      status('没拷：确认期间换了场景或布置库变了，请再点一次', 'warn');
+      return false;
+    }
+  }
+  const prevPlace = S.placeId, prevSel = S.sel.key;
+  // 拷进正在看的这一份：它成为活动布置（edit 里马上 rebuildSim，要先摆对）；区域顶点序号对不上新行，清掉
+  if (to === S.phase) {
+    S.placeId = id;
+    if (/^area:/.test(S.sel.key)) S.sel.key = '';
+  }
+  const changed = editLib(`拷布置「${id}」：${fromLabel} → ${toLabel}`, () => {
+    const r = libRows(sid, from).find((x) => x.id === id);
+    const arr = rowsArr(sid, to);
+    const i = arr.findIndex((x) => x && x.id === id);
+    if (i >= 0) arr[i] = clone(r); else arr.push(clone(r));
+  });
+  if (!changed) { S.placeId = prevPlace; S.sel.key = prevSel; return false; }
+  // 限定暂存跟着这条走（去掉「限定」勾时收着的范围区域，再勾上时两份一致）
+  const kFrom = `${sid}\n${from}\n${id}`, kTo = `${sid}\n${to}\n${id}`;
+  delete S.confineStash[kTo];
+  if (S.confineStash[kFrom]) S.confineStash[kTo] = clone(S.confineStash[kFrom]);
+  if (to === S.phase && S.doc && src.effect === S.doc.id) select(`place:${id}`);
+  status(`${dst ? '覆盖' : '拷'}了「${toLabel}」里的「${id}」（只动这一条；Ctrl+S 存盘）`, 'ok');
+  return true;
+}
 /** 从「这个效果还布置在」点过去：切到那个场景那套外观并选中它 */
 async function goPlacement(sid, phase, id) {
   if (!S.scene || S.scene.id !== sid || S.phase !== (phase || '')) await loadScene(sid, phase || '');
@@ -1916,6 +2526,8 @@ function select(key) {
   }
   const emId = emitterIdOfKey(key);
   if (emId) S.emitterId = emId;                        // 记住作者最近操作的发射器（选别的东西时检视器不跳回第一个）
+  const bmk = beamKeyOf(key);
+  if (bmk) S.beamId = bmk.id;
   if (S.sel.key === key && !rebuilt) { draw(); return; }
   S.sel.key = key;
   const r = radiusOf(S.sel.key);
@@ -1928,6 +2540,11 @@ function setTool(t) {
   if (!/^area/.test(t)) S.areaDraft = null;
   if (/^area/.test(t) && S.doc && !activePlacement()) {
     status(`本场景本时段没有布置这个效果：先点左栏「把当前效果布置到这里」，再拉${AREA_LABEL[t === 'areaEmit' ? 'emit' : 'range']}`, 'warn');
+  }
+  if (t === 'fire' && S.doc) {
+    // 武装火工具就先说清楚放了火能点着什么（绑了模板但装不上要说为什么），别等点下去才发现什么都不着
+    const hint = fireHint();
+    status(`火焰调试（I）：点场景表面放一段竖直火焰（只在本地预览里）——${hint.text}`, hint.kind);
   }
   for (const b of document.querySelectorAll('#tools button[data-tool]')) b.classList.toggle('on', b.dataset.tool === t);
   renderAnchorToolTitle();
@@ -1972,6 +2589,7 @@ async function openEffect(id, opts) {
     S.doc = j.doc;
     S.sel.key = '';
     S.emitterId = '';                                  // 上一份效果的发射器 id，别让同名的串过来
+    S.beamId = '';
     S.extRefs = Array.isArray(j.externalRefs) ? j.externalRefs : [];
     S.placeId = o.placeId || '';
     // 撤销栈里库那一半一律留着（把每条的 doc 换成新打开的这份，只改了旧效果 doc 的条目丢掉）——
@@ -1989,6 +2607,8 @@ async function openEffect(id, opts) {
       if (env.placeId && !o.placeId) o.placeId = env.placeId;
     }
     if (o.placeId) S.placeId = o.placeId;
+    // 重开效果 = 重读可燃物模板表（燃烧工作台可能刚改过模板）：第一次建模拟就按盘上最新的模板烧；读不到照旧开
+    await refreshBurnTemplates({ rebuild: false });
     rebuildSim();
     if (o.placeId && activePlacement() && activePlacement().id === o.placeId) S.sel.key = 'anchor';
     renderAll();
@@ -2195,8 +2815,7 @@ async function renameEffect() {
   if (S.docDirty || S.libDirty) { status('先保存再改名（改名连布置库一起改磁盘上那份，工作态的改动会对不上）', 'warn'); return; }
   // 布置库之外还按 id 用它（挂件预设 / playVfx）：本台不写那些文件，改名 = 让它们静默指空。服务端也拒，这里先说人话、不弹对话框
   if (S.extRefs.length) {
-    const files = [...new Set(S.extRefs.map((r) => r.file))].join(' / ');
-    status(`改不了名：「${S.doc.id}」还被 ${S.extRefs.length} 处按 id 引用（${extRefsText(S.extRefs)}）——先在主编辑器里改掉 ${files} 里的这些引用再来改名`, 'err');
+    status(`改不了名：「${S.doc.id}」还被 ${S.extRefs.length} 处按 id 引用（${extRefsText(S.extRefs)}）——先${extRefsFixHint(S.extRefs)}再来改名`, 'err');
     return;
   }
   const v = await promptDialog('改名', '新 id（布置里引用它的会跟着改）', S.doc.id);
@@ -2223,7 +2842,7 @@ async function deleteEffect() {
   const refsText = (refs) => refs.map((r) => `${r.sceneId} · ${phaseLabel(r.sceneId, r.phase)} · ${r.id}`).join('\n');
   // 布置库之外按 id 用它的（挂件预设 / playVfx）：**只列不改**（那些文件归主编辑器），删完它们指空——要作者看着清单明确确认。
   // 原来只看布置库：火把 ember 态的余烟 incense_smoke 没有布置，确认框说"全库没有布置引用它"，删完游戏里再也不冒烟
-  const extText = (ext) => (ext.length ? `\n\n还有 ${ext.length} 处按 id 用它（工作台不改这些文件，删了它们会指空——去主编辑器改）：\n${ext.map((r) => (r.kind === 'action' ? r.label : `${r.label}（${r.file}）`)).join('\n')}` : '');
+  const extText = (ext) => (ext.length ? `\n\n还有 ${ext.length} 处按 id 用它（删除不改这些地方，删了它们会指空——${extRefsFixHint(ext)}）：\n${ext.map((r) => (r.kind === 'action' ? r.label : `${r.label}（${r.file}）`)).join('\n')}` : '');
   const ask = (refs, ext) => {
     if (!refs.length && !ext.length) return confirmDialog(`删除「${id}」`, '删了就没了（全库没有布置、也没有挂件预设 / playVfx 引用它）').then((v) => (v ? 'plain' : 'cancel'));
     const head = refs.length ? `全库还有 ${refs.length} 条布置引用它：\n${refsText(refs)}` : '全库没有布置引用它。';
@@ -2630,6 +3249,15 @@ function renderSimBar() {
     + (S.lastFlock ? ` · ${S.lastFlock}` : '')
     + (w ? ` · 风 ${fmt(w.speed, 0)} wu/s` : ' · 无风');
   if (ps.plates) txt += ` · 薄片 离地 ${ps.free} / 醒 ${ps.awake}`;
+  if (S.sim.beams && S.sim.beams.length) {
+    txt += ` · 光柱 ${S.sim.beams.length}${S.simTime > 0 ? `（淡入 ${S.sim.beams.map((b) => fmt(b.fade, 2)).join(' / ')}）` : ''}`;
+  }
+  const planarBeamWarn = !!(S.cal && S.cal.planar && S.sim.beams && S.sim.beams.some((b) => b.def.mode === '3d'));
+  const bs = burnStats();
+  if (bs.flammable || bs.bound || S.fires.length) txt += ` · 可燃 在烧 ${bs.burning} / 烧没 ${bs.burnt}${S.fires.length ? ` · 调试火焰 ${S.fires.length} 段` : ''}`;
+  // 绑了可燃模板却没装上（模板不存在 / 是消耗燃烧 / 读不懂 / 表没读到 / 不是薄片）：运行时静默不可燃，这里必须说出来
+  const burnBad = bs.bound ? burnBindingStates().filter((s) => !s.ok) : [];
+  if (hasExternalShape(S.doc)) txt += ` · 外部给点=预览用假点 ${EXT_PREVIEW_COUNT} 个（游戏里由燃烧系统给，写盘不带）`;
   const inp = S.simInput;
   if (inp && inp.placement) {
     txt += ` · 布置「${inp.placement}」种子 ${inp.seed}${inp.countScale !== 1 ? ` ×${fmt(inp.countScale, 2)}` : ''}${S.sim.confine ? ' · 限定区域' : ''}`;
@@ -2650,6 +3278,8 @@ function renderSimBar() {
     }
   }
   if (ps.plates && !w) warns.push('本场景无持续风；纸片是否接受局部气流和刺激，见「模拟与外部影响」');
+  if (planarBeamWarn) warns.push('⚠ 没有深度载荷：3D 光柱在这里只是平面近似，要摆 3D 光柱去有深度的场景');
+  if (burnBad.length) warns.push(`⚠ 可燃薄片不可燃：${burnBad[0].why}${burnBad.length > 1 ? `（另有 ${burnBad.length - 1} 处）` : ''}`);
   if (warns.length) { txt = `${warns.join(' · ')} · ${txt}`; info.className = 'warn'; }
   info.textContent = txt;
   info.title = txt;
@@ -2733,6 +3363,26 @@ function renderLeft() {
       }
     }
   }
+  // ---- 光柱（与发射器并列）：选中 = 起点把手；左栏按钮作用在「当前光柱」上
+  const bl = el('beamList');
+  bl.textContent = '';
+  const fb = focusBeam();
+  const beamScoped = !!beamKeyOf(S.sel.key);
+  for (const b of ((S.doc && S.doc.beams) || [])) {
+    const k = beamKeyOf(S.sel.key);
+    const on = !!k && k.id === b.id;
+    const cur = !on && !beamScoped && fb === b;
+    const users = S.doc ? beamRefs(b.id) : [];
+    bl.appendChild(h('div', { class: 'item' + (on ? ' on' : '') + (cur ? ' cur' : ''), 'data-beam': b.id,
+      title: `${b.mode === '2d' ? '2D 光带（画面坐标）' : '3D 光柱（M-world）'}${users.length ? `；尘埃发射器 ${users.join(' / ')} 用着它` : ''}`,
+      onclick: () => select(`beam:${b.id}`) },
+    h('span', { class: 'ic' }, b.mode === '2d' ? '▱' : '◭'),
+    h('span', { class: 'name' }, b.id),
+    h('span', { class: 'dim' }, `${b.mode === '2d' ? '2D' : '3D'}${users.length ? ` · ${users.length} 尘` : ''}`)));
+  }
+  if (S.doc && !(S.doc.beams || []).length) bl.appendChild(h('div', { class: 'pad dim', style: 'padding:2px 10px' }, '没有光柱（体积光）'));
+  for (const id of ['btnDupBeam', 'btnRenameBeam', 'btnUpBeam', 'btnDownBeam', 'btnDelBeam']) el(id).disabled = !fb;
+  for (const id of ['btnAddBeam3', 'btnAddBeam2']) el(id).disabled = !S.doc;
   const pl = el('playerRow');
   pl.textContent = '';
   pl.appendChild(h('div', { class: 'item' + (S.sel.key === 'player' ? ' on' : ''), onclick: () => S.player.on && select('player') },
@@ -2742,7 +3392,7 @@ function renderLeft() {
   wk.checked = S.walk.on;
   wk.addEventListener('change', () => setWalk(wk.checked));
   pl.appendChild(h('div', { class: 'item sub' }, h('span', { class: 'ic' }, '↔'),
-    h('label', { class: 'chk', title: `沿画面横向来回走 ±${WALK_SPAN_WU} wu（挂点模式下就能看"锚点在动、已发射的粒子留在原地"）` },
+    h('label', { class: 'chk', title: `沿画面横向来回走 ±${WALK_SPAN_WU} wu（挂点模式下就能看"锚点在动、已发射的粒子按「跟着发射点走」留下或跟上"）` },
       wk, `来回走（${WALK_SPEED_WU} wu/s）`)));
   const pr = el('probeList');
   pr.textContent = '';
@@ -2783,11 +3433,56 @@ function renderPlacements() {
       onclick: () => { if (mine) select(`place:${r.id}`); },
     }, ...kids));
   }
+  const others = S.scene ? phasesOf(sid).filter((p) => p.key !== S.phase) : [];
   if (!rows.length) list.appendChild(h('div', { class: 'pad dim', style: 'padding:2px 10px' }, S.scene ? '这一份还没有布置（没配就没有，不继承别的时段）' : '还没装场景'));
   const editable = !!S.scene && !S.libErr;
   el('btnPlaceHere').disabled = !(editable && S.doc);
   for (const id of ['btnPlaceDel', 'btnPlaceUp', 'btnPlaceDown', 'btnPlaceRename']) el(id).disabled = !(editable && ap);
   el('btnPlaceCopy').disabled = !(editable && rows.length && phasesOf(sid).length > 1);
+  // ---- 选中的那一条布置在本场景别的时段外观里：比一比，一键拷过去 / 拷过来（只动这一条）
+  //      这一份里还没有当前效果的布置时，列出别的时段外观里当前效果的布置，可以逐条拷过来
+  const pp = el('placePhases');
+  pp.textContent = '';
+  if (others.length && S.doc) {
+    const here = phaseLabel(sid, S.phase);
+    const copyBtn = (act, disabled, title, fn) => h('button', { 'data-act': act, disabled, title, onclick: (e) => { e.stopPropagation(); void fn(); } }, act === 'push' ? '拷过去' : '拷过来');
+    // 两行：左栏只有 170–230 px，时段名（「基底（辰时、午时、向晚）」）和状态、按钮挤一行时名字被省略号吃光
+    const actLine = (id, stateText, stateCls, ...btns) => h('div', { class: 'act', 'data-copy-id': id },
+      h('span', { class: stateCls, 'data-role': 'phaseState' }, stateText), h('div', { class: 'pair' }, ...btns));
+    if (ap) {
+      pp.appendChild(h('div', { class: 'pad dim', style: 'padding:6px 10px 0', title: '只拷选中的这一条（同 id 原位覆盖 / 没有就加上），别的布置不动；拷完两份各改各的' },
+        `「${ap.id}」在别的时段外观`));
+      for (const p of others) {
+        const t = libRows(sid, p.key).find((r) => r.id === ap.id);
+        const foreign = !!t && t.effect !== ap.effect;
+        const same = !!t && !foreign && canonJson(t) === canonJson(ap);
+        const state = foreign ? `同 id 是别的效果「${t.effect}」` : !t ? '没有这条' : same ? '这条一样' : '这条不一样';
+        pp.appendChild(h('div', { class: 'phaseRow', 'data-phase-row': p.key },
+          h('div', { class: 'lab' }, h('span', { class: 'ic' }, same ? '＝' : '≠'), h('span', { class: 'name' }, p.label)),
+          actLine(ap.id, state, same ? 'dim' : 'warn',
+            copyBtn('push', !editable || foreign || same, `把「${here}」的「${ap.id}」拷到「${p.label}」${t ? '（覆盖那边同 id 的这条）' : '（加上这一条）'}，别的布置不动`,
+              () => copyPlacementAcrossPhases(ap.id, S.phase, p.key)),
+            copyBtn('pull', !editable || !t || foreign || same, `把「${p.label}」的「${ap.id}」拷到正在看的「${here}」（覆盖这边这条），别的布置不动`,
+              () => copyPlacementAcrossPhases(ap.id, p.key, S.phase)))));
+      }
+    } else {
+      const blocks = others.map((p) => ({ p, mine: libRows(sid, p.key).filter((r) => r.effect === S.doc.id) })).filter((b) => b.mine.length);
+      if (blocks.length) {
+        pp.appendChild(h('div', { class: 'pad dim', style: 'padding:6px 10px 0', title: '逐条拷：只拷点的那一条，别的布置不动' },
+          `「${S.doc.id}」在别的时段外观的布置`));
+        for (const { p, mine } of blocks) {
+          const lines = mine.map((r) => {
+            const clash = curRows().find((x) => x.id === r.id);
+            return actLine(r.id, clash ? `「${r.id}」· 这里同 id 是「${clash.effect}」` : `「${r.id}」`, clash ? 'warn' : 'dim',
+              copyBtn('pull', !editable || !!clash, `把「${p.label}」的「${r.id}」拷到正在看的「${here}」，别的布置不动`,
+                () => copyPlacementAcrossPhases(r.id, p.key, S.phase)));
+          });
+          pp.appendChild(h('div', { class: 'phaseRow', 'data-phase-row': p.key },
+            h('div', { class: 'lab' }, h('span', { class: 'ic' }, '→'), h('span', { class: 'name' }, p.label)), ...lines));
+        }
+      }
+    }
+  }
   // ---- 这个效果还布置在（全库）
   const els = el('placeElsewhere');
   els.textContent = '';
@@ -2800,18 +3495,20 @@ function renderPlacements() {
       onclick: () => { void goPlacement(r.sceneId, r.phase, r.id); },
     }, h('span', { class: 'ic' }, here ? '●' : '→'), h('span', { class: 'name' }, `${r.sceneId} · ${phaseLabel(r.sceneId, r.phase)}`), h('span', { class: 'dim' }, r.id)));
   }
-  // 布置库之外按 id 用它的（挂件预设 / playVfx）：只读列出来（改它们去主编辑器）。原来这里只看布置库，
-  // 火把余烟 incense_smoke 没有布置就写"游戏里不会出现"，作者据此删掉了它
+  // 布置库之外按 id 用它的（挂件预设 / playVfx / 可燃物模板的燃烧粒子）：只读列出来（改挂件 / 动作去主编辑器，改模板去燃烧工作台）。
+  // 原来这里只看布置库，火把余烟 incense_smoke 没有布置就写"游戏里不会出现"，作者据此删掉了它
   const ext = S.doc ? S.extRefs : [];
   for (const r of ext) {
-    els.appendChild(h('div', { class: 'item other', 'data-extref': `${r.file}\n${r.where}`, title: `${r.file}（这一处归主编辑器改，工作台只读）` },
-      h('span', { class: 'ic' }, r.kind === 'prop' ? '◇' : '▶'), h('span', { class: 'name' }, r.kind === 'prop' ? r.label : `playVfx · ${r.where}`),
+    els.appendChild(h('div', { class: 'item other', 'data-extref': `${r.file}\n${r.where}`,
+      title: r.kind === 'burnable' ? `${r.file}（可燃物模板烧起来发它：在燃烧工作台里打开模板「${r.burnable}」改粒子，工作台只读）` : `${r.file}（这一处归主编辑器改，工作台只读）` },
+      h('span', { class: 'ic' }, r.kind === 'prop' ? '◇' : r.kind === 'burnable' ? '◆' : '▶'),
+      h('span', { class: 'name' }, r.kind === 'prop' || r.kind === 'burnable' ? r.label : `${r.action || 'playVfx'} · ${r.where}`),
       h('span', { class: 'dim' }, r.file.split('/').pop())));
   }
   if (!refs.length && S.doc) {
     els.appendChild(h('div', { class: 'pad dim', style: 'padding:2px 10px' }, ext.length
-      ? `全库都没有布置这个效果；上面 ${ext.length} 处按 id 用它（挂件 / 动作里临时生成，不需要布置）`
-      : '全库都没有布置这个效果，也没有挂件预设 / playVfx 用它：游戏里不会出现'));
+      ? `全库都没有布置这个效果；上面 ${ext.length} 处按 id 用它（挂件 / 动作 / 可燃物燃烧时临时生成，不需要布置）`
+      : '全库都没有布置这个效果，也没有挂件预设 / playVfx / 可燃物模板用它：游戏里不会出现'));
   }
 }
 function renderLinkChip() {
@@ -2943,6 +3640,7 @@ function onKey(e) {
   if (k === 'a') { setTool('anchor'); return; }
   if (k === 'm') { setTool('player'); return; }
   if (k === 'k') { setTool('field'); return; }
+  if (k === 'i') { setTool('fire'); return; }
   if (k === 'h') { setTool('pan'); return; }
   if (k === 'w') { S.gizmoMode = 'move'; draw(); return; }
   if (k === 'e') { S.gizmoMode = 'rotate'; draw(); return; }
@@ -2967,6 +3665,8 @@ function onKey(e) {
     if (S.sel.key === 'player') { clearPlayer(); return; }
     const em = /^emitter:(.+)$/.exec(S.sel.key);
     if (em) { delEmitter(em[1]); return; }
+    const bk = beamKeyOf(S.sel.key);
+    if (bk) { delBeam(bk.id); return; }
     return;
   }
   const step = e.shiftKey ? 10 : 1;
@@ -3053,6 +3753,11 @@ const host = {
   /** 动画包的状态名（`/api/anims` 带来的）；不认识的包 = 空表（检视器的下拉照样保值显示当前值） */
   animStates: (path) => ((S.sources.animStates || {})[path] || []),
   get sfx() { return S.sfx; },
+  /** 效果目录（`/api/effects`） */
+  get effects() { return S.effects; },
+  /** 可燃物模板表（`/api/burnables` + 运行时清洗结果）：检视器「可燃模板」选择器的候选与只读参数 */
+  get burn() { return S.burn; },
+  burnTemplateStatus, openBurnWorkbench,
   get player() { return S.player; },
   get walk() { return S.walk; },
   get attach() { return attachDef(); },
@@ -3064,12 +3769,14 @@ const host = {
   areaToolBegin, setAreaDraft, commitAreaDraft, areaEdgeHit, insertAreaVertex, deleteAreaVertexKey,
   areaShapes, areaLines3, areaPointWorld,
   status, select, setTool, edit, dragBegin, dragTick, dragEnd,
-  objects, spheres, particlePoints, fieldMarks, anchorWorld, bodyLines,
+  objects, spheres, particlePoints, fieldMarks, anchorWorld, bodyLines, previewMarks, addFireAt,
   gizmoPivot, gizmoBase, applyGizmo, gizmoLabel, dragObjectTo, dragObjectToScene, dragObjectByScene, nudgeSelected,
   radiusSelected: () => !!(S.doc && radiusOf(S.sel.key)), setRadiusValue,
   setAnchorAt, setAnchorScene, setPlayerAt, addFieldAt,
   setAttachMode, ensureAttach, setWalk,
   currentEmitter, renameEmitter, ensureAuthoring, ensureAnchor, reanchor,
+  currentBeam, renameBeam, beamRefs, beamLines3, drawBeams2d,
+  beamApi: () => (S.rt && S.rt.vfxBeam) || null,
   onCursorWorld, onCursorScene, renderInspector,
 };
 
@@ -3157,6 +3864,12 @@ async function boot() {
     S.sources = { anims: rows.map((a) => a.path), images: j.images || [], animStates: Object.fromEntries(rows.map((a) => [a.path, a.states || []])) };
   } catch (e) { /* 候选空着 */ }
   try { const j = await API.json('/api/sfx'); S.sfx = j.sfx || []; } catch (e) { /* 同上 */ }
+  // 可燃物模板表（薄片「可燃模板」的候选 + 本地预览的 burnTemplates）；读不到不拦开页，检视器与状态栏会说
+  await refreshBurnTemplates({ rebuild: false });
+  // 窗口重新获得焦点（多半是在燃烧工作台里改完模板存了盘切回来）/ 页面重新可见：重读模板表——
+  // 内容一样什么都不做；变了且当前效果绑着的模板清洗结果变了才重建本地预览
+  window.addEventListener('focus', () => { void refreshBurnTemplates(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') void refreshBurnTemplates(); });
   // 布置库先于场景 / 效果装：本地预览第一次建模拟就要按活动布置跑。读不懂 = 只读（绝不拿空库覆盖盘上那份）
   S.libReal = !(boot0.placements && boot0.placements.real === false);
   try {
@@ -3233,7 +3946,19 @@ function bindUI() {
     const v = await promptDialog('改发射器名', 'id', em.id);
     if (v && v !== em.id) edit('改发射器 id', () => renameEmitter(em.id, v));
   });
+  el('btnAddBeam3').addEventListener('click', () => addBeam('3d'));
+  el('btnAddBeam2').addEventListener('click', () => addBeam('2d'));
+  el('btnDupBeam').addEventListener('click', () => { const b = focusBeam(); if (b) dupBeam(b.id); });
+  el('btnDelBeam').addEventListener('click', () => { const b = focusBeam(); if (b) delBeam(b.id); });
+  el('btnUpBeam').addEventListener('click', () => { const b = focusBeam(); if (b) moveBeam(b.id, -1); });
+  el('btnDownBeam').addEventListener('click', () => { const b = focusBeam(); if (b) moveBeam(b.id, 1); });
+  el('btnRenameBeam').addEventListener('click', async () => {
+    const b = focusBeam(); if (!b) return;
+    const v = await promptDialog('改光柱名', 'id（尘埃的「光柱体积」/「被光柱照亮」会跟着改）', b.id);
+    if (v && v !== b.id) edit('改光柱 id', () => renameBeam(b.id, v));
+  });
   el('btnClearFields').addEventListener('click', () => { S.fields.length = 0; S.playerField = null; draw(); status('清了所有刺激场'); });
+  el('btnClearFires').addEventListener('click', () => clearFires());
   el('btnLaunchGame').addEventListener('click', async () => {
     if (!S.scene) return;
     try { const r = await API.post('/api/link/launch', { sceneId: S.scene.id }); status(r.message || '已请求', r.ok ? 'ok' : 'err'); }

@@ -48,6 +48,8 @@ class ActionRecord:
             "dialogueGraph": "图对话",
             "cutscene": "过场",
             "item": "物件用途",
+            "prop_preset": "挂件状态",
+            "narrative_graphs": "叙事状态",
         }
         return labels.get(self.source_type, self.source_type)
 
@@ -222,6 +224,15 @@ def _scan_actions(model: ProjectModel) -> list[ActionRecord]:
             _emit(records, use.get("actions"), source_type="item",
                   source_id=str(it.get("id") or "?"), scene_id="", field="use.actions")
 
+    # 挂件预设里会执行的动作：状态进入动作 states[*].onEnterActions + 风吹灭越线动作
+    # （blowout / states[*].blowout 的 onEmberActions / onOutActions）。位置清单只有一份：iter_prop_preset_action_lists
+    from ..shared.prop_preview import iter_prop_preset_action_lists
+    props = getattr(model, "prop_presets", None)
+    for pid, entry in (props.items() if isinstance(props, dict) else ()):
+        for al in iter_prop_preset_action_lists(entry):
+            _emit(records, al.raw, source_type="prop_preset",
+                  source_id=str(pid), scene_id="", field=al.field)
+
     # 档案 firstViewActions：人物 / 传说 / 文档 / 书页与书页子条目
     for ch in getattr(model, "archive_characters", None) or []:
         if isinstance(ch, dict):
@@ -279,6 +290,25 @@ def _scan_actions(model: ProjectModel) -> list[ActionRecord]:
                     container_field=path, container_index=-1, navigable=False,
                 ))
 
+    # 状态进入/退出动作也是声明与引用的真实宿主（临时阳气限制通常就在这里）。
+    # 不能只扫图对话，否则候选与保存校验会把真实声明误判为不存在。
+    def narrative_actions(node):
+        if isinstance(node, dict):
+            states = node.get("states")
+            if isinstance(states, dict):
+                for sid, state in states.items():
+                    if not isinstance(state, dict):
+                        continue
+                    for hook in ("onEnterActions", "onExitActions"):
+                        _emit(records, state.get(hook), source_type="narrative_graphs",
+                              source_id=str(node.get("id", "")), scene_id="",
+                              field=f"{sid}.{hook}", navigable=False)
+            for value in node.values():
+                narrative_actions(value)
+        elif isinstance(node, list):
+            for value in node:
+                narrative_actions(value)
+    narrative_actions(getattr(model, "narrative_graphs", {}))
     return records
 
 
@@ -304,9 +334,10 @@ def _iter_cutscene_step_actions(steps, prefix: str):
 _SOURCE_TYPES = [
     "全部", "Quest", "Encounter", "Scene", "Hotspot", "Zone", "ZoneRule",
     "长按", "信号Cue", "捞尸", "糖画", "扎纸", "物件检视", "档案", "图对话", "过场",
-    "物件用途",
+    "物件用途", "挂件状态", "叙事状态",
 ]
 _SOURCE_MAP = {
+    "叙事状态": "narrative_graphs",
     "Quest": "quest", "Encounter": "encounter", "Scene": "scene",
     "Hotspot": "scene_hotspot", "Zone": "scene_zone",
     "ZoneRule": "scene_zone_rule",
@@ -315,13 +346,14 @@ _SOURCE_MAP = {
     "物件检视": "object_examine",
     "档案": "archive", "图对话": "dialogueGraph", "过场": "cutscene",
     "物件用途": "item",
+    "挂件状态": "prop_preset",
 }
 
 # 覆盖这些脏桶变更时标记需重扫（扩大自 scene/quest/encounter，含新纳入的动作站点）。
 _ACTION_REGISTRY_DIRTY_TYPES = frozenset({
     "scene", "quest", "encounter", "pressure_holds", "signal_cues",
     "water_minigames", "sugar_wheel", "paper_craft", "object_examine", "archive",
-    "cutscene", "dialogue_graph_edits", "item",
+    "cutscene", "dialogue_graph_edits", "item", "prop_presets",
 })
 
 

@@ -39,8 +39,9 @@ function sliceGlsl(src: string, tag: string): string {
   return src.substring(i + b.length, j);
 }
 
-const WR_CORE = sliceGlsl(WORLD_RECONSTRUCT, 'WR_CORE');
-const LC = sliceGlsl(LIGHTING_CORE, 'LIGHTING_CORE');
+/** 世界重建 / 光照核心切片（光柱着色 `vfxBeamShaders.ts` 拼同一份，不另切） */
+export const WR_CORE = sliceGlsl(WORLD_RECONSTRUCT, 'WR_CORE');
+export const LC = sliceGlsl(LIGHTING_CORE, 'LIGHTING_CORE');
 
 /**
  * 顶点程序。`plate` = 薄片（纸钱）：多一条逐顶点世界法线 `aNrm`（片能弯能翻，法线不是朝相机的那根）。
@@ -53,7 +54,7 @@ in vec2 aUV;
 in vec4 aColor;      // 预乘 rgba
 in vec3 aQ;          // 粒子中心的伪世界 q（遮挡 / 照明）
 in vec2 aLocal;      // 帧内局部 [0,1]²
-in vec2 aMisc;       // x = 软边宽（q）；y = 留空
+in vec2 aMisc;       // x = 软边宽（q）；y = 逐顶点自发光份额（燃着的纸，其余恒 0）
 ${plate ? 'in vec3 aNrm;        // 薄片：逐顶点世界法线（已翻到朝相机那一面）\n' : ''}
 uniform mat3 uProjectionMatrix;
 uniform mat3 uWorldTransformMatrix;
@@ -270,7 +271,11 @@ void main(void) {
 __VFX_NORMAL__
 
     vec3 q = vQ;
-    vec3 E = ((uMode < 0.5) ? gatherRT(q + nQ * 0.02, nQ) : probeE(q, nQ));
+    // 底光只走 probe 查表。角色那条的 uMode 0（gatherRT 体素光线步进）对粒子不可达：粒子那组
+    // frameShade 的 uMode 由 CharacterLightingSystem 钉成 1..3。把那一支拼进来不改画面，
+    // 却让 ANGLE→D3D11 的编译从约 3 秒涨到 11 秒（192×256 嵌套循环里采 3D 纹理，FXC 整段展开），
+    // 而且是在第一个受光粒子出现那一帧同步卡住主线程（2026-09-16 实测）。
+    vec3 E = probeE(q, nQ);
     E *= mix(1.0, skyaoAt(q, nQ), clamp(uSkyaoBlend, 0.0, 1.0));
 
     // 实体灯：与角色同一段循环（ENTITY_SCENE_LIGHTS_GLSL），同一次 packLights 的数
@@ -281,7 +286,8 @@ __VFX_NORMAL__
     vec3 litLin = shadeEntityLinear(alb, E, directE, uVfxIndirectFactor, uVfxDirectFactor, uVfxTotalFactor * uLightGain, uEChroma);
     // 镜面/自发光份额（appearance.emissive）：这一份不吃漫反射着色，按比例混入原色（线性）。
     // 水滴、火星这类靠镜面才看得见的材质用它——漫反射路径没有镜面瓣，只用它画出来是黑疙瘩。
-    litLin = mix(litLin, srgb2lin(alb), clamp(uEmissive, 0.0, 1.0));
+    // 逐顶点自发光（燃着的纸那道火线，vMisc.y）与发射器份额取大：不燃烧的粒子 vMisc.y 恒 0 ⇒ 与改动前逐位相同
+    litLin = mix(litLin, srgb2lin(alb), clamp(max(uEmissive, vMisc.y), 0.0, 1.0));
     vec3 outRgb = clamp(lcDisplayTransform(litLin,
         uDispEv, uDispTonemap, uDispWhite,
         uDispSaturation, uDispContrast, uDispLift, uDispLiftColor), 0.0, 1.0);

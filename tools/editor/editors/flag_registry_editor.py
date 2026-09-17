@@ -96,6 +96,8 @@ def _flag_ref_domains(model) -> list[tuple[str, object, str]]:
         ("water_minigames", getattr(model, "water_minigames_instances", None), "water_minigames"),
         ("sugar_wheel", getattr(model, "sugar_wheel_instances", None), "sugar_wheel"),
         ("paper_craft", getattr(model, "paper_craft_instances", None), "paper_craft"),
+        # 挂件预设 states[*].onEnterActions（切到该状态时真执行的动作树，可 setFlag / 读 flag 条件）
+        ("prop_presets", getattr(model, "prop_presets", None), "prop_presets"),
     ]
 
 
@@ -289,6 +291,19 @@ class FlagRegistryEditor(QWidget):
         type_row.addWidget(self._static_type_combo, stretch=1)
         lay.addLayout(type_row)
 
+        desc_row = QHBoxLayout()
+        desc_row.addWidget(QLabel("选中项说明:"))
+        self._static_desc = QLineEdit()
+        self._static_desc.setPlaceholderText("这个 flag 是干嘛的（引擎派生的写明「只读」）")
+        self._static_desc.setToolTip(
+            "写给策划自己看的一句话：这个 flag 什么时候变、谁写它。\n"
+            "引擎派生的（has_item_* / coins / rule_*_acquired 这类）务必写明「只读，内容不得写入」——\n"
+            "条件里可以读，绝不许写。\n"
+            "留空 = 不写这个键；仅选中单个 flag 时可改。")
+        self._static_desc.textEdited.connect(self._on_static_desc_edited)
+        desc_row.addWidget(self._static_desc, stretch=1)
+        lay.addLayout(desc_row)
+
         self._static_list.itemSelectionChanged.connect(self._sync_static_type_ui)
 
         count_row = QHBoxLayout()
@@ -340,14 +355,22 @@ class FlagRegistryEditor(QWidget):
             return it.text()
         return ""
 
+    def _set_static_desc_ui(self, text: str, *, enabled: bool) -> None:
+        self._static_desc.blockSignals(True)
+        self._static_desc.setText(text)
+        self._static_desc.blockSignals(False)
+        self._static_desc.setEnabled(enabled)
+
     def _sync_static_type_ui(self) -> None:
         sel = self._static_list.selectedItems()
         if len(sel) != 1:
             self._static_type_combo.setEnabled(False)
+            self._set_static_desc_ui("", enabled=False)
             return
         it = sel[0]
         if it.isHidden():
             self._static_type_combo.setEnabled(False)
+            self._set_static_desc_ui("", enabled=False)
             return
         self._static_type_combo.setEnabled(True)
         key = it.text()
@@ -361,6 +384,23 @@ class FlagRegistryEditor(QWidget):
         else:
             self._static_type_combo.setCurrentText("bool")
         self._static_type_combo.blockSignals(False)
+        desc = (ent or {}).get("description")
+        self._set_static_desc_ui(desc if isinstance(desc, str) else "", enabled=True)
+
+    def _on_static_desc_edited(self, text: str) -> None:
+        """逐键落模型（不防抖）：敲完立刻 Ctrl+S 也不会丢这一行字。"""
+        sel = self._static_list.selectedItems()
+        if len(sel) != 1:
+            return
+        ent = self._find_static_entry(sel[0].text())
+        if ent is None:
+            return
+        t = text.strip()
+        if t:
+            ent["description"] = t
+        else:
+            ent.pop("description", None)   # 清空 = 不写这个键（别留个空字符串）
+        self._mark_registry_dirty()
 
     def _on_static_type_edited(self, text: str) -> None:
         sel = self._static_list.selectedItems()

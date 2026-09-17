@@ -1725,52 +1725,51 @@ class NarrativeStateEditor(QWidget):
         return True
 
     @staticmethod
-    def _focus_state_js(gid: str, sid: str) -> str:
+    def _host_focus_js(method: str, args: tuple[str, ...]) -> str:
+        call_args = ", ".join(json.dumps(a, ensure_ascii=False) for a in args)
         return (
-            "window.__narrativeEditor && window.__narrativeEditor.focusState"
-            f" ? window.__narrativeEditor.focusState({json.dumps(gid, ensure_ascii=False)},"
-            f" {json.dumps(sid, ensure_ascii=False)}) : false"
+            f"window.__narrativeEditor && window.__narrativeEditor.{method}"
+            f" ? window.__narrativeEditor.{method}({call_args}) : false"
         )
 
     def focus_state(self, graph_id: str, state_id: str) -> bool:
-        """外部跳转入口（全局搜索/位面面板 hub 等）：让 web 编辑器切编排并聚焦指定状态。
+        """外部跳转入口（全局搜索/位面面板 hub 等）：让 web 编辑器切编排并聚焦指定状态。"""
+        return self._focus_on_page("focusState", (graph_id, state_id), "图/状态不存在?")
 
-        自带两层兜底:dist 过期且无草稿时先自动重载最新页面;页面尚未就绪
-        (刚重载/首次加载中)则转入非阻塞延迟重试,就绪即定位。返回 False 仅当
-        参数无效/视图缺失;已转入重试的返回 True(尽力而为,失败打日志)。"""
-        gid = str(graph_id or "").strip()
-        sid = str(state_id or "").strip()
-        if not gid or not sid or self._view is None:
+    def focus_element(self, composition_id: str, element_id: str) -> bool:
+        """外部跳转入口（图对话「被引用」黑盒、全局搜索命中元素）：切编排并选中画布元素。"""
+        return self._focus_on_page("focusElement", (composition_id, element_id), "编排/元素不存在?")
+
+    def _focus_on_page(self, method: str, raw_args: tuple[str, ...], miss_hint: str) -> bool:
+        """自带两层兜底:dist 过期且无草稿时先自动重载最新页面;页面尚未就绪
+        (刚重载/首次加载中)则转入非阻塞延迟重试,就绪即定位。返回 False 当
+        参数无效/视图缺失/页面就绪但没定位到;已转入重试的返回 True(尽力而为,失败打日志)。"""
+        args = tuple(str(a or "").strip() for a in raw_args)
+        if not all(args) or self._view is None:
             return False
+        ready_js = f"!!(window.__narrativeEditor && window.__narrativeEditor.{method})"
+        call_js = self._host_focus_js(method, args)
+        label = ".".join(args)
         reloading = self._auto_reload_if_stale()
         if not reloading:
-            ready = self._run_editor_js_result(
-                "!!(window.__narrativeEditor && window.__narrativeEditor.focusState)")
-            if ready is True:
-                return self._run_editor_js_result(self._focus_state_js(gid, sid)) is True
-        self._schedule_focus_state_retry(gid, sid, tries=25)
-        return True
+            if self._run_editor_js_result(ready_js) is True:
+                return self._run_editor_js_result(call_js) is True
 
-    def _schedule_focus_state_retry(self, gid: str, sid: str, tries: int) -> None:
-        """页面加载期间的定位重试(每 400ms,一次成败即止;全程不阻塞 UI)。"""
         def attempt(left: int) -> None:
             try:
-                ready = self._run_editor_js_result(
-                    "!!(window.__narrativeEditor && window.__narrativeEditor.focusState)",
-                    timeout_ms=800,
-                )
-                if ready is True:
-                    if self._run_editor_js_result(self._focus_state_js(gid, sid)) is not True:
-                        print(f"[narrative] 页面就绪但未定位 {gid}.{sid}(图/状态不存在?)", flush=True)
+                if self._run_editor_js_result(ready_js, timeout_ms=800) is True:
+                    if self._run_editor_js_result(call_js) is not True:
+                        print(f"[narrative] 页面就绪但未定位 {label}({miss_hint})", flush=True)
                     return
             except Exception:
                 pass
             if left > 0:
                 QTimer.singleShot(400, self, lambda: attempt(left - 1))
             else:
-                print(f"[narrative] 定位 {gid}.{sid} 超时:web 页面迟迟未就绪", flush=True)
+                print(f"[narrative] 定位 {label} 超时:web 页面迟迟未就绪", flush=True)
 
-        QTimer.singleShot(400, self, lambda: attempt(tries))
+        QTimer.singleShot(400, self, lambda: attempt(25))
+        return True
 
     def pop_flush_error(self) -> str | None:
         message = self._last_flush_error
@@ -3107,6 +3106,14 @@ def _is_condition_shape(expr: Any) -> bool:
         return True
     if isinstance(expr.get("plane"), str):
         return bool(expr["plane"].strip())
+    # 手持挂件叶（火把点着没有 / 火势 / 锁）：与 TS narrativeGraphValidation 同口径，只拦空 holder；
+    # 挂件 / 状态存在性由 validator.py 的 heldProp 叶检查。
+    if isinstance(expr.get("heldProp"), str):
+        return bool(expr["heldProp"].strip())
+    # 可燃物叶（燃烧状态）：与 TS narrativeGraphValidation 同口径——burn 非空（场景实体 id；写了 burnSocket 时是拿东西的人）、
+    # burnState 四选一；是不是可燃实例（宿主身上的 burnable 块）由 validator.py 对照场景 / 挂件预设检查。
+    if isinstance(expr.get("burn"), str):
+        return bool(expr["burn"].strip()) and str(expr.get("burnState") or "") in ("unburnt", "burning", "out", "burnt")
     # 叙事活计计数叶（S1 v2）：narrativeCount 需数值 value（活计当前态用普通 narrative 叶）。
     if isinstance(expr.get("narrativeCount"), str):
         return isinstance(expr.get("value"), (int, float)) and not isinstance(expr.get("value"), bool)

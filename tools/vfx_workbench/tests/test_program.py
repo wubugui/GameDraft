@@ -75,6 +75,9 @@ def test_python_and_runtime_validate_the_same_author_documents():
     for solver in CONTRACT["solvers"]:
         base = {"simulation": new_program(solver), "plate": {}, "behavior": {}}
         cases.append(base)
+        for value in (None, 0, 1, "true", False, True):
+            d = copy.deepcopy(base); d["simulation"]["influences"]["contact"] = value; cases.append(d)
+        d = copy.deepcopy(base); d["simulation"]["influences"].pop("contact", None); cases.append(d)
         for key, values in {
             "solver": [None, "unknown", 3], "spawnPlacement": [None, "missing"],
             "surfaceRadius": [None, True, "12", -1, 0, 12],

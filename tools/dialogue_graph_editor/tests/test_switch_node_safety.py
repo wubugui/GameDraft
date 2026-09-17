@@ -291,6 +291,13 @@ class SwitchNodeSafetyTests(unittest.TestCase):
             ({"conditions": [{"plane": "yin"}]}, "位面=yin"),
             ({"conditions": [{"not": {"flag": "f", "value": True}}]}, "非(f=true)"),
             ({"conditions": [{"narrativeCount": "job", "op": ">=", "value": 2}]}, "做过 job>=2"),
+            ({"conditions": [{"heldProp": "player", "prop": "xianteng_torch", "burning": True,
+                              "vitalityOp": "<", "vitality": 0.3}]}, "玩家手上 xianteng_torch 燃着 火势<0.3"),
+            ({"conditions": [{"burn": "hs_paper", "burnState": "burning"}]}, "可燃物 hs_paper 燃烧状态 = 在烧"),
+            ({"conditions": [{"burn": "hs_candle", "burnScene": "义庄", "burnState": "burnt"}]},
+             "可燃物 义庄/hs_candle 燃烧状态 = 烧完"),
+            ({"conditions": [{"burn": "player", "burnSocket": "left_hand", "burnScene": "义庄", "burnState": "out"}]},
+             "玩家 left_hand 上的可燃挂件 燃烧状态 = 灭了"),
             ({"condition": {"any": [{"flag": "a", "value": True}, {"flag": "b", "value": True}]}},
              "a=true 或 b=true"),
         ]
@@ -381,6 +388,9 @@ class CaseVerdictTests(unittest.TestCase):
             ({"condition": {"not": {"any": []}}, "next": "a"}, ALWAYS, "not(恒假)=恒真"),
             ({"conditions": [{"plane": "yin"}], "next": "a"}, NORMAL, "plane 叶被运行时识别"),
             ({"conditions": [{"posture": "crouch"}], "next": "a"}, NORMAL, "posture 叶被识别"),
+            ({"conditions": [{"heldProp": "player"}], "next": "a"}, NORMAL, "heldProp 叶被识别（只写人 = 手上拿着东西）"),
+            ({"conditions": [{"heldProp": "player", "flag": "f"}], "next": "a"}, NORMAL,
+             "带 flag 串的走 flag 叶（isHeldPropLeaf 排除），仍看状态"),
             ({"conditions": [{"narrativeCount": "j", "value": 2}], "next": "a"}, NORMAL, "narrativeCount 叶被识别"),
             ({"conditions": [{"scenarioLine": "s", "lineStatus": "active"}], "next": "a"}, NORMAL, "scenarioLine 叶被识别"),
             ({"conditions": [{"没这个键": 1}], "next": "a"}, NEVER, "认不出的形状 → false"),
@@ -418,6 +428,9 @@ class CaseVerdictTests(unittest.TestCase):
             "isPostureLeaf": {"posture": "crouch"},
             "isTimePhaseLeaf": {"timePhase": "night"},
             "isVfxStateLeaf": {"vfx": "vfx_bats", "vfxState": "airborne"},
+            "isHeldPropLeaf": {"heldProp": "player", "burning": True},
+            "isPropLevelLeaf": {"propLevel": "xianteng_torch", "op": ">=", "value": 2},
+            "isBurnLeaf": {"burn": "hs_paper", "burnState": "burnt"},
         }
         self.assertEqual(
             guards,

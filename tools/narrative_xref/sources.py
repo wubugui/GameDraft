@@ -45,6 +45,9 @@ ASSET_SPECS: dict[str, dict[str, str]] = {
     # K7 线索注册表 clues[].collectActions（2026-08-17「采集=内容事件」拍板）：首采经
     # 统一执行器真执行，emitNarrativeSignal 在其中合法——不登记 = 线索发的信号从此隐身。
     "clues_registry": {"mode": "whole", "kind": "clue", "path": "clues.json", "label": "线索"},
+    # 挂件预设 states[*].onEnterActions（2026-09-15 燃烧物契约）：切到该状态时经统一执行器真执行，
+    # 是实发面——状态进入动作里发的信号 / 读的状态不登记就从信号关系里隐身。
+    "prop_presets": {"mode": "whole", "kind": "propPreset", "path": "prop_presets.json", "label": "挂件预设"},
 }
 
 # 主编辑器只加载不保存的数据面：目录/清单要看得见它发的信号，重构则拒绝改写它

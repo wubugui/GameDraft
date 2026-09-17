@@ -111,7 +111,14 @@ describe('预设与显式覆盖的合并', () => {
       lit: true,
       mirror: undefined,
       light: null,
-      vfx: [],
+      particles: [],
+      firePoint: null,
+      burn: 1,
+      windShelter: 0,
+      flame: null,
+      onEnterActions: [],
+      blowout: null,
+      igniter: null,
     });
   });
 
@@ -142,8 +149,31 @@ describe('预设与显式覆盖的合并', () => {
       lit: undefined,
       mirror: undefined,
       light: null,
-      vfx: [],
+      particles: [],
+      firePoint: null,
+      burn: 1,
+      windShelter: 0,
+      flame: null,
+      onEnterActions: [],
+      blowout: null,
+      igniter: null,
     });
+  });
+
+  it('点火块：基础块写了就能点；状态写 null = 这个状态点不了；坏块当没写', () => {
+    const table = parsePropPresets({
+      torch: {
+        image: '/t.png', igniter: { flameLength: 25 },
+        states: { lit: {}, out: { igniter: null }, weird: { igniter: 'x' } },
+      },
+      plain: { image: '/p.png', igniter: {} },
+    });
+    const t = table.torch!;
+    expect(resolvePropAttach(t, {}, 'lit').igniter).toEqual({ flameLength: 25 });
+    expect(resolvePropAttach(t, {}, 'out').igniter).toBeNull();
+    expect(resolvePropAttach(t, {}, 'weird').igniter).toEqual({ flameLength: 25 });
+    expect(resolvePropAttach(table.plain!, {}).igniter).toEqual({});
+    expect(resolvePropAttach(parsePropPresets({ n: { image: '/n.png' } }).n, {}).igniter).toBeNull();
   });
 
   it('预设与显式都没图 → 空列表（调用方据此放弃挂载）', () => {
@@ -200,5 +230,171 @@ describe('状态：挂哪个状态、这个状态长什么样', () => {
     const r = resolvePropAttach(t.torch, {}, 'lit');
     expect(r.images).toEqual(['/base.png']);
     expect([r.anchorX, r.anchorY, r.rotation, r.scale]).toEqual([0.47, 0, -90, 0.45]);
+  });
+});
+
+/**
+ * 燃烧物（起火点 / 燃烧强度 / 帧动画火苗 / 粒子挂载 / 进入动作）的黄金用例。⚠ 与
+ * `tools/editor/tests/test_prop_preview.py` **同一组**（契约 v3：清洗与合并口径），改一处必改两处。
+ */
+describe('燃烧物：起火点、燃烧强度、挡风、进入动作', () => {
+  const raw = {
+    t: {
+      image: '/a.png', anchorX: 0.5, anchorY: 0.9,
+      firePoint: [0.5, 0.05],
+      flame: { image: '/f.png', cols: 12, frames: 64, height: 30 },
+      states: {
+        lit: { burn: 1 },
+        ember: { burn: 0.15, firePoint: [0.4, 0.1] },
+        out: { burn: 0, onEnterActions: [{ type: 'playSfx', params: { id: 'x' } }] },
+      },
+    },
+    bad: { image: '/b.png', firePoint: [2, -1], burn: 1.5, flame: { image: '', height: 10 } },
+    noh: { image: '/c.png', flame: { image: '/f.png', cols: 0, fps: -3, height: 0 } },
+    defaults: { image: '/d.png', flame: { image: '/f.png', cols: 4, height: 12 } },
+  };
+  const t = parsePropPresets(raw);
+  const pick = (id: keyof typeof raw, state = '') => {
+    const r = resolvePropAttach(t[id], {}, state);
+    return { firePoint: r.firePoint, burn: r.burn, flame: r.flame, onEnterActions: r.onEnterActions };
+  };
+  const full = { image: '/f.png', cols: 12, frames: 64, fps: 24, height: 30 };
+
+  it.each([
+    ['t', '', [0.5, 0.05], 1, full, []],
+    ['t', 'lit', [0.5, 0.05], 1, full, []],
+    ['t', 'ember', [0.4, 0.1], 0.15, full, []],
+    ['t', 'out', [0.5, 0.05], 0, full, [{ type: 'playSfx', params: { id: 'x' } }]],
+    ['bad', '', [1, 0], 1, null, []],
+    ['noh', '', null, 1, null, []],
+    ['defaults', '', null, 1, { image: '/f.png', cols: 4, frames: 4, fps: 24, height: 12 }, []],
+  ] as const)('%s / 状态「%s」', (id, state, firePoint, burn, flame, enter) => {
+    expect(pick(id, state)).toEqual({ firePoint, burn, flame, onEnterActions: enter });
+  });
+
+  describe('粒子挂载：每条 = 一个效果挂在贴图上的一个点', () => {
+    const tm = parsePropPresets({
+      m: {
+        image: '/m.png', firePoint: [0.5, 0.1],
+        particles: [
+          { effect: 'flame', point: [0.5, 0.05] }, { effect: 'smoke' }, { effect: '' }, 'junk',
+          { effect: 'sparks', point: [3, -1] },
+        ],
+        states: { out: { particles: [] }, ember: { particles: [{ effect: 'coals' }] }, lit: {} },
+      },
+    });
+    const lit = [
+      { effect: 'flame', point: [0.5, 0.05] },
+      { effect: 'smoke', point: null },
+      { effect: 'sparks', point: [1, 0] },
+    ];
+    it.each([
+      ['', lit],
+      ['lit', lit],
+      ['ember', [{ effect: 'coals', point: null }]],
+      ['out', []],
+    ] as const)('m / 状态「%s」', (state, particles) => {
+      expect(resolvePropAttach(tm.m, {}, state).particles).toEqual(particles);
+    });
+  });
+
+  it('进入动作只留 {type: 非空串}；params 缺了补空对象（执行器入参形状）', () => {
+    const tb = parsePropPresets({
+      p: { states: { s: { onEnterActions: [null, [], { type: '  ' }, { type: 'playSfx' }, 'x'] } } },
+    });
+    expect(resolvePropAttach(tb.p, {}, 's').onEnterActions).toEqual([{ type: 'playSfx', params: {} }]);
+  });
+
+  it('挡风比例：状态 → 基础块 → 0；夹到 0..1；非数当没写', () => {
+    const tb = parsePropPresets({
+      p: { windShelter: 0.1, states: { guard: { windShelter: 1.8 }, open: {}, junk: { windShelter: 'x' } } },
+      q: { image: '/q.png' },
+    });
+    expect(resolvePropAttach(tb.p, {}, 'guard').windShelter).toBe(1);
+    expect(resolvePropAttach(tb.p, {}, 'open').windShelter).toBe(0.1);
+    expect(resolvePropAttach(tb.p, {}, 'junk').windShelter).toBe(0.1);
+    expect(resolvePropAttach(tb.q, {}).windShelter).toBe(0);
+  });
+
+  it('物理闪烁：kind = flame / ember + 直径 > 0 才收；puffAmp 只给明火、夹 0..1；坏了整块丢；不认识的 kind 按老写法解析', () => {
+    const tb = parsePropPresets({
+      a: { light: { intensity: 1, flicker: { kind: 'flame', diameter: 0.1, puffAmp: 3, amp: 0.2, hz: 7 } } },
+      b: { light: { intensity: 1, flicker: { kind: 'ember', diameter: 0.08, puffAmp: 0.5 } } },
+      c: { light: { intensity: 1, flicker: { kind: 'flame', diameter: 0 } } },
+      d: { light: { intensity: 1, flicker: { kind: 'flame', diameter: 'x' } } },
+      e: { light: { intensity: 1, flicker: { kind: 'flames', amp: 0.2, hz: 7 } } },
+      f: { light: { intensity: 1, flicker: { kind: 'flame', diameter: 0.1, puffAmp: 'x' } } },
+    });
+    expect(tb.a.light!.flicker).toEqual({ kind: 'flame', diameter: 0.1, puffAmp: 1 });
+    expect(tb.b.light!.flicker).toEqual({ kind: 'ember', diameter: 0.08 });
+    expect(tb.c.light!.flicker).toBeUndefined();
+    expect(tb.d.light!.flicker).toBeUndefined();
+    expect(tb.e.light!.flicker).toEqual({ amp: 0.2, hz: 7 });
+    expect(tb.f.light!.flicker).toEqual({ kind: 'flame', diameter: 0.1 });
+  });
+
+  it('吹灭块：三个必填量 > 0 才收；状态 null = 这个状态吹不灭、对象整块替换、不写沿用基础块；坏块当没写', () => {
+    const tb = parsePropPresets({
+      t: {
+        image: '/t.png',
+        blowout: { windSpeed: 8, drainSeconds: 4, recoverSeconds: 3, emberBelow: 1.4, emberState: ' ', auto: 'x', fadeMs: -1,
+          onOutActions: [{ type: 'emitNarrativeSignal', params: { signal: 'torch_out' } }, { type: '' }] },
+        states: {
+          lit: {},
+          sheltered: { blowout: null },
+          reed: { blowout: { windSpeed: 3, drainSeconds: 1, recoverSeconds: 2, auto: false } },
+          junk: { blowout: { windSpeed: 0, drainSeconds: 1, recoverSeconds: 1 } },
+        },
+      },
+      bad: { image: '/b.png', blowout: { windSpeed: 8, drainSeconds: 4 } },
+    });
+    const base = { windSpeed: 8, drainSeconds: 4, recoverSeconds: 3, emberBelow: 1,
+      onOutActions: [{ type: 'emitNarrativeSignal', params: { signal: 'torch_out' } }] };
+    expect(resolvePropAttach(tb.t, {}, 'lit').blowout).toEqual(base);
+    expect(resolvePropAttach(tb.t, {}, 'sheltered').blowout).toBeNull();
+    expect(resolvePropAttach(tb.t, {}, 'reed').blowout).toEqual({ windSpeed: 3, drainSeconds: 1, recoverSeconds: 2, auto: false });
+    expect(resolvePropAttach(tb.t, {}, 'junk').blowout).toEqual(base);
+    expect(resolvePropAttach(tb.bad, {}).blowout).toBeNull();
+  });
+
+  it('没写这些键的老挂件（灯笼）：解析结果里一个新键都不冒出来', () => {
+    const tb = parsePropPresets({ lantern: { image: '/l.png', light: { intensity: 0.15 }, states: { lit: { label: '点着' } } } });
+    expect(Object.keys(tb.lantern).sort()).toEqual(['image', 'light', 'states']);
+    expect(Object.keys(tb.lantern.states!.lit)).toEqual(['label']);
+  });
+});
+
+describe('可燃挂件（A3.8：可燃物是模板，挂件引用它 = 实例化一次）', () => {
+  it('burnable 块读进来；坏块（没 template）当没写', () => {
+    const t = parsePropPresets({
+      xiang: { label: '线香', persistent: true, scale: 1.5, burnable: { template: 'incense_stick', initial: 'burning', signals: { ignited: 's_on', bogus: 1 } } },
+      bad: { image: '/a.png', burnable: { initial: 'burning' } },
+    });
+    expect(t.xiang.burnable).toEqual({ template: 'incense_stick', initial: 'burning', signals: { ignited: 's_on' } });
+    expect(t.bad.burnable).toBeUndefined();
+  });
+
+  it('解析挂载：渲染由模板接管——贴图空、灯 / 粒子 / 火苗 / 起火点 / 吹熄 / 点火能力全空，缩放 / 自转照留', () => {
+    const t = parsePropPresets({
+      xiang: {
+        image: '/should_not_draw.png', anchorX: 0.1, rotation: 30, scale: 2,
+        light: { intensity: 1 }, particles: [{ effect: 'fx' }], firePoint: [0.5, 0.1],
+        blowout: { windSpeed: 1, drainSeconds: 1, recoverSeconds: 1 }, igniter: { flameLength: 5 },
+        states: { lit: { light: { intensity: 2 } } },
+        burnable: { template: 'incense_stick' },
+      },
+    });
+    const r = resolvePropAttach(t.xiang, {}, 'lit');
+    expect(r.images).toEqual([]);
+    expect(r.anchorX).toBeUndefined();
+    expect(r.light).toBeNull();
+    expect(r.particles).toEqual([]);
+    expect(r.firePoint).toBeNull();
+    expect(r.flame).toBeNull();
+    expect(r.blowout).toBeNull();
+    expect(r.igniter).toBeNull();
+    expect(r.rotation).toBe(30);
+    expect(r.scale).toBe(2);
+    expect(r.burnable).toEqual({ template: 'incense_stick' });
   });
 });

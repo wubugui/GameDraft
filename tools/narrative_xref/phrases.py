@@ -88,6 +88,14 @@ ACTION_LIST_KEYS: dict[str, str] = {
     "onRefuse": "拒绝时",
     "onPullSuccess": "拉起成功时",
     "onPullFail": "拉起失败时",
+    # 挂件预设风吹灭块的越线动作（blowout.onEmberActions / onOutActions）
+    "onEmberActions": "掉到残炭时",
+    "onOutActions": "被风吹灭时",
+}
+
+# 其余要译的结构键（不是容器、不是动作面、也不是条件面）。
+STRUCT_KEYS: dict[str, str] = {
+    "blowout": "风吹灭",
 }
 
 # 纯结构噪声，读出来只会碍事。
@@ -96,7 +104,7 @@ SKIP_KEYS = frozenset({"params", "graph", "mainGraph", "meta"})
 
 def plain_label(key: str) -> str | None:
     """这个键本身就该译成一个词（条件/分支/不满足…），下一层不是它的正主。"""
-    return CONDITION_KEYS.get(key)
+    return CONDITION_KEYS.get(key) or STRUCT_KEYS.get(key)
 
 
 def pending_label(key: str) -> str | None:
@@ -148,8 +156,80 @@ def describe_condition(cond: Any, state_phrase: Callable[[str, str, str], str] |
         return f"位面「{cond.get('plane')}」开着"
     if "narrativeCount" in cond:
         return f"活计「{cond.get('narrativeCount')}」的次数达标"
+    if isinstance(cond.get("heldProp"), str):
+        return _held_prop_phrase(cond)
+    if isinstance(cond.get("propLevel"), str):
+        return _prop_level_phrase(cond)
+    if isinstance(cond.get("burn"), str):
+        return _burn_phrase(cond)
     keys = list(cond.keys())
     return "、".join(f"{k}={cond[k]}" for k in keys[:2])
+
+
+_HELD_PROP_LOCK_PHRASE = {"lit": "锁定不灭", "unlit": "点不燃", "none": "没上锁"}
+_BURN_STATE_PHRASE = {"unburnt": "没点", "burning": "在烧", "out": "灭了", "burnt": "烧完了"}
+
+
+def _burn_phrase(cond: dict) -> str:
+    """可燃物叶 → 「可燃物「hs_paper」在烧」/「义庄的可燃物「hs_candle」烧完了」/「玩家「left_hand」上的可燃挂件在烧」。
+
+    写了 `burnSocket` = 问这个人这个挂点上拿着的可燃挂件（`burnScene` 不读）；没写 = 场景里的可燃实体（热点 / NPC / 演出生成的对象）。
+    """
+    eid = str(cond.get("burn") or "").strip() or "?"
+    state = str(cond.get("burnState") or "").strip()
+    socket = cond.get("burnSocket")
+    if isinstance(socket, str) and socket.strip():
+        who = "玩家" if eid == "player" else f"「{eid}」"
+        where = f"{who}「{socket.strip()}」上的可燃挂件"
+    else:
+        scene = cond.get("burnScene")
+        where = f"{scene.strip()}的可燃物「{eid}」" if isinstance(scene, str) and scene.strip() else f"可燃物「{eid}」"
+    return where + _BURN_STATE_PHRASE.get(state, f"燃烧状态是 {state or '?'}")
+
+
+def _prop_level_phrase(cond: dict) -> str:
+    """挂件等级叶 → 「「xianteng_torch」升到第 2 级或更高」。`op` 不写 = `>=`。"""
+    pid = str(cond.get("propLevel") or "").strip() or "?"
+    op = cond.get("op")
+    op_text = op.strip() if isinstance(op, str) and op.strip() else ">="
+    v = cond.get("value")
+    if op_text == ">=":
+        return f"「{pid}」升到第 {v} 级或更高"
+    if op_text == "==":
+        return f"「{pid}」正是第 {v} 级"
+    return f"「{pid}」的等级 {op_text} {v}"
+
+
+def _held_prop_phrase(cond: dict) -> str:
+    """手持挂件叶 → 「玩家手上的「xianteng_torch」燃着、火势<0.3」。没写的项不限，不出现。"""
+    who = str(cond.get("heldProp") or "").strip()
+    who_text = "玩家" if who == "player" else f"「{who or '?'}」"
+    socket = cond.get("socket")
+    where = f"{who_text}「{socket.strip()}」上" if isinstance(socket, str) and socket.strip() else f"{who_text}手上"
+    prop = cond.get("prop")
+    prop_id = prop.strip() if isinstance(prop, str) else ""
+    bits: list[str] = []
+    state = cond.get("propState")
+    if isinstance(state, str) and state.strip():
+        bits.append(f"处在「{state.strip()}」")
+    if isinstance(cond.get("burning"), bool):
+        bits.append("燃着" if cond["burning"] else "没燃")
+    op = cond.get("vitalityOp")
+    if isinstance(op, str) and op.strip():
+        bits.append(f"火势{op.strip()}{cond.get('vitality')}")
+    fop = cond.get("fuelOp")
+    if isinstance(fop, str) and fop.strip():
+        bits.append(f"燃料{fop.strip()}{cond.get('fuel')}")
+    effect = cond.get("effect")
+    if isinstance(effect, str) and effect.strip():
+        bits.append(f"带「{effect.strip()}」")
+    lock = cond.get("lock")
+    if isinstance(lock, str) and lock.strip():
+        bits.append(_HELD_PROP_LOCK_PHRASE.get(lock.strip(), f"锁是 {lock.strip()}"))
+    if not bits:
+        return f"{where}拿着「{prop_id}」" if prop_id else f"{where}拿着东西"
+    thing = f"的「{prop_id}」" if prop_id else "拿的东西"
+    return f"{where}{thing}" + "、".join(bits)
 
 
 def describe_conditions(

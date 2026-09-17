@@ -36,6 +36,13 @@ import type { Vec3 } from '../utils/sceneSpace';
  *    第 N 步设的音量会**追溯性地改掉还在响的第 N−1 步**。逐步衰减必须走
  *    `playTransientSfx`（那条才是 per-soundId）。
  *
+ * ## 落脚与出声是两件事
+ *
+ * 落脚判定（帧 / 可见 / 防抖 / 移动片段）先做，通过就发 `onContact`（带原始场景脚点）；
+ * **之后**才是声音这一半（音频解锁、`setEnabled`、脚步集、音效 key、空间化）。
+ * 群体刺激之类的视觉反应接在 `onContact` 上，所以音频没解锁 / 这块地没配脚步集时照样会被惊动，
+ * 也不会借到音频那份做过透视重整的坐标。
+ *
  * ## 生命周期
  *
  * 谁播的谁停：本系统播出的每个句柄自己记着，`destroy` / 场景卸载 / 读档三处收掉。
@@ -64,6 +71,19 @@ export interface FootstepEmitter {
   isVisible(): boolean;
 }
 
+/**
+ * 一次落脚：动画真的推进到落脚帧上的那一刻，与这一步**出不出声无关**。
+ * 坐标是原始场景脚点——**不是**音频的 M-world（那份在配了透视线的场景里做过纵深重整，是音频专用的）。
+ */
+export interface FootstepContact {
+  emitterId: string;
+  clip: string;
+  frame: number;
+  /** 脚点场景坐标 wu（发声体的 contactX / contactY 原值） */
+  contactX: number;
+  contactY: number;
+}
+
 export interface FootstepSpatialContext {
   /** 场景坐标 + 高度 → M-world 的解算器（field / planar） */
   resolver: AudioSpaceResolver;
@@ -80,8 +100,16 @@ export interface FootstepSystemDeps {
     world: Vec3,
     options: { volume?: number; onEnd?: () => void; spatialized?: boolean },
   ): AudioPlaybackHandle | null;
-  /** 本帧的解算器；返回 null = 本帧不发声（场景没就绪/音频没解锁）。 */
+  /**
+   * 本帧的解算器；返回 null = 本帧不发声（场景没就绪/音频没解锁）。
+   * ⚠ 只管声音：落脚判定与 {@link onContact} 照常进行，不受它影响。
+   */
   getSpatialContext(): FootstepSpatialContext | null;
+  /**
+   * 落脚事件（群体刺激等视觉反应从这里接）。每个通过可见 / 防抖 / 移动片段三道判定的落脚都发，
+   * **不看**音频解锁、`setEnabled`、脚点处有没有脚步集——地虫被惊散不该取决于这一步能不能响。
+   */
+  onContact?(contact: FootstepContact): void;
   /** 脚点处该用哪个脚步集：zone 覆盖 → 场景默认 → null（本处不发脚步）。 */
   resolveSetAt(sceneX: number, sceneY: number): string | null;
   getConfig(): FootstepConfig | null;
@@ -129,6 +157,10 @@ export interface FootstepDebugRecord {
   spatialized: boolean;
 }
 
+export interface FootstepContactDebugRecord extends FootstepContact {
+  atMs: number;
+}
+
 const DEBUG_RING = 16;
 
 export class FootstepSystem implements IGameSystem {
@@ -138,6 +170,8 @@ export class FootstepSystem implements IGameSystem {
   /** 在播的句柄：谁播的谁停。 */
   private readonly live = new Set<AudioPlaybackHandle>();
   private readonly recent: FootstepDebugRecord[] = [];
+  /** 最近的落脚（不论出没出声）；与 `recent` 对照就能分清「没落脚」和「落了脚但没响」 */
+  private readonly recentContacts: FootstepContactDebugRecord[] = [];
   /**
    * 累计时间，**只用来给调试记录打时间戳**（`FootstepDebugRecord.atMs`）。
    *
@@ -183,11 +217,12 @@ export class FootstepSystem implements IGameSystem {
 
   update(dt: number): void {
     this.nowMs += Math.max(0, dt) * 1000;
-    if (!this.enabled || this.emitters.size === 0) return;
+    if (this.emitters.size === 0) return;
+    // 配置缺失 = 没有任何片段登记为移动片段，落脚也就无从判起
     const cfg = this.deps.getConfig();
     if (!cfg) return;
-    const ctx = this.deps.getSpatialContext();
-    if (!ctx) return;
+    // ctx 只管出不出声：噤声 / 音频没解锁时照样逐帧跟踪、照样发落脚事件
+    const ctx = this.enabled ? this.deps.getSpatialContext() : null;
 
     for (const emitter of this.emitters.values()) {
       this.updateEmitter(emitter, cfg, ctx);
@@ -197,7 +232,7 @@ export class FootstepSystem implements IGameSystem {
   private updateEmitter(
     emitter: FootstepEmitter,
     cfg: FootstepConfig,
-    ctx: FootstepSpatialContext,
+    ctx: FootstepSpatialContext | null,
   ): void {
     const clip = emitter.getClip();
     const frame = emitter.getFrameIndex();
@@ -241,7 +276,7 @@ export class FootstepSystem implements IGameSystem {
   private tryEmit(
     emitter: FootstepEmitter,
     cfg: FootstepConfig,
-    ctx: FootstepSpatialContext,
+    ctx: FootstepSpatialContext | null,
     clip: string,
     frame: number,
   ): void {
@@ -249,11 +284,30 @@ export class FootstepSystem implements IGameSystem {
     const st = this.states.get(emitter.id);
     if (!st) return;
 
-    // 防抖闸：上一次发声之后动画必须**至少推进过一帧**。按帧计，与播放速率无关。
+    // 防抖闸：上一次落脚之后动画必须**至少推进过一帧**。按帧计，与播放速率无关。
     if (st.framesSinceStep <= 0) return;
+    // 只有显式登记过的片段才算走路：站着的 idle 复用了走路的某一格也不是落脚（见 resolveSfx 的注释）
+    if (!isLocomotionClip(cfg, clip)) return;
 
     const x = emitter.getContactX();
     const y = emitter.getContactY();
+    st.framesSinceStep = 0;
+    this.pushContact({ atMs: this.nowMs, emitterId: emitter.id, clip, frame, contactX: x, contactY: y });
+    this.deps.onContact?.({ emitterId: emitter.id, clip, frame, contactX: x, contactY: y });
+
+    if (ctx) this.emitSound(emitter.id, cfg, ctx, clip, frame, x, y);
+  }
+
+  /** 这一步的声音：脚步集 → 片段音效 → 空间化播放。任何一环缺了就这一步无声（落脚事件已经发过了）。 */
+  private emitSound(
+    emitterId: string,
+    cfg: FootstepConfig,
+    ctx: FootstepSpatialContext,
+    clip: string,
+    frame: number,
+    x: number,
+    y: number,
+  ): void {
     const setId = this.deps.resolveSetAt(x, y);
     if (!setId) return;
     const set = cfg.sets?.[setId];
@@ -265,18 +319,15 @@ export class FootstepSystem implements IGameSystem {
     const cue = resolveSfx(set.sfx, cfg.clipFallback, clip);
     const audioId = audioCueId(cue);
     if (!audioId) {
-      // 只有**登记过**的片段（= 被认定为移动片段）查不到音效才算配置错误，值得报。
-      // 没登记的片段本来就不该发声，静默是正解——对它们 warn 只会把控制台刷满。
-      if (isLocomotionClip(cfg, clip)) {
-        this.warnOnce(`footstep: 脚步集 "${setId}" 没有片段 "${clip}" 的音效（回落链也没命中）`);
-      }
+      // 走到这里的片段都登记过（= 被认定为移动片段，tryEmit 已判），查不到音效就是配置错误。
+      // 没登记的片段在 tryEmit 就静默返回了——对它们 warn 只会把控制台刷满。
+      this.warnOnce(`footstep: 脚步集 "${setId}" 没有片段 "${clip}" 的音效（回落链也没命中）`);
       return;
     }
 
-    // 脚点 → M-world：脚步恒在行走面上 ⇒ 高度 0。距离 / 声像 / 回音全交给空间音总线按这个点算
+    // 脚点 → 音频 M-world：脚步恒在行走面上 ⇒ 高度 0。距离 / 声像 / 回音全交给空间音总线按这个点算。
+    // ⚠ 这份坐标做过透视纵深重整，只给声音用；落脚事件带的是原始场景脚点。
     const world = resolveWorld(ctx.resolver, { contactX: x, contactY: y, heightWu: 0 });
-
-    st.framesSinceStep = 0;
 
     // 两级：dB 管“这块地整体多响”，本条 volume 管“这个片段相对本集多响”（相乘，不是替换）。
     // ≠ playSfx 的“替换素材级”口径：脚步根本不读素材级 volume，它的基准就是 gainDb。
@@ -298,7 +349,7 @@ export class FootstepSystem implements IGameSystem {
 
     this.pushDebug({
       atMs: this.nowMs,
-      emitterId: emitter.id,
+      emitterId,
       setId,
       clip,
       frame,
@@ -319,6 +370,11 @@ export class FootstepSystem implements IGameSystem {
   private pushDebug(r: FootstepDebugRecord): void {
     this.recent.push(r);
     if (this.recent.length > DEBUG_RING) this.recent.shift();
+  }
+
+  private pushContact(r: FootstepContactDebugRecord): void {
+    this.recentContacts.push(r);
+    if (this.recentContacts.length > DEBUG_RING) this.recentContacts.shift();
   }
 
   private stopAllLive(): void {
@@ -353,6 +409,7 @@ export class FootstepSystem implements IGameSystem {
       emitterState: live,
       liveHandles: this.live.size,
       recent: this.recent.slice(),
+      recentContacts: this.recentContacts.slice(),
     };
   }
 
@@ -372,6 +429,7 @@ export class FootstepSystem implements IGameSystem {
     this.emitters.clear();
     this.states.clear();
     this.recent.length = 0;
+    this.recentContacts.length = 0;
     this.warned.clear();
   }
 }

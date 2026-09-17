@@ -1,4 +1,4 @@
-"""挂点 / 落脚帧标注面板：挂点列表 + 帧条 + 标注画布 + 省力工具，落盘到 sockets.json sidecar。
+"""挂点 / 落脚帧 / 点火接触帧标注面板：挂点列表 + 帧条 + 标注画布 + 省力工具，落盘到 sockets.json sidecar。
 
 挂在 anim 编辑器里。**只写 sidecar，不碰 anim.json**——挂点是人工逐帧标的，
 anim.json 是产线产物，两者生命周期不同（见 animation_sockets 模块头）。
@@ -6,6 +6,10 @@ anim.json 是产线产物，两者生命周期不同（见 animation_sockets 模
 落脚帧（``contactSlots``）与挂点同一个面板、同一份文件、同一个脏态与保存门：
 帧条里选中一格 → 勾「落脚帧」→ 这一格在帧条里带标记、画布脚线变橙条。
 运行时走到这一格就播一声脚步；声音本身在「脚步集」页配，这里只管**哪一帧响**。
+
+点火接触帧（``igniteSlots``）与落脚帧同一种写法：选中一格 → 勾「本帧点火接触」→
+帧条带「◆ 点火」+ 红底、画布整格红框。点火表演取点火片段里**第一个**标了的帧作为
+火头碰到可燃物那一刻；一格都没标 = 运行时用片段第一帧。
 
 逐帧标注的现实：全库 46 个包、3176 个图集槽位。所以省力手段是可行性前提而不是锦上添花：
 - 按 state 过帧（只标这个动作用到的那些槽位）
@@ -51,12 +55,14 @@ from .animation_sockets import (
     empty_socket_set,
     fingerprint_matches,
     fingerprint_of_anim,
+    ignite_slots_of,
     interpolate_poses,
     load_socket_set,
     pose_is_front,
     sanitize_socket_set,
     save_socket_set,
     set_contact_slot,
+    set_ignite_slot,
     sockets_path_for_bundle,
 )
 from .anim_atlas_preview import crop_atlas_cell, frame_slots_of_state
@@ -65,6 +71,8 @@ from .form_layout import compact_form
 from .id_ref_selector import IdRefSelector
 from .prop_preview import (
     anim_world_size,
+    burnable_prop_placement,
+    burnable_template_id,
     frame_image_index,
     prop_image_file,
     resolve_prop_preview,
@@ -74,6 +82,16 @@ from .socket_canvas import PropPreviewSpec, SocketCanvas
 
 #: 帧条里落脚帧那一行的底色：不靠 emoji 字形（离屏 / 缺字体会成方块），靠颜色也能一眼看见
 _CONTACT_BRUSH = QBrush(QColor(255, 150, 40, 70))
+#: 点火接触帧那一行的底色（红，与落脚帧的橙分开）；两样都标的一格用品红，文字后缀两个都带
+_IGNITE_BRUSH = QBrush(QColor(235, 60, 50, 80))
+_CONTACT_AND_IGNITE_BRUSH = QBrush(QColor(220, 60, 170, 80))
+
+_IGNITE_TOOLTIP = (
+    "勾上 = 这一格画的是点火动作里火头碰到可燃物的瞬间。\n"
+    "点火表演取点火片段（逻辑状态 ignite，经 stateMap 解析）帧序列里**第一个**标了的帧\n"
+    "作为火头碰到可燃物那一刻，站位按那一帧挂件起火点的位置反解；\n"
+    "一格都没标 = 运行时用片段第一帧（dev 下告警一次）。\n"
+    "按图集槽位标，与落脚帧同一份文件、同一份图集指纹；指纹对不上时整份作废。")
 
 
 class SocketPanel(QWidget):
@@ -185,6 +203,21 @@ class SocketPanel(QWidget):
         self._contact_summary.setWordWrap(True)
         cl.addWidget(self._contact_summary)
         f.addRow(contact_box)
+
+        # -- 点火接触帧：与落脚帧同一种逐帧布尔标注、同一个脏态与保存门 --
+        ignite_box = QGroupBox("点火 · 接触帧")
+        ignite_box.setToolTip(_IGNITE_TOOLTIP)
+        il = QVBoxLayout(ignite_box)
+        il.setContentsMargins(6, 4, 6, 4)
+        self._ignite = QCheckBox("本帧点火接触（火头碰到可燃物）")
+        self._ignite.setToolTip(_IGNITE_TOOLTIP)
+        self._ignite.toggled.connect(self._on_ignite_toggled)
+        il.addWidget(self._ignite)
+        self._ignite_summary = QLabel("")
+        self._ignite_summary.setStyleSheet("color:#888;")
+        self._ignite_summary.setWordWrap(True)
+        il.addWidget(self._ignite_summary)
+        f.addRow(ignite_box)
 
         self._behind = QCheckBox("画在身后（被身体挡住）")
         self._behind.setToolTip(
@@ -346,8 +379,9 @@ class SocketPanel(QWidget):
             self._banner.setVisible(False)
             return
         self._banner.setText(
-            "⚠ 这份挂点 / 落脚帧标注与当前图集对不上（重导出过？）。游戏里会**整份忽略**——"
-            "挂件不挂、脚步不响，宁可没有也不照漂移的槽位号出错。请重标后保存，保存即刷新指纹。")
+            "⚠ 这份挂点 / 落脚帧 / 点火接触帧标注与当前图集对不上（重导出过？）。游戏里会**整份忽略**——"
+            "挂件不挂、脚步不响、点火退到片段第一帧，宁可没有也不照漂移的槽位号出错。"
+            "请重标后保存，保存即刷新指纹。")
         self._banner.setVisible(True)
 
     def _sockets(self) -> dict[str, Any]:
@@ -384,8 +418,36 @@ class SocketPanel(QWidget):
             self._refresh_canvas()
             self.dirtyChanged.emit(self.is_dirty())
 
+    # ---- 点火接触帧 ----------------------------------------------------
+
+    def is_ignite_slot(self, slot: int) -> bool:
+        """某图集槽位是否已标为点火接触帧。"""
+        return int(slot) in ignite_slots_of(self._data)
+
+    def ignite_slots(self) -> list[int]:
+        return ignite_slots_of(self._data)
+
+    def ignite_contact_order(self, frames: list[int]) -> int | None:
+        """帧序列里第一个落在点火接触帧上的帧下标（与运行时 `igniteContactFrame` 同口径）；没标 = None。"""
+        marks = set(ignite_slots_of(self._data))
+        for i, s in enumerate(frames):
+            if int(s) in marks:
+                return i
+        return None
+
+    def _on_ignite_toggled(self, on: bool) -> None:
+        if self._loading:
+            return
+        slot = self._current_slot()
+        if slot is None:
+            return
+        if set_ignite_slot(self._data, slot, bool(on)):
+            self._decorate_frame_items()
+            self._refresh_canvas()
+            self.dirtyChanged.emit(self.is_dirty())
+
     def _decorate_frame_items(self) -> None:
-        """帧条每一行：落脚帧带「落脚」后缀 + 橙底，一眼看出这个动作在哪几帧响。"""
+        """帧条每一行：落脚帧带「● 落脚」+ 橙底，点火接触帧带「◆ 点火」+ 红底（两样都标 = 品红底、两个后缀）。"""
         for i in range(self._frame_list.count()):
             it = self._frame_list.item(i)
             if it is None:
@@ -393,14 +455,27 @@ class SocketPanel(QWidget):
             slot = int(it.data(Qt.ItemDataRole.UserRole))
             order = it.data(Qt.ItemDataRole.UserRole + 1)
             base = f"#{order}  槽位 {slot}"
-            if self.is_contact_slot(slot):
-                it.setText(f"{base}   ● 落脚")
+            contact = self.is_contact_slot(slot)
+            ignite = self.is_ignite_slot(slot)
+            tags: list[str] = []
+            tips: list[str] = []
+            if contact:
+                tags.append("● 落脚")
+                tips.append("落脚帧：运行时走到这一格播一声脚步")
+            if ignite:
+                tags.append("◆ 点火")
+                tips.append("点火接触帧：点火片段里第一个标了的帧 = 火头碰到可燃物那一刻")
+            it.setText(f"{base}   {'  '.join(tags)}" if tags else base)
+            if contact and ignite:
+                it.setBackground(_CONTACT_AND_IGNITE_BRUSH)
+            elif contact:
                 it.setBackground(_CONTACT_BRUSH)
-                it.setToolTip("落脚帧：运行时走到这一格播一声脚步")
+            elif ignite:
+                it.setBackground(_IGNITE_BRUSH)
             else:
-                it.setText(base)
                 it.setBackground(QBrush())
-                it.setToolTip("")
+            it.setToolTip("\n".join(tips))
+        self._decorate_ignite_summary()
         marked = [s for s in dict.fromkeys(self._slots) if self.is_contact_slot(s)]
         if not self._slots:
             self._contact_summary.setText("")
@@ -409,6 +484,19 @@ class SocketPanel(QWidget):
                 f"本动作 {len(marked)} 个落脚帧：槽位 {', '.join(str(s) for s in marked)}")
         else:
             self._contact_summary.setText("本动作还没标落脚帧——走它的时候**不会**响脚步")
+
+    def _decorate_ignite_summary(self) -> None:
+        marked = [s for s in dict.fromkeys(self._slots) if self.is_ignite_slot(s)]
+        if not self._slots:
+            self._ignite_summary.setText("")
+            return
+        first = self.ignite_contact_order(self._slots)
+        if marked and first is not None:
+            self._ignite_summary.setText(
+                f"本动作 {len(marked)} 个点火接触帧：槽位 {', '.join(str(s) for s in marked)}"
+                f"——当点火片段用时取第 #{first} 帧（槽位 {self._slots[first]}）")
+        else:
+            self._ignite_summary.setText("本动作没标点火接触帧——当点火片段用时运行时取第 #0 帧（片段第一帧）")
 
     def _rebuild_sockets(self) -> None:
         keep = self._current_socket()
@@ -498,6 +586,7 @@ class SocketPanel(QWidget):
         self._canvas.set_marks(marks, cur)
         self._canvas.set_ghost(self._prev_pose_xy(cur, slot))
         self._canvas.set_contact(slot is not None and self.is_contact_slot(slot))
+        self._canvas.set_ignite(slot is not None and self.is_ignite_slot(slot))
         self._sync_contact_field(slot)
         self._sync_fields(marks.get(cur))
 
@@ -507,6 +596,9 @@ class SocketPanel(QWidget):
         try:
             self._contact.setEnabled(slot is not None)
             self._contact.setChecked(slot is not None and self.is_contact_slot(slot))
+            # 点火接触帧与落脚帧同一套启用 / 回显规则
+            self._ignite.setEnabled(slot is not None)
+            self._ignite.setChecked(slot is not None and self.is_ignite_slot(slot))
         finally:
             self._loading = was
 
@@ -611,15 +703,35 @@ class SocketPanel(QWidget):
             self._prop_note.setText("")
             return None
         state = str(self._prop_state_combo.currentData() or "")
-        resolved = resolve_prop_preview(preset, state)
-        if not resolved.images:
-            self._prop_note.setText("这支挂件（这个状态）没有贴图，画不出来。")
-            return None
-        url = resolved.images[frame_image_index(len(resolved.images), (pose or {}).get("frame"))]
-        pix = self._prop_pixmap(url)
-        if pix is None:
-            self._prop_note.setText(f"贴图找不到或读不出：{url}")
-            return None
+        burn_tid = burnable_template_id(preset)
+        if burn_tid:
+            # 可燃挂件（A3.8）：自己的图被模板接管——画模板的图、挂点对准模板握点、按模板真实宽缩放（与运行时同口径）
+            doc_fn = getattr(self._model, "burnable_doc", None)
+            burn_doc = doc_fn(burn_tid) if callable(doc_fn) else None
+            if burn_doc is None:
+                self._prop_note.setText(f"这支挂件开了可燃，但模板「{burn_tid}」不存在，画不出来。")
+                return None
+            url = str(burn_doc.get("image") or "").strip()
+            pix = self._prop_pixmap(url) if url else None
+            if pix is None:
+                self._prop_note.setText(f"可燃模板「{burn_tid}」的图找不到或读不出：{url or '（没写 image）'}")
+                return None
+            place = burnable_prop_placement(preset, burn_doc, float(pix.width()))
+            if place is None:
+                self._prop_note.setText(f"可燃模板「{burn_tid}」没写真实尺寸，没法按比例画。")
+                return None
+            anchor_x, anchor_y, rotation, scale = place.anchor_x, place.anchor_y, place.rotation, place.scale
+        else:
+            resolved = resolve_prop_preview(preset, state)
+            if not resolved.images:
+                self._prop_note.setText("这支挂件（这个状态）没有贴图，画不出来。")
+                return None
+            url = resolved.images[frame_image_index(len(resolved.images), (pose or {}).get("frame"))]
+            pix = self._prop_pixmap(url)
+            if pix is None:
+                self._prop_note.setText(f"贴图找不到或读不出：{url}")
+                return None
+            anchor_x, anchor_y, rotation, scale = resolved.anchor_x, resolved.anchor_y, resolved.rotation, resolved.scale
         atlas = self._atlas
         world = anim_world_size(
             self._anim,
@@ -641,10 +753,10 @@ class SocketPanel(QWidget):
             pixmap=pix,
             world_w=world[0],
             world_h=world[1],
-            anchor_x=resolved.anchor_x,
-            anchor_y=resolved.anchor_y,
-            rotation=resolved.rotation,
-            scale=resolved.scale,
+            anchor_x=anchor_x,
+            anchor_y=anchor_y,
+            rotation=rotation,
+            scale=scale,
         )
 
     def _write_current(self, **fields) -> None:

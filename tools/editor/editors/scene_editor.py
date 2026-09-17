@@ -76,6 +76,7 @@ from .scene_undo import SceneUndoController, broadcast_external_scene_write
 from ..shared.vfx_confine import CONFINE_FEATHER_DEFAULT as _VFX_CONFINE_FEATHER_DEFAULT
 from ..shared.vfx_confine import is_polygon as _vfx_is_polygon
 from ..shared import vfx_placements as _vfx_pl
+from ..shared import vfx_beam as _vfx_beam
 from ..shared.entity_transform_math import (
     entity_perspective_factor,
     DEFAULT_ENTITY_ANCHOR_X,
@@ -100,6 +101,11 @@ from .scene_time_variant_form import TimeVariantForm, variant_summary
 from ..shared.rich_text_field import RichTextLineEdit
 from ..shared.condition_editor import ConditionEditor
 from ..shared.action_editor import ActionEditor, FilterableTypeCombo
+from ..shared.health_threat_form import HealthThreatSection
+from ..shared.fire_protection_form import EnvironmentFireSection
+from ..shared import burnables as _bn_lib
+from ..shared import burn_geometry as _burn_geo
+from ..shared.burnable_host_form import BurnableHostSection
 from ..shared import audio_cue
 from ..shared.audio_library import (
     AudioMetaCache,
@@ -108,6 +114,11 @@ from ..shared.audio_library import (
 )
 from ..shared.audio_preview_selector import AudioIdPreviewSelector, AudioPreviewControls
 from ..shared.id_ref_selector import IdRefSelector
+from ..shared.position_ref_field import (
+    PositionRefField,
+    params_xy as _position_params_xy,
+    parse_position_ref as _parse_position_ref,
+)
 from ..shared.reference_picker import ReferencePickerDialog, ReferencePickerField
 from ..shared.dialogue_graph_refs import (
     DIALOGUE_GRAPH_OPEN_TOOLTIP,
@@ -447,7 +458,7 @@ class _SceneNpcAnimRuntime:
         "world_w", "world_h", "cursor",
         "facing_x", "_prev_x", "_prev_y", "_have_prev",
         "inst_scale", "inst_rot_deg", "persp", "anchor_x", "anchor_y",
-        "ref_speed", "visible",
+        "ref_speed", "visible", "on_drawn",
     )
 
     frames = property(lambda self: self.cursor.frames)
@@ -515,6 +526,8 @@ class _SceneNpcAnimRuntime:
         # draw_at 每 8ms 被动画定时器调一次，从前它最后一行是无条件 `item.show()`，
         # 于是"把精灵藏起来"这件事最多活 8 毫秒——外面怎么改都像没生效。
         self.visible = True
+        #: 每画一拍之后的回调 ``(rt, x, y)``：可燃 NPC 的着火点标记跟着精灵走（只 setPos，便宜）
+        self.on_drawn = None
 
     def set_instance_transform(
         self, scale: float, rot_deg: float,
@@ -587,6 +600,8 @@ class _SceneNpcAnimRuntime:
         # 过闸门，不是无条件 show()：被位面/时段/过场过滤掉的 NPC，其精灵每拍都要
         # 保持隐藏。写成 show() 时"藏起来"只能活到下一拍（8ms），外面怎么改都像没生效。
         self.item.setVisible(self.visible)
+        if self.on_drawn is not None:
+            self.on_drawn(self, float(npc_x), float(npc_y))
 
     def set_visible(self, on: bool) -> None:
         """视图过滤闸门。立刻生效，且下一拍 draw_at 不会把它冲掉。"""
@@ -660,6 +675,7 @@ class _DraggableCircle(QGraphicsEllipseItem):
         self.entity_kind = entity_kind
         self._scene_view = scene_view
         self._range_outline: QGraphicsEllipseItem | None = None
+        self._survival_outlines = {}
         self.set_interaction_range(range_radius)
 
         self._label = QGraphicsTextItem(self)
@@ -710,7 +726,31 @@ class _DraggableCircle(QGraphicsEllipseItem):
             self._range_outline.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         else:
             self._range_outline.setRect(-r, -r, r * 2, r * 2)
-            self._range_outline.show()
+        self._range_outline.show()
+
+    def set_survival_ranges(self, entity: dict) -> None:
+        from ..shared.health_refs import survival_ranges
+        ranges = survival_ranges(entity)
+        for circle in self._survival_outlines.values():
+            circle.hide()
+        for radius, label, color in ranges:
+            circle = self._survival_outlines.get(label)
+            if circle is None:
+                circle = QGraphicsEllipseItem(self)
+                circle.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+                circle.setBrush(Qt.BrushStyle.NoBrush)
+                circle.setPen(QPen(QColor(color), 0, Qt.PenStyle.DashLine))
+                text = QGraphicsTextItem(circle)
+                text.setDefaultTextColor(QColor(color))
+                text.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                text.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+                circle._survival_label = text
+                self._survival_outlines[label] = circle
+            circle.setRect(-radius, -radius, radius * 2, radius * 2)
+            circle._survival_label.setPlainText(f"{label} {radius:g}")
+            circle._survival_label.setPos(0, -radius)
+            circle.setVisible(self.isSelected())
+        self._survival_active = {label for _, label, _ in ranges}
 
     def set_color(self, color: QColor) -> None:
         c = QColor(color)
@@ -735,6 +775,9 @@ class _DraggableCircle(QGraphicsEllipseItem):
         value: object,
     ) -> object:
         result = super().itemChange(change, value)
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
+            for label, circle in getattr(self, "_survival_outlines", {}).items():
+                circle.setVisible(bool(value) and label in getattr(self, "_survival_active", set()))
         if (
             change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged
             and self._scene_view is not None
@@ -1526,6 +1569,212 @@ class _VfxAnchorMarker(QGraphicsItem):
             painter.drawLine(QPointF(self._x - a, self._y), QPointF(self._x + a, self._y))
             painter.drawLine(QPointF(self._x, self._y - a), QPointF(self._x, self._y + a))
             painter.drawEllipse(QPointF(self._x, self._y), a * 0.35, a * 0.35)
+        painter.restore()
+
+
+#: 光柱轮廓：暖白（与发射区域的青、范围区域的黄分开）
+_VFX_BEAM_RGB = (255, 236, 180)
+
+
+class _VfxBeamOutline(QGraphicsItem):
+    """布置库里一条实例的效果带的一道光柱——画面轮廓（凸包）+ 起点圆点 + 起点→终点中轴，**只读显示**。
+
+    轮廓与运行时画光柱用的同一个凸包（3D 光柱两圈截面顶点投到画面、2D 光带四角），不含原画深度截断
+    （截断是逐像素的，主编辑器不画光）。与 ``_VfxAreaPolygon`` 同一套纯显示约束。
+    """
+
+    def __init__(self, outline: list, start: list, end: list, iid: str, beam: str, *, mode: str):
+        super().__init__()
+        self.instance_id = str(iid)
+        self.beam_id = str(beam)
+        self.mode = mode
+        self._outline = [(float(p[0]), float(p[1])) for p in outline]
+        self._start = (float(start[0]), float(start[1]))
+        self._end = (float(end[0]), float(end[1]))
+        _make_vfx_overlay_passive(self)
+        self.setZValue(_Z_DECOR_VFX_OVERLAY - 0.5)
+        # 标签挂在落点：天窗 / 高窗漏下来的光起点常在原画上沿之外，挂起点上整场景适配时看不见
+        self._label = _VfxOverlayLabel(self, self.label_text(), offset=(8.0, 4.0))
+        self._label.setPos(self._end[0], self._end[1])
+
+    def outline_points(self) -> list[list[float]]:
+        return [[round(x, 1), round(y, 1)] for x, y in self._outline]
+
+    def start_point(self) -> tuple[float, float]:
+        return self._start
+
+    def end_point(self) -> tuple[float, float]:
+        return self._end
+
+    def label_text(self) -> str:
+        return f"光柱 {self.beam_id} · {self.instance_id}" + (" · 2D" if self.mode == "2d" else "")
+
+    def shape(self) -> QPainterPath:
+        return QPainterPath()
+
+    def contains(self, point: QPointF) -> bool:  # noqa: ARG002 — Qt API
+        return False
+
+    def boundingRect(self) -> QRectF:
+        pts = [*self._outline, self._start, self._end]
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        m = 8.0
+        return QRectF(min(xs) - m, min(ys) - m, max(xs) - min(xs) + 2 * m, max(ys) - min(ys) + 2 * m)
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        del option, widget
+        r, g, b = _VFX_BEAM_RGB
+        painter.save()
+        poly = QPolygonF([QPointF(x, y) for x, y in self._outline])
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(r, g, b, 26)))
+        painter.drawPolygon(poly)
+        for color, width in ((QColor(0, 0, 0, 150), 3.0), (QColor(r, g, b, 235), 1.4)):
+            edge = QPen(color, width)
+            edge.setCosmetic(True)
+            painter.setPen(edge)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPolygon(poly)
+        axis = QPen(QColor(r, g, b, 200), 1.0)
+        axis.setCosmetic(True)
+        axis.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(axis)
+        painter.drawLine(QPointF(*self._start), QPointF(*self._end))
+        # 起点：黑边亮心的实心点，半径按视图缩放换算成屏幕约 4px（整场景适配时也看得见）
+        scale = abs(painter.worldTransform().m11()) or 1.0
+        rad = 4.0 / scale
+        dot = QPen(QColor(0, 0, 0, 200), 1.0)
+        dot.setCosmetic(True)
+        painter.setPen(dot)
+        painter.setBrush(QBrush(QColor(r, g, b, 250)))
+        painter.drawEllipse(QPointF(*self._start), rad, rad)
+        painter.restore()
+
+
+#: 着火点标记的颜色（火橙）；"没标着火点 = 整体点着"那一个用虚线空心圈；模板装不上的实例用红叉
+_BURN_POINT_RGB = (255, 140, 40)
+_BURN_WARN_RGB = (230, 60, 60)
+
+
+def hotspot_burn_template_view(model, hs: dict) -> dict | None:
+    """开了可燃的热点在画布上按什么画：``{template, doc, image, size}``；没开可燃 ⇒ None。
+
+    ``doc`` / ``image`` / ``size`` 取模板（``size`` = 真实尺寸 wu，未乘实例缩放）；模板不存在 / 没尺寸时
+    ``doc`` 或 ``size`` 为 None——运行时装不上这个实例，展示图也不画（画布只标一个红叉提示）。
+    """
+    host = hs.get("burnable") if isinstance(hs, dict) else None
+    if not isinstance(host, dict):
+        return None
+    tid = str(host.get("template") or "").strip()
+    if not tid:
+        return None
+    fn = getattr(model, "burnable_doc", None)
+    doc = fn(tid) if callable(fn) else None
+    doc = doc if isinstance(doc, dict) else None
+    return {
+        "template": tid,
+        "doc": doc,
+        "image": str((doc or {}).get("image") or "").strip(),
+        "size": _bn_lib.template_world_size(doc) if doc is not None else None,
+    }
+
+
+def hotspot_visual_world_size(model, hs: dict) -> tuple[float, float]:
+    """热点在画布 / 运行时画出来的世界宽高（未乘实例缩放）：开了可燃取模板真实尺寸，否则展示图宽高。"""
+    view = hotspot_burn_template_view(model, hs)
+    if view is not None:
+        return view["size"] if view["size"] is not None else (0.0, 0.0)
+    di = hs.get("displayImage") if isinstance(hs.get("displayImage"), dict) else {}
+    try:
+        return float(di.get("worldWidth", 0) or 0), float(di.get("worldHeight", 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0, 0.0
+
+
+def burn_marker_rows(doc: dict | None, template: str, entity_id: str) -> list[tuple[str, float, float, str, str]]:
+    """一个可燃实例在画布上的标记 ``[(point_id, u, v, label, style)]``（``style`` ∈ ``point / whole / warn``）。
+
+    模板标了着火点：每个点一枚菱形（第一个标「缺省」——``igniteBurnable`` 不写 point 时用它）；
+    没标：图中间一个虚线圈（整体点着；缺省也必须看得见）；模板不存在 / 没尺寸：实体锚点上一个红叉。
+    """
+    if doc is None:
+        return [("", 0.5, 1.0, f"{entity_id} · 可燃模板「{template}」不存在——运行时装不上", "warn")]
+    if _bn_lib.template_world_size(doc) is None:
+        return [("", 0.5, 1.0, f"{entity_id} · 可燃模板「{template}」没写真实尺寸——运行时装不上", "warn")]
+    pts = _bn_lib.ignition_points_uv(doc)
+    if not pts:
+        return [("", 0.5, 0.5, f"{entity_id} · {template}：没标着火点，整体点着", "whole")]
+    return [(pid, u, v, f"{entity_id} · 着火点 {pid}" + ("（缺省）" if i == 0 else ""), "point")
+            for i, (pid, u, v) in enumerate(pts)]
+
+
+class _BurnPointMarker(QGraphicsItem):
+    """可燃实例（热点 / NPC 身上的 ``burnable``）的着火点——火橙菱形 + 标签，**只读显示**。
+
+    着火点来自模板（``ignitionPoints``，模板唯一写入者是燃烧工作台）；位置 = 实例摆法（与运行时
+    ``burnEntityPlacement`` 同口径，见 ``shared/burn_geometry``）下的图内 uv。与粒子 overlay 同一套纯显示约束
+    （``_make_vfx_overlay_passive`` + 空 ``shape()``：不吃鼠标、点选落到下面的实体上）。
+    ``style``：``point`` 菱形；``whole`` = 模板没标着火点、整体点着（虚线空心圈画在图中间）；
+    ``warn`` = 模板装不上（红叉画在实体锚点）。位置由画布 ``setPos``（拖实体时跟着走，不拆建图元）。
+    """
+
+    def __init__(self, kind: str, entity_id: str, point_id: str, label: str, *, arm: float, style: str = "point"):
+        super().__init__()
+        self.entity_kind_ref = str(kind)
+        self.entity_ref_id = str(entity_id)
+        self.point_id = str(point_id)
+        self.style = style if style in ("point", "whole", "warn") else "point"
+        self.whole = self.style == "whole"
+        #: 能不能算出位置；算不出的标记无论视图怎么切都不显示
+        self._has_pos = False
+        self._arm = max(4.0, float(arm))
+        _make_vfx_overlay_passive(self)
+        self.setZValue(_Z_DECOR_VFX_OVERLAY + 1.0)
+        self._label = _VfxOverlayLabel(self, label, offset=(8.0, -20.0))
+        self._label.setPos(0.0, 0.0)
+
+    @property
+    def hotspot_id(self) -> str:
+        """兼容读：热点那一族的实体 id（NPC 标记返回空串）。"""
+        return self.entity_ref_id if self.entity_kind_ref == "hotspot" else ""
+
+    def label_text(self) -> str:
+        return self._label.text()
+
+    def shape(self) -> QPainterPath:
+        return QPainterPath()
+
+    def contains(self, point: QPointF) -> bool:  # noqa: ARG002 — Qt API
+        return False
+
+    def boundingRect(self) -> QRectF:
+        a = self._arm + 2.0
+        return QRectF(-a, -a, 2 * a, 2 * a)
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        del option, widget
+        r, g, b = _BURN_WARN_RGB if self.style == "warn" else _BURN_POINT_RGB
+        a = self._arm * 0.6
+        painter.save()
+        for color, width in ((QColor(0, 0, 0, 170), 3.0), (QColor(r, g, b, 240), 1.4)):
+            pen = QPen(color, width)
+            pen.setCosmetic(True)
+            if self.style == "whole":
+                pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            if self.style == "whole":
+                painter.drawEllipse(QPointF(0.0, 0.0), a, a)
+            elif self.style == "warn":
+                painter.drawLine(QPointF(-a, -a), QPointF(a, a))
+                painter.drawLine(QPointF(-a, a), QPointF(a, -a))
+            else:
+                painter.drawPolygon(QPolygonF([QPointF(0, -a), QPointF(a, 0), QPointF(0, a), QPointF(-a, 0)]))
+        if self.style == "point":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(r, g, b, 150)))
+            painter.drawPolygon(QPolygonF([QPointF(0, -a * 0.5), QPointF(a * 0.5, 0), QPointF(0, a * 0.5), QPointF(-a * 0.5, 0)]))
         painter.restore()
 
 
@@ -2690,6 +2939,10 @@ class SceneCanvas(QGraphicsView):
     light_place_requested = Signal(float, float)
     # 右键菜单：在 (wx, wy) 世界坐标处添加实体；kind: hotspot|npc|zone|spawn
     context_add_entity = Signal(str, float, float)
+    # 右键「复制」：list[(kind, id)]；空列表 = 复制当前选择集
+    context_copy_requested = Signal(object)
+    # 右键「粘贴到这里」：落点世界坐标 (wx, wy)
+    context_paste_requested = Signal(float, float)
     # 拖拽中按 Esc 取消：把该实体恢复到按下前坐标（kind, id, orig_x, orig_y）
     drag_cancelled = Signal(str, str, float, float)
     # 左键按到可拖实体图元（潜在拖拽起点）：撤销系统在此捕获「拖拽前」快照——
@@ -2799,6 +3052,20 @@ class SceneCanvas(QGraphicsView):
         # 粒子布置 overlay（布置库只读镜像的画布投影，纯显示、不是实体；见 _VfxAreaPolygon）
         self._vfx_area_items: list[_VfxAreaPolygon] = []
         self._vfx_anchor_items: list[_VfxAnchorMarker] = []
+        self._vfx_beam_items: list[_VfxBeamOutline] = []
+        # 可燃实例的着火点标记（热点 / NPC 身上的 burnable → 模板的 ignitionPoints，纯显示；见 _BurnPointMarker）：
+        # "kind:id" → 那几个标记；"kind:id" → 标记签名（点集没变就只重摆、不拆建）
+        self._burn_marker_items: dict[str, list[_BurnPointMarker]] = {}
+        self._burn_marker_sigs: dict[str, tuple] = {}
+        # 被位面 / 时段视图藏起来的实体：着火点是热点 / NPC 的一个 part（PART_TABLE），跟着实体一起藏
+        self._burn_filter_hidden: set[str] = set()
+        for _burn_kind in ("hotspot", "npc"):
+            self.register_part_adapter(
+                _burn_kind, "burn",
+                item_of=lambda eid, k=_burn_kind: (self._burn_marker_items.get(f"{k}:{eid}") or [None])[0],
+                set_visible=lambda eid, vis, k=_burn_kind: self._set_burn_markers_visible(k, eid, vis),
+                drop=lambda eid, k=_burn_kind: self.drop_entity_burn_markers(k, eid),
+            )
         # 地形碰撞红块（游戏读的 collision.png 走运行时链投到画面上；纯显示）
         self._terrain_item: _TerrainOverlayItem | None = None
         self._world_w: float = 800
@@ -2866,6 +3133,9 @@ class SceneCanvas(QGraphicsView):
         self._lightcurve_overlay = None
         self._vfx_area_items = []             # 图元已随 _gfx.clear() 析构
         self._vfx_anchor_items = []
+        self._burn_marker_items = {}          # 图元已随 _gfx.clear() 析构
+        self._burn_marker_sigs = {}
+        self._burn_filter_hidden = set()
         self._terrain_item = None
         self._transform_gizmo = None  # 图元已随 _gfx.clear() 析构
         self._persp_cfg = None
@@ -3046,6 +3316,7 @@ class SceneCanvas(QGraphicsView):
             hs["x"], hs["y"], self.handle_radius,
             color, hs.get("id", "?"), "hotspot",
             range_radius=ir, scene_view=self)
+        item.set_survival_ranges(hs)
         self._gfx.addItem(item)
         self._entity_items[f"hotspot:{hs.get('id', '')}"] = item
         self.refresh_hotspot_visuals(hs)
@@ -3073,10 +3344,27 @@ class SceneCanvas(QGraphicsView):
         pf = self.persp_factor(hs, "hotspot")
         inst_s = entity_scale_of(hs) * pf
         inst_rot = entity_rotation_deg_of(hs)
+        # 开了可燃（A3.8）：展示图的图与宽高失效，画模板的图、按模板真实尺寸，摆法与运行时
+        # `burnEntityPlacement` 同口径（实体锚点 / 缩放 × 透视 / 旋转 / 朝左镜像，见 shared/burn_geometry）。
+        # 贴图与着火点从同一个 BurnFrame 派生——图和点不可能各摆各的。
+        burn_view = hotspot_burn_template_view(self._project_model, hs)
+        burn_frame = None
+        if burn_view is not None:
+            size = burn_view["size"]
+            if size is not None and burn_view["image"]:
+                img = burn_view["image"]
+                ww, hh = size
+                burn_frame = _burn_geo.entity_frame(
+                    hs, size, depth_scale=pf, flip_x=_burn_geo.hotspot_flip_x(hs))
+            else:
+                img, ww, hh = "", 0.0, 0.0       # 模板装不上：运行时不画，画布也不画（只标红叉）
 
         def _foot_anchor_transform(frame_w: float, frame_h: float) -> QTransform:
             """底中锚 quad 的统一变换（与运行时 container 级 transform 同口径）：
-            平移到锚点 → 实例旋转 → (实例缩放×帧到世界缩放) → 帧局部底中对齐。"""
+            平移到锚点 → 实例旋转 → (实例缩放×帧到世界缩放) → 帧局部底中对齐。
+            可燃实例改走模板摆法（BurnFrame 的仿射，镜像在变换里，不翻像素）。"""
+            if burn_frame is not None:
+                return QTransform(*_burn_geo.frame_pixel_transform(burn_frame, frame_w, frame_h))
             t = QTransform()
             t.translate(cx, cy)
             if inst_rot:
@@ -3088,7 +3376,11 @@ class SceneCanvas(QGraphicsView):
         # displayImage 来源签名：拖拽中只有 x/y 变、签名不变时，原地重摆既有 pixmap，
         # 不再每帧 remove+重建+从磁盘重载 —— 消除"拖热区时贴图狂闪 + 卡顿"（perf-reload）。
         # 实例 transform 进签名：scale/rotation 变化走同样的原地重摆快路径。
-        disp_sig = (img, ww, hh, facing) if (img and ww > 0 and hh > 0) else None
+        # 可燃实例的签名带模板 id、不带朝向（镜像在变换里做，像素不翻）。
+        if burn_frame is not None:
+            disp_sig = ("burn", burn_view["template"], img, ww, hh)
+        else:
+            disp_sig = (img, ww, hh, facing) if (img and ww > 0 and hh > 0) else None
         existing_disp = self._entity_items.get(disp_key)
         if (
             disp_sig is not None
@@ -3114,7 +3406,7 @@ class SceneCanvas(QGraphicsView):
                 if disk_path and disk_path.is_file():
                     pm_data = QPixmap(str(disk_path))
                 if not pm_data.isNull():
-                    if facing == "left":
+                    if facing == "left" and burn_frame is None:
                         pm_data = QPixmap.fromImage(pm_data.toImage().mirrored(True, False))
                     sw = max(pm_data.width(), 1)
                     sh = max(pm_data.height(), 1)
@@ -3134,6 +3426,13 @@ class SceneCanvas(QGraphicsView):
                     rect.setZValue(_Z_CONTENT_LO)
                     self._gfx.addItem(rect)
                     self._entity_items[disp_key] = rect
+        # 着火点标记按热点**此刻**的摆法跟着挪（点集没变只 setPos，不拆建图元；拖拽中也安全）
+        if burn_view is None:
+            self.drop_entity_burn_markers("hotspot", hid)
+        else:
+            self.set_entity_burn_markers(
+                "hotspot", hid, burn_marker_rows(burn_view["doc"], burn_view["template"], hid),
+                burn_frame, (cx, cy))
         col_key = f"hotspot_collision:{hid}"
         poly = hs.get("collisionPolygon")
         pts: list[tuple[float, float]] = []
@@ -3257,6 +3556,7 @@ class SceneCanvas(QGraphicsView):
             npc["x"], npc["y"], self.handle_radius,
             _NPC_COLOR, npc.get("id", "?"), "npc",
             range_radius=ir, scene_view=self)
+        item.set_survival_ranges(npc)
         self._gfx.addItem(item)
         self._entity_items[f"npc:{npc.get('id', '')}"] = item
         self.refresh_npc_collision_visuals(npc)
@@ -3481,8 +3781,91 @@ class SceneCanvas(QGraphicsView):
                 return it
         return None
 
+    def set_vfx_beam_overlay(self, rows: list[dict]) -> None:
+        """整份重建光柱轮廓 overlay（``rows`` 见 ``vfx_beam.beam_overlay_rows``）；与区域 overlay 同一套拆了重建。"""
+        for it in self._vfx_beam_items:
+            if it.scene() is self._gfx:
+                self._gfx.removeItem(it)
+        self._vfx_beam_items = []
+        for r in rows:
+            outline = r.get("outline") or []
+            if len(outline) < 3:
+                continue
+            it = _VfxBeamOutline(outline, r["start"], r["end"], str(r.get("id") or ""), str(r.get("beam") or ""),
+                                 mode=str(r.get("mode") or "3d"))
+            self._gfx.addItem(it)
+            self._vfx_beam_items.append(it)
+
+    def vfx_beam_item(self, iid: str, beam: str) -> "_VfxBeamOutline | None":
+        for it in self._vfx_beam_items:
+            if it.instance_id == iid and it.beam_id == beam:
+                return it
+        return None
+
     def vfx_overlay_items(self) -> list[QGraphicsItem]:
-        return [*self._vfx_area_items, *self._vfx_anchor_items]
+        return [*self._vfx_area_items, *self._vfx_anchor_items, *self._vfx_beam_items]
+
+    # ---- 可燃实例的着火点标记（只读显示） ----
+    def set_entity_burn_markers(
+        self, kind: str, eid: str, rows: list[tuple[str, float, float, str, str]],
+        frame: "_burn_geo.BurnFrame | None", anchor: tuple[float, float],
+    ) -> None:
+        """一个可燃实例（热点 / NPC）的着火点标记：点集（``burn_marker_rows``）没变只重摆，变了才拆建。
+
+        ``frame`` = 实例此刻的摆法（与贴图同一个）；None = 模板装不上，只在实体锚点 ``anchor`` 画红叉。
+        新建的图元默认可见，按当前位面 / 时段视图重贴一次（藏着的实体，它的着火点也藏）。
+        """
+        key = f"{kind}:{eid}"
+        arm = max(8.0, self.handle_radius * 1.6)
+        sig = tuple(rows)
+        if self._burn_marker_sigs.get(key) != sig or key not in self._burn_marker_items:
+            self.drop_entity_burn_markers(kind, eid)
+            items = [_BurnPointMarker(kind, eid, pid, label, arm=arm, style=style)
+                     for pid, _u, _v, label, style in rows]
+            for it, (_pid, u, v, _label, _style) in zip(items, rows):
+                it._uv = (float(u), float(v))
+                self._gfx.addItem(it)
+            self._burn_marker_items[key] = items
+            self._burn_marker_sigs[key] = sig
+            self.place_entity_burn_markers(kind, eid, frame, anchor)
+            self.refresh_entity_presence(kind, eid)
+            return
+        self.place_entity_burn_markers(kind, eid, frame, anchor)
+
+    def place_entity_burn_markers(
+        self, kind: str, eid: str, frame: "_burn_geo.BurnFrame | None", anchor: tuple[float, float],
+    ) -> None:
+        """按实例此刻的摆法重摆已有标记（拖动 / 巡逻预览每拍都走这里，只 setPos）。"""
+        key = f"{kind}:{eid}"
+        for it in self._burn_marker_items.get(key) or []:
+            if it.style == "warn" or frame is None:
+                pos = (float(anchor[0]), float(anchor[1])) if it.style == "warn" else None
+            else:
+                pos = _burn_geo.uv_to_scene(frame, it._uv[0], it._uv[1])
+            it._has_pos = pos is not None
+            it.setVisible(pos is not None and key not in self._burn_filter_hidden)
+            if pos is not None:
+                it.setPos(pos[0], pos[1])
+
+    def drop_entity_burn_markers(self, kind: str, eid: str) -> None:
+        key = f"{kind}:{eid}"
+        self._burn_marker_sigs.pop(key, None)
+        for it in self._burn_marker_items.pop(key, []):
+            if it.scene() is self._gfx:
+                self._gfx.removeItem(it)
+
+    def _set_burn_markers_visible(self, kind: str, eid: str, visible: bool) -> None:
+        """burn part 的显隐（视图过滤走这里）：算不出位置的标记始终不显示。"""
+        key = f"{kind}:{eid}"
+        if visible:
+            self._burn_filter_hidden.discard(key)
+        else:
+            self._burn_filter_hidden.add(key)
+        for it in self._burn_marker_items.get(key) or []:
+            it.setVisible(bool(visible) and bool(getattr(it, "_has_pos", False)))
+
+    def burn_marker_items(self) -> list[_BurnPointMarker]:
+        return [it for items in self._burn_marker_items.values() for it in items]
 
     # ---- 地形碰撞 overlay（只读显示） ----
     def set_terrain_overlay(self, rgba: bytes | None, w: int, h: int) -> None:
@@ -3676,7 +4059,8 @@ class SceneCanvas(QGraphicsView):
                 self._gfx.removeItem(it)
 
     def remove_hotspot_graphics(self, entity_id: str) -> None:
-        self._drop_entity_parts("hotspot", entity_id)
+        self._drop_entity_parts("hotspot", entity_id)     # 着火点标记是 burn part，经适配器一起撤
+        self._burn_filter_hidden.discard(f"hotspot:{str(entity_id).strip()}")
 
     def remove_npc_graphics(self, entity_id: str) -> None:
         nid = str(entity_id).strip()
@@ -3684,7 +4068,8 @@ class SceneCanvas(QGraphicsView):
             return
         # 巡逻折线的删除有自己的防崩溃收尾（先 setSelected(False)），走它自己的出口。
         self.remove_npc_patrol_overlay(nid)
-        self._drop_entity_parts("npc", nid)
+        self._drop_entity_parts("npc", nid)               # 着火点标记是 burn part，经适配器一起撤
+        self._burn_filter_hidden.discard(f"npc:{nid}")
 
     def remove_zone_graphics(self, entity_id: str) -> None:
         self._drop_entity_parts("zone", entity_id)
@@ -4065,6 +4450,9 @@ class SceneCanvas(QGraphicsView):
         手写 `_record_entity_view` + `_apply_entity_view_filters` 两行，成对关系
         全靠自觉。
         """
+        item = self._entity_items.get(key)
+        if isinstance(item, _DraggableCircle) and isinstance(ent, dict):
+            item.set_survival_ranges(ent)
         self._record_entity_view(key, ent)
         self._apply_entity_view_filters()
 
@@ -4225,8 +4613,51 @@ class SceneCanvas(QGraphicsView):
             act.triggered.connect(
                 lambda *_, k=kind, x=wx, y=wy: self.context_add_entity.emit(k, x, y))
             menu.addAction(act)
+        menu.addSeparator()
+        self._add_clipboard_actions(menu, scene_pt, wx, wy)
         menu.exec(event.globalPos())
         event.accept()
+
+    def _add_clipboard_actions(self, menu: QMenu, scene_pt: QPointF,
+                               wx: float, wy: float) -> None:
+        """右键「复制 / 粘贴到这里」。
+
+        右键不改选择（这张画布的选中回路挂着墓碑注释，不在菜单里去碰它）：点在一个
+        没选中的实体上时，「复制」拷的是**那一个**；否则拷选择集——拿选择集会拷走
+        用户没指着的东西。"""
+        from ..shared.scene_entity_clipboard import read_entity_clip
+
+        base = {"npc_collision": "npc", "hotspot_collision": "hotspot"}
+        under = None
+        for it in self._entity_stack_at(scene_pt):
+            kind = base.get(str(getattr(it, "entity_kind", "")), str(getattr(it, "entity_kind", "")))
+            eid = str(getattr(it, "entity_id", "") or "")
+            if kind in ("npc", "hotspot", "zone", "spawn") and eid:
+                under = (kind, eid, it)
+                break
+        selected = [it for it in self.selected_items()
+                    if base.get(str(getattr(it, "entity_kind", "")),
+                                str(getattr(it, "entity_kind", "")))
+                    in ("npc", "hotspot", "zone", "spawn")]
+        if under is not None and not under[2].isSelected():
+            act = QAction(f"复制「{under[1]}」	Ctrl+C", menu)
+            act.triggered.connect(
+                lambda *_, r=[(under[0], under[1])]: self.context_copy_requested.emit(r))
+        else:
+            n = len({(getattr(it, "entity_kind", ""), getattr(it, "entity_id", ""))
+                     for it in selected})
+            act = QAction(f"复制（{n}）	Ctrl+C" if n else "复制	Ctrl+C", menu)
+            act.setEnabled(bool(n))
+            act.triggered.connect(lambda *_: self.context_copy_requested.emit([]))
+        menu.addAction(act)
+        clip = read_entity_clip()
+        count = len(clip["entities"]) if clip else 0
+        act = QAction(f"粘贴到这里（{count}）	Ctrl+V" if count else "粘贴到这里	Ctrl+V", menu)
+        act.setEnabled(bool(count))
+        act.setToolTip("剪贴板里是在任意场景（含另一个画布）按 Ctrl+C 拷走的实体")
+        act.triggered.connect(
+            lambda *_, x=wx, y=wy: self.context_paste_requested.emit(x, y))
+        menu.addAction(act)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         # 统一光影的「在画布上定位」模式：拦在最前面，先落灯再说，
@@ -5122,6 +5553,11 @@ class ScenePropertyPanel(QScrollArea):
             "_zn_stay",
             "_zn_exit",
             "_zn_interact",
+            "_hs_health_threat",
+            "_npc_health_threat",
+            # 可燃物模板是燃烧工作台（别的进程）写的：切页回来重拉模板候选（当前值保值）
+            "_hs_burnable",
+            "_npc_burnable",
             # 跟随目标的候选是「本场景 NPC + player」，NPC 在本页就能新增 ⇒ 切页要重拉
             "_sl_follow",
         ):
@@ -5161,8 +5597,10 @@ class ScenePropertyPanel(QScrollArea):
         self._multi_group_btn = QPushButton("指派分组…")
         self._multi_group_btn.setToolTip(
             "给全部选中实体指派同一分组（group 标签；留空可移出分组）。")
-        self._multi_dup_btn = QPushButton("复制")
-        self._multi_dup_btn.setToolTip("在本场景为每个选中实体各复制一个副本（Ctrl+D）。")
+        self._multi_dup_btn = QPushButton("创建副本")
+        self._multi_dup_btn.setToolTip(
+            "在本场景为每个选中实体各建一个副本（Ctrl+D）。"
+            "要粘到别的场景用 Ctrl+C 复制、切场景后 Ctrl+V 粘贴。")
         self._multi_del_btn = QPushButton("删除")
         self._multi_del_btn.setToolTip("删除全部选中实体（Delete；可 Ctrl+Z 撤销）。")
         for _b in (self._multi_group_btn, self._multi_dup_btn, self._multi_del_btn):
@@ -5245,6 +5683,9 @@ class ScenePropertyPanel(QScrollArea):
         self._vfx_view_phase: str = ""
         self._vfx_canvas_time_phase: str = ""
         self._vfx_loaded_scene_id: str | None = None
+        # 光柱轮廓（只读）要的场景几何：(工程, 场景, 背景) → 空间（有深度包 SceneGeometry，没有 / 装不起来走平面近似）
+        self._vfx_beam_space_key: tuple | None = None
+        self._vfx_beam_space: object | None = None
         # 地形 / 碰撞块（只读）：此刻装着的场景文档（取 depthConfig / worldWidth / backgrounds 算红块）
         self._terrain_scene_doc: dict | None = None
         # 统一光影：灯位
@@ -5879,6 +6320,58 @@ class ScenePropertyPanel(QScrollArea):
                     anchors.append({"id": iid, "x": float(x), "y": float(y)})
         return areas, anchors
 
+    def vfx_view_background(self) -> str:
+        """vfx 块此刻显示的那套时段外观用哪张背景（与 ``scene_phases`` 同口径：变体没写背景 = 顶层背景）。"""
+        st = self._staging_scene if isinstance(self._staging_scene, dict) else {}
+
+        def first(layers: object) -> str:
+            if isinstance(layers, list) and layers and isinstance(layers[0], dict):
+                img = layers[0].get("image")
+                if isinstance(img, str) and img.strip():
+                    return img
+            return ""
+
+        base = first(st.get("backgrounds")) or "background.png"
+        ph = self._vfx_view_phase
+        doc = self._vfx_scene_doc_for_phases()
+        if ph and doc["dayNight"]["enabled"] and isinstance(doc["timeVariants"].get(ph), dict):
+            return first(doc["timeVariants"][ph].get("backgrounds")) or base
+        return base
+
+    def _vfx_beam_scene_space(self) -> object:
+        """光柱轮廓的换算空间：场景烘过深度时用轨迹工作台那份 ``SceneGeometry``（与运行时 / 粒子工作台同一套几何），
+        否则（没深度、不是仓库本体工程、装载失败）走与运行时 ``createPlanarVfxSpace`` 同式的平面近似。
+        按 (工程, 场景, 背景) 缓存；「刷新粒子数据」清掉重装。"""
+        sid = str(self._editing_scene_id or "")
+        bg = self.vfx_view_background()
+        root = self._model.project_path
+        key = (str(root), sid, bg)
+        if key == self._vfx_beam_space_key and self._vfx_beam_space is not None:
+            return self._vfx_beam_space
+        space: object = _vfx_beam.PlanarBeamSpace()
+        try:
+            from tools.trajectory_workbench.geometry import PUBLIC, SceneGeometry
+
+            if root is not None and (Path(root) / "public").resolve() == Path(PUBLIC).resolve():
+                g = SceneGeometry(sid, bg)
+                if g.has_depth:
+                    space = _vfx_beam.GeometryBeamSpace(g)
+        except Exception:  # noqa: BLE001 — 只读显示：几何装不起来就退平面近似，不拖垮场景页
+            space = _vfx_beam.PlanarBeamSpace()
+        self._vfx_beam_space_key = key
+        self._vfx_beam_space = space
+        return space
+
+    def vfx_beam_overlay_rows(self) -> list[dict]:
+        """画布光柱轮廓：此刻显示的那份布置里、效果带光柱的实例 → ``{id, beam, mode, outline, start, end}``。
+        没有一条带光柱就不碰几何（绝大多数场景）。"""
+        rows = self.vfx_view_rows()
+        effects = self._model.vfx_effects
+        if not any(isinstance(effects.get(str(r.get("effect") or "")), dict)
+                   and effects[str(r.get("effect") or "")].get("beams") for r in rows):
+            return []
+        return _vfx_beam.beam_overlay_rows(rows, effects, self._vfx_beam_scene_space())
+
     def vfx_legacy_row_count(self) -> int | None:
         """场景 staging 里残留的旧 ``vfx`` 键：None = 没有；否则是里面的条数（不是数组记 0）。"""
         st = self._staging_scene
@@ -5994,6 +6487,77 @@ class ScenePropertyPanel(QScrollArea):
             return
         opener(str(self._sc_id.text() or "").strip())
 
+    # ------------------------------------------------------------ 可燃（宿主身上的 burnable 块，A3.8）
+
+    def _open_burn_workbench(self, template_id: str) -> None:
+        """「打开燃烧工作台」：另起工作台进程（起进程的落点在主窗口），选了模板就直接打开那份（--open）。"""
+        opener = getattr(self.window(), "open_burn_workbench", None)
+        if not callable(opener):
+            return
+        opener(str(template_id or "").strip())
+
+    def _on_hs_burnable_changed(self) -> None:
+        """热点「可燃」块改了：立刻落进 staging（画布按模板重画读的是它），再走统一的 props changed。"""
+        hs = self._pending_hotspot
+        if hs is None or self._stack.currentWidget() != self._hotspot_panel:
+            return
+        self._hs_burnable.write_to(hs)
+        self._emit_props_changed()
+        eid = str(hs.get("id", "")).strip()
+        if eid:
+            self.hotspot_visual_refresh_requested.emit(eid)
+
+    def _hs_burnable_image_hint(self) -> str:
+        hs = self._pending_hotspot if isinstance(self._pending_hotspot, dict) else {}
+        di = hs.get("displayImage") if isinstance(hs.get("displayImage"), dict) else {}
+        return str(di.get("image") or "").strip()
+
+    def _hs_burnable_notes(self, tid: str, doc: dict | None) -> list[str]:
+        """热点开了可燃时的具体冲突：展示图那张与模板图不是同一张（开了可燃展示图不画）。"""
+        del tid
+        img = self._hs_burnable_image_hint()
+        bimg = str((doc or {}).get("image") or "").strip()
+        if img and bimg and img != bimg:
+            return [f"这个热点的展示图（{img}）与模板的图（{bimg}）不是同一张：开了可燃后展示图不画、画模板那张"
+                    "（校验器给警告；不想要旧图就把展示图清掉）"]
+        return []
+
+    def _on_npc_burnable_changed(self) -> None:
+        """NPC「可燃」块改了：立刻落进 staging，画布上这个 NPC 的精灵换成模板图（与改 animFile 同一条重建路）。"""
+        npc = self._pending_npc
+        if npc is None or self._stack.currentWidget() != self._npc_panel:
+            return
+        self._npc_burnable.write_to(npc)
+        self._emit_props_changed()
+        self._request_scene_npc_anim_refresh()
+
+    def _npc_burnable_image_hint(self) -> str:
+        npc = self._pending_npc if isinstance(self._pending_npc, dict) else {}
+        di = npc.get("displayImage") if isinstance(npc.get("displayImage"), dict) else {}
+        return str(di.get("image") or "").strip()
+
+    def _npc_burnable_notes(self, tid: str, doc: dict | None) -> list[str]:
+        """NPC 开了可燃：它自己的动画 / 展示图一律不画、不再播——有的话显眼地说出来。"""
+        del tid, doc
+        npc = self._pending_npc if isinstance(self._pending_npc, dict) else {}
+        out: list[str] = []
+        anim = str(npc.get("animFile") or "").strip()
+        cid = str(npc.get("characterId") or "").strip()
+        if anim or cid:
+            src = "、".join(x for x in (f"animFile「{anim}」" if anim else "", f"characterId「{cid}」" if cid else "") if x)
+            out.append(f"这个 NPC 有动画（{src}）：开了可燃之后动画不画、不再播（走路也不播），画的是模板的图")
+        img = self._npc_burnable_image_hint()
+        if img:
+            out.append(f"这个 NPC 的展示图（{img}）也不画了")
+        return out
+
+    def refresh_burnable_blocks(self) -> None:
+        """模板在盘上变了（燃烧工作台存盘 → data_changed("burn")）：两个「可燃」块重拉候选、重算提示。不改数据。"""
+        for attr in ("_hs_burnable", "_npc_burnable"):
+            sec = getattr(self, attr, None)
+            if sec is not None:
+                sec.reload_refs_from_model()
+
     def _on_vfx_refresh_clicked(self) -> None:
         """「刷新粒子数据」：落到主窗「工具 → 刷新粒子数据」那一条（效果 + 布置库一起重读、当前页候选重拉）；
         离开主窗单独跑（测试 / 嵌在别处）时直接重读模型。无论盘上变没变，本块与画布都当场重画一遍。"""
@@ -6002,6 +6566,9 @@ class ScenePropertyPanel(QScrollArea):
             reload_all()
         else:
             self._model.reload_vfx_from_disk()
+        # 深度 / 标定可能刚重烘过：光柱轮廓的几何也重装
+        self._vfx_beam_space_key = None
+        self._vfx_beam_space = None
         self.refresh_vfx_block()
 
     def _on_vfx_legacy_drop(self) -> None:
@@ -9385,6 +9952,14 @@ class ScenePropertyPanel(QScrollArea):
         basic_g.add_body(basic_inner)
         lay.addWidget(basic_g)
 
+        # ---- 可燃（A3.8）：这个热点是不是一份可燃物模板的实例（写 burnable 块；默认折叠·懒建，有配置时自动展开） ----
+        self._hs_burnable = BurnableHostSection(self._model, "hotspot", self)
+        self._hs_burnable.host_image_hint = self._hs_burnable_image_hint
+        self._hs_burnable.set_note_provider(self._hs_burnable_notes)
+        self._hs_burnable.changed.connect(self._on_hs_burnable_changed)
+        self._hs_burnable.open_workbench_requested.connect(self._open_burn_workbench)
+        lay.addWidget(self._hs_burnable)
+
         cond_g = self._section("触发条件 conditions", start_open=False)
         cond_g.set_header_tool_tip("默认折叠；已配置条件时自动展开。")
         self._hs_cond_fold = cond_g
@@ -9670,6 +10245,13 @@ class ScenePropertyPanel(QScrollArea):
 
         self._hs_type.currentTextChanged.connect(self._on_hs_type_changed)
 
+        self._hs_health_threat = HealthThreatSection(self._model, self)
+        self._hs_health_threat.changed.connect(self._emit_props_changed)
+        lay.addWidget(self._hs_health_threat)
+        self._hs_fire_protection = EnvironmentFireSection(self._model, self)
+        self._hs_fire_protection.changed.connect(self._emit_props_changed)
+        lay.addWidget(self._hs_fire_protection)
+
         lay.addStretch(1)
         self._append_entity_delete_footer(lay)
         return root
@@ -9885,6 +10467,8 @@ class ScenePropertyPanel(QScrollArea):
         self._update_hs_disp_ratio_hint()
         self._update_hs_disp_auto_buttons()
         self._sync_hs_display_to_dict_and_refresh()
+        # 换了展示图：「可燃」块的"展示图与模板图不是同一张"提醒跟着重算（只读，不改数据）
+        self._hs_burnable.refresh_notes()
 
     def _compute_hs_display_world_height(self, path: str, ww: float) -> float:
         if not path or ww <= 0:
@@ -10208,6 +10792,8 @@ class ScenePropertyPanel(QScrollArea):
             self._current_data = st
             self._show_panel(self._hotspot_panel)
             self._hs_id.setText(st.get("id", ""))
+            self._hs_health_threat.load_entity(st, self._editing_scene_id)
+            self._hs_fire_protection.load_entity(st, self._editing_scene_id)
             self._hs_type.setCurrentText(st.get("type", "inspect"))
             self._hs_label.setText(st.get("label", ""))
             self._hs_x.blockSignals(True)
@@ -10258,6 +10844,7 @@ class ScenePropertyPanel(QScrollArea):
             )
             self._hs_cond.set_flag_pattern_context(self._model, self._editing_scene_id or None)
             self._hs_cond.set_data(st.get("conditions", []))
+            self._hs_burnable.load(st, self._editing_scene_id)
             self._hs_cond_hide_entity.blockSignals(True)
             self._hs_cond_hide_entity.setChecked(st.get("conditionHidesEntity", False) is True)
             self._hs_cond_hide_entity.blockSignals(False)
@@ -10691,6 +11278,9 @@ class ScenePropertyPanel(QScrollArea):
             self._set_npc_col_table(col)
 
     def _write_hotspot_widgets_to_dict(self, hs: dict) -> None:
+        self._hs_health_threat.write_to(hs)
+        self._hs_fire_protection.write_to(hs)
+        self._hs_burnable.write_to(hs)
         hs["id"] = self._hs_id.text().strip()
         hs["type"] = self._hs_type.currentText()
         hs["label"] = self._hs_label.text()
@@ -11327,6 +11917,16 @@ class ScenePropertyPanel(QScrollArea):
         )
         _npc_scene_hint.setWordWrap(True)
         outer.addWidget(_npc_scene_hint)
+        self._npc_health_threat = HealthThreatSection(self._model, self)
+        self._npc_health_threat.changed.connect(self._emit_props_changed)
+        outer.addWidget(self._npc_health_threat)
+        # 可燃（A3.8）：开了 = 这个 NPC 是模板的实例，动画 / 展示图不画，画布画模板图
+        self._npc_burnable = BurnableHostSection(self._model, "npc", self)
+        self._npc_burnable.host_image_hint = self._npc_burnable_image_hint
+        self._npc_burnable.set_note_provider(self._npc_burnable_notes)
+        self._npc_burnable.changed.connect(self._on_npc_burnable_changed)
+        self._npc_burnable.open_workbench_requested.connect(self._open_burn_workbench)
+        outer.addWidget(self._npc_burnable)
         self._append_entity_delete_footer(outer)
         return w
 
@@ -11590,6 +12190,10 @@ class ScenePropertyPanel(QScrollArea):
         nid = ""
         if self._pending_npc:
             nid = str(self._pending_npc.get("id", "") or "")
+        # 动画 / 展示图换了：「可燃」块里那句「动画不画了」的提示跟着重算（只读）
+        sec = getattr(self, "_npc_burnable", None)
+        if sec is not None:
+            sec.refresh_notes()
         self.npc_scene_anim_refresh_requested.emit(nid)
 
     def _on_npc_xy_live(self, _v: float) -> None:
@@ -12067,6 +12671,8 @@ class ScenePropertyPanel(QScrollArea):
             self._current_data = st
             self._show_panel(self._npc_panel)
             self._npc_id.setText(st.get("id", ""))
+            self._npc_health_threat.load_entity(st, self._editing_scene_id)
+            self._npc_burnable.load(st, self._editing_scene_id)
             self._npc_name.setText(st.get("name", ""))
             self._npc_x.blockSignals(True)
             self._npc_y.blockSignals(True)
@@ -12212,6 +12818,8 @@ class ScenePropertyPanel(QScrollArea):
             self.npc_patrol_overlay_refresh_requested.emit()
 
     def _write_npc_widgets_to_dict(self, npc: dict) -> None:
+        self._npc_health_threat.write_to(npc)
+        self._npc_burnable.write_to(npc)
         npc["id"] = self._npc_id.text().strip()
         _cid = str(self._npc_character.currentData() or "").strip()
         if _cid:
@@ -12545,26 +13153,20 @@ class ScenePropertyPanel(QScrollArea):
             "旧数据保值展示，改配气味源后请归零。")
         self._zn_smell_dir.valueChanged.connect(lambda _v: self._emit_props_changed())
         smell_form.addRow("方位偏向 dir（已废）", self._zn_smell_dir)
-        # 气味源（G.6）：气缕飘向指着源；不配 = 一直直的
-        self._zn_smell_has_source = QCheckBox("配气味源 source（气缕飘向指着它；不配=直的）")
-        self._zn_smell_has_source.toggled.connect(lambda _v: self._emit_props_changed())
-        smell_form.addRow("", self._zn_smell_has_source)
-        src_row = QWidget()
-        src_lay = QHBoxLayout(src_row)
-        src_lay.setContentsMargins(0, 0, 0, 0)
-        self._zn_smell_src_x = QDoubleSpinBox()
-        self._zn_smell_src_x.setRange(-100000.0, 100000.0)
-        self._zn_smell_src_x.setDecimals(2)
-        self._zn_smell_src_x.valueChanged.connect(lambda _v: self._emit_props_changed())
-        self._zn_smell_src_y = QDoubleSpinBox()
-        self._zn_smell_src_y.setRange(-100000.0, 100000.0)
-        self._zn_smell_src_y.setDecimals(2)
-        self._zn_smell_src_y.valueChanged.connect(lambda _v: self._emit_props_changed())
-        src_lay.addWidget(QLabel("x"))
-        src_lay.addWidget(self._zn_smell_src_x)
-        src_lay.addWidget(QLabel("y"))
-        src_lay.addWidget(self._zn_smell_src_y)
-        smell_form.addRow("气味源坐标", src_row)
+        # 气味源（G.6）：气缕飘向指着源；不配 = 一直直的。
+        # 统一位置选择器：实体此刻位置（铺子热点 / 尸体 NPC，运行时每帧跟着它）/ 地图拾取 / 曲线插槽 / 曲线上的点。
+        self._zn_smell_source = PositionRefField(
+            self._model, lambda: str(self._editing_scene_id or ""), optional=True,
+            none_hint="不配气味源：气缕一直是直的。",
+            parent=self,
+        )
+        self._zn_smell_source.setToolTip(
+            "气缕飘向指着它，顺着烟走能摸到源。\n"
+            "· 实体此刻位置：选铺子热点 / 尸体 NPC——运行时每帧取它的位置，它走到哪烟指到哪；\n"
+            "· 数字坐标：点「地图拾取…」在底图上点一下；\n"
+            "· 曲线插槽 / 曲线上的点：场景曲线的站位或轨迹点。")
+        self._zn_smell_source.changed.connect(self._emit_props_changed)
+        smell_form.addRow("气味源 source", self._zn_smell_source)
         self._zn_smell_flicker = QCheckBox("波动 flicker（不稳的味在 HUD 上明灭跳）")
         self._zn_smell_flicker.toggled.connect(lambda _v: self._emit_props_changed())
         smell_form.addRow("", self._zn_smell_flicker)
@@ -12874,14 +13476,13 @@ class ScenePropertyPanel(QScrollArea):
             except (TypeError, ValueError):
                 self._zn_smell_dir.setValue(0.0)
             self._zn_smell_flicker.setChecked(bool(sm.get("flicker", False)))
+            # 老数据 {x,y}（无 kind）→ 数字档；{kind:…} → 对应档；没配 → 不指定
             src = sm.get("source") if isinstance(sm.get("source"), dict) else None
-            self._zn_smell_has_source.setChecked(src is not None)
-            try:
-                self._zn_smell_src_x.setValue(float(src.get("x", 0)) if src else 0.0)
-                self._zn_smell_src_y.setValue(float(src.get("y", 0)) if src else 0.0)
-            except (TypeError, ValueError):
-                self._zn_smell_src_x.setValue(0.0)
-                self._zn_smell_src_y.setValue(0.0)
+            self._zn_smell_source.refresh_candidates()
+            if src is not None and "kind" in src:
+                self._zn_smell_source.load(src, None)
+            else:
+                self._zn_smell_source.load(None, _position_params_xy(src))
             self._zn_smell_fold.set_expanded(bool(sm.get("scent")))
             # 先填候选再设值：候选重建会带着当前值走一遍保值分支，反过来会把未知 id 洗掉
             self._zn_footstep.set_items(
@@ -12979,12 +13580,19 @@ class ScenePropertyPanel(QScrollArea):
                     sm["dir"] = dval
                 if self._zn_smell_flicker.isChecked():
                     sm["flicker"] = True
-                if self._zn_smell_has_source.isChecked():
+                src_ref = self._zn_smell_source.value()
+                if src_ref is not None:
                     old_src = old_sm.get("source") if isinstance(old_sm.get("source"), dict) else {}
-                    sm["source"] = {
-                        "x": self._keep_num(round(float(self._zn_smell_src_x.value()), 2), old_src.get("x")),
-                        "y": self._keep_num(round(float(self._zn_smell_src_y.value()), 2), old_src.get("y")),
-                    }
+                    if src_ref["kind"] == "point":
+                        # 数字档写老形状 {x,y}（不写 kind），未改动的数按原 int/float 回写
+                        sm["source"] = {
+                            "x": self._keep_num(src_ref["x"], old_src.get("x")),
+                            "y": self._keep_num(src_ref["y"], old_src.get("y")),
+                        }
+                    elif "kind" in old_src and _parse_position_ref(old_src) == _parse_position_ref(src_ref):
+                        sm["source"] = copy.deepcopy(old_src)   # 引用没动：磁盘原样回写
+                    else:
+                        sm["source"] = src_ref
                 # 保留未知键
                 for k, v in old_sm.items():
                     if k not in ("scent", "intensity", "dir", "flicker", "source"):
@@ -13465,6 +14073,10 @@ class SceneEditor(QWidget):
         self._vfx_area_overlay_refresh_timer.setSingleShot(True)
         self._vfx_area_overlay_refresh_timer.timeout.connect(
             self._apply_vfx_area_overlay_refresh)
+        # 模板重读后可燃实例整场景重画同理合并到下一拍（会拆建图元）
+        self._burn_overlay_refresh_timer = QTimer(self)
+        self._burn_overlay_refresh_timer.setSingleShot(True)
+        self._burn_overlay_refresh_timer.timeout.connect(self._apply_burn_overlay_refresh)
         # 地形红块同理合并到下一拍（要读盘 + 算一张掩码）
         self._terrain_overlay_refresh_timer = QTimer(self)
         self._terrain_overlay_refresh_timer.setSingleShot(True)
@@ -13519,8 +14131,14 @@ class SceneEditor(QWidget):
         del_btn.clicked.connect(self._delete_selected)
         tb.addWidget(del_btn)
         refactor_menu = QMenu(self)
+        # 复制 / 粘贴的快捷键挂在画布与实体树上（见 _install_clipboard_shortcuts），
+        # 这里只写提示不设 shortcut：同一组键注册两处 = Qt 判歧义、两边都不触发。
+        refactor_menu.addAction(
+            "复制选中实体\tCtrl+C", lambda: self._copy_selected_entities())
+        refactor_menu.addAction(
+            "粘贴实体（原位）\tCtrl+V", lambda: self._paste_entities())
         self._act_duplicate = refactor_menu.addAction(
-            "复制实体（本场景）", self._duplicate_selected)
+            "创建副本（本场景）", self._duplicate_selected)
         self._act_duplicate.setShortcut(QKeySequence("Ctrl+D"))
         # 弹出菜单里的 QAction 快捷键默认只在菜单可见时生效；挂回编辑器本体
         # 并限定 WidgetWithChildren，画布/面板聚焦时 Ctrl+D 直达（与 Delete 键同族）。
@@ -13539,7 +14157,8 @@ class SceneEditor(QWidget):
         refactor_btn = QToolButton()
         refactor_btn.setText("重构")
         refactor_btn.setToolTip(
-            "选中 NPC / 热区 / Zone / 出生点后：本场景复制（Ctrl+D）、跨场景迁移、"
+            "选中 NPC / 热区 / Zone / 出生点后：复制（Ctrl+C，可切场景后 Ctrl+V 粘贴）、"
+            "本场景创建副本（Ctrl+D）、跨场景迁移、"
             "全项目改名、带引用报告的安全删除；"
             "迁移/改名/删除先扫描全项目引用并预览，确认才执行（未 Save All 前仅内存变更）。"
             "Zone 的入站引用与出生点的入站 transition/切场景动作会全量机械改写跟随；"
@@ -13725,7 +14344,8 @@ class SceneEditor(QWidget):
             QAbstractItemView.SelectionMode.ExtendedSelection)
         self._entity_tree.setToolTip(
             "当前场景全部实体。点选=画布定位选中；Ctrl/Shift 多选；"
-            "分组节点可直接编辑整体显影条件；右键可指派分组 / 复制 / 删除。")
+            "分组节点可直接编辑整体显影条件；右键可指派分组 / 复制粘贴 / 创建副本 / 删除；"
+            "Ctrl+C 复制、Ctrl+V 粘贴（可跨场景）。")
         self._entity_tree.itemSelectionChanged.connect(
             self._on_tree_selection_changed)
         self._entity_tree.setContextMenuPolicy(
@@ -13763,6 +14383,11 @@ class SceneEditor(QWidget):
         self._canvas.item_npc_collision_polygon_committed.connect(
             self._on_item_npc_collision_polygon_committed)
         self._canvas.context_add_entity.connect(self._on_canvas_context_add_entity)
+        self._canvas.context_copy_requested.connect(
+            lambda refs: self._copy_selected_entities(list(refs) or None))
+        self._canvas.context_paste_requested.connect(
+            lambda wx, wy: self._paste_entities((wx, wy)))
+        self._install_clipboard_shortcuts()
         self._canvas.drag_cancelled.connect(self._on_drag_cancelled)
         self._canvas.item_drag_press.connect(self._on_canvas_drag_press)
         self._canvas.items_batch_moved.connect(self._on_items_batch_moved)
@@ -14084,6 +14709,9 @@ class SceneEditor(QWidget):
         self._scene_npc_anim_timer.stop()
         for npc_id in list(self._scene_npc_runtimes):
             self._drop_npc_sprite(npc_id)
+        # 可燃 NPC 的着火点标记跟着精灵一起重建（模板装不上的那种没有精灵，只有标记）
+        for key in [k for k in self._canvas._burn_marker_items if k.startswith("npc:")]:
+            self._canvas.drop_entity_burn_markers("npc", key[len("npc:"):])
         self._scene_npc_runtimes.clear()
         self._patrol_preview_ids.clear()
         self._patrol_preview_state.clear()
@@ -14125,12 +14753,8 @@ class SceneEditor(QWidget):
             # 与运行时 `displaySprite !== null` 同口径：画成紫色缺件框时那边也没有档位
             texture_loaded = isinstance(item, QGraphicsPixmapItem)
             pf = self._canvas.persp_factor(hs, "hotspot")
-            di = hs.get("displayImage") if isinstance(hs.get("displayImage"), dict) else {}
-            try:
-                ww = float(di.get("worldWidth", 0) or 0)
-                hh = float(di.get("worldHeight", 0) or 0)
-            except (TypeError, ValueError):
-                ww = hh = 0.0
+            # 开了可燃：画出来的是模板真实尺寸（与画布贴图 / 运行时实例同一个尺寸）
+            ww, hh = hotspot_visual_world_size(self._model, hs)
             s = entity_scale_of(hs) * pf
             foot = sort_foot_y_of(hs, ww * s, hh * s)
             z = entity_sort_z(
@@ -14240,6 +14864,49 @@ class SceneEditor(QWidget):
         """场景页 vfx 块此刻显示的那一份布置 → 画布（任何属性页下都显示）。"""
         areas, anchors = self._props.vfx_overlay_rows()
         self._canvas.set_vfx_overlay(areas, anchors)
+        self._canvas.set_vfx_beam_overlay(self._props.vfx_beam_overlay_rows())
+
+    def _refresh_burn_overlay(self) -> None:
+        self._burn_overlay_refresh_timer.start(0)
+
+    def burnable_canvas_entities(self) -> list[tuple[str, str]]:
+        """本场景开了可燃的实体 ``[(kind, id)]``（staging 感知：面板上刚勾的也算）。"""
+        sc = self._model.scenes.get(self._current_scene_id or "")
+        if not isinstance(sc, dict):
+            return []
+        out: list[tuple[str, str]] = []
+        for kind, key in (("hotspot", "hotspots"), ("npc", "npcs")):
+            for ent in sc.get(key) or []:
+                if not isinstance(ent, dict):
+                    continue
+                eid = str(ent.get("id") or "")
+                src = (self._staging_hotspot_for_canvas_drag(eid) if kind == "hotspot"
+                       else self._npc_render_pos_dict(eid, ent)) or ent
+                if eid and isinstance(src.get("burnable"), dict):
+                    out.append((kind, eid))
+        return out
+
+    def _apply_burn_overlay_refresh(self) -> None:
+        """可燃物模板在盘上变了（燃烧工作台存盘 → data_changed("burn")）：本场景全部可燃实例按新模板重画。
+
+        热点走 ``refresh_hotspot_visuals``（签名带模板图与尺寸，变了才拆建；着火点点集变了才拆建标记），
+        NPC 精灵按模板重建。会拆建图元，所以经单发定时器合并到下一拍、不在鼠标事件栈里做。
+        """
+        try:
+            sc = self._model.scenes.get(self._current_scene_id or "")
+            if not isinstance(sc, dict):
+                return
+            hs_by_id = {str(h.get("id") or ""): h for h in sc.get("hotspots") or [] if isinstance(h, dict)}
+            for kind, eid in self.burnable_canvas_entities():
+                if kind == "hotspot":
+                    hs = self._staging_hotspot_for_canvas_drag(eid) or hs_by_id.get(eid)
+                    if hs is not None:
+                        self._canvas.refresh_hotspot_visuals(hs)
+                else:
+                    self._refresh_one_scene_npc_anim(eid)
+            self._resort_canvas_content_z()
+        except RuntimeError:
+            pass    # 编辑页已析构的那一拍
 
     def _refresh_terrain_overlay(self) -> None:
         self._terrain_overlay_refresh_timer.start(0)
@@ -14275,6 +14942,15 @@ class SceneEditor(QWidget):
         """粒子数据在盘上变了（工作台存盘后主窗自动 / 手动重读）：vfx 块与画布区域跟着重画。
 
         只认 ``vfx`` 这一类——场景编辑时 mark_dirty 发的是 ``scene``，不能每改一个字段就重建一遍。"""
+        if kind == "burn":
+            # 可燃物模板在盘上变了（燃烧工作台存盘后主窗自动 / 手动重读）：可燃实例按新模板重画、
+            # 两个「可燃」块重拉模板候选与摘要（不改数据）
+            try:
+                self._refresh_burn_overlay()
+                self._props.refresh_burnable_blocks()
+            except RuntimeError:
+                pass
+            return
         if kind != "vfx":
             return
         try:
@@ -14476,6 +15152,13 @@ class SceneEditor(QWidget):
         npc_id = str(npc.get("id", "") or "")
         if not npc_id:
             return
+        # 开了可燃（A3.8）：动画 / 展示图一律不画，精灵换成模板的图（判据读 staging：面板上刚勾的立刻生效）
+        self._canvas.drop_entity_burn_markers("npc", npc_id)
+        burn_src = self._npc_render_pos_dict(npc_id, npc)
+        burn_view = hotspot_burn_template_view(self._model, burn_src)
+        if burn_view is not None:
+            self._try_add_scene_npc_burn_sprite(npc, npc_id, burn_view)
+            return
         # characterId 引用的 NPC 无就地 animFile，须经角色注册表解析（否则画布不出 sprite）
         anim_id = self._model.character_field(npc, "animFile").strip()
         if not anim_id:
@@ -14572,6 +15255,52 @@ class SceneEditor(QWidget):
             ref_speed=ref_speed if ref_speed > 0 else None,
             use_patrol_anim=use_patrol_anim,
         )
+
+    def _try_add_scene_npc_burn_sprite(self, npc: dict, npc_id: str, view: dict) -> None:
+        """可燃 NPC：模板的图合成 **1×1 单帧**、按模板真实尺寸，走与动画 NPC 同一个 runtime。
+
+        于是实例 scale / rotation / 锚点 / 透视系数 / 朝向 / 内容层 z 与普通 NPC 逐字相同，也就与运行时
+        ``burnEntityPlacement`` 同口径（depthScale = NPC 透视系数、朝左镜像）。着火点标记挂在 runtime 的
+        ``on_drawn`` 上，每画一拍跟着重摆。模板装不上（不存在 / 没尺寸）：运行时不画这个实例，画布也不画，
+        只在 NPC 锚点标一个红叉。
+        """
+        src = self._npc_render_pos_dict(npc_id, npc)
+        rows = burn_marker_rows(view["doc"], view["template"], npc_id)
+        size = view["size"]
+        if view["doc"] is None or size is None or not view["image"]:
+            self._canvas.set_entity_burn_markers(
+                "npc", npc_id, rows, None, (float(src.get("x", 0) or 0), float(src.get("y", 0) or 0)))
+            return
+        pm = QPixmap()
+        disk = disk_path_for_runtime_url(self._model, view["image"])
+        if disk and disk.is_file():
+            pm = QPixmap(str(disk))
+        if pm.isNull():
+            # 模板图文件找不到：画一块半透明占位（与热点缺图的紫框同色），尺寸仍是模板真实尺寸
+            pm = QPixmap(64, 64)
+            pm.fill(QColor(200, 120, 255, 70))
+        di = src.get("displayImage") if isinstance(src.get("displayImage"), dict) else None
+        self._install_scene_npc_sprite(
+            npc, npc_id, pm, 1, 1, float(size[0]), float(size[1]), [0], 1.0, True,
+            display_image=di,
+        )
+        rt = self._scene_npc_runtimes.get(npc_id)
+        if rt is None:
+            return
+        rt.on_drawn = self._place_npc_burn_markers
+        x = float(src.get("x", 0) or 0)
+        y = float(src.get("y", 0) or 0)
+        self._canvas.set_entity_burn_markers("npc", npc_id, rows, self._npc_burn_frame(rt, x, y), (x, y))
+
+    @staticmethod
+    def _npc_burn_frame(rt: "_SceneNpcAnimRuntime", x: float, y: float) -> "_burn_geo.BurnFrame":
+        """可燃 NPC 此刻的实例摆法：与 ``rt.draw_at`` 画精灵用的是同一组量（锚点 / 缩放 × 透视 / 旋转 / 朝向）。"""
+        defn = {"x": x, "y": y, "scale": rt.inst_scale, "rotation": rt.inst_rot_deg,
+                "anchor": {"x": rt.anchor_x, "y": rt.anchor_y}}
+        return _burn_geo.entity_frame(defn, (rt.world_w, rt.world_h), depth_scale=rt.persp, flip_x=rt.facing_x < 0)
+
+    def _place_npc_burn_markers(self, rt: "_SceneNpcAnimRuntime", x: float, y: float) -> None:
+        self._canvas.place_entity_burn_markers("npc", rt.npc_id, self._npc_burn_frame(rt, x, y), (x, y))
 
     def _try_add_scene_npc_static_display(self, npc: dict, npc_id: str) -> None:
         """没有动画包的道具：`displayImage` 合成 **1×1 单帧**，走与动画 NPC 同一个 runtime。
@@ -14690,6 +15419,7 @@ class SceneEditor(QWidget):
         old = self._scene_npc_runtimes.pop(npc_id, None)
         if old is not None and old.item.scene() is not None:
             old.item.scene().removeItem(old.item)
+        self._canvas.drop_entity_burn_markers("npc", npc_id)
         if npc is None:
             if not self._scene_npc_runtimes:
                 self._scene_npc_anim_timer.stop()
@@ -14794,6 +15524,9 @@ class SceneEditor(QWidget):
         self._canvas.move_entity_handle("npc", npc_id, n.get("x", 0), n.get("y", 0))
         self._canvas.refresh_npc_collision_visuals(n)
         if rt is None:
+            # 模板装不上的可燃 NPC 没有精灵，只有锚点上的红叉：跟着挪
+            self._canvas.place_entity_burn_markers(
+                "npc", npc_id, None, (float(n.get("x", 0) or 0), float(n.get("y", 0) or 0)))
             return
         if npc_id not in self._patrol_preview_ids:
             rt.draw_at(float(n.get("x", 0)), float(n.get("y", 0)))
@@ -14986,6 +15719,7 @@ class SceneEditor(QWidget):
         self._canvas.set_group_boxes_visible(self._chk_group_boxes.isChecked())
         self._refresh_group_boxes()
         # 展示图与精灵都已就绪：按运行时规则派一次内容 z
+        # （可燃实例的模板图与着火点标记随热点图元 / NPC 精灵一起建好了，不另起一趟）
         self._resort_canvas_content_z()
 
     def _refresh_entity_find_completer(self, sc: dict) -> None:
@@ -15462,13 +16196,9 @@ class SceneEditor(QWidget):
         s = entity_scale_of(ent) * self._canvas.persp_factor(ent, kind)
         w = h = 0.0
         if kind == "hotspot":
-            di = ent.get("displayImage")
-            if isinstance(di, dict):
-                try:
-                    w = float(di.get("worldWidth", 0) or 0) * s
-                    h = float(di.get("worldHeight", 0) or 0) * s
-                except (TypeError, ValueError):
-                    w = h = 0.0
+            # 开了可燃取模板真实尺寸（画布上画的就是它）
+            w0, h0 = hotspot_visual_world_size(self._model, ent)
+            w, h = w0 * s, h0 * s
         else:  # npc：优先用场景精灵的真实世界尺寸
             rt = self._scene_npc_runtimes.get(str(ent.get("id") or ""))
             if rt is not None:
@@ -16264,9 +16994,19 @@ class SceneEditor(QWidget):
             "给选中的 NPC / 热点 / Zone 批量盖一份叙事状态机产物；"
             "图 id 与 ownerId 由实体推导，暂存后由「全部保存」落盘")
         act_tpl.setEnabled(can_group)
-        act_dup = menu.addAction("复制")
+        can_clip = any(r[0] in ("npc", "hotspot", "zone", "spawn") for r in refs)
+        act_copy = menu.addAction("复制\tCtrl+C")
+        act_copy.setData("copy")
+        act_copy.setEnabled(can_clip)
+        from ..shared.scene_entity_clipboard import read_entity_clip
+        clip = read_entity_clip()
+        act_paste = menu.addAction(
+            f"粘贴（{len(clip['entities'])}）\tCtrl+V" if clip else "粘贴\tCtrl+V")
+        act_paste.setData("paste")
+        act_paste.setEnabled(clip is not None)
+        act_dup = menu.addAction("创建副本\tCtrl+D")
         act_dup.setData("duplicate")
-        act_dup.setEnabled(any(r[0] in ("npc", "hotspot", "zone", "spawn") for r in refs))
+        act_dup.setEnabled(can_clip)
         act_del = menu.addAction("删除")
         act_del.setData("delete")
         return menu
@@ -16276,6 +17016,10 @@ class SceneEditor(QWidget):
             self._assign_group_to_selection()
         elif key == "template":
             self._apply_state_machine_template_to_selection()
+        elif key == "copy":
+            self._copy_selected_entities()
+        elif key == "paste":
+            self._paste_entities()
         elif key == "duplicate":
             self._duplicate_selected()
         elif key == "delete":
@@ -16508,11 +17252,7 @@ class SceneEditor(QWidget):
         # 环半径按画布显示尺寸（× 透视系数）；gizmo 数值本体仍是实例 scale（提交不除回）
         pf = self._canvas.persp_factor(d, kind)
         if kind == "hotspot":
-            di = d.get("displayImage") if isinstance(d.get("displayImage"), dict) else {}
-            hint = max(
-                float(di.get("worldWidth", 0) or 0),
-                float(di.get("worldHeight", 0) or 0),
-            ) * s * pf or 90.0
+            hint = max(hotspot_visual_world_size(self._model, d)) * s * pf or 90.0
         else:
             rt = self._scene_npc_runtimes.get(eid)
             hint = (max(rt.world_w, rt.world_h) * s * pf) if rt is not None else 90.0
@@ -18120,6 +18860,111 @@ class SceneEditor(QWidget):
                    f"{summary.get('danglingRefs', 0)} 处引用悬垂（跑 Validate Data 查看）。")
         QMessageBox.information(self, "实体重构", msg)
 
+    # ---- 剪贴板（Ctrl+C / Ctrl+V）：规则在 shared/entity_refactor 剪贴板一节 -------
+
+    def _install_clipboard_shortcuts(self) -> None:
+        """Ctrl+C / Ctrl+V 只挂在**画布与实体树**上，不挂编辑器本体。
+
+        挂本体（WidgetWithChildren）会连属性面板一起罩住：面板里的表格/列表按 Ctrl+C
+        本该拷单元格文本，却变成拷实体。画布与树是"选中实体"的两个地方，挂这两处够了。"""
+        for host in (self._canvas, self._entity_tree):
+            for seq, slot in (
+                (QKeySequence.StandardKey.Copy, lambda: self._copy_selected_entities()),
+                (QKeySequence.StandardKey.Paste, lambda: self._paste_entities()),
+            ):
+                shortcut = QShortcut(QKeySequence(seq), host)
+                shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+                shortcut.activated.connect(slot)
+
+    def _flash_status(self, text: str, ms: int = 5000) -> None:
+        try:
+            self.window().statusBar().showMessage(text, ms)
+        except (AttributeError, RuntimeError):
+            pass
+
+    def _copy_selected_entities(self, refs: list[tuple[str, str]] | None = None) -> bool:
+        """把实体 def 快照进系统剪贴板（不改数据）。``refs`` 缺省 = 当前选择。
+
+        先把未应用的面板编辑提交成命令（与创建副本同一口径）：否则拷走的是打开实体时的
+        旧快照，面板上刚改的字段在副本里凭空消失。"""
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return False
+        sid = self._current_scene_id or ""
+        if self._model.scenes.get(sid) is None:
+            return False
+        if refs is None:
+            refs = self._selected_entity_refs_plural()
+        refs = [r for r in refs if r[0] in ("npc", "hotspot", "zone", "spawn")]
+        from ..shared import entity_refactor as er
+        from ..shared.scene_entity_clipboard import write_entity_clip
+        try:
+            clip = er.build_entity_clip(self._model, sid, refs)
+        except er.EntityRefactorError as exc:
+            self._flash_status(str(exc))
+            return False
+        write_entity_clip(clip)
+        self._flash_status(
+            f"已复制 {len(clip['entities'])} 个实体（Ctrl+V 粘贴；可切到别的场景再粘）")
+        return True
+
+    def _paste_entities(self, anchor: tuple[float, float] | None = None) -> bool:
+        """把剪贴板里的实体粘进当前场景：``anchor`` 为 None = 原位，否则包围盒中心落到那里。
+
+        撤销走 Ctrl+Z 快照栈（与创建副本同理，不进重构 journal）。"""
+        from ..shared.scene_entity_clipboard import read_entity_clip
+        clip = read_entity_clip()
+        if clip is None:
+            self._flash_status("剪贴板里没有场景实体（先在场景画布上选中实体按 Ctrl+C）")
+            return False
+        if not self._undo_flush_pending_as_command():
+            self._restore_editing_selection_after_block()
+            return False
+        result: dict = {}
+        with self._undo.capture("粘贴实体"):
+            self._paste_entities_impl(clip, anchor, result)
+        return bool(result.get("entries"))
+
+    def _paste_entities_impl(self, clip: dict, anchor, result: dict) -> None:
+        sc = self._require_scene()
+        if sc is None:
+            return
+        self._commit_pending_scene_edits()
+        from ..shared import entity_refactor as er
+        sid = self._current_scene_id or ""
+        try:
+            summary = er.paste_entity_clip(self._model, sid, clip, anchor=anchor)
+        except er.EntityRefactorError as exc:
+            QMessageBox.warning(self, "粘贴实体", str(exc))
+            return
+        result.update(summary)
+        new_refs = [(e["kind"], e["newId"]) for e in summary["entries"]]
+        self._load_scene(self._current_scene_id, reset_view=False)
+        self._select_new_entities(new_refs)
+        lines = er.describe_paste_report(summary)
+        if lines:
+            QMessageBox.information(
+                self, "粘贴实体",
+                f"已粘贴 {len(new_refs)} 个实体。\n\n" + "\n".join(lines))
+        else:
+            self._flash_status(f"已粘贴 {len(new_refs)} 个实体（Ctrl+Z 可撤销）")
+
+    def _select_new_entities(self, new_refs: list[tuple[str, str]]) -> None:
+        """刚建出来的实体回选：单个走完整选中（出属性面板），多个全选（方便整体拖开摆位）。"""
+        if len(new_refs) == 1:
+            kind, new_id = new_refs[0]
+            if kind == "spawn":
+                self._restore_canvas_selection("spawn", new_id)
+            else:
+                self._select_scene_entity_by_kind(
+                    kind, new_id, self._current_scene_id or "")
+            return
+        self._canvas.clear_selection()
+        for kind, new_id in new_refs:
+            item = self._canvas.entity_item_by_key(f"{kind}:{new_id}")
+            if item is not None:
+                item.setSelected(True)
+
     def _duplicate_selected(self) -> None:
         """本场景复制选中实体（引擎 duplicate op：deepcopy + 新 id + 偏移落位）。
 
@@ -18165,20 +19010,7 @@ class SceneEditor(QWidget):
                 QMessageBox.warning(self, "复制实体", "\n".join(errors))
             return
         self._load_scene(self._current_scene_id, reset_view=False)
-        if len(new_ids) == 1:
-            kind, new_id = new_ids[0]
-            if kind == "spawn":
-                self._restore_canvas_selection("spawn", new_id)
-            else:
-                self._select_scene_entity_by_kind(
-                    kind, new_id, self._current_scene_id or "")
-        else:
-            # 批量复制：全选全部副本（多选状态，方便整体拖开摆位）
-            self._canvas.clear_selection()
-            for kind, new_id in new_ids:
-                item = self._canvas.entity_item_by_key(f"{kind}:{new_id}")
-                if item is not None:
-                    item.setSelected(True)
+        self._select_new_entities(new_ids)
         notices: list[str] = []
         if stripped_all:
             notices.append(

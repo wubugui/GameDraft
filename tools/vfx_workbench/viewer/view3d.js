@@ -288,6 +288,8 @@ class View3D {
     }
     // 线框球：巢 / 活动域 / 惊起
     if (host.layers.rings) for (const s of host.spheres()) this._circle(mvp, s.center, s.radius, s.color, s.hot);
+    // 光柱线框（3D 棱台 / 2D 光带立在锚点脚下的直立面上）；真实效果在原画视图里画
+    if (host.layers.beams) for (const l of host.beamLines3()) this._lines(mvp, l.pts, l.color, gl.LINES, 1);
     // 活动布置的粒子区域：贴地折线，不做深度测试（地形起伏会把一段线埋进网格里）
     if (cal) {
       gl.disable(gl.DEPTH_TEST);
@@ -298,6 +300,11 @@ class View3D {
     for (const f of host.fieldMarks()) this._circle(mvp, f.at, f.radius, f.color, false);
     // 角色代理的身体线（尺度参考：角色高 150 wu）+ 挂点横杆；不可选中、不进 doc
     for (const b of host.bodyLines()) this._lines(mvp, b.pts, b.color, gl.LINES, 1);
+    // 预览标记（外部给点的假点 / 调试火焰）：不可选中、不进 doc
+    for (const m of host.previewMarks()) {
+      if (m.top) this._lines(mvp, new Float32Array([...m.pos, ...m.top]), m.color, gl.LINES, 1);
+      this._marker(mvp, m.pos, m.color, m.size);
+    }
     // 物体标记
     for (const o of host.objects()) this._marker(mvp, o.pos, o.color, o.size);
     if (host.layers.marks) for (const m of (host.marks || [])) this._marker(mvp, m.world, m.kind === 'spawn' ? [0.5, 0.9, 0.55, 1] : [0.7, 0.7, 0.8, 0.9], 7);
@@ -399,6 +406,12 @@ class View3D {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, ov.clientWidth, ov.clientHeight);
     g.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif'; g.textBaseline = 'alphabetic';
+    for (const m of this.host.previewMarks()) {
+      if (!m.label) continue;
+      const c = this.project(m.pos); if (!c) continue;
+      g.fillStyle = 'rgba(255,170,90,.95)';
+      g.fillText(m.label, c[0] + 9, c[1] + 14);
+    }
     for (const o of this.host.objects()) {
       if (!o.label) continue;
       const c = this.project(o.pos); if (!c) continue;
@@ -582,6 +595,7 @@ class View3D {
     if (tool === 'anchor') { const s = this.pickSurface(mx, my); if (s) host.setAnchorAt(s); return; }
     if (tool === 'player') { const g = this.pickGround(mx, my); if (g) host.setPlayerAt(g); return; }
     if (tool === 'field') { const s = this.pickSurface(mx, my); if (s) host.addFieldAt(s.p); return; }
+    if (tool === 'fire') { const s = this.pickSurface(mx, my); if (s) host.addFireAt(s.p); else host.status('点到场景表面上放火焰（光标下拾取不到表面）', 'warn'); return; }
     const hit = this._hit(mx, my);
     if (hit && hit.kind === 'gz') { this._gzDown(hit.part, mx, my); return; }
     if (hit && hit.kind === 'obj') {
@@ -609,7 +623,7 @@ class View3D {
       let cur = 'default';
       if (sg) cur = 'pointer';
       else if (e.altKey || this.spaceDown || host.tool === 'pan') cur = 'grab';
-      else if (host.tool === 'anchor' || host.tool === 'player' || host.tool === 'field' || /^area/.test(host.tool)) cur = 'crosshair';
+      else if (host.tool === 'anchor' || host.tool === 'player' || host.tool === 'field' || host.tool === 'fire' || /^area/.test(host.tool)) cur = 'crosshair';
       else if (hit) cur = hit.kind === 'gz' ? Gizmo.cursor(hit.part) : 'move';
       this.c.style.cursor = cur;
       return;

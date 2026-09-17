@@ -71,6 +71,8 @@ _COLLISION_KINDS: dict[str, tuple[str, ...]] = {
 #   scene_entity  实体 id，由同 action 的 sceneId + entityKind 限定
 #   scene_hotspot 热点 id，由同 action 的 sceneId 限定
 #   scene_zone    zone id，由同 action 的 sceneId 限定
+#   burn_target   燃烧动作的 target（运行时按当前场景解析）：没写 socket = 场景里开了可燃的实体（热点 / NPC /
+#                 演出生成留下的对象）；写了 socket = 拿东西的人（player / NPC）。两档合起来命中面 = NPC + 热点
 #   position_ref  位置引用对象 `at`（{kind:'point'|'entity'|'slot'|'curve'}，src/utils/positionRef.ts）：
 #                 只有 entity 档的 `at.id` 是实体引用（NPC / 热点 / player / _cut_，运行时按当前场景解析）
 ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
@@ -80,6 +82,11 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     # 挂件状态机：target 是挂点宿主（与 attachToSocket 同一命中面）。
     # socket / state 不是实体引用——前者是动画包 sockets.json 的键，后者是挂件预设 states 的键。
     "setPropState": {"target": "actor"},
+    # 风吹不灭的锁：target 同 setPropState（挂点宿主）；socket 是挂点键，不是实体引用。
+    "lockPropState": {"target": "actor"},
+    # 挂件上的一次性效果：target 同 setPropState（挂点宿主）。挂件状态 onEnterActions 顶层留空 = 这件挂件自己，
+    # 空串对重构天然不命中。socket / effect / point 不是实体引用（挂点键 / 全局效果资产 id / 贴图上的点）。
+    "playPropVfx": {"target": "actor"},
     "setEntityEnabled": {"target": "actor"},
     # 头顶闲聊说话人：运行时走 resolveEmoteTarget（NPC / 热点 / player / 过场演员），
     # 所以命中面与 emote_subject 同宽；另外多认一档 `character:<角色id>`（不是实体引用，
@@ -135,6 +142,13 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     # 日程覆盖把角色钉在某场景：scene 是场景引用（改场景名要跟随）。
     # characterId 指向 character_registry 的角色、不是场景实体，故不在本表登记。
     "setNpcScheduleOverride": {"scene": "scene"},
+    # 燃烧（A3.8，2026-09-16 模板 + 实例）：target 是实体引用——socket 没写 = 当前场景里开了可燃的实体（热点 / NPC），
+    # 写了 = 拿着可燃挂件的人（player / NPC，同 setPropState.target 的 actor 口径）。值语义上两档的命中面都是 NPC + 热点，
+    # 所以登记一个 kind（burn_target），热点、NPC 改名都跟随。socket 是挂点键、point 是模板着火点 id，都不是实体引用。
+    # 可燃配置本身写在宿主自己身上（burnable 块），随实体走，不需要改写。
+    "igniteBurnable": {"target": "burn_target"},
+    "extinguishBurnable": {"target": "burn_target"},
+    "resetBurnable": {"target": "burn_target"},
 }
 
 # 裸引用按 value 匹配实体 id 时，各 kind 允许命中的实体种类
@@ -144,6 +158,7 @@ _BARE_KIND_SCOPE: dict[str, tuple[str, ...]] = {
     "bubble_speaker": ("npc", "hotspot"),
     "npc": ("npc",),
     "npc_soft": ("npc",),
+    "burn_target": ("npc", "hotspot"),
 }
 
 _TAG_NPC_RE_TMPL = r"\[tag:npc:{}\]"
@@ -1685,7 +1700,11 @@ def delete_entity(
 # --------------------------------------------------------------------------- #
 
 def _offset_num(value: Any, delta: float) -> Any:
-    """世界坐标平移并保留数值形态：整数结果写回 int（往返不引入 .0 噪声）。"""
+    """世界坐标平移并保留数值形态：整数结果写回 int（往返不引入 .0 噪声）。
+
+    **零位移原值返回**：原位粘贴时 dx=dy=0，走 round 会把 218.02 静默截成 218.0。"""
+    if not delta:
+        return value
     try:
         out = round(float(value) + delta, 1)
     except (TypeError, ValueError):
@@ -1847,6 +1866,432 @@ def _duplicate_spawn(
         "entityId": key, "newId": new, "index": idx + 1,
         "strippedCutsceneIds": [],
     }
+
+
+# --------------------------------------------------------------------------- #
+# 剪贴板（Ctrl+C / Ctrl+V）：def 快照进剪贴板，粘到任意场景（含跨场景）
+# --------------------------------------------------------------------------- #
+#
+# 与 duplicate 的分工：duplicate 是"本场景就地再来一个"；剪贴板是"先拿走一份快照，
+# 之后粘到哪个场景都行"。两个画布共用这一份规则，Qt 侧只负责读写剪贴板。
+#
+# 跨场景粘贴的引用口径（与 rename 的"可证明指向"同一条原则）：
+# - 同场景：def 里的引用原样保留——它们在源场景里指谁，粘贴后还指谁（与 duplicate 同口径）；
+# - 跨场景：指向**本批**成员的裸引用，在源场景里可证明指的就是那个成员，到了目标场景
+#   它的替身是本批的副本 → 改写到副本新 id；其余裸引用原样保留，在目标场景里找不到的
+#   逐条进 `danglingRefs` 报告（运行时找不到会静默跳过，不说就没人知道）。
+#   场景限定引用（sceneId+id）跨场景本就稳定，一律不动；叙事 owner 绑定是全局的，不动。
+# - npc / hotspot 取号查**全工程**：owner 绑定与 `[tag:npc:]` 都按裸 id 全局解析，
+#   在别的场景用回原 id 等于让副本静默继承原实体的叙事状态机。zone / 出生点只在场景内寻址，
+#   查目标场景即可。
+
+#: 剪贴板载荷的标记键（值 = 格式版本）。只认带这个键的 JSON，别的文本一律不当实体。
+ENTITY_CLIP_MARK = "gamedraftSceneEntities"
+ENTITY_CLIP_VERSION = 1
+#: 两个场景画布共用的剪贴板 MIME；文本面同时写一份同样的 JSON（跨进程 / 排查时可读）。
+ENTITY_CLIP_MIME = "application/x-gamedraft-scene-entities"
+
+#: 粘贴后要核对"目标场景里有没有这个 id"的裸引用种类。`npc_soft` 未命中回退显示名、
+#: `owner` 是全局叙事绑定，都不构成悬垂。
+_PASTE_CHECKED_BARE = ("actor", "emote_subject", "bubble_speaker", "npc", "hotspot", "burn_target")
+
+
+def build_entity_clip(
+    model: Any, scene_id: str, refs: list[tuple[str, str]],
+) -> dict[str, Any]:
+    """把场景里的实体 def 快照成剪贴板载荷。**不写模型**。
+
+    ``refs`` 是 (kind, id)；不认识的种类、默认出生点、找不到的实体静默略过（选择集里
+    本来就可能混着分组框之类）。一个都没剩下时抛 ``EntityRefactorError``。
+    """
+    sid = str(scene_id or "").strip()
+    scene = (getattr(model, "scenes", None) or {}).get(sid)
+    if not isinstance(scene, dict):
+        raise EntityRefactorError(f"场景 {sid!r} 不存在")
+    entities: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for kind, eid in refs:
+        kind = str(kind or "")
+        eid = str(eid or "").strip()
+        if not eid or (kind, eid) in seen:
+            continue
+        seen.add((kind, eid))
+        if kind == SPAWN_KIND:
+            found = None if eid == "default" else _find_spawn(scene, eid)
+        elif kind in ENTITY_KINDS:
+            found = _find_entity(scene, kind, eid)
+        else:
+            continue
+        if found is None or not isinstance(found[1], dict):
+            continue
+        entities.append({"kind": kind, "id": eid, "def": copy.deepcopy(found[1])})
+    if not entities:
+        raise EntityRefactorError(
+            "没有可复制的实体（NPC / 热区 / Zone / 命名出生点；默认出生点不参与）")
+    return {ENTITY_CLIP_MARK: ENTITY_CLIP_VERSION, "sourceScene": sid, "entities": entities}
+
+
+def entity_clip_to_text(clip: dict[str, Any]) -> str:
+    return json.dumps(clip, ensure_ascii=False, indent=2)
+
+
+def parse_entity_clip(text: Any) -> dict[str, Any] | None:
+    """剪贴板文本 → 载荷；不是本格式（或一个可用实体都没有）返回 None。"""
+    if not isinstance(text, str) or ENTITY_CLIP_MARK not in text:
+        return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get(ENTITY_CLIP_MARK) != ENTITY_CLIP_VERSION:
+        return None
+    rows: list[dict[str, Any]] = []
+    for row in data.get("entities") or []:
+        if not isinstance(row, dict):
+            continue
+        kind = row.get("kind")
+        eid = str(row.get("id") or "").strip()
+        body = row.get("def")
+        if kind not in ALL_KINDS or not eid or not isinstance(body, dict):
+            continue
+        if kind == SPAWN_KIND and eid == "default":
+            continue
+        rows.append({"kind": kind, "id": eid, "def": body})
+    if not rows:
+        return None
+    return {ENTITY_CLIP_MARK: ENTITY_CLIP_VERSION,
+            "sourceScene": str(data.get("sourceScene") or ""), "entities": rows}
+
+
+def _point_xy(pt: Any) -> tuple[float, float] | None:
+    if isinstance(pt, dict):
+        x, y = pt.get("x"), pt.get("y")
+    elif isinstance(pt, list) and len(pt) >= 2:
+        x, y = pt[0], pt[1]
+    else:
+        return None
+    try:
+        return float(x), float(y)
+    except (TypeError, ValueError):
+        return None
+
+
+def _paste_ref_point(kind: str, row: dict[str, Any]) -> tuple[float, float] | None:
+    """判"原位粘贴会不会与现有实体完全重叠"用的代表点：zone 取首顶点，其余取 x/y。"""
+    if kind == "zone":
+        poly = row.get("polygon")
+        return _point_xy(poly[0]) if isinstance(poly, list) and poly else None
+    return _point_xy(row)
+
+
+def _paste_bbox(rows: list[dict[str, Any]]) -> tuple[float, float, float, float] | None:
+    pts: list[tuple[float, float]] = []
+    for row in rows:
+        body = row["def"]
+        if row["kind"] == "zone":
+            pts.extend(xy for xy in (_point_xy(p) for p in body.get("polygon") or []) if xy)
+        else:
+            xy = _point_xy(body)
+            if xy:
+                pts.append(xy)
+    if not pts:
+        return None
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _remap_pasted_refs(node: Any, mapping: dict[str, str]) -> int:
+    """跨场景粘贴：把指向本批成员（npc / hotspot，旧 id → 新 id）的裸引用改到副本上。
+
+    新 id 从不与本批任何旧 id 相同（取号时预留了），所以逐项改写不会串成链。"""
+    count = 0
+
+    def visit(act_type: str, params: dict[str, Any]) -> None:
+        nonlocal count
+        for param, spec_kind in ENTITY_REF_PARAMS[act_type].items():
+            value = params.get(param)
+            if spec_kind in _BARE_KIND_SCOPE:
+                if isinstance(value, str) and value.strip() in mapping:
+                    params[param] = mapping[value.strip()]
+                    count += 1
+            elif spec_kind == "position_ref":
+                eid = position_ref_entity_id(value)
+                if eid in mapping:
+                    value["id"] = mapping[eid]
+                    count += 1
+    _walk_ref_actions(node, visit)
+    for old, new in mapping.items():
+        count += _visit_npc_data_refs(node, "npc", old, rename_to=new)
+    return count
+
+
+def _pasted_dangling_refs(node: Any, known: set[str]) -> list[tuple[str, str, str]]:
+    """粘贴后在目标场景里解析不到的裸引用 → (动作, 参数, 值)。
+
+    ``known`` = 目标场景（含本批副本）的 npc ∪ hotspot id。**不按族细分**：两族共用
+    命名空间，这里只回答"这个场景里根本没有这个 id"，族对不对是 validator 的事——
+    按族细分会把"写对了、只是族表登记得窄"的引用误报成悬垂。"""
+    out: list[tuple[str, str, str]] = []
+
+    def special(spec_kind: str, v: str) -> bool:
+        return (not v or v == "player" or v.startswith("_cut_")
+                or (spec_kind == "bubble_speaker" and v.startswith("character:")))
+
+    def visit(act_type: str, params: dict[str, Any]) -> None:
+        for param, spec_kind in ENTITY_REF_PARAMS[act_type].items():
+            value = params.get(param)
+            if spec_kind in _PASTE_CHECKED_BARE:
+                v = value.strip() if isinstance(value, str) else ""
+                if not special(spec_kind, v) and v not in known:
+                    out.append((act_type, param, v))
+            elif spec_kind == "position_ref":
+                v = position_ref_entity_id(value)
+                if not special(spec_kind, v) and v not in known:
+                    out.append((act_type, f"{param}.id", v))
+    _walk_ref_actions(node, visit)
+
+    def walk(n: Any) -> None:
+        if isinstance(n, dict):
+            if str(n.get("type") or "") == "npc" and isinstance(n.get("data"), dict):
+                v = str(n["data"].get("npcId") or "").strip()
+                if v and v not in known:
+                    out.append(("npc 型热点", "data.npcId", v))
+            for child in n.values():
+                walk(child)
+        elif isinstance(n, list):
+            for child in n:
+                walk(child)
+    walk(node)
+    return out
+
+
+def plan_entity_paste(
+    model: Any, scene_id: str, clip: dict[str, Any],
+    *, anchor: tuple[float, float] | None = None,
+    step: tuple[float, float] = (24.0, 24.0),
+) -> dict[str, Any]:
+    """算出"把剪贴板粘进 ``scene_id``"会落成什么。**不写模型**（新画布据此构造命令）。
+
+    落位：
+    - 给了 ``anchor``（右键「粘贴到这里」）→ 整批包围盒中心对齐落点；
+    - 否则原位（坐标原样）；跨场景且原位整批落在目标世界外时，改放世界中心；
+    - 两种情况下若代表点与目标场景现有同族实体完全重叠（同场景复制又粘回来、连按
+      Ctrl+V），按 ``step`` 逐级错开，免得看起来"什么都没发生"。
+
+    返回的 ``entries[*].def`` 是最终要写进场景的行；报告项见键名。
+    """
+    sid = str(scene_id or "").strip()
+    scenes = getattr(model, "scenes", None) or {}
+    scene = scenes.get(sid)
+    if not isinstance(scene, dict):
+        raise EntityRefactorError(f"场景 {sid!r} 不存在")
+    rows = [r for r in (clip or {}).get("entities") or []
+            if isinstance(r, dict) and r.get("kind") in ALL_KINDS
+            and isinstance(r.get("def"), dict) and str(r.get("id") or "").strip()]
+    if not rows:
+        raise EntityRefactorError("剪贴板里没有可粘贴的实体")
+    src_sid = str((clip or {}).get("sourceScene") or "")
+    cross = src_sid != sid
+
+    # ---- 取号 -------------------------------------------------------------
+    def ns_of(kind: str) -> str:
+        return "actor" if kind in ("npc", "hotspot") else kind
+
+    existing: dict[str, set[str]] = {"actor": set(), "zone": set(), SPAWN_KIND: {"default"}}
+    for other in scenes.values():
+        if not isinstance(other, dict):
+            continue
+        for list_key in ("npcs", "hotspots"):
+            existing["actor"].update(
+                str(r.get("id") or "").strip()
+                for r in other.get(list_key) or [] if isinstance(r, dict))
+    existing["zone"].update(
+        str(r.get("id") or "").strip() for r in scene.get("zones") or [] if isinstance(r, dict))
+    if isinstance(scene.get("spawnPoints"), dict):
+        existing[SPAWN_KIND].update(str(k) for k in scene["spawnPoints"])
+    reserved = {ns: {str(r["id"]).strip() for r in rows if ns_of(r["kind"]) == ns}
+                for ns in existing}
+    allocated: dict[str, set[str]] = {ns: set() for ns in existing}
+    new_ids: list[str] = []
+    for row in rows:
+        ns = ns_of(row["kind"])
+        old = str(row["id"]).strip()
+        if old not in existing[ns] and old not in allocated[ns]:
+            new = old
+        else:
+            n = 1
+            while True:
+                new = f"{old}_copy" if n == 1 else f"{old}_copy_{n}"
+                if (new not in existing[ns] and new not in reserved[ns]
+                        and new not in allocated[ns]):
+                    break
+                n += 1
+        allocated[ns].add(new)
+        new_ids.append(new)
+
+    # ---- 落位 -------------------------------------------------------------
+    bbox = _paste_bbox(rows)
+    base_dx = base_dy = 0.0
+    placement = "inPlace"
+    if anchor is not None and bbox is not None:
+        base_dx = float(anchor[0]) - (bbox[0] + bbox[2]) / 2.0
+        base_dy = float(anchor[1]) - (bbox[1] + bbox[3]) / 2.0
+        placement = "anchor"
+    elif cross and bbox is not None:
+        try:
+            ww = float(scene.get("worldWidth") or 0)
+            wh = float(scene.get("worldHeight") or 0)
+        except (TypeError, ValueError):
+            ww = wh = 0.0
+        if ww > 0 and wh > 0 and (bbox[2] < 0 or bbox[0] > ww or bbox[3] < 0 or bbox[1] > wh):
+            base_dx = ww / 2.0 - (bbox[0] + bbox[2]) / 2.0
+            base_dy = wh / 2.0 - (bbox[1] + bbox[3]) / 2.0
+            placement = "worldCenter"
+
+    occupied: set[tuple[str, float, float]] = set()
+    for kind in ENTITY_KINDS:
+        for r in scene.get(_entity_list_key(kind)) or []:
+            xy = _paste_ref_point(kind, r) if isinstance(r, dict) else None
+            if xy:
+                occupied.add((kind, round(xy[0], 1), round(xy[1], 1)))
+    dst_points = scene.get("spawnPoints")
+    for value in dst_points.values() if isinstance(dst_points, dict) else ():
+        xy = _point_xy(value)
+        if xy:
+            occupied.add((SPAWN_KIND, round(xy[0], 1), round(xy[1], 1)))
+    ref_points = [(r["kind"], _paste_ref_point(r["kind"], r["def"])) for r in rows]
+
+    def overlaps(dx: float, dy: float) -> bool:
+        for kind, xy in ref_points:
+            if xy is None:
+                continue
+            x = _offset_num(xy[0], dx)
+            y = _offset_num(xy[1], dy)
+            if (kind, round(float(x), 1), round(float(y), 1)) in occupied:
+                return True
+        return False
+
+    k = 0
+    dx, dy = base_dx, base_dy
+    while k < 200 and overlaps(dx, dy):
+        k += 1
+        dx = base_dx + float(step[0]) * k
+        dy = base_dy + float(step[1]) * k
+
+    # ---- 逐行生成 ----------------------------------------------------------
+    src_scene = scenes.get(src_sid) if src_sid else None
+    src_groups = {str(g.get("id") or "").strip()
+                  for g in (src_scene or {}).get("entityGroups") or [] if isinstance(g, dict)}
+    dst_groups = {str(g.get("id") or "").strip()
+                  for g in scene.get("entityGroups") or [] if isinstance(g, dict)}
+    mapping = {str(r["id"]).strip(): new for r, new in zip(rows, new_ids)
+               if r["kind"] in ("npc", "hotspot") and str(r["id"]).strip() != new}
+
+    entries: list[dict[str, Any]] = []
+    stripped_cutscenes: list[dict[str, Any]] = []
+    stripped_groups: list[dict[str, str]] = []
+    needs_review: list[str] = []
+    remapped = 0
+    for row, new in zip(rows, new_ids):
+        kind = row["kind"]
+        old = str(row["id"]).strip()
+        label = f"{kind}:{new}"
+        if kind == SPAWN_KIND:
+            body = copy.deepcopy(row["def"])
+            if "x" in body:
+                body["x"] = _offset_num(body.get("x"), dx)
+            if "y" in body:
+                body["y"] = _offset_num(body.get("y"), dy)
+        else:
+            body, stripped = build_duplicate_payload(row["def"], new, dx, dy)
+            if stripped:
+                stripped_cutscenes.append({"ref": label, "cutsceneIds": stripped})
+            _rewrite_source_id_strings(body, f"{src_sid}:{old}", f"{sid}:{new}")
+            gid = str(body.get("group") or "").strip()
+            # 目标场景没有这个组的定义、而源场景有：带过去就成了一个丢了时段归属的
+            # "兼容标签组"，比不带更骗人 → 摘掉并点名。两边都没有定义的纯标签原样保留。
+            if gid and gid not in dst_groups and gid in src_groups:
+                body.pop("group", None)
+                stripped_groups.append({"ref": label, "group": gid})
+            if cross:
+                if mapping:
+                    remapped += _remap_pasted_refs(body, mapping)
+                if body.get("renderRaw"):
+                    needs_review.append(f"{label} 的 renderRaw（贴图烤自源场景背景）")
+                if kind == "zone" and (str(body.get("zoneKind") or "") == "depth_floor"
+                                       or body.get("floorOffsetBoost")):
+                    needs_review.append(
+                        f"{label} 的 floorOffsetBoost / depth_floor（叠加在源场景深度图公式上）")
+        entries.append({"kind": kind, "sourceId": old, "newId": new, "def": body})
+
+    # 目标场景的 id 才算"解析得到"（取号用的 existing["actor"] 是全工程的，不能拿来判）
+    known = {str(r.get("id") or "").strip()
+             for list_key in ("npcs", "hotspots")
+             for r in scene.get(list_key) or [] if isinstance(r, dict)}
+    known |= {e["newId"] for e in entries if e["kind"] in ("npc", "hotspot")}
+    dangling: list[dict[str, str]] = []
+    for e in entries:
+        if e["kind"] == SPAWN_KIND:
+            continue
+        for act_type, param, value in _pasted_dangling_refs(e["def"], known):
+            item = {"ref": f"{e['kind']}:{e['newId']}", "action": act_type,
+                    "param": param, "value": value}
+            if item not in dangling:
+                dangling.append(item)
+
+    return {
+        "sceneId": sid, "sourceScene": src_sid, "crossScene": cross,
+        "placement": placement, "offset": [dx, dy],
+        "entries": entries,
+        "strippedCutscenes": stripped_cutscenes,
+        "strippedGroups": stripped_groups,
+        "remappedRefs": remapped,
+        "danglingRefs": dangling,
+        "needsReview": needs_review,
+    }
+
+
+def paste_entity_clip(
+    model: Any, scene_id: str, clip: dict[str, Any],
+    *, anchor: tuple[float, float] | None = None,
+    step: tuple[float, float] = (24.0, 24.0),
+) -> dict[str, Any]:
+    """按 :func:`plan_entity_paste` 的结果写进场景（追加到各列表 / spawnPoints 末尾）并标脏。
+
+    撤销由调用方的快照栈负责（老画布 `SceneUndo.capture`），不进重构 journal——
+    与 duplicate 同理：双栈同管一个操作会让一边撤销后另一边的记录悬垂。"""
+    plan = plan_entity_paste(model, scene_id, clip, anchor=anchor, step=step)
+    scene = model.scenes[plan["sceneId"]]
+    for e in plan["entries"]:
+        if e["kind"] == SPAWN_KIND:
+            points = scene.get("spawnPoints")
+            if not isinstance(points, dict):
+                points = scene["spawnPoints"] = {}
+            points[e["newId"]] = e["def"]
+        else:
+            scene.setdefault(_entity_list_key(e["kind"]), []).append(e["def"])
+    model.mark_dirty("scene", plan["sceneId"])
+    return {"op": "pasteEntities", **plan}
+
+
+def describe_paste_report(plan: dict[str, Any], *, limit: int = 8) -> list[str]:
+    """粘贴报告里**需要作者知道**的几行（两个画布共用措辞）。空列表 = 无事发生。"""
+    lines: list[str] = []
+    for item in plan.get("strippedCutscenes") or []:
+        lines.append(f"{item['ref']} 未带过场绑定（{'、'.join(item['cutsceneIds'])}）")
+    for item in plan.get("strippedGroups") or []:
+        lines.append(f"{item['ref']} 未带分组「{item['group']}」（本场景没有这个分组）")
+    dangling = plan.get("danglingRefs") or []
+    for item in dangling[:limit]:
+        lines.append(
+            f"{item['ref']}：{item['action']}.{item['param']} = 「{item['value']}」"
+            "在本场景找不到（运行时会静默跳过）")
+    if len(dangling) > limit:
+        lines.append(f"……另有 {len(dangling) - limit} 处引用找不到")
+    for text in plan.get("needsReview") or []:
+        lines.append(f"需复核：{text}")
+    return lines
 
 
 # --------------------------------------------------------------------------- #

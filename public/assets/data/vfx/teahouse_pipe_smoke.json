@@ -1,0 +1,131 @@
+{
+  "id": "teahouse_pipe_smoke",
+  "label": "茶馆 · 叶子烟烟锅细烟",
+  "prewarmSeconds": [
+    1.8,
+    3.6
+  ],
+  "emitters": [
+    {
+      "id": "thread",
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/smoke_puff.png",
+        "sizeWu": 3.2,
+        "sizeJitter": [
+          0.8,
+          1.12
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.38
+          ],
+          [
+            0.25,
+            0.72
+          ],
+          [
+            0.65,
+            1.1
+          ],
+          [
+            1,
+            1.8
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.06,
+            0.42
+          ],
+          [
+            0.5,
+            0.32
+          ],
+          [
+            0.8,
+            0.14
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.78,
+          0.8,
+          0.79
+        ],
+        "lit": false,
+        "spin": {
+          "rate": [
+            -9,
+            11
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 72,
+        "rate": 16,
+        "intervalJitter": 0.22,
+        "burst": 0,
+        "shape": {
+          "kind": "disc",
+          "radius": 0.24
+        },
+        "speed": [
+          2,
+          3
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 4
+      },
+      "motion": {
+        "drag": 0.6,
+        "wind": [
+          -0.3,
+          0,
+          0.1
+        ],
+        "buoyancy": 7,
+        "turbulence": {
+          "strength": 0.75,
+          "scale": 12,
+          "speed": 0.4
+        },
+        "maxSpeed": 13
+      },
+      "life": {
+        "seconds": [
+          2.8,
+          4.2
+        ]
+      }
+    }
+  ],
+  "authoring": {
+    "sceneId": "teahouse",
+    "background": "background.png",
+    "anchor": {
+      "x": 378.4,
+      "y": 178.4,
+      "h": 0.4,
+      "surface": "shell"
+    },
+    "note": "两名叶子烟客的烟锅细烟；与茶杯白色热气、全屋积烟分开编辑。"
+  }
+}

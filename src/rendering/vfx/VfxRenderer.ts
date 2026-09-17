@@ -10,6 +10,11 @@
  * 各自带上脚点的水平纵深；粒子排在"第一个比它近的实体"之前。桶网格的 `entitySortFootY` 取那个
  * 实体的脚点 y 减 ε。桶数 = 实体数 + 1，上限 `MAX_BUCKETS`（多了按分位数合并）。
  *
+ * **挂在实体身上的效果**（手里火把的火苗）另有一条：整团粒子钉在宿主的**同一侧**——挂件画在身前就全在
+ * 宿主之后画，挂件画在身后就全在宿主之前画（`VfxSortHost`），只有对**别的**实体才逐颗按纵深分桶。
+ * 否则挂件灯离身体那几 wu 的间隙抵不过湍流：朝左举火把（挂件在身后）时一半火舌飘到人前面，
+ * 同一团火被人身劈成前后两半。
+ *
  * ⚠ 此前拿"粒子正下方地面点的画面 y"直接比脚点 y：在平地上与上面等价，但悬在更低地面上方的粒子
  *   （崖边的蝙蝠、檐口上的烟）正下方的地面点投到画面很靠下，会被整批错排到人前面。
  *
@@ -32,17 +37,36 @@
 import { resolveLightFactors, type LightFactors } from '../../data/lightFactors';
 import { Container, type GlProgram, Shader, Texture, type TextureSource, UniformGroup } from 'pixi.js';
 
-import type { SceneDepthConfig, VfxCurve } from '../../data/types';
+import type { SceneDepthConfig } from '../../data/types';
+import { sampleColorCurve, sampleCurve } from '../../systems/vfx/vfxCurve';
 import type { Vec3 } from '../../utils/sceneSpace';
 import type { VfxEmitterRuntime, VfxInstanceSim } from '../../systems/vfx/vfxSim';
 import { VfxParticleMode } from '../../systems/vfx/vfxSim';
 import { PlateContact } from '../../systems/vfx/vfxPlate';
+import { plateBurnDir, plateBurnProgress } from '../../systems/vfx/vfxPlateBurn';
 import type { VfxSpace } from '../../systems/vfx/vfxSpace';
+import {
+  beam2dLocal, beam3dLocal, beamColorAt, beamGainAt, convexHull2d, sceneQAffine, VFX_BEAM_MAX_HULL,
+  type VfxBeamLocal, type VfxSceneQAffine,
+} from '../../systems/vfx/vfxBeam';
+import type { VfxBeamRuntime } from '../../systems/vfx/vfxSim';
 import { VfxBatchMesh, type VfxQuad } from './VfxBatchMesh';
+import { packBeamUniforms, type VfxBeamPackEnv } from './vfxBeamGlsl';
+import { VfxBeamView } from './VfxBeamView';
 import { VfxPlateBatchMesh, createPlateStrip, type VfxPlateStrip } from './VfxPlateBatchMesh';
+import { getVfxBeamProgram } from './vfxBeamShaders';
 import { getVfxLitProgram, getVfxPlateLitProgram, getVfxUnlitProgram } from './vfxShaders';
 
 export const MAX_BUCKETS = 8;
+
+/**
+ * 粒子渲染会用到的全部 GL 程序（无光 / 受光 / 薄片受光 / 光柱）。组装层开局交给 `GlProgramWarmup`
+ * 在后台编、切场景遮罩下交给 Pixi——否则第一个受光粒子出现那一帧同步编秒级（见 `rendering/glProgramWarmup.ts`）。
+ * 新增一种粒子程序就加进这里，漏了它就回到"第一次出现卡一下"。
+ */
+export function vfxGlPrograms(): GlProgram[] {
+  return [getVfxUnlitProgram(), getVfxLitProgram(), getVfxPlateLitProgram(), getVfxBeamProgram()];
+}
 
 /** 一个发射器的贴图：图集 + 帧 uv 表 + 长宽比 */
 export interface VfxSpriteSheet {
@@ -142,17 +166,51 @@ export function horizontalViewAxis(viewDir: readonly number[]): [number, number]
   return l > 1e-6 ? [x / l, z / l] : [0, 1];
 }
 
-/** 分桶阈值：实体按脚点 y 升序（= 实体层画序），同一脚点只留一个，超上限按分位数合并。 */
-export function buildSortThresholds(anchors: readonly VfxSortAnchor[], maxBuckets = MAX_BUCKETS): VfxSortAnchor[] {
+/**
+ * 挂在实体身上的效果的宿主：宿主在实体层里的那个节点 + 挂件此刻画在它身前还是身后
+ * （与挂件自己在容器里的前后同一个判据，见 `SpriteEntity.getSocketPose(...).front`）。
+ */
+export interface VfxSortHost {
+  node: Container;
+  front: boolean;
+}
+
+/**
+ * 分桶阈值：实体按脚点 y 升序（= 实体层画序），同一脚点只留一个，超上限按分位数合并。
+ * `pinnedFootYs`（有效果挂在身上的宿主）**合并时一律保留**：宿主被并掉，"整团在它身前 / 身后"就没有边界可钉。
+ */
+export function buildSortThresholds(
+  anchors: readonly VfxSortAnchor[], maxBuckets = MAX_BUCKETS, pinnedFootYs: ReadonlySet<number> = new Set(),
+): VfxSortAnchor[] {
   const th = anchors.slice().sort((a, b) => a.footY - b.footY);
   let w = 0;
   for (let i = 0; i < th.length; i++) if (w === 0 || th[i].footY !== th[w - 1].footY) th[w++] = th[i];
   th.length = w;
   if (th.length <= maxBuckets - 1) return th;
-  const keep = maxBuckets - 1;
-  const out: VfxSortAnchor[] = [];
-  for (let i = 0; i < keep; i++) out.push(th[Math.floor(((i + 1) * th.length) / (keep + 1))]);
-  return out;
+  const pinned = th.filter((a) => pinnedFootYs.has(a.footY));
+  const rest = th.filter((a) => !pinnedFootYs.has(a.footY));
+  const keep = Math.max(0, maxBuckets - 1 - pinned.length);
+  const out: VfxSortAnchor[] = pinned;
+  for (let i = 0; i < keep && rest.length > 0; i++) out.push(rest[Math.floor(((i + 1) * rest.length) / (keep + 1))]);
+  return out.sort((a, b) => a.footY - b.footY);
+}
+
+/**
+ * 宿主在阈值里占的位置：`[lo, hi)` = 脚点 y 等于宿主的那几条（去重后至多一条）。
+ * 宿主不在阈值里（这一帧不可见）⇒ lo === hi，调用方据此不钉。
+ */
+export function hostBucketRange(th: readonly VfxSortAnchor[], hostFootY: number): [number, number] {
+  let lo = 0;
+  while (lo < th.length && th[lo].footY < hostFootY) lo++;
+  let hi = lo;
+  while (hi < th.length && th[hi].footY <= hostFootY) hi++;
+  return [lo, hi];
+}
+
+/** 挂在宿主身上的粒子：对别的实体照常按纵深分桶，对宿主钉在挂件那一侧（身前 ⇒ 宿主之后，身后 ⇒ 宿主之前） */
+export function clampBucketToHost(bucket: number, lo: number, hi: number, front: boolean): number {
+  if (lo === hi) return bucket;
+  return front ? Math.max(bucket, hi) : Math.min(bucket, lo);
 }
 
 /**
@@ -184,6 +242,13 @@ const PLATE_FLUTTER_SATURATE = 220;
 const PLATE_FLUTTER_AMP = 0.28;
 /** 贴死的纸在满风时被掀起的静弯曲（弯曲单位） */
 const PLATE_PINNED_LIFT = 0.45;
+/** 燃着的纸烧完时卷起的弯曲（弯曲单位）：纸受热失水、烧过的一侧收缩，朝火线方向卷 */
+const PLATE_BURN_CURL = 0.9;
+
+function smoothstep01(e0: number, e1: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+  return t * t * (3 - 2 * t);
+}
 
 const tmpA: Vec3 = [0, 0, 0];
 const swayOut = { x: 0, y: 0 };
@@ -218,18 +283,32 @@ const quad: VfxQuad = {
   r: 1, g: 1, b: 1, a: 1, qx: 0, qy: 0, qz: 0, softQ: 0,
 };
 
-export function sampleCurve(c: VfxCurve | undefined, t: number): number {
-  if (!c || c.length === 0) return 1;
-  if (t <= c[0][0]) return c[0][1];
-  for (let i = 1; i < c.length; i++) {
-    if (t <= c[i][0]) {
-      const [t0, v0] = c[i - 1];
-      const [t1, v1] = c[i];
-      const k = t1 > t0 ? (t - t0) / (t1 - t0) : 1;
-      return v0 + (v1 - v0) * k;
-    }
-  }
-  return c[c.length - 1][1];
+// 曲线采样搬到纯模块（光柱与粒子工作台共用），这里原名转出，老调用方与测试不动
+export { sampleColorCurve, sampleCurve };
+
+const tmpLifeColor: [number, number, number] = [1, 1, 1];
+const tmpBeamLocal: VfxBeamLocal = { t01: 0, u: 0, v: 0, edge: 0 };
+const tmpBeamColor: [number, number, number] = [1, 1, 1];
+const tmpHullIn = new Float32Array(VFX_BEAM_MAX_HULL * 2);
+const tmpHullOut = new Float32Array(VFX_BEAM_MAX_HULL * 2);
+const tmpBeamW: Vec3 = [0, 0, 0];
+const tmpBeamS = { x: 0, y: 0 };
+/** 被光柱照亮的尘埃：亮度超过 1 的那份按颜色提亮，封顶这么多倍（再往上显示变换也钳掉了） */
+const BEAM_LIT_COLOR_BOOST_MAX = 8;
+
+/**
+ * 被光柱照亮（`appearance.beamLit`）：粒子所在位置的光柱亮度倍率。3D 光柱按粒子世界点、2D 光带按粒子画面点。
+ * 在柱外 / 光柱退化 = 0。颜色写进 `color`（光柱沿长度的 sRGB 颜色）。
+ */
+export function beamLitFactor(
+  bl: VfxBeamRuntime, pulse: number, gain: number,
+  wx: number, wy: number, wz: number, sx: number, sy: number, color: [number, number, number],
+): number {
+  const inside = bl.frame3d ? beam3dLocal(bl.frame3d, wx, wy, wz, tmpBeamLocal)
+    : bl.frame2d ? beam2dLocal(bl.frame2d, sx, sy, tmpBeamLocal) : false;
+  if (!inside) return 0;
+  beamColorAt(bl.look, tmpBeamLocal.t01, color);
+  return beamGainAt(bl.def, bl.look, tmpBeamLocal, pulse, bl.fade) * gain;
 }
 
 /**
@@ -268,6 +347,12 @@ export function vfxLightGain(ap: { lit?: boolean; lightGain?: number }): number 
 
 export class VfxRenderer {
   private readonly views = new Map<string, EmitterView>();
+  /** 光柱视图：`<instanceId>/beam:<beamId>`，一根一张网格 */
+  private readonly beamViews = new Map<string, VfxBeamView>();
+  /** 光柱打包用的场景量（按空间缓存：换空间才重探仿射） */
+  private beamEnvSpace: VfxSpace | null = null;
+  private beamAffine: VfxSceneQAffine | null = null;
+  private beamUpright: VfxBeamPackEnv['uprightQz'] = null;
   /** 本帧可见的场景矩形（实体层局部坐标 = 场景 wu）；算不出 ⇒ null = 不剔除 */
   private cullX0 = 0;
   private cullY0 = 0;
@@ -278,6 +363,11 @@ export class VfxRenderer {
   /** 水平视线轴（本帧，随空间） */
   private hx = 0;
   private hz = 1;
+  /** 本帧宿主节点 → 它的脚点 y（`refreshThresholds` 顺手记下，与阈值同一个数） */
+  private readonly hostFootY = new Map<Container, number>();
+  private hostLo = 0;
+  private hostHi = 0;
+  private hostFront = true;
   /** tone 路的共享参数（逐帧从场景的光照环境同步，与 NPC 的 EntityLightingFilter 同一组数） */
   private readonly toneGroup = new UniformGroup({
     uToneStrength: { value: 0, type: 'f32' },
@@ -403,7 +493,7 @@ export class VfxRenderer {
    * 每帧：从实体层读排序阈值——脚点 y（画序）+ 脚点落到地面后沿水平视线轴的纵深。
    * 实体脚点的世界位置走 `groundWorldAtScene`（与脚步声 / 摆灯同一条换算）。
    */
-  private refreshThresholds(space: VfxSpace): void {
+  private refreshThresholds(space: VfxSpace, hosts: ReadonlyMap<string, VfxSortHost> | undefined): void {
     const [hx, hz] = horizontalViewAxis(space.viewDir);
     this.hx = hx; this.hz = hz;
     const own = new Set<Container>();
@@ -411,7 +501,12 @@ export class VfxRenderer {
       for (const m of v.buckets.values()) own.add(m.mesh);
       for (const m of v.plateBuckets.values()) own.add(m.mesh);
     }
+    for (const bv of this.beamViews.values()) own.add(bv.mesh);
     const anchors: VfxSortAnchor[] = [];
+    this.hostFootY.clear();
+    const hostNodes = new Set<Container>();
+    if (hosts) for (const h of hosts.values()) hostNodes.add(h.node);
+    const pinned = new Set<number>();
     for (const child of this.deps.entityLayer.children) {
       if (own.has(child)) continue;
       const ext = child as Container & { entitySortBand?: string; entitySortFootY?: number };
@@ -420,20 +515,36 @@ export class VfxRenderer {
       const footY = ext.entitySortFootY ?? child.y;
       const g = space.groundWorldAtScene(child.x, footY);
       anchors.push({ footY, depthKey: g[0] * hx + g[2] * hz });
+      if (hostNodes.has(child)) { this.hostFootY.set(child, footY); pinned.add(footY); }
     }
-    this.thresholds = buildSortThresholds(anchors);
+    this.thresholds = buildSortThresholds(anchors, MAX_BUCKETS, pinned);
+  }
+
+  /** 本实例的宿主钉位（`fill` / `fillPlate` 期间有效）；没有宿主 / 宿主不在场 ⇒ lo === hi */
+  private bindHost(host: VfxSortHost | undefined): void {
+    const footY = host ? this.hostFootY.get(host.node) : undefined;
+    if (!host || footY === undefined) { this.hostLo = 0; this.hostHi = 0; return; }
+    [this.hostLo, this.hostHi] = hostBucketRange(this.thresholds, footY);
+    this.hostFront = host.front;
   }
 
   /** 粒子（世界 x / z）落第几桶 */
   private bucketOf(wx: number, wz: number): number {
-    return bucketOfDepth(this.thresholds, wx * this.hx + wz * this.hz);
+    const b = bucketOfDepth(this.thresholds, wx * this.hx + wz * this.hz);
+    return clampBucketToHost(b, this.hostLo, this.hostHi, this.hostFront);
   }
 
   /**
    * 渲染一批实例。`sheets` 按 `<instanceId>/<emitterId>` 给贴图；没贴图的发射器跳过。
+   * `hosts`：挂在实体身上的实例 id → 宿主（见 {@link VfxSortHost}）；不在表里的照常逐颗分桶。
    */
-  render(instances: readonly VfxInstanceSim[], sheets: ReadonlyMap<string, VfxSpriteSheet>): void {
-    if (instances.length > 0) this.refreshThresholds(instances[0].space);
+  render(
+    instances: readonly VfxInstanceSim[], sheets: ReadonlyMap<string, VfxSpriteSheet>,
+    hosts?: ReadonlyMap<string, VfxSortHost>,
+    /** 光柱图案遮罩贴图：`<instanceId>/<beamId>`；还没装到的光柱先不带图案画 */
+    beamTextures?: ReadonlyMap<string, Texture>,
+  ): void {
+    if (instances.length > 0) this.refreshThresholds(instances[0].space, hosts);
     this.refreshCull();
     const depth = this.deps.getDepth();
     const depthSrc = depth?.tex.source ?? null;
@@ -444,6 +555,7 @@ export class VfxRenderer {
     const seen = new Set<string>();
     for (const inst of instances) {
       const space = inst.space;
+      this.bindHost(hosts?.get(inst.id));
       for (const e of inst.emitters) {
         const key = `${inst.id}/${e.def.id}`;
         const sheet = sheets.get(key);
@@ -482,12 +594,109 @@ export class VfxRenderer {
           (m.mesh as Container & { entitySortFootY?: number }).entitySortFootY = bucketSortFootY(this.thresholds, b);
         }
       }
+      // 测试桩 / 旧调用方的实例可能没有 beams 表
+      if ((inst.beams?.length ?? 0) > 0) this.renderBeams(inst, depth, depthSrc, size, beamTextures, seen);
     }
     // 不在本帧清单里的视图（实例被收掉）→ 销毁
     for (const [key, v] of this.views) {
       if (seen.has(key)) continue;
       this.destroyView(v);
       this.views.delete(key);
+    }
+    for (const [key, bv] of this.beamViews) {
+      if (seen.has(key)) continue;
+      bv.destroy();
+      this.beamViews.delete(key);
+    }
+  }
+
+  /** 光柱打包的场景量：仿射与直立面按空间缓存 */
+  private beamEnv(space: VfxSpace, time: number, hasDepth: boolean): VfxBeamPackEnv {
+    if (this.beamEnvSpace !== space) {
+      this.beamEnvSpace = space;
+      this.beamAffine = sceneQAffine(space);
+      const upright = space.uprightWorldAtScene?.bind(space);
+      const q: Vec3 = [0, 0, 0];
+      this.beamUpright = upright
+        ? (fx, fy, sx, sy) => { space.toQ(upright(fx, fy, sx, sy), q); return q[2]; }
+        : null;
+    }
+    return { affine: this.beamAffine, wuPerQ: space.wuPerQ, time, uprightQz: this.beamUpright, hasDepth };
+  }
+
+  /**
+   * 一个实例的光柱：一根一张网格。视图按"建的那一拍有什么"建（光柱运行态对象 / 深度纹理 / 图案贴图），
+   * 变了就重建；其余（形状、颜色、强度、淡入淡出）逐帧打包进 uniform。
+   */
+  private renderBeams(
+    inst: VfxInstanceSim, depth: { tex: Texture; cfg: SceneDepthConfig } | null, depthSrc: TextureSource | null,
+    size: { w: number; h: number }, beamTextures: ReadonlyMap<string, Texture> | undefined, seen: Set<string>,
+  ): void {
+    const space = inst.space;
+    const useDepth = !!depth && space.kind === 'field';
+    const env = this.beamEnv(space, inst.time, useDepth);
+    for (const b of inst.beams) {
+      const key = `${inst.id}/beam:${b.def.id}`;
+      seen.add(key);
+      const cookieSrc = b.def.cookie ? beamTextures?.get(`${inst.id}/${b.def.id}`)?.source ?? null : null;
+      let v = this.beamViews.get(key);
+      if (v && (v.beam !== b || v.depthSrc !== depthSrc || v.cookieSrc !== cookieSrc)) {
+        v.destroy();
+        this.beamViews.delete(key);
+        v = undefined;
+      }
+      if (!v) {
+        v = new VfxBeamView(key, b, depthSrc, cookieSrc, this.deps.displayUniforms);
+        this.deps.entityLayer.addChild(v.mesh);
+        this.beamViews.set(key, v);
+      }
+      inst.beamFrame(b);
+      let ok = packBeamUniforms(b, inst.beamPulse(b), env, v.values);
+      // 图案贴图还没装到：先不带图案画（装到后视图按贴图重建）
+      if (b.def.cookie && !cookieSrc) v.values.uBeamCookieOn = 0;
+      // 画面包络
+      let n = 0;
+      if (ok && b.frame3d) {
+        const c = b.frame3d.corners;
+        const m = c.length / 3;
+        for (let k = 0; k < m; k++) {
+          tmpBeamW[0] = c[k * 3]; tmpBeamW[1] = c[k * 3 + 1]; tmpBeamW[2] = c[k * 3 + 2];
+          space.toScene(tmpBeamW, tmpBeamS);
+          tmpHullIn[k * 2] = tmpBeamS.x; tmpHullIn[k * 2 + 1] = tmpBeamS.y;
+        }
+        n = convexHull2d(tmpHullIn, m, tmpHullOut);
+      } else if (ok && b.frame2d) {
+        tmpHullOut.set(b.frame2d.corners);
+        n = 4;
+      }
+      if (n < 3) ok = false;
+      if (ok && this.culling) {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        for (let k = 0; k < n; k++) {
+          const x = tmpHullOut[k * 2], y = tmpHullOut[k * 2 + 1];
+          if (x < x0) x0 = x; if (x > x1) x1 = x;
+          if (y < y0) y0 = y; if (y > y1) y1 = y;
+        }
+        if (x1 < this.cullX0 || x0 > this.cullX1 || y1 < this.cullY0 || y0 > this.cullY1) ok = false;
+      }
+      v.mesh.visible = ok;
+      if (!ok) continue;
+      const du = v.depthGroup.uniforms as Record<string, unknown>;
+      (du['uSceneSize'] as Float32Array).set([size.w, size.h]);
+      if (useDepth) {
+        du['uHasDepth'] = 1;
+        du['uInvert'] = depth!.cfg.depth_mapping.invert ? 1 : 0;
+        du['uScale'] = depth!.cfg.depth_mapping.scale;
+        du['uOffset'] = depth!.cfg.depth_mapping.offset;
+        du['uTolerance'] = depth!.cfg.depth_tolerance;
+      } else {
+        du['uHasDepth'] = 0;
+      }
+      v.depthGroup.update();
+      v.setHull(tmpHullOut, n);
+      v.syncUniforms();
+      v.setSort(b.look.sort, b.foot.y);
+      v.setBlend(b.look.blend);
     }
   }
 
@@ -577,12 +786,21 @@ export class VfxRenderer {
     const fps = typeof ap.frameRate === 'number' ? ap.frameRate : sheet.frameRate;
     const stretch = ap.stretchByVelocity ?? 0;
     const soft = ap.softEdgeWu ?? 0;
+    // 被光柱照亮（光柱里的尘埃）：同一实例里那根光柱的帧 / 起伏每个发射器取一次
+    const bl = ap.beamLit ? inst.beamById(ap.beamLit.beam) : null;
+    const blGain = ap.beamLit?.gain ?? 1;
+    const blPulse = bl ? inst.beamPulse(inst.beamFrame(bl)) : 1;
     for (let i = 0; i < p.cap; i++) {
       if (!p.alive[i]) continue;
       tmpW[0] = p.x[i]; tmpW[1] = p.y[i]; tmpW[2] = p.z[i];
       space.toScene(tmpW, tmpScene);
       const sx = tmpScene.x, sy = tmpScene.y;
       if (this.culled(sx, sy)) continue;
+      let beamK = 1;
+      if (bl) {
+        beamK = beamLitFactor(bl, blPulse, blGain, p.x[i], p.y[i], p.z[i], sx, sy, tmpBeamColor);
+        if (beamK <= 0.002) continue;
+      }
       // 脚点 = 正下方地面点（只管透视系数；前后分桶按水平纵深，见 bucketOf）
       tmpW[1] = space.groundY(p.x[i], p.z[i]);
       space.toScene(tmpW, tmpScene2);
@@ -624,7 +842,19 @@ export class VfxRenderer {
       const f = sheet.frames[fi];
       quad.u0 = f.u0; quad.v0 = f.v0; quad.u1 = f.u1; quad.v1 = f.v1;
       quad.mirror = mirror;
-      quad.r = tint[0]; quad.g = tint[1]; quad.b = tint[2]; quad.a = alpha;
+      if (ap.tintOverLife) {
+        sampleColorCurve(ap.tintOverLife, t, tmpLifeColor);
+        quad.r = tint[0] * tmpLifeColor[0]; quad.g = tint[1] * tmpLifeColor[1]; quad.b = tint[2] * tmpLifeColor[2];
+      } else {
+        quad.r = tint[0]; quad.g = tint[1]; quad.b = tint[2];
+      }
+      quad.a = alpha;
+      if (bl) {
+        // 亮度 ≤ 1 的部分当不透明度（柱边上的尘埃淡掉），超过 1 的部分按光柱颜色提亮
+        const boost = Math.min(BEAM_LIT_COLOR_BOOST_MAX, Math.max(1, beamK));
+        quad.r *= tmpBeamColor[0] * boost; quad.g *= tmpBeamColor[1] * boost; quad.b *= tmpBeamColor[2] * boost;
+        quad.a = alpha * Math.min(1, beamK);
+      }
       // q（遮挡 / 照明）
       tmpW[0] = p.x[i]; tmpW[1] = p.y[i]; tmpW[2] = p.z[i];
       space.toQ(tmpW, tmpQ);
@@ -685,6 +915,16 @@ export class VfxRenderer {
         bend = pinned ? A.restBend[i] + PLATE_PINNED_LIFT * wf + fl : bend + fl;
       }
       const f = sheet.frames[nFrames > 1 ? Math.floor(p.seed[i] * nFrames) % nFrames : 0];
+      const lc = ap.tintOverLife ? sampleColorCurve(ap.tintOverLife, t01, tmpLifeColor) : null;
+      const cr = lc ? tint[0] * lc[0] : tint[0];
+      const cg = lc ? tint[1] * lc[1] : tint[1];
+      const cb = lc ? tint[2] * lc[2] : tint[2];
+      // 燃着的纸：火线从被火碰到的那一边扫到另一边（方向着的那一刻定），扫过的焦黑、卷起、成灰淡掉，火线那一带发亮
+      const burn = e.burn;
+      const bk = burn ? plateBurnProgress(burn, i) : -1;
+      const burnDir = burn && bk >= 0 ? plateBurnDir(burn, i) : 1;
+      const burnFront = -0.15 + bk * 1.3;
+      if (bk >= 0) bend += burnDir * bk * PLATE_BURN_CURL;
       // 躺着 / 贴着的纸跟着底下那片草木走（与背景摆动同一个位移）
       let swX = 0, swY = 0;
       if (A.contact[i] !== PlateContact.Free && this.deps.swayAt) {
@@ -704,6 +944,22 @@ export class VfxRenderer {
         if (mx * vd[0] + my * vd[1] + mz * vd[2] > 0) { mx = -mx; my = -my; mz = -mz; }
         const sh = lit ? 1 : 0.5 * (1 + my) + PLATE_GROUND_ALBEDO * 0.5 * (1 - my);
         const uu = f.u0 + (f.u1 - f.u0) * u;
+        // 燃烧着色（没着的纸：vr/vg/vb = 原色 × 明暗、vAlpha = alpha、自发光 0，与改动前逐位相同）
+        let vr = cr * sh, vg = cg * sh, vb = cb * sh, vAlpha = alpha, vEm = 0;
+        if (bk >= 0 && burn) {
+          const along = burnDir > 0 ? u : 1 - u;
+          const behind = burnFront - along;                       // > 0 = 火线已经扫过
+          const charAmt = smoothstep01(-0.05, 0.1, behind);
+          const glowAmt = Math.max(0, 1 - Math.abs(behind) / 0.12);
+          const cc = burn.P.charColor;
+          vr = vr + (cc[0] * sh - vr) * charAmt;
+          vg = vg + (cc[1] * sh - vg) * charAmt;
+          vb = vb + (cc[2] * sh - vb) * charAmt;
+          const gs = burn.P.glowStrength * glowAmt;
+          vr += burn.P.glow[0] * gs; vg += burn.P.glow[1] * gs; vb += burn.P.glow[2] * gs;
+          vAlpha = alpha * (1 - smoothstep01(0.25, 0.45, behind));
+          vEm = Math.min(1, glowAmt);
+        }
         for (let side = 0; side < 2; side++) {
           const ly = side === 0 ? -halfH : halfH;
           const wx = cx + (lx * tx + ly * bx + d * nx) * s;
@@ -714,10 +970,12 @@ export class VfxRenderer {
           strip.pos[vi * 2 + 1] = S[3] * wx + S[4] * wy + S[5] * wz + S[7] + swY;
           strip.uv[vi * 2] = uu;
           strip.uv[vi * 2 + 1] = side === 0 ? f.v0 : f.v1;
-          strip.col[vi * 4] = tint[0] * sh * alpha;
-          strip.col[vi * 4 + 1] = tint[1] * sh * alpha;
-          strip.col[vi * 4 + 2] = tint[2] * sh * alpha;
-          strip.col[vi * 4 + 3] = alpha;
+          strip.col[vi * 4] = vr * vAlpha;
+          strip.col[vi * 4 + 1] = vg * vAlpha;
+          strip.col[vi * 4 + 2] = vb * vAlpha;
+          strip.col[vi * 4 + 3] = vAlpha;
+          strip.misc[vi * 2] = 0;
+          strip.misc[vi * 2 + 1] = vEm;
           strip.q[vi * 3] = Q[0] * wx + Q[1] * wy + Q[2] * wz + Q[9];
           strip.q[vi * 3 + 1] = Q[3] * wx + Q[4] * wy + Q[5] * wz + Q[10];
           strip.q[vi * 3 + 2] = Q[6] * wx + Q[7] * wy + Q[8] * wz + Q[11];
@@ -741,9 +999,21 @@ export class VfxRenderer {
   clear(): void {
     for (const v of this.views.values()) this.destroyView(v);
     this.views.clear();
+    for (const bv of this.beamViews.values()) bv.destroy();
+    this.beamViews.clear();
+    this.beamEnvSpace = null;
+    this.beamAffine = null;
+    this.beamUpright = null;
   }
 
   get viewCount(): number { return this.views.size; }
+
+  /** 光柱视图数与本帧可见（真画了）的光柱数 */
+  get beamStats(): { views: number; visible: number } {
+    let visible = 0;
+    for (const bv of this.beamViews.values()) if (bv.mesh.visible) visible++;
+    return { views: this.beamViews.size, visible };
+  }
 
   get drawCallCount(): number {
     let n = 0;
@@ -751,6 +1021,7 @@ export class VfxRenderer {
       for (const m of v.buckets.values()) if (m.used > 0) n++;
       for (const m of v.plateBuckets.values()) if (m.used > 0) n++;
     }
+    for (const bv of this.beamViews.values()) if (bv.mesh.visible) n++;
     return n;
   }
 }

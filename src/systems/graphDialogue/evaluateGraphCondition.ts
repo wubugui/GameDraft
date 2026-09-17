@@ -1,4 +1,7 @@
-import type { Condition, ScenarioLineConditionLeaf, VfxStateConditionLeaf } from '../../data/types';
+import type {
+  BurnConditionLeaf, Condition, HeldPropConditionLeaf, HeldPropConditionStatus, PropLevelConditionLeaf,
+  ScenarioLineConditionLeaf, VfxStateConditionLeaf,
+} from '../../data/types';
 import type { ConditionExpr } from '../../data/types';
 import type { QuestManager } from '../QuestManager';
 import type { FlagStore } from '../../core/FlagStore';
@@ -21,6 +24,9 @@ export type ConditionTrace =
   | { kind: 'posture'; result: boolean; label: string }
   | { kind: 'timePhase'; result: boolean; label: string }
   | { kind: 'vfxState'; result: boolean; label: string }
+  | { kind: 'heldProp'; result: boolean; label: string }
+  | { kind: 'propLevel'; result: boolean; label: string }
+  | { kind: 'burn'; result: boolean; label: string }
   | { kind: 'unknown'; result: boolean; label: string };
 
 const questStatusMap: Record<string, QuestStatus> = {
@@ -77,6 +83,21 @@ export interface ConditionEvalContext {
    * 未注入或实例不在当前场景时返回 null → vfxState 叶子恒为假（表演态取不到就当"不在那个状态"）。
    */
   getVfxState?: (instanceId: string) => string | null;
+  /**
+   * 某人身上挂着的东西此刻的事实（`HeldPropSystem.statusOf`）。未注入 / 不在场 ⇒ 空 → heldProp 叶子恒为假
+   * （取不到就当"手上没有那样一件"，与 posture 同一条安全侧）。
+   */
+  getHeldProps?: (targetId: string) => readonly HeldPropConditionStatus[];
+  /**
+   * 这根挂件升到第几级（1 起；`HeldPropSystem.getPropLevel`）。与拿没拿在手上无关。
+   * 未注入 ⇒ 恒第 1 级（与"没有等级表"同一口径，安全侧）。
+   */
+  getPropLevel?: (propId: string) => number;
+  /**
+   * 可燃实例此刻的状态（`BurnSystem.statusOf`）。`socket` 给了 = `target` 这个人这个挂点上的可燃挂件；
+   * 否则 = 场景实体（`sceneId` 缺省当前场景）。未注入 / 不是可燃实例 ⇒ null → burn 叶子恒为假。
+   */
+  getBurnState?: (target: string, sceneId?: string, socket?: string) => string | null;
 }
 
 /**
@@ -194,6 +215,103 @@ function evalVfxStateLeaf(expr: VfxStateConditionLeaf, ctx: ConditionEvalContext
   if (!id || !want) return false;
   const now = ctx.getVfxState?.(id) ?? null;
   return now !== null && now === want;
+}
+
+function isPropLevelLeaf(x: ConditionExpr): x is PropLevelConditionLeaf {
+  const m = x as { propLevel?: unknown; flag?: unknown; quest?: unknown; scenario?: unknown; narrative?: unknown };
+  return (
+    typeof m.propLevel === 'string' &&
+    typeof m.flag !== 'string' &&
+    m.quest === undefined &&
+    m.scenario === undefined &&
+    m.narrative === undefined
+  );
+}
+
+const PROP_LEVEL_OPS: Record<NonNullable<PropLevelConditionLeaf['op']>, (a: number, b: number) => boolean> = {
+  '==': (a, b) => a === b,
+  '!=': (a, b) => a !== b,
+  '<': (a, b) => a < b,
+  '<=': (a, b) => a <= b,
+  '>': (a, b) => a > b,
+  '>=': (a, b) => a >= b,
+};
+
+function evalPropLevelLeaf(expr: PropLevelConditionLeaf, ctx: ConditionEvalContext): boolean {
+  const id = expr.propLevel.trim();
+  if (!id || typeof expr.value !== 'number' || !Number.isFinite(expr.value)) return false;
+  const now = ctx.getPropLevel?.(id) ?? 1;
+  return PROP_LEVEL_OPS[expr.op ?? '>='](now, expr.value);
+}
+
+function isHeldPropLeaf(x: ConditionExpr): x is HeldPropConditionLeaf {
+  const m = x as { heldProp?: unknown; flag?: unknown; quest?: unknown; scenario?: unknown; narrative?: unknown };
+  return (
+    typeof m.heldProp === 'string' &&
+    typeof m.flag !== 'string' &&
+    m.quest === undefined &&
+    m.scenario === undefined &&
+    m.narrative === undefined
+  );
+}
+
+const HELD_VITALITY_OPS: Record<NonNullable<HeldPropConditionLeaf['vitalityOp']>, (a: number, b: number) => boolean> = {
+  '<': (a, b) => a < b,
+  '<=': (a, b) => a <= b,
+  '>': (a, b) => a > b,
+  '>=': (a, b) => a >= b,
+};
+
+/** 一件挂件满不满足叶子写了的每一项；不满足时给出第一条不满足的原因（trace 用） */
+function heldPropMismatch(expr: HeldPropConditionLeaf, s: HeldPropConditionStatus): string | null {
+  const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+  if (str(expr.socket) && s.socket !== str(expr.socket)) return `挂点=${s.socket}`;
+  if (str(expr.prop) && s.prop !== str(expr.prop)) return `挂件=${s.prop}`;
+  if (str(expr.propState) && s.state !== str(expr.propState)) return `状态=${s.state}`;
+  if (typeof expr.burning === 'boolean' && s.burning !== expr.burning) return s.burning ? '燃着' : '没燃';
+  if (expr.lock && s.lock !== expr.lock) return `锁=${s.lock}`;
+  if (str(expr.effect) && !(s.effects ?? []).includes(str(expr.effect))) {
+    return `效果=${(s.effects ?? []).join('、') || '没有'}`;
+  }
+  const op = expr.vitalityOp ? HELD_VITALITY_OPS[expr.vitalityOp] : undefined;
+  if (op && typeof expr.vitality === 'number' && !op(s.vitality, expr.vitality)) return `火势=${s.vitality.toFixed(2)}`;
+  const fop = expr.fuelOp ? HELD_VITALITY_OPS[expr.fuelOp] : undefined;
+  if (fop && typeof expr.fuel === 'number' && !fop(s.fuel ?? 1, expr.fuel)) return `燃料=${(s.fuel ?? 1).toFixed(2)}`;
+  return null;
+}
+
+function evalHeldPropLeaf(expr: HeldPropConditionLeaf, ctx: ConditionEvalContext): boolean {
+  const who = expr.heldProp.trim();
+  if (!who) return false;
+  return (ctx.getHeldProps?.(who) ?? []).some((s) => heldPropMismatch(expr, s) === null);
+}
+
+function isBurnLeaf(x: ConditionExpr): x is BurnConditionLeaf {
+  const m = x as { burn?: unknown; burnState?: unknown; flag?: unknown; quest?: unknown; scenario?: unknown; narrative?: unknown };
+  return (
+    typeof m.burn === 'string' &&
+    typeof m.burnState === 'string' &&
+    typeof m.flag !== 'string' &&
+    m.quest === undefined &&
+    m.scenario === undefined &&
+    m.narrative === undefined
+  );
+}
+
+function evalBurnLeaf(expr: BurnConditionLeaf, ctx: ConditionEvalContext): boolean {
+  const id = expr.burn.trim();
+  const want = expr.burnState.trim();
+  if (!id || !want) return false;
+  const { scene, socket } = burnLeafWhere(expr);
+  const now = ctx.getBurnState?.(id, socket ? undefined : scene, socket) ?? null;
+  return now !== null && now === want;
+}
+
+/** burn 叶子问哪：写了 burnSocket = 手上的挂件（burnScene 不读）；否则场景实体 */
+function burnLeafWhere(expr: BurnConditionLeaf): { scene: string | undefined; socket: string | undefined } {
+  const socket = typeof expr.burnSocket === 'string' && expr.burnSocket.trim() ? expr.burnSocket.trim() : undefined;
+  const scene = typeof expr.burnScene === 'string' && expr.burnScene.trim() ? expr.burnScene.trim() : undefined;
+  return { scene, socket };
 }
 
 function isPlaneLeaf(x: ConditionExpr): x is { plane: string } {
@@ -423,6 +541,18 @@ export function evaluateConditionExpr(
     return evalVfxStateLeaf(expr, ctx);
   }
 
+  if (isHeldPropLeaf(expr)) {
+    return evalHeldPropLeaf(expr, ctx);
+  }
+
+  if (isPropLevelLeaf(expr)) {
+    return evalPropLevelLeaf(expr, ctx);
+  }
+
+  if (isBurnLeaf(expr)) {
+    return evalBurnLeaf(expr, ctx);
+  }
+
   if (isQuestLeaf(expr)) {
     const m = expr as { quest: string; questStatus?: string; status?: string };
     return evalQuestLeaf(m.quest, m.questStatus ?? m.status, ctx);
@@ -553,6 +683,39 @@ export function evaluateConditionExprWithTrace(
     const now = ctx.getVfxState?.(expr.vfx.trim()) ?? null;
     const label = `vfx「${expr.vfx.trim() || '—'}」期望=${expr.vfxState.trim() || '—'} 实际=${now ?? '不在场'}`;
     return { result: ok, trace: { kind: 'vfxState', result: ok, label } };
+  }
+
+  if (isHeldPropLeaf(expr)) {
+    const ok = evalHeldPropLeaf(expr, ctx);
+    const all = ctx.getHeldProps?.(expr.heldProp.trim()) ?? [];
+    const got = all.length === 0
+      ? '手上没东西'
+      : all.map((s) => `${s.socket}:${s.prop}/${s.state}${ok ? '' : `（${heldPropMismatch(expr, s) ?? '满足'}）`}`).join('；');
+    const want = [
+      expr.socket && `挂点=${expr.socket}`, expr.prop && `挂件=${expr.prop}`, expr.propState && `状态=${expr.propState}`,
+      typeof expr.burning === 'boolean' && (expr.burning ? '燃着' : '没燃'), expr.lock && `锁=${expr.lock}`,
+      expr.effect && `效果=${expr.effect}`,
+      expr.vitalityOp && typeof expr.vitality === 'number' && `火势${expr.vitalityOp}${expr.vitality}`,
+      expr.fuelOp && typeof expr.fuel === 'number' && `燃料${expr.fuelOp}${expr.fuel}`,
+    ].filter(Boolean).join(' ');
+    const label = `heldProp「${expr.heldProp.trim() || '—'}」期望=${want || '拿着东西'} 实际=${got}`;
+    return { result: ok, trace: { kind: 'heldProp', result: ok, label } };
+  }
+
+  if (isPropLevelLeaf(expr)) {
+    const ok = evalPropLevelLeaf(expr, ctx);
+    const now = ctx.getPropLevel?.(expr.propLevel.trim()) ?? 1;
+    const label = `propLevel「${expr.propLevel.trim() || '—'}」期望 ${expr.op ?? '>='} ${expr.value} 实际=${now}`;
+    return { result: ok, trace: { kind: 'propLevel', result: ok, label } };
+  }
+
+  if (isBurnLeaf(expr)) {
+    const ok = evalBurnLeaf(expr, ctx);
+    const { scene, socket } = burnLeafWhere(expr);
+    const now = ctx.getBurnState?.(expr.burn.trim(), socket ? undefined : scene, socket) ?? null;
+    const where = socket ? `${expr.burn.trim() || '—'} 手上 ${socket}` : `${scene ? `${scene}/` : ''}${expr.burn.trim() || '—'}`;
+    const label = `burn「${where}」期望=${expr.burnState.trim() || '—'} 实际=${now ?? '不是可燃实例'}`;
+    return { result: ok, trace: { kind: 'burn', result: ok, label } };
   }
 
   if (isQuestLeaf(expr)) {

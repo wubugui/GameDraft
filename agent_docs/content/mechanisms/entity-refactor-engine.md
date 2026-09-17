@@ -16,6 +16,7 @@ triggers:
 verified_by:
   - tools/editor/tests/test_entity_refactor.py
   - tools/editor/tests/test_scene_entity_duplicate_flow.py
+  - tools/editor/tests/test_scene_entity_clipboard.py
 last_governed: 2026-08-05
 ---
 
@@ -33,7 +34,7 @@ last_governed: 2026-08-05
 
 ## 怎么用
 
-- **人(策划)**:场景编辑器选中实体 → 工具栏「重构」菜单(迁移/改名/安全删除/复制/撤销),
+- **人(策划)**:场景编辑器选中实体 → 工具栏「重构」菜单(复制粘贴/创建副本/迁移/改名/安全删除/撤销),
   预览引用报告后确认;几何(坐标/polygon)迁移后需手工重摆。
 - **agent(无头)**:载入 `ProjectModel` → 先 `scan_entity_usages` 看影响面 → 调对应 op →
   `model.save_all()`;**引擎零磁盘写,落盘只经 save_all**。批量结构调整走这条路,别逐文件手改。
@@ -60,9 +61,17 @@ NPC 缺省 true,引擎自动钉成 false)与摆位口径(热点把整幅矩形�
   其余留报告——**宁可少改不错改**,报告里的"需人工"项必须处置。
 - 删除**不级联**:引用悬垂交 `validate-data` 报;`[tag:npc:]` 引用着全项目最后一个
   同 id 实例时删除被硬拒(否则整工程保存门 raise)。
-- **复制只支持同场景**:副本自动取号并**剥离过场绑定**(present 步按 id 只驱动原实体,
-  副本挂着绑定既无人驱动、`cutsceneOnly` 副本还会被常隐藏);跨场景复制未实现(需出站
-  引用扫描),别手搓代替。
+- **创建副本(duplicate,Ctrl+D)只做同场景**:副本自动取号并**剥离过场绑定**(present 步按 id
+  只驱动原实体,副本挂着绑定既无人驱动、`cutsceneOnly` 副本还会被常隐藏)。
+- **跨场景复制走剪贴板(Ctrl+C / Ctrl+V,2026-09-16)**:`build_entity_clip` 快照 → `plan_entity_paste`
+  (新画布据此构造命令)/ `paste_entity_clip`(老画布直写 + 快照撤销),两个画布同一份规则、互相能粘。
+  与 duplicate 同样剥离过场绑定;另有四条跨场景口径,别在调用侧改:
+  ① npc/hotspot 取号查**全工程**(owner 绑定按裸 id 全局解析,用回原 id = 副本静默继承叙事状态机),
+  zone/出生点只查目标场景;② 同场景引用原样(仍指原件),跨场景时指向**本批成员**的裸引用改到副本、
+  其余原样,目标场景解析不到的进 `danglingRefs`(`npc_soft`/`owner` 不算悬垂);③ 源场景有定义而
+  目标场景没有的 `group` 摘掉并报告(带过去 = 丢了时段归属的标签组);④ 原位粘贴零位移原值返回
+  (`_offset_num` 早退),与现有实体完全重叠才按步长错开,跨场景整批落在世界外改放世界中心。
+  报告措辞统一走 `describe_paste_report`。
 - 从叙事图/过场触发的对话图(可达集不封闭)裸引用检测有原理性留白,收尾 warning
   必须逐条处置,不能"没 error 就当对了"。
 - 实体改名会使老存档 sceneMemory 键失联(scenes 无 migrations 机制,拍板暂不管)——

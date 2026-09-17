@@ -54,8 +54,10 @@
             "hz": 3
           }
         },
-        "vfx": [
-          "incense_smoke"
+        "particles": [
+          {
+            "effect": "incense_smoke"
+          }
         ]
       },
       "out": {
@@ -64,6 +66,606 @@
         "lit": true
       }
     },
-    "vfx": []
+    "effects": [
+      "fire_repulsion"
+    ]
+  },
+  "torch": {
+    "label": "火把",
+    "image": "/resources/runtime/images/props/torch_wood.png",
+    "anchorX": 0.5,
+    "anchorY": 0.85,
+    "rotation": -35,
+    "scale": 0.26,
+    "persistent": true,
+    "firePoint": [
+      0.455,
+      0.04
+    ],
+    "igniter": {
+      "flameLength": 20
+    },
+    "defaultState": "lit",
+    "light": {
+      "kelvin": 1800,
+      "intensity": 0.1,
+      "range": 500,
+      "softeningRadius": 12,
+      "flicker": {
+        "kind": "flame",
+        "diameter": 0.1
+      },
+      "castShadow": false
+    },
+    "blowout": {
+      "windSpeed": 8,
+      "drainSeconds": 4,
+      "recoverSeconds": 3,
+      "emberBelow": 0.35,
+      "fadeMs": 500
+    },
+    "playerControl": {},
+    "states": {
+      "lit": {
+        "label": "点着",
+        "burn": 1,
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "guarding": {
+        "label": "侧身护着火",
+        "burn": 0.75,
+        "windShelter": 0.8,
+        "light": {
+          "intensity": 0.08
+        },
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "ember": {
+        "label": "只剩红炭",
+        "igniter": {
+          "flameLength": 5
+        },
+        "light": {
+          "intensity": 0.014,
+          "range": 160,
+          "flicker": {
+            "kind": "ember",
+            "diameter": 0.1
+          }
+        },
+        "particles": [
+          {
+            "effect": "torch_ember"
+          }
+        ],
+        "blowout": {
+          "windSpeed": 8,
+          "drainSeconds": 10,
+          "recoverSeconds": 3,
+          "emberBelow": 0.35,
+          "fadeMs": 500
+        }
+      },
+      "out": {
+        "label": "灭了",
+        "light": null,
+        "onEnterActions": [
+          {
+            "type": "playPropVfx",
+            "params": {
+              "effect": "torch_snuff_smoke"
+            }
+          }
+        ]
+      },
+      "unlit": {
+        "label": "拿着没点",
+        "light": null,
+        "blowout": null
+      }
+    },
+    "effects": [
+      "fire_repulsion"
+    ]
+  },
+  "xianteng_torch": {
+    "label": "纤藤火把",
+    "image": "/resources/runtime/images/props/torch_xianteng.png",
+    "anchorX": 0.5,
+    "anchorY": 0.82,
+    "rotation": -35,
+    "scale": 0.26,
+    "persistent": true,
+    "firePoint": [
+      0.43,
+      0.04
+    ],
+    "igniter": {
+      "flameLength": 20
+    },
+    "defaultState": "lit",
+    "light": {
+      "kelvin": 1800,
+      "intensity": 0.09,
+      "range": 450,
+      "softeningRadius": 12,
+      "flicker": {
+        "kind": "flame",
+        "diameter": 0.1
+      },
+      "castShadow": false
+    },
+    "blowout": {
+      "windSpeed": 8,
+      "drainSeconds": 4,
+      "recoverSeconds": 3,
+      "emberBelow": 0.35,
+      "fadeMs": 500
+    },
+    "playerControl": {},
+    "states": {
+      "lit": {
+        "label": "点着",
+        "burn": 1,
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "guarding": {
+        "label": "侧身护着火",
+        "burn": 0.75,
+        "windShelter": 0.8,
+        "light": {
+          "intensity": 0.07
+        },
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "ember": {
+        "label": "只剩红炭",
+        "igniter": {
+          "flameLength": 5
+        },
+        "light": {
+          "intensity": 0.014,
+          "range": 160,
+          "flicker": {
+            "kind": "ember",
+            "diameter": 0.1
+          }
+        },
+        "particles": [
+          {
+            "effect": "torch_ember"
+          }
+        ],
+        "blowout": {
+          "windSpeed": 8,
+          "drainSeconds": 10,
+          "recoverSeconds": 3,
+          "emberBelow": 0.35,
+          "fadeMs": 500
+        }
+      },
+      "out": {
+        "label": "灭了",
+        "light": null,
+        "onEnterActions": [
+          {
+            "type": "playPropVfx",
+            "params": {
+              "effect": "torch_snuff_smoke"
+            }
+          }
+        ]
+      },
+      "unlit": {
+        "label": "拿着没点",
+        "light": null,
+        "blowout": null
+      }
+    },
+    "levels": [
+      {
+        "label": "旧纤藤",
+        "note": "捡来的那截，什么都没做",
+        "effects": [
+          "fire_repulsion"
+        ]
+      },
+      {
+        "label": "裹布浸桐油",
+        "effects": [
+          "oiled"
+        ],
+        "note": "正式图：旧纤藤上段裹粗麻布浸桐油；浅色布头与裸藤区分。GPT Image 生成，34×192 运行时贴图，沿用握持点与起火点。",
+        "image": "/resources/runtime/images/props/torch_xianteng_l2_gpt.png"
+      },
+      {
+        "label": "铁箍加固",
+        "effects": [
+          "oiled",
+          "ironband"
+        ],
+        "note": "正式图：浸油布头加宽铁领和下箍；暗铁与浅布分区在小尺寸仍可辨。GPT Image 生成，34×192 运行时贴图，沿用握持点与起火点。",
+        "image": "/resources/runtime/images/props/torch_xianteng_l3_gpt.png"
+      }
+    ]
+  },
+  "songming_torch": {
+    "label": "松明",
+    "image": "/resources/runtime/images/props/torch_wood.png",
+    "anchorX": 0.5,
+    "anchorY": 0.82,
+    "rotation": -35,
+    "scale": 0.26,
+    "persistent": true,
+    "firePoint": [
+      0.43,
+      0.04
+    ],
+    "igniter": {
+      "flameLength": 20
+    },
+    "defaultState": "unlit",
+    "effects": [
+      "resin_hot"
+    ],
+    "fuel": {
+      "seconds": 150,
+      "onSpentActions": [
+        {
+          "type": "removeItem",
+          "params": {
+            "id": "songming",
+            "count": 1
+          }
+        }
+      ]
+    },
+    "light": {
+      "kelvin": 1800,
+      "intensity": 0.09,
+      "range": 450,
+      "softeningRadius": 12,
+      "flicker": {
+        "kind": "flame",
+        "diameter": 0.1
+      },
+      "castShadow": false
+    },
+    "blowout": {
+      "windSpeed": 8,
+      "drainSeconds": 4,
+      "recoverSeconds": 3,
+      "emberBelow": 0.35,
+      "fadeMs": 500
+    },
+    "playerControl": {},
+    "states": {
+      "lit": {
+        "label": "点着",
+        "burn": 1,
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "guarding": {
+        "label": "侧身护火",
+        "burn": 0.75,
+        "windShelter": 0.8,
+        "light": {
+          "intensity": 0.0702
+        },
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "ember": {
+        "label": "只剩残炭",
+        "light": {
+          "intensity": 0.014,
+          "range": 160,
+          "flicker": {
+            "kind": "ember",
+            "diameter": 0.1
+          }
+        },
+        "igniter": {
+          "flameLength": 5
+        },
+        "particles": [
+          {
+            "effect": "torch_ember"
+          }
+        ],
+        "blowout": {
+          "windSpeed": 8,
+          "drainSeconds": 10,
+          "recoverSeconds": 3,
+          "emberBelow": 0.35,
+          "fadeMs": 500
+        }
+      },
+      "out": {
+        "label": "灭了",
+        "light": null,
+        "onEnterActions": [
+          {
+            "type": "playPropVfx",
+            "params": {
+              "effect": "torch_snuff_smoke"
+            }
+          }
+        ]
+      },
+      "unlit": {
+        "label": "拿着没点",
+        "light": null,
+        "blowout": null
+      }
+    }
+  },
+  "shichai_torch": {
+    "label": "湿柴火把",
+    "image": "/resources/runtime/images/props/torch_wood.png",
+    "anchorX": 0.5,
+    "anchorY": 0.82,
+    "rotation": -35,
+    "scale": 0.26,
+    "persistent": true,
+    "firePoint": [
+      0.43,
+      0.04
+    ],
+    "igniter": {
+      "flameLength": 20
+    },
+    "defaultState": "unlit",
+    "effects": [
+      "damp_smoke",
+      "fire_repulsion"
+    ],
+    "fuel": {
+      "seconds": 240,
+      "onSpentActions": [
+        {
+          "type": "removeItem",
+          "params": {
+            "id": "shichai",
+            "count": 1
+          }
+        }
+      ]
+    },
+    "light": {
+      "kelvin": 1800,
+      "intensity": 0.09,
+      "range": 450,
+      "softeningRadius": 12,
+      "flicker": {
+        "kind": "flame",
+        "diameter": 0.1
+      },
+      "castShadow": false
+    },
+    "blowout": {
+      "windSpeed": 8,
+      "drainSeconds": 4,
+      "recoverSeconds": 3,
+      "emberBelow": 0.35,
+      "fadeMs": 500
+    },
+    "playerControl": {},
+    "states": {
+      "lit": {
+        "label": "点着",
+        "burn": 1,
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "guarding": {
+        "label": "侧身护火",
+        "burn": 0.75,
+        "windShelter": 0.8,
+        "light": {
+          "intensity": 0.0702
+        },
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "ember": {
+        "label": "只剩残炭",
+        "light": {
+          "intensity": 0.014,
+          "range": 160,
+          "flicker": {
+            "kind": "ember",
+            "diameter": 0.1
+          }
+        },
+        "igniter": {
+          "flameLength": 5
+        },
+        "particles": [
+          {
+            "effect": "torch_ember"
+          }
+        ],
+        "blowout": {
+          "windSpeed": 8,
+          "drainSeconds": 10,
+          "recoverSeconds": 3,
+          "emberBelow": 0.35,
+          "fadeMs": 500
+        }
+      },
+      "out": {
+        "label": "灭了",
+        "light": null,
+        "onEnterActions": [
+          {
+            "type": "playPropVfx",
+            "params": {
+              "effect": "torch_snuff_smoke"
+            }
+          }
+        ]
+      },
+      "unlit": {
+        "label": "拿着没点",
+        "light": null,
+        "blowout": null
+      }
+    }
+  },
+  "xiang_torch": {
+    "label": "香火把",
+    "image": "/resources/runtime/images/props/torch_wood.png",
+    "anchorX": 0.5,
+    "anchorY": 0.82,
+    "rotation": -35,
+    "scale": 0.26,
+    "persistent": true,
+    "firePoint": [
+      0.43,
+      0.04
+    ],
+    "igniter": {
+      "flameLength": 20
+    },
+    "defaultState": "unlit",
+    "effects": [
+      "incense_calm",
+      "mugwort"
+    ],
+    "fuel": {
+      "seconds": 200,
+      "onSpentActions": [
+        {
+          "type": "removeItem",
+          "params": {
+            "id": "xianghuoba",
+            "count": 1
+          }
+        }
+      ]
+    },
+    "light": {
+      "kelvin": 1800,
+      "intensity": 0.09,
+      "range": 450,
+      "softeningRadius": 12,
+      "flicker": {
+        "kind": "flame",
+        "diameter": 0.1
+      },
+      "castShadow": false
+    },
+    "blowout": {
+      "windSpeed": 8,
+      "drainSeconds": 4,
+      "recoverSeconds": 3,
+      "emberBelow": 0.35,
+      "fadeMs": 500
+    },
+    "playerControl": {},
+    "states": {
+      "lit": {
+        "label": "点着",
+        "burn": 1,
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "guarding": {
+        "label": "侧身护火",
+        "burn": 0.75,
+        "windShelter": 0.8,
+        "light": {
+          "intensity": 0.0702
+        },
+        "particles": [
+          {
+            "effect": "torch_flame"
+          }
+        ]
+      },
+      "ember": {
+        "label": "只剩残炭",
+        "light": {
+          "intensity": 0.014,
+          "range": 160,
+          "flicker": {
+            "kind": "ember",
+            "diameter": 0.1
+          }
+        },
+        "igniter": {
+          "flameLength": 5
+        },
+        "particles": [
+          {
+            "effect": "torch_ember"
+          }
+        ],
+        "blowout": {
+          "windSpeed": 8,
+          "drainSeconds": 10,
+          "recoverSeconds": 3,
+          "emberBelow": 0.35,
+          "fadeMs": 500
+        }
+      },
+      "out": {
+        "label": "灭了",
+        "light": null,
+        "onEnterActions": [
+          {
+            "type": "playPropVfx",
+            "params": {
+              "effect": "torch_snuff_smoke"
+            }
+          }
+        ]
+      },
+      "unlit": {
+        "label": "拿着没点",
+        "light": null,
+        "blowout": null
+      }
+    }
+  },
+  "burn_demo_xiang": {
+    "label": "线香（可燃挂件样例）",
+    "persistent": true,
+    "burnable": {
+      "template": "incense_stick"
+    }
   }
 }

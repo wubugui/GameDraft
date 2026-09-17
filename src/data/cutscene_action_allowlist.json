@@ -28,6 +28,7 @@
   "setHotspotDisplayImage",
   "tempSetHotspotDisplayFacing",
   "playSfx",
+  "sceneWindGust",
   "playSceneAmbient",
   "stopSceneAmbient",
   "playBgm",
@@ -48,6 +49,7 @@
   "setSmellVisible",
   "playVfx",
   "stopVfx",
+  "playPropVfx",
   "setVfxState",
   "emitVfxField",
   "fadeLight"

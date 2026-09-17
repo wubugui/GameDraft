@@ -45,6 +45,9 @@ def program_errors(emitter: dict) -> list[str]:
     for k in CONTRACT["influenceKeys"]:
         if not isinstance(inf.get(k), bool):
             errors.append(f"simulation.influences.{k} 必须为布尔")
+    for k in CONTRACT["optionalInfluenceKeys"]:
+        if k in inf and not isinstance(inf[k], bool):
+            errors.append(f"simulation.influences.{k} 必须为布尔")
     recycle = p.get("recycle") if isinstance(p.get("recycle"), dict) else {}
     if recycle.get("mode") not in CONTRACT["recycleModes"]:
         errors.append("simulation.recycle.mode 无效")
@@ -64,4 +67,6 @@ def program_errors(emitter: dict) -> list[str]:
         errors.append("群体由巢管理出生与返回，不能作为子发射器或使用表面铺撒 / 补回")
     if solver == "flock" and any(inf.get(k) for k in ("sceneWind", "wind", "airflow")):
         errors.append("群体运动模型不支持物理风输入；使用群体刺激响应")
+    if solver == "flock" and inf.get("contact"):
+        errors.append("群体运动模型不支持接触冲量；使用群体刺激响应")
     return errors

@@ -1,6 +1,10 @@
 {
   "id": "teahouse_haze",
   "label": "茶馆 · 满堂烟气",
+  "prewarmSeconds": [
+    6,
+    12
+  ],
   "emitters": [
     {
       "id": "haze",
@@ -10,11 +14,11 @@
         0
       ],
       "appearance": {
-        "image": "/resources/runtime/images/vfx/smoke_puff.png",
-        "sizeWu": 125,
+        "image": "/resources/runtime/images/vfx/teahouse_smoke_veil_v1.png",
+        "sizeWu": 260,
         "sizeJitter": [
-          0.8,
-          1.2
+          0.65,
+          1.35
         ],
         "sizeOverLife": [
           [
@@ -22,12 +26,12 @@
             0.8
           ],
           [
-            0.4,
+            0.6,
             1.1
           ],
           [
             1,
-            1.45
+            1.35
           ]
         ],
         "alphaOverLife": [
@@ -36,12 +40,12 @@
             0
           ],
           [
-            0.12,
-            0.22
+            0.18,
+            0.23
           ],
           [
-            0.7,
-            0.16
+            0.65,
+            0.18
           ],
           [
             1,
@@ -49,62 +53,182 @@
           ]
         ],
         "tint": [
-          0.69,
-          0.72,
-          0.72
+          0.62,
+          0.63,
+          0.6
         ],
         "lit": false,
-        "softEdgeWu": 25,
+        "softEdgeWu": 28,
         "spin": {
           "rate": [
-            -3,
-            4
+            -1.5,
+            2
           ],
-          "randomPhase": true
+          "randomPhase": false
         }
       },
       "spawn": {
-        "max": 24,
-        "rate": 2.3,
-        "burst": 16,
+        "max": 15,
+        "rate": 1.15,
+        "intervalJitter": 0.6,
+        "burst": 9,
         "shape": {
           "kind": "box",
           "size": [
-            220,
-            18,
-            60
+            170,
+            95,
+            95
           ]
         },
         "speed": [
-          1,
-          2
+          0.3,
+          1.5
         ],
         "direction": [
           0,
           1,
           0
         ],
-        "spread": 20
+        "spread": 35
       },
       "motion": {
-        "drag": 1.2,
+        "drag": 0.65,
         "wind": [
-          7,
+          3,
           0,
-          -1
+          -0.6
         ],
-        "buoyancy": 3,
+        "buoyancy": 0.9,
         "turbulence": {
-          "strength": 3,
-          "scale": 65,
-          "speed": 0.12
+          "strength": 2.5,
+          "scale": 90,
+          "speed": 0.1
         },
-        "maxSpeed": 10
+        "maxSpeed": 7,
+        "stimulus": {
+          "fear": {
+            "player:motion": 0.3
+          },
+          "accel": 8
+        }
       },
       "life": {
         "seconds": [
-          9,
-          12
+          10,
+          15
+        ]
+      }
+    },
+    {
+      "id": "stale_air",
+      "offset": [
+        0,
+        12,
+        -12
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/smoke_puff.png",
+        "sizeWu": 190,
+        "sizeJitter": [
+          0.8,
+          1.4
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.8
+          ],
+          [
+            0.6,
+            1.1
+          ],
+          [
+            1,
+            1.35
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.2,
+            0.105
+          ],
+          [
+            0.75,
+            0.08
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.59,
+          0.59,
+          0.55
+        ],
+        "lit": false,
+        "softEdgeWu": 28,
+        "spin": {
+          "rate": [
+            -1,
+            1
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 10,
+        "rate": 0.65,
+        "intervalJitter": 0.6,
+        "burst": 5,
+        "shape": {
+          "kind": "box",
+          "size": [
+            180,
+            95,
+            90
+          ]
+        },
+        "speed": [
+          0.3,
+          1.5
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 35
+      },
+      "motion": {
+        "drag": 0.65,
+        "wind": [
+          -1.5,
+          0,
+          0.5
+        ],
+        "buoyancy": 0.9,
+        "turbulence": {
+          "strength": 1.5,
+          "scale": 90,
+          "speed": 0.1
+        },
+        "maxSpeed": 7,
+        "stimulus": {
+          "fear": {
+            "player:motion": 0.3
+          },
+          "accel": 8
+        }
+      },
+      "life": {
+        "seconds": [
+          12,
+          15
         ]
       }
     }
@@ -118,6 +242,6 @@
       "h": 215,
       "surface": "ground"
     },
-    "note": "离地胸口至头顶高度的室内积烟；ground 锚点 h 为真正世界竖直离地高度，避免 shell 法线偏移。"
+    "note": "后排、梁下、左右两侧与前景边缘分层积烟；不同高度和独立种子，中央人物保持可读。ground.h 为真实竖直高度，烟气悬空。"
   }
 }

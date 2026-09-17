@@ -2,6 +2,7 @@ import { EventBus } from './EventBus';
 import { earHeightWu, type AcousticTap } from '../audio/acousticSpace';
 import { RuntimeAcousticsSync } from '../dev/runtimeAcousticsSync';
 import { RuntimeVfxSync, phaseRequestNeedsAdvance } from '../dev/runtimeVfxSync';
+import { RuntimeBurnSync } from '../dev/runtimeBurnSync';
 import type { SceneSpaceGeometry, Vec3 } from '../utils/sceneSpace';
 import { FlagStore, type FlagRegistryJson } from './FlagStore';
 import { applyDevRuntimeCommand } from './devRuntimeCommands';
@@ -51,6 +52,10 @@ import { PressureHoldUI } from '../ui/PressureHoldUI';
 import { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
 import { SignalCueManager } from '../systems/SignalCueManager';
 import { HealthSystem } from '../systems/HealthSystem';
+import { RetrySystem } from '../systems/RetrySystem';
+import { HealthThreatSystem, type HealthThreatSource } from '../systems/HealthThreatSystem';
+import { FireProtectionSystem, type ProtectionFireSource } from '../systems/FireProtectionSystem';
+import type { ConditionExpr } from '../data/types';
 import { SmellSystem } from '../systems/SmellSystem';
 import { FootstepSystem, type FootstepEmitter, type FootstepSpatialContext } from '../systems/FootstepSystem';
 import {
@@ -154,9 +159,9 @@ import {
 import {
   parsePropPresets,
   resolvePropAttach,
+  type PropFlameDef,
   type PropPresetTable,
-  type ResolvedPropAttach,
-} from '../data/propPresets';
+  type ResolvedPropAttach, parsePropEffects, type PropEffectTable } from '../data/propPresets';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import { resolvePathRelativeToAnimManifest } from './assetPath';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
@@ -228,15 +233,37 @@ import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { resolveText, type ResolveContext } from './resolveText';
 import { VfxSystem } from '../systems/vfx/VfxSystem';
-import { FLICKER_PUSH_HZ_CHOICES, HeldPropSystem } from '../systems/heldProp/HeldPropSystem';
+import { BurnSystem, type BurnEntityHost, type BurnHeldHost } from '../systems/burn/BurnSystem';
+import { burnEntityPlacement, burnFrameFromCorners, burnPlacementFrame } from '../systems/burn/burnGeometry';
+import { burnableWorldSize, type ResolvedBurnable } from '../data/burnables';
+import { IgnitePerformer } from '../systems/burn/ignitePerformer';
+import { BurnRenderer } from '../rendering/burn/BurnRenderer';
+import { loadBurnImageData } from '../rendering/burn/burnImageData';
+import type { VfxFireSegment } from '../data/types';
+import { FLICKER_PUSH_HZ_CHOICES, HeldPropSystem, PROP_CONTROL_KEYS, type HeldIgniteResult } from '../systems/heldProp/HeldPropSystem';
 import { createFieldVfxSpace, createPlanarVfxSpace, type VfxSpace } from '../systems/vfx/vfxSpace';
 import { RuntimeSwaySync, swayPreviewDirUrl } from '../dev/runtimeSwaySync';
 import { RuntimeTerrainSync, terrainPreviewDirUrl } from '../dev/runtimeTerrainSync';
 import { SceneWindState, sampleSceneWind } from '../utils/sceneWind';
 import { SwayBackground, findSwayHostSprite, loadBackgroundSwayInput, swayInsertIndex } from '../rendering/backgroundSway';
-import { VfxRenderer } from '../rendering/vfx/VfxRenderer';
+import { VfxRenderer, vfxGlPrograms, type VfxSortHost } from '../rendering/vfx/VfxRenderer';
 import { VfxConfineOverlay } from '../rendering/vfx/VfxConfineOverlay';
-import { socketLightWorld, viewDirWorld } from '../utils/sceneSpace';
+import { GlProgramWarmup, glWarmupTargetOf } from '../rendering/glProgramWarmup';
+import { socketLightWorld, viewDirWorld, worldToScene } from '../utils/sceneSpace';
+import { FireHintMarker } from '../rendering/FireHintMarker';
+
+/**
+ * 揭幕前闸的限时（毫秒）。过了就先揭幕：没交给 Pixi 的 shader 第一次用到时自己编（会卡），
+ * 没跑完的粒子预热按帧接着跑。shader 那头放得宽——等在遮罩下总比停在可见画面上强。
+ */
+const REVEAL_GATE_SHADER_TIMEOUT_MS = 15000;
+const REVEAL_GATE_VFX_TIMEOUT_MS = 8000;
+
+/** 「嗅」键。不能与 `PROP_CONTROL_KEYS` 撞（护火占 Q、点火占 T） */
+const SNIFF_KEY = 'KeyV';
+
+/** 演出里动态生成的可燃物（`spawn.burnable`）玩家能按 E 点时的交互范围（wu；与样例可燃热点同尺度） */
+const SPAWNED_BURNABLE_INTERACTION_RANGE = 60;
 import { mergeGameConfig } from './gameConfigMerge';
 import { BubbleChatterSystem, type BubbleSpeakerRef } from '../systems/BubbleChatterSystem';
 import { PlayerIdleBehaviorSystem } from '../systems/PlayerIdleBehaviorSystem';
@@ -257,7 +284,7 @@ import {
   type ScriptedSpeakerEntity,
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
-import { Container, Culler, Graphics, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { Container, Culler, Graphics, Rectangle, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
 import { bakeKeyFromBackground, dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
 import type { TrajectoryAsset, TrajectoryKeyframe } from '../data/types';
 import type { TrajectoryEndReason } from '../systems/TrajectorySystem';
@@ -570,6 +597,7 @@ export class Game {
   /** 声学工作台 ↔ 游戏的实时联动（游戏只是预览器）。DEV 专用。 */
   private acousticsSync: RuntimeAcousticsSync | null = null;
   private vfxSync: RuntimeVfxSync | null = null;
+  private burnSync: RuntimeBurnSync | null = null;
   /** 运行时编辑模式（DEV 专用）。null = 生产构建，或还没装配到。 */
   private authoringMode: AuthoringMode | null = null;
   private unsubAuthoringHotkey: (() => void) | null = null;
@@ -599,6 +627,11 @@ export class Game {
   private bubbleChatterSystem: BubbleChatterSystem;
   private playerIdleBehaviorSystem: PlayerIdleBehaviorSystem;
   private healthSystem: HealthSystem;
+  private retrySystem: RetrySystem;
+  private healthThreatSystem = new HealthThreatSystem();
+  private fireProtectionSystem = new FireProtectionSystem();
+  private yinThreatsVisible = false;
+  private systemNotePauseDepth = 0;
   private smellSystem: SmellSystem;
   private planeReconciler: PlaneReconciler;
   private npcScheduleSystem: NpcScheduleSystem;
@@ -650,10 +683,23 @@ export class Game {
    */
   private heldPropSystem: HeldPropSystem;
   /**
+   * 燃烧系统（A3.8）：可燃物（热点）烧的状态进存档、离场照推；表现（燃烧滤镜 / 火苗 / 火光 / 火焰段）只在当前场景。
+   * 点火表演（`ignitePerformer`）在 ActionSequence 里走位 + 播点火动作，接触帧点着。
+   */
+  private burnSystem: BurnSystem;
+  private readonly burnRenderer = new BurnRenderer();
+  private ignitePerformer: IgnitePerformer;
+  /** 燃烧系统读的"这个场景的几何定了"：scene:ready 之后置当前场景 id，beforeUnload 清 */
+  private burnSceneReadyId: string | null = null;
+  private readonly heldFireScratch: VfxFireSegment[] = [];
+  /** 玩家手上那支火「快灭了」的符号（火边、entityLayer 最前档；表现归组装层，数据由挂件系统逐帧推） */
+  private readonly fireHintMarker = new FireHintMarker(() => this.renderer?.entityLayer ?? null);
+  /**
    * 场景风：一份参数 + 一个钟。粒子（经 `VfxSystem.getWind`）与背景草木摆动（`swayBackground`）
    * 读的是同一个，所以一阵风两边同一拍（见 [[scene-wind]]）。组装层持有，逐帧推钟。
    */
-  private readonly sceneWind = new SceneWindState();
+  private readonly sceneWind = new SceneWindState((id, volume, weight) =>
+    this.audioManager?.setAmbientPulse(id, volume, weight));
   /** 风采样的复用缓冲（热路径零分配，与粒子侧同一习惯） */
   private readonly windSampleTmp = new Float32Array(3);
   /** "这个场景没有光照、手持灯不会亮"只报一次的场景 id（见 applySceneDynamicLights） */
@@ -677,6 +723,8 @@ export class Game {
   /** 当前这份拆层装了哪几个纹理 URL（热重载时按它把上一份丢掉，否则每推一次漏一套显存） */
   private swayTexUrls: string[] = [];
   private vfxRenderer: VfxRenderer | null = null;
+  /** 粒子 shader 预编译：开局后台编、切场景遮罩下交给 Pixi（见 `rendering/glProgramWarmup`） */
+  private glProgramWarmup: GlProgramWarmup | null = null;
   /** F2「粒子」页勾上才建：粒子区域的框线 + 边带内沿（调试叠加，不入档、不持久） */
   private vfxConfineOverlay: VfxConfineOverlay | null = null;
 
@@ -820,6 +868,8 @@ export class Game {
   private overlayImageRegistry: OverlayImageTable = {};
   /** `prop_presets.json`：挂件的支点/自转/缩放登记一次，attachToSocket 用 prop 引用 */
   private propPresetRegistry: PropPresetTable = {};
+  /** 挂件效果块库（`prop_effects.json`，临时火把的脾气）；缺文件 = 空表 */
+  private propEffectRegistry: PropEffectTable = {};
 
   private gameConfig: GameConfig = {
     initialScene: '',
@@ -908,6 +958,7 @@ export class Game {
     this.pressureHoldManager = new PressureHoldManager(this.actionExecutor);
     this.signalCueManager = new SignalCueManager(this.actionExecutor);
     this.healthSystem = new HealthSystem(this.eventBus, this.flagStore, this.actionExecutor);
+    this.retrySystem = new RetrySystem();
     this.smellSystem = new SmellSystem(this.eventBus, this.flagStore);
     this.planeReconciler = new PlaneReconciler(this.eventBus);
     this.npcScheduleSystem = new NpcScheduleSystem(this.eventBus);
@@ -974,14 +1025,17 @@ export class Game {
      */
     this.footstepSystem = new FootstepSystem({
       // 脚步是有物理位置的声源：脚点世界坐标进空间音总线，距离 / 声像 / 回音按听者与脚点的几何算
-      playAt: (id, world, options) => {
-        // 脚步落地也是群体的刺激源（`sfx:footstep` 标签，物种档案决定怕不怕）
-        this.vfxSystem?.emitField({ kind: 'fear', tag: 'sfx:footstep', radius: 220, strength: 0.6, duration: 0.25 }, world);
-        return this.audioManager.playSfxAt(id, { x: world[0], y: world[1], z: world[2] }, options);
-      },
-      // 音频没解锁时不发声：发了只会排队，解锁那一刻按过时的位置一齐放出来
+      playAt: (id, world, options) => this.audioManager.playSfxAt(id, { x: world[0], y: world[1], z: world[2] }, options),
+      // 音频没解锁时不发声：发了只会排队，解锁那一刻按过时的位置一齐放出来（只管声音，落脚事件照发）
       getSpatialContext: () => (this.footstepConfig && this.audioManager.isAudioUnlocked()
         ? { resolver: this.buildAudioSpaceResolver() } : null),
+      // 脚步落地也是群体的刺激源（`sfx:footstep` 标签，物种档案决定怕不怕）。
+      // 🔴 脚点必须经粒子自己的空间换算：playAt 拿到的是音频坐标（透视场景做过纵深重整），
+      //   借来当刺激点时，茶馆实测说书人第一步离脚边虫群 600 wu 以上（半径才 220）；也不许跟着音频解锁门控。
+      onContact: (c) => {
+        const w = this.vfxSystem?.sceneToWorld(c.contactX, c.contactY, 0);
+        if (w) this.vfxSystem.emitField({ kind: 'fear', tag: 'sfx:footstep', radius: 220, strength: 0.6, duration: 0.25 }, w);
+      },
       resolveSetAt: (x, y) => this.resolveFootstepSetAt(x, y),
       getConfig: () => this.footstepConfig,
     });
@@ -1007,6 +1061,9 @@ export class Game {
       playSfxAt: (id, at) => { this.audioManager.playSfxAt(id, { x: at[0], y: at[1], z: at[2] }); },
       log: (m) => { if (import.meta.env.DEV) console.warn(`[vfx] ${m}`); this.debugPanelUI?.log(`[vfx] ${m}`); },
       getWind: () => ({ params: this.sceneWind.params, time: this.sceneWind.time }),
+      // 可燃薄片（纸钱）烧没了哪几张：燃烧系统进档、建模拟时恢复（燃烧系统在下面构造，闭包里晚绑定）
+      burntPlatesOf: (instanceId) => this.burnSystem?.burntPlatesOf(instanceId) ?? null,
+      onPlatesBurnt: (instanceId, emitterIndex, slots) => this.burnSystem?.onPlatesBurnt(instanceId, emitterIndex, slots),
     });
     /**
      * 手持挂件与运行时灯。依赖同样全走窄回调：
@@ -1017,6 +1074,16 @@ export class Game {
      */
     this.heldPropSystem = new HeldPropSystem({
       getPreset: (id) => this.propPresetRegistry[id],
+      getEffect: (id) => this.propEffectRegistry[id],
+      // 效果块的场（驱虫 / 招东西）：与 emitVfxField 同一套场，handle 认一份、喂 null 撤掉
+      setPropField: (handle, field, world) => {
+        if (!field || !world) { this.vfxSystem.removeField(handle); return; }
+        this.vfxSystem.emitField(
+          { kind: field.kind, tag: field.tag, radius: field.radius, strength: field.strength },
+          [world[0], world[1], world[2]],
+          handle,
+        );
+      },
       // 相对接地点、已穿过外层实体变换：NPC 转身只翻外层容器，用本容器局部位姿的话朝左时灯落在另一侧
       getSocketLocalPose: (targetId, socket) =>
         this.spriteEntityOf(targetId)?.getSocketOffsetFromContact(socket) ?? null,
@@ -1037,16 +1104,170 @@ export class Game {
         sampleSceneWind(p, this.sceneWind.time, world[0], world[2], heightWu, this.windSampleTmp);
         return Math.hypot(this.windSampleTmp[0], this.windSampleTmp[2]);
       },
+      // 同一份风参数、同一个钟、同一个采样点——帧动画火苗往哪倒与它闪得多凶读的是同一阵风
+      windVectorAt: (world, heightWu) => {
+        const p = this.sceneWind.params;
+        if (!p) return [0, 0, 0];
+        sampleSceneWind(p, this.sceneWind.time, world[0], world[2], heightWu, this.windSampleTmp);
+        return [this.windSampleTmp[0], this.windSampleTmp[1], this.windSampleTmp[2]];
+      },
+      // 与灯位同一份光照几何（铁律 0：世界 → 画面只走 utils/sceneSpace 这一处）
+      worldToScene: (world) => {
+        const geo = this.buildLightSpaceGeometry();
+        return geo ? worldToScene(geo, world) : null;
+      },
+      setFlameView: (targetId, socket, params) => this.spriteEntityOf(targetId)?.setAttachmentFlame(socket, params),
+      // 起火点 / 粒子挂点：贴图上的点穿过挂件自己的变换，再走与挂点同一套外层换算
+      getPropPointLocalPose: (targetId, socket, point) =>
+        this.spriteEntityOf(targetId)?.getAttachmentPointOffsetFromContact(socket, point[0], point[1]) ?? null,
+      // 玩家操作手上的火：只在探索态受理（演出 / 对话 / 面板里给 null，护火照常松开）。点火键用"消费"读——
+      // 固定步长下一帧可能走好几个 tick，普通读会让一次按键在同一帧里熄了又点
+      // 「快灭了」符号：挂 entityLayer 最前档，大小按宿主身高
+      setFireHint: (hint) => {
+        if (!hint) { this.fireHintMarker.setTarget(null); return; }
+        const body = this.spriteEntityOf(hint.targetId)?.getWorldSize().height ?? 0;
+        this.fireHintMarker.setTarget({ ...hint, bodyHeightWu: body });
+      },
+      // 挂件的玩法事实变了 ⇒ 叙事 reactive 条件重评（heldProp 叶子；接收方微任务合批）
+      onHeldChanged: () => this.eventBus.emit('heldProp:changed', {}),
+      // 可燃挂件（A3.8）：收起来 = 熄灭 + 记成包里那根；"在不在烧"问燃烧系统
+      onBurnablePropRemoved: (targetId, socket, propId) => this.burnSystem?.onHeldRemoved(targetId, socket, propId),
+      burnablePropBurning: (targetId, socket) => this.burnSystem?.statusOf(targetId, undefined, socket) === 'burning',
+      // 火种（A3.7）：当前火种住在背包里，挂件系统只问"还能不能点、点一次用掉一次"
+      igniterStatus: () => {
+        const st = this.inventoryManager.getActiveIgniter();
+        return st ? { name: this.resolveDisplayText(st.name), seconds: st.seconds, windLimit: st.windLimit, available: st.available } : null;
+      },
+      consumeIgniterUse: () => {
+        const st = this.inventoryManager.consumeIgniterUse();
+        return st ? { name: this.resolveDisplayText(st.name), seconds: st.seconds, windLimit: st.windLimit } : null;
+      },
+      onIgniteResult: (result, name) => this.onPlayerIgniteResult(result, name),
+      readPlayerPropInput: () => {
+        if (this.stateController.currentState !== GameState.Exploring) return null;
+        return {
+          togglePressed: this.inputManager.consumeKeyJustPressed(PROP_CONTROL_KEYS.toggle),
+          guardHeld: this.inputManager.isKeyDown(PROP_CONTROL_KEYS.guard),
+        };
+      },
+      runStateActions: (actions) => this.actionExecutor.executeBatchAwait(actions),
       attachView: (targetId, socket, resolved) => this.attachSocketView(targetId, socket, resolved),
       detachView: (targetId, socket) => this.detachSocketView(targetId, socket),
-      setDynamicLights: (lights) => this.applySceneDynamicLights(lights),
+      setDynamicLights: (lights) => this.setDynamicLightsFrom('prop', lights),
       setLightIntensityScales: (scales) => this.applySceneLightIntensityScales(scales),
-      playVfx: (effect, world) => this.vfxSystem.playVfx({ effect, followWorld: world }),
-      moveVfx: (id, world) => this.vfxSystem.moveInstanceAnchor(id, world),
+      playVfx: (effect, world, host, oneShot) => {
+        const id = this.vfxSystem.playVfx({ effect, followWorld: world, oneShot });
+        if (id) this.vfxSystem.setInstanceSortHost(id, () => this.vfxSortHostOf(host.targetId, host.socket));
+        return id;
+      },
+      moveVfx: (id, world, carry) => this.vfxSystem.moveInstanceAnchor(id, world, carry),
       stopVfx: (id) => this.vfxSystem.stopVfx(id),
       softStopVfx: (id) => this.vfxSystem.stopVfxSoft(id),
       setVfxRate: (id, k) => this.vfxSystem.setInstanceRateScale(id, k),
+      setVfxSizeScale: (id, k) => this.vfxSystem.setInstanceSizeScale(id, k),
+      setVfxWindScale: (id, k) => this.vfxSystem.setInstanceWindScale(id, k),
+      setVfxDistanceScale: (id, k) => this.vfxSystem.setInstanceDistanceScale(id, k),
       log: (m) => { if (import.meta.env.DEV) console.warn(`[heldProp] ${m}`); this.debugPanelUI?.log(`[heldProp] ${m}`); },
+    });
+    /**
+     * 燃烧系统（A3.8）。依赖全走窄回调（系统之间不互持实例）：粒子能力、热点实体、空间、风钟、灯、信号。
+     * 格点世界位置用粒子空间（真 3D 场或平面近似，与火苗粒子同一个世界）；火光只在真 3D 场里有（铁律 0）。
+     */
+    this.burnSystem = new BurnSystem({
+      loadJson: (url) => this.assetManager.loadJson(url),
+      dropJson: (url) => { this.assetManager.dropJson(url); },
+      loadImageData: (url) => loadBurnImageData(url),
+      getSceneData: () => this.sceneManager.currentSceneData ?? null,
+      loadSceneData: (sceneId) => this.assetManager.loadSceneData(sceneId),
+      sceneBurnables: (sceneId, scene) => this.sceneManager.sceneBurnableEntities(sceneId, scene),
+      liveEntities: () => this.burnEntityHosts(),
+      liveHeld: () => this.burnHeldHosts(),
+      getSpace: () => this.vfxSystem.currentSpace,
+      // 几何定了：场景就绪之后，且粒子空间不是"真 3D 场已到、自己还没升级"的平面近似
+      isSpaceFinal: () => {
+        const sid = this.sceneManager.currentSceneData?.id ?? null;
+        if (!sid || this.burnSceneReadyId !== sid) return false;
+        const space = this.vfxSystem.currentSpace;
+        if (!space) return false;
+        return !(space.kind === 'planar' && this.buildAudioSceneGeometry() !== null);
+      },
+      windClock: () => this.sceneWind.time,
+      conditionContext: () => this.buildConditionEvalContext(),
+      vfx: {
+        playVfx: (opts) => this.vfxSystem.playVfx(opts),
+        stopVfxSoft: (id) => this.vfxSystem.stopVfxSoft(id),
+        moveInstanceAnchor: (id, world) => this.vfxSystem.moveInstanceAnchor(id, world),
+        setInstanceSpawnPoints: (id, pts, count) => this.vfxSystem.setInstanceSpawnPoints(id, pts, count),
+        setInstanceRateScale: (id, k) => this.vfxSystem.setInstanceRateScale(id, k),
+        setInstanceSortHost: (id, host) => this.vfxSystem.setInstanceSortHost(id, host),
+        setFireSources: (owner, segs) => this.vfxSystem.setFireSources(owner, segs),
+        burningPlates: () => this.vfxSystem.burningPlates(),
+        burningPlateSlots: () => this.vfxSystem.burningPlateSlots(),
+      },
+      setDynamicLights: (lights) => this.setDynamicLightsFrom('burn', lights),
+      // 实例配的信号走 emitNarrativeSignal 动作（owner = 场景实体 / 拿着挂件的人；私有信号定向与实体动作批同一条）
+      emitSignal: (signal, ownerId) => {
+        const ownerType = ownerId === 'player' ? 'player' : this.sceneManager.getNpcById(ownerId) ? 'npc' : 'hotspot';
+        void this.actionExecutor.executeBatchFromOwner(
+          [{ type: 'emitNarrativeSignal', params: { signal } }], ownerType, ownerId,
+        ).catch((e) => console.warn('[burn] 发信号失败', signal, e));
+      },
+      log: (m) => { if (import.meta.env.DEV) console.warn(`[burn] ${m}`); this.debugPanelUI?.log(`[burn] ${m}`); },
+    });
+    this.burnSystem.setRenderer(this.burnRenderer);
+    this.burnRenderer.setPixiRenderer(() => this.renderer.app?.renderer);
+    // 开了可燃的热点 / NPC 按模板画：模板从燃烧系统取（工作台推来的工作态也在那里）
+    this.sceneManager.setBurnTemplateResolver((id) => this.burnSystem.loadTemplate(id));
+    // 护着火只能走不能跑（玩法清单 A3.7「火把养成」）：挂件系统只说"此刻护着火没有"，走不走得动归玩家自己
+    this.player.setHeldPropMovement(() => ({ allowRun: !this.heldPropSystem.playerGuardBlocksRun() }));
+    this.ignitePerformer = new IgnitePerformer({
+      getState: () => this.stateController.currentState,
+      setState: (s) => this.stateController.setState(s),
+      switching: () => this.sceneManager.switching,
+      player: {
+        pos: () => ({ x: this.player.contactX, y: this.player.contactY }),
+        facing: () => (this.player.facingDirection === 'left' ? -1 : 1),
+        setFacing: (dir) => this.player.setFacing(dir, 0),
+        moveTo: (x, y, speed) => this.player.moveTo(x, y, speed, 'walk', true),
+        cancelMotion: () => this.player.cancelMotion(),
+        walkSpeed: () => this.player.currentWalkSpeed,
+        hasLogicalState: (logical) => this.player.hasAnimationState(logical),
+        playOnce: (logical, thenLogical) => this.player.playAnimation(logical, { loop: false, thenState: thenLogical }),
+        currentFrame: () => ({
+          state: this.player.sprite.getCurrentState(),
+          frame: this.player.sprite.getFrameIndex(),
+          frameCount: this.player.sprite.getFrameCount(),
+          clipSeconds: this.player.sprite.getCurrentClipDurationSec(),
+        }),
+        resolveClip: (logical) => this.player.sprite.resolveLogicalClip(logical),
+        igniteContactFrame: (logical) => this.player.sprite.igniteContactFrame(logical),
+        predictTip: (socket, u, v, logical, frame, facing, depthScale) =>
+          this.player.sprite.predictAttachmentPointOffset(socket, u, v, { logicalState: logical, frameIndex: frame, facing, depthScale }),
+      },
+      perspectiveAt: (x, y) => this.perspectiveScaleResolver?.scaleAt(x, y) ?? 1,
+      isWalkable: (x, y) => {
+        const sd = this.sceneManager.currentSceneData;
+        if (sd && (x < 0 || y < 0 || x > sd.worldWidth || y > sd.worldHeight)) return false;
+        return !this.sceneDepthSystem.isCollision(x, y);
+      },
+      // 手上的火：火把优先，其次燃着的可燃挂件（香 / 蜡烛，A3.8）
+      igniter: () => this.heldPropSystem.igniterOf('player') ?? this.burnSystem.heldIgniterOf('player'),
+      relightTip: () => this.heldPropSystem.relightTipOf('player') ?? this.burnSystem.heldRelightTipOf('player'),
+      relight: () => (this.heldPropSystem.relightTipOf('player')
+        ? this.heldPropSystem.relightPlayerTorch()
+        : this.burnSystem.relightHeld('player')),
+      burn: {
+        canPlayerIgnite: (id) => this.burnSystem.canPlayerIgnite(id),
+        playerIgniteTarget: (id, tip) => this.burnSystem.playerIgniteTarget(id, tip),
+        igniteAt: (id, target) => this.burnSystem.igniteAt(id, target),
+        canRelightFrom: (id) => this.burnSystem.canRelightFrom(id),
+        relightTarget: (id, tip) => this.burnSystem.relightTarget(id, tip),
+      },
+      config: () => ({
+        animation: this.gameConfig.playerActs?.ignite?.animation?.trim() || 'ignite',
+        walkSpeed: this.gameConfig.playerActs?.ignite?.walkSpeed,
+      }),
+      log: (m) => { if (import.meta.env.DEV) console.warn(`[burn] ${m}`); this.debugPanelUI?.log(`[burn] ${m}`); },
     });
     // 载荷就绪(depthLoader 内已 await,先于 scene:ready):把行走面深度场交给深度系统——
     // 遮挡脚点/碰撞反投影/影子落地面从此以它为真值,不再用 floor_depth_A/B 全图拟合直线
@@ -1130,6 +1351,9 @@ export class Game {
       { name: 'pressureHoldManager', system: this.pressureHoldManager },
       { name: 'signalCueManager', system: this.signalCueManager },
       { name: 'healthSystem', system: this.healthSystem },
+      { name: 'retrySystem', system: this.retrySystem },
+      { name: 'healthThreatSystem', system: this.healthThreatSystem },
+      { name: 'fireProtectionSystem', system: this.fireProtectionSystem },
       { name: 'smellSystem', system: this.smellSystem },
       { name: 'cutsceneManager', system: null as any },
       { name: 'archiveManager', system: this.archiveManager },
@@ -1147,6 +1371,9 @@ export class Game {
       { name: 'trajectorySystem', system: this.trajectorySystem },
       // 粒子 / 群体是表演态：serialize 恒为空桶，deserialize = 整批散掉
       { name: 'vfxSystem', system: this.vfxSystem },
+      // 燃烧：可燃物烧的状态是世界事实（进档、离场照推）。排在粒子之后：读档时粒子先散（散的时候报的纸钱是旧时间线的，
+      // 燃烧系统在 save:restoring 之后一律不收），燃烧再按存档重建
+      { name: 'burnSystem', system: this.burnSystem },
       // 手持挂件：**只有手持物（persistent 预设）入档**，存的是玩法事实，表现全派生
       { name: 'heldPropSystem', system: this.heldPropSystem },
     ];
@@ -1592,6 +1819,11 @@ export class Game {
       return existing;
     }
     const def: NpcDef = { id, name: spec.name ?? id, x: at.x, y: at.y, interactionRange: 0 };
+    if (spec.burnable) {
+      // 动态创建的可燃物（A3.8）：渲染由模板实例接管；玩家能按 E 点的给一个与样例热点同尺度的交互范围
+      def.burnable = spec.burnable;
+      if (spec.burnable.playerIgnite !== false) def.interactionRange = SPAWNED_BURNABLE_INTERACTION_RANGE;
+    }
     if (spec.kind === 'image' && spec.src) {
       def.displayImage = { image: spec.src, worldWidth: spec.worldWidth ?? 0, worldHeight: spec.worldHeight ?? 0 };
     } else if (spec.kind === 'character' && spec.characterId) {
@@ -1863,6 +2095,22 @@ export class Game {
       getScreen: () => ({ w: this.renderer.app.screen.width, h: this.renderer.app.screen.height }),
     });
     this.vfxSystem.setRenderer(this.vfxRenderer);
+    /**
+     * 粒子 shader 第一次用到时 Pixi 同步编译：受光粒子秒级（2026-09-16 实测进茶馆第一帧 11 s、第一次点火把同样）。
+     * 开局就在后台线程编（不阻塞），每次装场景在揭幕前闸里（遮罩下）等它编完并交给 Pixi；
+     * 同一个闸里把本场景的粒子预热也跑完（原来挤在揭幕后第一帧）。两件都限时、永不悬挂。
+     */
+    this.glProgramWarmup = new GlProgramWarmup(
+      () => glWarmupTargetOf(this.renderer.app.renderer),
+      (m) => { if (import.meta.env.DEV) console.warn(m); this.debugPanelUI?.log(m); },
+    );
+    this.glProgramWarmup.request(vfxGlPrograms());
+    this.sceneManager.setRevealGate(async () => {
+      await Promise.all([
+        this.glProgramWarmup?.whenReady(REVEAL_GATE_SHADER_TIMEOUT_MS),
+        this.vfxSystem.prepareForReveal(REVEAL_GATE_VFX_TIMEOUT_MS),
+      ]);
+    });
 
     // UI 皮肤素材（做旧木框九宫格 + 纸纹）必须赶在任何面板首次构建之前到位，
     // 否则那一次会画成纯色降级版、且不会自动重画。单张失败只降级该张，不阻断启动。
@@ -1983,18 +2231,23 @@ export class Game {
     this.hud.setQuestDataProvider(this.questManager);
     // 系统说明卡的开卡函数（UI 归 ui 层，系统层不 import 它）：压暗全屏但给被说明的读数留口子。
     // 卡开着 = UI 覆盖态（与压力小游戏 runSegment 同一把锁）：探索输入整体停住，关卡恢复原状态。
-    this.systemNoteManager.setOpener((def) =>
-      this.runInGameState(GameState.UIOverlay, () =>
-        openSystemNote(this.renderer, this.assetManager, def, {
+    this.systemNoteManager.setOpener(async (def, signal) => {
+      this.systemNotePauseDepth++;
+      try {
+        await this.runInGameState(GameState.UIOverlay, () =>
+          openSystemNote(this.renderer, this.assetManager,
+            { ...def, title: this.resolveDisplayText(def.title), body: this.resolveRichText(def.body) }, {
+          signal,
           strings: this.stringsProvider,
           spotlight: def.hudAnchor === 'threeFires'
             ? this.hud.getThreeFiresScreenRect()
             : def.hudAnchor === 'smell'
               ? this.hud.getSmellScreenRect()
               : null,
-        }),
-      ),
-    );
+          }),
+        );
+      } finally { this.systemNotePauseDepth = Math.max(0, this.systemNotePauseDepth - 1); }
+    });
     this.notificationUI = new NotificationUI(this.renderer, this.eventBus);
     // **只有过场与切场加载**压住提示条出队（电影化静默；priority='system' 的过场跳过确认
     // 仍越过静默）。面板开着时提示必须**立即、最顶层**弹出——玩家在册子里点词条采集，
@@ -2139,6 +2392,15 @@ export class Game {
     // 气味飘向按玩家相对气味源现算（G.6）：同一套 getter 注入，系统不持有玩家/场景管理器引用
     this.smellSystem.setSceneIdGetter(() => this.sceneManager.currentSceneData?.id ?? null);
     this.smellSystem.setPlayerPositionGetter(() => ({ x: this.player.x, y: this.player.y }));
+    // 气味源是位置引用（实体此刻位置 / 曲线插槽 / 曲线上的点）：每帧同步求值；曲线资产没装过就先装，
+    // 装完之前这几帧当"求不出"（气缕直的），不出声。
+    this.smellSystem.setSourceEvaluator((ref) => {
+      if ((ref.kind === 'slot' || ref.kind === 'curve') && !this.trajectoryAssets.has(ref.trajectoryId)) {
+        void this.loadTrajectoryAsset(ref.trajectoryId);
+        return null;
+      }
+      return this.evaluatePositionRefNow(ref);
+    });
     this.cutsceneManager.setPlayerPositionSetter((x, y) => { this.player.x = x; this.player.y = y; });
     this.cutsceneManager.setCameraAccessor(this.camera);
     this.cutsceneManager.setSceneManager(this.sceneManager);
@@ -2212,9 +2474,39 @@ export class Game {
     // 该窗口只在长时生命周期动作（waitMs/waitClickContinue/moveEntityTo 等）期间存在，瞬时即逝。
     this.saveManager.setCanSavePredicate(() => {
       const s = this.stateController.currentState;
+      if (this.healthSystem.isDepleted() || this.systemNotePauseDepth > 0) return false;
       if (s !== GameState.Exploring && s !== GameState.UIOverlay) return false;
       return this.narrativeStateManager.isIdle();
     });
+    this.retrySystem.configure(this.gameConfig.health?.retry);
+    this.retrySystem.connect({
+      canCapture: () => this.stateController.currentState === GameState.Exploring
+        && !!this.sceneManager.currentSceneData && this.saveManager.canSaveNow(),
+      capture: () => this.saveManager.capturePayload(),
+      load: (raw) => this.saveManager.loadPayload(raw),
+      isDepleted: () => this.healthSystem.isDepleted(),
+      enterDeath: () => {
+        this.actionExecutor.cancelPending();
+        this.sceneWind.clearGust();
+        this.cutsceneManager.deserialize({});
+        this.graphDialogueManager.deserialize({});
+        this.dialogueManager.deserialize({});
+        this.dialogueUI.hide();
+        this.stateController.closeAllPanels();
+        this.actionChoiceUI.close();
+        this.stateController.setState(GameState.Dead);
+        this.playerNavTarget = null;
+      },
+      closeChoice: () => this.actionChoiceUI.close(),
+      showNote: (id) => this.systemNoteManager.show(id),
+      choose: (title, options) => this.actionChoiceUI.choose(this.resolveRichText(title),
+        options.map((option) => ({ text: this.resolveRichText(option.text) })), false),
+      returnToMenu: () => this.eventBus.emit('menu:returnToMain'),
+      shownNoteFlags: () => Object.fromEntries(Object.entries(this.flagStore.serialize())
+        .filter(([key, value]) => key.startsWith('sysnote_') && value === true)) as Record<string, boolean>,
+    });
+    this.healthSystem.setDepletionHandler((cause) => this.retrySystem.deplete(cause));
+    this.stateController.setDepletionGuard(() => this.healthSystem.isDepleted());
     this.menuUI = new MenuUI(
       this.renderer, this.eventBus, this.saveDataForMenu(options), this.audioManager,
       this.textDisplaySettings, this.smellDisplaySettings, this.stringsProvider,
@@ -2313,6 +2605,12 @@ export class Game {
     );
     // 身体动词：目标/zone 派发/受理闸一律由组装层给闭包，PlayerActionSystem 不持任何同层 system
     this.interactionSystem.setGraphEntryProbe((gid, entry) => this.graphHasEntry(gid, entry));
+    // 点火（A3.8）：手上燃着能点火的东西 + 燃烧系统说这个可燃物此刻能点 ⇒ 这个热点能按 E 点火（优先于它自己的交互）；
+    // 反过来手上的火把灭着 + 这个可燃物正在烧 ⇒ 按 E 从它身上引火（同一套表演，见 IgnitePerformer.modeFor）
+    this.interactionSystem.setIgniteProbe((id) =>
+      this.gameConfig.playerActs?.ignite?.enabled !== false
+      && !this.ignitePerformer.busy
+      && this.ignitePerformer.modeFor(id) !== null);
     // 区域级 E 交互（ZoneDef.onInteract）：优先级判定留在 InteractionSystem（目标级 → 区域级），
     // 这里只把 ZoneSystem 的两个只读/派发口以闭包递过去——两个同层 system 仍不互持引用。
     this.interactionSystem.setZoneInteractBinding({
@@ -2339,6 +2637,98 @@ export class Game {
     this.mapUI.setConditionEvalContextFactory(mkCondCtx);
     this.archiveManager.setConditionEvalContextFactory(mkCondCtx);
     this.inventoryManager.setConditionEvalContextFactory(mkCondCtx);
+    this.healthSystem.setTetherAllowed(() => !!this.gameConfig.health?.tetherCondition
+      && evaluateConditionExpr(this.gameConfig.health.tetherCondition, mkCondCtx()));
+    // 数值系统只消费防护来源，不反向依赖背包。背包先于 HealthSystem 恢复存档。
+    this.healthSystem.setProtectionProvider(() => this.inventoryManager.getAllItems().flatMap((item) =>
+      item.count > 0 && item.def?.healthProtection
+        ? [{ ...item.def.healthProtection, id: `item:${item.id}` }] : []));
+    this.listenEvent('item:acquired', () => this.healthSystem.refreshProtection());
+    this.listenEvent('item:consumed', () => this.healthSystem.refreshProtection());
+    const canUpdatePresentationSurvival = () => this.systemNotePauseDepth === 0 && !this.healthSystem.isDepleted()
+      && [GameState.Exploring, GameState.Cutscene, GameState.ActionSequence, GameState.Dialogue].includes(this.stateController.currentState);
+    const conditionsPass = (conditions?: ConditionExpr[]) => !conditions?.length
+      || conditions.every((condition) => evaluateConditionExpr(condition, mkCondCtx()));
+    this.fireProtectionSystem.configure(this.gameConfig.health?.fireProtection);
+    this.fireProtectionSystem.connect({
+      canUpdate: canUpdatePresentationSurvival,
+      changed: (protectedByFire) => this.flagStore.set(FlagKeys.fireProtected, protectedByFire),
+      playerPosition: () => ({ x: this.player.x, y: this.player.y }),
+      sources: () => {
+        const designatedProps = this.gameConfig.health?.fireProtection?.heldPropIds ?? [];
+        const sources: ProtectionFireSource[] = this.heldPropSystem.statusOf('player')
+          .filter((held) => designatedProps.includes(held.prop))
+          .map((held) => ({ id: `held:${held.socket}:${held.prop}`, active: held.vitality > 0 && held.fuel > 0,
+            burning: held.burning, x: this.player.x, y: this.player.y, radius: 0 }));
+        for (const hotspot of this.sceneManager.getCurrentHotspots()) {
+          const fire = hotspot.def.fireProtection;
+          if (!fire) continue;
+          sources.push({ id: `hotspot:${hotspot.def.id}`, x: hotspot.container.x, y: hotspot.container.y,
+            radius: fire.radius, active: hotspot.active && this.sceneManager.getHotspotBaseEnabledForInteraction(hotspot)
+              && conditionsPass(fire.conditions),
+            burning: fire.requiresBurning === false || this.burnSystem.canRelightFrom(hotspot.def.id) });
+        }
+        return sources;
+      },
+    });
+    this.healthThreatSystem.connect({
+      canUpdate: canUpdatePresentationSurvival,
+      isPresentation: () => this.stateController.currentState !== GameState.Exploring,
+      isNight: () => !this.dayManager.daylightPhases.includes(this.dayManager.currentPhase),
+      playerPosition: () => ({ x: this.player.x, y: this.player.y }),
+      hasFireProtection: () => this.fireProtectionSystem.protected,
+      playSound: (id, at, volume) => {
+        const world = this.vfxSystem.sceneToWorld(at.x, at.y, 0);
+        if (world) this.audioManager.playSfxAt(id, { x: world[0], y: world[1], z: world[2] }, { volume });
+      },
+      damage: (value) => { this.healthSystem.applyDamage(value); },
+      setYinSources: (ids) => {
+        this.yinThreatsVisible = ids.length > 0;
+        // 已有作者请求时不重发显隐，尤其不能中途打断首次 debut 仪式。
+        if (this.flagStore.get(FlagKeys.threeFiresVisible) !== true)
+          this.hud?.setThreeFiresVisible(this.yinThreatsVisible, 'fade');
+      },
+      signal: (signal, sourceId) => {
+        const scene = this.sceneManager.currentSceneData;
+        const npc = scene?.npcs?.find((entity) => entity.healthThreat?.id === sourceId);
+        const hotspot = scene?.hotspots?.find((entity) => entity.healthThreat?.id === sourceId);
+        void this.narrativeStateManager.emitNarrativeSignal({ signal, sourceType: 'entity', sourceId,
+          ...(npc ? { owner: { ownerType: 'npc', ownerId: npc.id } }
+            : hotspot ? { owner: { ownerType: 'hotspot', ownerId: hotspot.id } } : {}) });
+      },
+    });
+    this.listenEvent('scene:beforeUnload', () => {
+      this.healthThreatSystem.clear();
+      this.fireProtectionSystem.clear();
+      this.sceneWind.clearGust();
+    });
+    this.listenEvent('cutscene:end', () => this.sceneWind.clearGust());
+    this.listenEvent('scene:ready', () => {
+      this.healthSystem.enterScene(this.sceneManager.currentSceneData?.id ?? '');
+      this.healthSystem.refreshProtection();
+      const sources: HealthThreatSource[] = [];
+      const scene = this.sceneManager.currentSceneData;
+      for (const def of scene?.npcs ?? []) {
+        const threat = def.healthThreat;
+        if (!threat) continue;
+        const entity = () => this.sceneManager.getNpcById(def.id);
+        sources.push({ def: threat, position: () => { const n = entity(); return n ? { x: n.x, y: n.y } : null; },
+          active: () => { const n = entity(); return !!n && this.sceneManager.getNpcBaseVisibleForInteraction(n)
+            && conditionsPass(def.conditions)
+            && (threat.affectsWhenHidden === true || n.container.visible) && conditionsPass(threat.conditions); } });
+      }
+      for (const def of scene?.hotspots ?? []) {
+        const threat = def.healthThreat;
+        if (!threat) continue;
+        const entity = () => this.sceneManager.getCurrentHotspots().find((h) => h.def.id === def.id);
+        sources.push({ def: threat, position: () => { const h = entity(); return h ? { x: h.container.x, y: h.container.y } : null; },
+          active: () => { const h = entity(); return !!h && this.sceneManager.getHotspotBaseEnabledForInteraction(h)
+            && conditionsPass(def.conditions)
+            && !h.pickedUp && (threat.affectsWhenHidden === true || h.active) && conditionsPass(threat.conditions); } });
+      }
+      this.healthThreatSystem.setSources(sources);
+      this.fireProtectionSystem.refresh();
+    });
     this.graphDialogueManager.setConditionEvalContextFactory(mkCondCtx);
     this.documentRevealManager.setConditionEvalContextFactory(mkCondCtx);
     this.narrativeStateManager.setConditionEvalContextFactory(mkCondCtx);
@@ -2530,7 +2920,13 @@ export class Game {
         this.attachToSocketFromAction(targetId, socket, images, opts),
       detachFromSocket: (targetId, socket) => this.detachFromSocketFromAction(targetId, socket),
       setPropState: (targetId, socket, state, fadeMs) =>
-        this.heldPropSystem.setState(targetId, socket, state, fadeMs),
+        this.heldPropSystem.setStateAwait(targetId, socket, state, fadeMs),
+      playPropVfx: (targetId, socket, effect, point) => this.heldPropSystem.playOneShot(targetId, socket, effect, point),
+      lockPropState: (targetId, socket, lock) => this.heldPropSystem.setLock(targetId, socket, lock),
+      setPropLevel: (propId, level) => this.heldPropSystem.setPropLevel(propId, level),
+      igniteBurnable: (target, socket, pointId) => this.burnSystem.igniteBurnable(target, socket, pointId),
+      extinguishBurnable: (target, socket) => this.burnSystem.extinguishBurnable(target, socket),
+      resetBurnable: (target, socket) => this.burnSystem.resetBurnable(target, socket),
       fadeLight: (lightId, toScale, fadeMs) => this.heldPropSystem.fadeLight(lightId, toScale, fadeMs),
       setSceneDepthFloorOffset: (v) => { this.sceneDepthSystem.floorOffset = v; },
       resetSceneDepthFloorOffset: () => {
@@ -2691,6 +3087,8 @@ export class Game {
       signalCueManager: this.signalCueManager,
       bubbleChatterSystem: this.bubbleChatterSystem,
       healthSystem: this.healthSystem,
+      retrySystem: this.retrySystem,
+      sceneWind: this.sceneWind,
       smellSystem: this.smellSystem,
       planeReconciler: this.planeReconciler,
       voiceChannel: this.voiceChannel,
@@ -3030,6 +3428,41 @@ export class Game {
         log: (m) => this.debugPanelUI?.log(m),
       }, `game:${this.runtimeBootId}`);
       this.vfxSync.start();
+      /**
+       * 燃烧的实时联动：燃烧工作台（`tools/burn_workbench`）是可燃物模板唯一的作者面，这里只是预览器——
+       * 工作台推来的模板工作态（存没存都算）顶替盘上那份、用到它的实例按它重建（场景实体重画、手上的重挂、纸钱重建）；
+       * 「在游戏里点着 / 熄灭 / 复原」直接对实例做。走 dev server 的两个槽（`src/dev/runtimeBurnApiPlugin.ts`）。
+       */
+      this.burnSync = new RuntimeBurnSync({
+        applyPreview: (burnables) => this.applyBurnTemplatePreview(burnables),
+        probe: (action, target, socket, point) => (action === 'ignite'
+          ? this.burnSystem.igniteBurnable(target, socket, point)
+          : action === 'extinguish' ? this.burnSystem.extinguishBurnable(target, socket) : this.burnSystem.resetBurnable(target, socket)),
+        getSceneId: () => this.sceneManager.currentSceneData?.id ?? null,
+        // 与点火表演判站位同一条（场景边界 + 游戏自己的 isCollision）
+        walkable: (x, y) => {
+          const sd = this.sceneManager.currentSceneData;
+          if (sd && (x < 0 || y < 0 || x > sd.worldWidth || y > sd.worldHeight)) return false;
+          return !this.sceneDepthSystem.isCollision(x, y);
+        },
+        getStatus: () => {
+          const st = this.burnSystem.debugStats;
+          const sid = this.sceneManager.currentSceneData?.id ?? null;
+          return {
+            bootId: this.runtimeBootId,
+            sceneId: sid,
+            items: this.burnSystem.debugSnapshot().filter((x) => x.kind === 'held' || x.sceneId === sid)
+              .map((x) => ({
+                kind: x.kind, ...(x.sceneId ? { sceneId: x.sceneId } : {}), target: x.target, ...(x.socket ? { socket: x.socket } : {}),
+                template: x.template, state: x.state, events: x.events, ready: x.ready,
+              })),
+            // simMs / clock 取整：不然每一拍都算「内容变了」，状态槽被写爆
+            stats: { ...st, simMs: Math.round(st.simMs * 10) / 10, clock: Math.round(st.clock) },
+          };
+        },
+        log: (m) => this.debugPanelUI?.log(m),
+      }, `game:${this.runtimeBootId}`);
+      this.burnSync.start();
       /**
        * 草木拆层的实时联动：草木工作台「推给游戏」（预览，资源不动）/「导出到游戏」（写进资源）烘完往槽里写一行，
        * 游戏原地把拆层换掉——不切场景、玩家不动。推的是"那几张 PNG 变了",所以重装时 URL 带 `?v=rev`
@@ -3470,6 +3903,19 @@ export class Game {
           const sb = this.swayBackground;
           return sb ? { ms: sb.updateMs, verts: sb.vertexCount, insts: sb.instanceCount } : null;
         },
+      });
+      /** F2「燃烧」页：只看状态、按探针；可燃物模板在燃烧工作台里改。 */
+      this.debugPanelUI.attachBurnDebug({
+        getSceneId: () => this.sceneManager.currentSceneData?.id,
+        getStats: () => this.burnSystem.debugStats,
+        getSnapshot: () => this.burnSystem.debugSnapshot(),
+        getIgniter: () => this.heldPropSystem.igniterOf('player') ?? this.burnSystem.heldIgniterOf('player'),
+        getPerformer: () => this.ignitePerformer.debugState,
+        canPlayerIgnite: (id) => this.burnSystem.canPlayerIgnite(id),
+        ignite: (id, socket) => this.burnSystem.igniteBurnable(id, socket),
+        extinguish: (id, socket) => this.burnSystem.extinguishBurnable(id, socket),
+        reset: (id, socket) => this.burnSystem.resetBurnable(id, socket),
+        log: (m: string) => this.debugPanelUI.log(m),
       });
       this.debugPanelUI.attachAcousticDebug({
         getCurrentSceneId: () => this.sceneManager.currentSceneData?.id,
@@ -4303,6 +4749,13 @@ export class Game {
     } catch {
       this.propPresetRegistry = {};
     }
+    // 效果块库同样可选（没有临时火把的项目就没有这张表）
+    try {
+      const raw = await this.assetManager.loadOptionalJson<unknown>(TEXT_URLS.propEffects);
+      this.propEffectRegistry = parsePropEffects(raw);
+    } catch {
+      this.propEffectRegistry = {};
+    }
   }
 
   /**
@@ -4447,6 +4900,21 @@ export class Game {
    * packed 推给角色侧 —— 否则会出现"地上那圈光跟着走、人身上的暖光没跟上"。
    * 作者数据（`sceneLighting.params`）一个字节不动，编辑器实时同步看不见这些灯。
    */
+  /**
+   * 运行时灯**按来源**整份替换，再合成一份交给光照（2026-09-16 燃烧系统加入后才有第二个来源）。
+   *
+   * `SceneLightingSystem.setDynamicLights` 是整表覆盖：两个来源各推各的会互相冲掉（火把一推，燃烧的火光没了）。
+   * 合成次序 = 优先级：**手上举着的在前**（离玩家最近、最该生效，灯槽满了按数组次序截断），燃烧的火光在后。
+   */
+  private setDynamicLightsFrom(owner: 'prop' | 'burn', lights: LightDef[]): void {
+    this.dynamicLightsByOwner.set(owner, lights);
+    const prop = this.dynamicLightsByOwner.get('prop') ?? [];
+    const burn = this.dynamicLightsByOwner.get('burn') ?? [];
+    this.applySceneDynamicLights(burn.length === 0 ? prop : prop.length === 0 ? burn : [...prop, ...burn]);
+  }
+
+  private readonly dynamicLightsByOwner = new Map<'prop' | 'burn', LightDef[]>();
+
   private applySceneDynamicLights(lights: LightDef[]): void {
     if (!this.sceneLighting.active) {
       /**
@@ -4460,8 +4928,8 @@ export class Game {
         if (this.dynamicLightMuteWarnedFor !== sceneId) {
           this.dynamicLightMuteWarnedFor = sceneId;
           const bg = this.sceneManager.currentSceneData?.backgrounds?.[0]?.image ?? 'background.png';
-          const msg = `[heldProp] ${sceneId}：场景光照未启用（${bg} 没烘几何场，或没有 depthConfig），`
-            + `手持光源的 ${lights.length} 盏灯不会出现——挂件贴图与粒子照旧。`
+          const msg = `[heldProp/burn] ${sceneId}：场景光照未启用（${bg} 没烘几何场，或没有 depthConfig），`
+            + `手持光源 / 燃烧火光的 ${lights.length} 盏灯不会出现——贴图与粒子照旧。`
             + `烘：sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene ${sceneId}`;
           console.warn(msg);
           this.debugPanelUI?.log(msg);
@@ -4491,6 +4959,136 @@ export class Game {
     }
   }
 
+  /**
+   * 挂件效果的排序宿主：宿主在实体层里的节点（玩家 = 精灵容器；NPC = 外层容器，转身翻的是它）
+   * + 挂件此刻画在身前还是身后。宿主不在 / 挂点这一帧没标注 ⇒ null（照常逐颗分桶）。
+   */
+  private vfxSortHostOf(targetId: string, socket: string): VfxSortHost | null {
+    const id = targetId.trim();
+    const sprite = this.spriteEntityOf(id);
+    const pose = sprite?.getSocketPose(socket);
+    if (!sprite || !pose) return null;
+    const node = id === 'player' ? sprite.container : this.sceneManager.getNpcById(id)?.container;
+    return node ? { node, front: pose.front } : null;
+  }
+
+  /** 燃烧系统的宿主对象（每个实体一份，身份稳定：渲染侧按宿主身份判"还是不是同一个"） */
+  private readonly burnHostCache = new WeakMap<object, BurnEntityHost>();
+  private readonly burnHeldHostCache = new Map<string, BurnHeldHost>();
+
+  /** 当前场景开了可燃的实体（A3.8）：热点挂两道燃烧滤镜、NPC 在图像空间里换纹理 */
+  private burnEntityHosts(): BurnEntityHost[] {
+    const out: BurnEntityHost[] = [];
+    const layer = this.renderer.entityLayer;
+    for (const h of this.sceneManager.getCurrentHotspots()) {
+      if (!h.def.burnable) continue;
+      let host = this.burnHostCache.get(h);
+      if (!host) {
+        host = {
+          id: h.def.id, kind: 'hotspot',
+          get burnable() { return h.def.burnable; },
+          frame: (size) => burnPlacementFrame(burnEntityPlacement(h.def, size, { depthScale: h.depthScaleFactor, flipX: h.getFacing() < 0 })),
+          get active() { return h.active; },
+          render: { kind: 'filters', host: h },
+          container: h.container,
+        };
+        this.burnHostCache.set(h, host);
+      }
+      out.push(host);
+    }
+    for (const npc of this.sceneManager.getCurrentNpcs()) {
+      if (!npc.def.burnable) continue;
+      let host = this.burnHostCache.get(npc);
+      if (!host) {
+        host = {
+          id: npc.def.id, kind: 'npc',
+          get burnable() { return npc.def.burnable; },
+          // 量本体精灵画出来的样子（实例缩放 / 旋转 / 镜像 / 透视 / 轨迹叠加都在里面），立面过接地点
+          frame: () => {
+            const se = npc.spriteEntity;
+            const tl = se?.bodyUvToLayer(layer, 0, 0);
+            const tr = se?.bodyUvToLayer(layer, 1, 0);
+            const bl = se?.bodyUvToLayer(layer, 0, 1);
+            return tl && tr && bl ? burnFrameFromCorners(tl, tr, bl, { x: npc.contactX, y: npc.contactY }) : null;
+          },
+          get active() { return npc.container.visible; },
+          render: {
+            kind: 'texture',
+            host: {
+              burnBaseTexture: () => npc.spriteEntity?.bodyBurnBaseTexture() ?? null,
+              setBurnTextures: (albedo, emissive) => npc.spriteEntity?.setBodyBurnTextures(albedo, emissive),
+            },
+          },
+          container: npc.container,
+        };
+        this.burnHostCache.set(npc, host);
+      }
+      out.push(host);
+    }
+    return out;
+  }
+
+  /** 此刻挂着的可燃挂件（A3.8）：图像空间里换纹理；摆放量挂件贴图画出来的样子，立面过拿着它的人的接地点 */
+  private burnHeldHosts(): BurnHeldHost[] {
+    const out: BurnHeldHost[] = [];
+    const seen = new Set<string>();
+    const layer = this.renderer.entityLayer;
+    for (const x of this.heldPropSystem.listBurnable()) {
+      const key = `${x.target}::${x.socket}`;
+      seen.add(key);
+      let host = this.burnHeldHostCache.get(key);
+      if (!host || host.prop !== x.prop) {
+        const { target, socket } = x;
+        // eslint-disable-next-line @typescript-eslint/no-this-alias -- 宿主对象的 getter 要读组装层此刻的实体
+        const self = this;
+        host = {
+          target, socket, prop: x.prop, burnable: x.burnable,
+          frame: () => {
+            const se = this.spriteEntityOf(target);
+            const foot = this.entityContactOf(target);
+            const tl = se?.attachmentUvToLayer(socket, layer, 0, 0);
+            const tr = se?.attachmentUvToLayer(socket, layer, 1, 0);
+            const bl = se?.attachmentUvToLayer(socket, layer, 0, 1);
+            return tl && tr && bl && foot ? burnFrameFromCorners(tl, tr, bl, foot) : null;
+          },
+          render: {
+            kind: 'texture',
+            host: {
+              burnBaseTexture: () => this.spriteEntityOf(target)?.attachmentBurnBaseTexture(socket) ?? null,
+              setBurnTextures: (albedo, emissive) => this.spriteEntityOf(target)?.setAttachmentBurnTextures(socket, albedo, emissive),
+            },
+          },
+          get container() {
+            return target === 'player'
+              ? self.player.sprite.container
+              : self.sceneManager.getNpcById(target)?.container ?? self.player.sprite.container;
+          },
+        };
+        this.burnHeldHostCache.set(key, host);
+      }
+      out.push(host);
+    }
+    for (const key of [...this.burnHeldHostCache.keys()]) if (!seen.has(key)) this.burnHeldHostCache.delete(key);
+    return out;
+  }
+
+  /**
+   * DEV 燃烧工作台推来模板工作态（`null` 撤销）：燃烧系统换模板、纸钱按新模板重建、开了可燃的热点 / NPC 按新模板重画、
+   * 手上的可燃挂件按新模板（图 / 握点 / 尺寸）重挂。
+   */
+  private applyBurnTemplatePreview(burnables: Record<string, unknown> | null): void {
+    this.burnSystem.applyPreview(burnables);
+    this.vfxSystem.applyPreviewBurnTemplates(burnables);
+    void this.sceneManager.refreshBurnableDisplays().then((npcs) => {
+      const baked = this.characterLighting.shadingResources;
+      for (const npc of npcs) {
+        npc.setPerspectiveScale(this.perspectiveScaleResolver);
+        if (baked) npc.enableBakedShading(this.litShaderProvider);
+      }
+    });
+    this.heldPropSystem.reapplyBurnableViews();
+  }
+
   private spriteEntityOf(targetId: string): SpriteEntity | null {
     const id = targetId.trim();
     if (!id) return null;
@@ -4501,6 +5099,26 @@ export class Game {
 
   /** 已挂上去的挂件：`<实体id>::<挂点>` → Sprite（卸载时要 destroy，纹理归 AssetManager 缓存管） */
   private socketAttachViews = new Map<string, Sprite>();
+  /** 挂件上的帧动画火苗（同键；与 socketAttachViews 同生同灭） */
+  private socketFlameViews = new Map<string, Sprite>();
+  /** 帧动画火苗图集切出来的帧包装：`图集|列|帧数` → Texture[]（源归 AssetManager，包装归这里） */
+  private flameFrameCache = new Map<string, Texture[]>();
+
+  /**
+   * 用火种点火的结果 → 玩家看得见的反馈（A3.7「火种」）：开始点不出字（火边的符号在装）；点着了放点火声；
+   * 没点着 / 点不了出一行字说为什么。文案在 strings.json `igniter` 类。
+   */
+  private onPlayerIgniteResult(result: HeldIgniteResult, name: string): void {
+    if (result === 'started') return;
+    if (result === 'success') {
+      this.audioManager.playSfx('sfx_lamp_oil_flame');
+      return;
+    }
+    // 进了对话 / 演出 / 面板时没点着：那边正在说别的事，不插一行字
+    if (result === 'failInterrupted') return;
+    const text = this.stringsProvider.get('igniter', result, { name });
+    if (text && text !== result) this.eventBus.emit('notification:show', { text, type: result === 'moving' ? 'info' : 'warning' });
+  }
 
   /**
    * Action 入口：往挂点挂一张（或一列）图。
@@ -4528,7 +5146,8 @@ export class Game {
        * 引了预设就走手持挂件系统：它认状态表、自带灯与自带效果，也管卸下时一起收走。
        * 只给图不给 prop 的老写法仍走下面那条直路（无状态、无灯，与既有行为逐字一致）。
        */
-      await this.heldPropSystem.attach(targetId, socket, propId, opts.state, { ...opts, images });
+      // 动作入口挂上 = 进入初始状态，执行它的进入动作（读档 / 切场景的自动重挂不走这里）
+      await this.heldPropSystem.attach(targetId, socket, propId, opts.state, { ...opts, images }, { enterActions: true });
       return;
     }
     if (opts.state) {
@@ -4553,7 +5172,16 @@ export class Game {
       return;
     }
     const textures: Texture[] = [];
-    for (const url of resolved.images) {
+    // 可燃挂件（A3.8）：贴图取模板、挂点对准模板握点、大小 = 模板真实宽 × 预设 scale（挂件是等比的，按宽算）
+    let burnTemplate: ResolvedBurnable | null = null;
+    if (resolved.burnable) {
+      burnTemplate = await this.burnSystem.loadTemplate(resolved.burnable.template);
+      if (!burnTemplate) {
+        console.warn(`attachToSocket: 可燃挂件的模板「${resolved.burnable.template}」装不到，挂不上`);
+        return;
+      }
+    }
+    for (const url of burnTemplate ? [burnTemplate.image] : resolved.images) {
       try {
         textures.push(await this.assetManager.loadTexture(url));
       } catch (e) {
@@ -4561,6 +5189,7 @@ export class Game {
       }
     }
     if (textures.length === 0) return;
+    const flameFrames = resolved.flame ? await this.loadFlameFrames(resolved.flame) : null;
     // 加载是异步的：期间可能已切场景/卸实体，落地前再确认一次目标还在
     if (this.spriteEntityOf(targetId) !== sprite) return;
 
@@ -4570,16 +5199,66 @@ export class Game {
     // 支点缺省图心，由 anchorX/anchorY 覆盖（刀剑给刀柄）——每帧由 syncAttachments 施加
     view.anchor.set(0.5, 0.5);
     this.socketAttachViews.set(key, view);
+    let flame: { view: Sprite; frames: Texture[]; params: null } | undefined;
+    if (flameFrames && flameFrames.length > 0) {
+      // 帧动画火苗：格底中点当锚（火从起火点往上长），不吃光（自发光）；参数由挂件系统逐帧推
+      const fv = new Sprite(flameFrames[0]);
+      fv.anchor.set(0.5, 1);
+      this.socketFlameViews.set(key, fv);
+      flame = { view: fv, frames: flameFrames, params: null };
+    }
+    const texW = textures[0].frame.width;
     sprite.attachToSocket(socket, {
       view,
       frameTextures: textures.length > 1 ? textures : undefined,
-      scale: resolved.scale,
+      scale: burnTemplate && texW > 0
+        ? (burnableWorldSize(burnTemplate).width / texW) * (resolved.scale ?? 1)
+        : resolved.scale,
       mirrorWithHost: resolved.mirror,
-      anchorX: resolved.anchorX,
-      anchorY: resolved.anchorY,
+      anchorX: burnTemplate ? burnTemplate.grip.u : resolved.anchorX,
+      anchorY: burnTemplate ? burnTemplate.grip.v : resolved.anchorY,
       rotationOffsetDeg: resolved.rotation,
       lit: resolved.lit,
+      firePoint: resolved.firePoint ?? undefined,
+      flame,
     });
+  }
+
+  /**
+   * 帧动画火苗图集切帧（行优先；格尺寸由贴图推，见 `PropFlameDef`）。同一张图集同一种切法只切一次：
+   * 切状态会整个重挂视图，不缓存就是每切一次状态造一批 Texture 包装。
+   * 纹理源归 AssetManager；这里只持有切出来的包装，Game 销毁时一并收。失败只 warn、这件挂件没有火苗。
+   */
+  private async loadFlameFrames(flame: PropFlameDef): Promise<Texture[] | null> {
+    const cacheKey = `${flame.image}|${flame.cols}|${flame.frames}`;
+    const hit = this.flameFrameCache.get(cacheKey);
+    if (hit) return hit;
+    let tex: Texture;
+    try {
+      tex = await this.assetManager.loadTexture(flame.image);
+    } catch (e) {
+      console.warn(`attachToSocket: 火苗图集加载失败 ${flame.image}`, e);
+      return null;
+    }
+    const cols = Math.max(1, flame.cols);
+    const rows = Math.max(1, Math.ceil(flame.frames / cols));
+    const fw = Math.floor(tex.width / cols);
+    const fh = Math.floor(tex.height / rows);
+    if (!(fw > 0) || !(fh > 0)) {
+      console.warn(`attachToSocket: 火苗图集 ${flame.image} 按 ${cols} 列 × ${rows} 行切不出格子（贴图 ${tex.width}×${tex.height}）`);
+      return null;
+    }
+    const again = this.flameFrameCache.get(cacheKey);
+    if (again) return again;
+    const frames: Texture[] = [];
+    for (let k = 0; k < flame.frames; k++) {
+      frames.push(new Texture({
+        source: tex.source,
+        frame: new Rectangle((k % cols) * fw, Math.floor(k / cols) * fh, fw, fh),
+      }));
+    }
+    this.flameFrameCache.set(cacheKey, frames);
+    return frames;
   }
 
   /**
@@ -4599,6 +5278,12 @@ export class Game {
   }
 
   private destroySocketView(key: string): void {
+    const flame = this.socketFlameViews.get(key);
+    if (flame) {
+      this.socketFlameViews.delete(key);
+      // 帧纹理是缓存里共用的包装，只毁 Sprite 本身
+      flame.destroy({ children: true });
+    }
     const old = this.socketAttachViews.get(key);
     if (!old) return;
     this.socketAttachViews.delete(key);
@@ -6135,6 +6820,11 @@ export class Game {
       getTimePhase: () => this.dayManager.currentPhase,
       // 粒子 / 群体实例状态（roosting / airborne / fleeing …）：不在场 → null → 叶子恒假
       getVfxState: (id) => this.vfxSystem?.getInstanceState(id) ?? null,
+      // 手持挂件（火把点着没有、火势、锁）：全局玩法状态，不镜像成 flag
+      getHeldProps: (target) => this.heldPropSystem?.statusOf(target) ?? [],
+      // 挂件等级（随身那根火把升到第几级）：拿在手上还是收在包里都算数
+      getPropLevel: (propId) => this.heldPropSystem?.getPropLevel(propId) ?? 1,
+      getBurnState: (target, sceneId, socket) => this.burnSystem?.statusOf(target, sceneId, socket) ?? null,
     };
   }
 
@@ -6260,7 +6950,9 @@ export class Game {
       );
       // 动词按钮按真实可用性隐藏（缺片段 / 被位面禁 / 全局关）——不给玩家死按钮
       this.touchMobileControls.setVerbAvailabilityReader(
-        (verb) => this.playerActionSystem.isVerbUsable(verb as PlayerVerb),
+        (verb) => (verb === 'torch' || verb === 'torchGuard'
+          ? this.heldPropSystem.hasPlayerControl()
+          : this.playerActionSystem.isVerbUsable(verb as PlayerVerb)),
       );
       // 未读点与桌面入口条同一判据（K3）：触屏玩家一样要知道「刚才那几条还在」
       this.touchMobileControls.setPanelUnreadProvider((panel) =>
@@ -6316,7 +7008,17 @@ export class Game {
   }
 
   private setupSceneReadyHandler(): void {
+    // 点火表演（A3.8）：交互系统在可燃物上按 E 时发；表演自己判条件，拒绝时什么都不动
+    this.listenEvent('burn:igniteRequested', (p: { targetId?: string }) => {
+      if (this.gameConfig.playerActs?.ignite?.enabled === false) return;
+      const id = typeof p?.targetId === 'string' ? p.targetId : '';
+      if (id) this.ignitePerformer.start(id);
+    });
+    // 读档 = 换时间线：在途的点火表演作废（状态由读档流程恢复，不在这里还）
+    this.listenEvent('save:restoring', () => { this.ignitePerformer.abort(false); });
     this.listenEvent('scene:beforeUnload', () => {
+      this.burnSceneReadyId = null;
+      this.ignitePerformer.abort();
       this.patrolGeneration++;
       this.npcPatrolEpoch.clear();
       /**
@@ -6337,6 +7039,7 @@ export class Game {
       }
     });
     this.listenEvent('scene:ready', () => {
+      this.burnSceneReadyId = this.sceneManager.currentSceneData?.id ?? null;
       this.player.syncMovementFromScene(this.sceneManager.currentSceneData);
       // 换场景 = 姿态复位（姿态不跨场景、不入存档）
       this.playerActionSystem.onSceneChanged();
@@ -7098,6 +7801,10 @@ export class Game {
   }
 
   private distributeSaveData(data: Record<string, object>): void {
+    this.sceneWind.clearGust();
+    this.actionExecutor.cancelPending();
+    // 旧档可能没有说明卡桶，但仍须取消当前这张卡。
+    this.systemNoteManager.deserialize({});
     /** 读档开始信号：HUD 等纯事件驱动的展示层先清上一局残留（任务追踪等），
      *  随后各系统 deserialize 补发的事件（quest:accepted{restored} 等）重建显示。 */
     this.eventBus.emit('save:restoring', {});
@@ -7119,6 +7826,7 @@ export class Game {
       for (const entry of this.registeredSystems) {
         if (entry.system && data[entry.name]) entry.system.deserialize(data[entry.name]);
       }
+      if (!data.retrySystem) this.retrySystem.deserialize({});
       // 旧档兼容：K3 之前日志是 UI 自持的 `dialogueLog` 桶（只有对话、无序号无通道）。
       // 新桶缺席时把它迁进来——开了新版本不该把老档的记录清空。
       if (!data['gameLogManager'] && data['dialogueLog']) {
@@ -7167,7 +7875,7 @@ export class Game {
       // 首次出场仪式 = 一段演出：整段切到 Cutscene 态（与 startCutscene 同一把锁），演完恢复原状态
       return this.runInGameState(GameState.Cutscene, () => Promise.resolve(this.hud.setThreeFiresVisible(visible, style)));
     }
-    return this.hud.setThreeFiresVisible(visible, style);
+    return this.hud.setThreeFiresVisible(visible || this.yinThreatsVisible, style);
   }
 
   /**
@@ -7175,17 +7883,20 @@ export class Game {
    * 与 startCutscene 动作、压力小游戏 runSegment 同一套纪律——中途别人已把状态切走则不抢回。
    */
   private async runInGameState<T>(state: GameState, run: () => Promise<T>): Promise<T> {
+    const generation = this.actionExecutor.getGeneration();
     const prev = this.stateController.currentState;
     this.stateController.setState(state);
     try {
       return await run();
     } finally {
-      if (this.stateController.currentState === state) this.stateController.setState(prev);
+      if (generation === this.actionExecutor.getGeneration() && this.stateController.currentState === state) {
+        this.stateController.setState(prev);
+      }
     }
   }
 
   private syncThreeFiresFromFlags(): void {
-    this.hud.setThreeFiresVisible(this.flagStore.get(FlagKeys.threeFiresVisible) === true, 'instant');
+    this.hud.setThreeFiresVisible(this.yinThreatsVisible || this.flagStore.get(FlagKeys.threeFiresVisible) === true, 'instant');
   }
 
   /** 读档待落位的玩家坐标：由 distribute 收下、由紧随其后的场景重载消费（见 restorePlayerPose）。 */
@@ -7838,7 +8549,7 @@ export class Game {
     const modeMap: Record<string, string> = {
       MainMenu: 'menu', Exploring: 'exploring', ActionSequence: 'busy',
       Dialogue: 'dialogue', Encounter: 'encounter', Cutscene: 'cutscene',
-      UIOverlay: 'menu', Minigame: 'minigame',
+      UIOverlay: 'menu', Minigame: 'minigame', Dead: 'dead',
     };
     return {
       mode: modeMap[gs] ?? gs,
@@ -7875,6 +8586,11 @@ export class Game {
       narrativeState: this.narrativeStateManager.debugSnapshot(),
       documentReveals: this.documentRevealManager.debugSnapshot(),
       eventTrace: this.eventBus.getDebugTrace(),
+      health: this.healthSystem.snapshot(),
+      retry: this.retrySystem.snapshot(),
+      healthThreats: this.healthThreatSystem.snapshot(),
+      fireProtection: this.fireProtectionSystem.snapshot(),
+      windGust: this.sceneWind.gustSnapshot,
       saveData: this.collectSaveData(),
       runtimeRandomState: this.runtimeRandom.getState(),
       activeZones: [...this.zoneSystem.getActiveZoneIds()].sort(),
@@ -8498,6 +9214,8 @@ export class Game {
     this.acousticsSync?.stop();
     this.acousticsSync = null;
     this.vfxSync?.stop();
+    this.burnSync?.stop();
+    this.burnSync = null;
     this.swaySync?.stop();
     this.swaySync = null;
     this.terrainSync?.stop();
@@ -8539,6 +9257,7 @@ export class Game {
     }
 
     this.interactionCoordinator?.destroy();
+    this.sceneWind.clearGust();
     this.eventBridge?.destroy();
     /** 配音导演不在 registeredSystems 里（无存档态），显式摘监听 + 停在播人声 */
     this.dialogueVoiceDirector?.destroy();
@@ -8560,6 +9279,10 @@ export class Game {
     // 摆动 mesh 通常已随场景卸载拆掉；这里兜一次（幂等），必须早于下面的资产收尾
     this.swayBackground?.destroy();
     this.swayBackground = null;
+    // 揭幕前闸摘掉；预编译器放行在途等待、删掉后台编译的 GL 对象（早于渲染器销毁）
+    this.sceneManager.setRevealGate(null);
+    this.glProgramWarmup?.destroy();
+    this.glProgramWarmup = null;
     // 模块级注入复位（生命周期对称：destroy 后再 init 与首启一致；
     // 切换音的钩子还捏着已销毁那局的 eventBus，不摘就是一条跨局的死引用）
     setClueAccess(null);
@@ -8573,6 +9296,10 @@ export class Game {
     this.cutsceneRenderer?.destroy();
 
     this.destroyAllSocketViews();
+    this.fireHintMarker.destroy();
+    // 帧动画火苗帧包装：源归 AssetManager（不毁源），包装归这里
+    for (const frames of this.flameFrameCache.values()) for (const t of frames) t.destroy(false);
+    this.flameFrameCache.clear();
     this.actionExecutor.destroy();
     this.flagStore.destroy();
     this.inputManager.destroy();
@@ -8721,6 +9448,11 @@ export class Game {
   }
 
   private tick(dt: number): void {
+    // 说明卡阅读与死亡期间冻结世界时钟（火把、阵风、侵袭、主动防护），UI 仍可点击。
+    if (this.systemNotePauseDepth > 0 || this.stateController.currentState === GameState.Dead) {
+      this.inputManager.endFrame();
+      return;
+    }
     this.lastFps = dt > 0 ? 1 / dt : 0;
     this.playTimeMs += dt * 1000;
 
@@ -8757,10 +9489,16 @@ export class Game {
     this.bubbleChatterSystem.update(dt);
 
     if (this.stateController.currentState === GameState.Exploring) {
+      this.retrySystem.update(dt);
       this.updatePlayerNav();
+      this.healthSystem.update(dt);
       this.player.update(dt);
-      // 「嗅」键（KeyQ）：主动闻一下当前气味，HUD 气缕短暂拔高变清。
-      if (this.inputManager.wasKeyJustPressed('KeyQ')) this.smellSystem.sniff();
+      this.fireProtectionSystem.update(dt);
+      this.healthThreatSystem.update(dt);
+      // 伤害可能打开死亡卡或叙事信号开始过场；同帧余下的探索输入作废。
+      if (this.stateController.currentState !== GameState.Exploring) { this.inputManager.endFrame(); return; }
+      // 「嗅」键（KeyV；2026-09-15 起 Q 让给按住护火）：主动闻一下当前气味，HUD 气缕短暂拔高变清。
+      if (this.inputManager.wasKeyJustPressed(SNIFF_KEY)) this.smellSystem.sniff();
       this.interactionSystem.update(dt);
       // 非探索态跨时段时挂起的 zone 重注册在此补刷，且必须赶在 zoneSystem.update 之前——
       // 晚于它，过期的 zone 集合会以旧集合多跑一帧 enter/stay（与位面那条补刷同一个理由，
@@ -8783,6 +9521,12 @@ export class Game {
       }
       // 过场态相机跟随（cameraFollowActor）：无跟随目标时不动镜头，交由 cameraMove 摆布。
       this.applyCameraFollow(false);
+    }
+
+    if ([GameState.Cutscene, GameState.ActionSequence, GameState.Dialogue].includes(this.stateController.currentState)) {
+      this.fireProtectionSystem.update(dt);
+      this.healthThreatSystem.update(dt);
+      if (this.healthSystem.isDepleted()) { this.inputManager.endFrame(); return; }
     }
 
     // 过场对白框上的「继续」点捺：**不能挂在任何状态分支里**——过场态、对话态、
@@ -8833,6 +9577,8 @@ export class Game {
 
     if (this.stateController.currentState === GameState.ActionSequence) {
       this.player.cutsceneUpdate(dt);
+      // 点火表演：玩家这一帧的位移与换帧已写完，盯接触帧 / 播完
+      this.ignitePerformer.update(dt);
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         npc.cutsceneUpdate(dt);
       }
@@ -8855,11 +9601,13 @@ export class Game {
      * - **在 `camera.update` / `sortEntityLayer` 之前**：`snapTo` 写的是 current+target，
      *   随后的 `camera.update` 平滑一步即原地；姿态里的 `entitySortFootY` 也要赶在排序前落定。
      *
-     * 切场景遮罩期与标题页不跑：那两态实体正在拆/尚未建，推进时间只会把轨迹白白播完。
+     * 切场景遮罩期、标题页、覆盖面板期间不跑：实体可能正在拆建，或玩家已暂停。
+     * 火把、燃料、阵风与粒子共用这一闸，不能在玩家翻背包时把火吹灭。
      * （不是"暂停"——tMs 不前进，回到正常态从原处接着播。）
      */
     if (this.stateController.currentState !== GameState.SceneTransition
-      && this.stateController.currentState !== GameState.MainMenu) {
+      && this.stateController.currentState !== GameState.MainMenu
+      && this.stateController.currentState !== GameState.UIOverlay) {
       this.trajectorySystem.update(dt);
       // 场景风的钟与粒子同处推进（同暂停语义）；背景摆动读同一个钟
       this.sceneWind.advance(dt);
@@ -8870,8 +9618,22 @@ export class Game {
        * 同样要求实体位置已写完 —— 所以和粒子在同一个守卫里。
        */
       this.heldPropSystem.update(dt);
+      this.fireHintMarker.tick(dt);
+      // 手上燃着能点火的火头 = 火焰段（可燃纸钱碰到会着）：挂点位置这一帧才定，所以排在挂件之后、粒子之前
+      this.heldFireScratch.length = 0;
+      this.heldPropSystem.igniterFireSegments(this.heldFireScratch);
+      this.vfxSystem.setFireSources('heldProp', this.heldFireScratch);
+      // 燃烧：推模拟、推火苗出生点 / 火光 / 火线火焰段——同样要赶在粒子之前（粒子这一帧就用上）
+      this.burnSystem.update(dt);
       // 粒子 / 群体：同一约束——实体位置已全部写完、排序与相机之前（它写桶网格的 entitySortFootY）
       this.vfxSystem.update(dt);
+      // 群体已走完本帧实际位移/惊飞判定；暂停、演出及死亡期间不侵扰玩家。
+      if (this.stateController.currentState === GameState.Exploring && !this.healthSystem.isDepleted()) {
+        for (const source of this.vfxSystem.playerHarassment()) {
+          void this.healthSystem.applyDamage({ amount: source.attackPerSecond * dt, kind: 'fright', sourceId: source.sourceId });
+          if (this.healthSystem.isDepleted()) return;
+        }
+      }
     }
     this.camera.update(dt);
     /**
@@ -8897,6 +9659,13 @@ export class Game {
 
     // 视锥剔除:先于下方 depth 驱动块——同帧内屏外实体既跳 GPU 渲染,也跳着色驱动。
     this.updateFrustumCulling();
+
+    // 燃烧滤镜的相机 uniform：相机本帧已定稿（早于这里推，镜头一动烧痕就滑一帧）；限速上传燃烧场纹理
+    this.burnRenderer.update(performance.now(), {
+      x: this.renderer.worldContainer.x,
+      y: this.renderer.worldContainer.y,
+      scale: this.camera.getProjectionScale(),
+    });
 
     this.syncEntityPixelDensityMatch();
 

@@ -41,12 +41,22 @@ export interface PlayerPostureMovement {
   allowRun: boolean;
 }
 
+/**
+ * 手上那件东西对自由移动的修饰（由组装层每帧从挂件系统取；与上面两层**相乘**叠加）。
+ * 现在只有一条：**护着火只能走不能跑**（玩法清单 A3.7「火把养成」，2026-09-16 制作人定）。
+ */
+export interface PlayerHeldPropMovement {
+  allowRun: boolean;
+}
+
 export class Player implements ICutsceneActor, ITrajectoryTarget {
   public sprite: SpriteEntity;
   private inputManager: InputManager;
   private depthCollision: ((worldX: number, worldY: number) => boolean) | null = null;
   /** 与 depthCollision 同模式的注入 getter；null = 无修饰（现状行为） */
   private movementModifier: (() => PlayerMovementModifier) | null = null;
+  /** 手上那件东西的移动修饰（护火不能跑）；null = 无修饰 */
+  private heldPropMovement: (() => PlayerHeldPropMovement) | null = null;
   /** 场景透视缩放句柄（Game 在 scene:ready 注入、beforeUnload 清除）；null = 不缩放 */
   private perspectiveScale: PerspectiveScaleResolver | null = null;
 
@@ -120,6 +130,11 @@ export class Player implements ICutsceneActor, ITrajectoryTarget {
   }
 
   /** 注入/清除自由移动修饰（漂移/速度系数/禁跑）。仅影响 update() 自由移动分支。 */
+  /** 手上那件东西的移动修饰（护火不能跑）。与位面 / 姿态两层相乘：任一禁跑即禁跑 */
+  setHeldPropMovement(fn: (() => PlayerHeldPropMovement) | null): void {
+    this.heldPropMovement = fn;
+  }
+
   setMovementModifier(fn: (() => PlayerMovementModifier) | null): void {
     this.movementModifier = fn;
   }
@@ -244,6 +259,11 @@ export class Player implements ICutsceneActor, ITrajectoryTarget {
 
   get collisionsEnabledState(): boolean {
     return this.collisionsEnabled;
+  }
+
+  /** 本场景的走路速度（wu/s；点火表演走到站位用） */
+  get currentWalkSpeed(): number {
+    return this.walkSpeed;
   }
 
   get x(): number { return this.sprite.x; }
@@ -527,9 +547,10 @@ export class Player implements ICutsceneActor, ITrajectoryTarget {
     const posture = this.postureMovement;
     // allowRun 掩蔽奔跑；speedScale 乘速度；drift 恒生效（不并入 isMoving——站着被拖走
     // 时动画保持 idle 正是要的效果）。位移积分处向量加，X/Y 分轴走既有碰撞/边界钳制。
-    // 姿态与位面两层修饰相乘：任一禁跑即禁跑。
+    // 姿态、位面、手上那件东西（护火）三层修饰相乘：任一禁跑即禁跑。
     const isRunning =
-      this.inputManager.isRunning() && (mod?.allowRun ?? true) && (posture?.allowRun ?? true) && !this.inputLocked;
+      this.inputManager.isRunning() && (mod?.allowRun ?? true) && (posture?.allowRun ?? true)
+      && (this.heldPropMovement?.().allowRun ?? true) && !this.inputLocked;
     const speed =
       (isRunning ? this.runSpeed : this.walkSpeed) * (mod?.speedScale ?? 1) * (posture?.speedScale ?? 1);
     // 透视步长补偿整体乘在位移上（含 drift：世界坐标即屏幕空间，远处一切位移等比变小）

@@ -10,6 +10,7 @@ import type {
 import {
   fingerprintOfAnim,
   socketPoseToLocal,
+  attachmentPointLocal,
   type ResolvedSockets,
   type SocketLocalPose,
 } from '../data/animationSockets';
@@ -57,6 +58,48 @@ export interface SocketAttachment {
   litQuad?: LitSpriteQuad | null;
   litShader?: Shader | null;
   litSrc?: TextureSource | null;
+  /**
+   * 起火点（贴图内归一化 0..1）：帧动画火苗的底部从这一点出。不给 = 支点本身。
+   */
+  firePoint?: [number, number];
+  /** 帧动画火苗（显示对象归调用方建与毁，这里只摆位） */
+  flame?: SocketAttachmentFlame;
+  /**
+   * 燃烧（可燃挂件，渲染由可燃物实例接管）：烧起来之后贴图换成燃烧系统在图像空间里画的颜色图（与原图同尺寸，
+   * 照常受光），`burnGlow` 是叠在上面的自发光（加法混合、不受光）。见 {@link SpriteEntity.setAttachmentBurnTextures}。
+   */
+  burnBase?: Texture | null;
+  burnGlow?: Sprite | null;
+}
+
+/**
+ * 帧动画火苗此刻的样子（程序化那一半，`HeldPropSystem` 逐帧算好推进来）。
+ * 位置不在这里：火苗底部永远钉在起火点上，由摆位那一步现算。
+ */
+export interface AttachmentFlameParams {
+  visible: boolean;
+  /** 帧动画第几帧（超出取模） */
+  frame: number;
+  /** 这一刻一格帧的高度（wu，透视系数 1 处；已含燃烧强度、闪烁与前倾的透视缩短） */
+  heightWu: number;
+  /** 画面倾角（弧度，顺时针为正）。**相对画面竖直**：燃烧物怎么转都不带着火苗转 */
+  angleRad: number;
+}
+
+/** 挂件上的帧动画火苗：一个 Sprite（锚点格底中点）+ 帧纹理表 + 最近一次推进来的参数。 */
+export interface SocketAttachmentFlame {
+  view: Sprite;
+  frames: Texture[];
+  params: AttachmentFlameParams | null;
+}
+
+/** 挂件在容器局部坐标里的这一帧变换（摆位与"贴图上某点在哪"共用，两处数学不许各写一份）。 */
+interface AttachmentTransform {
+  x: number;
+  y: number;
+  sx: number;
+  sy: number;
+  rot: number;
 }
 import { LitSpriteQuad } from './CharacterLitSprite';
 
@@ -251,6 +294,12 @@ export class SpriteEntity {
   private contactSlots: Set<number> = new Set();
   /** 已挂载的东西：挂点名 → 挂件；每帧按当前帧的位姿重摆 */
   private attachments: Map<string, SocketAttachment> = new Map();
+  /**
+   * 燃烧（本体是可燃物实例：NPC 开了可燃，渲染由实例接管）：烧过的颜色图（顶替本体颜色纹理，照常受光）
+   * 与叠加的自发光精灵（加法、不受光）。没在烧 = null。见 {@link setBodyBurnTextures}。
+   */
+  private bodyBurnAlbedo: Texture | null = null;
+  private bodyBurnGlow: Sprite | null = null;
 
   // ————————————————————————— 锚点（anchor）—————————————————————————
   //
@@ -456,7 +505,8 @@ export class SpriteEntity {
   private refreshLitQuad(): void {
     const provider = this.litProvider;
     if (!provider || !this.baseTexture || !this.animDef) return;
-    const src = this.baseTexture.source;
+    // 本体在烧：颜色源是燃烧系统画的那张（与帧同尺寸、同 UV），不是图集
+    const src = this.bodyBurnAlbedo?.source ?? this.baseTexture.source;
     if (!this.litShader) {
       const sh = provider.create(src, this.animDef.resolvedSheetUrl ?? null);
       if (!sh) return;                     // 场景无载荷:保持旧管线
@@ -469,6 +519,7 @@ export class SpriteEntity {
       this.container.addChild(this.litQuad.mesh);
       // mesh 是追加到末尾的：已挂着的 front 挂件会被它盖住，重排一次纠正回来
       this.reorderAttachments();
+      this.placeBodyBurnGlow();
       this.sprite.renderable = false;      // color 由 mesh 画(同 quad 同 UV),原精灵只当变换载体
     } else if (this.litColorSrc !== src) { // 运行时换图集(背尸/道士/setEntityField)
       provider.swapTextures(this.litShader, src, this.animDef.resolvedSheetUrl ?? null);
@@ -558,6 +609,11 @@ export class SpriteEntity {
     return this.logicalToClip.get(stateName) ?? stateName;
   }
 
+  /** 逻辑状态名经 stateMap 解析成图集片段名（与播放同一口径；调用方拿它比 `getCurrentState()`） */
+  resolveLogicalClip(stateName: string): string {
+    return this.resolveClip(stateName);
+  }
+
   /** 当前片段按有效帧率播完一遍的时长（秒）；无片段或帧率非法时回落 0。 */
   getCurrentClipDurationSec(): number {
     const n = this.currentFrames.length;
@@ -622,7 +678,7 @@ export class SpriteEntity {
       this.frameIndex = this.playbackReverse ? textures.length - 1 : 0;
       this.playing = true;
     }
-    this.sprite.texture = textures[this.frameIndex];
+    this.showFrameTexture(textures[this.frameIndex]);
     // 帧框尺寸可能逐帧不同（atlasFrames），起播/定格帧非 0 时须立刻按所示帧重算缩放
     this.applySpriteScale();
   }
@@ -663,7 +719,7 @@ export class SpriteEntity {
       }
     }
 
-    this.sprite.texture = this.currentFrames[this.frameIndex];
+    this.showFrameTexture(this.currentFrames[this.frameIndex]);
     this.applySpriteScale();
     this.syncPosition();
   }
@@ -731,7 +787,7 @@ export class SpriteEntity {
     this.frameIndex = this.playbackReverse ? Math.max(0, this.currentFrames.length - 1) : 0;
     this.frameTimer = 0;
     if (this.currentFrames.length > 0) {
-      this.sprite.texture = this.currentFrames[this.frameIndex];
+      this.showFrameTexture(this.currentFrames[this.frameIndex]);
       this.applySpriteScale();
     }
   }
@@ -743,7 +799,7 @@ export class SpriteEntity {
     const i = ((Math.trunc(index) % n) + n) % n;
     this.frameIndex = i;
     this.frameTimer = 0;
-    this.sprite.texture = this.currentFrames[i];
+    this.showFrameTexture(this.currentFrames[i]);
     this.applySpriteScale();
     this.syncPosition();
   }
@@ -1019,9 +1075,110 @@ export class SpriteEntity {
   getSocketOffsetFromContact(name: string): { x: number; y: number; front: boolean; clearanceWu: number; bodyWidthWu: number } | null {
     const pose = this.getSocketPose(name);
     if (!pose) return null;
+    return this.offsetFromContactOfLocal(pose.x, pose.y, pose.front);
+  }
+
+  /**
+   * 挂在 `name` 上那件挂件**贴图上某一点**（归一化 u/v，同支点口径）此刻相对接地点的偏移——
+   * 与 {@link getSocketOffsetFromContact} 同形状、同一套外层换算，只是起点从挂点换成了贴图上的点
+   * （火把的起火点：手握着杆子，火在杆头）。
+   *
+   * 这一点穿过挂件自己的支点 / 自转 / 缩放 / 镜像 / 透视系数（与 `syncAttachments` 摆贴图同一份变换）。
+   * 挂点这一帧没标注、没挂东西、或贴图还没到 ⇒ null。
+   */
+  getAttachmentPointOffsetFromContact(
+    name: string, u: number, v: number,
+  ): { x: number; y: number; front: boolean; clearanceWu: number; bodyWidthWu: number } | null {
+    const at = this.attachments.get(name);
+    if (!at) return null;
+    const pose = this.getSocketPose(name);
+    if (!pose) return null;
+    const p = this.attachmentLocalPoint(at, this.attachmentTransform(at, pose), u, v);
+    if (!p) return null;
+    return this.offsetFromContactOfLocal(p.x, p.y, pose.front);
+  }
+
+  /**
+   * **预测**：假如此刻播到逻辑状态 `logicalState` 的第 `frameIndex` 帧、朝向 `facing`、透视系数 `depthScale`，
+   * 挂在 `socketName` 上那件挂件贴图上的点 (u, v) 相对接地点在哪（场景 wu，y 向上为负）。
+   *
+   * 点火表演用它反解站位（动作不变、只挪脚，接触帧那一刻火头对准着火点）。与
+   * {@link getAttachmentPointOffsetFromContact} 同一套换算（挂点标注 → 容器局部 → 挂件支点 / 自转 / 缩放 / 镜像 →
+   * 外层实体变换），只是帧、朝向、透视系数由调用方给，不读当前播放态。跳跃抬升按 0（站在地上点火）。
+   * 片段不存在 / 这一帧没标挂点 / 没挂东西 / 贴图还没到 ⇒ null。
+   */
+  predictAttachmentPointOffset(
+    socketName: string, u: number, v: number,
+    opts: { logicalState: string; frameIndex: number; facing: 1 | -1; depthScale: number },
+  ): { x: number; y: number } | null {
+    const at = this.attachments.get(socketName);
+    if (!at) return null;
+    const slot = this.slotOfLogicalFrame(opts.logicalState, opts.frameIndex);
+    if (slot === null) return null;
+    const raw = this.socketSet?.sockets[socketName]?.poses[String(slot)];
+    if (!raw) return null;
+    const d = opts.depthScale > 0 && Number.isFinite(opts.depthScale) ? opts.depthScale : 1;
+    const pose = socketPoseToLocal(raw, {
+      worldWidth: this.worldWidth,
+      worldHeight: this.worldHeight,
+      depthScale: d,
+      facing: opts.facing,
+      hostMirrorX: this.hostMirrorX(),
+      visualLiftY: 0,
+      anchorX: this.anchorX,
+      anchorY: this.anchorY,
+    });
+    const tex = (at.view as Sprite).texture;
+    const texW = tex?.frame?.width ?? 0;
+    const texH = tex?.frame?.height ?? 0;
+    if (!(texW > 0) || !(texH > 0)) return null;
+    // 与燃烧工作台同一个纯函数（没有轨迹叠加时与 attachmentTransform + attachmentLocalPoint 逐位相同）
+    const p = attachmentPointLocal(pose, {
+      scale: at.scale, anchorX: at.anchorX, anchorY: at.anchorY,
+      rotationOffsetDeg: at.rotationOffsetDeg, mirrorWithHost: at.mirrorWithHost, texW, texH,
+    }, u, v);
+    // 接地点偏移按给定朝向与透视系数算（不读当前朝向）；缺省底中锚点时恒 0
+    const gx = (0.5 - this.anchorX) * this.worldWidth * d * opts.facing;
+    const gy = (1 - this.anchorY) * this.worldHeight * d;
+    const vx = (p.x - gx) * this.litParentSX;
+    const vy = (p.y - gy) * this.litParentSY;
+    const r = this.litParentRot;
+    if (r === 0) return { x: vx, y: vy };
+    const c = Math.cos(r);
+    const s = Math.sin(r);
+    return { x: vx * c - vy * s, y: vx * s + vy * c };
+  }
+
+  /** 逻辑状态第 `frameIndex` 帧画的是图集哪一格（经 stateMap 解析；越界取模）。没有这个片段 ⇒ null */
+  slotOfLogicalFrame(logicalState: string, frameIndex: number): number | null {
+    const seq = this.animDef?.states?.[this.resolveClip(logicalState)]?.frames;
+    if (!seq || seq.length === 0) return null;
+    const n = seq.length;
+    return seq[((Math.trunc(frameIndex) % n) + n) % n] ?? null;
+  }
+
+  /**
+   * 逻辑状态的**点火接触帧**：帧序列里第一个落在 `sockets.json.igniteSlots` 的帧下标。
+   * 片段存在但一格都没标 ⇒ `{frame: 0, marked: false}`（调用方 dev 告警）；没有这个片段 ⇒ null。
+   */
+  igniteContactFrame(logicalState: string): { frame: number; marked: boolean; frameCount: number } | null {
+    const seq = this.animDef?.states?.[this.resolveClip(logicalState)]?.frames;
+    if (!seq || seq.length === 0) return null;
+    const marks = this.socketSet?.igniteSlots ?? [];
+    if (marks.length > 0) {
+      const set = new Set(marks);
+      for (let i = 0; i < seq.length; i++) if (set.has(seq[i])) return { frame: i, marked: true, frameCount: seq.length };
+    }
+    return { frame: 0, marked: false, frameCount: seq.length };
+  }
+
+  /** 容器局部点 → 相对接地点的偏移（含外层实体变换）。两个公开查询共用，口径不许分叉。 */
+  private offsetFromContactOfLocal(
+    localX: number, localY: number, front: boolean,
+  ): { x: number; y: number; front: boolean; clearanceWu: number; bodyWidthWu: number } {
     const g = this.getGroundContactOffset();
-    const vx = (pose.x - g.x) * this.litParentSX;
-    const vy = (pose.y - g.y) * this.litParentSY;
+    const vx = (localX - g.x) * this.litParentSX;
+    const vy = (localY - g.y) * this.litParentSY;
     // 与 lit quad 的变换后格宽同源：身体厚度和离身距离均属于实体，不属于场景 q 尺。
     const rot = this.litParentRot + this.sprite.rotation;
     const bodyWidthWu = this.getWorldSize().width * Math.abs(this.trajScaleX)
@@ -1029,10 +1186,10 @@ export class SpriteEntity {
         Math.sin(rot) * this.litParentSY * this.container.scale.y);
     const clearanceWu = bodyWidthWu * 0.06;
     const r = this.litParentRot;
-    if (r === 0) return { x: vx, y: vy, front: pose.front, clearanceWu, bodyWidthWu };
+    if (r === 0) return { x: vx, y: vy, front, clearanceWu, bodyWidthWu };
     const c = Math.cos(r);
     const s = Math.sin(r);
-    return { x: vx * c - vy * s, y: vx * s + vy * c, front: pose.front, clearanceWu, bodyWidthWu };
+    return { x: vx * c - vy * s, y: vx * s + vy * c, front, clearanceWu, bodyWidthWu };
   }
 
   /**
@@ -1044,8 +1201,29 @@ export class SpriteEntity {
     this.detachFromSocket(name);
     this.attachments.set(name, attachment);
     this.container.addChild(attachment.view);
+    // 火苗与贴图是兄弟（不做贴图的子节点：贴图跟着手转，火苗不跟）；排在贴图之后 = 画在杆头之上
+    if (attachment.flame) {
+      attachment.flame.view.visible = false;
+      this.container.addChild(attachment.flame.view);
+    }
     this.refreshAttachmentLit(attachment);
     this.syncAttachments();
+  }
+
+  /**
+   * 推一帧帧动画火苗参数（`HeldPropSystem` 每帧调）。挂点上没有火苗 ⇒ 安静忽略
+   * （贴图是异步挂的，参数先到、贴图后到是常态）。推进来当场就摆，不等下一帧的 `syncAttachments`。
+   */
+  setAttachmentFlame(name: string, params: AttachmentFlameParams | null): void {
+    const at = this.attachments.get(name);
+    if (!at?.flame) return;
+    at.flame.params = params;
+    const pose = this.getSocketPose(name);
+    if (!pose) {
+      at.flame.view.visible = false;
+      return;
+    }
+    this.syncAttachmentFlame(at, this.attachmentTransform(at, pose), pose.scale);
   }
 
   /**
@@ -1094,6 +1272,16 @@ export class SpriteEntity {
     this.disposeAttachmentLit(at);
     at.view.renderable = true;
     if (at.view.parent === this.container) this.container.removeChild(at.view);
+    if (at.flame && at.flame.view.parent === this.container) this.container.removeChild(at.flame.view);
+    if (at.burnGlow) {
+      at.burnGlow.removeFromParent();
+      at.burnGlow.destroy({ texture: false });
+      at.burnGlow = null;
+    }
+    if (at.burnBase) {
+      (at.view as Sprite).texture = at.burnBase;
+      at.burnBase = null;
+    }
   }
 
   /** 卸下全部挂件（换场景/销毁前）。 */
@@ -1120,6 +1308,8 @@ export class SpriteEntity {
       if (!pose) {
         at.view.visible = false;
         if (at.litQuad) at.litQuad.mesh.visible = false;
+        if (at.flame) at.flame.view.visible = false;
+        if (at.burnGlow) at.burnGlow.visible = false;
         continue;
       }
       at.view.visible = true;
@@ -1130,34 +1320,11 @@ export class SpriteEntity {
       if (sprite.anchor && (sprite.anchor.x !== ax || sprite.anchor.y !== ay)) {
         sprite.anchor.set(ax, ay);
       }
-      const base = at.scale ?? 1;
-      const mirror = at.mirrorWithHost === false ? 1 : pose.facing;
-      // 旋转 = 挂点标注角度 + 挂件自身偏置；偏置同样跟着镜像取反，否则朝左时道具会反着歪
-      const offset = (at.rotationOffsetDeg ?? 0) * pose.facing;
-      let atX = pose.x;
-      let atY = pose.y;
-      let atSx = base * pose.scale * mirror;
-      let atSy = base * pose.scale;
-      let atRot = ((pose.angleDeg + offset) * Math.PI) / 180;
-      if (this.trajOverlayActive) {
-        // 挂件与本体 sprite 是**兄弟**（都挂在 container 下，见 attachToSocket），
-        // 拿不到 sprite 身上的轨迹叠加变换。不补这一段，角色被轨迹转起来 / 缩起来时
-        // 手里的刀会留在原地不转不缩（"人转刀不转"）。
-        // 与 sprite 局部矩阵同序：先缩放后旋转（T·R·S）。
-        const lx = atX * this.trajScaleX;
-        const ly = atY * this.trajScaleY;
-        const c = Math.cos(this.trajRotRad);
-        const s = Math.sin(this.trajRotRad);
-        atX = lx * c - ly * s;
-        atY = lx * s + ly * c;
-        atSx *= this.trajScaleX;
-        atSy *= this.trajScaleY;
-        atRot += this.trajRotRad;
-      }
-      at.view.x = atX;
-      at.view.y = atY;
-      at.view.scale.set(atSx, atSy);
-      at.view.rotation = atRot;
+      const tr = this.attachmentTransform(at, pose);
+      at.view.x = tr.x;
+      at.view.y = tr.y;
+      at.view.scale.set(tr.sx, tr.sy);
+      at.view.rotation = tr.rot;
       // 第二档：挂点驱动帧号——挂件是一张小序列图时用标注里的帧号选纹理，
       // 不引入第二个时钟（所以也没有锁相问题）。
       if (at.frameTextures && at.frameTextures.length > 0 && pose.frame !== null) {
@@ -1170,12 +1337,106 @@ export class SpriteEntity {
       // 换了纹理就要换 shader（shader 绑的是那张 color 贴图）
       this.refreshAttachmentLit(at);
       this.syncAttachmentLit(at);
+      if (at.burnGlow) {
+        const g = at.burnGlow;
+        g.anchor.set(sprite.anchor.x, sprite.anchor.y);
+        g.position.set(at.view.x, at.view.y);
+        g.scale.set(at.view.scale.x, at.view.scale.y);
+        g.rotation = at.view.rotation;
+        g.visible = true;
+      }
+      if (at.flame) this.syncAttachmentFlame(at, tr, pose.scale);
       if (at.lastFront !== pose.front) {
         at.lastFront = pose.front;
         needSort = true;
       }
     }
     if (needSort) this.reorderAttachments();
+  }
+
+  /**
+   * 挂件这一帧在容器局部的变换：位置 = 挂点，缩放 = 挂件缩放 × 透视系数 × 镜像，
+   * 旋转 = 挂点标注角 + 挂件自转（自转跟着镜像取反，否则朝左时道具会反着歪），再叠轨迹变换。
+   */
+  private attachmentTransform(at: SocketAttachment, pose: SocketLocalPose): AttachmentTransform {
+    const base = at.scale ?? 1;
+    const mirror = at.mirrorWithHost === false ? 1 : pose.facing;
+    const offset = (at.rotationOffsetDeg ?? 0) * pose.facing;
+    let atX = pose.x;
+    let atY = pose.y;
+    let atSx = base * pose.scale * mirror;
+    let atSy = base * pose.scale;
+    let atRot = ((pose.angleDeg + offset) * Math.PI) / 180;
+    if (this.trajOverlayActive) {
+      // 挂件与本体 sprite 是**兄弟**（都挂在 container 下，见 attachToSocket），
+      // 拿不到 sprite 身上的轨迹叠加变换。不补这一段，角色被轨迹转起来 / 缩起来时
+      // 手里的刀会留在原地不转不缩（"人转刀不转"）。
+      // 与 sprite 局部矩阵同序：先缩放后旋转（T·R·S）。
+      const lx = atX * this.trajScaleX;
+      const ly = atY * this.trajScaleY;
+      const c = Math.cos(this.trajRotRad);
+      const s = Math.sin(this.trajRotRad);
+      atX = lx * c - ly * s;
+      atY = lx * s + ly * c;
+      atSx *= this.trajScaleX;
+      atSy *= this.trajScaleY;
+      atRot += this.trajRotRad;
+    }
+    return { x: atX, y: atY, sx: atSx, sy: atSy, rot: atRot };
+  }
+
+  /**
+   * 挂件贴图上的归一化点 (u, v) 在容器局部的位置：`P = T + R(rot)·S(sx, sy)·((u − ax)·W, (v − ay)·H)`，
+   * 与 Pixi 对 Sprite 的 T·R·S 同序（编辑器试挂预览 `paint_prop` 也是这一套）。贴图还没到 ⇒ null。
+   */
+  private attachmentLocalPoint(
+    at: SocketAttachment, tr: AttachmentTransform, u: number, v: number,
+  ): { x: number; y: number } | null {
+    const tex = (at.view as Sprite).texture;
+    const w = tex?.frame?.width ?? 0;
+    const h = tex?.frame?.height ?? 0;
+    if (!(w > 0) || !(h > 0)) return null;
+    const dx = (clamp01(u) - clamp01(at.anchorX ?? 0.5)) * w * tr.sx;
+    const dy = (clamp01(v) - clamp01(at.anchorY ?? 0.5)) * h * tr.sy;
+    const c = Math.cos(tr.rot);
+    const s = Math.sin(tr.rot);
+    return { x: tr.x + dx * c - dy * s, y: tr.y + dx * s + dy * c };
+  }
+
+  /**
+   * 帧动画火苗摆位：底部钉在起火点（跟着燃烧物走），但**朝向不跟燃烧物**——画面上的倾角由参数给
+   * （风与走动吹出来的），燃烧物怎么歪火苗都朝上。
+   *
+   * 外层实体变换要抵掉：NPC 转身翻的是外层容器（局部角 φ 在画面上变成 −φ），外层旋转 r 会叠上去，
+   * 所以局部角 = 镜像符号 × (画面角 − r)。大小吃透视系数与轨迹的纵向缩放（人被压扁时火跟着扁）。
+   */
+  private syncAttachmentFlame(at: SocketAttachment, tr: AttachmentTransform, depthScale: number): void {
+    const flame = at.flame;
+    if (!flame) return;
+    const params = flame.params;
+    const frames = flame.frames;
+    const view = flame.view;
+    if (!params || !params.visible || frames.length === 0 || !at.view.visible) {
+      view.visible = false;
+      return;
+    }
+    const p = at.firePoint
+      ? this.attachmentLocalPoint(at, tr, at.firePoint[0], at.firePoint[1])
+      : { x: tr.x, y: tr.y };
+    const n = frames.length;
+    const tex = frames[((Math.trunc(params.frame) % n) + n) % n]!;
+    const cellH = tex.frame.height;
+    if (!p || !(cellH > 0) || !(params.heightWu > 0)) {
+      view.visible = false;
+      return;
+    }
+    if (view.texture !== tex) view.texture = tex;
+    const s = (params.heightWu * depthScale * Math.abs(this.trajScaleY)) / cellH;
+    view.scale.set(s, s);
+    view.position.set(p.x, p.y);
+    const sign = this.litParentSX < 0 ? -1 : 1;
+    view.rotation = sign * (params.angleRad - this.litParentRot);
+    view.visible = true;
   }
 
   /** 把挂件 view 的变换逐项复制给它的光照 mesh（两者是兄弟，见 refreshAttachmentLit）。 */
@@ -1209,8 +1470,13 @@ export class SpriteEntity {
    */
   private reorderAttachments(): void {
     for (const at of this.attachments.values()) {
-      // view 与它的光照 mesh 是一对，前后要一起挪（view 不出图但顺序仍要一致）
-      for (const node of [at.view, at.litQuad?.mesh]) {
+      // view 与它的光照 mesh 是一对，前后要一起挪（view 不出图但顺序仍要一致）；
+      // 帧动画火苗跟着这一组走，并且始终排在组内最后（火画在杆头之上）
+      const group = [at.view, at.litQuad?.mesh, at.burnGlow, at.flame?.view];
+      // 挪到最前时逐个插到 0：要倒着插，火苗才留在组内最后。没有火苗的挂件保持原来的插法
+      // （view 不出图，它与 mesh 谁先谁后看不出来——但老挂件的节点顺序一个都不动）
+      const ordered = at.lastFront || !at.flame ? group : [...group].reverse();
+      for (const node of ordered) {
         if (!node || node.parent !== this.container) continue;
         if (at.lastFront) this.container.setChildIndex(node, this.container.children.length - 1);
         else this.container.setChildIndex(node, 0);
@@ -1377,6 +1643,141 @@ export class SpriteEntity {
       ((this.worldHeight * this.depthScaleFactor) / frameH) * this.trajScaleY,
     );
     this.syncLitQuad();   // 所有换帧/换向/透视缩放路径的必经点:mesh 顶点+UV 跟随
+    this.syncBodyBurnGlow();
     this.syncAttachments();   // 挂点位姿同源:换帧/换向/透视一变,挂件当场跟上
+  }
+
+  // ------------------------------------------------- 燃烧（本体是可燃物实例）
+
+  /**
+   * 显示这一帧：本体在烧、又没有光照 mesh（平光旧管线）时显示燃烧颜色图；有 mesh 时精灵只当变换载体、
+   * 颜色源在 shader 里换（帧纹理照旧给 UV）。
+   */
+  private showFrameTexture(tex: Texture): void {
+    this.sprite.texture = this.bodyBurnAlbedo && !this.litQuad ? this.bodyBurnAlbedo : tex;
+  }
+
+  /** 燃烧系统读：本体此刻显示的那一帧（模板图；可燃实体是单帧）。没装贴图 ⇒ null */
+  bodyBurnBaseTexture(): Texture | null {
+    return this.currentFrames[this.frameIndex] ?? null;
+  }
+
+  /**
+   * 燃烧系统写：本体换成烧过的颜色图 + 叠加自发光（`null, null` = 还原）。颜色图与帧同像素尺寸、同 UV
+   * （燃烧系统按帧尺寸建），所以几何一点不动；自发光是一个兄弟精灵，排在本体（mesh）后面、挂件前面。
+   * 资源归燃烧系统，这里只引用；还原时自发光精灵本身由这里销毁（纹理不毁）。
+   */
+  setBodyBurnTextures(albedo: Texture | null, emissive: Texture | null): void {
+    this.bodyBurnAlbedo = albedo;
+    if (this.litShader && this.litProvider && this.baseTexture && this.animDef) {
+      const src = albedo?.source ?? this.baseTexture.source;
+      if (this.litColorSrc !== src) {
+        this.litProvider.swapTextures(this.litShader, src, this.animDef.resolvedSheetUrl ?? null);
+        this.litColorSrc = src;
+      }
+    }
+    const frame = this.currentFrames[this.frameIndex];
+    if (frame) this.showFrameTexture(frame);
+    if (emissive) {
+      if (!this.bodyBurnGlow) {
+        this.bodyBurnGlow = new Sprite(emissive);
+        this.bodyBurnGlow.blendMode = 'add';
+        this.container.addChild(this.bodyBurnGlow);
+        this.placeBodyBurnGlow();
+      } else if (this.bodyBurnGlow.texture !== emissive) {
+        this.bodyBurnGlow.texture = emissive;
+      }
+    } else if (this.bodyBurnGlow) {
+      this.bodyBurnGlow.removeFromParent();
+      this.bodyBurnGlow.destroy({ texture: false });
+      this.bodyBurnGlow = null;
+    }
+    this.syncBodyBurnGlow();
+  }
+
+  /** 自发光精灵排在本体（光照 mesh / 精灵）紧后面 */
+  private placeBodyBurnGlow(): void {
+    const g = this.bodyBurnGlow;
+    if (!g || g.parent !== this.container) return;
+    const body = this.litQuad?.mesh.parent === this.container ? this.litQuad.mesh : this.sprite;
+    if (body.parent !== this.container) return;
+    const bi = this.container.getChildIndex(body);
+    const gi = this.container.getChildIndex(g);
+    this.container.setChildIndex(g, gi < bi ? bi : Math.min(this.container.children.length - 1, bi + 1));
+  }
+
+  private syncBodyBurnGlow(): void {
+    const g = this.bodyBurnGlow;
+    if (!g) return;
+    g.anchor.set(this.sprite.anchor.x, this.sprite.anchor.y);
+    g.position.set(this.sprite.x, this.sprite.y);
+    g.scale.set(this.sprite.scale.x, this.sprite.scale.y);
+    g.rotation = this.sprite.rotation;
+    g.visible = this.sprite.visible;
+  }
+
+  /**
+   * 燃烧系统读：本体图上归一化点 (u, v) 此刻在 `layer` 局部坐标里的位置（场景实体层 = 场景 wu）。
+   * 走 Pixi 的整条变换链（外层容器的实例缩放 / 旋转 / 镜像、透视、轨迹叠加的旋转与缩放），与画面上画出来的逐位一致。
+   * 没装贴图 ⇒ null。
+   */
+  bodyUvToLayer(layer: Container, u: number, v: number): { x: number; y: number } | null {
+    const tex = this.sprite.texture;
+    const w = tex?.frame?.width ?? 0;
+    const h = tex?.frame?.height ?? 0;
+    if (!(w > 0) || !(h > 0) || this.currentFrames.length === 0) return null;
+    const g = this.sprite.toGlobal({ x: (u - this.sprite.anchor.x) * w, y: (v - this.sprite.anchor.y) * h });
+    return layer.toLocal(g);
+  }
+
+  /** 同 {@link bodyUvToLayer}，量挂在 `name` 上那件挂件的贴图；这一帧没标挂点（挂件隐着）/ 没挂 ⇒ null */
+  attachmentUvToLayer(name: string, layer: Container, u: number, v: number): { x: number; y: number } | null {
+    const at = this.attachments.get(name);
+    if (!at || !at.view.visible || !this.getSocketPose(name)) return null;
+    const view = at.view as Sprite;
+    const w = view.texture?.frame?.width ?? 0;
+    const h = view.texture?.frame?.height ?? 0;
+    if (!(w > 0) || !(h > 0)) return null;
+    const g = view.toGlobal({ x: (u - view.anchor.x) * w, y: (v - view.anchor.y) * h });
+    return layer.toLocal(g);
+  }
+
+  /** 燃烧系统读：挂件原本的贴图（模板图；在烧时贴图已换成颜色图，这里仍给原图）。没挂 ⇒ null */
+  attachmentBurnBaseTexture(name: string): Texture | null {
+    const at = this.attachments.get(name);
+    if (!at) return null;
+    return at.burnBase ?? ((at.view as Sprite).texture ?? null);
+  }
+
+  /**
+   * 燃烧系统写：挂件贴图换成烧过的颜色图（同尺寸：支点 / 起火点 / 站位解算一点不动；光照 mesh 按新纹理源重建）
+   * + 叠加自发光（`null, null` = 还原原图、摘掉自发光）。
+   */
+  setAttachmentBurnTextures(name: string, albedo: Texture | null, emissive: Texture | null): void {
+    const at = this.attachments.get(name);
+    if (!at) return;
+    const view = at.view as Sprite;
+    if (albedo) {
+      if (!at.burnBase) at.burnBase = view.texture;
+      if (view.texture !== albedo) view.texture = albedo;
+    } else if (at.burnBase) {
+      view.texture = at.burnBase;
+      at.burnBase = null;
+    }
+    if (emissive) {
+      if (!at.burnGlow) {
+        at.burnGlow = new Sprite(emissive);
+        at.burnGlow.blendMode = 'add';
+        this.container.addChild(at.burnGlow);
+        this.reorderAttachments();
+      } else if (at.burnGlow.texture !== emissive) {
+        at.burnGlow.texture = emissive;
+      }
+    } else if (at.burnGlow) {
+      at.burnGlow.removeFromParent();
+      at.burnGlow.destroy({ texture: false });
+      at.burnGlow = null;
+    }
+    this.syncAttachments();
   }
 }

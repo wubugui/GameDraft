@@ -5,6 +5,7 @@ import {
   framesBetween,
   isLocomotionClip,
   resolveSfx,
+  type FootstepContact,
   type FootstepEmitter,
   type FootstepSpatialContext,
   type FootstepSystemDeps,
@@ -130,6 +131,7 @@ interface Played {
 
 function harness(over: Partial<FootstepSystemDeps> = {}) {
   const played: Played[] = [];
+  const contacts: FootstepContact[] = [];
   const stopped: string[] = [];
   const ctx: FootstepSpatialContext = { resolver: planarResolver() };
   let setId: string | null = 'plank';
@@ -142,11 +144,12 @@ function harness(over: Partial<FootstepSystemDeps> = {}) {
     getSpatialContext: () => ctx,
     resolveSetAt: () => setId,
     getConfig: () => CFG,
+    onContact: (c) => { contacts.push(c); },
     ...over,
   };
   const sys = new FootstepSystem(deps);
   return {
-    sys, played, stopped, ctx,
+    sys, played, contacts, stopped, ctx,
     setSet(v: string | null) { setId = v; },
   };
 }
@@ -460,6 +463,95 @@ describe('FootstepSystem：没有配置就安静，不瞎凑', () => {
     expect(h.played).toHaveLength(0);
   });
 
+});
+
+describe('FootstepSystem：落脚事件与出声解耦（群体刺激不看音频）', () => {
+  it('🔴 音频没解锁（无空间上下文）⇒ 不出声，但落脚事件照发 —— 地虫的反应不许取决于能不能响', () => {
+    const h = harness({ getSpatialContext: () => null });
+    const e = new FakeEmitter('storyteller');
+    startOnContact(h, e);
+    step(h.sys, e, [11]);
+    expect(h.played).toHaveLength(0);
+    expect(h.contacts.map((c) => c.frame)).toEqual([3, 11]);
+  });
+
+  it('🔴 落脚事件带的是原始场景脚点，不是音频那份 M-world（透视场景里后者做过纵深重整）', () => {
+    const h = harness();
+    const e = new FakeEmitter('player');
+    e.x = 335;
+    e.y = 424.5;
+    startOnContact(h, e);
+    expect(h.contacts[0]).toEqual({ emitterId: 'player', clip: 'walk', frame: 3, contactX: 335, contactY: 424.5 });
+    // 同一步的声音坐标是另一个空间的量，两者不是同一个点
+    expect(h.played[0].world).not.toEqual([335, 0, 424.5]);
+  });
+
+  it('setEnabled(false) 只噤声，落脚事件照发', () => {
+    const h = harness();
+    const e = new FakeEmitter('player');
+    h.sys.setEnabled(false);
+    startOnContact(h, e);
+    expect(h.played).toHaveLength(0);
+    expect(h.contacts).toHaveLength(1);
+  });
+
+  it('脚点处没有脚步集 ⇒ 不出声，落脚事件照发', () => {
+    const h = harness();
+    h.setSet(null);
+    startOnContact(h, new FakeEmitter('player'));
+    expect(h.played).toHaveLength(0);
+    expect(h.contacts).toHaveLength(1);
+  });
+
+  it('站着的 idle 复用了落脚格也不是落脚（未登记的片段不发事件）', () => {
+    const h = harness();
+    const e = new FakeEmitter('player');
+    e.clip = 'idle';
+    h.sys.registerEmitter(e);
+    h.sys.update(0.2);
+    step(h.sys, e, [3, 8, 11, 0, 3]);
+    expect(h.contacts).toHaveLength(0);
+  });
+
+  it('不可见 / 防抖闸对落脚事件同样生效', () => {
+    const hidden = harness();
+    const e1 = new FakeEmitter('npc_1');
+    e1.visible = false;
+    startOnContact(hidden, e1);
+    expect(hidden.contacts).toHaveLength(0);
+
+    const jitter = harness({ getSpatialContext: () => null });
+    const e2 = new FakeEmitter('player');
+    startOnContact(jitter, e2);
+    for (let i = 0; i < 20; i++) {
+      e2.clip = i % 2 === 0 ? 'idle' : 'walk';
+      e2.frame = 3;
+      jitter.sys.update(0.016);
+    }
+    expect(jitter.contacts).toHaveLength(1);
+  });
+
+  it('音频中途解锁：之前一直在跟踪帧号，解锁那一刻不会补发一声', () => {
+    let unlocked = false;
+    const ctx: FootstepSpatialContext = { resolver: planarResolver() };
+    const h = harness({ getSpatialContext: () => (unlocked ? ctx : null) });
+    const e = new FakeEmitter('player');
+    startOnContact(h, e);          // 帧 3：落脚、无声
+    unlocked = true;
+    h.sys.update(0.2);             // 帧号没动
+    expect(h.played).toHaveLength(0);
+    step(h.sys, e, [11]);
+    expect(h.played).toHaveLength(1);
+    expect(h.contacts).toHaveLength(2);
+  });
+
+  it('调试状态里的 recentContacts 与 recent 分开记：能分清「没落脚」和「落了脚但没响」', () => {
+    const h = harness({ getSpatialContext: () => null });
+    startOnContact(h, new FakeEmitter('player'));
+    const st = h.sys.getDebugOutputState();
+    expect(st.recent).toEqual([]);
+    expect((st.recentContacts as FootstepContact[])[0].contactX).toBe(100);
+  });
 });
 
 describe('FootstepSystem：生命周期 —— 谁播的谁停', () => {

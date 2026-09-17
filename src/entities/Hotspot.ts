@@ -54,6 +54,12 @@ export class Hotspot {
   private depthOcclusionFilter: IEntityShadingFilter | null = null;
   /** 展示图专用；与 DepthOcclusionFilter 组合为 [density, depth]，深度实例引用不变 */
   private pixelDensityBlur: BlurFilter | null = null;
+  /**
+   * 燃烧滤镜（可燃物，燃烧系统挂 / 摘；本类不销毁它们，所有者是燃烧系统的渲染侧）：
+   * 链 = [密度, 燃烧材质, 深度 + 受光, 燃烧自发光]——材质要吃光，自发光不吃。
+   */
+  private burnMaterialFilter: Filter | null = null;
+  private burnGlowFilter: Filter | null = null;
   private promptIcon: Container | null = null;
   /** 当前提示的键名（'E' / 'C' / 'Space'…）：换键名要重建图标 */
   private promptLabel = 'E';
@@ -224,6 +230,8 @@ export class Hotspot {
     this.marker.visible = false;
     // 换图后尺寸变了：实例 transform 的接地线/遮挡多边形一并重派生（含 band 同步）
     this.applyInstanceTransform();
+    // 挂着燃烧滤镜的可燃物换了新 Sprite：链要重贴到新 Sprite 上（燃烧系统随后按新图判还配不配得上）
+    if (this.burnMaterialFilter || this.burnGlowFilter) this.rebuildDisplaySpriteFilters();
   }
 
   private _effectiveDisplayFacing(): 'left' | 'right' {
@@ -289,13 +297,30 @@ export class Hotspot {
   }
 
   /**
-   * 先密度低通、后深度遮挡（深度滤镜实例与未开密度时相同，仅数组组合变化）
+   * 挂 / 摘燃烧滤镜（`null, null` = 摘）。**所有者是燃烧系统**：摘下之后由它销毁，本类不碰。
+   * 卸载顺序：燃烧系统先摘、再销毁滤镜与燃烧场纹理（BindGroup 见死即自毁）。
+   */
+  setBurnFilters(material: Filter | null, glow: Filter | null): void {
+    this.burnMaterialFilter = material;
+    this.burnGlowFilter = glow;
+    this.rebuildDisplaySpriteFilters();
+  }
+
+  /** 燃烧系统读：展示图在不在、当前是哪张（运行时换了图就不是它配的那张了） */
+  get hasDisplaySprite(): boolean {
+    return this.displaySprite !== null;
+  }
+
+  /**
+   * 先密度低通、再燃烧材质、再深度遮挡 + 受光、最后燃烧自发光（深度滤镜实例与未开密度时相同，仅数组组合变化）
    */
   private rebuildDisplaySpriteFilters(): void {
     if (!this.displaySprite) return;
     const chain: Filter[] = [];
     if (this.pixelDensityBlur) chain.push(this.pixelDensityBlur);
+    if (this.burnMaterialFilter) chain.push(this.burnMaterialFilter);
     if (this.depthOcclusionFilter) chain.push(this.depthOcclusionFilter);
+    if (this.burnGlowFilter) chain.push(this.burnGlowFilter);
     this.displaySprite.filters = chain.length > 0 ? chain : [];
   }
 

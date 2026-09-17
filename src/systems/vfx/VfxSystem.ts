@@ -38,20 +38,26 @@ import type {
   VfxAppearanceDef,
   VfxEffectDef,
   VfxFieldDef,
+  VfxFireSegment,
   VfxFlockState,
   VfxInstanceDef,
   VfxInstanceState,
   VfxPlacementLibrary,
 } from '../../data/types';
-import { TEXT_URLS, vfxEffectJsonUrl } from '../../core/projectPaths';
-import type { VfxRenderer, VfxSpriteSheet } from '../../rendering/vfx/VfxRenderer';
+import { TEXT_URLS, burnableJsonUrl, vfxEffectJsonUrl } from '../../core/projectPaths';
+import { resolveBurnable, type ResolvedBurnable } from '../../data/burnables';
+import type { VfxRenderer, VfxSortHost, VfxSpriteSheet } from '../../rendering/vfx/VfxRenderer';
 import type { Vec3 } from '../../utils/sceneSpace';
 import type { SceneWindParams } from '../../utils/sceneWind';
 import { evaluateConditionExpr, type ConditionEvalContext } from '../graphDialogue/evaluateGraphCondition';
 import type { ConfineField } from './vfxConfine';
 import { hashSeed } from './vfxRandom';
+import { flockHarassmentRate } from './vfxHarassment';
 import { VfxMotionAirflow } from './vfxMotionSource';
-import { VfxInstanceSim, createFieldRuntime, type VfxFieldRuntime } from './vfxSim';
+import { VfxMotionContact } from './vfxContact';
+import {
+  VfxInstanceSim, createFieldRuntime, type VfxBurningPlateGroup, type VfxFieldRuntime, type VfxStepContext,
+} from './vfxSim';
 import type { VfxSpace } from './vfxSpace';
 
 /** 调试面板的一行 */
@@ -79,6 +85,15 @@ const LIGHT_FIELD_STRENGTH_PER_INTENSITY = 1 / 2.5;
 const CONDITION_RECHECK_S = 0.5;
 /** 群体循环声的重触发周期（秒）：空间音总线没有 loop，用一次性音按节奏补 */
 const LOOP_SFX_PERIOD_S = 2.4;
+/**
+ * 预热按帧分片的预算，工作量单位 = 子步 × `VfxInstanceSim.prewarmStepCost`（发射器数 + 粒子槽位）。
+ * 按工作量切、不按毫秒切：不读挂钟，同一串 dt 下第几帧跑完逐位可复现（无头逐帧断言靠它）。
+ * 进场景的实例在揭幕闸里（遮罩下）已经跑完，走到这里的是场景中途新建的模拟：条件翻真、换时段外观、
+ * `playVfx` 重开、粒子工作台推新定义、载荷晚到整批重建、揭幕闸超时。标定见 agent_docs vfx-system「代价」。
+ */
+const PREWARM_UNITS_PER_FRAME = 4000;
+/** 揭幕闸里每跑这么多就让出一次主线程（遮罩下，加载动画与音频保活也要喘口气） */
+const PREWARM_UNITS_PER_REVEAL_SLICE = 40000;
 
 export interface VfxSystemDeps {
   assetManager: AssetManager;
@@ -114,6 +129,23 @@ export interface VfxSystemDeps {
    * 可不注入（旧调用方 / 测试）＝ 没有风。
    */
   getWind?: () => { params: SceneWindParams | null; time: number } | null;
+  /**
+   * 燃烧系统：某个**布置实例**里哪些可燃薄片已经烧没了（发射器序号 → 槽位）。建模拟时恢复（永久没了、不补回）。
+   * 不注入 / 返回 null = 一张没烧。临时实例不问。
+   */
+  burntPlatesOf?: (instanceId: string) => ReadonlyMap<number, readonly number[]> | null;
+  /**
+   * 可燃薄片烧没了（含模拟被收掉 / 离场那一刻**还在烧**的——它们推不出来，按烧没了算）：交给燃烧系统进存档。
+   * 只报布置实例（临时实例切场景即散，没有存档意义）。
+   */
+  onPlatesBurnt?: (instanceId: string, emitterIndex: number, slots: readonly number[]) => void;
+}
+
+/** 一个实例里的一组燃着的薄片（给燃烧系统） */
+export interface VfxBurningPlateReport {
+  instanceId: string;
+  transient: boolean;
+  group: VfxBurningPlateGroup;
 }
 
 interface InstanceRuntime {
@@ -133,10 +165,31 @@ interface InstanceRuntime {
    * 由 `moveInstanceAnchor` 逐帧写（手持光源的火焰），见 `systems/heldProp`。
    */
   followWorld: Vec3 | null;
+  /**
+   * 实例倍率（发射率 / 新生粒子大小 / 吃场景风）：手持火把逐帧推（燃烧强度、闪烁、护火）。
+   * 存在实例上，模拟重建时重新套上；没被设过 = undefined（全 1）。
+   */
+  scales?: { rate: number; size: number; wind: number; distance: number };
+  /**
+   * 挂在实体身上（手里火把的火苗）：每帧问一次宿主节点与挂件此刻在身前还是身后，渲染据此把整团粒子
+   * 钉在宿主同一侧（见 `VfxRenderer` 的 `VfxSortHost`）。返回 null = 宿主这一帧不在，照常逐颗分桶。
+   */
+  sortHost?: () => VfxSortHost | null;
+  /** 一次性（`playVfx({oneShot})`）：放完了（`VfxInstanceSim.finished`）就自己收，不用谁来停 */
+  oneShot?: boolean;
+  /**
+   * 带光柱的模拟被条件翻假时不当场收：先 `stop()` 让光柱按 fadeOut 淡掉，淡完再收（`update` 里判 `beamsDark`）。
+   * 没有光柱的效果永远不进这个态（与原来"条件一假当场收"逐位相同）。
+   */
+  draining?: boolean;
+  /** 薄片绑的可燃物模板（装效果时一起装好；建模拟时交给它） */
+  burnTemplates?: ReadonlyMap<string, ResolvedBurnable>;
   /** Retry only when the effect changes or the scene space is rebuilt. */
   failedConstruction?: { effect: VfxEffectDef; space: VfxSpace };
   loadRevision?: number;
 }
+
+const NO_BURN_TEMPLATES: ReadonlyMap<string, ResolvedBurnable> = new Map();
 
 export class VfxSystem implements IGameSystem {
   private eventBus: EventBus | null = null;
@@ -144,10 +197,16 @@ export class VfxSystem implements IGameSystem {
   private readonly instances = new Map<string, InstanceRuntime>();
   private readonly fields: VfxFieldRuntime[] = [];
   private readonly effectCache = new Map<string, Promise<VfxEffectDef | null>>();
+  /** 可燃物模板（薄片绑的；燃烧工作台联动的工作态覆盖在 `burnTemplateOverrides`） */
+  private readonly burnTemplateCache = new Map<string, Promise<ResolvedBurnable | null>>();
+  private burnTemplateOverrides = new Map<string, ResolvedBurnable>();
   /** 粒子工作台联动（DEV）：各效果最近一次套上的工作态定义（JSON 串）；同样的一份再来不重建实例 */
   private readonly previewEffectJson = new Map<string, string>();
   private readonly sheetCache = new Map<string, Promise<VfxSpriteSheet | null>>();
   private readonly sheets = new Map<string, VfxSpriteSheet>();
+  /** 光柱图案遮罩贴图：`<instanceId>/<beamId>`（与 `sheets` 同一个装载 / 清理节拍） */
+  private readonly beamTextures = new Map<string, Texture>();
+  private readonly beamTextureCache = new Map<string, Promise<Texture | null>>();
   private space: VfxSpace | null = null;
   private generation = 0;
   private time = 0;
@@ -157,13 +216,14 @@ export class VfxSystem implements IGameSystem {
   private playerSpeed = 0;
   private playerField: VfxFieldRuntime | null = null;
   private readonly playerAirflow = new VfxMotionAirflow('player:motion');
+  private readonly playerContact = new VfxMotionContact();
   private lightFields: VfxFieldRuntime[] = [];
   private lightsKey = '';
   private readonly onSceneReady: () => void;
   private readonly onSceneUnload: () => void;
   private readonly onConditionsMaybeChanged: () => void;
   private enabled = true;
-  private lastStats = { instances: 0, live: 0, drawCalls: 0, fields: 0, simMs: 0 };
+  private lastStats = { instances: 0, live: 0, drawCalls: 0, fields: 0, simMs: 0, beams: 0 };
   /** 布置库（会话内装一次；DEV 下工作台的工作态走 `placementOverrides`，不改这份） */
   private library: Promise<VfxPlacementLibrary | null> | null = null;
   /** 已建的实例表取自哪一份（场景 id + 外观键）；null = 还没建（或正在换场景） */
@@ -177,9 +237,15 @@ export class VfxSystem implements IGameSystem {
    */
   private libraryOverride: VfxPlacementLibrary | null = null;
   private readonly onPhaseChanged: () => void;
+  /** 在途的场景重建（scene:ready / 载荷晚到自愈）；揭幕闸要等它把布置表建出来 */
+  private rebuilding: Promise<void> | null = null;
+  /** 在途的实例资产装载（效果 JSON / 贴图 / 模板）；揭幕闸等它们落地 */
+  private readonly pendingLoads = new Set<Promise<void>>();
+  /** 揭幕闸里在途的等待（各带一个定时器）：销毁时逐个撤掉并放行 */
+  private readonly revealWaits = new Set<() => void>();
 
   constructor(private readonly deps: VfxSystemDeps) {
-    this.onSceneReady = () => { void this.rebuildScene(); };
+    this.onSceneReady = () => { void this.startRebuild(); };
     this.onSceneUnload = () => this.clearScene();
     this.onConditionsMaybeChanged = () => { this.conditionsDirty = true; };
     this.onPhaseChanged = () => { this.conditionsDirty = true; this.placementKeyDirty = true; };
@@ -210,6 +276,8 @@ export class VfxSystem implements IGameSystem {
 
   destroy(): void {
     this.clearScene();
+    for (const cancel of [...this.revealWaits]) cancel();
+    this.revealWaits.clear();
     const eb = this.eventBus;
     if (eb) {
       eb.off('scene:ready', this.onSceneReady);
@@ -223,8 +291,11 @@ export class VfxSystem implements IGameSystem {
     this.renderer?.clear();
     this.renderer = null;
     this.effectCache.clear();
+    this.burnTemplateCache.clear();
+    this.burnTemplateOverrides.clear();
     this.previewEffectJson.clear();
     this.sheetCache.clear();
+    this.beamTextureCache.clear();
     this.library = null;
     this.libraryOverride = null;
   }
@@ -249,25 +320,143 @@ export class VfxSystem implements IGameSystem {
     if (!this.space) return;                       // 还没进场景：scene:ready 会建
     if (this.space.kind === 'field') return;       // 已经是真 3D
     if (!this.deps.hasFieldGeometry()) return;     // 载荷还没到
-    void this.rebuildScene();
+    void this.startRebuild();
+  }
+
+  /**
+   * 揭幕闸（`SceneManager.loadScene` 在 scene:ready 之后、撤遮罩之前 await）：在遮罩下把本场景此刻的粒子备齐——
+   * 布置表建好、效果与贴图装完、模拟建好、预热跑完。揭幕后第一帧看到的就是"已经在跑"的样子，
+   * 也不再有哪一帧同步补跑几百毫秒的预热（茶馆 30 个实例原来挤在揭幕后第一帧，实测 361 ms）。
+   *
+   * - 只备此刻：条件不满足、被停掉的实例不建（它们之后翻真 / `playVfx` 时走 `update` 的分帧预热）；
+   * - 限时：超时就放行揭幕，没跑完的由 `update` 按帧预算接着跑——不把揭幕扣成人质；
+   * - 等待中换了场景（世代变了）立刻收手；系统销毁时在途的等待全部放行。永不悬挂。
+   */
+  async prepareForReveal(timeoutMs: number): Promise<void> {
+    if (!this.enabled || !this.space) return;
+    const deadline = performance.now() + Math.max(0, timeoutMs);
+    // 载荷的几何项在 scene:ready 同一拍里（排在本系统后面的监听里）才落地：在遮罩下先升级成真 3D，
+    // 否则揭幕后第一帧自愈重建，已经预热好的模拟整批作废重来
+    if (this.space.kind === 'planar' && this.deps.hasFieldGeometry()) void this.startRebuild();
+    // 布置库 → 布置表 → 各实例资产：重建完才登记实例装载，所以等到"没有在途的"为止
+    for (;;) {
+      const inflight: Promise<unknown>[] = [...this.pendingLoads];
+      if (this.rebuilding) inflight.push(this.rebuilding);
+      if (inflight.length === 0) break;
+      if (!(await this.revealWait(Promise.all(inflight), deadline))) { this.revealTimedOut('粒子资产装载'); return; }
+    }
+    if (!this.enabled || !this.space) return;
+    const gen = this.generation;
+    this.refreshConditions();
+    const ctx = this.prewarmContext();
+    for (;;) {
+      let budget = PREWARM_UNITS_PER_REVEAL_SLICE;
+      let left = 0;
+      for (const inst of this.instances.values()) {
+        const sim = inst.sim;
+        if (!sim || sim.prewarmRemaining <= 0) continue;
+        budget -= this.advancePrewarm(sim, ctx, budget, PREWARM_UNITS_PER_REVEAL_SLICE);
+        if (sim.prewarmRemaining > 0) left++;
+      }
+      if (left === 0) return;
+      if (performance.now() >= deadline) { this.revealTimedOut(`粒子预热（还剩 ${left} 个实例）`); return; }
+      if (!(await this.revealWait(null, deadline))) return;
+      if (gen !== this.generation || !this.enabled || !this.space) return;
+    }
+  }
+
+  /** 预热的上下文：只剩风与外部火焰段（玩家 / 刺激场 / 接触模拟自己剔掉）；时间取系统此刻 */
+  private prewarmContext(): VfxStepContext {
+    const wind = this.deps.getWind?.() ?? null;
+    const fires: VfxFireSegment[] = [];
+    for (const segs of this.fireSources.values()) for (const s of segs) fires.push(s);
+    return {
+      fields: [], contacts: [], player: null, time: this.time,
+      wind: wind?.params ?? null, windTime: wind?.time ?? 0, fires,
+    };
+  }
+
+  /**
+   * 按工作量预算推一段预热，返回用掉的单位。一步都放不下时，只要预算还是满的（这一片的第一笔）也推一步——
+   * 单步就超预算的大实例不许永远轮不上。
+   */
+  private advancePrewarm(sim: VfxInstanceSim, ctx: VfxStepContext, budget: number, full: number): number {
+    const cost = sim.prewarmStepCost;
+    let steps = Math.floor(budget / cost);
+    if (steps <= 0 && budget >= full) steps = 1;
+    return steps > 0 ? sim.advancePrewarm(ctx, steps) * cost : 0;
+  }
+
+  /**
+   * 揭幕闸里的一次等待：`p` 落地（`null` = 只让出一轮主线程）或到 `deadline`。
+   * true = 等到了；false = 超时 / 系统销毁。定时器登记在 `revealWaits`，销毁时撤掉。
+   */
+  private revealWait(p: Promise<unknown> | null, deadline: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let open = true;
+      const finish = (ok: boolean): void => {
+        if (!open) return;
+        open = false;
+        clearTimeout(timer);
+        this.revealWaits.delete(cancel);
+        resolve(ok);
+      };
+      const cancel = (): void => finish(false);
+      const timer = setTimeout(p ? cancel : () => finish(true), p ? Math.max(0, deadline - performance.now()) : 0);
+      this.revealWaits.add(cancel);
+      p?.then(() => finish(true), () => finish(true));
+    });
+  }
+
+  private revealTimedOut(what: string): void {
+    if (!this.eventBus) return;   // 是系统销毁撤掉的等待，不是超时
+    this.deps.log(`vfx: 揭幕前${what}没在限时内做完，先揭幕，剩下的按帧接着跑`);
+  }
+
+  /**
+   * 收掉一个实例的模拟。布置实例里**还在烧**的可燃薄片推不出来（表演态不入档），按烧没了报给燃烧系统；
+   * 新烧没的一并报掉。所有丢模拟的地方都走这里，否则切场景 / 条件翻 / 布置改动时正烧着的纸会以新纸的样子回来。
+   */
+  private retireSim(inst: InstanceRuntime): void {
+    const sim = inst.sim;
+    inst.sim = null;
+    if (!sim || inst.transient || !this.deps.onPlatesBurnt) return;
+    for (const r of sim.takeNewlyBurnt()) this.deps.onPlatesBurnt(inst.def.id, r.emitterIndex, r.slots);
+    for (const r of sim.burningSlots()) this.deps.onPlatesBurnt(inst.def.id, r.emitterIndex, r.slots);
   }
 
   private clearScene(): void {
     this.generation++;
-    for (const inst of this.instances.values()) inst.sim = null;
+    for (const inst of this.instances.values()) this.retireSim(inst);
     this.instances.clear();
+    // 实例都没了，等着收的那张单子也要清——否则旧场景的 id 永远留在集合里
+    this.softStopped.clear();
+    this.fireSources.clear();
     this.fields.length = 0;
     this.playerField = null;
     this.playerAirflow.reset();
+    this.playerContact.reset();
     this.lightFields = [];
     this.lightsKey = '';
     this.sheets.clear();
+    this.beamTextures.clear();
     this.space = null;
     this.playerPrev = null;
     this.playerSpeed = 0;
     this.builtPlacement = null;
     this.placementKeyDirty = false;
+    // 旧场景的装载各自按世代作废；揭幕闸不必再等它们
+    this.pendingLoads.clear();
     this.renderer?.clear();
+  }
+
+  /** 重建本场景并记住在途的那一次（揭幕闸要等它）。失败出声，不留未处理的拒绝。 */
+  private startRebuild(): Promise<void> {
+    const p = this.rebuildScene();
+    this.rebuilding = p;
+    const settle = (): void => { if (this.rebuilding === p) this.rebuilding = null; };
+    p.then(settle, (e) => { settle(); this.deps.log(`vfx: 场景粒子重建失败：${String(e)}`); });
+    return p;
   }
 
   private async rebuildScene(): Promise<void> {
@@ -331,7 +520,7 @@ export class VfxSystem implements IGameSystem {
       if (inst.transient) continue;
       const next = want.get(id);
       if (next && JSON.stringify(next) === JSON.stringify(inst.def)) { want.delete(id); continue; }
-      inst.sim = null;
+      this.retireSim(inst);
       this.instances.delete(id);
     }
     for (const def of want.values()) {
@@ -375,22 +564,103 @@ export class VfxSystem implements IGameSystem {
     const gen = this.generation, revision = (inst.loadRevision ?? 0) + 1;
     inst.loadRevision = revision;
     const current = () => gen === this.generation && inst.loadRevision === revision && this.instances.get(inst.def.id) === inst;
-    void this.loadEffect(inst.def.effect).then(async effect => {
+    const loading: Promise<void> = this.loadEffect(inst.def.effect).then(async effect => {
       if (!current()) return;
       if (!effect) { this.deps.log(`vfx: 实例「${inst.def.id}」的效果「${inst.def.effect}」装不到，跳过`); return; }
       const sheets = await Promise.all(effect.emitters.map(async e => [e.id, await this.loadSheet(e.appearance)] as const));
+      const cookies = await Promise.all((effect.beams ?? []).map(async b =>
+        [b.id, b.cookie?.image ? await this.loadBeamTexture(b.cookie.image) : null, b.cookie?.image] as const));
+      // 没有薄片绑可燃模板的效果不多等一拍（装载时序与没有可燃之前逐位相同）
+      const burnTemplates = effect.emitters.some((em) => em.plate?.burnable?.template)
+        ? await this.loadPlateBurnTemplates(effect)
+        : NO_BURN_TEMPLATES;
       if (!current()) return;
+      inst.burnTemplates = burnTemplates;
       // Publish one coherent effect and sheet set. Earlier preview requests cannot overwrite it.
       for (const key of this.sheets.keys()) if (key.startsWith(`${inst.def.id}/`)) this.sheets.delete(key);
+      for (const key of this.beamTextures.keys()) if (key.startsWith(`${inst.def.id}/`)) this.beamTextures.delete(key);
       for (const [id, sheet] of sheets) {
         if (sheet) this.sheets.set(`${inst.def.id}/${id}`, sheet);
         else this.deps.log(`vfx: 发射器「${effect.id}/${id}」的贴图装不到`);
+      }
+      for (const [id, tex, image] of cookies) {
+        if (tex) this.beamTextures.set(`${inst.def.id}/${id}`, tex);
+        else if (image) this.deps.log(`vfx: 光柱「${effect.id}/${id}」的图案遮罩「${image}」装不到（先不带图案画）`);
       }
       inst.effect = effect;
       this.conditionsDirty = true;
     }).catch(error => {
       if (current()) this.deps.log(`vfx: 实例「${inst.def.id}」加载失败：${String(error)}`);
     });
+    // 上面已兜住一切拒绝：这条只会 resolve
+    this.pendingLoads.add(loading);
+    void loading.then(() => { this.pendingLoads.delete(loading); });
+  }
+
+  /**
+   * 效果里薄片绑的可燃物模板（`plate.burnable.template`）一次装齐。装不到 / 是消耗燃烧 ⇒ 这张纸不可燃，出声一次。
+   */
+  private async loadPlateBurnTemplates(effect: VfxEffectDef): Promise<ReadonlyMap<string, ResolvedBurnable>> {
+    const ids = new Set<string>();
+    for (const em of effect.emitters) {
+      const id = em.plate?.burnable?.template;
+      if (typeof id === 'string' && id.trim()) ids.add(id.trim());
+    }
+    const out = new Map<string, ResolvedBurnable>();
+    await Promise.all([...ids].map(async (id) => {
+      const t = await this.loadBurnTemplate(id);
+      if (!t) { this.deps.log(`vfx: 效果「${effect.id}」的薄片绑的可燃物模板「${id}」装不到，这张纸不可燃`); return; }
+      if (t.mode !== 'spread') { this.deps.log(`vfx: 效果「${effect.id}」的薄片绑的「${id}」是消耗燃烧，薄片只能绑面燃烧模板，这张纸不可燃`); return; }
+      out.set(id, t);
+    }));
+    return out;
+  }
+
+  private loadBurnTemplate(id: string): Promise<ResolvedBurnable | null> {
+    const pv = this.burnTemplateOverrides.get(id);
+    if (pv) return Promise.resolve(pv);
+    let p = this.burnTemplateCache.get(id);
+    if (!p) {
+      p = this.deps.assetManager.loadJson<unknown>(burnableJsonUrl(id))
+        .then((raw) => resolveBurnable(raw, id))
+        .catch(() => null);
+      this.burnTemplateCache.set(id, p);
+    }
+    return p;
+  }
+
+  /**
+   * 燃烧工作台联动（DEV）：可燃物模板的工作态（id → 原始文档；`null` 撤销、回到盘上那份）。
+   * 绑了这些模板的效果的实例整批重建（纸钱按新模板烧）。
+   */
+  applyPreviewBurnTemplates(raw: Record<string, unknown> | null): void {
+    const next = new Map<string, ResolvedBurnable>();
+    if (raw) for (const [id, doc] of Object.entries(raw)) { const t = resolveBurnable(doc, id); if (t) next.set(id, t); }
+    const changed = new Set<string>([...this.burnTemplateOverrides.keys(), ...next.keys()]);
+    if (!raw) {
+      for (const id of this.burnTemplateOverrides.keys()) this.deps.assetManager.dropJson(burnableJsonUrl(id));
+      this.burnTemplateCache.clear();
+    }
+    this.burnTemplateOverrides = next;
+    if (changed.size === 0) return;
+    for (const inst of this.instances.values()) {
+      const eff = inst.effect;
+      if (!eff || !eff.emitters.some((em) => changed.has(em.plate?.burnable?.template ?? ''))) continue;
+      this.retireSim(inst);
+      inst.effect = null;
+      this.loadInstanceEffect(inst);
+    }
+  }
+
+  /** 光柱图案遮罩（灰度图）：按路径缓存，装不到 = null（由调用方出声） */
+  private loadBeamTexture(image: string): Promise<Texture | null> {
+    let p = this.beamTextureCache.get(image);
+    if (!p) {
+      p = this.deps.assetManager.loadTexture(image).then((t: Texture) => t ?? null)
+        .catch((e) => { this.deps.log(`vfx: 光柱图案遮罩「${image}」加载失败：${String(e)}`); return null; });
+      this.beamTextureCache.set(image, p);
+    }
+    return p;
   }
 
   private loadSheet(ap: VfxAppearanceDef): Promise<VfxSpriteSheet | null> {
@@ -454,7 +724,20 @@ export class VfxSystem implements IGameSystem {
         {
           area: Array.isArray(inst.def.area) ? inst.def.area : null,
           confine: inst.def.confine && typeof inst.def.confine === 'object' ? inst.def.confine : null,
+          burnTemplates: inst.burnTemplates ?? null,
         });
+      // 烧没了的纸永久没了：建模拟时（第一次发射之前）恢复，起播铺撒按原次序抽签后收掉
+      if (!inst.transient) {
+        const burnt = this.deps.burntPlatesOf?.(inst.def.id);
+        if (burnt) for (const [emitterIndex, slots] of burnt) inst.sim.applyBurntSlots(emitterIndex, slots);
+      }
+      // 实例倍率住在实例上、不住在模拟上：几何载荷晚到时整批重建模拟，倍率不能跟着丢
+      if (inst.scales) {
+        inst.sim.setRateScale(inst.scales.rate);
+        inst.sim.setSizeScale(inst.scales.size);
+        inst.sim.setWindScale(inst.scales.wind);
+        inst.sim.setDistanceScale(inst.scales.distance);
+      }
       inst.failedConstruction = undefined;
     } catch (error) {
       inst.failedConstruction = { effect: inst.effect, space: this.space };
@@ -466,8 +749,23 @@ export class VfxSystem implements IGameSystem {
     for (const inst of this.instances.values()) {
       const ok = this.evalEligible(inst);
       inst.eligible = ok;
-      if (ok && !inst.stopped) this.ensureSim(inst);
-      else if (inst.sim) inst.sim = null;
+      if (ok && !inst.stopped) {
+        // 正在淡出的光柱又被开回来（条件翻回真 / playVfx）：原模拟接着淡入，不重建
+        if (inst.draining && inst.sim) { inst.draining = false; inst.sim.start(); }
+        else this.ensureSim(inst);
+      }
+      // 软停的临时实例 `stopped` 也是 true，但它的模拟要留着让在飞的粒子飞完、由收尸那段删——
+      // 这里一并清掉的话，任何一次条件重算（另一个实例装完效果就会触发）都让整团当场消失
+      // （2026-09-15 真跑抓到：火把切状态，46 颗粒子下一拍 43、再下一拍 0）
+      else if (inst.sim && !this.softStopped.has(inst.def.id)) {
+        // 带光柱的：先按 fadeOut 淡掉，淡完 update 里再收（光柱不许"啪"一下没了）
+        if (!inst.sim.beamsDark) {
+          if (!inst.draining) { inst.draining = true; inst.sim.stop(); }
+        } else {
+          inst.draining = false;
+          this.retireSim(inst);
+        }
+      }
     }
   }
 
@@ -487,14 +785,24 @@ export class VfxSystem implements IGameSystem {
    */
   playVfx(opts: {
     instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number;
+    /** 具名演出重播时从同一种子/零时刻重建，不接着上次的随机数与轨迹。 */
+    restart?: boolean;
     /** 跟随锚点（世界 wu）：给了就用它当锚，随后由 `moveInstanceAnchor` 逐帧挪 */
     followWorld?: Vec3;
+    /** 一次性临时实例：效果放完就自己收（手持挂件上的 `playPropVfx`）。一直发的发射器永远放不完 */
+    oneShot?: boolean;
   }): string | null {
     if (opts.instanceId) {
       const inst = this.instances.get(opts.instanceId);
       if (!inst) { this.deps.log(`playVfx: 当前场景没有实例「${opts.instanceId}」`); return null; }
       inst.stopped = false;
-      if (inst.sim) inst.sim.start();
+      if (opts.restart) {
+        this.retireSim(inst);
+        inst.draining = false;
+        inst.loopAt = -Infinity;
+        this.softStopped.delete(opts.instanceId);
+      }
+      else if (inst.sim) inst.sim.start();
       this.conditionsDirty = true;
       return opts.instanceId;
     }
@@ -509,26 +817,107 @@ export class VfxSystem implements IGameSystem {
       def, effect: null, sim: null, eligible: true, stopped: false, loopAt: -Infinity, transient: true,
       followWorld: opts.followWorld ? [opts.followWorld[0], opts.followWorld[1], opts.followWorld[2]] : null,
     };
+    if (opts.oneShot) inst.oneShot = true;
     this.instances.set(id, inst);
     this.loadInstanceEffect(inst);
     return id;
   }
 
   /**
-   * 跟随实例：把锚点挪到世界点（手持光源逐帧调）。已发射的粒子留在原地（见 `VfxInstanceSim.moveAnchor`）。
+   * 跟随实例：把锚点挪到世界点（手持光源逐帧调）。已发射的粒子留在原地；`carry` = 在飞的一起平移这么多
+   * （手持挂件动画带出来的位移，见 `VfxInstanceSim.moveAnchor`）。
    * 实例不在场（切场景散了 / 还没装完）时安静返回 false —— 调用方据此知道要不要重开。
    */
-  moveInstanceAnchor(instanceId: string, world: Vec3): boolean {
+  moveInstanceAnchor(instanceId: string, world: Vec3, carry: Vec3 | null = null): boolean {
     const inst = this.instances.get(instanceId);
     if (!inst) return false;
     inst.followWorld = [world[0], world[1], world[2]];
-    inst.sim?.moveAnchor(world);
+    inst.sim?.moveAnchor(world, carry);
     return true;
   }
 
-  /** 发射率倍率（火焰输出 `L(t)` 驱动）。实例不在场时忽略。 */
+  /** 发射率倍率（手持火把：燃烧强度驱动；0 = 不再发）。实例不在场时忽略。 */
   setInstanceRateScale(instanceId: string, k: number): void {
-    this.instances.get(instanceId)?.sim?.setRateScale(k);
+    const inst = this.instances.get(instanceId);
+    if (!inst) return;
+    (inst.scales ??= { rate: 1, size: 1, wind: 1, distance: 1 }).rate = k;
+    inst.sim?.setRateScale(k);
+  }
+
+  /** 新生粒子大小倍率（火把燃烧强度 → 火苗大小）。实例不在场时忽略。 */
+  setInstanceSizeScale(instanceId: string, k: number): void {
+    const inst = this.instances.get(instanceId);
+    if (!inst) return;
+    (inst.scales ??= { rate: 1, size: 1, wind: 1, distance: 1 }).size = k;
+    inst.sim?.setSizeScale(k);
+  }
+
+  /** 最远烧到多远的倍率（火把：燃烧强度与风把火焰缩短）。实例不在场时忽略。 */
+  setInstanceDistanceScale(instanceId: string, k: number): void {
+    const inst = this.instances.get(instanceId);
+    if (!inst) return;
+    (inst.scales ??= { rate: 1, size: 1, wind: 1, distance: 1 }).distance = k;
+    inst.sim?.setDistanceScale(k);
+  }
+
+  /** 吃场景风的倍率（火把护火 = 挡风）。实例不在场时忽略。 */
+  setInstanceWindScale(instanceId: string, k: number): void {
+    const inst = this.instances.get(instanceId);
+    if (!inst) return;
+    (inst.scales ??= { rate: 1, size: 1, wind: 1, distance: 1 }).wind = k;
+    inst.sim?.setWindScale(k);
+  }
+
+  /**
+   * 外部供点（燃烧系统逐帧推）：给实例里 `external` 形状的发射器换一批出生点（每点 x, y, z, 半径）。
+   * 实例不在场 / 模拟还没建时忽略（下一帧会再推）。
+   */
+  setInstanceSpawnPoints(instanceId: string, pts: Float32Array, count: number): void {
+    this.instances.get(instanceId)?.sim?.setSpawnPoints(pts, count);
+  }
+
+  /**
+   * 火焰段（按来源整份替换）：`burn` = 燃烧系统的火线簇，`heldProp` = 手上燃着且能点火的火头。
+   * 可燃薄片碰到会着；燃着的纸本身由粒子系统每帧自己加进去。空数组 = 这个来源这一帧没有火。
+   */
+  setFireSources(owner: string, segments: readonly VfxFireSegment[]): void {
+    if (segments.length === 0) this.fireSources.delete(owner);
+    else this.fireSources.set(owner, segments);
+  }
+
+  private readonly fireSources = new Map<string, readonly VfxFireSegment[]>();
+  private readonly firesScratch: VfxFireSegment[] = [];
+  private readonly burningScratch: VfxBurningPlateGroup[] = [];
+
+  /** 此刻燃着的可燃薄片（逐实例逐发射器一组；给燃烧系统发火苗 / 打火光 / 点可燃物） */
+  burningPlates(): VfxBurningPlateReport[] {
+    const out: VfxBurningPlateReport[] = [];
+    for (const inst of this.instances.values()) {
+      // 还在预热的模拟是"过去"，看不见：不给燃烧系统发火苗 / 打火光
+      if (!inst.sim || inst.sim.prewarmRemaining > 0) continue;
+      for (const group of inst.sim.burningPlates(this.burningScratch)) {
+        out.push({ instanceId: inst.def.id, transient: inst.transient, group });
+      }
+    }
+    return out;
+  }
+
+  /** 此刻还在烧的布置实例纸片槽位（存档那一刻它们推不出来 ⇒ 按烧没了进档；不改动模拟） */
+  burningPlateSlots(): { instanceId: string; emitterIndex: number; slots: number[] }[] {
+    const out: { instanceId: string; emitterIndex: number; slots: number[] }[] = [];
+    for (const inst of this.instances.values()) {
+      if (!inst.sim || inst.transient) continue;
+      for (const r of inst.sim.burningSlots()) out.push({ instanceId: inst.def.id, ...r });
+    }
+    return out;
+  }
+
+  /** 把实例钉到宿主身上排序（`null` 解绑）。实例不在场时忽略。 */
+  setInstanceSortHost(instanceId: string, host: (() => VfxSortHost | null) | null): void {
+    const inst = this.instances.get(instanceId);
+    if (!inst) return;
+    if (host) inst.sortHost = host;
+    else delete inst.sortHost;
   }
 
   private transientSeq = 0;
@@ -609,7 +998,7 @@ export class VfxSystem implements IGameSystem {
     }
     for (const inst of this.instances.values()) {
       if (inst.def.effect !== effectId) continue;
-      inst.sim = null;
+      this.retireSim(inst);
       inst.effect = null;
       this.loadInstanceEffect(inst);
     }
@@ -658,7 +1047,7 @@ export class VfxSystem implements IGameSystem {
   /** 当前模拟空间（F2 用来分清"真 3D 场"与"平面近似"——后者所有几何判据都空成立）。 */
   get currentSpace(): VfxSpace | null { return this.space; }
 
-  get stats(): { instances: number; live: number; drawCalls: number; fields: number; simMs: number } {
+  get stats(): { instances: number; live: number; drawCalls: number; fields: number; simMs: number; beams: number } {
     return this.lastStats;
   }
 
@@ -668,12 +1057,30 @@ export class VfxSystem implements IGameSystem {
     for (const inst of this.instances.values()) {
       const cf = inst.sim?.confine ?? null;
       out.push({
-        id: inst.def.id, effect: inst.def.effect, state: this.getInstanceState(inst.def.id) ?? 'n/a',
+        id: inst.def.id, effect: inst.def.effect,
+        state: inst.sim && inst.sim.prewarmRemaining > 0 ? 'prewarming' : this.getInstanceState(inst.def.id) ?? 'n/a',
         live: inst.sim?.liveCount ?? 0, eligible: inst.eligible,
         confine: cf ? { feather: cf.feather, ceiling: cf.ceiling, ...inst.sim!.confineStats()! } : null,
       });
     }
     return out;
+  }
+
+  /** 同一种效果/发射器即使被重复布置也只算一次；组装层交给统一伤害系统。 */
+  playerHarassment(): { sourceId: string; attackPerSecond: number }[] {
+    const pc = this.deps.getPlayerContact();
+    if (!this.enabled || !this.space || !pc) return [];
+    const player = this.space.groundWorldAtScene(pc.x, pc.y);
+    const rates = new Map<string, number>();
+    for (const inst of this.instances.values()) {
+      if (!inst.eligible || inst.stopped || inst.draining || !inst.sim || inst.sim.prewarmRemaining > 0) continue;
+      for (const emitter of inst.sim.emitters) {
+        const rate = flockHarassmentRate(emitter, player);
+        const sourceId = `vfx:${inst.def.effect}:${emitter.def.id}`;
+        if (rate > 0) rates.set(sourceId, Math.max(rate, rates.get(sourceId) ?? 0));
+      }
+    }
+    return [...rates].map(([sourceId, attackPerSecond]) => ({ sourceId, attackPerSecond }));
   }
 
   /** 在场实例的范围区域（权重场）与发射区域（F2 叠加层画框线、边带内沿、发射区域用） */
@@ -696,7 +1103,7 @@ export class VfxSystem implements IGameSystem {
     // 所有几何判据都空成立）。载荷一落地就换成真 3D 场重建——判据便宜（只读几个 getter），
     // 真正贵的建高度场只在 kind 真的要变时才发生。
     if (this.space.kind === 'planar' && this.deps.hasFieldGeometry()) {
-      void this.rebuildScene();
+      void this.startRebuild();
       return;
     }
     if (this.placementKeyDirty) this.syncPlacementKey();
@@ -731,6 +1138,8 @@ export class VfxSystem implements IGameSystem {
     }
     const air = this.playerAirflow.sample(player?.world ?? null, dt,
       player ? this.space.metricAt(player.world[0], player.world[2]) : 1);
+    const contact = this.playerContact.sample(player?.world ?? null, dt,
+      player ? this.space.metricAt(player.world[0], player.world[2]) : 1);
     if (player) { if (!this.fields.includes(air)) this.fields.push(air); }
     else { const i = this.fields.indexOf(air); if (i >= 0) this.fields.splice(i, 1); }
     // ---- 灯当恐惧源（时段一变灯表就变，按 key 重建）
@@ -745,18 +1154,67 @@ export class VfxSystem implements IGameSystem {
     // ---- 模拟
     const t0 = performance.now();
     const wind = this.deps.getWind?.() ?? null;
-    const ctx = { fields: this.fields, player, time: this.time, wind: wind?.params ?? null, windTime: wind?.time ?? 0 };
+    // 火焰段：外部来源 + 各实例这一帧开头燃着的纸（一帧的延迟，确定性：按实例表次序收集）
+    const fires = this.firesScratch;
+    fires.length = 0;
+    for (const segs of this.fireSources.values()) for (const s of segs) fires.push(s);
+    for (const inst of this.instances.values()) {
+      if (inst.sim && inst.sim.prewarmRemaining === 0) inst.sim.plateFireSegments(fires);
+    }
+    const ctx: VfxStepContext = {
+      fields: this.fields, contacts: contact ? [contact] : [], player, time: this.time,
+      wind: wind?.params ?? null, windTime: wind?.time ?? 0, fires,
+    };
     const sims: VfxInstanceSim[] = [];
     let live = 0;
+    const hosts = new Map<string, VfxSortHost>();
+    let prewarmBudget = PREWARM_UNITS_PER_FRAME;
     for (const inst of this.instances.values()) {
       const sim = inst.sim;
       if (!sim) continue;
+      if (sim.prewarmRemaining > 0) {
+        // 还在预热 = 还是"过去"：不画、不正常推进、不出事件。按帧预算推一截；跑完的这一帧照常接上
+        // （预算够一帧跑完时，与原来"第一次 step 里一口气补完"逐位相同）
+        prewarmBudget -= this.advancePrewarm(sim, ctx, prewarmBudget, PREWARM_UNITS_PER_FRAME);
+        if (sim.prewarmRemaining > 0) continue;
+      }
+      const host = inst.sortHost?.();
+      if (host) hosts.set(sim.id, host);
       sim.step(dt, ctx);
       live += sim.liveCount;
       sims.push(sim);
       this.handleEvents(inst, sim);
+      if (!inst.transient && this.deps.onPlatesBurnt) {
+        for (const r of sim.takeNewlyBurnt()) this.deps.onPlatesBurnt(inst.def.id, r.emitterIndex, r.slots);
+      }
     }
     const simMs = performance.now() - t0;
+    // ---- 收尸：条件翻假 / 被停后淡出中的光柱，淡完再收模拟（这一帧照样交给渲染，亮度 0 不画）
+    for (const inst of this.instances.values()) {
+      if (inst.draining && inst.sim?.beamsDark) {
+        inst.draining = false;
+        this.retireSim(inst);
+      }
+    }
+    // ---- 收尸：一次性临时实例放完就删（手持挂件上播的熄灭烟）
+    for (const [id, inst] of this.instances) {
+      if (inst.transient && inst.oneShot && inst.sim?.finished) {
+        this.instances.delete(id);
+        this.softStopped.delete(id);
+      }
+    }
+    /**
+     * ---- 收尸（兜底）：**停了、又没有模拟**的临时实例再也做不了任何事（停了的不会再 `ensureSim`），
+     * 留在表里就是只涨不掉的记账。软停之后模拟被条件重算收走、还没装出模拟就被停掉（点着当帧又熄）都归它。
+     * 2026-09-16 真跑抓到：火把点一次灭一次，`instances` 稳定 +2 再不掉。
+     * ⚠ 两种不能碰：还没装完、但没被停的（模拟正在路上）；建不出模拟但没被停的
+     *   （粒子工作台把坏效果改好之后还要靠它恢复，见 `VfxSystem.inputs.test.ts`）。
+     */
+    for (const [id, inst] of this.instances) {
+      if (!inst.transient || inst.sim || !inst.stopped) continue;
+      this.instances.delete(id);
+      this.softStopped.delete(id);
+    }
     // ---- 收尸：软停的临时实例等在飞的粒子老化完再删（火舌停了，空中那几点火星该飞完）
     if (this.softStopped.size > 0) {
       for (const id of [...this.softStopped]) {
@@ -769,10 +1227,10 @@ export class VfxSystem implements IGameSystem {
       }
     }
     // ---- 渲染
-    if (this.renderer) this.renderer.render(sims, this.sheets);
+    if (this.renderer) this.renderer.render(sims, this.sheets, hosts, this.beamTextures);
     this.lastStats = {
       instances: sims.length, live, drawCalls: this.renderer?.drawCallCount ?? 0,
-      fields: this.fields.length, simMs,
+      fields: this.fields.length, simMs, beams: this.renderer?.beamStats.visible ?? 0,
     };
   }
 

@@ -43,8 +43,8 @@ Part = str
 #:
 #: 顺序无语义，但保持"主图元在前"便于阅读。
 PART_TABLE: dict[str, tuple[Part, ...]] = {
-    "hotspot": ("handle", "display", "collision", "ghost"),
-    "npc": ("handle", "collision", "ghost", "patrol", "sprite"),
+    "hotspot": ("handle", "display", "collision", "ghost", "burn"),
+    "npc": ("handle", "collision", "ghost", "patrol", "sprite", "burn"),
     "zone": ("polygon",),
     "spawn": ("handle",),
     "group": ("box",),
@@ -57,11 +57,13 @@ PART_KEY_PREFIX: dict[tuple[str, Part], str | None] = {
     ("hotspot", "display"): "hotspot_display",
     ("hotspot", "collision"): "hotspot_collision",
     ("hotspot", "ghost"): "hotspot_collision_ghost",
+    ("hotspot", "burn"): None,  # 可燃实例的着火点标记（模板 ignitionPoints 的只读投影），住 SceneCanvas._burn_marker_items["hotspot:id"]
     ("npc", "handle"): "npc",
     ("npc", "collision"): "npc_collision",
     ("npc", "ghost"): "npc_collision_ghost",
     ("npc", "patrol"): None,   # 住 SceneCanvas._patrol_overlays
     ("npc", "sprite"): None,   # 住 SceneEditor._scene_npc_runtimes[eid].item
+    ("npc", "burn"): None,     # 可燃 NPC 的着火点标记，住 SceneCanvas._burn_marker_items["npc:id"]
     ("zone", "polygon"): "zone",
     ("spawn", "handle"): "spawn",
     ("group", "box"): "group",

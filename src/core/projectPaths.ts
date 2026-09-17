@@ -28,6 +28,8 @@ export const TEXT_URLS = {
   vfxDir: '/assets/data/vfx',
   /** 粒子布置库（场景 × 时段外观 → 实例表；粒子工作台唯一写者），见 `VfxPlacementLibrary` */
   vfxPlacements: '/assets/data/vfx_placements.json',
+  /** 可燃物模板目录（一个模板一个文件，id = 文件名；燃烧工作台唯一写者；谁用它写在宿主自己身上），见 `BurnableDef` */
+  burnablesDir: '/assets/data/burnables',
   archiveDir: '/assets/data/archive',
   cutscenesIndex: '/assets/data/cutscenes/index.json',
   parallaxScenes: '/assets/data/parallax_scenes.json',
@@ -38,6 +40,7 @@ export const TEXT_URLS = {
   footstepSets: '/assets/data/footstep_sets.json',
   overlayImages: '/assets/data/overlay_images.json',
   propPresets: '/assets/data/prop_presets.json',
+  propEffects: '/assets/data/prop_effects.json',
   scenarios: '/assets/data/scenarios.json',
   narrativePackages: '/assets/data/narrative_packages.json',
   documentReveals: '/assets/data/document_reveals.json',
@@ -137,6 +140,13 @@ export function vfxEffectJsonUrl(effectId: string): string {
   const id = (effectId ?? '').trim();
   if (!id) throw new Error('vfxEffectJsonUrl: effectId required');
   return `${TEXT_URLS.vfxDir}/${id}.json`;
+}
+
+/** 可燃物资产 JSON URL：`/assets/data/burnables/<id>.json`（一个可燃物一个文件，id = 文件名；燃烧工作台唯一写者）。 */
+export function burnableJsonUrl(burnableId: string): string {
+  const id = (burnableId ?? '').trim();
+  if (!id) throw new Error('burnableJsonUrl: burnableId required');
+  return `${TEXT_URLS.burnablesDir}/${id}.json`;
 }
 
 /** data 子目录下的 JSON URL；entry.file 已是绝对路径时原样返回。 */

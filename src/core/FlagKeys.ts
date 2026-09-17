@@ -10,6 +10,8 @@ export const FlagKeys = {
   archiveCharacter: (characterId: string): string => `archive_character_${characterId}`,
   /** 三把火 HUD 读数当前显不显示（玩法清单 G.5：默认不显、动作控显、入存档） */
   threeFiresVisible: 'three_fires_visible',
+  /** 引擎派生，只读：玩家此刻受到指定且有效的火光保护。内容只能拿来作条件。 */
+  fireProtected: 'player_fire_protected',
   /** 气味指示器（鼻子）当前显不显示（玩法清单 G.6：默认不显、动作控显、入存档） */
   smellHudVisible: 'smell_hud_visible',
   /** 气缕飘向追踪开关（G.6：飘向指着气味源；关了一直是直的；缺省开） */

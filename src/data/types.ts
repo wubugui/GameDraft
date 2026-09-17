@@ -23,8 +23,10 @@ import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { FlagStore } from '../core/FlagStore';
 import type { AssetManager } from '../core/AssetManager';
+import type { HealthProtection, RetryConfig, HealthThreatDef, FireProtectionConfig, FireProtectionDef } from './survival';
 import type { DialogueLayoutStyle, SpeakerSide } from '../utils/dialogueSpeakerSide';
 import type { KeyframeEasing } from '../utils/keyframeSampler';
+import type { BurnableHostDef, BurnablePlateBindingDef } from './burnables';
 
 import cutsceneActionAllowlist from './cutscene_action_allowlist.json';
 
@@ -51,6 +53,8 @@ export enum GameState {
   Cutscene = 'Cutscene',
   UIOverlay = 'UIOverlay',
   Minigame = 'Minigame',
+  /** 三把火耗尽：世界暂停，只允许死亡说明与重试选择。 */
+  Dead = 'Dead',
 }
 
 // ============================================================
@@ -905,6 +909,21 @@ export interface PlayerActsConfig {
   lie?: PlayerPostureConfig;
   kick?: PlayerActConfig;
   jump?: PlayerActConfig;
+  /** 地图上点火的表演（燃烧系统 A3.8）；缺省 = 开、片段取逻辑状态 `ignite`、走路速度走过去 */
+  ignite?: PlayerIgniteActConfig;
+}
+
+/**
+ * 点火表演：走到站位 → 播 `animation`（逻辑状态名，经 `playerAvatar.stateMap` 解析成片段；解析不出来退 `idle`）→
+ * 接触帧（`sockets.json.igniteSlots` 标的那一格）火头对准着火点、点着。
+ */
+export interface PlayerIgniteActConfig {
+  /** false = 玩家按 E 点不了可燃物（动作 igniteBurnable 照常能点）。缺省 true */
+  enabled?: boolean;
+  /** 点火片段的逻辑状态名，缺省 `ignite` */
+  animation?: string;
+  /** 走到站位的速度（wu/s），缺省本场景走路速度 */
+  walkSpeed?: number;
 }
 
 /**
@@ -948,6 +967,8 @@ export type DialogueFacing = 'keep' | 'left' | 'right' | 'player';
 
 export interface HotspotDef {
   id: string;
+  healthThreat?: HealthThreatDef;
+  fireProtection?: FireProtectionDef;
   type: HotspotType;
   x: number;
   y: number;
@@ -991,8 +1012,13 @@ export interface HotspotDef {
    * 没有展示图就没有可镜像的东西。对话结束恢复成进对话前的朝向。
    */
   dialogueFacing?: DialogueFacing;
-  /** 可选：展示用贴图，底中锚点对齐 (x,y) */
+  /** 可选：展示用贴图，底中锚点对齐 (x,y)。开了可燃（`burnable`）时不画——渲染由可燃物实例接管 */
   displayImage?: HotspotDisplayImage;
+  /**
+   * 可燃（A3.8）：这个热点是可燃物模板的一个实例。有它 ⇒ 展示图取模板的图、按模板真实尺寸画
+   * （实例 scale / rotation / 朝向照乘），`displayImage.image / worldWidth / worldHeight` 失效（`facing` / `spriteSort` 照用）。
+   */
+  burnable?: BurnableHostDef;
   /**
    * 可选：相对热区锚点 (x,y) 的局部多边形（与 `collisionPolygonLocal` 配合）。
    * 旧场景未写 `collisionPolygonLocal` 时按世界坐标兼容。
@@ -1197,6 +1223,76 @@ export type TimePhaseConditionLeaf = {
   timePhase: string;
 };
 
+/**
+ * 手持挂件条件叶：`{ heldProp: 'player', prop: 'xianteng_torch', burning: true }`。
+ * 火把点着没有、火势多少、锁没锁都是**全局玩法状态**，别的系统查它决定自己（2026-09-15 制作人定）——
+ * 与 posture / timePhase 同一条通道，不镜像成 flag。
+ *
+ * 语义：`heldProp` 这个人（`player` 或 NPC 实例 id）身上**有一件**挂件同时满足写了的每一项，没写的项不限：
+ * - `socket` 挂点；`prop` 挂件预设 id；`propState` 当前状态名；
+ * - `burning` 燃着没有：当前状态有灯（点着 / 护火 / 残炭）为真，灭了为假；
+ * - `vitalityOp` + `vitality` 火势比较（0..1；没配风吹灭火的挂件恒 1；两项要一起写）；
+ * - `fuelOp` + `fuel` 剩下几成燃料的比较（0..1；没有耐久、烧不完的挂件恒 1；两项要一起写）；
+ * - `effect` 挂着哪块效果（写效果块 id 或它的标签都认，见 `prop_effects.json`）；
+ * - `lock` 锁（`lit` 锁定不灭 / `unlit` 点不燃 / `none`）。
+ * 手上什么都没有 ⇒ 假；`{not:{heldProp:'player', burning:true}}` = "手上没有燃着的东西"。
+ */
+export interface HeldPropConditionLeaf {
+  heldProp: string;
+  socket?: string;
+  prop?: string;
+  propState?: string;
+  burning?: boolean;
+  vitalityOp?: '<' | '<=' | '>' | '>=';
+  vitality?: number;
+  fuelOp?: '<' | '<=' | '>' | '>=';
+  fuel?: number;
+  effect?: string;
+  lock?: 'lit' | 'unlit' | 'none';
+}
+
+/**
+ * 挂件等级条件叶：`{ propLevel: 'xianteng_torch', op: '>=', value: 2 }`（玩法清单 A3.7「火把养成」）。
+ * 问的是**这根挂件升到第几级**，与拿没拿在手上无关（收在包里也算）——物品描述按等级变就靠它。
+ * `op` 缺省 `>=`；没有等级表的挂件恒第 1 级。
+ */
+export interface PropLevelConditionLeaf {
+  propLevel: string;
+  op?: '==' | '!=' | '<' | '<=' | '>' | '>=';
+  value: number;
+}
+
+/** `heldProp` 条件叶读的一件挂件的事实（`HeldPropSystem.statusOf` 给；数据层不 import 系统层） */
+export interface HeldPropConditionStatus {
+  socket: string;
+  prop: string;
+  state: string;
+  burning: boolean;
+  vitality: number;
+  /** 第几级（1 起；没有等级表的恒 1） */
+  level: number;
+  /** 还剩几成燃料 0..1；没有耐久（烧不完）的恒 1 */
+  fuel: number;
+  /** 挂着的效果块 id 与标签（`effect` 两样都认） */
+  effects: string[];
+  lock: 'lit' | 'unlit' | 'none';
+}
+
+/**
+ * 可燃物条件叶（燃烧系统，A3.8）：`{ burn: 'hs_paper', burnState: 'burnt' }`。
+ * 可燃物烧的状态是**世界事实**（进存档、离场照推），任何写条件的地方都能直接问——不镜像成 flag。
+ * - 不写 `burnSocket`：`burn` = 场景实体 id（热点 / NPC / 演出生成留下的对象），`burnScene` 场景 id（缺省当前场景）；
+ * - 写了 `burnSocket`：`burn` = 拿着东西的人（`player` / NPC id），问他这个挂点上的可燃道具（`burnScene` 不读）；
+ * - `burnState`：`unburnt` 没点 / `burning` 在烧（含余烬）/ `out` 灭了（剩燃料）/ `burnt` 烧完。
+ * 不是可燃实例 ⇒ 假。叙事自动迁移在状态变化时（`burn:changed`）重评。
+ */
+export interface BurnConditionLeaf {
+  burn: string;
+  burnSocket?: string;
+  burnScene?: string;
+  burnState: 'unburnt' | 'burning' | 'out' | 'burnt';
+}
+
 /** 图对话原子条件（无逻辑组合） */
 export type GraphConditionLeaf =
   | Condition
@@ -1208,7 +1304,10 @@ export type GraphConditionLeaf =
   | PlaneConditionLeaf
   | PostureConditionLeaf
   | TimePhaseConditionLeaf
-  | VfxStateConditionLeaf;
+  | VfxStateConditionLeaf
+  | HeldPropConditionLeaf
+  | PropLevelConditionLeaf
+  | BurnConditionLeaf;
 
 /**
  * 递归条件：叶子或 all / any / not（与叙事文档 ConditionExpr 一致）。
@@ -1566,6 +1665,7 @@ export interface EntityAnchor {
 
 export interface NpcDef {
   id: string;
+  healthThreat?: HealthThreatDef;
   /**
    * 引用 character_registry.json 的角色 id：名字/动画包/头像从该角色继承，
    * 本 NpcDef 就地写的同名字段覆盖之。缺省=独立 NPC（名字/动画等全部就地定义，旧数据不变）。
@@ -1639,6 +1739,11 @@ export interface NpcDef {
    * 语义与字段含义同热区展示图 {@link HotspotDisplayImage}（底边中点对齐 (x,y)）。
    */
   displayImage?: HotspotDisplayImage;
+  /**
+   * 可燃（A3.8）：这个 NPC 是可燃物模板的一个实例。有它 ⇒ `animFile` / `characterId` 的动画与 `displayImage` 的图一律不画，
+   * 按模板的图与真实尺寸合成单帧（与 `displayImage` 同一条实体管线：受光 / 遮挡 / 透视 / 排序照旧），不再播动画。
+   */
+  burnable?: BurnableHostDef;
   /**
    * 对话头像立绘集目录名（`resources/runtime/images/dialogue_portraits/<slug>/`）。
    * 图对话行 portrait 省略 slug（「跟随说话 NPC」）时按此解析；未配置则该行不显头像。
@@ -2035,6 +2140,37 @@ export interface ItemDef {
   tags?: string[];
   /** 自身用途；缺省＝该物件在背包里没有使用入口 */
   use?: ItemUseDef;
+  /**
+   * 火种（2026-09-16，玩法清单 A3.7「火种」）：写了这一块 = 这件物品是火种。背包里它的用法是「设为火种」
+   * （写了 `use` 就按 `use` 走，不另给）；手上拿着灭着的火把按 T 用当前火种点火，点一次用掉一次、点没点着都算。
+   */
+  igniter?: ItemIgniterDef;
+  /** 携带即生效；一类物品不按份数叠加。主动防护编排在 use.actions。 */
+  healthProtection?: Omit<HealthProtection, 'id'>;
+}
+
+/** 火种参数（见 {@link ItemDef.igniter}） */
+export interface ItemIgniterDef {
+  /** 一份能点几次（整数 ≥ 1，缺省 1）：火折子一支点三次，火绒、洋火一份一次 */
+  uses?: number;
+  /** 点着要多久（秒，> 0）：这段时间里风太大 / 人走动 / 停手就没点着 */
+  seconds: number;
+  /** 火把头的风（已算护火挡掉的）超过多少 m/s 就点不着（> 0） */
+  windLimit: number;
+}
+
+/** 当前火种此刻的样子（背包详情、点火都读它） */
+export interface ActiveIgniterStatus {
+  itemId: string;
+  name: string;
+  seconds: number;
+  windLimit: number;
+  /** 一份能点几次 */
+  uses: number;
+  /** 已经拆开那一份还剩几次（0 = 没有拆开的） */
+  openedLeft: number;
+  /** 一共还能点几次 = 拆开的剩余 + 包里的份数 × 一份几次 */
+  available: number;
 }
 
 /**
@@ -2188,6 +2324,12 @@ export interface SocketSetDef {
    * 共用 12 格）时只标一次，且片段帧序改了标注不漂。空数组 = 这个包没有脚步。
    */
   contactSlots: number[];
+  /**
+   * **点火接触帧**（2026-09-16，燃烧系统 A3.8）：点火动作里火头碰到可燃物的那些**图集槽位**（升序、去重）。
+   * 与落脚帧同口径（按槽位、同一份指纹、同一个挂点面板里勾）。点火表演取「点火片段帧序列里第一个落在这里的帧」
+   * 作为接触帧，站位按那一帧的火头位置反解。空数组 = 这个包没标（运行时退到片段第一帧，dev 告警一次）。
+   */
+  igniteSlots: number[];
 }
 
 export interface AnimationStateDef {
@@ -2872,6 +3014,11 @@ export interface TrajectorySpawnSpec {
    * ⚠ 「要发光、但仍要被前景几何挡住」今天表达不了——不受光与不被挡绑在这一个开关上。
    */
   renderRaw?: boolean;
+  /**
+   * 可燃（A3.8，动态创建可燃物）：生成出来的对象是可燃物模板的一个实例——渲染由实例接管（`src` / `characterId` 可不写），
+   * `keep` 留下的照常进存档、照常烧。
+   */
+  burnable?: BurnableHostDef;
 }
 
 /**
@@ -3374,8 +3521,12 @@ export interface ZoneSmellConfig {
   /** @deprecated 静态方位已废（G.6，2026-09-10）：飘向只按 {@link source} 与玩家位置现算；留字段不报错、不生效。 */
   dir?: number;
   flicker?: boolean;
-  /** 气味源（本场景世界坐标）：气缕飘向的方向就是它，顺着烟走能摸到源。不配 = 直的。 */
-  source?: { x: number; y: number };
+  /**
+   * 气味源：气缕飘向的方向就是它，顺着烟走能摸到源。不配 = 直的。
+   * 位置引用（{@link PositionRef}）：数字点 / 实体此刻位置（铺子热点、尸体 NPC…）/ 场景曲线插槽 / 曲线上的点，
+   * 每帧现求。老数据 `{x, y}`（不写 kind）照旧当数字点。
+   */
+  source?: PositionRef | { x: number; y: number };
 }
 
 export interface ZoneDef {
@@ -3584,6 +3735,10 @@ export interface GameConfig {
     restoreFloor?: number;
     tetherCueId?: string;
     tetherSuppressFlagKey?: string;
+    /** 自动系绳必须明确满足此条件；不配时普通耗尽直接死亡。 */
+    tetherCondition?: ConditionExpr;
+    retry?: RetryConfig;
+    fireProtection?: FireProtectionConfig;
   };
   /**
    * 玩家可见文本的**语义色板**：内容里写 `[c:<id>]…[/c]` 给某几个字上色。
@@ -3826,6 +3981,8 @@ export interface IInventoryDataProvider {
   canDiscard(id: string): boolean;
   /** 该物件此刻的使用态；没配 `use` 返回 null（＝面板不画使用键） */
   resolveItemUse(id: string): ResolvedItemUse | null;
+  /** 这件是火种 ⇒ 它是不是当前火种、拆开那一份还剩几次；不是火种 ⇒ null（面板据此画标签） */
+  igniterInfoOf?(id: string): { current: boolean; uses: number; openedLeft: number } | null;
 }
 
 export interface IRulesDataProvider {
@@ -4166,6 +4323,9 @@ export interface VfxAnchorDef {
 /** 随寿命变化的标量曲线：`[t01, value]` 关键点，线性插值；缺省恒 1 */
 export type VfxCurve = [number, number][];
 
+/** 随寿命变化的颜色曲线：`[t01, r, g, b]` 关键点（0..1），逐通道线性插值；缺省恒白 */
+export type VfxColorCurve = [number, number, number, number][];
+
 export type VfxBlendMode = 'normal' | 'add';
 
 export interface VfxAppearanceDef {
@@ -4189,6 +4349,11 @@ export interface VfxAppearanceDef {
   alphaOverLife?: VfxCurve;
   /** 乘色（0..1），缺省白 */
   tint?: [number, number, number];
+  /**
+   * 颜色随寿命（乘在 `tint` 上）：火苗出生黄白、升起变橙、烧尽暗红就是它。
+   * 采样口径与 `alphaOverLife` 同一套（超出两端取端点、空 / 不写 = 恒白）。
+   */
+  tintOverLife?: VfxColorCurve;
   /** 混合：normal / add（火星、萤火） */
   blend?: VfxBlendMode;
   /** 吃 probe 底光 + 场景实体灯（烟、蝙蝠）；自发光的东西 false。缺省 true */
@@ -4216,6 +4381,12 @@ export interface VfxAppearanceDef {
   softEdgeWu?: number;
   /** 自转（度/秒）区间 + 初始随机相位。缺省不转 */
   spin?: { rate: [number, number]; randomPhase?: boolean };
+  /**
+   * 被光柱照亮（光柱里的尘埃）：这颗粒子的亮度 × 同一效果里光柱 `beam` 在它所在位置的亮度
+   * （形状 / 边缘软度 / 沿长度曲线 / 亮度起伏 / 淡入淡出），颜色 × 光柱颜色。柱外 = 看不见。
+   * `gain` 缺省 1。与 `lit` 正交：一般配 `lit:false` + `blend:add`。
+   */
+  beamLit?: { beam: string; gain?: number };
 }
 
 export type VfxSpawnShapeDef =
@@ -4229,13 +4400,27 @@ export type VfxSpawnShapeDef =
    * 画面上那里是石头 / 树 / 灌丛就挂在它表面，看过去是崖下虚空就不放。实例没给 `area` 时退成
    * 以原点为心、半径 `radius`（wu，缺省 200）的圆盘（粒子工作台预览用）。只对 `burst` 生效。
    */
-  | { kind: 'area'; radius?: number };
+  | { kind: 'area'; radius?: number }
+  /**
+   * **外部供点**（2026-09-16，燃烧系统）：出生点由别的系统每帧交进来（`VfxSystem.setInstanceSpawnPoints`）——
+   * 可燃物正在烧的那条火线、正在烧的纸钱。每颗随机挑一个点，在那一点的半径 × `jitter`（缺省 1）的球里出生。
+   * 没有点 = 不发。粒子工作台里单独预览时没有点（到燃烧工作台里看）。
+   */
+  | { kind: 'external'; jitter?: number }
+  /**
+   * **光柱体积**（2026-09-16）：在同一效果里光柱 `beam` 的体积内均匀出生（3D 模式在棱台里，2D 模式在光带里、
+   * 立在锚点脚下那一深度的直立面上）。`along` = 只在沿长度这一段出生（0..1，缺省 [0,1]）。
+   * 发射器的 `offset` 不参与（位置全由光柱定）。只对普通粒子求解器生效。
+   */
+  | { kind: 'beam'; beam: string; along?: [number, number] };
 
 export interface VfxSpawnDef {
   /** 池容量（同时存活上限） */
   max: number;
   /** 持续发射速率（个/秒）；不写 = 只有 burst */
   rate?: number;
+  /** 每次持续发射间隔的随机浮动比例 0..0.95；0/不写保持固定间隔。实例种子驱动，平均速率不变。 */
+  intervalJitter?: number;
   /** 开播时一次性发多少 */
   burst?: number;
   /** 发射形状（相对发射器原点，M-world） */
@@ -4271,7 +4456,19 @@ export interface VfxMotionDef {
    * （站着不动强度 0 = 它们自己飘回来），所以不需要任何事件，走过去就散、走开就聚。
    */
   stimulus?: VfxStimulusResponseDef;
+  /**
+   * 锚点动了，**已经发出去的**粒子怎么走（跟随锚点的实例才有意义：手持挂件上的效果）。缺省 `none`。
+   * - `none`：发出去就归空气，留在原地（烟、火星）；
+   * - `rig`：只跟"动画带出来的"那部分——宿主转身、换姿势、逐帧动画换帧；宿主在世界里走不跟（火舌拖在身后）。
+   *   只有挂件上的效果有这一份位移，别处等于 none；
+   * - `full`：整个跟着锚点走，像粘在发射面上（熄灭的火头上那点余烬红光、炭火）。
+   * 群体与薄片不吃（它们本来就不挂在会动的东西上）。
+   */
+  followAnchor?: VfxFollowAnchor;
 }
+
+/** 见 {@link VfxMotionDef.followAnchor} */
+export type VfxFollowAnchor = 'none' | 'rig' | 'full';
 
 /** 普通粒子怎么看待刺激场。标签与群体那份 `attitude` 同一套词汇（`player:motion` / `item:bug` / …）。 */
 export interface VfxStimulusResponseDef {
@@ -4289,6 +4486,13 @@ export interface VfxStimulusResponseDef {
 export interface VfxLifeDef {
   /** 寿命区间（秒）；不写 = 永生（群体） */
   seconds?: [number, number];
+  /**
+   * 最远烧到多远（wu，离发射器原点；只对有寿命的普通粒子）：粒子的"烧完进度"取 `max(活了多久 / 寿命, 离原点距离 / maxDistance)`，
+   * 所以离火源越远越早走完寿命曲线（变红、变淡、没）。火焰燃气离开火源超过火焰长度就烧完了、不再发光——
+   * 不写的话被大风带着飞、人跑起来甩在身后的火舌一拖一米多，比人还长（2026-09-15 制作人抓到）。
+   * 实例可整体缩放（`setInstanceDistanceScale`：手持火把按燃烧强度与风把火焰缩短）。
+   */
+  maxDistance?: number;
 }
 
 export type VfxCollisionResponse = 'none' | 'kill' | 'bounce' | 'stick' | 'slide';
@@ -4315,6 +4519,8 @@ export type VfxFlockState = 'roosting' | 'airborne' | 'fleeing' | 'returning';
  * **加速度上限 × 方向**（wu/s²），没有无量纲权重。
  */
 export interface VfxFlockBehaviorDef {
+  /** 实际近身侵扰：世界空间球体，以玩家脚点 + height 为中心；整群按秒扣一次，不乘个体数。 */
+  harassment?: { radius: number; height: number; attackPerSecond: number };
   /** 巡航速度 / 最大速度（wu/s）、最大加速度（wu/s²） */
   cruise: number;
   max: number;
@@ -4403,6 +4609,8 @@ export interface VfxSimulationDef {
     airflow: boolean;
     /** fear / attract 标签响应：普通与薄片使用 motion.stimulus，群体使用 behavior.attitude。 */
     stimulus: boolean;
+    /** Moving kinematic bodies (e.g. feet). Missing = disabled for existing effects. */
+    contact?: boolean;
   };
   recycle: {
     mode: 'none' | 'surface' | 'airborne';
@@ -4448,13 +4656,153 @@ export interface VfxPlateDef {
   segments?: number;
   /** 旧资产兼容字段，仅装载边界消费；新资产使用 simulation.recycle。 */
   replenish?: boolean;
+  /**
+   * 可燃（A3.8）：绑一份**面燃烧**可燃物模板——碰到火会着、从被碰到的那边烧过去、烧成灰、永久没了。缺省不可燃。
+   * 多久点着、火苗多长、烧过去多快（模板火线速度 × 这张纸此刻的朝向）、焦黑 / 发光、火苗粒子、火光都取模板；
+   * 贴图与大小仍归粒子自己。
+   */
+  burnable?: BurnablePlateBindingDef;
+}
+
+/**
+ * 一段火焰（运行时，M-world wu）：从 `(x,y,z)` 沿单位轴 `(ax,ay,az)` 伸 `len`，粗 `r`。
+ * 绑了可燃模板的薄片与它的距离 ≤ r + 片的半尺寸 = 碰到。由燃烧系统（可燃物的火线簇）、手持挂件（燃着且能点火的火头）、
+ * 粒子系统自己（燃着的纸）每帧交给粒子系统。
+ */
+export interface VfxFireSegment {
+  x: number; y: number; z: number;
+  ax: number; ay: number; az: number;
+  len: number;
+  r: number;
+}
+
+// ---------------------------------------------------------------------------
+// 光柱（体积光，2026-09-16 制作人定）：美术可控的氛围件，不是物理积分。
+// 枚举 / 缺省 / 上下限的唯一真相源是 `src/data/vfxBeamContract.json`（运行时与 Python 校验同读）。
+// ---------------------------------------------------------------------------
+
+/** 光柱混合：`add` 叠加 / `screen` 柔叠加（亮处不爆）/ `normal` 普通透明 */
+export type VfxBeamBlend = 'add' | 'screen' | 'normal';
+
+/**
+ * 光柱与实体的前后：`depth` = 整根光柱按落点参与实体排序（3D：终点正下方的地面点；2D：锚点脚下），
+ * 人站在落点前面就挡住光柱、后面就被光柱叠上去；`background` = 钉在所有实体后面；`foreground` = 钉在所有实体前面。
+ */
+export type VfxBeamSort = 'depth' | 'background' | 'foreground';
+
+/**
+ * 3D 光柱的源截面。矩形 = 窗、门缝、瓦缝；正多边形 = 天窗圆孔之类。
+ * **没有圆截面**：亮度按视线穿过的厚度加权，圆截面画出来是中间亮两边暗的"发光管"（制作人 2026-09-16）。
+ */
+export type VfxBeamSectionDef =
+  | { kind: 'rect'; width: number; height: number }
+  | { kind: 'polygon'; sides: number; radius: number };
+
+/** 3D 模式（M-world，wu，相对实例锚点）：从 `from` 到 `to` 的一根棱台 */
+export interface VfxBeam3dDef {
+  /** 起点（源截面中心），缺省 [0,0,0] */
+  from?: [number, number, number];
+  /** 终点：方向 + 长度都由它定。一般拖到地面上稍微穿进去一点，交给原画深度截断 */
+  to: [number, number, number];
+  section: VfxBeamSectionDef;
+  /** 张角（度，全角）：[沿截面宽, 沿截面高]；正多边形只看第一个。缺省 [0,0] = 平行光棱柱（太阳透窗） */
+  spreadDeg?: [number, number];
+  /** 截面绕光柱轴的转角（度）：让矩形的边对齐墙 / 窗框。缺省 0（宽沿水平） */
+  rollDeg?: number;
+}
+
+/** 2D 模式（画面坐标 wu，相对实例锚点投到画面上的那一点）：一条梯形光带 */
+export interface VfxBeam2dDef {
+  /** 起点，缺省 [0,0] */
+  from?: [number, number];
+  to: [number, number];
+  /** 起点处 / 终点处的全宽（画面 wu） */
+  width: [number, number];
+  /**
+   * 让原画前景挡住它：光带立在锚点脚下那一深度的直立面上（与实体同一个模型），原画比它近的地方把它挡掉。
+   * 缺省 false；没深度的场景忽略。
+   */
+  occludeByDepth?: boolean;
+}
+
+/** 光柱里流动的雾气（程序化 3D 噪声，世界空间） */
+export interface VfxBeamNoiseDef {
+  /** 0..1：亮度在 [1−s, 1+s] 之间起伏 */
+  strength: number;
+  /** 一团雾的尺度（wu；2D 模式是画面 wu） */
+  scaleWu: number;
+  /** 流速（wu/s，M-world；2D 模式只看前两个、画面坐标） */
+  velocity?: [number, number, number];
+}
+
+/** 图案遮罩（窗棂 / 树叶）：灰度图贴在截面上，沿光柱方向投出一条条光 */
+export interface VfxBeamCookieDef {
+  /** 灰度图（取 R 通道），`resources/runtime/images/vfx/` 下 */
+  image: string;
+  /** 0..1，缺省 1 */
+  strength?: number;
+  /** 截面上铺几遍（宽, 高），缺省 [1,1] */
+  scale?: [number, number];
+  /** 平移（截面归一化单位），缺省 [0,0] */
+  offset?: [number, number];
+  /** 旋转（度），缺省 0 */
+  rotationDeg?: number;
+}
+
+/** 亮度起伏：`flicker` 闪烁（平滑随机）/ `breathe` 慢呼吸（正弦，云过太阳） */
+export interface VfxBeamPulseDef {
+  kind: 'flicker' | 'breathe';
+  /** 频率（Hz） */
+  hz: number;
+  /** 0..1：最暗时亮度 = 1 − amount */
+  amount: number;
+}
+
+/** 效果里的一根光柱（与 `emitters` 并列） */
+export interface VfxBeamDef {
+  /** 效果内唯一（尘埃的 `spawn.shape.beam` / `appearance.beamLit.beam` 按它引用） */
+  id: string;
+  mode: '3d' | '2d';
+  /** 3D 模式的形状；切到 2D 时原样保留 */
+  shape3d?: VfxBeam3dDef;
+  /** 2D 模式的形状；切到 3D 时原样保留 */
+  shape2d?: VfxBeam2dDef;
+  /** 起点颜色（sRGB 0..1） */
+  color: [number, number, number];
+  /** 终点颜色，缺省 = `color`（沿长度线性过渡） */
+  colorEnd?: [number, number, number];
+  /** 强度（0..20） */
+  intensity: number;
+  /** 沿长度亮度（`[t01, 倍率]`，≤ 8 个关键点），缺省恒 1 */
+  alongCurve?: VfxCurve;
+  /** 边缘软度（0 = 硬边，1 = 从中心就开始暗），缺省 0.4 */
+  edgeSoftness?: number;
+  /** 厚度感（只 3D）：0 = 亮度与视线穿过多厚无关，1 = 按厚度加权（截面形状看得出来）。缺省 1 */
+  thickness?: number;
+  /** 贴近原画表面的软收尾距离（wu），缺省 60；0 = 硬切 */
+  contactSoftWu?: number;
+  /** 缺省 `add` */
+  blend?: VfxBeamBlend;
+  noise?: VfxBeamNoiseDef;
+  cookie?: VfxBeamCookieDef;
+  pulse?: VfxBeamPulseDef;
+  /** 开 / 关的淡入 / 淡出秒数（`playVfx` / `stopVfx` / 条件翻转），缺省各 0.6 */
+  fadeIn?: number;
+  fadeOut?: number;
+  /** 缺省 `depth` */
+  sort?: VfxBeamSort;
 }
 
 /** 效果资产：`public/assets/data/vfx/<id>.json`，`id == 文件名`。 */
 export interface VfxEffectDef {
   id: string;
   label?: string;
+  /** 起播前静默模拟的秒数范围 [min,max]，0 ≤ min ≤ max ≤ 15；按实例种子取样。缺省不预热。 */
+  prewarmSeconds?: [number, number];
+  /** 发射器；只有光柱的效果写空数组 */
   emitters: VfxEmitterDef[];
+  /** 光柱（体积光），见 {@link VfxBeamDef}。缺省没有 */
+  beams?: VfxBeamDef[];
   /** 工作台重开现场用（运行时忽略） */
   authoring?: {
     sceneId?: string;

@@ -56,6 +56,15 @@
   .item .ic { width: 16px; color: var(--warn); }
   .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item button { padding: 0 5px; font-size: 11px; }
+  /* 左栏「别的时段外观 · 整份拷贝」：时段名一行（可折行，不省略）、状态 + 两个按钮一行 */
+  .phaseRow { padding: 3px 10px; }
+  .phaseRow .lab { display: flex; gap: 6px; align-items: baseline; }
+  .phaseRow .lab .ic { width: 16px; flex: none; color: var(--warn); }
+  .phaseRow .lab .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .phaseRow .act { display: flex; flex-wrap: wrap; gap: 2px 4px; align-items: center; padding-left: 22px; margin-top: 2px; }
+  .phaseRow .act > span { flex: 1 0 auto; white-space: nowrap; font-size: 11px; }
+  .phaseRow .act > .pair { display: flex; gap: 4px; margin-left: auto; }
+  .phaseRow button { padding: 0 5px; font-size: 11px; }
   #center { position: relative; overflow: hidden; background: #111; }
   #center canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
   #overlay3d { pointer-events: none; }
@@ -83,6 +92,8 @@
   .kv { display: flex; gap: 8px; padding: 1px 10px; font-size: 12px; }
   .kv > span:first-child { width: 72px; color: var(--dim); flex: none; }
   .curverow canvas { border-radius: 4px; cursor: crosshair; }
+  .gradrow canvas { border-radius: 3px; border: 1px solid var(--line); }
+  .row .swatch { width: 16px; height: 16px; flex: none; border-radius: 3px; border: 1px solid var(--line); }
   label.chk { display: inline-flex; gap: 4px; align-items: center; white-space: nowrap; font-size: 12px; }
   #bottom { grid-column: 1 / span 4; display: flex; gap: 14px; align-items: center; padding: 4px 10px; background: var(--panel); border-top: 1px solid var(--line); font-size: 12px; }
   #status { flex: 1; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -125,6 +136,7 @@
       <input type="number" id="fieldStrength" value="1" step="0.1" title="强度：wind 为 wu/s²，airflow 为 wu/s，fear / attract 为倍率">
       <input type="number" id="fieldDuration" value="0" step="0.1" title="持续秒数；0 = 瞬时脉冲"><span class="unit">s</span>
       <button id="btnClearFields" title="清掉所有在飞的刺激场">清场</button></span>
+    <span class="grp"><b>火焰</b><button id="btnClearFires" title="清掉火焰调试工具（I）放的调试火焰（只在本地预览里；已经着了的纸照样烧完）">清火</button></span>
     <span class="grp" id="fieldDirection" hidden><b>方向</b>
       <input type="number" id="fieldDirX" value="1" step="0.1" aria-label="刺激方向 X" title="M-world X：向右">
       <input type="number" id="fieldDirY" value="0" step="0.1" aria-label="刺激方向 Y" title="M-world Y：向上">
@@ -137,6 +149,7 @@
     <button data-tool="anchor" title="放锚点（A）：有活动布置时改的是这条布置的 anchor（游戏用的）；没有时写 authoring.anchor（仅工作台预览）。点场景表面，切 ground/shell 落到对应面。锚点模式=角色挂点时，点的是「火头摆在哪」（写 authoring.attach）">⊕</button>
     <button data-tool="player" title="放角色（M）：点地面放一个可拖的角色标记（高 150 wu 是尺度参考），走动时自动带出 player:motion 场；左栏「来回走」让它自己来回走">🚶</button>
     <button data-tool="field" title="发一个刺激（K）：点任意处，按上面那排参数发 fear / attract / wind">⚡</button>
+    <button data-tool="fire" title="放一段调试火焰（I）：点场景表面 = 在那里立一段竖直火焰（高 40 wu），绑了可燃模板（面燃烧）的薄片碰到会着、焦黑、成灰消失。只在本地预览里（不存盘、不推游戏），预览条「清火」清掉">火</button>
     <button data-tool="areaEmit" class="areaTool emit" title="拉发射区域（写活动布置的 area，青色虚线）：按住拖一个框 = 那块区域；之后拖顶点 / 双击边线加点 / Delete 或右键删点。Esc 退出">▭</button>
     <button data-tool="areaRange" class="areaTool range" title="拉范围区域（写活动布置的 confine.area 并打开限定，黄色实线 + 边带）：按住拖一个框 = 那块区域。Esc 退出">▣</button>
     <button data-tool="pan" title="平移（H）">✋</button>
@@ -158,6 +171,17 @@
       <button id="btnDownEmitter" title="下移">↓</button>
       <button id="btnDelEmitter" class="danger" title="删除">×</button>
     </div>
+    <h3>光柱（体积光）</h3>
+    <div id="beamList"></div>
+    <div class="btns" style="padding:4px 8px">
+      <button id="btnAddBeam3" title="加一根 3D 光柱（M-world 里的棱台：起点 / 终点 / 多边形截面，原画深度挡得住）">+ 3D</button>
+      <button id="btnAddBeam2" title="加一条 2D 光带（画面坐标里的梯形，没深度的场景也能用）">+ 2D</button>
+      <button id="btnDupBeam" title="复制当前光柱">⧉</button>
+      <button id="btnRenameBeam" title="改名（尘埃的光柱体积 / 被光柱照亮引用会跟着改）">改名</button>
+      <button id="btnUpBeam" title="上移">↑</button>
+      <button id="btnDownBeam" title="下移">↓</button>
+      <button id="btnDelBeam" class="danger" title="删除（还有尘埃用着它就拒绝）">×</button>
+    </div>
     <h3 id="placeHead">布置</h3>
     <div id="placeList"></div>
     <div class="btns" style="padding:4px 8px">
@@ -168,6 +192,7 @@
       <button id="btnPlaceRename" title="改布置 id（playVfx / 条件按 id 引用它）">改 id</button>
       <button id="btnPlaceCopy" title="把选中的布置或这一份整份复制到本场景另一套时段外观">复制到时段…</button>
     </div>
+    <div id="placePhases"></div>
     <h3>这个效果还布置在</h3>
     <div id="placeElsewhere"></div>
     <h3>玩家</h3>
@@ -181,6 +206,7 @@
       <label class="chk"><input type="checkbox" id="layer_grid"> 地面网格（2 m）</label>
       <label class="chk"><input type="checkbox" id="layer_particles"> 粒子</label>
       <label class="chk"><input type="checkbox" id="layer_rings"> 群体半径</label>
+      <label class="chk" title="3D 视图画线框；原画视图画真实预览（运行时那段着色器）"><input type="checkbox" id="layer_beams"> 光柱</label>
       <label class="chk"><input type="checkbox" id="layer_marks"> 出生点 / NPC</label>
     </div>
     <h3>游戏</h3>
@@ -193,7 +219,7 @@
     <canvas id="view2d" hidden></canvas>
     <div id="coords"></div>
     <div id="legend">V 选择 · A 锚点 · M 玩家 · K 刺激 · ▭/▣ 拉发射 / 范围区域 · W/E/R gizmo（Ctrl 吸附）· 1/2 切 3D / 原画<br>
-      区域：拖顶点 · 双击边线加点 · Delete / 右键删点<br>右键拖 环视（按住 WASD/QE 飞）· Alt+左键 环绕 · 中键 平移 · 滚轮 朝光标缩放 · F 对准 · Home 整场</div>
+      区域：拖顶点 · 双击边线加点 · Delete / 右键删点 · 光柱：拖起点 / 终点把手（真实效果看原画视图）<br>右键拖 环视（按住 WASD/QE 飞）· Alt+左键 环绕 · 中键 平移 · 滚轮 朝光标缩放 · F 对准 · Home 整场</div>
     <div id="viewbtns"><span id="sceneNote" class="chip"></span></div>
   </div>
   <div id="side">
@@ -210,6 +236,7 @@
 <script src="/vendor/gizmo.js"></script>
 <script src="/viewer/view3d.js"></script>
 <script src="/viewer/view2d.js"></script>
+<script src="/viewer/beams.js"></script>
 <script src="/viewer/inspector.js"></script>
 <script src="/viewer/app.js"></script>
 </body>

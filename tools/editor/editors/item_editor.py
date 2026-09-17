@@ -1,6 +1,9 @@
 """Item definition editor."""
 from __future__ import annotations
 
+import copy
+import math
+
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QListWidget,
     QFormLayout, QLineEdit, QComboBox, QPushButton, QSpinBox,
@@ -20,12 +23,49 @@ from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.qt_icon_buttons import outline_row_tool_button, delete_standard_pixmap
 from ..shared.form_layout import compact_form
 from ..shared.collapsible_section import CollapsibleSection
+from ..shared.health_forms import HealthProtectionForm, ABSENT as HEALTH_ABSENT
+from ..shared.widget_discard import discard_widget
 
 #: consume 三态下拉的取值顺序（索引即 combo 行号）。
 #: ``None`` = 不写 ``consume`` 键，运行时按 type 推定（consumable 扣 / key 不扣）——
 #: 与位面编辑器的槽继承同一范式：不显式配置就不写键，别拿默认值把"没配"写成"配了"。
 _CONSUME_MODES: tuple[bool | None, ...] = (None, True, False)
 _CONSUME_LABELS = ("按类型（默认）", "消耗一个", "不消耗")
+
+#: 「不写这个键」的哨兵（与 None / null 区分：`igniter: null` 是盘上真有的值）。
+_MISSING = object()
+
+#: `ItemIgniterDef`（src/data/types.ts）里表单管着的键；其余键原样透传。
+_IGNITER_KEYS = ("uses", "seconds", "windLimit")
+#: 新勾「是火种」时写出的起步值（seconds / windLimit 必填，uses 缺省 1 不写）
+_IGNITER_SEED_USES = 1
+_IGNITER_SEED_SECONDS = 1.0
+_IGNITER_SEED_WIND = 5.0
+
+_IGNITER_TIP = (
+    "火种（ItemDef.igniter）：写了这一块，这件物品就是火种。\n"
+    "玩家手上拿着灭着的火把按 T，用「当前火种」点火：点一次用掉一次，点没点着都算；\n"
+    "点着要花「点着要多久」秒，这段时间里风太大 / 人走动 / 停手就没点着。\n"
+    "背包里火种的用法是「设为火种」（写了 use 就按 use 走，不另给）。剧情里也能用动作 setActiveIgniter 替玩家设。"
+)
+_IGNITER_USES_TIP = "一份能点几次（整数 ≥ 1，不写 = 1）：火折子一支点三次，火绒、洋火一份一次。"
+_IGNITER_SECONDS_TIP = "点着要多久（秒，> 0）：这段时间里风太大 / 人走动 / 停手就没点着。"
+_IGNITER_WIND_TIP = "火把头风超过多少 m/s 就点不着（> 0；风速已算上护火挡掉的那部分）。"
+
+
+def _is_finite_num(v: object) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _finite_or(v: object, default: float) -> float:
+    """盘上值是有限数就用它（控件自己夹量程），否则用起步值。"""
+    return float(v) if _is_finite_num(v) else float(default)
+
+
+def _igniter_number_out(v: float) -> int | float:
+    """控件值落盘：整数落 int（`3` 不写成 `3.0`），其余保留到 4 位小数。"""
+    r = round(float(v), 4)
+    return int(r) if r.is_integer() else r
 
 
 class DynDescWidget(QGroupBox):
@@ -169,6 +209,12 @@ class ItemEditor(QWidget):
             "不勾＝删除 use 键（背包里不画使用键）；勾上才写入下面这些字段。")
         self._u_enabled.toggled.connect(self._sync_use_enabled)
         use_lay.addWidget(self._u_enabled)
+        # 火种的背包用法是运行时**合成**的（InventoryManager.resolveItemUse）：数据里没有这枚按钮，
+        # 不在这里说一声，作者看着「不可主动使用」会以为背包里没按钮。
+        self._u_igniter_hint = QLabel("")
+        self._u_igniter_hint.setWordWrap(True)
+        self._u_igniter_hint.hide()
+        use_lay.addWidget(self._u_igniter_hint)
 
         self._u_body = QWidget()
         uf = compact_form(QFormLayout(self._u_body))
@@ -205,7 +251,61 @@ class ItemEditor(QWidget):
 
         use_section.add_body(use_inner)
         dl.addWidget(use_section)
+
+        # ── 火种（ItemDef.igniter）─────────────────────────────────────────
+        ig_section = CollapsibleSection("火种（igniter）", start_open=False)
+        ig_section.set_header_tool_tip(_IGNITER_TIP)
+        ig_inner = QWidget()
+        ig_lay = QVBoxLayout(ig_inner)
+        ig_lay.setContentsMargins(0, 0, 0, 0)
+        self._ig_enabled = QCheckBox("是火种")
+        self._ig_enabled.setToolTip(
+            "勾上 = 写 igniter 对象（这件物品是火种）；不勾 = **不写 igniter 键**。\n" + _IGNITER_TIP)
+        ig_lay.addWidget(self._ig_enabled)
+        self._ig_body = QWidget()
+        igf = compact_form(QFormLayout(self._ig_body))
+        self._ig_uses = QSpinBox()
+        self._ig_uses.setRange(1, 999)
+        self._ig_uses.setToolTip(_IGNITER_USES_TIP)
+        igf.addRow("一份能点几次 uses", self._ig_uses)
+        self._ig_seconds = QDoubleSpinBox()
+        self._ig_seconds.setRange(0.01, 600.0)
+        self._ig_seconds.setDecimals(2)
+        self._ig_seconds.setSingleStep(0.1)
+        self._ig_seconds.setSuffix(" 秒")
+        self._ig_seconds.setToolTip(_IGNITER_SECONDS_TIP)
+        igf.addRow("点着要多久 seconds", self._ig_seconds)
+        self._ig_wind = QDoubleSpinBox()
+        self._ig_wind.setRange(0.01, 100.0)
+        self._ig_wind.setDecimals(2)
+        self._ig_wind.setSingleStep(0.5)
+        self._ig_wind.setSuffix(" m/s")
+        self._ig_wind.setToolTip(_IGNITER_WIND_TIP)
+        igf.addRow("风限 windLimit", self._ig_wind)
+        ig_lay.addWidget(self._ig_body)
+        self._ig_hint = QLabel("")
+        self._ig_hint.setWordWrap(True)
+        ig_lay.addWidget(self._ig_hint)
+        ig_section.add_body(ig_inner)
+        dl.addWidget(ig_section)
+        # 往返状态：载入原值（_MISSING = 没写键）+ 三个控件的载入种子（控件仍 == 种子 ⇒ 回吐原值，
+        # 坏值 / 越界值 / int·float 表示一个字节不改，见 numeric-roundtrip-fidelity 的种子快照法）
+        self._ig_orig: object = _MISSING
+        self._ig_loading = False
+        self._ig_toggled = False
+        self._ig_seed: tuple[int, float, float] = (_IGNITER_SEED_USES, _IGNITER_SEED_SECONDS, _IGNITER_SEED_WIND)
+        self._ig_loaded_on = False
+        self._ig_enabled.toggled.connect(self._on_igniter_toggled)
+        self._u_enabled.toggled.connect(self._sync_igniter_hint)
+
         self._sync_use_enabled(False)
+        self._set_igniter(_MISSING)
+
+        self._health_section = CollapsibleSection("护身作用（三把火）", start_open=False)
+        self._health_form = None
+        self._health_raw = HEALTH_ABSENT
+        self._health_section.expanded_changed.connect(self._expand_health_protection)
+        dl.addWidget(self._health_section)
 
         dyn_section = CollapsibleSection("Dynamic Descriptions（条件动态描述）", start_open=False)
         dyn_section.set_header_tool_tip(
@@ -262,10 +362,124 @@ class ItemEditor(QWidget):
     # _apply（写回）里。漏掉 _is_dirty 的后果最阴——切换物件时 commit-on-leave 判不脏，
     # 编辑被静默吞掉，而 flush_to_model / confirm_close 全靠它。
 
+    def _expand_health_protection(self, expanded: bool) -> None:
+        if expanded and self._health_form is None:
+            self._health_form = HealthProtectionForm(self._model, self._health_raw, self)
+            self._health_section.add_body(self._health_form)
+
+    def _set_health_protection(self, raw) -> None:
+        self._health_raw = copy.deepcopy(raw) if raw is not HEALTH_ABSENT else HEALTH_ABSENT
+        if self._health_form is not None:
+            discard_widget(self._health_form)
+            self._health_form = None
+        self._expand_health_protection(self._health_section.is_expanded())
+
+    def _health_protection_value(self):
+        return self._health_form.value() if self._health_form is not None else self._health_raw
+
+    def reload_refs_from_model(self) -> None:
+        if self._health_form is not None:
+            self._health_form.reload_refs_from_model()
+
     def _sync_use_enabled(self, on: bool) -> None:
         self._u_body.setEnabled(on)
         self._u_conds.setEnabled(on)
         self._u_actions.setEnabled(on)
+
+    # --- igniter（火种）的 UI ↔ 数据 互转 ------------------------------------
+    # 同上三处同步契约（_on_select → _set_igniter / _is_dirty / _apply 都走 _igniter_value）。
+
+    def _set_igniter(self, raw: object) -> None:
+        """载入一块 `igniter`（`_MISSING` = 没写键；非对象的坏值也收下，不动就原样回吐）。"""
+        self._ig_loading = True
+        try:
+            self._ig_orig = raw if raw is _MISSING else copy.deepcopy(raw)
+            on = isinstance(raw, dict)
+            self._ig_loaded_on = on
+            self._ig_toggled = False
+            o = raw if on else {}
+            self._ig_enabled.setChecked(on)
+            # 先夹进量程再转 int：1e30 这类值直接交给 QSpinBox 会溢出抛错
+            self._ig_uses.setValue(int(min(max(_finite_or(o.get("uses"), _IGNITER_SEED_USES), 1.0), 999.0)))
+            self._ig_seconds.setValue(_finite_or(o.get("seconds"), _IGNITER_SEED_SECONDS))
+            self._ig_wind.setValue(_finite_or(o.get("windLimit"), _IGNITER_SEED_WIND))
+            # 种子 = 控件**实际**显示值（越界被夹、2.5 次被截），不是盘上值
+            self._ig_seed = (self._ig_uses.value(), self._ig_seconds.value(), self._ig_wind.value())
+            self._ig_body.setEnabled(on)
+        finally:
+            self._ig_loading = False
+        self._sync_igniter_hint()
+
+    def _on_igniter_toggled(self, on: bool) -> None:
+        self._ig_body.setEnabled(on)
+        if not self._ig_loading:
+            self._ig_toggled = True
+        self._sync_igniter_hint()
+
+    def _igniter_value(self) -> object:
+        """当前表单对应的 `igniter` 落盘值；`_MISSING` = 不写键。
+
+        - 没勾且没动过开关 ⇒ 原样回吐载入值（没写键 / `null` / 坏形态都不改）；动过开关勾掉 ⇒ 删键；
+        - 勾着 ⇒ 以载入的对象为底（不认识的键、键序原样），控件没动过的键回吐盘上原值（含坏值与缺键）；
+          新勾的一块写 `seconds` / `windLimit` 起步值，`uses` 为 1 时不写（运行时缺省 1）。
+        """
+        if not self._ig_enabled.isChecked():
+            return _MISSING if self._ig_toggled else (
+                self._ig_orig if self._ig_orig is _MISSING else copy.deepcopy(self._ig_orig))
+        fresh = not isinstance(self._ig_orig, dict)
+        out: dict = {} if fresh else copy.deepcopy(self._ig_orig)
+        seed_uses, seed_sec, seed_wind = self._ig_seed
+        uses = self._ig_uses.value()
+        if uses != seed_uses:
+            if uses == 1 and "uses" not in out:
+                pass
+            else:
+                out["uses"] = int(uses)
+        for key, spin, seed in (("seconds", self._ig_seconds, seed_sec), ("windLimit", self._ig_wind, seed_wind)):
+            v = spin.value()
+            if v != seed or fresh:
+                out[key] = _igniter_number_out(v)
+        return out
+
+    def _sync_igniter_hint(self, *_a: object) -> None:
+        """两处提示：火种没写 use ⇒ 背包自动给「设为火种」；火种又写了 use ⇒ use 优先、不给。"""
+        ig_on = self._ig_enabled.isChecked()
+        use_on = self._u_enabled.isChecked()
+        bad = self._igniter_bad_notes() if ig_on else []
+        if not ig_on:
+            text, color = "不是火种。勾上后（且没写 use）背包里自动给「设为火种」按钮。", "#888"
+        elif use_on:
+            text, color = (
+                "⚠ 这件是火种，但写了 use：背包里按 use 走，不给「设为火种」按钮。"
+                "要保留 use 又能设火种，就在 use.actions 里放一条 setActiveIgniter。"), "#c66"
+        else:
+            text, color = (
+                "这件是火种、没写 use：背包里自动给「设为火种」按钮（运行时合成，数据里不写这枚按钮）。"), "#888"
+        self._ig_hint.setText("　".join([text, *bad]))
+        self._ig_hint.setStyleSheet(f"color:{'#c66' if bad else color};")
+        self._u_igniter_hint.setVisible(ig_on)
+        self._u_igniter_hint.setText(text)
+        self._u_igniter_hint.setStyleSheet(f"color:{color};")
+
+    def _igniter_bad_notes(self) -> list[str]:
+        """盘上原值控件表达不了时说一声（不动就原样保留；动了才按控件值写）。"""
+        o = self._ig_orig if isinstance(self._ig_orig, dict) else None
+        if o is None:
+            return []
+        notes: list[str] = []
+        for key in ("seconds", "windLimit"):
+            v = o.get(key, _MISSING)
+            if v is _MISSING:
+                notes.append(f"盘上缺 {key}（必填）——控件显示的是起步值，改一下才会写进去。")
+            elif not _is_finite_num(v) or not v > 0:
+                notes.append(f"盘上 {key} = {v!r} 不是 > 0 的数——不动就原样保留。")
+        u = o.get("uses", _MISSING)
+        if u is not _MISSING and (not _is_finite_num(u) or u < 1 or float(u) != int(u)):
+            notes.append(f"盘上 uses = {u!r} 不是 ≥ 1 的整数——不动就原样保留。")
+        unknown = [k for k in o if k not in _IGNITER_KEYS]
+        if unknown:
+            notes.append(f"含不认识的键 {unknown}（原样保留）。")
+        return notes
 
     def _ensure_tag_boxes(self, tags) -> None:
         """按需补勾选框（只增不删）。
@@ -386,6 +600,10 @@ class ItemEditor(QWidget):
             return True
         if self._use_to_dict() != (it.get("use") if isinstance(it.get("use"), dict) else None):
             return True
+        if self._igniter_value() != it.get("igniter", _MISSING):
+            return True
+        if self._health_protection_value() != it.get("healthProtection", HEALTH_ABSENT):
+            return True
         return False
 
     def flush_to_model(self) -> bool:
@@ -446,6 +664,8 @@ class ItemEditor(QWidget):
         self._rebuild_dyn(it.get("dynamicDescriptions", []))
         self._set_tags(it.get("tags") or [])
         self._set_use(it.get("use") if isinstance(it.get("use"), dict) else None)
+        self._set_igniter(it.get("igniter", _MISSING))
+        self._set_health_protection(it.get("healthProtection", HEALTH_ABSENT))
         self._i_id.setFocus()
 
     def _rebuild_dyn(self, dyns: list[dict]) -> None:
@@ -583,6 +803,18 @@ class ItemEditor(QWidget):
             it["use"] = use
         elif "use" in it:
             del it["use"]
+        ig = self._igniter_value()
+        if ig is _MISSING:
+            it.pop("igniter", None)
+        else:
+            it["igniter"] = ig
+        # 以刚写进模型的值重新做种子：此后「改回原值」按新盘面判，不再对着上一版比
+        protection = self._health_protection_value()
+        if protection is HEALTH_ABSENT:
+            it.pop("healthProtection", None)
+        else:
+            it["healthProtection"] = copy.deepcopy(protection)
+        self._set_igniter(it.get("igniter", _MISSING))
         self._model.mark_dirty("item")
         row = self._current_idx
         tag = "[K]" if it.get("type") == "key" else "[C]"

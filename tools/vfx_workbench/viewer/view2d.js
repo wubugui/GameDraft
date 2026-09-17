@@ -141,9 +141,15 @@ class View2D {
     if (w > 0) { const a = this.toCanvas(0, 0), b = this.toCanvas(w, h); g.strokeStyle = 'rgba(255,255,255,.15)'; g.lineWidth = 1; g.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); }
     if (!cal) {
       g.fillStyle = '#9aa1ad'; g.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
-      g.fillText('这个场景没有深度载荷：装不出 3D 伪世界，也跑不了本地预览', 14, 24);
+      g.fillText('还没装场景', 14, 24);
       return;
     }
+    if (cal.planar) {
+      g.fillStyle = 'rgba(255,180,84,.9)'; g.font = '12px "Segoe UI", "Microsoft YaHei", sans-serif';
+      g.fillText('没有深度载荷：平面近似（2D 光带与原画上的位置是真的；3D 光柱 / 地形判据都不真）', 14, 22);
+    }
+    // 光柱：运行时那段 GLSL 编译出来的真实预览（按各自的混合合成到原画上），画在粒子与标记下面
+    if (host.layers.beams) host.drawBeams2d(g, { zoom: this.zoom, ox: this.ox, oy: this.oy, cssW: this.c.clientWidth, cssH: this.c.clientHeight, dpr });
     // 粒子（投影到画面）
     if (host.layers.particles) {
       for (const grp of host.particlePoints(true)) {
@@ -188,6 +194,15 @@ class View2D {
         if (!p || !q) continue;
         g.beginPath(); g.moveTo(p[0], p[1]); g.lineTo(q[0], q[1]); g.stroke();
       }
+    }
+    // 预览标记（外部给点的假点 / 调试火焰）：不可选中、不进 doc
+    g.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
+    for (const m of host.previewMarks()) {
+      const c = this.projectWorld(m.pos); if (!c) continue;
+      const css = `rgba(${Math.round(m.color[0] * 255)},${Math.round(m.color[1] * 255)},${Math.round(m.color[2] * 255)},${m.color[3]})`;
+      if (m.top) { const t = this.projectWorld(m.top); if (t) { g.strokeStyle = css; g.lineWidth = 2; g.beginPath(); g.moveTo(c[0], c[1]); g.lineTo(t[0], t[1]); g.stroke(); } }
+      g.fillStyle = css; g.beginPath(); g.arc(c[0], c[1], m.size / 2, 0, Math.PI * 2); g.fill();
+      if (m.label) { g.fillStyle = 'rgba(255,170,90,.95)'; g.fillText(m.label, c[0] + 8, c[1] + 14); }
     }
     // 物体标记 + 名字
     g.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
@@ -285,6 +300,7 @@ class View2D {
     if (host.tool === 'anchor') { host.setAnchorScene(sc[0], sc[1]); return; }
     if (host.tool === 'player') { const w = host.cal.sceneToWorldGround(sc[0], sc[1]); host.setPlayerAt(w); return; }
     if (host.tool === 'field') { const w = host.cal.sceneToWorldGround(sc[0], sc[1]); host.addFieldAt([w[0], w[1] + 80, w[2]]); return; }
+    if (host.tool === 'fire') { host.addFireAt(host.cal.sceneToWorldGround(sc[0], sc[1])); return; }
     const hit = this._hit(mx, my);
     if (hit && hit.kind === 'gz') {
       const g = this._gizmo(); if (!g) return;
@@ -320,7 +336,7 @@ class View2D {
       const hv = hit && hit.kind === 'gz' ? { kind: 'gz', part: hit.part } : hit ? { kind: 'obj', key: hit.key } : null;
       if (JSON.stringify(hv) !== JSON.stringify(this.hover)) { this.hover = hv; this.draw(); }
       this.c.style.cursor = this.spaceDown || host.tool === 'pan' ? 'grab'
-        : host.tool === 'anchor' || host.tool === 'player' || host.tool === 'field' || /^area/.test(host.tool) ? 'crosshair'
+        : host.tool === 'anchor' || host.tool === 'player' || host.tool === 'field' || host.tool === 'fire' || /^area/.test(host.tool) ? 'crosshair'
           : hit ? (hit.kind === 'gz' ? Gizmo.cursor(hit.part) : 'move') : 'default';
       return;
     }

@@ -48,6 +48,9 @@ _EMIT_SOURCE_ATTRS = (
     # ActionExecutor.executeBatchAwait 真执行（与 archive:firstView 同范式），是实发面
     # （2026-08-17「采集=内容事件」拍板时与运行时同步新增）。
     "clues_registry",
+    # 挂件预设 states[*].onEnterActions：切到该状态时经统一执行器真执行（2026-09-15 燃烧物契约），
+    # 是实发面；与 signal_refactor.EMIT_SOURCE_BUCKETS 同源。
+    "prop_presets",
 )
 
 
@@ -864,6 +867,9 @@ def _collect_emitted_signal_ids(node: Any, out: set[str]) -> None:
                 sig = str(params.get("signal", "")).strip()
                 if sig:
                     out.add(sig)
+        from .health_refs import health_signal_fields
+        out.update(signal for _, _, signal in health_signal_fields(node))
+        out.update(signal for _, _, signal in burnable_host_signal_fields(node))
         for value in node.values():
             _collect_emitted_signal_ids(value, out)
     elif isinstance(node, list):
@@ -943,6 +949,9 @@ def emitted_signal_ids(model: Any) -> list[str]:
     = 对话图（public/assets/dialogues/graphs/*）∪ 内容资产 action 树 ∪ 叙事图自身
     action 树（状态 onEnter/onExitActions 运行时真执行）里 emitNarrativeSignal.params.signal
     ∪ 派生广播 state:<g>:<s>（仅 broadcastOnEnter 的 state）。
+    同一趟深度遍历顺带收两类**不是动作树形状**的实发面：三把火 `healthThreat` 的信号，与
+    宿主身上可燃配置 `burnable.signals`（场景热点 / NPC、挂件预设、轨迹 spawn 规格——都长在上面这几份
+    来源里，见 :func:`burnable_host_signal_fields`；2026-09-16 起取代已删除的燃烧布置库）。
     **不含** blackbox 的 meta.emits（那是「声明」非「实发」——纯字符串列表，深度遍历不会误收）。
 
     每次网页 loadAuthoringCatalog 调一次（非每帧），全项目线性扫（读一遍对话图目录 + 遍历
@@ -979,6 +988,31 @@ def emitted_signal_ids(model: Any) -> list[str]:
     emitted |= _derived_broadcast_signals(narrative_data)
 
     return sorted(emitted)
+
+
+def burnable_host_signal_fields(node: Any):
+    """宿主身上可燃配置的信号：``node`` 自己带 ``burnable: {template, signals}`` 时逐个产出 ``(signals 块, 时刻, 信号 id)``。
+
+    宿主 = 热点 / NPC（场景 JSON）、挂件预设、轨迹 spawn 规格（``playTrajectory.params.spawn``）——可燃物实例的状态真变了
+    （点着 / 烧完 / 熄灭）由 BurnSystem 经 emitNarrativeSignal 真发（owner：场景实体 = 实体 id；挂件 = 拿着它的人）。
+    与 ``health_signal_fields`` 同一个形状：结构无关，深度遍历的调用方（本模块 ``_collect_emitted_signal_ids`` /
+    ``narrative_xref._walk``）每层问一次即可，两侧口径因此天然一致。没写 ``template`` 的块运行时不建实例，不算。
+    """
+    host = node.get("burnable") if isinstance(node, dict) else None
+    if not isinstance(host, dict):
+        return
+    tid = host.get("template")
+    if not isinstance(tid, str) or not tid.strip():
+        return
+    sig = host.get("signals")
+    if not isinstance(sig, dict):
+        return
+    from .burnables import SIGNAL_KEYS
+
+    for moment in SIGNAL_KEYS:
+        value = sig.get(moment)
+        if isinstance(value, str) and value.strip():
+            yield sig, moment, value.strip()
 
 
 def _find_composition(narrative_data: Any, composition_id: str) -> dict[str, Any] | None:

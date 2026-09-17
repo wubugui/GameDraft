@@ -1,41 +1,39 @@
 {
   "id": "teahouse_table_flies",
-  "label": "茶馆 · 茶渣小飞虫",
+  "label": "茶馆 · 无人桌食物旁苍蝇",
+  "prewarmSeconds": [
+    0.6,
+    2.2
+  ],
   "emitters": [
     {
       "id": "insects",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": true,
+          "contact": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        5,
+        0
+      ],
       "appearance": {
-        "image": "/resources/runtime/images/vfx/teahouse_moth.png",
-        "sizeWu": 3.1,
+        "image": "/resources/runtime/images/vfx/teahouse_fly.png",
+        "sizeWu": 4.2,
         "sizeJitter": [
-          0.65,
-          1.2
-        ],
-        "sizeOverLife": [
-          [
-            0,
-            1
-          ],
-          [
-            0.2,
-            0.6
-          ],
-          [
-            0.4,
-            1
-          ],
-          [
-            0.6,
-            0.65
-          ],
-          [
-            0.8,
-            1
-          ],
-          [
-            1,
-            0.7
-          ]
+          0.85,
+          1.15
         ],
         "alphaOverLife": [
           [
@@ -43,12 +41,12 @@
             0
           ],
           [
-            0.06,
-            0.85
+            0.045,
+            0.95
           ],
           [
-            0.88,
-            0.85
+            0.87,
+            0.95
           ],
           [
             1,
@@ -56,63 +54,64 @@
           ]
         ],
         "tint": [
-          0.1,
-          0.08,
-          0.06
+          1,
+          1,
+          1
         ],
-        "lit": false,
-        "faceVelocity": true,
-        "spin": {
-          "rate": [
-            -90,
-            120
-          ],
-          "randomPhase": true
-        }
+        "lit": true,
+        "emissive": 0,
+        "stretchByVelocity": 0.001,
+        "faceVelocity": false
       },
       "spawn": {
-        "max": 7,
-        "rate": 1.2,
-        "burst": 7,
+        "max": 3,
+        "rate": 1.1,
+        "intervalJitter": 0.48,
+        "burst": 3,
         "shape": {
           "kind": "box",
           "size": [
-            22,
-            9,
-            15
+            17,
+            8,
+            12
           ]
         },
         "speed": [
-          13.0,
-          26
-        ],
-        "direction": [
-          1,
-          0,
-          0
-        ],
-        "spread": 180
+          14,
+          24
+        ]
       },
       "motion": {
-        "drag": 2,
+        "drag": 1.5,
         "turbulence": {
-          "strength": 78,
-          "scale": 13,
-          "speed": 1.1
+          "strength": 105,
+          "scale": 11,
+          "speed": 1.15
         },
-        "maxSpeed": 26,
+        "maxSpeed": 36,
         "stimulus": {
           "fear": {
-            "player:motion": 1
+            "player:motion": 1,
+            "sfx:footstep": 0.15,
+            "torch:艾": 0.85,
+            "torch:呛": 0.6
           },
-          "accel": 180
+          "accel": 140
         }
       },
       "life": {
         "seconds": [
-          3,
-          6
-        ]
+          3.5,
+          5.5
+        ],
+        "maxDistance": 32
+      },
+      "collision": {
+        "ground": "bounce",
+        "shell": "bounce",
+        "restitution": 0.4,
+        "friction": 0.1,
+        "radiusWu": 0.4
       }
     }
   ],
@@ -120,11 +119,11 @@
     "sceneId": "teahouse",
     "background": "background.png",
     "anchor": {
-      "x": 181,
-      "y": 391,
-      "h": 0,
+      "x": 86,
+      "y": 287,
+      "h": 12,
       "surface": "shell"
     },
-    "note": "茶馆氛围；通过粒子工作台维护。无新增音频。"
+    "note": "只布置左侧无人食物桌；3只苍蝇在食物附近低飞，受光，朝飞行方向，不配音。"
   }
 }

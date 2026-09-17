@@ -11,6 +11,9 @@
  * （回到 types.ts 的缺省），不落 0 —— 0 与"没写"在运行时不是一回事（`gravity` 0 = 不受重力，
  * 没写也是；但 `restitution` 0 = 不反弹，没写 = 运行时缺省）。 */
 
+/** 颜色关键点的新值取三位小数（插值出来的 0.54999… 不往资产里写一长串） */
+const round3 = (v) => Math.round(v * 1000) / 1000;
+
 const INS_OPEN = { effect: true, placement: true, appearance: true, spawn: true, motion: true, life: true, collision: false, behavior: false, sound: false };
 
 const Inspector = {
@@ -249,6 +252,75 @@ const Inspector = {
     return h('div', { class: 'row curverow' }, h('span', {}, label), cv);
   },
 
+  /**
+   * 「颜色×寿命」：`appearance.tintOverLife` = `[t, r, g, b][]`，**乘在乘色 tint 上**（最终色 = tint × 它(t)）。
+   * 采样与运行时 `sampleColorCurve` 同口径：按 t 线性插值、超出两端取端点、空 / 不写 = 恒白。
+   *
+   * 关键点列表（每行一个键：寿命 t + r/g/b + 色块 + 删），上面一条渐变条画的是最终色 tint × 曲线。
+   * - 「+ 关键点」：空时先铺上缺省的两端白（与曲线编辑器同一个理由：单键 = 整段一个色，点一下就把整条寿命染死）；
+   *   非空时插在最宽的那段 t 空档正中、颜色取那一点的插值（加一个键画面不变，再去改它）；
+   * - 改 t 后按 t 重排（形状闸门要求非降序），数值一律夹到 0..1（与闸门 / 校验器同口径）；
+   * - 删到最后一个 = **删键**（回到恒白），不落 `[]`；每次改动一条历史（`E` = host.edit）。
+   */
+  tintOverLifeRows(ap, E) {
+    const keys = () => (Array.isArray(ap.tintOverLife) ? ap.tintOverLife : []);
+    const write = (label, fn) => E(label, () => {
+      const ks = keys().map((k) => k.slice());
+      fn(ks);
+      ks.sort((a, b) => a[0] - b[0]);                  // 稳定排序：同一个 t 的两个键保持原先后（硬切）
+      if (ks.length) ap.tintOverLife = ks; else delete ap.tintOverLife;
+    });
+    const sample = (ks, t) => {
+      if (!ks.length) return [1, 1, 1];
+      if (t <= ks[0][0]) return ks[0].slice(1, 4);
+      for (let i = 1; i < ks.length; i++) {
+        if (t <= ks[i][0]) {
+          const a = ks[i - 1], b = ks[i];
+          const k = b[0] > a[0] ? (t - a[0]) / (b[0] - a[0]) : 1;
+          return [1, 2, 3].map((j) => a[j] + (b[j] - a[j]) * k);
+        }
+      }
+      return ks[ks.length - 1].slice(1, 4);
+    };
+    const css = (c) => `rgb(${c.map((x) => Math.round(clamp(x, 0, 1) * 255)).join(',')})`;
+    const tint = Array.isArray(ap.tint) && ap.tint.length === 3 ? ap.tint : [1, 1, 1];
+    const W = 168, H = 14;
+    const bar = h('canvas', { class: 'gradient', width: String(W), height: String(H), 'data-role': 'tol-bar',
+      title: '最终颜色 = 乘色 × 颜色×寿命（横 = 寿命 0→1）。没写 = 恒白（只剩乘色）' });
+    const g = bar.getContext('2d');
+    const ks0 = keys();
+    for (let x = 0; x < W; x++) {
+      const c = sample(ks0, x / (W - 1));
+      g.fillStyle = css([c[0] * tint[0], c[1] * tint[1], c[2] * tint[2]]);
+      g.fillRect(x, 0, 1, H);
+    }
+    for (const k of ks0) { g.fillStyle = '#ffe44d'; g.fillRect(Math.round(clamp(k[0], 0, 1) * (W - 1)) - 1, H - 4, 3, 4); }
+    bar._sample = (t) => sample(keys(), t);            // 自检用：与画的是同一个采样
+    const add = () => write('加颜色关键点', (ks) => {
+      if (!ks.length) { ks.push([0, 1, 1, 1], [1, 1, 1, 1]); return; }
+      const edges = [0, ...ks.map((k) => clamp(k[0], 0, 1)), 1];
+      let best = 0;
+      for (let i = 1; i < edges.length; i++) if (edges[i] - edges[i - 1] > edges[best + 1] - edges[best]) best = i - 1;
+      const t = round3((edges[best] + edges[best + 1]) / 2);
+      ks.push([t, ...sample(ks, t).map(round3)]);
+    });
+    const rows = [
+      h('div', { class: 'row gradrow' }, h('span', {}, '颜色×寿命'), bar,
+        h('button', { 'data-role': 'tol-add', title: '加一个颜色关键点（空的时候先铺上两端白）', onclick: add }, '+ 关键点')),
+    ];
+    ks0.forEach((k, i) => {
+      rows.push(h('div', { class: 'row' },
+        h('span', { class: 'dim' }, `  键 ${i + 1}`),
+        this.num(() => k[0], (v) => write('改颜色关键点寿命', (ks) => { ks[i][0] = v == null ? 0 : clamp(v, 0, 1); }), 't',
+          { step: 0.05, title: '寿命归一化进度 0..1；改完按 t 重排' }),
+        this.vec3(() => k.slice(1, 4), (v) => write('改颜色关键点', (ks) => { ks[i] = [ks[i][0], ...v.map((x) => clamp(x, 0, 1))]; }), 'rgb'),
+        h('span', { class: 'swatch', 'data-role': `tol-swatch:${i}`, title: '这一键的颜色（未乘 tint）', style: `background:${css(k.slice(1, 4))}` }),
+        h('button', { class: 'danger', 'data-role': `tol-del:${i}`, title: '删这个关键点（删到最后一个 = 删掉整条，回到恒白）',
+          onclick: () => write('删颜色关键点', (ks) => { ks.splice(i, 1); }) }, '×')));
+    });
+    return rows;
+  },
+
   /** 非群体发射器的「怕 / 被吸引」表（motion.stimulus）。群体走 behavior.attitude，不在这里出现。 */
   stimulusRows(em, mo, E) {
     if (this._host.programApi?.resolveEmitterProgram(em).solver === 'flock') {
@@ -293,6 +365,84 @@ const Inspector = {
   },
 
   /**
+   * 「跟着发射点走」= `motion.followAnchor`（types.ts `VfxFollowAnchor`）：锚点动了，**已经发出去的**粒子怎么走。
+   * - 不写 = `none`：选「不跟」是**删键**（不落 `"none"`；删完运动模块空了连 `motion` 一起删——空模块与没有在运行时一样）；
+   *   显式写着的 `"none"` 显示成「不跟」、原样不动（形状闸门也不改它）；
+   * - 选别的 = 一次编辑写 `motion.followAnchor`（运动模块不在时在写入闭包里补，渲染只读）；
+   * - 群体 / 薄片运行时不吃（`moveAnchor` 对它们整个跳过）：没写时不出下拉、只留一行灰字（悬停说为什么）；
+   *   **写了**（比如从普通粒子切成群体）照样出下拉并黄字提醒，好让作者选「不跟」删掉——措辞与形状闸门 / 校验器同一句。
+   * 本地预览：挂点模式页面调运行时 `moveAnchor(a)` 不传 carry，所以「完全跟」看得出来、「跟动作、不跟走」在工作台里等于不跟。
+   */
+  followAnchorRows(em, E) {
+    const mo = em.motion && typeof em.motion === 'object' ? em.motion : null;
+    const cur = mo ? mo.followAnchor : undefined;
+    const api = this._host.programApi;
+    const solver = api ? api.resolveEmitterProgram(em).solver : (em.behavior ? 'flock' : em.plate ? 'plate' : 'particle');
+    const kind = solver === 'flock' ? '群体' : solver === 'plate' ? '薄片' : '';
+    const why = kind ? `群体 / 薄片不吃 followAnchor，写了没用（这是${kind}发射器：运行时挪锚点时整个跳过它，在飞的粒子不跟锚点）` : '';
+    if (kind && cur == null) {
+      return [h('div', { class: 'row', 'data-role': 'followAnchor-na', title: why },
+        h('span', {}, '跟着发射点走'), h('span', { class: 'dim' }, `${kind}不吃（悬停看为什么）`))];
+    }
+    const title = [
+      '锚点动了（挂件粒子挂载 / playPropVfx 的效果每帧跟着挂点挪），已经发出去的粒子怎么走。',
+      '· 不跟（缺省，不写）：发出去就归空气，留在原地——烟、火星',
+      '· 跟动作、不跟走：只跟宿主转身 / 换姿势 / 动画换帧带出来的那份位移，人在世界里走路那份不跟（火舌拖在身后）。'
+        + '只有效果挂在手持挂件上（挂件粒子挂载 / playPropVfx）时才和「不跟」不一样；布置、playVfx、工作台本地预览里等于不跟',
+      '· 完全跟：整个跟着锚点走，粘在发射点上——火头余烬的红光、炭火',
+    ].join('\n');
+    const s = this.sel(() => (cur === 'none' ? '' : cur), (v) => E('改跟着发射点走', () => {
+      if (v == null) {
+        const m = em.motion;
+        if (!m || typeof m !== 'object') return;
+        delete m.followAnchor;
+        if (!Object.keys(m).length) delete em.motion;
+        return;
+      }
+      if (!em.motion || typeof em.motion !== 'object') em.motion = {};
+      em.motion.followAnchor = v;
+    }), [
+      { value: '', label: '不跟（缺省）：发出去就归空气——烟、火星' },
+      { value: 'rig', label: '跟动作、不跟走（手持挂件）：转身 / 换姿势 / 动画换帧带着走，人走路留拖尾——火舌' },
+      { value: 'full', label: '完全跟：粘在发射点上——火头余烬的红光、炭火' },
+    ], false);
+    s.setAttribute('data-role', 'followAnchor');
+    s.title = kind ? why : title;
+    const row = this.row('跟着发射点走', s);
+    row.title = s.title;
+    return [row, kind ? h('div', { class: 'pad warn', 'data-role': 'followAnchor-warn' }, `${why}——选「不跟」删掉`) : null];
+  },
+
+  /**
+   * 「最远烧到多远」= `life.maxDistance`（types.ts `VfxLifeDef`，wu，离发射器原点）：运行时 `stepGeneric` 每步把粒子的
+   * age 抬到 `离原点距离 / (maxDistance × 实例距离倍率) × 寿命`，离火源越远越早走完寿命曲线、到这个距离烧完。
+   * - 空 = **删键**（不限距离；运行时 ≤ 0 也当不限，所以填 0 / 负数同样删键，不落 0）；填正数 = 一次编辑写进去；
+   * - 群体 / 薄片不走普通粒子那一步、没有 `life.seconds` 的粒子永生：运行时都不读它——没写时不出输入框、只留一行灰字
+   *   （悬停说为什么）；**写了**照样出输入框并黄字提醒（好清空删掉）——措辞与形状闸门 / 校验器（`shared/vfx_life.py`）同一句。
+   */
+  maxDistanceRows(em, li, E) {
+    const cur = li.maxDistance;
+    const api = this._host.programApi;
+    const solver = api ? api.resolveEmitterProgram(em).solver : (em.behavior ? 'flock' : em.plate ? 'plate' : 'particle');
+    const kind = solver === 'flock' ? '群体' : solver === 'plate' ? '薄片' : '';
+    const reason = kind ? `这是${kind}发射器，运行时不走普通粒子那一步`
+      : li.seconds == null ? '这个发射器没有 life.seconds（永生），运行时只对有寿命的粒子按距离烧完' : '';
+    const why = reason ? `没有寿命 / 群体 / 薄片不吃 maxDistance，写了没用（${reason}，life.maxDistance 被忽略）` : '';
+    if (why && cur == null) {
+      return [h('div', { class: 'row', 'data-role': 'maxDistance-na', title: why },
+        h('span', {}, '最远烧到多远'), h('span', { class: 'dim' }, `${kind || '没有寿命'}不吃（悬停看为什么）`))];
+    }
+    const title = '离发射器原点超过这个距离就烧完（按距离提前走完寿命曲线）。火苗核心 / 光晕这类燃气用：风大、人跑时火舌不会被拖得比人还长。火星、烟不要写。手持挂件上还会按燃烧强度和风自动缩短。';
+    const wrap = this.num(() => cur, (v) => E('改最远烧到多远', () => {
+      if (v != null && v > 0) li.maxDistance = v; else delete li.maxDistance;
+    }), 'wu', { placeholder: '不限', title: why || title });
+    wrap.querySelector('input').setAttribute('data-role', 'maxDistance');
+    const row = this.row('最远烧到多远', wrap);
+    row.title = why || title;
+    return [row, why ? h('div', { class: 'pad warn', 'data-role': 'maxDistance-warn' }, `${why}——清空删掉`) : null];
+  },
+
+  /**
    * 发射「方向 / 锥角」。`spawn.direction` 没写 = 运行时**各向同性随机**（vfxSim spawnOne 走 unitVector），
    * 由别的发射器 onHit 触发时没写 = **沿命中法线**（flushHits）；锥角只在有基准方向时才读。
    * 原来没写时显示成 0 / 1 / 0（读着像"朝上"，预览却四散）、锥角填了没反应，改一个分量就把显示的缺省整条写进去
@@ -322,11 +472,342 @@ const Inspector = {
     ];
   },
 
+  /**
+   * 发射形状下拉。「外部给点（燃烧系统）」= `{kind: 'external'}`（types.ts `VfxSpawnShapeDef`）：出生点由燃烧系统每帧交进来，
+   * 选它**不写 jitter**（缺省 1）；当前出生位置是「发射区域的可见表面」时一并切回「发射形状」（表面铺撒会把外部点挪走、
+   * 没点时一颗都不发——与形状闸门那条提醒同一件事），与选 area 时切到表面对称。
+   */
+  shapeSelect(em, sp, shape, E) {
+    const host = this._host;
+    const beams = (host.doc && host.doc.beams) || [];
+    const s = this.sel(() => shape && shape.kind, (v) => E('改发射形状', () => {
+      if (!v) { delete sp.shape; return; }
+      const d = { point: {}, sphere: { radius: 20 }, disc: { radius: 20 }, box: { size: [100, 50, 100] }, line: { to: [100, 0, 0] }, area: { radius: 200 }, external: {},
+        beam: { beam: beams.length ? beams[0].id : '' } }[v] || {};
+      sp.shape = Object.assign({ kind: v }, d);
+      if (v === 'area' && host.programApi) {
+        em.simulation = structuredClone(host.programApi.resolveEmitterProgram(em));
+        em.simulation.spawnPlacement = 'surface';
+      }
+      if (v === 'external' && host.programApi && host.programApi.resolveEmitterProgram(em).spawnPlacement === 'surface') {
+        em.simulation = structuredClone(host.programApi.resolveEmitterProgram(em));
+        em.simulation.spawnPlacement = 'shape';
+      }
+      // 光柱体积：出生位置全由光柱定，表面铺撒会把点挪走——切回「发射形状」（与 external 同一个理由）
+      if (v === 'beam' && host.programApi && host.programApi.resolveEmitterProgram(em).spawnPlacement === 'surface') {
+        em.simulation = structuredClone(host.programApi.resolveEmitterProgram(em));
+        em.simulation.spawnPlacement = 'shape';
+      }
+    }), ['point', 'sphere', 'disc', 'box', 'line', 'area', { value: 'external', label: '外部给点（燃烧系统）' },
+      { value: 'beam', label: '光柱体积（光柱尘埃）' }], true);
+    s.setAttribute('data-role', 'spawnShape');
+    return s;
+  },
+
+  /** 外部给点：jitter 一行（空 = 删键、缺省 1）+ 说明（工作台里没有外部点 → 预览用假点；真东西去燃烧工作台看） */
+  externalShapeRows(em, shape, E) {
+    if (!shape || shape.kind !== 'external') return [];
+    const host = this._host;
+    const wrap = this.num(() => shape.jitter, (v) => E('改外部点抖动', () => { if (v == null) delete shape.jitter; else shape.jitter = Math.max(0, v); }), '× 点半径',
+      { placeholder: '1', title: '每颗在挑中的那个外部点周围、半径 = 点的半径 × 它 的球里出生；空 = 缺省 1；0 = 正好生在点上' });
+    wrap.querySelector('input').setAttribute('data-role', 'shape-jitter');
+    const p = host.programApi ? host.programApi.resolveEmitterProgram(em) : null;
+    const why = p && p.solver === 'flock' ? '群体发射器用了外部给点（external）：群体出生由巢管理，没有外部点时整群一个都摆不出来'
+      : p && p.spawnPlacement === 'surface' ? '出生位置是「发射区域的可见表面」时外部给点（external）的点不起作用（出生后被挪到区域表面），没有外部点时一个都不发——外部给点要配「发射形状」'
+        : '';
+    return [
+      this.row('外部点抖动', wrap),
+      h('div', { class: 'pad dim', 'data-role': 'external-note' },
+        '出生点由燃烧系统每帧给（正在烧的格 / 燃着的纸）；没给点就不出生。工作台里没有外部点，本来预览不出生——'
+        + '本地预览在锚点周围摆了一圈「预览用假点」代发（只在预览里，写盘不带、不推游戏）；真实效果挂到可燃物上看——燃烧工作台'),
+      why ? h('div', { class: 'pad warn', 'data-role': 'external-warn' }, why) : null,
+    ];
+  },
+
+  /**
+   * 薄片「可燃模板」= `plate.burnable = {template}`（types.ts `BurnablePlateBindingDef`，2026-09-16 模板化）：
+   * 薄片绑一份**面燃烧**可燃物模板（燃烧工作台做的，`assets/data/burnables/<id>.json`）——多久点着、火焰多长、
+   * 火线速度、焦黑与发光、火苗粒子、火光全取模板；**贴图与大小仍归粒子自己**。
+   *
+   * - **选择器**：候选只列能绑的模板（服务端 `/api/burnables` 的 `bindable`，= 形状闸门零提醒的集合，候选面 = 校验面）；
+   *   当前值不在候选里（不存在 / 读不懂 / 是消耗燃烧 / 装不上 / 模板表没读到）时**保值展示**并在下面一行说清为什么，
+   *   不静默顶替、不清空。选中 = 一次编辑写 `plate.burnable.template`（块里别的键原样留着）；选「不可燃」= 删掉整个 `burnable` 键。
+   * - **只读参数**：所选模板在表里就列关键参数（服务端 `plate_template_summary`）；模板没写、取运行时缺省的那几项灰显。
+   * - **打开燃烧工作台**：带当前模板 id（`/api/open_burn_workbench`）；那边存盘后切回来，页面重取模板表、本地预览按新模板烧。
+   * - 残留旧 `plate.flammable`（作废、运行时不读）：一行提示 +「删掉」（删键、一条历史）。
+   * 渲染只读：什么都不往 doc 里塞，写入全在 `E(label, fn)` 闭包里。
+   */
+  burnableRows(pl, E) {
+    const host = this._host;
+    const B = host.burn || {};
+    const rows = [];
+    const raw = pl.burnable;
+    const isObj = !!raw && typeof raw === 'object' && !Array.isArray(raw);
+    // 与运行时 plateBurnOf 同口径：template 去空白后才是它找的 id
+    const cur = isObj && typeof raw.template === 'string' ? raw.template.trim() : '';
+    const badShape = 'burnable' in pl && !cur;
+    const st = cur ? host.burnTemplateStatus(cur) : null;
+    const cands = (B.rows || []).filter((r) => r.bindable)
+      .map((r) => ({ value: r.id, label: r.label && r.label !== r.id ? `${r.id} · ${r.label}` : r.id }));
+    if (cur && !cands.some((o) => o.value === cur)) cands.push({ value: cur, label: `${cur}（当前值：${st.short}）` });
+    const s = this.sel(() => cur || null, (v) => {
+      if (v == null) { E('设为不可燃', () => { delete pl.burnable; }); return; }
+      E('改可燃模板', () => {
+        if (pl.burnable && typeof pl.burnable === 'object' && !Array.isArray(pl.burnable)) pl.burnable.template = v;
+        else pl.burnable = { template: v };
+      });
+    }, cands, true);
+    s.options[0].textContent = '（不可燃）';
+    s.setAttribute('data-role', 'burnable-template');
+    s.title = '绑一份面燃烧可燃物模板：碰到火（可燃物的火、燃着的火把 / 可燃道具、别的燃着的纸）受热够了就着，按模板的火线速度'
+      + '从被火碰到的那边烧过去、焦黑、成灰——这一张永久没了、不补回。候选只有面燃烧模板（蜡烛 / 香这类消耗燃烧不能绑）；'
+      + '选「不可燃」= 删掉 plate.burnable';
+    const row = this.row('可燃模板', s);
+    row.title = s.title;
+    rows.push(row);
+    if (B.err) {
+      rows.push(h('div', { class: 'pad warn', 'data-role': 'burnable-table-err' },
+        `可燃物模板表没读到（${B.err}）：候选空着，当前值原样保留；切回窗口或点「↺ 重置」会再读一次`));
+    }
+    if (badShape) {
+      rows.push(h('div', { class: 'pad warn', 'data-role': 'burnable-shape' },
+        'plate.burnable 形状不对（要是 {template: 模板 id}），存不了：选一份模板改好，或选「不可燃」删掉'));
+    }
+    if (st && st.state !== 'ok') rows.push(h('div', { class: 'pad warn', 'data-role': 'burnable-why' }, st.why));
+    const sm = st && st.row ? st.row.summary : null;
+    if (sm) {
+      const dflt = new Set(sm.defaulted || []);
+      const val = (key, text, title) => h('span', {
+        class: dflt.has(key) ? 'mono dim' : 'mono', 'data-role': `burn-sum:${key}`,
+        title: dflt.has(key) ? `模板没写，取运行时缺省${title ? `——${title}` : ''}` : (title || ''),
+      }, text);
+      const n = (v) => (typeof v === 'number' && Number.isFinite(v) ? String(v) : '?');
+      rows.push(
+        this.row('名字', val('label', sm.label || cur, `模板 id「${cur}」`)),
+        this.row('尺寸', val('size', `${n(sm.widthCm)} × ${n(sm.heightCm)} 厘米`, '模板的真实尺寸（宽 × 高）；纸钱的贴图与大小仍归粒子自己')),
+        this.row('引燃时间', val('ignitionDelay', `${n(sm.ignitionDelay)} 秒`, '被火碰到、累计受热这么多秒才着')),
+        this.row('火焰长度', val('flameLength', `${n(sm.flameLength)} 厘米`, '燃着时一张纸的火焰长度：会点着挨着的纸与可燃物，也托起一股上升气流')),
+        this.row('火线速度', h('span', {},
+          val('speedOpposed', `逆流 ${n(sm.speedOpposed)}`, '往下 / 横着烧的火线速度（cm/s）'), ' / ',
+          val('speedConcurrent', `顺流 ${n(sm.speedConcurrent)}`, '往上烧的火线速度（cm/s）；一张纸烧完 = 纸宽 / 按此刻朝向插值出来的速度'),
+          h('span', { class: 'unit' }, ' cm/s'))),
+        this.row('火苗粒子', val('particles', sm.particles && sm.particles.length ? sm.particles.join('、') : '（没有）',
+          '模板挂的燃烧粒子效果（来源）：燃着的纸上只发 from = flame 的那几条，出生点 = 燃着的纸')),
+        this.row('火光', val('light', sm.light ? '有' : '没有', '燃着的纸按燃着的面积发火光（模板 light）')),
+      );
+    }
+    rows.push(h('div', { class: 'btns' }, h('button', {
+      'data-role': 'burn-open',
+      title: cur ? `在燃烧工作台里打开模板「${cur}」（另起进程；那边存盘后切回这里，本地预览按新模板烧）`
+        : '另起燃烧工作台（可燃物模板在那边做；存盘后切回这里，候选与本地预览自动跟上）',
+      onclick: () => host.openBurnWorkbench(cur),
+    }, '打开燃烧工作台')));
+    if (B.errors && Object.keys(B.errors).length) {
+      rows.push(h('div', { class: 'pad dim', 'data-role': 'burnable-unreadable', title: Object.entries(B.errors).map(([k, v]) => `${k}：${v}`).join('\n') },
+        `有 ${Object.keys(B.errors).length} 份模板读不懂、不在候选里：${Object.keys(B.errors).join(' / ')}（悬停看原因）`));
+    }
+    if ('flammable' in pl) {
+      rows.push(h('div', { class: 'row', 'data-role': 'flammable-legacy', title: '2026-09-16 起薄片的可燃参数全取绑的可燃物模板；旧参数表 plate.flammable 运行时一个字都不读' },
+        h('span', { class: 'warn' }, '旧可燃参数'),
+        h('span', { class: 'warn' }, '旧可燃参数已作废，运行时不读'),
+        h('button', { class: 'danger', 'data-role': 'flammable-legacy-del', title: '删掉 plate.flammable（一条历史）；要可燃就在上面选一份模板',
+          onclick: () => E('删掉旧可燃参数', () => { delete pl.flammable; }) }, '删掉')));
+    }
+    rows.push(h('div', { class: 'pad dim', 'data-role': 'burnable-note' },
+      '本地预览：按 I（左侧「火」）在光标处放一段调试火焰，看纸片被点着（火色）、焦黑、成灰消失；火光与火苗粒子在游戏 / 燃烧工作台里看'));
+    return rows;
+  },
+
   // ---------------------------------------------------------------- 主体
   render(host, container) {
     this._renderBody(host, container);
-    this.applyCapabilities(host, container);
+    if (!host.currentBeam()) this.applyCapabilities(host, container);
     this.stampKeys(container);                         // 焦点按身份键放回（见 stampKeys）
+  },
+
+  /** sRGB 0..1 三元组的颜色控件：系统取色器 + 三格数值（取色器改完 = 一次编辑；数值夹到 0..1、三位小数） */
+  color(get, set, role) {
+    const cur = get() || [1, 1, 1];
+    const hex = '#' + cur.map((x) => Math.round(clamp(x, 0, 1) * 255).toString(16).padStart(2, '0')).join('');
+    const pick = h('input', { type: 'color', value: hex, 'data-role': role || null, title: '取色（sRGB）' });
+    pick.addEventListener('change', () => {
+      const v = pick.value.replace('#', '');
+      set([0, 2, 4].map((i) => round3(parseInt(v.slice(i, i + 2), 16) / 255)));
+    });
+    return h('span', { class: 'numwrap' }, pick, this.vec3(get, (v) => set(v.map((x) => round3(clamp(x, 0, 1)))), 'sRGB 0–1'));
+  },
+
+  /**
+   * 光柱（体积光，types.ts `VfxBeamDef`）。字段逐条对 types.ts；缺省 / 上下限读打包进页面的运行时契约
+   * （`vfxBeam.VFX_BEAM_CONTRACT` = `src/data/vfxBeamContract.json`，与 Python 闸门同一份）——灰字占位是缺省，空 = 删键。
+   * 写入时夹到契约范围：页面产生不了被闸门拒存的值。形状过不了运行时闸门时顶上黄字列出（与存盘拒绝同一句）。
+   */
+  beamSections(host, doc, b) {
+    const api = host.beamApi();
+    const C = api ? api.VFX_BEAM_CONTRACT : { defaults: {}, limits: {} };
+    const D = C.defaults, L = C.limits;
+    const E = (label, fn) => host.edit(label, fn);
+    const lim = (k, v) => (L[k] ? clamp(v, L[k][0], L[k][1]) : v);
+    const optNum = (label, key, unit, title, opts) => this.row(label, this.num(() => b[key], (v) => E(`改${label}`, () => {
+      if (v == null) delete b[key]; else b[key] = lim(key === 'fadeIn' || key === 'fadeOut' ? 'fadeSeconds' : key, v);
+    }), unit, Object.assign({ placeholder: D[key] == null ? '' : String(D[key]), title }, opts || {})));
+    const errors = api ? api.beamDefErrors(b) : [];
+    const users = host.beamRefs(b.id);
+    const out = [];
+    if (errors.length) out.push(h('div', { class: 'pad warn', 'data-role': 'beam-errors' }, `这根光柱现在存不了（也推不到游戏）：${errors.join('；')}`));
+    const DEFAULT_3D = { from: [-160, 280, 60], to: [30, -20, -10], section: { kind: 'rect', width: 110, height: 30 } };
+    const DEFAULT_2D = { from: [-60, -240], to: [0, 0], width: [40, 150] };
+    out.push(this.section('beam', `光柱 · ${b.id}`, () => [
+      this.row('id', this.txt(() => b.id, (v) => { if (v && v !== b.id) E('改光柱 id', () => host.renameBeam(b.id, v)); }, 'window_light')),
+      this.row('模式', this.sel(() => b.mode, (v) => E('切光柱模式', () => {
+        b.mode = v === '2d' ? '2d' : '3d';
+        // 另一个模式的形状原样留着（切回来还在）；这个模式还没有形状就给缺省
+        if (b.mode === '3d' && !b.shape3d) b.shape3d = clone(DEFAULT_3D);
+        if (b.mode === '2d' && !b.shape2d) b.shape2d = clone(DEFAULT_2D);
+      }), [{ value: '3d', label: '3D 光柱（伪 3D 世界里的棱台，原画深度挡得住）' }, { value: '2d', label: '2D 光带（画面坐标里的梯形，没深度也能用）' }])),
+      this.row('颜色', this.color(() => b.color, (v) => E('改光柱颜色', () => { b.color = v; }), 'beam-color')),
+      h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => Array.isArray(b.colorEnd), (v) => E(v ? '光柱颜色沿长度渐变' : '光柱去掉渐变', () => {
+        if (v) b.colorEnd = (b.color || [1, 1, 1]).slice(); else delete b.colorEnd;
+      }), '终点颜色不一样（沿长度渐变）', { role: 'beam-colorEnd' })),
+      Array.isArray(b.colorEnd) ? this.row('终点颜色', this.color(() => b.colorEnd, (v) => E('改光柱终点颜色', () => { b.colorEnd = v; }), 'beam-colorEnd-pick')) : null,
+      this.row('强度', this.num(() => b.intensity, (v) => E('改光柱强度', () => { b.intensity = lim('intensity', v == null ? 0 : v); }), '',
+        { step: 0.05, title: '显示空间的亮度：1 = 光柱颜色整份叠上去（与粒子 alpha 同一个约定）；暗场景一般 0.2–0.6' })),
+      optNum('边缘软度', 'edgeSoftness', '0–1', '0 = 硬边；越大越从中心就开始暗', { step: 0.05 }),
+      b.mode === '3d' ? optNum('厚度感', 'thickness', '0–1', '按视线穿过光柱多厚加权：1 = 截面形状看得出来（矩形窗光中间平、棱边亮）；0 = 只看边缘软度', { step: 0.1 }) : null,
+      optNum('贴地软收尾', 'contactSoftWu', 'wu', '光柱碰到原画表面（地面 / 墙 / 前景）时在这个距离里淡掉；0 = 硬切'),
+      this.row('混合', this.sel(() => b.blend, (v) => E('改光柱混合', () => { if (v) b.blend = v; else delete b.blend; }),
+        [{ value: 'add', label: 'add 叠加（缺省）' }, { value: 'screen', label: 'screen 柔叠加（亮处不爆）' }, { value: 'normal', label: 'normal 普通透明' }], true)),
+      this.row('与实体前后', this.sel(() => b.sort, (v) => E('改光柱前后', () => { if (v) b.sort = v; else delete b.sort; }),
+        [{ value: 'depth', label: '按落点参与实体排序（缺省）：人在落点前面挡住光柱、后面被叠上' },
+          { value: 'background', label: '钉在所有实体后面' }, { value: 'foreground', label: '钉在所有实体前面' }], true)),
+      optNum('淡入', 'fadeIn', '秒', 'playVfx / 条件翻真时淡入', { step: 0.1 }),
+      optNum('淡出', 'fadeOut', '秒', 'stopVfx / 条件翻假时淡出（淡完实例才收）', { step: 0.1 }),
+      users.length ? h('div', { class: 'pad dim' }, `尘埃发射器 ${users.join(' / ')} 用着它（光柱体积出生 / 被光柱照亮）`) : null,
+      h('div', { class: 'pad dim' }, '真实效果看原画视图（运行时那段着色器）；3D 视图画线框。不给人物加光。'),
+    ]));
+    // ---- 形状
+    out.push(this.section('beamShape', b.mode === '2d' ? '形状（2D 光带）' : '形状（3D 光柱）', () => {
+      if (b.mode === '2d') {
+        const s = b.shape2d || {};
+        const W = (label, fn) => E(label, () => { b.shape2d = b.shape2d || clone(DEFAULT_2D); fn(b.shape2d); });
+        return [
+          h('div', { class: 'pad dim' }, '画面坐标（wu），相对布置锚点投到画面上的那一点；拖原画上的起点 / 终点把手也行'),
+          this.row('起点', this.pair(() => s.from || [0, 0], (v) => W('改光带起点', (q) => { if (v.every((x) => x === 0)) delete q.from; else q.from = v.map(round2); }), '画面 wu')),
+          this.row('终点', this.pair(() => s.to || [0, 0], (v) => W('改光带终点', (q) => { q.to = v.map(round2); }), '画面 wu')),
+          this.row('起止全宽', this.pair(() => s.width || [0, 0], (v) => W('改光带宽', (q) => { q.width = v.map((x) => Math.max(0, round2(x))); }), 'wu')),
+          h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => s.occludeByDepth === true, (v) => W(v ? '光带被原画前景挡住' : '光带不被原画挡', (q) => {
+            if (v) q.occludeByDepth = true; else delete q.occludeByDepth;
+          }), '原画前景挡住它（立在锚点脚下那一深度）', { role: 'beam-occlude', title: '光带立在锚点脚下那一深度的直立面上，原画比它近的地方把它挡掉；没深度的场景忽略' })),
+        ];
+      }
+      const s = b.shape3d || {};
+      const sec = s.section || { kind: 'rect', width: 60, height: 20 };
+      const W = (label, fn) => E(label, () => { b.shape3d = b.shape3d || clone(DEFAULT_3D); fn(b.shape3d); });
+      const polygon = sec.kind === 'polygon';
+      return [
+        h('div', { class: 'pad dim' }, '伪 3D 世界（wu），相对布置锚点；终点一般拖到地面稍微穿进去一点，交给原画深度截断'),
+        this.row('起点', this.vec3(() => s.from || [0, 0, 0], (v) => W('改光柱起点', (q) => { if (v.every((x) => x === 0)) delete q.from; else q.from = v.map(round2); }), 'wu')),
+        this.row('终点', this.vec3(() => s.to || [0, 0, 0], (v) => W('改光柱终点', (q) => { q.to = v.map(round2); }), 'wu')),
+        this.row('截面', this.sel(() => sec.kind, (v) => W('改光柱截面', (q) => {
+          const old = q.section || sec;
+          if (v === 'polygon' && old.kind !== 'polygon') q.section = { kind: 'polygon', sides: 6, radius: round2(Math.max(old.width || 0, old.height || 0) / 2 || 30) };
+          if (v === 'rect' && old.kind !== 'rect') q.section = { kind: 'rect', width: round2((old.radius || 30) * 2), height: round2((old.radius || 30) * 2) };
+        }), [{ value: 'rect', label: '矩形（窗、门缝、瓦缝）' }, { value: 'polygon', label: '正多边形（天窗圆孔之类）' }])),
+        !polygon ? this.row('截面宽 × 高', this.pair(() => [sec.width, sec.height], (v) => W('改光柱截面尺寸', (q) => {
+          q.section = { kind: 'rect', width: Math.max(0.5, round2(v[0])), height: Math.max(0.5, round2(v[1])) };
+        }), 'wu')) : null,
+        polygon ? this.row('边数', this.num(() => sec.sides, (v) => W('改截面边数', (q) => {
+          q.section = Object.assign({}, q.section, { sides: Math.round(clamp(v == null ? 6 : v, 3, 8)) });
+        }), '3–8', { int: true })) : null,
+        polygon ? this.row('外接圆半径', this.num(() => sec.radius, (v) => W('改截面半径', (q) => {
+          q.section = Object.assign({}, q.section, { radius: Math.max(0.5, v == null ? 30 : v) });
+        }), 'wu')) : null,
+        this.row('张角', this.pair(() => s.spreadDeg || [0, 0], (v) => W('改光柱张角', (q) => {
+          const a = v.map((x) => round2(lim('spreadDeg', x)));
+          if (a.every((x) => x === 0)) delete q.spreadDeg; else q.spreadDeg = a;
+        }), polygon ? '度（只看第一个）' : '度（沿宽, 沿高）', { title: '全角；0 = 平行光棱柱（太阳透窗），大于 0 往外张开' })),
+        this.row('绕轴转角', this.num(() => s.rollDeg, (v) => W('改光柱转角', (q) => { if (!v) delete q.rollDeg; else q.rollDeg = round2(v); }), '度',
+          { placeholder: '0', title: '截面绕光柱轴转：让矩形的边对齐墙 / 窗框（0 = 宽沿水平）' })),
+      ];
+    }));
+    // ---- 沿长度亮度
+    out.push(this.section('beamAlong', '沿长度亮度', () => [
+      this.curve('沿长度亮度', () => b.alongCurve, (v) => {
+        if (v && v.length) b.alongCurve = v.slice(0, 8).map((k) => [round3(clamp(k[0], 0, 1)), round3(lim('alongValue', k[1]))]);
+        else delete b.alongCurve;
+      }),
+      h('div', { class: 'pad dim' }, '横 = 起点→终点，纵 = 倍率；不写 = 恒 1。起点淡入、落地前变暗靠它（最多 8 个点）'),
+    ]));
+    // ---- 雾气噪声
+    out.push(this.section('beamNoise', '雾气噪声', () => {
+      const n = b.noise;
+      const rows = [h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => !!n, (v) => E(v ? '加光柱雾气噪声' : '去掉光柱雾气噪声', () => {
+        if (v) b.noise = { strength: 0.3, scaleWu: 90, velocity: [8, 3, 0] }; else delete b.noise;
+      }), '光柱里流动的雾气', { role: 'beam-noise' }))];
+      if (!n) return rows;
+      rows.push(
+        this.row('强度', this.num(() => n.strength, (v) => E('改雾气强度', () => { n.strength = lim('noiseStrength', v == null ? 0 : v); }), '0–1', { step: 0.05, title: '亮度在 [1−强度, 1+强度] 之间起伏' })),
+        this.row('尺度', this.num(() => n.scaleWu, (v) => E('改雾气尺度', () => { n.scaleWu = Math.max(1, v == null ? 90 : v); }), 'wu', { title: '一团雾大约多大' })),
+        this.row('流速', this.vec3(() => n.velocity || [0, 0, 0], (v) => E('改雾气流速', () => { if (v.every((x) => x === 0)) delete n.velocity; else n.velocity = v.map(round2); }),
+          b.mode === '2d' ? 'wu/s（2D 只看前两个，画面坐标）' : 'wu/s（M-world）')),
+      );
+      return rows;
+    }));
+    // ---- 图案遮罩
+    out.push(this.section('beamCookie', '图案遮罩（窗棂 / 树叶）', () => {
+      const ck = b.cookie;
+      const images = (host.sources && host.sources.images) || [];
+      const rows = [h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => !!ck, (v) => E(v ? '加光柱图案遮罩' : '去掉光柱图案遮罩', () => {
+        if (v) b.cookie = { image: images[0] || '' }; else delete b.cookie;
+      }), '截面上贴一张灰度图，沿光柱投出一条条光', { role: 'beam-cookie' }))];
+      if (!ck) return rows;
+      rows.push(
+        this.row('灰度图', this.sel(() => ck.image, (v) => E('改图案遮罩', () => { ck.image = v || ''; }), images, false)),
+        images.length ? null : h('div', { class: 'pad warn' }, 'resources/runtime/images/vfx/ 下还没有图片：先把窗棂 / 树叶灰度图放进去'),
+        this.row('强度', this.num(() => ck.strength, (v) => E('改图案强度', () => { if (v == null) delete ck.strength; else ck.strength = lim('cookieStrength', v); }), '0–1', { placeholder: String(D.cookieStrength), step: 0.05 })),
+        this.row('铺几遍', this.pair(() => ck.scale || [1, 1], (v) => E('改图案缩放', () => { const a = v.map((x) => Math.max(0.01, round3(x))); if (a[0] === 1 && a[1] === 1) delete ck.scale; else ck.scale = a; }), '宽, 高')),
+        this.row('偏移', this.pair(() => ck.offset || [0, 0], (v) => E('改图案偏移', () => { const a = v.map(round3); if (a.every((x) => x === 0)) delete ck.offset; else ck.offset = a; }), '截面归一化')),
+        this.row('旋转', this.num(() => ck.rotationDeg, (v) => E('改图案旋转', () => { if (!v) delete ck.rotationDeg; else ck.rotationDeg = round2(v); }), '度', { placeholder: '0' })),
+      );
+      return rows;
+    }));
+    // ---- 亮度起伏
+    out.push(this.section('beamPulse', '亮度起伏', () => {
+      const p = b.pulse;
+      const rows = [this.row('起伏', this.sel(() => p && p.kind, (v) => E('改光柱亮度起伏', () => {
+        if (!v) { delete b.pulse; return; }
+        const keep = b.pulse && typeof b.pulse === 'object' ? b.pulse : null;
+        b.pulse = { kind: v, hz: keep ? keep.hz : (v === 'flicker' ? 6 : 0.2), amount: keep ? keep.amount : (v === 'flicker' ? 0.3 : 0.35) };
+      }), [{ value: 'flicker', label: '闪烁（平滑随机）' }, { value: 'breathe', label: '慢呼吸（正弦，云过太阳）' }], true))];
+      if (!p) return rows;
+      rows.push(
+        this.row('频率', this.num(() => p.hz, (v) => E('改起伏频率', () => { p.hz = lim('pulseHz', v == null ? 0 : v); }), 'Hz', { step: 0.1 })),
+        this.row('幅度', this.num(() => p.amount, (v) => E('改起伏幅度', () => { p.amount = lim('pulseAmount', v == null ? 0 : v); }), '0–1', { step: 0.05, title: '最暗时亮度 = 1 − 幅度' })),
+      );
+      return rows;
+    }));
+    return out;
+  },
+
+  /** 发射形状「光柱体积」那几行：用哪根光柱 + 沿长度那一段（不写 = 整根） */
+  beamShapeRows(doc, em, shape, E) {
+    if (!shape || shape.kind !== 'beam') return [];
+    const ids = (doc.beams || []).map((b) => b.id);
+    const errs = [];
+    const api = this._host.beamApi();
+    if (api && this._host.programApi) {
+      const own = new Set(ids);
+      for (const e of api.emitterBeamRefErrors(em, own, this._host.programApi.resolveEmitterProgram(em).solver)) errs.push(e);
+    }
+    return [
+      this.row('光柱', this.sel(() => shape.beam, (v) => E('改出生光柱', () => { shape.beam = v || ''; }), ids, false)),
+      this.row('沿长度', this.pair(() => shape.along || [0, 1], (v) => E('改出生区段', () => {
+        const a = v.map((x) => round3(clamp(x, 0, 1))).sort((x, y) => x - y);
+        if (a[0] === 0 && a[1] === 1) delete shape.along; else shape.along = a;
+      }), '0–1', { title: '只在光柱沿长度这一段里出生；不写 = 整根' })),
+      ids.length ? null : h('div', { class: 'pad warn' }, '这个效果还没有光柱：左栏「光柱」先加一根'),
+      errs.length ? h('div', { class: 'pad warn', 'data-role': 'beam-shape-errors' }, errs.join('；')) : null,
+    ];
   },
 
   programSection(host, em) {
@@ -355,7 +836,7 @@ const Inspector = {
         () => p.surfaceRadius ?? (em.spawn.shape?.kind === 'area' ? em.spawn.shape.radius ?? 200 : 200),
         v => change('改表面铺撒半径', q => { if (v == null) delete q.surfaceRadius; else q.surfaceRadius = Math.max(1, v); }), 'wu',
         { title: '未画发射区域时使用的圆盘半径；画了区域则按区域采样。清空恢复原有半径。' })) : null,
-      ...[['sceneWind', '场景风（空气速度）'], ['wind', '局部推力（加速度）'], ['airflow', '局部气流（空气速度）'], ['stimulus', '标签刺激响应']].map(([key, label]) => {
+      ...[['sceneWind', '场景风（空气速度）'], ['wind', '局部推力（加速度）'], ['airflow', '局部气流（空气速度）'], ['contact', '角色接触（踢动）'], ['stimulus', '标签刺激响应']].map(([key, label]) => {
         const row = this.row(label, this.chk(() => p.influences[key], (v) => change('改' + label, (q) => { q.influences[key] = v; }), '接收'));
         if (p.solver === 'flock' && key !== 'stimulus') for (const n of row.querySelectorAll('input')) n.disabled = true;
         return row;
@@ -389,10 +870,10 @@ const Inspector = {
     if (!c.initialVelocity) for (const label of ['初速', '方向', '方向向量', '锥角']) disable(row('spawn', label), '当前出生方式不使用初速度');
     if (!c.genericMotion) for (const label of ['重力', '阻力', '恒定风', '浮力', '速度上限']) disable(row('motion', label), '当前运动模型不使用此通用参数');
     if (!c.turbulence) for (const label of ['湍流强度', '湍流尺度', '湍流速率']) disable(row('motion', label), '群体运动不使用通用湍流');
-    if (c.spawnPlacement === 'surface') for (const label of ['形状', '半径', '盒尺寸', '线终点']) disable(row('spawn', label), '出生位置取布置的发射区域表面');
+    if (c.spawnPlacement === 'surface') for (const label of ['形状', '半径', '盒尺寸', '线终点', '外部点抖动']) disable(row('spawn', label), '出生位置取布置的发射区域表面');
     if (host.areaPoly(host.activePlacement())?.length >= 3) disable(row('simulation', '无区域时半径'), '当前使用已绘制的发射区域');
     if (c.flock) {
-      for (const label of ['速率', '开播爆发', '形状', '半径', '预览半径', '盒尺寸', '线终点', '活跃时长']) disable(row('spawn', label), '群体出生由巢管理');
+      for (const label of ['速率', '间隔浮动', '开播爆发', '形状', '半径', '预览半径', '盒尺寸', '线终点', '外部点抖动', '活跃时长']) disable(row('spawn', label), '群体出生由巢管理');
       disable(container.querySelector('.sec[data-sec="life"]'), '群体生命周期由状态机管理');
     }
     if (!c.collision) disable(container.querySelector('.sec[data-sec="collision"]'), '接触由当前运动模型处理');
@@ -413,7 +894,17 @@ const Inspector = {
     const doc = host.doc;
     const em = host.currentEmitter();
     container.appendChild(this.effectSection(host, doc));
+    container.appendChild(this.section('timing', '起播错峰', () => [
+      this.row('随机预热', this.chk(() => doc.prewarmSeconds !== undefined,
+        (v) => host.edit('改随机预热', () => { if (v) doc.prewarmSeconds = [1, 4]; else delete doc.prewarmSeconds; }),
+        '启用', { title: '按实例种子选择预热时长，先静默模拟再显示；适合烟、虫群、灯火。关闭则从头起播。' })),
+      doc.prewarmSeconds ? this.row('预热时长', this.pair(() => doc.prewarmSeconds,
+        (v) => host.edit('改预热时长', () => { doc.prewarmSeconds = v.map((x) => clamp(x, 0, 15)).sort((a, b) => a - b); }), '秒')) : null,
+    ]));
     container.appendChild(this.placementSection(host, doc));
+    // 选中的是光柱把手：检视器换成这根光柱（发射器那几块不出——左栏点发射器回来）
+    const bm = host.currentBeam();
+    if (bm) { for (const n of this.beamSections(host, doc, bm)) if (n) container.appendChild(n); return; }
     if (!em) { container.appendChild(h('div', { class: 'pad dim' }, '左栏选一个发射器')); return; }
     const E = (label, fn) => host.edit(label, fn);
     const ensure = (key, init) => { if (!em[key] || typeof em[key] !== 'object') em[key] = init; return em[key]; };
@@ -446,7 +937,16 @@ const Inspector = {
         this.curve('大小×寿命', () => ap.sizeOverLife, (v) => { if (v && v.length) ap.sizeOverLife = v; else delete ap.sizeOverLife; }),
         this.curve('透明×寿命', () => ap.alphaOverLife, (v) => { if (v && v.length) ap.alphaOverLife = v; else delete ap.alphaOverLife; }, { cap: 1 }),
         this.row('乘色', this.vec3(() => ap.tint || [1, 1, 1], (v) => E('改乘色', () => { ap.tint = v.map((x) => clamp(x, 0, 1)); }), '0–1')),
+        ...this.tintOverLifeRows(ap, E),
         this.row('混合', this.sel(() => ap.blend, (v) => E('改混合', () => { if (v) ap.blend = v; else delete ap.blend; }), ['normal', 'add'], true)),
+        // 被光柱照亮（光柱里的尘埃）：候选 = 本效果的光柱（选择器铁律；悬垂值保值显示）
+        this.row('被光柱照亮', this.sel(() => ap.beamLit && ap.beamLit.beam, (v) => E('改被光柱照亮', () => {
+          if (!v) { delete ap.beamLit; return; }
+          ap.beamLit = Object.assign({}, ap.beamLit, { beam: v });
+        }), ((doc.beams || []).map((b) => b.id)), true)),
+        ap.beamLit ? this.row('光柱亮度倍率', this.num(() => ap.beamLit.gain, (v) => E('改光柱照亮倍率', () => {
+          if (v == null) delete ap.beamLit.gain; else ap.beamLit.gain = clamp(v, 0, 20);
+        }), '×', { placeholder: '1', step: 0.1, title: '尘埃亮度 = 光柱在它那一点的亮度 × 这个倍率；柱外看不见' })) : null,
         h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => ap.lit !== false, (v) => E('改受光', () => { if (v) delete ap.lit; else ap.lit = false; }), '吃 probe 底光 + 实体灯（自发光的关掉）')),
         ap.lit !== false ? this.row('镜面/自发光', this.num(() => ap.emissive, (v) => E('改自发光', () => { if (v == null) delete ap.emissive; else ap.emissive = clamp(v, 0, 1); }), '0–1', { title: '这一份亮度不吃漫反射着色。水滴、火星这类靠镜面/自发光才看得见的东西才给；不是亮度拉杆' })) : null,
         // 空 = 删键（运行时缺省 1）；夹到 0..10（与形状闸门 / 校验器 / 运行时同口径）
@@ -466,16 +966,13 @@ const Inspector = {
       return [
         this.row('池容量', this.num(() => sp.max, (v) => E('改池容量', () => { sp.max = Math.max(1, Math.round(v == null ? 1 : v)); }), '个', { int: true, title: '同时存活上限' })),
         this.row('速率', this.num(() => sp.rate, (v) => E('改发射速率', () => { if (v == null) delete sp.rate; else sp.rate = v; }), '个/秒', { title: '不写 = 只有 burst' })),
+        this.row('间隔浮动', this.num(() => sp.intervalJitter, (v) => E('改间隔浮动', () => {
+          if (v == null) delete sp.intervalJitter; else sp.intervalJitter = clamp(v, 0, 0.95);
+        }), '比例', { step: 0.05, title: '0 = 固定节拍；0.3 = 每次发射间隔随机上下浮动 30%。由实例种子驱动。', disabled: !(sp.rate > 0) || !!em.subOnly })),
         this.row('开播爆发', this.num(() => sp.burst, (v) => E('改爆发', () => { if (v == null) delete sp.burst; else sp.burst = Math.round(v); }), '个', { int: true })),
-        this.row('形状', this.sel(() => shape && shape.kind, (v) => E('改发射形状', () => {
-          if (!v) { delete sp.shape; return; }
-          const d = { point: {}, sphere: { radius: 20 }, disc: { radius: 20 }, box: { size: [100, 50, 100] }, line: { to: [100, 0, 0] }, area: { radius: 200 } }[v] || {};
-          sp.shape = Object.assign({ kind: v }, d);
-          if (v === 'area' && host.programApi) {
-            em.simulation = structuredClone(host.programApi.resolveEmitterProgram(em));
-            em.simulation.spawnPlacement = 'surface';
-          }
-        }), ['point', 'sphere', 'disc', 'box', 'line', 'area'], true)),
+        this.row('形状', this.shapeSelect(em, sp, shape, E)),
+        ...this.externalShapeRows(em, shape, E),
+        ...this.beamShapeRows(doc, em, shape, E),
         shape && (shape.kind === 'sphere' || shape.kind === 'disc')
           ? this.row('半径', this.num(() => shape.radius, (v) => E('改发射半径', () => { shape.radius = v == null ? 1 : Math.max(0, v); }), 'wu')) : null,
         shape && shape.kind === 'area'
@@ -491,7 +988,7 @@ const Inspector = {
     // ---------------- 运动
     container.appendChild(this.section('motion', '运动', () => {
       const mo = em.motion;
-      if (!mo) return [h('div', { class: 'btns' }, h('button', { onclick: () => E('加运动模块', () => { ensure('motion', {}); }) }, '+ 加运动模块'))];
+      if (!mo) return [...this.followAnchorRows(em, E), h('div', { class: 'btns' }, h('button', { onclick: () => E('加运动模块', () => { ensure('motion', {}); }) }, '+ 加运动模块'))];
       const t = mo.turbulence || null;
       return [
         this.row('重力', this.num(() => mo.gravity, (v) => E('改重力', () => { if (v == null) delete mo.gravity; else mo.gravity = v; }), 'wu/s²', { title: '正值向下；水滴 865（= 9.8 m/s²）' })),
@@ -506,6 +1003,7 @@ const Inspector = {
         t ? this.row('湍流速率', this.num(() => t.speed, (v) => E('改湍流速率', () => { if (v == null) delete t.speed; else t.speed = v; }), '1/s')) : null,
         this.row('速度上限', this.num(() => mo.maxSpeed, (v) => E('改速度上限', () => { if (v == null) delete mo.maxSpeed; else mo.maxSpeed = v; }), 'wu/s')),
         h('div', { 'data-role': 'stimulus-controls' }, ...this.stimulusRows(em, mo, E)),
+        ...this.followAnchorRows(em, E),
         h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删运动模块', () => { delete em.motion; }) }, '删运动模块')),
       ];
     }));
@@ -517,6 +1015,7 @@ const Inspector = {
         h('div', { class: 'btns' }, h('button', { onclick: () => E('加寿命模块', () => { ensure('life', { seconds: [1, 2] }); }) }, '+ 加寿命模块'))];
       return [
         this.row('寿命', this.pair(() => li.seconds || [1, 2], (v) => E('改寿命', () => { li.seconds = v; }), '秒')),
+        ...this.maxDistanceRows(em, li, E),
         h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删寿命模块', () => { delete em.life; }) }, '删寿命模块（永生）')),
       ];
     }));
@@ -594,6 +1093,12 @@ const Inspector = {
         this.row('惊飞阈值', this.num(() => at.fleeThreshold, (v) => E('改惊飞阈值', () => { if (v == null) delete at.fleeThreshold; else at.fleeThreshold = v; }), '')),
         this.row('安静回巢', this.num(() => at.calmSeconds, (v) => E('改回巢时长', () => { if (v == null) delete at.calmSeconds; else at.calmSeconds = v; }), '秒')),
         this.row('开播状态', this.sel(() => be.initialState, (v) => E('改开播状态', () => { if (v) be.initialState = v; else delete be.initialState; }), ['roosting', 'airborne', 'fleeing', 'returning'], true)),
+        this.row('近身侵扰半径', this.num(() => be.harassment && be.harassment.radius, (v) => E('改近身侵扰', () => {
+          if (v == null) { delete be.harassment; return; }
+          be.harassment = Object.assign({ height: 90, attackPerSecond: 5 }, be.harassment, { radius: v });
+        }), 'wu', { title: '留空关闭。个体实际飞进玩家身边才扣阳气；整群按秒结算，不乘粒子数量；惊飞/回巢时不扣。' })),
+        be.harassment ? this.row('侵扰中心离脚点', this.num(() => be.harassment.height, (v) => E('改侵扰高度', () => { be.harassment.height = v == null ? 0 : v; }), 'wu')) : null,
+        be.harassment ? this.row('侵扰每秒扣阳气', this.num(() => be.harassment.attackPerSecond, (v) => E('改侵扰伤害', () => { be.harassment.attackPerSecond = v == null ? 0 : v; }), '/秒')) : null,
         this.row('扑翼巡航', this.num(() => be.wingFlap && be.wingFlap.atCruise, (v) => E('改扑翼频率', () => {
           if (v == null) { delete be.wingFlap; return; }
           be.wingFlap = Object.assign({ atMax: v * 1.6 }, be.wingFlap, { atCruise: v });
@@ -640,6 +1145,8 @@ const Inspector = {
         numIn('弯曲上限', 'bend', 'max', '', '', 0, 1.5),
         numIn('静卷曲', 'bend', 'rest', '', '躺着时自带的卷曲（逐张在 ±它 里抽）', 0, 1),
         this.row('渲染段数', this.num(() => pl.segments, (v) => E('改渲染段数', () => { if (v == null) delete pl.segments; else pl.segments = Math.max(1, Math.min(16, Math.round(v))); }), '段', { int: true })),
+        h('h4', {}, '可燃'),
+        ...this.burnableRows(pl, E),
         h('div', { class: 'pad dim' }, '受力来源见「模拟与外部影响」；铺撒区域取活动布置的发射区域；本地预览与游戏共用模拟，片的朝向与弯曲在游戏里看'),
         h('div', { class: 'btns' }, h('button', { class: 'danger', onclick: () => E('删薄片模块', () => { delete em.plate; activate('particle'); }) }, '删薄片模块')),
       ];
@@ -684,6 +1191,7 @@ const Inspector = {
             [{ value: 'surface', label: '场景面（行走面 / 深度壳）' }, { value: 'socket', label: '角色挂点（手持：火把 / 灯笼）' }])),
           h('div', { class: 'pad dim' }, `锚点跟着活动布置「${ap.id}」走（运行时读的就是它），在下面「布置」一节改；效果自己的预览锚点只在本份没布置它时用`),
           h('div', { class: 'pad dim' }, '发射器一览：' + (doc.emitters || []).map((x) => x.id).join(' / ')),
+          (doc.beams || []).length ? h('div', { class: 'pad dim' }, '光柱一览：' + doc.beams.map((x) => x.id).join(' / ')) : null,
         ];
       }
       return [
@@ -701,9 +1209,9 @@ const Inspector = {
           if (!v) delete o.offsetX; else o.offsetX = v;
         }), 'wu（画面横向）', { title: '手伸在身侧 / 身前：与运行时挂点的画面横向偏移（contact.x + pose.x）同口径' })) : null,
         at ? h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => host.walk.on, (v) => host.setWalk(v),
-          '让角色来回走（看锚点在动、已发射的粒子留在原地）')) : null,
+          '让角色来回走（看锚点在动、已发射的粒子按「跟着发射点走」留下或跟上）')) : null,
         at && !host.player.on ? h('div', { class: 'pad warn' }, '场上还没有角色：按 M 点一下地面放一个（挂点跟着它走；没有角色时锚点暂时落在场景面上）') : null,
-        at ? h('div', { class: 'pad dim' }, '运行时就是这条：挂件预设的 vfx 由 HeldPropSystem 每帧把锚点挪到挂点上（moveAnchor），已发射的粒子留在原地——本地预览跑的是同一份函数。A 工具点一下 = 把火头摆到那里')
+        at ? h('div', { class: 'pad dim' }, '运行时就是这条：挂件预设的 vfx 由 HeldPropSystem 每帧把锚点挪到挂点上（moveAnchor），已发射的粒子按各发射器「跟着发射点走」（运动一节；缺省留在原地）——本地预览跑的是同一份函数（不带动画位移，「跟动作、不跟走」在这里等于不跟）。A 工具点一下 = 把火头摆到那里')
           : null,
         // ---- 场景面那一档
         at ? h('div', { class: 'pad dim' }, `场景锚点（切回「场景面」才用）：${a ? `${fmt(a.x)} , ${fmt(a.y)}` : foreign ? `记在「${foreign}」（这里用出生点）` : '还没有'}`) : null,
@@ -713,6 +1221,7 @@ const Inspector = {
         !at && a ? this.row('离面高', this.num(() => a.h == null ? 0 : a.h, (v) => E('改锚点高度', () => { const o = host.ensureAnchor(); o.h = v == null ? 0 : Math.max(0, v); }), 'wu')) : null,
         !at && a ? this.row('落在', this.sel(() => a.surface || 'ground', (v) => E('改锚点表面', () => { const o = host.ensureAnchor(); if (v === 'shell') o.surface = 'shell'; else delete o.surface; host.reanchor(); }), [{ value: 'ground', label: '行走面' }, { value: 'shell', label: '深度壳（崖壁 / 桌面）' }])) : null,
         h('div', { class: 'pad dim' }, '发射器一览：' + (doc.emitters || []).map((x) => x.id).join(' / ')),
+        (doc.beams || []).length ? h('div', { class: 'pad dim' }, '光柱一览：' + doc.beams.map((x) => x.id).join(' / ')) : null,
       ];
     });
   },

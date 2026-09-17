@@ -14,6 +14,7 @@
 - [加 Action 的登记面](runtime/mechanisms/action-registration-registry-surfaces.md) — 新 action 要同步的登记面不止一处(运行时注册 / TS 参数清单 / 编辑器授权面 / 校验器 / 条件性的实体引用表);漏哪一处的报错通道各不相同,有一处漏了 tsc 与 validate-data 全绿、只有编辑器测试红
 - [档案系统解锁语义](runtime/mechanisms/archive-unlock-semantics.md) — 人物档案解锁唯一入口=addArchiveEntry(幂等);lore/doc/book 走声明式条件;totalPages 只认 pages.length
 - [打包管线(只读抽取 · dev/发行双档 · 产物验收门)](runtime/mechanisms/build-pipeline.md) — 打包只从开发树只读抽取,绝不改动开发数据;裁剪一律写成"不抽取";清单=JSON引用闭包+传递闭包+id约定+显式规则(光照载荷按载荷自己的 shading.mode 展开,文件名表与运行时共用一份);输出目录是每次传的参数、不进配置;静态清单证明不了完备——release.mjs 默认无头真跑每个场景反向核对清单(scene_sweep),verify 再做开发树→产物的光照载荷平价
+- [燃烧系统(可燃物模板 · 宿主实例化 · 确定性燃烧模拟 · 点火表演 · 离场照推与存档)](runtime/mechanisms/burn-system.md) — 可燃物是模板(图 / 真实尺寸 / 握点 / 燃料 / 着火点 / 烧法 / 粒子 / 火光,和场景无关),热点 / NPC / 演出生成的对象 / 挂件预设身上写 burnable 引用它 = 实例化一次、渲染由实例接管,粒子薄片 plate.burnable 绑它;场景实例进每场景一份事件驱动的确定性模拟(Dijkstra 火线 + 消耗燃烧 + 按体积接触蔓延,挪位 / 出现 / 收掉也是外部事件,活跑 / 重放 / 离场照推逐位相同),手上的挂件单独一份模拟存快照;热点挂两道燃烧滤镜、NPC 与挂件在图像空间画颜色图 + 自发光;玩家点火 = 切 ActionSequence 走到闭式解出的站位、接触帧火头在画面 2D 对准着火点
 - [角色逐像素照明(probe 底光 + 加性实体灯)](runtime/mechanisms/character-lighting.md) — 只有一条活路径——probe 烘死的 GI 底光 + 与场景同一次打包的加性实体灯 + 与背景同一组显示变换;统一角色路径被 Game 里的常量开关整条关死(留码不删);着色核心单一 GLSL 源,法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐
 - [角色注册表(characterId 合并)](runtime/mechanisms/character-registry.md) — 角色身份(name/animFile/portraitSlug)一处定义,NpcDef.characterId 引用,实例化时合并且 own 字段赢过注册表
 - [坐标空间总表(屏幕→场景 wu→像素栅格→伪世界 q→M-world)](runtime/mechanisms/coordinate-spaces.md) — 全项目六个坐标空间的单位/原点/住户/权威源与逐条可验判据;两个 M(det ±1)、两套像素栅格(比例非恒定 4)、着色在 M-world 而 march 在 q——混用一律不报错只是效果不对
@@ -32,7 +33,7 @@
 - [实体轨迹动画(烘焙式 · 独立资产)运行时语义](runtime/mechanisms/entity-trajectory.md) — 一条轨迹一个资产文件、帧相对**曲线原点**(作者摆的参考点,不是第一帧);曲线没有锚点,播放位置在播放时给(at 位置引用:数字 / 实体此刻位置 / 场景曲线插槽 / 曲线上的点,含播放头 current);位置引用只认场景曲线(相对曲线是资源、每次播放一个实例,不许引用);运动对象是场景实体(target)或播放时临时生成的图片 / 角色模板(spawn,keep = 播完留下成场景实体进存档);场景曲线可原地播、相对曲线必须给位置;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;轨迹不驱动相机,镜头跟曲线走 = cameraFollowActor 的 at 引用播放头;音效关键点 cues 按时间轴触发(不带位置,跳过/被停不补声)
 - [实体显隐四通道合成](runtime/mechanisms/entity-visibility-channels.md) — 四个独立通道(派生基底/条件/会话覆盖/拾取位)在实体内单点合成;任何一方只写自己的通道,禁止直接 setEnabled 冲掉运行态
 - [脚步声与空间化音频(帧驱动 + 两级精度 + 可插拔听者)](runtime/mechanisms/footstep-and-spatial-audio.md) — 脚步由动画落脚帧驱动不由计时器,落脚帧住动画包 sockets.json 的 contactSlots(动画浏览页看图标);脚步集一片段一条音效 key 无随机;空间量一律在 M-world(wu)算;八个场景没有 depthConfig 必须两级降级;听者可设成任意目标且推拉镜头必须用 zoom 比值不是可视宽度
-- [手持光源(挂件状态机 · 跟随灯 · 运行时灯那一层)](runtime/mechanisms/held-prop-lights.md) — 火把/灯笼是"挂件预设自带灯与效果 + 离散状态机"；灯位每帧从挂点解出来，作为**运行时灯**加在作者灯之外（作者数据一个字节不动）；闪烁是一个信号 L(t) 同时驱动灯强度与发射率；灯每动一次就重烘整张光照缓存，所以闪烁推送必须限速
+- [手持光源(挂件状态机 · 跟随灯 · 运行时灯那一层)](runtime/mechanisms/held-prop-lights.md) — 火把/篾条/灯笼是"燃烧物静态图 + 粒子挂载（每个效果挂在贴图上自己的点）+ 程序化燃烧状态 + 自带灯"，帧动画火苗留作能力；灯位与粒子锚点每帧从起火点 / 挂载点（或挂点）解出来，灯作为**运行时灯**加在作者灯之外（作者数据一个字节不动）；闪烁是一个信号 L(t) 同时驱动灯强度与粒子发射率；燃烧强度驱动粒子发射率与新生大小（2/5 次方）、挡风驱动粒子吃风，都不动灯；灯每动一次就重烘整张光照缓存，所以闪烁推送必须限速；状态进入动作只在真进入时执行
 - [背包槽上限与 critical 给予](runtime/mechanisms/inventory-capacity-critical.md) — 背包有槽上限,giveItem 返回值必须消费;关键道具用 critical=true 绕上限,拾取失败走 inventory:full 不消耗热点
 - [运行时摆灯的可视化手柄(聚光靶点/锥角、面光尺寸/朝向)](runtime/mechanisms/light-authoring-gizmos.md) — 判据只有一条——三维朝向/尺寸必须能拖,标量数字框就够;聚光靶点落行走面(正向求交要粗扫+二分),面光正面判据必须用真视线不能写 n.z<0;面板兜底值要与 packLights 逐字对齐
 - [光照参数的空间与单位(世界空间 wu ↔ 伪世界 q)](runtime/mechanisms/lighting-scale-reference.md) — 灯摆在世界空间、单位 wu(与 NPC/热区/spawn 同尺,角色高 150 wu 恒定);shader 里 march 走伪世界 q,两者差一个逐场景的 wuPerQUnit,transform 只在打包处折一次
@@ -52,7 +53,7 @@
 - [scenarios.json 运行时消费语义(退役中)](runtime/mechanisms/scenario-catalog-semantics.md) — 一等公民 scenario 已数据侧退役、零数据喂养;新内容一律走 narrative scenario_* 子图,别把活儿写进 Scenarios 面板
 - [场景声学（实时回音）](runtime/mechanisms/scene-acoustics.md) — 声学空间→IR→ConvolverNode 的实时回音；v2 几何一律 M-world wu + 全局距离缩放；听者=玩家/相机/实体脚下的 3D 地面点；作者面是独立的声学工作台，游戏只是预览器（dev server 双槽实时联动）；三条硬判据（首回晚于干声时长 / 晚期尾延后 / 不套点源 1/r）
 - [场景背景受光(原画 + 加性实体灯)](runtime/mechanisms/scene-lighting.md) — 原画就是最终的光照,运行时只把作者摆的实体灯加上去(乘在**烘出来的 albedo 贴图**上);天光与太阳的运行时加光项已删,「夜」靠换一张夜原画;两级 RT 缓存,稳态每帧零光照计算
-- [场景 onEnter 揭幕时机契约](runtime/mechanisms/scene-onenter-reveal-timing.md) — loadScene 尾序=scene:ready → 揭幕(onReveal) → onEnter;初始进场同样先遮罩后揭幕;主 tick 必须先于任何场景装载挂载
+- [场景 onEnter 揭幕时机契约](runtime/mechanisms/scene-onenter-reveal-timing.md) — loadScene 尾序=scene:ready → 揭幕前闸(限时,遮罩下做完会卡帧的准备) → 揭幕(onReveal) → onEnter;初始进场同样先遮罩后揭幕;主 tick 必须先于任何场景装载挂载
 - [场景风(一份空气速度场 · 粒子与背景草木同一个钟)](runtime/mechanisms/scene-wind.md) — 场景 JSON 的 wind 是空气的速度场(不是加速度)——一份参数一个钟,粒子(普通粒子经 drag、纸钱走薄片气动)与背景草木摆动同读、两路增益分开调;近地对数廓线决定"躺着的纸大多不动";草木摆动是离线拆层(静态底板 + 逐株植被网格:树整株刚转、灌丛草根部钉住弯、石头在底板上永不动),位移封顶在底板补带内;摆幅透视按视深查表(不按透视轴);透视场景里真实位移×脚点透视系数
 - [气味系统(双层 action/zone)](runtime/mechanisms/smell-system.md) — action 层永远压过 zone 层;zone 气味声明式挂 ZoneDef.smell,SmellSystem 听 zone:enter 驱动,ZoneSystem 不动
 - [首启手势门 + 音频解锁快路径](runtime/mechanisms/start-gate-audio-unlock.md) — 「点击开始」遮罩给页面 sticky 激活;AudioManager init 时按 hasBeenActive 直接解锁——救开场首句配音音画同步
@@ -60,7 +61,7 @@
 - [拆除顺序与世代作废](runtime/mechanisms/teardown-ordering.md) — 拆一局/拆一个场景是强排序不是清单;跨 await 的异步流程靠世代号自杀,不靠"记得取消"
 - [UI 组件层(窗体/按钮/滚动区)](runtime/mechanisms/ui-component-layer.md) — 面板不再各自手搭遮罩·标题栏·滚动·按钮,统一走 src/ui/components;重绘用 attach 不用 open、量高前必须摘 mask、行内点击必须消费
 - [UI 面板皮肤单一入口](runtime/mechanisms/ui-panel-skin.md) — 面板底/边只经 PanelSkin 的 createPanel(有木框)或 drawPanelBase(只有底+细边);拿木框皮肤调 drawPanelBase 会静默丢框;「暗角」实为一层均匀黑纱,暗底配色是连着它一起量的
-- [世界空间粒子 / 群体系统(效果资产 · 布置 · 刺激场)](runtime/mechanisms/vfx-system.md) — 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 按场景×时段外观分份的布置库 / 运行时刺激场),效果与布置唯一写者都是粒子工作台;表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源
+- [世界空间粒子 / 群体系统(效果资产 · 布置 · 刺激场)](runtime/mechanisms/vfx-system.md) — 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 按场景×时段外观分份的布置库 / 运行时刺激场),效果与布置唯一写者都是粒子工作台;表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源;效果里还可以挂美术可控的光柱(体积光,3D 截面多边形视锥 / 2D 光带,逐像素一次解析求弦,不照角色、不进光照缓存)与挂在光柱里的尘埃
 - [zone 生命周期与上下文契约](runtime/mechanisms/zone-lifecycle-contracts.md) — 触发载体两路(进出即触发 / 按键才触发);zone 上下文按参数线程化(executeBatchInZoneContext),禁回退全局栈;位面重注册仅 Exploring
 
 ### 配方
@@ -87,6 +88,7 @@
 - [_PARAM_SCHEMAS 是控件清单不是必填集](editor-tools/mechanisms/action-param-schemas-vs-required.md) — action 参数清单三处镜像语义各不同;required/optional 的唯一权威是 actionParamManifest.ts,编辑器侧的 schema 只决定建哪些控件
 - [转盘氛围脚本编辑器](editor-tools/mechanisms/atmosphere-script-editor.md) — 递归指令列表编辑器(RPGMaker-event 式,非 DSL/树);复用 ActionEditor 的范式不复用控件;to_list 输出必须与独立轻量运行时逐字段一致
 - [音频加工台与 audio_config 的写入面](editor-tools/mechanisms/audio-workbench-config-write.md) — 唯一一个非主编辑器却会写游戏音频配置的工具(那份 JSON 双进程共写);加工指纹只是缓存键、成品字节哈希才是身份,状态一律由磁盘反算
+- [燃烧工作台(独立桌面应用 · 只编可燃物模板、和场景无关 · 页内跑同一份燃烧模拟与着色 · 模板唯一写入者)](editor-tools/mechanisms/burn-workbench.md) — 可燃物模板（burnables/<id>.json：图 / 真实尺寸 / 握点 / 燃料 / 着火点 / 烧法 / 粒子 / 火光）唯一的作者面与写入者，没有"先选场景"；原画视图是主视图（按真实尺寸在平面空间摆一个实例预览，火线速度就是准的）；「用在哪」只读列出所有宿主，点场景实体开只读场景视图（各实体按自己的 transform 摆、同一个模拟、左右点火站位与能不能站）；改名一次事务跟着改所有宿主上的 template 值（只动那几个值的字节、确认后被改过就拒绝、失败回滚），删除有引用就拒绝；页内预览打包运行时 burnSim / burnGeometry / burnAim / igniteStance / burnShadeParams 本体、着色拼 burnShade.glsl；推给游戏走联动协议 v2
 - [画布手势期间的布局与命中区纪律](editor-tools/mechanisms/canvas-gesture-safety.md) — 鼠标事件里改布局 = 必现崩溃(队列连接不是解药,要带 context 的单发定时器);屏幕像素定尺的命中区一律留在成员包围盒之外,护栏要断净空余量而不是"没被罩住"
 - [关闭路径的 Discard 中和与 flush 门控](editor-tools/mechanisms/close-path-flush-discard.md) — 主窗口关闭 = 逐页 confirm_close → 统一 flush_to_model;Discard 必须把 UI 回滚到模型值,flush 必须门控真实变更,否则被放弃的编辑复活或零编辑伪脏
 - [图对话编辑器](editor-tools/mechanisms/dialogue-graph-editor.md) — 独立包内嵌主编辑器的图对话编辑;分层架构 + 表单形状保真回写 + 语义零变化时原样字节回写;往返探针是改 inspector 的必跑门
@@ -108,7 +110,7 @@
 - [地形工作台(碰撞 · 可走区 · 行走面修补 · 推给游戏 / 导出到游戏)](editor-tools/mechanisms/terrain-workbench.md) — 碰撞 / 可走区 / 行走面的唯一作者面:烘焙器只留自动结果(collision_auto.png),作者层(多边形 / 笔刷 / 高度增量)住 runtime/scenes/<id>/terrain/,唯一合成器 terrain_compose 把两者合成 collision.png + collision.json 旁挂 + 各时段 ground_d.png;推给游戏 = 页面此刻那份合成进 local/ 预览、游戏原地换上、资源不动,导出到游戏 = 先存盘再合成进资源;运行时对齐靠游戏用自己的 isCollision 答探测;文档一律网格单位(没乘 wu/q 的 M-world)
 - [过场步骤编辑器(TimelineEditor)契约](editor-tools/mechanisms/timeline-editor-contracts.md) — UI/交互改动不得改 StepWidget.to_dict 序列化输出;已有搜索/撤销/剪贴板等能力勿重复造;含一个 PySide takeAt 布局级深坑
 - [轨迹工作台(独立桌面应用 · 画面/世界两种空间 · 烘成独立资产)](editor-tools/mechanisms/trajectory-workbench.md) — 轨迹资产唯一的作者面与唯一写入者;曲线没有锚点(播放位置在播放时给),只有一种曲线两种配置(场景曲线绑作者场景 / 相对曲线不绑),命名插槽是曲线暴露给场景的站位;加载任一场景(可把 q 空间还原成 3D 伪世界)拉线/抛体,保存=烘一次再原子写盘(保存即迁移老锚点资产);世界空间物理与地面高度场+深度壳碰撞、控制点是 {x,z,h};投影与运行时同一份金标;桌面壳零浏览器缓存
-- [粒子工作台(独立桌面应用 · 页内跑同一份运行时模拟 · 效果资产与布置库唯一写入者)](editor-tools/mechanisms/vfx-workbench.md) — 效果资产与布置库(场景 × 时段外观)唯一的作者面与唯一写入者;3D / 原画里摆发射器 / 巢与活动域 / 布置锚点 / 发射区域与范围区域 / 玩家 / 刺激,页内跑的是打包进来的运行时 vfxSim 本体(不是镜像);相机与 gizmo 经 /vendor 原样复用轨迹台那两份、不 fork;双槽实时推给游戏预览(整份工作态布置库 + 切时段);主编辑器只显示;桌面壳零缓存
+- [粒子工作台(独立桌面应用 · 页内跑同一份运行时模拟 · 效果资产与布置库唯一写入者)](editor-tools/mechanisms/vfx-workbench.md) — 效果资产与布置库(场景 × 时段外观)唯一的作者面与唯一写入者;3D / 原画里摆发射器 / 巢与活动域 / 布置锚点 / 发射区域与范围区域 / 玩家 / 刺激,页内跑的是打包进来的运行时 vfxSim 本体(不是镜像);相机与 gizmo 经 /vendor 原样复用轨迹台那两份、不 fork;双槽实时推给游戏预览(整份工作态布置库 + 切时段);光柱(体积光)也在这里摆:起点 / 终点把手、原画视图用运行时同一份 GLSL 真预览、3D 视图只画线框;主编辑器只显示;桌面壳零缓存
 - [控件丢弃：摘 parent 之前必须先 hide](editor-tools/mechanisms/widget-teardown-orphan-window.md) — 对可见控件直接 setParent(None) 会让它变成一个真顶层窗口并被 Qt 显示出来（屏幕中央光速开关的小窗）；销毁走 discard_widget/discard_layout_widgets，重新安家走 detach_widget 且必须同回合安家
 
 ### 配方

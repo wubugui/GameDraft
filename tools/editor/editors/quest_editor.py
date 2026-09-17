@@ -1208,6 +1208,8 @@ class QuestEditor(QWidget):
             ("archive/lore.json", m.archive_lore, "archive", ""),
             ("archive/books.json", m.archive_books, "archive", ""),
             ("archive/documents.json", m.archive_documents, "archive", ""),
+            # 挂件状态进入时动作（states[*].onEnterActions）里可以 updateQuest / 读任务条件
+            ("prop_presets.json", m.prop_presets, "prop_presets", ""),
         ]
         for sid in sorted(m.scenes.keys()):
             units.append((f"场景 {sid}", m.scenes[sid], "scene", sid))

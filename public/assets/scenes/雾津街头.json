@@ -1200,7 +1200,23 @@
       "interactionRange": 0,
       "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
       "initialAnimState": "idle",
-      "cutsceneOnly": false
+      "cutsceneOnly": false,
+      "healthThreat": {
+        "id": "coin_stranger",
+        "kind": "yin",
+        "boundaryRadius": 260,
+        "damageRadius": 260,
+        "attackPerSecond": 4,
+        "nightOnly": false,
+        "duringPresentation": true,
+        "fireResponse": "ignore",
+        "conditions": [
+          {
+            "narrative": "wrapper_序章_路遇私铸钱",
+            "state": "教学中"
+          }
+        ]
+      }
     },
     {
       "id": "npc_验证龛前叠图",
@@ -2029,96 +2045,11 @@
       ],
       "onEnter": [
         {
-          "type": "startCutscene",
-          "params": {
-            "id": "主线_铜钱脱落滚走__part1"
-          }
-        },
-        {
-          "type": "persistNpcEntityEnabled",
-          "params": {
-            "target": "npc_路遇_怪人",
-            "enabled": true
-          }
-        },
-        {
-          "type": "setSceneEntityPosition",
-          "params": {
-            "sceneId": "雾津街头",
-            "entityKind": "npc",
-            "entityId": "npc_路遇_怪人",
-            "x": 2013.0,
-            "y": 1993.0
-          }
-        },
-        {
-          "type": "setThreeFiresVisible",
-          "params": {
-            "visible": true,
-            "style": "debut"
-          }
-        },
-        {
-          "type": "showSystemNote",
-          "params": {
-            "noteId": "three_fires"
-          }
-        },
-        {
-          "type": "startCutscene",
-          "params": {
-            "id": "主线_铜钱脱落滚走__part2__part1"
-          }
-        },
-        {
-          "type": "setThreeFiresVisible",
-          "params": {
-            "visible": false,
-            "style": "instant"
-          }
-        },
-        {
-          "type": "setEntityEnabled",
-          "params": {
-            "target": "npc_验证铜钱",
-            "enabled": true
-          }
-        },
-        {
-          "type": "teleportEntityTo",
-          "params": {
-            "target": "npc_验证铜钱",
-            "x": 2150.67,
-            "y": 1976.0
-          }
-        },
-        {
-          "type": "startCutscene",
-          "params": {
-            "id": "主线_铜钱脱落滚走__part2__part2"
-          }
-        },
-        {
           "type": "emitNarrativeSignal",
           "params": {
-            "signal": "路遇私铸钱_完结",
+            "signal": "路遇私铸钱_开始",
             "sourceType": "zone",
             "sourceId": "雾津街头:Zone_路遇私铸钱"
-          }
-        },
-        {
-          "type": "persistZoneEnabled",
-          "params": {
-            "sceneId": "雾津街头",
-            "zoneId": "Zone_路遇私铸钱",
-            "enabled": false
-          }
-        },
-        {
-          "type": "persistNpcEntityEnabled",
-          "params": {
-            "target": "npc_验证铜钱",
-            "enabled": false
           }
         }
       ],
@@ -2126,6 +2057,10 @@
         {
           "narrative": "flow_xungou_main",
           "state": "state_4"
+        },
+        {
+          "narrative": "wrapper_序章_路遇私铸钱",
+          "state": "initial"
         }
       ],
       "phases": [

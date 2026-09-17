@@ -18,6 +18,7 @@ import {
   type DebugVfxDeps,
   type DebugVfxSectionHandle,
 } from './debugVfxSection';
+import { createDebugBurnSection, type DebugBurnDeps, type DebugBurnSectionHandle } from './debugBurnSection';
 
 /** 可注册的 debug 区块内容：纯文本或带操作按钮；可选附加 DOM（如滑条） */
 export type DebugSectionContent =
@@ -53,6 +54,7 @@ const TAB_LIGHTING = 'lighting';
 const TAB_SCENE = 'scene';
 const TAB_ACOUSTIC = 'acoustic';
 const TAB_VFX = 'vfx';
+const TAB_BURN = 'burn';
 const TAB_LOG = 'log';
 
 /** 与 DebugTools.setupDebugPanelSections 注册的区块 id 一致 */
@@ -104,6 +106,7 @@ type TabId =
   | typeof TAB_SCENE
   | typeof TAB_ACOUSTIC
   | typeof TAB_VFX
+  | typeof TAB_BURN
   | typeof TAB_LOG;
 
 /** 区块渲染上下文：tools / screen 默认折叠；其余默认展开。screen=游戏画面常驻卡（只有 ✕ 取消常驻） */
@@ -165,6 +168,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private acousticSectionHandle: DebugAcousticSectionHandle | null = null;
   private panelVfx!: HTMLElement;
   private vfxSectionHandle: DebugVfxSectionHandle | null = null;
+  private panelBurn!: HTMLElement;
+  private burnSectionHandle: DebugBurnSectionHandle | null = null;
   private panelLog: HTMLElement;
   private logPre: HTMLElement;
   private tabButtons: Map<TabId, HTMLButtonElement> = new Map();
@@ -246,6 +251,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     mkTab(TAB_FLAGS, 'Flag');
     mkTab(TAB_ACOUSTIC, '声学');
     mkTab(TAB_VFX, '粒子');
+    mkTab(TAB_BURN, '燃烧');
     mkTab(TAB_SCENE, '场景');
     mkTab(TAB_LOG, '日志');
 
@@ -264,6 +270,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelScene = this.mkPanel('scene-panel');
     this.panelAcoustic = this.mkPanel('acoustic-panel');
     this.panelVfx = this.mkPanel('vfx-panel');
+    this.panelBurn = this.mkPanel('burn-panel');
     this.panelLog = this.mkPanel('log-panel');
 
     const logScroll = document.createElement('div');
@@ -296,6 +303,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     panels.appendChild(this.panelScene);
     panels.appendChild(this.panelAcoustic);
     panels.appendChild(this.panelVfx);
+    panels.appendChild(this.panelBurn);
     panels.appendChild(this.panelLog);
 
     this.root.appendChild(header);
@@ -351,11 +359,13 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelScene.classList.toggle('is-active', id === TAB_SCENE);
     this.panelAcoustic.classList.toggle('is-active', id === TAB_ACOUSTIC);
     this.panelVfx.classList.toggle('is-active', id === TAB_VFX);
+    this.panelBurn.classList.toggle('is-active', id === TAB_BURN);
     this.panelLog.classList.toggle('is-active', id === TAB_LOG);
     // 切到「场景」页时重取清单：改了场景 JSON / 换了当前场景都不必刷页面
     if (id === TAB_SCENE) this.sceneSectionHandle?.refresh();
     if (id === TAB_ACOUSTIC) this.acousticSectionHandle?.refresh();
     if (id === TAB_VFX) this.vfxSectionHandle?.refresh();
+    if (id === TAB_BURN) this.burnSectionHandle?.refresh();
     this.updateSystemLiveLoop();
   }
 
@@ -395,6 +405,13 @@ export class DebugPanelUI implements IDebugPanelAPI {
   attachVfxDebug(deps: DebugVfxDeps): void {
     if (this.vfxSectionHandle) return;
     this.vfxSectionHandle = createDebugVfxSection(deps);
+    if (this._isOpen) this.render();
+  }
+
+  /** 挂载「燃烧」页（可燃物状态、离场照推、点火表演、探针）；仅 dev 构建调用一次 */
+  attachBurnDebug(deps: DebugBurnDeps): void {
+    if (this.burnSectionHandle) return;
+    this.burnSectionHandle = createDebugBurnSection(deps);
     if (this._isOpen) this.render();
   }
 
@@ -560,6 +577,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.renderScene();
     this.renderAcoustic();
     this.renderVfx();
+    this.renderBurn();
     this.renderLogOnly();
     this.restorePanelScrollState(scrollState);
   }
@@ -977,6 +995,18 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelVfx.appendChild(scroll);
   }
 
+  private renderBurn(): void {
+    this.panelBurn.replaceChildren();
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+    if (this.burnSectionHandle) {
+      scroll.appendChild(this.burnSectionHandle.root);
+    } else {
+      scroll.appendChild(this.p('（燃烧调试仅在 npm run dev 的开发构建挂载）'));
+    }
+    this.panelBurn.appendChild(scroll);
+  }
+
   private renderScene(): void {
     this.panelScene.replaceChildren();
     const scroll = document.createElement('div');
@@ -1059,6 +1089,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.acousticSectionHandle = null;
     this.vfxSectionHandle?.destroy();
     this.vfxSectionHandle = null;
+    this.burnSectionHandle?.destroy();
+    this.burnSectionHandle = null;
     this.sceneSectionHandle = null;
     this.close();
     this.sections.clear();

@@ -1,0 +1,46 @@
+{
+  "id": "incense_stick",
+  "label": "线香（样例）",
+  "image": "/resources/runtime/images/props/burn_demo/incense_stick.png",
+  "widthCm": 5.97,
+  "heightCm": 79.55,
+  "mode": "consume",
+  "orientation": "upright",
+  "gridCells": 64,
+  "ignitionPoints": [
+    {
+      "id": "p1",
+      "u": 0.4954,
+      "v": 0.0148
+    }
+  ],
+  "consume": {
+    "seconds": 300,
+    "from": "top",
+    "flameU": 0.5,
+    "flameWidth": 0.5
+  },
+  "flameSeconds": 4,
+  "emberSeconds": 2,
+  "flameLength": 1,
+  "ignitionDelay": 1,
+  "look": {
+    "glowKelvin": 1100,
+    "glowStrength": 2.5
+  },
+  "particles": [
+    {
+      "effect": "incense_tip_smoke",
+      "from": "flame",
+      "refArea": 3
+    }
+  ],
+  "light": {
+    "kelvin": 1200,
+    "intensityPerM2": 40,
+    "maxIntensity": 0.02,
+    "range": 120,
+    "softeningRadius": 6,
+    "puffAmp": 0.05
+  }
+}

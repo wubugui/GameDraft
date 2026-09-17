@@ -320,10 +320,47 @@ _REGISTRY_FILES: tuple[tuple[str, str, object], ...] = (
     ),
     (
         "assets/data/prop_presets.json",
-        "注册表 prop_presets（image 字段，src/data/propPresets.ts）",
-        lambda data: [v.get("image") for v in data.values() if isinstance(v, dict)] if isinstance(data, dict) else [],
+        "注册表 prop_presets（image / images / states[*].image·images / levels[*].image / flame.image，"
+        "src/data/propPresets.ts）",
+        lambda data: _prop_preset_media(data),
     ),
 )
+
+
+def _prop_preset_media(data: object) -> list[object]:
+    """挂件预设里登记的**每一张**图：基础块 `image` / `images`、每个状态的 `image` / `images`、
+    **每一级的 `levels[*].image`**（火把养成，玩法清单 A3.7）、火苗图集 `flame.image`。
+
+    只收顶层 `image` 的旧写法会让多帧挂件、状态换图（灭了的火把）、升级换外观与火苗图集整批不进包——
+    dev 服整个 public/ 都在所以看不出来，包里就是挂上去什么都没有 / 火苗不画 / 升了级还是老样子（静默）。
+    """
+    out: list[object] = []
+    if not isinstance(data, dict):
+        return out
+
+    def block(node: object) -> None:
+        if not isinstance(node, dict):
+            return
+        out.append(node.get("image"))
+        many = node.get("images")
+        if isinstance(many, list):
+            out.extend(many)
+
+    for entry in data.values():
+        if not isinstance(entry, dict):
+            continue
+        block(entry)
+        flame = entry.get("flame")
+        if isinstance(flame, dict):
+            out.append(flame.get("image"))
+        states = entry.get("states")
+        for st in (states.values() if isinstance(states, dict) else ()):
+            block(st)
+        levels = entry.get("levels")
+        for lv in (levels if isinstance(levels, list) else ()):
+            if isinstance(lv, dict):
+                out.append(lv.get("image"))
+    return out
 
 
 def _collect_registry_targets(project_root: Path) -> dict[str, str]:

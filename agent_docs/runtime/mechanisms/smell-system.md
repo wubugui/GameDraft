@@ -49,8 +49,13 @@ last_governed: 2026-09-12
   `smell:debut/show/hide`。渲染器(`SmellIndicatorRenderer.setVisible`)缺省仍是显——编辑器预览要直接看见。
 - **飘向 = 指向气味源,每帧现算**(G.6,2026-09-12 改;原「气味源反方向」2026-09-10 拍板已推翻):
   `dir` 不再是作者静态值——`setSmell.dir` / `ZoneSmellConfig.dir` **已废、不生效**。源 = zone
-  `smell.source{x,y}` 或动作 `setSmellSource{x,y,scene?}`(action 源压 zone 源、只在所属场景生效、
+  `smell.source` 或动作 `setSmellSource{x,y,at?,scene?}`(action 源压 zone 源、只在所属场景生效、
   入存档);开关 `setSmellTracking`(flag `smell_tracking`,缺省开)。关/无源/源不在本场景/无味 → dir=0。
+  **源是位置引用**(2026-09-16,制作人骂过"选气味源居然是手写数字"):zone `source` 可写老形状 `{x,y}`
+  或 `PositionRef{kind:…}`;动作的 `at` 覆盖 x/y。**引用存本身、每帧现求**(`setSourceEvaluator`,组装层
+  注入 Game 的同步求值;曲线资产首帧未装则先装、这几帧直的)——源是会走的 NPC 时烟跟着它,别在
+  setSmellSource 执行时 resolve 成死坐标。存档:数字源存老形状 `{scene,x,y}`,引用源存 `{scene,ref}`。
+  编辑器两处都用 `PositionRefField`,**不许退回手输 x/y**(`test_smell_source_position_ref.py` 钉着)。
   玩家位置与场景 id 由组装层 getter 注入(`setPlayerPositionGetter/setSceneIdGetter`),`update()` 里算、
   变化 ≥0.01 才广播。源在右 → 往右飘(dir>0)、顺着烟走能摸到源。
 - **指向可被玩家设置翻转,但翻转只在 HUD**(G.6,2026-09-12):设置页「气味指向」两个值——

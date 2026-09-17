@@ -1,0 +1,232 @@
+{
+  "id": "burn_flame",
+  "label": "可燃物火苗（出生点 = 正在明火的格，燃烧系统每帧给）",
+  "emitters": [
+    {
+      "id": "core",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/flame_glow.png",
+        "sizeWu": 7,
+        "sizeJitter": [
+          0.7,
+          1.3
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.7
+          ],
+          [
+            0.25,
+            1
+          ],
+          [
+            1,
+            0.2
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.08,
+            0.85
+          ],
+          [
+            0.55,
+            0.55
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "tintOverLife": [
+          [
+            0,
+            1,
+            0.86,
+            0.5
+          ],
+          [
+            0.3,
+            1,
+            0.55,
+            0.14
+          ],
+          [
+            0.7,
+            0.78,
+            0.22,
+            0.04
+          ],
+          [
+            1,
+            0.3,
+            0.05,
+            0.01
+          ]
+        ],
+        "blend": "add",
+        "lit": false,
+        "stretchByVelocity": 0.06
+      },
+      "spawn": {
+        "max": 360,
+        "rate": 36,
+        "shape": {
+          "kind": "external",
+          "jitter": 1
+        },
+        "speed": [
+          20,
+          45
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 12
+      },
+      "motion": {
+        "drag": 2.5,
+        "buoyancy": 480,
+        "turbulence": {
+          "strength": 240,
+          "scale": 9,
+          "speed": 5
+        },
+        "maxSpeed": 300
+      },
+      "life": {
+        "seconds": [
+          0.22,
+          0.42
+        ]
+      }
+    },
+    {
+      "id": "sparks",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/spark.png",
+        "sizeWu": 1.3,
+        "sizeJitter": [
+          0.7,
+          1.3
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            1
+          ],
+          [
+            0.7,
+            0.9
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "tintOverLife": [
+          [
+            0,
+            1,
+            0.92,
+            0.55
+          ],
+          [
+            0.5,
+            1,
+            0.55,
+            0.15
+          ],
+          [
+            1,
+            0.7,
+            0.15,
+            0.03
+          ]
+        ],
+        "blend": "add",
+        "lit": false,
+        "stretchByVelocity": 0.03
+      },
+      "spawn": {
+        "max": 48,
+        "rate": 1.5,
+        "shape": {
+          "kind": "external",
+          "jitter": 1
+        },
+        "speed": [
+          40,
+          90
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 35
+      },
+      "motion": {
+        "drag": 1.2,
+        "buoyancy": 120,
+        "turbulence": {
+          "strength": 380,
+          "scale": 14,
+          "speed": 2.5
+        },
+        "maxSpeed": 260
+      },
+      "life": {
+        "seconds": [
+          0.5,
+          1.1
+        ]
+      }
+    }
+  ]
+}

@@ -465,6 +465,8 @@ _FIELD_PROPERTY = {
     "patrol": EntityProperty.GEOMETRY,
     "displayImage": EntityProperty.APPEARANCE,
     "animFile": EntityProperty.APPEARANCE,
+    # 开 / 关可燃、换模板 = 换了画的图（A3.8：渲染由模板实例接管）
+    "burnable": EntityProperty.APPEARANCE,
     "id": EntityProperty.IDENTITY, "name": EntityProperty.IDENTITY,
     "label": EntityProperty.IDENTITY,
     "group": EntityProperty.GROUPING,

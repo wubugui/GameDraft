@@ -746,7 +746,7 @@ export class InventoryUI {
       }
     }
 
-    const tags = this.detailTags(isKey, count);
+    const tags = this.detailTags(isKey, count, itemId);
     if (tags.length > 0) {
       bottom -= TAG_H;
       box.addChild(this.buildTagRow(tags, bottom));
@@ -788,8 +788,14 @@ export class InventoryUI {
    * 硬凑「近战 / 法器」那类标签就是拿假数据充版面。文案取自 strings，方括号是列表里的
    * 可点约定、进方块就多余，故去掉。
    */
-  private detailTags(isKey: boolean, count: number): { text: string; color: number }[] {
+  private detailTags(isKey: boolean, count: number, itemId: string): { text: string; color: number }[] {
     const tags: { text: string; color: number }[] = [];
+    // 火种：是不是当前火种、拆开那一份还剩几次（一份点好几次的才标）
+    const ig = this.inventoryData.igniterInfoOf?.(itemId) ?? null;
+    if (ig?.current) tags.push({ text: this.strings.get('inventory', 'igniterCurrentTag'), color: UITheme.colors.title });
+    if (ig && ig.uses > 1 && ig.openedLeft > 0) {
+      tags.push({ text: this.strings.get('inventory', 'igniterOpenedLeft', { n: ig.openedLeft }), color: UITheme.colors.bodyMuted });
+    }
     if (isKey) {
       tags.push({
         text: this.strings.get('inventory', 'keyItem').replace(/^\[|\]$/g, ''),

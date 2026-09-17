@@ -37,6 +37,11 @@ export class ActionExecutor {
   /** destroy() 后置 true；ZoneSystem 等 Promise 链仍可能异步回调，需在入口短路避免误报 unknown */
   private destroyed = false;
   private warnedAfterDestroy = false;
+  private generation = 0;
+
+  /** 死亡/读档使旧批的后续动作失效；已进入的异步系统由各自生命周期闸门收尾。 */
+  cancelPending(): void { this.generation++; }
+  getGeneration(): number { return this.generation; }
   /**
    * dev 叙事调试器的动作挂点（见 src/dev/narrativeDebugBridge.ts）。
    * 默认 null——生产环境无任何设置方，行为与从前一致。
@@ -210,7 +215,9 @@ export class ActionExecutor {
 
   /** 顺序执行批量动作并 await 每一条；originContext 原样传给批内每条动作。 */
   async executeBatchAwait(actions: ActionDef[], originContext: ActionOriginContext | null = null): Promise<void> {
+    const gen = this.generation;
     for (const action of actions) {
+      if (gen !== this.generation || this.destroyed) return;
       await this.executeAwait(action, originContext);
     }
   }
@@ -235,6 +242,7 @@ export class ActionExecutor {
   }
 
   destroy(): void {
+    this.cancelPending();
     this.destroyed = true;
     this.handlers.clear();
     this.paramNamesMap.clear();
@@ -246,6 +254,7 @@ export class ActionExecutor {
    * 若在动作内部切到 Dialogue 等后再回到 Exploring，下一条 executeAwait 会再次加锁。
    */
   private async runWithExploreActionLock<T>(work: () => Promise<T>): Promise<T> {
+    const gen = this.generation;
     const sc = this.gameStateController;
     if (!sc) return work();
     let appliedExploreLock = false;
@@ -256,7 +265,7 @@ export class ActionExecutor {
     try {
       return await work();
     } finally {
-      if (appliedExploreLock && sc.currentState === GameState.ActionSequence) {
+      if (gen === this.generation && appliedExploreLock && sc.currentState === GameState.ActionSequence) {
         sc.setState(GameState.Exploring);
       }
     }

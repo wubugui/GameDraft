@@ -8,6 +8,7 @@ import type { ShellContact } from '../../utils/depthShellField';
 import type { Vec3 } from '../../utils/sceneSpace';
 import { VfxInstanceSim, VfxParticleMode, createFieldRuntime, type VfxFieldRuntime, type VfxStepContext } from './vfxSim';
 import { SHELL_THICKNESS_WU, ShellSide, thinShellSide, type VfxSpace } from './vfxSpace';
+import { resolveSceneWind } from '../../utils/sceneWind';
 
 const WALL_X = 300;
 
@@ -485,5 +486,153 @@ describe('vfxSim · 群体', () => {
       expect(Number.isFinite(p.x[i]) && Number.isFinite(p.y[i]) && Number.isFinite(p.z[i])).toBe(true);
       expect(Math.hypot(p.x[i], p.z[i])).toBeLessThan(5000);
     }
+  });
+});
+
+describe('vfxSim · 实例倍率（手持火把：燃烧强度 / 护火）', () => {
+  function puffEffect(): VfxEffectDef {
+    return {
+      id: 'puff_test',
+      emitters: [{
+        id: 'puff',
+        appearance: { image: 'x', sizeWu: 10 },
+        spawn: { max: 400, rate: 60, speed: [0, 0] },
+        motion: { drag: 3 },
+        life: { seconds: [3, 3] },
+      }],
+    };
+  }
+  const alive = (sim: VfxInstanceSim) => sim.emitters[0].p.liveCount;
+  const WIND = resolveSceneWind({ direction: [1, 0, 0], speed: 400, gust: { amount: 0 }, veer: 0, turbulence: { intensity: 0 } })!;
+  const windy = (t: number): VfxStepContext => ({ fields: [], player: null, time: t, wind: WIND, windTime: t });
+  const meanX = (sim: VfxInstanceSim) => {
+    const p = sim.emitters[0].p;
+    let s = 0, n = 0;
+    for (let i = 0; i < p.cap; i++) if (p.alive[i]) { s += p.x[i]; n++; }
+    return n ? s / n : 0;
+  };
+
+  it('发射率 0 是合法值：不再发，在飞的照样活着（火苗是这样灭的）；负数 / NaN 当 1', () => {
+    const sim = new VfxInstanceSim('p', puffEffect(), [0, 100, 0], 1, new TestSpace());
+    run(sim, 0.5, () => ctx());
+    const before = alive(sim);
+    expect(before).toBeGreaterThan(20);
+    sim.setRateScale(0);
+    run(sim, 0.5, () => ctx());
+    expect(alive(sim)).toBe(before);
+    sim.setRateScale(Number.NaN);
+    run(sim, 0.5, () => ctx());
+    expect(alive(sim)).toBeGreaterThan(before);
+  });
+
+  it('放完（finished）：有时长的发射器过了时长、只有 burst 的发完、且一颗活的都没有才算；一直发的永远放不完', () => {
+    const burst = (): VfxEffectDef => ({
+      id: 'once', emitters: [
+        { id: 'b', appearance: { image: 'x', sizeWu: 4 }, spawn: { max: 10, burst: 5 }, life: { seconds: [0.3, 0.3] } },
+        { id: 'r', appearance: { image: 'x', sizeWu: 4 }, spawn: { max: 20, rate: 20, duration: 0.5 }, life: { seconds: [0.3, 0.3] } },
+      ],
+    });
+    const sim = new VfxInstanceSim('o', burst(), [0, 100, 0], 1, new TestSpace());
+    expect(sim.finished).toBe(false);
+    run(sim, 0.4, () => ctx());
+    expect(sim.liveCount).toBeGreaterThan(0);
+    expect(sim.finished).toBe(false);
+    run(sim, 1, () => ctx());
+    expect(sim.liveCount).toBe(0);
+    expect(sim.finished).toBe(true);
+    const loop = new VfxInstanceSim('p', puffEffect(), [0, 100, 0], 1, new TestSpace());
+    run(loop, 5, () => ctx());
+    expect(loop.finished).toBe(false);
+  });
+
+  it('挪锚点：在飞的粒子按 followAnchor——none 不动、rig 平移 carry、full 平移锚点整个位移；原点一律跟锚点', () => {
+    const three = (): VfxEffectDef => {
+      const base = puffEffect().emitters[0]!;
+      return {
+        id: 'follow_test',
+        emitters: [
+          { ...base, id: 'none' },
+          { ...base, id: 'rig', motion: { ...base.motion, followAnchor: 'rig' } },
+          { ...base, id: 'full', motion: { ...base.motion, followAnchor: 'full' } },
+        ],
+      };
+    };
+    const sim = new VfxInstanceSim('p', three(), [0, 100, 0], 1, new TestSpace());
+    run(sim, 0.25, () => ctx());
+    const snap = (k: number) => {
+      const p = sim.emitters[k]!.p;
+      const m = new Map<number, [number, number, number]>();
+      for (let i = 0; i < p.cap; i++) if (p.alive[i]) m.set(i, [p.x[i], p.y[i], p.z[i]]);
+      return m;
+    };
+    const at = (k: number, i: number) => { const p = sim.emitters[k]!.p; return [p.x[i], p.y[i], p.z[i]]; };
+    const before = [0, 1, 2].map(snap);
+    sim.moveAnchor([-50, 110, 20], [-60, 4, 20]);
+    for (const [i, v] of before[0]!) expect(at(0, i)).toEqual(v);
+    for (const [i, v] of before[1]!) [-60, 4, 20].forEach((d, c) => expect(at(1, i)[c]).toBeCloseTo(v[c]! + d, 3));
+    for (const [i, v] of before[2]!) [-50, 10, 20].forEach((d, c) => expect(at(2, i)[c]).toBeCloseTo(v[c]! + d, 3));
+    for (const e of sim.emitters) expect(e.origin).toEqual([-50, 110, 20]);
+    // 锚点没动、只有 carry（宿主走了、挂件相对宿主退回原位）：rig 照样带
+    const mid = snap(1);
+    sim.moveAnchor([-50, 110, 20], [5, 0, 0]);
+    for (const [i, v] of mid) expect(at(1, i)[0]).toBeCloseTo(v[0] + 5, 3);
+    // 不给 carry：rig 不动
+    const last = snap(1);
+    sim.moveAnchor([0, 0, 0]);
+    for (const [i, v] of last) expect(at(1, i)).toEqual(v);
+  });
+
+  it('最远烧到多远：强风里粒子离原点不超过 maxDistance（按距离提前走完寿命）；实例倍率立刻缩短；不写不限', () => {
+    const windy = (maxDistance?: number): VfxEffectDef => ({
+      id: 'flame_len', emitters: [{
+        id: 'core', appearance: { image: 'x', sizeWu: 4 },
+        spawn: { max: 200, rate: 80, speed: [0, 0] },
+        motion: { wind: [3000, 0, 0], drag: 5, maxSpeed: 400 },
+        life: { seconds: [1, 1], ...(maxDistance ? { maxDistance } : {}) },
+      }],
+    });
+    const far = (sim: VfxInstanceSim) => {
+      const p = sim.emitters[0]!.p; let m = 0;
+      for (let i = 0; i < p.cap; i++) if (p.alive[i]) m = Math.max(m, Math.hypot(p.x[i] - 0, p.y[i] - 100, p.z[i] - 0));
+      return m;
+    };
+    const free = new VfxInstanceSim('a', windy(), [0, 100, 0], 1, new TestSpace());
+    run(free, 2, () => ctx());
+    expect(far(free)).toBeGreaterThan(200);
+    const capped = new VfxInstanceSim('b', windy(40), [0, 100, 0], 1, new TestSpace());
+    run(capped, 2, () => ctx());
+    expect(far(capped)).toBeLessThanOrEqual(40 + 400 / 64 + 1e-6);
+    expect(capped.emitters[0]!.p.liveCount).toBeGreaterThan(5);
+    capped.setDistanceScale(0.5);
+    run(capped, 1 / 32, () => ctx());
+    expect(far(capped)).toBeLessThanOrEqual(20 + 2 * 400 / 64 + 1e-6);
+  });
+
+  it('大小倍率只乘新生粒子：已经在飞的不跟着缩', () => {
+    const sim = new VfxInstanceSim('p', puffEffect(), [0, 100, 0], 1, new TestSpace());
+    run(sim, 0.25, () => ctx());
+    const p = sim.emitters[0].p;
+    const old = new Map<number, number>();
+    for (let i = 0; i < p.cap; i++) if (p.alive[i]) old.set(i, p.size[i]);
+    sim.setSizeScale(0.5);
+    run(sim, 0.25, () => ctx());
+    for (const [i, s] of old) expect(p.size[i]).toBe(s);
+    let fresh = 0;
+    for (let i = 0; i < p.cap; i++) if (p.alive[i] && !old.has(i)) { expect(p.size[i]).toBeCloseTo(5, 9); fresh++; }
+    expect(fresh).toBeGreaterThan(5);
+  });
+
+  it('吃风倍率：同一阵风里 0 = 不被吹走、0.2 走得比 1 近得多', () => {
+    const drift = (k: number) => {
+      const sim = new VfxInstanceSim('p', puffEffect(), [0, 100, 0], 1, new TestSpace());
+      sim.setWindScale(k);
+      run(sim, 1, windy);
+      return meanX(sim);
+    };
+    const full = drift(1), guard = drift(0.2), none = drift(0);
+    expect(full).toBeGreaterThan(50);
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(full * 0.3);
+    expect(Math.abs(none)).toBeLessThan(1e-9);
   });
 });

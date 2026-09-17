@@ -1,6 +1,10 @@
 {
   "id": "teahouse_tea_wisps",
   "label": "茶馆 · 各桌滚烫茶气",
+  "prewarmSeconds": [
+    1,
+    4.5
+  ],
   "emitters": [
     {
       "id": "steam",
@@ -65,6 +69,7 @@
       "spawn": {
         "max": 18,
         "rate": 4.5,
+        "intervalJitter": 0.4,
         "burst": 8,
         "shape": {
           "kind": "disc",

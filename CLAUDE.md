@@ -83,6 +83,7 @@ sh scripts/py.sh -B tools/skill_workflow_governance/govern.py audit
 `.cursor/skills/` 与 `.claude/skills/`:feature-iteration、gameplay-iteration、production-mode、
 pure-data-iteration、editor-tools-iteration、add-game-action、add-text-ref、
 core-framework-architecture-review、agent-docs-cli、**handbook-mode**(文档模式:往制作人手册写东西,见 §H)、
-**mainline-story-progress**(制作人下令时核对/更新 FindingDogStory 的主线故事进度文档)。
+**mainline-story-progress**(制作人下令时核对/更新 FindingDogStory 的主线故事进度文档)、
+**kill-gamedraft-residue**(杀游戏运行时 / 编辑器 / 工作台残留进程)。
 
 **壳只留"怎么做",知识("是什么/为什么")一律在 agent_docs**——两边打架时以库为准。

@@ -91,12 +91,43 @@ describe('SmellSystem 飘向 = 指向气味源（G.6）', () => {
     expect(data.tracking).toBe(false);
     const t = make();
     t.s.deserialize(data);
-    expect(t.s.getActionSource()).toEqual({ scene: '义庄', x: 10, y: 20 });
+    expect(t.s.getActionSource()).toEqual({ scene: '义庄', ref: { kind: 'point', x: 10, y: 20 } });
     expect(t.s.isTracking()).toBe(false);
     const u = make();
     u.s.deserialize({ action: { scent: 'yin', intensity: 30, dir: 0.5, flicker: false } });
     expect(u.s.getActionSource()).toBeNull();
     expect(u.s.isTracking()).toBe(true);
     expect(u.s.getScent()).toBe('yin');
+  });
+
+  it('气味源是位置引用：zone 源指向实体，实体走到哪烟指到哪；实体不在场 = 直的', () => {
+    const { s, bus, player } = make();
+    const npc = { x: 300, y: 0 };
+    let present = true;
+    s.setSourceEvaluator((ref) => (ref.kind === 'entity' && ref.id === '尸体' && present ? npc : null));
+    player.x = 0;
+    bus.emit('zone:enter', { zoneId: 'z1', zone: { id: 'z1', smell: { scent: 'yin', source: { kind: 'entity', id: '尸体' } } } });
+    s.update(0.016);
+    expect(s.getDir()).toBeCloseTo(300 / 320, 3);
+    npc.x = -160; // 实体走到玩家左边
+    s.update(0.016);
+    expect(s.getDir()).toBeCloseTo(-0.5, 3);
+    present = false;
+    s.update(0.016);
+    expect(s.getDir()).toBe(0);
+  });
+
+  it('动作源存引用本身：序列化出 {scene, ref}，读回后照样每帧现求', () => {
+    const { s } = make();
+    s.setSmell('corpse', 70);
+    s.setSourceRef({ kind: 'entity', id: '老汉' });
+    const data = s.serialize() as { source: unknown };
+    expect(data.source).toEqual({ scene: '街', ref: { kind: 'entity', id: '老汉' } });
+    const t = make();
+    t.s.setSourceEvaluator((ref) => (ref.kind === 'entity' && ref.id === '老汉' ? { x: 320, y: 0 } : null));
+    t.s.deserialize({ action: { scent: 'corpse', intensity: 70, flicker: false }, ...data });
+    t.player.x = 0;
+    t.s.update(0.016);
+    expect(t.s.getDir()).toBe(1);
   });
 });

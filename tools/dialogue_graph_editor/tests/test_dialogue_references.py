@@ -77,8 +77,76 @@ class FindDialogueReferrersTests(unittest.TestCase):
             ],
         }]}
         refs = find_dialogue_referrers("TARGET", narrative_graphs=narr)
-        self.assertEqual(self._navs(refs), {("navigate_to_narrative_state", ("flow", ""))})
+        self.assertEqual(self._navs(refs), {("navigate_to_narrative_element", ("comp", "e"))})
         self.assertEqual(refs[0].category, "叙事图")
+
+    def test_narrative_state_actions_in_main_and_wrapper_graphs(self) -> None:
+        start = {"type": "startDialogueGraph", "params": {"graphId": "TARGET"}}
+        narr = {"compositions": [{
+            "id": "comp",
+            "mainGraph": {"id": "flow", "states": {
+                "s_main": {"id": "s_main", "onEnterActions": [start]},
+                "s_cond": {"id": "s_cond", "onEnterActions": [{
+                    "type": "runActionsIf",
+                    "params": {"condition": {"narrative": "TARGET", "state": "x"}, "actions": []},
+                }]},
+            }},
+            "elements": [
+                {"id": "el_w", "kind": "wrapperGraph", "graph": {
+                    "id": "wrapper_x", "label": "包装图", "states": {
+                        "引路": {"id": "引路", "onEnterActions": [{
+                            "type": "runActionsIf",
+                            "params": {"condition": {}, "actions": [start]},
+                        }]},
+                        "别处": {"id": "别处", "onEnterActions": [
+                            {"type": "startDialogueGraph", "params": {"graphId": "别的"}},
+                        ]},
+                    },
+                }},
+            ],
+        }]}
+        refs = find_dialogue_referrers("TARGET", narrative_graphs=narr)
+        self.assertEqual(self._navs(refs), {
+            ("navigate_to_narrative_state", ("flow", "s_main")),
+            ("navigate_to_narrative_state", ("wrapper_x", "引路")),
+        })
+        self.assertTrue(all(r.category == "叙事图" for r in refs))
+
+    def test_every_referrer_nav_is_a_live_main_window_jump(self) -> None:
+        # 双击 = getattr(主窗, 方法名)(*参数)；方法不存在或参数为空都是「点了没反应」
+        from tools.editor.main_window import MainWindow
+
+        start = {"type": "startDialogueGraph", "params": {"graphId": "TARGET"}}
+        refs = find_dialogue_referrers(
+            "TARGET",
+            scenes={"s": {
+                "npcs": [{"id": "n", "dialogueGraphId": "TARGET"}],
+                "hotspots": [{"id": "h", "actions": [start]}],
+                "zones": [{"id": "z", "actions": [start]}],
+                "onEnterActions": [start],
+            }},
+            scenarios_catalog={"scenarios": [{"id": "sc", "dialogueGraphIds": ["TARGET"]}]},
+            narrative_graphs={"compositions": [{
+                "id": "comp",
+                "mainGraph": {"id": "flow", "states": {"a": {"id": "a", "onEnterActions": [start]}}},
+                "elements": [
+                    {"id": "bb", "kind": "dialogueBlackbox", "refId": "TARGET"},
+                    {"id": "w", "kind": "wrapperGraph", "graph": {
+                        "id": "wg", "states": {"b": {"id": "b", "onEnterActions": [start]}}}},
+                ],
+            }]},
+            other_dialogues={"other": {"nodes": {"n": {"actions": [start]}}}},
+        )
+        self.assertEqual({r.category for r in refs}, {"地图实体", "Scenario", "叙事图", "其它对话"})
+        for ref in refs:
+            method, args = ref.nav
+            self.assertTrue(callable(getattr(MainWindow, method, None)), f"主窗没有 {method}：{ref}")
+            # _on_navigate_to_source(类型, id, 场景)：场景级来源的第三参本就为空
+            required = args[:2] if method == "_on_navigate_to_source" else args
+            self.assertTrue(all(str(a).strip() for a in required), f"跳转参数为空：{ref}")
+            if method == "_on_navigate_to_source":
+                from tools.editor.main_window import SOURCE_NAVIGATION_TABS
+                self.assertIn(args[0], SOURCE_NAVIGATION_TABS, f"来源类型没有跳转页签：{ref}")
 
     def test_other_dialogues_jump(self) -> None:
         others = {

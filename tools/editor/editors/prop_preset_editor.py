@@ -10,14 +10,40 @@
 这些同样是火把**自己**的属性，不是调用点的属性。于是本页多出四块：
 
 - `light` 自带光源（挂上就有、卸下就没，每帧跟着挂点走）；
-- `vfx` 自带效果（效果资产 id；火焰的**声音住在效果资产自己的 `sound.loop`** 里，
-  本表刻意**不开音频字段**——开了就是第二个真相源）；
+- `particles` 粒子挂载（契约 v3，取代旧 `vfx`）：`[{effect, point?}]`，每条一个粒子效果挂在贴图上的
+  一个点，跟着支点 / 自转 / 缩放 / 镜像走；火焰的**声音住在效果资产自己的 `sound.loop`** 里，
+  本表刻意**不开音频字段**——开了就是第二个真相源；
 - `persistent` 手持物（玩法事实，入档、跨场景自动重挂）；
 - `states` + `defaultState` 状态表（每个状态覆盖上面这些块）。
 
+燃烧物（2026-09-15，数据契约见 `prop_preview` 模块头）再加一块「火焰」：起火点 `firePoint`
+（灯位 / 效果锚点 / 火苗底部都从这里出）、看得见的火苗 `flame`（共用帧动画图集）、
+燃烧强度 `burn`、挡风比例 `windShelter`（护火：只压火苗倾斜，不碰灯）；状态里可覆盖
+起火点 / burn / 挡风，并带「进入时动作」`onEnterActions`。
+风吹灭（同日）：基础块「风吹灭」`blowout`（火势被风压掉 → 残炭 / 灭，带越线动作；残炭里挡住风复燃回 `recoverState`）
++ 状态里三态覆盖；「玩家操作」`playerControl`（T 点火 / 熄灭、按住 Q 护火切到哪几个状态，快灭提示线 `hintBelow`）。
+两块默认折叠·懒建。
+能点火（2026-09-16，燃烧系统 A3.8）：基础块「能点火」`igniter`（勾 = 写对象，可选火焰长度 `flameLength` 厘米）
++ 状态里三态覆盖（沿用 / `null` 这个状态点不了 / 整块替换），默认折叠·懒建。
+火把养成（2026-09-16，玩法清单 A3.7）再加三块，**都只在基础块**（状态里写了运行时不读）：
+「耐久（燃料）」`fuel`（能烧几秒 / 风里烧得快多少 / 烧完切到哪个状态 / 烧完之后的动作）、
+「效果块」`effects`（挑 prop_effects.json 里的脾气，数值相乘、行为并集，至多两块——与等级带的合起来算）、
+「等级」`levels`（随身那根火把的升级：顺序即等级，每级一套外观 + 一串效果块；等级住在存档里，
+动作 `setPropLevel` 升、条件叶 `propLevel` 问）。三块同样默认折叠·懒建。
+起火点可以在试挂预览上**点选 / 拖动**设置（所见即所得），火苗按当前预览状态的
+burn × 满火高度画第 0 帧；每个粒子挂点画一个小圆点并标效果 id（粒子本身不模拟）。
+粒子挂载的挂点同样可以在预览上点选（行尾「点选」）。`burn` / `windShelter` 同时驱动帧动画火苗与
+该状态全部粒子挂载。
+
+可燃挂件（2026-09-16，玩法清单 A3.8「模板 + 实例」）：「可燃」块写 `burnable: {template, initial?, signals?}`
+（`playerIgnite` / `igniteConditions` 对挂件不显示——挂件不走按 E 点）。开了可燃：火把那一套块
+（灯 / 粒子挂载 / 火焰 / 风吹灭 / 玩家操作 / 能点火 / 耐久 / 效果块 / 等级 / 状态表）与可燃**互斥**——界面灰掉并说明，
+写着的可以一键清掉；贴图 / 帧贴图 / 支点被模板接管（提示，不拦）。试挂预览改画模板的图：挂点对准模板握点、
+等比缩放到模板真实宽（× 这里的缩放），标出模板的着火点。
+
 骨架照主从列表样板（`_refresh` / `_on_select` / `_apply`），右侧详情分组
-（基本 / 摆放 / 自带效果 / 自带光源 / 状态表 / 试挂预览）。**光源块与状态表默认折叠
-且懒建**（布局纪律：重块首次展开才造控件；没展开过的块原样透传磁盘值）。
+（基本 / 摆放 / 粒子挂载 / 火焰 / 自带光源 / 状态表 / 试挂预览）。**粒子挂载、火焰、光源块与状态表
+默认折叠且懒建**（布局纪律：重块首次展开才造控件；没展开过的块原样透传磁盘值）。
 控件本体在 `prop_preset_blocks.py`——`light` 那张表单在基础块与每个状态里各出现一次，
 写两遍必然发散。试挂预览与运行时同一套位姿数学，见 `prop_tryon_canvas`。
 """
@@ -59,18 +85,49 @@ from ..shared.form_layout import compact_form
 from ..shared.image_path_picker import CutsceneImagePathRow
 from ..shared.numeric_roundtrip import preserve_numeric_repr
 from ..shared.prop_preset_refs import rename_prop_references, scan_prop_usages
-from ..shared.prop_preview import anim_world_size, prop_image_file
+from ..shared import burnables as _bn
+from ..shared.burnable_host_form import BurnableHostSection
+from ..shared.prop_preview import (
+    BURNABLE_TAKEN_OVER_KEYS,
+    FlameDef,
+    anim_world_size,
+    burnable_prop_placement,
+    prop_image_file,
+    resolve_prop_preview,
+)
 from ..shared.prop_tryon_canvas import PropTryOnCanvas
 from ..shared.socket_image_list import SocketImageListField
 from .prop_preset_blocks import (
+    PropBlowoutBlock,
+    PropEffectsBlock,
+    PropFireBlock,
+    PropFuelBlock,
+    PropIgniterBlock,
+    PropLevelsEditor,
     PropLightBlock,
+    PropPlayerControlBlock,
     PropStatesEditor,
-    VfxIdListField,
+    PropParticlesBlock,
+    _MISSING,
     reorder_like,
 )
 
 #: 摆放字段的运行时缺省（与 SpriteEntity.syncAttachments / propPresets.ts 一致）
 DEFAULTS: dict[str, float] = {"anchorX": 0.5, "anchorY": 0.5, "rotation": 0.0, "scale": 1.0}
+
+
+class _DataOnlyModel:
+    """只装着本页 `_data` 的假模型：让 `rename_prop_references` 只改这份工作副本。
+
+    它的扫描面读 `signal_refactor.CONDITION_SOURCES`（其中 `prop_presets` 一格就是这份表），
+    其余属性都不存在 ⇒ getattr 兜 None 自动跳过；标脏由本页自己的 flush 负责，这里吞掉。
+    """
+
+    def __init__(self, data: dict) -> None:
+        self.prop_presets = data
+
+    def mark_dirty(self, *_a: object) -> None:
+        return None
 
 
 def _num(entry: dict, key: str) -> float:
@@ -91,10 +148,14 @@ class PropPresetEditor(QWidget):
         self._current: str = ""
         self._loading = False
         self._dirty = False
+        #: Discard / 从内存重载期间：切条目**不许**把表单提交回 _data（那会把放弃的编辑复活）
+        self._discarding = False
         #: 试挂用的动画包挂点数据（选包时按需读盘，不进模型）
         self._sockets: dict[str, Any] = {}
         self._atlas: QPixmap | None = None
         self._prop_pix: QPixmap | None = None
+        #: 火苗图集缓存（URL → 整张图；预览只裁第 0 帧）
+        self._flame_sheets: dict[str, QPixmap | None] = {}
 
         root = QVBoxLayout(self)
         hint = QLabel("登记挂件的贴图 + 支点 + 自转 + 缩放；动作里 attachToSocket 只写 prop 引用它。")
@@ -120,7 +181,8 @@ class PropPresetEditor(QWidget):
         btns = QHBoxLayout()
         for text, tip, slot in (
             ("新建", "新增一个挂件预设（自己起 id，全表唯一）", self._on_new),
-            ("改名", "改 id，并把全工程 attachToSocket.prop 的引用一起改过去", self._on_rename),
+            ("改名", "改 id，并把全工程 attachToSocket.prop 与手持挂件条件 {heldProp, prop} 的引用一起改过去",
+             self._on_rename),
             ("删除", "删除该预设；仍被引用时先给出引用清单再确认", self._on_delete),
         ):
             b = QPushButton(text)
@@ -169,6 +231,12 @@ class PropPresetEditor(QWidget):
             "多帧贴图：挂点标注里的 frame 选第几张（顺序即帧号）。\n"
             "不引入第二个时钟——跟着角色的帧走，所以没有锁相问题。")
         bf.addRow("帧贴图", self._images_field)
+        #: 开了可燃：贴图被模板接管的提示（没开时藏起来）
+        self._burn_image_hint = QLabel("")
+        self._burn_image_hint.setWordWrap(True)
+        self._burn_image_hint.setStyleSheet("color:#d08a20;")
+        self._burn_image_hint.setVisible(False)
+        bf.addRow(self._burn_image_hint)
         rl.addWidget(basic)
 
         place = QGroupBox("摆放")
@@ -219,26 +287,82 @@ class PropPresetEditor(QWidget):
             "⚠ 只有勾了这个的挂件，setPropState 切出来的状态才会跟着存档走。")
         self._persistent.toggled.connect(self._on_field_changed)
         pf.addRow("持久化", self._persistent)
+        #: 开了可燃：支点被模板握点接管、缩放乘在模板真实宽上的提示
+        self._burn_place_hint = QLabel("")
+        self._burn_place_hint.setWordWrap(True)
+        self._burn_place_hint.setStyleSheet("color:#d08a20;")
+        self._burn_place_hint.setVisible(False)
+        pf.addRow(self._burn_place_hint)
         rl.addWidget(place)
 
-        vfx_box = QGroupBox("自带效果")
-        vf = compact_form(QFormLayout(vfx_box))
-        self._vfx_field = VfxIdListField(model, [], self)
-        self._vfx_field.changed.connect(self._on_field_changed)
-        self._vfx_field.setToolTip(
-            "挂上就一起放的效果资产（火焰、火星…），候选来自 assets/data/vfx/*.json。\n"
-            "⚠ 火焰的**声音住在效果资产自己的 sound.loop 里**（那条本来就从发射器原点空间播、\n"
-            "跟着锚点走），所以本页刻意没有音频字段——开了就是第二个真相源。")
-        vf.addRow("效果", self._vfx_field)
-        rl.addWidget(vfx_box)
+        # 可燃（A3.8 模板 + 实例）：默认折叠·懒建，有配置时自动展开。与下面火把那一套互斥。
+        self._burnable_block = BurnableHostSection(model, "prop", self)
+        self._burnable_block.host_image_hint = lambda: self._image_row.path()
+        self._burnable_block.set_note_provider(self._burnable_notes)
+        self._burnable_block.changed.connect(self._on_burnable_changed)
+        self._burnable_block.open_workbench_requested.connect(self._open_burn_workbench)
+        rl.addWidget(self._burnable_block)
+        #: 开了可燃时火把那一套灰掉：说明 + 一键清掉写着的互斥块
+        self._burn_exclusive_box = QWidget()
+        ebl = QHBoxLayout(self._burn_exclusive_box)
+        ebl.setContentsMargins(0, 0, 0, 0)
+        self._burn_exclusive_note = QLabel("")
+        self._burn_exclusive_note.setWordWrap(True)
+        self._burn_exclusive_note.setStyleSheet("color:#d08a20;")
+        ebl.addWidget(self._burn_exclusive_note, 1)
+        self._burn_exclusive_clear = QPushButton("清掉互斥的配置")
+        self._burn_exclusive_clear.setToolTip(
+            "把与可燃互斥、但这条预设里还写着的块（灯 / 粒子挂载 / 火苗 / 起火点 / 玩家操作 / 风吹灭 / 能点火 / 耐久 / "
+            "效果块 / 等级 / 状态表）从表单里删掉（先问一句；没 Apply 前「从内存重载」可以反悔）。")
+        self._burn_exclusive_clear.clicked.connect(self._clear_burnable_exclusive)
+        ebl.addWidget(self._burn_exclusive_clear)
+        self._burn_exclusive_box.setVisible(False)
+        rl.addWidget(self._burn_exclusive_box)
 
         # 重块：默认折叠 + 懒建（布局纪律）。没展开过的块 dump() 原样回吐磁盘值。
         # 只接 `changed` 信号，不再另传 on_changed 回调——两条都接会让一次编辑走两遍。
+        self._particles_block = PropParticlesBlock(model, self)
+        self._particles_block.changed.connect(self._on_block_changed)
+        self._particles_block.pick_requested.connect(lambda i: self._start_mount_pick("", i))
+        rl.addWidget(self._particles_block)
+        self._fire_block = PropFireBlock(model, self)
+        self._fire_block.changed.connect(self._on_block_changed)
+        rl.addWidget(self._fire_block)
         self._light_block = PropLightBlock(None, self)
         self._light_block.changed.connect(self._on_block_changed)
         rl.addWidget(self._light_block)
-        self._states_editor = PropStatesEditor(model, None, self)
+        # 风吹灭 / 玩家操作：状态名下拉的候选来自下面的状态表（_sync_state_names）
+        self._blowout_block = PropBlowoutBlock(model, self)
+        self._blowout_block.changed.connect(self._on_block_changed)
+        rl.addWidget(self._blowout_block)
+        self._player_block = PropPlayerControlBlock(self)
+        self._player_block.changed.connect(self._on_block_changed)
+        rl.addWidget(self._player_block)
+        self._igniter_block = PropIgniterBlock(self)
+        self._igniter_block.changed.connect(self._on_block_changed)
+        rl.addWidget(self._igniter_block)
+        # 火把养成（A3.7）：耐久 / 效果块 / 等级。三块只在基础块；效果块与等级**合起来**算上限，
+        # 而且运行时是"等级那串在前、预设自己那串在后、满两块就不再收"，所以两边各拿对方**整串
+        # id**（不是条数——条数算不出谁被挤掉），并互相通知重算红字：
+        # 等级那边改了 / 换了选中的一级 ⇒ cap_changed；预设自己这边改了 ⇒ changed。
+        self._fuel_block = PropFuelBlock(model, self)
+        self._fuel_block.changed.connect(self._on_block_changed)
+        rl.addWidget(self._fuel_block)
+        self._effects_block = PropEffectsBlock(
+            model, self, level_effects_getter=lambda: self._levels_editor.effects_by_level())
+        self._effects_block.changed.connect(self._on_block_changed)
+        self._effects_block.changed.connect(self._refresh_level_cap_note)
+        rl.addWidget(self._effects_block)
+        self._levels_editor = PropLevelsEditor(
+            model, self, base_effects_getter=lambda: self._effects_block.effect_ids())
+        self._levels_editor.changed.connect(self._on_block_changed)
+        self._levels_editor.cap_changed.connect(self._effects_block.refresh_cap_note)
+        rl.addWidget(self._levels_editor)
+        self._states_editor =PropStatesEditor(model, None, self)
         self._states_editor.changed.connect(self._on_block_changed)
+        self._states_editor.particle_pick_requested.connect(self._start_mount_pick)
+        #: 预览点选写到哪：None = 起火点；(状态名 or "" = 基础块, 第几条) = 那条粒子挂载的挂点
+        self._pick_target: tuple[str, int] | None = None
         rl.addWidget(self._states_editor)
 
         tryon = QGroupBox("试挂预览")
@@ -281,8 +405,18 @@ class PropPresetEditor(QWidget):
             "「基础块」＝没有状态表时的样子。")
         self._state_combo.currentIndexChanged.connect(self._on_preview_state_changed)
         pk.addRow("状态", self._state_combo)
+        self._pick_fire_btn = QPushButton("点选起火点")
+        self._pick_fire_btn.setCheckable(True)
+        self._pick_fire_btn.setMaximumWidth(160)
+        self._pick_fire_btn.setToolTip(
+            "按下后在下面的预览上点 / 拖，起火点就落在光标处（逆着支点 / 自转 / 缩放 / 镜像解回贴图坐标）。\n"
+            "写到哪：按「状态」预览、且那个状态勾了「起火点 覆盖」⇒ 写那个状态；否则写基础块的「火焰」块。\n"
+            "青色斜十字 = 起火点；火苗按当前状态的 burn × 满火高度画第 0 帧（无风无闪）。")
+        self._pick_fire_btn.toggled.connect(self._on_pick_fire_toggled)
+        pk.addRow("起火点", self._pick_fire_btn)
         tf.addWidget(pick)
         self._canvas = PropTryOnCanvas()
+        self._canvas.fire_point_picked.connect(self._on_fire_point_picked)
         tf.addWidget(self._canvas, stretch=1)
         tryon.setMaximumWidth(380)
         dl.addWidget(tryon)
@@ -309,7 +443,11 @@ class PropPresetEditor(QWidget):
         raw = getattr(self._model, "prop_presets", None)
         self._data = copy.deepcopy(raw) if isinstance(raw, dict) else {}
         self._dirty = False
-        self._refresh(keep=self._current)
+        self._discarding = True
+        try:
+            self._refresh(keep=self._current)
+        finally:
+            self._discarding = False
         self._status.setText("")
 
     def _refresh(self, keep: str = "") -> None:
@@ -335,8 +473,22 @@ class PropPresetEditor(QWidget):
         e = self._data.get(self._current)
         return e if isinstance(e, dict) else {}
 
+    def _commit_form(self) -> None:
+        """commit-on-leave：把当前表单并回 `_data`（editor-data-sync-paradigm 契约 3）。
+
+        只在当前条目仍在 `_data` 里时做——改名 / 删除之后旧键已经不在了，这时并回去
+        等于把刚删掉 / 改掉的条目原名复活。
+        """
+        if self._current and self._current in self._data:
+            self._data = self._staged()
+
     def _on_select(self, key: str) -> None:
-        self._current = str(key or "")
+        new_key = str(key or "")
+        if (not self._loading and not self._discarding
+                and self._current and new_key != self._current):
+            # 编辑完直接点下一条：不提交就是"刚填的静默消失"（切条目是清脏的离开路径之一）
+            self._commit_form()
+        self._current = new_key
         entry = self._entry()
         self._loading = True
         try:
@@ -352,13 +504,23 @@ class PropPresetEditor(QWidget):
                 self._sliders[k].setValue(int(round(v * 100)))
             self._lit.setChecked(entry.get("lit") is not False)
             self._persistent.setChecked(entry.get("persistent") is True)
-            self._vfx_field.set_ids(entry.get("vfx"))
+            self._particles_block.set_data(entry)
+            self._fire_block.set_data(entry)
             self._light_block.set_socket_items(self._socket_items())
             self._light_block.set_data(entry.get("light"))
             self._states_editor.set_socket_items(self._socket_items())
             self._states_editor.set_data(entry.get("states"), entry.get("defaultState"))
+            self._sync_state_names()
+            self._blowout_block.set_data(entry)
+            self._player_block.set_data(entry)
+            self._igniter_block.set_data(entry)
+            self._fuel_block.set_data(entry)
+            self._effects_block.set_data(entry)
+            self._levels_editor.set_data(entry)
+            self._burnable_block.load(entry)
         finally:
             self._loading = False
+        self._sync_burnable_exclusive()
         self._refresh_state_combo()
         self._load_prop_pixmap()
         self._refresh_preview()
@@ -383,7 +545,136 @@ class PropPresetEditor(QWidget):
         if self._loading:
             return
         self._refresh_state_combo()
+        self._sync_state_names()
         self._on_field_changed()
+
+    def _refresh_level_cap_note(self) -> None:
+        """预设自己那一串效果块变了 ⇒ 等级表单里那行红字也得重算（反向那半由 cap_changed 走）。"""
+        self._levels_editor.refresh_cap_note()
+
+    # ---- 可燃（A3.8 模板 + 实例）----------------------------------------
+
+    #: 与可燃互斥的块：(预设键, 块属性名, 人话)。灰掉的是整块控件。
+    _BURN_EXCLUSIVE_BLOCKS = (
+        ("particles", "_particles_block", "粒子挂载"),
+        ("firePoint", "_fire_block", "起火点"),
+        ("flame", "_fire_block", "帧动画火苗"),
+        ("light", "_light_block", "自带光源"),
+        ("blowout", "_blowout_block", "风吹灭"),
+        ("playerControl", "_player_block", "玩家操作"),
+        ("igniter", "_igniter_block", "能点火"),
+        ("fuel", "_fuel_block", "耐久（燃料）"),
+        ("effects", "_effects_block", "效果块"),
+        ("levels", "_levels_editor", "等级"),
+        ("states", "_states_editor", "状态表"),
+    )
+
+    def _open_burn_workbench(self, template_id: str) -> None:
+        opener = getattr(self.window(), "open_burn_workbench", None)
+        if callable(opener):
+            opener(str(template_id or "").strip())
+
+    def _on_burnable_changed(self) -> None:
+        if self._loading:
+            return
+        self._sync_burnable_exclusive()
+        self._on_block_changed()
+
+    def _burnable_conflicts(self) -> tuple[list[str], list[str]]:
+        """``(写着的互斥块人话, 写着的被接管字段)``——按表单当前值（没 Apply 的也算）。"""
+        entry = self._collect() if self._current else {}
+        exclusive = [label for key, _attr, label in self._BURN_EXCLUSIVE_BLOCKS if key in entry]
+        taken = [k for k in BURNABLE_TAKEN_OVER_KEYS if k in entry]
+        return exclusive, taken
+
+    def _burnable_notes(self, tid: str, doc: dict | None) -> list[str]:
+        """「可燃」块里的具体冲突：互斥块写着 = 校验器 error；贴图 / 支点写着 = 警告（被模板接管、不画）。"""
+        del tid, doc
+        if not self._current:
+            return []
+        exclusive, taken = self._burnable_conflicts()
+        out: list[str] = []
+        if exclusive:
+            out.append(f"与可燃互斥、却还写着：{'、'.join(exclusive)}（校验器报错；下面「清掉互斥的配置」一键删）")
+        if taken:
+            out.append(f"被模板接管、写了也不画：{' / '.join(taken)}（校验器警告）")
+        return out
+
+    def _sync_burnable_exclusive(self) -> None:
+        """开了可燃：火把那一套块灰掉 + 说明；贴图 / 支点提示被模板接管。没开：全部恢复。只动界面、不动数据。"""
+        on = self._burnable_block.is_enabled() and bool(self._current)
+        seen: set[str] = set()
+        for _key, attr, _label in self._BURN_EXCLUSIVE_BLOCKS:
+            if attr in seen:
+                continue
+            seen.add(attr)
+            block = getattr(self, attr)
+            block.setEnabled(not on)
+            block.setToolTip("与可燃互斥：这个挂件开了可燃（上面「可燃」块），这一块运行时不读、写了算错误。" if on else "")
+        self._pick_fire_btn.setEnabled(not on)
+        if on and self._pick_fire_btn.isChecked():
+            self._pick_fire_btn.setChecked(False)
+        tid = self._burnable_block.current_template()
+        doc = self._model.burnable_doc(tid) if tid and hasattr(self._model, "burnable_doc") else None
+        exclusive, _taken = self._burnable_conflicts() if on else ([], [])
+        self._burn_exclusive_box.setVisible(on)
+        self._burn_exclusive_clear.setEnabled(bool(exclusive))
+        if on:
+            base = ("开了可燃：灯 / 粒子挂载 / 火苗 / 起火点 / 玩家操作 / 风吹灭 / 能点火 / 耐久 / 效果块 / 等级 / 状态表"
+                    "与可燃互斥（下面这些块灰掉了）——火、光、粒子、吹灭全由模板管。")
+            self._burn_exclusive_note.setText(base + (f"\n⚠ 还写着：{'、'.join(exclusive)}" if exclusive else ""))
+        img = str((doc or {}).get("image") or "") if doc else ""
+        self._burn_image_hint.setVisible(on)
+        self._burn_place_hint.setVisible(on)
+        if on:
+            self._burn_image_hint.setText(
+                f"被模板接管：贴图 / 帧贴图不画，画的是模板「{tid}」的图" + (f"（{img}）" if img else "") + "。")
+            if isinstance(doc, dict) and _bn.template_world_size(doc) is not None:
+                gu, gv = _bn.template_grip(doc)
+                self._burn_place_hint.setText(
+                    f"被模板接管：支点 x / y 不用，挂点对准模板握点（u {gu:g} v {gv:g}）；"
+                    f"缩放乘在模板真实宽 {doc['widthCm']:g} cm 上（1 cm = {_bn.WU_PER_CM:g} wu）；自转、光照、持久化照用。")
+            else:
+                self._burn_place_hint.setText("被模板接管：支点不用、缩放乘在模板真实宽上（模板装不上，现在画不出来）。")
+        self._burnable_block.refresh_notes()
+
+    def _confirm_clear_exclusive(self, labels: list[str]) -> bool:
+        """清掉互斥块之前的确认（测试里 monkeypatch 这一个方法，别让离屏模态框挂死）。"""
+        ans = QMessageBox.question(
+            self, "清掉互斥的配置",
+            f"这条挂件预设开了可燃，下面这些块与可燃互斥：\n{'、'.join(labels)}\n\n从表单里删掉它们吗？"
+            "（没 Apply 之前「从内存重载」可以反悔）",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        return ans == QMessageBox.StandardButton.Yes
+
+    def _clear_burnable_exclusive(self) -> None:
+        if not self._current:
+            return
+        staged = self._staged()
+        entry = staged.get(self._current)
+        if not isinstance(entry, dict):
+            return
+        keys = [key for key, _attr, _label in self._BURN_EXCLUSIVE_BLOCKS if key in entry]
+        if not keys:
+            return
+        labels = [label for key, _attr, label in self._BURN_EXCLUSIVE_BLOCKS if key in keys]
+        if not self._confirm_clear_exclusive(labels):
+            return
+        for key in keys:
+            entry.pop(key, None)
+        if "states" in keys:
+            entry.pop("defaultState", None)     # 没有状态表，缺省状态名无处可指
+        self._data = staged
+        self._dirty = True
+        self._on_select(self._current)
+        self._status.setText(f"已从表单里删掉与可燃互斥的：{'、'.join(labels)}（Apply 后写入内存）。")
+
+    def _sync_state_names(self) -> None:
+        """风吹灭 / 玩家操作里状态名下拉的候选 = 这个预设的状态表（增删改名后跟上；当前选择保值、不标脏）。"""
+        names = self._states_editor.state_names()
+        self._blowout_block.set_state_names(names)
+        self._player_block.set_state_names(names)
+        self._fuel_block.set_state_names(names)
 
     def _refresh_state_combo(self) -> None:
         """试挂预览的状态下拉。当前选择尽量保留（改一个状态名不该把预览跳回基础块）。"""
@@ -462,10 +753,19 @@ class PropPresetEditor(QWidget):
         light = self._light_block.dump()
         if isinstance(light, dict):
             out["light"] = light
-        # 自带效果：空列表**原本没有该键时**才不落键（磁盘上写着 `vfx: []` 的要原样保住）
-        vfx = self._vfx_field.to_list()
-        if vfx or "vfx" in original:
-            out["vfx"] = vfx
+        # 粒子挂载：_MISSING = 不写键；磁盘上显式写着 `particles: []` 的要原样保住
+        particles = self._particles_block.dump()
+        if particles is not _MISSING:
+            out["particles"] = particles
+        # 火焰（firePoint / flame / burn / windShelter）：块自己管"没动过回吐原值"，这里只并进来
+        out.update(self._fire_block.dump())
+        # 风吹灭 / 玩家操作 / 能点火 / 耐久 / 效果块 / 等级：_MISSING = 不写键；坏形态没动过原样保住
+        for key, block in (("blowout", self._blowout_block), ("playerControl", self._player_block),
+                           ("igniter", self._igniter_block), ("fuel", self._fuel_block),
+                           ("effects", self._effects_block), ("levels", self._levels_editor)):
+            val = block.dump()
+            if val is not _MISSING:
+                out[key] = val
         # 手持物：运行时只认 `=== true`，但磁盘上显式写着 false 的要保住
         if self._persistent.isChecked() or "persistent" in original:
             out["persistent"] = self._persistent.isChecked()
@@ -474,6 +774,8 @@ class PropPresetEditor(QWidget):
             out["states"] = states
         if default_state:
             out["defaultState"] = default_state
+        # 可燃：没展开过 / 没动过原样回吐；关 = 不写 `burnable` 键
+        self._burnable_block.write_to(out)
         # 数值表示保真：磁盘上的 `rotation: 0`(int) 不得因为过了一趟 QDoubleSpinBox
         # 就漂成 `0.0`(float)——那是纯格式噪音，会把无关改动混进 diff。
         return preserve_numeric_repr(out, original)
@@ -481,7 +783,9 @@ class PropPresetEditor(QWidget):
     #: `_collect` 负责产出的键。其余键（将来给 PropPresetDef 加字段）原样透传。
     _MANAGED_KEYS = (
         "label", "image", "images", "anchorX", "anchorY", "rotation", "scale", "lit",
-        "light", "vfx", "persistent", "states", "defaultState",
+        "light", "particles", "persistent", "states", "defaultState",
+        "firePoint", "flame", "burn", "windShelter", "blowout", "playerControl", "igniter",
+        "fuel", "effects", "levels", "burnable",
     )
 
     def _staged(self) -> dict[str, dict]:
@@ -520,6 +824,7 @@ class PropPresetEditor(QWidget):
         if key in self._data:
             QMessageBox.warning(self, "挂件预设", f"id「{key}」已存在。")
             return
+        self._commit_form()   # 当前条目没 Apply 的编辑先并回去，否则新建一条就把它丢了
         self._data[key] = {}
         self._dirty = True
         self._refresh(keep=key)
@@ -551,7 +856,10 @@ class PropPresetEditor(QWidget):
                 return
             if ans == QMessageBox.StandardButton.Yes:
                 n = rename_prop_references(self._model, old, key)
-                self._status.setText(f"已跟随改写 {n} 处引用。")
+                # 挂件状态的进入动作里也可能 attachToSocket 别的挂件：本页持有的是 _data 这份
+                # 工作副本（flush 时整份写回模型），模型那边改了、这边不改，下一次 flush 就拍回旧名
+                n_local = rename_prop_references(_DataOnlyModel(self._data), old, key)
+                self._status.setText(f"已跟随改写 {max(n, n_local)} 处引用。")
         # 保持键序：改名不该把条目挪到末尾
         self._data = {(key if k == old else k): v for k, v in self._data.items()}
         self._dirty = True
@@ -668,9 +976,96 @@ class PropPresetEditor(QWidget):
                 out.append(float(self._spins[key].value()))
         return out[0], out[1], out[2], out[3]
 
+    def _on_pick_fire_toggled(self, on: bool) -> None:
+        """开 / 关「点选」——只是交互模式，不是数据改动，不标脏。关掉 = 下一次点选回到写起火点。"""
+        if not on:
+            self._pick_target = None
+            self._pick_fire_btn.setText("点选起火点")
+        self._canvas.set_fire_pick_enabled(on)
+
+    def _start_mount_pick(self, owner: str, index: int) -> None:
+        """粒子挂载行的「点选」：接下来在预览上点 / 拖写那一条的挂点（owner "" = 基础块，否则状态名）。
+
+        状态的挂载要按那个状态预览才看得见它的挂点，所以顺手把预览状态切过去。
+        """
+        self._pick_target = (str(owner or ""), int(index))
+        if owner:
+            idx = self._state_combo.findData(owner)
+            if idx >= 0 and self._state_combo.currentIndex() != idx:
+                self._state_combo.setCurrentIndex(idx)
+        self._pick_fire_btn.setText(f"点选挂载 {index + 1}（{owner or '基础块'}）")
+        if self._pick_fire_btn.isChecked():
+            self._canvas.set_fire_pick_enabled(True)
+        else:
+            self._pick_fire_btn.setChecked(True)     # → _on_pick_fire_toggled(True)
+
+    def _on_fire_point_picked(self, x: float, y: float) -> None:
+        """预览上点到的点写到哪：正在点选某条粒子挂载 ⇒ 写它的挂点；
+        否则是起火点——预览的状态自己覆盖了起火点就写它，否则写基础块。"""
+        if not self._current or self._loading:
+            return
+        if self._pick_target is not None:
+            owner, index = self._pick_target
+            if owner:
+                self._states_editor.set_state_particle_point(owner, index, x, y)
+            else:
+                self._particles_block.set_point(index, x, y)
+            return
+        name = str(self._state_combo.currentData() or "")
+        if name and self._states_editor.state_has_fire_point(name):
+            self._states_editor.set_state_fire_point(name, x, y)
+        else:
+            self._fire_block.set_fire_point(x, y)
+
+    def _preview_fire(self) -> tuple[Any, float, FlameDef | None, list]:
+        """当前预览状态下的 (起火点, burn, 火苗, 粒子挂载)：合并口径与运行时同一份（`resolve_prop_preview`）。
+
+        基础块取「火焰」「粒子挂载」块的**当前控件值**（没 Apply 也看得见），状态取状态表暂存。
+        """
+        base = dict(self._fire_block.dump())
+        particles = self._particles_block.dump()
+        if particles is not _MISSING:
+            base["particles"] = particles
+        name = str(self._state_combo.currentData() or "")
+        if name:
+            base["states"] = {name: self._preview_state()}
+        r = resolve_prop_preview(base, name)
+        return r.fire_point, r.burn, r.flame, r.particles
+
+    def _flame_cell(self, flame: FlameDef | None) -> QPixmap | None:
+        """火苗图集第 0 帧那一格（按贴图推格尺寸：cellW = texW/cols，cellH = texH/rows）。"""
+        if flame is None:
+            return None
+        if flame.image not in self._flame_sheets:
+            pix = None
+            disk = prop_image_file(getattr(self._model, "project_path", None), flame.image)
+            if disk is not None:
+                loaded = QPixmap(str(disk))
+                pix = loaded if not loaded.isNull() else None
+            self._flame_sheets[flame.image] = pix
+        sheet = self._flame_sheets.get(flame.image)
+        if sheet is None:
+            return None
+        cw, ch = flame.cell_size(sheet.width(), sheet.height())
+        if cw < 1 or ch < 1:
+            return None
+        return sheet.copy(0, 0, int(cw), int(ch))
+
+    def _burnable_preview_template(self) -> tuple[str, dict | None]:
+        """试挂预览按可燃挂件画时的 ``(模板 id, 模板文档)``；没开可燃 ⇒ ``("", None)``。"""
+        if not self._current or not self._burnable_block.is_enabled():
+            return "", None
+        tid = self._burnable_block.current_template()
+        doc = self._model.burnable_doc(tid) if tid and hasattr(self._model, "burnable_doc") else None
+        return tid, doc if isinstance(doc, dict) else None
+
     def _load_prop_pixmap(self) -> None:
-        """预览用的挂件贴图：按当前预览状态解析（状态没给图就回落基础块）。"""
-        imgs = self._preview_images()
+        """预览用的挂件贴图：按当前预览状态解析（状态没给图就回落基础块）。开了可燃：画模板的图。"""
+        tid, doc = self._burnable_preview_template()
+        if tid:
+            imgs = [str(doc.get("image") or "").strip()] if doc is not None else []
+        else:
+            imgs = self._preview_images()
         path = imgs[0] if imgs else ""
         self._prop_pix = None
         if not path:
@@ -720,13 +1115,53 @@ class PropPresetEditor(QWidget):
                     pose = None
         self._canvas.set_pose(pose)
         self._canvas.set_prop(self._prop_pix)
-        self._canvas.set_placement(*self._preview_placement())
         self._canvas.set_facing(-1 if self._facing.currentIndex() == 1 else 1)
+        burn_tid, burn_doc = self._burnable_preview_template()
+        burn_place = None
+        if burn_tid:
+            # 可燃挂件（与运行时同口径）：模板的图、挂点对准模板握点、scale = widthCm·0.88/texW × 这里的缩放；
+            # 火把那一套（起火点 / 火苗 / 粒子挂载）与可燃互斥，不画；标出模板的着火点
+            preset = {"scale": float(self._spins["scale"].value()), "rotation": float(self._spins["rotation"].value())}
+            tex_w = float(self._prop_pix.width()) if self._prop_pix is not None else 0.0
+            burn_place = burnable_prop_placement(preset, burn_doc, tex_w)
+            if burn_place is not None:
+                self._canvas.set_placement(burn_place.anchor_x, burn_place.anchor_y, burn_place.rotation, burn_place.scale)
+            else:
+                self._canvas.set_placement(*self._preview_placement())
+            self._canvas.set_fire(None, configured=False)
+            self._canvas.set_particle_mounts([])
+            self._canvas.set_burn_points([(pid, (u, v)) for pid, u, v in _bn.ignition_points_uv(burn_doc)])
+            fire_point, burn, flame, mounts, flame_cell = None, 1.0, None, [], None
+        else:
+            self._canvas.set_placement(*self._preview_placement())
+            self._canvas.set_burn_points([])
+            fire_point, burn, flame, mounts = self._preview_fire() if self._current else (None, 1.0, None, [])
+            flame_cell = self._flame_cell(flame)
+            self._canvas.set_fire(
+                fire_point,
+                configured=fire_point is not None or flame is not None,
+                flame_cell=flame_cell,
+                flame_height_wu=(flame.height * burn) if flame is not None else 0.0,
+            )
+            self._canvas.set_particle_mounts([(m.effect, m.point) for m in mounts])
 
         notes = []
         state_name = str(self._state_combo.currentData() or "")
         if not self._current:
             notes.append("左边先选/新建一个挂件预设。")
+        elif burn_tid:
+            if burn_doc is None:
+                notes.append(f"可燃模板「{burn_tid}」不存在（或读不懂）：运行时这件挂件画不出来。")
+            elif self._prop_pix is None:
+                notes.append(f"可燃模板「{burn_tid}」的图找不到文件：{burn_doc.get('image') or '（没写）'}。")
+            elif burn_place is None:
+                notes.append(f"可燃模板「{burn_tid}」没写真实尺寸，缩放没有基准。")
+            else:
+                notes.append(
+                    f"可燃挂件：模板「{burn_tid}」宽 {burn_doc['widthCm']:g} cm → scale {burn_place.scale:.4g}"
+                    f"（= {burn_doc['widthCm']:g}×{_bn.WU_PER_CM:g} ÷ 贴图宽 {self._prop_pix.width()} × 缩放 "
+                    f"{float(self._spins['scale'].value()):g}）；挂点对准握点 u {burn_place.anchor_x:g} v {burn_place.anchor_y:g}。")
+            state_name = ""
         elif self._prop_pix is None:
             if state_name:
                 notes.append(f"状态「{state_name}」与基础块都没有能用的贴图（或路径找不到文件）。")
@@ -738,15 +1173,28 @@ class PropPresetEditor(QWidget):
             notes.append("这一帧该挂点没有标注——游戏里挂件在这一帧会隐藏。")
         if state_name:
             notes.append(f"按状态「{state_name}」预览（状态没写的项沿用基础块）。")
+        if flame is not None:
+            if flame_cell is None:
+                notes.append("火苗图集找不到文件（或读不出格子），火苗没法预览。")
+            elif burn <= 0:
+                notes.append("burn = 0：这个状态火苗不画。")
+            else:
+                notes.append(f"火苗：满火 {flame.height:g} wu × burn {burn:g}（第 0 帧，无风无闪）。")
+        if fire_point is not None and self._prop_pix is None:
+            notes.append("没有能用的挂件贴图，起火点（贴图归一化）落不到画面上。")
         self._canvas.set_note("　".join(notes))
 
     # ---- 主窗钩子 ----------------------------------------------------
 
-    def select_by_id(self, prop_id: str, _scene_id: str = "") -> None:
-        """全局搜索/跳转落点。"""
+    def select_by_id(self, prop_id: str, _scene_id: str = "") -> bool:
+        """全局搜索 / 动作总表跳转落点。返回是否真的定位到了（导航诚实化契约）。"""
         target = (prop_id or "").strip()
-        if target and target in self._data:
+        if not target or target not in self._data:
+            return False
+        if target != self._current:
+            self._commit_form()   # 跳走之前先把没 Apply 的编辑并回去
             self._refresh(keep=target)
+        return self._current == target
 
     def reload_refs_from_model(self) -> None:
         """别处新增动画包/挂点/效果资产后，候选要能看见（本页表单字段值不动）。"""
@@ -757,8 +1205,20 @@ class PropPresetEditor(QWidget):
             if idx >= 0:
                 self._bundle_combo.setCurrentIndex(idx)
         # 效果资产是独立进程（粒子工作台）写的，切页回来必须重拉候选；当前值保值
-        self._vfx_field.reload_refs()
+        self._particles_block.reload_refs()
+        self._blowout_block.reload_refs()
         self._states_editor.reload_refs()
+        self._fuel_block.reload_refs()
+        # 效果块库是另一页（「挂件效果块」）写的，切页回来必须重拉候选与摘要；当前值保值
+        self._effects_block.reload_refs()
+        self._levels_editor.reload_refs()
+        # 可燃物模板是燃烧工作台（别的进程）写的：重拉模板候选、重算接管提示，试挂按新模板的图重画
+        self._burnable_block.reload_refs_from_model()
+        self._sync_burnable_exclusive()
+        # 火苗图集可能在别处换了图 / 新导入：丢缓存，下次预览重读
+        self._flame_sheets.clear()
+        self._load_prop_pixmap()
+        self._refresh_preview()
 
     def flush_to_model(self, for_save_all: bool = False) -> None:
         """保存工程前：仅在内容确有变化时写回并标脏（禁无条件 mark_dirty）。"""

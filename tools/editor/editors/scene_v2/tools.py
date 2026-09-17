@@ -112,8 +112,8 @@ class AbstractTool(QObject):
     def key_pressed(self, key, modifiers) -> bool:
         """选择级快捷键在**基类**统一处理，工具只覆盖自己特有的那些。
 
-        Esc / Delete / Ctrl+D / 方向键都不属于任何一个工具 —— 它们作用在
-        "当前选择"上。放进基类是为了让"换个工具就没法删了"不可能发生：
+        Esc / Delete / Ctrl+D / Ctrl+C / Ctrl+V / 方向键都不属于任何一个工具 ——
+        它们作用在"当前选择"上。放进基类是为了让"换个工具就没法删了"不可能发生：
         这几条此前一个调用点都没有（`delete_selected` / `duplicate_selected`
         是公开方法却没人调，状态栏还写着"方向键微移"），全靠这一处兑现。
         """
@@ -124,6 +124,12 @@ class AbstractTool(QObject):
         if (key == Qt.Key.Key_D
                 and modifiers & Qt.KeyboardModifier.ControlModifier):
             return self._duplicate_selection()
+        if (key == Qt.Key.Key_C
+                and modifiers & Qt.KeyboardModifier.ControlModifier):
+            return self._copy_selection()
+        if (key == Qt.Key.Key_V
+                and modifiers & Qt.KeyboardModifier.ControlModifier):
+            return self._paste_clipboard()
         step = (self.NUDGE_STEP_FAST
                 if modifiers & Qt.KeyboardModifier.ShiftModifier
                 else self.NUDGE_STEP)
@@ -132,7 +138,7 @@ class AbstractTool(QObject):
             return self._nudge_selection(delta[0] * step, delta[1] * step)
         return False
 
-    # 这三个是"作用在选择上"的动作，实现住在 tools_structure / tools_transform。
+    # 这几个是"作用在选择上"的动作，实现住在 tools_structure / tools_transform。
     # **函数级延迟导入**：那两个模块反过来要 import 本模块的 `AbstractTool`，
     # 模块级导入会成环。（把动作搬到基类文件里也能破环，但那样"增删"与"位移"
     # 的规则就散在两处了。）
@@ -144,6 +150,15 @@ class AbstractTool(QObject):
     def _duplicate_selection(self) -> bool:
         from .tools_structure import duplicate_selected
         return duplicate_selected(self._doc)
+
+    def _copy_selection(self) -> bool:
+        from .tools_structure import copy_selection
+        return copy_selection(self._doc)
+
+    def _paste_clipboard(self) -> bool:
+        from ...shared.scene_entity_clipboard import read_entity_clip
+        from .tools_structure import paste_clip
+        return paste_clip(self._doc, read_entity_clip())
 
     def _nudge_selection(self, dx: float, dy: float) -> bool:
         """方向键微移。连按由**命令合并**收成一条撤销记录。

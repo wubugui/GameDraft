@@ -29,7 +29,9 @@ from .shared.item_tags import is_known_item_tag
 from .shared.audio_library import audio_id_problem
 from .shared.narrative_catalog import emitted_signal_ids
 from .shared.project_paths import URL_KIND_MEDIA
+from .shared.prop_preview import ABSENT as _ABSENT
 from .shared.runtime_field_schema import field_meta, is_valid_field, value_matches_field
+from .shared.health_validation import health_action_errors, health_config_errors, health_protection_errors, health_threat_errors, environment_fire_errors
 
 if TYPE_CHECKING:
     from .project_model import ProjectModel
@@ -765,7 +767,11 @@ def validate(model: ProjectModel) -> list[Issue]:
                     else:
                         acts = idata.get("actions")
                         has_actions = isinstance(acts, list) and len(acts) > 0
-                        if not itext and not has_actions:
+                        # 开了可燃的热点本身没有查看内容是正常形态：它的交互是按 E 点火
+                        # （运行时 InteractionSystem：可点的可燃物即使本身没有交互也参与选目标）
+                        _burn_host = hs.get("burnable")
+                        is_burnable = isinstance(_burn_host, dict) and bool(str(_burn_host.get("template") or "").strip())
+                        if not itext and not has_actions and not is_burnable:
                             issues.append(Issue(
                                 "warning", "scene", sid,
                                 f"Hotspot '{hid}' inspect 未配置 graphId、非空 text 或非空 actions",
@@ -1122,17 +1128,24 @@ def validate(model: ProjectModel) -> list[Issue]:
                             "warning", "scene", sid,
                             f"Zone '{zid}' 为 depth_floor，smell 不会触发（区域逻辑已跳过）",
                         ))
-                    # 气味源（G.6）：{x,y} 数字；配了静态 dir 已不生效，提醒改用 source
+                    # 气味源（G.6）：老形状 {x,y} 数字，或位置引用 {kind:'point'|'entity'|'slot'|'curve',…}
+                    # （与动作 at 同一套校验）；配了静态 dir 已不生效，提醒改用 source
                     src = smell.get("source")
                     if src is not None:
-                        ok_src = (isinstance(src, dict)
-                                  and isinstance(src.get("x"), (int, float)) and not isinstance(src.get("x"), bool)
-                                  and isinstance(src.get("y"), (int, float)) and not isinstance(src.get("y"), bool))
-                        if not ok_src:
-                            issues.append(Issue(
-                                "error", "scene", sid,
-                                f"Zone '{zid}' smell.source 须为 {{x, y}} 数字对象（气味源世界坐标）",
-                            ))
+                        if isinstance(src, dict) and "kind" in src:
+                            _position_ref_issues(
+                                model, issues, f"Zone '{zid}' smell.source", {"at": src},
+                                "scene", sid, sid, frozenset(),
+                            )
+                        else:
+                            ok_src = (isinstance(src, dict)
+                                      and isinstance(src.get("x"), (int, float)) and not isinstance(src.get("x"), bool)
+                                      and isinstance(src.get("y"), (int, float)) and not isinstance(src.get("y"), bool))
+                            if not ok_src:
+                                issues.append(Issue(
+                                    "error", "scene", sid,
+                                    f"Zone '{zid}' smell.source 须为 {{x, y}} 数字对象或位置引用 {{kind, …}}",
+                                ))
                     if "dir" in smell:
                         issues.append(Issue(
                             "warning", "scene", sid,
@@ -1489,11 +1502,32 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_dev_narrative_warps(model, issues, scene_ids)
     _validate_day_night(model, issues)
     _validate_player_acts(model, issues)
+    if "health" in cfg:
+        for error in health_config_errors(cfg["health"]):
+            issues.append(Issue("error", "config", "game_config", error))
+        hc = cfg["health"]
+        if isinstance(hc, dict):
+            fire = hc.get("fireProtection")
+            if isinstance(fire, dict) and isinstance(fire.get("heldPropIds"), list):
+                for prop in fire["heldPropIds"]:
+                    if isinstance(prop, str) and prop not in (model.prop_presets or {}):
+                        issues.append(Issue("error", "config", "game_config", f"保护火源挂件 {prop!r} 不存在"))
+            if "tetherCondition" in hc:
+                _walk_conditions(model, issues, [hc["tetherCondition"]], "config", "game_config.health", None)
+            retry = hc.get("retry")
+            if isinstance(retry, dict) and retry.get("firstDeathNoteId"):
+                if retry["firstDeathNoteId"] not in {n.get("id") for n in model.system_note_rows()}:
+                    issues.append(Issue("error", "config", "game_config", "health.retry.firstDeathNoteId 引用的说明卡不存在"))
+            if hc.get("tetherCueId") and hc["tetherCueId"] not in {c.get("id") for c in model.signal_cues}:
+                issues.append(Issue("error", "config", "game_config", "health.tetherCueId 引用的信号演出不存在"))
     _validate_character_avatars(model, issues)
     _validate_animation_sockets(model, issues)
 
     _validate_items(model, issues)
+    _validate_health_threats(model, issues)
+    _validate_health_references(model, issues)
     _validate_overlay_images(model, issues)
+    _validate_prop_effects(model, issues)
     _validate_prop_presets(model, issues)
     _validate_parallax_scenes(model, issues)
 
@@ -1517,6 +1551,8 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_trajectories(model, issues)
     _validate_vfx_effects(model, issues)
     _validate_vfx_placements(model, issues)
+    _validate_burnables(model, issues)
+    _validate_burnable_hosts(model, issues)
     _validate_plane_action_pairing(model, issues)
     _validate_narrative_templates(model, issues)
     _validate_entity_reachability(model, issues)
@@ -2408,7 +2444,7 @@ def _validate_entity_reachability(model: ProjectModel, issues: list[Issue]) -> N
 
         def visit(act_type: str, params: dict) -> None:
             for param, spec_kind in ENTITY_REF_PARAMS[act_type].items():
-                if spec_kind not in ("actor", "emote_subject", "npc", "bubble_speaker"):
+                if spec_kind not in ("actor", "emote_subject", "npc", "bubble_speaker", "burn_target"):
                     continue
                 value = params.get(param)
                 if not isinstance(value, str):
@@ -2419,8 +2455,9 @@ def _validate_entity_reachability(model: ProjectModel, issues: list[Issue]) -> N
                 # 头顶闲聊的角色档 target 不是实体引用，可达场景无从谈起
                 if ref.startswith(BUBBLE_CHARACTER_TARGET_PREFIX):
                     continue
-                # 热点也能冒气泡：emote_subject / bubble_speaker 两档同宽
-                wide = spec_kind in ("emote_subject", "bubble_speaker")
+                # 热点也能冒气泡：emote_subject / bubble_speaker 两档同宽；燃烧动作 target（burn_target）
+                # 也同宽——socket 没写是可燃实体（热点 / NPC），写了是拿东西的人（NPC）
+                wide = spec_kind in ("emote_subject", "bubble_speaker", "burn_target")
                 allowed = npc_union | (hotspot_union if wide else set())
                 if ref in allowed:
                     continue
@@ -4269,8 +4306,240 @@ def _validate_item_use(model: ProjectModel, it: dict, iid: str, issues: list[Iss
         ))
 
 
+#: `ItemIgniterDef` 的键（TS 权威 `src/data/types.ts`）。别的键运行时不读。
+_ITEM_IGNITER_KEYS = ("uses", "seconds", "windLimit")
+
+
+def _is_js_finite_number(v: object) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _validate_item_igniter(it: dict, iid: str, issues: list[Issue]) -> None:
+    """火种块 `igniter`（`ItemDef.igniter`，玩法清单 A3.7；运行时 `InventoryManager` 的火种段 + `HeldPropSystem` 点火）。
+
+    运行时不清洗这一块：`def.igniter` 为真就当火种，`seconds` / `windLimit` 原样拿去比——
+    缺了 / 不是数 ⇒ `elapsed < NaN` 恒 false、`风 > undefined` 恒 false = **一按就点着、风再大也不灭**；
+    ≤ 0 ⇒ 点火瞬间完成 / 有一丝风就失败。`uses` 缺省 1，非整数运行时向下取整、< 1 当 1——作者写的不是他得到的，一律 error。
+    写了 `use` 时背包按 `use` 走、不给「设为火种」按钮（`InventoryManager.resolveItemUse`）。
+    """
+    if "igniter" not in it:
+        return
+    raw = it.get("igniter")
+    if not isinstance(raw, dict):
+        if raw:
+            issues.append(Issue(
+                "error", "item", iid,
+                f"igniter 须为对象 {{uses?, seconds, windLimit}}，当前 {raw!r}——运行时当火种、却读不出点火时长与风限"
+                "（一按就点着、风再大也不灭）",
+            ))
+        else:
+            issues.append(Issue(
+                "warning", "item", iid,
+                f"igniter 写成了 {raw!r}——运行时当不是火种；不是火种请直接删掉该键",
+            ))
+        return
+    for key in ("seconds", "windLimit"):
+        what = "点着要多久（秒）" if key == "seconds" else "火把头风超过多少 m/s 就点不着"
+        if key not in raw:
+            issues.append(Issue(
+                "error", "item", iid,
+                f"igniter.{key} 缺失（{what}，必填 > 0 的数）——运行时"
+                + ("一按就点着" if key == "seconds" else "风再大也点得着"),
+            ))
+            continue
+        v = raw.get(key)
+        if not _is_js_finite_number(v) or v <= 0:
+            issues.append(Issue(
+                "error", "item", iid,
+                f"igniter.{key} 须为 > 0 的数（{what}），当前 {v!r}",
+            ))
+    if "uses" in raw:
+        u = raw.get("uses")
+        if not _is_js_finite_number(u) or float(u) != int(u) or u < 1:
+            issues.append(Issue(
+                "error", "item", iid,
+                f"igniter.uses 须为 ≥ 1 的整数（一份能点几次，不写 = 1），当前 {u!r}——运行时"
+                "非整数向下取整、< 1 或读不出当 1",
+            ))
+    unknown = [k for k in raw if k not in _ITEM_IGNITER_KEYS]
+    if unknown:
+        issues.append(Issue(
+            "warning", "item", iid,
+            f"igniter 含运行时不认识的键 {unknown}（只认 uses / seconds / windLimit）——多半是拼错",
+        ))
+    if it.get("use") is not None:
+        issues.append(Issue(
+            "warning", "item", iid,
+            "既写了 igniter（火种）又写了 use：背包里按 use 走，不给「设为火种」按钮——"
+            "要让玩家在背包里设它为火种，就删掉 use，或在 use.actions 里自己放 setActiveIgniter",
+        ))
+
+
+def _set_active_igniter_issues(
+    model: ProjectModel, p: dict, data_type: str, item_id: str, issues: list[Issue],
+) -> None:
+    """`setActiveIgniter {item}`（TS manifest：item 必填非空）。
+
+    运行时 `item` 不是非空串 ⇒ warn 一行、什么都不设；物品不存在或没写 `igniter` ⇒ warn 一行、不设。
+    接受面 = `ProjectModel.igniter_item_ids()`（与动作表单的候选同一个函数）。
+    """
+    raw = p.get("item")
+    iid = raw.strip() if isinstance(raw, str) else ""
+    if not iid:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "setActiveIgniter 缺 item（火种物品 id）——运行时 warn 一行、什么都不设",
+        ))
+        return
+    if iid in {i for i, _l in model.igniter_item_ids()}:
+        return
+    if iid in {str(it.get("id") or "").strip() for it in model.items if isinstance(it, dict)}:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"setActiveIgniter 的物品 {iid!r} 不是火种（items.json 里没写 igniter 块）——运行时 warn 一行、不设",
+        ))
+    else:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"setActiveIgniter 引用了不存在的物品 {iid!r}——运行时 warn 一行、不设",
+        ))
+
+
+def _set_prop_level_issues(
+    model: ProjectModel, p: dict, data_type: str, item_id: str, issues: list[Issue],
+) -> None:
+    """`setPropLevel {prop, level}`（火把养成的升级就是调它；TS manifest：两个都必填，prop 非空）。
+
+    运行时 `HeldPropSystem.setPropLevel` 对三种错**一律 log 一行、什么都不改**：挂件预设不存在、
+    这个预设没有 `levels` 表、级数超出 1..levels.length。玩家交了材料、对话也演完了，火把一点没变——
+    画面上完全看不出来，所以这三条都是 error。接受面 = `ProjectModel.prop_preset_ids_with_levels()`
+    与 `prop_level_counts()`（动作表单的两格候选读的是同一对函数）。
+    """
+    raw = p.get("prop")
+    pid = raw.strip() if isinstance(raw, str) else ""
+    counts = model.prop_level_counts()
+    if not pid:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "setPropLevel 缺 prop（要升级的挂件预设 id）——运行时 warn 一行、什么都不改",
+        ))
+    else:
+        table = getattr(model, "prop_presets", None)
+        table = table if isinstance(table, dict) else {}
+        if pid not in table:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setPropLevel 的 prop {pid!r} 不在 prop_presets.json 中——运行时 log 一行、什么都不改",
+            ))
+        elif pid not in counts:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setPropLevel 的挂件 {pid!r} 没有等级表（levels）——运行时 log「没有等级表」、什么都不改；"
+                "要能升级就在挂件预设页给它配「等级」",
+            ))
+    lv = p.get("level", _ABSENT)
+    if lv is _ABSENT or lv is None or isinstance(lv, bool) or not _is_num(lv) or not math.isfinite(float(lv)):
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"setPropLevel 的 level 须为整数级数（当前 {'缺失' if lv is _ABSENT else repr(lv)}）——"
+            "运行时 Number() 读不出就 warn 一行、什么都不改",
+        ))
+        return
+    n = float(lv)
+    if n != int(n):
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"setPropLevel 的 level {lv!r} 不是整数——运行时按 Math.trunc 截断，配出来的级数与写的不是一个",
+        ))
+    want = int(n)
+    max_level = counts.get(pid, 0)
+    if pid and max_level and not 1 <= want <= max_level:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"setPropLevel 的 level {want} 超出挂件 {pid!r} 的 1..{max_level} 级——运行时 log 一行、什么都不改",
+        ))
+
+
+def _validate_health_threats(model: ProjectModel, issues: list[Issue]) -> None:
+    seen = {}
+    signals = _narrative_registered_signal_ids(model)
+    notes = {n.get("id") for n in model.system_note_rows()}
+    for sid, scene in model.scenes.items():
+        for entity in [*scene.get("npcs", []), *scene.get("hotspots", [])]:
+            if "fireProtection" in entity:
+                fire = entity["fireProtection"]
+                for error in environment_fire_errors(fire):
+                    issues.append(Issue("error", "scene", sid, f"{entity.get('id')}: {error}"))
+                if entity in scene.get("npcs", []):
+                    issues.append(Issue("error", "scene", sid, "环境保护火只能挂在热点上"))
+                if isinstance(fire, dict) and isinstance(fire.get("conditions", []), list):
+                    _walk_conditions(model, issues, fire.get("conditions", []), "scene", f"{sid}/{entity.get('id')}.fireProtection", sid)
+            if "healthThreat" not in entity:
+                continue
+            threat = entity["healthThreat"]
+            eid = str(entity.get("id", "?"))
+            for error in health_threat_errors(threat):
+                issues.append(Issue("error", "scene", sid, f"{eid}: {error}"))
+            if not isinstance(threat, dict):
+                continue
+            tid = str(threat.get("id", ""))
+            if tid:
+                if tid in seen:
+                    issues.append(Issue("error", "scene", sid, f"威胁 id {tid!r} 与 {seen[tid]} 重复"))
+                seen[tid] = f"{sid}/{eid}"
+            if isinstance(threat.get("conditions", []), list):
+                _walk_conditions(model, issues, threat.get("conditions", []), "scene", f"{sid}/{eid}.healthThreat", sid)
+            for key in ("enteredSignal", "repelledSignal", "leftSignal"):
+                if threat.get(key) and threat[key] not in signals:
+                    issues.append(Issue("error", "scene", sid, f"{eid}.healthThreat.{key} 信号未登记"))
+            if threat.get("deathNoteId") and threat["deathNoteId"] not in notes:
+                issues.append(Issue("error", "scene", sid, f"{eid}.healthThreat.deathNoteId 说明卡不存在"))
+            if threat.get("presenceSfx") and threat["presenceSfx"] not in (model.audio_config or {}).get("sfx", {}):
+                issues.append(Issue("error", "scene", sid, f"{eid}.healthThreat.presenceSfx 音效不存在"))
+
+
+def _validate_health_references(model: ProjectModel, issues: list[Issue]) -> None:
+    """所有宿主只扫一次，避免每个防护动作重扫全工程。"""
+    from .editors.action_registry_editor import _scan_actions
+    records = _scan_actions(model)
+    declarations = {"lockHealth": set(), "applyHealthProtection": set(), "inflictHealthDamage": set()}
+    for record in records:
+        params = record.action.get("params")
+        if record.action_type in declarations and isinstance(params, dict):
+            value = params.get("sourceId" if record.action_type == "inflictHealthDamage" else "id")
+            if isinstance(value, str) and value.strip():
+                declarations[record.action_type].add(value.strip())
+    sources = declarations["inflictHealthDamage"]
+    from .shared.health_refs import vfx_health_sources
+    for effect in (getattr(model, 'vfx_effects', {}) or {}).values():
+        sources.update(key for key, _ in vfx_health_sources(effect))
+    for scene in model.scenes.values():
+        for entity in [*scene.get("npcs", []), *scene.get("hotspots", [])]:
+            threat = entity.get("healthThreat")
+            if isinstance(threat, dict) and isinstance(threat.get("id"), str):
+                sources.add(threat["id"])
+    for record in records:
+        params = record.action.get("params")
+        if not isinstance(params, dict):
+            continue
+        kind = record.action_type
+        field = "threatId" if kind == "applyHealthProtection" else "id"
+        known = sources if kind == "applyHealthProtection" else declarations["lockHealth"] if kind == "unlockHealth" else declarations["applyHealthProtection"] if kind == "removeHealthProtection" else None
+        value = params.get(field)
+        if known is not None and isinstance(value, str) and value and value not in known:
+            issues.append(Issue("error", record.source_type, record.source_id,
+                                f"{record.full_source}: {kind}.{field} 引用 {value!r} 没有定义"))
+    for item in model.items:
+        protection = item.get("healthProtection")
+        if not isinstance(protection, dict) or not isinstance(protection.get("threatIds"), list):
+            continue
+        for source in protection["threatIds"]:
+            if isinstance(source, str) and source not in sources:
+                issues.append(Issue("error", "item", str(item.get("id", "")), f"防护威胁 {source!r} 不存在"))
+
+
 def _validate_items(model: ProjectModel, issues: list[Issue]) -> None:
-    """物品：背包图标存在性 + 标签词表收敛 + 自身用途（use）的完备性。
+    """物品：背包图标存在性 + 标签词表收敛 + 自身用途（use）的完备性 + 火种块（igniter）。
 
     留空是合法的（背包格子退回物品名文字显示），但**填了却指不到文件**运行时就是
     一个静默画不出来的空格子——只报到不存在/越界这两种，不强制所有物品都配图。
@@ -4281,6 +4550,10 @@ def _validate_items(model: ProjectModel, issues: list[Issue]) -> None:
         iid = str(it.get("id", "") or "?")
         _validate_item_tags(it, iid, issues)
         _validate_item_use(model, it, iid, issues)
+        _validate_item_igniter(it, iid, issues)
+        if "healthProtection" in it:
+            for error in health_protection_errors(it["healthProtection"]):
+                issues.append(Issue("error", "item", iid, error))
         raw = it.get("icon")
         if raw is None:
             continue
@@ -4808,8 +5081,15 @@ def _append_action_param_ref_issues(
     scene_id: str | None,
     *,
     cutscene_temp_ids: frozenset[str] | None = None,
+    prop_state_self: bool = False,
 ) -> None:
-    """Action 参数与工程清单一致性（warning 为主，避免历史数据大量爆红）。"""
+    """Action 参数与工程清单一致性（warning 为主，避免历史数据大量爆红）。
+
+    ``prop_state_self``：这条动作是挂件预设某状态 ``onEnterActions`` 的**顶层**动作——运行时
+    （``HeldPropSystem`` 进入状态时）给其中没写 target / socket 的 ``playPropVfx`` 注入"正在进入这个状态的
+    那件挂件"。嵌套在 runActions / chooseAction 等容器里的不注入，调用方（``_walk_action_defs``）
+    递归时不传它。
+    """
     t = act.get("type")
     if not isinstance(t, str) or not t:
         return
@@ -5399,6 +5679,23 @@ def _append_action_param_ref_issues(
         _append_prop_state_issues(model, issues, "", str(p.get("state") or "").strip(),
                                   "setPropState", data_type, item_id)
 
+    if t == "lockPropState":
+        _lock_prop_state_issues(p, data_type, item_id, issues)
+
+    if t == "setActiveIgniter":
+        _set_active_igniter_issues(model, p, data_type, item_id, issues)
+
+    if t == "setPropLevel":
+        _set_prop_level_issues(model, p, data_type, item_id, issues)
+
+    if t in ("igniteBurnable", "extinguishBurnable", "resetBurnable"):
+        _burn_action_issues(model, issues, t, p, data_type, item_id, scene_id)
+    if t in (
+        "playNpcAnimation", "persistNpcAnimState", "persistPlayNpcAnimation", "moveEntityTo", "jumpEntityTo",
+        "playTrajectory", "setEntityField", "setHotspotDisplayImage",
+    ):
+        _burn_render_override_issues(model, issues, t, p, data_type, item_id, scene_id)
+
     if t == "fadeLight":
         lid = str(p.get("lightId") or "").strip()
         if lid and scene_id:
@@ -5655,6 +5952,9 @@ def _append_action_param_ref_issues(
                     f"emitVfxField kind={k} 缺少非零 direction：场没有方向，运行时不产生作用",
                 ))
 
+    if t == "playPropVfx":
+        _play_prop_vfx_issues(model, issues, p, data_type, item_id, prop_state_self=prop_state_self)
+
     if t == "playTrajectory":
         # trajectoryId 指全局轨迹资产（assets/data/trajectories/<id>.json）。空 id 是硬错
         # （运行时整步跳过）；悬垂只 warning——"宁可少校验不误报"：资产目录可能正被
@@ -5687,7 +5987,7 @@ def _append_action_param_ref_issues(
                 "playTrajectory 缺少运动对象：给 target（player / 本场景 NPC id）或 spawn（临时生成的图片 / 角色模板）",
             ))
         if isinstance(spawn_pt, dict):
-            _spawn_spec_issues(model, issues, spawn_pt, data_type, item_id)
+            _spawn_spec_issues(model, issues, spawn_pt, data_type, item_id, scene_id)
         # 播放位置：at（活引用）/ 老写法 anchorX+anchorY（= at point）。场景曲线可不给；相对曲线必须给
         ax_pt, ay_pt = p.get("anchorX"), p.get("anchorY")
         for key_pt, v_pt in (("anchorX", ax_pt), ("anchorY", ay_pt)):
@@ -6439,10 +6739,227 @@ def _scan_condition_expr(
                 "两边纯「与」会让成员永远不出现",
             ))
         return
+    if isinstance(expr.get("heldProp"), str):
+        _held_prop_condition_issues(model, issues, expr, data_type, item_id)
+        return
+    if isinstance(expr.get("propLevel"), str):
+        _prop_level_condition_issues(model, issues, expr, data_type, item_id)
+        return
+    if isinstance(expr.get("burn"), str):
+        _burn_condition_issues(model, issues, expr, data_type, item_id, scene_id_flag)
+        return
     issues.append(Issue(
         "warning", data_type, item_id,
         f"无法识别的条件叶子（键: {sorted(expr.keys())!s}）",
     ))
+
+
+#: `heldProp` 叶的火势 / 燃料比较运算符（evaluateGraphCondition.ts `HELD_VITALITY_OPS`，两处共用一张表）
+_HELD_VITALITY_OPS = frozenset({"<", "<=", ">", ">="})
+#: `propLevel` 叶的比较运算符（evaluateGraphCondition.ts `PROP_LEVEL_OPS`）；不写 = `>=`
+_PROP_LEVEL_OPS = frozenset({"==", "!=", "<", "<=", ">", ">="})
+
+
+def _prop_level_condition_issues(
+    model: ProjectModel, issues: list[Issue], expr: dict, data_type: str, item_id: str,
+) -> None:
+    """挂件等级叶 `{propLevel, op?, value}`（玩法清单 A3.7「火把养成」）。
+
+    TS 权威 `types.ts::PropLevelConditionLeaf`，求值 `evaluateGraphCondition.ts::evalPropLevelLeaf`：
+    id 空 / `value` 不是有限数 ⇒ **恒为假**（那条分支永远走不到，一行都不 warn）；`op` 不在表里 ⇒
+    `PROP_LEVEL_OPS[op]` 取到 undefined、当场 TypeError。没有等级表的挂件恒第 1 级——问它只是恒真恒假。
+    接受面 = `ProjectModel.prop_level_counts()`（条件树的挂件下拉读的是同一个函数）。
+    """
+    raw = expr.get("propLevel")
+    pid = raw.strip() if isinstance(raw, str) else ""
+    if not pid:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "propLevel 条件需要非空挂件预设 id——运行时恒为假",
+        ))
+    else:
+        table = getattr(model, "prop_presets", None)
+        table = table if isinstance(table, dict) else {}
+        counts = model.prop_level_counts()
+        if pid not in table:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"propLevel 条件的挂件 {pid!r} 不在 prop_presets.json 中——没有这根火把，这条比较读到的恒是第 1 级",
+            ))
+        elif pid not in counts:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"propLevel 条件的挂件 {pid!r} 没有等级表（levels）——运行时恒第 1 级，"
+                "这条比较不是恒真就是恒假；要分级就在挂件预设页给它配「等级」",
+            ))
+    op = expr.get("op", _ABSENT)
+    if op is not _ABSENT and (not isinstance(op, str) or op not in _PROP_LEVEL_OPS):
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"propLevel 条件的 op {op!r} 非法（只认 == != < <= > >=；不写 = >=）——运行时取不到比较函数，当场报错",
+        ))
+    v = expr.get("value", _ABSENT)
+    if v is _ABSENT or isinstance(v, bool) or not _is_num(v) or not math.isfinite(float(v)):
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"propLevel 条件的 value 须为数（第几级；当前 {'缺失' if v is _ABSENT else repr(v)}）——运行时恒为假",
+        ))
+        return
+    if pid:
+        max_level = model.prop_level_counts().get(pid, 0)
+        if max_level and (float(v) < 1 or float(v) > max_level) and str(op if op is not _ABSENT else ">=") not in ("!=",):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"propLevel 条件比的是第 {v!r} 级，而挂件 {pid!r} 只有 1..{max_level} 级——这条比较恒真或恒假",
+            ))
+
+
+def _held_prop_condition_issues(
+    model: ProjectModel, issues: list[Issue], expr: dict, data_type: str, item_id: str,
+) -> None:
+    """手持挂件叶 `{heldProp, socket?, prop?, propState?, burning?, vitalityOp?+vitality?, fuelOp?+fuel?, effect?, lock?}`。
+
+    TS 权威 `types.ts::HeldPropConditionLeaf`，求值 `evaluateGraphCondition.ts::heldPropMismatch`。
+    运行时对错一律静默：写错的项要么让叶子**恒为假**（prop / propState / lock 对不上任何挂件）——error；
+    要么被**当没写**（类型不对的 socket / burning、落单的 vitalityOp / vitality）——作者想限定、结果没限定。
+    「谁」的候选口径与编辑器同一个函数（`ProjectModel.held_prop_holder_items`）。
+    """
+    who = str(expr.get("heldProp") or "").strip()
+    if not who:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "heldProp 条件需要非空 heldProp（player 或 NPC 实例 id）——运行时恒为假",
+        ))
+    else:
+        fn = getattr(model, "held_prop_holder_items", None)
+        known = {row[0] for row in fn()} if callable(fn) else set()
+        if known and who not in known:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"heldProp 条件的 {who!r} 既不是 player，也不是任何场景的 NPC / 过场临时演员 / 轨迹生成对象"
+                "（运行时找不到这个人就恒为假）",
+            ))
+    for key in ("socket", "prop", "propState"):
+        if key in expr and not isinstance(expr.get(key), str):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"heldProp 条件的 {key} 须为字符串（当前 {expr.get(key)!r}）——运行时当没写 = 不限",
+            ))
+
+    table = getattr(model, "prop_presets", None)
+    table = table if isinstance(table, dict) else {}
+    prop = expr.get("prop")
+    prop_id = prop.strip() if isinstance(prop, str) else ""
+    if prop_id and prop_id not in table:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"heldProp 条件的 prop {prop_id!r} 不在 prop_presets.json 中——没有挂件对得上，运行时恒为假",
+        ))
+    st = expr.get("propState")
+    state = st.strip() if isinstance(st, str) else ""
+    if state:
+        entry = table.get(prop_id) if prop_id else None
+        if isinstance(entry, dict):
+            states = entry.get("states")
+            if not isinstance(states, dict) or not states:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"heldProp 条件的 propState {state!r} 无处可去：挂件预设 {prop_id!r} 没有状态表"
+                    "（挂上去状态是空串）——运行时恒为假",
+                ))
+            elif state not in states:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"heldProp 条件的 propState {state!r} 不在挂件预设 {prop_id!r} 的 states 里"
+                    f"（现有：{'、'.join(str(k) for k in states)}）——运行时恒为假",
+                ))
+        elif not prop_id:
+            all_names: set[str] = set()
+            for e in table.values():
+                sts = e.get("states") if isinstance(e, dict) else None
+                if isinstance(sts, dict):
+                    all_names |= {str(k) for k in sts}
+            if state not in all_names:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"heldProp 条件的 propState {state!r} 在任何挂件预设的 states 里都不存在"
+                    "——没有挂件会处在这个状态，这条恒为假",
+                ))
+
+    if "burning" in expr and not isinstance(expr.get("burning"), bool):
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"heldProp 条件的 burning 须为 true/false（当前 {expr.get('burning')!r}）——运行时当没写 = 不限",
+        ))
+
+    if "lock" in expr:
+        lock = expr.get("lock")
+        if lock == "":
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "heldProp 条件的 lock 是空串——运行时当没写 = 不限；不限就删掉这个键",
+            ))
+        elif not isinstance(lock, str) or lock not in _PROP_LOCK_VALUES:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"heldProp 条件的 lock {lock!r} 非法（只认 lit / unlit / none）——没有挂件对得上，运行时恒为假",
+            ))
+
+    # 火势（vitality）与燃料（fuel）是同一条规矩的两份：运算符 + 数值一对，0..1，一起写才生效
+    #（`heldPropMismatch` 两处各自 `expr.xxxOp ? OPS[...] : undefined`，落单的那一半被静默忽略）。
+    for op_key, v_key, what, absent in (
+        ("vitalityOp", "vitality", "火势", "火势不限"),
+        ("fuelOp", "fuel", "燃料", "燃料不限"),
+    ):
+        has_op = op_key in expr
+        has_v = v_key in expr
+        op_raw = expr.get(op_key)
+        if has_op and (not isinstance(op_raw, str) or op_raw not in _HELD_VITALITY_OPS):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"heldProp 条件的 {op_key} {op_raw!r} 非法（只认 < <= > >=）——运行时当没写，{absent}",
+            ))
+        if has_v:
+            v = expr.get(v_key)
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(float(v)):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"heldProp 条件的 {v_key} 须为 0..1 的数（当前 {v!r}）——运行时当没写，{absent}",
+                ))
+            elif not 0.0 <= float(v) <= 1.0:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"heldProp 条件的 {v_key} {v!r} 超出 0..1——{what}恒在 0..1，这个比较不是恒真就是恒假",
+                ))
+        if has_op != has_v:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"heldProp 条件的 {op_key} 与 {v_key} 要一起写（现在只写了 {op_key if has_op else v_key}）"
+                f"——运行时当没写，{absent}",
+            ))
+
+    # 效果块（火把的脾气）：写 id 或写它的标签都命中（`s.effects` 是 id ∪ tags 的并集）。
+    # 两样都对不上 ⇒ 没有挂件会带这一块，这条恒为假；效果块库还空着时不报（刚起步的工程别满屏红）。
+    if "effect" in expr:
+        eff = expr.get("effect")
+        if not isinstance(eff, str):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"heldProp 条件的 effect 须为字符串（效果块 id 或它的标签；当前 {eff!r}）——运行时当没写 = 不限",
+            ))
+        elif not eff.strip():
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "heldProp 条件的 effect 是空串——运行时当没写 = 不限；不限就删掉这个键",
+            ))
+        else:
+            known = _prop_effect_tokens(model)
+            if known and eff.strip() not in known:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"heldProp 条件的 effect {eff.strip()!r} 既不是 prop_effects.json 的效果块 id，"
+                    f"也不是任何一块的标签（现有：{'、'.join(sorted(known))}）——没有挂件带得上它，这条恒为假",
+                ))
 
 
 def _graph_has_hold_voice(nodes: dict) -> bool:
@@ -6730,11 +7247,21 @@ def _validate_animation_sockets(model: ProjectModel, issues: list[Issue]) -> Non
                 "——运行时按空处理，这个包一步都不响",
             ))
             continue
+        # 点火接触帧（燃烧系统 A3.8）：与落脚帧同口径（`parseContactSlots` 同一套清洗）
+        ignite_raw = raw.get("igniteSlots")
+        if ignite_raw is not None and not isinstance(ignite_raw, list):
+            issues.append(Issue(
+                "error", "animation", bundle,
+                f"sockets.json 的 igniteSlots 须为槽位数组（当前 {type(ignite_raw).__name__}）"
+                "——运行时按空处理，点火表演退到片段第一帧",
+            ))
+            continue
         has_contact = isinstance(contact_raw, list) and bool(contact_raw)
-        if not has_sockets and not has_contact:
+        has_ignite = isinstance(ignite_raw, list) and bool(ignite_raw)
+        if not has_sockets and not has_contact and not has_ignite:
             issues.append(Issue(
                 "warning", "animation", bundle,
-                "sockets.json 里既没有挂点也没有落脚帧——空壳文件，删掉即可",
+                "sockets.json 里既没有挂点也没有落脚帧 / 点火接触帧——空壳文件，删掉即可",
             ))
             continue
         if not fingerprint_matches(raw.get("atlas"), fingerprint_of_anim(anim)):
@@ -6753,6 +7280,15 @@ def _validate_animation_sockets(model: ProjectModel, issues: list[Issue]) -> Non
                 issues.append(Issue(
                     "error", "animation", bundle,
                     f"落脚帧 contactSlots 里有不存在的图集槽位：{'、'.join(bad)}"
+                    f"（共 {slot_count} 个槽位，只能是非负整数）——运行时这些项被静默丢掉",
+                ))
+        if isinstance(ignite_raw, list):
+            bad = [repr(s) for s in ignite_raw
+                   if not _is_nonneg_int(s) or (slot_count and int(s) >= slot_count)]
+            if bad:
+                issues.append(Issue(
+                    "error", "animation", bundle,
+                    f"点火接触帧 igniteSlots 里有不存在的图集槽位：{'、'.join(bad)}"
                     f"（共 {slot_count} 个槽位，只能是非负整数）——运行时这些项被静默丢掉",
                 ))
         if not has_sockets:
@@ -6800,6 +7336,8 @@ def _validate_character_avatars(model: ProjectModel, issues: list[Issue]) -> Non
     known_logical = (
         {"idle", "walk", "run", "crouchWalk"}
         | set(_PLAYER_VERB_LOGICAL_STATES.values())
+        # 点火表演的片段（燃烧系统 A3.8；可控角色当玩家时同样解析它）
+        | {_player_ignite_logical_state(model.game_config if isinstance(model.game_config, dict) else {})}
     )
 
     # —— 角色级对话图绑定（与 NpcDef 侧同口径，缺了就是"角色配了图、进游戏没反应"）——
@@ -6966,6 +7504,43 @@ def _validate_day_night(model: ProjectModel, issues: list[Issue]) -> None:
     ))
 
 
+def _player_ignite_act_issues(slot: object, issues: list[Issue]) -> None:
+    """`playerActs.ignite {enabled?, animation?, walkSpeed?}`（运行时 Game.ts：`enabled !== false`、
+    `animation?.trim() || 'ignite'`、`walkSpeed` 原样给点火表演，缺省 = 本场景走路速度）。"""
+    if not isinstance(slot, dict):
+        issues.append(Issue(
+            "error", "config", "game_config",
+            f"playerActs.ignite 须为对象（当前 {slot!r}）——运行时读不到里面的项，全按缺省（开、片段 ignite）",
+        ))
+        return
+    en = slot.get("enabled")
+    if "enabled" in slot and not isinstance(en, bool):
+        issues.append(Issue(
+            "warning", "config", "game_config",
+            f"playerActs.ignite.enabled 须为 true/false（当前 {en!r}）——运行时只认 `=== false` 才关",
+        ))
+    anim = slot.get("animation")
+    if "animation" in slot and not isinstance(anim, str):
+        issues.append(Issue(
+            "error", "config", "game_config",
+            f"playerActs.ignite.animation 须为逻辑状态名字符串（当前 {anim!r}）——运行时 .trim() 会抛",
+        ))
+    ws = slot.get("walkSpeed")
+    if "walkSpeed" in slot and not (_is_num(ws) and math.isfinite(float(ws)) and float(ws) > 0):
+        issues.append(Issue(
+            "error", "config", "game_config",
+            f"playerActs.ignite.walkSpeed 须为 > 0 的数（wu/s，当前 {ws!r}）——不写 = 本场景走路速度",
+        ))
+
+
+def _player_ignite_logical_state(cfg: dict) -> str:
+    """点火片段的逻辑状态名（与 Game.ts 同口径：`playerActs.ignite.animation?.trim() || 'ignite'`）。"""
+    acts = cfg.get("playerActs")
+    slot = acts.get("ignite") if isinstance(acts, dict) else None
+    anim = slot.get("animation") if isinstance(slot, dict) else None
+    return anim.strip() if isinstance(anim, str) and anim.strip() else "ignite"
+
+
 def _validate_player_acts(model: ProjectModel, issues: list[Issue]) -> None:
     """playerAvatar.stateMap 与 playerActs 的一致性闸。
 
@@ -6985,6 +7560,8 @@ def _validate_player_acts(model: ProjectModel, issues: list[Issue]) -> None:
         known_logical = (
             {"idle", "walk", "run", "crouchWalk"}
             | set(_PLAYER_VERB_LOGICAL_STATES.values())
+            # 点火表演的片段（燃烧系统 A3.8）：逻辑状态名 = playerActs.ignite.animation，缺省 ignite
+            | {_player_ignite_logical_state(cfg)}
         )
         for logical, clip in state_map.items():
             if logical not in known_logical:
@@ -7037,6 +7614,11 @@ def _validate_player_acts(model: ProjectModel, issues: list[Issue]) -> None:
     disabled: set[str] = set()
     if isinstance(acts_cfg, dict):
         for verb, slot in acts_cfg.items():
+            if verb == "ignite":
+                # 地图上点火的表演（燃烧系统 A3.8，types.ts PlayerIgniteActConfig）：不是 zone onPlayerAct 的身体动词，
+                # 只是 playerActs 下的一个配置块
+                _player_ignite_act_issues(slot, issues)
+                continue
             if verb not in PLAYER_VERBS:
                 issues.append(Issue(
                     "error", "config", "game_config",
@@ -7148,8 +7730,13 @@ def _walk_action_defs(
     data_type: str, item_id: str, scene_id: str | None,
     *,
     cutscene_temp_ids: frozenset[str] | None = None,
+    prop_state_self: bool = False,
 ) -> None:
-    """遍历 ActionDef 列表：校验 type 已登记；setFlag 键；递归嵌套 action 容器。"""
+    """遍历 ActionDef 列表：校验 type 已登记；setFlag 键；递归嵌套 action 容器。
+
+    ``prop_state_self`` 只作用于**这一层**（挂件预设状态 ``onEnterActions`` 的顶层，见
+    ``_append_action_param_ref_issues``）；下面递归进容器时一律不传——运行时只给顶层注入。
+    """
     from .shared.action_editor import ACTION_TYPES
     allowed_types = set(ACTION_TYPES)
 
@@ -7159,6 +7746,7 @@ def _walk_action_defs(
         _append_action_param_ref_issues(
             model, issues, act, data_type, item_id, scene_id,
             cutscene_temp_ids=cutscene_temp_ids,
+            prop_state_self=prop_state_self,
         )
         t = act.get("type")
         if isinstance(t, str) and t and t not in allowed_types:
@@ -7168,6 +7756,18 @@ def _walk_action_defs(
                 f"添加新 Action 须在 ActionRegistry 与 action_editor 同步维护",
             ))
         p = act.get("params") or {}
+        for error in health_action_errors(t, p):
+            issues.append(Issue("error", data_type, item_id, error))
+        if t == "sceneWindGust":
+            from .shared.wind_gust_validation import wind_gust_errors
+            for error in wind_gust_errors(p):
+                issues.append(Issue("error", data_type, item_id, error))
+            if p.get("id") and p["id"] not in (model.audio_config or {}).get("ambient", {}):
+                issues.append(Issue("error", data_type, item_id, f"sceneWindGust 环境音 {p['id']!r} 不存在"))
+        if t == "inflictHealthDamage" and p.get("deathNoteId"):
+            note_ids = {n.get("id") for n in model.system_note_rows()}
+            if p["deathNoteId"] not in note_ids:
+                issues.append(Issue("error", data_type, item_id, f"inflictHealthDamage.deathNoteId {p['deathNoteId']!r} 不存在"))
         if t in ("setFlag", "appendFlag") and not str(p.get("key") or "").strip():
             issues.append(Issue(
                 "error", data_type, item_id,
@@ -7370,7 +7970,7 @@ _TRAJECTORY_SPACES: frozenset[str] = frozenset({"screen", "world"})
 # playTrajectory / playVfx / emitVfxField 在各自分支里调。
 _POSITION_REF_ACTIONS: frozenset[str] = frozenset({
     "moveEntityTo", "jumpEntityTo", "teleportEntityTo", "persistNpcAt", "cutsceneSpawnActor", "setSceneEntityPosition",
-    "cameraFollowActor", "faceEntity",
+    "cameraFollowActor", "faceEntity", "setSmellSource",
 })
 
 
@@ -7567,13 +8167,20 @@ def _curve_point_issues(
         ))
 
 
-def _spawn_spec_issues(model: ProjectModel, issues: list[Issue], spawn: dict, data_type: str, item_id: str) -> None:
-    """playTrajectory.spawn（TS `TrajectorySpawnSpec`）：kind 与对应必填、图片存在、角色登记、keep 形状。"""
+def _spawn_spec_issues(
+    model: ProjectModel, issues: list[Issue], spawn: dict, data_type: str, item_id: str, scene_id: str | None = None,
+) -> None:
+    """playTrajectory.spawn（TS `TrajectorySpawnSpec`）：kind 与对应必填、图片存在、角色登记、keep 形状、可燃块。
+
+    开了可燃（`burnable`）的生成对象渲染由模板接管，`src` / `characterId` 不再必填（写了照查存在性）。
+    """
     kind = str(spawn.get("kind") or "").strip()
+    burnable_on = "burnable" in spawn
     if kind == "image":
         src = str(spawn.get("src") or "").strip()
         if not src:
-            issues.append(Issue("error", data_type, item_id, "playTrajectory spawn.kind=image 缺少 src（运行时按没给运动对象处理）"))
+            if not burnable_on:
+                issues.append(Issue("error", data_type, item_id, "playTrajectory spawn.kind=image 缺少 src（运行时按没给运动对象处理）"))
         elif model.project_path is not None and src.startswith("/"):
             disk = model.project_path / "public" / src.lstrip("/")
             if not disk.is_file():
@@ -7589,7 +8196,8 @@ def _spawn_spec_issues(model: ProjectModel, issues: list[Issue], spawn: dict, da
         cid = str(spawn.get("characterId") or "").strip()
         reg = getattr(model, "character_registry", None) or {}
         if not cid:
-            issues.append(Issue("error", data_type, item_id, "playTrajectory spawn.kind=character 缺少 characterId（运行时按没给运动对象处理）"))
+            if not burnable_on:
+                issues.append(Issue("error", data_type, item_id, "playTrajectory spawn.kind=character 缺少 characterId（运行时按没给运动对象处理）"))
         elif isinstance(reg, dict) and reg and cid not in reg:
             issues.append(Issue(
                 "warning", data_type, item_id,
@@ -7613,6 +8221,8 @@ def _spawn_spec_issues(model: ProjectModel, issues: list[Issue], spawn: dict, da
     sid = spawn.get("id")
     if sid is not None and (not isinstance(sid, str) or not sid.strip()):
         issues.append(Issue("warning", data_type, item_id, "playTrajectory spawn.id 给了就要是非空字符串（空 = 运行时自动生成）"))
+    if burnable_on:
+        _spawn_burnable_issues(model, issues, spawn, data_type, item_id, scene_id)
 
 
 def _known_trajectory_ids(model: ProjectModel) -> set[str]:
@@ -7644,6 +8254,516 @@ _VFX_PLACEMENTS_DT = "vfx_placements"
 _VFX_INSTANCE_NULLABLE = frozenset({"seed", "countScale", "autoStart", "conditions", "area", "confine"})
 _VFX_ANCHOR_NULLABLE = frozenset({"h", "surface"})
 _VFX_CONFINE_NULLABLE = frozenset({"area", "feather", "ceiling"})
+
+
+# ---------------------------------------------------------------------------- 燃烧系统（A3.8）
+#
+# 2026-09-16 制作人改定「模板 + 实例」：可燃物模板 `assets/data/burnables/<id>.json`（唯一写入者燃烧工作台，和场景无关）；
+# 谁是可燃物写在**宿主自己身上**——热点 / NPC（场景 JSON）、挂件预设、轨迹 spawn 规格（`playTrajectory.params.spawn`）的
+# `burnable: {template, initial?, playerIgnite?, igniteConditions?, signals?}`，粒子薄片 `plate.burnable: {template}`。
+# 形状闸门是共享的 `tools/editor/shared/burnables.py`（工作台保存用同一份）。
+# 运行时 `BurnSystem` 对这里的内容错一律「warn 一行、跳过这个实例」——画面上就是"点不着 / 没有火 / 图没了"，
+# 与"没开可燃"长得一样，只能构建期拦。模板目录不存在 = 还没有可燃物，静默通过。
+
+_BURN_DT = "burnable"
+
+#: 挂件预设开了可燃后与火把那一套**互斥**的键（写了 = error：运行时整件按可燃物实例走，这些块一律不读）
+_BURN_PROP_EXCLUSIVE_KEYS = (
+    "light", "particles", "flame", "firePoint", "playerControl", "blowout", "igniter", "fuel", "effects", "levels", "states",
+)
+#: 挂件预设开了可燃后被模板接管、不画的键（写了 = warning）
+_BURN_PROP_OVERRIDDEN_KEYS = ("image", "images", "anchorX", "anchorY")
+#: 实体运行时字段里「换图 / 换动画」的那几种应用方式（`runtime_field_schema.json` 的 apply）
+_BURN_RENDER_FIELD_APPLIES = frozenset({"reloadAnimation", "playAnimation", "reloadHotspotDisplayImage"})
+_BURN_RENDER_OVERRIDE_NOTE = (
+    "开了可燃的实体渲染由可燃物模板接管：图与大小取模板、不播动画也不换图，这一步画面上没有任何效果"
+    "——要换样子就关掉它的「可燃」，或换一个没开可燃的实体"
+)
+
+
+def _burn_template_ok(
+    model: ProjectModel, issues: list[Issue], tid: str, data_type: str, item_id: str, where: str,
+) -> dict | None:
+    """宿主引用的模板：在镜像里返回文档；读不懂（`_validate_burnables` 已报）/ 模型没有镜像返回 None 且不报；不存在报 error。"""
+    mirror = getattr(model, "burnables", None)
+    if not isinstance(mirror, dict):
+        return None  # 测试桩没有模板镜像：宁可少校验不误报
+    doc = mirror.get(tid)
+    if isinstance(doc, dict):
+        return doc
+    if tid in (getattr(model, "burnables_errors", None) or {}):
+        return None
+    issues.append(Issue(
+        "error", data_type, item_id,
+        f"{where}：可燃物模板 {tid!r} 不在 assets/data/burnables/ 里——运行时建不出这个实例（不画、点不着）",
+    ))
+    return None
+
+
+def _burn_host_signal_issues(
+    model: ProjectModel, issues: list[Issue], host: dict, data_type: str, item_id: str, where: str,
+) -> None:
+    """宿主可燃配置里的三个信号：与 `emitNarrativeSignal.signal` 同一套叙事信号校验（保留信号 error、未登记 / 没人听 warning）。"""
+    from .shared import burnables as _bn
+
+    registered = _narrative_registered_signal_ids(model)
+    listened = _narrative_listened_signals(model)
+    for moment, name in _bn.host_signals(host):
+        label = f"{where}：{_bn.SIGNAL_MOMENT_LABELS.get(moment, moment)}的信号"
+        if name == "__draft__" or name.startswith("state:"):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"{label} 不可发射保留信号 {name!r}（state:* 由运行时派生广播；__draft__ 是占位符）——运行时拒发",
+            ))
+            continue
+        if registered and name not in registered:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{label} {name!r} 未在 narrative_graphs.signals 注册表登记",
+            ))
+        if listened and name not in listened:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{label} {name!r} 没有任何 Transition 监听（发出后不会推动任何迁移）",
+            ))
+
+
+def _burn_host_issues(
+    model: ProjectModel, issues: list[Issue], raw: object, host_kind: str,
+    data_type: str, item_id: str, where: str, scene_id: str | None,
+) -> dict | None:
+    """一个宿主上的 `burnable` 块：形状（共享闸门）+ 模板存在 + 能点的条件 + 信号。返回清洗后的块与模板文档（坏形状返回 None）。
+
+    ``host_kind``：``entity`` 热点 / NPC、``prop`` 挂件预设、``spawn`` 轨迹 spawn 规格；``scene_id`` = 能点的条件的场景上下文。
+    """
+    from .shared import burnables as _bn
+
+    try:
+        host, warns = _bn.normalize_burnable_host(raw, where, host_kind)
+    except _bn.BurnShapeError as e:
+        issues.append(Issue("error", data_type, item_id, f"{e}——运行时当没开可燃（按它自己的图 / 动画画、点不着）"))
+        return None
+    for w in warns:
+        issues.append(Issue("warning", data_type, item_id, w))
+    tid = str(host.get("template") or "").strip()
+    doc = _burn_template_ok(model, issues, tid, data_type, item_id, where)
+    conds = host.get("igniteConditions")
+    if isinstance(conds, list) and conds and host_kind != "prop":
+        sub: list[Issue] = []
+        _walk_conditions(model, sub, conds, data_type, item_id, scene_id)
+        for it in sub:
+            issues.append(Issue(it.severity, it.data_type, it.item_id, f"{where}：能点的条件 · {it.message}"))
+    _burn_host_signal_issues(model, issues, host, data_type, item_id, where)
+    return {"host": host, "template": doc}
+
+
+def _validate_burnables(model: ProjectModel, issues: list[Issue]) -> None:
+    """可燃物模板：形状（共享闸门 `normalize_burnable`，id == 文件名、真实尺寸必填、握点）+ 图存在 + 粒子效果存在。"""
+    from .shared import burnables as _bn
+
+    root = getattr(model, "project_path", None)
+    if root is None or not _bn.burnables_dir(Path(root)).is_dir():
+        return
+    effects = getattr(model, "vfx_effects", None) or {}
+    known_eff, external_eff = _vfx_effect_id_sets(effects) if isinstance(effects, dict) else (set(), set())
+    for bid in _bn.list_burnable_ids(Path(root)):
+        doc, err = _bn.load_burnable(Path(root), bid)
+        if err:
+            issues.append(Issue("error", _BURN_DT, bid, f"{err}——运行时装不到，引用它的实体 / 挂件 / 粒子都点不着"))
+            continue
+        try:
+            norm, warns = _bn.normalize_burnable(doc, bid)
+        except _bn.BurnShapeError as e:
+            issues.append(Issue(
+                "error", _BURN_DT, bid,
+                f"{e}——在燃烧工作台里改（工作台保存闸门同样拒这份；运行时这份模板不装，引用它的实例都不建）",
+            ))
+            continue
+        for w in warns:
+            issues.append(Issue("warning", _BURN_DT, bid, w))
+        image = str(norm.get("image") or "").strip()
+        if image and not (image.startswith("http://") or image.startswith("https://")):
+            disk = model.paths.url_to_disk(image, kind=URL_KIND_MEDIA)
+            if disk is None:
+                issues.append(Issue(
+                    "error", _BURN_DT, bid,
+                    f"image 不可解析为媒体路径（媒体必须落在 public/resources/runtime 下）：{image!r}"
+                    "——运行时读不出图，这份模板的实例都不建",
+                ))
+            elif not disk.is_file():
+                issues.append(Issue(
+                    "error", _BURN_DT, bid,
+                    f"image 指向的图片文件不存在：{disk}——运行时读不出图，这份模板的实例都不建",
+                ))
+        for i, slot in enumerate(norm.get("particles") or []):
+            eff = str(slot.get("effect") or "").strip() if isinstance(slot, dict) else ""
+            if not eff:
+                continue
+            if known_eff and eff not in known_eff:
+                issues.append(Issue(
+                    "error", _BURN_DT, bid,
+                    f"particles[{i}].effect {eff!r} 不在 assets/data/vfx/ 里——运行时装不到，这团粒子不发",
+                ))
+            elif known_eff and eff not in external_eff:
+                issues.append(Issue(
+                    "warning", _BURN_DT, bid,
+                    f"particles[{i}].effect {eff!r} 里没有发射形状为「外部给点（external）」的发射器——"
+                    "粒子不会落在正在烧的地方（只在效果自己的形状里发）",
+                ))
+
+
+def _validate_burnable_hosts(model: ProjectModel, issues: list[Issue]) -> None:
+    """场景实体（热点 / NPC）与挂件预设身上的 `burnable` 块。
+
+    轨迹 spawn 规格上的块由动作校验（`_spawn_spec_issues`）走既有动作遍历器报——对话图 / 任务 / 叙事图里的也覆盖；
+    粒子薄片的 `plate.burnable` 在 `_validate_vfx_effects` 里报。
+    """
+    scenes = getattr(model, "scenes", None)
+    for sid, sc in sorted((scenes or {}).items()) if isinstance(scenes, dict) else []:
+        if not isinstance(sc, dict):
+            continue
+        for kind, key, label in (("hotspot", "hotspots", "热点"), ("npc", "npcs", "NPC")):
+            for ent in sc.get(key) or []:
+                if not isinstance(ent, dict) or "burnable" not in ent:
+                    continue
+                eid = str(ent.get("id") or "").strip() or "?"
+                where = f"{label} '{eid}' 的可燃"
+                got = _burn_host_issues(model, issues, ent.get("burnable"), "entity", "scene", sid, where, sid)
+                if got is None or kind != "hotspot":
+                    continue
+                tdoc = got["template"]
+                di = ent.get("displayImage")
+                if isinstance(di, dict) and isinstance(tdoc, dict) and isinstance(tdoc.get("image"), str):
+                    himg = di.get("image")
+                    if isinstance(himg, str) and himg.strip() and himg.strip() != tdoc["image"].strip():
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"{where}：展示图 {himg.strip()!r} 不是模板 {str(got['host'].get('template'))!r} 的图"
+                            f"（{tdoc['image'].strip()}）——开了可燃的热点按模板的图与真实尺寸画，这张图不画"
+                            "（displayImage 的 facing / spriteSort 照用）",
+                        ))
+
+    table = getattr(model, "prop_presets", None)
+    for key, entry in (table or {}).items() if isinstance(table, dict) else []:
+        pid = str(key).strip()
+        if not pid or not isinstance(entry, dict) or "burnable" not in entry:
+            continue
+        where = f"挂件预设 {pid!r} 的可燃"
+        _burn_host_issues(model, issues, entry.get("burnable"), "prop", "prop_preset", pid, where, None)
+        for k in _BURN_PROP_EXCLUSIVE_KEYS:
+            if k in entry:
+                issues.append(Issue(
+                    "error", "prop_preset", pid,
+                    f"{where}与 {k} 互斥：开了可燃的挂件整件按可燃物实例走（火与光都由模板出），{k} 运行时不读"
+                    "——火把那一套与可燃二选一，删掉其中一边",
+                ))
+        for k in _BURN_PROP_OVERRIDDEN_KEYS:
+            if k in entry:
+                issues.append(Issue(
+                    "warning", "prop_preset", pid,
+                    f"{where}：{k} 被模板接管、不读（图取模板、挂点对准模板的握点；scale / rotation 照乘）",
+                ))
+
+
+def _spawn_burnable_issues(
+    model: ProjectModel, issues: list[Issue], spawn: dict, data_type: str, item_id: str, scene_id: str | None,
+) -> None:
+    """轨迹 spawn 规格上的 `burnable` 块（动态创建的可燃物）。"""
+    from .shared import burnables as _bn
+
+    sid = spawn.get("id")
+    who = f"playTrajectory spawn{(' ' + repr(sid.strip())) if isinstance(sid, str) and sid.strip() else ''} 的可燃"
+    got = _burn_host_issues(model, issues, spawn.get("burnable"), "spawn", data_type, item_id, who, scene_id)
+    if got is None:
+        return
+    tdoc = got["template"]
+    src = spawn.get("src")
+    if (
+        isinstance(src, str) and src.strip() and isinstance(tdoc, dict) and isinstance(tdoc.get("image"), str)
+        and src.strip() != tdoc["image"].strip()
+    ):
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"{who}：spawn.src {src.strip()!r} 不是模板的图（{tdoc['image'].strip()}）——开了可燃的生成对象按模板的图与真实尺寸画，"
+            "这张图不画（src / characterId 可以不写）",
+        ))
+    if _bn.host_signals(got["host"]) and not (isinstance(sid, str) and sid.strip()):
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"{who}：配了信号但 spawn 没写 id——信号的宿主是运行时自动生成的 id，私有信号投递不到、条件 / 动作也指名不到它",
+        ))
+
+
+def _burn_bare_target_verdict(
+    model: ProjectModel, scene_id: str | None, target: str, *, kinds: tuple[str, ...], with_spawn: bool = True,
+) -> str:
+    """裸 target 是不是开了可燃的实体：`"all"` 一定是 / `"some"` 可能是（同 id 有的场景 / 生成规格开了、有的没开）/ `""` 不是。
+
+    ``kinds`` = 这个动作运行时能解析到的实体种类（`npc` / `hotspot`）；``with_spawn`` = 演出生成的对象算不算
+    （它们运行时是 NPC，`resolveActor` 找得到；按场景定义指名的 setEntityField 一类找不到）。
+    有场景上下文只看那个场景；没有看所有定义了它的场景（运行时按当前场景解析）。
+    """
+    tid = target.strip()
+    if not tid or tid == "player":
+        return ""
+    flags: list[bool] = []
+    scenes = getattr(model, "scenes", None)
+    scenes = scenes if isinstance(scenes, dict) else {}
+    keys = [k for k, key in (("npc", "npcs"), ("hotspot", "hotspots")) if k in kinds]
+    for sid in ([scene_id] if scene_id else sorted(scenes)):
+        sc = scenes.get(sid)
+        if not isinstance(sc, dict):
+            continue
+        for k in keys:
+            for ent in sc.get(f"{k}s") or []:
+                if isinstance(ent, dict) and str(ent.get("id") or "").strip() == tid:
+                    host = ent.get("burnable")
+                    flags.append(isinstance(host, dict) and bool(str(host.get("template") or "").strip()))
+    if with_spawn and "npc" in kinds:
+        fn = getattr(model, "burnable_spawn_specs", None)
+        for row in (fn() if callable(fn) else []):
+            if row.get("id") == tid:
+                flags.append(bool(row.get("template")))
+    if not flags or not any(flags):
+        return ""
+    return "all" if all(flags) else "some"
+
+
+def _burn_render_override_issues(
+    model: ProjectModel, issues: list[Issue], t: str, p: dict, data_type: str, item_id: str, scene_id: str | None,
+) -> None:
+    """「给开了可燃的实体换图 / 换动画」（A3.8：开了可燃 ⇒ 宿主自己的图 / 动画一律失效）。
+
+    清单以 `action_editor.ACTION_TYPES` + 运行时 `ActionRegistry` 为准（2026-09-16 盘点）：
+    `playNpcAnimation.target`、`persistNpcAnimState` / `persistPlayNpcAnimation.target`、
+    `moveEntityTo.moveAnimState / arriveAnimState`、`jumpEntityTo.jumpAnimState / landAnimState`、
+    `playTrajectory.animState`（target 档）、`setEntityField` 改 `runtime_field_schema.json` 里 apply ∈
+    reloadAnimation / playAnimation / reloadHotspotDisplayImage 的字段（animFile / initialAnimState / animState / displayImage）、
+    `setHotspotDisplayImage`。只移动 / 转向 / 显隐 / 缩放的不算（实例照乘宿主的位置、scale、rotation、朝向）。
+    """
+    def report(target: str, verdict: str, what: str) -> None:
+        if not verdict:
+            return
+        if verdict == "all":
+            issues.append(Issue("error", data_type, item_id, f"{t} 给开了可燃的实体 {target!r} {what}——{_BURN_RENDER_OVERRIDE_NOTE}"))
+        else:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{t} 的 {target!r} 在有的场景 / 生成规格里开了可燃：在那里{what}没有效果——{_BURN_RENDER_OVERRIDE_NOTE}",
+            ))
+
+    def bare(param: str, what: str) -> None:
+        target = p.get(param)
+        if isinstance(target, str) and target.strip():
+            report(target.strip(), _burn_bare_target_verdict(model, scene_id, target, kinds=("npc",)), what)
+
+    if t == "playNpcAnimation":
+        state = str(p.get("state") or "").strip()
+        bare("target", f"播动画（state {state!r}）" if state else "播动画")
+    elif t in ("persistNpcAnimState", "persistPlayNpcAnimation"):
+        bare("target", "换存档动画状态")
+    elif t == "moveEntityTo":
+        used = [k for k in ("moveAnimState", "arriveAnimState") if str(p.get(k) or "").strip()]
+        if used:
+            bare("target", f"指定动画（{' / '.join(used)}）")
+    elif t == "jumpEntityTo":
+        used = [k for k in ("jumpAnimState", "landAnimState") if str(p.get(k) or "").strip()]
+        if used:
+            bare("target", f"指定动画（{' / '.join(used)}）")
+    elif t == "playTrajectory":
+        if str(p.get("animState") or "").strip() and not isinstance(p.get("spawn"), dict):
+            bare("target", f"开播前切动画（animState {str(p.get('animState')).strip()!r}）")
+    elif t == "setEntityField":
+        sid = str(p.get("sceneId") or "").strip()
+        kind = str(p.get("entityKind") or "").strip()
+        eid = str(p.get("entityId") or "").strip()
+        field = str(p.get("fieldName") or "").strip()
+        meta = field_meta(kind, field) if kind in ("npc", "hotspot") and field else None
+        if sid and eid and isinstance(meta, dict) and meta.get("apply") in _BURN_RENDER_FIELD_APPLIES:
+            report(eid, _burn_bare_target_verdict(model, sid, eid, kinds=(kind,), with_spawn=False),
+                   f"改 {kind}.{field}（换图 / 换动画）")
+    elif t == "setHotspotDisplayImage":
+        sid = str(p.get("sceneId") or "").strip()
+        hid = str(p.get("hotspotId") or "").strip()
+        if sid and hid:
+            report(hid, _burn_bare_target_verdict(model, sid, hid, kinds=("hotspot",), with_spawn=False), "换展示图")
+
+
+def _burn_spawn_nonkeep_note(model: ProjectModel, target: str) -> str:
+    """target 是开了可燃、但**播完移除**的演出生成对象时的补充说明（空 = 不是）。"""
+    fn = getattr(model, "burnable_spawn_specs", None)
+    for row in (fn() if callable(fn) else []):
+        if row.get("id") == target and row.get("template") and not row.get("keep"):
+            return "（它是演出里生成的可燃对象，但没勾「播完留在终点」：播完就移除，之后找不到）"
+    return ""
+
+
+def _burn_condition_issues(
+    model: ProjectModel, issues: list[Issue], expr: dict, data_type: str, item_id: str,
+    scene_id: str | None,
+) -> None:
+    """可燃物叶 `{burn, burnSocket?, burnScene?, burnState}`（TS 权威 `types.ts::BurnConditionLeaf`，求值 `evalBurnLeaf`）。
+
+    候选口径与条件编辑器同一组函数（`ProjectModel.burn_target_ids` / `burn_holder_ids`）：
+    - 不写 burnSocket：burn = 场景里开了可燃的实体（热点 / NPC）或演出生成且留下的可燃对象；`burnScene` 缺省 = 当前场景，
+      有场景上下文（场景 JSON 里的条件）按那个场景查，没有按全工程并集查；
+    - 写了 burnSocket：burn = 拿东西的人（player / NPC），`burnScene` 不读。
+    """
+    eid = str(expr.get("burn") or "").strip()
+    state = expr.get("burnState")
+    if not eid or state not in ("unburnt", "burning", "out", "burnt"):
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"burn 条件需要非空 burn（可燃实体 id；写了 burnSocket 时是拿东西的人）与 burnState"
+            f"（unburnt / burning / out / burnt，当前 {state!r}）——运行时恒为假",
+        ))
+        if not eid:
+            return
+    socket_raw = expr.get("burnSocket")
+    if "burnSocket" in expr and not isinstance(socket_raw, str):
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"burn 条件的 burnSocket 须为挂点名字符串（当前 {socket_raw!r}）——运行时当没写 = 问场景实体",
+        ))
+    socket = socket_raw.strip() if isinstance(socket_raw, str) else ""
+    if isinstance(socket_raw, str) and not socket:
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            "burn 条件的 burnSocket 是空串——运行时当没写 = 问场景实体；不问手上的可燃挂件就删掉这个键",
+        ))
+    scene_raw = expr.get("burnScene")
+    if "burnScene" in expr and not isinstance(scene_raw, str):
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"burn 条件的 burnScene 须为场景 id 字符串（当前 {scene_raw!r}）——运行时当没写 = 当前场景",
+        ))
+    scene = scene_raw.strip() if isinstance(scene_raw, str) else ""
+    if socket:
+        if scene:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"burn 条件写了 burnSocket（问 {eid!r} 手上的可燃挂件）时 burnScene {scene!r} 不读——删掉它",
+            ))
+        fn = getattr(model, "burn_holder_ids", None)
+        if callable(fn) and eid not in {i for i, _l in fn(scene_id)}:
+            where = f"场景 {scene_id!r} 的" if scene_id else "任何场景的"
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"burn 条件的 burn {eid!r} 既不是 player 也不是{where} NPC——写了 burnSocket 时它是拿东西的人，"
+                "运行时找不到这个人恒为假",
+            ))
+        return
+    scenes = getattr(model, "scenes", None) or {}
+    if scene and scene not in scenes:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"burn 条件的 burnScene {scene!r} 不是已有场景——运行时恒为假",
+        ))
+        return
+    fn = getattr(model, "burn_target_ids", None)
+    if not callable(fn):
+        return
+    where = scene or scene_id
+    if eid not in {i for i, _l in fn(where or None)}:
+        at = f"场景 {where!r} 里" if where else "任何场景里"
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"burn 条件的 burn {eid!r} 在{at}都不是开了可燃的实体{_burn_spawn_nonkeep_note(model, eid)}"
+            "——运行时取不到状态，恒为假（在实体的「可燃」块里选模板；问手上的可燃挂件要写 burnSocket）",
+        ))
+
+
+def _burn_action_issues(
+    model: ProjectModel, issues: list[Issue], t: str, p: dict, data_type: str, item_id: str,
+    scene_id: str | None,
+) -> None:
+    """`igniteBurnable {target, socket?, point?}` / `extinguishBurnable {target, socket?}` / `resetBurnable {target, socket?}`。
+
+    候选口径与动作编辑器同一组函数（`ProjectModel.burn_target_ids` / `burn_point_ids`）：socket 没写 = target 是
+    场景里开了可燃的实体（有场景上下文 = 本场景，没有 = 全工程并集）或演出生成且留下的可燃对象；写了 = target 是拿东西的人。
+    运行时按当前场景解析，不是可燃实例 = warn 一行、什么都不做。point 候选 = 那个实例的模板的着火点。
+    """
+    target = str(p.get("target") or "").strip()
+    if not target:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"{t} 缺 target（开了可燃的实体 id；写了 socket 时是拿东西的人）——运行时 warn 一行、什么都不做",
+        ))
+        return
+    socket_raw = p.get("socket")
+    if socket_raw is not None and not isinstance(socket_raw, str):
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"{t} 的 socket 须为挂点名字符串（当前 {socket_raw!r}）",
+        ))
+    socket = socket_raw.strip() if isinstance(socket_raw, str) else ""
+    if isinstance(socket_raw, str) and not socket:
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"{t} 的 socket 是空串——运行时当没写 = target 是场景里的可燃实体；不烧手上的可燃挂件就删掉这个键",
+        ))
+    fn = getattr(model, "burn_target_ids", None)
+    if not callable(fn):
+        return
+    known = {i for i, _l in fn(scene_id, socket)}
+    if target not in known:
+        at = f"场景 {scene_id!r} 里" if scene_id else "任何场景里"
+        if socket:
+            msg = (f"{t} 的 target {target!r} 既不是 player 也不是{at}的 NPC——写了 socket 时 target 是拿着可燃挂件的人，"
+                   "运行时找不到这个人，warn 一行、什么都不做")
+        else:
+            msg = (f"{t} 的 target {target!r} 在{at}都不是开了可燃的实体{_burn_spawn_nonkeep_note(model, target)}"
+                   "——运行时 warn 一行、什么都不做（在实体的「可燃」块里选模板；烧手上的可燃挂件要写 socket）")
+        issues.append(Issue("warning", data_type, item_id, msg))
+        return
+    if t != "igniteBurnable":
+        return
+    point = p.get("point")
+    if point is None or (isinstance(point, str) and not point.strip()):
+        return
+    if not isinstance(point, str):
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"igniteBurnable 的 point 须为着火点 id 字符串（当前 {point!r}）——运行时按缺省点",
+        ))
+        return
+    pfn = getattr(model, "burn_point_ids", None)
+    pts = {pid for pid, _l in (pfn(scene_id, target, socket) if callable(pfn) else [])}
+    if point.strip() not in pts:
+        whose = f"{target!r} 手上 {socket!r} 挂点的可燃挂件" if socket else f"可燃实体 {target!r}"
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"igniteBurnable 的 point {point.strip()!r} 不是{whose}的模板着火点"
+            f"（有：{'、'.join(sorted(pts)) or '没标着火点'}）——运行时按缺省点（有点取第一个，没有整体点着）",
+        ))
+
+
+def _vfx_plate_burnable_issues(
+    model: ProjectModel, issues: list[Issue], pl: dict, stem: str, eid: str,
+) -> None:
+    """粒子薄片的可燃绑定 `plate.burnable: {template}`：形状、模板存在、**只能绑面燃烧**（mode ≠ consume）模板。"""
+    from .shared import burnables as _bn
+
+    if "flammable" in pl:
+        issues.append(Issue(
+            "warning", "vfx", stem,
+            f"发射器 {eid!r}: plate.flammable 是已删除的旧写法，运行时不读——在粒子工作台里给薄片绑可燃模板（plate.burnable）",
+        ))
+    if "burnable" not in pl:
+        return
+    where = f"发射器 {eid!r} 的 plate.burnable"
+    try:
+        binding = _bn.normalize_plate_binding(pl.get("burnable"), where)
+    except _bn.BurnShapeError as e:
+        issues.append(Issue("error", "vfx", stem, f"{e}——运行时这片纸不可燃"))
+        return
+    tid = str(binding.get("template") or "").strip()
+    doc = _burn_template_ok(model, issues, tid, "vfx", stem, where)
+    if isinstance(doc, dict) and doc.get("mode") == "consume":
+        issues.append(Issue(
+            "error", "vfx", stem,
+            f"{where}：模板 {tid!r} 是消耗燃烧（蜡烛 / 香）——粒子薄片只能绑面燃烧模板，运行时这片纸不可燃",
+        ))
 
 
 def _vfx_placement_library(model: ProjectModel) -> tuple[dict, str]:
@@ -8026,8 +9146,24 @@ def _prop_light_issues(
     if flk is None:
         return
     if not isinstance(flk, dict):
-        issues.append(Issue("error", "prop_preset", pid, f"{where}.flicker 须为对象 {{amp, hz}}"))
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where}.flicker 须为对象：物理 {{kind: flame|ember, diameter}} 或正弦 {{amp, hz}}",
+        ))
         return
+    if "kind" in flk:
+        kind = flk.get("kind")
+        if kind in _PROP_FLICKER_PHYSICAL_KINDS:
+            _prop_physical_flicker_issues(flk, str(kind), pid, where, issues)
+            return
+        # 运行时只认严格等于 "flame" / "ember"：别的值（"flames"、1、null）一律按正弦解析、kind 被忽略
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where}.flicker.kind={kind!r} 运行时不认（只有 \"flame\" 明火 / \"ember\" 炭火）——"
+            "它会静默按正弦老写法解析、忽略 kind：没写 amp/hz 就整块丢掉，灯不闪",
+        ))
+        if not any(k in flk for k in ("amp", "hz", "windAmp")):
+            return
     bad: list[str] = []
     for key in ("amp", "hz"):
         v = flk.get(key)
@@ -8047,12 +9183,1128 @@ def _prop_light_issues(
         ))
 
 
+#: 物理闪烁的两种火（`PropFlickerPhysicalDef.kind`）。运行时是严格 `===` 比较
+_PROP_FLICKER_PHYSICAL_KINDS = ("flame", "ember")
+
+
+def _prop_physical_flicker_issues(
+    flk: dict, kind: str, pid: str, where: str, issues: list[Issue],
+) -> None:
+    """物理闪烁 `{kind: flame|ember, diameter, puffAmp?}`（TS 权威 `parsePropLight`）。
+
+    数值走 `Number()` 口径（`js_number`）：`"0.1"` 这类写法运行时照用，只 warn，不报 error
+    （norms 不变量 7）。`diameter` 拿不到 > 0 的有限数 ⇒ 整块丢掉，与正弦缺 amp/hz 同一个口径。
+    """
+    from .shared.prop_preview import js_number
+
+    d_raw = flk.get("diameter", _ABSENT)
+    diameter = js_number(d_raw)
+    if diameter is None or diameter <= 0:
+        shown = "没写" if d_raw is _ABSENT else repr(d_raw)
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where}.flicker.diameter 必须是 > 0 的数（燃烧面直径，米；火把头 ≈ 0.1；当前 {shown}）——"
+            "少了运行时整块丢掉：灯不闪",
+        ))
+    else:
+        _prop_coerced_num_warning(d_raw, diameter, pid, f"{where}.flicker.diameter", issues)
+    stale = [k for k in ("amp", "hz", "windAmp") if k in flk]
+    if stale:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where}.flicker 写了 kind={kind!r} 又写了 {'/'.join(stale)}——"
+            "写了 kind 就不读 amp/hz/windAmp，删掉免得以为它们在起作用",
+        ))
+    if "puffAmp" not in flk:
+        return
+    p_raw = flk.get("puffAmp")
+    if kind == "ember":
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where}.flicker.puffAmp——炭火不读 puffAmp（炭火不喘），删掉",
+        ))
+        return
+    puff = js_number(p_raw)
+    if puff is None:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where}.flicker.puffAmp 不是数（当前 {p_raw!r}）——运行时当没写，按缺省 0.1 喘",
+        ))
+        return
+    if p_raw is None:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where}.flicker.puffAmp: null——运行时 Number(null)=0 ⇒ 火不喘；"
+            "不是这个意思就删掉这个键（没写才是缺省 0.1）",
+        ))
+    else:
+        _prop_coerced_num_warning(p_raw, puff, pid, f"{where}.flicker.puffAmp", issues)
+    if not 0.0 <= puff <= 1.0:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where}.flicker.puffAmp={p_raw!r} 超出 0..1——运行时夹到 0..1",
+        ))
+
+
+#: 挂件状态动作与过场白名单的交集判据：这两个动作之一进了白名单，状态的进入动作就成了
+#: 过场里能间接跑起来的动作树（契约「过场」一条）
+_PROP_STATE_SWITCH_ACTIONS = frozenset({"setPropState", "attachToSocket"})
+
+
+def _prop_coerced_num_warning(
+    raw: object, value: float | None, pid: str, where: str, issues: list[Issue],
+) -> None:
+    """非数值写法但 `Number()` 强转后有限（`"0.5"` / `true` / `null`）：运行时照用，只提醒。
+
+    TS 权威 `finiteOrUndefined` 是 `Number(v)`，这类写法**是合法数据**——报 error 就比 TS 更严
+    （norms 不变量 7）。但 `null`→0、`true`→1 这种强转读起来像"没写"，值得让作者看见。
+    """
+    if value is not None and not _is_num(raw):
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where} 写成了非数值 {raw!r}——运行时按 Number() 强转成 {value:g}；改成数免得读错",
+        ))
+
+
+#: 挂件点火块火头长度缺省（厘米，与 `propPresets.ts::PROP_IGNITER_DEFAULT_FLAME_CM` 同值）
+_PROP_IGNITER_DEFAULT_FLAME_CM = 20
+
+
+def _prop_igniter_issues(
+    raw: object, pid: str, where: str, issues: list[Issue], *, in_state: bool,
+) -> None:
+    """能点火块 `igniter`（基础块 / 状态；TS 权威 `propPresets.ts::parseIgniter`，燃烧系统 A3.8）。
+
+    基础块：对象即开（`{}` = 全用缺省）；不是对象（含 null）运行时当没写 = 点不了。
+    状态：`null` = 这个状态点不了（有意义的值）；对象 = 整块替换；坏值当没写 = 沿用基础块。
+    `flameLength` 走 `Number()`，> 0 的有限数才算写了，否则用缺省。
+    """
+    from .shared.prop_preview import ABSENT, js_number
+
+    if raw is ABSENT:
+        return
+    if raw is None:
+        if not in_state:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{where}: null——基础块写 null 运行时当没写（点不了）；要能点火写 {{}}，不能就删掉这个键"
+                "（null = 这个状态点不了，只在状态里有意义）",
+            ))
+        return
+    if not isinstance(raw, dict):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 须为对象（{{}} = 缺省火头长度 {_PROP_IGNITER_DEFAULT_FLAME_CM} cm）当前 {raw!r}——运行时当没写："
+            + ("沿用基础块" if in_state else "这件挂件点不了东西"),
+        ))
+        return
+    if "flameLength" in raw:
+        fl = raw.get("flameLength")
+        value = js_number(fl)
+        if value is None or value <= 0:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{where}.flameLength 须为 > 0 的厘米数（当前 {fl!r}）——运行时当没写，"
+                f"用缺省 {_PROP_IGNITER_DEFAULT_FLAME_CM} cm",
+            ))
+        else:
+            _prop_coerced_num_warning(fl, value, pid, f"{where}.flameLength", issues)
+
+
+def _prop_igniter_never_burns_issue(entry: dict, pid: str, issues: list[Issue]) -> None:
+    """写了 igniter 却一盏灯都没有：能点火 = 有 igniter **且此刻燃着**（当前状态有灯），永远点不了。"""
+    states = entry.get("states") if isinstance(entry.get("states"), dict) else {}
+    has_igniter = isinstance(entry.get("igniter"), dict) or any(
+        isinstance(sv, dict) and isinstance(sv.get("igniter"), dict) for sv in states.values())
+    if not has_igniter:
+        return
+    has_light = entry.get("light") is not None or any(
+        isinstance(sv, dict) and sv.get("light") is not None for sv in states.values())
+    if not has_light:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            "写了 igniter（能点火）但基础块与各状态都没有灯——能点火要求此刻燃着（当前状态有灯），这件挂件永远点不了东西",
+        ))
+
+
+def _prop_fire_point_issues(raw: object, pid: str, where: str, issues: list[Issue]) -> None:
+    """起火点 `[x, y]`（贴图归一化 0..1）。清洗口径见 `prop_preview.parse_fire_point`。
+
+    `raw` 为 `ABSENT`（没写）或 `null` ⇒ 不报（运行时同样当没写，灯笼就是这个形态）。
+    """
+    from .shared.prop_preview import ABSENT, js_number, parse_fire_point
+
+    if raw is ABSENT or raw is None:
+        return
+    if parse_fire_point(raw) is None:
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 须为 [x, y] 两个有限数（贴图归一化 0..1，左上原点；当前 {raw!r}）——"
+            "运行时读不到就当没写：灯位 / 自带效果 / 火苗全都从挂点本身出，看着像起火点没生效",
+        ))
+        return
+    vals = [js_number(v) for v in raw[:2]]
+    for i, v in enumerate(raw[:2]):
+        _prop_coerced_num_warning(v, vals[i], pid, f"{where}[{i}]", issues)
+    if not all(0.0 <= float(v) <= 1.0 for v in vals):
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where} {vals!r} 超出 0..1——运行时各自夹到 0..1（起火点被钉到贴图边上）",
+        ))
+
+
+def _vfx_effect_endless_emitters(doc: object) -> list[str]:
+    """效果里**放不完**的发射器 id（`VfxInstanceSim.finished` 永远不为真的那几种）。
+
+    与运行时判据同口径：群体（有 `behavior`）永远不算放完；非 `subOnly` 的发射器有 `spawn.rate > 0`
+    且没写 `spawn.duration` = 一直发。`playPropVfx` 靠"放完自己收"，碰上这种就一直冒到挂件卸下。
+    """
+    if not isinstance(doc, dict) or not isinstance(doc.get("emitters"), list):
+        return []
+    out: list[str] = []
+    for i, em in enumerate(doc["emitters"]):
+        if not isinstance(em, dict):
+            continue
+        eid = str(em.get("id") or f"#{i}")
+        if em.get("behavior") is not None:
+            out.append(eid)
+            continue
+        if em.get("subOnly") is True:
+            continue
+        spawn = em.get("spawn") if isinstance(em.get("spawn"), dict) else {}
+        rate = spawn.get("rate")
+        if _is_num(rate) and float(rate) > 0 and spawn.get("duration") is None:
+            out.append(eid)
+    return out
+
+
+def _play_prop_vfx_issues(
+    model: ProjectModel, issues: list[Issue], p: dict, data_type: str, item_id: str,
+    *, prop_state_self: bool,
+) -> None:
+    """`playPropVfx`（在手持挂件上播一个效果）。运行时对这些错一律 warn 一行、效果不播——只能在这里说。
+
+    - `effect` 空 / 不在 `assets/data/vfx/` → error（与挂件预设粒子挂载 `particles[i].effect` 同档）；
+    - `target` / `socket` 只有在挂件预设状态 `onEnterActions`、风吹灭块 `onEmberActions` / `onOutActions` 的**顶层**
+      才可以不写（= 这件挂件自己）；
+      别处（含 onEnterActions 里嵌套在容器中的）空了 → error；
+    - `point` 清洗同起火点（`prop_preview.parse_fire_point`：长度 ≥2、`Number()` 后有限、各自夹到 0..1），
+      读不出 → error（运行时当没写），强转得出来的非数值 / 越界 → warning。
+    """
+    from .shared.prop_preview import ABSENT, js_number, parse_fire_point
+
+    eff = str(p.get("effect") or "").strip()
+    if not eff:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "playPropVfx 缺 effect（要在挂件上播的效果资产 id）——运行时 warn 一行、什么都不播",
+        ))
+    else:
+        known = _known_vfx_effect_ids(model)
+        if known and eff not in known:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"playPropVfx effect {eff!r} 不在 assets/data/vfx/ 里——运行时装不到资产，挂件上什么都不冒",
+            ))
+        elif known:
+            effects = getattr(model, "vfx_effects", None)
+            doc = effects.get(eff) if isinstance(effects, dict) else None
+            if _vfx_effect_endless_emitters(doc):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"效果「{eff}」有一直发的发射器，playPropVfx 会一直冒到挂件卸下"
+                    f"（{'、'.join(_vfx_effect_endless_emitters(doc))}：有 spawn.rate 没 spawn.duration，或是群体）",
+                ))
+    if not prop_state_self:
+        missing = [k for k in ("target", "socket") if not str(p.get(k) or "").strip()]
+        if missing:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "playPropVfx 在挂件状态进入动作之外必须写 target 与 socket"
+                f"（缺 {' / '.join(missing)}；只有挂件预设状态 onEnterActions 与风吹灭 onEmberActions / onOutActions 顶层的才会自动指向这件挂件，"
+                "嵌套在 runActions 等容器里的不算）——运行时 warn 一行、效果不播",
+            ))
+    raw = p.get("point", ABSENT)
+    if raw is ABSENT or raw is None:
+        return
+    if parse_fire_point(raw) is None:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"playPropVfx 的 point 须为 [u, v] 两个有限数（贴图归一化 0..1，左上原点；当前 {raw!r}）——"
+            "运行时读不到就当没写：效果从起火点（没有就是挂点本身）出，看着像 point 没生效",
+        ))
+        return
+    vals = [js_number(v) for v in raw[:2]]
+    for i, v in enumerate(raw[:2]):
+        if not _is_num(v):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"playPropVfx 的 point[{i}] 写成了非数值 {v!r}——运行时按 Number() 强转成 {vals[i]:g}；改成数免得读错",
+            ))
+    if not all(0.0 <= float(v) <= 1.0 for v in vals):
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"playPropVfx 的 point {vals!r} 超出 0..1——运行时各自夹到 0..1（效果被钉到贴图边上）",
+        ))
+
+
+#: 0..1 比例字段（清洗同 `parseBurn`）→ (没写时最终落到的说法, null 强转成 0 的后果)
+_PROP_UNIT_FIELDS: dict[str, tuple[str, str]] = {
+    "burn": ("最终按满火 1 烧", "燃烧强度 0、火苗不画（灭）"),
+    "windShelter": ("最终按 0 不挡风", "挡风比例 0（火苗照样吃满风）"),
+}
+
+
+def _prop_burn_issues(
+    raw: object, pid: str, where: str, issues: list[Issue], *, field: str = "burn",
+) -> None:
+    """0..1 比例字段（`burn` 燃烧强度 / `windShelter` 挡风比例，TS 同一个 `parseBurn`）。
+
+    `Number()` 后不是有限数运行时当没写（状态 → 基础块 → 缺省）。
+    """
+    from .shared.prop_preview import ABSENT, js_number
+
+    if raw is ABSENT:
+        return
+    fallback, null_effect = _PROP_UNIT_FIELDS[field]
+    value = js_number(raw)
+    if value is None:
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 须为 0..1 的数（当前 {raw!r}）——运行时当没写：沿用上一层，{fallback}",
+        ))
+        return
+    if raw is None:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where}: null——运行时 Number(null)=0 ⇒ {null_effect}；"
+            "不是这个意思就删掉这个键（没写才是沿用上一层）",
+        ))
+    else:
+        _prop_coerced_num_warning(raw, value, pid, where, issues)
+    if not 0.0 <= value <= 1.0:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where}={raw!r} 超出 0..1——运行时夹到 0..1",
+        ))
+
+
+def _prop_flame_issues(
+    model: ProjectModel, raw: object, pid: str, issues: list[Issue],
+) -> None:
+    """看得见的火苗（基础块 `flame`）。`image` / `height` 坏了运行时**整块作废**（火苗不画）。
+
+    数值口径同 `prop_preview.parse_flame`（`Number()` 强转）：非数值写法但强转得出来的只 warning。
+    """
+    from .shared.prop_preview import ABSENT, js_number
+
+    if raw is ABSENT or raw is None:
+        return
+    if not isinstance(raw, dict):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"flame 须为对象 {{image, cols, frames, fps, height}}（当前 {raw!r}）——运行时整块作废，火苗不画",
+        ))
+        return
+    image = raw.get("image")
+    if not isinstance(image, str) or not image.strip():
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"flame.image 必须是非空的火苗图集路径（当前 {image!r}）——运行时整块作废，火苗不画",
+        ))
+    else:
+        _prop_preset_image_issues(model, issues, image, pid, "flame.image")
+    height_raw = raw.get("height", ABSENT)
+    height = js_number(height_raw)
+    if height is None or height <= 0:
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"flame.height 必须是 > 0 的数（满火时一格帧的高度，wu；当前 "
+            f"{'没写' if height_raw is ABSENT else repr(height_raw)}）——运行时整块作废，火苗不画",
+        ))
+    else:
+        _prop_coerced_num_warning(height_raw, height, pid, "flame.height", issues)
+    for key, fallback in (("cols", "1"), ("frames", "cols")):
+        v_raw = raw.get(key, ABSENT)
+        if v_raw is ABSENT:
+            continue
+        v = js_number(v_raw)
+        if v is None or math.trunc(v) < 1:
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"flame.{key} 须为 ≥1 的整数（当前 {v_raw!r}）——运行时当没写（按 {fallback} 切图集），"
+                "格子切错整条火苗就是乱帧",
+            ))
+            continue
+        _prop_coerced_num_warning(v_raw, v, pid, f"flame.{key}", issues)
+        if v != math.trunc(v):
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"flame.{key}={v_raw!r} 不是整数——运行时截成 {math.trunc(v)}",
+            ))
+    fps_raw = raw.get("fps", ABSENT)
+    if fps_raw is not ABSENT:
+        fps = js_number(fps_raw)
+        if fps is None or fps <= 0:
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"flame.fps 须为 > 0 的数（当前 {fps_raw!r}）——运行时当没写，按 24 帧/秒放",
+            ))
+        else:
+            _prop_coerced_num_warning(fps_raw, fps, pid, "flame.fps", issues)
+
+
+def _prop_state_on_enter_issues(
+    model: ProjectModel, raw: object, pid: str, sname: str, issues: list[Issue],
+) -> None:
+    """状态的进入时动作：与物件用途 `use.actions` 走**同一条**动作校验链。
+
+    另加过场白名单那一条：`setPropState` / `attachToSocket` 目前不在白名单里，过场切不了挂件
+    状态；**若**哪天进了白名单，状态动作就能在过场里间接跑起来 —— 那时进入动作里任何不在
+    白名单的动作都得报 error（不能成为绕过"过场内禁改存档"的口子）。
+    """
+    if raw is None:
+        return
+    where = f"states[{sname}].onEnterActions"
+    if not isinstance(raw, list):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 须为动作数组（当前 {type(raw).__name__}）——运行时读不到就当这个状态没有进入动作",
+        ))
+        return
+    for i, act in enumerate(raw):
+        if not isinstance(act, dict):
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where}[{i}] 须为动作对象 {{type, params}}（当前 {act!r}）——运行时跳过这一条",
+            ))
+    # 顶层动作里的 playPropVfx 可以不写 target / socket（= 这件挂件自己，HeldPropSystem 注入）
+    _walk_action_defs(model, issues, raw, "prop_preset", f"{pid}:{where}", None, prop_state_self=True)
+    if not (_CUTSCENE_ACTION_WHITELIST & _PROP_STATE_SWITCH_ACTIONS):
+        return
+    from .shared.action_structure import flatten_actions
+
+    for path, act in flatten_actions(raw, where):
+        t = act.get("type")
+        if isinstance(t, str) and t and t not in _CUTSCENE_ACTION_WHITELIST:
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{path} 的动作 {t!r} 不在过场白名单里——"
+                f"{'、'.join(sorted(_CUTSCENE_ACTION_WHITELIST & _PROP_STATE_SWITCH_ACTIONS))} "
+                "已能在过场里切挂件状态，进入动作会跟着在过场里执行，成了绕过「过场内禁改存档」的口子",
+            ))
+
+
+#: 风吹灭块的三个必填量（`parseBlowout`：都要是 > 0 的有限数，少一个整块丢掉）
+_BLOWOUT_REQUIRED: tuple[tuple[str, str], ...] = (
+    ("windSpeed", "吹熄风速 m/s"),
+    ("drainSeconds", "掉速：两倍风速下几秒灭"),
+    ("recoverSeconds", "回速：无风几秒回满"),
+)
+#: 越线动作列表 → 什么时候执行
+_BLOWOUT_ACTION_LISTS: tuple[tuple[str, str], ...] = (
+    ("onEmberActions", "掉过残炭线时"),
+    ("onOutActions", "火势到底时"),
+)
+
+
+def _prop_blowout_issues(
+    model: ProjectModel, raw: object, pid: str, where: str, issues: list[Issue],
+    *, states: object, state_name: str | None,
+) -> None:
+    """风吹灭块 `blowout`（基础块 / 状态；TS 权威 `propPresets.ts::parseBlowout`，运行时 `HeldPropSystem.stepBlowout`）。
+
+    运行时对错一律静默：必填量坏了整块丢（基础块 = 吹不灭；状态 = 当没写、沿用基础块），
+    状态名对不上只 log 一行、不切状态只执行越线动作——这一段是唯一能看见这些错的地方。
+    越线动作与状态进入动作走**同一条**动作校验链：顶层 `playPropVfx` 不写 target / socket = 这件挂件（运行时注入）。
+    """
+    from .shared.prop_preview import js_number
+
+    in_state = state_name is not None
+    if raw is _ABSENT:
+        return
+    if raw is None:
+        if in_state:
+            return  # 有意义的值：这个状态风吹不灭
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 是 null——null 只在状态里有意义（= 这个状态吹不灭）；基础块写 null 运行时当没写 = 永远吹不灭，"
+            "不想让它能被吹灭就直接删掉这个键",
+        ))
+        return
+    fallback = "运行时当没写、沿用基础块那份" if in_state else "运行时整块丢掉 = 吹不灭"
+    if not isinstance(raw, dict):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 须为对象 {{windSpeed, drainSeconds, recoverSeconds, …}}（当前 {raw!r}）——{fallback}",
+        ))
+        return
+    for key, label in _BLOWOUT_REQUIRED:
+        v = raw.get(key, _ABSENT)
+        n = js_number(v)
+        if n is None or n <= 0:
+            cur = "没写" if v is _ABSENT else repr(v)
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where}.{key}（{label}）须为 > 0 的数（当前 {cur}）——三个必填量少一个{fallback}",
+            ))
+        else:
+            _prop_coerced_num_warning(v, n, pid, f"{where}.{key}", issues)
+
+    eb = raw.get("emberBelow", _ABSENT)
+    ember_n = js_number(eb)
+    if eb is not _ABSENT:
+        if ember_n is None:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{where}.emberBelow {eb!r} 读不出数——运行时当没写：没有残炭这一步，火势到底直接灭",
+            ))
+        elif not 0.0 <= ember_n <= 1.0:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{where}.emberBelow {ember_n:g} 超出 0..1——运行时夹到 {min(1.0, max(0.0, ember_n)):g}",
+            ))
+        else:
+            _prop_coerced_num_warning(eb, ember_n, pid, f"{where}.emberBelow", issues)
+
+    auto_raw = raw.get("auto", _ABSENT)
+    if auto_raw is not _ABSENT and not isinstance(auto_raw, bool):
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where}.auto 必须是 true/false（当前 {auto_raw!r}）——运行时只认布尔，别的值当没写 = 越线自动切状态",
+        ))
+    auto = auto_raw is not False
+    names = [str(k) for k in states] if isinstance(states, dict) else []
+    have = "、".join(names) if names else "（没有状态表）"
+    out_name = "out"
+    # recoverState：残炭里挡住风、火势回到残炭线上方时复燃回哪个状态（只在有残炭这一步时才用得到）
+    for key, default, active in (("emberState", "ember", ember_n is not None), ("outState", "out", True),
+                                 ("recoverState", "lit", ember_n is not None)):
+        v = raw.get(key, _ABSENT)
+        if v is not _ABSENT and not isinstance(v, str):
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{where}.{key} 须为状态名（当前 {v!r}）——运行时当没写，按缺省 {default!r}",
+            ))
+        explicit = isinstance(v, str) and bool(v.strip())
+        name = v.strip() if explicit else default
+        if key == "outState":
+            out_name = name
+        if active and (auto or explicit) and name not in names:
+            consequence = (
+                "残炭里挡住风火势回来时运行时找不到这个状态，不复燃（一直是残炭，直到被吹灭或动作切走）"
+                if key == "recoverState"
+                else "风吹到这一步时运行时 log 一行、不切状态，只执行越线动作"
+            )
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{where}.{key} {name!r}{'' if explicit else '（缺省）'} 不在这个挂件的 states 里（现有：{have}）——"
+                + consequence,
+            ))
+    if in_state and state_name == out_name:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where}：这个状态就是这块的灭状态（outState {out_name!r}）——灭的状态里不再算火势，这块写了不生效；"
+            "灭着的状态什么都不用写",
+        ))
+
+    fm = raw.get("fadeMs", _ABSENT)
+    if fm is not _ABSENT:
+        n = js_number(fm)
+        if n is None or n < 0:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{where}.fadeMs 须为 ≥ 0 的毫秒数（当前 {fm!r}）——运行时当没写，按 500 ms 渐变",
+            ))
+        else:
+            _prop_coerced_num_warning(fm, n, pid, f"{where}.fadeMs", issues)
+
+    for key, label in _BLOWOUT_ACTION_LISTS:
+        acts = raw.get(key)
+        if acts is None:
+            continue
+        lw = f"{where}.{key}"
+        if not isinstance(acts, list):
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{lw} 须为动作数组（当前 {type(acts).__name__}）——运行时读不到就当{label}没有动作",
+            ))
+            continue
+        for i, act in enumerate(acts):
+            if not isinstance(act, dict):
+                issues.append(Issue(
+                    "error", "prop_preset", pid,
+                    f"{lw}[{i}] 须为动作对象 {{type, params}}（当前 {act!r}）——运行时跳过这一条",
+                ))
+        if key == "onEmberActions" and acts and ember_n is None:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{lw} 写了动作但没写 emberBelow（残炭线）——没有残炭这一步，这些动作永远不执行",
+            ))
+        # 顶层 playPropVfx 可以不写 target / socket（= 这件挂件自己，HeldPropSystem.crossLine 注入）
+        _walk_action_defs(model, issues, acts, "prop_preset", f"{pid}:{lw}", None, prop_state_self=True)
+
+
+#: 玩家操作块 `playerControl` 的三个状态名键 → (缺省状态名, 按键时发生什么)
+_PLAYER_CONTROL_STATES: tuple[tuple[str, str, str], ...] = (
+    ("litState", "lit", "按 T 点火切到的状态"),
+    ("guardState", "guarding", "按住 Q 护火切到的状态"),
+    ("outState", "out", "按 T 熄灭切到的状态"),
+)
+#: 玩家操作块的两个渐变（毫秒）→ 缺省
+_PLAYER_CONTROL_FADES: tuple[tuple[str, int], ...] = (("extinguishFadeMs", 400), ("igniteFadeMs", 250))
+
+
+def _prop_player_control_issues(raw: object, pid: str, states: object, issues: list[Issue]) -> None:
+    """玩家操作块 `playerControl`（只在基础块；写了对象 = 玩家能用键操作这件挂件：T 点火 / 熄灭，按住 Q 护火）。
+
+    状态名不写 / 空串 = 缺省（lit / guarding / out）；按到一个预设里没有的状态，运行时切不过去（只 log 一行）——
+    这里 warning。渐变须为 ≥ 0 的数，否则当没写按缺省。
+    """
+    from .shared.prop_preview import js_number
+
+    if raw is _ABSENT:
+        return
+    if not isinstance(raw, dict):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"playerControl 须为对象（当前 {raw!r}；全用缺省就写 {{}}）——运行时当没写 = 玩家不能操作这件挂件；"
+            "不给玩家操作就删掉这个键",
+        ))
+        return
+    names = [str(k) for k in states] if isinstance(states, dict) else []
+    have = "、".join(names) if names else "（没有状态表）"
+    for key, default, what in _PLAYER_CONTROL_STATES:
+        v = raw.get(key, _ABSENT)
+        if v is not _ABSENT and not isinstance(v, str):
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"playerControl.{key} 须为状态名（当前 {v!r}）——运行时当没写，按缺省 {default!r}",
+            ))
+        explicit = isinstance(v, str) and bool(v.strip())
+        name = v.strip() if explicit else default
+        if name not in names:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"playerControl.{key}（{what}）{name!r}{'' if explicit else '（缺省）'} 不在这个挂件的 states 里"
+                f"（现有：{have}）——玩家按下去切不过去",
+            ))
+    for key, default in _PLAYER_CONTROL_FADES:
+        v = raw.get(key, _ABSENT)
+        if v is _ABSENT:
+            continue
+        n = js_number(v)
+        if n is None or n < 0:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"playerControl.{key} 须为 ≥ 0 的毫秒数（当前 {v!r}）——运行时当没写，按 {default} ms",
+            ))
+        else:
+            _prop_coerced_num_warning(v, n, pid, f"playerControl.{key}", issues)
+    # 快灭提示线：火势掉到这以下火边出快灭符号（运行时 parsePlayerControl 夹到 0..1；读不出数当没写 = 0.8）
+    hb = raw.get("hintBelow", _ABSENT)
+    if hb is not _ABSENT:
+        n = js_number(hb)
+        if n is None:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"playerControl.hintBelow {hb!r} 读不出数——运行时当没写，按缺省 {_PLAYER_CONTROL_HINT_BELOW_DEFAULT:g}",
+            ))
+        elif not 0.0 <= n <= 1.0:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"playerControl.hintBelow {n:g} 超出 0..1——运行时夹到 {min(1.0, max(0.0, n)):g}",
+            ))
+        else:
+            _prop_coerced_num_warning(hb, n, pid, "playerControl.hintBelow", issues)
+    # 护着火只能走不能跑（玩法清单 A3.7：护火省燃料的代价）。运行时只认 `typeof === 'boolean'`，
+    # 别的值当没写 = 按缺省 true —— 作者写 "false" 想放开跑，结果还是跑不动，一声不吭。
+    gb = raw.get("guardBlocksRun", _ABSENT)
+    if gb is not _ABSENT and not isinstance(gb, bool):
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"playerControl.guardBlocksRun 必须是 true/false（护着火只能走不能跑；当前 {gb!r}）——"
+            f"运行时只认布尔，别的值当没写，按缺省 {str(_PLAYER_CONTROL_GUARD_BLOCKS_RUN_DEFAULT).lower()}",
+        ))
+
+
+#: 玩家操作块「快灭提示线」缺省（`PROP_CONTROL_DEFAULTS.hintBelow`）
+_PLAYER_CONTROL_HINT_BELOW_DEFAULT = 0.8
+#: 「护着火只能走不能跑」缺省（`PROP_CONTROL_DEFAULTS.guardBlocksRun`）
+_PLAYER_CONTROL_GUARD_BLOCKS_RUN_DEFAULT = True
+
+
+# =========================================================================== #
+# 火把养成（玩法清单 A3.7）：耐久 `fuel` / 效果块 `effects` / 等级 `levels`
+#
+# TS 权威 `src/data/propPresets.ts`（`PropFuelDef` / `PropEffectDef` / `PropLevelDef` +
+# `parseFuel` / `parsePropEffects` / `parseLevels`）。这三块运行时对错值一律**静默降级**：
+# `fuel.seconds` 不是正数整块当没写（= 这根永远烧不完，临时火把变永久）、效果块 id 查不到就跳过、
+# 等级 `label` 空的那一条整条不算级（级数变少，`setPropLevel` 从此越界）。画面上全都是"我配了没生效"。
+# =========================================================================== #
+
+#: 一支火把最多挂几块效果（TS `PROP_EFFECTS_MAX`）；多写的运行时只认前两块
+_PROP_EFFECTS_MAX = 2
+#: 燃料没写 `windFactor` 时的缺省（TS `PROP_FUEL_WIND_FACTOR`）
+_PROP_FUEL_WIND_FACTOR_DEFAULT = 0.1
+#: 耐久块里表单 / 运行时认识的键
+_PROP_FUEL_KEYS = frozenset({"seconds", "windFactor", "outState", "onSpentActions", "keepInHandWhenSpent"})
+#: 一条效果块里运行时认识的键（`parsePropEffects`）。别的键 = 拼错，运行时一声不吭地丢掉
+_PROP_EFFECT_KEYS = frozenset({
+    "label", "note", "light", "burn", "fuelRate", "wind", "igniterFlame", "fields", "tags",
+})
+#: 效果块里的倍率子块 → 允许的键（`scaleBlock` 的 keys 参数）
+_PROP_EFFECT_SCALE_BLOCKS: dict[str, tuple[str, ...]] = {
+    "light": ("intensity", "range"),
+    "wind": ("windSpeed", "drainSeconds", "recoverSeconds", "emberBelow"),
+}
+#: 效果块里的顶层倍率
+_PROP_EFFECT_SCALARS: tuple[str, ...] = ("burn", "fuelRate", "igniterFlame")
+#: 一条 `fields` 里运行时认识的键 + 两档 kind
+_PROP_EFFECT_FIELD_KEYS = frozenset({"kind", "tag", "radius", "strength"})
+_PROP_EFFECT_FIELD_KINDS = frozenset({"fear", "attract"})
+
+
+def _prop_effect_table(model: ProjectModel) -> dict:
+    t = getattr(model, "prop_effects", None)
+    return t if isinstance(t, dict) else {}
+
+
+def _prop_effect_ids(model: ProjectModel) -> set[str]:
+    """效果块库里**有效**的 id（`ProjectModel.all_prop_effect_ids` 同一面 = 编辑器候选面）。"""
+    return {str(k).strip() for k in _prop_effect_table(model) if str(k).strip()}
+
+
+def _prop_effect_tokens(model: ProjectModel) -> set[str]:
+    """`heldProp` 叶 `effect` 能命中的全部串：效果块 id ∪ 它们的 `tags`（运行时两样都 includes）。"""
+    out = _prop_effect_ids(model)
+    for entry in _prop_effect_table(model).values():
+        if isinstance(entry, dict):
+            for t in entry.get("tags") or []:
+                if isinstance(t, str) and t.strip():
+                    out.add(t.strip())
+    return out
+
+
+def _prop_effect_ids_issues(
+    model: ProjectModel, raw: object, pid: str, where: str, issues: list[Issue],
+    *, extra: int = 0, extra_where: str = "",
+) -> int:
+    """一串效果块 id（基础块 `effects` / 某一级的 `levels[i].effects`）。返回这串里有效的条数。
+
+    `extra` 是"与它合起来算上限"的另一串的条数（等级带的 + 预设自己的合起来至多
+    {@link _PROP_EFFECTS_MAX} 块）——超了运行时只认前两块并 log 一行，作者配的第三块静默不生效。
+    """
+    if raw is _ABSENT or raw is None:
+        return 0
+    if not isinstance(raw, list):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 须为效果块 id 数组（当前 {raw!r}）——运行时读不到就当这根火把没挂效果块",
+        ))
+        return 0
+    known = _prop_effect_ids(model)
+    n = 0
+    for i, one in enumerate(raw):
+        if not isinstance(one, str) or not one.strip():
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where}[{i}] 须为非空效果块 id（当前 {one!r}）——运行时跳过这一条",
+            ))
+            continue
+        n += 1
+        eid = one.strip()
+        if known and eid not in known:
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where}[{i}] 的效果块 {eid!r} 不在 prop_effects.json 里"
+                f"（现有：{'、'.join(sorted(known)) or '（空表）'}）——运行时跳过这一块，这支火把的脾气就没了",
+            ))
+    dup = [x for x in {s.strip() for s in raw if isinstance(s, str)} if
+           sum(1 for s in raw if isinstance(s, str) and s.strip() == x) > 1]
+    for eid in sorted(dup):
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"{where} 里 {eid!r} 写了两遍——倍率会连乘两次（行为类并集看不出来），多半是复制粘贴漏改",
+        ))
+    if n + extra > _PROP_EFFECTS_MAX:
+        tail = f"（加上{extra_where}那 {extra} 块）" if extra else ""
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 挂了 {n} 块效果{tail}，超过上限 {_PROP_EFFECTS_MAX} 块——"
+            f"运行时只认前 {_PROP_EFFECTS_MAX} 块并 log 一行，多写的那些静默不生效",
+        ))
+    return n
+
+
+def _prop_fuel_issues(
+    model: ProjectModel, raw: object, pid: str, states: object, blowout: object, issues: list[Issue],
+) -> None:
+    """耐久块 `fuel`（只在基础块；不写 = 没有耐久，点着就一直烧得下去）。TS 权威 `parseFuel`。
+
+    `seconds` 不是 > 0 的有限数 ⇒ **整块当没写**：临时火把从此烧不完，而作者以为自己配了耐久。
+    """
+    from .shared.prop_preview import js_number
+
+    if raw is _ABSENT:
+        return
+    if not isinstance(raw, dict):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"fuel 须为对象 {{seconds, windFactor?, outState?, onSpentActions?, keepInHandWhenSpent?}}（当前 {raw!r}）——"
+            "运行时当没写 = 这根火把没有耐久（烧不完）；没有耐久就删掉这个键",
+        ))
+        return
+    unknown = sorted(set(raw) - _PROP_FUEL_KEYS)
+    if unknown:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"fuel 含运行时不认识的键 {unknown}（只认 seconds / windFactor / outState / onSpentActions / keepInHandWhenSpent）——多半是拼错",
+        ))
+    sec = raw.get("seconds", _ABSENT)
+    n = js_number(sec) if sec is not _ABSENT else None
+    if sec is _ABSENT or n is None or n <= 0:
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"fuel.seconds 须为 > 0 的秒数（满燃料能烧多久；当前 {'缺失' if sec is _ABSENT else repr(sec)}）——"
+            "运行时**整块 fuel 当没写**：这根火把变成烧不完的",
+        ))
+    else:
+        _prop_coerced_num_warning(sec, n, pid, "fuel.seconds", issues)
+    wf = raw.get("windFactor", _ABSENT)
+    if wf is not _ABSENT:
+        w = js_number(wf)
+        if w is None or w < 0:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"fuel.windFactor 须为 ≥ 0 的数（每秒倍率 = 1 + windFactor × 气流 m/s；当前 {wf!r}）——"
+                f"运行时当没写，按缺省 {_PROP_FUEL_WIND_FACTOR_DEFAULT:g}",
+            ))
+        else:
+            _prop_coerced_num_warning(wf, w, pid, "fuel.windFactor", issues)
+    names = [str(k) for k in states] if isinstance(states, dict) else []
+    have = "、".join(names) if names else "（没有状态表）"
+    os_raw = raw.get("outState", _ABSENT)
+    if os_raw is not _ABSENT and not isinstance(os_raw, str):
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"fuel.outState 须为状态名（当前 {os_raw!r}）——运行时当没写：跟 blowout.outState，再缺省 'out'",
+        ))
+    explicit = isinstance(os_raw, str) and bool(os_raw.strip())
+    fallback = ""
+    if isinstance(blowout, dict) and isinstance(blowout.get("outState"), str):
+        fallback = str(blowout["outState"]).strip()
+    name = os_raw.strip() if explicit else (fallback or "out")
+    if name not in names:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            f"fuel.outState（烧完切到的状态）{name!r}{'' if explicit else '（缺省）'} 不在这个挂件的 states 里"
+            f"（现有：{have}）——烧完时运行时切不过去，火把看着还燃着",
+        ))
+    acts = raw.get("onSpentActions")
+    if acts is None:
+        return
+    if not isinstance(acts, list):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"fuel.onSpentActions 须为动作数组（当前 {type(acts).__name__}）——运行时读不到就当烧完没有动作",
+        ))
+        return
+    for i, act in enumerate(acts):
+        if not isinstance(act, dict):
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"fuel.onSpentActions[{i}] 须为动作对象 {{type, params}}（当前 {act!r}）——运行时跳过这一条",
+            ))
+    # 顶层 playPropVfx 可以不写 target / socket（= 这件挂件自己，与状态进入动作同待遇）
+    _walk_action_defs(model, issues, acts, "prop_preset", f"{pid}:fuel.onSpentActions", None,
+                      prop_state_self=True)
+
+
+def _prop_levels_issues(
+    model: ProjectModel, raw: object, pid: str, own_effects: int, issues: list[Issue],
+) -> None:
+    """等级表 `levels`（随身那根火把的升级；第 1 项 = 出厂的样子）。TS 权威 `parseLevels`。
+
+    `label` 空的那一条**整条不算一级**——级数悄悄变少，写在内容里的 `setPropLevel` / `propLevel`
+    从此越界（前者 warn 一行不动、后者恒比 1），所以是 error。
+    """
+    if raw is _ABSENT or raw is None:
+        return
+    if not isinstance(raw, list):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"levels 须为数组 [{{label, image?, effects?, note?}}]（当前 {raw!r}）——运行时当这根不能升级",
+        ))
+        return
+    if not raw:
+        issues.append(Issue(
+            "warning", "prop_preset", pid,
+            "levels 是空数组——运行时当这根不能升级（恒第 1 级）；不能升级就删掉这个键",
+        ))
+        return
+    for i, lv in enumerate(raw):
+        where = f"levels[{i}]"
+        if not isinstance(lv, dict):
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where} 须为对象 {{label, image?, effects?, note?}}（当前 {lv!r}）——"
+                "运行时跳过这一条，后面各级整体前移一位",
+            ))
+            continue
+        label = lv.get("label")
+        if not isinstance(label, str) or not label.strip():
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{where}.label 必须是非空名字（「裹布浸桐油」；当前 {label!r}）——"
+                "运行时**这一条整条不算一级**：级数变少，setPropLevel / propLevel 从此越界",
+            ))
+        img = lv.get("image")
+        if img is not None:
+            if not isinstance(img, str) or not img.strip():
+                issues.append(Issue(
+                    "error", "prop_preset", pid,
+                    f"{where}.image 必须是非空字符串（不换图就删掉这个键）",
+                ))
+            else:
+                _prop_preset_image_issues(model, issues, img, pid, f"{where}.image")
+        note = lv.get("note")
+        if note is not None and not isinstance(note, str):
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{where}.note 须为字符串（作者备注，不是玩家文案）——当前 {note!r}，运行时丢掉",
+            ))
+        _prop_effect_ids_issues(model, lv.get("effects", _ABSENT), pid, f"{where}.effects", issues,
+                               extra=own_effects, extra_where="预设自己 effects ")
+        unknown = sorted(set(lv) - {"label", "image", "effects", "note"})
+        if unknown:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                f"{where} 含运行时不认识的键 {unknown}（只认 label / image / effects / note）——多半是拼错",
+            ))
+
+
+def _validate_prop_effects(model: ProjectModel, issues: list[Issue]) -> None:
+    """效果块库 `prop_effects.json`（TS 权威 `propPresets.ts::PropEffectDef` / `parsePropEffects`）。
+
+    数值**全是倍率**，1 = 不改。运行时 `positiveScale` 只收 > 0 的有限数：0 / 负数 / 写成串的
+    一律当**没写这一项**——作者想"把亮度按到 0"结果是"亮度不变"，画面上完全看不出来。
+    坏条目（不是对象、id 空）整条跳过；不认识的键静默丢掉。
+    """
+    table = getattr(model, "prop_effects", None)
+    if table is None:
+        return
+    if not isinstance(table, dict):
+        issues.append(Issue(
+            "error", "prop_effect", "prop_effects",
+            "prop_effects.json 的根须为对象 {效果块 id: {...}}——运行时读不到就当一块都没有，"
+            "挂了效果块的火把全部退回基础配置",
+        ))
+        return
+
+    def num(v: object) -> float | None:
+        from .shared.prop_preview import js_number
+
+        return js_number(v)
+
+    for key, entry in table.items():
+        eid = str(key).strip()
+        if not eid:
+            issues.append(Issue(
+                "error", "prop_effect", "prop_effects",
+                "存在无效的键（空字符串），请在「挂件效果块」页修正并保存",
+            ))
+            continue
+        if not isinstance(entry, dict):
+            issues.append(Issue(
+                "error", "prop_effect", eid,
+                "条目须为对象——运行时 parsePropEffects 逐条丢弃坏条目，引用它的挂件预设就少一块效果",
+            ))
+            continue
+        label = entry.get("label")
+        if not isinstance(label, str) or not label.strip():
+            issues.append(Issue(
+                "error", "prop_effect", eid,
+                f"label 必须是非空名字（作者面上认这一块靠它；当前 {label!r}）——运行时回落成 id",
+            ))
+        note = entry.get("note")
+        if note is not None and not isinstance(note, str):
+            issues.append(Issue(
+                "warning", "prop_effect", eid,
+                f"note 须为字符串（作者备注，不是玩家文案）——当前 {note!r}，运行时丢掉",
+            ))
+        unknown = sorted(set(entry) - _PROP_EFFECT_KEYS)
+        if unknown:
+            issues.append(Issue(
+                "warning", "prop_effect", eid,
+                f"含运行时不认识的键 {unknown}"
+                f"（只认 {' / '.join(sorted(_PROP_EFFECT_KEYS))}）——多半是拼错，运行时静默丢掉",
+            ))
+        for k in _PROP_EFFECT_SCALARS:
+            if k not in entry:
+                continue
+            n = num(entry.get(k))
+            if n is None or n <= 0:
+                issues.append(Issue(
+                    "error", "prop_effect", eid,
+                    f"{k} 须为 > 0 的倍率（1 = 不改；当前 {entry.get(k)!r}）——"
+                    "运行时当没写：这一项一点没变，作者以为改了",
+                ))
+            else:
+                _prop_effect_scale_note(entry.get(k), n, eid, k, issues)
+        for block, keys in _PROP_EFFECT_SCALE_BLOCKS.items():
+            if block not in entry:
+                continue
+            sub = entry.get(block)
+            if not isinstance(sub, dict):
+                issues.append(Issue(
+                    "error", "prop_effect", eid,
+                    f"{block} 须为对象 {{{' / '.join(keys)}}}（全是倍率；当前 {sub!r}）——运行时当没写",
+                ))
+                continue
+            sub_unknown = sorted(set(sub) - set(keys))
+            if sub_unknown:
+                issues.append(Issue(
+                    "warning", "prop_effect", eid,
+                    f"{block} 含运行时不认识的键 {sub_unknown}（只认 {' / '.join(keys)}）——多半是拼错",
+                ))
+            for k in keys:
+                if k not in sub:
+                    continue
+                n = num(sub.get(k))
+                if n is None or n <= 0:
+                    issues.append(Issue(
+                        "error", "prop_effect", eid,
+                        f"{block}.{k} 须为 > 0 的倍率（1 = 不改；当前 {sub.get(k)!r}）——运行时当没写：这一项一点没变",
+                    ))
+                else:
+                    _prop_effect_scale_note(sub.get(k), n, eid, f"{block}.{k}", issues)
+            if not (set(sub) & set(keys)):
+                issues.append(Issue(
+                    "warning", "prop_effect", eid,
+                    f"{block} 一个认识的倍率都没写——运行时整块当没写；不改就删掉这个键",
+                ))
+        _prop_effect_fields_issues(entry.get("fields", _ABSENT), eid, issues)
+        tags = entry.get("tags")
+        if tags is not None:
+            if not isinstance(tags, list):
+                issues.append(Issue(
+                    "error", "prop_effect", eid,
+                    f"tags 须为字符串数组（内容侧 heldProp 条件叶按它问；当前 {tags!r}）——运行时当没写",
+                ))
+            else:
+                for i, t in enumerate(tags):
+                    if not isinstance(t, str) or not t.strip():
+                        issues.append(Issue(
+                            "error", "prop_effect", eid,
+                            f"tags[{i}] 须为非空字符串（当前 {t!r}）——运行时跳过这一条",
+                        ))
+
+
+def _prop_effect_scale_note(raw: object, value: float, eid: str, where: str, issues: list[Issue]) -> None:
+    """倍率写成串（`"1.2"`）运行时照样 Number() 认，但下一个人读不懂；1 是空转，提醒一次。"""
+    if not _is_num(raw):
+        issues.append(Issue(
+            "warning", "prop_effect", eid,
+            f"{where} 写成了非数值 {raw!r}——运行时按 Number() 强转成 {value:g}；改成数免得读错",
+        ))
+    elif value == 1.0:
+        issues.append(Issue(
+            "warning", "prop_effect", eid,
+            f"{where} = 1（倍率 1 = 不改）——这一项写了等于没写；不改就删掉它",
+        ))
+
+
+def _prop_effect_fields_issues(raw: object, eid: str, issues: list[Issue]) -> None:
+    """效果块的场 `fields`（燃着时在火头放的驱 / 招）。TS 权威 `parseEffectFields`：
+    四项缺一 / 半径与强度不是 > 0 的数 ⇒ **这一条整条跳过**，虫子照旧不躲不来。"""
+    from .shared.prop_preview import js_number
+
+    if raw is _ABSENT or raw is None:
+        return
+    if not isinstance(raw, list):
+        issues.append(Issue(
+            "error", "prop_effect", eid,
+            f"fields 须为数组 [{{kind, tag, radius, strength}}]（当前 {raw!r}）——运行时当没写：不驱也不招",
+        ))
+        return
+    for i, one in enumerate(raw):
+        where = f"fields[{i}]"
+        if not isinstance(one, dict):
+            issues.append(Issue(
+                "error", "prop_effect", eid,
+                f"{where} 须为对象 {{kind, tag, radius, strength}}（当前 {one!r}）——运行时跳过这一条",
+            ))
+            continue
+        kind = one.get("kind")
+        if not isinstance(kind, str) or kind not in _PROP_EFFECT_FIELD_KINDS:
+            issues.append(Issue(
+                "error", "prop_effect", eid,
+                f"{where}.kind 只认 fear（驱：虫子躲开）/ attract（招：东西围过来）——当前 {kind!r}，运行时跳过这一条",
+            ))
+        tag = one.get("tag")
+        if not isinstance(tag, str) or not tag.strip():
+            issues.append(Issue(
+                "error", "prop_effect", eid,
+                f"{where}.tag 须为非空标签（粒子群体按它查权重，与场景 emitVfxField 同口径）——"
+                f"当前 {tag!r}，运行时跳过这一条",
+            ))
+        for k, what in (("radius", "半径 wu"), ("strength", "强度")):
+            v = one.get(k, _ABSENT)
+            n = js_number(v) if v is not _ABSENT else None
+            if v is _ABSENT or n is None or n <= 0:
+                issues.append(Issue(
+                    "error", "prop_effect", eid,
+                    f"{where}.{k} 须为 > 0 的数（{what}；当前 {'缺失' if v is _ABSENT else repr(v)}）——运行时跳过这一条",
+                ))
+        unknown = sorted(set(one) - _PROP_EFFECT_FIELD_KEYS)
+        if unknown:
+            issues.append(Issue(
+                "warning", "prop_effect", eid,
+                f"{where} 含运行时不认识的键 {unknown}（只认 kind / tag / radius / strength）——多半是拼错",
+            ))
+
+
+#: lockPropState.lock 运行时认的三档（ActionRegistry；别的值当 none）
+_PROP_LOCK_VALUES = frozenset({"lit", "unlit", "none"})
+
+
+def _lock_prop_state_issues(p: dict, data_type: str, item_id: str, issues: list[Issue]) -> None:
+    """`lockPropState {target, socket, lock}`（TS manifest：三个都必填非空）。
+
+    运行时缺 target / socket ⇒ warn 一行跳过；`lock` 只认 `"lit"`（锁定不灭）/ `"unlit"`（点不燃）/ `"none"`（解锁），
+    别的值 warn 一行、当解锁——作者想锁、结果什么都没锁，所以缺 / 空 / 不认识一律 error。
+    """
+    missing = [k for k in ("target", "socket") if not str(p.get(k) or "").strip()]
+    if missing:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"lockPropState 缺 {' / '.join(missing)}——运行时 warn 一行、什么都不锁",
+        ))
+    raw = p.get("lock")
+    lock = raw.strip() if isinstance(raw, str) else ""
+    if not lock:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            "lockPropState 缺 lock（lit = 锁定不灭 / unlit = 点不燃 / none = 解锁）——运行时当解锁",
+        ))
+    elif lock not in _PROP_LOCK_VALUES:
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"lockPropState 的 lock {raw!r} 运行时不认（只认 lit / unlit / none）——warn 一行、当解锁",
+        ))
+
+
 def _validate_prop_presets(model: ProjectModel, issues: list[Issue]) -> None:
     """挂件预设（`prop_presets.json`，TS 权威 `src/data/propPresets.ts`）。
 
     这张表 2026-09-12 从"贴图 + 支点 + 缩放"扩到了手持光源（自带灯 / 自带效果 /
-    状态表 / 入档标记）。**运行时对错值一律静默降级**（坏条目逐条丢弃、灯整盏丢、
-    flicker 整块丢、状态名对不上只 warn 一行），所以这一整段是唯一能看见这些错的地方。
+    状态表 / 入档标记），2026-09-15 又扩到燃烧物（起火点 `firePoint` / 火苗 `flame` /
+    燃烧强度 `burn` / 挡风比例 `windShelter` / 状态进入动作 `onEnterActions`），同日契约 v3 用粒子挂载
+    `particles` 取代了 `vfx`；同日又加了风吹灭 `blowout`（基础块 / 状态，带越线动作）与玩家操作 `playerControl`（基础块）。
+    **运行时对错值一律静默降级**
+    （坏条目逐条丢弃、灯整盏丢、flicker 整块丢、flame 整块作废、粒子挂载坏条逐条丢、状态名对不上只 warn 一行），
+    所以这一整段是唯一能看见这些错的地方。
     """
     table = getattr(model, "prop_presets", None)
     if not isinstance(table, dict):
@@ -8087,11 +10339,29 @@ def _validate_prop_presets(model: ProjectModel, issues: list[Issue]) -> None:
                 f"persistent 必须是 true/false（当前 {entry.get('persistent')!r}）——"
                 "运行时只认 `=== true`，别的值一律当演出挂件（切场景即散）",
             ))
-        vfx_raw = entry.get("vfx")
-        if vfx_raw is not None and not isinstance(vfx_raw, list):
-            issues.append(Issue("error", "prop_preset", pid, "vfx 须为效果资产 id 的数组"))
-            vfx_raw = None
-        _prop_preset_vfx_issues(issues, vfx_raw, known_vfx, pid, "vfx")
+        _prop_legacy_vfx_issue(entry, pid, "vfx", issues)
+        _prop_particles_issues(entry.get("particles", _ABSENT), known_vfx, pid, "particles", issues)
+        _prop_fire_point_issues(entry.get("firePoint", _ABSENT), pid, "firePoint", issues)
+        _prop_burn_issues(entry.get("burn", _ABSENT), pid, "burn", issues)
+        _prop_burn_issues(entry.get("windShelter", _ABSENT), pid, "windShelter", issues,
+                          field="windShelter")
+        _prop_flame_issues(model, entry.get("flame", _ABSENT), pid, issues)
+        _prop_blowout_issues(model, entry.get("blowout", _ABSENT), pid, "blowout", issues,
+                             states=entry.get("states"), state_name=None)
+        _prop_player_control_issues(entry.get("playerControl", _ABSENT), pid, entry.get("states"), issues)
+        _prop_igniter_issues(entry.get("igniter", _ABSENT), pid, "igniter", issues, in_state=False)
+        _prop_igniter_never_burns_issue(entry, pid, issues)
+        # 火把养成（A3.7）：耐久 / 效果块 / 等级。三块都**只在基础块**——状态里写了运行时不读
+        _prop_fuel_issues(model, entry.get("fuel", _ABSENT), pid, entry.get("states"),
+                          entry.get("blowout"), issues)
+        own_effects = _prop_effect_ids_issues(model, entry.get("effects", _ABSENT), pid, "effects", issues)
+        _prop_levels_issues(model, entry.get("levels", _ABSENT), pid, own_effects, issues)
+        if entry.get("onEnterActions") is not None:
+            issues.append(Issue(
+                "warning", "prop_preset", pid,
+                "基础块写了 onEnterActions——运行时只读**状态**里的进入动作，基础块这份不会执行；"
+                "挪到要触发它的那个状态里",
+            ))
 
         states = entry.get("states")
         if states is not None and not isinstance(states, dict):
@@ -8132,15 +10402,36 @@ def _validate_prop_presets(model: ProjectModel, issues: list[Issue]) -> None:
                         "error", "prop_preset", pid,
                         f"states[{sname}].lit 必须是 true/false（当前 {sv.get('lit')!r}）",
                     ))
-                sv_vfx = sv.get("vfx")
-                if "vfx" in sv and not isinstance(sv_vfx, list):
+                _prop_legacy_vfx_issue(sv, pid, f"states[{sname}].vfx", issues)
+                _prop_particles_issues(
+                    sv.get("particles", _ABSENT), known_vfx, pid, f"states[{sname}].particles", issues)
+                _prop_fire_point_issues(
+                    sv.get("firePoint", _ABSENT), pid, f"states[{sname}].firePoint", issues)
+                _prop_burn_issues(sv.get("burn", _ABSENT), pid, f"states[{sname}].burn", issues)
+                _prop_burn_issues(sv.get("windShelter", _ABSENT), pid,
+                                  f"states[{sname}].windShelter", issues, field="windShelter")
+                if sv.get("flame") is not None:
                     issues.append(Issue(
-                        "error", "prop_preset", pid,
-                        f"states[{sname}].vfx 须为数组（空数组 = 这个状态没有效果）",
+                        "warning", "prop_preset", pid,
+                        f"states[{sname}].flame 运行时不读——火苗图集只在基础块定义，状态换不了"
+                        "（要换就是另一个挂件预设）；状态里只调 burn 与 firePoint",
                     ))
-                    sv_vfx = None
-                _prop_preset_vfx_issues(
-                    issues, sv_vfx, known_vfx, pid, f"states[{sname}].vfx")
+                _prop_state_on_enter_issues(model, sv.get("onEnterActions"), pid, sname, issues)
+                _prop_blowout_issues(model, sv.get("blowout", _ABSENT), pid, f"states[{sname}].blowout",
+                                     issues, states=states, state_name=sname)
+                _prop_igniter_issues(sv.get("igniter", _ABSENT), pid, f"states[{sname}].igniter", issues,
+                                     in_state=True)
+                if "playerControl" in sv:
+                    issues.append(Issue(
+                        "warning", "prop_preset", pid,
+                        f"states[{sname}].playerControl 运行时不读——玩家操作只在基础块配（按键切到哪几个状态写在那里）",
+                    ))
+                for only_base, what in (("fuel", "耐久（燃料时长）"), ("effects", "效果块"), ("levels", "等级表")):
+                    if only_base in sv:
+                        issues.append(Issue(
+                            "warning", "prop_preset", pid,
+                            f"states[{sname}].{only_base} 运行时不读——{what}是这根火把的事、不随状态变，只在基础块配",
+                        ))
 
         ds = entry.get("defaultState")
         if ds is not None:
@@ -8215,23 +10506,84 @@ def _append_prop_state_issues(
         ))
 
 
-def _prop_preset_vfx_issues(
-    issues: list[Issue], raw: object, known: set[str], pid: str, where: str,
+def _prop_legacy_vfx_issue(block: dict, pid: str, where: str, issues: list[Issue]) -> None:
+    """旧 `vfx` 字段（契约 v3 删除，被 `particles` 取代）：写了运行时不读，那团效果**根本不放**。"""
+    if "vfx" in block:
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 已由 particles 取代，写了运行时不读——改成 particles: [{{\"effect\": 效果 id}}]"
+            f"（当前 {block.get('vfx')!r}）",
+        ))
+
+
+def _prop_particles_issues(
+    raw: object, known: set[str], pid: str, where: str, issues: list[Issue],
 ) -> None:
-    """效果资产 id 存在性。缺席＝运行时那团火**根本不放**（只在 DEV 打一行）。"""
-    if not isinstance(raw, list):
+    """粒子挂载 `[{effect, point?}]`（契约 v3）。清洗口径见 `prop_preview.parse_particles`。
+
+    运行时对坏条目**逐条丢弃**（非对象 / effect 不是非空串），找不到的效果资产**不放**——
+    画面上都是"这支火把少了一团粒子"，没有报错，只能在这里说。`point` 同起火点：形状坏 = 当没写。
+    """
+    if raw is _ABSENT:
         return
-    for i, one in enumerate(raw):
-        if not isinstance(one, str) or not one.strip():
-            issues.append(Issue("error", "prop_preset", pid, f"{where}[{i}] 必须是非空效果 id"))
-            continue
-        eid = one.strip()
-        if known and eid not in known:
+    if not isinstance(raw, list):
+        issues.append(Issue(
+            "error", "prop_preset", pid,
+            f"{where} 须为数组 [{{effect, point?}}, …]（当前 {raw!r}）——运行时读不到就当空列表：一个粒子都不挂",
+        ))
+        return
+    for i, item in enumerate(raw):
+        at = f"{where}[{i}]"
+        if not isinstance(item, dict):
             issues.append(Issue(
                 "error", "prop_preset", pid,
-                f"{where}[{i}] 的效果 {eid!r} 不在 assets/data/vfx/ 里——"
-                "运行时找不到资产就不放这团效果（火把只剩一张图）",
+                f"{at} 须为对象 {{effect, point?}}（当前 {item!r}）——运行时丢掉这一条",
             ))
+            continue
+        effect = item.get("effect")
+        if not isinstance(effect, str) or not effect.strip():
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{at}.effect 必须是非空效果 id（当前 {effect!r}）——运行时丢掉这一条",
+            ))
+        elif known and effect.strip() not in known:
+            issues.append(Issue(
+                "error", "prop_preset", pid,
+                f"{at}.effect {effect.strip()!r} 不在 assets/data/vfx/ 里——"
+                "运行时找不到资产就不放这团粒子（火把只剩一张图）",
+            ))
+        _prop_fire_point_issues(item.get("point", _ABSENT), pid, f"{at}.point", issues)
+
+
+def _vfx_spawn_placement(emitter: dict) -> str:
+    """发射器有效的出生位置（与运行时 ``resolveEmitterProgram`` 同判据：显式 simulation 为准；
+    旧资产薄片 + area 形状 = surface；其余 = shape）。粒子工作台 ``assets._spawn_placement`` 同一判据。"""
+    from tools.editor.shared.vfx_program import effective_solver
+
+    sim = emitter.get("simulation")
+    if isinstance(sim, dict):
+        return str(sim.get("spawnPlacement") or "")
+    sp = emitter.get("spawn")
+    shape = sp.get("shape") if isinstance(sp, dict) else None
+    kind = shape.get("kind") if isinstance(shape, dict) else None
+    return "surface" if effective_solver(emitter) == "plate" and kind == "area" else "shape"
+
+
+def _vfx_effect_id_sets(effects: dict) -> tuple[set[str], set[str]]:
+    """``(全部效果 id, 至少有一个 external 形状发射器的效果 id)``——plate.flammable.fireEffect 的提醒用。"""
+    known: set[str] = set()
+    external: set[str] = set()
+    for stem, doc in effects.items():
+        if not isinstance(doc, dict):
+            continue
+        known.add(str(stem))
+        for e in doc.get("emitters") if isinstance(doc.get("emitters"), list) else []:
+            sp = e.get("spawn") if isinstance(e, dict) else None
+            shape = sp.get("shape") if isinstance(sp, dict) else None
+            if isinstance(shape, dict) and shape.get("kind") == "external":
+                external.add(str(stem))
+                break
+    return known, external
 
 
 def _validate_vfx_plate(pl: object, stem: str, eid: str, issues: list[Issue]) -> None:
@@ -8281,6 +10633,10 @@ def _validate_vfx_behavior(beh: object, stem: str, eid: str, issues: list[Issue]
     if not isinstance(beh, dict):
         issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} 的 behavior 须为对象"))
         return
+    if "harassment" in beh:
+        from .shared.vfx_harassment import harassment_errors
+        for error in harassment_errors(beh["harassment"]):
+            issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} behavior.{error}"))
     for key in ("cruise", "max", "maxAccel", "minAltitude", "senseRadius", "separation"):
         v = beh.get(key)
         if not _is_num(v) or float(v) < 0:
@@ -8359,6 +10715,9 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
             issues.append(Issue("error", "vfx", stem, "效果资产根须为对象"))
             continue
         eid_top = str(row.get("id") or "").strip()
+        from .shared.vfx_timing import timing_problems
+        for problem in timing_problems(row):
+            issues.append(Issue("error", "vfx", stem, problem))
         if not eid_top:
             issues.append(Issue("error", "vfx", stem, "效果资产缺少非空 id"))
         elif eid_top != stem:
@@ -8368,9 +10727,20 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                 f"不一致 = 引用永远命不中）",
             ))
         ems = row.get("emitters")
-        if not isinstance(ems, list) or not ems:
-            issues.append(Issue("error", "vfx", stem, "效果资产须有非空 emitters 数组（一个效果 = 若干发射器）"))
+        beams = row.get("beams")
+        has_beams = isinstance(beams, list) and bool(beams)
+        if not isinstance(ems, list) or (not ems and not has_beams):
+            issues.append(Issue(
+                "error", "vfx", stem,
+                "效果资产须有 emitters 数组，且发射器与光柱（beams）至少有一样（只有光柱的效果写 emitters: []）",
+            ))
             continue
+        # 光柱（体积光）：形状 / id 重复 / 发射器对光柱的引用。口径与措辞与运行时 vfxBeam.ts 同一份
+        # （Python 镜像 shared/vfx_beam.py，parity 测试钉着）；运行时遇到就整个实例建不起来
+        from tools.editor.shared.vfx_beam import effect_beam_errors
+        from tools.editor.shared.vfx_program import effective_solver as _beam_solver
+        for problem in effect_beam_errors(row, _beam_solver):
+            issues.append(Issue("error", "vfx", stem, problem))
         seen: set[str] = set()
         ids: set[str] = set()
         for e in ems:
@@ -8411,6 +10781,14 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                 tint = ap.get("tint")
                 if tint is not None and (not isinstance(tint, list) or len(tint) != 3 or not all(_is_num(v) for v in tint)):
                     issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} appearance.tint 须为三个数 [r,g,b]（0..1）"))
+                if ap.get("tintOverLife") is not None:
+                    # 颜色 × 寿命（乘在 tint 上）：口径与工作台形状闸门同一个函数；null 按"未填"（同 emissive / lightGain）
+                    from .shared.vfx_appearance import tint_over_life_problems
+                    for problem in tint_over_life_problems(ap.get("tintOverLife")):
+                        sep = "" if problem.startswith("[") else " "
+                        issues.append(Issue(
+                            "error", "vfx", stem, f"发射器 {eid!r} appearance.tintOverLife{sep}{problem}",
+                        ))
                 emi = ap.get("emissive")
                 if emi is not None:
                     if not _is_num(emi) or not (0.0 <= float(emi) <= 1.0):
@@ -8449,11 +10827,19 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                         issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} spawn.{key} 须为 [最小, 最大]"))
                 shape = sp.get("shape")
                 if shape is not None:
-                    if not isinstance(shape, dict) or str(shape.get("kind") or "") not in ("point", "sphere", "disc", "box", "line", "area"):
+                    if not isinstance(shape, dict) or str(shape.get("kind") or "") not in ("point", "sphere", "disc", "box", "line", "area", "external", "beam"):
                         issues.append(Issue(
                             "error", "vfx", stem,
-                            f"发射器 {eid!r} spawn.shape.kind 须为 point / sphere / disc / box / line / area",
+                            f"发射器 {eid!r} spawn.shape.kind 须为 point / sphere / disc / box / line / area / external / beam",
                         ))
+                    elif shape.get("kind") == "external":
+                        # 外部给点（燃烧系统）：口径与措辞与粒子工作台形状闸门同一份（shared/vfx_burn.py）
+                        from .shared.vfx_burn import external_shape_notes, external_shape_problem
+                        problem = external_shape_problem(shape)
+                        if problem:
+                            issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r}: {problem}"))
+                        for note in external_shape_notes(shape, solver, _vfx_spawn_placement(e)):
+                            issues.append(Issue("warning", "vfx", stem, f"发射器 {eid!r}: {note}"))
                     elif shape.get("kind") == "area" and e.get("plate") is None and not e.get("simulation"):
                         issues.append(Issue(
                             "warning", "vfx", stem,
@@ -8466,6 +10852,17 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                 sec = life.get("seconds")
                 if not isinstance(sec, list) or len(sec) != 2 or not all(_is_num(v) for v in sec):
                     issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} life.seconds 须为 [最小秒, 最大秒]"))
+            if isinstance(life, dict) and life.get("maxDistance") is not None:
+                # 最远烧到多远（wu，离发射器原点）。口径与措辞与工作台形状闸门同一份
+                # （shared/vfx_life.py）；null 按"未填"（同 followAnchor / emissive / lightGain）
+                from .shared.vfx_life import max_distance_ignored, max_distance_problem
+                bad = max_distance_problem(life.get("maxDistance"))
+                if bad:
+                    issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} {bad}"))
+                else:
+                    ignored = max_distance_ignored(solver, life)
+                    if ignored:
+                        issues.append(Issue("warning", "vfx", stem, f"发射器 {eid!r} {ignored}"))
 
             col = e.get("collision")
             if isinstance(col, dict):
@@ -8531,6 +10928,18 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                             "warning", "vfx", stem,
                             f"发射器 {eid!r} 既有群体 behavior 又有 motion.stimulus："
                             f"群体走 behavior.attitude，运行时会忽略 stimulus（两条路不叠加）"))
+            if isinstance(mo, dict) and mo.get("followAnchor") is not None:
+                # 锚点动了、在飞的粒子怎么走（none / rig / full）。口径与措辞与工作台形状闸门同一份
+                # （shared/vfx_motion.py）；null 按"未填"（同 emissive / lightGain）
+                from .shared.vfx_motion import follow_anchor_ignored, follow_anchor_problem
+                fa = mo.get("followAnchor")
+                bad = follow_anchor_problem(fa)
+                if bad:
+                    issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} {bad}"))
+                else:
+                    ignored = follow_anchor_ignored(fa, solver)
+                    if ignored:
+                        issues.append(Issue("warning", "vfx", stem, f"发射器 {eid!r} {ignored}"))
 
             beh = e.get("behavior")
             if beh is not None:
@@ -8545,6 +10954,9 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
             pl = e.get("plate")
             if pl is not None:
                 _validate_vfx_plate(pl, stem, eid, issues)
+                if isinstance(pl, dict):
+                    # 可燃薄片（纸钱，A3.8）：薄片绑一份面燃烧模板；火苗 / 火光 / 烧法都取模板，贴图与大小仍归粒子
+                    _vfx_plate_burnable_issues(model, issues, pl, stem, eid)
                 if beh is not None and not e.get("simulation"):
                     issues.append(Issue(
                         "warning", "vfx", stem,

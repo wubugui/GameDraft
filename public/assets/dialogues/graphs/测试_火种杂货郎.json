@@ -1,0 +1,273 @@
+{
+  "schemaVersion": 1,
+  "id": "测试_火种杂货郎",
+  "entry": "hello",
+  "meta": {
+    "title": "测试·火种杂货郎（火种 / 临时火把 / 升级材料，测火把养成用）"
+  },
+  "nodes": {
+    "hello": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "火镰火绒、火折子、洋火，要啥子有啥子。测火把的？",
+      "next": "ask"
+    },
+    "ask": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "take",
+          "text": "三样火种各拿十份，再给根旧纤藤",
+          "next": "give"
+        },
+        {
+          "id": "torches",
+          "text": "临时火把各来三根",
+          "next": "give_torches"
+        },
+        {
+          "id": "mats",
+          "text": "升级的材料来一套",
+          "next": "give_mats"
+        },
+        {
+          "id": "up2",
+          "text": "把我这根纤藤裹布浸油（第二级）",
+          "next": "do_up2",
+          "requireCondition": {
+            "all": [
+              {
+                "propLevel": "xianteng_torch",
+                "op": "==",
+                "value": 1
+              },
+              {
+                "flag": "has_item_tongyou",
+                "value": true
+              },
+              {
+                "flag": "has_item_mabu",
+                "value": true
+              }
+            ]
+          },
+          "disabledClickHint": "先弄到桐油和麻布，纤藤也得还没裹过。"
+        },
+        {
+          "id": "up3",
+          "text": "再给我箍上铁箍（第三级）",
+          "next": "do_up3",
+          "requireCondition": {
+            "all": [
+              {
+                "propLevel": "xianteng_torch",
+                "op": "==",
+                "value": 2
+              },
+              {
+                "flag": "has_item_tiegu",
+                "value": true
+              }
+            ]
+          },
+          "disabledClickHint": "得先裹了油布，还要有铁箍。"
+        },
+        {
+          "id": "no",
+          "text": "不要",
+          "next": "end"
+        }
+      ]
+    },
+    "give": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "huorong",
+            "count": 10,
+            "critical": true
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "huozhezi",
+            "count": 10,
+            "critical": true
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "yanghuo",
+            "count": 10,
+            "critical": true
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "torch",
+            "count": 1,
+            "critical": true
+          }
+        }
+      ],
+      "next": "bye"
+    },
+    "bye": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "拿去。背包里先把纤藤拿在手上，再挑一样「设为火种」，按 T 点。",
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    },
+    "give_torches": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "songming",
+            "count": 3,
+            "critical": true
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "shichai",
+            "count": 3,
+            "critical": true
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "xianghuoba",
+            "count": 3,
+            "critical": true
+          }
+        }
+      ],
+      "next": "bye_torches"
+    },
+    "bye_torches": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "松明旺、湿柴呛、香火把亮得可怜——各有各的用处，烧完就没得了。",
+      "next": "end"
+    },
+    "give_mats": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "tongyou",
+            "count": 2,
+            "critical": true
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "mabu",
+            "count": 2,
+            "critical": true
+          }
+        },
+        {
+          "type": "giveItem",
+          "params": {
+            "id": "tiegu",
+            "count": 2,
+            "critical": true
+          }
+        }
+      ],
+      "next": "bye_mats"
+    },
+    "bye_mats": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "桐油麻布铁箍都齐了。拿回来我给你裹上。",
+      "next": "end"
+    },
+    "do_up2": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "removeItem",
+          "params": {
+            "id": "tongyou",
+            "count": 1
+          }
+        },
+        {
+          "type": "removeItem",
+          "params": {
+            "id": "mabu",
+            "count": 1
+          }
+        },
+        {
+          "type": "setPropLevel",
+          "params": {
+            "prop": "xianteng_torch",
+            "level": 2
+          }
+        }
+      ],
+      "next": "up2_line"
+    },
+    "up2_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "布裁条，浸透了油再裹紧——这下风里经得住一阵了。",
+      "next": "end"
+    },
+    "do_up3": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "removeItem",
+          "params": {
+            "id": "tiegu",
+            "count": 1
+          }
+        },
+        {
+          "type": "setPropLevel",
+          "params": {
+            "prop": "xianteng_torch",
+            "level": 3
+          }
+        }
+      ],
+      "next": "up3_line"
+    },
+    "up3_line": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "箍上了。火拢得住，烧起来也不散架。",
+      "next": "end"
+    }
+  }
+}

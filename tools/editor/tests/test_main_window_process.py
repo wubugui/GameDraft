@@ -195,6 +195,9 @@ def test_dialogue_process_exit_refreshes_and_stops_watch_timer():
         # 粒子工作台同理（2026-09-11；09-14 起连布置库一起）：它是 assets/data/vfx/ 与 vfx_placements.json
         # 的唯一写者，退出时不重读，它新建的效果不进 playVfx 下拉、刚挪的区域在场景画布上还是旧的那圈，且不报任何错。
         _resync_vfx_from_disk=lambda: events.append("vfx"),
+        # 燃烧工作台同表登记（2026-09-16）：可燃物资产与燃烧布置库的唯一写者，退出时重读——
+        # 不重读就是它刚布置的可燃物在燃烧动作 / 条件叶候选、热点检视器、画布着火点上都看不见。
+        _resync_burn_from_disk=lambda: events.append("burn"),
         # 地形工作台同表登记（2026-09-14）：它退出时场景页的「地形 / 碰撞」块与画布红块要重读盘上的产物，
         # 不重读就是作者刚导出的碰撞在主编辑器里还是旧的那片红。
         _resync_terrain_from_disk=lambda: events.append("terrain"),
@@ -202,11 +205,12 @@ def test_dialogue_process_exit_refreshes_and_stops_watch_timer():
 
     main_window.MainWindow._poll_dialogue_external_processes(owner)
     assert len(owner._dialogue_external_processes) == 1
-    assert events == ["traj", "vfx", "terrain", "reload", "audio"]
+    assert events == ["traj", "vfx", "burn", "terrain", "reload", "audio"]
 
     owner._dialogue_external_processes[0].running = False
     main_window.MainWindow._poll_dialogue_external_processes(owner)
-    assert events == ["traj", "vfx", "terrain", "reload", "audio", "traj", "vfx", "terrain", "reload", "audio", "stop"]
+    assert events == ["traj", "vfx", "burn", "terrain", "reload", "audio",
+                      "traj", "vfx", "burn", "terrain", "reload", "audio", "stop"]
 
 
 def test_voice_workbench_launches_the_right_module_with_the_project_root(tmp_path):

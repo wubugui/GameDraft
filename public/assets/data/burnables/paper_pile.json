@@ -1,0 +1,62 @@
+{
+  "id": "paper_pile",
+  "label": "纸钱堆（样例）",
+  "image": "/resources/runtime/images/props/burn_demo/paper_pile.png",
+  "widthCm": 72.73,
+  "heightCm": 40.45,
+  "mode": "spread",
+  "orientation": "upright",
+  "gridCells": 72,
+  "fuel": {
+    "alphaThreshold": 0.5
+  },
+  "ignitionPoints": [
+    {
+      "id": "底边",
+      "u": 0.5,
+      "v": 0.99
+    }
+  ],
+  "spread": {
+    "speedOpposed": 2,
+    "speedConcurrent": 14
+  },
+  "flameSeconds": 2,
+  "emberSeconds": 3,
+  "flameLength": 14,
+  "ignitionDelay": 0.4,
+  "look": {
+    "ashColor": [
+      0.16,
+      0.15,
+      0.14
+    ],
+    "ashAlpha": 0.12,
+    "ashFadeSeconds": 4
+  },
+  "particles": [
+    {
+      "effect": "burn_flame",
+      "from": "flame",
+      "refArea": 100
+    },
+    {
+      "effect": "burn_ember",
+      "from": "ember",
+      "refArea": 200
+    },
+    {
+      "effect": "burn_ash",
+      "from": "ash",
+      "refArea": 300
+    }
+  ],
+  "light": {
+    "kelvin": 1700,
+    "intensityPerM2": 4,
+    "maxIntensity": 0.25,
+    "range": 420,
+    "softeningRadius": 12,
+    "puffAmp": 0.12
+  }
+}

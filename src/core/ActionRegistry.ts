@@ -11,6 +11,7 @@
  * `ActionExecutor.executeAwait`，顺序 await handler 返回的 Promise。
  */
 import { parsePositionRef } from '../utils/positionRef';
+import { resolveBurnableHost } from '../data/burnables';
 import type { ActionExecutor } from './ActionExecutor';
 import type { RuleOfferRegistry } from './RuleOfferRegistry';
 import type { EventBus } from './EventBus';
@@ -42,6 +43,9 @@ import type { ObjectExamineManager } from '../systems/objectExamine/ObjectExamin
 import type { PressureHoldManager } from '../systems/pressureHold/PressureHoldManager';
 import type { SignalCueManager } from '../systems/SignalCueManager';
 import type { HealthSystem } from '../systems/HealthSystem';
+import type { RetrySystem } from '../systems/RetrySystem';
+import type { SceneWindState } from '../utils/sceneWind';
+import { windGustErrors, type WindGustDef } from '../data/windGust';
 import type { SmellSystem } from '../systems/SmellSystem';
 import {
   readVoiceSpec,
@@ -211,7 +215,7 @@ export interface ActionRegistryDeps {
   setEntityShadowBindings: (target: string, bindings: EntityShadowBinding[]) => void;
   /** 世界空间粒子 / 群体（VfxSystem）：开 / 停 / 改群状态 / 发刺激场。位置一律画面点 + 离地高。 */
   vfx: {
-    play: (opts: { instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number }) => void;
+    play: (opts: { instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number; restart?: boolean; oneShot?: boolean }) => void;
     stop: (instanceId: string) => void;
     setState: (instanceId: string, state: VfxFlockState) => void;
     emitField: (def: VfxFieldDef, sceneX: number, sceneY: number, h: number) => void;
@@ -282,7 +286,21 @@ export interface ActionRegistryDeps {
    * `fadeMs` 只作用于**灯的强度**（贴图与粒子是离散的，纹理没法淡入淡出）。
    * 挂点上没有挂件、或预设里没有这个状态 ⇒ false（调用方报警）。
    */
-  setPropState: (targetId: string, socket: string, state: string, fadeMs: number) => boolean;
+  /** Promise 覆盖新状态进入动作的真实完成时间（顺序动作批要等它）；resolve false = 没挂件 / 没这个状态 */
+  setPropState: (targetId: string, socket: string, state: string, fadeMs: number) => Promise<boolean>;
+  /** 锁挂件：`lit` 锁定不灭 / `unlit` 点不燃 / `none` 解锁；挂点上没有挂件 ⇒ false */
+  lockPropState: (targetId: string, socket: string, lock: 'lit' | 'unlit' | 'none') => boolean;
+  /** 设挂件等级（`setPropLevel`）：没有等级表 / 超范围 ⇒ false */
+  setPropLevel: (propId: string, level: number) => boolean;
+  /**
+   * 燃烧系统（A3.8）：可燃实例直接点着 / 熄灭 / 复原；不是可燃实例 ⇒ false。
+   * `socket` 没给 = 当前场景的可燃实体（`target` = 实体 id）；给了 = `target` 这个人这个挂点上的可燃挂件。
+   */
+  igniteBurnable: (target: string, socket: string | undefined, pointId: string | undefined) => boolean;
+  extinguishBurnable: (target: string, socket: string | undefined) => boolean;
+  resetBurnable: (target: string, socket: string | undefined) => boolean;
+  /** 在挂着的挂件上播一次性效果（跟着挂件走、放完自己收）；挂点上没有挂件 ⇒ false */
+  playPropVfx: (targetId: string, socket: string, effect: string, point: [number, number] | null) => boolean;
   /**
    * 场景灯的运行时**强度倍率**渐变（门口那盏灯笼被风吹灭：`scale` 给 0）。
    * 存倍率而不是绝对强度，作者后续在编辑器里调那盏灯仍然有效。演出态、不入档。
@@ -448,6 +466,8 @@ export interface ActionRegistryDeps {
   pressureHoldManager: PressureHoldManager;
   signalCueManager: SignalCueManager;
   healthSystem: HealthSystem;
+  retrySystem: RetrySystem;
+  sceneWind: SceneWindState;
   smellSystem: SmellSystem;
   planeReconciler: PlaneReconciler;
   /** 配音通道（与过场字幕、世界对话共用同一条）；未注入时气泡配音整体退化为不发声。 */
@@ -631,6 +651,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   }, ['actions']);
 
   executor.register('chooseAction', async (p, zctx) => {
+    const gen = executor.getGeneration();
     const rawOptions = Array.isArray(p.options) ? p.options : [];
     const options = rawOptions
       .filter((x): x is Record<string, unknown> => isParamObject(x))
@@ -653,11 +674,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         p.allowCancel === true,
       );
     } finally {
-      if (d.stateController.currentState === GameState.UIOverlay) {
+      if (gen === executor.getGeneration() && d.stateController.currentState === GameState.UIOverlay) {
         d.stateController.setState(prevState);
       }
     }
-    if (picked === null || picked < 0 || picked >= options.length) return;
+    if (gen !== executor.getGeneration() || picked === null || picked < 0 || picked >= options.length) return;
     await executor.executeBatchAwait(options[picked].actions, zctx);
   }, ['prompt', 'options', 'allowCancel']);
 
@@ -812,6 +833,22 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (!ok) console.warn(`giveItem: 背包已满，物品 "${String(p.id)}" 未能给予（非 critical 给予不绕过槽上限）`);
   }, ['id', 'count', 'critical']);
   executor.register('removeItem', (p) => { void d.inventoryManager.removeItem(p.id as string, (p.count as number) ?? 1); }, ['id', 'count']);
+  /**
+   * 设挂件的等级（随身那根火把的升级：找人 + 材料之后调它）。等级按挂件 id 记、进存档，
+   * 拿在手上的当场换外观与效果。没有等级表 / 超出范围 ⇒ warn、不动。
+   */
+  executor.register('setPropLevel', (p) => {
+    const prop = typeof p.prop === 'string' ? p.prop.trim() : '';
+    const level = Number(p.level);
+    if (!prop || !Number.isFinite(level)) { console.warn('setPropLevel: 缺 prop / level'); return; }
+    d.setPropLevel(prop, level);
+  }, ['prop', 'level']);
+  /** 设当前火种（背包里火种的「设为火种」就是它；剧情里也能直接替玩家设）。不是火种 ⇒ warn、不动 */
+  executor.register('setActiveIgniter', (p) => {
+    const id = typeof p.item === 'string' ? p.item.trim() : '';
+    if (!id) { console.warn('setActiveIgniter: 缺 item'); return; }
+    d.inventoryManager.setActiveIgniter(id);
+  }, ['item']);
   /** B7：金额走统一严格解析（非有限数 warn+跳过），杜绝 NaN/字符串污染 coins 入档。 */
   executor.register('giveCurrency', (p) => {
     const amt = resolveCurrencyAmountParam(p.amount, d.resolveDisplayText, 'giveCurrency');
@@ -1116,6 +1153,45 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (!Number.isFinite(amount)) return;
     d.healthSystem.setHealth(amount);
   }, ['amount']);
+  executor.register('setMaxHealth', (p) => {
+    d.healthSystem.setBaseMaxHealth(Number(p.amount));
+  }, ['amount']);
+  executor.register('setRetryCheckpoint', (p) => {
+    d.retrySystem.requestCheckpoint(String(p.id ?? ''), String(p.label ?? ''));
+  }, ['id', 'label']);
+  executor.register('sceneWindGust', (p) => {
+    const errors = windGustErrors(p);
+    if (errors.length) { console.warn('sceneWindGust:', errors.join('; ')); return; }
+    const finished = d.sceneWind.startGust(p as unknown as WindGustDef);
+    if (p.wait === true) return finished;
+  }, ['speedMultiplier', 'durationMs', 'attackMs', 'releaseMs', 'id', 'volume', 'wait']);
+  executor.register('lockHealth', (p) => {
+    if (!d.healthSystem.setBounds({
+      id: String(p.id ?? '').trim(),
+      min: p.min === undefined ? undefined : Number(p.min),
+      max: p.max === undefined ? undefined : Number(p.max),
+      scope: p.scope === 'persistent' ? 'persistent' : 'scene',
+    })) console.warn('lockHealth: invalid or conflicting bounds', p);
+  }, ['id', 'min', 'max', 'scope']);
+  executor.register('unlockHealth', (p) => { d.healthSystem.clearBounds(String(p.id ?? '')); }, ['id']);
+  executor.register('inflictHealthDamage', async (p) => {
+    if (p.kind !== 'yin' && p.kind !== 'fright') return;
+    const sourceId = String(p.sourceId ?? '').trim();
+    if (!sourceId) return;
+    await d.healthSystem.applyDamage({ amount: Number(p.amount), kind: p.kind, sourceId,
+      deathNoteId: typeof p.deathNoteId === 'string' ? p.deathNoteId : undefined });
+  }, ['amount', 'kind', 'sourceId', 'deathNoteId']);
+  executor.register('applyHealthProtection', (p) => {
+    if (p.kind !== undefined && p.kind !== '' && p.kind !== 'yin' && p.kind !== 'fright') return;
+    d.healthSystem.applyProtection({
+      id: String(p.id ?? '').trim(),
+      reduction: p.reduction === undefined ? undefined : Number(p.reduction),
+      maxHealthBonus: p.maxHealthBonus === undefined ? undefined : Number(p.maxHealthBonus),
+      kinds: p.kind === 'yin' || p.kind === 'fright' ? [p.kind] : undefined,
+      threatIds: typeof p.threatId === 'string' && p.threatId ? [p.threatId] : undefined,
+    }, Number(p.seconds));
+  }, ['id', 'seconds', 'reduction', 'maxHealthBonus', 'kind', 'threatId']);
+  executor.register('removeHealthProtection', (p) => { d.healthSystem.removeProtection(String(p.id ?? '')); }, ['id']);
   executor.register('incHealth', (p) => {
     const amount = Number(p.amount ?? 0);
     if (!Number.isFinite(amount)) return;
@@ -1150,16 +1226,26 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.smellSystem.sniff();
   }, []);
   // 气味源（G.6）：放了源，气缕就被那边"吸"过去——飘向指向源。scene 缺省当前场景，只在那个场景里指向。
+  // `at`（位置引用：实体此刻位置 / 曲线插槽 / 曲线上的点）有值就覆盖 x/y，且**不在这一刻求值**——
+  // 存的是引用本身，SmellSystem 每帧现求（源是会走的 NPC 时烟跟着它）。
   executor.register('setSmellSource', (p) => {
+    const scene = p.scene === undefined ? undefined : String(p.scene);
+    if (p.at != null) {
+      const at = parsePositionRef(p.at);
+      if (at) {
+        d.smellSystem.setSourceRef(at, scene);
+        return;
+      }
+      console.warn('setSmellSource: at 不是认得的位置引用，退回 x/y', p.at);
+    }
     const x = Number(p.x);
     const y = Number(p.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
       console.warn('setSmellSource: x/y 需为数字', p);
       return;
     }
-    const scene = p.scene === undefined ? undefined : String(p.scene);
     d.smellSystem.setSource(x, y, scene);
-  }, ['x', 'y', 'scene']);
+  }, ['x', 'y', 'scene', 'at']);
   executor.register('clearSmellSource', () => {
     d.smellSystem.clearSource();
   }, []);
@@ -1440,9 +1526,85 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     const fadeRaw = Number(p.fadeMs);
-    const ok = d.setPropState(target, socket, state, Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0);
-    if (!ok) console.warn(`setPropState: ${target}.${socket} 上没有挂件，或预设里没有状态「${state}」`);
+    return d.setPropState(target, socket, state, Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0)
+      .then((ok) => {
+        if (!ok) {
+          console.warn(
+            `setPropState: ${target}.${socket} 没有切到「${state}」——挂点上没有挂件、预设里没有这个状态，`
+            + '或一帧内切换过多（后两种原因另有 [heldProp] 日志）',
+          );
+        }
+      });
   }, ['target', 'socket', 'state', 'fadeMs']);
+
+  /**
+   * `lockPropState`：`lock` = `lit` 锁定不灭（风吹不灭——火势只回不掉，照样闪、照样被吹歪——玩家按键也熄不了）/
+   * `unlit` 点不燃（玩家按键点不着）/ `none` 解锁。锁入档。`setPropState` 不受锁影响——动作永远优先。
+   * 锁通常挂在叙事状态的进入 / 离开动作上（进这段剧情锁、出来解）。
+   */
+  executor.register('lockPropState', (p) => {
+    const target = String(p.target ?? '').trim();
+    const socket = String(p.socket ?? '').trim();
+    const raw = String(p.lock ?? '').trim();
+    if (!target || !socket) {
+      console.warn('lockPropState: 缺 target / socket');
+      return;
+    }
+    const lock = raw === 'lit' || raw === 'unlit' || raw === 'none' ? raw : 'none';
+    if (lock !== raw) console.warn(`lockPropState: lock「${raw}」不认识（lit / unlit / none），按解锁处理`);
+    if (!d.lockPropState(target, socket, lock)) {
+      console.warn(`lockPropState: ${target}.${socket} 上没有挂件`);
+    }
+  }, ['target', 'socket', 'lock']);
+
+  /**
+   * 燃烧系统（A3.8）：`igniteBurnable` 直接点着可燃实例（不走点火表演）——`point` = 模板着火点 id，
+   * 缺省：标了着火点取第一个、没标整体点着。`extinguishBurnable` 熄灭（消耗燃烧留着剩下的燃料；面燃烧正在烧的地方定格焦黑）。
+   * `resetBurnable` 复原成没点。`socket` 没写 = 当前场景的可燃实体（`target` = 实体 id）；写了 = `target` 这个人
+   * （`player` / NPC id）这个挂点上的可燃挂件。三个都改存档（烧的状态是世界事实），不进过场白名单。
+   */
+  const burnArgs = (name: string, p: Record<string, unknown>): { target: string; socket: string | undefined } | null => {
+    const target = String(p.target ?? '').trim();
+    const socket = String(p.socket ?? '').trim();
+    if (!target) { console.warn(`${name}: 缺 target（可燃实体 id；写了 socket 时是拿着它的人）`); return null; }
+    return { target, socket: socket || undefined };
+  };
+  executor.register('igniteBurnable', (p) => {
+    const a = burnArgs('igniteBurnable', p);
+    if (!a) return;
+    const point = String(p.point ?? '').trim();
+    d.igniteBurnable(a.target, a.socket, point || undefined);
+  }, ['target', 'socket', 'point']);
+  executor.register('extinguishBurnable', (p) => {
+    const a = burnArgs('extinguishBurnable', p);
+    if (a) d.extinguishBurnable(a.target, a.socket);
+  }, ['target', 'socket']);
+  executor.register('resetBurnable', (p) => {
+    const a = burnArgs('resetBurnable', p);
+    if (a) d.resetBurnable(a.target, a.socket);
+  }, ['target', 'socket']);
+
+  /**
+   * `playPropVfx`：在手持挂件上播一个效果（熄灭后冒的烟）——跟着挂件走、效果放完自己收、卸下即散。
+   * 挂件预设状态的进入动作里不写 target / socket = 这件挂件自己（HeldPropSystem 注入）；别处必须写全。
+   * `point` = 贴图上的点 [u, v]，不写 = 起火点 → 挂点。
+   */
+  executor.register('playPropVfx', (p) => {
+    const target = String(p.target ?? '').trim();
+    const socket = String(p.socket ?? '').trim();
+    const effect = String(p.effect ?? '').trim();
+    if (!target || !socket || !effect) {
+      console.warn('playPropVfx: 缺 target / socket / effect（target / socket 只有在挂件状态的进入动作里才可以不写）');
+      return;
+    }
+    const pt = Array.isArray(p.point) && p.point.length >= 2 ? [Number(p.point[0]), Number(p.point[1])] : null;
+    const point = pt && Number.isFinite(pt[0]) && Number.isFinite(pt[1])
+      ? [Math.min(1, Math.max(0, pt[0]!)), Math.min(1, Math.max(0, pt[1]!))] as [number, number]
+      : null;
+    if (!d.playPropVfx(target, socket, effect, point)) {
+      console.warn(`playPropVfx: ${target}.${socket} 上没有挂件，效果「${effect}」没有播`);
+    }
+  }, ['target', 'socket', 'effect', 'point']);
 
   /**
    * 场景灯渐灭 / 渐亮（`scale` = 强度倍率，0 = 灭、1 = 原样）。
@@ -2005,7 +2167,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    */
   executor.register('playVfx', async (p) => {
     const instanceId = String(p.instanceId ?? '').trim();
-    if (instanceId) { d.vfx.play({ instanceId }); return; }
+    if (instanceId) { d.vfx.play({ instanceId, restart: p.restart === true }); return; }
     const effect = String(p.effect ?? '').trim();
     if (!effect) { console.warn('playVfx: 需要 instanceId，或 effect + 位置'); return; }
     const at = await resolveVfxAt(p, 'playVfx');
@@ -2016,8 +2178,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       anchor: { x: at.x, y: at.y, h: at.h, surface },
       seed: Number.isFinite(Number(p.seed)) ? Number(p.seed) : undefined,
       countScale: Number.isFinite(Number(p.countScale)) ? Number(p.countScale) : undefined,
+      oneShot: p.oneShot === true,
     });
-  }, ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale']);
+  }, ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale', 'restart', 'oneShot']);
   /** `stopVfx`：停一个实例（在飞的粒子自然老化；永生的群整批清掉；临时实例直接移除）。 */
   executor.register('stopVfx', (p) => {
     const instanceId = String(p.instanceId ?? '').trim();
@@ -2658,17 +2821,20 @@ export function parseTrajectorySpawnSpec(raw: unknown): TrajectorySpawnSpec | nu
     return Number.isFinite(n) ? n : undefined;
   };
   const out: TrajectorySpawnSpec = { kind: kind as TrajectorySpawnSpec['kind'] };
+  // 开了可燃：渲染由可燃物实例接管（图 / 大小取模板），src / characterId 可以不写
+  const burnable = resolveBurnableHost(o.burnable);
+  if (burnable) out.burnable = burnable;
   if (kind === 'image') {
     const src = String(o.src ?? '').trim();
-    if (!src) return null;
-    out.src = src;
+    if (!src && !burnable) return null;
+    if (src) out.src = src;
     const w = num(o.worldWidth), h = num(o.worldHeight);
     if (w !== undefined) out.worldWidth = w;
     if (h !== undefined) out.worldHeight = h;
   } else if (kind === 'character') {
     const cid = String(o.characterId ?? '').trim();
-    if (!cid) return null;
-    out.characterId = cid;
+    if (!cid && !burnable) return null;
+    if (cid) out.characterId = cid;
   } else return null;
   const id = String(o.id ?? '').trim();
   if (id) out.id = id;

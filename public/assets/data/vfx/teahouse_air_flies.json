@@ -1,0 +1,127 @@
+{
+  "id": "teahouse_air_flies",
+  "label": "茶馆 · 空桌与过道上方盘旋苍蝇",
+  "prewarmSeconds": [
+    0.6,
+    2.2
+  ],
+  "emitters": [
+    {
+      "id": "air_flies",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": true,
+          "contact": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/teahouse_fly.png",
+        "sizeWu": 4.6,
+        "sizeJitter": [
+          0.85,
+          1.15
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.045,
+            0.95
+          ],
+          [
+            0.87,
+            0.95
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "lit": true,
+        "emissive": 0,
+        "stretchByVelocity": 0.001,
+        "faceVelocity": false
+      },
+      "spawn": {
+        "max": 3,
+        "rate": 1.0,
+        "intervalJitter": 0.6,
+        "burst": 3,
+        "shape": {
+          "kind": "box",
+          "size": [
+            35,
+            17,
+            30
+          ]
+        },
+        "speed": [
+          25,
+          42
+        ]
+      },
+      "motion": {
+        "drag": 1.05,
+        "turbulence": {
+          "strength": 150,
+          "scale": 18,
+          "speed": 0.9
+        },
+        "maxSpeed": 58,
+        "stimulus": {
+          "fear": {
+            "player:motion": 1,
+            "sfx:footstep": 0.15
+          },
+          "accel": 140
+        }
+      },
+      "life": {
+        "seconds": [
+          4,
+          7
+        ],
+        "maxDistance": 70
+      },
+      "collision": {
+        "ground": "bounce",
+        "shell": "bounce",
+        "restitution": 0.4,
+        "friction": 0.1,
+        "radiusWu": 0.4
+      }
+    }
+  ],
+  "authoring": {
+    "sceneId": "teahouse",
+    "background": "background.png",
+    "anchor": {
+      "x": 230,
+      "y": 303,
+      "h": 80,
+      "surface": "ground"
+    },
+    "note": "空桌和前景过道半空两小群，每群最多3只；限定范围避开有人桌，不跟随主角、不飞向食客。"
+  }
+}

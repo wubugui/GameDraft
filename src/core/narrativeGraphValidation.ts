@@ -1,4 +1,6 @@
 import { getActionParamManifest } from './actionParamManifest';
+import { windGustErrors } from '../data/windGust';
+import { healthActionErrors } from '../data/healthActionValidation';
 
 export type NarrativeValidationSeverity = 'error' | 'warning';
 
@@ -1093,6 +1095,39 @@ function validateConditionExpr(
   if (typeof x.quest === 'string') return typeof x.questStatus === 'string' || typeof x.status === 'string';
   if (typeof x.scenario === 'string') return typeof x.phase === 'string' && typeof x.status === 'string';
   if (typeof x.scenarioLine === 'string') return typeof x.lineStatus === 'string';
+  // heldProp 叶子（手持挂件：火把点着没有 / 火势 / 锁）：挂件变了发 heldProp:changed，reactive 迁移会被叫醒，所以叙事图里合法。
+  // 挂件 / 状态存在性由编辑器侧 validator 对照 prop_presets.json 检查（本模块无挂件表）。
+  // posture / timePhase / vfxState 不在此列：它们变化时没有唤醒叙事重评的事件。
+  if (typeof (x as { heldProp?: unknown }).heldProp === 'string') {
+    if (!String((x as { heldProp: string }).heldProp).trim()) {
+      addIssue(issues, 'error', 'condition.shape', `${owner}: heldProp condition requires a non-empty holder id`, path, owner, target);
+      return false;
+    }
+    return true;
+  }
+  // burn 叶子（可燃物烧的状态）：状态变了发 burn:changed，reactive 迁移会被叫醒，所以叙事图里合法。
+  // burn 是不是可燃实例（场景实体身上的 burnable 块 / 写了 burnSocket 时拿东西的人）由编辑器侧 validator 对照场景与挂件预设检查。
+  if (typeof (x as { burn?: unknown }).burn === 'string') {
+    const leaf = x as { burn: string; burnState?: unknown };
+    if (!leaf.burn.trim() || !['unburnt', 'burning', 'out', 'burnt'].includes(String(leaf.burnState ?? ''))) {
+      addIssue(issues, 'error', 'condition.shape', `${owner}: burn condition requires an entity id (or a holder id with burnSocket) and burnState unburnt|burning|out|burnt`, path, owner, target);
+      return false;
+    }
+    return true;
+  }
+  // propLevel 叶子（挂件升到第几级）：`setPropLevel` 会发 heldProp:changed，reactive 迁移叫得醒，故叙事图里合法
+  if (typeof (x as { propLevel?: unknown }).propLevel === 'string') {
+    if (!String((x as { propLevel: string }).propLevel).trim()) {
+      addIssue(issues, 'error', 'condition.shape', `${owner}: propLevel condition requires a non-empty prop id`, path, owner, target);
+      return false;
+    }
+    const v = (x as { value?: unknown }).value;
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+      addIssue(issues, 'error', 'condition.shape', `${owner}: propLevel condition requires numeric value`, path, owner, target);
+      return false;
+    }
+    return true;
+  }
   // plane 叶子：id 存在性由编辑器侧 validator 对照 planes.json 检查（本模块无位面清单）
   if (typeof x.plane === 'string') {
     if (!x.plane.trim()) {
@@ -1110,6 +1145,12 @@ function validateActionDef(action: ActionLike, path: string, issues: NarrativeVa
   const params = action.params && typeof action.params === 'object' && !Array.isArray(action.params)
     ? action.params as Record<string, unknown>
     : {};
+  if (type === 'sceneWindGust') for (const error of windGustErrors(params)) {
+    addIssue(issues, 'error', 'action.param.invalid', `${owner}: sceneWindGust ${error}`, `${path}.params`, owner, target);
+  }
+  for (const error of healthActionErrors(type, params)) {
+    addIssue(issues, 'error', 'action.param.invalid', `${owner}: ${type} ${error}`, `${path}.params`, owner, target);
+  }
   // 动作参数唯一权威源：src/core/actionParamManifest.ts（三方同步契约见该文件头注释）。
   const manifest = getActionParamManifest(type);
   if (!manifest) {

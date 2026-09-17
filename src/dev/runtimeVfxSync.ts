@@ -99,7 +99,7 @@ export interface VfxStatusDoc {
   instances: VfxInstanceStatus[];
   /** 本场景所有实例的总览（不止工作台那个效果） */
   allInstances: number;
-  stats: { instances: number; live: number; drawCalls: number; fields: number; simMs: number };
+  stats: { instances: number; live: number; drawCalls: number; fields: number; simMs: number; beams?: number };
   /** 玩家脚点（场景坐标 wu）与它的 M-world 地面点：工作台拿同一画面点过本地换算比一次（活证据） */
   playerScene: { x: number; y: number } | null;
   playerWorld: [number, number, number] | null;

@@ -13,8 +13,10 @@
 * **效果改名 / 删除连带布置**：改名 = 布置里引用旧 id 的一起改（先写库再改名，改名失败回滚库）；
   删除 = 先列出全库所有引用它的布置，作者确认"连布置一起删"才动（先写库再删文件，删失败回滚库）。
 * **布置库之外按效果 id 的引用只读、只列不改**（``external_refs_to_effect``）：挂件预设 ``prop_presets.json``
-  的 ``vfx`` / ``states[*].vfx``、数据里 ``playVfx`` 动作的 ``effect`` 参数。那些文件归主编辑器写，
-  本台一个字节都不碰——删除要作者看着清单明确确认，改名在它们还在时一律拒绝并说去主编辑器改哪个文件。
+  的粒子挂载 ``particles[i].effect`` / ``states[*].particles[i].effect``（契约 v3 取代旧 ``vfx``）、
+  数据里 ``playVfx`` / ``playPropVfx`` 动作的 ``effect`` 参数（后者常在挂件预设状态的 ``onEnterActions`` 里）、
+  可燃物模板 ``assets/data/burnables/<id>.json`` 的 ``particles[i].effect``（燃烧粒子）。那些文件归主编辑器 / 燃烧工作台写，
+  本台一个字节都不碰——删除要作者看着清单明确确认，改名在它们还在时一律拒绝并说去哪里改。
   ⚠ 2026-09-14 之前只看布置库：火把 ember 态的 ``incense_smoke`` 没有任何布置，左栏说"游戏里不会出现"、
   删除确认说"全库没有布置引用它"，删完火把的余烟从此静默消失。
 * **布置库之外按实例 id 的引用同样只读、只列不改**（``external_refs_to_instance``）：``playVfx`` / ``stopVfx`` /
@@ -33,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.atomic_io import retry_transient
+from tools.editor.shared import burnables as _burnables
 from tools.editor.shared import vfx_placements as vp
 from tools.vfx_workbench import assets
 
@@ -138,8 +141,10 @@ def refs_to_effect(lib: dict, effect_id: str) -> list[dict]:
             for sid, ph, _i, row in vp.iter_rows(lib) if str(row.get("effect") or "") == effect_id]
 
 
-#: 扫 ``playVfx`` 动作时跳过的：本台自己写的两样（效果目录 / 布置库）、归档与备份（运行时不读，列出来只会误拦改名）
-_REF_SKIP_DIRS = ("vfx", "archive")
+#: 扫 ``playVfx`` 动作时跳过的：本台自己写的两样（效果目录 / 布置库）、归档与备份（运行时不读，列出来只会误拦改名）、
+#: 可燃物模板目录（模板里没有动作也没有实例引用；它按 ``particles[i].effect`` 引用效果由 ``_burnable_template_refs``
+#: 单独扫——深遍历不挑容器，别让同一个文件在两条扫描里各算一遍）
+_REF_SKIP_DIRS = ("vfx", "archive", "burnables")
 
 
 def _read_json(p: Path) -> Any:
@@ -157,7 +162,8 @@ def _rel_ref(p: Path) -> str:
 
 
 def _prop_preset_refs(effect_id: str) -> list[dict]:
-    """挂件预设（``HeldPropSystem.startVfx`` 按 id 直接 ``playVfx``）：顶层 ``vfx`` 与 ``states[*].vfx``。"""
+    """挂件预设的粒子挂载（契约 v3，按 id 直接 ``playVfx``）：顶层 ``particles[i].effect`` 与
+    ``states[*].particles[i].effect``。旧 ``vfx`` 字段运行时不读，不算引用（校验器对它报 error）。"""
     p = REF_ROOT / "public" / "assets" / "data" / "prop_presets.json"
     doc = _read_json(p)
     if not isinstance(doc, dict):
@@ -165,29 +171,41 @@ def _prop_preset_refs(effect_id: str) -> list[dict]:
     out: list[dict] = []
     rel = _rel_ref(p)
 
-    def hit(lst: Any) -> bool:
-        return isinstance(lst, list) and any(str(x or "") == effect_id for x in lst)
+    def hits(lst: Any) -> list[int]:
+        if not isinstance(lst, list):
+            return []
+        return [i for i, m in enumerate(lst)
+                if isinstance(m, dict) and isinstance(m.get("effect"), str) and m["effect"].strip() == effect_id]
 
     for pid, pre in doc.items():
         if not isinstance(pre, dict):
             continue
-        if hit(pre.get("vfx")):
-            out.append({"kind": "prop", "file": rel, "where": f"{pid} · vfx", "label": f"挂件预设「{pid}」· vfx"})
+        for i in hits(pre.get("particles")):
+            where = f"particles[{i}]"
+            out.append({"kind": "prop", "file": rel, "where": f"{pid} · {where}", "label": f"挂件预设「{pid}」· {where}"})
         states = pre.get("states")
         if isinstance(states, dict):
             for sid, st in states.items():
-                if isinstance(st, dict) and hit(st.get("vfx")):
-                    out.append({"kind": "prop", "file": rel, "where": f"{pid} · states.{sid}.vfx",
-                                "label": f"挂件预设「{pid}」· states.{sid}.vfx"})
+                for i in hits(st.get("particles") if isinstance(st, dict) else None):
+                    where = f"states.{sid}.particles[{i}]"
+                    out.append({"kind": "prop", "file": rel, "where": f"{pid} · {where}",
+                                "label": f"挂件预设「{pid}」· {where}"})
     return out
 
 
-def _walk_play_vfx(node: Any, path: str, effect_id: str, out: list[str]) -> None:
+#: 按 ``effect`` 参数引用效果资产的动作：``playVfx``（临时实例）、``playPropVfx``（手持挂件上播，常住挂件预设
+#: ``states[*].onEnterActions`` 与风吹灭块 ``blowout`` / ``states[*].blowout`` 的 ``onEmberActions`` / ``onOutActions``
+#: 里——``prop_presets.json`` 在 ``_ref_files`` 里、深遍历不挑容器，照样扫到）
+_EFFECT_ACTIONS = ("playVfx", "playPropVfx")
+
+
+def _walk_play_vfx(node: Any, path: str, effect_id: str, out: list[tuple[str, str]]) -> None:
     if isinstance(node, dict):
-        if node.get("type") == "playVfx":
+        t = node.get("type")
+        if t in _EFFECT_ACTIONS:
             params = node.get("params") if isinstance(node.get("params"), dict) else node
             if str(params.get("effect") or "").strip() == effect_id:
-                out.append(path or "(根)")
+                out.append((str(t), path or "(根)"))
         for k, v in node.items():
             if isinstance(v, (dict, list)):
                 _walk_play_vfx(v, f"{path}.{k}" if path else str(k), effect_id, out)
@@ -217,30 +235,69 @@ def _ref_files() -> list[Path]:
 
 
 def _action_refs(effect_id: str) -> list[dict]:
-    """数据里 ``playVfx`` 动作的 ``effect`` 参数（临时实例那一档）：对话图 / 演出 / 任务 / 遭遇 / 场景热区……"""
+    """数据里 ``playVfx``（临时实例那一档）/ ``playPropVfx``（挂件上播）动作的 ``effect`` 参数：
+    对话图 / 演出 / 任务 / 遭遇 / 场景热区 / 挂件预设状态的进入动作……``action`` = 哪条动作。"""
     out: list[dict] = []
     for p in _ref_files():
         doc = _read_json(p)
         if not isinstance(doc, (dict, list)):
             continue
-        hits: list[str] = []
+        hits: list[tuple[str, str]] = []
         _walk_play_vfx(doc, "", effect_id, hits)
         rel = _rel_ref(p)
-        for h in hits:
-            out.append({"kind": "action", "file": rel, "where": h, "label": f"playVfx 动作 · {rel} · {h}"})
+        for t, h in hits:
+            out.append({"kind": "action", "action": t, "file": rel, "where": h, "label": f"{t} 动作 · {rel} · {h}"})
+    return out
+
+
+def _burnable_template_refs(effect_id: str) -> list[dict]:
+    """**可燃物模板**按 id 用它当燃烧粒子（``public/assets/data/burnables/<模板 id>.json`` 的 ``particles[i].effect``，
+    2026-09-16 模板化；取代旧的薄片 ``plate.flammable.fireEffect``）。
+
+    模板归燃烧工作台写，本台一个字节都不碰：改名 / 删除只动效果文件，模板那边会静默指空（烧起来不再冒火苗 / 火星 / 灰）。
+    所以与挂件预设同待遇——列出来、改名拒绝、删除要确认；去**燃烧工作台里打开那份模板**改粒子。
+    ``from`` 取不到（形状坏）时照样算引用（运行时按 effect 装）；读不懂的模板文件跳过（主校验器另报）。
+    扫 ``REF_ROOT`` 下的模板目录（与挂件预设 / 动作同一个根；测试指到临时工程）。"""
+    out: list[dict] = []
+    d = _burnables.burnables_dir(REF_ROOT)
+    if not d.is_dir():
+        return out
+    for p in sorted(d.glob("*.json")):
+        doc = _read_json(p)
+        parts = doc.get("particles") if isinstance(doc, dict) and isinstance(doc.get("particles"), list) else []
+        rel = _rel_ref(p)
+        for i, slot in enumerate(parts):
+            if not (isinstance(slot, dict) and isinstance(slot.get("effect"), str) and slot["effect"].strip() == effect_id):
+                continue
+            where = f"particles[{i}]"
+            src = slot.get("from")
+            out.append({"kind": "burnable", "burnable": p.stem, "file": rel, "where": f"{p.stem} · {where}",
+                        "label": f"可燃物模板「{p.stem}」· {where}" + (f"（{src}）" if isinstance(src, str) and src else "")})
     return out
 
 
 def external_refs_to_effect(effect_id: str) -> list[dict]:
-    """布置库之外按 id 引用这个效果的地方：``[{kind, file, where, label}]``（``kind`` = ``prop`` / ``action``）。
+    """布置库之外按 id 引用这个效果的地方：``[{kind, file, where, label}]``（``kind`` = ``prop`` / ``action`` / ``burnable``）。
 
-    **只读**：本台绝不改这些文件（它们归主编辑器写）。给删除确认与改名拒绝列清单用，也给左栏
-    「这个效果还布置在」说"不是没人用"。
+    **只读**：本台不在改名 / 删除时顺手改这些地方（挂件预设 / 动作归主编辑器写；可燃物模板的粒子
+    要作者在燃烧工作台里打开那份模板改）。给删除确认与改名拒绝列清单用，也给左栏「这个效果还布置在」说"不是没人用"。
     """
     eid = str(effect_id or "").strip()
     if not eid:
         return []
-    return _prop_preset_refs(eid) + _action_refs(eid)
+    return _prop_preset_refs(eid) + _action_refs(eid) + _burnable_template_refs(eid)
+
+
+def refs_fix_hint(refs: list[dict]) -> str:
+    """去哪改这些引用（给人看）：挂件预设 / 动作 → 主编辑器里的文件；可燃物模板的粒子 → 燃烧工作台里打开那份模板。"""
+    parts: list[str] = []
+    files = sorted({r["file"] for r in refs if r.get("kind") != "burnable"})
+    if files:
+        parts.append(f"在主编辑器里改掉 {' / '.join(files)} 里的这些引用")
+    tids = sorted({str(r.get("burnable") or "") for r in refs if r.get("kind") == "burnable"})
+    if tids:
+        parts.append(f"在燃烧工作台里打开模板{'/'.join(f'「{t}」' for t in tids)}改粒子")
+    return "、".join(parts)
 
 
 #: 按 ``instanceId`` 指向场景里摆好的实例的三条动作（``emitVfxField`` 不指实例）
@@ -472,9 +529,8 @@ def rename_effect(old: str, new: str) -> dict:
     # 布置库之外还有按 id 引用它的（挂件预设 / playVfx）：本台不写那些文件，改名 = 让它们静默指空——拒绝，说清去哪改
     ext = external_refs_to_effect(old)
     if ext:
-        files = sorted({r["file"] for r in ext})
-        raise ValueError(f"「{old}」还被 {len(ext)} 处按 id 引用（工作台不改这些文件，改名会让它们指空）："
-                         f"{external_refs_text(ext)}——先在主编辑器里改掉 {' / '.join(files)} 里的这些引用再改名")
+        raise ValueError(f"「{old}」还被 {len(ext)} 处按 id 引用（改名不改这些地方，改名会让它们指空）："
+                         f"{external_refs_text(ext)}——先{refs_fix_hint(ext)}再改名")
     lib, err = load()
     if err:
         raise ValueError(f"布置库读不懂，改名会漏掉布置里的引用（先修好库）：{err}")

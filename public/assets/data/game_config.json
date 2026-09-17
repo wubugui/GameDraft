@@ -62,7 +62,8 @@
       "crouchWalk": "slow_walk",
       "gaze": "stand",
       "jump": "jump",
-      "lie": "lie_down"
+      "lie": "lie_down",
+      "ignite": "ignite"
     },
     "portraitSlug": "player_carry_corpse_anim"
   },
@@ -90,6 +91,10 @@
     "kick": {
       "enabled": true,
       "missActions": []
+    },
+    "ignite": {
+      "enabled": true,
+      "animation": "ignite"
     },
     "jump": {
       "enabled": true,
@@ -155,5 +160,49 @@
         "label": "入夜"
       }
     ]
+  },
+  "health": {
+    "maxHealth": 100,
+    "deathThreshold": 0,
+    "restoreFloor": 60,
+    "tetherCondition": {
+      "all": [
+        {
+          "flag": "has_item_old_cloth_pouch"
+        },
+        {
+          "any": [
+            {
+              "narrative": "scenario_义庄镇尸",
+              "state": "two_done"
+            },
+            {
+              "narrative": "scenario_背尸",
+              "state": "scent"
+            },
+            {
+              "narrative": "scenario_送货",
+              "state": "litiangou_peril"
+            }
+          ]
+        }
+      ]
+    },
+    "retry": {
+      "title": "三把火熄了。",
+      "retryText": "从上一个安全点重试",
+      "menuText": "返回主菜单",
+      "firstDeathNoteId": "yin_boundary_death"
+    },
+    "fireProtection": {
+      "heldPropIds": [
+        "lantern",
+        "torch",
+        "xianteng_torch",
+        "songming_torch",
+        "shichai_torch"
+      ],
+      "lossGraceSeconds": 0.15
+    }
   }
 }

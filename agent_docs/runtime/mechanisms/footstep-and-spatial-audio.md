@@ -12,6 +12,7 @@ authority:
   - src/utils/audioSpace.ts
   - src/utils/sceneSpace.ts
   - src/core/Game.ts#resolveAudioListener
+  - src/systems/vfx/VfxSystem.ts#sceneToWorld
   - src/audio/SpatialAudioBus.ts#playAt
   - public/assets/data/footstep_sets.json
   - tools/editor/shared/socket_panel.py
@@ -26,7 +27,7 @@ triggers:
     - "tools/editor/shared/socket_panel.py"
     - "tools/editor/shared/animation_sockets.py"
     - "tools/animation_pipeline/contact_frames.py"
-  topics: [脚步, 脚步声, footstep, 空间化, 声像, pan, 听者, listener, 落脚帧, 触地帧, contactSlots, sockets.json]
+  topics: [脚步, 脚步声, footstep, 空间化, 声像, pan, 听者, listener, 落脚帧, 触地帧, contactSlots, sockets.json, 落脚刺激, sfx:footstep, 地虫]
   tasks: [加脚步声, 改空间化音频, 改听者, 标落脚帧, 标触地帧, 加移动动画, 给一块地换脚步声]
 verified_by:
   - src/systems/FootstepSystem.test.ts
@@ -168,6 +169,18 @@ sidecar 解析在 `animationSockets.ts::parseSocketSet`(与 Python `animation_so
     工作台里按听感摆的 M-world 数据,与视觉几何解耦(scene-acoustics 的硬规矩),不动它。
     ⚠ **没配 `perspectiveScale` 的场景 `persp === undefined`,逐位零变化**——全仓 36 个场景
     只有 6 个配了透视线(雾津街头 / 跑马梁 / 崖墓前段1 / test_room_a / teahouse / 牛头凼)。
+
+14. **🔴 落脚与出声是两件事,群体刺激只接落脚(2026-09-16)。**
+    `FootstepSystem.tryEmit` 先判落脚(可见 / 按帧防抖 / 显式登记的移动片段),通过就发
+    `deps.onContact`(原始场景脚点 `contactX/contactY`),**之后**才走声音(音频解锁、`setEnabled`、
+    脚步集、音效 key、`resolveWorld`)。`Game` 在 `onContact` 里经 `vfxSystem.sceneToWorld` 发
+    `sfx:footstep` 的 fear 场。
+    - 曾经把刺激挂在 `playAt` 里、直接用音频坐标:茶馆(配了透视线)实测说书人第一步的刺激点
+      离脚边虫群 607–633 wu(半径 220),虫群不惊——那份坐标做过透视纵深重整,是音频专用的(见下面「已知坑」)。
+      **不许靠加大半径掩盖**,范围和方向都会错。
+    - 同时它还被 `getSpatialContext` 的音频解锁门控连带:没解锁时虫群对脚步毫无反应。
+    - 调试状态 `recentContacts` 记每次落脚(不论响没响),与 `recent` 对照分清「没落脚」和「落了脚但没响」。
+    - 帧号跟踪不再因音频没解锁而暂停:解锁那一刻不会把当前帧当「新片段第一步」补发一声。
 
 ## 已知坑
 

@@ -3,27 +3,28 @@
   "spawnPlacements": ["shape", "surface"],
   "initialVelocities": ["configured", "rest"],
   "influenceKeys": ["sceneWind", "wind", "airflow", "stimulus"],
+  "optionalInfluenceKeys": ["contact"],
   "recycleModes": ["none", "surface", "airborne"],
   "newPrograms": {
     "particle": {
       "solver": "particle",
       "spawnPlacement": "shape",
       "initialVelocity": "configured",
-      "influences": { "sceneWind": true, "wind": true, "airflow": true, "stimulus": true },
+      "influences": { "sceneWind": true, "wind": true, "airflow": true, "stimulus": true, "contact": false },
       "recycle": { "mode": "none" }
     },
     "plate": {
       "solver": "plate",
       "spawnPlacement": "surface",
       "initialVelocity": "rest",
-      "influences": { "sceneWind": true, "wind": true, "airflow": true, "stimulus": true },
+      "influences": { "sceneWind": true, "wind": true, "airflow": true, "stimulus": true, "contact": true },
       "recycle": { "mode": "none" }
     },
     "flock": {
       "solver": "flock",
       "spawnPlacement": "shape",
       "initialVelocity": "configured",
-      "influences": { "sceneWind": false, "wind": false, "airflow": false, "stimulus": true },
+      "influences": { "sceneWind": false, "wind": false, "airflow": false, "stimulus": true, "contact": false },
       "recycle": { "mode": "none" }
     }
   }

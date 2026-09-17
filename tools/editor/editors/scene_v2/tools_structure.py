@@ -12,21 +12,27 @@ import re
 from PySide6.QtCore import QPointF, Qt
 
 from ...shared.entity_refactor import (
+    EntityRefactorError,
     build_duplicate_payload,
+    build_entity_clip,
+    describe_paste_report,
     id_namespace_kinds,
+    plan_entity_paste,
 )
 from .changes import EntityProperty, EntityRef
 from .commands import build_change_fields_command
 from .commands_structure import (
     LIST_KEY,
     AddEntitiesCommand,
+    CompositeCommand,
     RemoveEntitiesCommand,
     snapshot_entries,
 )
 from .tools import AbstractTool
 
 __all__ = ["unique_entity_id", "CreateTool", "create_entity_at", "create_spawn",
-           "delete_spawn", "spawn_names", "delete_selected", "duplicate_selected"]
+           "delete_spawn", "spawn_names", "delete_selected", "duplicate_selected",
+           "copy_selection", "paste_clip"]
 
 #: 新建实体的默认字段。**与老画布逐字对齐**（scene_editor.py 的
 #: `_add_hotspot_at` / `_add_npc_at`）—— 不对齐的话从两个画布建出来的实体
@@ -258,3 +264,83 @@ def duplicate_selected(document, offset: tuple[float, float] = (24.0, 24.0)) -> 
                     f"{nid} ← {', '.join(cs)}" for nid, cs in stripped_cutscenes))
         return True
     return False
+
+
+#: 能进剪贴板的族。出生点住 `spawnPoints`、不在名册里，但复制/粘贴照样要认。
+_CLIP_KINDS = (*LIST_KEY, "spawn")
+
+
+def copy_selection(document, refs=None) -> bool:
+    """Ctrl+C：把实体 def 快照进系统剪贴板。**不写数据、不入撤销栈。**
+
+    ``refs`` 缺省 = 当前选择集；右键点在一个没选中的实体上时由菜单显式给出那一个
+    （右键不改选择，拿选择集会拷走别的东西）。快照取模型层（面板编辑经桥即时成
+    命令，模型就是当前真相）。粘贴规则见 `shared/entity_refactor` 剪贴板一节。
+    """
+    from ...shared.scene_entity_clipboard import write_entity_clip
+
+    source = document.selection if refs is None else refs
+    refs = [(r.kind, r.id) for r in source if r.kind in _CLIP_KINDS]
+    if not refs:
+        document.notify("先选中 NPC / 热区 / Zone / 命名出生点再复制")
+        return False
+    try:
+        clip = build_entity_clip(document.model, document.scene_id, refs)
+    except EntityRefactorError as exc:
+        document.notify(str(exc))
+        return False
+    write_entity_clip(clip)
+    document.notify(
+        f"已复制 {len(clip['entities'])} 个实体（Ctrl+V 粘贴；可切到别的场景再粘）")
+    return True
+
+
+def paste_clip(document, clip: dict | None,
+               anchor: tuple[float, float] | None = None) -> bool:
+    """Ctrl+V / 右键「粘贴到这里」：**一条命令**建出整批副本，选择切到副本上。
+
+    ``clip`` 由调用方从剪贴板取（`read_entity_clip`），这里不碰 Qt 剪贴板——
+    测试与程序化入口可以直接喂载荷。落位 / 取号 / 跨场景引用口径全在
+    `plan_entity_paste`，与老画布同一份。
+    """
+    if clip is None:
+        document.notify("剪贴板里没有场景实体（先在场景画布上选中实体按 Ctrl+C）")
+        return False
+    sc = document.scene()
+    if not isinstance(sc, dict):
+        return False
+    try:
+        plan = plan_entity_paste(document.model, document.scene_id, clip, anchor=anchor)
+    except EntityRefactorError as exc:
+        document.notify(str(exc))
+        return False
+    entries = []
+    new_refs = []
+    counts: dict[str, int] = {}
+    points = dict(sc.get("spawnPoints") or {})
+    spawn_added = False
+    for e in plan["entries"]:
+        ref = EntityRef(e["kind"], e["newId"])
+        new_refs.append(ref)
+        if e["kind"] == "spawn":
+            points[e["newId"]] = e["def"]
+            spawn_added = True
+            continue
+        key = LIST_KEY[e["kind"]]
+        index = len(sc.get(key) or []) + counts.get(key, 0)
+        counts[key] = counts.get(key, 0) + 1
+        entries.append((ref, index, e["def"]))
+    children = []
+    if spawn_added:
+        children.append(build_change_fields_command(
+            document, [EntityRef("scene", document.scene_id)],
+            [{"spawnPoints": points}], EntityProperty.POSITION, "粘贴出生点"))
+    if entries:
+        children.append(AddEntitiesCommand(document, entries, "粘贴实体"))
+    if not document.push(CompositeCommand(children, "粘贴实体")):
+        return False
+    document.set_selection(new_refs)
+    head = f"已粘贴 {len(new_refs)} 个实体（Ctrl+Z 可撤销）"
+    lines = describe_paste_report(plan, limit=3)
+    document.notify(head + ("；" + "；".join(lines) if lines else ""))
+    return True

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..theme import mark_reference_value
 from .dialog_geometry import remember_dialog_geometry
 
 
@@ -255,6 +256,14 @@ class ReferencePickerField(QWidget):
         self.value_changed.emit("")
 
     def refresh_display(self) -> None:
+        """把当前取值刷到只读框上。
+
+        两条视觉纪律（2026-09-16 离屏可用性复核）：
+        - 文字从**头**显示。`setText` 之后光标停在末尾，框一窄就只剩尾巴（`纤藤火把
+          （3 级）  [xianteng_torch]` 只看得见 `[xianteng_torch]`），人名那一半全没了；
+        - 只读 QLineEdit 被主题统一涂成灰字 ⇒ **选好的引用和占位符长一个样**。按取值
+          标 `referenceValue` 属性，主题给「选了」正常字色、给「没选」灰斜体。
+        """
         rows = self._safe_rows()
         by_value = {value: (label, detail) for value, label, detail in rows}
         if not self._value:
@@ -276,6 +285,8 @@ class ReferencePickerField(QWidget):
             self._line.setToolTip(
                 "引用目标当前不在候选目录中；原值已保留，不会被自动改写。",
             )
+        self._line.setCursorPosition(0)
+        mark_reference_value(self._line, filled=bool(self._value))
         self._clear.setEnabled(bool(self._value))
         self._open.setEnabled(bool(self._value) and self._on_open is not None)
 

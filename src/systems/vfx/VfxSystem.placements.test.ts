@@ -193,6 +193,44 @@ describe('VfxSystem 布置取份', () => {
     expect(h.ids()).toContain('萤火');
   });
 
+  it('软停的临时实例：条件重算不清它的模拟，在飞的粒子飞完才删（火把切状态时整团不许当场消失）', async () => {
+    const h = harness();
+    await h.ready();
+    const tid = h.sys.playVfx({ effect: 'torch', anchor: { x: 1, y: 2 } })!;
+    await h.flush();
+    const rt = h.runtimeOf(tid) as { sim: unknown };
+    const fake = { liveCount: 5, events: [], emitters: [], state: 'active', stop() {}, step() {}, setRateScale() {}, setSizeScale() {}, setWindScale() {}, plateFireSegments() {}, takeNewlyBurnt() { return []; } };
+    rt.sim = fake;
+    h.sys.stopVfxSoft(tid);
+    // 另一个实例装完效果会把条件标脏——这里直接标脏再推一帧
+    (h.sys as unknown as { conditionsDirty: boolean }).conditionsDirty = true;
+    h.sys.update(1 / 60);
+    expect(rt.sim).toBe(fake);
+    expect(h.ids()).toContain(tid);
+    fake.liveCount = 0;
+    h.sys.update(1 / 60);
+    expect(h.runtimeOf(tid)).toBeUndefined();
+  });
+
+  it('一次性临时实例：放完（sim.finished）就自己收；没放完不收；普通临时实例放完了也不收', async () => {
+    const h = harness();
+    await h.ready();
+    const once = h.sys.playVfx({ effect: 'torch', followWorld: [1, 2, 3], oneShot: true })!;
+    const plain = h.sys.playVfx({ effect: 'torch', followWorld: [1, 2, 3] })!;
+    await h.flush();
+    const mk = () => ({ finished: false, liveCount: 3, events: [], emitters: [], state: 'active', stop() {}, step() {}, setRateScale() {}, setSizeScale() {}, setWindScale() {}, moveAnchor() {}, plateFireSegments() {}, takeNewlyBurnt() { return []; } });
+    const a = mk(), b = mk();
+    (h.runtimeOf(once) as { sim: unknown }).sim = a;
+    (h.runtimeOf(plain) as { sim: unknown }).sim = b;
+    h.sys.update(1 / 60);
+    expect(h.ids()).toContain(once);
+    a.finished = true; b.finished = true;
+    h.sys.update(1 / 60);
+    expect(h.runtimeOf(once)).toBeUndefined();
+    expect(h.sys.moveInstanceAnchor(once, [0, 0, 0])).toBe(false);
+    expect(h.ids()).toContain(plain);
+  });
+
   it('布置库装不到 = 没有任何布置，场景照常进、log 一句', async () => {
     const h = harness({ library: new Error('404') });
     await h.ready();

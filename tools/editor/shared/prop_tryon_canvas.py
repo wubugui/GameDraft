@@ -14,14 +14,24 @@
 拉伸的（两个比值不必相等，玩家包就差 8.6%）。画布上角色帧是按原图等比画的，
 所以挂件要先在世界单位里摆好、再乘"世界 → 画布"那个**分轴**缩放——
 只按 worldWidth 算一个倍率，纵向就会差出那个比值。见 `paint_prop`。
+
+**起火点与火苗**（2026-09-15 燃烧物契约）：起火点跟着燃烧物走（同 `paint_prop` 那一套变换，
+数学在 `prop_preview.fire_point_offset`，与运行时同一公式）；火苗以格底中点为锚、画面竖直
+向上、不跟燃烧物转、不吃光——预览只画第 0 帧、高 = burn × 满火高度（wu），无风无闪。
+开了「点选」时在画布上按下 / 拖动，把光标位置逆变换回贴图归一化坐标发出去（所见即所得）。
+
+**可燃挂件**（2026-09-16 A3.8 模板 + 实例）：宿主页把模板的图、握点、按模板真实宽换算的 scale 喂进来
+（``prop_preview.burnable_prop_placement``），这里照常按 `paint_prop` 摆；模板的着火点经 `set_burn_points`
+画成火橙菱形（与起火点 / 粒子挂点同一套 uv → 画布变换）。
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QWidget
 
 from .animation_sockets import socket_front_for_facing
+from .prop_preview import fire_point_from_offset, fire_point_offset
 
 CANVAS_W = 340
 CANVAS_H = 400
@@ -77,7 +87,14 @@ def paint_prop(
 
 
 class PropTryOnCanvas(QWidget):
-    """只读预览：角色帧 + 按挂点位姿摆好的挂件 + 支点十字。"""
+    """预览：角色帧 + 按挂点位姿摆好的挂件 + 支点十字 + 起火点十字与火苗。
+
+    数据只读；唯一的交互是「点选起火点」（`set_fire_pick_enabled`），结果经
+    `fire_point_picked(x, y)` 发给宿主，由宿主决定写进基础块还是某个状态。
+    """
+
+    #: 在画布上点选 / 拖出的起火点（贴图归一化 0..1）
+    fire_point_picked = Signal(float, float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -93,6 +110,18 @@ class PropTryOnCanvas(QWidget):
         self._scale = 1.0
         self._facing = 1          # 1=朝右 -1=朝左（验镜像）
         self._note = ""
+        #: 起火点（贴图归一化）；None = 没写，火从挂点本身出
+        self._fire_point: tuple[float, float] | None = None
+        #: 火苗第 0 帧（已裁好的一格）与此刻的高度（wu = burn × 满火高度）
+        self._flame_cell: QPixmap | None = None
+        self._flame_height_wu = 0.0
+        #: 有没有配火（决定画不画起火点十字：灯笼也可以只写起火点不写火苗）
+        self._fire_configured = False
+        self._fire_pick = False
+        #: 粒子挂载 (效果 id, 贴图归一化挂点 or None)
+        self._mounts: list[tuple[str, tuple[float, float] | None]] = []
+        #: 可燃挂件模板的着火点 (id, 贴图归一化 uv)
+        self._burn_points: list[tuple[str, tuple[float, float]]] = []
 
     # ---- 数据入口 ----------------------------------------------------
 
@@ -125,6 +154,29 @@ class PropTryOnCanvas(QWidget):
         self._note = str(note or "")
         self.update()
 
+    def set_fire(
+        self,
+        fire_point: tuple[float, float] | None,
+        *,
+        configured: bool,
+        flame_cell: QPixmap | None = None,
+        flame_height_wu: float = 0.0,
+    ) -> None:
+        """起火点 + 火苗（第 0 帧一格 + 此刻高度 wu）。`configured=False` = 这个挂件没有火，什么都不画。"""
+        self._fire_point = fire_point
+        self._fire_configured = bool(configured)
+        self._flame_cell = flame_cell if flame_cell is not None and not flame_cell.isNull() else None
+        self._flame_height_wu = max(0.0, float(flame_height_wu or 0.0))
+        self.update()
+
+    def set_fire_pick_enabled(self, on: bool) -> None:
+        self._fire_pick = bool(on)
+        self.setCursor(Qt.CursorShape.CrossCursor if self._fire_pick else Qt.CursorShape.ArrowCursor)
+        self.update()
+
+    def fire_pick_enabled(self) -> bool:
+        return self._fire_pick
+
     # ---- 几何 --------------------------------------------------------
 
     def _fit(self) -> tuple[float, QPointF, float, float]:
@@ -154,6 +206,7 @@ class PropTryOnCanvas(QWidget):
 
         if not front:
             self._draw_prop(p, k, o, cw, ch)
+            self._draw_flame(p, k, o, cw, ch)
         if self._cell is not None:
             target = QRectF(o.x(), o.y(), cw * k, ch * k)
             if self._facing < 0:
@@ -168,6 +221,7 @@ class PropTryOnCanvas(QWidget):
                 p.drawPixmap(target, self._cell, QRectF(self._cell.rect()))
         if front:
             self._draw_prop(p, k, o, cw, ch)
+            self._draw_flame(p, k, o, cw, ch)
         else:
             # 身后：真实遮挡照画（所见即游戏所得），再在最上层描一道外框——
             # 被身体整个挡住时标注的人仍要看得出挂件在哪
@@ -205,6 +259,135 @@ class PropTryOnCanvas(QWidget):
             outline_only=outline_only,
         )
 
+    # ---- 起火点 / 火苗 ------------------------------------------------
+
+    def _view_per_world(self, k: float, cw: float, ch: float) -> tuple[float, float] | None:
+        if self._world_w <= 0 or self._world_h <= 0:
+            return None
+        return ((cw * k) / self._world_w, (ch * k) / self._world_h)
+
+    def _fire_geometry(self) -> dict | None:
+        """起火点变换要的量（挂点画布位置、分轴缩放、合成角…）；取不到返回 None。"""
+        if not self._pose:
+            return None
+        k, o, cw, ch = self._fit()
+        c = self._socket_view_point(k, o, cw, ch)
+        vpw = self._view_per_world(k, cw, ch)
+        if c is None or vpw is None:
+            return None
+        sign = -1 if self._facing < 0 else 1
+        prop_ok = self._prop is not None and not self._prop.isNull()
+        return {
+            "at": c, "vpw": vpw, "sign": sign,
+            "frame_w": float(self._prop.width()) if prop_ok else 0.0,
+            "frame_h": float(self._prop.height()) if prop_ok else 0.0,
+            "angle": (self._pose[2] + self._rotation) * sign,
+        }
+
+    def fire_view_point(self) -> QPointF | None:
+        """起火点在画布上的像素位置（没配火 / 算不出来返回 None）。"""
+        if not self._fire_configured:
+            return None
+        return self._uv_view_point(self._fire_point)
+
+    def _uv_view_point(self, uv: tuple[float, float] | None) -> QPointF | None:
+        """贴图归一化点 → 画布像素（None = 挂点本身）。与起火点同一套变换（`fire_point_offset`）。"""
+        g = self._fire_geometry()
+        if g is None:
+            return None
+        if uv is None:
+            return g["at"]
+        if g["frame_w"] <= 0 or g["frame_h"] <= 0:
+            return None                          # 贴图尺寸不知道，归一化点落不到画布上
+        dx, dy = fire_point_offset(
+            uv, anchor_x=self._anchor[0], anchor_y=self._anchor[1],
+            frame_w=g["frame_w"], frame_h=g["frame_h"], angle_deg=g["angle"],
+            facing=g["sign"], scale=self._scale,
+        )
+        sx, sy = g["vpw"]
+        return QPointF(g["at"].x() + dx * sx, g["at"].y() + dy * sy)
+
+    def set_particle_mounts(self, mounts: list[tuple[str, tuple[float, float] | None]]) -> None:
+        """粒子挂载 (效果 id, 挂点)：挂点 None = 起火点 → 挂点本身（契约 v3）。粒子本身不模拟，只画点 + id。"""
+        self._mounts = [(str(e), p) for e, p in (mounts or [])]
+        self.update()
+
+    def set_burn_points(self, points: list[tuple[str, tuple[float, float]]]) -> None:
+        """可燃挂件模板的着火点 (id, uv)：火橙菱形 + id。空列表 = 不画（不是可燃挂件 / 模板没标着火点）。"""
+        self._burn_points = [(str(pid), (float(uv[0]), float(uv[1]))) for pid, uv in (points or [])]
+        self.update()
+
+    def burn_point_view_points(self) -> list[tuple[str, QPointF]]:
+        """每个着火点在画布上的位置（算不出来的跳过）。与起火点同一套变换。"""
+        out: list[tuple[str, QPointF]] = []
+        for pid, uv in self._burn_points:
+            at = self._uv_view_point(uv)
+            if at is not None:
+                out.append((pid, at))
+        return out
+
+    def particle_mount_view_points(self) -> list[tuple[str, QPointF]]:
+        """每个粒子挂载在画布上的位置（算不出来的跳过）。挂点没写落到起火点，再没有落到挂点本身。"""
+        out: list[tuple[str, QPointF]] = []
+        for effect, point in getattr(self, "_mounts", []):
+            at = self._uv_view_point(point if point is not None else self._fire_point)
+            if at is not None:
+                out.append((effect, at))
+        return out
+
+    def flame_view_rect(self) -> QRectF | None:
+        """火苗第 0 帧在画布上的矩形：格底中点对准起火点、竖直向上、宽高按世界单位分轴换算。"""
+        if self._flame_cell is None or self._flame_height_wu <= 0:
+            return None
+        at = self.fire_view_point()
+        if at is None:
+            return None
+        k, _o, cw, ch = self._fit()
+        vpw = self._view_per_world(k, cw, ch)
+        if vpw is None:
+            return None
+        fw = float(self._flame_cell.width())
+        fh = float(self._flame_cell.height())
+        if fw <= 0 or fh <= 0:
+            return None
+        h_view = self._flame_height_wu * vpw[1]
+        w_view = self._flame_height_wu * (fw / fh) * vpw[0]
+        return QRectF(at.x() - w_view / 2.0, at.y() - h_view, w_view, h_view)
+
+    def _draw_flame(self, p: QPainter, _k: float, _o: QPointF, _cw: float, _ch: float) -> None:
+        rect = self.flame_view_rect()
+        if rect is None:
+            return
+        p.drawPixmap(rect, self._flame_cell, QRectF(self._flame_cell.rect()))
+
+    def _pick_at(self, pos: QPointF) -> None:
+        g = self._fire_geometry()
+        if g is None or g["frame_w"] <= 0 or g["frame_h"] <= 0:
+            return
+        sx, sy = g["vpw"]
+        uv = fire_point_from_offset(
+            (pos.x() - g["at"].x()) / sx, (pos.y() - g["at"].y()) / sy,
+            anchor_x=self._anchor[0], anchor_y=self._anchor[1],
+            frame_w=g["frame_w"], frame_h=g["frame_h"], angle_deg=g["angle"],
+            facing=g["sign"], scale=self._scale,
+        )
+        if uv is not None:
+            self.fire_point_picked.emit(uv[0], uv[1])
+
+    def mousePressEvent(self, e: QMouseEvent) -> None:  # noqa: N802 (Qt 命名)
+        if self._fire_pick and e.button() == Qt.MouseButton.LeftButton:
+            self._pick_at(e.position())
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e: QMouseEvent) -> None:  # noqa: N802 (Qt 命名)
+        if self._fire_pick and e.buttons() & Qt.MouseButton.LeftButton:
+            self._pick_at(e.position())
+            e.accept()
+            return
+        super().mouseMoveEvent(e)
+
     def _draw_hud(self, p: QPainter, k: float, o: QPointF, cw: float, ch: float) -> None:
         # 脚线：挂点 y=1 就是这条线，标注时的基准
         p.setPen(QPen(QColor(90, 100, 115), 1, Qt.PenStyle.DashLine))
@@ -219,6 +402,40 @@ class PropTryOnCanvas(QWidget):
             p.setPen(pen)
             p.drawLine(QPointF(c.x() - 7, c.y()), QPointF(c.x() + 7, c.y()))
             p.drawLine(QPointF(c.x(), c.y() - 7), QPointF(c.x(), c.y() + 7))
+        # 起火点：斜十字 + 小圈（与支点的正十字分得开），同样画在最上层
+        fire = self.fire_view_point()
+        if fire is not None:
+            pen = QPen(QColor(90, 220, 255, 240))
+            pen.setWidthF(1.5)
+            p.setPen(pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawLine(QPointF(fire.x() - 6, fire.y() - 6), QPointF(fire.x() + 6, fire.y() + 6))
+            p.drawLine(QPointF(fire.x() - 6, fire.y() + 6), QPointF(fire.x() + 6, fire.y() - 6))
+            p.drawEllipse(fire, 3.0, 3.0)
+        # 粒子挂点：小圆点 + 效果 id（同一点上多个效果时 id 往下错开，不叠成一团）
+        stacked: dict[tuple[int, int], int] = {}
+        for effect, at in self.particle_mount_view_points():
+            key = (round(at.x()), round(at.y()))
+            n = stacked.get(key, 0)
+            stacked[key] = n + 1
+            p.setPen(QPen(QColor(20, 20, 24, 230), 1.0))
+            p.setBrush(QColor(255, 120, 200, 235))
+            p.drawEllipse(at, 3.5, 3.5)
+            p.setPen(QColor(255, 170, 225))
+            p.drawText(QPointF(at.x() + 6, at.y() - 4 + n * 12), effect)
+        # 可燃挂件的着火点：火橙菱形 + id（与场景画布的着火点标记同色）
+        for pid, at in self.burn_point_view_points():
+            p.setPen(QPen(QColor(20, 20, 24, 230), 1.0))
+            p.setBrush(QColor(255, 140, 40, 235))
+            p.drawPolygon(QPolygonF([QPointF(at.x(), at.y() - 5), QPointF(at.x() + 5, at.y()),
+                                     QPointF(at.x(), at.y() + 5), QPointF(at.x() - 5, at.y())]))
+            p.setPen(QColor(255, 180, 110))
+            p.drawText(QPointF(at.x() + 7, at.y() + 4), pid)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        if self._fire_pick:
+            pen = QPen(QColor(90, 220, 255, 160), 2, Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            p.drawRect(QRectF(self.rect()).adjusted(1, 1, -1, -1))
         if self._note:
             p.setPen(QColor(190, 195, 205))
             p.drawText(QRectF(6, 4, self.width() - 12, 40),

@@ -1069,8 +1069,8 @@
                 "label": "还在城头",
                 "meta": {
                   "editor": {
-                    "x": 30,
-                    "y": 20
+                    "x": -64,
+                    "y": 41
                   }
                 }
               },
@@ -1080,8 +1080,8 @@
                 "description": "醒来小路南头触发：跑马梁在地图上解锁（map_config 读本状态 reached），弹地图提示传送。",
                 "meta": {
                   "editor": {
-                    "x": 260,
-                    "y": 20
+                    "x": 217,
+                    "y": 88
                   }
                 },
                 "onEnterActions": [
@@ -1174,8 +1174,8 @@
                 "broadcastOnEnter": true,
                 "meta": {
                   "editor": {
-                    "x": 490,
-                    "y": 20
+                    "x": 493,
+                    "y": 0
                   }
                 }
               }
@@ -1202,8 +1202,8 @@
           "label": "跑马梁·风火教学与纸钱引路",
           "ownerType": "scene",
           "ownerId": "跑马梁",
-          "x": 1650,
-          "y": 50,
+          "x": 1913,
+          "y": -27,
           "graph": {
             "id": "wrapper_跑马梁_风火引路",
             "ownerType": "scene",
@@ -1216,18 +1216,19 @@
                 "label": "initial",
                 "meta": {
                   "editor": {
-                    "x": 0,
-                    "y": 0
+                    "x": -117,
+                    "y": 134
                   }
-                }
+                },
+                "description": "事件还没执行的时候，进入跑马梁时候触发"
               },
               "迎风": {
                 "id": "迎风",
                 "label": "迎风",
                 "meta": {
                   "editor": {
-                    "x": 200,
-                    "y": 0
+                    "x": 114,
+                    "y": 63
                   }
                 },
                 "onEnterActions": [
@@ -1247,8 +1248,8 @@
                 "label": "护火教学",
                 "meta": {
                   "editor": {
-                    "x": 400,
-                    "y": 0
+                    "x": 218,
+                    "y": -82
                   }
                 },
                 "onEnterActions": [
@@ -1274,8 +1275,8 @@
                 "label": "护好",
                 "meta": {
                   "editor": {
-                    "x": 600,
-                    "y": 0
+                    "x": 562,
+                    "y": -129
                   }
                 },
                 "onEnterActions": [
@@ -1293,8 +1294,8 @@
                 "label": "阵风",
                 "meta": {
                   "editor": {
-                    "x": 800,
-                    "y": 0
+                    "x": 795,
+                    "y": -7
                   }
                 },
                 "onEnterActions": [
@@ -1373,8 +1374,8 @@
                 "label": "点火教学",
                 "meta": {
                   "editor": {
-                    "x": 800,
-                    "y": 210
+                    "x": 585,
+                    "y": 138
                   }
                 },
                 "onEnterActions": [
@@ -1419,8 +1420,8 @@
                 "label": "点火选择",
                 "meta": {
                   "editor": {
-                    "x": 600,
-                    "y": 210
+                    "x": 642,
+                    "y": 351
                   }
                 },
                 "onEnterActions": [
@@ -1438,8 +1439,8 @@
                 "label": "引路",
                 "meta": {
                   "editor": {
-                    "x": 400,
-                    "y": 210
+                    "x": 380,
+                    "y": 388
                   }
                 },
                 "onEnterActions": [
@@ -1456,8 +1457,8 @@
                 "label": "寻香",
                 "meta": {
                   "editor": {
-                    "x": 200,
-                    "y": 210
+                    "x": 128,
+                    "y": 335
                   }
                 }
               },
@@ -1466,8 +1467,8 @@
                 "label": "闻到香火",
                 "meta": {
                   "editor": {
-                    "x": 0,
-                    "y": 210
+                    "x": -110,
+                    "y": 243
                   }
                 },
                 "onEnterActions": [
@@ -1657,8 +1658,8 @@
           "label": "跑马梁·可选阴间招呼",
           "ownerType": "npc",
           "ownerId": "npc_跑马梁_路边身影",
-          "x": 1900,
-          "y": 50,
+          "x": 2139,
+          "y": 63,
           "graph": {
             "id": "wrapper_跑马梁_路边招呼",
             "ownerType": "npc",

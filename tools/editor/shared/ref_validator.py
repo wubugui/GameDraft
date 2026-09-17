@@ -391,6 +391,10 @@ def validate_all_embedded_refs(
         return dirty is None or bucket in dirty
 
     errs: list[str] = []
+    if want("system_notes"):
+        for note in model.system_note_rows():
+            for key in ("title", "body"):
+                errs.extend(scan_refs(note.get(key), f"system_notes[{note.get('id', '?')}].{key}", model))
     if want("bubble_lines"):
         # 气泡台词与对白同等待遇（`[tag:…]` + `[c:…]`），校验面必须跟上——
         # 否则 `[tag:item:打错的id]` 一路漏到运行时，玩家看到的是兜底串而不是道具名。
@@ -406,6 +410,11 @@ def validate_all_embedded_refs(
     if want("config"):
         # 主角待机节目的气泡台词同理（挂在 game_config.playerAvatar.idle）
         cfg = getattr(model, "game_config", None)
+        health = cfg.get("health") if isinstance(cfg, dict) else None
+        retry = health.get("retry") if isinstance(health, dict) else None
+        if isinstance(retry, dict):
+            for key in ("title", "retryText", "menuText", "failedText"):
+                errs.extend(scan_refs(retry.get(key), f"game_config.health.retry.{key}", model))
         idle = ((cfg or {}).get("playerAvatar") or {}).get("idle") if isinstance(cfg, dict) else None
         if isinstance(idle, dict):
             for ei, e in enumerate(idle.get("entries") or []):
@@ -431,6 +440,15 @@ def validate_all_embedded_refs(
                 walk_action_defs_embedded_refs(
                     use.get("actions"), f"items[{iid}].use.actions", model, errs,
                 )
+    if want("prop_presets"):
+        # 挂件状态的进入时动作（states[*].onEnterActions，2026-09-15）：与物件 use.actions 同样
+        # 由统一执行器真执行，动作树里的 [tag:] 同样要进保存期校验。
+        # 风吹灭越线动作（blowout / states[*].blowout 的 onEmberActions / onOutActions）同理；位置清单只有一份。
+        from .prop_preview import iter_prop_preset_action_lists
+        props = getattr(model, "prop_presets", None)
+        for pid, entry in (props.items() if isinstance(props, dict) else ()):
+            for al in iter_prop_preset_action_lists(entry):
+                walk_action_defs_embedded_refs(al.raw, f"prop_presets[{pid}].{al.bracket_path}", model, errs)
     if want("quest"):
         for i, q in enumerate(model.quests):
             qid = q.get("id", i)

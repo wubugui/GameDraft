@@ -64,6 +64,8 @@ _MAX_WALK_DEPTH = 200
 
 EMIT_ACTION = "emitNarrativeSignal"
 STATE_COMMAND_ACTION = "setNarrativeState"
+#: 合成发射节点上的标记键：值 = 可燃配置信号的时刻（ignited / burntOut / extinguished）
+BURN_HOST_MARK = "__burnHostMoment"
 
 # params 带 graphId 的动作（镜像 signal_refactor._GRAPH_PARAM_ACTION_TYPES，parity 测试锁定）。
 # 只有 setNarrativeState 真的 enterState（会广播）；活计四件套只改 activeStates，
@@ -495,6 +497,8 @@ class SignalIndex:
                 # narrative_catalog.emitted_signal_ids 的权威口径打架。
                 return
             owner_type, owner_id = _owner_binding(hit.node)
+            # 宿主身上可燃配置的信号（燃烧系统实发，不是动作）：只读行——改它去宿主自己的「可燃」块
+            burn_moment = hit.node.get(BURN_HOST_MARK) if isinstance(hit.node, dict) else None
             self.emitters.setdefault(signal, []).append(Emitter(
                 owner_type=owner_type,
                 owner_id=owner_id,
@@ -506,11 +510,11 @@ class SignalIndex:
                 kind_label=kind_label,
                 where=_trim_container_prefix(hit.where, owner(hit)),
                 context=_context_for(channel, root, hit),
-                note=_source_note(hit.node),
+                note=_burn_host_note(hit.node) if burn_moment else _source_note(hit.node),
                 file=file,
                 pointer=hit.pointer,
                 anchors=hit.anchors,
-                readonly=readonly,
+                readonly=readonly or bool(burn_moment),
             ))
 
         def on_command(graph_id: str, state_id: str, hit: _Hit) -> None:
@@ -948,6 +952,32 @@ def _owner_binding(node: Any) -> tuple[str, str]:
     return (owner_type, owner_id) if (owner_type and owner_id) else ("", "")
 
 
+def _burn_host_owner(container: str, node: dict[str, Any]) -> tuple[str, str]:
+    """可燃配置信号的宿主身份：场景热点 / NPC = 实体自己；轨迹 spawn 规格 = 生成出来的那个对象（运行时是个 NPC）；
+    挂件预设 = 运行时拿着它的那个人（静态不知道，留空）。"""
+    node_id = _text(node.get("id")) if isinstance(node, dict) else ""
+    if container == "hotspots" and node_id:
+        return "hotspot", node_id
+    if container in ("npcs", "spawn") and node_id:
+        return "npc", node_id
+    return "", ""
+
+
+def _burn_host_note(node: dict[str, Any]) -> str:
+    """可燃配置信号行的附注：谁发、去哪改。"""
+    from tools.editor.shared.burnables import SIGNAL_MOMENT_LABELS
+
+    moment = node.get(BURN_HOST_MARK) if isinstance(node, dict) else ""
+    params = node.get("params") if isinstance(node, dict) else None
+    owner_type = _text(params.get("ownerType")) if isinstance(params, dict) else ""
+    owner_id = _text(params.get("ownerId")) if isinstance(params, dict) else ""
+    who = f"宿主 = {owner_type}:{owner_id}" if owner_type and owner_id else "宿主 = 运行时拿着这件挂件的人"
+    return (
+        f"可燃物实例{SIGNAL_MOMENT_LABELS.get(str(moment), str(moment))}由燃烧系统发（{who}）；"
+        "在宿主自己的「可燃」块里改（场景页热点 / NPC、挂件预设页、轨迹生成规格）"
+    )
+
+
 def _source_note(node: dict[str, Any]) -> str:
     """发射行的附注：留痕来源（不是接线）+ 显式宿主身份（私有信号的定向依据）。"""
     params = node.get("params") if isinstance(node, dict) else None
@@ -1060,6 +1090,8 @@ _SUBJECT_BY_KIND: dict[str, tuple[str, str]] = {
     "minigame": ("minigame", "小游戏里的分支"),
     "cutscene": ("cutscene", "这段过场的分支"),
     "bubbleLineSet": ("bubbleLineSet", "这组台词说不说"),
+    # 挂件预设：读状态的只可能是某个状态进入动作里的 runActionsIf
+    "propPreset": ("propPreset", "挂件切到这个状态时做什么"),
 }
 
 # 主体类别的中文名。界面上说「NPC「庄家来人」」而不是「场景「庄家来人」」——
@@ -1084,6 +1116,7 @@ SUBJECT_KIND_LABELS: dict[str, str] = {
     "rule": "规矩",
     "item": "物品",
     "bubbleLineSet": "气泡台词",
+    "propPreset": "挂件预设",
 }
 
 
@@ -1191,6 +1224,24 @@ def _walk(
             my_subjects = subjects + [(container, _text(node_id), human, node)]
         node_type = _text(node.get("type"))
         params = node.get("params")
+        from tools.editor.shared.health_refs import HEALTH_THREAT_SIGNALS, health_signal_fields
+        for _, key, signal in health_signal_fields(node):
+            owner_type = "npc" if container == "npcs" else "hotspot" if container == "hotspots" else ""
+            source = {"type": EMIT_ACTION, "params": {"signal": signal,
+                      "ownerType": owner_type, "ownerId": _text(node_id)}}
+            on_emit(signal, _Hit(f"{pointer}/healthThreat/{key}", [list(a) for a in my_anchors],
+                    list(trail) + [HEALTH_THREAT_SIGNALS[key]], source, list(my_labels), list(my_subjects)))
+        # 宿主身上的可燃配置（热点 / NPC / 挂件预设 / 轨迹 spawn 规格）：状态真变了由燃烧系统发（A3.8）。
+        # 口径与 narrative_catalog.emitted_signal_ids 同一个函数（burnable_host_signal_fields）。
+        from tools.editor.shared.burnables import SIGNAL_MOMENT_LABELS
+        from tools.editor.shared.narrative_catalog import burnable_host_signal_fields
+        for _, moment, signal in burnable_host_signal_fields(node):
+            burn_owner_type, burn_owner_id = _burn_host_owner(container, node)
+            source = {"type": EMIT_ACTION, BURN_HOST_MARK: moment,
+                      "params": {"signal": signal, "ownerType": burn_owner_type, "ownerId": burn_owner_id}}
+            on_emit(signal, _Hit(f"{pointer}/burnable/signals/{_esc(moment)}", [list(a) for a in my_anchors],
+                    list(trail) + [f"可燃·{SIGNAL_MOMENT_LABELS.get(moment, moment)}"], source,
+                    list(my_labels), list(my_subjects)))
         if node_type == EMIT_ACTION and isinstance(params, dict):
             signal = _text(params.get("signal"))
             if signal:

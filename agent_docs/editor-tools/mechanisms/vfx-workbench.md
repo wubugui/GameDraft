@@ -3,7 +3,7 @@ id: vfx-workbench
 title: 粒子工作台(独立桌面应用 · 页内跑同一份运行时模拟 · 效果资产与布置库唯一写入者)
 domain: editor-tools
 type: mechanism
-summary: 效果资产与布置库(场景 × 时段外观)唯一的作者面与唯一写入者;3D / 原画里摆发射器 / 巢与活动域 / 布置锚点 / 发射区域与范围区域 / 玩家 / 刺激,页内跑的是打包进来的运行时 vfxSim 本体(不是镜像);相机与 gizmo 经 /vendor 原样复用轨迹台那两份、不 fork;双槽实时推给游戏预览(整份工作态布置库 + 切时段);主编辑器只显示;桌面壳零缓存
+summary: 效果资产与布置库(场景 × 时段外观)唯一的作者面与唯一写入者;3D / 原画里摆发射器 / 巢与活动域 / 布置锚点 / 发射区域与范围区域 / 玩家 / 刺激,页内跑的是打包进来的运行时 vfxSim 本体(不是镜像);相机与 gizmo 经 /vendor 原样复用轨迹台那两份、不 fork;双槽实时推给游戏预览(整份工作态布置库 + 切时段);光柱(体积光)也在这里摆:起点 / 终点把手、原画视图用运行时同一份 GLSL 真预览、3D 视图只画线框;主编辑器只显示;桌面壳零缓存
 status: active
 authority:
   - tools/vfx_workbench/serve.py
@@ -14,20 +14,27 @@ authority:
   - tools/vfx_workbench/game_link.py
   - tools/vfx_workbench/viewer/app.js
   - tools/vfx_workbench/viewer/view3d.js
+  - tools/vfx_workbench/viewer/beams.js
+  - tools/vfx_workbench/viewer/inspector.js
+  - tools/editor/shared/vfx_burn.py
   - src/dev/runtimeVfxSync.ts
   - tools/desktop_shell.py
 triggers:
   paths: ["tools/vfx_workbench/**", "public/assets/data/vfx/**", "public/assets/data/vfx_placements.json", "src/dev/runtimeVfxSync.ts"]
-  topics: [粒子工作台, vfx, 效果资产, 发射器, 群体, 巢, 刺激, 联动, gizmo, 布置, 时段外观, 发射区域, 范围区域]
-  tasks: [做粒子效果, 改粒子工作台, 调群体参数, 摆巢, 加发射器, 布置粒子, 拉粒子区域, 调夜里的粒子]
+  topics: [粒子工作台, vfx, 效果资产, 发射器, 群体, 巢, 刺激, 联动, gizmo, 布置, 时段外观, 发射区域, 范围区域, 光柱, 体积光, 光带]
+  tasks: [加光柱, 调体积光, 做粒子效果, 改粒子工作台, 调群体参数, 摆巢, 加发射器, 布置粒子, 拉粒子区域, 调夜里的粒子]
 verified_by:
   - tools/vfx_workbench/tests/test_assets_and_serve.py
   - tools/vfx_workbench/tests/test_bundle.py
   - tools/vfx_workbench/tests/test_placements.py
   - tools/vfx_workbench/tests/test_selftest.py
   - tools/vfx_workbench/viewer/tests/selftest.js
+  - tools/vfx_workbench/viewer/tests/beam-selftest.js
+  - tools/vfx_workbench/tests/test_beam.py
+  - tools/vfx_workbench/tests/test_burn_fields.py
   - tools/editor/tests/test_scene_vfx_overlay.py
-last_governed: 2026-09-14
+  - tools/editor/tests/test_scene_vfx_beam_overlay.py
+last_governed: 2026-09-16
 ---
 
 ## 是什么(一句话)
@@ -167,6 +174,13 @@ M-world 是左手系,右手 lookAt 画它**整张镜像且不报错**——轨�
   把当前效果布置到这里 / 删 / 上下移 / 改 id(状态栏提醒 playVfx 与条件按 id 引用;库里再没有这个 id 时列出引用它的具体文件)/ 复制到时段…(目标有同 id
   时选覆盖或跳过));「这个效果还布置在」列全库引用当前效果的布置,点一下切到那个场景那个时段并选中——
   一个效果可以布置到多个场景,不绑场景。
+  列表下面另有「「id」在别的时段外观」几行(`copyPlacementAcrossPhases`):**只拷左栏选中的那一条**——本场景每套别的外观一行,
+  说那边这条 `没有这条 / 这条一样 / 这条不一样 / 同 id 是别的效果`,带「拷过去」「拷过来」:同 id 原位覆盖(先确认)、没有就加到末尾(不问),
+  同效果的其它条与别的效果一律不动,一条历史;拷进正在看的这一份就选中它。这一份里还没有当前效果的布置时,改列别的外观里
+  当前效果的每条布置、各带「拷过来」(这边同 id 被别的效果占着 = 按钮置灰说原因)。**不改"各份互不继承"的规则**,拷完各改各的。
+  ⚠ 制作人 2026-09-16 两轮定的:第一版做成"整份替换整套外观"被打回——"应该只拷贝当前选中的粒子",范围选的是"左栏选中的那一条"。
+  与「复制到时段…」对话框(选中那条或整份、同 id 问覆盖 / 跳过)并存。自检 S18「per-placement copy」几条。
+  起因:作者改了基底那份的纸钱区域,游戏在夜里读夜那份,以为"存了不生效"——游戏面板那行黄字「你在调…游戏现在是…」很容易看漏。
 - **主编辑器那一侧**:「工具 → 粒子工作台…」起进程、「工具 → 刷新粒子数据」手动重读(效果 + 布置库一起,
   只 emit 一次);工作台进程退出、或主窗重新获得焦点时静默 `reload_vfx_from_disk()`(盘上没变就什么都不做)。
   场景页 vfx 块:「显示时段外观」下拉(默认跟画布的时段视图)+ 只读摘要 + 「刷新粒子数据」,**没有任何编辑控件**;
@@ -177,7 +191,9 @@ M-world 是左手系,右手 lookAt 画它**整张镜像且不报错**——轨�
 - **保存前过同一道形状闸门**(`assets.normalize_effect`,与 `validator._validate_vfx_effects` 同口径):
   `id == 文件名`、`spawn.max ≥ 1`、`appearance.sizeWu > 0`、`onHit.emitter` 必须指向本效果内
   **别的**发射器、`subOnly` 不得带 behavior、发射器 id 不重复、`appearance.emissive ∈ [0,1]`、
-  `appearance.lightGain ∈ [0,10]`(两者配 `lit:false` 都会警告"没有意义",不拦)。键序按 `types.ts`:
+  `appearance.lightGain ∈ [0,10]`(两者配 `lit:false` 都会警告"没有意义",不拦)、
+  `motion.followAnchor ∈ none / rig / full`(群体 / 薄片写 rig / full 警告"写了没用";取值与措辞共用
+  `tools/editor/shared/vfx_motion.py`,显式 `"none"` 原样保留、不替作者删)、`life.maxDistance` 有限且 > 0(寿命模块「最远烧到多远 wu」,空 / ≤ 0 = 删键;群体 / 薄片 / 没有 `life.seconds` 写了警告"没有寿命 / 群体 / 薄片不吃 maxDistance";共用 `tools/editor/shared/vfx_life.py`,工作台拒 null、校验器当未填;自检 S23 #5 钉本地预览强风下粒子不出这个距离)。键序按 `types.ts`:
   `id, label, emitters, authoring`。原子写。
 - **删发射器前查引用**:还有 `onHit` 指着它就拒绝并说人话(自检 S12 钉住)。
 - **只有真改了 doc 才标脏**;拖拽合成一条历史;**纯点一下 gizmo 不算编辑**;保存锁(保存在飞期间
@@ -205,7 +221,7 @@ M-world 是左手系,右手 lookAt 画它**整张镜像且不报错**——轨�
 - **「让游戏切到这个时段」**:游戏页没开时先记着、游戏起来再发(原来发了也被当成"第一眼看到的旧请求"吞掉);
   游戏已经是这套外观就不发、按钮置灰;游戏侧再兜一道(当前外观 = 目标外观就不推进时间——原来能让游戏过一整天、跑一次日终)。
 - **效果形状暂时不对时布置照推**:用上一份合法定义 / 盘上那份推,回 `defErr` 在状态标签上黄字说;刺激反应 × 删空的表一并删掉。
-- **删除 / 改名效果查外部引用**:挂件预设 `prop_presets.json`(`vfx` 与 `states[*].vfx`)与数据里的 `playVfx`;删除要单独确认、
+- **删除 / 改名效果查外部引用**:挂件预设 `prop_presets.json`（`particles[i]` 与 `states.<s>.particles[i]`，2026-09-15 起取代旧 `vfx`）与数据里的 `playVfx` / `playPropVfx`（含挂件状态的 `onEnterActions`）;删除要单独确认、
   改名直接拒绝并说去主编辑器改哪个文件;「这个效果还布置在」不再对被挂件用着的效果说"游戏里不会出现"。工作台不写那些文件。
 - **动画状态名是下拉**(`/api/anims` 返回 `[{path, states}]`),打错的状态名形状闸门警告(运行时会静默退回第一个状态)。
 - **拖拽**:直接拖锚点 / 发射器 / 刺激点与拖 gizmo 中心一样是**相对位移**(保 h、表面、y 偏移;原来拖一下就贴到背后的地面、高度清零、
@@ -291,7 +307,10 @@ M-world 是左手系,右手 lookAt 画它**整张镜像且不报错**——轨�
 - 右栏按模块折叠:外观 / 发射 / 运动 / 寿命 / 碰撞 / 群体行为 / 薄片(纸钱)/ 声音;数值框带单位提示
   (wu / wu/s / wu/s²);外观里「镜面/自发光」「受光强度」两行只在受光(`lit` 没关)时出现——
   「受光强度」= `appearance.lightGain`(乘在该发射器收到的光上、不乘自发光,见 [[vfx-system]]),
-  空 = 删键(缺省 1)、夹 0..10、一次改动一条历史(自检 S23 #3);`sizeOverLife` / `alphaOverLife` 有小折线编辑器;群体那块有一组
+  空 = 删键(缺省 1)、夹 0..10、一次改动一条历史(自检 S23 #3);运动里「跟着发射点走」= `motion.followAnchor`
+  (锚点动了、已发射的粒子怎么走:不跟 / 跟动作、不跟走 / 完全跟;选「不跟」删键、模块空了连 `motion` 一起删;
+  群体 / 薄片没写时不出下拉;本地预览 `moveAnchor(a)` 不传 carry,「跟动作、不跟走」在台里等于不跟,自检 S23 #4);
+  `sizeOverLife` / `alphaOverLife` 有小折线编辑器;群体那块有一组
   「刺激权重」行——**标签不在 `attitude.fear` 表里 = 权重 0 = 完全没反应且不报错**,
   那组行就是为这条准备的。
 - 控制条:播放 / 暂停 / 单步 / 重置 / 种子 / 倍速。**同种子 + 同 dt 串两次跑逐帧相同**(自检 S9)。
@@ -303,6 +322,69 @@ M-world 是左手系,右手 lookAt 画它**整张镜像且不报错**——轨�
   3D 视图按点画,那部分去游戏里看,见 [[scene-wind]]。
 - **它是桌面应用**:入口是桌面窗口(纯内存 profile、NoCache、服务端 `no-store`),单实例,
   第二次 `--open <id>` 把已开着的窗口切到那条资产;`--serve` 只是给自动化的裸服务。
+
+## 燃烧用的两个字段(2026-09-16,见 [[burn-system]])
+
+- **发射形状「外部给点（燃烧系统）」**`{kind:'external', jitter?}`:游戏里出生点由燃烧系统每帧给(正在烧的格)。工作台本地预览每帧喂
+  6 个**预览用假点**(锚点周围,视图与状态栏标明),不写盘。选它时发射位置从「area 表面」退回「发射形状」。
+- **薄片「可燃模板」**`plate.burnable = {template}`(同日改定为**绑可燃物模板**,见 A3.8;旧 `plate.flammable` 参数表 +
+  `FLAMMABLE_DEFAULTS` + `fireEffect` 整套已删,**不留兼容读**):多久点着、火焰多长、逆流 / 顺流火线速度、焦黑发光、火苗粒子、火光全取模板,
+  **粒子的贴图与大小仍归粒子自己**。只能绑面燃烧(`mode ≠ consume`)模板。
+  - **检视器**(薄片一节「可燃」):「可燃模板」选择器——候选只列能绑的模板(服务端 `/api/burnables` 的 `bindable` =
+    `vfx_burn.plate_bindable_template_ids` = 形状闸门 `plate_burnable_notes` 零提醒的集合,**候选面 = 校验面**;蜡烛 / 香不进候选);
+    选中一次编辑写 `template`(块里别的键原样留着),选「不可燃」删整个 `burnable` 键。当前值不在候选里(不存在 / 读不懂 / 消耗燃烧 /
+    装不上 / 模板表没读到)**保值展示**:下拉项带「当前值:原因」、下面一行黄字说全(不能绑的原因句就是服务端 `note` = 闸门同一句),
+    不静默顶替、不清空。所选模板在表里就列只读关键参数(服务端 `plate_template_summary`:名字、尺寸、引燃时间、火焰长度、逆流 / 顺流速度、
+    火苗粒子、有无火光;模板没写、取运行时缺省的那几项灰显)。「打开燃烧工作台」= `POST /api/open_burn_workbench {id}`,服务端另起 detached
+    `sys.executable -m tools.burn_workbench --open <id>`(cwd 仓库根,Windows `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`,照抄主编辑器
+    `open_burn_workbench`;id 不是模板 id 写法 / 以 `-` 开头回 400 不起进程)。文件里残留 `plate.flammable`:一行「旧可燃参数已作废，运行时不读」+「删掉」(删键、一条历史)。
+  - **本地预览真按模板烧**:`bundle.py` 打进 `src/data/burnables.ts`(页面命名空间 `burnables`);页面取 `/api/burnables`,每份原始文档过
+    **打包进来的** `resolveBurnable(doc, id)` 装成 `S.burn.map`,建 `VfxInstanceSim` 时当 `burnTemplates` 传(与 `VfxSystem` 同形;绑消耗燃烧的
+    由运行时 `plateBurnOf` 自己拒)。⚠ 页面里不许另写模板清洗 / 缺省。重取时机:开页、打开效果(建模拟前等它)、「↺ 重置」、
+    窗口重新获得焦点 / 页面重新可见(燃烧工作台里存了盘切回来);同一时刻只发一个请求,在飞期间再叫合成一次。
+    **表内容一样什么都不做**;变了但当前效果绑着的模板清洗结果没变 = 只换表重画检视器;绑着的变了才重建本地预览。
+  - **形状闸门**(`assets._plate`):`plate.burnable` 形状不对(不是对象 / 没写 template)拒存(`plate_burnable_problems`)、按
+    `PLATE_BURNABLE_ORDER` 收键序、`burnable` 在 plate 键序最后;有发射器绑了模板才读盘上模板(`assets.BURN_ROOT`,本台只读)出
+    `plate_burnable_notes` 提醒(不存在 / 读不懂 / 消耗燃烧 / 没图或没正的真实尺寸);残留 `plate.flammable` 只警告(作废、运行时不读),不拒存、不替作者删。
+- **火工具**(`I` 或工具栏「火」):在光标下的表面放一段 40 wu 竖直火焰(经 `ctx.fires` 喂给同一份模拟),看纸片着 → 焦黑 → 成灰永久消失;
+  「清火」/ 换场景 / 重置清掉。只在预览内存里。武装与放火时状态栏说放了火能点着什么(`fireHint`):没绑模板 / 绑了但本地预览里不可燃
+  (判据先看模拟本体 `sim.emitters[i].burn`,不可燃再说原因——运动模型不是薄片 / 模板问题同检视器 `burnTemplateStatus` / 表没读到)/
+  会着(哪几份模板)。预览条 `可燃 在烧 N / 烧没 M`;绑了却不可燃整行变黄 `⚠ 可燃薄片不可燃:…`。焦黑两档按运行时 `plateBurnProgress` 画。
+- **效果被谁按 id 引用**:`fireEffect` 没了;现在是**可燃物模板**的 `particles[i].effect`(`placements._burnable_template_refs`,扫
+  `REF_ROOT/public/assets/data/burnables/*.json`):`{kind:"burnable", burnable:<模板 id>, file, where:"<模板 id> · particles[i]", label:"可燃物模板「…」· particles[i](from)"}`,
+  改名拒绝、删除要确认(与挂件预设同待遇,模板文件一字不动),提示句「在燃烧工作台里打开模板「…」改粒子」——页面 `extRefsFixHint` 与服务端
+  `refs_fix_hint` 逐字同句(`test_burn_fields` 拿 node 真跑页面那段函数对账);左栏「这个效果还布置在」同样列出。`_ref_files` 的跳过目录含
+  `burnables`:模板不在动作 / 实例引用那条深遍历里重复算。
+- 口径共用 `tools/editor/shared/vfx_burn.py`(主校验器同一份)。**自检 S24**:#1–#3 外部给点;#4 页面模板表每一项 == 打包的
+  `resolveBurnable(raw, id)`、服务端摘要与清洗结果一致;#5 候选 == bindable、选中写 / 选空删(各一条历史)、只读参数;#6 不存在 / 消耗燃烧的当前值
+  保值展示并说原因、渲染不改 doc、旧 `flammable`「删掉」;#7 存盘往返;#8「打开燃烧工作台」打到 `/api/open_burn_workbench`(拦截 fetch,不起进程);
+  #9 窗口焦点重读:没变不重建 / 没绑的变了不重建 / 绑着的变了重建且只读参数跟上;#10 火工具点着绑面燃烧模板的纸(在烧计数 > 0、成灰),
+  绑消耗燃烧 / 不存在模板的不着且火工具提示与预览条说清楚。模板只读工程真模板(能绑的 / 消耗燃烧的各挑第一份),改模板的情形拦截
+  `/api/burnables` 假造——**本台与自检都从不写 `assets/data/burnables/`**。页面 6 处变异(候选不过滤 / 没绑的变了也重建 / 删掉不删 /
+  不传 burnTemplates / 焦点不重读 / 打开不带 id)各红过。
+
+## 光柱(体积光,2026-09-16,运行时见 [[vfx-system]]「光柱」)
+
+- **左栏「光柱(体积光)」**:`+ 3D` / `+ 2D` / 复制 / 改名 / 上移下移 / 删除;`Delete` 删选中的光柱。
+  改名把尘埃的引用(发射形状 `beam`、外观 `beamLit`)一起改;**还被尘埃用着的光柱删不掉**,状态栏写是哪几个发射器在用。
+- **两个把手**:`beam:<id>` = 起点(`from`)、`beamEnd:<id>` = 终点(`to`),两个视图都能选、gizmo 立刻在把手上
+  (与发射器原点同一套 `gizmoPivot / applyGizmo / dragObjectTo*`,**没动共用的 gizmo.js**);拖成 < 1 wu 的退化光柱直接拒。
+  3D 光柱的把手写相对锚点世界点的 wu,2D 光带写相对锚点画面点的 wu。
+- **3D 视图只画线框**(两圈截面 + 棱),**原画视图是真预览**:`beams.js` 的 `BeamPreview` 在离屏 WebGL2 里编译运行时同一份
+  `BEAM_GLSL_CORE`(打包进来的 `vfxBeamGlsl.ts`),宿主函数换成台里的:壳深度 R32F 纹理(NEAREST)、`bmToLinear` 恒等,
+  按 `add / screen / normal` 用 `lighter / screen / source-over` 叠到原画上。⚠ 台里没有游戏的显示变换与场景灯,
+  **最终亮度去游戏里看**(推给游戏或存盘后进场景);尘埃在台里仍是点云。
+- **模拟没开跑(时间 0)时光柱按淡入完成画**(不然刚加的光柱是黑的,作者以为没加上);开跑后照运行时淡入淡出。
+- **没有深度载荷的场景**:退 `PlanarCal`(与运行时平面近似同式),本地模拟与 2D 光带照常,状态栏黄字
+  "没有深度载荷:3D 光柱在这里只是平面近似"。
+- **检视器**:光柱 / 形状 / 沿长度曲线 / 噪声 / 图案遮罩 / 起伏六块,范围与缺省读 `vfxBeamContract.json`(与校验器同源);
+  发射形状下拉多「光柱体积」(缺省第一道光柱,`along` 两个数),外观多「被光柱照亮」+「光柱亮度倍率」;效果块有「光柱一览」。
+- **存盘闸门**:`assets.normalize_effect` 调 `effect_beam_errors`(与运行时逐字同句);`beams` 空数组剥掉;
+  既没有发射器也没有光柱 → warning「游戏里什么都不会画」。
+- 图案遮罩贴图走服务端 `/resources/runtime/images/`(只放行该目录下 png / webp / jpg);`scene_summary` 带 `depthTolerance`
+  (与运行时同一个 `depth_tolerance`)。
+- 🔴 **尘埃看不见先看 `beamLit.gain`**:k = 光柱份量 × gain,份量本身 = intensity × 边缘 × 沿长度,强度 0.4 的光柱配 gain 1
+  中位只有 0.25(义庄实测),要 4 左右才读得出来。
 
 ## 联动(双槽,与声学同形)
 
@@ -348,6 +430,8 @@ Ctrl 吸附是整数倍、纯点一下不入历史、选中单个东西立刻有
 gizmo 只动那一个顶点、双击插点 / Delete 与右键删点、撤销覆盖布置、预览 sim 收到活动布置的 area + confine、
 publish 体带 placements 与 phaseRequest、只存成一半不清脏、限定勾 stash、复制到时段的覆盖 / 跳过
 (页面 29 处 + 服务端 14 处变异各红过)。
+光柱另有 `viewer/tests/beam-selftest.js`(B1–B8:加光柱即选中把手有 gizmo / 原画视图真预览像素变亮 / 从画布拖起点一条历史且实时跟 /
+检视器写入与 3D↔2D 切换不丢形状 / 尘埃出生都在光柱里 / 存盘往返键序 / 改名改引用、被用着删不掉 / 平面近似),`test_selftest.py` 串行跑。
 **改 viewer 下任何东西先跑它**;新抓到的坑往里加一条 `ok()`;改相机基要顺手变异一次确认判据会红。
 
 ## 相关

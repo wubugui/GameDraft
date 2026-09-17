@@ -441,6 +441,10 @@ export class NarrativeStateManager implements IGameSystem {
     // reactive 迁移的条件几乎全是 flag 叶子：flag 变化时唤醒重评，
     // 否则 reactive 只在队列排空后重评，纯 setFlag 驱动的迁移会"沉睡"到下一个信号才醒。
     this.eventBus.on('flag:changed', this.onFlagChangedListener);
+    // 手持挂件的玩法事实（heldProp 条件叶：火把点着没有 / 火势 / 锁）同理，走同一个合批重评
+    this.eventBus.on('heldProp:changed', this.onFlagChangedListener);
+    // 可燃物烧的状态（burn 条件叶：没点 / 在烧 / 灭了 / 烧完）同理
+    this.eventBus.on('burn:changed', this.onFlagChangedListener);
     // 读档统一钩子（与 zone 的 clearActiveZonesForRestore 同一契约层）：旧时间线的
     // 队列/在飞迁移不得写入恢复后的状态；deserialize 自身也会清（覆盖直接调用/测试路径），
     // 挂钩子是为老档缺 narrative 条目、deserialize 不被调用的边角兜底。
@@ -1487,6 +1491,8 @@ export class NarrativeStateManager implements IGameSystem {
     // 清合批标志：已排入的微任务见 destroyed 早退（下句已断监听，不会再有新 flag:changed 入批）。
     this.reactiveEvalScheduled = false;
     this.eventBus.off('flag:changed', this.onFlagChangedListener);
+    this.eventBus.off('heldProp:changed', this.onFlagChangedListener);
+    this.eventBus.off('burn:changed', this.onFlagChangedListener);
     this.eventBus.off('save:restoring', this.onSaveRestoringListener);
     // 挂起项显式 reject（而非静默丢弃），让 await 中的动作链尽快失败退出；
     // 已处理完仅待落定的项照常 resolve。

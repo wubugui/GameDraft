@@ -74,6 +74,8 @@ SOURCE_NAVIGATION_TABS = {
     "plane": "位面",
     # 物件自身用途 use.actions（ItemEditor 已有 select_by_id(item_id, scene_id) 这一签名）
     "item": "Item",
+    # 挂件状态的进入时动作（PropPresetEditor.select_by_id(prop_id, scene_id)）
+    "prop_preset": "挂件预设",
 }
 
 SOURCE_NAVIGATION_SELECTORS = {
@@ -434,6 +436,10 @@ class MainWindow(QMainWindow):
         # 场景画布显示发射区域 / 范围区域，playVfx 选择器出效果与实例候选
         self._act(ext, "粒子工作台…", self.open_vfx_workbench)
         self._act(ext, "刷新粒子数据", self._reload_vfx_from_disk)
+        # 燃烧工作台是可燃物模板 assets/data/burnables/ 的唯一写者（和场景无关）；主编辑器只读模板：
+        # 实体 / 挂件 / 轨迹生成规格的「可燃」块选模板，画布按模板图画、标着火点，燃烧动作 / 条件叶出候选
+        self._act(ext, "燃烧工作台…", self.open_burn_workbench)
+        self._act(ext, "刷新燃烧数据", self._reload_burn_from_disk)
         # 草木工作台是 lighting/<背景基名>/sway_paint.png 的唯一写者；拆层产物由它按需重烘
         self._act(ext, "草木工作台…", self.open_sway_workbench)
         # 地形工作台是 runtime/scenes/<id>/terrain/ 作者层的唯一写者；collision.png / collision.json / ground_d.png 由它合成
@@ -760,6 +766,8 @@ class MainWindow(QMainWindow):
                 self.navigate_to_cutscene(a[0])
             elif k == "narrative_state":
                 self.navigate_to_narrative_state(a[0], a[1])
+            elif k == "narrative_element":
+                self.navigate_to_narrative_element(a[0], a[1])
             elif k == "scene_entity":
                 self.navigate_to_scene_entity(*a)
             elif k == "plane":
@@ -811,6 +819,8 @@ class MainWindow(QMainWindow):
             return f"过场 · {a[0]}"
         if k == "narrative_state":
             return f"叙事 · {a[0]} / {a[1]}"
+        if k == "narrative_element":
+            return f"叙事 · {a[0]} / 元素 {a[1]}"
         if k == "scene_entity":
             return f"场景{a[0]} · {a[1]}"
         if k == "plane":
@@ -1203,6 +1213,7 @@ class MainWindow(QMainWindow):
             # 反过来就是"拿旧模型重建了一遍"，看起来刷新了其实没有。
             self._resync_trajectories_from_disk()
             self._resync_vfx_from_disk()
+            self._resync_burn_from_disk()
             self._resync_terrain_from_disk()
             self._reload_all_reference_catalogs()
             self._resync_audio_config_from_disk()
@@ -1221,6 +1232,7 @@ class MainWindow(QMainWindow):
             # 轨迹资产排在目录刷新**之前**：它换的是只读镜像，控件重建要用到新镜像。
             QTimer.singleShot(0, self, self._resync_trajectories_from_disk)
             QTimer.singleShot(0, self, self._resync_vfx_from_disk)
+            QTimer.singleShot(0, self, self._resync_burn_from_disk)
             QTimer.singleShot(0, self, self._resync_terrain_from_disk)
             # 图对话目录**真变了才重建**（轨迹/vfx/音频那三条各自已经这么门控了）：
             # 这条路每 alt-tab 一次就跑一次，而一次全页重建实测 218~1105ms。
@@ -1690,6 +1702,7 @@ class MainWindow(QMainWindow):
         from .editors.action_registry_editor import ActionRegistryEditor
         from .editors.overlay_images_editor import OverlayImagesEditor
         from .editors.prop_preset_editor import PropPresetEditor
+        from .editors.prop_effects_editor import PropEffectsEditor
         from .editors.narrative_data_editors import (
             ScenariosCatalogEditor,
             DocumentRevealsEditor,
@@ -1701,6 +1714,7 @@ class MainWindow(QMainWindow):
         from .editors.sugar_wheel_editor import SugarWheelEditor
         from .editors.paper_craft_editor import PaperCraftEditor
         from .editors.pressure_signal_editor import PressureHoldEditor, SignalCueEditor
+        from .editors.system_notes_editor import SystemNotesEditor
         from .editors.bubble_lines_editor import BubbleLinesEditor
         from .editors.smell_profile_editor import SmellProfileEditor
         from .editors.footstep_sets_editor import FootstepSetsEditor
@@ -1727,6 +1741,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "叙事编排"], "Encounter", EncounterEditor),
             (["数据编辑", "叙事编排"], "临场长按", PressureHoldEditor),
             (["数据编辑", "叙事编排"], "信号Cue", SignalCueEditor),
+            (["数据编辑", "叙事编排"], "系统说明卡", SystemNotesEditor),
             (["数据编辑", "叙事编排"], "头顶闲聊", BubbleLinesEditor),
             (["数据编辑", "叙事编排"], "水域小游戏", WaterMinigameEditor),
             (["数据编辑", "叙事编排"], "转盘小游戏", SugarWheelEditor),
@@ -1746,6 +1761,7 @@ class MainWindow(QMainWindow):
             (["数据编辑", "资源与本地化"], "玩家化身", PlayerAvatarEditor),
             (["数据编辑", "资源与本地化"], "叠图 ID", OverlayImagesEditor),
             (["数据编辑", "资源与本地化"], "挂件预设", PropPresetEditor),
+            (["数据编辑", "资源与本地化"], "挂件效果块", PropEffectsEditor),
             (["数据编辑", "资源与本地化"], "文档揭示", DocumentRevealsEditor),
             (["数据编辑", "资源与本地化"], "气味Profile", SmellProfileEditor),
             (["数据编辑", "资源与本地化"], "脚步集", FootstepSetsEditor),
@@ -3368,6 +3384,24 @@ class MainWindow(QMainWindow):
                     )
                 return
 
+    def navigate_to_narrative_element(self, composition_id: str, element_id: str) -> None:
+        """切换到「叙事状态机」页并选中某编排画布上的元素（黑盒/包装图等）。"""
+        from .editors.narrative_state_editor import NarrativeStateEditor
+
+        cid = (composition_id or "").strip()
+        eid = (element_id or "").strip()
+        if not cid or not eid:
+            return
+        for i, ed in enumerate(self._editor_instances):
+            if isinstance(ed, NarrativeStateEditor):
+                self._show_stack_page(i)
+                self._record_nav(_NavLocation("narrative_element", (cid, eid)))
+                if not ed.focus_element(cid, eid):
+                    self._status.showMessage(
+                        f"未能在叙事编辑器中定位编排 {cid} 的元素 {eid}（元素不存在或 web 编辑器未就绪）", 5000,
+                    )
+                return
+
     def navigate_to_scene_entity(
         self, kind: str, entity_id: str, scene_id: str, plane_view: str = "",
     ) -> None:
@@ -3544,6 +3578,59 @@ class MainWindow(QMainWindow):
         if self._model.project_path is None:
             return
         if self._model.reload_vfx_from_disk():
+            self._refresh_open_pages_after_disk_change()
+
+    def open_burn_workbench(self, burnable_id: str = "") -> None:
+        """另起独立进程打开「燃烧工作台」（「工具 → 燃烧工作台…」与场景页热点检视器「在燃烧工作台中打开」的落点）。
+
+        可燃物模板 `assets/data/burnables/<id>.json` 的**唯一写者**是工作台进程；主编辑器只读（宿主「可燃」块的模板候选、
+        画布按模板图画与着火点、燃烧动作 / 条件候选、校验）。谁用了模板写在宿主自己身上（热点 / NPC / 挂件预设 /
+        轨迹生成规格的 ``burnable`` 块），随各自的数据走、由主编辑器写。
+        起法与粒子工作台逐条相同：detached、不等它、**登记进外置进程监视表**——工作台存盘后，
+        工作台退出或主窗回到前台时静默重读（``_resync_burn_from_disk``）；手动那一下在「工具 → 刷新燃烧数据」。
+        """
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        bid = (burnable_id or "").strip()
+        cmd = [sys.executable, "-m", "tools.burn_workbench", *(["--open", bid] if bid else [])]
+        kwargs: dict = {"cwd": str(root.resolve())}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        try:
+            proc = subprocess.Popen(cmd, **kwargs)
+        except OSError as e:
+            QMessageBox.critical(self, "External tools", f"Failed to start 燃烧工作台:\n{e}")
+            return
+        self._dialogue_external_processes.append(proc)
+        self._dialogue_process_watch_timer.start()
+        self._status.showMessage(
+            f"Started in new process: 燃烧工作台{f'（{bid}）' if bid else ''}", 4000)
+
+    def _reload_burn_from_disk(self) -> None:
+        """重读可燃物模板并让**当前页**立刻用上（「工具 → 刷新燃烧数据」，场景页可燃块里的「刷新」按钮也落到这里）。
+
+        与粒子那条同构：先换只读镜像，再重拉已打开页的候选（场景页那一拍会顺带重画画布上按模板图画的实体与着火点）。
+        只读模板——宿主身上的可燃配置随场景 / 挂件预设 / 动作树走，不在这里重读。用户显式点时**无条件**刷当前页。
+        """
+        if self._model.project_path is None:
+            return
+        changed = self._model.reload_burn_from_disk()
+        self._refresh_open_pages_after_disk_change()
+        bad = len(getattr(self._model, "burnables_errors", {}) or {})
+        self._status.showMessage(
+            f"已刷新燃烧数据：{len(self._model.burnables)} 份可燃物模板"
+            + (f"（{bad} 份读不懂，校验里有原因）" if bad else "")
+            + ("（有变化，模板候选与画布已同步）" if changed else "（与内存里的一致）"),
+            6000 if bad else 4000)
+
+    def _resync_burn_from_disk(self) -> None:
+        """静默重读可燃物模板（工作台还开着时主窗回到前台 / 工作台退出时自动走这条）。"""
+        if self._model.project_path is None:
+            return
+        if self._model.reload_burn_from_disk():
             self._refresh_open_pages_after_disk_change()
 
     def _resync_terrain_from_disk(self) -> None:
@@ -3847,6 +3934,12 @@ class MainWindow(QMainWindow):
             return None, "已打开「Strings」页(未逐条定位)"
         if rel == "overlay_images.json":
             return self._nav_hit_generic("叠图 ID", segs[0] if segs else "")
+        if rel == "prop_presets.json":
+            # /<prop id>/states/<状态名>/onEnterActions/… → 落到那条挂件预设
+            return self._nav_hit_generic("挂件预设", segs[0] if segs else "")
+        if rel == "prop_effects.json":
+            # /<effect id>/… → 落到那一块效果
+            return self._nav_hit_generic("挂件效果块", segs[0] if segs else "")
         if rel == "scenarios.json":
             sid = outer_id
             if not sid and len(segs) >= 2 and segs[0] == "scenarios" and segs[1].isdigit():
@@ -3878,6 +3971,18 @@ class MainWindow(QMainWindow):
             if gid and sid:
                 self.navigate_to_narrative_state(gid, sid)
                 return True, f"已定位叙事图「{gid}」状态「{sid}」"
+            # /compositions/<i>/elements/<j>/…（黑盒 refId、元素标签等，不在子图状态里）→ 选中元素
+            if (len(segs) >= 4 and segs[0] == "compositions" and segs[1].isdigit()
+                    and segs[2] == "elements" and segs[3].isdigit()):
+                i, j = int(segs[1]), int(segs[3])
+                if 0 <= i < len(comps) and isinstance(comps[i], dict):
+                    els = comps[i].get("elements") or []
+                    if 0 <= j < len(els) and isinstance(els[j], dict):
+                        cid = str(comps[i].get("id") or "")
+                        eid = str(els[j].get("id") or "")
+                        if cid and eid:
+                            self.navigate_to_narrative_element(cid, eid)
+                            return True, f"已定位编排「{cid}」元素「{eid}」"
             return self._nav_hit_generic("叙事状态机")
         if rel == "document_reveals.json":
             return self._nav_hit_generic("文档揭示", outer_id)
@@ -3893,6 +3998,8 @@ class MainWindow(QMainWindow):
             return self._nav_hit_generic("临场长按", outer_id)
         if rel == "signal_cues.json":
             return self._nav_hit_generic("信号Cue", outer_id)
+        if rel == "system_notes.json":
+            return self._nav_hit_generic("系统说明卡", outer_id)
         if rel == "planes.json":
             if outer_id:
                 self.navigate_to_plane(outer_id)

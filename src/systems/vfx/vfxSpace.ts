@@ -15,7 +15,7 @@ import { shellContactAt, shellPxOfWorld, shellPxToWorld, sampleShellDepth } from
 import type { GroundHeightfield } from '../../utils/groundHeightfield';
 import { buildGroundHeightfield, groundHeightAt, groundObservedAt } from '../../utils/groundHeightfield';
 import type { SceneSpaceGeometry, Vec3 } from '../../utils/sceneSpace';
-import { groundWorldAt, worldToQ, worldToScene } from '../../utils/sceneSpace';
+import { groundWorldAt, socketLightWorld, worldToQ, worldToScene } from '../../utils/sceneSpace';
 
 export interface VfxSpace {
   readonly kind: 'field' | 'planar';
@@ -38,6 +38,12 @@ export interface VfxSpace {
   anchorToWorld(a: VfxAnchorDef): Vec3;
   /** 画面点（场景 wu）脚下的地面世界点 */
   groundWorldAtScene(sceneX: number, sceneY: number): Vec3;
+  /**
+   * 过脚点 `(footX, footY)` 的**直立面**上、投影对准画面点 `(sceneX, sceneY)` 的世界点——
+   * 实体（角色 / 热点展示图）是立在脚点深度上的直立 quad，这就是那个 quad 上的点（燃烧系统的可燃物格点用它）。
+   * 两种正式实现（field / planar）都有；可选只是为了让只测模拟的空间桩不必实现它。
+   */
+  uprightWorldAtScene?(footX: number, footY: number, sceneX: number, sceneY: number): Vec3;
   /** 视线方向（M-world 单位向量，往画面里去） */
   readonly viewDir: Vec3;
   /** 世界 XZ 处的地面法线（单位向量，写进 out） */
@@ -207,6 +213,17 @@ class FieldSpace implements VfxSpace {
     return groundWorldAt(this.geo, sceneX, sceneY);
   }
 
+  uprightWorldAtScene(footX: number, footY: number, sceneX: number, sceneY: number): Vec3 {
+    // 与挂点灯位同一条：过脚点的直立面、q.xy 对准画面点；零身体厚度、零离身距离 = 面本身
+    const w = socketLightWorld(
+      this.geo,
+      { x: footX, y: footY },
+      { x: sceneX - footX, y: sceneY - footY, front: true, clearanceWu: 0, bodyWidthWu: 0 },
+      0,
+    );
+    return w ?? groundWorldAt(this.geo, sceneX, sceneY);
+  }
+
   anchorToWorld(a: VfxAnchorDef): Vec3 {
     const h = a.h ?? 0;
     if (a.surface === 'shell' && this.shell) {
@@ -260,6 +277,10 @@ class PlanarSpace implements VfxSpace {
   }
   groundWorldAtScene(sceneX: number, sceneY: number): Vec3 {
     return [sceneX, 0, -sceneY * this.depthScale];
+  }
+  uprightWorldAtScene(footX: number, footY: number, sceneX: number, sceneY: number): Vec3 {
+    // toScene 的逆：纵深钉在脚点，高度 = 画面上高出脚点多少
+    return [sceneX, footY - sceneY, -footY * this.depthScale];
   }
   anchorToWorld(a: VfxAnchorDef): Vec3 {
     return [a.x, a.h ?? 0, -a.y * this.depthScale];

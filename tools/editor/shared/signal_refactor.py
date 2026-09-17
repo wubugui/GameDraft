@@ -13,7 +13,9 @@ Save All 覆写原文件（区别于 ``dialogue_stubs`` 的只写新文件）。
 信号引用面共五类通道（与 narrative_catalog.emitted_signal_ids 的扫描口径一致）：
 narrative_graphs（注册表 / transition 监听 / 图内 state 动作发射 / blackbox meta.emits）
 + 对话图（磁盘文件，深度遍历 emitNarrativeSignal）+ 内容资产 action 树（scenes/quests/
-cutscenes/pressure_holds/…内存集合）。narrative_templates 刻意不扫：模板走
+cutscenes/pressure_holds/…内存集合）。动作树之外的结构化发射字段（``healthThreat`` 的信号、
+宿主身上可燃配置的 ``burnable.signals``）在同一趟深度遍历里逐层问（``_count_emit_refs`` 三件套）。
+narrative_templates 刻意不扫：模板走
 ``{{taskId}}__`` 占位符命名空间，运行时永不加载。
 
 图 id / 状态名的引用面见 ``_walk_narrative_refs`` 的 kind 表（条件叶 / 计数叶 /
@@ -31,6 +33,8 @@ import json
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+from .health_refs import health_signal_fields
+from .narrative_catalog import burnable_host_signal_fields
 
 _DERIVED_PREFIX = "state:"
 _DRAFT_SIGNAL = "__draft__"
@@ -60,6 +64,10 @@ EMIT_SOURCE_BUCKETS: dict[str, tuple[str, bool]] = {
     # K7 线索注册表 clues[].collectActions（2026-08-17「采集=内容事件」拍板）：首采经
     # ActionExecutor 真执行，是实发面；独立脏桶 "clues"（data/clues.json 整文件落盘）。
     "clues_registry": ("clues", False),
+    # 挂件预设状态的进入时动作 states[*].onEnterActions（2026-09-15 燃烧物契约）：切到该状态时
+    # 经统一执行器真执行，是实发面；整文件落盘走 "prop_presets" 脏桶。漏登记 = 状态动作里的
+    # emitNarrativeSignal / 实体引用改名时悄悄悬垂。
+    "prop_presets": ("prop_presets", False),
 }
 
 
@@ -153,6 +161,9 @@ def _iter_collection(root: Any) -> Iterator[tuple[str, Any]]:
 def _count_emit_refs(node: Any, signal_id: str) -> int:
     count = 0
     if isinstance(node, dict):
+        count += sum(1 for _, _, signal in health_signal_fields(node) if signal == signal_id)
+        # 宿主身上可燃配置的信号（热点 / NPC / 挂件预设 / 轨迹 spawn 规格的 burnable.signals，A3.8）
+        count += sum(1 for _, _, signal in burnable_host_signal_fields(node) if signal == signal_id)
         if str(node.get("type") or "").strip() == "emitNarrativeSignal":
             params = node.get("params")
             if isinstance(params, dict) and str(params.get("signal") or "").strip() == signal_id:
@@ -168,6 +179,14 @@ def _count_emit_refs(node: Any, signal_id: str) -> int:
 def _replace_emit_refs(node: Any, old_id: str, new_id: str) -> int:
     count = 0
     if isinstance(node, dict):
+        for container, field, signal in health_signal_fields(node):
+            if signal == old_id:
+                container[field] = new_id
+                count += 1
+        for container, field, signal in list(burnable_host_signal_fields(node)):
+            if signal == old_id:
+                container[field] = new_id
+                count += 1
         if str(node.get("type") or "").strip() == "emitNarrativeSignal":
             params = node.get("params")
             if isinstance(params, dict) and str(params.get("signal") or "").strip() == old_id:
@@ -186,6 +205,13 @@ def _remove_emit_actions(node: Any, signal_id: str, path: list[Any], removed: li
     永远住在动作列表里；dict 值位置的 emit 结构不摘、只可能出现在非法数据里）。
     removed 按摘除顺序记录 {path, index, action}，撤销时**逆序**回放 insert 即可复原。"""
     if isinstance(node, dict):
+        for container, field, signal in list(health_signal_fields(node)):
+            if signal == signal_id:
+                removed.append({"path": [*path, "healthThreat"], "field": field, "value": container.pop(field)})
+        for container, field, signal in list(burnable_host_signal_fields(node)):
+            if signal == signal_id:
+                # 只摘这一个时刻的键（signals 块留着，撤销按路径回填）
+                removed.append({"path": [*path, "burnable", "signals"], "field": field, "value": container.pop(field)})
         for key, value in node.items():
             _remove_emit_actions(value, signal_id, [*path, key], removed)
     elif isinstance(node, list):
@@ -1367,6 +1393,8 @@ def undo_delete(model: Any, reverse_ops: list[dict[str, Any]]) -> None:
                 container = _path_get(root, op["path"])
                 if isinstance(container, list):
                     container.insert(min(int(op["index"]), len(container)), copy.deepcopy(op["action"]))
+                elif isinstance(container, dict) and "field" in op:
+                    container[op["field"]] = copy.deepcopy(op["value"])
         elif kind == "dialogueDoc":
             gid = op["graphId"]
             prev = op.get("prev") or {}

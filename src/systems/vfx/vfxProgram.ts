@@ -47,6 +47,9 @@ export function emitterProgramErrors(def: VfxEmitterDef): string[] {
   for (const k of contract.influenceKeys as (keyof VfxSimulationDef['influences'])[]) {
     if (typeof p.influences?.[k] !== 'boolean') errors.push(`simulation.influences.${k} 必须为布尔`);
   }
+  for (const k of contract.optionalInfluenceKeys as (keyof VfxSimulationDef['influences'])[]) {
+    if (p.influences?.[k] !== undefined && typeof p.influences[k] !== 'boolean') errors.push(`simulation.influences.${k} 必须为布尔`);
+  }
   if (!contract.recycleModes.includes(p.recycle?.mode)) errors.push('simulation.recycle.mode 无效');
   for (const k of ['height', 'upwind'] as const) {
     const v = p.recycle?.[k];
@@ -62,6 +65,7 @@ export function emitterProgramErrors(def: VfxEmitterDef): string[] {
   if (p.solver === 'flock' && (p.influences?.sceneWind || p.influences?.wind || p.influences?.airflow)) {
     errors.push('群体运动模型不支持物理风输入；使用群体刺激响应');
   }
+  if (p.solver === 'flock' && p.influences?.contact) errors.push('群体运动模型不支持接触冲量；使用群体刺激响应');
   return errors;
 }
 

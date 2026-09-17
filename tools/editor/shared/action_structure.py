@@ -212,6 +212,21 @@ def summarize_condition(expr: Any) -> str:
         return f"姿态 = {expr.get('posture')}"
     if "timePhase" in expr:
         return f"时段 = {expr.get('timePhase')}"
+    if isinstance(expr.get("heldProp"), str):
+        # 手持挂件叶：与图对话摘要同一份叫法（纯函数模块，无 Qt 依赖）
+        from tools.dialogue_graph_editor.dialogue_condition_text import held_prop_leaf_text
+
+        return held_prop_leaf_text(expr)
+    if isinstance(expr.get("propLevel"), str):
+        # 挂件等级叶：与图对话摘要同一份叫法（纯函数模块，无 Qt 依赖）
+        from tools.dialogue_graph_editor.dialogue_condition_text import prop_level_leaf_text
+
+        return prop_level_leaf_text(expr)
+    if isinstance(expr.get("burn"), str) and isinstance(expr.get("burnState"), str):
+        # 可燃物叶：与图对话摘要同一份叫法（纯函数模块，无 Qt 依赖）
+        from tools.dialogue_graph_editor.dialogue_condition_text import burn_leaf_text
+
+        return burn_leaf_text(expr)
     return _clip(json.dumps(expr, ensure_ascii=False), 60)
 
 

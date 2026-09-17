@@ -249,6 +249,11 @@
       "valueType": "float"
     },
     {
+      "key": "player_fire_protected",
+      "valueType": "bool",
+      "description": "引擎只读：指定火把或环境火源正在保护玩家；内容不得写入"
+    },
+    {
       "key": "player_max_health",
       "valueType": "float"
     },
@@ -395,10 +400,6 @@
     {
       "key": "current_smell_dir_depth",
       "valueType": "float"
-    },
-    {
-      "key": "torch_lit",
-      "valueType": "bool"
     }
   ],
   "patterns": [

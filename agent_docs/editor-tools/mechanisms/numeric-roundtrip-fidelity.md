@@ -26,7 +26,7 @@ Qt 数值控件天然破坏 JSON 数值表示(QDoubleSpinBox 一律 float、量�
 ## 权威源(读代码从哪进)
 
 - `tools/editor/shared/numeric_roundtrip.py` 的 `preserve_numeric_repr(out, original)`:在每个 `to_dict` 出口对 params 调一次;需要构造时存原始参数深拷贝快照(切类型时清空)。
-- 占位键剔除:`action_editor.py` 的 `_OMIT_WHEN_ABSENT_AND_DEFAULT`(原本无该键且为中性默认时不写)。
+- 占位键剔除:`action_editor.py` 的 `_OMIT_WHEN_ABSENT_AND_DEFAULT`(原本无该键且为中性默认时不写;盘上非中性被清回中性也不写,`_OMIT_ONLY_WHEN_ABSENT` 里的必填名字除外——细节见 `action-registration-registry-surfaces`)。
 
 ## 硬契约
 

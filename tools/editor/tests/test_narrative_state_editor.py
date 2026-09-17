@@ -1672,6 +1672,18 @@ class TestReview20260717Regressions(unittest.TestCase):
             self.assertEqual(result, "saved to ProjectModel")
             self.assertTrue(m.is_dirty)
 
+    def test_bridge_save_accepts_held_prop_condition_leaf(self) -> None:
+        """heldProp（手持挂件）叶在叙事迁移里合法（TS narrativeGraphValidation 同口径）；空 holder 拦。"""
+        from tools.editor.editors.narrative_state_editor import _is_condition_shape
+        with TemporaryDirectory() as td:
+            bridge, m = self._bridge(td)
+            result = bridge.saveData(json.dumps(self._file_with_transition(
+                conditions=[{"not": {"heldProp": "player", "prop": "xianteng_torch", "burning": True}}],
+            )))
+            self.assertEqual(result, "saved to ProjectModel")
+            self.assertTrue(m.is_dirty)
+        self.assertFalse(_is_condition_shape({"heldProp": "  "}))
+
     def test_bridge_save_accepts_bare_quest_scenario_leaves(self) -> None:
         """P-F1 同族：quest/scenario/scenarioLine 缺伴随字段时 TS 静默容忍，Python 不得报 error。"""
         with TemporaryDirectory() as td:

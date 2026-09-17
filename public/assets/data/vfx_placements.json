@@ -42,16 +42,6 @@
     "崖墓前段": {
       "base": [
         {
-          "id": "vfx_bats",
-          "effect": "bat_cliff",
-          "anchor": {
-            "x": 772,
-            "y": 521,
-            "h": 10,
-            "surface": "shell"
-          }
-        },
-        {
           "id": "vfx_drip",
           "effect": "water_drip",
           "anchor": {
@@ -60,20 +50,20 @@
             "h": 12,
             "surface": "shell"
           }
+        },
+        {
+          "id": "vfx_bats",
+          "effect": "bat_cliff",
+          "anchor": {
+            "x": 772,
+            "y": 521,
+            "h": 10,
+            "surface": "shell"
+          }
         }
       ],
       "variants": {
         "夜": [
-          {
-            "id": "vfx_bats",
-            "effect": "bat_cliff",
-            "anchor": {
-              "x": 772,
-              "y": 521,
-              "h": 10,
-              "surface": "shell"
-            }
-          },
           {
             "id": "vfx_drip",
             "effect": "water_drip",
@@ -81,6 +71,16 @@
               "x": 492,
               "y": 521,
               "h": 12,
+              "surface": "shell"
+            }
+          },
+          {
+            "id": "vfx_bats",
+            "effect": "bat_cliff",
+            "anchor": {
+              "x": 772,
+              "y": 521,
+              "h": 10,
               "surface": "shell"
             }
           }
@@ -191,53 +191,64 @@
           "id": "纸钱_山顶",
           "effect": "paper_money",
           "anchor": {
-            "x": 700,
-            "y": 800,
+            "x": 471.05,
+            "y": 965.7,
             "h": 0
           },
           "countScale": 1,
           "area": [
             [
-              325.4,
-              708.4
+              1191,
+              316.3
             ],
             [
-              452.6,
-              677.5
+              1300.9,
+              287
             ],
             [
-              633.4,
-              710.8
+              1329.2,
+              301.4
             ],
             [
-              852.4,
-              743.5
+              1454.3,
+              344.9
             ],
             [
-              740,
-              807.9
+              1374.2,
+              411.8
             ],
             [
-              656,
-              869.1
+              1248,
+              404.9
             ],
             [
-              546.8,
-              983.8
+              573.2,
+              875.7
             ],
             [
-              407.3,
-              948.4
+              538.5,
+              865.2
             ],
             [
-              333.8,
-              852.3
+              938.9,
+              582.1
             ],
             [
-              306,
-              751.7
+              1195.5,
+              383.8
             ]
           ]
+        },
+        {
+          "id": "纸钱_引路过场",
+          "effect": "paper_money_pass",
+          "anchor": {
+            "x": 640,
+            "y": 905,
+            "h": 65
+          },
+          "seed": 20260916,
+          "autoStart": false
         }
       ],
       "variants": {
@@ -246,64 +257,70 @@
             "id": "纸钱_山顶",
             "effect": "paper_money",
             "anchor": {
-              "x": 700,
-              "y": 800
+              "x": 471.05,
+              "y": 965.7,
+              "h": 0
             },
+            "countScale": 1,
             "area": [
               [
-                325.4,
-                708.4
+                1191,
+                316.3
               ],
               [
-                415.1,
-                674.4
+                1300.9,
+                287
               ],
               [
-                671.3,
-                709.1
+                1329.2,
+                301.4
               ],
               [
-                725.9,
-                815.6
+                1454.3,
+                344.9
               ],
               [
-                650.7,
-                905.7
+                1374.2,
+                411.8
               ],
               [
-                436.5,
-                1119
+                1248,
+                404.9
               ],
               [
-                95.5,
-                1114.5
+                573.2,
+                875.7
               ],
               [
-                142.2,
-                964.4
+                538.5,
+                865.2
               ],
               [
-                352,
-                825.5
+                938.9,
+                582.1
+              ],
+              [
+                1195.5,
+                383.8
               ]
             ]
+          },
+          {
+            "id": "纸钱_引路过场",
+            "effect": "paper_money_pass",
+            "anchor": {
+              "x": 640,
+              "y": 905,
+              "h": 65
+            },
+            "seed": 20260916,
+            "autoStart": false
           }
         ]
       }
     },
     "teahouse": {
       "base": [
-        {
-          "id": "teahouse_tobacco_01",
-          "effect": "teahouse_tobacco",
-          "anchor": {
-            "x": 428,
-            "y": 174,
-            "h": 2,
-            "surface": "shell"
-          },
-          "seed": 915
-        },
         {
           "id": "teahouse_dust_01",
           "effect": "teahouse_dust",
@@ -331,56 +348,81 @@
           "id": "teahouse_table_flies_01",
           "effect": "teahouse_table_flies",
           "anchor": {
-            "x": 181,
-            "y": 391,
-            "h": 2,
+            "x": 86,
+            "y": 287,
+            "h": 12,
             "surface": "shell"
           },
-          "seed": 918
+          "seed": 16091683,
+          "confine": {
+            "area": [
+              [
+                57,
+                270
+              ],
+              [
+                120,
+                270
+              ],
+              [
+                120,
+                322
+              ],
+              [
+                57,
+                322
+              ]
+            ],
+            "feather": 6
+          }
         },
         {
           "id": "teahouse_haze_1",
           "effect": "teahouse_haze",
           "anchor": {
-            "x": 270,
-            "y": 265,
-            "h": 205,
+            "x": 245,
+            "y": 305,
+            "h": 295,
             "surface": "ground"
           },
-          "seed": 927
+          "seed": 927,
+          "countScale": 1.05
         },
         {
           "id": "teahouse_haze_2",
           "effect": "teahouse_haze",
           "anchor": {
-            "x": 480,
-            "y": 300,
-            "h": 220,
+            "x": 490,
+            "y": 340,
+            "h": 280,
             "surface": "ground"
           },
-          "seed": 1025
+          "seed": 1025,
+          "countScale": 1
         },
         {
           "id": "teahouse_haze_3",
           "effect": "teahouse_haze",
           "anchor": {
-            "x": 255,
-            "y": 430,
-            "h": 215,
+            "x": 290,
+            "y": 435,
+            "h": 235,
             "surface": "ground"
           },
-          "seed": 1123
+          "seed": 1123,
+          "countScale": 0.55
         },
         {
           "id": "teahouse_haze_4",
           "effect": "teahouse_haze",
           "anchor": {
-            "x": 485,
-            "y": 435,
-            "h": 235,
+            "x": 505,
+            "y": 425,
+            "h": 210,
             "surface": "ground"
           },
-          "seed": 1221
+          "seed": 1221,
+          "countScale": 0.65
         },
         {
           "id": "teahouse_tea_wisps_1",
@@ -463,8 +505,8 @@
           "id": "teahouse_floor_roaches_1",
           "effect": "teahouse_floor_roaches",
           "anchor": {
-            "x": 310,
-            "y": 465,
+            "x": 440,
+            "y": 492,
             "h": 1.5,
             "surface": "ground"
           },
@@ -513,6 +555,176 @@
             "surface": "shell"
           },
           "seed": 1039
+        },
+        {
+          "id": "teahouse_tobacco_02",
+          "effect": "teahouse_tobacco",
+          "anchor": {
+            "x": 167,
+            "y": 371,
+            "h": 3,
+            "surface": "shell"
+          },
+          "seed": 20629,
+          "countScale": 0.65
+        },
+        {
+          "id": "teahouse_tobacco_03",
+          "effect": "teahouse_tobacco",
+          "anchor": {
+            "x": 356,
+            "y": 339,
+            "h": 3,
+            "surface": "shell"
+          },
+          "seed": 21008,
+          "countScale": 0.65
+        },
+        {
+          "id": "teahouse_tobacco_04",
+          "effect": "teahouse_tobacco",
+          "anchor": {
+            "x": 517,
+            "y": 270,
+            "h": 3,
+            "surface": "shell"
+          },
+          "seed": 21387,
+          "countScale": 0.65
+        },
+        {
+          "id": "teahouse_haze_left",
+          "effect": "teahouse_haze",
+          "anchor": {
+            "x": 45,
+            "y": 385,
+            "h": 170,
+            "surface": "ground"
+          },
+          "seed": 41768,
+          "countScale": 0.75
+        },
+        {
+          "id": "teahouse_haze_right",
+          "effect": "teahouse_haze",
+          "anchor": {
+            "x": 665,
+            "y": 355,
+            "h": 145,
+            "surface": "ground"
+          },
+          "seed": 41905,
+          "countScale": 0.8
+        },
+        {
+          "id": "teahouse_haze_front_left",
+          "effect": "teahouse_haze",
+          "anchor": {
+            "x": 100,
+            "y": 525,
+            "h": 125,
+            "surface": "ground"
+          },
+          "seed": 42042,
+          "countScale": 0.6
+        },
+        {
+          "id": "teahouse_haze_front_right",
+          "effect": "teahouse_haze",
+          "anchor": {
+            "x": 610,
+            "y": 525,
+            "h": 115,
+            "surface": "ground"
+          },
+          "seed": 42179,
+          "countScale": 0.65
+        },
+        {
+          "id": "teahouse_pipe_smoke_right_guest",
+          "effect": "teahouse_pipe_smoke",
+          "anchor": {
+            "x": 547.9,
+            "y": 237.2,
+            "h": 0.4,
+            "surface": "shell"
+          },
+          "seed": 16091679
+        },
+        {
+          "id": "teahouse_air_flies_empty_table",
+          "effect": "teahouse_air_flies",
+          "anchor": {
+            "x": 230,
+            "y": 303,
+            "h": 80,
+            "surface": "ground"
+          },
+          "seed": 16091711,
+          "confine": {
+            "area": [
+              [
+                185,
+                272
+              ],
+              [
+                275,
+                272
+              ],
+              [
+                275,
+                335
+              ],
+              [
+                185,
+                335
+              ]
+            ],
+            "feather": 10
+          }
+        },
+        {
+          "id": "teahouse_air_flies_front_aisle",
+          "effect": "teahouse_air_flies",
+          "anchor": {
+            "x": 390,
+            "y": 478,
+            "h": 75,
+            "surface": "ground"
+          },
+          "seed": 16091749,
+          "confine": {
+            "area": [
+              [
+                345,
+                448
+              ],
+              [
+                435,
+                448
+              ],
+              [
+                435,
+                508
+              ],
+              [
+                345,
+                508
+              ]
+            ],
+            "feather": 10
+          }
+        },
+        {
+          "id": "teahouse_old_smoker_humming",
+          "effect": "teahouse_humming_notes",
+          "anchor": {
+            "x": 423,
+            "y": 140,
+            "h": 1.5,
+            "surface": "shell"
+          },
+          "seed": 160916193
         }
       ]
     }

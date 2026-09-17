@@ -9,8 +9,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { VfxEmitterRuntime, VfxInstanceSim } from '../../systems/vfx/vfxSim';
 import {
-  MAX_BUCKETS, VFX_LIGHT_GAIN_MAX, VfxRenderer, bucketOfDepth, bucketSortFootY, buildSortThresholds, horizontalViewAxis,
-  sampleCurve, vfxLightGain, vfxParamValues,
+  MAX_BUCKETS, VFX_LIGHT_GAIN_MAX, VfxRenderer, bucketOfDepth, bucketSortFootY, buildSortThresholds, clampBucketToHost,
+  horizontalViewAxis, hostBucketRange,
+  sampleColorCurve, sampleCurve, vfxLightGain, vfxParamValues,
   type VfxRenderDeps, type VfxSortAnchor, type VfxSpriteSheet,
 } from './VfxRenderer';
 import { getVfxLitProgram, getVfxPlateLitProgram, getVfxUnlitProgram } from './vfxShaders';
@@ -45,6 +46,23 @@ function flat(entityFootYs: number[]): { of: (particleFootY: number) => number; 
   const th = buildSortThresholds(entityFootYs.map((y): VfxSortAnchor => ({ footY: y, depthKey: -y * K })));
   return { of: (y) => bucketOfDepth(th, -y * K), footY: (b) => bucketSortFootY(th, b) };
 }
+
+describe('sampleColorCurve（tintOverLife）', () => {
+  it('逐通道与 sampleCurve 同口径：空 = 恒白、超出两端取端点、中间线性', () => {
+    const out: [number, number, number] = [0, 0, 0];
+    expect(sampleColorCurve(undefined, 0.5, out)).toEqual([1, 1, 1]);
+    expect(sampleColorCurve([], 0.5, out)).toEqual([1, 1, 1]);
+    const c: [number, number, number, number][] = [[0.2, 1, 0.9, 0.8], [0.6, 0.6, 0.3, 0.0]];
+    expect([...sampleColorCurve(c, 0, out)]).toEqual([1, 0.9, 0.8]);
+    expect([...sampleColorCurve(c, 1, out)]).toEqual([0.6, 0.3, 0]);
+    const mid = [...sampleColorCurve(c, 0.4, out)];
+    [0.8, 0.6, 0.4].forEach((v, k) => expect(mid[k]).toBeCloseTo(v, 12));
+    for (const t of [0, 0.3, 0.45, 0.9]) {
+      const col = sampleColorCurve(c, t, out);
+      [1, 2, 3].forEach((k) => expect(col[k - 1]).toBeCloseTo(sampleCurve(c.map((q) => [q[0], q[k]] as [number, number]), t), 12));
+    }
+  });
+});
 
 describe('VfxRenderer · 按水平纵深分桶', () => {
   it('场上只有玩家时：身后进 0 桶（排在他前面之前）、身前进 1 桶', () => {
@@ -95,6 +113,37 @@ describe('VfxRenderer · 按水平纵深分桶', () => {
     const batDepth = -600 * K + 100;              // 比玩家远 100
     expect(bucketOfDepth(th, batDepth)).toBe(0);  // 排在玩家之前（身后）
     expect(bucketSortFootY(th, 0)).toBeLessThan(600);
+  });
+
+  it('挂在宿主身上的整团粒子钉在挂件那一侧：纵深在人前人后抖都不劈开；对别的实体照常分桶', () => {
+    // 玩家脚点 600；另一个 NPC 在更远处 400、更近处 800
+    const th = buildSortThresholds([400, 600, 800].map((y): VfxSortAnchor => ({ footY: y, depthKey: -y * K })));
+    const [lo, hi] = hostBucketRange(th, 600);
+    expect([lo, hi]).toEqual([1, 2]);
+    // 火把在身后（朝左举）：比玩家近 3 wu 的那颗火舌也留在玩家之前画
+    const nearer = bucketOfDepth(th, -600 * K - 3);
+    expect(nearer).toBe(2);
+    expect(clampBucketToHost(nearer, lo, hi, false)).toBe(1);
+    expect(clampBucketToHost(bucketOfDepth(th, -600 * K + 3), lo, hi, false)).toBe(1);
+    // 飘到远处 NPC 身后的那颗照样排到 NPC 之前
+    expect(clampBucketToHost(bucketOfDepth(th, -400 * K + 5), lo, hi, false)).toBe(0);
+    // 火把在身前：比玩家远的那颗也在玩家之后画；飘到近处 NPC 前面的照样在 NPC 之后
+    expect(clampBucketToHost(bucketOfDepth(th, -600 * K + 3), lo, hi, true)).toBe(2);
+    expect(clampBucketToHost(bucketOfDepth(th, -800 * K - 5), lo, hi, true)).toBe(3);
+  });
+
+  it('宿主这一帧不在阈值里（不可见）⇒ 不钉；实体多于上限时宿主一律保留不被并掉', () => {
+    const th = buildSortThresholds([{ footY: 400, depthKey: 0 }]);
+    const [lo, hi] = hostBucketRange(th, 600);
+    expect(lo).toBe(hi);
+    expect(clampBucketToHost(0, lo, hi, true)).toBe(0);
+    const many = Array.from({ length: 40 }, (_, i): VfxSortAnchor => ({ footY: i * 10 + 1, depthKey: -(i * 10 + 1) * K }));
+    const kept = buildSortThresholds(many, MAX_BUCKETS, new Set([121]));
+    expect(kept.length).toBe(MAX_BUCKETS - 1);
+    expect(kept.some((a) => a.footY === 121)).toBe(true);
+    for (let i = 1; i < kept.length; i++) expect(kept[i].footY).toBeGreaterThan(kept[i - 1].footY);
+    const [klo, khi] = hostBucketRange(kept, 121);
+    expect(khi - klo).toBe(1);
   });
 
   it('水平视线轴：去掉竖直分量再归一；正俯视时退化成 +z', () => {

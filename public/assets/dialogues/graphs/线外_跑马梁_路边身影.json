@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "线外_跑马梁_路边身影",
+  "entry": "n0",
+  "meta": {
+    "title": "跑马梁·路边身影"
+  },
+  "preconditions": [],
+  "defaultLayout": "bubble",
+  "nodes": {
+    "n0": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "你还真敢过来。身上的火，护好了。",
+      "next": "n1"
+    },
+    "n1": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "喊老子过来，到底啥子事？",
+      "next": "n2"
+    },
+    "n2": {
+      "type": "line",
+      "speaker": {
+        "kind": "npc"
+      },
+      "text": "你要找的路，闻香火。莫跟脚步声走。",
+      "next": "n3"
+    },
+    "n3": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_身影交谈完",
+            "sourceType": "dialogue",
+            "sourceId": "线外_跑马梁_路边身影"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

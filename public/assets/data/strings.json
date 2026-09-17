@@ -170,7 +170,11 @@
     "noDesc": "(无描述)",
     "discard": "丢弃",
     "useDisabled": "眼下用不成。",
-    "closeHint": "按 I 关闭"
+    "closeHint": "按 I 关闭",
+    "setIgniter": "设为火种",
+    "igniterCurrent": "已经是当前火种",
+    "igniterCurrentTag": "当前火种",
+    "igniterOpenedLeft": "这一份还能点 {n} 次"
   },
   "map": {
     "title": "[tag:string:place:wujin]城区图",
@@ -344,7 +348,9 @@
     "crouch": "蹲",
     "gaze": "看",
     "kick": "上脚",
-    "jump": "跳"
+    "jump": "跳",
+    "torch": "火",
+    "torchGuard": "护火"
   },
   "paperCraft": {
     "orderDescDefault": "按活计单子选纸、搭骨、糊面。部件可换，但分数和忌讳不一样。",
@@ -421,5 +427,15 @@
     "blue_doubt": "你那个骰子，怕是有名堂哦。",
     "middle_bicker": "莫挤嘛，半边凳子都占完了。",
     "middle_debt": "欠我的那几文，啥时还嘛？"
+  },
+  "igniter": {
+    "noneSet": "手上没设火种——去背包里把一种火种「设为火种」",
+    "empty": "{name}用完了",
+    "moving": "站稳了再点",
+    "failWind": "风太大，{name}没点着",
+    "failMove": "一动，{name}没点着",
+    "failCancel": "停了手，{name}白费了",
+    "locked": "火把点不着",
+    "spent": "这根烧完了，点不着了"
   }
 }

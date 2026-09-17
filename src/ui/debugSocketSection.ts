@@ -55,7 +55,11 @@ export interface DebugSocketDeps {
     attach: (target: string, socket: string, prop: string, state?: string) => Promise<void>;
     setState: (target: string, socket: string, state: string, fadeMs: number) => boolean;
     detach: (target: string, socket: string) => void;
-    snapshot: () => { target: string; socket: string; prop: string; state: string; lightIntensity: number }[];
+    snapshot: () => {
+      target: string; socket: string; prop: string; state: string; lightIntensity: number;
+      /** 火势 0..1（风吹灭火）/ 还剩几成燃料（烧不完的恒 1）/ 第几级 / 锁 */
+      vitality: number; fuel: number; level: number; lock: string;
+    }[];
     /** 闪烁推送率（观感 × 帧时的取舍，当场换着看；调试态不落盘） */
     getFlickerPushHz: () => number;
     setFlickerPushHz: (hz: number) => void;
@@ -138,6 +142,8 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
       },
       // 落脚帧原样带过去：注入临时挂点不该让脚步声跟着消失
       contactSlots: existing?.contactSlots ?? [],
+      // 点火接触帧同理：注入临时挂点不该让点火表演找不到接触帧
+      igniteSlots: existing?.igniteSlots ?? [],
     };
   }
 
@@ -215,7 +221,7 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
      * 带灯 / 带效果 / 带状态表的预设必须走手持挂件系统：那条路才会点灯、起火焰、认状态。
      * 本页自己那条只挂贴图的直路留给没有这些东西的老挂件（桃木剑）。
      */
-    if (deps.heldProp && sprite0 && (def.light || def.vfx?.length || def.states)) {
+    if (deps.heldProp && sprite0 && (def.light || def.particles?.length || def.flame || def.firePoint || def.states)) {
       const socket = activeSocket(sprite0);
       if (socket === TEMP_SOCKET && !st.injected) reinject();
       detach();
@@ -328,6 +334,12 @@ export function createDebugSocketSection(deps: DebugSocketDeps): DebugSocketSect
       lines.push(
         `手持挂件：${held.prop}　状态 ${held.state || '（无状态表）'}　`
         + `灯强度 ${held.lightIntensity.toFixed(2)}（基准，闪烁乘在上面）`,
+      );
+      // 火把养成那几个玩法量：火势（风吹灭）/ 燃料（耐久）/ 等级 / 锁——调参与查"为什么灭了"都看这一行
+      lines.push(
+        `火势 ${(held.vitality * 100).toFixed(0)}%　`
+        + `燃料 ${held.fuel >= 1 ? '烧不完' : `${(held.fuel * 100).toFixed(0)}%`}　`
+        + `等级 ${held.level}　锁 ${held.lock}`,
       );
       // 推送率是"灯摆多深 × 多贵"的取舍，只能看动的判——所以摆在这里当场换
       lines.push(

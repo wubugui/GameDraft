@@ -55,6 +55,12 @@ last_governed: 2026-09-11
    **外置进程退出那条仍是无条件重建**(那是真写盘边界,且一次性)。
    重扫函数要能被反复调用:每次重扫前先清掉自己上一轮记进 `load_anomalies` 的告警,不然同一个坏文件会越记越多。
 
+## 2026-09-16 新接入的页面:挂件效果块
+
+`editors/prop_effects_editor.py` 按本卡四步接进来(注册页面 + `project_model` 的 load/save 分支与脏桶 +
+搜索落点 `prop_effects.json` + 校验器认这张表)。它是**挂件预设编辑器的候选源**:效果块 id / 标签喂
+「效果块」picker 与 `heldProp` 条件叶的 `effect`——改这张表要让预设页 `reload_refs_from_model` 跟着刷。
+
 ## 已知坑
 
 - 契约 4 尚未普及:只有场景编辑器实现,item 编辑器有 Apply 却没钩子(未 Apply 的编辑切页即丢)——接新 staging 面板照契约补,别假定同类已接。

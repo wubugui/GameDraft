@@ -2,11 +2,13 @@ import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
 import type { ActionExecutor } from '../core/ActionExecutor';
 import type { ActionDef, IGameSystem, GameContext } from '../data/types';
+import { protectionHealthBonus, resolveHealthDamage } from '../data/survival';
+import type { HealthBounds, HealthDamage, HealthDamageResult, HealthDepletion, HealthProtection, TimedHealthProtection } from '../data/survival';
 
 export interface HealthConfig {
   /** 血量上限（默认满血起步） */
   maxHealth: number;
-  /** 血量降到此值（含）即触发死亡系绳，玩家不真死 */
+  /** 血量降到此值（含）即耗尽；只有明确获准时走剧情系绳 */
   deathThreshold: number;
   /** 系绳拽回后恢复到的血量 */
   restoreFloor: number;
@@ -31,9 +33,9 @@ const DEFAULT_HEALTH_CONFIG: HealthConfig = {
 /**
  * 死亡系绳 / 系统级血量（见 docs/玩法功能需求清单.md §G.5）。
  *
- * 主角**永不真死**：血量将归零那一刻被拦截——血拽回恢复底，同时触发阿秀冷信号
- * （香粉味+小调，来自他贪财捡的旧帕子包/空香粉盒）。机制即主题：那不是温情守护，
- * 是阿秀死时那口盲目的「不撒手」念气，只认物不认人、无意识、无倾向，只是不让他撒手。
+ * 普通伤害耗尽会死亡；只有内容条件明确允许时，才由死亡系绳接管。
+ * 编排 setHealth 仍只置数（既有演出语义），普通玩法一律 applyDamage。
+ * 防护来源由组装层提供，不持有背包／鬼物／UI 实例。临时上下限不修改永久能力。
  *
  * §1 合规：状态进 FlagStore（`player_health`/`player_max_health`），只经 EventBus
  * （`player:healthChanged`）+ ActionExecutor（跑系绳 cue），不持有其它系统引用。
@@ -45,9 +47,19 @@ export class HealthSystem implements IGameSystem {
 
   private config: HealthConfig = { ...DEFAULT_HEALTH_CONFIG };
   private currentHealth = DEFAULT_HEALTH_CONFIG.maxHealth;
+  private baseMaxHealth = DEFAULT_HEALTH_CONFIG.maxHealth;
   private maxHealth = DEFAULT_HEALTH_CONFIG.maxHealth;
   /** 系绳演出期间为 true：连续致死 damage 只拽一次，避免重入 */
   private tethering = false;
+  private depleted = false;
+  private generation = 0;
+  private bounds = new Map<string, HealthBounds>();
+  private activeProtections = new Map<string, TimedHealthProtection>();
+  private sceneId = '';
+  private protectionProvider: () => readonly HealthProtection[] = () => [];
+  private tetherAllowed: () => boolean = () => false;
+  private depletionHandler: ((cause: HealthDepletion) => void | Promise<void>) | null = null;
+  private lastDamage: (HealthDamage & { result: HealthDamageResult }) | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore, actionExecutor: ActionExecutor) {
     this.eventBus = eventBus;
@@ -59,16 +71,56 @@ export class HealthSystem implements IGameSystem {
   configure(partial: Partial<HealthConfig> | undefined | null): void {
     if (!partial) return;
     this.config = { ...this.config, ...partial };
+    this.config.maxHealth = this.validMax(this.config.maxHealth);
+    if (!Number.isFinite(this.config.deathThreshold) || this.config.deathThreshold < 0
+      || this.config.deathThreshold >= this.config.maxHealth) this.config.deathThreshold = 0;
+    if (!Number.isFinite(this.config.restoreFloor) || this.config.restoreFloor <= this.config.deathThreshold)
+      this.config.restoreFloor = Math.max(this.config.deathThreshold + 1, DEFAULT_HEALTH_CONFIG.restoreFloor);
   }
 
   init(_ctx: GameContext): void {
-    this.maxHealth = this.config.maxHealth;
+    this.generation++;
+    this.baseMaxHealth = this.validMax(this.config.maxHealth);
+    this.maxHealth = this.baseMaxHealth;
     this.currentHealth = this.maxHealth;
+    this.bounds.clear();
+    this.activeProtections.clear();
+    this.sceneId = '';
+    this.depleted = false;
+    this.tethering = false;
+    this.lastDamage = null;
     this.syncFlags();
     this.emitChanged();
   }
 
-  update(_dt: number): void {}
+  update(dt: number): void {
+    if (!Number.isFinite(dt) || dt <= 0 || this.depleted || this.tethering) return;
+    let changed = false;
+    for (const [id, protection] of this.activeProtections) {
+      protection.remainingSeconds -= dt;
+      if (protection.remainingSeconds <= 0) { this.activeProtections.delete(id); changed = true; }
+    }
+    if (changed) this.refreshProtection();
+  }
+
+  /** 携带的被动来源与主动来源共用 id 去重规则。 */
+  getProtections(): readonly HealthProtection[] {
+    return [...this.protectionProvider(), ...this.activeProtections.values()];
+  }
+
+  applyProtection(protection: HealthProtection, seconds: number): boolean {
+    if (!protection.id?.trim() || !Number.isFinite(seconds) || seconds <= 0) return false;
+    if (protection.reduction !== undefined && (!Number.isFinite(protection.reduction) || protection.reduction < 0 || protection.reduction > 1)) return false;
+    if (protection.maxHealthBonus !== undefined && (!Number.isFinite(protection.maxHealthBonus) || protection.maxHealthBonus < 0)) return false;
+    this.activeProtections.set(protection.id, { ...protection, remainingSeconds: seconds });
+    this.refreshProtection();
+    return true;
+  }
+
+  removeProtection(id: string): void {
+    this.activeProtections.delete(id);
+    this.refreshProtection();
+  }
 
   /** 当前血量。 */
   getHealth(): number {
@@ -79,30 +131,119 @@ export class HealthSystem implements IGameSystem {
     return this.maxHealth;
   }
 
-  /**
-   * 扣血。若一次扣血会使血量 ≤ deathThreshold，**不真死**——触发死亡系绳：
-   * 血先触底、跑阿秀冷信号、再拽回恢复底，并发叙事信号 `death_tether`。
-   */
-  async damage(amount: number): Promise<void> {
-    const amt = Math.max(0, amount);
-    if (amt === 0) return;
-    const next = this.currentHealth - amt;
-    if (next <= this.config.deathThreshold) {
-      await this.triggerDeathTether();
-      return;
-    }
-    this.currentHealth = next;
+  getBaseMaxHealth(): number { return this.baseMaxHealth; }
+  isDepleted(): boolean { return this.depleted; }
+
+  setProtectionProvider(provider: () => readonly HealthProtection[]): void {
+    this.protectionProvider = provider;
+    this.refreshProtection();
+  }
+
+  setTetherAllowed(predicate: () => boolean): void { this.tetherAllowed = predicate; }
+  setDepletionHandler(handler: ((cause: HealthDepletion) => void | Promise<void>) | null): void {
+    this.depletionHandler = handler;
+  }
+
+  /** 成长保留当前值：增加上限不是隐含回血，补血由独立 action 表达。 */
+  setBaseMaxHealth(amount: number): void {
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    this.baseMaxHealth = amount;
+    this.refreshProtection();
+  }
+
+  refreshProtection(): void {
+    const next = this.validMax(this.baseMaxHealth + protectionHealthBonus(this.getProtections()));
+    const old = this.maxHealth;
+    this.maxHealth = next;
+    const current = this.clampCurrent(this.currentHealth);
+    if (old === next && current === this.currentHealth) return;
+    this.currentHealth = current;
     this.syncFlags();
     this.emitChanged();
   }
 
-  /** 回血（不超过上限）。 */
-  heal(amount: number): void {
-    const amt = Math.max(0, amount);
-    if (amt === 0) return;
-    this.currentHealth = Math.min(this.maxHealth, this.currentHealth + amt);
+  /** 重叠限制取交集；冲突拒绝，不悄悄覆盖另一段教学的限制。 */
+  setBounds(value: HealthBounds): boolean {
+    if (!value.id?.trim() || (value.min === undefined && value.max === undefined)) return false;
+    if (value.scope !== undefined && value.scope !== 'scene' && value.scope !== 'persistent') return false;
+    for (const v of [value.min, value.max]) if (v !== undefined && (!Number.isFinite(v) || v < 0)) return false;
+    const pending = new Map(this.bounds);
+    pending.set(value.id, { ...value, scope: value.scope ?? 'scene' });
+    let min = 0, max = Infinity;
+    for (const b of pending.values()) { min = Math.max(min, b.min ?? 0); max = Math.min(max, b.max ?? Infinity); }
+    if (min > max) return false;
+    this.bounds = pending;
+    this.setHealth(this.currentHealth);
+    return true;
+  }
+
+  clearBounds(id: string): void { this.bounds.delete(id); }
+  clearSceneBounds(): void {
+    for (const [id, b] of this.bounds) if (b.scope !== 'persistent') this.bounds.delete(id);
+  }
+
+  /** 同场景读档保留教学限制；真正换场才释放 scene 句柄。 */
+  enterScene(id: string): void {
+    if (this.sceneId && this.sceneId !== id) this.clearSceneBounds();
+    this.sceneId = id;
+  }
+
+  private validMax(value: number): number {
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_HEALTH_CONFIG.maxHealth;
+  }
+
+  private clampCurrent(value: number): number {
+    let min = 0, max = this.maxHealth;
+    for (const b of this.bounds.values()) { min = Math.max(min, b.min ?? 0); max = Math.min(max, b.max ?? max); }
+    // 脱下加上限的物品时，最低保护不能把当前值抬到真实最大值之外。
+    return Math.max(Math.min(min, max), Math.min(max, value));
+  }
+
+  /**
+   * 旧入口保留调用形状，统一交给普通伤害通道。只有获准时才触发死亡系绳。
+   */
+  async damage(amount: number): Promise<void> {
+    await this.applyDamage({ amount, kind: 'yin', sourceId: 'legacy' });
+  }
+
+  async applyDamage(damage: HealthDamage): Promise<HealthDamageResult> {
+    const result: HealthDamageResult = {
+      requested: Number.isFinite(damage.amount) ? Math.max(0, damage.amount) : 0,
+      afterProtection: 0, applied: 0, depleted: false, protectionIds: [],
+    };
+    if (this.depleted || this.tethering || result.requested <= 0) return result;
+    this.refreshProtection();
+    const resolved = resolveHealthDamage(damage, this.getProtections());
+    result.afterProtection = resolved.amount;
+    result.protectionIds = resolved.protectionIds;
+    const before = this.currentHealth;
+    this.currentHealth = this.clampCurrent(before - resolved.amount);
+    result.applied = Math.max(0, before - this.currentHealth);
+    // 正最低保护具有“不死”含义，即使作者配置了大于 0 的濒死阈值。
+    const protectedFloor = [...this.bounds.values()].some((b) => (b.min ?? 0) > 0);
+    result.depleted = !protectedFloor && this.currentHealth <= this.config.deathThreshold;
+    this.lastDamage = { ...damage, result: { ...result, protectionIds: [...result.protectionIds] } };
+    const gen = this.generation;
+    if (result.depleted) this.depleted = true; // 先闸住重入，再发事件
     this.syncFlags();
     this.emitChanged();
+    this.eventBus.emit('player:damaged', this.lastDamage);
+    if (gen !== this.generation || !result.depleted) return result;
+    if (this.tetherAllowed()) {
+      await this.triggerDeathTether();
+    } else {
+      const cause: HealthDepletion = { ...damage, result };
+      this.eventBus.emit('player:depleted', cause);
+      if (gen === this.generation) await this.depletionHandler?.(cause);
+    }
+    return result;
+  }
+
+  /** 回血（不超过上限）。 */
+  heal(amount: number): void {
+    const amt = Number.isFinite(amount) ? Math.max(0, amount) : 0;
+    if (amt === 0) return;
+    this.setHealth(this.currentHealth + amt);
   }
 
   /**
@@ -112,7 +253,8 @@ export class HealthSystem implements IGameSystem {
    */
   setHealth(value: number): void {
     const v = Number.isFinite(value) ? value : this.currentHealth;
-    this.currentHealth = Math.max(0, Math.min(this.maxHealth, v));
+    this.currentHealth = this.clampCurrent(v);
+    if (this.currentHealth > this.config.deathThreshold) this.depleted = false;
     this.syncFlags();
     this.emitChanged();
   }
@@ -125,12 +267,19 @@ export class HealthSystem implements IGameSystem {
    * 否则批内排在其后的音效/信号会在演出完成前提前执行（与 damage() 路径同约定）。
    */
   tether(): Promise<void> {
+    if (!this.tetherAllowed()) {
+      console.warn('triggerDeathTether: authored eligibility condition is not satisfied');
+      return Promise.resolve();
+    }
     return this.triggerDeathTether();
   }
 
   private async triggerDeathTether(): Promise<void> {
     if (this.tethering) return;
+    const gen = this.generation;
     this.tethering = true;
+    // 由剧情接管的濒死不是普通死亡态，不能被死亡输入闸锁住救场动作。
+    this.depleted = false;
 
     // 不死：先把血压到 0（触底的那一拍），演出后拽回
     this.currentHealth = 0;
@@ -157,7 +306,9 @@ export class HealthSystem implements IGameSystem {
       console.warn('HealthSystem: death-tether actions failed', e);
     }
 
-    this.currentHealth = Math.max(1, Math.min(this.maxHealth, this.config.restoreFloor));
+    if (gen !== this.generation) return;
+    this.currentHealth = this.clampCurrent(Math.max(1, Math.min(this.maxHealth, this.config.restoreFloor)));
+    this.depleted = false;
     this.syncFlags();
     this.emitChanged();
     this.tethering = false;
@@ -176,16 +327,64 @@ export class HealthSystem implements IGameSystem {
   }
 
   serialize(): object {
-    return { currentHealth: this.currentHealth, maxHealth: this.maxHealth };
+    return {
+      currentHealth: this.currentHealth, maxHealth: this.maxHealth,
+      baseMaxHealth: this.baseMaxHealth, depleted: this.depleted,
+      bounds: [...this.bounds.values()].map((b) => ({ ...b })),
+      activeProtections: [...this.activeProtections.values()].map((p) => ({ ...p })),
+      sceneId: this.sceneId,
+    };
   }
 
   deserialize(data: object): void {
-    const d = data as { currentHealth?: number; maxHealth?: number };
-    if (typeof d.maxHealth === 'number') this.maxHealth = d.maxHealth;
-    if (typeof d.currentHealth === 'number') this.currentHealth = d.currentHealth;
+    this.generation++;
+    this.tethering = false;
+    this.lastDamage = null;
+    const d = (data ?? {}) as { currentHealth?: number; maxHealth?: number; baseMaxHealth?: number; depleted?: boolean; bounds?: HealthBounds[]; activeProtections?: TimedHealthProtection[]; sceneId?: string };
+    this.sceneId = typeof d.sceneId === 'string' ? d.sceneId : '';
+    this.baseMaxHealth = this.validMax(d.baseMaxHealth ?? d.maxHealth ?? this.config.maxHealth);
+    this.activeProtections.clear();
+    if (Array.isArray(d.activeProtections)) for (const p of d.activeProtections) {
+      if (!p || typeof p.id !== 'string' || !p.id.trim() || !Number.isFinite(p.remainingSeconds) || p.remainingSeconds <= 0) continue;
+      if (p.reduction !== undefined && (!Number.isFinite(p.reduction) || p.reduction < 0 || p.reduction > 1)) continue;
+      if (p.maxHealthBonus !== undefined && (!Number.isFinite(p.maxHealthBonus) || p.maxHealthBonus < 0)) continue;
+      if (p.kinds !== undefined && (!Array.isArray(p.kinds) || p.kinds.some((k) => k !== 'yin' && k !== 'fright'))) continue;
+      if (p.threatIds !== undefined && (!Array.isArray(p.threatIds) || p.threatIds.some((id) => typeof id !== 'string'))) continue;
+      this.activeProtections.set(p.id, { ...p });
+    }
+    this.maxHealth = this.baseMaxHealth + protectionHealthBonus(this.getProtections());
+    this.bounds.clear();
+    // 不经 setBounds 逐条广播：读档是一次原子恢复，不是重播教学。
+    if (Array.isArray(d.bounds)) {
+      let min = 0, max = Infinity;
+      for (const b of d.bounds) {
+        if (!b || typeof b.id !== 'string' || !b.id.trim() || this.bounds.has(b.id)) continue;
+        if (b.scope !== undefined && b.scope !== 'scene' && b.scope !== 'persistent') continue;
+        if (b.min === undefined && b.max === undefined) continue;
+        if ([b.min, b.max].some((v) => v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < 0))) continue;
+        const nextMin = Math.max(min, b.min ?? 0), nextMax = Math.min(max, b.max ?? Infinity);
+        if (nextMin > nextMax) continue;
+        min = nextMin; max = nextMax;
+        this.bounds.set(b.id, { ...b, scope: b.scope ?? 'scene' });
+      }
+    }
+    this.currentHealth = this.clampCurrent(Number.isFinite(d.currentHealth) ? d.currentHealth! : this.maxHealth);
+    this.depleted = d.depleted === true && this.currentHealth <= this.config.deathThreshold;
     this.syncFlags();
     this.emitChanged();
   }
 
-  destroy(): void {}
+  snapshot(): object {
+    return { ...this.serialize(), lastDamage: this.lastDamage, protections: this.getProtections().map((p) => ({ ...p })) };
+  }
+
+  destroy(): void {
+    this.generation++;
+    this.tethering = false;
+    this.bounds.clear();
+    this.activeProtections.clear();
+    this.depletionHandler = null;
+    this.protectionProvider = () => [];
+    this.tetherAllowed = () => false;
+  }
 }

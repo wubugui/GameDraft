@@ -1,14 +1,33 @@
 {
   "id": "teahouse_floor_roaches",
   "label": "茶馆 · 桌脚地虫",
+  "prewarmSeconds": [
+    2,
+    8
+  ],
   "emitters": [
     {
       "id": "crawlers",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": true,
+          "contact": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
       "appearance": {
         "image": "/resources/runtime/images/vfx/teahouse_roach.png",
-        "sizeWu": 12,
+        "sizeWu": 8,
         "sizeJitter": [
-          0.65,
+          0.75,
           1.15
         ],
         "alphaOverLife": [
@@ -30,63 +49,67 @@
           ]
         ],
         "tint": [
-          1,
-          0.9,
-          0.8
+          0.25,
+          0.32,
+          0.38
         ],
-        "lit": false,
-        "faceVelocity": true
+        "lit": true,
+        "emissive": 0,
+        "stretchByVelocity": 0.01,
+        "faceVelocity": false
       },
       "spawn": {
         "max": 5,
-        "rate": 0.45,
+        "rate": 0.27,
+        "intervalJitter": 0.7,
         "burst": 4,
         "shape": {
           "kind": "disc",
           "radius": 18
         },
         "speed": [
-          3,
-          7
+          2,
+          6
         ],
         "direction": [
           1,
           0,
           0
         ],
-        "spread": 25
+        "spread": 180
       },
       "motion": {
-        "gravity": 90,
-        "drag": 1.3,
-        "wind": [
-          3,
-          0,
-          1
-        ],
+        "gravity": 70,
+        "drag": 2.1,
         "turbulence": {
-          "strength": 14,
-          "scale": 18,
-          "speed": 0.9
+          "strength": 22,
+          "scale": 19,
+          "speed": 0.22
         },
-        "maxSpeed": 16,
+        "maxSpeed": 120,
         "stimulus": {
           "fear": {
-            "player:motion": 1
+            "player:motion": 4,
+            "sfx:footstep": 0.15,
+            "teahouse:storyteller_step": 3,
+            "torch:呛": 0.8,
+            "torch:艾": 1.0
           },
-          "accel": 150
+          "accel": 720
         }
       },
       "life": {
         "seconds": [
-          10,
-          14
+          16,
+          24
         ]
       },
       "collision": {
         "ground": "slide",
-        "friction": 0.015,
-        "radiusWu": 1.5
+        "shell": "bounce",
+        "restitution": 0.15,
+        "friction": 0.008,
+        "radiusWu": 0.45
       }
     }
   ],
@@ -99,6 +122,6 @@
       "h": 1.5,
       "surface": "ground"
     },
-    "note": "沿地面爬行，玩家走动时散开；无声。"
+    "note": "地虫：关闭场景风、气流和踢飞；不规则慢爬，玩家动静与实际脚步触发贴地逃散，碰可见壳转向。微量速度拉伸仅启用虫头朝速度方向旋转，不拉长身体、不左右镜像。普通粒子地面滑动约束；暗褐色、受光、无自发光。"
   }
 }

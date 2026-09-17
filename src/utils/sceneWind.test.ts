@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  resolveSceneWind, windGustBasis, windGustClock, windGustFromBasis, windGustMul, windPhase, WIND_GUST_BASIS,
+  resolveSceneWind, windGustBasis, windGustClock, windGustFromBasis, windGustMul, windPhase, WIND_GUST_BASIS, SceneWindState,
 } from './sceneWind';
 
 const W = resolveSceneWind({
@@ -24,5 +24,50 @@ describe('sceneWind 阵风批量求值', () => {
 
   it('windPhase 的点相关部分与 t 可分离', () => {
     expect(windPhase(W, 3.5, 120, -80)).toBeCloseTo(3.5 + windPhase(W, 0, 120, -80), 10);
+  });
+});
+
+describe('authored finite scene gust', () => {
+  it('uses the same envelope for shared wind and ambient, then restores latest base', async () => {
+    const calls: unknown[][] = [];
+    const wind = new SceneWindState((...args) => calls.push(args));
+    wind.reset({ direction: [1, 0, 0], speed: 100 });
+    wind.setOverride({ speedMul: 2 });
+    const done = wind.startGust({ speedMultiplier: 4, durationMs: 1000, attackMs: 100, releaseMs: 200, id: 'wind', volume: .8 });
+    wind.advance(.05);
+    expect(wind.params!.speed).toBe(500);
+    expect(calls[calls.length - 1]).toEqual(['wind', .8, .5]);
+    wind.advance(.05);
+    expect(wind.params!.speed).toBe(800);
+    wind.advance(.8);
+    expect(wind.params!.speed).toBe(500);
+    wind.setOverride({ speedMul: 3 });
+    wind.advance(.1);
+    await done;
+    expect(wind.params!.speed).toBe(300);
+    expect(calls[calls.length - 1]).toEqual(['wind', undefined, 0]);
+    expect(wind.gustSnapshot).toBeNull();
+  });
+
+  it('replacing, resetting, and explicit cancellation resolve waiters without leaking sound', async () => {
+    const calls: unknown[][] = [];
+    const wind = new SceneWindState((...args) => calls.push(args));
+    wind.reset({ direction: [1, 0, 0], speed: 100 });
+    const first = wind.startGust({ speedMultiplier: 2, durationMs: 1000, attackMs: 0, id: 'wind' });
+    const second = wind.startGust({ speedMultiplier: 3, durationMs: 1000, attackMs: 0 });
+    await first;
+    expect(calls[calls.length - 1]).toEqual(['wind', undefined, 0]);
+    wind.advance(0);
+    wind.advance(NaN);
+    expect(wind.params!.speed).toBe(300);
+    wind.reset({ direction: [1, 0, 0], speed: 50 });
+    await second;
+    expect(wind.params!.speed).toBe(50);
+    const third = wind.startGust({ speedMultiplier: 4, durationMs: 1000, attackMs: 0 });
+    wind.clearGust();
+    await third;
+    expect(wind.params!.speed).toBe(50);
+    await wind.startGust({ speedMultiplier: NaN, durationMs: 1000 });
+    expect(wind.gustSnapshot).toBeNull();
   });
 });

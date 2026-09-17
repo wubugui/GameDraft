@@ -47,6 +47,13 @@ _WEB_FONT_STEPS: Final[tuple[float, ...]] = (
 )
 
 _EDITOR_FONT_ROLE_PROP = "editorFontRole"
+#: 只放一个字形的窄按钮（＋ / － / ↑ / ↓ / −）。常规 QPushButton 的左右内边距是 14px×2 = 28px,
+#: 而这类按钮宽度常被钉到 28~34px ⇒ 字形被内边距整个挤掉,按钮画出来是**空白**的。
+#: 标了这个属性的按钮拿到一份更小的内边距(见各主题 QSS),28px 也画得下一个全角字形。
+COMPACT_BUTTON_PROP: Final[str] = "compactIconButton"
+#: 只读引用框(ReferencePickerField)的取值状态:"filled" = 选了东西 / "empty" = 没选。
+#: 只读 QLineEdit 一律被主题涂成灰字 ⇒ 选好的引用看上去和占位符一模一样,作者分不出「选了」与「没选」。
+REFERENCE_VALUE_PROP: Final[str] = "referenceValue"
 _GRAPHICS_FONT_ROLE_ATTR = "_game_draft_font_role"
 _GRAPHICS_FONT_FAMILY_ATTR = "_game_draft_font_family"
 _GRAPHICS_FONT_WEIGHT_ATTR = "_game_draft_font_weight"
@@ -90,6 +97,33 @@ def make_editor_font(
         font.setStyleHint(style_hint)
     font.setPixelSize(font_px_for_role(role, base_px))
     return font
+
+
+def _repolish(widget: QWidget) -> None:
+    """属性变了要重跑一遍样式计算——QSS 的属性选择器只在 polish 时求值。"""
+    style = widget.style()
+    if style is not None:
+        style.unpolish(widget)
+        style.polish(widget)
+    widget.update()
+
+
+def mark_compact_button(button: QWidget) -> None:
+    """把按钮标成「窄图标按钮」（见 {@link COMPACT_BUTTON_PROP}）。
+
+    宽度仍由调用方定（`setFixedWidth` / `setMaximumWidth`），这里只换一份小内边距。
+    """
+    button.setProperty(COMPACT_BUTTON_PROP, True)
+    _repolish(button)
+
+
+def mark_reference_value(line_edit: QWidget, *, filled: bool) -> None:
+    """标记只读引用框此刻「有没有值」（见 {@link REFERENCE_VALUE_PROP}）。"""
+    want = "filled" if filled else "empty"
+    if line_edit.property(REFERENCE_VALUE_PROP) == want:
+        return
+    line_edit.setProperty(REFERENCE_VALUE_PROP, want)
+    _repolish(line_edit)
 
 
 def set_editor_font_role(widget: QWidget, role: str) -> None:
@@ -382,6 +416,18 @@ def _stylesheet_flat_dark(base_px: int = DEFAULT_FONT_PX) -> str:
             border-radius: 0px;
             padding: 3px;
         }}
+        /* 禁用的输入框必须一眼看出「现在改不了」：不写这条,没勾上的可选项里那串
+           数值和能改的长得一模一样,作者对着改半天没反应。放在 :read-only 之后,
+           同特异度下后者生效（只读且禁用时按禁用画）。 */
+        QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled,
+        QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+            color: #5e5e5e;
+            background-color: #101010;
+            border: 1px solid {brm};
+        }}
+        /* 只读引用框：选好的值必须和「（未选择）」长得不一样（都是只读灰字就分不出） */
+        QLineEdit[{REFERENCE_VALUE_PROP}="filled"]:read-only {{ color: {tx}; background-color: {ab}; }}
+        QLineEdit[{REFERENCE_VALUE_PROP}="empty"]:read-only {{ color: #7a7a7a; font-style: italic; }}
         QAbstractScrollArea {{ background-color: {b}; }}
         QScrollArea {{ border: none; }}
         QScrollBar:vertical, QScrollBar:horizontal {{
@@ -445,6 +491,8 @@ def _stylesheet_flat_dark(base_px: int = DEFAULT_FONT_PX) -> str:
         QPushButton:hover {{ background-color: #323232; }}
         QPushButton:pressed {{ background-color: #161616; }}
         QPushButton:disabled {{ color: #666666; background-color: #141414; }}
+        /* 窄图标按钮（＋ / － / ↑ / ↓）：常规内边距 14px×2 比按钮本身还宽，字形会被挤没 */
+        QPushButton[{COMPACT_BUTTON_PROP}="true"] {{ padding: 4px 3px; min-width: 0; }}
         QCheckBox {{ spacing: 8px; }}
         QCheckBox::indicator {{
             width: 16px;
@@ -647,6 +695,16 @@ def _stylesheet_flat_modern(base_px: int = DEFAULT_FONT_PX) -> str:
             border-radius: 4px;
             padding: 3px 6px;
         }}
+        /* 禁用的输入框必须一眼看出「现在改不了」（见近黑主题里那段注释） */
+        QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled,
+        QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+            color: #6b6b6b;
+            background-color: #2a2a2b;
+            border: 1px solid {brm};
+        }}
+        /* 只读引用框：选好的值必须和「（未选择）」长得不一样 */
+        QLineEdit[{REFERENCE_VALUE_PROP}="filled"]:read-only {{ color: {tx}; background-color: {ab}; }}
+        QLineEdit[{REFERENCE_VALUE_PROP}="empty"]:read-only {{ color: #8d8d8d; font-style: italic; }}
         QAbstractScrollArea {{ background-color: {b}; }}
         QScrollArea {{ border: none; }}
         QScrollBar:vertical, QScrollBar:horizontal {{
@@ -711,6 +769,8 @@ def _stylesheet_flat_modern(base_px: int = DEFAULT_FONT_PX) -> str:
         QPushButton:hover {{ background-color: #1177bb; }}
         QPushButton:pressed {{ background-color: #0d5a8f; }}
         QPushButton:disabled {{ color: #6e6e6e; background-color: #3c3c3c; border-color: {brm}; }}
+        /* 窄图标按钮（＋ / － / ↑ / ↓）：常规内边距 14px×2 比按钮本身还宽，字形会被挤没 */
+        QPushButton[{COMPACT_BUTTON_PROP}="true"] {{ padding: 4px 3px; min-width: 0; }}
         QCheckBox {{ spacing: 8px; }}
         QCheckBox::indicator {{
             width: 16px;
@@ -904,6 +964,16 @@ def _stylesheet_flat_light(base_px: int = DEFAULT_FONT_PX) -> str:
             border-radius: 0px;
             padding: 3px;
         }}
+        /* 禁用的输入框必须一眼看出「现在改不了」（见近黑主题里那段注释） */
+        QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled,
+        QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {{
+            color: #9a9a9a;
+            background-color: #e6e6e6;
+            border: 1px solid {brm};
+        }}
+        /* 只读引用框：选好的值必须和「（未选择）」长得不一样 */
+        QLineEdit[{REFERENCE_VALUE_PROP}="filled"]:read-only {{ color: {tx}; background-color: {ab}; }}
+        QLineEdit[{REFERENCE_VALUE_PROP}="empty"]:read-only {{ color: #8a8a8a; font-style: italic; }}
         QAbstractScrollArea {{ background-color: {ab}; }}
         QScrollArea {{ border: none; }}
         QScrollBar:vertical, QScrollBar:horizontal {{
@@ -967,6 +1037,8 @@ def _stylesheet_flat_light(base_px: int = DEFAULT_FONT_PX) -> str:
         QPushButton:hover {{ background-color: #dedede; }}
         QPushButton:pressed {{ background-color: #d0d0d0; }}
         QPushButton:disabled {{ color: #a0a0a0; background-color: #f0f0f0; }}
+        /* 窄图标按钮（＋ / － / ↑ / ↓）：常规内边距 14px×2 比按钮本身还宽，字形会被挤没 */
+        QPushButton[{COMPACT_BUTTON_PROP}="true"] {{ padding: 4px 3px; min-width: 0; }}
         QCheckBox {{ spacing: 8px; }}
         QCheckBox::indicator {{
             width: 16px;

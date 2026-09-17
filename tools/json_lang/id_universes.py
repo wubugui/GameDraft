@@ -356,6 +356,15 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
     ):
         u[name], labels[name] = _ids_and_labels(_load(path, read), label_key)
 
+    # 火种(ItemDef.igniter):写了 igniter **对象**的物品——setActiveIgniter.item 的宇宙。
+    # 与 ProjectModel.igniter_item_ids / validator._set_active_igniter_issues 同口径(非对象的坏形态不算)
+    item_rows = _load(data / "items.json", read)
+    u["igniter_items"], labels["igniter_items"] = _ids_and_labels(
+        [e for e in item_rows if isinstance(e, dict) and isinstance(e.get("igniter"), dict)]
+        if isinstance(item_rows, list) else [],
+        "name",
+    )
+
     plane_ids, plane_labels = _ids_and_labels(_load(data / "planes.json", read), "label")
     u["planes"] = sorted(set(plane_ids) | {"normal"})
     plane_labels.setdefault("normal", "常态(无位面)")
@@ -410,8 +419,47 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
             k: _trunc(v["label"]) for k, v in prop_doc.items()
             if isinstance(v, dict) and isinstance(v.get("label"), str)
         }
+        # heldProp 条件叶:prop 确定时 propState 收窄到该预设的 states 键
+        scoped["prop_states"] = {
+            k: [str(s) for s in v["states"]]
+            for k, v in prop_doc.items()
+            if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("states"), dict)
+        }
+        # 火把养成(A3.7):配了等级表的挂件才是 setPropLevel / propLevel 的合法目标——
+        # 没等级表的运行时恒第 1 级,写了也只是 log 一行。宇宙单列一张,与编辑器候选同口径。
+        u["prop_leveled"] = sorted(
+            k for k, v in prop_doc.items()
+            if isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("levels"), list)
+            and any(isinstance(lv, dict) for lv in v["levels"])
+        )
+        labels["prop_leveled"] = {
+            k: _trunc(v["label"]) for k, v in prop_doc.items()
+            if k in set(u["prop_leveled"]) and isinstance(v, dict) and isinstance(v.get("label"), str)
+        }
     else:
         u["prop_presets"] = []
+        u["prop_leveled"] = []
+        scoped["prop_states"] = {}
+
+    # 挂件效果块库(prop_effects.json,火把养成的"脾气"):`heldProp` 叶的 `effect` 写 id **或**
+    # 它的标签都命中(运行时 `s.effects` 是两样的并集),所以宇宙是并集,不是只有 id。
+    effect_doc = _load(data / "prop_effects.json", read)
+    if isinstance(effect_doc, dict):
+        eff_ids = sorted(k for k in effect_doc if isinstance(k, str))
+        u["prop_effects"] = eff_ids
+        labels["prop_effects"] = {
+            k: _trunc(v["label"]) for k, v in effect_doc.items()
+            if isinstance(v, dict) and isinstance(v.get("label"), str)
+        }
+        tags: set[str] = set()
+        for v in effect_doc.values():
+            if isinstance(v, dict) and isinstance(v.get("tags"), list):
+                tags |= {t.strip() for t in v["tags"] if isinstance(t, str) and t.strip()}
+        u["prop_effect_matches"] = sorted(set(eff_ids) | tags)
+        labels["prop_effect_matches"] = dict(labels["prop_effects"])
+    else:
+        u["prop_effects"] = []
+        u["prop_effect_matches"] = []
 
     audio = _load(data / "audio_config.json", read)
     if isinstance(audio, dict):
@@ -561,4 +609,33 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
     # 清掉空 label 表,schema 侧按"有才注"处理
     ud.labels = {k: {i: t for i, t in v.items() if t} for k, v in labels.items()}
     ud.labels = {k: v for k, v in ud.labels.items() if v}
+    # 三把火的来源与具名动作句柄：与编辑器同样扫描所有动作宿主及 overlay-only 文件。
+    survival_ids = {"health_threats": set(), "health_bounds": set(), "health_protections": set()}
+    def survival_walk(node):
+        if isinstance(node, dict):
+            threat = node.get("healthThreat")
+            if isinstance(threat, dict) and isinstance(threat.get("id"), str) and threat["id"].strip():
+                survival_ids["health_threats"].add(threat["id"].strip())
+            kind, params = node.get("type"), node.get("params")
+            if isinstance(params, dict) and isinstance(kind, str):
+                target = {"inflictHealthDamage": ("health_threats", "sourceId"),
+                          "lockHealth": ("health_bounds", "id"),
+                          "applyHealthProtection": ("health_protections", "id")}.get(kind)
+                if target:
+                    key = params.get(target[1])
+                    if isinstance(key, str) and key.strip():
+                        survival_ids[target[0]].add(key.strip())
+            for child in node.values():
+                survival_walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                survival_walk(child)
+    for path in iter_content_files(root, extra_paths=extra_paths):
+        doc = _load(path, read)
+        survival_walk(doc)
+        if path.parent.name == 'vfx':
+            from tools.editor.shared.health_refs import vfx_health_sources
+            survival_ids['health_threats'].update(key for key, _ in vfx_health_sources(doc))
+    for key, values in survival_ids.items():
+        u[key] = sorted(values)
     return ud

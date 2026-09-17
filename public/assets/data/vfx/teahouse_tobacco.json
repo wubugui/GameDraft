@@ -1,6 +1,10 @@
 {
   "id": "teahouse_tobacco",
   "label": "茶馆 · 靠墙桌边烟丝",
+  "prewarmSeconds": [
+    1,
+    4
+  ],
   "emitters": [
     {
       "id": "puffs",
@@ -11,23 +15,23 @@
       ],
       "appearance": {
         "image": "/resources/runtime/images/vfx/smoke_puff.png",
-        "sizeWu": 13,
+        "sizeWu": 10,
         "sizeJitter": [
-          0.7,
-          1.3
+          0.65,
+          1.2
         ],
         "sizeOverLife": [
           [
             0,
-            0.45
+            0.4
           ],
           [
-            0.35,
-            1
+            0.4,
+            0.95
           ],
           [
             1,
-            1.8
+            2.4
           ]
         ],
         "alphaOverLife": [
@@ -36,12 +40,12 @@
             0
           ],
           [
-            0.2,
-            0.5
+            0.12,
+            0.33
           ],
           [
-            0.65,
-            0.28
+            0.5,
+            0.18
           ],
           [
             1,
@@ -49,9 +53,9 @@
           ]
         ],
         "tint": [
-          0.82,
-          0.77,
-          0.67
+          0.65,
+          0.63,
+          0.58
         ],
         "lit": false,
         "spin": {
@@ -63,9 +67,10 @@
         }
       },
       "spawn": {
-        "max": 24,
-        "rate": 3,
-        "burst": 8,
+        "max": 22,
+        "rate": 3.5,
+        "intervalJitter": 0.55,
+        "burst": 7,
         "shape": {
           "kind": "box",
           "size": [
@@ -86,24 +91,30 @@
         "spread": 20
       },
       "motion": {
-        "drag": 1.2,
+        "drag": 0.9,
         "wind": [
-          4,
+          1.5,
           0,
           0
         ],
-        "buoyancy": 12,
+        "buoyancy": 15,
         "turbulence": {
-          "strength": 5,
-          "scale": 40,
-          "speed": 0.18
+          "strength": 2.5,
+          "scale": 25,
+          "speed": 0.2
         },
-        "maxSpeed": 14
+        "maxSpeed": 18,
+        "stimulus": {
+          "fear": {
+            "player:motion": 0.65
+          },
+          "accel": 12
+        }
       },
       "life": {
         "seconds": [
-          5,
-          8
+          3.5,
+          6
         ]
       }
     }

@@ -75,6 +75,13 @@
       ]
     },
     {
+      "glob": "public/assets/data/burnables/**",
+      "docs": [
+        "burn-system",
+        "burn-workbench"
+      ]
+    },
+    {
       "glob": "public/assets/data/character_registry.json",
       "docs": [
         "character-registry"
@@ -525,6 +532,12 @@
       ]
     },
     {
+      "glob": "src/data/burnables.ts",
+      "docs": [
+        "burn-system"
+      ]
+    },
+    {
       "glob": "src/data/characterRegistry.ts",
       "docs": [
         "character-registry"
@@ -537,6 +550,12 @@
       ]
     },
     {
+      "glob": "src/data/vfxBeamContract.json",
+      "docs": [
+        "vfx-system"
+      ]
+    },
+    {
       "glob": "src/dev/**",
       "docs": [
         "debug-ui-persistence"
@@ -546,6 +565,20 @@
       "glob": "src/dev/runtimeAcousticsSync.ts",
       "docs": [
         "scene-acoustics"
+      ]
+    },
+    {
+      "glob": "src/dev/runtimeBurnApiPlugin.ts",
+      "docs": [
+        "burn-system",
+        "burn-workbench"
+      ]
+    },
+    {
+      "glob": "src/dev/runtimeBurnSync.ts",
+      "docs": [
+        "burn-system",
+        "burn-workbench"
       ]
     },
     {
@@ -649,6 +682,12 @@
       ]
     },
     {
+      "glob": "src/rendering/FireHintMarker.ts",
+      "docs": [
+        "held-prop-lights"
+      ]
+    },
+    {
       "glob": "src/rendering/Renderer.ts",
       "docs": [
         "display-viewport-and-window",
@@ -659,6 +698,12 @@
       "glob": "src/rendering/backgroundSway.ts",
       "docs": [
         "scene-wind"
+      ]
+    },
+    {
+      "glob": "src/rendering/burn/**",
+      "docs": [
+        "burn-system"
       ]
     },
     {
@@ -678,6 +723,12 @@
       "glob": "src/rendering/entitySortRule.ts",
       "docs": [
         "scene-canvas-item-parts-and-z"
+      ]
+    },
+    {
+      "glob": "src/rendering/glProgramWarmup.ts",
+      "docs": [
+        "vfx-system"
       ]
     },
     {
@@ -841,6 +892,12 @@
       ]
     },
     {
+      "glob": "src/systems/burn/**",
+      "docs": [
+        "burn-system"
+      ]
+    },
+    {
       "glob": "src/systems/heldProp/**",
       "docs": [
         "held-prop-lights"
@@ -875,6 +932,12 @@
       "glob": "src/systems/vfx/vfxPlate.ts",
       "docs": [
         "scene-wind"
+      ]
+    },
+    {
+      "glob": "src/systems/vfx/vfxPlateBurn.ts",
+      "docs": [
+        "burn-system"
       ]
     },
     {
@@ -964,6 +1027,12 @@
       "glob": "src/ui/debugAcousticSection.ts",
       "docs": [
         "scene-acoustics"
+      ]
+    },
+    {
+      "glob": "src/ui/debugBurnSection.ts",
+      "docs": [
+        "burn-system"
       ]
     },
     {
@@ -1128,6 +1197,12 @@
       "glob": "tools/build/**",
       "docs": [
         "build-pipeline"
+      ]
+    },
+    {
+      "glob": "tools/burn_workbench/**",
+      "docs": [
+        "burn-workbench"
       ]
     },
     {
@@ -1358,6 +1433,13 @@
       ]
     },
     {
+      "glob": "tools/editor/shared/burnables.py",
+      "docs": [
+        "burn-system",
+        "burn-workbench"
+      ]
+    },
+    {
       "glob": "tools/editor/shared/entity_refactor.py",
       "docs": [
         "action-registration-registry-surfaces",
@@ -1478,6 +1560,12 @@
       "glob": "tools/editor/shared/terrain_overlay.py",
       "docs": [
         "terrain-workbench"
+      ]
+    },
+    {
+      "glob": "tools/editor/shared/vfx_beam.py",
+      "docs": [
+        "vfx-system"
       ]
     },
     {

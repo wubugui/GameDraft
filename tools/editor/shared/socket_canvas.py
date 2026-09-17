@@ -70,6 +70,8 @@ class SocketCanvas(QWidget):
         self._ghost: tuple[float, float] | None = None
         #: 本帧是不是落脚帧（脚触地 → 播脚步声）：在脚线上画一条醒目的实心横条
         self._contact = False
+        #: 本帧是不是点火接触帧（火头碰到可燃物）：整格描一道红框 + 顶部文字，与落脚帧的脚线橙条分开
+        self._ignite = False
 
     # ---- 数据入口 ----------------------------------------------------
 
@@ -95,6 +97,11 @@ class SocketCanvas(QWidget):
     def set_contact(self, on: bool) -> None:
         """本帧是否落脚帧。落脚帧要一眼看得出：脚线变成粗实心橙条并标「落脚」。"""
         self._contact = bool(on)
+        self.update()
+
+    def set_ignite(self, on: bool) -> None:
+        """本帧是否点火接触帧。与落脚帧区分开：整格红框 + 左上角「点火接触帧」，不压脚线。"""
+        self._ignite = bool(on)
         self.update()
 
     # ---- 几何 --------------------------------------------------------
@@ -167,6 +174,12 @@ class SocketCanvas(QWidget):
                 p.drawLine(QPointF(o.x(), o.y() + ch), QPointF(o.x() + cw, o.y() + ch))
                 p.setPen(QPen(QColor(255, 150, 40), 1))
                 p.drawText(QPointF(o.x() + 4, o.y() + ch - 8), "落脚帧 · 播脚步声")
+            if self._ignite:
+                # 点火接触帧：整格粗红框 + 左上角文字（落脚帧占脚线与左下角，两者同帧时互不遮挡）
+                p.setPen(QPen(QColor(235, 60, 50, 230), 4))
+                p.drawRect(QRectF(o.x(), o.y(), cw, ch))
+                p.setPen(QPen(QColor(255, 110, 90), 1))
+                p.drawText(QPointF(o.x() + 6, o.y() + 16), "点火接触帧 · 火头碰到可燃物")
 
         # 洋葱皮：上一帧位置
         if self._ghost is not None:

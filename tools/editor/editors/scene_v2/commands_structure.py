@@ -9,10 +9,12 @@ from __future__ import annotations
 import copy
 from typing import Sequence
 
+from PySide6.QtGui import QUndoCommand
+
 from .changes import EntitiesAdded, EntityRef
 from .commands import SceneCommand
 
-__all__ = ["AddEntitiesCommand", "RemoveEntitiesCommand", "LIST_KEY"]
+__all__ = ["AddEntitiesCommand", "RemoveEntitiesCommand", "CompositeCommand", "LIST_KEY"]
 
 #: 实体族 → 场景 JSON 里的列表键
 LIST_KEY = {"hotspot": "hotspots", "npc": "npcs", "zone": "zones"}
@@ -95,6 +97,33 @@ class RemoveEntitiesCommand(_StructureCommand):
 
     def undo(self) -> None:
         self._insert_all()
+
+
+class CompositeCommand(QUndoCommand):
+    """几条命令当**一条**入栈，撤销一次整批撤回。
+
+    粘贴一批里既有名册行（NPC / 热区 / Zone）又有出生点时，两者走的是两种命令
+    （增名册 / 改 spawnPoints）。分两次 push 就是"撤销撤一半"—— 按一次 Ctrl+Z
+    出生点回去了、实体还留着。子命令各自发自己的事件，这里只管顺序：
+    重做按序、撤销倒序。零变更的子命令构造时就剔掉。
+    """
+
+    def __init__(self, children: Sequence[QUndoCommand | None], label: str) -> None:
+        super().__init__(label)
+        self._children = [c for c in children
+                          if c is not None and not getattr(c, "is_noop", False)]
+
+    @property
+    def is_noop(self) -> bool:
+        return not self._children
+
+    def redo(self) -> None:
+        for child in self._children:
+            child.redo()
+
+    def undo(self) -> None:
+        for child in reversed(self._children):
+            child.undo()
 
 
 def snapshot_entries(document, refs: Sequence[EntityRef]):

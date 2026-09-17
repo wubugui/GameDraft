@@ -66,6 +66,8 @@ _ACTION_SOURCE_BUCKETS: tuple[tuple[str, str], ...] = (
     # K7 线索注册表 clues[].collectActions（2026-08-17）：动作树经统一执行器真执行，
     # 里面的 startDialogueGraph 引用必须参与对话图改名级联，否则悄悄悬垂。
     ("clues_registry", "clues"),
+    # 挂件预设 states[*].onEnterActions（2026-09-15）：状态进入动作里的 startDialogueGraph 同样要跟改名。
+    ("prop_presets", "prop_presets"),
 )
 
 

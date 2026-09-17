@@ -178,8 +178,9 @@
       ],
       "conditions": [
         {
-          "flag": "torch_lit",
-          "value": true
+          "heldProp": "player",
+          "socket": "right_hand",
+          "burning": true
         }
       ],
       "onEnter": [
@@ -215,13 +216,6 @@
             "socket": "right_hand",
             "state": "out",
             "fadeMs": 900
-          }
-        },
-        {
-          "type": "setFlag",
-          "params": {
-            "key": "torch_lit",
-            "value": false
           }
         },
         {

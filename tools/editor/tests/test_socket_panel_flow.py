@@ -422,6 +422,42 @@ class SocketPanelFlowTests(unittest.TestCase):
         panel._prop_combo.setCurrentIndex(0)   # (none)
         self.assertIsNone(panel._canvas._prop)
 
+    def test_preview_burnable_prop_draws_template_on_grip(self) -> None:
+        from PySide6.QtGui import QColor, QImage
+        img_dir = self._root / "public/resources/runtime/images/props"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        img = QImage(20, 80, QImage.Format.Format_ARGB32)
+        img.fill(QColor(120, 60, 20))
+        self.assertTrue(img.save(str(img_dir / "stick_probe.png")))
+        self._model.burnables = {
+            "stick_probe": {
+                "label": "探针香", "image": "/resources/runtime/images/props/stick_probe.png",
+                "widthCm": 10, "heightCm": 40, "grip": {"u": 0.5, "v": 0.9},
+            },
+        }
+        self._model.prop_presets = {
+            "xiang_probe": {
+                "label": "探针可燃香",
+                "image": "/resources/runtime/images/icons/not_there.png",
+                "anchorX": 0.1, "anchorY": 0.1, "rotation": 30, "scale": 2,
+                "burnable": {"template": "stick_probe"},
+            },
+        }
+        ed, _key = self._panel()
+        panel = ed._socket_panel
+        self.assertEqual(panel._prop_combo.current_id(), "xiang_probe")
+        self._mark_one(panel)
+        spec = panel._canvas._prop
+        self.assertIsNotNone(spec, "可燃挂件画模板的图，自己那张（不存在的）图被接管")
+        self.assertEqual(spec.pixmap.width(), 20)
+        self.assertEqual((spec.anchor_x, spec.anchor_y, spec.rotation), (0.5, 0.9, 30))
+        self.assertAlmostEqual(spec.scale, 10 * 0.88 / 20 * 2, places=6, msg="宽 = 模板真实宽 × 预设缩放")
+
+        self._model.burnables = {}
+        panel._on_preview_prop_changed()
+        self.assertIsNone(panel._canvas._prop)
+        self.assertIn("stick_probe", panel._prop_note.text(), "模板不在时说清楚原因，不静默")
+
     def test_reload_refs_picks_up_new_presets_and_keeps_choice(self) -> None:
         ed, _key = self._panel()
         panel = ed._socket_panel

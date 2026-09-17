@@ -1,0 +1,35 @@
+{
+  "_comment": "光柱（体积光）数据契约的唯一真相源：运行时（src/systems/vfx/vfxBeam.ts）与 Python 校验（tools/editor/shared/vfx_beam.py）都读这一份，不各抄一份枚举 / 缺省 / 上下限。",
+  "modes": ["3d", "2d"],
+  "sectionKinds": ["rect", "polygon"],
+  "blends": ["add", "screen", "normal"],
+  "sorts": ["depth", "background", "foreground"],
+  "pulseKinds": ["flicker", "breathe"],
+  "polygonSides": [3, 8],
+  "maxCurveKeys": 8,
+  "defaults": {
+    "edgeSoftness": 0.4,
+    "thickness": 1,
+    "contactSoftWu": 60,
+    "blend": "add",
+    "fadeIn": 0.6,
+    "fadeOut": 0.6,
+    "sort": "depth",
+    "cookieStrength": 1,
+    "beamLitGain": 1
+  },
+  "limits": {
+    "intensity": [0, 20],
+    "edgeSoftness": [0, 1],
+    "thickness": [0, 1],
+    "contactSoftWu": [0, 2000],
+    "spreadDeg": [0, 170],
+    "alongValue": [0, 10],
+    "noiseStrength": [0, 1],
+    "cookieStrength": [0, 1],
+    "pulseAmount": [0, 1],
+    "pulseHz": [0, 30],
+    "fadeSeconds": [0, 30],
+    "beamLitGain": [0, 20]
+  }
+}

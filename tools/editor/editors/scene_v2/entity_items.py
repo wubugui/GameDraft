@@ -99,6 +99,7 @@ class HandleItem(_StateMixin, EntityItem):
         self._radius_px = HANDLE_R_PX
         self._label = ""
         self._range_world = 0.0
+        self._survival_ranges = []
         self._scale = 1.0
         self.setFlag(
             EntityItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
@@ -121,12 +122,20 @@ class HandleItem(_StateMixin, EntityItem):
     def _range_px(self) -> float:
         return self._range_world * self._scale
 
+    def set_survival_ranges(self, ranges) -> None:
+        if ranges != self._survival_ranges:
+            self.prepareGeometryChange()
+            self._survival_ranges = list(ranges)
+            self.update()
+
     def boundingRect(self) -> QRectF:
-        r = max(self._radius_px, self._range_px()) + 2.0
+        r = max(self._radius_px, self._range_px(), *(radius * self._scale for radius, _, _ in self._survival_ranges)) + 2.0
         rect = QRectF(-r, -r, r * 2.0, r * 2.0)
         if self._label:
             # 给标签留位置，否则文字会被裁掉一截
             rect = rect.united(QRectF(r, -r - 14.0, 8.0 * len(self._label) + 8.0, 16.0))
+        if self._survival_ranges:
+            rect = rect.adjusted(0, -18, 100, 0)
         return rect
 
     def set_color(self, color: QColor) -> None:
@@ -148,6 +157,13 @@ class HandleItem(_StateMixin, EntityItem):
 
     def paint(self, painter, option, widget=None) -> None:
         painter.setRenderHint(painter.RenderHint.Antialiasing, True)
+        if self._selected:
+            for radius, label, color in self._survival_ranges:
+                rp = radius * self._scale
+                painter.setPen(QPen(QColor(color), 0, Qt.PenStyle.DashLine))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawEllipse(QPointF(0, 0), rp, rp)
+                painter.drawText(QPointF(3, -rp - 3), f"{label} {radius:g}")
         rp = self._range_px()
         if rp > self._radius_px:
             painter.setPen(QPen(QColor(255, 255, 255, 60), 0, Qt.PenStyle.DotLine))

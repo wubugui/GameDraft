@@ -1,0 +1,131 @@
+{
+  "oiled": {
+    "label": "裹布浸桐油",
+    "note": "升级第二级用：火稳一截，风里难吹灭",
+    "light": {
+      "intensity": 1.15
+    },
+    "wind": {
+      "windSpeed": 1.25,
+      "drainSeconds": 1.4
+    },
+    "tags": [
+      "耐风"
+    ],
+    "fields": [
+      {
+        "kind": "fear",
+        "tag": "torch:fire",
+        "radius": 450,
+        "strength": 2
+      }
+    ]
+  },
+  "ironband": {
+    "label": "铁箍加固",
+    "note": "升级第三级用：火拢住了，掉得更慢、回得更快，火头伸得出去",
+    "wind": {
+      "drainSeconds": 1.6,
+      "recoverSeconds": 0.75
+    },
+    "igniterFlame": 1.3,
+    "tags": [
+      "稳"
+    ]
+  },
+  "resin_hot": {
+    "label": "松脂旺",
+    "note": "松明用：又亮又旺，烧得快，招东西",
+    "light": {
+      "intensity": 1.5,
+      "range": 1.2
+    },
+    "burn": 1.4,
+    "fuelRate": 1.6,
+    "fields": [
+      {
+        "kind": "attract",
+        "tag": "torch:招",
+        "radius": 600,
+        "strength": 1.2
+      }
+    ],
+    "tags": [
+      "招东西"
+    ]
+  },
+  "damp_smoke": {
+    "label": "湿柴呛烟",
+    "note": "湿柴用：暗，但风吹不大动；烟呛，虫子不近身",
+    "light": {
+      "intensity": 0.6
+    },
+    "burn": 0.7,
+    "wind": {
+      "windSpeed": 1.8,
+      "drainSeconds": 1.3
+    },
+    "fuelRate": 0.7,
+    "fields": [
+      {
+        "kind": "fear",
+        "tag": "torch:呛",
+        "radius": 320,
+        "strength": 1.5
+      }
+    ],
+    "tags": [
+      "驱虫",
+      "冒烟"
+    ]
+  },
+  "incense_calm": {
+    "label": "香火气",
+    "note": "香火把用：亮得可怜，但点着的时候不干净的东西不愿意靠近",
+    "light": {
+      "intensity": 0.5,
+      "range": 0.8
+    },
+    "fields": [
+      {
+        "kind": "fear",
+        "tag": "torch:香",
+        "radius": 420,
+        "strength": 1.0
+      }
+    ],
+    "tags": [
+      "驱邪"
+    ]
+  },
+  "mugwort": {
+    "label": "艾草",
+    "note": "艾草绑一把：驱虫",
+    "fields": [
+      {
+        "kind": "fear",
+        "tag": "torch:艾",
+        "radius": 380,
+        "strength": 2.0
+      }
+    ],
+    "tags": [
+      "驱虫"
+    ]
+  },
+  "fire_repulsion": {
+    "label": "普通火光驱群",
+    "note": "普通火源的驱群能力；按挂件燃烧状态启停，不依赖场景是否烘焙了灯光。松明保留专门的招引配方。",
+    "fields": [
+      {
+        "kind": "fear",
+        "tag": "torch:fire",
+        "radius": 450,
+        "strength": 2
+      }
+    ],
+    "tags": [
+      "驱群"
+    ]
+  }
+}

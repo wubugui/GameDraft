@@ -282,7 +282,9 @@ def test_instance_ids_for_scene_is_ordered_union() -> None:
 
 def test_instance_ids_for_real_scene_unions_base_and_night() -> None:
     doc, _err = vp.load_library(REPO)
-    assert vp.instance_ids_for_scene(doc, "崖墓前段") == ["vfx_bats", "vfx_drip"]
+    # 并集里有哪些、去不去重是这里的判据；**顺序不写死**——库里的行序是作者面的顺序（工作台左栏 ↑↓ 就能换），
+    # 上面那条纯数据用例已经钉住「base 在前、按时段顺序、首次出现序」的语义了
+    assert sorted(vp.instance_ids_for_scene(doc, "崖墓前段")) == ["vfx_bats", "vfx_drip"]
     assert vp.instance_ids_for_scene(doc, "崖墓入口") == ["vfx_fireflies"], "萤火虫只在夜里那份"
     assert vp.rows_for(doc, "崖墓入口", vp.BASE) == [], "只在夜里摆的，基底里没有（没配就没有）"
 

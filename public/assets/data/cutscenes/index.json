@@ -1939,26 +1939,61 @@
         "type": "moveEntityTo",
         "params": {
           "target": "storyteller_zhang",
-          "x": 576.56,
-          "y": 451.17,
+          "x": 430,
+          "y": 496.28,
           "speed": 60.0,
           "moveAnimState": "walk",
           "waypoints": [
             {
               "x": 383.2,
               "y": 487.5
-            },
-            {
-              "x": 476.95,
-              "y": 505.08
-            },
-            {
-              "x": 530.86,
-              "y": 495.7
             }
           ],
-          "faceTowardMovement": true
+          "faceTowardMovement": true,
+          "arriveAnimState": "walk"
         }
+      },
+      {
+        "kind": "parallel",
+        "tracks": [
+          {
+            "kind": "action",
+            "type": "moveEntityTo",
+            "params": {
+              "target": "storyteller_zhang",
+              "x": 576.56,
+              "y": 451.17,
+              "speed": 60.0,
+              "moveAnimState": "walk",
+              "waypoints": [
+                {
+                  "x": 476.95,
+                  "y": 505.08
+                },
+                {
+                  "x": 530.86,
+                  "y": 495.7
+                }
+              ],
+              "faceTowardMovement": true
+            }
+          },
+          {
+            "kind": "action",
+            "type": "emitVfxField",
+            "params": {
+              "kind": "fear",
+              "tag": "teahouse:storyteller_step",
+              "radius": 100,
+              "strength": 0.4,
+              "duration": 0.35,
+              "at": {
+                "kind": "entity",
+                "id": "storyteller_zhang"
+              }
+            }
+          }
+        ]
       },
       {
         "kind": "action",
@@ -7211,5 +7246,116 @@
         "type": "hideMovieBar"
       }
     ]
+  },
+  {
+    "id": "跑马梁_纸钱引路",
+    "restoreState": false,
+    "steps": [
+      {
+        "kind": "present",
+        "type": "showMovieBar"
+      },
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 1.15,
+        "duration": 650
+      },
+      {
+        "kind": "action",
+        "type": "cameraFollowActor",
+        "params": {
+          "target": "player",
+          "smooth": true
+        }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "狗日的，这往囊开走呀？"
+      },
+      {
+        "kind": "action",
+        "type": "moveEntityTo",
+        "params": {
+          "target": "player",
+          "sceneId": "跑马梁",
+          "x": 485,
+          "y": 935,
+          "speed": 75,
+          "moveAnimState": "walk",
+          "faceTowardMovement": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "player",
+          "direction": "left"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 450
+      },
+      {
+        "kind": "action",
+        "type": "faceEntity",
+        "params": {
+          "target": "player",
+          "direction": "right"
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 450
+      },
+      {
+        "kind": "action",
+        "type": "playVfx",
+        "params": {
+          "instanceId": "纸钱_引路过场",
+          "restart": true
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 1700
+      },
+      {
+        "kind": "action",
+        "type": "cameraStopFollow",
+        "params": {}
+      },
+      {
+        "kind": "present",
+        "type": "cameraMove",
+        "x": 485,
+        "y": 770,
+        "duration": 1200
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 950
+      },
+      {
+        "kind": "present",
+        "type": "cameraZoom",
+        "scale": 0,
+        "duration": 650
+      },
+      {
+        "kind": "present",
+        "type": "hideMovieBar"
+      }
+    ],
+    "targetScene": "跑马梁",
+    "targetSpawnPoint": "spawn_1"
   }
 ]

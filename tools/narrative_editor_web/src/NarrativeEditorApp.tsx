@@ -725,15 +725,33 @@ function NarrativeEditorInner() {
           const inMain = comp.mainGraph?.id === gid;
           const el = inMain ? undefined : (comp.elements ?? []).find((e) => e.graph?.id === gid);
           if (!inMain && !el) continue;
-          focus({
+          const issue: ValidationIssueDef = {
             severity: 'warning',
             code: 'host.focusState',
             message: '',
             target: { kind: 'state', compositionId: comp.id, graphId: gid, stateId: sid, ...(el ? { elementId: el.id } : {}) },
-          });
+          };
+          if (!resolveValidationIssueFocus(issue, data)) return false;
+          focus(issue);
           return true;
         }
         return false;
+      },
+      // 宿主跳转定位（图对话「被引用」双击黑盒、全局搜索命中元素）：切编排 + 选中画布元素。
+      focusElement: (compositionId: string, elementId: string): boolean => {
+        const cid = String(compositionId ?? '').trim();
+        const eid = String(elementId ?? '').trim();
+        const focus = focusIssueRef.current;
+        if (!cid || !eid || !focus) return false;
+        const issue: ValidationIssueDef = {
+          severity: 'warning',
+          code: 'host.focusElement',
+          message: '',
+          target: { kind: 'element', compositionId: cid, elementId: eid },
+        };
+        if (!resolveValidationIssueFocus(issue, data)) return false;
+        focus(issue);
+        return true;
       },
     };
     window.__narrativeEditor = api;

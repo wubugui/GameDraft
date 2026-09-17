@@ -40,6 +40,13 @@ last_governed: 2026-09-03
    接新桶前逐个对一遍。
 4. **测试打桩缝**:保存类测试拦截写盘用 `tools/editor/tests/save_test_utils.py` 的 `patch_staged_add`,不要再 patch `write_json`(staged 路径不经过它)。
 
+## 2026-09-16 新增的桶:`prop_effects`
+
+挂件效果块库 `public/assets/data/prop_effects.json`(火把养成,玩法清单 A3.7)自己一个脏桶:
+`project_model.py` 里 load / save 分支 + `_planned_write_paths` 分支 + `all_prop_effect_ids` / `prop_effect_tags` 等候选源;
+页面 `editors/prop_effects_editor.py`(写穿模型、无本地脏态,与气味 Profile 同范式)。
+打包侧 `tools/build/asset_manifest.py` 另外要收 `prop_presets.levels[*].image`——漏了它打出来的包里火把永远是没升级那张图。
+
 ## 已知坑
 
 - **"唯一写盘出口"目前名不副实**(2026-09-03 实测):有独立工具直写本出口管辖的业务文件,

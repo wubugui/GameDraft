@@ -100,6 +100,7 @@ onboarding-app/
 # 注:历史上已入库的那批(含脚步声 artifact/FootstepSFX_20260907/)不受影响——
 # gitignore 管不到已跟踪的文件；要退版本得另行 git rm --cached。
 artifact/
+/artifacts/
 
 # 制作人手册(handbook/)的静态构建产物;源是 handbook/docs/*.md,产物随时可重生成
 handbook/site/

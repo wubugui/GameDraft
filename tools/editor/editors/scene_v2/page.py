@@ -23,7 +23,7 @@ import json
 from dataclasses import replace
 
 from PySide6.QtCore import QPointF, Qt, QTimer
-from PySide6.QtGui import QActionGroup, QPixmap
+from PySide6.QtGui import QActionGroup, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -87,12 +87,15 @@ from ...shared.entity_refactor import (
     undo_last,
 )
 from .groups import all_group_ids, assign_group, create_group, delete_group
+from ...shared.scene_entity_clipboard import read_entity_clip
 from .tools_structure import (
     CreateTool,
+    copy_selection,
     create_entity_at,
     create_spawn,
     delete_selected,
     duplicate_selected,
+    paste_clip,
 )
 from .tools_transform import GroupMoveTool, TransformTool, translate_group
 from .view import SceneView
@@ -170,6 +173,13 @@ class SceneEditorV2(QWidget):
         # 而用户的习惯正是"在左树里点名字选实体、再按 Delete"。
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._show_tree_menu)
+        # 复制 / 粘贴在树上另挂一对快捷键：在左树点名字选中、按 Ctrl+C 是最顺手的拷法，
+        # 只挂画布的话焦点在树上时按了没反应，还会被树自带的「拷单元格文本」吃掉。
+        for seq, slot in ((QKeySequence.StandardKey.Copy, lambda: self.copy_selected()),
+                          (QKeySequence.StandardKey.Paste, lambda: self.paste_clipboard())):
+            shortcut = QShortcut(QKeySequence(seq), self._tree)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(slot)
         self._syncing_tree = False
         lv.addWidget(QLabel("实体"))
         # 过滤框 + 视图模式：实体多的场景（雾津街头 30+ 项）没有它们只能靠肉眼扫
@@ -296,6 +306,9 @@ class SceneEditorV2(QWidget):
         self._loaded_scene_obj = self._doc.scene()
         self._view = SceneView(self._doc, self._canvas_host)
         self._canvas_layout.addWidget(self._view)
+        # 可燃模板先于贴图接上：开了可燃的实体第一次同步就按模板画（不先闪一下自己的图）
+        self._burn_templates_sig = self._burn_templates_signature()
+        self._view.set_burn_template_provider(self._burn_template_doc)
         self._view.set_texture_provider(self._load_texture)
         self._view.set_sprite_metrics_provider(self._npc_sprite_metrics)
         self._anim_bank.clear()
@@ -374,6 +387,33 @@ class SceneEditorV2(QWidget):
         pix = QPixmap(str(path)) if path is not None else QPixmap()
         self._texture_cache[url] = pix
         return pix if not pix.isNull() else None
+
+    def _burn_template_doc(self, template_id: str):
+        """``template_id -> dict | None``：可燃物模板只读文档（模板唯一写入者是燃烧工作台，这里只读模型镜像）。"""
+        fn = getattr(self._model, "burnable_doc", None)
+        return fn(template_id) if callable(fn) else None
+
+    def _burn_templates_signature(self) -> str:
+        """模板镜像的内容签名：燃烧工作台存盘 → 主窗重读模型之后，切页 / 强刷时据此判断画布要不要按新模板重画。"""
+        table = getattr(self._model, "burnables", None)
+        if not isinstance(table, dict):
+            return ""
+        try:
+            return json.dumps(table, sort_keys=True, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            return repr(sorted(table))
+
+    def _refresh_burn_templates_if_changed(self) -> None:
+        """模板变了（图 / 真实尺寸 / 着火点）：丢掉按旧模板合成的精灵包，重画开了可燃的实体与着火点。"""
+        if self._view is None:
+            return
+        sig = self._burn_templates_signature()
+        if sig == getattr(self, "_burn_templates_sig", None):
+            return
+        self._burn_templates_sig = sig
+        self._anim_bank.invalidate_burn_templates()
+        self._view.set_burn_template_provider(self._burn_template_doc)
+        self.resort_content_z()
 
     def _tick_npc_anims(self) -> None:
         """把 NPC 精灵推进一帧。
@@ -810,11 +850,13 @@ class SceneEditorV2(QWidget):
         act_group = menu.addAction("新建分组")
         act_group.triggered.connect(lambda _c: create_group(self._doc))
         sel = self._doc.selection
+        menu.addSeparator()
+        self._add_clipboard_actions(menu, world_pos)
         if sel:
             menu.addSeparator()
             act_assign = menu.addAction(f"指派分组（{len(sel)}）…")
             act_assign.triggered.connect(self._on_assign_group_clicked)
-            act_dup = menu.addAction(f"复制选中（{len(sel)}）")
+            act_dup = menu.addAction(f"创建副本（{len(sel)}）	Ctrl+D")
             act_dup.triggered.connect(self.duplicate_selected)
             act_del = menu.addAction(f"删除选中（{len(sel)}）")
             act_del.triggered.connect(self.delete_selected_interactive)
@@ -986,9 +1028,11 @@ class SceneEditorV2(QWidget):
         if entities:
             act = menu.addAction(f"指派分组（{len(entities)}）…")
             act.triggered.connect(self._on_assign_group_clicked)
+        menu.addSeparator()
+        self._add_clipboard_actions(menu, None)
         if sel:
             menu.addSeparator()
-            act_dup = menu.addAction(f"复制（{len(sel)}）")
+            act_dup = menu.addAction(f"创建副本（{len(sel)}）")
             act_dup.triggered.connect(self.duplicate_selected)
             act_del = menu.addAction(f"删除（{len(sel)}）")
             act_del.triggered.connect(self.delete_selected_interactive)
@@ -1411,6 +1455,63 @@ class SceneEditorV2(QWidget):
     def duplicate_selected(self) -> bool:
         return duplicate_selected(self._doc) if self._doc else False
 
+    # ---- 剪贴板（Ctrl+C / Ctrl+V）-----------------------------------------
+    #
+    # 画布上的快捷键走 `AbstractTool.key_pressed`（换工具也在）；实体树另挂一对
+    # QShortcut（见 `_install_tree_clipboard_shortcuts`）；两处右键共用
+    # `_add_clipboard_actions`。规则全在 `shared/entity_refactor` 剪贴板一节，
+    # 与老画布同一份——两个画布之间也能互相粘。
+
+    def copy_selected(self, refs=None) -> bool:
+        return copy_selection(self._doc, refs) if self._doc else False
+
+    def paste_clipboard(self, anchor: tuple[float, float] | None = None) -> bool:
+        return paste_clip(self._doc, read_entity_clip(), anchor) if self._doc else False
+
+    def _clip_ref_under(self, world_pos) -> "EntityRef | None":
+        """右键落点下能复制的实体（与点选同一套形状命中）。"""
+        if world_pos is None or self._view is None:
+            return None
+        tool = getattr(self, "select_tool", None)
+        if tool is None:
+            return None
+        for item in tool.hits_at(world_pos, self._view.entity_items()):
+            if item.ref.kind in ("hotspot", "npc", "zone", "spawn"):
+                return item.ref
+        return None
+
+    def _add_clipboard_actions(self, menu: QMenu, world_pos) -> None:
+        """「复制 / 粘贴」两项。``world_pos`` 为 None = 实体树（原位粘贴）。
+
+        右键不改选择：点在一个没选中的实体上时，「复制」拷的是**那一个**，
+        否则拷选择集——拿选择集会拷走用户没指着的东西。
+        """
+        doc = self._doc
+        if doc is None:
+            return
+        under = self._clip_ref_under(world_pos)
+        if under is not None and under not in doc.selection:
+            act = menu.addAction(f"复制「{under.id}」	Ctrl+C")
+            act.triggered.connect(lambda _c, r=under: self.copy_selected([r]))
+        else:
+            n = sum(1 for r in doc.selection
+                    if r.kind in ("hotspot", "npc", "zone", "spawn"))
+            act = menu.addAction(f"复制（{n}）	Ctrl+C" if n else "复制	Ctrl+C")
+            act.setEnabled(bool(n))
+            act.triggered.connect(lambda _c: self.copy_selected())
+        clip = read_entity_clip()
+        count = len(clip["entities"]) if clip else 0
+        if world_pos is None:
+            label = f"粘贴（{count}）	Ctrl+V" if count else "粘贴	Ctrl+V"
+            anchor = None
+        else:
+            label = f"粘贴到这里（{count}）	Ctrl+V" if count else "粘贴到这里	Ctrl+V"
+            anchor = (float(world_pos.x()), float(world_pos.y()))
+        act = menu.addAction(label)
+        act.setEnabled(bool(count))
+        act.setToolTip("剪贴板里是在任意场景（含另一个画布）按 Ctrl+C 拷走的实体")
+        act.triggered.connect(lambda _c, a=anchor: self.paste_clipboard(a))
+
     def select_entity(self, kind: str, entity_id: str) -> bool:
         """供全局搜索/跨页跳转定位到某个实体。"""
         if self._doc is None:
@@ -1471,6 +1572,8 @@ class SceneEditorV2(QWidget):
         if callable(reload):
             reload()
         self.refresh_axis_choices()
+        # 燃烧工作台存盘后主窗重读了模板：画布上按模板画的实体要跟上
+        self._refresh_burn_templates_if_changed()
 
     # ---- 主窗口鸭子协议钩子 ------------------------------------------------
 

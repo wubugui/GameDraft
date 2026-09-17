@@ -1,0 +1,38 @@
+{
+  "id": "paper_money",
+  "label": "纸钱（一张）",
+  "image": "/resources/runtime/images/props/burn_demo/paper_money.png",
+  "widthCm": 18.18,
+  "heightCm": 18.18,
+  "mode": "spread",
+  "orientation": "upright",
+  "gridCells": 16,
+  "spread": {
+    "speedOpposed": 6,
+    "speedConcurrent": 14
+  },
+  "flameSeconds": 1.5,
+  "emberSeconds": 1,
+  "flameLength": 8,
+  "ignitionDelay": 0.4,
+  "look": {
+    "charColor": [
+      0.05,
+      0.04,
+      0.035
+    ],
+    "glowKelvin": 1300,
+    "glowStrength": 2.5
+  },
+  "particles": [
+    {
+      "effect": "burn_flame",
+      "from": "flame",
+      "refArea": 3305.1
+    }
+  ],
+  "light": {
+    "kelvin": 1800,
+    "intensityPerM2": 0.605
+  }
+}

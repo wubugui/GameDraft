@@ -27,6 +27,7 @@ import type {
   AudioCueRef,
 } from '../data/types';
 import { isCutsceneOnlyEntity, isEntityBoundToCutscene } from '../data/types';
+import { burnableWorldSize, resolveBurnableHost, type ResolvedBurnable } from '../data/burnables';
 import { applyCharacterDefaults, type CharacterRegistry } from '../data/characterRegistry';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { loadSocketsForAnim } from '../data/animationSockets';
@@ -82,6 +83,12 @@ function staticDisplayImageOf(def: NpcDef): HotspotDisplayImage | null {
   return di && typeof di.image === 'string' && di.image.trim() ? di : null;
 }
 
+/**
+ * 开了可燃的实体（A3.8：可燃物是模板，渲染由实例接管）的展示图：模板的图、按模板真实尺寸；
+ * 朝向 / 叠放档沿用实体自己 `displayImage` 里写的。`undefined` = 没开可燃；`null` = 开了但模板装不到（画不出来）。
+ */
+type BurnableDisplay = HotspotDisplayImage | null | undefined;
+
 /** dev 下 spriteSort 错位提示只响一次/实体，避免每次切场景刷屏。 */
 const staticDisplaySpriteSortWarned = new Set<string>();
 
@@ -126,6 +133,8 @@ export class SceneManager implements IGameSystem {
   private currentScene: SceneData | null = null;
   private currentHotspots: Hotspot[] = [];
   private currentNpcs: Npc[] = [];
+  /** 可燃物模板（燃烧系统的缓存：工作台工作态覆盖也在那里）；Game 装配期注入 */
+  private burnTemplateResolver: ((id: string) => Promise<ResolvedBurnable | null>) | null = null;
   /**
    * 编辑期标记（NPC 名字标签/朝向块、热点占位圆点）是否可见。**默认关**——玩家侧不做任何
    * "这个能交互"的标注（沉浸优先，2026-08-03 拍板）；策划摆位时经 F2 调试面板打开。
@@ -249,6 +258,8 @@ export class SceneManager implements IGameSystem {
     | ((sceneId: string, sceneData: SceneData, primary: Texture) => Promise<Container | null>)
     | null = null;
   private lightingUnloader: (() => void) | null = null;
+  /** 揭幕前闸，见 {@link setRevealGate} */
+  private revealGate: ((sceneId: string) => Promise<void>) | null = null;
   /**
    * 背景草木摆动的装载钩子（场景风 + 摆动图，见 `rendering/backgroundSway`）。在统一光影**之后**调用：
    * 背景仍是平铺 Sprite 时返回一个替代它的 mesh；点亮的背景自己在 shader 里摆，这里返回 null。
@@ -359,6 +370,14 @@ export class SceneManager implements IGameSystem {
 
   setDepthUnloader(fn: () => void): void {
     this.depthUnloader = fn;
+  }
+
+  /**
+   * 揭幕前闸：`scene:ready` 之后、`onReveal`（撤遮罩）之前 await。给"必须在遮罩下做完、否则就停在
+   * 可见画面上"的活用——粒子 shader 交给 Pixi、粒子预热。实现方必须自己限时、永不悬挂；抛了照常揭幕。
+   */
+  setRevealGate(fn: ((sceneId: string) => Promise<void>) | null): void {
+    this.revealGate = fn;
   }
 
   /** 见 {@link lightingLoader}。 */
@@ -1413,8 +1432,37 @@ export class SceneManager implements IGameSystem {
     return first ? first.texture : null;
   }
 
+  /** 燃烧系统的模板入口（开了可燃的实体按模板画）。不注入 = 开了可燃的实体画不出来 */
+  setBurnTemplateResolver(fn: ((id: string) => Promise<ResolvedBurnable | null>) | null): void {
+    this.burnTemplateResolver = fn;
+  }
+
+  /** 见 {@link BurnableDisplay} */
+  private async burnableDisplayOf(raw: unknown, own: HotspotDisplayImage | undefined, entityId: string): Promise<BurnableDisplay> {
+    const host = resolveBurnableHost(raw);
+    if (!host) return undefined;
+    const t = this.burnTemplateResolver ? await this.burnTemplateResolver(host.template).catch(() => null) : null;
+    if (!t) {
+      console.warn(`SceneManager: 实体 "${entityId}" 开了可燃，模板「${host.template}」装不到——它画不出来`);
+      return null;
+    }
+    const size = burnableWorldSize(t);
+    return {
+      image: t.image, worldWidth: size.width, worldHeight: size.height,
+      ...(own?.facing ? { facing: own.facing } : {}),
+      ...(own?.spriteSort ? { spriteSort: own.spriteSort } : {}),
+    };
+  }
+
   private async instantiateHotspot(def: HotspotDef, overrides: HotspotRuntimeOverride | undefined): Promise<Hotspot> {
-    const defToUse = applyHotspotRuntimeOverride(def, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
+    let defToUse = applyHotspotRuntimeOverride(def, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
+    // 开了可燃：展示图换成模板的（渲染由可燃物实例接管；模板装不到 = 不画图）
+    const burnDi = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, defToUse.id);
+    if (burnDi !== undefined) {
+      defToUse = { ...defToUse };
+      if (burnDi) defToUse.displayImage = burnDi;
+      else delete defToUse.displayImage;
+    }
     const hotspot = new Hotspot(defToUse);
     hotspot.setAuthoringMarkersVisible(this.authoringMarkersVisible);
     this.applySessionOverrideOnInstantiate('hotspot', hotspot);
@@ -1434,7 +1482,15 @@ export class SceneManager implements IGameSystem {
   private async instantiateNpc(npcDef: NpcDef, overrides: NpcRuntimeOverride | undefined): Promise<Npc> {
     // 合并顺序：角色注册表默认（base）→ 运行时字段覆盖（session/sceneMemory，最高优先）
     const withChar = applyCharacterDefaults(npcDef, this.characterRegistry);
-    const defToUse = applyNpcRuntimeOverride(withChar, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
+    let defToUse = applyNpcRuntimeOverride(withChar, overrides as Record<string, SceneEntityRuntimeValue> | undefined);
+    // 开了可燃：动画包 / 角色模板的动画 / 自己的展示图一律不画，按模板的图合成单帧（不再播动画）
+    const burnDi = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, defToUse.id);
+    if (burnDi !== undefined) {
+      defToUse = { ...defToUse };
+      delete defToUse.animFile;
+      if (burnDi) defToUse.displayImage = burnDi;
+      else delete defToUse.displayImage;
+    }
     const npc = new Npc(defToUse);
     npc.setAuthoringMarkersVisible(this.authoringMarkersVisible);
     this.applySessionOverrideOnInstantiate('npc', npc);
@@ -1483,7 +1539,7 @@ export class SceneManager implements IGameSystem {
         }
       }
     }
-    if (overrides) {
+    if (overrides && burnDi === undefined) {
       const anim = (overrides as NpcRuntimeOverride).animState?.trim();
       if (anim) {
         npc.playAnimation(anim);
@@ -1563,10 +1619,12 @@ export class SceneManager implements IGameSystem {
           boundToActive ? 'cutscene' : 'outer',
         ) as Record<string, SceneEntityRuntimeValue> | undefined,
       );
-      if (defToUse.displayImage?.image) {
-        add({ type: 'texture', path: defToUse.displayImage.image, label: `Hotspot: ${def.id}` });
+      const hsBurn = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, def.id);
+      const hsImage = hsBurn !== undefined ? hsBurn?.image : defToUse.displayImage?.image;
+      if (hsImage) {
+        add({ type: 'texture', path: hsImage, label: `Hotspot: ${def.id}` });
         // 法线图与展示图同批预载（离线烘焙产物），挂滤镜时只做同步缓存读
-        const normalPath = normalAtlasUrlFor(defToUse.displayImage.image);
+        const normalPath = normalAtlasUrlFor(hsImage);
         if (normalPath) {
           add({ type: 'texture', path: normalPath, label: `Hotspot 法线: ${def.id}` });
         }
@@ -1587,6 +1645,16 @@ export class SceneManager implements IGameSystem {
         applyCharacterDefaults(npcDef, this.characterRegistry),
         snap as Record<string, SceneEntityRuntimeValue> | undefined,
       );
+      const npcBurn = await this.burnableDisplayOf(defToUse.burnable, defToUse.displayImage, npcDef.id);
+      if (npcBurn !== undefined) {
+        // 开了可燃：只预载模板的图（+ 法线），动画包不装
+        if (npcBurn) {
+          add({ type: 'texture', path: npcBurn.image, label: `NPC 可燃模板图: ${npcDef.id}` });
+          const bn = normalAtlasUrlFor(npcBurn.image);
+          if (bn) add({ type: 'texture', path: bn, label: `NPC 可燃模板图法线: ${npcDef.id}` });
+        }
+        continue;
+      }
       if (!defToUse.animFile) {
         // 静态贴图实体：预载展示图 + 同批预载法线图（挂滤镜时只做同步缓存读）。
         // 照热点展示图那两行写——没烘法线是合法的，getNormalAtlasSource 取不到即平面法线。
@@ -1890,6 +1958,16 @@ export class SceneManager implements IGameSystem {
     // 揭出来的场景才是完整表现。scene:enter 供 HUD/地图等复位。二者与 onEnter 解耦、先于 onEnter。
     this.eventBus.emit('scene:enter', { sceneId, fromSceneId: fromSceneId ?? null, sceneName: sceneData.name });
     this.eventBus.emit('scene:ready');
+
+    // 揭幕前闸：scene:ready 的监听都跑完了（实体、载荷几何已就绪），趁遮罩还在把会卡帧的准备做完
+    // （粒子 shader 交给 Pixi、粒子预热）。闸自己限时；抛了只记一笔，照常揭幕——不许把首屏锁在黑幕后。
+    if (this.revealGate) {
+      try {
+        await this.revealGate(sceneId);
+      } catch (e) {
+        console.warn('SceneManager: 揭幕前闸失败（照常揭幕）', e);
+      }
+    }
 
     // 揭幕：撤掉切场过渡遮罩，把已就绪的场景显示出来，**再**跑 onEnter。这样 onEnter 里的
     // 成段演出（过场/对话）落在可见场景之上、而非被加载遮罩盖住；长演出也不再把揭幕/进度收尾扣住。
@@ -2379,6 +2457,62 @@ export class SceneManager implements IGameSystem {
       };
       this.blackoutRafId = requestAnimationFrame(tick);
     });
+  }
+
+  /**
+   * 某场景里开了可燃的实体（燃烧系统离场重建 / 问别的场景的条件叶用）：场景 JSON 的热点 / NPC，
+   * 加上这个场景记着的、演出生成留下的对象（`sceneMemory.spawnedNpcs`）。块原样给，燃烧系统清洗。
+   */
+  sceneBurnableEntities(sceneId: string, scene: SceneData): { id: string; burnable: unknown }[] {
+    const out: { id: string; burnable: unknown }[] = [];
+    for (const h of scene.hotspots ?? []) if (h.burnable) out.push({ id: h.id, burnable: h.burnable });
+    for (const n of scene.npcs ?? []) if (n.burnable) out.push({ id: n.id, burnable: n.burnable });
+    for (const n of Object.values(this.getCommittedMemory(sceneId)?.spawnedNpcs ?? {})) {
+      if (n.burnable) out.push({ id: n.id, burnable: n.burnable });
+    }
+    return out;
+  }
+
+  /**
+   * DEV 燃烧工作台推了模板工作态：开了可燃的热点 / NPC 按新模板重画（图 / 真实尺寸可能变了）。
+   * 返回换了精灵的 NPC（组装层给它们补透视 / 光照 mesh，与生成对象同一步）。
+   */
+  async refreshBurnableDisplays(): Promise<Npc[]> {
+    const epoch = this.sceneEpoch;
+    const same = (a: HotspotDisplayImage | undefined, b: HotspotDisplayImage): boolean =>
+      !!a && a.image === b.image && a.worldWidth === b.worldWidth && a.worldHeight === b.worldHeight;
+    for (const h of [...this.currentHotspots]) {
+      if (!h.def.burnable) continue;
+      const di = await this.burnableDisplayOf(h.def.burnable, h.def.displayImage, h.def.id);
+      if (epoch !== this.sceneEpoch) return [];
+      if (!di || same(h.def.displayImage, di)) continue;
+      h.def.displayImage = di;
+      try {
+        const tex = await this.assetManager.loadTexture(di.image);
+        if (epoch !== this.sceneEpoch) return [];
+        h.setDisplayTexture(tex, di.worldWidth, di.worldHeight);
+      } catch (_e) {
+        console.warn(`SceneManager: 可燃热点 "${h.def.id}" 按新模板重画失败`, di.image);
+      }
+    }
+    const changed: Npc[] = [];
+    for (const npc of [...this.currentNpcs]) {
+      if (!npc.def.burnable) continue;
+      const di = await this.burnableDisplayOf(npc.def.burnable, npc.def.displayImage, npc.def.id);
+      if (epoch !== this.sceneEpoch) return [];
+      if (!di || same(npc.def.displayImage, di)) continue;
+      npc.def.displayImage = di;
+      try {
+        const tex = await this.assetManager.loadTexture(di.image);
+        if (epoch !== this.sceneEpoch) return [];
+        const animDef = normalizeAnimationSetDef(buildStaticDisplayAnimationSet(di), tex.width, tex.height, di.image);
+        npc.loadSprite(tex, animDef, 'idle', null);
+        changed.push(npc);
+      } catch (_e) {
+        console.warn(`SceneManager: 可燃 NPC "${npc.def.id}" 按新模板重画失败`, di.image);
+      }
+    }
+    return changed;
   }
 
   /**

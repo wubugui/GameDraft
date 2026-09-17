@@ -70,6 +70,42 @@ const CONFIG = {
   systemSfx: {},
 };
 
+describe('ambient gust pulse', () => {
+  it('preserves user volume, site baseline, and latest baseline changes without restarting', async () => {
+    const { audio, howls } = makeAudioManager(structuredClone(CONFIG));
+    audio.addAmbient('wind', .2);
+    await Promise.resolve();
+    const howl = howls.get('wind.wav')!;
+    const plays = howl.played;
+    audio.setAmbientPulse('wind', 1, .5);
+    audio.setVolume('ambient', .5);
+    expect(last(howl.volumeCalls)).toBeCloseTo(.3);
+    audio.addAmbient('wind', .4);
+    expect(last(howl.volumeCalls)).toBeCloseTo(.35);
+    audio.setAmbientPulse('wind', undefined);
+    expect(last(howl.volumeCalls)).toBeCloseTo(.2);
+    expect(howl.played).toBe(plays);
+    expect(audio.getActiveAmbientCues()).toEqual([{ id: 'wind', volume: .4 }]);
+    audio.setAmbientPulse('wind', 0, 1);
+    expect(last(howl.volumeCalls)).toBe(0);
+    audio.clearAmbient(0);
+    audio.addAmbient('wind', .4);
+    expect(last(howl.volumeCalls)).toBeCloseTo(.2);
+  });
+
+  it('applies a pulse to an in-flight audio load without starting a new layer itself', async () => {
+    const { audio, howls } = makeAudioManager(structuredClone(CONFIG));
+    audio.setAmbientPulse('wind', 1, 1);
+    expect(howls.size).toBe(0);
+    audio.setVolume('ambient', .4);
+    audio.addAmbient('wind', .2);
+    await Promise.resolve();
+    expect(last(howls.get('wind.wav')!.volumeCalls)).toBeCloseTo(.4);
+    audio.setAmbientPulse('wind', undefined);
+    expect(last(howls.get('wind.wav')!.volumeCalls)).toBeCloseTo(.08);
+  });
+});
+
 describe('AudioManager：BGM 的本处音量', () => {
   it('本处音量替换素材级，再乘 bgm 通道音量', async () => {
     const { audio, howls } = makeAudioManager(structuredClone(CONFIG));

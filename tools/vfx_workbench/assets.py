@@ -26,12 +26,24 @@ from pathlib import Path
 from typing import Any
 
 from tools.atomic_io import retry_transient
+from tools.editor.shared.vfx_appearance import tint_over_life_problems
+from tools.editor.shared.vfx_beam import (BEAM_ORDER, COOKIE_ORDER, NOISE_ORDER, PULSE_ORDER, SHAPE2D_ORDER,
+                                          SHAPE3D_ORDER, effect_beam_errors)
+from tools.editor.shared import burnables as _burnables
+from tools.editor.shared.vfx_burn import (PLATE_BURNABLE_ORDER, external_shape_notes, external_shape_problem,
+                                          plate_burnable_notes, plate_burnable_problems)
+from tools.editor.shared.vfx_life import max_distance_ignored, max_distance_problem
+from tools.editor.shared.vfx_motion import follow_anchor_ignored, follow_anchor_problem
+from tools.editor.shared.vfx_timing import timing_problems
 from tools.editor.shared.vfx_program import effective_solver, new_program, program_errors
 
 ROOT = Path(__file__).resolve().parents[2]
 VFX_DIR = ROOT / "public" / "assets" / "data" / "vfx"
 #: ``/resources/...`` 这类运行时 URL 的根（查 ``animFile`` 的 ``states`` 用；测试指到临时目录）
 PUBLIC_DIR = ROOT / "public"
+#: 可燃物模板所在的工程根（读 ``<它>/public/assets/data/burnables/``：薄片 ``plate.burnable`` 的提醒、``/api/burnables``）。
+#: 本台只读模板——唯一写入者是燃烧工作台。测试指到临时工程。
+BURN_ROOT: Path = ROOT
 WRITE_LOCK = threading.RLock()
 UNCHECKED_BASE = object()  # Offline imports/tests may deliberately write without a loaded document.
 
@@ -50,24 +62,24 @@ _ID_RE = re.compile(r'^[^\\/:*?"<>|\x00-\x1f]{1,120}$')
 _EMITTER_ID_RE = re.compile(r'^[^\s./\\:*?"<>|\x00-\x1f]{1,60}$')
 
 #: 顶层键序（运行时真相在前、工作态在后）
-_ORDER = ("id", "label", "emitters", "authoring")
+_ORDER = ("id", "label", "prewarmSeconds", "emitters", "beams", "authoring")
 #: 发射器键序（与 types.ts 的 VfxEmitterDef 逐字同序）
 _EMITTER_ORDER = ("id", "simulation", "offset", "subOnly", "appearance", "spawn", "motion", "life", "collision", "behavior",
                   "plate", "sound")
 #: 各模块的键序（同上，按 types.ts）
 _MODULE_ORDER = {
     "appearance": ("animFile", "image", "state", "restState", "frameRate", "sizeWu", "sizeJitter",
-                   "sizeOverLife", "alphaOverLife", "tint", "blend", "lit", "emissive", "lightGain",
-                   "stretchByVelocity", "faceVelocity", "softEdgeWu", "spin"),
-    "spawn": ("max", "rate", "burst", "shape", "speed", "direction", "spread", "duration"),
-    "motion": ("gravity", "drag", "wind", "buoyancy", "turbulence", "maxSpeed", "stimulus"),
-    "life": ("seconds",),
+                   "sizeOverLife", "alphaOverLife", "tint", "tintOverLife", "blend", "lit", "emissive", "lightGain",
+                   "stretchByVelocity", "faceVelocity", "softEdgeWu", "spin", "beamLit"),
+    "spawn": ("max", "rate", "intervalJitter", "burst", "shape", "speed", "direction", "spread", "duration"),
+    "motion": ("gravity", "drag", "wind", "buoyancy", "turbulence", "maxSpeed", "stimulus", "followAnchor"),
+    "life": ("seconds", "maxDistance"),
     "collision": ("ground", "shell", "restitution", "friction", "radiusWu", "onHit"),
     "behavior": ("cruise", "max", "maxAccel", "minAltitude", "senseRadius", "separation", "accel",
                  "orbit", "home", "attitude", "initialState", "wingFlap", "speedJitter", "wander",
                  "startlePulse"),
     "plate": ("size", "terminalSpeed", "edgeDrag", "pressureOffset", "friction", "adhere", "bend", "segments",
-              "replenish"),
+              "replenish", "burnable"),
     "sound": ("loop", "start", "hit"),
 }
 _AUTHORING_ORDER = ("sceneId", "background", "anchor", "attach", "note")
@@ -194,6 +206,12 @@ def _appearance(ap: Any, where: str, warn: list[str]) -> dict:
             out[k] = _pair(out[k], f"{where}.appearance.{k}")
     if "tint" in out:
         out["tint"] = _vec3(out["tint"], f"{where}.appearance.tint")
+    if "tintOverLife" in out:
+        # 颜色 × 寿命（乘在 tint 上）：形状不对直接拒——运行时读出 NaN 会把粒子染成黑块 / 画没
+        bad = tint_over_life_problems(out["tintOverLife"])
+        if bad:
+            raise ValueError(f"{where}.appearance.tintOverLife: {bad[0]}")
+        out["tintOverLife"] = [list(kp) for kp in out["tintOverLife"]]
     if "blend" in out and out["blend"] not in _BLENDS:
         raise ValueError(f"{where}.appearance.blend 只能是 {_BLENDS}，收到 {out['blend']!r}")
     if "emissive" in out:
@@ -227,9 +245,12 @@ def _spawn(sp: Any, where: str) -> dict:
     shape = out.get("shape")
     if isinstance(shape, dict):
         kind = shape.get("kind")
-        if kind not in ("point", "sphere", "disc", "box", "line", "area"):
+        if kind not in ("point", "sphere", "disc", "box", "line", "area", "external", "beam"):
             raise ValueError(f"{where}.spawn.shape.kind 未知：{kind!r}")
         shape = dict(shape)
+        # 外部给点（燃烧系统每帧交出生点）：jitter 可缺省（= 1），写着就得是非负数；不补缺省、不改值
+        if bad := external_shape_problem(shape):
+            raise ValueError(f"{where}.{bad}")
         if kind in ("sphere", "disc") and not _is_num(shape.get("radius")):
             raise ValueError(f"{where}.spawn.shape.radius 要是数")
         if kind == "area" and "radius" in shape and not _is_num(shape.get("radius")):
@@ -273,6 +294,12 @@ def _motion(mo: Any, where: str) -> dict:
         if "fear" not in st and "attract" not in st:
             raise ValueError(f"{where}.motion.stimulus 至少要有 fear 或 attract 一张表，否则一个场也不认")
         out["stimulus"] = _order(st, ("fear", "attract", "accel"))
+    if "followAnchor" in out:
+        # 锚点动了、在飞的粒子怎么走：只收 none / rig / full。显式 "none" 原样留着（闸门不替作者改值，
+        # 同 blend "normal"）；工作台检视器选「不跟」是删键，自己从不写 "none"。null 也拒（写入者从不写 null）
+        bad = follow_anchor_problem(out["followAnchor"])
+        if bad:
+            raise ValueError(f"{where}.{bad}")
     return _order(out, _MODULE_ORDER["motion"])
 
 
@@ -282,6 +309,12 @@ def _life(li: Any, where: str) -> dict:
         out["seconds"] = _pair(out["seconds"], f"{where}.life.seconds")
         if out["seconds"][0] <= 0 or out["seconds"][1] < out["seconds"][0]:
             raise ValueError(f"{where}.life.seconds 要是 [下限>0, 上限≥下限]，收到 {out['seconds']!r}")
+    if "maxDistance" in out:
+        # 最远烧到多远（wu）：有限且 > 0。null / 0 / 负数都拒——写入者（检视器）清空是删键，从不写这些；
+        # 运行时对 ≤ 0 静默当"不限"，作者填 0 以为"烧不出去"其实是不限
+        bad = max_distance_problem(out["maxDistance"])
+        if bad:
+            raise ValueError(f"{where}.{bad}")
     return _order(out, _MODULE_ORDER["life"])
 
 
@@ -303,6 +336,11 @@ def _collision(co: Any, where: str) -> dict:
 def _behavior(be: Any, where: str) -> dict:
     if not isinstance(be, dict):
         raise ValueError(f"{where}.behavior 要是对象")
+    if "harassment" in be:
+        from tools.editor.shared.vfx_harassment import harassment_errors
+        errors = harassment_errors(be["harassment"])
+        if errors:
+            raise ValueError(f"{where}.behavior: {'; '.join(errors)}")
     for k in ("cruise", "max", "maxAccel", "minAltitude", "senseRadius", "separation"):
         if not _is_num(be.get(k)):
             raise ValueError(f"{where}.behavior.{k} 要是数（wu / wu/s / wu/s²）")
@@ -331,8 +369,14 @@ def _behavior(be: Any, where: str) -> dict:
     return _order(out, _MODULE_ORDER["behavior"])
 
 
-def _plate(pl: Any, where: str) -> dict:
-    """薄片模块（纸钱 / 落叶）：与 validator._validate_vfx_plate 同口径的最低形状闸门。"""
+def _plate(pl: Any, where: str, warn: list[str]) -> dict:
+    """薄片模块（纸钱 / 落叶）：与 validator._validate_vfx_plate 同口径的最低形状闸门。
+
+    ``burnable``（绑可燃物模板，2026-09-16 模板化）：形状（不是对象 / 没写 ``template``）拒存、按 ``PLATE_BURNABLE_ORDER``
+    收键序（口径共用 ``tools/editor/shared/vfx_burn.py``）；模板在不在 / 是不是面燃烧由 ``normalize_effect`` 读盘上模板统一提醒。
+    残留的旧 ``flammable`` 参数表只提醒（作废、运行时不读），**不拒存、不替作者删**——检视器有「删掉」按钮。
+    只收束键序，**不改数值、不补缺省**。
+    """
     if not isinstance(pl, dict):
         raise ValueError(f"{where}.plate 要是对象")
     out = dict(pl)
@@ -344,7 +388,30 @@ def _plate(pl: Any, where: str) -> dict:
     for key in ("friction", "adhere", "bend"):
         if key in out and not isinstance(out[key], dict):
             raise ValueError(f"{where}.plate.{key} 要是对象")
+    if "burnable" in out:
+        bad = plate_burnable_problems(out["burnable"])
+        if bad:
+            raise ValueError(f"{where}: {bad[0]}")
+        out["burnable"] = _order(dict(out["burnable"]), PLATE_BURNABLE_ORDER)
+    if "flammable" in out:
+        warn.append(f"{where}: 旧可燃参数 plate.flammable 已作废，运行时不读（2026-09-16 起薄片绑可燃物模板 plate.burnable）"
+                    "——删掉它；要可燃就在「薄片」一节选一份面燃烧模板")
     return _order(out, _MODULE_ORDER["plate"])
+
+
+def burn_templates() -> tuple[dict[str, dict], dict[str, str]]:
+    """盘上的可燃物模板 ``({id: 原始文档}, {id: 读不懂的原因})``（``BURN_ROOT`` 下；本台只读）。"""
+    return _burnables.load_all_burnables(BURN_ROOT)
+
+
+def _spawn_placement(em: dict) -> str:
+    """有效的出生位置（与运行时 ``resolveEmitterProgram`` 同判据：显式 simulation 为准；旧资产薄片 + area = surface）。"""
+    sim = em.get("simulation")
+    if isinstance(sim, dict):
+        return str(sim.get("spawnPlacement") or "")
+    shape = (em.get("spawn") or {}).get("shape") if isinstance(em.get("spawn"), dict) else None
+    kind = shape.get("kind") if isinstance(shape, dict) else None
+    return "surface" if effective_solver(em) == "plate" and kind == "area" else "shape"
 
 
 def _emitter(em: Any, idx: int, warn: list[str]) -> dict:
@@ -370,21 +437,47 @@ def _emitter(em: Any, idx: int, warn: list[str]) -> dict:
         raise ValueError(f"{where}: {'; '.join(errors)}")
     out["appearance"] = _appearance(out.get("appearance"), where, warn)
     out["spawn"] = _spawn(out.get("spawn"), where)
+    for note in external_shape_notes(out["spawn"].get("shape"), effective_solver(out), _spawn_placement(out)):
+        warn.append(f"{where}: {note}")
     for key, fn in (("motion", _motion), ("life", _life), ("collision", _collision)):
         if isinstance(out.get(key), dict):
             out[key] = fn(out[key], where)
         elif key in out:
             raise ValueError(f"{where}.{key} 要是对象")
+    if isinstance(out.get("motion"), dict) and "followAnchor" in out["motion"]:
+        ignored = follow_anchor_ignored(out["motion"]["followAnchor"], effective_solver(out))
+        if ignored:
+            warn.append(f"{where}: {ignored}")
+    if isinstance(out.get("life"), dict) and "maxDistance" in out["life"]:
+        ignored = max_distance_ignored(effective_solver(out), out["life"])
+        if ignored:
+            warn.append(f"{where}: {ignored}")
     if "behavior" in out:
         out["behavior"] = _behavior(out["behavior"], where)
     if "plate" in out:
-        out["plate"] = _plate(out["plate"], where)
+        out["plate"] = _plate(out["plate"], where, warn)
     if isinstance(out.get("sound"), dict):
         out["sound"] = _order(dict(out["sound"]), _MODULE_ORDER["sound"])
     if not sub and not _is_num(out["spawn"].get("rate")) and not _is_num(out["spawn"].get("burst")) \
             and effective_solver(out) != "flock":
         warn.append(f"{where}: 既没有 rate 也没有 burst、也不是群体 —— 运行时一个粒子都不会发")
     return _order(out, _EMITTER_ORDER)
+
+
+def _beam(b: dict) -> dict:
+    """一根光柱：只按 types.ts 的 VfxBeamDef 收束键序（形状已由 ``effect_beam_errors`` 过了）。未知键透传到末尾。"""
+    out = dict(b)
+    if isinstance(out.get("shape3d"), dict):
+        s3 = dict(out["shape3d"])
+        if isinstance(s3.get("section"), dict):
+            s3["section"] = _order(dict(s3["section"]), ("kind", "width", "height", "sides", "radius"))
+        out["shape3d"] = _order(s3, SHAPE3D_ORDER)
+    if isinstance(out.get("shape2d"), dict):
+        out["shape2d"] = _order(dict(out["shape2d"]), SHAPE2D_ORDER)
+    for key, order in (("noise", NOISE_ORDER), ("cookie", COOKIE_ORDER), ("pulse", PULSE_ORDER)):
+        if isinstance(out.get(key), dict):
+            out[key] = _order(dict(out[key]), order)
+    return _order(out, BEAM_ORDER)
 
 
 def _anchor(a: Any) -> dict:
@@ -425,6 +518,8 @@ def normalize_effect(doc: Any, warnings: list[str] | None = None) -> dict:
     warn = warnings if warnings is not None else []
     if not isinstance(doc, dict):
         raise ValueError("效果文档的根不是对象")
+    if problems := timing_problems(doc):
+        raise ValueError("; ".join(problems))
     eid = str(doc.get("id") or "").strip()
     if not valid_id(eid):
         raise ValueError(f"非法效果 id: {doc.get('id')!r}")
@@ -444,8 +539,30 @@ def normalize_effect(doc: Any, warnings: list[str] | None = None) -> dict:
         oh = (e.get("collision") or {}).get("onHit")
         if isinstance(oh, dict) and oh.get("emitter") not in ids:
             raise ValueError(f"发射器「{e['id']}」的 onHit 指向不存在的发射器「{oh.get('emitter')}」")
-    if not emitters:
-        warn.append("这份效果还没有发射器，游戏里什么都不会画")
+    # 薄片绑的可燃物模板是**按 id 引用燃烧工作台的模板**：不存在 / 读不懂 / 是消耗燃烧 / 装不上（没图、没正的真实尺寸）
+    # 只提醒——运行时 plateBurnOf 对这几种静默不可燃，作者得看得见；形状不对在 _plate 里已经拒了。
+    # 只在真有人绑了模板时才读盘（与运行时同一个判据：template 去空白非空）
+    bound = [(e["id"], e["plate"]["burnable"]) for e in emitters
+             if isinstance(e.get("plate"), dict) and "burnable" in e["plate"]]
+    if bound:
+        templates, _errors = burn_templates()
+        for em_id, binding in bound:
+            for note in plate_burnable_notes(binding, templates):
+                warn.append(f"发射器「{em_id}」: {note}")
+    # 光柱（体积光）：形状 / id 重复 / 发射器对光柱的引用一律拒存（运行时遇到整个实例建不起来）。
+    # 口径与措辞与运行时 vfxBeam.ts 同一份（shared/vfx_beam.py）；只收束键序，不改数值
+    beams_raw = out.get("beams")
+    probe = dict(out)
+    probe["emitters"] = emitters
+    if problems := effect_beam_errors(probe, effective_solver):
+        raise ValueError("; ".join(problems))
+    if isinstance(beams_raw, list):
+        if beams_raw:
+            out["beams"] = [_beam(b) for b in beams_raw]
+        else:
+            out.pop("beams", None)
+    if not emitters and not out.get("beams"):
+        warn.append("这份效果还没有发射器也没有光柱，游戏里什么都不会画")
     out["emitters"] = emitters
     label = str(out.get("label") or "").strip()
     if label:
@@ -501,6 +618,8 @@ def list_assets() -> list[dict]:
         row.update({
             "label": str(doc.get("label") or ""),
             "emitters": [str(e.get("id") or "") for e in ems if isinstance(e, dict)],
+            "beams": [str(b.get("id") or "") for b in (doc.get("beams") if isinstance(doc.get("beams"), list) else [])
+                      if isinstance(b, dict)],
             "flock": any(isinstance(e, dict) and effective_solver(e) == "flock" for e in ems),
             "sceneId": str(au.get("sceneId") or ""),
             "background": str(au.get("background") or ""),
@@ -520,6 +639,23 @@ def load_asset(eid: str) -> dict | None:
     return doc
 
 
+def _guard_removed_health_sources(before, after):
+    from tools.editor.shared.health_refs import vfx_health_sources, health_reference_fields
+    removed = {key for key, _ in vfx_health_sources(before)} - {key for key, _ in vfx_health_sources(after)}
+    if not removed:
+        return
+    from tools.json_lang.id_universes import iter_content_files
+    root = VFX_DIR.parents[3]
+    hits = []
+    for path in iter_content_files(root):
+        node = json.loads(path.read_text(encoding='utf-8'))
+        used = {value for _, _, value in health_reference_fields(node, threat_only=True)} & removed
+        if used:
+            hits.append(f"{path.relative_to(root)}: {', '.join(sorted(used))}")
+    if hits:
+        raise ValueError('侵扰来源仍被护身物或动作引用，请先调整引用再改名、删除或关闭侵扰：\n' + '\n'.join(hits))
+
+
 @serialized_write
 def save_asset(doc: dict, base: Any = UNCHECKED_BASE) -> tuple[Path, dict, list[str]]:
     """归一化 → 原子写盘。返回 (路径, 落盘形, 告警)。"""
@@ -534,6 +670,7 @@ def save_asset(doc: dict, base: Any = UNCHECKED_BASE) -> tuple[Path, dict, list[
             raise ValueError("效果已被外部修改或删除，未覆盖磁盘；页面改动仍保留，请先核对（可复制当前效果保留改动）")
         if disk == norm:
             return p, norm, warn
+    _guard_removed_health_sources(load_asset(norm['id']), norm)
     atomic_write(p, dumps(norm))
     return p, norm, warn
 
@@ -543,6 +680,7 @@ def delete_asset(eid: str) -> bool:
     p = asset_path(eid)
     if not p.is_file():
         return False
+    _guard_removed_health_sources(load_asset(eid), None)
     retry_transient(os.unlink, p)
     return True
 
@@ -557,7 +695,9 @@ def rename_asset(old: str, new: str) -> Path:
     if dst.exists():
         raise FileExistsError(f"效果 {new!r} 已存在")
     doc = load_asset(old) or {}
+    before = dict(doc)
     doc["id"] = new
+    _guard_removed_health_sources(before, doc)
     atomic_write(dst, dumps(normalize_effect(doc)))
     retry_transient(os.unlink, src)
     return dst

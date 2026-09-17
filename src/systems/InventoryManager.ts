@@ -1,12 +1,20 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
-import type { Condition, ConditionExpr, ItemDef, IGameSystem, GameContext, IInventoryDataProvider, ResolvedItemUse } from '../data/types';
+import type {
+  ActiveIgniterStatus, Condition, ConditionExpr, ItemDef, IGameSystem, GameContext, IInventoryDataProvider, ResolvedItemUse,
+} from '../data/types';
 import type { AssetManager } from '../core/AssetManager';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExprList } from './graphDialogue/conditionEvalBridge';
 import { TEXT_URLS } from '../core/projectPaths';
 
 const MAX_SLOTS = 12;
+
+/** 火种一份能点几次（缺省 / 非法 = 1） */
+function igniterUses(def: ItemDef): number {
+  const n = def.igniter?.uses;
+  return typeof n === 'number' && Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+}
 
 export class InventoryManager implements IGameSystem, IInventoryDataProvider {
   private eventBus: EventBus;
@@ -19,6 +27,10 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
   private strings: { get(cat: string, key: string, vars?: Record<string, string | number>): string } = { get: (_c, k) => k };
   private assetManager!: AssetManager;
   private conditionCtxFactory: (() => ConditionEvalContext) | null = null;
+  /** 当前火种（物品 id；null = 没设）。玩家在背包里主动设，**不自动挑**（制作人 2026-09-15） */
+  private activeIgniter: string | null = null;
+  /** 每种火种拆开那一份还剩几次（火折子一支点三次：点了一次，剩两次记在这；换火种再换回来接着用） */
+  private igniterOpened: Map<string, number> = new Map();
 
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
@@ -173,6 +185,7 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
    */
   resolveItemUse(id: string): ResolvedItemUse | null {
     const def = this.itemDefs.get(id);
+    if (def && !def.use && def.igniter) return this.resolveIgniterUse(def);
     const use = def?.use;
     if (!def || !use) return null;
 
@@ -210,6 +223,79 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
     };
   }
 
+  // ---------------------------------------------------------------- 火种
+
+  /** 火种的用法：「设为火种」；已经是当前火种 ⇒ 置灰 + 理由 */
+  private resolveIgniterUse(def: ItemDef): ResolvedItemUse {
+    const current = this.activeIgniter === def.id;
+    return {
+      itemId: def.id,
+      label: this.strings.get('inventory', 'setIgniter'),
+      enabled: !current,
+      disableReason: current ? this.strings.get('inventory', 'igniterCurrent') : undefined,
+      consume: false,
+      actions: [{ type: 'setActiveIgniter', params: { item: def.id } }],
+    };
+  }
+
+  /** 设当前火种（`setActiveIgniter` 动作）。不是火种 ⇒ false，不动 */
+  setActiveIgniter(id: string): boolean {
+    const def = this.itemDefs.get(id.trim());
+    if (!def?.igniter) {
+      console.warn(`setActiveIgniter: 物品「${id}」不是火种（items.json 里没写 igniter）`);
+      return false;
+    }
+    this.activeIgniter = def.id;
+    this.eventBus.emit('inventory:igniterChanged', { itemId: def.id });
+    return true;
+  }
+
+  /** 当前火种此刻的样子；没设 ⇒ null（设了但用完了照样返回，`available` 为 0） */
+  getActiveIgniter(): ActiveIgniterStatus | null {
+    const id = this.activeIgniter;
+    const def = id ? this.itemDefs.get(id) : undefined;
+    if (!id || !def?.igniter) return null;
+    const uses = igniterUses(def);
+    const openedLeft = this.igniterOpened.get(id) ?? 0;
+    return {
+      itemId: id,
+      name: def.name,
+      seconds: def.igniter.seconds,
+      windLimit: def.igniter.windLimit,
+      uses,
+      openedLeft,
+      available: openedLeft + (this.slots.get(id) ?? 0) * uses,
+    };
+  }
+
+  /**
+   * 点一次火用掉当前火种的一次：拆开的那份还有就扣它；没有就从包里拆一份（扣一件）。
+   * 用不了（没设 / 用完了）⇒ null，什么都不动。点没点着都在开始点那一刻扣（制作人："点火失败，就直接消耗了"）。
+   */
+  consumeIgniterUse(): ActiveIgniterStatus | null {
+    const st = this.getActiveIgniter();
+    if (!st || st.available <= 0) return null;
+    if (st.openedLeft > 0) {
+      this.setOpened(st.itemId, st.openedLeft - 1);
+    } else {
+      if (!this.removeItem(st.itemId, 1)) return null;
+      this.setOpened(st.itemId, st.uses - 1);
+    }
+    this.eventBus.emit('inventory:igniterChanged', { itemId: st.itemId });
+    return st;
+  }
+
+  igniterInfoOf(id: string): { current: boolean; uses: number; openedLeft: number } | null {
+    const def = this.itemDefs.get(id);
+    if (!def?.igniter) return null;
+    return { current: this.activeIgniter === id, uses: igniterUses(def), openedLeft: this.igniterOpened.get(id) ?? 0 };
+  }
+
+  private setOpened(id: string, n: number): void {
+    if (n > 0) this.igniterOpened.set(id, n);
+    else this.igniterOpened.delete(id);
+  }
+
   discardItem(id: string): void {
     if (!this.canDiscard(id)) return;
     this.slots.delete(id);
@@ -225,10 +311,26 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
   serialize(): object {
     const items: Record<string, number> = {};
     this.slots.forEach((count, id) => { items[id] = count; });
-    return { items, coins: this.coins };
+    const out: { items: Record<string, number>; coins: number; igniter?: { active: string | null; opened: Record<string, number> } } = {
+      items, coins: this.coins,
+    };
+    if (this.activeIgniter || this.igniterOpened.size > 0) {
+      out.igniter = { active: this.activeIgniter, opened: Object.fromEntries(this.igniterOpened) };
+    }
+    return out;
   }
 
-  deserialize(data: { items: Record<string, number>; coins: number }): void {
+  deserialize(data: {
+    items: Record<string, number>; coins: number; igniter?: { active?: unknown; opened?: unknown };
+  }): void {
+    this.activeIgniter = typeof data.igniter?.active === 'string' && data.igniter.active ? data.igniter.active : null;
+    this.igniterOpened.clear();
+    const opened = data.igniter?.opened;
+    if (opened && typeof opened === 'object' && !Array.isArray(opened)) {
+      for (const [id, n] of Object.entries(opened as Record<string, unknown>)) {
+        if (typeof n === 'number' && Number.isFinite(n) && n >= 1) this.igniterOpened.set(id, Math.floor(n));
+      }
+    }
     this.slots.clear();
     for (const [id, count] of Object.entries(data.items)) {
       this.slots.set(id, count);
@@ -242,6 +344,8 @@ export class InventoryManager implements IGameSystem, IInventoryDataProvider {
   }
 
   destroy(): void {
+    this.activeIgniter = null;
+    this.igniterOpened.clear();
     this.slots.clear();
     this.itemDefs.clear();
     this.coins = 0;

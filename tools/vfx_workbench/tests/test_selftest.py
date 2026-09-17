@@ -51,7 +51,9 @@ def _fingerprint() -> dict:
 @pytest.mark.skipif(not _has_webengine(), reason="没有 PySide6 QtWebEngine")
 def test_interaction_layer_selftest() -> None:
     # 两个真实页面用例串行，避免临时效果的指纹检查互相干扰。
-    for script in ("tools/vfx_workbench/viewer/tests/selftest.js", "tools/vfx_workbench/viewer/tests/scoped-save-selftest.js", "tools/vfx_workbench/viewer/tests/pipeline-selftest.js"):
+    for script in ("tools/vfx_workbench/viewer/tests/selftest.js", "tools/vfx_workbench/viewer/tests/scoped-save-selftest.js", "tools/vfx_workbench/viewer/tests/pipeline-selftest.js", "tools/vfx_workbench/viewer/tests/timing-selftest.js",
+                   # 光柱：加光柱 / 选中立刻有 gizmo / 原画视图真实预览 / 从画布拖把手 / 检视器 / 尘埃挂光柱 / 存盘往返 / 改名删除 / 平面近似
+                   "tools/vfx_workbench/viewer/tests/beam-selftest.js"):
         before = _fingerprint()
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", PYTHONUTF8="1", QT_QPA_PLATFORM="offscreen")
         r = subprocess.run([sys.executable, "-m", "tools.vfx_workbench", "--selftest", script], cwd=str(_ROOT),

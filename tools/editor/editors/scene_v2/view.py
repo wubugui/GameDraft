@@ -28,7 +28,7 @@ from ...shared.entity_transform_math import (
     is_default_entity_anchor,
 )
 from ...shared.scene_migrations import collision_polygon_local_to_world
-from ...shared.static_display_sprite import npc_content_facing_x
+from ...shared.static_display_sprite import npc_content_facing_x, static_display_facing_x
 from ..scene_canvas_model import iter_part_keys
 from .changes import (
     EntitiesAboutToBeRemoved,
@@ -41,6 +41,8 @@ from .changes import (
     SelectionChanged,
     ViewFiltersChanged,
 )
+from ...shared import burnables as _bn_lib
+from .burn_items import BurnPointsItem, burn_marker_rows, burnable_template_of
 from .content_items import BackgroundItem, DisplayImageItem, SpritePreviewItem
 from .entity_items import (
     CollisionGhostItem,
@@ -72,11 +74,14 @@ _PART_ITEM_FACTORY = {
     ("hotspot", "display"): DisplayImageItem,
     ("hotspot", "collision"): PolygonItem,
     ("hotspot", "ghost"): CollisionGhostItem,
+    # 可燃实例的着火点标记（只读，不进命中白名单）；模板图本身走 display / sprite
+    ("hotspot", "burn"): BurnPointsItem,
     ("npc", "handle"): HandleItem,
     ("npc", "collision"): PolygonItem,
     ("npc", "ghost"): CollisionGhostItem,
     ("npc", "patrol"): PolylineItem,
     ("npc", "sprite"): SpritePreviewItem,
+    ("npc", "burn"): BurnPointsItem,
     ("zone", "polygon"): PolygonItem,
     ("spawn", "handle"): HandleItem,
 }
@@ -144,6 +149,10 @@ class SceneView(QGraphicsView):
         #: ``npc_dict -> QPixmap | None``（图集里的**当前一格**）。
         #: 与 `_texture_provider` 分开：精灵是随时间变的一帧，展示图是一整张。
         self._sprite_frame = None
+        #: ``template_id -> dict | None``（可燃物模板只读文档）。开了可燃的实体（A3.8）自己的展示图 /
+        #: 动画失效，画模板的图、按模板真实尺寸 —— 模板住在 ProjectModel，同样归宿主注入。
+        #: 没注入 = 模板一律当"装不上"（不画图、只标红叉），绝不回落去画实体自己的图（那是撒谎）。
+        self._burn_template = None
         #: 中键平移的上一帧位置（None = 没在平移）
         self._pan_from = None
         #: 还欠一次"布好版之后再适配"
@@ -273,6 +282,9 @@ class SceneView(QGraphicsView):
         if (ref.kind, part) in _CONTENT_PARTS:
             self._sync_content_part(ref, part, factory, ent)
             return
+        if part == "burn":
+            self._sync_burn_part(ref, factory, ent)
+            return
         pts = self._part_points(ref.kind, part, ent)
         if part in ("collision", "ghost", "patrol", "lightcurve") and not pts:
             # 数据门：没有多边形/路线就不该有图元（不是"藏起来"，是不存在）
@@ -287,6 +299,8 @@ class SceneView(QGraphicsView):
                 # 光曲线选不中（它不属于任何实体），所以控制点必须恒显
                 item.always_show_vertices = True
         if isinstance(item, HandleItem):
+            from ...shared.health_refs import survival_ranges
+            item.set_survival_ranges(survival_ranges(ent))
             item.set_base_pos(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0))
             item.set_color(entity_canvas_color(ref.kind, ent))
             item.set_label(ref.id)
@@ -346,6 +360,47 @@ class SceneView(QGraphicsView):
         else:
             item.set_pixmap(None)
 
+    def _sync_burn_part(self, ref, factory, ent) -> None:
+        """可燃实例的着火点标记。没开可燃 = 没有这个图元（数据门，不是藏起来）。
+
+        摆法取内容 part 的同一份 spec（模板图画不出来时 spec 为 None，只剩锚点上的红叉），
+        于是标记与图恒同一个摆法。
+        """
+        burn = self._burn_view(ent)
+        if burn is None:
+            self._drop_part(ref, "burn")
+            return
+        tid, doc = burn
+        item = self._items.get((ref, "burn"))
+        if item is None:
+            item = factory(ref)
+            self._gfx.addItem(item)
+            self._items[(ref, "burn")] = item
+            self._push_view_scale(item)
+        item.set_rows(burn_marker_rows(doc, tid))
+        item.set_base_pos(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0))
+        spec = self._content_spec(ref.kind, ent) if doc is not None else None
+        if spec is None:
+            item.set_geometry(None)
+            return
+        _anchor, w, h, facing, scale, rot, _url = spec
+        ax, ay = _content_anchor(ref.kind, ent)
+        item.set_geometry(QPointF(0, 0), w, h, scale=scale, rotation=rot, facing=facing,
+                          anchor_x=ax, anchor_y=ay)
+
+    def set_burn_template_provider(self, provider) -> None:
+        """注入 ``template_id -> dict | None``（可燃物模板只读文档）。模板变了（燃烧工作台存盘后重读）也调它重画。"""
+        self._burn_template = provider
+        self._resync_content()
+
+    def _burn_view(self, ent: dict):
+        """``(template_id, 模板文档 | None)``；实体没开可燃 ⇒ None。"""
+        tid = burnable_template_of(ent)
+        if not tid:
+            return None
+        doc = self._burn_template(tid) if self._burn_template is not None else None
+        return tid, (doc if isinstance(doc, dict) else None)
+
     def _content_spec(self, kind: str, ent: dict):
         """内容 part 的几何与贴图来源；没有内容返回 None。
 
@@ -366,6 +421,10 @@ class SceneView(QGraphicsView):
             # initialFacing 说了算；没写且这是个静态贴图实体时才轮到 displayImage.facing
             # （与运行时 instantiateNpc 同一条取舍，老画布共用同一个函数）
             facing = npc_content_facing_x(ent)
+            if burnable_template_of(ent):
+                # 可燃 NPC 运行时删掉了动画包：initialFacing 没开口时展示图的 facing 生效（不管有没有 animFile）
+                di = ent.get("displayImage")
+                facing = static_display_facing_x(ent, di if isinstance(di, dict) else None)
             return (
                 QPointF(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0)),
                 w, h, facing,
@@ -377,6 +436,25 @@ class SceneView(QGraphicsView):
             )
         if kind != "hotspot":
             return None
+        burn = self._burn_view(ent)
+        if burn is not None:
+            # 开了可燃（A3.8）：展示图的图与宽高失效，画模板的图、按模板真实尺寸（与运行时
+            # `SceneManager.burnableDisplayOf` 同口径：朝向照用展示图的 facing）；模板装不上 = 不画
+            _tid, doc = burn
+            size = _bn_lib.template_world_size(doc) if doc is not None else None
+            url = str((doc or {}).get("image") or "").strip()
+            if size is None or not url:
+                return None
+            di = ent.get("displayImage") if isinstance(ent.get("displayImage"), dict) else {}
+            facing = -1 if str(di.get("facing", "")).strip().lower() == "left" else 1
+            return (
+                QPointF(float(ent.get("x", 0) or 0), float(ent.get("y", 0) or 0)),
+                float(size[0]), float(size[1]), facing,
+                float(ent.get("scale", 1.0) or 1.0)
+                * self.perspective_factor(ent, kind),
+                float(ent.get("rotation", 0.0) or 0.0),
+                url,
+            )
         di = ent.get("displayImage")
         if not isinstance(di, dict):
             return None
@@ -746,7 +824,7 @@ class SceneView(QGraphicsView):
             return
         _anchor, w, h, facing, _s, _r, _url = content
         ax, ay = _content_anchor(ref.kind, ent)
-        for part in ("display", "sprite"):
+        for part in ("display", "sprite", "burn"):
             item = self._items.get((ref, part))
             if item is not None:
                 item.set_geometry(QPointF(0, 0), w, h,

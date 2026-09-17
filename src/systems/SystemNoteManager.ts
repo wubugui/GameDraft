@@ -6,7 +6,7 @@ import { FlagKeys } from '../core/FlagKeys';
 import { TEXT_URLS } from '../core/projectPaths';
 
 /** 组装层注入的开卡函数：把一条说明卡画出来、等玩家关掉再 resolve（必然封口）。 */
-export type SystemNoteOpener = (def: SystemNoteDef) => Promise<void>;
+export type SystemNoteOpener = (def: SystemNoteDef, signal: AbortSignal) => Promise<void>;
 
 interface SystemNotesJson {
   notes?: SystemNoteDef[];
@@ -35,6 +35,7 @@ export class SystemNoteManager implements IGameSystem {
   /** 时间线代号：deserialize / destroy 自增，在途的那张卡关掉时发现代号变了就不写 flag */
   private generation = 0;
   private destroyed = false;
+  private activeCard: AbortController | null = null;
 
   constructor(eventBus: EventBus, flagStore: FlagStore) {
     this.eventBus = eventBus;
@@ -101,13 +102,19 @@ export class SystemNoteManager implements IGameSystem {
       return;
     }
     const gen = ++this.generation;
+    const card = new AbortController();
+    this.activeCard = card;
     this.showing = true;
     try {
-      await this.opener(def);
+      await this.opener(def, card.signal);
     } catch (e) {
       console.warn('SystemNoteManager: 开卡失败', e);
+      return;
     } finally {
-      this.showing = false;
+      if (gen === this.generation) {
+        this.showing = false;
+        this.activeCard = null;
+      }
     }
     // 卡开着的时候读了档 / 销毁了：这是旧时间线，不往新时间线写 flag
     if (this.destroyed || gen !== this.generation) return;
@@ -121,11 +128,17 @@ export class SystemNoteManager implements IGameSystem {
 
   deserialize(_data: object): void {
     this.generation++;
+    this.activeCard?.abort();
+    this.activeCard = null;
+    this.showing = false;
   }
 
   destroy(): void {
     this.destroyed = true;
     this.generation++;
+    this.activeCard?.abort();
+    this.activeCard = null;
+    this.showing = false;
     this.defs.clear();
     this.opener = null;
   }

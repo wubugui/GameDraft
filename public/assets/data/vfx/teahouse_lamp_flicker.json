@@ -1,6 +1,10 @@
 {
   "id": "teahouse_lamp_flicker",
   "label": "茶馆 · 灯火明灭",
+  "prewarmSeconds": [
+    0.5,
+    4
+  ],
   "emitters": [
     {
       "id": "glow",
@@ -58,6 +62,7 @@
       "spawn": {
         "max": 1,
         "rate": 0.22,
+        "intervalJitter": 0.3,
         "burst": 1,
         "shape": {
           "kind": "point"

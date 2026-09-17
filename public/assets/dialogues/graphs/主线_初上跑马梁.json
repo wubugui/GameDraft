@@ -3,21 +3,26 @@
   "id": "主线_初上跑马梁",
   "entry": "n_start",
   "meta": {
-    "title": "主线_初上跑马梁"
+    "title": "跑马梁·纸钱引路"
   },
   "preconditions": [],
+  "defaultLayout": "bubble",
   "nodes": {
     "n_start": {
-      "type": "line",
-      "speaker": {
-        "kind": "player"
-      },
-      "next": "n_signal",
-      "text": "？？？？"
-    },
-    "n_signal": {
       "type": "runActions",
       "actions": [
+        {
+          "type": "startCutscene",
+          "params": {
+            "id": "跑马梁_纸钱引路"
+          }
+        },
+        {
+          "type": "stopVfx",
+          "params": {
+            "instanceId": "纸钱_引路过场"
+          }
+        },
         {
           "type": "emitNarrativeSignal",
           "params": {
@@ -27,11 +32,10 @@
           }
         }
       ],
-      "next": "n_1"
+      "next": "n_end"
     },
-    "n_1": {
+    "n_end": {
       "type": "end"
     }
-  },
-  "defaultLayout": "bubble"
+  }
 }

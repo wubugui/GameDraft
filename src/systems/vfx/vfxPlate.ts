@@ -40,6 +40,7 @@ import {
 import { curlNoise3 } from './vfxNoise';
 import { accumulateAirflow, accumulateFieldAcceleration, type VfxFieldRuntime, type VfxStimulusResponse } from './vfxFields';
 import type { VfxParticleLifecycle } from './vfxLifecycle';
+import { resolveKinematicContacts, type VfxKinematicContact } from './vfxContact';
 import type { VfxRng } from './vfxRandom';
 import { ShellSide, spawnsBehindShell, thinShellSide, type VfxSpace } from './vfxSpace';
 
@@ -265,10 +266,20 @@ export interface PlateStepEnv {
   confine: ConfineField | null;
   lifecycle: VfxParticleLifecycle;
   fields: readonly VfxFieldRuntime[];
+  contacts?: readonly VfxKinematicContact[];
+  contactStart?: number;
+  contactEnd?: number;
   fieldWind: boolean;
   airflow: boolean;
   stimulus: VfxStimulusResponse | null;
   rng: VfxRng;
+  /** 实例吃场景风的倍率（手持火把护火时的挡风）；缺省 1 */
+  windScale?: number;
+  /**
+   * 可燃薄片（`plate.flammable`）：燃着的片（`burnT[i] ≥ 0`）处的空气多一股竖直上升气流 `liftWu`（wu/s，真实量）——
+   * 燃烧热托起来的。没有可燃模块 = null，一字不变。
+   */
+  burn?: { burnT: Float32Array; liftWu: number } | null;
 }
 
 const U: [number, number, number] = [0, 0, 0];
@@ -292,7 +303,7 @@ export function stepPlates(
   const halfW = P.w / 2;
   const refreshMetric = env.substep % METRIC_EVERY === 0;
   const checkWake = env.substep % WAKE_CHECK_EVERY === 0;
-  const gainV = wind ? wind.gainVfx : 0;
+  const gainV = wind ? wind.gainVfx * (env.windScale ?? 1) : 0;
   const cf = env.confine;
   // 边带里躺着的纸：权重 w 处平均躺 CONFINE_SETTLE_MEAN_S / (1−w) 秒开始淡出（只在查唤醒的子步上掷）
   const settleP = (h * WAKE_CHECK_EVERY) / CONFINE_SETTLE_MEAN_S;
@@ -301,6 +312,16 @@ export function stepPlates(
   for (let i = 0; i < cap; i++) {
     if (!alive[i]) continue;
     if (env.lifecycle.beforeParticle(i, h)) continue;
+    if (env.contacts?.length && arr.hold[i] !== Infinity) {
+      const s = sp.metricAt(b.x[i], b.z[i]);
+      if (resolveKinematicContacts(env.contacts, b, i, h, env.contactStart ?? 0, env.contactEnd ?? 1, s)) {
+        arr.metric[i] = s;
+        arr.sleep[i] = 0; arr.still[i] = 0; arr.hold[i] = 0;
+        // Contact transfers momentum and breaks finite adhesion. The existing
+        // aerodynamic/ground solver owns all subsequent tumbling and settling.
+        if (b.vx[i] * arr.cnx[i] + b.vy[i] * arr.cny[i] + b.vz[i] * arr.cnz[i] > 0) arr.contact[i] = PlateContact.Free;
+      }
+    }
     const sleeping = arr.sleep[i] === 1;
     // 睡着的片只在查唤醒的子步上露面（这是常驻几百张也便宜的原因）
     if (sleeping && !checkWake) continue;
@@ -336,6 +357,8 @@ export function stepPlates(
       sampleSceneWind(wind, env.windTime, x, z, hExp, U);
       ux = U[0] * gainV; uy = U[1] * gainV; uz = U[2] * gainV;
     }
+    // 燃着的纸：燃烧热托起的上升气流（真实量，与风同一处叠；纸自己的气动决定它飘多高）
+    if (env.burn && env.burn.burnT[i] >= 0) uy += env.burn.liftWu;
     let hasLocalAirflow = false;
     if (env.airflow) {
       U[0] = 0; U[1] = 0; U[2] = 0;
@@ -370,22 +393,16 @@ export function stepPlates(
       const wtx = ux - wn * nx, wty = uy - wn * ny, wtz = uz - wn * nz;
       const wtm = Math.hypot(wtx, wty, wtz);
       const ktEff = kt + kn * bendAbs * CURL_FRONTAL;
-      const push = ktEff * wtm * wtm;
       const lift = kn * CAMBER_LIFT * bendAbs * wtm * wtm;
-      const gIn = g * Math.max(0, cny);                       // 重力压进面里的那一份
-      const slide = g * Math.sqrt(Math.max(0, 1 - cny * cny)); // 重力沿坡的那一份
-      let wake = push + slide > P.muS * Math.max(0, gIn - lift) + arr.hold[i] || lift > gIn + arr.hold[i];
-      if (hasExternalForce || hasLocalAirflow) {
-        // Include the same external acceleration in contact-space wake and integration.
-        // No arbitrary upward kick: an acceleration into the surface increases the normal load.
-        const pressure = kn * wn * Math.abs(wn);
-        const ax = pressure * nx + ktEff * wtm * wtx + lift * cnx + EXTRA[0];
-        const ay = -g + pressure * ny + ktEff * wtm * wty + lift * cny + EXTRA[1];
-        const az = pressure * nz + ktEff * wtm * wtz + lift * cnz + EXTRA[2];
-        const an = ax * cnx + ay * cny + az * cnz;
-        const tangent = Math.hypot(ax - an * cnx, ay - an * cny, az - an * cnz);
-        wake = tangent > P.muS * Math.max(0, -an) + arr.hold[i] || an > arr.hold[i];
-      }
+      // Scene wind has vertical pressure too. Sleeping and moving paper must
+      // evaluate the same force; otherwise an updraft cannot wake a flat sheet.
+      const pressure = kn * wn * Math.abs(wn);
+      const ax = pressure * nx + ktEff * wtm * wtx + lift * cnx + EXTRA[0];
+      const ay = -g + pressure * ny + ktEff * wtm * wty + lift * cny + EXTRA[1];
+      const az = pressure * nz + ktEff * wtm * wtz + lift * cnz + EXTRA[2];
+      const an = ax * cnx + ay * cny + az * cnz;
+      const tangent = Math.hypot(ax - an * cnx, ay - an * cny, az - an * cnz);
+      const wake = tangent > P.muS * Math.max(0, -an) + arr.hold[i] || an > arr.hold[i];
       if (wake) {
         arr.sleep[i] = 0;
         arr.still[i] = 0;
@@ -407,10 +424,15 @@ export function stepPlates(
     const ktEff = kt + kn * bendAbs * CURL_FRONTAL;
 
     // ---- 力（每单位质量）
-    const fn = kn * wn * Math.abs(wn);
-    let ax = fn * nx + ktEff * wtm * wtx;
-    let ay = -g + fn * ny + ktEff * wtm * wty;
-    let az = fn * nz + ktEff * wtm * wtz;
+    // At storm speeds, explicit quadratic drag can reverse relative velocity in
+    // one step and then explode. Use its integrated decay only in that stiff
+    // regime; ordinary wind retains the original operations and trajectories.
+    const normalDecay = quadraticDecay(kn * Math.abs(wn), h);
+    const tangentDecay = quadraticDecay(ktEff * wtm, h);
+    const fn = kn * wn * Math.abs(wn) * normalDecay;
+    let ax = fn * nx + ktEff * wtm * wtx * tangentDecay;
+    let ay = -g + fn * ny + ktEff * wtm * wty * tangentDecay;
+    let az = fn * nz + ktEff * wtm * wtz * tangentDecay;
     if (env.turb) {
       const t = env.turb;
       curlNoise3(x * t.invScale, y * t.invScale, z * t.invScale, env.time * t.speed + b.seed[i] * 3, N3);
@@ -421,16 +443,17 @@ export function stepPlates(
     // ---- 力矩（角加速度）
     let ox = arr.ox[i], oy = arr.oy[i], oz = arr.oz[i];
     // 翻转：(w·n)(n × w)
-    let alx = flipK * wn * (ny * wz - nz * wy);
-    let aly = flipK * wn * (nz * wx - nx * wz);
-    let alz = flipK * wn * (nx * wy - ny * wx);
+    let alx = flipK * wn * (ny * wz - nz * wy) * normalDecay;
+    let aly = flipK * wn * (nz * wx - nx * wz) * normalDecay;
+    let alz = flipK * wn * (nx * wy - ny * wx) * normalDecay;
     // 转动气动阻尼：面内轴全额，绕法线轴按切向比例
     const on = ox * nx + oy * ny + oz * nz;
     const opx = ox - on * nx, opy = oy - on * ny, opz = oz - on * nz;
     const opm = Math.hypot(opx, opy, opz);
-    alx -= damp * opm * opx + dampN * Math.abs(on) * on * nx;
-    aly -= damp * opm * opy + dampN * Math.abs(on) * on * ny;
-    alz -= damp * opm * opz + dampN * Math.abs(on) * on * nz;
+    const spinDecay = quadraticDecay(damp * opm, h), normalSpinDecay = quadraticDecay(dampN * Math.abs(on), h);
+    alx -= damp * opm * opx * spinDecay + dampN * Math.abs(on) * on * nx * normalSpinDecay;
+    aly -= damp * opm * opy * spinDecay + dampN * Math.abs(on) * on * ny * normalSpinDecay;
+    alz -= damp * opm * opz * spinDecay + dampN * Math.abs(on) * on * nz * normalSpinDecay;
 
     // ---- 接触：库仑摩擦 + 附着 + 倒伏
     let held = false;
@@ -524,6 +547,19 @@ export function stepPlates(
         }
       }
     }
+    // A shell projection can move x/z onto a higher part of the slope, even
+    // when its own normal points upward. Recheck the floor at the final x/z.
+    if (newContact === PlateContact.Shell) {
+      const floor = sp.groundY(x, z) + off;
+      if (y < floor) {
+        y = floor;
+        sp.groundNormal(x, z, GN);
+        ncx = GN[0]; ncy = GN[1]; ncz = GN[2];
+        const vn = vx * ncx + vy * ncy + vz * ncz;
+        if (vn < 0) { vx -= vn * ncx; vy -= vn * ncy; vz -= vn * ncz; }
+        newContact = PlateContact.Ground;
+      }
+    }
     arr.contact[i] = newContact;
     arr.cnx[i] = ncx; arr.cny[i] = ncy; arr.cnz[i] = ncz;
 
@@ -555,6 +591,14 @@ const GN: Vec3 = [0, 1, 0];
 const P3: Vec3 = [0, 0, 0];
 const tmpS = { x: 0, y: 0 };
 const EXTRA: Vec3 = [0, 0, 0];
+
+/** du/dt = -k|u|u => u(t+h) = u(t)/(1+k|u|h).
+ * Preserve the established explicit solver while the step is below its
+ * monotonicity limit; the implicit branch cannot overshoot the air velocity.
+ */
+function quadraticDecay(rate: number, h: number): number {
+  return rate * h <= 0.5 ? 1 : 1 / (1 + rate * h);
+}
 
 /** 弯曲：阻尼振子追"静卷曲 + 法向气动载荷 / 刚度"，封顶 */
 function stepBend(P: PlateParams, arr: PlateArrays, i: number, fn: number, h: number): void {

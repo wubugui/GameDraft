@@ -48,7 +48,14 @@ def _migrate_flag_registry_in_place(data: dict[str, Any]) -> None:
             if vt_raw is None and k in parallel_types:
                 vt_raw = parallel_types[k]
             vt = normalize_registry_value_type(vt_raw)
-            norm.append({"key": k, "valueType": vt})
+            ent: dict[str, str] = {"key": k, "valueType": vt}
+            # 说明是作者写的字（多半是「引擎派生、只读，内容不得写入」这类纪律提示）。
+            # 旧实现把 static 项一律归一成 {key, valueType} 两个键 —— 说明在下一次
+            # Save All 被无声抹掉（2026-09-16 全工程 load→Save All→逐字节比对抓到）。
+            desc = e.get("description")
+            if isinstance(desc, str) and desc.strip():
+                ent["description"] = desc
+            norm.append(ent)
     data["static"] = norm
 
 

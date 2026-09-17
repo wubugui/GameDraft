@@ -16,6 +16,9 @@
   * ``systems/vfx/vfxRandom.ts``    —— ``hashSeed``：布置没写 seed 时按实例 id 派生（与 ``VfxSystem.ensureSim`` 同一个函数）
   * ``systems/vfx/vfxConfine.ts``   —— 粒子区域的权重网格与 ``confineDistanceContour``（画范围区域的边带内沿；
                                       别在 JS 里另写一份距离场，F2 叠加层与本台画的是同一条线）
+  * ``systems/vfx/vfxPlateBurn.ts`` —— 薄片可燃（受热 / 着 / 成灰；燃烧工作台打包的是同一份）
+  * ``data/burnables.ts``           —— 可燃物模板清洗 ``resolveBurnable``（薄片绑的模板经它装进 ``burnTemplates``，
+                                      与 ``VfxSystem`` 同一个函数；页面不另写清洗 / 缺省）
 
 缓存：按 TS 源文件 mtime + 大小做戳，落 ``viewer/_gen/vfx.bundle.js``（不入库）。
 戳盖的是**从入口顺着 import 走出来的整棵依赖树**（``sources()`` 现场扫），不是手抄的清单——
@@ -51,6 +54,16 @@ ENTRY_MODULES = [
     SRC / "systems" / "vfx" / "vfxConfine.ts",
     SRC / "systems" / "vfx" / "vfxProgram.ts",
     SRC / "systems" / "vfx" / "vfxMotionSource.ts",
+    # 薄片可燃（vfxSim 本来就 import 它，戳里早有；单列出来是给页面一个命名空间：燃烧预览按 plateBurnProgress 画焦黑，
+    # 自检拿 resolvePlateBurnParams 对账模板参数——不在 JS 里另写）
+    SRC / "systems" / "vfx" / "vfxPlateBurn.ts",
+    # 可燃物模板清洗（页面命名空间 burnables）：/api/burnables 的原始文档过 resolveBurnable(doc, id) 装成 burnTemplates，
+    # 与游戏 VfxSystem.loadBurnTemplate 同一个函数——页面里不许另写清洗 / 缺省
+    SRC / "data" / "burnables.ts",
+    # 光柱（体积光）：帧 / 局部坐标 / 形状闸门 / 画面↔世界仿射（vfxSim 本来就 import 它，单列给页面命名空间），
+    # 与光柱着色的**同一段 GLSL 核心 + 同一个 uniform 打包函数**（原画视图的 WebGL 预览层编译它，不在 JS 里另写着色）
+    SRC / "systems" / "vfx" / "vfxBeam.ts",
+    SRC / "rendering" / "vfx" / "vfxBeamGlsl.ts",
 ]
 GEN_DIR = TOOL / "viewer" / "_gen"
 OUT = GEN_DIR / "vfx.bundle.js"

@@ -183,16 +183,32 @@
     "name": "桃木剑",
     "type": "key",
     "icon": "/resources/runtime/images/icons/taomu_sword.png",
-    "description": "从城东先生那里顺来的桃木剑，轻得像烧火棍；外搭两张讹来的歪符——歪是歪，红是红，唬人够了。",
-    "maxStack": 1
+    "description": "从城东先生那里顺来的桃木剑，轻得像烧火棍；外搭两张讹来的歪符——歪是歪，红是红，唬人够了。\n对某些鬼物有奇效，带在身上，靠近时阳气消耗大减。",
+    "maxStack": 1,
+    "healthProtection": {
+      "kinds": [
+        "yin"
+      ],
+      "threatIds": [
+        "ridge_caller"
+      ],
+      "reduction": 0.96
+    }
   },
   {
     "id": "taoist_outfit",
     "name": "凑合的行头",
     "type": "key",
     "icon": "/resources/runtime/images/icons/taoist_outfit.png",
-    "description": "用零活攒的钱置办的一身「道士皮」：旧道袍、歪符、桃木剑。不全、不正经，但远看……还行。",
-    "maxStack": 1
+    "description": "用零活攒的钱置办的一身「道士皮」：旧道袍、歪符、桃木剑。不全、不正经，但远看……还行。\n行头齐整，胆气也壮：带在身上可提高阳气上限，并减轻阴气侵袭。",
+    "maxStack": 1,
+    "healthProtection": {
+      "maxHealthBonus": 150,
+      "kinds": [
+        "yin"
+      ],
+      "reduction": 0.15
+    }
   },
   {
     "id": "silver_dimes",
@@ -280,72 +296,370 @@
     "id": "torch",
     "name": "旧纤藤",
     "type": "consumable",
-    "description": "纤夫扔下的一截旧竹篾纤藤，浸透了江水和汗油。点起来就是根火把，耐烧——莫遭风吹熄就好。",
+    "description": "纤夫扔下的一截旧竹篾纤藤，浸透了江水和汗油。拿在手上用火种点起来就是根火把，耐烧——莫遭风吹熄就好。",
     "maxStack": 1,
     "tags": [
       "引火"
     ],
     "use": {
-      "label": "点火 / 收起",
+      "label": "拿在手上 / 收起来",
       "consume": false,
       "actions": [
         {
-          "type": "chooseAction",
+          "type": "runActionsIf",
           "params": {
-            "prompt": "纤藤怎么办？",
-            "allowCancel": true,
-            "options": [
+            "condition": {
+              "heldProp": "player",
+              "prop": "xianteng_torch"
+            },
+            "actions": [
               {
-                "text": "点起来",
-                "actions": [
-                  {
-                    "type": "attachToSocket",
-                    "params": {
-                      "target": "player",
-                      "socket": "right_hand",
-                      "prop": "lantern",
-                      "state": "lit"
-                    }
-                  },
-                  {
-                    "type": "setFlag",
-                    "params": {
-                      "key": "torch_lit",
-                      "value": true
-                    }
-                  },
-                  {
-                    "type": "playSfx",
-                    "params": {
-                      "id": "sfx_lamp_oil_flame"
-                    }
-                  }
-                ]
-              },
+                "type": "detachFromSocket",
+                "params": {
+                  "target": "player",
+                  "socket": "right_hand"
+                }
+              }
+            ],
+            "elseActions": [
               {
-                "text": "熄了收进包里",
-                "actions": [
-                  {
-                    "type": "detachFromSocket",
-                    "params": {
-                      "target": "player",
-                      "socket": "right_hand"
-                    }
-                  },
-                  {
-                    "type": "setFlag",
-                    "params": {
-                      "key": "torch_lit",
-                      "value": false
-                    }
-                  }
-                ]
+                "type": "attachToSocket",
+                "params": {
+                  "target": "player",
+                  "socket": "right_hand",
+                  "prop": "xianteng_torch",
+                  "state": "unlit"
+                }
               }
             ]
           }
         }
       ]
-    }
+    },
+    "dynamicDescriptions": [
+      {
+        "conditions": [
+          {
+            "propLevel": "xianteng_torch",
+            "op": ">=",
+            "value": 3
+          }
+        ],
+        "text": "那截旧纤藤如今裹了浸油的麻布、箍了铁箍。火拢得住，山上的风也压不垮它。"
+      },
+      {
+        "conditions": [
+          {
+            "propLevel": "xianteng_torch",
+            "op": ">=",
+            "value": 2
+          }
+        ],
+        "text": "旧纤藤外头裹了一圈浸桐油的麻布，火比先前稳当多了，风里也经得住一阵。"
+      }
+    ],
+    "icon": "/resources/runtime/images/icons/torch_gpt.png"
+  },
+  {
+    "id": "songming",
+    "name": "松明",
+    "type": "consumable",
+    "description": "劈开的松木心子，油脂重。点起来又亮又旺，烧得也快，烟里一股松脂味——山里的东西闻得见。",
+    "buyPrice": 4,
+    "maxStack": 5,
+    "tags": [
+      "引火"
+    ],
+    "use": {
+      "label": "拿在手上 / 收起来",
+      "consume": false,
+      "actions": [
+        {
+          "type": "runActionsIf",
+          "params": {
+            "condition": {
+              "heldProp": "player",
+              "prop": "songming_torch"
+            },
+            "actions": [
+              {
+                "type": "detachFromSocket",
+                "params": {
+                  "target": "player",
+                  "socket": "right_hand"
+                }
+              }
+            ],
+            "elseActions": [
+              {
+                "type": "attachToSocket",
+                "params": {
+                  "target": "player",
+                  "socket": "right_hand",
+                  "prop": "songming_torch",
+                  "state": "unlit"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "dynamicDescriptions": [
+      {
+        "conditions": [
+          {
+            "heldProp": "player",
+            "prop": "songming_torch",
+            "fuelOp": "<",
+            "fuel": 0.2
+          }
+        ],
+        "text": "劈开的松木心子，油脂重。点起来又亮又旺，烧得也快，烟里一股松脂味——山里的东西闻得见。\n松明子烧得快，这一根眼看要到头了。"
+      },
+      {
+        "conditions": [
+          {
+            "heldProp": "player",
+            "prop": "songming_torch",
+            "fuelOp": "<",
+            "fuel": 0.5
+          }
+        ],
+        "text": "劈开的松木心子，油脂重。点起来又亮又旺，烧得也快，烟里一股松脂味——山里的东西闻得见。\n手上这根松明烧过半了。"
+      }
+    ],
+    "icon": "/resources/runtime/images/icons/songming_gpt.png"
+  },
+  {
+    "id": "shichai",
+    "name": "湿柴火把",
+    "type": "consumable",
+    "description": "半干不干的杂柴捆一把。火不旺、烟大，可也正因为这样，风吹不大动它，虫子也不近身。",
+    "buyPrice": 2,
+    "maxStack": 5,
+    "tags": [
+      "引火"
+    ],
+    "use": {
+      "label": "拿在手上 / 收起来",
+      "consume": false,
+      "actions": [
+        {
+          "type": "runActionsIf",
+          "params": {
+            "condition": {
+              "heldProp": "player",
+              "prop": "shichai_torch"
+            },
+            "actions": [
+              {
+                "type": "detachFromSocket",
+                "params": {
+                  "target": "player",
+                  "socket": "right_hand"
+                }
+              }
+            ],
+            "elseActions": [
+              {
+                "type": "attachToSocket",
+                "params": {
+                  "target": "player",
+                  "socket": "right_hand",
+                  "prop": "shichai_torch",
+                  "state": "unlit"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "dynamicDescriptions": [
+      {
+        "conditions": [
+          {
+            "heldProp": "player",
+            "prop": "shichai_torch",
+            "fuelOp": "<",
+            "fuel": 0.2
+          }
+        ],
+        "text": "半干不干的杂柴捆一把。火不旺、烟大，可也正因为这样，风吹不大动它，虫子也不近身。\n湿柴烧得慢，可这一把也快烧完了。"
+      },
+      {
+        "conditions": [
+          {
+            "heldProp": "player",
+            "prop": "shichai_torch",
+            "fuelOp": "<",
+            "fuel": 0.5
+          }
+        ],
+        "text": "半干不干的杂柴捆一把。火不旺、烟大，可也正因为这样，风吹不大动它，虫子也不近身。\n手上这把湿柴烧过半了，烟还是那么呛。"
+      }
+    ],
+    "icon": "/resources/runtime/images/icons/shichai_gpt.png"
+  },
+  {
+    "id": "xianghuoba",
+    "name": "香火把",
+    "type": "consumable",
+    "description": "线香混着艾草扎的一把。照路是不指望了，可点着的时候，该躲的东西会躲开些。",
+    "buyPrice": 8,
+    "maxStack": 5,
+    "tags": [
+      "引火",
+      "辟邪"
+    ],
+    "use": {
+      "label": "拿在手上 / 收起来",
+      "consume": false,
+      "actions": [
+        {
+          "type": "runActionsIf",
+          "params": {
+            "condition": {
+              "heldProp": "player",
+              "prop": "xiang_torch"
+            },
+            "actions": [
+              {
+                "type": "detachFromSocket",
+                "params": {
+                  "target": "player",
+                  "socket": "right_hand"
+                }
+              }
+            ],
+            "elseActions": [
+              {
+                "type": "attachToSocket",
+                "params": {
+                  "target": "player",
+                  "socket": "right_hand",
+                  "prop": "xiang_torch",
+                  "state": "unlit"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "dynamicDescriptions": [
+      {
+        "conditions": [
+          {
+            "heldProp": "player",
+            "prop": "xiang_torch",
+            "fuelOp": "<",
+            "fuel": 0.2
+          }
+        ],
+        "text": "线香混着艾草扎的一把。照路是不指望了，可点着的时候，该躲的东西会躲开些。\n香快燃尽了，剩下小半截。"
+      },
+      {
+        "conditions": [
+          {
+            "heldProp": "player",
+            "prop": "xiang_torch",
+            "fuelOp": "<",
+            "fuel": 0.5
+          }
+        ],
+        "text": "线香混着艾草扎的一把。照路是不指望了，可点着的时候，该躲的东西会躲开些。\n手上这把香火把烧过半了。"
+      }
+    ],
+    "icon": "/resources/runtime/images/icons/xianghuoba_gpt.png"
+  },
+  {
+    "id": "tongyou",
+    "name": "桐油",
+    "type": "consumable",
+    "description": "一小罐桐油。裹布浸上油，火把才经得住山上的风。",
+    "buyPrice": 8,
+    "maxStack": 5,
+    "tags": [
+      "材料"
+    ],
+    "icon": "/resources/runtime/images/icons/tongyou_gpt.png"
+  },
+  {
+    "id": "mabu",
+    "name": "麻布",
+    "type": "consumable",
+    "description": "一块粗麻布，裁成条正好裹火把头。",
+    "buyPrice": 3,
+    "maxStack": 5,
+    "tags": [
+      "材料"
+    ],
+    "icon": "/resources/runtime/images/icons/mabu_gpt.png"
+  },
+  {
+    "id": "tiegu",
+    "name": "铁箍",
+    "type": "consumable",
+    "description": "铁匠打的一副小箍。箍住火把头，火拢得住，也不怕烧散架。",
+    "buyPrice": 12,
+    "maxStack": 5,
+    "tags": [
+      "材料"
+    ],
+    "icon": "/resources/runtime/images/icons/tiegu_gpt.png"
+  },
+  {
+    "id": "huorong",
+    "name": "火镰火绒",
+    "type": "consumable",
+    "description": "一块火镰、一撮火绒。火镰擦着火石打出火星，引燃火绒，再去点火把。便宜，就是慢，风一大火星落不稳。",
+    "buyPrice": 2,
+    "maxStack": 20,
+    "tags": [
+      "引火"
+    ],
+    "igniter": {
+      "uses": 1,
+      "seconds": 2.5,
+      "windLimit": 3
+    },
+    "icon": "/resources/runtime/images/icons/huorong_gpt.png"
+  },
+  {
+    "id": "huozhezi",
+    "name": "火折子",
+    "type": "consumable",
+    "description": "一截竹筒，里头卷着闷燃的草纸。拔开盖子吹一口就冒火，盖上还能留着下回——一支点得三回。",
+    "buyPrice": 6,
+    "maxStack": 10,
+    "tags": [
+      "引火"
+    ],
+    "igniter": {
+      "uses": 3,
+      "seconds": 1,
+      "windLimit": 6
+    },
+    "icon": "/resources/runtime/images/icons/huozhezi_gpt.png"
+  },
+  {
+    "id": "yanghuo",
+    "name": "洋火",
+    "type": "consumable",
+    "description": "洋人的火柴，一划就着，有风也点得燃。一根只管一回，金贵。",
+    "buyPrice": 12,
+    "maxStack": 20,
+    "tags": [
+      "引火"
+    ],
+    "igniter": {
+      "uses": 1,
+      "seconds": 0.4,
+      "windLimit": 10
+    },
+    "icon": "/resources/runtime/images/icons/yanghuo_gpt.png"
   },
   {
     "id": "zhiqian",

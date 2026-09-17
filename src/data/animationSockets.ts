@@ -112,11 +112,13 @@ export function parseSocketSet(raw: unknown): SocketSetDef | null {
     atlas: { cols, rows, slotCount },
     sockets,
     contactSlots: parseContactSlots(m.contactSlots, slotCount),
+    // 点火接触帧与落脚帧同一套清洗（槽位号、去重升序、坏项跳过）
+    igniteSlots: parseContactSlots(m.igniteSlots, slotCount),
   };
 }
 
 /**
- * 落脚帧槽位：只收 `0 <= 整数 < slotCount`，去重升序；不是数组/整份坏掉 ⇒ 空（无脚步）。
+ * 落脚帧 / 点火接触帧槽位：只收 `0 <= 整数 < slotCount`，去重升序；不是数组/整份坏掉 ⇒ 空。
  * 单个坏项跳过——与 pose 同一口径：标注是表现层增益，任何时候不该把角色本身弄挂。
  */
 function parseContactSlots(raw: unknown, slotCount: number): number[] {
@@ -213,6 +215,49 @@ export function socketPoseToLocal(
     scale: d,
     facing: sign,
   };
+}
+
+/** 挂件在挂点上的摆法（与 `SpriteEntity` 的 `SocketAttachment` 同名同义；缺省同运行时） */
+export interface AttachmentPlacement {
+  /** 挂件缩放（缺省 1） */
+  scale?: number;
+  /** 贴图上的支点（缺省 0.5 / 0.5） */
+  anchorX?: number;
+  anchorY?: number;
+  /** 挂件自转偏置（度，缺省 0；朝左取反） */
+  rotationOffsetDeg?: number;
+  /** false = 不随宿主镜像（缺省随） */
+  mirrorWithHost?: boolean;
+  /** 贴图像素尺寸 */
+  texW: number;
+  texH: number;
+}
+
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/**
+ * 挂件贴图上的归一化点 (u, v) 在**宿主容器局部**的位置（纯函数）：`P = T + R(rot)·S(sx, sy)·((u − ax)·W, (v − ay)·H)`，
+ * T = 挂点位姿、缩放 = 挂件缩放 × 透视系数 × 镜像、旋转 = 挂点标注角 + 挂件自转（跟着镜像取反）。
+ *
+ * 与 `SpriteEntity.attachmentTransform` + `attachmentLocalPoint` 同一式子（没有轨迹叠加时逐位相同，
+ * `SpriteEntitySocketFacing.test.ts` 钉着预测 == 真播到那一帧）。燃烧工作台打包它算点火站位，不另写一份。
+ */
+export function attachmentPointLocal(
+  pose: SocketLocalPose, at: AttachmentPlacement, u: number, v: number,
+): { x: number; y: number } {
+  const base = at.scale ?? 1;
+  const mirror = at.mirrorWithHost === false ? 1 : pose.facing;
+  const offset = (at.rotationOffsetDeg ?? 0) * pose.facing;
+  const sx = base * pose.scale * mirror;
+  const sy = base * pose.scale;
+  const rot = ((pose.angleDeg + offset) * Math.PI) / 180;
+  const dx = (clamp01(u) - clamp01(at.anchorX ?? 0.5)) * at.texW * sx;
+  const dy = (clamp01(v) - clamp01(at.anchorY ?? 0.5)) * at.texH * sy;
+  const c = Math.cos(rot);
+  const s = Math.sin(rot);
+  return { x: pose.x + dx * c - dy * s, y: pose.y + dx * s + dy * c };
 }
 
 /** 解析结果 + 是否与当前图集对得上（对不上时 `set` 仍返回，供编辑器提示重标）。 */

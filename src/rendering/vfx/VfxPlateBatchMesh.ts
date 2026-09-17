@@ -22,13 +22,18 @@ export interface VfxPlateStrip {
   q: Float32Array;
   /** 每顶点世界法线（已翻到朝向相机那一面） */
   nrm: Float32Array;
+  /**
+   * 每顶点 `aMisc`：x = 软边宽（q，薄片恒 0）；y = **逐顶点自发光份额**（0..1，燃着的纸那道火线；
+   * 受光程序取 `max(uEmissive, vMisc.y)`，不燃烧的纸恒 0 ⇒ 与改动前逐位相同）。
+   */
+  misc: Float32Array;
 }
 
 export function createPlateStrip(segs: number): VfxPlateStrip {
   const n = 2 * (segs + 1);
   return {
     pos: new Float32Array(n * 2), uv: new Float32Array(n * 2), col: new Float32Array(n * 4),
-    q: new Float32Array(n * 3), nrm: new Float32Array(n * 3),
+    q: new Float32Array(n * 3), nrm: new Float32Array(n * 3), misc: new Float32Array(n * 2),
   };
 }
 
@@ -42,6 +47,8 @@ export class VfxPlateBatchMesh {
   private readonly col: Float32Array;
   private readonly q: Float32Array;
   private readonly nrm: Float32Array;
+  private readonly misc: Float32Array;
+  private readonly miscBuf: Buffer;
   private readonly posBuf: Buffer;
   private readonly uvBuf: Buffer;
   private readonly colBuf: Buffer;
@@ -63,7 +70,7 @@ export class VfxPlateBatchMesh {
     this.q = new Float32Array(nv * 3);
     this.nrm = new Float32Array(nv * 3);
     const local = new Float32Array(nv * 2);
-    const misc = new Float32Array(nv * 2);
+    this.misc = new Float32Array(nv * 2);
     const idx = new Uint32Array(cap * this.segs * 6);
     let o = 0;
     for (let i = 0; i < cap; i++) {
@@ -85,6 +92,7 @@ export class VfxPlateBatchMesh {
     this.colBuf = dyn(this.col);
     this.qBuf = dyn(this.q);
     this.nrmBuf = dyn(this.nrm);
+    this.miscBuf = dyn(this.misc);
     const geometry = new Geometry({
       attributes: {
         aPosition: { buffer: this.posBuf, format: 'float32x2' },
@@ -92,7 +100,7 @@ export class VfxPlateBatchMesh {
         aColor: { buffer: this.colBuf, format: 'float32x4' },
         aQ: { buffer: this.qBuf, format: 'float32x3' },
         aLocal: { buffer: new Buffer({ data: local, usage: BufferUsage.VERTEX | BufferUsage.COPY_DST }), format: 'float32x2' },
-        aMisc: { buffer: new Buffer({ data: misc, usage: BufferUsage.VERTEX | BufferUsage.COPY_DST }), format: 'float32x2' },
+        aMisc: { buffer: this.miscBuf, format: 'float32x2' },
         aNrm: { buffer: this.nrmBuf, format: 'float32x3' },
       },
       indexBuffer: new Buffer({ data: idx, usage: BufferUsage.INDEX | BufferUsage.COPY_DST }),
@@ -118,6 +126,7 @@ export class VfxPlateBatchMesh {
     this.col.set(strip.col, v0 * 4);
     this.q.set(strip.q, v0 * 3);
     this.nrm.set(strip.nrm, v0 * 3);
+    this.misc.set(strip.misc, v0 * 2);
     return true;
   }
 
@@ -137,6 +146,7 @@ export class VfxPlateBatchMesh {
     this.colBuf.update();
     this.qBuf.update();
     this.nrmBuf.update();
+    this.miscBuf.update();
     this.mesh.visible = from > 0;
   }
 

@@ -4,6 +4,7 @@ import { VfxInstanceSim, createFieldRuntime } from './vfxSim';
 import { createPlanarVfxSpace } from './vfxSpace';
 import { emitterCapabilities, emitterProgramErrors, newEmitterProgram, resolveEmitterProgram } from './vfxProgram';
 import { VfxMotionAirflow } from './vfxMotionSource';
+import { VfxMotionContact } from './vfxContact';
 import batAsset from '../../../public/assets/data/vfx/bat_cliff.json';
 
 const area: [number, number][] = [[-10,-10],[10,-10],[10,10],[-10,10]];
@@ -27,6 +28,61 @@ function state(s: VfxInstanceSim) {
 const upward: VfxFieldDef = { kind: 'wind', tag: 'gust', radius: 1000, strength: 3000, direction: [0,1,0] };
 
 describe('VFX module pipeline', () => {
+  it('walking contact kicks sleeping paper a little upward, then it lands; disabled paper stays still', () => {
+    const doc = effect(); doc.emitters[0].plate!.adhere!.hold = 120;
+    const off = structuredClone(doc); off.emitters[0].simulation!.influences.contact = false;
+    const a = sim(doc), b = sim(off), source = new VfxMotionContact();
+    step(a, .1); step(b, .1);
+    // Keep the same five initial surface samples; drive a real source path past them.
+    const original = [...a.emitters[0].p.x];
+    let maxHeight = 0, maxSpeed = 0;
+    for (let frame = 0; frame < 90; frame++) {
+      const contact = source.sample([-60 + frame * 200 / 120, 0, 0], 1/120);
+      const ctx = { fields: [], contacts: contact ? [contact] : [], player: null, time: frame/120 };
+      a.step(1/120, ctx); b.step(1/120, ctx);
+      maxHeight = Math.max(maxHeight, ...a.emitters[0].p.y);
+      maxSpeed = Math.max(maxSpeed, ...a.emitters[0].p.vy);
+    }
+    expect(maxSpeed).toBeGreaterThan(20);
+    expect(maxHeight).toBeGreaterThan(2);
+    expect(maxHeight).toBeLessThan(40);
+    expect(Math.max(...a.emitters[0].p.x.map((x, i) => x - original[i]))).toBeGreaterThan(10);
+    expect([...b.emitters[0].p.x]).toEqual(original);
+    step(a, 6);
+    expect(Math.max(...a.emitters[0].p.y)).toBeLessThan(1);
+    expect([...a.emitters[0].plate!.arr.contact]).not.toContain(0);
+    expect(source.sample([90,0,0], 1/120)).not.toBeNull();
+    expect(source.sample([90,0,0], 1/120)).toBeNull();
+    expect(source.sample([9000,0,0], 1/120)).toBeNull();
+    source.reset(); expect(source.sample([0,0,0], 1/120)).toBeNull();
+  });
+  it('strong aerodynamic input remains finite, lifts ground paper, and settles when wind stops', () => {
+    const doc = effect(); doc.emitters[0].simulation!.recycle = { mode: 'surface' };
+    const s = sim(doc); step(s, .1);
+    // Bound the ground patch generously so the height, not replacement, proves lift.
+    Object.assign(s.emitters[0].area, { minX: -100000, maxX: 100000, minY: -100000, maxY: 100000 });
+    const airflow = { kind: 'airflow', tag: 'storm', radius: 100000, strength: 1600, direction: [1, .7, 0] } as VfxFieldDef;
+    step(s, 2, airflow);
+    expect(Math.max(...s.emitters[0].p.y)).toBeGreaterThan(150);
+    for (const arrays of state(s)) for (const a of Object.values(arrays)) {
+      if (a instanceof Float32Array) expect([...a].every(Number.isFinite)).toBe(true);
+    }
+    step(s, 20);
+    expect(Math.max(...s.emitters[0].p.y)).toBeLessThan(1);
+  });
+  it('surface replacement tests horizontal ground bounds; flying up alone never recycles', () => {
+    const doc = effect(); doc.emitters[0].simulation!.recycle = { mode: 'surface' };
+    const s = sim(doc); step(s, .1); const e = s.emitters[0], p = e.p;
+    expect(e.lifecycle.afterMotion(0, p.x[0], 10000, p.z[0])).toBe(false);
+    expect(e.lifecycle.afterMotion(0, 10000, 0, p.z[0])).toBe(true);
+  });
+  it('a shell collision cannot project paper through the floor after the ground collision pass', () => {
+    const sp = Object.assign(createPlanarVfxSpace(), { hasShell: true,
+      shellContact: () => ({ penWu: 3, normal: [Math.SQRT1_2, -Math.SQRT1_2, 0] as [number, number, number], px: 0, py: 0, groundLike: false }) });
+    const s = new VfxInstanceSim('corner', effect(), [0,0,0], 42, sp, 1, { area });
+    step(s, .2, upward);
+    expect(Math.min(...s.emitters[0].p.y)).toBeGreaterThanOrEqual(.47);
+  });
   it('physical airflow cannot be misread as an attraction field by legacy flock behavior', () => {
     const doc = structuredClone(batAsset) as unknown as VfxEffectDef;
     doc.emitters[0].behavior!.attitude.attract = { 'actor:test': 1 };

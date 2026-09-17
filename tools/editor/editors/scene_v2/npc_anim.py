@@ -26,11 +26,13 @@ from ...shared.anim_atlas_preview import (
     spritesheet_public_path,
 )
 from ...shared.anim_frame_cursor import AnimFrameCursor
+from ...shared.burnables import template_world_size
 from ...shared.static_display_sprite import (
     static_display_image_of,
     static_display_pixmap,
     static_display_world_pair,
 )
+from .burn_items import burnable_template_of
 
 __all__ = ["NpcAnimBank", "initial_playback_tuple"]
 
@@ -103,9 +105,10 @@ class NpcAnimBank:
         self._model = model
         self._resolve_path = resolve_path
         self._bundles: dict[str, _AnimBundle | None] = {}
-        # 静态贴图实体（没有动画包的道具）的合成包；键含世界尺寸，同一张图两种尺寸不串味
-        self._static_bundles: dict[tuple[str, str, str], _AnimBundle | None] = {}
-        self._cursors: dict[str, tuple[str, AnimFrameCursor]] = {}
+        # 静态贴图实体（没有动画包的道具）的合成包；键含世界尺寸，同一张图两种尺寸不串味。
+        # 可燃 NPC 按模板合成的包也住这里，键首项为 "burn"（模板重读时只清这一批）
+        self._static_bundles: dict[tuple[str, ...], _AnimBundle | None] = {}
+        self._cursors: dict[str, tuple[tuple[str, int], AnimFrameCursor]] = {}
 
     def clear(self) -> None:
         """换场景时丢掉逐 NPC 的游标；图集缓存保留（换场景常常还是那批角色）。"""
@@ -174,8 +177,38 @@ class NpcAnimBank:
         self._static_bundles[key] = bundle
         return bundle
 
+    def _burn_bundle(self, template_id: str) -> _AnimBundle | None:
+        """开了可燃的 NPC（A3.8）：动画包 / 角色模板的动画 / 自己的展示图一律不画，按**模板的图**合成
+        1×1 单帧包、世界尺寸 = 模板真实尺寸（与运行时 `SceneManager.instantiateNpc` 的接管同口径）。
+        模板不存在 / 没尺寸 / 图读不出 ⇒ None（运行时不画，画布也不建精灵）。
+        """
+        fn = getattr(self._model, "burnable_doc", None)
+        doc = fn(template_id) if callable(fn) else None
+        size = template_world_size(doc) if isinstance(doc, dict) else None
+        url = str((doc or {}).get("image") or "").strip() if isinstance(doc, dict) else ""
+        if size is None or not url:
+            return None
+        key = ("burn", url, repr(float(size[0])), repr(float(size[1])))
+        if key in self._static_bundles:
+            return self._static_bundles[key]
+        self._static_bundles[key] = None
+        pm = static_display_pixmap(self._model, {"image": url})
+        if pm is None:
+            return None
+        bundle = _AnimBundle(pm, 1, 1, None, None, None, _STATIC_STATES, float(size[0]), float(size[1]))
+        self._static_bundles[key] = bundle
+        return bundle
+
+    def invalidate_burn_templates(self) -> None:
+        """可燃物模板重读之后（燃烧工作台存盘）：丢掉按模板合成的包，下次按新模板重合成。"""
+        for key in [k for k in self._static_bundles if k and k[0] == "burn"]:
+            self._static_bundles.pop(key, None)
+
     def _bundle_for(self, npc: dict) -> _AnimBundle | None:
-        """这个 NPC 的精灵素材：动画包优先，没有动画包时回落静态贴图合成包。"""
+        """这个 NPC 的精灵素材：开了可燃按模板；否则动画包优先，没有动画包时回落静态贴图合成包。"""
+        tid = burnable_template_of(npc)
+        if tid:
+            return self._burn_bundle(tid)
         anim_id = self._anim_id(npc)
         if anim_id:
             return self._bundle(anim_id)
@@ -188,6 +221,11 @@ class NpcAnimBank:
 
     def sprite_texture_url(self, npc: dict) -> str:
         """精灵贴图的 URL；动画 NPC 走帧通路故返回空串（贴图不由 texture_provider 取）。"""
+        tid = burnable_template_of(npc)
+        if tid:
+            fn = getattr(self._model, "burnable_doc", None)
+            doc = fn(tid) if callable(fn) else None
+            return str(doc.get("image") or "").strip() if isinstance(doc, dict) else ""
         di = static_display_image_of(npc, self._anim_id(npc))
         return str(di.get("image", "") or "").strip() if di else ""
 
@@ -201,6 +239,8 @@ class NpcAnimBank:
     def _cursor_for(self, npc_id: str, npc: dict, bundle: _AnimBundle):
         """取（或按状态变化重建）该 NPC 的帧游标。"""
         name, st = bundle.pick_state(npc)
+        # 游标按"状态名 + 素材包"认：同名状态换了素材（开 / 关可燃、换模板）时帧表不同，旧游标的格号会越界
+        name = (name, id(bundle))
         cached = self._cursors.get(npc_id)
         if cached is not None and cached[0] == name:
             cursor = cached[1]

@@ -4,6 +4,20 @@
   "emitters": [
     {
       "id": "fireflies",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": true,
+          "airflow": false,
+          "stimulus": true
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
       "appearance": {
         "image": "/resources/runtime/images/vfx/firefly.png",
         "sizeWu": 10,
@@ -58,19 +72,19 @@
         ]
       },
       "motion": {
-        "drag": 0.6,
+        "drag": 1.2,
         "turbulence": {
           "strength": 22,
           "scale": 90,
           "speed": 0.35
         },
-        "maxSpeed": 110,
+        "maxSpeed": 32,
         "stimulus": {
           "fear": {
             "player:motion": 1.0,
-            "sfx:footstep": 0.35
+            "sfx:footstep": 0
           },
-          "accel": 1600
+          "accel": 180
         }
       },
       "life": {

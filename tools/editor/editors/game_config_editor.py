@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project_model import ProjectModel
-from ..shared.action_editor import ActionEditor
+from ..shared.action_editor import ActionEditor, FilterableTypeCombo
 from ..shared.id_ref_selector import IdRefSelector
 from ..shared.flag_key_field import FlagKeyPickField
 from ..shared.flag_value_edit import FlagValueEdit
@@ -25,6 +25,7 @@ from ..shared.text_palette import (
     load_text_palette,
 )
 from ..shared.widget_discard import discard_widget
+from ..shared.health_forms import HealthConfigForm
 
 
 # 玩家身体动词参数表：(verb, 分组标题, [(键, 标签, 类型, 下限, 上限, tooltip)])
@@ -67,6 +68,14 @@ _PLAYER_ACT_DEFAULTS: dict[str, dict[str, float]] = {
     "kick": {"callbackFrame": -1},
     "jump": {"durationMs": 480, "arcHeight": 46},
 }
+
+# 点火（playerActs.ignite，燃烧系统 A3.8）不进上面的整槽写出机制：walkSpeed 没有数值缺省
+# （缺省 = 本场景走路速度），写成 0 就改了行为。三项各自「缺省不写键」，见 _read_ignite_ui。
+_IGNITE_DEFAULT_ANIMATION = "ignite"
+#: 仅作 walkSpeed 控件的初值提示（Player.ts 的 DEFAULT_PLAYER_WALK_SPEED）；不勾「写」就不落盘
+_IGNITE_WALK_SPEED_HINT = 100.0
+#: _read_ignite_ui 的「整槽不写」哨兵
+_OMIT = object()
 
 
 def _parse_hhmm(raw: str) -> tuple[int, int]:
@@ -234,6 +243,10 @@ class GameConfigEditor(QWidget):
 
         lay.addWidget(self._build_day_night_section())
         lay.addWidget(self._build_player_acts_section())
+        self._health_section = CollapsibleSection("三把火与剧情系绳", start_open=False)
+        self._health_form = None
+        self._health_section.expanded_changed.connect(self._expand_health)
+        lay.addWidget(self._health_section)
 
         apply_btn = QPushButton("Apply")
         apply_btn.setToolTip("把当前配置写入 game_config 并标脏；保存工程后写入磁盘。")
@@ -414,12 +427,13 @@ class GameConfigEditor(QWidget):
         self._dn_phase_host.setEnabled(has_custom)
 
     def _build_player_acts_section(self) -> CollapsibleSection:
-        """蹲/注视/躺/上脚/跳 的全局参数。重块 → 默认折叠。"""
-        sec = CollapsibleSection("玩家身体动词（蹲 / 注视 / 躺 / 上脚 / 跳）", start_open=False)
+        """蹲/注视/躺/上脚/跳/点火 的全局参数。重块 → 默认折叠。"""
+        sec = CollapsibleSection("玩家身体动词（蹲 / 注视 / 躺 / 上脚 / 跳 / 点火）", start_open=False)
         sec.set_header_tool_tip(
-            "键位：C 蹲（躺点上按 C 即躺）· X 驻足注视 · F 上脚 · 空格 跳。\n"
+            "键位：C 蹲（躺点上按 C 即躺）· X 驻足注视 · F 上脚 · 空格 跳 · "
+            "E 点火（手上拿着燃着的点火挂件、走到可燃物跟前）。\n"
             "动画映射在「玩家化身」页；某动词没有映射到片段时自动禁用。\n"
-            "整块缺省不写 = 五个动词全按缺省开启。"
+            "整块缺省不写 = 各动词（含点火）全按缺省开启。"
         )
         body = QWidget()
         body_lay = QVBoxLayout(body)
@@ -462,8 +476,157 @@ class GameConfigEditor(QWidget):
             self._act_widgets[verb] = widgets
             body_lay.addWidget(box)
 
+        body_lay.addWidget(self._build_ignite_act_box())
         sec.add_body(body)
         return sec
+
+    # ———————————————— 点火（playerActs.ignite） ————————————————
+
+    def _build_ignite_act_box(self) -> QGroupBox:
+        box = QGroupBox("点火（地图上点可燃物，按 E）")
+        box.setToolTip(
+            "玩家手上拿着燃着的点火挂件、走到可燃物跟前按 E：走到站位 → 播点火动画 → "
+            "接触帧火头对准着火点、点着。\n"
+            "点火接触帧在「动画浏览」页的挂点面板里逐帧勾「本帧点火接触」。"
+        )
+        form = compact_form(QFormLayout(box))
+        # 盘上原样快照（_load_player_acts 填）：「原本有没有这个键」一律按打开时的盘面判
+        self._ignite_snap_present = False
+        self._ignite_snap: object = None
+        self._ignite_anim_seed: tuple[bool, object, str] = (False, None, "")
+        self._ignite_ws_seed: tuple[bool, object, float] = (False, None, 0.0)
+
+        self._ignite_enabled = QCheckBox("启用（玩家按 E 点火）")
+        self._ignite_enabled.setToolTip(
+            "取消勾选 = 只关掉「玩家按 E 点可燃物」；\n"
+            "内容里的动作 igniteBurnable 照常能点着东西，不受这里影响。\n"
+            "缺省勾上（不写键）。"
+        )
+        form.addRow(self._ignite_enabled)
+
+        self._ignite_anim = FilterableTypeCombo(
+            self._ignite_anim_entries(),
+            orphan_label=lambda v: f"{v}（化身 stateMap 里没有这个名字）",
+            select_only=False,
+        )
+        self._ignite_anim.setMaximumWidth(260)
+        self._ignite_anim.setToolTip(
+            "点火动画的**逻辑状态名**，不是片段名：经「玩家化身」页的 stateMap 映射成片段，\n"
+            "映射不出来时运行时退回 idle。\n"
+            "选「缺省」= 不写键，运行时按 ignite 解析。候选 = ignite + 化身 stateMap 已有的名字。"
+        )
+        form.addRow("点火动画（逻辑状态）", self._ignite_anim)
+
+        ws_row = QHBoxLayout()
+        self._ignite_ws_chk = QCheckBox("写")
+        self._ignite_ws_chk.setToolTip("不勾 = 不写键 = 按本场景的玩家走路速度走到站位")
+        ws_row.addWidget(self._ignite_ws_chk)
+        self._ignite_ws = QDoubleSpinBox()
+        self._ignite_ws.setRange(0.0, 5000.0)
+        self._ignite_ws.setDecimals(2)
+        self._ignite_ws.setSingleStep(10.0)
+        self._ignite_ws.setSuffix(" wu/s")
+        self._ignite_ws.setMaximumWidth(130)
+        self._ignite_ws.setValue(_IGNITE_WALK_SPEED_HINT)
+        self._ignite_ws.setEnabled(False)
+        self._ignite_ws.setToolTip("走到点火站位的速度（wu/s）；≤0 运行时也按本场景走路速度")
+        self._ignite_ws_chk.toggled.connect(self._ignite_ws.setEnabled)
+        ws_row.addWidget(self._ignite_ws)
+        ws_row.addStretch(1)
+        form.addRow("走到站位速度", ws_row)
+        return box
+
+    def _ignite_anim_entries(self) -> list[tuple[str, str]]:
+        """候选：缺省（不写键）+ ignite + 化身 stateMap 的键（显示映射到的片段）。"""
+        entries: list[tuple[str, str]] = [
+            (f"（缺省 = {_IGNITE_DEFAULT_ANIMATION}，不写键）", ""),
+            (_IGNITE_DEFAULT_ANIMATION, _IGNITE_DEFAULT_ANIMATION),
+        ]
+        pa = self._model.game_config.get("playerAvatar")
+        sm = pa.get("stateMap") if isinstance(pa, dict) else None
+        if isinstance(sm, dict):
+            seen = {_IGNITE_DEFAULT_ANIMATION}
+            for k, clip in sm.items():
+                name = str(k).strip()
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                entries.append((f"{name} → {clip}", name))
+        return entries
+
+    def _load_ignite(self, acts_cfg: dict) -> None:
+        present = "ignite" in acts_cfg
+        raw = acts_cfg.get("ignite")
+        self._ignite_snap_present = present
+        self._ignite_snap = copy.deepcopy(raw)
+        slot = raw if isinstance(raw, dict) else {}
+
+        self._ignite_enabled.setChecked(slot.get("enabled") is not False)
+
+        self._ignite_anim.set_entries(self._ignite_anim_entries())
+        if "animation" in slot:
+            a_raw = slot.get("animation")
+            a_txt = a_raw if isinstance(a_raw, str) else str(a_raw)
+            self._ignite_anim.set_committed_type(a_txt)
+            self._ignite_anim_seed = (True, copy.deepcopy(a_raw), self._ignite_anim.committed_type())
+        else:
+            self._ignite_anim.set_committed_type("")
+            self._ignite_anim_seed = (False, None, "")
+
+        if "walkSpeed" in slot:
+            w_raw = slot.get("walkSpeed")
+            num = w_raw if isinstance(w_raw, (int, float)) and not isinstance(w_raw, bool) else 0.0
+            self._ignite_ws_chk.setChecked(True)
+            self._ignite_ws.setValue(float(num))
+            # 种子快照：控件会 clamp/量化，仍等于种子就回写盘上原字面值（int 不漂 float）
+            self._ignite_ws_seed = (True, copy.deepcopy(w_raw), float(self._ignite_ws.value()))
+        else:
+            self._ignite_ws_chk.setChecked(False)
+            self._ignite_ws.setValue(_IGNITE_WALK_SPEED_HINT)
+            self._ignite_ws_seed = (False, None, 0.0)
+
+    def _read_ignite_ui(self, current: object) -> object:
+        """读点火槽。`current` = 模型当前的 ignite 值（未知子键从它透传）；
+        「原本有没有键」按打开时的盘面快照判。返回 `_OMIT` = 不写 ignite。"""
+        snap_slot = self._ignite_snap if isinstance(self._ignite_snap, dict) else {}
+        slot: dict = copy.deepcopy(current) if isinstance(current, dict) else {}
+
+        # enabled：只有盘上原本有这个键、或用户关掉时才写
+        if not self._ignite_enabled.isChecked():
+            slot["enabled"] = False
+        elif "enabled" in snap_slot:
+            orig = snap_slot["enabled"]
+            slot["enabled"] = copy.deepcopy(orig) if orig is not False else True
+        else:
+            slot.pop("enabled", None)
+
+        # animation：空 = 不写；等于缺省 ignite 且盘上原本没键 = 不写；没动过 = 原字面值
+        a_present, a_raw, a_seed = self._ignite_anim_seed
+        cur = self._ignite_anim.committed_type()
+        if a_present and cur == a_seed:
+            slot["animation"] = copy.deepcopy(a_raw)
+        elif not cur.strip() or (cur.strip() == _IGNITE_DEFAULT_ANIMATION and not a_present):
+            slot.pop("animation", None)
+        else:
+            slot["animation"] = cur.strip()
+
+        # walkSpeed：不勾「写」= 不写；控件没动过 = 原字面值；否则整数值写 int
+        w_present, w_raw, w_seed = self._ignite_ws_seed
+        if not self._ignite_ws_chk.isChecked():
+            slot.pop("walkSpeed", None)
+        else:
+            v = float(self._ignite_ws.value())
+            if w_present and v == w_seed:
+                slot["walkSpeed"] = copy.deepcopy(w_raw)
+            else:
+                slot["walkSpeed"] = int(v) if v.is_integer() else v
+
+        if slot:
+            return slot
+        if not self._ignite_snap_present:
+            return _OMIT
+        # 盘上原本就有 ignite：非 dict 的原值（如 null）三项全缺省时原样透传；dict 则留空槽
+        return slot if isinstance(current, dict) else copy.deepcopy(current)
 
     def _default_player_acts(self) -> dict:
         """与运行时缺省完全一致的整块（用于判断「用户什么都没改」）。"""
@@ -512,6 +675,13 @@ class GameConfigEditor(QWidget):
             if isinstance(mw, ActionEditor):
                 slot["missActions"] = mw.to_list()
             out[verb] = slot
+        # 点火槽单独读写：三项缺省且盘上原本没 ignite ⇒ 不写（_default_player_acts 不含它，
+        # 故「打开→Apply」不会因点火凭空写出 playerActs）
+        ign = self._read_ignite_ui(out.get("ignite"))
+        if ign is _OMIT:
+            out.pop("ignite", None)
+        else:
+            out["ignite"] = ign
         return out
 
     def _load_player_acts(self) -> None:
@@ -537,6 +707,22 @@ class GameConfigEditor(QWidget):
             if isinstance(mw, ActionEditor):
                 raw_actions = slot.get("missActions")
                 mw.set_data(raw_actions if isinstance(raw_actions, list) else [])
+        self._load_ignite(cfg)
+
+    def _expand_health(self, expanded: bool) -> None:
+        if expanded and self._health_form is None:
+            self._health_form = HealthConfigForm(self._model, self._health_data, self)
+            self._health_section.add_body(self._health_form)
+
+    def _load_health(self) -> None:
+        self._health_data = copy.deepcopy(self._model.game_config.get("health", {}))
+        if self._health_form is not None:
+            discard_widget(self._health_form)
+            self._health_form = None
+            self._expand_health(True)
+
+    def commit_pending_on_leave(self) -> bool:
+        return self.flush_to_model()
 
     def reload_refs_from_model(self) -> None:
         """主窗口切页后调用：重拉引用候选（本会话新建的场景/任务/演出 id 才可见），
@@ -552,6 +738,10 @@ class GameConfigEditor(QWidget):
             cur = sel.current_id()
             sel.set_items(items)
             sel.set_current(cur)
+        # 点火动画候选取自「玩家化身」页的 stateMap；set_entries 保当前值（悬垂作孤儿项展示）
+        self._ignite_anim.set_entries(self._ignite_anim_entries())
+        if self._health_form is not None:
+            self._health_form.reload_refs_from_model()
 
     def _build_text_palette_section(self) -> CollapsibleSection:
         """语义色板：内容里写 `[c:<id>]…[/c]` 给某几个字上色，这里定义有哪些档位。
@@ -727,6 +917,7 @@ class GameConfigEditor(QWidget):
 
         self._load_day_night()
         self._load_player_acts()
+        self._load_health()
 
         sf = cfg.get("startupFlags", {})
         self._flags_table.setRowCount(0)
@@ -862,6 +1053,9 @@ class GameConfigEditor(QWidget):
             del cfg["dayNight"]
 
         # 玩家动词块：整块与缺省一致且磁盘上本就没有这个键时不写（防「打开即注入」）
+        health = self._health_form.value() if self._health_form is not None else copy.deepcopy(self._health_data)
+        if health or "health" in cfg:
+            cfg["health"] = health
         acts = self._read_player_acts_ui()
         if "playerActs" in cfg or acts != self._default_player_acts():
             cfg["playerActs"] = acts

@@ -25,15 +25,15 @@
         "max": 700,
         "maxAccel": 2600,
         "minAltitude": 60,
-        "senseRadius": 170,
-        "separation": 42,
+        "senseRadius": 148,
+        "separation": 50,
         "accel": {
           "separation": 2000,
           "alignment": 800,
           "cohesion": 600
         },
         "orbit": {
-          "radius": 320,
+          "radius": 180,
           "height": 210,
           "handedness": "mixed"
         },
@@ -44,10 +44,12 @@
         },
         "attitude": {
           "fear": {
-            "item:bug": 1.0,
+            "item:bug": 1,
             "player:motion": 0.35,
             "light": 0.6,
-            "sfx:footstep": 0.15
+            "sfx:footstep": 0.15,
+            "torch:香": 0.8,
+            "torch:fire": 1
           },
           "reactionDelay": [
             0.05,
@@ -55,7 +57,10 @@
           ],
           "fearDecay": 0.35,
           "fleeThreshold": 0.25,
-          "calmSeconds": 6
+          "calmSeconds": 6,
+          "attract": {
+            "torch:招": 0.45
+          }
         },
         "initialState": "roosting",
         "wingFlap": {
@@ -63,7 +68,12 @@
           "atMax": 14
         },
         "speedJitter": 0.15,
-        "wander": 300
+        "wander": 300,
+        "harassment": {
+          "radius": 75,
+          "height": 90,
+          "attackPerSecond": 6
+        }
       }
     }
   ]

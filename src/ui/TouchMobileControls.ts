@@ -280,11 +280,18 @@ export class TouchMobileControls {
     actions.appendChild(gazeBtn);
     actions.appendChild(kickBtn);
     actions.appendChild(jumpBtn);
+    // 手上的火：点火 / 熄灭点按（T）、护火 toggle（Q，触屏没有可靠的按住手感）。手上没有能操作的火就藏起来
+    const torchBtn = this.makeVerbTapBtn('KeyT', strings.get('touchControls', 'torch'));
+    const guardBtn = this.makeVerbToggleBtn('KeyQ', strings.get('touchControls', 'torchGuard'));
+    actions.appendChild(torchBtn);
+    actions.appendChild(guardBtn);
     this.verbBtns.push(
       { btn: crouchBtn, verb: 'crouch' },
       { btn: gazeBtn, verb: 'gaze' },
       { btn: kickBtn, verb: 'kick' },
       { btn: jumpBtn, verb: 'jump' },
+      { btn: torchBtn, verb: 'torch' },
+      { btn: guardBtn, verb: 'torchGuard' },
     );
 
     const overlayBar = document.createElement('div');

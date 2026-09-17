@@ -44,6 +44,28 @@ function expectBadActionsReportedAt(issues: ReturnType<typeof issuesForOnEnter>,
   expect(at('action.signal.reserved', `${listPath}[2].params.signal`), `${listPath}: reserved signal`).toBe(true);
 }
 
+describe('narrative transition conditions accept the heldProp leaf (reactive wakes on heldProp:changed)', () => {
+  const issuesFor = (conditions: unknown[]) => validateNarrativeGraphData({
+    schemaVersion: 3,
+    signals: [],
+    compositions: [{
+      id: 'comp',
+      mainGraph: {
+        id: 'flow', ownerType: 'flow', initialState: 'a',
+        states: { a: { id: 'a' }, b: { id: 'b' } },
+        transitions: [{ id: 't', from: 'a', to: 'b', signal: '__draft__', trigger: 'reactiveAll', conditions }],
+      },
+      elements: [],
+    }],
+  }).filter((i) => i.code.startsWith('condition'));
+
+  it('accepts heldProp (also under not / all) and rejects an empty holder', () => {
+    expect(issuesFor([{ heldProp: 'player', prop: 'xianteng_torch', burning: true }])).toEqual([]);
+    expect(issuesFor([{ not: { all: [{ heldProp: 'player', vitalityOp: '<', vitality: 0.3 }] } }])).toEqual([]);
+    expect(issuesFor([{ heldProp: '  ' }]).some((i) => i.code === 'condition.shape')).toBe(true);
+  });
+});
+
 describe('narrative validation descends into every nested action list', () => {
   const cond = { flag: 'k' };
 

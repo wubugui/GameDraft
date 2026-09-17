@@ -17,6 +17,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QLineEdit
 
 from tools.editor.editors.prop_preset_editor import PropPresetEditor
@@ -125,6 +126,48 @@ class PropPresetDirtyFlowTests(_Base):
         ed.flush_to_model(True)
         self.assertAlmostEqual(self._model.prop_presets["taomu_jian"]["scale"], 0.5,
                                msg="Discard 之后的统一 flush 不许把放弃的编辑写回")
+
+    def test_switching_preset_commits_the_edit_on_leave(self) -> None:
+        """编辑完直接点下一条挂件（不点 Apply）：刚改的不许静默消失（commit-on-leave）。
+
+        修之前 `_on_select` 直接换条目，`_staged()` 只并**当前**这一条——上一条的表单编辑
+        在列表点击那一刻就没了，flush 只写得出新选中那条。"""
+        ed = PropPresetEditor(self._model)
+        ed._list.setCurrentRow(ed._list.row(ed._list.findItems("taomu_jian", Qt.MatchFlag.MatchExactly)[0]))
+        ed._spins["anchorY"].setValue(0.42)
+        ed._list.setCurrentRow(ed._list.row(ed._list.findItems("denglong", Qt.MatchFlag.MatchExactly)[0]))
+        self.assertEqual(ed._current, "denglong")
+        ed.flush_to_model(True)
+        self.assertAlmostEqual(self._model.prop_presets["taomu_jian"]["anchorY"], 0.42)
+        self.assertEqual(self._model.prop_presets["denglong"], SEED["denglong"], "切过去的那条不许被连带改写")
+
+    def test_new_preset_keeps_the_unapplied_edit(self) -> None:
+        from unittest import mock
+
+        from PySide6.QtWidgets import QInputDialog
+        ed = PropPresetEditor(self._model)
+        ed._refresh(keep="taomu_jian")
+        ed._spins["scale"].setValue(2.0)
+        with mock.patch.object(QInputDialog, "getText", return_value=("新挂件", True)):
+            ed._on_new()
+        ed.flush_to_model(True)
+        self.assertAlmostEqual(self._model.prop_presets["taomu_jian"]["scale"], 2.0)
+        self.assertIn("新挂件", self._model.prop_presets)
+
+    def test_discard_then_reselect_does_not_resurrect(self) -> None:
+        ed = PropPresetEditor(self._model)
+        ed._refresh(keep="taomu_jian")
+        ed._spins["scale"].setValue(9.0)
+        ed._reload_from_model()
+        ed._list.setCurrentRow(ed._list.row(ed._list.findItems("denglong", Qt.MatchFlag.MatchExactly)[0]))
+        ed.flush_to_model(True)
+        self.assertAlmostEqual(self._model.prop_presets["taomu_jian"]["scale"], 0.5)
+
+    def test_select_by_id_reports_honestly(self) -> None:
+        ed = PropPresetEditor(self._model)
+        self.assertTrue(ed.select_by_id("denglong"))
+        self.assertEqual(ed._current, "denglong")
+        self.assertFalse(ed.select_by_id("没有这条"))
 
     def test_save_all_writes_the_file(self) -> None:
         ed = PropPresetEditor(self._model)

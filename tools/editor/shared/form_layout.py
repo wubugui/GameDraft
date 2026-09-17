@@ -6,7 +6,12 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFormLayout, QWidget
+from PySide6.QtWidgets import QFormLayout, QPushButton, QWidget
+
+from ..theme import mark_compact_button
+
+#: 窄图标按钮的宽度：够画一个全角字形（＋ / － / ↑ / ↓ / −）+ 紧凑内边距，再窄就开始糊。
+COMPACT_ICON_BUTTON_W = 30
 
 
 def compact_form(form: QFormLayout) -> QFormLayout:
@@ -26,3 +31,31 @@ def cap_width(widget: QWidget, max_w: int) -> QWidget:
     """给短字段设最大宽度（用于不在 QFormLayout 字段列、无法靠表单策略约束的包装行）。"""
     widget.setMaximumWidth(max_w)
     return widget
+
+
+def fit_width_cap(widget: QWidget, max_w: int) -> QWidget:
+    """设宽度上限，但**不许低于控件自己画得下的宽度**。
+
+    宽度上限是布局纪律（短字段别撑满整行），可上限比 `sizeHint()` 还小就不是纪律而是
+    裁字：下拉里最长那一项（常常正是「（不限）」这种缺省项）被切一半，作者读到的是
+    半句话。所以一律取 `max(上限, sizeHint)`。
+    """
+    widget.ensurePolished()   # QSS 的内边距要 polish 过才算进 sizeHint
+    widget.setMaximumWidth(max(int(max_w), widget.sizeHint().width()))
+    return widget
+
+
+def compact_icon_button(text: str, tooltip: str, parent: QWidget | None = None,
+                        *, width: int = COMPACT_ICON_BUTTON_W) -> QPushButton:
+    """只放一个字形的窄按钮（＋ / － / ↑ / ↓ / −）。
+
+    ⚠ 直接 `QPushButton(...)` + `setFixedWidth(28)` 画出来是**空白按钮**：主题给
+    QPushButton 的左右内边距合计 28px，比按钮本身还宽，字形被挤到没有。必须带上
+    `mark_compact_button` 给的紧凑内边距（见 `theme.COMPACT_BUTTON_PROP`）。
+    """
+    button = QPushButton(text, parent)
+    button.setToolTip(tooltip)
+    mark_compact_button(button)
+    button.ensurePolished()   # QSS 的内边距要 polish 过才算进 sizeHint
+    button.setFixedWidth(max(int(width), button.sizeHint().width()))
+    return button

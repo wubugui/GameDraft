@@ -24,14 +24,16 @@ export interface SystemNoteUIOptions {
   strings: { get(cat: string, key: string): string };
   /** 压暗时留白的屏幕区域（被说明的 HUD 读数）；null = 全压 */
   spotlight?: Rectangle | null;
+  /** 读档 / 销毁终止旧时间线的卡，包括图片还在装载的时候。 */
+  signal?: AbortSignal;
 }
 
 /** 同屏只许一张说明卡：重入直接 resolve，不叠第二层模态。 */
-let noteActive = false;
+let activeNote: { signal?: AbortSignal } | null = null;
 
 /** 模态在场判据（GameStateController 的按键压制钩子用；同 isConfirmDialogOpen）。 */
 export function isSystemNoteOpen(): boolean {
-  return noteActive;
+  return activeNote !== null && activeNote.signal?.aborted !== true;
 }
 
 const IMG_BOX_W = 170;
@@ -52,17 +54,25 @@ export async function openSystemNote(
   def: SystemNoteDef,
   opts: SystemNoteUIOptions,
 ): Promise<void> {
-  if (noteActive) return;
-  noteActive = true;
+  if (isSystemNoteOpen() || opts.signal?.aborted) return;
+  const session = { signal: opts.signal };
+  activeNote = session;
+  const releaseSession = () => { if (activeNote === session) activeNote = null; };
 
   let texture: Texture | null = null;
   if (def.image) {
+    let stopLoading!: () => void;
+    const cancelled = new Promise<null>((resolve) => { stopLoading = () => resolve(null); });
+    opts.signal?.addEventListener('abort', stopLoading, { once: true });
     try {
-      texture = await assetManager.loadTexture(resolveContentImageUrl(def.image));
+      texture = await Promise.race([assetManager.loadTexture(resolveContentImageUrl(def.image)), cancelled]);
     } catch (e) {
       console.warn('SystemNoteUI: 小图装载失败，卡上只出字', def.image, e);
+    } finally {
+      opts.signal?.removeEventListener('abort', stopLoading);
     }
   }
+  if (opts.signal?.aborted) { releaseSession(); return; }
 
   return new Promise<void>((resolve) => {
     const sw = renderer.screenWidth;
@@ -76,10 +86,11 @@ export async function openSystemNote(
       if (finished) return;
       finished = true;
       window.removeEventListener('keydown', onKey, true);
+      opts.signal?.removeEventListener('abort', finish);
       if (raf) cancelAnimationFrame(raf);
       if (root.parent) root.parent.removeChild(root);
       root.destroy({ children: true });
-      noteActive = false;
+      releaseSession();
       resolve();
     };
 
@@ -186,6 +197,7 @@ export async function openSystemNote(
       finish();
     };
     window.addEventListener('keydown', onKey, true);
+    opts.signal?.addEventListener('abort', finish, { once: true });
 
     renderer.uiLayer.addChild(root);
     fadeIn(panel);

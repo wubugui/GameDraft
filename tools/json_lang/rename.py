@@ -41,6 +41,8 @@ RENAMEABLE_UNIVERSES = {
 
 # 拒绝时的指路文案(kind → 原因)
 _REJECT_REASONS = [
+    ({"health_threats", "health_bounds", "health_protections"},
+     "三把火定义请在编辑器中修改并调整所有引用；保存前会拦截悬垂引用。粒子来源请在粒子工作台修改"),
     ({"actors", "emote_subjects", "scene_entities", "hotspots", "zones", "spawn_points"},
      "实体/出生点改名有场景限定歧义与 [tag:npc:] 文本引用,请走编辑器「重构」菜单(entity_refactor 引擎)"),
     ({"scenes"}, "场景 id 与文件名耦合(id==文件名契约),不支持在 IDE 里改"),

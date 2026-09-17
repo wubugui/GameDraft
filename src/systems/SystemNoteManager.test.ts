@@ -16,6 +16,21 @@ function make(): { m: SystemNoteManager; flags: FlagStore; bus: EventBus } {
 }
 
 describe('SystemNoteManager（K4 系统说明卡）', () => {
+  it('读档会取消旧卡，旧卡的 finally 不会解锁新卡', async () => {
+    const { m, flags } = make(); await m.loadDefs();
+    const sessions: { signal: AbortSignal; close(): void }[] = [];
+    m.setOpener((_def, signal) => new Promise<void>((close) => { sessions.push({ signal, close }); }));
+    const old = m.show('three_fires'); m.deserialize({});
+    expect(sessions[0].signal.aborted).toBe(true);
+    const current = m.show('three_fires');
+    sessions[0].close(); await old;
+    expect(flags.get('sysnote_three_fires')).toBeUndefined();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await m.show('three_fires'); expect(sessions).toHaveLength(2);
+    sessions[1].close(); await current;
+    expect(flags.get('sysnote_three_fires')).toBe(true);
+    warn.mockRestore();
+  });
   it('关卡即落 flag sysnote_<id>，每档只自动弹一次；force 重弹', async () => {
     const { m, flags } = make();
     await m.loadDefs();

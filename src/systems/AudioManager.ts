@@ -80,6 +80,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private requestedAmbientIds = new Set<string>();
   /** 每层 ambient 的基础音量乘数（addAmbient 入参 ?? 配置 entry.volume ?? 1）；setVolume('ambient') 按 base×全局 重算 */
   private ambientBaseVolume: Map<string, number> = new Map();
+  /** 短时表演覆盖，不改场景基线、不进存档、也不改玩家通道偏好。 */
+  private ambientPulses = new Map<string, { volume: number; weight: number }>();
   /**
    * 对齐 bgmRequestSeq 的按层代次守卫：addAmbient 记下自己的代次，removeAmbient/clearAmbient/destroy
    * 推进代次使在途加载作废（await loadAudio 归来发现代次过期即不 play、不入 Map），
@@ -536,7 +538,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       const playing = this.ambientLayers.get(id);
       if (playing) {
         if (this.ambientBaseVolume.get(id) !== baseVol) {
-          playing.volume(this.clamp01(baseVol * this.ambientVolume));
+          playing.volume(this.ambientEffectiveVolume(id, baseVol));
           this.ambientBaseVolume.set(id, baseVol);
         }
         return;
@@ -550,7 +552,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       // 复用缓存 Howl 前先停残留发声实例（如淡出中的旧层），否则 play() 会另起并发实例叠音（同 playBgm）
       howl.stop();
       howl.loop(true);
-      howl.volume(this.clamp01(baseVol * this.ambientVolume));
+      howl.volume(this.ambientEffectiveVolume(id, baseVol));
       howl.play();
       this.ambientLayers.set(id, howl);
       this.ambientBaseVolume.set(id, baseVol);
@@ -558,6 +560,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   removeAmbient(id: string, fadeMs: number = 500): void {
+    this.ambientPulses.delete(id);
     this.requestedAmbientIds.delete(id);
     // 使该层任何在途 addAmbient 作废
     this.bumpAmbientSeq(id);
@@ -573,6 +576,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   clearAmbient(fadeMs: number = 500): void {
+    this.ambientPulses.clear();
     this.requestedAmbientIds.clear();
     // 使全部层的在途 addAmbient 作废（含尚未入 Map、还停在 await loadAudio 的）
     for (const key of this.ambientRequestSeq.keys()) this.bumpAmbientSeq(key);
@@ -810,6 +814,26 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     return this.playTransientEntry(id, options, 'voice');
   }
 
+  /** 共享风场的包络直接写此层；恢复时读取最新基线而非旧快照。 */
+  setAmbientPulse(id: string, volume: number | undefined, weight = 0): void {
+    const previous = this.ambientPulses.get(id);
+    if (volume === undefined || weight <= 0) {
+      if (!previous) return;
+      this.ambientPulses.delete(id);
+    } else {
+      if (!Number.isFinite(volume) || !Number.isFinite(weight)) return;
+      const next = { volume: this.clamp01(volume), weight: this.clamp01(weight) };
+      if (previous?.volume === next.volume && previous.weight === next.weight) return;
+      this.ambientPulses.set(id, next);
+    }
+    this.ambientLayers.get(id)?.volume(this.ambientEffectiveVolume(id, this.ambientBaseVolume.get(id) ?? 1));
+  }
+
+  private ambientEffectiveVolume(id: string, base: number): number {
+    const pulse = this.ambientPulses.get(id);
+    return this.clamp01((pulse ? base + (pulse.volume - base) * pulse.weight : base) * this.ambientVolume);
+  }
+
   setVolume(channel: AudioChannel, vol: number): void {
     const v = Math.max(0, Math.min(1, vol));
     switch (channel) {
@@ -824,7 +848,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         this.ambientVolume = v;
         // 按「每层基础乘数 × 新全局值」重算，不能直接覆盖成 v（会把配置/入参的层级音量冲掉）
         this.ambientLayers.forEach((howl, id) =>
-          howl.volume(this.clamp01((this.ambientBaseVolume.get(id) ?? 1.0) * v)));
+          howl.volume(this.ambientEffectiveVolume(id, this.ambientBaseVolume.get(id) ?? 1.0)));
         break;
       case 'voice':
         this.voiceVolume = v;
@@ -1331,6 +1355,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   destroy(): void {
+    this.ambientPulses.clear();
     // 使任何仍在 await loadAudio 的 playBgm/addAmbient 失效：到点 resume 时代次不匹配即放弃 play()，
     // 否则会在 destroy 之后才起一个永不被停止的 Howl。
     ++this.bgmRequestSeq;

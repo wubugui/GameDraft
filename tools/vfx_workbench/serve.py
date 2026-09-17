@@ -18,6 +18,12 @@
                                           kind = playVfx / stopVfx / setVfxState / condition（只读；删布置 / 改 id 前列清单）
   GET  /api/sfx                           音效 id 清单（声音模块的选择器候选）
   GET  /api/anims                         可用动画包 ``[{path, states[]}]`` / 单图清单（外观模块的选择器候选）
+  GET  /api/burnables                     可燃物模板表（``assets/data/burnables/``，本台只读）：
+                                          ``{templates:[{id, label, mode, bindable, note, summary, doc}], errors:{id: 读不懂的原因}}``——
+                                          ``bindable`` = 薄片能绑（``vfx_burn.plate_bindable_template_ids``，与形状闸门零提醒同一集合），
+                                          ``note`` = 不能绑的原因（闸门同一句），``summary`` = 检视器只读展示的关键参数，
+                                          ``doc`` = 原始文档（页面过打包进来的运行时 ``resolveBurnable`` 喂本地预览）
+  POST /api/open_burn_workbench {id?}     另起 detached 进程开燃烧工作台（``-m tools.burn_workbench [--open id]``，cwd = 仓库根）
   POST /api/save      {doc}               归一化校验后原子写盘
   POST /api/create    {id, sceneId?, background?, label?}
   POST /api/delete    {id, withPlacements?, confirmExternal?}   全库有布置引用它 / 挂件预设或 playVfx 还按 id 用它
@@ -41,6 +47,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -51,6 +58,8 @@ ROOT = TOOL.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from tools.editor.shared import burnables as bn                                      # noqa: E402
+from tools.editor.shared import vfx_burn                                             # noqa: E402
 from tools.editor.shared import vfx_placements as vp                                  # noqa: E402
 from tools.trajectory_workbench.geometry import SCENES_RT, list_scenes, scene_paths  # noqa: E402
 from tools.trajectory_workbench.serve import get_geometry, scaled_background         # noqa: E402
@@ -71,6 +80,26 @@ VENDOR = {
     # 页内下拉（不走系统原生弹窗：Qt 在高 DPI 下那个弹窗每开一次再乘一次缩放，白边越开越大）
     "dropdown.js": "tools/trajectory_workbench/viewer/dropdown.js",
 }
+
+
+#: 运行时贴图 URL 前缀（与游戏同一个 URL：效果资产里写的就是它）
+RESOURCE_IMAGES_URL = "/resources/runtime/images/"
+_IMAGE_TYPES = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+
+
+def resource_image_path(url_path: str) -> Path | None:
+    """``/resources/runtime/images/...`` → 磁盘文件；出了那个目录 / 不是图片 / 不存在 = None。"""
+    from urllib.parse import unquote
+    rel = unquote(url_path[len(RESOURCE_IMAGES_URL):])
+    base = (ROOT / "public" / "resources" / "runtime" / "images").resolve()
+    try:
+        p = (base / rel).resolve()
+        p.relative_to(base)
+    except (ValueError, OSError):
+        return None
+    if p.suffix.lower() not in _IMAGE_TYPES or not p.is_file():
+        return None
+    return p
 
 
 def scene_list() -> list[dict]:
@@ -131,6 +160,10 @@ def scene_summary(sid: str, bg: str | None, phase: str | None = None) -> dict:
     s["phase"] = cur["key"]
     s["timePhase"] = cur["timePhase"]
     s["dayNight"] = isinstance(d.get("dayNight"), dict) and d["dayNight"].get("enabled") is True
+    # 光柱预览按原画深度截断 / 遮挡：容差与运行时同一个数（depthConfig.depth_tolerance，q 单位）
+    dc = d.get("depthConfig") if isinstance(d.get("depthConfig"), dict) else {}
+    tol = dc.get("depth_tolerance")
+    s["depthTolerance"] = float(tol) if isinstance(tol, (int, float)) and not isinstance(tol, bool) else 0.05
     return s
 
 
@@ -190,6 +223,44 @@ def appearance_sources() -> dict:
             if p.suffix.lower() in (".png", ".webp", ".jpg", ".jpeg"):
                 images.append("/resources/runtime/images/vfx/" + p.name)
     return {"anims": anims, "images": images}
+
+
+def burnable_table() -> dict:
+    """可燃物模板表（薄片「可燃模板」选择器的候选 + 本地预览要装的模板）。
+
+    候选面 = 校验面：``bindable`` 用 ``vfx_burn.plate_bindable_template_ids``（= ``plate_burnable_notes`` 零提醒的集合），
+    不能绑的那几份照样列出来（``note`` 是闸门同一句原因），好让检视器在当前值是它们时**保值展示并说清为什么**。
+    读不懂的文件进 ``errors``（不在 ``templates`` 里）。``doc`` 原样给：页面拿打包进来的运行时 ``resolveBurnable``
+    清洗，不在 JS 里另写缺省。只读，不写任何东西。
+    """
+    docs, errors = assets.burn_templates()
+    bindable = set(vfx_burn.plate_bindable_template_ids(docs))
+    rows = []
+    for tid in sorted(docs):
+        doc = docs[tid]
+        summary = vfx_burn.plate_template_summary(doc)
+        notes = [] if tid in bindable else vfx_burn.plate_burnable_notes({"template": tid}, docs)
+        rows.append({"id": tid, "label": summary["label"], "mode": summary["mode"], "bindable": tid in bindable,
+                     "note": notes[0] if notes else "", "summary": summary, "doc": doc})
+    return {"templates": rows, "errors": dict(sorted(errors.items()))}
+
+
+def open_burn_workbench(template_id: str = "") -> dict:
+    """另起独立进程开「燃烧工作台」（检视器「打开燃烧工作台」的落点；照抄主编辑器 ``open_burn_workbench``）。
+
+    detached、不等它；带模板 id 就 ``--open`` 那一份（已开着的实例会切过去）。模板归燃烧工作台写：
+    作者那边存盘后切回本台，页面在窗口重新获得焦点时重取 ``/api/burnables``。
+    id 不合法（不是模板 id 的写法 / 以 ``-`` 开头会被当成参数）→ 不起进程、回错。
+    """
+    tid = str(template_id or "").strip()
+    if tid and (not bn.is_valid_id(tid) or tid.startswith("-")):
+        raise ValueError(f"不是可燃物模板 id：{tid!r}")
+    cmd = [sys.executable, "-m", "tools.burn_workbench", *(["--open", tid] if tid else [])]
+    kwargs: dict = {"cwd": str(ROOT)}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    subprocess.Popen(cmd, **kwargs)
+    return {"ok": True, "id": tid, "message": f"已另起燃烧工作台{f'（打开模板「{tid}」）' if tid else ''}"}
 
 
 class H(SimpleHTTPRequestHandler):
@@ -254,6 +325,12 @@ class H(SimpleHTTPRequestHandler):
                 if not p.is_file():
                     return self._json({"ok": False, "err": f"共用件不存在: {rel}"}, 404)
                 return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+            if u.path.startswith(RESOURCE_IMAGES_URL):
+                # 贴图预览（光柱图案遮罩 / 粒子单图）：只放行 public/resources/runtime/images 下的图片，不许拿路径拼任意文件
+                p = resource_image_path(u.path)
+                if p is None:
+                    return self._json({"ok": False, "err": "不是 resources/runtime/images 下的图片"}, 404)
+                return self._bytes(p.read_bytes(), _IMAGE_TYPES[p.suffix.lower()])
             if u.path == "/gen/vfx.bundle.js":
                 p, err = bundle.ensure_bundle()
                 if not p or not p.exists():
@@ -315,6 +392,8 @@ class H(SimpleHTTPRequestHandler):
                 return self._json({"ok": True, "sfx": sfx_ids()})
             if u.path == "/api/anims":
                 return self._json({"ok": True, **appearance_sources()})
+            if u.path == "/api/burnables":
+                return self._json({"ok": True, **burnable_table()})
             if u.path == "/api/link/config":
                 return self._json({"ok": True, "gameUrl": LINK.base, "writer": LINK.writer})
             if u.path == "/api/link/status":
@@ -369,6 +448,11 @@ class H(SimpleHTTPRequestHandler):
                 working = body.get("doc") if isinstance(body.get("doc"), dict) else None
                 p, norm = assets.duplicate_asset(str(body.get("id") or ""), str(body.get("to") or "").strip(), working)
                 return self._json({"ok": True, "doc": norm, "path": _rel(p)})
+            if u.path == "/api/open_burn_workbench":
+                try:
+                    return self._json(open_burn_workbench(str(body.get("id") or "")))
+                except ValueError as e:
+                    return self._json({"ok": False, "err": str(e)}, 400)
             if u.path == "/api/link/config":
                 return self._json({"ok": True, "gameUrl": LINK.set_base(str(body.get("gameUrl") or ""))})
             if u.path == "/api/link/publish":

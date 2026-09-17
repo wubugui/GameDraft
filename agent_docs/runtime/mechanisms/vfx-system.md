@@ -3,7 +3,7 @@ id: vfx-system
 title: 世界空间粒子 / 群体系统(效果资产 · 布置 · 刺激场)
 domain: runtime
 type: mechanism
-summary: 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 按场景×时段外观分份的布置库 / 运行时刺激场),效果与布置唯一写者都是粒子工作台;表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源
+summary: 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 按场景×时段外观分份的布置库 / 运行时刺激场),效果与布置唯一写者都是粒子工作台;表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源;效果里还可以挂美术可控的光柱(体积光,3D 截面多边形视锥 / 2D 光带,逐像素一次解析求弦,不照角色、不进光照缓存)与挂在光柱里的尘埃
 status: active
 authority:
   - src/data/types.ts#VfxEffectDef
@@ -12,13 +12,20 @@ authority:
   - src/systems/vfx/vfxConfine.ts
   - src/systems/vfx/vfxSpace.ts
   - src/systems/vfx/VfxSystem.ts
+  - src/systems/vfx/vfxBeam.ts
+  - src/data/vfxBeamContract.json
   - src/rendering/vfx/VfxRenderer.ts
+  - src/rendering/vfx/vfxBeamGlsl.ts
+  - src/rendering/vfx/VfxBeamView.ts
   - src/rendering/vfx/vfxShaders.ts
+  - src/rendering/glProgramWarmup.ts
+  - src/systems/SceneManager.ts#setRevealGate
   - src/utils/depthShellField.ts
   - src/utils/groundHeightfield.ts
   - src/core/ActionRegistry.ts#playVfx
   - src/dev/runtimeVfxSync.ts
   - tools/editor/shared/vfx_placements.py
+  - tools/editor/shared/vfx_beam.py
 triggers:
   paths:
     - "src/systems/vfx/**"
@@ -28,8 +35,11 @@ triggers:
     - "public/assets/data/vfx/**"
     - "public/assets/data/vfx_placements.json"
     - "tools/editor/shared/vfx_placements.py"
-  topics: [粒子, 群体, 蝙蝠, 鸟群, 虫, boids, 刺激场, 烟, 滴水, 萤火, 尘埃, vfx, 发射器, 深度壳, 粒子区域, 发射区域, 范围区域, 软边界, 布置, 布置库, 时段外观, 白天夜里]
-  tasks: [加粒子效果, 改群体行为, 摆效果实例, 布置粒子, 调夜里的粒子, 加刺激源, 改粒子渲染, 限定粒子范围, 配粒子区域]
+    - "tools/editor/shared/vfx_beam.py"
+    - "src/data/vfxBeamContract.json"
+    - "src/rendering/glProgramWarmup.ts"
+  topics: [粒子, 群体, 蝙蝠, 鸟群, 虫, boids, 刺激场, 烟, 滴水, 萤火, 尘埃, vfx, 发射器, 深度壳, 粒子区域, 发射区域, 范围区域, 软边界, 布置, 布置库, 时段外观, 白天夜里, 光柱, 体积光, 光束, 丁达尔, god rays, 天窗漏光, 光带, 预热, prewarm, 卡顿, shader 编译, 揭幕前闸]
+  tasks: [加粒子效果, 改群体行为, 摆效果实例, 布置粒子, 调夜里的粒子, 加刺激源, 改粒子渲染, 限定粒子范围, 配粒子区域, 加光柱, 调体积光, 让尘埃只在光里亮, 查粒子卡顿, 加粒子 shader]
 verified_by:
   - src/systems/vfx/vfxSim.test.ts
   - src/systems/vfx/vfxConfine.test.ts
@@ -38,7 +48,17 @@ verified_by:
   - src/systems/vfx/VfxSystem.placements.test.ts
   - src/dev/runtimeVfxSync.test.ts
   - tools/editor/tests/test_vfx_action_registration.py
-last_governed: 2026-09-14
+  - src/systems/vfx/vfxBeam.test.ts
+  - src/systems/vfx/VfxSystem.beams.test.ts
+  - src/rendering/vfx/vfxBeamGlsl.test.ts
+  - tools/vfx_workbench/tests/test_beam.py
+  - tools/editor/tests/test_scene_vfx_beam_overlay.py
+  - src/systems/vfx/vfxTiming.test.ts
+  - src/systems/vfx/VfxSystem.prewarm.test.ts
+  - src/rendering/glProgramWarmup.test.ts
+  - src/rendering/vfx/vfxGlPrograms.test.ts
+  - src/systems/SceneManagerRevealGate.test.ts
+last_governed: 2026-09-17
 ---
 
 ## 是什么(一句话)
@@ -160,6 +180,37 @@ last_governed: 2026-09-14
   切场景前粒子系统先销毁自己的 shader,早于纹理销毁 —— 漏一个槽 = 整局卡死
   (见 [pixi-v8-traps](pixi-v8-traps.md))。
 
+- **颜色随寿命 `appearance.tintOverLife`**(`[t, r, g, b][]`,2026-09-15):乘在 `tint` 上,逐粒子在 CPU 填顶点色
+  (普通粒子与薄片两条路,`sampleColorCurve` 与 `sampleCurve` 同一口径:空 = 恒白、超出两端取端点)。火苗黄白 → 橙 → 暗红靠它。
+  工作台本地预览只画点云,颜色要推到游戏里看。
+- **跟随锚点时在飞的粒子怎么走** `motion.followAnchor`(2026-09-15,粒子工作台「跟着发射点走」):`none`(缺省,留在空气里)/
+  `rig`(只跟手持挂件"动画带出来的"位移,人走路留拖尾——火舌)/ `full`(整个跟锚点——余烬红光、炭火)。群体与薄片不吃。
+  `VfxInstanceSim.moveAnchor(world, carry)`,carry 由 `HeldPropSystem.rigCarry` 算。
+- **最远烧到多远** `life.maxDistance`(wu,2026-09-15):普通有寿命粒子的烧完进度取 `max(age/life, 离发射器原点距离/(maxDistance × 实例倍率))`,
+  离火源越远越早走完寿命曲线;实例倍率 `setInstanceDistanceScale`(手持火把按燃烧强度与风缩短火焰),对在飞粒子立刻生效。
+- **一次性临时实例** `playVfx({oneShot})`:`VfxInstanceSim.finished`(不再会发 + 一颗活的都没有)就在 update 里收掉;一直发的发射器永远放不完。
+- 🔴 **不许让任何一帧可见画面同步编 shader、同步补跑预热**(2026-09-16 实测:进茶馆第一帧 11,281 ms = 受光粒子 shader
+  链接等待 10,847 ms + 30 个实例预热 361 ms;第一次点火把同样卡,都在 GTX 970 + ANGLE/D3D11 上;预览窗口
+  `--disable-gpu-shader-disk-cache`,每次开窗口重来)。三件事,缺一件就回到原样:
+  ① **受光粒子 shader 不拼 `gatherRT`**:主函数只 `probeE`。角色那条 uMode 0(体素光线步进)对粒子不可达
+  (`vfxFrameLit.uMode` 由 `CharacterLightingSystem` 钉在 1..3),拼进来不改画面,编译却从约 3 s 涨到 11 s
+  (192×256 嵌套循环里采 3D 纹理,FXC 整段展开)。`vfxGlPrograms.test.ts` 钉着(含"uMode 钉在 ≥1"这个前提)。
+  ② **粒子 GL 程序开局预编译**:`VfxRenderer.vfxGlPrograms()` 是全部粒子程序的清单(无光 / 受光 / 薄片受光 / 光柱),
+  `Game` 开局交给 `GlProgramWarmup` 用 `KHR_parallel_shader_compile` 在后台线程编(主线程轮询一次 0.1 ms),
+  每次装场景在**揭幕前闸**里(遮罩下)等编完、经 `renderer.shader.bind(shader, true)` 交给 Pixi(同源同上下文命中
+  ANGLE 程序缓存,受光粒子 70 ms)。新增粒子程序必须进清单,`vfxGlPrograms.test.ts` 扫目录拦(且只许单例建)。
+  ③ **预热分片**:`VfxInstanceSim.advancePrewarm(ctx, maxSteps)` 分几片跑与一口气跑逐位相同(时间锚在第一片)。
+  进场景的实例由 `VfxSystem.prepareForReveal` 在揭幕前闸里建好模拟并跑完预热;场景中途新建的(条件翻真 / 换时段外观 /
+  工作台推新定义 / 载荷晚到重建 / 闸超时)由 `update` 按**工作量**预算 `PREWARM_UNITS_PER_FRAME`(子步 × (发射器数 + 槽位))
+  分帧跑,不读挂钟 ⇒ 第几帧跑完可复现。**还在预热的模拟是"过去"**:不画、不正常 step、不出事件、不伤人、
+  不给燃烧系统报燃着的纸、调试行 state = `prewarming`。
+  揭幕前闸(`SceneManager.setRevealGate`)时序与限时见 [scene-onenter-reveal-timing](scene-onenter-reveal-timing.md)。
+- **挂在实体身上的实例**(`setInstanceSortHost`,手持火把):每帧问宿主节点与挂件前后,整团粒子钉在宿主同一侧,
+  对别的实体照常逐颗分桶(`VfxRenderer.clampBucketToHost`;宿主在阈值合并时保留)。
+- **实例倍率**(运行时 API,无数据字段,手持火把逐帧推):`setInstanceRateScale`(允许 0 = 不再发、在飞的自然老化)、
+  `setInstanceSizeScale`(**只乘新生粒子**)、`setInstanceWindScale`(乘场景风经阻力作用的那一项,普通粒子与薄片同一处;
+  不碰恒定风 / 刺激 / airflow)。**存在实例上**,几何载荷晚到整批重建模拟时重新套上——只存在模拟上会随重建丢掉。
+
 ## 布置取哪一份(场景 × 时段外观)
 
 - **分份的键 = 时段外观**,不是时段:`base` = 场景顶层外观(没单列成 `timeVariants` 的时段都用它),
@@ -220,6 +271,57 @@ last_governed: 2026-09-14
 - 风的模型、透视度量、草木摆动拆层、已知坑:[[scene-wind]]。
 - **薄片按毫秒算预算,不按只数**:大部分时间在睡(只做便宜的唤醒检查)。实测跑马梁 520 张:
   模拟 ≈ 0.3 ms + 顶点填充 ≈ 0.4 ms/帧(下面"普通粒子 ≤ 300 只"那条线是按普通粒子单只成本定的)。
+
+## 燃烧接口(2026-09-16,见 [[burn-system]])
+
+- **发射形状 `external`**(`{kind:'external', jitter?}`):出生点由外部每帧给(`VfxSystem.setInstanceSpawnPoints`,每点 x,y,z,半径;世界坐标),
+  发射器 `offset` 照样加上;没给点就不发(`spawnOne` 返回 -2,发射率照常消耗)。燃烧系统用它把火苗 / 余烬 / 飞灰发在正在烧的格上。
+- **薄片 `plate.burnable: {template}`**(`vfxPlateBurn.ts`,2026-09-16 起取代 `plate.flammable`):绑一份**面燃烧可燃物模板**,参数全取模板。
+  `VfxSystem` 装效果时把绑的模板一起装好(`VfxInstanceOptions.burnTemplates`;装不到 / 是消耗燃烧 ⇒ 这张纸不可燃、出声一次;没有薄片绑模板的效果不多等一拍)。
+  被火焰段碰到累计受热 `ignitionDelay` 秒 → 着(**火线从被碰到的那一边扫过去**,烧完秒数按模板火线速度 × 这张纸此刻切线朝上的分量定)→ 焦黑发亮缩小(逐顶点自发光 `aMisc.y`)
+  → **永久消失**(不补回,槽位进档:`VfxSystem` deps `burntPlatesOf` / `onPlatesBurnt`,重建模拟时 burst 填满再杀掉保 RNG 序)。
+  燃着的一组报 `plateAreaCm2`,燃烧系统按燃着面积发模板的火苗粒子与火光。
+  燃着的纸自己也是火焰段(点别的纸、带上浮力气流 √(gL))。**收模拟那一刻还在烧的按烧没了报**(离场 / 读档 / 改布置)。
+- **火焰段总线**:`VfxSystem.setFireSources(owner, segs)`——`burn`(可燃实例火线聚成 4×4 块,粗细 + 纵深半厚;含手上燃着的可燃挂件)、`heldProp`(燃着且能点火的火把火头)
+  + 各模拟自己燃着的纸,每帧拼成 `VfxStepContext.fires`。`burningPlates()` 反馈给燃烧系统(纸钱点着可燃物)。
+
+## 光柱(体积光,2026-09-16)
+
+制作人定调:**美术可控、随便放、性能好**,不要物理积分;与场景光照混用不冲突;**不照角色**(做成 blend 就够);
+视角是 2D、远观,相机不会走进 / 贴近光柱——所以砍掉了一切"近看才需要"的东西(内外强度、眩光、距离淡出 / LOD、
+抖动、步进、体积阴影、光源绑定、触发区……清单在 `docs/玩法功能需求清单.md` A3.6)。作者面在粒子工作台(见 [[vfx-workbench]]「光柱」)。
+
+- **数据**:效果资产里与 `emitters` 并列的 `beams[]`(`VfxBeamDef`,字段与缺省以 `types.ts` 为准;只有光柱的效果 `emitters` 可空)。
+  取值范围 / 枚举 / 缺省的**唯一真相源**是 `src/data/vfxBeamContract.json`,TS(`vfxBeam.ts`)与 Python(`tools/editor/shared/vfx_beam.py`)
+  都读它;闸门报错**逐字同句**(`test_beam.py` 用 node 真跑 TS 比),运行时建模拟时闸门不过直接抛(整个实例建不起来,不是半个)。
+- **两种模式**:
+  - `3d`:M-world 里的**截面视锥**,`from`(缺省锚点)→ `to` 都是相对锚点世界点的 wu;截面 `rect {width,height}` 或
+    **正 3–8 边形** `polygon {sides, radius}`——**不许圆**(制作人:远看圆柱反而怪);`spreadDeg [宽, 高]` 张角、`rollDeg` 绕轴转。
+    宽方向缺省水平(`right = Y × axis`,竖直光柱退世界 +X)。
+  - `2d`:画面坐标里的梯形光带(相对锚点的画面点),`occludeByDepth` 开了就当成立在锚点脚下的**直立面**参与原画深度遮挡。
+- **画法**(`vfxBeamGlsl.ts` 一份 GLSL,游戏与工作台原画视图同源拼接):一道光柱一张网格,网格 = 视锥角点投到画面的**凸包**
+  (≤ 16 点);片元把画面点经 `sceneQAffine` 的逆换回世界视线,与 N+2 个半空间求**一次弦**(不步进),弦的远端截在
+  原画深度 + `depth_tolerance`(被柱子挡住、落在床面上都靠这一刀),在弦**中点采样一次**:边缘遮罩(矩形取 u/v 较近边、多边形取最近边)
+  × 沿长度曲线 × 噪声(fbm,`velocity` 世界 wu/s)× 图案遮罩(灰度图)× 起伏(`flicker` / `breathe`)× 淡入淡出;
+  `thickness` 把弦长 / 截面参考厚度(封顶 3)混进来,`contactSoftWu` 让撞上原画的地方软着陆。
+  平面近似场景同一套数学、没有深度截断。
+- 🔴 **亮度乘在显示空间,不乘在线性空间**:`bmShade` 分开返回线性颜色与份量,宿主先过显示变换再乘份量——
+  与粒子 alpha 同口径。先乘再编码的第一版边缘是一刀硬边(sRGB 编码把低份量整段抬亮),`vfxBeamGlsl.test.ts` 钉着输出式。
+- **混合** `add`(ONE, ONE)/ `screen`(ONE, ONE_MINUS_SRC_COLOR)/ `normal`(预乘);**不照亮角色、不进光照两级缓存**
+  (任何灯变化都整张重烘 RGBA16F,光柱每帧在动,放进去等于每帧重烘)。
+- **前后关系**:整道光柱**按落点**当一个实体排——3D 取终点正下方地面点、2D 取锚点脚点的画面 y(`VfxBeamRuntime.foot`);
+  `sort: background / foreground` 钉到实体层最后 / 最前。实测义庄:人站在落点后面被光柱罩住,站到前面盖在光柱上。
+- **生命周期**:`fadeIn / fadeOut` 秒;`stop()` 让光柱按 fadeOut 淡(不当场消失)。布置条件翻假 / `stopVfx` 时带光柱的实例进
+  `draining`,**淡完才收模拟**(没有光柱的效果一字不变:条件一假当场收);淡出中 `playVfx` / 条件翻回 = 原模拟接着淡入,不重建。
+  ⚠ 收模拟时在飞的尘埃随之消失——与原来"条件一假整团没了"同口径,尘埃挂了 `beamLit` 本来就跟着光柱一起淡。
+- **光柱里的尘埃**:发射形状 `{kind:'beam', beam, along?}` 在光柱体积里均匀出生(3D 按截面面积拒绝采样;2D 落在光带画面点对应的直立面上);
+  外观 `beamLit {beam, gain}`:粒子所在处的光柱亮度 k = 光柱在该点的份量 × gain,**透明度 × min(1,k)、颜色 × 光柱颜色 × clamp(k,1,8)**,
+  k≈0(飘出光柱)不画。🔴 `gain` 缺省 1 配 `intensity 0.4` 的光柱时尘埃中位 k 只有 0.25,画面上等于没有(义庄实测);义庄 `dust_motes` 用 4。
+- **图案遮罩贴图**按实例装(`VfxSystem.beamTextures`),装不到先不带图案画 + log 一句;贴图存在性走 `asset_reference_audit`(键名 `image`)。
+- **主编辑器只读显示**起点、起点→终点中轴与画面轮廓(`vfx_beam.beam_overlay_rows`;有深度包轨迹工作台的 `SceneGeometry`、
+  没有走与 `createPlanarVfxSpace` 同式的平面近似)。义庄真数据与运行时凸包角点逐点差 < 0.01 wu。
+- **代价**(2026-09-16,义庄 1280×960,`app.render()` + 同步回读 1 像素取中位):0 道 1.1–1.3 ms、1 道 1.3、4 道 1.6、8 道 1.8 ms;
+  模拟侧每道光柱只有每帧一次淡入淡出与锚点变了才重算的框架,`simMs` 看不出差别。
 
 ## 粒子区域(发射区域 `area` + 范围区域 `confine.area`,软边界)
 
@@ -320,8 +422,24 @@ returning <──安静 calmSeconds──────────── fleeing
 拿它当稳态会误判成"超预算"。预算线:普通粒子每场景 ≤ 300 只；群体每场景 ≤ 200 只、稳态 < 1.5 ms/帧；
 draw call ≤ 8。
 
+**首次出现的代价（2026-09-17 实测，GTX 970 / ANGLE D3D11）**：
+
+| 项 | 冷编译 | 说明 |
+|---|---|---|
+| 受光粒子 shader | 11.1 s → 去掉 gatherRT 后 2–3.4 s（并行编 1.9 s，不阻塞） | 再去掉 24 盏灯循环约 2.1 s（灯循环是真用的，没动） |
+| 薄片受光 shader | 10.1 s（改前） | 与受光粒子同一份主函数、同一处改法；改后没单独量 |
+| 光柱 / 无光 shader | 0.58 s / 0.06 s | |
+| 编完后交给 Pixi | 受光 70 ms | 同源同上下文命中 ANGLE 缓存，落在遮罩下 |
+| 预热工作量 | 4000 单位 ≈ 2.1 ms（p90 2.9，真 3D 场） | 茶馆整份 29.8 万单位；中途新建时按 4000/帧分 75 帧跑完 |
+
+修完进茶馆：揭幕前闸 625 ms（遮罩下，期间加载画面照常出帧），揭幕后第一帧 37 ms（贴图首传 9 ms + 建 39 个视图 / 358 张网格），
+之后中位 3.6 ms、p95 6.7 ms；在没有粒子的 `城门口` 现场生成 6 个火把 / 燃烧效果（6 个受光视图）：0 次 shader 编译、最坏一帧 9.6 ms。
+
 ## 怎么验证
 
+- 光柱:`vfxBeam.test.ts`(闸门 / 半空间与局部量逐点一致(矩形、3/6/8 边形)/ 弦长闭式对暴力 / 采样都在体积里 / 起伏确定性 / 淡入淡出与 finished / 尘埃出生在光柱里 / 锚点跟随 / uniform 打包)、
+  `VfxSystem.beams.test.ts`(stopVfx 淡出后才收 / 淡出中 playVfx 原模拟接着淡入)、`vfxBeamGlsl.test.ts`(GLSL uniform 表 = 打包键 = 视图组键、显示空间乘份量)、
+  `test_beam.py`(Python / TS 闸门逐字同句、存盘键序)、`test_scene_vfx_beam_overlay.py`(轮廓角点与运行时逐点一致、画布只读不吃鼠标)。
 - 单元:`vfxSim.test.ts`(确定性 / 不入地 / 不进壳 / **薄壳:侧面滑到柱子背后不被推出、壳厚内撞侧面、
   正面不隧穿、滞回、出生在背后、薄片同一条** / 惊起 → 惊散 → 回巢 / 子发射 / 大 dt 封顶)、
   `vfxConfine.test.ts`(权重网格几何 / 强风里纸钱被限定、总数不漏、边带渐稀、补回飞不过边带 / 普通粒子出框淡出 / 限高 / 不限定一字不变)、
@@ -329,6 +447,13 @@ draw call ≤ 8。
   `worldSpaceShading.test.ts`(粒子不许自己写灯循环)、
   `VfxSystem.placements.test.ts`(基底 / 夜取份、没配不回退、时段推进按 id 差分换表、工作态库整份顶替与撤销、临时实例不动;五处变异各红过)、
   `runtimeVfxSync.test.ts`(布置库套用 / 拆联动撤销、切时段序号规则;四处变异各红过)。
+- 卡帧:`vfxTiming.test.ts`(预热分片与一口气补完逐位相同,带风;时间锚改坏会红)、
+  `VfxSystem.prewarm.test.ts`(揭幕前闸建好 + 跑完、被停的不建;中途新建按帧预算分片、预热中不画;单步超预算的每帧至少一步;
+  闸超时放行 / 销毁与卸载放行;揭幕闸与分帧跳过两处变异各红过)、`glProgramWarmup.test.ts`(后台编完才交、只交一次、
+  无扩展同步交、上下文重建重来、销毁放行)、`vfxGlPrograms.test.ts`(受光主函数无 gatherRT、清单覆盖目录里全部程序)、
+  `SceneManagerRevealGate.test.ts`(scene:ready → 闸 → 揭幕 → onEnter;闸抛错照常揭幕)。
+  真机量卡帧:包 `WebGL2RenderingContext.prototype.getProgramParameter` / `shaderSource` 计时,
+  `fixedTickMode` + `debugStepTicks(1)` 逐帧推、帧间 `setTimeout(16)` 让异步装载落地;`window.__game.glProgramWarmup.pending` 看交接。
 - 构建期:`./dev.sh validate-data`(效果资产结构、布置库逐条含 `confine`、场景 JSON 残留 `vfx` 键、四条 action 的参数、`vfx` 条件叶);
   `asset_reference_audit --strict` 管贴图存在性。
 - 真机:`?mode=dev&devScene=<场景>`,页内直读 `window.__game.vfxSystem`
@@ -343,6 +468,7 @@ draw call ≤ 8。
 ## 相关
 
 - 作者面:[[vfx-workbench]]
+- 燃烧(external 形状 / 可燃纸钱 / 火焰段):[[burn-system]]
 - 坐标与单位:[[coordinate-spaces]]、[[lighting-scale-reference]]
 - 受光同口径:[[character-lighting]]、[[scene-lighting]]
 - 遮挡与脚点:[[entity-lighting]]

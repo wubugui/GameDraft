@@ -1,4 +1,4 @@
-"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine / narrative / plane / posture）。"""
+"""递归 ConditionExpr 树形编辑器（all / any / not / flag / quest / scenario / scenarioLine / narrative / plane / posture / timePhase / heldProp / burn）。"""
 from __future__ import annotations
 
 import copy
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFrame,
     QPushButton,
     QLineEdit,
@@ -31,7 +32,7 @@ from .flag_value_edit import FlagValueEdit
 from .id_ref_selector import IdRefSelector
 from .reference_picker import ReferencePickerField
 from .rich_text_field import RichTextLineEdit
-from .form_layout import compact_form
+from .form_layout import compact_form, fit_width_cap
 from .widget_discard import discard_layout_widgets, discard_widget
 
 # 与 narrative_data_editors /运行时一致
@@ -49,6 +50,42 @@ def _render_outcome_text(oc: object) -> str:
         return str(oc)
 _SCENARIO_LINE_STATUSES = ("inactive", "active", "completed")
 _MAX_DEPTH = 32
+
+# ---- heldProp（手持挂件叶）的短枚举：与运行时 evaluateGraphCondition.ts / types.ts 同口径 ----
+#: 表单管着的键（写出顺序，与 types.ts `HeldPropConditionLeaf` 的字段顺序逐字对齐）；叶子里别的键原样透传
+_HELD_PROP_KEYS = (
+    "heldProp", "socket", "prop", "propState", "burning",
+    "vitalityOp", "vitality", "fuelOp", "fuel", "effect", "lock",
+)
+#: 火势 / 燃料比较（HELD_VITALITY_OPS，两处共用一张表）
+_HELD_VITALITY_OPS = ("<", "<=", ">", ">=")
+
+# ---- propLevel（挂件等级叶）：与 types.ts `PropLevelConditionLeaf` / evaluateGraphCondition.ts 同口径 ----
+#: 表单管着的键（写出顺序）；叶子里别的键原样透传
+_PROP_LEVEL_KEYS = ("propLevel", "op", "value")
+#: 比较运算符（PROP_LEVEL_OPS）；不写 = `>=`
+_PROP_LEVEL_OPS = ("==", "!=", "<", "<=", ">", ">=")
+#: 不写 `op` 时运行时用的那一档
+_PROP_LEVEL_DEFAULT_OP = ">="
+#: 锁（HeldPropConditionLeaf.lock）→ 展示名，与 lockPropState 下拉同一套叫法
+_HELD_LOCK_ROWS = (("lit", "锁定不灭（lit）"), ("unlit", "点不燃（unlit）"), ("none", "没上锁（none）"))
+#: 下拉里「不写这个键」那一行的取值（不落盘）
+_HP_UNSET = ""
+#: 下拉里「磁盘上是运行时不认的怪值」那一行的取值（不落盘，原值原样回吐）
+_HP_RAW = "\x00raw"
+#: 「不写键」哨兵（区分于 None / 空串）
+_HP_ABSENT = object()
+
+# ---- burn（可燃物叶）：与运行时 evaluateGraphCondition.ts `isBurnLeaf` / types.ts `BurnConditionLeaf` 同口径 ----
+#: 表单管着的键（写出顺序）；叶子里别的键原样透传
+_BURN_KEYS = ("burn", "burnSocket", "burnScene", "burnState")
+#: burnSocket 空值那一行的说法
+_BURN_SOCKET_EMPTY_LABEL = "（不写 = 场景里的可燃实体）"
+#: 四个状态（值, 展示名）；叫法与 shared/burnables.BURN_STATE_LABELS 同一份
+_BURN_STATE_ROWS = (
+    ("unburnt", "没点（unburnt）"), ("burning", "在烧（burning，含余烬）"),
+    ("out", "灭了（out，还剩燃料）"), ("burnt", "烧完（burnt）"),
+)
 # 单个 flag 节点约 ~120px；旧值 640 会让常见的一节点条件凭空占掉大片空白。
 # 设一个紧凑的下限，内容更多时由滚动条接管（直到 MAX）。
 _CONDITION_EXPR_TREE_SCROLL_MIN_HEIGHT = 180
@@ -128,6 +165,9 @@ class ConditionExprNodeEditor(QWidget):
             ("激活位面", "plane"),
             ("玩家姿态", "posture"),
             ("时段（日夜）", "timePhase"),
+            ("手持挂件（火把燃着没有 / 火势 / 燃料 / 效果块）", "heldProp"),
+            ("挂件等级（火把升到第几级）", "propLevel"),
+            ("可燃物燃烧状态（没点 / 在烧 / 灭了 / 烧完）", "burn"),
         ):
             self._kind.addItem(lab, val)
         self._kind.currentIndexChanged.connect(self._on_kind_changed)
@@ -198,6 +238,35 @@ class ConditionExprNodeEditor(QWidget):
         self._tp_wrap: QWidget | None = None
         self._tp_kind: QComboBox | None = None
         self._pl_id: IdRefSelector | None = None
+        self._hp_wrap: QWidget | None = None
+        self._hp_who: ReferencePickerField | None = None
+        self._hp_socket: QWidget | None = None  # FilterableTypeCombo（懒导入，action_editor 很重）
+        self._hp_prop: ReferencePickerField | None = None
+        self._hp_state: QComboBox | None = None
+        self._hp_burning: QComboBox | None = None
+        self._hp_op: QComboBox | None = None
+        self._hp_vitality: QDoubleSpinBox | None = None
+        self._hp_fuel_op: QComboBox | None = None
+        self._hp_fuel: QDoubleSpinBox | None = None
+        self._hp_effect: ReferencePickerField | None = None
+        self._hp_lock: QComboBox | None = None
+        # heldProp 载入快照：{键: 磁盘原值}（没有的键不在里面）+ 各控件载入后的样子
+        self._hp_raw: dict[str, Any] = {}
+        self._hp_seed: dict[str, Any] = {}
+        self._lv_wrap: QWidget | None = None
+        self._lv_prop: ReferencePickerField | None = None
+        self._lv_op: QComboBox | None = None
+        self._lv_value: QSpinBox | None = None
+        # propLevel 载入快照：磁盘原值 + 各控件载入后的样子（逐字段"没动过回吐原值"）
+        self._lv_raw: dict[str, Any] = {}
+        self._lv_seed: dict[str, Any] = {}
+        self._bn_wrap: QWidget | None = None
+        self._bn_target: ReferencePickerField | None = None
+        self._bn_socket: QWidget | None = None  # FilterableTypeCombo（懒导入，action_editor 很重）
+        self._bn_scene: ReferencePickerField | None = None
+        self._bn_state: QComboBox | None = None
+        # burn 载入快照：磁盘原值（改动时按原键序重写、不认识的键透传）
+        self._bn_raw: dict[str, Any] = {}
 
         self._remove_callback: Callable[[ConditionExprNodeEditor], None] | None = None
 
@@ -404,6 +473,12 @@ class ConditionExprNodeEditor(QWidget):
             return bool(self._po_kind and str(self._po_kind.currentData() or "").strip())
         if k == "timePhase":
             return bool(self._tp_kind and str(self._tp_kind.currentData() or "").strip())
+        if k == "heldProp":
+            return _picker_has(self._hp_who)
+        if k == "propLevel":
+            return _picker_has(self._lv_prop)
+        if k == "burn":
+            return _picker_has(self._bn_target)
         return False
 
     def _confirm_destructive_discard(self, action_label: str) -> bool:
@@ -479,6 +554,32 @@ class ConditionExprNodeEditor(QWidget):
         self._tp_wrap = None
         self._tp_kind = None
         self._pl_id = None
+        self._hp_wrap = None
+        self._hp_who = None
+        self._hp_socket = None
+        self._hp_prop = None
+        self._hp_state = None
+        self._hp_burning = None
+        self._hp_op = None
+        self._hp_vitality = None
+        self._hp_fuel_op = None
+        self._hp_fuel = None
+        self._hp_effect = None
+        self._hp_lock = None
+        self._hp_raw = {}
+        self._hp_seed = {}
+        self._lv_wrap = None
+        self._lv_prop = None
+        self._lv_op = None
+        self._lv_value = None
+        self._lv_raw = {}
+        self._lv_seed = {}
+        self._bn_wrap = None
+        self._bn_target = None
+        self._bn_socket = None
+        self._bn_scene = None
+        self._bn_state = None
+        self._bn_raw = {}
 
     def _rebuild_body(self, kind: str) -> None:
         self._rebuild_body_impl(kind)
@@ -763,6 +864,730 @@ class ConditionExprNodeEditor(QWidget):
             tf.addRow("timePhase", self._tp_kind)
             self._tp_wrap = tw
             self._body.addWidget(tw)
+        elif kind == "heldProp":
+            self._build_held_prop_body()
+        elif kind == "propLevel":
+            self._build_prop_level_body()
+        elif kind == "burn":
+            self._build_burn_body()
+
+    # ---- propLevel（挂件等级叶） ------------------------------------------------
+    #
+    # 形状以 src/data/types.ts `PropLevelConditionLeaf` 为准：`propLevel`（挂件预设 id）与 `value` 必填，
+    # `op` 不写 = `>=`。问的是**这根挂件升到第几级**，与拿没拿在手上无关（收在包里也算）。
+    # 候选与校验器同一对 ProjectModel 函数（候选面 = 校验面）：只列配了 `levels` 的预设，
+    # 级数上限跟着选中的那个预设走。往返：逐字段"没动过 ⇒ 回吐磁盘原值"，不认识的键透传、键序按磁盘原序。
+
+    def _build_prop_level_body(self) -> None:
+        lw = QWidget()
+        lw.setToolTip(
+            "这根挂件（火把）升到第几级（读存档里的等级，不是 flag）。第 1 级 = 出厂的样子。\n"
+            "与拿没拿在手上无关——收在背包里也算；物品描述按等级变、升级对话的前置都写这一条。\n"
+            "没有等级表的挂件运行时恒第 1 级（校验器会提醒这条恒真 / 恒假）。",
+        )
+        lf = compact_form(QFormLayout(lw))
+        self._lv_prop = ReferencePickerField(
+            lambda: self._prop_level_rows(),
+            lw,
+            allow_empty=True,
+            title="选择挂件预设（只列配了等级表的）",
+            geometry_key="condition_prop_level_prop_picker",
+        )
+        self._lv_prop.setToolTip(
+            "哪根挂件（prop_presets.json 里配了「等级」块的那些）。\n"
+            "没配等级表的不在候选里——它运行时恒第 1 级，问它没有意义。",
+        )
+        self._lv_prop.value_changed.connect(self._on_lv_prop_changed)
+        self._lv_op = QComboBox(lw)
+        self._lv_op.setMaximumWidth(150)
+        self._lv_op.setToolTip("怎么比。不写 = >=（「升到第 2 级或更高」是最常见的写法）。")
+        self._lv_op.currentIndexChanged.connect(lambda _i: self._emit_changed())
+        self._lv_value = QSpinBox(lw)
+        self._lv_value.setRange(1, 999)
+        self._lv_value.setValue(1)
+        self._lv_value.setMaximumWidth(96)
+        self._lv_value.setToolTip("第几级（1 起）。上限跟着上面选的挂件走（= 它 levels 的条数）。")
+        self._lv_value.valueChanged.connect(lambda _v: self._emit_changed())
+        lf.addRow("挂件", self._lv_prop)
+        row = QHBoxLayout()
+        row.addWidget(self._lv_op, 0)
+        row.addWidget(self._lv_value, 0)
+        row.addStretch(1)
+        lf.addRow("等级", row)
+        self._lv_wrap = lw
+        self._body.addWidget(lw)
+        self._lv_raw = {}
+        self._lv_load_controls({})
+        self._lv_seed = self._lv_snapshot()
+
+    def _prop_level_rows(self) -> list[tuple[str, str, str]]:
+        m = self._model()
+        fn = getattr(m, "prop_preset_ids_with_levels", None) if m is not None else None
+        if not callable(fn):
+            return []
+        try:
+            return [(str(pid), str(label), "挂件预设") for pid, label in fn()]
+        except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+            return []
+
+    def _lv_sync_max(self) -> None:
+        """级数上限跟着选中的挂件走。**当前值不被夹掉**：磁盘上写着第 3 级、预设后来砍成 2 级时，
+        夹成 2 就是静默改数据（校验器本该报的那条也跟着消失）。"""
+        if self._lv_value is None or self._lv_prop is None:
+            return
+        m = self._model()
+        fn = getattr(m, "prop_level_counts", None) if m is not None else None
+        counts = fn() if callable(fn) else {}
+        n = int(counts.get(self._lv_prop.current_value().strip(), 0) or 0)
+        cur = int(self._lv_value.value())
+        self._lv_value.setMaximum(max(n, cur, 1) if n else max(cur, 999))
+
+    def _on_lv_prop_changed(self, _value: str) -> None:
+        self._lv_sync_max()
+        self._emit_changed()
+
+    def _lv_load_controls(self, raw: dict[str, Any]) -> None:
+        """把一条叶子的磁盘值摆进控件（程序性：不外发、不改数据）。调用方先设好 `_lv_raw`。"""
+        if self._lv_prop is None or self._lv_op is None or self._lv_value is None:
+            return
+        pid = raw.get("propLevel")
+        self._lv_prop.set_value(pid.strip() if isinstance(pid, str) else "")
+        op = raw.get("op", _HP_ABSENT)
+        if op is _HP_ABSENT:
+            op_want: Any = _HP_UNSET
+        elif isinstance(op, str) and op in _PROP_LEVEL_OPS:
+            op_want = op
+        else:
+            op_want = _HP_RAW
+        self._hp_set_combo(
+            self._lv_op,
+            [(f"（不写 = {_PROP_LEVEL_DEFAULT_OP}）", _HP_UNSET), *((o, o) for o in _PROP_LEVEL_OPS)],
+            op_want, op,
+        )
+        v = raw.get("value")
+        self._lv_value.blockSignals(True)
+        self._lv_value.setMaximum(999)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and 1 <= int(v) <= 999:
+            self._lv_value.setValue(int(v))
+        else:
+            self._lv_value.setValue(1)
+        self._lv_value.blockSignals(False)
+        self._lv_sync_max()
+
+    def _lv_snapshot(self) -> dict[str, Any]:
+        return {
+            "propLevel": self._lv_prop.current_value() if self._lv_prop else "",
+            "op": self._lv_op.currentData() if self._lv_op else None,
+            "value": self._lv_value.value() if self._lv_value else None,
+        }
+
+    def _prop_level_canonical(self) -> dict[str, Any]:
+        pid = self._lv_prop.current_value().strip() if self._lv_prop else ""
+        if not pid:
+            return {}
+        raw, seed, snap = self._lv_raw, self._lv_seed, self._lv_snapshot()
+        vals: dict[str, Any] = {}
+        if snap["propLevel"] == seed.get("propLevel") and "propLevel" in raw:
+            vals["propLevel"] = copy.deepcopy(raw["propLevel"])  # 没动过：磁盘原值（含 " x " 这种带空格的）
+        else:
+            vals["propLevel"] = pid
+        op = snap["op"]
+        if snap["op"] == seed.get("op"):
+            if "op" in raw:
+                vals["op"] = copy.deepcopy(raw["op"])
+        elif op == _HP_RAW:
+            if "op" in raw:
+                vals["op"] = copy.deepcopy(raw["op"])
+        elif isinstance(op, str) and op:
+            vals["op"] = op
+        rv = raw.get("value")
+        if (snap["value"] == seed.get("value") and isinstance(rv, (int, float))
+                and not isinstance(rv, bool)):
+            vals["value"] = rv  # 数值没动：回吐磁盘原表示（2 不漂成 2.0）
+        else:
+            vals["value"] = int(snap["value"])
+        out: dict[str, Any] = {}
+        for key, value in raw.items():
+            if key in vals:
+                out[key] = vals[key]
+            elif key not in _PROP_LEVEL_KEYS:
+                out[key] = copy.deepcopy(value)  # 表单不认识的键透传
+        for key in _PROP_LEVEL_KEYS:
+            if key in vals and key not in out:
+                out[key] = vals[key]
+        return out
+
+    # ---- burn（可燃物叶） -----------------------------------------------------
+    #
+    # 形状以 src/data/types.ts `BurnConditionLeaf` 为准：`burn` + `burnState` 必填；
+    # 不写 `burnSocket` = burn 是场景里开了可燃的实体（热点 / NPC / 演出生成留下的对象），`burnScene` 缺省 = 当前场景；
+    # 写了 = burn 是拿东西的人（player / NPC），问他这个挂点上的可燃挂件（`burnScene` 不读）。
+    # 候选与校验器同一组 ProjectModel 函数（候选面 = 校验面）：`burn_target_ids` / `burn_socket_names` / `burn_scene_ids`。
+    # 往返：没编辑过由 to_dict 的原始快照逐字回吐；编辑过按磁盘原键序重写、不认识的键透传。
+
+    def _build_burn_body(self) -> None:
+        # 懒导入：action_editor 很重，只有真用到这类叶子才载入；挂点下拉与 heldProp 叶同一个控件
+        from .action_editor import FilterableTypeCombo
+
+        bw = QWidget()
+        bw.setToolTip(
+            "这个可燃物实例此刻烧到哪一步（读世界状态，不是 flag）。状态一变叙事自动迁移会被叫醒重评。\n"
+            "不是可燃实例 ⇒ 恒为假。模板在燃烧工作台里做；实体 / 挂件在自己的「可燃」块里选模板。",
+        )
+        bf = compact_form(QFormLayout(bw))
+        self._bn_target = ReferencePickerField(
+            lambda: self._burn_target_rows(),
+            bw,
+            allow_empty=True,
+            title="选择可燃实体 / 拿东西的人",
+            geometry_key="condition_burn_target_picker",
+        )
+        self._bn_target.setToolTip(
+            "没写挂点：场景里开了可燃的实体（热点 / NPC，或演出生成且留下的对象）；写了场景只列那个场景的。\n"
+            "写了挂点：拿着可燃挂件的人（player / NPC）。",
+        )
+        self._bn_target.value_changed.connect(self._on_bn_target_changed)
+        socket = FilterableTypeCombo([(_BURN_SOCKET_EMPTY_LABEL, "")], bw, select_only=False)
+        socket.setMaximumWidth(240)
+        socket.setToolTip(
+            "不写 = 问场景里的可燃实体；写了 = 问上面那个人这个挂点上拿着的可燃挂件（挂件预设开了可燃的那种）。\n"
+            "候选来自那个人的动画包 sockets.json（还没选人时列玩家的挂点）；取不到候选时可以手打——挂点名跨动画包通用。",
+        )
+        socket.typeCommitted.connect(lambda _t: self._on_bn_socket_changed())
+        self._bn_socket = socket
+        self._bn_scene = ReferencePickerField(
+            lambda: self._burn_scene_rows(),
+            bw,
+            allow_empty=True,
+            title="选择场景（不选 = 当前场景）",
+            geometry_key="condition_burn_scene_picker",
+        )
+        self._bn_scene.setToolTip(
+            "问哪个场景的可燃实体；不选 = 当前场景（burnScene 不写）。写了挂点时不读。\n"
+            "问别的场景（玩家不在那儿）要写它——离开场景后那边的火照样按时间推算。",
+        )
+        self._bn_scene.value_changed.connect(lambda _v: self._emit_changed())
+        self._bn_state = QComboBox(bw)
+        self._bn_state.setMaximumWidth(240)
+        self._bn_state.setToolTip("没点 / 在烧（含余烬）/ 灭了（熄灭或吹灭，还剩燃料）/ 烧完。")
+        self._bn_state.currentIndexChanged.connect(lambda _i: self._emit_changed())
+        bf.addRow("可燃物 / 人", self._bn_target)
+        bf.addRow("挂点", socket)
+        bf.addRow("场景", self._bn_scene)
+        bf.addRow("燃烧状态", self._bn_state)
+        self._bn_wrap = bw
+        self._body.addWidget(bw)
+        self._bn_raw = {}
+        self._bn_load_controls({})
+
+    def _bn_socket_value(self) -> str:
+        return self._bn_socket.committed_type().strip() if self._bn_socket is not None else ""
+
+    def _burn_target_rows(self) -> list[tuple[str, str, str]]:
+        m = self._model()
+        fn = getattr(m, "burn_target_ids", None) if m is not None else None
+        if not callable(fn):
+            return []
+        socket = self._bn_socket_value()
+        scene = self._bn_scene.current_value().strip() if self._bn_scene else ""
+        try:
+            if socket:
+                return [(str(i), str(lab), "拿东西的人") for i, lab in fn(None, socket)]
+            if scene:
+                return [(str(i), str(lab), scene) for i, lab in fn(scene, "")]
+            return [(str(i), str(lab), "可燃实体") for i, lab in fn(None, "")]
+        except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+            return []
+
+    def _burn_scene_rows(self) -> list[tuple[str, str, str]]:
+        m = self._model()
+        fn = getattr(m, "burn_scene_ids", None) if m is not None else None
+        if not callable(fn):
+            return []
+        try:
+            return [(str(i), str(lab), "场景") for i, lab in fn()]
+        except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+            return []
+
+    def _bn_fill_socket_combo(self, want: str | None = None) -> None:
+        cb = self._bn_socket
+        if cb is None or self._bn_target is None:
+            return
+        cur = cb.committed_type().strip() if want is None else want
+        rows: list[tuple[str, str]] = [(_BURN_SOCKET_EMPTY_LABEL, "")]
+        m = self._model()
+        fn = getattr(m, "burn_socket_names", None) if m is not None else None
+        if callable(fn):
+            try:
+                for name, label in fn(None, self._bn_target.current_value()) or []:
+                    rows.append((f"{name}  {label}" if label and label != name else str(name), str(name)))
+            except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+                pass
+        if cur and cur not in {v for _l, v in rows}:
+            rows = [(f"（数据）{cur}", cur)] + rows
+        cb.set_entries(rows)
+        cb.set_committed_type(cur)
+        le = cb.lineEdit()
+        if le is not None:
+            le.setCursorPosition(0)
+
+    def _on_bn_target_changed(self, _value: str) -> None:
+        # 换人只刷挂点候选；已选的挂点名保值（名字跨动画包通用）
+        self._bn_fill_socket_combo()
+        self._emit_changed()
+
+    def _on_bn_socket_changed(self) -> None:
+        # 挂点有无决定 burn 的候选是「可燃实体」还是「拿东西的人」：候选是现取的（provider），刷一下显示即可；已选值保值
+        if self._bn_target is not None:
+            self._bn_target.refresh_display()
+        self._emit_changed()
+
+    def _bn_load_controls(self, raw: dict[str, Any]) -> None:
+        """把一条叶子的磁盘值摆进控件（程序性：不外发、不改数据）。"""
+        if self._bn_target is None or self._bn_scene is None or self._bn_state is None:
+            return
+        eid = raw.get("burn")
+        self._bn_target.set_value(eid.strip() if isinstance(eid, str) else "")
+        sk = raw.get("burnSocket")
+        self._bn_fill_socket_combo(want=sk.strip() if isinstance(sk, str) else "")
+        sc = raw.get("burnScene")
+        self._bn_scene.set_value(sc.strip() if isinstance(sc, str) else "")
+        st = raw.get("burnState", _HP_ABSENT)
+        if st is _HP_ABSENT:
+            want: Any = "burnt"
+        elif isinstance(st, str):
+            want = st.strip()
+        else:
+            want = _HP_RAW
+        self._hp_set_combo(self._bn_state, [(lab, val) for val, lab in _BURN_STATE_ROWS], want, st)
+
+    def _burn_canonical(self) -> dict[str, Any]:
+        eid = self._bn_target.current_value().strip() if self._bn_target else ""
+        if not eid:
+            return {}
+        raw = self._bn_raw
+        vals: dict[str, Any] = {"burn": eid}
+        socket = self._bn_socket_value()
+        if socket:
+            vals["burnSocket"] = socket
+        elif "burnSocket" in raw and not isinstance(raw["burnSocket"], str):
+            vals["burnSocket"] = copy.deepcopy(raw["burnSocket"])  # 怪值：控件摆不出，原样留住
+        scene = self._bn_scene.current_value().strip() if self._bn_scene else ""
+        if scene:
+            vals["burnScene"] = scene
+        elif "burnScene" in raw and not isinstance(raw["burnScene"], str):
+            vals["burnScene"] = copy.deepcopy(raw["burnScene"])
+        st = self._bn_state.currentData() if self._bn_state else None
+        if st == _HP_RAW:
+            if "burnState" in raw:
+                vals["burnState"] = copy.deepcopy(raw["burnState"])
+        elif isinstance(st, str) and st:
+            vals["burnState"] = st
+        out: dict[str, Any] = {}
+        for key, value in raw.items():
+            if key in vals:
+                out[key] = vals[key]
+            elif key not in _BURN_KEYS:
+                out[key] = copy.deepcopy(value)  # 表单不认识的键透传
+        for key in _BURN_KEYS:
+            if key in vals and key not in out:
+                out[key] = vals[key]
+        return out
+
+    # ---- heldProp（手持挂件叶） -------------------------------------------------
+    #
+    # 形状与语义以 src/data/types.ts `HeldPropConditionLeaf` 为准：`heldProp` 必填，其余项不写 = 不限。
+    # 往返：每个字段各自「没动过 ⇒ 回吐磁盘原值（含运行时不认的怪值），动过 ⇒ 写新值 / 选不限就删键」，
+    # 表单不认识的键原样透传、键序按磁盘原序——编辑其中一项不许顺手改写别的项。
+
+    def _build_held_prop_body(self) -> None:
+        # 懒导入：action_editor 很重，只有真用到这类叶子才载入；挂点下拉与状态候选与挂件动作同一套
+        from .action_editor import FilterableTypeCombo
+
+        hw = QWidget()
+        hw.setToolTip(
+            "这个人身上**有一件**挂件同时满足写了的每一项（没写的项不限）；手上什么都没有 ⇒ 假。\n"
+            "读的是此刻的世界状态（与姿态 / 时段同一类，不是 flag）。\n"
+            "「手上没有燃着的东西」写法：否定(not) + 本叶子「燃着」选燃着。",
+        )
+        hf = compact_form(QFormLayout(hw))
+        self._hp_who = ReferencePickerField(
+            lambda: self._held_prop_holder_rows(),
+            hw,
+            allow_empty=True,
+            title="选择拿东西的人",
+            geometry_key="condition_held_prop_holder_picker",
+        )
+        self._hp_who.setToolTip(
+            "谁手上：player 或 NPC 实例 id（过场临时演员 / 轨迹生成对象也行）。\n"
+            "条件没有场景上下文，候选是全工程的并集；这个人此刻不在场 ⇒ 恒为假。",
+        )
+        self._hp_who.value_changed.connect(self._on_hp_who_changed)
+        socket = FilterableTypeCombo([("（不限挂点）", "")], hw, select_only=False)
+        socket.setMaximumWidth(240)
+        socket.setToolTip(
+            "哪个挂点上的那件；不限 = 身上任何一件。\n"
+            "候选来自上面那个人的动画包 sockets.json（在动画编辑器的「挂点」区标）；\n"
+            "取不到候选时可以手打——挂点名跨动画包通用。",
+        )
+        socket.typeCommitted.connect(lambda _t: self._emit_changed())
+        self._hp_socket = socket
+        self._hp_prop = ReferencePickerField(
+            lambda: self._held_prop_preset_rows(),
+            hw,
+            allow_empty=True,
+            title="选择挂件预设",
+            geometry_key="condition_held_prop_preset_picker",
+        )
+        self._hp_prop.setToolTip("哪件挂件预设（prop_presets.json）；不限 = 哪件都算。")
+        self._hp_prop.value_changed.connect(self._on_hp_prop_changed)
+        self._hp_state = QComboBox(hw)
+        self._hp_state.setMaximumWidth(280)
+        self._hp_state.setToolTip(
+            "挂件此刻的状态名（挂件预设 states 里的键）；不限 = 什么状态都算。\n"
+            "选了挂件就只列它的状态；没选列全工程挂件预设出现过的状态名（标签注明哪些预设有它）。",
+        )
+        self._hp_state.currentIndexChanged.connect(lambda _i: self._emit_changed())
+        self._hp_burning = QComboBox(hw)
+        self._hp_burning.setMaximumWidth(160)
+        self._hp_burning.setToolTip(
+            "燃着没有：当前状态有灯（点着 / 护火 / 残炭）= 燃着，灭了 = 没燃。不限 = 不写。",
+        )
+        self._hp_burning.currentIndexChanged.connect(lambda _i: self._emit_changed())
+        self._hp_op = QComboBox(hw)
+        self._hp_op.setMaximumWidth(90)
+        self._hp_op.setToolTip(
+            "火势比较：火势 0..1（风吹灭火那一套；没配风吹灭的挂件恒为 1）。\n"
+            "运算符与数值一起写；不限 = 两个都不写。",
+        )
+        self._hp_op.currentIndexChanged.connect(self._on_hp_op_changed)
+        self._hp_vitality = QDoubleSpinBox(hw)
+        self._hp_vitality.setRange(0.0, 1.0)
+        self._hp_vitality.setSingleStep(0.05)
+        self._hp_vitality.setDecimals(3)
+        self._hp_vitality.setValue(0.5)
+        self._hp_vitality.setMaximumWidth(96)
+        self._hp_vitality.setToolTip("火势阈值 0..1（选了运算符才生效）。")
+        self._hp_vitality.valueChanged.connect(lambda _v: self._emit_changed())
+        self._hp_fuel_op = QComboBox(hw)
+        self._hp_fuel_op.setMaximumWidth(90)
+        self._hp_fuel_op.setToolTip(
+            "燃料比较：还剩几成燃料 0..1（火把养成的耐久；没配耐久的挂件恒为 1 = 烧不完）。\n"
+            "运算符与数值一起写；不限 = 两个都不写。",
+        )
+        self._hp_fuel_op.currentIndexChanged.connect(self._on_hp_fuel_op_changed)
+        self._hp_fuel = QDoubleSpinBox(hw)
+        self._hp_fuel.setRange(0.0, 1.0)
+        self._hp_fuel.setSingleStep(0.05)
+        self._hp_fuel.setDecimals(3)
+        self._hp_fuel.setValue(0.5)
+        self._hp_fuel.setMaximumWidth(96)
+        self._hp_fuel.setToolTip("燃料阈值 0..1（选了运算符才生效）。「快烧完了」= < 0.2 这一类。")
+        self._hp_fuel.valueChanged.connect(lambda _v: self._emit_changed())
+        self._hp_effect = ReferencePickerField(
+            lambda: self._held_prop_effect_rows(),
+            hw,
+            allow_empty=True,
+            title="选择效果块 / 标签",
+            geometry_key="condition_held_prop_effect_picker",
+        )
+        self._hp_effect.setToolTip(
+            "手上这件带着哪一块效果（prop_effects.json，「挂件效果块」页维护）。\n"
+            "写效果块 id，或写它的**标签**（「驱虫」「招东西」）——运行时两样都认，\n"
+            "所以「手上拿的是驱虫的火把」不用点名是哪一支。不限 = 不写。",
+        )
+        self._hp_effect.value_changed.connect(lambda _v: self._emit_changed())
+        self._hp_lock = QComboBox(hw)
+        self._hp_lock.setMaximumWidth(180)
+        self._hp_lock.setToolTip(
+            "挂件的锁（lockPropState 设的）：锁定不灭 / 点不燃 / 没上锁。不限 = 不写。",
+        )
+        self._hp_lock.currentIndexChanged.connect(lambda _i: self._emit_changed())
+        hf.addRow("谁手上", self._hp_who)
+        hf.addRow("挂点", socket)
+        hf.addRow("挂件", self._hp_prop)
+        hf.addRow("状态", self._hp_state)
+        hf.addRow("燃着", self._hp_burning)
+        # 单位写在屏幕上，不许只躺在 tooltip 里：0.2 是两成还是两秒，光看数字分不出
+        vrow = QHBoxLayout()
+        vrow.addWidget(self._hp_op, 0)
+        vrow.addWidget(self._hp_vitality, 0)
+        vrow.addWidget(QLabel("（0..1 剩余火势）", hw), 0)
+        vrow.addStretch(1)
+        hf.addRow("火势", vrow)
+        frow = QHBoxLayout()
+        frow.addWidget(self._hp_fuel_op, 0)
+        frow.addWidget(self._hp_fuel, 0)
+        frow.addWidget(QLabel("（0..1 剩余比例）", hw), 0)
+        frow.addStretch(1)
+        hf.addRow("燃料", frow)
+        hf.addRow("效果块", self._hp_effect)
+        hf.addRow("锁", self._hp_lock)
+        self._hp_wrap = hw
+        self._body.addWidget(hw)
+        self._hp_raw = {}
+        self._hp_load_controls({})
+        # 宽度上限得等到候选填完再收：空下拉的 sizeHint 量不出东西。
+        # 运算符那两个铉死 90px 时连自己的缺省项「（不限）」都画不下。
+        for _cb in (self._hp_burning, self._hp_op, self._hp_fuel_op,
+                    self._hp_state, self._hp_lock):
+            fit_width_cap(_cb, _cb.maximumWidth())
+        self._hp_seed = self._hp_snapshot()
+
+    def _held_prop_holder_rows(self) -> list[tuple[str, str, str]]:
+        m = self._model()
+        fn = getattr(m, "held_prop_holder_items", None) if m is not None else None
+        if callable(fn):
+            try:
+                return [(str(i), str(lab), str(det)) for i, lab, det in fn()]
+            except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+                pass
+        return [("player", "玩家", "玩家")]
+
+    def _held_prop_preset_rows(self) -> list[tuple[str, str, str]]:
+        m = self._model()
+        fn = getattr(m, "all_prop_preset_ids", None) if m is not None else None
+        if not callable(fn):
+            return []
+        return [(str(pid), str(label), "挂件预设") for pid, label in fn()]
+
+    def _held_prop_effect_rows(self) -> list[tuple[str, str, str]]:
+        """`effect` 的候选：效果块 id ∪ 它们的标签（运行时 `s.effects` 是这两样的并集）。
+        与校验器同一个函数 `ProjectModel.prop_effect_match_items`（候选面 = 校验面）。"""
+        m = self._model()
+        fn = getattr(m, "prop_effect_match_items", None) if m is not None else None
+        if not callable(fn):
+            return []
+        try:
+            return [(str(v), str(lab), str(det)) for v, lab, det in fn()]
+        except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+            return []
+
+    @staticmethod
+    def _hp_set_combo(cb: QComboBox, rows: list[tuple[str, Any]], want: Any, raw: Any) -> None:
+        """重建一个短枚举下拉（程序性，不外发）。悬垂值 / 怪值保值展示，绝不顶替成第一项。"""
+        cb.blockSignals(True)
+        try:
+            cb.clear()
+            for label, value in rows:
+                cb.addItem(label, value)
+            if want == _HP_RAW:
+                cb.addItem(f"（数据）{raw!r}", _HP_RAW)
+            elif isinstance(want, str) and want and cb.findData(want) < 0:
+                cb.addItem(f"（数据）{want}  ⚠ 不在候选里", want)
+            idx = cb.findData(want)
+            cb.setCurrentIndex(idx if idx >= 0 else 0)
+        finally:
+            cb.blockSignals(False)
+
+    def _hp_fill_socket_combo(self, want: str | None = None) -> None:
+        cb = self._hp_socket
+        if cb is None or self._hp_who is None:
+            return
+        cur = cb.committed_type().strip() if want is None else want
+        rows: list[tuple[str, str]] = [("（不限挂点）", "")]
+        m = self._model()
+        fn = getattr(m, "socket_names_for_holder_any_scene", None) if m is not None else None
+        if callable(fn):
+            try:
+                for name, label in fn(self._hp_who.current_value()) or []:
+                    rows.append((f"{name}  {label}" if label and label != name else str(name), str(name)))
+            except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+                pass
+        if cur and cur not in {v for _l, v in rows}:
+            rows = [(f"（数据）{cur}", cur)] + rows
+        cb.set_entries(rows)
+        cb.set_committed_type(cur)
+        # 可编辑下拉设完文本光标停在**末尾**：框一窄就只剩尾巴（「（不限挂点）」显示成
+        # 「不限挂点）」，作者读到的是半句话）。程序性赋值一律把光标拨回开头。
+        le = cb.lineEdit()
+        if le is not None:
+            le.setCursorPosition(0)
+
+    def _hp_state_rows(self) -> list[tuple[str, str]]:
+        """状态候选 `(展示名, 值)`：选了（存在的）挂件 ⇒ 它的 states；否则全工程状态名并集。与校验器同一口径。"""
+        from .action_editor import _prop_state_name_rows, _prop_state_rows_for_prop
+
+        m = self._model()
+        pid = self._hp_prop.current_value().strip() if self._hp_prop else ""
+        table = getattr(m, "prop_presets", None) if m is not None else None
+        if pid and isinstance(table, dict) and isinstance(table.get(pid), dict):
+            return _prop_state_rows_for_prop(m, pid)
+        return _prop_state_name_rows(m)
+
+    def _hp_fill_state_combo(self, want: Any = None) -> None:
+        cb = self._hp_state
+        if cb is None:
+            return
+        cur = cb.currentData() if want is None else want
+        rows: list[tuple[str, Any]] = [("（不限状态）", _HP_UNSET)]
+        rows.extend(self._hp_state_rows())
+        self._hp_set_combo(cb, rows, cur, self._hp_raw.get("propState"))
+
+    def _hp_sync_vitality_enabled(self) -> None:
+        if self._hp_op is not None and self._hp_vitality is not None:
+            self._hp_vitality.setEnabled(self._hp_op.currentData() not in (None, _HP_UNSET))
+        if self._hp_fuel_op is not None and self._hp_fuel is not None:
+            self._hp_fuel.setEnabled(self._hp_fuel_op.currentData() not in (None, _HP_UNSET))
+
+    def _on_hp_who_changed(self, _value: str) -> None:
+        # 换人只刷挂点候选；已选的挂点名保值（名字跨动画包通用，清掉比留着危险）
+        self._hp_fill_socket_combo()
+        self._emit_changed()
+
+    def _on_hp_prop_changed(self, _value: str) -> None:
+        # 换挂件只刷状态候选；已选状态名保值（不在新挂件里就标「不在候选里」，校验器报 error）
+        self._hp_fill_state_combo()
+        self._emit_changed()
+
+    def _on_hp_op_changed(self, _i: int) -> None:
+        self._hp_sync_vitality_enabled()
+        self._emit_changed()
+
+    def _on_hp_fuel_op_changed(self, _i: int) -> None:
+        self._hp_sync_vitality_enabled()
+        self._emit_changed()
+
+    def _hp_load_controls(self, raw: dict[str, Any]) -> None:
+        """把一条叶子的磁盘值摆进控件（程序性：不外发、不改数据）。调用方先设好 `_hp_raw`。"""
+        if self._hp_who is None or self._hp_op is None or self._hp_vitality is None:
+            return
+        who = raw.get("heldProp")
+        self._hp_who.set_value(who if isinstance(who, str) else "")
+        sk = raw.get("socket")
+        self._hp_fill_socket_combo(want=sk.strip() if isinstance(sk, str) else "")
+        pr = raw.get("prop")
+        self._hp_prop.set_value(pr if isinstance(pr, str) else "")
+        st = raw.get("propState", _HP_ABSENT)
+        if st is _HP_ABSENT:
+            st_want: Any = _HP_UNSET
+        elif isinstance(st, str):
+            st_want = st.strip()
+        else:
+            st_want = _HP_RAW
+        self._hp_fill_state_combo(want=st_want)
+
+        b = raw.get("burning", _HP_ABSENT)
+        b_want = _HP_UNSET if b is _HP_ABSENT else ("true" if b is True else "false" if b is False else _HP_RAW)
+        self._hp_set_combo(
+            self._hp_burning,
+            [("（不限）", _HP_UNSET), ("燃着（true）", "true"), ("没燃（false）", "false")],
+            b_want, b,
+        )
+        op = raw.get("vitalityOp", _HP_ABSENT)
+        op_want = _HP_UNSET if op is _HP_ABSENT else (
+            op if isinstance(op, str) and op in _HELD_VITALITY_OPS else _HP_RAW)
+        self._hp_set_combo(
+            self._hp_op,
+            [("（不限）", _HP_UNSET), *((o, o) for o in _HELD_VITALITY_OPS)],
+            op_want, op,
+        )
+        v = raw.get("vitality")
+        self._hp_vitality.blockSignals(True)
+        self._hp_vitality.setValue(
+            float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.5,
+        )
+        self._hp_vitality.blockSignals(False)
+        fop = raw.get("fuelOp", _HP_ABSENT)
+        fop_want = _HP_UNSET if fop is _HP_ABSENT else (
+            fop if isinstance(fop, str) and fop in _HELD_VITALITY_OPS else _HP_RAW)
+        self._hp_set_combo(
+            self._hp_fuel_op,
+            [("（不限）", _HP_UNSET), *((o, o) for o in _HELD_VITALITY_OPS)],
+            fop_want, fop,
+        )
+        fv = raw.get("fuel")
+        self._hp_fuel.blockSignals(True)
+        self._hp_fuel.setValue(
+            float(fv) if isinstance(fv, (int, float)) and not isinstance(fv, bool) else 0.5,
+        )
+        self._hp_fuel.blockSignals(False)
+        ef = raw.get("effect")
+        self._hp_effect.set_value(ef.strip() if isinstance(ef, str) else "")
+        lk = raw.get("lock", _HP_ABSENT)
+        lock_values = [val for val, _lab in _HELD_LOCK_ROWS]
+        lk_want = _HP_UNSET if lk is _HP_ABSENT else (
+            lk if isinstance(lk, str) and lk in lock_values else _HP_RAW)
+        self._hp_set_combo(
+            self._hp_lock,
+            [("（不限）", _HP_UNSET), *((lab, val) for val, lab in _HELD_LOCK_ROWS)],
+            lk_want, lk,
+        )
+        self._hp_sync_vitality_enabled()
+
+    def _hp_snapshot(self) -> dict[str, Any]:
+        return {
+            "heldProp": self._hp_who.current_value() if self._hp_who else "",
+            "socket": self._hp_socket.committed_type().strip() if self._hp_socket else "",
+            "prop": self._hp_prop.current_value() if self._hp_prop else "",
+            "propState": self._hp_state.currentData() if self._hp_state else None,
+            "burning": self._hp_burning.currentData() if self._hp_burning else None,
+            "vitalityOp": self._hp_op.currentData() if self._hp_op else None,
+            "vitality": self._hp_vitality.value() if self._hp_vitality else None,
+            "fuelOp": self._hp_fuel_op.currentData() if self._hp_fuel_op else None,
+            "fuel": self._hp_fuel.value() if self._hp_fuel else None,
+            "effect": self._hp_effect.current_value() if self._hp_effect else "",
+            "lock": self._hp_lock.currentData() if self._hp_lock else None,
+        }
+
+    def _held_prop_canonical(self) -> dict[str, Any]:
+        who = self._hp_who.current_value().strip() if self._hp_who else ""
+        if not who:
+            return {}
+        raw, seed, snap = self._hp_raw, self._hp_seed, self._hp_snapshot()
+        vals: dict[str, Any] = {}
+
+        def put(key: str, new: Any, *, untouched: bool | None = None) -> None:
+            same = snap.get(key) == seed.get(key) if untouched is None else untouched
+            if same:
+                if key in raw:
+                    vals[key] = copy.deepcopy(raw[key])
+                elif key == "heldProp":
+                    vals[key] = new
+                return
+            if new is not _HP_ABSENT:
+                vals[key] = new
+
+        def pick(key: str, value: Any, mapping: dict[Any, Any] | None = None) -> Any:
+            if value in (None, _HP_UNSET):
+                return _HP_ABSENT
+            if value == _HP_RAW:
+                return copy.deepcopy(raw.get(key)) if key in raw else _HP_ABSENT
+            return mapping.get(value, value) if mapping else value
+
+        put("heldProp", who)
+        put("socket", snap["socket"] or _HP_ABSENT)
+        put("prop", snap["prop"].strip() or _HP_ABSENT)
+        put("propState", pick("propState", snap["propState"]))
+        put("burning", pick("burning", snap["burning"], {"true": True, "false": False}))
+        # 火势 / 燃料比较各是一对：两个都没动 ⇒ 各自回吐原值；动了任一 ⇒ 按运算符整对重写（不限 = 两个都删）
+        for op_key, v_key in (("vitalityOp", "vitality"), ("fuelOp", "fuel")):
+            pair_same = snap[op_key] == seed.get(op_key) and snap[v_key] == seed.get(v_key)
+            op_val = pick(op_key, snap[op_key])
+            put(op_key, op_val, untouched=pair_same)
+            if op_val is _HP_ABSENT:
+                put(v_key, _HP_ABSENT, untouched=pair_same)
+                continue
+            rv = raw.get(v_key)
+            if (snap[v_key] == seed.get(v_key) and isinstance(rv, (int, float))
+                    and not isinstance(rv, bool)):
+                num: Any = rv  # 数值没动：回吐磁盘原表示（0 不漂成 0.0、0.3333 不被截断）
+            else:
+                num = round(float(snap[v_key]), 4)
+            put(v_key, num, untouched=pair_same)
+        put("effect", snap["effect"].strip() or _HP_ABSENT)
+        put("lock", pick("lock", snap["lock"]))
+
+        out: dict[str, Any] = {}
+        for key, value in raw.items():
+            if key in vals:
+                out[key] = vals[key]
+            elif key not in _HELD_PROP_KEYS:
+                out[key] = copy.deepcopy(value)  # 表单不认识的键透传
+        for key in _HELD_PROP_KEYS:
+            if key in vals and key not in out:
+                out[key] = vals[key]
+        return out
 
     def _narrative_graph_entries(self) -> list[tuple[str, str, dict[str, Any]]]:
         """(显示名, graphId, graph dict)：主图 + wrapper 子图，与 narrative_graphs.json 一致。"""
@@ -956,9 +1781,22 @@ class ConditionExprNodeEditor(QWidget):
             self._nv_state,
             self._nc_graph,
             self._nc_exit,
+            self._hp_who,
+            self._hp_prop,
+            self._hp_effect,
+            self._lv_prop,
         ):
             if field is not None:
                 field.refresh_display()
+        if self._lv_prop is not None:
+            self._lv_sync_max()
+        if self._hp_who is not None:
+            # 挂点 / 状态候选跟着工程刷新；当前值保值、不外发（程序性刷新不是编辑）
+            self._hp_fill_socket_combo()
+            self._hp_fill_state_combo()
+        if self._bn_target is not None:
+            self._bn_target.refresh_display()
+            self._bn_fill_socket_combo()
         for child in self._child_editors:
             child.refresh_live_reference_fields()
         if self._not_child:
@@ -1064,6 +1902,12 @@ class ConditionExprNodeEditor(QWidget):
             self._kind.setCurrentIndex(self._kind.findData("posture"))
         elif isinstance(data.get("timePhase"), str) and str(data.get("timePhase", "")).strip():
             self._kind.setCurrentIndex(self._kind.findData("timePhase"))
+        elif isinstance(data.get("heldProp"), str) and str(data.get("heldProp", "")).strip():
+            self._kind.setCurrentIndex(self._kind.findData("heldProp"))
+        elif isinstance(data.get("propLevel"), str) and str(data.get("propLevel", "")).strip():
+            self._kind.setCurrentIndex(self._kind.findData("propLevel"))
+        elif isinstance(data.get("burn"), str) and str(data.get("burn", "")).strip():
+            self._kind.setCurrentIndex(self._kind.findData("burn"))
         else:
             self._kind.setCurrentIndex(3)
         k = self._kind.currentData()
@@ -1202,6 +2046,17 @@ class ConditionExprNodeEditor(QWidget):
             self._tp_kind.blockSignals(True)
             self._tp_kind.setCurrentIndex(idx if idx >= 0 else 0)
             self._tp_kind.blockSignals(False)
+        elif k == "heldProp" and self._hp_who is not None:
+            self._hp_raw = copy.deepcopy(data)
+            self._hp_load_controls(self._hp_raw)
+            self._hp_seed = self._hp_snapshot()
+        elif k == "propLevel" and self._lv_prop is not None:
+            self._lv_raw = copy.deepcopy(data)
+            self._lv_load_controls(self._lv_raw)
+            self._lv_seed = self._lv_snapshot()
+        elif k == "burn" and self._bn_target is not None:
+            self._bn_raw = copy.deepcopy(data)
+            self._bn_load_controls(self._bn_raw)
         elif k == "plane" and self._pl_id:
             pid = str(data.get("plane", "")).strip()
             _pm = self._model()
@@ -1345,6 +2200,12 @@ class ConditionExprNodeEditor(QWidget):
             if not want:
                 return {}
             return {"timePhase": want}
+        if k == "heldProp" and self._hp_who is not None:
+            return self._held_prop_canonical()
+        if k == "propLevel" and self._lv_prop is not None:
+            return self._prop_level_canonical()
+        if k == "burn" and self._bn_target is not None:
+            return self._burn_canonical()
         return {}
 
 

@@ -156,6 +156,35 @@ def test_archive_and_item_condition_trees() -> None:
         assert key in flags, f"{key} 未被收集：{sorted(flags)}"
 
 
+def test_item_use_and_prop_state_on_enter_actions() -> None:
+    """物件 use.actions 与挂件状态 onEnterActions 是同一类「真执行的动作树」，flag 收集要一视同仁。"""
+    model = _model()
+    model.items = [{"id": "i", "use": {
+        "label": "用",
+        "conditions": [{"not": {"flag": "use_cond_not"}}],
+        "actions": [{"type": "runActions", "params": {"actions": [_set("use_nested_write")]}}],
+    }}]
+    model.prop_presets = {
+        "torch": {"image": "/a.png", "states": {
+            "lit": {},
+            "out": {"onEnterActions": [
+                _set("prop_out_write"),
+                {"type": "runActionsIf", "params": {
+                    "condition": {"flag": "prop_if_read"},
+                    "actions": [], "elseActions": [_set("prop_else_write")]}},
+            ]},
+            "坏": None,
+        }},
+        "junk": "not-a-preset",
+    }
+
+    flags = model.all_flags()
+
+    for key in ("use_cond_not", "use_nested_write",
+                "prop_out_write", "prop_if_read", "prop_else_write"):
+        assert key in flags, f"{key} 未被收集：{sorted(flags)}"
+
+
 def test_flat_shapes_still_collected_and_junk_is_ignored() -> None:
     model = _model()
     model.scenes = {

@@ -58,6 +58,10 @@ export class GameStateController {
   private unsubKeyDown: (() => void) | null = null;
   /** requestPanelOpen 在非探索态下挂起的面板：状态回到 Exploring 那一刻开（见 applyCurrentState）。 */
   private pendingPanelOpen: string | null = null;
+  private isDepleted: () => boolean = () => false;
+
+  /** 旧演出/对话收尾不得把死亡还原成探索；完整读档恢复生命后自动解除。 */
+  setDepletionGuard(predicate: () => boolean): void { this.isDepleted = predicate; }
 
   constructor(
     private readonly inputManager: InputManager,
@@ -81,6 +85,7 @@ export class GameStateController {
    * 见 [InputManager.clearInputEdges]。
    */
   private applyCurrentState(next: GameState): void {
+    if (this.isDepleted() && next !== GameState.UIOverlay && next !== GameState.MainMenu) next = GameState.Dead;
     if (this._currentState === next) return;
     this._currentState = next;
     this.inputManager.clearInputEdges();

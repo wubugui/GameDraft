@@ -172,6 +172,59 @@ class ManifestBaseTests(unittest.TestCase):
         self.assertNotIn("resources/runtime/images/illustrations/not_there.png", rep.files)
         self.assertTrue(rep.origin["resources/runtime/images/illustrations/lamp.png"].startswith("注册表"))
 
+    def test_注册表登记即引用_道具预设的帧图_状态图与火苗图集(self) -> None:
+        """挂件预设里每一处图都要进包：多帧 `images`、状态换图 `states[*].image/images`、火苗 `flame.image`。
+        只收顶层 `image` 时这些整批漏抽——包里挂件挂不出 / 灭了的火把没图 / 火苗不画，零报错。"""
+        imgs = self.root / "public" / "resources" / "runtime" / "images"
+        names = ("base.png", "f0.png", "f1.png", "out.png", "ember0.png", "ember1.png", "fires.png")
+        for n in names:
+            _write_png(imgs / "props" / n)
+        rt = "/resources/runtime/images/props/"
+        _write(self.root / "public" / "assets" / "data" / "prop_presets.json", json.dumps({
+            "torch": {
+                "image": rt + "base.png",
+                "images": [rt + "f0.png", "", 3, rt + "f1.png"],
+                "flame": {"image": rt + "fires.png", "cols": 12, "frames": 64, "height": 30},
+                "states": {
+                    "out": {"image": rt + "out.png"},
+                    "ember": {"images": [rt + "ember0.png", rt + "ember1.png"]},
+                    "坏": None,
+                },
+            },
+            "junk": "not-a-preset",
+            "bad_flame": {"flame": "三把火"},
+        }))
+        # 只验注册表这一路（素材审计那一路按键名也会收，这里要证明的是注册表闭包本身完整）
+        from tools.build.asset_manifest import _collect_registry_targets
+        got = _collect_registry_targets(self.root)
+        for n in names:
+            self.assertIn(f"resources/runtime/images/props/{n}", got, n)
+        rep = self.run_manifest()
+        for n in names:
+            self.assertIn(f"resources/runtime/images/props/{n}", rep.files, n)
+
+    def test_素材审计同样覆盖道具预设的全部图字段(self) -> None:
+        """清单第二来源（JSON 引用闭包）复用素材审计：写错的状态图 / 火苗图集必须在审计里报出来，
+        否则收尾门全绿、包里静默缺。"""
+        from tools.editor.shared.asset_reference_audit import audit_project_assets
+        rt = "/resources/runtime/images/props/"
+        _write_png(self.root / "public" / "resources" / "runtime" / "images" / "props" / "ok.png")
+        _write(self.root / "public" / "assets" / "data" / "prop_presets.json", json.dumps({
+            "torch": {
+                "image": rt + "ok.png",
+                "images": [rt + "missing_frame.png"],
+                "flame": {"image": rt + "missing_fires.png", "height": 30},
+                "states": {"out": {"image": rt + "missing_out.png",
+                                   "images": [rt + "missing_state_frame.png"]}},
+            },
+        }))
+        report = audit_project_assets(self.root)
+        bad = {i.field_path for i in report.issues if i.file.endswith("prop_presets.json")}
+        self.assertEqual(bad, {
+            "torch.images[0]", "torch.flame.image",
+            "torch.states.out.image", "torch.states.out.images[0]",
+        })
+
     # -------------------------------------------------------------- 规则
 
     def test_always_extract_捞进代码写死的资源(self) -> None:

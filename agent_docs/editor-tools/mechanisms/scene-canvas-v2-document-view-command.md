@@ -94,6 +94,12 @@ Document 永远写模型。面板编辑经桥变成命令。
 - **删除撤销要回原数组下标**：数组序是运行时平局排序的依据。
 - 新增实体族要同时改：`document._LIST_KEY`、`commands_structure.LIST_KEY`、
   `view._PART_ITEM_FACTORY`、`scene_canvas_model.PART_TABLE`。
+- **开了 `burnable` 的热点 / NPC 画的是可燃物模板,不是自己的图**(A3.8,2026-09-16):热点的
+  `_content_spec` 取模板图 + 模板真实尺寸(朝向照用 `displayImage.facing`);NPC 在 `NpcAnimBank._burn_bundle`
+  按模板合成 1×1 单帧(动画包 / 角色模板动画一律不画)。模板由宿主经 `set_burn_template_provider` 注入;
+  **没注入 / 模板装不上 = 不画图**,绝不回落画实体自己的图。着火点是 `burn` part(`burn_items.BurnPointsItem`,
+  `pick_contains` 恒 False、`pick_rect` 为空),与内容图元同签名 `set_geometry`,手势预览三个 part 一起调。
+  模板重读后靠页面 `reload_refs_from_model` 比模板签名重画。
 - **命中要按真实形状，不是包围盒**（`EntityItem.pick_contains`）。三角 Zone 的
   AABB 有一半在形外,拿包围盒判定 = 点空白处选中一个大区域,还把叠在上面的小
   实体一并压过去。
@@ -159,8 +165,11 @@ Document 永远写模型。面板编辑经桥变成命令。
 顺带两条容易漏的接线:
 - `SceneView` 要 `setFocusPolicy(StrongFocus)`,否则 `QGraphicsView` 默认不接受
   点击取焦,`keyPressEvent` 一个事件都收不到。
-- Delete / Ctrl+D / 方向键作用在**当前选择**上,不属于任何工具 —— 接在
-  `AbstractTool.key_pressed` 基类,免得"换个工具就删不了"。
+- Delete / Ctrl+D / Ctrl+C / Ctrl+V / 方向键作用在**当前选择**上,不属于任何工具 —— 接在
+  `AbstractTool.key_pressed` 基类,免得"换个工具就删不了"。实体树另挂 Ctrl+C / Ctrl+V 两个
+  `QShortcut`(焦点在树上时画布的 keyPressEvent 收不到)。
+- 粘贴一批里既有名册行又有出生点时是两种命令,用 `CompositeCommand` 包成**一条**入栈 ——
+  分两次 push 就是按一次 Ctrl+Z 撤一半。剪贴板规则本身在重构引擎(见 entity-refactor-engine)。
 
 ## 并存期(两个画布同时活着)
 

@@ -1,0 +1,47 @@
+{
+  "id": "candle_red",
+  "label": "红蜡烛（样例）",
+  "image": "/resources/runtime/images/props/burn_demo/candle_red.png",
+  "widthCm": 13.64,
+  "heightCm": 51.14,
+  "mode": "consume",
+  "orientation": "upright",
+  "gridCells": 64,
+  "ignitionPoints": [
+    {
+      "id": "p1",
+      "u": 0.5053,
+      "v": 0.0694
+    }
+  ],
+  "consume": {
+    "seconds": 120,
+    "from": "top",
+    "flameU": 0.5,
+    "flameWidth": 0.2
+  },
+  "flameSeconds": 3,
+  "emberSeconds": 2,
+  "flameLength": 6,
+  "ignitionDelay": 0.5,
+  "particles": [
+    {
+      "effect": "candle_flame",
+      "from": "flame",
+      "refArea": 4
+    }
+  ],
+  "light": {
+    "kelvin": 1800,
+    "intensityPerM2": 280,
+    "maxIntensity": 0.15,
+    "range": 380,
+    "softeningRadius": 10,
+    "puffAmp": 0.08
+  },
+  "blowout": {
+    "windSpeed": 3,
+    "drainSeconds": 1.5,
+    "recoverSeconds": 2
+  }
+}

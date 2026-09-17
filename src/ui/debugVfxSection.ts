@@ -29,7 +29,7 @@ export interface DebugVfxDeps {
   /** 粒子区域叠加层（框线 + 边带内沿）开关；没注入就不显示那个勾 */
   setConfineOverlay?: (on: boolean) => void;
   getConfineOverlay?: () => boolean;
-  getStats: () => { instances: number; live: number; drawCalls: number; fields: number; simMs: number };
+  getStats: () => { instances: number; live: number; drawCalls: number; fields: number; simMs: number; beams?: number };
   /** 在玩家脚下发一个刺激场（走与物品用途同一条通道） */
   emitAtPlayer: (def: VfxFieldDef, heightWu: number) => void;
   /** 强制群状态（调试用；正常由状态机自己转） */
@@ -246,7 +246,7 @@ export function createDebugVfxSection(deps: DebugVfxDeps): DebugVfxSectionHandle
     }
     const s = deps.getStats();
     statLine.textContent =
-      `实例 ${s.instances}　活粒子 ${s.live}　draw call ${s.drawCalls}　刺激场 ${s.fields}　模拟 ${s.simMs.toFixed(2)} ms/帧`;
+      `实例 ${s.instances}　活粒子 ${s.live}　光柱 ${s.beams ?? 0}　draw call ${s.drawCalls}　刺激场 ${s.fields}　模拟 ${s.simMs.toFixed(2)} ms/帧`;
     const rows = deps.getSnapshot();
     list.textContent = rows.length
       ? rows.map((r) => {

@@ -60,7 +60,8 @@
           0.65,
           0.4
         ],
-        "lit": false,
+        "lit": true,
+        "emissive": 0,
         "faceVelocity": true,
         "spin": {
           "rate": [
@@ -103,7 +104,12 @@
         "maxSpeed": 20,
         "stimulus": {
           "fear": {
-            "player:motion": 1
+            "player:motion": 1,
+            "torch:呛": 0.9,
+            "torch:艾": 1.0
+          },
+          "attract": {
+            "torch:招": 1.0
           },
           "accel": 180
         }

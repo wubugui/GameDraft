@@ -64,7 +64,7 @@ def test_runtime_register_param_names_match_manifest() -> None:
     reg = (REPO / "src/core/ActionRegistry.ts").read_text("utf-8")
     man = (REPO / "src/core/actionParamManifest.ts").read_text("utf-8")
     expect = {
-        "playVfx": {"instanceId", "effect", "at", "x", "y", "h", "surface", "seed", "countScale"},
+        "playVfx": {"instanceId", "effect", "at", "x", "y", "h", "surface", "seed", "countScale", "restart", "oneShot"},
         "stopVfx": {"instanceId"},
         "setVfxState": {"instanceId", "state"},
         "emitVfxField": {"kind", "tag", "radius", "strength", "duration", "at", "x", "y", "h", "direction"},
@@ -166,7 +166,7 @@ def test_json_lang_instance_universe_reads_the_placement_library() -> None:
         assert scene_vfx.get(sid) == sorted(vp.instance_ids_for_scene(lib, sid)), sid
     assert scene_vfx["崖墓前段"] == ["vfx_bats", "vfx_drip"]
     assert scene_vfx["崖墓入口"] == ["vfx_fireflies"]
-    assert scene_vfx["跑马梁"] == ["纸钱_山顶"]
+    assert scene_vfx["跑马梁"] == ["纸钱_山顶", "纸钱_引路过场"]
     assert ud.ids["vfx_instances"] == sorted({i for ids in scene_vfx.values() for i in ids})
     assert {"vfx_bats", "vfx_fireflies", "纸钱_山顶"} <= set(ud.ids["vfx_instances"])
 
@@ -258,7 +258,7 @@ def test_effect_mirror_and_id_providers() -> None:
     assert "发射器" in ids["bat_cliff"], "候选 label 应带发射器数，下拉里才分得清"
     # 实例候选读布置库：崖墓前段的 vfx_bats / vfx_drip 在基底与夜各摆一份 → 并集里各出现一次
     pairs = m.vfx_instance_ids_for_scene("崖墓前段")
-    assert [iid for iid, _lab in pairs] == ["vfx_bats", "vfx_drip"], pairs
+    assert sorted(iid for iid, _lab in pairs) == ["vfx_bats", "vfx_drip"], pairs  # 行序是作者面的顺序，不写死
     rows = dict(pairs)
     assert "bat_cliff" in rows["vfx_bats"], "候选 label 要带效果 id"
     assert m.vfx_instance_ids_for_scene(None) == []
@@ -353,7 +353,8 @@ def test_shipped_effects_are_clean(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("mutate,frag", [
     (lambda d: d.update(id="别的名字"), "与文件名"),
-    (lambda d: d.update(emitters=[]), "非空 emitters"),
+    # 空 emitters 且没有光柱仍是 error（只有光柱的效果才许 emitters 为空）
+    (lambda d: d.update(emitters=[]), "发射器与光柱（beams）至少有一样"),
     (lambda d: d["emitters"][0]["appearance"].update(sizeWu=0), "sizeWu"),
     (lambda d: d["emitters"][0]["appearance"].pop("image"), "animFile"),
     (lambda d: d["emitters"][0]["spawn"].update(max=0), "spawn.max"),
@@ -509,6 +510,213 @@ def test_light_gain_gate_matches_the_workbench_gate(tmp_path: Path) -> None:
     # 编辑器兜底读的是手改过的文件，null 按"未填"放过（运行时同样按缺省 1）。与 emissive 同一套口径。
     d = json.loads(json.dumps(MINIMAL_EFFECT))
     d["emitters"][0]["appearance"]["lightGain"] = None
+    with pytest.raises(ValueError):
+        wb.normalize_effect(json.loads(json.dumps(d)))
+    assert _issues_for_effects(tmp_path, {"zz_min": d}) == []
+
+
+# --------------------------------------------------------------------------- #
+# 校验器：appearance.tintOverLife（颜色 × 寿命，乘在 tint 上）
+# --------------------------------------------------------------------------- #
+
+_TINT_OVER_LIFE_BAD = [
+    ({"k": 1}, "数组"),
+    ([[0, 1, 1]], "四个有限数"),
+    ([[0, 1, 1, 1, 1]], "四个有限数"),
+    ([[0, 1, "1", 1]], "四个有限数"),
+    ([[0, 1, True, 1]], "四个有限数"),
+    ([[0, 1, float("nan"), 1]], "四个有限数"),
+    ([[0, 1, float("inf"), 1]], "四个有限数"),
+    ([[-0.1, 1, 1, 1]], "不在 [0,1]"),
+    ([[0, 1, 1, 1], [1.5, 1, 1, 1]], "不在 [0,1]"),
+    ([[0.6, 1, 1, 1], [0.2, 1, 0, 0]], "按 t 递增"),
+    ([[0, 1.2, 1, 1]], "r=1.2"),
+    ([[0, 1, -0.1, 1]], "g=-0.1"),
+    ([[0, 1, 1, 2]], "b=2"),
+]
+
+
+@pytest.mark.parametrize("bad,frag", _TINT_OVER_LIFE_BAD)
+def test_tint_over_life_bad_shapes_are_errors(tmp_path: Path, bad, frag: str) -> None:
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["appearance"]["tintOverLife"] = bad
+    issues = _issues_for_effects(tmp_path, {"zz_min": d})
+    errs = [i.message for i in issues if i.severity == "error" and "tintOverLife" in i.message]
+    assert any(frag in m for m in errs), f"tintOverLife={bad!r} 该报「{frag}」没报：{[i.message for i in issues]!r}"
+
+
+@pytest.mark.parametrize("ok", [
+    [],                                                    # 空 = 恒白
+    [[0, 1, 0.9, 0.6]],                                    # 单键 = 整段取它
+    [[0, 1, 0.95, 0.7], [0.4, 1, 0.55, 0.15], [1, 0.35, 0.05, 0]],
+    [[0, 1, 1, 1], [0.5, 1, 1, 1], [0.5, 1, 0, 0], [1, 0, 0, 0]],   # 同一个 t 两个键（硬切）= 非降序，合法
+    None,                                                  # 显式 null = 未填（与 emissive / lightGain 同口径）
+])
+def test_tint_over_life_valid_shapes_are_clean(tmp_path: Path, ok) -> None:
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["appearance"]["tintOverLife"] = ok
+    assert _issues_for_effects(tmp_path, {"zz_min": d}) == []
+
+
+def test_tint_over_life_gate_matches_the_workbench_gate(tmp_path: Path) -> None:
+    """编辑器兜底与工作台闸门读同一个 `vfx_appearance.tint_over_life_problems`：拒的一样、放的一样。"""
+    from tools.vfx_workbench import assets as wb
+
+    for bad, _frag in _TINT_OVER_LIFE_BAD:
+        d = json.loads(json.dumps(MINIMAL_EFFECT))
+        d["emitters"][0]["appearance"]["tintOverLife"] = bad
+        with pytest.raises(ValueError, match="tintOverLife"):
+            wb.normalize_effect(json.loads(json.dumps(d)))
+        assert [i for i in _issues_for_effects(tmp_path, {"zz_min": d}) if i.severity == "error"], bad
+    good = [[0, 1, 0.95, 0.7], [0.4, 1, 0.55, 0.15], [1, 0.35, 0.05, 0]]
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["appearance"]["tintOverLife"] = good
+    out = wb.normalize_effect(json.loads(json.dumps(d)))
+    assert out["emitters"][0]["appearance"]["tintOverLife"] == good
+    assert _issues_for_effects(tmp_path, {"zz_min": d}) == []
+
+
+# --------------------------------------------------------------------------- #
+# 校验器：motion.followAnchor（锚点动了、在飞的粒子怎么走）
+# --------------------------------------------------------------------------- #
+
+_FLOCK_BEHAVIOR = {
+    "cruise": 1, "max": 2, "maxAccel": 3, "minAltitude": 4, "senseRadius": 5, "separation": 6,
+    "accel": {"separation": 1, "alignment": 1, "cohesion": 1},
+    "orbit": {"radius": 1, "height": 1},
+    "home": {"nestRadius": 1, "rangeRadius": 2, "startleRadius": 3},
+    "attitude": {"fear": {"light": 1}},
+}
+_PLATE = {"size": [16, 16], "terminalSpeed": 90}
+
+
+@pytest.mark.parametrize("bad", ["hover", "Full", "", 1, True, ["full"]])
+def test_follow_anchor_unknown_value_is_an_error(tmp_path: Path, bad) -> None:
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["motion"] = {"followAnchor": bad}
+    issues = _issues_for_effects(tmp_path, {"zz_min": d})
+    assert [i for i in issues if i.severity == "error" and "motion.followAnchor 只能是 none / rig / full" in i.message], \
+        f"followAnchor={bad!r} 该报 error 没报：{[i.message for i in issues]!r}"
+
+
+@pytest.mark.parametrize("ok", ["none", "rig", "full", None])
+def test_follow_anchor_valid_values_are_clean_on_plain_particles(tmp_path: Path, ok) -> None:
+    """null 按"未填"（与 emissive / lightGain 同口径）。"""
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["motion"] = {"followAnchor": ok}
+    assert _issues_for_effects(tmp_path, {"zz_min": d}) == []
+
+
+@pytest.mark.parametrize("extra", [{"behavior": _FLOCK_BEHAVIOR}, {"plate": _PLATE}], ids=["flock", "plate"])
+def test_follow_anchor_on_flock_or_plate_is_a_warning(tmp_path: Path, extra) -> None:
+    """群体 / 薄片运行时不吃：rig / full 警告不拦；显式 none 不警告。"""
+    for v in ("rig", "full"):
+        d = json.loads(json.dumps(MINIMAL_EFFECT))
+        d["emitters"][0].update(json.loads(json.dumps(extra)))
+        d["emitters"][0]["motion"] = {"followAnchor": v}
+        issues = _issues_for_effects(tmp_path, {"zz_min": d})
+        assert [i for i in issues if i.severity == "warning" and "群体 / 薄片不吃 followAnchor，写了没用" in i.message], \
+            [f"{i.severity}:{i.message}" for i in issues]
+        assert not [i for i in issues if "followAnchor" in i.message and i.severity == "error"]
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0].update(json.loads(json.dumps(extra)))
+    d["emitters"][0]["motion"] = {"followAnchor": "none"}
+    assert not [i for i in _issues_for_effects(tmp_path, {"zz_min": d}) if "followAnchor" in i.message]
+
+
+def test_follow_anchor_gate_matches_the_workbench_gate(tmp_path: Path) -> None:
+    """编辑器兜底与工作台闸门读同一个 `vfx_motion`：拒的一样、警告的一样，措辞逐字相同（只差前缀）。"""
+    from tools.vfx_workbench import assets as wb
+
+    for bad in ("hover", "", 1):
+        d = json.loads(json.dumps(MINIMAL_EFFECT))
+        d["emitters"][0]["motion"] = {"followAnchor": bad}
+        with pytest.raises(ValueError) as e:
+            wb.normalize_effect(json.loads(json.dumps(d)))
+        errs = [i.message for i in _issues_for_effects(tmp_path, {"zz_min": d}) if i.severity == "error"]
+        assert len(errs) == 1 and str(e.value).split(".", 1)[1] == errs[0].split(" ", 2)[2], (str(e.value), errs)
+
+    for extra in ({"behavior": _FLOCK_BEHAVIOR}, {"plate": _PLATE}):
+        d = json.loads(json.dumps(MINIMAL_EFFECT))
+        d["emitters"][0].update(json.loads(json.dumps(extra)))
+        d["emitters"][0]["motion"] = {"followAnchor": "full"}
+        warn: list[str] = []
+        wb.normalize_effect(json.loads(json.dumps(d)), warn)
+        wb_w = [w.split(": ", 1)[1] for w in warn if "followAnchor" in w]
+        ed_w = [i.message.split(" ", 2)[2] for i in _issues_for_effects(tmp_path, {"zz_min": d})
+                if i.severity == "warning" and "followAnchor" in i.message]
+        assert wb_w and wb_w == ed_w, (wb_w, ed_w)
+
+    # 唯一有意的差别：显式 null。工作台是写入者，从不写 null（检视器选「不跟」= 删键），闸门拒；编辑器兜底按"未填"放过
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["motion"] = {"followAnchor": None}
+    with pytest.raises(ValueError):
+        wb.normalize_effect(json.loads(json.dumps(d)))
+    assert _issues_for_effects(tmp_path, {"zz_min": d}) == []
+
+
+# --------------------------------------------------------------------------- #
+# 校验器：life.maxDistance（最远烧到多远，wu，离发射器原点）
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("bad", [0, -3, "60", True, [60], float("nan"), float("inf")])
+def test_max_distance_non_positive_or_non_number_is_an_error(tmp_path: Path, bad) -> None:
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["life"] = {"seconds": [1, 2], "maxDistance": bad}
+    issues = _issues_for_effects(tmp_path, {"zz_min": d})
+    assert [i for i in issues if i.severity == "error" and "life.maxDistance 必须是 > 0 的数" in i.message], \
+        f"maxDistance={bad!r} 该报 error 没报：{[i.message for i in issues]!r}"
+
+
+@pytest.mark.parametrize("ok", [60, 0.5, None])
+def test_max_distance_valid_values_are_clean_on_particles_with_life(tmp_path: Path, ok) -> None:
+    """null 按"未填"（与 followAnchor / emissive / lightGain 同口径）。"""
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["life"] = {"seconds": [1, 2], "maxDistance": ok}
+    assert _issues_for_effects(tmp_path, {"zz_min": d}) == []
+
+
+@pytest.mark.parametrize("extra, why", [
+    ({"behavior": _FLOCK_BEHAVIOR, "life": {"seconds": [1, 2], "maxDistance": 30}}, "这是群体发射器"),
+    ({"plate": _PLATE, "life": {"seconds": [1, 2], "maxDistance": 30}}, "这是薄片发射器"),
+    ({"life": {"maxDistance": 30}}, "没有 life.seconds"),
+], ids=["flock", "plate", "immortal"])
+def test_max_distance_where_the_runtime_ignores_it_is_a_warning(tmp_path: Path, extra, why) -> None:
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0].update(json.loads(json.dumps(extra)))
+    issues = _issues_for_effects(tmp_path, {"zz_min": d})
+    hit = [i for i in issues if i.severity == "warning" and "没有寿命 / 群体 / 薄片不吃 maxDistance，写了没用" in i.message]
+    assert len(hit) == 1 and why in hit[0].message, [f"{i.severity}:{i.message}" for i in issues]
+    assert not [i for i in issues if "maxDistance" in i.message and i.severity == "error"]
+
+
+def test_max_distance_gate_matches_the_workbench_gate(tmp_path: Path) -> None:
+    """编辑器兜底与工作台闸门读同一个 `vfx_life`：拒的一样、警告的一样，措辞逐字相同（只差前缀）。"""
+    from tools.vfx_workbench import assets as wb
+
+    for bad in (0, -1, "60"):
+        d = json.loads(json.dumps(MINIMAL_EFFECT))
+        d["emitters"][0]["life"] = {"seconds": [1, 2], "maxDistance": bad}
+        with pytest.raises(ValueError) as e:
+            wb.normalize_effect(json.loads(json.dumps(d)))
+        errs = [i.message for i in _issues_for_effects(tmp_path, {"zz_min": d}) if i.severity == "error"]
+        assert len(errs) == 1 and str(e.value).split(".", 1)[1] == errs[0].split(" ", 2)[2], (str(e.value), errs)
+
+    for extra in ({"behavior": _FLOCK_BEHAVIOR, "life": {"seconds": [1, 2], "maxDistance": 30}},
+                  {"plate": _PLATE, "life": {"seconds": [1, 2], "maxDistance": 30}},
+                  {"life": {"maxDistance": 30}}):
+        d = json.loads(json.dumps(MINIMAL_EFFECT))
+        d["emitters"][0].update(json.loads(json.dumps(extra)))
+        warn: list[str] = []
+        wb.normalize_effect(json.loads(json.dumps(d)), warn)
+        wb_w = [w.split(": ", 1)[1] for w in warn if "maxDistance" in w]
+        ed_w = [i.message.split(" ", 2)[2] for i in _issues_for_effects(tmp_path, {"zz_min": d})
+                if i.severity == "warning" and "maxDistance" in i.message]
+        assert wb_w and wb_w == ed_w, (wb_w, ed_w)
+
+    # 唯一有意的差别：显式 null。工作台是写入者，从不写 null（检视器清空 = 删键），闸门拒；编辑器兜底按"未填"放过
+    d = json.loads(json.dumps(MINIMAL_EFFECT))
+    d["emitters"][0]["life"] = {"seconds": [1, 2], "maxDistance": None}
     with pytest.raises(ValueError):
         wb.normalize_effect(json.loads(json.dumps(d)))
     assert _issues_for_effects(tmp_path, {"zz_min": d}) == []

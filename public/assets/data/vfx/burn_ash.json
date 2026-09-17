@@ -1,0 +1,96 @@
+{
+  "id": "burn_ash",
+  "label": "可燃物飞灰（出生点 = 刚烧成灰的格）",
+  "emitters": [
+    {
+      "id": "flakes",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/spark.png",
+        "sizeWu": 1.6,
+        "sizeJitter": [
+          0.6,
+          1.4
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.1,
+            0.8
+          ],
+          [
+            0.8,
+            0.6
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.32,
+          0.31,
+          0.3
+        ],
+        "lit": true,
+        "spin": {
+          "rate": [
+            -180,
+            180
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 60,
+        "rate": 3,
+        "shape": {
+          "kind": "external",
+          "jitter": 1
+        },
+        "speed": [
+          6,
+          16
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 50
+      },
+      "motion": {
+        "drag": 1.6,
+        "buoyancy": 30,
+        "turbulence": {
+          "strength": 90,
+          "scale": 20,
+          "speed": 1.2
+        },
+        "maxSpeed": 80
+      },
+      "life": {
+        "seconds": [
+          1.2,
+          2.2
+        ]
+      }
+    }
+  ]
+}

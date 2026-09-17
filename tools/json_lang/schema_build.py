@@ -45,6 +45,10 @@ REF_KIND_UNIVERSE: dict[str, str | None] = {
     "owner": None,
     # 位置引用 `at`（{kind:'point'|'entity'|'slot'}）：对象不是裸 id，实体档的 id 在对象里，无法静态套宇宙
     "position_ref": None,
+    # 燃烧动作 target（运行时按当前场景解析）：socket 没写 = 可燃实体（热点 / NPC / 演出生成的对象），
+    # 写了 = 拿东西的人（player / NPC）。两档与「是不是开了可燃」的跨字段收窄交给 validator，这里放 emote_subjects 并集
+    # （NPC ∪ 热点 ∪ 轨迹生成对象 ∪ player，宁可少校验不误报）
+    "burn_target": "emote_subjects",
 }
 
 # 内容 id 参数 → 宇宙(ENTITY_REF_PARAMS 之外的裸 id 引用;这是本工具唯一一张
@@ -55,6 +59,8 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("pickup", "itemId"): "items",
     ("shopPurchase", "itemId"): "items",
     ("inventoryDiscard", "itemId"): "items",
+    # 设当前火种:只收火种(写了 igniter 对象的物品)——items 的子集,与编辑器候选 / 校验器接受面同口径
+    ("setActiveIgniter", "item"): "igniter_items",
     ("giveRule", "id"): "rules",
     ("grantRuleLayer", "ruleId"): "rules",
     ("giveFragment", "id"): "fragments",
@@ -76,10 +82,13 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("addFlagValue", "key"): "__flag__",
     ("setSmell", "scent"): "smells",
     ("attachToSocket", "prop"): "prop_presets",
+    # 火把养成的升级:只收**配了等级表**的挂件——prop_presets 的子集,与编辑器候选 / 校验器接受面同口径
+    ("setPropLevel", "prop"): "prop_leveled",
     ("revealDocument", "documentId"): "documents",
     ("playBgm", "id"): "bgm",
     ("playSfx", "id"): "sfx",
     ("stopSceneAmbient", "id"): "ambient",
+    ("sceneWindGust", "id"): "ambient",
     ("setScenarioPhase", "scenarioId"): "scenarios",
     ("startScenario", "scenarioId"): "scenarios",
     ("activateScenario", "scenarioId"): "scenarios",
@@ -88,10 +97,16 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("collectClue", "clueId"): "clues",
     # 系统说明卡(K4):showSystemNote.noteId 的引用宇宙 = system_notes.json
     ("showSystemNote", "noteId"): "system_notes",
+    ("inflictHealthDamage", "deathNoteId"): "system_notes",
+    ("applyHealthProtection", "threatId"): "health_threats",
+    ("unlockHealth", "id"): "health_bounds",
+    ("removeHealthProtection", "id"): "health_protections",
     # 轨迹资产是全局独立文件(assets/data/trajectories/<id>.json),id 全局唯一 → 直接烤成枚举
     ("playTrajectory", "trajectoryId"): "trajectories",
     # 效果资产是全局独立文件(assets/data/vfx/<id>.json),id 全局唯一 → 直接烤成枚举
     ("playVfx", "effect"): "vfx_effects",
+    # 挂件上的一次性效果：同一份效果资产宇宙
+    ("playPropVfx", "effect"): "vfx_effects",
     ("emitNarrativeSignal", "signal"): "narrative_signals",
     # 叙事活计生命周期（S1）：目标是活计图；宇宙沿用 narrative 条件叶的图 id 集合
     ("startNarrativeRun", "graphId"): "narrative_graph_ids",
@@ -122,6 +137,8 @@ SCOPED_PARAM_RULES: list[tuple[str, str, str, str, bool, str | None]] = [
 _WIDGET_JSON_TYPE: dict[str, dict] = {
     "int": {"type": "number"},
     "float": {"type": "number"},
+    "optional_health_number": {"type": "number", "minimum": 0},
+    "health_number": {"type": "number", "minimum": 0},
     "bool": {"type": "boolean"},
     # 气泡头顶锚 / 大小：控件是可视化舞台，落盘仍是数（缺省不写键=继承）
     "bubble_anchor": {"type": "number"},
@@ -129,6 +146,8 @@ _WIDGET_JSON_TYPE: dict[str, dict] = {
     # 位置引用 / 临时生成规格：复合对象（形状由 src/utils/positionRef.ts、TrajectorySpawnSpec 定义）
     "position_ref": {"type": "object"},
     "spawn_spec": {"type": "object"},
+    # 贴图上的归一化点 [u, v]（playPropVfx.point）：只约束成数组，元素清洗交给运行时 / 校验器
+    "unit_point": {"type": "array"},
 }
 
 # 脚手架占位值:必填参数按控件类型给默认
@@ -280,10 +299,14 @@ def _condition_snippets(spec: LanguageSpec) -> list[dict]:
         "posture": {"posture": spec.player_postures[0] if spec.player_postures else "crouch"},
         "timePhase": {"timePhase": "$1"},
         "vfxState": {"vfx": "$1", "vfxState": "airborne"},
+        "heldProp": {"heldProp": "player", "burning": True},
+        "propLevel": {"propLevel": "$1", "op": ">=", "value": 2},
+        "burn": {"burn": "$1", "burnState": "burnt"},
+        "burnHeld": {"burn": "player", "burnSocket": "$1", "burnState": "burning"},
     }
     snippets = [
         {"label": f"条件: {k}", "body": [body]}
-        for k, body in leaf_bodies.items() if k in set(spec.condition_leaves)
+        for k, body in leaf_bodies.items() if (k[:-4] if k == "burnHeld" else k) in set(spec.condition_leaves)
     ]
     snippets.append({"label": "条件: any(或)", "body": [{"any": []}]})
     snippets.append({"label": "条件: not(非)", "body": [{"not": {"flag": "$1", "value": True}}]})
@@ -423,10 +446,59 @@ def _condition_expr(spec: LanguageSpec, ud: UniverseData) -> dict:
             "vfx": {"type": "string"},
             "vfxState": {"enum": ["roosting", "airborne", "fleeing", "returning", "active", "inactive"]},
         }))
+    if "heldProp" in modeled:
+        # 手持挂件叶(types.ts HeldPropConditionLeaf):谁手上与 attachToSocket.target 同一个命名空间(actors 宇宙);
+        # prop 是全局唯一的挂件预设 id;prop 确定时 propState 收窄到该预设的 states(同 narrative 叶的 state)。
+        # 「op 与 vitality 一起写」这类跨字段约束交给 validator(宁可少校验不误报)
+        prop_state_variants = [
+            {"if": {"properties": {"prop": {"const": pid}}, "required": ["prop"]},
+             "then": {"properties": {"propState": {"enum": states}}}}
+            for pid, states in sorted((ud.scoped.get("prop_states") or {}).items()) if states
+        ]
+        branches.append(leaf(
+            ["heldProp"],
+            {
+                "heldProp": _universe_schema("actors", ud) or {"type": "string"},
+                "socket": {"type": "string"},
+                "prop": _universe_schema("prop_presets", ud) or {"type": "string"},
+                "propState": {"type": "string"},
+                "burning": {"type": "boolean"},
+                "vitalityOp": {"enum": ["<", "<=", ">", ">="]},
+                "vitality": {"type": "number", "minimum": 0, "maximum": 1},
+                # 燃料(火把养成的耐久)与火势同一张运算符表、同一个 0..1 口径
+                "fuelOp": {"enum": ["<", "<=", ">", ">="]},
+                "fuel": {"type": "number", "minimum": 0, "maximum": 1},
+                # 效果块:写 id **或**它的标签都命中(运行时 `s.effects` 是两样的并集)
+                "effect": _universe_schema("prop_effect_matches", ud) or {"type": "string"},
+                "lock": {"enum": ["lit", "unlit", "none"]},
+            },
+            {"allOf": prop_state_variants} if prop_state_variants else None,
+        ))
+    if "propLevel" in modeled:
+        # 挂件等级叶(types.ts PropLevelConditionLeaf,玩法清单 A3.7「火把养成」):
+        # 目标只能是**配了等级表**的挂件预设(没等级表的运行时恒第 1 级);`op` 不写 = `>=`;
+        # `value` 是第几级(1 起的整数)。「这个挂件到底有几级」这条跨字段约束交给 validator
+        #(宁可少校验不误报)。
+        branches.append(leaf(["propLevel", "value"], {
+            "propLevel": _universe_schema("prop_leveled", ud) or {"type": "string"},
+            "op": {"enum": ["==", "!=", "<", "<=", ">", ">="]},
+            "value": {"type": "number", "minimum": 1},
+        }))
+    if "burn" in modeled:
+        # 可燃物叶(types.ts BurnConditionLeaf,A3.8 模板 + 实例):不写 burnSocket = burn 是场景里开了可燃的实体
+        # (热点 / NPC / 演出生成留下的对象,burnScene 缺省当前场景);写了 = burn 是拿东西的人(player / NPC),
+        # 问他这个挂点上的可燃挂件(burnScene 不读)。"是不是开了可燃"与两档收窄交给 validator——
+        # 这里只锁状态枚举,burn 放 emote_subjects 并集(NPC ∪ 热点 ∪ 轨迹生成对象 ∪ player,宁可少校验不误报)
+        branches.append(leaf(["burn", "burnState"], {
+            "burn": _universe_schema("emote_subjects", ud) or {"type": "string"},
+            "burnSocket": {"type": "string"},
+            "burnScene": _universe_schema("scenes", ud) or {"type": "string"},
+            "burnState": {"enum": ["unburnt", "burning", "out", "burnt"]},
+        }))
     # 提取到未建模叶子时(extract 已出 warning)加一条兜底,免得新叶子全量报错
     for extra_leaf in modeled - {
         "flag", "quest", "scenario", "scenarioLine", "narrative", "narrativeCount",
-        "plane", "posture", "timePhase", "vfxState",
+        "plane", "posture", "timePhase", "vfxState", "heldProp", "propLevel", "burn",
     }:
         branches.append(leaf([extra_leaf], {extra_leaf: {}}))
     return {"anyOf": branches}

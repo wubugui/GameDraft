@@ -5,7 +5,7 @@
       "id": "three_fires",
       "title": "三把火",
       "image": "images/illustrations/three_fires.png",
-      "body": "[c:emphasis]看见火，就是过了界。[/c]\n受惊、回头、应声——火要灭。",
+      "body": "[c:emphasis]看见三把火，就是过了界。[/c]\n三把火是你身上的阳气。\n阴间的东西靠得越近，阳气消耗得越快；火全灭，人就没了。\n看见火在变弱，先退开。",
       "loreEntryId": "lore_three_fires",
       "hudAnchor": "threeFires"
     },
@@ -13,9 +13,27 @@
       "id": "smell",
       "title": "鼻子",
       "image": "images/illustrations/smell_nose.png",
-      "body": "[c:emphasis]鼻子比眼睛先知道。[/c]\n烟是味，字是名；烟往哪边飘，东西就在那边。\n按 Q 闻一闻。",
+      "body": "[c:emphasis]鼻子比眼睛先知道。[/c]\n烟是味，字是名；烟往哪边飘，东西就在那边。\n按 V 闻一闻。",
       "loreEntryId": "lore_smell_nose",
       "hudAnchor": "smell"
+    },
+    {
+      "id": "torch_guard",
+      "title": "护火",
+      "body": "风要把火吹灭了。\n[c:emphasis]按住 Q 护火，再往前走。[/c]\n护住火头，火苗才稳得下来。",
+      "image": "images/illustrations/torch_guard_gpt.png"
+    },
+    {
+      "id": "torch_relight",
+      "title": "点火",
+      "body": "[c:emphasis]停下来，按 T 点火；有风时同时按住 Q 护火。[/c]\n先在背包里选一种火种，点「设为火种」。点火会消耗火种，走动会打断。\n普通阴间东西怕火。你也可以不点，冒险去看——阳气不够，莫靠太近。",
+      "image": "images/illustrations/torch_relight_gpt.png"
+    },
+    {
+      "id": "yin_boundary_death",
+      "title": "阳气不强，莫随便过界",
+      "hudAnchor": "threeFires",
+      "body": "[c:emphasis]你的三把火，被它耗尽了。[/c]\n离得近，耗得快。\n点火可以避开普通鬼物；想靠近它，先养足阳气，或带上能挡它的东西。"
     }
   ]
 }

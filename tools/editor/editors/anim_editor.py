@@ -365,12 +365,14 @@ class AnimEditor(QWidget):
         dl.addLayout(f)
 
         # 保存/放弃改动（仅写 anim.json 的 states 与世界尺寸；图集不动）
-        socket_sec = CollapsibleSection("挂点 / 落脚帧（逐帧标注 · 写 sockets.json）", start_open=False)
+        socket_sec = CollapsibleSection("挂点 / 落脚帧 / 点火接触帧（逐帧标注 · 写 sockets.json）", start_open=False)
         socket_sec.set_header_tool_tip(
-            "给这个动画包逐帧标两样东西：\n"
+            "给这个动画包逐帧标三样东西：\n"
             "· 挂点（右手/头顶/腰…）——运行时可以往上挂任意东西；\n"
             "· 落脚帧——脚触地的那几格，运行时走到这一格就播一声脚步"
-            "（声音本身在「脚步集」页配，这里只管哪一帧响）。\n"
+            "（声音本身在「脚步集」页配，这里只管哪一帧响）；\n"
+            "· 点火接触帧——点火动作里火头碰到可燃物的那一格"
+            "（点火片段里第一个标了的帧；一格没标 = 片段第一帧）。\n"
             "数据写同目录的 sockets.json sidecar，**不进 anim.json**——重导出图集不会带走它，\n"
             "但槽位会漂移：指纹对不上时游戏整份忽略并在此提示重标。")
         self._socket_panel = SocketPanel(self._model)
@@ -1815,6 +1817,10 @@ class AnimEditor(QWidget):
         if panel is not None and frames and 0 <= self._preview_seq_i < len(frames) \
                 and panel.is_contact_slot(int(frames[self._preview_seq_i])):
             base = f"{base}  ·  ▶ 落脚帧（播脚步声）"
+        # 点火接触帧只标运行时真正取的那一帧：本片段帧序列里第一个标了的帧
+        if panel is not None and frames and 0 <= self._preview_seq_i < len(frames) \
+                and panel.ignite_contact_order([int(s) for s in frames]) == self._preview_seq_i:
+            base = f"{base}  ·  ◆ 点火接触帧（火头碰到可燃物）"
         self._lbl_preview_info.setText(base)
 
     def _advance_preview_frame(self) -> None:

@@ -1,0 +1,131 @@
+{
+  "id": "candle_flame",
+  "label": "蜡烛 / 线香火苗（出生点 = 火线带上的格，燃烧系统每帧给）",
+  "emitters": [
+    {
+      "id": "core",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/flame_glow.png",
+        "sizeWu": 3.2,
+        "sizeJitter": [
+          0.85,
+          1.15
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.8
+          ],
+          [
+            0.3,
+            1
+          ],
+          [
+            1,
+            0.3
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.08,
+            0.9
+          ],
+          [
+            0.6,
+            0.6
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "tintOverLife": [
+          [
+            0,
+            1,
+            0.86,
+            0.5
+          ],
+          [
+            0.3,
+            1,
+            0.55,
+            0.14
+          ],
+          [
+            0.7,
+            0.78,
+            0.22,
+            0.04
+          ],
+          [
+            1,
+            0.3,
+            0.05,
+            0.01
+          ]
+        ],
+        "blend": "add",
+        "lit": false,
+        "stretchByVelocity": 0.05
+      },
+      "spawn": {
+        "max": 60,
+        "rate": 40,
+        "shape": {
+          "kind": "external",
+          "jitter": 0.6
+        },
+        "speed": [
+          8,
+          16
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 6
+      },
+      "motion": {
+        "drag": 3,
+        "buoyancy": 260,
+        "turbulence": {
+          "strength": 60,
+          "scale": 5,
+          "speed": 4
+        },
+        "maxSpeed": 140
+      },
+      "life": {
+        "seconds": [
+          0.16,
+          0.28
+        ]
+      }
+    }
+  ]
+}

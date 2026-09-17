@@ -48,6 +48,21 @@ describe('requestPanelOpen', () => {
     expect(sc.currentState).toBe(GameState.UIOverlay);
   });
 
+  it('死亡后的旧演出收尾不能恢复探索，读档恢复生命后才可还权', () => {
+    let depleted = true;
+    sc.setDepletionGuard(() => depleted);
+    sc.setState(GameState.Dead);
+    sc.setState(GameState.Exploring);
+    expect(sc.currentState).toBe(GameState.Dead);
+    sc.setState(GameState.UIOverlay);
+    expect(sc.currentState).toBe(GameState.UIOverlay);
+    sc.restorePreviousState();
+    expect(sc.currentState).toBe(GameState.Dead);
+    depleted = false;
+    sc.setState(GameState.Exploring);
+    expect(sc.currentState).toBe(GameState.Exploring);
+  });
+
   it('动作序列态挂起，回到探索态那一刻开；关掉后回探索态', () => {
     sc.setState(GameState.ActionSequence);
     sc.requestPanelOpen('map');

@@ -274,15 +274,18 @@ def test_delete_failure_rolls_the_library_back(world, monkeypatch) -> None:
 
 
 def _external_world(world) -> dict[str, bytes]:
-    """临时工程里放一份挂件预设（顶层 vfx + states.ember.vfx）与一段演出里的 playVfx 临时实例；返回原字节（核"一个字节都不写"）。"""
+    """临时工程里放一份挂件预设（顶层 particles + states.ember.particles，外加一条运行时不读的旧 vfx）
+    与一段演出里的 playVfx 临时实例；返回原字节（核"一个字节都不写"）。"""
     root = placements.REF_ROOT
     data = root / "public" / "assets" / "data"
     (data / "cutscenes").mkdir(parents=True)
     (data / "archive").mkdir()
     (data / "vfx").mkdir()
     files = {
-        data / "prop_presets.json": {"torch": {"label": "火把", "vfx": ["other"],
-                                               "states": {"lit": {}, "ember": {"vfx": ["fx"]}}},
+        data / "prop_presets.json": {"torch": {"label": "火把", "particles": [{"effect": "other", "point": [0.5, 0]}],
+                                               "states": {"lit": {},
+                                                          "ember": {"particles": [{"effect": "smoke"}, {"effect": "fx"}]},
+                                                          "out": {"vfx": ["fx"]}}},
                                      "sword": {"label": "剑"}},
         data / "cutscenes" / "index.json": [{"id": "cs1", "steps": [
             {"kind": "action", "type": "playSfx", "params": {"id": "x"}},
@@ -303,11 +306,58 @@ def _external_world(world) -> dict[str, bytes]:
 def test_external_refs_list_held_props_and_play_vfx_actions(world) -> None:
     _external_world(world)
     refs = placements.external_refs_to_effect("fx")
-    assert [(r["kind"], r["where"]) for r in refs] == [("prop", "torch · states.ember.vfx"), ("action", "[0].steps[1]")], refs
+    assert [(r["kind"], r["where"]) for r in refs] == [("prop", "torch · states.ember.particles[1]"), ("action", "[0].steps[1]")], \
+        f"粒子挂载按条给下标；运行时不读的旧 vfx 不算引用：{refs}"
     assert refs[0]["file"] == "public/assets/data/prop_presets.json" and refs[1]["file"] == "public/assets/data/cutscenes/index.json"
-    assert [r["where"] for r in placements.external_refs_to_effect("other")] == ["torch · vfx"]
+    assert [r["where"] for r in placements.external_refs_to_effect("other")] == ["torch · particles[0]"]
     assert placements.external_refs_to_effect("nobody") == []
     assert "prop_presets.json" in placements.external_refs_text(refs) and "cutscenes/index.json" in placements.external_refs_text(refs)
+
+
+def test_play_prop_vfx_effect_refs_are_listed_and_guard_rename_and_delete(world) -> None:
+    """``playPropVfx``（手持挂件上播的效果）也按 id 引用效果：常住挂件预设状态的 ``onEnterActions``
+    （火把灭了冒的那口烟），也可能在演出里。漏扫 = 工作台里改名 / 删掉它，火把熄灭时静默不冒烟。"""
+    root = placements.REF_ROOT
+    data = root / "public" / "assets" / "data"
+    (data / "cutscenes").mkdir(parents=True)
+    files = {
+        data / "prop_presets.json": {"torch": {"label": "火把", "states": {
+            "lit": {},
+            "out": {"onEnterActions": [
+                {"type": "playSfx", "params": {"id": "snuff"}},
+                {"type": "runActions", "params": {"actions": [
+                    {"type": "playPropVfx", "params": {"target": "player", "socket": "right_hand", "effect": "fx"}}]}},
+                {"type": "playPropVfx", "params": {"effect": "fx"}},
+            ]},
+        }}},
+        data / "cutscenes" / "index.json": [{"id": "cs1", "steps": [
+            {"kind": "action", "type": "playPropVfx",
+             "params": {"target": "player", "socket": "right_hand", "effect": "other", "point": [0.5, 0.1]}}]}],
+    }
+    before = {}
+    for p, doc in files.items():
+        b = json.dumps(doc, ensure_ascii=False).encode("utf-8")
+        p.write_bytes(b)
+        before[str(p)] = b
+
+    refs = placements.external_refs_to_effect("fx")
+    assert [(r["kind"], r.get("action"), r["where"]) for r in refs] == [
+        ("action", "playPropVfx", "torch.states.out.onEnterActions[1].params.actions[0]"),
+        ("action", "playPropVfx", "torch.states.out.onEnterActions[2]"),
+    ], refs
+    assert all(r["file"] == "public/assets/data/prop_presets.json" for r in refs)
+    assert refs[1]["label"].startswith("playPropVfx 动作 · "), refs[1]["label"]
+    other = placements.external_refs_to_effect("other")
+    assert [(r.get("action"), r["file"]) for r in other] == [("playPropVfx", "public/assets/data/cutscenes/index.json")]
+
+    with pytest.raises(ValueError) as e:
+        placements.rename_effect("fx", "fx2")
+    assert "playPropVfx" in str(e.value) and "prop_presets.json" in str(e.value), str(e.value)
+    assert (assets.VFX_DIR / "fx.json").is_file() and not (assets.VFX_DIR / "fx2.json").exists()
+    r = placements.delete_effect("fx", with_placements=False)
+    assert r["deleted"] is False and r["needConfirm"] is True and len(r["externalRefs"]) == 2
+    assert (assets.VFX_DIR / "fx.json").is_file()
+    assert {k: Path(k).read_bytes() for k in before} == before, "工作台不写挂件预设 / 演出"
 
 
 def test_delete_with_external_refs_needs_explicit_confirmation_and_never_touches_those_files(world) -> None:
@@ -341,7 +391,7 @@ def test_http_effect_reports_external_refs_and_delete_confirm_flag(server, world
     _external_world(world)
     r = get("/api/effect?id=fx")
     assert r["ok"] and [x["kind"] for x in r["externalRefs"]] == ["prop", "action"]
-    assert get("/api/effect?id=other")["externalRefs"][0]["label"] == "挂件预设「torch」· vfx"
+    assert get("/api/effect?id=other")["externalRefs"][0]["label"] == "挂件预设「torch」· particles[0]"
     rn = post("/api/rename", {"id": "fx", "to": "fx2"})
     assert rn["ok"] is False and "主编辑器" in rn["err"]
     d = post("/api/delete", {"id": "fx"})
@@ -370,8 +420,8 @@ def _instance_ref_world(world) -> dict[str, bytes]:
                                 "onComplete": [{"type": "setVfxState", "params": {"instanceId": iid, "state": "fleeing"}}]}],
         root / "public" / "assets" / "dialogues" / "graphs" / "g.json": {"nodes": {"n1": {"type": "switch", "cases": [
             {"conditions": [{"vfx": iid, "vfxState": "inactive"}]}]}}},
-        # 挂件预设的 vfx 是效果 id 列表、场景 JSON 残留的 vfx 是数组：都不是条件叶
-        data / "prop_presets.json": {"torch": {"vfx": [iid]}},
+        # 挂件预设的粒子挂载按效果 id、场景 JSON 残留的 vfx 是数组：都不是实例引用 / 条件叶
+        data / "prop_presets.json": {"torch": {"particles": [{"effect": iid}]}},
         root / "public" / "assets" / "scenes" / "hill.json": {"id": "hill", "vfx": [{"id": iid}]},
         # 归档 / 备份不算
         data / "archive" / "old.json": [{"type": "stopVfx", "params": {"instanceId": iid}}],

@@ -4,6 +4,21 @@
   "emitters": [
     {
       "id": "paper",
+      "simulation": {
+        "solver": "plate",
+        "spawnPlacement": "surface",
+        "initialVelocity": "rest",
+        "influences": {
+          "sceneWind": true,
+          "wind": false,
+          "airflow": true,
+          "stimulus": false,
+          "contact": true
+        },
+        "recycle": {
+          "mode": "surface"
+        }
+      },
       "offset": [
         0,
         0,
@@ -75,7 +90,7 @@
           "kinetic": 0.35
         },
         "adhere": {
-          "pinned": 0.15,
+          "pinned": 0,
           "onObjects": 1,
           "hold": 120
         },
@@ -87,12 +102,15 @@
           "rest": 0.35
         },
         "segments": 2,
-        "replenish": true
+        "replenish": true,
+        "burnable": {
+          "template": "paper_money"
+        }
       }
     }
   ],
   "authoring": {
     "sceneId": "跑马梁",
-    "note": "每颗粒子是一张纸钱（薄片模块）：躺在实例 area 圈出的那片地面 / 物件上，被场景风吹动。场景没有 wind 就一动不动。受光：与角色同一套 probe 底光 + 实体灯 + 显示变换（亮度随场景角色曝光 shading.beta）；tint 是纸钱反照率，按原画路面上那几张纸钱标定。"
+    "note": "每颗粒子是一张纸钱（薄片模块）：躺在实例 area 圈出的那片地面 / 物件上，被场景风吹动。无风时仍能被角色脚边接触踢开、轻抬，停步后由薄片模拟自然落地。出界在发射区域表面补回，再由风吹起。受光：与角色同一套 probe 底光 + 实体灯 + 显示变换（亮度随场景角色曝光 shading.beta）；tint 是纸钱反照率，按原画路面上那几张纸钱标定。"
   }
 }

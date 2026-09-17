@@ -74,6 +74,8 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   // ---- 背包 / 货币 / 规矩 / 任务 ----
   giveItem: { required: ['id'], nonEmpty: ['id'], optional: ['count', 'critical'] },
   removeItem: { required: ['id'], nonEmpty: ['id'], optional: ['count'] },
+  setActiveIgniter: { required: ['item'], nonEmpty: ['item'] },
+  setPropLevel: { required: ['prop', 'level'], nonEmpty: ['prop'] },
   giveCurrency: { required: ['amount'] },
   removeCurrency: { required: ['amount'], nonEmpty: ['amount'] },
   giveRule: { required: ['id'], nonEmpty: ['id'] },
@@ -132,6 +134,14 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   healPlayer: { required: ['amount'] },
   resetHealth: { required: [] },
   setHealth: { required: ['amount'] },
+  setMaxHealth: { required: ['amount'] },
+  setRetryCheckpoint: { required: ['id'], nonEmpty: ['id'], optional: ['label'] },
+  sceneWindGust: { required: ['speedMultiplier', 'durationMs'], optional: ['attackMs', 'releaseMs', 'id', 'volume', 'wait'] },
+  lockHealth: { required: ['id'], nonEmpty: ['id'], optional: ['min', 'max', 'scope'] },
+  unlockHealth: { required: ['id'], nonEmpty: ['id'] },
+  inflictHealthDamage: { required: ['amount', 'kind', 'sourceId'], nonEmpty: ['kind', 'sourceId'], optional: ['deathNoteId'] },
+  applyHealthProtection: { required: ['id', 'seconds'], nonEmpty: ['id'], optional: ['reduction', 'maxHealthBonus', 'kind', 'threatId'] },
+  removeHealthProtection: { required: ['id'], nonEmpty: ['id'] },
   incHealth: { required: ['amount'] },
   decHealth: { required: ['amount'] },
   triggerDeathTether: { required: [] },
@@ -140,7 +150,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   // 气味指示器显隐（G.6）：与三把火同一套 style 词汇 flare|fade|instant|debut（显缺省 flare=聚拢浮现 / 隐缺省 fade=散开）
   setSmellVisible: { required: ['visible'], optional: ['style'] },
   // 气味源 / 飘向追踪（G.6）：气缕飘向的方向 = 源；scene 缺省当前场景；追踪可随时开关，缺省开
-  setSmellSource: { required: ['x', 'y'], optional: ['scene'] },
+  setSmellSource: { required: ['x', 'y'], optional: ['scene', 'at'] },
   clearSmellSource: { required: [] },
   setSmellTracking: { required: ['enabled'] },
   sniff: { required: [] },
@@ -331,8 +341,19 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   // ---- 世界空间粒子 / 群体（VfxSystem）----
   // playVfx：instanceId（场景实例）或 effect + 位置（临时实例）二选一，运行时校验至少一个。
   // 位置 = at（'player' / NPC id / {x,y,h}）或 x/y/h；surface 缺省 ground；seed / countScale 可选。
-  playVfx: { required: [], optional: ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale'] },
+  playVfx: { required: [], optional: ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale', 'restart', 'oneShot'] },
   stopVfx: { required: ['instanceId'], nonEmpty: ['instanceId'] },
+  // playPropVfx：在手持挂件上播一个效果（跟着挂件走、效果自己放完就收）。target / socket 在挂件预设状态的
+  // onEnterActions 里可以不写 = 这件挂件自己；别处必填（运行时缺了 warn 跳过，校验器按所在位置判）。
+  // point = 贴图上的点 [u, v]（0..1），不写 = 起火点，再没有 = 挂点本身。
+  playPropVfx: { required: ['effect'], nonEmpty: ['effect'], optional: ['target', 'socket', 'point'] },
+  // 锁挂件：lock = lit 锁定不灭（风吹不灭、玩家熄不了）/ unlit 点不燃（玩家点不着）/ none 解锁。入档（手持物）
+  lockPropState: { required: ['target', 'socket', 'lock'], nonEmpty: ['target', 'socket', 'lock'] },
+  // 燃烧系统（A3.8 模板 + 实例）：socket 没写 = target 是当前场景的可燃实体 id（热点 / NPC / 演出生成留下的对象）；
+  // 写了 = target 是拿东西的人（player / NPC），烧他这个挂点上的可燃挂件。point = 模板着火点 id（缺省：有点取第一个、没有整体点）
+  igniteBurnable: { required: ['target'], nonEmpty: ['target'], optional: ['socket', 'point'] },
+  extinguishBurnable: { required: ['target'], nonEmpty: ['target'], optional: ['socket'] },
+  resetBurnable: { required: ['target'], nonEmpty: ['target'], optional: ['socket'] },
   // state ∈ roosting / airborne / fleeing / returning
   setVfxState: { required: ['instanceId', 'state'], nonEmpty: ['instanceId', 'state'] },
   // kind 缺省 fear；duration 缺省 0 = 瞬时脉冲；direction 只给 wind

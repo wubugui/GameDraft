@@ -19,8 +19,8 @@
   "hotspots": [
     {
       "id": "T_到崖墓",
-      "x": 382.2,
-      "y": 762.6,
+      "x": 1301.5,
+      "y": 288.4,
       "type": "transition",
       "label": "和尚坡",
       "interactionRange": 50,
@@ -32,21 +32,301 @@
       "scale": 0.92,
       "rotation": 359.3,
       "autoTrigger": true,
-      "castShadow": false
+      "castShadow": false,
+      "conditions": [
+        {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "闻到香火",
+          "reached": true
+        }
+      ]
+    },
+    {
+      "id": "H_跑马梁_跟脚声",
+      "type": "inspect",
+      "label": "跟脚声来源",
+      "x": 408.6,
+      "y": 909.0,
+      "visible": false,
+      "phases": [
+        "夜"
+      ],
+      "interactionRange": 0,
+      "data": {
+        "text": "……后头没有人。"
+      },
+      "conditions": [
+        {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "点火选择",
+          "reached": true
+        },
+        {
+          "narrative": "wrapper_跑马梁_路边招呼",
+          "state": "未交谈"
+        },
+        {
+          "not": {
+            "flag": "player_fire_protected"
+          }
+        }
+      ],
+      "healthThreat": {
+        "id": "ridge_follower",
+        "kind": "yin",
+        "boundaryRadius": 900,
+        "damageRadius": 900,
+        "attackPerSecond": 1.5,
+        "affectsWhenHidden": true,
+        "presenceSfx": "sfx_step_paper_money_2",
+        "soundInterval": 0.8,
+        "soundBehindPlayer": 85,
+        "soundVolume": 0.65,
+        "deathNoteId": "yin_boundary_death"
+      }
+    },
+    {
+      "id": "H_跑马梁_点火教学跟脚声",
+      "type": "inspect",
+      "label": "点火教学·跟脚声",
+      "x": 469.4,
+      "y": 1011.9,
+      "visible": false,
+      "phases": [
+        "夜"
+      ],
+      "interactionRange": 0,
+      "data": {
+        "text": "……后头没有人。"
+      },
+      "conditions": [
+        {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "点火教学"
+        },
+        {
+          "narrative": "wrapper_跑马梁_路边招呼",
+          "state": "未交谈"
+        },
+        {
+          "not": {
+            "flag": "player_fire_protected"
+          }
+        }
+      ],
+      "healthThreat": {
+        "id": "ridge_follower_lesson",
+        "kind": "yin",
+        "boundaryRadius": 900,
+        "damageRadius": 900,
+        "attackPerSecond": 1.5,
+        "affectsWhenHidden": true,
+        "presenceSfx": "sfx_step_paper_money_2",
+        "soundInterval": 0.8,
+        "soundBehindPlayer": 85,
+        "soundVolume": 0.65,
+        "deathNoteId": "yin_boundary_death",
+        "duringPresentation": true
+      }
     }
   ],
   "npcs": [
     {
-      "id": "new_npc",
-      "x": 785.5,
-      "y": 742.1,
-      "interactionRange": 50,
-      "name": "New NPC",
-      "animFile": "/resources/runtime/animation/官差枪_pipeline_anim/anim.json",
-      "initialAnimState": "idle"
+      "id": "npc_跑马梁_路边身影",
+      "name": "路边身影",
+      "x": 1278.1,
+      "y": 625.1,
+      "phases": [
+        "夜"
+      ],
+      "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
+      "initialAnimState": "idle",
+      "interactionRange": 28,
+      "dialogueGraphId": "线外_跑马梁_路边身影",
+      "conditionHidesEntity": true,
+      "conditions": [
+        {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "点火教学",
+          "reached": true
+        },
+        {
+          "narrative": "wrapper_跑马梁_路边招呼",
+          "state": "未交谈"
+        },
+        {
+          "not": {
+            "flag": "player_fire_protected"
+          }
+        }
+      ],
+      "healthThreat": {
+        "id": "ridge_caller",
+        "kind": "yin",
+        "boundaryRadius": 200.0,
+        "damageRadius": 164.4,
+        "attackPerSecond": 5,
+        "nearRadius": 115,
+        "nearAttackPerSecond": 1000,
+        "deathNoteId": "yin_boundary_death"
+      },
+      "initialFacing": "left"
     }
   ],
-  "zones": [],
+  "zones": [
+    {
+      "id": "Zone_跑马梁_阵风",
+      "polygon": [
+        {
+          "x": 995.3,
+          "y": 444.6
+        },
+        {
+          "x": 1220.3,
+          "y": 444.6
+        },
+        {
+          "x": 1220.3,
+          "y": 634.6
+        },
+        {
+          "x": 995.3,
+          "y": 634.6
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "护好"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_走进风口",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_阵风"
+          }
+        }
+      ],
+      "onStay": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_走进风口",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_阵风"
+          }
+        }
+      ]
+    },
+    {
+      "id": "Zone_跑马梁_纸钱过场",
+      "polygon": [
+        {
+          "x": 369.7,
+          "y": 724.5
+        },
+        {
+          "x": 759.7,
+          "y": 724.5
+        },
+        {
+          "x": 759.7,
+          "y": 934.5
+        },
+        {
+          "x": 369.7,
+          "y": 934.5
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "点火选择"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_走进引路拍",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_纸钱过场"
+          }
+        }
+      ],
+      "onStay": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_走进引路拍",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_纸钱过场"
+          }
+        }
+      ]
+    },
+    {
+      "id": "Zone_跑马梁_香火",
+      "polygon": [
+        {
+          "x": 1229.7,
+          "y": 271.2
+        },
+        {
+          "x": 1362.1,
+          "y": 264.6
+        },
+        {
+          "x": 1401.8,
+          "y": 355.3
+        },
+        {
+          "x": 1314.7,
+          "y": 381.8
+        },
+        {
+          "x": 1229.1,
+          "y": 376.4
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "寻香"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_靠近纸钱",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_香火"
+          }
+        }
+      ],
+      "onStay": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_靠近纸钱",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_香火"
+          }
+        }
+      ],
+      "smell": {
+        "scent": "incense",
+        "source": {
+          "x": 1216.69,
+          "y": 283.65
+        }
+      }
+    }
+  ],
   "perspectiveScale": {
     "near": {
       "x": 167.4,
@@ -67,8 +347,12 @@
   },
   "spawnPoints": {
     "spawn_0": {
-      "x": 446.3,
-      "y": 771.6
+      "x": 1300.1,
+      "y": 333.5
+    },
+    "spawn_1": {
+      "x": 550.2,
+      "y": 878.6
     }
   },
   "camera": {
@@ -124,7 +408,10 @@
         }
       ],
       "ambientSounds": [
-        "可怕的呼啸风声3"
+        {
+          "id": "可怕的呼啸风声3",
+          "volume": 0.38
+        }
       ],
       "lighting": {
         "lightFactors": {
@@ -145,7 +432,10 @@
     }
   },
   "ambientSounds": [
-    "呼呼的风"
+    {
+      "id": "呼呼的风",
+      "volume": 0.38
+    }
   ],
   "onEnter": [
     {
@@ -159,14 +449,23 @@
       "type": "runActionsIf",
       "params": {
         "condition": {
-          "narrative": "scenario_夜出南门",
-          "state": "望山"
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "initial"
         },
         "actions": [
           {
-            "type": "startDialogueGraph",
+            "type": "setRetryCheckpoint",
             "params": {
-              "graphId": "主线_初上跑马梁"
+              "id": "ridge_arrival",
+              "label": "跑马梁·上梁"
+            }
+          },
+          {
+            "type": "emitNarrativeSignal",
+            "params": {
+              "signal": "跑马梁_进场",
+              "sourceType": "scene",
+              "sourceId": "wrapper_跑马梁_风火引路"
             }
           }
         ]
@@ -179,15 +478,15 @@
       0,
       -0.25
     ],
-    "speed": 400,
+    "speed": 800,
     "gust": {
-      "amount": 0.8,
+      "amount": 1.2,
       "period": 7
     },
     "veer": 14,
     "turbulence": {
-      "intensity": 0.35,
-      "scale": 140
+      "intensity": 1.2,
+      "scale": 3000
     },
     "roughness": 1,
     "gain": {

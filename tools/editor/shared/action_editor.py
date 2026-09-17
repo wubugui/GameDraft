@@ -29,6 +29,7 @@ from PySide6.QtCore import Qt, QTimer, Signal, QSize
 from PySide6.QtGui import QWheelEvent
 
 from .rich_text_field import RichTextLineEdit, RichTextTextEdit
+from .health_forms import OptionalHealthNumber, ABSENT as HEALTH_ABSENT, health_handle_rows, health_source_rows
 
 # Qt6: ItemDataRole.UserRole
 _USER_ROLE = Qt.ItemDataRole.UserRole
@@ -160,7 +161,8 @@ OUTLINE_ABSENT = object()
 
 # 这些参数在 schema 里恒会被写出，但语义上"缺省即未设"。当某键原本不在数据里、且当前值
 # 等于其中性默认时，剔除它——避免编辑器"打开即保存"凭空添加 direction:""/anchorOffset:0。
-# 仅作用于"原本就没有该键"的情形；用户显式设过（原数据里有）的一律保留。
+# 盘上原本写着非中性值、用户清回中性档的，同样去键（清空 = 不写）；例外见 _OMIT_ONLY_WHEN_ABSENT。
+# 盘上原本就写着中性值的（作者自己写的 ""/0/false）一律原样保留。
 _OMIT_WHEN_ABSENT_AND_DEFAULT: dict[str, object] = {
     "direction": "",
     "anchorOffsetX": 0.0,
@@ -199,11 +201,38 @@ _OMIT_WHEN_ABSENT_AND_DEFAULT: dict[str, object] = {
     "options": [],
 }
 
+# 全局表里**清回中性档也不去键**的名字（只剔"原本没有"）。它们都在某个 action 里是
+# actionParamManifest.ts 的 required，去键会把"合法的中性值"改成"缺必填参数"，或者直接改行为：
+# - text：appendFlag / showNotification 里 required 但**不是** nonEmpty——`text:""` 合法（追加空串 /
+#   空提示条），缺键则校验报 action.param.missing。它唯一可选的宿主 waitClickContinue 走作用域表。
+# - key（setFlag / appendFlag / addFlagValue）、itemName（pickup）：required+nonEmpty，清空两种写法都错，
+#   留 "" 让校验报"为空"而不是"缺参"。
+# - slots（enableRuleOffers）：**行为不同**——`slots:[]` 把本 zone 的规矩槽登记成空，缺键则直接 return、
+#   不动已登记的。
+# - options（chooseAction）：required，缺键校验报缺参。
+# 表里其余名字在所有用到它的 action 里都可选，且运行时把中性值与缺键当同义（逐个核过读法：
+# faceEntity direction/faceTarget 与 emitNarrativeSignal sourceType/sourceId 都 trim 后判空；
+# 气泡 anchorOffsetX/Y 非有限按 0；chooseAction prompt `?? ''`、allowCancel `=== true`；
+# pickup isCurrency 判真；blendOverlayImage delayMs `?? 0`；switchScene/changeScene targetSpawnPoint
+# 在 SceneManager trim 后判空；setSmell dir 已废不读、flicker `!!`；giveItem critical `=== true`；
+# playNpcAnimation reverse 只认 true、loop 空串按未设、thenState trim 后判空）。
+# 新增全局键时：只要它在任一 action 里是 required 就必须进本表——
+# test_action_row_global_omit_cleared.test_only_when_absent_set_matches_manifest_required 按 manifest 守着。
+_OMIT_ONLY_WHEN_ABSENT: frozenset[str] = frozenset({"text", "key", "itemName", "slots", "options", "sourceId"})
+
 # 同上，但**按 (action, param) 限定作用域**。用于参数名在多个 action 间复用、
 # 而"缺省即未设"只对其中一个成立的情况：`image` 在 attachToSocket 里可选
 # （贴图可由 prop 预设提供），在 showOverlayImage / setHotspotDisplayImage 里却是
 # required+nonEmpty——放进上面那张按名的全局表会误伤后两者。
 _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
+    ("emitNarrativeSignal", "sourceId"): "",
+    ("lockHealth", "scope"): "",
+    ("inflictHealthDamage", "deathNoteId"): "",
+    ("applyHealthProtection", "kind"): "",
+    ("applyHealthProtection", "threatId"): "",
+    ("setRetryCheckpoint", "label"): "",
+    ("sceneWindGust", "id"): "",
+    ("sceneWindGust", "wait"): False,
     # silence 缺省 false＝不闭嘴；不登记的话「打开→不改→保存」会凭空多出 silence:false
     ("clearBubbleLineSet", "silence"): False,
     # 挂件预设 id、单张贴图、三态 mirror/lit 的"未设"都是空串。
@@ -285,6 +314,8 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # playVfx 的两条互斥入口（instanceId=场景实例 / effect=临时实例）：只填一条是**正常形态**，
     # 另一条的空串在运行时同义于缺键（`if (instanceId)` / `if (!effect)` 都按未填走）。
     ("playVfx", "instanceId"): "",
+    ("playVfx", "restart"): False,
+    ("playVfx", "oneShot"): False,
     ("playVfx", "effect"): "",
     # 位置引用 `at`：缺键 = 走散写 x/y。**空串绝不能写出去**——运行时
     # `p.at != null` 对 "" 成立，parsePositionRef("") → null → resolveVfxAt warn 后整个动作
@@ -301,6 +332,13 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # 不是"默认值 0"——所以走本表而不是 _ACTION_PARAM_RUNTIME_DEFAULTS（那张表是按默认值 seed
     # 控件用的，seed 没有数值默认可 seed）。凭空写 0 = 把随机种子钉成固定种子（行为级）。
     ("playVfx", "seed"): 0,
+    # playPropVfx（在手持挂件上播效果）：target / socket 在挂件预设状态 onEnterActions 的**顶层**可以不写
+    # （= 正在进入这个状态的那件挂件，运行时注入）；运行时 `String(p.target ?? '').trim()`，空串与缺键同义。
+    # 不登记的话「打开→不改→保存」会给 onEnterActions 里的最小形态 `{effect}` 凭空写上 target:"" / socket:""。
+    # point 不在这里：它的控件自带「不写」档（不勾 = 不写键）。
+    # 不能进全局表：target / socket 在 attachToSocket / setPropState 里是必填。
+    ("playPropVfx", "target"): "",
+    ("playPropVfx", "socket"): "",
     # pickup 的物品 id：铜钱档（isCurrency + itemName + count）本就不填 itemId，
     # 运行时在 isCurrency 分支里 return，根本不读它。原本没这个键就别凭空写出来。
     # 不能进全局表：itemId 是 giveItem/removeItem 那一族的必填参数名。
@@ -316,10 +354,23 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # 调试动作的标题：运行时 `p.title.trim() !== ''` 才拼前缀，空串同义于缺键。
     # 不能进全局表：title 在别处（说明卡等）可能是必填。
     ("debugAlertActionParams", "title"): "",
+    # igniteBurnable.point：缺键 = 有着火点取第一个、没有整体点着；运行时 `point || undefined`，空串与缺键同义。
+    # 控件（着火点下拉）的中性值是空串，不登记的话「打开→不改→保存」凭空写出 point:""。
+    # 不能进全局表：point 在 playPropVfx 里是贴图上的 [u, v]（另一个形状、另一个控件）。
+    ("igniteBurnable", "point"): "",
+    # 三个燃烧动作的 socket：缺键 = target 是场景里的可燃实体；写了 = target 是拿东西的人、烧他这个挂点上的可燃挂件。
+    # 运行时 `String(p.socket ?? '').trim() || undefined`，空串与缺键同义；控件（挂点下拉）中性值是空串。
+    # 不能进全局表：socket 在 attachToSocket / setPropState / lockPropState 里是必填。
+    ("igniteBurnable", "socket"): "",
+    ("extinguishBurnable", "socket"): "",
+    ("resetBurnable", "socket"): "",
     # setSceneEntityPosition 的实体类别：缺键 = 运行时 'npc'（只有 'hotspot' 走另一支）。
     # 专用表单恒写它，原本没这个键的旧条目会凭空多出 entityKind:"npc"。
     # 不能进全局表：entityKind 是 setEntityField 的 **required+nonEmpty** 参数。
     ("setSceneEntityPosition", "entityKind"): "npc",
+    # 点击继续的提示文案：运行时 trim 后空串 = 不给提示，与缺键同义。全局表把 text 列为只剔缺键
+    #（appendFlag / showNotification 里 `text:""` 是合法必填值），这里单给唯一可选的宿主清空去键。
+    ("waitClickContinue", "text"): "",
 }
 
 # 运行时默认为 true 的可选 bool：控件用三态（""/"true"/"false"）表达"未设"，
@@ -344,6 +395,34 @@ def _coerce_bool_param(val: object) -> bool:
     if isinstance(val, str):
         return val.strip().lower() not in ("", "false", "0", "no", "off")
     return bool(val)
+
+
+def _scoped_omit_original_is_neutral(orig: object, neutral: object) -> bool:
+    """盘上原值**语义上**是否就是剔除表（作用域表 / 全局表）里的中性档（控件载入它，给出的就是中性值）。
+
+    是 ⇒ 保存时的中性值是"没动过"，键原样留着（往返保真）；否 ⇒ 用户把非中性值清回了中性档，
+    键该去掉。按语义比、不按字面比：三态 ``wait`` 盘上是真 bool ``true``、控件里是 ``"true"``；
+    过场数据里的 bool 常写成字符串 ``"false"``——字面比会把这些没动过的键误删。
+    ``null`` 一律当中性（控件只能把它显示成中性档，维持旧行为）。
+    """
+    if orig is None:
+        return True
+    if isinstance(neutral, bool):
+        return isinstance(orig, (bool, str)) and _coerce_bool_param(orig) == neutral
+    if isinstance(neutral, str):
+        return isinstance(orig, (str, bool)) and str(orig).strip().lower() == neutral.lower()
+    if isinstance(neutral, (int, float)):
+        if isinstance(orig, bool):
+            return False
+        if isinstance(orig, (int, float)):
+            return orig == neutral
+        if isinstance(orig, str):
+            try:
+                return float(orig) == neutral
+            except ValueError:
+                return False
+        return False
+    return orig == neutral
 
 
 # 这些 action 的 int 参数运行时有**非零**默认（见 src/core/ActionRegistry.ts 的 `?? N`），但编辑器
@@ -421,7 +500,7 @@ ACTION_TYPES = [
     "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState",
     "startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun",
     "loadNarrativePackage", "unloadNarrativePackage",
-    "appendFlag", "giveItem", "removeItem", "giveCurrency", "removeCurrency",
+    "appendFlag", "giveItem", "removeItem", "setActiveIgniter", "setPropLevel", "giveCurrency", "removeCurrency",
     "giveRule", "grantRuleLayer", "giveFragment", "updateQuest", "setFocusedQuest", "startEncounter",
     "playBgm", "stopBgm", "playSfx", "playSceneAmbient", "stopSceneAmbient", "endDay", "addDelayedEvent",
     "advanceTime", "advanceTimeTo", "setNpcScheduleOverride",
@@ -430,6 +509,9 @@ ACTION_TYPES = [
     "startPressureHold", "playSignalCue", "addFlagValue",
     "setBubbleLineSet", "clearBubbleLineSet",
     "damagePlayer", "healPlayer", "resetHealth", "setHealth", "incHealth", "decHealth", "triggerDeathTether",
+    "setMaxHealth", "lockHealth", "unlockHealth", "inflictHealthDamage", "applyHealthProtection", "removeHealthProtection",
+    "setRetryCheckpoint",
+    "sceneWindGust",
     "setThreeFiresVisible", "showSystemNote",
     "setSmell", "clearSmell", "sniff", "setSmellVisible",
     "setSmellSource", "clearSmellSource", "setSmellTracking",
@@ -443,7 +525,7 @@ ACTION_TYPES = [
     "persistHotspotEnabled", "setZoneEnabled", "persistZoneEnabled", "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "shopPurchase", "inventoryDiscard",
     "setPlayerAvatar", "resetPlayerAvatar",
-    "attachToSocket", "detachFromSocket", "setPropState",
+    "attachToSocket", "detachFromSocket", "setPropState", "lockPropState",
     "fadeLight",
     "setSceneDepthFloorOffset", "resetSceneDepthFloorOffset",
     "setCameraZoom", "restoreSceneCameraZoom",
@@ -460,8 +542,9 @@ ACTION_TYPES = [
     "enableRuleOffers", "disableRuleOffers",
     "moveEntityTo", "jumpEntityTo", "teleportEntityTo", "faceEntity", "cutsceneSpawnActor", "cutsceneRemoveActor", "showEmoteAndWait", "showSpeechBubbleAndWait",
     "playTrajectory", "stopTrajectory",
-    "playVfx", "stopVfx", "setVfxState", "emitVfxField",
+    "playVfx", "stopVfx", "playPropVfx", "setVfxState", "emitVfxField",
     "setGroupEnabled", "moveGroupBy",
+    "igniteBurnable", "extinguishBurnable", "resetBurnable",
 ]
 
 # ---------------------------------------------------------------------------
@@ -560,7 +643,7 @@ def _make_speaker_side_combo(parent, current: object) -> QComboBox:
 
 
 DEBUG_ONLY_ACTION_TYPES = {"setNarrativeState"}
-# Legacy：旧扣血/回血。新内容统一用 decHealth/incHealth（编排控值）+ triggerDeathTether（系绳）。
+# Legacy：旧扣血/回血。真实侵袭用 inflictHealthDamage；编排控值用 decHealth/incHealth。
 # 仍保留在 ACTION_TYPES（兼容历史数据、校验通过、运行时可用），但从编辑器内容下拉中移除。
 LEGACY_ACTION_TYPES = {"damagePlayer", "healPlayer"}
 CONTENT_ACTION_TYPES = [t for t in ACTION_TYPES if t not in DEBUG_ONLY_ACTION_TYPES and t not in LEGACY_ACTION_TYPES]
@@ -572,6 +655,8 @@ CONTENT_ACTION_TYPES = [t for t in ACTION_TYPES if t not in DEBUG_ONLY_ACTION_TY
 # 新增 _make_selector kind 且用于某内容 id 参数时，必须在此登记对应宇宙（parity 测试会拦）。
 _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "item": "items",
+    # 火种（写了 igniter 块的物品）：items 的子集，json_lang 另立 igniter_items 宇宙
+    "igniter_item": "igniter_items",
     "rule": "rules",
     "fragment": "fragments",
     "quest": "quests",
@@ -592,6 +677,11 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "pressure_hold": "pressure_holds",
     "signal_cue": "signal_cues",
     "prop_preset": "prop_presets",
+    # 火把养成：只列**配了等级表**的挂件预设（setPropLevel.prop）。自成一个**子集宇宙**
+    # （json_lang 的 `prop_leveled`）——宇宙级 parity 要求"控件服务的宇宙 == 登记宇宙"，
+    # 标成宽的 prop_presets 就等于声称"任何挂件都收"，而校验器只收有等级表的那些。
+    # 改名 / 查引用仍走 prop_preset_refs（那边认的是 prop_presets 这张表本身）。
+    "prop_preset_leveled": "prop_leveled",
     "bubble_line_set": "bubble_line_sets",
     "bubble_speaker": "bubble_speakers",
     # 叙事活计生命周期（S1）：候选=声明 run 的活计图，宇宙沿用 narrative 条件叶的图 id 集合
@@ -637,6 +727,24 @@ _VFX_FIELD_KINDS: list[tuple[str, str]] = [
     ("airflow", "airflow · 气流（空气速度 wu/s）"),
 ]
 
+#: lockPropState.lock 的三档（值, 展示名）；空值那一行 = 还没选（manifest 必填非空）。与运行时 ActionRegistry 同口径
+_PROP_LOCK_ROWS: list[tuple[str, str]] = [
+    ("", "（选：锁定不灭 / 点不燃 / 解锁）"),
+    ("lit", "锁定不灭（lit）"),
+    ("unlit", "点不燃（unlit）"),
+    ("none", "解锁（none）"),
+]
+
+#: playPropVfx.socket 空值那一行的说法（构造与按 target 刷候选两处共用）
+_PROP_VFX_SOCKET_EMPTY_LABEL = "（留空 = 挂件状态进入动作里的这件挂件自己）"
+
+#: 燃烧系统的三个动作（socket 没写 = target 是场景里的可燃实体；写了 = target 是拿东西的人）
+_BURN_ACTION_TYPES = ("igniteBurnable", "extinguishBurnable", "resetBurnable")
+#: igniteBurnable.point 空值那一行的说法（构造与按 target 刷候选两处共用）
+_BURN_POINT_EMPTY_LABEL = "（缺省：有着火点取第一个，没有整体点着）"
+#: 燃烧动作 socket 空值那一行的说法（构造与按 target 刷候选两处共用）
+_BURN_SOCKET_EMPTY_LABEL = "（不写 = 烧场景里的可燃实体）"
+
 
 def _enum_combo(parent, rows: list[tuple[str, str]], val: str) -> "FilterableTypeCombo":
     """短枚举下拉（`select_only`：枚举不许手输未知值）。
@@ -680,6 +788,21 @@ def _prop_state_rows_for_prop(model, prop_id: str) -> list[tuple[str, str]]:
             tag = "　· 预设初始状态（状态表第一个）"
         rows.append((f"{key}{'  ' + label if label else ''}{tag}", key))
     return rows
+
+
+def _burn_target_rows(model, scene_id: str | None, socket: object) -> list[tuple[str, str]]:
+    """三个燃烧动作 target 的候选 `(id, label)`（`ProjectModel.burn_target_ids`，与校验器同一个函数）。
+
+    `socket` 是这一行此刻的挂点值：空 = 场景里开了可燃的实体 + 演出生成且留下的可燃对象；非空 = 拿东西的人。
+    """
+    fn = getattr(model, "burn_target_ids", None) if model is not None else None
+    if not callable(fn):
+        return []
+    sk = socket.strip() if isinstance(socket, str) else ""
+    try:
+        return [(str(i), str(lab)) for i, lab in (fn(scene_id or None, sk) or [])]
+    except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+        return []
 
 
 def _prop_state_name_rows(model) -> list[tuple[str, str]]:
@@ -832,6 +955,14 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "healPlayer": "save",
     "resetHealth": "save",
     "setHealth": "save",
+    "setMaxHealth": "save",
+    "setRetryCheckpoint": "save",
+    "sceneWindGust": "memory",
+    "lockHealth": "save",
+    "unlockHealth": "save",
+    "inflictHealthDamage": "save",
+    "applyHealthProtection": "save",
+    "removeHealthProtection": "save",
     "incHealth": "save",
     "decHealth": "save",
     "triggerDeathTether": "save",
@@ -878,6 +1009,10 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "persistPlayNpcAnimation": "save",
     "shopPurchase": "save",
     "inventoryDiscard": "save",
+    # 当前火种（InventoryManager.serialize 的 igniter 桶，与背包同档入存档）：改存档，因此**不进过场白名单**。
+    "setActiveIgniter": "save",
+    # 挂件等级（火把养成的升级）：`HeldPropSystem.serialize` 的 levels 桶入存档 ⇒ **不进过场白名单**。
+    "setPropLevel": "save",
     "setPlayerAvatar": "save",
     "resetPlayerAvatar": "save",
     "attachToSocket": "memory",
@@ -885,6 +1020,9 @@ ACTION_PERSISTENCE: dict[str, str] = {
     # 挂件状态：`persistent: true` 的手持物把 (target, socket, prop, **state**) 整条存进档
     #（HeldPropSystem.serialize），所以切状态是会落到存档里的事实，不是纯演出。
     "setPropState": "save",
+    # 挂件的锁（锁定不灭 / 点不燃）：与状态同一条 HeldPropSystem.serialize 入档（手持物的玩法事实）。
+    # 因此**不进过场白名单**（过场内禁改存档）。
+    "lockPropState": "save",
     # 场景灯的运行时强度倍率：只活在这一次运行里（HeldPropSystem 的 scale 表不序列化），
     # 所以是 memory；它也因此在过场白名单里（纯表演、不改存档）。
     "fadeLight": "memory",
@@ -936,10 +1074,17 @@ ACTION_PERSISTENCE: dict[str, str] = {
     # 粒子 / 群体同理：VfxSystem.serialize 恒为空桶，切场景即散、读档即作废
     "playVfx": "memory",
     "stopVfx": "memory",
+    # 挂件上的一次性效果：纯表演、不入档（与 playVfx 同档）
+    "playPropVfx": "memory",
     "setVfxState": "memory",
     "emitVfxField": "memory",
     "setGroupEnabled": "memory",
     "moveGroupBy": "memory",
+    # 燃烧系统（A3.8）：烧的状态是世界事实——BurnSystem 把燃烧事件整份进存档（burn 桶）。
+    # 三个都改存档，因此**不进过场白名单**（过场内禁改存档）。
+    "igniteBurnable": "save",
+    "extinguishBurnable": "save",
+    "resetBurnable": "save",
 }
 
 TRAJECTORY_OPEN_TOOLTIP = (
@@ -1017,6 +1162,16 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "healPlayer": [("amount", "int")],
     "resetHealth": [],
     "setHealth": [("amount", "int")],
+    "setMaxHealth": [("amount", "health_number")],
+    "setRetryCheckpoint": [("id", "str"), ("label", "str")],
+    "sceneWindGust": [("speedMultiplier", "health_number"), ("durationMs", "health_number"),
+                      ("attackMs", "optional_health_number"), ("releaseMs", "optional_health_number"),
+                      ("id", "str"), ("wait", "bool")],
+    "lockHealth": [("id", "str"), ("min", "optional_health_number"), ("max", "optional_health_number"), ("scope", "str")],
+    "unlockHealth": [("id", "str")],
+    "inflictHealthDamage": [("amount", "health_number"), ("kind", "str"), ("sourceId", "str"), ("deathNoteId", "str")],
+    "applyHealthProtection": [("id", "str"), ("seconds", "health_number"), ("reduction", "optional_health_number"), ("maxHealthBonus", "optional_health_number"), ("kind", "str"), ("threatId", "str")],
+    "removeHealthProtection": [("id", "str")],
     "incHealth": [("amount", "int")],
     "decHealth": [("amount", "int")],
     "triggerDeathTether": [],
@@ -1054,7 +1209,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     # 气味指示器显隐（G.6）：与三把火同一套 style 词汇（显缺省 flare=聚拢浮现 / 隐缺省 fade=散开）
     "setSmellVisible": [("visible", "bool"), ("style", "str")],
     # 气味源 / 飘向追踪（G.6）：气缕飘向的方向 = 源；scene 缺省当前场景；追踪缺省开、关了一直直的
-    "setSmellSource": [("x", "float"), ("y", "float"), ("scene", "str")],
+    # 走专用表单（_rebuild_set_smell_source_params）：scene 下拉 + PositionRefField（at 每帧现求，x/y 快照）。
+    "setSmellSource": [("x", "float"), ("y", "float"), ("scene", "str"), ("at", "position_ref")],
     "clearSmellSource": [],
     "setSmellTracking": [("enabled", "bool")],
     # 系统说明卡（K4）：noteId=system_notes.json；force 可选（每档一次，force 重弹）
@@ -1115,6 +1271,11 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "persistPlayNpcAnimation": [("target", "str"), ("state", "str")],
     "shopPurchase": [("itemId", "str"), ("price", "int")],
     "inventoryDiscard": [("itemId", "str")],
+    # 设当前火种：item = 写了 igniter 块的物品 id（候选只列火种，与校验器同一函数 ProjectModel.igniter_item_ids）
+    "setActiveIgniter": [("item", "str")],
+    # 设挂件等级（火把养成的升级，玩法清单 A3.7）：prop = 配了 levels 的挂件预设（候选只列这些，
+    # 与校验器同一函数 ProjectModel.prop_preset_ids_with_levels）；level = 1..那个预设的级数（上下限跟着 prop 走）
+    "setPropLevel": [("prop", "str"), ("level", "int")],
     "pickup": [("itemId", "str"), ("itemName", "str"), ("count", "int"), ("isCurrency", "bool")],
     "addDelayedEvent": [("targetDay", "int")],
     "disableRuleOffers": [],
@@ -1135,6 +1296,9 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     # 挂件状态机（火把：点着 / 护火 / 残炭 / 灭）。运行时按 (target, socket) 找到那次挂载，
     # 再从它的 prop 预设里取状态；fadeMs 只作用于**灯的强度**（贴图是硬切）。
     "setPropState": [("target", "str"), ("socket", "str"), ("state", "str"), ("fadeMs", "int")],
+    # 挂件的锁：lock 必填三选一——lit 锁定不灭（风压不掉火势、玩家 T 熄不灭）/ unlit 点不燃（玩家 T 点不着）/
+    # none 解锁。setPropState 永远不受锁影响。
+    "lockPropState": [("target", "str"), ("socket", "str"), ("lock", "str")],
     # 场景灯的运行时强度倍率（0 = 吹灭门口那盏灯笼）。**手持火把不走这条**，走 setPropState。
     "fadeLight": [("lightId", "str"), ("scale", "float"), ("fadeMs", "int")],
     "setSceneDepthFloorOffset": [("floor_offset", "float")],
@@ -1218,9 +1382,21 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("surface", "str"),
         ("seed", "int"),
         ("countScale", "float"),
+        ("restart", "bool"),
+        ("oneShot", "bool"),
     ],
     "stopVfx": [("instanceId", "str")],
+    # playPropVfx：在手持挂件上播一个效果（跟着挂件走、放完自己收、卸下即停）。effect 必填；
+    # target / socket = 挂在谁的哪个挂点上（挂件预设状态 onEnterActions 顶层留空 = 这件挂件自己，别处必填，
+    # 校验器按所在位置判）；point = 贴图上的点 [u, v]（0..1），控件带「不写」档，不写 = 起火点 → 挂点。
+    "playPropVfx": [("target", "str"), ("socket", "str"), ("effect", "str"), ("point", "unit_point")],
     "setVfxState": [("instanceId", "str"), ("state", "str")],
+    # ---- 燃烧（BurnSystem；燃烧工作台管可燃物模板，谁可燃写在宿主自己的「可燃」块里）----
+    # socket 没写 = target 是场景里开了可燃的实体（热点 / NPC / 演出生成留下的对象）；写了 = target 是拿东西的人
+    # target = 当前场景里布置了可燃物的热点 id；point = 那个可燃物的着火点 id（可空：有着火点取第一个、没有整体点着）。
+    "igniteBurnable": [("target", "str"), ("socket", "str"), ("point", "str")],
+    "extinguishBurnable": [("target", "str"), ("socket", "str")],
+    "resetBurnable": [("target", "str"), ("socket", "str")],
     # emitVfxField：tag 是**作者标签**，群体按它查自己的 attitude 权重（不认识 = 权重 0 = 等于没发）。
     # duration 不写 / 0 = 瞬时脉冲；direction 只对 kind=wind 有意义（泛型 schema 表达不了三元组，走专用分支）。
     "emitVfxField": [
@@ -1458,6 +1634,8 @@ def _spawn_spec_equal(a: dict, b: dict) -> bool:
             out["keep"] = True
         if _coerce_bool_param(d.get("renderRaw")):
             out["renderRaw"] = True
+        if "burnable" in d:
+            out["burnable"] = json.dumps(d.get("burnable"), ensure_ascii=False, sort_keys=True)
         return out
     return norm(a) == norm(b)
 
@@ -2037,6 +2215,282 @@ class NarrativeSignalPickerField(QWidget):
             self.valueChanged.emit(self._value)
         else:
             self._refresh_line()
+
+
+class _BurnHostAbsent:
+    """宿主可燃块里「这个键没写」的哨兵（与 None / 空串区分）；deepcopy 后仍是它自己（`is` 判得住）。"""
+
+    __slots__ = ()
+
+    def __copy__(self) -> "_BurnHostAbsent":
+        return self
+
+    def __deepcopy__(self, _memo: dict) -> "_BurnHostAbsent":
+        return self
+
+
+_BURN_HOST_ABSENT = _BurnHostAbsent()
+#: initial 的短枚举（值, 展示名）；空值 = 不写键 = 缺省没点
+_BURN_INITIAL_ROWS: list[tuple[str, str]] = [
+    ("", "（缺省：第一次出现时没点）"),
+    ("unburnt", "没点（unburnt）"),
+    ("burning", "已经在烧（burning）"),
+]
+#: playerIgnite 的三态（值, 展示名）：运行时缺省 true，勾选框表达不了"没写"
+_BURN_PLAYER_IGNITE_ROWS: list[tuple[str, str]] = [
+    ("", "（缺省：玩家能按 E 点）"),
+    ("true", "玩家能点（true）"),
+    ("false", "玩家点不了（false）"),
+]
+
+
+class BurnableHostBlock(QWidget):
+    """宿主身上的「可燃」块 `burnable: {template, initial?, playerIgnite?, igniteConditions?, signals?}`（A3.8）。
+
+    本处用于轨迹 spawn 规格（演出临时生成的对象开可燃）；形状与键序以 `shared/burnables.py` 的
+    `normalize_burnable_host` / `HOST_ORDER` 为准。往返：每个字段各自「没动过 ⇒ 回吐磁盘原值（含怪值），
+    动过 ⇒ 写新值 / 回到缺省就删键」，块里不认识的键原样透传、已有键保持原顺序。
+    所有非自由文本字段都是选择器：模板（弹窗，候选 = `ProjectModel.burnable_template_ids`，与校验器同一份镜像）、
+    initial / playerIgnite（短枚举下拉）、能点的条件（条件编辑器，折叠懒建）、三个信号（信号管理器）。
+    """
+
+    changed = Signal()
+
+    def __init__(self, model, scene_id: str | None, raw: object, parent: QWidget | None = None,
+                 *, host_kind: str = "spawn") -> None:
+        super().__init__(parent)
+        from .burnables import HOST_ORDER, SIGNAL_KEYS, SIGNAL_MOMENT_LABELS
+
+        self._model = model
+        self._scene_id = scene_id
+        self._host_kind = host_kind
+        self._raw = deepcopy(raw)
+        self._raw_dict: dict = self._raw if isinstance(self._raw, dict) else {}
+        self._host_order = HOST_ORDER
+        self._signal_keys = SIGNAL_KEYS
+        self._cond_editor = None
+        self._loading = True
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        self._enabled = QCheckBox("可燃（生成出来的是可燃物模板的一个实例）", self)
+        self._enabled.setToolTip(
+            "勾上 = 这个对象是一份可燃物模板的实例：它自己的图 / 动画一律不画，按模板的图与真实尺寸画"
+            "（位置 / 缩放 / 朝向照乘）；src / characterId 可以不写。\n"
+            "播完留下（keep）的照常进存档、照常烧，燃烧动作与 burn 条件能按 spawn id 指到它。\n"
+            "模板在「工具 → 燃烧工作台…」里做。")
+        self._enabled.setChecked(raw is not _BURN_HOST_ABSENT)
+        self._enabled.toggled.connect(self._on_enabled)
+        lay.addWidget(self._enabled)
+
+        self._body = QWidget(self)
+        form = compact_form(QFormLayout(self._body))
+        lay.addWidget(self._body)
+
+        tid = self._raw_dict.get("template")
+        self._template = IdRefSelector(self._body, allow_empty=True, editable=False, click_opens_popup=True)
+        self._template.setMinimumWidth(96)
+        self._template.set_items(_id_ref_rows_with_orphan(self._template_rows(), tid if isinstance(tid, str) else ""))
+        self._template.set_current(tid.strip() if isinstance(tid, str) else "")
+        self._template.setToolTip(
+            "用哪份可燃物模板（assets/data/burnables/，燃烧工作台里做）：图、真实尺寸、燃料、着火点、烧法、粒子、火光都取它。\n"
+            "标了「缺失」的值已保值、不会被改写（校验器报 error）。")
+        self._template.value_changed.connect(lambda _v: self._emit())
+        form.addRow("模板", self._template)
+
+        init = self._raw_dict.get("initial", _BURN_HOST_ABSENT)
+        self._initial = _enum_combo(self._body, _BURN_INITIAL_ROWS, init if isinstance(init, str) else "")
+        if init is not _BURN_HOST_ABSENT and not isinstance(init, str):
+            self._initial.set_entries(
+                [(lab, v) for v, lab in _BURN_INITIAL_ROWS] + [(f"(数据) {init!r}", "__raw__")])
+            self._initial.set_committed_type("__raw__")
+        self._initial.setToolTip("第一次生成出来时是不是已经在烧（有着火点按第一个点，没有整体点着）。不写 = 没点。")
+        self._initial.typeCommitted.connect(lambda _t: self._emit())
+        form.addRow("初始", self._initial)
+
+        pi = self._raw_dict.get("playerIgnite", _BURN_HOST_ABSENT)
+        pi_val = "true" if pi is True else "false" if pi is False else ""
+        self._player_ignite = _enum_combo(self._body, _BURN_PLAYER_IGNITE_ROWS, pi_val)
+        if pi is not _BURN_HOST_ABSENT and not isinstance(pi, bool):
+            self._player_ignite.set_entries(
+                [(lab, v) for v, lab in _BURN_PLAYER_IGNITE_ROWS] + [(f"(数据) {pi!r}", "__raw__")])
+            self._player_ignite.set_committed_type("__raw__")
+        self._player_ignite.setToolTip(
+            "玩家手上有火时能不能走过去按 E 点它（动作 igniteBurnable 不受影响）。不写 = 能点。")
+        self._player_ignite.typeCommitted.connect(lambda _t: self._emit())
+        form.addRow("玩家能点", self._player_ignite)
+
+        conds = self._raw_dict.get("igniteConditions", _BURN_HOST_ABSENT)
+        n_conds = len(conds) if isinstance(conds, list) else 0
+        self._cond_section = CollapsibleSection(
+            f"能点的条件（{n_conds} 条）" if n_conds else "能点的条件（不限）", start_open=False, parent=self._body)
+        self._cond_section.set_header_tool_tip(
+            "玩家能按 E 点它的条件（与实体自己的 conditions 同时满足；组内 AND）。不写 = 不限。")
+        self._cond_section.expanded_changed.connect(self._ensure_cond_editor)
+        form.addRow(self._cond_section)
+
+        sig = self._raw_dict.get("signals")
+        sig = sig if isinstance(sig, dict) else {}
+        self._signal_fields: dict[str, NarrativeSignalPickerField] = {}
+        for moment in self._signal_keys:
+            row = QWidget(self._body)
+            rl = QHBoxLayout(row)
+            rl.setContentsMargins(0, 0, 0, 0)
+            cur = sig.get(moment)
+            field = NarrativeSignalPickerField(model, cur if isinstance(cur, str) else "", row)
+            field.setToolTip(
+                f"可燃物实例{SIGNAL_MOMENT_LABELS.get(moment, moment)}发的叙事信号（宿主 = 这个生成对象的 id）。"
+                "只能通过信号管理器选择；不写 = 不发。")
+            field.valueChanged.connect(lambda _t: self._emit())
+            clear = QToolButton(row)
+            clear.setText("清空")
+            clear.setToolTip("不发这个信号（删掉这一项）")
+            clear.clicked.connect(lambda _c=False, f=field: self._clear_signal(f))
+            rl.addWidget(field, 1)
+            rl.addWidget(clear, 0)
+            self._signal_fields[moment] = field
+            form.addRow(f"{SIGNAL_MOMENT_LABELS.get(moment, moment)}的信号", row)
+
+        self._seed = self._field_values()
+        self._body.setVisible(self._enabled.isChecked())
+        self._loading = False
+
+    # ---- candidates -------------------------------------------------------
+
+    def _template_rows(self) -> list[tuple[str, str]]:
+        fn = getattr(self._model, "burnable_template_ids", None) if self._model is not None else None
+        if not callable(fn):
+            return []
+        try:
+            return [(str(i), str(lab)) for i, lab in fn()]
+        except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+            return []
+
+    def refresh_candidates(self) -> None:
+        """工程数据变了（模板重读）：重灌模板候选，当前值保值。"""
+        cur = self._template.current_id()
+        self._template.set_items(_id_ref_rows_with_orphan(self._template_rows(), cur))
+        self._template.set_current(cur)
+
+    # ---- edits ------------------------------------------------------------
+
+    def _emit(self) -> None:
+        if not self._loading:
+            self.changed.emit()
+
+    def _on_enabled(self, on: bool) -> None:
+        self._body.setVisible(on)
+        self._emit()
+
+    def _clear_signal(self, field: "NarrativeSignalPickerField") -> None:
+        if not field.current_signal():
+            return
+        field._value = ""
+        field._refresh_line()
+        field.valueChanged.emit("")
+
+    def _ensure_cond_editor(self, expanded: bool) -> None:
+        if not expanded or self._cond_editor is not None:
+            return
+        from .condition_editor import ConditionEditor
+
+        editor = ConditionEditor("能点的条件", self._cond_section)
+        editor.set_flag_pattern_context(self._model, self._scene_id)
+        conds = self._raw_dict.get("igniteConditions")
+        editor.set_data([c for c in conds if isinstance(c, dict)] if isinstance(conds, list) else [])
+        editor.changed.connect(self._on_conditions_changed)
+        self._cond_editor = editor
+        self._cond_section.add_body(editor)
+        editor.show()
+
+    def _on_conditions_changed(self) -> None:
+        if self._cond_editor is not None:
+            n = len(self._cond_editor.to_list())
+            self._cond_section.set_title(f"能点的条件（{n} 条）" if n else "能点的条件（不限）")
+        self._emit()
+
+    # ---- read out ---------------------------------------------------------
+
+    def _field_values(self) -> dict[str, object]:
+        """每个受管键此刻「控件上的样子」（`_BURN_HOST_ABSENT` = 不写）。"""
+        out: dict[str, object] = {}
+        out["template"] = self._template.current_id().strip()
+        iv = self._initial.committed_type().strip()
+        out["initial"] = "__raw__" if iv == "__raw__" else (iv or _BURN_HOST_ABSENT)
+        pv = self._player_ignite.committed_type().strip()
+        out["playerIgnite"] = (
+            "__raw__" if pv == "__raw__" else True if pv == "true" else False if pv == "false" else _BURN_HOST_ABSENT
+        )
+        if self._cond_editor is None:
+            out["igniteConditions"] = "__raw__"
+        else:
+            lst = self._cond_editor.to_list()
+            if lst == self._raw_dict.get("igniteConditions"):
+                out["igniteConditions"] = "__raw__"
+            else:
+                out["igniteConditions"] = lst if lst else _BURN_HOST_ABSENT
+        sig = {m: f.current_signal().strip() for m, f in self._signal_fields.items() if f.current_signal().strip()}
+        out["signals"] = sig if sig else _BURN_HOST_ABSENT
+        return out
+
+    def is_enabled(self) -> bool:
+        return self._enabled.isChecked()
+
+    def value(self) -> object:
+        """要写进宿主的 `burnable` 值；没勾「可燃」返回 `_BURN_HOST_ABSENT`（不写键）。"""
+        if not self._enabled.isChecked():
+            return _BURN_HOST_ABSENT
+        cur = self._field_values()
+        if cur == self._seed and self._raw is not _BURN_HOST_ABSENT:
+            return deepcopy(self._raw)
+        raw = self._raw_dict
+        vals: dict[str, object] = {}
+        for key in self._host_order:
+            now = cur[key]
+            if key == "template" and "template" not in raw:
+                vals[key] = now  # 开 = 至少写 {template}（还没选就写空串，校验器报「必填」）
+            elif now == self._seed[key] or now == "__raw__":
+                if key in raw:
+                    vals[key] = deepcopy(raw[key])
+            elif now is not _BURN_HOST_ABSENT:
+                vals[key] = deepcopy(now)
+        if cur["signals"] is not _BURN_HOST_ABSENT and cur["signals"] != self._seed["signals"]:
+            old = raw.get("signals") if isinstance(raw.get("signals"), dict) else {}
+            vals["signals"] = _merge_in_order(old, cur["signals"], self._signal_keys)
+        out: dict = {}
+        pending = [k for k in self._host_order if k in vals and k not in raw]
+        for k, v in raw.items():
+            if k in self._host_order:
+                idx = self._host_order.index(k)
+                while pending and self._host_order.index(pending[0]) < idx:
+                    nk = pending.pop(0)
+                    out[nk] = vals[nk]
+                if k in vals:
+                    out[k] = vals[k]
+            else:
+                out[k] = deepcopy(v)
+        for nk in pending:
+            out[nk] = vals[nk]
+        return out
+
+
+def _merge_in_order(old: dict, new_vals: dict, managed: tuple[str, ...]) -> dict:
+    """按旧对象的键序写回：旧键里受管的取新值（新值没有 = 删掉），旧对象里没有的新键按受管顺序插到合适位置。"""
+    out: dict = {}
+    pending = [k for k in managed if k in new_vals and k not in old]
+    for k, v in old.items():
+        if k in managed:
+            idx = managed.index(k)
+            while pending and managed.index(pending[0]) < idx:
+                nk = pending.pop(0)
+                out[nk] = new_vals[nk]
+            if k in new_vals:
+                out[k] = new_vals[k]
+        else:
+            out[k] = v
+    for nk in pending:
+        out[nk] = new_vals[nk]
+    return out
 
 
 class FilterableTypeCombo(QComboBox):
@@ -3473,8 +3927,9 @@ class ActionRow(QWidget):
             if cur in states or cur == "":
                 combo.set_committed_type(cur)
             else:
-                # 悬垂值保值展示（共享控件保值契约），绝不静默清空/顶替
-                combo.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                # 悬垂值保值展示（共享控件保值契约），绝不静默清空/顶替；
+                # 空值行留在首位——切掉它作者就再也清不掉这个值（set_committed_type("") 落 entries[0]）
+                combo.set_entries([rows[0], (f"(数据) {cur}", cur)] + rows[1:])
                 combo.set_committed_type(cur)
 
         def refresh_state(_: str = "") -> None:
@@ -3528,7 +3983,7 @@ class ActionRow(QWidget):
             if cur in states or cur == "":
                 st_w.set_committed_type(cur)
             elif cur:
-                st_w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                st_w.set_entries([rows[0], (f"(数据) {cur}", cur)] + rows[1:])
                 st_w.set_committed_type(cur)
             else:
                 st_w.set_committed_type("")
@@ -3571,12 +4026,42 @@ class ActionRow(QWidget):
         prop_w.value_changed.connect(refresh_state)
         refresh_state()
 
-    def _connect_prop_state_socket_picker(self, *, initial_socket: str) -> None:
-        """`setPropState`：按 target 的动画包刷 socket 候选（挂点住在它的动画包里）。
+    def _connect_prop_level_spin(self) -> None:
+        """`setPropLevel`：选了 prop 就把 level 那一格的上限收成它的级数（候选面 = 校验面）。
+
+        **当前值不被夹掉**：磁盘上写着第 3 级、prop 后来被砍成 2 级时，把 3 夹成 2 就是
+        静默改数据（校验器本该报的 error 也跟着消失）。所以上限取 `max(级数, 当前值)`，
+        越界值原样留着让校验器说话；没选 prop / 那个预设没有等级表时不收窄。
+        """
+        prop_w = self._param_widgets.get("prop")
+        lv_w = self._param_widgets.get("level")
+        if not isinstance(prop_w, IdRefSelector) or not isinstance(lv_w, QSpinBox):
+            return
+
+        def refresh(_: object = "") -> None:
+            counts = getattr(self._ctx_model, "prop_level_counts", None)
+            table = counts() if callable(counts) else {}
+            n = int(table.get(prop_w.current_id().strip(), 0) or 0)
+            cur = int(lv_w.value())
+            lv_w.setMinimum(min(1, cur))
+            lv_w.setMaximum(max(n, cur, 1) if n else max(cur, 999))
+            lv_w.setToolTip(
+                f"升到第几级（1 起）。挂件「{prop_w.current_id().strip()}」一共 {n} 级。"
+                if n else
+                "升到第几级（1 起）。先在上面选一个配了等级表的挂件，这一格的上限就跟着它走。")
+
+        prop_w.value_changed.connect(refresh)
+        refresh()
+
+    def _connect_prop_state_socket_picker(
+        self, *, initial_socket: str, empty_label: str = "（挂点名，如 right_hand）",
+    ) -> None:
+        """`setPropState` / `playPropVfx`：按 target 的动画包刷 socket 候选（挂点住在它的动画包里）。
 
         与 `light_follow_ui` 的挂点候选同一条解析链（`socket_names_for_actor`）。
         取不到候选（那个包没标过挂点）时**仍可手打**——名字跨动画包通用，
-        而且清空一个合法的挂点名比让它留着危险得多。
+        而且清空一个合法的挂点名比让它留着危险得多。`empty_label` 是空值那一行的说法
+        （playPropVfx 的空值在挂件状态进入动作里有意义：= 这件挂件自己）。
         """
         tgt_w = self._param_widgets.get("target")
         sk_w = self._param_widgets.get("socket")
@@ -3588,7 +4073,7 @@ class ActionRow(QWidget):
         def refresh_socket(_: object = "") -> None:
             nonlocal calls
             calls += 1
-            rows = [("（挂点名，如 right_hand）", "")]
+            rows = [(empty_label, "")]
             fn = getattr(self._ctx_model, "socket_names_for_actor", None)
             if callable(fn):
                 try:
@@ -3613,6 +4098,88 @@ class ActionRow(QWidget):
 
         tgt_w.value_changed.connect(refresh_socket)
         refresh_socket()
+
+    def _connect_burn_pickers(self, *, initial_socket: object, initial_point: object) -> None:
+        """三个燃烧动作：target / socket / point 三个选择器互相刷新候选（全部取 ProjectModel，与校验器同一组函数）。
+
+        - socket 一变：target 候选在「场景里的可燃实体」与「拿东西的人」两套之间切（``burn_target_ids``），point 候选重算；
+        - target 一变：socket 候选换成这个人的挂点（``burn_socket_names``），point 候选重算（``burn_point_ids``）。
+        已选的值一律保值（不在新候选里就标「缺失 / (数据)」，校验器报 warning），绝不静默清空。
+        """
+        tgt_w = self._param_widgets.get("target")
+        sk_w = self._param_widgets.get("socket")
+        pt_w = self._param_widgets.get("point")
+        if not isinstance(tgt_w, IdRefSelector) or not isinstance(sk_w, FilterableTypeCombo):
+            return
+        m = self._ctx_model
+        scene = self._ctx_scene_id
+        init_sk = initial_socket.strip() if isinstance(initial_socket, str) else ""
+        init_pt = initial_point.strip() if isinstance(initial_point, str) else ""
+        calls = {"socket": 0, "point": 0}
+
+        def cur_socket() -> str:
+            return sk_w.committed_type().strip()
+
+        def refresh_socket() -> None:
+            calls["socket"] += 1
+            rows = [(_BURN_SOCKET_EMPTY_LABEL, "")]
+            fn = getattr(m, "burn_socket_names", None) if m is not None else None
+            if callable(fn):
+                try:
+                    for name, label in (fn(scene, tgt_w.current_id()) or []):
+                        rows.append((f"{name}  {label}" if label and label != name else str(name), str(name)))
+                except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+                    pass
+            cur = cur_socket()
+            if calls["socket"] == 1 and not cur and init_sk:
+                cur = init_sk
+            if cur and cur not in {v for _lab, v in rows}:
+                rows.insert(1, (f"(数据) {cur}", cur))
+            sk_w.set_entries(rows)
+            sk_w.set_committed_type(cur)
+            le = sk_w.lineEdit()
+            if le is not None:
+                le.setCursorPosition(0)
+
+        def refresh_point() -> None:
+            if not isinstance(pt_w, FilterableTypeCombo):
+                return
+            calls["point"] += 1
+            rows = [(_BURN_POINT_EMPTY_LABEL, "")]
+            fn = getattr(m, "burn_point_ids", None) if m is not None else None
+            if callable(fn):
+                try:
+                    rows.extend(
+                        (str(label), str(pid)) for pid, label in (fn(scene, tgt_w.current_id(), cur_socket()) or [])
+                    )
+                except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+                    pass
+            known = {v for _lab, v in rows}
+            cur = pt_w.committed_type().strip()
+            if calls["point"] == 1 and not cur and init_pt:
+                cur = init_pt
+            if cur and cur not in known:
+                rows.insert(1, (f"(数据) {cur}  ⚠ 这个实例的模板没有这个着火点", cur))
+            pt_w.set_entries(rows)
+            pt_w.set_committed_type(cur)
+
+        def refresh_targets() -> None:
+            cur = tgt_w.current_id()
+            tgt_w.set_items(_burn_target_rows(m, scene, cur_socket()))
+            tgt_w.set_current(cur)
+
+        def on_target(_v: object = "") -> None:
+            refresh_socket()
+            refresh_point()
+
+        def on_socket(_t: object = "") -> None:
+            refresh_targets()
+            refresh_point()
+
+        tgt_w.value_changed.connect(on_target)
+        sk_w.typeCommitted.connect(on_socket)
+        refresh_socket()
+        refresh_point()
 
     def _default_map_scene_id(self, params: dict) -> str:
         """「地图 sceneId」下拉的缺省场景：数据里写了就用它，否则按上下文推。
@@ -3661,16 +4228,19 @@ class ActionRow(QWidget):
         optional: bool = False,
         tip: str | None = None,
         legacy_xy: tuple[float, float] | None = None,
+        with_xy: bool = True,
     ) -> PositionRefField:
         """统一的位置引用控件（数字 / 实体此刻位置 / 场景曲线插槽 / 地图拾取），登记为 `at`。
 
         载入：`params['at']` 有就按它；没有就用顶层 x/y（或 `legacy_xy`，playTrajectory 的旧 anchorX/Y）当数字坐标。
+        ``with_xy`` 与 :meth:`_write_position_params` 成对：宿主没有顶层 x/y 参数（playTrajectory）就不读它们——
+        读进来却从不写回，「不指定」就永远存不下去（x/y 在那边是未登记参数，按原值透传）。
         """
         f = PositionRefField(
             self._ctx_model, scene_provider, optional=optional,
             cutscene_id=self._ctx_cutscene_id, parent=self,
         )
-        xy = legacy_xy if legacy_xy is not None else _params_xy(params)
+        xy = legacy_xy if legacy_xy is not None else (_params_xy(params) if with_xy else None)
         f.load(params.get("at"), xy)
         if tip:
             f.setToolTip(tip)
@@ -3844,7 +4414,7 @@ class ActionRow(QWidget):
                 if cur in allowed:
                     w.set_committed_type(cur)
                 elif cur:
-                    w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                    w.set_entries([rows[0], (f"(数据) {cur}", cur)] + rows[1:])
                     w.set_committed_type(cur)
                 else:
                     w.set_committed_type("")
@@ -3876,6 +4446,59 @@ class ActionRow(QWidget):
             tip="钉到哪：数字坐标 / 另一实体此刻位置（运行时取执行那一刻）/ 场景曲线插槽。",
         )
         self._sync_foldable_visibility()
+
+    def _rebuild_set_smell_source_params(self, params: dict) -> None:
+        """setSmellSource：气味源所属场景（下拉，空 = 当前场景）+ 源位置（统一位置选择器）。
+
+        实体 / 曲线档写 `at`，运行时**不在执行时求值**、存引用本身每帧现求（源是会走的 NPC 时烟跟着它）；
+        x/y 仍是 manifest 必填，写编辑期快照当回落。数字档只写 x/y（老数据一个字节不动）。
+        """
+        self._params_frame.setVisible(True)
+        while self._params_layout.rowCount() > 0:
+            self._params_layout.removeRow(0)
+        self._param_widgets.clear()
+
+        tip = QLabel(
+            "放气味源：气缕飘向指着它，只在所属场景里生效，入存档。\n"
+            "源位置：选实体（铺子热点 / 尸体 NPC，运行时每帧跟着它）、地图拾取、或场景曲线的站位 / 轨迹点。"
+        )
+        tip.setWordWrap(True)
+        self._params_layout.addRow(tip)
+
+        m = self._ctx_model
+        scene0 = str(params.get("scene") or "").strip()
+        scene_rows = [("（当前场景）", "")] + [(s, s) for s in (m.all_scene_ids() if m else [])]
+        if scene0 and scene0 not in {v for _d, v in scene_rows}:
+            scene_rows.append((f"{scene0}（缺失）", scene0))   # 保值：候选里没有也不顶替
+        scene_combo = FilterableTypeCombo(scene_rows, self, select_only=True)
+        scene_combo.set_committed_type(scene0)
+        scene_combo.setToolTip("气味源属于哪个场景：只在那个场景里指向。留「当前场景」= 执行时玩家所在场景。")
+        self._param_widgets["scene"] = scene_combo
+        self._params_layout.addRow("所属场景 scene", scene_combo)
+
+        def map_scene() -> str:
+            return scene_combo.committed_type().strip() or self._default_map_scene_id({})
+
+        pos_f = self._add_position_field(
+            params, map_scene, label="源位置",
+            tip="气味源在哪：实体此刻位置（每帧跟着它）/ 数字坐标（地图拾取）/ 场景曲线插槽 / 曲线上的点。",
+        )
+
+        def on_scene(_t: str) -> None:
+            pos_f.refresh_candidates()
+            self.changed.emit()
+
+        scene_combo.typeCommitted.connect(on_scene)
+        self._sync_foldable_visibility()
+
+    def _to_dict_set_smell_source(self) -> dict:
+        prm: dict = {}
+        self._write_position_params(prm, self._param_widgets.get("at"), with_xy=True)
+        sc_w = self._param_widgets.get("scene")
+        scene = sc_w.committed_type().strip() if isinstance(sc_w, FilterableTypeCombo) else ""
+        if scene:   # 空 = 当前场景：不写键
+            prm["scene"] = scene
+        return {"type": "setSmellSource", "params": prm}
 
     def _to_dict_persist_npc_at(self) -> dict:
         tgt_w = self._param_widgets.get("target")
@@ -4091,7 +4714,17 @@ class ActionRow(QWidget):
         self._param_widgets["_spawnRenderRaw"] = raw_cb
         self._params_layout.addRow("", raw_cb)
 
-        spawn_widgets = (img_w, size_row, char_w, anchor_row, ident_row, keep_cb, raw_cb)
+        # 可燃（A3.8 动态创建可燃物）：生成出来的是可燃物模板的实例——渲染由实例接管，src / characterId 可不写
+        burn_w = BurnableHostBlock(
+            m, self._ctx_scene_id,
+            (spawn_raw or {}).get("burnable", _BURN_HOST_ABSENT) if spawn_raw is not None else _BURN_HOST_ABSENT,
+            self,
+        )
+        burn_w.changed.connect(self.changed)
+        self._param_widgets["_spawnBurnable"] = burn_w
+        self._params_layout.addRow("可燃", burn_w)
+
+        spawn_widgets = (img_w, size_row, char_w, anchor_row, ident_row, keep_cb, raw_cb, burn_w)
 
         def _sync_mover(_i: int = 0) -> None:
             mode = str(mover_w.currentData() or "target")
@@ -4128,7 +4761,7 @@ class ActionRow(QWidget):
             return ts or self._default_map_scene_id(params)
 
         pos_f = self._add_position_field(
-            params, _traj_scene, label="播放位置", optional=True, legacy_xy=legacy_xy,
+            params, _traj_scene, label="播放位置", optional=True, legacy_xy=legacy_xy, with_xy=False,
             tip="曲线起点放到哪：数字坐标 / 实体此刻位置 / 场景曲线插槽。场景曲线可不给（原地播）；相对曲线必须给。",
         )
 
@@ -4239,7 +4872,7 @@ class ActionRow(QWidget):
             if cur_a in ({""} | set(states)):
                 anim_w.set_committed_type(cur_a)
             elif cur_a:
-                anim_w.set_entries([(f"(数据) {cur_a}", cur_a)] + rows_a[1:])
+                anim_w.set_entries([rows_a[0], (f"(数据) {cur_a}", cur_a)] + rows_a[1:])
                 anim_w.set_committed_type(cur_a)
             else:
                 anim_w.set_committed_type("")
@@ -4443,8 +5076,11 @@ class ActionRow(QWidget):
             return
         prm["at"] = ref
 
-    def _passthrough_unmanaged(self, prm: dict, managed: tuple[str, ...]) -> None:
-        """表单管不到的键按原值透传（运行时认识但编辑器没登记的）——绝不"保存即删"。"""
+    def _passthrough_unmanaged(self, prm: dict, managed: frozenset[str] | tuple[str, ...]) -> None:
+        """表单管不到的键按原值透传（运行时认识但编辑器没登记的）——绝不"保存即删"。
+
+        专用表单统一在 ``_to_dict_raw`` 按 ``_CUSTOM_FORMS`` 的接管集调这里，写出函数自己不调。
+        """
         for k, v in (self._original_params or {}).items():
             if k not in prm and k not in managed:
                 prm[k] = deepcopy(v)
@@ -4488,7 +5124,6 @@ class ActionRow(QWidget):
         self._write_entity_or_ref(prm, self._param_widgets.get("at"), "target")
         sm = self._param_widgets.get("smooth")
         prm["smooth"] = bool(sm.isChecked()) if isinstance(sm, QCheckBox) else False
-        self._passthrough_unmanaged(prm, ("target", "at", "smooth"))
         return {"type": "cameraFollowActor", "params": prm}
 
     def _rebuild_face_entity_params(self, params: dict) -> None:
@@ -4540,7 +5175,6 @@ class ActionRow(QWidget):
             "direction": dir_w.committed_type().strip() if isinstance(dir_w, FilterableTypeCombo) else "",
         }
         self._write_entity_or_ref(prm, self._param_widgets.get("at"), "faceTarget")
-        self._passthrough_unmanaged(prm, ("target", "direction", "faceTarget", "at"))
         return {"type": "faceEntity", "params": prm}
 
     def _connect_jump_entity_animation_pickers(self, *, initial_jump: str, initial_land: str = "") -> None:
@@ -4578,7 +5212,7 @@ class ActionRow(QWidget):
                 if cur in allowed:
                     w.set_committed_type(cur)
                 elif cur:
-                    w.set_entries([(f"(数据) {cur}", cur)] + rows[1:])
+                    w.set_entries([rows[0], (f"(数据) {cur}", cur)] + rows[1:])
                     w.set_committed_type(cur)
                 else:
                     w.set_committed_type("")
@@ -4632,13 +5266,11 @@ class ActionRow(QWidget):
     def _bind_audio_site_volume(self, w: QWidget, raw_volume: object) -> None:
         """把盘上的 ``params[\"volume\"]`` 喉进选择器的本处音量格。
 
-        写回在 :meth:`to_dict` 里统一做。这里顺手把 ``volume`` 从“未知参数透传集”
-        里摘除——否则 to_dict 末尾那轮透传会把旧值又塞回去，把用户刚改的音量盖掉。
+        写回在 :meth:`to_dict` 里统一做；挂了音量格的 ``volume`` 由选择器接管，
+        末尾那轮原值透传不会把旧值塞回去（见 ``_to_dict_raw`` 的 owned）。
         """
         if isinstance(w, AudioIdPreviewSelector):
             w.set_volume(raw_volume)
-        if isinstance(self._original_params, dict):
-            self._original_params.pop("volume", None)
 
     def _make_selector(
         self,
@@ -4656,16 +5288,16 @@ class ActionRow(QWidget):
         committed = str(val if val is not None else "").strip()
         strict_pick = kind in (
             "scene", "narrative_run_archetype", "narrative_package",
-            "item", "quest", "quest_any", "encounter", "rule", "fragment", "cutscene", "shop",
+            "item", "igniter_item", "quest", "quest_any", "encounter", "rule", "fragment", "cutscene", "shop",
             "spawn",
             "actor", "emote_target", "npc_only", "scene_group", "trajectory_target",
             "bubble_speaker", "bubble_line_set",
             "water_minigame", "sugar_wheel_minigame", "paper_craft_minigame",
             "object_examine",
-            "smell", "plane", "pressure_hold", "signal_cue", "prop_preset",
+            "smell", "plane", "pressure_hold", "signal_cue", "prop_preset", "prop_preset_leveled",
             "time_phase", "time_transition", "character", "clue", "trajectory",
             "vfx_effect", "vfx_instance", "scene_light",
-            "system_note",
+            "system_note", "burn_target",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -4677,6 +5309,9 @@ class ActionRow(QWidget):
             pairs = [(p, p) for p in (m.narrative_package_ids_ordered() if m else [])]
         elif kind == "item":
             pairs = m.all_item_ids() if m else []
+        elif kind == "igniter_item":
+            # 只列火种（写了 igniter 块的物品）：与校验器 `_set_active_igniter_issues` 同一个函数（候选面 = 校验面）
+            pairs = m.igniter_item_ids() if m else []
         elif kind == "quest":
             # updateQuest 等状态机目标：排除 repeatable（无状态机可推）
             pairs = m.quest_status_target_ids() if m else []
@@ -4695,6 +5330,10 @@ class ActionRow(QWidget):
             pairs = m.all_shop_ids() if m else []
         elif kind == "prop_preset":
             pairs = m.all_prop_preset_ids() if m else []
+        elif kind == "prop_preset_leveled":
+            # 只列配了等级表的（没等级表的 setPropLevel 运行时 log 一行、什么都不改）：
+            # 与校验器 `_set_prop_level_issues` 同一个函数 —— 候选面 = 校验面
+            pairs = m.prop_preset_ids_with_levels() if m else []
         elif kind == "audio_bgm":
             pairs = [(a, a) for a in (m.all_audio_ids("bgm") if m else [])]
         elif kind == "audio_sfx":
@@ -4730,6 +5369,11 @@ class ActionRow(QWidget):
             # 场景作用域：当前上下文场景的灯表。label 带上时段与投影，一眼能对上
             #（同一盏灯白天一组、夜里一组写在同一个 lights[] 里是正常形态）。
             pairs = m.scene_light_ids_for_scene(self._ctx_scene_id) if m else []
+        elif kind == "burn_target":
+            # 燃烧动作 target：socket 没写 = 场景里开了可燃的实体（有场景上下文 = 本场景，没有 = 全工程并集）
+            # + 演出生成且留下的可燃对象；写了 = 拿东西的人（player / NPC）。建控件时按本行磁盘上的 socket 取一次，
+            # 之后 socket 一变就重灌（见 _connect_burn_pickers）。与校验器 `_burn_action_issues` 同一个函数（候选面 = 校验面）。
+            pairs = _burn_target_rows(m, self._ctx_scene_id, (self._data.get("params") or {}).get("socket"))
         elif kind == "bubble_speaker":
             # 头顶闲聊说话人：与台词本的三档一一对应（player / character:<角色id> / 实体 id）。
             # 串的形状由 BubbleChatterSystem.bubbleSpeakerFromActionTarget 定义；与台词本自带的
@@ -4905,6 +5549,25 @@ class ActionRow(QWidget):
                 "预设带着这件挂件的贴图 + 支点 + 自转 + 缩放——选了它下面几项就不用填；\n"
                 "下面填了的会覆盖预设（留给「这一次歪着拿」）。"
             ),
+            "prop_preset_leveled": (
+                "仅下拉选择：**配了等级表**的挂件预设（挂件预设页的「等级」块，玩法清单 A3.7「火把养成」）。\n"
+                "没配等级表的挂件不在候选里——运行时 setPropLevel 对它 log 一行、什么都不改。\n"
+                "等级按挂件 id 记、进存档；拿在手上的当场换外观与效果块，收在包里的下次拿出来也是新的那级。\n"
+                "标了「缺失」的值已保值、不会被改写，校验器报 error。"
+            ),
+            "igniter_item": (
+                "仅下拉选择：火种（items.json 里写了「火种」块的物品，物品页里勾「是火种」）。\n"
+                "设成当前火种后，手上拿着灭着的火把按 T 就用它点（点一次用掉一次，点没点着都算）；\n"
+                "包里没有这件也设得上，按 T 时提示「用完了」。\n"
+                "背包里火种自带「设为火种」按钮，这条动作是给剧情里替玩家设用的。\n"
+                "标了「仅数据引用」的值（不是火种 / 物品已不在）已保值、不会被改写，校验器报 error。"
+            ),
+            "burn_target": (
+                "仅下拉选择。socket 没写：场景里开了可燃的实体（热点 / NPC 的「可燃」块选了模板的，"
+                "或轨迹生成规格里开了可燃且播完留下的对象）；socket 写了：拿着可燃挂件的人（player / NPC）。\n"
+                "有场景上下文列本场景的；没有（任务 / 遭遇 / 叙事图）列全工程的，运行时按**当前场景**解析——\n"
+                "当前场景里没有这个可燃物 = warn 一行、什么都不做。标了「缺失」的值已保值、不会被改写。"
+            ),
         }.get(kind)
         if tip:
             w.setToolTip(tip)
@@ -4981,6 +5644,10 @@ class ActionRow(QWidget):
 
         if act_type == "persistNpcAt":
             self._rebuild_persist_npc_at_params(params)
+            return
+
+        if act_type == "setSmellSource":
+            self._rebuild_set_smell_source_params(params)
             return
 
         if act_type == "cutsceneSpawnActor":
@@ -6547,7 +7214,24 @@ class ActionRow(QWidget):
                         "把片段任意一帧当 pose 用。-1=不定格（缺省，不写键）。\n"
                         "定格时 speed/reverse/thenState 不生效。",
                     )
+                if act_type == "setPropLevel" and pname == "level":
+                    # 第几级：1 起，必填（没有运行时缺省，所以刻意**不**进
+                    # `_ACTION_PARAM_RUNTIME_DEFAULTS`——那张表会把"等于缺省"的键整个删掉）。
+                    # **上限**跟着上面选的 prop 走（见 _connect_prop_level_spin），
+                    # 但当前值越界时不夹——夹了就是静默改数据，校验器本该报的那条也跟着消失。
+                    if val in ("", None):
+                        w.setValue(1)
+                    w.setMinimum(min(1, w.value()))
+                    w.setMaximum(max(1, w.value()))
+                    w.setToolTip(
+                        "升到第几级（1 起；第 1 级 = 这根火把出厂的样子）。\n"
+                        "上限跟着上面选的挂件走（= 它 levels 的条数）；超范围运行时 log 一行、什么都不改。")
                 w.valueChanged.connect(self.changed)
+            elif ptype in ("optional_health_number", "health_number"):
+                w = OptionalHealthNumber(params.get(pname, HEALTH_ABSENT), self,
+                                         maximum=1 if pname == "reduction" else 1000000,
+                                         required=ptype == "health_number")
+                w.changed.connect(self.changed)
             elif ptype == "float":
                 w = QDoubleSpinBox(self)
                 if act_type in (
@@ -6773,7 +7457,7 @@ class ActionRow(QWidget):
                     "audio_sfx", str(val) if val is not None else "", with_volume=True,
                 )
                 self._bind_audio_site_volume(w, params.get("volume"))
-            elif act_type == "playSceneAmbient" and pname == "id":
+            elif act_type in ("playSceneAmbient", "sceneWindGust") and pname == "id":
                 w = self._make_selector(
                     "audio_ambient", str(val) if val is not None else "", with_volume=True,
                 )
@@ -6783,6 +7467,9 @@ class ActionRow(QWidget):
                     "不会顶掉场景原有的环境层。列表来自 audio_config.ambient，右侧按钮可试听。\n"
                     "中间那格是**本处音量**：同一条环境音在别处多响不受影响。",
                 )
+                if act_type == "sceneWindGust":
+                    w.setToolTip("可选：阵风同时增强的环境风声层。须由当前场景播放此层；不会新建声音。"
+                                 "右侧音量为峰值本处音量，起落与风速同步，结束后恢复最新场景音量。")
             elif act_type == "stopSceneAmbient" and pname == "id":
                 w = self._make_selector("audio_ambient", str(val) if val is not None else "")
                 w.setToolTip(
@@ -6811,6 +7498,8 @@ class ActionRow(QWidget):
                 w = self._make_selector("item", str(val) if val is not None else "")
             elif act_type == "inventoryDiscard" and pname == "itemId":
                 w = self._make_selector("item", str(val) if val is not None else "")
+            elif act_type == "setActiveIgniter" and pname == "item":
+                w = self._make_selector("igniter_item", str(val) if val is not None else "")
             elif act_type == "pickup" and pname == "itemId":
                 w = self._make_selector("item", str(val) if val is not None else "")
             elif act_type == "addArchiveEntry" and pname == "bookType":
@@ -6834,7 +7523,34 @@ class ActionRow(QWidget):
                 w.set_current(str(val) if val is not None else "")
                 w.value_changed.connect(self.changed)
                 _tag_content_universe(w, "archive_entries")
-            elif act_type == "showSystemNote" and pname == "noteId":
+            elif act_type == "applyHealthProtection" and pname == "threatId":
+                w = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
+                w.set_items(health_source_rows(self._ctx_model))
+                w.set_current(str(val or ""))
+                w.value_changed.connect(self.changed)
+                _tag_content_universe(w, "health_threats")
+            elif act_type in ("unlockHealth", "removeHealthProtection") and pname == "id":
+                w = IdRefSelector(self, allow_empty=True, editable=False, click_opens_popup=True)
+                declaration = "lockHealth" if act_type == "unlockHealth" else "applyHealthProtection"
+                w.set_items(health_handle_rows(self._ctx_model, declaration))
+                w.set_current(str(val or ""))
+                w.value_changed.connect(self.changed)
+                _tag_content_universe(w, "health_bounds" if act_type == "unlockHealth" else "health_protections")
+            elif (act_type == "lockHealth" and pname == "scope") or (act_type in ("inflictHealthDamage", "applyHealthProtection") and pname == "kind"):
+                w = QComboBox(self)
+                rows = [("", "随场景释放"), ("scene", "随场景释放（显式）"), ("persistent", "直到显式解除")]
+                if pname == "kind":
+                    rows = [("", "全部类型"), ("yin", "阴气侵袭"), ("fright", "惊吓侵扰")]
+                    if act_type == "inflictHealthDamage":
+                        rows[0] = ("", "请选择伤害类型")
+                for key, title in rows:
+                    w.addItem(title, key)
+                selected = str(val or "")
+                if w.findData(selected) < 0:
+                    w.addItem(f"（数据）{selected}", selected)
+                w.setCurrentIndex(w.findData(selected))
+                w.currentIndexChanged.connect(self.changed)
+            elif (act_type == "showSystemNote" and pname == "noteId") or (act_type == "inflictHealthDamage" and pname == "deathNoteId"):
                 # 说明卡引用（选择器铁律：引用字段禁裸 QLineEdit；候选=system_notes.json）
                 w = self._make_selector("system_note", str(val) if val is not None else "")
             elif act_type in ("setThreeFiresVisible", "setSmellVisible") and pname == "style":
@@ -7161,6 +7877,8 @@ class ActionRow(QWidget):
                     "留空＝走预设的 defaultState（没写就取状态表第一个键）。\n"
                     "只在给了 prop 时有意义；候选来自上面那个 prop 的 states。")
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "setPropLevel" and pname == "prop":
+                w = self._make_selector("prop_preset_leveled", str(val) if val is not None else "")
             elif act_type == "setPropState" and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
                 w.setToolTip(
@@ -7201,6 +7919,90 @@ class ActionRow(QWidget):
                     "灯的强度渐变时长（毫秒）。0（缺省，不写键）＝瞬切。\n"
                     "⚠ 只作用于**灯**：贴图与效果是硬切（一张图渐变没有意义）。")
                 w.valueChanged.connect(self.changed)
+            elif act_type == "lockPropState" and pname == "target":
+                # 与 setPropState.target 同一命中面（ENTITY_REF_PARAMS 登记为 actor）
+                w = self._make_selector("actor", str(val) if val is not None else "")
+                w.setToolTip(
+                    "挂点宿主：player 或场景 NPC id。\n"
+                    "运行时按 (target, socket) 找到那件挂件——那儿没挂东西 = warn 一行、什么都不锁。")
+            elif act_type == "lockPropState" and pname == "socket":
+                # 候选从目标动画包的 sockets.json 派生（与 setPropState.socket 同一条解析链）；手打值一律保值。
+                w = FilterableTypeCombo(
+                    [("（挂点名，如 right_hand）", "")], self, select_only=False)
+                w.set_committed_type(str(val) if val is not None else "")
+                w.setToolTip(
+                    "哪个挂点上的挂件；与目标动画包 sockets.json 里的键一致。\n"
+                    "候选来自上面那个 target 的动画包（在动画编辑器的「挂点」区标）。")
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "lockPropState" and pname == "lock":
+                # 短枚举（三档）走下拉；空值那一行是"还没选"（manifest 必填非空，校验器报 error），
+                # 数据里的未知值保值展示（_enum_combo 追加「未知」行）。
+                w = _enum_combo(self, _PROP_LOCK_ROWS, str(val) if val is not None else "")
+                w.setToolTip(
+                    "挂件的锁（进存档，手持物）：\n"
+                    "· 锁定不灭（lit）：风压不掉火势（只回不掉，照样闪、照样被吹歪），玩家按 T 也熄不灭；\n"
+                    "· 点不燃（unlit）：玩家按 T 点不着；\n"
+                    "· 解锁（none）：风照常能吹灭、玩家照常能点 / 熄。\n"
+                    "setPropState 不受锁影响——动作永远优先。锁通常挂在叙事状态的进入 / 离开动作上（进这段剧情锁、出来解）。")
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "playPropVfx" and pname == "target":
+                # 与 setPropState.target 同一命中面（ENTITY_REF_PARAMS 登记为 actor）
+                w = self._make_selector("actor", str(val) if val is not None else "")
+                w.setToolTip(
+                    "挂件的宿主：player 或场景 NPC id。运行时按 (target, socket) 找到那件挂件——\n"
+                    "那儿没挂东西＝效果不播（warn 一行）。\n"
+                    "挂件状态进入动作里留空 = 这件挂件自己（运行时补上）；别处必须写，留空校验器报错。")
+            elif act_type == "playPropVfx" and pname == "socket":
+                # 候选从目标动画包的 sockets.json 派生（与 setPropState.socket 同一条解析链）；手打值一律保值。
+                w = FilterableTypeCombo(
+                    [(_PROP_VFX_SOCKET_EMPTY_LABEL, "")], self, select_only=False)
+                w.set_committed_type(str(val) if val is not None else "")
+                w.setToolTip(
+                    "挂件挂在哪个挂点上；与目标动画包 sockets.json 里的键一致。\n"
+                    "挂件状态进入动作里留空 = 这件挂件自己（运行时补上）；别处必须写，留空校验器报错。")
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "playPropVfx" and pname == "effect":
+                w = self._make_selector("vfx_effect", str(val) if val is not None else "")
+                w.setToolTip(
+                    "要播的效果资产（assets/data/vfx/，在粒子工作台里做）。\n"
+                    "效果跟着挂件走、画在挂件那一侧；放完（发射器都停了、粒子都没了）自己收，挂件卸下立刻停。\n"
+                    "⚠ 有一直发的发射器（有 rate 没 duration）的效果放不完，会一直冒到挂件卸下。")
+            elif act_type == "playPropVfx" and pname == "point":
+                # 可选归一化点：勾选框就是「写 / 不写」这一档（不勾 = 不写键）。与挂件预设页起火点同一个控件，
+                # 没动过就原样回吐磁盘值（含越界 / 坏形态，运行时自己清洗），见 _to_dict_raw 的 unit_point 分支。
+                from ..editors.prop_preset_blocks import OptionalPointField
+
+                w = OptionalPointField(check_label="写", seed=(0.5, 0.1), parent=self)
+                w.set_value(deepcopy(val) if val != "" else None)
+                w.set_tool_tip(
+                    "贴图上的点 [u, v]（0..1，左上原点，与支点 / 起火点同口径）：效果从这一点出、跟着这一点走。\n"
+                    "不勾 = 不写：用挂件的起火点，挂件没配起火点就是挂点本身。")
+                w.changed.connect(self.changed)
+            elif act_type in _BURN_ACTION_TYPES and pname == "target":
+                # 与 ENTITY_REF_PARAMS 登记的 "burn_target" 同一命中面（热点 / NPC 改名跟着改）；
+                # 候选按本行 socket 有无切两套（见 _connect_burn_pickers）
+                w = self._make_selector("burn_target", str(val) if val is not None else "")
+            elif act_type in _BURN_ACTION_TYPES and pname == "socket":
+                # 挂点候选与 heldProp 叶 / 挂件动作同一条解析链（ProjectModel.burn_socket_names，按 target 刷）；
+                # 名字跨动画包通用，取不到候选时可手打，手打值一律保值。空值 = 不写键 = 烧场景里的可燃实体。
+                w = FilterableTypeCombo([(_BURN_SOCKET_EMPTY_LABEL, "")], self, select_only=False)
+                w.set_committed_type(str(val) if val is not None else "")
+                w.setToolTip(
+                    "不写 = target 是场景里开了可燃的实体（热点 / NPC / 演出生成留下的对象）。\n"
+                    "写了 = target 是拿东西的人（player / NPC），烧他这个挂点上的可燃挂件（挂件预设开了可燃的那种）。\n"
+                    "候选来自 target 那个人的动画包 sockets.json；还没选人时列玩家的挂点。")
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "igniteBurnable" and pname == "point":
+                # 候选 = target 那个实例的模板的着火点（按 target / socket 刷，见 _connect_burn_pickers）。
+                # 短枚举走下拉；空值那一行 = 不写键（缺省点）；悬垂值保值展示（"(数据) …"）。
+                w = FilterableTypeCombo([(_BURN_POINT_EMPTY_LABEL, "")], self, select_only=True)
+                w.set_committed_type(str(val) if val is not None else "")
+                w.setToolTip(
+                    "从哪个着火点点着（可燃物模板里标的点，在燃烧工作台里标）。\n"
+                    "不选 = 标了着火点取第一个、没标整体一起点着。\n"
+                    "写了模板里没有的点 = 运行时按缺省点（warn 一行）。\n"
+                    "写了 socket 时候选是所有开了可燃的挂件预设的模板着火点（手上拿的是哪件要到运行时才知道）。")
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "fadeLight" and pname == "lightId":
                 w = self._make_selector("scene_light", str(val) if val is not None else "")
                 w.setToolTip(
@@ -7303,7 +8105,14 @@ class ActionRow(QWidget):
                 w = QLineEdit(str(val), self)
                 w.textChanged.connect(self.changed)
             self._param_widgets[pname] = w
-            self._params_layout.addRow(pname, w)
+            labels = {
+                ("playVfx", "restart"): ("从头重播固定种子", "场景实例已播放过时重置模拟；未勾选则沿用实例。只对 instanceId 生效。"),
+                ("playVfx", "oneShot"): ("播完自动回收", "临时 effect 实例停止发射且粒子全部结束后自动回收。常驻场景实例由 stopVfx 管理。"),
+            }
+            label, hint = labels.get((act_type, pname), (pname, ""))
+            if hint:
+                w.setToolTip(hint)
+            self._params_layout.addRow(label, w)
 
         if act_type in ("switchScene", "changeScene"):
             self._connect_scene_spawn_pickers()
@@ -7322,9 +8131,20 @@ class ActionRow(QWidget):
             self._connect_attach_state_picker(
                 initial_state=str(params.get("state", "") or ""),
             )
-        if act_type == "setPropState":
+        if act_type == "setPropLevel":
+            self._connect_prop_level_spin()
+        if act_type in ("setPropState", "lockPropState"):
             self._connect_prop_state_socket_picker(
                 initial_socket=str(params.get("socket", "") or ""),
+            )
+        if act_type == "playPropVfx":
+            self._connect_prop_state_socket_picker(
+                initial_socket=str(params.get("socket", "") or ""),
+                empty_label=_PROP_VFX_SOCKET_EMPTY_LABEL,
+            )
+        if act_type in _BURN_ACTION_TYPES:
+            self._connect_burn_pickers(
+                initial_socket=params.get("socket"), initial_point=params.get("point"),
             )
 
         if act_type == "setFlag":
@@ -7568,6 +8388,9 @@ class ActionRow(QWidget):
                 value = w.committed_type().strip()
             elif isinstance(w, QLineEdit):
                 value = w.text().strip()
+            elif w is None and "value" in (self._original_params or {}):
+                # 字段名不在字段表里（悬垂 / 以后才登记的）就建不出值控件：值按磁盘原样回写，别存成 ""
+                value = deepcopy(self._original_params["value"])
             else:
                 value = ""
         return {
@@ -7665,12 +8488,6 @@ class ActionRow(QWidget):
         dim_w = self._param_widgets.get("dimBackground")
         if isinstance(dim_w, QCheckBox) and dim_w.isChecked():
             prm["dimBackground"] = True
-        managed = {
-            "graphId", "entry", "npcId", "ownerType", "ownerId", "dimBackground",
-        }
-        for key, value in (self._original_params or {}).items():
-            if key not in managed and key not in prm:
-                prm[key] = deepcopy(value)
         return {"type": "startDialogueGraph", "params": prm}
 
     def _to_dict_play_scripted_dialogue(self) -> dict:
@@ -7758,6 +8575,12 @@ class ActionRow(QWidget):
                         except ValueError:
                             pr["outcome"] = out_raw
         return {"type": "setScenarioPhase", "params": pr}
+
+    def _to_dict_scenario_lifecycle(self) -> dict:
+        """startScenario / activateScenario / completeScenario：只有一个 scenarioId。"""
+        sid_w = self._param_widgets.get("scenarioId")
+        sid = sid_w.committed_type() if isinstance(sid_w, FilterableTypeCombo) else ""
+        return {"type": self.type_combo.committed_type(), "params": {"scenarioId": sid}}
 
     def _to_dict_reveal_document(self) -> dict:
         w = self._param_widgets.get("documentId")
@@ -7870,16 +8693,25 @@ class ActionRow(QWidget):
     def _play_trajectory_spawn_spec(self, mode: str) -> dict:
         """从表单读临时生成规格（形状照 TS `TrajectorySpawnSpec`；可选键缺省不写）。"""
         spec: dict = {"kind": mode}
+        o_spawn_raw = (self._original_params or {}).get("spawn")
+        o_spawn_raw = o_spawn_raw if isinstance(o_spawn_raw, dict) else {}
+        burn_w = self._param_widgets.get("_spawnBurnable")
+        burn_on = isinstance(burn_w, BurnableHostBlock) and burn_w.is_enabled()
         if mode == "image":
             img_w = self._param_widgets.get("_spawnSrc")
-            spec["src"] = img_w.path() if isinstance(img_w, CutsceneImagePathRow) else ""
+            src = img_w.path() if isinstance(img_w, CutsceneImagePathRow) else ""
+            # 开了可燃时 src 不必填（渲染由模板接管）：空着且原本没写就不写键
+            if src or not burn_on or "src" in o_spawn_raw:
+                spec["src"] = src
             for key, wk in (("worldWidth", "_spawnWorldWidth"), ("worldHeight", "_spawnWorldHeight")):
                 sb = self._param_widgets.get(wk)
                 if isinstance(sb, QDoubleSpinBox) and sb.value() > 0:
                     spec[key] = round(float(sb.value()), 2)
         else:
             cw = self._param_widgets.get("_spawnCharacter")
-            spec["characterId"] = cw.current_id().strip() if isinstance(cw, IdRefSelector) else ""
+            cid = cw.current_id().strip() if isinstance(cw, IdRefSelector) else ""
+            if cid or not burn_on or "characterId" in o_spawn_raw:
+                spec["characterId"] = cid
         ax_w = self._param_widgets.get("_spawnAnchorX")
         ay_w = self._param_widgets.get("_spawnAnchorY")
         if isinstance(ax_w, QDoubleSpinBox) and isinstance(ay_w, QDoubleSpinBox):
@@ -7902,6 +8734,10 @@ class ActionRow(QWidget):
         raw_w = self._param_widgets.get("_spawnRenderRaw")
         if isinstance(raw_w, QCheckBox) and raw_w.isChecked():
             spec["renderRaw"] = True
+        if isinstance(burn_w, BurnableHostBlock):
+            bv = burn_w.value()
+            if bv is not _BURN_HOST_ABSENT:
+                spec["burnable"] = bv
         return spec
 
     def _to_dict_jump_entity_to(self) -> dict:
@@ -7969,13 +8805,18 @@ class ActionRow(QWidget):
             # 1) 未改动的数值参数恢复原始 int/float 表示（1000.0 -> 1000）。
             preserve_numeric_repr(params, self._original_params)
             # 2) 剔除"原本没有、且为中性默认"的占位键（direction:""/anchorOffsetX/Y:0/allowCancel:false…）。
+            #    同 4)，盘上原本写着非中性值、用户清回中性档的也去键（playNpcAnimation.thenState 清空不再
+            #    落成 thenState:""）；_OMIT_ONLY_WHEN_ABSENT 里的名字除外——它们在别的 action 里是必填，
+            #    清空留中性值（原因逐条见该表）。盘上原本就写着中性值的照旧原样保留（往返保真）。
             for k, default in _OMIT_WHEN_ABSENT_AND_DEFAULT.items():
-                if k in params and k not in self._original_params and params[k] == default:
-                    cur_is_bool = isinstance(params[k], bool)
-                    def_is_bool = isinstance(default, bool)
-                    if cur_is_bool != def_is_bool:
-                        continue  # 0==False 之类的跨类型巧合不剔
-                    del params[k]
+                if k not in params or params[k] != default \
+                        or isinstance(params[k], bool) != isinstance(default, bool):
+                    continue  # 0==False 之类的跨类型巧合不剔
+                if k in self._original_params and (
+                        k in _OMIT_ONLY_WHEN_ABSENT
+                        or _scoped_omit_original_is_neutral(self._original_params[k], default)):
+                    continue
+                del params[k]
             # 3) 运行时非零默认的 int 参数（fadeMs/count/durationMs…）：原本缺该键且仍为运行时默认时
             #    不回写——既保持往返不漂移，又让运行时沿用其默认行为（用户显式设的非默认值仍保留）。
             act_type = result.get("type", "")
@@ -7984,11 +8825,20 @@ class ActionRow(QWidget):
                         and not isinstance(params[pk], bool) and params[pk] == dv:
                     del params[pk]
             # 4) 同 2)，但只对指定 action 生效（同名参数在别处是必填的情况）。
+            #    作用域表里的参数对这个 action **一定可选**，所以比 2) 多管一种情形：盘上原本写着
+            #    非中性值、用户在控件上把它清回中性档 = 不写，键一并去掉。不去掉的话清空永远存不成
+            #    缺键——playVfx.at 清空会落成 at:""，运行时整条动作静默跳过。
+            #    盘上原本就写着中性值的（作者自己写的 ""/0/"false"…）照旧原样保留（往返保真）。
+            #    全局表 2) 同样这么做，只有 _OMIT_ONLY_WHEN_ABSENT（text/key… 在别的 action 里是必填）例外。
             for (at, pk), dv in _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT.items():
-                if at == act_type and pk in params and pk not in self._original_params \
-                        and isinstance(params[pk], bool) == isinstance(dv, bool) \
-                        and params[pk] == dv:
-                    del params[pk]
+                if at != act_type or pk not in params \
+                        or isinstance(params[pk], bool) != isinstance(dv, bool) \
+                        or params[pk] != dv:
+                    continue
+                if pk in self._original_params \
+                        and _scoped_omit_original_is_neutral(self._original_params[pk], dv):
+                    continue
+                del params[pk]
             # 5) 三态可选 bool 的表示保真。控件是三态字符串（""/"true"/"false"），
             #    但磁盘上两种写法都真实存在：过场数据里是字符串 "false"，新的生态对话图里
             #    是真 bool false。**无脑归一化任何一边都会把另一边改写**（实测：一律转 bool
@@ -8007,65 +8857,123 @@ class ActionRow(QWidget):
                     params[pk] = want
         return result
 
+    # 专用表单：act_type → (写出函数, 表单接管的参数)。
+    # 「接管」= 表单把它读进控件、写不写键由表单说了算——**包括它有意不写的**：原本没有的
+    # moveEntityTo.sceneId、数字档不写的 at、「不指定」时的位置、另一档运动对象的 target / spawn、
+    # 被 at 取代的老 anchorX/anchorY、清空了的可选项……这些进了接管集，末尾透传就不会把磁盘旧值塞回来。
+    # 不在接管集里的键一律按磁盘原值透传（运行时认识但表单没登记的 / 以后才加的），与泛型路径末尾那轮
+    # 透传同一条规矩。新增专用表单只在这里登一行；漏登的会被
+    # test_action_row_owned_params.test_every_passthrough_action_keeps_an_unknown_key 拦下。
+    _POS_XY_AT = ("x", "y", "at")
+    _CUSTOM_FORMS: dict[str, tuple[Callable[..., dict], frozenset[str]]] = {
+        "setSceneEntityPosition": (
+            lambda row: row._to_dict_set_scene_entity_position(),
+            frozenset(("sceneId", "entityKind", "entityId", *_POS_XY_AT))),
+        "setEntityField": (
+            lambda row: row._to_dict_set_entity_field(),
+            frozenset(("sceneId", "entityKind", "entityId", "fieldName", "value"))),
+        "setHotspotDisplayImage": (
+            lambda row: row._to_dict_set_hotspot_display_image(),
+            frozenset(("sceneId", "hotspotId", "image", "worldWidth", "worldHeight", "facing"))),
+        "tempSetHotspotDisplayFacing": (
+            lambda row: row._to_dict_temp_set_hotspot_display_facing(),
+            frozenset(("sceneId", "hotspotId", "facing"))),
+        "persistHotspotEnabled": (
+            lambda row: row._to_dict_persist_hotspot_enabled(),
+            frozenset(("sceneId", "hotspotId", "enabled"))),
+        "setZoneEnabled": (
+            lambda row: row._to_dict_zone_enabled(persist=False),
+            frozenset(("sceneId", "zoneId", "enabled"))),
+        "persistZoneEnabled": (
+            lambda row: row._to_dict_zone_enabled(persist=True),
+            frozenset(("sceneId", "zoneId", "enabled"))),
+        "showOverlayImage": (
+            lambda row: row._to_dict_show_overlay_image(),
+            frozenset(("id", "image", "xPercent", "yPercent", "widthPercent"))),
+        "blendOverlayImage": (
+            lambda row: row._to_dict_blend_overlay_image(),
+            frozenset(("id", "fromImage", "toImage", "durationMs", "delayMs",
+                       "xPercent", "yPercent", "widthPercent"))),
+        "startDialogueGraph": (
+            lambda row: row._to_dict_start_dialogue_graph(),
+            frozenset(("graphId", "entry", "npcId", "ownerType", "ownerId", "dimBackground"))),
+        "playScriptedDialogue": (
+            lambda row: row._to_dict_play_scripted_dialogue(),
+            frozenset(("lines", "scriptedNpcId", "dimBackground", "layout"))),
+        # animManifest 与 bundleId 二选一写；idle/walk/run 三格合成 stateMap
+        "setPlayerAvatar": (
+            lambda row: row._to_dict_set_player_avatar(),
+            frozenset(("animManifest", "bundleId", "stateMap", "portraitSlug"))),
+        "setScenarioPhase": (
+            lambda row: row._to_dict_set_scenario_phase(),
+            frozenset(("scenarioId", "phase", "status", "outcome"))),
+        "startScenario": (lambda row: row._to_dict_scenario_lifecycle(), frozenset(("scenarioId",))),
+        "activateScenario": (lambda row: row._to_dict_scenario_lifecycle(), frozenset(("scenarioId",))),
+        "completeScenario": (lambda row: row._to_dict_scenario_lifecycle(), frozenset(("scenarioId",))),
+        "revealDocument": (
+            lambda row: row._to_dict_reveal_document(),
+            frozenset(("documentId", "force"))),
+        "hideDocument": (lambda row: row._to_dict_hide_document(), frozenset(("documentId",))),
+        "moveEntityTo": (
+            lambda row: row._to_dict_move_entity_to(),
+            frozenset(("target", "sceneId", *_POS_XY_AT, "speed", "moveAnimState", "arriveAnimState",
+                       "waypoints", "faceTowardMovement"))),
+        "jumpEntityTo": (
+            lambda row: row._to_dict_jump_entity_to(),
+            frozenset(("target", "sceneId", *_POS_XY_AT, "durationMs", "arcHeight", "jumpAnimState",
+                       "landAnimState", "faceTowardMovement"))),
+        "teleportEntityTo": (
+            lambda row: row._to_dict_teleport_entity_to(),
+            frozenset(("target", "sceneId", *_POS_XY_AT))),
+        # 播放位置控件认 at / 老 anchorX+anchorY 两种载入形状，写出只落其中一种；没有顶层 x/y（那是透传键）
+        "playTrajectory": (
+            lambda row: row._to_dict_play_trajectory(),
+            frozenset(("trajectoryId", "target", "spawn", "at", "anchorX", "anchorY",
+                       "flipX", "wait", "animState"))),
+        "persistNpcAt": (lambda row: row._to_dict_persist_npc_at(), frozenset(("target", *_POS_XY_AT))),
+        "setSmellSource": (lambda row: row._to_dict_set_smell_source(), frozenset(("scene", *_POS_XY_AT))),
+        "cutsceneSpawnActor": (
+            lambda row: row._to_dict_cutscene_spawn_actor(),
+            frozenset(("id", "name", *_POS_XY_AT))),
+        "cameraFollowActor": (
+            lambda row: row._to_dict_camera_follow(),
+            frozenset(("target", "at", "smooth"))),
+        "faceEntity": (
+            lambda row: row._to_dict_face_entity(),
+            frozenset(("target", "direction", "faceTarget", "at"))),
+    }
+    del _POS_XY_AT
+
     def _to_dict_raw(self) -> dict:
         act_type = self.type_combo.committed_type()
-        if act_type == "setSceneEntityPosition":
-            return self._to_dict_set_scene_entity_position()
-        if act_type == "setEntityField":
-            return self._to_dict_set_entity_field()
-        if act_type == "setHotspotDisplayImage":
-            return self._to_dict_set_hotspot_display_image()
-        if act_type == "tempSetHotspotDisplayFacing":
-            return self._to_dict_temp_set_hotspot_display_facing()
-        if act_type == "persistHotspotEnabled":
-            return self._to_dict_persist_hotspot_enabled()
-        if act_type == "setZoneEnabled":
-            return self._to_dict_zone_enabled(persist=False)
-        if act_type == "persistZoneEnabled":
-            return self._to_dict_zone_enabled(persist=True)
-        if act_type == "showOverlayImage":
-            return self._to_dict_show_overlay_image()
-        if act_type == "blendOverlayImage":
-            return self._to_dict_blend_overlay_image()
-        if act_type == "startDialogueGraph":
-            return self._to_dict_start_dialogue_graph()
-        if act_type == "playScriptedDialogue":
-            return self._to_dict_play_scripted_dialogue()
-        if act_type == "setPlayerAvatar":
-            return self._to_dict_set_player_avatar()
-        if act_type == "setScenarioPhase":
-            return self._to_dict_set_scenario_phase()
-        if act_type in ("startScenario", "activateScenario", "completeScenario"):
-            sid_w = self._param_widgets.get("scenarioId")
-            sid0 = sid_w.committed_type() if isinstance(sid_w, FilterableTypeCombo) else ""
-            return {"type": act_type, "params": {"scenarioId": sid0}}
-        if act_type == "revealDocument":
-            return self._to_dict_reveal_document()
-        if act_type == "hideDocument":
-            return self._to_dict_hide_document()
-        if act_type == "moveEntityTo":
-            return self._to_dict_move_entity_to()
-        if act_type == "jumpEntityTo":
-            return self._to_dict_jump_entity_to()
-        if act_type == "teleportEntityTo":
-            return self._to_dict_teleport_entity_to()
-        if act_type == "playTrajectory":
-            return self._to_dict_play_trajectory()
-        if act_type == "persistNpcAt":
-            return self._to_dict_persist_npc_at()
-        if act_type == "cutsceneSpawnActor":
-            return self._to_dict_cutscene_spawn_actor()
-        if act_type == "cameraFollowActor":
-            return self._to_dict_camera_follow()
-        if act_type == "faceEntity":
-            return self._to_dict_face_entity()
+        custom = self._CUSTOM_FORMS.get(act_type)
+        if custom is not None:
+            build, owned_keys = custom
+            result = build(self)
+            self._passthrough_unmanaged(result["params"], owned_keys)
+            return result
         schema = _PARAM_SCHEMAS.get(act_type, [])
         params: dict = {}
+        # 由控件接管的参数：写不写键由控件说了算。控件没写 = 它**有意不写**（清空的 images、
+        # 不配配音、继承的气泡锚、不勾的 point…），末尾的"未登记参数原值透传"不许把磁盘旧值
+        # 塞回来——否则清空永远存不下去。没控件接管的参数（未登记 / 控件没建出来）照旧透传。
+        owned: set[str] = set()
         for pname, ptype in schema:
             w = self._param_widgets.get(pname)
             if w is None:
                 continue
-            if ptype == "voice_spec":
+            owned.add(pname)
+            if ptype == "unit_point":
+                # 可选归一化点 [u, v]（playPropVfx.point）：控件没动过 ⇒ 磁盘原值原样回吐
+                # （含越界 / 坏形态——运行时自己清洗，编辑器不替它"修"）；动过 ⇒ 勾了写 [u, v]、没勾不写键。
+                orig_params = self._original_params or {}
+                if hasattr(w, "is_untouched") and w.is_untouched() and pname in orig_params:
+                    params[pname] = deepcopy(orig_params[pname])
+                else:
+                    pv = w.value() if hasattr(w, "value") else None
+                    if pv is not None:
+                        params[pname] = pv
+            elif ptype == "voice_spec":
                 # None = 没配配音，不写键（最小形态打开→保存不得凭空多键）
                 if isinstance(w, VoiceSpecField):
                     v = w.voice_value()
@@ -8101,6 +9009,10 @@ class ActionRow(QWidget):
                 params[pname] = deepcopy(orig) if orig is not None and txt == str(orig) else txt
             elif ptype == "int":
                 params[pname] = w.value()
+            elif ptype in ("optional_health_number", "health_number"):
+                value = w.value()
+                if value is not HEALTH_ABSENT:
+                    params[pname] = value
             elif ptype == "float":
                 params[pname] = float(w.value())
             elif ptype == "bool":
@@ -8148,12 +9060,16 @@ class ActionRow(QWidget):
 
         if act_type == "enableRuleOffers" and (outline or self._rule_slots_editor is not None):
             params["slots"] = _nested("slots", self._rule_slots_editor)
+            owned.add("slots")
         if act_type == "addDelayedEvent" and (outline or self._delayed_editor is not None):
             params["actions"] = _nested("actions", self._delayed_editor)
+            owned.add("actions")
         if act_type == "runActions" and (outline or self._run_actions_editor is not None):
             params["actions"] = _nested("actions", self._run_actions_editor)
+            owned.add("actions")
         if act_type == "chooseAction" and (outline or self._choice_options_editor is not None):
             params["options"] = _nested("options", self._choice_options_editor)
+            owned.add("options")
         if act_type == "randomBranch":
             pw = self._param_widgets.get("probability")
             if isinstance(pw, QDoubleSpinBox):
@@ -8162,8 +9078,11 @@ class ActionRow(QWidget):
                 params["probability"] = 0.5
             params["aboveActions"] = _nested("aboveActions", self._random_above_editor)
             params["belowActions"] = _nested("belowActions", self._random_below_editor)
+            owned.update(("probability", "aboveActions", "belowActions"))
         if act_type == "runActionsIf":
+            owned.update(("actions", "elseActions"))
             if self._cond_if_expr is not None:
+                owned.add("condition")
                 expr = self._cond_if_expr.get_expr()
                 if expr:
                     params["condition"] = expr
@@ -8186,11 +9105,12 @@ class ActionRow(QWidget):
                 params["elseActions"] = else_list
             else:
                 params.pop("elseActions", None)
-        if act_type in ("playSfx", "playBgm", "playSceneAmbient"):
+        if act_type in ("playSfx", "playBgm", "playSceneAmbient", "sceneWindGust"):
             # 本处音量住在 id 选择器里（与 ▶ 试听同一个数），不另建一行控件。
             # 中性值 / 未配 = 不写键；盘上写着但用户没动过的原值原样回写（往返保真）。
             aw = self._param_widgets.get("id")
             if isinstance(aw, AudioIdPreviewSelector) and aw.has_volume():
+                owned.add("volume")
                 vol = aw.volume_for_write()
                 if vol is None:
                     params.pop("volume", None)
@@ -8204,9 +9124,10 @@ class ActionRow(QWidget):
 
         # 运行时认识但 schema 未登记的参数（changeScene.cameraX/cameraY、legacy duration 别名、
         # sugarWheelResetPointer.angle…）：GUI 改不到它们，按原值透传——绝不"保存即删"。
+        # 控件接管的参数（owned）不在此列：它们缺键就是控件选了不写。
         # _original_params 在类型切换时已被清空，故不会把旧类型的参数带进新类型。
         for _k, _v in (self._original_params or {}).items():
-            if _k not in params:
+            if _k not in params and _k not in owned:
                 params[_k] = deepcopy(_v)
         return {"type": act_type, "params": params}
 

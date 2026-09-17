@@ -37,7 +37,9 @@ from tools.editor.editors.prop_preset_blocks import (  # noqa: E402
     STATE_LIGHT_OWN,
     PropLightForm,
     PropStatesEditor,
-    VfxIdListField,
+    STATE_PARTICLES_INHERIT,
+    STATE_PARTICLES_OWN,
+    ParticleMountListField,
 )
 from tools.editor.editors.prop_preset_editor import PropPresetEditor  # noqa: E402
 from tools.editor.project_model import ProjectModel  # noqa: E402
@@ -82,12 +84,12 @@ FULL_PRESET = {
         "castShadow": False,
         "flicker": {"amp": 0.2, "hz": 8, "windAmp": 0.5},
     },
-    "vfx": [],
+    "particles": [],
     "persistent": True,
     "states": {
         "lit": {"label": "点着"},
         "ember": {"label": "残炭", "light": {"intensity": 1}, "scale": 1},
-        "out": {"label": "灭", "light": None, "vfx": [], "lit": True},
+        "out": {"label": "灭", "light": None, "particles": [], "lit": True},
     },
     "defaultState": "lit",
 }
@@ -145,19 +147,46 @@ class PropPresetRoundtripTests(unittest.TestCase):
 
     def test_minimal_form_gains_no_phantom_keys(self) -> None:
         """新增可选键最容易出的错：打开一条只有 image 的老预设，保存后凭空多出
-        light/vfx/persistent/states —— 那是**改行为**，不是格式漂移。"""
+        light/particles/persistent/states —— 那是**改行为**，不是格式漂移。"""
         out = self._roundtrip({"x": {"image": _REAL_IMAGE}})
         self.assertEqual(out, {"x": {"image": _REAL_IMAGE}})
-        for key in ("light", "vfx", "persistent", "states", "defaultState", "lit"):
+        for key in ("light", "particles", "persistent", "states", "defaultState", "lit"):
             self.assertNotIn(key, out["x"], f"最小形态凭空多出 {key}")
 
     def test_empty_entry_stays_empty(self) -> None:
         self.assertEqual(self._roundtrip({"y": {}}), {"y": {}})
 
-    def test_explicit_empty_vfx_list_is_preserved(self) -> None:
-        """磁盘上显式写着 `vfx: []` 的不能被抹掉（"等于缺省就删"会改字节）。"""
-        out = self._roundtrip({"z": {"image": _REAL_IMAGE, "vfx": []}})
-        self.assertEqual(out["z"].get("vfx"), [])
+    def test_explicit_empty_particles_list_is_preserved(self) -> None:
+        """磁盘上显式写着 `particles: []` 的不能被抹掉（"等于缺省就删"会改字节）。"""
+        out = self._roundtrip({"z": {"image": _REAL_IMAGE, "particles": []}})
+        self.assertEqual(out["z"].get("particles"), [])
+
+    def test_particle_mounts_roundtrip_with_odd_shapes(self) -> None:
+        """粒子挂载往返：未知键 / 键序 / 坏条目 / 写坏的 point / int 表示都一字不改。"""
+        src = {"m": {"image": _REAL_IMAGE, "particles": [
+            {"point": [0, 1], "effect": "paper_money", "未来字段": 1},
+            "junk",
+            {"effect": "绝不存在的效果", "point": [0.5]},
+            {"effect": ""},
+        ], "states": {"s": {"particles": "坏"}, "t": {"particles": [{"effect": "paper_money"}]}}}}
+        self.model.prop_presets = copy.deepcopy(src)
+        ed = PropPresetEditor(self.model)
+        try:
+            ed._particles_block.ensure_built()
+            ed._states_editor.ensure_built()
+            for name in ("s", "t", "s"):
+                ed._states_editor._on_select(name)
+            out = ed._staged()
+            self.assertFalse(ed._dirty)
+        finally:
+            ed.deleteLater()
+        self.assertEqual(json.dumps(out, ensure_ascii=False), json.dumps(src, ensure_ascii=False))
+        self.assertIsInstance(out["m"]["particles"][0]["point"][0], int)
+
+    def test_legacy_vfx_key_passes_through_untouched(self) -> None:
+        """旧 `vfx` 编辑器不再管，但数据里有就原样透传（校验器报 error 提醒迁移），绝不静默吞掉。"""
+        src = {"old": {"image": _REAL_IMAGE, "vfx": ["paper_money"], "states": {"a": {"vfx": []}}}}
+        self.assertEqual(self._roundtrip(src), src)
 
     def test_unknown_keys_pass_through(self) -> None:
         """将来给 PropPresetDef 加字段时，旧编辑器不得把它吞掉。"""
@@ -227,13 +256,38 @@ class PropStateLightTristateTests(unittest.TestCase):
         finally:
             ed.deleteLater()
 
-    def test_state_vfx_is_also_three_state(self) -> None:
-        ed = self._editor({"a": {}, "b": {"vfx": []}, "c": {"vfx": ["paper_money"]}})
+    def test_state_particles_are_inherit_or_own_list(self) -> None:
+        """两态：不写键 = 沿用基础块；写了（哪怕空数组）= 整体替换。空数组与「没写」绝不能混。"""
+        ed = self._editor({"a": {}, "b": {"particles": []},
+                           "c": {"particles": [{"effect": "paper_money", "point": [0.5, 0.1]}]}})
         try:
+            for name, want in (("a", STATE_PARTICLES_INHERIT), ("b", STATE_PARTICLES_OWN),
+                               ("c", STATE_PARTICLES_OWN)):
+                ed._on_select(name)
+                self.assertEqual(ed._st_particles._mode.currentData(), want, name)
             states, _ = ed.dump()
-            self.assertNotIn("vfx", states["a"])
-            self.assertEqual(states["b"]["vfx"], [], "空数组 = 这个状态没有效果，不是「没写」")
-            self.assertEqual(states["c"]["vfx"], ["paper_money"])
+            self.assertNotIn("particles", states["a"])
+            self.assertEqual(states["b"]["particles"], [], "空数组 = 这个状态没有粒子，不是「没写」")
+            self.assertEqual(states["c"]["particles"], [{"effect": "paper_money", "point": [0.5, 0.1]}])
+        finally:
+            ed.deleteLater()
+
+    def test_switching_state_particles_to_own_writes_empty_list_then_inherit_drops_key(self) -> None:
+        ed = self._editor({"a": {}})
+        try:
+            ed._on_select("a")
+            combo = ed._st_particles._mode
+            combo.setCurrentIndex(combo.findData(STATE_PARTICLES_OWN))
+            states, _ = ed.dump()
+            self.assertEqual(states["a"]["particles"], [])
+            ed._st_particles._list._on_add()
+            ed._st_particles._list._rows[0]["sel"].set_current("paper_money")
+            ed._st_particles._list._rows[0]["sel"].value_changed.emit("paper_money")
+            states, _ = ed.dump()
+            self.assertEqual(states["a"]["particles"], [{"effect": "paper_money"}])
+            combo.setCurrentIndex(combo.findData(STATE_PARTICLES_INHERIT))
+            states, _ = ed.dump()
+            self.assertNotIn("particles", states["a"])
         finally:
             ed.deleteLater()
 
@@ -287,12 +341,13 @@ class PropPresetWidgetContractTests(unittest.TestCase):
         cls._qt = _app()
         cls.model = _model()
 
-    def test_vfx_ids_are_not_bare_line_edits(self) -> None:
+    def test_particle_effect_ids_are_not_bare_line_edits(self) -> None:
         """选择器铁律：效果 id 是跨文件引用，禁裸 QLineEdit，候选取自 id-provider。"""
-        f = VfxIdListField(self.model, ["paper_money"], None)
+        f = ParticleMountListField(self.model, None)
+        f.set_mounts([{"effect": "paper_money"}])
         try:
-            self.assertEqual(len(f._rows), 1)
-            sel = f._rows[0]
+            self.assertEqual(f.count(), 1)
+            sel = f._rows[0]["sel"]
             self.assertIsInstance(sel, IdRefSelector)
             self.assertNotIsInstance(sel, QLineEdit)
             self.assertEqual(sel.current_id(), "paper_money")
@@ -301,10 +356,11 @@ class PropPresetWidgetContractTests(unittest.TestCase):
         finally:
             f.deleteLater()
 
-    def test_dangling_vfx_id_is_preserved(self) -> None:
-        f = VfxIdListField(self.model, ["绝不存在的效果"], None)
+    def test_dangling_particle_effect_id_is_preserved(self) -> None:
+        f = ParticleMountListField(self.model, None)
+        f.set_mounts([{"effect": "绝不存在的效果"}])
         try:
-            self.assertEqual(f.to_list(), ["绝不存在的效果"])
+            self.assertEqual(f.to_list(), [{"effect": "绝不存在的效果"}])
         finally:
             f.deleteLater()
 
@@ -601,7 +657,7 @@ class PropPresetValidationTests(unittest.TestCase):
 
     def test_healthy_full_preset_is_clean(self) -> None:
         table = copy.deepcopy(FULL_PRESET)
-        table["vfx"] = []
+        table["particles"] = []
         self.assertEqual(self._issues({"torch": table}), [])
 
     def test_real_project_table_is_clean(self) -> None:
@@ -635,17 +691,54 @@ class PropPresetValidationTests(unittest.TestCase):
         table["light"]["flicker"] = {"amp": 0.2, "hz": 8}
         self.assertEqual(self._errors(self._issues({"t": table})), [])
 
-    def test_missing_vfx_asset_is_an_error(self) -> None:
+    def test_missing_particle_effect_asset_is_an_error(self) -> None:
         table = copy.deepcopy(FULL_PRESET)
-        table["vfx"] = ["绝不存在的效果"]
+        table["particles"] = [{"effect": "绝不存在的效果"}]
         msgs = self._errors(self._issues({"t": table}))
         self.assertTrue(any("绝不存在的效果" in m for m in msgs), msgs)
 
-    def test_missing_vfx_asset_in_a_state_is_an_error(self) -> None:
+    def test_missing_particle_effect_asset_in_a_state_is_an_error(self) -> None:
         table = copy.deepcopy(FULL_PRESET)
-        table["states"]["lit"]["vfx"] = ["绝不存在的效果"]
+        table["states"]["lit"]["particles"] = [{"effect": "绝不存在的效果"}]
         msgs = self._errors(self._issues({"t": table}))
-        self.assertTrue(any("states[lit].vfx" in m for m in msgs), msgs)
+        self.assertTrue(any("states[lit].particles[0].effect" in m for m in msgs), msgs)
+
+    def test_legacy_vfx_is_an_error_on_base_and_state(self) -> None:
+        """契约 v3：`vfx` 已由 particles 取代，写了运行时不读——那团效果根本不放，只有这里能看见。"""
+        for where in ("base", "state"):
+            table = copy.deepcopy(FULL_PRESET)
+            (table if where == "base" else table["states"]["lit"])["vfx"] = ["paper_money"]
+            with self.subTest(where=where):
+                msgs = self._errors(self._issues({"t": table}))
+                self.assertTrue(any("已由 particles 取代，写了运行时不读" in m for m in msgs), msgs)
+
+    def test_particle_mount_bad_shapes_are_errors(self) -> None:
+        for bad, needle in (
+            ("paper_money", "particles 须为数组"),
+            (["paper_money"], "particles[0] 须为对象"),
+            ([{"effect": ""}], "particles[0].effect"),
+            ([{"effect": 3}], "particles[0].effect"),
+            ([{"point": [0.5, 0.1]}], "particles[0].effect"),
+            ([{"effect": "paper_money", "point": [0.5]}], "particles[0].point"),
+            ([{"effect": "paper_money", "point": "杆头"}], "particles[0].point"),
+        ):
+            for where in ("base", "state"):
+                table = copy.deepcopy(FULL_PRESET)
+                (table if where == "base" else table["states"]["lit"])["particles"] = bad
+                with self.subTest(bad=bad, where=where):
+                    msgs = self._errors(self._issues({"t": table}))
+                    self.assertTrue(any(needle in m for m in msgs), msgs)
+
+    def test_particle_mount_valid_shapes_are_clean(self) -> None:
+        table = copy.deepcopy(FULL_PRESET)
+        table["particles"] = [{"effect": "paper_money", "point": [0.5, 0.05]}, {"effect": "paper_money"}]
+        table["states"]["out"]["particles"] = []
+        table["states"]["lit"]["particles"] = [{"effect": "paper_money", "point": None}]
+        self.assertEqual(self._issues({"t": table}), [])
+        table["particles"][0]["point"] = [3, -1]      # 越界：运行时夹 0..1 ⇒ 只提醒
+        issues = self._issues({"t": table})
+        self.assertEqual([i.message for i in issues if i.severity == "error"], [])
+        self.assertTrue(any("particles[0].point" in i.message for i in issues if i.severity == "warning"))
 
     def test_default_state_must_exist(self) -> None:
         table = copy.deepcopy(FULL_PRESET)
@@ -686,6 +779,729 @@ class PropPresetValidationTests(unittest.TestCase):
         table["light"]["offset"] = [0, 10]
         msgs = self._errors(self._issues({"t": table}))
         self.assertTrue(any("offset" in m for m in msgs), msgs)
+
+
+_FLAME_SHEET = "/resources/runtime/images/ui/three_fires_sheet.png"
+
+#: 燃烧物（火把）形态：基础块起火点 + 火苗 + burn，状态覆盖 burn / 起火点 + 进入动作。
+FIRE_PRESET = {
+    "label": "火把",
+    "image": _REAL_IMAGE,
+    "anchorX": 0.5,
+    "anchorY": 0.9,
+    "firePoint": [0.5, 0.05],
+    "flame": {"image": _FLAME_SHEET, "cols": 12, "frames": 64, "fps": 24, "height": 30},
+    "burn": 1,
+    "windShelter": 0,
+    "states": {
+        "lit": {"burn": 1},
+        "guarding": {"burn": 0.75, "windShelter": 0.8},
+        "ember": {"burn": 0.15, "firePoint": [0.4, 0.1]},
+        "out": {"burn": 0, "onEnterActions": [
+            {"type": "playSfx", "params": {"id": "sfx_rock_bounce_dry"}}]},
+    },
+    "defaultState": "lit",
+}
+
+
+class FlamePresetValidationTests(unittest.TestCase):
+    """燃烧物字段：每条护栏先把数据改坏一次，确认它真的红。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.model = _model()
+
+    def _issues(self, entry: dict) -> list:
+        from tools.editor.validator import _validate_prop_presets
+        self.model.prop_presets = {"t": copy.deepcopy(entry)}
+        out: list = []
+        _validate_prop_presets(self.model, out)
+        return out
+
+    def _errors(self, entry: dict) -> list[str]:
+        return [i.message for i in self._issues(entry) if i.severity == "error"]
+
+    def _warnings(self, entry: dict) -> list[str]:
+        return [i.message for i in self._issues(entry) if i.severity == "warning"]
+
+    def test_healthy_fire_preset_is_clean(self) -> None:
+        self.assertEqual([i.message for i in self._issues(FIRE_PRESET)], [])
+
+    def test_lantern_without_fire_fields_is_clean(self) -> None:
+        self.assertEqual(self._issues({"image": _REAL_IMAGE}), [])
+
+    def test_bad_fire_point_shape_is_an_error(self) -> None:
+        for bad in ([0.5], "0.5,0.1", [0.5, "左"], [float("nan"), 0.1], {"x": 0.5}, [0.5, {}]):
+            for where in ("base", "state"):
+                e = copy.deepcopy(FIRE_PRESET)
+                if where == "base":
+                    e["firePoint"] = bad
+                else:
+                    e["states"]["ember"]["firePoint"] = bad
+                with self.subTest(bad=bad, where=where):
+                    msgs = self._errors(e)
+                    self.assertTrue(any("firePoint" in m for m in msgs), msgs)
+
+    def test_out_of_range_fire_point_is_only_a_warning(self) -> None:
+        """运行时夹到 0..1（合法数据，只是被钉到边上）⇒ warning，不比 TS 更严。"""
+        e = copy.deepcopy(FIRE_PRESET)
+        e["firePoint"] = [2, -1]
+        self.assertEqual(self._errors(e), [])
+        self.assertTrue(any("firePoint" in m for m in self._warnings(e)))
+
+    def test_fire_point_extra_elements_are_legal(self) -> None:
+        e = copy.deepcopy(FIRE_PRESET)
+        e["firePoint"] = [0.5, 0.05, 9]
+        self.assertEqual(self._issues(e), [])
+
+    def test_non_numeric_burn_is_an_error_and_out_of_range_warns(self) -> None:
+        for bad in ("满", float("inf"), {"v": 1}, [1, 2]):
+            e = copy.deepcopy(FIRE_PRESET)
+            e["states"]["out"]["burn"] = bad
+            with self.subTest(bad=bad):
+                self.assertTrue(any("burn" in m for m in self._errors(e)))
+        e = copy.deepcopy(FIRE_PRESET)
+        e["burn"] = 1.5
+        self.assertEqual(self._errors(e), [])
+        self.assertTrue(any("burn" in m for m in self._warnings(e)))
+
+    def test_wind_shelter_gets_the_same_checks_as_burn(self) -> None:
+        """挡风比例与 burn 同一个运行时清洗（`parseBurn`）⇒ 同一套护栏，基础块与状态两处都查。"""
+        for where in ("base", "state"):
+            def put(val, where=where):
+                e = copy.deepcopy(FIRE_PRESET)
+                (e if where == "base" else e["states"]["guarding"])["windShelter"] = val
+                return e
+            for bad in ("挡", float("inf"), {"v": 1}, [1, 2]):
+                with self.subTest(where=where, bad=bad):
+                    msgs = self._errors(put(bad))
+                    self.assertTrue(any("windShelter" in m and "不挡风" in m for m in msgs), msgs)
+            with self.subTest(where=where, case="越界只提醒"):
+                e = put(1.8)
+                self.assertEqual(self._errors(e), [])
+                self.assertTrue(any("windShelter" in m and "夹到" in m for m in self._warnings(e)))
+            with self.subTest(where=where, case="强转只提醒"):
+                e = put("0.8")
+                self.assertEqual(self._errors(e), [])
+                self.assertTrue(any("windShelter" in m and "Number()" in m for m in self._warnings(e)))
+            with self.subTest(where=where, case="null=0"):
+                e = put(None)
+                self.assertEqual(self._errors(e), [])
+                self.assertTrue(any("windShelter" in m and "挡风比例 0" in m for m in self._warnings(e)))
+
+    def test_number_coercible_values_are_legal_but_warned(self) -> None:
+        """TS `finiteOrUndefined` 是 `Number(v)`：`"0.5"` / `true` / `null` 都是合法数据——
+        报 error 就比运行时更严（norms 不变量 7），只提醒；`null` 尤其要说清是 0（火灭）。"""
+        cases = (
+            (("burn",), "0.5"),
+            (("states", "out", "burn"), True),
+            (("firePoint",), ["0.5", 0.05]),
+            (("flame", "height"), "30"),
+            (("flame", "cols"), "12"),
+            (("flame", "fps"), "24"),
+        )
+        for path, val in cases:
+            e = copy.deepcopy(FIRE_PRESET)
+            node = e
+            for k in path[:-1]:
+                node = node[k]
+            node[path[-1]] = val
+            with self.subTest(path=path, val=val):
+                self.assertEqual(self._errors(e), [])
+                self.assertTrue(any("Number()" in m for m in self._warnings(e)), self._warnings(e))
+        e = copy.deepcopy(FIRE_PRESET)
+        e["states"]["lit"]["burn"] = None
+        self.assertEqual(self._errors(e), [])
+        self.assertTrue(any("Number(null)=0" in m for m in self._warnings(e)))
+
+    def test_flame_voiding_fields_are_errors(self) -> None:
+        for patch, needle in (
+            ({"image": ""}, "flame.image"),
+            ({"image": 3}, "flame.image"),
+            ({"height": 0}, "flame.height"),
+            ({"height": -3}, "flame.height"),
+            ({"height": "三十"}, "flame.height"),
+            ({"height": None}, "flame.height"),
+            ({"cols": 0}, "flame.cols"),
+            ({"cols": None}, "flame.cols"),
+            ({"frames": "六十四"}, "flame.frames"),
+            ({"fps": -3}, "flame.fps"),
+        ):
+            e = copy.deepcopy(FIRE_PRESET)
+            e["flame"].update(patch)
+            with self.subTest(patch=patch):
+                msgs = self._errors(e)
+                self.assertTrue(any(needle in m for m in msgs), msgs)
+        e = copy.deepcopy(FIRE_PRESET)
+        del e["flame"]["height"]
+        self.assertTrue(any("flame.height" in m for m in self._errors(e)))
+        e = copy.deepcopy(FIRE_PRESET)
+        e["flame"] = "三把火"
+        self.assertTrue(any("flame" in m for m in self._errors(e)))
+
+    def test_flame_image_file_must_exist(self) -> None:
+        e = copy.deepcopy(FIRE_PRESET)
+        e["flame"]["image"] = "/resources/runtime/images/ui/根本没有的火.png"
+        msgs = self._errors(e)
+        self.assertTrue(any("flame.image" in m and "不存在" in m for m in msgs), msgs)
+
+    def test_non_integer_cols_warns(self) -> None:
+        e = copy.deepcopy(FIRE_PRESET)
+        e["flame"]["cols"] = 12.5
+        self.assertEqual(self._errors(e), [])
+        self.assertTrue(any("flame.cols" in m for m in self._warnings(e)))
+
+    def test_flame_in_a_state_is_ignored_and_warned(self) -> None:
+        e = copy.deepcopy(FIRE_PRESET)
+        e["states"]["ember"]["flame"] = {"image": _FLAME_SHEET, "height": 10}
+        self.assertTrue(any("states[ember].flame" in m for m in self._warnings(e)))
+
+    def test_base_on_enter_actions_is_ignored_and_warned(self) -> None:
+        e = copy.deepcopy(FIRE_PRESET)
+        e["onEnterActions"] = [{"type": "playSfx", "params": {"id": "sfx_rock_bounce_dry"}}]
+        self.assertTrue(any("onEnterActions" in m for m in self._warnings(e)))
+
+    def test_on_enter_actions_go_through_the_action_checker(self) -> None:
+        """与物件 `use.actions` 同一条动作校验链：未登记动作、嵌套里的未登记动作都要报。"""
+        for acts in (
+            [{"type": "__definitely_not_registered__", "params": {}}],
+            [{"type": "runActionsIf", "params": {
+                "condition": {"flag": "x"},
+                "actions": [],
+                "elseActions": [{"type": "__definitely_not_registered__", "params": {}}]}}],
+        ):
+            e = copy.deepcopy(FIRE_PRESET)
+            e["states"]["out"]["onEnterActions"] = acts
+            with self.subTest(acts=acts):
+                msgs = self._errors(e)
+                self.assertTrue(any("__definitely_not_registered__" in m for m in msgs), msgs)
+
+    def test_on_enter_actions_prop_state_refs_are_checked(self) -> None:
+        e = copy.deepcopy(FIRE_PRESET)
+        e["states"]["out"]["onEnterActions"] = [{"type": "setPropState", "params": {
+            "target": "player", "socket": "right_hand", "state": "根本没这个状态"}}]
+        msgs = self._errors(e)
+        self.assertTrue(any("根本没这个状态" in m for m in msgs), msgs)
+
+    def test_on_enter_actions_shape_errors(self) -> None:
+        e = copy.deepcopy(FIRE_PRESET)
+        e["states"]["out"]["onEnterActions"] = {"type": "playSfx"}
+        self.assertTrue(any("onEnterActions" in m for m in self._errors(e)))
+        e = copy.deepcopy(FIRE_PRESET)
+        e["states"]["out"]["onEnterActions"] = ["playSfx"]
+        self.assertTrue(any("onEnterActions[0]" in m for m in self._errors(e)))
+
+    def test_cutscene_allowlist_gate_is_dormant_while_switch_actions_are_not_allowed(self) -> None:
+        from tools.editor import validator as v
+        self.assertFalse(v._CUTSCENE_ACTION_WHITELIST & {"setPropState", "attachToSocket"},
+                         "契约前提：两个切状态动作目前都不在过场白名单里——变了就改这条用例")
+        e = copy.deepcopy(FIRE_PRESET)
+        e["states"]["out"]["onEnterActions"] = [
+            {"type": "giveItem", "params": {"id": "__x__", "count": 1}}]
+        self.assertFalse(any("过场白名单" in m for m in self._errors(e)))
+
+    def test_cutscene_allowlist_gate_fires_once_switch_is_allowed(self) -> None:
+        from unittest import mock
+
+        from tools.editor import validator as v
+        allowed = v._CUTSCENE_ACTION_WHITELIST | {"setPropState"}
+        e = copy.deepcopy(FIRE_PRESET)
+        e["states"]["out"]["onEnterActions"] = [
+            {"type": "playSfx", "params": {"id": "sfx_rock_bounce_dry"}},
+            {"type": "runActions", "params": {"actions": [
+                {"type": "giveItem", "params": {"id": "__x__", "count": 1}}]}},
+        ]
+        with mock.patch.object(v, "_CUTSCENE_ACTION_WHITELIST", allowed):
+            msgs = [m for m in self._errors(e) if "过场白名单" in m]
+        self.assertTrue(any("giveItem" in m for m in msgs), msgs)
+        self.assertTrue(any("runActions" in m for m in msgs), msgs)
+        self.assertFalse(any("'playSfx'" in m for m in msgs), "白名单内的动作不报")
+
+
+class FlamePresetEditorTests(unittest.TestCase):
+    """挂件预设页的「火焰」块 + 状态里的起火点 / burn / 进入时动作 + 试挂预览里的起火点与火苗。"""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls._qt = _app()
+        cls.model = _model()
+
+    def _editor(self, table: dict, select: str = "t") -> PropPresetEditor:
+        self.model.prop_presets = copy.deepcopy(table)
+        self.model._dirty.clear()
+        ed = PropPresetEditor(self.model)
+        self.addCleanup(ed.deleteLater)
+        ed._refresh(keep=select)
+        ed._canvas.resize(340, 400)
+        return ed
+
+    @staticmethod
+    def _dumps(obj: object) -> str:
+        return json.dumps(obj, ensure_ascii=False, indent=2)
+
+    # ---- 往返 ----------------------------------------------------------
+
+    def test_full_fire_preset_roundtrips_byte_for_byte(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        out = ed._staged()
+        self.assertFalse(ed._dirty, "打开即脏是红线")
+        self.assertEqual(self._dumps(out), self._dumps({"t": FIRE_PRESET}))
+        self.assertIsInstance(out["t"]["flame"]["cols"], int)
+        self.assertIsInstance(out["t"]["flame"]["height"], int)
+        self.assertIsInstance(out["t"]["burn"], int)
+        self.assertIsInstance(out["t"]["windShelter"], int)
+        ed._fire_block.ensure_built()
+        ed._states_editor._on_select("out")      # 让进入动作真的过一趟 ActionEditor
+        ed._states_editor._on_select("guarding")  # 挡风覆盖过一趟 OptionalNumField
+        ed._states_editor._on_select("ember")
+        self.assertEqual(self._dumps(ed._staged()), self._dumps({"t": FIRE_PRESET}))
+
+    def test_bad_and_odd_values_roundtrip_untouched(self) -> None:
+        """运行时自己清洗的坏值 / 越界值 / 未来键，打开→不动→保存都要一字不改。"""
+        odd = {
+            "image": _REAL_IMAGE,
+            "firePoint": [2, -1, 9],
+            "burn": "1",
+            "windShelter": 1.8,
+            "flame": {"height": 0, "image": 3, "cols": 12.5, "未来字段": {"a": 1}},
+            "states": {
+                "a": {"firePoint": None, "burn": 1.5, "windShelter": "x", "onEnterActions": "不是数组"},
+                "b": {"onEnterActions": [
+                    {"type": "setPropState", "params": {"target": "player", "state": "a"}},
+                    "坏元素",
+                ]},
+            },
+        }
+        ed = self._editor({"t": odd})
+        ed._fire_block.ensure_built()
+        for name in ("a", "b", "a"):
+            ed._states_editor._on_select(name)
+        self.assertEqual(self._dumps(ed._staged()), self._dumps({"t": odd}))
+        ed.flush_to_model(True)
+        self.assertNotIn("prop_presets", self.model._dirty, "零编辑 flush 不标脏")
+
+    def test_non_dict_flame_passes_through(self) -> None:
+        ed = self._editor({"t": {"image": _REAL_IMAGE, "flame": "三把火"}})
+        self.assertEqual(ed._staged()["t"]["flame"], "三把火")
+
+    def test_minimal_preset_gains_no_fire_keys(self) -> None:
+        ed = self._editor({"t": {"image": _REAL_IMAGE, "states": {"lit": {}}}})
+        ed._fire_block.ensure_built()
+        out = ed._staged()["t"]
+        for key in ("firePoint", "flame", "burn", "windShelter"):
+            self.assertNotIn(key, out)
+        self.assertEqual(out["states"], {"lit": {}},
+                         "状态也不许凭空多出 firePoint/burn/windShelter/onEnterActions")
+
+    def test_fire_block_starts_collapsed_and_lazy_without_fire_keys(self) -> None:
+        ed = self._editor({"t": {"image": _REAL_IMAGE}})
+        self.assertFalse(ed._fire_block._built, "没配火的挂件不该造火焰控件（懒建）")
+        self.assertFalse(ed._fire_block._section.is_expanded())
+        ed2 = self._editor({"t": FIRE_PRESET})
+        self.assertTrue(ed2._fire_block._section.is_expanded(), "配了火就当场展开，折着等于没接进来")
+
+    # ---- 真实编辑 ------------------------------------------------------
+
+    def test_turning_flame_on_writes_visible_defaults_and_marks_dirty(self) -> None:
+        ed = self._editor({"t": {"image": _REAL_IMAGE}})
+        ed._fire_block.ensure_built()
+        ed._fire_block._flame_on.setChecked(True)
+        self.assertTrue(ed._dirty)
+        ed.flush_to_model(True)
+        self.assertIn("prop_presets", self.model._dirty)
+        flame = self.model.prop_presets["t"]["flame"]
+        self.assertEqual(flame["image"], _FLAME_SHEET)
+        self.assertGreater(flame["height"], 0, "勾上就得是运行时画得出来的火苗")
+        self.assertEqual((flame["cols"], flame["frames"]), (12, 64), "三把火图集要按 12 列 64 帧切")
+        self.assertIsInstance(flame["cols"], int)
+
+    def test_state_burn_and_fire_point_edits_are_written(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        se = ed._states_editor
+        se._on_select("lit")
+        se._st_burn._spin.setValue(0.5)
+        se._st_fire._on.setChecked(True)
+        se._st_fire._spins[0].setValue(0.25)
+        se._on_select("ember")                   # commit-on-leave
+        ed.flush_to_model(True)
+        lit = self.model.prop_presets["t"]["states"]["lit"]
+        self.assertEqual(lit["burn"], 0.5)
+        self.assertEqual(lit["firePoint"][0], 0.25)
+
+    def test_wind_shelter_edits_are_written_base_and_state(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        se = ed._states_editor
+        se._on_select("guarding")
+        se._st_wind_shelter._spin.setValue(0.5)
+        se._on_select("lit")
+        se._st_wind_shelter._on.setChecked(True)
+        se._st_wind_shelter._spin.setValue(0.25)
+        se._on_select("ember")                   # commit-on-leave
+        ed._fire_block._wind_shelter._spin.setValue(0.1)
+        self.assertTrue(ed._dirty)
+        ed.flush_to_model(True)
+        t = self.model.prop_presets["t"]
+        self.assertEqual(t["windShelter"], 0.1)
+        self.assertEqual(t["states"]["guarding"]["windShelter"], 0.5)
+        self.assertEqual(t["states"]["lit"]["windShelter"], 0.25)
+        self.assertNotIn("windShelter", t["states"]["ember"], "没勾的状态不写键（沿用基础块）")
+        self.assertNotIn("windShelter", t.get("light") or {}, "挡风不碰灯")
+
+    def test_unchecking_state_wind_shelter_removes_the_key(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        se = ed._states_editor
+        se._on_select("guarding")
+        se._st_wind_shelter._on.setChecked(False)
+        se._on_select("lit")
+        ed.flush_to_model(True)
+        self.assertNotIn("windShelter", self.model.prop_presets["t"]["states"]["guarding"])
+
+    def test_wind_shelter_fields_explain_guarding_and_not_the_light(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        for tip in (ed._fire_block._wind_shelter.toolTip(),
+                    ed._states_editor._st_wind_shelter.toolTip()):
+            self.assertIn("护火", tip)
+            self.assertIn("不改灯", tip)
+
+    def test_adding_an_on_enter_action_from_the_button(self) -> None:
+        from PySide6.QtWidgets import QPushButton
+        ed = self._editor({"t": FIRE_PRESET})
+        se = ed._states_editor
+        se._on_select("lit")
+        add = [b for b in se._st_on_enter.findChildren(QPushButton) if b.text() == "+ 进入时动作"]
+        self.assertEqual(len(add), 1)
+        add[0].click()
+        ed.flush_to_model(True)
+        acts = self.model.prop_presets["t"]["states"]["lit"].get("onEnterActions")
+        self.assertIsInstance(acts, list)
+        self.assertEqual(len(acts), 1)
+
+    def test_on_enter_actions_uses_the_shared_action_editor(self) -> None:
+        from tools.editor.shared.action_editor import ActionEditor as _AE
+        ed = self._editor({"t": FIRE_PRESET})
+        self.assertIsInstance(ed._states_editor._st_on_enter, _AE, "选择器铁律：与物件用途同款动作列表")
+        self.assertIs(ed._states_editor._st_on_enter._ctx_model, self.model)
+
+    # ---- 试挂预览 ------------------------------------------------------
+
+    def _need_geometry(self, ed: PropPresetEditor) -> None:
+        if ed._canvas._fire_geometry() is None or ed._prop_pix is None:
+            self.skipTest("工程里没有可试挂的动画包挂点标注")
+
+    def test_flame_is_drawn_bottom_center_at_the_fire_point(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        self._need_geometry(ed)
+        fire = ed._canvas.fire_view_point()
+        rect = ed._canvas.flame_view_rect()
+        self.assertIsNotNone(fire)
+        self.assertIsNotNone(rect, "有火苗、burn>0 就得画出来")
+        self.assertAlmostEqual(rect.center().x(), fire.x(), places=6)
+        self.assertAlmostEqual(rect.bottom(), fire.y(), places=6)
+
+    def test_state_dropdown_changes_the_flame_size(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        self._need_geometry(ed)
+        combo = ed._state_combo
+        heights = {}
+        for name in ("lit", "ember", "out"):
+            combo.setCurrentIndex(combo.findData(name))
+            rect = ed._canvas.flame_view_rect()
+            heights[name] = rect.height() if rect is not None else 0.0
+        self.assertGreater(heights["lit"], 0)
+        self.assertAlmostEqual(heights["ember"] / heights["lit"], 0.15, places=6)
+        self.assertEqual(heights["out"], 0.0, "burn=0 火苗不画")
+        self.assertFalse(ed._dirty, "切预览状态不是数据改动")
+
+    def test_ember_state_moves_the_fire_point(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        self._need_geometry(ed)
+        combo = ed._state_combo
+        combo.setCurrentIndex(combo.findData("lit"))
+        lit = ed._canvas.fire_view_point()
+        combo.setCurrentIndex(combo.findData("ember"))
+        ember = ed._canvas.fire_view_point()
+        self.assertNotEqual((round(lit.x(), 3), round(lit.y(), 3)),
+                            (round(ember.x(), 3), round(ember.y(), 3)))
+
+    def _click_at_uv(self, ed: PropPresetEditor, u: float, v: float) -> None:
+        from PySide6.QtCore import QPoint, Qt as _Qt
+        from PySide6.QtTest import QTest
+        canvas = ed._canvas
+        saved = canvas._fire_point, canvas._fire_configured
+        canvas._fire_point, canvas._fire_configured = (u, v), True
+        target = canvas.fire_view_point()
+        canvas._fire_point, canvas._fire_configured = saved
+        self.assertIsNotNone(target)
+        QTest.mouseClick(canvas, _Qt.MouseButton.LeftButton, _Qt.KeyboardModifier.NoModifier,
+                         QPoint(round(target.x()), round(target.y())))
+
+    def test_picking_on_the_preview_writes_the_base_fire_point(self) -> None:
+        """从最外层入口进：按下「点选起火点」、在画布上真点一下，数据落到基础块。"""
+        ed = self._editor({"t": {"image": _REAL_IMAGE, "anchorX": 0.5, "anchorY": 0.9}})
+        self._need_geometry(ed)
+        ed._pick_fire_btn.click()
+        self.assertTrue(ed._canvas.fire_pick_enabled())
+        self.assertFalse(ed._dirty, "开点选模式不是数据改动")
+        self._click_at_uv(ed, 0.3, 0.2)
+        self.assertTrue(ed._dirty)
+        ed.flush_to_model(True)
+        fp = self.model.prop_presets["t"]["firePoint"]
+        tol = 0.05   # 一个像素在贴图归一化坐标里的量级
+        self.assertAlmostEqual(fp[0], 0.3, delta=tol)
+        self.assertAlmostEqual(fp[1], 0.2, delta=tol)
+
+    def test_picking_writes_the_previewed_state_when_it_overrides(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        self._need_geometry(ed)
+        combo = ed._state_combo
+        combo.setCurrentIndex(combo.findData("ember"))   # ember 自己覆盖了起火点
+        ed._pick_fire_btn.click()
+        self._click_at_uv(ed, 0.7, 0.6)
+        ed.flush_to_model(True)
+        t = self.model.prop_presets["t"]
+        self.assertEqual(t["firePoint"], [0.5, 0.05], "状态覆盖了起火点时不许写到基础块")
+        self.assertAlmostEqual(t["states"]["ember"]["firePoint"][0], 0.7, delta=0.05)
+        self.assertAlmostEqual(t["states"]["ember"]["firePoint"][1], 0.6, delta=0.05)
+
+    # ---- 粒子挂载（契约 v3）--------------------------------------------
+
+    MOUNTED = {
+        "image": _REAL_IMAGE, "anchorX": 0.5, "anchorY": 0.9, "firePoint": [0.5, 0.05],
+        "particles": [{"effect": "paper_money", "point": [0.3, 0.6]}, {"effect": "paper_money"}],
+        "states": {"lit": {}, "out": {"particles": []},
+                   "ember": {"particles": [{"effect": "paper_money", "point": [0.7, 0.2]}]}},
+    }
+
+    def test_preview_draws_a_dot_per_particle_mount(self) -> None:
+        ed = self._editor({"t": self.MOUNTED})
+        self._need_geometry(ed)
+        combo = ed._state_combo
+        combo.setCurrentIndex(combo.findData("lit"))
+        pts = ed._canvas.particle_mount_view_points()
+        self.assertEqual([e for e, _ in pts], ["paper_money", "paper_money"])
+        fire = ed._canvas.fire_view_point()
+        self.assertAlmostEqual(pts[1][1].x(), fire.x(), places=6, msg="没写 point 落到起火点")
+        self.assertAlmostEqual(pts[1][1].y(), fire.y(), places=6)
+        self.assertNotAlmostEqual(pts[0][1].y(), fire.y(), places=1)
+        combo.setCurrentIndex(combo.findData("out"))
+        self.assertEqual(ed._canvas.particle_mount_view_points(), [], "状态写了空数组 = 没有粒子")
+        combo.setCurrentIndex(combo.findData("ember"))
+        self.assertEqual(len(ed._canvas.particle_mount_view_points()), 1, "状态的列表整体替换基础块")
+        self.assertFalse(ed._dirty, "切预览状态不是数据改动")
+
+    def test_picking_a_base_particle_mount_from_its_row(self) -> None:
+        """从最外层入口进：行尾「点选」→ 在预览上真点一下 → 那一条的 point 变了，起火点不动。"""
+        from PySide6.QtWidgets import QPushButton
+        ed = self._editor({"t": self.MOUNTED})
+        self._need_geometry(ed)
+        row0 = ed._particles_block._list._rows[0]["host"]
+        [b for b in row0.findChildren(QPushButton) if b.text() == "点选"][0].click()
+        self.assertTrue(ed._canvas.fire_pick_enabled())
+        self.assertFalse(ed._dirty, "开点选模式不是数据改动")
+        self._click_at_uv(ed, 0.45, 0.35)
+        ed.flush_to_model(True)
+        t = self.model.prop_presets["t"]
+        self.assertAlmostEqual(t["particles"][0]["point"][0], 0.45, delta=0.05)
+        self.assertAlmostEqual(t["particles"][0]["point"][1], 0.35, delta=0.05)
+        self.assertEqual(t["particles"][1], {"effect": "paper_money"}, "别的挂载不动")
+        self.assertEqual(t["firePoint"], [0.5, 0.05], "点的是挂载，不许写到起火点")
+        ed._pick_fire_btn.click()                          # 关掉点选 = 下一次回到写起火点
+        self.assertIsNone(ed._pick_target)
+
+    def test_picking_a_state_particle_mount_switches_the_preview_to_that_state(self) -> None:
+        from PySide6.QtWidgets import QPushButton
+        ed = self._editor({"t": self.MOUNTED})
+        self._need_geometry(ed)
+        se = ed._states_editor
+        se.ensure_built()
+        se._on_select("ember")
+        items = se._list.findItems("ember", se._list_match())
+        se._list.setCurrentItem(items[0])
+        row0 = se._st_particles._list._rows[0]["host"]
+        [b for b in row0.findChildren(QPushButton) if b.text() == "点选"][0].click()
+        self.assertEqual(ed._state_combo.currentData(), "ember")
+        self._click_at_uv(ed, 0.2, 0.4)
+        ed.flush_to_model(True)
+        t = self.model.prop_presets["t"]
+        self.assertAlmostEqual(t["states"]["ember"]["particles"][0]["point"][0], 0.2, delta=0.05)
+        self.assertEqual(t["particles"][0]["point"], [0.3, 0.6], "基础块那一串不动")
+
+    def test_particle_block_is_lazy_and_add_row_marks_dirty(self) -> None:
+        ed = self._editor({"t": {"image": _REAL_IMAGE}})
+        self.assertFalse(ed._particles_block._built, "没配粒子的挂件不该造控件（懒建）")
+        ed._particles_block._section.set_expanded(True)
+        self.assertTrue(ed._particles_block._built)
+        self.assertNotIn("particles", ed._staged()["t"], "展开不是改动：不凭空写 particles: []")
+        self.assertFalse(ed._dirty)
+        ed._particles_block._list._on_add()
+        self.assertTrue(ed._dirty)
+        ed.flush_to_model(True)
+        self.assertEqual(self.model.prop_presets["t"]["particles"], [{"effect": ""}])
+
+    def test_particle_rows_reorder(self) -> None:
+        from PySide6.QtWidgets import QPushButton
+        ed = self._editor({"t": {"image": _REAL_IMAGE, "particles": [{"effect": "a"}, {"effect": "b"}]}})
+        row1 = ed._particles_block._list._rows[1]["host"]
+        [b for b in row1.findChildren(QPushButton) if b.text() == "↑"][0].click()
+        ed.flush_to_model(True)
+        self.assertEqual([m["effect"] for m in self.model.prop_presets["t"]["particles"]], ["b", "a"])
+
+    def test_burn_and_wind_tooltips_cover_flame_and_particles(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        for tip in (ed._fire_block._burn.toolTip(), ed._states_editor._st_burn.toolTip()):
+            self.assertIn("帧动画火苗", tip)
+            self.assertIn("全部粒子挂载", tip)
+            self.assertIn("burn^0.4", tip)
+            self.assertIn("留缺省 1", tip)
+        self.assertIn("全部粒子挂载", ed._fire_block._wind_shelter.toolTip())
+
+    def test_expanded_fire_block_is_not_squeezed_flat(self) -> None:
+        ed = self._editor({"t": FIRE_PRESET})
+        body = ed._fire_block._body
+        self.assertGreaterEqual(body.sizeHint().height(), 120,
+                                f"火焰块展开后高度只有 {body.sizeHint().height()}px —— 被压成一条缝了")
+
+
+class PropStateOnEnterActionScanTests(unittest.TestCase):
+    """`states[*].onEnterActions` 是一个新的「带动作列表的位置」：物件 `use.actions` 被扫到的
+    每一处（引用校验 / 动作总表 / 信号目录与改名 / flag 引用 / 对话图与实体重构 / 任务引用 /
+    挂件引用 / 信号关系）都必须同样扫到它。每条都从各面的公开入口进，不摸内部表。
+    """
+
+    PROP = "torch"
+
+    def _model(self, on_enter: list) -> ProjectModel:
+        from tempfile import TemporaryDirectory
+
+        from tools.editor.tests.save_test_utils import write_minimal_loadable_project
+        td = TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        root = Path(td.name) / "p"
+        write_minimal_loadable_project(root)
+        m = ProjectModel()
+        m.load_project(root)
+        m.scenes["sc_a"]["npcs"] = [{"id": "更夫", "x": 0, "y": 0}]
+        m.prop_presets = {
+            self.PROP: {"image": _REAL_IMAGE,
+                        "states": {"lit": {}, "out": {"onEnterActions": on_enter}},
+                        "defaultState": "lit"},
+            "sword": {"image": _REAL_IMAGE},
+        }
+        m._dirty.clear()
+        return m
+
+    def test_embedded_tag_refs_are_save_gated(self) -> None:
+        bad = "坏 [tag:item:__definitely_missing__]"
+        for acts in (
+            [{"type": "chooseAction", "params": {"prompt": bad, "options": []}}],
+            [{"type": "runActions", "params": {"actions": [
+                {"type": "chooseAction", "params": {"prompt": bad, "options": []}}]}}],
+        ):
+            from tools.editor.shared.ref_validator import validate_refs_for_save
+            m = self._model(acts)
+            with self.subTest(nested=acts[0]["type"]):
+                err = validate_refs_for_save(m, dirty={"prop_presets"})
+                self.assertTrue(err, "状态进入动作里的悬垂 [tag:] 必须拦下保存")
+                self.assertIn("prop_presets[torch].states[out].onEnterActions", err)
+        m = self._model([{"type": "chooseAction", "params": {"prompt": "好 [tag:item:i_ok]",
+                                                             "options": []}}])
+        from tools.editor.shared.ref_validator import validate_refs_for_save
+        self.assertIsNone(validate_refs_for_save(m, dirty={"prop_presets"}))
+
+    def test_action_registry_lists_them_and_can_navigate(self) -> None:
+        from tools.editor.editors.action_registry_editor import (
+            _ACTION_REGISTRY_DIRTY_TYPES, _SOURCE_MAP, _scan_actions,
+        )
+        from tools.editor.main_window import SOURCE_NAVIGATION_TABS
+        m = self._model([{"type": "runActions", "params": {"actions": [
+            {"type": "playSfx", "params": {"id": "s"}}]}}])
+        hits = [r for r in _scan_actions(m) if r.source_type == "prop_preset"]
+        self.assertEqual([h.action_type for h in hits], ["runActions", "playSfx"],
+                         "嵌套容器也要展开（共 N 条）")
+        self.assertEqual({h.source_id for h in hits}, {self.PROP})
+        self.assertIn("states.out.onEnterActions", hits[0].container_field)
+        self.assertIn("prop_preset", _SOURCE_MAP.values(), "来源筛选下拉要能选到")
+        self.assertIn("prop_presets", _ACTION_REGISTRY_DIRTY_TYPES, "改了挂件预设要标记重扫")
+        self.assertEqual(SOURCE_NAVIGATION_TABS.get("prop_preset"), "挂件预设")
+        main_src = (_ROOT / "tools" / "editor" / "main_window.py").read_text(encoding="utf-8")
+        self.assertIn('"挂件预设", PropPresetEditor', main_src, "跳转标签必须是真实页签名")
+        self.assertTrue(all(h.navigable for h in hits))
+
+    def test_emitted_signals_and_signal_rename_reach_them(self) -> None:
+        from tools.editor.shared.narrative_catalog import emitted_signal_ids
+        from tools.editor.shared.signal_refactor import scan_signal_usages
+        m = self._model([{"type": "emitNarrativeSignal", "params": {"signal": "火把灭了"}}])
+        self.assertIn("火把灭了", emitted_signal_ids(m))
+        assets = scan_signal_usages(m, "火把灭了")["assets"]
+        self.assertEqual(
+            [(a["bucket"], a["itemId"], a["count"]) for a in assets],
+            [("prop_presets", self.PROP, 1)])
+
+    def test_signal_rename_rewrites_and_marks_prop_presets_dirty(self) -> None:
+        from tools.editor.shared.signal_refactor import rename_signal
+        m = self._model([{"type": "emitNarrativeSignal", "params": {"signal": "火把灭了"}}])
+        m.narrative_graphs = {"signals": [{"id": "火把灭了"}], "compositions": []}
+        m._dirty.clear()
+        rename_signal(m, "火把灭了", "火把熄了")
+        act = m.prop_presets[self.PROP]["states"]["out"]["onEnterActions"][0]
+        self.assertEqual(act["params"]["signal"], "火把熄了")
+        self.assertIn("prop_presets", m._dirty)
+
+    def test_flag_key_references_and_rename(self) -> None:
+        from tools.editor.editors.flag_registry_editor import (
+            find_flag_key_references, rename_flag_key_references,
+        )
+        m = self._model([{"type": "runActionsIf", "params": {
+            "condition": {"flag": "torch_out"},
+            "actions": [{"type": "setFlag", "params": {"key": "torch_out", "value": True}}]}}])
+        refs = find_flag_key_references(m, "torch_out")
+        self.assertEqual(len([r for r in refs if r.startswith("prop_presets")]), 2, refs)
+        self.assertEqual(rename_flag_key_references(m, "torch_out", "torch_dead"), 2)
+        self.assertIn("prop_presets", m._dirty)
+        self.assertIn("torch_dead", m.all_flags())
+
+    def test_dialogue_graph_usages_include_state_actions(self) -> None:
+        from tools.editor.shared.dialogue_graph_refactor import scan_dialogue_graph_usages
+        m = self._model([{"type": "startDialogueGraph", "params": {"graphId": "某段对话"}}])
+        usages = scan_dialogue_graph_usages(m, "某段对话")
+        self.assertTrue(any("prop_presets" in (u.get("path", "") + u.get("owner", ""))
+                            for u in usages), usages)
+
+    def test_entity_usages_include_state_actions(self) -> None:
+        from tools.editor.shared.entity_refactor import scan_entity_usages
+        m = self._model([{"type": "setPropState", "params": {
+            "target": "更夫", "socket": "right_hand", "state": "out"}}])
+        report = scan_entity_usages(m, "sc_a", "npc", "更夫")
+        self.assertIn({"bucket": "prop_presets", "itemId": self.PROP, "count": 1},
+                      report["globalRefs"])
+
+    def test_prop_references_inside_state_actions_are_found_and_renamed(self) -> None:
+        from tools.editor.shared.prop_preset_refs import (
+            rename_prop_references, scan_prop_usages,
+        )
+        m = self._model([{"type": "attachToSocket", "params": {
+            "target": "player", "socket": "left_hand", "prop": "sword"}}])
+        self.assertEqual(scan_prop_usages(m, "sword"), [f"prop_presets {self.PROP}"])
+        self.assertEqual(rename_prop_references(m, "sword", "taomu"), 1)
+        self.assertIn("prop_presets", m._dirty)
+
+    def test_quest_reference_scan_units_include_prop_presets(self) -> None:
+        from types import SimpleNamespace
+
+        from tools.editor.editors.quest_editor import QuestEditor
+        m = self._model([])
+        units = QuestEditor._quest_ref_scan_units(SimpleNamespace(_model=m))
+        self.assertIn(("prop_presets.json", "prop_presets"),
+                      [(label, bucket) for label, _obj, bucket, _sid in units])
+
+    def test_narrative_xref_sees_state_actions_in_memory_and_on_disk(self) -> None:
+        from tools.narrative_xref.sources import from_disk, from_project_model
+        m = self._model([{"type": "emitNarrativeSignal", "params": {"signal": "火把灭了"}}])
+        mem = [a for a in from_project_model(m).assets if a.attr == "prop_presets"]
+        self.assertEqual(len(mem), 1)
+        self.assertEqual(mem[0].file, "public/assets/data/prop_presets.json")
+        disk = [a for a in from_disk(_ROOT).assets if a.attr == "prop_presets"]
+        self.assertEqual(len(disk), 1, "磁盘来源同一张表，同一个文件")
 
 
 class HeldPropActionValidationTests(unittest.TestCase):

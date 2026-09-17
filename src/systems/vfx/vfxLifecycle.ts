@@ -23,6 +23,11 @@ export interface VfxLifecycleInput {
   fallSpeed: number;
   place(i: number, surface: Surface): void;
   launch(i: number, at: Vec3, velocity: Vec3): void;
+  /**
+   * 回收之前问一句：这一颗是不是"不能以新的样子回来"（燃着的纸被挪走 = 这一格作废，见 `vfxPlateBurn`）。
+   * 返回 true ⇒ 直接收掉、不补回。缺省没有 = 一律可补回（与改动前逐位相同）。
+   */
+  consume?(i: number): boolean;
 }
 const REPLENISH_HEIGHT: [number, number] = [140, 340];
 const REPLENISH_UPWIND: [number, number] = [0, 260];
@@ -45,7 +50,7 @@ export class VfxParticleLifecycle {
     b.fade[i] -= b.fadeRate[i] * h;
     if (b.fade[i] <= 0) {
       if (this.input.clampDeadFade || policy.mode !== 'none') b.fade[i] = 0;
-      if (policy.mode === 'none') { this.kill(i); return true; }
+      if (policy.mode === 'none' || this.input.consume?.(i)) { this.kill(i); return true; }
       // Failed sampling keeps the invisible slot for a later attempt; never leak population.
       if (this.budget > 0) { this.budget--; this.replace(i); }
       return true;
@@ -58,13 +63,15 @@ export class VfxParticleLifecycle {
     if (!detectLoss) return false;
     let lost = y < a.floorY - LOST_DROP_WU;
     if (!lost && !a.confine) {
-      sp.toScene([x, y, z], this.projected);
+      // Surface replenishment bounds the patch of ground, not its screen-space
+      // silhouette: lifting a particle must not be mistaken for leaving the patch.
+      sp.toScene([x, policy.mode === 'surface' ? sp.groundY(x, z) : y, z], this.projected);
       const mx = (a.maxX - a.minX) * 0.35 + 60, my = (a.maxY - a.minY) * 0.35 + 60;
       lost = this.projected.x < a.minX - mx || this.projected.x > a.maxX + mx
         || this.projected.y < a.minY - my || this.projected.y > a.maxY + my;
     }
     if (!lost) return false;
-    if (policy.mode === 'none' || !this.replace(i)) this.kill(i);
+    if (policy.mode === 'none' || this.input.consume?.(i) || !this.replace(i)) this.kill(i);
     return true;
   }
   replace(i: number): boolean {

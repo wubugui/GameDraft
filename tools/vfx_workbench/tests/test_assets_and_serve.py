@@ -68,6 +68,20 @@ class TestAssets:
         assert g == 865 and isinstance(g, int) and not isinstance(g, bool), "整数不许漂成 float"
         assert out["emitters"][0]["motion"]["drag"] == 0.85
 
+    def test_tint_over_life_sits_right_after_tint_and_keeps_numbers(self) -> None:
+        """键序：appearance 里紧跟 tint 之后；关键点数值原样（int 不漂 float），空表合法（= 恒白）。"""
+        ap = {"tintOverLife": [[0, 1, 0.95, 0.7], [1, 0.35, 0.05, 0]], "blend": "add", "tint": [1, 1, 1],
+              "sizeWu": 4, "image": "/x.png"}
+        out = assets.normalize_effect(_doc(emitters=[_emitter(appearance=ap)]))
+        oap = out["emitters"][0]["appearance"]
+        keys = list(oap.keys())
+        assert keys.index("tintOverLife") == keys.index("tint") + 1, keys
+        assert oap["tintOverLife"] == [[0, 1, 0.95, 0.7], [1, 0.35, 0.05, 0]]
+        assert isinstance(oap["tintOverLife"][0][0], int) and isinstance(oap["tintOverLife"][0][1], int)
+        empty = assets.normalize_effect(_doc(emitters=[_emitter(appearance={"image": "/x.png", "sizeWu": 4,
+                                                                             "tintOverLife": []})]))
+        assert empty["emitters"][0]["appearance"]["tintOverLife"] == []
+
     def test_normalize_is_idempotent(self) -> None:
         doc = _doc(emitters=[_emitter(collision={"ground": "kill", "radiusWu": 2},
                                       life={"seconds": [1, 2]}, motion={"gravity": 865})])
@@ -84,6 +98,11 @@ class TestAssets:
         (lambda d: d["emitters"][0].__setitem__("id", "a b"), "非法发射器 id"),
         (lambda d: d["emitters"][0]["appearance"].__setitem__("blend", "screen"), "blend"),
         (lambda d: d["emitters"][0]["appearance"].__setitem__("alphaOverLife", [[0]]), "关键点"),
+        (lambda d: d["emitters"][0]["appearance"].__setitem__("tintOverLife", [[0, 1, 1]]), "tintOverLife"),
+        (lambda d: d["emitters"][0]["appearance"].__setitem__("tintOverLife", [[0.5, 1, 1, 1], [0.1, 1, 1, 1]]), "按 t 递增"),
+        (lambda d: d["emitters"][0]["appearance"].__setitem__("tintOverLife", [[0, 1, 1.5, 1]]), "g=1.5"),
+        (lambda d: d["emitters"][0]["appearance"].__setitem__("tintOverLife", [[2, 1, 1, 1]]), "不在 [0,1]"),
+        (lambda d: d["emitters"][0]["appearance"].__setitem__("tintOverLife", None), "tintOverLife"),
         (lambda d: d["emitters"][0].__setitem__("life", {"seconds": [0, 2]}), "life.seconds"),
         (lambda d: d["emitters"][0].__setitem__("offset", [1, 2]), "三个数"),
         (lambda d: d.__setitem__("id", "../x"), "非法效果 id"),
@@ -155,6 +174,122 @@ class TestAssets:
         assets.normalize_effect(_doc(emitters=[_emitter(appearance={
             "image": "/x.png", "sizeWu": 4, "lit": False, "lightGain": 3})]), warn)
         assert any("lightGain 没有意义" in w for w in warn), warn
+
+    def test_follow_anchor_is_an_enum_last_in_motion_and_explicit_none_is_kept(self) -> None:
+        """``motion.followAnchor``（锚点动了、在飞的粒子怎么走）：只收 none / rig / full，键序排 motion 最后（types.ts 同序）。
+
+        缺省口径：写入者（检视器）选「不跟」= 删键；闸门对显式 ``"none"`` 原样保留（同 ``blend: "normal"``，闸门不替作者改值），
+        没写的一个字节都不加。
+        """
+        for v in ("none", "rig", "full"):
+            warn: list[str] = []
+            out = assets.normalize_effect(_doc(emitters=[_emitter(motion={
+                "followAnchor": v, "maxSpeed": 80, "stimulus": {"accel": 700, "fear": {"player:motion": 1}}, "gravity": -30})]), warn)
+            mo = out["emitters"][0]["motion"]
+            assert mo["followAnchor"] == v
+            assert list(mo.keys()) == ["gravity", "maxSpeed", "stimulus", "followAnchor"], "键序跟着 types.ts 走（motion 最后一个）"
+            assert not [w for w in warn if "followAnchor" in w], warn
+        plain = assets.normalize_effect(_doc(emitters=[_emitter(motion={"drag": 0.6})]))
+        assert "followAnchor" not in plain["emitters"][0]["motion"], "没写 = 不补缺省"
+        a = assets.normalize_effect(_doc(emitters=[_emitter(motion={"followAnchor": "full", "drag": 1})]))
+        b = assets.normalize_effect(json.loads(json.dumps(a, ensure_ascii=False)))
+        assert json.dumps(a, ensure_ascii=False) == json.dumps(b, ensure_ascii=False), "幂等"
+
+    @pytest.mark.parametrize("bad", ["hover", "Full", "", None, 1, True, ["full"]])
+    def test_follow_anchor_rejects_anything_else(self, bad) -> None:
+        with pytest.raises(ValueError) as e:
+            assets.normalize_effect(_doc(emitters=[_emitter(motion={"followAnchor": bad})]))
+        msg = str(e.value)
+        assert "motion.followAnchor" in msg and "none / rig / full" in msg and "发射器「a」" in msg, msg
+
+    def test_follow_anchor_on_flock_or_plate_warns_but_saves(self) -> None:
+        """群体 / 薄片运行时 ``moveAnchor`` 整个跳过：rig / full 写了没用 → 提醒不拒；显式 none 不提醒。"""
+        beh = {"cruise": 1, "max": 2, "maxAccel": 3, "minAltitude": 4, "senseRadius": 5, "separation": 6,
+               "accel": {"separation": 1, "alignment": 1, "cohesion": 1},
+               "orbit": {"radius": 1, "height": 1},
+               "home": {"nestRadius": 1, "rangeRadius": 2, "startleRadius": 3},
+               "attitude": {"fear": {"light": 1}}}
+        plate = {"size": [16, 16], "terminalSpeed": 90}
+        for extra, kind in (({"behavior": beh}, "群体"), ({"plate": plate}, "薄片")):
+            for v in ("rig", "full"):
+                warn: list[str] = []
+                out = assets.normalize_effect(_doc(emitters=[_emitter(motion={"followAnchor": v},
+                                                                      **json.loads(json.dumps(extra)))]), warn)
+                assert out["emitters"][0]["motion"]["followAnchor"] == v, "只提醒、不改不删"
+                hit = [w for w in warn if "群体 / 薄片不吃 followAnchor，写了没用" in w]
+                assert hit and f"这是{kind}发射器" in hit[0], warn
+            warn_none: list[str] = []
+            assets.normalize_effect(_doc(emitters=[_emitter(motion={"followAnchor": "none"},
+                                                            **json.loads(json.dumps(extra)))]), warn_none)
+            assert not [w for w in warn_none if "followAnchor" in w], warn_none
+
+    def test_follow_anchor_values_match_types_ts(self) -> None:
+        """镜像清单对账：Python 闸门的取值集合 == ``types.ts`` 的 ``VfxFollowAnchor``（norms 不变量 8）。"""
+        import re
+
+        from tools.editor.shared.vfx_motion import FOLLOW_ANCHOR_VALUES
+
+        src = (_ROOT / "src" / "data" / "types.ts").read_bytes().decode("utf-8")
+        m = re.search(r"export type VfxFollowAnchor\s*=\s*([^;]+);", src)
+        assert m, "types.ts 里找不到 VfxFollowAnchor"
+        ts_values = tuple(re.findall(r"'([^']+)'", m.group(1)))
+        assert ts_values == FOLLOW_ANCHOR_VALUES, (ts_values, FOLLOW_ANCHOR_VALUES)
+        assert "followAnchor" == assets._MODULE_ORDER["motion"][-1]
+
+    def test_max_distance_is_a_positive_number_after_seconds(self) -> None:
+        """``life.maxDistance``（最远烧到多远 wu）：有限正数原样收（int 不漂 float），键序紧跟 ``seconds``（types.ts 同序）；没写不补。"""
+        for v in (60, 0.5, 1e4):
+            warn: list[str] = []
+            out = assets.normalize_effect(_doc(emitters=[_emitter(life={"maxDistance": v, "seconds": [0.4, 0.9]})]), warn)
+            li = out["emitters"][0]["life"]
+            assert li["maxDistance"] == v and type(li["maxDistance"]) is type(v)
+            assert list(li.keys()) == ["seconds", "maxDistance"], "键序跟着 types.ts 走（seconds 之后）"
+            assert not [w for w in warn if "maxDistance" in w], warn
+        plain = assets.normalize_effect(_doc(emitters=[_emitter(life={"seconds": [1, 2]})]))
+        assert "maxDistance" not in plain["emitters"][0]["life"], "没写 = 不补缺省"
+        a = assets.normalize_effect(_doc(emitters=[_emitter(life={"maxDistance": 45, "seconds": [1, 2], "zz": 1})]))
+        assert list(a["emitters"][0]["life"].keys()) == ["seconds", "maxDistance", "zz"], "未知键原样透传到末尾"
+        b = assets.normalize_effect(json.loads(json.dumps(a, ensure_ascii=False)))
+        assert json.dumps(a, ensure_ascii=False) == json.dumps(b, ensure_ascii=False), "幂等"
+
+    @pytest.mark.parametrize("bad", [0, -3, 0.0, None, "60", True, [60], float("nan"), float("inf")])
+    def test_max_distance_rejects_anything_else(self, bad) -> None:
+        """0 / 负数运行时静默当"不限"（作者以为烧不出去）、null / 字符串 / 非有限值写入者从不写——一律拒存并说人话。"""
+        with pytest.raises(ValueError) as e:
+            assets.normalize_effect(_doc(emitters=[_emitter(life={"seconds": [1, 2], "maxDistance": bad})]))
+        msg = str(e.value)
+        assert "life.maxDistance 必须是 > 0 的数" in msg and "发射器「a」" in msg and "最远烧到多远" in msg, msg
+
+    def test_max_distance_where_the_runtime_ignores_it_warns_but_saves(self) -> None:
+        """群体 / 薄片不走 stepGeneric、没有 life.seconds 的粒子永生：写了没用 → 提醒不拒，也不删。"""
+        beh = {"cruise": 1, "max": 2, "maxAccel": 3, "minAltitude": 4, "senseRadius": 5, "separation": 6,
+               "accel": {"separation": 1, "alignment": 1, "cohesion": 1},
+               "orbit": {"radius": 1, "height": 1},
+               "home": {"nestRadius": 1, "rangeRadius": 2, "startleRadius": 3},
+               "attitude": {"fear": {"light": 1}}}
+        plate = {"size": [16, 16], "terminalSpeed": 90}
+        cases = (
+            ({"behavior": beh, "life": {"seconds": [1, 2], "maxDistance": 30}}, "这是群体发射器"),
+            ({"plate": plate, "life": {"seconds": [1, 2], "maxDistance": 30}}, "这是薄片发射器"),
+            ({"life": {"maxDistance": 30}}, "没有 life.seconds"),
+        )
+        for extra, why in cases:
+            warn: list[str] = []
+            out = assets.normalize_effect(_doc(emitters=[_emitter(**json.loads(json.dumps(extra)))]), warn)
+            assert out["emitters"][0]["life"]["maxDistance"] == 30, "只提醒、不改不删"
+            hit = [w for w in warn if "没有寿命 / 群体 / 薄片不吃 maxDistance，写了没用" in w]
+            assert len(hit) == 1 and why in hit[0] and hit[0].startswith("发射器「a」: "), warn
+
+    def test_life_keys_match_types_ts(self) -> None:
+        """镜像清单对账：寿命模块键序 == ``types.ts`` 的 ``VfxLifeDef`` 字段顺序（norms 不变量 8）。"""
+        import re
+
+        src = (_ROOT / "src" / "data" / "types.ts").read_bytes().decode("utf-8")
+        m = re.search(r"export interface VfxLifeDef\s*\{(.*?)\n\}", src, re.S)
+        assert m, "types.ts 里找不到 VfxLifeDef"
+        body = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S)
+        fields = tuple(re.findall(r"^\s*(\w+)\??\s*:", body, re.M))
+        assert fields == assets._MODULE_ORDER["life"], (fields, assets._MODULE_ORDER["life"])
 
     def test_socket_attach_is_workbench_state_next_to_the_anchor(self) -> None:
         """``authoring.attach``（锚点模式=角色挂点）：与 anchor 同一块工作态，运行时忽略整个 authoring。
@@ -428,6 +563,21 @@ def test_link_status_answers_even_without_a_game(server) -> None:
 
 
 @pytest.mark.skipif(not _HAS_SCENE, reason="缺工程真数据（bridge_underpass 背景）")
+def test_resource_image_route_serves_runtime_images_and_nothing_else(server) -> None:
+    """光柱图案遮罩 / 粒子单图的预览：只放行 public/resources/runtime/images 下的图片（与游戏同一个 URL）。"""
+    get, _post, _ = server
+    body, hd = get("/resources/runtime/images/vfx/dust.png")
+    assert body[:8] == b"\x89PNG\r\n\x1a\n" and hd.get("Content-Type") == "image/png"
+    for bad in ("/resources/runtime/images/vfx/nope.png", "/resources/runtime/images/%2e%2e/%2e%2e/%2e%2e/assets/data/items.json",
+                "/resources/runtime/images/../../../../tools/vfx_workbench/serve.py"):
+        try:
+            get(bad)
+            leaked = True
+        except urllib.error.HTTPError as e:
+            leaked = e.code != 404
+        assert not leaked, bad
+
+
 def test_scene_routes_and_shell_probe(server) -> None:
     """几何路由与轨迹工作台同一套；`/api/shell_probe` 是页面对齐自证的裁判之一。"""
     get, post, _ = server
@@ -435,8 +585,10 @@ def test_scene_routes_and_shell_probe(server) -> None:
     assert any(s["id"] == SCENE for s in scenes["scenes"])
     sc, _ = get(f"/api/scene?id={urllib.parse.quote(SCENE)}")
     assert sc["ok"] and sc["scene"]["cal"] and "marks" in sc["scene"]
-    # 本地预览要跟游戏同口径跑：风（薄片只吃它）、透视（薄片尺寸 / 位移）、时段外观（布置按它分份）一样不少
-    assert {"wind", "perspectiveScale", "phases", "phase", "timePhase", "dayNight"} <= set(sc["scene"])
+    # 本地预览要跟游戏同口径跑：风（薄片只吃它）、透视（薄片尺寸 / 位移）、时段外观（布置按它分份）一样不少；
+    # 光柱预览按原画深度截断要与运行时同一个遮挡容差
+    assert {"wind", "perspectiveScale", "phases", "phase", "timePhase", "dayNight", "depthTolerance"} <= set(sc["scene"])
+    assert isinstance(sc["scene"]["depthTolerance"], float) and sc["scene"]["depthTolerance"] > 0
     # 布置搬进了布置库：场景描述里不再有 vfx（残留的 vfx 由校验器报 error，工作台不吞也不用）
     assert "vfx" not in sc["scene"]
     ground, _ = get(f"/api/scene_ground?id={SCENE}&bg={sc['scene']['background']}")

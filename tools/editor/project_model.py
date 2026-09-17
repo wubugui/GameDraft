@@ -15,6 +15,7 @@ from .shared.action_structure import flatten_actions
 from .shared.animation_sockets import load_socket_set, sockets_path_for_bundle
 from .shared.project_paths import ProjectPaths
 from .shared import vfx_placements as vfx_placements_lib
+from .shared import burnables as burnables_lib
 
 
 def _dict_rows(value: Any) -> list[dict]:
@@ -116,11 +117,23 @@ class ProjectModel(QObject):
         self.vfx_placements: dict = vfx_placements_lib.empty_library()
         #: 布置库读不懂时的错误文本（空 = 正常 / 文件不存在）。读不懂时镜像退成空库，场景页 vfx 块里红字报出来。
         self.vfx_placements_error: str = ""
+        #: 可燃物模板 `assets/data/burnables/<id>.json` 的**只读镜像**（文件名 stem → 原始文档）。
+        #: 唯一写者是燃烧工作台（tools/burn_workbench）；与 vfx_effects 同一待遇——
+        #: 没有脏桶、不进 save_all、不进外部改动基线。读不懂的文件记在 ``burnables_errors``。
+        #: 谁是可燃物写在宿主自己身上（热点 / NPC / 挂件预设 / 轨迹 spawn 的 ``burnable`` 块），随各自的数据走。
+        self.burnables: dict[str, dict] = {}
+        self.burnables_errors: dict[str, str] = {}
+        #: `burnable_spawn_specs()` 的编辑缓存（`mark_dirty` / 重读燃烧数据时作废）
+        self._burnable_spawn_cache: list[dict] | None = None
         self.flag_registry: dict = {}
         #: 叠图登记：短 id → 路径字符串，或 {image, playSfx, sfx}（带叠图音配置的形态）
         self.overlay_images: dict[str, object] = {}
         #: 挂件预设：id → {label,image/images,anchorX,anchorY,rotation,scale,lit}
         self.prop_presets: dict[str, dict] = {}
+        #: 挂件效果块库 `assets/data/prop_effects.json`：id → PropEffectDef（TS 权威
+        #: `src/data/propPresets.ts::PropEffectDef`，玩法清单 A3.7「火把养成 · 效果自由组合」）。
+        #: 全是**倍率**（1 = 不改）+ 行为类 fields / tags；挂件预设的 `effects` / `levels[*].effects` 引用它。
+        self.prop_effects: dict[str, dict] = {}
         self.scenarios_catalog: dict = {}
         self.narrative_graphs: dict = {}
         #: dev 叙事跳转表（public/assets/data/dev_narrative_warps.json）的 warps 列表。
@@ -349,7 +362,7 @@ class ProjectModel(QObject):
         self.archive_books = self._load(dp / "archive" / "books.json", [])
         self.archive_documents = self._load(dp / "archive" / "documents.json", [])
         self.clues_registry = self._load(dp / "clues.json", {})
-        # 系统说明卡（K4）：只读镜像，供 showSystemNote 选择器与校验器取 id；编辑器不写它
+        # 系统说明卡（K4）：说明卡页维护，选择器与校验器共同读取这个活数据面。
         self.system_notes = self._load(dp / "system_notes.json", {})
         self.pressure_holds = self._load(dp / "pressure_holds.json", [])
         self.signal_cues = self._load(dp / "signal_cues.json", [])
@@ -455,12 +468,19 @@ class ProjectModel(QObject):
         self._scan_trajectories_from_disk()
         self._scan_vfx_from_disk()
         self._scan_vfx_placements_from_disk()
+        self._scan_burn_from_disk()
 
         from .flag_registry import flag_registry_path, load_flag_registry
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
 
         self.overlay_images = self._load(dp / "overlay_images.json", {})
         self.prop_presets = self._load(dp / "prop_presets.json", {})
+        raw_effects = self._load(dp / "prop_effects.json", {})
+        self.prop_effects = raw_effects if isinstance(raw_effects, dict) else {}
+        if not isinstance(raw_effects, dict) and (dp / "prop_effects.json").exists():
+            self.load_anomalies.append(
+                "prop_effects.json: 根不是 JSON 对象，载入为空表（下次保存 prop_effects 会覆写该文件）",
+            )
         # scenarios.json 缺失 → 默认 {"scenarios": []}（审查 P2）：旧默认 {} 会让
         # presave 校验「缺少 scenarios 字段」把无 scenarios.json 的工程整体锁死。
         raw_sc = self._load(dp / "scenarios.json", {"scenarios": []})
@@ -628,6 +648,33 @@ class ProjectModel(QObject):
         if (self.vfx_effects, self.vfx_placements, self.vfx_placements_error) == before:
             return False
         self.data_changed.emit("vfx", "")
+        return True
+
+    def _scan_burn_from_disk(self) -> None:
+        """重读可燃物模板目录进只读镜像（``burnables``）。
+
+        与 :meth:`_scan_vfx_from_disk` 同一条理由**不走 ``_load``**：唯一写者是燃烧工作台（另一个进程），
+        登记了外部改动基线，下一次 Save All 就把工作台刚存的东西当并发改动拦下。读盘与形状判定只走共享闸门
+        ``shared/burnables``（``load_all_burnables``）——校验器 / 工作台读的是同一份。目录不存在 = 空、无错。
+        """
+        self._burnable_spawn_cache = None
+        if self.project_path is None:
+            self.burnables, self.burnables_errors = {}, {}
+            return
+        self.burnables, self.burnables_errors = burnables_lib.load_all_burnables(self.project_path)
+
+    def reload_burn_from_disk(self) -> bool:
+        """重读可燃物模板（燃烧工作台存盘后同步；**不标脏、不动基线**）。
+
+        口径与 :meth:`reload_vfx_from_disk` 一致：盘上与内存真不一样才发一次 ``data_changed("burn", "")``。
+        """
+        if self.project_path is None:
+            return False
+        before = (self.burnables, self.burnables_errors)
+        self._scan_burn_from_disk()
+        if (self.burnables, self.burnables_errors) == before:
+            return False
+        self.data_changed.emit("burn", "")
         return True
 
     def reload_trajectories_from_disk(self) -> bool:
@@ -955,6 +1002,8 @@ class ProjectModel(QObject):
             out.append(dp / "overlay_images.json")
         if "prop_presets" in dty:
             out.append(dp / "prop_presets.json")
+        if "prop_effects" in dty:
+            out.append(dp / "prop_effects.json")
         if "scenarios" in dty:
             out.append(dp / "scenarios.json")
         if "narrative_graphs" in dty:
@@ -971,6 +1020,8 @@ class ProjectModel(QObject):
             out.append(dp / "pressure_holds.json")
         if "signal_cues" in dty:
             out.append(dp / "signal_cues.json")
+        if "system_notes" in dty:
+            out.append(dp / "system_notes.json")
         if "bubble_lines" in dty:
             out.append(dp / "bubble_lines.json")
         if "planes" in dty:
@@ -1071,6 +1122,10 @@ class ProjectModel(QObject):
             ref_err = validate_refs_for_save(self, dirty=set(dty))
             if ref_err:
                 raise ValueError(ref_err)
+            from .shared.survival_save_validation import survival_save_errors
+            survival_errors = survival_save_errors(self, set(dty))
+            if survival_errors:
+                raise ValueError("夜间生存配置保存被拦截：\n" + "\n".join(survival_errors[:8]))
 
             # scenarios 校验只在本次要写 scenarios 时把关（旧实现无条件跑：无
             # scenarios.json 的工程改任何东西都存不了——现默认 {"scenarios": []}
@@ -1114,6 +1169,13 @@ class ProjectModel(QObject):
                 if plane_errs:
                     msg = "\n".join(f"位面 {pid!r}: {m}" for pid, m in plane_errs[:8])
                     raise ValueError(f"planes.json 保存被拦截：\n{msg}")
+            if "system_notes" in dty:
+                from .validator import _validate_system_notes_registry
+                note_issues = []
+                _validate_system_notes_registry(self, note_issues)
+                errors = [issue.message for issue in note_issues if issue.severity == "error"]
+                if errors:
+                    raise ValueError("系统说明卡保存被拦截：\n" + "\n".join(errors[:8]))
 
         maybe_stamp(clk, "预校验通过 — 顺序：refs → scenarios → narrative → planes → writes")
 
@@ -1186,6 +1248,8 @@ class ProjectModel(QObject):
                 w.add(dp / "overlay_images.json", self.overlay_images)
             if "prop_presets" in dty:
                 w.add(dp / "prop_presets.json", self.prop_presets)
+            if "prop_effects" in dty:
+                w.add(dp / "prop_effects.json", self.prop_effects)
             if "scenarios" in dty:
                 w.add(dp / "scenarios.json", self.scenarios_catalog)
             if "narrative_graphs" in dty:
@@ -1203,6 +1267,8 @@ class ProjectModel(QObject):
                 w.add(dp / "pressure_holds.json", self.pressure_holds)
             if "signal_cues" in dty:
                 w.add(dp / "signal_cues.json", self.signal_cues)
+            if "system_notes" in dty:
+                w.add(dp / "system_notes.json", self.system_notes)
             if "bubble_lines" in dty:
                 w.add(dp / "bubble_lines.json", self.bubble_lines)
             if "planes" in dty:
@@ -1370,10 +1436,10 @@ class ProjectModel(QObject):
     KNOWN_DIRTY_BUCKETS: frozenset = frozenset({
         "config", "characterRegistry", "item", "quest", "questGroup", "encounter",
         "rules", "shop", "map", "cutscene", "audio", "strings", "archive", "clues", "scene",
-        "flag_registry", "overlay_images", "prop_presets",
+        "flag_registry", "overlay_images", "prop_presets", "prop_effects",
         "scenarios", "narrative_graphs", "narrative_packages",
         "document_reveals", "smell_profiles", "footstep_sets",
-        "pressure_holds", "signal_cues", "bubble_lines",
+        "pressure_holds", "signal_cues", "system_notes", "bubble_lines",
         "planes", "npc_schedules", "narrative_templates", "narrative_categories", "dialogue_stubs",
         "dialogue_graph_edits", "dialogue_graph_deletes",
         "water_minigames", "sugar_wheel", "paper_craft", "filter",
@@ -1388,6 +1454,7 @@ class ProjectModel(QObject):
             )
         was_dirty = self.is_dirty
         self._trajectory_spawn_ids_cache = None   # 编排改了 → 轨迹生成物的 id 表作废（候选与校验都读它）
+        self._burnable_spawn_cache = None         # 同上：演出生成的可燃对象表（燃烧动作 / burn 叶候选与校验都读它）
         self._dirty.add(data_type)
         if data_type == "scene":
             sid = (item_id or "").strip()
@@ -1763,6 +1830,21 @@ class ProjectModel(QObject):
     def all_item_ids(self) -> list[tuple[str, str]]:
         return [(it["id"], it.get("name", it["id"])) for it in self.items]
 
+    def igniter_item_ids(self) -> list[tuple[str, str]]:
+        """火种 `(id, label)`：写了 `igniter` 对象的物品（`ItemDef.igniter`，玩法清单 A3.7）。
+
+        `setActiveIgniter.item` 的候选**与**校验器的接受面是这同一个函数（候选面 = 校验面）。
+        只认对象：`igniter: true` 这类坏形态运行时虽当火种、却读不出 seconds / windLimit，物品校验另报 error。
+        """
+        out: list[tuple[str, str]] = []
+        for it in self.items:
+            if not isinstance(it, dict) or not isinstance(it.get("igniter"), dict):
+                continue
+            iid = str(it.get("id") or "").strip()
+            if iid:
+                out.append((iid, str(it.get("name") or iid)))
+        return out
+
     def all_quest_ids(self) -> list[tuple[str, str]]:
         return [(q["id"], q.get("title", q["id"])) for q in self.quests]
 
@@ -1856,6 +1938,291 @@ class ProjectModel(QObject):
             for iid in vfx_placements_lib.instance_ids_for_scene(lib, scene_id)
             if iid in where
         ]
+
+    # ---- 燃烧（模板只读镜像 + 宿主身上的 burnable 块；校验器用同一批函数，候选面 = 校验面） ----
+
+    def burnable_doc(self, burnable_id: str | None) -> dict | None:
+        """可燃物模板原始文档（只读）；没有 / 读不懂返回 None。"""
+        doc = self.burnables.get(str(burnable_id or "").strip()) if burnable_id else None
+        return doc if isinstance(doc, dict) else None
+
+    def burnable_template_ids(self) -> list[tuple[str, str]]:
+        """可燃物模板 `(id, label)`：宿主 `burnable.template` / 粒子 `plate.burnable.template` 的候选。
+
+        label 写上名字、烧法与真实尺寸（读不懂的文件不列——校验器另报）。
+        """
+        out: list[tuple[str, str]] = []
+        for tid in sorted(self.burnables):
+            doc = self.burnables[tid]
+            name = str(doc.get("label") or "").strip()
+            mode = "消耗燃烧" if doc.get("mode") == "consume" else "面燃烧"
+            size = burnables_lib.template_world_size(doc)
+            dims = f"{doc.get('widthCm'):g}×{doc.get('heightCm'):g} cm" if size else "没写尺寸"
+            out.append((tid, f"{tid}（{name + ' · ' if name else ''}{mode} · {dims}）"))
+        return out
+
+    def burnable_spread_template_ids(self) -> list[tuple[str, str]]:
+        """面燃烧模板（粒子薄片只能绑它）"""
+        return [(tid, lab) for tid, lab in self.burnable_template_ids() if self.burnables[tid].get("mode", "spread") != "consume"]
+
+    def scene_burnable_entities(self, scene_id: str | None) -> list[dict]:
+        """场景 JSON（内存里这一份）里开了可燃的实体：``{id, kind: hotspot|npc, name, template, host}``（``host`` 只读别改）。"""
+        if not scene_id:
+            return []
+        sc = self.scenes.get(scene_id) or {}
+        out: list[dict] = []
+        for kind, key in (("hotspot", "hotspots"), ("npc", "npcs")):
+            for ent in sc.get(key) or []:
+                if not isinstance(ent, dict):
+                    continue
+                eid = str(ent.get("id") or "").strip()
+                host = ent.get("burnable")
+                if not eid or not isinstance(host, dict):
+                    continue
+                tid = str(host.get("template") or "").strip()
+                if not tid:
+                    continue
+                name = str(ent.get("label") or ent.get("name") or "").strip()
+                out.append({"id": eid, "kind": kind, "name": name, "template": tid, "host": host})
+        return out
+
+    def burnable_host_for(self, scene_id: str | None, entity_id: str | None) -> dict | None:
+        """场景里这个实体身上的 `burnable` 块（只读）；不是可燃实体返回 None。"""
+        eid = str(entity_id or "").strip()
+        for row in self.scene_burnable_entities(scene_id):
+            if row["id"] == eid:
+                return row["host"]
+        return None
+
+    def burnable_entity_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """本场景里开了可燃的实体 `(id, label)`（热点 / NPC）。
+
+        `igniteBurnable` / `extinguishBurnable` / `resetBurnable` 不写 socket 时的 target 与条件叶 `burn`（不写 burnSocket）的候选；
+        校验器判"是不是这个场景的可燃实体"用的也是这一个函数。label 写上模板 id、种类与名字。
+        """
+        out: list[tuple[str, str]] = []
+        for row in self.scene_burnable_entities(scene_id):
+            kind = "热点" if row["kind"] == "hotspot" else "NPC"
+            name = row["name"]
+            extra = f" · {name}" if name and name != row["id"] else ""
+            out.append((row["id"], f"{row['id']}（{kind} · {row['template']}{extra}）"))
+        return out
+
+    def burnable_entity_ids_any_scene(self) -> list[tuple[str, str]]:
+        """全工程开了可燃的场景实体 `(id, label)`（同 id 在几个场景各有一份只列一次，label 写上场景）。
+
+        没有静态场景上下文的动作（任务 / 遭遇 / 叙事图 / 注册动作）与条件叶不写 burnScene 时的候选：
+        运行时按**当前场景**解析，所以任何一个场景里是可燃实体都算。
+        """
+        where: dict[str, list[str]] = {}
+        for sid in sorted(self.scenes):
+            for row in self.scene_burnable_entities(sid):
+                where.setdefault(row["id"], []).append(sid)
+        return [(eid, f"{eid}（{'/'.join(where[eid])}）") for eid in sorted(where)]
+
+    def burn_scene_ids(self) -> list[tuple[str, str]]:
+        """有可燃实体的场景 `(id, label)`（条件叶 `burnScene` 的候选）。"""
+        out: list[tuple[str, str]] = []
+        for sid in sorted(self.scenes):
+            n = len(self.scene_burnable_entities(sid))
+            if n:
+                out.append((sid, f"{sid}（{n} 个可燃实体）"))
+        return out
+
+    def burnable_prop_ids(self) -> list[tuple[str, str]]:
+        """开了可燃的挂件预设 `(id, label)`（label 写上模板 id）。"""
+        out: list[tuple[str, str]] = []
+        for pid in sorted(self.prop_presets):
+            p = self.prop_presets.get(pid)
+            host = p.get("burnable") if isinstance(p, dict) else None
+            tid = str(host.get("template") or "").strip() if isinstance(host, dict) else ""
+            if tid:
+                name = str(p.get("label") or "").strip()
+                out.append((pid, f"{pid}（{tid}{' · ' + name if name else ''}）"))
+        return out
+
+    def burn_ignition_point_ids(
+        self, scene_id: str | None, entity_id: str | None, socket: str | None = None,
+    ) -> list[tuple[str, str]]:
+        """`igniteBurnable.point` 的候选 `(着火点 id, label)`：target 那个实例的模板的 ignitionPoints。
+
+        - 写了 socket（手上的可燃挂件）：运行时手上拿的是哪件事先不知道 ⇒ 所有开了可燃的挂件预设的模板并集；
+        - 有场景上下文 = 本场景那个实体的模板；没有 = 这个实体 id 在任何场景里的模板的并集（运行时按当前场景解析）。
+        label 写上 u / v 与模板 id。
+        """
+        eid = str(entity_id or "").strip()
+        tids: list[str] = []
+        if str(socket or "").strip():
+            for pid, _lab in self.burnable_prop_ids():
+                tid = str(((self.prop_presets.get(pid) or {}).get("burnable") or {}).get("template") or "").strip()
+                if tid and tid not in tids:
+                    tids.append(tid)
+        elif eid:
+            scenes = [scene_id] if scene_id else sorted(self.scenes)
+            for sid in scenes:
+                host = self.burnable_host_for(sid, eid)
+                tid = str((host or {}).get("template") or "").strip()
+                if tid and tid not in tids:
+                    tids.append(tid)
+        out: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        for tid in tids:
+            for pid, u, v in burnables_lib.ignition_points_uv(self.burnable_doc(tid)):
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                out.append((pid, f"{pid}（{tid} · u {u:g} v {v:g}）"))
+        return out
+
+    # ---- 燃烧：演出临时生成的可燃对象 / 拿东西的人 / 三个燃烧动作与 burn 叶的统一候选 ----
+    #
+    # 下面这组函数是主编辑器动作表单、条件树与校验器**共用**的候选源（候选面 = 校验面）：
+    # 动作 `igniteBurnable / extinguishBurnable / resetBurnable {target, socket?, point?}` 与条件叶
+    # `{burn, burnSocket?, burnScene?, burnState}` 都是「socket 没写 = 场景里的可燃实体；写了 = 这个人这个挂点上的可燃挂件」。
+
+    def burnable_spawn_specs(self) -> list[dict]:
+        """全工程动作树里的 `playTrajectory.params.spawn` 规格（只读）：`{id, keep, template, host, name}`。
+
+        `host` = 规格上的 `burnable` 块（没开可燃 = None，`template` 为空串）；`id` 空 = 运行时自动生成、内容里指名不到。
+        扫描面 = 叙事信号实发源那张登记表（对话图含未保存暂存 + `narrative_catalog._EMIT_SOURCE_ATTRS` 的内容资产 + 叙事图），
+        与校验器遍历动作树的疆域一致——轨迹生成写在对话图 / 任务 / 叙事状态机里的也算。
+        结果按编辑缓存（`mark_dirty` / 重读燃烧数据时作废）：校验器对每条换图 / 换动画动作都要问一次。
+        """
+        cache = getattr(self, "_burnable_spawn_cache", None)
+        if cache is not None:
+            return list(cache)
+        from .shared.narrative_catalog import _EMIT_SOURCE_ATTRS
+        from .shared.signal_refactor import _dialogue_graph_ids, _load_dialogue_doc
+
+        out: list[dict] = []
+
+        def visit(node: Any) -> None:
+            if isinstance(node, dict):
+                if str(node.get("type") or "") == "playTrajectory":
+                    p = node.get("params")
+                    spawn = p.get("spawn") if isinstance(p, dict) else None
+                    if isinstance(spawn, dict):
+                        host = spawn.get("burnable") if isinstance(spawn.get("burnable"), dict) else None
+                        tid = str((host or {}).get("template") or "").strip() if host is not None else ""
+                        out.append({
+                            "id": str(spawn.get("id") or "").strip() if isinstance(spawn.get("id"), str) else "",
+                            "keep": spawn.get("keep") is True,
+                            "template": tid,
+                            "host": host if tid else None,
+                            "name": str(spawn.get("name") or "").strip() if isinstance(spawn.get("name"), str) else "",
+                        })
+                for v in node.values():
+                    if isinstance(v, (dict, list)):
+                        visit(v)
+            elif isinstance(node, list):
+                for v in node:
+                    if isinstance(v, (dict, list)):
+                        visit(v)
+
+        for gid in _dialogue_graph_ids(self):
+            doc = _load_dialogue_doc(self, gid)
+            if isinstance(doc, dict):
+                visit(doc)
+        for attr in _EMIT_SOURCE_ATTRS:
+            root = getattr(self, attr, None)
+            if isinstance(root, (dict, list)):
+                visit(root)
+        narrative = getattr(self, "narrative_graphs", None)
+        if isinstance(narrative, (dict, list)):
+            visit(narrative)
+        self._burnable_spawn_cache = out
+        return list(out)
+
+    def burnable_spawn_ids(self) -> list[tuple[str, str]]:
+        """演出里临时生成、**开了可燃且播完留下（keep）**的对象 id `(id, label)`。
+
+        播完留下的就是场景实体（进存档、照常烧），所以它们与场景里的可燃实体一起进燃烧动作 target / burn 叶的候选。
+        同一个 id 在几处生成规格里写了只列一次（label 写上模板）。
+        """
+        where: dict[str, list[str]] = {}
+        names: dict[str, str] = {}
+        for row in self.burnable_spawn_specs():
+            if not row["id"] or not row["template"] or not row["keep"]:
+                continue
+            tids = where.setdefault(row["id"], [])
+            if row["template"] not in tids:
+                tids.append(row["template"])
+            if row["name"] and row["id"] not in names:
+                names[row["id"]] = row["name"]
+        out: list[tuple[str, str]] = []
+        for sid in sorted(where, key=lambda x: (x.lower(), x)):
+            name = names.get(sid, "")
+            out.append((sid, f"{sid}（演出生成 · {'/'.join(where[sid])}{' · ' + name if name and name != sid else ''}）"))
+        return out
+
+    def burn_holder_ids(self, scene_id: str | None) -> list[tuple[str, str]]:
+        """写了 socket / burnSocket 时「拿东西的人」的候选 `(id, label)`：`player` + NPC。
+
+        有场景上下文 = 那个场景的 NPC；没有 = 全工程 NPC（运行时按当前场景解析）。
+        """
+        out: list[tuple[str, str]] = [("player", "玩家")]
+        seen = {"player"}
+        rows = self.npc_ids_for_scene(scene_id) if scene_id else self.all_npc_ids_global()
+        for nid, label in rows:
+            key = str(nid or "").strip()
+            if key and key not in seen:
+                seen.add(key)
+                out.append((key, str(label or key)))
+        return out
+
+    def burn_target_ids(self, scene_id: str | None, socket: str | None = None) -> list[tuple[str, str]]:
+        """三个燃烧动作的 `target` / 条件叶 `burn` 的候选 `(id, label)`。
+
+        - socket 没写：场景里开了可燃的实体（有场景上下文 = 那个场景的，没有 = 全工程并集）+ 演出生成且留下的可燃对象；
+        - socket 写了：拿东西的人（:meth:`burn_holder_ids`）。
+        """
+        if str(socket or "").strip():
+            return self.burn_holder_ids(scene_id)
+        rows = self.burnable_entity_ids_for_scene(scene_id) if scene_id else self.burnable_entity_ids_any_scene()
+        seen = {i for i, _l in rows}
+        out = list(rows)
+        for sid, label in self.burnable_spawn_ids():
+            if sid not in seen:
+                seen.add(sid)
+                out.append((sid, label))
+        return out
+
+    def burn_socket_names(self, scene_id: str | None, holder: str | None) -> list[tuple[str, str]]:
+        """socket / burnSocket 的挂点候选 `(挂点名, label)`（与 `heldProp` 叶 / 挂件动作同一条解析链）。
+
+        `holder` 是拿东西的人时读他的动画包（有场景上下文按那个场景，没有按所有摆了他的场景并起来）；
+        还没选人 / 选的是场景实体时退到玩家的挂点——先挑挂点、再挑人也配得出来。取不到返回空（调用方允许手打）。
+        """
+        hid = str(holder or "").strip()
+        holders = {i for i, _l in self.burn_holder_ids(scene_id)}
+        if not hid or hid not in holders:
+            hid = "player"
+        if scene_id:
+            return self.socket_names_for_actor(scene_id, hid)
+        return self.socket_names_for_holder_any_scene(hid)
+
+    def burn_point_ids(
+        self, scene_id: str | None, target: str | None, socket: str | None = None,
+    ) -> list[tuple[str, str]]:
+        """`igniteBurnable.point` 的候选 `(着火点 id, label)`：:meth:`burn_ignition_point_ids` 再补上演出生成的可燃对象的模板。"""
+        out = list(self.burn_ignition_point_ids(scene_id, target, socket))
+        if str(socket or "").strip():
+            return out
+        tid_want = str(target or "").strip()
+        if not tid_want:
+            return out
+        seen = {pid for pid, _l in out}
+        tids: list[str] = []
+        for row in self.burnable_spawn_specs():
+            if row["id"] == tid_want and row["template"] and row["template"] not in tids:
+                tids.append(row["template"])
+        for tid in tids:
+            for pid, u, v in burnables_lib.ignition_points_uv(self.burnable_doc(tid)):
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                out.append((pid, f"{pid}（{tid} · u {u:g} v {v:g}）"))
+        return out
 
     def scene_light_ids_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
         """场景灯 `(id, label)`。`fadeLight.lightId` 的候选。
@@ -2762,6 +3129,135 @@ class ProjectModel(QObject):
             out.append((ks, label or ks))
         return out
 
+    # ---- 火把养成（玩法清单 A3.7）：效果块库 / 等级表 ------------------------------
+    #
+    # 这三个函数是**候选面 = 校验面**的那一份：挂件预设页的效果块勾选、条件叶 `propLevel` 的
+    # 挂件下拉与级数上限、动作 `setPropLevel` 的两格，以及 validator 的接受面，全读同一份。
+
+    def all_prop_effect_ids(self) -> list[tuple[str, str]]:
+        """prop_effects.json 的效果块 id `(id, 展示名)`。展示名 = label（没写就是 id）。"""
+        table = self.prop_effects if isinstance(self.prop_effects, dict) else {}
+        out: list[tuple[str, str]] = []
+        for k in sorted(table.keys(), key=lambda x: (str(x).lower(), str(x))):
+            ks = str(k).strip()
+            if not ks:
+                continue
+            entry = table.get(k)
+            label = ""
+            if isinstance(entry, dict) and isinstance(entry.get("label"), str):
+                label = entry["label"].strip()
+            out.append((ks, label or ks))
+        return out
+
+    def prop_effect_tags(self) -> list[str]:
+        """效果块登记过的标签（`tags[*]`，去重排序）。`heldProp` 叶的 `effect` 写 id 或标签都认。"""
+        table = self.prop_effects if isinstance(self.prop_effects, dict) else {}
+        out: set[str] = set()
+        for entry in table.values():
+            if not isinstance(entry, dict):
+                continue
+            for t in entry.get("tags") or []:
+                if isinstance(t, str) and t.strip():
+                    out.add(t.strip())
+        return sorted(out)
+
+    def prop_effect_match_items(self) -> list[tuple[str, str, str]]:
+        """`heldProp` 叶 `effect` 的候选 `(值, 展示名, 类别)`：效果块 id ∪ 它们的标签。
+
+        运行时 `heldPropMismatch` 拿 `effects`（id + tags 并集）做 `includes`，两样都命中，
+        所以候选也必须两样都给——只给 id 就等于「按脾气问」这条写法在 UI 上不可达。
+        """
+        out: list[tuple[str, str, str]] = []
+        for eid, label in self.all_prop_effect_ids():
+            out.append((eid, f"{eid}　{label}" if label and label != eid else eid, "效果块"))
+        known = {v for v, _l, _d in out}
+        for tag in self.prop_effect_tags():
+            if tag not in known:
+                out.append((tag, tag, "标签"))
+        return out
+
+    def prop_level_counts(self) -> dict[str, int]:
+        """有等级表的挂件预设 → 级数（`levels` 里的合法条数）。没有等级表的不在表里（恒第 1 级）。"""
+        table = self.prop_presets if isinstance(self.prop_presets, dict) else {}
+        out: dict[str, int] = {}
+        for pid, entry in table.items():
+            key = str(pid).strip()
+            if not key or not isinstance(entry, dict):
+                continue
+            levels = entry.get("levels")
+            if isinstance(levels, list):
+                n = sum(1 for lv in levels if isinstance(lv, dict))
+                if n > 0:
+                    out[key] = n
+        return out
+
+    def prop_preset_ids_with_levels(self) -> list[tuple[str, str]]:
+        """`setPropLevel.prop` / `propLevel` 叶的候选 `(id, 展示名)`：**只有配了等级表的**预设。
+
+        没有等级表的挂件运行时恒第 1 级（`setPropLevel` 直接 warn 不动、`propLevel` 恒比 1），
+        所以它们不进候选——候选面就是校验器的接受面。
+        """
+        counts = self.prop_level_counts()
+        out: list[tuple[str, str]] = []
+        for pid, label in self.all_prop_preset_ids():
+            n = counts.get(pid)
+            if not n:
+                continue
+            out.append((pid, f"{label}　（{n} 级）" if label != pid else f"{pid}　（{n} 级）"))
+        return out
+
+    def held_prop_holder_items(self) -> list[tuple[str, str, str]]:
+        """`heldProp` 条件叶「谁手上」的候选 `(id, 展示名, 类别)`：player + 全工程 NPC + 过场临时演员 + 轨迹生成对象。
+
+        条件没有静态场景上下文（一条对话可能在任何场景里求值），所以是**全工程并集**——
+        与 `attachToSocket.target`（`actor_id_items_for_scene`）同一个运行时命名空间，只是不按场景收窄。
+        校验器「这个人哪儿都没有」的提醒读的也是这一个函数（候选面 = 校验面）。
+        """
+        seen: set[str] = set()
+        out: list[tuple[str, str, str]] = []
+
+        def add(i: str, label: str, detail: str) -> None:
+            key = str(i or "").strip()
+            if key and key not in seen:
+                seen.add(key)
+                out.append((key, str(label or key), detail))
+
+        add("player", "玩家", "玩家")
+        for nid, label in self.all_npc_ids_global():
+            add(nid, label, "场景 NPC")
+        for tid, disp in self.collect_cutscene_temp_actor_ids():
+            add(tid, disp, "过场临时演员")
+        for tid, disp in self.collect_trajectory_spawn_ids():
+            add(tid, disp, "轨迹生成对象")
+        return out
+
+    def socket_names_for_holder_any_scene(self, actor_id: str) -> list[tuple[str, str]]:
+        """某个人身上的挂点（不限场景）：player 读玩家动画包；NPC 把**所有摆了它的场景**里的动画包挂点并起来。
+
+        给没有场景上下文的地方用（`heldProp` 条件叶）。取不到（过场临时演员 / 没标挂点）返回空，
+        调用方据此允许手打——挂点名跨动画包通用。
+        """
+        aid = (actor_id or "").strip()
+        if not aid:
+            return []
+        if aid == "player":
+            return self.socket_names_for_actor(None, "player")
+        seen: set[str] = set()
+        out: list[tuple[str, str]] = []
+        for sid, sc in self.scenes.items():
+            if not isinstance(sc, dict):
+                continue
+            if not any(
+                isinstance(n, dict) and str(n.get("id") or n.get("npcId") or "").strip() == aid
+                for n in (sc.get("npcs") or [])
+            ):
+                continue
+            for name, label in self.socket_names_for_actor(sid, aid):
+                if name not in seen:
+                    seen.add(name)
+                    out.append((name, label))
+        return out
+
     def actor_id_items_for_scene(self, scene_id: str | None) -> list[tuple[str, str]]:
         """与 Game.resolveActor 一致：过场临时演员 + **轨迹临时生成的对象** + 当前场景 NPC + player。
 
@@ -3019,9 +3515,21 @@ class ProjectModel(QObject):
             self._collect_flags_from_scene(sc, flags)
         # Cutscene 使用新 steps schema（无副作用，不含 set_flag）
         conds = self._collect_flags_from_condition_list
+        acts = self._collect_flags_from_actions
         for it in _dict_rows(self.items):
             for dd in _dict_rows(it.get("dynamicDescriptions")):
                 conds(dd.get("conditions"), flags)
+            # 物件自身用途：use.conditions 读 flag、use.actions 写/读 flag（EventBridge 真执行）
+            use = it.get("use")
+            if isinstance(use, dict):
+                conds(use.get("conditions"), flags)
+                acts(use.get("actions"), flags)
+        # 挂件预设里会执行的动作（状态进入动作 + 风吹灭越线动作；位置清单只有一份 iter_prop_preset_action_lists）
+        from .shared.prop_preview import iter_prop_preset_action_lists
+        props = self.prop_presets if isinstance(self.prop_presets, dict) else {}
+        for entry in props.values():
+            for al in iter_prop_preset_action_lists(entry):
+                acts(al.raw, flags)
         for ch in _dict_rows(self.archive_characters):
             conds(ch.get("unlockConditions"), flags)
             for imp in _dict_rows(ch.get("impressions")):

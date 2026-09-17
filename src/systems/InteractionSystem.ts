@@ -84,6 +84,12 @@ export class InteractionSystem implements IGameSystem {
   private graphHasEntry: ((graphId: string, entry: string) => boolean) | null = null;
   /** 区域级 E 交互（ZoneDef.onInteract）；null = 未接线，行为与旧版完全一致。 */
   private zoneInteract: ZoneInteractBinding | null = null;
+  /**
+   * 点火探针（燃烧系统，A3.8）：玩家此刻能不能按 E 点（或从它身上引火）这个可燃实体（热点 / NPC，按实体 id 问）。
+   * 能点的热点**即使本身没有交互**也参与选目标；按 E 时**优先点火**（发 `burn:igniteRequested`，不走实体自己的交互 / 对话）。
+   * null = 未接线，行为与旧版完全一致。
+   */
+  private igniteProbe: ((entityId: string) => boolean) | null = null;
   /** 当前正出「按 E」提示的 zone id；null = 没出。只在变化时发事件，不每帧刷 UI。 */
   private promptedZoneId: string | null = null;
   private promptedZoneLabel = '';
@@ -151,6 +157,11 @@ export class InteractionSystem implements IGameSystem {
   /** 注入图入口探针（Game 用 AssetManager 已缓存的图 JSON 同步作答）。 */
   setGraphEntryProbe(fn: ((graphId: string, entry: string) => boolean) | null): void {
     this.graphHasEntry = fn;
+  }
+
+  /** 注入/清除点火探针（燃烧系统）。见 `igniteProbe` 字段注释 */
+  setIgniteProbe(fn: ((entityId: string) => boolean) | null): void {
+    this.igniteProbe = fn;
   }
 
   /** 注入/清除区域级 E 交互接线（组装层给 ZoneSystem 的闭包）。清除时收起在显提示。 */
@@ -270,9 +281,10 @@ export class InteractionSystem implements IGameSystem {
       }
 
       if (!hotspot.active) continue;
-      if (!hotspotOffersPlayerInteraction(hotspot.def)) continue;
+      const ignitable = this.igniteProbe?.(hotspot.def.id) ?? false;
+      if (!ignitable && !hotspotOffersPlayerInteraction(hotspot.def)) continue;
       if (policy && !policy.canInteractHotspots) continue;
-      if (policy && !policy.canPickup && hotspot.def.type === 'pickup') continue;
+      if (policy && !policy.canPickup && hotspot.def.type === 'pickup' && !ignitable) continue;
       if (hotspot.def.conditions && hotspot.def.conditions.length > 0 && !condOk) continue;
 
       const dx = pos.x - hotspot.centerX;
@@ -315,6 +327,13 @@ export class InteractionSystem implements IGameSystem {
     this.setPromptedZone(zoneCandidate);
 
     if (closestTarget && this.inputManager.wasKeyJustPressed('KeyE')) {
+      // 可燃物且此刻能点：按 E 优先点火（燃烧系统接走），不走热点自己的交互
+      const igniteId = closestTarget.kind === 'hotspot' ? closestTarget.hotspot?.def.id
+        : closestTarget.kind === 'npc' ? closestTarget.npc?.def.id : undefined;
+      if (igniteId && this.igniteProbe?.(igniteId)) {
+        this.eventBus.emit('burn:igniteRequested', { targetId: igniteId });
+        return;
+      }
       // 同帧 E 触发 autoTrigger 热点也写入已触发标记，防止下一帧 auto 路径双发
       if (closestTarget.kind === 'hotspot' && closestTarget.hotspot?.def.autoTrigger) {
         this.autoTriggeredInRange.add(closestTarget.hotspot);
@@ -322,7 +341,8 @@ export class InteractionSystem implements IGameSystem {
       this.triggerTarget(closestTarget);
     } else if (this.promptedZoneId && this.inputManager.wasKeyJustPressed('KeyE')) {
       this.zoneInteract?.dispatch(this.promptedZoneId);
-    } else if (closestTarget?.kind === 'hotspot' && closestTarget.hotspot?.def.autoTrigger) {
+    } else if (closestTarget?.kind === 'hotspot' && closestTarget.hotspot?.def.autoTrigger
+      && hotspotOffersPlayerInteraction(closestTarget.hotspot.def)) {
       const h = closestTarget.hotspot;
       if (!this.autoTriggeredInRange.has(h)) {
         this.autoTriggeredInRange.add(h);
@@ -483,7 +503,7 @@ export class InteractionSystem implements IGameSystem {
     for (const hotspot of this.hotspots) {
       const available =
         hotspot.active &&
-        hotspotOffersPlayerInteraction(hotspot.def) &&
+        (hotspotOffersPlayerInteraction(hotspot.def) || (this.igniteProbe?.(hotspot.def.id) ?? false)) &&
         (!planePolicy || (planePolicy.canInteractHotspots &&
           (planePolicy.canPickup || hotspot.def.type !== 'pickup'))) &&
         (!hotspot.def.conditions?.length || this.evalConditionsList(hotspot.def.conditions));
@@ -584,5 +604,6 @@ export class InteractionSystem implements IGameSystem {
     this.npcBaseVisible = null;
     this.planePolicy = null;
     this.graphHasEntry = null;
+    this.igniteProbe = null;
   }
 }

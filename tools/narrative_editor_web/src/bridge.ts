@@ -77,6 +77,8 @@ declare global {
       refreshCatalog?: () => Promise<boolean>;
       /** 宿主（PySide 位面面板等）跳转定位：切到含该图的编排并聚焦该状态。返回是否命中。 */
       focusState?: (graphId: string, stateId: string) => boolean;
+      /** 宿主跳转定位：切到该编排并选中画布上的元素（黑盒/包装图等）。返回是否命中。 */
+      focusElement?: (compositionId: string, elementId: string) => boolean;
     };
     /**
      * 最近一次画布数据快照（JSON 字符串）。与 __narrativeEditor 不同：React 卸载/崩溃后

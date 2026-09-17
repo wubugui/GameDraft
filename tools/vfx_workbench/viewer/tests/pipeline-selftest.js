@@ -19,6 +19,7 @@
     if (boot.placements.real !== false) throw new Error('Selftest placement isolation missing');
     const paper = (await API.json('/api/effect?id=paper_money')).doc;
     const seed = structuredClone(paper); seed.id = id;
+    delete seed.emitters[0].simulation; // Exercise legacy authoring independently of the shipped paper preset.
     seed.emitters[0].futureProperty = { values: [3, 1, 2] };
     await API.post('/api/save', { doc: seed }); created = true;
     await refreshEffects(); await openEffect(id, { force: true, jump: true });
@@ -41,6 +42,8 @@
     await change('simulation', '出生速度', 'configured');
     ok('Surface birth can use configured speed', !row('spawn', '初速').querySelector('input').disabled && S.doc.emitters[0].simulation.spawnPlacement === 'surface');
     await change('simulation', '局部气流（空气速度）', true, 'input');
+    await change('simulation', '角色接触（踢动）', true, 'input');
+    ok('Contact edits the actual runtime program and can be undone', S.sim.emitters[0].program.influences.contact === true);
     await change('simulation', '标签刺激响应', true, 'input');
     ok('Enabling label response enables its parameter controls', !el('inspector').querySelector('[data-role="stimulus-controls"] input').disabled);
     await change('simulation', '高度方式', 'custom');
@@ -64,7 +67,7 @@
     await change('simulation', '高度方式', 'auto');
     el('btnSave').click(); await ioChain;
     await openEffect(id, { force: true, jump: true });
-    ok('Reload preserves absence of automatic height and enabled inputs', !S.doc.emitters[0].simulation.recycle.height && S.doc.emitters[0].simulation.influences.airflow);
+    ok('Reload preserves absence of automatic height and enabled inputs', !S.doc.emitters[0].simulation.recycle.height && S.doc.emitters[0].simulation.influences.airflow && S.doc.emitters[0].simulation.influences.contact);
     ok('Workbench runs the shared field geometry simulator without errors', S.space?.kind === 'field' && !!S.sim && !S.simErr);
     // A second writer modifies the same effect while this editor has an unsaved module edit.
     const diskBase = (await API.json(`/api/effect?id=${id}`)).doc;

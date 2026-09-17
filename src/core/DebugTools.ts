@@ -86,7 +86,11 @@ export interface DebugToolsDeps {
     attach: (target: string, socket: string, prop: string, state?: string) => Promise<void>;
     setState: (target: string, socket: string, state: string, fadeMs: number) => boolean;
     detach: (target: string, socket: string) => void;
-    snapshot: () => { target: string; socket: string; prop: string; state: string; lightIntensity: number }[];
+    snapshot: () => {
+      target: string; socket: string; prop: string; state: string; lightIntensity: number;
+      /** 火势 0..1（风吹灭火）/ 还剩几成燃料（烧不完的恒 1）/ 第几级 / 锁 */
+      vitality: number; fuel: number; level: number; lock: string;
+    }[];
     getFlickerPushHz: () => number;
     setFlickerPushHz: (hz: number) => void;
     flickerPushHzChoices: readonly number[];

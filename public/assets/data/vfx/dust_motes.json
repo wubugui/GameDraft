@@ -30,22 +30,26 @@
           ]
         ],
         "tint": [
-          1.0,
+          1,
           0.78,
           0.5
         ],
         "blend": "add",
-        "lit": false
+        "lit": false,
+        "beamLit": {
+          "beam": "skylight",
+          "gain": 4
+        }
       },
       "spawn": {
         "max": 120,
         "rate": 12,
         "shape": {
-          "kind": "box",
-          "size": [
-            300,
-            180,
-            240
+          "kind": "beam",
+          "beam": "skylight",
+          "along": [
+            0.45,
+            1
           ]
         },
         "speed": [
@@ -68,6 +72,79 @@
           8,
           12
         ]
+      }
+    }
+  ],
+  "beams": [
+    {
+      "id": "skylight",
+      "mode": "3d",
+      "shape3d": {
+        "from": [
+          -200,
+          620,
+          110
+        ],
+        "to": [
+          40,
+          -110,
+          -80
+        ],
+        "section": {
+          "kind": "rect",
+          "width": 120,
+          "height": 70
+        },
+        "spreadDeg": [
+          6,
+          4
+        ]
+      },
+      "color": [
+        1,
+        0.92,
+        0.78
+      ],
+      "colorEnd": [
+        1,
+        0.8,
+        0.55
+      ],
+      "intensity": 0.4,
+      "alongCurve": [
+        [
+          0,
+          0
+        ],
+        [
+          0.35,
+          0.5
+        ],
+        [
+          0.75,
+          1
+        ],
+        [
+          1,
+          0.9
+        ]
+      ],
+      "edgeSoftness": 0.55,
+      "contactSoftWu": 70,
+      "blend": "screen",
+      "noise": {
+        "strength": 0.45,
+        "scaleWu": 110,
+        "velocity": [
+          5,
+          -2,
+          3
+        ]
+      },
+      "pulse": {
+        "kind": "breathe",
+        "hz": 0.08,
+        "amount": 0.15
       }
     }
   ]

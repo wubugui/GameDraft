@@ -1,7 +1,8 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
-import type { IGameSystem, GameContext, ZoneSmellConfig } from '../data/types';
+import type { IGameSystem, GameContext, PositionRef, ZoneSmellConfig } from '../data/types';
 import { FlagKeys } from '../core/FlagKeys';
+import { parsePositionRef } from '../utils/positionRef';
 
 /** 气味来源：action（编排显式 setSmell，优先级高）/ zone（场景触发器，玩家在区内）/ none（无味）。 */
 export type SmellSource = 'action' | 'zone' | 'none';
@@ -9,18 +10,22 @@ export type SmellSource = 'action' | 'zone' | 'none';
 /** 气味源（世界坐标）：气缕飘向的方向就是它，顺着烟走能摸到源。 */
 export interface SmellSourcePoint { x: number; y: number }
 
-/** 一层气味状态（scent 空串=该层无味）。source = 这一层自带的气味源（zone 配的 / setSmellSource 配的）。 */
-interface SmellLayer { scent: string; intensity: number; flicker: boolean; source: SmellSourcePoint | null }
+/**
+ * 一层气味状态（scent 空串=该层无味）。source = 这一层自带的气味源（zone 配的），
+ * 是**位置引用**（数字 / 实体此刻位置 / 场景曲线插槽 / 曲线上的点），每帧现求——源是会走的 NPC 时烟跟着它。
+ */
+interface SmellLayer { scent: string; intensity: number; flicker: boolean; source: PositionRef | null }
+
+/** 位置引用每帧求值口（组装层注入 Game 的同步求值那一套）；求不出返回 null。 */
+export type SmellSourceEvaluator = (ref: PositionRef) => SmellSourcePoint | null;
 
 function emptyLayer(): SmellLayer {
   return { scent: '', intensity: 0, flicker: false, source: null };
 }
 
-function normalizePoint(p: unknown): SmellSourcePoint | null {
-  const o = p as { x?: unknown; y?: unknown } | null | undefined;
-  const x = Number(o?.x);
-  const y = Number(o?.y);
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+/** 气味源规整成位置引用：老数据 `{x,y}`（无 kind）当数字点；认不得返回 null（= 不配源）。 */
+function normalizeSourceRef(p: unknown): PositionRef | null {
+  return parsePositionRef(p);
 }
 
 /** 把任意来源（action 参数 / ZoneSmellConfig）规整成一层；scent 空=无味层。 */
@@ -32,7 +37,7 @@ function normalizeLayer(scent: string, intensity?: number, flicker?: boolean, so
     scent: s,
     intensity: Number.isFinite(n) ? Math.max(0, Math.min(100, n)) : 60,
     flicker: !!flicker,
-    source: normalizePoint(source),
+    source: normalizeSourceRef(source),
   };
 }
 
@@ -57,8 +62,9 @@ const DIR_EMIT_EPSILON = 0.01;
  *
  * **飘向 = 指向气味源**（玩法清单 G.6，2026-09-12 改；原「来源反方向」2026-09-10 拍板已推翻）：
  * 气缕像被气味源吸过去，飘向哪边、源就在那边，顺着烟走能摸到源。飘向 `dir` 不再是作者手填的静态值，而是每帧按**玩家位置相对气味源**现算：
- *   - 气味源来自 `setSmellSource{x,y[,scene]}`（action 源，入存档、只在那个场景生效）
+ *   - 气味源来自 `setSmellSource{x,y[,at][,scene]}`（action 源，入存档、只在那个场景生效）
  *     或 zone 配的 `smell.source`（进区带上、出区撤回）；action 源压过 zone 源；
+ *     两处都是**位置引用**（数字 / 实体此刻位置 / 曲线插槽 / 曲线上的点），每帧现求——源是会走的 NPC 时烟跟着走；
  *   - 追踪可随时开关（`setSmellTracking{enabled}`，flag `smell_tracking`，缺省开）；
  *   - 关着、或没放气味源、或源不在当前场景 → 气缕一直是直的（dir=0）。
  *
@@ -75,8 +81,8 @@ export class SmellSystem implements IGameSystem {
   private zone: SmellLayer = emptyLayer();
   /** 活跃 zone 气味：zoneId → 层（含 MANUAL_ZONE_KEY 调试项）。Map 保留插入序 → 末项=最后进入。 */
   private activeZoneSmells: Map<string, SmellLayer> = new Map();
-  /** action 气味源（setSmellSource）：带场景，只在那个场景里生效；入存档。 */
-  private actionSource: { scene: string; x: number; y: number } | null = null;
+  /** action 气味源（setSmellSource）：带场景，只在那个场景里生效；入存档。ref = 位置引用（每帧现求）。 */
+  private actionSource: { scene: string; ref: PositionRef } | null = null;
   /** 追踪开关：关 = 气缕永远直的。 */
   private tracking = true;
   /** 上一次广播出去的飘向（每帧算、变了才发）：横向 / 纵深。 */
@@ -85,6 +91,7 @@ export class SmellSystem implements IGameSystem {
 
   private playerPosGetter: (() => { x: number; y: number }) | null = null;
   private sceneIdGetter: (() => string | null | undefined) | null = null;
+  private sourceEvaluator: SmellSourceEvaluator | null = null;
 
   private readonly onZoneEnter: (p: unknown) => void;
   private readonly onZoneExit: (p: unknown) => void;
@@ -115,6 +122,14 @@ export class SmellSystem implements IGameSystem {
   /** 组装层注入：当前场景 id（action 气味源只在它所属场景生效）。 */
   setSceneIdGetter(fn: (() => string | null | undefined) | null): void {
     this.sceneIdGetter = fn;
+  }
+
+  /**
+   * 组装层注入：位置引用每帧求值（实体此刻位置 / 曲线插槽 / 曲线上的点）。
+   * 不注入时只认数字点——实体 / 曲线源一律当"求不出"（气缕直的）。
+   */
+  setSourceEvaluator(fn: SmellSourceEvaluator | null): void {
+    this.sourceEvaluator = fn;
   }
 
   init(_ctx: GameContext): void {
@@ -160,10 +175,16 @@ export class SmellSystem implements IGameSystem {
   private effectiveSource(): SmellSourcePoint | null {
     if (this.actionSource) {
       const scene = this.sceneIdGetter?.() ?? '';
-      if (scene && scene === this.actionSource.scene) return { x: this.actionSource.x, y: this.actionSource.y };
+      if (scene && scene === this.actionSource.scene) return this.evaluateSource(this.actionSource.ref);
     }
     const { layer } = this.resolve();
-    return layer.scent ? layer.source : null;
+    return layer.scent && layer.source ? this.evaluateSource(layer.source) : null;
+  }
+
+  /** 源引用 → 此刻的世界坐标。实体不在场 / 曲线还没开播 → null（气缕直的；每帧调，不出声）。 */
+  private evaluateSource(ref: PositionRef): SmellSourcePoint | null {
+    if (ref.kind === 'point') return { x: ref.x, y: ref.y };
+    return this.sourceEvaluator?.(ref) ?? null;
   }
 
   /**
@@ -219,12 +240,25 @@ export class SmellSystem implements IGameSystem {
       console.warn('SmellSystem.setSource: 坐标不是数字，忽略', x, y);
       return;
     }
+    this.setSourceRef({ kind: 'point', x: sx, y: sy }, scene);
+  }
+
+  /**
+   * 放 action 气味源（位置引用：数字 / 实体此刻位置 / 曲线插槽 / 曲线上的点）。引用**每帧现求**——
+   * 源是 NPC 时它走到哪烟指到哪；只在所属场景（缺省当前场景）里指向；入存档（存引用本身）。
+   */
+  setSourceRef(raw: unknown, scene?: string): void {
+    const ref = parsePositionRef(raw);
+    if (!ref) {
+      console.warn('SmellSystem.setSourceRef: 认不得的位置引用，忽略', raw);
+      return;
+    }
     const sc = String(scene ?? '').trim() || (this.sceneIdGetter?.() ?? '');
     if (!sc) {
       console.warn('SmellSystem.setSource: 取不到场景 id（未注入 getter 且未显式传 scene），忽略');
       return;
     }
-    this.actionSource = { scene: sc, x: sx, y: sy };
+    this.actionSource = { scene: sc, ref };
     this.syncFlags();
     this.emitChanged();
   }
@@ -247,9 +281,9 @@ export class SmellSystem implements IGameSystem {
     return this.tracking;
   }
 
-  /** action 气味源（setSmellSource 放的；null=没放）。 */
-  getActionSource(): { scene: string; x: number; y: number } | null {
-    return this.actionSource ? { ...this.actionSource } : null;
+  /** action 气味源（setSmellSource 放的；null=没放）。ref 是引用本身，此刻坐标看 `getDebugState().effectiveSource`。 */
+  getActionSource(): { scene: string; ref: PositionRef } | null {
+    return this.actionSource ? { scene: this.actionSource.scene, ref: { ...this.actionSource.ref } } : null;
   }
 
   /** 手动设 **zone 层**气味（F2 调试用；真实 zone 由 zone:enter/exit 自动驱动）。空 scent=清手动项。 */
@@ -303,7 +337,7 @@ export class SmellSystem implements IGameSystem {
     action: SmellLayer;
     zone: SmellLayer;
     tracking: boolean;
-    actionSource: { scene: string; x: number; y: number } | null;
+    actionSource: { scene: string; ref: PositionRef } | null;
     effectiveSource: SmellSourcePoint | null;
   } {
     const { layer, source } = this.resolve();
@@ -313,7 +347,7 @@ export class SmellSystem implements IGameSystem {
       action: { ...this.action },
       zone: { ...this.zone },
       tracking: this.tracking,
-      actionSource: this.actionSource ? { ...this.actionSource } : null,
+      actionSource: this.getActionSource(),
       effectiveSource: this.effectiveSource(),
     };
   }
@@ -348,9 +382,13 @@ export class SmellSystem implements IGameSystem {
 
   serialize(): object {
     // 只存 action 层 + action 源 + 追踪开关；zone 层是玩家位置的瞬时函数，读档进场后由 zone:enter 自然重建。
+    // 数字源存老形状 {scene,x,y}（老档一个字节不变）；引用源存 {scene, ref}。
+    const as = this.actionSource;
     return {
       action: { scent: this.action.scent, intensity: this.action.intensity, flicker: this.action.flicker },
-      source: this.actionSource ? { ...this.actionSource } : null,
+      source: !as ? null
+        : as.ref.kind === 'point' ? { scene: as.scene, x: as.ref.x, y: as.ref.y }
+          : { scene: as.scene, ref: { ...as.ref } },
       tracking: this.tracking,
     };
   }
@@ -358,7 +396,7 @@ export class SmellSystem implements IGameSystem {
   deserialize(data: object): void {
     const d = data as {
       action?: { scent?: unknown; intensity?: unknown; flicker?: unknown };
-      source?: { scene?: unknown; x?: unknown; y?: unknown } | null;
+      source?: { scene?: unknown; x?: unknown; y?: unknown; ref?: unknown } | null;
       tracking?: unknown;
       // 旧档兼容：扁平单层 → 归入 action 层
       scent?: string; intensity?: number; flicker?: boolean;
@@ -373,8 +411,11 @@ export class SmellSystem implements IGameSystem {
       };
     }
     const sp = d.source;
-    if (sp && typeof sp.scene === 'string' && sp.scene && Number.isFinite(Number(sp.x)) && Number.isFinite(Number(sp.y))) {
-      this.actionSource = { scene: sp.scene, x: Number(sp.x), y: Number(sp.y) };
+    const spRef = sp && typeof sp.scene === 'string' && sp.scene
+      ? parsePositionRef(sp.ref !== undefined ? sp.ref : { x: sp.x, y: sp.y })
+      : null;
+    if (sp && spRef) {
+      this.actionSource = { scene: String(sp.scene), ref: spRef };
     } else {
       this.actionSource = null;
     }
@@ -389,5 +430,6 @@ export class SmellSystem implements IGameSystem {
     this.activeZoneSmells.clear();
     this.playerPosGetter = null;
     this.sceneIdGetter = null;
+    this.sourceEvaluator = null;
   }
 }

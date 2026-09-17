@@ -20,7 +20,7 @@
       "liftKelvin": 6500.0
     },
     "aoStrength": 1.0,
-    "ratioMax": 8.0,
+    "ratioMax": 8,
     "dehaze": 0.0,
     "emissive": {
       "gain": 0.0
@@ -494,6 +494,75 @@
         "image": "/resources/runtime/images/npcs/wujin_street/water_carrier.png",
         "worldWidth": 100.0,
         "worldHeight": 186.0
+      }
+    },
+    {
+      "id": "burn_demo_paper",
+      "type": "inspect",
+      "label": "纸钱堆",
+      "x": 2178.4,
+      "y": 1985.8,
+      "interactionRange": 60.0,
+      "data": {},
+      "displayImage": {
+        "image": "/resources/runtime/images/props/burn_demo/paper_pile.png",
+        "worldWidth": 64.0,
+        "worldHeight": 35.6
+      },
+      "burnable": {
+        "template": "paper_pile"
+      }
+    },
+    {
+      "id": "burn_demo_paper_2",
+      "type": "inspect",
+      "label": "纸钱堆（挨着）",
+      "x": 2126.9,
+      "y": 1996.9,
+      "interactionRange": 60.0,
+      "data": {},
+      "displayImage": {
+        "image": "/resources/runtime/images/props/burn_demo/paper_pile.png",
+        "worldWidth": 64.0,
+        "worldHeight": 35.6
+      },
+      "burnable": {
+        "template": "paper_pile"
+      }
+    },
+    {
+      "id": "burn_demo_candle",
+      "type": "inspect",
+      "label": "红蜡烛",
+      "x": 1930.0,
+      "y": 2150.0,
+      "interactionRange": 60.0,
+      "data": {},
+      "displayImage": {
+        "image": "/resources/runtime/images/props/burn_demo/candle_red.png",
+        "worldWidth": 12.0,
+        "worldHeight": 45.0
+      },
+      "burnable": {
+        "template": "candle_red"
+      }
+    },
+    {
+      "id": "burn_demo_incense",
+      "type": "inspect",
+      "label": "线香",
+      "x": 1962.0,
+      "y": 2158.0,
+      "interactionRange": 60.0,
+      "data": {},
+      "displayImage": {
+        "image": "/resources/runtime/images/props/burn_demo/incense_stick.png",
+        "worldWidth": 5.25,
+        "worldHeight": 70.0
+      },
+      "burnable": {
+        "template": "incense_stick",
+        "initial": "burning"
       }
     }
   ],
@@ -1010,6 +1079,27 @@
       "initialFacing": "left",
       "dialogueGraphId": "线外_街巷_市井闲谈",
       "dialogueGraphEntry": "incense_granny"
+    },
+    {
+      "id": "test_igniter_vendor",
+      "name": "测试·火种杂货郎",
+      "x": 1990.0,
+      "y": 2060.0,
+      "interactionRange": 70.0,
+      "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "dialogueGraphId": "测试_火种杂货郎"
+    },
+    {
+      "id": "burn_demo_figure",
+      "name": "纸扎（可燃 NPC 样例）",
+      "x": 2260.0,
+      "y": 1985.0,
+      "interactionRange": 60.0,
+      "burnable": {
+        "template": "paper_pile"
+      }
     }
   ],
   "zones": [
@@ -1142,6 +1232,50 @@
       "x": 2800,
       "y": 400,
       "scale": 0.45
+    }
+  },
+  "timeVariants": {
+    "夜": {
+      "lighting": {
+        "sky": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 1,
+          "hemi": 0.5
+        },
+        "display": {
+          "ev": 0,
+          "tonemap": "none",
+          "whiteKelvin": 6500,
+          "contrast": 1,
+          "saturation": 1,
+          "lift": 0,
+          "liftKelvin": 6500
+        },
+        "aoStrength": 1,
+        "dehaze": 0,
+        "emissive": {
+          "gain": 0
+        },
+        "giGain": 0,
+        "lightFactors": {
+          "character": {
+            "indirectFactor": 0.3183098861837907,
+            "directFactor": 1,
+            "totalFactor": 1,
+            "eChroma": 0
+          },
+          "particles": {
+            "indirectFactor": 1,
+            "directFactor": 1,
+            "totalFactor": 0.3183098861837907,
+            "eChroma": 0
+          }
+        }
+      }
     }
   }
 }

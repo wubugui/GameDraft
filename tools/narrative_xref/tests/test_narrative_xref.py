@@ -760,6 +760,10 @@ class _FakeModel:
             ("object_examine", "object_examine_instances"),
         ):
             setattr(self, attr, _load_family(data / family))
+        # 挂件预设：状态进入动作与可燃配置（burnable.signals，A3.8 模板 + 实例）都是实发面
+        self.prop_presets = _read(data / "prop_presets.json", {})
+        self.items = _read(data / "items.json", [])
+        self.clues_registry = _read(data / "clues.json", {})
 
 
 def _read(path: Path, default):

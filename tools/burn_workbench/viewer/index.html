@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>燃烧工作台</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #1b1d22; --panel: #23262d; --panel2: #2a2e36; --line: #3a3f4a; --fg: #e6e8ec; --dim: #9aa1ad;
+    --accent: #6cb4ff; --warn: #ffb454; --err: #ff6b6b; --ok: #7ed492; --fire: #ff8c3a;
+    --font: 13px/1.45 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--fg); font: var(--font); overflow: hidden; user-select: none; }
+  input, textarea { user-select: text; }
+  button, select, input, textarea { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:hover { border-color: var(--accent); }
+  button.on { background: #2c4f7a; border-color: var(--accent); }
+  button.primary { background: #2c4f7a; border-color: #3f6ea8; }
+  button.primary.dirty { background: #6a4a16; border-color: var(--warn); color: #ffe2b0; }
+  button.danger { border-color: #7a3c3c; }
+  button:disabled { opacity: .45; cursor: default; }
+  textarea { width: 100%; min-height: 64px; font: 12px/1.4 Consolas, "Cascadia Mono", monospace; resize: vertical; }
+  #app { display: grid; grid-template-rows: auto 1fr auto; grid-template-columns: minmax(200px, 260px) minmax(300px, 1fr) minmax(320px, 420px); height: 100%; }
+  #app[inert] { filter: saturate(.5) brightness(.8); }
+  #top, #simbar { grid-column: 1 / span 3; display: flex; flex-wrap: wrap; gap: 5px 12px; align-items: center; padding: 5px 10px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  #simbar { border-top: 1px solid var(--line); border-bottom: none; }
+  .grp { display: inline-flex; gap: 5px; align-items: center; }
+  .grp b { color: var(--dim); font-weight: 500; }
+  #status { flex: 1 1 0; min-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dim); }
+  #status.ok { color: var(--ok); } #status.warn { color: var(--warn); } #status.err { color: var(--err); }
+  #left { background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; display: flex; flex-direction: column; }
+  #left h3, #side h3 { margin: 8px 10px 4px; font-size: 12px; color: var(--dim); font-weight: 600; letter-spacing: .04em; display: flex; align-items: center; gap: 6px; }
+  #left h3 button { font-size: 11px; padding: 0 5px; font-weight: 400; }
+  .btnrow { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 10px 6px; }
+  .btnrow button { font-size: 12px; padding: 1px 6px; }
+  .item { display: flex; gap: 6px; align-items: center; padding: 3px 10px; cursor: pointer; border-left: 3px solid transparent; }
+  .item:hover { background: var(--panel2); }
+  .item.on { background: #2c4f7a; border-left-color: var(--accent); }
+  .item.ro { cursor: default; }
+  .item.ro:hover { background: transparent; }
+  .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .tag { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; }
+  .item .dot { color: var(--warn); width: 10px; }
+  .item .bad { color: var(--err); }
+  .refkind { margin: 6px 10px 2px; font-size: 11px; color: var(--dim); }
+  .fire { color: var(--fire); }
+  #center { position: relative; overflow: hidden; background: #111; }
+  #center canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
+  #viewbar { position: absolute; left: 8px; top: 8px; z-index: 5; display: flex; flex-wrap: wrap; gap: 4px; max-width: calc(100% - 16px); }
+  #viewbar button { font-size: 12px; }
+  #viewbar .ro { color: var(--warn); font-size: 12px; align-self: center; padding: 0 4px; background: rgba(0,0,0,.55); border-radius: 3px; }
+  #viewInfo { position: absolute; left: 8px; bottom: 8px; z-index: 5; max-width: calc(100% - 16px); color: var(--fg); background: rgba(0,0,0,.6); padding: 3px 8px; border-radius: 4px; font-size: 12px; white-space: pre-wrap; pointer-events: none; }
+  #viewInfo .err { color: var(--err); } #viewInfo .warn { color: var(--warn); }
+  #brushbar { position: absolute; left: 8px; top: 44px; z-index: 5; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; background: rgba(0,0,0,.55); padding: 4px 8px; border-radius: 4px; font-size: 12px; max-width: 60%; }
+  #brushbar input[type=range] { width: 80px; }
+  #side { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding-bottom: 12px; }
+  details.sec { border-bottom: 1px solid var(--line); padding: 0 10px 6px; }
+  details.sec > summary { cursor: pointer; padding: 6px 0 4px; color: var(--dim); font-weight: 600; font-size: 12px; list-style: none; }
+  details.sec > summary::before { content: '▸ '; }
+  details.sec[open] > summary::before { content: '▾ '; }
+  .row { display: flex; gap: 6px; align-items: center; min-height: 24px; }
+  .row > label { width: 118px; flex: none; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row input[type=text] { width: 90px; }
+  .row input.wide, .row select.wide { flex: 1; min-width: 0; width: auto; }
+  .row input.c3 { width: 50px; }
+  .row .unit { color: var(--dim); font-size: 11px; }
+  .row .sw { width: 16px; height: 16px; border: 1px solid var(--line); border-radius: 3px; }
+  .row .path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px Consolas, "Cascadia Mono", monospace; }
+  .note { color: var(--dim); font-size: 12px; padding: 2px 0; }
+  .note.warn { color: var(--warn); } .note.err { color: var(--err); } .note.ok { color: var(--ok); }
+  .note.loud { color: #ffe2b0; background: #5a3a10; border: 1px solid var(--warn); border-radius: 4px; padding: 4px 6px; margin: 3px 0; }
+  .sub { border-left: 2px solid var(--line); padding-left: 8px; margin: 4px 0; }
+  .kv { font: 12px Consolas, "Cascadia Mono", monospace; color: var(--fg); white-space: pre-wrap; }
+  #busy, #dialog { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 50; background: rgba(0,0,0,.45); }
+  #busyText { background: var(--panel); padding: 12px 18px; border-radius: 6px; border: 1px solid var(--line); }
+  #dialogBox { background: var(--panel); padding: 14px 16px; border-radius: 6px; border: 1px solid var(--line); min-width: 380px; max-width: 640px; display: flex; flex-direction: column; gap: 8px; }
+  #dialogBox h4 { margin: 0; }
+  #dialogText { white-space: pre-wrap; color: var(--dim); max-height: 40vh; overflow-y: auto; }
+  #dialogFields .row > label { width: 90px; }
+  #dialogBtns { display: flex; gap: 6px; justify-content: flex-end; }
+  .imgpick { display: flex; flex-direction: column; gap: 4px; }
+  .imglist { max-height: 230px; overflow-y: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
+  .imglist .it { padding: 2px 6px; font: 12px Consolas, "Cascadia Mono", monospace; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .imglist .it:hover { background: var(--panel2); }
+  .imglist .it.on { background: #2c4f7a; color: #fff; }
+  .imglist .it .u { color: var(--fire); }
+  .imgprev { display: flex; gap: 8px; align-items: center; min-height: 60px; }
+  .imgprev img { max-width: 96px; max-height: 96px; background: repeating-conic-gradient(#333 0 25%, #444 0 50%) 0 0 / 12px 12px; }
+  input[type=range] { accent-color: var(--accent); }
+  #tslider { width: 240px; }
+</style>
+<script src="/vendor/dropdown.js"></script>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <div class="grp"><b>燃烧工作台 · 可燃物模板</b></div>
+    <div class="grp">
+      <button id="btnSave" class="primary" title="Ctrl+S：存所有改过的模板">保存</button>
+      <button id="btnUndo" title="Ctrl+Z">撤销</button>
+      <button id="btnRedo" title="Ctrl+Y / Ctrl+Shift+Z">重做</button>
+    </div>
+    <div class="grp">
+      <button id="btnPush" title="把页面上此刻的模板（存没存都算）推给在跑的游戏；资源不动">推给游戏</button>
+      <label title="改动自动推给游戏"><input type="checkbox" id="linkOn"> 联动</label>
+      <button id="btnLaunch" title="让游戏进场景视图里那个场景（没开场景视图 = 第一个用这份模板的场景）">拉起游戏</button>
+      <input id="gameUrl" type="text" style="width:170px" title="游戏 dev server 地址">
+    </div>
+    <div id="status"></div>
+  </div>
+
+  <div id="left">
+    <h3>可燃物模板</h3>
+    <div class="btnrow">
+      <button id="btnNew">新建</button><button id="btnDup">复制</button><button id="btnRename">重命名</button><button id="btnDelete" class="danger">删除</button>
+    </div>
+    <div id="assetList"></div>
+    <h3 id="refsHead">用在哪 <button id="btnRefsReload" title="重新扫一遍全工程（主编辑器存过之后点它）">刷新</button></h3>
+    <div id="refsList"></div>
+  </div>
+
+  <div id="center">
+    <canvas id="gl"></canvas>
+    <canvas id="ov" tabindex="0"></canvas>
+    <div id="viewbar">
+      <button id="btnViewArt" title="1：原画视图（模板自己的图，按真实尺寸预览）">原画</button>
+      <button id="btnViewScene" title="2：只读场景视图（从「用在哪」点开）" hidden></button>
+      <button id="btnCloseScene" title="关掉场景视图" hidden>×</button>
+      <button id="btnFit" title="F：整幅">整幅</button>
+      <span id="toolBtns"></span>
+      <span id="layerBtns"></span>
+    </div>
+    <div id="brushbar" hidden>
+      <span>笔刷</span>
+      <label>大小 <input id="brushSize" type="range" min="1" max="64" value="10"></label>
+      <label>强度 <input id="brushStrength" type="range" min="1" max="100" value="60"></label>
+      <label id="brushValueWrap">值 <input id="brushValue" type="range" min="0" max="100" value="100"></label>
+      <label><input id="brushErase" type="checkbox"> 擦除（E / 右键拖）</label>
+      <button id="btnClearMask" title="删掉这层涂层（燃料回到 alpha 以上全满 / 顺序回到按方向）">清涂层</button>
+    </div>
+    <div id="viewInfo"></div>
+  </div>
+
+  <div id="side"></div>
+
+  <div id="simbar">
+    <div class="grp">
+      <button id="btnPlay" title="空格">▶ 播放</button>
+      <select id="speedSel" title="倍速"><option value="0.25">×0.25</option><option value="0.5">×0.5</option><option value="1" selected>×1</option><option value="2">×2</option><option value="4">×4</option><option value="8">×8</option></select>
+      <input id="tslider" type="range" min="0" max="60" step="0.05" value="0" title="拖动 = 从 0 按事件确定性重放到该时刻">
+      <span id="tText" class="kv">0.00 s</span>
+    </div>
+    <div class="grp">
+      <b>预览</b>
+      <button id="btnIgnitePoint" title="在选中（没选就第一个）着火点点着；没有着火点 = 整体">点着</button>
+      <button id="btnIgniteAll">整体点着</button>
+      <button id="btnExtinguish">熄灭</button>
+      <button id="btnResetItem">复原</button>
+      <button id="btnRestart" title="清掉所有预览事件、回到 0 秒">从头</button>
+      <span id="windGrp" class="grp" title="原画视图的预览风（只在页面里，不写资源；场景视图用场景自己的风）"><b>风</b>
+        <select id="windSel"><option value="0">无</option><option value="1">1 m/s</option><option value="2">2 m/s</option><option value="3">3 m/s</option><option value="5">5 m/s</option><option value="8">8 m/s</option><option value="12">12 m/s</option></select>
+        <button id="btnWindDir" title="风往哪边吹">→</button>
+      </span>
+      <span id="evText" class="kv"></span>
+    </div>
+    <div class="grp">
+      <b>游戏里</b>
+      <select id="gameTarget" title="游戏回传的实例里用这份模板的（场景实体 / 手上的）"></select>
+      <button id="btnGameIgnite">点着</button>
+      <button id="btnGameExt">熄灭</button>
+      <button id="btnGameReset">复原</button>
+      <button id="btnGameWalk" title="请游戏用它自己的 isCollision 判场景视图里选中实例的站位">判站位</button>
+    </div>
+    <div id="linkText" class="kv" style="flex:1;min-width:120px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+  </div>
+</div>
+
+<div id="busy" hidden><div id="busyText">装载中…</div></div>
+<div id="dialog" hidden>
+  <form id="dialogBox" onsubmit="return false">
+    <h4 id="dialogTitle"></h4>
+    <div id="dialogText"></div>
+    <div id="dialogFields"></div>
+    <div id="dialogBtns"></div>
+  </form>
+</div>
+
+<script src="/viewer/core.js"></script>
+<script src="/viewer/preview.js"></script>
+<script src="/viewer/render.js"></script>
+<script src="/viewer/views.js"></script>
+<script src="/viewer/inspector.js"></script>
+<script src="/viewer/app.js"></script>
+</body>
+</html>

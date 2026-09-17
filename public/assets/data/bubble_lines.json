@@ -449,6 +449,43 @@
           "text": "[tag:string:teahouseAtmosphere:middle_debt]"
         }
       ]
+    },
+    {
+      "id": "跑马梁_路边身影_招呼",
+      "description": "无火过界后，路边有人喊他；火一亮就不再出现",
+      "speaker": {
+        "kind": "entity",
+        "id": "npc_跑马梁_路边身影"
+      },
+      "scenes": [
+        "跑马梁"
+      ],
+      "trigger": "approach",
+      "approachRange": 520,
+      "cooldownMs": 14000,
+      "when": {
+        "all": [
+          {
+            "narrative": "wrapper_跑马梁_风火引路",
+            "state": "点火教学",
+            "reached": true
+          },
+          {
+            "narrative": "wrapper_跑马梁_路边招呼",
+            "state": "未交谈"
+          },
+          {
+            "not": {
+              "flag": "player_fire_protected"
+            }
+          }
+        ]
+      },
+      "lines": [
+        {
+          "text": "过来嘛，挨近点……我跟你说句话。"
+        }
+      ]
     }
   ]
 }

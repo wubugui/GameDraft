@@ -8,7 +8,7 @@
 - 场景热点：``hotspot.data.graphId``（inspect 型）
 - 场景热点/区域/场景级动作：``startDialogueGraph``/``playScriptedDialogue`` 等的 ``params.graphId``（递归）
 - Scenario：``scenarios.json`` 里 scenario/phase 的 ``dialogueGraphIds``
-- 叙事图：``dialogueBlackbox`` 元素的 ``refId``
+- 叙事图：``dialogueBlackbox`` 元素的 ``refId``；主图与包装图（``wrapperGraph``）各状态动作里的 ``graphId``
 - 其它对话图：图内节点动作里 ``graphId`` 跳到本图
 
 坑：场景条件里的 ``narrative``/``state`` 指叙事图**不是** dialogue graphId；而 ``graphId`` /
@@ -132,6 +132,28 @@ def _scan_scenarios(target: str, scenarios_catalog: Any) -> list[Referrer]:
     return out
 
 
+def _scan_narrative_graph_states(target: str, graph: dict, comp_id: str) -> list[Referrer]:
+    out: list[Referrer] = []
+    graph_id = _ref_id(graph.get("id"))
+    states = graph.get("states")
+    if not graph_id or not isinstance(states, dict):
+        return out
+    graph_label = _ref_id(graph.get("label")) or graph_id
+    for state_key, state in states.items():
+        if not isinstance(state, dict) or not subtree_references_dialogue(state, target):
+            continue
+        state_id = _ref_id(state.get("id")) or _ref_id(state_key)
+        out.append(
+            Referrer(
+                category="叙事图",
+                label=graph_label,
+                detail=f"状态「{state_id}」的动作 · 编排 {comp_id}",
+                nav=("navigate_to_narrative_state", (graph_id, state_id)),
+            )
+        )
+    return out
+
+
 def _scan_narrative(target: str, narrative_graphs: Any) -> list[Referrer]:
     out: list[Referrer] = []
     if not isinstance(narrative_graphs, dict):
@@ -139,22 +161,26 @@ def _scan_narrative(target: str, narrative_graphs: Any) -> list[Referrer]:
     for comp in narrative_graphs.get("compositions") or []:
         if not isinstance(comp, dict):
             continue
+        comp_id = _ref_id(comp.get("id"))
         main_graph = comp.get("mainGraph") if isinstance(comp.get("mainGraph"), dict) else {}
-        main_graph_id = _ref_id(main_graph.get("id"))
+        out += _scan_narrative_graph_states(target, main_graph, comp_id)
         for element in comp.get("elements") or []:
             if not isinstance(element, dict):
                 continue
+            if isinstance(element.get("graph"), dict):
+                out += _scan_narrative_graph_states(target, element["graph"], comp_id)
             if _ref_id(element.get("kind")) != "dialogueBlackbox":
                 continue
             if _ref_id(element.get("refId")) != target:
                 continue
-            label = _ref_id(element.get("label")) or _ref_id(element.get("id")) or target
+            element_id = _ref_id(element.get("id"))
+            label = _ref_id(element.get("label")) or element_id or target
             out.append(
                 Referrer(
                     category="叙事图",
                     label=label,
-                    detail=f"编排 {_ref_id(comp.get('id'))}",
-                    nav=("navigate_to_narrative_state", (main_graph_id, "")),
+                    detail=f"对话黑盒 · 编排 {comp_id}",
+                    nav=("navigate_to_narrative_element", (comp_id, element_id)),
                 )
             )
     return out

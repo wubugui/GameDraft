@@ -1014,6 +1014,83 @@
         if (owBtn) owBtn.click();
         await wait(30);
         ok('S18 overwrite replaces the target row in place', libRows(SC, '').find((r) => r.id === PID).anchor.h === 77);
+        // ---- 选中的那一条拷到别的时段外观（左栏「「id」在别的时段外观」的「拷过去 / 拷过来」；制作人 2026-09-16：只拷选中的那一条）
+        {
+          const phaseRow = (k) => el('placePhases').querySelector(`[data-phase-row="${k}"]`);
+          const copyBtn = (k, id, act) => phaseRow(k) && phaseRow(k).querySelector(`[data-copy-id="${id}"] button[data-act=${act}]`);
+          const dlgBtn = (c) => [...el('dialogForm').querySelectorAll('button')].find((b) => b.getAttribute('data-choice') === c);
+          const restOf = (ph) => canonJson(libRows(SC, ph).filter((r) => r.id !== PID));
+          const rowOf = (ph) => libRows(SC, ph).find((r) => r.id === PID);
+          const ctrlZ = async () => { key('z', { ctrlKey: true }); await wait(30); };
+          select(`place:${PID}`);
+          const snapBase = canonJson(libRows(SC, '')), snapNight = canonJson(libRows(SC, NIGHT));
+          const baseRest = restOf(''), nightRest = restOf(NIGHT);
+          edit('自检改夜里这条的锚点', () => { activePlacement().anchor.h = 55; });
+          renderLeft();
+          const nightBefore = canonJson(libRows(SC, NIGHT));
+          ok('S18 per-placement copy: the other appearance\'s row for the selected placement says it differs, push + pull enabled, no other buttons in the section',
+            S.phase === NIGHT && activePlacement().id === PID && /这条不一样/.test(phaseRow('') ? phaseRow('').textContent : '')
+            && !!copyBtn('', PID, 'push') && !copyBtn('', PID, 'push').disabled && !copyBtn('', PID, 'pull').disabled
+            && el('placePhases').querySelectorAll('button').length === 2,
+            { row: phaseRow('') && phaseRow('').textContent, buttons: el('placePhases').querySelectorAll('button').length });
+          copyBtn('', PID, 'pull').click(); await wait(80);
+          ok('S18 pulling onto an existing row asks before overwriting, naming the row',
+            !el('dialog').hidden && el('dialogForm').textContent.includes(PID) && !!dlgBtn('overwrite'), { txt: el('dialogForm').textContent });
+          if (dlgBtn('cancel')) dlgBtn('cancel').click();
+          await wait(30);
+          ok('S18 cancelling the per-placement copy leaves the library untouched', canonJson(libRows(SC, NIGHT)) === nightBefore && canonJson(libRows(SC, '')) === snapBase);
+          const u0 = history.undoStack.length;
+          copyBtn('', PID, 'pull').click(); await wait(80);
+          if (dlgBtn('overwrite')) dlgBtn('overwrite').click();
+          await wait(60);
+          ok('S18 "pull" overwrites only the selected row with a deep copy; every other row in both appearances untouched; one history entry; the row stays selected',
+            !!rowOf(NIGHT) && canonJson(rowOf(NIGHT)) === canonJson(rowOf('')) && rowOf(NIGHT) !== rowOf('')
+            && restOf(NIGHT) === nightRest && canonJson(libRows(SC, '')) === snapBase
+            && history.undoStack.length === u0 + 1 && activePlacement() === rowOf(NIGHT) && S.libDirty,
+            { night: libRows(SC, NIGHT).map((r) => r.id), undo: history.undoStack.length - u0 });
+          ok('S18 after the copy the row says identical and both buttons grey out',
+            /这条一样/.test(phaseRow('').textContent) && copyBtn('', PID, 'push').disabled && copyBtn('', PID, 'pull').disabled, { row: phaseRow('').textContent });
+          ok('S18 the copied row\'s appearance goes into the edited scopes (save / game push carry it)',
+            !!(changedPlacementLibrary().scenes[SC] && changedPlacementLibrary().scenes[SC].variants && NIGHT in changedPlacementLibrary().scenes[SC].variants));
+          await ctrlZ();
+          ok('S18 Ctrl+Z undoes the per-placement copy in one step', canonJson(libRows(SC, NIGHT)) === nightBefore);
+          // 拷过去：那边没有这条 → 直接加上，不问
+          edit('自检基底删掉这条', () => { const a = rowsArr(SC, ''); a.splice(a.findIndex((r) => r.id === PID), 1); });
+          renderLeft();
+          ok('S18 when the other appearance lacks the row it says so: pull disabled, push enabled',
+            /没有这条/.test(phaseRow('').textContent) && copyBtn('', PID, 'pull').disabled && !copyBtn('', PID, 'push').disabled, { row: phaseRow('').textContent });
+          const u1 = history.undoStack.length;
+          copyBtn('', PID, 'push').click(); await wait(80);
+          ok('S18 "push" adds just this row there without a dialog; the rows already there untouched; selection stays here',
+            el('dialog').hidden && !!rowOf('') && canonJson(rowOf('')) === canonJson(activePlacement()) && restOf('') === baseRest
+            && history.undoStack.length === u1 + 1 && S.phase === NIGHT && activePlacement().id === PID,
+            { base: libRows(SC, '').map((r) => r.id) });
+          await ctrlZ(); await ctrlZ();                        // 撤掉拷过去、撤掉基底删行
+          // 这一份里还没有当前效果的布置：列出别的时段外观里它的布置，逐条拷过来
+          edit('自检夜里删掉这条', () => { const a = rowsArr(SC, NIGHT); a.splice(a.findIndex((r) => r.id === PID), 1); });
+          renderLeft();
+          ok('S18 with no placement of this effect here, its placements in the other appearance are listed, each with its own "pull" (no "push")',
+            !activePlacement() && !!copyBtn('', PID, 'pull') && !copyBtn('', PID, 'pull').disabled && !copyBtn('', PID, 'push'),
+            { row: phaseRow('') && phaseRow('').textContent });
+          const u2 = history.undoStack.length;
+          copyBtn('', PID, 'pull').click(); await wait(80);
+          ok('S18 pulling it adds that one row here without a dialog and selects it; other rows untouched',
+            el('dialog').hidden && !!rowOf(NIGHT) && canonJson(rowOf(NIGHT)) === canonJson(rowOf('')) && activePlacement() === rowOf(NIGHT)
+            && S.sel.key === 'anchor' && restOf(NIGHT) === nightRest && history.undoStack.length === u2 + 1,
+            { night: libRows(SC, NIGHT).map((r) => r.id), sel: S.sel.key });
+          await ctrlZ();
+          // 这边同 id 被别的效果占着：不许拷
+          edit('自检夜里同 id 是别的效果', () => { rowsArr(SC, NIGHT).push({ id: PID, effect: 'zz_other_effect', anchor: { x: 1, y: 2 } }); });
+          renderLeft();
+          ok('S18 a same-id row of another effect here blocks the pull (button disabled, says why)',
+            !activePlacement() && !!copyBtn('', PID, 'pull') && copyBtn('', PID, 'pull').disabled && /同 id 是/.test(phaseRow('').textContent),
+            { row: phaseRow('') && phaseRow('').textContent });
+          await ctrlZ(); await ctrlZ(); await ctrlZ();          // 撤掉占 id、撤掉夜里删行、撤掉改锚点
+          ok('S18 undoing back restores both appearances to how they were before this block',
+            canonJson(libRows(SC, '')) === snapBase && canonJson(libRows(SC, NIGHT)) === snapNight,
+            { base: libRows(SC, '').map((r) => r.id), night: libRows(SC, NIGHT).map((r) => r.id) });
+          select(`place:${PID}`);
+        }
         // ---- publish 体里带着整份工作态布置库与切时段请求
         const bodies = [];
         const origFetch = window.fetch;
@@ -1978,6 +2055,51 @@
                 }
                 for (let i = 0; i < 12 && history.undoStack.length > u19; i++) doUndo();
               }
+              // ---- #24 颜色×寿命（appearance.tintOverLife）：空 = 恒白；第一次加 = 两端白；插在最宽空档正中且画面不变；
+              //      改颜色 / 改 t 后按 t 重排、夹 0..1；删到最后一个 = 删键；每一步一条历史，全部撤回 = 原样
+              {
+                select(`emitter:${em0().id}`);
+                Inspector.open.appearance = true;
+                const ap24 = () => em0().appearance;
+                const before24 = JSON.stringify(ap24().tintOverLife === undefined ? null : ap24().tintOverLife);
+                const u24 = history.undoStack.length;
+                edit('自检 #24 清颜色曲线', () => { delete ap24().tintOverLife; });
+                renderInspector();
+                const q = (sel) => el('inspector').querySelector(sel);
+                const keyRow = (n) => [...el('inspector').querySelectorAll('.sec[data-sec="appearance"] .row')]
+                  .find((r) => r.firstElementChild && r.firstElementChild.textContent.trim() === `键 ${n}`);
+                const setInput = (inp, v) => { inp.value = String(v); inp.dispatchEvent(new Event('change', { bubbles: true })); };
+                if (!q('[data-role="tol-add"]') || !q('canvas[data-role="tol-bar"]')) log.push('FAIL S21 #24 no 颜色×寿命 editor under 乘色');
+                else {
+                  const white = JSON.stringify(q('canvas[data-role="tol-bar"]')._sample(0.3)) === JSON.stringify([1, 1, 1]);
+                  const h0 = history.undoStack.length;
+                  q('[data-role="tol-add"]').click();
+                  const seeded = JSON.stringify(ap24().tintOverLife) === JSON.stringify([[0, 1, 1, 1], [1, 1, 1, 1]]) && history.undoStack.length === h0 + 1;
+                  setInput(keyRow(2).querySelectorAll('input')[3], 0.2);            // 键 2（t=1）的 b → 0.2
+                  const recolored = JSON.stringify(ap24().tintOverLife[1]) === JSON.stringify([1, 1, 1, 0.2]);
+                  const mid0 = q('canvas[data-role="tol-bar"]')._sample(0.5);
+                  q('[data-role="tol-add"]').click();                                 // 插在 0..1 正中，颜色取插值 → 画面不变
+                  const k3 = ap24().tintOverLife;
+                  const inserted = k3.length === 3 && k3[1][0] === 0.5 && Math.abs(k3[1][3] - mid0[2]) < 1e-3
+                    && Math.abs(q('canvas[data-role="tol-bar"]')._sample(0.5)[2] - mid0[2]) < 1e-3;
+                  setInput(keyRow(1).querySelectorAll('input')[0], 0.8);            // 键 1 的 t 0 → 0.8：重排到中间
+                  const ts = ap24().tintOverLife.map((k) => k[0]);
+                  const resorted = JSON.stringify(ts) === JSON.stringify([0.5, 0.8, 1]);
+                  setInput(keyRow(1).querySelectorAll('input')[3], 7);              // 键 1 的 b 7 → 夹到 1；键 3 的 t -3 → 夹到 0
+                  setInput(keyRow(3).querySelectorAll('input')[0], -3);
+                  const clamped = ap24().tintOverLife.every((k) => k.every((x) => x >= 0 && x <= 1))
+                    && ap24().tintOverLife[0][0] === 0 && ap24().tintOverLife.every((k, i, a) => !i || a[i - 1][0] <= k[0]);
+                  const swatch = !!q('[data-role="tol-swatch:0"]');
+                  for (let i = 0; i < 6 && ap24().tintOverLife; i++) q('[data-role="tol-del:0"]').click();
+                  const gone = !('tintOverLife' in ap24());
+                  const steps = history.undoStack.length - h0;
+                  for (let i = 0; i < 20 && history.undoStack.length > u24; i++) doUndo();
+                  const restored = JSON.stringify(ap24().tintOverLife === undefined ? null : ap24().tintOverLife) === before24;
+                  ok('S21 #24 颜色×寿命: empty shows constant white; first add seeds white ends; add inserts at the widest gap without changing the look; edits re-sort by t and clamp to 0..1; deleting the last key removes the property; one history entry per step and undo restores the asset',
+                    white && seeded && recolored && inserted && resorted && clamped && swatch && gone && steps === 9 && restored,
+                    { white, seeded, recolored, inserted, resorted, clamped, swatch, gone, steps, restored });
+                }
+              }
               // ---- #20 方向键微移锚点：连按合成一次手势（一条历史、途中不重建预览），松键 / 停手 400 ms 收尾，吞掉按键不滚面板
               {
                 let ap20 = activePlacement();
@@ -2437,6 +2559,175 @@
                   for (let i = 0; i < 20 && history.undoStack.length > u0; i++) key('z', { ctrlKey: true });
                   renderInspector();
                 }
+                // ---- #4 跟着发射点走（motion.followAnchor）：运动模块里一行**页内**下拉；选「完全跟」= 一条历史写 "full"；
+                //      选「不跟」= 一条历史删键（运动模块因此空了连模块一起删，渲染不往 doc 里塞空容器）；群体 / 薄片没写时不出下拉
+                {
+                  const u0 = history.undoStack.length;
+                  setView(3); setTool('select');
+                  select(`emitter:${em0().id}`);
+                  Inspector.open.motion = true;
+                  edit('自检 S23 #4 普通粒子带运动', () => {
+                    delete em0().behavior; delete em0().plate; delete em0().subOnly;
+                    em0().simulation = S.rt.vfxProgram.newEmitterProgram('particle');
+                    em0().motion = { drag: 0.6 };
+                  });
+                  renderInspector(); await wait(30);
+                  const faSel = () => el('inspector').querySelector('select[data-role=followAnchor]');
+                  const naRow = () => el('inspector').querySelector('[data-role=followAnchor-na]');
+                  const pickVia = async (value) => {
+                    const s = faSel();
+                    if (!s) return false;
+                    const r = s.getBoundingClientRect();
+                    const cancelled = s.dispatchEvent(new MouseEvent('mousedown', {
+                      bubbles: true, cancelable: true, button: 0, buttons: 1,
+                      clientX: Math.round(r.left + r.width / 2), clientY: Math.round(r.top + r.height / 2),
+                    })) === false;
+                    const l = document.getElementById('ddlist');
+                    const idx = [...s.options].findIndex((o) => o.value === value);
+                    if (!cancelled || !l || idx < 0) { Dropdown.close(); return false; }
+                    l.children[idx].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+                    await wait(60);
+                    return !Dropdown.isOpen();
+                  };
+                  const s1 = faSel();
+                  const shownOk = !!s1 && s1.value === '' && [...s1.options].map((o) => o.value).join('|') === '|rig|full'
+                    && /不跟（缺省）/.test(s1.selectedOptions[0].textContent) && /跟动作、不跟走/.test(s1.options[1].textContent)
+                    && /完全跟/.test(s1.options[2].textContent) && /只有效果挂在手持挂件上/.test(s1.title) && /playPropVfx/.test(s1.title)
+                    && !!rowOf('跟着发射点走') && !naRow();
+                  const ua = history.undoStack.length;
+                  const fullOk = (await pickVia('full')) && em0().motion.followAnchor === 'full' && em0().motion.drag === 0.6
+                    && history.undoStack.length === ua + 1 && history.peekUndo() === '改跟着发射点走' && !!faSel() && faSel().value === 'full';
+                  const noneOk = (await pickVia('')) && !!em0().motion && !('followAnchor' in em0().motion) && em0().motion.drag === 0.6
+                    && history.undoStack.length === ua + 2 && !!faSel() && faSel().value === '';
+                  // 运动模块本来没有：看一眼不写 doc；选「跟动作、不跟走」在写入时补模块；选「不跟」删键，空模块一起删
+                  edit('自检 S23 #4 去运动模块', () => { delete em0().motion; });
+                  renderInspector(); await wait(30);
+                  const ub = history.undoStack.length;
+                  const readOnly = !('motion' in em0()) && !!faSel();
+                  const rigOk = (await pickVia('rig')) && JSON.stringify(em0().motion) === '{"followAnchor":"rig"}' && history.undoStack.length === ub + 1;
+                  const pruneOk = (await pickVia('')) && !('motion' in em0()) && history.undoStack.length === ub + 2;
+                  // 群体：没写 = 不出下拉，只一行灰字（title 说群体 / 薄片不吃）；写了 = 下拉照出 + 黄字提醒（好选「不跟」删掉）
+                  edit('自检 S23 #4 群体', () => {
+                    em0().simulation = S.rt.vfxProgram.newEmitterProgram('flock');
+                    em0().behavior = {
+                      cruise: 400, max: 700, maxAccel: 2600, minAltitude: 60, senseRadius: 120, separation: 30,
+                      accel: { separation: 2000, alignment: 800, cohesion: 600 }, orbit: { radius: 180, height: 170 },
+                      home: { nestRadius: 60, rangeRadius: 600, startleRadius: 300 },
+                      attitude: { fear: { 'player:motion': 0.5 } }, initialState: 'roosting',
+                    };
+                    em0().motion = { drag: 0.6 };
+                  });
+                  renderInspector(); await wait(30);
+                  const flockHidden = !faSel() && !!naRow() && /群体 \/ 薄片不吃 followAnchor，写了没用/.test(naRow().title);
+                  edit('自检 S23 #4 群体写了 full', () => { em0().motion.followAnchor = 'full'; });
+                  renderInspector(); await wait(30);
+                  const warnEl = el('inspector').querySelector('[data-role=followAnchor-warn]');
+                  const flockStale = !!faSel() && faSel().value === 'full' && !!warnEl && /写了没用/.test(warnEl.textContent) && !naRow();
+                  edit('自检 S23 #4 薄片', () => {
+                    delete em0().behavior; delete em0().motion;
+                    em0().plate = { size: [16, 16], terminalSpeed: 90 };
+                    em0().simulation = S.rt.vfxProgram.newEmitterProgram('plate');
+                  });
+                  renderInspector(); await wait(30);
+                  const plateHidden = !faSel() && !!naRow() && /薄片/.test(naRow().textContent);
+                  ok('S23 #4 跟着发射点走 is an in-page dropdown in 运动 (不跟 / 跟动作、不跟走 / 完全跟, title says rig only differs on a held prop); 完全跟 writes motion.followAnchor:"full" in one edit, 不跟 deletes the key in one edit (and an emptied motion module), rendering never adds a container; hidden for flock / plate unless already written (then shown with a warning)',
+                    shownOk && fullOk && noneOk && readOnly && rigOk && pruneOk && flockHidden && flockStale && plateHidden,
+                    { shownOk, fullOk, noneOk, readOnly, rigOk, pruneOk, flockHidden, flockStale, plateHidden, motion: em0().motion });
+                  for (let i = 0; i < 30 && history.undoStack.length > u0; i++) key('z', { ctrlKey: true });
+                  renderInspector();
+                }
+                // ---- #5 最远烧到多远（life.maxDistance）：寿命模块里一行数值框（空 = 不写，占位「不限」）；填数 = 一条历史写进去、
+                //      本地预览按新定义重建（跑的是打包进来的运行时 stepGeneric），强恒定风里这个发射器的粒子离原点不超过这个距离；
+                //      清空 / 填 ≤ 0 = 删键；没有寿命 / 群体 / 薄片没写时不出输入框，写了照出 + 黄字提醒
+                {
+                  const u0 = history.undoStack.length;
+                  setView(3); setTool('select');
+                  select(`emitter:${em0().id}`);
+                  Inspector.open.life = true;
+                  const ap5 = activePlacement();
+                  if (ap5 && (ap5.area || ap5.confine)) editPlacement(ap5.id, '自检 S23 #5 去区域', (r) => { delete r.area; delete r.confine; });
+                  const MAXSPD = 300;
+                  edit('自检 S23 #5 普通粒子 + 强风', () => {
+                    const e = em0();
+                    delete e.behavior; delete e.plate; delete e.subOnly; delete e.collision; delete e.offset;
+                    e.simulation = S.rt.vfxProgram.newEmitterProgram('particle');
+                    e.spawn = { max: 300, rate: 150 };
+                    e.motion = { wind: [1200, 0, 0], maxSpeed: MAXSPD };
+                    e.life = { seconds: [3, 3] };
+                  });
+                  renderInspector(); await wait(30);
+                  const mdInp = () => el('inspector').querySelector('input[data-role=maxDistance]');
+                  const mdNa = () => el('inspector').querySelector('[data-role=maxDistance-na]');
+                  const mdWarn = () => el('inspector').querySelector('[data-role=maxDistance-warn]');
+                  const commitMd = async (v) => { const i = mdInp(); if (!i) return false; i.value = v; i.dispatchEvent(new Event('change', { bubbles: true })); await wait(40); return true; };
+                  const simEm = () => S.sim && S.sim.emitters.find((x) => x.def.id === em0().id);
+                  const farthest = () => {
+                    const e = simEm(); if (!e) return { d: -1, n: 0 };
+                    let d = 0, n = 0;
+                    for (let i = 0; i < e.p.cap; i++) {
+                      if (!e.p.alive[i]) continue;
+                      n++; d = Math.max(d, Math.hypot(e.p.x[i] - e.origin[0], e.p.y[i] - e.origin[1], e.p.z[i] - e.origin[2]));
+                    }
+                    return { d, n };
+                  };
+                  const run = (sec) => { const o = simEm() && simEm().origin.slice(); for (let i = 0; i < Math.round(sec * 60); i++) stepSim(1 / 60); return !!o && JSON.stringify(o) === JSON.stringify(simEm().origin); };
+                  const i1 = mdInp(), row1 = rowOf('最远烧到多远');
+                  const shownOk = !!i1 && i1.value === '' && i1.placeholder === '不限' && /火星、烟不要写/.test(i1.title) && /按燃烧强度和风自动缩短/.test(i1.title)
+                    && !!row1 && /wu/.test(row1.textContent) && !mdNa() && !mdWarn() && !('maxDistance' in em0().life) && !S.simErr;
+                  const still0 = run(2.5);
+                  const free = farthest();
+                  const freeOk = still0 && free.n > 0 && free.d > 200;       // 不写：强风把粒子吹出去几百 wu
+                  const ua = history.undoStack.length, sim0 = S.sim;
+                  await commitMd('60');
+                  const e5 = simEm();
+                  const setOk = em0().life.maxDistance === 60 && JSON.stringify(Object.keys(em0().life)) === '["seconds","maxDistance"]'
+                    && history.undoStack.length === ua + 1 && history.peekUndo() === '改最远烧到多远'
+                    && S.sim !== sim0 && !!e5 && e5.def.life && e5.def.life.maxDistance === 60 && !!mdInp() && mdInp().value === '60';
+                  const still1 = run(2.5);
+                  const lim = farthest();
+                  // 死亡判定在挪位置之前：活着的最多比界线多走一个子步（速度上限 × 1/120 s）
+                  const limitOk = still1 && lim.n > 0 && lim.d <= 60 + MAXSPD / 120 + 1e-6;
+                  await commitMd('');
+                  const clearOk = !('maxDistance' in em0().life) && history.undoStack.length === ua + 2 && !!mdInp() && mdInp().value === '';
+                  await commitMd('-5');
+                  const nonPosOk = !('maxDistance' in em0().life) && history.undoStack.length === ua + 2;
+                  doUndo(); await wait(30);
+                  const undoOk = em0().life.maxDistance === 60 && !!simEm() && simEm().def.life.maxDistance === 60;
+                  // 没有 life.seconds（永生）：没写 = 灰字；群体：没写 = 灰字，写了 = 输入框照出 + 黄字；薄片：灰字
+                  edit('自检 S23 #5 永生', () => { em0().life = {}; });
+                  renderInspector(); await wait(30);
+                  const noLifeHidden = !mdInp() && !!mdNa() && /没有寿命 \/ 群体 \/ 薄片不吃 maxDistance，写了没用/.test(mdNa().title) && /life\.seconds/.test(mdNa().title);
+                  edit('自检 S23 #5 群体', () => {
+                    em0().simulation = S.rt.vfxProgram.newEmitterProgram('flock');
+                    em0().behavior = {
+                      cruise: 400, max: 700, maxAccel: 2600, minAltitude: 60, senseRadius: 120, separation: 30,
+                      accel: { separation: 2000, alignment: 800, cohesion: 600 }, orbit: { radius: 180, height: 170 },
+                      home: { nestRadius: 60, rangeRadius: 600, startleRadius: 300 },
+                      attitude: { fear: { 'player:motion': 0.5 } }, initialState: 'roosting',
+                    };
+                    em0().motion = { drag: 0.6 };
+                    em0().spawn = { max: 12 };
+                    em0().life = { seconds: [1, 2] };
+                  });
+                  renderInspector(); await wait(30);
+                  const flockHidden = !mdInp() && !!mdNa() && /这是群体发射器/.test(mdNa().title);
+                  edit('自检 S23 #5 群体写了 maxDistance', () => { em0().life.maxDistance = 40; });
+                  renderInspector(); await wait(30);
+                  const flockStale = !!mdInp() && mdInp().value === '40' && !!mdWarn() && /写了没用/.test(mdWarn().textContent) && !mdNa();
+                  edit('自检 S23 #5 薄片', () => {
+                    delete em0().behavior; delete em0().motion;
+                    em0().life = { seconds: [1, 2] };
+                    em0().plate = { size: [16, 16], terminalSpeed: 90 };
+                    em0().simulation = S.rt.vfxProgram.newEmitterProgram('plate');
+                  });
+                  renderInspector(); await wait(30);
+                  const plateHidden = !mdInp() && !!mdNa() && /薄片/.test(mdNa().textContent);
+                  ok('S23 #5 最远烧到多远 (life.maxDistance) is an optional number row in 寿命 (empty, placeholder 不限, the burn-out tooltip); typing 60 writes it after seconds in one edit and rebuilds the local sim with that def, whose particles then stay within 60 wu (+ one substep) of the origin under a strong constant wind (without it they fly > 200 wu); clearing / ≤ 0 deletes the key; hidden for immortal / flock / plate unless already written (then shown with a warning)',
+                    shownOk && freeOk && setOk && limitOk && clearOk && nonPosOk && undoOk && noLifeHidden && flockHidden && flockStale && plateHidden,
+                    { shownOk, freeOk, free: { d: R(free.d), n: free.n }, setOk, limitOk, lim: { d: R(lim.d * 100) / 100, n: lim.n }, clearOk, nonPosOk, undoOk, noLifeHidden, flockHidden, flockStale, plateHidden, err: S.simErr, life: em0().life });
+                  for (let i = 0; i < 40 && history.undoStack.length > u0; i++) key('z', { ctrlKey: true });
+                  renderInspector();
+                }
               }
             }
             // ---- #37 动画「状态 / 栖息状态」是下拉（候选 = 动画包的 states），打错的旧值保值显示（真资产只读打开，绝不存）
@@ -2466,7 +2757,7 @@
               await openEffect('incense_smoke', { force: true, keepScene: true });
               if (!S.extRefs.some((r) => r.kind === 'prop')) log.push('WARN S20 #38 skipped: no held prop uses incense_smoke in this checkout');
               else {
-                // 挂件 id 取自本检出的真实引用（where 形如「<id> · states.<s>.vfx」），不写死——预设改名不该让自检变红
+                // 挂件 id 取自本检出的真实引用（where 形如「<id> · states.<s>.particles[i]」），不写死——预设改名不该让自检变红
                 const propId = S.extRefs.find((r) => r.kind === 'prop').where.split(' · ')[0];
                 const panel = el('placeElsewhere').textContent;
                 ok('S20 #38 an effect used only by a held prop: the panel lists the prop reference and no longer says it never appears in game',
@@ -2493,6 +2784,305 @@
             }
           }
         }
+      }
+    }
+    // ------------------------------------------------------------------ S24 燃烧两字段（2026-09-16）：外部给点 external / 薄片绑可燃模板 burnable
+    // 运行时已落地：external 没给点就一颗都不发（工作台里没有燃烧系统 ⇒ 预览用假点代发，只在预览内存里）；
+    // plate.burnable = {template}：绑了面燃烧模板的纸碰火受热 → 着 → 焦黑 → 成灰永久没了（参数全取模板；火焰调试工具经
+    // VfxStepContext.fires 喂火焰段；模板表经打包的 resolveBurnable 当 burnTemplates 传进模拟）。
+    // 只写 zz_selftest_burn_* 临时效果；模板只读工程里的真模板（本台从不写 assets/data/burnables/），改模板的情形拦截 fetch 假造。
+    {
+      const until24 = async (fn, ms) => { const t0 = performance.now(); while (!fn() && performance.now() - t0 < (ms || 20000)) await wait(40); return fn(); };
+      if (!el('dialog').hidden) key('Escape');
+      await until24(() => !S.busy, 20000);
+      if (!S.cal || !S.rt) { const base = S.scenes.find((s) => s.depth); if (base) await loadScene(base.id, ''); }
+      const ins = () => el('inspector');
+      const q = (role) => ins().querySelector(`[data-role="${role}"]`);
+      const fire = (n, v) => { if (n.type === 'checkbox') n.checked = v; else n.value = String(v); n.dispatchEvent(new Event('change', { bubbles: true })); };
+      const settle = async () => { await wait(20); renderInspector(); await wait(20); };
+      const FIRE_ID = 'zz_selftest_burn_fire', PAPER_ID = 'zz_selftest_burn_paper';
+      // 上一轮自检中途退出留下的临时效果先删掉（带确认：临时效果不该被谁引用，万一有也照删）
+      for (const id of [PAPER_ID, FIRE_ID]) { await post('/api/delete', { id, withPlacements: true, confirmExternal: true }); tmp.push(id); }
+      // ---- 外部给点：检视器切形状 → 本地预览看得见（假点）→ jitter 空 = 删键 → 存盘往返
+      const cr = await post('/api/create', { id: FIRE_ID, sceneId: S.scene.id, background: S.scene.background, label: '自检 外部给点' });
+      await refreshEffects();
+      if (!cr.ok) log.push(`FAIL S24 create ${FIRE_ID} ${JSON.stringify(cr)}`);
+      else {
+        S.dirty = false; S.docDirty = false;
+        await openEffect(FIRE_ID, { force: true, keepScene: true });
+        select(`emitter:${em0().id}`); await settle();
+        const u0 = history.undoStack.length;
+        const shapeSel = q('spawnShape');
+        const hasOpt = !!shapeSel && [...shapeSel.options].some((o) => o.value === 'external' && /外部给点（燃烧系统）/.test(o.textContent));
+        fire(shapeSel, 'external'); await settle();
+        const sh = em0().spawn.shape;
+        const note = q('external-note');
+        ok('S24 #1 the spawn shape dropdown offers 「外部给点（燃烧系统）」; picking it writes exactly {kind:"external"} (no jitter default) in one undo step, shows the jitter row and the note (no external points in the workbench → preview fake points; the real thing in the burn workbench)',
+          hasOpt && JSON.stringify(sh) === '{"kind":"external"}' && history.undoStack.length === u0 + 1 && S.docDirty
+          && !!q('shape-jitter') && q('shape-jitter').value === '' && q('shape-jitter').placeholder === '1'
+          && !!note && /燃烧工作台/.test(note.textContent) && /预览用假点/.test(note.textContent),
+          { hasOpt, sh, undo: history.undoStack.length - u0, note: note && note.textContent });
+        // 运行时本体：不给点 = 一颗不发；工作台每帧交预览用假点（同一个 setSpawnPoints）= 看得见
+        rebuildSim();
+        for (let i = 0; i < 60; i++) S.sim.step(1 / 60, { fields: [], player: null, time: i / 60 });
+        const bare = S.sim.liveCount;
+        resetSim();
+        for (let i = 0; i < 60; i++) stepSim(1 / 60);
+        const a = anchorWorld();
+        let far = 0;
+        const e0r = S.sim.emitters[0];
+        for (let k = 0; k < e0r.p.cap; k++) if (e0r.p.alive[k] && Math.hypot(e0r.p.x[k] - a[0], e0r.p.y[k] - a[1], e0r.p.z[k] - a[2]) > EXT_PREVIEW_SPREAD_WU + EXT_PREVIEW_RADIUS_WU + 40) far++;
+        renderSimBar(); draw();
+        const marks = previewMarks().filter((m) => !m.top);
+        ok('S24 #2 without points the runtime sim spawns nothing; the workbench feeds preview-only fake points around the anchor every frame so particles show up there, marked 「预览用假点」 in the view and the sim bar',
+          bare === 0 && S.sim.liveCount > 0 && far === 0 && marks.length === EXT_PREVIEW_COUNT && marks[0].label === '预览用假点（外部给点）'
+          && /预览用假点/.test(el('simInfo').textContent),
+          { bare, live: S.sim.liveCount, far, marks: marks.length, info: el('simInfo').textContent });
+        fire(q('shape-jitter'), 0.5); await settle();
+        const j1 = em0().spawn.shape.jitter;
+        fire(q('shape-jitter'), ''); await settle();
+        const j2 = 'jitter' in em0().spawn.shape;
+        fire(q('shape-jitter'), 2); await settle();
+        await saveEffect();
+        const back = (await API.json(`/api/effect?id=${encodeURIComponent(FIRE_ID)}`)).doc;
+        ok('S24 #3 jitter: typing writes it, clearing deletes the key; save round-trips {kind:"external", jitter:2} exactly, clean, and no preview point ever reaches the file',
+          j1 === 0.5 && !j2 && !S.dirty && JSON.stringify(back.emitters[0].spawn.shape) === '{"kind":"external","jitter":2}'
+          && canonJson(back) === canonJson(S.doc) && !/spawnPoints|预览用假点/.test(JSON.stringify(back)),
+          { j1, j2, dirty: S.dirty, shape: back.emitters[0].spawn.shape });
+        await openEffect(FIRE_ID, { force: true, keepScene: true }); await settle();
+        ok('S24 #3 reopening shows the external shape and its jitter', !!q('spawnShape') && q('spawnShape').value === 'external' && q('shape-jitter').value === '2' && !S.dirty);
+      }
+      // ---- 可燃模板（plate.burnable = {template}）：模板表 == 打包的 resolveBurnable / 候选只含面燃烧模板 / 选中写、选空删 /
+      //      未知值与消耗燃烧保值展示并说原因 / 只读参数 / 旧 flammable 提示与删掉 / 存盘往返 / 打开燃烧工作台（拦截 fetch）/
+      //      窗口重新获得焦点重读、内容真变了才重建 / 火焰调试点着绑了面燃烧模板的纸、绑消耗燃烧的不着。
+      // 模板用工程里的真模板（只读；本台从不写 assets/data/burnables/），能绑的 / 消耗燃烧的各挑第一份
+      let bt = null;
+      try { bt = await API.json('/api/burnables'); } catch (e) { log.push(`FAIL S24 /api/burnables ${e && e.message}`); }
+      const spreadT = bt && bt.templates.find((r) => r.bindable);
+      const consumeT = bt && bt.templates.find((r) => r.mode === 'consume');
+      if (!spreadT || !consumeT) log.push(`FAIL S24 needs one bindable (spread) and one consume template in assets/data/burnables ${JSON.stringify(bt && bt.templates.map((r) => [r.id, r.mode, r.bindable]))}`);
+      const paperDoc = { id: PAPER_ID, label: '自检 可燃纸', emitters: [{
+        id: 'paper',
+        simulation: { solver: 'plate', spawnPlacement: 'surface', surfaceRadius: 30, initialVelocity: 'rest',
+          influences: { sceneWind: false, wind: false, airflow: false, stimulus: false, contact: false }, recycle: { mode: 'none' } },
+        appearance: { image: '/resources/runtime/images/vfx/dust.png', sizeWu: 16 },
+        spawn: { max: 60, burst: 60, shape: { kind: 'area', radius: 30 } },
+        plate: { size: [16, 16], terminalSpeed: 90 },
+      }] };
+      const sv = spreadT && consumeT ? await post('/api/save', { doc: paperDoc }) : { ok: false, err: 'no templates' };
+      await refreshEffects();
+      if (!sv.ok) log.push(`FAIL S24 save ${PAPER_ID} ${JSON.stringify(sv)}`);
+      else {
+        S.dirty = false; S.docDirty = false;
+        await openEffect(PAPER_ID, { force: true, keepScene: true });
+        select('emitter:paper'); await settle();
+        // #4 页面模板表：服务端每一份原始文档过**打包进来的** resolveBurnable(doc, id)，不在页面里另写清洗
+        const rt = S.rt.burnables;
+        const mapOk = S.burn.loaded && !S.burn.err && S.burn.map instanceof Map
+          && JSON.stringify(S.burn.rows.map((r) => r.id)) === JSON.stringify(bt.templates.map((r) => r.id))
+          && S.burn.rows.every((r) => {
+            const want = rt.resolveBurnable(r.doc, r.id);
+            return want ? S.burn.map.has(r.id) && canonJson(S.burn.map.get(r.id)) === canonJson(want) : !S.burn.map.has(r.id);
+          })
+          && S.burn.map.size === S.burn.rows.filter((r) => rt.resolveBurnable(r.doc, r.id)).length;
+        const rs = S.burn.map.get(spreadT.id), sum = spreadT.summary;
+        const P = S.rt.vfxPlateBurn.resolvePlateBurnParams(rs);
+        ok('S24 #4 the page template table is every /api/burnables doc passed through the bundled runtime resolveBurnable(doc, id) (nothing cleaned in page JS); the server summary agrees with the resolved template (ignition delay, flame length, opposed speed)',
+          mapOk && rs.mode === 'spread' && S.burn.map.get(consumeT.id) && S.burn.map.get(consumeT.id).mode === 'consume'
+          && rs.ignitionDelay === sum.ignitionDelay && rs.flameLengthCm === sum.flameLength && rs.speedOpposed === sum.speedOpposed
+          && P.template === spreadT.id && Math.abs(P.flameLenWu - sum.flameLength * 0.88) < 1e-9,
+          { mapOk, ids: S.burn.rows.map((r) => r.id), rs: rs && { ig: rs.ignitionDelay, fl: rs.flameLengthCm, vo: rs.speedOpposed }, sum });
+        // #5 选择器：候选只含能绑的（面燃烧）模板；选中写 plate.burnable = {template}、一次历史；只读参数（缺省灰显）；选空删键
+        const clean0 = canonJson(S.doc), u0 = history.undoStack.length;
+        const sel0 = q('burnable-template');
+        const optVals = sel0 ? [...sel0.options].map((o) => o.value) : [];
+        const wantVals = [''].concat(bt.templates.filter((r) => r.bindable).map((r) => r.id));
+        const offOk = !!sel0 && sel0.value === '' && JSON.stringify(optVals) === JSON.stringify(wantVals) && !optVals.includes(consumeT.id)
+          && !q('burn-sum:label') && !q('burnable-why') && !!q('burn-open') && canonJson(S.doc) === clean0 && !S.dirty;
+        fire(sel0, spreadT.id); await settle();
+        const setOk = JSON.stringify(em0().plate.burnable) === JSON.stringify({ template: spreadT.id }) && history.undoStack.length === u0 + 1 && S.docDirty;
+        const dflt = new Set(sum.defaulted || []);
+        const sumKeys = ['ignitionDelay', 'flameLength', 'speedOpposed', 'speedConcurrent'];
+        const sumOk = !!q('burn-sum:label') && q('burn-sum:label').textContent === (sum.label || spreadT.id)
+          && q('burn-sum:size').textContent.includes(String(sum.widthCm)) && q('burn-sum:size').textContent.includes(String(sum.heightCm))
+          && sumKeys.every((k) => q(`burn-sum:${k}`) && q(`burn-sum:${k}`).textContent.includes(String(sum[k])) && q(`burn-sum:${k}`).classList.contains('dim') === dflt.has(k))
+          && q('burn-sum:light').textContent === (sum.light ? '有' : '没有')
+          && (sum.particles.length ? sum.particles.every((p) => q('burn-sum:particles').textContent.includes(p)) : q('burn-sum:particles').textContent === '（没有）')
+          && !q('burnable-why') && q('burnable-template').value === spreadT.id;
+        const u1 = history.undoStack.length;
+        fire(q('burnable-template'), ''); await settle();
+        const emptyOk = !('burnable' in em0().plate) && history.undoStack.length === u1 + 1 && !q('burn-sum:label') && q('burnable-template').value === '';
+        ok('S24 #5 可燃模板 is a selector whose candidates are exactly the bindable (spread) templates from the server; picking one writes plate.burnable = {template} in one undo step and shows its key parameters read-only (defaults greyed); picking 不可燃 deletes the key in one step',
+          offOk && setOk && sumOk && emptyOk, { offOk, optVals, wantVals, setOk, burnable: em0().plate.burnable, sumOk, emptyOk });
+        // #6 当前值不在候选里：保值展示并说原因（不存在 / 消耗燃烧），渲染不改 doc；旧 flammable 一行提示 +「删掉」
+        const GHOST = 'zz_selftest_no_such_template';
+        edit('自检：绑不存在的模板', () => { em0().plate.burnable = { template: GHOST }; }); await settle();
+        const docG = canonJson(S.doc);
+        renderInspector(); await settle();
+        const sg = q('burnable-template');
+        const ghostOpt = sg ? [...sg.options].find((o) => o.value === GHOST) : null;
+        const ghostOk = !!sg && sg.value === GHOST && !!ghostOpt && /不存在/.test(ghostOpt.textContent)
+          && !!q('burnable-why') && q('burnable-why').textContent.includes(GHOST) && /不在/.test(q('burnable-why').textContent)
+          && canonJson(S.doc) === docG && !q('burn-sum:label');
+        edit('自检：绑消耗燃烧模板', () => { em0().plate.burnable = { template: consumeT.id }; }); await settle();
+        const docC = canonJson(S.doc);
+        renderInspector(); await settle();
+        const sc = q('burnable-template');
+        const cOpts = sc ? [...sc.options].filter((o) => o.value === consumeT.id) : [];
+        const consumeOk = !!sc && sc.value === consumeT.id && cOpts.length === 1 && /消耗燃烧/.test(cOpts[0].textContent)
+          && !!q('burnable-why') && q('burnable-why').textContent === consumeT.note && /消耗燃烧/.test(consumeT.note)
+          && !!q('burn-sum:label') && canonJson(S.doc) === docC;
+        edit('自检：残留旧可燃参数', () => { em0().plate.flammable = { burnSeconds: 3, fireEffect: 'x' }; }); await settle();
+        const legacy = q('flammable-legacy');
+        const legacyShown = !!legacy && legacy.textContent.includes('旧可燃参数已作废，运行时不读') && !!q('flammable-legacy-del');
+        const u2 = history.undoStack.length;
+        if (q('flammable-legacy-del')) q('flammable-legacy-del').click();
+        await settle();
+        const legacyGone = !('flammable' in em0().plate) && history.undoStack.length === u2 + 1 && !q('flammable-legacy')
+          && em0().plate.burnable.template === consumeT.id;
+        ok('S24 #6 a current value that is not a candidate is kept and shown with the reason (missing template → 不存在 / consume template → the gate sentence), rendering never touches the doc; a leftover plate.flammable shows 「旧可燃参数已作废，运行时不读」 and 删掉 deletes just that key in one step',
+          ghostOk && consumeOk && legacyShown && legacyGone,
+          { ghostOk, ghostOpt: ghostOpt && ghostOpt.textContent, why: q('burnable-why') && q('burnable-why').textContent, consumeOk, legacyShown, legacyGone });
+        // #7 存盘往返
+        fire(q('burnable-template'), spreadT.id); await settle();
+        await saveEffect();
+        const back = (await API.json(`/api/effect?id=${encodeURIComponent(PAPER_ID)}`)).doc;
+        ok('S24 #7 save round-trips plate.burnable = {template} exactly (last key of plate, nothing else added) and the page is clean',
+          !S.dirty && JSON.stringify(back.emitters[0].plate.burnable) === JSON.stringify({ template: spreadT.id })
+          && Object.keys(back.emitters[0].plate).pop() === 'burnable' && !('flammable' in back.emitters[0].plate) && canonJson(back) === canonJson(S.doc),
+          { dirty: S.dirty, plate: back.emitters[0].plate });
+        // #8 「打开燃烧工作台」打到 /api/open_burn_workbench（带当前模板 id）；自检拦截 fetch，不真起进程
+        const realFetch = window.fetch;
+        const openCalls = [];
+        window.fetch = (url, opts) => {
+          if (String(url).includes('/api/open_burn_workbench')) {
+            openCalls.push({ url: String(url), method: opts && opts.method, body: opts && opts.body ? JSON.parse(opts.body) : null });
+            return Promise.resolve(new Response(JSON.stringify({ ok: true, id: spreadT.id, message: '已另起燃烧工作台（自检拦截）' }),
+              { status: 200, headers: { 'Content-Type': 'application/json' } }));
+          }
+          return realFetch.call(window, url, opts);
+        };
+        try {
+          q('burn-open').click();
+          await until24(() => openCalls.length > 0 && /自检拦截/.test(el('status').textContent), 3000);
+        } finally { window.fetch = realFetch; }
+        ok('S24 #8 「打开燃烧工作台」 posts /api/open_burn_workbench with the current template id (intercepted, no process started) and says so in the status bar',
+          openCalls.length === 1 && openCalls[0].method === 'POST' && openCalls[0].body && openCalls[0].body.id === spreadT.id
+          && /自检拦截/.test(el('status').textContent), { openCalls, status: el('status').textContent });
+        // #9 窗口重新获得焦点：重读模板表；绑着的模板内容真变了才重建本地预览，没变 / 变的是没绑的模板都不重建
+        const IG = 7.25;
+        let mutate = null;
+        window.fetch = (url, opts) => {
+          if (mutate && String(url).includes('/api/burnables')) {
+            return realFetch.call(window, url, opts).then((r) => r.json()).then((j) => {
+              mutate(j);
+              return new Response(JSON.stringify(j), { status: 200, headers: { 'Content-Type': 'application/json' } });
+            });
+          }
+          return realFetch.call(window, url, opts);
+        };
+        let focusOk = {};
+        try {
+          const sim0 = S.sim;
+          mutate = null;
+          window.dispatchEvent(new Event('focus'));
+          await wait(300);
+          focusOk.same = S.sim === sim0;
+          mutate = (j) => { const r = j.templates.find((x) => x.id === consumeT.id); r.doc = Object.assign({}, r.doc, { ignitionDelay: IG }); };
+          window.dispatchEvent(new Event('focus'));
+          await until24(() => S.burn.map.get(consumeT.id).ignitionDelay === IG, 5000);
+          focusOk.unboundChanged = S.burn.map.get(consumeT.id).ignitionDelay === IG && S.sim === sim0;
+          mutate = (j) => {
+            for (const id of [consumeT.id, spreadT.id]) { const r = j.templates.find((x) => x.id === id); r.doc = Object.assign({}, r.doc, { ignitionDelay: IG }); }
+            // 服务端摘要也跟着那份文档（假设火焰长度没写、取缺省）：检视器的只读参数跟着重画、缺省那一项灰显
+            const r = j.templates.find((x) => x.id === spreadT.id);
+            r.summary = Object.assign({}, r.summary, { ignitionDelay: IG, defaulted: ['flameLength'] });
+          };
+          window.dispatchEvent(new Event('focus'));
+          await until24(() => S.sim !== sim0, 5000);
+          const sim1 = S.sim;
+          focusOk.boundRebuilt = sim1 !== sim0 && !!sim1 && sim1.emitters[0].burn && sim1.emitters[0].burn.P.ignitionDelay === IG
+            && S.burn.map.get(spreadT.id).ignitionDelay === IG;
+          await settle();
+          focusOk.inspectorFollows = !!q('burn-sum:ignitionDelay') && q('burn-sum:ignitionDelay').textContent.includes(String(IG))
+            && !q('burn-sum:ignitionDelay').classList.contains('dim') && q('burn-sum:flameLength').classList.contains('dim')
+            && /缺省/.test(q('burn-sum:flameLength').title);
+          window.dispatchEvent(new Event('focus'));
+          await wait(300);
+          focusOk.sameAgain = S.sim === sim1;
+          mutate = null;
+          window.dispatchEvent(new Event('focus'));
+          await until24(() => S.burn.map.get(spreadT.id).ignitionDelay === sum.ignitionDelay && S.sim !== sim1, 5000);
+          focusOk.restored = S.sim !== sim1 && S.sim.emitters[0].burn && S.sim.emitters[0].burn.P.ignitionDelay === sum.ignitionDelay && !S.dirty;
+        } finally { mutate = null; window.fetch = realFetch; }
+        ok('S24 #9 window focus re-reads the template table: unchanged → nothing rebuilt; a change to an unbound template swaps the table without rebuilding; a change to the bound template rebuilds the local preview with it and the read-only parameters follow (defaulted ones greyed); the doc stays clean',
+          focusOk.same && focusOk.unboundChanged && focusOk.boundRebuilt && focusOk.inspectorFollows && focusOk.sameAgain && focusOk.restored, focusOk);
+        // #10 火焰调试：I 武装（提示说绑的模板会着）→ 画布上点一下放火、清火；纸真的着 → 焦黑 → 成灰；绑消耗燃烧 / 不存在的模板不着、状态栏说清楚
+        resetSim();
+        for (let i = 0; i < 30; i++) stepSim(1 / 60);
+        const live0 = S.sim.liveCount;
+        for (let i = 0; i < 90; i++) stepSim(1 / 60);
+        const calm = burnStats();
+        const docBefore = canonJson(S.doc), histBefore = history.undoStack.length;
+        let placedByClick = false, armHint = '';
+        if (S.view === 3 && v3 && v3.ok) {
+          v3.fit(true); draw();
+          const pa = P3(anchorWorld());
+          key('i');
+          const armed = S.tool === 'fire';
+          armHint = el('status').textContent;
+          if (pa) { click(pa[0], pa[1]); placedByClick = armed && S.fires.length === 1 && S.tool === 'select'; }
+        } else { placedByClick = true; armHint = fireHint().text; }
+        el('btnClearFires').click();
+        const cleared = S.fires.length === 0;
+        host.addFireAt(anchorWorld());
+        const fireStatus = el('status').textContent;
+        const fireMark = previewMarks().some((m) => m.top && m.label === '调试火焰（只在预览里）');
+        let maxBurning = 0, sawLit = false, sawCharred = false;
+        for (let i = 0; i < 480; i++) {
+          stepSim(1 / 60);
+          const bs = burnStats();
+          maxBurning = Math.max(maxBurning, bs.burning);
+          if (i % 5 === 0) {
+            const groups = particlePoints();
+            if (groups.some((g) => g.burn === 'burning' && g.pts.length)) sawLit = true;
+            if (groups.some((g) => g.burn === 'charred' && g.pts.length)) sawCharred = true;
+          }
+        }
+        const after = burnStats();
+        renderSimBar();
+        ok('S24 #10 fire debug tool: I arms it and says the bound template will burn, a click on the canvas places one fire segment and returns to select, 清火 clears it; the fire is preview-only (doc, dirty state and history untouched) and is drawn as 「调试火焰」',
+          placedByClick && cleared && fireMark && canonJson(S.doc) === docBefore && !S.dirty && history.undoStack.length === histBefore
+          && armHint.includes('会着') && armHint.includes(spreadT.id) && fireStatus.includes('会着'),
+          { placedByClick, cleared, fireMark, dirty: S.dirty, armHint, fireStatus });
+        ok('S24 #10 fed through VfxStepContext.fires the runtime sim ignites paper bound to a spread template (its burn params come from that template), shows burning then charred plates, and burnt plates are gone for good (live count drops, sim bar counts them)',
+          live0 > 0 && calm.burning === 0 && calm.burnt === 0 && calm.flammable && calm.bound === 1 && S.sim.emitters[0].burn && S.sim.emitters[0].burn.P.template === spreadT.id
+          && maxBurning > 0 && sawLit && sawCharred && after.burnt > 0
+          && S.sim.liveCount <= live0 - after.burnt && /可燃 在烧 \d+ \/ 烧没 [1-9]/.test(el('simInfo').textContent),
+          { live0, calm, maxBurning, sawLit, sawCharred, after, live: S.sim.liveCount, info: el('simInfo').textContent });
+        // 绑消耗燃烧模板：运行时 plateBurnOf 不给燃烧态 ⇒ 放火也不着；火工具提示与状态栏说清楚是哪份、为什么
+        edit('自检：绑消耗燃烧模板', () => { em0().plate.burnable = { template: consumeT.id }; }); await settle();
+        resetSim();
+        for (let i = 0; i < 30; i++) stepSim(1 / 60);
+        host.addFireAt(anchorWorld());
+        const cStatus = el('status').textContent, cKind = el('status').className;
+        let cMax = 0;
+        for (let i = 0; i < 480; i++) { stepSim(1 / 60); cMax = Math.max(cMax, burnStats().burning); }
+        const cAfter = burnStats();
+        renderSimBar();
+        const cInfo = el('simInfo');
+        const consumeFireOk = S.sim.emitters[0].burn === null && !cAfter.flammable && cAfter.bound === 1 && cMax === 0 && cAfter.burnt === 0
+          && cStatus.includes(consumeT.id) && cStatus.includes('火焰点不着东西') && /warn/.test(cKind)
+          && cInfo.className === 'warn' && cInfo.textContent.includes('可燃薄片不可燃') && cInfo.textContent.includes(consumeT.id);
+        edit('自检：绑不存在的模板', () => { em0().plate.burnable = { template: GHOST }; }); await settle();
+        resetSim();
+        renderSimBar();
+        const gInfo = el('simInfo').textContent;
+        const ghostFireOk = S.sim.emitters[0].burn === null && gInfo.includes('可燃薄片不可燃') && gInfo.includes(GHOST) && fireHint().kind === 'warn';
+        ok('S24 #10 paper bound to a consume template (or a missing one) never ignites: no burn state in the runtime sim, the fire tool status and the sim bar name the template and why',
+          consumeFireOk && ghostFireOk, { consumeFireOk, cStatus, cKind, cMax, cAfter, info: cInfo.textContent, ghostFireOk, gInfo });
+        resetSim();
+        ok('S24 #10 reset clears the debug fire', S.fires.length === 0 && burnStats().burnt === 0);
       }
     }
   } catch (e) {

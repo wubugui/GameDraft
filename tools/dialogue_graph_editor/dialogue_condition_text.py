@@ -20,8 +20,16 @@ __all__ = [
     "case_verdict",
     "condition_expr_text",
     "condition_expr_verdict",
+    "burn_leaf_text",
+    "held_prop_leaf_text",
+    "prop_level_leaf_text",
     "shorten",
 ]
+
+#: `heldProp` 叶 `lock` 三档的人话（与 `lockPropState` 下拉同一套叫法）
+_HELD_PROP_LOCK_TEXT = {"lit": "锁定不灭", "unlit": "点不燃", "none": "没上锁"}
+#: `burn` 叶四个状态的人话（与条件编辑器下拉同一套叫法；源头 tools/editor/shared/burnables.BURN_STATE_LABELS）
+_BURN_STATE_TEXT = {"unburnt": "没点", "burning": "在烧", "out": "灭了", "burnt": "烧完"}
 
 #: 与游戏状态无关，永远命中（后续分支与 defaultNext 成死路）。
 ALWAYS = "always"
@@ -52,6 +60,86 @@ def _value_text(v: Any) -> str:
     if v is None:
         return "null"
     return str(v)
+
+
+def prop_level_leaf_text(expr: dict[str, Any]) -> str:
+    """`{propLevel, op?, value}` → 「挂件 xianteng_torch 等级 >= 2」。`op` 不写 = `>=`（与运行时同）。
+
+    图对话摘要与动作大纲的条件摘要（`action_structure.summarize_condition`）共用这一份。
+    """
+    raw = expr.get("propLevel")
+    pid = raw.strip() if isinstance(raw, str) else ""
+    op = expr.get("op")
+    op_text = op.strip() if isinstance(op, str) and op.strip() else ">="
+    return f"挂件 {pid or '?'} 等级 {op_text} {_value_text(expr.get('value'))}"
+
+
+def held_prop_leaf_text(expr: dict[str, Any]) -> str:
+    """`{heldProp, socket?, prop?, propState?, burning?, vitalityOp?+vitality?, fuelOp?+fuel?, effect?, lock?}` → 一行人话。
+
+    例：`玩家手上 xianteng_torch 燃着 火势<0.3`。没写的项不限，所以不出现；一项都没写 =
+    「手上拿着东西」（运行时：这个人身上挂着任何一件就为真）。
+    图对话摘要与动作大纲的条件摘要（`action_structure.summarize_condition`）共用这一份。
+    """
+    who_raw = expr.get("heldProp")
+    who = who_raw.strip() if isinstance(who_raw, str) else ""
+    who_text = "玩家" if who == "player" else (who or "?")
+    socket = expr.get("socket")
+    socket = socket.strip() if isinstance(socket, str) else ""
+    head = f"{who_text} {socket} 上" if socket else f"{who_text}手上"
+    parts: list[str] = []
+    prop = expr.get("prop")
+    if isinstance(prop, str) and prop.strip():
+        parts.append(prop.strip())
+    state = expr.get("propState")
+    if isinstance(state, str) and state.strip():
+        parts.append(f"状态={state.strip()}")
+    burning = expr.get("burning")
+    if isinstance(burning, bool):
+        parts.append("燃着" if burning else "没燃")
+    op = expr.get("vitalityOp")
+    if isinstance(op, str) and op.strip():
+        parts.append(f"火势{op.strip()}{_value_text(expr.get('vitality'))}")
+    elif "vitality" in expr:
+        parts.append(f"火势?{_value_text(expr.get('vitality'))}")
+    fop = expr.get("fuelOp")
+    if isinstance(fop, str) and fop.strip():
+        parts.append(f"燃料{fop.strip()}{_value_text(expr.get('fuel'))}")
+    elif "fuel" in expr:
+        parts.append(f"燃料?{_value_text(expr.get('fuel'))}")
+    effect = expr.get("effect")
+    if isinstance(effect, str) and effect.strip():
+        parts.append(f"带{effect.strip()}")
+    lock = expr.get("lock")
+    if isinstance(lock, str) and lock.strip():
+        parts.append(_HELD_PROP_LOCK_TEXT.get(lock.strip(), f"锁={lock.strip()}"))
+    if not parts:
+        return f"{head}拿着东西"
+    return " ".join([head, *parts])
+
+
+def burn_leaf_text(expr: dict[str, Any]) -> str:
+    """`{burn, burnSocket?, burnScene?, burnState}` → 一行人话。
+
+    - 没写 `burnSocket`：「可燃物 hs_paper 燃烧状态 = 在烧」（写了场景就是「场景/实体」；实体 = 热点 / NPC / 演出生成的对象）；
+    - 写了 `burnSocket`：「玩家 left_hand 上的可燃挂件 燃烧状态 = 在烧」（问这个人这个挂点上拿着的可燃挂件，`burnScene` 不读）。
+
+    图对话摘要与动作大纲的条件摘要（`action_structure.summarize_condition`）共用这一份。
+    """
+    eid = expr.get("burn")
+    eid = eid.strip() if isinstance(eid, str) else ""
+    state = expr.get("burnState")
+    state = state.strip() if isinstance(state, str) else ""
+    state_text = _BURN_STATE_TEXT.get(state, state or "?")
+    socket = expr.get("burnSocket")
+    socket = socket.strip() if isinstance(socket, str) else ""
+    if socket:
+        who = "玩家" if eid == "player" else (eid or "?")
+        return f"{who} {socket} 上的可燃挂件 燃烧状态 = {state_text}"
+    scene = expr.get("burnScene")
+    scene = scene.strip() if isinstance(scene, str) else ""
+    where = f"{scene}/{eid or '?'}" if scene else (eid or "?")
+    return f"可燃物 {where} 燃烧状态 = {state_text}"
 
 
 def condition_expr_text(expr: Any, depth: int = 0) -> str:
@@ -117,6 +205,12 @@ def condition_expr_text(expr: Any, depth: int = 0) -> str:
         return f"时段={expr['timePhase'].strip() or '?'}"
     if isinstance(expr.get("vfx"), str) and isinstance(expr.get("vfxState"), str):
         return f"效果「{expr['vfx'].strip() or '?'}」状态={expr['vfxState'].strip() or '?'}"
+    if isinstance(expr.get("heldProp"), str):
+        return held_prop_leaf_text(expr)
+    if isinstance(expr.get("propLevel"), str):
+        return prop_level_leaf_text(expr)
+    if isinstance(expr.get("burn"), str) and isinstance(expr.get("burnState"), str):
+        return burn_leaf_text(expr)
 
     return _compact(expr)
 
@@ -168,8 +262,8 @@ def _is_recognized_leaf(expr: dict[str, Any]) -> bool:
         and not has("narrative")
     ):
         return True
-    # isPlaneLeaf / isPostureLeaf / isTimePhaseLeaf
-    for key in ("plane", "posture", "timePhase"):
+    # isPlaneLeaf / isPostureLeaf / isTimePhaseLeaf / isHeldPropLeaf / isPropLevelLeaf（同一组排除项）
+    for key in ("plane", "posture", "timePhase", "heldProp", "propLevel"):
         if (
             isinstance(expr.get(key), str)
             and not flag_is_str
@@ -178,6 +272,16 @@ def _is_recognized_leaf(expr: dict[str, Any]) -> bool:
             and not has("narrative")
         ):
             return True
+    # isBurnLeaf（两键都得是字符串；同一组排除项）
+    if (
+        isinstance(expr.get("burn"), str)
+        and isinstance(expr.get("burnState"), str)
+        and not flag_is_str
+        and not has("quest")
+        and not has("scenario")
+        and not has("narrative")
+    ):
+        return True
     # isQuestLeaf
     if isinstance(expr.get("quest"), str) and not has("scenario"):
         return True
