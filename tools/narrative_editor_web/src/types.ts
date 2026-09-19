@@ -385,11 +385,94 @@ export interface StateXrefCardDef {
   waysOut: XrefListenerDef[];
   emits: XrefEmitterDef[];
   readers: XrefStateReadDef[];
+  /** 进了这一拍会去动谁（它调的）；旧宿主没有这栏 */
+  targets?: XrefTargetDef[];
   diagnostics: XrefDiagnosticDef[];
   wayInCount: number;
   wayOutCount: number;
   readerCount: number;
   emitCount: number;
+  targetCount?: number;
+}
+
+/**
+ * 「它调的」：状态动作指向的**世界里的一个东西**（过场 / 对话图 / 物品 / 说明卡 / 区域 / NPC…）。
+ * 判据是 json_lang 的内容 id 表；信号名、flag、状态名不算（它们是机制，不是要跳过去看的东西）。
+ * 跳法三选一：file(+anchors/pointer) 交宿主跳转引擎；navKind 走 navigate(kind,id)；refGraphId 画布定位。
+ */
+export interface XrefTargetDef {
+  universe: string;
+  kindLabel: string;
+  targetId: string;
+  label: string;
+  display: string;
+  actionType: string;
+  param: string;
+  sceneId: string;
+  sceneLabel: string;
+  where: string;
+  file: string;
+  pointer: string;
+  anchors: string[][];
+  navKind: string;
+  readonly: boolean;
+  note: string;
+  refCompositionId: string;
+  refElementId: string;
+  refGraphId: string;
+  hostPointer: string;
+  compositionId: string;
+  elementId: string;
+  graphId: string;
+  stateId: string;
+}
+
+/** 「推它的」：一条转移 × 一个让它走的来源（发射行原样带出 + 转移坐标） */
+export interface XrefPusherDef extends XrefEmitterDef {
+  transitionId: string;
+  fromState: string;
+  toState: string;
+  fromLabel: string;
+  toLabel: string;
+  trigger: string;
+  /** 来源是本图自己的状态动作（自推）：不是世界里的东西，界面单独标、排最后 */
+  selfGraph: boolean;
+  /** 来源是另一张叙事图的状态（派生广播 / 反应式条件读到）：画布定位 */
+  refGraphId: string;
+  refStateId: string;
+  refStateLabel: string;
+  /** 发射点落到世界里的哪个东西（区域 / 热点 / NPC / 对话图 / 叙事图 / 场景…）与那一下（进入时 / 停留时） */
+  subjectKindLabel: string;
+  subjectId: string;
+  subjectName: string;
+  sceneId: string;
+  sceneLabel: string;
+  moment: string;
+}
+
+/**
+ * 一张图的**编排全貌**：只列它与游戏里真实存在的东西之间的关联。
+ * 推它的 / 它管的 / 它调的，外加接它末态往下走的别的图。
+ */
+export interface GraphXrefCardDef {
+  graphId: string;
+  graphLabel: string;
+  compositionId: string;
+  compositionLabel: string;
+  elementId: string;
+  ownerType: string;
+  ownerId: string;
+  exists: boolean;
+  stateIds: string[];
+  stateLabels: Record<string, string>;
+  pushers: XrefPusherDef[];
+  readers: XrefStateReadDef[];
+  targets: XrefTargetDef[];
+  downstream: XrefListenerDef[];
+  pusherCount: number;
+  readerCount: number;
+  targetCount: number;
+  downstreamCount: number;
 }
 
 export interface SignalXrefIndexDef {
@@ -404,6 +487,8 @@ export interface SignalXrefIndexDef {
   };
   signals: SignalXrefCardDef[];
   states: StateXrefCardDef[];
+  /** 图维度（编排全貌）；旧宿主没有这栏 */
+  graphs?: GraphXrefCardDef[];
 }
 
 export interface AuthoringCatalogDef {
@@ -625,10 +710,16 @@ export type CanvasNode = Node<{
   label: string;
   subtitle: string;
   kind: 'state' | ElementKind | 'graphAnchor' | 'projectionAnchor' | 'transitionAnchor'
-    | 'editorGroupFrame' | 'wrapperGroupFrame';
+    | 'editorGroupFrame' | 'wrapperGroupFrame' | 'annotationNote';
   detail?: string;
+  /** 便签节点（kind === 'annotationNote'）：正文与底色，见 canvas/annotations.ts */
+  noteText?: string;
+  noteColor?: string;
   boundary?: 'entry' | 'exit' | 'entryExit';
   active?: boolean;
+  /** 状态节点的身份（图 id + 状态 id）：画布上的引用小标按它查表，见 canvas/refChips.tsx */
+  graphId?: string;
+  stateId?: string;
   /** 编辑器分组框（kind === 'editorGroupFrame'）专用视觉字段，见 canvas/editorGroups.ts */
   groupColor?: string;
   groupCollapsed?: boolean;
@@ -642,6 +733,9 @@ export type CanvasEdge = Edge<{
   label?: string;
   edgeKind: 'transition' | 'trigger' | 'read' | 'stateCommand';
   detail?: string;
+  /** 转移边的身份（图 id + 转移 id）：「推它的」小标按它查表，见 canvas/refChips.tsx */
+  graphId?: string;
+  transitionId?: string;
   /** 画布路由（display 层派生，见 canvas/edgeRouting.ts）：平行边错开量与自环标记，不进数据。 */
   route?: { offset: number; selfLoop: boolean };
 }>;

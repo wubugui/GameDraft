@@ -22,6 +22,7 @@
 - [过场步骤语义(parallel/镜头位/运镜/字幕推进)](runtime/mechanisms/cutscene-step-semantics.md) — 入场三态(就地开演/搬人/跨场景必落人);parallel 是 fork-join 组内无时序;匿名镜头位自动顶掉;运镜受相机夹紧约束、跳过快进到编排终姿;subtitleAutoAdvance 三态;typewriter 缺省按台词面分家
 - [日夜循环与 NPC 日程(时刻不自流逝 · 离场宽限集)](runtime/mechanisms/day-night-npc-schedule.md) — 时刻只由动作推进;phases 三级就近取用(实体→分组→种类缺省)且分组不套 NPC 的白日缺省;transition 决定 NPC 换班演不演离场;leaving/arriving 宽限集是"绝不当着玩家的面消失"的唯一实现,判定点只挂 NPC 不进 entityInPlane
 - [调试/编辑器偏好与「游戏↔编辑器活数据」的持久化范式](runtime/mechanisms/debug-ui-persistence.md) — 按内容性质分三档:调试/编辑器偏好落 editor_data;游戏↔编辑器的活数据交换也走 editor_data 但必须按"对讲机"设计(服务端版本号+writer+新鲜期);工程数据游戏侧一律不写。玩家设置不归本卡。localStorage 已彻底清退
+- [脱手演出会话（技能/天气这类跑在玩家背后的演出）](runtime/mechanisms/detached-performance-session.md) — runActionsDetached 开的是第二条时间线；任何系统都能强制打断，打断＝跳过演出+补齐结算+按账本归位
 - [dialogue:end 负载语义](runtime/mechanisms/dialogue-end-payload.md) — dialogue:end 带 source/willContinue/nestedInGraph;状态恢复只认最外层、只认恰好一次 willContinue=false 的最终 end
 - [对话图 owner 归属(四档优先级与注入点登记面)](runtime/mechanisms/dialogue-owner-origin.md) — ownerState 认谁当 owner 由唯一判定源按四档优先级裁;每条能开对话图的路径都必须显式线程化来源上下文,漏注入无红字、只是静默走 missingWrapperNext
 - [对话头像(立绘)运行时](runtime/mechanisms/dialogue-portrait-runtime.md) — 头像跟「装扮配置」走不跟实体走;跟随说话人要求这行的说话人实体解析得出来,UI 收到的 portrait 恒带 slug
@@ -62,6 +63,7 @@
 - [UI 组件层(窗体/按钮/滚动区)](runtime/mechanisms/ui-component-layer.md) — 面板不再各自手搭遮罩·标题栏·滚动·按钮,统一走 src/ui/components;重绘用 attach 不用 open、量高前必须摘 mask、行内点击必须消费
 - [UI 面板皮肤单一入口](runtime/mechanisms/ui-panel-skin.md) — 面板底/边只经 PanelSkin 的 createPanel(有木框)或 drawPanelBase(只有底+细边);拿木框皮肤调 drawPanelBase 会静默丢框;「暗角」实为一层均匀黑纱,暗底配色是连着它一起量的
 - [世界空间粒子 / 群体系统(效果资产 · 布置 · 刺激场)](runtime/mechanisms/vfx-system.md) — 一套粒子系统,群体(蝙蝠群)只是挂了行为模块的发射器;模拟只在 M-world/wu、地面走高度场、墙走深度壳 CPU 副本且壳是薄壳(遮挡物背后是空处);三件正交的东西(全局效果资产 / 按场景×时段外观分份的布置库 / 运行时刺激场),效果与布置唯一写者都是粒子工作台;表演态不入档;渲染一批一张网格、按水平纵深在实体之间分桶;着色 lit / tone / unlit 三条路与 NPC 同源;效果里还可以挂美术可控的光柱(体积光,3D 截面多边形视锥 / 2D 光带,逐像素一次解析求弦,不照角色、不进光照缓存)与挂在光柱里的尘埃
+- [世界暂停与游戏时钟](runtime/mechanisms/world-pause-and-game-clock.md) — 开面板/菜单=冻结整个游戏；演出时间一律吃 GameClock 而非 setTimeout，暂停期间原地不动
 - [zone 生命周期与上下文契约](runtime/mechanisms/zone-lifecycle-contracts.md) — 触发载体两路(进出即触发 / 按键才触发);zone 上下文按参数线程化(executeBatchInZoneContext),禁回退全局栈;位面重注册仅 Exploring
 
 ### 配方

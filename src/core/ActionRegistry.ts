@@ -13,6 +13,12 @@
 import { parsePositionRef } from '../utils/positionRef';
 import { resolveBurnableHost } from '../data/burnables';
 import type { ActionExecutor } from './ActionExecutor';
+import type { PerformanceSessionManager } from '../systems/performanceSession';
+import type { GameClock } from '../systems/gameClock';
+import {
+  ledgerTakeDuck, ledgerTakeEnvDim, ledgerTakeGust, ledgerTakeSfx,
+  ledgerTakeShake, ledgerTakeStrikeLight, ledgerTakeVfx,
+} from '../systems/performanceSession';
 import type { RuleOfferRegistry } from './RuleOfferRegistry';
 import type { EventBus } from './EventBus';
 import type { StringsProvider } from './StringsProvider';
@@ -26,6 +32,7 @@ import type { DayManager } from '../systems/DayManager';
 import type { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
 import type { ArchiveManager } from '../systems/ArchiveManager';
 import type { OverlaySfxCue } from '../data/overlayImages';
+import type { ThreatRank } from '../systems/HealthThreatSystem';
 import type { ClueManager } from '../systems/ClueManager';
 import type { SystemNoteManager } from '../systems/SystemNoteManager';
 import type { CutsceneManager } from '../systems/CutsceneManager';
@@ -182,10 +189,132 @@ function parseDurationMsParam(params: Record<string, unknown>, fallback: number)
  * 气泡 `duration`：正有限毫秒，无效回退 1500。
  * showEmote / showSpeechBubble / showEmoteAndWait / showSpeechBubbleAndWait 共用。
  */
+/**
+ * 颜色参数：`"#rrggbb"` / `"rrggbb"` / `0xrrggbb` 数字，三种都收。认不出来用 fallback。
+ * （作者在编辑器里手打的多半是 `#ffffff`，而 Pixi 吃的是数字。）
+ */
+function parseColorParam(raw: unknown, fallback: number): number {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return Math.max(0, Math.min(0xffffff, Math.trunc(raw)));
+  const s = String(raw ?? '').trim().replace(/^#/, '');
+  if (!/^[0-9a-fA-F]{6}$/.test(s)) return fallback;
+  return parseInt(s, 16);
+}
+
+/**
+ * 天色压暗的**后发接管**令牌。任何一次新的压暗（渐变或直给）都让在跑的渐变当场退场。
+ * 没有它就是两条渐变互相踩：各自记着自己出发时的 `from`，交替写值 ⇒ 画面抽搐，
+ * 且**先发的那条可能最后收尾**，把天色定在它的目标上。雷符可以反复放，这是必然场面。
+ */
+let sceneDimRampToken = 0;
+
+/**
+ * 作废所有在跑的天色渐变。
+ *
+ * 归位（脱手演出的账本释放）是**瞬间**写终值的，但在跑的渐变还攥着自己的目标——
+ * 不作废的话，归位写完几十毫秒内下一档就把天色又压回去，表现是"过场演到一半天忽然黑了"。
+ * 只在账本**真的插手**时调（作者自己把天色还回去了那条路不该打断人家的 2.6 秒放晴）。
+ */
+export function cancelSceneDimRamps(): void { sceneDimRampToken++; }
+
+/**
+ * 分档渐变压暗。**不是每帧一个值**：曝光每变一次整张光照缓存重烘一遍，
+ * 逐帧推会把稳态零光照计算彻底毁掉（见 [[scene-lighting]]）。这里固定 ~12 档，
+ * 250ms 的渐变就是 12 次重烘，肉眼已经连续。
+ */
+async function rampSceneDim(d: ActionRegistryDeps, target: number, fadeMs: number): Promise<void> {
+  const token = ++sceneDimRampToken;
+  const steps = 12;
+  const gap = Math.max(1, fadeMs / steps);
+  const from = d.getEnvDim();
+  for (let i = 1; i <= steps; i++) {
+    if (token !== sceneDimRampToken) return; // 已被后一次压暗接管
+    d.setEnvDim(from + (target - from) * (i / steps));
+    // 同 waitMs：渐变吃游戏时钟，暂停期间天色定住
+    if (i < steps) await d.gameClock.wait(gap);
+  }
+}
+
 function parseBubbleDurationParam(params: Record<string, unknown>, fallback = 1500): number {
   const raw = params.duration ?? fallback;
   const n = typeof raw === 'number' ? raw : Number(raw);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** {@link ActionRegistryDeps.strikeThreat} 的入参。语义逐项见 `strikeThreat` 动作的注册处。 */
+export interface StrikeThreatOptions {
+  rank?: ThreatRank;
+  maxDistance?: number;
+  fallback?: 'random' | 'none';
+  fallbackRadius?: number;
+  effect?: string;
+  /** 一组效果 id：每次随机挑一个（同一道具反复放，每道雷都不一样） */
+  effects?: string[];
+  effectHeight?: number;
+  lightIntensity?: number;
+  lightHeight?: number;
+  lightRange?: number;
+  lightKelvin?: number;
+  lightMs?: number;
+  removeTarget?: boolean;
+  seed?: number;
+  /** 与这道雷绑在一起的雷声（audio_config.sfx id）：放在**落点**上，每道雷各响一次。 */
+  sfx?: string;
+  /** 雷声的本处音量（覆盖素材级）。近处炸雷要压过其它一切，这里就是那个旋钮。 */
+  sfxVolume?: number;
+  /**
+   * 最多连劈几道（缺省 1）。
+   *
+   * ⚠ **每一道都独立走一遍完整规则**：现取玩家位置 → 挑周围威胁最高的鬼 → 没鬼就随机落点，
+   * 且本次已经劈过的靶子不再重复挑。所以三道雷落在三个不同的地方（可能收掉三个鬼）。
+   */
+  strikes?: number;
+  /** 第 2 道起每一道真的落下的概率；掷不中整条链就停（缺省 1） */
+  extraChance?: number;
+  /** 两道之间的间隔毫秒（缺省 220） */
+  gapMs?: number;
+  /** 间隔的随机抖动 ±毫秒（缺省 0） */
+  gapJitterMs?: number;
+  /** 每道雷自带的闪白强度 0..1（缺省 0 = 不闪，交给单独的 screenFlash 动作） */
+  flashAlpha?: number;
+  /** 每道雷自带闪白的时长毫秒（缺省 150） */
+  flashMs?: number;
+  /** 每道雷自带的震屏幅度（屏幕像素；缺省 0 = 不震） */
+  shakeAmplitude?: number;
+  /** 每道雷自带震屏的时长毫秒（缺省 700） */
+  shakeMs?: number;
+  /**
+   * 连劈的**中止判据**：每道雷之间问一次，返回 true 就不再往下劈。
+   *
+   * 脱手演出在两道雷的间隔里被打断时，`silent` 是进函数那一刻定死的、已经晚了；
+   * 没有这个判据，剩下的雷会接着落在过场上面。
+   */
+  abort?: () => boolean;
+  /**
+   * **静默结算**：只把靶子收掉，一点演出都不出（不放雷柱、不亮、不响、不闪、不震、不等间隔）。
+   *
+   * 脱手演出被打断时走这条：制作人 2026-09-19 定的是"打断＝跳过演出，**不是**取消技能"——
+   * 玩家放了符，鬼必须没；但那会儿多半已经切进过场或换了场景，再劈一道给谁看。
+   */
+  silent?: boolean;
+}
+
+/** 这一记雷的结果：打着了没、打的谁、落在哪（场景 wu）、真的劈下来几道。 */
+export interface StrikeThreatResult {
+  hit: boolean;
+  /** 第一道雷打中的威胁 id（一道都没打中鬼时为 null） */
+  threatId: string | null;
+  /** 本次连劈**逐道**打中的威胁 id（每道雷各挑各的靶子，所以可能不止一个） */
+  threatIds: string[];
+  /** 第一道雷的落点（场景 wu） */
+  x: number;
+  y: number;
+  bolts: number;
+  /** 本次放出的粒子实例 id：交给脱手演出的归位账本（Game 自己不认识会话） */
+  vfxIds: string[];
+  /** 本次起过的雷声 id（同上） */
+  sfxIds: string[];
+  /** 本次点过雷光（同上） */
+  lit: boolean;
 }
 
 export interface ActionRegistryDeps {
@@ -214,8 +343,16 @@ export interface ActionRegistryDeps {
    */
   setEntityShadowBindings: (target: string, bindings: EntityShadowBinding[]) => void;
   /** 世界空间粒子 / 群体（VfxSystem）：开 / 停 / 改群状态 / 发刺激场。位置一律画面点 + 离地高。 */
+  /** 脱手演出会话（`runActionsDetached` 的宿主）。见 systems/performanceSession.ts */
+  performanceSessions: PerformanceSessionManager;
+  /**
+   * 游戏时钟：**演出时间的唯一来源**。所有玩家看得见的等待都走它，
+   * 于是"开菜单世界停"对 `waitMs` 与各种渐变一并成立（见 systems/gameClock.ts）。
+   */
+  gameClock: GameClock;
   vfx: {
-    play: (opts: { instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number; restart?: boolean; oneShot?: boolean }) => void;
+    /** 返回实例 id：脱手演出要把自己放出来的实例记进归位账本 */
+    play: (opts: { instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number; restart?: boolean; oneShot?: boolean }) => string | null;
     stop: (instanceId: string) => void;
     setState: (instanceId: string, state: VfxFlockState) => void;
     emitField: (def: VfxFieldDef, sceneX: number, sceneY: number, h: number) => void;
@@ -306,6 +443,16 @@ export interface ActionRegistryDeps {
    * 存倍率而不是绝对强度，作者后续在编辑器里调那盏灯仍然有效。演出态、不入档。
    */
   fadeLight: (lightId: string, toScale: number, fadeMs: number) => void;
+  /** 满屏闪一下（雷、爆闪）。不限过场内。 */
+  screenFlash: (durationMs: number, color: number, alpha: number) => Promise<void>;
+  /** 震屏。amplitude 是**屏幕像素**，不随 zoom 变。 */
+  cameraShake: (amplitude: number, durationMs: number, frequency: number) => void;
+  /** 环境压暗（背景 + 角色 + 粒子同值）。1 = 原样。 */
+  setEnvDim: (scale: number) => void;
+  /** 当前压暗倍率（渐变要从此刻的值起步，否则连发两条会跳回 1 再压）。 */
+  getEnvDim: () => number;
+  /** 落雷：选靶 → 雷 → 靶消失。见 Game 的实现注释。 */
+  strikeThreat: (opts: StrikeThreatOptions) => Promise<StrikeThreatResult>;
   /** 运行时覆盖场景深度遮挡的 floor_offset（脚底衬底偏移，与 depthConfig 同语义） */
   setSceneDepthFloorOffset: (floorOffset: number) => void;
   /** 恢复为当前场景已加载的 depthConfig.floor_offset */
@@ -644,13 +791,42 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.ruleOfferRegistry.unregister(zctx.zoneId);
   }, []);
 
-  // 嵌套容器动作转发 zctx：zone 批里包一层 runActions/chooseAction/randomBranch 时，
-  // 内层 enableRuleOffers 等仍能拿到本 zone 上下文（与旧共享栈的继承语义一致）。
-  executor.register('runActions', async (p, zctx) => {
-    await executor.executeBatchAwait(actionListFromParam(p.actions), zctx);
+  // 嵌套容器动作转发 zctx 与 scope：zone 批里包一层 runActions/chooseAction/randomBranch 时，
+  // 内层 enableRuleOffers 等仍能拿到本 zone 上下文（与旧共享栈的继承语义一致）；
+  // scope 一并往下传，否则脱手批里套一层 runActions 就会**就地重新锁住玩家**。
+  executor.register('runActions', async (p, zctx, scope) => {
+    await executor.executeBatchAwait(actionListFromParam(p.actions), zctx, scope);
   }, ['actions']);
 
-  executor.register('chooseAction', async (p, zctx) => {
+  /**
+   * `runActionsDetached`：**脱手**执行一批动作——发车即返回，玩家当场就能继续走。
+   *
+   * 差别只有一条，但很致命：平常的动作批在 Exploring 时会把游戏切进 `ActionSequence`，
+   * 批里每条 `waitMs` 都是**玩家一动不能动**的等待。热区检视、对话前摇要的就是这个；
+   * 但一段「天色压暗 → 起风 → 远雷 → 一道惊雷」的背景演出前后近十秒，把人钉在原地
+   * 就成了事故。放进这个容器，整批（含嵌套容器）改走脱手作用域，玩家全程照常活动。
+   *
+   * - **不等**：本动作立即返回，批外后续动作不会等这一批跑完。要等就别用它。
+   * - **可叠**：反复触发就是几批并行跑，各自独立；互斥要各自的系统自己管
+   *   （如 `setSceneDim` 的渐变是后发接管）。
+   * - **会被取消**：死亡/读档 `cancelPending()` 之后剩下的动作不再执行（与普通批同）。
+   * - ⚠ **不进过场白名单**：脱手批会活过过场自己的执行窗口，过场压的动作黑名单
+   *   （禁改存档）到时已经弹掉了，等于给了条绕过去的路。
+   */
+  executor.register('runActionsDetached', (p, zctx) => {
+    const actions = actionListFromParam(p.actions);
+    if (actions.length === 0) return;
+    /**
+     * `id` = 这段演出的名字，也是**顶替**的依据：同名再放一次，前一段当场按打断收掉
+     * （制作人 2026-09-19 定：不叠加——两片雷云叠在一起没有表达价值，只会像 bug）。
+     * 不写就都叫 `detached`，于是任意两段脱手演出互相顶替；想让两段共存就各起各的名字。
+     */
+    const id = String(p.id ?? '').trim() || 'detached';
+    d.performanceSessions.start(id, actions, zctx);
+    // 故意不 return Promise：返回它就又变成"等它跑完"，这条动作就白写了。
+  }, ['id', 'actions']);
+
+  executor.register('chooseAction', async (p, zctx, scope) => {
     const gen = executor.getGeneration();
     const rawOptions = Array.isArray(p.options) ? p.options : [];
     const options = rawOptions
@@ -679,11 +855,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       }
     }
     if (gen !== executor.getGeneration() || picked === null || picked < 0 || picked >= options.length) return;
-    await executor.executeBatchAwait(options[picked].actions, zctx);
+    await executor.executeBatchAwait(options[picked].actions, zctx, scope);
   }, ['prompt', 'options', 'allowCancel']);
 
   /** r ∈ [0,1) 均匀采样；r > probability → aboveActions，否则 belowActions。probability 夹到 [0,1]。 */
-  executor.register('randomBranch', async (p, zctx) => {
+  executor.register('randomBranch', async (p, zctx, scope) => {
     const raw = p.probability;
     let threshold = typeof raw === 'number' ? raw : Number(raw);
     if (!Number.isFinite(threshold)) threshold = 0.5;
@@ -692,7 +868,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const above = r > threshold;
     const key = above ? 'aboveActions' : 'belowActions';
     const actions = actionListFromParam(p[key]);
-    await executor.executeBatchAwait(actions, zctx);
+    await executor.executeBatchAwait(actions, zctx, scope);
   }, ['probability', 'aboveActions', 'belowActions']);
 
   /**
@@ -701,11 +877,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    * `all/any/not`），求值经 `d.evaluateCondition` 走中央上下文工厂——不在这里另建上下文。
    * 不写 `condition` = 恒真（等价于 `runActions`）。
    */
-  executor.register('runActionsIf', async (p, zctx) => {
+  executor.register('runActionsIf', async (p, zctx, scope) => {
     const raw = p.condition;
     const expr = isParamObject(raw) ? (raw as unknown as ConditionExpr) : null;
     const key = d.evaluateCondition(expr) ? 'actions' : 'elseActions';
-    await executor.executeBatchAwait(actionListFromParam(p[key]), zctx);
+    await executor.executeBatchAwait(actionListFromParam(p[key]), zctx, scope);
   }, ['condition', 'actions', 'elseActions']);
 
   executor.register('setScenarioPhase', (p) => {
@@ -909,10 +1085,14 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     );
   }, ['id', 'fadeMs', 'volume']);
   executor.register('stopBgm', (p) => { void d.audioManager.stopBgm((p.fadeMs as number) ?? 1000); }, ['fadeMs']);
-  executor.register('playSfx', (p) => {
+  executor.register('playSfx', (p, _zctx, scope) => {
     const rawVol = p.volume;
     const vol = typeof rawVol === 'number' ? rawVol : Number(rawVol);
-    d.audioManager.playSfx(p.id as string, Number.isFinite(vol) ? vol : undefined);
+    const id = String(p.id ?? '').trim();
+    d.audioManager.playSfx(id, Number.isFinite(vol) ? vol : undefined);
+    // 脱手演出自己起的长音要记账：会话一收就掐掉，不让它响到过场/新场景里去。
+    // 只记自己起的——玩家踩出来的脚步声不在账上。
+    ledgerTakeSfx(scope?.session, id);
   }, ['id', 'volume']);
   // 抽空场景环境音（如崖墓"阴风"骤停制造"太安静"的诡异一拍）：留空 id 清掉全部环境层，
   // 传 id 只停指定一层。复用 AudioManager 既有 clear/removeAmbient，不扩 ActionRegistryDeps。
@@ -930,6 +1110,57 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const vol = typeof rawVol === 'number' ? rawVol : Number(rawVol);
     d.audioManager.addAmbient(p.id as string, Number.isFinite(vol) ? vol : undefined);
   }, ['id', 'volume']);
+
+  /**
+   * `duckAudio`：把背景层**临时**压下去，让这一段该听的东西浮出来（配 `restoreAudio` 抬回）。
+   *
+   * - 压的是**演出层**，不是玩家在设置页调的那四个档：那个进存档，动它等于替玩家改了偏好。
+   * - `bgm` / `ambient` / `sfx` / `voice` 各是 0..1 的倍率，只写要压的那几条；1 或不写 = 不压。
+   * - `id` 是这层的名字，`restoreAudio` 按它抬。同名可以叠几层（同一个道具连放两次），
+   *   一次 `restoreAudio` 只抬掉**最早**那层，后放的那次不受影响。
+   * - `holdMs` 是**兜底上限**：没人来抬时到点自己抬。缺省 20 秒。
+   *   ⚠ 它走**墙钟**，玩家开着面板发呆的时间也算在内（世界停了，这个计时不停）——
+   *   放在脱手演出里时留足余量。在脱手演出里它其实是多余的保险：会话的归位账本一定会抬；
+   *   真正靠它的是**普通批**里的 `duckAudio`（那里没有账本）。
+   */
+  executor.register('duckAudio', (p, _zctx, scope) => {
+    const name = String(p.id ?? '').trim() || 'duck';
+    const scale = (v: unknown): number | undefined => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return v === undefined || v === null || v === '' || !Number.isFinite(n) ? undefined : n;
+    };
+    d.audioManager.pushAudioDuck(
+      name,
+      {
+        ...(scale(p.bgm) !== undefined ? { bgm: scale(p.bgm) as number } : {}),
+        ...(scale(p.ambient) !== undefined ? { ambient: scale(p.ambient) as number } : {}),
+        ...(scale(p.sfx) !== undefined ? { sfx: scale(p.sfx) as number } : {}),
+        ...(scale(p.voice) !== undefined ? { voice: scale(p.voice) as number } : {}),
+      },
+      scale(p.holdMs) ?? 20000,
+      scale(p.fadeMs) ?? 0,
+    );
+    ledgerTakeDuck(scope?.session, name);
+  }, ['id', 'bgm', 'ambient', 'sfx', 'voice', 'fadeMs', 'holdMs']);
+
+  /**
+   * `restoreAudio`：抬掉 `duckAudio` 压的那层，**原样**还回演出之前的响度
+   * （还的是闪避倍率，玩家偏好从头到尾没被碰过，所以"还原"是精确的，不是靠记一份快照猜）。
+   *
+   * `stopSfx` 另给一份**逗号分隔**的音效 id：把这段演出自己起的、可能还在响的长音
+   * （酝酿的闷雷、风声）当场掐掉。不写就只抬闪避、不掐任何声音。
+   */
+  executor.register('restoreAudio', (p) => {
+    const name = String(p.id ?? '').trim() || 'duck';
+    const fadeRaw = Number(p.fadeMs);
+    d.audioManager.releaseAudioDuck(name, Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0);
+    const list = Array.isArray(p.stopSfx) ? p.stopSfx
+      : (typeof p.stopSfx === 'string' ? p.stopSfx.split(',') : []);
+    for (const raw of list) {
+      const id = String(raw).trim();
+      if (id) d.audioManager.stopSfxById(id);
+    }
+  }, ['id', 'fadeMs', 'stopSfx']);
   // 必须 return：endDay 含到期延迟事件批 + day:start，批内后续动作要等整段落地（严格顺序）。
   executor.register('endDay', () => d.dayManager.endDay(), []);
 
@@ -1159,10 +1390,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
   executor.register('setRetryCheckpoint', (p) => {
     d.retrySystem.requestCheckpoint(String(p.id ?? ''), String(p.label ?? ''));
   }, ['id', 'label']);
-  executor.register('sceneWindGust', (p) => {
+  executor.register('sceneWindGust', (p, _zctx, scope) => {
     const errors = windGustErrors(p);
     if (errors.length) { console.warn('sceneWindGust:', errors.join('; ')); return; }
     const finished = d.sceneWind.startGust(p as unknown as WindGustDef);
+    ledgerTakeGust(scope?.session);
     if (p.wait === true) return finished;
   }, ['speedMultiplier', 'durationMs', 'attackMs', 'releaseMs', 'id', 'volume', 'wait']);
   executor.register('lockHealth', (p) => {
@@ -1624,6 +1856,141 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0,
     );
   }, ['lightId', 'scale', 'fadeMs']);
+
+  /**
+   * `screenFlash`：满屏闪一下再淡掉。缺省惨白全不透明（雷）；`color` 是 24 位整数或 `#rrggbb`。
+   * `wait: true` 时 await 到淡完（闪白之后才出字的编排要用）。
+   */
+  executor.register('screenFlash', (p) => {
+    const durationMs = parseDurationMsParam(p, 220);
+    const alphaRaw = Number(p.alpha);
+    const alpha = Number.isFinite(alphaRaw) ? Math.max(0, Math.min(1, alphaRaw)) : 1;
+    const color = parseColorParam(p.color, 0xffffff);
+    const done = d.screenFlash(durationMs, color, alpha);
+    if (p.wait === true) return done;
+    void done.catch(() => {});
+    return;
+  }, ['durationMs', 'color', 'alpha', 'wait']);
+
+  /**
+   * `cameraShake`：震屏。`amplitude` 是**屏幕像素**（标准视口 1024×768 下），不随 zoom 变强变弱。
+   * 后发的接管、不叠加；`durationMs` 到点必然归零。`wait` 不提供——震屏是伴奏，
+   * 挡住后面的编排没有意义（要等就在后面排一条 `waitMs`）。
+   */
+  executor.register('cameraShake', (p, _zctx, scope) => {
+    const amplitude = Number(p.amplitude);
+    if (!Number.isFinite(amplitude) || amplitude < 0) {
+      console.warn('cameraShake: amplitude 须为 ≥0 的数值');
+      return;
+    }
+    const frequencyRaw = Number(p.frequency);
+    d.cameraShake(
+      amplitude,
+      parseDurationMsParam(p, 450),
+      Number.isFinite(frequencyRaw) && frequencyRaw > 0 ? frequencyRaw : 18,
+    );
+    ledgerTakeShake(scope?.session);
+  }, ['amplitude', 'durationMs', 'frequency']);
+
+  /**
+   * `setSceneDim`：把这一刻的天色压暗（1 = 原样，0.35 = 压到三成半）。背景、角色、粒子同一个值。
+   *
+   * ⚠ 压暗**只是低亮度**，不等于"天变了"：这张原画里没有发光体，压多暗都还是"光线不好的白天"。
+   * 变天的说服力来自云、雷光和发光体，压暗是给它们垫底的，别单靠它。
+   *
+   * `fadeMs` 给了就分档渐变（内部限速，不是每帧一个值——灯/曝光每变一次整张光照缓存重烘）；
+   * `wait: true` 时 await 到渐变走完。切场景自动归 1。
+   */
+  executor.register('setSceneDim', (p, _zctx, scope) => {
+    const raw = Number(p.scale);
+    if (!Number.isFinite(raw)) { console.warn('setSceneDim: scale 须为 0..1 的数值'); return; }
+    const target = Math.max(0, Math.min(1, raw));
+    // 记账：第一次压暗前的天色就是归位时要还回去的那个值（不是某个写死的缺省——
+    // 夜里 / 别的演出压过的场景，"1"是错的）
+    ledgerTakeEnvDim(scope?.session, d.getEnvDim(), target);
+    const fadeMs = Number(p.fadeMs);
+    // 直给也要抢令牌，否则在跑的渐变下一档就把这个值盖回去。
+    if (!Number.isFinite(fadeMs) || fadeMs <= 0) { sceneDimRampToken++; d.setEnvDim(target); return; }
+    const done = rampSceneDim(d, target, fadeMs);
+    if (p.wait === true) return done;
+    void done.catch(() => {});
+    return;
+  }, ['scale', 'fadeMs', 'wait']);
+
+  /**
+   * `strikeThreat`：挑一个鬼，一道雷劈下去，它就没了。
+   *
+   * - **选谁**：`rank` = `threat`（缺省，最凶的；同分挑近的）或 `distance`（最近的；同距挑凶的）。
+   *   连劈多道时**每道各挑各的**（挑过的不再挑），所以几道雷落点不同、可能收掉好几个鬼。
+   *   "凶" 取威胁定义上的**峰值**攻击力（近身档优先）——不是"此刻正在造成的伤害"，
+   *   因为玩家手上有火时普通鬼一律被逼退、那个值恒为 0，夜里举着火把用符会一个靶都挑不出来。
+   *   `maxDistance` 限定搜索半径（场景 wu），不给 = 不限。
+   * - **挑不到**：`fallback` = `random`（缺省）在玩家周围随机找个地方照劈；`none` = 整件事不发生。
+   *   `fallbackRadius` 缺省 320 wu。给 `seed` 则落点完全确定（无头复现用），不给才真随机。
+   * - **雷长什么样**：`effect` = 粒子效果 id，或 `effects` = 一组 id（**每次随机挑一道**，
+   *   同一个道具反复放不会每次都是同一张图；给了 `seed` 则连挑哪道都确定）；
+   *   `lightIntensity` > 0 时另加一盏运行时强光照亮整片（`lightHeight` / `lightRange` / `lightKelvin` /
+   *   `lightMs` 调它）。两者都不给也合法——那就是"无声无光地把鬼收了"。
+   * - **靶子怎么没的**：走 `persistNpcEntityEnabled` / `persistHotspotEnabled` 同一条通道（持久）。
+   *   `removeTarget: false` 则只演不收。
+   *
+   * 闪白与震屏是另外两条动作，由作者自己排时机（雷光先亮、半拍后才到声和震，是"远近"的表达）。
+   * ⚠ 本动作**写存档**，故不在过场白名单内。
+   */
+  executor.register('strikeThreat', (p, _zctx, scope) => {
+    const rank = p.rank === 'distance' ? 'distance' : p.rank === 'threat' ? 'threat' : undefined;
+    const fallback = p.fallback === 'none' ? 'none' : p.fallback === 'random' ? 'random' : undefined;
+    const num = (v: unknown): number | undefined => {
+      const n = Number(v);
+      return v === undefined || v === null || v === '' || !Number.isFinite(n) ? undefined : n;
+    };
+    const effect = String(p.effect ?? '').trim();
+    // effects：一组效果 id，每次随机挑一道。数组或逗号分隔的串都收（编辑器里手打逗号最省事）
+    const effectsRaw = Array.isArray(p.effects) ? p.effects
+      : (typeof p.effects === 'string' ? p.effects.split(',') : []);
+    const effects = effectsRaw.map((e) => String(e).trim()).filter(Boolean);
+    const done = d.strikeThreat({
+      ...(rank ? { rank } : {}),
+      ...(fallback ? { fallback } : {}),
+      ...(effect ? { effect } : {}),
+      ...(effects.length ? { effects } : {}),
+      ...(num(p.maxDistance) !== undefined ? { maxDistance: num(p.maxDistance) as number } : {}),
+      ...(num(p.fallbackRadius) !== undefined ? { fallbackRadius: num(p.fallbackRadius) as number } : {}),
+      ...(num(p.effectHeight) !== undefined ? { effectHeight: num(p.effectHeight) as number } : {}),
+      ...(num(p.lightIntensity) !== undefined ? { lightIntensity: num(p.lightIntensity) as number } : {}),
+      ...(num(p.lightHeight) !== undefined ? { lightHeight: num(p.lightHeight) as number } : {}),
+      ...(num(p.lightRange) !== undefined ? { lightRange: num(p.lightRange) as number } : {}),
+      ...(num(p.lightKelvin) !== undefined ? { lightKelvin: num(p.lightKelvin) as number } : {}),
+      ...(num(p.lightMs) !== undefined ? { lightMs: num(p.lightMs) as number } : {}),
+      ...(num(p.seed) !== undefined ? { seed: num(p.seed) as number } : {}),
+      ...(String(p.sfx ?? '').trim() ? { sfx: String(p.sfx).trim() } : {}),
+      ...(num(p.sfxVolume) !== undefined ? { sfxVolume: num(p.sfxVolume) as number } : {}),
+      ...(num(p.strikes) !== undefined ? { strikes: num(p.strikes) as number } : {}),
+      ...(num(p.extraChance) !== undefined ? { extraChance: num(p.extraChance) as number } : {}),
+      ...(num(p.gapMs) !== undefined ? { gapMs: num(p.gapMs) as number } : {}),
+      ...(num(p.gapJitterMs) !== undefined ? { gapJitterMs: num(p.gapJitterMs) as number } : {}),
+      ...(num(p.flashAlpha) !== undefined ? { flashAlpha: num(p.flashAlpha) as number } : {}),
+      ...(num(p.flashMs) !== undefined ? { flashMs: num(p.flashMs) as number } : {}),
+      ...(num(p.shakeAmplitude) !== undefined ? { shakeAmplitude: num(p.shakeAmplitude) as number } : {}),
+      ...(num(p.shakeMs) !== undefined ? { shakeMs: num(p.shakeMs) as number } : {}),
+      ...(scope?.session?.hurried ? { silent: true } : {}),
+      // 连劈的间隔里才被打断时：`silent` 已经晚了，靠这个判据把剩下的雷掐掉
+      ...(scope?.session ? { abort: () => scope.session?.hurried === true } : {}),
+      ...(p.removeTarget === undefined ? {} : { removeTarget: parseLooseBooleanParam(p.removeTarget) !== false }),
+    });
+    void done.catch((e) => { console.warn('ActionRegistry: strikeThreat failed', e); });
+    // 演出资源进归位账本。⚠ 这里**不能 await**：打断时的同步补跑等不起一个微任务，
+    // 所以登记挂在 then 上；静默档下这三样本来就是空的，登记与否都一样。
+    void done.then((r) => {
+      for (const id of r.vfxIds) ledgerTakeVfx(scope?.session, id);
+      for (const id of r.sfxIds) ledgerTakeSfx(scope?.session, id);
+      if (r.lit) ledgerTakeStrikeLight(scope?.session);
+    }).catch(() => { /* 上面那条已经报过 */ });
+    return done.then(() => undefined);
+  }, ['rank', 'maxDistance', 'fallback', 'fallbackRadius', 'effect', 'effects', 'effectHeight',
+    'lightIntensity', 'lightHeight', 'lightRange', 'lightKelvin', 'lightMs', 'removeTarget', 'seed',
+    'sfx', 'sfxVolume', 'strikes', 'extraChance', 'gapMs', 'gapJitterMs',
+    'flashAlpha', 'flashMs', 'shakeAmplitude', 'shakeMs']);
 
   executor.register('openShop', (p) => {
     d.stateController.setState(GameState.UIOverlay);
@@ -2165,7 +2532,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    * `playVfx`：开一处布置（`instanceId`，当前场景当前时段外观里在场的那条；被 stopVfx 停过的重开；条件不满足仍不开），
    * 或现场生成一个临时实例（`effect` + 位置；不在布置库里，切场景即散）。
    */
-  executor.register('playVfx', async (p) => {
+  executor.register('playVfx', async (p, _zctx, scope) => {
     const instanceId = String(p.instanceId ?? '').trim();
     if (instanceId) { d.vfx.play({ instanceId, restart: p.restart === true }); return; }
     const effect = String(p.effect ?? '').trim();
@@ -2173,13 +2540,14 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const at = await resolveVfxAt(p, 'playVfx');
     if (!at) return;
     const surface = p.surface === 'shell' ? 'shell' : 'ground';
-    d.vfx.play({
+    const vid = d.vfx.play({
       effect,
       anchor: { x: at.x, y: at.y, h: at.h, surface },
       seed: Number.isFinite(Number(p.seed)) ? Number(p.seed) : undefined,
       countScale: Number.isFinite(Number(p.countScale)) ? Number(p.countScale) : undefined,
       oneShot: p.oneShot === true,
     });
+    ledgerTakeVfx(scope?.session, vid);
   }, ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale', 'restart', 'oneShot']);
   /** `stopVfx`：停一个实例（在飞的粒子自然老化；永生的群整批清掉；临时实例直接移除）。 */
   executor.register('stopVfx', (p) => {
@@ -2386,11 +2754,17 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     return d.playScriptedDialogue(lines);
   }, ['lines', 'layout']);
 
+  /**
+   * `waitMs`：等一段**游戏时间**。
+   *
+   * ⚠ 走游戏时钟不是墙钟：世界暂停（开面板 / 菜单 / 说明卡 / 死亡 / 切场景遮罩）时这段等待
+   * **原地不动**。从前用 `setTimeout`，于是玩家翻个背包出来会发现演出已经在背后播完了。
+   */
   executor.register('waitMs', async (p) => {
     const durRaw = p.durationMs ?? 600;
     const durationMs = typeof durRaw === 'number' ? durRaw : Number(durRaw);
     const ms = Number.isFinite(durationMs) && durationMs >= 0 ? durationMs : 0;
-    if (ms > 0) await new Promise<void>(resolve => setTimeout(resolve, ms));
+    if (ms > 0) await d.gameClock.wait(ms);
   }, ['durationMs']);
 
   // ----------------------------------------------------------------

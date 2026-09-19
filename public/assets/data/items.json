@@ -119,6 +119,206 @@
     ]
   },
   {
+    "id": "leifu",
+    "name": "雷符",
+    "type": "consumable",
+    "description": "不晓得哪个塞进包头的一张符。黄纸发脆，朱砂画的道道歪歪扭扭，一个字都不认得。捏在手上是凉的，像刚从井水头捞起来。",
+    "maxStack": 5,
+    "tags": [
+      "辟邪"
+    ],
+    "use": {
+      "label": "掐诀，掷出去",
+      "consume": true,
+      "actions": [
+        {
+          "type": "runActionsDetached",
+          "params": {
+            "id": "leifu",
+            "actions": [
+              {
+                "type": "duckAudio",
+                "params": {
+                  "ambient": 0.08,
+                  "bgm": 0.05,
+                  "fadeMs": 900,
+                  "holdMs": 60000,
+                  "id": "leifu"
+                }
+              },
+              {
+                "type": "playSfx",
+                "params": {
+                  "id": "sfx_storm_brew",
+                  "volume": 0.5
+                }
+              },
+              {
+                "type": "setSceneDim",
+                "params": {
+                  "fadeMs": 1400,
+                  "scale": 0.62
+                }
+              },
+              {
+                "type": "playVfx",
+                "params": {
+                  "at": {
+                    "kind": "entity",
+                    "id": "player"
+                  },
+                  "effect": "storm_clouds",
+                  "oneShot": true
+                }
+              },
+              {
+                "type": "waitMs",
+                "params": {
+                  "durationMs": 1800
+                }
+              },
+              {
+                "type": "setSceneDim",
+                "params": {
+                  "fadeMs": 1600,
+                  "scale": 0.38
+                }
+              },
+              {
+                "type": "playSfx",
+                "params": {
+                  "id": "sfx_thunder_rumble",
+                  "volume": 0.45
+                }
+              },
+              {
+                "type": "waitMs",
+                "params": {
+                  "durationMs": 1400
+                }
+              },
+              {
+                "type": "sceneWindGust",
+                "params": {
+                  "attackMs": 900,
+                  "durationMs": 7000,
+                  "releaseMs": 2200,
+                  "speedMultiplier": 3.4
+                }
+              },
+              {
+                "type": "playSfx",
+                "params": {
+                  "id": "sfx_wind_gust",
+                  "volume": 0.6
+                }
+              },
+              {
+                "type": "waitMs",
+                "params": {
+                  "durationMs": 2200
+                }
+              },
+              {
+                "type": "playSfx",
+                "params": {
+                  "id": "sfx_thunder_near",
+                  "volume": 0.65
+                }
+              },
+              {
+                "type": "screenFlash",
+                "params": {
+                  "alpha": 0.2,
+                  "color": "#c8d8ff",
+                  "durationMs": 120
+                }
+              },
+              {
+                "type": "waitMs",
+                "params": {
+                  "durationMs": 1500
+                }
+              },
+              {
+                "type": "setSceneDim",
+                "params": {
+                  "fadeMs": 700,
+                  "scale": 0.24,
+                  "wait": true
+                }
+              },
+              {
+                "type": "waitMs",
+                "params": {
+                  "durationMs": 700
+                }
+              },
+              {
+                "type": "strikeThreat",
+                "params": {
+                  "effects": "lightning_bolt_01,lightning_bolt_02,lightning_bolt_03,lightning_bolt_04,lightning_bolt_05,lightning_bolt_06,lightning_bolt_07,lightning_bolt_08,lightning_bolt_09,lightning_bolt_10",
+                  "extraChance": 0.45,
+                  "fallback": "random",
+                  "fallbackRadius": 340,
+                  "flashAlpha": 0.42,
+                  "flashMs": 150,
+                  "gapJitterMs": 110,
+                  "gapMs": 240,
+                  "lightHeight": 300,
+                  "lightIntensity": 170,
+                  "lightMs": 460,
+                  "lightRange": 4200,
+                  "maxDistance": 1800,
+                  "rank": "threat",
+                  "sfx": "sfx_thunder_crack",
+                  "sfxVolume": 1.0,
+                  "shakeAmplitude": 26,
+                  "shakeMs": 750,
+                  "strikes": 3
+                }
+              },
+              {
+                "type": "waitMs",
+                "params": {
+                  "durationMs": 2000
+                }
+              },
+              {
+                "type": "restoreAudio",
+                "params": {
+                  "fadeMs": 1600,
+                  "id": "leifu",
+                  "stopSfx": "sfx_storm_brew,sfx_thunder_rumble,sfx_wind_gust,sfx_thunder_near"
+                }
+              },
+              {
+                "type": "setSceneDim",
+                "params": {
+                  "fadeMs": 2600,
+                  "scale": 1
+                }
+              },
+              {
+                "type": "waitMs",
+                "params": {
+                  "durationMs": 3600
+                }
+              },
+              {
+                "type": "restoreAudio",
+                "params": {
+                  "id": "leifu",
+                  "stopSfx": "sfx_thunder_crack"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  {
     "id": "temple_notes",
     "name": "庙祝手札",
     "type": "key",

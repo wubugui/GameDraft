@@ -96,6 +96,43 @@ def _print_card(card, verbose: bool = True) -> None:
             print(f"    · {who} — {s.where}")
 
 
+def _print_graph_card(card, verbose: bool = True) -> None:
+    """一张图的编排全貌：只列它与游戏里真实存在的东西之间的关联。"""
+    owner = f"（{card.owner_type}:{card.owner_id}）" if card.owner_id else ""
+    print(f"「{card.graph_label}」{owner}  {card.graph_id}  · {card.composition_label or card.composition_id}")
+    if not card.exists:
+        print("  ✗ 目录里没有这张图")
+        return
+    print(f"  推它的（{len(card.pushers)}）：")
+    for p in card.pushers:
+        e = p.emitter
+        who = f"本图 · {e.where}" if p.self_graph else f"{e.kind_label}「{e.container_label or e.container_id}」 {e.where}"
+        how = f"条件读到「{e.container_label}」{e.where}" if p.ref_graph_id and not p.signal else f"发「{p.signal}」"
+        print(f"    · {p.from_label} → {p.to_label}  ← {who}  {how}".rstrip())
+        if verbose and e.file:
+            print(f"        {e.file}#{e.pointer}")
+    print(f"  它管的（{len(card.readers)}）：")
+    for r in card.readers:
+        print(f"    · 状态「{card.state_labels.get(r.state_id, r.state_id)}」 → {r.subject_display}（{r.subject_effect}）")
+        if verbose and r.file:
+            print(f"        {r.file}#{r.pointer}")
+    print(f"  它调的（{len(card.targets)}）：")
+    for t in card.targets:
+        scene = f"{t.scene_label} 的 " if t.scene_id and t.universe != "scenes" else ""
+        jump = ""
+        if t.readonly:
+            jump = f"  ⚠ {t.note}"
+        elif t.note and not t.file and not t.nav_kind and not t.ref_graph_id:
+            jump = f"  ⚠ {t.note}"
+        print(f"    · 状态「{card.state_labels.get(t.state_id, t.state_id)}」 {t.where} → {scene}{t.kind_label}「{t.display}」{jump}")
+        if verbose and t.file:
+            print(f"        {t.file}#{t.pointer}")
+    if card.downstream:
+        print(f"  接它往下走的图（{len(card.downstream)}）：")
+        for l in card.downstream:
+            print(f"    · {l.graph_label} · {l.from_label} → {l.to_label}  听「{l.signal}」")
+
+
 def _print_state_card(card, verbose: bool = True) -> None:
     head = f"「{card.graph_label} · {card.state_label}」（{card.key}）"
     marks = [m for m, on in (("初始拍", card.is_initial), ("进入时广播", card.broadcasts),
@@ -147,9 +184,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--state", default="", metavar="图.态",
                     help="换个问法：这一拍怎么进来、去哪、谁在看着")
     ap.add_argument("--states", action="store_true", help="列出全部状态与引用计数")
+    ap.add_argument("--graph", default="", metavar="图id",
+                    help="一张图的编排全貌：推它的 / 它管的 / 它调的 / 接它往下走的图")
+    ap.add_argument("--graphs", action="store_true", help="列出全部图与三组计数")
     ap.add_argument("--list", action="store_true", help="列出全部信号与两侧计数")
     ap.add_argument("--problems", action="store_true", help="只列两侧对不齐的信号")
     ap.add_argument("--json", action="store_true", help="结构化输出")
+    ap.add_argument("--dump", action="store_true",
+                    help="整份索引（信号 + 状态 + 图）以 JSON 输出——与编辑器桥 scanSignalXref 同一形状")
     ap.add_argument("--quiet", action="store_true", help="不打印文件/指针")
     args = ap.parse_args(argv)
 
@@ -158,6 +200,29 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001 - 命令行如实报错，不甩 traceback
         print(f"扫描失败（工程数据可能是半截的）：{exc}", file=sys.stderr)
         return 2
+
+    if args.dump:
+        print(json.dumps({"ok": True, "xref": index.to_dict()}, ensure_ascii=False))
+        return 0
+
+    if args.graph:
+        card = index.graph_card(args.graph)
+        if args.json:
+            print(json.dumps(card.to_dict(), ensure_ascii=False, indent=2))
+            return 0
+        _print_graph_card(card, verbose=not args.quiet)
+        return 0
+
+    if args.graphs:
+        cards = index.graph_overview()
+        if args.json:
+            print(json.dumps({"graphs": [c.to_dict() for c in cards]}, ensure_ascii=False, indent=2))
+            return 0
+        print(f"共 {len(cards)} 张图")
+        for c in cards:
+            print(f"  {c.graph_id:<40s} 推它的 {len(c.pushers):<3d} 它管的 {len(c.readers):<3d} "
+                  f"它调的 {len(c.targets):<3d} 接它往下走 {len(c.downstream)}")
+        return 0
 
     if args.state:
         gid, _, sid = args.state.rpartition(".")

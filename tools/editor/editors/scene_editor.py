@@ -42,6 +42,7 @@ from PySide6.QtGui import (
 from PySide6.QtCore import (
     Qt,
     QEvent,
+    QItemSelectionModel,
     QRect,
     QRectF,
     QPoint,
@@ -16039,6 +16040,25 @@ class SceneEditor(QWidget):
             return "spawn", str(props._spawn_name_original or "")
         return None
 
+    def _select_tree_item_exactly(self, item: QTreeWidgetItem) -> None:
+        """把实体树选中**精确**设成这一项（程序化定位统一走这里）。
+
+        必须显式传 ``ClearAndSelect``：单参 ``setCurrentItem(item)`` 内部走
+        ``QAbstractItemView.selectionCommand()``，而它在 ExtendedSelection 下读的是
+        **全局键盘修饰键**（``QGuiApplication.keyboardModifiers()``）——
+
+        - 按着 Ctrl（工具提示里写的多选手势）时解析成 ``Toggle``：刚选中的项被**再
+          取消一次**，回滚完变成「树里什么都没选中、右侧还挂着未提交草稿」；
+        - 按着 Shift 时解析成 ``SelectCurrent``：从锚点拉成一整段区间，程序本来只想
+          定位一个实体，却进了多选面板。
+
+        两种都**不报错**，只是选中结果不对。ClearAndSelect 是这些调用点真正要的语义：
+        「不管用户手上按着什么，就选这一个」。
+        """
+        self._entity_tree.setCurrentItem(
+            item, 0, QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+
     def _restore_editing_selection_after_block(self) -> None:
         """fail-safe 导航回滚：保留 staging，并把树/画布选中恢复到原编辑对象。"""
         ref = self._editing_property_ref()
@@ -16055,8 +16075,7 @@ class SceneEditor(QWidget):
             for item in self._iter_entity_tree_items():
                 data = item.data(0, Qt.ItemDataRole.UserRole)
                 if data and tuple(data) == (kind, entity_id):
-                    item.setSelected(True)
-                    self._entity_tree.setCurrentItem(item)
+                    self._select_tree_item_exactly(item)
                     tree_hit = item
                     break
             if tree_hit is not None:
@@ -16084,8 +16103,7 @@ class SceneEditor(QWidget):
             return
         self._left_tabs.setCurrentIndex(1)
         self._entity_tree.clearSelection()
-        self._entity_tree.setCurrentItem(item)
-        item.setSelected(True)
+        self._select_tree_item_exactly(item)
         self._entity_tree.scrollToItem(item)
 
     # ---- 场景分组：画布代理框 / 整组位移（分组是一等实体，但自己没有坐标） ------
@@ -17063,8 +17081,7 @@ class SceneEditor(QWidget):
             for item in self._iter_entity_tree_items():
                 data = item.data(0, Qt.ItemDataRole.UserRole)
                 if data and tuple(data) == ("group", gid):
-                    self._entity_tree.setCurrentItem(item)
-                    item.setSelected(True)
+                    self._select_tree_item_exactly(item)
                     break
 
     def _narrative_page_with_unsaved_draft(self):

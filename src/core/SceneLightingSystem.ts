@@ -136,6 +136,8 @@ export class SceneLightingSystem {
   private dynamicLights: LightDef[] = [];
   /** 作者灯的运行时强度倍率。见 {@link setLightIntensityScales} */
   private intensityScales: Map<string, number> = new Map();
+  /** 背景的运行时压暗倍率。见 {@link setEnvDim } —— 不落盘、不进 `params` */
+  private envDim = 1;
   private skyvisGrid: Float32Array | null = null;
   private skyvisTex: BufferImageSource | null = null;
   private giHitmapTex: BufferImageSource | null = null;
@@ -590,6 +592,28 @@ export class SceneLightingSystem {
   }
 
   /**
+   * **背景**的运行时压暗倍率（1 = 原样，0.35 = 压到三成半）。同样不落盘、切场景清空。
+   *
+   * 走的是显示曝光 `display.ev`（减 `-log2(scale)` 档）而不是去动灯：原画就是最终光照，
+   * 作者灯全是**加性**的额外项 —— 把灯调到 0 只是把额外的灯拿掉，原画该多亮还多亮。
+   * 唯一能把这张画整体压下去的旋钮就是显示变换。
+   *
+   * ⚠ **只压背景**。角色与粒子的着色链里没有场景的显示变换（写死 lin2srgb，只在 display
+   * 为缺省值时才碰巧一致），必须由 `CharacterLightingSystem.setEnvDim` 同步压同一个值，
+   * 否则人是原来的亮度站在压暗的背景前面，像贴上去的。两处由 Game 一个入口一起推。
+   *
+   * ⚠ 每变一次就整张光照缓存重烘（`markDirty`）—— 渐变必须限速，别每帧推一个新值。
+   */
+  setEnvDim(scale: number): void {
+    const s = Number.isFinite(scale) ? Math.max(0, Math.min(1, scale)) : 1;
+    if (Math.abs(s - this.envDim) < 1e-4) return;
+    this.envDim = s;
+    this.pushEffective();
+  }
+
+  getEnvDim(): number { return this.envDim; }
+
+  /**
    * 作者灯 + 运行时灯（带强度倍率）。粒子把灯当恐惧源、影子绑灯都该看这一份。
    *
    * ⚠ **运行时灯排在最前面**，这不是随意的顺序：`packLights` 超过 `MAX_STATIC_LIGHTS`
@@ -615,9 +639,15 @@ export class SceneLightingSystem {
   private pushEffective(): void {
     const def = this.def;
     if (!def || !this.pass) return;
-    const effective = (this.dynamicLights.length > 0 || this.intensityScales.size > 0)
+    let effective = (this.dynamicLights.length > 0 || this.intensityScales.size > 0)
       ? { ...def, lights: this.effectiveLights() }
       : def;
+    if (this.envDim < 1) {
+      // 压暗写进曝光的**档位**（ev 是 log2 的量）：×s ⇔ ev + log2(s)。
+      // s=0 时 log2 是 -∞，按"全黑"给一个足够深的档，不让 NaN 流进 shader。
+      const stops = this.envDim > 0 ? Math.log2(this.envDim) : -24;
+      effective = { ...effective, display: { ...effective.display, ev: effective.display.ev + stops } };
+    }
     this.pass.applyParams(effective, this.filterPhase());
     this.pass.markDirty();
     if (this.passPlate) {
@@ -703,6 +733,7 @@ export class SceneLightingSystem {
     // 运行时灯与渐灭覆盖是**演出态**：跨场景残留会让新场景凭空多一盏灯 / 某盏灯莫名半暗
     this.dynamicLights = [];
     this.intensityScales = new Map();
+    this.envDim = 1;
     this.skyvisGrid = null;
     this.giPass?.destroy();
     this.giPass = null;

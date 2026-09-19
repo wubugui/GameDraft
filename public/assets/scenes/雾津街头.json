@@ -386,6 +386,19 @@
       "planes": [
         "normal"
       ]
+    },
+    {
+      "id": "hs_雷符_拉客女",
+      "type": "pickup",
+      "label": "她塞过来的一张符",
+      "x": 1175.0,
+      "y": 1630.0,
+      "interactionRange": 160,
+      "data": {
+        "itemId": "leifu",
+        "itemName": "雷符",
+        "count": 1
+      }
     }
   ],
   "lighting": {

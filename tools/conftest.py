@@ -238,3 +238,42 @@ def isolated_qsettings() -> Iterator[Path]:
 
     assert _qsettings_root is not None
     yield _qsettings_root
+
+
+@pytest.fixture(autouse=True)
+def _release_leaked_keyboard_modifiers() -> Iterator[None]:
+    """收尾把**全局键盘修饰键状态**放回 NoModifier。
+
+    ``QTest.keyClick(w, key, ControlModifier)`` 走平台事件通道，会把
+    ``QGuiApplicationPrivate::modifier_buttons`` 置成该修饰键，而 QTest **不会**补一个
+    「松开」事件——于是整个 worker 进程此后都认为 Ctrl 还按着，且任何断言都看不见它。
+
+    后果不在按键测试自己身上，而在后面**别的文件**里：``QAbstractItemView`` 在
+    ExtendedSelection 下用 ``QGuiApplication.keyboardModifiers()`` 解析
+    ``setCurrentItem(item)`` 的选择命令，Ctrl 卡住就从 ClearAndSelect 变成 Toggle
+    （选中被再取消一次），Shift 卡住变成 SelectCurrent（拉成区间）。一律不报错，
+    只是选中结果不对。
+
+    ``--dist loadfile`` 下「哪些文件落在同一个 worker」每次现分，所以症状是间歇性的：
+    2026-09-20 实测 ``test_action_outline_editor.py`` 末尾那次 Ctrl+Z 泄给了
+    ``test_scene_group_entities.py``，后者的「阻断导航后恢复选中」断言随机挂，单独跑
+    该文件必过。放在仓库级 conftest 而不是 ``tools/editor/tests``：泄漏方与受害方可以
+    分属不同测试目录，这道收尾是纯进程级状态卫生，不涉及 Qt 控件销毁那条有作用域
+    边界的收尾（见 ``tools/editor/tests/conftest.py`` 模块注释）。
+    """
+    yield
+    # 没 import 过 Qt 的测试进程不该被这层收尾拖去 import PySide6（同 qt_teardown）。
+    if "PySide6.QtWidgets" not in sys.modules:
+        return
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    app = QApplication.instance()
+    if app is None or QApplication.keyboardModifiers() == Qt.KeyboardModifier.NoModifier:
+        return
+    from PySide6.QtTest import QTest
+
+    # 只有真泄漏时才走到这里。probe 无父对象 = 归 Python 所有，函数返回即析构，
+    # 不会给 destroy_leftover_qt_widgets 留顶层控件。
+    probe = QWidget()
+    QTest.keyRelease(probe, Qt.Key.Key_Control, Qt.KeyboardModifier.NoModifier)

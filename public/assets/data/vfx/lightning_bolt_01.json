@@ -1,0 +1,353 @@
+{
+  "id": "lightning_bolt_01",
+  "label": "天雷 01：介质击穿模型离线烘成贴图（1 个 draw call）+ 云内闪 / 溅射 / 焦烟",
+  "emitters": [
+    {
+      "id": "bolt",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/lightning_bolt_01.png",
+        "sizeWu": 1647.9,
+        "alphaOverLife": [
+          [
+            0,
+            1.0
+          ],
+          [
+            0.08,
+            1.0
+          ],
+          [
+            0.3,
+            0.5
+          ],
+          [
+            0.62,
+            0.22
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "blend": "add",
+        "lit": false
+      },
+      "spawn": {
+        "max": 1,
+        "burst": 1,
+        "shape": {
+          "kind": "point"
+        },
+        "speed": [
+          0,
+          0
+        ]
+      },
+      "motion": {},
+      "life": {
+        "seconds": [
+          0.42,
+          0.42
+        ]
+      }
+    },
+    {
+      "id": "cloud_flash",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        1450,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/flame_glow.png",
+        "sizeWu": 420,
+        "sizeJitter": [
+          0.7,
+          1.4
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.8
+          ],
+          [
+            1,
+            1.35
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0.4
+          ],
+          [
+            0.35,
+            0.22
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.55,
+          0.7,
+          1.0
+        ],
+        "blend": "add",
+        "lit": false
+      },
+      "spawn": {
+        "max": 5,
+        "burst": 4,
+        "shape": {
+          "kind": "box",
+          "size": [
+            900,
+            220,
+            400
+          ]
+        },
+        "speed": [
+          0,
+          6
+        ]
+      },
+      "motion": {},
+      "life": {
+        "seconds": [
+          0.22,
+          0.5
+        ]
+      }
+    },
+    {
+      "id": "impact_sparks",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": true,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/spark.png",
+        "sizeWu": 4,
+        "sizeJitter": [
+          0.6,
+          1.5
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            1
+          ],
+          [
+            0.55,
+            0.8
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "tintOverLife": [
+          [
+            0,
+            0.82,
+            0.9,
+            1.0
+          ],
+          [
+            1,
+            1.0,
+            0.8,
+            0.45
+          ]
+        ],
+        "blend": "add",
+        "lit": false
+      },
+      "spawn": {
+        "max": 140,
+        "burst": 110,
+        "shape": {
+          "kind": "disc",
+          "radius": 10
+        },
+        "speed": [
+          70,
+          300
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 88
+      },
+      "motion": {
+        "gravity": 620,
+        "drag": 1.6,
+        "maxSpeed": 400
+      },
+      "life": {
+        "seconds": [
+          0.45,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "scorch_smoke",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        6,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/smoke_puff.png",
+        "sizeWu": 26,
+        "sizeJitter": [
+          0.8,
+          1.3
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.5
+          ],
+          [
+            1,
+            2.2
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.2,
+            0.35
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.22,
+          0.22,
+          0.24
+        ],
+        "lit": true,
+        "spin": {
+          "rate": [
+            -25,
+            25
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 24,
+        "burst": 14,
+        "shape": {
+          "kind": "disc",
+          "radius": 14
+        },
+        "speed": [
+          10,
+          40
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 35
+      },
+      "motion": {
+        "drag": 1.2,
+        "buoyancy": 40,
+        "turbulence": {
+          "strength": 45,
+          "scale": 40,
+          "speed": 0.7
+        },
+        "maxSpeed": 90
+      },
+      "life": {
+        "seconds": [
+          1.1,
+          2.2
+        ]
+      }
+    }
+  ]
+}

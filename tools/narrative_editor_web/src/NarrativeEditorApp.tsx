@@ -35,6 +35,27 @@ import { flowEdgeTypes } from './canvas/flowEdges';
 import { flowNodeTypes } from './canvas/flowNodes';
 import { applyCanvasSelection } from './canvas/canvasSelection';
 import { NarrativeCanvasActionsProvider } from './canvas/canvasActionsContext';
+import { RefChipsProvider, stateChipKey, transitionChipKey, type RefChipLookup } from './canvas/refChips';
+import {
+  buildNoteNodes,
+  groupNote,
+  newNote,
+  newNoteId,
+  notesForCanvas,
+  parseNoteNodeId,
+  reconcileNoteNodes,
+  setGroupNote,
+  setNotesForCanvas,
+  setStateNote,
+  setTransitionNote,
+  stateNote,
+  transitionNote,
+  type CanvasNoteDef,
+} from './canvas/annotations';
+import { AnnotationsProvider, NoteInspectorFields, type AnnotationActions } from './canvas/annotationsContext';
+import { useCanvasAnnotations } from './hooks/useCanvasAnnotations';
+import { WHOLE_COMPOSITION_ID, buildCompositionOverview, buildGraphOverview, describeRowJump, type RefGroup, type RefRow } from './graphOverview';
+import { GraphOverviewPanel } from './components/GraphOverviewPanel';
 import {
   expandParentsForPositionChanges,
   findTransitionByAnchorId,
@@ -140,6 +161,9 @@ import {
   loadTaskIndex,
   loadTemplates,
   navigateTo,
+  jumpToRefRemote,
+  navigateRemote,
+  scanSignalXrefRemote,
   refactorJournalSizeRemote,
   saveCategoriesRemote,
   saveNarrativeData,
@@ -177,6 +201,7 @@ import {
   getElementByGraphRef,
   getElementByNodeId,
   graphDisplayName,
+  stateDisplayName,
   graphLabel,
   graphReferenceLabel,
   isSubgraphElement,
@@ -216,6 +241,7 @@ import type {
   ProjectionEdgeDef,
   ProjectionResult,
   RuntimeDebugSnapshotDef,
+  SignalXrefIndexDef,
   NarrativeTemplateDef,
   StampSummaryDef,
   TaskIndex,
@@ -295,6 +321,19 @@ function NarrativeEditorInner() {
   // 从状态属性「看引用」点进来时直接换人。
   const [signalXrefMode, setSignalXrefMode] = useState<'signal' | 'state'>('signal');
   const [signalXrefState, setSignalXrefState] = useState('');
+  // 「编排全貌」：一张图连着游戏里的哪些东西（推它的 / 它管的 / 它调的），点一下跳过去。
+  // 扫描结果由 App 持有：面板与画布引用小标共用同一份（同一次扫描、同一口径）。
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  // 收起态：面板缩成一条标题栏露出画布——点「定位」之后人要看的是画布上那一拍，不是面板
+  const [overviewMinimized, setOverviewMinimized] = useState(false);
+  const [overviewGraphId, setOverviewGraphId] = useState('');
+  const [overviewScroll, setOverviewScroll] = useState<{ group: RefGroup | ''; token: number }>({ group: '', token: 0 });
+  const [overviewJumpNote, setOverviewJumpNote] = useState('');
+  const [xrefIndex, setXrefIndex] = useState<SignalXrefIndexDef | null>(null);
+  const [xrefScanning, setXrefScanning] = useState(false);
+  const [xrefError, setXrefError] = useState('');
+  const [xrefScannedFingerprint, setXrefScannedFingerprint] = useState('');
+  const [xrefScannedAt, setXrefScannedAt] = useState('');
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [templates, setTemplates] = useState<NarrativeTemplateDef[]>([]);
   // 「整理分组」标签：编辑器专用，运行时永不加载，绝不进 narrative_graphs.json。
@@ -322,6 +361,51 @@ function NarrativeEditorInner() {
     },
     [compositionId, graphRef, updateCanvasGroupsFile],
   );
+
+  // 画布注释（节点 / 迁移 / 分组框注释 + 便签）：与分组框同一套旁挂，运行时永不加载、不进 Save All。
+  const { file: annotationsFile, updateFile: updateAnnotationsFile } = useCanvasAnnotations();
+  const currentNotes = useMemo(
+    () => notesForCanvas(annotationsFile, compositionId, graphRef),
+    [annotationsFile, compositionId, graphRef],
+  );
+  const currentNotesRef = useRef(currentNotes);
+  currentNotesRef.current = currentNotes;
+  const updateCurrentNotes = useCallback(
+    (updater: (notes: Record<string, CanvasNoteDef>) => Record<string, CanvasNoteDef>) => {
+      updateAnnotationsFile((file) => setNotesForCanvas(
+        file, compositionId, graphRef, updater(notesForCanvas(file, compositionId, graphRef)),
+      ));
+    },
+    [compositionId, graphRef, updateAnnotationsFile],
+  );
+  const annotationActions = useMemo<AnnotationActions>(() => ({
+    setStateNote: (graphId, stateId, text) => updateAnnotationsFile((file) => setStateNote(file, graphId, stateId, text)),
+    setTransitionNote: (graphId, transitionId, text) => updateAnnotationsFile((file) => setTransitionNote(file, graphId, transitionId, text)),
+    setGroupNote: (gid, text) => updateAnnotationsFile((file) => setGroupNote(file, compositionId, graphRef, gid, text)),
+    setNoteText: (noteId, text) => updateCurrentNotes((notes) => (
+      notes[noteId] ? { ...notes, [noteId]: { ...notes[noteId]!, text } } : notes
+    )),
+    setNoteColor: (noteId, color) => updateCurrentNotes((notes) => (
+      notes[noteId] ? { ...notes, [noteId]: { ...notes[noteId]!, color } } : notes
+    )),
+    setNoteRect: (noteId, rect) => updateCurrentNotes((notes) => (
+      notes[noteId]
+        ? { ...notes, [noteId]: { ...notes[noteId]!, x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) } }
+        : notes
+    )),
+    removeNote: (noteId) => updateCurrentNotes((notes) => {
+      if (!notes[noteId]) return notes;
+      const next = { ...notes };
+      delete next[noteId];
+      return next;
+    }),
+  }), [compositionId, graphRef, updateAnnotationsFile, updateCurrentNotes]);
+  const annotationsValue = useMemo(() => ({
+    stateNote: (graphId: string, stateId: string) => stateNote(annotationsFile, graphId, stateId),
+    transitionNote: (graphId: string, transitionId: string) => transitionNote(annotationsFile, graphId, transitionId),
+    groupNote: (gid: string) => groupNote(annotationsFile, compositionId, graphRef, gid),
+    actions: annotationActions,
+  }), [annotationsFile, compositionId, graphRef, annotationActions]);
   // wrapper 自动分组：按数据现算的呈现层（owner 场景 / 同款模板），不落盘、不进 narrative_graphs.json。
   // 与上面的手动分组框并存，见 canvas/wrapperAutoGroups.ts 顶部注释的分工。
   const [wrapperGroupMode, setWrapperGroupMode] = useState<WrapperGroupMode>('off');
@@ -622,6 +706,21 @@ function NarrativeEditorInner() {
     () => getSelectedSummary(composition, graph, graphRef, selectedId),
     [composition, graph, graphRef, selectedId],
   );
+  const selectedNoteId = parseNoteNodeId(selectedId);
+  /** 选中的状态 / 迁移（含主画布里展开子图的内联对象）→ 右侧「画布注释」字段落到哪张图的哪个对象 */
+  const annotationTarget = useMemo((): { kind: 'state' | 'transition'; graphId: string; id: string } | null => {
+    if (!graph || !composition || !selectedId) return null;
+    const inline = parseInlineSubgraphId(selectedId);
+    if (inline) {
+      const el = composition.elements?.find((item) => item.id === inline.elementId);
+      const gid = el?.graph?.id;
+      if (!gid || (inline.kind !== 'state' && inline.kind !== 'transition')) return null;
+      return { kind: inline.kind, graphId: gid, id: inline.objectId };
+    }
+    if (selectedId.startsWith('state:')) return { kind: 'state', graphId: graph.id, id: selectedId.slice('state:'.length) };
+    if (selectedId.startsWith('transition:')) return { kind: 'transition', graphId: graph.id, id: selectedId.slice('transition:'.length) };
+    return null;
+  }, [graph, composition, selectedId]);
   const entityNarrative = useMemo(
     () => buildEntityNarrativeIndex(data, projection, validationIssues, activeStates, dialogueRelations),
     [data, projection, validationIssues, activeStates, dialogueRelations],
@@ -843,7 +942,7 @@ function NarrativeEditorInner() {
     let builtNodes = buildCanvasNodes(canvasStructureInput);
     builtNodes = resizeSubgraphParents(builtNodes);
     // 分组框随结构重建一并注入（经 ref 取，分组变更本身由下方 reconcile effect 处理）
-    setNodes([...builtNodes, ...buildGroupFrameNodes(currentGroupsRef.current)]);
+    setNodes([...builtNodes, ...buildGroupFrameNodes(currentGroupsRef.current), ...buildNoteNodes(currentNotesRef.current)]);
     setEdges(builtEdges);
 
     let raf2 = 0;
@@ -875,6 +974,11 @@ function NarrativeEditorInner() {
   useEffect(() => {
     setNodes((current) => reconcileGroupFrameNodes(current, currentGroups));
   }, [currentGroups]);
+
+  // 便签数据变更（建/删/改文/改色/拖动/拉大小）→ 就地对齐画布上的便签节点
+  useEffect(() => {
+    setNodes((current) => reconcileNoteNodes(current, currentNotes));
+  }, [currentNotes]);
 
   const signalLabelMap = useMemo(() => buildSignalLabelMap(data), [data]);
 
@@ -1160,7 +1264,7 @@ function NarrativeEditorInner() {
     const removedNodeIds = changes
       .filter((c) => c.type === 'remove')
       .map((c) => c.id)
-      .filter((id) => !parseGroupFrameNodeId(id));
+      .filter((id) => !parseGroupFrameNodeId(id) && !parseNoteNodeId(id));
     if (removedNodeIds.length) removeModelObjects(removedNodeIds);
     const snapAnchors = shouldSnapTransitionAnchors(changes);
     setNodes((nds) => {
@@ -1239,6 +1343,16 @@ function NarrativeEditorInner() {
   }, [canvasMode, composition, graph, graphRef, updateCurrentGraph, updateData]);
 
   const onNodeDragStop = useCallback((_event: unknown, node: CanvasNode) => {
+    const draggedNote = parseNoteNodeId(node.id);
+    if (draggedNote) {
+      // 便签是编辑器视觉层：坐标只写旁挂注释文件
+      updateCurrentNotes((notes) => {
+        const n = notes[draggedNote];
+        if (!n) return notes;
+        return { ...notes, [draggedNote]: { ...n, x: Math.round(node.position.x), y: Math.round(node.position.y) } };
+      });
+      return;
+    }
     const draggedGid = parseGroupFrameNodeId(node.id);
     if (draggedGid) {
       updateCurrentGroups((groups) => {
@@ -1282,9 +1396,16 @@ function NarrativeEditorInner() {
         element.y = Math.round(node.position.y);
       });
     }
-  }, [composition?.id, compositionId, graphRef, updateCurrentGraph, updateCurrentGroups, updateData]);
+  }, [composition?.id, compositionId, graphRef, updateCurrentGraph, updateCurrentGroups, updateCurrentNotes, updateData]);
 
   const selectNode = useCallback((_event: unknown, node: CanvasNode) => {
+    const selectedNote = parseNoteNodeId(node.id);
+    if (selectedNote) {
+      // 便签不是模型对象：检视器只展示便签本身（正文 / 底色 / 删除）
+      setSelectedId(node.id);
+      setSelectedJson(JSON.stringify(currentNotesRef.current[selectedNote] ?? {}, null, 2));
+      return;
+    }
     const selectedGid = parseGroupFrameNodeId(node.id);
     if (selectedGid) {
       // 分组框是编辑器视觉层，不是模型对象：检查器只展示分组定义本身
@@ -1416,8 +1537,17 @@ function NarrativeEditorInner() {
 
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
+    const noteId = parseNoteNodeId(selectedId);
+    if (noteId) {
+      // 便签只删旁挂注释，绝不进模型删除
+      annotationActions.removeNote(noteId);
+      setSelectedId('');
+      setSelectedJson('');
+      setStatus('已删除便签（编排数据不受影响）');
+      return;
+    }
     removeModelObjects([selectedId]);
-  }, [removeModelObjects, selectedId]);
+  }, [annotationActions, removeModelObjects, selectedId]);
 
   // 从侧栏「编排列表」删除整个编排（主图 + 全部元素/子图）。破坏面大 → 显式确认、可撤销。
   const deleteComposition = useCallback((compId: string) => {
@@ -1748,6 +1878,122 @@ function NarrativeEditorInner() {
    * 拖十秒约 75MB 字符串垃圾）——而且面板关着照收。
    */
   const signalXrefFingerprint = useMemo(() => relationFingerprint(data), [data]);
+
+  // ---- 编排全貌 / 画布引用小标：共用一份全工程扫描（同一次扫描、同一口径）----
+  const xrefDataRef = useRef(data);
+  xrefDataRef.current = data;
+  const xrefFingerprintRef = useRef(signalXrefFingerprint);
+  xrefFingerprintRef.current = signalXrefFingerprint;
+  const rescanXrefIndex = useCallback(async () => {
+    const fingerprint = xrefFingerprintRef.current;
+    setXrefScanning(true);
+    setXrefError('');
+    const res = await scanSignalXrefRemote(xrefDataRef.current);
+    setXrefScanning(false);
+    if (res.ok && res.xref) {
+      setXrefIndex(res.xref);
+      setXrefScannedFingerprint(fingerprint);
+      setXrefScannedAt(new Date().toLocaleTimeString('zh-CN', { hour12: false }));
+    } else {
+      // 不清上一份：留着旧结果 + 红字说明，人还能继续看（与「关系」面板同一取舍）
+      setXrefError(res.reason ?? '扫描失败');
+    }
+  }, []);
+  // 数据一就绪就扫一次（画布小标默认开，得有数据才画）；面板打开而还没扫过也补一次。
+  // 扫描只发生在这两个时机与手动「重新扫描」，不跟着每次编辑重扫（一次约 0.5 秒、读全工程）。
+  useEffect(() => {
+    if (!hostReady || xrefIndex || xrefScanning) return;
+    if (!preferences.canvasRefChips && !overviewOpen) return;
+    void rescanXrefIndex();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hostReady, overviewOpen, preferences.canvasRefChips]);
+  const xrefStale = xrefIndex !== null && xrefScannedFingerprint !== signalXrefFingerprint;
+  const overviewEffectiveGraphId = overviewGraphId || graph?.id || '';
+  // 画布切到哪张图，全貌就跟到哪张图；面板里的下拉可以临时看别的图
+  useEffect(() => {
+    if (graph?.id) setOverviewGraphId(graph.id);
+  }, [graph?.id]);
+  const overviewGraphChoices = useMemo(() => {
+    if (!composition) return [] as Array<{ id: string; label: string }>;
+    const subgraphs = (composition.elements ?? []).filter((el) => el.graph?.id);
+    const out = [
+      { id: WHOLE_COMPOSITION_ID, label: `整个编排（主图 + ${subgraphs.length} 张子图）` },
+      { id: composition.mainGraph.id, label: `主图 · ${graphDisplayName(composition.mainGraph) || composition.mainGraph.id}` },
+    ];
+    for (const el of subgraphs) {
+      out.push({ id: el.graph!.id, label: graphDisplayName(el.graph) || el.label || el.graph!.id });
+    }
+    return out;
+  }, [composition]);
+  const overviewModel = useMemo(() => {
+    if (!xrefIndex?.graphs) return null;
+    if (overviewEffectiveGraphId === WHOLE_COMPOSITION_ID) {
+      if (!composition) return null;
+      const ids = new Set([composition.mainGraph.id, ...(composition.elements ?? []).map((el) => el.graph?.id).filter((id): id is string => Boolean(id))]);
+      const cards = xrefIndex.graphs.filter((g) => ids.has(g.graphId));
+      return buildCompositionOverview(cards, composition.label || composition.id);
+    }
+    const card = xrefIndex.graphs.find((g) => g.graphId === overviewEffectiveGraphId);
+    return card ? buildGraphOverview(card) : null;
+  }, [xrefIndex, overviewEffectiveGraphId, composition]);
+  const refChipLookup = useMemo<RefChipLookup | null>(() => {
+    if (!xrefIndex?.graphs) return null;
+    const byState: RefChipLookup['byState'] = {};
+    const byTransition: RefChipLookup['byTransition'] = {};
+    for (const card of xrefIndex.graphs) {
+      const model = buildGraphOverview(card);
+      for (const [sid, bucket] of Object.entries(model.chipsByState)) byState[stateChipKey(card.graphId, sid)] = bucket;
+      for (const [tid, rows] of Object.entries(model.chipsByTransition)) byTransition[transitionChipKey(card.graphId, tid)] = rows;
+    }
+    return { byState, byTransition };
+  }, [xrefIndex]);
+  /** 全貌行 / 画布小标的跳转：画布定位 / navigate / 交宿主跳转引擎；回执三态原样说，写进面板与状态栏 */
+  const jumpRef = useCallback(async (row: RefRow) => {
+    const jump = row.jump;
+    const label = `${row.kindLabel}「${row.title}」`;
+    let note = '';
+    if (jump.kind === 'none') {
+      note = `${label}：${jump.reason}`;
+    } else if (jump.kind === 'focus') {
+      note = focusTarget(jump.target) ? `已在画布上定位到${label}` : `${label} 在当前画布上找不到（可能刚被删或改名）`;
+    } else if (jump.kind === 'navigate') {
+      const res = await navigateRemote(jump.navKind, jump.id, describeRowJump(row));
+      note = res.note;
+    } else {
+      const res = await jumpToRefRemote({ file: jump.file, pointer: jump.pointer, anchors: jump.anchors }, describeRowJump(row));
+      if (!res.ok) note = `没跳成：${res.reason || res.note || '未知原因'}`;
+      else if (res.exact) note = res.note || `已定位到${label}`;
+      else note = res.note || '已打开对应编辑页（没能逐条定位）';
+    }
+    setOverviewJumpNote(note);
+    setStatus(note);
+  }, [focusTarget]);
+  const openOverviewAt = useCallback((graphId: string, stateId: string, transitionId: string) => {
+    if (graphId) setOverviewGraphId(graphId);
+    setOverviewOpen(true);
+    setOverviewMinimized(false);
+    setOverviewScroll((prev) => ({ group: stateId ? 'gate' : transitionId ? 'push' : '', token: prev.token + 1 }));
+  }, []);
+  const refChipsValue = useMemo(() => ({
+    enabled: preferences.canvasRefChips,
+    lookup: refChipLookup,
+    actions: { jump: (row: RefRow) => { void jumpRef(row); }, more: openOverviewAt },
+  }), [preferences.canvasRefChips, refChipLookup, jumpRef, openOverviewAt]);
+  const overviewHighlight = useMemo(() => {
+    if (!composition || !selectedId) return null;
+    const view = resolveActiveGraphView(composition, graphRef);
+    if (!view) return null;
+    const ep = stateEndpointFromNodeIdForView(selectedId, view);
+    if (!ep) return null;
+    // 单图视图只认本图的选中；整个编排视图任何一张图的选中都算
+    if (overviewEffectiveGraphId !== WHOLE_COMPOSITION_ID && ep.graphId !== overviewEffectiveGraphId) return null;
+    const owner = ep.graphId === composition.mainGraph.id
+      ? composition.mainGraph
+      : (composition.elements ?? []).find((el) => el.graph?.id === ep.graphId)?.graph;
+    const state = owner?.states?.[ep.stateId];
+    return { graphId: ep.graphId, stateId: ep.stateId, stateLabel: stateDisplayName(state, ep.stateId) };
+  }, [composition, graphRef, selectedId, overviewEffectiveGraphId]);
+
   const signalStillUnregistered = useCallback(
     (signalId: string) => isUnregisteredAuthorSignal(data, signalId), [data]);
   const requestSignalRefactorFromXref = useCallback((mode: 'rename' | 'delete', signalId: string) => {
@@ -1967,6 +2213,29 @@ function NarrativeEditorInner() {
     }))
   ), [graphRef]);
 
+  /** 新建便签（独立注释节点）：放在当前节点云质心附近，按已有便签数错开；纯旁挂，不进编排数据 */
+  const createNote = useCallback(() => {
+    if (!compositionId) return;
+    const anchorNodes = nodes.filter((n) => (
+      !n.parentId && n.data?.kind !== 'editorGroupFrame' && n.data?.kind !== 'annotationNote'
+      && n.data?.kind !== 'graphAnchor' && n.data?.kind !== 'projectionAnchor' && n.data?.kind !== 'transitionAnchor'
+    ));
+    const cx = anchorNodes.length ? anchorNodes.reduce((sum, n) => sum + n.position.x, 0) / anchorNodes.length : 160;
+    const cy = anchorNodes.length ? anchorNodes.reduce((sum, n) => sum + n.position.y, 0) / anchorNodes.length : 140;
+    let createdId = '';
+    updateCurrentNotes((notes) => {
+      const nid = newNoteId(notes);
+      createdId = nid;
+      const offset = Object.keys(notes).length * 28;
+      return { ...notes, [nid]: newNote(notes, cx + 260 + offset, cy - 40 + offset) };
+    });
+    if (createdId) {
+      setSelectedId(`editor-note:${createdId}`);
+      setSelectedJson('');
+    }
+    setStatus('已新建便签：双击写正文，拖动摆位置，选中后拉边角改大小（只存编辑器旁挂文件，不进编排数据）');
+  }, [compositionId, nodes, updateCurrentNotes]);
+
   const addMenuItems = useMemo((): ToolbarMenuItem[] => {
     const items: ToolbarMenuItem[] = [
       { id: 'state', label: '状态', disabled: !graph, onSelect: addState },
@@ -1980,8 +2249,9 @@ function NarrativeEditorInner() {
         });
       }
     }
+    items.push({ id: 'note', label: '便签（画布注释）', disabled: !compositionId, onSelect: createNote });
     return items;
-  }, [addElementAction, addState, graph, graphRef]);
+  }, [addElementAction, addState, compositionId, createNote, graph, graphRef]);
 
   const shellStyle = {
     gridTemplateColumns: `${leftCollapsed ? 0 : panelLayout.leftWidth}px minmax(480px, 1fr) ${rightCollapsed ? 0 : panelLayout.rightWidth}px`,
@@ -2044,6 +2314,8 @@ function NarrativeEditorInner() {
 
   return (
     <NarrativeCanvasActionsProvider value={canvasActions}>
+    <RefChipsProvider value={refChipsValue}>
+    <AnnotationsProvider value={annotationsValue}>
     <div
       className={`app-shell ${leftCollapsed ? 'left-collapsed' : ''} ${rightCollapsed ? 'right-collapsed' : ''}${preferences.reduceMotion ? ' reduce-motion' : ''}`}
       style={shellStyle}
@@ -2114,6 +2386,16 @@ function NarrativeEditorInner() {
             >
               {signalXrefOpen ? '关系−' : '关系+'}
             </button>
+            <button
+              type="button"
+              className="toolbar-btn"
+              onClick={() => setOverviewOpen((v) => !v)}
+              title={overviewOpen
+                ? '关闭编排全貌面板'
+                : '打开编排全貌：这张图连着游戏里的哪些东西——推它的（区域/热点/对话图）、它管的（实体显隐/任务/地图）、它调的（过场/对话图/物品/说明卡），点一下跳过去'}
+            >
+              {overviewOpen ? '全貌−' : '全貌+'}
+            </button>
             <button type="button" className="toolbar-btn" onClick={() => setTemplatesOpen((v) => !v)} title={templatesOpen ? '关闭模板面板' : '打开叙事状态机模板面板（填 taskId 一键派生新任务）'}>
               {templatesOpen ? '模板−' : '模板+'}
             </button>
@@ -2124,6 +2406,15 @@ function NarrativeEditorInner() {
               title="新建画布分组框：命名/配色的矩形框，节点中心落入框内即归组；纯编辑器视觉整理，不影响编排数据。存 editor_data，随工程固化。"
             >
               +分组框
+            </button>
+            <button
+              type="button"
+              className="toolbar-btn"
+              onClick={createNote}
+              disabled={!compositionId}
+              title="新建便签（画布注释节点）：双击写正文、拖动摆位置、选中后拉边角改大小。节点 / 迁移的注释在右侧「属性」里写或双击注释条改；分组框的注释点框标题栏的 ✎。全部只存编辑器旁挂文件，不进编排数据、不进 Save All。"
+            >
+              +便签
             </button>
             <ToolbarMenuDropdown
               label={wrapperGroupMode === 'off'
@@ -2139,6 +2430,14 @@ function NarrativeEditorInner() {
                 onChange={(e) => setPreferences({ canvasSignalDisplay: e.target.checked ? 'id' : 'label' })}
               />
               信号id
+            </label>
+            <label className="toggle compact-toggle" title="勾选后画布上每个状态下面挂它管的 / 它调的小标、转移下面挂推它的小标（都是游戏里真实存在的东西，点一下跳过去）；超过三个折成 +N。只影响显示，不改数据。">
+              <input
+                type="checkbox"
+                checked={preferences.canvasRefChips}
+                onChange={(e) => setPreferences({ canvasRefChips: e.target.checked })}
+              />
+              引用标
             </label>
             {refactorJournalSize > 0 && (
               <button
@@ -2287,6 +2586,58 @@ function NarrativeEditorInner() {
             </aside>
           )}
 
+          {overviewOpen && (
+            <aside className={`entity-global-panel signal-xref-dock graph-overview-dock${overviewMinimized ? ' minimized' : ''}`}>
+              <div className="entity-global-head">
+                <div>
+                  <div className="section-title">编排全貌{overviewMinimized && overviewModel ? ` · ${overviewModel.graphLabel}` : ''}</div>
+                  {overviewMinimized
+                    ? <div className="muted">已收起露出画布 · 「展开」回到清单</div>
+                    : <div className="muted">这张图连着游戏里的哪些东西：推它的 · 它管的 · 它调的（只读，点一下跳过去）</div>}
+                </div>
+                <div className="graph-overview-head-actions">
+                  <button
+                    type="button"
+                    onClick={() => setOverviewMinimized((v) => !v)}
+                    title={overviewMinimized ? '展开清单' : '收成一条标题栏，露出画布（点「定位」后会自动收起）'}
+                  >
+                    {overviewMinimized ? '展开' : '收起'}
+                  </button>
+                  <button type="button" onClick={() => setOverviewOpen(false)}>关闭</button>
+                </div>
+              </div>
+              <div className="graph-overview-body" hidden={overviewMinimized}>
+                <GraphOverviewPanel
+                  model={overviewModel}
+                  graphs={overviewGraphChoices}
+                  selectedGraphId={overviewEffectiveGraphId}
+                  onSelectGraph={setOverviewGraphId}
+                  scanning={xrefScanning}
+                  error={xrefError}
+                  stale={xrefStale}
+                  scannedAt={xrefScannedAt}
+                  onRescan={rescanXrefIndex}
+                  onJump={jumpRef}
+                  onFocus={(target, label) => {
+                    const ok = focusTarget(target);
+                    if (ok) {
+                      // 定位之后人要看的是画布：面板自动收成标题栏，不用先关掉再找那一拍
+                      setOverviewMinimized(true);
+                      setOverviewJumpNote(`已在画布上选中「${label}」挂着的那一拍（面板已收起，点「展开」回来）`);
+                      setStatus(`已在画布上选中「${label}」挂着的那一拍`);
+                    } else {
+                      setOverviewJumpNote(`「${label}」在当前画布上找不到（可能刚被删或改名）`);
+                    }
+                  }}
+                  jumpNote={overviewJumpNote}
+                  highlight={overviewHighlight}
+                  scrollToGroup={overviewScroll.group}
+                  scrollToken={overviewScroll.token}
+                />
+              </div>
+            </aside>
+          )}
+
           {templatesOpen && (
             <aside className="entity-global-panel task-bus-panel">
               <div className="entity-global-head">
@@ -2424,6 +2775,14 @@ function NarrativeEditorInner() {
         </div>
         {inspectorTab === 'properties' && (
           <>
+            {selectedNoteId ? (
+              <NoteInspectorFields
+                noteId={selectedNoteId}
+                note={currentNotes[selectedNoteId]}
+                actions={annotationActions}
+                onRemoved={() => { setSelectedId(''); setSelectedJson(''); }}
+              />
+            ) : (
             <StructuredInspector
               data={data}
               composition={composition}
@@ -2450,6 +2809,18 @@ function NarrativeEditorInner() {
               onInspectSignal={openSignalXref}
               onInspectState={openStateXref}
             />
+            )}
+            {annotationTarget && !selectedNoteId ? (
+              <TextAreaField
+                label="画布注释（编辑器专用·不进编排数据）"
+                value={annotationTarget.kind === 'state'
+                  ? stateNote(annotationsFile, annotationTarget.graphId, annotationTarget.id)
+                  : transitionNote(annotationsFile, annotationTarget.graphId, annotationTarget.id)}
+                onChange={(value) => (annotationTarget.kind === 'state'
+                  ? annotationActions.setStateNote(annotationTarget.graphId, annotationTarget.id, value)
+                  : annotationActions.setTransitionNote(annotationTarget.graphId, annotationTarget.id, value))}
+              />
+            ) : null}
             <div className="inspector-actions">
               <button type="button" onClick={deleteSelected} disabled={!isSelectionDeletable(selectedId, graphRef)}>删除</button>
               <button type="button" onClick={() => selectedObject.navigate && navigateTo(selectedObject.navigate.kind, selectedObject.navigate.id)} disabled={!selectedObject.navigate}>
@@ -2576,6 +2947,8 @@ function NarrativeEditorInner() {
         <div className="panel-resizer panel-resizer-right" onMouseDown={startRight} aria-hidden />
       </aside>
     </div>
+    </AnnotationsProvider>
+    </RefChipsProvider>
     </NarrativeCanvasActionsProvider>
   );
 }
@@ -4335,6 +4708,7 @@ function applySelectedObjectJson(
 
 function getSelectedSummary(comp: NarrativeCompositionDef | undefined, graph: NarrativeGraphDef | undefined, graphRef: GraphRef, selectedId: string) {
   if (!selectedId || !comp || !graph) return { title: graph?.id ?? '未选择', subtitle: '图检视器', navigate: null as null | { kind: string; id: string } };
+  if (parseNoteNodeId(selectedId)) return { title: '便签', subtitle: '画布注释 · 编辑器专用，不进编排数据', navigate: null };
   const inline = parseInlineSubgraphId(selectedId);
   if (inline) {
     const element = comp.elements?.find((el) => el.id === inline.elementId);

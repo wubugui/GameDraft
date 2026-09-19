@@ -42,14 +42,17 @@ from .model import (
     Declaration,
     Diagnostic,
     Emitter,
+    GraphCard,
     KIND_AUTHOR,
     KIND_DERIVED,
     KIND_DRAFT,
     KIND_UNKNOWN,
     Listener,
+    Pusher,
     SignalCard,
     StateCard,
     StateRead,
+    Target,
     derived_signal_key,
     is_derived,
     parse_derived,
@@ -58,6 +61,7 @@ from .model import (
 )
 from .phrases import CONTAINER_KEYS, SKIP_KEYS, condition_parts, join_trail, pending_label, plain_label
 from .sources import XrefSource
+from .targets import TargetContext, build_target_context, resolve_action_targets
 
 # 递归兜底闸：真实数据最深十几层，200 层只可能是环或病态数据。
 _MAX_WALK_DEPTH = 200
@@ -137,6 +141,9 @@ class GraphMeta:
     initial_state: str = ""
     # 活计图（有 run 声明）：运行时只有"当前激活的那一个"才吃信号，挂起的一个都不接
     is_run: bool = False
+    # wrapper 图绑的实体（ownerType:ownerId）；flow 主图的 ownerId 是纯注释、零机制效力
+    owner_type: str = ""
+    owner_id: str = ""
     state_labels: dict[str, str] = field(default_factory=dict)
     broadcast_states: set[str] = field(default_factory=set)
 
@@ -211,6 +218,10 @@ class SignalIndex:
         # ⚠ 两处坑：① 非 dict 元素也必须占位（否则后面每条都错位一格，跳到别的转移上——
         # 比跳不过去更坏）；② 按图 id 建键会让同 id 的两张图串成一条列表。
         self._graph_transitions: dict[str, list[str]] = {}
+        # 「它调的」：叙事图状态动作指向的世界里的东西，按 (图, 状态) 归档
+        self.targets: dict[tuple[str, str], list[Target]] = {}
+        self._pending_targets: list[Target] = []
+        self._target_ctx: TargetContext = TargetContext()
         self.stats = ScanStats()
         self._build(source)
 
@@ -219,11 +230,14 @@ class SignalIndex:
         self._scan_registry(source.narrative)
         self._scan_graphs(source.narrative)
         self._scan_declarations(source.narrative)
+        # 「它调的」要把 id 翻成中文名、把实体落到场景：现场知识先建好（磁盘宇宙 + 已加载文档）
+        self._target_ctx = build_target_context(source)
         # 叙事图自身：整份文件扫一遍（口径必须等于 emitted_signal_ids 的全文件扫描），
-        # 命中再按人话路径归属到图/状态。
+        # 命中再按人话路径归属到图/状态。目标扫描只挂在这一遍上：别的容器的动作
+        # 不是"这张图调的"。
         self._scan_container(
             source.narrative, self.narrative_file, CHANNEL_NARRATIVE_ACTION,
-            "narrativeGraph", "", "叙事状态机",
+            "narrativeGraph", "", "叙事状态机", on_action=self._collect_target,
         )
         for doc in source.dialogues:
             self.stats.dialogues += 1
@@ -291,6 +305,21 @@ class SignalIndex:
         for srows in self.state_reads.values():
             for row in srows:
                 attach(row, keep_graph=True)
+        # 「它调的」行：宿主坐标从 host_pointer 翻；落不到某张图某个状态的（理论上没有）丢弃
+        for row in self._pending_targets:
+            for prefix, meta in prefixes:
+                if not row.host_pointer.startswith(prefix + "/"):
+                    continue
+                segs = [x.replace("~1", "/").replace("~0", "~")
+                        for x in row.host_pointer[len(prefix):].split("/")[1:]]
+                if len(segs) >= 2 and segs[0] == "states":
+                    row.composition_id = meta.composition_id
+                    row.element_id = meta.element_id
+                    row.graph_id = meta.graph_id
+                    row.state_id = segs[1]
+                    self.targets.setdefault((meta.graph_id, segs[1]), []).append(row)
+                break
+        self._pending_targets = []
 
     def _render_conditions(self) -> None:
         """条件的人话渲染必须等**所有图都扫完**：急着在扫描途中渲染，前向引用的图还没
@@ -353,6 +382,8 @@ class SignalIndex:
                 pointer=pointer,
                 initial_state=_text(graph.get("initialState")),
                 is_run=isinstance(graph.get("run"), dict),
+                owner_type=_text(graph.get("ownerType")),
+                owner_id=_text(graph.get("ownerId")),
             )
             states = graph.get("states")
             if isinstance(states, dict):
@@ -476,6 +507,7 @@ class SignalIndex:
         readonly: bool = False,
         collect_emits: bool = True,
         pointer_prefix: str = "",
+        on_action: ActionHandler | None = None,
     ) -> None:
         """扫一份文档，收「发射 / 强制设状态 / 条件读状态」三类命中。
 
@@ -557,10 +589,26 @@ class SignalIndex:
             _fill_subject(row, hit, container_kind, container_id)
             self.state_reads.setdefault((graph_id, state_id), []).append(row)
 
-        _walk(root, pointer_prefix, [], [], [], "", None, [], on_emit, on_command, on_condition)
+        _walk(root, pointer_prefix, [], [], [], "", None, [], on_emit, on_command, on_condition, on_action)
+
+    def _collect_target(self, node: dict[str, Any], hit: _Hit) -> None:
+        """叙事文件里的一条动作 → 它指向的世界里的东西（画布坐标随后在 _attach_narrative_coords 补）。"""
+        rows = resolve_action_targets(_text(node.get("type")), node.get("params"), self._target_ctx)
+        for row in rows:
+            row.host_pointer = hit.pointer
+            row.where = _action_where(hit.where)
+            if row.ref_graph_id:
+                meta = self.graphs.get(row.ref_graph_id)
+                if meta is not None:
+                    row.label = meta.label
+                    row.ref_composition_id = meta.composition_id
+                    row.ref_element_id = meta.element_id
+            self._pending_targets.append(row)
 
     def _sort_all(self) -> None:
         """稳定排序：同一份数据每次扫出的顺序必须一致，否则界面每次刷新都在跳。"""
+        for trows in self.targets.values():
+            trows.sort(key=lambda t: (t.host_pointer, t.universe, t.target_id))
         for erows in self.emitters.values():
             erows.sort(key=lambda e: (_CHANNEL_ORDER.get(e.channel, 9), e.container_kind, e.container_id, e.pointer))
         for drows in self.declarations.values():
@@ -835,6 +883,7 @@ class SignalIndex:
         card.ways_in = self._ways_into_state(gid, sid)
         card.ways_out = list(self.transitions_out.get((gid, sid), []))
         card.readers = list(self.state_reads.get((gid, sid), []))
+        card.targets = list(self.targets.get((gid, sid), []))
         # 进/出这一拍会发的信号：状态动作树里的发射 + 广播派生。发射行在扫描时已经
         # 补过画布坐标（graph_id/state_id），按它归属，别再解析一遍指针。
         emits = [
@@ -889,9 +938,178 @@ class SignalIndex:
     def overview(self) -> list[SignalCard]:
         return [self.card(sid) for sid in self.all_signal_ids()]
 
+    # ------------------------------------------------------------------ 图维度
+    def all_graph_ids(self) -> list[str]:
+        """目录里的全部图（按登记序 = JSON 位置序，与画布导航一致）。"""
+        return list(self.graphs.keys())
+
+    def graph_card(self, graph_id: str) -> GraphCard:
+        """一张图的编排全貌：推它的 / 它管的 / 它调的 / 接它往下走的图。
+
+        三组都只认**图外**的东西：本图自己的状态动作发的信号仍列进「推它的」但标 selfGraph
+        （不然一条转移空着，人会以为没接线）；本图自己转移里读自己状态的条件不算"它管的"。
+        """
+        gid = _text(graph_id)
+        meta = self.graphs.get(gid)
+        card = GraphCard(
+            graph_id=gid,
+            graph_label=meta.label if meta else gid,
+            composition_id=meta.composition_id if meta else "",
+            composition_label=meta.composition_label if meta else "",
+            element_id=meta.element_id if meta else "",
+            owner_type=meta.owner_type if meta else "",
+            owner_id=meta.owner_id if meta else "",
+            exists=meta is not None,
+        )
+        if meta is None:
+            return card
+        card.state_ids = list(meta.state_labels.keys())
+        card.state_labels = {sid: meta.state_label(sid) for sid in card.state_ids}
+
+        # 推它的：本图每条转移 × 让它走的来源
+        transitions = [
+            row for rows in self.transitions_out.values() for row in rows if row.graph_id == gid
+        ]
+        transitions.sort(key=lambda l: (card.state_ids.index(l.from_state) if l.from_state in card.state_ids else 999, l.transition_id))
+        seen_push: set[tuple[str, str, str, str]] = set()
+        for tr in transitions:
+            if tr.trigger in REACTIVE_TRIGGERS:
+                # 反应式：条件里读到的别的图的状态就是"推它的"
+                for rows in self.state_reads.values():
+                    for read in rows:
+                        if read.host_graph_id != gid or read.host_transition_id != tr.transition_id:
+                            continue
+                        if read.graph_id == gid:
+                            continue
+                        key = (tr.transition_id, "read", read.graph_id, read.state_id)
+                        if key in seen_push:
+                            continue
+                        seen_push.add(key)
+                        other = self.graphs.get(read.graph_id)
+                        emitter = Emitter(
+                            signal="", channel=CHANNEL_UPSTREAM,
+                            container_kind="narrativeGraph", container_id=read.graph_id,
+                            container_label=other.label if other else read.graph_id,
+                            kind_label="叙事图",
+                            where=f"状态「{other.state_label(read.state_id) if other else read.state_id}」",
+                            context="条件读到这一拍时自动走",
+                            file=self.narrative_file,
+                            pointer=f"{other.pointer}/states/{_esc(read.state_id)}" if other else "",
+                            composition_id=other.composition_id if other else "",
+                            element_id=other.element_id if other else "",
+                            graph_id=read.graph_id, state_id=read.state_id,
+                        )
+                        card.pushers.append(Pusher(
+                            transition_id=tr.transition_id, signal=tr.signal,
+                            from_state=tr.from_state, to_state=tr.to_state,
+                            from_label=tr.from_label, to_label=tr.to_label, trigger=tr.trigger,
+                            emitter=emitter, ref_graph_id=read.graph_id, ref_state_id=read.state_id,
+                            ref_state_label=other.state_label(read.state_id) if other else read.state_id,
+                        ))
+                continue
+            if not tr.signal or tr.signal == DRAFT_SIGNAL:
+                continue
+            for emitter in self.emitters.get(tr.signal, []):
+                if emitter.channel == CHANNEL_UPSTREAM:
+                    continue
+                key = (tr.transition_id, emitter.file, emitter.pointer, emitter.signal)
+                if key in seen_push:
+                    continue
+                seen_push.add(key)
+                self_graph = emitter.file == self.narrative_file and emitter.graph_id == gid
+                push = Pusher(
+                    transition_id=tr.transition_id, signal=tr.signal,
+                    from_state=tr.from_state, to_state=tr.to_state,
+                    from_label=tr.from_label, to_label=tr.to_label, trigger=tr.trigger,
+                    emitter=emitter, self_graph=self_graph,
+                )
+                if emitter.channel == CHANNEL_BROADCAST and emitter.graph_id and emitter.graph_id != gid:
+                    push.ref_graph_id = emitter.graph_id
+                    push.ref_state_id = emitter.state_id
+                    other = self.graphs.get(emitter.graph_id)
+                    push.ref_state_label = other.state_label(emitter.state_id) if other else emitter.state_id
+                card.pushers.append(push)
+        # 自推的排最后：它们不是世界里的东西
+        order = {tr.transition_id: i for i, tr in enumerate(transitions)}
+        card.pushers.sort(key=lambda p: (p.self_graph, order.get(p.transition_id, 999)))
+        for push in card.pushers:
+            self._describe_pusher_subject(push, gid)
+
+        # 它管的：读本图任一状态的、长在图外的引用
+        for sid in card.state_ids:
+            for read in self.state_reads.get((gid, sid), []):
+                if read.file == self.narrative_file and read.host_graph_id == gid:
+                    continue
+                card.readers.append(read)
+        # 它调的
+        for sid in card.state_ids:
+            card.targets.extend(self.targets.get((gid, sid), []))
+        # 接它往下走的图：监听本图末态广播（state:<图>:<态>）的别的图的转移
+        for sid in sorted(meta.broadcast_states):
+            for listener in self.listeners.get(derived_signal_key(gid, sid), []):
+                if listener.graph_id != gid:
+                    card.downstream.append(listener)
+        return card
+
+    def _describe_pusher_subject(self, push: Pusher, graph_id: str) -> None:
+        """把一条发射行落到**世界里的那个东西**上（区域 / 热点 / NPC / 对话图 / 叙事图…）。
+
+        发射行的容器是整份文件（场景 / 对话图），而策划要的是"哪个区域"。区域 / 热点 / NPC
+        从 anchors 里取（宿主跳转引擎认的就是这对锚点），名字查场景里的 name / label。
+        """
+        e = push.emitter
+        ctx = self._target_ctx
+        if push.self_graph:
+            push.subject_kind_label = "本图"
+            push.subject_id = e.state_id
+            push.subject_name = self.graphs[graph_id].state_label(e.state_id) if graph_id in self.graphs else e.state_id
+            push.moment = "状态动作"
+            return
+        if e.container_kind == "scene":
+            scene_id = e.container_id
+            push.scene_id = scene_id
+            push.scene_label = ctx.scene_labels.get(scene_id, scene_id)
+            entity = next(
+                (pair for pair in reversed(e.anchors) if len(pair) == 2 and pair[0] in ("zones", "hotspots", "npcs")),
+                None,
+            )
+            if entity is not None:
+                container, ident = entity
+                push.subject_kind_label = {"zones": "区域", "hotspots": "热点", "npcs": "NPC"}[container]
+                push.subject_id = ident
+                found = ctx.find_entity(ident, scene_id, container)
+                push.subject_name = found[2] if found and found[2] else ident
+                push.moment = _moment_of(e.where, ident)
+            else:
+                push.subject_kind_label = "场景"
+                push.subject_id = scene_id
+                push.subject_name = push.scene_label
+                push.moment = _moment_of(e.where, "")
+            return
+        if e.container_kind == "dialogue":
+            push.subject_kind_label = "对话图"
+            push.subject_id = e.container_id
+            push.subject_name = ctx.label_of("dialogue_graphs", e.container_id)
+            push.moment = e.where
+            return
+        if e.container_kind == "narrativeGraph":
+            push.subject_kind_label = "叙事图"
+            push.subject_id = e.container_id
+            push.subject_name = e.container_label or e.container_id
+            push.moment = e.where
+            return
+        push.subject_kind_label = e.kind_label or e.container_kind
+        push.subject_id = e.container_id
+        push.subject_name = e.container_label or e.container_id
+        push.moment = e.where
+
+    def graph_overview(self) -> list[GraphCard]:
+        return [self.graph_card(gid) for gid in self.all_graph_ids()]
+
     def to_dict(self) -> dict[str, Any]:
         cards = self.overview()
         states = self.state_overview()
+        graphs = self.graph_overview()
         return {
             "origin": self.origin,
             "stats": {
@@ -906,6 +1124,8 @@ class SignalIndex:
             # 状态维度与信号维度一起交付：一次扫描（约 110ms / 759KB）换两边切换零延迟，
             # 而按需再问一次要么多一趟往返、要么得在宿主里缓存索引（两者都更容易漂）。
             "states": [c.to_dict() for c in states],
+            # 图维度（编排全貌）：同一次扫描，面板与画布小标共用
+            "graphs": [g.to_dict() for g in graphs],
         }
 
 
@@ -916,6 +1136,32 @@ _CHANNEL_ORDER = {
     CHANNEL_BROADCAST: 3,
     CHANNEL_UPSTREAM: 4,
 }
+
+
+def _moment_of(where: str, entity_id: str) -> str:
+    """发射位置串里「那个东西之后」的那一下：`区域「z」 · 进入时 第 1 个` → `进入时`。"""
+    rest = where
+    if entity_id:
+        marker = f"「{entity_id}」"
+        idx = rest.find(marker)
+        if idx >= 0:
+            rest = rest[idx + len(marker):]
+    rest = rest.lstrip(" ·")
+    first = rest.split(" · ")[0].strip()
+    # 「进入时 第 1 个」→「进入时」：第几个动作是技术细节，小标上没地方放
+    return first.split(" 第 ")[0].strip() if first else where
+
+
+def _action_where(where: str) -> str:
+    """「它调的」一行的位置串只留状态**之后**那截（进入时动作 第 3 个）：
+    编排 / 元素 / 状态在面板上各有自己的位置，再写一遍就是每行三段重复。"""
+    marker = "状态「"
+    idx = where.rfind(marker)
+    if idx < 0:
+        return where
+    rest = where[idx:]
+    sep = rest.find("」 · ")
+    return rest[sep + 4:] if sep >= 0 else ""
 
 
 def _trim_container_prefix(where: str, container_id: str) -> str:
@@ -1033,6 +1279,8 @@ def _dialogue_line(root: Any, pointer: str) -> str:
 
 EmitHandler = Callable[[str, _Hit], None]
 StateRefHandler = Callable[[str, str, _Hit], None]
+#: 每一条 `{type, params}` 动作都回调一次（「它调的」目标扫描用）；只在扫叙事图时挂
+ActionHandler = Callable[[dict[str, Any], _Hit], None]
 
 
 def _display_name(node: Any) -> str:
@@ -1192,9 +1440,10 @@ def _walk(
     on_emit: EmitHandler,
     on_command: StateRefHandler,
     on_condition: StateRefHandler,
+    on_action: ActionHandler | None = None,
     depth: int = 0,
 ) -> None:
-    """深度遍历任意 JSON，捞三类命中。
+    """深度遍历任意 JSON，捞三类命中（挂了 `on_action` 时每条动作也回调一次）。
 
     三件事同时往下带：
     - `pointer` / `anchors`：形状与 `tools/json_lang/search.py` 完全一致，可以直接喂给
@@ -1224,6 +1473,8 @@ def _walk(
             my_subjects = subjects + [(container, _text(node_id), human, node)]
         node_type = _text(node.get("type"))
         params = node.get("params")
+        if on_action is not None and node_type and isinstance(params, dict):
+            on_action(node, _Hit(pointer, [list(a) for a in my_anchors], list(trail), node, list(my_labels), list(my_subjects)))
         from tools.editor.shared.health_refs import HEALTH_THREAT_SIGNALS, health_signal_fields
         for _, key, signal in health_signal_fields(node):
             owner_type = "npc" if container == "npcs" else "hotspot" if container == "hotspots" else ""
@@ -1304,7 +1555,7 @@ def _walk(
                 child_trail = trail + [plain_label(skey) or skey]
                 child_pending = None
             _walk(value, f"{pointer}/{_esc(skey)}", my_anchors, my_labels, my_subjects, skey, child_pending, child_trail,
-                                    on_emit, on_command, on_condition, depth + 1)
+                                    on_emit, on_command, on_condition, on_action, depth + 1)
     elif isinstance(node, list):
         for i, item in enumerate(node):
             ident = _display_name(item)
@@ -1313,7 +1564,7 @@ def _walk(
             else:
                 part = f"「{ident}」" if ident else f"第 {i + 1} 项"
             _walk(item, f"{pointer}/{i}", anchors, labels, subjects, container, None, trail + [part],
-                                    on_emit, on_command, on_condition, depth + 1)
+                                    on_emit, on_command, on_condition, on_action, depth + 1)
 
 
 def build_index(source: XrefSource) -> SignalIndex:

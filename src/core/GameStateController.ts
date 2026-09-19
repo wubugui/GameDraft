@@ -76,6 +76,17 @@ export class GameStateController {
   get previousState(): GameState { return this._previousState; }
 
   /**
+   * 状态变更旁听席（只一个，后设的顶替）。给"状态一变就必须立刻收摊"的东西用——
+   * 目前是脱手演出会话（见 systems/performanceSession.ts）。
+   * ⚠ 它**不是**事件总线：这里要的是同步、且在状态写入之后立刻发生。
+   */
+  setStateChangeObserver(fn: ((next: GameState, previous: GameState) => void) | null): void {
+    this.stateChangeObserver = fn;
+  }
+
+  private stateChangeObserver: ((next: GameState, previous: GameState) => void) | null = null;
+
+  /**
    * `_currentState` 的**唯一**写入口（setState / restorePreviousState / closePanel / togglePanel
    * 全都经这里）：状态真的变了就把本帧未消费的输入沿丢掉。
    *
@@ -87,8 +98,19 @@ export class GameStateController {
   private applyCurrentState(next: GameState): void {
     if (this.isDepleted() && next !== GameState.UIOverlay && next !== GameState.MainMenu) next = GameState.Dead;
     if (this._currentState === next) return;
+    const previous = this._currentState;
     this._currentState = next;
     this.inputManager.clearInputEdges();
+    /**
+     * 状态真的变了才通知。观察者是**同步**跑的——脱手演出要在"过场第一拍演出去之前"
+     * 就把自己收干净，晚一个微任务就会闪在过场上面。
+     * 观察者自己抛错不许影响状态机（它只是个旁听席）。
+     */
+    if (this.stateChangeObserver) {
+      try { this.stateChangeObserver(next, previous); } catch (e) {
+        console.warn('GameStateController: 状态变更观察者抛错（已忽略）', e);
+      }
+    }
     if (next === GameState.Exploring && this.pendingPanelOpen) {
       const name = this.pendingPanelOpen;
       this.pendingPanelOpen = null;

@@ -5952,6 +5952,145 @@ def _append_action_param_ref_issues(
                     f"emitVfxField kind={k} 缺少非零 direction：场没有方向，运行时不产生作用",
                 ))
 
+    if t == "strikeThreat":
+        # 落雷。运行时对内容错一律 warn 一句就少演一层，「画面上什么都没发生」与「编排如此」
+        # 长得一样，只能构建期拦（与上面粒子那几条同一个理由）。
+        rank = str(p.get("rank") or "").strip()
+        if rank and rank not in ("threat", "distance"):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"strikeThreat rank {rank!r} 非法（threat / distance）",
+            ))
+        fb = str(p.get("fallback") or "").strip()
+        if fb and fb not in ("random", "none"):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"strikeThreat fallback {fb!r} 非法（random / none）",
+            ))
+        eff = str(p.get("effect") or "").strip()
+        raw_effs = p.get("effects")
+        effs = ([str(x).strip() for x in raw_effs] if isinstance(raw_effs, list)
+                else [x.strip() for x in str(raw_effs or "").split(",")])
+        effs = [x for x in effs if x]
+        if eff or effs:
+            known_eff = _known_vfx_effect_ids(model)
+            for e in ([eff] if eff else []) + effs:
+                if known_eff and e not in known_eff:
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"strikeThreat 引用的效果 {e!r} 不在 assets/data/vfx/ 里"
+                        f"（运行时装不到只 warn 一句，雷的粒子那一层什么都不出）",
+                    ))
+            if eff and effs:
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    "strikeThreat 同时给了 effect 与 effects：运行时只认 effects（随机挑一道），effect 被忽略",
+                ))
+        for key in ("maxDistance", "fallbackRadius", "lightIntensity", "lightRange", "lightMs",
+                    "lightHeight", "lightKelvin", "effectHeight", "seed",
+                    "sfxVolume", "strikes", "extraChance", "gapMs", "gapJitterMs",
+                    "flashAlpha", "flashMs", "shakeAmplitude", "shakeMs"):
+            v = p.get(key)
+            if v is not None and v != "" and not _is_num(v):
+                issues.append(Issue("error", data_type, item_id, f"strikeThreat 的 {key} 须为数值"))
+        # 绑在落点上的雷声：没登记 = 运行时 warn 一句，雷劈下来是哑的。
+        bolt_sfx = str(p.get("sfx") or "").strip()
+        if bolt_sfx and bolt_sfx not in (model.audio_config.get("sfx") or {}):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"strikeThreat 的雷声 {bolt_sfx!r} 不在 audio_config.sfx 中——这道雷会是哑的",
+            ))
+        for key, lo, hi in (("extraChance", 0.0, 1.0), ("flashAlpha", 0.0, 1.0)):
+            v = p.get(key)
+            if _is_num(v) and not (lo <= float(v) <= hi):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"strikeThreat 的 {key} 须为 {lo}..{hi}",
+                ))
+        strikes = p.get("strikes")
+        if _is_num(strikes) and float(strikes) > 1 and not _is_num(p.get("gapMs")):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "strikeThreat 配了连劈多道却没给 gapMs：会按缺省 220ms 一道接一道，"
+                "间隔不抖的话连劈听起来像点射而不是雷（再配 gapJitterMs）",
+            ))
+        # 一条雷什么都不给 = 靶子无声无息地消失。合法（作者可能只想要"它没了"），但十有八九是漏配。
+        if not eff and not effs and not _is_num(p.get("lightIntensity")):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "strikeThreat 既没有 effect（雷的粒子）也没有 lightIntensity（雷光）："
+                "靶子会无声无息地消失，玩家看不到发生了什么",
+            ))
+
+    if t == "duckAudio":
+        # 闪避倍率写反（比如写成 dB 或百分数）在游戏里只表现为"没压"或"全哑"，构建期拦下来。
+        for key in ("bgm", "ambient", "sfx", "voice"):
+            v = p.get(key)
+            if v is None or v == "":
+                continue
+            if not _is_num(v) or not (0.0 <= float(v) <= 1.0):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"duckAudio 的 {key} 须为 0..1 的倍率（0.05 = 压到二十分之一，1 = 不压）",
+                ))
+        for key in ("fadeMs", "holdMs"):
+            v = p.get(key)
+            if v is not None and v != "" and not _is_num(v):
+                issues.append(Issue("error", data_type, item_id, f"duckAudio 的 {key} 须为数值"))
+        if not any(_is_num(p.get(k)) for k in ("bgm", "ambient", "sfx", "voice")):
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                "duckAudio 一条通道都没压：这一条什么都不做（压哪条就写哪条的倍率）",
+            ))
+
+    if t == "restoreAudio":
+        raw_stop = p.get("stopSfx")
+        stop_ids = ([str(x).strip() for x in raw_stop] if isinstance(raw_stop, list)
+                    else [x.strip() for x in str(raw_stop or "").split(",")])
+        known_sfx = model.audio_config.get("sfx") or {}
+        for sid in [x for x in stop_ids if x]:
+            if sid not in known_sfx:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"restoreAudio 要掐的音效 {sid!r} 不在 audio_config.sfx 中——掐了个不存在的，"
+                    f"真正在响的那条还在响",
+                ))
+        v = p.get("fadeMs")
+        if v is not None and v != "" and not _is_num(v):
+            issues.append(Issue("error", data_type, item_id, "restoreAudio 的 fadeMs 须为数值"))
+
+    if t == "screenFlash":
+        a = p.get("alpha")
+        if a is not None and a != "" and (not _is_num(a) or not (0.0 <= float(a) <= 1.0)):
+            issues.append(Issue("error", data_type, item_id, "screenFlash 的 alpha 须为 0..1"))
+        c = p.get("color")
+        if c is not None and c != "" and not _is_num(c):
+            s = str(c).strip().lstrip("#")
+            if len(s) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in s):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"screenFlash color {c!r} 非法（#rrggbb、裸十六进制或数字）",
+                ))
+
+    if t == "cameraShake":
+        amp = p.get("amplitude")
+        if not _is_num(amp) or float(amp) < 0:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "cameraShake 的 amplitude 须为 ≥0 的数值（屏幕像素）",
+            ))
+        f = p.get("frequency")
+        if f is not None and f != "" and (not _is_num(f) or float(f) <= 0):
+            issues.append(Issue("error", data_type, item_id, "cameraShake 的 frequency 须为正数（Hz）"))
+
+    if t == "setSceneDim":
+        s = p.get("scale")
+        if not _is_num(s) or not (0.0 <= float(s) <= 1.0):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                "setSceneDim 的 scale 须为 0..1（1 = 恢复原样）",
+            ))
+
     if t == "playPropVfx":
         _play_prop_vfx_issues(model, issues, p, data_type, item_id, prop_state_self=prop_state_self)
 
@@ -6183,6 +6322,66 @@ def _iter_cutscene_show_dialogue(steps: object):
                 yield f"[{si}].tracks{sub_path}", sub
         elif step.get("type") == "showDialogue":
             yield f"[{si}]", step
+
+
+def _check_detached_batch(
+    issues: list, p: dict, data_type: str, item_id: str,
+) -> None:
+    """脱手演出批（`runActionsDetached`）自己的三条规矩。
+
+    这一批跑在**玩家背后**、可以被任意系统随时打断（打断＝跳过演出、补齐结算、归位做满，
+    见 `src/systems/performanceSession.ts`）。三件事只能在构建期拦：
+
+    1. **不许抢控制权 / 换世界**。里面出现过场、对话、小游戏、切场景这类动作，就是在随机时刻
+       把玩家从他正在做的事里拽走——那正是这套东西要根治的毛病，所以报 error。
+    2. **顶替是按名字算的**。不写 `id` 的都叫 `detached`，于是两段互不相干的演出会互相顶掉。
+    3. **纯演出动作要登记**。没登记进 `PRESENTATION_ONLY_ACTIONS` 的演出动作，在打断时会照跑，
+       正好播在过场上面。这条只能 warning——"是不是纯演出"最终是作者说了算。
+    """
+    from tools.editor.shared.action_editor import ACTION_PERSISTENCE
+    from tools.editor.shared.action_structure import (
+        detached_forbidden, detached_presentation_only, is_container_action,
+    )
+
+    forbidden = detached_forbidden()
+    presentation = detached_presentation_only()
+
+    if not str(p.get("id") or "").strip():
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            "runActionsDetached 没写 id：脱手演出按名字顶替，不写的都叫 \"detached\"，"
+            "两段互不相干的演出会互相顶掉。给它起个名字（技能名 / 事件名）",
+        ))
+
+    seen_container = False
+    for act in p.get("actions") or []:
+        if not isinstance(act, dict):
+            continue
+        at = str(act.get("type") or "").strip()
+        if not at:
+            continue
+        if at in forbidden:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"脱手演出里不许出现 {at!r}：这一批跑在玩家背后，它会在随机时刻抢走控制权"
+                f"（或把世界换掉）。要接管就别用脱手批",
+            ))
+        elif at not in presentation and ACTION_PERSISTENCE.get(at) == "memory":
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"脱手演出里的 {at!r} 是演出类动作，却没登记进 PRESENTATION_ONLY_ACTIONS："
+                f"这段演出被打断（触发过场 / 切场景 / 死亡）时它会照跑，正好播在过场上面。"
+                f"确认是纯演出就补登记进 src/core/actionParamManifest.ts",
+            ))
+        if is_container_action(at):
+            seen_container = True
+
+    if seen_container:
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            "脱手演出里套了容器动作：被打断时**只有顶层**是同步补跑的，容器里剩下的动作"
+            "要晚一个微任务才收（切场景那一刻就可能落到新场景头上）。时间线尽量摊平写",
+        ))
 
 
 def _contains_self_collect_clue(node: object, clue_id: str) -> bool:
@@ -7810,7 +8009,9 @@ def _walk_action_defs(
                 data_type, item_id, scene_id,
                 cutscene_temp_ids=cutscene_temp_ids,
             )
-        elif t == "runActions":
+        elif t in ("runActions", "runActionsDetached"):
+            if t == "runActionsDetached":
+                _check_detached_batch(issues, p, data_type, item_id)
             _walk_action_defs(
                 model, issues, p.get("actions"),
                 data_type, item_id, scene_id,

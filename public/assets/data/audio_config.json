@@ -757,6 +757,21 @@
     },
     "sfx_smell_hide": {
       "src": "/resources/runtime/audio/hud_20260910/sfx_smell_hide.wav"
+    },
+    "sfx_thunder_crack": {
+      "src": "/resources/runtime/audio/leifu_20260919/sfx_thunder_crack.wav"
+    },
+    "sfx_thunder_rumble": {
+      "src": "/resources/runtime/audio/leifu_20260918/sfx_thunder_rumble.wav"
+    },
+    "sfx_wind_gust": {
+      "src": "/resources/runtime/audio/leifu_20260918/sfx_wind_gust.wav"
+    },
+    "sfx_storm_brew": {
+      "src": "/resources/runtime/audio/leifu_20260918/sfx_storm_brew.wav"
+    },
+    "sfx_thunder_near": {
+      "src": "/resources/runtime/audio/leifu_20260918/sfx_thunder_near.wav"
     }
   },
   "voice": {

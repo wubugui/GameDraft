@@ -3188,3 +3188,466 @@ button.secondary {
   cursor: pointer;
   font: inherit;
 }
+
+/* ------------------------------------------------------------------ 引用小标（画布） */
+/* 状态节点下面：它管的（绿）/ 它调的（紫）；转移标签下面：推它的（蓝）。
+   每个小标 = 游戏里真实存在的一个东西，点一下跳过去；超过三个折成 +N，点开全貌面板。 */
+.node-ref-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 6px;
+  pointer-events: auto;
+}
+
+.node-ref-chips::before {
+  content: attr(data-group-label);
+  flex: none;
+  align-self: center;
+  font-size: calc(var(--editor-host-font-10, 10px) * var(--editor-canvas-label-scale, 1));
+  color: #93a3b1;
+  margin-right: 1px;
+}
+
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 168px;
+  padding: 1px 6px;
+  border: 1px solid #4c5661;
+  border-radius: 10px;
+  background: #191b1f;
+  color: #dfe7ee;
+  font-size: calc(var(--editor-host-font-10, 10px) * var(--editor-canvas-label-scale, 1));
+  line-height: 1.5;
+  cursor: pointer;
+  pointer-events: auto;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.ref-chip:hover {
+  background: #2b3946;
+  border-color: #8fb4cc;
+}
+
+.ref-chip.blocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ref-chip.push { border-color: #45a8e5; }
+.ref-chip.gate { border-color: #79b65d; }
+.ref-chip.call { border-color: #d782d9; }
+.ref-chip.more { border-style: dashed; color: #9fb3c4; }
+
+.ref-chip-kind {
+  flex: none;
+  opacity: 0.72;
+}
+
+.ref-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.edge-ref-chips {
+  margin-top: 3px;
+  pointer-events: auto;
+}
+
+.edge-ref-chips .node-ref-chips {
+  justify-content: center;
+  margin-top: 0;
+}
+
+/* ------------------------------------------------------------------ 编排全貌面板 */
+.graph-overview-pick {
+  max-width: 220px;
+}
+
+.graph-overview-summary {
+  margin-top: 4px;
+  font-size: var(--editor-host-font-12, 12px);
+  color: #c7d3de;
+}
+
+.graph-overview-only {
+  margin-top: 4px;
+}
+
+.graph-overview-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+}
+
+.graph-overview-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.graph-overview-row.self {
+  opacity: 0.7;
+}
+
+.graph-overview-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.graph-overview-main:hover:not(:disabled) {
+  background: #232a31;
+  border-color: #3b4650;
+}
+
+.graph-overview-main:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.graph-overview-row.active .graph-overview-main {
+  border-color: #6f8aa5;
+  background: #22303c;
+}
+
+.overview-kind {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid #4c5661;
+  border-radius: 8px;
+  font-size: var(--editor-host-font-10, 10px);
+  color: #b8c4cf;
+}
+
+.overview-kind.push { border-color: #45a8e5; }
+.overview-kind.gate { border-color: #79b65d; }
+.overview-kind.call { border-color: #d782d9; }
+.overview-kind.next { border-color: #d9a441; }
+
+.overview-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.overview-title {
+  font-weight: 600;
+  font-size: var(--editor-host-font-12, 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-sub {
+  font-size: var(--editor-host-font-11, 11px);
+  color: #9fb3c4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overview-arrow {
+  flex: none;
+  color: #8fb4cc;
+}
+
+.graph-overview-locate {
+  flex: none;
+  padding: 0 8px;
+  font-size: var(--editor-host-font-11, 11px);
+}
+
+/* 全貌面板：单栏清单，不用关系面板那么宽（880 会把画布整个盖住，点完「定位」看不见选中的那一拍） */
+.graph-overview-dock {
+  width: min(560px, calc(100% - 24px));
+}
+
+.graph-overview-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.graph-overview-only.disabled {
+  opacity: 0.6;
+}
+
+.graph-overview-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.graph-overview-kind {
+  padding: 2px 8px;
+  border: 1px solid #4c5661;
+  border-radius: 10px;
+  background: #191b1f;
+  color: #c7d3de;
+  font-size: var(--editor-host-font-11, 11px);
+  cursor: pointer;
+}
+
+.graph-overview-kind small {
+  color: #8b98a4;
+  margin-left: 2px;
+}
+
+.graph-overview-kind.active {
+  border-color: #6f8aa5;
+  background: #2b3946;
+  color: #eef4f9;
+}
+
+.graph-overview-state {
+  border: 1px solid #262e36;
+  border-radius: 6px;
+  background: #12171c;
+  margin-top: 4px;
+}
+
+.graph-overview-state > summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: var(--editor-host-font-12, 12px);
+  color: #c7d3de;
+  list-style: none;
+}
+
+.graph-overview-state > summary::before {
+  content: '▸';
+  margin-right: 4px;
+  color: #8b98a4;
+}
+
+.graph-overview-state[open] > summary::before {
+  content: '▾';
+}
+
+.graph-overview-state > summary small {
+  color: #8b98a4;
+}
+
+.graph-overview-state > .graph-overview-row {
+  margin: 0 4px 2px;
+}
+
+/* 全貌面板收起态：缩成一条标题栏贴在右上角，露出画布（点「定位」后自动收起） */
+.graph-overview-dock.minimized {
+  bottom: auto;
+  width: auto;
+  max-width: min(560px, calc(100% - 24px));
+}
+
+.graph-overview-dock.minimized .entity-global-head {
+  margin-bottom: 0;
+}
+
+.graph-overview-head-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.graph-overview-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.graph-overview-body[hidden] {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ 画布注释（旁挂文件，不进编排数据） */
+.node-note {
+  margin-top: 6px;
+  padding: 4px 7px;
+  border-left: 3px solid #d9a441;
+  border-radius: 4px;
+  background: rgba(245, 215, 110, 0.14);
+  color: #f3e7bd;
+  font-size: calc(var(--editor-host-font-11, 11px) * var(--editor-canvas-label-scale, 1));
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 5.6em;
+  overflow: hidden;
+  cursor: text;
+}
+
+.edge-note {
+  margin-top: 3px;
+  padding: 3px 7px;
+  border: 1px solid #d9a441;
+  border-radius: 6px;
+  background: #2d2b24;
+  color: #f3e7bd;
+  font-size: calc(var(--editor-host-font-10, 10px) * var(--editor-edge-label-scale, 1));
+  line-height: 1.4;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 5.8em;
+  overflow: hidden;
+  pointer-events: auto;
+  cursor: text;
+}
+
+.note-editor {
+  display: block;
+  width: 100%;
+  min-height: 64px;
+  margin-top: 6px;
+  padding: 5px 7px;
+  border: 1px solid #d9a441;
+  border-radius: 4px;
+  background: #1a1d21;
+  color: #f4f7fa;
+  font: inherit;
+  font-size: calc(var(--editor-host-font-12, 12px) * var(--editor-canvas-label-scale, 1));
+  line-height: 1.4;
+  resize: vertical;
+  pointer-events: auto;
+}
+
+.edge-note-editor {
+  font-size: calc(var(--editor-host-font-11, 11px) * var(--editor-edge-label-scale, 1));
+}
+
+.editor-group-note {
+  pointer-events: all;
+  margin: 0 8px 6px;
+  padding: 4px 8px;
+  border-left: 3px solid rgba(255, 255, 255, 0.55);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.28);
+  color: #f3f0e4;
+  font-size: calc(var(--editor-host-font-11, 11px) * var(--editor-canvas-label-scale, 1));
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 420px;
+  max-height: 7em;
+  overflow: hidden;
+}
+
+.editor-group-note.editing {
+  max-height: none;
+  overflow: visible;
+  background: transparent;
+  border-left: 0;
+  padding: 0;
+}
+
+.editor-group-note .note-editor {
+  margin-top: 0;
+}
+
+.editor-group-tools button.has-note {
+  color: #f5d76e;
+}
+
+.annotation-note {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 120px;
+  min-height: 60px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.28);
+  color: #1e1a10;
+  display: flex;
+  flex-direction: column;
+}
+
+.annotation-note.selected {
+  box-shadow: 0 0 0 3px rgba(240, 196, 93, 0.45), 0 6px 16px rgba(0, 0, 0, 0.28);
+}
+
+.annotation-note-tools {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.annotation-note:hover .annotation-note-tools,
+.annotation-note.selected .annotation-note-tools {
+  opacity: 1;
+}
+
+.annotation-note-tools button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  line-height: 1;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.55);
+  color: #1e1a10;
+  font-size: var(--editor-host-font-12, 12px);
+  cursor: pointer;
+}
+
+.annotation-note-tools input[type='color'] {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.annotation-note-text {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  font-size: calc(var(--editor-host-font-12, 12px) * var(--editor-canvas-label-scale, 1));
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  cursor: text;
+}
+
+.annotation-note-empty {
+  color: rgba(30, 26, 16, 0.55);
+}
+
+.annotation-note-editor {
+  flex: 1;
+  min-height: 0;
+  margin: 6px;
+  width: calc(100% - 12px);
+  background: rgba(255, 255, 255, 0.85);
+  color: #1e1a10;
+  border-color: rgba(0, 0, 0, 0.35);
+  resize: none;
+}

@@ -43,6 +43,27 @@ export class Camera {
   /** 上一帧投影缩放 S；仅在 S 稳定时对平移取整，避免 zoom 动画时每帧 round 随 S 变化在 ±1px 间抖。 */
   private pixelSnapLastProjectionScale: number | null = null;
 
+  /**
+   * 震屏（雷劈、重物落地…）：**只偏移屏幕平移**，`current/target` 一个字节不动。
+   *
+   * 为什么不动逻辑坐标：相机位姿是听者、脚步空间化、世界↔屏幕互换、边界钳制的共同真相源
+   * （`clampCenterWorld` 还会把越界的值拉回来）。把抖动写进 `currentX/Y` 会让声音跟着抖、
+   * 让贴着地图边缘时抖动被钳掉一半，而且 `getX()` 的读者全都读到一个正在高频跳的值。
+   * 所以它与 `pixelSnapTranslation` 同层——都是 `applyTransform` 末尾对屏幕平移做的事。
+   *
+   * 单位是**屏幕像素**（标准视口 1024×768 下的像素），不是世界单位：震的是画面不是世界，
+   * 不该随 zoom 变强变弱。
+   *
+   * 波形是两条无理数比例的正弦叠加，**完全确定**（不用 `Math.random`）——无头截图与回放
+   * 逐帧可复现是这个项目的既定要求。
+   */
+  private shakeAmplitude = 0;
+  private shakeFrequency = 0;
+  private shakeElapsedMs = 0;
+  private shakeTotalMs = 0;
+  private shakeOffsetX = 0;
+  private shakeOffsetY = 0;
+
   constructor(worldContainer: Container) {
     this.worldContainer = worldContainer;
   }
@@ -102,6 +123,39 @@ export class Camera {
     this.applyTransform();
   }
 
+  /**
+   * 开始一次震屏。**后发的接管**：再发一次就是从头按新参数震，不叠加
+   * （叠加会让连发几条的编排震出无法预期的幅度）。
+   *
+   * @param amplitude 峰值偏移（屏幕像素）。≤0 视为立即停震。
+   * @param durationMs 总时长；到点必然归零。
+   * @param frequency 主频（Hz），缺省 18——低于 ~10 看着像滑动不像震。
+   */
+  shake(amplitude: number, durationMs: number, frequency = 18): void {
+    const amp = Number.isFinite(amplitude) ? Math.max(0, amplitude) : 0;
+    const dur = Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0;
+    if (amp <= 0 || dur <= 0) { this.clearShake(); return; }
+    this.shakeAmplitude = amp;
+    this.shakeTotalMs = dur;
+    this.shakeElapsedMs = 0;
+    this.shakeFrequency = Number.isFinite(frequency) && frequency > 0 ? frequency : 18;
+    this.applyTransform();
+  }
+
+  /** 立即停震并把偏移归零。换场景、拆一局、跳过演出都必须调——否则画面停在一个歪掉的平移上。 */
+  clearShake(): void {
+    if (this.shakeTotalMs === 0 && this.shakeOffsetX === 0 && this.shakeOffsetY === 0) return;
+    this.shakeAmplitude = 0;
+    this.shakeTotalMs = 0;
+    this.shakeElapsedMs = 0;
+    this.shakeOffsetX = 0;
+    this.shakeOffsetY = 0;
+    this.applyTransform();
+  }
+
+  /** 这一刻还在震吗（供动作侧 await 到震完）。 */
+  isShaking(): boolean { return this.shakeTotalMs > 0; }
+
   update(dt: number): void {
     const base = Math.min(1, Math.max(0, this.smoothing));
     const refFps = 60;
@@ -111,7 +165,30 @@ export class Camera {
     const p = this.clampCenterWorld(this.currentX, this.currentY);
     this.currentX = p.x;
     this.currentY = p.y;
+    this.advanceShake(dt);
     this.applyTransform();
+  }
+
+  /** dt 单位与 {@link update} 一致（秒）。 */
+  private advanceShake(dt: number): void {
+    if (this.shakeTotalMs <= 0) return;
+    this.shakeElapsedMs += Math.max(0, dt) * 1000;
+    if (this.shakeElapsedMs >= this.shakeTotalMs) {
+      this.shakeAmplitude = 0;
+      this.shakeTotalMs = 0;
+      this.shakeElapsedMs = 0;
+      this.shakeOffsetX = 0;
+      this.shakeOffsetY = 0;
+      return;
+    }
+    // 二次衰减：一下撞击该是「猛地一顿、迅速收住」，线性衰减听起来像持续震动。
+    const k = 1 - this.shakeElapsedMs / this.shakeTotalMs;
+    const a = this.shakeAmplitude * k * k;
+    const t = this.shakeElapsedMs / 1000;
+    const w = 2 * Math.PI * this.shakeFrequency;
+    // 无理数比例的两条正弦叠加：看着没规律，但完全确定、可复现。
+    this.shakeOffsetX = a * (Math.sin(w * t) * 0.6 + Math.sin(w * 2.37 * t + 1.7) * 0.4);
+    this.shakeOffsetY = a * (Math.sin(w * 1.13 * t + 0.9) * 0.6 + Math.sin(w * 3.11 * t + 2.6) * 0.4);
   }
 
   getX(): number { return this.currentX; }
@@ -228,7 +305,8 @@ export class Camera {
     } else {
       this.pixelSnapLastProjectionScale = null;
     }
-    this.worldContainer.x = tx;
-    this.worldContainer.y = ty;
+    // 震屏加在取整**之后**：震的那几帧画面本来就在动，把抖动 round 掉只会让它变成阶梯。
+    this.worldContainer.x = tx + this.shakeOffsetX;
+    this.worldContainer.y = ty + this.shakeOffsetY;
   }
 }

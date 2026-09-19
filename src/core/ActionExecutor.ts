@@ -1,4 +1,6 @@
 import type { ActionDef, ActionOriginContext } from '../data/types';
+import type { PerformanceSession } from '../systems/performanceSession';
+import { isPresentationOnlyAction } from './actionParamManifest';
 import { GameState } from '../data/types';
 import type { EventBus } from './EventBus';
 import type { FlagStore, FlagValue } from './FlagStore';
@@ -13,7 +15,32 @@ import { makeOwnerOrigin } from './actionOrigin';
 export type ActionHandler = (
   params: Record<string, unknown>,
   originContext: ActionOriginContext | null,
+  scope: ActionExecScope,
 ) => void | Promise<void>;
+
+/**
+ * 执行作用域。与 originContext 同一个理由**显式线程化**（不用共享栈/计数器）：不同来源的批
+ * 在微任务粒度交错，共享状态会把 A 批的作用域套到 B 批头上。
+ *
+ * `detached` = **脱手执行**：本批不把 Exploring 切进 ActionSequence。
+ * 缺省（不脱手）的语义是「动作跑着的时候玩家不能动」——热区检视、对话前摇、演出都靠它；
+ * 脱手是给**背景演出**用的：一段几秒到十几秒的天气/光影/音画，玩家该照常走动。
+ * 作用域随容器动作往下传（见 ActionRegistry 里 runActions / randomBranch 等的转发）。
+ */
+export interface ActionExecScope {
+  detached: boolean;
+  /**
+   * 这一批属于哪段脱手演出会话。
+   * 有会话才谈得上"被打断"与"归位账本"——演出 handler 据此登记自己动过的旋钮
+   * （见 `systems/performanceSession.ts`）。普通批恒为 undefined，一切照旧。
+   */
+  session?: PerformanceSession;
+}
+
+/** 缺省作用域：锁住玩家。冻结导出，免得任何一处就地改写殃及全局。 */
+export const SCOPE_ATTACHED: ActionExecScope = Object.freeze({ detached: false });
+/** 脱手作用域：演出在背景跑，玩家照常走。 */
+export const SCOPE_DETACHED: ActionExecScope = Object.freeze({ detached: true });
 
 /**
  * 执行策略（L1 根因修复）：过场等宿主在执行窗口内压入黑名单，`executeAwait` 对**每个**
@@ -165,7 +192,11 @@ export class ActionExecutor {
    * 嵌套容器动作（runActions / chooseAction / randomBranch）由各自 handler 转发
    * 上下文；signal cue / 延迟事件等独立子系统的批不属于任何来源，天然为 null。
    */
-  async executeAwait(action: ActionDef, originContext: ActionOriginContext | null = null): Promise<void> {
+  async executeAwait(
+    action: ActionDef,
+    originContext: ActionOriginContext | null = null,
+    scope: ActionExecScope = SCOPE_ATTACHED,
+  ): Promise<void> {
     if (this.destroyed) {
       if (!this.warnedAfterDestroy) {
         this.warnedAfterDestroy = true;
@@ -198,7 +229,7 @@ export class ActionExecutor {
         /* 调试通道故障绝不影响动作执行 */
       }
     }
-    await this.runWithExploreActionLock(async () => {
+    await this.runWithExploreActionLock(scope, async () => {
       const handler = this.handlers.get(typeKey);
       if (!handler) {
         console.warn(`ActionExecutor: unknown action type "${typeKey}"`);
@@ -209,16 +240,28 @@ export class ActionExecutor {
         );
         return;
       }
-      await Promise.resolve(handler(action.params, originContext));
+      await Promise.resolve(handler(action.params, originContext, scope));
     });
   }
 
-  /** 顺序执行批量动作并 await 每一条；originContext 原样传给批内每条动作。 */
-  async executeBatchAwait(actions: ActionDef[], originContext: ActionOriginContext | null = null): Promise<void> {
+  /** 顺序执行批量动作并 await 每一条；originContext 与 scope 原样传给批内每条动作。 */
+  async executeBatchAwait(
+    actions: ActionDef[],
+    originContext: ActionOriginContext | null = null,
+    scope: ActionExecScope = SCOPE_ATTACHED,
+  ): Promise<void> {
     const gen = this.generation;
     for (const action of actions) {
       if (gen !== this.generation || this.destroyed) return;
-      await this.executeAwait(action, originContext);
+      /**
+       * 所属会话已被打断 ⇒ 本批剩下的按**快进**跑：纯演出整条跳过，结算照做。
+       *
+       * 顶层时间线由会话自己同步补跑（切场景这类同步收尾路径等不起一个微任务）；
+       * 这里管的是**嵌套容器**里的剩余动作——少了这一段，脱手批里套一层 `runActions`
+       * 就会在打断之后接着把整套演出播完，正好播在过场上面。
+       */
+      if (scope.session?.hurried && isPresentationOnlyAction(String(action?.type ?? ''))) continue;
+      await this.executeAwait(action, originContext, scope);
     }
   }
 
@@ -252,11 +295,14 @@ export class ActionExecutor {
   /**
    * 仅在当前为 Exploring 时切入 ActionSequence（对话/遭遇/演出等不参与，避免与子状态抢占）。
    * 若在动作内部切到 Dialogue 等后再回到 Exploring，下一条 executeAwait 会再次加锁。
+   *
+   * **脱手作用域整条跳过加锁**：那一批是背景演出，玩家全程该能走。跳过的是「加锁」本身，
+   * 不是「判断」——脱手批里若有动作自己切了状态（对话、小游戏），那是它自己的事，与此无关。
    */
-  private async runWithExploreActionLock<T>(work: () => Promise<T>): Promise<T> {
+  private async runWithExploreActionLock<T>(scope: ActionExecScope, work: () => Promise<T>): Promise<T> {
     const gen = this.generation;
     const sc = this.gameStateController;
-    if (!sc) return work();
+    if (!sc || scope.detached) return work();
     let appliedExploreLock = false;
     if (sc.currentState === GameState.Exploring) {
       sc.setState(GameState.ActionSequence);

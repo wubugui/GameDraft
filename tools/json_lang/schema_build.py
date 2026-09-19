@@ -107,6 +107,10 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("playVfx", "effect"): "vfx_effects",
     # 挂件上的一次性效果：同一份效果资产宇宙
     ("playPropVfx", "effect"): "vfx_effects",
+    # 落雷的雷柱：同一份效果资产宇宙（雷柱就是个挂了光柱的粒子效果）
+    ("strikeThreat", "effect"): "vfx_effects",
+    # 绑在落点上的雷声：与 playSfx.id 同一份音效宇宙
+    ("strikeThreat", "sfx"): "sfx",
     ("emitNarrativeSignal", "signal"): "narrative_signals",
     # 叙事活计生命周期（S1）：目标是活计图；宇宙沿用 narrative 条件叶的图 id 集合
     ("startNarrativeRun", "graphId"): "narrative_graph_ids",

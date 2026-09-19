@@ -44,6 +44,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
 
   // ---- 组合 / 分支 ----
   runActions: { required: ['actions'] },
+  runActionsDetached: { required: ['actions'], optional: ['id'] },
   chooseAction: { required: ['options'], optional: ['prompt', 'allowCancel'] },
   randomBranch: { required: [], optional: ['probability', 'aboveActions', 'belowActions'] },
   // condition 是统一条件表达式（与热区/zone 的 conditions 同一套叶子）；不写 = 恒真。
@@ -222,6 +223,22 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     nonEmpty: ['lightId'],
     optional: ['fadeMs'],
   },
+  // 满屏闪一下（雷 / 爆闪）。全可选：什么都不填 = 220ms 惨白
+  screenFlash: { required: [], optional: ['durationMs', 'color', 'alpha', 'wait'] },
+  // 震屏。amplitude 是屏幕像素，必填（0 也要显式写，免得"忘了填"看起来像"没震"）
+  cameraShake: { required: ['amplitude'], optional: ['durationMs', 'frequency'] },
+  // 环境压暗（背景 + 角色 + 粒子同值）。scale 必填：1 = 恢复
+  setSceneDim: { required: ['scale'], optional: ['fadeMs', 'wait'] },
+  // 落雷：选靶 → 雷 → 靶消失。全可选——最小形态 `{}` 就是"照缺省挑最凶的劈了"
+  duckAudio: { required: [], optional: ['id', 'bgm', 'ambient', 'sfx', 'voice', 'fadeMs', 'holdMs'] },
+  restoreAudio: { required: [], optional: ['id', 'fadeMs', 'stopSfx'] },
+  strikeThreat: {
+    required: [],
+    optional: ['rank', 'maxDistance', 'fallback', 'fallbackRadius', 'effect', 'effects', 'effectHeight',
+      'lightIntensity', 'lightHeight', 'lightRange', 'lightKelvin', 'lightMs', 'removeTarget', 'seed',
+      'sfx', 'sfxVolume', 'strikes', 'extraChance', 'gapMs', 'gapJitterMs',
+      'flashAlpha', 'flashMs', 'shakeAmplitude', 'shakeMs'],
+  },
   detachFromSocket: { required: ['target', 'socket'] },
   setSceneDepthFloorOffset: { required: ['floor_offset'] },
   resetSceneDepthFloorOffset: { required: [] },
@@ -380,4 +397,72 @@ export function isKnownActionType(type: string): boolean {
 
 export function getActionParamManifest(type: string): ActionParamManifestEntry | undefined {
   return isKnownActionType(type) ? ACTION_PARAM_MANIFEST[type] : undefined;
+}
+
+// =========================================================================== //
+// 脱手演出（runActionsDetached）的两张分类表
+//
+// 会话被打断时走的是**快进**而不是砍断：剩下的动作照跑，只有纯演出那些整条跳过。
+// 这两张表是那条规则的唯一权威源（运行时与编辑器/校验器都读它，Python 侧有 parity 测试对账）。
+// 机制全貌见 `src/systems/performanceSession.ts`。
+// =========================================================================== //
+
+/**
+ * **纯演出动作**：快进时整条跳过。
+ *
+ * 判据只有一条——**跳过它不会少掉任何玩家事后还能观察到的后果**。
+ * 于是这张表里一个写存档 / 推状态 / 动背包的动作都不许有（Python 侧 parity 测试按编辑器的
+ * `ACTION_PERSISTENCE` 钉死："save" 档的动作永远不许进这张表）。
+ *
+ * ⚠ **缺省是「跑」而不是「跳」**。漏登记一条演出动作，最坏是它在过场上面闪了一下；
+ * 漏登记反了（把结算当演出跳掉）就是玩家放了技能什么都没发生——后者坏得多，
+ * 所以默认值站在"宁可多演，不可少算"这一边。
+ *
+ * `waitMs` 在表内，所以"打断时等待归零"是这条规则的副产物，不用另写一套时长改写。
+ */
+export const PRESENTATION_ONLY_ACTIONS: ReadonlySet<string> = new Set([
+  // 时间本身
+  'waitMs',
+  // 画面演出
+  'screenFlash', 'cameraShake', 'setSceneDim', 'fadeLight',
+  'fadeWorldToBlack', 'fadeWorldFromBlack', 'showBlackout', 'hideBlackout',
+  'setCameraZoom', 'restoreSceneCameraZoom', 'fadingZoom', 'fadingRestoreSceneCameraZoom',
+  'cameraFollowActor', 'cameraStopFollow',
+  'showOverlayImage', 'hideOverlayImage', 'blendOverlayImage',
+  // 声音
+  'playSfx', 'playBgm', 'stopBgm', 'playSceneAmbient', 'stopSceneAmbient',
+  'duckAudio', 'restoreAudio',
+  // 粒子与风
+  'playVfx', 'stopVfx', 'playPropVfx', 'setVfxState', 'emitVfxField', 'sceneWindGust',
+  // 头顶气泡 / 表情（信息量在别处，跳掉不丢后果）
+  'showEmote', 'showSpeechBubble', 'showEmoteAndWait', 'showSpeechBubbleAndWait',
+  // 提示条：跳掉只是少弹一条 toast，弹在过场上面反而是事故
+  'showNotification',
+  // 实体演出走位（持久版是 persistNpcAt / persistPlayNpcAnimation，那些照跑）
+  'moveEntityTo', 'jumpEntityTo', 'faceEntity', 'playNpcAnimation', 'stopNpcPatrol',
+  'playTrajectory', 'stopTrajectory',
+]);
+
+/**
+ * **脱手演出里禁止出现的动作**：抢控制权、换世界、推时间。
+ *
+ * 脱手演出的全部意义就是"跑在玩家背后、玩家全程能动"。里面一旦出现这些，
+ * 技能就会在任意时刻把玩家从他正在做的事里拽走——那正是这套东西要根治的毛病。
+ * 校验器按这张表**报 error**（不是 warning：配出来就是随机时刻抢控制，没有合理用法）。
+ */
+export const DETACHED_FORBIDDEN_ACTIONS: ReadonlySet<string> = new Set([
+  // 接管态入口
+  'startCutscene', 'startEncounter', 'startDialogueGraph', 'playScriptedDialogue',
+  'chooseAction', 'waitClickContinue', 'openShop', 'openMap',
+  'startWaterMinigame', 'startSugarWheelMinigame', 'startPaperCraftMinigame',
+  'startObjectExamine', 'startPressureHold',
+  'revealDocument', 'showSystemNote',
+  'triggerDeathTether',
+  // 换世界 / 推时间
+  'switchScene', 'changeScene', 'endDay', 'advanceTime', 'advanceTimeTo',
+]);
+
+/** 快进时这条动作该不该整条跳过。表外一律「跑」（见 PRESENTATION_ONLY_ACTIONS 的缺省取向）。 */
+export function isPresentationOnlyAction(actionType: string): boolean {
+  return PRESENTATION_ONLY_ACTIONS.has(String(actionType ?? '').trim());
 }

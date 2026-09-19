@@ -86,6 +86,30 @@ last_governed: 2026-08-05
     判事故形状:数据文件"整块字段消失、别的字段完好、键序变成代码里的 EMPTY 常量"= 半加载
     全量写回,先查有没有起于旧代码的编辑器进程(`tools/dev_console` 现在会报孤儿),别先找会话。
 
+13. **「编排全貌」面板与画布引用小标只认「游戏里真实存在的东西」，且与「关系」面板同一次扫描**
+    (2026-09-17 制作人定):一张图的关联分三组——推它的(发信号的区域/热点/对话图/别的图)、
+    它管的(条件读它状态的实体/任务/地图/档案/对话分支)、它调的(状态动作指向的过场/对话图/物品/
+    说明卡/位面/区域/NPC)——信号名、状态名、标签**不单列**。三组都由共享引擎 `tools/narrative_xref`
+    的 `graph_card` 算(`--graph 图id` 可在命令行看同一份),网页只渲染;画布小标按 `图.状态` /
+    `图.转移` 查表(`canvas/refChips.tsx` 的 context),不进画布结构、扫描一到即换新。
+    **「它调的」口径 = json_lang 的 `CONTENT_ID_PARAMS`**(编辑器选择器 / 语言服务同一张表)+
+    场景作用域规则 + 按 id 能在场景里找到的实体参数;每个宇宙在 `narrative_xref/targets.py` 登记
+    人话类别与跳法,新加内容 id 宇宙不登记 = 那类目标**静默少算**(护栏
+    `test_every_content_id_universe_is_registered_or_excluded`)。跳法对着宿主
+    `_navigate_to_search_hit_inner` 的路由写(anchors 最外层 id / 指针段),缺路由的文件宿主会
+    如实回"没有对应的编辑页",界面提前灰掉并说明,不谎报。独立网页开发态经 vite 中间件
+    `/__dev/narrative_xref` 跑同一条 CLI(`--dump`)取索引、看不见画布草稿;点跳转不能切页,
+    回执写明"主编辑器里会打开 …"(见 `bridge.ts` 的 jumpToRefRemote / navigateRemote)。
+
+14. **画布注释（节点 / 迁移 / 分组框注释 + 便签）是旁挂，一个字节不进 narrative_graphs.json**
+    (2026-09-17 制作人定:"绝对要保证编排数据安全"):存 `editor_data/narrative_canvas_annotations.json`,
+    与分组框同一条路(Qt 桥 `getCanvasAnnotations`/`saveCanvasAnnotations` 立即写盘、不标脏、
+    不进 Save All、运行时永不加载;纯网页态兜底 localStorage)。模型在 `canvas/annotations.ts`
+    (节点/迁移注释按 图id+对象id 记,分组框注释与便签按 编排+画布 记),呈现件在
+    `canvas/annotationsContext.tsx`(context 查表,不进画布结构)。便签节点 `deletable:false`、
+    删除只走自己的 ×/检视器,`onNodesChange` 的删除面也把它排除——**任何注释操作都不许碰
+    `updateData`**。状态的 `description`(「策划备注」)仍是编排数据,与画布注释是两样东西。
+
 ## 已知坑
 
 - 同一事件连打两次 `updateData` = 第二次赢、第一次被静默丢弃(根因:绕过持有串行基线的撤销核,直接读渲染期 data 再 setData);直接 `setDataInternal` 的路径(初次加载、adopt 重构结果)必须同 tick 追平基线。

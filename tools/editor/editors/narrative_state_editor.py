@@ -969,6 +969,20 @@ class NarrativeEditorBridge(QObject):
         """整表覆盖保存画布分组框并**立即写盘**（重启不丢；归一化由 web 侧负责）。"""
         return self._write_editor_sidecar("narrative_canvas_groups.json", payload, "canvas groups")
 
+    @Slot(result=str)
+    def getCanvasAnnotations(self) -> str:  # noqa: N802 - Qt slot name
+        """读当前工程的叙事画布注释（节点 / 迁移 / 分组框注释 + 便签）；无工程/文件缺失时返回空对象。"""
+        return self._read_editor_sidecar("narrative_canvas_annotations.json")
+
+    @Slot(str, result=str)
+    def saveCanvasAnnotations(self, payload: str) -> str:  # noqa: N802 - Qt slot name
+        """整表覆盖保存画布注释并**立即写盘**。
+
+        编辑器专用旁挂（与分组框同一条路）：运行时永不加载、不经 Save All、不标脏，
+        **一个字节都不进 narrative_graphs.json**——编排数据的保存路径与护栏原样不动。
+        """
+        return self._write_editor_sidecar("narrative_canvas_annotations.json", payload, "canvas annotations")
+
     @Slot(str, result=str)
     def getQuest(self, quest_id: str) -> str:  # noqa: N802 - Qt slot name
         """按 id 取一条 quest 的 JSON（供「从现成作曲创建模板」把镜像 quest 一起参数化）。"""

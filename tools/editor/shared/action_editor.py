@@ -343,6 +343,64 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # 运行时在 isCurrency 分支里 return，根本不读它。原本没这个键就别凭空写出来。
     # 不能进全局表：itemId 是 giveItem/removeItem 那一族的必填参数名。
     ("pickup", "itemId"): "",
+    # ---- 雷雨演出（screenFlash / cameraShake / setSceneDim / strikeThreat）----
+    # 全是"不写=按运行时缺省"的可选项；凭空写中性值在这里都是**行为级**的：
+    # alpha:0 = 根本不闪、durationMs:0 = 时长归零、lightIntensity:0 = 雷不发光、
+    # fallback:"" 在运行时不等于 "random"（它走的是"认不出就用缺省"，写空串等于白占一个键）。
+    # 不能进全局表：durationMs / color / alpha / scale / effect / seed 全是通用词。
+    ("screenFlash", "durationMs"): 0,
+    ("screenFlash", "color"): "",
+    ("screenFlash", "alpha"): 0.0,
+    ("screenFlash", "wait"): False,
+    ("cameraShake", "durationMs"): 0,
+    ("cameraShake", "frequency"): 0.0,
+    ("setSceneDim", "fadeMs"): 0,
+    ("setSceneDim", "wait"): False,
+    # strikeThreat 全部参数都可选（最小形态 `{}` = 照缺省挑最凶的劈了），一个都不能凭空写。
+    # rank / fallback 的控件是带"（留空）"档的枚举下拉，缺键时给空串——按控件那侧登记。
+    ("strikeThreat", "rank"): "",
+    ("strikeThreat", "fallback"): "",
+    ("strikeThreat", "effect"): "",
+    ("strikeThreat", "effects"): "",
+    ("strikeThreat", "maxDistance"): 0.0,
+    ("strikeThreat", "fallbackRadius"): 0.0,
+    ("strikeThreat", "effectHeight"): 0.0,
+    ("strikeThreat", "lightIntensity"): 0.0,
+    ("strikeThreat", "lightHeight"): 0.0,
+    ("strikeThreat", "lightRange"): 0.0,
+    ("strikeThreat", "lightKelvin"): 0.0,
+    ("strikeThreat", "lightMs"): 0,
+    ("strikeThreat", "seed"): 0,
+    # 绑在落点上的雷声与连劈参数：同样全可选。凭空写也全是行为级——
+    # sfx:"" = 这道雷不响、strikes:0 会被夹成 1 但键是噪音、extraChance:0 = 第二道永远不落、
+    # flashAlpha:0 / shakeAmplitude:0 = 不闪不震（那是缺省，写出来只是多一个键）。
+    ("strikeThreat", "sfx"): "",
+    ("strikeThreat", "sfxVolume"): 0.0,
+    ("strikeThreat", "strikes"): 0,
+    ("strikeThreat", "extraChance"): 0.0,
+    ("strikeThreat", "gapMs"): 0,
+    ("strikeThreat", "gapJitterMs"): 0,
+    ("strikeThreat", "flashAlpha"): 0.0,
+    ("strikeThreat", "flashMs"): 0,
+    ("strikeThreat", "shakeAmplitude"): 0.0,
+    ("strikeThreat", "shakeMs"): 0,
+    # ---- 演出闪避（duckAudio / restoreAudio）----
+    # 全可选。压 0 是合法的"压到听不见"，所以中性值不能用 0 当"没填"——这两条的控件
+    # 中性态就是 0，凭空写 0 等于"把这条通道摁死"，是行为级的。
+    ("duckAudio", "id"): "",
+    ("duckAudio", "bgm"): 0.0,
+    ("duckAudio", "ambient"): 0.0,
+    ("duckAudio", "sfx"): 0.0,
+    ("duckAudio", "voice"): 0.0,
+    ("duckAudio", "fadeMs"): 0,
+    ("duckAudio", "holdMs"): 0,
+    ("restoreAudio", "id"): "",
+    # 脱手演出的名字：不写 = 运行时叫 "detached"。凭空写空串等于多占一个键。
+    ("runActionsDetached", "id"): "",
+    ("restoreAudio", "fadeMs"): 0,
+    ("restoreAudio", "stopSfx"): "",
+    # removeTarget 是三态字符串（见 _TRISTATE_BOOL_PARAMS）：""＝不写键＝收掉。
+    ("strikeThreat", "removeTarget"): "",
     # runActionsIf 的「满足时」：空列表与缺键在运行时同义（actionListFromParam(undefined) → []），
     # 与已有的 elseActions 剔除对称。不能进全局表：actions 是 runActions / addDelayedEvent 的必填。
     ("runActionsIf", "actions"): [],
@@ -387,6 +445,9 @@ _TRISTATE_BOOL_PARAMS: dict[str, tuple[str, ...]] = {
     # playTrajectory.wait 运行时缺省 **true**（等轨迹播完再走下一步）：勾选框的中性态
     # 是 false，用它就配不出"不等"。三档＝""（不写键=等）/ "true" / "false"。
     "playTrajectory": ("wait",),
+    # strikeThreat.removeTarget 运行时缺省 **true**（劈完靶子就没了，这是这条动作的本意）：
+    # 用勾选框就配不出"只演不收"那一档。三档＝""（不写键=收掉）/ "true" / "false"。
+    "strikeThreat": ("removeTarget",),
 }
 
 def _coerce_bool_param(val: object) -> bool:
@@ -496,7 +557,7 @@ _ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], float] = {
 }
 
 ACTION_TYPES = [
-    "runActions", "chooseAction", "randomBranch", "runActionsIf",
+    "runActions", "runActionsDetached", "chooseAction", "randomBranch", "runActionsIf",
     "setFlag", "setScenarioPhase", "startScenario", "activateScenario", "completeScenario", "emitNarrativeSignal", "setNarrativeState",
     "startNarrativeRun", "resetNarrativeRun", "revertNarrativeRun", "activateNarrativeRun",
     "loadNarrativePackage", "unloadNarrativePackage",
@@ -545,6 +606,8 @@ ACTION_TYPES = [
     "playVfx", "stopVfx", "playPropVfx", "setVfxState", "emitVfxField",
     "setGroupEnabled", "moveGroupBy",
     "igniteBurnable", "extinguishBurnable", "resetBurnable",
+    "screenFlash", "cameraShake", "setSceneDim", "strikeThreat",
+    "duckAudio", "restoreAudio",
 ]
 
 # ---------------------------------------------------------------------------
@@ -719,6 +782,21 @@ _VFX_FLOCK_STATES: list[tuple[str, str]] = [
     ("fleeing", "fleeing · 惊散远离"),
     ("returning", "returning · 回巢"),
 ]
+#: strikeThreat.rank 的两档（值, 展示名）。与运行时同口径：认不出的值一律按 threat。
+#: "凶" = 威胁定义上的**峰值**攻击力（近身档优先），不是"此刻正在造成的伤害"——
+#: 玩家手上有火时普通鬼一律被逼退、那个值恒为 0。
+_STRIKE_RANKS: list[tuple[str, str]] = [
+    ("", "（缺省 threat · 最凶的）"),
+    ("threat", "threat · 最凶的（同分挑近的）"),
+    ("distance", "distance · 最近的（同距挑凶的）"),
+]
+#: strikeThreat.fallback 的两档：一个靶都挑不到时怎么办。
+_STRIKE_FALLBACKS: list[tuple[str, str]] = [
+    ("", "（缺省 random · 在玩家周围随便劈一道）"),
+    ("random", "random · 玩家周围随机落点（雷照响，只是没打着东西）"),
+    ("none", "none · 什么都不发生"),
+]
+
 _VFX_FIELD_KINDS: list[tuple[str, str]] = [
     ("", "（缺省 fear · 恐惧）"),
     ("fear", "fear · 恐惧（推开）"),
@@ -906,6 +984,7 @@ def _tag_content_universe(widget, universe: str | None) -> None:
 # "save" = 常关联存档、任务、背包、flag、持久化 override 等；"memory" = 多为镜头、UI、过场、等待、切场景、音效等
 ACTION_PERSISTENCE: dict[str, str] = {
     "runActions": "save",
+    "runActionsDetached": "save",
     "chooseAction": "save",
     "randomBranch": "save",
     "runActionsIf": "save",
@@ -958,6 +1037,15 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "setMaxHealth": "save",
     "setRetryCheckpoint": "save",
     "sceneWindGust": "memory",
+    # 雷雨演出：闪白 / 震屏 / 压暗都是纯表现，切场景自动归位，不入存档。
+    "screenFlash": "memory",
+    "cameraShake": "memory",
+    "setSceneDim": "memory",
+    # 落雷**写存档**：靶子的消失是持久的（走 persistNpcEntityEnabled / persistHotspotEnabled
+    # 同一条通道）。因此它也不在过场白名单里——过场内的动作禁改存档。
+    "strikeThreat": "save",
+    "duckAudio": "memory",
+    "restoreAudio": "memory",
     "lockHealth": "save",
     "unlockHealth": "save",
     "inflictHealthDamage": "save",
@@ -1127,6 +1215,8 @@ _assert_action_persistence_covers_types()
 
 _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "runActions": [],
+    # 只有一个子动作列表，走自定义表单（与 runActions 同）；空表只作授权面。
+    "runActionsDetached": [],
     "chooseAction": [("prompt", "str"), ("allowCancel", "bool")],
     "randomBranch": [],
     # 三个参数全走自定义表单（条件树 + 两个子动作列表），这里空表只作授权面。
@@ -1390,6 +1480,56 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     # target / socket = 挂在谁的哪个挂点上（挂件预设状态 onEnterActions 顶层留空 = 这件挂件自己，别处必填，
     # 校验器按所在位置判）；point = 贴图上的点 [u, v]（0..1），控件带「不写」档，不写 = 起火点 → 挂点。
     "playPropVfx": [("target", "str"), ("socket", "str"), ("effect", "str"), ("point", "unit_point")],
+    # ---- 雷雨演出（见 runtime ActionRegistry 各自的注释）----
+    # screenFlash：满屏闪一下。全可选；color 收 "#rrggbb" 或裸十六进制。
+    "screenFlash": [("durationMs", "int"), ("color", "str"), ("alpha", "float"), ("wait", "bool")],
+    # cameraShake：震屏。amplitude 是**屏幕像素**（必填，写 0 = 显式不震）；不提供 wait
+    # （震屏是伴奏，挡住后面的编排没意义；要等就在后面排一条 waitMs）。
+    "cameraShake": [("amplitude", "float"), ("durationMs", "int"), ("frequency", "float")],
+    # setSceneDim：把天色压暗（1 = 原样）。背景 + 角色 + 粒子同一个值，切场景自动归 1。
+    "setSceneDim": [("scale", "float"), ("fadeMs", "int"), ("wait", "bool")],
+    # strikeThreat：挑一个鬼劈了。全部可选——最小形态 `{}` 就能用。
+    # effect 走 vfx_effect 选择器（见下面 _make_selector 的特判），不是裸输入框。
+    "strikeThreat": [
+        ("rank", "str"),
+        ("maxDistance", "float"),
+        ("fallback", "str"),
+        ("fallbackRadius", "float"),
+        ("effect", "str"),
+        # 一组效果 id，逗号分隔（每次随机挑一道；同一道具反复放不会每次同一张图）
+        ("effects", "str"),
+        ("effectHeight", "float"),
+        ("lightIntensity", "float"),
+        ("lightHeight", "float"),
+        ("lightRange", "float"),
+        ("lightKelvin", "float"),
+        ("lightMs", "int"),
+        ("removeTarget", "str"),
+        ("seed", "int"),
+        # 与这道雷绑在一起的雷声：放在**落点**上，每道雷各响一次（不是没有位置的一声）。
+        ("sfx", "str"),
+        ("sfxVolume", "float"),
+        # 连劈：最多几道 / 第二道起每道落下的概率（掷不中整条链就停）/ 间隔 ± 抖动
+        ("strikes", "int"),
+        ("extraChance", "float"),
+        ("gapMs", "int"),
+        ("gapJitterMs", "int"),
+        # 每道雷自带的闪白与震屏（0 = 不带，交给单独的 screenFlash / cameraShake 动作排）
+        ("flashAlpha", "float"),
+        ("flashMs", "int"),
+        ("shakeAmplitude", "float"),
+        ("shakeMs", "int"),
+    ],
+    # duckAudio：把背景层临时压下去（0..1 的倍率，只写要压的那几条）。压的是**演出层**，
+    # 不是玩家在设置页调的那四个档——那个进存档，动它等于替玩家改了偏好。
+    # holdMs = 兜底上限：演出被打断时没人来抬，到点自己抬（缺省 20 秒）。
+    "duckAudio": [
+        ("id", "str"), ("bgm", "float"), ("ambient", "float"), ("sfx", "float"),
+        ("voice", "float"), ("fadeMs", "int"), ("holdMs", "int"),
+    ],
+    # restoreAudio：抬掉 duckAudio 压的那层，原样还回演出之前的响度。
+    # stopSfx = 逗号分隔的音效 id，把这段演出自己起的长音（闷雷、风声）当场掐掉。
+    "restoreAudio": [("id", "str"), ("fadeMs", "int"), ("stopSfx", "str")],
     "setVfxState": [("instanceId", "str"), ("state", "str")],
     # ---- 燃烧（BurnSystem；燃烧工作台管可燃物模板，谁可燃写在宿主自己的「可燃」块里）----
     # socket 没写 = target 是场景里开了可燃的实体（热点 / NPC / 演出生成留下的对象）；写了 = target 是拿东西的人
@@ -6803,13 +6943,25 @@ class ActionRow(QWidget):
             self._sync_foldable_visibility()
             return
 
-        if act_type == "runActions":
+        if act_type in ("runActions", "runActionsDetached"):
             if self._outline_children is not None:
                 self._params_frame.setVisible(True)
+                if act_type == "runActionsDetached":
+                    self._params_layout.addRow(*self._detached_id_row(params))
                 self._params_layout.addRow(self._outline_children_hint(act_type))
                 self._sync_foldable_visibility()
                 return
-            self._params_frame.setVisible(False)
+            if act_type == "runActionsDetached":
+                self._params_frame.setVisible(True)
+                tip = QLabel(
+                    "脱手执行：这一批在背景里跑，玩家全程照常活动，批外后续动作不等它。",
+                    self,
+                )
+                tip.setWordWrap(True)
+                self._params_layout.addRow(tip)
+                self._params_layout.addRow(*self._detached_id_row(params))
+            else:
+                self._params_frame.setVisible(False)
             self._run_actions_editor = self._make_nested_action_editor("actions", params.get("actions", []))
             self._sync_foldable_visibility()
             return
@@ -7409,6 +7561,21 @@ class ActionRow(QWidget):
                 w = _enum_combo(self, _VFX_FLOCK_STATES, str(val or ""))
             elif act_type == "emitVfxField" and pname == "kind":
                 w = _enum_combo(self, _VFX_FIELD_KINDS, str(val or ""))
+            elif act_type == "strikeThreat" and pname == "effect":
+                # 与 playVfx.effect 同一个候选面（assets/data/vfx/*.json）——雷柱就是个粒子效果。
+                w = self._make_selector("vfx_effect", str(val) if val is not None else "")
+            elif act_type == "strikeThreat" and pname == "sfx":
+                # 与 playSfx.id 同一个候选面（audio_config.sfx），右侧可试听。
+                # 本处音量另有 sfxVolume 一格，不用 with_volume（那是给 id+volume 成对的动作用的）。
+                w = self._make_selector("audio_sfx", str(val) if val is not None else "")
+                w.setToolTip(
+                    "这道雷自己的雷声，放在**落点**上：方位、距离衰减、空气低通、场景回音都跟着雷走。\n"
+                    "不写 = 这道雷不出声（还可以照旧用单独的 playSfx 动作排一声没有位置的）。"
+                )
+            elif act_type == "strikeThreat" and pname == "rank":
+                w = _enum_combo(self, _STRIKE_RANKS, str(val or ""))
+            elif act_type == "strikeThreat" and pname == "fallback":
+                w = _enum_combo(self, _STRIKE_FALLBACKS, str(val or ""))
             elif act_type == "activatePlane" and pname == "id":
                 w = self._make_selector("plane", str(val) if val is not None else "")
             elif act_type in ("advanceTime", "advanceTimeTo") and pname == "transition":
@@ -8189,6 +8356,24 @@ class ActionRow(QWidget):
         ed.changed.connect(self.changed)
         self._foldable_layout.addWidget(ed)
         return ed
+
+    def _detached_id_row(self, params: dict) -> tuple[str, QLineEdit]:
+        """脱手演出的「演出名」一格。大纲模式与内联模式共用一份，别抄两遍。
+
+        这个名字是**顶替**的依据：同名的演出再放一次，前一段当场收掉（结算补齐、归位做满）。
+        不写就都叫 detached，于是任意两段脱手演出互相顶替；想让两段共存就各起各的名字。
+        """
+        edit = QLineEdit(str(params.get("id") or ""), self)
+        edit.setPlaceholderText("这段演出的名字（不写 = detached）")
+        edit.setToolTip(
+            "这段脱手演出的名字，也是**顶替**的依据：\n"
+            "同名再放一次，前一段当场按打断收掉——演出跳过、结算补齐、归位做满。\n"
+            "两段想同时存在（比如「天气」与「技能」）就各起各的名字。\n"
+            "不写 = 都叫 detached，于是任意两段互相顶替。"
+        )
+        edit.textChanged.connect(self.changed)
+        self._param_widgets["id"] = edit
+        return "演出名", edit
 
     def _outline_children_hint(self, act_type: str) -> QLabel:
         from .action_structure import action_slots
@@ -9064,7 +9249,7 @@ class ActionRow(QWidget):
         if act_type == "addDelayedEvent" and (outline or self._delayed_editor is not None):
             params["actions"] = _nested("actions", self._delayed_editor)
             owned.add("actions")
-        if act_type == "runActions" and (outline or self._run_actions_editor is not None):
+        if act_type in ("runActions", "runActionsDetached") and (outline or self._run_actions_editor is not None):
             params["actions"] = _nested("actions", self._run_actions_editor)
             owned.add("actions")
         if act_type == "chooseAction" and (outline or self._choice_options_editor is not None):

@@ -16,6 +16,8 @@ export type EditorPreferences = {
   defaultShowMiniMap: boolean;
   /** 画布信号显示模式：'label'=显示注册表中文名（默认），'id'=显示原始信号 id */
   canvasSignalDisplay: 'label' | 'id';
+  /** 画布上挂引用小标（它管的 / 它调的 / 推它的），默认开 */
+  canvasRefChips: boolean;
 };
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
@@ -28,6 +30,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferences = {
   reduceMotion: false,
   defaultShowMiniMap: false,
   canvasSignalDisplay: 'label',
+  canvasRefChips: true,
 };
 
 const STORAGE_KEY = 'narrative-editor-preferences-v1';
@@ -84,6 +87,8 @@ export function normalizeEditorPreferences(raw: Partial<EditorPreferences> | nul
     reduceMotion: raw.reduceMotion === true,
     defaultShowMiniMap: raw.defaultShowMiniMap === true,
     canvasSignalDisplay: raw.canvasSignalDisplay === 'id' ? 'id' : 'label',
+    // 缺省开：老偏好文件没有这一项时按开算，不是按 false 算
+    canvasRefChips: raw.canvasRefChips !== false,
   };
 }
 

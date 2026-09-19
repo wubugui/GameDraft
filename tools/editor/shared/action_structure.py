@@ -13,7 +13,9 @@ enableRuleOffers（槽位 resultActions 由 ZoneSystem/规矩面执行）。护�
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterator
 
 
@@ -37,6 +39,12 @@ class ActionListSlot:
 NESTED_ACTION_SLOTS: dict[str, tuple[ActionListSlot, ...]] = {
     "runActions": (
         ActionListSlot("actions", "依次执行", hint="按顺序逐条执行（等待型动作会等它结束再往下）。"),
+    ),
+    "runActionsDetached": (
+        ActionListSlot(
+            "actions", "脱手执行",
+            hint="发车即返回：这一批在背景里按顺序跑，玩家全程照常活动，批外后续动作不等它。",
+        ),
     ),
     "addDelayedEvent": (
         ActionListSlot("actions", "到期执行", hint="到 targetDay 那天时执行这些动作。"),
@@ -389,3 +397,40 @@ def summarize_slot_item(slot: ActionListSlot, item: Any) -> str:
     if slot.key == "slots":
         return f"{item.get('ruleId') or '（未选规矩）'} · {_count_label(n)}"
     return _count_label(n)
+
+
+# ---------------------------------------------------------------------------
+# 脱手演出（runActionsDetached）的两张分类表 —— **读运行时那份，不在这里另抄一份**
+#
+# 权威源是 `src/core/actionParamManifest.ts` 里的 `PRESENTATION_ONLY_ACTIONS` /
+# `DETACHED_FORBIDDEN_ACTIONS`。这边只做解析：抄一份进 Python 就是又一处会漂的表，
+# 而这两张表决定的是"打断时哪条动作会被跳过"——漂了就是玩家放了技能什么都没发生。
+# ---------------------------------------------------------------------------
+
+_MANIFEST_TS = Path(__file__).resolve().parents[3] / "src" / "core" / "actionParamManifest.ts"
+
+
+def _parse_ts_string_set(name: str) -> frozenset[str]:
+    """从 actionParamManifest.ts 里抠出一个 `new Set([...])` 的字符串成员。"""
+    try:
+        text = _MANIFEST_TS.read_text("utf-8")
+    except OSError:
+        return frozenset()
+    m = re.search(
+        r"export const %s:\s*ReadonlySet<string>\s*=\s*new Set\(\[(.*?)\]\);" % re.escape(name),
+        text,
+        re.DOTALL,
+    )
+    if not m:
+        return frozenset()
+    return frozenset(re.findall(r"'([A-Za-z0-9_]+)'", m.group(1)))
+
+
+def detached_presentation_only() -> frozenset[str]:
+    """快进时整条跳过的纯演出动作（打断脱手演出时用）。"""
+    return _parse_ts_string_set("PRESENTATION_ONLY_ACTIONS")
+
+
+def detached_forbidden() -> frozenset[str]:
+    """脱手演出里禁止出现的动作：抢控制权 / 换世界 / 推时间。"""
+    return _parse_ts_string_set("DETACHED_FORBIDDEN_ACTIONS")

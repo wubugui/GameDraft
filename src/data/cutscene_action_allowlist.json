@@ -52,5 +52,10 @@
   "playPropVfx",
   "setVfxState",
   "emitVfxField",
-  "fadeLight"
+  "fadeLight",
+  "screenFlash",
+  "cameraShake",
+  "setSceneDim",
+  "duckAudio",
+  "restoreAudio"
 ]

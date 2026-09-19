@@ -31,6 +31,7 @@ REPO = Path(__file__).resolve().parents[3]
 # manifest required 参数中、编辑器不经 _PARAM_SCHEMAS 而走专用表单分支建的（早返回分支）。
 # 这些是列表/复合参数，泛型 (name, kind) schema 表达不了，各有专用子编辑器：
 #   runActions.actions      → _run_actions_editor
+#   runActionsDetached.actions → _run_actions_editor（与 runActions 共用同一个子编辑器）
 #   chooseAction.options    → _choice_options_editor
 #   addDelayedEvent.actions → _delayed_editor
 #   runActionsIf.condition  → _cond_if_expr（ConditionExprTreeRootWidget；条件表达式树，
@@ -38,6 +39,7 @@ REPO = Path(__file__).resolve().parents[3]
 # 新增此类"必填但走专用分支"的参数时在此登记并注明分支，否则反向检查会 FAIL。
 _BESPOKE_BUILT_REQUIRED: set[tuple[str, str]] = {
     ("runActions", "actions"),
+    ("runActionsDetached", "actions"),
     ("chooseAction", "options"),
     ("addDelayedEvent", "actions"),
     ("runActionsIf", "condition"),

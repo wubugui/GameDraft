@@ -429,6 +429,53 @@
           }
         }
       }
+    },
+    "午": {
+      "lighting": {
+        "sky": {
+          "kelvin": 6500,
+          "intensity": 1,
+          "hemi": 0
+        },
+        "fog": {
+          "sigma": 0,
+          "scaleHeight": 530,
+          "baseHeight": 0,
+          "kelvin": 7000,
+          "scatter": 0.15
+        },
+        "display": {
+          "ev": 0,
+          "tonemap": "none",
+          "whiteKelvin": 6500,
+          "contrast": 1,
+          "saturation": 1,
+          "lift": 0,
+          "liftKelvin": 6500
+        },
+        "emissive": {
+          "gain": 0,
+          "coreRadius": 30,
+          "haloRadius": 140,
+          "haloGain": 0.18
+        },
+        "dehaze": 0,
+        "aoStrength": 1,
+        "lightFactors": {
+          "character": {
+            "indirectFactor": 2.5464790894703255,
+            "directFactor": 1,
+            "totalFactor": 1,
+            "eChroma": 0
+          },
+          "particles": {
+            "indirectFactor": 1,
+            "directFactor": 1,
+            "totalFactor": 2.5464790894703255,
+            "eChroma": 0
+          }
+        }
+      }
     }
   },
   "ambientSounds": [
@@ -525,10 +572,10 @@
     },
     "dehaze": 0.0,
     "aoStrength": 1.0,
-    "ratioMax": 8.0,
+    "ratioMax": 8,
     "shadowBias": {
       "bias": 30.8,
-      "thickness": 264.0
+      "thickness": 264
     },
     "lightFactors": {
       "character": {

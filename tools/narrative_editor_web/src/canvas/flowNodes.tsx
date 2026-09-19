@@ -5,6 +5,9 @@ import { elementIdFromCanvasNodeId, useNarrativeCanvasActions } from './canvasAc
 import { parseGroupFrameNodeId } from './editorGroups';
 import { parseWrapperGroupNodeId } from './wrapperAutoGroups';
 import { nodeTypeHasFourWayPorts, sideToPosition, type RouteSide } from './edgeRouting';
+import { StateRefChips } from './refChips';
+import { AnnotationNoteNode, GroupNoteBlock, StateNoteStrip, useAnnotations } from './annotationsContext';
+import { useState } from 'react';
 
 /**
  * 四向端口：每一侧都同时放 target 与 source 两个 handle（同点重叠）。
@@ -66,6 +69,7 @@ export const flowNodeTypes = {
   subgraphGroup: SubgraphGroupNode,
   editorGroupFrame: EditorGroupFrameNode,
   wrapperGroupFrame: WrapperGroupFrameNode,
+  annotationNote: AnnotationNoteNode,
   wrapperGraph: ElementNode,
   scenarioSubgraph: ElementNode,
   dialogueBlackbox: ElementNode,
@@ -93,6 +97,10 @@ function EditorGroupFrameNode({ id, data, selected }: NodeProps<CanvasNode>) {
   const color = data.groupColor ?? '#4a6fa8';
   const collapsed = data.groupCollapsed === true;
   const count = data.groupMemberCount ?? 0;
+  // 分组注释：存旁挂注释文件（不在分组框数据里），标题栏「注释」按钮切换就地编辑
+  const annotations = useAnnotations();
+  const [editingNote, setEditingNote] = useState(false);
+  const hasNote = Boolean(annotations.groupNote(gid));
 
   const header = (
     <div
@@ -117,6 +125,16 @@ function EditorGroupFrameNode({ id, data, selected }: NodeProps<CanvasNode>) {
         <button type="button" onClick={() => ga?.toggleCollapsed(gid)} title={collapsed ? '展开分组' : '折叠为一个节点（纯画布呈现，数据不变）'}>
           {collapsed ? '⊞' : '⊟'}
         </button>
+        {annotations.actions ? (
+          <button
+            type="button"
+            className={hasNote ? 'has-note' : undefined}
+            onClick={() => setEditingNote(true)}
+            title={hasNote ? '改这一组的注释' : '给这一组写注释（只存编辑器旁挂文件，不进编排数据）'}
+          >
+            ✎
+          </button>
+        ) : null}
         <button type="button" onClick={() => ga?.remove(gid)} title="删除分组框（框内节点与编排数据不受影响）">
           ×
         </button>
@@ -142,6 +160,7 @@ function EditorGroupFrameNode({ id, data, selected }: NodeProps<CanvasNode>) {
       )}
       <Handle type="target" position={Position.Left} className="editor-group-port" />
       {header}
+      <GroupNoteBlock gid={gid} editing={editingNote} onDone={() => setEditingNote(false)} />
       {!collapsed && <div className="editor-group-body" aria-hidden />}
       <Handle type="source" position={Position.Right} className="editor-group-port" />
     </div>
@@ -196,6 +215,8 @@ function StateNode({ data, selected, type }: NodeProps<CanvasNode>) {
     <div className={`node state-node${boundaryClass} ${selected ? 'selected' : ''} ${data.active ? 'runtime-active' : ''}`}>
       <div className="node-title">{data.label}</div>
       <div className="node-subtitle">{data.subtitle}</div>
+      <StateNoteStrip graphId={data.graphId} stateId={data.stateId} />
+      <StateRefChips graphId={data.graphId} stateId={data.stateId} />
       <NodePorts type={type} />
     </div>
   );

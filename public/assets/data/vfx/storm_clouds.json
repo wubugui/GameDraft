@@ -1,0 +1,216 @@
+{
+  "id": "storm_clouds",
+  "label": "雷云：压在头顶的一片厚云（符纸雷击 / 变天）",
+  "emitters": [
+    {
+      "id": "cloud_mass",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        620,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/smoke_puff.png",
+        "sizeWu": 520,
+        "sizeJitter": [
+          0.75,
+          1.5
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.85
+          ],
+          [
+            1,
+            1.25
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.12,
+            0.62
+          ],
+          [
+            0.85,
+            0.62
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.2,
+          0.22,
+          0.28
+        ],
+        "lit": false,
+        "spin": {
+          "rate": [
+            -4,
+            4
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 28,
+        "rate": 2.2,
+        "burst": 18,
+        "shape": {
+          "kind": "box",
+          "size": [
+            2600,
+            260,
+            700
+          ]
+        },
+        "speed": [
+          4,
+          14
+        ],
+        "direction": [
+          1,
+          0,
+          0
+        ],
+        "spread": 25,
+        "duration": 9.0
+      },
+      "motion": {
+        "drag": 0.35,
+        "turbulence": {
+          "strength": 6,
+          "scale": 300,
+          "speed": 0.15
+        },
+        "maxSpeed": 70
+      },
+      "life": {
+        "seconds": [
+          7.6,
+          11.9
+        ]
+      }
+    },
+    {
+      "id": "cloud_underbelly",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        470,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/smoke_puff.png",
+        "sizeWu": 340,
+        "sizeJitter": [
+          0.8,
+          1.4
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.15,
+            0.4
+          ],
+          [
+            0.85,
+            0.4
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.12,
+          0.13,
+          0.17
+        ],
+        "lit": false,
+        "spin": {
+          "rate": [
+            -6,
+            6
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 20,
+        "rate": 1.6,
+        "burst": 12,
+        "shape": {
+          "kind": "box",
+          "size": [
+            2400,
+            160,
+            620
+          ]
+        },
+        "speed": [
+          6,
+          18
+        ],
+        "direction": [
+          1,
+          0,
+          0
+        ],
+        "spread": 30,
+        "duration": 9.0
+      },
+      "motion": {
+        "drag": 0.4,
+        "turbulence": {
+          "strength": 9,
+          "scale": 260,
+          "speed": 0.2
+        },
+        "maxSpeed": 80
+      },
+      "life": {
+        "seconds": [
+          6.8,
+          11.0
+        ]
+      }
+    }
+  ]
+}

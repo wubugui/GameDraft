@@ -124,6 +124,9 @@ class XrefSource:
     narrative_file: str = NARRATIVE_FILE
     dialogues: list[DialogueDoc] = field(default_factory=list)
     assets: list[AssetDoc] = field(default_factory=list)
+    # 工程根目录：「它调的」那一栏要把过场 / 物品 / 说明卡的 id 翻成中文名，名字取自
+    # json_lang 的 id 宇宙（定义处扫描）。空 = 没有根（合成测试），名字退回 id。
+    project_root: str = ""
 
 
 # --------------------------------------------------------------------------- #
@@ -140,6 +143,8 @@ def from_project_model(model: Any) -> XrefSource:
 
     narrative = getattr(model, "narrative_graphs", None)
     src = XrefSource(origin="model", narrative=narrative if isinstance(narrative, dict) else {})
+    project_path = getattr(model, "project_path", None)
+    src.project_root = str(project_path) if project_path else ""
 
     for gid in _dialogue_graph_ids(model):
         doc = _load_dialogue_doc(model, gid)
@@ -195,6 +200,7 @@ def from_disk(project_root: Path | str) -> XrefSource:
     """
     root = Path(project_root)
     src = XrefSource(origin="disk", narrative=_read_json(root / NARRATIVE_FILE, {}))
+    src.project_root = str(root)
     if not isinstance(src.narrative, dict):
         src.narrative = {}
 

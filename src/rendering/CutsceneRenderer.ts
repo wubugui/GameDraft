@@ -509,15 +509,27 @@ export class CutsceneRenderer {
   }
 
   async flashWhite(duration: number): Promise<void> {
+    await this.flashScreen(duration, 0xffffff, 1);
+  }
+
+  /**
+   * 满屏闪一下再淡掉（{@link flashWhite} 的一般形态）。颜色与峰值不透明度可给，
+   * 于是雷是惨白、火是橙、阴东西是青——同一条通道，不必各造一个。
+   *
+   * 与 fade 系列不同，这一层**用完即销毁**：闪光是瞬态，不该留一个常驻 overlay 在 uiLayer 上。
+   */
+  async flashScreen(duration: number, color = 0xffffff, alpha = 1): Promise<void> {
+    const peak = Number.isFinite(alpha) ? Math.max(0, Math.min(1, alpha)) : 1;
+    if (peak <= 0) return;
     const flash = new Graphics();
     flash.rect(0, 0, this.screenWidth + 200, this.screenHeight + 200);
-    flash.fill(0xffffff);
+    flash.fill(Number.isFinite(color) ? color : 0xffffff);
     flash.x = -100;
     flash.y = -100;
-    flash.alpha = 1;
+    flash.alpha = peak;
     this.renderer.uiLayer.addChild(flash);
 
-    await this.animateAlpha(flash, 1, 0, duration);
+    await this.animateAlpha(flash, peak, 0, duration);
     if (flash.parent) flash.parent.removeChild(flash);
     flash.destroy();
   }

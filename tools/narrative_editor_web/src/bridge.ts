@@ -48,6 +48,8 @@ type QtBridge = {
   saveEditorPreferences?: (payload: string, cb: (result: string) => void) => void;
   getCanvasGroups?: (cb: (result: string) => void) => void;
   saveCanvasGroups?: (payload: string, cb: (result: string) => void) => void;
+  getCanvasAnnotations?: (cb: (result: string) => void) => void;
+  saveCanvasAnnotations?: (payload: string, cb: (result: string) => void) => void;
   scanSignalXref?: (payload: string, cb: (result: string) => void) => void;
   revealXrefRef?: (payload: string, cb: (result: string) => void) => void;
   scanSignalUsages?: (signalId: string, cb: (result: string) => void) => void;
@@ -481,6 +483,53 @@ export async function saveCanvasGroupsRemote(file: unknown): Promise<{ ok: boole
   });
 }
 
+const CANVAS_ANNOTATIONS_DRAFT_STORAGE_KEY = 'narrative-editor-canvas-annotations-draft';
+
+/** 画布注释（节点 / 迁移 / 分组框注释 + 便签）：编辑器专用旁挂，与分组框同一条路，运行时永不加载 */
+export async function loadCanvasAnnotationsRemote(): Promise<unknown> {
+  const bridge = await waitForBridge();
+  if (!bridge?.getCanvasAnnotations) {
+    try {
+      const draft = localStorage.getItem(CANVAS_ANNOTATIONS_DRAFT_STORAGE_KEY);
+      return draft ? (JSON.parse(draft) as unknown) : null;
+    } catch {
+      return null;
+    }
+  }
+  return new Promise((resolve) => {
+    bridge.getCanvasAnnotations!((payload) => {
+      try {
+        const parsed = JSON.parse(payload || '{}') as unknown;
+        resolve(parsed && typeof parsed === 'object' ? parsed : null);
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
+export async function saveCanvasAnnotationsRemote(file: unknown): Promise<{ ok: boolean; reason?: string }> {
+  const bridge = await waitForBridge();
+  const payload = JSON.stringify(file);
+  if (!bridge?.saveCanvasAnnotations) {
+    try {
+      localStorage.setItem(CANVAS_ANNOTATIONS_DRAFT_STORAGE_KEY, payload);
+    } catch {
+      /* 存储不可用时静默降级为内存态 */
+    }
+    return { ok: true };
+  }
+  return new Promise((resolve) => {
+    bridge.saveCanvasAnnotations!(payload, (result) => {
+      try {
+        resolve(JSON.parse(result) as { ok: boolean; reason?: string });
+      } catch (e) {
+        resolve({ ok: false, reason: `无法解析注释保存响应：${String(e)}` });
+      }
+    });
+  });
+}
+
 export async function getQuestRemote(questId: string): Promise<{ ok: boolean; quest?: Record<string, unknown>; reason?: string }> {
   const bridge = await waitForBridge();
   if (!bridge?.getQuest) return { ok: false, reason: '任务读取只在主编辑器（Qt 宿主）内可用' };
@@ -685,11 +734,34 @@ const XREF_HOST_ONLY = '信号关系要读全工程的对话图与内容资产�
  * 一次要回全部信号（而不是查一条问一次）：面板要列全表，逐条问会把一次扫描放大成
  * N 次盘 IO；全量一次约 0.1 秒，之后切换信号纯内存。
  */
+/** 有没有 Qt 宿主桥（没有 = 独立网页开发态：能看、不能切页） */
+export async function hasHostBridge(): Promise<boolean> {
+  const bridge = await waitForBridge();
+  return Boolean(bridge);
+}
+
+/**
+ * 独立网页开发态的扫描：vite 开发服务器把 `python -m tools.narrative_xref --dump` 透出在
+ * `/__dev/narrative_xref`（见 vite.config.ts）。同一套扫描引擎、同一形状，只是读的是磁盘、
+ * 看不见画布草稿。构建产物里没有这条路（apply: 'serve'），主编辑器永远走桥。
+ */
+async function scanSignalXrefDev(): Promise<{ ok: boolean; xref?: SignalXrefIndexDef; reason?: string }> {
+  if (!import.meta.env.DEV) return { ok: false, reason: XREF_HOST_ONLY };
+  try {
+    const res = await fetch('/__dev/narrative_xref', { cache: 'no-store' });
+    const payload = await res.json() as { ok: boolean; xref?: SignalXrefIndexDef; reason?: string };
+    if (!res.ok || !payload.ok) return { ok: false, reason: payload.reason || `开发态扫描失败（HTTP ${res.status}）` };
+    return payload;
+  } catch (e) {
+    return { ok: false, reason: `开发态扫描失败：${String(e)}` };
+  }
+}
+
 export async function scanSignalXrefRemote(
   draft?: NarrativeGraphsFileDef,
 ): Promise<{ ok: boolean; xref?: SignalXrefIndexDef; reason?: string }> {
   const bridge = await waitForBridge();
-  if (!bridge?.scanSignalXref) return { ok: false, reason: XREF_HOST_ONLY };
+  if (!bridge?.scanSignalXref) return scanSignalXrefDev();
   // 带上画布草稿：面板要回答的是"我现在改成这样之后"的关系，不是上次存盘时的关系。
   const arg = JSON.stringify(draft ? { data: draft } : {});
   return new Promise((resolve) => {
@@ -722,6 +794,30 @@ export async function revealXrefRefRemote(ref: {
       }
     });
   });
+}
+
+/**
+ * 「编排全貌」的跳转：宿主里交跳转引擎；独立网页开发态**不能切页**，就把去处如实说给人听
+ * （ok=true 但 exact=false，note 写明是网页模式），绝不谎报"已定位"。
+ */
+export async function jumpToRefRemote(ref: {
+  file: string;
+  pointer: string;
+  anchors?: string[][];
+}, describe: string): Promise<{ ok: boolean; exact?: boolean; note?: string; reason?: string }> {
+  const bridge = await waitForBridge();
+  if (!bridge?.revealXrefRef) {
+    return { ok: true, exact: false, note: `网页开发模式不能切页；主编辑器里这一下会${describe}` };
+  }
+  return revealXrefRefRemote(ref);
+}
+
+/** navigate(kind, id) 的可回报版本：宿主里真切页；网页开发态把去处说给人听 */
+export async function navigateRemote(kind: string, id: string, describe: string): Promise<{ ok: boolean; note: string }> {
+  const bridge = await waitForBridge();
+  if (!bridge) return { ok: true, note: `网页开发模式不能切页；主编辑器里这一下会${describe}` };
+  bridge.navigate(kind, id);
+  return { ok: true, note: `已${describe}` };
 }
 
 export async function scanSignalUsagesRemote(

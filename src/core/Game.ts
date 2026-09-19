@@ -54,6 +54,12 @@ import { SignalCueManager } from '../systems/SignalCueManager';
 import { HealthSystem } from '../systems/HealthSystem';
 import { RetrySystem } from '../systems/RetrySystem';
 import { HealthThreatSystem, type HealthThreatSource } from '../systems/HealthThreatSystem';
+import { StrikeLightRig, seededUnitPair } from '../systems/strikeLight';
+import { GameClock } from '../systems/gameClock';
+import type { ActionExecScope } from './ActionExecutor';
+import type { PerformanceSession } from '../systems/performanceSession';
+import { PerformanceSessionManager } from '../systems/performanceSession';
+import { isPresentationOnlyAction } from './actionParamManifest';
 import { FireProtectionSystem, type ProtectionFireSource } from '../systems/FireProtectionSystem';
 import type { ConditionExpr } from '../data/types';
 import { SmellSystem } from '../systems/SmellSystem';
@@ -167,7 +173,8 @@ import { resolvePathRelativeToAnimManifest } from './assetPath';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
 import type { Npc } from '../entities/Npc';
 import type { Hotspot } from '../entities/Hotspot';
-import { registerActionHandlers, auditActionRegistrationsAgainstManifest } from './ActionRegistry';
+import { registerActionHandlers, auditActionRegistrationsAgainstManifest, cancelSceneDimRamps,
+  type StrikeThreatOptions, type StrikeThreatResult } from './ActionRegistry';
 import { collectRecentPageErrors, installPageErrorTrap } from './pageErrorTrap';
 import { DeterministicRandom } from '../utils/deterministicRandom';
 import { ScenarioStateManager } from './ScenarioStateManager';
@@ -458,6 +465,13 @@ type EntityShadowEntry = {
  */
 type LogicFreezeReason = 'narrative' | 'authoring';
 
+/**
+ * 运行时灯的来源。`SceneLightingSystem.setDynamicLights` 是**整表覆盖**，
+ * 各来源各推各的会互相冲掉，所以在 {@link Game.setDynamicLightsFrom} 里按来源存、合成后整份推。
+ * 次序即优先级（灯槽满了按数组次序截断）：落雷 > 手上举着的 > 烧着的。
+ */
+type DynamicLightOwner = 'prop' | 'burn' | 'strike';
+
 /** `AudioListenerConfig`（脚步配置 / 动作 / 调试命令那套）→ 统一听者绑定。 */
 /** 正数才算数：0 / 负数 / NaN 一律当"没给"，回落到下一层——否则一个手写的 0 会把视距钉在耳朵上。 */
 function positiveOrUndefined(v: unknown): number | undefined {
@@ -632,6 +646,11 @@ export class Game {
   private fireProtectionSystem = new FireProtectionSystem();
   private yinThreatsVisible = false;
   private systemNotePauseDepth = 0;
+  /**
+   * 游戏时钟：**演出时间的唯一来源**（`waitMs` / 天色渐变 / 连劈间隔 / 雷柱软停）。
+   * 只在世界没暂停时前进——见 {@link isWorldPaused}。
+   */
+  private readonly gameClock = new GameClock();
   private smellSystem: SmellSystem;
   private planeReconciler: PlaneReconciler;
   private npcScheduleSystem: NpcScheduleSystem;
@@ -2486,7 +2505,15 @@ export class Game {
       load: (raw) => this.saveManager.loadPayload(raw),
       isDepleted: () => this.healthSystem.isDepleted(),
       enterDeath: () => {
+        /**
+         * ⚠ 顺序：**先收脱手演出，再 cancelPending**。
+         * 反过来的话，`cancelPending` 只是把批停在两条动作之间——剩下的结算与归位一条都不跑，
+         * 世界就停在"天是黑的、背景音是哑的、闷雷还在响"那一帧上（2026-09-19 的原始故障）。
+         */
+        this.performanceSessions?.interruptAll('death');
         this.actionExecutor.cancelPending();
+        // 在途的游戏时间等待一并兑现：否则被作废的批还攥着一个永远不返回的 await
+        this.gameClock.cancelAll();
         this.sceneWind.clearGust();
         this.cutsceneManager.deserialize({});
         this.graphDialogueManager.deserialize({});
@@ -2701,6 +2728,21 @@ export class Game {
       this.healthThreatSystem.clear();
       this.fireProtectionSystem.clear();
       this.sceneWind.clearGust();
+      // 演出态一律不跨场景：雷放到一半换场景，新场景不该接着亮 / 接着抖 / 接着压暗。
+      // （压暗在 SceneLightingSystem 那边也会随场景重置，这里把角色侧那一半一起归位。）
+      this.strikeLightRig.clear();
+      this.dynamicLightsByOwner.delete('strike');
+      this.camera.clearShake();
+      this.characterLighting.setEnvDim(1);
+      // 演出把背景音压下去了、人却走出了这张场景：新场景该按新场景的响度来。
+      this.audioManager.clearAudioDucks();
+      /**
+       * 脱手演出：兜底再打断一次。
+       * 主路是状态旁听席上的 `SceneTransition`，但不是每条换场景都经过它
+       * （过场内部的换场景沿用 Cutscene 锁，位面切换也自己走）。这一刀是幂等的：
+       * 已经收过的会话再来一次是安静 no-op。
+       */
+      this.performanceSessions?.interruptAll('scene');
     });
     this.listenEvent('cutscene:end', () => this.sceneWind.clearGust());
     this.listenEvent('scene:ready', () => {
@@ -2845,8 +2887,12 @@ export class Game {
     await this.narrativeStateManager.loadFromAsset(this.assetManager);
     if (this.tearDownComplete) return;
 
+    this.buildPerformanceSessions();
+
     registerActionHandlers(this.actionExecutor, {
       randomValue: () => this.runtimeRandom.next(),
+      performanceSessions: this.performanceSessions,
+      gameClock: this.gameClock,
       // `runActionsIf` 的判据。统一走中央工厂（律5 统一条件源）：手工缩水上下文缺
       // @scene/@owner/plane/timePhase 叶，同一条件在此入口与对话/zone/热点入口会得出不同结果。
       evaluateCondition: (expr) =>
@@ -2881,7 +2927,7 @@ export class Game {
         else this.entityShadowBindings.set(key, bindings);
       },
       vfx: {
-        play: (opts) => this.vfxSystem.playVfx(opts),
+        play: (opts) => this.vfxSystem.playVfx(opts) ?? null,
         stop: (id) => this.vfxSystem.stopVfx(id),
         setState: (id, state) => this.vfxSystem.setVfxState(id, state),
         emitField: (def, sceneX, sceneY, h) => {
@@ -2928,6 +2974,11 @@ export class Game {
       extinguishBurnable: (target, socket) => this.burnSystem.extinguishBurnable(target, socket),
       resetBurnable: (target, socket) => this.burnSystem.resetBurnable(target, socket),
       fadeLight: (lightId, toScale, fadeMs) => this.heldPropSystem.fadeLight(lightId, toScale, fadeMs),
+      screenFlash: (durationMs, color, alpha) => this.cutsceneManager.screenFlash(durationMs, color, alpha),
+      cameraShake: (amplitude, durationMs, frequency) => this.camera.shake(amplitude, durationMs, frequency),
+      setEnvDim: (scale) => this.applyEnvDim(scale),
+      getEnvDim: () => this.sceneLighting.getEnvDim(),
+      strikeThreat: (opts) => this.strikeThreat(opts),
       setSceneDepthFloorOffset: (v) => { this.sceneDepthSystem.floorOffset = v; },
       resetSceneDepthFloorOffset: () => {
         const cfg = this.sceneDepthSystem.currentConfig;
@@ -4906,14 +4957,368 @@ export class Game {
    * `SceneLightingSystem.setDynamicLights` 是整表覆盖：两个来源各推各的会互相冲掉（火把一推，燃烧的火光没了）。
    * 合成次序 = 优先级：**手上举着的在前**（离玩家最近、最该生效，灯槽满了按数组次序截断），燃烧的火光在后。
    */
-  private setDynamicLightsFrom(owner: 'prop' | 'burn', lights: LightDef[]): void {
+  private setDynamicLightsFrom(owner: DynamicLightOwner, lights: LightDef[]): void {
     this.dynamicLightsByOwner.set(owner, lights);
     const prop = this.dynamicLightsByOwner.get('prop') ?? [];
     const burn = this.dynamicLightsByOwner.get('burn') ?? [];
-    this.applySceneDynamicLights(burn.length === 0 ? prop : prop.length === 0 ? burn : [...prop, ...burn]);
+    // 落雷排在最前：灯槽满了按数组次序截断，而雷是这一刻画面上唯一重要的光源——
+    // 被挤掉就是"雷劈下来画面没亮"，而且只有一行告警。
+    const strike = this.dynamicLightsByOwner.get('strike') ?? [];
+    const merged = [...strike, ...prop, ...burn];
+    this.applySceneDynamicLights(merged);
   }
 
-  private readonly dynamicLightsByOwner = new Map<'prop' | 'burn', LightDef[]>();
+  private readonly dynamicLightsByOwner = new Map<DynamicLightOwner, LightDef[]>();
+
+  /** 落雷的那一盏运行时灯（限速推送见 {@link StrikeLightRig}）。 */
+  private readonly strikeLightRig = new StrikeLightRig();
+
+  /**
+   * 脱手演出会话（`runActionsDetached` 的宿主）。机制全貌见 systems/performanceSession.ts。
+   * `null` 直到 `buildPerformanceSessions()` 立起来——它要用到 actionExecutor 与各演出系统。
+   */
+  private performanceSessions!: PerformanceSessionManager;
+
+  /**
+   * 立起脱手演出会话管理器，并把**所有打断源**接上。
+   *
+   * 打断源的取舍（制作人 2026-09-19 拍板）：
+   * - **打断**：过场开演、进小游戏、切场景（含读条）、死亡、回主菜单、读档、拆除。
+   * - **不打断**：对话、遭遇、面板。雷在背景劈着、NPC 在旁边说话是**好演出**；
+   *   只有全屏接管的东西才必须清场。
+   *
+   * 状态那一路走 `GameStateController` 的同步旁听席而不是事件总线：要的是"状态一写完就收摊"，
+   * 晚一个微任务，演出就会闪在过场的第一拍上面。
+   */
+  private buildPerformanceSessions(): void {
+    /** 每个会话一份 scope（认的是同一个对象，handler 靠它拿到会话记账） */
+    const scopes = new WeakMap<PerformanceSession, ActionExecScope>();
+    const scopeOf = (session: PerformanceSession): ActionExecScope => {
+      let scope = scopes.get(session);
+      if (!scope) {
+        scope = { detached: true, session };
+        scopes.set(session, scope);
+      }
+      return scope;
+    };
+
+    this.performanceSessions = new PerformanceSessionManager({
+      runAction: (action, session) =>
+        this.actionExecutor.executeAwait(action, session.originContext, scopeOf(session)),
+      /**
+       * ⚠ 故意不 await：`executeAwait` 的函数体在**第一个 await 之前**就把 handler 同步调掉了，
+       * 所以同步结算（写存档、收鬼、给物品）当场落地——这正是切场景/死亡这类同步收尾路径要的。
+       * 剩下那点异步尾巴由各系统自己的生命周期闸门收。
+       */
+      runActionSync: (action, session) => {
+        void this.actionExecutor
+          .executeAwait(action, session.originContext, scopeOf(session))
+          .catch((e) => { console.warn('脱手演出打断补跑失败', e); });
+      },
+      isPresentationOnly: (type) => isPresentationOnlyAction(type),
+      release: {
+        setEnvDimNow: (scale) => {
+          // 先作废在跑的渐变，再写终值：反过来的话下一档就把归位盖回去了
+          cancelSceneDimRamps();
+          this.applyEnvDim(scale);
+        },
+        releaseDuck: (name) => { this.audioManager.releaseAudioDuck(name); },
+        clearShake: () => { this.camera.clearShake(); },
+        clearStrikeLight: () => {
+          this.strikeLightRig.clear();
+          this.dynamicLightsByOwner.delete('strike');
+        },
+        clearGust: () => { this.sceneWind.clearGust(); },
+        stopSfx: (id) => { this.audioManager.stopSfxById(id); },
+        stopVfxSoft: (id) => { this.vfxSystem.stopVfxSoft(id); },
+      },
+    });
+
+    this.stateController.setStateChangeObserver((next) => {
+      // 全屏接管 / 换世界 / 没命了：背景里的演出必须当场收摊（结算补齐、归位做满）
+      if (next === GameState.Cutscene) this.performanceSessions.interruptAll('cutscene');
+      else if (next === GameState.Minigame) this.performanceSessions.interruptAll('minigame');
+      else if (next === GameState.SceneTransition) this.performanceSessions.interruptAll('scene');
+      else if (next === GameState.Dead) this.performanceSessions.interruptAll('death');
+      else if (next === GameState.MainMenu) this.performanceSessions.interruptAll('teardown');
+    });
+  }
+
+  /**
+   * 环境压暗（雷雨压天色）。**背景与角色/粒子必须同值**——只压一边就是人浮在背景上，
+   * 两边的实现完全不同（背景走显示曝光，角色/粒子走总受光倍率），所以这里是唯一入口。
+   * 不落盘、切场景归 1。
+   */
+  private applyEnvDim(scale: number): void {
+    const s = Number.isFinite(scale) ? Math.max(0, Math.min(1, scale)) : 1;
+    this.sceneLighting.setEnvDim(s);
+    this.characterLighting.setEnvDim(s);
+    // 背景那一侧改的是 display，灯没变；但角色侧读的是同一份 packed，稳妥起见一并重推。
+    this.pushPackedLightsToCharacters();
+  }
+
+  /** 每帧推进落雷灯；`null` = 限速没轮到，不推。 */
+  private updateStrikeLight(dt: number): void {
+    const lights = this.strikeLightRig.update(dt * 1000);
+    if (lights) this.setDynamicLightsFrom('strike', lights);
+  }
+
+  /**
+   * 落雷：挑一个靶（最凶 / 最近的鬼）→ 在它头上放一记雷（粒子 + 一盏运行时强光）→ 让它消失。
+   *
+   * 挑不到靶时按 `fallback` 处理：`'random'`（缺省）在玩家周围随机找个地方照劈（雷该多响多响，
+   * 只是没打着东西）；`'none'` 则整件事不发生。
+   *
+   * ⚠ **会写存档**（靶子的消失是持久的），所以这条动作**不进过场白名单**——
+   * 过场里的动作禁改存档（见 [[action-registration-registry-surfaces]]）。
+   *
+   * 闪白与震屏**不在这里**：它们是独立动作，由作者在编排里自己排时机（雷光先亮、
+   * 半拍后才到震和声音，是"远近"的表达）。这条只管"选谁、劈哪、谁没了"。
+   */
+  private async strikeThreat(opts: StrikeThreatOptions): Promise<StrikeThreatResult> {
+    // 这道雷亮多久：灯与粒子共用一个时长，作者只有一个旋钮。
+    const strikeMs = Number.isFinite(opts.lightMs) && (opts.lightMs as number) > 0 ? opts.lightMs as number : 420;
+
+    /**
+     * 一次落雷可能是**好几道连着劈**。真雷本来就这样（回击 return stroke），
+     * 而且"偶尔多劈两下"比每次都一模一样有威慑。
+     *
+     * ⚠ **每一道雷都独立走一遍完整规则**：现取玩家位置 → 挑周围威胁最高的鬼 → 没鬼就随机落点。
+     * 所以几道雷落在**不同**地方（2026-09-20 制作人报"几道雷都打在同一个地方"——那一版是
+     * 开头选一次靶、整条链复用，等于连劈只是把同一记雷播三遍）。
+     * 本链里已经劈过的靶子进 `struck`，下一道跳过它：劈中就收的那条路靠 `active()` 自然排除，
+     * 但 `removeTarget: false`「只演不收」那条不会，不显式排除就又全砸在同一个鬼头上。
+     *
+     * - `strikes` = 最多几道（缺省 1）。
+     * - `extraChance` = 第 2 道起**每一道**真的落下来的概率（缺省 1 = 配几道就劈几道）。
+     *   掷不中就**整条链到此为止**——不是跳过这一道继续下一道。于是道数是个几何分布：
+     *   多数时候一道、偶尔两道、三道很少见，正是"偶尔来一串"的手感。
+     * - `gapMs` ± `gapJitterMs` = 两道之间的间隔（缺省 220 ± 0）。间隔不抖的话，
+     *   连劈三道会听成机枪点射而不是雷。
+     */
+    const numOr0 = (v: unknown, dflt: number): number => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return v === undefined || v === null || !Number.isFinite(n) ? dflt : n;
+    };
+    const maxStrikes = Math.max(1, Math.round(numOr0(opts.strikes, 1)));
+    const extraChance = Math.max(0, Math.min(1, numOr0(opts.extraChance, 1)));
+    const gapMs = Math.max(0, numOr0(opts.gapMs, 220));
+    const gapJitterMs = Math.max(0, numOr0(opts.gapJitterMs, 0));
+    const pool = (opts.effects ?? []).map((e) => String(e).trim()).filter(Boolean);
+    const fallbackEffect = (opts.effect ?? '').trim();
+    const seeded = opts.seed !== undefined && Number.isFinite(opts.seed);
+    /**
+     * 给了 seed 就连"劈几道、挑哪张图、隔多久、随机落在哪"都是确定的（无头复现 / 回放逐帧一致）。
+     *
+     * 每道雷要**五个互不相干**的数，三组 pair 取出来。一个数兼两职会把两件事绑死——
+     * 比如拿间隔抖动当"挑哪张贴图"，间隔偏短的那几道就总是同一张图。
+     */
+    const roll = (i: number): {
+      chance: number; jitter: number; angle: number; radius: number; variant: number;
+    } => {
+      if (!seeded) {
+        return {
+          chance: Math.random(), jitter: Math.random(), angle: Math.random(),
+          radius: Math.random(), variant: Math.random(),
+        };
+      }
+      const s = opts.seed as number;
+      const a = seededUnitPair(s + i * 7919);
+      const b = seededUnitPair(s + i * 7919 + 104729);
+      const c = seededUnitPair(s + i * 7919 + 15485863);
+      return { chance: a.a, jitter: a.b, angle: b.a, radius: b.b, variant: c.a };
+    };
+
+    /**
+     * 一道雷的落点：**完整规则走一遍**。返回 null = 这一道不该发生（`fallback: 'none'` 且没靶子）。
+     * 玩家位置每道现取——连劈之间他还在走，雷该跟着他周围的局面走。
+     */
+    const pickSpot = (
+      r: { angle: number; radius: number }, struck: ReadonlySet<string>,
+    ): { x: number; y: number; threatId: string | null } | null => {
+      const from = { x: this.player.x, y: this.player.y };
+      const hit = this.healthThreatSystem.pickTarget(from, {
+        ...(opts.maxDistance !== undefined ? { maxDistance: opts.maxDistance } : {}),
+        ...(opts.rank !== undefined ? { rank: opts.rank } : {}),
+        exclude: struck,
+      });
+      if (hit) return { x: hit.x, y: hit.y, threatId: hit.id };
+      if (opts.fallback === 'none') return null;
+      const radius = Number.isFinite(opts.fallbackRadius) && (opts.fallbackRadius as number) > 0
+        ? (opts.fallbackRadius as number) : 320;
+      const angle = r.angle * Math.PI * 2;
+      // √ 是为了在圆面上均匀（不开方会挤在圆心附近）；下限 0.45 半径免得雷劈在玩家脚面上。
+      const dist = radius * (0.45 + 0.55 * Math.sqrt(r.radius));
+      return { x: from.x + Math.cos(angle) * dist, y: from.y + Math.sin(angle) * dist, threatId: null };
+    };
+
+    /**
+     * 静默档（脱手演出被打断）：**结算照做、一道雷都不放**。
+     * "打断＝跳过演出，不是取消技能"——鬼照样没，但那会儿多半已经切进过场，没人看得到雷。
+     * 静默时不等间隔，于是整条链在**同一个同步块**里走完（打断的同步补跑等不起微任务）。
+     */
+    const took = { vfxIds: [] as string[], sfxIds: [] as string[], lit: false };
+    const struck = new Set<string>();
+    const threatIds: string[] = [];
+    let firstSpot: { x: number; y: number } | null = null;
+    let bolts = 0;
+
+    for (let i = 0; i < maxStrikes; i++) {
+      const r = roll(i);
+      if (i > 0) {
+        if (r.chance >= extraChance) break;
+        if (!opts.silent) {
+          const jitter = gapJitterMs > 0 ? (r.jitter * 2 - 1) * gapJitterMs : 0;
+          // 游戏时钟而不是墙钟：玩家在两道雷之间开了背包，第三道该等他出来再劈
+          await this.gameClock.wait(Math.max(0, gapMs + jitter));
+          // 等待期间换了场景 / 这段演出被打断：后面的雷不该再落下来
+          if (!this.vfxSystem.currentSpace) break;
+          if (opts.abort?.() === true) break;
+        }
+      }
+      const spot = pickSpot(r, struck);
+      if (!spot) break;
+      if (spot.threatId) {
+        struck.add(spot.threatId);
+        threatIds.push(spot.threatId);
+        if (opts.removeTarget !== false) this.removeThreatEntity(spot.threatId);
+      }
+      if (!firstSpot) firstSpot = { x: spot.x, y: spot.y };
+      if (!opts.silent) {
+        this.fireOneBolt(spot, { pool, fallbackEffect, strikeMs, opts, variantPick: r.variant, took });
+      }
+      bolts++;
+    }
+
+    const at = firstSpot ?? { x: this.player.x, y: this.player.y };
+    return {
+      hit: threatIds.length > 0,
+      threatId: threatIds[0] ?? null,
+      threatIds,
+      x: at.x, y: at.y, bolts,
+      vfxIds: took.vfxIds, sfxIds: took.sfxIds, lit: took.lit,
+    };
+  }
+
+  /**
+   * 放**一道**雷：贴图 + 雷光 + 雷声 + 闪白 + 震屏，在同一句里一起发车。
+   *
+   * 雷声由这里放、而且用 `playSfxAt` 放在**落点**上（不是 `playSfx` 那种没有位置的一声）：
+   * 一道雷的画面和声音是同一件事——分成两条动作各排各的时机，连劈几道时必然错位，
+   * 而且远处劈的和脸上劈的会一样响。绑在落点上，方位、距离衰减、空气低通、场景回音
+   * 全都自动跟着这道雷走。
+   */
+  private fireOneBolt(
+    at: { x: number; y: number },
+    ctx: {
+      pool: string[]; fallbackEffect: string; strikeMs: number;
+      opts: StrikeThreatOptions; variantPick: number;
+      /** 本次落雷取用的演出资源，回填给调用方记进脱手演出的归位账本 */
+      took: { vfxIds: string[]; sfxIds: string[]; lit: boolean };
+    },
+  ): void {
+    const { pool, fallbackEffect, strikeMs, opts } = ctx;
+    const numOr0 = (v: unknown, dflt: number): number => {
+      const n = typeof v === 'number' ? v : Number(v);
+      return v === undefined || v === null || !Number.isFinite(n) ? dflt : n;
+    };
+    /**
+     * 这一道雷用哪个效果。`effects` 给一组时**每道随机挑一个** —— 同一个道具反复放、
+     * 一次连劈几道，每一道都该是新的一道雷；反复用同一张贴图，玩家第二次就看出来了。
+     */
+    const effect = pool.length > 0
+      ? pool[Math.floor(ctx.variantPick * pool.length) % pool.length]
+      : fallbackEffect;
+    if (effect) {
+      const vid = this.vfxSystem.playVfx({
+        effect,
+        anchor: { x: at.x, y: at.y, h: opts.effectHeight ?? 0, surface: 'ground' },
+        ...(opts.seed !== undefined && Number.isFinite(opts.seed) ? { seed: opts.seed } : {}),
+        oneShot: true,
+      });
+      /**
+       * 雷柱是**光柱**（`beams`），而光柱没有寿命——只有开关。`oneShot` 的自动收尸要求
+       * "粒子放完 **且** 光柱已暗"，光柱不关就永远不满足，那道柱子会一直戳在场上。
+       * 所以放完这道雷必须显式软停一次：软停让光柱按自己的 fadeOut 淡掉、在飞的火星飞完再收。
+       * （硬 `stopVfx` 对临时实例是当场删除，整道雷凭空消失，演出上是假的。）
+       *
+       * 换场景不用管：实例随场景清空，`stopVfxSoft` 找不到实例安静返回。
+       */
+      if (vid) {
+        ctx.took.vfxIds.push(vid);
+        // 同上：暂停期间雷柱该定在屏上，不该在背包盖着的时候自己淡掉
+        this.gameClock.after(strikeMs, () => { this.vfxSystem.stopVfxSoft(vid); });
+      }
+    }
+
+    // 灯位与雷声走**同一个空间换算**（`anchorToWorld`），否则光和声会落在离雷柱几十 wu 的地方。
+    const space = this.vfxSystem.currentSpace;
+    const intensity = Number.isFinite(opts.lightIntensity) ? Math.max(0, opts.lightIntensity as number) : 0;
+    if (intensity > 0) {
+      const world = space?.anchorToWorld({ x: at.x, y: at.y, h: opts.lightHeight ?? 260, surface: 'ground' });
+      if (world) {
+        this.strikeLightRig.start({
+          pos: [world[0], world[1], world[2]],
+          intensity,
+          durationMs: strikeMs,
+          ...(opts.lightRange !== undefined ? { range: opts.lightRange } : {}),
+          ...(opts.lightKelvin !== undefined ? { kelvin: opts.lightKelvin } : {}),
+        });
+        ctx.took.lit = true;
+      } else {
+        // 没几何场 = 整套光照禁用，这在本项目里是"作者还没烘这张图"的常见状态，必须出声。
+        console.warn('strikeThreat: 当前场景没有粒子/光照空间，雷光这一层不出（粒子与消失照旧）');
+      }
+    }
+
+    const sfx = (opts.sfx ?? '').trim();
+    if (sfx) {
+      // 声源摆在落点、约人耳高度：不用 lightHeight（那是给灯用的，在半空）。
+      const world = space?.anchorToWorld({ x: at.x, y: at.y, h: 60, surface: 'ground' });
+      this.audioManager.playSfxAt(
+        sfx,
+        world ? { x: world[0], y: world[1], z: world[2] } : null,
+        opts.sfxVolume !== undefined ? { volume: opts.sfxVolume } : {},
+      );
+      if (!ctx.took.sfxIds.includes(sfx)) ctx.took.sfxIds.push(sfx);
+    }
+
+    const flashAlpha = numOr0(opts.flashAlpha, 0);
+    if (flashAlpha > 0) {
+      void this.cutsceneManager.screenFlash(
+        Math.max(1, numOr0(opts.flashMs, 150)), 0xffffff, Math.min(1, flashAlpha),
+      ).catch(() => {});
+    }
+    const shakeAmplitude = numOr0(opts.shakeAmplitude, 0);
+    if (shakeAmplitude > 0) {
+      this.camera.shake(shakeAmplitude, Math.max(1, numOr0(opts.shakeMs, 700)), 20);
+    }
+  }
+
+  /**
+   * 让某个威胁背后的实体永久消失。走的是与 `persistNpcEntityEnabled` / `persistHotspotEnabled`
+   * **完全相同**的通道（派生基底 + 存档覆盖），不另开一条"杀死"语义——
+   * 实体显隐是四通道单点合成的，绕过去就会被下一次刷新覆盖回来（见 [[entity-visibility-channels]]）。
+   *
+   * 威胁源的 `active()` 本来就绑在这两个判据上，所以实体一关，伤害自动停，不必另发"解除威胁"。
+   */
+  private removeThreatEntity(threatId: string): void {
+    const scene = this.sceneManager.currentSceneData;
+    if (!scene) return;
+    const npc = scene.npcs?.find((e) => e.healthThreat?.id === threatId);
+    if (npc) {
+      this.sceneManager.mergePersistentNpcState(npc.id, { enabled: false });
+      this.resolveActorFn(npc.id)?.setVisible(false);
+      return;
+    }
+    const hotspot = scene.hotspots?.find((e) => e.healthThreat?.id === threatId);
+    if (hotspot) {
+      void this.setSceneEntityFieldFromAction(scene.id, 'hotspot', hotspot.id, 'enabled', false)
+        .catch((e) => { console.warn('strikeThreat: 收掉热点失败', e); });
+      return;
+    }
+    console.warn(`strikeThreat: 威胁「${threatId}」找不到对应实体，没东西可收`);
+  }
 
   private applySceneDynamicLights(lights: LightDef[]): void {
     if (!this.sceneLighting.active) {
@@ -7801,8 +8206,11 @@ export class Game {
   }
 
   private distributeSaveData(data: Record<string, object>): void {
+    // 同 enterDeath：先收演出（补结算 + 归位），再作废动作批。反过来就是收尾永不执行。
+    this.performanceSessions?.interruptAll('load');
     this.sceneWind.clearGust();
     this.actionExecutor.cancelPending();
+    this.gameClock.cancelAll();
     // 旧档可能没有说明卡桶，但仍须取消当前这张卡。
     this.systemNoteManager.deserialize({});
     /** 读档开始信号：HUD 等纯事件驱动的展示层先清上一局残留（任务追踪等），
@@ -9120,6 +9528,13 @@ export class Game {
     if (this.tearDownComplete) return;
     this.tearDownComplete = true;
 
+    /**
+     * 脱手演出最先收：它是唯一一条**在玩家背后自己跑**的时间线，各系统一个个销毁的过程中
+     * 它还会继续往已销毁的系统上发指令。按打断走（结算补齐 + 归位做满），不是一刀砍掉。
+     */
+    this.performanceSessions?.destroy();
+    this.gameClock.cancelAll();
+
     /** P3：先推进巡逻代数/epoch——NPC 巡逻协程在下一个检查点立刻退出，
      *  不会在系统逐个销毁期间继续 moveTo 已销毁的实体（HMR 悬挂根因）。 */
     this.patrolGeneration++;
@@ -9447,6 +9862,25 @@ export class Game {
     );
   }
 
+  /**
+   * 世界是否**暂停**。一个判据供所有"该跟着游戏时钟走"的东西共用：
+   * 轨迹、阵风、草木、挂件、燃烧、粒子、角色动画、镜头、落雷的灯，以及**演出时钟**
+   * （`waitMs` / 天色渐变 / 连劈间隔 / 雷柱软停）。
+   *
+   * ⚠ **UI 自己的东西不吃这个闸**：提示条在面板开着时照常弹（2026-08-18 制作人拍板）。
+   *
+   * 从前这套判据在 tick 里散着写了两份（轨迹那一闸列了三个状态、说明卡与死亡另走早返回），
+   * 加一个暂停源就得记得改两处——2026-09-19 收成这一处。
+   */
+  private isWorldPaused(): boolean {
+    if (this.systemNotePauseDepth > 0) return true;
+    const s = this.stateController.currentState;
+    return s === GameState.SceneTransition
+      || s === GameState.MainMenu
+      || s === GameState.UIOverlay
+      || s === GameState.Dead;
+  }
+
   private tick(dt: number): void {
     // 说明卡阅读与死亡期间冻结世界时钟（火把、阵风、侵袭、主动防护），UI 仍可点击。
     if (this.systemNotePauseDepth > 0 || this.stateController.currentState === GameState.Dead) {
@@ -9455,6 +9889,9 @@ export class Game {
     }
     this.lastFps = dt > 0 ? 1 / dt : 0;
     this.playTimeMs += dt * 1000;
+    const worldPaused = this.isWorldPaused();
+    // 演出时间只在世界没暂停时前进：翻背包出来，雷该停在原处而不是已经劈完了
+    if (!worldPaused) this.gameClock.advance(dt);
 
     this.camera.setPixelSnapTranslation(this.isEntityPixelDensityMatchRenderingOn());
 
@@ -9568,12 +10005,8 @@ export class Game {
       }
     }
 
-    if (this.stateController.currentState === GameState.UIOverlay) {
-      this.player.cutsceneUpdate(dt);
-      for (const npc of this.sceneManager.getCurrentNpcs()) {
-        npc.cutsceneUpdate(dt);
-      }
-    }
+    // ⚠ UIOverlay（面板 / 菜单 / 说明卡）**不推角色动画**：暂停就是暂停，画面定住。
+    // 2026-09-19 之前这里推 cutsceneUpdate，于是玩家开着背包时 NPC 还在原地走动画。
 
     if (this.stateController.currentState === GameState.ActionSequence) {
       this.player.cutsceneUpdate(dt);
@@ -9591,9 +10024,12 @@ export class Game {
     this.emoteBubbleManager.update(dt);
     this.notificationUI.update(dt);
     // 横幅与引导层跟着游戏时钟走（不自转 rAF）：暂停/开面板时它们也该停，
-    // 否则关掉面板会发现横幅已经在背后播完了
-    this.questBannerUI.update(dt);
-    this.guidanceLayerUI.update(dt);
+    // 否则关掉面板会发现横幅已经在背后播完了。
+    // （2026-09-19：这段注释一直在，但 dt 是无条件喂的——真停下来是从这一版起。）
+    if (!worldPaused) {
+      this.questBannerUI.update(dt);
+      this.guidanceLayerUI.update(dt);
+    }
     /**
      * 烘焙轨迹回放。位置有两个硬约束，别挪：
      * - **在所有状态分支之后**：过场/动作链分支里的 `applyCameraFollow` 会写相机目标点，
@@ -9605,9 +10041,7 @@ export class Game {
      * 火把、燃料、阵风与粒子共用这一闸，不能在玩家翻背包时把火吹灭。
      * （不是"暂停"——tMs 不前进，回到正常态从原处接着播。）
      */
-    if (this.stateController.currentState !== GameState.SceneTransition
-      && this.stateController.currentState !== GameState.MainMenu
-      && this.stateController.currentState !== GameState.UIOverlay) {
+    if (!worldPaused) {
       this.trajectorySystem.update(dt);
       // 场景风的钟与粒子同处推进（同暂停语义）；背景摆动读同一个钟
       this.sceneWind.advance(dt);
@@ -9635,7 +10069,11 @@ export class Game {
         }
       }
     }
-    this.camera.update(dt);
+    // 落雷的灯：与玩法**状态**无关（雷放到一半进对话也得放完），但吃**暂停**闸——
+    // 开着背包时雷光一闪一闪是"世界没停"，正是这一版要治的。
+    if (!worldPaused) this.updateStrikeLight(dt);
+    // 暂停时喂 0：平滑不动、震屏不推进，`applyTransform` 照旧（画面该定住，不是不画）。
+    this.camera.update(worldPaused ? 0 : dt);
     /**
      * 听者与脚步 **必须排在 `camera.update` 之后**：听者是本帧定稿的相机位姿，
      * 而实体位置在上面（`player.update` / NPC `cutsceneUpdate` / `trajectorySystem.update`）

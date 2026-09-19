@@ -387,6 +387,7 @@
     {
       "glob": "src/core/ActionExecutor.ts",
       "docs": [
+        "detached-performance-session",
         "zone-lifecycle-contracts"
       ]
     },
@@ -417,7 +418,8 @@
       "docs": [
         "entity-visibility-channels",
         "scene-onenter-reveal-timing",
-        "teardown-ordering"
+        "teardown-ordering",
+        "world-pause-and-game-clock"
       ]
     },
     {
@@ -483,7 +485,8 @@
       "glob": "src/core/actionParamManifest.ts",
       "docs": [
         "action-param-schemas-vs-required",
-        "action-registration-registry-surfaces"
+        "action-registration-registry-surfaces",
+        "detached-performance-session"
       ]
     },
     {
@@ -898,6 +901,12 @@
       ]
     },
     {
+      "glob": "src/systems/gameClock.ts",
+      "docs": [
+        "world-pause-and-game-clock"
+      ]
+    },
+    {
       "glob": "src/systems/heldProp/**",
       "docs": [
         "held-prop-lights"
@@ -914,6 +923,12 @@
       "docs": [
         "object-examine-scene",
         "pixi-v8-traps"
+      ]
+    },
+    {
+      "glob": "src/systems/performanceSession.ts",
+      "docs": [
+        "detached-performance-session"
       ]
     },
     {

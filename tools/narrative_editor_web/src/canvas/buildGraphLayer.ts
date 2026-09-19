@@ -52,6 +52,8 @@ export function buildGraphStateNodes(input: GraphLayerInput): CanvasNode[] {
       kind: 'state' as const,
       boundary: scenarioBoundaryKind(graph, sid),
       active: activeStates[graph.id] === sid,
+      graphId: graph.id,
+      stateId: sid,
     },
   }));
 }
@@ -70,7 +72,7 @@ export function buildGraphTransitionEdges(input: GraphLayerInput): CanvasEdge[] 
       interactionWidth: 24,
       zIndex: 25,
       markerEnd: { type: MarkerType.ArrowClosed },
-      data: { edgeKind: 'transition', label, detail: `${graph.id}.${t.id}` },
+      data: { edgeKind: 'transition', label, detail: `${graph.id}.${t.id}`, graphId: graph.id, transitionId: t.id },
     };
     // Style reactive transitions distinctly
     if (t.trigger === 'reactive') {

@@ -71,6 +71,36 @@ python3 -m tools.narrative_xref <id> --json               # 给 agent / 脚本
 诊断盖四种：图里没有这个状态（被引用却不存在＝那些条件永远判不成立）、进不来、
 没有出口、没人读也不广播。
 
+## 一张图的全貌（graph card）
+
+第三个问题：**这张图连着游戏里的哪些东西。** 只列实打实存在于游戏里的资产，三组：
+
+| 组 | 收哪些 | 从哪来 |
+|---|---|---|
+| 推它的 `pushers` | 发信号让它的转移走起来的区域 / 热点 / NPC / 对话图 / 小游戏 / 过场 / 任务…；反应式转移条件读到的别的图 | 每条转移 × 该信号的实发行（`emitters`，不含上游因果）；发射行的容器是整个场景，`subject_*` 把它落到**哪个区域 / 热点**（从 anchors 取，名字查场景）、`moment` 说是进入时还是停留时；本图自己状态动作发的标 `selfGraph`、排最后 |
+| 它管的 `readers` | 条件里读它任一状态的、长在图外的引用（场景实体显隐 / 任务 / 地图节点 / 档案 / 对话分支 / 章节包 / 气泡台词） | `state_reads` 按图汇总，剔除宿主是本图的行 |
+| 它调的 `targets` | 它的状态动作指向的过场 / 对话图 / 物品 / 说明卡 / 位面 / 气味 / 音效 / 区域 / NPC / 场景 / 另一张图… | `targets.py`：判据是 json_lang 的 `CONTENT_ID_PARAMS`（编辑器选择器 / 语言服务同一张表）+ `SCOPED_PARAM_RULES`（场景作用域实体）+ 按 id 能在某场景 npcs/hotspots/zones 里找到的 `target`/`npcId`… 参数；信号名 / flag 明确排除 |
+| 接它往下走 `downstream` | 监听它末态广播 `state:<图>:<态>` 的别的图的转移 | `listeners` |
+
+每个宇宙在 `targets.TARGET_SPECS` 登记人话类别 + 一种跳法：文件+锚点（`items.json` 里的「i1」，宿主按
+outer_id 深选）、指针段（`audio_config.json#/sfx/<id>`）、一条一个文件（对话图 / 轨迹 / 粒子效果）、
+`navigate(kind,id)`（位面 / 小游戏）、画布定位（另一张图）；工作台资产标只读、没有编辑页的明说。
+**`CONTENT_ID_PARAMS` 里出现的宇宙必须登记或明确排除**——护栏
+`test_every_content_id_universe_is_registered_or_excluded`，否则新加一种动作会静默少算一类目标。
+名字：磁盘宇宙（`json_lang.id_universes`）给全表，已加载文档（编辑器里未保存的改名）覆盖。
+
+```bash
+python3 -m tools.narrative_xref --graph wrapper_跑马梁_风火引路   # 一张图：推它的 · 它管的 · 它调的
+python3 -m tools.narrative_xref --graphs                        # 全部图 + 三组计数
+python3 -m tools.narrative_xref --dump                          # 整份索引 JSON（与编辑器桥 scanSignalXref 同形状）
+```
+
+编辑器里：工具栏「全貌+」是这张卡的面板（跟着画布当前图，可下拉换图、搜索、只看选中的一拍，
+每行 ↗ 跳过去、「定位」落到画布那一拍）；工具栏「引用标」在画布上每个状态下挂它管的 / 它调的、
+每条转移下挂推它的（超过三个折成 +N，点开面板）。两处与「关系」面板同一次扫描、同一口径。
+独立网页开发态：vite 中间件 `/__dev/narrative_xref` 跑 `--dump` 取索引（读磁盘，看不见画布草稿）；
+跳转不能切页，回执写明"主编辑器里这一下会打开 …"。
+
 ## 反应式转移的 signal 字段
 
 反应式转移（`reactive*`）靠条件自动走，运行时**根本不看 signal 字段**。但策划确实会在

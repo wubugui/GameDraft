@@ -230,6 +230,8 @@ function buildElementOverlayNodes(
             kind: 'state' as const,
             boundary: scenarioBoundaryKind(el.graph, sid),
             detail: el.graph.id,
+            graphId: el.graph.id,
+            stateId: sid,
             active: activeStates[el.graph.id] === sid,
           },
         });
@@ -350,7 +352,7 @@ function buildInlineTransitionEdges(
         label,
         interactionWidth: 24,
         markerEnd: { type: MarkerType.ArrowClosed },
-        data: { edgeKind: 'transition', label, detail: `${el.graph.id}.${t.id}` },
+        data: { edgeKind: 'transition', label, detail: `${el.graph.id}.${t.id}`, graphId: el.graph.id, transitionId: t.id },
       });
     }
   }

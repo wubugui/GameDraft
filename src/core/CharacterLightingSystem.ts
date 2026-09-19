@@ -178,10 +178,27 @@ export class CharacterLightingSystem implements IGameSystem {
     const fallback = sh && !this.geometryOnly
       ? legacyLightFactors(sh.beta, lightFactor((sh as { giStrength?: number }).giStrength))
       : { indirectFactor: 1, directFactor: 1, totalFactor: 1 };
-    return resolveLightResponse(this.sceneFactors?.[kind], {
+    const out = resolveLightResponse(this.sceneFactors?.[kind], {
       ...fallback, eChroma: this.geometryOnly ? 0 : lightChroma((sh as { eChroma?: number } | undefined)?.eChroma),
     });
+    // 环境压暗乘在**总倍率**上（不碰间接/直接的配比，也不碰色度）：压暗是"这一刻天黑下来了"，
+    // 不是"改了这个场景的受光配方"。粒子每帧重新问这里，所以它自动跟；角色那份是缓存的，
+    // 由 setEnvDim 重推一次。
+    return this.envDim >= 1 ? out : { ...out, totalFactor: out.totalFactor * this.envDim };
   }
+
+  /**
+   * 角色与粒子的运行时压暗倍率（1 = 原样）。与 `SceneLightingSystem.setEnvDim` **必须同值**，
+   * 由 Game 一个入口同时推——只压一边就是人浮在背景上（或反过来）。见那边的注释。
+   */
+  setEnvDim(scale: number): void {
+    const s = Number.isFinite(scale) ? Math.max(0, Math.min(1, scale)) : 1;
+    if (Math.abs(s - this.envDim) < 1e-4) return;
+    this.envDim = s;
+    this.applyLightFactors(this.sceneFactors);
+  }
+
+  private envDim = 1;
 
   applyLightFactors(value: SceneLightingDef['lightFactors']): void {
     this.sceneFactors = value;

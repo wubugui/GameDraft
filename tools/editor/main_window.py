@@ -4000,6 +4000,12 @@ class MainWindow(QMainWindow):
             return self._nav_hit_generic("信号Cue", outer_id)
         if rel == "system_notes.json":
             return self._nav_hit_generic("系统说明卡", outer_id)
+        if rel == "bubble_lines.json":
+            # /lineSets/<i>/… → 落到那一组台词（anchors 最外层 = lineSets 的 id）
+            return self._nav_hit_generic("头顶闲聊", outer_id)
+        if rel == "narrative_packages.json":
+            # 章节导演清单没有按 id 深选的接口：只切页，回执如实写「未逐条定位」
+            return self._nav_hit_generic("章节导演")
         if rel == "planes.json":
             if outer_id:
                 self.navigate_to_plane(outer_id)

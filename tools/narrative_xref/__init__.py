@@ -35,16 +35,19 @@ from .model import (
     Declaration,
     Diagnostic,
     Emitter,
+    GraphCard,
     KIND_AUTHOR,
     KIND_DERIVED,
     KIND_DRAFT,
     KIND_UNKNOWN,
     Listener,
+    Pusher,
     SCOPE_GLOBAL,
     SCOPE_PRIVATE,
     SignalCard,
     StateCard,
     StateRead,
+    Target,
     derived_signal_key,
     is_derived,
     is_reactive,
@@ -55,6 +58,7 @@ from .model import (
 from .phrases import condition_parts, describe_condition, describe_conditions
 from .scan import GraphMeta, SignalIndex, build_index
 from .sources import ASSET_SPECS, XrefSource, from_disk, from_project_model
+from .targets import EXCLUDED_UNIVERSES, TARGET_SPECS, TargetContext, build_target_context, resolve_action_targets
 
 __all__ = [
     "ASSET_SPECS",
@@ -79,8 +83,16 @@ __all__ = [
     "DRAFT_SIGNAL",
     "Declaration",
     "Diagnostic",
+    "EXCLUDED_UNIVERSES",
     "Emitter",
+    "GraphCard",
     "GraphMeta",
+    "Pusher",
+    "TARGET_SPECS",
+    "Target",
+    "TargetContext",
+    "build_target_context",
+    "resolve_action_targets",
     "KIND_AUTHOR",
     "KIND_DERIVED",
     "KIND_DRAFT",

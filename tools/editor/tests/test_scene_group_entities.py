@@ -232,6 +232,57 @@ class SceneGroupEntityTests(unittest.TestCase):
             self.assertEqual(model.scenes["sc_a"]["entityGroups"], malformed)
             self.assertTrue(ed._props.is_pending_dirty())
 
+    def test_blocked_tree_navigation_restores_selection_while_ctrl_is_held(self) -> None:
+        """按着 Ctrl 多选点树被阻断时，恢复选中不能被修饰键带跑。
+
+        `setCurrentItem(item)` 单参走 `selectionCommand()`，在 ExtendedSelection 下读
+        全局修饰键：Ctrl 会把它解析成 Toggle，把刚恢复的选中**再取消一次**，回滚完
+        「树里没选中、右侧还挂着草稿」。Ctrl+树多选正是工具提示里写的手势，所以这条
+        走的是正常流程，不是构造出来的极端情形。
+
+        （同一条全局状态也是 2026-09-20 那次间歇性失败的根因：`QTest.keyClick` 带
+        修饰键会把它永久留在进程里，`--dist loadfile` 下泄给后面随机某个文件。
+        仓库级 conftest 的 `_release_leaked_keyboard_modifiers` 负责收尾复位。）
+        """
+        from PySide6.QtTest import QTest
+
+        with TemporaryDirectory() as td:
+            ed, model = self._editor(Path(td) / "p", explicit=False)
+            malformed = {"unexpected": [1, 2, 3]}
+            model.scenes["sc_a"]["entityGroups"] = copy.deepcopy(malformed)
+            ed._load_scene("sc_a")
+            ed._entity_tree.setCurrentItem(self._tree_item(ed, ("group", "夜巡")))
+            QApplication.processEvents()
+            ed._props._grp_label.setText("按着 Ctrl 也不能丢")
+
+            # 让进程进入「Ctrl 按着」的全局状态——与用户真按住 Ctrl 点树等价。
+            QTest.keyPress(
+                ed._entity_tree, Qt.Key.Key_Control, Qt.KeyboardModifier.ControlModifier,
+            )
+            self.assertEqual(
+                QApplication.keyboardModifiers(), Qt.KeyboardModifier.ControlModifier,
+                "前置条件没成立：这条用例要在 Ctrl 按下的状态里跑",
+            )
+            real = QMessageBox.warning
+            QMessageBox.warning = staticmethod(lambda *args, **kwargs: QMessageBox.StandardButton.Ok)
+            try:
+                ed._entity_tree.clearSelection()
+                ed._entity_tree.setCurrentItem(self._tree_item(ed, ("zone", "z1")))
+                QApplication.processEvents()
+            finally:
+                QMessageBox.warning = real
+
+            selected = {
+                tuple(item.data(0, Qt.ItemDataRole.UserRole))
+                for item in ed._entity_tree.selectedItems()
+                if item.data(0, Qt.ItemDataRole.UserRole)
+            }
+            self.assertEqual(selected, {("group", "夜巡")})
+            self.assertIs(ed._props._stack.currentWidget(), ed._props._group_panel)
+            self.assertEqual(ed._props._grp_label.text(), "按着 Ctrl 也不能丢")
+            self.assertEqual(model.scenes["sc_a"]["entityGroups"], malformed)
+            self.assertTrue(ed._props.is_pending_dirty())
+
     def test_malformed_group_pending_blocks_scene_navigation_and_restores_scene_row(self) -> None:
         with TemporaryDirectory() as td:
             ed, model = self._editor(Path(td) / "p", explicit=False)

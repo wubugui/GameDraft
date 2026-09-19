@@ -1216,6 +1216,7 @@ function validateActionDef(action: ActionLike, path: string, issues: NarrativeVa
  */
 const NESTED_ACTION_LIST_SLOTS: Readonly<Record<string, ReadonlyArray<{ key: string; itemActionsKey?: string }>>> = {
   runActions: [{ key: 'actions' }],
+  runActionsDetached: [{ key: 'actions' }],
   addDelayedEvent: [{ key: 'actions' }],
   runActionsIf: [{ key: 'actions' }, { key: 'elseActions' }],
   randomBranch: [{ key: 'aboveActions' }, { key: 'belowActions' }],

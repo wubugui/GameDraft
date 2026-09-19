@@ -389,6 +389,7 @@ class StateCard:
     ways_out: list[Listener] = field(default_factory=list)    # 从这儿能去哪
     emits: list[Emitter] = field(default_factory=list)        # 进/出这一拍会发什么信号
     readers: list[StateRead] = field(default_factory=list)    # 谁在看着这一拍
+    targets: list["Target"] = field(default_factory=list)     # 进了这一拍会去动谁（它调的）
     diagnostics: list[Diagnostic] = field(default_factory=list)
 
     @property
@@ -413,11 +414,189 @@ class StateCard:
             "waysOut": [l.to_dict() for l in self.ways_out],
             "emits": [e.to_dict() for e in self.emits],
             "readers": [r.to_dict() for r in self.readers],
+            "targets": [t.to_dict() for t in self.targets],
             "diagnostics": [d.to_dict() for d in self.diagnostics],
             "wayInCount": len(self.ways_in),
             "wayOutCount": len(self.ways_out),
             "readerCount": len(self.readers),
             "emitCount": len(self.emits),
+            "targetCount": len(self.targets),
+        }
+
+
+@dataclass
+class Target:
+    """状态动作**指向的世界里的一个东西**（「它调的」）：过场、对话图、物品、系统说明卡、
+    区域、NPC、位面……
+
+    与发射行 / 读状态行是第三类问题：前两类问"谁推它 / 它管谁"，这一类问"进了这一拍
+    会去动谁"。判据只认**真实存在于游戏里的资产**——信号名、flag、状态名都不算
+    （`targets.EXCLUDED_UNIVERSES`），它们是编排的机制，不是策划要跳过去看的那个东西。
+    """
+
+    universe: str                 # items / cutscenes / dialogue_graphs / zones …（json_lang 宇宙名）
+    kind_label: str               # 人话类别：物品 / 过场 / 对话图 / 区域 …
+    target_id: str
+    label: str = ""               # 中文名；取不到就等于 id
+    action_type: str = ""
+    param: str = ""
+    scene_id: str = ""            # 场景作用域的目标（区域 / 热点 / NPC）所在场景
+    scene_label: str = ""
+    where: str = ""               # 这条动作长在哪：进入时动作 第 3 个
+    # 跳转：三选一。file+pointer(+anchors) 走宿主文件跳转引擎；nav_kind 走 navigate(kind,id)；
+    # ref_graph_id 走画布定位（目标是另一张叙事图）。
+    file: str = ""
+    pointer: str = ""
+    anchors: list[list[str]] = field(default_factory=list)
+    nav_kind: str = ""
+    readonly: bool = False        # 工作台资产 / 无编辑页：主编辑器跳不过去，界面要提前说明
+    note: str = ""
+    ref_composition_id: str = ""
+    ref_element_id: str = ""
+    ref_graph_id: str = ""
+    # 这行**长在哪**（叙事文件内坐标，扫描后补上）
+    host_pointer: str = ""
+    composition_id: str = ""
+    element_id: str = ""
+    graph_id: str = ""
+    state_id: str = ""
+
+    @property
+    def display(self) -> str:
+        return self.label if self.label and self.label != self.target_id else self.target_id
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "universe": self.universe,
+            "kindLabel": self.kind_label,
+            "targetId": self.target_id,
+            "label": self.label,
+            "display": self.display,
+            "actionType": self.action_type,
+            "param": self.param,
+            "sceneId": self.scene_id,
+            "sceneLabel": self.scene_label,
+            "where": self.where,
+            "file": self.file,
+            "pointer": self.pointer,
+            "anchors": [list(a) for a in self.anchors],
+            "navKind": self.nav_kind,
+            "readonly": self.readonly,
+            "note": self.note,
+            "refCompositionId": self.ref_composition_id,
+            "refElementId": self.ref_element_id,
+            "refGraphId": self.ref_graph_id,
+            "hostPointer": self.host_pointer,
+            "compositionId": self.composition_id,
+            "elementId": self.element_id,
+            "graphId": self.graph_id,
+            "stateId": self.state_id,
+        }
+
+
+@dataclass
+class Pusher:
+    """「推它的」：让这张图某条转移走起来的那个东西——发信号的场景区域 / 热点 / 对话图 /
+    小游戏 / 过场……，或（反应式转移）条件里读到的另一张图。
+
+    一行 = 一条转移 × 一个来源。`emitter` 是共享扫描里的那一行原样带出（跳转、位置、
+    人话全复用），这里只加"是哪条转移"。
+    """
+
+    transition_id: str
+    signal: str
+    from_state: str
+    to_state: str
+    from_label: str
+    to_label: str
+    trigger: str
+    emitter: Emitter
+    # 来源就是本图自己的状态动作（自推）：不是"世界里的东西"，界面单独标出、排最后
+    self_graph: bool = False
+    # 反应式转移条件读到的另一张图的状态：跳转走画布定位
+    ref_graph_id: str = ""
+    ref_state_id: str = ""
+    ref_state_label: str = ""
+    # 发射点落到**世界里的哪个东西**：场景里的区域 / 热点 / NPC（发射行的容器是整个场景，
+    # 策划要的是"哪个区域"）、对话图、另一张叙事图…；moment = 那个东西的哪一下（进入时 / 停留时）
+    subject_kind_label: str = ""
+    subject_id: str = ""
+    subject_name: str = ""
+    scene_id: str = ""
+    scene_label: str = ""
+    moment: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        out = self.emitter.to_dict()
+        out.update({
+            "transitionId": self.transition_id,
+            "signal": self.signal,
+            "fromState": self.from_state,
+            "toState": self.to_state,
+            "fromLabel": self.from_label,
+            "toLabel": self.to_label,
+            "trigger": self.trigger,
+            "selfGraph": self.self_graph,
+            "refGraphId": self.ref_graph_id,
+            "refStateId": self.ref_state_id,
+            "refStateLabel": self.ref_state_label,
+            "subjectKindLabel": self.subject_kind_label,
+            "subjectId": self.subject_id,
+            "subjectName": self.subject_name,
+            "sceneId": self.scene_id,
+            "sceneLabel": self.scene_label,
+            "moment": self.moment,
+        })
+        return out
+
+
+@dataclass
+class GraphCard:
+    """一张图的**编排全貌**——只列它与游戏里真实存在的东西之间的关联，三组：
+
+    - 推它的（pushers）：谁发的信号让它的转移走起来；
+    - 它管的（readers）：谁的条件读它的状态（场景实体显隐 / 任务 / 地图 / 档案 / 对话分支…）；
+    - 它调的（targets）：它的状态动作会去动谁（过场 / 对话图 / 物品 / 说明卡 / 区域 / 位面…）。
+
+    外加一组「接它往下走的图」（downstream）：监听它末态广播的别的叙事图（主线脊椎接线）。
+    状态名、信号名、标签一律不单列——它们是机制，不是策划要跳过去看的东西。
+    """
+
+    graph_id: str
+    graph_label: str = ""
+    composition_id: str = ""
+    composition_label: str = ""
+    element_id: str = ""
+    owner_type: str = ""
+    owner_id: str = ""
+    exists: bool = True
+    state_ids: list[str] = field(default_factory=list)
+    state_labels: dict[str, str] = field(default_factory=dict)
+    pushers: list[Pusher] = field(default_factory=list)
+    readers: list[StateRead] = field(default_factory=list)
+    targets: list[Target] = field(default_factory=list)
+    downstream: list[Listener] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "graphId": self.graph_id,
+            "graphLabel": self.graph_label,
+            "compositionId": self.composition_id,
+            "compositionLabel": self.composition_label,
+            "elementId": self.element_id,
+            "ownerType": self.owner_type,
+            "ownerId": self.owner_id,
+            "exists": self.exists,
+            "stateIds": list(self.state_ids),
+            "stateLabels": dict(self.state_labels),
+            "pushers": [p.to_dict() for p in self.pushers],
+            "readers": [r.to_dict() for r in self.readers],
+            "targets": [t.to_dict() for t in self.targets],
+            "downstream": [l.to_dict() for l in self.downstream],
+            "pusherCount": len(self.pushers),
+            "readerCount": len(self.readers),
+            "targetCount": len(self.targets),
+            "downstreamCount": len(self.downstream),
         }
 
 

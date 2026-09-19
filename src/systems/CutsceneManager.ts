@@ -595,6 +595,17 @@ export class CutsceneManager implements IGameSystem {
     });
   }
 
+  /**
+   * 满屏闪一下（雷、爆闪）。**不限过场内**：`screenFlash` 动作在探索态也走这里，
+   * 借的只是这一层渲染能力，不进过场的步骤时间线。
+   */
+  screenFlash(durationMs: number, color: number, alpha: number): Promise<void> {
+    const d = Math.max(1, durationMs);
+    return this.cutsceneRenderer.flashScreen(d, color, alpha).catch((e) => {
+      console.warn('CutsceneManager: screenFlash failed', e);
+    });
+  }
+
   fadeWorldFromBlack(durationMs: number): Promise<void> {
     const d = Math.max(0, durationMs);
     return this.cutsceneRenderer.fadeWorldFromBlack(d <= 0 ? 1 : d).catch((e) => {

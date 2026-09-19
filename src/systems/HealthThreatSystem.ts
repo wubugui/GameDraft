@@ -7,6 +7,20 @@ export interface HealthThreatSource {
   active(): boolean;
 }
 export type HealthThreatState = 'outside' | 'repelled' | 'boundary' | 'attacking';
+
+/** 选靶口径：按威胁度挑最凶的，还是按距离挑最近的。并列时用另一项决胜。 */
+export type ThreatRank = 'threat' | 'distance';
+
+export interface ThreatPick {
+  /** 威胁 id（= `HealthThreatDef.id`，不是实体 id） */
+  id: string;
+  /** 靶子此刻的位置（场景 wu，与 NPC / 热点同尺） */
+  x: number;
+  y: number;
+  distance: number;
+  /** 这个靶的**峰值**攻击力（近身档优先），排序用的那一项 */
+  threatLevel: number;
+}
 export interface HealthThreatDeps {
   canUpdate(): boolean;
   isPresentation?(): boolean;
@@ -109,6 +123,59 @@ export class HealthThreatSystem implements IGameSystem {
       this.yinSources = yinSources;
       d.setYinSources(yinSources);
     }
+  }
+
+  /**
+   * 挑一个靶（符纸雷击等"对最近/最凶的那个下手"的能力）。选不出来返回 `null`。
+   *
+   * ⚠ **不看 `readings` 里的 `attackPerSecond`**：那是"此刻正在造成的伤害"，玩家手上有火时
+   * 普通鬼一律 `repelled`、这个值恒为 0 —— 夜里举着火把用符就会一个靶都挑不出来。
+   * 排序用的是 `def` 上的**峰值**攻击力（近身档优先），也就是"这东西有多凶"这个静态口径。
+   *
+   * 在场判定沿用 `update` 那一套（`source.active()` + `nightOnly`）：已经被关掉的、条件不满足的、
+   * 白天的夜行鬼都不是靶。**`repelled`（被火逼退）仍然是合法的靶** —— 它还在那儿，只是不敢靠近。
+   *
+   * @param from 参照点（通常是玩家），场景 wu
+   * @param maxDistance 只在这个半径内找；不给 = 不限
+   */
+  /**
+   * 挑一个靶子。`exclude` 里的威胁 id 跳过——**一次连劈里每道雷各挑各的**，
+   * 不能都砸在同一个鬼头上（劈中就收的那条路靠 `active()` 自然排除，但
+   * `removeTarget: false`「只演不收」那条不会，所以排除必须显式传进来）。
+   */
+  pickTarget(
+    from: { x: number; y: number },
+    opts: { maxDistance?: number; rank?: ThreatRank; exclude?: ReadonlySet<string> } = {},
+  ): ThreatPick | null {
+    const night = this.deps?.isNight() ?? false;
+    const rank: ThreatRank = opts.rank === 'distance' ? 'distance' : 'threat';
+    const limit = Number.isFinite(opts.maxDistance) && (opts.maxDistance as number) > 0
+      ? (opts.maxDistance as number) : Infinity;
+    let best: ThreatPick | null = null;
+    for (const source of this.sources) {
+      const def = source.def;
+      if (def.nightOnly !== false && !night) continue;
+      if (opts.exclude?.has(def.id)) continue;
+      if (!source.active()) continue;
+      const position = source.position();
+      if (!position) continue;
+      const distance = Math.hypot(from.x - position.x, from.y - position.y);
+      if (!Number.isFinite(distance) || distance > limit) continue;
+      const threatLevel = Math.max(def.attackPerSecond, def.nearAttackPerSecond ?? def.attackPerSecond);
+      const pick: ThreatPick = { id: def.id, x: position.x, y: position.y, distance, threatLevel };
+      if (!best) { best = pick; continue; }
+      // 主次两项都参与：主项并列时用另一项决胜，否则同分的两个鬼挑哪个要看数组次序（= 作者写的顺序）。
+      const better = rank === 'threat'
+        ? (pick.threatLevel !== best.threatLevel ? pick.threatLevel > best.threatLevel : pick.distance < best.distance)
+        : (pick.distance !== best.distance ? pick.distance < best.distance : pick.threatLevel > best.threatLevel);
+      if (better) best = pick;
+    }
+    return best;
+  }
+
+  /** 这个威胁挂在哪个实体上——调用方要让它消失时得知道去关谁。挂钩由装配层（Game）给。 */
+  hasThreat(threatId: string): boolean {
+    return this.sources.some((s) => s.def.id === threatId);
   }
 
   clear(): void {
