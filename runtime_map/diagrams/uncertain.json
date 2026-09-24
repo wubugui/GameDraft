@@ -1,0 +1,791 @@
+{
+  "id": "uncertain",
+  "title": "抽不准的地方",
+  "note": "只列静态抽取看不见、或看得见但决定不了走向的关系。每条写清在哪、为什么抽不准、影响本图哪一部分；不推测被调方。source=raw 表示来自抽取器 raw.json 的 dynamic / events 数组(raw 字段给出 dynamic 下标),source=manual 表示抽取器没覆盖、逐个读代码补上的。",
+  "items": [
+    {
+      "id": "u1",
+      "kind": "string-dispatch",
+      "source": "raw",
+      "raw": [1],
+      "label": "动作按类型名查表执行",
+      "where": "动作执行器 ActionExecutor.executeAwait(src/core/ActionExecutor.ts:233)从处理函数表(同文件 :57)里按类型名取函数再调用(:243)。4 个内置动作在构造时注册(:100 起),其余 174 个由 registerActionHandlers(src/core/ActionRegistry.ts:909)注册,装配点在 Game.ts:3037。",
+      "why": "表里登记了哪些类型名(178 条)静态能列全(raw.json actions);但每一次执行用的类型名取自 JSON 数据里的 type 字段,所以'哪份数据、哪个系统会触发哪个动作,进而调到哪个模块'在代码里看不出来。",
+      "affects": "模块总图里'动作执行器 → 各系统'只能画成'已注册',画不出'谁在触发';一帧、场景生命周期中'执行动作批'一步的具体内容。",
+      "cites": [
+        {"f": "src/core/ActionExecutor.ts", "l": 233, "m": "const handler = this.handlers.get(typeKey);"},
+        {"f": "src/core/ActionExecutor.ts", "l": 57, "m": "private handlers: Map<string, ActionHandler>"},
+        {"f": "src/core/ActionExecutor.ts", "l": 243, "m": "handler(action.params, originContext, scope)"},
+        {"f": "src/core/ActionExecutor.ts", "l": 100, "m": "this.register('setFlag'"},
+        {"f": "src/core/ActionRegistry.ts", "l": 909, "m": "export function registerActionHandlers("},
+        {"f": "src/core/Game.ts", "l": 3037, "m": "registerActionHandlers(this.actionExecutor, {"}
+      ]
+    },
+    {
+      "id": "u2",
+      "kind": "data-driven",
+      "source": "manual",
+      "label": "动作批的内容来自数据:执行器的各个入口",
+      "where": "把一整批动作交给执行器的调用点:热区(InteractionCoordinator.ts:234)、任务奖励(QuestManager.ts:309)、区域进入(ZoneSystem.ts:269)、叙事状态进出(NarrativeStateManager.ts:2257)、对话图 runActions 节点(GraphDialogueManager.ts:772)、过场 action 步(CutsceneManager.ts:1249)、遭遇选项结果(EncounterManager.ts:235)、到期的延迟事件(DayManager.ts:289)、信号提示(SignalCueManager.ts:81)、小游戏(WaterMinigameScene.ts:99 等)、场景进场(Game.ts:6562)、规矩使用与物品使用事件载荷(EventBridge.ts:190、:225)、长按(PressureHoldManager.ts:187)、玩家动作(PlayerActionSystem.ts:744)。",
+      "why": "这些地方只是'把一个动作数组交出去',数组取自热区/任务/区域/叙事图/对话图/过场/遭遇/小游戏等 JSON,或者随事件载荷一起传来(ruleUse:apply、item:use 的 payload 里带 actions)。静态看不到批里有哪些类型,也就连不到最终被调的系统。",
+      "affects": "模块总图的'谁调谁';一帧、场景生命周期里动作批一步;事件配对之外还有一条'事件载荷里夹带动作'的通道。",
+      "cites": [
+        {"f": "src/core/InteractionCoordinator.ts", "l": 234, "m": "executeBatchFromOwner(data.actions, 'hotspot'"},
+        {"f": "src/systems/QuestManager.ts", "l": 309, "m": "executeBatchFromOwner(def.rewards, 'quest'"},
+        {"f": "src/systems/ZoneSystem.ts", "l": 269, "m": "executeBatchInZoneContext(enter, zoneOrigin(zone.id))"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 2257, "m": "executeBatchFromOwner(list, owner?.ownerType"},
+        {"f": "src/systems/GraphDialogueManager.ts", "l": 772, "m": "executeAwait(a as ActionDef, origin)"},
+        {"f": "src/systems/CutsceneManager.ts", "l": 1249, "m": "executeAwait({ type: step.type, params: step.params })"},
+        {"f": "src/systems/EncounterManager.ts", "l": 235, "m": "executeBatchAwait(opt.resultActions)"},
+        {"f": "src/systems/DayManager.ts", "l": 289, "m": "executeBatchAwait(evt.actions)"},
+        {"f": "src/systems/SignalCueManager.ts", "l": 81, "m": "executeBatchAwait(def.actions)"},
+        {"f": "src/systems/waterMinigame/WaterMinigameScene.ts", "l": 99, "m": "executeBatchFromOwner(acts, 'minigame'"},
+        {"f": "src/core/Game.ts", "l": 6562, "m": "makeOwnerOrigin('scene', sceneId)"},
+        {"f": "src/core/EventBridge.ts", "l": 190, "m": "executeBatchAwait(p.actions)"},
+        {"f": "src/core/EventBridge.ts", "l": 225, "m": "executeBatchAwait(p.actions)"},
+        {"f": "src/systems/pressureHold/PressureHoldManager.ts", "l": 187, "m": "executeBatchAwait(def.onComplete)"},
+        {"f": "src/systems/PlayerActionSystem.ts", "l": 744, "m": ".executeBatchAwait(actions)"}
+      ]
+    },
+    {
+      "id": "u3",
+      "kind": "string-dispatch",
+      "source": "manual",
+      "label": "容器动作把子动作交回执行器,分支在运行时定",
+      "where": "ActionRegistry.ts 里的四个容器动作:runActions(:944)、chooseAction(:986 注册,:1017 执行所选分支)、randomBranch(:1030)、runActionsIf(:1043)。",
+      "why": "容器动作把参数里的子动作列表再交回执行器;走哪一支由玩家选择、运行时随机数或条件求值决定,子动作的类型名同样来自数据。静态只能看到'执行器调执行器'。",
+      "affects": "动作注册表里容器动作的去向;'谁触发哪个动作'进一步不可见。",
+      "cites": [
+        {"f": "src/core/ActionRegistry.ts", "l": 944, "m": "executeBatchAwait(actionListFromParam(p.actions), zctx, scope)"},
+        {"f": "src/core/ActionRegistry.ts", "l": 986, "m": "executor.register('chooseAction'"},
+        {"f": "src/core/ActionRegistry.ts", "l": 1017, "m": "executeBatchAwait(options[picked].actions, zctx, scope)"},
+        {"f": "src/core/ActionRegistry.ts", "l": 1030, "m": "await executor.executeBatchAwait(actions, zctx, scope);"},
+        {"f": "src/core/ActionRegistry.ts", "l": 1043, "m": "executeBatchAwait(actionListFromParam(p[key]), zctx, scope)"}
+      ]
+    },
+    {
+      "id": "u4",
+      "kind": "string-dispatch",
+      "source": "manual",
+      "label": "代码里现写的动作对象同样走类型名分发",
+      "where": "例:健康系统在代码里写 {type:'emitNarrativeSignal'} 交给执行器(HealthSystem.ts:300);EventBridge 写 {type:'shopPurchase'}(EventBridge.ts:115);InteractionCoordinator 写 {type:'setFlag'}(InteractionCoordinator.ts:329)。",
+      "why": "类型名虽然是字面量,但这里不是函数调用,而是'交一个对象给执行器';raw.json 只记录动作的注册点(actions),不记录这种字面量使用点,所以像'健康系统 → 叙事状态机'这样实际发生的调用链,在依赖数据里没有边。",
+      "affects": "模块总图的依赖线会少掉经由动作名转手的调用。",
+      "cites": [
+        {"f": "src/systems/HealthSystem.ts", "l": 300, "m": "type: 'emitNarrativeSignal',"},
+        {"f": "src/core/EventBridge.ts", "l": 115, "m": "executeAwait({ type: 'shopPurchase'"},
+        {"f": "src/core/InteractionCoordinator.ts", "l": 329, "m": "executeAwait({ type: 'setFlag'"}
+      ]
+    },
+    {
+      "id": "u5",
+      "kind": "string-dispatch",
+      "source": "manual",
+      "label": "按动作类型名集合跳过动作(过场白名单/黑名单/快进/叙事重放)",
+      "where": "过场白名单(CutsceneManager.ts:1241;名单内容来自构建时并入的 src/data/cutscene_action_allowlist.json,types.ts:31、:3022)、过场禁改存档黑名单(CutsceneManager.ts:27)、快进跳过表(CutsceneManager.ts:72)、叙事重放静音表(NarrativeStateManager.ts:190)、脱手演出快进判断(actionParamManifest.ts:583)。",
+      "why": "同一个动作在过场里、快进时、叙事重放时会不会执行,取决于它的类型名在不在这些字符串集合里;静态调用关系只看到'交给执行器',看不到'被跳过'这一层。",
+      "affects": "一帧/过场/场景生命周期里'执行动作'这一步是否真的发生。",
+      "cites": [
+        {"f": "src/systems/CutsceneManager.ts", "l": 1241, "m": "CUTSCENE_ACTION_WHITELIST.has(step.type)"},
+        {"f": "src/data/types.ts", "l": 31, "m": "import cutsceneActionAllowlist from './cutscene_action_allowlist.json';"},
+        {"f": "src/data/types.ts", "l": 3022, "m": "new Set(cutsceneActionAllowlist)"},
+        {"f": "src/systems/CutsceneManager.ts", "l": 27, "m": "CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST"},
+        {"f": "src/systems/CutsceneManager.ts", "l": 72, "m": "CUTSCENE_FAST_FORWARD_SKIP_ACTIONS"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 190, "m": "REPLAY_SILENCED_ACTION_TYPES"},
+        {"f": "src/core/actionParamManifest.ts", "l": 583, "m": "export function isPresentationOnlyAction("}
+      ]
+    },
+    {
+      "id": "u6",
+      "kind": "string-dispatch",
+      "source": "manual",
+      "label": "条件表达式按对象'长什么样'分发(不是 switch,抽取器未识别)",
+      "where": "统一条件求值 evaluateConditionExpr(src/systems/graphDialogue/evaluateGraphCondition.ts:490)是一串形状判断:有 flag 字段算 flag 叶(:126)、有 narrative+state 算叙事叶(:445)、再有 quest / scenario / plane / posture / timePhase / vfxState / heldProp / propLevel / burn / narrativeCount,以及 all / any / not 组合。",
+      "why": "叶子种类由 JSON 对象里出现了哪个字段决定,是 if 链,不在抽取器'字符串 switch'规则里;每个叶子读哪个 flag、哪张叙事图、哪个任务,都是数据里的字符串。对话、热区、区域、叙事迁移、runActionsIf 等都走这一个入口。",
+      "affects": "状态与存档图里'谁读谁的状态'的读取边;叙事/任务/区域门控关系。",
+      "cites": [
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 490, "m": "export function evaluateConditionExpr("},
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 126, "m": "function isConditionLeaf(x: ConditionExpr)"},
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 445, "m": "function evalNarrativeLeaf("},
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 474, "m": "function evalFlagLeaf(expr: Condition"}
+      ]
+    },
+    {
+      "id": "u7",
+      "kind": "injected-callback",
+      "source": "manual",
+      "label": "条件求值取数靠上下文里注入的函数",
+      "where": "条件模块只声明可选的取数函数(如 getBurnState,evaluateGraphCondition.ts:100);实际填值在 Game.buildConditionEvalContext(Game.ts:7783),例如 getVfxState 接到特效系统(:7801)、getBurnState 接到燃烧系统(:7806)。",
+      "why": "机械抽取的依赖数据不跟踪'作为值传递的函数':raw.json 里 evaluateGraphCondition.ts 对 FlagStore / QuestManager / ScenarioStateManager 只有类型级 import(runtime=false),与特效、燃烧、挂件、时段、位面系统之间没有边;真实的读取关系只存在于 Game 装配时塞进去的箭头函数里。未注入时相应叶子按'假'处理。",
+      "affects": "模块总图里条件模块的依赖线;状态归属图的'读'边。",
+      "cites": [
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 100, "m": "getBurnState?: (target: string"},
+        {"f": "src/core/Game.ts", "l": 7783, "m": "private buildConditionEvalContext(): ConditionEvalContext"},
+        {"f": "src/core/Game.ts", "l": 7801, "m": "getVfxState: (id) => this.vfxSystem?.getInstanceState(id)"},
+        {"f": "src/core/Game.ts", "l": 7806, "m": "getBurnState: (target, sceneId, socket) =>"}
+      ]
+    },
+    {
+      "id": "u8",
+      "kind": "resolved-local",
+      "source": "raw",
+      "raw": [2, 3, 4, 5, 21, 23, 27, 28],
+      "label": "核对后只在本模块内分支的字符串分派(不产生跨模块关系)",
+      "where": "比较运算符:挂件等级比较表 PROP_LEVEL_OPS(evaluateGraphCondition.ts:244)、计数比较(:354)、flag 比较(FlagStore.ts:257);调试追踪文本格式化(evaluateGraphCondition.ts:758);富文本块排版(RichContent.ts:425);菜单页模式(MenuUI.ts:394);燃烧事件存档编解码(burnSim.ts:165、:180)。",
+      "why": "分支取值来自数据(op 如 '=='/'>=')、界面内部状态(菜单 mode 由 MenuUI 自己赋值)、或存档里的紧凑编码;逐条核对分支体,只做比较、排版或格式转换,不调用其他模块。抽取器把它们列为'由数据决定走向'是对的,但它们不影响结构图的连线。",
+      "affects": "不影响模块/依赖连线;只影响条件结果与界面显示。",
+      "cites": [
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 244, "m": "PROP_LEVEL_OPS[expr.op ?? '>='](now, expr.value)"},
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 354, "m": "switch (expr.op ?? '>=')"},
+        {"f": "src/core/FlagStore.ts", "l": 257, "m": "switch (op) {"},
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 758, "m": "switch (trace.kind) {"},
+        {"f": "src/ui/RichContent.ts", "l": 425, "m": "switch (block.kind) {"},
+        {"f": "src/ui/MenuUI.ts", "l": 394, "m": "switch (this.mode) {"},
+        {"f": "src/systems/burn/burnSim.ts", "l": 165, "m": "switch (e.k) {"},
+        {"f": "src/systems/burn/burnSim.ts", "l": 180, "m": "switch (raw[1]) {"}
+      ]
+    },
+    {
+      "id": "u9",
+      "kind": "resolved-local",
+      "source": "raw",
+      "raw": [16],
+      "label": "演出音频收尾表(核对:被调方唯一,实际可确定)",
+      "where": "ActionRegistry.ts:914 按演出会话对象从 WeakMap 取收尾函数。",
+      "why": "抽取器把它列为'按键取函数再调用'。核对:表里只会放入同一种闭包(:916,调用 AudioManager.releaseAudioOwner),被调方唯一,不构成不确定关系。",
+      "affects": "无;可直接画成'动作注册 → 音频管理器'。",
+      "cites": [
+        {"f": "src/core/ActionRegistry.ts", "l": 914, "m": "cleanup = audioOwnerCleanups.get(session)"},
+        {"f": "src/core/ActionRegistry.ts", "l": 916, "m": "d.audioManager.releaseAudioOwner(session)"}
+      ]
+    },
+    {
+      "id": "u10",
+      "kind": "runtime-key",
+      "source": "raw",
+      "raw": [9, 10, 11],
+      "label": "档案册种类 bookType 分支,分支里写拼出来的 flag 键",
+      "where": "ArchiveManager.addEntry / entryDisplayName / hasUnread(ArchiveManager.ts:354、:422、:498);bookType 来自动作参数(ActionRegistry.ts:1399 的 addEntry 调用);分支内写入的键如 `archive_lore_${entryId}`(ArchiveManager.ts:365)。",
+      "why": "走哪本册子取决于数据里的 bookType;每一支都会写一个运行时拼出来的 flag 键并发更新事件。读这些 flag 的一方(条件、文本标签)只能靠键名字符串相同对上。",
+      "affects": "状态与存档图里'档案 → FlagStore'的写入边的具体键;事件配对不受影响(事件名是字面量)。",
+      "cites": [
+        {"f": "src/systems/ArchiveManager.ts", "l": 354, "m": "switch (bookType) {"},
+        {"f": "src/systems/ArchiveManager.ts", "l": 422, "m": "switch (bookType) {"},
+        {"f": "src/systems/ArchiveManager.ts", "l": 498, "m": "switch (bookType) {"},
+        {"f": "src/core/ActionRegistry.ts", "l": 1399, "m": "d.archiveManager.addEntry("},
+        {"f": "src/systems/ArchiveManager.ts", "l": 365, "m": "this.flagStore.set(`archive_lore_${entryId}`, true);"}
+      ]
+    },
+    {
+      "id": "u11",
+      "kind": "data-driven",
+      "source": "raw",
+      "raw": [14],
+      "label": "构建时并入的 JSON 决定行为(含实体运行时字段表)",
+      "where": "6 个 JSON 在构建时并入代码:运行时字段表(EntityRuntimeFieldSchema.ts:2,按字段类型分支于 :77,写入经 SceneManager.ts:1278,生效方式在 Game.ts:9156 按 apply 字符串判断)、过场动作白名单(types.ts:31)、特效模拟合同(vfxProgram.ts:5)、光束合同(vfxBeam.ts:23)、呼吸参数表(breathingParams.ts:1)、默认场景光照(sceneLightingDefault.ts:2)。",
+      "why": "这些文件的内容(哪些字段可写、按什么类型校验、写后怎样生效;哪些动作允许进过场;模拟参数)改变运行行为,却不改变任何 import 关系;抽取器不读 JSON 内容。",
+      "affects": "场景生命周期中'运行时覆盖字段';过场里动作是否执行;特效/呼吸的参数来源。",
+      "cites": [
+        {"f": "src/data/EntityRuntimeFieldSchema.ts", "l": 2, "m": "runtime_field_schema.json"},
+        {"f": "src/data/EntityRuntimeFieldSchema.ts", "l": 77, "m": "switch (descriptor.kind) {"},
+        {"f": "src/systems/SceneManager.ts", "l": 1278, "m": "coerceRuntimeFieldValue(kind, field, rawValue)"},
+        {"f": "src/core/Game.ts", "l": 9156, "m": "?.apply === 'transform'"},
+        {"f": "src/systems/vfx/vfxProgram.ts", "l": 5, "m": "vfxSimulationContract.json"},
+        {"f": "src/systems/vfx/vfxBeam.ts", "l": 23, "m": "vfxBeamContract.json"},
+        {"f": "src/systems/breathing/breathingParams.ts", "l": 1, "m": "breathingParams.json"},
+        {"f": "src/data/sceneLightingDefault.ts", "l": 2, "m": "scene_lighting_default.json"}
+      ]
+    },
+    {
+      "id": "u12",
+      "kind": "data-driven",
+      "source": "raw",
+      "raw": [0],
+      "label": "资源按类型字符串选加载器、按路径字符串取文件",
+      "where": "AssetManager.loadRef 按 ref.type 选 json/texture/audio/text/bitmap/filter 六种加载器(AssetManager.ts:479);路径由 id 拼出:场景(projectPaths.ts:113)、对话图(:120)、特效(:141)、滤镜(AssetManager.ts:430)。",
+      "why": "资源清单里的 type 和 path 都是数据;资源管理器与最终使用方之间只由路径字符串相连,静态看不出哪个模块会用到哪个文件、何时加载。",
+      "affects": "启动图、场景生命周期图里'加载了什么'只能写到'按清单加载',写不出具体文件。",
+      "cites": [
+        {"f": "src/core/AssetManager.ts", "l": 479, "m": "switch (ref.type) {"},
+        {"f": "src/core/projectPaths.ts", "l": 113, "m": "export function sceneJsonUrl(sceneId: string)"},
+        {"f": "src/core/projectPaths.ts", "l": 120, "m": "export function dialogueGraphJsonUrl(graphId: string)"},
+        {"f": "src/core/projectPaths.ts", "l": 141, "m": "export function vfxEffectJsonUrl(effectId: string)"},
+        {"f": "src/core/AssetManager.ts", "l": 430, "m": "loadJson<FilterDef>(filterJsonUrl(id))"}
+      ]
+    },
+    {
+      "id": "u13",
+      "kind": "data-driven",
+      "source": "manual",
+      "label": "场景 JSON 与场景记忆决定生成哪些实体",
+      "where": "SceneManager 装载场景时遍历场景数据里的热区(SceneManager.ts:1854)与 NPC(:1878);已拾取的热区跳过(:1866);场景数据由 AssetManager.loadSceneData 读入(AssetManager.ts:611)。",
+      "why": "生成哪些实体、多少个、用哪套运行时覆盖,完全由场景 JSON、存档里的场景记忆和当前过场决定;静态只能画出'遍历并实例化'这一步。",
+      "affects": "场景生命周期图的'生成实体'一步。",
+      "cites": [
+        {"f": "src/systems/SceneManager.ts", "l": 1854, "m": "for (const def of sceneData.hotspots) {"},
+        {"f": "src/systems/SceneManager.ts", "l": 1878, "m": "for (const npcDef of sceneData.npcs) {"},
+        {"f": "src/systems/SceneManager.ts", "l": 1866, "m": "pickedUpHotspots.includes(def.id)"},
+        {"f": "src/core/AssetManager.ts", "l": 611, "m": "async loadSceneData(sceneId: string)"}
+      ]
+    },
+    {
+      "id": "u14",
+      "kind": "string-dispatch",
+      "source": "raw",
+      "raw": [15, 25],
+      "label": "热区按 type 字符串分派交互",
+      "where": "InteractionCoordinator.handleHotspot 按 def.type 分四支(inspect / pickup / transition / encounter,InteractionCoordinator.ts:99);能否向玩家提示交互另由 hotspotInteraction.ts:23 按同一字段分五支(多一支 npc)。",
+      "why": "def.type 来自场景 JSON;四支分别进入查看、拾取、转场(会切场景)、遭遇(会开遭遇界面)。某个热区走哪条完全由数据决定。",
+      "affects": "场景交互 → 场景切换 / 遭遇的触发关系;状态切换图。",
+      "cites": [
+        {"f": "src/core/InteractionCoordinator.ts", "l": 99, "m": "switch (def.type) {"},
+        {"f": "src/utils/hotspotInteraction.ts", "l": 23, "m": "switch (def.type) {"}
+      ]
+    },
+    {
+      "id": "u15",
+      "kind": "string-dispatch",
+      "source": "manual",
+      "label": "对话图节点类型按 if 链分派(抽取器未识别)",
+      "where": "GraphDialogueManager 推进循环里依次判断 node.type:switch(GraphDialogueManager.ts:747)、ownerState、contextState、runActions(:765,内部执行动作)、line(:784)、choice(:806)、end(:821)。",
+      "why": "节点类型与连线来自对话图 JSON;对话实际经过哪些节点由条件与玩家选择决定。这里是 if 链而不是 switch,raw.json dynamic 里没有这一条。",
+      "affects": "一帧图'对话态'里对话系统的行为;对话 → 动作执行器的调用。",
+      "cites": [
+        {"f": "src/systems/GraphDialogueManager.ts", "l": 747, "m": "if (node.type === 'switch') {"},
+        {"f": "src/systems/GraphDialogueManager.ts", "l": 765, "m": "if (node.type === 'runActions') {"},
+        {"f": "src/systems/GraphDialogueManager.ts", "l": 784, "m": "if (node.type === 'line') {"},
+        {"f": "src/systems/GraphDialogueManager.ts", "l": 806, "m": "if (node.type === 'choice') {"},
+        {"f": "src/systems/GraphDialogueManager.ts", "l": 821, "m": "if (node.type === 'end') {"}
+      ]
+    },
+    {
+      "id": "u16",
+      "kind": "string-dispatch",
+      "source": "raw",
+      "raw": [12, 13],
+      "label": "过场步骤按 kind / type 字符串分派",
+      "where": "CutsceneManager.executeOneStepBody 按 step.kind 分 action / present / parallel(CutsceneManager.ts:1235);present 步再按 step.type 分 17 种(:1289,调用过场渲染器的淡入淡出、白闪、等待等);action 步交给动作执行器(:1249)。",
+      "why": "过场由 JSON 时间线驱动,步骤种类、顺序、是否并行都来自数据;静态只能列出'可能的 17 种演出'和'转交执行器',画不出某段过场的实际流程。",
+      "affects": "一帧图'过场态';渲染管线里过场覆盖层的使用时机。",
+      "cites": [
+        {"f": "src/systems/CutsceneManager.ts", "l": 1235, "m": "switch (step.kind) {"},
+        {"f": "src/systems/CutsceneManager.ts", "l": 1289, "m": "switch (step.type) {"}
+      ]
+    },
+    {
+      "id": "u17",
+      "kind": "string-dispatch",
+      "source": "manual",
+      "label": "叙事信号名来自数据,按字符串与叙事图迁移配对(不经事件总线)",
+      "where": "动作 emitNarrativeSignal(ActionRegistry.ts:1080)把参数里的信号名交给叙事状态机(:1098 → NarrativeStateManager.ts:889);状态机逐图把迁移上的 t.signal 与收到的名字比较(:1799);'有哪些信号被监听'是扫描所有图的迁移得来(:1863)。Game 还把健康威胁的信号(Game.ts:2850)、调试桥与开发命令的信号直接送进来。",
+      "why": "信号名在动作参数/系统配置里,迁移条件里的信号名在叙事图 JSON 里,两边只在运行时按字符串相等配对;这条通道不走 EventBus,所以既不在事件配对数据里,也不在调用关系里。",
+      "affects": "状态与存档图中'叙事状态由谁推进';事件异常页不覆盖叙事信号的'有发没收/有收没发'。",
+      "cites": [
+        {"f": "src/core/ActionRegistry.ts", "l": 1080, "m": "executor.register('emitNarrativeSignal'"},
+        {"f": "src/core/ActionRegistry.ts", "l": 1098, "m": "d.narrativeStateManager.emitNarrativeSignal({"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 889, "m": "emitNarrativeSignal(signal: NarrativeSignal): Promise<void>"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 1799, "m": "triggerKeysEqual(t.signal, triggerKey)"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 1863, "m": "normalizeTriggerKey(t.signal)"},
+        {"f": "src/core/Game.ts", "l": 2850, "m": "emitNarrativeSignal({ signal, sourceType: 'entity', sourceId,"}
+      ]
+    },
+    {
+      "id": "u18",
+      "kind": "runtime-key",
+      "source": "manual",
+      "label": "叙事图之间的引用在运行时拼接或解析",
+      "where": "一张图进入某状态时,以拼出的名字 `state:<图>:<状态>` 广播给其它图(NarrativeStateManager.ts:463);条件里的 @owner / @scene 在求值时换成当前对话 owner 或当前场景的图(evaluateGraphCondition.ts:109、:113、:118)。",
+      "why": "跨图依赖只以字符串形式存在于叙事图数据里;@owner / @scene 指向哪张图取决于当时是谁在说话、在哪个场景。",
+      "affects": "状态与存档图中叙事图之间的依赖。",
+      "cites": [
+        {"f": "src/core/NarrativeStateManager.ts", "l": 463, "m": "return `state:${g}:${s}`;"},
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 109, "m": "export function resolveNarrativeGraphRef("},
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 113, "m": "if (raw === '@owner') {"},
+        {"f": "src/systems/graphDialogue/evaluateGraphCondition.ts", "l": 118, "m": "if (raw === '@scene') {"}
+      ]
+    },
+    {
+      "id": "u19",
+      "kind": "data-driven",
+      "source": "manual",
+      "label": "叙事迁移的触发方式由数据决定(信号型 / 条件响应型)",
+      "where": "迁移的 trigger 字段为 reactive / reactiveAll / reactiveAny 时不等信号(NarrativeStateManager.ts:1987);状态机订阅 flag:changed、heldProp:changed、burn:changed(:446 起)后排微任务重评(:646)。",
+      "why": "哪张图会被哪次 flag / 挂件 / 燃烧状态变化推进,取决于迁移上写的条件;静态只看到'任何 flag 变化都唤醒一次重评'。",
+      "affects": "状态与存档图中'FlagStore → 叙事状态'的影响范围;一帧之外的异步推进。",
+      "cites": [
+        {"f": "src/core/NarrativeStateManager.ts", "l": 1987, "m": "if (t.trigger === 'reactive') {"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 1862, "m": "if (t.trigger && t.trigger !== 'signal') continue;"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 446, "m": "this.eventBus.on('flag:changed', this.onFlagChangedListener);"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 646, "m": "queueMicrotask(() => {"}
+      ]
+    },
+    {
+      "id": "u20",
+      "kind": "runtime-key",
+      "source": "manual",
+      "label": "flag 是字符串键值表;flag:changed 的订阅方不按键过滤",
+      "where": "FlagStore 每次写入广播 flag:changed {key, value}(FlagStore.ts:230);正式运行路径里的订阅方:任务(QuestManager.ts:85 整体重评)、档案(ArchiveManager.ts:84)、特效(VfxSystem.ts:308)、叙事(NarrativeStateManager.ts:446)。",
+      "why": "订阅方收到后整体重评自己的条件,不看是哪个键;所以'某次 flag 写入会影响到谁'只由数据里的条件决定。事件配对能连出'FlagStore → 这四个系统',但连不出具体哪个 flag 在起作用。",
+      "affects": "状态与存档图的读写边;事件线的实际含义。",
+      "cites": [
+        {"f": "src/core/FlagStore.ts", "l": 230, "m": "this.eventBus.emit('flag:changed', { key, value });"},
+        {"f": "src/systems/QuestManager.ts", "l": 85, "m": "this.onFlagChanged = () => { if (!this.restoring) this.evaluate(); };"},
+        {"f": "src/systems/ArchiveManager.ts", "l": 84, "m": "this.onFlagChanged = () => {"},
+        {"f": "src/systems/vfx/VfxSystem.ts", "l": 308, "m": "ctx.eventBus.on('flag:changed', this.onConditionsMaybeChanged);"}
+      ]
+    },
+    {
+      "id": "u21",
+      "kind": "runtime-key",
+      "source": "manual",
+      "label": "flag 键在运行时拼接,或整批来自数据",
+      "where": "拼键写入:背包 `has_item_${id}`(InventoryManager.ts:307)、规矩碎片 `fragment_${id}_acquired`(RulesManager.ts:222)、`rule_${ruleId}_fragments_collected`(:251);拼键读取:遭遇 `rule_${ruleId}_acquired`(EncounterManager.ts:120);剧情线按 scenarios.json 的 exposes 批量写 flag(ScenarioStateManager.ts:408、:426)。",
+      "why": "写入方与读取方(条件叶子、文本标签、其它系统)之间只靠字符串相同对上,中间没有调用或 import;exposes 写哪些键完全由数据决定。",
+      "affects": "状态与存档图里 FlagStore 的写入者/读取者清单只能列到'系统级',列不到'键级'。",
+      "cites": [
+        {"f": "src/systems/InventoryManager.ts", "l": 307, "m": "this.flagStore.set(`has_item_${id}`, count > 0);"},
+        {"f": "src/systems/RulesManager.ts", "l": 222, "m": "`fragment_${fragmentId}_acquired`"},
+        {"f": "src/systems/RulesManager.ts", "l": 251, "m": "`rule_${ruleId}_fragments_collected`"},
+        {"f": "src/systems/EncounterManager.ts", "l": 120, "m": "this.flagStore.get(`rule_${ruleId}_acquired`)"},
+        {"f": "src/core/ScenarioStateManager.ts", "l": 408, "m": "Object.entries(entry.exposes)"},
+        {"f": "src/core/ScenarioStateManager.ts", "l": 426, "m": "this.flagStore.set(k, value);"}
+      ]
+    },
+    {
+      "id": "u22",
+      "kind": "data-driven",
+      "source": "manual",
+      "label": "文本标签 [tag:…] 在显示时读取 flag / 字符串表 / 名称",
+      "where": "resolveText(src/core/resolveText.ts:132)在显示前替换文本里的标签:字符串表(:139)、flag 值(:148)、以及物品 / NPC / 任务 / 规矩 / 场景名。",
+      "why": "任何玩家可见文本里都可能夹着标签,于是界面在显示时去读 FlagStore 等状态;这种读取由文本数据决定,不是代码里的调用链。",
+      "affects": "状态与存档图中'界面读状态'的边。",
+      "cites": [
+        {"f": "src/core/resolveText.ts", "l": 132, "m": "export function resolveText(raw: string | undefined, ctx: ResolveContext)"},
+        {"f": "src/core/resolveText.ts", "l": 139, "m": "ctx.stringsRaw(String(cat), String(key))"},
+        {"f": "src/core/resolveText.ts", "l": 148, "m": "formatFlagValue(ctx.flagStore.get(k), ctx)"}
+      ]
+    },
+    {
+      "id": "u23",
+      "kind": "string-dispatch",
+      "source": "raw",
+      "raw": [29],
+      "label": "界面面板按名字字符串登记与打开(含日志跳转)",
+      "where": "状态控制器用名字→面板的表(GameStateController.ts:48、登记 :157/:163);打开方只传名字:requestPanelOpen(:127)、switchToPanel(:192)、快捷键循环(:305)、HUD 入口条(HUD.ts:107 的名字表,:662 调用)、触屏按钮(TouchMobileControls.ts:323)、动作 openMap(ActionRegistry.ts:2412)、日志条目跳转按 link.kind 选面板(Game.ts:2114、:2116)。登记在 Game.ts:7866 起。",
+      "why": "'谁打开谁'只靠名字字符串相等查表,import 关系里看不到;日志跳转的 kind 与 id 是运行时记录下来的日志数据。",
+      "affects": "模块总图 UI 块内部的连线;一帧图'界面态'的进入方式。",
+      "cites": [
+        {"f": "src/core/GameStateController.ts", "l": 48, "m": "private panels = new Map<string, PanelEntry>();"},
+        {"f": "src/core/GameStateController.ts", "l": 163, "m": "this.panels.set(name, {"},
+        {"f": "src/core/GameStateController.ts", "l": 127, "m": "requestPanelOpen(name: string): void {"},
+        {"f": "src/core/GameStateController.ts", "l": 192, "m": "switchToPanel(name: string): void {"},
+        {"f": "src/core/GameStateController.ts", "l": 305, "m": "this.togglePanel(name);"},
+        {"f": "src/ui/HUD.ts", "l": 107, "m": "{ panel: 'quest', icon: 'scroll', cap: 'Tab' },"},
+        {"f": "src/ui/HUD.ts", "l": 662, "m": "this.panelOpener?.(def.panel);"},
+        {"f": "src/ui/TouchMobileControls.ts", "l": 323, "m": "this.stateController.togglePanel(panelName);"},
+        {"f": "src/core/ActionRegistry.ts", "l": 2412, "m": "d.stateController.requestPanelOpen('map');"},
+        {"f": "src/core/Game.ts", "l": 2114, "m": "switch (link.kind) {"},
+        {"f": "src/core/Game.ts", "l": 7866, "m": "this.stateController.registerPanel('quest'"}
+      ]
+    },
+    {
+      "id": "u24",
+      "kind": "event-name",
+      "source": "manual",
+      "label": "事件总线只认字符串,载荷无类型",
+      "where": "EventBus 以事件名字符串为键存订阅(src/core/EventBus.ts:10);on / emit 的事件名参数为 string、载荷为 any(:16、:27)。运行时有两个实例:主总线(Game.ts:967)与画布特效私有总线(见 u29)。",
+      "why": "没有事件目录或类型约束,发与收只能按字符串相等配对;事件图里的每条事件线都依赖抽取器把名字当字面量抽出来(raw.json:395 条字面量、106 条经封装函数回推、5 条数组循环、2 条三元)。载荷结构静态看不到。",
+      "affects": "模块总图的事件线;异常页'有发没收 / 有收没发'。",
+      "cites": [
+        {"f": "src/core/EventBus.ts", "l": 10, "m": "private listeners: Map<string, Set<EventCallback>>"},
+        {"f": "src/core/EventBus.ts", "l": 16, "m": "on(event: string, callback: EventCallback): void {"},
+        {"f": "src/core/EventBus.ts", "l": 27, "m": "emit(event: string, payload?: any): void {"},
+        {"f": "src/core/Game.ts", "l": 967, "m": "this.eventBus = new EventBus();"}
+      ]
+    },
+    {
+      "id": "u25",
+      "kind": "event-name",
+      "source": "raw",
+      "label": "经封装函数订阅:事件名是形参,靠回推调用点",
+      "where": "6 个封装函数把形参当事件名订阅:AudioManager.onSfx(AudioManager.ts:1761)、EventBridge.listen(EventBridge.ts:309)、DialogueVoiceDirector.listen(DialogueVoiceDirector.ts:49)、GameLogManager.listen(GameLogManager.ts:346)、InteractionCoordinator.listen(InteractionCoordinator.ts:88)、Game.listenEvent(Game.ts:10144)。",
+      "why": "on() 那一行的事件名不是字面量;抽取器按'函数第 0 个参数'回到各调用点取字面量,共回推 106 条订阅(onSfx 46、listen 33、listenEvent 27)。调用点传的不是字面量或数组字面量时,就只能记为'未解析'。",
+      "affects": "事件线的来源行号指向调用点而非 on() 本身。",
+      "cites": [
+        {"f": "src/systems/AudioManager.ts", "l": 1761, "m": "this.eventBus.on(event, callback);"},
+        {"f": "src/core/EventBridge.ts", "l": 309, "m": "this.eventBus.on(event, fn);"},
+        {"f": "src/systems/DialogueVoiceDirector.ts", "l": 49, "m": "this.eventBus.on(event, fn);"},
+        {"f": "src/systems/GameLogManager.ts", "l": 346, "m": "this.eventBus.on(event, fn);"},
+        {"f": "src/core/InteractionCoordinator.ts", "l": 88, "m": "this.eventBus.on(event, fn);"},
+        {"f": "src/core/Game.ts", "l": 10144, "m": "this.eventBus.on(event, fn);"}
+      ]
+    },
+    {
+      "id": "u26",
+      "kind": "event-name",
+      "source": "raw",
+      "raw": [8, 18, 20, 22, 26, 30, 31],
+      "label": "销毁时按登记表逐条解绑(7 处事件名非字面量)",
+      "where": "AudioManager.destroy(AudioManager.ts:1895)、EventBridge.destroy(EventBridge.ts:314)、DialogueVoiceDirector.destroy(:102)、GameLogManager.destroy(:414)、InteractionCoordinator.destroy(:371)、Game.teardownNarrativeDebugBridge(Game.ts:4577)、Game.destroy(Game.ts:10243)。",
+      "why": "解绑用的事件名取自登记时存下的数组元素;对应的订阅已在登记处(u25 的封装函数、u28 的调试数组)抽出,但抽取器没有把'解绑'与'登记'逐条对上,所以销毁步骤'解绑了哪些事件'只能写成'解绑本模块登记过的全部'。",
+      "affects": "生命周期图的销毁步骤;事件线条数不受影响(解绑不构成发/收关系)。",
+      "cites": [
+        {"f": "src/systems/AudioManager.ts", "l": 1895, "m": "this.eventBus.off(event, callback);"},
+        {"f": "src/core/EventBridge.ts", "l": 314, "m": "this.eventBus.off(event, fn);"},
+        {"f": "src/systems/DialogueVoiceDirector.ts", "l": 102, "m": "this.eventBus.off(b.event, b.fn);"},
+        {"f": "src/systems/GameLogManager.ts", "l": 414, "m": "this.eventBus.off(event, fn);"},
+        {"f": "src/core/InteractionCoordinator.ts", "l": 371, "m": "this.eventBus.off(event, fn);"},
+        {"f": "src/core/Game.ts", "l": 4577, "m": "this.eventBus.off(event, callback);"},
+        {"f": "src/core/Game.ts", "l": 10243, "m": "this.eventBus.off(event, fn);"}
+      ]
+    },
+    {
+      "id": "u27",
+      "kind": "event-name",
+      "source": "raw",
+      "label": "三元选择的事件名:两个名字都记为'可能发出'",
+      "where": "ZoneSystem.emitRuleAvailability 按布尔值发 zone:ruleAvailable 或 zone:ruleUnavailable(ZoneSystem.ts:302)。",
+      "why": "raw.json 把两个名字都记为该行发出(how=union);某一次到底发哪一个取决于运行时布尔值。",
+      "affects": "事件线:两条线都画,但单次只走其一。",
+      "cites": [
+        {"f": "src/systems/ZoneSystem.ts", "l": 302, "m": "available ? 'zone:ruleAvailable' : 'zone:ruleUnavailable'"}
+      ]
+    },
+    {
+      "id": "u28",
+      "kind": "event-name",
+      "source": "raw",
+      "status": "dev-only",
+      "label": "仅开发构建生效的 14 条订阅在事件数据里没有开发标记",
+      "where": "叙事调试桥用数组循环订阅 5 个事件(Game.ts:4565);运行时调试快照发布用数组循环经 listenEvent 订阅 9 个事件(Game.ts:9666),该函数开头 `if (!import.meta.env.DEV) return;`(:9652)。",
+      "why": "raw.json 的 events 条目没有 devGuarded 字段(imports 有),这 14 条订阅会与正式路径的订阅一起参与'有发没收 / 有收没发'配对,但在正式构建里不存在。",
+      "affects": "异常页事件配对;模块总图事件线(应标开发专用)。",
+      "cites": [
+        {"f": "src/core/Game.ts", "l": 4565, "m": "for (const [event, callback] of listeners) this.eventBus.on(event, callback);"},
+        {"f": "src/core/Game.ts", "l": 9666, "m": "this.listenEvent(event, () => this.scheduleRuntimeDebugSnapshotPublish(event));"},
+        {"f": "src/core/Game.ts", "l": 9652, "m": "if (!import.meta.env.DEV) return;"}
+      ]
+    },
+    {
+      "id": "u29",
+      "kind": "private-bus",
+      "source": "manual",
+      "label": "第二条事件总线:画布特效的私有总线,与主总线同名事件会混配",
+      "where": "CanvasVfxHost 自建一条 EventBus(CanvasVfxHost.ts:95),自建一个 VfxSystem(:101),用强转成 GameContext 的 {eventBus: 私有总线} 去 init 它(:147),再在私有总线上发一次 scene:ready(:149)。主游戏的 VfxSystem 另建于 Game.ts:1157,经系统登记表(:1495)在主总线上 init(:1503)。两者共用同一段订阅代码(VfxSystem.ts:306 起 6 条)。",
+      "why": "raw.json 把 VfxSystem.ts:306-311 的 6 条订阅都记为主总线(接收者是 ctx.eventBus),只有 CanvasVfxHost.ts:149 那一次发出被标为私有总线。按事件名配对时,私有总线的 scene:ready 会和主总线上所有 scene:ready 订阅方连在一起,主总线的 scene:ready / flag:changed 等也会连到画布那个实例上——而实际上两条总线互不相通。",
+      "affects": "模块总图事件线(scene:ready、scene:beforeUnload、flag:changed、narrative:stateChanged、time:phaseChanged、quest:statusChanged 六个事件);异常页事件配对。",
+      "cites": [
+        {"f": "src/systems/canvas/CanvasVfxHost.ts", "l": 95, "m": "private readonly bus = new EventBus();"},
+        {"f": "src/systems/canvas/CanvasVfxHost.ts", "l": 101, "m": "this.system = new VfxSystem({"},
+        {"f": "src/systems/canvas/CanvasVfxHost.ts", "l": 147, "m": "this.system.init({ eventBus: this.bus } as unknown as GameContext);"},
+        {"f": "src/systems/canvas/CanvasVfxHost.ts", "l": 149, "m": "this.bus.emit('scene:ready');"},
+        {"f": "src/systems/vfx/VfxSystem.ts", "l": 306, "m": "ctx.eventBus.on('scene:ready', this.onSceneReady);"},
+        {"f": "src/core/Game.ts", "l": 1157, "m": "this.vfxSystem = new VfxSystem({"},
+        {"f": "src/core/Game.ts", "l": 1495, "m": "{ name: 'vfxSystem', system: this.vfxSystem },"}
+      ]
+    },
+    {
+      "id": "u30",
+      "kind": "string-dispatch",
+      "source": "manual",
+      "label": "系统登记表:按接口逐个调用,存档桶名就是登记名字符串",
+      "where": "Game 的系统登记表(Game.ts:936,填表 :1444);循环调用 init(:1503)、serialize(:8782,写入 data[entry.name])、deserialize(:8820,按同一名字取回)、destroy(:10328)。过场管理器在表里先以 null 占位(:1475),稍后按名字 'cutsceneManager' 查表回填(:2495)。",
+      "why": "循环里只看得到'对每个条目调接口方法',具体是哪些类要读登记数组;过场管理器那一项在登记数组里是空,要到回填那一行才有实例。存档桶名与读档取回之间只靠字符串相同。",
+      "affects": "启动图(init 顺序)、状态与存档图(存了哪些桶)、生命周期图(销毁顺序)。",
+      "cites": [
+        {"f": "src/core/Game.ts", "l": 936, "m": "private registeredSystems: { name: string; system: IGameSystem }[] = [];"},
+        {"f": "src/core/Game.ts", "l": 1444, "m": "this.registeredSystems = ["},
+        {"f": "src/core/Game.ts", "l": 1503, "m": "if (entry.system) entry.system.init(ctx);"},
+        {"f": "src/core/Game.ts", "l": 8782, "m": "data[entry.name] = entry.system.serialize();"},
+        {"f": "src/core/Game.ts", "l": 8820, "m": "entry.system.deserialize(data[entry.name])"},
+        {"f": "src/core/Game.ts", "l": 10328, "m": "if (entry.system) entry.system.destroy();"},
+        {"f": "src/core/Game.ts", "l": 1475, "m": "{ name: 'cutsceneManager', system: null as any },"},
+        {"f": "src/core/Game.ts", "l": 2495, "m": "this.registeredSystems.find(e => e.name === 'cutsceneManager')"}
+      ]
+    },
+    {
+      "id": "u31",
+      "kind": "injected-callback",
+      "source": "manual",
+      "label": "注入的回调:接收方只知道'调一个函数'",
+      "where": "动作处理器依赖包(ActionRegistryDeps,ActionRegistry.ts:346,由 Game.ts:3037 传入,其中如 evaluateCondition :3043)、EventBridge 依赖包(EventBridge.ts:26)、场景进场执行器(SceneManager.ts:417 声明,Game.ts:6555 注入)。仅 Game.ts 一个文件里,形如 `.setXxx((…) =>` 的注入调用就有 84 处(grep 计数)。",
+      "why": "被调方写在 Game 装配处的箭头函数里;raw.json 的 holds / news 只记录对象持有与构造,不记录函数值流向,所以这些真实的'谁调谁'不在依赖数据里。",
+      "affects": "模块总图依赖线(以 Game 为中介的调用只表现为'Game 持有两边');启动图里的装配步骤。",
+      "cites": [
+        {"f": "src/core/ActionRegistry.ts", "l": 346, "m": "export interface ActionRegistryDeps {"},
+        {"f": "src/core/Game.ts", "l": 3043, "m": "evaluateCondition: (expr) =>"},
+        {"f": "src/core/EventBridge.ts", "l": 26, "m": "export interface EventBridgeDeps {"},
+        {"f": "src/systems/SceneManager.ts", "l": 417, "m": "setSceneEnterRunner(fn: ((actions: ActionDef[]) => Promise<void>) | null)"},
+        {"f": "src/core/Game.ts", "l": 6555, "m": "this.sceneManager.setSceneEnterRunner(async (actions) => {"}
+      ]
+    },
+    {
+      "id": "u32",
+      "kind": "data-driven",
+      "source": "manual",
+      "label": "场景进场动作经注入的执行器运行",
+      "where": "SceneManager 在场景揭幕后取场景数据里的 onEnter 动作,交给注入的执行器并等待完成(SceneManager.ts:2009);注入的函数在 Game.ts:6555,内部把动作交给执行器(:6562)。",
+      "why": "场景生命周期'执行进场动作'这一步的内容来自场景 JSON;SceneManager 与执行器之间只经一个注入函数相连,依赖数据里没有 SceneManager → ActionExecutor 的边。",
+      "affects": "场景生命周期图'执行进场动作'一步。",
+      "cites": [
+        {"f": "src/systems/SceneManager.ts", "l": 2009, "m": "await this.sceneEnterRunner(rootEnter);"},
+        {"f": "src/core/Game.ts", "l": 6562, "m": "await this.actionExecutor.executeBatchAwait(actions"}
+      ]
+    },
+    {
+      "id": "u33",
+      "kind": "string-dispatch",
+      "source": "manual",
+      "label": "演员/目标按 id 字符串解析",
+      "where": "统一的演员解析(Game.ts:2505):先查过场临时演员表,再查当前场景 NPC(:2509),再认 'player';表情气泡目标另有 resolveEmoteTarget(:1668),可解析到当前场景热点。",
+      "why": "过场、对话、动作里写的演员 id 来自数据;解析到哪个对象取决于当前场景与正在播的过场,静态看不出。",
+      "affects": "过场/对话对场景实体的操作关系。",
+      "cites": [
+        {"f": "src/core/Game.ts", "l": 2505, "m": "this.resolveActorFn = (id: string) => {"},
+        {"f": "src/core/Game.ts", "l": 2509, "m": "if (npc) return npc;"},
+        {"f": "src/core/Game.ts", "l": 1668, "m": "private resolveEmoteTarget(raw: string)"}
+      ]
+    },
+    {
+      "id": "u34",
+      "kind": "data-driven",
+      "source": "manual",
+      "label": "音效/音乐按 id 查 audio_config",
+      "where": "音频管理器用 id 查配置里的 sfx / bgm / ambient 表(AudioManager.ts:561);系统音效键查 systemSfx 表(:1738);事件到系统音效键的映射写在订阅处(如 :1771)。",
+      "why": "事件 → 系统音效键是代码字面量,但键 → 实际音频文件在 audio_config.json 里;动作里的音效 id 也来自数据。",
+      "affects": "音频相关模块的资源来源。",
+      "cites": [
+        {"f": "src/systems/AudioManager.ts", "l": 561, "m": "const entry = this.config.sfx[id];"},
+        {"f": "src/systems/AudioManager.ts", "l": 1738, "m": "const ref = this.config.systemSfx[key];"},
+        {"f": "src/systems/AudioManager.ts", "l": 1771, "m": "this.playSystemSfx('questCompleted')"}
+      ]
+    },
+    {
+      "id": "u35",
+      "kind": "data-driven",
+      "source": "manual",
+      "label": "延迟事件:动作存进日程,按天到期执行,且进存档",
+      "where": "动作把一批子动作登记到日程(ActionRegistry.ts:1395 → DayManager.ts:273);存档时一并写出(:304);过天时到期执行(:289)。",
+      "why": "被推迟执行的动作内容来自数据,且可能跨存档/读档;它们在哪一天、以什么顺序执行,静态不可见。",
+      "affects": "状态与存档图(日程里的动作进存档);时间推进时的动作执行。",
+      "cites": [
+        {"f": "src/core/ActionRegistry.ts", "l": 1395, "m": "d.dayManager.addDelayedEvent(p.targetDay as number, actions);"},
+        {"f": "src/systems/DayManager.ts", "l": 273, "m": "this.delayedEvents.push({ targetDay, actions });"},
+        {"f": "src/systems/DayManager.ts", "l": 304, "m": "delayedEvents: this.delayedEvents,"}
+      ]
+    },
+    {
+      "id": "u36",
+      "kind": "global-entry",
+      "source": "raw",
+      "status": "dev-only",
+      "label": "开发构建挂到 window 上的入口(调用方在 src 之外)",
+      "where": "__game(Game.ts:2175)、UI 取景台经动态 import 装入(:2177)并替换 window.requestAnimationFrame / cancelAnimationFrame(uiShotHarness.ts:152、:158)、__ndbg(Game.ts:4482)、__gameDevAPI(Game.ts:8538)。",
+      "why": "这些对象由浏览器控制台、编辑器内嵌浏览器、截图脚本等外部调用,静态看不到谁调、何时调。raw.json globalsExposed 把 uiShotHarness.ts:152/:158 标为 devGuarded=false——该文件本身没有开发判断,但只经 Game.ts:2177 的开发分支被动态加载。",
+      "affects": "异常页'正式路径引用开发代码';模块总图的边界接口。",
+      "cites": [
+        {"f": "src/core/Game.ts", "l": 2175, "m": "(window as unknown as Record<string, unknown>).__game = this;"},
+        {"f": "src/core/Game.ts", "l": 2177, "m": "void import('../dev/uiShotHarness')"},
+        {"f": "src/dev/uiShotHarness.ts", "l": 152, "m": "window.requestAnimationFrame = (cb: FrameRequestCallback)"},
+        {"f": "src/dev/uiShotHarness.ts", "l": 158, "m": "window.cancelAnimationFrame = (id: number)"},
+        {"f": "src/core/Game.ts", "l": 4482, "m": "(window as unknown as Record<string, unknown>).__ndbg = api;"},
+        {"f": "src/core/Game.ts", "l": 8538, "m": "window.__gameDevAPI = {"}
+      ]
+    },
+    {
+      "id": "u37",
+      "kind": "global-entry",
+      "source": "raw",
+      "label": "正式构建也存在的全局入口(外壳从外部读写)",
+      "where": "__gameDestroy(main.ts:211,供编辑器预览窗关闭时调用)、__GAMEDRAFT_BUILD__(main.ts:59,写出构建档位)、__GAMEDRAFT_BOOT_QUERY__(main.ts:39,读打包时烘入的启动参数)、__TAURI__(persistentStore.ts:63,读打包外壳提供的接口)。",
+      "why": "读写这些全局的另一方是编辑器、打包 exe 或构建校验脚本,不在 src 里;静态只看到'挂上去 / 读出来'。",
+      "affects": "启动图与关闭流程的外部触发点;存档后端选择(u43)。",
+      "cites": [
+        {"f": "src/main.ts", "l": 211, "m": "window.__gameDestroy = () => {"},
+        {"f": "src/main.ts", "l": 59, "m": "__GAMEDRAFT_BUILD__ = isDevBuild ? 'dev' : 'release';"},
+        {"f": "src/main.ts", "l": 39, "m": "__GAMEDRAFT_BOOT_QUERY__"},
+        {"f": "src/core/storage/persistentStore.ts", "l": 63, "m": "const t = w.__TAURI__;"}
+      ]
+    },
+    {
+      "id": "u38",
+      "kind": "dev-channel",
+      "source": "raw",
+      "raw": [19],
+      "status": "dev-only",
+      "label": "开发命令通道:轮询开发服务器队列,按命令名分派(38 支)",
+      "where": "每 600ms 轮询(Game.ts:9719)开发服务器的命令队列(:9729),逐条交给 applyDevRuntimeCommand(:9797),后者按命令名 switch 分 38 支(devRuntimeCommands.ts:171);其中 debugExecuteAction 把任意动作交给执行器,emitNarrativeSignal 直接发叙事信号。",
+      "why": "命令由外部工具写进开发服务器队列,名字与参数都是运行时数据;该通道可以触达执行器与叙事状态机,但发送方不在 src。",
+      "affects": "异常页'正式路径里的开发代码'(devRuntimeCommands.ts 在 src/core 下);模块总图边界接口。",
+      "cites": [
+        {"f": "src/core/Game.ts", "l": 9719, "m": "this.runtimeCommandPollTimer = window.setInterval(() => {"},
+        {"f": "src/core/Game.ts", "l": 9729, "m": "fetch('/__gamedraft-api/runtime-command', { method: 'GET' })"},
+        {"f": "src/core/Game.ts", "l": 9797, "m": "return applyDevRuntimeCommand(command, {"},
+        {"f": "src/core/devRuntimeCommands.ts", "l": 171, "m": "switch (type) {"}
+      ]
+    },
+    {
+      "id": "u39",
+      "kind": "dev-channel",
+      "source": "raw",
+      "raw": [24],
+      "status": "dev-only",
+      "label": "叙事调试桥:WebSocket 命令按名字分派,在核心类上挂静态观察者",
+      "where": "调试桥连 WebSocket(src/dev/narrativeDebugBridge.ts:565),收到的命令按名字分 12 支(:447);装桥时 Game 把桥的回调挂到执行器与叙事状态机的静态字段上(Game.ts:4539、:4540;字段声明 ActionExecutor.ts:76、NarrativeStateManager.ts:425)。",
+      "why": "命令来自 WebSocket 另一端;核心类里只有一个可空的静态函数字段,静态看不到在开发时是谁把它填上、填了什么。",
+      "affects": "异常页'核心层引用调试工具'的边界接口。",
+      "cites": [
+        {"f": "src/dev/narrativeDebugBridge.ts", "l": 565, "m": "ws = new WebSocket(url);"},
+        {"f": "src/dev/narrativeDebugBridge.ts", "l": 447, "m": "switch (command) {"},
+        {"f": "src/core/Game.ts", "l": 4539, "m": "NarrativeStateManager.traceObserver = bridge.onTrace;"},
+        {"f": "src/core/Game.ts", "l": 4540, "m": "ActionExecutor.actionObserver = bridge.noteAction;"},
+        {"f": "src/core/ActionExecutor.ts", "l": 76, "m": "static actionObserver:"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 425, "m": "static traceObserver:"}
+      ]
+    },
+    {
+      "id": "u40",
+      "kind": "dev-channel",
+      "source": "manual",
+      "status": "dev-only",
+      "label": "开发期双向同步通道(灯光、声学、特效、燃烧、呼吸、摆动、地形)",
+      "where": "开发构建里(Game.ts:3513)创建 7 个同步器,如灯光同步(:3548),经开发服务器接口收发(runtimeLightingSync.ts:343)。",
+      "why": "桌面编辑器改的数据经开发服务器推到运行中的游戏,发送方在 src 之外;静态只看到'定时向某个地址取数据再写回系统'。",
+      "affects": "模块总图边界接口;场景光照等参数的来源在开发期多了一路。",
+      "cites": [
+        {"f": "src/core/Game.ts", "l": 3513, "m": "if (import.meta.env.DEV) {"},
+        {"f": "src/core/Game.ts", "l": 3548, "m": "this.lightingSync = new RuntimeLightingSync({"},
+        {"f": "src/dev/runtimeLightingSync.ts", "l": 343, "m": "const res = await fetch(RUNTIME_LIGHTING_API, {"}
+      ]
+    },
+    {
+      "id": "u41",
+      "kind": "string-dispatch",
+      "source": "raw",
+      "raw": [17, 6, 7],
+      "label": "调试面板区块按 id 查表;编辑模式按拖拽种类 / 按键码分派(边界)",
+      "where": "调试面板区块以 id 登记(DebugPanelUI.ts:468),快捷页按钉选列表逐个取(:860);钉选列表只在开发构建从开发服务器文件拉取(:682、:691)。编辑模式(src/authoring,边界)按拖拽种类(AuthoringMode.ts:660)与键盘码(:846)分派。",
+      "why": "区块 id 来自外部文件,拖拽种类是编辑模式内部状态,键码来自键盘输入;它们都只影响调试/编辑界面,不在正式玩法路径上。",
+      "affects": "边界目录不展开;仅影响调试面板显示。",
+      "cites": [
+        {"f": "src/ui/DebugPanelUI.ts", "l": 468, "m": "this.sections.set(id, getter);"},
+        {"f": "src/ui/DebugPanelUI.ts", "l": 860, "m": "const getter = this.sections.get(id);"},
+        {"f": "src/ui/DebugPanelUI.ts", "l": 682, "m": "if (!import.meta.env.DEV) return;"},
+        {"f": "src/ui/DebugPanelUI.ts", "l": 691, "m": "this.quickPins = new Set(normalizePinList(rec.quick));"},
+        {"f": "src/authoring/AuthoringMode.ts", "l": 660, "m": "switch (drag.kind) {"},
+        {"f": "src/authoring/AuthoringMode.ts", "l": 846, "m": "switch (code) {"}
+      ]
+    },
+    {
+      "id": "u42",
+      "kind": "runtime-probe",
+      "source": "manual",
+      "label": "启动走哪条路由网址参数与打包烘入的缺省参数决定",
+      "where": "main.ts 合并网址参数与打包烘入的启动参数(main.ts:37);标题态(:76)、按槽读档(:77)、开发直达(:61 起,仅开发构建)等开关由这些参数得出,再交给 Game.start。",
+      "why": "静态只能列出所有启动分支,某次启动实际走哪条取决于运行时网址与打包配置。",
+      "affects": "启动图(需把各分支并列画出并标条件)。",
+      "cites": [
+        {"f": "src/main.ts", "l": 37, "m": "const urlParams = resolveBootParams("},
+        {"f": "src/main.ts", "l": 76, "m": "const startAtTitle = urlParams.has(TITLE_BOOT_PARAM);"},
+        {"f": "src/main.ts", "l": 61, "m": "const devMode = isDevBuild && urlParams.get('mode') === 'dev';"}
+      ]
+    },
+    {
+      "id": "u43",
+      "kind": "runtime-probe",
+      "source": "manual",
+      "label": "存档落到哪里在运行时探测决定(Tauri → 开发服务器 → 内存)",
+      "where": "probeBackends(src/core/storage/persistentStore.ts:188)先看有无 Tauri 接口(:189),再试开发服务器存储接口(:200),都不行就退到内存(:212);Tauri 侧按命令名字符串调用(:81 'gamedata_read_all' 等)。",
+      "why": "存档实际写到 exe 旁文件夹、仓库本地目录还是只在内存,取决于运行环境;Tauri 命令的接收方是 Rust 代码,不在 src。",
+      "affects": "状态与存档图的'存到哪里'。",
+      "cites": [
+        {"f": "src/core/storage/persistentStore.ts", "l": 188, "m": "async function probeBackends(): Promise<PersistentStore>"},
+        {"f": "src/core/storage/persistentStore.ts", "l": 189, "m": "const invoke = tauriInvoke();"},
+        {"f": "src/core/storage/persistentStore.ts", "l": 200, "m": "const http = new HttpFileStore();"},
+        {"f": "src/core/storage/persistentStore.ts", "l": 212, "m": "return new MemoryStore();"},
+        {"f": "src/core/storage/persistentStore.ts", "l": 81, "m": "this.invoke('gamedata_read_all', { namespace })"}
+      ]
+    },
+    {
+      "id": "u44",
+      "kind": "compile-time-switch",
+      "source": "manual",
+      "label": "编译期开关:开发 / 正式构建由构建工具替换",
+      "where": "运行时范围内(不含 src/dev、src/debug、src/authoring 与测试)有 14 个文件共 67 处 import.meta.env.DEV(grep 计数),如 main.ts:46、Game.ts:9652。",
+      "why": "两条路径都在源码里;哪条留在产物里由构建时常量决定。raw.json 的 imports 与 news 带 devGuarded 标记,events / holds / frameHooks 不带,所以只在开发构建执行的订阅、持有关系与帧回调会混在正式结构里。",
+      "affects": "所有图中'dev-only'的标注完整度。",
+      "cites": [
+        {"f": "src/main.ts", "l": 46, "m": "const isDevBuild = import.meta.env.DEV;"},
+        {"f": "src/core/Game.ts", "l": 9652, "m": "if (!import.meta.env.DEV) return;"}
+      ]
+    },
+    {
+      "id": "u45",
+      "kind": "compile-time-switch",
+      "source": "manual",
+      "status": "disabled",
+      "label": "已关停的统一角色光影路径(常量 false,代码保留)",
+      "where": "总闸常量 UNIFIED_CHAR_PATH_ENABLED = false(Game.ts:443);判断点(:6608)之后的统一角色光影装配不会执行。",
+      "why": "闸后的调用与相关模块的 import / 构造仍在源码中,会被抽取为依赖;运行时这条路径整条不走,它关掉的东西没有消费者。",
+      "affects": "模块总图、渲染管线图中统一角色光影相关节点应标'已关停'。",
+      "cites": [
+        {"f": "src/core/Game.ts", "l": 443, "m": "const UNIFIED_CHAR_PATH_ENABLED = false;"},
+        {"f": "src/core/Game.ts", "l": 6608, "m": "if (!UNIFIED_CHAR_PATH_ENABLED) {"}
+      ]
+    },
+    {
+      "id": "u46",
+      "kind": "library-internal",
+      "source": "manual",
+      "label": "画面提交在 Pixi 库内部,游戏回调与渲染的先后由优先级决定",
+      "where": "主 tick 以默认优先级挂到 Pixi ticker(Game.ts:4269);角色光照帧同步以 LOW+1 优先级(:4286);GL 事后排空以 UTILITY 优先级(:4617)。",
+      "why": "src 里没有直接调用'渲染这一帧';渲染由 Pixi 的 ticker 插件按优先级排在这些回调之间,先后关系取决于库内部约定,静态抽取 src 看不到渲染调用本身。",
+      "affects": "一帧图与渲染管线图的衔接点(tick 结束 → 渲染 → 事后回调)。",
+      "cites": [
+        {"f": "src/core/Game.ts", "l": 4269, "m": "ticker.add(this.mainTick);"},
+        {"f": "src/core/Game.ts", "l": 4286, "m": "ticker.add(this.charLitFrameSync, undefined, UPDATE_PRIORITY.LOW + 1);"},
+        {"f": "src/core/Game.ts", "l": 4617, "m": "UPDATE_PRIORITY.UTILITY"}
+      ]
+    },
+    {
+      "id": "u47",
+      "kind": "deferred",
+      "source": "manual",
+      "label": "不在主 tick 里的逐帧/延迟执行:rAF、定时器、微任务",
+      "where": "raw.json frameHooks 记有 requestAnimationFrame 45 处、setInterval 13 处(如过场的跳过检测 CutsceneManager.ts:1261、场景过渡动画 SceneManager.ts:2392、HUD 渐隐 HUD.ts:354);收到事件后推迟到微任务再处理:叙事重评(NarrativeStateManager.ts:646)、档案重评(ArchiveManager.ts:99)、任务播报(QuestManager.ts:663)。",
+      "why": "这些回调不在主 tick 的调用序列里,执行时刻由浏览器调度;'发事件 → 处理'的实际发生时刻晚于发出点,静态调用顺序表现不出来。",
+      "affects": "一帧图(这些活动不在 tick 顺序表里);场景生命周期图的异步标注。",
+      "cites": [
+        {"f": "src/systems/CutsceneManager.ts", "l": 1261, "m": "skipRafId = requestAnimationFrame(check);"},
+        {"f": "src/systems/SceneManager.ts", "l": 2392, "m": "this.animRafId = requestAnimationFrame(tick);"},
+        {"f": "src/ui/HUD.ts", "l": 354, "m": "this.hudFadeRaf = requestAnimationFrame(tick);"},
+        {"f": "src/core/NarrativeStateManager.ts", "l": 646, "m": "queueMicrotask(() => {"},
+        {"f": "src/systems/ArchiveManager.ts", "l": 99, "m": "queueMicrotask(() => {"},
+        {"f": "src/systems/QuestManager.ts", "l": 663, "m": "queueMicrotask(() => this.flushAnnounce());"}
+      ]
+    },
+    {
+      "id": "u48",
+      "kind": "shader-binding",
+      "source": "manual",
+      "label": "贴图与缓冲按名字绑定到着色器;灯的种类与烘焙文件由数据决定;实体前后次序每帧重算",
+      "where": "着色器资源以名字为键交给 Pixi(如 LitBackground.ts:154 起的 uRadiance :157、uDepth :158),与 GLSL 源码字符串里的 uniform 名配对;灯按 kind 字符串打包进 GPU 缓冲(lightPacking.ts:235、:257);烘焙派生物目录由背景文件名拼出(projectPaths.ts:210),probe 图集文件随 shadingMode 选择(lightingPayloadFiles.ts:104),另有一批可缺省文件(:89);实体层开启排序(Renderer.ts:152),每帧按脚底 y 与遮挡多边形重算 zIndex(:318)。",
+      "why": "抽取器不解析 GLSL 字符串,看不到某张贴图在着色器里是否被采样、怎么用;场景里有几盏什么灯、哪些烘焙贴图存在,取决于场景数据和磁盘上的文件(缺省即降级);实体之间谁先画由运行时位置决定。静态只能给出层级顺序(背景层 → 阴影层 → 实体层 → 世界淡出层 → 画布层 → 过场层 → UI 层,Renderer.ts:150-159)。",
+      "affects": "渲染管线图'每一步用到哪些贴图和缓冲'只能写到代码里出现的资源名;实体间绘制次序不画。",
+      "cites": [
+        {"f": "src/rendering/lighting/LitBackground.ts", "l": 154, "m": "this.shader = Shader.from({"},
+        {"f": "src/rendering/lighting/LitBackground.ts", "l": 157, "m": "uRadiance: radiance.source,"},
+        {"f": "src/rendering/lighting/LitBackground.ts", "l": 158, "m": "uDepth: geo.depth.source,"},
+        {"f": "src/rendering/lighting/lightPacking.ts", "l": 235, "m": "l.kind === 'point' || l.kind === 'spot' || l.kind === 'line'"},
+        {"f": "src/rendering/lighting/lightPacking.ts", "l": 257, "m": "const dir = l.kind === 'directional'"},
+        {"f": "src/core/projectPaths.ts", "l": 210, "m": "export function sceneBakeDirUrl(sceneId: string, image: string)"},
+        {"f": "src/core/lightingPayloadFiles.ts", "l": 104, "m": "export function probeAtlasFileForMode(shadingMode: unknown)"},
+        {"f": "src/core/lightingPayloadFiles.ts", "l": 89, "m": "export const LIGHTING_PAYLOAD_OPTIONAL"},
+        {"f": "src/rendering/Renderer.ts", "l": 152, "m": "this.entityLayer.sortableChildren = true;"},
+        {"f": "src/rendering/Renderer.ts", "l": 318, "m": "child.zIndex = entitySortZ("},
+        {"f": "src/rendering/Renderer.ts", "l": 150, "m": "this.worldContainer.addChild(this.backgroundLayer);"},
+        {"f": "src/rendering/Renderer.ts", "l": 159, "m": "this.app.stage.addChild(this.uiLayer);"}
+      ]
+    }
+  ]
+}

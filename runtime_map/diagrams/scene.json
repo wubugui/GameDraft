@@ -1,0 +1,2848 @@
+{
+  "id": "scene",
+  "title": "场景生命周期:切场景时实际发生了什么",
+  "summary": "所有正式换场入口(内容动作、传送热点、地图旅行、过场)都汇到场景管理的 switchScene:排队 → 发\"开始切场\" → 确保记忆桶 → 遮罩淡出 300ms(等) → 同步卸载(发\"即将卸载\"、释放资源作用域、销毁实体、拆光照/摆动/背景/深度)→ 装载(读 JSON、按时段定外观、并行预载资源清单、串行搭背景与实体、交互/落点/音频/区域、等深度与光照装载器、世界滤镜)→ 发\"进入场景\"\"场景就绪\"(实体滤镜/阴影/巡逻在这里挂)→ 揭幕前闸(并行等着色器与粒子)→ 淡入 300ms 撤遮罩 → 发\"揭幕完成\"(状态还给探索)→ 等 onEnter 动作批 → 发\"切场结束\"。读档、时段换装、开局首场景不经 switchScene,直接卸载+装载。场景记忆是\"发生即写\",离开时只确保有一格。",
+  "lanes": [
+    {
+      "id": "trigger",
+      "label": "触发方 · 状态锁"
+    },
+    {
+      "id": "state",
+      "label": "游戏状态机"
+    },
+    {
+      "id": "scene",
+      "label": "场景管理 SceneManager"
+    },
+    {
+      "id": "asset",
+      "label": "资源管理 AssetManager"
+    },
+    {
+      "id": "render",
+      "label": "渲染 · 遮罩 · 背景"
+    },
+    {
+      "id": "game",
+      "label": "组装层 Game(注入的回调)"
+    },
+    {
+      "id": "lighting",
+      "label": "深度 · 光照 · 摆动"
+    },
+    {
+      "id": "audio",
+      "label": "音频"
+    },
+    {
+      "id": "listeners",
+      "label": "事件监听的各系统"
+    },
+    {
+      "id": "actions",
+      "label": "进场动作执行器"
+    }
+  ],
+  "entryPoints": [
+    {
+      "id": "i1",
+      "label": "内容动作 changeScene / switchScene",
+      "detail": "对话、任务、遭遇、叙事等一切动作批里的\"换场景\"动作。两个动作名走同一段:先上状态锁、收拾拾取提示与查看框,再调场景管理的 switchScene;changeScene 额外可带落点坐标(同时是玩家落点覆盖)。→ 汇入 switchScene。",
+      "cites": [
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2270,
+          "m": "executor.register('switchScene'"
+        },
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2281,
+          "m": "executor.register('changeScene'"
+        },
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2286,
+          "m": "return d.sceneManager.switchScene(p.targetScene"
+        }
+      ]
+    },
+    {
+      "id": "i2",
+      "label": "传送热点(transition 型热点)",
+      "detail": "玩家在探索态对 transition 型热点按交互,交互协调器把它翻成一条 switchScene 动作(走 i1 同一段)。切场进行中(switching)时热点交互直接忽略。",
+      "cites": [
+        {
+          "f": "src/core/InteractionCoordinator.ts",
+          "l": 95,
+          "m": "if (sceneManager.switching) return;"
+        },
+        {
+          "f": "src/core/InteractionCoordinator.ts",
+          "l": 106,
+          "m": "case 'transition':"
+        },
+        {
+          "f": "src/core/InteractionCoordinator.ts",
+          "l": 365,
+          "m": "type: 'switchScene',"
+        }
+      ]
+    },
+    {
+      "id": "i3",
+      "label": "地图快速旅行",
+      "detail": "地图面板点目的地 → 发 map:travel 事件(全库唯一发射点);事件桥先把地图压的界面态弹栈,再过位面\"是否允许旅行\"第二道闸,然后执行一条 switchScene 动作(走 i1 同一段)。",
+      "cites": [
+        {
+          "f": "src/ui/MapUI.ts",
+          "l": 420,
+          "m": "this.eventBus.emit('map:travel', { sceneId });"
+        },
+        {
+          "f": "src/core/EventBridge.ts",
+          "l": 129,
+          "m": "this.listen('map:travel'"
+        },
+        {
+          "f": "src/core/EventBridge.ts",
+          "l": 141,
+          "m": "if (!this.deps.guardMapTravel()) return;"
+        },
+        {
+          "f": "src/core/EventBridge.ts",
+          "l": 144,
+          "m": "type: 'switchScene',"
+        }
+      ]
+    },
+    {
+      "id": "i4",
+      "label": "过场跨场景 / 过场结束回原场景",
+      "detail": "过场定义带 targetScene 时,过场管理器先登记\"过场舞台\"(staging),再经组装层注入的切场器调 switchScene;过场结束若需还原,同一个切场器切回过场前的场景。不经过动作锁,由过场自己的状态锁住。",
+      "cites": [
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 770,
+          "m": "this.sceneManagerAPI.beginCutsceneStaging(id, sid);"
+        },
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 903,
+          "m": "await this.sceneSwitcher({"
+        },
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 952,
+          "m": "await this.sceneSwitcher({ targetScene: this.snapshot.sceneI"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2523,
+          "m": "this.cutsceneManager.setSceneSwitcher(async (params) => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2529,
+          "m": "await this.sceneManager.switchScene("
+        }
+      ]
+    },
+    {
+      "id": "i5",
+      "label": "读档(游戏内菜单 / 标题\"继续\"整页重启后按槽启动)",
+      "detail": "存档管理器先把存档分发给全部系统,再调组装层注入的\"读档专用重载\":先静默撤下旧场景的活跃区域,再走 reloadScene(不经 switchScene、无淡出、无进度遮罩)。标题界面的\"继续\"是整页重启后在启动流程里按槽读档,同一条路。",
+      "cites": [
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 384,
+          "m": "await this.sceneReloader(sceneId);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2601,
+          "m": "this.zoneSystem.clearActiveZonesForRestore();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2602,
+          "m": "return this.reloadScene(sceneId);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4935,
+          "m": "loaded = await this.saveManager.load(slot);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4902,
+          "m": "if (!options.startAtTitle) return this.saveManager;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4910,
+          "m": "this.eventBridge.restartPageToLoadSlot(slot);"
+        }
+      ]
+    },
+    {
+      "id": "i6",
+      "label": "开局首场景",
+      "detail": "正常新开局(非标题态、非按槽启动、非 dev)时,启动流程直接调 loadInitialScene:遮罩瞬间全黑起手(不淡出),装完后 400ms 揭幕。不经 switchScene。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4325,
+          "m": "await this.sceneManager.loadInitialScene(this.gameConfig.ini"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2033,
+          "m": "async loadInitialScene(sceneId: string, spawnPointId?: strin"
+        }
+      ]
+    },
+    {
+      "id": "i7",
+      "label": "时段换装(白天↔夜换整套外观)",
+      "detail": "时段推进事件只登记\"待换装\";主循环每帧在安全窗口(探索态、没在切场、上一次换装不在途)检查,外观真会变才走 reloadScene,并按作者声明的表现档盖 500ms 黑幕。不经 switchScene。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 3007,
+          "m": "this.eventBus.on('time:phaseChanged', (e) => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10553,
+          "m": "this.drainPendingPhaseSwap();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9373,
+          "m": "void this.reloadSceneForPhase(sceneId, this.pendingPhaseSwap"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9401,
+          "m": "await this.reloadScene(sceneId);"
+        }
+      ]
+    },
+    {
+      "id": "i8",
+      "label": "进场动作批里又换场景(重入)",
+      "detail": "场景 onEnter 动作批正在跑时再来 changeScene:不排队(会互等死锁),只登记最后一个请求并立即返回;当前这次加载收尾后再发出(不等结果)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2117,
+          "m": "if (this.sceneEnterBatchDepth > 0) {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2127,
+          "m": "this.pendingReentrantSwitch = { targetSceneId, spawnPointId,"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2225,
+          "m": "void this.switchScene(req.targetSceneId, req.spawnPointId, r"
+        }
+      ]
+    },
+    {
+      "id": "i9",
+      "label": "开发入口(仅开发构建)",
+      "detail": "dev 房间直达(直接 loadScene)、Dev 面板/F2 场景页跳场景(switchScene)、F2\"Reload Scene\"、摆灯编辑模式退出重载、运行时命令通道(调试切场/重载)、叙事调试器\"重载场景\"、截图工具。均在 import.meta.env.DEV 门控之内或位于 src/dev。",
+      "status": "dev-only",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 8428,
+          "m": "await this.sceneManager.loadScene(DEV_SCENE);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8747,
+          "m": "await this.sceneManager.switchScene(sceneId, spawnPoint);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4111,
+          "m": "void this.devLoadScene(sceneId, spawnPoint);"
+        },
+        {
+          "f": "src/core/DebugTools.ts",
+          "l": 2186,
+          "m": "this.deps.reloadScene(id);"
+        },
+        {
+          "f": "src/authoring/AuthoringMode.ts",
+          "l": 312,
+          "m": "if (sceneId) this.deps.reloadScene(sceneId);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9853,
+          "m": "debugReloadScene: (sceneId) => this.reloadScene("
+        },
+        {
+          "f": "src/dev/narrativeDebugBridge.ts",
+          "l": 548,
+          "m": "await deps.reloadScene(String(message.sceneId ?? ''));"
+        },
+        {
+          "f": "src/dev/uiShotHarness.ts",
+          "l": 61,
+          "m": "gi.sceneManager.switchScene(SHOT_SCENE),"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "id": "s1",
+      "order": 1,
+      "status": "active",
+      "lane": "trigger",
+      "label": "切场动作上状态锁",
+      "async": "sync",
+      "detail": "当前是\"探索\"或\"动作批锁\"→ 切到\"切场中\"(SceneTransition);若已在对话/过场等叙事态 → 挂\"过场\"锁,不抢叙事态自己的状态。锁的还原函数留到切场全部结束后再调。",
+      "cites": [
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2250,
+          "m": "const beginSceneSwitchLock = () => {"
+        },
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2252,
+          "m": "const lockState = prev === GameState.Exploring || prev === G"
+        },
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2255,
+          "m": "d.stateController.setState(lockState);"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "order": 2,
+      "status": "active",
+      "lane": "trigger",
+      "label": "收拾界面残留",
+      "async": "sync",
+      "detail": "强制收掉拾取提示,查看框开着就关掉。过场切场器在组装层里做同样两件事。",
+      "cites": [
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2237,
+          "m": "const prepareSceneSwitch = () => {"
+        },
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2238,
+          "m": "d.pickupNotification.forceCleanup();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2524,
+          "m": "this.pickupNotification.forceCleanup();"
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "order": 3,
+      "status": "active",
+      "lane": "scene",
+      "label": "重入检测:onEnter 批内只登记",
+      "async": "sync",
+      "detail": "若此刻正在执行某场景的 onEnter 动作批,本次请求只登记(覆盖前一个登记)并立即返回;否则进入串行队列。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2117,
+          "m": "if (this.sceneEnterBatchDepth > 0) {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2127,
+          "m": "this.pendingReentrantSwitch = { targetSceneId, spawnPointId,"
+        }
+      ]
+    },
+    {
+      "id": "s4",
+      "order": 4,
+      "status": "active",
+      "lane": "scene",
+      "label": "排进切场串行队列",
+      "async": "await",
+      "detail": "每次切场是一个作业,接在上一次切场作业的尾巴后面执行(上一次成功或失败都会接着跑),调用方等这一次作业跑完。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2208,
+          "m": "const p = this.sceneSwitchTail.then(job, job);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2209,
+          "m": "this.sceneSwitchTail = p.catch((e) => {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2213,
+          "m": "await p;"
+        }
+      ]
+    },
+    {
+      "id": "s5",
+      "order": 5,
+      "status": "active",
+      "lane": "scene",
+      "label": "同场景:只挪落点和镜头",
+      "async": "sync",
+      "detail": "目标就是当前场景:没给落点/坐标就什么都不做;给了就(非过场舞台时)确保记忆桶存在,把玩家与镜头摆到新落点,结束。不卸载、不淡出、不发任何场景事件。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2139,
+          "m": "if (curId === tid) {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2151,
+          "m": "this.applyPlayerSpawnAndCamera(this.currentScene, spawnPoint"
+        }
+      ]
+    },
+    {
+      "id": "s6",
+      "order": 6,
+      "status": "active",
+      "lane": "scene",
+      "label": "标记\"切场进行中\"",
+      "async": "sync",
+      "detail": "置 switching 标志:热点交互、时段换装、dev 跳场景都会看这个标志避让。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2155,
+          "m": "this.isSwitching = true;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 957,
+          "m": "get switching(): boolean {"
+        }
+      ]
+    },
+    {
+      "id": "s7",
+      "order": 7,
+      "status": "active",
+      "lane": "scene",
+      "label": "发出\"开始切场\"",
+      "async": "event",
+      "event": "scene:transition",
+      "detail": "同步广播:状态机从探索切到\"切场中\"(若是从探索进来的);音频播换场提示音(500ms 内刚播过地图旅行音就不播)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2157,
+          "m": "this.eventBus.emit('scene:transition', {"
+        }
+      ]
+    },
+    {
+      "id": "s8",
+      "order": 8,
+      "status": "active",
+      "lane": "state",
+      "label": "探索 → 切场中",
+      "async": "sync",
+      "detail": "只在当前是\"探索\"时才切;动作入口已上锁的情况下这里是空操作。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 3457,
+          "m": "this.listenEvent('scene:transition', () => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3459,
+          "m": "this.stateController.setState(GameState.SceneTransition);"
+        }
+      ]
+    },
+    {
+      "id": "s9",
+      "order": 9,
+      "status": "active",
+      "lane": "scene",
+      "label": "场景记忆:确保当前场景有记忆桶",
+      "async": "sync",
+      "detail": "名为\"保存\",实际只确保当前场景在记忆表里有一格(过场舞台期间跳过)。拾取、查看、实体覆盖等运行态在发生当时就已写入记忆,离开时不再拍快照。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2161,
+          "m": "this.saveCurrentSceneMemory();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2237,
+          "m": "private saveCurrentSceneMemory(): void {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2240,
+          "m": "this.ensureSceneMemory(this.currentScene.id);"
+        }
+      ]
+    },
+    {
+      "id": "s10",
+      "order": 10,
+      "status": "active",
+      "lane": "render",
+      "label": "建切场遮罩(黑底 + 进度条)",
+      "async": "sync",
+      "detail": "遮罩挂在界面层、层级为\"幕布\"(压过所有面板);进度条配色由组装层按界面主题注入。开发构建额外挂一行资源级调试文字。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2279,
+          "m": "private ensureTransitionOverlay(): void {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2293,
+          "m": "root.zIndex = UI_LAYER_Z.curtain;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2344,
+          "m": "this.renderer.uiLayer.addChild(root);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 989,
+          "m": "this.sceneManager.setTransitionPalette({"
+        }
+      ]
+    },
+    {
+      "id": "s11",
+      "order": 11,
+      "status": "active",
+      "lane": "render",
+      "label": "淡出 300ms(遮罩 0→1)",
+      "async": "await",
+      "detail": "用浏览器逐帧回调(requestAnimationFrame,不走游戏主循环)把遮罩透明度线性拉到全黑,切场作业等它结束。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2163,
+          "m": "await this.fadeOut(300);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2269,
+          "m": "await this.animateAlpha(this.transitionOverlay!, 0, 1, durat"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2398,
+          "m": "this.animRafId = requestAnimationFrame(tick);"
+        }
+      ]
+    },
+    {
+      "id": "s12",
+      "order": 12,
+      "status": "active",
+      "lane": "scene",
+      "label": "卸载旧场景:世代号 +1",
+      "async": "sync",
+      "detail": "记下来源场景 id 后同步卸载。世代号自增,让跨 await 持有旧场景引用的流程(如过场实体重建)自行作废。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2165,
+          "m": "const fromSceneId = this.currentScene?.id ?? null;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2166,
+          "m": "this.unloadScene();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2076,
+          "m": "this.sceneEpoch++;"
+        }
+      ]
+    },
+    {
+      "id": "s13",
+      "order": 13,
+      "status": "active",
+      "lane": "scene",
+      "label": "发出\"即将卸载\"",
+      "async": "event",
+      "event": "scene:beforeUnload",
+      "detail": "同步广播,监听者此刻还能看到旧场景的实体:粒子清场、燃烧离场、威胁/护佑/阵风/雷光/震屏/压暗/闪避音量清零、演出会话打断、点火表演中止、巡逻与在途轨迹作废、透视缩放句柄清空、热点深度滤镜摘除。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2077,
+          "m": "this.eventBus.emit('scene:beforeUnload');"
+        }
+      ]
+    },
+    {
+      "id": "s14",
+      "order": 14,
+      "status": "active",
+      "lane": "game",
+      "label": "交互表清空",
+      "async": "sync",
+      "detail": "注入回调:交互系统的热点/NPC 表置空,脚步发声体同步重建(为空)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2078,
+          "m": "this.interactionSetter?.([], []);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6373,
+          "m": "this.interactionSystem.setHotspots(hotspots);"
+        }
+      ]
+    },
+    {
+      "id": "s15",
+      "order": 15,
+      "status": "active",
+      "lane": "asset",
+      "label": "释放旧场景的资源作用域",
+      "async": "sync",
+      "detail": "解除旧场景清单对纹理/JSON/音频等的钉住,按类型做一次淘汰(无人再钉的可被逐出缓存)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2080,
+          "m": "this.assetManager.releaseScope(this.currentSceneScopeId);"
+        },
+        {
+          "f": "src/core/AssetManager.ts",
+          "l": 516,
+          "m": "releaseScope(scopeId: string): void {"
+        },
+        {
+          "f": "src/core/AssetManager.ts",
+          "l": 525,
+          "m": "for (const type of Object.keys(this.buckets) as AssetType[])"
+        }
+      ]
+    },
+    {
+      "id": "s16",
+      "order": 16,
+      "status": "active",
+      "lane": "scene",
+      "label": "销毁热点与 NPC",
+      "async": "sync",
+      "detail": "逐个先把实体身上的滤镜从深度系统的每帧驱动表摘掉并销毁(组装层注入的释放器),再销毁实体本身。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2086,
+          "m": "this.releaseHotspotFilters(hotspot);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2092,
+          "m": "this.releaseNpcFilters(npc);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6387,
+          "m": "this.sceneManager.setEntityFilterReleaser((filters) => {"
+        }
+      ]
+    },
+    {
+      "id": "s17",
+      "order": 17,
+      "status": "active",
+      "lane": "lighting",
+      "label": "拆场景光照",
+      "async": "sync",
+      "detail": "注入回调:光照同步基线作废;角色侧的实体灯、显示变换、灯系数退回恒等;统一角色光照拆除(该路径已关停,此处调用照常执行);最后卸场景光照(网格与渲染目标)。顺序要求先于背景容器销毁。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2100,
+          "m": "this.lightingUnloader?.();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6491,
+          "m": "this.sceneManager.setLightingUnloader(() => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6499,
+          "m": "this.characterLighting.applyLights(null);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6502,
+          "m": "this.sceneLighting.unload();"
+        }
+      ]
+    },
+    {
+      "id": "s18",
+      "order": 18,
+      "status": "active",
+      "lane": "lighting",
+      "label": "拆草木摆动",
+      "async": "sync",
+      "detail": "注入回调:先从打光背景上解绑摆动图,再销毁摆动背景、丢弃摆动贴图、风归零。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2101,
+          "m": "this.swayUnloader?.();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6516,
+          "m": "this.sceneManager.setSwayUnloader(() => {"
+        }
+      ]
+    },
+    {
+      "id": "s19",
+      "order": 19,
+      "status": "active",
+      "lane": "render",
+      "label": "移除并销毁背景容器",
+      "async": "sync",
+      "detail": "从渲染器的背景层摘下整个背景容器并连同子节点销毁;主背景精灵/纹理引用清空。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2106,
+          "m": "this.renderer.backgroundLayer.removeChild(this.sceneContaine"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2107,
+          "m": "this.sceneContainerBg.destroy({ children: true });"
+        }
+      ]
+    },
+    {
+      "id": "s20",
+      "order": 20,
+      "status": "active",
+      "lane": "lighting",
+      "label": "拆深度与角色照明载荷",
+      "async": "sync",
+      "detail": "注入回调:卸深度系统(清系统滤镜表)、清玩家滤镜、清全部实体阴影、调试可视化解绑纹理、销毁角色照明烘焙载荷、刷新玩家碰撞、销毁辐照度探针、清光照环境。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2111,
+          "m": "this.depthUnloader?.();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6530,
+          "m": "this.sceneManager.setDepthUnloader(() => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6536,
+          "m": "this.sceneDepthSystem.unload();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6544,
+          "m": "this.characterLighting.destroy();"
+        }
+      ]
+    },
+    {
+      "id": "s21",
+      "order": 21,
+      "status": "active",
+      "lane": "game",
+      "label": "区域表清空 · 当前场景置空",
+      "async": "sync",
+      "detail": "区域系统拿到空表;场景管理的\"当前场景\"置空。卸载结束。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2112,
+          "m": "this.zoneSetter?.([]);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2113,
+          "m": "this.currentScene = null;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6369,
+          "m": "this.zoneSystem.setZones(zones);"
+        }
+      ]
+    },
+    {
+      "id": "s22",
+      "order": 22,
+      "status": "active",
+      "lane": "scene",
+      "label": "开始装载新场景(揭幕回调随参带入)",
+      "async": "await",
+      "detail": "把\"淡入 300ms\"包成揭幕回调、把进度条刷新包成进度回调,一并交给 loadScene;切场作业等整个装载(含 onEnter)结束。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2169,
+          "m": "const reveal = (): Promise<void> => this.fadeIn(300);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2171,
+          "m": "await this.loadScene(tid, spawnPointId, cameraPosition, from"
+        }
+      ]
+    },
+    {
+      "id": "s23",
+      "order": 23,
+      "status": "active",
+      "lane": "asset",
+      "label": "读场景数据 JSON",
+      "async": "await",
+      "detail": "进度条置 0 并显示\"场景 JSON\";资源管理返回一份深拷贝的场景数据。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1731,
+          "m": "onLoadProgress?.(0, `场景 JSON · ${sceneId}`);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1732,
+          "m": "const sceneData = await this.assetManager.loadSceneData(scen"
+        }
+      ]
+    },
+    {
+      "id": "s24",
+      "order": 24,
+      "status": "active",
+      "lane": "scene",
+      "label": "按当前时段定外观",
+      "async": "sync",
+      "detail": "在装任何资源前,按当前时段把背景/光照/深度/环境音/滤镜换成该时段的那一套,并留一份未覆盖的外观基底供之后时段变化时重算。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1742,
+          "m": "const phase0 = this.currentPhaseGetter?.() ?? '';"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1754,
+          "m": "applySceneAppearance(sceneData, phase0);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1755,
+          "m": "this.appearanceBase = {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2992,
+          "m": "this.sceneManager.setCurrentPhaseGetter(() => this.dayManage"
+        }
+      ]
+    },
+    {
+      "id": "s25",
+      "order": 25,
+      "status": "active",
+      "lane": "scene",
+      "label": "当前场景就位 · 生成资源清单",
+      "async": "await",
+      "detail": "清单涵盖:背景层、按记忆过滤后的热点展示图、NPC 动画包、深度图/碰撞图、世界滤镜、场景音频。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1759,
+          "m": "this.currentScene = sceneData;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1760,
+          "m": "const manifest = await this.buildSceneResourceManifest(scene"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1601,
+          "m": "private async buildSceneResourceManifest(sceneId: string, sc"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1711,
+          "m": "for (const ref of this.audioManifestResolver?.(sceneData.bgm"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6366,
+          "m": "this.sceneManager.setAudioManifestResolver((bgm, ambient)"
+        }
+      ]
+    },
+    {
+      "id": "s26",
+      "order": 26,
+      "status": "active",
+      "lane": "scene",
+      "label": "读取本场景记忆与过场舞台",
+      "async": "sync",
+      "detail": "取本场景已提交的记忆;若本场景正被某个过场借作舞台,取出该过场 id,之后实体按\"过场上下文\"装。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1762,
+          "m": "const committedMemory = this.getCommittedMemory(sceneId);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1763,
+          "m": "const activeCutsceneId = this.cutsceneStaging?.sceneId === s"
+        }
+      ]
+    },
+    {
+      "id": "s27",
+      "order": 27,
+      "status": "active",
+      "lane": "asset",
+      "label": "按清单并行预载全部资源",
+      "async": "parallel",
+      "detail": "清单里所有条目同时发起加载(单条失败容忍),每完成一条推进一次进度条;完成后本清单记为当前场景的资源作用域。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1792,
+          "m": "await this.assetManager.preloadManifest(manifest, {"
+        },
+        {
+          "f": "src/core/AssetManager.ts",
+          "l": 472,
+          "m": "await Promise.all(refs.map(loadOne));"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1802,
+          "m": "this.currentSceneScopeId = manifest.scopeId;"
+        }
+      ]
+    },
+    {
+      "id": "s28",
+      "order": 28,
+      "status": "active",
+      "lane": "render",
+      "label": "搭背景层",
+      "async": "await",
+      "detail": "按 z 排序逐层(串行 await)取纹理、建精灵并拉伸到世界尺寸;第一层记作主背景(光照与摆动要替换它),并由它算出世界→像素比例。没有背景层时画占位背景。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1809,
+          "m": "this.sceneContainerBg = new Container();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1819,
+          "m": "const texture = await this.assetManager.loadTexture(layer.im"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1836,
+          "m": "this.primaryBgSprite = sprite;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1845,
+          "m": "this.sceneContainerBg = createPlaceholderBackground("
+        }
+      ]
+    },
+    {
+      "id": "s29",
+      "order": 29,
+      "status": "active",
+      "lane": "render",
+      "label": "背景容器挂上背景层",
+      "async": "sync",
+      "detail": "从这一刻起新背景在显示树里(被遮罩盖着)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1851,
+          "m": "this.renderer.backgroundLayer.addChild(this.sceneContainerBg"
+        }
+      ]
+    },
+    {
+      "id": "s30",
+      "order": 30,
+      "status": "active",
+      "lane": "scene",
+      "label": "生成热点",
+      "async": "await",
+      "detail": "逐个(串行 await)实例化:过场绑定的用过场暂存覆盖;其余跳过\"仅过场\"、已拾取、被记忆禁用的,套上记忆里的运行时覆盖;可燃物换展示图;恢复会话级隐藏;挂进实体层;再加载展示图纹理。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1866,
+          "m": "if (committedMemory?.pickedUpHotspots.includes(def.id)) cont"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1870,
+          "m": "const hotspot = await this.instantiateHotspot(def, ovr as Ho"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1479,
+          "m": "this.renderer.entityLayer.addChild(hotspot.container);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1470,
+          "m": "const burnDi = await this.burnableDisplayOf(defToUse.burnabl"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 1337,
+          "m": "this.sceneManager.setBurnTemplateResolver((id) => this.burnS"
+        }
+      ]
+    },
+    {
+      "id": "s31",
+      "order": 31,
+      "status": "active",
+      "lane": "scene",
+      "label": "生成 NPC",
+      "async": "await",
+      "detail": "逐个(串行 await)实例化:角色注册表默认值 → 记忆里的运行时覆盖;加载动画描述、精灵图、挂点;静态展示图 NPC 走同一入口;挂进实体层。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1892,
+          "m": "const npc = await this.instantiateNpc(npcDef, snap);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1494,
+          "m": "const withChar = applyCharacterDefaults(npcDef, this.charact"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1558,
+          "m": "this.renderer.entityLayer.addChild(npc.container);"
+        }
+      ]
+    },
+    {
+      "id": "s32",
+      "order": 32,
+      "status": "active",
+      "lane": "scene",
+      "label": "生成\"演出留下的\"对象",
+      "async": "await",
+      "detail": "记忆里 spawnedNpcs(演出中生成、播完留在场景的对象)按普通 NPC 同一管线实例化。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1899,
+          "m": "for (const npcDef of Object.values(this.getCommittedMemory(s"
+        }
+      ]
+    },
+    {
+      "id": "s33",
+      "order": 33,
+      "status": "active",
+      "lane": "game",
+      "label": "交互表换上新实体",
+      "async": "sync",
+      "detail": "注入回调:交互系统收到新热点/NPC 表;脚步发声体跟实体表一起重建。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1907,
+          "m": "this.interactionSetter?.(this.currentHotspots, this.currentN"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6372,
+          "m": "this.sceneManager.setInteractionSetter((hotspots, npcs) => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6382,
+          "m": "this.refreshFootstepEmitters();"
+        }
+      ]
+    },
+    {
+      "id": "s34",
+      "order": 34,
+      "status": "active",
+      "lane": "game",
+      "label": "玩家落点与镜头",
+      "async": "sync",
+      "detail": "落点优先级:显式坐标 > 指定出生点 > 默认出生点。注入回调把玩家放上去,并设镜头边界、像素比、缩放、世界缩放、锚点,镜头瞬移到位。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1909,
+          "m": "this.applyPlayerSpawnAndCamera(sceneData, spawnPointId, came"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2069,
+          "m": "const posX = cameraPosition?.x ?? spawn.x;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6331,
+          "m": "this.sceneManager.setCameraSetter((boundsW, boundsH, snapX,"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6348,
+          "m": "this.camera.snapTo(snapX, snapY);"
+        }
+      ]
+    },
+    {
+      "id": "s35",
+      "order": 35,
+      "status": "active",
+      "lane": "audio",
+      "label": "换场景音频与声学空间",
+      "async": "sync",
+      "detail": "注入回调:背景乐/环境音切到本场景,换混响空间,刷新听者位置,通知工作台同步钩子(开发用)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1911,
+          "m": "this.audioApplier?.(sceneData.bgm, sceneData.ambientSounds,"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6355,
+          "m": "this.audioManager.applySceneAudio(bgm, ambient);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6357,
+          "m": "this.audioManager.setAcousticSpace(acousticSpace);"
+        }
+      ]
+    },
+    {
+      "id": "s36",
+      "order": 36,
+      "status": "active",
+      "lane": "game",
+      "label": "注册区域",
+      "async": "sync",
+      "detail": "按记忆禁用、会话禁用、分组禁用等过滤后的区域表交给区域系统。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1912,
+          "m": "this.zoneSetter?.(this.computeEffectiveZones(sceneId, sceneD"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 932,
+          "m": "private computeEffectiveZones(sceneId: string, raw: ZoneDef["
+        }
+      ]
+    },
+    {
+      "id": "s37",
+      "order": 37,
+      "status": "active",
+      "lane": "lighting",
+      "label": "装深度 · 实体光照 · 角色照明载荷",
+      "async": "await",
+      "detail": "注入回调(纳入加载门):有深度配置则等深度系统装深度图/碰撞图,否则关深度;然后按主背景建辐照度探针并启用实体光照(全局开关关则禁用);再等角色照明烘焙载荷装完;最后刷新玩家碰撞。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1916,
+          "m": "await this.depthLoader(sceneId, sceneData, worldToPixelX, wo"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6415,
+          "m": "this.sceneManager.setDepthLoader(async (sceneId, sceneData,"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6419,
+          "m": "await this.sceneDepthSystem.load("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6446,
+          "m": "this.setupSceneLighting(sceneData, worldToPixelX, worldToPix"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6453,
+          "m": "await this.characterLighting.load("
+        }
+      ]
+    },
+    {
+      "id": "s38",
+      "order": 38,
+      "status": "active",
+      "lane": "lighting",
+      "label": "装场景光照(原画 + 加性灯),替换主背景",
+      "async": "await",
+      "detail": "注入回调:场景光照读几何场与法线/albedo,建光照通道与点亮背景;失败或未烘则返回空、背景照旧。成功则先渲一次缓存,把实体灯与显示变换交给角色照明,重设风并等草木摆动建好,返回点亮网格;场景管理把它插到主背景精灵的位置并隐藏原精灵。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1925,
+          "m": "const litMesh = await this.lightingLoader(sceneId, sceneData"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6463,
+          "m": "const ok = await this.sceneLighting.load(sceneId, sceneData,"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6469,
+          "m": "this.sceneLighting.update(this.renderer.app.renderer);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6485,
+          "m": "await this.buildSway(sceneId, sceneData, primary, undefined,"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1929,
+          "m": "this.primaryBgSprite.renderable = false;"
+        }
+      ]
+    },
+    {
+      "id": "s39",
+      "order": 39,
+      "status": "disabled",
+      "lane": "lighting",
+      "label": "统一角色光照路径(已关停)",
+      "async": "sync",
+      "detail": "装场景光照时仍会调\"接统一角色光照\",但开关 UNIFIED_CHAR_PATH_ENABLED=false 使其第一句就拆除并重建实体着色器后返回;后面的统一角色光照装配整段不执行。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6477,
+          "m": "this.setupUnifiedCharacterLighting();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 443,
+          "m": "const UNIFIED_CHAR_PATH_ENABLED = false;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6608,
+          "m": "if (!UNIFIED_CHAR_PATH_ENABLED) {"
+        }
+      ]
+    },
+    {
+      "id": "s40",
+      "order": 40,
+      "status": "active",
+      "lane": "lighting",
+      "label": "草木摆动(仅未打光的背景)",
+      "async": "await",
+      "detail": "背景没被点亮(仍是平铺精灵)时才由这里装:重设风、建摆动网格替换主背景精灵;失败回落原背景。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1940,
+          "m": "const swayMesh = await this.swayLoader(sceneId, sceneData, t"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6507,
+          "m": "this.sceneManager.setSwayLoader(async (sceneId, sceneData, p"
+        }
+      ]
+    },
+    {
+      "id": "s41",
+      "order": 41,
+      "status": "active",
+      "lane": "render",
+      "label": "世界滤镜",
+      "async": "await",
+      "detail": "场景配了滤镜就等渲染器加载并套到世界层;失败或没配则清除世界滤镜。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1954,
+          "m": "await this.renderer.loadAndSetWorldFilter(sceneData.filterId"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1960,
+          "m": "this.renderer.clearWorldFilter();"
+        }
+      ]
+    },
+    {
+      "id": "s42",
+      "order": 42,
+      "status": "active",
+      "lane": "scene",
+      "label": "进度条打满",
+      "async": "sync",
+      "detail": "进度 100%\"就绪\"。onEnter 不计入进度。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1964,
+          "m": "onLoadProgress(1, `就绪 · ${sceneId}`);"
+        }
+      ]
+    },
+    {
+      "id": "s43",
+      "order": 43,
+      "status": "active",
+      "lane": "scene",
+      "label": "发出\"进入场景\"",
+      "async": "event",
+      "event": "scene:enter",
+      "detail": "同步广播(带场景 id、来源场景、场景名):顶栏场景名亮 4 秒、指引层重建、地图记当前场景;开发构建另有若干调试面板监听。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1969,
+          "m": "this.eventBus.emit('scene:enter', { sceneId, fromSceneId: fr"
+        }
+      ]
+    },
+    {
+      "id": "s44",
+      "order": 44,
+      "status": "active",
+      "lane": "scene",
+      "label": "发出\"场景就绪\"",
+      "async": "event",
+      "event": "scene:ready",
+      "detail": "同步广播,监听者按注册先后跑完才返回:位面对账、日程就位、粒子重建(发出不等)、燃烧激活(发出不等)、生命值与威胁源、组装层给实体挂滤镜/阴影/巡逻。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1970,
+          "m": "this.eventBus.emit('scene:ready');"
+        }
+      ]
+    },
+    {
+      "id": "s45",
+      "order": 45,
+      "status": "active",
+      "lane": "listeners",
+      "label": "位面对账 · NPC 日程就位",
+      "async": "sync",
+      "detail": "位面系统按叙事全量重算当前位面并无条件对账一次;日程系统取消在途走位,把 NPC 按当前时刻直接摆到位(不演出)。",
+      "cites": [
+        {
+          "f": "src/systems/PlaneReconciler.ts",
+          "l": 127,
+          "m": "this.recomputeActivePlaneId();"
+        },
+        {
+          "f": "src/systems/NpcScheduleSystem.ts",
+          "l": 128,
+          "m": "this.applyScheduledPositions();"
+        }
+      ]
+    },
+    {
+      "id": "s46",
+      "order": 46,
+      "status": "active",
+      "lane": "listeners",
+      "label": "粒子 · 燃烧:后台开建",
+      "async": "fire-and-forget",
+      "detail": "粒子系统开始重建本场景实例、燃烧系统激活本场景可燃物,两者都不被等待;揭幕前闸会限时等粒子资源落地。",
+      "cites": [
+        {
+          "f": "src/systems/vfx/VfxSystem.ts",
+          "l": 292,
+          "m": "this.onSceneReady = () => { void this.startRebuild(); };"
+        },
+        {
+          "f": "src/systems/burn/BurnSystem.ts",
+          "l": 280,
+          "m": "this.onSceneReady = () => { void this.activateLiveScene(); }"
+        }
+      ]
+    },
+    {
+      "id": "s47",
+      "order": 47,
+      "status": "active",
+      "lane": "listeners",
+      "label": "生命值:进入场景 · 登记威胁源",
+      "async": "sync",
+      "detail": "生命系统记当前场景、刷新护佑,并把本场景 NPC/热点身上配的威胁源登记进威胁系统。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 2880,
+          "m": "this.healthSystem.enterScene(this.sceneManager.currentSceneD"
+        }
+      ]
+    },
+    {
+      "id": "s48",
+      "order": 48,
+      "status": "active",
+      "lane": "game",
+      "label": "就绪处理:玩家与场景属性",
+      "async": "sync",
+      "detail": "组装层的 scene:ready 处理前半段:记燃烧就绪场景、按场景同步玩家移动参数、姿态复位、销毁旧挂件视图、手持挂件重派生、预拉本场景对话图、建透视缩放与相机跟随透视、按场景重设风、交互系统立即刷一帧。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 8022,
+          "m": "this.listenEvent('scene:ready', () => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8024,
+          "m": "this.player.syncMovementFromScene(this.sceneManager.currentS"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8039,
+          "m": "this.preloadSceneDialogueGraphs();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8056,
+          "m": "this.interactionSystem.update(0);"
+        }
+      ]
+    },
+    {
+      "id": "s49",
+      "order": 49,
+      "status": "active",
+      "lane": "game",
+      "label": "就绪处理:实体滤镜 · 巡逻 · 阴影",
+      "async": "sync",
+      "detail": "给玩家挂场景滤镜(有烘焙载荷走网格着色 + 纯遮挡,否则走光照/遮挡滤镜);每个 NPC 挂透视与滤镜并按条件启动巡逻;带展示图的热点挂深度滤镜;整表重建投影阴影,广播阴影与 AO,同步像素密度低通;深度调试可视化绑定当前深度图。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 8058,
+          "m": "this.attachPlayerSceneFilter();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8062,
+          "m": "this.startNpcPatrolIfEligible(npc);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8067,
+          "m": "this.attachHotspotDepthFilter(h);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8070,
+          "m": "this.rebuildEntityShadows();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8084,
+          "m": "this.depthDebugVisualizer.onSceneLoaded("
+        }
+      ]
+    },
+    {
+      "id": "s50",
+      "order": 50,
+      "status": "active",
+      "lane": "scene",
+      "label": "揭幕前闸:遮罩下预编着色器 · 粒子预热",
+      "async": "parallel",
+      "detail": "注入的闸:同时等\"粒子着色器编译完成\"和\"粒子系统准备揭幕\"(两者各自限时),然后在遮罩下预先算好雷击落点采样几何。闸抛错只记日志、照常揭幕。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1976,
+          "m": "await this.revealGate(sceneId);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2230,
+          "m": "this.sceneManager.setRevealGate(async () => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2231,
+          "m": "await Promise.all(["
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2233,
+          "m": "this.vfxSystem.prepareForReveal(REVEAL_GATE_VFX_TIMEOUT_MS),"
+        }
+      ]
+    },
+    {
+      "id": "s51",
+      "order": 51,
+      "status": "active",
+      "lane": "render",
+      "label": "揭幕:淡入 300ms 后撤遮罩",
+      "async": "await",
+      "detail": "揭幕回调:遮罩透明度 1→0(逐帧回调),完成后销毁遮罩。揭幕失败只记日志。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1986,
+          "m": "await onReveal();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2275,
+          "m": "await this.animateAlpha(this.transitionOverlay!, 1, 0, durat"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2276,
+          "m": "this.removeTransitionOverlay();"
+        }
+      ]
+    },
+    {
+      "id": "s52",
+      "order": 52,
+      "status": "active",
+      "lane": "scene",
+      "label": "发出\"揭幕完成\"",
+      "async": "event",
+      "event": "scene:revealed",
+      "detail": "场景已可见、onEnter 之前:状态机把\"切场中\"还给\"探索\";叙事包导演按新场景做一次入场评估(读档恢复期间不评估)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1995,
+          "m": "this.eventBus.emit('scene:revealed', { sceneId, fromSceneId:"
+        }
+      ]
+    },
+    {
+      "id": "s53",
+      "order": 53,
+      "status": "active",
+      "lane": "state",
+      "label": "切场中 → 探索(揭幕即还权)",
+      "async": "sync",
+      "detail": "只在当前仍是\"切场中\"时才改;onEnter 里的开场演出因此从探索态起跳。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 3462,
+          "m": "const endSceneTransition = (): void => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3467,
+          "m": "this.listenEvent('scene:revealed', endSceneTransition);"
+        }
+      ]
+    },
+    {
+      "id": "s54",
+      "order": 54,
+      "status": "active",
+      "lane": "actions",
+      "label": "执行场景 onEnter 动作批",
+      "async": "await",
+      "detail": "场景被过场借作舞台时跳过;否则进入\"onEnter 批内\"标记,经组装层注入的执行器以\"场景\"为归属等整批动作跑完(可含对话、过场、换场景等);失败只记日志。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2003,
+          "m": "const loadedAsCutsceneStage = this.cutsceneStaging?.sceneId"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2009,
+          "m": "await this.sceneEnterRunner(rootEnter);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6555,
+          "m": "this.sceneManager.setSceneEnterRunner(async (actions) => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6562,
+          "m": "await this.actionExecutor.executeBatchAwait(actions, makeOwn"
+        }
+      ]
+    },
+    {
+      "id": "s55",
+      "order": 55,
+      "status": "active",
+      "lane": "scene",
+      "label": "直接装载路径:放行登记的重入切场",
+      "async": "fire-and-forget",
+      "detail": "只在不经 switchScene 的直接装载(开局首场景、重载)时,这里放行 onEnter 批内登记的切场请求;switchScene 路径留给外层作业收尾处。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2019,
+          "m": "if (!this.isSwitching) {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2020,
+          "m": "this.consumePendingReentrantSwitch();"
+        }
+      ]
+    },
+    {
+      "id": "s56",
+      "order": 56,
+      "status": "active",
+      "lane": "scene",
+      "label": "装载失败:回载原场景 · 提示",
+      "async": "await",
+      "detail": "新场景装载抛错:卸掉半装的东西,尝试带同一揭幕回调回载来源场景;发一条通知(已退回 / 加载失败);两者都失败则直接撤遮罩,避免黑屏锁死。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2175,
+          "m": "console.error(`SceneManager: 加载场景 \"${tid}\" 失败`, e);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2181,
+          "m": "await this.loadScene(fromSceneId, undefined, undefined, tid,"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2190,
+          "m": "this.eventBus.emit('notification:show', {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2196,
+          "m": "this.removeTransitionOverlay();"
+        }
+      ]
+    },
+    {
+      "id": "s57",
+      "order": 57,
+      "status": "active",
+      "lane": "scene",
+      "label": "清\"切场进行中\" · 发出\"切场结束\"",
+      "async": "event",
+      "event": "scene:transitionEnd",
+      "detail": "无论成功、失败还是双失败都会发(finally)。状态机收到后同样把残留的\"切场中\"还给\"探索\",兜住揭幕没发生的路径。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2201,
+          "m": "this.isSwitching = false;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2204,
+          "m": "this.eventBus.emit('scene:transitionEnd', { toSceneId: tid }"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3468,
+          "m": "this.listenEvent('scene:transitionEnd', endSceneTransition);"
+        }
+      ]
+    },
+    {
+      "id": "s58",
+      "order": 58,
+      "status": "active",
+      "lane": "scene",
+      "label": "放行 onEnter 批内登记的切场",
+      "async": "fire-and-forget",
+      "detail": "外层等完这次作业后(成败都执行),若 onEnter 批里登记过换场景,再发起一次 switchScene,不等结果。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2216,
+          "m": "this.consumePendingReentrantSwitch();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2221,
+          "m": "private consumePendingReentrantSwitch(): void {"
+        }
+      ]
+    },
+    {
+      "id": "s59",
+      "order": 59,
+      "status": "active",
+      "lane": "trigger",
+      "label": "还原动作锁",
+      "async": "sync",
+      "detail": "切场承诺完成后调还原:状态若仍是上锁时的锁态 → 还原到上锁前;若锁是\"切场中\"、此刻已被揭幕改回探索而上锁前是动作批锁 → 重挂动作批锁,让批里后续动作仍在锁下执行。",
+      "cites": [
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2274,
+          "m": ".then(restore)"
+        },
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2258,
+          "m": "if (cur === lockState) {"
+        },
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 2265,
+          "m": "d.stateController.setState(GameState.ActionSequence);"
+        }
+      ]
+    },
+    {
+      "id": "s60",
+      "order": 60,
+      "status": "active",
+      "lane": "scene",
+      "label": "【开局首场景】遮罩瞬间全黑起手",
+      "async": "await",
+      "detail": "没有旧场景可淡出:直接建遮罩并置全黑,揭幕回调改为淡入 400ms,然后走同一个 loadScene(因此不发 scene:transition / scene:transitionEnd)。装载失败撤遮罩后把错误抛回启动流程。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2035,
+          "m": "this.transitionOverlay!.alpha = 1;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2036,
+          "m": "const reveal = (): Promise<void> => this.fadeIn(400);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2038,
+          "m": "await this.loadScene("
+        }
+      ]
+    },
+    {
+      "id": "s61",
+      "order": 61,
+      "status": "active",
+      "lane": "game",
+      "label": "【开局首场景】装完后开序章过场",
+      "async": "await",
+      "detail": "首场景装载(含 onEnter)结束后,启动流程再等初始序章过场。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4326,
+          "m": "await this.tryStartInitialPrologue();"
+        }
+      ]
+    },
+    {
+      "id": "s62",
+      "order": 62,
+      "status": "active",
+      "lane": "trigger",
+      "label": "【读档】先分发存档,再重载场景",
+      "async": "await",
+      "detail": "存档管理:解析与结构校验 → 对当前全系统拍快照 → 把存档分发给各系统(场景管理此时清空并重建场景记忆、清会话桶)→ 等重载存档里的场景。失败则回滚快照并重载原场景。",
+      "cites": [
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 375,
+          "m": "const snapshot = this.collector();"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 380,
+          "m": "this.distributor(payload.systems);"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 384,
+          "m": "await this.sceneReloader(sceneId);"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 391,
+          "m": "await this.sceneReloader(snapshotSceneId);"
+        }
+      ]
+    },
+    {
+      "id": "s63",
+      "order": 63,
+      "status": "active",
+      "lane": "game",
+      "label": "【重载】同步卸载 + 直接装载",
+      "async": "await",
+      "detail": "reloadScene:同步卸载(无淡出、无遮罩、不发 scene:transition);取出读档登记的玩家坐标作为落点覆盖;不带进度与揭幕回调调 loadScene(因此没有遮罩可撤,scene:revealed 照发)。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 9414,
+          "m": "private async reloadScene(sceneId: string): Promise<void> {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9415,
+          "m": "this.sceneManager.unloadScene();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9421,
+          "m": "await this.sceneManager.loadScene(sceneId, undefined, restor"
+        }
+      ]
+    },
+    {
+      "id": "s64",
+      "order": 64,
+      "status": "active",
+      "lane": "state",
+      "label": "【重载】收尾强制回探索",
+      "async": "sync",
+      "detail": "onEnter 可能已开演:当前若不是对话/过场/遭遇/小游戏,才把状态写成\"探索\"。按槽启动成功后启动流程也写一次\"探索\"。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 9431,
+          "m": "this.stateController.setState(GameState.Exploring);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4943,
+          "m": "this.stateController.setState(GameState.Exploring);"
+        }
+      ]
+    },
+    {
+      "id": "s65",
+      "order": 65,
+      "status": "active",
+      "lane": "game",
+      "label": "【时段换装】登记 → 安全窗口 → 遮幕重载",
+      "async": "fire-and-forget",
+      "detail": "时段变更只登记;每帧检查:非探索、切场中、上次换装在途都不换;外观不变只重套灯光参数;外观会变则记下玩家站位,发起换装(不等):按表现档先等黑幕盖上 500ms → 等 reloadScene → 最后等黑幕揭开 500ms(失败也揭)。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 3011,
+          "m": "this.pendingPhaseSwap = true;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9347,
+          "m": "if (this.stateController.currentState !== GameState.Explorin"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9359,
+          "m": "if (!this.sceneManager.appearanceChangesWithPhase(to)) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9398,
+          "m": "await this.sceneManager.showBlackout(ms);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9407,
+          "m": "if (covered) await this.sceneManager.hideBlackout(ms);"
+        }
+      ]
+    },
+    {
+      "id": "s66",
+      "order": 66,
+      "status": "active",
+      "lane": "trigger",
+      "label": "【过场跨场景】先登记舞台,再切场",
+      "async": "await",
+      "detail": "过场开演前登记\"过场舞台\"(新建一份空的暂存记忆);随后切场装载时只按过场上下文装绑定实体、跳过该场景的 onEnter;过场结束后解除舞台。",
+      "cites": [
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 770,
+          "m": "this.sceneManagerAPI.beginCutsceneStaging(id, sid);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1014,
+          "m": "memory: this.createEmptyMemory(),"
+        },
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 831,
+          "m": "this.sceneManagerAPI?.endCutsceneStaging();"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "event": "scene:transition",
+      "when": "switchScene 作业开头(确认要换到另一个场景后),淡出之前。开局首场景、reloadScene 不发。",
+      "emitters": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2157,
+          "m": "this.eventBus.emit('scene:transition', {"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "组装层 · 状态机",
+          "does": "探索 → 切场中(只从探索进)",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 3459,
+              "m": "this.stateController.setState(GameState.SceneTransition);"
+            }
+          ]
+        },
+        {
+          "who": "音频",
+          "does": "播换场提示音;500ms 内刚播过地图旅行音则不播",
+          "cites": [
+            {
+              "f": "src/systems/AudioManager.ts",
+              "l": 1826,
+              "m": "this.onSfx('scene:transition', () => {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": "map:travel",
+      "when": "地图面板点目的地(换场入口之一)",
+      "emitters": [
+        {
+          "f": "src/ui/MapUI.ts",
+          "l": 420,
+          "m": "this.eventBus.emit('map:travel', { sceneId });"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "事件桥",
+          "does": "弹掉地图界面态、过位面闸、执行 switchScene 动作",
+          "cites": [
+            {
+              "f": "src/core/EventBridge.ts",
+              "l": 129,
+              "m": "this.listen('map:travel'"
+            }
+          ]
+        },
+        {
+          "who": "音频",
+          "does": "播地图旅行音并记时间",
+          "cites": [
+            {
+              "f": "src/systems/AudioManager.ts",
+              "l": 1830,
+              "m": "this.onSfx('map:travel', () => {"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": "scene:beforeUnload",
+      "when": "unloadScene 第二句(世代号 +1 之后),旧实体尚未销毁。所有卸载都发,含 reloadScene。",
+      "emitters": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2077,
+          "m": "this.eventBus.emit('scene:beforeUnload');"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "粒子系统",
+          "does": "清场",
+          "cites": [
+            {
+              "f": "src/systems/vfx/VfxSystem.ts",
+              "l": 293,
+              "m": "this.onSceneUnload = () => this.clearScene();"
+            },
+            {
+              "f": "src/systems/vfx/VfxSystem.ts",
+              "l": 307,
+              "m": "ctx.eventBus.on('scene:beforeUnload', this.onSceneUnload);"
+            }
+          ]
+        },
+        {
+          "who": "燃烧系统",
+          "does": "离开活场景",
+          "cites": [
+            {
+              "f": "src/systems/burn/BurnSystem.ts",
+              "l": 281,
+              "m": "this.onSceneUnload = () => this.leaveLiveScene();"
+            }
+          ]
+        },
+        {
+          "who": "组装层(启动时挂)",
+          "does": "清威胁源/护佑/阵风、跟脚者脚点作废、雷光与震屏清掉、角色压暗复位、音量闪避清掉、演出会话全部打断",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 2855,
+              "m": "this.listenEvent('scene:beforeUnload', () => {"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 2876,
+              "m": "this.performanceSessions?.interruptAll('scene');"
+            }
+          ]
+        },
+        {
+          "who": "组装层(就绪处理里挂)",
+          "does": "点火表演中止、巡逻世代作废、在途轨迹全取消、透视句柄清空、热点深度滤镜摘除并销毁",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 7999,
+              "m": "this.listenEvent('scene:beforeUnload', () => {"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 8009,
+              "m": "this.trajectorySystem.cancelAll();"
+            }
+          ]
+        },
+        {
+          "who": "调试工具(仅开发构建)",
+          "does": "清 F10 坐标标记引用",
+          "cites": [
+            {
+              "f": "src/core/DebugTools.ts",
+              "l": 307,
+              "m": "this.deps.eventBus.on('scene:beforeUnload', this.sceneUnload"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": "scene:enter",
+      "when": "loadScene 装完全部资源/实体/光照、进度打满之后,与 scene:ready 紧挨着先发。",
+      "emitters": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1969,
+          "m": "this.eventBus.emit('scene:enter', { sceneId, fromSceneId: fr"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "指引层",
+          "does": "记当前场景并重建指引",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 2292,
+              "m": "this.guidanceLayerUI = new GuidanceLayerUI("
+            },
+            {
+              "f": "src/ui/GuidanceLayerUI.ts",
+              "l": 94,
+              "m": "this.eventBus.on('scene:enter', this.sceneEnterCb);"
+            }
+          ]
+        },
+        {
+          "who": "顶栏 HUD",
+          "does": "场景名亮 4 秒后淡出;收掉上一场景的区域提示",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 2356,
+              "m": "this.hud = new HUD(this.renderer, this.eventBus"
+            },
+            {
+              "f": "src/ui/HUD.ts",
+              "l": 559,
+              "m": "this.eventBus.on('scene:enter', this.sceneEnterCb);"
+            },
+            {
+              "f": "src/ui/HUD.ts",
+              "l": 511,
+              "m": "this.sceneNameFadeTimer = window.setTimeout(() => this.fadeS"
+            }
+          ]
+        },
+        {
+          "who": "事件桥",
+          "does": "地图面板记当前场景",
+          "cites": [
+            {
+              "f": "src/core/EventBridge.ts",
+              "l": 183,
+              "m": "this.listen('scene:enter', (p: { sceneId: string }) => mapUI"
+            }
+          ]
+        },
+        {
+          "who": "摆灯编辑模式 / F2 场景页 / 叙事调试器 / 运行时调试快照(仅开发构建)",
+          "does": "刷新各自的\"当前场景\"显示或推快照",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 3536,
+              "m": "this.eventBus.on('scene:enter', cb);"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 4115,
+              "m": "this.eventBus.on('scene:enter', cb);"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 4563,
+              "m": "['scene:enter', () => bridge.noteWorldChanged('scene.enter')"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 9663,
+              "m": "'scene:enter',"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": "scene:ready",
+      "when": "紧接 scene:enter;揭幕前闸之前。监听者全部同步跑完 loadScene 才继续。另:画布特效宿主在它自己私有的一条总线上也发同名事件,不到达主总线。",
+      "emitters": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1970,
+          "m": "this.eventBus.emit('scene:ready');"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "位面对账",
+          "does": "按叙事重算命名与当前位面,无条件对账一次",
+          "cites": [
+            {
+              "f": "src/systems/PlaneReconciler.ts",
+              "l": 162,
+              "m": "this.eventBus.on('scene:ready', this.onSceneReady);"
+            },
+            {
+              "f": "src/systems/PlaneReconciler.ts",
+              "l": 128,
+              "m": "this.reconcile();"
+            }
+          ]
+        },
+        {
+          "who": "NPC 日程",
+          "does": "取消在途走位,按当前时刻直接就位",
+          "cites": [
+            {
+              "f": "src/systems/NpcScheduleSystem.ts",
+              "l": 144,
+              "m": "this.eventBus.on('scene:ready', this.onSceneReady);"
+            }
+          ]
+        },
+        {
+          "who": "粒子系统",
+          "does": "开始重建本场景实例(发出不等)",
+          "cites": [
+            {
+              "f": "src/systems/vfx/VfxSystem.ts",
+              "l": 306,
+              "m": "ctx.eventBus.on('scene:ready', this.onSceneReady);"
+            }
+          ]
+        },
+        {
+          "who": "燃烧系统",
+          "does": "激活本场景可燃物(发出不等)",
+          "cites": [
+            {
+              "f": "src/systems/burn/BurnSystem.ts",
+              "l": 292,
+              "m": "ctx.eventBus.on('scene:ready', this.onSceneReady);"
+            }
+          ]
+        },
+        {
+          "who": "组装层 · 生命值",
+          "does": "进入场景、刷新护佑、登记本场景威胁源",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 2879,
+              "m": "this.listenEvent('scene:ready', () => {"
+            }
+          ]
+        },
+        {
+          "who": "组装层 · 就绪处理",
+          "does": "玩家/NPC/热点挂滤镜与透视、启动巡逻、重建阴影与 AO、像素密度、深度调试绑定",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 8022,
+              "m": "this.listenEvent('scene:ready', () => {"
+            }
+          ]
+        },
+        {
+          "who": "草木实时同步(仅开发构建)",
+          "does": "记\"已就绪的场景 id\",之前不收工作台推送",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 3720,
+              "m": "this.listenEvent('scene:ready', () => { this.swayReadySceneI"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": "scene:revealed",
+      "when": "揭幕(淡入撤遮罩)之后、onEnter 之前。所有 loadScene 都发(reloadScene 没有遮罩也发)。",
+      "emitters": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1995,
+          "m": "this.eventBus.emit('scene:revealed', { sceneId, fromSceneId:"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "组装层 · 状态机",
+          "does": "切场中 → 探索",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 3467,
+              "m": "this.listenEvent('scene:revealed', endSceneTransition);"
+            }
+          ]
+        },
+        {
+          "who": "叙事包导演",
+          "does": "记当前场景并做一次\"入场\"评估(读档恢复期间跳过)",
+          "cites": [
+            {
+              "f": "src/systems/NarrativePackageDirector.ts",
+              "l": 85,
+              "m": "this.eventBus.on('scene:revealed', this.onSceneRevealed);"
+            },
+            {
+              "f": "src/systems/NarrativePackageDirector.ts",
+              "l": 62,
+              "m": "if (!this.restoring) this.evaluate('sceneEntry');"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": "scene:transitionEnd",
+      "when": "switchScene 作业的 finally,成功/失败/双失败都发;onEnter 之后。",
+      "emitters": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2204,
+          "m": "this.eventBus.emit('scene:transitionEnd', { toSceneId: tid }"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "组装层 · 状态机",
+          "does": "若仍是切场中 → 探索(兜底)",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 3468,
+              "m": "this.listenEvent('scene:transitionEnd', endSceneTransition);"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": "scene:entitiesRebuilt",
+      "when": "同场景过场进/出时重建绑定实体之后(不是切场本身,但复用 scene:ready 的实体装配)。",
+      "emitters": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1169,
+          "m": "this.eventBus.emit('scene:entitiesRebuilt', { cutsceneId, ph"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "组装层",
+          "does": "只对重建的实体重挂滤镜/透视/阴影,退出阶段重启巡逻",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 8115,
+              "m": "'scene:entitiesRebuilt',"
+            }
+          ]
+        },
+        {
+          "who": "位面对账",
+          "does": "重贴实体的位面显隐",
+          "cites": [
+            {
+              "f": "src/systems/PlaneReconciler.ts",
+              "l": 163,
+              "m": "this.eventBus.on('scene:entitiesRebuilt', this.onEntitiesReb"
+            }
+          ]
+        },
+        {
+          "who": "NPC 日程",
+          "does": "取消在途走位、重对在场基线",
+          "cites": [
+            {
+              "f": "src/systems/NpcScheduleSystem.ts",
+              "l": 145,
+              "m": "this.eventBus.on('scene:entitiesRebuilt', this.onEntitiesReb"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": "time:phaseChanged",
+      "when": "时段推进跨过时段边界时(时段换装入口)。",
+      "emitters": [
+        {
+          "f": "src/systems/DayManager.ts",
+          "l": 240,
+          "m": "this.eventBus.emit('time:phaseChanged', {"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "组装层",
+          "does": "只登记\"待换装\"与表现档,由主循环在安全窗口执行",
+          "cites": [
+            {
+              "f": "src/core/Game.ts",
+              "l": 3007,
+              "m": "this.eventBus.on('time:phaseChanged', (e) => {"
+            }
+          ]
+        },
+        {
+          "who": "粒子系统",
+          "does": "标记条件与摆放需重算",
+          "cites": [
+            {
+              "f": "src/systems/vfx/VfxSystem.ts",
+              "l": 310,
+              "m": "ctx.eventBus.on('time:phaseChanged', this.onPhaseChanged);"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "event": "hotspot:pickup:done / hotspot:inspected",
+      "when": "场景内交互发生当时(不是切场时)——它们是场景记忆的写入口。",
+      "emitters": [
+        {
+          "f": "src/core/InteractionCoordinator.ts",
+          "l": 355,
+          "m": "eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.de"
+        },
+        {
+          "f": "src/core/InteractionCoordinator.ts",
+          "l": 229,
+          "m": "eventBus.emit('hotspot:inspected'"
+        }
+      ],
+      "listeners": [
+        {
+          "who": "场景管理",
+          "does": "拾取型热点记入\"已拾取\";记入\"已查看\"",
+          "cites": [
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 315,
+              "m": "this.eventBus.on('hotspot:pickup:done', this.onHotspotPickup"
+            },
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 316,
+              "m": "this.eventBus.on('hotspot:inspected', this.onHotspotInspecte"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "memory": [
+    {
+      "id": "mem1",
+      "label": "场景记忆表:每个到过的场景一格",
+      "detail": "场景管理持有一张\"场景 id → 记忆\"的表。每格四项:已查看的热点、已拾取的热点、实体运行时覆盖(NPC / 热点 / 区域三类,如显隐、位置、动画、展示图、巡逻禁用)、演出里生成并留在场景的对象(完整 NPC 定义)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 101,
+          "m": "interface SceneMemory {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 104,
+          "m": "entityOverrides: SceneEntityRuntimeOverrides;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 109,
+          "m": "spawnedNpcs: Record<string, NpcDef>;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 146,
+          "m": "private sceneMemory: Map<string, SceneMemory> = new Map();"
+        }
+      ]
+    },
+    {
+      "id": "mem2",
+      "label": "离开时:不拍快照,只确保有一格",
+      "detail": "切场景(以及存档序列化前)调用的\"保存当前场景记忆\"只做一件事:确保当前场景在表里有一格;过场舞台期间直接跳过。真正的内容全部在发生当时写入(见下一条)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2161,
+          "m": "this.saveCurrentSceneMemory();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2239,
+          "m": "if (this.cutsceneStaging) return;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2240,
+          "m": "this.ensureSceneMemory(this.currentScene.id);"
+        }
+      ]
+    },
+    {
+      "id": "mem3",
+      "label": "发生即写:记忆的写入口",
+      "detail": "拾取完成(只记拾取型热点)、查看完成、持久化实体字段、合并 NPC 持久快照(显隐/巡逻禁用/位置/动画)、持久化区域开关、演出生成并保留的对象(生成/移除/终点位置回写)。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2254,
+          "m": "mem.pickedUpHotspots.push(hotspotId);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2262,
+          "m": "mem.inspectedHotspots.push(hotspotId);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1287,
+          "m": "bucket[id] = { ...prev, [field]: coerced.value };"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1328,
+          "m": "mem.entityOverrides.npcs[id] = { ...prev, ...patch };"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 899,
+          "m": "mem.entityOverrides.zones[zid] = { enabled: false };"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2572,
+          "m": "if (mem) mem.spawnedNpcs[def.id] = { ...def };"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2593,
+          "m": "if (mem) delete mem.spawnedNpcs[id];"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2607,
+          "m": "def.x = Math.round(npc.x * 100) / 100;"
+        }
+      ]
+    },
+    {
+      "id": "mem4",
+      "label": "回来时:装载按记忆过滤与覆盖",
+      "detail": "已拾取的热点不生成、被记忆禁用的热点不生成(资源清单同样按此过滤);生成的实体套上记忆里的运行时覆盖,NPC 还原记忆里的动画状态;记忆里的\"演出留下的对象\"重新生成;区域表按记忆/会话/分组禁用过滤后才注册;巡逻按记忆里的\"巡逻禁用\"决定是否启动。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1866,
+          "m": "if (committedMemory?.pickedUpHotspots.includes(def.id)) cont"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1868,
+          "m": "if (ovr?.enabled === false) continue;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1495,
+          "m": "let defToUse = applyNpcRuntimeOverride(withChar, overrides a"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1555,
+          "m": "npc.playAnimation(anim);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1899,
+          "m": "for (const npcDef of Object.values(this.getCommittedMemory(s"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1912,
+          "m": "this.zoneSetter?.(this.computeEffectiveZones(sceneId, sceneD"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8272,
+          "m": "!this.sceneManager.isNpcPatrolPersistentlyDisabled(npc.id)"
+        }
+      ]
+    },
+    {
+      "id": "mem5",
+      "label": "过场暂存记忆:过场里写的不落进正式记忆",
+      "detail": "过场开演时新建一份空的暂存记忆;过场期间对该场景的写入都进暂存,对其它场景的写入被忽略;装载过场绑定实体时只读暂存覆盖;过场结束解除舞台,暂存整份丢弃。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1004,
+          "m": "beginCutsceneStaging(cutsceneId: string, sceneId: string): v"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1197,
+          "m": "return this.normalizeMemory(this.cutsceneStaging.memory);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1019,
+          "m": "endCutsceneStaging(): void {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1020,
+          "m": "this.cutsceneStaging = null;"
+        }
+      ]
+    },
+    {
+      "id": "mem6",
+      "label": "会话桶:同一局内保留、不进存档",
+      "detail": "三张按场景分桶的会话表:区域会话禁用、实体会话隐藏、分组会话禁用。重进同一场景时实体实例化会从会话桶恢复隐藏;读档(换时间线)与系统销毁时全部清空。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 165,
+          "m": "private zoneSessionDisabled: Map<string, Set<string>> = new"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 172,
+          "m": "private entitySessionOverrides: Map<string, { npcs: Set<stri"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 175,
+          "m": "private groupSessionDisabled: Map<string, Set<string>> = new"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1506,
+          "m": "this.applySessionOverrideOnInstantiate('npc', npc);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2657,
+          "m": "this.entitySessionOverrides.clear();"
+        }
+      ]
+    },
+    {
+      "id": "mem7",
+      "label": "进存档的部分",
+      "detail": "序列化:当前场景 id + 每个场景的 {已查看, 已拾取, 实体覆盖, 留下的对象(有才写)}。读档:清空记忆与会话桶后逐格重建,并兼容旧档的 NPC 快照与热点展示图覆盖两种旧写法。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2611,
+          "m": "serialize(): object {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2637,
+          "m": "return { currentSceneId: this.currentScene?.id ?? null, memo"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2654,
+          "m": "this.sceneMemory.clear();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2667,
+          "m": "if (mem.npcSnapshots) {"
+        }
+      ]
+    },
+    {
+      "id": "mem8",
+      "label": "读档站位:待落位坐标",
+      "detail": "读档分发时只登记存档里的玩家坐标(朝向当场设);紧随其后的 reloadScene 把它作为落点覆盖传给 loadScene,落点先于 onEnter。时段换装也用同一格保住站位。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 8896,
+          "m": "private pendingRestorePlayerPosition: { x: number; y: number"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8912,
+          "m": "this.pendingRestorePlayerPosition = { x, y };"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9419,
+          "m": "const restorePos = this.pendingRestorePlayerPosition;"
+        }
+      ]
+    },
+    {
+      "id": "mem9",
+      "label": "时段外观基底(只针对当前场景)",
+      "detail": "每次装载留一份\"未按时段覆盖\"的外观基底与当时解析结果,时段变化时从它出发判断外观是否会变。不跨场景、不进存档。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 234,
+          "m": "private appearanceBase: { scene: SceneData; applied: Resolve"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1755,
+          "m": "this.appearanceBase = {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 612,
+          "m": "appearanceChangesWithPhase(nextPhase: string): boolean {"
+        }
+      ]
+    },
+    {
+      "id": "mem10",
+      "label": "离开即作废、不记忆的运行态",
+      "detail": "scene:beforeUnload 监听者当场清掉:在途轨迹、巡逻协程、点火表演、雷光/震屏/压暗、音量闪避、演出会话、透视缩放句柄;scene:ready 时姿态复位。回到场景时这些都从场景数据重新派生。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 8009,
+          "m": "this.trajectorySystem.cancelAll();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8002,
+          "m": "this.patrolGeneration++;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2866,
+          "m": "this.camera.clearShake();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8026,
+          "m": "this.playerActionSystem.onSceneChanged();"
+        }
+      ]
+    }
+  ],
+  "uncertain": [
+    {
+      "what": "同一事件多个监听者的先后",
+      "why": "事件总线按\"注册先后\"依次同步调用监听者;图里各事件监听者的先后是由注册位置推出来的(构造期系统 init 循环按数组顺序先注册,启动流程里的 listenEvent 按行序后注册)。若运行中有系统被重新 init(先 off 再 on),它会排到末尾——静态看不出运行期是否发生。",
+      "cites": [
+        {
+          "f": "src/core/EventBus.ts",
+          "l": 31,
+          "m": "const cbs = [...set];"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 1503,
+          "m": "if (entry.system) entry.system.init(ctx);"
+        }
+      ]
+    },
+    {
+      "what": "onEnter 里具体会跑什么",
+      "why": "onEnter 动作批来自场景 JSON(数据),由动作执行器按动作类型字符串查表分发;里面会不会开对话/过场/再换场景,静态代码看不出,只能看数据。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1998,
+          "m": "const rootEnter = sceneData.onEnter;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6562,
+          "m": "await this.actionExecutor.executeBatchAwait(actions, makeOwn"
+        }
+      ]
+    },
+    {
+      "what": "哪些过场会跨场景",
+      "why": "过场是否换场景取决于过场定义里的 targetScene(数据),代码只给出机制。",
+      "cites": [
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 899,
+          "m": "const targetSceneId = typeof def.targetScene === 'string' ?"
+        }
+      ]
+    },
+    {
+      "what": "画布特效宿主的 scene:ready",
+      "why": "按事件名字符串配对时它会被当成主总线上的第二个 scene:ready 发射点;实际它发在自己新建的私有总线上,主总线的监听者收不到。图里没把它画进主流程。",
+      "cites": [
+        {
+          "f": "src/systems/canvas/CanvasVfxHost.ts",
+          "l": 95,
+          "m": "private readonly bus = new EventBus();"
+        },
+        {
+          "f": "src/systems/canvas/CanvasVfxHost.ts",
+          "l": 149,
+          "m": "this.bus.emit('scene:ready');"
+        }
+      ]
+    },
+    {
+      "what": "场景光照 / 深度 / 世界滤镜装载器的内部细节",
+      "why": "这张图只画到\"组装层注入的装载器做了什么、是否被等待\";装载器内部的贴图读取与失败回落(如几何场哈希门、深度一致性检查、世界滤镜的着色器加载)没有逐句展开,归渲染管线图。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 376,
+          "m": "async load("
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1954,
+          "m": "await this.renderer.loadAndSetWorldFilter(sceneData.filterId"
+        }
+      ]
+    },
+    {
+      "what": "遮罩淡入淡出的实际时长",
+      "why": "淡入淡出由浏览器逐帧回调驱动,300/400/500ms 是代码里的目标时长;实际帧数与页面是否被节流(后台标签页)有关,静态看不出。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2389,
+          "m": "const t = Math.min(elapsed / durationMs, 1);"
+        }
+      ]
+    }
+  ]
+}

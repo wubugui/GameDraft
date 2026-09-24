@@ -1,0 +1,3241 @@
+{
+  "id": "render",
+  "title": "渲染管线：一帧画面怎么画出来",
+  "summary": "画面是 Pixi 的一棵显示树，从下到上：世界（背景 → 阴影 → 实体，外面可套一层世界滤镜）→ 世界渐黑 → 画布 → 演出覆盖 → UI。光影是「原画 + 加性实体灯」两级：①脏时才重算的离屏光照缓存（原画 + albedo × Σ实体灯，RGBA16F 线性 HDR，阴影用线扫前缀查表），②每帧由点亮的背景网格采样缓存、加高度雾、过显示变换出屏。角色走另一套：probe 烘好的 GI 底光 + 与场景同一次打包的实体灯 + 同一组显示变换，画在与精灵同形的受光网格上；遮挡由挂在实体容器上的深度滤镜按场景深度图判。一个渲染帧里 Pixi ticker 依次跑：游戏 tick（末尾触发草木位移图与光照缓存的离屏渲染、排序实体）→ 角色帧组同步 → Pixi 主渲染 → WebGL 错误排空。统一角色光照路径（含 UnifiedCharacterShader、GI 反弹、3D 天穹网格）被总闸关死，照实标为已关停。",
+  "stageTree": [
+    {
+      "id": "s-stage",
+      "label": "舞台根（Pixi app.stage）",
+      "parent": null,
+      "order": 0,
+      "status": "active",
+      "what": "整张画面的根。它的五个孩子按添加先后就是从下到上的绘制顺序：世界 → 世界渐黑 → 画布 → 演出覆盖 → UI。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 155,
+          "m": "this.app.stage.addChild(this.worldContainer)"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 159,
+          "m": "this.app.stage.addChild(this.uiLayer)"
+        }
+      ]
+    },
+    {
+      "id": "s-world",
+      "label": "世界容器（worldContainer）",
+      "parent": "s-stage",
+      "order": 1,
+      "status": "active",
+      "what": "场景 + 阴影 + 实体。相机只改这一个容器的平移与缩放（View-Projection 全在它身上）；世界滤镜也只挂在它上面，UI 不受影响。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 155,
+          "m": "this.app.stage.addChild(this.worldContainer)"
+        },
+        {
+          "f": "src/rendering/Camera.ts",
+          "l": 346,
+          "m": "this.worldContainer.scale.set(S, S)"
+        },
+        {
+          "f": "src/rendering/Camera.ts",
+          "l": 361,
+          "m": "this.worldContainer.x = tx + this.shakeOffsetX"
+        }
+      ]
+    },
+    {
+      "id": "s-bg",
+      "label": "背景层（backgroundLayer）",
+      "parent": "s-world",
+      "order": 1,
+      "status": "active",
+      "what": "世界里最先画的一层：场景背景图（或被点亮的背景网格）。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 150,
+          "m": "this.worldContainer.addChild(this.backgroundLayer)"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1851,
+          "m": "this.renderer.backgroundLayer.addChild(this.sceneContainerBg"
+        }
+      ]
+    },
+    {
+      "id": "s-bg-sprites",
+      "label": "场景背景容器：各层背景 Sprite",
+      "parent": "s-bg",
+      "order": 1,
+      "status": "active",
+      "what": "场景 JSON 的 backgrounds 按 z 升序各建一张 Sprite，铺满场景世界尺寸。第一层是「主背景」（原画），光照与草木都拿它当输入。没有背景时换成一张占位图。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1810,
+          "m": "const layers = [...sceneData.backgrounds].sort("
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1826,
+          "m": "const sprite = new Sprite(texture);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1836,
+          "m": "this.primaryBgSprite = sprite;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1845,
+          "m": "this.sceneContainerBg = createPlaceholderBackground("
+        }
+      ]
+    },
+    {
+      "id": "s-bg-lit",
+      "label": "点亮的背景网格（LitBackground.mesh，打光场景）",
+      "parent": "s-bg",
+      "order": 2,
+      "status": "active",
+      "what": "场景烘过几何场时，光照系统造一张铺满世界的网格，插到主背景 Sprite 原来的位置，原 Sprite 设为不渲染。它每帧采样光照缓存、做高度雾和显示变换后出屏。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6489,
+          "m": "return this.sceneLighting.backgroundMesh;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1928,
+          "m": "this.sceneContainerBg.addChildAt(litMesh, idx);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1929,
+          "m": "this.primaryBgSprite.renderable = false;"
+        }
+      ]
+    },
+    {
+      "id": "s-bg-sway",
+      "label": "草木摆动合成面（SwayBackground.root，不打光场景）",
+      "parent": "s-bg",
+      "order": 3,
+      "status": "active",
+      "what": "场景不打光、但有风与草木拆层时，用\"底板 + 按位移图取原画\"的合成网格顶替主背景 Sprite。打光场景不走这一支（草木改由点亮的背景去读位移图）。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1943,
+          "m": "this.sceneContainerBg.addChildAt(swayMesh, idx);"
+        },
+        {
+          "f": "src/rendering/backgroundSway.ts",
+          "l": 949,
+          "m": "this.root.addChild(this.comp);"
+        }
+      ]
+    },
+    {
+      "id": "s-bg-debug",
+      "label": "背景调试滤镜（BackgroundDebugFilter）",
+      "parent": "s-bg",
+      "order": 4,
+      "status": "dev-only",
+      "what": "深度/碰撞/UV 可视化，挂在背景层的 filters 上；只有 F2 调试面板切到非 Off 时才挂，F2 调试工具只在开发构建里建。可视化对象本身在正式构建也会被创建。",
+      "cites": [
+        {
+          "f": "src/debug/DepthDebugVisualizer.ts",
+          "l": 166,
+          "m": "layer.filters = [...existing, this.filter];"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3498,
+          "m": "this.depthDebugVisualizer = new DepthDebugVisualizer("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3743,
+          "m": "if (import.meta.env.DEV) this.debugTools = new DebugTools({"
+        }
+      ]
+    },
+    {
+      "id": "s-shadow",
+      "label": "阴影层（shadowLayer）",
+      "parent": "s-world",
+      "order": 2,
+      "status": "active",
+      "what": "背景之上、实体之下。每个投影实体一套 planar 阴影：投影剪影网格（带模糊滤镜）+ 脚底接触 AO 网格。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 151,
+          "m": "this.worldContainer.addChild(this.shadowLayer)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7171,
+          "m": "const sh = new PlanarEntityShadow(layer, ctx);"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 607,
+          "m": "layer.addChild(this.castMesh);"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 616,
+          "m": "layer.addChild(this.contactMesh);"
+        }
+      ]
+    },
+    {
+      "id": "s-entity",
+      "label": "实体层（entityLayer，可排序）",
+      "parent": "s-world",
+      "order": 3,
+      "status": "active",
+      "what": "玩家、NPC、热点、粒子、气泡、火势提示都在这一层，子节点按 zIndex 每帧重排（前/后两档 × 档内按脚底 y）。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 152,
+          "m": "this.entityLayer.sortableChildren = true;"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 153,
+          "m": "this.worldContainer.addChild(this.entityLayer)"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 329,
+          "m": "this.entityLayer.sortChildren();"
+        }
+      ]
+    },
+    {
+      "id": "s-ent-player",
+      "label": "玩家容器",
+      "parent": "s-entity",
+      "order": 1,
+      "status": "active",
+      "what": "玩家精灵容器，滤镜 = [玩家那一个遮挡/受光滤镜]。烘焙场景里真正出图的是同容器下的逐像素受光网格（LitSpriteQuad），原精灵只当变换载体、不渲染。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6221,
+          "m": "this.renderer.entityLayer.addChild(this.player.sprite.contai"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8159,
+          "m": "this.player.sprite.container.filters = [this.playerDepthFilt"
+        },
+        {
+          "f": "src/rendering/SpriteEntity.ts",
+          "l": 572,
+          "m": "this.container.addChild(this.litQuad.mesh);"
+        },
+        {
+          "f": "src/rendering/SpriteEntity.ts",
+          "l": 576,
+          "m": "this.sprite.renderable = false;"
+        }
+      ]
+    },
+    {
+      "id": "s-ent-npc",
+      "label": "NPC 容器",
+      "parent": "s-entity",
+      "order": 2,
+      "status": "active",
+      "what": "NPC 外层容器（内含精灵容器、名字标签、标记），滤镜挂在外层容器上。烘焙场景同样由受光网格出图。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1558,
+          "m": "this.renderer.entityLayer.addChild(npc.container);"
+        },
+        {
+          "f": "src/entities/Npc.ts",
+          "l": 344,
+          "m": "this.container.addChildAt(this.sprite.container, 0);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8258,
+          "m": "npc.container.filters = [npcFilter];"
+        }
+      ]
+    },
+    {
+      "id": "s-ent-hotspot",
+      "label": "热点容器（展示图 + 提示）",
+      "parent": "s-entity",
+      "order": 3,
+      "status": "active",
+      "what": "热点展示图 Sprite 的滤镜链固定顺序：[像素密度低通, 燃烧材质, 深度遮挡/受光, 燃烧自发光]（有哪个挂哪个）。滤镜只挂展示图，不挂提示图标。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1479,
+          "m": "this.renderer.entityLayer.addChild(hotspot.container);"
+        },
+        {
+          "f": "src/entities/Hotspot.ts",
+          "l": 320,
+          "m": "if (this.pixelDensityBlur) chain.push(this.pixelDensityBlur)"
+        },
+        {
+          "f": "src/entities/Hotspot.ts",
+          "l": 323,
+          "m": "if (this.burnGlowFilter) chain.push(this.burnGlowFilter);"
+        }
+      ]
+    },
+    {
+      "id": "s-ent-vfx",
+      "label": "粒子批网格 / 光柱 / 闪电（VfxRenderer）",
+      "parent": "s-entity",
+      "order": 4,
+      "status": "active",
+      "what": "一批粒子一张网格，按与实体的纵深分桶后作为实体层的普通子节点参与排序；挂在实体身上的效果可挂到宿主容器下。",
+      "cites": [
+        {
+          "f": "src/rendering/vfx/VfxRenderer.ts",
+          "l": 540,
+          "m": "this.hostOf(v.instanceId).addChild(m.mesh);"
+        },
+        {
+          "f": "src/rendering/vfx/VfxRenderer.ts",
+          "l": 531,
+          "m": "return this.deps.hostFor?.(instanceId) ?? this.deps.entityLa"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2184,
+          "m": "entityLayer: this.renderer.entityLayer,"
+        }
+      ]
+    },
+    {
+      "id": "s-ent-bubble",
+      "label": "表情气泡（前档）",
+      "parent": "s-entity",
+      "order": 5,
+      "status": "active",
+      "what": "挂在热点上的表情气泡放进实体层并标 front 档，恒在同层其它实体之前。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 2182,
+          "m": "this.emoteBubbleManager.setEntityAttachLayer(this.renderer.e"
+        },
+        {
+          "f": "src/systems/EmoteBubbleManager.ts",
+          "l": 356,
+          "m": "entitySortBand = 'front';"
+        }
+      ]
+    },
+    {
+      "id": "s-ent-firehint",
+      "label": "火势提示符号（FireHintMarker，前档）",
+      "parent": "s-entity",
+      "order": 6,
+      "status": "active",
+      "what": "手持火旁边的火苗油量符号，Graphics 画成，挂实体层最前档。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 776,
+          "m": "new FireHintMarker(() => this.renderer?.entityLayer ?? null)"
+        },
+        {
+          "f": "src/rendering/FireHintMarker.ts",
+          "l": 149,
+          "m": "entitySortBand = 'front';"
+        }
+      ]
+    },
+    {
+      "id": "s-ent-cutscene",
+      "label": "过场临时对象",
+      "parent": "s-entity",
+      "order": 7,
+      "status": "active",
+      "what": "过场渲染器可把临时显示对象直接放进实体层。",
+      "cites": [
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 459,
+          "m": "this.renderer.entityLayer.addChild(child);"
+        }
+      ]
+    },
+    {
+      "id": "s-worldfilter",
+      "label": "世界滤镜栈（WorldFilterPipeline → worldContainer.filters）",
+      "parent": "s-world",
+      "order": 4,
+      "status": "active",
+      "what": "不是子节点，是挂在整个世界容器上的滤镜数组。当前唯一的滤镜类型是场景 filterId 指向的颜色矩阵（ColorMatrixFilter）；没配就清空。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 73,
+          "m": "this.worldFilterPipeline = new WorldFilterPipeline(this.worl"
+        },
+        {
+          "f": "src/rendering/filter/WorldFilterPipeline.ts",
+          "l": 21,
+          "m": "this.target.filters = filters.length > 0 ? filters : null;"
+        },
+        {
+          "f": "src/rendering/filter/FilterLoader.ts",
+          "l": 20,
+          "m": "const filter = new ColorMatrixFilter();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1954,
+          "m": "await this.renderer.loadAndSetWorldFilter(sceneData.filterId"
+        }
+      ]
+    },
+    {
+      "id": "s-worldfade",
+      "label": "世界渐黑层（worldFadeLayer）",
+      "parent": "s-stage",
+      "order": 2,
+      "status": "active",
+      "what": "一张全屏黑色 Graphics，改 alpha 做\"只黑掉世界\"；它在画布之下，所以画布上的叠图照样画在黑场上。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 156,
+          "m": "this.app.stage.addChild(this.worldFadeLayer)"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 510,
+          "m": "this.renderer.worldFadeLayer.addChild(this.worldFadeOverlay)"
+        }
+      ]
+    },
+    {
+      "id": "s-canvas",
+      "label": "画布（canvasStage.layer）",
+      "parent": "s-stage",
+      "order": 3,
+      "status": "active",
+      "what": "场景之外的屏幕空间面：叠图、文档揭示、画布实体、画布特效（含呼吸图、交叉溶解）共用一个 order 顺序空间（写进 zIndex）。不吃相机、不吃世界滤镜。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 157,
+          "m": "this.app.stage.addChild(this.canvasStage.layer)"
+        },
+        {
+          "f": "src/rendering/CanvasStage.ts",
+          "l": 85,
+          "m": "this.layer.sortableChildren = true;"
+        },
+        {
+          "f": "src/rendering/CanvasStage.ts",
+          "l": 112,
+          "m": "this.layer.addChild(node);"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 1518,
+          "m": "this.renderer.canvasStage.attach(this.canvasKind(kind), id,"
+        }
+      ]
+    },
+    {
+      "id": "s-canvas-vfx",
+      "label": "画布特效（CanvasVfxHost，无受光）",
+      "parent": "s-canvas",
+      "order": 1,
+      "status": "active",
+      "what": "画布上的粒子另起一个 VfxRenderer，宿主是画布层；它的受光 shader 供给恒返回空，只走色调/无光路。",
+      "cites": [
+        {
+          "f": "src/systems/canvas/CanvasVfxHost.ts",
+          "l": 120,
+          "m": "entityLayer: deps.canvasStage.layer,"
+        },
+        {
+          "f": "src/systems/canvas/CanvasVfxHost.ts",
+          "l": 125,
+          "m": "createLitShader: () => null,"
+        }
+      ]
+    },
+    {
+      "id": "s-canvas-entity",
+      "label": "画布实体（CanvasStageSystem）",
+      "parent": "s-canvas",
+      "order": 2,
+      "status": "active",
+      "what": "放到画布上的实体包装节点。",
+      "cites": [
+        {
+          "f": "src/systems/canvas/CanvasStageSystem.ts",
+          "l": 218,
+          "m": "this.deps.canvasStage.attach('entity', key, wrap, opts.order"
+        }
+      ]
+    },
+    {
+      "id": "s-cutscene",
+      "label": "演出覆盖层（cutsceneOverlay）",
+      "parent": "s-stage",
+      "order": 4,
+      "status": "active",
+      "what": "实际放进来的是电影黑边和小游戏场景根（小游戏自带的 UI 子层也在它里面）。过场字幕、对白框、淡黑、闪白实际放在 UI 层（见「文档与代码不一致」）。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 158,
+          "m": "this.app.stage.addChild(this.cutsceneOverlay)"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 1700,
+          "m": "this.renderer.cutsceneOverlay.addChild(this.movieBarContaine"
+        },
+        {
+          "f": "src/systems/minigameSession.ts",
+          "l": 282,
+          "m": "this.renderer!.cutsceneOverlay.addChild(scene.root);"
+        },
+        {
+          "f": "src/systems/waterMinigame/WaterMinigameScene.ts",
+          "l": 147,
+          "m": "this.root.addChild(this.uiLayer);"
+        }
+      ]
+    },
+    {
+      "id": "s-ui",
+      "label": "UI 层（uiLayer）",
+      "parent": "s-stage",
+      "order": 5,
+      "status": "active",
+      "what": "最上层。HUD、对话框、面板、通知、过场淡黑/闪白/字幕/标题卡/过场对白框、切场遮幕与持久黑幕都在这里；内部先后 = zIndex 带（引导浮标 5 / 面板 10 / 遮幕 20 / 通知 50 …）+ 同带插入序。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 159,
+          "m": "this.app.stage.addChild(this.uiLayer)"
+        },
+        {
+          "f": "src/ui/HUD.ts",
+          "l": 473,
+          "m": "this.renderer.uiLayer.addChild(this.container);"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 470,
+          "m": "this.renderer.uiLayer.addChild(this.fadeOverlay);"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 1724,
+          "m": "this.renderer.uiLayer.addChild(container);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2411,
+          "m": "g.zIndex = UI_LAYER_Z.curtain;"
+        },
+        {
+          "f": "src/rendering/uiLayerOrder.ts",
+          "l": 35,
+          "m": "worldMarker: 5,"
+        }
+      ]
+    },
+    {
+      "id": "s-ui-confine",
+      "label": "粒子区域叠加层（VfxConfineOverlay）",
+      "parent": "s-ui",
+      "order": 1,
+      "status": "dev-only",
+      "what": "F2「粒子」页开关建出的调试叠加，挂 UI 层；每帧在 tick 里重画。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4131,
+          "m": "this.vfxConfineOverlay = new VfxConfineOverlay(this.renderer"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10754,
+          "m": "this.vfxConfineOverlay.update(this.camera, this.vfxSystem.co"
+        }
+      ]
+    }
+  ],
+  "passes": [
+    {
+      "order": 1,
+      "id": "p-load-bg",
+      "label": "装背景图、搭背景层",
+      "where": "加载期",
+      "when": "场景加载时",
+      "sync": "await",
+      "inputs": [
+        "r-painting"
+      ],
+      "outputs": [
+        "s-bg-sprites"
+      ],
+      "detail": "背景按 z 排好逐张 await 装纹理、建 Sprite，第一张记为主背景；整个容器挂进背景层。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1819,
+          "m": "const texture = await this.assetManager.loadTexture(layer.im"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1851,
+          "m": "this.renderer.backgroundLayer.addChild(this.sceneContainerBg"
+        }
+      ]
+    },
+    {
+      "order": 2,
+      "id": "p-load-depth",
+      "label": "装深度图与碰撞图",
+      "where": "加载期",
+      "when": "场景加载时（有 depthConfig）",
+      "sync": "await",
+      "inputs": [],
+      "outputs": [
+        "r-depth",
+        "r-collision"
+      ],
+      "detail": "深度加载器里先 await 深度系统装载；随后同步建光环境与辐照探针（下一步），再 await 角色照明载荷。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6419,
+          "m": "await this.sceneDepthSystem.load("
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1916,
+          "m": "await this.depthLoader(sceneId, sceneData, worldToPixelX, wo"
+        }
+      ]
+    },
+    {
+      "order": 3,
+      "id": "p-load-irr",
+      "label": "烘辐照探针小图（GPU 离屏一次）",
+      "where": "加载期",
+      "when": "场景加载时（entityLighting.enabled）",
+      "sync": "sync",
+      "inputs": [
+        "r-painting"
+      ],
+      "outputs": [
+        "r-irrprobe",
+        "r-lightenv"
+      ],
+      "detail": "在深度加载器里同步执行：把主背景缩到约 96 像素宽、套一次模糊，离屏渲进一张小 RT。只有 game_config.entityLighting.enabled 时才做。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6446,
+          "m": "this.setupSceneLighting(sceneData, worldToPixelX, worldToPix"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7038,
+          "m": "this.currentProbe = buildIrradianceProbe(this.renderer.app,"
+        },
+        {
+          "f": "src/rendering/irradianceProbe.ts",
+          "l": 42,
+          "m": "app.renderer.render({ container: root, target: rt, clear: tr"
+        }
+      ]
+    },
+    {
+      "order": 4,
+      "id": "p-load-charpayload",
+      "label": "装角色照明载荷（probe / valid / 行走面 / skyao）",
+      "where": "加载期",
+      "when": "场景加载时",
+      "sync": "await",
+      "inputs": [],
+      "outputs": [
+        "r-probe",
+        "r-probevalid",
+        "r-ground",
+        "r-skyao"
+      ],
+      "detail": "纳入加载门 await；就绪回调把行走面场交给深度系统。时段原画没烘时只借主背景的几何项（行走面），光照项不借。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6453,
+          "m": "await this.characterLighting.load("
+        },
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 913,
+          "m": "fetchPayloadBlob(`${base}/ground_d.png`),"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 1394,
+          "m": "this.sceneDepthSystem.setGroundDepthField("
+        }
+      ]
+    },
+    {
+      "order": 5,
+      "id": "p-load-scenelight",
+      "label": "装场景光照：几何场 → 建光照 pass 与点亮的背景 → 先渲一次缓存",
+      "where": "加载期",
+      "when": "场景加载时（深度之后）",
+      "sync": "await",
+      "inputs": [
+        "r-geojson",
+        "r-normal",
+        "r-albedo",
+        "r-depth",
+        "r-painting"
+      ],
+      "outputs": [
+        "r-radiance",
+        "r-lights",
+        "s-bg-lit"
+      ],
+      "detail": "await 装 geometry.json / normal / albedo；缺任一件整份不启用、背景照旧走 Sprite。建好后立刻 update 一次（揭幕那帧背景不空），再把同一次打包的灯、显示变换、受光倍率推给角色侧。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6463,
+          "m": "const ok = await this.sceneLighting.load(sceneId, sceneData,"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6469,
+          "m": "this.sceneLighting.update(this.renderer.app.renderer);"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 515,
+          "m": "this.pass = new SceneLightingPass(paintingTexture, geo);"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 529,
+          "m": "this.litBg = new LitBackground("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6476,
+          "m": "this.sceneLighting.packedLights ?? null, this.sceneLighting."
+        }
+      ]
+    },
+    {
+      "order": 6,
+      "id": "p-load-swap-bg",
+      "label": "换背景节点：点亮网格或草木合成面顶替主背景 Sprite",
+      "where": "加载期",
+      "when": "场景加载时",
+      "sync": "sync",
+      "inputs": [
+        "s-bg-lit",
+        "s-bg-sway"
+      ],
+      "outputs": [
+        "s-bg"
+      ],
+      "detail": "打光成功 → 点亮网格插在主背景位置、原 Sprite 不渲染；否则如果草木可用 → 合成面顶替。两者互斥（草木那步要求主背景仍可渲染）。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1928,
+          "m": "this.sceneContainerBg.addChildAt(litMesh, idx);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1938,
+          "m": "if (this.swayLoader && this.primaryBgTexture && this.primary"
+        }
+      ]
+    },
+    {
+      "order": 7,
+      "id": "p-load-sway",
+      "label": "装草木（打光场景另建\"露出处\"第二份光照 pass）",
+      "where": "加载期",
+      "when": "场景加载时（有风与拆层）",
+      "sync": "await",
+      "inputs": [
+        "r-swayinputs"
+      ],
+      "outputs": [
+        "r-swayuv",
+        "r-radplate"
+      ],
+      "detail": "打光场景：在光照装载器里 await buildSway(lit)，把位移图与扣掉植物的补图交给光照系统。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6485,
+          "m": "await this.buildSway(sceneId, sceneData, primary, undefined,"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6761,
+          "m": "const ok = this.sceneLighting.attachSway({"
+        }
+      ]
+    },
+    {
+      "order": 8,
+      "id": "p-load-worldfilter",
+      "label": "装世界滤镜",
+      "where": "加载期",
+      "when": "场景加载时",
+      "sync": "await",
+      "inputs": [],
+      "outputs": [
+        "r-worldfilter",
+        "s-worldfilter"
+      ],
+      "detail": "场景配了 filterId 就 await 装载并设为世界滤镜，失败或没配就清空。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1954,
+          "m": "await this.renderer.loadAndSetWorldFilter(sceneData.filterId"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 418,
+          "m": "this.setWorldFilter(filter);"
+        }
+      ]
+    },
+    {
+      "order": 9,
+      "id": "p-load-ready",
+      "label": "挂实体着色/遮挡滤镜、建阴影",
+      "where": "加载期",
+      "when": "scene:ready 事件",
+      "sync": "event",
+      "inputs": [
+        "r-depth",
+        "r-probe",
+        "r-irrprobe"
+      ],
+      "outputs": [
+        "r-dof",
+        "r-elf",
+        "r-csf",
+        "r-litshader",
+        "r-shadowmesh"
+      ],
+      "detail": "按载荷选路：有烘焙载荷 → 玩家/NPC 开受光网格 + 纯遮挡滤镜，热点用 CharacterShadingFilter；否则有光环境 → EntityLightingFilter；再否则 → 纯遮挡。然后重建阴影、广播 AO、同步像素密度。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1970,
+          "m": "this.eventBus.emit('scene:ready');"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8058,
+          "m": "this.attachPlayerSceneFilter();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8148,
+          "m": "this.player.sprite.enableBakedShading(this.litShaderProvider"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8070,
+          "m": "this.rebuildEntityShadows();"
+        }
+      ]
+    },
+    {
+      "order": 10,
+      "id": "p-load-reveal",
+      "label": "揭幕前闸：粒子 GL 程序交给 Pixi、粒子预热",
+      "where": "加载期",
+      "when": "每次装场景、遮罩撤掉之前",
+      "sync": "await",
+      "inputs": [
+        "r-vfxprog"
+      ],
+      "outputs": [],
+      "detail": "开局就用并行编译扩展后台编粒子程序；这里限时等它编完并做完粒子预热，避免第一帧同步编 shader 卡死。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 2232,
+          "m": "this.glProgramWarmup?.whenReady(REVEAL_GATE_SHADER_TIMEOUT_M"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1976,
+          "m": "await this.revealGate(sceneId);"
+        }
+      ]
+    },
+    {
+      "order": 11,
+      "id": "p-tick-gate",
+      "label": "（帧头）说明卡 / 死亡时整个 tick 早退",
+      "where": "CPU(tick 内)",
+      "when": "每帧",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [],
+      "detail": "说明卡打开或死亡态时 tick 第一段就 return——下面所有 tick 内的离屏与驱动步骤本帧都不跑，但 Pixi 主渲染照常画（画的是上一帧留下的状态）。探索态里受伤转入别的状态时也会中途 return。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10529,
+          "m": "if (this.systemNotePauseDepth > 0 || this.stateController.cu"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10585,
+          "m": "if (this.stateController.currentState !== GameState.Explorin"
+        }
+      ]
+    },
+    {
+      "order": 12,
+      "id": "p-tick-sway",
+      "label": "草木振子与网格顶点（CPU）",
+      "where": "CPU(tick 内)",
+      "when": "每帧（世界不暂停）",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [
+        "r-swayuv"
+      ],
+      "detail": "风推进后逐株解振子、改顶点，标记位移图需要重渲。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10711,
+          "m": "this.sceneWind.advance(dt);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10712,
+          "m": "this.swayBackground?.update(this.sceneWind.params, this.scen"
+        }
+      ]
+    },
+    {
+      "order": 13,
+      "id": "p-tick-dynlights",
+      "label": "运行时灯推送（手持火 / 燃烧 / 落雷）→ 光照缓存标脏",
+      "where": "CPU(tick 内)",
+      "when": "灯动了 / 数量变了 / 闪烁限速到点",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [
+        "r-lights"
+      ],
+      "detail": "三类运行时灯合并（落雷排最前）推给场景光照；只要有运行时灯，每推一次就重打包并标脏，同时把同一份打包推给角色。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10718,
+          "m": "this.heldPropSystem.update(dt);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10738,
+          "m": "if (!worldPaused) this.updateStrikeLight(dt);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 5163,
+          "m": "const merged = [...strike, ...prop, ...burn];"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 718,
+          "m": "this.pass.markDirty();"
+        }
+      ]
+    },
+    {
+      "order": 14,
+      "id": "p-tick-vfx",
+      "label": "粒子模拟与填网格（CPU）",
+      "where": "CPU(tick 内)",
+      "when": "每帧（世界不暂停）",
+      "sync": "sync",
+      "inputs": [
+        "r-depth",
+        "r-irrprobe"
+      ],
+      "outputs": [
+        "s-ent-vfx"
+      ],
+      "detail": "粒子系统模拟完调用渲染侧：按纵深分桶、写顶点、同步深度与受光参数；必要时重建视图（着色路变了）。世界暂停时不跑，网格保持上一帧。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10727,
+          "m": "this.vfxSystem.update(dt);"
+        },
+        {
+          "f": "src/systems/vfx/VfxSystem.ts",
+          "l": 1435,
+          "m": "if (this.renderer) this.renderer.render(sims, this.sheets, h"
+        }
+      ]
+    },
+    {
+      "order": 15,
+      "id": "p-tick-camera",
+      "label": "相机定稿 → 世界容器平移与缩放",
+      "where": "CPU(tick 内)",
+      "when": "每帧（暂停时喂 0，仍写变换）",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [
+        "s-world"
+      ],
+      "detail": "之后所有依赖相机的 uniform（燃烧、深度滤镜、角色帧组）都在这一步之后取值。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10740,
+          "m": "this.camera.update(worldPaused ? 0 : dt);"
+        },
+        {
+          "f": "src/rendering/Camera.ts",
+          "l": 346,
+          "m": "this.worldContainer.scale.set(S, S);"
+        }
+      ]
+    },
+    {
+      "order": 16,
+      "id": "p-tick-cull",
+      "label": "视锥剔除（实体层）",
+      "where": "CPU(tick 内)",
+      "when": "每帧（开关开时）",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [
+        "s-entity"
+      ],
+      "detail": "除玩家外的实体按屏幕外扩一圈做剔除；被剔除的本帧既不画、也跳过后面的着色驱动。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10763,
+          "m": "this.updateFrustumCulling();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7233,
+          "m": "Culler.shared.cull(layer, view);"
+        }
+      ]
+    },
+    {
+      "order": 17,
+      "id": "p-tick-burn",
+      "label": "燃烧：限速上传燃烧场 + 推相机 + 纹理宿主离屏画颜色/自发光图",
+      "where": "GPU 离屏(tick 内触发)",
+      "when": "每帧（有在烧的实例时）",
+      "sync": "sync",
+      "inputs": [
+        "r-burnfield",
+        "r-charatlas"
+      ],
+      "outputs": [
+        "r-burnrt"
+      ],
+      "detail": "滤镜宿主（热点）只更新相机 uniform；纹理宿主（NPC、挂件）每帧两次离屏渲染。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10766,
+          "m": "this.burnRenderer.update(performance.now(), {"
+        },
+        {
+          "f": "src/rendering/burn/BurnRenderer.ts",
+          "l": 257,
+          "m": "if (e.pending) this.flush(e, nowMs, false);"
+        },
+        {
+          "f": "src/rendering/burn/BurnRenderer.ts",
+          "l": 300,
+          "m": "r.render({ container: e.glowMesh, target: e.emissive, clear:"
+        }
+      ]
+    },
+    {
+      "order": 18,
+      "id": "p-tick-density",
+      "label": "像素密度低通同步",
+      "where": "CPU(tick 内)",
+      "when": "每帧",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [
+        "r-blur"
+      ],
+      "detail": "按背景每世界单位像素数给实体精灵/展示图装或调 BlurFilter 强度。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10772,
+          "m": "this.syncEntityPixelDensityMatch();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9274,
+          "m": "this.player.sprite.applyPixelDensityMatch(dBg, strengthScale"
+        }
+      ]
+    },
+    {
+      "order": 19,
+      "id": "p-tick-depthdrive",
+      "label": "遮挡与着色驱动：世界位姿、每实体脚点深度、热点物理着色参数",
+      "where": "CPU(tick 内)",
+      "when": "每帧（深度或光环境启用时）",
+      "sync": "sync",
+      "inputs": [
+        "r-ground"
+      ],
+      "outputs": [
+        "r-dof",
+        "r-elf",
+        "r-csf"
+      ],
+      "detail": "给所有实体滤镜推世界容器位姿与投影缩放；逐实体推脚点、行走面脚深度、层偏移；CharacterShadingFilter（热点）另推尺寸、朝向、法线图集。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10776,
+          "m": "this.sceneDepthSystem.updatePerFrame("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10876,
+          "m": "this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.conta"
+        },
+        {
+          "f": "src/core/SceneDepthSystem.ts",
+          "l": 630,
+          "m": "filter.setFootDepthQ?.(this.sampleGroundDepth(footWorldX, fo"
+        }
+      ]
+    },
+    {
+      "order": 20,
+      "id": "p-tick-lightenv",
+      "label": "光环境曲线（按玩家位置插值，原地写）",
+      "where": "CPU(tick 内)",
+      "when": "每帧",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [
+        "r-lightenv"
+      ],
+      "detail": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10890,
+          "m": "this.updateLightEnvFromCurve();"
+        }
+      ]
+    },
+    {
+      "order": 21,
+      "id": "p-tick-swayuv",
+      "label": "草木位移图离屏渲染",
+      "where": "GPU 离屏(tick 内触发)",
+      "when": "位移图脏时（草木动过）",
+      "sync": "sync",
+      "inputs": [
+        "r-swayinputs"
+      ],
+      "outputs": [
+        "r-swayuv"
+      ],
+      "detail": "必须在主画面之前、与光照缓存同一拍；抛错只报一次、之后草木静止。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10893,
+          "m": "this.swayBackground?.renderUv(this.renderer.app.renderer);"
+        },
+        {
+          "f": "src/rendering/backgroundSway.ts",
+          "l": 958,
+          "m": "if (this.destroyed || this.uvBroken || !this.uvDirty) return"
+        }
+      ]
+    },
+    {
+      "order": 22,
+      "id": "p-tick-prefix",
+      "label": "场景光照 ①a：阴影线扫前缀（每组 4 盏带影灯）",
+      "where": "GPU 离屏(tick 内触发)",
+      "when": "脏时",
+      "sync": "sync",
+      "inputs": [
+        "r-depth",
+        "r-lights"
+      ],
+      "outputs": [
+        "r-prefix"
+      ],
+      "detail": "稳态不跑。脏的来源：作者参数变（编辑器同步/F2）、运行时灯推送、fadeLight 倍率、压暗、表面材质区、调试档。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10897,
+          "m": "this.sceneLighting.update(this.renderer.app.renderer);"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 1103,
+          "m": "if (!this.dirty || !this.rt || !this.mesh) return false;"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 1108,
+          "m": "this.prefix.solve(renderer, this.prefixLights, this.prefixBi"
+        },
+        {
+          "f": "src/rendering/lighting/shadowPrefix.ts",
+          "l": 297,
+          "m": "renderer.render({ container: mesh, target: this.slabs[s], cl"
+        }
+      ]
+    },
+    {
+      "order": 23,
+      "id": "p-tick-radiance",
+      "label": "场景光照 ①b：原画 + albedo × Σ实体灯 → 辐射缓存（主缓存 + 露出处缓存）",
+      "where": "GPU 离屏(tick 内触发)",
+      "when": "脏时",
+      "sync": "sync",
+      "inputs": [
+        "r-painting",
+        "r-albedo",
+        "r-normal",
+        "r-depth",
+        "r-prefix",
+        "r-lights",
+        "r-emissive",
+        "r-haze",
+        "r-surfmask"
+      ],
+      "outputs": [
+        "r-radiance",
+        "r-radplate"
+      ],
+      "detail": "全屏一个 quad 渲进 RGBA16F：原画线性化 → 去霾 → 加 albedo × 灯照度（可见性查前缀）→ 加灯体自发光；落雷灯另加 GGX 镜面（水面雨纹的时钟每帧推，但不标脏）。有草木时第二份 pass 同样重算。只产线性辐射。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10895,
+          "m": "this.sceneLighting.setSurfaceTime(this.gameClock.now / 1000)"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 1119,
+          "m": "renderer.render({ container: this.mesh, target: this.rt, cle"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 126,
+          "m": "uniform sampler2D uAlbedo;"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 780,
+          "m": "this.passPlate?.update(renderer);"
+        }
+      ]
+    },
+    {
+      "order": 24,
+      "id": "p-tick-shadows",
+      "label": "实体阴影驱动（剪影形状、接触 AO 参数）",
+      "where": "CPU(tick 内)",
+      "when": "每帧（有光环境且阴影未关）",
+      "sync": "sync",
+      "inputs": [
+        "r-lightenv",
+        "r-lights",
+        "r-charatlas"
+      ],
+      "outputs": [
+        "r-shadowmesh"
+      ],
+      "detail": "逐实体按绑定解算投影剪影（逐帧幂等）、按光照/绑定/场景主光解接触 AO 方向，写阴影网格顶点与 uniform。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10898,
+          "m": "this.updateEntityShadows();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7357,
+          "m": "this.driveEntryShadows(playerEntry, env, field, dtMs);"
+        }
+      ]
+    },
+    {
+      "order": 25,
+      "id": "p-tick-sort",
+      "label": "实体层排序（写 zIndex + sortChildren）",
+      "where": "CPU(tick 内)",
+      "when": "每帧",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [
+        "s-entity"
+      ],
+      "detail": "三档（后 / 无 / 前）× 档内按脚底 y；热点带遮挡多边形时按玩家脚点动态换档。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10900,
+          "m": "this.renderer.sortEntityLayer(this.player.x, this.player.y);"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 318,
+          "m": "child.zIndex = entitySortZ("
+        },
+        {
+          "f": "src/rendering/entitySortRule.ts",
+          "l": 87,
+          "m": "if (band === 'front') return ENTITY_SORT_BAND + footY;"
+        }
+      ]
+    },
+    {
+      "order": 26,
+      "id": "p-prerender-charsync",
+      "label": "渲染前：角色帧组同步（charLitFrameSync）",
+      "where": "CPU(tick 内)",
+      "when": "每个渲染帧（Pixi ticker，优先级 LOW+1，排在 tick 之后、渲染之前）",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [
+        "r-framelit"
+      ],
+      "detail": "不在 tick 函数里，是单独挂在 ticker 上的回调：把世界容器位姿、投影缩放与全部照明参数写进共享帧组；不经任何游戏状态分支。统一角色那一路的同步只在其 active 时执行（已关停，恒不执行）。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4275,
+          "m": "this.characterLighting.syncFrame(wc.x, wc.y, scale);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4286,
+          "m": "ticker.add(this.charLitFrameSync, undefined, UPDATE_PRIORITY"
+        }
+      ]
+    },
+    {
+      "order": 27,
+      "id": "p-render-entry",
+      "label": "Pixi 主渲染入口（带防崩兜底）",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每个渲染帧（ticker 优先级 LOW）",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [],
+      "detail": "渲染函数在 app.init 之前被替换成兜底版本：渲染抛错只丢这一帧并大声报，不让异常打断 ticker。之后按显示树从下到上画。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 136,
+          "m": "this.installRenderCrashGuard();"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 107,
+          "m": "basePrototypeRender.call(this);"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 134,
+          "m": "引用交给 ticker 了(`ticker.add(this.render, this, LOW)`)"
+        }
+      ]
+    },
+    {
+      "order": 28,
+      "id": "p-render-bg",
+      "label": "① 背景层：点亮背景（采缓存 → 雾 → 显示变换）/ 原画 Sprite / 草木合成面",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧",
+      "sync": "sync",
+      "inputs": [
+        "r-radiance",
+        "r-radplate",
+        "r-swayuv",
+        "r-depth",
+        "r-fog",
+        "r-display",
+        "r-painting"
+      ],
+      "outputs": [],
+      "detail": "打光场景：先按位移图找源 uv，取辐射缓存（露出处取第二份）→ 若开雾按深度重建世界高度与视距做高度雾 → 显示变换 → 屏幕。不打光：直接画原画 Sprite，或\"底板 + 按位移图取原画\"。其余背景层 Sprite 按序画在后面。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/rendering/lighting/LitBackground.ts",
+          "l": 102,
+          "m": "vec3 lin = texture(uRadiance, src).rgb;"
+        },
+        {
+          "f": "src/rendering/lighting/LitBackground.ts",
+          "l": 123,
+          "m": "lin = lcApplyFog(lin, od, uFogColor);"
+        },
+        {
+          "f": "src/rendering/lighting/LitBackground.ts",
+          "l": 126,
+          "m": "fragColor = vec4(lcDisplayTransform(lin, uEv, uTonemap, uWhi"
+        },
+        {
+          "f": "src/rendering/backgroundSway.ts",
+          "l": 521,
+          "m": "vec3 fg = texture(uPainting, vUv + m.rg / m.a).rgb;"
+        }
+      ]
+    },
+    {
+      "order": 29,
+      "id": "p-render-bgdebug",
+      "label": "（调试）背景层滤镜：深度/碰撞/UV 可视化",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "F2 背景调试开着时",
+      "sync": "sync",
+      "inputs": [
+        "r-depth"
+      ],
+      "outputs": [],
+      "detail": "挂上后整个背景层先渲进临时 RT 再过滤镜。",
+      "status": "dev-only",
+      "cites": [
+        {
+          "f": "src/debug/DepthDebugVisualizer.ts",
+          "l": 164,
+          "m": "const layer = this.renderer.backgroundLayer;"
+        }
+      ]
+    },
+    {
+      "order": 30,
+      "id": "p-render-shadow",
+      "label": "② 阴影层：投影剪影（模糊）+ 接触胶囊 AO",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧（有阴影实例时）",
+      "sync": "sync",
+      "inputs": [
+        "r-shadowmesh",
+        "r-charatlas",
+        "r-depth",
+        "r-collision",
+        "r-ground",
+        "r-blur"
+      ],
+      "outputs": [],
+      "detail": "cast：梯形网格采角色剪影 alpha，按碰撞方向裁、按前景深度淡化，外面套 BlurFilter；contact：在行走面还原的世界空间里算胶囊遮蔽，只画在地面上。两者都输出\"阴影色 + 透明度\"叠在背景上。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 229,
+          "m": "finalColor = vec4(uShadowColor, a);"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 451,
+          "m": "finalColor = vec4(uShadowColor, alpha);"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 557,
+          "m": "uTexture: texSource,"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 559,
+          "m": "uCollisionMap: ctx?.collisionTexture?.source ?? Texture.WHIT"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 113,
+          "m": "uniform sampler2D uGroundD;    // 行走面深度场（RG16，与角色遮挡同一份）"
+        }
+      ]
+    },
+    {
+      "order": 31,
+      "id": "p-render-char-baked",
+      "label": "③a 实体层·玩家/NPC（烘焙场景）：受光网格 + 容器遮挡滤镜",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧（场景有角色照明载荷时）",
+      "sync": "sync",
+      "inputs": [
+        "r-litshader",
+        "r-charatlas",
+        "r-charnormal",
+        "r-ground",
+        "r-probe",
+        "r-probevalid",
+        "r-skyao",
+        "r-vol",
+        "r-charlights",
+        "r-framelit",
+        "r-display",
+        "r-dof",
+        "r-depth"
+      ],
+      "outputs": [],
+      "detail": "容器带 DepthOcclusionFilter ⇒ Pixi 先把容器子树（受光网格、名字标签等）渲进临时图，再由遮挡滤镜按场景深度丢/淡被挡像素后合成。受光网格：同 UV 采颜色与法线 → 行走面取脚深度 → probe 查 GI 底光 + 实体灯循环 → 受光倍率 → 显示变换。世界坐标由 CPU 喂的仿射给，不从屏幕反推。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 220,
+          "m": "vec4 color = texture(uColorTex, vUV);"
+        },
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 229,
+          "m": "vec4 gs = texture(uGround, guv);"
+        },
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 387,
+          "m": "vec3 outRgb = clamp(lcDisplayTransform("
+        },
+        {
+          "f": "src/rendering/DepthOcclusionFilter.ts",
+          "l": 83,
+          "m": "vec4 depthSample = texture(uDepthMap, depthUV);"
+        }
+      ]
+    },
+    {
+      "order": 32,
+      "id": "p-render-char-tone",
+      "label": "③b 实体层·玩家/NPC（无烘焙载荷）：EntityLightingFilter 或纯遮挡",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧（场景无角色照明载荷时）",
+      "sync": "sync",
+      "inputs": [
+        "r-elf",
+        "r-irrprobe",
+        "r-lightenv",
+        "r-depth",
+        "r-dof"
+      ],
+      "outputs": [],
+      "detail": "有光环境：同一个滤镜里先判遮挡，再按脚点上方采辐照探针做保亮度白平衡，再乘 sprite 纵向 AO；无光环境：只有深度遮挡。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 8154,
+          "m": "? this.sceneDepthSystem.createLightingFilterForEntity(player"
+        },
+        {
+          "f": "src/rendering/EntityLightingFilter.ts",
+          "l": 161,
+          "m": "rgb *= mix(vec3(1.0), wb, uToneStrength);"
+        },
+        {
+          "f": "src/rendering/EntityLightingFilter.ts",
+          "l": 169,
+          "m": "rgb *= ao;"
+        }
+      ]
+    },
+    {
+      "order": 33,
+      "id": "p-render-hotspot",
+      "label": "③c 实体层·热点展示图：[密度低通 → 燃烧材质 → 遮挡/物理着色 → 燃烧自发光]",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧（有展示图的热点）",
+      "sync": "sync",
+      "inputs": [
+        "r-blur",
+        "r-burnfield",
+        "r-csf",
+        "r-dof",
+        "r-depth",
+        "r-charnormal",
+        "r-probe"
+      ],
+      "outputs": [],
+      "detail": "滤镜链逐级在临时图上跑。烘焙场景第三级是 CharacterShadingFilter（深度遮挡 + probe/法线物理着色），否则是纯深度遮挡。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/entities/Hotspot.ts",
+          "l": 321,
+          "m": "if (this.burnMaterialFilter) chain.push(this.burnMaterialFil"
+        },
+        {
+          "f": "src/entities/Hotspot.ts",
+          "l": 322,
+          "m": "if (this.depthOcclusionFilter) chain.push(this.depthOcclusio"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8286,
+          "m": "const f = this.sceneDepthSystem.createBakedFilterForEntity(b"
+        }
+      ]
+    },
+    {
+      "order": 34,
+      "id": "p-render-vfx",
+      "label": "③d 实体层·粒子 / 光柱 / 闪电 + 气泡、火势提示（前档）",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧",
+      "sync": "sync",
+      "inputs": [
+        "r-vfxprog",
+        "r-depth",
+        "r-probe",
+        "r-charlights",
+        "r-irrprobe",
+        "r-display"
+      ],
+      "outputs": [],
+      "detail": "粒子桶网格夹在实体之间按 zIndex 画；每个视图按 lit/tone/unlit 选 shader，拿自己的纵深比深度图做遮挡；混合模式按外观 add/normal。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/rendering/vfx/VfxRenderer.ts",
+          "l": 538,
+          "m": "m.mesh.blendMode = v.emitter.def.appearance.blend === 'add'"
+        },
+        {
+          "f": "src/rendering/vfx/vfxShaders.ts",
+          "l": 173,
+          "m": "vec3 amb = texture(uProbe, su).rgb;"
+        },
+        {
+          "f": "src/rendering/vfx/vfxShaders.ts",
+          "l": 264,
+          "m": "${ENTITY_SCENE_LIGHTS_GLSL}"
+        }
+      ]
+    },
+    {
+      "order": 35,
+      "id": "p-render-worldfilter",
+      "label": "④ 世界滤镜：整个世界容器过颜色矩阵",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧（场景配了 filterId 时）",
+      "sync": "sync",
+      "inputs": [
+        "r-worldfilter"
+      ],
+      "outputs": [],
+      "detail": "有滤镜时世界子树（背景 + 阴影 + 实体）整体先渲进临时图、再过滤镜后合成；UI 与画布不受影响。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/rendering/filter/WorldFilterPipeline.ts",
+          "l": 21,
+          "m": "this.target.filters = filters.length > 0 ? filters : null;"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 43,
+          "m": "/** 世界滤镜管线：仅作用于 worldContainer（场景+实体），GUI 不受影响 */"
+        }
+      ]
+    },
+    {
+      "order": 36,
+      "id": "p-render-worldfade",
+      "label": "⑤ 世界渐黑层",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧（alpha>0 时有效）",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [],
+      "detail": "全屏黑色矩形，只盖世界。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 506,
+          "m": "this.worldFadeOverlay.fill(0x000000);"
+        }
+      ]
+    },
+    {
+      "order": 37,
+      "id": "p-render-canvas",
+      "label": "⑥ 画布层：叠图 / 交叉溶解 / 呼吸图 / 文档揭示 / 画布实体 / 画布特效",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [],
+      "detail": "按作者 order（zIndex）画。交叉溶解与呼吸图是自定义 shader 网格（呼吸图的 uniform 在 tick 里、世界不暂停时推进）；画布特效只有色调/无光路。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10551,
+          "m": "this.breathingOverlaySystem.update(dt);"
+        },
+        {
+          "f": "src/rendering/breathingOverlayMesh.ts",
+          "l": 36,
+          "m": "finalColor = vec4(breathingShade(vUV), 1.0);"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 1628,
+          "m": "const { mesh, setT, disposeGpu } = createOverlayBlendMesh(te"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 1211,
+          "m": "this.attachToCanvas(kind, id, node, order);"
+        },
+        {
+          "f": "src/rendering/CanvasStage.ts",
+          "l": 111,
+          "m": "node.zIndex = ord;"
+        }
+      ]
+    },
+    {
+      "order": 38,
+      "id": "p-render-cutscene",
+      "label": "⑦ 演出覆盖层：电影黑边 + 小游戏场景",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧",
+      "sync": "sync",
+      "inputs": [
+        "r-minigame-rt"
+      ],
+      "outputs": [],
+      "detail": "小游戏自己的离屏渲染（取水的水下两张图、物件查看的接触 AO）在它们各自的 update 里触发，update 只在 Minigame 状态的 tick 分支里跑。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 1700,
+          "m": "this.renderer.cutsceneOverlay.addChild(this.movieBarContaine"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10648,
+          "m": "this.waterMinigameManager.update(dt);"
+        },
+        {
+          "f": "src/systems/waterMinigame/WaterMinigameScene.ts",
+          "l": 722,
+          "m": "target: this.bottomMrt,"
+        },
+        {
+          "f": "src/systems/objectExamine/contactAo.ts",
+          "l": 423,
+          "m": "target: this.rtBody,"
+        }
+      ]
+    },
+    {
+      "order": 39,
+      "id": "p-render-ui",
+      "label": "⑧ UI 层（最上）",
+      "where": "GPU 主渲染(Pixi render)",
+      "when": "每帧",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [],
+      "detail": "HUD、对话、面板、通知；过场的淡黑、闪白、字幕、标题卡、对白框；切场遮幕与持久黑幕。按 zIndex 带 + 插入序。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 551,
+          "m": "this.renderer.uiLayer.addChild(flash);"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 878,
+          "m": "this.renderer.uiLayer.addChild(box);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2344,
+          "m": "this.renderer.uiLayer.addChild(root);"
+        }
+      ]
+    },
+    {
+      "order": 40,
+      "id": "p-postrender-drain",
+      "label": "渲染后：排空 WebGL 错误到 F2 日志",
+      "where": "CPU(tick 内)",
+      "when": "每个渲染帧（ticker 优先级 UTILITY，渲染之后）",
+      "sync": "sync",
+      "inputs": [],
+      "outputs": [],
+      "detail": "启动末尾无条件装上（不按开发构建门控），回调用的是 src/debug 下的诊断函数；日志写到 F2 面板（面板不存在时只是空调用）。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4615,
+          "m": "drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4617,
+          "m": "this.renderer.app.ticker.add(this.glPostRenderDrain, undefin"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4332,
+          "m": "this.setupWebGlPanelDiagnostics();"
+        }
+      ]
+    }
+  ],
+  "resources": [
+    {
+      "id": "r-painting",
+      "name": "原画（主背景纹理 primaryBgTexture）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "场景装载：backgrounds 第一层 loadTexture",
+      "usedBy": "主背景 Sprite；场景光照 pass 的 uPainting；草木合成面的 uPainting；辐照探针的输入",
+      "detail": "\"原画就是最终光照\"：不打光时直接显示；打光时进光照缓存作为底，灯只往上加。夜景 = 换一张夜原画（换主背景 = 换整套烘焙目录）。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1819,
+          "m": "const texture = await this.assetManager.loadTexture(layer.im"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1837,
+          "m": "this.primaryBgTexture = texture;"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 842,
+          "m": "uPainting: this.painting.source,"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 387,
+          "m": "sceneId, sceneData.backgrounds?.[0]?.image"
+        }
+      ]
+    },
+    {
+      "id": "r-albedo",
+      "name": "albedo 贴图（albedo.png，sRGB8）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "离线烘焙；场景光照装载时 loadTexture（缺了整份场景光照不启用）",
+      "usedBy": "场景光照 pass 的 uAlbedo（灯乘在它上面）",
+      "detail": "作者可手改；全时段共用主背景那一张。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 457,
+          "m": "albedo = await assetManager.loadTexture(`${this.bakeBase}/al"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 848,
+          "m": "uAlbedo: this.geo.albedo.source,"
+        },
+        {
+          "f": "src/core/lightingPayloadFiles.ts",
+          "l": 57,
+          "m": "['geometry.json', 'normal.png', 'albedo.png']"
+        }
+      ]
+    },
+    {
+      "id": "r-normal",
+      "name": "场景法线图（normal.png）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "离线烘焙；场景光照装载时 loadTexture",
+      "usedBy": "场景光照 pass 的 uNormal（灯的 N·L）",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 454,
+          "m": "normal = await assetManager.loadTexture(`${this.bakeBase}/no"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 847,
+          "m": "uNormal: this.geo.normal.source,"
+        }
+      ]
+    },
+    {
+      "id": "r-geojson",
+      "name": "几何场元数据（geometry.json）",
+      "kind": "uniform",
+      "status": "active",
+      "producedBy": "离线烘焙；场景光照装载时 loadOptionalJson（没有 = 本张原画没烘，场景光照整体不启用）",
+      "usedBy": "wuPerQUnit、深度尺寸、去霾参数、标定 → 光照 pass / 显示网格的 uniform",
+      "detail": "运行时按必需字段表验，缺字段整包不启用。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 404,
+          "m": "`${this.bakeBase}/geometry.json`,"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 444,
+          "m": "const metaProblems = geometryMetaProblems(meta);"
+        }
+      ]
+    },
+    {
+      "id": "r-depth",
+      "name": "场景深度图（depthConfig.depth_map，RG16 打包）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "深度系统装载（depthLoader，await）",
+      "usedBy": "光照 pass uDepth、阴影线扫 uDepth、点亮背景的雾 uDepth、实体遮挡滤镜 uDepthMap（三种）、阴影 cast/contact、粒子遮挡 uDepthMap",
+      "detail": "同一张纹理被十来处采样；遮挡、雾、阴影、光照可见性都靠它。",
+      "cites": [
+        {
+          "f": "src/core/SceneDepthSystem.ts",
+          "l": 216,
+          "m": "this.depthTexture = await assetManager.loadTexture(p);"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 849,
+          "m": "uDepth: this.geo.depth.source,"
+        },
+        {
+          "f": "src/rendering/lighting/LitBackground.ts",
+          "l": 158,
+          "m": "uDepth: geo.depth.source,"
+        },
+        {
+          "f": "src/rendering/DepthOcclusionFilter.ts",
+          "l": 174,
+          "m": "uDepthMap: depthTexture.source,"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 558,
+          "m": "uDepthMap: ctx?.depthTexture?.source ?? Texture.WHITE.source"
+        },
+        {
+          "f": "src/rendering/vfx/VfxRenderer.ts",
+          "l": 494,
+          "m": "uDepthMap: depthTex,"
+        }
+      ]
+    },
+    {
+      "id": "r-collision",
+      "name": "碰撞图 GPU 纹理（collision_map）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "深度系统装载时（CPU 位图 + 同一 PNG 的 GPU 纹理）",
+      "usedBy": "投影阴影 cast 的 uCollisionMap（碰撞方向阻挡）",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/core/SceneDepthSystem.ts",
+          "l": 239,
+          "m": "try { this.collisionTexture = await assetManager.loadTexture"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 559,
+          "m": "uCollisionMap: ctx?.collisionTexture?.source ?? Texture.WHIT"
+        }
+      ]
+    },
+    {
+      "id": "r-ground",
+      "name": "行走面深度场（ground_d.png，RG16）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "角色照明载荷装载（必读件）；就绪回调把 CPU 场与纹理交给深度系统",
+      "usedBy": "角色受光网格 uGround（脚点深度）；阴影 cast/contact 的 uGroundD；CPU 侧遮挡脚点、碰撞反投影",
+      "detail": "遮挡 / 阴影落地 / 碰撞三处的脚点来源；遮挡滤镜在本帧拿不到脚深度时整段不遮挡。",
+      "cites": [
+        {
+          "f": "src/rendering/DepthOcclusionFilter.ts",
+          "l": 77,
+          "m": "if (uHasFootDepth < 0.5 ||"
+        },
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 913,
+          "m": "fetchPayloadBlob(`${base}/ground_d.png`),"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 1393,
+          "m": "this.characterLighting.onReady = () => {"
+        },
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 659,
+          "m": "uGround: tex.ground,"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 560,
+          "m": "uGroundD: ctx?.groundTexture ?? Texture.WHITE.source,"
+        }
+      ]
+    },
+    {
+      "id": "r-radiance",
+      "name": "场景辐射缓存（radiance RT，RGBA16F 线性 HDR，深度图尺寸）",
+      "kind": "renderTexture",
+      "status": "active",
+      "producedBy": "场景光照 pass（脏时重算）",
+      "usedBy": "点亮的背景网格 uRadiance（逐帧采样）",
+      "detail": "两级结构的第一级：原画 + albedo × Σ实体灯 + 灯体自发光，只存线性辐射，不做雾、不做显示变换。",
+      "cites": [
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 827,
+          "m": "format: 'rgba16float',"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 1119,
+          "m": "renderer.render({ container: this.mesh, target: this.rt, cle"
+        },
+        {
+          "f": "src/rendering/lighting/LitBackground.ts",
+          "l": 157,
+          "m": "uRadiance: radiance.source,"
+        }
+      ]
+    },
+    {
+      "id": "r-prefix",
+      "name": "阴影线扫前缀 slab（RGBA16F，每张 4 盏灯）+ 乒乓暂存",
+      "kind": "renderTexture",
+      "status": "active",
+      "producedBy": "阴影线扫求解器（脏时，初始化 1 趟 + 约 12 趟扫描 + 可能 1 趟拷贝，每组灯）",
+      "usedBy": "场景光照 pass 的 uPrefix0 / uPrefix1（每像素一次查表判灯是否被挡）",
+      "detail": "带影灯最多 8 盏（2 张 slab × 4 通道）。",
+      "cites": [
+        {
+          "f": "src/rendering/lighting/shadowPrefix.ts",
+          "l": 220,
+          "m": "width: w, height: h, format: 'rgba16float', scaleMode: 'line"
+        },
+        {
+          "f": "src/rendering/lighting/shadowPrefix.ts",
+          "l": 308,
+          "m": "renderer.render({ container: mesh, target: dst, clear: true"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 1113,
+          "m": "if (s0) r.uPrefix0 = s0.source;"
+        }
+      ]
+    },
+    {
+      "id": "r-lights",
+      "name": "灯光打包（PackedLights：uLightA..D × 24 槽）",
+      "kind": "uniform",
+      "status": "active",
+      "producedBy": "packLights（场景光照 pass 的 applyParams；作者灯 + 运行时灯，按时段过滤）",
+      "usedBy": "场景光照 pass 的 uLightA..D；角色受光网格与受光粒子的 charLights 组（同一次打包的结果）",
+      "detail": "运行时灯（落雷 > 手持 > 燃烧）排在最前；超过 24 盏截断并告警。",
+      "cites": [
+        {
+          "f": "src/rendering/lighting/lightPacking.ts",
+          "l": 8,
+          "m": "export const MAX_STATIC_LIGHTS = 24;"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 948,
+          "m": "const packed = packLights(def, this.geo.wuPerQUnit, phase);"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 989,
+          "m": "(u.uLightA as Float32Array).set(packed.a);"
+        },
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 396,
+          "m": "applyCharLights(this.charLights, packed, ["
+        }
+      ]
+    },
+    {
+      "id": "r-emissive",
+      "name": "灯体自发光 / 大气光晕参数（uCore）",
+      "kind": "uniform",
+      "status": "active",
+      "producedBy": "packEmissive",
+      "usedBy": "场景光照 pass",
+      "detail": "灯体自发光不乘 albedo，单独累加。",
+      "cites": [
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 996,
+          "m": "u.uCore.set(packEmissive(def, this.geo.wuPerQUnit));"
+        }
+      ]
+    },
+    {
+      "id": "r-haze",
+      "name": "去霾参数（uHaze / uHazeColor）",
+      "kind": "uniform",
+      "status": "active",
+      "producedBy": "geometry.json 的 haze 段 × 场景 dehaze",
+      "usedBy": "场景光照 pass（线性化原画后先去霾）",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 1001,
+          "m": "u.uHaze.set([hz.k, hz.strength * (def.dehaze ?? 1), hz.depth"
+        }
+      ]
+    },
+    {
+      "id": "r-surfmask",
+      "name": "表面材质反光遮罩（Canvas → 纹理）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "粒子系统交来表面区后在 CPU Canvas 上画成（没有区时不建图、用缺省材质）",
+      "usedBy": "场景光照 pass 的 uSurfMask（只对打了反光位的灯——落雷——起作用）",
+      "detail": "先换绑再销毁旧图。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 653,
+          "m": "if (canvas) this.surfaceMask = Texture.from(canvas);"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 796,
+          "m": "sh.resources.uSurfMask = (mask ?? Texture.WHITE).source;"
+        }
+      ]
+    },
+    {
+      "id": "r-display",
+      "name": "显示变换参数（ev / tonemap / 白平衡 / 对比 / 饱和 / lift）",
+      "kind": "uniform",
+      "status": "active",
+      "producedBy": "场景 lighting.display（运行时压暗 envDim 折进 ev）",
+      "usedBy": "点亮的背景网格（litBg 组）；角色受光网格与粒子（charLights 组里同一组数）",
+      "detail": "背景、角色、粒子一个曝光。",
+      "cites": [
+        {
+          "f": "src/rendering/lighting/LitBackground.ts",
+          "l": 207,
+          "m": "u.uEv = d.ev;"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 713,
+          "m": "effective = { ...effective, display: { ...effective.display,"
+        },
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 371,
+          "m": "applyCharDisplay(this.charLights, display);"
+        }
+      ]
+    },
+    {
+      "id": "r-fog",
+      "name": "高度雾参数（σ / 标高 / 基准高 / 颜色）",
+      "kind": "uniform",
+      "status": "active",
+      "producedBy": "场景 lighting.fog",
+      "usedBy": "点亮的背景网格（只在背景上，角色不吃雾）",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/rendering/lighting/LitBackground.ts",
+          "l": 218,
+          "m": "u.uFogSigma = f.sigma;"
+        },
+        {
+          "f": "src/rendering/lighting/LitBackground.ts",
+          "l": 123,
+          "m": "lin = lcApplyFog(lin, od, uFogColor);"
+        }
+      ]
+    },
+    {
+      "id": "r-swayuv",
+      "name": "草木位移图（uvMap RT，RGBA16F，原画尺寸）",
+      "kind": "renderTexture",
+      "status": "active",
+      "producedBy": "草木网格离屏渲染（renderUv，uvDirty 时）",
+      "usedBy": "点亮的背景网格 uUvMap（打光场景）；草木合成面 uUvMap（不打光场景）",
+      "detail": "RG = 源 uv − 本像素 uv（乘过覆盖度），A = 覆盖度。",
+      "cites": [
+        {
+          "f": "src/rendering/backgroundSway.ts",
+          "l": 914,
+          "m": "this.uvMap = RenderTexture.create({ width: nw, height: nh, f"
+        },
+        {
+          "f": "src/rendering/backgroundSway.ts",
+          "l": 960,
+          "m": "renderer.render({ container: this.mesh, target: this.uvMap,"
+        },
+        {
+          "f": "src/rendering/lighting/LitBackground.ts",
+          "l": 195,
+          "m": "r.uUvMap = use.uvMap.source;"
+        }
+      ]
+    },
+    {
+      "id": "r-swayinputs",
+      "name": "草木拆层贴图（sway_plate / sway_matte / sway_ids；打光补图 normal/albedo/depth）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "草木装载 loadBackgroundSwayInput（离线 sway_field 产出）",
+      "usedBy": "草木网格 uMatte/uIds；合成面 uPlate；打光场景的第二份光照 pass（扣掉植物的原画/法线/albedo/深度）",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/rendering/backgroundSway.ts",
+          "l": 918,
+          "m": "uMatte: inp.matteTex.source,"
+        },
+        {
+          "f": "src/rendering/backgroundSway.ts",
+          "l": 937,
+          "m": "uPlate: inp.plateTex.source,"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6763,
+          "m": "normal: inp.litPlate.normal, albedo: inp.litPlate.albedo, de"
+        }
+      ]
+    },
+    {
+      "id": "r-radplate",
+      "name": "露出处辐射缓存（passPlate 的 radiance RT）",
+      "kind": "renderTexture",
+      "status": "active",
+      "producedBy": "第二份场景光照 pass（与主缓存同灯同参、同脏同算）",
+      "usedBy": "点亮的背景网格 uRadiancePlate（植物挪开露出来的地方）",
+      "detail": "只在打光场景接了草木时存在。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 732,
+          "m": "this.passPlate = new SceneLightingPass(sw.plate, { ...this.g"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 742,
+          "m": "this.litBg.setSway({ uvMap: sw.uvMap, radiancePlate: rad, de"
+        }
+      ]
+    },
+    {
+      "id": "r-charatlas",
+      "name": "角色动画图集（颜色，uColorTex）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "实体动画装载；燃烧中的本体换成燃烧系统画的颜色图",
+      "usedBy": "角色受光网格；投影阴影剪影（cast 的 uTexture）",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 657,
+          "m": "uColorTex: tex.colorTex,"
+        },
+        {
+          "f": "src/rendering/SpriteEntity.ts",
+          "l": 562,
+          "m": "const src = this.bodyBurnAlbedo?.source ?? this.baseTexture."
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 642,
+          "m": "(this.castShader.resources as Record<string, unknown>)['uTex"
+        }
+      ]
+    },
+    {
+      "id": "r-charnormal",
+      "name": "角色法线图集（<图集名>.normal.png）",
+      "kind": "texture",
+      "status": "active",
+      "producedBy": "离线烘（bake_normal_atlas），运行时按图集 URL 装",
+      "usedBy": "角色受光网格 uNrm；热点 CharacterShadingFilter 的法线（逐帧跟当前图集）",
+      "detail": "缺图走平面法线。",
+      "cites": [
+        {
+          "f": "src/rendering/spriteNormalAtlas.ts",
+          "l": 19,
+          "m": "const NORMAL_SUFFIX = '.normal.png';"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 872,
+          "m": "const nrm = getNormalAtlasSource(this.assetManager, sheetUrl"
+        },
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 658,
+          "m": "uNrm: tex.nrm ?? Texture.WHITE.source,"
+        }
+      ]
+    },
+    {
+      "id": "r-probe",
+      "name": "角色 probe 图集（atlas_l1 / atlas_l2 / atlas_bin，按 shading.mode 只拉一张）",
+      "kind": "dataTexture",
+      "status": "active",
+      "producedBy": "角色照明载荷装载（await，纳入加载门）",
+      "usedBy": "角色受光网格、热点 CharacterShadingFilter、受光粒子的 uPL1/uPL2/uPBin（GI 底光查表）",
+      "detail": "缺省 mode 3（八面体 atlas_bin.bin）。",
+      "cites": [
+        {
+          "f": "src/core/lightingPayloadFiles.ts",
+          "l": 41,
+          "m": "3: 'atlas_bin.bin',"
+        },
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 911,
+          "m": "fetchPayloadBytes(`${base}/${probeCfg0.file}`),"
+        },
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 660,
+          "m": "uPL1: tex.atlasL1,"
+        }
+      ]
+    },
+    {
+      "id": "r-probevalid",
+      "name": "probe 有效位（probes_valid.bin，r8）",
+      "kind": "dataTexture",
+      "status": "active",
+      "producedBy": "角色照明载荷装载",
+      "usedBy": "同上三处的 uValid",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 912,
+          "m": "fetchPayloadBytes(`${base}/probes_valid.bin`),"
+        },
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 937,
+          "m": "format: 'r8unorm', scaleMode: 'nearest',"
+        }
+      ]
+    },
+    {
+      "id": "r-skyao",
+      "name": "skyao probe 图集（skyao_probe.bin，rgba16f，可缺）",
+      "kind": "dataTexture",
+      "status": "active",
+      "producedBy": "角色照明载荷装载（可选件，缺了角色不遮蔽）",
+      "usedBy": "角色受光网格 / 热点滤镜 / 受光粒子的 uSkyaoTex（乘在 GI 上）",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 915,
+          "m": "fetch(`${base}/skyao_probe.bin`)"
+        },
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 667,
+          "m": "uSkyaoTex: tex.skyao ?? Texture.WHITE.source,"
+        }
+      ]
+    },
+    {
+      "id": "r-vol",
+      "name": "体素卷（vol_rad / vol_emit）",
+      "kind": "dataTexture",
+      "status": "dev-only",
+      "producedBy": "进场景恒为 1×1 占位；只有 F2 切到 RT 档才现拉真卷（F2 调试工具只在开发构建）",
+      "usedBy": "受光网格/滤镜的 uVolRad / uVolEmit（RT gather 档）",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 944,
+          "m": "const volRadTex = this.makeVolumeTexture(new Uint16Array(4)."
+        },
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 550,
+          "m": "fetchPayloadBytes(`${base}/vol_rad.bin`),"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3878,
+          "m": "void this.applyCharMode(nextMode);"
+        }
+      ]
+    },
+    {
+      "id": "r-framelit",
+      "name": "角色帧组 uniform（frameLit：世界容器位姿、投影缩放、模式与倍率）",
+      "kind": "uniform",
+      "status": "active",
+      "producedBy": "charLitFrameSync 每个渲染帧写（挂 Pixi ticker，不经任何游戏状态分支）",
+      "usedBy": "所有角色受光网格共享（frameShade）",
+      "detail": "粒子另有一份 vfxFrameLit，不借角色的曝光与调试覆盖。",
+      "cites": [
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 172,
+          "m": "private readonly frameLit: UniformGroup = createFrameLitUnif"
+        },
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 1456,
+          "m": "syncFrame(wcX: number, wcY: number, projectionScale: number)"
+        },
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 648,
+          "m": "frameShade: frameGroup,"
+        }
+      ]
+    },
+    {
+      "id": "r-charlights",
+      "name": "角色灯组（charLights：实体灯 + 显示变换，跨场景常驻）",
+      "kind": "uniform",
+      "status": "active",
+      "producedBy": "光照装载 / 灯变化时 applyLights、applyDisplay；换场景归零",
+      "usedBy": "角色受光网格与受光粒子（同一个 UniformGroup）；粒子无光/色调路的显示变换",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 225,
+          "m": "private readonly charLights: UniformGroup = createCharLightU"
+        },
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 649,
+          "m": "charLights: lightGroup,"
+        },
+        {
+          "f": "src/core/CharacterLightingSystem.ts",
+          "l": 1366,
+          "m": "charLights: this.charLights,"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6499,
+          "m": "this.characterLighting.applyLights(null);"
+        }
+      ]
+    },
+    {
+      "id": "r-irrprobe",
+      "name": "辐照探针小图（原画降采样 + 模糊，约 96 像素宽）",
+      "kind": "renderTexture",
+      "status": "active",
+      "producedBy": "场景装载时 buildIrradianceProbe 一次离屏渲染（game_config.entityLighting.enabled 时）",
+      "usedBy": "EntityLightingFilter 的 uProbe（色调融入）；粒子 tone 路 uProbe",
+      "detail": "只服务\"没有烘焙载荷\"时的色调路径。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 7038,
+          "m": "this.currentProbe = buildIrradianceProbe(this.renderer.app,"
+        },
+        {
+          "f": "src/rendering/irradianceProbe.ts",
+          "l": 42,
+          "m": "app.renderer.render({ container: root, target: rt, clear: tr"
+        },
+        {
+          "f": "src/rendering/EntityLightingFilter.ts",
+          "l": 242,
+          "m": "uProbe: probeSource ?? Texture.WHITE.source,"
+        },
+        {
+          "f": "src/rendering/vfx/VfxRenderer.ts",
+          "l": 515,
+          "m": "uProbe: toneSrc ?? Texture.WHITE.source,"
+        }
+      ]
+    },
+    {
+      "id": "r-lightenv",
+      "name": "光环境（lightEnv：key/ambient 色与强度、色调强度、AO、阴影参数）",
+      "kind": "uniform",
+      "status": "active",
+      "producedBy": "场景 lightEnv + game_config 解析；光环境曲线逐帧原地改",
+      "usedBy": "EntityLightingFilter 的 uKeyColor 等；阴影浓度；粒子 tone 路",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 7028,
+          "m": "const env = resolveLightEnv(sceneData.lightEnv, cfg);"
+        },
+        {
+          "f": "src/rendering/EntityLightingFilter.ts",
+          "l": 233,
+          "m": "uKeyColor: { value: new Float32Array(lightEnv.key.color)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10890,
+          "m": "this.updateLightEnvFromCurve();"
+        }
+      ]
+    },
+    {
+      "id": "r-burnfield",
+      "name": "燃烧场纹理（BurnFieldTexture，RGBA8 网格，nearest）",
+      "kind": "dataTexture",
+      "status": "active",
+      "producedBy": "燃烧模拟直接编码字节；上传限速 20 次/秒",
+      "usedBy": "热点展示图的燃烧材质/自发光滤镜 uBurnField；纹理宿主的图像空间燃烧网格",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/rendering/burn/BurnFilters.ts",
+          "l": 136,
+          "m": "format: 'rgba8unorm', scaleMode: 'nearest', alphaMode: 'no-p"
+        },
+        {
+          "f": "src/rendering/burn/BurnRenderer.ts",
+          "l": 44,
+          "m": "export const BURN_FIELD_UPLOAD_HZ = 20;"
+        },
+        {
+          "f": "src/rendering/burn/BurnRenderer.ts",
+          "l": 277,
+          "m": "e.field.upload();"
+        }
+      ]
+    },
+    {
+      "id": "r-burnrt",
+      "name": "燃烧颜色图 / 自发光图（RenderTexture，纹理宿主各一对）",
+      "kind": "renderTexture",
+      "status": "active",
+      "producedBy": "燃烧渲染器每帧在图像空间离屏画（NPC、手上挂件这类由受光网格出图的宿主）",
+      "usedBy": "宿主拿颜色图顶替颜色纹理（照常受光），自发光图叠加在上",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/rendering/burn/BurnRenderer.ts",
+          "l": 314,
+          "m": "e.albedo = RenderTexture.create({ width: w, height: h, antia"
+        },
+        {
+          "f": "src/rendering/burn/BurnRenderer.ts",
+          "l": 299,
+          "m": "r.render({ container: e.materialMesh, target: e.albedo, clea"
+        },
+        {
+          "f": "src/rendering/burn/BurnRenderer.ts",
+          "l": 302,
+          "m": "e.host.setBurnTextures(e.albedo, e.emissive);"
+        }
+      ]
+    },
+    {
+      "id": "r-worldfilter",
+      "name": "世界滤镜（ColorMatrixFilter，assets/data/filters/<id>.json）",
+      "kind": "filter",
+      "status": "active",
+      "producedBy": "场景装载时 loadAndSetWorldFilter（资源桶缓存）",
+      "usedBy": "世界容器 filters",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/core/AssetManager.ts",
+          "l": 431,
+          "m": "return createFilterFromDef(def);"
+        },
+        {
+          "f": "src/rendering/filter/FilterLoader.ts",
+          "l": 24,
+          "m": "filter.matrix = arr as ["
+        }
+      ]
+    },
+    {
+      "id": "r-dof",
+      "name": "深度遮挡滤镜（DepthOcclusionFilter）",
+      "kind": "filter",
+      "status": "active",
+      "producedBy": "深度系统 createFilterForEntity（scene:ready 时挂）",
+      "usedBy": "烘焙场景的玩家/NPC（只做遮挡）；没有光环境时的玩家/NPC/热点",
+      "detail": "读 uTexture（容器子树渲出的临时图）+ uDepthMap；按\"脚点深度 + 直立 quad 深度梯度\"判被前景挡住的像素，丢弃或按系数淡化。",
+      "cites": [
+        {
+          "f": "src/rendering/DepthOcclusionFilter.ts",
+          "l": 40,
+          "m": "uniform sampler2D uDepthMap;"
+        },
+        {
+          "f": "src/rendering/DepthOcclusionFilter.ts",
+          "l": 110,
+          "m": "if (sceneDepth + uTolerance < spriteDepth) {"
+        },
+        {
+          "f": "src/core/SceneDepthSystem.ts",
+          "l": 492,
+          "m": "const f = DepthOcclusionFilter.createForEntity(this.depthTex"
+        }
+      ]
+    },
+    {
+      "id": "r-elf",
+      "name": "实体色调滤镜（EntityLightingFilter）",
+      "kind": "filter",
+      "status": "active",
+      "producedBy": "深度系统 createLightingFilterForEntity（无烘焙载荷 + 有光环境时）",
+      "usedBy": "玩家/NPC",
+      "detail": "遮挡（同 DepthOcclusionFilter）+ 用辐照探针做保亮度白平衡 + sprite 空间纵向 AO。",
+      "cites": [
+        {
+          "f": "src/rendering/EntityLightingFilter.ts",
+          "l": 75,
+          "m": "uniform sampler2D uProbe;"
+        },
+        {
+          "f": "src/rendering/EntityLightingFilter.ts",
+          "l": 157,
+          "m": "vec3 amb = texture(uProbe, vec2(su, sv)).rgb;"
+        },
+        {
+          "f": "src/core/SceneDepthSystem.ts",
+          "l": 516,
+          "m": "const f = EntityLightingFilter.createForEntity({"
+        }
+      ]
+    },
+    {
+      "id": "r-csf",
+      "name": "角色物理着色滤镜（CharacterShadingFilter，CHAR_FS）",
+      "kind": "filter",
+      "status": "active",
+      "producedBy": "深度系统 createBakedFilterForEntity（烘焙场景的热点展示图）",
+      "usedBy": "热点展示图（玩家/NPC 已改走受光网格）",
+      "detail": "采样 uDepthMap / uNrm / probe 图集 / skyao / 体素卷；每帧由 CPU 喂脚点与尺寸（driveFilter）。",
+      "cites": [
+        {
+          "f": "src/rendering/CharacterShadingFilter.ts",
+          "l": 895,
+          "m": "uNrm: Texture.WHITE.source,"
+        },
+        {
+          "f": "src/rendering/CharacterShadingFilter.ts",
+          "l": 896,
+          "m": "uPL1: scene.atlasL1,"
+        },
+        {
+          "f": "src/core/SceneDepthSystem.ts",
+          "l": 551,
+          "m": "const f = CharacterShadingFilter.createForEntity({"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7250,
+          "m": "this.characterLighting.driveFilter(filter, worldX, worldY, e"
+        }
+      ]
+    },
+    {
+      "id": "r-litshader",
+      "name": "角色受光网格 shader（LitSpriteQuad + createLitShader）",
+      "kind": "shader",
+      "status": "active",
+      "producedBy": "实体开烘焙着色时向供给方要（litShaderProvider → characterLighting.createEntityLitShader）",
+      "usedBy": "玩家、NPC、手上挂件",
+      "detail": "与精灵同 quad、同 UV 采颜色与法线；E = probe 查表（GI 底光）+ 同一次打包的实体灯；再过与背景同一份显示变换。",
+      "cites": [
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 638,
+          "m": "export function createLitShader("
+        },
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 217,
+          "m": "${ENTITY_SCENE_LIGHTS_GLSL}"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 874,
+          "m": "?? this.characterLighting.createEntityLitShader(colorTex, nr"
+        }
+      ]
+    },
+    {
+      "id": "r-vfxprog",
+      "name": "粒子 shader 三路（lit / tone / unlit）+ 光柱 + 闪电",
+      "kind": "shader",
+      "status": "active",
+      "producedBy": "VfxRenderer 逐视图建（条件变了重建）；GL 程序开局后台预编",
+      "usedBy": "粒子批网格",
+      "detail": "lit：与角色同一套 probe、同一段实体灯循环、同一组显示变换；tone：辐照探针色调；unlit：自发光。三路都读 uDepthMap 做遮挡。",
+      "cites": [
+        {
+          "f": "src/rendering/vfx/VfxRenderer.ts",
+          "l": 492,
+          "m": "shader = this.deps.createLitShader(isPlate ? getVfxPlateLitP"
+        },
+        {
+          "f": "src/rendering/vfx/vfxShaders.ts",
+          "l": 90,
+          "m": "uniform sampler2D uDepthMap;"
+        },
+        {
+          "f": "src/rendering/vfx/vfxShaders.ts",
+          "l": 370,
+          "m": "export function getVfxLitProgram(): GlProgram {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2229,
+          "m": "this.glProgramWarmup.request(vfxGlPrograms());"
+        }
+      ]
+    },
+    {
+      "id": "r-blur",
+      "name": "模糊滤镜（BlurFilter：像素密度低通 / 阴影剪影模糊）",
+      "kind": "filter",
+      "status": "active",
+      "producedBy": "实体像素密度同步；阴影驱动",
+      "usedBy": "实体精灵 / 热点展示图（密度低通）；阴影 cast 网格（软化）",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/rendering/EntityPixelDensityMatch.ts",
+          "l": 46,
+          "m": "return new BlurFilter({ strength: s, quality: 3 });"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 703,
+          "m": "this.castMesh.filters = [this.blur];"
+        },
+        {
+          "f": "src/rendering/SpriteEntity.ts",
+          "l": 1667,
+          "m": "this.sprite.filters = [this.pixelDensityBlur];"
+        }
+      ]
+    },
+    {
+      "id": "r-shadowmesh",
+      "name": "阴影网格（cast 剪影梯形 + contact 胶囊 AO 片）",
+      "kind": "mesh",
+      "status": "active",
+      "producedBy": "createShadowImpl（scene:ready 重建）；每帧 updateEntityShadows 改顶点与 uniform",
+      "usedBy": "阴影层",
+      "detail": "cast 采角色剪影 + 深度 + 碰撞 + 行走面；contact 采行走面 + 深度（只画在地面上）。",
+      "cites": [
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 604,
+          "m": "this.castShader = makePlanarShader(this.ctx, Texture.WHITE.s"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 613,
+          "m": "this.contactShader = makeContactShader(this.ctx);"
+        },
+        {
+          "f": "src/rendering/EntityShadow.ts",
+          "l": 507,
+          "m": "uGroundD: ctx?.groundTexture ?? Texture.WHITE.source,"
+        }
+      ]
+    },
+    {
+      "id": "r-minigame-rt",
+      "name": "小游戏自有离屏 RT（取水：水下颜色/参数图；物件查看：接触 AO 四张）",
+      "kind": "renderTexture",
+      "status": "active",
+      "producedBy": "小游戏场景自己的 update（Minigame 状态下）",
+      "usedBy": "小游戏场景内部的滤镜/合成",
+      "detail": "",
+      "cites": [
+        {
+          "f": "src/systems/waterMinigame/WaterMinigameScene.ts",
+          "l": 124,
+          "m": "this.bottomMrt = RenderTexture.create({"
+        },
+        {
+          "f": "src/systems/objectExamine/contactAo.ts",
+          "l": 368,
+          "m": "this.rtBody = RenderTexture.create({ width: tw, height: th }"
+        }
+      ]
+    }
+  ],
+  "disabled": [
+    {
+      "id": "d-unified",
+      "label": "统一角色光照路径（总闸 UNIFIED_CHAR_PATH_ENABLED = false）",
+      "detail": "总闸常关：每次装场景都走早退分支，只 teardown + 重建实体 shader。于是 UnifiedCharacterLighting 恒不 enabled，shader 供给方先问它的 createShader 恒返回空、落到 probe 路径；渲染前帧同步里那一路也恒不执行。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 443,
+          "m": "const UNIFIED_CHAR_PATH_ENABLED = false;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6608,
+          "m": "if (!UNIFIED_CHAR_PATH_ENABLED) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 873,
+          "m": "return this.unifiedCharLighting.createShader(colorTex, nrm)"
+        },
+        {
+          "f": "src/core/UnifiedCharacterLighting.ts",
+          "l": 112,
+          "m": "if (!this.enabled || !this.geometryGroup || !this.lightGroup"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4278,
+          "m": "if (this.unifiedCharLighting.active) {"
+        }
+      ]
+    },
+    {
+      "id": "d-ucs",
+      "label": "UnifiedCharacterShader（统一角色 shader）",
+      "detail": "只由 UnifiedCharacterLighting.createShader 调用，随上面的总闸无消费者。灯参数仍会被推给它（pushPackedLightsToCharacters / applySceneLightingParams），但没有任何 shader 读那组数。角色侧的高度雾也只在这个 shader 里，所以现役角色不吃雾。",
+      "cites": [
+        {
+          "f": "src/rendering/lighting/UnifiedCharacterShader.ts",
+          "l": 150,
+          "m": "uniform float uFogSigma;"
+        },
+        {
+          "f": "src/rendering/lighting/UnifiedCharacterShader.ts",
+          "l": 586,
+          "m": "export function createUnifiedCharShader("
+        },
+        {
+          "f": "src/core/UnifiedCharacterLighting.ts",
+          "l": 114,
+          "m": "const sh = createUnifiedCharShader(this.geometryGroup, this."
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 5796,
+          "m": "this.unifiedCharLighting.applyParams("
+        }
+      ]
+    },
+    {
+      "id": "d-gi",
+      "label": "GI 反弹 pass（GiBouncePass）",
+      "detail": "唯一的构造点在 loadGiHitmap 里，而 loadGiHitmap 没有调用方；场景光照 update 里\"重算后跑 GI\"那一句因此恒为空操作。gi_hitmap.bin 照旧烘但运行时不装。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 282,
+          "m": "this.giPass = new GiBouncePass(radiance.source, {"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 252,
+          "m": "private async loadGiHitmap(sceneId: string, meta: LightingGe"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 783,
+          "m": "if (recomputed) this.giPass?.render(renderer);"
+        },
+        {
+          "f": "src/rendering/lighting/GiBouncePass.ts",
+          "l": 108,
+          "m": "export class GiBouncePass {"
+        }
+      ]
+    },
+    {
+      "id": "d-skyvis",
+      "label": "3D 天穹可见性网格（skyvis_grid）",
+      "detail": "装载时直接置空，纹理 getter 因此恒返回空；唯一消费方是已关停的统一角色路径。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 548,
+          "m": "this.skyvisGrid = null;"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 185,
+          "m": "if (!this.skyvisGrid || !this.meta) return null;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6620,
+          "m": "const skyGrid = this.sceneLighting.skyVisibilityTexture;"
+        }
+      ]
+    },
+    {
+      "id": "d-placeholder",
+      "label": "lighting.placeholder 字段",
+      "detail": "运行时唯一判点在总闸早退之后，走不到。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6613,
+          "m": "if (this.sceneLighting.params?.placeholder) {"
+        }
+      ]
+    },
+    {
+      "id": "d-radiancescale",
+      "label": "radianceScale（角色标定常数）",
+      "detail": "只作为参数传给统一角色那一路，最终进 UnifiedCharacterShader 的 uRadianceScale；那个 shader 不会被建出来。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 335,
+          "m": "get radianceScale(): number {"
+        },
+        {
+          "f": "src/rendering/lighting/UnifiedCharacterShader.ts",
+          "l": 542,
+          "m": "num('uRadianceScale', radianceScale);"
+        }
+      ]
+    }
+  ],
+  "uncertain": [
+    {
+      "id": "u-ticker",
+      "where": "src/core/Game.ts:4269 / 4286 / 4617；src/rendering/Renderer.ts:134",
+      "why": "同一个 ticker 回调里的先后（主 tick → 角色帧同步 → Pixi 渲染 → WebGL 错误排空）是按回调优先级推出来的：代码只给出 LOW+1 / (Pixi 内部的 LOW) / UTILITY 这些常量名和注释。仓库里没装 pixi.js（node_modules 缺失），无法对照 Pixi 源确认常量数值与同优先级下的先后。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4269,
+          "m": "ticker.add(this.mainTick);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 886,
+          "m": "/** Pixi 渲染之后 drain gl.getError（优先级 UTILITY，低于内置 render） */"
+        }
+      ]
+    },
+    {
+      "id": "u-entity-order",
+      "where": "src/rendering/Renderer.ts:310-329",
+      "why": "实体层里玩家、NPC、热点、粒子桶谁先画谁后画是每帧按脚底 y、档位、遮挡多边形和玩家位置算 zIndex 决定的，静态只能画出规则，画不出具体次序。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 310,
+          "m": "sortEntityLayer(playerFootX?: number, playerFootY?: number):"
+        }
+      ]
+    },
+    {
+      "id": "u-shading-route",
+      "where": "src/core/Game.ts 的 attachPlayerSceneFilter / attachNpcSceneFilters / makeHotspotSceneFilter",
+      "why": "每个场景的实体实际走哪条着色路（受光网格 / EntityLightingFilter / 纯遮挡；热点 CharacterShadingFilter / 纯遮挡）取决于运行时角色照明载荷是否装上、game_config.entityLighting.enabled、场景有没有 depthConfig——都是数据与装载结果，静态不能按场景给出。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 8143,
+          "m": "const baked = this.characterLighting.shadingResources;"
+        }
+      ]
+    },
+    {
+      "id": "u-vfx-host",
+      "where": "src/rendering/vfx/VfxRenderer.ts:531",
+      "why": "粒子网格挂到哪个父节点由运行时 hostFor(instanceId) 回调决定（挂件效果可挂到宿主实体容器下，此时会被宿主容器的滤镜一起处理），静态看不出具体哪些效果走哪边。",
+      "cites": [
+        {
+          "f": "src/rendering/vfx/VfxRenderer.ts",
+          "l": 531,
+          "m": "return this.deps.hostFor?.(instanceId) ?? this.deps.entityLa"
+        }
+      ]
+    },
+    {
+      "id": "u-worldfilter-data",
+      "where": "src/rendering/filter/FilterLoader.ts:19-27",
+      "why": "世界滤镜的内容来自 assets/data/filters/<filterId>.json 的 20 元颜色矩阵；哪些场景配了、矩阵是什么只在数据里，代码层面看不到。",
+      "cites": [
+        {
+          "f": "src/rendering/filter/FilterLoader.ts",
+          "l": 19,
+          "m": "export function createFilterFromDef(def: FilterDef): ColorMa"
+        }
+      ]
+    },
+    {
+      "id": "u-density-baked",
+      "where": "src/rendering/SpriteEntity.ts:1667 与 577",
+      "why": "像素密度低通挂在精灵自身的 filters 上，而烘焙路径把精灵设为不渲染、由兄弟受光网格出图。精灵不渲染时它的滤镜是否还产生绘制属于 Pixi 内部行为，静态无法确认，所以没把\"密度低通\"画进③a 的输入。",
+      "cites": [
+        {
+          "f": "src/rendering/SpriteEntity.ts",
+          "l": 1667,
+          "m": "this.sprite.filters = [this.pixelDensityBlur];"
+        },
+        {
+          "f": "src/rendering/SpriteEntity.ts",
+          "l": 576,
+          "m": "this.sprite.renderable = false;"
+        }
+      ]
+    },
+    {
+      "id": "u-dirty-rate",
+      "where": "src/core/SceneLightingSystem.ts 的 setDynamicLights / setLightIntensityScales / setEnvDim / pushEffective",
+      "why": "场景光照缓存（①a/①b）是否在某一帧重算取决于运行时灯推送（手持火按位置/闪烁限速、落雷限速、燃烧）、F2/编辑器同步等；静态只能列出标脏的入口，给不出频率。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 588,
+          "m": "if (this.dynamicLights.length === 0 && lights.length === 0)"
+        }
+      ]
+    },
+    {
+      "id": "u-filter-rt",
+      "where": "Pixi FilterSystem（库内部）",
+      "why": "带滤镜的容器（实体容器、热点展示图、世界容器、阴影 cast）会让 Pixi 先把子树渲进临时 RT 再过滤镜，临时 RT 的分配、尺寸（按包围盒）与合并都在 Pixi 内部，代码里没有显式调用，因此没有把它们列为独立资源。",
+      "cites": [
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 138,
+          "m": "Pixi 滤镜先把子树渲进**按包围盒对齐的临时 RT**"
+        }
+      ]
+    },
+    {
+      "id": "u-ui-order",
+      "where": "src/rendering/uiLayerOrder.ts；src/rendering/CanvasStage.ts",
+      "why": "UI 层与画布层内部的先后分别由 zIndex 带 + 插入顺序、作者 order 决定，属运行时数据。",
+      "cites": [
+        {
+          "f": "src/rendering/CanvasStage.ts",
+          "l": 29,
+          "m": "`order` 越大越靠前,直接写进 `node.zIndex`"
+        }
+      ]
+    },
+    {
+      "id": "u-dom",
+      "where": "index.html 的 #game-mount 覆盖层",
+      "why": "触屏 HUD、F2 常驻卡等是挂在画面盒上的 DOM 元素，不在 Pixi 渲染树里，本图未画；它们与 canvas 的叠放由浏览器决定。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 191,
+          "m": "DOM 覆盖层（触屏 HUD、F2 常驻卡、编辑模式 HUD）都挂在画面盒上"
+        }
+      ]
+    }
+  ],
+  "docMismatch": [
+    {
+      "id": "m-cutsceneoverlay",
+      "doc": "Renderer.ts 注释：演出覆盖层放\"字幕、电影黑边、对白框、小游戏等\"",
+      "code": "实际只有电影黑边与小游戏场景根放进 cutsceneOverlay；过场字幕、对白框、淡黑、闪白都 addChild 到 uiLayer。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 39,
+          "m": "/** 演出用覆盖层：字幕、电影黑边、对白框、小游戏等，位于画布之上、UI之下 */"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 1724,
+          "m": "this.renderer.uiLayer.addChild(container);"
+        },
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 878,
+          "m": "this.renderer.uiLayer.addChild(box);"
+        }
+      ]
+    },
+    {
+      "id": "m-sls-header",
+      "doc": "SceneLightingSystem 类注释：持有\"法线 / 天穹可见性 / 3D 可见性网格\"",
+      "code": "装载时 3D 天穹网格置空、天穹可见性不再装（skyvis.png 已不在运行时文件表里）；实际持有的是法线 + albedo + 深度。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 115,
+          "m": "* 持有烘出来的**几何场**（法线 / 天穹可见性 / 3D 可见性网格）与两级渲染："
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 548,
+          "m": "this.skyvisGrid = null;"
+        }
+      ]
+    },
+    {
+      "id": "m-debug-numbering",
+      "doc": "SceneLightingSystem.setDebug 与 SceneLightingPass.setDebug 的注释编号（0=正常 1=天穹可见性 2=法线 …）",
+      "code": "shader 里的档位已于 2026-09-07 重编号为 0=正常 1=法线 2=albedo 3=灯的辐照度 4=线性化原画 5..9=GI/skyao；两处 setDebug 的注释仍是旧编号。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 756,
+          "m": "/** 调试可视化：0=正常 1=天穹可见性 2=法线 3=S_day 4=S_new 5=比值 6=线性化原画 7=G"
+        },
+        {
+          "f": "src/rendering/lighting/SceneLightingPass.ts",
+          "l": 163,
+          "m": "* 0=正常 1=法线 2=albedo 贴图 3=灯的辐照度 4=线性化原画 5..9=GI/skyao 体（见下）。"
+        }
+      ]
+    },
+    {
+      "id": "m-litsprite-child",
+      "doc": "CharacterLitSprite 类注释：受光网格\"作为 sprite 的子节点挂载\"",
+      "code": "实际挂在实体容器下、与精灵是兄弟节点（Pixi v8 的 Sprite 子节点不渲染），变换逐项从精灵复制。",
+      "cites": [
+        {
+          "f": "src/rendering/CharacterLitSprite.ts",
+          "l": 702,
+          "m": "* 与 sprite 同 quad 的网格。作为 sprite 的**子节点**挂载:继承 sprite 的全部变换"
+        },
+        {
+          "f": "src/rendering/SpriteEntity.ts",
+          "l": 572,
+          "m": "this.container.addChild(this.litQuad.mesh);"
+        }
+      ]
+    },
+    {
+      "id": "m-provider-comment",
+      "doc": "Game.litShaderProvider 注释：场景配了 lighting 且烘好载荷 → 走统一光影",
+      "code": "统一角色路径已被总闸关死，createShader 恒返回空，一律落到 probe 路径（characterLighting.createEntityLitShader）。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 864,
+          "m": "* · 场景配了 `lighting` 且烘好载荷 → 走统一光影(角色与背景同一份光、同一条显示变换)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 874,
+          "m": "?? this.characterLighting.createEntityLitShader(colorTex, nr"
+        }
+      ]
+    }
+  ]
+}

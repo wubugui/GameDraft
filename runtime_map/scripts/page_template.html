@@ -96,7 +96,7 @@ main { padding: 18px 16px 60px; min-width: 0; }
 
 .section-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .section-head p { margin: 0; color: var(--muted); font-size: 13px; max-width: 70ch; }
-.lede { color: var(--ink2); max-width: 78ch; margin: 4px 0 14px; }
+.lede { color: var(--ink2); max-width: 120ch; margin: 4px 0 14px; }
 .panel { background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
 .pad { padding: 14px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 14px; align-items: start; }
@@ -251,6 +251,8 @@ svg.dig .colhead { font-size: 10px; fill: var(--muted); font-family: var(--f-bod
 .lane-card:hover, .lane-card.sel { border-color: var(--ink2); }
 .lane-card .lt { font-weight: 500; }
 .lane-card .ld { color: var(--muted); font-size: 11.5px; }
+.lane-card .io { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 3px; }
+.lane-card.faded { opacity: .25; }
 
 .board { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 10px; }
 .board-col { border: 1px solid var(--line); border-radius: 8px; background: var(--paper); display: flex; flex-direction: column; }
@@ -740,6 +742,8 @@ function showFile(fi) {
   const f = FILE.get(fi);
   const p = P(fi);
   const nodes = [];
+  const dn = (D.diagrams.docs?.fileNames || []).find((x) => x.file === p);
+  if (dn) nodes.push(el('div', { class: 'note' }, '文档叫法:', dn.docName ?? '(无)', ' ', crefs(dn.cites, '文档出处')));
   nodes.push(kv([['所属块', BLOCK.get(f.b).name], ['层(按目录)', f.L ?? '规范未定层'], ['行数', f.n], ['标记', [f.asm ? '组装层' : '', f.dbg ? '调试设施(按文件名)' : '', f.bd ? '边界目录' : ''].filter(Boolean).join(' · ') || '—']]));
   nodes.push(el('a', { href: gh(p), target: '_blank', rel: 'noopener', class: 'small' }, `在仓库里看 ${p}`));
   const grp = (title, list, mk, open) => { if (list.length) nodes.push(fold(`${title} · ${list.length}`, open, list.map(mk))); };
@@ -1058,35 +1062,39 @@ RENDER.frame = (root) => {
 };
 function gateCls(g) { if (!g || g === 'always') return 'ok'; if (g === 'notPaused') return 'warn'; if (g.startsWith('state')) return 'dep'; return ''; }
 
+/** 泳道网格:lanes=[{id,label}],steps 按顺序,每步卡片放在 laneOf(step) 那一列 */
+function laneGrid(lanes, steps, laneOf, card) {
+  const idx = new Map(lanes.map((l, i) => [l.id, i]));
+  const g = el('div', { class: 'lanes', style: `grid-template-columns: 44px repeat(${lanes.length}, minmax(150px, 1fr)); min-width:${lanes.length * 160 + 44}px` });
+  g.append(el('div', { class: 'lane-h' }, '#'));
+  for (const l of lanes) g.append(el('div', { class: 'lane-h' }, l.label));
+  for (const s of steps) {
+    g.append(el('div', { class: 'lane-n' }, s.order ?? ''));
+    const li = idx.has(laneOf(s)) ? idx.get(laneOf(s)) : 0;
+    for (let i = 0; i < lanes.length; i++) {
+      const c = el('div', { class: 'lane-c' });
+      if (i === li) {
+        const cd = card(s);
+        cd.addEventListener('click', () => { for (const x of g.querySelectorAll('.lane-card.sel')) x.classList.remove('sel'); cd.classList.add('sel'); });
+        c.append(cd);
+      }
+      g.append(c);
+    }
+  }
+  return el('div', { class: 'tbl-wrap panel' }, g);
+}
+
 // ════════════════════════════════════ 4 场景生命周期
 RENDER.scene = (root) => {
   const d = D.diagrams.scene;
   head(root, d?.title || '场景生命周期', d?.summary);
   if (!d) return missing(root, 'scene');
-  calloutList(root, '入口(都汇到同一条切场路径)', d.entryPoints);
-  root.append(el('h3', { style: 'margin:18px 0 8px' }, '实际顺序(泳道 = 谁在做)'));
-  root.append(el('div', { class: 'row small muted', style: 'margin-bottom:6px' }, '标签:', asyncChip('await'), asyncChip('parallel'), asyncChip('fire-and-forget'), asyncChip('event'), asyncChip('sync')));
-  const lanes = d.lanes || [];
-  const idx = new Map(lanes.map((l, i) => [l.id, i]));
-  const wrap = el('div', { class: 'tbl-wrap panel' });
-  const g = el('div', { class: 'lanes', style: `grid-template-columns: 44px repeat(${lanes.length}, minmax(150px, 1fr)); min-width:${lanes.length * 160 + 44}px` });
-  g.append(el('div', { class: 'lane-h' }, '#'));
-  for (const l of lanes) g.append(el('div', { class: 'lane-h' }, l.label));
-  for (const s of d.steps || []) {
-    g.append(el('div', { class: 'lane-n' }, s.order ?? ''));
-    const li = idx.has(s.lane) ? idx.get(s.lane) : 0;
-    for (let i = 0; i < lanes.length; i++) {
-      const c = el('div', { class: 'lane-c' });
-      if (i === li) {
-        c.append(el('div', { class: 'lane-card', onclick: (ev) => { for (const x of g.querySelectorAll('.lane-card.sel')) x.classList.remove('sel'); ev.currentTarget.classList.add('sel'); stepDetail(s.label, s); } },
-          el('div', { class: 'row' }, el('span', { class: 'lt' }, s.label), asyncChip(s.async), s.event ? chip(s.event, 'evt') : null, statusChip(s.status)),
-          s.detail ? el('div', { class: 'ld' }, s.detail) : null));
-      }
-      g.append(c);
-    }
-  }
-  wrap.append(g);
-  root.append(wrap);
+  root.append(el('h3', { style: 'margin:6px 0 8px' }, '切一次场景的实际顺序(泳道 = 谁在做)'));
+  root.append(el('div', { class: 'row small muted', style: 'margin-bottom:6px' }, '标签:', asyncChip('await'), asyncChip('parallel'), asyncChip('fire-and-forget'), asyncChip('event'), '(没标的是同步)。点卡片看出处。'));
+  root.append(laneGrid(d.lanes || [], d.steps || [], (s) => s.lane, (s) => el('div', { class: 'lane-card', onclick: () => stepDetail(s.label, s) },
+    el('div', { class: 'row' }, el('span', { class: 'lt' }, s.label), asyncChip(s.async), s.event ? chip(s.event, 'evt') : null, statusChip(s.status)),
+    s.detail ? el('div', { class: 'ld' }, s.detail) : null)));
+  calloutList(root, '入口(都汇到这条切场路径)', d.entryPoints);
   if (d.events?.length) {
     root.append(el('h3', { style: 'margin:18px 0 8px' }, '切场景期间总线上的事件'));
     const t = el('table', { class: 't' }, el('thead', null, el('tr', null, el('th', null, '事件'), el('th', null, '何时'), el('th', null, '谁发'), el('th', null, '谁收 · 做什么'))));
@@ -1153,7 +1161,8 @@ RENDER.render = (root) => {
   walk('__root', 0);
   // 资源
   const RES = new Map((d.resources || []).map((r) => [r.id, r]));
-  const resName = (id) => RES.get(id)?.name || id;
+  const STAGE = new Map((d.stageTree || []).map((n) => [n.id, n]));
+  const resName = (id) => RES.get(id)?.name || (STAGE.get(id) ? `显示树:${STAGE.get(id).label}` : id);
   let curRes = null;
   const passesBox = el('div', { class: 'panel', style: 'padding:4px 0' }, el('h3', { style: 'padding:8px 12px 4px' }, '一帧画面的实际工作顺序'), el('div', { class: 'small muted', style: 'padding:0 12px 6px' }, '左列颜色:', el('span', { class: 'where-cpu' }, 'CPU(tick 内)'), ' · ', el('span', { class: 'where-off' }, 'GPU 离屏'), ' · ', el('span', { class: 'where-main' }, 'GPU 主渲染'), ' · ', el('span', { class: 'where-load' }, '加载期'), '。点贴图/缓冲标签,只看用到它的步骤。'));
   const passRows = [];
@@ -1170,9 +1179,34 @@ RENDER.render = (root) => {
   }
   function applyRes() {
     for (const [r, p] of passRows) r.classList.toggle('faded', !!curRes && !(p.inputs || []).includes(curRes) && !(p.outputs || []).includes(curRes));
+    for (const c of root.querySelectorAll('.lane-card')) {
+      const p = perFrameByCard.get(c);
+      if (p) c.classList.toggle('faded', !!curRes && !(p.inputs || []).includes(curRes) && !(p.outputs || []).includes(curRes));
+    }
     if (curRes && RES.get(curRes)) { const r = RES.get(curRes); stepDetail(r.name, r, [['类别', r.kind], ['谁产出', r.producedBy], ['谁读', r.usedBy]]); }
+    else if (curRes && STAGE.get(curRes)) { const n = STAGE.get(curRes); stepDetail(n.label, { ...n, detail: n.what }); }
   }
-  grid.append(passesBox, tree);
+  // 每帧:泳道视图;加载期单列
+  const WHERE_LANES = [{ id: 'cpu', label: 'CPU(tick 内 / ticker 回调)' }, { id: 'off', label: 'GPU 离屏(tick 内触发)' }, { id: 'main', label: 'GPU 主渲染(Pixi render)' }];
+  const laneOfPass = (p) => ((p.where || '').includes('离屏') ? 'off' : (p.where || '').includes('主渲染') ? 'main' : 'cpu');
+  const perFrame = (d.passes || []).filter((p) => !(p.where || '').includes('加载'));
+  const loadTime = (d.passes || []).filter((p) => (p.where || '').includes('加载'));
+  const passCard = (p) => el('div', { class: 'lane-card', onclick: () => stepDetail(p.label, p, [['在哪', p.where], ['何时', p.when], ['读', (p.inputs || []).map(resName).join('、')], ['写', (p.outputs || []).map(resName).join('、')]]) },
+    el('div', { class: 'row' }, el('span', { class: 'lt' }, p.label), statusChip(p.status)),
+    el('div', { class: 'ld' }, p.when || ''),
+    el('div', { class: 'io' }, (p.inputs || []).map((r) => resChip(r, 'dep')), (p.outputs || []).length ? el('span', { class: 'muted small' }, ' → ') : null, (p.outputs || []).map((r) => resChip(r, 'crt'))));
+  root.append(el('h3', { style: 'margin:6px 0 6px' }, '每一帧:从 tick 到画面(按实际先后)'));
+  root.append(el('div', { class: 'small muted', style: 'margin-bottom:6px' }, '蓝色标签 = 读的贴图/缓冲,紫色 = 写的;点标签只看用到它的步骤并显示它的来龙去脉。'));
+  const perFrameByCard = new Map();
+  const laneBox = laneGrid(WHERE_LANES, perFrame, laneOfPass, (p) => { const c = passCard(p); perFrameByCard.set(c, p); return c; });
+  root.append(laneBox);
+  root.append(el('h3', { style: 'margin:18px 0 6px' }, '显示树与加载期准备'));
+  const loadBox = el('div', { class: 'panel', style: 'padding:4px 0' }, el('h3', { style: 'padding:8px 12px 4px' }, '加载期(切场景时准备好的贴图与节点)'));
+  for (const p of loadTime) {
+    const row = passRows.find((x) => x[1] === p);
+    if (row) loadBox.append(row[0]);
+  }
+  grid.append(loadBox, tree);
   root.append(grid);
   if (d.resources?.length) {
     root.append(el('h3', { style: 'margin:18px 0 8px' }, '贴图与缓冲'));
@@ -1271,10 +1305,11 @@ RENDER.anomalies = (root) => {
 RENDER.uncertain = (root) => {
   const d = D.diagrams.uncertain;
   head(root, '抽不准的地方', '静态抽取看不见的关系:运行时拼出来的名字、按字符串查表分发、数据驱动的调用。这些关系在图上没有画,原因写在每一条里。');
+  if (d?.note) root.append(el('p', { class: 'note' }, d.note));
   if (d?.items?.length) {
     const t = el('table', { class: 't' }, el('thead', null, el('tr', null, el('th', null, '类别'), el('th', null, '是什么'), el('th', null, '在哪'), el('th', null, '为什么抽不准'), el('th', null, '影响'), el('th', null, '出处'))));
     const tb = el('tbody');
-    for (const u of d.items) tb.append(el('tr', null, el('td', { class: 'small' }, chip(u.kind)), el('td', null, u.label), el('td', { class: 'small' }, u.where), el('td', { class: 'small' }, u.why), el('td', { class: 'small muted' }, u.affects), el('td', null, crefs(u.cites, u.label))));
+    for (const u of d.items) tb.append(el('tr', null, el('td', { class: 'small' }, chip(u.kind), u.source ? el('div', { class: 'muted small' }, u.source === 'raw' ? '脚本标出' : '人工补') : null), el('td', null, u.label), el('td', { class: 'small' }, u.where), el('td', { class: 'small' }, u.why), el('td', { class: 'small muted' }, u.affects), el('td', null, crefs(u.cites, u.label))));
     t.append(tb);
     root.append(el('div', { class: 'tbl-wrap panel' }, t));
   } else missing(root, 'uncertain');
@@ -1298,6 +1333,16 @@ RENDER.docs = (root) => {
         el('div', null, el('div', { class: 'row' }, chip('代码', 'dep')), el('p', { style: 'margin:4px 0' }, m.code), crefs(m.codeCites, '代码出处')))));
   }
   root.append(list);
+  for (const k of ['boot', 'frame', 'scene', 'state', 'render']) {
+    const extra = D.diagrams[k]?.docMismatch;
+    if (!extra?.length) continue;
+    root.append(el('h3', { style: 'margin:18px 0 8px' }, `画"${D.diagrams[k].title || k}"时发现的(文档 / 代码注释与代码不一致)`));
+    for (const m of extra) root.append(el('div', { class: 'panel pad', style: 'margin-bottom:8px' },
+      el('div', { class: 'grid2' },
+        el('div', null, el('div', { class: 'row' }, chip('文档 / 注释', 'warn')), el('p', { style: 'margin:4px 0' }, m.doc)),
+        el('div', null, el('div', { class: 'row' }, chip('代码', 'dep')), el('p', { style: 'margin:4px 0' }, m.code))),
+      crefs(m.cites || [...(m.docCites || []), ...(m.codeCites || [])], m.id)));
+  }
   if (d.blockNames?.length) {
     root.append(el('h3', { style: 'margin:18px 0 8px' }, '块名的文档出处'));
     const t = el('table', { class: 't' }, el('thead', null, el('tr', null, el('th', null, '块'), el('th', null, '文档叫法'), el('th', null, '说明'), el('th', null, '出处'))));
