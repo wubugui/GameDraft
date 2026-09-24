@@ -40,7 +40,6 @@ class HealthThreatForm(QWidget):
             ("nightOnly", "发生时段", [(None, "默认：只在非白昼时段"), (True, "仅非白昼"), (False, "全天")]),
             ("affectsWhenHidden", "隐藏时", [(None, "默认：停止侵袭"), (False, "停止侵袭"), (True, "仍会侵袭（无形来源）")]),
             ("duringPresentation", "演出期间", [(None, "默认：暂停侵袭"), (False, "暂停侵袭"), (True, "继续侵袭（教学须配最低保护）")]),
-            ("soundOnlyMoving", "存在声播放时机", [(None, "默认：范围内持续"), (False, "范围内持续"), (True, "只在玩家走动时")]),
         ):
             combo = QComboBox(self.body)
             for data, label in entries:
@@ -61,7 +60,6 @@ class HealthThreatForm(QWidget):
             ("nearRadius", "近身半径（场景单位）", 40, False),
             ("nearAttackPerSecond", "近身每秒侵袭强度", 400, False),
             ("soundInterval", "存在声间隔（秒，至少 0.1）", .7, False),
-            ("soundBehindPlayer", "声源跟在身后距离（空＝实体）", 70, False),
             ("soundVolume", "存在声音量（0—1）", 1, False),
         ):
             field = OptionalHealthNumber(raw.get(key, ABSENT), self.body, default=default, required=required,
@@ -75,6 +73,12 @@ class HealthThreatForm(QWidget):
         sound.set_current(str(raw.get("presenceSfx", "")))
         sound.value_changed.connect(lambda *_: self._edit("presenceSfx"))
         self.fields["presenceSfx"] = sound
+        sound.setToolTip(
+            "这东西在**它自己待的地方**按间隔发的声（喘息、拖曳、嗡鸣这类）。\n"
+            "❗ 不要拿它做「跟着你走的脚步」——那是独立的一条：\n"
+            "动作 setFollowerFootsteps（接玩家的落脚做延迟重放，步频自动跟着玩家走）。\n"
+            "本条是固定间隔的，拿来当脚步就是个节拍器。",
+        )
         form.addRow("存在声（SFX，可空）", sound)
         note = IdRefSelector(self.body, allow_empty=True, editable=False, click_opens_popup=True)
         note.set_items([(str(n.get("id", "")), str(n.get("title", n.get("id", "")))) for n in model.system_note_rows()])

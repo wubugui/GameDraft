@@ -13,11 +13,11 @@
 import { parsePositionRef } from '../utils/positionRef';
 import { resolveBurnableHost } from '../data/burnables';
 import type { ActionExecutor } from './ActionExecutor';
-import type { PerformanceSessionManager } from '../systems/performanceSession';
+import type { PerformanceSession, PerformanceSessionManager } from '../systems/performanceSession';
 import type { GameClock } from '../systems/gameClock';
 import {
-  ledgerTakeDuck, ledgerTakeEnvDim, ledgerTakeGust, ledgerTakeSfx,
-  ledgerTakeShake, ledgerTakeStrikeLight, ledgerTakeVfx,
+  ledgerTakeEnvDim, ledgerTakeGust,
+  ledgerTakeShake, ledgerTakeStrikeLight, ledgerTakeVfx, ledgerTakeCleanup,
 } from '../systems/performanceSession';
 import type { RuleOfferRegistry } from './RuleOfferRegistry';
 import type { EventBus } from './EventBus';
@@ -27,7 +27,7 @@ import type { InventoryManager } from '../systems/InventoryManager';
 import type { RulesManager } from '../systems/RulesManager';
 import type { QuestManager } from '../systems/QuestManager';
 import type { EncounterManager } from '../systems/EncounterManager';
-import type { AudioManager } from '../systems/AudioManager';
+import type { AudioManager, SfxPreparation } from '../systems/AudioManager';
 import type { DayManager } from '../systems/DayManager';
 import type { NpcScheduleSystem } from '../systems/NpcScheduleSystem';
 import type { ArchiveManager } from '../systems/ArchiveManager';
@@ -54,6 +54,7 @@ import type { RetrySystem } from '../systems/RetrySystem';
 import type { SceneWindState } from '../utils/sceneWind';
 import { windGustErrors, type WindGustDef } from '../data/windGust';
 import type { SmellSystem } from '../systems/SmellSystem';
+import { FOLLOWER_DEFAULTS, type FollowerFootstepSystem } from '../systems/FollowerFootstepSystem';
 import {
   readVoiceSpec,
   readVoiceAdvanceSpec,
@@ -66,12 +67,13 @@ import type {
   TrajectoryEndReason,
   TrajectoryStopOptions,
 } from '../systems/TrajectorySystem';
-import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, ConditionExpr, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, EntityShadowBinding, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, TrajectoryTargetRef, ZoneRuleSlot, RuleLayerKey, TrajectoryPlayOptions, PositionRef, TrajectorySpawnSpec, VfxAnchorDef, VfxFieldDef, VfxFlockState} from '../data/types';
+import type { ActionDef, ActionOriginContext, AnimationPlaybackParams, CanvasEntityOptions, CanvasItemKindName, ConditionExpr, DialogueLine, DialoguePortraitRef, EmoteBubbleOffsetOpts, EmoteBubbleVariant, EntityShadowBinding, ICutsceneActor, IEmoteBubbleAnchor, TimeTransition, TrajectoryTargetRef, ZoneRuleSlot, RuleLayerKey, TrajectoryPlayOptions, PositionRef, TrajectorySpawnSpec, VfxAnchorDef, VfxFieldDef, VfxFlockState} from '../data/types';
 import { GameState } from '../data/types';
 import type { SceneEntityKind, RuntimeFieldValue } from '../data/EntityRuntimeFieldSchema';
 import { applyDialogueColonSpeakerFromResolvedText } from './resolveText';
 import { ACTION_PARAM_MANIFEST } from './actionParamManifest';
-import { isSpeakerSide, resolveDialogueLayout } from '../utils/dialogueSpeakerSide';
+import { BREATHING_ACTS, type BreathingAct } from '../systems/breathing/BreathingOverlaySystem';
+import { isSpeakerSide, resolveDialogueLayout, type DialogueLayoutStyle } from '../utils/dialogueSpeakerSide';
 
 /**
  * playScriptedDialogue 行内 `portrait` 字段的宽松解析：需带非空 `emotion` 才生效，`slug` 可选（缺省=跟随说话人）。
@@ -246,10 +248,32 @@ export interface StrikeThreatOptions {
   maxDistance?: number;
   fallback?: 'random' | 'none';
   fallbackRadius?: number;
+  fallbackMargin?: number;
+  fallbackMinDistance?: number;
+  fallbackSeparation?: number;
+  /** Enforce world-space separation; otherwise only spacing may soften on a valid surface. */
+  fallbackStrictSeparation?: boolean;
+  /** Current-scene zone explicitly confirmed by the author to contain only visible solid surfaces. */
+  fallbackSurfaceZone?: string;
+  fallbackGroundOnly?: boolean;
+  fallbackMaxSlopeDeg?: number;
+  /** Total visible bolts, filling after the unchanged authoritative chain with harmless ground strikes. */
+  visualStrikes?: number;
+  visualExtraChance?: number;
+  visualGapMs?: number;
+  visualGapJitterMs?: number;
+  /** Zero or absent preserves full playback; a positive budget stops the oldest sound. */
+  sfxVoices?: number;
+  /** Zero or absent preserves natural decay; a positive budget removes the oldest instance. */
+  vfxVoices?: number;
+  /** Register presentation ownership as each bolt starts, not after the entire chain resolves. */
+  onPresentation?: (resource: { vfxId?: string; cleanup?: () => void; lit?: boolean; shaken?: boolean }) => void;
   effect?: string;
   /** 一组效果 id：每次随机挑一个（同一道具反复放，每道雷都不一样） */
   effects?: string[];
   effectHeight?: number;
+  /** Particle seed only; overrides seed for VFX without affecting targets, gaps or chain probability. */
+  effectSeed?: number;
   lightIntensity?: number;
   lightHeight?: number;
   lightRange?: number;
@@ -261,6 +285,8 @@ export interface StrikeThreatOptions {
   sfx?: string;
   /** 雷声的本处音量（覆盖素材级）。近处炸雷要压过其它一切，这里就是那个旋钮。 */
   sfxVolume?: number;
+  /** Runtime-only audio ownership; a session's own duck layer does not suppress its thunder. */
+  mixOwner?: object;
   /**
    * 最多连劈几道（缺省 1）。
    *
@@ -352,10 +378,12 @@ export interface ActionRegistryDeps {
   gameClock: GameClock;
   vfx: {
     /** 返回实例 id：脱手演出要把自己放出来的实例记进归位账本 */
-    play: (opts: { instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number; restart?: boolean; oneShot?: boolean }) => string | null;
-    stop: (instanceId: string) => void;
+    play: (opts: { instanceId?: string; effect?: string; handle?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number; restart?: boolean; oneShot?: boolean; followCamera?: boolean }) => string | null;
+    stop: (instanceId: string, opts?: { soft?: boolean; fadeMs?: number; handle?: boolean }) => void;
     setState: (instanceId: string, state: VfxFlockState) => void;
     emitField: (def: VfxFieldDef, sceneX: number, sceneY: number, h: number) => void;
+    /** 静默预备一批效果（装进缓存，不建实例）：脱手演出开场时调，见 `VfxSystem.prepareEffects` */
+    prepare?: (effectIds: readonly string[]) => Promise<void>;
   };
   ruleOfferRegistry: RuleOfferRegistry;
   inventoryManager: InventoryManager;
@@ -510,6 +538,10 @@ export interface ActionRegistryDeps {
     xPercent: number,
     yPercent: number,
     widthPercent: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
+    /** 铺满窗口（等比盖满整屏、随窗口缩放重铺）；此时 x/y/width 不参与布局 */
+    fill?: boolean,
   ) => Promise<void>;
   /**
    * 将 overlay_images.json 中的短 id 解析为 /assets/... 路径；
@@ -522,6 +554,50 @@ export interface ActionRegistryDeps {
    */
   resolveOverlayImageSfx: (image: string) => OverlaySfxCue;
   hideOverlayImage: (id: string) => void;
+
+  // ───── 呼吸图(与叠图同一张 images 表、同一套 id 句柄;hideOverlayImage 收掉它)─────
+  /** 显示呼吸图(`breathing` = `assets/data/breathing/<id>.json` 的 id);百分比布局口径同 showOverlayImage;显示出来时兑现 */
+  showBreathingOverlay: (id: string, breathing: string, xPercent: number, yPercent: number, widthPercent: number, order?: number) => Promise<void>;
+  /** 呼吸图表演;`wait` 为真时:渐弱等到「停住 + 真停后多久出字」走完、猛吸等到猛吸结束才兑现 */
+  performBreathing: (id: string, act: BreathingAct, wait: boolean) => Promise<void>;
+  /** 呼吸图实时改参数(键见 src/data/breathingParams.json;`durationMs` > 0 时平滑过渡) */
+  setBreathingParams: (id: string, params: Record<string, unknown>, durationMs: number) => void;
+
+  // ───── 画布（场景之外那张屏幕空间的面）─────
+  //
+  // 叠图 / 文档揭示 / 实体 / 特效四类 item 共用同一个 `order` 顺序空间（越大越靠前）。
+  // 前两类由 CutsceneRenderer 放上去（句柄与三态语义没动），后两类由 CanvasStageSystem 管。
+
+  /** 往画布上放一个实体（同名先收掉旧的） */
+  showCanvasEntity: (name: string, opts: CanvasEntityOptions) => Promise<void>;
+  /** 收掉画布上的一个实体 */
+  hideCanvasEntity: (name: string) => void;
+  /** 画布实体播某个动画状态 */
+  playCanvasEntityAnimation: (name: string, state: string, playback?: AnimationPlaybackParams) => void;
+  /** 改画布实体的位置 / 大小 / 朝向 / 透明度（只改给了的项） */
+  setCanvasEntityTransform: (
+    name: string,
+    patch: {
+      xPercent?: number; yPercent?: number;
+      heightPercent?: number; widthPercent?: number;
+      facing?: 'left' | 'right'; alpha?: number;
+    },
+  ) => void;
+  /** 改画布上**任意** item 的绘制顺序； item 不在画布上返回 false */
+  setCanvasOrder: (kind: CanvasItemKindName, name: string, order: number) => boolean;
+  /** 往画布上放一团特效（同名先收掉旧的）；起不来返回 false */
+  playCanvasVfx: (
+    name: string,
+    opts: { effect: string; xPercent?: number; yPercent?: number; scale?: number; order?: number },
+  ) => boolean;
+  /** 收掉画布上的一团特效 */
+  stopCanvasVfx: (name: string) => void;
+  /**
+   * 收掉画布上全部**实体与特效**。
+   * 叠图 / 文档揭示 **不在此列**：它们的句柄与三态语义归各自那套，
+   * 收图走 `hideOverlayImage` / `hideDocument`（两个命名空间永不互访）。
+   */
+  clearCanvas: () => void;
   /** 双图叠化（与 showOverlayImage 同布局与 id，durationMs 结束后保留目标图） */
   blendOverlayImage: (
     id: string,
@@ -532,6 +608,8 @@ export interface ActionRegistryDeps {
     widthPercent: number,
     durationMs: number,
     delayMs: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ) => Promise<void>;
   /** 图对话（参数 graphId 对应 `graphs/<graphId>.json`） */
   startDialogueGraph: (
@@ -563,6 +641,8 @@ export interface ActionRegistryDeps {
     prompt: string,
     options: { text: string }[],
     allowCancel: boolean,
+    /** 版式档：`firstPerson` = 第一人称（屏底横排、不要木框）；不给 = 现行的屏底选项条 */
+    layout?: DialogueLayoutStyle,
   ) => Promise<number | null>;
   /**
    * `playScriptedDialogue`：`[tag:npc:@context]` 在无图对白时用 scriptedNpcId 补全上下文。
@@ -616,6 +696,8 @@ export interface ActionRegistryDeps {
   retrySystem: RetrySystem;
   sceneWind: SceneWindState;
   smellSystem: SmellSystem;
+  /** 跟脚声（玩家落脚的延迟重放）。只管声音，扣血在 healthThreatSystem，两者互不知道。 */
+  followerFootsteps: FollowerFootstepSystem;
   planeReconciler: PlaneReconciler;
   /** 配音通道（与过场字幕、世界对话共用同一条）；未注入时气泡配音整体退化为不发声。 */
   voiceChannel?: VoiceChannel;
@@ -772,7 +854,71 @@ function dbg(deps: ActionRegistryDeps, tag: string, line: string): void {
   deps.debugPanelLog?.(`[${tag}] ${line}`);
 }
 
+/** Read both branches without evaluating conditions, drawing random numbers, or running actions. */
+function performanceSfx(actions: ActionDef[]): SfxPreparation[] {
+  const refs = new Map<string, SfxPreparation>();
+  const pending = [...actions];
+  for (let i = 0; i < pending.length; i++) {
+    const action = pending[i];
+    const p = action.params ?? {};
+    if (action.type === 'playSfx' || action.type === 'strikeThreat') {
+      const id = String(action.type === 'playSfx' ? p.id ?? '' : p.sfx ?? '').trim();
+      if (id) refs.set(id, { id, positional: refs.get(id)?.positional || action.type === 'strikeThreat' });
+    }
+    if (action.type === 'runActions' || action.type === 'runActionsIf' || action.type === 'runActionsDetached') {
+      pending.push(...actionListFromParam(p.actions));
+      if (action.type === 'runActionsIf') pending.push(...actionListFromParam(p.elseActions));
+    } else if (action.type === 'randomBranch') {
+      pending.push(...actionListFromParam(p.aboveActions), ...actionListFromParam(p.belowActions));
+    } else if (action.type === 'chooseAction' && Array.isArray(p.options)) {
+      for (const option of p.options) if (isParamObject(option)) pending.push(...actionListFromParam(option.actions));
+    }
+  }
+  return [...refs.values()];
+}
+
+/**
+ * 一段脱手演出后面会放的效果 id（`playVfx` 的 effect、落雷的 effect / effects 池），扫法与 {@link performanceSfx} 相同：
+ * 只读引用，不求条件、不掷随机 —— 分支两边都收，宁可多装一个也不让第一道雷晚到。
+ */
+function performanceVfx(actions: ActionDef[]): string[] {
+  const ids = new Set<string>();
+  const add = (raw: unknown) => { const id = String(raw ?? '').trim(); if (id) ids.add(id); };
+  const pending = [...actions];
+  for (let i = 0; i < pending.length; i++) {
+    const action = pending[i];
+    const p = action.params ?? {};
+    if (action.type === 'playVfx') add(p.effect);
+    else if (action.type === 'strikeThreat') {
+      add(p.effect);
+      const pool = Array.isArray(p.effects) ? p.effects : typeof p.effects === 'string' ? p.effects.split(',') : [];
+      for (const id of pool) add(id);
+    }
+    if (action.type === 'runActions' || action.type === 'runActionsIf' || action.type === 'runActionsDetached') {
+      pending.push(...actionListFromParam(p.actions));
+      if (action.type === 'runActionsIf') pending.push(...actionListFromParam(p.elseActions));
+    } else if (action.type === 'randomBranch') {
+      pending.push(...actionListFromParam(p.aboveActions), ...actionListFromParam(p.belowActions));
+    } else if (action.type === 'chooseAction' && Array.isArray(p.options)) {
+      for (const option of p.options) if (isParamObject(option)) pending.push(...actionListFromParam(option.actions));
+    }
+  }
+  return [...ids];
+}
+
 export function registerActionHandlers(executor: ActionExecutor, d: ActionRegistryDeps): void {
+  // Use session identity: replacing a same-name performance must not stop its successor's audio.
+  const audioOwnerCleanups = new WeakMap<PerformanceSession, () => void>();
+  const ownSessionAudio = (session: PerformanceSession | undefined): void => {
+    if (!session) return;
+    let cleanup = audioOwnerCleanups.get(session);
+    if (!cleanup) {
+      cleanup = () => d.audioManager.releaseAudioOwner(session);
+      audioOwnerCleanups.set(session, cleanup);
+    }
+    ledgerTakeCleanup(session, cleanup);
+  };
+
   executor.register('enableRuleOffers', (p, zctx) => {
     if (!zctx?.zoneId) {
       console.warn('enableRuleOffers: missing zone context (must run from ZoneSystem batch)');
@@ -822,7 +968,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
      * 不写就都叫 `detached`，于是任意两段脱手演出互相顶替；想让两段共存就各起各的名字。
      */
     const id = String(p.id ?? '').trim() || 'detached';
-    d.performanceSessions.start(id, actions, zctx);
+    const session = d.performanceSessions.start(id, actions, zctx);
+    // start may synchronously trigger a scene change/interruption through its first action.
+    // Preparation owns no timeline wait and must not resurrect a session that already ended.
+    if (!session.finished && !session.hurried) {
+      const audio = performanceSfx(actions);
+      if (audio.length) {
+        ownSessionAudio(session);
+        void d.audioManager.prepareSfx(audio, session);
+      }
+      const effects = performanceVfx(actions);
+      if (effects.length) void d.vfx?.prepare?.(effects);
+    }
     // 故意不 return Promise：返回它就又变成"等它跑完"，这条动作就白写了。
   }, ['id', 'actions']);
 
@@ -848,6 +1005,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
         d.resolveRichText(String(p.prompt ?? '')),
         options.map((x) => ({ text: x.text })),
         p.allowCancel === true,
+        // 与对白同一套版式档（不写 = 现行选项条）
+        p.layout !== undefined ? resolveDialogueLayout(p.layout) : undefined,
       );
     } finally {
       if (gen === executor.getGeneration() && d.stateController.currentState === GameState.UIOverlay) {
@@ -856,7 +1015,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     }
     if (gen !== executor.getGeneration() || picked === null || picked < 0 || picked >= options.length) return;
     await executor.executeBatchAwait(options[picked].actions, zctx, scope);
-  }, ['prompt', 'options', 'allowCancel']);
+  }, ['prompt', 'options', 'allowCancel', 'layout']);
 
   /** r ∈ [0,1) 均匀采样；r > probability → aboveActions，否则 belowActions。probability 夹到 [0,1]。 */
   executor.register('randomBranch', async (p, zctx, scope) => {
@@ -1089,11 +1248,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const rawVol = p.volume;
     const vol = typeof rawVol === 'number' ? rawVol : Number(rawVol);
     const id = String(p.id ?? '').trim();
-    d.audioManager.playSfx(id, Number.isFinite(vol) ? vol : undefined);
-    // 脱手演出自己起的长音要记账：会话一收就掐掉，不让它响到过场/新场景里去。
-    // 只记自己起的——玩家踩出来的脚步声不在账上。
-    ledgerTakeSfx(scope?.session, id);
-  }, ['id', 'volume']);
+    const session = scope?.session;
+    ownSessionAudio(session);
+    if (p.loop === true) {
+      const handle = d.audioManager.playTransientSfx(id, {
+        volume: Number.isFinite(vol) ? vol : undefined, loop: true,
+        ...(session ? { mixOwner: session } : {}),
+      });
+      if (handle) ledgerTakeCleanup(session, () => handle.stop());
+      return;
+    } else d.audioManager.playSfx(id, Number.isFinite(vol) ? vol : undefined, session);
+    // 会话按音源归属收尾，保留同素材的其它实例（例如同时响起的脚步声）。
+  }, ['id', 'volume', 'loop']);
   // 抽空场景环境音（如崖墓"阴风"骤停制造"太安静"的诡异一拍）：留空 id 清掉全部环境层，
   // 传 id 只停指定一层。复用 AudioManager 既有 clear/removeAmbient，不扩 ActionRegistryDeps。
   executor.register('stopSceneAmbient', (p) => {
@@ -1116,12 +1282,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    *
    * - 压的是**演出层**，不是玩家在设置页调的那四个档：那个进存档，动它等于替玩家改了偏好。
    * - `bgm` / `ambient` / `sfx` / `voice` 各是 0..1 的倍率，只写要压的那几条；1 或不写 = 不压。
-   * - `id` 是这层的名字，`restoreAudio` 按它抬。同名可以叠几层（同一个道具连放两次），
-   *   一次 `restoreAudio` 只抬掉**最早**那层，后放的那次不受影响。
-   * - `holdMs` 是**兜底上限**：没人来抬时到点自己抬。缺省 20 秒。
-   *   ⚠ 它走**墙钟**，玩家开着面板发呆的时间也算在内（世界停了，这个计时不停）——
-   *   放在脱手演出里时留足余量。在脱手演出里它其实是多余的保险：会话的归位账本一定会抬；
-   *   真正靠它的是**普通批**里的 `duckAudio`（那里没有账本）。
+   * - `id` 是这层的名字，`restoreAudio` 在同一会话内按它抬，一次只抬最早那层。
+   *   不同会话互不代收，同一会话自己的音源不被本层压低。
+   * - 脱手演出由会话托管：存续期间所有新旧音源持续吃倍率，结束时精确归还这层；
+   *   自然结束保留作者已开始的还原渐变，打断则立即归还。
+   * - `holdMs` 仅用于没有会话的普通批：墙钟兜底上限，缺省 20 秒。
    */
   executor.register('duckAudio', (p, _zctx, scope) => {
     const name = String(p.id ?? '').trim() || 'duck';
@@ -1129,7 +1294,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       const n = typeof v === 'number' ? v : Number(v);
       return v === undefined || v === null || v === '' || !Number.isFinite(n) ? undefined : n;
     };
-    d.audioManager.pushAudioDuck(
+    const session = scope?.session;
+    const release = d.audioManager.pushAudioDuck(
       name,
       {
         ...(scale(p.bgm) !== undefined ? { bgm: scale(p.bgm) as number } : {}),
@@ -1139,8 +1305,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       },
       scale(p.holdMs) ?? 20000,
       scale(p.fadeMs) ?? 0,
+      !!session,
+      session,
     );
-    ledgerTakeDuck(scope?.session, name);
+    ledgerTakeCleanup(session, () => release(session?.hurried ? 0 : undefined));
+    ownSessionAudio(session);
   }, ['id', 'bgm', 'ambient', 'sfx', 'voice', 'fadeMs', 'holdMs']);
 
   /**
@@ -1148,17 +1317,18 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    * （还的是闪避倍率，玩家偏好从头到尾没被碰过，所以"还原"是精确的，不是靠记一份快照猜）。
    *
    * `stopSfx` 另给一份**逗号分隔**的音效 id：把这段演出自己起的、可能还在响的长音
-   * （酝酿的闷雷、风声）当场掐掉。不写就只抬闪避、不掐任何声音。
+   * （酝酿的闷雷、风声）当场掐掉。有会话时只停属于本会话的实例；
+   * 不写就只抬闪避、不掐任何声音。
    */
-  executor.register('restoreAudio', (p) => {
+  executor.register('restoreAudio', (p, _zctx, scope) => {
     const name = String(p.id ?? '').trim() || 'duck';
     const fadeRaw = Number(p.fadeMs);
-    d.audioManager.releaseAudioDuck(name, Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0);
+    d.audioManager.releaseAudioDuck(name, Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0, scope?.session);
     const list = Array.isArray(p.stopSfx) ? p.stopSfx
       : (typeof p.stopSfx === 'string' ? p.stopSfx.split(',') : []);
     for (const raw of list) {
       const id = String(raw).trim();
-      if (id) d.audioManager.stopSfxById(id);
+      if (id) d.audioManager.stopSfxById(id, scope?.session);
     }
   }, ['id', 'fadeMs', 'stopSfx']);
   // 必须 return：endDay 含到期延迟事件批 + day:start，批内后续动作要等整段落地（严格顺序）。
@@ -1486,6 +1656,38 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const enabled = !(p.enabled === false || p.enabled === 'false');
     d.smellSystem.setTracking(enabled);
   }, ['enabled']);
+
+  /**
+   * 跟脚声开关：「后头好像有人跟着走」。
+   *
+   * 机制是**玩家落脚事件的延迟重放**——你迈一步，半拍之后你刚才站的那个脚点上也落一步。
+   * 所以步频自动跟着当前装扮与速度走、拐弯沿着你走过的路线、你停住就没了（最多再跟一步）。
+   * 距离不用配：它 = 你在这段延迟里走过的路。
+   *
+   * ⚠ 与扣血**正交**：这条只管声音。要"跟着你还掉血"就照旧配 `healthThreat`，两者互不知道。
+   */
+  executor.register('setFollowerFootsteps', (p) => {
+    const id = String(p.id ?? '').trim() || 'default';
+    // 缺省为开：与 setSmellTracking 同口径（只有显式 false 才是关）
+    if (parseLooseBooleanParam(p.enabled) === false) {
+      // 缺省让**已排队的那一声响完**（"你停下了，后头还有一下"）；abrupt 才连它一起掐
+      d.followerFootsteps.clear(id, parseLooseBooleanParam(p.abrupt) === true);
+      return;
+    }
+    const set = String(p.footstepSet ?? '').trim();
+    // 百分比进数据（作者面读得懂：50 = 半步，正好踏在你两步中间），运行时折成比例
+    const percent = parseFiniteNumberParam(p.delayPercent);
+    const minDelay = parseFiniteNumberParam(p.minDelayMs);
+    const gainDb = parseFiniteNumberParam(p.gainDb);
+    d.followerFootsteps.set({
+      id,
+      delayRatio: percent !== null ? percent / 100 : FOLLOWER_DEFAULTS.delayRatio,
+      minDelayMs: minDelay !== null ? minDelay : FOLLOWER_DEFAULTS.minDelayMs,
+      footstepSet: set || undefined,
+      gainDb: gainDb !== null ? gainDb : FOLLOWER_DEFAULTS.gainDb,
+      fireStops: parseLooseBooleanParam(p.fireStops) === true,
+    });
+  }, ['enabled', 'id', 'delayPercent', 'minDelayMs', 'footstepSet', 'gainDb', 'fireStops', 'abrupt']);
 
   // 位面（PlaneReconciler）：手动覆盖激活位面 / 清覆盖回叙事点名。
   // 调试与特例演出用；任务逻辑的主路径 = 叙事状态节点 activePlane 点名。
@@ -1926,7 +2128,9 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    *   因为玩家手上有火时普通鬼一律被逼退、那个值恒为 0，夜里举着火把用符会一个靶都挑不出来。
    *   `maxDistance` 限定搜索半径（场景 wu），不给 = 不限。
    * - **挑不到**：`fallback` = `random`（缺省）在玩家周围随机找个地方照劈；`none` = 整件事不发生。
-   *   `fallbackRadius` 缺省 320 wu。给 `seed` 则落点完全确定（无头复现用），不给才真随机。
+   *   `fallbackRadius` 缺省 320 wu，表现落点按 M-world 三维距离取样。
+   *   `fallbackSurfaceZone` 指定作者确认的实体表面范围；缺省仅接受可确认的地面。
+   *   `fallbackStrictSeparation` 为 true 时不放宽世界距离间距。给 `seed` 则落点完全确定。
    * - **雷长什么样**：`effect` = 粒子效果 id，或 `effects` = 一组 id（**每次随机挑一道**，
    *   同一个道具反复放不会每次都是同一张图；给了 `seed` 则连挑哪道都确定）；
    *   `lightIntensity` > 0 时另加一盏运行时强光照亮整片（`lightHeight` / `lightRange` / `lightKelvin` /
@@ -1949,6 +2153,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const effectsRaw = Array.isArray(p.effects) ? p.effects
       : (typeof p.effects === 'string' ? p.effects.split(',') : []);
     const effects = effectsRaw.map((e) => String(e).trim()).filter(Boolean);
+    ownSessionAudio(scope?.session);
     const done = d.strikeThreat({
       ...(rank ? { rank } : {}),
       ...(fallback ? { fallback } : {}),
@@ -1956,7 +2161,27 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       ...(effects.length ? { effects } : {}),
       ...(num(p.maxDistance) !== undefined ? { maxDistance: num(p.maxDistance) as number } : {}),
       ...(num(p.fallbackRadius) !== undefined ? { fallbackRadius: num(p.fallbackRadius) as number } : {}),
+      ...(num(p.fallbackMargin) !== undefined ? { fallbackMargin: num(p.fallbackMargin) as number } : {}),
+      ...(num(p.fallbackMinDistance) !== undefined ? { fallbackMinDistance: num(p.fallbackMinDistance) as number } : {}),
+      ...(num(p.fallbackSeparation) !== undefined ? { fallbackSeparation: num(p.fallbackSeparation) as number } : {}),
+      ...(typeof p.fallbackGroundOnly === 'boolean' ? { fallbackGroundOnly: p.fallbackGroundOnly } : {}),
+      ...(typeof p.fallbackStrictSeparation === 'boolean' ? { fallbackStrictSeparation: p.fallbackStrictSeparation } : {}),
+      ...(typeof p.fallbackSurfaceZone === 'string' && p.fallbackSurfaceZone.trim() ? { fallbackSurfaceZone: p.fallbackSurfaceZone.trim() } : {}),
+      ...(num(p.fallbackMaxSlopeDeg) !== undefined ? { fallbackMaxSlopeDeg: num(p.fallbackMaxSlopeDeg) as number } : {}),
+      ...(num(p.visualStrikes) !== undefined ? { visualStrikes: num(p.visualStrikes) as number } : {}),
+      ...(num(p.visualExtraChance) !== undefined ? { visualExtraChance: num(p.visualExtraChance) as number } : {}),
+      ...(num(p.visualGapMs) !== undefined ? { visualGapMs: num(p.visualGapMs) as number } : {}),
+      ...(num(p.visualGapJitterMs) !== undefined ? { visualGapJitterMs: num(p.visualGapJitterMs) as number } : {}),
+      ...(num(p.sfxVoices) !== undefined ? { sfxVoices: num(p.sfxVoices) as number } : {}),
+      ...(num(p.vfxVoices) !== undefined ? { vfxVoices: num(p.vfxVoices) as number } : {}),
+      onPresentation: (resource) => {
+        ledgerTakeVfx(scope?.session, resource.vfxId);
+        if (resource.cleanup) ledgerTakeCleanup(scope?.session, resource.cleanup);
+        if (resource.lit) ledgerTakeStrikeLight(scope?.session);
+        if (resource.shaken) ledgerTakeShake(scope?.session);
+      },
       ...(num(p.effectHeight) !== undefined ? { effectHeight: num(p.effectHeight) as number } : {}),
+      ...(num(p.effectSeed) !== undefined ? { effectSeed: num(p.effectSeed) as number } : {}),
       ...(num(p.lightIntensity) !== undefined ? { lightIntensity: num(p.lightIntensity) as number } : {}),
       ...(num(p.lightHeight) !== undefined ? { lightHeight: num(p.lightHeight) as number } : {}),
       ...(num(p.lightRange) !== undefined ? { lightRange: num(p.lightRange) as number } : {}),
@@ -1965,6 +2190,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       ...(num(p.seed) !== undefined ? { seed: num(p.seed) as number } : {}),
       ...(String(p.sfx ?? '').trim() ? { sfx: String(p.sfx).trim() } : {}),
       ...(num(p.sfxVolume) !== undefined ? { sfxVolume: num(p.sfxVolume) as number } : {}),
+      ...(scope?.session ? { mixOwner: scope.session } : {}),
       ...(num(p.strikes) !== undefined ? { strikes: num(p.strikes) as number } : {}),
       ...(num(p.extraChance) !== undefined ? { extraChance: num(p.extraChance) as number } : {}),
       ...(num(p.gapMs) !== undefined ? { gapMs: num(p.gapMs) as number } : {}),
@@ -1979,15 +2205,11 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       ...(p.removeTarget === undefined ? {} : { removeTarget: parseLooseBooleanParam(p.removeTarget) !== false }),
     });
     void done.catch((e) => { console.warn('ActionRegistry: strikeThreat failed', e); });
-    // 演出资源进归位账本。⚠ 这里**不能 await**：打断时的同步补跑等不起一个微任务，
-    // 所以登记挂在 then 上；静默档下这三样本来就是空的，登记与否都一样。
-    void done.then((r) => {
-      for (const id of r.vfxIds) ledgerTakeVfx(scope?.session, id);
-      for (const id of r.sfxIds) ledgerTakeSfx(scope?.session, id);
-      if (r.lit) ledgerTakeStrikeLight(scope?.session);
-    }).catch(() => { /* 上面那条已经报过 */ });
+    // 每道雷起播时即登记归位资源，静默结算不取用表现资源。
     return done.then(() => undefined);
-  }, ['rank', 'maxDistance', 'fallback', 'fallbackRadius', 'effect', 'effects', 'effectHeight',
+  }, ['rank', 'maxDistance', 'fallback', 'fallbackRadius', 'effect', 'effects', 'effectHeight', 'effectSeed',
+    'fallbackMargin', 'fallbackMinDistance', 'fallbackSeparation', 'fallbackStrictSeparation', 'fallbackSurfaceZone', 'fallbackGroundOnly', 'fallbackMaxSlopeDeg',
+    'visualStrikes', 'visualExtraChance', 'visualGapMs', 'visualGapJitterMs', 'sfxVoices', 'vfxVoices',
     'lightIntensity', 'lightHeight', 'lightRange', 'lightKelvin', 'lightMs', 'removeTarget', 'seed',
     'sfx', 'sfxVolume', 'strikes', 'extraChance', 'gapMs', 'gapJitterMs',
     'flashAlpha', 'flashMs', 'shakeAmplitude', 'shakeMs']);
@@ -2413,20 +2635,146 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       console.warn('showOverlayImage: 需要 id 与 image');
       return;
     }
+    // fill = 铺满窗口：等比盖满整屏、随窗口缩放重铺，x/y/width 不参与布局（不写 = 按百分比定位）
+    const fill = p.fill === true;
     const x = typeof p.xPercent === 'number' ? p.xPercent : Number(p.xPercent);
     const y = typeof p.yPercent === 'number' ? p.yPercent : Number(p.yPercent);
     const w = typeof p.widthPercent === 'number' ? p.widthPercent : Number(p.widthPercent);
-    if (![x, y, w].every(n => Number.isFinite(n))) {
+    if (!fill && ![x, y, w].every(n => Number.isFinite(n))) {
       console.warn('showOverlayImage: xPercent / yPercent / widthPercent 须为数值');
       return;
     }
     // 叠图音：负载只带"该怎么响"，真正发声在音频管理器的系统音效事件表里（不在这儿播，
     // 分散播放会与全局默认音做出双响）。事件与图同步发出，不等贴图加载完。
     d.eventBus.emit('overlay:show', d.resolveOverlayImageSfx(rawImage));
-    return d.showOverlayImage(id, image, x, y, w).catch((e) => {
+    return d.showOverlayImage(id, image, x, y, w, parseFiniteNumberParam(p.order) ?? undefined, fill).catch((e) => {
       console.warn('ActionRegistry: showOverlayImage failed', e);
     });
-  }, ['id', 'image', 'xPercent', 'yPercent', 'widthPercent']);
+  }, ['id', 'image', 'xPercent', 'yPercent', 'widthPercent', 'order', 'fill']);
+
+  // ────────── 画布（场景之外那张屏幕空间的面）──────────
+  //
+  // 背景一张图，前面按 `order` 画别的东西。四类 item（叠图 / 文档揭示 / 实体 / 特效）
+  // 共用同一个顺序空间，所以实体与特效能排到文档揭示前面（这正是 2026-09-21 立项要的）。
+
+  executor.register('showCanvasEntity', (p) => {
+    const name = String(p.name ?? '').trim();
+    if (!name) {
+      console.warn('showCanvasEntity: 需要 name（画布上的句柄）');
+      return;
+    }
+    const character = String(p.character ?? '').trim();
+    const animFile = String(p.animFile ?? '').trim();
+    if (!character && !animFile) {
+      console.warn('showCanvasEntity: character 与 animFile 必须给一个');
+      return;
+    }
+    const facingRaw = String(p.facing ?? '').trim().toLowerCase();
+    const facing: 'left' | 'right' | undefined =
+      facingRaw === 'left' || facingRaw === 'right' ? facingRaw : undefined;
+    if (facingRaw && !facing) console.warn('showCanvasEntity: facing 须为 left 或 right，已忽略', p.facing);
+    return d.showCanvasEntity(name, {
+      character: character || undefined,
+      animFile: animFile || undefined,
+      state: String(p.state ?? '').trim() || undefined,
+      xPercent: parseFiniteNumberParam(p.xPercent) ?? undefined,
+      yPercent: parseFiniteNumberParam(p.yPercent) ?? undefined,
+      heightPercent: parseFiniteNumberParam(p.heightPercent) ?? undefined,
+      widthPercent: parseFiniteNumberParam(p.widthPercent) ?? undefined,
+      order: parseFiniteNumberParam(p.order) ?? undefined,
+      facing,
+      alpha: parseFiniteNumberParam(p.alpha) ?? undefined,
+    }).catch((e) => {
+      console.warn('ActionRegistry: showCanvasEntity failed', e);
+    });
+  }, ['name', 'character', 'animFile', 'state', 'xPercent', 'yPercent', 'heightPercent', 'widthPercent', 'order', 'facing', 'alpha']);
+
+  executor.register('hideCanvasEntity', (p) => {
+    const name = String(p.name ?? '').trim();
+    if (!name) {
+      console.warn('hideCanvasEntity: 需要 name');
+      return;
+    }
+    d.hideCanvasEntity(name);
+  }, ['name']);
+
+  executor.register('playCanvasEntityAnimation', (p) => {
+    const name = String(p.name ?? '').trim();
+    const state = String(p.state ?? '').trim();
+    if (!name || !state) {
+      console.warn('playCanvasEntityAnimation: 需要 name 与 state');
+      return;
+    }
+    d.playCanvasEntityAnimation(name, state, parseAnimationPlaybackParams(p));
+  }, ['name', 'state', 'speed', 'reverse', 'loop', 'holdFrame', 'thenState']);
+
+  executor.register('setCanvasEntityTransform', (p) => {
+    const name = String(p.name ?? '').trim();
+    if (!name) {
+      console.warn('setCanvasEntityTransform: 需要 name');
+      return;
+    }
+    const facingRaw = String(p.facing ?? '').trim().toLowerCase();
+    const facing: 'left' | 'right' | undefined =
+      facingRaw === 'left' || facingRaw === 'right' ? facingRaw : undefined;
+    if (facingRaw && !facing) console.warn('setCanvasEntityTransform: facing 须为 left 或 right，已忽略', p.facing);
+    d.setCanvasEntityTransform(name, {
+      xPercent: parseFiniteNumberParam(p.xPercent) ?? undefined,
+      yPercent: parseFiniteNumberParam(p.yPercent) ?? undefined,
+      heightPercent: parseFiniteNumberParam(p.heightPercent) ?? undefined,
+      widthPercent: parseFiniteNumberParam(p.widthPercent) ?? undefined,
+      facing,
+      alpha: parseFiniteNumberParam(p.alpha) ?? undefined,
+    });
+  }, ['name', 'xPercent', 'yPercent', 'heightPercent', 'widthPercent', 'facing', 'alpha']);
+
+  /**
+   * 改画布上任意一个 item 的绘制顺序。`kind` 是命名空间（四类永不互访），
+   * `name` 是该类里的作者名：叠图填句柄、文档揭示填 documentId、实体 / 特效填它们的 name。
+   */
+  executor.register('setCanvasOrder', (p) => {
+    const kindRaw = String(p.kind ?? '').trim();
+    const name = String(p.name ?? '').trim();
+    const order = Number(p.order);
+    if (!name || !Number.isFinite(order)) {
+      console.warn('setCanvasOrder: 需要 name 与数值 order');
+      return;
+    }
+    if (kindRaw !== 'image' && kindRaw !== 'document' && kindRaw !== 'entity' && kindRaw !== 'vfx') {
+      console.warn('setCanvasOrder: kind 须为 image / document / entity / vfx，得到', p.kind);
+      return;
+    }
+    d.setCanvasOrder(kindRaw, name, order);
+  }, ['kind', 'name', 'order']);
+
+  executor.register('playCanvasVfx', (p) => {
+    const name = String(p.name ?? '').trim();
+    const effect = String(p.effect ?? '').trim();
+    if (!name || !effect) {
+      console.warn('playCanvasVfx: 需要 name 与 effect');
+      return;
+    }
+    d.playCanvasVfx(name, {
+      effect,
+      xPercent: parseFiniteNumberParam(p.xPercent) ?? undefined,
+      yPercent: parseFiniteNumberParam(p.yPercent) ?? undefined,
+      scale: parseFiniteNumberParam(p.scale) ?? undefined,
+      order: parseFiniteNumberParam(p.order) ?? undefined,
+    });
+  }, ['name', 'effect', 'xPercent', 'yPercent', 'scale', 'order']);
+
+  executor.register('stopCanvasVfx', (p) => {
+    const name = String(p.name ?? '').trim();
+    if (!name) {
+      console.warn('stopCanvasVfx: 需要 name');
+      return;
+    }
+    d.stopCanvasVfx(name);
+  }, ['name']);
+
+  executor.register('clearCanvas', () => {
+    d.clearCanvas();
+  }, []);
 
   executor.register('setHotspotDisplayImage', (p) => {
     const sceneId = String(p.sceneId ?? '').trim();
@@ -2539,22 +2887,30 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (!effect) { console.warn('playVfx: 需要 instanceId，或 effect + 位置'); return; }
     const at = await resolveVfxAt(p, 'playVfx');
     if (!at) return;
+    if (scope?.session?.finished || scope?.session?.hurried) return;
     const surface = p.surface === 'shell' ? 'shell' : 'ground';
     const vid = d.vfx.play({
       effect,
+      handle: String(p.handle ?? '').trim() || undefined,
       anchor: { x: at.x, y: at.y, h: at.h, surface },
       seed: Number.isFinite(Number(p.seed)) ? Number(p.seed) : undefined,
       countScale: Number.isFinite(Number(p.countScale)) ? Number(p.countScale) : undefined,
       oneShot: p.oneShot === true,
+      followCamera: p.followCamera === true,
     });
     ledgerTakeVfx(scope?.session, vid);
-  }, ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale', 'restart', 'oneShot']);
+  }, ['instanceId', 'effect', 'handle', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale', 'restart', 'oneShot', 'followCamera']);
   /** `stopVfx`：停一个实例（在飞的粒子自然老化；永生的群整批清掉；临时实例直接移除）。 */
   executor.register('stopVfx', (p) => {
     const instanceId = String(p.instanceId ?? '').trim();
-    if (!instanceId) { console.warn('stopVfx: 需要 instanceId'); return; }
-    d.vfx.stop(instanceId);
-  }, ['instanceId']);
+    const handle = String(p.handle ?? '').trim();
+    if (!instanceId && !handle) { console.warn('stopVfx: 需要 instanceId 或 handle'); return; }
+    d.vfx.stop(instanceId || handle, {
+      handle: !instanceId && !!handle,
+      soft: p.soft === true,
+      fadeMs: Math.max(0, Number(p.fadeMs) || 0),
+    });
+  }, ['instanceId', 'handle', 'soft', 'fadeMs']);
   /** `setVfxState`：强制群状态（roosting / airborne / fleeing / returning）。 */
   executor.register('setVfxState', (p) => {
     const instanceId = String(p.instanceId ?? '').trim();
@@ -2626,6 +2982,47 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.hideOverlayImage(id);
   }, ['id']);
 
+  // ────────── 呼吸图 ──────────
+  // 一张静帧拆层 + 位移场,运行时按表演模拟实时合出「盖着纸在呼吸」;挂在叠图同一层、同一套 id 句柄。
+  executor.register('showBreathingOverlay', (p) => {
+    const id = String(p.id ?? '').trim();
+    const breathing = String(p.breathing ?? '').trim();
+    if (!id || !breathing) {
+      console.warn('showBreathingOverlay: 需要 id 与 breathing');
+      return;
+    }
+    const x = typeof p.xPercent === 'number' ? p.xPercent : Number(p.xPercent);
+    const y = typeof p.yPercent === 'number' ? p.yPercent : Number(p.yPercent);
+    const w = typeof p.widthPercent === 'number' ? p.widthPercent : Number(p.widthPercent);
+    if (![x, y, w].every((n) => Number.isFinite(n))) {
+      console.warn('showBreathingOverlay: xPercent / yPercent / widthPercent 须为数值');
+      return;
+    }
+    return d.showBreathingOverlay(id, breathing, x, y, w, parseFiniteNumberParam(p.order) ?? undefined).catch((e) => {
+      console.warn('ActionRegistry: showBreathingOverlay failed', e);
+    });
+  }, ['id', 'breathing', 'xPercent', 'yPercent', 'widthPercent', 'order']);
+
+  executor.register('breathingPerform', (p) => {
+    const id = String(p.id ?? '').trim();
+    const act = String(p.act ?? '').trim() as BreathingAct;
+    if (!id || !BREATHING_ACTS.includes(act)) {
+      console.warn(`breathingPerform: 需要 id 与 act(${BREATHING_ACTS.join(' / ')})`);
+      return;
+    }
+    return d.performBreathing(id, act, p.wait === true);
+  }, ['id', 'act', 'wait']);
+
+  executor.register('setBreathingParams', (p) => {
+    const id = String(p.id ?? '').trim();
+    const params = p.params;
+    if (!id || !params || typeof params !== 'object' || Array.isArray(params)) {
+      console.warn('setBreathingParams: 需要 id 与 params(参数名 → 数值)');
+      return;
+    }
+    d.setBreathingParams(id, params as Record<string, unknown>, parseDurationMsParam(p, 0));
+  }, ['id', 'params', 'durationMs']);
+
   executor.register('blendOverlayImage', (p) => {
     const id = String(p.id ?? '').trim();
     const rawFrom = String(p.fromImage ?? '').trim();
@@ -2651,10 +3048,10 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const delayMs = Number.isFinite(delayParsed) && delayParsed >= 0 ? delayParsed : 0;
     // 叠化音按**目标图**（正在露出来的那张）的配置发；起手就响，与淡化同步而不是等它走完。
     d.eventBus.emit('overlay:blend', d.resolveOverlayImageSfx(rawTo));
-    return d.blendOverlayImage(id, fromImage, toImage, x, y, w, ms, delayMs).catch((e) => {
+    return d.blendOverlayImage(id, fromImage, toImage, x, y, w, ms, delayMs, parseFiniteNumberParam(p.order) ?? undefined).catch((e) => {
       console.warn('ActionRegistry: blendOverlayImage failed', e);
     });
-  }, ['id', 'fromImage', 'toImage', 'durationMs', 'delayMs', 'xPercent', 'yPercent', 'widthPercent']);
+  }, ['id', 'fromImage', 'toImage', 'durationMs', 'delayMs', 'xPercent', 'yPercent', 'widthPercent', 'order']);
 
   executor.register('startDialogueGraph', (p, zctx) => {
     const graphId = String(p.graphId ?? '').trim();

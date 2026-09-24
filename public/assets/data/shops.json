@@ -22,6 +22,14 @@
       {
         "itemId": "talisman",
         "price": 8
+      },
+      {
+        "itemId": "leifu",
+        "price": 0
+      },
+      {
+        "itemId": "yanghuo",
+        "price": 0
       }
     ]
   },

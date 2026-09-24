@@ -21,7 +21,7 @@ verified_by:
   - tools/editor/tests/test_scene_canvas_presence_regressions.py
   - src/rendering/entitySortRule.test.ts
   - tools/editor/tests/test_scene_collision_migration.py
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -33,8 +33,8 @@ last_governed: 2026-09-03
 
 ### 1. 图元清单只在 `PART_TABLE`
 
-热点 = 圆点 + 展示图 + 碰撞多边形 + 透视幽灵;NPC = 圆点 + 碰撞 + 幽灵 + 巡逻折线
-+ **动画精灵**。增删附属图元只改 `scene_canvas_model.PART_TABLE` 一处,
+每类实体有哪几个 part(圆点、展示图/精灵、碰撞、幽灵、巡逻、着火点标记……)以
+`scene_canvas_model.PART_TABLE` 为准,别抄清单。增删附属图元只改那一处,
 `set_entity_visible` 与各 `remove_*_graphics` 都遍历它。
 
 **不住 `_entity_items` 的 part 走适配器**(`register_part_adapter`),不搬家:
@@ -83,6 +83,11 @@ size hint 都要读 `rt.world_w/world_h`。
   运行时与两个画布都会就地合成一份单帧动画集回落出精灵——所以"没有动画包就没有精灵"
   这条口径**不再成立**。编辑器侧的唯一真相源是 `tools/editor/shared/static_display_sprite.py`
   (老画布与新画布共用),运行时那一半见 [[entity-trajectory]] 的"道具 = 无动画包的普通 NPC"。
+- **开了可燃(`burnable`)的实体,图与尺寸取燃烧模板,不取实体自己的展示图/动画包**:热点展示图与
+  NPC 精灵都改画模板图、按模板真实尺寸(NPC 合成单帧走同一个精灵 runtime,于是缩放/朝向/透视/z 与普通 NPC
+  同口径);着火点标记挂在精灵 runtime 的"画完一拍"回调上跟着走。模板装不上 = 运行时不画这个实例,
+  画布也不画、只标红叉。改这类实体的画法或尺寸别从 `displayImage` 那条路下手(`hotspot_visual_world_size`
+  是两条路的分岔点)。护栏 `tools/editor/editors/tests/test_scene_editor_burn_overlay.py`。
 - **热点档位额外要求贴图真的加载成功**(运行时 `displaySprite !== null`;编辑器即
   "读出了 pixmap、没画成紫色缺件框"),**NPC 侧不要求**。这个不对称容易被顺手抹平。
 - **遮挡多边形只有热点有**。NPC 的 `collisionPolygon` 不参与遮挡带,一视同仁会造出
@@ -93,7 +98,7 @@ size hint 都要读 `rt.world_w/world_h`。
   它与 `PART_TABLE` 同性质,是清单型真相源。踩过:迁移一度只遍历热点、NPC 那支没有任何
   迁移路径。**任何新的批量平移/变换都要按那份登记逐类判**,别照热点抄一份。
 - **编辑器没有玩家**,故遮挡带那一支恒不生效(与运行时 `hasPlayer` 为假同分支),
-  这类热点回落静态 `spriteSort`。全库仅 8 个热点受影响。
+  这类热点回落静态 `spriteSort`。
 - 内容图元刻意没有 `entity_kind` 且 `NoButton`,因此不进叠放循环点选、不与
   `_saved_item_z` 互相覆盖。**别"顺手补上 entity_kind 让代码整齐"**。
 

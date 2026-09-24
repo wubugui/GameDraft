@@ -93,6 +93,10 @@ NPC 缺省 true,引擎自动钉成 false)与摆位口径(热点把整幅矩形�
   改写」的承诺里,而 `rename_entity` 实际不动它——**改完静默指空**,要等 `validate-data`
   才发现。现两侧共用 `_npc_data_ref_hit` / `_visit_npc_data_refs`(同一次遍历、同一个
   判定),parity 由 `test_scan_and_rename_agree_on_npc_data_refs` 锁死。
+- 重构只走动作参数表:**条件叶子里的实体 id 不跟随**(例:手持挂件条件叶的持有者 NPC id,NPC 改名后静默指空)。
+  数据结构内(非动作参数)的引用该怎么处置,判据见
+  [action-registration-registry-surfaces](../../runtime/mechanisms/action-registration-registry-surfaces.md)「四条路径」;
+  条件叶侧见 [condition-leaf-registration-surfaces](../../runtime/mechanisms/condition-leaf-registration-surfaces.md)。
 
 ## 怎么验证
 

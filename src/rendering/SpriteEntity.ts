@@ -137,6 +137,19 @@ function normalizePlaybackSpeed(raw: unknown): number {
 }
 
 /**
+ * 脚底偏移的上限（格高比例）。超过一半已经不是"脚没贴格底"，是数据写错了——夹住，
+ * 免得一个错值把整个人沉进地里半身。
+ */
+export const FOOT_OFFSET_MAX = 0.5;
+
+/** 状态的脚底偏移（`states[*].footOffset`，格高比例）；缺省 / 非法 / ≤0 ⇒ 0，超上限夹到上限。 */
+export function footOffsetOfState(state: AnimationStateDef | null | undefined): number {
+  const v = Number(state?.footOffset);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  return Math.min(FOOT_OFFSET_MAX, v);
+}
+
+/**
  * 反推图集格内**内容底部留白**（格像素）：打包器给每格上下各留同样的 pad，
  * 故 `pad = (格高 - 全图集最高帧内容高) / 2`。缺 `atlasFrames`/数据非法时返回 null。
  */
@@ -267,6 +280,14 @@ export class SpriteEntity {
   private currentState: string = '';
   private currentFrames: Texture[] = [];
   private currentFrameDef: AnimationStateDef | null = null;
+  /**
+   * 当前状态的脚底偏移（格高比例，见 `AnimationStateDef.footOffset`）。换状态时跟着换，
+   * 落点只有一处：**画面锚点**（`applyEffectiveAnchor`）——光照 mesh、挂件、燃烧叠加、
+   * 挂点换算都吃 `sprite.anchor`，所以跟着一起挪；接地点按逻辑锚点算，不动。
+   */
+  private footOffset = 0;
+  /** 投影剪影用的「脚底线以下裁掉」帧纹理（按帧纹理缓存；状态的偏移固定，所以键就是帧纹理） */
+  private groundTrimmedFrames: Map<Texture, Texture> = new Map();
   /** 本次播放的有效循环标志：动作层 playback.loop 覆盖优先，否则取状态定义 frameDef.loop。 */
   private effectiveLoop: boolean = false;
   private frameIndex: number = 0;
@@ -312,6 +333,11 @@ export class SpriteEntity {
   //
   // 光照不需要额外一行：`syncLitQuad` 一直是把 `sprite.anchor.x/y` 原样喂给
   // `LitSpriteQuad.sync`（它据此摆 quad 四个顶点），改锚点自动跟随（已实证）。
+  //
+  // 下面两个是**逻辑锚点**（作者写的 `def.anchor`，量的是「格顶 → 脚底线」这一段）；
+  // 打到 `sprite.anchor` 上的是**画面锚点** = 逻辑锚点再算上当前状态的脚底偏移
+  // （`effectiveAnchorY`）。没有脚底偏移时两者逐位相同。光照 mesh 把画面锚点当脚
+  // （着色器里 local 原点 = 脚，像素高度从它量起），所以偏移必须落在锚点上，不能落在 sprite.y。
   private anchorX = 0.5;
   private anchorY = 1;
 
@@ -335,19 +361,43 @@ export class SpriteEntity {
     if (x === this.anchorX && y === this.anchorY) return;
     this.anchorX = x;
     this.anchorY = y;
-    this.sprite.anchor.set(x, y);
+    this.applyEffectiveAnchor();
     this.applySpriteScale();
   }
 
-  /** 只读：当前锚点。 */
+  /** 只读：当前锚点（逻辑锚点，即作者写的 `def.anchor`；画面锚点另含脚底偏移）。 */
   getSpriteAnchor(): { x: number; y: number } {
     return { x: this.anchorX, y: this.anchorY };
   }
 
   /**
+   * **画面锚点**的 y：逻辑锚点落在「格顶 → 脚底线」这一段里（脚底线 = 格底上移 `footOffset`）。
+   *
+   * 逻辑锚点的 y 量的是这一段（缺省 1 = 脚底线）；没有脚底偏移时这一段就是整格，与改造前逐位相同。
+   * `off` 缺省取当前状态的偏移；预测别的状态（点火站位）时由调用方给。
+   */
+  private effectiveAnchorY(off: number = this.footOffset): number {
+    return this.anchorY * (1 - off);
+  }
+
+  /** 把画面锚点打到内层精灵上（幂等）。锚点或当前状态一变就调——两处入口都走 `applySpriteScale`。 */
+  private applyEffectiveAnchor(): void {
+    const ay = this.effectiveAnchorY();
+    if (this.sprite.anchor.x !== this.anchorX || this.sprite.anchor.y !== ay) {
+      this.sprite.anchor.set(this.anchorX, ay);
+    }
+  }
+
+  /** 只读：当前状态的脚底偏移（格高比例；0 = 格底就是脚）。 */
+  getFootOffset(): number {
+    return this.footOffset;
+  }
+
+  /**
    * **接地点**相对本类原点（`container.x/y`）的局部偏移。
    *
-   * 接地点 = 精灵世界包围盒的底边中点，也就是锚点可配之前 `(x, y)` 的那个含义；
+   * 接地点 = 脚底线的中点（脚底线 = 格底上移当前状态的 `footOffset`；没偏移时就是格底），
+   * 也就是锚点可配之前 `(x, y)` 的那个含义；
    * 阴影落点 / 深度排序锚 / 透视采样点 / 深度遮挡脚点都该吃它，不是锚点。
    *
    * 已含：透视系数（经 `getWorldSize()`）与**本类自己那一层镜像**（`facingX`，住在
@@ -355,14 +405,14 @@ export class SpriteEntity {
    * —— 那三样是调用方（`Npc`）的事，与轨迹叠加旋转的 `outerMirrorX` 同一套分层口径。
    * 也**不含**跳跃的视觉抬升（`setVisualLiftY`）：那个按设计不动接地点。
    *
-   * 缺省锚点时恒返回 `(0, 0)`。
+   * 缺省锚点时恒返回 `(0, 0)`——有没有脚底偏移都一样：偏移挪的是画，不是接地点。
    */
   getGroundContactOffset(): { x: number; y: number } {
     if (this.anchorX === 0.5 && this.anchorY === 1) return { x: 0, y: 0 };
     const size = this.getWorldSize();
     return {
       x: (0.5 - this.anchorX) * size.width * this.facingX,
-      y: (1 - this.anchorY) * size.height,
+      y: (1 - this.anchorY) * (1 - this.footOffset) * size.height,
     };
   }
 
@@ -413,6 +463,9 @@ export class SpriteEntity {
   private disposeFrameTextures(): void {
     this.contentBottomPadPx = null;
     this.sprite.texture = Texture.EMPTY;
+    for (const t of this.groundTrimmedFrames.values()) t.destroy(false);
+    this.groundTrimmedFrames.clear();
+    this.footOffset = 0;
     for (const textures of this.frames.values()) {
       for (const t of textures) {
         // 子纹理与图集共享 Assets 管理的 TextureSource，不可 destroy(true) 否则会拆掉整张贴图
@@ -653,6 +706,8 @@ export class SpriteEntity {
     this.currentState = clip;
     this.currentFrames = textures;
     this.currentFrameDef = frameDef;
+    // 画面锚点随之更新：下面 applySpriteScale 是必经点（applyEffectiveAnchor 在它里头）
+    this.footOffset = footOffsetOfState(frameDef);
     // 有效循环标志：动作层 playback.loop（显式 true/false）覆盖状态定义，缺省沿用 frameDef.loop
     this.effectiveLoop = playback?.loop ?? frameDef.loop;
     this.frameTimer = 0;
@@ -762,6 +817,9 @@ export class SpriteEntity {
       trajectoryOverlay: this.getTrajectoryOverlay(),
       frame: frame ? { x: frame.x, y: frame.y, width: frame.width, height: frame.height } : null,
       pixelDensityMatchActive: this.pixelDensityMatchActive,
+      /** 当前状态的脚底偏移（格高比例）与实际打到精灵上的画面锚点——验"脚落没落到接地点"用 */
+      footOffset: this.footOffset,
+      spriteAnchor: { x: this.sprite.anchor.x, y: this.sprite.anchor.y },
     };
   }
 
@@ -952,11 +1010,13 @@ export class SpriteEntity {
       width: box.w * scaleX,
       height: box.h * scaleY,
       // sprite.y 为跳跃弧线的视觉抬升（负=离地），减去它内容框才跟着精灵一起升；
-      // 末项是锚点重定基：quad 底边在容器局部 y = sprite.y + (1-anchorY)·格高，
-      // 而 bottomGap 的口径是"高于容器原点多少"。缺省锚点时该项恒 0。
+      // 末项是锚点重定基：quad 底边在容器局部 y = sprite.y + (1-画面锚点y)·格高，
+      // 而 bottomGap 的口径是"高于容器原点多少"。缺省锚点且无脚底偏移时该项恒 0。
+      // 内容底边高于格底：打包器对称留白 pad 与脚底偏移取大——pad 是从最高那帧反推的，
+      // 旧产线图集里站立帧的脚比它高出一截（那正是脚底偏移量出来的那一截）。
       bottomGap:
-        pad * scaleY - this.sprite.y
-        - (1 - this.anchorY) * this.worldHeight * this.depthScaleFactor,
+        Math.max(pad, this.footOffset * frameH) * scaleY - this.sprite.y
+        - (1 - this.sprite.anchor.y) * this.worldHeight * this.depthScaleFactor,
     };
   }
 
@@ -1057,9 +1117,9 @@ export class SpriteEntity {
       hostMirrorX: this.hostMirrorX(),
       visualLiftY: this.sprite.y,
       // 挂件与 sprite 是**兄弟**（同挂 container 下），锚点一变 sprite 的图挪了、
-      // 挂件不会自动跟着挪 —— 这两个值就是那道换算
+      // 挂件不会自动跟着挪 —— 这两个值就是那道换算（画面锚点：含脚底偏移，图挪多少挂件挪多少）
       anchorX: this.anchorX,
-      anchorY: this.anchorY,
+      anchorY: this.effectiveAnchorY(),
     });
   }
 
@@ -1118,6 +1178,8 @@ export class SpriteEntity {
     const raw = this.socketSet?.sockets[socketName]?.poses[String(slot)];
     if (!raw) return null;
     const d = opts.depthScale > 0 && Number.isFinite(opts.depthScale) ? opts.depthScale : 1;
+    // 预测的是那个状态：脚底偏移也按那个状态取（点火片段的脚底线未必与当前站立的相同）
+    const off = footOffsetOfState(this.animDef?.states?.[this.resolveClip(opts.logicalState)]);
     const pose = socketPoseToLocal(raw, {
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
@@ -1126,7 +1188,7 @@ export class SpriteEntity {
       hostMirrorX: this.hostMirrorX(),
       visualLiftY: 0,
       anchorX: this.anchorX,
-      anchorY: this.anchorY,
+      anchorY: this.effectiveAnchorY(off),
     });
     const tex = (at.view as Sprite).texture;
     const texW = tex?.frame?.width ?? 0;
@@ -1137,9 +1199,9 @@ export class SpriteEntity {
       scale: at.scale, anchorX: at.anchorX, anchorY: at.anchorY,
       rotationOffsetDeg: at.rotationOffsetDeg, mirrorWithHost: at.mirrorWithHost, texW, texH,
     }, u, v);
-    // 接地点偏移按给定朝向与透视系数算（不读当前朝向）；缺省底中锚点时恒 0
+    // 接地点偏移按给定朝向与透视系数算（不读当前朝向）；缺省底中锚点时恒 0（与 getGroundContactOffset 同式）
     const gx = (0.5 - this.anchorX) * this.worldWidth * d * opts.facing;
-    const gy = (1 - this.anchorY) * this.worldHeight * d;
+    const gy = (1 - this.anchorY) * (1 - off) * this.worldHeight * d;
     const vx = (p.x - gx) * this.litParentSX;
     const vy = (p.y - gy) * this.litParentSY;
     const r = this.litParentRot;
@@ -1490,15 +1552,15 @@ export class SpriteEntity {
    *
    * 存在的理由：内容框顶 ≠ 头顶——举枪、扛尸、打伞这些状态，自动锚会挂到道具尖上。
    *
-   * ⚠ 授权值的零点是脚底，而返回值的零点是容器原点。锚点可配之后这两个零点**不再重合**，
-   * 中间那一项 `(1-anchorY)·格高` 就是换算 —— 漏了它头顶气泡会整体飘走
-   * （缺省锚点时该项恒 0，与改造前逐位相同）。
+   * ⚠ 授权值的零点是格底，而返回值的零点是容器原点。锚点可配 / 有脚底偏移之后这两个零点
+   * **不再重合**，中间那一项 `(1-画面锚点y)·格高` 就是换算 —— 漏了它头顶气泡会整体飘走
+   * （缺省锚点且无脚底偏移时该项恒 0，与改造前逐位相同）。
    */
   getAuthoredBubbleAnchorLocalY(): number | null {
     const raw = this.currentFrameDef?.bubbleAnchor;
     if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return null;
     const cellH = this.worldHeight * this.depthScaleFactor;
-    return this.sprite.y + (1 - this.anchorY) * cellH - raw * cellH;
+    return this.sprite.y + (1 - this.sprite.anchor.y) * cellH - raw * cellH;
   }
 
   /** 当前显示帧在 `atlasFrames` 中登记的内容包围盒（格像素）；无登记/非法返回 null。 */
@@ -1526,10 +1588,33 @@ export class SpriteEntity {
     return this.depthScaleFactor;
   }
 
-  /** 当前显示帧纹理（供投影阴影复用剪影）；未加载时返回 null */
+  /**
+   * 当前显示帧纹理（供投影阴影复用剪影）；未加载时返回 null。
+   *
+   * 当前状态有脚底偏移时，给的是**裁掉脚底线以下那一截**的同一帧：阴影把剪影的底边钉在接地点上，
+   * 不裁的话剪影的脚离影子根部还隔着那段空白，投影会和脚分家。裁掉的一截按定义是空的
+   * （偏移取的就是本状态最贴地那帧的留白），所以剪影一个像素都不少。
+   * 本体在烧（显示的是燃烧颜色图）时不裁——那张图的透明度随燃烧变化，按原样给。
+   */
   getDisplayTexture(): Texture | null {
     const t = this.sprite.texture;
-    return t && t !== Texture.EMPTY ? t : null;
+    if (!t || t === Texture.EMPTY) return null;
+    if (this.footOffset <= 0) return t;
+    const frame = this.currentFrames[this.frameIndex];
+    if (!frame || t !== frame) return t;
+    return this.groundTrimmedFrame(frame);
+  }
+
+  private groundTrimmedFrame(frame: Texture): Texture {
+    const cached = this.groundTrimmedFrames.get(frame);
+    if (cached) return cached;
+    const r = frame.frame;
+    // 与画面锚点同一个基准：偏移是这一帧自身高度的比例（atlasFrames 不登记帧框时就是格高）
+    const h = r.height * (1 - this.footOffset);
+    if (!(h >= 1)) return frame;
+    const trimmed = new Texture({ source: frame.source, frame: new Rectangle(r.x, r.y, r.width, h) });
+    this.groundTrimmedFrames.set(frame, trimmed);
+    return trimmed;
   }
 
   /**
@@ -1628,6 +1713,8 @@ export class SpriteEntity {
   }
 
   private applySpriteScale(): void {
+    // 画面锚点（含当前状态的脚底偏移）先于 mesh 同步：syncLitQuad 按 sprite.anchor 摆顶点
+    this.applyEffectiveAnchor();
     const tex = this.baseTexture;
     const def = this.animDef;
     if (!tex || !def) {

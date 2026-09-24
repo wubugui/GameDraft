@@ -305,6 +305,73 @@ export function sampleSceneWind(
 
 
 /**
+ * 一阵**冲击风**（2026-09-24，落雷落地那一下）：从 (x, z) 往外推开的一圈空气，只给**表现**用——
+ * 吃场景风的粒子（纸钱、落叶、烟、扬尘）与草木摇曳。**不进** `sampleSceneWind`：手里火把的火苗 / 护火、
+ * 燃烧系统读的是那一份，冲击进了它们就成了玩法（一道雷吹灭玩家的火把、燃烧重放对不上）。
+ *
+ * 时间用冲击自己的钟（`SceneWindState.blastTime`），不用场景风的钟：没写风的场景里风钟不走，
+ * 而且燃烧系统的存档记着风钟的映射，不许为了冲击去推它。
+ */
+export interface WindBlast {
+  /** 中心（M-world wu） */
+  x: number;
+  z: number;
+  /** 起始时刻（冲击钟，秒） */
+  t0: number;
+  /** 中心处的峰值风速（wu/s） */
+  strength: number;
+  /** 半径（wu）：外面没有 */
+  radius: number;
+  /** 持续（秒） */
+  duration: number;
+}
+
+/** 冲击起风的时长（秒）：四十毫秒冲到峰值，之后按 (1−u)² 收 */
+const BLAST_ATTACK_S = 0.04;
+/** 冲击里往上的那一份（相对水平）：落点炸开，空气先往外、也往上 */
+const BLAST_UPWARD = 0.35;
+/** 冲击只在贴地这么高以内（wu）满额，往上线性减到 3 倍处为零 */
+const BLAST_HEIGHT_WU = 150;
+
+/** 冲击在 age 秒时的强度包络（0..1） */
+export function windBlastEnvelope(age: number, duration: number): number {
+  if (!(age >= 0) || !(duration > 0) || age >= duration) return 0;
+  const rise = age < BLAST_ATTACK_S ? age / BLAST_ATTACK_S : 1;
+  const u = age / duration;
+  return rise * (1 - u) * (1 - u);
+}
+
+/**
+ * 把这些冲击在世界 XZ、离地 `hReal` 处的空气速度**加进** `out[0..2]`（wu/s）：水平从中心往外，带一点往上；
+ * 强度 × 包络 × (1 − r/半径)²。返回加了多大（速度大小，0 = 这里没有冲击）。
+ */
+export function addWindBlasts(
+  blasts: readonly WindBlast[] | null | undefined, t: number, x: number, z: number, hReal: number,
+  out: number[] | Float32Array,
+): number {
+  if (!blasts || blasts.length === 0) return 0;
+  const hk = hReal <= BLAST_HEIGHT_WU ? 1 : Math.max(0, 1 - (hReal - BLAST_HEIGHT_WU) / (2 * BLAST_HEIGHT_WU));
+  if (hk <= 0) return 0;
+  let sum = 0;
+  for (const b of blasts) {
+    const env = windBlastEnvelope(t - b.t0, b.duration);
+    if (env <= 0) continue;
+    const dx = x - b.x, dz = z - b.z;
+    const r = Math.hypot(dx, dz);
+    if (!(r < b.radius)) continue;
+    const f = 1 - r / b.radius;
+    const v = b.strength * env * f * f * hk;
+    // 正中心没有方向：只往上
+    const nx = r > 1e-3 ? dx / r : 0, nz = r > 1e-3 ? dz / r : 0;
+    out[0] += nx * v;
+    out[1] += v * BLAST_UPWARD;
+    out[2] += nz * v;
+    sum += v;
+  }
+  return sum;
+}
+
+/**
  * 场景风的运行态：一份参数 + 一个钟 + 调试覆盖。组装层持有一个，逐帧 `advance(dt)`，
  * 粒子系统与背景摆动都从它读——**同一个钟**，所以同一阵风两边同拍。
  */
@@ -326,21 +393,42 @@ export class SceneWindState {
   private override: SceneWindOverride = {};
   private gust: { def: WindGustDef; elapsed: number; finish: () => void } | null = null;
   private gustWeight = 0;
+  private blastList: WindBlast[] = [];
   constructor(private readonly ambientPulse?: (id: string, volume: number | undefined, weight: number) => void) {}
   /** 自进场景起的秒数（切场景清零） */
   time = 0;
+  /** 冲击风的钟（秒）：一直走、切场景清零（见 {@link WindBlast} 为什么不用 `time`） */
+  blastTime = 0;
+
+  /** 此刻还没吹完的冲击（只读；给吃场景风的粒子与草木摇曳） */
+  get blasts(): readonly WindBlast[] { return this.blastList; }
+
+  /** 落一阵冲击（中心 M-world wu、峰值风速 wu/s、半径 wu、秒）。不改场景风参数，别的消费者一概不受影响 */
+  addBlast(b: { x: number; z: number; strength: number; radius: number; duration: number }): void {
+    if (![b.x, b.z, b.strength, b.radius, b.duration].every(Number.isFinite) || !(b.strength > 0) || !(b.radius > 0) || !(b.duration > 0)) return;
+    this.blastList = [...this.blastList, { ...b, t0: this.blastTime }];
+  }
+
+  clearBlasts(): void { this.blastList = []; }
 
   /** 换场景：按新场景数据重设（没有风 ⇒ 之后 `params` 恒 null） */
   reset(def: SceneWindDef | null | undefined): void {
     this.clearGust();
     this.base = resolveSceneWind(def);
     this.time = 0;
+    this.blastTime = 0;
+    this.blastList = [];
     this.rebuild();
   }
 
   advance(dt: number): void {
     if (!Number.isFinite(dt) || dt <= 0) return;
     if (this.live) this.time += dt;
+    if (this.blastList.length) {
+      this.blastTime += dt;
+      const t = this.blastTime;
+      if (this.blastList.some((b) => t - b.t0 >= b.duration)) this.blastList = this.blastList.filter((b) => t - b.t0 < b.duration);
+    }
     if (this.gust) {
       this.gust.elapsed += dt * 1000;
       if (this.gust.elapsed >= this.gust.def.durationMs) this.clearGust();

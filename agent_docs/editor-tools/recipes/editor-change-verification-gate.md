@@ -1,7 +1,7 @@
 ---
 id: editor-change-verification-gate
 title: 改编辑器后的验证门
-summary: 三件套(全树测试+素材审计+validate-data)+ 挂死分流 + 测试环境三条硬规矩 + 已知盲区对策 + "输出字节不变"强验收;跨机绿灯必须在验收机重放
+summary: 三件套(全树测试+素材审计+validate-data)+ 挂死 / worker 被打死分流 + 测试环境硬规矩 + 已知盲区对策(布局塌陷三形、入口三件) + "输出字节不变"强验收;双树对照用 worktree 不用 stash,跨机绿灯必须在验收机重放
 domain: editor-tools
 type: recipe
 status: active
@@ -15,10 +15,10 @@ triggers:
   paths: ["tools/editor/*", "tools/dialogue_graph_editor/*", "tools/narrative_editor_web/*"]
   topics: [验证门, 黄金往返, 格式保真, 字节验收, 挂死, 跨平台]
   tasks: [改编辑器收尾验证, 证明导出格式不变]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
-实测环境与日期:macOS 与 Windows 各多轮实测,2026-06-20 至 2026-08-21。解释器一律用项目
+实测环境与日期:macOS 与 Windows 各多轮实测,2026-06-20 至 2026-09-23(Windows 11 + PySide6 6.11)。解释器一律用项目
 venv(`scripts/py.sh` 会自己挑 `.tools/venv` 的 Scripts/bin,**不是** `.venv`;宿主 python 上
 PySide6/xdist 未必齐)。离屏平台与 `-n auto --dist loadfile` 已由 `tools/conftest.py` 与根
 `pytest.ini` 固化,不必手打;并行依赖 `pytest-xdist`,缺它全线 `unrecognized arguments: --dist`。
@@ -29,7 +29,12 @@ PySide6/xdist 未必齐)。离屏平台与 `-n auto --dist loadfile` 已由 `too
 sh scripts/py.sh -m pytest tools/editor -q -p no:cacheprovider
 sh scripts/py.sh -m tools.editor.shared.asset_reference_audit . --strict   # 应 issues: 0
 ./dev.sh validate-data                                                     # 应 exit=0、0 error
+sh scripts/py.sh -m tools.dev validate-data                                # Windows:dev.sh 只找 venv/bin,在这里直接退出
 ```
+
+⚠ **validate-data 的起点在多会话并行的树上常常不是零**(2026-09-23 实测起点 66 error,全来自别的会话在改的东西)。
+这时"零 error"不可达,能证明的是**没新增**:改动前后各跑一次,比 `[ERR ]` / `[WARN]` 行的**集合**(不是比数字),
+差集为空即过。门本身的措辞以 [editor-tools norms](../norms.md) 为准(2026-09-23 制作人批为「只减不增」)。
 
 ⚠ **门必须是 `tools/editor` 全树,不是 `tools/editor/tests`。** 编辑器测试实际分两处
 (第二处在 `tools/editor/editors/tests/`),少写一层目录就整个收不到——**跑绿了也说明不了
@@ -60,7 +65,12 @@ sh scripts/py.sh -m tools.editor.shared.asset_reference_audit . --strict   # 应
    真弹窗弹出来没人应答。**打空的桩不是失败,是挂死**;改交互控件时必须同步排查所有打它桩
    的测试。定位:`-X faulthandler` 起后台跑再 `kill -ABRT <pid>` 拿栈,或 `-n0 -v` 看
    最后一条测试名;栈顶会直接指到那个槽函数。
-3. 以上都不是,再去看 xdist worker / QtWebEngine 残留;`tools/conftest.py` 的守卫会在超时时
+3. **不是停住而是 worker 被打死**(`Windows fatal exception: access violation`,随后 xdist 抛
+   `INTERNALERROR KeyError: <WorkerController gwN>`,整跑收不了尾、失败汇总都不打印)⇒ 先查是不是往**被测 Qt
+   子类自己的类字典**上 patch 了 `MagicMock`:PySide6(6.11 实测)在 `signal.connect(self.<方法>)` 时扫类字典读每个
+   可调用物的槽标记,MagicMock 回一个子 Mock,C++ 当列表读即崩(挂在 Qt 基类上不触发;版本不同的机器可能不崩)。
+   打 Qt 子类方法的桩一律用普通函数 / lambda(样板 `test_port_conflict_dialog.py` 顶部)。
+4. 以上都不是,再去看 xdist worker / QtWebEngine 残留;`tools/conftest.py` 的守卫会在超时时
    dump 全线程栈并用 py-spy 拍卡死 worker,凭那份栈定罪,不要凭猜。
 
 ## Qt 生命周期与测试环境硬规矩(前两条是生产代码约束,不只测试)
@@ -69,6 +79,14 @@ sh scripts/py.sh -m tools.editor.shared.asset_reference_audit . --strict   # 应
   `tools/conftest.py`,任何测试写进真实根即失败(踩过:打开图会自动修 sidecar,跑测试即污染
   真实数据)。**别用 `python -m unittest`**——它不加载 conftest,把这三层连同控件销毁收尾
   一起绕过。
+  写保护只拦**本进程里 Python 层的文件 API**:子进程、Node/vitest、Qt 的 C++ 文件写入都不经过它。反过来,
+  **工具要往工作树内写派生产物(如工作台打包给页面的模块)时,测试里一律走子进程打包、本进程只读产物**,
+  在进程内直接调打包函数必被拦(样板 `tools/vfx_workbench/tests/test_bundle.py` 文件头)。
+- **合成按键的修饰键是全进程状态**:`QTest.keyClick(..., ControlModifier)` 不补"松开",Ctrl 从此在
+  `keyboardModifiers()` 里常驻,同一 worker 里后面的测试全当 Ctrl 按着(多选控件的"设为当前项"会被解析成切换,
+  选中又被取消——不报错,只是结果不对;`--dist loadfile` 下表现为间歇、单跑必过,**不是离屏能力缺失**)。
+  `tools/conftest.py` 已在每条测试后复位(护栏 `test_global_keyboard_modifier_hygiene.py`)。生产侧配套:
+  **程序化定位选中必须显式传选择标志**,别用只收一个参数的"设为当前项"——它读用户手上真按着的键。
 - **`QTimer.singleShot` 必须带 context 对象**(3 参版):2 参版没有 receiver,宿主销毁后照样
   触发,回调碰 C++ 即 `RuntimeError`,且 PySide 会沿最近的 Python-override 边界外抛、炸在
   **毫不相干的下一段操作**里。护栏 `test_single_shot_context_parity.py`,但它**只静态扫几个
@@ -97,7 +115,19 @@ sh scripts/py.sh -m tools.editor.shared.asset_reference_audit . --strict   # 应
   "编辑→切走/Discard→断言模型"探针(样板 `test_close_path_flow.py`)。
 - **布局塌陷 model 层测不出来**:动态加行/切模式显隐这类缺陷,构造冒烟与上千条 model 测试
   全绿也照样漏,只有离屏截图或断言实际高度(`host.height() >= host.sizeHint().height()`)
-  看得见。生产侧纪律见 [editor-tools norms](../norms.md) 过程义务「布局纪律」。
+  看得见。生产侧纪律见 [editor-tools norms](../norms.md) 过程义务「布局纪律」。同族三形:
+  - **动态内容挪进独立宿主控件**:父布局按控件项缓存宿主的 sizeHint,宿主没显示过时增删子控件连布局请求都不投递,
+    高度冻在旧值——增删后要对宿主显式 `updateGeometry()`(并先 invalidate 内层布局)。
+  - **宽度上限低于 sizeHint = 裁字**:窄 `QPushButton` 在现用主题下左右内边距就吃掉 28px,≤30px 宽的单字形按钮
+    画出来是**空白色块**;窄下拉连自己的缺省项都切一半。走共享出口(`shared/form_layout.py` 的
+    `fit_width_cap` / `compact_icon_button`,或 QToolButton 系的窄按钮),判据 `sizeHint().width() <= maximumWidth()`,
+    **跨主题 × 最大字号**跑(样板 `test_prop_editor_usability_fixes.py`)。只按缺省字号验收等于没验。
+  - **离屏截图要先装字体**:离屏平台的字体库是空的(`QFontDatabase.families()` 为 0),`grab()` 出来布局全对、
+    字全是方块。抓图前 `QFontDatabase.addApplicationFont(<系统字体文件>)` 再 `setFont`;裸脚本还要把仓库根放进
+    `PYTHONPATH`;动作编辑器的参数区默认折叠,先展开再抓。
+- **"入口接上了"要三样都 grep 得到**:后端路由 + 前端触发件 + 回包字段的消费方。只断言路由在的测试,
+  挡不住"页面上一个按钮都没有"(踩过:烘焙端口接好、查看器零按钮,服务端专门回带的过期旗标无人读,挂了 9 天)。
+  服务端为页面回带的旗标,配一条"谁在读它"的断言。
 
 - **护栏本身可能是假的,写之前先证明它会红**(2026-09-03 盲重建实测的三处):
   - pytest 配置里的严格标记/严格配置两个开关**写在默认参数里不生效**(只有命令行显式给才生效),
@@ -125,8 +155,9 @@ sh scripts/py.sh -m tools.editor.shared.asset_reference_audit . --strict   # 应
   `newline=""`。
 - **Windows 全量 pytest 有成规模的环境性存量失败**(缺可选依赖、临时目录 PermissionError、
   DPI/布局差异等),库内其它地方的"编辑器 pytest 全绿"口径在该平台**不成立**。该平台的有效
-  判据是:**靶向跑受影响文件全绿 + 与 HEAD 双树对照失败集合完全一致**(stash 到 HEAD 各跑
-  一遍,比集合而不是比数字)。
+  判据是:**靶向跑受影响文件全绿 + 与 HEAD 双树对照失败集合完全一致**(比集合而不是比数字)。
+  HEAD 那一树**另开 worktree 跑,主树里禁用 `git stash`**——它连别的会话未提交的改动一起藏,还会撞坏正在跑的
+  后台测试;worktree 的补件与单文件对照法见 [共享工作树](../../meta/recipes/shared-tree-and-worktrees.md)。
 
 ## 静态门:undefined name 零容忍(2026-08-06 加)
 
@@ -173,10 +204,14 @@ closeEvent 类收尾钩子时,别指望异常会自己冒出来(签名跑偏也�
 
 ## "输出字节不变"强验收(声称零格式影响时用)
 
-`git stash` 隔离 HEAD 版与改后版 → 两版对同一份数据各跑一次 save_all 到独立目录 →
-`diff -rq` 应为空。**必须固定 `PYTHONHASHSEED`**(hash 随机化造假 diff);working tree 里手写
-的内联 JSON 会被 save_all 规范化,所以要 stash 隔离而不是"改前先跑一次"。叙事编辑器另有单
+HEAD 版(另开 worktree,**不用 `git stash`**,理由见上节)与改后版对同一份数据各跑一次 save_all 到
+独立目录 → `diff -rq` 应为空。**必须固定 `PYTHONHASHSEED`**(hash 随机化造假 diff);working tree 里手写
+的内联 JSON 会被 save_all 规范化,所以要两棵树隔离而不是"改前先跑一次"。叙事编辑器另有单
 文件幂等探针(`_normalize_file` 结果与磁盘逐字节相等)。种子文件的写法见上面的 Windows 注记。
+
+**已知噪声源(同时也是真 bug 形状)**:把业务 dict 存进 Qt 条目数据(`setData(UserRole, d)`)再读回,PySide
+会转成 QVariantMap,**键按字母重排**(嵌套 dict 也是)。凡这样中转业务数据的列表面板,字节验收必红且与你的改动
+无关;修法是把原始 dict 挂旁路角色存引用、按原序重建(见 [数值往返保真](../mechanisms/numeric-roundtrip-fidelity.md) 契约 4)。
 
 ## 布局类改动附加冒烟
 

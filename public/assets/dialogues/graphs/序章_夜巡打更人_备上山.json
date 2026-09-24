@@ -139,6 +139,12 @@
               }
             ]
           }
+        },
+        {
+          "type": "openShop",
+          "params": {
+            "shopId": "teahouse_shop"
+          }
         }
       ],
       "next": "n_end"
@@ -148,8 +154,46 @@
       "speaker": {
         "kind": "npc"
       },
-      "next": "n_end",
+      "next": "n_done_shop",
       "text": "东西都给你了，还杵到起？出南门，顺到小路走。"
+    },
+    "n_done_shop": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "runActionsIf",
+          "params": {
+            "condition": {
+              "all": [
+                {
+                  "not": {
+                    "flag": "has_item_yanghuo"
+                  }
+                },
+                {
+                  "not": {
+                    "flag": "has_item_huorong"
+                  }
+                },
+                {
+                  "not": {
+                    "flag": "has_item_huozhezi"
+                  }
+                }
+              ]
+            },
+            "actions": [
+              {
+                "type": "openShop",
+                "params": {
+                  "shopId": "teahouse_shop"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "next": "n_end"
     },
     "n_end": {
       "type": "end"

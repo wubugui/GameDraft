@@ -68,8 +68,8 @@
       "y": 178.9
     },
     "spawn_0": {
-      "x": 790.3,
-      "y": 421.94
+      "x": 692.0,
+      "y": 538.0
     }
   },
   "hotspots": [
@@ -89,8 +89,8 @@
       "id": "T到庙宇室内",
       "type": "transition",
       "label": "到城隍庙",
-      "x": 786.1,
-      "y": 443.9,
+      "x": 692.0,
+      "y": 515.0,
       "interactionRange": 30.0,
       "data": {
         "targetScene": "temple",

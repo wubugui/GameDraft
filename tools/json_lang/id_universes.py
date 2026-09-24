@@ -335,6 +335,21 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
     u["vfx_instances"] = sorted({i for ids in scene_vfx.values() for i in ids})
     labels["vfx_effects"] = vfx_labels
 
+    # ---- 呼吸图资产(assets/data/breathing/<id>.json,一文件一张图) ----
+    # showBreathingOverlay.breathing 写的是**文件名**(运行时按 breathing/<id>.json 拉,不看文档里的 id);
+    # 唯一写者是呼吸工作台,这里只读。
+    breathing_ids: set[str] = set()
+    breathing_labels: dict[str, str] = {}
+    for f in iter_content_files(root, ("public/assets/data/breathing/*.json",), extra_paths):
+        doc = _load(f, read)
+        if not isinstance(doc, dict):
+            continue
+        breathing_ids.add(f.stem)
+        if isinstance(doc.get("label"), str) and doc["label"].strip():
+            breathing_labels[f.stem] = _trunc(doc["label"])
+    u["breathing_overlays"] = sorted(breathing_ids)
+    labels["breathing_overlays"] = breathing_labels
+
     # ---- 数据表(id + 中文名) ----
     # 线索注册表(K7):collectClue.clueId 与 [clue:] 标记的引用宇宙
     clue_doc = _load(data / "clues.json", read)
@@ -411,6 +426,19 @@ def collect_id_universes(root: Path, read_text=None, extra_paths=()) -> Universe
         }
     else:
         u["smells"] = []
+
+    # 脚步集(footstep_sets.json 的 sets):scene.footstepSet / zone.footstepSet 与
+    # setFollowerFootsteps.footstepSet 同一份表。label 取集自己的 label。
+    footstep_doc = _load(data / "footstep_sets.json", read)
+    fsets = footstep_doc.get("sets") if isinstance(footstep_doc, dict) else None
+    if isinstance(fsets, dict):
+        u["footstep_sets"] = sorted(k for k in fsets if isinstance(k, str))
+        labels["footstep_sets"] = {
+            k: _trunc(v["label"]) for k, v in fsets.items()
+            if isinstance(v, dict) and isinstance(v.get("label"), str)
+        }
+    else:
+        u["footstep_sets"] = []
 
     prop_doc = _load(data / "prop_presets.json", read)
     if isinstance(prop_doc, dict):

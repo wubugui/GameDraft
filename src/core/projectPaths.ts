@@ -30,6 +30,8 @@ export const TEXT_URLS = {
   vfxPlacements: '/assets/data/vfx_placements.json',
   /** 可燃物模板目录（一个模板一个文件，id = 文件名；燃烧工作台唯一写者；谁用它写在宿主自己身上），见 `BurnableDef` */
   burnablesDir: '/assets/data/burnables',
+  /** 呼吸图目录(一张图一个文件,id = 文件名;呼吸工作台唯一写者),见 `BreathingOverlayDef` */
+  breathingDir: '/assets/data/breathing',
   archiveDir: '/assets/data/archive',
   cutscenesIndex: '/assets/data/cutscenes/index.json',
   parallaxScenes: '/assets/data/parallax_scenes.json',
@@ -147,6 +149,13 @@ export function burnableJsonUrl(burnableId: string): string {
   const id = (burnableId ?? '').trim();
   if (!id) throw new Error('burnableJsonUrl: burnableId required');
   return `${TEXT_URLS.burnablesDir}/${id}.json`;
+}
+
+/** 呼吸图资产 JSON URL：`/assets/data/breathing/<id>.json`（一张图一个文件，id = 文件名；呼吸工作台唯一写者）。 */
+export function breathingJsonUrl(breathingId: string): string {
+  const id = (breathingId ?? '').trim();
+  if (!id) throw new Error('breathingJsonUrl: breathingId required');
+  return `${TEXT_URLS.breathingDir}/${id}.json`;
 }
 
 /** data 子目录下的 JSON URL；entry.file 已是绝对路径时原样返回。 */

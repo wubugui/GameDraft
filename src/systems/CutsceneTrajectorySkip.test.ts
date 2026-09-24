@@ -35,7 +35,7 @@ function makeManager() {
 
   const setZoom = vi.fn();
   const snapTo = vi.fn();
-  (mgr as any).cameraAccessor = { setZoom, snapTo, getSceneBaseZoom: () => 1.2 };
+  (mgr as any).cameraAccessor = { setZoom, snapTo, getSceneBaseZoom: () => 1.2, isZoomOverridden: () => false, releaseZoomOverride: () => {} };
   return { mgr, finishAll, setFastForward, abortCutsceneOps, setZoom, snapTo, executeAwait };
 }
 

@@ -452,7 +452,7 @@
     },
     {
       "id": "跑马梁_路边身影_招呼",
-      "description": "无火过界后，路边有人喊他；火一亮就不再出现",
+      "description": "无火过界后，前头路边有人喊他（「有人喊」那一拍现身）；火一亮就不再出现",
       "speaker": {
         "kind": "entity",
         "id": "npc_跑马梁_路边身影"
@@ -467,7 +467,7 @@
         "all": [
           {
             "narrative": "wrapper_跑马梁_风火引路",
-            "state": "点火教学",
+            "state": "有人喊",
             "reached": true
           },
           {

@@ -141,8 +141,9 @@
                 "params": {
                   "ambient": 0.08,
                   "bgm": 0.05,
+                  "sfx": 0.08,
+                  "voice": 0.08,
                   "fadeMs": 900,
-                  "holdMs": 60000,
                   "id": "leifu"
                 }
               },
@@ -150,13 +151,13 @@
                 "type": "playSfx",
                 "params": {
                   "id": "sfx_storm_brew",
-                  "volume": 0.5
+                  "volume": 0.18
                 }
               },
               {
                 "type": "setSceneDim",
                 "params": {
-                  "fadeMs": 1400,
+                  "fadeMs": 2000,
                   "scale": 0.62
                 }
               },
@@ -168,19 +169,21 @@
                     "id": "player"
                   },
                   "effect": "storm_clouds",
-                  "oneShot": true
+                  "oneShot": true,
+                  "followCamera": true,
+                  "handle": "leifu_clouds"
                 }
               },
               {
                 "type": "waitMs",
                 "params": {
-                  "durationMs": 1800
+                  "durationMs": 2600
                 }
               },
               {
                 "type": "setSceneDim",
                 "params": {
-                  "fadeMs": 1600,
+                  "fadeMs": 2400,
                   "scale": 0.38
                 }
               },
@@ -188,20 +191,21 @@
                 "type": "playSfx",
                 "params": {
                   "id": "sfx_thunder_rumble",
-                  "volume": 0.45
+                  "volume": 0.08,
+                  "loop": true
                 }
               },
               {
                 "type": "waitMs",
                 "params": {
-                  "durationMs": 1400
+                  "durationMs": 2400
                 }
               },
               {
                 "type": "sceneWindGust",
                 "params": {
-                  "attackMs": 900,
-                  "durationMs": 7000,
+                  "attackMs": 1500,
+                  "durationMs": 12800,
                   "releaseMs": 2200,
                   "speedMultiplier": 3.4
                 }
@@ -210,7 +214,63 @@
                 "type": "playSfx",
                 "params": {
                   "id": "sfx_wind_gust",
-                  "volume": 0.6
+                  "volume": 0.1,
+                  "loop": true
+                }
+              },
+              {
+                "type": "playVfx",
+                "params": {
+                  "at": {
+                    "kind": "entity",
+                    "id": "player"
+                  },
+                  "effect": "storm_wind_mist",
+                  "oneShot": true,
+                  "followCamera": true,
+                  "handle": "leifu_mist"
+                }
+              },
+              {
+                "type": "waitMs",
+                "params": {
+                  "durationMs": 3200
+                }
+              },
+              {
+                "type": "playSfx",
+                "params": {
+                  "id": "sfx_thunder_near",
+                  "volume": 0.14
+                }
+              },
+              {
+                "type": "playVfx",
+                "params": {
+                  "at": {
+                    "kind": "entity",
+                    "id": "player"
+                  },
+                  "effect": "storm_rain",
+                  "oneShot": true,
+                  "followCamera": true,
+                  "handle": "leifu_rain"
+                }
+              },
+              {
+                "type": "playSfx",
+                "params": {
+                  "id": "sfx_storm_rain",
+                  "volume": 0.23,
+                  "loop": true
+                }
+              },
+              {
+                "type": "screenFlash",
+                "params": {
+                  "alpha": 0.1,
+                  "color": "#c8d8ff",
+                  "durationMs": 85
                 }
               },
               {
@@ -220,30 +280,9 @@
                 }
               },
               {
-                "type": "playSfx",
-                "params": {
-                  "id": "sfx_thunder_near",
-                  "volume": 0.65
-                }
-              },
-              {
-                "type": "screenFlash",
-                "params": {
-                  "alpha": 0.2,
-                  "color": "#c8d8ff",
-                  "durationMs": 120
-                }
-              },
-              {
-                "type": "waitMs",
-                "params": {
-                  "durationMs": 1500
-                }
-              },
-              {
                 "type": "setSceneDim",
                 "params": {
-                  "fadeMs": 700,
+                  "fadeMs": 900,
                   "scale": 0.24,
                   "wait": true
                 }
@@ -258,24 +297,36 @@
                 "type": "strikeThreat",
                 "params": {
                   "effects": "lightning_bolt_01,lightning_bolt_02,lightning_bolt_03,lightning_bolt_04,lightning_bolt_05,lightning_bolt_06,lightning_bolt_07,lightning_bolt_08,lightning_bolt_09,lightning_bolt_10",
+                  "effectSeed": 0,
                   "extraChance": 0.45,
                   "fallback": "random",
-                  "fallbackRadius": 340,
-                  "flashAlpha": 0.42,
-                  "flashMs": 150,
+                  "fallbackRadius": 650,
+                  "flashAlpha": 0.045,
+                  "flashMs": 45,
                   "gapJitterMs": 110,
                   "gapMs": 240,
-                  "lightHeight": 300,
-                  "lightIntensity": 170,
-                  "lightMs": 460,
-                  "lightRange": 4200,
+                  "lightHeight": 240,
+                  "lightIntensity": 7,
+                  "lightMs": 210,
+                  "lightRange": 1400,
                   "maxDistance": 1800,
                   "rank": "threat",
                   "sfx": "sfx_thunder_crack",
-                  "sfxVolume": 1.0,
-                  "shakeAmplitude": 26,
-                  "shakeMs": 750,
-                  "strikes": 3
+                  "sfxVolume": 0.65,
+                  "shakeAmplitude": 10,
+                  "shakeMs": 260,
+                  "strikes": 3,
+                  "visualStrikes": 5,
+                  "visualExtraChance": 1,
+                  "visualGapMs": 600,
+                  "visualGapJitterMs": 250,
+                  "fallbackMargin": 0.14,
+                  "fallbackMinDistance": 120,
+                  "fallbackSeparation": 160,
+                  "fallbackGroundOnly": true,
+                  "sfxVoices": 0,
+                  "vfxVoices": 0,
+                  "fallbackMaxSlopeDeg": 30
                 }
               },
               {
@@ -285,11 +336,32 @@
                 }
               },
               {
+                "type": "stopVfx",
+                "params": {
+                  "handle": "leifu_clouds",
+                  "fadeMs": 2600
+                }
+              },
+              {
+                "type": "stopVfx",
+                "params": {
+                  "handle": "leifu_mist",
+                  "fadeMs": 2600
+                }
+              },
+              {
+                "type": "stopVfx",
+                "params": {
+                  "handle": "leifu_rain",
+                  "fadeMs": 2600
+                }
+              },
+              {
                 "type": "restoreAudio",
                 "params": {
                   "fadeMs": 1600,
                   "id": "leifu",
-                  "stopSfx": "sfx_storm_brew,sfx_thunder_rumble,sfx_wind_gust,sfx_thunder_near"
+                  "stopSfx": "sfx_storm_brew,sfx_thunder_rumble,sfx_wind_gust,sfx_thunder_near,sfx_storm_rain"
                 }
               },
               {

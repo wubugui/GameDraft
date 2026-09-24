@@ -51,8 +51,8 @@ import {
 
 import type { SceneData } from '../data/types';
 import {
-  resolveSceneWind, windGustBasis, windGustClock, windGustFromBasis, windGustMul, windPhase, windProfile, windVeer,
-  SWAY_WAVE_SIZE_DEFAULT, WIND_GUST_BASIS, type SceneWindParams,
+  addWindBlasts, resolveSceneWind, windGustBasis, windGustClock, windGustFromBasis, windGustMul, windPhase, windProfile, windVeer,
+  SWAY_WAVE_SIZE_DEFAULT, WIND_GUST_BASIS, type SceneWindParams, type WindBlast,
 } from '../utils/sceneWind';
 
 /** 拆层载荷版本（`sway.json` 的 `version`）；与 `tools/character_lighting_lab/sway_field.py` 的 `SWAY_VERSION` 同步 */
@@ -729,8 +729,14 @@ export interface SwayBackgroundOptions {
   composite?: boolean;
 }
 
+/** 冲击风采样的暂存（逐株 / 逐顶点复用） */
+const BLAST_TMP = new Float32Array(3);
+
 export class SwayBackground {
   readonly root: Container;
+  /** 这一帧的冲击风（落雷，见 `update`）；没有 = null */
+  private blasts: readonly WindBlast[] | null = null;
+  private blastTime = 0;
   /** 位移图：RG = (源 uv − 本像素 uv) × 覆盖度，A = 覆盖度（场景 uv 寻址，原画像素尺寸） */
   readonly uvMap: RenderTexture;
   private readonly comp: Mesh<MeshGeometry, Shader> | null = null;
@@ -1165,7 +1171,16 @@ export class SwayBackground {
     // 所以一根竿是整根一起摆，不会各段各弯
     {
       const n = (sa * rt.phC + ca * rt.phS) + 0.6 * (sb * rt.phC + cb * rt.phS);
-      const U = Math.max(0, Um0 * windGustMul(w, tau) * (1 + ti * n));
+      let U = Math.max(0, Um0 * windGustMul(w, tau) * (1 + ti * n));
+      // 冲击风（落雷落地那一下）：与平均风按矢量合成——弯多少看合风速，往哪弯看合风向（离落点近的往外倒）
+      if (this.blasts) {
+        BLAST_TMP[0] = 0; BLAST_TMP[1] = 0; BLAST_TMP[2] = 0;
+        if (addWindBlasts(this.blasts, this.blastTime, wx, wz, Hh * 0.6, BLAST_TMP) > 0) {
+          const bx = U * rt.dx + BLAST_TMP[0] * w.gainSway, bz = U * rt.dz + BLAST_TMP[2] * w.gainSway;
+          const m = Math.hypot(bx, bz);
+          if (m > 1e-6) { U = m; rt.dx = bx / m; rt.dz = bz / m; }
+        }
+      }
       const tgt = swayBendAngle(kb * U * U);
       if (this.prime) { rt.st[0] = tgt; rt.st[1] = 0; }
       stepSwayOscillator(rt.st, 0, tgt, k1, k2, h, steps);
@@ -1194,9 +1209,15 @@ export class SwayBackground {
       * (this.inp.paintSize[0] / this.inp.sceneSize[0]);
   }
 
-  /** 逐帧：每株一个转角（刚体株）/ 每顶点一个位移（场），写进网格 */
-  update(wind: SceneWindParams | null, time: number): void {
+  /**
+   * 逐帧：每株一个转角（刚体株）/ 每顶点一个位移（场），写进网格。
+   * `blasts` / `blastTime` = 冲击风（落雷落地那一下，见 `utils/sceneWind` 的 `WindBlast`）与它自己的钟：
+   * 与平均风按矢量合成，离落点近的草木往外倒、再弹回来（振子自己的过冲）。
+   */
+  update(wind: SceneWindParams | null, time: number, blasts?: readonly WindBlast[] | null, blastTime = 0): void {
     if (this.destroyed) return;
+    this.blasts = blasts && blasts.length ? blasts : null;
+    this.blastTime = blastTime;
     const t0 = performance.now();
     this.updateInner(wind, time);
     this.ms += (performance.now() - t0 - this.ms) * 0.1;
@@ -1265,13 +1286,27 @@ export class SwayBackground {
           const cp = this.vOsc[v * 2], sp = this.vOsc[v * 2 + 1];
           const g = windGustFromBasis(w, this.clock, this.vGust, v * WIND_GUST_BASIS);
           const n = (F.sa * cp + F.ca * sp) + 0.6 * (F.sb * cp + F.cb * sp);
-          const U = Math.max(0, F.Um * g * (1 + F.ti * n));
+          let U = Math.max(0, F.Um * g * (1 + F.ti * n));
+          // 冲击风：这一点自己的合风（离落点近的往外倒），方向逐点
+          let vex = ex, vey = ey;
+          if (this.blasts) {
+            BLAST_TMP[0] = 0; BLAST_TMP[1] = 0; BLAST_TMP[2] = 0;
+            if (addWindBlasts(this.blasts, this.blastTime, this.vWorld[v * 2], this.vWorld[v * 2 + 1], rt.def.height, BLAST_TMP) > 0) {
+              const bx = U * rt.dx + BLAST_TMP[0] * w.gainSway, bz = U * rt.dz + BLAST_TMP[2] * w.gainSway;
+              const m = Math.hypot(bx, bz);
+              if (m > 1e-6) {
+                U = m;
+                const ux = bx / m, uz = bz / m;
+                vex = J.jx[0] * ux + J.jz[0] * uz; vey = J.jx[1] * ux + J.jz[1] * uz;
+              }
+            }
+          }
           const tgt = swayBendAngle(F.kb * U * U);
           // 解算：这一点自己的惯性（过冲 / 余振 / 与阵风共振都从这里出来）
           if (prime) { this.vSt[v * 2] = tgt; this.vSt[v * 2 + 1] = 0; }
           stepSwayOscillator(this.vSt, v * 2, tgt, F.k1, F.k2, h, steps);
           const amp = softCap(A * this.vSt[v * 2], F.cap);          // 真实弯角，原画没有风
-          let ox = ex * amp, oy = ey * amp;
+          let ox = vex * amp, oy = vey * amp;
           if (rg > 0) {
             // 刚体度：往"绕支点转"那一头插值（1 = 完全不弯，只跟着竿转；支点 = 最近的作者锚点或根）
             const rx = p0[v * 2] - pv[v * 2], ry = p0[v * 2 + 1] - pv[v * 2 + 1];

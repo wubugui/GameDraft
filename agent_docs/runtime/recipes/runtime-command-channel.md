@@ -13,7 +13,7 @@ triggers:
   paths: ["src/core/devRuntimeCommands.ts", "vite.config.ts"]
   tasks: [测试游戏, 驱动游戏, 流程验证, e2e]
   topics: [命令通道, runtime-command, 快照, playerView, rAF 节流, 时间断言]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 **实测环境与日期**:2026-06 live 验证(数百命令往返 <1.3s 不卡死);2026-07 位面/立绘/背尸多轮实战沿用;2026-07-13 隐藏 pane 节流与快照竞态两坑实测。

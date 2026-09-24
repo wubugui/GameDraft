@@ -35,6 +35,8 @@ function makeHowl(id: string): FakeHowl & Record<string, unknown> {
     loop(v?: boolean) { if (v !== undefined) h.loopCalls.push(v); return true; },
     play() { h.played += 1; return 1; },
     stop() { h.stopped += 1; },
+    once() { /* test fake has no natural completion */ },
+    off() { /* no-op */ },
     fade(from: number, to: number, ms: number) { h.fades.push([from, to, ms]); },
     playing() { return h.played > 0; },
   };
@@ -112,24 +114,24 @@ describe('AudioManager：BGM 的本处音量', () => {
     audio.playBgm('theme', 0, 0.25);
     await Promise.resolve();
     // 0.25（本处） × 0.6（bgm 通道出厂）= 0.15；**不是** 0.8 × 0.25 × 0.6
-    expect(last(howls.get('theme.mp3')!.fades)[1]).toBeCloseTo(0.15, 6);
+    expect(last(howls.get('theme.mp3')!.volumeCalls)).toBeCloseTo(0.15, 6);
   });
 
   it('不给本处音量时沿用素材级', async () => {
     const { audio, howls } = makeAudioManager(structuredClone(CONFIG));
     audio.playBgm('theme', 0);
     await Promise.resolve();
-    expect(last(howls.get('theme.mp3')!.fades)[1]).toBeCloseTo(0.8 * 0.6, 6);
+    expect(last(howls.get('theme.mp3')!.volumeCalls)).toBeCloseTo(0.8 * 0.6, 6);
   });
 
   it('🔴 同一首曲子换个音量必须真的重播——幂等守卫不能只比 id', async () => {
     const { audio, howls } = makeAudioManager(structuredClone(CONFIG));
     audio.playBgm('theme', 0, 1);
     await Promise.resolve();
-    const first = last(howls.get('theme.mp3')!.fades)[1];
+    const first = last(howls.get('theme.mp3')!.volumeCalls);
     audio.playBgm('theme', 0, 0.2);
     await Promise.resolve();
-    const second = last(howls.get('theme.mp3')!.fades)[1];
+    const second = last(howls.get('theme.mp3')!.volumeCalls);
     expect(first).not.toBeCloseTo(second, 6);
     expect(second).toBeCloseTo(0.2 * 0.6, 6);
   });
@@ -148,7 +150,7 @@ describe('AudioManager：BGM 的本处音量', () => {
     const { audio, howls } = makeAudioManager(structuredClone(CONFIG));
     audio.playBgm('theme', 0, 4);
     await Promise.resolve();
-    expect(last(howls.get('theme.mp3')!.fades)[1]).toBe(1);
+    expect(last(howls.get('theme.mp3')!.volumeCalls)).toBe(1);
   });
 });
 
@@ -181,12 +183,16 @@ describe('AudioManager：环境层的本处音量', () => {
 
 describe('AudioManager：场景音频套用带本处音量', () => {
   it('bgm 与逐层 ambient 的引用都认对象形态', async () => {
+    vi.useFakeTimers();
     const { audio, howls } = makeAudioManager(structuredClone(CONFIG));
     audio.applySceneAudio({ id: 'theme', volume: 0.5 }, ['rain', { id: 'wind', volume: 0.2 }]);
     await Promise.resolve();
-    expect(last(howls.get('theme.mp3')!.fades)[1]).toBeCloseTo(0.5 * 0.6, 6);
+    vi.advanceTimersByTime(1000);
+    expect(last(howls.get('theme.mp3')!.volumeCalls)).toBeCloseTo(0.5 * 0.6, 6);
     expect(last(howls.get('rain.wav')!.volumeCalls)).toBeCloseTo(1 * 0.4, 6);
     expect(last(howls.get('wind.wav')!.volumeCalls)).toBeCloseTo(0.2 * 0.4, 6);
+    audio.destroy();
+    vi.useRealTimers();
   });
 
   it('资源清单对两种形态都取得出 src', () => {

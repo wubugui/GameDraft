@@ -92,12 +92,19 @@ export interface HealthThreatDef {
   enteredSignal?: string;
   repelledSignal?: string;
   leftSignal?: string;
-  /** 范围内的存在声；被火驱退/退出范围立即停止发新声。 */
+  /**
+   * 范围内的**存在声**：在这东西自己待的地方按固定间隔响（喘息、拖曳、嗡鸣这类）。
+   * 被火驱退 / 退出范围立即停止发新声。
+   *
+   * ⚠ **不要用它做「跟着你走的脚步」**。2026-09-21 之前跑马梁正是这么干的
+   * （`soundInterval: 0.8` + 一个把声源钉在玩家身后的 `soundBehindPlayer`），四个病：
+   * 与玩家步频脱节（固定间隔 vs 装扮差一倍的步频）、站着不动照响、不吃脚步集、
+   * 且把「有人跟着你」与「扣血」焊死在同一个实体上。
+   * 跟脚声现在是独立的一条：`FollowerFootstepSystem` + `setFollowerFootsteps` 动作，
+   * 接玩家的落脚事件做延迟重放。这两个字段已删，别再加回来。
+   */
   presenceSfx?: string;
   soundInterval?: number;
-  /** 写了即把声源放在玩家行进方向后方（场景单位）；不写用实体位置。 */
-  soundBehindPlayer?: number;
-  soundOnlyMoving?: boolean;
   soundVolume?: number;
 }
 

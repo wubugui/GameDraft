@@ -9,8 +9,8 @@ triggers:
   tasks: [做内容, 改JSON, 加任务, 加对话, 加遭遇, 加演出, 改文案, 策划模式]
   topics: [production mode, 策划模式, 内容生产, L1L2L3]
   paths: ["public/assets/data/**", "public/assets/scenes/*.json", "public/assets/dialogues/graphs/*.json"]
-last_governed: 2026-09-03
-last_used: 2026-07-04
+last_governed: 2026-09-23
+last_used: 2026-09-21
 ---
 
 ## 适用时机
@@ -59,4 +59,6 @@ last_used: 2026-07-04
 - 编辑器可往返硬契约:[editor-roundtrip-contract](../mechanisms/editor-roundtrip-contract.md)
 - L2 登记面三件套:[l2-action-primitive-registration](../mechanisms/l2-action-primitive-registration.md)
 - 收尾双校验门命令:[content-validation-gate](../recipes/content-validation-gate.md)
+- 故事侧权威顺序、已落地主线梗概在哪、基调:[文档权威决策](../decisions/2026-06-27-xungouji-doc-authority.md) /
+  [题材调性决策](../decisions/2026-06-25-xungouji-genre-anchor.md)
 - 字段级可编辑地图(权威):`docs/editor-authoring-surface.md`;步骤版 skill:`.cursor/skills/production-mode/SKILL.md`

@@ -112,7 +112,8 @@ def build_acceptance_save_load_runtime_commands(unit: StoryUnit) -> AcceptanceRu
     commands: list[dict[str, Any]] = []
     warnings: list[str] = []
     reason_prefix = f"acceptance-save-load:{unit.record.composition_id}"
-    slot = save_slot_from_text(text) or 2
+    parsed_slot = save_slot_from_text(text)
+    slot = 2 if parsed_slot is None else parsed_slot
 
     if save_load_check_requests_save_load(text):
         commands.extend([
@@ -542,9 +543,16 @@ def named_identifier(raw: str, name: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+# 与运行时 `src/data/types.ts` 的 SAVE_SLOT_COUNT 同值（槽位 0..98；2026-09-23 由 3 扩到 99）
+SAVE_SLOT_COUNT = 99
+
+
 def save_slot_from_text(raw: str) -> int | None:
-    match = re.search(r"(?:slot|槽位|存档位)\s*[:=]?\s*([0-2])", str(raw or ""), re.IGNORECASE)
-    return int(match.group(1)) if match else None
+    match = re.search(r"(?:slot|槽位|存档位)\s*[:=]?\s*([0-9]{1,2})(?![0-9])", str(raw or ""), re.IGNORECASE)
+    if not match:
+        return None
+    slot = int(match.group(1))
+    return slot if 0 <= slot < SAVE_SLOT_COUNT else None
 
 
 def save_load_check_requests_save_load(raw: str) -> bool:

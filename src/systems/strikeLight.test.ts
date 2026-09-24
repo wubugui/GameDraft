@@ -3,6 +3,7 @@ import {
   StrikeLightRig, seededUnitPair, strikeEnvelope,
   STRIKE_LIGHT_ID, STRIKE_LIGHT_PUSH_HZ,
 } from './strikeLight';
+import { sampleStrikeFallback, type StrikeSurfacePoint } from './strikePresentation';
 
 describe('落雷的灯', () => {
   it('包络：主闪满亮、末尾必然归零、全程夹在 0..1', () => {
@@ -109,5 +110,50 @@ describe('随机落点的种子', () => {
       }
       expect(a).not.toBe(b);
     }
+  });
+});
+
+describe('无目标落雷的世界表面距离', () => {
+  const point = (world: [number, number, number], areaWu2 = 1): StrikeSurfacePoint => ({
+    x: 50, y: 50, world, normal: [0, 1, 0], kind: 'ground', areaWu2,
+  });
+  const pick = (candidates: StrikeSurfacePoint[], extra: Partial<Parameters<typeof sampleStrikeFallback>[0]> = {}) =>
+    sampleStrikeFallback({ from: [0, 0, 0], radius: 100, minDistance: 20, separation: 0,
+      previous: [], random: { angle: 0.2, radius: 0.3 }, candidates,
+      bounds: { left: 0, right: 100, top: 0, bottom: 100 }, ...extra });
+
+  it('同一个画面位置，纵深和高差超出半径都拒绝；保留原始表面坐标', () => {
+    const near = point([30, 40, 0]);
+    expect(pick([point([0, 0, 101]), point([0, 101, 0]), near])).toBe(near);
+    expect(pick([point([0, 0, 101]), point([0, 101, 0])])).toBeNull();
+    expect(pick([point([0, 0, 19])])).toBeNull();
+    expect(pick([point([0, 0, 100])])?.world).toEqual([0, 0, 100]);
+  });
+
+  it('镜头边界只筛掉候选，不会把点夹到边上或放宽世界距离', () => {
+    const outside = { ...point([0, 0, 50]), x: 101 };
+    expect(pick([outside])).toBeNull();
+    expect(outside.x).toBe(101);
+    expect(pick([point([0, 0, 50])], { minDistance: 110 })).toBeNull();
+    expect(pick([])).toBeNull();
+  });
+
+  it('间距同样包含纵深；严格配置无解则跳过，允许放宽也必须仍贴原面', () => {
+    const p = point([0, 0, 60]);
+    expect(pick([p], { previous: [[0, 0, 20]], separation: 40, strictSeparation: true })).toBe(p);
+    expect(pick([p], { previous: [[0, 0, 59]], separation: 40, strictSeparation: true })).toBeNull();
+    expect(pick([p], { previous: [[0, 0, 59]], separation: 40, strictSeparation: false })).toBe(p);
+  });
+
+  it('按世界表面积抽样，同样的种子和候选得到同样结果', () => {
+    const small = point([0, 0, 40], 1), large = point([0, 0, 60], 3);
+    let largeHits = 0;
+    for (let i = 0; i < 1000; i++) {
+      const options = { random: { angle: (i + 0.5) / 1000, radius: 0 } };
+      const chosen = pick([small, large], options);
+      expect(pick([small, large], options)).toBe(chosen);
+      if (chosen === large) largeHits++;
+    }
+    expect(largeHits).toBe(750);
   });
 });

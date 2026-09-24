@@ -3,6 +3,9 @@ import { earHeightWu, type AcousticTap } from '../audio/acousticSpace';
 import { RuntimeAcousticsSync } from '../dev/runtimeAcousticsSync';
 import { RuntimeVfxSync, phaseRequestNeedsAdvance } from '../dev/runtimeVfxSync';
 import { RuntimeBurnSync } from '../dev/runtimeBurnSync';
+import { RuntimeBreathingSync } from '../dev/runtimeBreathingSync';
+import { BreathingOverlaySystem } from '../systems/breathing/BreathingOverlaySystem';
+import { fetchPayloadBytes } from './lightingPayloadFiles';
 import type { SceneSpaceGeometry, Vec3 } from '../utils/sceneSpace';
 import { FlagStore, type FlagRegistryJson } from './FlagStore';
 import { applyDevRuntimeCommand } from './devRuntimeCommands';
@@ -25,6 +28,7 @@ import { RulesManager } from '../systems/RulesManager';
 import { InventoryManager } from '../systems/InventoryManager';
 import { EncounterManager } from '../systems/EncounterManager';
 import { AudioManager } from '../systems/AudioManager';
+import { buildStrikeSurfaceCandidates, pickBoltVariant, sampleStrikeFallback, type StrikeSurfacePoint } from '../systems/strikePresentation';
 import { VoiceChannel } from '../systems/VoiceChannel';
 import { DialogueVoiceDirector } from '../systems/DialogueVoiceDirector';
 import { DayManager } from '../systems/DayManager';
@@ -54,7 +58,9 @@ import { SignalCueManager } from '../systems/SignalCueManager';
 import { HealthSystem } from '../systems/HealthSystem';
 import { RetrySystem } from '../systems/RetrySystem';
 import { HealthThreatSystem, type HealthThreatSource } from '../systems/HealthThreatSystem';
-import { StrikeLightRig, seededUnitPair } from '../systems/strikeLight';
+import { STRIKE_BRANCH_LIGHTS, STRIKE_CHANNEL_LIGHT_SEGMENTS, StrikeLightRig, seededUnitPair, type StrikeLightSpec } from '../systems/strikeLight';
+import { boltInstanceSeed, boltLightPolylines, createBolt } from '../systems/vfx/vfxBolt';
+import type { VfxInstanceStartInfo } from '../systems/vfx/VfxSystem';
 import { GameClock } from '../systems/gameClock';
 import type { ActionExecScope } from './ActionExecutor';
 import type { PerformanceSession } from '../systems/performanceSession';
@@ -62,8 +68,10 @@ import { PerformanceSessionManager } from '../systems/performanceSession';
 import { isPresentationOnlyAction } from './actionParamManifest';
 import { FireProtectionSystem, type ProtectionFireSource } from '../systems/FireProtectionSystem';
 import type { ConditionExpr } from '../data/types';
+import type { ContactAoDef } from '../data/types';
 import { SmellSystem } from '../systems/SmellSystem';
 import { FootstepSystem, type FootstepEmitter, type FootstepSpatialContext } from '../systems/FootstepSystem';
+import { FollowerFootstepSystem } from '../systems/FollowerFootstepSystem';
 import {
   DEFAULT_LISTENER_BACK_AT_BASE_ZOOM_WU,
   DEFAULT_PLANAR_DEPTH_SCALE,
@@ -71,6 +79,7 @@ import {
   cameraListener,
   isSuspectWuPerQUnit,
   planarResolver,
+  resolveSurfaceWorld,
   resolveWorld,
   type AudioListenerSnapshot,
   type AudioPerspective,
@@ -110,6 +119,7 @@ import { ClueBookUI } from '../ui/ClueBookUI';
 import { setClueAccess } from '../ui/clueAccess';
 import { setFocusChangeSound } from '../ui/components/UIFocus';
 import { isConfirmDialogOpen } from '../ui/components/UIConfirmDialog';
+import { isTextPromptOpen } from '../ui/components/UITextPromptDialog';
 import { DocumentBoxUI } from '../ui/DocumentBoxUI';
 import { ShopUI } from '../ui/ShopUI';
 import { MapUI } from '../ui/MapUI';
@@ -169,7 +179,7 @@ import {
   type PropPresetTable,
   type ResolvedPropAttach, parsePropEffects, type PropEffectTable } from '../data/propPresets';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
-import { resolvePathRelativeToAnimManifest } from './assetPath';
+import { resolveAssetPath, resolvePathRelativeToAnimManifest } from './assetPath';
 import { createPlaceholderPlayerTextures } from '../rendering/PlaceholderFactory';
 import type { Npc } from '../entities/Npc';
 import type { Hotspot } from '../entities/Hotspot';
@@ -202,9 +212,18 @@ import {
   CharacterLightingSystem,
   type CharShadingEntityInfo,
 } from './CharacterLightingSystem';
+import { resolveSurfaceDefaults } from '../rendering/lighting/surfaceMask';
 import { SceneLightingSystem } from './SceneLightingSystem';
 import { UnifiedCharacterLighting } from './UnifiedCharacterLighting';
-import { resolveBoundShadow, type ShadowBindingContext } from '../rendering/entityShadowBinding';
+import {
+  lightDirFromShadowScreenAngle, resolveBindingLightDir, resolveBoundShadow,
+  type ShadowBindingContext,
+} from '../rendering/entityShadowBinding';
+import { ALL_SHADOWS_ON, npcShadowFlags, playerShadowFlags, type EntityShadowFlags } from '../rendering/entityShadowFlags';
+import { resolveContactAo } from '../rendering/contactAo';
+import {
+  indirectUpperMoment, lightGroundSources, resolveContactAoSources, type ContactAoSource,
+} from '../rendering/contactAoSources';
 import { CharacterShadingFilter } from '../rendering/CharacterShadingFilter';
 import { getNormalAtlasSource, normalAtlasUrlFor } from '../rendering/spriteNormalAtlas';
 import type { LitShaderProvider, SpriteEntity } from '../rendering/SpriteEntity';
@@ -224,12 +243,14 @@ import {
 } from '../rendering/lightEnvCurve';
 import { buildIrradianceProbe } from '../rendering/irradianceProbe';
 import { PlanarEntityShadow } from '../rendering/EntityShadow';
-import type { ShadowSource, IEntityShadow } from '../rendering/entityShadowTypes';
+import type { ContactAoParams, ShadowSource, IEntityShadow } from '../rendering/entityShadowTypes';
 import { UniformShadowField, type ShadowProjectionField } from '../rendering/shadowField';
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
 import { transitionIsCovered } from '../utils/sceneAppearance';
 import {
   createPerspectiveScaleResolver,
+  createPerspectiveCameraFollowResolver,
+  type PerspectiveCameraFollowResolver,
   type PerspectiveScaleResolver as ScenePerspectiveScaleResolver,
 } from '../utils/perspectiveScale';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
@@ -240,6 +261,7 @@ import { depthLog, depthError } from './depthLog';
 import { DevModeUI } from '../ui/DevModeUI';
 import { resolveText, type ResolveContext } from './resolveText';
 import { VfxSystem } from '../systems/vfx/VfxSystem';
+import { CanvasStageSystem } from '../systems/canvas/CanvasStageSystem';
 import { BurnSystem, type BurnEntityHost, type BurnHeldHost } from '../systems/burn/BurnSystem';
 import { burnEntityPlacement, burnFrameFromCorners, burnPlacementFrame } from '../systems/burn/burnGeometry';
 import { burnableWorldSize, type ResolvedBurnable } from '../data/burnables';
@@ -292,7 +314,7 @@ import {
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
 import { Container, Culler, Graphics, Rectangle, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
-import { bakeKeyFromBackground, dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
+import { bakeKeyFromBackground, breathingJsonUrl, dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
 import type { TrajectoryAsset, TrajectoryKeyframe } from '../data/types';
 import type { TrajectoryEndReason } from '../systems/TrajectorySystem';
 import {
@@ -437,6 +459,9 @@ type DevNarrativeWarp = {
  *  此处留边界余量，超限即丢弃最重的 eventTrace 后再上报，防 413 与主线程卡顿。 */
 const RUNTIME_DEBUG_SNAPSHOT_MAX_BYTES = 1_900_000;
 
+/** 热区展示图的接触 AO：简单 AO（没有作者面，方向 AO 缺省开只针对角色，见 buildHotspotShadowEntry）。 */
+const HOTSPOT_CONTACT_AO: ContactAoDef = Object.freeze({ directional: false });
+
 /**
  * 每实体阴影 entry。
  *
@@ -456,6 +481,15 @@ type EntityShadowEntry = {
   extra?: IEntityShadow[];
   /** 每条 env 覆盖对象(缓存复用,避免逐帧分配) */
   envSlots?: ResolvedLightEnv[];
+  /**
+   * 投影 / 接触阴影各自的开关（制作人 2026-09-23：两者分开，接触阴影缺省开）。
+   * 关了投影的实体照样建实例，只为画脚底接触斑；绑定的剪影也一并不画。
+   */
+  flags: EntityShadowFlags;
+  /** 这个实体的接触 AO 作者配置（NPC `contactAo` / 场景 `playerContactAo`；热区无，恒缺省）。 */
+  aoDef: ContactAoDef | null;
+  /** 主实例按 flags 熄掉某一样时用的 env 覆盖对象（缓存复用） */
+  mainEnv?: ResolvedLightEnv;
 };
 
 /**
@@ -612,10 +646,15 @@ export class Game {
   private acousticsSync: RuntimeAcousticsSync | null = null;
   private vfxSync: RuntimeVfxSync | null = null;
   private burnSync: RuntimeBurnSync | null = null;
+  /** 呼吸工作台 ↔ 游戏的实时联动(游戏只是预览器)。DEV 专用。 */
+  private breathingSync: RuntimeBreathingSync | null = null;
+  /** 呼吸图(盖脸纸那类「一张静帧实时在呼吸」的叠图)的实例持有者 */
+  private breathingOverlaySystem!: BreathingOverlaySystem;
   /** 运行时编辑模式（DEV 专用）。null = 生产构建，或还没装配到。 */
   private authoringMode: AuthoringMode | null = null;
   private unsubAuthoringHotkey: (() => void) | null = null;
   private sceneDepthSystem: SceneDepthSystem;
+  private readonly strikeGroundAllowed = (x: number, y: number): boolean => this.sceneDepthSystem.collisionAt(x, y) === false;
   /** 角色照明(烘焙 probe 消费端);载荷缺失/过期时 inactive,回落旧色调管线 */
   private characterLighting: CharacterLightingSystem;
   /** 统一光影系统（lighting-rebuild）。场景未配 `lighting` 块时整体不启用。 */
@@ -663,6 +702,11 @@ export class Game {
   private trajectoryAssets = new Map<string, TrajectoryAsset | null>();
   private smellProfilesData: SmellProfilesRaw | null = null;
   private footstepSystem: FootstepSystem;
+  /**
+   * 跟脚声：玩家落脚事件的延迟重放（「你走他才走」）。开关是 `setFollowerFootsteps` 动作，
+   * 与阴间威胁的扣血**正交**——声音在这儿，伤害仍在 `healthThreatSystem`。
+   */
+  private followerFootsteps: FollowerFootstepSystem;
   /** `footstep_sets.json`；缺文件 = 全局无脚步声（不是错误，只是没配）。 */
   private footstepConfig: FootstepConfigData | null = null;
   /**
@@ -694,8 +738,25 @@ export class Game {
   private charModeSwitching = false;
   /** 场景透视缩放（近大远小）句柄：scene:ready 从场景数据构建、beforeUnload 清空；实体注入共享同一实例 */
   private perspectiveScaleResolver: ScenePerspectiveScaleResolver | null = null;
+  /**
+   * 相机跟随透视（需求清单 A3.5，2026-09-20）：场景写了 `perspectiveScale.cameraFollow` 才有；
+   * **null 时全流程一次 zoom 都不多写**，效果与开此功能之前严格一致。与上面那个句柄同生同死。
+   */
+  private perspectiveCameraFollow: PerspectiveCameraFollowResolver | null = null;
+  /**
+   * 这一帧镜头锚在哪（世界坐标）——`applyCameraFollow` 与探索态的 `camera.follow` 各自记一笔。
+   * 透视跟随按它求 f：镜头跟谁就按谁的纵深定景别（缺省玩家脚底，过场里是被跟的实体 / 曲线点）。
+   */
+  private cameraAnchorX = 0;
+  private cameraAnchorY = 0;
   /** 世界空间粒子 / 群体（蝙蝠、滴水、香火烟、萤火）：模拟在系统层，画在实体层的批网格里 */
   private vfxSystem: VfxSystem;
+  /**
+   * 画布（场景之外那张屏幕空间的面）上的**实体**与**绘制顺序**。
+   * 画布容器与顺序表在 `Renderer.canvasStage`；叠图 / 文档揭示仍由 `CutsceneRenderer` 放上去，
+   * 四类 item 共用同一个 `order` 空间。
+   */
+  private canvasStageSystem: CanvasStageSystem;
   /**
    * 手持挂件（火把 / 灯笼）与运行时灯。手持物入档（玩法事实），表现全是派生的：
    * 灯与效果每帧跟着挂点走，切场景 / 读档各重派生一次。
@@ -1054,13 +1115,41 @@ export class Game {
       onContact: (c) => {
         const w = this.vfxSystem?.sceneToWorld(c.contactX, c.contactY, 0);
         if (w) this.vfxSystem.emitField({ kind: 'fear', tag: 'sfx:footstep', radius: 220, strength: 0.6, duration: 0.25 }, w);
+        // 跟脚声接的是**落脚事件**，不是出声：音频没解锁 / 这块地没配集时照样记账，
+        // 于是步间隔与错拍不会因为"这一步没响"而漂掉。只跟玩家的脚。
+        if (c.emitterId === 'player') this.followerFootsteps.onSourceContact(c);
       },
       resolveSetAt: (x, y) => this.resolveFootstepSetAt(x, y),
       getConfig: () => this.footstepConfig,
     });
+    /**
+     * 跟脚声。依赖同样全走窄回调：时间取游戏时钟（开面板世界停，后头那位也停）、
+     * 出声回到脚步系统那一条（脚步集 / 两级增益 / 空间化 / 句柄回收一份实现）、
+     * 火源状态取护火系统（"举着火他就不跟"是作者可选的一条，不是硬编码）。
+     */
+    this.followerFootsteps = new FollowerFootstepSystem({
+      nowMs: () => this.gameClock.now,
+      after: (ms, fire) => this.gameClock.after(ms, fire),
+      playStep: (args) => this.footstepSystem.playExternalStep(args),
+      hasFireProtection: () => this.fireProtectionSystem.protected,
+    });
     this.sceneDepthSystem = new SceneDepthSystem();
     this.characterLighting = new CharacterLightingSystem();
     this.sceneLighting = new SceneLightingSystem();
+    /**
+     * 画布（场景之外那张屏幕空间的面）：实体 + 特效 + 四类 item 的顺序。
+     * 排在 characterLighting 之后：画布特效要拿它那组**显示变换**（整幅画面的调色）。
+     * 注意画布特效**不**吃场景光照（无光路），只共用调色——见 CanvasVfxHost 的说明。
+     */
+    this.canvasStageSystem = new CanvasStageSystem({
+      assetManager: this.assetManager,
+      canvasStage: this.renderer.canvasStage,
+      getScreenSize: () => ({ width: this.renderer.screenWidth, height: this.renderer.screenHeight }),
+      resolveCharacterAnimFile: (id) => this.sceneManager.getCharacterAnimFile(id),
+      displayUniforms: this.characterLighting.displayUniforms,
+      conditionContext: () => this.buildConditionEvalContext(),
+      log: (m) => { if (import.meta.env.DEV) console.warn(`[canvas] ${m}`); this.debugPanelUI?.log(`[canvas] ${m}`); },
+    });
     /**
      * 世界空间粒子 / 群体。依赖全部走窄回调：空间（行走面 + 壳 + 基）由照明载荷与深度系统给，
      * 载荷异步到达时 onReady 里再让它重建；玩家脚点 / 时段 / 灯表 / 条件工厂 / 空间音各取一口。
@@ -1073,16 +1162,25 @@ export class Game {
       // 是平面近似下**所有几何判据都空成立**（没有地面高低、没有墙）。
       hasFieldGeometry: () => this.buildAudioSceneGeometry() !== null,
       getPlayerContact: () => (this.player ? { x: this.player.contactX, y: this.player.contactY } : null),
+      getViewAnchor: () => this.camera.screenToWorld(
+        this.renderer.app.screen.width * 0.5, this.renderer.app.screen.height * 0.65,
+      ),
       // 布置按「场景 × 时段外观」各配一份：与背景 / 光照换装同一个判据（没单列外观的时段 = 基底）
       getAppearancePhase: () => this.sceneManager.appearancePhaseFor(this.dayManager.currentPhase),
       getActiveLights: () => this.activeSceneLightsForVfx(),
       conditionContext: () => this.buildConditionEvalContext(),
       playSfxAt: (id, at) => { this.audioManager.playSfxAt(id, { x: at[0], y: at[1], z: at[2] }); },
       log: (m) => { if (import.meta.env.DEV) console.warn(`[vfx] ${m}`); this.debugPanelUI?.log(`[vfx] ${m}`); },
-      getWind: () => ({ params: this.sceneWind.params, time: this.sceneWind.time }),
+      getWind: () => ({ params: this.sceneWind.params, time: this.sceneWind.time, blasts: this.sceneWind.blasts, blastTime: this.sceneWind.blastTime }),
       // 可燃薄片（纸钱）烧没了哪几张：燃烧系统进档、建模拟时恢复（燃烧系统在下面构造，闭包里晚绑定）
       burntPlatesOf: (instanceId) => this.burnSystem?.burntPlatesOf(instanceId) ?? null,
       onPlatesBurnt: (instanceId, emitterIndex, slots) => this.burnSystem?.onPlatesBurnt(instanceId, emitterIndex, slots),
+      // 表面材质：全局缺省材质（没画区域的地方）+ 本场景的表面材质区（水面 / 湿地）→ 场景照明的反光遮罩，
+      // 落雷的灯在任何地方都照出反光（雷是随机落点，不靠逐个场景圈区域）
+      onSurfacesChanged: (regions, defaults) => {
+        const sd = this.sceneManager.currentSceneData;
+        this.sceneLighting.setSurfaceRegions(regions, sd?.worldWidth ?? 1, sd?.worldHeight ?? 1, resolveSurfaceDefaults(defaults));
+      },
     });
     /**
      * 手持挂件与运行时灯。依赖同样全走窄回调：
@@ -1382,12 +1480,17 @@ export class Game {
       { name: 'zoneSystem', system: this.zoneSystem },
       // 脚步是表现态：serialize 恒为空桶，deserialize = 作废在途尾音（旧时间线不写新状态）
       { name: 'footstepSystem', system: this.footstepSystem },
+      // 跟脚声：**开关与参数是世界事实**（有个东西在跟着你），进档；在途那一步是表现态，不进。
+      // 不进档的话，这一段的重试检查点一读回来跟脚声就没了，而且没有任何报错。
+      { name: 'followerFootstepSystem', system: this.followerFootsteps },
       { name: 'emoteBubbleManager', system: this.emoteBubbleManager },
       { name: 'bubbleChatterSystem', system: this.bubbleChatterSystem },
       { name: 'playerIdleBehaviorSystem', system: this.playerIdleBehaviorSystem },
       { name: 'sceneDepthSystem', system: this.sceneDepthSystem },
       // 轨迹是表演态：serialize 恒为空桶，deserialize = 作废在途表演（旧时间线不写新状态）
       { name: 'trajectorySystem', system: this.trajectorySystem },
+      // 画布实体同样是表演态：serialize 恒为空桶，deserialize = 整批收掉
+      { name: 'canvasStageSystem', system: this.canvasStageSystem },
       // 粒子 / 群体是表演态：serialize 恒为空桶，deserialize = 整批散掉
       { name: 'vfxSystem', system: this.vfxSystem },
       // 燃烧：可燃物烧的状态是世界事实（进档、离场照推）。排在粒子之后：读档时粒子先散（散的时候报的纸钱是旧时间线的，
@@ -2129,6 +2232,14 @@ export class Game {
         this.glProgramWarmup?.whenReady(REVEAL_GATE_SHADER_TIMEOUT_MS),
         this.vfxSystem.prepareForReveal(REVEAL_GATE_VFX_TIMEOUT_MS),
       ]);
+      // Static sampling geometry belongs to loading, never to the first visible bolt.
+      const space = this.vfxSystem.currentSpace;
+      const shell = this.sceneDepthSystem.depthShellField;
+      const rows = basisRowsFromDepthConfigR(this.sceneDepthSystem.currentConfig?.M?.R);
+      if (!this.tearDownComplete && space?.kind === 'field' && shell && rows) {
+        buildStrikeSurfaceCandidates({ space, shell, basis: { basisRows: rows, wuPerQUnit: space.wuPerQ },
+          groundAllowed: this.strikeGroundAllowed, groundOnly: false, maxSlopeDeg: 90 });
+      }
     });
 
     // UI 皮肤素材（做旧木框九宫格 + 纸纹）必须赶在任何面板首次构建之前到位，
@@ -2317,9 +2428,19 @@ export class Game {
     this.mapUI = new MapUI(this.renderer, this.eventBus, this.flagStore, this.stringsProvider, this.assetManager);
     this.mapUI.setQuestDataProvider(this.questManager);
 
-    this.cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera, this.assetManager);
+    this.cutsceneRenderer = new CutsceneRenderer(this.renderer, this.camera, this.assetManager, () => this.gameClock.now);
+    // 呼吸图挂在叠图同一层(同一套 id 句柄,hideOverlayImage / 过场 cleanup 都收得掉);推进走 tick 里的暂停闸
+    this.breathingOverlaySystem = new BreathingOverlaySystem({
+      loadDefJson: (id) => this.assetManager.loadJson(breathingJsonUrl(id)),
+      loadTexture: (path) => this.assetManager.loadTexture(path),
+      fetchBytes: (path) => fetchPayloadBytes(resolveAssetPath(path)),
+      showLayer: (id, w, h, x, y, wp, order, prepare) => this.cutsceneRenderer.showBreathingLayer(id, w, h, x, y, wp, order, prepare),
+      hideLayer: (id) => this.cutsceneManager.hideOverlayImage(id),
+      startBreathSound: () => this.audioManager.startProceduralBreath(),
+    });
     // 过场对白框复用全站面板皮肤 + 主题色，与常规对话框(DialogueUI)对齐观感。
     // 皮肤/主题属 UI 层，渲染层不反向依赖——在组装层绑好绘制器与颜色再注入。
+    const strings = this.stringsProvider;
     this.cutsceneRenderer.setDialoguePanelStyle({
       // 走 createPanel（返回容器）而不是 drawPanelBase：皮肤里的做旧木框是九宫格 Sprite，
       // 画不进 Graphics——用旧钩子的话过场对白框只有平底，跟同一段戏里的常规对话框材质对不上。
@@ -2331,6 +2452,11 @@ export class Game {
       bodyColor: UITheme.colors.body,
       fontFamily: UITheme.fonts.ui,
       displayFontFamily: UITheme.fonts.display,
+      // 第一人称档句首不给旁白写名字：旁白的显示名在字符串表里，现读（装配时表可能还没载完）
+      get narratorLabel(): string {
+        const v = strings.get('dialogue', 'narratorLabel');
+        return v && v !== 'narratorLabel' ? v : '';
+      },
       // 「继续」点捺与常规对话框同一个件；渲染层不 import ui，故走注入
       buildContinueMark: (x, y) => {
         const mark = new ContinueIndicator();
@@ -2486,6 +2612,8 @@ export class Game {
     // 玩家偏好同一个存放面，同样要赶在 UI 与首句台词之前落位。
     await this.textDisplaySettings.hydrate();
     await this.smellDisplaySettings.hydrate();
+    // 音量（总音量 + 四条通道）同是玩家偏好：settings/audio.json，赶在开场第一声之前生效
+    await this.audioManager.hydrateMixPreferences();
     // 仅在探索 / UI 覆盖层（暂停菜单打开）可存档；对话/遭遇/演出/小游戏等在途态拒绝存档，
     // 避免半态存档（这些系统不持久化在途状态，读档会丢失或半执行）。
     // 叙事编排排空在飞时同样拒绝：队列/在飞广播不入档，级联中途的档读回后
@@ -2728,9 +2856,12 @@ export class Game {
       this.healthThreatSystem.clear();
       this.fireProtectionSystem.clear();
       this.sceneWind.clearGust();
+      // 跟脚者本人跟着你走进下一张图（开关不清），但在途那一步的脚点属于上一张图，作废。
+      this.followerFootsteps.onSceneChanged();
       // 演出态一律不跨场景：雷放到一半换场景，新场景不该接着亮 / 接着抖 / 接着压暗。
       // （压暗在 SceneLightingSystem 那边也会随场景重置，这里把角色侧那一半一起归位。）
       this.strikeLightRig.clear();
+      this.strikeLightEpoch++;
       this.dynamicLightsByOwner.delete('strike');
       this.camera.clearShake();
       this.characterLighting.setEnvDim(1);
@@ -2775,6 +2906,18 @@ export class Game {
     this.documentRevealManager.setConditionEvalContextFactory(mkCondCtx);
     this.narrativeStateManager.setConditionEvalContextFactory(mkCondCtx);
 
+    /**
+     * 叙事状态一变就补刷实体的条件通道（2026-09-23）。
+     *
+     * `InteractionSystem.update` 只挂在 tick 的 Exploring 分支上，而叙事状态多半是在
+     * 动作链 / 对话 / 过场里推进的：某个状态的 onEnter 里只要有一条 `waitMs`，整段就在
+     * ActionSequence 态里跑完，条件刚变真的实体**直到回探索态才现身**——真机抓到过
+     * 跑马梁「有人喊」那一拍：气泡已经在喊了，喊话的人还没出现（两张说明卡读完才冒出来）。
+     * 与时刻推进那一处（refreshEntityVisibility）同一个补刀，只是触发源换成叙事状态。
+     * 这里不选目标、不触发 autoTrigger（refreshVisibilityChannels 刻意不带那一段）。
+     */
+    this.listenEvent('narrative:stateChanged', () => this.interactionSystem.refreshVisibilityChannels());
+
     // 位面对账器接线须先于 narrativeStateManager.loadFromAsset——注册图时的 reactive
     // 迁移会立即发 narrative:stateChanged，晚接线会漏掉首轮点名（scene:ready 虽兜底，
     // 但装载期 zone 过滤已按激活位面取值）。
@@ -2800,7 +2943,9 @@ export class Game {
       setCameraZoom: (z) => this.camera.setZoom(z),
       restoreSceneCameraZoom: () => {
         // 对账器在"离开位面"时调，此刻激活位面已切走 → 基线即场景 zoom；用统一基线口保持一致。
-        this.camera.setZoom(this.getCameraBaselineZoom());
+        // 配了相机跟随透视的场景恢复到**此刻位置该有的** zoom，并把 zoom 交回连续通道。
+        this.camera.setZoom(this.currentPerspectiveZoom());
+        this.camera.releaseZoomOverride();
       },
       applyPlaneLightEnvOverride: (partial) => this.applyPlaneLightEnvOverride(partial),
       damagePlayer: (amount) => this.healthSystem.damage(amount),
@@ -2871,10 +3016,10 @@ export class Game {
     // 文档揭示的显示层走自己那套（键 documentId），不与叠图动作的句柄表共用——
     // 作者不需要知道任何句柄，`hideOverlayImage` 也碰不到它。
     this.documentRevealManager.setLayerPresenter({
-      show: (docId, path, x, y, w) =>
-        this.cutsceneManager.showDocumentImage(docId, path, x, y, w),
-      blend: (docId, from, to, x, y, w, dur, delay) =>
-        this.cutsceneManager.blendDocumentImage(docId, from, to, x, y, w, dur, delay),
+      show: (docId, path, x, y, w, order) =>
+        this.cutsceneManager.showDocumentImage(docId, path, x, y, w, order),
+      blend: (docId, from, to, x, y, w, dur, delay, order) =>
+        this.cutsceneManager.blendDocumentImage(docId, from, to, x, y, w, dur, delay, order),
       hide: (docId) => this.cutsceneManager.hideDocumentImage(docId),
     });
     await this.documentRevealManager.loadDefinitions();
@@ -2928,12 +3073,13 @@ export class Game {
       },
       vfx: {
         play: (opts) => this.vfxSystem.playVfx(opts) ?? null,
-        stop: (id) => this.vfxSystem.stopVfx(id),
+        stop: (id, opts) => this.vfxSystem.stopVfx(id, opts),
         setState: (id, state) => this.vfxSystem.setVfxState(id, state),
         emitField: (def, sceneX, sceneY, h) => {
           const w = this.vfxSystem.sceneToWorld(sceneX, sceneY, h);
           if (w) this.vfxSystem.emitField(def, w);
         },
+        prepare: (ids) => this.vfxSystem.prepareEffects(ids),
       },
       ruleOfferRegistry: this.ruleOfferRegistry,
       inventoryManager: this.inventoryManager,
@@ -2987,10 +3133,12 @@ export class Game {
       setCameraZoom: (z) => { this.camera.setZoom(z); },
       restoreSceneCameraZoom: () => {
         // 基线=位面相机档(激活时) ?? 场景 zoom：对话/演出收尾恢复到位面态该有的值，不盖掉位面档。
-        this.camera.setZoom(this.getCameraBaselineZoom());
+        // 配了相机跟随透视的场景再乘上此刻位置的透视倍数，并把 zoom 交回连续通道。
+        this.camera.setZoom(this.currentPerspectiveZoom());
+        this.camera.releaseZoomOverride();
       },
       fadingRestoreSceneCameraZoom: (durationMs) => {
-        return this.cutsceneManager.fadingCameraZoom(this.getCameraBaselineZoom(), durationMs);
+        return this.fadingRestoreCameraZoom(durationMs);
       },
       setCameraFollowTarget: (targetId, snap) => {
         this.cameraFollowTargetId = targetId;
@@ -3016,15 +3164,32 @@ export class Game {
         const t = this.resolveTrajectoryTarget(ref);
         return t ? this.trajectorySystem.stopFor(t.trajectoryKey, 'stopped', opts) : false;
       },
-      showOverlayImage: (id, image, xPct, yPct, wPct) =>
-        this.cutsceneManager.showOverlayImage(id, image, xPct, yPct, wPct),
+      showOverlayImage: (id, image, xPct, yPct, wPct, order, fill) =>
+        this.cutsceneManager.showOverlayImage(id, image, xPct, yPct, wPct, order, fill),
       resolveOverlayImagePath: (img) => this.resolveOverlayImageIdToPath(img),
       resolveOverlayImageSfx: (img) => this.resolveOverlayImageSfxCue(img),
       hideOverlayImage: (id) => {
         this.cutsceneManager.hideOverlayImage(id);
       },
-      blendOverlayImage: (id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs) =>
-        this.cutsceneManager.blendOverlayImage(id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs),
+      blendOverlayImage: (id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs, order) =>
+        this.cutsceneManager.blendOverlayImage(id, fromPath, toPath, xPct, yPct, wPct, durationMs, delayMs, order),
+      showBreathingOverlay: (id, breathing, xPct, yPct, wPct, order) =>
+        this.breathingOverlaySystem.show(id, breathing, xPct, yPct, wPct, order),
+      performBreathing: (id, act, wait) => this.breathingOverlaySystem.perform(id, act, wait),
+      setBreathingParams: (id, params, durationMs) => { this.breathingOverlaySystem.setParams(id, params, durationMs); },
+
+      // 画布（场景之外那张屏幕空间的面）：实体与顺序都经 CanvasStageSystem。
+      // 叠图 / 文档揭示 仍走各自的动作（它们只是换了宿主），四类共用一个 order 空间。
+      showCanvasEntity: (name, opts) => this.canvasStageSystem.showEntity(name, opts),
+      hideCanvasEntity: (name) => { this.canvasStageSystem.hideEntity(name); },
+      playCanvasEntityAnimation: (name, state, playback) => {
+        this.canvasStageSystem.playEntityAnimation(name, state, playback);
+      },
+      setCanvasEntityTransform: (name, patch) => { this.canvasStageSystem.setEntityTransform(name, patch); },
+      setCanvasOrder: (kind, name, order) => this.canvasStageSystem.setOrder(kind, name, order),
+      playCanvasVfx: (name, opts) => this.canvasStageSystem.playVfx(name, opts),
+      stopCanvasVfx: (name) => { this.canvasStageSystem.stopVfx(name); },
+      clearCanvas: () => { this.canvasStageSystem.clearAll(); },
       startDialogueGraph: async (graphId, entry, npcId, ownerType, ownerId, dimBackground, origin) => {
         this.stateController.setState(GameState.Dialogue);
         try {
@@ -3061,13 +3226,15 @@ export class Game {
            *  会话未终结，不得提前恢复 Exploring——状态恢复交给最终 dialogue:end / EventBridge */
           if (
             !this.graphDialogueManager.isActive &&
-            !this.graphDialogueManager.hasPendingChainContinuation
+            !this.graphDialogueManager.hasPendingChainContinuation &&
+            // 图末尾的动作已把状态切走（开铺子 / 小游戏 / 切场景）：收尾归那一边，同 EventBridge 的 dialogue:end
+            this.stateController.currentState === GameState.Dialogue
           ) {
             this.stateController.setState(GameState.Exploring);
           }
         } catch (e) {
           console.warn('Game: startDialogueGraph failed', e);
-          this.stateController.setState(GameState.Exploring);
+          if (this.stateController.currentState === GameState.Dialogue) this.stateController.setState(GameState.Exploring);
         }
       },
       playScriptedDialogue: (lines) => {
@@ -3126,8 +3293,16 @@ export class Game {
         this.tempSetHotspotDisplayFacingFromAction(sceneId, hotspotId, facing),
       resolveDisplayText: (raw) => this.resolveDisplayText(raw),
       resolveRichText: (raw) => this.resolveRichText(raw),
-      chooseAction: (prompt, options, allowCancel) =>
-        this.actionChoiceUI.choose(prompt, options, allowCancel),
+      chooseAction: async (prompt, options, allowCancel, layout) => {
+        // 第一人称档要 HUD 收起屏底那几样（三把火与气味照留）；与对白框走同一个事件
+        const firstPerson = layout === 'firstPerson';
+        if (firstPerson) this.eventBus.emit('ui:firstPerson', { source: 'actionChoice', active: true });
+        try {
+          return await this.actionChoiceUI.choose(prompt, options, allowCancel, layout);
+        } finally {
+          if (firstPerson) this.eventBus.emit('ui:firstPerson', { source: 'actionChoice', active: false });
+        }
+      },
       resolveRichTextForPlayScripted: (raw, sid) =>
         this.resolveRichTextForPlayScripted(raw, sid),
       waterMinigameManager: this.waterMinigameManager,
@@ -3141,6 +3316,7 @@ export class Game {
       retrySystem: this.retrySystem,
       sceneWind: this.sceneWind,
       smellSystem: this.smellSystem,
+      followerFootsteps: this.followerFootsteps,
       planeReconciler: this.planeReconciler,
       voiceChannel: this.voiceChannel,
     });
@@ -3258,7 +3434,7 @@ export class Game {
       fadingRestoreSceneCameraZoom: (durationMs) => {
         // NPC 对话收尾的 550ms 渐变必须以"位面基线"为目标——按场景 zoom 渐变会把
         // 对账器在 Dialogue→Exploring 边沿重贴的位面相机档静默盖掉。
-        return this.cutsceneManager.fadingCameraZoom(this.getCameraBaselineZoom(), durationMs);
+        return this.fadingRestoreCameraZoom(durationMs);
       },
     });
     this.interactionCoordinator.init();
@@ -3514,6 +3690,22 @@ export class Game {
         log: (m) => this.debugPanelUI?.log(m),
       }, `game:${this.runtimeBootId}`);
       this.burnSync.start();
+      /**
+       * 呼吸图的实时联动:呼吸工作台(`tools/breathing_workbench`)是呼吸图资产唯一的作者面,这里只是预览器——
+       * 工作台推来的工作态(存没存都算)顶替盘上那份,正在显示的同一张图立刻换上新参数;
+       * 「在游戏里显示 / 收起 / 从头来 / 渐弱 / 猛吸」直接对实例做。走 dev server 的两个槽(`src/dev/runtimeBreathingApiPlugin.ts`)。
+       */
+      this.breathingSync = new RuntimeBreathingSync({
+        applyPreview: (docs) => this.applyBreathingPreview(docs),
+        probe: (action, target) => this.breathingOverlaySystem.probe(action, target),
+        getStatus: () => ({
+          bootId: this.runtimeBootId,
+          sceneId: this.sceneManager.currentSceneData?.id ?? null,
+          instances: this.breathingOverlaySystem.debugSnapshot(),
+        }),
+        log: (m) => this.debugPanelUI?.log(m),
+      }, `game:${this.runtimeBootId}`);
+      this.breathingSync.start();
       /**
        * 草木拆层的实时联动：草木工作台「推给游戏」（预览，资源不动）/「导出到游戏」（写进资源）烘完往槽里写一行，
        * 游戏原地把拆层换掉——不切场景、玩家不动。推的是"那几张 PNG 变了",所以重装时 URL 带 `?v=rev`
@@ -4689,6 +4881,8 @@ export class Game {
       wuPerQUnit: this.sceneLighting.wuPerQUnit,
       camera: { zoom: this.camera.getZoom(), sceneBaseZoom: this.camera.getSceneBaseZoom() },
       ...this.footstepSystem.getDebugOutputState(),
+      // 跟脚声：错拍对不对、排没排上、响没响，听感判不了，这份能判
+      ...this.followerFootsteps.getDebugOutputState(),
     };
   }
 
@@ -4708,7 +4902,9 @@ export class Game {
     if (!options.startAtTitle) return this.saveManager;
     const sm = this.saveManager;
     return {
-      save: (slot) => sm.save(slot),
+      save: (slot, opts) => sm.save(slot, opts),
+      renameSlot: (slot, name) => sm.renameSlot(slot, name),
+      slotCount: () => sm.slotCount(),
       // 重启后不会再回到这个 Promise，故恒 pending：resolve(false) 会让菜单弹一条"读档失败"
       load: (slot) => {
         this.eventBridge.restartPageToLoadSlot(slot);
@@ -4972,6 +5168,11 @@ export class Game {
 
   /** 落雷的那一盏运行时灯（限速推送见 {@link StrikeLightRig}）。 */
   private readonly strikeLightRig = new StrikeLightRig();
+  /**
+   * 撤灯的代数：灯要等雷的效果装到、雷真出现那一拍才点（`playVfx` 的 onStart），在这之间演出被收摊 / 换了场景，
+   * 迟到的那一拍不许再把灯点起来。每次撤灯 +1，点灯时比一下。
+   */
+  private strikeLightEpoch = 0;
 
   /**
    * 脱手演出会话（`runActionsDetached` 的宿主）。机制全貌见 systems/performanceSession.ts。
@@ -5026,15 +5227,20 @@ export class Game {
         clearShake: () => { this.camera.clearShake(); },
         clearStrikeLight: () => {
           this.strikeLightRig.clear();
+          this.strikeLightEpoch++;
           this.dynamicLightsByOwner.delete('strike');
         },
         clearGust: () => { this.sceneWind.clearGust(); },
         stopSfx: (id) => { this.audioManager.stopSfxById(id); },
         stopVfxSoft: (id) => { this.vfxSystem.stopVfxSoft(id); },
+        stopVfxNow: (id) => { this.vfxSystem.stopVfx(id); },
       },
     });
 
-    this.stateController.setStateChangeObserver((next) => {
+    this.stateController.setStateChangeObserver((next, previous) => {
+      // 控制权从玩家手上收走的那一刻，腿也要收住：不然走路动画在非探索态里继续循环，
+      // 人不动、脚步声（与跟脚声）照响（见 Player.settleLocomotion）。
+      if (previous === GameState.Exploring && next !== GameState.Exploring) this.player.settleLocomotion();
       // 全屏接管 / 换世界 / 没命了：背景里的演出必须当场收摊（结算补齐、归位做满）
       if (next === GameState.Cutscene) this.performanceSessions.interruptAll('cutscene');
       else if (next === GameState.Minigame) this.performanceSessions.interruptAll('minigame');
@@ -5058,6 +5264,79 @@ export class Game {
   }
 
   /** 每帧推进落雷灯；`null` = 限速没轮到，不推。 */
+  /**
+   * 雷自带的灯（效果 `bolts[].light`）→ 这一道雷的三盏灯。形状与画出来的那道雷**同一个**
+   * （同一个 `boltInstanceSeed`）：线光从落点沿雷身走向摆到 `channel.heightWu` 高。效果没写灯 ⇒ null（调用方用旧的单灯）。
+   * `strikeThreat` 的 `lightIntensity` 是总亮度，三盏的 gain 乘在它上面；`lightKelvin` 给了就盖过效果里的色温。
+   */
+  private boltLightSpec(
+    info: VfxInstanceStartInfo, intensity: number, durationMs: number, opts: StrikeThreatOptions,
+  ): StrikeLightSpec | null {
+    const bolt = info.effect.bolts?.find((b) => b.kind === 'sky' && b.sky && b.light);
+    const L = bolt?.light;
+    const space = this.vfxSystem.currentSpace;
+    if (!bolt || !L || !space) return null;
+    const foot = info.anchorWorld;
+    const contact = L.contact ?? { gain: 1, heightWu: 40, rangeWu: 1400 };
+    const spec: StrikeLightSpec = {
+      pos: [foot[0], foot[1] + contact.heightWu, foot[2]],
+      intensity: intensity * contact.gain,
+      range: contact.rangeWu,
+      durationMs,
+      kelvin: opts.lightKelvin ?? L.kelvin ?? 9000,
+      reflect: true,
+    };
+    const channel = L.channel;
+    if (channel && channel.gain > 0 && channel.heightWu > 0) {
+      // 雷身的灯：沿画出来的那道雷（同一个 boltInstanceSeed）的折线摆，一段一条线光。
+      // 雷在落点那一处的直立面上（与画雷同一个换算：局部 (x, y) → 场景 (落点 + x·透视, 落点 − y·透视) → 直立面上的世界点）
+      const g = createBolt(bolt, boltInstanceSeed(info.seed, foot));
+      const fs = { x: 0, y: 0 };
+      space.toScene(foot, fs);
+      const persp = this.perspectiveScaleResolver?.scaleAt(fs.x, fs.y) ?? 1;
+      const toWorld = (x: number, y: number): [number, number, number] => {
+        const w = space.uprightWorldAtScene
+          ? space.uprightWorldAtScene(fs.x, fs.y, fs.x + x * persp, fs.y - y * persp)
+          : [foot[0] + x, foot[1] + y, foot[2]];
+        return [w[0], w[1], w[2]];
+      };
+      spec.lines = boltLightPolylines(g, channel.heightWu, STRIKE_CHANNEL_LIGHT_SEGMENTS, STRIKE_BRANCH_LIGHTS)
+        .map((s) => ({
+          from: toWorld(s.x0, s.y0), to: toWorld(s.x1, s.y1),
+          intensity: intensity * channel.gain * s.share, range: channel.rangeWu,
+        }));
+    }
+    if (L.sky && L.sky.gain > 0) {
+      // 云被照亮的那一记从雷那边的天上打下来：方位取玩家 → 落点（水平方向）
+      const from = space.groundWorldAtScene(this.player.x, this.player.y);
+      const dx = foot[0] - from[0], dz = foot[2] - from[2];
+      const az = Math.hypot(dx, dz) > 1e-3 ? (Math.atan2(dx, dz) * 180) / Math.PI : 180;
+      spec.sky = { intensity: intensity * L.sky.gain, elevationDeg: L.sky.elevationDeg, azimuthDeg: az };
+    }
+    return spec;
+  }
+
+  /**
+   * 雷落地那一下（效果 `bolts[].impact`，与灯同一拍）：落点一阵冲击风 + 点着周围开了「雷劈能点着」的可燃物。
+   * 冲击风只进表现（吃场景风的粒子、草木摇曳；见 `SceneWindState.addBlast`）；点火走燃烧系统 / 粒子薄片各自的入口，
+   * 只点模板开了开关的（09-24 制作人定：不开的雷劈在旁边也不着）。
+   */
+  private boltImpact(info: VfxInstanceStartInfo): void {
+    const im = info.effect.bolts?.find((b) => b.kind === 'sky' && b.impact)?.impact;
+    if (!im) return;
+    const foot = info.anchorWorld;
+    if (im.blast) {
+      this.sceneWind.addBlast({
+        x: foot[0], z: foot[2], strength: im.blast.strengthWu, radius: im.blast.radiusWu, duration: im.blast.seconds,
+      });
+    }
+    const r = im.igniteRadiusWu ?? 0;
+    if (r > 0) {
+      this.burnSystem.igniteByLightning(foot, r, r);
+      this.vfxSystem.igniteByLightning(foot, r, r);
+    }
+  }
+
   private updateStrikeLight(dt: number): void {
     const lights = this.strikeLightRig.update(dt * 1000);
     if (lights) this.setDynamicLightsFrom('strike', lights);
@@ -5076,6 +5355,7 @@ export class Game {
    * 半拍后才到震和声音，是"远近"的表达）。这条只管"选谁、劈哪、谁没了"。
    */
   private async strikeThreat(opts: StrikeThreatOptions): Promise<StrikeThreatResult> {
+    const sceneAtStart = this.sceneManager.currentSceneData;
     // 这道雷亮多久：灯与粒子共用一个时长，作者只有一个旋钮。
     const strikeMs = Number.isFinite(opts.lightMs) && (opts.lightMs as number) > 0 ? opts.lightMs as number : 420;
 
@@ -5104,6 +5384,26 @@ export class Game {
     const extraChance = Math.max(0, Math.min(1, numOr0(opts.extraChance, 1)));
     const gapMs = Math.max(0, numOr0(opts.gapMs, 220));
     const gapJitterMs = Math.max(0, numOr0(opts.gapJitterMs, 0));
+    const visualStrikes = Math.max(0, Math.round(numOr0(opts.visualStrikes, 0)));
+    const visualChance = Math.max(0, Math.min(1, numOr0(opts.visualExtraChance, 1)));
+    const visualGapMs = Math.max(0, numOr0(opts.visualGapMs, gapMs));
+    const visualJitterMs = Math.max(0, numOr0(opts.visualGapJitterMs, gapJitterMs));
+    const previousSpots: Vec3[] = [];
+    /** 本条雷链已经用过的雷形变体：权威链与装饰补雷共用一份，整条链不重样（见 fireOneBolt） */
+    const usedEffects = new Set<string>();
+    let surfaceCandidates: StrikeSurfacePoint[] | null = null;
+    let surfaceSpace: typeof this.vfxSystem.currentSpace = null;
+    let surfaceShell: typeof this.sceneDepthSystem.depthShellField = null;
+    let surfaceWarning = false;
+    const warnSurface = (reason: string): null => {
+      if (!surfaceWarning) {
+        surfaceWarning = true;
+        const message = `strikeThreat: 跳过装饰落雷，${reason}（${sceneAtStart?.id ?? '无场景'}）`;
+        console.warn(message);
+        this.debugPanelUI?.log(message);
+      }
+      return null;
+    };
     const pool = (opts.effects ?? []).map((e) => String(e).trim()).filter(Boolean);
     const fallbackEffect = (opts.effect ?? '').trim();
     const seeded = opts.seed !== undefined && Number.isFinite(opts.seed);
@@ -5133,6 +5433,51 @@ export class Game {
      * 一道雷的落点：**完整规则走一遍**。返回 null = 这一道不该发生（`fallback: 'none'` 且没靶子）。
      * 玩家位置每道现取——连劈之间他还在走，雷该跟着他周围的局面走。
      */
+    const pickFallback = (r: { angle: number; radius: number }): (StrikeSurfacePoint & { threatId: null }) | null => {
+      if (opts.fallback === 'none') return null;
+      const space = this.vfxSystem.currentSpace;
+      const shell = this.sceneDepthSystem.depthShellField;
+      // Use the shell's own calibration basis (the GPU mirror is Float32-rounded).
+      const rows = basisRowsFromDepthConfigR(this.sceneDepthSystem.currentConfig?.M?.R);
+      const sd = this.sceneManager.currentSceneData;
+      if (sd !== sceneAtStart || !space || space.kind !== 'field' || !shell || !rows) {
+        return warnSurface('缺少真实场景几何或场景已切换');
+      }
+      if (surfaceCandidates === null || surfaceSpace !== space || surfaceShell !== shell) {
+        const zoneId = opts.fallbackSurfaceZone;
+        const region = zoneId === undefined ? undefined : sd?.zones?.find(z => z.id === zoneId)?.polygon;
+        if (zoneId !== undefined && (!region || region.length < 3)) return warnSurface(`表面范围区无效：${zoneId}`);
+        surfaceCandidates = buildStrikeSurfaceCandidates({
+          space, shell, basis: { basisRows: rows, wuPerQUnit: space.wuPerQ },
+          groundAllowed: this.strikeGroundAllowed,
+          ...(region ? { surfaceRegion: region.map(p => [p.x, p.y] as [number, number]) } : {}),
+          groundOnly: opts.fallbackGroundOnly === true,
+          maxSlopeDeg: numOr0(opts.fallbackMaxSlopeDeg, 90),
+        });
+        surfaceSpace = space;
+        surfaceShell = shell;
+      }
+      const from = space.groundWorldAtScene(this.player.x, this.player.y);
+      const radius = Number.isFinite(opts.fallbackRadius) && (opts.fallbackRadius as number) > 0
+        ? opts.fallbackRadius as number : 320;
+      const margin = Math.max(0, Math.min(0.45, numOr0(opts.fallbackMargin, 0)));
+      const screen = this.renderer.app.screen;
+      // The current view can already be shaking. Reserve the full old-to-new displacement.
+      const shakePad = Math.max(0, numOr0(opts.shakeAmplitude, 0)) * 2;
+      const a = this.camera.screenToWorld(screen.width * margin + shakePad, screen.height * margin + shakePad);
+      const b = this.camera.screenToWorld(screen.width * (1 - margin) - shakePad, screen.height * (1 - margin) - shakePad);
+      const point = sampleStrikeFallback({
+        from, radius, random: r,
+        minDistance: Math.max(0, numOr0(opts.fallbackMinDistance, radius * 0.45)),
+        separation: Math.max(0, numOr0(opts.fallbackSeparation, 0)),
+        previous: previousSpots,
+        candidates: surfaceCandidates,
+        strictSeparation: opts.fallbackStrictSeparation === true,
+        bounds: { left: Math.max(0, a.x), right: Math.min(sd?.worldWidth ?? b.x, b.x),
+          top: Math.max(0, a.y), bottom: Math.min(sd?.worldHeight ?? b.y, b.y) },
+      });
+      return point ? { ...point, threatId: null } : warnSurface('世界距离、表面或间距条件内没有可用落点');
+    };
     const pickSpot = (
       r: { angle: number; radius: number }, struck: ReadonlySet<string>,
     ): { x: number; y: number; threatId: string | null } | null => {
@@ -5147,7 +5492,6 @@ export class Game {
       const radius = Number.isFinite(opts.fallbackRadius) && (opts.fallbackRadius as number) > 0
         ? (opts.fallbackRadius as number) : 320;
       const angle = r.angle * Math.PI * 2;
-      // √ 是为了在圆面上均匀（不开方会挤在圆心附近）；下限 0.45 半径免得雷劈在玩家脚面上。
       const dist = radius * (0.45 + 0.55 * Math.sqrt(r.radius));
       return { x: from.x + Math.cos(angle) * dist, y: from.y + Math.sin(angle) * dist, threatId: null };
     };
@@ -5157,11 +5501,17 @@ export class Game {
      * "打断＝跳过演出，不是取消技能"——鬼照样没，但那会儿多半已经切进过场，没人看得到雷。
      * 静默时不等间隔，于是整条链在**同一个同步块**里走完（打断的同步补跑等不起微任务）。
      */
-    const took = { vfxIds: [] as string[], sfxIds: [] as string[], lit: false };
+    const took = {
+      vfxIds: [] as string[], sfxIds: [] as string[], lit: false,
+      liveVfx: [] as string[], liveAudio: [] as { stop(): void }[],
+    };
+    const clearFlash = () => this.cutsceneManager.clearScreenFlash();
+    if (!opts.silent) opts.onPresentation?.({ cleanup: clearFlash });
     const struck = new Set<string>();
     const threatIds: string[] = [];
     let firstSpot: { x: number; y: number } | null = null;
     let bolts = 0;
+    let visualBolts = 0;
 
     for (let i = 0; i < maxStrikes; i++) {
       const r = roll(i);
@@ -5185,9 +5535,39 @@ export class Game {
       }
       if (!firstSpot) firstSpot = { x: spot.x, y: spot.y };
       if (!opts.silent) {
-        this.fireOneBolt(spot, { pool, fallbackEffect, strikeMs, opts, variantPick: r.variant, took });
+        // A real target is absolute: no surface, range, viewport or spacing filter.
+        const visibleSpot: { x: number; y: number; world?: Vec3 } | null = spot.threatId ? spot : pickFallback(r);
+        if (visibleSpot) {
+          const world = visibleSpot.world ?? this.vfxSystem.currentSpace?.groundWorldAtScene(visibleSpot.x, visibleSpot.y);
+          if (world) previousSpots.push(world);
+          this.fireOneBolt(visibleSpot, { pool, fallbackEffect, strikeMs, opts, variantPick: r.variant, usedEffects, took });
+          visualBolts++;
+        }
       }
       bolts++;
+    }
+
+    // Complete the requested presentation with harmless ground bolts. This loop never
+    // selects/removes a threat, consumes an item, or draws from the authoritative chain's RNG.
+    const visualSeed = visualStrikes > visualBolts && !opts.silent
+      ? (seeded ? (opts.seed as number) ^ 0x6a09e667 : Math.floor(Math.random() * 0x100000000)) : 0;
+    for (let i = visualBolts; !opts.silent && i < visualStrikes; i++) {
+      if (opts.abort?.() || this.sceneManager.currentSceneData !== sceneAtStart) break;
+      const a = seededUnitPair(visualSeed + i * 7919);
+      if (a.a >= visualChance) break;
+      if (bolts > 0) {
+        await this.gameClock.wait(Math.max(0, visualGapMs + (a.b * 2 - 1) * visualJitterMs));
+        if (opts.abort?.() || this.sceneManager.currentSceneData !== sceneAtStart) break;
+      }
+      const b = seededUnitPair(visualSeed + i * 7919 + 104729);
+      const spot = pickFallback({ angle: b.a, radius: b.b });
+      if (!spot) break;
+      if (!firstSpot) firstSpot = { x: spot.x, y: spot.y };
+      previousSpots.push(spot.world);
+      const variant = seededUnitPair(visualSeed + i * 7919 + 15485863).a;
+      this.fireOneBolt(spot, { pool, fallbackEffect, strikeMs, opts, variantPick: variant, usedEffects, took });
+      bolts++;
+      visualBolts++;
     }
 
     const at = firstSpot ?? { x: this.player.x, y: this.player.y };
@@ -5209,12 +5589,14 @@ export class Game {
    * 全都自动跟着这道雷走。
    */
   private fireOneBolt(
-    at: { x: number; y: number },
+    at: { x: number; y: number; world?: Vec3; normal?: Vec3 },
     ctx: {
       pool: string[]; fallbackEffect: string; strikeMs: number;
       opts: StrikeThreatOptions; variantPick: number;
+      /** 本条雷链已经用过的变体（同一条链里不重样，池用完才允许重复） */
+      usedEffects: Set<string>;
       /** 本次落雷取用的演出资源，回填给调用方记进脱手演出的归位账本 */
-      took: { vfxIds: string[]; sfxIds: string[]; lit: boolean };
+      took: { vfxIds: string[]; sfxIds: string[]; lit: boolean; liveVfx: string[]; liveAudio: { stop(): void }[] };
     },
   ): void {
     const { pool, fallbackEffect, strikeMs, opts } = ctx;
@@ -5223,19 +5605,58 @@ export class Game {
       return v === undefined || v === null || !Number.isFinite(n) ? dflt : n;
     };
     /**
-     * 这一道雷用哪个效果。`effects` 给一组时**每道随机挑一个** —— 同一个道具反复放、
-     * 一次连劈几道，每一道都该是新的一道雷；反复用同一张贴图，玩家第二次就看出来了。
+     * `effects` 提供非空效果池时，每道按池抽样；只提供 `effect` 时，每道使用同一个效果。
+     * 是否使用变体由作者配置决定。
+     *
+     * **同一条雷链里不重样**（见 `pickBoltVariant`）。
      */
-    const effect = pool.length > 0
-      ? pool[Math.floor(ctx.variantPick * pool.length) % pool.length]
-      : fallbackEffect;
+    const effect = pickBoltVariant(pool, ctx.variantPick, ctx.usedEffects) ?? fallbackEffect;
+    // Particle repeatability is independent of the authoritative chain's random draws.
+    const effectSeed = Number.isFinite(opts.effectSeed) ? opts.effectSeed : opts.seed;
+    // A sampled shell point is already resolved. Never project it back onto ground.
+    // Effect clearance follows the surface normal; light/audio retain world-up height.
+    const space = this.vfxSystem.currentSpace;
+    const worldAt = (height: number, normalOffset = false): Vec3 | null => {
+      if (!at.world) return space?.anchorToWorld({ x: at.x, y: at.y, h: height, surface: 'ground' }) ?? null;
+      const n = normalOffset && at.normal ? at.normal : [0, 1, 0];
+      return [at.world[0] + n[0] * height, at.world[1] + n[1] * height, at.world[2] + n[2] * height];
+    };
+    // ---- 灯：与雷**同一拍**点亮（雷的效果装到、雷真出现的那一刻，见 playVfx 的 onStart）----
+    // 效果里的雷写了灯（`bolts[].light`）⇒ 落点贴地一盏 + 雷身一条线光 + 天上一记平行光，三盏都在
+    // 表面材质区的水面 / 湿地上照出反光；没写 ⇒ 旧的单灯（lightHeight 高处一盏点光）。
+    // 灯与声音都不看画面：雷劈在画外照样亮、照样响（09-24 制作人：不能 cull 掉）。
+    const intensity = Number.isFinite(opts.lightIntensity) ? Math.max(0, opts.lightIntensity as number) : 0;
+    const legacyWorld = intensity > 0 ? worldAt(opts.lightHeight ?? 260) : null;
+    const epoch = this.strikeLightEpoch;
+    const startLights = (info: VfxInstanceStartInfo | null): void => {
+      if (epoch !== this.strikeLightEpoch || !legacyWorld) return;
+      const spec = info ? this.boltLightSpec(info, intensity, strikeMs, opts) : null;
+      this.strikeLightRig.start(spec ?? {
+        pos: [legacyWorld[0], legacyWorld[1], legacyWorld[2]],
+        intensity,
+        durationMs: strikeMs,
+        ...(opts.lightRange !== undefined ? { range: opts.lightRange } : {}),
+        ...(opts.lightKelvin !== undefined ? { kelvin: opts.lightKelvin } : {}),
+      });
+    };
+    // 雷真出现的那一拍：落地那一下（冲击风 + 点火）与灯一起
+    const onBoltStart = (info: VfxInstanceStartInfo): void => {
+      if (epoch !== this.strikeLightEpoch) return;
+      this.boltImpact(info);
+      startLights(info);
+    };
+    let lightDeferred = false;
     if (effect) {
+      const effectWorld = at.world ? worldAt(opts.effectHeight ?? 0, true) : null;
       const vid = this.vfxSystem.playVfx({
         effect,
-        anchor: { x: at.x, y: at.y, h: opts.effectHeight ?? 0, surface: 'ground' },
-        ...(opts.seed !== undefined && Number.isFinite(opts.seed) ? { seed: opts.seed } : {}),
+        anchor: { x: at.x, y: at.y, h: opts.effectHeight ?? 0, surface: at.world ? 'shell' : 'ground' },
+        ...(effectWorld ? { followWorld: effectWorld } : {}),
+        ...(effectSeed !== undefined && Number.isFinite(effectSeed) ? { seed: effectSeed } : {}),
         oneShot: true,
+        onStart: onBoltStart,
       });
+      lightDeferred = !!vid && !!legacyWorld;
       /**
        * 雷柱是**光柱**（`beams`），而光柱没有寿命——只有开关。`oneShot` 的自动收尸要求
        * "粒子放完 **且** 光柱已暗"，光柱不关就永远不满足，那道柱子会一直戳在场上。
@@ -5246,25 +5667,23 @@ export class Game {
        */
       if (vid) {
         ctx.took.vfxIds.push(vid);
+        ctx.took.liveVfx.push(vid);
+        opts.onPresentation?.({ vfxId: vid });
+        const voices = Math.max(0, Math.min(32, Math.round(numOr0(opts.vfxVoices, 0))));
+        // Zero preserves every instance's authored lifetime; a positive budget opts into stealing.
+        while (voices > 0 && ctx.took.liveVfx.length > voices) this.vfxSystem.stopVfx(ctx.took.liveVfx.shift()!);
         // 同上：暂停期间雷柱该定在屏上，不该在背包盖着的时候自己淡掉
         this.gameClock.after(strikeMs, () => { this.vfxSystem.stopVfxSoft(vid); });
       }
     }
 
-    // 灯位与雷声走**同一个空间换算**（`anchorToWorld`），否则光和声会落在离雷柱几十 wu 的地方。
-    const space = this.vfxSystem.currentSpace;
-    const intensity = Number.isFinite(opts.lightIntensity) ? Math.max(0, opts.lightIntensity as number) : 0;
+    // 灯位沿用 VFX 的 M-world；声音单独按听者的透视音频空间换算。
     if (intensity > 0) {
-      const world = space?.anchorToWorld({ x: at.x, y: at.y, h: opts.lightHeight ?? 260, surface: 'ground' });
-      if (world) {
-        this.strikeLightRig.start({
-          pos: [world[0], world[1], world[2]],
-          intensity,
-          durationMs: strikeMs,
-          ...(opts.lightRange !== undefined ? { range: opts.lightRange } : {}),
-          ...(opts.lightKelvin !== undefined ? { kelvin: opts.lightKelvin } : {}),
-        });
+      if (legacyWorld) {
+        // 效果没放出来（没有效果 / 放不了）⇒ 没有"雷出现的那一拍"可等，当场点
+        if (!lightDeferred) startLights(null);
         ctx.took.lit = true;
+        opts.onPresentation?.({ lit: true });
       } else {
         // 没几何场 = 整套光照禁用，这在本项目里是"作者还没烘这张图"的常见状态，必须出声。
         console.warn('strikeThreat: 当前场景没有粒子/光照空间，雷光这一层不出（粒子与消失照旧）');
@@ -5274,12 +5693,26 @@ export class Game {
     const sfx = (opts.sfx ?? '').trim();
     if (sfx) {
       // 声源摆在落点、约人耳高度：不用 lightHeight（那是给灯用的，在半空）。
-      const world = space?.anchorToWorld({ x: at.x, y: at.y, h: 60, surface: 'ground' });
-      this.audioManager.playSfxAt(
+      const groundWorld = at.world ? space?.groundWorldAtScene(at.x, at.y) : null;
+      const world = resolveSurfaceWorld(
+        this.buildAudioSpaceResolver(),
+        { contactX: at.x, contactY: at.y, heightWu: 60 },
+        at.world && groundWorld ? { world: at.world, groundWorld } : undefined,
+      );
+      const voices = Math.max(0, Math.min(16, Math.round(numOr0(opts.sfxVoices, 0))));
+      while (voices > 0 && ctx.took.liveAudio.length >= voices) ctx.took.liveAudio.shift()!.stop();
+      const handle = this.audioManager.playSfxAt(
         sfx,
         world ? { x: world[0], y: world[1], z: world[2] } : null,
-        opts.sfxVolume !== undefined ? { volume: opts.sfxVolume } : {},
+        {
+          ...(opts.sfxVolume !== undefined ? { volume: opts.sfxVolume } : {}),
+          ...(opts.mixOwner ? { mixOwner: opts.mixOwner } : {}),
+        },
       );
+      if (handle) {
+        ctx.took.liveAudio.push(handle);
+        opts.onPresentation?.({ cleanup: () => handle.stop() });
+      }
       if (!ctx.took.sfxIds.includes(sfx)) ctx.took.sfxIds.push(sfx);
     }
 
@@ -5292,6 +5725,7 @@ export class Game {
     const shakeAmplitude = numOr0(opts.shakeAmplitude, 0);
     if (shakeAmplitude > 0) {
       this.camera.shake(shakeAmplitude, Math.max(1, numOr0(opts.shakeMs, 700)), 20);
+      opts.onPresentation?.({ shaken: true });
     }
   }
 
@@ -5475,6 +5909,20 @@ export class Game {
     }
     for (const key of [...this.burnHeldHostCache.keys()]) if (!seen.has(key)) this.burnHeldHostCache.delete(key);
     return out;
+  }
+
+  /** 上一次呼吸工作台推来过的呼吸图 id(撤销覆盖时让它们下次从盘上重读) */
+  private breathingPreviewIds = new Set<string>();
+
+  /**
+   * DEV 呼吸工作台推来工作态(`null` 撤销):之后新显示的呼吸图用它,正在显示的同一张图立刻换上新参数。
+   * 撤销时丢掉 JSON 缓存,下次显示从盘上重读(工作台「导出到游戏」写盘后不必重开游戏)。
+   */
+  private applyBreathingPreview(docs: Record<string, unknown> | null): void {
+    const ids = new Set([...this.breathingPreviewIds, ...Object.keys(docs ?? {})]);
+    for (const id of ids) this.assetManager.dropJson(breathingJsonUrl(id));
+    this.breathingPreviewIds = new Set(Object.keys(docs ?? {}));
+    this.breathingOverlaySystem.applyPreview(docs);
   }
 
   /**
@@ -5890,9 +6338,13 @@ export class Game {
       }
       // 场景基线缩放：过场 cameraZoom「恢复场景缩放」语义（scale 缺省/≤0）的回读源
       this.camera.setSceneBaseZoom(cameraConfig?.zoom ?? 1);
+      // 进场景 = zoom 交回连续通道：上一行的 setZoom 会把它标成「显式占用」，不放开的话
+      // 这个场景的相机跟随透视永远不生效（没配跟随的场景这句是纯 no-op）。
+      this.camera.releaseZoomOverride();
       if (worldScale !== undefined) {
         this.camera.setWorldScale(worldScale);
       }
+      this.setCameraAnchor(snapX, snapY);
       this.camera.snapTo(snapX, snapY);
     });
     this.sceneManager.setBoundsOnlySetter((boundsW, boundsH) => {
@@ -6317,7 +6769,7 @@ export class Game {
         return null;
       }
     }
-    this.swayBackground.update(this.sceneWind.params, this.sceneWind.time);
+    this.swayBackground.update(this.sceneWind.params, this.sceneWind.time, this.sceneWind.blasts, this.sceneWind.blastTime);
     // 上一份（`?v=` 不同的同几张图）连同显存丢掉：不丢的话推一次漏一套，几十张 4 MB 的底板能把缓存挤爆
     const stale = this.swayTexUrls.filter((u) => !inp.urls.includes(u));
     for (const u of stale) this.assetManager.dropTexture(u);
@@ -6621,6 +7073,8 @@ export class Game {
       shadow: this.createShadowImpl(env.shadow.mode),
       src: this.makePlayerShadowSource(),
       owner: this.player,
+      flags: playerShadowFlags(sceneData?.playerContactAo),
+      aoDef: sceneData?.playerContactAo ?? null,
     });
     for (const npc of this.sceneManager.getCurrentNpcs()) {
       this.buildNpcShadowEntry(npc);
@@ -6666,10 +7120,16 @@ export class Game {
     this.entityShadows.delete(key);
   }
 
-  /** 为单个 NPC 建阴影 entry（castShadow!==false 才建）；rebuildEntityShadows 与定向重建共用，避免逻辑漂移。 */
+  /**
+   * 为单个 NPC 建阴影 entry；rebuildEntityShadows 与定向重建共用，避免逻辑漂移。
+   * 投影与接触阴影**分开判**（制作人 2026-09-23）：`castShadow:false` 只关投影，
+   * 接触阴影缺省开，所以两样都关才不建。
+   */
   private buildNpcShadowEntry(npc: Npc): void {
     const env = this.currentLightEnv;
-    if (!env || npc.def.castShadow === false) return;
+    if (!env) return;
+    const flags = npcShadowFlags(npc.def);
+    if (!flags.cast && !flags.contact) return;
     if (npc.def.shadowBindings?.length) {
       this.entityShadowBindings.set(npc.id, npc.def.shadowBindings);
     }
@@ -6678,6 +7138,8 @@ export class Game {
       shadow: this.createShadowImpl(env.shadow.mode),
       src: this.makeNpcShadowSource(npc),
       owner: npc,
+      flags,
+      aoDef: npc.def.contactAo ?? null,
     });
   }
 
@@ -6693,6 +7155,10 @@ export class Game {
       shadow: this.createShadowImpl(env.shadow.mode),
       src: this.makeHotspotShadowSource(h),
       owner: h,
+      flags: ALL_SHADOWS_ON,
+      // 热区展示图（道具）不是角色、也没有接触 AO 的作者面：保持简单 AO。
+      // 「所有 NPC 默认都开方向 AO，包括主角」（制作人 2026-09-24）说的是角色。
+      aoDef: HOTSPOT_CONTACT_AO,
     });
   }
 
@@ -6931,7 +7397,7 @@ export class Game {
    * ## 接触斑与灯无关（制作人 2026-09-02 定死）
    *
    * 脚底接触斑是"角色坐进地面"的常驻效果，强度只认 `env.shadow.contact`
-   * （场景 / 全局 lightEnv，缺省 0.5），**不看有没有绑灯、绑的灯多远多亮**。
+   * （场景 / 全局 lightEnv，缺省 0.75；实体 contactAo.darkness 可覆盖），**不看有没有绑灯、绑的灯多远多亮**。
    * 它永远由主 planar 实例（`entry.shadow`）画；绑定只接管**投影剪影**（extra 槽），
    * extra 槽的接触斑恒 0。
    *
@@ -6939,6 +7405,12 @@ export class Game {
    * 主实例整个熄灭（含接触斑），接触斑改由绑定解算给。后果是玩家离绑定灯超过
    * 灯的射程就整颗消失（雾津街头 lamp_2 射程 200 wu，出生点 1332 wu 外，份额 1e-21），
    * 而且画面上只表现为"脚下没东西"，没有任何报错。
+   *
+   * ## 投影与接触阴影各自一个开关（制作人 2026-09-23）
+   *
+   * `entry.flags`：`cast` 关 = 手调单影与绑定剪影都不画；`contact` 关 = 不画接触斑。
+   * 接触阴影**缺省开**，`castShadow:false` 不再连带关掉它——送葬队为了不投错方向的影子
+   * 关了投影，结果脚下什么都没有，站在灯前的亮地上像飘着。
    */
   private driveEntryShadows(
     entry: EntityShadowEntry,
@@ -6946,7 +7418,9 @@ export class Game {
     field: ShadowProjectionField | null,
     _dtMs: number,
   ): void {
-    const bindings = this.resolveEntityShadowBindings(entry);
+    // 关了投影的实体（castShadow:false）连绑定的剪影也不画，只剩接触阴影。
+    const bindings = entry.flags.cast ? this.resolveEntityShadowBindings(entry) : null;
+    const ao = this.contactAoParams(entry, env);
     const offSlot = (i: number): ResolvedLightEnv => {
       const off = this.getSlotEnv(entry, i, env);
       off.shadow.darkness = 0; off.shadow.contact = 0;
@@ -6955,7 +7429,7 @@ export class Game {
 
     if (!bindings || bindings.length === 0) {
       // 没配绑定：原手调单影。**不是**回落到某种自动行为——没配就是没配。
-      entry.shadow.update(entry.src, env, field);
+      entry.shadow.update(entry.src, this.mainShadowEnv(entry, env, entry.flags.cast), field, null, ao);
       if (entry.extra?.length) {
         for (let i = 0; i < entry.extra.length; i++) {
           entry.extra[i].update(entry.src, offSlot(i), null);
@@ -6966,9 +7440,7 @@ export class Game {
 
     // 配了绑定：手调单影只熄灭**投影**（darkness=0），接触斑照旧由它按 env 常驻画；
     // 逐条 planar 剪影由 extra 槽接管。
-    const mainEnv = this.getSlotEnv(entry, bindings.length, env);
-    mainEnv.shadow.darkness = 0;
-    entry.shadow.update(entry.src, mainEnv, field);
+    entry.shadow.update(entry.src, this.mainShadowEnv(entry, env, false), field, null, ao);
 
     const ctx = this.shadowBindingContext(entry);
     entry.extra ??= [];
@@ -6995,6 +7467,76 @@ export class Game {
       // field 会覆盖 key 方向，绑定解出来的方向必须传 null 才不被冲掉
       impl.update(entry.src, se, null, { spread: sol.spread, widthScale: sol.widthScale });
     }
+  }
+
+  /**
+   * 胶囊 AO（脚底接触 AO）这一帧的参数。作者面（制作人 2026-09-24）：`contactAo` 缺省开、方向 AO 缺省也开；
+   * 明暗 / 大小不写跟随场景光环境。
+   *
+   * 方向来源是作者选项 `dirSource`：
+   * - `'lighting'`（缺省，制作人 2026-09-24「ao 方向本来就和间接光强度要一致」）跟角色身上的光一致：
+   *   间接光一路（probe 上半球来光，与角色间接光同一份数据）+ 每盏实体灯一路，各投各的影、
+   *   按各自照到脚下地面的量加权（`contactAoSources.ts`）。角色没走 probe 受光（没有载荷 / 只借几何）时
+   *   它也不吃实体灯，退场景主光——与它那时的受光（光环境色调）一致；
+   * - `'binding'` 跟阴影绑定：取第一条解得出方向的（绑灯朝灯、虚拟灯朝它），全是 `'none'` → 只画无方向部分，
+   *   没配绑定 → 场景主光。绑定按实体取、不看 `castShadow`；
+   * - `'scene'` 场景光环境主方向（`env.key`，影朝 az+180，与手调单影同向）。
+   * 浓度上限只认解出来的明暗（`dirStrength`）；缺省档里各路按照度分这份浓度，照不到的灯自然没份。
+   * 这是投影剪影"不自动挑灯"（2026-08-20）之外的有意例外：只给接触 AO 用，作者随时能换档。
+   */
+  private contactAoParams(entry: EntityShadowEntry, env: ResolvedLightEnv): ContactAoParams {
+    const wuPerQUnit = this.sceneLighting.wuPerQUnit;
+    const ao = resolveContactAo(entry.aoDef, env.shadow);
+    // 接触开关只有一个：entry.flags.contact（由 contactAo.enabled 派生，运行时也可单独关）。
+    // 主实例画接触 AO 只看这里解出的 ao，不再看 env.shadow.contact——所以关必须关在这里
+    // （2026-09-24 真机：只关 flags.contact 时接触 AO 照画）。
+    if (!entry.flags.contact) ao.enabled = false;
+    const rows = this.characterLighting.shadowBasisRows;
+    // 看不见的实体影子本来就不画（PlanarEntityShadow.update 首行就藏），不必逐帧查探针、算灯
+    if (!ao.enabled || !ao.directional || !rows || !entry.src.isVisible()) return { ao, sources: [], wuPerQUnit };
+    // 只有一路的两档：方向型、权重 1
+    const one = (dir: readonly [number, number, number] | null): ContactAoSource[] =>
+      dir ? [{ point: false, x: dir[0], y: dir[1], z: dir[2], footDir: dir, weight: 1 }] : [];
+    const sceneDir = (): [number, number, number] | null =>
+      lightDirFromShadowScreenAngle(env.key.azimuthDeg + 180, env.key.elevationDeg, rows);
+
+    if (ao.dirSource === 'scene') return { ao, sources: one(sceneDir()), wuPerQUnit };
+
+    if (ao.dirSource === 'binding') {
+      const bindings = this.resolveEntityShadowBindings(entry);
+      if (!bindings || bindings.length === 0) return { ao, sources: one(sceneDir()), wuPerQUnit };
+      const ctx = this.shadowBindingContext(entry);
+      for (const b of bindings) {
+        const dir = ctx
+          ? resolveBindingLightDir(b, ctx)
+          : (b.source === 'virtual' && b.virtual
+            ? lightDirFromShadowScreenAngle(b.virtual.azimuthDeg, b.virtual.elevationDeg, rows)
+            : null);
+        if (dir) return { ao, sources: one(dir), wuPerQUnit };
+      }
+      return { ao, sources: [], wuPerQUnit };
+    }
+
+    // 'lighting'
+    const cl = this.characterLighting;
+    const fx = entry.src.getFootX(), fy = entry.src.getFootY();
+    const chest = cl.active && !cl.isGeometryOnly ? cl.chestQAt(fx, fy, entry.src.getWorldHeight()) : null;
+    const foot = chest ? cl.chestQAt(fx, fy, 0) : null;
+    if (!chest || !foot) return { ao, sources: one(sceneDir()), wuPerQUnit };
+    const probe = cl.indirectProbeData();
+    const packed = cl.characterPackedLights;
+    // 脚点 → M-world wu（与角色 shader 的 P = R·q × wuPerQUnit 同式，铁律 0）
+    const P: [number, number, number] = [
+      (rows[0] * foot[0] + rows[1] * foot[1] + rows[2] * foot[2]) * wuPerQUnit,
+      (rows[3] * foot[0] + rows[4] * foot[1] + rows[5] * foot[2]) * wuPerQUnit,
+      (rows[6] * foot[0] + rows[7] * foot[1] + rows[8] * foot[2]) * wuPerQUnit,
+    ];
+    const mix = cl.characterLightMix;
+    const sources = resolveContactAoSources(
+      probe ? indirectUpperMoment(probe, chest, rows) : null, mix.indirect,
+      packed ? lightGroundSources(packed, P) : [], mix.direct,
+    );
+    return { ao, sources, wuPerQUnit };
   }
 
   /**
@@ -7029,6 +7571,38 @@ export class Game {
       skyIntensity: lighting.sky.intensity,
       charHeightQ,
     };
+  }
+
+  /**
+   * 主实例（手调单影 + 接触斑）这一帧用的 env。
+   *
+   * 投影与接触阴影各按开关熄灭：`castOn=false` 压投影浓度，`entry.flags.contact=false` 压接触斑。
+   * 两样都要画时**直接返回活 env**——没配绑定、两个开关都开的存量实体逐字走老路。
+   * 覆盖对象整份从活 env 刷新（含 key 方向），不留上一帧的值。
+   */
+  private mainShadowEnv(entry: EntityShadowEntry, env: ResolvedLightEnv, castOn: boolean): ResolvedLightEnv {
+    if (castOn && entry.flags.contact) return env;
+    let me = entry.mainEnv;
+    if (!me) {
+      me = {
+        key: { ...env.key },
+        ambient: env.ambient,
+        shadow: { ...env.shadow },
+        toneStrength: env.toneStrength,
+        toneEnabled: env.toneEnabled,
+        ao: env.ao,
+      };
+      entry.mainEnv = me;
+    }
+    Object.assign(me.key, env.key);
+    me.ambient = env.ambient;
+    Object.assign(me.shadow, env.shadow);
+    me.toneStrength = env.toneStrength;
+    me.toneEnabled = env.toneEnabled;
+    me.ao = env.ao;
+    if (!castOn) me.shadow.darkness = 0;
+    if (!entry.flags.contact) me.shadow.contact = 0;
+    return me;
   }
 
   /** 槽 env 覆盖对象:缓存复用,每帧从活 env 刷新标量再由调用方覆写方向/浓度/软度。 */
@@ -7284,7 +7858,8 @@ export class Game {
     // 确认框在场时控制器整帧不吃键盘（Esc 双消费修复，见 UIConfirmDialog.isConfirmDialogOpen）
     // 说明卡是模态：与确认框同款整帧让路（面板快捷键不许在卡上叠开）。仪式/卡的"世界停住"走状态机
     // （runInGameState：仪式 Cutscene、卡 UIOverlay），不靠这里。
-    this.stateController.setKeySuppressor(() => isConfirmDialogOpen() || isSystemNoteOpen());
+    // 文字输入框（存档起名）同理：按键落在输入框上、不冒泡，这里再兜一道，打字不许触发面板快捷键
+    this.stateController.setKeySuppressor(() => isConfirmDialogOpen() || isSystemNoteOpen() || isTextPromptOpen());
     // 全部探索面板共用「玩家自由可控」闸（2026-08-18 拍板）：切场/加载遮罩下 state
     // 仍是 Exploring，不加闸的话面板会被按到加载画面上。
     const freeControl = (): boolean => this.isPlayerFreeControl();
@@ -7434,6 +8009,7 @@ export class Game {
       this.trajectorySystem.cancelAll();
       // 透视缩放随场景走：先清句柄防旧场景系数漂到新场景（NPC/热点随实例销毁）
       this.perspectiveScaleResolver = null;
+      this.perspectiveCameraFollow = null;
       this.player.setPerspectiveScale(null);
       for (const h of this.sceneManager.getCurrentHotspots()) {
         const f = h.detachDepthOcclusionFilter();
@@ -7465,6 +8041,15 @@ export class Game {
       this.perspectiveScaleResolver = createPerspectiveScaleResolver(
         this.sceneManager.currentSceneData?.perspectiveScale,
       );
+      // 相机跟随透视：没写 cameraFollow 键就恒 null，下面每帧那一步整条不跑
+      this.perspectiveCameraFollow = createPerspectiveCameraFollowResolver(
+        this.sceneManager.currentSceneData?.perspectiveScale,
+      );
+      // 进场景第一帧就该是对的景别（不是先按基线画一帧再跳）：锚点此刻就是玩家落点
+      if (this.perspectiveCameraFollow) {
+        this.setCameraAnchor(this.player.x, this.player.y);
+        this.applyPerspectiveCameraZoom();
+      }
       this.player.setPerspectiveScale(this.perspectiveScaleResolver);
       // 场景风：点亮的场景不走摆动装载钩子，这里保证每个场景都按自己的 wind 重设（没有 = 无风）
       if (!this.swayBackground) this.sceneWind.reset(this.sceneManager.currentSceneData?.wind);
@@ -9376,6 +9961,7 @@ export class Game {
       // 引用点还没产生，没东西可跟（2026-09-12 制作人定）。
       const p = this.evaluatePositionRefNow(this.cameraFollowRef);
       if (p) {
+        this.setCameraAnchor(p.x, p.y);
         if (this.cameraFollowSnap) this.camera.snapTo(p.x, p.y);
         else this.camera.follow(p.x, p.y);
       }
@@ -9384,6 +9970,7 @@ export class Game {
     if (this.cameraFollowTargetId !== null) {
       const followed = this.resolveActorFn(this.cameraFollowTargetId);
       if (followed) {
+        this.setCameraAnchor(followed.x, followed.y);
         if (this.cameraFollowSnap) this.camera.snapTo(followed.x, followed.y);
         else this.camera.follow(followed.x, followed.y);
         return;
@@ -9391,8 +9978,49 @@ export class Game {
       this.cameraFollowTargetId = null;
     }
     if (fallbackToPlayer) {
+      this.setCameraAnchor(this.player.x, this.player.y);
       this.camera.follow(this.player.x, this.player.y);
     }
+  }
+
+  /**
+   * 「渐变恢复场景 zoom」的唯一实现（对话收尾 550ms、演出收尾都走它）。
+   *
+   * 目标是 {@link currentPerspectiveZoom}——配了相机跟随透视的场景要回到**此刻位置该有的**
+   * 景别，不是静态场景 zoom。渐变期间 zoom 仍归显式通道所有（否则连续通道会和渐变打架，
+   * 每帧把它拽回目标值、550ms 的淡出变成瞬切）；渐变收尾才交回去。
+   */
+  private fadingRestoreCameraZoom(durationMs: number): Promise<void> {
+    const p = this.cutsceneManager.fadingCameraZoom(this.currentPerspectiveZoom(), durationMs);
+    return p.finally(() => { this.camera.releaseZoomOverride(); });
+  }
+
+  /** 记下这一帧镜头锚在哪（透视跟随按它求 f）。与真正摆镜头的那一句成对，不单独调。 */
+  private setCameraAnchor(x: number, y: number): void {
+    this.cameraAnchorX = x;
+    this.cameraAnchorY = y;
+  }
+
+  /**
+   * 「此刻位置该有的那个 zoom」：相机基线 zoom × 跟随点处的透视倍数。
+   *
+   * **没配相机跟随透视的场景恒等于 `getCameraBaselineZoom()`**——所有恢复路径照旧，
+   * 一个字节的行为都不变（需求清单 A3.5）。
+   */
+  private currentPerspectiveZoom(): number {
+    const base = this.getCameraBaselineZoom();
+    const follow = this.perspectiveCameraFollow;
+    if (!follow) return base;
+    return base * follow.zoomRatioAt(this.cameraAnchorX, this.cameraAnchorY);
+  }
+
+  /**
+   * 相机跟随透视：把 zoom 写进连续通道。显式占用期间（过场 cameraZoom / setCameraZoom /
+   * 对话拉近 / 调试滚轮）Camera 自己让位，这里不必判。没配跟随的场景整条不跑。
+   */
+  private applyPerspectiveCameraZoom(): void {
+    if (!this.perspectiveCameraFollow) return;
+    this.camera.setDrivenZoom(this.currentPerspectiveZoom());
   }
 
   /**
@@ -9413,7 +10041,12 @@ export class Game {
             && (state === GameState.Exploring || state === GameState.ActionSequence);
     if (!anchored) return;
     const actor = this.resolveActorFn(entityId);
-    if (actor) this.camera.snapTo(actor.x, actor.y);
+    if (actor) {
+      this.setCameraAnchor(actor.x, actor.y);
+      this.camera.snapTo(actor.x, actor.y);
+      // 瞬移跨了纵深就得当场换景别，不能等下一帧——否则跳的那一帧人物大小是错的
+      this.applyPerspectiveCameraZoom();
+    }
   }
 
   private async debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): Promise<void> {
@@ -9631,6 +10264,9 @@ export class Game {
     this.vfxSync?.stop();
     this.burnSync?.stop();
     this.burnSync = null;
+    this.breathingSync?.stop();
+    this.breathingSync = null;
+    this.breathingOverlaySystem?.destroy();
     this.swaySync?.stop();
     this.swaySync = null;
     this.terrainSync?.stop();
@@ -9882,6 +10518,13 @@ export class Game {
   }
 
   private tick(dt: number): void {
+    /**
+     * 引导浮标的「收起来」判据必须每帧现算，且**排在下面所有 early-return 之前**：
+     * 它是写在容器上的可见性状态，停一帧就把上一帧的可见性冻住——说明卡 / 死亡这条
+     * 第一行就 return，于是浮标会挂在说明卡与死亡画面上不走。
+     * （位置重算跟着世界暂停停没关系：暂停时镜头也不动。）
+     */
+    this.guidanceLayerUI?.applyVisibility();
     // 说明卡阅读与死亡期间冻结世界时钟（火把、阵风、侵袭、主动防护），UI 仍可点击。
     if (this.systemNotePauseDepth > 0 || this.stateController.currentState === GameState.Dead) {
       this.inputManager.endFrame();
@@ -9900,6 +10543,12 @@ export class Game {
     this.planeReconciler.update(dt);
     // 气缕飘向按玩家相对气味源每帧现算（G.6）：不分探索/演出态——演出里走位也该跟着歪
     this.smellSystem.update(dt);
+    // 画布实体的动画：**不分探索 / 演出态**（画布本就是演出面，对话与过场里照样要动），
+    // 但**吃暂停闸**——暂停一览表里「角色动画」是停的那一列（world-pause-and-game-clock），
+    // 画布实体也是角色，同一条待遇。
+    if (!worldPaused) this.canvasStageSystem.update(dt);
+    // 呼吸图:同吃暂停闸(暂停时胸口、纸都停住,呼吸声靠看门狗自己落下去);演出面,不分探索 / 演出态
+    if (!worldPaused) this.breathingOverlaySystem.update(dt);
     // 时段换装：等一个"没人在演、也没在切场"的安全窗口再动场景（见 pendingPhaseSwap）。
     this.drainPendingPhaseSwap();
     // 日程演出（离场/入场走位）：内部自判探索态，非探索态原地挂起。
@@ -9945,6 +10594,7 @@ export class Game {
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         npc.cutsceneUpdate(dt);
       }
+      this.setCameraAnchor(this.player.x, this.player.y);
       this.camera.follow(this.player.x, this.player.y);
     }
 
@@ -10021,6 +10671,14 @@ export class Game {
       this.applyCameraFollow(true);
     }
 
+    /**
+     * 相机跟随透视（需求清单 A3.5）：**在所有摆镜头的分支之后**，按这一帧镜头真正锚住的
+     * 那个点求 zoom。放在这里而不是各分支里，是因为它对每个状态都成立——没在跟人的状态
+     * （遭遇 / 小游戏 / 面板）锚点不动，zoom 自然也不动。
+     * 没配 `perspectiveScale.cameraFollow` 的场景整条不跑，一次 zoom 都不多写。
+     */
+    this.applyPerspectiveCameraZoom();
+
     this.emoteBubbleManager.update(dt);
     this.notificationUI.update(dt);
     // 横幅与引导层跟着游戏时钟走（不自转 rAF）：暂停/开面板时它们也该停，
@@ -10028,8 +10686,14 @@ export class Game {
     // （2026-09-19：这段注释一直在，但 dt 是无条件喂的——真停下来是从这一版起。）
     if (!worldPaused) {
       this.questBannerUI.update(dt);
-      this.guidanceLayerUI.update(dt);
     }
+    /**
+     * 引导层**不吃世界暂停**：它没有任何动画（`update` 里 dt 根本没用），只做
+     * 「收不收起来 + 浮标跟镜头」两件事。2026-09-19 把它和横幅一起收进这道闸之后，
+     * 一开面板它就停在最后一帧的可见性上 = 浮标画在面板上（存档页 / 设置页截图）。
+     * 横幅是真有时间线的，留在闸里。
+     */
+    this.guidanceLayerUI.update(dt);
     /**
      * 烘焙轨迹回放。位置有两个硬约束，别挪：
      * - **在所有状态分支之后**：过场/动作链分支里的 `applyCameraFollow` 会写相机目标点，
@@ -10045,7 +10709,7 @@ export class Game {
       this.trajectorySystem.update(dt);
       // 场景风的钟与粒子同处推进（同暂停语义）；背景摆动读同一个钟
       this.sceneWind.advance(dt);
-      this.swayBackground?.update(this.sceneWind.params, this.sceneWind.time);
+      this.swayBackground?.update(this.sceneWind.params, this.sceneWind.time, this.sceneWind.blasts, this.sceneWind.blastTime);
       /**
        * 手持挂件 **必须排在粒子之前**：它这一帧才把火焰的锚点挪到手上、把灯推给光照系统。
        * 反过来的话粒子会拿上一帧的锚点发这一帧的火星（走得快时火焰拖在身后）。
@@ -10227,6 +10891,8 @@ export class Game {
     // 草木位移图：这一帧的网格渲进离屏 uv 图（不打光的合成面与打光的背景都读它）。
     // 必须在主画面渲染之前、与光照缓存同一拍——放进场景树里渲染离屏目标会串台（pixi-v8-traps）。
     this.swayBackground?.renderUv(this.renderer.app.renderer);
+    // 水面细波纹的钟（只在落雷的灯亮着、本来就重烘的那几帧起作用）
+    this.sceneLighting.setSurfaceTime(this.gameClock.now / 1000);
     // 统一光影：脏才重算场景辐射缓存，稳态是一次布尔判断（零光照计算）。
     this.sceneLighting.update(this.renderer.app.renderer);
     this.updateEntityShadows();

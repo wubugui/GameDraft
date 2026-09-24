@@ -9,7 +9,7 @@ triggers:
   paths: ["src/**"]
   topics: [运行时, 不变量, 验收门, 红线]
   tasks: [改运行时代码, 修bug, 重构, 新增系统]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 # 游戏运行时开发规范
@@ -71,7 +71,9 @@ last_governed: 2026-09-03
 
 - `npx tsc --noEmit` 零错误;
 - `npm test` 全绿(仅当前工作区,不含隐藏 worktree);
-- `./dev.sh validate-data` 零 error,且警告数不增加;
+- `validate-data` 的 **error / 警告集合与改动前一致、只减不增**(2026-09-23 制作人批:多会话共用的树上长期有存量 error,
+  字面"零 error"没人过得了;与 editor-tools 验收门同口径)。Windows 入口 `sh scripts/py.sh -m tools.dev validate-data`,
+  `./dev.sh` 在那里零启动;基线怎么取、存量怎么分流见 [content-validation-gate](../content/recipes/content-validation-gate.md);
 - 素材引用审计零问题;
 - `git diff --check` 干净。
 

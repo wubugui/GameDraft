@@ -12,7 +12,7 @@ triggers:
   paths: ["scripts/py.sh", "scripts/pytool.cjs", "dev.sh", "scripts/package.mjs"]
   topics: [python 解释器, venv, Windows, python3, 入口脚本, 静默失效]
   tasks: [写钩子, 加 CLI 入口, 加打包/工具脚本, 跨平台排障]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -35,6 +35,9 @@ last_governed: 2026-09-03
 - **`python3` 在部分 Windows 机上是应用商店占位程序**:不报错、不执行、直接退出。
   直写 `python3` 的钩子 / CLI / 治理工具因此**整批静默失效而无人察觉**——曾出现治理产物
   停在几周前的状态、所有人都以为在跑。
+- **裸 `python` 在本机是 Python 2.7**。`scripts/py.sh` 的最后一档就是 `python`:项目 venv 缺失时它会**静默跑在 Py2 上**
+  (上一档 `python3` 占位程序过不了"能执行空程序"的探测,于是落到这里);直接敲 `python` 更是如此。症状是
+  `SyntaxError: Non-ASCII character`、或 Py3 才有的属性"不存在"——读起来像脚本写错了。先验解释器版本。
 - **POSIX 布局硬编码**(只找 `venv/bin/python`,不找 `venv/Scripts/python.exe`)会让钦定的
   开发入口在 Windows 上**零启动**:不是慢、不是不稳,是起不来;或者更糟——回落到上面那个
   占位程序,变成"跑过了但什么都没发生"。

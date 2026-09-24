@@ -1,6 +1,8 @@
 import type { Texture } from 'pixi.js';
 import type { ResolvedLightEnv } from './lightEnv';
 import type { ShadowProjectionField } from './shadowField';
+import type { ResolvedContactAo } from './contactAo';
+import type { ContactAoSource } from './contactAoSources';
 
 /**
  * 阴影数据源：玩家 / NPC 的统一只读视图（由 Game 适配，避免阴影模块直依赖实体类）。
@@ -77,6 +79,22 @@ export interface ShadowShapeParams {
 /** 未解出形状时的恒等值：平行四边形、不压窄——与本次改动之前逐像素一致。 */
 export const IDENTITY_SHADOW_SHAPE: ShadowShapeParams = { spread: 1, widthScale: 1 };
 
+/**
+ * 胶囊 AO（脚底接触 AO）的输入，只给画接触阴影的主实例。
+ *
+ * 作者面（制作人 2026-09-24）：接触 AO 缺省开（简单 AO）；方向 AO 缺省也开。方向部分由几路光
+ * 各投各的软影、按各自在地面照度里的占比加权（见 `contactAoSources.ts`）；方向来源选
+ * 「跟阴影绑定」「场景主光」时只有一路、权重 1。浓度上限只认解出来的 `ao.darkness`。
+ */
+export interface ContactAoParams {
+  /** 这个实体解好的接触 AO 参数（`resolveContactAo`）。 */
+  ao: ResolvedContactAo;
+  /** 方向部分的几路光（≤ MAX_CONTACT_AO_SOURCES，权重和 ≤ 1）；空 = 只画无方向部分（没勾方向 AO 也是空）。 */
+  sources: readonly ContactAoSource[];
+  /** 1 个 q 单位 = 多少 wu（铁律 0：光照的长度一律 wu）。 */
+  wuPerQUnit: number;
+}
+
 /** 阴影实现统一接口（PlanarEntityShadow / DeferredEntityShadow 各实现一版）。 */
 export interface IEntityShadow {
   update(
@@ -84,6 +102,7 @@ export interface IEntityShadow {
     env: ResolvedLightEnv,
     field?: ShadowProjectionField | null,
     shape?: ShadowShapeParams | null,
+    contactAo?: ContactAoParams | null,
   ): void;
   /**
    * 深度调参（F2 tolerance/floorOffset/occlusionBlendFactor）广播入口：

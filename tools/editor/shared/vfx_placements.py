@@ -23,6 +23,9 @@
 ``base`` = 场景顶层外观（没单列成时段变体的那些时段），``variants[<时段 id>]`` = ``timeVariants[<时段 id>]``
 那套外观。运行时取哪一份与 ``resolveSceneAppearance(scene, phase).phase`` 同一个判据（空串 = base）。
 
+``surfaces``（2026-09-24）= 这张图的**表面材质区**（哪里是水面、哪里是湿地；整张场景一份，不分时段外观）：
+落雷的灯在这些地方照出反光，落点在水面里时效果的 ``onSurface`` 取 ``water``（见 ``VfxSurfaceRegionDef``）。
+
 **唯一写入者是粒子工作台**（``tools/vfx_workbench``）；主编辑器只读（场景画布上显示区域、playVfx /
 条件叶的实例候选、校验）——没有脏桶、不进 Save All。两个写入者的下场是互删。
 
@@ -50,8 +53,21 @@ _COMMENT = (
     "各配各的、互不继承、没配就没有。唯一写入者是粒子工作台（tools/vfx_workbench），主编辑器只读。"
 )
 
-_TOP_ORDER = ("_comment", "scenes")
-_SCENE_ORDER = ("base", "variants")
+_TOP_ORDER = ("_comment", "defaultSurface", "scenes")
+_SCENE_ORDER = ("base", "variants", "surfaces")
+#: 表面材质区键序（与 ``src/data/types.ts`` 的 ``VfxSurfaceRegionDef`` 逐字同序）
+SURFACE_ORDER = ("id", "kind", "polygon", "reflect", "roughness", "feather")
+#: 全局缺省表面材质（库顶层 ``defaultSurface``）：没画区域的地方用它；细节起伏 / 水面雨纹两个强度全局共用。
+#: 缺省值与 ``src/rendering/lighting/surfaceMask.ts`` 的 SURFACE_DEFAULTS 同值（``tests`` 对着 TS 源文本断言）
+DEFAULT_SURFACE_ORDER = ("reflect", "roughness", "detail", "ripple")
+DEFAULT_SURFACE_RANGES = {"reflect": (0.0, 1.0), "roughness": (0.0, 1.0), "detail": (0.0, 2.0), "ripple": (0.0, 2.0)}
+SURFACE_DEFAULTS = {
+    "ground": {"reflect": 1, "roughness": 0.45, "detail": 1, "ripple": 1},
+    "water": {"reflect": 1, "roughness": 0.08},
+    "wet": {"reflect": 1, "roughness": 0.25},
+    "featherWu": 24,
+}
+SURFACE_KINDS = ("water", "wet")
 #: 实例键序（与 ``src/data/types.ts`` 的 ``VfxInstanceDef`` 逐字同序）
 INSTANCE_ORDER = ("id", "effect", "anchor", "seed", "countScale", "autoStart", "conditions", "area", "confine")
 _ANCHOR_ORDER = ("x", "y", "h", "surface")
@@ -106,6 +122,12 @@ def rows_for(lib: dict, scene_id: str, phase: str) -> list[dict]:
     else:
         variants = ent.get("variants")
         raw = variants.get(phase) if isinstance(variants, dict) else None
+    return [r for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
+
+
+def surfaces_for(lib: dict, scene_id: str) -> list[dict]:
+    """某场景的表面材质区（只返回 dict 行，原对象不拷贝）。"""
+    raw = scene_entry(lib, scene_id).get("surfaces")
     return [r for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
 
 
@@ -262,6 +284,51 @@ def normalize_instance(row: Any, where: str) -> dict:
     return _order(out, INSTANCE_ORDER)
 
 
+def normalize_surface(row: Any, where: str) -> dict:
+    """一块表面材质区的形状闸门。"""
+    if not isinstance(row, dict):
+        raise ValueError(f"{where}: 表面区不是对象")
+    out = dict(row)
+    rid = str(out.get("id") or "").strip()
+    if not rid:
+        raise ValueError(f"{where}: 表面区缺 id")
+    out["id"] = rid
+    if out.get("kind") not in SURFACE_KINDS:
+        raise ValueError(f"{where}: 表面区「{rid}」的 kind 只能是 water（水面）/ wet（湿地）")
+    if not is_polygon(out.get("polygon")):
+        raise ValueError(f"{where}: 表面区「{rid}」的 polygon 要是 ≥3 个 [x, y] 的多边形（场景坐标 wu）")
+    for k in ("reflect", "roughness"):
+        if k in out and (not _is_num(out[k]) or not 0 <= float(out[k]) <= 1):
+            raise ValueError(f"{where}: 表面区「{rid}」的 {k} 要是 0..1 的数")
+    if "feather" in out and (not _is_num(out["feather"]) or float(out["feather"]) < 0):
+        raise ValueError(f"{where}: 表面区「{rid}」的 feather 要是 ≥ 0 的数（边缘羽化宽 wu）")
+    return _order(out, SURFACE_ORDER)
+
+
+def normalize_default_surface(raw: Any) -> dict:
+    """全局缺省表面材质的形状闸门：只收 reflect / roughness / detail / ripple 四个数（范围见 DEFAULT_SURFACE_RANGES）。"""
+    if not isinstance(raw, dict):
+        raise ValueError("defaultSurface 要是对象 {reflect?, roughness?, detail?, ripple?}")
+    extra = sorted(set(raw) - set(DEFAULT_SURFACE_ORDER))
+    if extra:
+        raise ValueError(f"defaultSurface 不认得的键 {extra}（只有 reflect / roughness / detail / ripple）")
+    for k, (lo, hi) in DEFAULT_SURFACE_RANGES.items():
+        if k in raw and (not _is_num(raw[k]) or not lo <= float(raw[k]) <= hi):
+            raise ValueError(f"defaultSurface.{k} 要是 {lo:g}..{hi:g} 的数")
+    return _order(dict(raw), DEFAULT_SURFACE_ORDER)
+
+
+def normalize_surfaces(raw: Any, where: str) -> list[dict]:
+    if not isinstance(raw, list):
+        raise ValueError(f"{where}: surfaces 要是表面区数组")
+    rows = [normalize_surface(r, where) for r in raw]
+    ids = [r["id"] for r in rows]
+    dup = sorted({i for i in ids if ids.count(i) > 1})
+    if dup:
+        raise ValueError(f"{where}: 表面区 id 重复 {dup}")
+    return rows
+
+
 def _normalize_rows(raw: Any, where: str) -> list[dict]:
     if not isinstance(raw, list):
         raise ValueError(f"{where}: 要是实例数组")
@@ -312,17 +379,42 @@ def normalize_library(doc: Any) -> dict:
                 e["variants"] = nv
             else:
                 e.pop("variants")
+        if "surfaces" in e:
+            rows = normalize_surfaces(e["surfaces"], f"{sid} · 表面材质区")
+            if rows:
+                e["surfaces"] = rows
+            else:
+                e.pop("surfaces")
         e = _order(e, _SCENE_ORDER)
-        if "base" in e or "variants" in e or any(k not in _SCENE_ORDER for k in e):
+        if "base" in e or "variants" in e or "surfaces" in e or any(k not in _SCENE_ORDER for k in e):
             out_scenes[sid] = e
     out = dict(doc)
     out["_comment"] = str(doc.get("_comment") or _COMMENT)
+    if "defaultSurface" in out:
+        ds = normalize_default_surface(out["defaultSurface"])
+        if ds:
+            out["defaultSurface"] = ds
+        else:
+            out.pop("defaultSurface")
     out["scenes"] = out_scenes
     return _order(out, _TOP_ORDER)
 
 
+def set_default_surface(lib: dict, value: dict | None) -> dict:
+    """返回替换了全局缺省表面材质的**新**库（不改入参）。``None`` / 空对象 = 删掉（回运行时缺省）。"""
+    new = json.loads(json.dumps(lib, ensure_ascii=False)) if isinstance(lib, dict) else empty_library()
+    if value:
+        new["defaultSurface"] = normalize_default_surface(value)
+    else:
+        new.pop("defaultSurface", None)
+    return _order(new, _TOP_ORDER)
+
+
 def set_rows(lib: dict, scene_id: str, phase: str, rows: list[dict]) -> dict:
-    """返回替换了某场景某时段外观实例表的**新**库（不改入参）。空表 = 删掉那一份。"""
+    """返回替换了某场景某时段外观实例表的**新**库（不改入参）。空表 = 删掉那一份。
+
+    被改的场景条目按闸门同一个键序收（base 在前）：只有 variants 的场景加上 base，
+    不收的话 base 落在 variants 后面，写出去就不是 ``normalize_library`` 的不动点。"""
     new = json.loads(json.dumps(lib, ensure_ascii=False)) if isinstance(lib, dict) else empty_library()
     scenes = new.setdefault("scenes", {})
     ent = scenes.setdefault(scene_id, {})
@@ -341,4 +433,22 @@ def set_rows(lib: dict, scene_id: str, phase: str, rows: list[dict]) -> dict:
             ent.pop("variants", None)
     if not ent:
         scenes.pop(scene_id, None)
+    else:
+        scenes[scene_id] = _order(ent, _SCENE_ORDER)
+    return new
+
+
+def set_surfaces(lib: dict, scene_id: str, rows: list[dict]) -> dict:
+    """返回替换了某场景表面材质区的**新**库（不改入参）。空表 = 删掉。"""
+    new = json.loads(json.dumps(lib, ensure_ascii=False)) if isinstance(lib, dict) else empty_library()
+    scenes = new.setdefault("scenes", {})
+    ent = scenes.setdefault(scene_id, {})
+    if rows:
+        ent["surfaces"] = rows
+    else:
+        ent.pop("surfaces", None)
+    if not ent:
+        scenes.pop(scene_id, None)
+    else:
+        scenes[scene_id] = _order(ent, _SCENE_ORDER)
     return new

@@ -124,7 +124,7 @@ export function spawnsBehindShell(space: VfxSpace, x: number, y: number, z: numb
 }
 
 /** 表面分类的深度容差（wu）：可见壳与行走面相差不到它就算"看见的就是地面" */
-const SURFACE_TOLERANCE_WU = 12;
+export const SURFACE_TOLERANCE_WU = 12;
 /** 地面法线的有限差分步长（wu） */
 const GROUND_NORMAL_EPS = 4;
 

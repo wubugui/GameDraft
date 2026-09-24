@@ -1,0 +1,106 @@
+{
+  "id": "pml_dust",
+  "label": "跑马梁 · 稀疏浮尘（昼）",
+  "prewarmSeconds": [
+    3,
+    5
+  ],
+  "emitters": [
+    {
+      "id": "dust",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/dust.png",
+        "sizeWu": 2.5,
+        "sizeJitter": [
+          0.5,
+          1.4
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.2,
+            0.55
+          ],
+          [
+            0.7,
+            0.36
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.73,
+          0.72,
+          0.66
+        ],
+        "blend": "normal",
+        "lit": false,
+        "softEdgeWu": 3
+      },
+      "spawn": {
+        "max": 30,
+        "rate": 2.8,
+        "intervalJitter": 0.8,
+        "burst": 10,
+        "shape": {
+          "kind": "box",
+          "size": [
+            100,
+            35,
+            60
+          ]
+        },
+        "speed": [
+          0.5,
+          2
+        ],
+        "direction": [
+          -1,
+          -0.1,
+          -0.2
+        ],
+        "spread": 45
+      },
+      "motion": {
+        "gravity": 0.6,
+        "drag": 0.09,
+        "wind": [
+          -0.3,
+          0,
+          0
+        ],
+        "turbulence": {
+          "strength": 0.8,
+          "scale": 40,
+          "speed": 0.15
+        },
+        "maxSpeed": 8
+      },
+      "life": {
+        "seconds": [
+          7,
+          12
+        ]
+      }
+    }
+  ]
+}

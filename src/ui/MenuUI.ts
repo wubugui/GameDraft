@@ -5,13 +5,15 @@ import { UITheme, fadeIn } from './UITheme';
 import { createPanel, drawPanelBase, SKINS } from './PanelSkin';
 import { UIButton } from './components/UIButton';
 import { openConfirmDialog } from './components/UIConfirmDialog';
-import { UIWindow, WINDOW_SIZES } from './components/UIWindow';
+import { openTextPrompt } from './components/UITextPromptDialog';
+import { UIWindow, WINDOW_CHROME, WINDOW_SIZES } from './components/UIWindow';
 import { UIScrollView } from './components/UIScrollView';
 import { ART_TEXT_SHADOW, createRule, createTitleRow, drawSelectedRow } from './components/UIDecor';
 import { UIFocus, type FocusItem } from './components/UIFocus';
 import { clientToCanvas, markPointerConsumed } from './uiPointerCoords';
 import type { Renderer } from '../rendering/Renderer';
 import type { EventBus } from '../core/EventBus';
+import { SAVE_NAME_MAX_LENGTH } from '../data/types';
 import type {
   AudioChannel, ISaveDataProvider, IAudioSettingsProvider, ITextDisplaySettingsProvider,
   ISmellDisplaySettingsProvider, SaveSlotMeta,
@@ -106,8 +108,6 @@ let mainMenuBgTexture: Texture | null = null;
 let mainMenuBgFailed = false;
 let mainMenuBgPending: Promise<void> | null = null;
 
-/** 存档槽位数。真值在 SaveManager，这里只是渲染多少行——本文件不定义规则。 */
-const SLOT_COUNT = 3;
 /**
  * 一个槽位按钮的高度与行间距。
  *
@@ -117,8 +117,15 @@ const SLOT_COUNT = 3;
  */
 const SLOT_H = 76;
 const SLOT_GAP = UITheme.spacing.sm;
-/** 槽位右侧「JSON ↓ / JSON ↑」列宽 */
+/** 槽位右侧「改名 / JSON ↓ / JSON ↑」列宽 */
 const JSON_COL_W = 64;
+/** 右侧文字链三行时的行距（中心到中心）：76 高的槽位里放三行 micro 字刚好不挤 */
+const LINK_ROW_STEP = 22;
+/**
+ * 槽位行在视口外多远以内仍然画（上下各一段）。99 格全画的话每帧都要渲染几百个文字对象
+ * （遮罩只裁像素、不跳过渲染），首帧还要一次性生成几百张字形贴图——视口外的行一律不画。
+ */
+const SLOT_CULL_MARGIN = SLOT_H * 2;
 
 /** 底部「返回」按钮尺寸与它占用的行高 */
 const BACK_BTN_W = 140;
@@ -128,9 +135,13 @@ const FOOTER_H = BACK_BTN_H + UITheme.spacing.md;
 /**
  * UIWindow 的标题栏高 + 底部内边距，用于「按内容条数反推窗高」。
  * 真正排版一律回读 `win.bodyWidth/bodyHeight`，故此常量只影响窗体总高、不会让内容错位。
- * 口径与 ShopUI / QuestPanelUI 一致。
+ *
+ * ⚠ **必须从 `WINDOW_CHROME` 现取，不许写死**（2026-09-23 修）：这里原本写死 44，是标题栏
+ * 还是小字条那会儿的值，真值早就是 76 —— 少算 32px 的后果是窗体比内容矮一截，
+ * 底部「返回」按钮压在最后一行上（设置页加了「总音量」一行之后一眼看得见）。
+ * ShopUI / InventoryUI / RuleUseUI 都已经改成现取，这里是最后一处。
  */
-const WINDOW_CHROME_H = 44 + UITheme.spacing.xl;
+const WINDOW_CHROME_H = WINDOW_CHROME.titleBarHeight + WINDOW_CHROME.padding;
 
 /**
  * 主菜单 / 暂停页的「竖长木牌」几何（比例取自设计稿 02 / 11）。
@@ -244,8 +255,10 @@ export class MenuUI {
   private titleBackdropSize: { w: number; h: number } | null = null;
   /** 窗体页（存档 / 读档 / 设置）的窗体外壳 */
   private win: UIWindow | null = null;
-  /** 存档槽位列表的滚动区（小画布下槽位放不下时才真滚） */
+  /** 存档槽位列表的滚动区（99 格，常态就要滚） */
   private list: UIScrollView | null = null;
+  /** 存/读页每一格的显示对象与纵向范围：滚动时按视口开关 visible（见 {@link cullSlotRows}） */
+  private slotRows: { top: number; nodes: Container[] }[] = [];
   private _isOpen = false;
   private mode: MenuMode = 'main';
   private previousMode: MenuMode = 'main';
@@ -427,6 +440,10 @@ export class MenuUI {
   /** @param animate 保留形参与其它页对齐；主菜单本就无进场动画（冷启即全屏底色），故未使用。 */
   private buildMainMenu(_animate = false): void {
     this.container = new Container();
+    // 主菜单/暂停页是**整页面板**，只是没走 UIWindow：层序照样归面板带
+    // （见 rendering/uiLayerOrder；否则任务引导浮标那类写了 z 的展示层会画在页面上）。
+    // 标题底图挂在 container 之外、压在 uiLayer 最底，不受影响。
+    this.container.zIndex = UITheme.z.panel;
     const sw = this.renderer.screenWidth;
     const sh = this.renderer.screenHeight;
 
@@ -574,6 +591,8 @@ export class MenuUI {
     // 暂停页是**游戏里**的页：标题底图必须撤掉，否则它会把还在跑的世界整个盖住
     this.dropTitleBackdrop();
     this.container = new Container();
+    // 与主菜单同理：整页面板归面板带（见 buildMainMenu 的注释）
+    this.container.zIndex = UITheme.z.panel;
     const sw = this.renderer.screenWidth;
     const sh = this.renderer.screenHeight;
 
@@ -646,11 +665,12 @@ export class MenuUI {
    * 没有 hover、没有按下反馈、读档时的空槽只是"点了没反应"（没有灰态）。
    */
   private buildSaveLoadPanel(action: 'save' | 'load', animate: boolean): void {
+    const slotCount = this.saveData.slotCount();
     const metas: (SaveSlotMeta | null)[] = [];
-    for (let i = 0; i < SLOT_COUNT; i++) metas.push(this.saveData.getSlotMeta(i));
+    for (let i = 0; i < slotCount; i++) metas.push(this.saveData.getSlotMeta(i));
 
     const win = new UIWindow(this.renderer, {
-      size: { width: this.saveLoadWidth(metas), height: this.saveLoadHeight() },
+      size: { width: this.saveLoadWidth(metas), height: this.saveLoadHeight(slotCount) },
       title: action === 'save' ? this.strings.get('menu', 'save') : this.strings.get('menu', 'load'),
       // 迁移前这两页自己铺的是 overlayDark，比 UIWindow 缺省的 overlay 浓一档，照旧
       dimAlpha: UITheme.alpha.overlayDark,
@@ -658,19 +678,19 @@ export class MenuUI {
     });
     this.win = win;
 
-    // 槽位数固定为 3、窗高按内容反推，正常分辨率下滚不动；小画布（F2 调试坞挤压
-    // #game-mount）时窗体被夹到屏幕高，这里才真的滚起来——迁移前是直接溢出屏幕。
+    // 99 格远超一屏：窗高被夹到屏幕高，列表常态就在滚（滚轮 / 拖动 / 滚动条 / 方向键）。
     const list = new UIScrollView(this.renderer, {
       width: win.bodyWidth,
       height: Math.max(SLOT_H, win.bodyHeight - FOOTER_H),
       // 不能给底部留白：`listH` 已经扣掉了尾隙（`n*(SLOT_H+GAP) - GAP`），
-      // 再加一份就等于把 SLOT_GAP 算了两次 → 内容高比视口高出约 8px，
-      // 三个槽位明明放得下却常驻一根几乎占满轨道的滚动条、列表还能抖 8px。
+      // 再加一份就等于把 SLOT_GAP 算了两次 → 内容高比视口高出约 8px。
       bottomPadding: 0,
+      onScroll: (offset) => this.cullSlotRows(offset),
     });
     list.container.position.set(0, 0);
     win.body.addChild(list.container);
     this.list = list;
+    this.slotRows = [];
 
     const rowW = win.bodyWidth - UITheme.spacing.sm;   // 右侧留出滚动条的道
     const jsonX = rowW - JSON_COL_W;
@@ -679,10 +699,12 @@ export class MenuUI {
     metas.forEach((meta, i) => {
       const ry = i * (SLOT_H + SLOT_GAP);
       const disabled = action === 'load' && meta === null;
+      const nodes: Container[] = [];
       const slot = this.makeMenuRow({
-        // 两级层级：主行场景名（暖白，选中提到琥珀）+ 右侧「第 N 天」，副行时间·时长。
+        // 两级层级：主行 = 玩家起的名字（没起就是场景名，暖白，选中提到琥珀）+ 右侧「第 N 天」，
+        // 副行 = 时间·时长（起了名字的，副行前面再带上场景名，名字盖掉的信息不能丢）。
         // 空槽仍是单行「槽位 N: (空)」灰态（不给 sub 就走单行版式）。
-        label: meta ? meta.sceneName : this.strings.get('menu', 'slotEmpty', { slot: i + 1 }),
+        label: meta ? (meta.name ?? meta.sceneName) : this.strings.get('menu', 'slotEmpty', { slot: i + 1 }),
         trailing: meta ? this.strings.get('menu', 'slotDay', { day: meta.dayNumber }) : undefined,
         sub: meta ? this.slotSubLabel(meta) : undefined,
         width: slotW,
@@ -699,30 +721,36 @@ export class MenuUI {
       });
       slot.container.position.set(0, ry);
       list.content.addChild(slot.container);
+      nodes.push(slot.container);
 
-      // 槽位行自成一组（JSON 链另一组）：上下键在槽位间走，左右键才跨到本行的文字链，
+      // 槽位行自成一组（文字链另一组）：上下键在槽位间走，左右键才跨到本行的文字链，
       // 不会出现"下键从槽位 1 跳进槽位 1 的导出链"这种乱序
       this.focusItems.push({
         id: `slot:${i}`,
         x: 0, y: ry, w: slotW, h: SLOT_H,
         group: 'slots',
         disabled,
-        // 焦点高亮 = 行原有的选中重绘通道；小画布上列表真的会滚，焦点行要滚进视口
+        // 焦点高亮 = 行原有的选中重绘通道；焦点行要滚进视口
         onFocus: (on, via) => { slot.setActive(on && via === 'key'); if (on && via === 'key') this.revealSlot(ry); },
         onActivate: () => this.commitSlot(action, i),
       });
 
-      // JSON 导入/导出仍是文字链（不是主操作，做成按钮会与槽位抢视觉），但两行必须错开摆
+      // 改名 / 导入导出都是文字链（不是主操作，做成按钮会与槽位抢视觉），几行必须错开摆
       const mid = ry + SLOT_H / 2;
       if (meta) {
-        this.addJsonLink(list.content, 'JSON ↓', jsonX, mid - UITheme.spacing.md, () => this.exportSaveFile(i), `json:down:${i}`);
-        this.addJsonLink(list.content, 'JSON ↑', jsonX, mid + UITheme.spacing.md, () => this.importSaveFile(i), `json:up:${i}`);
+        nodes.push(this.addJsonLink(list.content, this.strings.get('menu', 'rename'), jsonX, mid - LINK_ROW_STEP, () => this.renameSaveSlot(i), `rename:${i}`, ry));
+        nodes.push(this.addJsonLink(list.content, 'JSON ↓', jsonX, mid, () => this.exportSaveFile(i), `json:down:${i}`, ry));
+        nodes.push(this.addJsonLink(list.content, 'JSON ↑', jsonX, mid + LINK_ROW_STEP, () => this.importSaveFile(i), `json:up:${i}`, ry));
       } else {
-        // 空槽没得导出，导入链居中——迁移前空槽也照画两行位，上面那行是空的
-        this.addJsonLink(list.content, 'JSON ↑', jsonX, mid, () => this.importSaveFile(i), `json:up:${i}`);
+        // 空槽没得改名、没得导出，导入链居中
+        nodes.push(this.addJsonLink(list.content, 'JSON ↑', jsonX, mid, () => this.importSaveFile(i), `json:up:${i}`, ry));
       }
+      this.slotRows.push({ top: ry, nodes });
     });
-    list.refresh();
+    // 内容总高按格数给定，不去量：视口外的行关了 visible 之后 getLocalBounds 量不到它们，
+    // 自动量高会把可滚距离缩成"只剩画着的那几格"。
+    list.setContentHeight(slotCount * (SLOT_H + SLOT_GAP) - SLOT_GAP);
+    this.cullSlotRows(list.scrollOffset);
 
     // 默认焦点 = 第一个可用槽位：存档页全可用，读档页跳过空槽（disabled 的行不吃焦点）
     const firstUsable = metas.findIndex(m => action === 'save' || m !== null);
@@ -732,6 +760,18 @@ export class MenuUI {
 
     if (animate) win.open();
     else win.attach();
+  }
+
+  /** 视口外（含上下各一段余量）的槽位行不画；视口一动就重判。只开关 visible，行本身不重建。 */
+  private cullSlotRows(offset: number): void {
+    const list = this.list;
+    if (!list) return;
+    const lo = offset - SLOT_CULL_MARGIN;
+    const hi = offset + list.viewportHeight + SLOT_CULL_MARGIN;
+    for (const row of this.slotRows) {
+      const on = row.top + SLOT_H >= lo && row.top <= hi;
+      for (const node of row.nodes) if (!node.destroyed) node.visible = on;
+    }
   }
 
   /** 焦点落到视口外的槽位行时滚进来（正常分辨率下滚不动，小画布被挤压时才起作用）。 */
@@ -745,11 +785,17 @@ export class MenuUI {
     }
   }
 
-  /** 槽位副行：保存日期时间 + 游玩时长（模板在 strings，格式化留代码） */
+  /**
+   * 槽位副行：保存日期时间 + 游玩时长（模板在 strings，格式化留代码）。
+   * 起了名字的档，主行显示的是名字，场景名挪到副行最前面——两样信息都得看得见。
+   */
   private slotSubLabel(meta: SaveSlotMeta): string {
     const d = new Date(meta.timestamp);
     const date = `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    return this.strings.get('menu', 'slotSub', { date, minutes: Math.floor(meta.playTimeMs / 60000) });
+    const minutes = Math.floor(meta.playTimeMs / 60000);
+    return meta.name
+      ? this.strings.get('menu', 'slotSubNamed', { scene: meta.sceneName, date, minutes })
+      : this.strings.get('menu', 'slotSub', { date, minutes });
   }
 
   /** 量一行 ui 字族文案的宽（窗宽反推用；样式须与槽位行里实际那份一致） */
@@ -766,15 +812,13 @@ export class MenuUI {
    * 空槽量它那句「(空)」。槽位行的文字不折行，写死 400 宽在场景名一长时必挤出按钮。
    */
   private saveLoadWidth(metas: (SaveSlotMeta | null)[]): number {
-    let textW = 0;
-    metas.forEach((meta, i) => {
-      if (!meta) {
-        textW = Math.max(textW, this.measureUiText(
-          this.strings.get('menu', 'slotEmpty', { slot: i + 1 }), UITheme.fontSize.bodyLarge,
-        ));
-        return;
-      }
-      const mainW = this.measureUiText(meta.sceneName, UITheme.fontSize.bodyLarge)
+    // 空槽那句只差一个编号：量一次最大编号那句就够了，不必 99 格逐格量
+    let textW = metas.some((m) => m === null)
+      ? this.measureUiText(this.strings.get('menu', 'slotEmpty', { slot: metas.length }), UITheme.fontSize.bodyLarge)
+      : 0;
+    metas.forEach((meta) => {
+      if (!meta) return;
+      const mainW = this.measureUiText(meta.name ?? meta.sceneName, UITheme.fontSize.bodyLarge)
         + UITheme.spacing.lg
         + this.measureUiText(this.strings.get('menu', 'slotDay', { day: meta.dayNumber }), UITheme.fontSize.small);
       const subW = this.measureUiText(this.slotSubLabel(meta), UITheme.fontSize.small);
@@ -789,8 +833,8 @@ export class MenuUI {
     return Math.round(Math.min(Math.max(WINDOW_SIZES.sm.width, desired), maxW));
   }
 
-  private saveLoadHeight(): number {
-    const listH = SLOT_COUNT * (SLOT_H + SLOT_GAP) - SLOT_GAP;
+  private saveLoadHeight(slotCount: number): number {
+    const listH = slotCount * (SLOT_H + SLOT_GAP) - SLOT_GAP;
     const maxH = this.renderer.screenHeight - UITheme.spacing.xl * 2;
     return Math.round(Math.min(listH + FOOTER_H + WINDOW_CHROME_H, maxH));
   }
@@ -849,7 +893,13 @@ export class MenuUI {
     this.devToggleRepaint?.();
   }
 
-  private addJsonLink(parent: Container, text: string, x: number, centerY: number, onPress: () => void, focusId: string): void {
+  /**
+   * @param rowTop 这条链所在那一格的顶（键盘走到视口外那一格的链上时，按它把整格滚进来）
+   * @returns 链本身（槽位行按视口开关显隐时连它一起管）
+   */
+  private addJsonLink(
+    parent: Container, text: string, x: number, centerY: number, onPress: () => void, focusId: string, rowTop: number,
+  ): Container {
     const link = createStyledText({
       text,
       // 迁移期沿用的旧 link 档是 0x8888aa 的冷蓝，在整屏暖木配色里是唯一一处蓝调；
@@ -877,9 +927,14 @@ export class MenuUI {
       x, y: link.y, w: link.width, h: link.height,
       group: 'json',
       // 焦点高亮 = 链自己的 hover 画法（goldDim 提到 title）
-      onFocus: (on) => { if (!link.destroyed) link.style.fill = on ? UITheme.colors.title : UITheme.colors.goldDim; },
+      onFocus: (on, via) => {
+        if (link.destroyed) return;
+        link.style.fill = on ? UITheme.colors.title : UITheme.colors.goldDim;
+        if (on && via === 'key') this.revealSlot(rowTop);
+      },
       onActivate: onPress,
     });
+    return link;
   }
 
   /** 子页底部的「[返回]」。与 ✕ 同一个出口（goBack），文案带方括号是本项目"可点"的视觉约定。 */
@@ -908,31 +963,19 @@ export class MenuUI {
     });
   }
 
-  /** 点槽位：存档就地刷新槽位（走 build() → attach，不重放开场动画），读档成功才关菜单。
-   *  覆盖已有存档 / 游戏中读档都是不可逆操作（审查 P1 零确认路径），先过确认框。 */
+  /**
+   * 点槽位：存档就地刷新槽位（走 build() → attach，不重放开场动画），读档成功才关菜单。
+   * 覆盖已有存档 / 游戏中读档都是不可逆操作（审查 P1 零确认路径），先过确认框。
+   *
+   * 存档多一步「起名字」（2026-09-23）：确认覆盖之后、真写盘之前弹输入框，预填这格原来的名字；
+   * 在输入框里取消 = 这次不存（什么都没写）。两个模态同屏只许一个，所以是串着开的。
+   */
   private commitSlot(action: 'save' | 'load', slot: number): void {
     if (action === 'save') {
-      // 写盘是异步的：等 SaveManager 真写成了再提示、再刷新槽位卡片。
-      // 乐观提示会让"没存上"看起来像存上了——存档这条路上最不能撒的谎。
-      const doSave = (): void => {
-        void this.saveData.save(slot).then((ok) => {
-          // 后端是内存降级时，「保存成功」是真的（这一局内读得回来），但**关掉就没**。
-          // 开局那条横幅可能早被关掉了，而点保存正是玩家最需要知道这件事的时刻——
-          // 让他以为存住了才是最坏的结果。
-          const ephemeral = ok && !this.saveData.isPersistent();
-          const persisted = ok && !ephemeral;
-          if (persisted) this.eventBus.emit('save:completed', { slot });
-          this.eventBus.emit('notification:show', {
-            text: ok
-              ? (ephemeral
-                ? `${this.strings.get('menu', 'saveSlot', { slot: slot + 1 })}（仅本次会话有效：找不到存档后端，关掉页面即失）`
-                : this.strings.get('menu', 'saveSlot', { slot: slot + 1 }))
-              : this.strings.get('menu', 'saveFailed'),
-            type: ok ? (ephemeral ? 'error' : 'info') : 'error',
-            // 成功音由 save:completed 统一播放，提示本身不再叠通用通知音。
-            customSfx: persisted,
-          });
-          this.build();
+      const nameAndSave = (): void => {
+        void this.promptSaveName(slot).then((name) => {
+          if (name === null) return;
+          this.performSave(slot, name);
         });
       };
       if (this.saveData.hasSave(slot)) {
@@ -941,9 +984,9 @@ export class MenuUI {
           message: this.strings.get('confirm', 'overwriteBody', { slot: String(slot + 1) }),
           confirmLabel: this.strings.get('confirm', 'ok'),
           cancelLabel: this.strings.get('confirm', 'cancel'),
-        }).then((ok) => { if (ok) doSave(); });
+        }).then((ok) => { if (ok) nameAndSave(); });
       } else {
-        doSave();
+        nameAndSave();
       }
       return;
     }
@@ -975,6 +1018,71 @@ export class MenuUI {
     } else {
       doLoad();
     }
+  }
+
+  /**
+   * 弹「给存档起名字」输入框。确定 → 输入框里的原文（空串 = 不起名字，显示场景名）；取消 → null。
+   * 预填这格原来的名字：覆盖旧档时多半还是同一段进度，名字接着用最顺手。
+   */
+  private promptSaveName(slot: number): Promise<string | null> {
+    return openTextPrompt(this.renderer, {
+      title: this.strings.get('menu', 'saveNameTitle'),
+      message: this.strings.get('menu', 'saveNameHint'),
+      initial: this.saveData.getSlotMeta(slot)?.name ?? '',
+      placeholder: this.strings.get('menu', 'saveNamePlaceholder'),
+      maxLength: SAVE_NAME_MAX_LENGTH,
+      confirmLabel: this.strings.get('confirm', 'ok'),
+      cancelLabel: this.strings.get('confirm', 'cancel'),
+    });
+  }
+
+  /** 真写盘。写盘是异步的：等 SaveManager 真写成了再提示、再刷新槽位卡片。 */
+  private performSave(slot: number, name: string): void {
+    // 乐观提示会让"没存上"看起来像存上了——存档这条路上最不能撒的谎。
+    void this.saveData.save(slot, { name }).then((ok) => {
+      // 后端是内存降级时，「保存成功」是真的（这一局内读得回来），但**关掉就没**。
+      // 开局那条横幅可能早被关掉了，而点保存正是玩家最需要知道这件事的时刻——
+      // 让他以为存住了才是最坏的结果。
+      const ephemeral = ok && !this.saveData.isPersistent();
+      const persisted = ok && !ephemeral;
+      if (persisted) this.eventBus.emit('save:completed', { slot });
+      this.eventBus.emit('notification:show', {
+        text: ok
+          ? (ephemeral
+            ? `${this.strings.get('menu', 'saveSlot', { slot: slot + 1 })}（仅本次会话有效：找不到存档后端，关掉页面即失）`
+            : this.strings.get('menu', 'saveSlot', { slot: slot + 1 }))
+          : this.strings.get('menu', 'saveFailed'),
+        type: ok ? (ephemeral ? 'error' : 'info') : 'error',
+        // 成功音由 save:completed 统一播放，提示本身不再叠通用通知音。
+        customSfx: persisted,
+      });
+      // 写盘期间菜单可能已被关掉：关着就不重建（重建会把一个"已关闭"的菜单画回屏幕上）
+      if (this._isOpen) this.build();
+    });
+  }
+
+  /** 槽位右侧「改名」：只改名字，存档内容与时间都不动。存档页、读档页都能改。 */
+  private renameSaveSlot(slot: number): void {
+    const meta = this.saveData.getSlotMeta(slot);
+    if (!meta) return;
+    void openTextPrompt(this.renderer, {
+      title: this.strings.get('menu', 'renameTitle'),
+      message: this.strings.get('menu', 'saveNameHint'),
+      initial: meta.name ?? '',
+      placeholder: this.strings.get('menu', 'saveNamePlaceholder'),
+      maxLength: SAVE_NAME_MAX_LENGTH,
+      confirmLabel: this.strings.get('confirm', 'ok'),
+      cancelLabel: this.strings.get('confirm', 'cancel'),
+    }).then(async (name) => {
+      if (name === null) return;
+      const ok = await this.saveData.renameSlot(slot, name);
+      this.eventBus.emit('notification:show', {
+        text: this.strings.get('menu', ok ? 'renamed' : 'renameFailed'),
+        type: ok ? 'info' : 'error',
+      });
+      // 菜单可能已经被关掉（改名写盘期间按了 Esc）：关着就不重建
+      if (ok && this._isOpen) this.build();
+    });
   }
 
   private exportSaveFile(slot: number): void {
@@ -1020,8 +1128,10 @@ export class MenuUI {
       // 对白单独一条：玩家把音效压低时台词必须还听得见
       { label: this.strings.get('menu', 'voice'), channel: 'voice' },
     ];
-    /** 行数 = 四条音量 + 「逐字显示」开关 + 「文字速度」滑条 + 「气味指向」开关；窗高按它反推 */
-    const rowCount = channels.length + 3;
+    /** 音量区 = 总音量一行 + 四条通道（总音量排第一：它管住下面四条的全部） */
+    const volumeRows = 1 + channels.length;
+    /** 行数 = 音量区 + 「逐字显示」开关 + 「文字速度」滑条 + 「气味指向」开关；窗高按它反推 */
+    const rowCount = volumeRows + 3;
 
     const win = new UIWindow(this.renderer, {
       size: {
@@ -1085,7 +1195,17 @@ export class MenuUI {
       win.body.addChild(labelT);
     };
 
-    channels.forEach(({ label, channel }, idx) => {
+    // ── 总音量：乘在整个游戏的出口上，管住下面四条通道与一切声音
+    addLabel(this.strings.get('menu', 'masterVolume'), 0);
+    this.drawSlider(win.body, controlX, rowCenterY(0), sliderW, this.audioSettings.getMasterVolume(), (v) => {
+      this.audioSettings.setMasterVolume(v);
+    }, {
+      focusId: 'slider:master',
+      onSettle: () => this.audioSettings.previewMasterVolume(),
+    });
+
+    channels.forEach(({ label, channel }, i) => {
+      const idx = 1 + i;
       addSeparator(idx);
       addLabel(label, idx);
       this.drawSlider(win.body, controlX, rowCenterY(idx), sliderW, this.audioSettings.getVolume(channel), (v) => {
@@ -1099,7 +1219,7 @@ export class MenuUI {
 
     // ── 逐字显示（打字机）：一行开关 + 一行速度。
     // 关掉时速度那行**整行压暗且点不动**——留一个"拖了没反应"的活滑条比少一行更糟。
-    const typewriterIdx = channels.length;
+    const typewriterIdx = volumeRows;
     const speedIdx = typewriterIdx + 1;
     const typewriterOn = this.textSettings.isTypewriterEnabled();
 
@@ -1192,8 +1312,8 @@ export class MenuUI {
       onActivate: toggleSmellDir,
     });
 
-    // 默认焦点落第一个控件（第一条音量滑条）
-    this.focusDefaultId = `slider:${channels[0].channel}`;
+    // 默认焦点落第一个控件（总音量滑条）
+    this.focusDefaultId = 'slider:master';
 
     this.addBackButton(win);
 
@@ -1821,6 +1941,8 @@ export class MenuUI {
     // 顺序要紧：滚动区先摘（它自己挂着 window 级 wheel/pointermove），再拆窗体
     this.list?.destroy();
     this.list = null;
+    // 槽位行随滚动区一起没了：留着引用就会在下一次 onScroll 里去摸已销毁的节点
+    this.slotRows = [];
     this.win?.destroy();
     this.win = null;
     if (this.container) {

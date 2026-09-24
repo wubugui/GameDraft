@@ -15,7 +15,7 @@ triggers:
   paths: ["public/assets/data/narrative_graphs.json", "public/assets/data/quests.json", "public/assets/data/scenarios.json"]
   topics: [拍子, beat, 叙事编排, 信号驱动, flow_xungou_main, scenario子图]
   tasks: [加主线拍, 加支线, 接叙事流程, 配任务]
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 **实测环境与日期**:2026-07-02 由 3 个 agent 交叉核对 + 运行时亲验(demo 编排盘点);2026-07-11 复核关键锚点(flow_xungou_main / xungou_demo_main / 集成测试)仍在。
@@ -40,7 +40,11 @@ last_governed: 2026-08-05
 
 ## 各层纪律(违反=脊椎坏死)
 
-- 对话/动作层只**"演 + 打信号"**,绝不碰存档/换场景/setFlag——推进全靠 `emitNarrativeSignal`。
+- 对话/动作层只**"演 + 打信号"**,不写进度 / 存档 / flag——推进全靠 `emitNarrativeSignal`。
+  **换场景(玩家移动)是例外、允许**:"走到路口出第一视角叠图 + 选项,选了才过去"这种**可反复进出**的
+  出口只能写在对话图 choice 分支里(叙事状态 onEnter 换场景只触发一次,不适合路口);主线多张图一直这么写。
+  注意:对话内换场景后,新场景 onEnter 里起的对话图**排队等当前对话结束才开**(图对话的延迟接续,
+  见 [dialogue-end-payload](../../runtime/mechanisms/dialogue-end-payload.md)),不会叠在当前对话上。
 - 子图 `initialState` 的 `onEnterActions` 不执行;禁在数据里用 `setNarrativeState` 硬跳。
 - 多路汇聚用 `reactiveAll/reactiveAny` 读别的 wrapper 图状态。
 - 主图是**唯一进度真相源**;quests.json 是纯镜像不驱动。
@@ -50,6 +54,7 @@ last_governed: 2026-08-05
 - **scenarios.json ≠ narrative 的 scenario_ 子图**:撞名但是两套东西、id 无交集。
   scenarios.json(ScenarioStateManager)只剩少量遗留条目,寻狗主线**不用它**——每拍的
   `scenario_背尸/scenario_枯井…` 全是 narrative 子图,别把活儿写进 Scenarios 面板。
-- narrative **无内建 exposes**:要把状态暴露成通用 flag,只能在 state 的 `onEnterActions`
-  里 setFlag(scenario 清单才有 exposes)。
+- narrative **无内建 exposes**,但**也不需要**:别处要读某图的状态,直接用 `narrative` 条件叶查,
+  不要在 `onEnterActions` 里 setFlag 把状态"暴露"出去——自写 flag 已被编排铁律禁止
+  (见 [content-norms](../norms.md) 第 10 条,hook 强制)。
 - composition id 是 `xungou_demo_main`,mainGraph.id 才是 `flow_xungou_main`,引用别拿错。

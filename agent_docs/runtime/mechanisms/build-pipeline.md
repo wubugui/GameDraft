@@ -47,6 +47,10 @@ last_governed: 2026-09-06
 `public/` `src/` 等源码树一律拒绝)+ **覆盖策略**(有上次的 `.gamedraft-build.json`
 标记才直接覆盖;陌生的非空目录报错退出,要 `--force`)。
 
+**制作人实际跑的包不在仓库里**:打包工作台的 `builds_root`(`tools/build_workbench`)下按时间戳一次一目录,
+他跑的永远是最新那份;仓库内 `release/` 与 `src-tauri/target/` 只是中转(后者还会混两代残留),
+NSIS 安装包没人装过。排查"包里坏了"先确认是哪一份,新鲜度看该目录的 `.gamedraft-build.json`。
+
 `release.mjs` 走 `tauri build --no-bundle`:只要绿色版的话,makensis 压 566 MB
 要多花四五分钟,对定期自动构建是纯浪费。
 

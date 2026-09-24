@@ -1,0 +1,296 @@
+{
+  "id": "storm_rain",
+  "label": "暴雨将至：斜雨、近景雨丝与真实落点水星",
+  "emitters": [
+    {
+      "id": "rain_far",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        760,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/drop.png",
+        "sizeWu": 2.2,
+        "sizeJitter": [
+          0.7,
+          1.25
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.08,
+            0.5
+          ],
+          [
+            0.88,
+            0.5
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.65,
+          0.76,
+          0.86
+        ],
+        "lit": true,
+        "emissive": 0.4,
+        "lightGain": 1.5,
+        "stretchByVelocity": 0.052,
+        "softEdgeWu": 4
+      },
+      "spawn": {
+        "max": 240,
+        "rate": 130,
+        "intervalJitter": 0.65,
+        "burst": 0,
+        "shape": {
+          "kind": "box",
+          "size": [
+            2700,
+            140,
+            1800
+          ]
+        },
+        "speed": [
+          820,
+          1120
+        ],
+        "direction": [
+          0.78,
+          -1,
+          0.08
+        ],
+        "spread": 5
+      },
+      "motion": {
+        "gravity": 865,
+        "drag": 0.25,
+        "maxSpeed": 1500,
+        "followAnchor": "none"
+      },
+      "life": {
+        "seconds": [
+          0.85,
+          1.4
+        ]
+      },
+      "collision": {
+        "ground": "kill",
+        "shell": "kill",
+        "radiusWu": 1,
+        "onHit": {
+          "emitter": "rain_splash",
+          "count": 1
+        }
+      }
+    },
+    {
+      "id": "rain_near",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        560,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/drop.png",
+        "sizeWu": 3.8,
+        "sizeJitter": [
+          0.7,
+          1.25
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.08,
+            0.68
+          ],
+          [
+            0.88,
+            0.68
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.65,
+          0.76,
+          0.86
+        ],
+        "lit": true,
+        "emissive": 0.4,
+        "lightGain": 1.5,
+        "stretchByVelocity": 0.052,
+        "softEdgeWu": 4
+      },
+      "spawn": {
+        "max": 240,
+        "rate": 60,
+        "intervalJitter": 0.65,
+        "burst": 0,
+        "shape": {
+          "kind": "box",
+          "size": [
+            2700,
+            140,
+            1800
+          ]
+        },
+        "speed": [
+          820,
+          1120
+        ],
+        "direction": [
+          0.78,
+          -1,
+          0.08
+        ],
+        "spread": 5
+      },
+      "motion": {
+        "gravity": 865,
+        "drag": 0.25,
+        "maxSpeed": 1500,
+        "followAnchor": "none"
+      },
+      "life": {
+        "seconds": [
+          0.85,
+          1.4
+        ]
+      },
+      "collision": {
+        "ground": "kill",
+        "shell": "kill",
+        "radiusWu": 1,
+        "onHit": {
+          "emitter": "rain_splash",
+          "count": 1
+        }
+      }
+    },
+    {
+      "id": "rain_splash",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "subOnly": true,
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/splash.png",
+        "sizeWu": 7,
+        "sizeJitter": [
+          0.65,
+          1.4
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.6
+          ],
+          [
+            0.4,
+            1.25
+          ],
+          [
+            1,
+            1.5
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0.45
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.66,
+          0.76,
+          0.83
+        ],
+        "lit": true,
+        "emissive": 0.35
+      },
+      "spawn": {
+        "max": 120,
+        "speed": [
+          25,
+          70
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 65
+      },
+      "motion": {
+        "gravity": 650,
+        "drag": 2
+      },
+      "life": {
+        "seconds": [
+          0.15,
+          0.28
+        ]
+      },
+      "collision": {
+        "ground": "kill",
+        "radiusWu": 1
+      }
+    }
+  ]
+}

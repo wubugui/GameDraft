@@ -400,9 +400,9 @@ _CUSTOM_FORM_CLEAR_CASES = [
     (_act("persistZoneEnabled", sceneId="zz_scene", zoneId="zz_zone", enabled=True),
      lambda o: o.w("enabled").setChecked(False),
      (), {"enabled": False}),
-    (_act("showOverlayImage", id="zz_ov", image="/a.png", xPercent=10, yPercent=20, widthPercent=30),
-     lambda o: o.w("image").set_path(""),
-     (), {"image": ""}),
+    (_act("showOverlayImage", id="zz_ov", image="/a.png", xPercent=10, yPercent=20, widthPercent=30, fill=True),
+     _steps(lambda o: o.w("image").set_path(""), lambda o: o.w("fill").setChecked(False)),
+     ("fill",), {"image": ""}),
     (_act("blendOverlayImage", id="zz_ov", fromImage="/a.png", toImage="/b.png", durationMs=600, delayMs=0,
           xPercent=10, yPercent=20, widthPercent=30),
      lambda o: o.w("toImage").set_path(""),
@@ -522,3 +522,29 @@ def test_set_entity_field_unknown_field_keeps_its_value(model) -> None:
     act = _act("setEntityField", sceneId="zz_scene", entityKind="npc", entityId="zz_npc",
                fieldName="zz_future_field", value={"a": [1, None]})
     assert _dumps(_roundtrip(model, act)) == _dumps(act)
+
+
+def test_choose_action_layout_roundtrips_and_default_writes_no_key(model) -> None:
+    """chooseAction 的版式下拉（与对白同一张表）：第一人称档原样存回；选回屏底缺省档 = 不写键。"""
+    act = {"type": "chooseAction", "params": {
+        "prompt": "", "allowCancel": False, "options": [], "layout": "firstPerson"}}
+    with _Open(model, act) as o:
+        assert o.save().get("layout") == "firstPerson"
+        cb = o.w("layout")
+        cb.setCurrentIndex(cb.findData("bottom"))
+        assert "layout" not in o.save()
+
+
+def test_show_overlay_image_fill_writes_true_and_greys_percent_fields(model) -> None:
+    """叠图「铺满窗口」：勾上写 `fill: true`、百分比三格置灰但值照存；不勾不写键。"""
+    act = {"type": "showOverlayImage", "params": {
+        "id": "zz_ov", "image": "/a.png", "xPercent": 10, "yPercent": 20, "widthPercent": 30}}
+    with _Open(model, act) as o:
+        assert "fill" not in o.save(), "没勾 = 不写键（与运行时缺省同义）"
+        pct = [o.w(k) for k in ("xPercent", "yPercent", "widthPercent")]
+        assert all(w.isEnabled() for w in pct)
+        o.w("fill").setChecked(True)
+        assert not any(w.isEnabled() for w in pct), "铺满时百分比不起作用，要置灰"
+        out = o.save()
+    assert out["fill"] is True
+    assert (out["xPercent"], out["yPercent"], out["widthPercent"]) == (10, 20, 30)

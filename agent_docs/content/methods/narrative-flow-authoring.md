@@ -9,8 +9,8 @@ triggers:
   tasks: [编叙事流程, 拆剧情, 拆叙事, 加主线, 加支线, 加遭遇, 加见闻, 重构叙事, 做内容, 策划模式]
   topics: [事件即叙事, 叙事编排, 信号脊椎, 位面, 跨flow查询, 三旋钮, production mode, 策划模式]
   paths: ["public/assets/data/narrative_graphs.json", "public/assets/data/quests.json", "public/assets/data/encounters.json", "public/assets/scenes/*.json"]
-last_governed: 2026-08-05
-last_used: 2026-07-16
+last_governed: 2026-09-23
+last_used: 2026-09-21
 ---
 
 ## 适用时机

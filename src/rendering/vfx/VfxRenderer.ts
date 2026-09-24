@@ -55,7 +55,11 @@ import { packBeamUniforms, type VfxBeamPackEnv } from './vfxBeamGlsl';
 import { VfxBeamView } from './VfxBeamView';
 import { VfxPlateBatchMesh, createPlateStrip, type VfxPlateStrip } from './VfxPlateBatchMesh';
 import { getVfxBeamProgram } from './vfxBeamShaders';
-import { getVfxLitProgram, getVfxPlateLitProgram, getVfxUnlitProgram } from './vfxShaders';
+import { getVfxBoltProgram, getVfxLitProgram, getVfxPlateLitProgram, getVfxUnlitProgram } from './vfxShaders';
+import { VfxBoltBatchMesh } from './VfxBoltBatchMesh';
+import { boltNeedHeight, emitBoltSegments, BOLT_QUAD_SIGMAS, type BoltLook, type BoltView } from './vfxBoltGlsl';
+import { boltInstanceSeed, createBolt, extendBolt, type BoltGeometry } from '../../systems/vfx/vfxBolt';
+import type { VfxBoltDef } from '../../data/types';
 
 export const MAX_BUCKETS = 8;
 
@@ -65,7 +69,7 @@ export const MAX_BUCKETS = 8;
  * 新增一种粒子程序就加进这里，漏了它就回到"第一次出现卡一下"。
  */
 export function vfxGlPrograms(): GlProgram[] {
-  return [getVfxUnlitProgram(), getVfxLitProgram(), getVfxPlateLitProgram(), getVfxBeamProgram()];
+  return [getVfxUnlitProgram(), getVfxLitProgram(), getVfxPlateLitProgram(), getVfxBeamProgram(), getVfxBoltProgram()];
 }
 
 /** 一个发射器的贴图：图集 + 帧 uv 表 + 长宽比 */
@@ -93,7 +97,24 @@ export interface VfxToneEnv {
 export interface VfxRenderDeps {
   /** 当前场景的粒子受光倍率（与角色独立）；缺省 1。 */
   getLightFactors?: () => LightFactors;
+  /** 缺省宿主：场景路就是实体层（粒子在实体之间按纵深分桶）。 */
   entityLayer: Container;
+  /**
+   * 这个实例的网格该挂到哪个容器（不给 / 返回 null ⇒ {@link entityLayer}）。
+   *
+   * **画布**（场景之外那张屏幕空间的面）用它把每个特效实例挂进它自己那个
+   * canvas item，于是**逐效果都有自己的 `order`**——实体能插在两个特效之间。
+   * 宿主写死成一个容器的话，整块画布的特效只能共一个顺序。
+   */
+  hostFor?: (instanceId: string) => Container | null;
+  /**
+   * 是否按场景实体的脚底 y 分桶（缺省 true）。
+   *
+   * 画布给 `false`：那里没有场景实体，也不按脚底 y 排。不关的后果是阈值计算去读
+   * 宿主容器的 children（画布 item 的 `y` 是**屏幕像素**），派出一组毫无意义的阈值，
+   * 粒子被分到乱七八糟的桶里——**不报错，只是画面不对**。
+   */
+  sortByScene?: boolean;
   /** 有照明载荷时给 lit shader；无则 null → 走 tone / unlit */
   createLitShader: (program: GlProgram, colorTex: TextureSource, extra: Record<string, unknown>) => Shader | null;
   releaseLitShader: (sh: Shader) => void;
@@ -128,6 +149,8 @@ const CULL_MARGIN_WU = 96;
 
 interface EmitterView {
   key: string;
+  /** 所属实例 id（找宿主用） */
+  instanceId: string;
   emitter: VfxEmitterRuntime;
   sheet: VfxSpriteSheet;
   shader: Shader;
@@ -143,6 +166,8 @@ interface EmitterView {
   plateBuckets: Map<number, VfxPlateBatchMesh>;
   /** 薄片：本视图复用的一条顶点暂存 */
   plateStrip: VfxPlateStrip | null;
+  /** 画雷的发射器（`appearance.bolt`）用这组；其余恒空 */
+  boltBuckets: Map<number, VfxBoltBatchMesh>;
   depthGroup: UniformGroup;
   /** 本视图自己的参数组（lit 路 `vfxParams`、无光路 `vfxToneOn`），装着 `uLightGain` */
   paramGroup: UniformGroup;
@@ -296,6 +321,29 @@ const tmpBeamS = { x: 0, y: 0 };
 /** 被光柱照亮的尘埃：亮度超过 1 的那份按颜色提亮，封顶这么多倍（再往上显示变换也钳掉了） */
 const BEAM_LIT_COLOR_BOOST_MAX = 8;
 
+/** 算不出可见矩形时（没有画布尺寸）天上那道雷先算到多高（真实 wu） */
+const BOLT_PREVIEW_HEIGHT_WU = 3000;
+/** 雷段暂存：ax ay bx by σ amp color */
+const BOLT_SCRATCH_STRIDE = 7;
+const boltScratch = {
+  n: 0,
+  data: new Float32Array(1024 * BOLT_SCRATCH_STRIDE),
+  segment(ax: number, ay: number, bx: number, by: number, sigma: number, amp: number, color: 0 | 1): void {
+    const o = this.n * BOLT_SCRATCH_STRIDE;
+    if (o + BOLT_SCRATCH_STRIDE > this.data.length) {
+      const next = new Float32Array(this.data.length * 2);
+      next.set(this.data);
+      this.data = next;
+    }
+    const d = this.data;
+    d[o] = ax; d[o + 1] = ay; d[o + 2] = bx; d[o + 3] = by; d[o + 4] = sigma; d[o + 5] = amp; d[o + 6] = color;
+    this.n++;
+  },
+};
+const boltCx = new Float64Array(4);
+const boltCy = new Float64Array(4);
+const boltQ = new Float64Array(12);
+
 /**
  * 被光柱照亮（`appearance.beamLit`）：粒子所在位置的光柱亮度倍率。3D 光柱按粒子世界点、2D 光带按粒子画面点。
  * 在柱外 / 光柱退化 = 0。颜色写进 `color`（光柱沿长度的 sRGB 颜色）。
@@ -377,6 +425,9 @@ export class VfxRenderer {
     uAmbientIntensity: { value: 1, type: 'f32' },
   });
 
+  /** 雷形缓存：`<instanceId>/<boltId>` → 这一次的雷形（同一实例的几层画同一道雷；按需往上续算） */
+  private readonly boltGeoms = new Map<string, { def: VfxBoltDef; geom: BoltGeometry }>();
+
   constructor(private readonly deps: VfxRenderDeps) {}
 
   /** 视图是按"当时有什么"建的；这几样一变就得重建，否则一路错到换场景。 */
@@ -411,14 +462,22 @@ export class VfxRenderer {
     const depth = this.deps.getDepth();
     const depthSrc = depth?.tex.source ?? null;
     const depthTex = depthSrc ?? sheet.texture.source;
-    const wantLit = ap.lit !== false;
+    const isBolt = !!ap.bolt;
+    // 雷是光源：不吃灯、不走色调融入（见 vfxShaders 的 FRAG_BOLT）
+    const wantLit = ap.lit !== false && !isBolt;
     const isPlate = !!e.plate;
     const lightGain = vfxLightGain(ap);
     let shader: Shader | null = null;
     let lit = false;
     let toneSrc: TextureSource | null = null;
     let paramGroup: UniformGroup | null = null;
-    if (wantLit && canLight) {
+    if (isBolt) {
+      paramGroup = new UniformGroup({ uLightGain: { value: 1, type: 'f32' } });
+      shader = new Shader({
+        glProgram: getVfxBoltProgram(),
+        resources: { vfxDepth: depthGroup, uDepthMap: depthSrc ?? Texture.WHITE.source },
+      });
+    } else if (wantLit && canLight) {
       const pv = vfxParamValues(ap);
       // 逐视图一组：createLitShader 每次 new 一个 Shader，这组只挂在这一个视图上（受光强度不许进角色共用组）
       paramGroup = new UniformGroup({
@@ -458,13 +517,18 @@ export class VfxRenderer {
       });
     }
     v = {
-      key, emitter: e, sheet, shader, lit, wantLit, depthSrc, toneSrc,
-      buckets: new Map(), plateBuckets: new Map(),
+      key, instanceId, emitter: e, sheet, shader, lit, wantLit, depthSrc, toneSrc,
+      buckets: new Map(), plateBuckets: new Map(), boltBuckets: new Map(),
       plateStrip: e.plate ? createPlateStrip(e.plate.P.segments) : null, depthGroup,
       paramGroup: paramGroup!, lightGain,
     };
     this.views.set(key, v);
     return v;
+  }
+
+  /** 该实例的网格挂哪（不给 / 返回 null ⇒ 实体层） */
+  private hostOf(instanceId: string): Container {
+    return this.deps.hostFor?.(instanceId) ?? this.deps.entityLayer;
   }
 
   private bucketMesh(v: EmitterView, bucket: number): VfxBatchMesh {
@@ -473,8 +537,19 @@ export class VfxRenderer {
     m = new VfxBatchMesh(v.emitter.p.cap, v.shader);
     m.mesh.blendMode = v.emitter.def.appearance.blend === 'add' ? 'add' : 'normal';
     m.mesh.cullable = false;
-    this.deps.entityLayer.addChild(m.mesh);
+    this.hostOf(v.instanceId).addChild(m.mesh);
     v.buckets.set(bucket, m);
+    return m;
+  }
+
+  private boltBucketMesh(v: EmitterView, bucket: number): VfxBoltBatchMesh {
+    let m = v.boltBuckets.get(bucket);
+    if (m) return m;
+    m = new VfxBoltBatchMesh(256, v.shader);
+    m.mesh.blendMode = 'add';
+    m.mesh.cullable = false;
+    this.hostOf(v.instanceId).addChild(m.mesh);
+    v.boltBuckets.set(bucket, m);
     return m;
   }
 
@@ -484,7 +559,7 @@ export class VfxRenderer {
     m = new VfxPlateBatchMesh(v.emitter.p.cap, v.emitter.plate!.P.segments, v.shader);
     m.mesh.blendMode = v.emitter.def.appearance.blend === 'add' ? 'add' : 'normal';
     m.mesh.cullable = false;
-    this.deps.entityLayer.addChild(m.mesh);
+    this.hostOf(v.instanceId).addChild(m.mesh);
     v.plateBuckets.set(bucket, m);
     return m;
   }
@@ -494,12 +569,22 @@ export class VfxRenderer {
    * 实体脚点的世界位置走 `groundWorldAtScene`（与脚步声 / 摆灯同一条换算）。
    */
   private refreshThresholds(space: VfxSpace, hosts: ReadonlyMap<string, VfxSortHost> | undefined): void {
+    if (this.deps.sortByScene === false) {
+      // 画布：没有场景实体可分，整个实例就是一桶（顺序由 canvas item 的 order 定）。
+      // 仍要刷视线轴：粒子的深度键还要用它（只是桶就一个）。
+      const [ax, az] = horizontalViewAxis(space.viewDir);
+      this.hx = ax; this.hz = az;
+      this.thresholds = [];
+      this.hostFootY.clear();
+      return;
+    }
     const [hx, hz] = horizontalViewAxis(space.viewDir);
     this.hx = hx; this.hz = hz;
     const own = new Set<Container>();
     for (const v of this.views.values()) {
       for (const m of v.buckets.values()) own.add(m.mesh);
       for (const m of v.plateBuckets.values()) own.add(m.mesh);
+      for (const m of v.boltBuckets.values()) own.add(m.mesh);
     }
     for (const bv of this.beamViews.values()) own.add(bv.mesh);
     const anchors: VfxSortAnchor[] = [];
@@ -543,6 +628,8 @@ export class VfxRenderer {
     hosts?: ReadonlyMap<string, VfxSortHost>,
     /** 光柱图案遮罩贴图：`<instanceId>/<beamId>`；还没装到的光柱先不带图案画 */
     beamTextures?: ReadonlyMap<string, Texture>,
+    /** 整团退场倍率；不改粒子寿命、轨迹、发射或受光。 */
+    instanceAlphas?: ReadonlyMap<string, number>,
   ): void {
     if (instances.length > 0) this.refreshThresholds(instances[0].space, hosts);
     this.refreshCull();
@@ -553,7 +640,9 @@ export class VfxRenderer {
     const tone = this.deps.getToneEnv();
     this.syncTone(tone);
     const seen = new Set<string>();
+    const liveBolts = new Set<string>();
     for (const inst of instances) {
+      const alpha = Math.max(0, Math.min(1, instanceAlphas?.get(inst.id) ?? 1));
       const space = inst.space;
       this.bindHost(hosts?.get(inst.id));
       for (const e of inst.emitters) {
@@ -583,19 +672,28 @@ export class VfxRenderer {
         v.depthGroup.update();
         for (const m of v.buckets.values()) m.begin();
         for (const m of v.plateBuckets.values()) m.begin();
-        if (e.plate) this.fillPlate(v, inst, e, space);
+        for (const m of v.boltBuckets.values()) m.begin();
+        if (e.def.appearance.bolt) this.fillBolt(v, inst, e, space, liveBolts);
+        else if (e.plate) this.fillPlate(v, inst, e, space);
         else this.fill(v, inst, e, space);
         for (const [b, m] of v.buckets) {
           m.end();
+          m.mesh.alpha = alpha;
           (m.mesh as Container & { entitySortFootY?: number }).entitySortFootY = bucketSortFootY(this.thresholds, b);
         }
         for (const [b, m] of v.plateBuckets) {
           m.end();
+          m.mesh.alpha = alpha;
+          (m.mesh as Container & { entitySortFootY?: number }).entitySortFootY = bucketSortFootY(this.thresholds, b);
+        }
+        for (const [b, m] of v.boltBuckets) {
+          m.end();
+          m.mesh.alpha = alpha;
           (m.mesh as Container & { entitySortFootY?: number }).entitySortFootY = bucketSortFootY(this.thresholds, b);
         }
       }
       // 测试桩 / 旧调用方的实例可能没有 beams 表
-      if ((inst.beams?.length ?? 0) > 0) this.renderBeams(inst, depth, depthSrc, size, beamTextures, seen);
+      if ((inst.beams?.length ?? 0) > 0) this.renderBeams(inst, depth, depthSrc, size, beamTextures, seen, alpha);
     }
     // 不在本帧清单里的视图（实例被收掉）→ 销毁
     for (const [key, v] of this.views) {
@@ -608,6 +706,8 @@ export class VfxRenderer {
       bv.destroy();
       this.beamViews.delete(key);
     }
+    // 雷形缓存跟着实例走：这一帧没画到的（实例收了 / 定义换了）扔掉
+    for (const key of this.boltGeoms.keys()) if (!liveBolts.has(key)) this.boltGeoms.delete(key);
   }
 
   /** 光柱打包的场景量：仿射与直立面按空间缓存 */
@@ -631,6 +731,7 @@ export class VfxRenderer {
   private renderBeams(
     inst: VfxInstanceSim, depth: { tex: Texture; cfg: SceneDepthConfig } | null, depthSrc: TextureSource | null,
     size: { w: number; h: number }, beamTextures: ReadonlyMap<string, Texture> | undefined, seen: Set<string>,
+    alpha: number,
   ): void {
     const space = inst.space;
     const useDepth = !!depth && space.kind === 'field';
@@ -647,11 +748,12 @@ export class VfxRenderer {
       }
       if (!v) {
         v = new VfxBeamView(key, b, depthSrc, cookieSrc, this.deps.displayUniforms);
-        this.deps.entityLayer.addChild(v.mesh);
+        this.hostOf(inst.id).addChild(v.mesh);
         this.beamViews.set(key, v);
       }
       inst.beamFrame(b);
       let ok = packBeamUniforms(b, inst.beamPulse(b), env, v.values);
+      v.mesh.alpha = alpha;
       // 图案贴图还没装到：先不带图案画（装到后视图按贴图重建）
       if (b.def.cookie && !cookieSrc) v.values.uBeamCookieOn = 0;
       // 画面包络
@@ -870,6 +972,113 @@ export class VfxRenderer {
   }
 
   /**
+   * 画雷（`appearance.bolt`）：每颗粒子 = 一道雷的落点。雷形按**实例种子 + 落点世界坐标**现算
+   * （同一实例的几层画同一道雷；落点不同就长得不同，同一位置重放逐位相同），往上只续算到镜头要的高度；
+   * 逐段交给 `emitBoltSegments` 挑细分级、定粗细、剔掉看不见的，一段一层光斑一张 quad。
+   *
+   * 剔除按**每一段自己的范围**，不按落点：落点在画外、雷身穿过画面照样画（09-24 制作人：雷在世界里，
+   * 看不看得见只是镜头的事）。逐顶点 q 取雷身直立面上那一点（`uprightWorldAtScene`，平面上是线性的）。
+   */
+  private fillBolt(v: EmitterView, inst: VfxInstanceSim, e: VfxEmitterRuntime, space: VfxSpace, live: Set<string>): void {
+    const ap = e.def.appearance;
+    const L = ap.bolt!;
+    const def = inst.effect.bolts?.find((b) => b.id === L.bolt);
+    if (!def || (def.kind === 'sky' ? !def.sky : !def.surface)) return;
+    const key = `${inst.id}/${def.id}`;
+    live.add(key);
+    let entry = this.boltGeoms.get(key);
+    if (!entry || entry.def !== def) {
+      // 种子 = 实例种子 × 落点（与落雷演出摆灯同一个，见 boltInstanceSeed）
+      entry = { def, geom: createBolt(def, boltInstanceSeed(inst.seed, inst.anchorWorld)) };
+      this.boltGeoms.set(key, entry);
+    }
+    const g = entry.geom;
+    const p = e.p;
+    const wt = this.deps.entityLayer.worldTransform;
+    const pxPerScene = Math.hypot(wt.a, wt.b) || 1;
+    const scr = this.deps.getScreen?.();
+    const k768 = scr && scr.h > 0 ? scr.h / 768 : 1;
+    const tint = ap.tint ?? [1, 1, 1];
+    const core = L.coreColor ?? [1, 1, 1];
+    const glow = L.glowColor;
+    const sizeWu = Math.max(1e-6, ap.sizeWu);
+    const view = this.culling ? { x0: this.cullX0, y0: this.cullY0, x1: this.cullX1, y1: this.cullY1 } : null;
+    if (g.kind === 'surface') probeAffine(space);
+    for (let i = 0; i < p.cap; i++) {
+      if (!p.alive[i]) continue;
+      const t = p.life[i] > 0 ? Math.min(1, p.age[i] / p.life[i]) : 0;
+      const alpha = sampleCurve(ap.alphaOverLife, t) * p.fade[i];
+      if (alpha <= 0.002) continue;
+      const wx = p.x[i], wy = p.y[i], wz = p.z[i];
+      tmpW[0] = wx; tmpW[1] = wy; tmpW[2] = wz;
+      space.toScene(tmpW, tmpScene);
+      const fx = tmpScene.x, fy = tmpScene.y;
+      const persp = this.deps.perspective(fx, fy);
+      const bv: BoltView = { footX: fx, footY: fy, persp, pxPerScene, k768, view };
+      // q：落点那一点 + 直立面上沿画面 x / y 各走一个场景 wu 的增量（直立面是平面，q 对画面坐标线性）
+      space.toQ(tmpW, tmpQ);
+      const q0 = tmpQ[0], q1 = tmpQ[1], q2 = tmpQ[2];
+      let dxq0 = 0, dxq1 = 0, dxq2 = 0, dyq0 = 0, dyq1 = 0, dyq2 = 0;
+      if (g.kind === 'sky') {
+        extendBolt(g, boltNeedHeight(bv, BOLT_PREVIEW_HEIGHT_WU));
+        if (space.uprightWorldAtScene) {
+          space.toQ(space.uprightWorldAtScene(fx, fy, fx + 1, fy), tmpQ);
+          dxq0 = tmpQ[0] - q0; dxq1 = tmpQ[1] - q1; dxq2 = tmpQ[2] - q2;
+          space.toQ(space.uprightWorldAtScene(fx, fy, fx, fy + 1), tmpQ);
+          dyq0 = tmpQ[0] - q0; dyq1 = tmpQ[1] - q1; dyq2 = tmpQ[2] - q2;
+        }
+      } else {
+        // 贴地的电弧：世界点 = 落点 + (dx, 地面高, dz)，过正交投影换场景坐标
+        const S = affS;
+        bv.groundToScene = (dx, dz, out) => {
+          const x = wx + dx * persp, z = wz + dz * persp;
+          const y = space.groundY(x, z);
+          out.x = S[0] * x + S[1] * y + S[2] * z + S[6];
+          out.y = S[3] * x + S[4] * y + S[5] * z + S[7];
+        };
+      }
+      const lc = ap.tintOverLife ? sampleColorCurve(ap.tintOverLife, t, tmpLifeColor) : null;
+      const tr = tint[0] * (lc ? lc[0] : 1), tg = tint[1] * (lc ? lc[1] : 1), tb = tint[2] * (lc ? lc[2] : 1);
+      const look: BoltLook = {
+        part: L.part === 'main' ? 'main' : 'all',
+        coreWu: L.coreWu, coreMinPx: L.coreMinPx, glowWu: L.glowWu, glowMinPx: L.glowMinPx,
+        haloWu: L.haloWu ?? 0, haloMinPx: L.haloMinPx ?? 0,
+        coreGain: L.coreGain, glowGain: L.glowGain, haloGain: L.haloGain ?? 0,
+        widthMul: (p.size[i] / sizeWu) * sampleCurve(ap.sizeOverLife, t),
+      };
+      const sc = boltScratch;
+      sc.n = 0;
+      emitBoltSegments(g, look, bv, sc);
+      if (sc.n === 0) continue;
+      const mesh = this.boltBucketMesh(v, this.bucketOf(wx, wz));
+      mesh.reserve(mesh.used + sc.n);
+      const d = sc.data;
+      for (let s = 0; s < sc.n; s++) {
+        const o = s * BOLT_SCRATCH_STRIDE;
+        const ax = d[o], ay = d[o + 1], bx = d[o + 2], by = d[o + 3], sig = d[o + 4], amp = d[o + 5];
+        const isCore = d[o + 6] === 0;
+        const len = Math.hypot(bx - ax, by - ay);
+        if (len < 1e-6) continue;
+        const r = sig * BOLT_QUAD_SIGMAS;
+        const tx = (bx - ax) / len * r, ty = (by - ay) / len * r;
+        const nx = -ty, ny = tx;
+        boltCx[0] = ax - tx - nx; boltCy[0] = ay - ty - ny;
+        boltCx[1] = bx + tx - nx; boltCy[1] = by + ty - ny;
+        boltCx[2] = bx + tx + nx; boltCy[2] = by + ty + ny;
+        boltCx[3] = ax - tx + nx; boltCy[3] = ay - ty + ny;
+        for (let k = 0; k < 4; k++) {
+          const ox = boltCx[k] - fx, oy = boltCy[k] - fy;
+          boltQ[k * 3] = q0 + ox * dxq0 + oy * dyq0;
+          boltQ[k * 3 + 1] = q1 + ox * dxq1 + oy * dyq1;
+          boltQ[k * 3 + 2] = q2 + ox * dxq2 + oy * dyq2;
+        }
+        const c = isCore ? core : glow;
+        mesh.push(boltCx, boltCy, ax, ay, bx, by, sig, amp, c[0] * tr, c[1] * tg, c[2] * tb, alpha, boltQ);
+      }
+    }
+  }
+
+  /**
    * 薄片：每张片按自己的朝向 / 弯曲 / 颤动在 M-world 里拼出一条带，逐顶点正交投影，再按脚点的
    * 透视系数绕中心缩放（伪世界横向 1 wu = 1 画面 wu，透视场景远处的纸真实尺寸画出来要更小）。
    * 躺着的是"碗"（两边翘），贴死的是"悬臂"（一边钉住、另一边被风掀）。
@@ -991,6 +1200,8 @@ export class VfxRenderer {
     v.buckets.clear();
     for (const m of v.plateBuckets.values()) m.destroy();
     v.plateBuckets.clear();
+    for (const m of v.boltBuckets.values()) m.destroy();
+    v.boltBuckets.clear();
     if (v.lit) this.deps.releaseLitShader(v.shader);
     else v.shader.destroy();
   }
@@ -1004,6 +1215,7 @@ export class VfxRenderer {
     this.beamEnvSpace = null;
     this.beamAffine = null;
     this.beamUpright = null;
+    this.boltGeoms.clear();
   }
 
   get viewCount(): number { return this.views.size; }
@@ -1020,6 +1232,7 @@ export class VfxRenderer {
     for (const v of this.views.values()) {
       for (const m of v.buckets.values()) if (m.used > 0) n++;
       for (const m of v.plateBuckets.values()) if (m.used > 0) n++;
+      for (const m of v.boltBuckets.values()) if (m.used > 0) n++;
     }
     for (const bv of this.beamViews.values()) if (bv.mesh.visible) n++;
     return n;

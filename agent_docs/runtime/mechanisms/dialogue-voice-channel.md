@@ -29,7 +29,7 @@ verified_by:
   - tools/editor/tests/test_voice_spec_field.py
   - tools/editor/tests/test_action_voice_params.py
   - tools/editor/tests/test_audio_editor_iteration.py
-last_governed: 2026-08-17
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -83,6 +83,8 @@ last_governed: 2026-08-17
 - 非阻塞气泡(`showEmote`/`showSpeechBubble`)没有"本拍结束"这个时刻,其 `voice` **一律留声**
   (自然播完 / 被下一条顶掉 / 被后续拍接管为止),写不写 `hold` 都一样;它们也不吃 `autoAdvance`。
 - `volume` 写 `null` 不等于 0:`Number(null) === 0` 会把"没写音量"静默解释成静音,解析器已挡。
+- **配音条目住 `audio_config.voice` 区**(不回落 sfx 区)。`AudioManager.playVoice` 与 `VoiceSpec.id` 的注释仍写
+  "条目在 audio_config.sfx",已过时,以代码为准。配音条目写 `spatial` 静默无效(配音不走空间音路径)。
 - 旧键名 `subtitleVoice` / `subtitleAutoAdvance` 只在 `showSubtitle` 上作兼容别名读;
   **编辑器保存时改写成新键名**(present 步在重建区),不要在新数据里写旧名。
 

@@ -8,8 +8,8 @@ status: active
 triggers:
   tasks: [拆帧, 分帧, 帧提取, 序列帧, 循环动画, 稳定帧]
   topics: [拆帧, 帧分解, 稳定帧, 循环, 锚点, 漂移]
-last_governed: 2026-08-05
-last_used: 2026-07-10
+last_governed: 2026-09-23
+last_used: 2026-09-14
 ---
 
 ## 适用时机

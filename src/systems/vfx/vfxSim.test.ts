@@ -580,6 +580,13 @@ describe('vfxSim · 实例倍率（手持火把：燃烧强度 / 护火）', () 
     const last = snap(1);
     sim.moveAnchor([0, 0, 0]);
     for (const [i, v] of last) expect(at(1, i)).toEqual(v);
+    // 镜头天气显式保留世界粒子：即使资产为 rig/full，已有粒子也不粘住屏幕。
+    const worldParticles = [0, 1, 2].map(snap);
+    sim.moveAnchor([100, 200, 300], [50, 60, 70], true);
+    for (let k = 0; k < 3; k++) {
+      for (const [i, v] of worldParticles[k]!) expect(at(k, i)).toEqual(v);
+    }
+    for (const e of sim.emitters) expect(e.origin).toEqual([100, 200, 300]);
   });
 
   it('最远烧到多远：强风里粒子离原点不超过 maxDistance（按距离提前走完寿命）；实例倍率立刻缩短；不写不限', () => {

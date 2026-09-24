@@ -163,9 +163,12 @@ export interface SceneShadowParams {
   softness?: number;
   /** 阴影长度相对角色高度的倍率，缺省由仰角推导 */
   length?: number;
-  /** 脚底接触阴影（地面 omni 暗斑）强度 0..1，让角色"坐进"地面；0=关闭 */
+  /** 脚底接触阴影（胶囊 AO）峰值浓度 0..1，脚边最暗处的浓度；0=关闭。方向手动（绑灯/虚拟灯，否则本块 key 方向），见 EntityShadow CONTACT_FRAG */
   contact?: number;
-  /** 接触暗斑大小倍率，默认 1 */
+  /**
+   * 接触阴影（胶囊 AO）大小倍率，默认 1：胶囊半径 = 剪影贴地那一截半宽 × 它（见 EntityShadow CONTACT_*）。
+   * 2026-09-24 前基准是**帧宽**（随图集留白乱变），此前调过的值含义已变。
+   */
   contactSize?: number;
 }
 
@@ -226,8 +229,13 @@ export interface LightEnvCurveDef {
 //   一切长度都是 **wu**——本项目只有这一个空间单位，与 pos/depthConfig/碰撞同尺。
 // ============================================================
 
-/** 光源类型。天光不是 Light（它是场景级唯一项，见 SceneLightingDef.sky）。 */
-export type LightKind = 'point' | 'spot' | 'area' | 'directional';
+/**
+ * 光源类型。天光不是 Light（它是场景级唯一项，见 SceneLightingDef.sky）。
+ *
+ * `line`（线光，2026-09-24）**只给运行时灯用**（落雷那一道雷身：从 `pos` 到 `to` 的一整条发光线），
+ * 作者不摆——编辑器的灯种表里没有它，校验器照旧拒收。
+ */
+export type LightKind = 'point' | 'spot' | 'area' | 'directional' | 'line';
 
 /**
  * 一盏灯。位置与一切长度都在**世界空间**，单位 **wu** —— 与 NPC、热区、spawn、
@@ -319,6 +327,15 @@ export interface LightDef {
 
   /** 投不投影。缺省 false。 */
   castShadow?: boolean;
+
+  /** `line`：线光的另一端（**世界坐标 wu**）；线光从 `pos` 到 `to` 整条均匀发光。其它灯种忽略。 */
+  to?: [number, number, number];
+
+  /**
+   * 在「表面材质区」标成水面 / 湿地的地方照出**镜面反光**（2026-09-24，落雷那几盏运行时灯用）。
+   * 缺省 false：场景照明本来是纯漫反射（原画 + 反照率 × 灯），不打这个标的灯一个像素都不变。
+   */
+  reflect?: boolean;
 
   /** 初始是否点亮，缺省 true。运行时由 `fadeLight` 动作改（强度倍率降到 0 = 熄）。 */
   enabled?: boolean;
@@ -539,6 +556,39 @@ export interface SceneLightingDef {
 }
 
 /**
+ * 脚底接触 AO（胶囊 AO）的作者面（制作人 2026-09-24 定）：
+ * 勾「接触 AO」就有；**方向 AO 缺省也开**（沿光方向的锥形软影，所有 NPC 与主角都是，同日改口），取消就只剩简单 AO。
+ * 方向来源是个选项（`dirSource`）：缺省跟角色身上的光一致（间接光一路 + 每盏实体灯各一路，按各自照到地面的量加权），也可跟阴影绑定或用场景主光。
+ * 所有字段可缺：明暗 / 大小缺省跟随场景光环境（`shadow.contact` / `contactSize`），其余用
+ * `src/rendering/contactAo.ts` 的缺省。解析见 `resolveContactAo`。
+ */
+export interface ContactAoDef {
+  /** 画不画接触 AO；缺省 true。 */
+  enabled?: boolean;
+  /** 方向 AO；缺省 true（制作人 2026-09-24：所有 NPC 默认都开，包括主角）。false = 只有简单 AO。 */
+  directional?: boolean;
+  /**
+   * 方向 AO 的方向从哪来（制作人 2026-09-24：是个选项；缺省「ao 方向本来就和间接光强度要一致」）：
+   * `'lighting'`（缺省）跟角色身上的光一致——间接光一路（probe）+ 每盏亮着的实体灯各一路，各投各的影、
+   * 按各自照到脚下地面的量加权（见 `rendering/contactAoSources.ts`）｜`'binding'` 跟阴影绑定（绑灯朝灯、
+   * 虚拟灯朝它，没绑用场景主光）｜`'scene'` 场景光环境主光方向。后两档只有一路。
+   */
+  dirSource?: 'lighting' | 'binding' | 'scene';
+  /** 明暗 0..1（脚边最暗处的浓度）；缺省跟随场景。 */
+  darkness?: number;
+  /** 大小倍率（胶囊半径 = 剪影贴地那一截半宽 × 它）；缺省跟随场景。 */
+  size?: number;
+  /** 简单 AO 晕开范围（遮挡高度占身高的比例）；缺省 0.25。 */
+  spread?: number;
+  /** 方向 AO 浓度 0..1；缺省 0.9。 */
+  dirStrength?: number;
+  /** 方向 AO 拖尾长度（× 身高）；缺省 0.7。 */
+  dirLength?: number;
+  /** 方向 AO 半影锥角（度，越大越软）；缺省 32。 */
+  dirConeDeg?: number;
+}
+
+/**
  * 实体阴影绑定。**必须手动指定，系统不自动 resolve**。
  * `virtual` 只影响影子、**不照亮角色**——角色的受光永远来自场景与真实灯。
  */
@@ -579,6 +629,43 @@ export interface PerspectivePoint {
 export interface PerspectiveMidStop {
   pos: number;
   scale: number;
+  /**
+   * 相机跟随透视：**从本停靠点到下一个停靠点那一段**是否跟随；缺省 true。
+   * 只在场景配了 {@link PerspectiveScaleConfig.cameraFollow} 时有意义。
+   *
+   * ⚠ 开关挂在停靠点上而不是「第 i 段」的数组里，是为了对 midStops 重排序免疫：
+   * 求值前按 pos 排序会打乱下标，独立的段数组会**静默错位**（段开关跑到别的段上，不报错）。
+   */
+  cameraFollow?: boolean;
+}
+
+/**
+ * 相机跟随透视（2026-09-20 拍板，需求清单 A3.5）：写这个键 = 本场景开启；
+ * **不写 = 完全不跟随，效果与开此功能之前严格一致**（运行时一次 zoom 都不多写）。
+ *
+ * 相机 zoom 吃同一根深度轴，让角色在屏幕上的大小（景别）基本不变：
+ * ```
+ * zoom(t) = 相机基线zoom × ∏（t 之前的每个开启段）f(段起点) / f(段内走到的位置)
+ * ```
+ * 关闭的段把当前倍数**原样带过去**（人物在那一段里正常地变小）——回落基线会跨段跳变。
+ * 这样写出来的 zoom 只由位置决定：从近往远走和从远往近走，同一点的景别一样。
+ */
+export interface PerspectiveCameraFollowConfig {
+  /**
+   * 近端到第一个停靠点那一段是否跟随；缺省 true。
+   *
+   * （其余各段的开关在 {@link PerspectiveMidStop.cameraFollow} 上；近端不是 midStop，
+   * 没地方挂，只能落在这里。远端没有后续段，不存开关。）
+   */
+  firstSegment?: boolean;
+  /** 基准位置 t∈[0,1]：该处 zoom 恰为相机基线 zoom。缺省 0（近端）⇒ 只往里推不往外拉。 */
+  refPos?: number;
+  /**
+   * zoom 相对基线的上限倍数；缺省 1.5（`DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO`）。
+   * 撞上限即停止补偿（人物继续变小），防止背景被放大糊掉——全段开启时最远端的放大倍数
+   * 就是 `f近/f远`。下限不在这里：由相机按「视野不超出地图」自动钳，没有作者旋钮。
+   */
+  maxZoomRatio?: number;
 }
 
 /**
@@ -597,6 +684,8 @@ export interface PerspectiveScaleConfig {
   midStops?: PerspectiveMidStop[];
   /** 移动步长是否同步 × f（防远处滑步）；缺省 true */
   affectsSpeed?: boolean;
+  /** 相机跟随透视；**不写键 = 不跟随**（存量场景零变化）。见 {@link PerspectiveCameraFollowConfig} */
+  cameraFollow?: PerspectiveCameraFollowConfig;
 }
 
 export interface SceneData {
@@ -679,6 +768,8 @@ export interface SceneData {
    * 有自己的 def，所以挂在场景上——本来就该逐场景配（这条街有路灯，那间屋子只有烛火）。
    */
   playerShadowBindings?: EntityShadowBinding[];
+  /** 玩家的脚底接触 AO。与 NPC 的 `contactAo` 同语义；挂在场景上的理由同 `playerShadowBindings`。 */
+  playerContactAo?: ContactAoDef;
   /**
    * 日夜循环开关。**缺省（不写键）= 本场景不参与日夜**——旧场景零影响。
    * 开启后本场景的 NPC 才受日程/`phases` 管，时段变化才会发出外观切换的事件。
@@ -1497,6 +1588,14 @@ export interface DocumentRevealDef {
   yPercent?: number;
   widthPercent?: number;
   /**
+   * 在**画布**上的绘制顺序（越大越靠前）；缺省 0。
+   *
+   * 画布是场景之外那张屏幕空间的面，叠图 / 文档揭示 / 实体 / 特效四类 item
+   * 共用同一个顺序空间。把这份文书当"背景一张图"用时给个负数 / 0，
+   * 再把实体与特效排到它前面（运行时还可用 `setCanvasOrder` 随时改）。
+   */
+  order?: number;
+  /**
    * 揭示音效：`audio_config.sfx` 的 id，与叠化同时起播（即等过 `animation.delayMs` 之后），
    * 经统一动作通道 `playSfx` 播放；留空＝无声。
    */
@@ -1772,8 +1871,13 @@ export interface NpcDef {
   collisionPolygon?: { x: number; y: number }[];
   /** 为 true 时 `collisionPolygon` 为相对 (x,y) 的局部坐标；缺省视为旧版世界坐标 */
   collisionPolygonLocal?: boolean;
-  /** 投射阴影 + 接触 AO 开关（合并）；缺省视为 true。false 时该 NPC 不投影也无接触 AO。 */
+  /**
+   * 投射阴影开关；缺省视为 true。false 时该 NPC 不投影（手调单影与 `shadowBindings` 的剪影都不画），
+   * **脚底接触 AO 不归它管**（见 `contactAo`）。2026-09-23 前这是投影 + 接触斑的合并开关。
+   */
   castShadow?: boolean;
+  /** 脚底接触 AO（胶囊 AO）；不写 = 开、简单 AO、明暗 / 大小跟随场景。见 {@link ContactAoDef}。 */
+  contactAo?: ContactAoDef;
   /**
    * 角色阴影绑定。**必须手动指定，系统不自动 resolve**（制作人 2026-08-20 定死）。
    *
@@ -2346,13 +2450,26 @@ export interface AnimationStateDef {
    */
   referenceSpeed?: number;
   /**
-   * 可选：本状态的**授权头顶锚**——格高归一化比例（0=脚点，1=格子顶边），气泡底边贴在此高度。
+   * 可选：本状态的**授权头顶锚**——格高归一化比例（0=格底，1=格子顶边；没有 `footOffset` 时格底就是脚），
+   * 气泡底边贴在此高度。
    *
    * 缺省 = 按每帧可见内容自动求（`SpriteEntity.getContentBoxLocal`），绝大多数状态用自动就对。
    * 什么时候需要手填：**内容顶 ≠ 头顶**的状态——举枪、扛尸、打伞，自动锚会挂到道具尖上。
    * 注意它是 per-state 常量，状态内每帧同一高度（不随内容起伏），这正是"钉死在头顶"的用意。
    */
   bubbleAnchor?: number;
+  /**
+   * 可选：本状态的**脚底偏移**——脚底线高于格底多少，格高归一化比例（0 = 脚就在格底，缺省）。
+   *
+   * 运行时把这条线当脚：精灵往下挪这么多，脚落在实体位置（接地点）上；接地点、阴影落点、
+   * 遮挡排序、透视采样**一概不动**。存在的理由：有些图集的格底并不是脚（旧产线把整套动作
+   * 按「往下伸得最远的那一帧」定格高，其余动作整体悬空 5–11 世界单位），而素材像素不改。
+   *
+   * 口径：状态里**最贴地的那一帧**的最低不透明行（alpha ≥ 128）到格底的距离 ÷ 格高，
+   * 于是这一状态每帧一起挪、动作内部的起伏不变（编辑器动画面板「按图测」就是这么算的）。
+   * 与 `bubbleAnchor` 一样从**格底**量起，两者互不换算。
+   */
+  footOffset?: number;
 }
 
 /**
@@ -2516,6 +2633,16 @@ export interface DialogueChoice {
   disableHint?: string;
 }
 
+/**
+ * `dialogue:choices` 的载荷：一组选项 + 这组选项的版式档。
+ * 版式按「提示句的版式 > 图级 defaultLayout > 缺省」取，与台词同一套口径；
+ * 目前只有 `firstPerson` 会改变选项的样子（屏底横排、不要木钮），其余档选项位置照旧固定。
+ */
+export interface DialogueChoicesPayload {
+  choices: DialogueChoice[];
+  layout?: DialogueLayoutStyle;
+}
+
 export interface ResolvedOption {
   index: number;
   text: string;
@@ -2548,6 +2675,20 @@ export interface IEmoteBubbleAnchor {
    * EmoteBubbleManager 会将气泡顶端置于 `anchorY - bubbleHeight`。
    */
   getEmoteBubbleAnchorLocalY(): number;
+}
+
+/**
+ * 这个锚点此刻看不看得见——气泡跟着人显隐、头顶闲聊不挑藏起来的人，两处共用这一个判据
+ * （2026-09-23 制作人：时段到了夜里人按作息隐掉了，头顶那句闲聊还挂在原地）。
+ *
+ * 判据就是实体自己的显示容器 `visible`：实体显隐的几条通道（派生基底 / 条件 / 会话覆盖 / 拾取）
+ * 只在实体内一处合成、落到这一个布尔上，所以时段、条件、setEntityEnabled 任何一路把人藏了，这里都跟着变。
+ * 没有 `visible` 字段的桩按看得见算；没有显示对象或已销毁 = 看不见。
+ */
+export function isEmoteAnchorShown(anchor: IEmoteBubbleAnchor): boolean {
+  const obj = anchor.getDisplayObject() as { visible?: unknown; destroyed?: unknown } | null | undefined;
+  if (!obj || typeof obj !== 'object') return false;
+  return obj.destroyed !== true && obj.visible !== false;
 }
 
 export interface ICutsceneActor extends IEmoteBubbleAnchor {
@@ -2718,6 +2859,49 @@ export interface PresentStep extends CutsceneStepDisableFlag {
  *   每帧按当前缩放余量夹紧，永不露出底层；
  * - durationMs：漂移时长，缺省 12000。
  */
+/**
+ * **画布**（场景之外那张屏幕空间的面，2026-09-21 制作人定名）上的 item 分四类，
+ * 共用**同一个 `order` 顺序空间**（越大越靠前）：
+ *
+ * - `image`——叠图（showOverlayImage / blendOverlayImage / 视差 / 动画层），名字是作者的**句柄**；
+ * - `document`——文档揭示，名字是 **documentId**；
+ * - `entity`——画布实体；
+ * - `vfx`——画布特效。
+ *
+ * 四个名字空间**永不互访**（`hideOverlayImage` 收不到文档揭示，2026-09-12 制作人定调）。
+ */
+export type CanvasItemKindName = 'image' | 'document' | 'entity' | 'vfx';
+
+/**
+ * 往画布上放一个实体。`character`（角色注册表 id）与 `animFile`（动画包 URL）
+ * 二选一（都给以 `animFile` 为准）。
+ *
+ * 坐标与尺寸全是**屏幕百分比**——画布不吃相机，窗口一变就重摆；
+ * `xPercent` / `yPercent` 指的是**脚底点**（精灵内层锚点缺省底中），所以 `yPercent: 100` = 站在画面底边。
+ */
+export interface CanvasEntityOptions {
+  /** `character_registry.json` 的角色 id */
+  character?: string;
+  /** 直接给动画包 `anim.json` 的 URL（不走注册表时用） */
+  animFile?: string;
+  /** 起播动画状态；缺省 `idle`，没有 idle 取第一个 */
+  state?: string;
+  /** 脚底点 x（屏宽百分比 0..100）；缺省 50 */
+  xPercent?: number;
+  /** 脚底点 y（屏高百分比 0..100）；缺省 100（站在画面底边） */
+  yPercent?: number;
+  /** 高度占屏高百分比；与 `widthPercent` 二选一，都不给按 40 */
+  heightPercent?: number;
+  /** 宽度占屏宽百分比 */
+  widthPercent?: number;
+  /** 绘制顺序（越大越靠前）；缺省 0 */
+  order?: number;
+  /** 朝向；缺省 right */
+  facing?: 'left' | 'right';
+  /** 整体透明度 0..1；缺省 1 */
+  alpha?: number;
+}
+
 export interface CutsceneKenBurns {
   fromScale?: number;
   toScale?: number;
@@ -3237,6 +3421,25 @@ export interface ITrajectoryTarget {
 // 存档数据
 // ============================================================
 
+/**
+ * 存档槽位数（2026-09-23 制作人定：3 → 99，"人家正常游戏都 99 个"）。
+ * 全项目只有这一处：SaveManager 的边界、菜单画多少行、命令通道的槽位校验都读它。
+ */
+export const SAVE_SLOT_COUNT = 99;
+/** 玩家给存档起的名字最多几个字（按 Unicode 字符数算，不按 UTF-16 码元）。 */
+export const SAVE_NAME_MAX_LENGTH = 24;
+
+/**
+ * 存档名字的唯一规整口径：去首尾空白、内部换行 / 制表 / 连续空白压成一个空格、截到上限。
+ * 规整后为空 = 没起名字（UI 回落显示场景名）。写盘与改名都过这一道，读档不重复规整。
+ */
+export function normalizeSaveName(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const collapsed = raw.replace(/\s+/gu, ' ').trim();
+  if (!collapsed) return undefined;
+  return Array.from(collapsed).slice(0, SAVE_NAME_MAX_LENGTH).join('');
+}
+
 export interface SaveSlotMeta {
   slot: number;
   timestamp: number;
@@ -3244,6 +3447,17 @@ export interface SaveSlotMeta {
   sceneName: string;
   dayNumber: number;
   playTimeMs: number;
+  /** 玩家起的名字（没起 = undefined，菜单回落显示场景名） */
+  name?: string;
+}
+
+/** `ISaveDataProvider.save` 的选项。 */
+export interface SaveOptions {
+  /**
+   * 这个存档叫什么。**不传这个键 = 沿用该槽原来的名字**（脚本 / 命令通道重存不抹掉玩家起的名）；
+   * 传空串 = 清掉名字。
+   */
+  name?: string;
 }
 
 // ============================================================
@@ -4188,6 +4402,14 @@ export interface FootstepConfig {
 }
 
 export interface IAudioSettingsProvider {
+  /**
+   * 总音量（0..1，2026-09-23）：管游戏里**所有**声音——乘在整个游戏唯一的出口上，
+   * 不是第五条通道。与通道音量一样是玩家偏好，落 `settings/audio.json`、不进存档。
+   */
+  getMasterVolume(): number;
+  setMasterVolume(vol: number): void;
+  /** 总音量滑条松手试听（一片安静时补一声样本；有声音在响时拖的过程本身就听得见） */
+  previewMasterVolume(): void;
   getVolume(channel: AudioChannel): number;
   setVolume(channel: AudioChannel, vol: number): void;
   /**
@@ -4236,6 +4458,8 @@ export interface AudioPlaybackHandle {
 
 export interface TransientSfxOptions {
   volume?: number;
+  /** Runtime presentation identity; never serialized. Exempts only its own duck layers. */
+  mixOwner?: object;
   /**
    * 仅在音频**自然播完**时回调一次；手动 stop / 加载失败 / 未知 id 均不触发
    * （调用方据此把"跟随配音结束"安全退化为等待点击，而非闪切）。
@@ -4284,8 +4508,15 @@ export interface ISaveDataProvider {
    * 返回是否真正写盘成功（写失败 / 无后端 / canSave 拒绝时 false），UI 按成败分支提示。
    * 落盘是文件 I/O，所以是异步的——等真写成了才回报成功，不许乐观返回。
    */
-  save(slot: number): Promise<boolean>;
+  save(slot: number, opts?: SaveOptions): Promise<boolean>;
   load(slot: number): Promise<boolean>;
+  /**
+   * 只改名字、不动存档内容。同 save 一样等真写成了才回报成功；空槽 / 越界 / 写盘失败为 false。
+   * 规整口径见 {@link normalizeSaveName}（规整后为空 = 清掉名字）。
+   */
+  renameSlot(slot: number, name: string): Promise<boolean>;
+  /** 槽位总数（= {@link SAVE_SLOT_COUNT}）。菜单按它画行，不自己再抄一份数。 */
+  slotCount(): number;
   /** 以下查询走内存镜像（启动时 hydrate 一次），保持同步，供菜单渲染路径逐帧调用。 */
   getSlotMeta(slot: number): SaveSlotMeta | null;
   hasSave(slot: number): boolean;
@@ -4387,7 +4618,158 @@ export interface VfxAppearanceDef {
    * `gain` 缺省 1。与 `lit` 正交：一般配 `lit:false` + `blend:add`。
    */
   beamLit?: { beam: string; gain?: number };
+  /**
+   * **画一道雷**（2026-09-24）：这个发射器的每颗粒子不贴图，而是把同一效果里 `bolts[bolt]` 那道雷
+   * 在世界里现画出来（折线 + 分叉，按世界尺寸、从落点一直画到天上，见 {@link VfxBoltLayerDef}）。
+   * 有它时 `animFile` / `image` 不用写；`sizeWu` 当粗细倍率的分母（`sizeOverLife` = 粗细随寿命）。
+   */
+  bolt?: VfxBoltLayerDef;
 }
+
+/**
+ * 一道雷的一层画法（发射器 `appearance.bolt`）。雷身 = 一条发光的细线被"亮到晕开"：
+ * 芯 / 光晕 / 外晕三层，都是**这条线与一个圆形光斑卷积**（逐段解析积分，段与段直接相加，接缝处不断不叠）。
+ *
+ * 每层的宽 = 世界宽（wu，离得近就粗）与屏幕下限（像素，按 768 高的标准视口）两者合成——
+ * 真闪电的芯只有几厘米，看起来的粗细主要是强光在画面里晕开的那一圈，所以远景里它不会细到没有。
+ */
+export interface VfxBoltLayerDef {
+  /** 画哪道雷（同一效果 `bolts[].id`） */
+  bolt: string;
+  /** `all` = 主干 + 分叉（缺省）；`main` = 只画主干（回击那几下加粗加亮用）。水面电弧那种雷只认 `all` */
+  part?: 'all' | 'main';
+  /** 芯的半高全宽（世界 wu） */
+  coreWu: number;
+  /** 芯最细不细过这么多屏幕像素（标准视口 768 高） */
+  coreMinPx: number;
+  /** 光晕的半高全宽（世界 wu） */
+  glowWu: number;
+  /** 光晕最细不细过这么多屏幕像素 */
+  glowMinPx: number;
+  /** 外晕（更宽更淡的一圈），缺省不画 */
+  haloWu?: number;
+  haloMinPx?: number;
+  /** 三层各自的亮度（芯 > 1 = 过曝成一条平顶的白带） */
+  coreGain: number;
+  glowGain: number;
+  haloGain?: number;
+  /** 芯的颜色（sRGB 0..1），缺省白 */
+  coreColor?: [number, number, number];
+  /** 光晕 / 外晕的颜色（sRGB 0..1） */
+  glowColor: [number, number, number];
+}
+
+/**
+ * 天上劈下来的那道雷的形状（`VfxBoltDef.sky`）。长度一律世界 wu，角度一律度。
+ * 雷是**分形**的：大步的尖角折线逐级「中点往旁边折」细分到 `detailWu`，分叉长短按幂律——
+ * 拉近了看得到更小的折和更小的枝杈，任何镜头下看起来都是同一种雷（见 `vfxBolt.ts` 头注释）。
+ */
+export interface VfxBoltSkyShapeDef {
+  /** 整道雷偏离竖直多少（区间随机，左右随机） */
+  tiltDeg: [number, number];
+  /** 大弯：走向绕整体方向摆动的幅度 */
+  bendDeg: number;
+  /** 大弯的长度尺度（走多远换一次大方向） */
+  bendLenWu: number;
+  /** 大步的步长（区间随机） */
+  stepWu: [number, number];
+  /** 每一大步偏离走向多少（区间随机） */
+  kinkDeg: [number, number];
+  /** 0..1：下一步往反方向偏的概率（越大越像锯齿） */
+  zigzag: number;
+  /** 0..0.5：每一级细分时中点往旁边折出去多少（相对那一段的长）——越大折得越碎 */
+  roughness: number;
+  /** 细分到多细为止（wu） */
+  detailWu: number;
+  /** 分叉多密：每 1000 wu 雷身长几根（多数是短枝杈，长分叉少，见 `branchMinWu` / `branchMaxWu`） */
+  branchPerKWu: number;
+  /** 离地多高以上才长分叉（到它的两倍高处长满） */
+  branchFromWu: number;
+  /** 分叉长度范围（幂律：短的多、长的少） */
+  branchMinWu: number;
+  branchMaxWu: number;
+  /** 分叉与主干往下那个方向的夹角（区间随机） */
+  branchAngleDeg: [number, number];
+  /** 分叉根部亮度（相对主干，区间随机；长分叉取上沿、短枝杈打折），往梢上淡到 0 */
+  branchIntensity: [number, number];
+  /** 分叉粗细（相对主干） */
+  branchWidth: number;
+  /** 分叉上再分叉多密（每 1000 wu 几根，长度同一套幂律） */
+  forkPerKWu: number;
+  /** 最多再分几级 */
+  forkDepth: number;
+  /** 下半截额外亮多少（1 = 不加；贴地那一段 × 它，往上 `lowBoostWu` 内淡回 1） */
+  lowBoostGain: number;
+  lowBoostWu: number;
+  /** 云底高度：画到这儿为止（远在任何镜头之外） */
+  cloudWu: number;
+}
+
+/** 落在水面上爬开的那一圈电弧的形状（`VfxBoltDef.surface`）：贴着地面 / 水面从落点往外爬 */
+export interface VfxBoltSurfaceShapeDef {
+  /** 几根（区间随机） */
+  count: [number, number];
+  /** 每根多长（区间随机） */
+  lenWu: [number, number];
+  /** 每一大步偏离走向多少 */
+  kinkDeg: [number, number];
+  /** 0..0.5：细分时中点往旁边折多少 */
+  roughness: number;
+  /** 细分到多细为止（wu） */
+  detailWu: number;
+  /** 再分叉多密（每 1000 wu 几根） */
+  forkPerKWu: number;
+  /** 根部亮度（区间随机），往梢上淡到 0 */
+  intensity: [number, number];
+}
+
+/**
+ * 这道雷的灯（落雷演出点亮它们；`strikeThreat` 的 `lightIntensity` 是总亮度，这里的 `gain` 都乘在它上面）。
+ * 三盏都打 `reflect`：在表面材质区的水面 / 湿地上照出反光。
+ */
+export interface VfxBoltLightDef {
+  /** 色温 K，缺省 9000 */
+  kelvin?: number;
+  /** 落点那一盏：贴地的点光（打出落点周围那一大片亮区） */
+  contact?: { gain: number; heightWu: number; rangeWu: number };
+  /** 雷身那一条：沿雷的走向从地面到 `heightWu` 的线光（照亮雷身旁边的墙、屋顶、树干） */
+  channel?: { gain: number; heightWu: number; rangeWu: number };
+  /** 天上那一记：云被雷照亮、从上往下打的平行光（整片场景一起亮一下） */
+  sky?: { gain: number; elevationDeg: number };
+}
+
+/**
+ * 天上的雷落地那一下（只对 `kind: 'sky'`；与灯同一拍，由落雷演出触发）。
+ *
+ * - `blast`：落点一阵往外推、带一点往上的冲击风（M-world wu/s，半径 wu，秒）。**只进表现**：吃场景风的粒子
+ *   （烟、尘、纸钱）与草木摇曳；拿在手上的挂件、燃烧、吹灭都不吃它——那些是玩法。
+ * - `igniteRadiusWu`：落点竖直往上同样高的一段、这么粗的胶囊里，模板开了「雷劈能点着」的可燃物当场着
+ *   （场景里的、手上的、粒子薄片绑的都算；不开的不点）。不写 / 0 = 不点。
+ */
+export interface VfxBoltImpactDef {
+  blast?: { strengthWu: number; radiusWu: number; seconds: number };
+  igniteRadiusWu?: number;
+}
+
+/**
+ * 效果里的一道雷（与 `emitters` / `beams` 并列）。形状 = 这里的参数 + 种子与**实例种子**混合
+ * （同一份效果每次劈出来都不一样）。画它的是 `appearance.bolt` 引用它的发射器（可以两层：一层主干 + 分叉、
+ * 一层只在回击时加亮主干，两层是同一个形状）。
+ */
+export interface VfxBoltDef {
+  id: string;
+  /** `sky` = 从天上劈到落点；`surface` = 从落点贴着水面 / 地面爬开的一圈电弧 */
+  kind: 'sky' | 'surface';
+  /** 形状种子（与实例种子混合），缺省 0 */
+  seed?: number;
+  sky?: VfxBoltSkyShapeDef;
+  surface?: VfxBoltSurfaceShapeDef;
+  light?: VfxBoltLightDef;
+  impact?: VfxBoltImpactDef;
+}
+
+/** 落点表面的种类（发射器 `onSurface` 用）：`water` = 表面材质区里的水面；`ground` = 其它（含湿地） */
+export type VfxSurfaceKind = 'ground' | 'water';
 
 export type VfxSpawnShapeDef =
   | { kind: 'point' }
@@ -4588,6 +4970,11 @@ export interface VfxEmitterDef {
   /** 薄片的气动、接触与形变参数。发射、外部输入和补回由 simulation 独立配置。 */
   plate?: VfxPlateDef;
   sound?: VfxSoundDef;
+  /**
+   * 只在这些落点表面上发（实例锚点落在布置库「表面材质区」的水面里 = `water`，否则 `ground`）。
+   * 不写 = 哪都发。落雷的碎石只在地上、水花只在水上，就靠它。
+   */
+  onSurface?: VfxSurfaceKind[];
 }
 
 /** 发射、环境输入、运动模型和回收策略相互独立。
@@ -4793,6 +5180,19 @@ export interface VfxBeamDef {
   sort?: VfxBeamSort;
 }
 
+/** 雷电样式生成器（见 {@link VfxEffectDef.generator}；形状闸门在 `tools/vfx_workbench/assets.py generator_problems`） */
+export interface VfxGeneratorDef {
+  kind: 'lightning';
+  /** 样式 id（`vfx_lightning_styles.json` 的 `styles[].id`） */
+  style: string;
+  /** 形状种子：同一套样式、不同种子 = 不同的一道雷 */
+  seed: number;
+  /** 同组的几份效果在工作台里一起换样式（雷符的 10 道雷 = `雷符天雷`） */
+  group?: string;
+  /** 当前写进效果的那几层是按哪个哈希套用的（样式参数 + 种子 + 生成器版本） */
+  built?: string;
+}
+
 /** 效果资产：`public/assets/data/vfx/<id>.json`，`id == 文件名`。 */
 export interface VfxEffectDef {
   id: string;
@@ -4803,6 +5203,14 @@ export interface VfxEffectDef {
   emitters: VfxEmitterDef[];
   /** 光柱（体积光），见 {@link VfxBeamDef}。缺省没有 */
   beams?: VfxBeamDef[];
+  /** 雷（现画的折线 + 分叉），见 {@link VfxBoltDef}；由 `appearance.bolt` 引用它的发射器来画。缺省没有 */
+  bolts?: VfxBoltDef[];
+  /**
+   * 生成器（粒子工作台的工作态，**运行时忽略**，同 `authoring`）：这份效果里的 `bolts` 与画它们的那几层发射器
+   * （`bolt` / `bolt_stroke`）是按雷电样式库 `assets/data/vfx_lightning_styles.json` 里的一套样式套用的。
+   * 运行时只认 `bolts` 与那几层发射器本身。
+   */
+  generator?: VfxGeneratorDef;
   /** 工作台重开现场用（运行时忽略） */
   authoring?: {
     sceneId?: string;
@@ -4822,8 +5230,25 @@ export interface VfxEffectDef {
  */
 export interface VfxPlacementLibrary {
   _comment?: string;
+  /**
+   * 没画表面材质区的地方用的材质（**全局一份，所有场景**；2026-09-24 制作人：雷是任意地方随机放的，不能靠逐个场景圈区域）。
+   * 落雷的灯（打了反光位的）在任何地方都按它照出反光；表面材质区只标真正不一样的地方（水、石板地）。缺省见 `surfaceMask.SURFACE_DEFAULTS.ground`。
+   */
+  defaultSurface?: VfxSurfaceDefaultsDef;
   /** 键 = 场景 id */
   scenes: Record<string, VfxScenePlacements>;
+}
+
+/** 全局缺省表面材质（`VfxPlacementLibrary.defaultSurface`）：每个量不写 = 运行时缺省 */
+export interface VfxSurfaceDefaultsDef {
+  /** 反光多强（0..1），缺省 1 */
+  reflect?: number;
+  /** 地面多粗糙（0..1），缺省 0.45 */
+  roughness?: number;
+  /** 细节起伏（程序化细节法线的强度，0..2；0 = 光滑一片），所有地面与湿地共用，缺省 1 */
+  detail?: number;
+  /** 水面雨纹（雨点打出的涟漪与细浪的强度，0..2），所有水面共用，缺省 1 */
+  ripple?: number;
 }
 
 export interface VfxScenePlacements {
@@ -4831,6 +5256,25 @@ export interface VfxScenePlacements {
   base?: VfxInstanceDef[];
   /** 键 = 时段 id（必须是该场景 `timeVariants` 的键），值 = 那套外观的布置 */
   variants?: Record<string, VfxInstanceDef[]>;
+  /**
+   * 表面材质区（2026-09-24）：这张图哪里是水面、哪里是湿地。**整张场景一份**（水不随时段变，
+   * 落雷只在雨夜发生），不分 base / variants。用在两处：落雷的灯在这些地方照出反光；
+   * 落点在水面里 ⇒ 发射器 `onSurface` 取 `water`（水花 / 水面电弧），否则 `ground`（碎石 / 扬尘）。
+   */
+  surfaces?: VfxSurfaceRegionDef[];
+}
+
+/** 一块表面材质区（画面坐标多边形，wu） */
+export interface VfxSurfaceRegionDef {
+  id: string;
+  kind: 'water' | 'wet';
+  polygon: [number, number][];
+  /** 反光多强（0..1），缺省 1 */
+  reflect?: number;
+  /** 表面多粗糙（0..1；越大反光越散、亮痕越短越宽），缺省 水面 0.08 / 湿地（石板、积水的路面）0.25 */
+  roughness?: number;
+  /** 边缘羽化宽（画面 wu），缺省 24 */
+  feather?: number;
 }
 
 /**

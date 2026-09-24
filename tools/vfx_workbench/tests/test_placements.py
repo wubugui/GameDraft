@@ -133,6 +133,35 @@ def test_scope_save_detects_external_edit_without_blocking_unrelated_scopes(worl
     assert vp.rows_for(placements.save_changes(stale, saved)[1], 'hill', '') == []
 
 
+def test_scope_save_writes_a_normalize_fixed_point(world) -> None:
+    """save_changes 写出去的必须是 ``normalize_library`` 的不动点（真库 09-21 就因此失配过：
+    崖墓入口原来只有 variants，工作台给它加 base 后落成了 variants 在前）。未编辑的场景逐字不动。"""
+    placements._write(vp.dumps({"_comment": "c", "scenes": {
+        "hill": {"variants": {"夜": [_row("n")]}},
+        "room": {"base": [_row("smoke", anchor={"x": 15, "y": 30, "h": 205})], "future": {"keep": 7}},
+    }}))
+
+    def disk() -> tuple[bytes, dict]:
+        raw = placements.lib_path().read_bytes()
+        return raw, json.loads(raw.decode("utf-8"))
+
+    placements.save_changes({"scenes": {"hill": {"base": [_row("b")]}}})
+    raw, doc = disk()
+    assert list(doc["scenes"]["hill"]) == ["base", "variants"], "只有 variants 的场景加上 base：base 要在前"
+    assert vp.dumps(vp.normalize_library(doc)) == raw
+    assert doc["scenes"]["room"] == {"base": [_row("smoke", anchor={"x": 15, "y": 30, "h": 205})], "future": {"keep": 7}}
+
+    placements.save_changes({"scenes": {"hill": {"variants": {"夜": []}}}})
+    raw, doc = disk()
+    assert doc["scenes"]["hill"] == {"base": [_row("b")]}, "清空最后一个时段份：连 variants 一起剥，不留 {\"夜\": []}"
+    assert vp.dumps(vp.normalize_library(doc)) == raw
+
+    placements.save_changes({"scenes": {"hill": {"base": []}}})
+    raw, doc = disk()
+    assert "hill" not in doc["scenes"], "一份都不剩的场景整条剥掉"
+    assert vp.dumps(vp.normalize_library(doc)) == raw
+
+
 def test_save_rejects_bad_shapes_and_writes_nothing(world) -> None:
     for bad, msg in (
         ({"scenes": {"hill": {"base": [_row(timePhases=["夜"])]}}}, "timePhases"),
@@ -569,7 +598,7 @@ def test_explicit_empty_scope_deletes_only_that_scope_and_empty_patch_does_not_w
     result = post("/api/placements/save", {"changes": {"scenes": {"hill": {"base": []}}}})
     assert result["ok"], result
     saved = get("/api/placements")["doc"]
-    assert saved["scenes"]["hill"]["base"] == []
+    assert "base" not in saved["scenes"]["hill"], "清空的份整条剥掉（没配 = 没有，不留空壳）"
     assert saved["scenes"]["room"] == original["scenes"]["room"]
     assert saved["scenes"]["hill"].get("variants") == original["scenes"]["hill"].get("variants")
     stamp = placements.lib_path().stat().st_mtime_ns

@@ -1,11 +1,11 @@
 ---
 name: editor-tools-iteration
-description: Guides safe, pattern-based iteration on GameDraft PySide editor tools (tools/editor, graph_editor, scene_depth_editor, etc.). Use when the user asks to 迭代编辑器,改编辑器, 改策划工具, Action编辑器, 表单, PySide, Qt 编辑器, or any change under tools/editor or related desktop editors. Emphasizes data integrity, selector-based fields, sensible list/button/input layouts (reorder, context menu, no overstretched widgets), grouped UI with collapsible sections default-collapsed, and post-change save/regression review.
+description: Guides safe, pattern-based iteration on GameDraft PySide editor tools (tools/editor, graph_editor, etc.). Use when the user asks to 迭代编辑器,改编辑器, 改策划工具, Action编辑器, 表单, PySide, Qt 编辑器, or any change under tools/editor or related desktop editors. Emphasizes data integrity, selector-based fields, sensible list/button/input layouts (reorder, context menu, no overstretched widgets), grouped UI with collapsible sections default-collapsed, and post-change save/regression review.
 ---
 
 # GameDraft 编辑器工具迭代
 
-在修改 `GameDraft/tools/editor`、`tools/graph_editor`、`tools/scene_depth_editor` 等基于 PySide 的编辑器时，**必须先读本技能再改代码**。
+在修改 `GameDraft/tools/editor`、`tools/graph_editor` 等基于 PySide 的编辑器时，**必须先读本技能再改代码**。
 
 > 域规范与知识卡（先查再动手）：`agent_docs/editor-tools/norms.md`；数据同步范式 `agent_docs/editor-tools/mechanisms/editor-data-sync-paradigm.md`、写盘与脏桶 `save-all-dirty-buckets.md`、关闭路径 `close-path-flush-discard.md`、新面板接入 `mainwindow-editor-hooks.md`、控件保值 `shared-widget-value-fidelity.md`；收尾验证门 `agent_docs/editor-tools/recipes/editor-change-verification-gate.md`。
 

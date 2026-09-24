@@ -307,8 +307,8 @@
       "id": "hs_歇脚棚",
       "type": "inspect",
       "label": "歇脚棚 · 把包袱放下",
-      "x": 886.63,
-      "y": 247.09,
+      "x": 470.0,
+      "y": 845.0,
       "interactionRange": 116.28,
       "conditions": [
         {

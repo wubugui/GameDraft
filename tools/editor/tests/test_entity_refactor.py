@@ -37,7 +37,7 @@ from tools.editor.shared.entity_refactor import (
 # 必须在 ENTITY_REF_PARAMS 登记（新 action 漏登记 → 重构/校验双双看不见它）。
 _REF_PARAM_NAMES = frozenset({
     "target", "npcId", "faceTarget", "targetScene", "targetSpawnPoint",
-    "entityId", "hotspotId", "ownerId", "zoneId", "scriptedNpcId",
+    "entityId", "hotspotId", "ownerId", "zoneId", "scriptedNpcId", "fallbackSurfaceZone",
 })
 
 # 参数名撞车但语义不是场景实体引用的豁免（临时演员 id / 定义自身）
@@ -543,9 +543,11 @@ def test_zone_move_rewrites_qualified_and_trace(model: FakeModel) -> None:
 
 
 def test_zone_rename_rewrites_qualified_and_trace(model: FakeModel) -> None:
+    model.scenes["甲村"]["onEnter"] = [_act("strikeThreat", fallbackSurfaceZone="z_门口")]
     snap = copy.deepcopy(model.scenes)
     summary = rename_entity(model, "甲村", "zone", "z_门口", "z_大门")
     assert model.quests[0]["onComplete"][1]["params"]["zoneId"] == "z_大门"
+    assert model.scenes["甲村"]["onEnter"][0]["params"]["fallbackSurfaceZone"] == "z_大门"
     zone = next(z for z in model.scenes["甲村"]["zones"] if z["id"] == "z_大门")
     emit = next(a for a in zone["onEnter"] if a["type"] == "emitNarrativeSignal")
     assert emit["params"]["sourceId"] == "甲村:z_大门"

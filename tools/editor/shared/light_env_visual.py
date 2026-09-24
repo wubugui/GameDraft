@@ -16,11 +16,47 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-__all__ = ["LightEnvVisual", "light_env_visual"]
+from .contact_ao import SPREAD_DEFAULT as _CONTACT_AO_SPREAD_DEFAULT
+
+__all__ = ["LightEnvVisual", "light_env_visual", "contact_preview_axes"]
 
 #: 影长系数的夹取区间（与运行时 resolveLightEnv 一致）
 SHADOW_LEN_MIN = 0.3
 SHADOW_LEN_MAX = 1.6
+
+#: 接触 AO（胶囊 AO）简单 AO 的晕开范围缺省（遮挡高度占身高的比例）——取 `contact_ao` 的那一份，
+#: 那边与运行时 `src/rendering/contactAo.ts` 对账（test_npc_contact_shadow_form）。预览画的是缺省晕开。
+CONTACT_NEAR_FIELD = _CONTACT_AO_SPREAD_DEFAULT
+#: 仅预览用：站立人物贴地那一截的宽度约占身高的比例（37 套角色图集实测 0.16~0.22）。
+#: 运行时不用它——那边直接读剪影脚底那一截；预览画在曲线控制点上，没有具体的人可读。
+CONTACT_PREVIEW_FOOT_FRAC = 0.18
+#: 仅预览用：本作相机俯角 45°，竖直世界高投屏缩 cos45、地面纵深投屏缩 sin45。
+_PREVIEW_COS = _PREVIEW_SIN = math.sqrt(0.5)
+
+
+def _omni(x: float, r: float, he: float) -> float:
+    """胶囊 AO 无方向部分（与运行时 CONTACT_FRAG 同式，贴身体表面归一到 1）。"""
+    return (2 / math.pi) * math.asin(min(1.0, r / max(x, 1e-6))) * he * he / (he * he + x * x)
+
+
+def contact_preview_axes(ref_height: float, contact_size: float) -> tuple[float, float]:
+    """接触阴影无方向部分在一个代表角色（屏幕高 ref_height）脚下、浓度落到约 1/10 的那一圈的屏幕半轴 (横, 纵)。
+
+    有方向部分不在这里——画布上每个控制点本来就画着沿光反方向的影迹线。
+    """
+    h_world = ref_height / _PREVIEW_COS
+    r = 0.5 * CONTACT_PREVIEW_FOOT_FRAC * ref_height * max(contact_size, 0.0)
+    if r <= 0:
+        return 0.0, 0.0
+    he = CONTACT_NEAR_FIELD * h_world
+    lo, hi = r, r + 10 * h_world                     # _omni 在 x>=r 上单调降
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        if _omni(mid, r, he) > 0.1:
+            lo = mid
+        else:
+            hi = mid
+    return hi, hi * _PREVIEW_SIN
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,7 +130,8 @@ def light_env_visual(env: object) -> LightEnvVisual:
         shadow_len=max(SHADOW_LEN_MIN, min(SHADOW_LEN_MAX, cot)),
         darkness=max(0.0, min(1.0, _num(shadow, "darkness", 0.4))),
         contact_size=max(0.0, _num(shadow, "contactSize", 1.0)),
-        contact=max(0.0, min(1.0, _num(shadow, "contact", 0.45))),
+        # 缺省 0.75 = 运行时 lightEnv 基线的 shadow.contact（0.45 是角色 AO 的 ao.contact，别混）
+        contact=max(0.0, min(1.0, _num(shadow, "contact", 0.75))),
         intensity=_num(key, "intensity", 1.0),
         key_rgb=_rgb(key.get("color"), (255, 247, 235)),
         ambient_rgb=_rgb(ambient.get("color"), (140, 153, 184)),

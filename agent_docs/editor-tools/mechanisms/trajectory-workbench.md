@@ -35,7 +35,7 @@ verified_by:
   - tools/trajectory_workbench/viewer/tests/math.test.cjs
   - tools/trajectory_workbench/viewer/tests/selftest.js
   - tools/editor/tests/test_trajectory_action_registration.py
-last_governed: 2026-09-12
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -153,7 +153,8 @@ last_governed: 2026-09-12
   不然美术在几十条资产之间看形状时每次都被问"丢弃?",迟早条件反射点丢弃。`Delete` 在抛体段上只在"整段"范围删段,否则只提示。
 - **参考层**:其它段曲线、幽灵、透视缩放、场景 NPC(带首帧图)、障碍(壳比地面近的像素染红 = 抛体会撞的地方)、网格、透视轴。
 **它是桌面应用**(制作人 2026-09-04 定死):入口只有桌面窗口(`tools/desktop_shell`:纯内存 profile、
-NoCache、NoPersistentCookies、服务端 `no-store/no-cache/Pragma/Expires` 三件套),不走系统浏览器、不留任何浏览器缓存。
+NoCache、NoPersistentCookies、服务端 `no-store/no-cache/Pragma/Expires` 三件套),不走系统浏览器、不留任何浏览器缓存
+(全仓口径见 [desktop-window-no-cache](../../meta/mechanisms/desktop-window-no-cache.md))。
 `--serve` 只是给无头验证与自动化的裸服务,不会开浏览器。单实例;第二次 `--open <id>` 把已开着的窗口切到那条资产。
 
 **关窗 / 刷新保护在壳里**(2026-09-14,`_ShellWindow.closeEvent` + `_guard_unsaved`,F5 / Ctrl+R 同一条):壳用 `runJavaScript`
@@ -298,8 +299,13 @@ authoring          sceneId / background(场景曲线才有)/ entity(预览实体
 - **播放心跳只在播放时转**(rAF 不常驻):页不可见时不烧 CPU,无头截图也能"安定"。
 - **`--serve` 在 `.claude/launch.json` 里用 `node scripts/pytool.cjs` 起**(预览面板找不到 `sh`);
   被 `preview_stop` 杀掉的是 node 壳,python 子进程可能留着占端口——见记忆里"TaskStop 留下 python 子进程"。
-- **`test_coin_roll_anchor.py` 拿的是真实资产 `coin_drop_demo`**:帧相对曲线起点后不等式不变(y 与 sortY 同减起点 y)。2026-09-11 起它在制作人手改的
-  那份资产上红(末帧沉地 1.14 wu,迁移前后一样),是数据问题不是烘焙机问题。
+- **改预览实体的尺寸不会回写资产**:`source.bake.restHeight / contactOffsetY` 只在未设过时从实体取一次,手绘控制点的
+  `h` 又是**绝对支点高**,都不跟着变;工作台也**不提示**两边已对不上。实体改了尺寸,要回工作台点「取自预览实体」
+  并把手绘点 `h` 一并下移,再重烘——**光重烘修不好**(烘焙机忠实地烘出错参数)。
+- **`test_coin_roll_anchor.py` 拿的是真实资产 `coin_drop_demo`**:帧相对曲线起点后不等式不变(y 与 sortY 同减起点 y)。
+  它从 2026-09-11 起红,是**数据问题不是烘焙机问题**,成因两件叠加:手绘段末控制点 `h` 低于 `restHeight`(支点压进地面),
+  加上场景里预览铜钱 `displayImage` 从 14 wu 缩到 7 wu 而资产尺寸参数仍是 14 wu 那份(即上一条);
+  该测试只查沉地不查浮空,贴地帧上反而浮空的那一半它看不见。
 
 ## 怎么验证
 

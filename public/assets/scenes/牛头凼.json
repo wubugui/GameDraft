@@ -31,6 +31,30 @@
       "castShadow": false,
       "autoTrigger": true,
       "scale": 1.03
+    },
+    {
+      "id": "H_牛头凼_阴气",
+      "type": "inspect",
+      "label": "牛头阴气",
+      "x": 456.0,
+      "y": 110.0,
+      "visible": false,
+      "interactionRange": 0,
+      "data": {
+        "text": "牛头朝到凼凼，阴飕飕的。"
+      },
+      "healthThreat": {
+        "id": "niutoudang_yin",
+        "kind": "yin",
+        "boundaryRadius": 2000,
+        "damageRadius": 2000,
+        "attackPerSecond": 4,
+        "fireResponse": "ignore",
+        "nightOnly": false,
+        "affectsWhenHidden": true,
+        "duringPresentation": true,
+        "deathNoteId": "yin_boundary_death"
+      }
     }
   ],
   "npcs": [
@@ -110,6 +134,25 @@
         "visible": true,
         "style": "flare"
       }
+    },
+    {
+      "type": "runActionsIf",
+      "params": {
+        "condition": {
+          "narrative": "wrapper_崖墓入口_认路",
+          "state": "未去牛头凼"
+        },
+        "actions": [
+          {
+            "type": "emitNarrativeSignal",
+            "params": {
+              "signal": "牛头凼_进场",
+              "sourceType": "scene",
+              "sourceId": "wrapper_崖墓入口_认路"
+            }
+          }
+        ]
+      }
     }
   ],
   "depthConfig": {
@@ -154,20 +197,20 @@
       0,
       -0.25
     ],
-    "speed": 400,
+    "speed": 6000,
     "gust": {
-      "amount": 0.8,
+      "amount": 0.3,
       "period": 7
     },
     "veer": 14,
     "turbulence": {
-      "intensity": 0.35,
+      "intensity": 0.15,
       "scale": 140
     },
     "roughness": 1,
     "gain": {
-      "vfx": 1,
-      "sway": 1
+      "vfx": 0.15,
+      "sway": 0.15
     }
   },
   "lighting": {

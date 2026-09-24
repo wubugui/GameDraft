@@ -115,6 +115,9 @@
       "y": 362.0,
       "interactionRange": 0,
       "castShadow": false,
+      "contactAo": {
+        "enabled": false
+      },
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
       "initialAnimState": "idle"
     },
@@ -125,6 +128,9 @@
       "y": 262.0,
       "interactionRange": 0,
       "castShadow": false,
+      "contactAo": {
+        "enabled": false
+      },
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
       "initialAnimState": "idle"
     },
@@ -135,6 +141,9 @@
       "y": 385.0,
       "interactionRange": 0,
       "castShadow": false,
+      "contactAo": {
+        "enabled": false
+      },
       "animFile": "/resources/runtime/animation/fx_teapot_steam/anim.json",
       "initialAnimState": "idle"
     },
@@ -145,6 +154,9 @@
       "y": 31.0,
       "interactionRange": 0,
       "castShadow": false,
+      "contactAo": {
+        "enabled": false
+      },
       "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
       "initialAnimState": "idle"
     },
@@ -155,6 +167,9 @@
       "y": 90.0,
       "interactionRange": 0,
       "castShadow": false,
+      "contactAo": {
+        "enabled": false
+      },
       "animFile": "/resources/runtime/animation/fx_lantern_glow/anim.json",
       "initialAnimState": "idle"
     },

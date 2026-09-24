@@ -94,6 +94,9 @@ vec3 entitySceneLightsE(vec3 q, vec3 n) {
             vec3 hu, hv;
             litAreaAxes(normalize(D.xyz), C.z, C.w, C.y, hu, hv);
             E += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, 1.0);
+        } else if (kind == LC_LINE) {
+            // 落雷的雷身（运行时线光）：雷旁边的人与粒子被沿着整道雷身照亮
+            E += lcLineLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, 1.0);
         } else {
             E += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
         }

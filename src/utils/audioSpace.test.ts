@@ -6,6 +6,7 @@ import {
   isSuspectWuPerQUnit,
   makeListener,
   planarResolver,
+  resolveSurfaceWorld,
   resolveWorld,
   type AudioSpaceResolver,
 } from './audioSpace';
@@ -177,6 +178,24 @@ describe('透视纵深重整（perspectiveScale 进音频距离）', () => {
       expect(h[1] - g[1]).toBeCloseTo(150, 6);
       expect(h[0]).toBeCloseTo(g[0], 6);
       expect(h[2]).toBeCloseTo(g[2], 6);
+
+      // A visible shell hit is not a ground contact. Preserve its actual 3D displacement,
+      // including the 220wu height, at both f=2 and f=0.5. Neither sampled input may change.
+      const contact = { contactX: x, contactY: 1125, heightWu: 0 };
+      const groundWorld = resolveWorld(FIELD, contact);
+      const surface: Vec3 = [groundWorld[0] + 25, groundWorld[1] + 220, groundWorld[2] - 40];
+      const before = [...surface];
+      const resolved = resolveSurfaceWorld(FIELD_P, { ...contact, heightWu: 60 }, { world: surface, groundWorld });
+      expect(resolved[0] - g[0]).toBeCloseTo(25, 6);
+      expect(resolved[1] - g[1]).toBeCloseTo(280, 6);
+      expect(resolved[2] - g[2]).toBeCloseTo(-40, 6);
+      expect(surface).toEqual(before);
+      const orthographic = resolveSurfaceWorld(FIELD, { ...contact, heightWu: 60 }, { world: surface, groundWorld });
+      expect(orthographic[0]).toBeCloseTo(surface[0], 6);
+      expect(orthographic[1]).toBeCloseTo(surface[1] + 60, 6);
+      expect(orthographic[2]).toBeCloseTo(surface[2], 6);
+      expect(resolveSurfaceWorld(FIELD_P, contact, { world: groundWorld, groundWorld })).toEqual(g);
+      expect(resolveSurfaceWorld(FIELD_P, contact)).toEqual(g);
     }
   });
 

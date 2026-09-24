@@ -179,6 +179,13 @@ class ProjectPaths:
         主编辑器对它**只读**（候选 / 校验），不进脏桶、不进 save_all。"""
         return self.data_dir / "vfx"
 
+    @property
+    def breathing_dir(self) -> Path:
+        """呼吸图资产目录（`<id>.json` 一文件一张图，id = 文件名；与 TS `TEXT_URLS.breathingDir` 同口径）。
+        唯一写者是呼吸工作台；主编辑器对它**只读**（`showBreathingOverlay.breathing` 的候选 / 校验），
+        不进脏桶、不进 save_all。"""
+        return self.data_dir / "breathing"
+
     # ---------------------------------------------------- runtime media tree
     @property
     def runtime_images_dir(self) -> Path:

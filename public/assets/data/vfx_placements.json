@@ -25,6 +25,188 @@
       ]
     },
     "崖墓入口": {
+      "base": [
+        {
+          "id": "pml_atmo_cliff_mist_1",
+          "effect": "pml_cliff_mist_streak",
+          "anchor": {
+            "x": 41.77,
+            "y": 132.43,
+            "h": 37.0,
+            "surface": "shell"
+          },
+          "seed": 1542719,
+          "countScale": 0.62
+        },
+        {
+          "id": "pml_atmo_cliff_mist_2",
+          "effect": "pml_cliff_mist",
+          "anchor": {
+            "x": 98.73,
+            "y": 256.32,
+            "h": 47.3,
+            "surface": "shell"
+          },
+          "seed": 1542898,
+          "countScale": 0.61
+        },
+        {
+          "id": "pml_atmo_ground_mist_1",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 387.32,
+            "y": 401.57,
+            "h": 12.9,
+            "surface": "shell"
+          },
+          "seed": 1542830,
+          "countScale": 0.79
+        },
+        {
+          "id": "pml_atmo_ground_mist_2",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 364.54,
+            "y": 316.13,
+            "h": 14.9,
+            "surface": "shell"
+          },
+          "seed": 1543009,
+          "countScale": 0.58
+        },
+        {
+          "id": "pml_atmo_ground_mist_3",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 341.76,
+            "y": 213.6,
+            "h": 25.5,
+            "surface": "shell"
+          },
+          "seed": 1543188,
+          "countScale": 0.66
+        },
+        {
+          "id": "pml_atmo_ground_mist_4",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 349.35,
+            "y": 119.62,
+            "h": 20.7,
+            "surface": "shell"
+          },
+          "seed": 1543367,
+          "countScale": 0.81
+        },
+        {
+          "id": "pml_atmo_ground_mist_5",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 417.7,
+            "y": 46.99,
+            "h": 12.4,
+            "surface": "shell"
+          },
+          "seed": 1543546,
+          "countScale": 0.57
+        },
+        {
+          "id": "pml_atmo_ledge_mist_1",
+          "effect": "pml_ledge_mist_streak",
+          "anchor": {
+            "x": 174.68,
+            "y": 273.41,
+            "h": 17.0,
+            "surface": "shell"
+          },
+          "seed": 1542941,
+          "countScale": 0.62
+        },
+        {
+          "id": "pml_atmo_ledge_mist_2",
+          "effect": "pml_ledge_mist",
+          "anchor": {
+            "x": 546.81,
+            "y": 367.39,
+            "h": 23.6,
+            "surface": "shell"
+          },
+          "seed": 1543120,
+          "countScale": 0.73
+        },
+        {
+          "id": "pml_atmo_dust_1",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 372.14,
+            "y": 273.41,
+            "h": 33.4,
+            "surface": "shell"
+          },
+          "seed": 1543052,
+          "countScale": 0.61
+        },
+        {
+          "id": "pml_atmo_dust_2",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 356.95,
+            "y": 149.52,
+            "h": 46.0,
+            "surface": "shell"
+          },
+          "seed": 1543231,
+          "countScale": 0.87
+        },
+        {
+          "id": "pml_atmo_dry_leaves_1",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 334.16,
+            "y": 333.22,
+            "h": 55.2,
+            "surface": "shell"
+          },
+          "seed": 1543163,
+          "countScale": 0.77
+        },
+        {
+          "id": "pml_atmo_dry_leaves_2",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 394.92,
+            "y": 93.98,
+            "h": 35.7,
+            "surface": "shell"
+          },
+          "seed": 1543342,
+          "countScale": 0.71
+        },
+        {
+          "id": "pml_atmo_sparse_drip_1",
+          "effect": "pml_sparse_drip",
+          "anchor": {
+            "x": 546.81,
+            "y": 106.8,
+            "h": 22.0,
+            "surface": "shell"
+          },
+          "seed": 1543274,
+          "countScale": 1.03
+        },
+        {
+          "id": "pml_atmo_sparse_drip_2",
+          "effect": "pml_sparse_drip",
+          "anchor": {
+            "x": 615.16,
+            "y": 170.88,
+            "h": 55.4,
+            "surface": "shell"
+          },
+          "seed": 1543453,
+          "countScale": 0.74
+        }
+      ],
       "variants": {
         "夜": [
           {
@@ -35,6 +217,368 @@
               "y": 299,
               "h": 40
             }
+          },
+          {
+            "id": "pml_atmo_cliff_mist_1",
+            "effect": "pml_cliff_mist_streak_night",
+            "anchor": {
+              "x": 41.77,
+              "y": 132.43,
+              "h": 37.0,
+              "surface": "shell"
+            },
+            "seed": 1542719,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_cliff_mist_2",
+            "effect": "pml_cliff_mist_night",
+            "anchor": {
+              "x": 98.73,
+              "y": 256.32,
+              "h": 47.3,
+              "surface": "shell"
+            },
+            "seed": 1542898,
+            "countScale": 0.61
+          },
+          {
+            "id": "pml_atmo_ground_mist_1",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 387.32,
+              "y": 401.57,
+              "h": 12.9,
+              "surface": "shell"
+            },
+            "seed": 1542830,
+            "countScale": 0.79
+          },
+          {
+            "id": "pml_atmo_ground_mist_2",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 364.54,
+              "y": 316.13,
+              "h": 14.9,
+              "surface": "shell"
+            },
+            "seed": 1543009,
+            "countScale": 0.58
+          },
+          {
+            "id": "pml_atmo_ground_mist_3",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 341.76,
+              "y": 213.6,
+              "h": 25.5,
+              "surface": "shell"
+            },
+            "seed": 1543188,
+            "countScale": 0.66
+          },
+          {
+            "id": "pml_atmo_ground_mist_4",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 349.35,
+              "y": 119.62,
+              "h": 20.7,
+              "surface": "shell"
+            },
+            "seed": 1543367,
+            "countScale": 0.81
+          },
+          {
+            "id": "pml_atmo_ground_mist_5",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 417.7,
+              "y": 46.99,
+              "h": 12.4,
+              "surface": "shell"
+            },
+            "seed": 1543546,
+            "countScale": 0.57
+          },
+          {
+            "id": "pml_atmo_ledge_mist_1",
+            "effect": "pml_ledge_mist_streak_night",
+            "anchor": {
+              "x": 174.68,
+              "y": 273.41,
+              "h": 17.0,
+              "surface": "shell"
+            },
+            "seed": 1542941,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_ledge_mist_2",
+            "effect": "pml_ledge_mist_night",
+            "anchor": {
+              "x": 546.81,
+              "y": 367.39,
+              "h": 23.6,
+              "surface": "shell"
+            },
+            "seed": 1543120,
+            "countScale": 0.73
+          },
+          {
+            "id": "pml_atmo_dust_1",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 372.14,
+              "y": 273.41,
+              "h": 33.4,
+              "surface": "shell"
+            },
+            "seed": 1543052,
+            "countScale": 0.61
+          },
+          {
+            "id": "pml_atmo_dust_2",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 356.95,
+              "y": 149.52,
+              "h": 46.0,
+              "surface": "shell"
+            },
+            "seed": 1543231,
+            "countScale": 0.87
+          },
+          {
+            "id": "pml_atmo_dry_leaves_1",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 334.16,
+              "y": 333.22,
+              "h": 55.2,
+              "surface": "shell"
+            },
+            "seed": 1543163,
+            "countScale": 0.77
+          },
+          {
+            "id": "pml_atmo_dry_leaves_2",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 394.92,
+              "y": 93.98,
+              "h": 35.7,
+              "surface": "shell"
+            },
+            "seed": 1543342,
+            "countScale": 0.71
+          },
+          {
+            "id": "pml_atmo_sparse_drip_1",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 546.81,
+              "y": 106.8,
+              "h": 22.0,
+              "surface": "shell"
+            },
+            "seed": 1543274,
+            "countScale": 1.03
+          },
+          {
+            "id": "pml_atmo_sparse_drip_2",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 615.16,
+              "y": 170.88,
+              "h": 55.4,
+              "surface": "shell"
+            },
+            "seed": 1543453,
+            "countScale": 0.74
+          }
+        ],
+        "午": [
+          {
+            "id": "pml_atmo_cliff_mist_1",
+            "effect": "pml_cliff_mist_streak",
+            "anchor": {
+              "x": 41.77,
+              "y": 132.43,
+              "h": 37.0,
+              "surface": "shell"
+            },
+            "seed": 1542719,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_cliff_mist_2",
+            "effect": "pml_cliff_mist",
+            "anchor": {
+              "x": 98.73,
+              "y": 256.32,
+              "h": 47.3,
+              "surface": "shell"
+            },
+            "seed": 1542898,
+            "countScale": 0.61
+          },
+          {
+            "id": "pml_atmo_ground_mist_1",
+            "effect": "pml_ground_mist_streak",
+            "anchor": {
+              "x": 387.32,
+              "y": 401.57,
+              "h": 12.9,
+              "surface": "shell"
+            },
+            "seed": 1542830,
+            "countScale": 0.79
+          },
+          {
+            "id": "pml_atmo_ground_mist_2",
+            "effect": "pml_ground_mist",
+            "anchor": {
+              "x": 364.54,
+              "y": 316.13,
+              "h": 14.9,
+              "surface": "shell"
+            },
+            "seed": 1543009,
+            "countScale": 0.58
+          },
+          {
+            "id": "pml_atmo_ground_mist_3",
+            "effect": "pml_ground_mist_broad",
+            "anchor": {
+              "x": 341.76,
+              "y": 213.6,
+              "h": 25.5,
+              "surface": "shell"
+            },
+            "seed": 1543188,
+            "countScale": 0.66
+          },
+          {
+            "id": "pml_atmo_ground_mist_4",
+            "effect": "pml_ground_mist_streak",
+            "anchor": {
+              "x": 349.35,
+              "y": 119.62,
+              "h": 20.7,
+              "surface": "shell"
+            },
+            "seed": 1543367,
+            "countScale": 0.81
+          },
+          {
+            "id": "pml_atmo_ground_mist_5",
+            "effect": "pml_ground_mist",
+            "anchor": {
+              "x": 417.7,
+              "y": 46.99,
+              "h": 12.4,
+              "surface": "shell"
+            },
+            "seed": 1543546,
+            "countScale": 0.57
+          },
+          {
+            "id": "pml_atmo_ledge_mist_1",
+            "effect": "pml_ledge_mist_streak",
+            "anchor": {
+              "x": 174.68,
+              "y": 273.41,
+              "h": 17.0,
+              "surface": "shell"
+            },
+            "seed": 1542941,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_ledge_mist_2",
+            "effect": "pml_ledge_mist",
+            "anchor": {
+              "x": 546.81,
+              "y": 367.39,
+              "h": 23.6,
+              "surface": "shell"
+            },
+            "seed": 1543120,
+            "countScale": 0.73
+          },
+          {
+            "id": "pml_atmo_dust_1",
+            "effect": "pml_dust",
+            "anchor": {
+              "x": 372.14,
+              "y": 273.41,
+              "h": 33.4,
+              "surface": "shell"
+            },
+            "seed": 1543052,
+            "countScale": 0.61
+          },
+          {
+            "id": "pml_atmo_dust_2",
+            "effect": "pml_dust",
+            "anchor": {
+              "x": 356.95,
+              "y": 149.52,
+              "h": 46.0,
+              "surface": "shell"
+            },
+            "seed": 1543231,
+            "countScale": 0.87
+          },
+          {
+            "id": "pml_atmo_dry_leaves_1",
+            "effect": "pml_dry_leaves",
+            "anchor": {
+              "x": 334.16,
+              "y": 333.22,
+              "h": 55.2,
+              "surface": "shell"
+            },
+            "seed": 1543163,
+            "countScale": 0.77
+          },
+          {
+            "id": "pml_atmo_dry_leaves_2",
+            "effect": "pml_dry_leaves",
+            "anchor": {
+              "x": 394.92,
+              "y": 93.98,
+              "h": 35.7,
+              "surface": "shell"
+            },
+            "seed": 1543342,
+            "countScale": 0.71
+          },
+          {
+            "id": "pml_atmo_sparse_drip_1",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 546.81,
+              "y": 106.8,
+              "h": 22.0,
+              "surface": "shell"
+            },
+            "seed": 1543274,
+            "countScale": 1.03
+          },
+          {
+            "id": "pml_atmo_sparse_drip_2",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 615.16,
+              "y": 170.88,
+              "h": 55.4,
+              "surface": "shell"
+            },
+            "seed": 1543453,
+            "countScale": 0.74
           }
         ]
       }
@@ -60,6 +604,186 @@
             "h": 10,
             "surface": "shell"
           }
+        },
+        {
+          "id": "pml_atmo_cliff_mist_1",
+          "effect": "pml_cliff_mist_streak",
+          "anchor": {
+            "x": 98.31,
+            "y": 434.5,
+            "h": 20.0,
+            "surface": "shell"
+          },
+          "seed": 1587029,
+          "countScale": 0.87
+        },
+        {
+          "id": "pml_atmo_cliff_mist_2",
+          "effect": "pml_cliff_mist",
+          "anchor": {
+            "x": 421.33,
+            "y": 608.3,
+            "h": 65.7,
+            "surface": "shell"
+          },
+          "seed": 1587208,
+          "countScale": 0.62
+        },
+        {
+          "id": "pml_atmo_cliff_mist_3",
+          "effect": "pml_cliff_mist_broad",
+          "anchor": {
+            "x": 814.58,
+            "y": 679.4,
+            "h": 31.8,
+            "surface": "shell"
+          },
+          "seed": 1587387,
+          "countScale": 1.0
+        },
+        {
+          "id": "pml_atmo_cliff_mist_4",
+          "effect": "pml_cliff_mist_streak",
+          "anchor": {
+            "x": 1264.0,
+            "y": 671.5,
+            "h": 50.6,
+            "surface": "shell"
+          },
+          "seed": 1587566,
+          "countScale": 0.89
+        },
+        {
+          "id": "pml_atmo_ground_mist_1",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 168.53,
+            "y": 244.9,
+            "h": 20.7,
+            "surface": "shell"
+          },
+          "seed": 1587140,
+          "countScale": 0.72
+        },
+        {
+          "id": "pml_atmo_ground_mist_2",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 337.07,
+            "y": 339.7,
+            "h": 26.2,
+            "surface": "shell"
+          },
+          "seed": 1587319,
+          "countScale": 1.02
+        },
+        {
+          "id": "pml_atmo_ground_mist_3",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 533.69,
+            "y": 410.8,
+            "h": 24.3,
+            "surface": "shell"
+          },
+          "seed": 1587498,
+          "countScale": 0.76
+        },
+        {
+          "id": "pml_atmo_ground_mist_4",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 730.31,
+            "y": 474.0,
+            "h": 25.9,
+            "surface": "shell"
+          },
+          "seed": 1587677,
+          "countScale": 1.01
+        },
+        {
+          "id": "pml_atmo_ground_mist_5",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 983.11,
+            "y": 529.3,
+            "h": 14.1,
+            "surface": "shell"
+          },
+          "seed": 1587856,
+          "countScale": 0.7
+        },
+        {
+          "id": "pml_atmo_ground_mist_6",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 1221.86,
+            "y": 513.5,
+            "h": 12.8,
+            "surface": "shell"
+          },
+          "seed": 1588035,
+          "countScale": 0.71
+        },
+        {
+          "id": "pml_atmo_dust_1",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 449.42,
+            "y": 347.6,
+            "h": 47.3,
+            "surface": "shell"
+          },
+          "seed": 1587251,
+          "countScale": 1.03
+        },
+        {
+          "id": "pml_atmo_dust_2",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 870.75,
+            "y": 489.8,
+            "h": 19.9,
+            "surface": "shell"
+          },
+          "seed": 1587430,
+          "countScale": 0.69
+        },
+        {
+          "id": "pml_atmo_dust_3",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 1221.86,
+            "y": 489.8,
+            "h": 47.2,
+            "surface": "shell"
+          },
+          "seed": 1587609,
+          "countScale": 0.79
+        },
+        {
+          "id": "pml_atmo_dry_leaves_1",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 561.78,
+            "y": 402.9,
+            "h": 38.9,
+            "surface": "shell"
+          },
+          "seed": 1587362,
+          "countScale": 1.03
+        },
+        {
+          "id": "pml_atmo_dry_leaves_2",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 1137.6,
+            "y": 521.4,
+            "h": 29.2,
+            "surface": "shell"
+          },
+          "seed": 1587541,
+          "countScale": 0.72
         }
       ],
       "variants": {
@@ -83,6 +807,186 @@
               "h": 10,
               "surface": "shell"
             }
+          },
+          {
+            "id": "pml_atmo_cliff_mist_1",
+            "effect": "pml_cliff_mist_streak_night",
+            "anchor": {
+              "x": 98.31,
+              "y": 434.5,
+              "h": 20.0,
+              "surface": "shell"
+            },
+            "seed": 1587029,
+            "countScale": 0.87
+          },
+          {
+            "id": "pml_atmo_cliff_mist_2",
+            "effect": "pml_cliff_mist_night",
+            "anchor": {
+              "x": 421.33,
+              "y": 608.3,
+              "h": 65.7,
+              "surface": "shell"
+            },
+            "seed": 1587208,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_cliff_mist_3",
+            "effect": "pml_cliff_mist_broad_night",
+            "anchor": {
+              "x": 814.58,
+              "y": 679.4,
+              "h": 31.8,
+              "surface": "shell"
+            },
+            "seed": 1587387,
+            "countScale": 1.0
+          },
+          {
+            "id": "pml_atmo_cliff_mist_4",
+            "effect": "pml_cliff_mist_streak_night",
+            "anchor": {
+              "x": 1264.0,
+              "y": 671.5,
+              "h": 50.6,
+              "surface": "shell"
+            },
+            "seed": 1587566,
+            "countScale": 0.89
+          },
+          {
+            "id": "pml_atmo_ground_mist_1",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 168.53,
+              "y": 244.9,
+              "h": 20.7,
+              "surface": "shell"
+            },
+            "seed": 1587140,
+            "countScale": 0.72
+          },
+          {
+            "id": "pml_atmo_ground_mist_2",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 337.07,
+              "y": 339.7,
+              "h": 26.2,
+              "surface": "shell"
+            },
+            "seed": 1587319,
+            "countScale": 1.02
+          },
+          {
+            "id": "pml_atmo_ground_mist_3",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 533.69,
+              "y": 410.8,
+              "h": 24.3,
+              "surface": "shell"
+            },
+            "seed": 1587498,
+            "countScale": 0.76
+          },
+          {
+            "id": "pml_atmo_ground_mist_4",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 730.31,
+              "y": 474.0,
+              "h": 25.9,
+              "surface": "shell"
+            },
+            "seed": 1587677,
+            "countScale": 1.01
+          },
+          {
+            "id": "pml_atmo_ground_mist_5",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 983.11,
+              "y": 529.3,
+              "h": 14.1,
+              "surface": "shell"
+            },
+            "seed": 1587856,
+            "countScale": 0.7
+          },
+          {
+            "id": "pml_atmo_ground_mist_6",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 1221.86,
+              "y": 513.5,
+              "h": 12.8,
+              "surface": "shell"
+            },
+            "seed": 1588035,
+            "countScale": 0.71
+          },
+          {
+            "id": "pml_atmo_dust_1",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 449.42,
+              "y": 347.6,
+              "h": 47.3,
+              "surface": "shell"
+            },
+            "seed": 1587251,
+            "countScale": 1.03
+          },
+          {
+            "id": "pml_atmo_dust_2",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 870.75,
+              "y": 489.8,
+              "h": 19.9,
+              "surface": "shell"
+            },
+            "seed": 1587430,
+            "countScale": 0.69
+          },
+          {
+            "id": "pml_atmo_dust_3",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 1221.86,
+              "y": 489.8,
+              "h": 47.2,
+              "surface": "shell"
+            },
+            "seed": 1587609,
+            "countScale": 0.79
+          },
+          {
+            "id": "pml_atmo_dry_leaves_1",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 561.78,
+              "y": 402.9,
+              "h": 38.9,
+              "surface": "shell"
+            },
+            "seed": 1587362,
+            "countScale": 1.03
+          },
+          {
+            "id": "pml_atmo_dry_leaves_2",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 1137.6,
+              "y": 521.4,
+              "h": 29.2,
+              "surface": "shell"
+            },
+            "seed": 1587541,
+            "countScale": 0.72
           }
         ]
       }
@@ -108,6 +1012,198 @@
             "h": 12,
             "surface": "shell"
           }
+        },
+        {
+          "id": "pml_atmo_cliff_mist_1",
+          "effect": "pml_cliff_mist",
+          "anchor": {
+            "x": 307.1,
+            "y": 690.98,
+            "h": 48.4,
+            "surface": "shell"
+          },
+          "seed": 1587372,
+          "countScale": 0.82
+        },
+        {
+          "id": "pml_atmo_cliff_mist_2",
+          "effect": "pml_cliff_mist_broad",
+          "anchor": {
+            "x": 851.51,
+            "y": 581.05,
+            "h": 61.4,
+            "surface": "shell"
+          },
+          "seed": 1587551,
+          "countScale": 0.82
+        },
+        {
+          "id": "pml_atmo_cliff_mist_3",
+          "effect": "pml_cliff_mist_streak",
+          "anchor": {
+            "x": 1270.28,
+            "y": 478.97,
+            "h": 19.4,
+            "surface": "shell"
+          },
+          "seed": 1587730,
+          "countScale": 0.94
+        },
+        {
+          "id": "pml_atmo_ground_mist_1",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 153.55,
+            "y": 612.46,
+            "h": 12.3,
+            "surface": "shell"
+          },
+          "seed": 1587483,
+          "countScale": 0.66
+        },
+        {
+          "id": "pml_atmo_ground_mist_2",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 348.98,
+            "y": 463.27,
+            "h": 29.3,
+            "surface": "shell"
+          },
+          "seed": 1587662,
+          "countScale": 0.88
+        },
+        {
+          "id": "pml_atmo_ground_mist_3",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 586.28,
+            "y": 400.45,
+            "h": 10.2,
+            "surface": "shell"
+          },
+          "seed": 1587841,
+          "countScale": 0.64
+        },
+        {
+          "id": "pml_atmo_ground_mist_4",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 823.59,
+            "y": 306.23,
+            "h": 13.1,
+            "surface": "shell"
+          },
+          "seed": 1588020,
+          "countScale": 0.82
+        },
+        {
+          "id": "pml_atmo_ground_mist_5",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 1060.89,
+            "y": 196.3,
+            "h": 23.9,
+            "surface": "shell"
+          },
+          "seed": 1588199,
+          "countScale": 0.78
+        },
+        {
+          "id": "pml_atmo_ground_mist_6",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 1200.48,
+            "y": 125.63,
+            "h": 33.3,
+            "surface": "shell"
+          },
+          "seed": 1588378,
+          "countScale": 0.74
+        },
+        {
+          "id": "pml_atmo_ledge_mist_1",
+          "effect": "pml_ledge_mist",
+          "anchor": {
+            "x": 544.4,
+            "y": 518.23,
+            "h": 16.8,
+            "surface": "shell"
+          },
+          "seed": 1587594,
+          "countScale": 0.93
+        },
+        {
+          "id": "pml_atmo_ledge_mist_2",
+          "effect": "pml_ledge_mist_broad",
+          "anchor": {
+            "x": 1088.81,
+            "y": 345.49,
+            "h": 47.0,
+            "surface": "shell"
+          },
+          "seed": 1587773,
+          "countScale": 0.85
+        },
+        {
+          "id": "pml_atmo_dust_1",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 307.1,
+            "y": 471.12,
+            "h": 23.6,
+            "surface": "shell"
+          },
+          "seed": 1587705,
+          "countScale": 0.62
+        },
+        {
+          "id": "pml_atmo_dust_2",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 697.96,
+            "y": 345.49,
+            "h": 47.2,
+            "surface": "shell"
+          },
+          "seed": 1587884,
+          "countScale": 0.91
+        },
+        {
+          "id": "pml_atmo_dust_3",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 1102.77,
+            "y": 196.3,
+            "h": 30.2,
+            "surface": "shell"
+          },
+          "seed": 1588063,
+          "countScale": 0.84
+        },
+        {
+          "id": "pml_atmo_dry_leaves_1",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 390.85,
+            "y": 447.56,
+            "h": 31.0,
+            "surface": "shell"
+          },
+          "seed": 1587816,
+          "countScale": 0.91
+        },
+        {
+          "id": "pml_atmo_dry_leaves_2",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 921.3,
+            "y": 243.41,
+            "h": 54.8,
+            "surface": "shell"
+          },
+          "seed": 1587995,
+          "countScale": 0.97
         }
       ],
       "variants": {
@@ -131,6 +1227,198 @@
               "h": 12,
               "surface": "shell"
             }
+          },
+          {
+            "id": "pml_atmo_cliff_mist_1",
+            "effect": "pml_cliff_mist_night",
+            "anchor": {
+              "x": 307.1,
+              "y": 690.98,
+              "h": 48.4,
+              "surface": "shell"
+            },
+            "seed": 1587372,
+            "countScale": 0.82
+          },
+          {
+            "id": "pml_atmo_cliff_mist_2",
+            "effect": "pml_cliff_mist_broad_night",
+            "anchor": {
+              "x": 851.51,
+              "y": 581.05,
+              "h": 61.4,
+              "surface": "shell"
+            },
+            "seed": 1587551,
+            "countScale": 0.82
+          },
+          {
+            "id": "pml_atmo_cliff_mist_3",
+            "effect": "pml_cliff_mist_streak_night",
+            "anchor": {
+              "x": 1270.28,
+              "y": 478.97,
+              "h": 19.4,
+              "surface": "shell"
+            },
+            "seed": 1587730,
+            "countScale": 0.94
+          },
+          {
+            "id": "pml_atmo_ground_mist_1",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 153.55,
+              "y": 612.46,
+              "h": 12.3,
+              "surface": "shell"
+            },
+            "seed": 1587483,
+            "countScale": 0.66
+          },
+          {
+            "id": "pml_atmo_ground_mist_2",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 348.98,
+              "y": 463.27,
+              "h": 29.3,
+              "surface": "shell"
+            },
+            "seed": 1587662,
+            "countScale": 0.88
+          },
+          {
+            "id": "pml_atmo_ground_mist_3",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 586.28,
+              "y": 400.45,
+              "h": 10.2,
+              "surface": "shell"
+            },
+            "seed": 1587841,
+            "countScale": 0.64
+          },
+          {
+            "id": "pml_atmo_ground_mist_4",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 823.59,
+              "y": 306.23,
+              "h": 13.1,
+              "surface": "shell"
+            },
+            "seed": 1588020,
+            "countScale": 0.82
+          },
+          {
+            "id": "pml_atmo_ground_mist_5",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 1060.89,
+              "y": 196.3,
+              "h": 23.9,
+              "surface": "shell"
+            },
+            "seed": 1588199,
+            "countScale": 0.78
+          },
+          {
+            "id": "pml_atmo_ground_mist_6",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 1200.48,
+              "y": 125.63,
+              "h": 33.3,
+              "surface": "shell"
+            },
+            "seed": 1588378,
+            "countScale": 0.74
+          },
+          {
+            "id": "pml_atmo_ledge_mist_1",
+            "effect": "pml_ledge_mist_night",
+            "anchor": {
+              "x": 544.4,
+              "y": 518.23,
+              "h": 16.8,
+              "surface": "shell"
+            },
+            "seed": 1587594,
+            "countScale": 0.93
+          },
+          {
+            "id": "pml_atmo_ledge_mist_2",
+            "effect": "pml_ledge_mist_broad_night",
+            "anchor": {
+              "x": 1088.81,
+              "y": 345.49,
+              "h": 47.0,
+              "surface": "shell"
+            },
+            "seed": 1587773,
+            "countScale": 0.85
+          },
+          {
+            "id": "pml_atmo_dust_1",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 307.1,
+              "y": 471.12,
+              "h": 23.6,
+              "surface": "shell"
+            },
+            "seed": 1587705,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_dust_2",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 697.96,
+              "y": 345.49,
+              "h": 47.2,
+              "surface": "shell"
+            },
+            "seed": 1587884,
+            "countScale": 0.91
+          },
+          {
+            "id": "pml_atmo_dust_3",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 1102.77,
+              "y": 196.3,
+              "h": 30.2,
+              "surface": "shell"
+            },
+            "seed": 1588063,
+            "countScale": 0.84
+          },
+          {
+            "id": "pml_atmo_dry_leaves_1",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 390.85,
+              "y": 447.56,
+              "h": 31.0,
+              "surface": "shell"
+            },
+            "seed": 1587816,
+            "countScale": 0.91
+          },
+          {
+            "id": "pml_atmo_dry_leaves_2",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 921.3,
+              "y": 243.41,
+              "h": 54.8,
+              "surface": "shell"
+            },
+            "seed": 1587995,
+            "countScale": 0.97
           }
         ]
       }
@@ -157,6 +1445,234 @@
             "h": 12,
             "surface": "shell"
           }
+        },
+        {
+          "id": "pml_atmo_cliff_mist_1",
+          "effect": "pml_cliff_mist_broad",
+          "anchor": {
+            "x": 573.44,
+            "y": 1071.36,
+            "h": 40.3,
+            "surface": "shell"
+          },
+          "seed": 1590172,
+          "countScale": 0.72
+        },
+        {
+          "id": "pml_atmo_cliff_mist_2",
+          "effect": "pml_cliff_mist_streak",
+          "anchor": {
+            "x": 1146.88,
+            "y": 898.56,
+            "h": 62.4,
+            "surface": "shell"
+          },
+          "seed": 1590351,
+          "countScale": 0.67
+        },
+        {
+          "id": "pml_atmo_cliff_mist_3",
+          "effect": "pml_cliff_mist",
+          "anchor": {
+            "x": 1617.92,
+            "y": 737.28,
+            "h": 50.3,
+            "surface": "shell"
+          },
+          "seed": 1590530,
+          "countScale": 0.83
+        },
+        {
+          "id": "pml_atmo_cliff_mist_4",
+          "effect": "pml_cliff_mist_broad",
+          "anchor": {
+            "x": 1945.6,
+            "y": 599.04,
+            "h": 41.3,
+            "surface": "shell"
+          },
+          "seed": 1590709,
+          "countScale": 1.0
+        },
+        {
+          "id": "pml_atmo_ground_mist_1",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 204.8,
+            "y": 1002.24,
+            "h": 13.4,
+            "surface": "shell"
+          },
+          "seed": 1590283,
+          "countScale": 0.86
+        },
+        {
+          "id": "pml_atmo_ground_mist_2",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 532.48,
+            "y": 852.48,
+            "h": 33.5,
+            "surface": "shell"
+          },
+          "seed": 1590462,
+          "countScale": 1.04
+        },
+        {
+          "id": "pml_atmo_ground_mist_3",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 860.16,
+            "y": 702.72,
+            "h": 19.1,
+            "surface": "shell"
+          },
+          "seed": 1590641,
+          "countScale": 0.86
+        },
+        {
+          "id": "pml_atmo_ground_mist_4",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 1208.32,
+            "y": 564.48,
+            "h": 15.5,
+            "surface": "shell"
+          },
+          "seed": 1590820,
+          "countScale": 0.91
+        },
+        {
+          "id": "pml_atmo_ground_mist_5",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 1515.52,
+            "y": 380.16,
+            "h": 8.4,
+            "surface": "shell"
+          },
+          "seed": 1590999,
+          "countScale": 0.7
+        },
+        {
+          "id": "pml_atmo_ground_mist_6",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 1781.76,
+            "y": 207.36,
+            "h": 29.5,
+            "surface": "shell"
+          },
+          "seed": 1591178,
+          "countScale": 0.77
+        },
+        {
+          "id": "pml_atmo_ledge_mist_1",
+          "effect": "pml_ledge_mist_broad",
+          "anchor": {
+            "x": 839.68,
+            "y": 898.56,
+            "h": 16.8,
+            "surface": "shell"
+          },
+          "seed": 1590394,
+          "countScale": 0.86
+        },
+        {
+          "id": "pml_atmo_ledge_mist_2",
+          "effect": "pml_ledge_mist_streak",
+          "anchor": {
+            "x": 1413.12,
+            "y": 679.68,
+            "h": 17.2,
+            "surface": "shell"
+          },
+          "seed": 1590573,
+          "countScale": 0.7
+        },
+        {
+          "id": "pml_atmo_dust_1",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 471.04,
+            "y": 840.96,
+            "h": 47.9,
+            "surface": "shell"
+          },
+          "seed": 1590505,
+          "countScale": 0.88
+        },
+        {
+          "id": "pml_atmo_dust_2",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 1085.44,
+            "y": 564.48,
+            "h": 58.7,
+            "surface": "shell"
+          },
+          "seed": 1590684,
+          "countScale": 0.72
+        },
+        {
+          "id": "pml_atmo_dust_3",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 1617.92,
+            "y": 288.0,
+            "h": 57.3,
+            "surface": "shell"
+          },
+          "seed": 1590863,
+          "countScale": 0.98
+        },
+        {
+          "id": "pml_atmo_dry_leaves_1",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 634.88,
+            "y": 783.36,
+            "h": 42.7,
+            "surface": "shell"
+          },
+          "seed": 1590616,
+          "countScale": 0.8
+        },
+        {
+          "id": "pml_atmo_dry_leaves_2",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 1392.64,
+            "y": 449.28,
+            "h": 45.8,
+            "surface": "shell"
+          },
+          "seed": 1590795,
+          "countScale": 0.87
+        },
+        {
+          "id": "pml_atmo_sparse_drip_1",
+          "effect": "pml_sparse_drip",
+          "anchor": {
+            "x": 880.64,
+            "y": 437.76,
+            "h": 24.2,
+            "surface": "shell"
+          },
+          "seed": 1590727,
+          "countScale": 0.76
+        },
+        {
+          "id": "pml_atmo_sparse_drip_2",
+          "effect": "pml_sparse_drip",
+          "anchor": {
+            "x": 1474.56,
+            "y": 207.36,
+            "h": 31.5,
+            "surface": "shell"
+          },
+          "seed": 1590906,
+          "countScale": 0.91
         }
       ],
       "variants": {
@@ -181,6 +1697,234 @@
               "h": 12,
               "surface": "shell"
             }
+          },
+          {
+            "id": "pml_atmo_cliff_mist_1",
+            "effect": "pml_cliff_mist_broad_night",
+            "anchor": {
+              "x": 573.44,
+              "y": 1071.36,
+              "h": 40.3,
+              "surface": "shell"
+            },
+            "seed": 1590172,
+            "countScale": 0.72
+          },
+          {
+            "id": "pml_atmo_cliff_mist_2",
+            "effect": "pml_cliff_mist_streak_night",
+            "anchor": {
+              "x": 1146.88,
+              "y": 898.56,
+              "h": 62.4,
+              "surface": "shell"
+            },
+            "seed": 1590351,
+            "countScale": 0.67
+          },
+          {
+            "id": "pml_atmo_cliff_mist_3",
+            "effect": "pml_cliff_mist_night",
+            "anchor": {
+              "x": 1617.92,
+              "y": 737.28,
+              "h": 50.3,
+              "surface": "shell"
+            },
+            "seed": 1590530,
+            "countScale": 0.83
+          },
+          {
+            "id": "pml_atmo_cliff_mist_4",
+            "effect": "pml_cliff_mist_broad_night",
+            "anchor": {
+              "x": 1945.6,
+              "y": 599.04,
+              "h": 41.3,
+              "surface": "shell"
+            },
+            "seed": 1590709,
+            "countScale": 1.0
+          },
+          {
+            "id": "pml_atmo_ground_mist_1",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 204.8,
+              "y": 1002.24,
+              "h": 13.4,
+              "surface": "shell"
+            },
+            "seed": 1590283,
+            "countScale": 0.86
+          },
+          {
+            "id": "pml_atmo_ground_mist_2",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 532.48,
+              "y": 852.48,
+              "h": 33.5,
+              "surface": "shell"
+            },
+            "seed": 1590462,
+            "countScale": 1.04
+          },
+          {
+            "id": "pml_atmo_ground_mist_3",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 860.16,
+              "y": 702.72,
+              "h": 19.1,
+              "surface": "shell"
+            },
+            "seed": 1590641,
+            "countScale": 0.86
+          },
+          {
+            "id": "pml_atmo_ground_mist_4",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 1208.32,
+              "y": 564.48,
+              "h": 15.5,
+              "surface": "shell"
+            },
+            "seed": 1590820,
+            "countScale": 0.91
+          },
+          {
+            "id": "pml_atmo_ground_mist_5",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 1515.52,
+              "y": 380.16,
+              "h": 8.4,
+              "surface": "shell"
+            },
+            "seed": 1590999,
+            "countScale": 0.7
+          },
+          {
+            "id": "pml_atmo_ground_mist_6",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 1781.76,
+              "y": 207.36,
+              "h": 29.5,
+              "surface": "shell"
+            },
+            "seed": 1591178,
+            "countScale": 0.77
+          },
+          {
+            "id": "pml_atmo_ledge_mist_1",
+            "effect": "pml_ledge_mist_broad_night",
+            "anchor": {
+              "x": 839.68,
+              "y": 898.56,
+              "h": 16.8,
+              "surface": "shell"
+            },
+            "seed": 1590394,
+            "countScale": 0.86
+          },
+          {
+            "id": "pml_atmo_ledge_mist_2",
+            "effect": "pml_ledge_mist_streak_night",
+            "anchor": {
+              "x": 1413.12,
+              "y": 679.68,
+              "h": 17.2,
+              "surface": "shell"
+            },
+            "seed": 1590573,
+            "countScale": 0.7
+          },
+          {
+            "id": "pml_atmo_dust_1",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 471.04,
+              "y": 840.96,
+              "h": 47.9,
+              "surface": "shell"
+            },
+            "seed": 1590505,
+            "countScale": 0.88
+          },
+          {
+            "id": "pml_atmo_dust_2",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 1085.44,
+              "y": 564.48,
+              "h": 58.7,
+              "surface": "shell"
+            },
+            "seed": 1590684,
+            "countScale": 0.72
+          },
+          {
+            "id": "pml_atmo_dust_3",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 1617.92,
+              "y": 288.0,
+              "h": 57.3,
+              "surface": "shell"
+            },
+            "seed": 1590863,
+            "countScale": 0.98
+          },
+          {
+            "id": "pml_atmo_dry_leaves_1",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 634.88,
+              "y": 783.36,
+              "h": 42.7,
+              "surface": "shell"
+            },
+            "seed": 1590616,
+            "countScale": 0.8
+          },
+          {
+            "id": "pml_atmo_dry_leaves_2",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 1392.64,
+              "y": 449.28,
+              "h": 45.8,
+              "surface": "shell"
+            },
+            "seed": 1590795,
+            "countScale": 0.87
+          },
+          {
+            "id": "pml_atmo_sparse_drip_1",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 880.64,
+              "y": 437.76,
+              "h": 24.2,
+              "surface": "shell"
+            },
+            "seed": 1590727,
+            "countScale": 0.76
+          },
+          {
+            "id": "pml_atmo_sparse_drip_2",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 1474.56,
+              "y": 207.36,
+              "h": 31.5,
+              "surface": "shell"
+            },
+            "seed": 1590906,
+            "countScale": 0.91
           }
         ]
       }
@@ -249,6 +1993,222 @@
           },
           "seed": 20260916,
           "autoStart": false
+        },
+        {
+          "id": "pml_atmo_valley_mist_1",
+          "effect": "pml_valley_mist_streak",
+          "anchor": {
+            "x": 184.32,
+            "y": 518.4,
+            "h": 90.6,
+            "surface": "shell"
+          },
+          "seed": 1639130,
+          "countScale": 0.77
+        },
+        {
+          "id": "pml_atmo_valley_mist_2",
+          "effect": "pml_valley_mist",
+          "anchor": {
+            "x": 593.92,
+            "y": 368.64,
+            "h": 63.3,
+            "surface": "shell"
+          },
+          "seed": 1639309,
+          "countScale": 1.02
+        },
+        {
+          "id": "pml_atmo_valley_mist_3",
+          "effect": "pml_valley_mist_broad",
+          "anchor": {
+            "x": 942.08,
+            "y": 253.44,
+            "h": 75.9,
+            "surface": "shell"
+          },
+          "seed": 1639488,
+          "countScale": 1.01
+        },
+        {
+          "id": "pml_atmo_valley_mist_4",
+          "effect": "pml_valley_mist_streak",
+          "anchor": {
+            "x": 1372.16,
+            "y": 184.32,
+            "h": 70.2,
+            "surface": "shell"
+          },
+          "seed": 1639667,
+          "countScale": 0.85
+        },
+        {
+          "id": "pml_atmo_valley_mist_5",
+          "effect": "pml_valley_mist",
+          "anchor": {
+            "x": 1740.8,
+            "y": 944.64,
+            "h": 83.4,
+            "surface": "shell"
+          },
+          "seed": 1639846,
+          "countScale": 0.88
+        },
+        {
+          "id": "pml_atmo_valley_mist_6",
+          "effect": "pml_valley_mist_broad",
+          "anchor": {
+            "x": 1966.08,
+            "y": 645.12,
+            "h": 66.3,
+            "surface": "shell"
+          },
+          "seed": 1640025,
+          "countScale": 0.93
+        },
+        {
+          "id": "pml_atmo_ground_mist_1",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 266.24,
+            "y": 1025.28,
+            "h": 30.0,
+            "surface": "shell"
+          },
+          "seed": 1639241,
+          "countScale": 0.72
+        },
+        {
+          "id": "pml_atmo_ground_mist_2",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 552.96,
+            "y": 840.96,
+            "h": 31.2,
+            "surface": "shell"
+          },
+          "seed": 1639420,
+          "countScale": 0.86
+        },
+        {
+          "id": "pml_atmo_ground_mist_3",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 839.68,
+            "y": 668.16,
+            "h": 18.3,
+            "surface": "shell"
+          },
+          "seed": 1639599,
+          "countScale": 0.84
+        },
+        {
+          "id": "pml_atmo_ground_mist_4",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 1126.4,
+            "y": 506.88,
+            "h": 18.1,
+            "surface": "shell"
+          },
+          "seed": 1639778,
+          "countScale": 0.63
+        },
+        {
+          "id": "pml_atmo_ground_mist_5",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 1433.6,
+            "y": 345.6,
+            "h": 32.4,
+            "surface": "shell"
+          },
+          "seed": 1639957,
+          "countScale": 0.79
+        },
+        {
+          "id": "pml_atmo_ground_mist_6",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 1740.8,
+            "y": 195.84,
+            "h": 22.8,
+            "surface": "shell"
+          },
+          "seed": 1640136,
+          "countScale": 1.04
+        },
+        {
+          "id": "pml_atmo_dust_1",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 471.04,
+            "y": 864.0,
+            "h": 43.3,
+            "surface": "shell"
+          },
+          "seed": 1639352,
+          "countScale": 0.62
+        },
+        {
+          "id": "pml_atmo_dust_2",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 1085.44,
+            "y": 495.36,
+            "h": 42.8,
+            "surface": "shell"
+          },
+          "seed": 1639531,
+          "countScale": 0.65
+        },
+        {
+          "id": "pml_atmo_dust_3",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 1576.96,
+            "y": 288.0,
+            "h": 27.7,
+            "surface": "shell"
+          },
+          "seed": 1639710,
+          "countScale": 0.7
+        },
+        {
+          "id": "pml_atmo_dry_leaves_1",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 348.16,
+            "y": 967.68,
+            "h": 25.6,
+            "surface": "shell"
+          },
+          "seed": 1639463,
+          "countScale": 0.7
+        },
+        {
+          "id": "pml_atmo_dry_leaves_2",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 942.08,
+            "y": 610.56,
+            "h": 54.6,
+            "surface": "shell"
+          },
+          "seed": 1639642,
+          "countScale": 0.62
+        },
+        {
+          "id": "pml_atmo_dry_leaves_3",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 1495.04,
+            "y": 334.08,
+            "h": 17.8,
+            "surface": "shell"
+          },
+          "seed": 1639821,
+          "countScale": 0.8
         }
       ],
       "variants": {
@@ -288,16 +2248,16 @@
                 404.9
               ],
               [
-                573.2,
-                875.7
+                1163,
+                460.7
               ],
               [
-                538.5,
-                865.2
+                1092.4,
+                496.6
               ],
               [
-                938.9,
-                582.1
+                1091.1,
+                438.1
               ],
               [
                 1195.5,
@@ -315,6 +2275,440 @@
             },
             "seed": 20260916,
             "autoStart": false
+          },
+          {
+            "id": "pml_atmo_valley_mist_1",
+            "effect": "pml_valley_mist_streak_night",
+            "anchor": {
+              "x": 184.32,
+              "y": 518.4,
+              "h": 90.6,
+              "surface": "shell"
+            },
+            "seed": 1639130,
+            "countScale": 0.77
+          },
+          {
+            "id": "pml_atmo_valley_mist_2",
+            "effect": "pml_valley_mist_night",
+            "anchor": {
+              "x": 593.92,
+              "y": 368.64,
+              "h": 63.3,
+              "surface": "shell"
+            },
+            "seed": 1639309,
+            "countScale": 1.02
+          },
+          {
+            "id": "pml_atmo_valley_mist_3",
+            "effect": "pml_valley_mist_broad_night",
+            "anchor": {
+              "x": 942.08,
+              "y": 253.44,
+              "h": 75.9,
+              "surface": "shell"
+            },
+            "seed": 1639488,
+            "countScale": 1.01
+          },
+          {
+            "id": "pml_atmo_valley_mist_4",
+            "effect": "pml_valley_mist_streak_night",
+            "anchor": {
+              "x": 1372.16,
+              "y": 184.32,
+              "h": 70.2,
+              "surface": "shell"
+            },
+            "seed": 1639667,
+            "countScale": 0.85
+          },
+          {
+            "id": "pml_atmo_valley_mist_5",
+            "effect": "pml_valley_mist_night",
+            "anchor": {
+              "x": 1740.8,
+              "y": 944.64,
+              "h": 83.4,
+              "surface": "shell"
+            },
+            "seed": 1639846,
+            "countScale": 0.88
+          },
+          {
+            "id": "pml_atmo_valley_mist_6",
+            "effect": "pml_valley_mist_broad_night",
+            "anchor": {
+              "x": 1966.08,
+              "y": 645.12,
+              "h": 66.3,
+              "surface": "shell"
+            },
+            "seed": 1640025,
+            "countScale": 0.93
+          },
+          {
+            "id": "pml_atmo_ground_mist_1",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 266.24,
+              "y": 1025.28,
+              "h": 30.0,
+              "surface": "shell"
+            },
+            "seed": 1639241,
+            "countScale": 0.72
+          },
+          {
+            "id": "pml_atmo_ground_mist_2",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 552.96,
+              "y": 840.96,
+              "h": 31.2,
+              "surface": "shell"
+            },
+            "seed": 1639420,
+            "countScale": 0.86
+          },
+          {
+            "id": "pml_atmo_ground_mist_3",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 839.68,
+              "y": 668.16,
+              "h": 18.3,
+              "surface": "shell"
+            },
+            "seed": 1639599,
+            "countScale": 0.84
+          },
+          {
+            "id": "pml_atmo_ground_mist_4",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 1126.4,
+              "y": 506.88,
+              "h": 18.1,
+              "surface": "shell"
+            },
+            "seed": 1639778,
+            "countScale": 0.63
+          },
+          {
+            "id": "pml_atmo_ground_mist_5",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 1433.6,
+              "y": 345.6,
+              "h": 32.4,
+              "surface": "shell"
+            },
+            "seed": 1639957,
+            "countScale": 0.79
+          },
+          {
+            "id": "pml_atmo_ground_mist_6",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 1740.8,
+              "y": 195.84,
+              "h": 22.8,
+              "surface": "shell"
+            },
+            "seed": 1640136,
+            "countScale": 1.04
+          },
+          {
+            "id": "pml_atmo_dust_1",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 471.04,
+              "y": 864.0,
+              "h": 43.3,
+              "surface": "shell"
+            },
+            "seed": 1639352,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_dust_2",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 1085.44,
+              "y": 495.36,
+              "h": 42.8,
+              "surface": "shell"
+            },
+            "seed": 1639531,
+            "countScale": 0.65
+          },
+          {
+            "id": "pml_atmo_dust_3",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 1576.96,
+              "y": 288.0,
+              "h": 27.7,
+              "surface": "shell"
+            },
+            "seed": 1639710,
+            "countScale": 0.7
+          },
+          {
+            "id": "pml_atmo_dry_leaves_1",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 348.16,
+              "y": 967.68,
+              "h": 25.6,
+              "surface": "shell"
+            },
+            "seed": 1639463,
+            "countScale": 0.7
+          },
+          {
+            "id": "pml_atmo_dry_leaves_2",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 942.08,
+              "y": 610.56,
+              "h": 54.6,
+              "surface": "shell"
+            },
+            "seed": 1639642,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_dry_leaves_3",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 1495.04,
+              "y": 334.08,
+              "h": 17.8,
+              "surface": "shell"
+            },
+            "seed": 1639821,
+            "countScale": 0.8
+          }
+        ],
+        "午": [
+          {
+            "id": "pml_atmo_valley_mist_1",
+            "effect": "pml_valley_mist_streak",
+            "anchor": {
+              "x": 184.32,
+              "y": 518.4,
+              "h": 90.6,
+              "surface": "shell"
+            },
+            "seed": 1639130,
+            "countScale": 0.77
+          },
+          {
+            "id": "pml_atmo_valley_mist_2",
+            "effect": "pml_valley_mist",
+            "anchor": {
+              "x": 593.92,
+              "y": 368.64,
+              "h": 63.3,
+              "surface": "shell"
+            },
+            "seed": 1639309,
+            "countScale": 1.02
+          },
+          {
+            "id": "pml_atmo_valley_mist_3",
+            "effect": "pml_valley_mist_broad",
+            "anchor": {
+              "x": 942.08,
+              "y": 253.44,
+              "h": 75.9,
+              "surface": "shell"
+            },
+            "seed": 1639488,
+            "countScale": 1.01
+          },
+          {
+            "id": "pml_atmo_valley_mist_4",
+            "effect": "pml_valley_mist_streak",
+            "anchor": {
+              "x": 1372.16,
+              "y": 184.32,
+              "h": 70.2,
+              "surface": "shell"
+            },
+            "seed": 1639667,
+            "countScale": 0.85
+          },
+          {
+            "id": "pml_atmo_valley_mist_5",
+            "effect": "pml_valley_mist",
+            "anchor": {
+              "x": 1740.8,
+              "y": 944.64,
+              "h": 83.4,
+              "surface": "shell"
+            },
+            "seed": 1639846,
+            "countScale": 0.88
+          },
+          {
+            "id": "pml_atmo_valley_mist_6",
+            "effect": "pml_valley_mist_broad",
+            "anchor": {
+              "x": 1966.08,
+              "y": 645.12,
+              "h": 66.3,
+              "surface": "shell"
+            },
+            "seed": 1640025,
+            "countScale": 0.93
+          },
+          {
+            "id": "pml_atmo_ground_mist_1",
+            "effect": "pml_ground_mist_streak",
+            "anchor": {
+              "x": 266.24,
+              "y": 1025.28,
+              "h": 30.0,
+              "surface": "shell"
+            },
+            "seed": 1639241,
+            "countScale": 0.72
+          },
+          {
+            "id": "pml_atmo_ground_mist_2",
+            "effect": "pml_ground_mist",
+            "anchor": {
+              "x": 552.96,
+              "y": 840.96,
+              "h": 31.2,
+              "surface": "shell"
+            },
+            "seed": 1639420,
+            "countScale": 0.86
+          },
+          {
+            "id": "pml_atmo_ground_mist_3",
+            "effect": "pml_ground_mist_broad",
+            "anchor": {
+              "x": 839.68,
+              "y": 668.16,
+              "h": 18.3,
+              "surface": "shell"
+            },
+            "seed": 1639599,
+            "countScale": 0.84
+          },
+          {
+            "id": "pml_atmo_ground_mist_4",
+            "effect": "pml_ground_mist_streak",
+            "anchor": {
+              "x": 1126.4,
+              "y": 506.88,
+              "h": 18.1,
+              "surface": "shell"
+            },
+            "seed": 1639778,
+            "countScale": 0.63
+          },
+          {
+            "id": "pml_atmo_ground_mist_5",
+            "effect": "pml_ground_mist",
+            "anchor": {
+              "x": 1433.6,
+              "y": 345.6,
+              "h": 32.4,
+              "surface": "shell"
+            },
+            "seed": 1639957,
+            "countScale": 0.79
+          },
+          {
+            "id": "pml_atmo_ground_mist_6",
+            "effect": "pml_ground_mist_broad",
+            "anchor": {
+              "x": 1740.8,
+              "y": 195.84,
+              "h": 22.8,
+              "surface": "shell"
+            },
+            "seed": 1640136,
+            "countScale": 1.04
+          },
+          {
+            "id": "pml_atmo_dust_1",
+            "effect": "pml_dust",
+            "anchor": {
+              "x": 471.04,
+              "y": 864.0,
+              "h": 43.3,
+              "surface": "shell"
+            },
+            "seed": 1639352,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_dust_2",
+            "effect": "pml_dust",
+            "anchor": {
+              "x": 1085.44,
+              "y": 495.36,
+              "h": 42.8,
+              "surface": "shell"
+            },
+            "seed": 1639531,
+            "countScale": 0.65
+          },
+          {
+            "id": "pml_atmo_dust_3",
+            "effect": "pml_dust",
+            "anchor": {
+              "x": 1576.96,
+              "y": 288.0,
+              "h": 27.7,
+              "surface": "shell"
+            },
+            "seed": 1639710,
+            "countScale": 0.7
+          },
+          {
+            "id": "pml_atmo_dry_leaves_1",
+            "effect": "pml_dry_leaves",
+            "anchor": {
+              "x": 348.16,
+              "y": 967.68,
+              "h": 25.6,
+              "surface": "shell"
+            },
+            "seed": 1639463,
+            "countScale": 0.7
+          },
+          {
+            "id": "pml_atmo_dry_leaves_2",
+            "effect": "pml_dry_leaves",
+            "anchor": {
+              "x": 942.08,
+              "y": 610.56,
+              "h": 54.6,
+              "surface": "shell"
+            },
+            "seed": 1639642,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_dry_leaves_3",
+            "effect": "pml_dry_leaves",
+            "anchor": {
+              "x": 1495.04,
+              "y": 334.08,
+              "h": 17.8,
+              "surface": "shell"
+            },
+            "seed": 1639821,
+            "countScale": 0.8
           }
         ]
       }
@@ -725,6 +3119,1566 @@
             "surface": "shell"
           },
           "seed": 160916193
+        }
+      ]
+    },
+    "牛头凼": {
+      "base": [
+        {
+          "id": "pml_atmo_pool_mist_1",
+          "effect": "pml_pool_mist_broad",
+          "anchor": {
+            "x": 574.79,
+            "y": 359.24,
+            "h": 5.7,
+            "surface": "shell"
+          },
+          "seed": 1432693,
+          "countScale": 1.04
+        },
+        {
+          "id": "pml_atmo_pool_mist_2",
+          "effect": "pml_pool_mist_streak",
+          "anchor": {
+            "x": 656.9,
+            "y": 405.43,
+            "h": 4.4,
+            "surface": "shell"
+          },
+          "seed": 1432872,
+          "countScale": 0.63
+        },
+        {
+          "id": "pml_atmo_pool_mist_3",
+          "effect": "pml_pool_mist",
+          "anchor": {
+            "x": 538.29,
+            "y": 467.01,
+            "h": 5.2,
+            "surface": "shell"
+          },
+          "seed": 1433051,
+          "countScale": 0.69
+        },
+        {
+          "id": "pml_atmo_pool_mist_4",
+          "effect": "pml_pool_mist_broad",
+          "anchor": {
+            "x": 611.28,
+            "y": 505.5,
+            "h": 6.2,
+            "surface": "shell"
+          },
+          "seed": 1433230,
+          "countScale": 0.87
+        },
+        {
+          "id": "pml_atmo_cliff_mist_1",
+          "effect": "pml_cliff_mist_broad",
+          "anchor": {
+            "x": 802.88,
+            "y": 189.88,
+            "h": 43.1,
+            "surface": "shell"
+          },
+          "seed": 1432804,
+          "countScale": 0.36
+        },
+        {
+          "id": "pml_atmo_cliff_mist_2",
+          "effect": "pml_cliff_mist_streak",
+          "anchor": {
+            "x": 638.65,
+            "y": 236.07,
+            "h": 20.9,
+            "surface": "shell"
+          },
+          "seed": 1432983,
+          "countScale": 0.36
+        },
+        {
+          "id": "pml_atmo_ground_mist_1",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 118.61,
+            "y": 343.84,
+            "h": 18.4,
+            "surface": "shell"
+          },
+          "seed": 1432915,
+          "countScale": 0.87
+        },
+        {
+          "id": "pml_atmo_ground_mist_2",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 209.84,
+            "y": 266.86,
+            "h": 28.5,
+            "surface": "shell"
+          },
+          "seed": 1433094,
+          "countScale": 0.95
+        },
+        {
+          "id": "pml_atmo_ground_mist_3",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 282.83,
+            "y": 364.37,
+            "h": 36.1,
+            "surface": "shell"
+          },
+          "seed": 1433273,
+          "countScale": 0.79
+        },
+        {
+          "id": "pml_atmo_ground_mist_4",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 319.33,
+            "y": 415.69,
+            "h": 5.9,
+            "surface": "shell"
+          },
+          "seed": 1433452,
+          "countScale": 0.94
+        },
+        {
+          "id": "pml_atmo_dust_1",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 182.47,
+            "y": 282.26,
+            "h": 42.6,
+            "surface": "shell"
+          },
+          "seed": 1433026,
+          "countScale": 1.05
+        },
+        {
+          "id": "pml_atmo_dust_2",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 291.96,
+            "y": 369.5,
+            "h": 53.7,
+            "surface": "shell"
+          },
+          "seed": 1433205,
+          "countScale": 0.92
+        },
+        {
+          "id": "pml_atmo_dry_leaves_1",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 118.61,
+            "y": 328.45,
+            "h": 58.5,
+            "surface": "shell"
+          },
+          "seed": 1433137,
+          "countScale": 0.77
+        },
+        {
+          "id": "pml_atmo_sparse_drip_1",
+          "effect": "pml_sparse_drip",
+          "anchor": {
+            "x": 465.3,
+            "y": 184.75,
+            "h": 24.2,
+            "surface": "shell"
+          },
+          "seed": 1433248,
+          "countScale": 1.03
+        },
+        {
+          "id": "pml_atmo_sparse_drip_2",
+          "effect": "pml_sparse_drip",
+          "anchor": {
+            "x": 711.64,
+            "y": 246.34,
+            "h": 20.9,
+            "surface": "shell"
+          },
+          "seed": 1433427,
+          "countScale": 1.02
+        }
+      ],
+      "variants": {
+        "夜": [
+          {
+            "id": "pml_atmo_pool_mist_1",
+            "effect": "pml_pool_mist_broad_night",
+            "anchor": {
+              "x": 574.79,
+              "y": 359.24,
+              "h": 5.7,
+              "surface": "shell"
+            },
+            "seed": 1432693,
+            "countScale": 1.04
+          },
+          {
+            "id": "pml_atmo_pool_mist_2",
+            "effect": "pml_pool_mist_streak_night",
+            "anchor": {
+              "x": 656.9,
+              "y": 405.43,
+              "h": 4.4,
+              "surface": "shell"
+            },
+            "seed": 1432872,
+            "countScale": 0.63
+          },
+          {
+            "id": "pml_atmo_pool_mist_3",
+            "effect": "pml_pool_mist_night",
+            "anchor": {
+              "x": 538.29,
+              "y": 467.01,
+              "h": 5.2,
+              "surface": "shell"
+            },
+            "seed": 1433051,
+            "countScale": 0.69
+          },
+          {
+            "id": "pml_atmo_pool_mist_4",
+            "effect": "pml_pool_mist_broad_night",
+            "anchor": {
+              "x": 611.28,
+              "y": 505.5,
+              "h": 6.2,
+              "surface": "shell"
+            },
+            "seed": 1433230,
+            "countScale": 0.87
+          },
+          {
+            "id": "pml_atmo_cliff_mist_1",
+            "effect": "pml_cliff_mist_broad_night",
+            "anchor": {
+              "x": 802.88,
+              "y": 189.88,
+              "h": 43.1,
+              "surface": "shell"
+            },
+            "seed": 1432804,
+            "countScale": 0.36
+          },
+          {
+            "id": "pml_atmo_cliff_mist_2",
+            "effect": "pml_cliff_mist_streak_night",
+            "anchor": {
+              "x": 638.65,
+              "y": 236.07,
+              "h": 20.9,
+              "surface": "shell"
+            },
+            "seed": 1432983,
+            "countScale": 0.36
+          },
+          {
+            "id": "pml_atmo_ground_mist_1",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 118.61,
+              "y": 343.84,
+              "h": 18.4,
+              "surface": "shell"
+            },
+            "seed": 1432915,
+            "countScale": 0.87
+          },
+          {
+            "id": "pml_atmo_ground_mist_2",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 209.84,
+              "y": 266.86,
+              "h": 28.5,
+              "surface": "shell"
+            },
+            "seed": 1433094,
+            "countScale": 0.95
+          },
+          {
+            "id": "pml_atmo_ground_mist_3",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 282.83,
+              "y": 364.37,
+              "h": 36.1,
+              "surface": "shell"
+            },
+            "seed": 1433273,
+            "countScale": 0.79
+          },
+          {
+            "id": "pml_atmo_ground_mist_4",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 319.33,
+              "y": 415.69,
+              "h": 5.9,
+              "surface": "shell"
+            },
+            "seed": 1433452,
+            "countScale": 0.94
+          },
+          {
+            "id": "pml_atmo_dust_1",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 182.47,
+              "y": 282.26,
+              "h": 42.6,
+              "surface": "shell"
+            },
+            "seed": 1433026,
+            "countScale": 1.05
+          },
+          {
+            "id": "pml_atmo_dust_2",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 291.96,
+              "y": 369.5,
+              "h": 53.7,
+              "surface": "shell"
+            },
+            "seed": 1433205,
+            "countScale": 0.92
+          },
+          {
+            "id": "pml_atmo_dry_leaves_1",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 118.61,
+              "y": 328.45,
+              "h": 58.5,
+              "surface": "shell"
+            },
+            "seed": 1433137,
+            "countScale": 0.77
+          },
+          {
+            "id": "pml_atmo_sparse_drip_1",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 465.3,
+              "y": 184.75,
+              "h": 24.2,
+              "surface": "shell"
+            },
+            "seed": 1433248,
+            "countScale": 1.03
+          },
+          {
+            "id": "pml_atmo_sparse_drip_2",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 711.64,
+              "y": 246.34,
+              "h": 20.9,
+              "surface": "shell"
+            },
+            "seed": 1433427,
+            "countScale": 1.02
+          }
+        ]
+      },
+      "surfaces": [
+        {
+          "id": "pool",
+          "kind": "water",
+          "polygon": [
+            [
+              430,
+              300
+            ],
+            [
+              560,
+              290
+            ],
+            [
+              640,
+              310
+            ],
+            [
+              680,
+              360
+            ],
+            [
+              700,
+              420
+            ],
+            [
+              760,
+              470
+            ],
+            [
+              800,
+              513.2
+            ],
+            [
+              400,
+              513.2
+            ],
+            [
+              400,
+              450
+            ],
+            [
+              390,
+              400
+            ],
+            [
+              410,
+              340
+            ]
+          ],
+          "feather": 16
+        }
+      ]
+    },
+    "崖墓正式": {
+      "base": [
+        {
+          "id": "pml_atmo_cliff_mist_1",
+          "effect": "pml_cliff_mist",
+          "anchor": {
+            "x": 541.1,
+            "y": 787.78,
+            "h": 25.9,
+            "surface": "shell"
+          },
+          "seed": 1609317,
+          "countScale": 1.03
+        },
+        {
+          "id": "pml_atmo_cliff_mist_2",
+          "effect": "pml_cliff_mist_broad",
+          "anchor": {
+            "x": 1034.46,
+            "y": 689.3,
+            "h": 41.6,
+            "surface": "shell"
+          },
+          "seed": 1609496,
+          "countScale": 0.91
+        },
+        {
+          "id": "pml_atmo_cliff_mist_3",
+          "effect": "pml_cliff_mist_streak",
+          "anchor": {
+            "x": 1480.07,
+            "y": 563.98,
+            "h": 23.4,
+            "surface": "shell"
+          },
+          "seed": 1609675,
+          "countScale": 0.86
+        },
+        {
+          "id": "pml_atmo_ground_mist_1",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 254.64,
+            "y": 751.97,
+            "h": 15.5,
+            "surface": "shell"
+          },
+          "seed": 1609428,
+          "countScale": 0.92
+        },
+        {
+          "id": "pml_atmo_ground_mist_2",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 350.12,
+            "y": 599.78,
+            "h": 37.3,
+            "surface": "shell"
+          },
+          "seed": 1609607,
+          "countScale": 0.99
+        },
+        {
+          "id": "pml_atmo_ground_mist_3",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 557.01,
+            "y": 528.17,
+            "h": 18.8,
+            "surface": "shell"
+          },
+          "seed": 1609786,
+          "countScale": 0.67
+        },
+        {
+          "id": "pml_atmo_ground_mist_4",
+          "effect": "pml_ground_mist",
+          "anchor": {
+            "x": 827.56,
+            "y": 438.65,
+            "h": 30.4,
+            "surface": "shell"
+          },
+          "seed": 1609965,
+          "countScale": 0.8
+        },
+        {
+          "id": "pml_atmo_ground_mist_5",
+          "effect": "pml_ground_mist_broad",
+          "anchor": {
+            "x": 1050.37,
+            "y": 349.13,
+            "h": 37.7,
+            "surface": "shell"
+          },
+          "seed": 1610144,
+          "countScale": 0.93
+        },
+        {
+          "id": "pml_atmo_ground_mist_6",
+          "effect": "pml_ground_mist_streak",
+          "anchor": {
+            "x": 1241.35,
+            "y": 205.9,
+            "h": 23.1,
+            "surface": "shell"
+          },
+          "seed": 1610323,
+          "countScale": 1.0
+        },
+        {
+          "id": "pml_atmo_ledge_mist_1",
+          "effect": "pml_ledge_mist",
+          "anchor": {
+            "x": 668.42,
+            "y": 653.5,
+            "h": 54.6,
+            "surface": "shell"
+          },
+          "seed": 1609539,
+          "countScale": 0.96
+        },
+        {
+          "id": "pml_atmo_ledge_mist_2",
+          "effect": "pml_ledge_mist_broad",
+          "anchor": {
+            "x": 1161.77,
+            "y": 519.22,
+            "h": 51.1,
+            "surface": "shell"
+          },
+          "seed": 1609718,
+          "countScale": 0.98
+        },
+        {
+          "id": "pml_atmo_dust_1",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 445.61,
+            "y": 519.22,
+            "h": 48.5,
+            "surface": "shell"
+          },
+          "seed": 1609650,
+          "countScale": 0.72
+        },
+        {
+          "id": "pml_atmo_dust_2",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 843.48,
+            "y": 411.79,
+            "h": 17.2,
+            "surface": "shell"
+          },
+          "seed": 1609829,
+          "countScale": 0.87
+        },
+        {
+          "id": "pml_atmo_dust_3",
+          "effect": "pml_dust",
+          "anchor": {
+            "x": 1225.43,
+            "y": 223.8,
+            "h": 40.9,
+            "surface": "shell"
+          },
+          "seed": 1610008,
+          "countScale": 0.88
+        },
+        {
+          "id": "pml_atmo_dry_leaves_1",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 270.55,
+            "y": 662.45,
+            "h": 48.3,
+            "surface": "shell"
+          },
+          "seed": 1609761,
+          "countScale": 0.62
+        },
+        {
+          "id": "pml_atmo_dry_leaves_2",
+          "effect": "pml_dry_leaves",
+          "anchor": {
+            "x": 986.71,
+            "y": 384.94,
+            "h": 28.4,
+            "surface": "shell"
+          },
+          "seed": 1609940,
+          "countScale": 0.82
+        },
+        {
+          "id": "pml_atmo_sparse_drip_1",
+          "effect": "pml_sparse_drip",
+          "anchor": {
+            "x": 381.95,
+            "y": 214.85,
+            "h": 38.8,
+            "surface": "shell"
+          },
+          "seed": 1609872,
+          "countScale": 0.87
+        },
+        {
+          "id": "pml_atmo_sparse_drip_2",
+          "effect": "pml_sparse_drip",
+          "anchor": {
+            "x": 938.97,
+            "y": 161.14,
+            "h": 42.7,
+            "surface": "shell"
+          },
+          "seed": 1610051,
+          "countScale": 0.96
+        },
+        {
+          "id": "pml_atmo_sparse_drip_3",
+          "effect": "pml_sparse_drip",
+          "anchor": {
+            "x": 1320.92,
+            "y": 304.37,
+            "h": 52.4,
+            "surface": "shell"
+          },
+          "seed": 1610230,
+          "countScale": 0.84
+        }
+      ],
+      "variants": {
+        "夜": [
+          {
+            "id": "pml_atmo_cliff_mist_1",
+            "effect": "pml_cliff_mist_night",
+            "anchor": {
+              "x": 541.1,
+              "y": 787.78,
+              "h": 25.9,
+              "surface": "shell"
+            },
+            "seed": 1609317,
+            "countScale": 1.03
+          },
+          {
+            "id": "pml_atmo_cliff_mist_2",
+            "effect": "pml_cliff_mist_broad_night",
+            "anchor": {
+              "x": 1034.46,
+              "y": 689.3,
+              "h": 41.6,
+              "surface": "shell"
+            },
+            "seed": 1609496,
+            "countScale": 0.91
+          },
+          {
+            "id": "pml_atmo_cliff_mist_3",
+            "effect": "pml_cliff_mist_streak_night",
+            "anchor": {
+              "x": 1480.07,
+              "y": 563.98,
+              "h": 23.4,
+              "surface": "shell"
+            },
+            "seed": 1609675,
+            "countScale": 0.86
+          },
+          {
+            "id": "pml_atmo_ground_mist_1",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 254.64,
+              "y": 751.97,
+              "h": 15.5,
+              "surface": "shell"
+            },
+            "seed": 1609428,
+            "countScale": 0.92
+          },
+          {
+            "id": "pml_atmo_ground_mist_2",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 350.12,
+              "y": 599.78,
+              "h": 37.3,
+              "surface": "shell"
+            },
+            "seed": 1609607,
+            "countScale": 0.99
+          },
+          {
+            "id": "pml_atmo_ground_mist_3",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 557.01,
+              "y": 528.17,
+              "h": 18.8,
+              "surface": "shell"
+            },
+            "seed": 1609786,
+            "countScale": 0.67
+          },
+          {
+            "id": "pml_atmo_ground_mist_4",
+            "effect": "pml_ground_mist_night",
+            "anchor": {
+              "x": 827.56,
+              "y": 438.65,
+              "h": 30.4,
+              "surface": "shell"
+            },
+            "seed": 1609965,
+            "countScale": 0.8
+          },
+          {
+            "id": "pml_atmo_ground_mist_5",
+            "effect": "pml_ground_mist_broad_night",
+            "anchor": {
+              "x": 1050.37,
+              "y": 349.13,
+              "h": 37.7,
+              "surface": "shell"
+            },
+            "seed": 1610144,
+            "countScale": 0.93
+          },
+          {
+            "id": "pml_atmo_ground_mist_6",
+            "effect": "pml_ground_mist_streak_night",
+            "anchor": {
+              "x": 1241.35,
+              "y": 205.9,
+              "h": 23.1,
+              "surface": "shell"
+            },
+            "seed": 1610323,
+            "countScale": 1.0
+          },
+          {
+            "id": "pml_atmo_ledge_mist_1",
+            "effect": "pml_ledge_mist_night",
+            "anchor": {
+              "x": 668.42,
+              "y": 653.5,
+              "h": 54.6,
+              "surface": "shell"
+            },
+            "seed": 1609539,
+            "countScale": 0.96
+          },
+          {
+            "id": "pml_atmo_ledge_mist_2",
+            "effect": "pml_ledge_mist_broad_night",
+            "anchor": {
+              "x": 1161.77,
+              "y": 519.22,
+              "h": 51.1,
+              "surface": "shell"
+            },
+            "seed": 1609718,
+            "countScale": 0.98
+          },
+          {
+            "id": "pml_atmo_dust_1",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 445.61,
+              "y": 519.22,
+              "h": 48.5,
+              "surface": "shell"
+            },
+            "seed": 1609650,
+            "countScale": 0.72
+          },
+          {
+            "id": "pml_atmo_dust_2",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 843.48,
+              "y": 411.79,
+              "h": 17.2,
+              "surface": "shell"
+            },
+            "seed": 1609829,
+            "countScale": 0.87
+          },
+          {
+            "id": "pml_atmo_dust_3",
+            "effect": "pml_dust_night",
+            "anchor": {
+              "x": 1225.43,
+              "y": 223.8,
+              "h": 40.9,
+              "surface": "shell"
+            },
+            "seed": 1610008,
+            "countScale": 0.88
+          },
+          {
+            "id": "pml_atmo_dry_leaves_1",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 270.55,
+              "y": 662.45,
+              "h": 48.3,
+              "surface": "shell"
+            },
+            "seed": 1609761,
+            "countScale": 0.62
+          },
+          {
+            "id": "pml_atmo_dry_leaves_2",
+            "effect": "pml_dry_leaves_night",
+            "anchor": {
+              "x": 986.71,
+              "y": 384.94,
+              "h": 28.4,
+              "surface": "shell"
+            },
+            "seed": 1609940,
+            "countScale": 0.82
+          },
+          {
+            "id": "pml_atmo_sparse_drip_1",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 381.95,
+              "y": 214.85,
+              "h": 38.8,
+              "surface": "shell"
+            },
+            "seed": 1609872,
+            "countScale": 0.87
+          },
+          {
+            "id": "pml_atmo_sparse_drip_2",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 938.97,
+              "y": 161.14,
+              "h": 42.7,
+              "surface": "shell"
+            },
+            "seed": 1610051,
+            "countScale": 0.96
+          },
+          {
+            "id": "pml_atmo_sparse_drip_3",
+            "effect": "pml_sparse_drip",
+            "anchor": {
+              "x": 1320.92,
+              "y": 304.37,
+              "h": 52.4,
+              "surface": "shell"
+            },
+            "seed": 1610230,
+            "countScale": 0.84
+          }
+        ]
+      }
+    },
+    "河边": {
+      "surfaces": [
+        {
+          "id": "river",
+          "kind": "water",
+          "polygon": [
+            [
+              230,
+              20
+            ],
+            [
+              330,
+              60
+            ],
+            [
+              500,
+              100
+            ],
+            [
+              650,
+              150
+            ],
+            [
+              800,
+              230
+            ],
+            [
+              1000,
+              300
+            ],
+            [
+              1150,
+              330
+            ],
+            [
+              1376,
+              350
+            ],
+            [
+              1376,
+              768
+            ],
+            [
+              1150,
+              700
+            ],
+            [
+              1100,
+              640
+            ],
+            [
+              1000,
+              560
+            ],
+            [
+              880,
+              500
+            ],
+            [
+              750,
+              440
+            ],
+            [
+              650,
+              390
+            ],
+            [
+              560,
+              330
+            ],
+            [
+              500,
+              270
+            ],
+            [
+              400,
+              170
+            ],
+            [
+              280,
+              90
+            ],
+            [
+              230,
+              60
+            ]
+          ],
+          "feather": 30
+        }
+      ]
+    },
+    "城门口": {
+      "surfaces": [
+        {
+          "id": "plaza_paving",
+          "kind": "wet",
+          "polygon": [
+            [
+              430,
+              520
+            ],
+            [
+              700,
+              520
+            ],
+            [
+              760,
+              640
+            ],
+            [
+              950,
+              660
+            ],
+            [
+              1240,
+              650
+            ],
+            [
+              1280,
+              720
+            ],
+            [
+              1130,
+              820
+            ],
+            [
+              1000,
+              900
+            ],
+            [
+              940,
+              1000
+            ],
+            [
+              960,
+              1125
+            ],
+            [
+              180,
+              1125
+            ],
+            [
+              160,
+              960
+            ],
+            [
+              280,
+              880
+            ],
+            [
+              330,
+              760
+            ],
+            [
+              420,
+              700
+            ]
+          ],
+          "feather": 30
+        }
+      ]
+    },
+    "码头白天": {
+      "surfaces": [
+        {
+          "id": "harbour",
+          "kind": "water",
+          "polygon": [
+            [
+              2330,
+              620
+            ],
+            [
+              2950,
+              160
+            ],
+            [
+              3000,
+              150
+            ],
+            [
+              3000,
+              1674
+            ],
+            [
+              680,
+              1674
+            ],
+            [
+              1000,
+              1470
+            ],
+            [
+              1450,
+              1150
+            ],
+            [
+              1830,
+              880
+            ],
+            [
+              2100,
+              760
+            ]
+          ],
+          "feather": 20
+        },
+        {
+          "id": "pier",
+          "kind": "wet",
+          "polygon": [
+            [
+              1420,
+              1150
+            ],
+            [
+              1830,
+              880
+            ],
+            [
+              2330,
+              1060
+            ],
+            [
+              1930,
+              1400
+            ]
+          ],
+          "feather": 10
+        },
+        {
+          "id": "boat",
+          "kind": "wet",
+          "polygon": [
+            [
+              2020,
+              1450
+            ],
+            [
+              2500,
+              1000
+            ],
+            [
+              2800,
+              930
+            ],
+            [
+              2800,
+              1250
+            ],
+            [
+              2400,
+              1560
+            ],
+            [
+              2050,
+              1560
+            ]
+          ],
+          "feather": 10
+        }
+      ]
+    },
+    "深潭绝地": {
+      "surfaces": [
+        {
+          "id": "deep_pool",
+          "kind": "water",
+          "polygon": [
+            [
+              1120,
+              200
+            ],
+            [
+              1260,
+              220
+            ],
+            [
+              1400,
+              320
+            ],
+            [
+              1520,
+              420
+            ],
+            [
+              1560,
+              540
+            ],
+            [
+              1480,
+              610
+            ],
+            [
+              1330,
+              630
+            ],
+            [
+              1230,
+              600
+            ],
+            [
+              1160,
+              540
+            ],
+            [
+              1110,
+              450
+            ],
+            [
+              1100,
+              330
+            ]
+          ],
+          "feather": 24
+        }
+      ]
+    },
+    "枯井土地庙": {
+      "surfaces": [
+        {
+          "id": "cobbles",
+          "kind": "wet",
+          "polygon": [
+            [
+              430,
+              300
+            ],
+            [
+              620,
+              280
+            ],
+            [
+              700,
+              200
+            ],
+            [
+              740,
+              240
+            ],
+            [
+              900,
+              300
+            ],
+            [
+              1050,
+              260
+            ],
+            [
+              1200,
+              280
+            ],
+            [
+              1250,
+              400
+            ],
+            [
+              1150,
+              520
+            ],
+            [
+              1100,
+              650
+            ],
+            [
+              1050,
+              768
+            ],
+            [
+              700,
+              768
+            ],
+            [
+              600,
+              650
+            ],
+            [
+              560,
+              520
+            ],
+            [
+              480,
+              470
+            ],
+            [
+              430,
+              420
+            ]
+          ],
+          "feather": 40
+        }
+      ]
+    },
+    "野道": {
+      "surfaces": [
+        {
+          "id": "puddle_1",
+          "kind": "water",
+          "polygon": [
+            [
+              590,
+              820
+            ],
+            [
+              700,
+              810
+            ],
+            [
+              710,
+              860
+            ],
+            [
+              640,
+              900
+            ],
+            [
+              590,
+              880
+            ]
+          ],
+          "feather": 6
+        },
+        {
+          "id": "puddle_2",
+          "kind": "water",
+          "polygon": [
+            [
+              240,
+              1010
+            ],
+            [
+              350,
+              1000
+            ],
+            [
+              360,
+              1050
+            ],
+            [
+              290,
+              1070
+            ],
+            [
+              240,
+              1050
+            ]
+          ],
+          "feather": 6
+        }
+      ]
+    },
+    "梦_农家院": {
+      "surfaces": [
+        {
+          "id": "yard_paving",
+          "kind": "wet",
+          "polygon": [
+            [
+              380,
+              260
+            ],
+            [
+              500,
+              230
+            ],
+            [
+              620,
+              210
+            ],
+            [
+              700,
+              260
+            ],
+            [
+              800,
+              300
+            ],
+            [
+              900,
+              340
+            ],
+            [
+              1000,
+              380
+            ],
+            [
+              1100,
+              430
+            ],
+            [
+              1250,
+              460
+            ],
+            [
+              1330,
+              430
+            ],
+            [
+              1120,
+              540
+            ],
+            [
+              900,
+              640
+            ],
+            [
+              830,
+              680
+            ],
+            [
+              700,
+              640
+            ],
+            [
+              560,
+              590
+            ],
+            [
+              440,
+              560
+            ],
+            [
+              400,
+              500
+            ],
+            [
+              300,
+              420
+            ],
+            [
+              230,
+              400
+            ],
+            [
+              380,
+              330
+            ]
+          ],
+          "feather": 20
+        },
+        {
+          "id": "brook",
+          "kind": "water",
+          "polygon": [
+            [
+              1080,
+              700
+            ],
+            [
+              1200,
+              640
+            ],
+            [
+              1376,
+              600
+            ],
+            [
+              1376,
+              774
+            ],
+            [
+              1060,
+              774
+            ]
+          ],
+          "feather": 16
+        }
+      ]
+    },
+    "崖墓": {
+      "surfaces": [
+        {
+          "id": "terrace_paving",
+          "kind": "wet",
+          "polygon": [
+            [
+              430,
+              250
+            ],
+            [
+              600,
+              230
+            ],
+            [
+              800,
+              280
+            ],
+            [
+              850,
+              380
+            ],
+            [
+              1000,
+              400
+            ],
+            [
+              1100,
+              380
+            ],
+            [
+              950,
+              480
+            ],
+            [
+              800,
+              500
+            ],
+            [
+              700,
+              560
+            ],
+            [
+              640,
+              600
+            ],
+            [
+              600,
+              520
+            ],
+            [
+              520,
+              450
+            ],
+            [
+              420,
+              400
+            ],
+            [
+              350,
+              330
+            ]
+          ],
+          "feather": 30
+        },
+        {
+          "id": "sea",
+          "kind": "water",
+          "polygon": [
+            [
+              1160,
+              300
+            ],
+            [
+              1376,
+              260
+            ],
+            [
+              1376,
+              768
+            ],
+            [
+              1040,
+              768
+            ],
+            [
+              1100,
+              690
+            ],
+            [
+              1140,
+              600
+            ],
+            [
+              1150,
+              480
+            ],
+            [
+              1150,
+              380
+            ]
+          ],
+          "feather": 20
         }
       ]
     }

@@ -71,6 +71,8 @@ TARGET_SPECS: dict[str, dict[str, Any]] = {
                      "readonly": "轨迹工作台的资产，主编辑器只读；要改去轨迹工作台"},
     "vfx_effects": {"label": "粒子效果", "file_pattern": f"{_DATA}/vfx/{{id}}.json",
                     "readonly": "粒子工作台的资产，主编辑器只读；要改去粒子工作台"},
+    "breathing_overlays": {"label": "呼吸图", "file_pattern": f"{_DATA}/breathing/{{id}}.json",
+                           "readonly": "呼吸工作台的资产，主编辑器只读；要改去呼吸工作台"},
     "narrative_graph_ids": {"label": "叙事图", "graph_ref": True},
     "narrative_package_ids": {"label": "章节包", "file": f"{_DATA}/narrative_packages.json", "anchor": "packages"},
     # 下面几种不在 CONTENT_ID_PARAMS 里，是场景作用域规则 / 实体参数解出来的

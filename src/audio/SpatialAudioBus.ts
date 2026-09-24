@@ -48,6 +48,11 @@ import {
  * 建在旧 ctx 上的总线从此全哑而不报错（2026-09-08 试听没声的根因）。`context` 暴露出去给 AudioManager 判：
  * 关了 / 换了就重建总线。
  */
+/** Stable route identity, owned by AudioManager; gain is the latest runtime mix multiplier (0..1). */
+export interface SpatialMixRoute {
+  gain: number;
+}
+
 export interface SpatialPlayOptions {
   /** 湿信号量 0..1（早期反射 + 晚期尾） */
   wet?: number;
@@ -55,14 +60,20 @@ export interface SpatialPlayOptions {
   dry?: number;
   /** 总音量 0..1 */
   volume?: number;
+  /** Applied after direct delays and all reverberation, never captured into the source volume. */
+  mix?: SpatialMixRoute;
   /** 只在自然播完时回调一次；手动 stop / 听不见 / 解码失败不触发 */
   onEnd?: () => void;
+  /** 生命周期结束时恰好一次：自然结束、取消、不可听、失败或总线清理；用于回收外部登记。 */
+  onDispose?: () => void;
   /** 真正开始出声那一刻回调一次（解码完、没被 stop、没超出最远距离）。"播放函数返回了"不算播出去 */
   onStart?: () => void;
 }
 
 export interface SpatialVoiceHandle {
   stop(): void;
+  /** Source gain before spatial processing; applies immediately or when pending decode finishes. */
+  setVolume(volume: number): void;
 }
 
 export interface SpatialAudioBusDeps {
@@ -97,9 +108,11 @@ interface TailNodes {
 
 interface Voice {
   src: AudioBufferSourceNode;
+  volume: GainNode;
   nodes: AudioNode[];
   cell: EarlyCell | null;
   tail: TailNodes | null;
+  dispose: () => void;
 }
 
 export class SpatialAudioBus {
@@ -112,6 +125,13 @@ export class SpatialAudioBus {
   private buffers = new Map<string, AudioBuffer>();
   private pending = new Map<string, Promise<AudioBuffer | null>>();
   private live = new Set<Voice>();
+  /** Includes requests still decoding, so cancellation releases ownership immediately. */
+  private playbacks = new Set<SpatialVoiceHandle>();
+  /** Separate convolution paths keep an owner's sound and the ducked world from sharing a gain. */
+  private mixBuses = new Map<SpatialMixRoute, SpatialAudioBus>();
+  /** Routed buses borrow the parent's decoded buffers and in-flight requests. */
+  private bufferOwner: SpatialAudioBus = this;
+  private playbackGeneration = 0;
 
   private spaceId: string | null = null;
   private space: AcousticSpaceDef | null = null;
@@ -176,6 +196,81 @@ export class SpatialAudioBus {
   get context(): AudioContext { return this.ctx; }
   /** 空间音的汇合节点：出声证据的电平表挂在这里（只量空间音）。 */
   get output(): AudioNode { return this.out; }
+  /** Push current mix state to the output end, including sound already inside a delay/convolver. */
+  refreshMixGains(): void {
+    if (this.destroyed) return;
+    for (const [route, bus] of this.mixBuses) {
+      bus.out.gain.setValueAtTime(mixGain(route), this.ctx.currentTime);
+    }
+  }
+
+  /** End one owner's output path, cancelling pending decode playback as well as its tail. */
+  releaseMix(route: SpatialMixRoute): void {
+    const bus = this.mixBuses.get(route);
+    if (!bus) return;
+    this.mixBuses.delete(route);
+    bus.destroy();
+  }
+
+  /** Silent, bounded preparation: an owner output and one source cell near the listener. */
+  prepareMix(route: SpatialMixRoute): void {
+    if (this.destroyed) return;
+    const bus = this.ensureMixBus(route);
+    const ear = bus.getListener();
+    const self = bus.earlyCells.get('self');
+    if (ear && self && bus.earlyCells.size < SpatialAudioBus.EARLY_CELLS_MAX
+      && !bus.earlyCells.has(bus.cellKey(ear))) {
+      // null-source and a source exactly at the ear have identical reflections. Reuse the
+      // computed IR, but never a convolver node: separate owners must retain separate tails.
+      bus.earlyCells.set(bus.cellKey(ear), bus.copyCell(self));
+    }
+  }
+
+  private copyCell(cell: EarlyCell): EarlyCell {
+    let conv: ConvolverNode | null = null;
+    if (cell.conv?.buffer) {
+      conv = this.ctx.createConvolver();
+      conv.normalize = false;
+      conv.buffer = cell.conv.buffer;
+      conv.connect(this.out);
+    }
+    return { conv, taps: cell.taps, usedAt: nowMs(), users: 0, retired: false };
+  }
+
+  private ensureMixBus(route: SpatialMixRoute): SpatialAudioBus {
+    const existing = this.mixBuses.get(route);
+    if (existing) {
+      existing.out.gain.setValueAtTime(mixGain(route), this.ctx.currentTime);
+      return existing;
+    }
+    const bus = new SpatialAudioBus({ ctx: this.ctx, destination: this.out, fetchBytes: this.fetchBytes });
+    bus.bufferOwner = this.bufferOwner;
+    bus.out.gain.value = mixGain(route);
+    // The parent already calculated this exact space/listener graph. Share immutable
+    // AudioBuffers, not nodes, rather than rebuilding ~100ms of IR on an owner's first sound.
+    bus.listener = this.listener;
+    bus.forward = [...this.forward];
+    bus.spaceId = this.spaceId;
+    bus.space = this.space;
+    bus.builtAt = this.builtAt;
+    bus.lastBuildMs = this.lastBuildMs;
+    bus.lastBuildCostMs = this.lastBuildCostMs;
+    bus.moveThresholdM = this.moveThresholdM;
+    bus.lastTaps = this.lastTaps;
+    for (const [key, cell] of this.earlyCells) bus.earlyCells.set(key, bus.copyCell(cell));
+    if (this.tail?.conv?.buffer) {
+      const conv = this.ctx.createConvolver();
+      conv.normalize = false;
+      conv.buffer = this.tail.conv.buffer;
+      const delay = this.ctx.createDelay(SpatialAudioBus.TAIL_DELAY_MAX_S);
+      delay.delayTime.value = this.tail.delay.delayTime.value;
+      delay.connect(conv);
+      conv.connect(bus.out);
+      bus.tail = { delay, conv, users: 0, retired: false };
+    }
+    this.mixBuses.set(route, bus);
+    return bus;
+  }
   /** 当前挂的空间 id；没有挂＝只有直达声。 */
   getSpaceId(): string | null { return this.spaceId; }
   /** 当前挂的空间定义（重建总线时要原样挂回去）。 */
@@ -211,6 +306,7 @@ export class SpatialAudioBus {
     this.dropCells();
     this.dropTail();
     this.lastTaps = [];
+    for (const bus of this.mixBuses.values()) bus.setSpace(id, space);
     if (!space || !space.reflectors?.length) return;
     this.buildTail(space);
     this.rebuild();
@@ -248,15 +344,17 @@ export class SpatialAudioBus {
       const l = Math.hypot(forward[0], forward[1], forward[2]);
       if (l > 1e-9) this.forward = [forward[0] / l, forward[1] / l, forward[2] / l];
     }
-    if (!this.space || !this.space.reflectors?.length) return false;
+    let routedRebuilt = false;
+    for (const bus of this.mixBuses.values()) routedRebuilt = bus.setListener(ear, this.forward, force) || routedRebuilt;
+    if (!this.space || !this.space.reflectors?.length) return routedRebuilt;
     const now = nowMs();
     if (!force) {
       if (this.builtAt) {
         const movedM = Math.hypot(ear.x - this.builtAt.x, ear.y - this.builtAt.y, ear.z - this.builtAt.z)
           * metersPerWu(this.space);
-        if (movedM < this.moveThresholdM) return false;
+        if (movedM < this.moveThresholdM) return routedRebuilt;
       }
-      if (now - this.lastBuildMs < SpatialAudioBus.REBUILD_MIN_INTERVAL_MS) return false;
+      if (now - this.lastBuildMs < SpatialAudioBus.REBUILD_MIN_INTERVAL_MS) return routedRebuilt;
     }
     this.rebuild();
     return true;
@@ -390,6 +488,7 @@ export class SpatialAudioBus {
   /** 预取并解码一条音频；重复调用共享同一个 in-flight promise。 */
   async preload(url: string): Promise<AudioBuffer | null> {
     if (this.destroyed) return null;
+    if (this.bufferOwner !== this) return this.bufferOwner.preload(url);
     const hit = this.buffers.get(url);
     if (hit) return hit;
     const inFlight = this.pending.get(url);
@@ -418,24 +517,54 @@ export class SpatialAudioBus {
 
   /**
    * 从 M-world 里的一个发声点播一条空间音。`source = null` = 自己喊。
-   * 句柄立刻返回；解码期间 stop() 会取消播放。超出 `direct.maxDistanceM` 的声源不播（onEnd 不触发）。
+   * 句柄立刻返回；解码期间 stop() 会取消播放，无任何可听路径时不播。
+   * onEnd 只报自然结束；onDispose 覆盖所有结束路径，取消时同步通知。
    */
   playAt(url: string, source: AcousticPoint | null, opts: SpatialPlayOptions = {}): SpatialVoiceHandle {
-    let stopped = false;
+    if (opts.mix && !this.destroyed) {
+      const { mix, ...sourceOptions } = opts;
+      return this.ensureMixBus(mix).playAt(url, source, sourceOptions);
+    }
+    let disposed = false;
     let voice: Voice | null = null;
+    let volume = clamp01(opts.volume ?? 1);
+    const generation = this.playbackGeneration;
+    const dispose = (): void => {
+      if (disposed) return;
+      disposed = true;
+      this.playbacks.delete(handle);
+      voice = null;
+      try { opts.onDispose?.(); } catch (err) {
+        console.warn('[SpatialAudioBus] 生命周期回调失败', err);
+      }
+    };
     const handle: SpatialVoiceHandle = {
       stop: () => {
-        if (stopped) return;
-        stopped = true;
+        if (disposed) return;
         if (voice) this.killVoice(voice);
-        voice = null;
+        dispose();
+      },
+      setVolume: (value) => {
+        if (disposed) return;
+        volume = clamp01(value);
+        voice?.volume.gain.setValueAtTime(volume, this.ctx.currentTime);
       },
     };
-    if (this.destroyed) return handle;
+    if (this.destroyed) { dispose(); return handle; }
+    this.playbacks.add(handle);
     void (async () => {
-      const buf = this.buffers.get(url) ?? await this.preload(url);
-      if (!buf || this.destroyed || stopped) return;
-      voice = this.startVoice(buf, source, opts);
+      try {
+        const buf = this.bufferOwner.buffers.get(url) ?? await this.preload(url);
+        if (!buf || this.destroyed || disposed || generation !== this.playbackGeneration) { dispose(); return; }
+        voice = this.startVoice(buf, source, { ...opts, volume, onDispose: dispose });
+        if (!voice) dispose();
+        else if (disposed) { this.killVoice(voice); voice = null; }
+        else voice.volume.gain.setValueAtTime(volume, this.ctx.currentTime);
+      } catch (err) {
+        if (voice) this.killVoice(voice);
+        dispose();
+        console.warn('[SpatialAudioBus] 起播失败', url, err);
+      }
     })();
     return handle;
   }
@@ -501,16 +630,21 @@ export class SpatialAudioBus {
       return null;
     }
 
-    const voice: Voice = { src, nodes, cell, tail: tailNodes };
+    const voice: Voice = { src, volume: vol, nodes, cell, tail: tailNodes, dispose: () => opts.onDispose?.() };
     this.live.add(voice);
     src.onended = () => {
       if (!this.live.has(voice)) return;   // 手动停的不算自然播完
       this.live.delete(voice);
       this.disconnectVoice(voice);
-      opts.onEnd?.();
+      try { opts.onEnd?.(); } finally { voice.dispose(); }
     };
-    src.start();
-    opts.onStart?.();
+    try {
+      src.start();
+      opts.onStart?.();
+    } catch (err) {
+      this.killVoice(voice);
+      throw err;
+    }
     return voice;
   }
 
@@ -519,6 +653,7 @@ export class SpatialAudioBus {
     this.live.delete(v);
     try { v.src.stop(); } catch { /* 已停 */ }
     this.disconnectVoice(v);
+    v.dispose();
   }
 
   private disconnectVoice(v: Voice): void {
@@ -529,6 +664,9 @@ export class SpatialAudioBus {
 
   /** 停掉所有在飞的空间音（切场景/过场接管时用）。 */
   stopAll(): void {
+    ++this.playbackGeneration;
+    for (const route of [...this.mixBuses.keys()]) this.releaseMix(route);
+    for (const handle of [...this.playbacks]) handle.stop();
     for (const v of Array.from(this.live)) this.killVoice(v);
     this.live.clear();
   }
@@ -566,6 +704,10 @@ function nowMs(): number {
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+function mixGain(route: SpatialMixRoute): number {
+  return Number.isFinite(route.gain) ? clamp01(route.gain) : 0;
 }
 
 export type { AcousticListener };

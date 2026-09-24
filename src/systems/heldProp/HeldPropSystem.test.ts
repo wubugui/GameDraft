@@ -991,6 +991,18 @@ describe('玩家按键：T 点火 / 熄灭、按住 Q 护火；锁拦按键不�
     expect(snap(h).state).toBe('guarding');
   });
 
+  it('按住 Q 跨场景 / 读档重挂：护火态被认领回来，松手照常回点着（不会卡在护火里跑不动）', async () => {
+    const h = mk();
+    // 重挂 = 新 entry（playerGuarding 恒 false），但状态是存档 / 上一张图里的护火态
+    await h.sys.attach('player', 'right_hand', 't', 'guarding');
+    h.setInput({ togglePressed: false, guardHeld: true });
+    h.sys.update(1 / 60);
+    expect(snap(h).state).toBe('guarding');   // 还按着：接着护
+    h.setInput({ togglePressed: false, guardHeld: false });
+    h.sys.update(1 / 60);
+    expect(snap(h).state).toBe('lit');        // 松手就回点着
+  });
+
   it('锁：lit 熄不了、unlit 点不着；setPropState 照样切；不受理输入（null）时按键无效、护火照常松开', async () => {
     const h = mk();
     await h.sys.attach('player', 'right_hand', 't', 'lit');

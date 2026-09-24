@@ -14,7 +14,7 @@ triggers:
   paths: ["tools/json_lang/**", "tools/editor/shared/lsp_client.py"]
   topics: [json_lang, schema 索引器, LSP, 补全, 查引用, 全局搜索, tripwire, CONTENT_ID_PARAMS]
   tasks: [改json_lang, 加id引用参数, 接LSP, 查引用]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -31,7 +31,8 @@ last_governed: 2026-09-03
 - **零侵入、只咨询不裁决**:纯 stdlib、只读;Python 权威用 `ast` 静态解析(不 import,避开 Qt 副作用),TS 权威文本解析。不替代任何校验门(validator / 编辑器保存门仍是权威裁决),爆炸半径 = IDE 里的波浪线。
 - **结构无关深扫描**:不建模文档结构(避免成为 validator 的第四份拷贝),凭签名识别构造。
 - **宁可少校验不误报**:空宇宙不注入枚举、`str` 参数不约束、跨字段限定做不到就放全局并集、可选引用允许空串。
-- **新增含 id 引用参数的 action → 补 `CONTENT_ID_PARAMS` 一行**(并入 [加 Action 的登记面](../../runtime/mechanisms/action-registration-registry-surfaces.md));权威源形状变化时提取器直接 raise,权威打架/新条件叶/新 ref kind 出 tripwire WARNING(`--check` 变非零退出)。
+- **新增含 id 引用参数的 action → 补 `CONTENT_ID_PARAMS` 一行**,新宇宙还要在 `id_universes` 装载、编辑器
+  `_SELECTOR_KIND_UNIVERSE` 与叙事关联 `TARGET_SPECS` 登记(全套见 [加 Action 的登记面](../../runtime/mechanisms/action-registration-registry-surfaces.md));权威源形状变化时提取器直接 raise,权威打架/新条件叶/新 ref kind 出 tripwire WARNING(`--check` 变非零退出)。
 - **刻意不做信号生产-消费对账**:已有 [emitted-signal-catalog](emitted-signal-catalog.md) 权威口径,再造 = 第四份拷贝。
 - **overlay-only 文件必须并进枚举**(2026-09-03):`read_text` 注入只决定"怎么读",**不决定"读哪些"**——
   文件集来自磁盘 glob,于是编辑器里刚新建、还没 Save All 的场景/图(磁盘上没有这个文件)对整个
@@ -45,7 +46,11 @@ last_governed: 2026-09-03
 
 ## 已知坑
 
-- LSP overlay 的镜像表(`overlay_payloads`)对应 save_all 写盘分支——**新增脏桶时必须补一行**,否则该桶未保存内容 IDE 看不见(镜像清单,配 parity)。
+- LSP overlay 的镜像表(`overlay_payloads`)对应 save_all 写盘分支——**新增脏桶时必须补一行**,否则该桶未保存内容 IDE 看不见(镜像清单,`test_lsp_overlay_parity` 对账)。
+  反过来,**编辑器只读镜像的数据(没有写盘分支的)不许塞进这张表**,对账会判它过时。
+- **在收尾门里它只是 warning**:`validate-data` 把 schema 违例一律记 warning,自身故障(比如权威源里写了它解析不了的
+  TS 语法)整层降级成**一条** warning——门照样绿。而内容 id 悬垂引用(物品 / 过场 / 音频…)校验器基本不查,
+  **这条 warning 常常是构建期唯一的信号**,别当噪声扫掉;看见"json_lang 检查未能运行"就是整层没跑。
 - **file URI 必须是标准形态 `file:///E:/x`,overlay 键按 normcase 归一**(2026-09-03 实测):此前客户端
   `"file://" + quote(str(path))` 把盘符与反斜杠整串塞进 netloc,server 解回来是 `.`——Windows 上
   所有 overlay 挤在同一个键上、一条都对不上磁盘路径,「未保存内容实时可见」从没成立过而且零报错。

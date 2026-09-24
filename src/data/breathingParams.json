@@ -1,0 +1,84 @@
+{
+  "$comment": "呼吸图(breathing overlay)的全部可调参数:运行时、呼吸工作台、主编辑器的 setBreathingParams 表单共用这一份。键名是数据里的写法,label 是给制作人看的名字(参数文本、工作台、编辑器都用它)。min/max 是作者面允许的范围,运行时按它夹紧;会把画面扯坏的位移上限另由各呼吸图自己的 rig.limits 管。",
+  "version": 1,
+  "groups": [
+    {
+      "id": "rhythm",
+      "title": "节奏",
+      "params": [
+        { "key": "ti", "label": "吸气时长", "default": 2.7, "min": 0.8, "max": 6, "step": 0.05, "unit": "s", "hint": "胸口从平到鼓满用多久" },
+        { "key": "te", "label": "呼气时长", "default": 3.75, "min": 0.8, "max": 8, "step": 0.05, "unit": "s", "hint": "胸口从鼓满落回平用多久" },
+        { "key": "tp", "label": "呼完停顿", "default": 1.05, "min": 0, "max": 5, "step": 0.05, "unit": "s", "hint": "落平之后、下一口吸气之前停多久" },
+        { "key": "jitter", "label": "每口随机变化", "default": 6, "min": 0, "max": 20, "step": 1, "unit": "%", "hint": "每口的长短、深浅随机差这么多;0 = 每口一模一样" },
+        { "key": "sighDepth", "label": "第一口深叹气·深度", "default": 135, "min": 100, "max": 200, "step": 5, "unit": "%", "hint": "出图后第一口,相对平常一口" },
+        { "key": "sighLen", "label": "第一口深叹气·长度", "default": 115, "min": 100, "max": 200, "step": 5, "unit": "%", "hint": "" }
+      ]
+    },
+    {
+      "id": "chest",
+      "title": "胸口",
+      "params": [
+        { "key": "vent", "label": "胸口鼓起·朝上", "default": 10, "min": 0, "max": 20, "step": 0.5, "unit": "mm", "hint": "吸满时整块胸口(布、盘扣、领口一起)往上鼓多高" },
+        { "key": "cran", "label": "胸口鼓起·朝头", "default": 4, "min": 0, "max": 10, "step": 0.5, "unit": "mm", "hint": "吸满时往头的方向走多少" }
+      ]
+    },
+    {
+      "id": "paper",
+      "title": "纸",
+      "params": [
+        { "key": "inflate", "label": "呼气时纸飞起", "default": 10, "min": 0, "max": 14, "step": 0.5, "unit": "mm", "hint": "纸悬空那一段(鼻尖到下巴、嘴上方)往外飞多高" },
+        { "key": "sink", "label": "吸气时纸贴下", "default": 4, "min": 0, "max": 10, "step": 0.5, "unit": "mm", "hint": "往嘴唇、鼻尖贴下去多深" },
+        { "key": "swing", "label": "飞起时垂帘外翻", "default": 12, "min": 0, "max": 25, "step": 0.5, "unit": "°", "hint": "下巴外垂着的那片翻开多少" },
+        { "key": "back", "label": "贴下时垂帘往回收", "default": 4.8, "min": 0, "max": 12, "step": 0.1, "unit": "°", "hint": "" },
+        { "key": "upLimit", "label": "纸最多飞起", "default": 14, "min": 2, "max": 15, "step": 0.5, "unit": "mm", "hint": "任何时候(包括猛颤回弹)都不超过;再大纸面会被扯坏" },
+        { "key": "sinkLimit", "label": "纸最多贴下", "default": 5, "min": 1, "max": 10, "step": 0.5, "unit": "mm", "hint": "任何时候都不超过;猛吸时纸就贴死在这个深度" }
+      ]
+    },
+    {
+      "id": "sync",
+      "title": "纸和胸口怎么对上",
+      "params": [
+        { "key": "lag", "label": "纸比胸口晚", "default": 0, "min": -1.5, "max": 1.5, "step": 0.05, "unit": "s", "hint": "正数 = 纸慢半拍跟在胸口后面;负数 = 纸抢在胸口前面" },
+        { "key": "inA", "label": "贴下开始于吸气的", "default": 0, "min": 0, "max": 95, "step": 1, "unit": "%", "hint": "胸口开始起之后,过了吸气这一段的百分之几,纸才开始贴下" },
+        { "key": "inB", "label": "贴下结束于吸气的", "default": 100, "min": 5, "max": 100, "step": 1, "unit": "%", "hint": "到吸气这一段的百分之几,纸松开回平" },
+        { "key": "exA", "label": "飞起开始于呼气的", "default": 0, "min": 0, "max": 95, "step": 1, "unit": "%", "hint": "胸口开始落之后,过了呼气这一段的百分之几,纸才开始飞起" },
+        { "key": "exB", "label": "飞起结束于呼气的", "default": 100, "min": 5, "max": 100, "step": 1, "unit": "%", "hint": "到呼气这一段的百分之几,纸落回平" },
+        { "key": "edge", "label": "纸起落的过渡", "default": 12, "min": 1, "max": 50, "step": 1, "unit": "%", "hint": "开始贴/飞、结束贴/飞时拿这一段的百分之几慢慢过渡;小 = 啪一下,大 = 慢慢地" },
+        { "key": "freq", "label": "纸跟上的快慢", "default": 6, "min": 1, "max": 15, "step": 0.5, "unit": "Hz", "hint": "小 = 纸软、慢半拍;大 = 立刻跟上" },
+        { "key": "damp", "label": "纸的稳定", "default": 0.18, "min": 0.05, "max": 1, "step": 0.01, "unit": "", "hint": "小 = 到位后还弹几下;大 = 稳稳停住" }
+      ]
+    },
+    {
+      "id": "gasp",
+      "title": "猛地一颤",
+      "params": [
+        { "key": "gaspT", "label": "猛吸时长", "default": 0.26, "min": 0.1, "max": 2, "step": 0.01, "unit": "s", "hint": "从猛抽第一口到吸满用多久" },
+        { "key": "gaspPow", "label": "猛吸的爆发", "default": 3, "min": 1, "max": 6, "step": 0.5, "unit": "", "hint": "1 = 匀匀地吸满;越大越是一下子猛抽进去、后面才慢慢吸满(窒息后醒过来那种)" },
+        { "key": "gaspChest", "label": "猛吸时胸口挺起", "default": 110, "min": 0, "max": 200, "step": 5, "unit": "%", "hint": "相对平常一口吸满" },
+        { "key": "gaspKick", "label": "松开后纸弹起", "default": 10, "min": 0, "max": 15, "step": 0.5, "unit": "mm", "hint": "猛吸时纸贴死在「纸最多贴下」,松开后弹起的最高点" }
+      ]
+    },
+    {
+      "id": "fade",
+      "title": "渐弱",
+      "note": "开始渐弱之后",
+      "params": [
+        { "key": "fadeTo", "label": "正在这口收到", "default": 70, "min": 10, "max": 100, "step": 5, "unit": "%", "hint": "开始渐弱时正在进行的这一口,深浅收到平常的百分之几" },
+        { "key": "fadeSec", "label": "收的时间", "default": 2.5, "min": 0.2, "max": 6, "step": 0.1, "unit": "s", "hint": "" },
+        { "key": "f1Depth", "label": "变浅那口·深度", "default": 50, "min": 5, "max": 100, "step": 5, "unit": "%", "hint": "相对平常一口" },
+        { "key": "f1Len", "label": "变浅那口·长度", "default": 80, "min": 30, "max": 150, "step": 5, "unit": "%", "hint": "" },
+        { "key": "apnea", "label": "假停", "default": 0, "min": 0, "max": 10, "step": 0.1, "unit": "s", "hint": "变浅那口之后停这么久再来最后一丝;0 = 不假停,直接越来越浅然后停" },
+        { "key": "f2Depth", "label": "最后一丝·深度", "default": 30, "min": 5, "max": 100, "step": 5, "unit": "%", "hint": "停下之前最后一口" },
+        { "key": "f2Len", "label": "最后一丝·长度", "default": 75, "min": 30, "max": 150, "step": 5, "unit": "%", "hint": "" },
+        { "key": "stillHold", "label": "真停后多久出字", "default": 2.5, "min": 0, "max": 8, "step": 0.1, "unit": "s", "hint": "最后一丝落平后静多久,「渐弱」这一步才算走完(对话里等它的那一步这时才放行)" }
+      ]
+    },
+    {
+      "id": "sound",
+      "title": "声音",
+      "params": [
+        { "key": "volume", "label": "呼吸声音量", "default": 0.6, "min": 0, "max": 1, "step": 0.05, "unit": "", "hint": "呼吸声跟着纸走(纸是被气吹动的)" }
+      ]
+    }
+  ]
+}

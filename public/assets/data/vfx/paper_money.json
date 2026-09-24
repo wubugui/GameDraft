@@ -53,8 +53,8 @@
         ]
       },
       "spawn": {
-        "max": 100,
-        "burst": 100,
+        "max": 200,
+        "burst": 200,
         "shape": {
           "kind": "area",
           "radius": 200

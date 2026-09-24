@@ -4,12 +4,19 @@ title: 开场背尸重设计(日常铺垫反衬诡异)
 domain: content
 type: decision
 summary: 开场背尸=先做混子糊口零活(零工背尸_done 闸门)铺日常基线,再让背阿秀逐拍崩坏;三个演出增量被否勿复活
-status: active
+status: superseded
 triggers:
   topics: [背尸, 开场, 零工, 阿秀反差, pressure hold]
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
+> **已被取代(2026-08-16 制作人审批的开场落地版)**:开场不再是"零工铺垫 → 背阿秀逐拍崩坏"。
+> 现行开场 = 神秘人发崖墓活(禁忌前置)→ 关二狗卷定金 → 赌坊输光被套牢 → 只能真上山 → 空山只有一盏长明灯;
+> 阿秀尸体进 Demo 已作废。权威:故事仓 `Demo制作资料/设定对账_2026.08.16.md` 与游戏总纲一·2;
+> 实现侧主图 `flow_xungou_main` 已长出序章状态(听书→被赶出→闲逛→赌坊→应下上山→出南门)。
+> 零工两条 flow(`beishi_lingong_flow` / `beishi_daily_flow`)仍在数据里,对话已改名 `线外_*`,**不再是开场**。
+> 本卡只留作历史:下面的被否清单里"信号梯度不许前移"一条仍成立(见冷框架决策)。
+>
 > **部分被取代(2026-07-12)**:第一单编排"先经零工工头顺序背两具普通尸(工头派活)"
 > 已被 [2026-07-12-beishi-first-job-yizhuang-reorchestration](2026-07-12-beishi-first-job-yizhuang-reorchestration.md)
 > 取代(改为自由空挡→找活→义庄门口拦活接单,工头只派后续淹尸单);本卡其余内容

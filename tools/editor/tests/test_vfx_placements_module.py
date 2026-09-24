@@ -280,13 +280,26 @@ def test_instance_ids_for_scene_is_ordered_union() -> None:
     assert vp.instance_ids_for_scene({}, "s") == []
 
 
+def _raw_parts(lib: dict, sid: str) -> list[tuple[str, list]]:
+    """直接走原始 JSON（不经 rows_for / phases_in_library）：``[(时段键, 行), …]``，base 记作 BASE。"""
+    ent = lib["scenes"][sid]
+    return [(vp.BASE, ent.get("base") or [])] + list((ent.get("variants") or {}).items())
+
+
 def test_instance_ids_for_real_scene_unions_base_and_night() -> None:
-    doc, _err = vp.load_library(REPO)
-    # 并集里有哪些、去不去重是这里的判据；**顺序不写死**——库里的行序是作者面的顺序（工作台左栏 ↑↓ 就能换），
+    doc, err = vp.load_library(REPO)
+    assert err == "" and doc["scenes"], "布置库是空的？"
+    # 期望值从真库现算：布置库是作者面、一直在长（09-21 各场景加了一批 pml_atmo_*），写死 id 清单一加布置就失配。
+    # 判据是并集有哪些、去不去重；**顺序不写死**——库里的行序是作者面的顺序（工作台左栏 ↑↓ 就能换），
     # 上面那条纯数据用例已经钉住「base 在前、按时段顺序、首次出现序」的语义了
-    assert sorted(vp.instance_ids_for_scene(doc, "崖墓前段")) == ["vfx_bats", "vfx_drip"]
-    assert vp.instance_ids_for_scene(doc, "崖墓入口") == ["vfx_fireflies"], "萤火虫只在夜里那份"
-    assert vp.rows_for(doc, "崖墓入口", vp.BASE) == [], "只在夜里摆的，基底里没有（没配就没有）"
+    for sid in doc["scenes"]:
+        parts = _raw_parts(doc, sid)
+        got = vp.instance_ids_for_scene(doc, sid)
+        assert len(got) == len(set(got)), f"{sid}: 候选里有重复（同 id 摆在几份时段外观里只算一个）"
+        assert sorted(got) == sorted({str(r["id"]).strip() for _ph, rows in parts for r in rows}), sid
+        # 没配就没有：每一份只有它自己的行，不从别的时段外观继承（只摆在夜里的，基底里没有）
+        for ph, rows in parts:
+            assert [r["id"] for r in vp.rows_for(doc, sid, ph)] == [r["id"] for r in rows], (sid, ph)
 
 
 def test_set_rows_returns_new_library() -> None:
@@ -308,6 +321,12 @@ def test_set_rows_returns_new_library() -> None:
     assert "t" not in f["scenes"], "对不存在的场景删一份不许留空壳"
     g = vp.set_rows({"scenes": {"s": {"base": [_row(anchor={"x": 7, "y": 8})]}}}, "u", vp.BASE, [])
     assert type(g["scenes"]["s"]["base"][0]["anchor"]["x"]) is int, "拷贝过程中 int 漂成了 float"
+    h = vp.set_rows({"_comment": "c", "scenes": {"t": {"base": [_row()]},
+                                                 "s": {"variants": {"夜": [_row(id="n")]}, "memo": 1}}},
+                    "s", vp.BASE, [_row(id="b")])
+    assert list(h["scenes"]["s"]) == ["base", "variants", "memo"], "只有 variants 的场景加 base：键序要与闸门一致"
+    assert list(h["scenes"]) == ["t", "s"], "改一个场景不许挪它在库里的位置"
+    assert vp.dumps(vp.normalize_library(h)) == vp.dumps(h), "set_rows 的结果要是闸门的不动点"
 
 
 # --------------------------------------------------------------------------- #

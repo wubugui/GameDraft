@@ -491,6 +491,22 @@ export class Player implements ICutsceneActor, ITrajectoryTarget {
     }
   }
 
+  /**
+   * 控制权被拿走的那一刻把腿收住（GameState 离开 Exploring 时由组装层调一次）。
+   *
+   * 非探索态下 `update` 不跑、位置就此冻住，但 `cutsceneUpdate` 仍在推 `sprite.update`——
+   * 于是"走着走着踩进一个会起动作链的 zone"之后，人钉在原地、走路动画却继续循环：
+   * 落脚帧照常命中，脚步声（连同跟脚声）一声接一声响在一个不动的人脚下（2026-09-23 真机抓到，
+   * 跑马梁「有人喊」那一拍连响 5.3 秒）。
+   *
+   * 有脚本位移在跑（moveTarget / jumpTarget）或动画归动作系统时不碰——那两种情况下
+   * 动画正由别人负责。
+   */
+  settleLocomotion(): void {
+    if (this.moveTarget || this.jumpTarget || this.animationOwned) return;
+    this.sprite.playAnimation(ANIM_IDLE);
+  }
+
   cutsceneUpdate(dt: number): void {
     // 跳跃演出与位移互斥：起跳期间独占更新（脚点线性 + 弧线抬升 + 插帧），跳过 moveTarget。
     if (this.jumpTarget) {

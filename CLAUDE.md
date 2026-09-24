@@ -22,6 +22,12 @@
 > 正文、落地清单、当前欠账、验收判据全在
 > `agent_docs/runtime/mechanisms/coordinate-spaces.md` 的「铁律 0」一节。
 
+> **🔴 Blender 铁律 · 一律走 Hub,本机禁止运行 Blender**(制作人 2026-09-24 定,hook 级强制,跨项目):
+> 建模/渲染/导出/查 .blend 全部提交给局域网 Hub `http://denghong01:8765` 的 `backend=blender`
+> (4.5.0 / 4.5.13 / 5.2.2),照 `inference-hub-generation` 技能做。本机任何 blender.exe 都不许启动,
+> 也不许下载新 Blender 或 `pip install bpy` 来绕。正文见 `agent_docs/asset-pipeline/norms.md` 不变量 7;
+> 强制见 `scripts/agent_hooks/no_local_blender.py`(用户级 PreToolUse)+ 本机 blender.exe 已换成拒绝替身。
+
 <!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py install 维护,勿手改) -->
 > **🔴 编排铁律 · 不准自己写 flag,派生 flag 只读**(制作人 2026-09-15 定,hook 级强制):
 > 做内容/编排一律走**叙事状态机**——推进走信号、门控/"做过没有"/跨线依赖读 `narrative` 条件叶。
@@ -84,6 +90,7 @@ sh scripts/py.sh -B tools/skill_workflow_governance/govern.py audit
 pure-data-iteration、editor-tools-iteration、add-game-action、add-text-ref、
 core-framework-architecture-review、agent-docs-cli、**handbook-mode**(文档模式:往制作人手册写东西,见 §H)、
 **mainline-story-progress**(制作人下令时核对/更新 FindingDogStory 的主线故事进度文档)、
-**kill-gamedraft-residue**(杀游戏运行时 / 编辑器 / 工作台残留进程)。
+**kill-gamedraft-residue**(杀游戏运行时 / 编辑器 / 工作台残留进程)、
+**scene-collision-from-art**(看原画修场景碰撞 + 独立子代理摆人复查)。
 
 **壳只留"怎么做",知识("是什么/为什么")一律在 agent_docs**——两边打架时以库为准。

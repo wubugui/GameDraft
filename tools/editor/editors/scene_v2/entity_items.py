@@ -9,7 +9,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QPen, QPolygonF
 
 from .changes import EntityRef
-from ...shared.light_env_visual import light_env_visual
+from ...shared.light_env_visual import contact_preview_axes, light_env_visual
 from .items import EntityItem
 from .renderer import point_in_polygon, point_segment_distance_sq
 
@@ -359,16 +359,17 @@ class LightCurveItem(PolylineItem):
         super().__init__(ref, color or QColor(0, 200, 220, 220))
         self.always_show_vertices = True
         self._envs: list = []
-        self._ref_width = 100.0
+        # 代表角色世界高：接触阴影的尺度只认它（与运行时同，帧宽只反映图集留白）
+        self._ref_height = 160.0
 
     def set_envs(self, envs) -> None:
         self._envs = list(envs or [])
         self.update()
 
-    def set_reference_width(self, width: float) -> None:
-        w = float(width or 0)
-        if w > 0 and w != self._ref_width:
-            self._ref_width = w
+    def set_reference_height(self, height: float) -> None:
+        h = float(height or 0)
+        if h > 0 and h != self._ref_height:
+            self._ref_height = h
             self.update()
 
     def paint(self, painter, option, widget=None) -> None:
@@ -381,16 +382,14 @@ class LightCurveItem(PolylineItem):
             if i >= len(self._envs):
                 break
             vis = light_env_visual(self._envs[i])
-            # 接触阴影：脚下椭圆，半轴与 EntityShadow 同公式
+            # 接触阴影：代表角色脚下的范围，与 EntityShadow 同一组系数（shared/light_env_visual）
             if vis.contact_size > 0 and vis.contact > 0:
                 painter.setBrush(QBrush(QColor(0, 0, 0,
                                                int(18 + 70 * vis.contact))))
                 painter.setPen(QPen(QColor(20, 24, 32, 200), 0,
                                     Qt.PenStyle.DashLine))
-                painter.drawEllipse(
-                    QPointF(px, py),
-                    self._ref_width * 0.65 * vis.contact_size,
-                    self._ref_width * 0.30 * vis.contact_size)
+                rx, ry = contact_preview_axes(self._ref_height, vis.contact_size)
+                painter.drawEllipse(QPointF(px, py), rx, ry)
             # 影迹：沿光来向的**反方向**，长度随仰角、暗度随 darkness
             trail = r * (2.4 + 2.2 * vis.shadow_len)
             pen = QPen(QColor(8, 8, 14, int(70 + 150 * vis.darkness)), 0)

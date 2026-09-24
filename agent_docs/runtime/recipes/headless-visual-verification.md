@@ -10,11 +10,11 @@ authority:
   - vite.config.ts
 triggers:
   tasks: [画面验证, 渲染迭代验证, 过场验证, 无头测试]
-  topics: [headless, rAF, 截图, 节流]
-last_governed: 2026-08-05
+  topics: [headless, rAF, 截图, 节流, 像素取证, 像素 diff, eval 往返]
+last_governed: 2026-09-23
 ---
 
-**实测环境与日期**:2026-07-06 实测 rAF 计数为 0(完全暂停非节流);2026-07-07 位面/背尸全环增补四条;2026-07-13 主线①听书全拍跑通(读 src 炸页/warp 守卫/驱动口);2026-07-18 Esc 弹 Dev Mode 面板;2026-07-30 public/ JSON 不触发刷新;2026-07-31 stepFixedTicks 时钟漂移;2026-08-03 git 子命令同样炸页 + 多实例叠画布。
+**实测环境与日期**:2026-07-06 实测 rAF 计数为 0(完全暂停非节流);2026-07-07 位面/背尸全环增补四条;2026-07-13 主线①听书全拍跑通(读 src 炸页/warp 守卫/驱动口);2026-07-18 Esc 弹 Dev Mode 面板;2026-07-30 public/ JSON 不触发刷新;2026-07-31 stepFixedTicks 时钟漂移;2026-08-03 git 子命令同样炸页 + 多实例叠画布;2026-09-11 像素 A/B 四条陷阱(粒子取证);2026-09-23 eval 往返墙钟与一发一拍。
 
 ## 为什么需要
 
@@ -26,7 +26,8 @@ last_governed: 2026-08-05
 1. 进 dev 模式:URL 加 `?mode=dev`(跳过首启手势门)。
 2. 驱动走 [runtime-command-channel](runtime-command-channel.md)。
 3. 出帧两条路:
-   - **forceFrame**:`renderer.app.ticker.update()`×n,同步跑 tick+render(临时调试桩,验完删)。
+   - **forceFrame**:`renderer.app.ticker.update()`×n,同步跑 tick+render(临时调试桩,验完删;
+     手改 uniform 做 A/B 时别用它,见下「取像素的陷阱」第一条)。
    - **rAF pump(零改码)**:eval 里 patch `window.requestAnimationFrame` 只入队 + 暴露
      `__pumpRaf(n)` 按需排空;`window.__gameDestroy()` 杀旧实例;`import('/src/core/Game.ts')`
      页内重启(补丁对新实例全生效);后台循环 pump + 注入事件,断言直读 `window.__game` 私有字段。
@@ -92,7 +93,32 @@ last_governed: 2026-08-05
 - **别连着 replay 过场**:隐藏页反复调播放接口会把会话搅乱(残留 resolver / 停在等点击),
   表现是"点了没反应/自己往前跑"。要干净起一段就整页带参数 reload。
 
-### 取像素的三个陷阱(都误导过整轮结论)
+- **一发 eval 一拍**:本机一次页内 eval 往返实测 30–75 s 墙钟,而被验的拍常常只有几秒(常风几秒就吹灭
+  不护的火把)。"先按住键、下一发再去点说明卡"这种跨 eval 的驱动必然错过窗口、像流程坏了——
+  **按键 + 等待 + 断言放进同一发 eval**(2026-09-23 跑马梁复验:分两发走错分支,合一发 6/6)。
+- **页内直调实体方法不经通道的夹值**:`player.moveTo(x, y)` 漏传 speed ⇒ 每帧把 NaN 写进玩家坐标、整局
+  不可逆(与 [runtime-command-channel](runtime-command-channel.md)「通道对参数零兜底」同一形状)。
+  让玩家走路用 `playerMoveTo` 命令 / `setPlayerNavTarget`,别直调过场用的 `moveTo`。
+- **探针"突然不更新"/玩家不走,先查游戏状态,别怀疑自己的代码**:说明卡一弹就是 UIOverlay 且世界暂停,
+  主循环 tick 第一行就返回,一切派生量冻在原值,像"新功能只生效了一次";玩家只在 Exploring 才走,
+  不动先查状态再查输入。说明卡要真实点击关掉;场景 onEnter 的过场/动作链同样会把状态切走
+  (机制见 [world-pause-and-game-clock](../mechanisms/world-pause-and-game-clock.md)、
+  [game-state-handoff](../mechanisms/game-state-handoff.md))。
+- 页内切场景:`sceneManager.switchScene` 只收**场景 id 字符串**(传过场用的对象形状会抛 trim 错);
+  dev 加载场景的入口**没有 id 闸**,场景候选列表只喂面板兜底,别据此以为某场景"不能 dev 加载"。
+
+### 取像素的陷阱(都误导过整轮结论)
+
+- **`ticker.update()` 出帧会把共享 uniform 写回参数值**:它跑逐帧同步(角色光照的 `syncFrame`),把
+  共享的 frameShade 组整份按参数重写——凡是"改一个 uniform 再 `ticker.update()` 取像素"的 A/B 全部无效,
+  会误判成"uniform 组没绑上"。A/B 改 uniform 时用 `renderer.render(stage)` 直接出帧。
+- **页内手动喂帧参数是污染源**:主循环喂给光照的相机参数带分辨率 / DPR 修正,控制台里手传"看起来对"的
+  裸容器坐标会把世界脚点系统性写歪上百 wu,表现成"灯照人的位置与光晕对不上"。要么让主循环自己跑,要么
+  照抄主循环那一处的实参;读 GPU 真值用 `gl.getUniform`,别信 JS 侧镜像变量与日志。
+- **稀疏 / 半透明 / 加法混合的效果不许用方框均值 A/B**:几百个变化像素的均值差被噪声淹没,像"根本没画"。
+  用**全画面逐像素 diff + 变化像素计数 + bbox**。反过来两条也都踩过:① diff 为 0 ≠ 没画,先确认目标在相机里
+  (`mesh.parent.toGlobal(...)` 比画布尺寸,曾在画布左边外 700 px);② diff 有几千像素但截图一片空白是常态
+  (低于人眼阈值)。**判据必须"变化像素数 + 截图"两个都过**。
 
 - **浮点 RenderTexture 取不出来**:对 16 位浮点的 RT 取像素**恒返回全 0,且不抛错不警告**——
   没有任何信号能区分"读不了"和"真的是 0",而浮点 RT 恰恰是光影链上最关键的中间产物。

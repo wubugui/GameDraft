@@ -24,14 +24,15 @@ import type {
   VfxFlockBehaviorDef,
   VfxFlockState,
   VfxInstanceState,
+  VfxSurfaceKind,
 } from '../../data/types';
 import {
-  consumeIfBurning, createPlateBurnState, PLATE_BURN_CONTACT_EVERY, resolvePlateBurnParams, stepPlateBurn,
+  consumeIfBurning, createPlateBurnState, PLATE_BURN_CONTACT_EVERY, plateLightningIgnite, resolvePlateBurnParams, stepPlateBurn,
   type PlateBurnParams, type PlateBurnState,
 } from './vfxPlateBurn';
 import { BURN_WU_PER_CM, type ResolvedBurnable } from '../../data/burnables';
 import type { Vec3 } from '../../utils/sceneSpace';
-import { sampleSceneWind, type SceneWindParams } from '../../utils/sceneWind';
+import { addWindBlasts, sampleSceneWind, type SceneWindParams, type WindBlast } from '../../utils/sceneWind';
 import {
   buildConfineField, CONFINE_EXIT_FADE_S, CONFINE_EXIT_WEIGHT, confineHeightWeight, confineWeightAt,
   type ConfineField,
@@ -155,6 +156,12 @@ export interface VfxStepContext {
   /** 风的钟（秒）——与背景摆动同一个，所以两边同一拍 */
   windTime?: number;
   /**
+   * 冲击风（落雷落地那一下，见 `utils/sceneWind` 的 `WindBlast`）与它自己的钟：吃场景风的粒子被它从中心推开。
+   * 没写风的场景里也有（冲击不靠场景风的参数）。
+   */
+  blasts?: readonly WindBlast[] | null;
+  blastTime?: number;
+  /**
    * 火焰段（M-world）：可燃物的火、手上燃着的火把、别的实例里燃着的纸。可燃薄片碰到会着（见 `vfxPlateBurn`）。
    * 同一实例里燃着的纸不用放进来（模拟自己算）。
    */
@@ -183,6 +190,18 @@ export interface VfxInstanceOptions {
    * （调用方负责出声）。
    */
   burnTemplates?: ReadonlyMap<string, ResolvedBurnable> | null;
+  /**
+   * 锚点落在什么表面上（布置库的表面材质区：水面里 = `water`，其余 = `ground`）。
+   * 发射器写了 `onSurface` 而不含它 ⇒ 这个发射器这一次不发。不给 = 按 `ground`。
+   */
+  surfaceKind?: VfxSurfaceKind;
+}
+
+/** 发射器在这个表面上发不发（`onSurface` 不写 = 哪都发） */
+export function emitterAllowedOnSurface(def: Pick<VfxEmitterDef, 'onSurface'>, kind: VfxSurfaceKind | undefined): boolean {
+  const on = def.onSurface;
+  if (!Array.isArray(on) || on.length === 0) return true;
+  return on.includes(kind ?? 'ground');
 }
 
 export type VfxSimEvent =
@@ -351,7 +370,8 @@ export class VfxInstanceSim {
     readonly id: string,
     readonly effect: VfxEffectDef,
     readonly anchorWorld: Vec3,
-    seed: number,
+    /** 实例种子（画雷的发射器拿它混出这一次的雷形：同一实例的几层画的是同一道雷） */
+    readonly seed: number,
     readonly space: VfxSpace,
     readonly countScale = 1,
     readonly options: VfxInstanceOptions = {},
@@ -407,7 +427,8 @@ export class VfxInstanceSim {
         rateThreshold: jitter ? timingRng.range(1 - jitter, 1 + jitter) : 1,
         elapsed: 0,
         rateAcc: 0,
-        active: !def.subOnly,
+        // onSurface：落点表面不对的发射器这一次整个不发（落在水里的雷不崩碎石、落在地上的不溅水花）
+        active: !def.subOnly && emitterAllowedOnSurface(def, options.surfaceKind),
         flock: beh ? {
           def: beh,
           state: beh.initialState ?? 'roosting',
@@ -618,11 +639,12 @@ export class VfxInstanceSim {
    *   不是火把真的划过去；火舌不带就原地留"鬼火"、断成珠子。宿主走路那一份不在 carry 里，拖尾照留；
    * - `full`：平移锚点的整个位移（粘在发射面上的余烬红光）；
    * - `none`（缺省）：不动。烟也带上的话，飘出几百 wu 的整条烟柱会跟着手一步一晃（2026-09-15 真跑抓到）。
+   * `keepParticlesInWorld`：镜头附近天气只移动发射位置，强制保留所有在飞粒子的世界坐标。
    *
    * ⚠ 薄片（`plate`）的 `area` 是构造时按原点解出来的贴附面，这里**不重解**：
    * 薄片是躺在地上的纸钱那一档，本来就不该挂在会动的东西上。
    */
-  moveAnchor(world: Vec3, carry: Vec3 | null = null): void {
+  moveAnchor(world: Vec3, carry: Vec3 | null = null, keepParticlesInWorld = false): void {
     const dx = world[0] - this.anchorWorld[0];
     const dy = world[1] - this.anchorWorld[1];
     const dz = world[2] - this.anchorWorld[2];
@@ -635,7 +657,7 @@ export class VfxInstanceSim {
     for (const e of this.emitters) {
       this.translateEmitterOrigin(e, dx, dy, dz);
       // 薄片与群体不跟：它们本来就不挂在会动的东西上
-      if (e.plate || e.flock) continue;
+      if (e.plate || e.flock || keepParticlesInWorld) continue;
       const follow = e.def.motion?.followAnchor;
       if (follow === 'full') translateLive(e.p, dx, dy, dz);
       else if (follow === 'rig' && carry) translateLive(e.p, carry[0], carry[1], carry[2]);
@@ -706,7 +728,7 @@ export class VfxInstanceSim {
   start(): void {
     for (const b of this.beams) b.active = true;
     for (const e of this.emitters) {
-      if (e.def.subOnly) continue;
+      if (e.def.subOnly || !emitterAllowedOnSurface(e.def, this.options.surfaceKind)) continue;
       e.active = true;
       e.elapsed = 0;
       e.burstDone = false;
@@ -795,6 +817,23 @@ export class VfxInstanceSim {
       e.burn.burnT[s] = -1;
       if (e.p.alive[s]) { e.p.alive[s] = 0; e.p.liveCount--; }
     }
+  }
+
+  /**
+   * 雷劈：落点竖直往上 `heightWu` 这一段、半径 `radiusWu` 内还没着的可燃薄片当场着（只点绑的模板开了「雷劈能点着」的）。
+   * 返回点着了几张。
+   */
+  lightningIgnitePlates(x: number, y: number, z: number, radiusWu: number, heightWu: number): number {
+    let n = 0;
+    for (const e of this.emitters) {
+      const S = e.burn;
+      const pl = e.plate;
+      if (!S || !pl) continue;
+      const arr = pl.arr;
+      n += plateLightningIgnite(S, e.p, e.p.cap, (pl.P.w + pl.P.h) / 4, pl.P.w, arr.metric, arr,
+        x, y, z, radiusWu, heightWu, (i) => { arr.sleep[i] = 0; arr.still[i] = 0; });
+    }
+    return n;
   }
 
   /** 燃着的纸作为火焰段（给别的实例 / 燃烧系统用）；竖直向上 `flameLength` */
@@ -1108,6 +1147,8 @@ export class VfxInstanceSim {
       space: this.space,
       wind: e.program.influences.sceneWind ? ctx.wind ?? null : null,
       windTime: ctx.windTime ?? this.time,
+      blasts: e.program.influences.sceneWind && ctx.blasts && ctx.blasts.length ? ctx.blasts : null,
+      blastTime: ctx.blastTime ?? 0,
       turb: e.turb,
       time: this.time,
       substep: this.substep,
@@ -1138,6 +1179,8 @@ export class VfxInstanceSim {
     const r = e.radius;
     const useShell = shellResp !== 'none' && sp.hasShell;
     const sceneWind = e.program.influences.sceneWind ? ctx.wind ?? null : null;
+    const blasts = e.program.influences.sceneWind && ctx.blasts && ctx.blasts.length ? ctx.blasts : null;
+    const blastTime = ctx.blastTime ?? 0;
     const windTime = ctx.windTime ?? this.time;
     const cf = this.confine;
     e.lifecycle.beginStep();
@@ -1181,6 +1224,17 @@ export class VfxInstanceSim {
           const uy = tmpWind[1] > 0 ? tmpWind[1] * chw : tmpWind[1];
           ax += e.drag * tmpWind[0] * g;
           ay += e.drag * uy * g;
+          az += e.drag * tmpWind[2] * g;
+        }
+      }
+      // 冲击风（落雷）：同样是相对空气的阻力，吃场景风的才吃它（没写风的场景也有）
+      if (blasts && e.drag > 0) {
+        tmpWind[0] = 0; tmpWind[1] = 0; tmpWind[2] = 0;
+        const hAbove = Math.max(0, p.y[i] - sp.groundY(p.x[i], p.z[i]));
+        if (addWindBlasts(blasts, blastTime, p.x[i], p.z[i], hAbove, tmpWind) > 0) {
+          const g = (sceneWind ? sceneWind.gainVfx : 1) * cw * this.windScale;
+          ax += e.drag * tmpWind[0] * g;
+          ay += e.drag * tmpWind[1] * g * chw;
           az += e.drag * tmpWind[2] * g;
         }
       }

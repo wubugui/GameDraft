@@ -112,7 +112,7 @@ def health_threat_errors(value) -> list[str]:
         errors.append("healthThreat.nearAttackPerSecond 需要 nearRadius")
     if "fireResponse" in value and value["fireResponse"] not in ("repelled", "ignore"):
         errors.append("healthThreat.fireResponse 须为 repelled 或 ignore")
-    for key in ("nightOnly", "affectsWhenHidden", "duringPresentation", "soundOnlyMoving"):
+    for key in ("nightOnly", "affectsWhenHidden", "duringPresentation"):
         if key in value and not isinstance(value[key], bool):
             errors.append(f"healthThreat.{key} 须为布尔值")
     if "conditions" in value and not isinstance(value["conditions"], list):
@@ -120,7 +120,7 @@ def health_threat_errors(value) -> list[str]:
     for key in ("enteredSignal", "repelledSignal", "leftSignal", "deathNoteId", "presenceSfx"):
         if key in value and not isinstance(value[key], str):
             errors.append(f"healthThreat.{key} 须为文字 id")
-    for key, minimum, maximum in (("soundInterval", .1, None), ("soundBehindPlayer", 0, None), ("soundVolume", 0, 1)):
+    for key, minimum, maximum in (("soundInterval", .1, None), ("soundVolume", 0, 1)):
         if key in value and not _number(value[key], minimum=minimum, maximum=maximum):
             errors.append(f"healthThreat.{key} 数值超出范围")
     return errors

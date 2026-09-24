@@ -22,8 +22,10 @@ from PySide6.QtGui import QPixmap
 
 from ...shared.anim_atlas_preview import (
     crop_atlas_cell,
+    lower_frame_to_foot,
     resolved_anim_world_pair,
     spritesheet_public_path,
+    state_foot_offset,
 )
 from ...shared.anim_frame_cursor import AnimFrameCursor
 from ...shared.burnables import template_world_size
@@ -273,9 +275,13 @@ class NpcAnimBank:
             if isinstance(box, dict):
                 sw = int(box.get("width", 0) or 0) or None
                 sh = int(box.get("height", 0) or 0) or None
-        return crop_atlas_cell(
+        cell = crop_atlas_cell(
             bundle.atlas, bundle.cols, bundle.rows, idx,
             cell_w=bundle.cell_w, cell_h=bundle.cell_h, slice_w=sw, slice_h=sh)
+        # 画布按「帧底 = 脚」摆帧；状态有脚底偏移（states[*].footOffset）时把画挪下去，
+        # 与运行时一样让脚落在 NPC 位置上（运行时挪画面锚点，接地点不动）
+        name, _st = bundle.pick_state(npc)
+        return lower_frame_to_foot(cell, state_foot_offset({"states": bundle.states}, name))
 
     def advance(self, dt: float) -> bool:
         """推进全部游标。返回是否**有可能**换了帧（用于跳过无谓重绘）。"""

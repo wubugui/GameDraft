@@ -89,8 +89,11 @@ from ..shared.entity_transform_math import (
     is_default_entity_anchor,
     inverse_transform_world_vec,
     perspective_axis_data,
+    perspective_camera_follow_info,
+    perspective_camera_zoom_ratio_at,
     perspective_scale_at,
     transform_local_vec,
+    DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO,
 )
 
 from ..project_model import ProjectModel
@@ -145,6 +148,7 @@ from ..shared.numeric_roundtrip import preserve_numeric_repr
 from . import scene_lights
 from .light_follow_ui import LightFollowEditor
 from .shadow_bindings_ui import ShadowBindingsEditor
+from .contact_ao_ui import ContactAoEditor
 
 def _assert_path_within(path: Path, base: Path) -> Path:
     """安全闸：确保 path 落在 base 目录内，否则抛错。
@@ -401,6 +405,9 @@ from ..shared.anim_atlas_preview import (          # noqa: E402
     resolved_anim_world_pair as _resolved_anim_world_pair,
     spritesheet_public_path as _spritesheet_public_path,
     reference_world_size as _npc_reference_world_size,
+)
+from ..shared.light_env_visual import (           # noqa: E402
+    contact_preview_axes as _contact_preview_axes,
 )
 from ..shared.static_display_sprite import (      # noqa: E402
     static_display_facing_x as _static_display_facing_x,
@@ -1345,8 +1352,11 @@ _VFX_AREA_RGB = (255, 209, 102)
 _VFX_EMIT_RGB = (110, 205, 255)
 #: 布置锚点十字：与发射区域同一青色系、更亮一档（没圈区域的蝙蝠 / 滴水也一眼找得到摆在哪）
 _VFX_ANCHOR_RGB = (170, 235, 255)
-#: 两种区域：发射（在哪生 / 从哪补回，``area``）、范围（粒子被关在哪，``confine.area``）
-VFX_AREA_ROLES = ("emit", "range")
+#: 表面材质区（布置库 ``scenes[场景].surfaces``，场景级、所有时段共用）：水面蓝、湿地青绿（与粒子工作台同色）
+_VFX_SURF_RGB = {"water": (90, 160, 255), "wet": (120, 220, 170)}
+#: 区域种类：发射（在哪生 / 从哪补回，``area``）、范围（粒子被关在哪，``confine.area``）、
+#: 表面材质区的水面 / 湿地（落雷照出倒影、落在水面放水花；编辑在粒子工作台）
+VFX_AREA_ROLES = ("emit", "range", "water", "wet")
 
 
 def _make_vfx_overlay_passive(item: QGraphicsItem) -> None:
@@ -1463,6 +1473,8 @@ class _VfxAreaPolygon(QGraphicsItem):
         return self._confined
 
     def label_text(self) -> str:
+        if self.role in _VFX_SURF_RGB:
+            return f"{'水面' if self.role == 'water' else '湿地'} {self.instance_id}（表面材质区，所有时段共用）"
         if self.role == "range":
             return f"范围区域 {self.instance_id} · 边带 {self._feather:g}"
         return f"发射区域 {self.instance_id}" + (
@@ -1495,7 +1507,7 @@ class _VfxAreaPolygon(QGraphicsItem):
         del option, widget
         if len(self._points) < 3:
             return
-        r, g, b = _VFX_AREA_RGB if self.role == "range" else _VFX_EMIT_RGB
+        r, g, b = _VFX_SURF_RGB.get(self.role) or (_VFX_AREA_RGB if self.role == "range" else _VFX_EMIT_RGB)
         painter.save()
         path = self._edge_path()
         painter.setPen(Qt.PenStyle.NoPen)
@@ -2020,11 +2032,12 @@ class _LightCurvePolyline(QGraphicsObject):
         self._last_scene: QPointF | None = None
         self._hover_vertex: int | None = None
         self._selected: int = -1
-        self._ref_width: float = 150.0  # 代表性角色世界宽度,用于接触阴影椭圆尺寸预览
+        # 代表性角色世界高度,用于接触阴影范围预览(运行时接触阴影的尺度只认帧高,与帧宽无关)
+        self._ref_height: float = 160.0
 
-    def set_ref_width(self, w: float) -> None:
-        if w and w > 0 and abs(w - self._ref_width) > 1e-6:
-            self._ref_width = float(w)
+    def set_ref_height(self, h: float) -> None:
+        if h and h > 0 and abs(h - self._ref_height) > 1e-6:
+            self._ref_height = float(h)
             self.prepareGeometryChange()  # 接触椭圆尺寸/包围盒随之变
             self.update()
 
@@ -2073,7 +2086,7 @@ class _LightCurvePolyline(QGraphicsObject):
             e = p.get("env") if isinstance(p.get("env"), dict) else {}
             shd = e.get("shadow") if isinstance(e.get("shadow"), dict) else {}
             cs = float(shd.get("contactSize", 1.0) or 1.0)
-            m = max(m, self._ref_width * 0.65 * cs)
+            m = max(m, _contact_preview_axes(self._ref_height, cs)[0])
         metrics = QFontMetricsF(theme.make_editor_font(
             theme.FONT_ROLE_CANVAS_MICRO,
             family=MONO_FONT_FAMILY,
@@ -2162,12 +2175,12 @@ class _LightCurvePolyline(QGraphicsObject):
         painter.setPen(spen)
         painter.setBrush(QBrush(Qt.GlobalColor.transparent))
         painter.drawLine(QPointF(px, py), QPointF(px - cx * sxL, py - cy * sxL))
-        # 接触阴影范围:脚下椭圆,半轴 = 角色宽×(0.65,0.30)×contactSize,暗度=contact(与 EntityShadow 同公式)
+        # 接触阴影范围:代表角色脚下的范围,尺度只认角色高(与运行时 EntityShadow 同一组系数),
+        # 暗度=contact(缺省 0.75,同 lightEnv 基线)
         cs = float(sh.get("contactSize", 1.0) or 1.0)
-        con = max(0.0, min(1.0, float(sh.get("contact", 0.45) or 0.45)))
+        con = max(0.0, min(1.0, float(sh.get("contact", 0.75) or 0.75)))
         if cs > 0 and con > 0:
-            rx = self._ref_width * 0.65 * cs
-            ry = self._ref_width * 0.30 * cs
+            rx, ry = _contact_preview_axes(self._ref_height, cs)
             fill_a = int((45 + 150 * con) if selected else (18 + 70 * con))
             painter.setBrush(QBrush(QColor(0, 0, 0, fill_a)))
             painter.setPen(QPen(QColor(20, 24, 32, 200), R * 0.12, Qt.PenStyle.DashLine))
@@ -2364,7 +2377,12 @@ class _PerspAxisItem(QGraphicsObject):
         self.near_scale = float(near_scale)
         self.far_scale = float(far_scale)
         self.mid_stops = list(mid_stops)  # [(pos, scale)...]
-        self._drag: str | None = None  # 'near' | 'far' | None
+        self._drag: str | None = None  # 'near' | 'far' | 'probe' | None
+        # 相机跟随透视（需求清单 A3.5）：None = 本场景没开。开了就按段染色 + 标累计倍数，
+        # 并给一个可沿轴拖的取景框游标——作者得能**看见**景别到底有没有保住。
+        self.follow_info: dict | None = None
+        # 取景框游标在轴上的位置 t∈[0,1]；只是画布上的观察工具，不入任何数据
+        self.probe_pos: float = 0.5
         self.setZValue(_Z_DECOR_PERSP_AXIS)
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
 
@@ -2395,15 +2413,82 @@ class _PerspAxisItem(QGraphicsObject):
         top = min(self.near.y(), self.far.y()) - ih
         w = abs(self.far.x() - self.near.x()) + ih * 2
         h = abs(self.far.y() - self.near.y()) + ih * 2
-        return QRectF(left, top, w, h)
+        r = QRectF(left, top, w, h)
+        # 取景框整个画在轴外也常有（镜头看到的比轴长得多），boundingRect 收不住就会留脏矩形
+        fr = self._probe_view_rect()
+        if fr is not None:
+            r = r.united(fr.adjusted(-8, -8, 8, 8))
+        return r
 
     def shape(self) -> QPainterPath:
-        # 只有两个端点手柄参与命中：轴体/等值线不遮挡下方实体点选
+        # 只有端点手柄（与开了跟随时的取景框游标）参与命中：轴体/等值线/取景框
+        # 不遮挡下方实体点选
         path = QPainterPath()
         r = self.HANDLE_R * 1.5
         path.addEllipse(self.near, r, r)
         path.addEllipse(self.far, r, r)
+        if self.follow_info is not None:
+            path.addEllipse(self._point_at(self.probe_pos), r, r)
         return path
+
+    # ---- 相机跟随透视的取景框预览 ------------------------------------------
+    def _cam_ctx(self) -> dict | None:
+        ctx = getattr(self._canvas, "_persp_cam_ctx", None)
+        return ctx if isinstance(ctx, dict) else None
+
+    def _probe_zoom(self) -> float | None:
+        """取景框那一点的**运行时真实 zoom**：基线 × 跟随倍数，再按「视野不超出地图」钳下限。
+
+        与运行时 `Camera.setDrivenZoom` 同一套钳法——画布上画的必须是真实结果，
+        画个理想值等于骗作者（作者面缺省必须看得见、且看见的要是真的）。"""
+        info = self.follow_info
+        ctx = self._cam_ctx()
+        if info is None or ctx is None:
+            return None
+        base = float(ctx.get("zoom") or 1.0)
+        unit = float(ctx.get("ppu") or 1.0) * float(ctx.get("worldScale") or 1.0)
+        if not (base > 0 and unit > 0):
+            return None
+        # 倍数一律问共享镜像要（`perspective_camera_zoom_ratio_at` 与 TS 权威源 parity 锁着），
+        # 不在画布里另写一份数学
+        p = self._point_at(self.probe_pos)
+        z = base * perspective_camera_zoom_ratio_at(
+            getattr(self._canvas, "_persp_cfg", None), p.x(), p.y())
+        ww, wh = self._canvas.world_size()
+        vw = float(ctx.get("viewW") or 1024.0)
+        vh = float(ctx.get("viewH") or 768.0)
+        if ww > 0 and wh > 0:
+            floor = max(vw / (unit * ww), vh / (unit * wh))
+            if z < floor:
+                z = floor
+        return z
+
+    def _probe_view_rect(self) -> QRectF | None:
+        """取景框游标处相机真正看到的世界矩形（含边界钳制，与运行时 clampCenterWorld 同口径）。"""
+        z = self._probe_zoom()
+        ctx = self._cam_ctx()
+        if z is None or ctx is None:
+            return None
+        unit = float(ctx.get("ppu") or 1.0) * float(ctx.get("worldScale") or 1.0)
+        s = unit * z
+        if s <= 0:
+            return None
+        vwW = float(ctx.get("viewW") or 1024.0) / s
+        vwH = float(ctx.get("viewH") or 768.0) / s
+        c = self._point_at(self.probe_pos)
+        cx, cy = c.x(), c.y()
+        ww, wh = self._canvas.world_size()
+        if ww > 0 and wh > 0:
+            half_w, half_h = vwW / 2.0, vwH / 2.0
+            lo_x, hi_x = half_w, ww - half_w
+            lo_y, hi_y = half_h, wh - half_h
+            if hi_x < lo_x:
+                lo_x = hi_x = ww / 2.0
+            if hi_y < lo_y:
+                lo_y = hi_y = wh / 2.0
+            cx = max(lo_x, min(cx, hi_x))
+            cy = max(lo_y, min(cy, hi_y))
+        return QRectF(cx - vwW / 2.0, cy - vwH / 2.0, vwW, vwH)
 
     def _draw_iso(self, painter: QPainter, center: QPointF) -> None:
         ux, uy = self._perp_unit()
@@ -2414,9 +2499,13 @@ class _PerspAxisItem(QGraphicsObject):
         )
 
     def paint(self, painter: QPainter, _opt, _widget=None) -> None:
-        # 轴线（实线）+ 箭头指向 far
-        painter.setPen(QPen(QColor(255, 170, 60, 230), 0))
-        painter.drawLine(self.near, self.far)
+        # 轴线：没开相机跟随就一根实线（历史外观原样）；开了就**按段**画——
+        # 跟随段实心粗、不跟随段灰虚线，作者一眼看得出哪几段在保景别。
+        if self.follow_info is None:
+            painter.setPen(QPen(QColor(255, 170, 60, 230), 0))
+            painter.drawLine(self.near, self.far)
+        else:
+            self._paint_follow_segments(painter)
         L = self._axis_len() or 1.0
         dx = (self.far.x() - self.near.x()) / L
         dy = (self.far.y() - self.near.y()) / L
@@ -2447,6 +2536,89 @@ class _PerspAxisItem(QGraphicsObject):
                          f"近 ×{self.near_scale:g}")
         painter.drawText(QPointF(self.far.x() + 8, self.far.y() - 6),
                          f"远 ×{self.far_scale:g}")
+        if self.follow_info is not None:
+            self._paint_follow_overlay(painter)
+
+    # ---- 相机跟随透视的画布呈现 --------------------------------------------
+    _FOLLOW_ON_COLOR = QColor(120, 220, 255, 235)     # 跟随段：亮青实线
+    _FOLLOW_OFF_COLOR = QColor(150, 150, 150, 170)    # 不跟随段：灰虚线
+    _FOLLOW_FRAME_COLOR = QColor(120, 220, 255, 220)  # 取景框
+
+    def _paint_follow_segments(self, painter: QPainter) -> None:
+        info = self.follow_info or {}
+        for seg in info.get("segments") or []:
+            a = self._point_at(float(seg["from_pos"]))
+            b = self._point_at(float(seg["to_pos"]))
+            if seg.get("follow"):
+                painter.setPen(QPen(self._FOLLOW_ON_COLOR, 0))
+            else:
+                painter.setPen(QPen(self._FOLLOW_OFF_COLOR, 0, Qt.PenStyle.DashLine))
+            painter.drawLine(a, b)
+
+    def _paint_follow_overlay(self, painter: QPainter) -> None:
+        """逐段累计倍数 + 取景框游标（游标处相机真看到的框 + 按 f 缩放的人物剪影）。"""
+        info = self.follow_info or {}
+        max_ratio = float(info.get("max_zoom_ratio") or DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO)
+        painter.setFont(theme.make_editor_font(
+            theme.FONT_ROLE_CANVAS_SECONDARY, family=MONO_FONT_FAMILY))
+        ux, uy = self._perp_unit()
+        off = self._iso_half() * 0.42
+        for seg in info.get("segments") or []:
+            mid = self._point_at((float(seg["from_pos"]) + float(seg["to_pos"])) / 2.0)
+            ratio = float(seg["ratio_at_to"])
+            over = ratio > max_ratio + 1e-9
+            if not seg.get("follow"):
+                painter.setPen(QPen(self._FOLLOW_OFF_COLOR, 0))
+                text = "不跟随"
+            elif over:
+                painter.setPen(QPen(QColor(255, 110, 90, 240), 0))
+                text = f"×{ratio:.2f} 超上限{max_ratio:g}"
+            else:
+                painter.setPen(QPen(self._FOLLOW_ON_COLOR, 0))
+                text = f"×{ratio:.2f}"
+            painter.drawText(QPointF(mid.x() + ux * off + 4, mid.y() + uy * off), text)
+        # 取景框：镜头在这一点真看到的范围（含地图边界钳制）+ 同一点按 f 缩放的人物剪影
+        rect = self._probe_view_rect()
+        probe = self._point_at(self.probe_pos)
+        if rect is not None:
+            painter.setPen(QPen(self._FOLLOW_FRAME_COLOR, 0, Qt.PenStyle.DashLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(rect)
+            f = perspective_scale_at(getattr(self._canvas, "_persp_cfg", None),
+                                     probe.x(), probe.y())
+            h = self._follow_ref_height() * f
+            w = max(2.0, h * 0.34)
+            painter.setPen(QPen(QColor(255, 255, 255, 200), 0))
+            painter.setBrush(QBrush(QColor(255, 255, 255, 70)))
+            painter.drawRect(QRectF(probe.x() - w / 2.0, probe.y() - h, w, h))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            z = self._probe_zoom()
+            if z is not None:
+                # 剪影在屏幕上占多高（px）= 世界高 × 投影缩放。景别保住 = 这个数沿轴不变。
+                ctx = self._cam_ctx() or {}
+                s = float(ctx.get("ppu") or 1.0) * float(ctx.get("worldScale") or 1.0) * z
+                painter.setPen(QPen(self._FOLLOW_FRAME_COLOR, 0))
+                painter.drawText(
+                    QPointF(rect.left() + 6, rect.top() + self._iso_half() * 0.22),
+                    f"取景 t={self.probe_pos:.2f} zoom={z:.3g} 人物屏上 {h * s:.0f}px")
+        # 游标手柄（菱形，与两端手柄区分）
+        painter.setPen(QPen(QColor(40, 90, 110, 230), 0))
+        painter.setBrush(QBrush(self._FOLLOW_FRAME_COLOR))
+        r = self.HANDLE_R * 0.8
+        painter.drawPolygon(QPolygonF([
+            QPointF(probe.x(), probe.y() - r), QPointF(probe.x() + r, probe.y()),
+            QPointF(probe.x(), probe.y() + r), QPointF(probe.x() - r, probe.y()),
+        ]))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+    def _follow_ref_height(self) -> float:
+        """人物剪影的基准世界高（f=1 处）。取场景里第一个参与透视的 NPC 的实际显示高，
+        取不到就退到画布高的 12%——剪影是给景别当尺子的，尺子本身不必绝对准，
+        但**必须随 f 变**，那才是"人在屏幕上是不是一样大"的判据。"""
+        h = getattr(self._canvas, "_persp_ref_height", None)
+        if isinstance(h, (int, float)) and h > 0:
+            return float(h)
+        return max(24.0, self._canvas.world_size()[1] * 0.12)
 
     def refresh_editor_font(self) -> None:
         self.prepareGeometryChange()
@@ -2455,12 +2627,29 @@ class _PerspAxisItem(QGraphicsObject):
     # ---- 交互 --------------------------------------------------------------
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         p = event.pos()
+        # 取景框游标优先于端点：它常落在轴中段，与端点不重叠；两者重叠时端点更要紧，
+        # 所以先判端点。
         for which, handle in (("near", self.near), ("far", self.far)):
             if math.hypot(p.x() - handle.x(), p.y() - handle.y()) <= self.HANDLE_R * 1.6:
                 self._drag = which
                 event.accept()
                 return
+        if self.follow_info is not None:
+            probe = self._point_at(self.probe_pos)
+            if math.hypot(p.x() - probe.x(), p.y() - probe.y()) <= self.HANDLE_R * 1.6:
+                self._drag = "probe"
+                event.accept()
+                return
         event.ignore()
+
+    def _project_t(self, p: QPointF) -> float:
+        dx = self.far.x() - self.near.x()
+        dy = self.far.y() - self.near.y()
+        len_sq = dx * dx + dy * dy
+        if len_sq <= 1e-9:
+            return 0.0
+        t = ((p.x() - self.near.x()) * dx + (p.y() - self.near.y()) * dy) / len_sq
+        return 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
 
     def mouseMoveEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         if self._drag is None:
@@ -2468,6 +2657,12 @@ class _PerspAxisItem(QGraphicsObject):
             return
         p = event.pos()
         self.prepareGeometryChange()
+        if self._drag == "probe":
+            # 纯画布观察工具：不写 cfg、不置脏、不发提交信号
+            self.probe_pos = self._project_t(p)
+            self.update()
+            event.accept()
+            return
         if self._drag == "near":
             self.near = QPointF(p.x(), p.y())
         else:
@@ -2483,6 +2678,9 @@ class _PerspAxisItem(QGraphicsObject):
             return
         which = self._drag
         self._drag = None
+        if which == "probe":
+            event.accept()
+            return
         handle = self.near if which == "near" else self.far
         self._canvas.persp_axis_committed.emit(which, float(handle.x()), float(handle.y()))
         event.accept()
@@ -3085,6 +3283,11 @@ class SceneCanvas(QGraphicsView):
         # 实体预览统一经 persp_factor 求系数（与运行时同口径，防预览撒谎）。
         self._persp_cfg: dict | None = None
         self._persp_axis_item: "_PerspAxisItem | None" = None
+        # 相机跟随透视的取景框预览要用的相机参数（zoom/ppu/worldScale + 逻辑视口）：
+        # 由编辑器经 set_perspective_camera_context 喂，画布不自己去读场景/配置。
+        self._persp_cam_ctx: dict | None = None
+        # 人物剪影的基准世界高（f=1 处）：装完实体后由编辑器填一次，取不到就按画布高回落
+        self._persp_ref_height: float | None = None
         # 场景分组框：gid -> _SceneGroupBox（同时登记进 _entity_items["group:<gid>"]
         # 供 _focus_canvas_on_entity 定位；组框不参与 Qt 选择系统，见类注释）
         self._group_boxes: dict[str, "_SceneGroupBox"] = {}
@@ -3148,6 +3351,9 @@ class SceneCanvas(QGraphicsView):
         **必须深拷贝**：加载路径传入的是 model 的 dict，画布 live 拖动会就地改 cfg 端点，
         直接持引用会污染 model / 破坏撤销基线（审查：拖轴撤销回不去）。"""
         self._persp_cfg = copy.deepcopy(cfg) if isinstance(cfg, dict) else None
+        # 取景框游标位置是纯观察态：面板每改一个数都会重建轴图元，不留住它等于一碰就跳回中点
+        prev_probe = (self._persp_axis_item.probe_pos
+                      if self._persp_axis_item is not None else None)
         if self._persp_axis_item is not None and self._persp_axis_item.scene() is self._gfx:
             self._gfx.removeItem(self._persp_axis_item)
         self._persp_axis_item = None
@@ -3167,8 +3373,25 @@ class SceneCanvas(QGraphicsView):
                 (float(near["x"]), float(near["y"])),
                 (float(far["x"]), float(far["y"])),
                 float(near["scale"]), float(far["scale"]), mids)
+            # 没写 cameraFollow 键 = None ⇒ 轴的画法与开此功能之前逐像素一致
+            item.follow_info = perspective_camera_follow_info(self._persp_cfg)
+            if prev_probe is not None:
+                item.probe_pos = prev_probe
             self._gfx.addItem(item)
             self._persp_axis_item = item
+
+    def set_perspective_camera_context(self, ctx: dict | None) -> None:
+        """取景框预览用的相机参数 {zoom, ppu, worldScale, viewW, viewH}；None = 不画取景框。"""
+        self._persp_cam_ctx = dict(ctx) if isinstance(ctx, dict) else None
+        if self._persp_axis_item is not None:
+            self._persp_axis_item.prepareGeometryChange()
+            self._persp_axis_item.update()
+
+    def set_perspective_ref_height(self, h: float | None) -> None:
+        """人物剪影的基准世界高（f=1 处）。"""
+        self._persp_ref_height = float(h) if isinstance(h, (int, float)) and h > 0 else None
+        if self._persp_axis_item is not None:
+            self._persp_axis_item.update()
 
     def _persp_axis_drag_update(self, which: str, x: float, y: float) -> None:
         """深度轴端点拖动 live：更新画布 cfg 副本端点坐标 + 刷新全部实体预览（不入 model/脏）。"""
@@ -3887,7 +4110,7 @@ class SceneCanvas(QGraphicsView):
         return self._terrain_item
 
     def set_lightcurve_overlay(
-        self, points: list | None, selected: int = -1, ref_width: float = 0.0,
+        self, points: list | None, selected: int = -1, ref_height: float = 0.0,
     ) -> None:
         """显示/更新光环境曲线折线；points 为 None 或空则移除。就地更新优先,避免高频析构。"""
         pts = [p for p in (points or []) if isinstance(p, dict)]
@@ -3896,15 +4119,15 @@ class SceneCanvas(QGraphicsView):
             return
         ov = self._lightcurve_overlay
         if isinstance(ov, _LightCurvePolyline) and ov.scene() is self._gfx:
-            if ref_width > 0:
-                ov.set_ref_width(ref_width)
+            if ref_height > 0:
+                ov.set_ref_height(ref_height)
             ov.set_points_from_model(pts)
             ov.set_selected(selected)
             return
         self.remove_lightcurve_overlay()
         item = _LightCurvePolyline(self, pts)
-        if ref_width > 0:
-            item.set_ref_width(ref_width)
+        if ref_height > 0:
+            item.set_ref_height(ref_height)
         item.set_selected(selected)
         self._gfx.addItem(item)
         self._lightcurve_overlay = item
@@ -5262,7 +5485,7 @@ _LC_BASELINE_ENV: dict = {
     "ambient": {"color": [0.55, 0.6, 0.72], "intensity": 1.0},
     "shadow": {
         "mode": "real", "enabled": True, "darkness": 0.4, "softness": 1.0,
-        "contact": 0.5, "contactSize": 1.0,
+        "contact": 0.75, "contactSize": 1.0,
         "softSamples": 1, "softRadius": 0.05, "billboard": "light",
     },
     "toneStrength": 0.45, "toneEnabled": True,
@@ -5421,7 +5644,7 @@ class _LightEnvKeyframeEditor(QWidget):
             self.sh_enabled.setChecked(bool(sh.get("enabled", True)))
             self.sh_darkness.setValue(float(sh.get("darkness", 0.4)))
             self.sh_softness.setValue(float(sh.get("softness", 1.0)))
-            self.sh_contact.setValue(float(sh.get("contact", 0.5)))
+            self.sh_contact.setValue(float(sh.get("contact", 0.75)))
             self.sh_contact_size.setValue(float(sh.get("contactSize", 1.0)))
             self.sh_soft_samples.setValue(int(sh.get("softSamples", 1)))
             self.sh_soft_radius.setValue(float(sh.get("softRadius", 0.05)))
@@ -6319,6 +6542,14 @@ class ScenePropertyPanel(QScrollArea):
                 x, y = a.get("x"), a.get("y")
                 if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (x, y)):
                     anchors.append({"id": iid, "x": float(x), "y": float(y)})
+        # 表面材质区（场景级、不分时段）：水面 / 湿地，实线、不画边带
+        sid = self._editing_scene_id or ""
+        if sid:
+            for srf in _vfx_pl.surfaces_for(self._model.vfx_placements, sid):
+                kind = srf.get("kind")
+                if kind in ("water", "wet") and _vfx_is_polygon(srf.get("polygon")):
+                    areas.append({"id": str(srf.get("id") or ""), "role": kind, "points": srf["polygon"],
+                                  "feather": 0.0, "confined": True})
         return areas, anchors
 
     def vfx_view_background(self) -> str:
@@ -6863,14 +7094,16 @@ class ScenePropertyPanel(QScrollArea):
             "这个数推不出来（游戏投影是正交的，相机在无穷远没有位置），只能听着定。")
         form.addRow("　└ 基准视距", self._sc_acoustic_back)
         # 这批控件此前不接 changed 信号 → 永不置 pending-dirty → 不点 Apply 切场景即丢（审查 P1-1）
+        # 这三个是取景框预览的输入（相机跟随透视）：改了要连画布一起刷，否则作者调 zoom
+        # 时画布上的取景框还停在旧值——"标注画布要画真实结果"。
         self._sc_zoom = QDoubleSpinBox(); self._sc_zoom.setRange(0.01, 20); self._sc_zoom.setSingleStep(0.1)
-        self._sc_zoom.valueChanged.connect(lambda _v: self._emit_props_changed())
+        self._sc_zoom.valueChanged.connect(lambda _v: self._on_camera_field_changed())
         form.addRow("camera.zoom", self._sc_zoom)
         self._sc_ppu = QDoubleSpinBox(); self._sc_ppu.setRange(0.01, 9999); self._sc_ppu.setValue(1)
-        self._sc_ppu.valueChanged.connect(lambda _v: self._emit_props_changed())
+        self._sc_ppu.valueChanged.connect(lambda _v: self._on_camera_field_changed())
         form.addRow("camera.ppu", self._sc_ppu)
         self._sc_scale = QDoubleSpinBox(); self._sc_scale.setRange(0.01, 10); self._sc_scale.setValue(1)
-        self._sc_scale.valueChanged.connect(lambda _v: self._emit_props_changed())
+        self._sc_scale.valueChanged.connect(lambda _v: self._on_camera_field_changed())
         form.addRow("worldScale", self._sc_scale)
         basic.add_body(basic_inner)
         outer.addWidget(basic)
@@ -7097,14 +7330,17 @@ class ScenePropertyPanel(QScrollArea):
         persp_lay.addLayout(persp_scale_row)
         mid_lbl = QLabel("中途点（可选，非线性纵深如台阶）：")
         persp_lay.addWidget(mid_lbl)
-        self._sc_persp_table = QTableWidget(0, 2)
-        self._sc_persp_table.setHorizontalHeaderLabels(["位置 0–1", "缩放"])
+        self._sc_persp_table = QTableWidget(0, 4)
+        self._sc_persp_table.setHorizontalHeaderLabels(["位置 0–1", "缩放", "本段跟随", "累计 ×"])
         self._sc_persp_table.horizontalHeader().setStretchLastSection(True)
         self._sc_persp_table.verticalHeader().setVisible(False)
         self._sc_persp_table.setMaximumHeight(110)
         self._sc_persp_table.setToolTip(
             "沿近→远轴的中途缩放点：位置为 0（近）到 1（远）之间的归一化值；"
-            "留空即两端线性插值。",
+            "留空即两端线性插值。\n"
+            "「本段跟随」= 从这一行往**远**那一段，相机是否跟着透视改 zoom；"
+            "「累计 ×」= 走完该段时 zoom 相对基线的倍数（也就是背景被放大的倍数）。"
+            "后两列只在下面开了「相机跟随透视」时有意义。",
         )
         self._sc_persp_table.itemChanged.connect(lambda _i: self._on_persp_widgets_changed())
         persp_lay.addWidget(self._sc_persp_table)
@@ -7129,6 +7365,65 @@ class ScenePropertyPanel(QScrollArea):
         )
         self._sc_persp_speed.stateChanged.connect(lambda _s: self._on_persp_widgets_changed())
         persp_lay.addWidget(self._sc_persp_speed)
+
+        # ---- 相机跟随透视（需求清单 A3.5，2026-09-20）----------------------
+        # 逐场景开关；不勾 = 不写 cameraFollow 键 = 运行时一次 zoom 都不多写，
+        # 效果与开此功能之前严格一致。
+        self._sc_persp_cam = QCheckBox("相机跟随透视（zoom 跟着纵深走，保住景别）")
+        self._sc_persp_cam.setToolTip(
+            "开：人往纵深走 f 变小、相机 zoom 相应放大，角色在屏幕上的大小基本不变。\n"
+            "关（缺省，不写键）：相机完全不理透视，与开此功能之前逐帧一致。\n"
+            "代价：zoom 放大多少，背景就被放大多少——全段开启时最远端的倍数就是 f近/f远，"
+            "用下面的上限和逐段开关压住。")
+        self._sc_persp_cam.stateChanged.connect(lambda _s: self._on_persp_cam_toggled())
+        persp_lay.addWidget(self._sc_persp_cam)
+
+        self._sc_persp_cam_box = QWidget()
+        cam_lay = QVBoxLayout(self._sc_persp_cam_box)
+        cam_lay.setContentsMargins(16, 0, 0, 0)
+        cam_lay.setSpacing(4)
+        self._sc_persp_cam_first = QCheckBox("近端起第一段跟随")
+        self._sc_persp_cam_first.setChecked(True)
+        self._sc_persp_cam_first.setToolTip(
+            "近端 → 第一个中途点（没有中途点时就是近端→远端）那一段是否跟随。\n"
+            "其余各段的开关在上面表格的「本段跟随」列。")
+        self._sc_persp_cam_first.stateChanged.connect(lambda _s: self._on_persp_widgets_changed())
+        cam_lay.addWidget(self._sc_persp_cam_first)
+        cam_form = compact_form(QFormLayout())
+        self._sc_persp_cam_ref = QDoubleSpinBox()
+        self._sc_persp_cam_ref.setRange(0.0, 1.0)
+        self._sc_persp_cam_ref.setDecimals(3)
+        self._sc_persp_cam_ref.setSingleStep(0.05)
+        self._sc_persp_cam_ref.setValue(0.0)
+        self._sc_persp_cam_ref.setMaximumWidth(110)
+        self._sc_persp_cam_ref.setToolTip(
+            "基准点：轴上这个位置的 zoom 恰为场景 camera.zoom（景别基线）。\n"
+            "缺省 0（近端）⇒ 只会往里推。挪到远端会变成只往外拉，"
+            "多数场景没有那么多余量，视野一超出地图相机就被钳死、不再跟人。")
+        self._sc_persp_cam_ref.valueChanged.connect(lambda _v: self._on_persp_widgets_changed())
+        cam_form.addRow("基准点 0–1", self._sc_persp_cam_ref)
+        self._sc_persp_cam_max = QDoubleSpinBox()
+        self._sc_persp_cam_max.setRange(1.0, 20.0)
+        self._sc_persp_cam_max.setDecimals(2)
+        self._sc_persp_cam_max.setSingleStep(0.1)
+        self._sc_persp_cam_max.setValue(DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO)
+        self._sc_persp_cam_max.setMaximumWidth(110)
+        self._sc_persp_cam_max.setToolTip(
+            "zoom 相对基线的上限倍数（缺省 1.5）。撞上限后不再补偿，人物继续正常变小。\n"
+            "这个数同时就是背景被放大的倍数上限——调高之前先在画布取景框里看看糊不糊。")
+        self._sc_persp_cam_max.valueChanged.connect(lambda _v: self._on_persp_widgets_changed())
+        cam_form.addRow("zoom 上限 ×", self._sc_persp_cam_max)
+        cam_lay.addLayout(cam_form)
+        self._sc_persp_cam_info = QLabel("")
+        self._sc_persp_cam_info.setWordWrap(True)
+        self._sc_persp_cam_info.setTextFormat(Qt.TextFormat.PlainText)
+        self._sc_persp_cam_info.setToolTip(
+            "整根轴走完 zoom 会变成基线的几倍（= 背景放大几倍），以及会不会撞上限 / 超出地图。\n"
+            "画布上拖青色菱形游标可以看任意一点的真实取景框与人物大小。")
+        cam_lay.addWidget(self._sc_persp_cam_info)
+        self._sc_persp_cam_box.setVisible(False)
+        persp_lay.addWidget(self._sc_persp_cam_box)
+
         # 深度轴端点坐标（画布拖动写入；面板只读展示，不手输）
         self._sc_persp_axis: dict | None = None
         self._persp_box.add_body(persp_inner)
@@ -7649,6 +7944,10 @@ class ScenePropertyPanel(QScrollArea):
         lay.addWidget(QLabel("玩家阴影绑定"))
         self._player_shadow_bind = ShadowBindingsEditor(self._emit_props_changed, self)
         lay.addWidget(self._player_shadow_bind)
+        # 玩家的脚底接触 AO：与 NPC 的同一个控件、同一份语义（挂在场景上的理由同上）
+        lay.addWidget(QLabel("玩家接触 AO"))
+        self._player_contact_ao = ContactAoEditor(self._emit_props_changed, self)
+        lay.addWidget(self._player_contact_ao)
 
         g.add_body(inner)
         self._sc_lights_fold = g
@@ -7881,12 +8180,44 @@ class ScenePropertyPanel(QScrollArea):
                 "near": {"x": ww * 0.5, "y": wh * 0.92},
                 "far": {"x": ww * 0.5, "y": wh * 0.30},
             }
+        self._refresh_persp_cam_readouts()
         self._emit_props_changed()
         self.perspective_preview_changed.emit(self._persp_cfg_preview())
+
+    def _on_camera_field_changed(self) -> None:
+        """camera.zoom / ppu / worldScale：照旧置脏，另外把取景框预览与汇总行刷一遍。
+
+        ⚠ 必须跟着 `_props_changed_suppressed` 一起闭嘴：`load_scene_props` 往这三个
+        spinbox 里灌值也会触发本槽，而那一刻透视面板还没填好（`_sc_persp_enable` 还没勾上），
+        `_persp_cfg_preview()` 返回 None —— 发出去就把**装场景那一步刚建好的深度轴当场擦掉**，
+        且不报任何错（2026-09-20 实测：画布上再也看不到透视轴）。
+        """
+        self._emit_props_changed()
+        if self._props_changed_suppressed or getattr(self, "_persp_updating", False):
+            return
+        self._refresh_persp_cam_readouts()
+        self.perspective_preview_changed.emit(self._persp_cfg_preview())
+
+    def _on_persp_cam_toggled(self) -> None:
+        self._sc_persp_cam_box.setVisible(self._sc_persp_cam.isChecked())
+        self._on_persp_widgets_changed()
+
+    def camera_context(self) -> dict:
+        """画布取景框预览用的相机参数（按面板当前值；视口由调用方补）。"""
+        return {
+            "zoom": float(self._sc_zoom.value()) or 1.0,
+            "ppu": float(self._sc_ppu.value()) or 1.0,
+            "worldScale": float(self._sc_scale.value()) or 1.0,
+        }
+
+    def _persp_row_follow(self, row: int) -> bool:
+        it = self._sc_persp_table.item(row, 2)
+        return True if it is None else it.checkState() == Qt.CheckState.Checked
 
     def _persp_mid_stops(self) -> list[dict]:
         out: list[dict] = []
         t = self._sc_persp_table
+        cam_on = self._sc_persp_cam.isChecked()
         for i in range(t.rowCount()):
             it_p = t.item(i, 0)
             it_s = t.item(i, 1)
@@ -7895,8 +8226,74 @@ class ScenePropertyPanel(QScrollArea):
                 s = float((it_s.text() if it_s else "").strip())
             except (TypeError, ValueError):
                 continue
-            out.append({"pos": pos, "scale": s})
+            m: dict = {"pos": pos, "scale": s}
+            # 只在开了相机跟随、且这一段被作者关掉时才落键：缺省 true 不写，存量数据零变化
+            if cam_on and not self._persp_row_follow(i):
+                m["cameraFollow"] = False
+            out.append(m)
         return out
+
+    def _refresh_persp_cam_readouts(self) -> None:
+        """刷新「累计 ×」列与汇总行。纯只读派生，写表时必须压住 itemChanged 免得自激。"""
+        cam_on = self._sc_persp_cam.isChecked() and self._sc_persp_enable.isChecked()
+        t = self._sc_persp_table
+        info = perspective_camera_follow_info(self._persp_cfg_preview()) if cam_on else None
+        prev = getattr(self, "_persp_updating", False)
+        self._persp_updating = True
+        t.blockSignals(True)
+        try:
+            segs = (info or {}).get("segments") or []
+            for i in range(t.rowCount()):
+                chk = t.item(i, 2)
+                if chk is None:
+                    chk = QTableWidgetItem("")
+                    chk.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+                    chk.setCheckState(Qt.CheckState.Checked)
+                    t.setItem(i, 2, chk)
+                chk.setFlags(
+                    (Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+                    if cam_on else Qt.ItemFlag.NoItemFlags)
+                # 第 i 个中途点起的那一段 = segments[i+1]（segments[0] 是近端起的首段）
+                cell = t.item(i, 3)
+                if cell is None:
+                    cell = QTableWidgetItem("")
+                    cell.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                    t.setItem(i, 3, cell)
+                if info is not None and i + 1 < len(segs):
+                    cell.setText(f"{segs[i + 1]['ratio_at_to']:.2f}")
+                else:
+                    cell.setText("")
+        finally:
+            t.blockSignals(False)
+            self._persp_updating = prev
+        if info is None:
+            self._sc_persp_cam_info.setText("")
+            self._sc_persp_cam_info.setStyleSheet("")
+            return
+        far_ratio = float(info["raw_ratio_at_far"])
+        max_ratio = float(info["max_zoom_ratio"])
+        lines = [f"整根轴走完 zoom = 基线 × {far_ratio:.2f}（背景同倍放大）"]
+        over = [s for s in info["segments"] if s["ratio_at_to"] > max_ratio + 1e-9]
+        if over:
+            lines.append(
+                f"⚠ 从 pos={over[0]['to_pos']:.3g} 起撞上限 {max_ratio:g}×，那之后不再保景别——"
+                f"关掉深处那几段，或调高上限")
+        min_ratio = min([1.0] + [s["ratio_at_to"] for s in info["segments"]])
+        if min_ratio < 1.0:
+            ctx = self.camera_context()
+            unit = ctx["ppu"] * ctx["worldScale"]
+            ww = float(self._sc_width.value() or 0)
+            wh = float(self._sc_height.value() or 0)
+            if unit > 0 and ww > 0 and wh > 0:
+                floor = max(1024.0 / (unit * ww), 768.0 / (unit * wh))
+                if ctx["zoom"] * min_ratio < floor - 1e-9:
+                    lines.append(
+                        f"⚠ 最远会拉到 zoom {ctx['zoom'] * min_ratio:.3g}，低于「视野铺满地图」的 "
+                        f"{floor:.3g}；相机会被钳在地图中轴、不再跟人")
+        lines.append("画布上拖青色菱形游标看任意一点的取景框与人物大小")
+        self._sc_persp_cam_info.setText("\n".join(lines))
+        self._sc_persp_cam_info.setStyleSheet(
+            "color:#e08060;" if len(lines) > 2 else "color:#8ab0c0;")
 
     def _persp_cfg_preview(self) -> dict | None:
         """按当前 UI + 轴端点生成画布预览用 cfg（未启用或无轴 None）。"""
@@ -7913,7 +8310,24 @@ class ScenePropertyPanel(QScrollArea):
         mids = self._persp_mid_stops()
         if mids:
             cfg["midStops"] = mids
+        if self._sc_persp_cam.isChecked():
+            cam: dict = {}
+            if not self._sc_persp_cam_first.isChecked():
+                cam["firstSegment"] = False
+            ref = round(float(self._sc_persp_cam_ref.value()), 4)
+            if ref != 0.0:
+                cam["refPos"] = ref
+            mx = round(float(self._sc_persp_cam_max.value()), 3)
+            if mx != DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO:
+                cam["maxZoomRatio"] = mx
+            cfg["cameraFollow"] = cam
         return cfg
+
+    def _new_persp_follow_item(self) -> QTableWidgetItem:
+        it = QTableWidgetItem("")
+        it.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+        it.setCheckState(Qt.CheckState.Checked)
+        return it
 
     def _on_persp_add_row(self) -> None:
         t = self._sc_persp_table
@@ -7923,6 +8337,10 @@ class ScenePropertyPanel(QScrollArea):
             t.insertRow(r)
             t.setItem(r, 0, QTableWidgetItem("0.5"))
             t.setItem(r, 1, QTableWidgetItem("0.75"))
+            t.setItem(r, 2, self._new_persp_follow_item())
+            ratio = QTableWidgetItem("")
+            ratio.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            t.setItem(r, 3, ratio)
         finally:
             self._persp_updating = False
         self._on_persp_widgets_changed()
@@ -7982,6 +8400,13 @@ class ScenePropertyPanel(QScrollArea):
                     t.insertRow(row)
                     t.setItem(row, 0, QTableWidgetItem(_persp_cell_text(m.get("pos"))))
                     t.setItem(row, 1, QTableWidgetItem(_persp_cell_text(m.get("scale"))))
+                    chk = self._new_persp_follow_item()
+                    if m.get("cameraFollow") is False:
+                        chk.setCheckState(Qt.CheckState.Unchecked)
+                    t.setItem(row, 2, chk)
+                    ratio = QTableWidgetItem("")
+                    ratio.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                    t.setItem(row, 3, ratio)
             t.blockSignals(False)
             self._sc_persp_enable.blockSignals(True)
             self._sc_persp_enable.setChecked(on)
@@ -7989,9 +8414,29 @@ class ScenePropertyPanel(QScrollArea):
             self._sc_persp_speed.blockSignals(True)
             self._sc_persp_speed.setChecked(not (on and cfg.get("affectsSpeed") is False))
             self._sc_persp_speed.blockSignals(False)
+            # 相机跟随透视：不写键 = 不跟随（勾不上、子块收起）
+            camf = cfg.get("cameraFollow") if on else None
+            cam_on = isinstance(camf, dict)
+            camf = camf if cam_on else {}
+            self._sc_persp_cam.blockSignals(True)
+            self._sc_persp_cam.setChecked(cam_on)
+            self._sc_persp_cam.blockSignals(False)
+            self._sc_persp_cam_box.setVisible(cam_on)
+            self._sc_persp_cam_first.blockSignals(True)
+            self._sc_persp_cam_first.setChecked(camf.get("firstSegment") is not False)
+            self._sc_persp_cam_first.blockSignals(False)
+            self._sc_persp_cam_ref.blockSignals(True)
+            self._sc_persp_cam_ref.setValue(_persp_editor_num(camf.get("refPos")) or 0.0)
+            self._sc_persp_cam_ref.blockSignals(False)
+            self._sc_persp_cam_max.blockSignals(True)
+            self._sc_persp_cam_max.setValue(
+                _persp_editor_num(camf.get("maxZoomRatio"))
+                or DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO)
+            self._sc_persp_cam_max.blockSignals(False)
             self._persp_box.set_expanded(on)
         finally:
             self._persp_updating = False
+        self._refresh_persp_cam_readouts()
 
     def _flush_persp_into(self, sc: dict) -> None:
         """UI + 轴端点 → staging：零编辑时按值比较原样保留原 dict（键序/数值表示零变化）。"""
@@ -8032,6 +8477,13 @@ class ScenePropertyPanel(QScrollArea):
             nm = dict(om)
             nm["pos"] = self._keep_num(round(pos, 4), om.get("pos"))
             nm["scale"] = self._keep_num(round(s, 3), om.get("scale"))
+            # 逐段跟随开关：缺省 true 不写键。没开相机跟随时**原样保留**已有的键——
+            # 关掉总开关不该顺手把作者配过的分段擦了（下次再开还在）。
+            if self._sc_persp_cam.isChecked():
+                if self._persp_row_follow(i):
+                    nm.pop("cameraFollow", None)
+                else:
+                    nm["cameraFollow"] = False
             new_mids.append(om if nm == om else nm)
         if new_mids:
             out["midStops"] = new_mids
@@ -8042,6 +8494,27 @@ class ScenePropertyPanel(QScrollArea):
                 out.pop("affectsSpeed", None)
         else:
             out["affectsSpeed"] = False
+        # 相机跟随透视：不勾 = **删键**（运行时据此整条不跑，效果与开此功能之前严格一致）
+        if not self._sc_persp_cam.isChecked():
+            out.pop("cameraFollow", None)
+        else:
+            o_cam = base.get("cameraFollow") if isinstance(base.get("cameraFollow"), dict) else {}
+            nc = dict(o_cam)
+            if self._sc_persp_cam_first.isChecked():
+                nc.pop("firstSegment", None)
+            else:
+                nc["firstSegment"] = False
+            ref = round(float(self._sc_persp_cam_ref.value()), 4)
+            if ref == 0.0:
+                nc.pop("refPos", None)
+            else:
+                nc["refPos"] = self._keep_num(ref, o_cam.get("refPos"))
+            mx = round(float(self._sc_persp_cam_max.value()), 3)
+            if mx == DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO:
+                nc.pop("maxZoomRatio", None)
+            else:
+                nc["maxZoomRatio"] = self._keep_num(mx, o_cam.get("maxZoomRatio"))
+            out["cameraFollow"] = o_cam if nc == o_cam else nc
         if isinstance(orig, dict) and out == orig:
             sc["perspectiveScale"] = orig
         else:
@@ -8997,6 +9470,32 @@ class ScenePropertyPanel(QScrollArea):
         self._fill_sl_table(select_row=0 if (self._sc_lighting or {}).get("lights") else -1)
         self._player_shadow_bind.set_lights((self._sc_lighting or {}).get("lights"))
         self._player_shadow_bind.load(st.get("playerShadowBindings"))
+        self._player_contact_ao.set_scene_defaults(*self._scene_contact_ao_defaults(st))
+        self._player_contact_ao.load(st.get("playerContactAo"))
+
+    def _scene_contact_ao_defaults(self, sc: dict | None = None) -> tuple[float | None, float | None, str]:
+        """接触 AO「跟随场景」那一档此刻跟到的浓度 / 大小。
+
+        与运行时 `resolveLightEnv` 同一条链：场景 `lightEnv` > 全局 `entityLighting.defaultLightEnv` > 基线
+        （`_LC_BASELINE_ENV`，镜像 lightEnv.ts）。配了光照曲线时按玩家位置变，只能标注出来。
+        """
+        if sc is None:
+            sc = self._model.scenes.get(self._editing_scene_id or "") or {}
+        env_sh = ((sc.get("lightEnv") or {}).get("shadow") or {}) if isinstance(sc.get("lightEnv"), dict) else {}
+        el = (self._model.game_config or {}).get("entityLighting") if isinstance(self._model.game_config, dict) else None
+        glob_sh = (((el or {}).get("defaultLightEnv") or {}).get("shadow") or {}) if isinstance(el, dict) else {}
+        base_sh = _LC_BASELINE_ENV["shadow"]
+
+        def pick(k: str) -> float | None:
+            for src in (env_sh, glob_sh, base_sh):
+                v = src.get(k) if isinstance(src, dict) else None
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    return float(v)
+            return None
+
+        curve = sc.get("lightEnvCurve")
+        note = "随光照曲线" if isinstance(curve, dict) and curve.get("points") else ""
+        return pick("contact"), pick("contactSize"), note
 
     def _recompute_light_heights(self) -> None:
         """从 `pos` 反推「离地高度」供 UI 显示（存档里只有绝对坐标）。
@@ -9210,12 +9709,18 @@ class ScenePropertyPanel(QScrollArea):
         self._writeback_player_shadow(sc)
 
     def _writeback_player_shadow(self, sc: dict) -> None:
-        """玩家阴影绑定。None = 不写字段（回落手调单影），不是「不投影」。"""
+        """玩家阴影绑定。None = 不写字段（回落手调单影），不是「不投影」。
+        玩家接触 AO 同处写回：全缺省（开、简单 AO、参数缺省）时不写字段。"""
         b = self._player_shadow_bind.dump()
         if b:
             sc["playerShadowBindings"] = b
         else:
             sc.pop("playerShadowBindings", None)
+        ao = self._player_contact_ao.dump()
+        if ao:
+            sc["playerContactAo"] = ao
+        else:
+            sc.pop("playerContactAo", None)
 
     # ---- 光环境曲线 lightEnvCurve --------------------------------------
     def _fill_lc_table(self, *, select_row: int = -1) -> None:
@@ -11655,12 +12160,16 @@ class ScenePropertyPanel(QScrollArea):
             self._open_npc_phase_ids_picker,
             self._clear_npc_phase_ids,
         ))
-        self._npc_cast_shadow = QCheckBox("投射阴影 + 接触AO")
+        self._npc_cast_shadow = QCheckBox("投射阴影")
         self._npc_cast_shadow.setToolTip(
-            "缺省开启：该 NPC 在地面投射阴影并带脚下接触 AO。关闭则此 NPC 不投影也无接触 AO。"
+            "缺省开启：该 NPC 在地面投射阴影（手调单影或下面绑定的剪影）。"
+            "关闭只关投影，脚底接触阴影由下一行单独管。"
         )
         self._npc_cast_shadow.stateChanged.connect(lambda _s: self._emit_props_changed())
         form.addRow("castShadow", self._npc_cast_shadow)
+        # 脚底接触 AO（胶囊 AO）：勾接触 AO 缺省简单 AO，勾方向 AO 才启用方向部分，参数都可调（制作人 2026-09-24）
+        self._npc_contact_ao = ContactAoEditor(self._emit_props_changed, self)
+        form.addRow("脚底 AO", self._npc_contact_ao)
         # 阴影绑定：**手动指定光源**，系统不自动 resolve（制作人 2026-08-20）
         self._npc_shadow_bind = ShadowBindingsEditor(self._emit_props_changed, self)
         form.addRow("阴影绑定", self._npc_shadow_bind)
@@ -12751,6 +13260,8 @@ class ScenePropertyPanel(QScrollArea):
             self._npc_shadow_bind.set_lights((self._sc_lighting or {}).get("lights"))
             self._npc_shadow_bind.load(st.get("shadowBindings"))
             self._npc_cast_shadow.blockSignals(False)
+            self._npc_contact_ao.set_scene_defaults(*self._scene_contact_ao_defaults())
+            self._npc_contact_ao.load(st.get("contactAo"))
             self._npc_facing.blockSignals(True)
             try:
                 cur_f = str(st.get("initialFacing", "") or "").strip().lower()
@@ -12922,6 +13433,12 @@ class ScenePropertyPanel(QScrollArea):
             npc["castShadow"] = False
         elif "castShadow" in npc:
             del npc["castShadow"]
+        # contactAo 缺省开、简单 AO、参数缺省：全缺省时不写字段（保持 JSON 干净）
+        _npc_ao = self._npc_contact_ao.dump()
+        if _npc_ao:
+            npc["contactAo"] = _npc_ao
+        else:
+            npc.pop("contactAo", None)
         _npc_sb = self._npc_shadow_bind.dump()
         if _npc_sb:
             npc["shadowBindings"] = _npc_sb
@@ -14824,9 +15341,9 @@ class SceneEditor(QWidget):
                 {"x": d.get("x", 0), "y": d.get("y", 0), "env": d.get("env", {})}
                 for d in data if isinstance(d, dict)
             ]
-        rw, _rh = _npc_reference_world_size(self._model)  # 代表性角色宽,使接触椭圆与实际站位一致
+        _rw, rh = _npc_reference_world_size(self._model)  # 代表性角色高:接触阴影的尺度只认它
         self._canvas.set_lightcurve_overlay(
-            pts, selected=self._props._lc_selected, ref_width=rw)
+            pts, selected=self._props._lc_selected, ref_height=rh)
 
     def _on_albedo_view_changed(self, on: bool) -> None:
         """把画布底图换成 albedo 贴图 / 换回原画。纯查看：不写模型、不标脏。
@@ -14976,7 +15493,35 @@ class SceneEditor(QWidget):
     def _on_persp_preview_changed(self, cfg: object) -> None:
         """面板透视配置 live 变更：重建画布基准线并刷新全部实体预览（与运行时同口径）。"""
         self._canvas.set_perspective_config(cfg if isinstance(cfg, dict) else None)
+        self._canvas.set_perspective_camera_context(self._persp_cam_context())
         self._refresh_all_persp_previews()
+
+    def _persp_cam_context(self, sc: dict | None = None) -> dict:
+        """取景框预览用的相机参数。给了 sc 就按磁盘值（装场景时面板还没填好），
+        否则按面板当前值（作者正在改 camera.zoom 时取景框要跟着动）。"""
+        if isinstance(sc, dict):
+            cam = sc.get("camera") if isinstance(sc.get("camera"), dict) else {}
+            ctx = {
+                "zoom": _persp_editor_num(cam.get("zoom")) or 1.0,
+                "ppu": _persp_editor_num(cam.get("pixelsPerUnit")) or 1.0,
+                "worldScale": _persp_editor_num(sc.get("worldScale")) or 1.0,
+            }
+        else:
+            ctx = self._props.camera_context()
+        vp = (getattr(self._model, "game_config", None) or {}).get("viewport") or {}
+        ctx["viewW"] = float(vp.get("width") or 1024)
+        ctx["viewH"] = float(vp.get("height") or 768)
+        return ctx
+
+    def _persp_ref_height(self) -> float | None:
+        """人物剪影的基准世界高（f=1 处）：用画布「NPC 参考」框那一份，不另起一个口径——
+        它就是运行时角色的真实世界高（`_npc_reference_world_size`），两处一致才谈得上
+        「标注画布画的是真实结果」。取不到返回 None，画布按画布高回落。"""
+        try:
+            _rw, rh = _npc_reference_world_size(self._model)
+        except Exception:
+            return None
+        return float(rh) if rh and rh > 0 else None
 
     def _refresh_all_persp_previews(self) -> None:
         sc = self._model.scenes.get(self._current_scene_id or "")
@@ -15680,6 +16225,8 @@ class SceneEditor(QWidget):
         # 透视缩放须在实体图元创建前写入画布（add_* 的交互圈/展示图按系数求半径）
         pcfg = sc.get("perspectiveScale")
         self._canvas.set_perspective_config(pcfg if isinstance(pcfg, dict) else None)
+        self._canvas.set_perspective_camera_context(self._persp_cam_context(sc))
+        self._canvas.set_perspective_ref_height(self._persp_ref_height())
 
         if img_path:
             self._canvas.load_background(img_path, world_w, world_h)

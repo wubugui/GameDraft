@@ -9,7 +9,7 @@ triggers:
   paths: ["public/assets/data/**", "public/assets/dialogues/**", "public/assets/scenes/**", "public/assets/cutscenes/**"]
   topics: [策划模式, 内容, JSON, 台词, 题材, 文案]
   tasks: [做内容, 写任务, 写对话, 配演出, 写文案, 改JSON]
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 # 内容制作规范(策划模式)
@@ -62,8 +62,10 @@ last_governed: 2026-08-05
 
 ## 过程义务
 
-1. **开工先认权威**:寻狗 demo 内容以四权威源为准、废弃归档一律死档勿信
-   ([文档权威决策](decisions/2026-06-27-xungouji-doc-authority.md))。
+1. **开工先认权威**:故事仓设定冲突按总纲的正典优先级裁(制作人审批的设定对账最高)、废弃归档一律死档勿信
+   ([文档权威决策](decisions/2026-06-27-xungouji-doc-authority.md));写怪、写台词、拆拍前先认
+   **基调中的基调「俗的怪、静的怕」**(2026-09-18 制作人定死,正典 `../FindingDogStory/Demo制作资料/设定对账_2026.09.18.md`,
+   摘要见[题材调性决策](decisions/2026-06-25-xungouji-genre-anchor.md))。
 2. L2 升级完成后报告动了哪些登记面;L3 跳过的任务收尾统一汇报。
 3. **偏差记录义务**:发现现实与本库文档打架或超出,收尾向 `agent_docs/_meta/inbox/`
    丢一条三行偏差记录(零门槛,格式见该目录 README)。

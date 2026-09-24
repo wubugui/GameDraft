@@ -375,6 +375,18 @@ describe('applyDevRuntimeCommand', () => {
     expect(result.message).toContain('failed to write');
   });
 
+  it('槽位范围跟着 SAVE_SLOT_COUNT 走：98 收、99 拒', async () => {
+    const ctx = deps();
+    const written: number[] = [];
+    const d = { ...ctx.deps, debugSaveGame: async (slot: number) => { written.push(slot); return true; } };
+    expect((await applyDevRuntimeCommand({ type: 'debugSaveGame', slot: 98 }, d)).ok).toBe(true);
+    expect(written).toEqual([98]);
+    const rejected = await applyDevRuntimeCommand({ type: 'debugSaveGame', slot: 99 }, d);
+    expect(written).toEqual([98]);
+    expect(rejected.ok).toBe(false);
+    expect(rejected.message).toContain('0..98');
+  });
+
   it('rejects missing save slots during debug load', async () => {
     const ctx = deps();
 

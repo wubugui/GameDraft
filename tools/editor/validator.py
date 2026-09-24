@@ -19,6 +19,7 @@ from .editors.scene_lights import validate_lights as _validate_scene_lights
 from .editors.scene_lights import validate_shadow_bindings as _validate_shadow_bindings
 from .file_io import read_json
 from .shared.character_dialogue import resolve_npc_dialogue_graph
+from .shared.contact_ao import contact_ao_issues as _contact_ao_issues
 from .shared.dialogue_entry_overrides import (
     collect_dialogue_graph_entry_overrides,
     graph_entry_roots,
@@ -29,6 +30,9 @@ from .shared.item_tags import is_known_item_tag
 from .shared.audio_library import audio_id_problem
 from .shared.narrative_catalog import emitted_signal_ids
 from .shared.project_paths import URL_KIND_MEDIA
+from .shared.entity_transform_math import (
+    perspective_camera_follow_info as _perspective_camera_follow_info,
+)
 from .shared.prop_preview import ABSENT as _ABSENT
 from .shared.runtime_field_schema import field_meta, is_valid_field, value_matches_field
 from .shared.health_validation import health_action_errors, health_config_errors, health_protection_errors, health_threat_errors, environment_fire_errors
@@ -610,6 +614,89 @@ def validate(model: ProjectModel) -> list[Issue]:
                         "warning", "scene", sid,
                         f"perspectiveScale.affectsSpeed 须为布尔（当前 {_pas!r}；运行时按 true 回落）",
                     ))
+                # 相机跟随透视 cameraFollow（需求清单 A3.5）：不写键 = 不跟随，存量场景零变化。
+                # 逐段开关挂在停靠点上（midStops[i].cameraFollow / cameraFollow.firstSegment）。
+                _pcf = _pcfg.get("cameraFollow")
+                if _pcf is not None:
+                    if not isinstance(_pcf, dict):
+                        issues.append(Issue(
+                            "warning", "scene", sid,
+                            f"perspectiveScale.cameraFollow 须为对象"
+                            f"（当前 {type(_pcf).__name__}；运行时按不跟随处理）",
+                        ))
+                    else:
+                        _cf_first = _pcf.get("firstSegment")
+                        if _cf_first is not None and not isinstance(_cf_first, bool):
+                            issues.append(Issue(
+                                "warning", "scene", sid,
+                                f"perspectiveScale.cameraFollow.firstSegment 须为布尔"
+                                f"（当前 {_cf_first!r}；运行时按 true 回落）",
+                            ))
+                        _cf_ref = _fin_num(_pcf.get("refPos"))
+                        if _pcf.get("refPos") is not None and (
+                                _cf_ref is None or not (0.0 <= _cf_ref <= 1.0)):
+                            issues.append(Issue(
+                                "warning", "scene", sid,
+                                f"perspectiveScale.cameraFollow.refPos 须为 [0,1] 内的有限数"
+                                f"（当前 {_pcf.get('refPos')!r}；运行时钳到端点）",
+                            ))
+                        _cf_max = _fin_num(_pcf.get("maxZoomRatio"))
+                        if _pcf.get("maxZoomRatio") is not None and (
+                                _cf_max is None or _cf_max < 1.0):
+                            issues.append(Issue(
+                                "warning", "scene", sid,
+                                f"perspectiveScale.cameraFollow.maxZoomRatio 须为 ≥1 的有限数"
+                                f"（当前 {_pcf.get('maxZoomRatio')!r}；运行时按缺省 1.5 回落）",
+                            ))
+                        if isinstance(_mids, list):
+                            for _mi, _m in enumerate(_mids):
+                                if not isinstance(_m, dict):
+                                    continue
+                                _mcf = _m.get("cameraFollow")
+                                if _mcf is not None and not isinstance(_mcf, bool):
+                                    issues.append(Issue(
+                                        "warning", "scene", sid,
+                                        f"perspectiveScale.midStops[{_mi}].cameraFollow 须为布尔"
+                                        f"（当前 {_mcf!r}；运行时按 true 回落）",
+                                    ))
+                        _cf_info = _perspective_camera_follow_info(_pcfg)
+                        if _cf_info is not None:
+                            _cf_over = [
+                                _s for _s in _cf_info["segments"]
+                                if _s["ratio_at_to"] > _cf_info["max_zoom_ratio"] + 1e-9
+                            ]
+                            if _cf_over:
+                                _first_over = _cf_over[0]
+                                issues.append(Issue(
+                                    "warning", "scene", sid,
+                                    f"perspectiveScale.cameraFollow 走到 pos={_first_over['to_pos']:.3g} "
+                                    f"时 zoom 已是基线的 {_first_over['ratio_at_to']:.3g}×，"
+                                    f"超过上限 {_cf_info['max_zoom_ratio']:.3g}×（整轴 "
+                                    f"{_cf_info['raw_ratio_at_far']:.3g}×）；撞上限后不再保景别，"
+                                    f"且背景按同样倍数放大。关掉深处那几段、或调高 maxZoomRatio",
+                                ))
+                            # 往外拉那一侧：视野不许超出地图，超了相机会被钳在地图中轴不再跟人
+                            _cf_min = min(
+                                [1.0] + [_s["ratio_at_to"] for _s in _cf_info["segments"]])
+                            _cf_base = _fin_num((sc.get("camera") or {}).get("zoom")) or 1.0
+                            _cf_ppu = _fin_num((sc.get("camera") or {}).get("pixelsPerUnit")) or 1.0
+                            _cf_ws = _fin_num(sc.get("worldScale")) or 1.0
+                            _cf_ww = _fin_num(sc.get("worldWidth")) or 0.0
+                            _cf_wh = _fin_num(sc.get("worldHeight")) or 0.0
+                            _cf_unit = _cf_ppu * _cf_ws
+                            if _cf_min < 1.0 and _cf_ww > 0 and _cf_wh > 0 and _cf_unit > 0:
+                                _vp = (model.game_config or {}).get("viewport") or {}
+                                _vw = _fin_num(_vp.get("width")) or 1024.0
+                                _vh = _fin_num(_vp.get("height")) or 768.0
+                                _floor = max(_vw / (_cf_unit * _cf_ww), _vh / (_cf_unit * _cf_wh))
+                                if _cf_base * _cf_min < _floor - 1e-9:
+                                    issues.append(Issue(
+                                        "warning", "scene", sid,
+                                        f"perspectiveScale.cameraFollow 最远会把 zoom 拉到 "
+                                        f"{_cf_base * _cf_min:.3g}，低于「视野刚好铺满地图」的 "
+                                        f"{_floor:.3g}；相机会被钳在地图中轴、不再跟着人走。"
+                                        f"把基准点 refPos 往近端挪，或关掉那几段",
+                                    ))
         # zone 只有 group 标签（无 transform 字段是设计）：形状检查对齐 npc/hotspot
         for _z2 in sc.get("zones", []) or []:
             if not isinstance(_z2, dict):
@@ -1282,6 +1369,9 @@ def validate(model: ProjectModel) -> list[Issue]:
             for _t in _validate_shadow_bindings(_sb, _scene_lights, _who):
                 issues.append(Issue("error", "scene", sid, _t))
 
+        for _t in _npc_contact_ao_issues(sc):
+            issues.append(Issue("error", "scene", sid, _t))
+
     # --- quest groups ---
     quest_group_ids = {g["id"] for g in model.quest_groups}
     for g in model.quest_groups:
@@ -1550,6 +1640,7 @@ def validate(model: ProjectModel) -> list[Issue]:
     _validate_npc_schedules(model, issues)
     _validate_trajectories(model, issues)
     _validate_vfx_effects(model, issues)
+    _validate_breathing_overlays(model, issues)
     _validate_vfx_placements(model, issues)
     _validate_burnables(model, issues)
     _validate_burnable_hosts(model, issues)
@@ -1582,6 +1673,19 @@ def _geometry_meta_problems(meta: object) -> list[str]:
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
             bad.append(path)
     return bad
+
+
+def _npc_contact_ao_issues(scene: dict) -> list[str]:
+    """场景里各 NPC 的 `contactAo` 与玩家的 `playerContactAo`(胶囊 AO 作者面,制作人 2026-09-24)。
+
+    运行时只认「显式 false 才关」、数值越界一律钳住:写成字符串 "false" 或越界不会报错,
+    只会画出来和作者以为的不一样。判据在 `shared/contact_ao.contact_ao_issues`(编辑器共用)。
+    """
+    out: list[str] = list(_contact_ao_issues(scene.get("playerContactAo"), "玩家"))
+    for n in scene.get("npcs") or []:
+        if isinstance(n, dict) and "contactAo" in n:
+            out.extend(_contact_ao_issues(n["contactAo"], f'NPC {n.get("id")}'))
+    return out
 
 
 def _shadow_bias_issues(sb: object) -> list[str]:
@@ -2429,6 +2533,7 @@ def _validate_entity_reachability(model: ProjectModel, issues: list[Issue]) -> N
 
     global_npcs = _all_npc_ids_global_set(model)
     global_hotspots = _all_hotspot_ids_global_set(model)
+    global_zones = {zid for sid in model.scenes for zid, _label in model.standard_zone_ids_for_scene(sid)}
     for gid, reach in sorted(dialogue_graph_scene_reach(model).items()):
         if not isinstance(reach, set) or not reach:
             continue  # GLOBAL / 无触发面：可达集不封闭,维持全局口径
@@ -2437,14 +2542,16 @@ def _validate_entity_reachability(model: ProjectModel, issues: list[Issue]) -> N
             continue
         npc_union: set[str] = set()
         hotspot_union: set[str] = set()
+        zone_union: set[str] = set()
         for sid in reach:
             npc_union |= _npc_ids_in_scene(model, sid)
             hotspot_union |= _hotspot_ids_in_scene(model, sid)
+            zone_union |= {zid for zid, _label in model.standard_zone_ids_for_scene(sid)}
         seen: set[tuple[str, str, str]] = set()
 
         def visit(act_type: str, params: dict) -> None:
             for param, spec_kind in ENTITY_REF_PARAMS[act_type].items():
-                if spec_kind not in ("actor", "emote_subject", "npc", "bubble_speaker", "burn_target"):
+                if spec_kind not in ("actor", "emote_subject", "npc", "bubble_speaker", "burn_target", "zone"):
                     continue
                 value = params.get(param)
                 if not isinstance(value, str):
@@ -2458,10 +2565,10 @@ def _validate_entity_reachability(model: ProjectModel, issues: list[Issue]) -> N
                 # 热点也能冒气泡：emote_subject / bubble_speaker 两档同宽；燃烧动作 target（burn_target）
                 # 也同宽——socket 没写是可燃实体（热点 / NPC），写了是拿东西的人（NPC）
                 wide = spec_kind in ("emote_subject", "bubble_speaker", "burn_target")
-                allowed = npc_union | (hotspot_union if wide else set())
+                allowed = zone_union if spec_kind == "zone" else npc_union | (hotspot_union if wide else set())
                 if ref in allowed:
                     continue
-                exists_globally = ref in global_npcs or (wide and ref in global_hotspots)
+                exists_globally = ref in global_zones if spec_kind == "zone" else ref in global_npcs or (wide and ref in global_hotspots)
                 if not exists_globally:
                     continue
                 key = (act_type, param, ref)
@@ -4460,6 +4567,55 @@ def _set_prop_level_issues(
         ))
 
 
+def _follower_footsteps_issues(
+    model: ProjectModel, p: dict, data_type: str, item_id: str, issues: list[Issue],
+) -> None:
+    """`setFollowerFootsteps`（跟脚声开关：玩家落脚事件的延迟重放）。
+
+    接受面与动作表单的候选同一个函数（`ProjectModel.all_footstep_set_ids()`）。
+    悬垂脚步集报 **warning** 而不是 error——与 `scene.footstepSet` / `zone.footstepSet` 同口径
+    （素材未入库时先把 id 填进去是正常工作流），运行时也只是 warnOnce 一次后这一位跟脚者不发声。
+    """
+    raw_set = p.get("footstepSet")
+    set_id = raw_set.strip() if isinstance(raw_set, str) else ""
+    if set_id and set_id not in {i for i, _l in model.all_footstep_set_ids()}:
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"setFollowerFootsteps 的 footstepSet {set_id!r} 不在 footstep_sets.json 的 sets 里——"
+            "这位跟脚者全程不发声（运行时只在控制台 warnOnce 一次）",
+        ))
+
+    # 延迟是**步间隔的百分比**：0 = 与玩家自己的脚步完全重叠（等于听不见，正是这条机制要避免的），
+    # 负数运行时会被 clampDelay 夹回下限、写了也不生效。两者都只能靠校验器说出来。
+    pct = p.get("delayPercent", _ABSENT)
+    if pct is not _ABSENT and pct is not None:
+        if isinstance(pct, bool) or not _is_num(pct):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setFollowerFootsteps 的 delayPercent 须为数值（当前 {pct!r}）",
+            ))
+        elif float(pct) <= 0:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setFollowerFootsteps 的 delayPercent {pct!r} ≤ 0——跟脚声会与玩家自己的脚步"
+                "重叠在同一刻（听不出是两个人）。50 = 半步，正好踏在两步中间",
+            ))
+    for key in ("minDelayMs", "gainDb"):
+        v = p.get(key, _ABSENT)
+        if v is _ABSENT or v is None:
+            continue
+        if isinstance(v, bool) or not _is_num(v):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setFollowerFootsteps 的 {key} 须为数值（当前 {v!r}）",
+            ))
+        elif key == "minDelayMs" and float(v) < 0:
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"setFollowerFootsteps 的 minDelayMs {v!r} 为负——延迟下限按 0 处理，写了不生效",
+            ))
+
+
 def _validate_health_threats(model: ProjectModel, issues: list[Issue]) -> None:
     seen = {}
     signals = _narrative_registered_signal_ids(model)
@@ -5072,6 +5228,59 @@ def _emote_subject_ref_ok(
     return False
 
 
+def _presentation_action_errors(action_type: str, params: dict) -> list[str]:
+    """TS actionParamManifest.presentationActionErrors 的兜底投影；旧雷链参数不收紧。"""
+    errors: list[str] = []
+
+    def number(key: str, minimum: float, maximum: float = math.inf, integer: bool = False) -> None:
+        value = params.get(key)
+        if value is None:
+            return
+        valid = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        if not valid or not minimum <= value <= maximum or (integer and not float(value).is_integer()):
+            errors.append(f"{key} 须为 {minimum}..{maximum} 的{'整数' if integer else '有限数'}")
+
+    def boolean(key: str) -> None:
+        if params.get(key) is not None and not isinstance(params[key], bool):
+            errors.append(f"{key} 须为布尔值")
+
+    if action_type == "strikeThreat":
+        number("visualStrikes", 0, integer=True)
+        number("visualExtraChance", 0, 1)
+        number("visualGapMs", 0)
+        number("visualGapJitterMs", 0)
+        number("fallbackMargin", 0, 0.45)
+        number("fallbackMinDistance", 0)
+        number("fallbackSeparation", 0)
+        number("fallbackMaxSlopeDeg", 0, 90)
+        number("sfxVoices", 0, 16, integer=True)
+        number("vfxVoices", 0, 32, integer=True)
+        number("effectSeed", -math.inf, integer=True)
+        boolean("fallbackGroundOnly")
+        boolean("fallbackStrictSeparation")
+        zone = params.get("fallbackSurfaceZone")
+        if zone is not None and (not isinstance(zone, str) or not zone.strip()):
+            errors.append("fallbackSurfaceZone 须为非空字符串")
+    if action_type == "playSfx":
+        boolean("loop")
+    if action_type in ("playVfx", "stopVfx"):
+        handle = params.get("handle")
+        if handle is not None and (not isinstance(handle, str) or not handle.strip()):
+            errors.append("handle 须为非空名称")
+        has_handle = isinstance(handle, str) and bool(handle.strip())
+        has_instance = bool(str(params.get("instanceId") if params.get("instanceId") is not None else "").strip())
+        if has_handle and has_instance:
+            errors.append("instanceId 与 handle 只能指定一个")
+        if action_type == "playVfx" and has_handle and not str(params.get("effect") or "").strip():
+            errors.append("handle 只能给临时 effect 实例命名")
+        if action_type == "stopVfx":
+            if not has_handle and not has_instance:
+                errors.append("缺 instanceId 或 handle")
+            boolean("soft")
+            number("fadeMs", 0)
+    return errors
+
+
 def _append_action_param_ref_issues(
     model: ProjectModel,
     issues: list[Issue],
@@ -5094,6 +5303,8 @@ def _append_action_param_ref_issues(
     if not isinstance(t, str) or not t:
         return
     p = act.get("params") if isinstance(act.get("params"), dict) else {}
+    for error in _presentation_action_errors(t, p):
+        issues.append(Issue("error", data_type, item_id, f"{t} {error}"))
     temp = cutscene_temp_ids or frozenset()
     graph_ids = set(model.all_dialogue_graph_ids())
     overlay_keys = set(model.overlay_images.keys()) if isinstance(model.overlay_images, dict) else set()
@@ -5617,6 +5828,22 @@ def _append_action_param_ref_issues(
         # 引用 overlay_images.json 的是图片参数(image / fromImage / toImage),
         # 不是 id(id 仅为叠图层句柄,供 hideOverlayImage 寻址,可任意命名)。
         # 仅当填的是短 id(非 / 开头的完整路径)时才比对登记表。
+        # order = 在画布上的绘制顺序（与文档揭示 / 实体 / 特效共用一个顺序空间）；可为负
+        _ov = p.get("order")
+        if _ov is not None and _ov != "":
+            try:
+                if not math.isfinite(float(_ov)):
+                    raise ValueError
+            except (TypeError, ValueError):
+                issues.append(Issue(
+                    "error", data_type, item_id, f"{t} 的 order 须为有限数值",
+                ))
+        # fill = 铺满窗口：运行时只认严格 true，写成 "true" / 1 会静默退回百分比布局
+        if t == "showOverlayImage" and "fill" in p and not isinstance(p.get("fill"), bool):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"showOverlayImage 的 fill 须为 true / false（现为 {p.get('fill')!r}）",
+            ))
         img_params = ("image",) if t == "showOverlayImage" else ("fromImage", "toImage")
         for ip in img_params:
             iv = str(p.get(ip) or "").strip()
@@ -5624,6 +5851,112 @@ def _append_action_param_ref_issues(
                 issues.append(Issue(
                     "warning", data_type, item_id,
                     f"{t} 的 {ip} {iv!r} 不在 overlay_images.json 的键中",
+                ))
+
+    if t in ("showBreathingOverlay", "breathingPerform", "setBreathingParams"):
+        _append_breathing_action_issues(model, issues, t, p, data_type, item_id)
+
+    if t in (
+        "showCanvasEntity", "hideCanvasEntity", "playCanvasEntityAnimation",
+        "setCanvasEntityTransform", "setCanvasOrder",
+        "playCanvasVfx", "stopCanvasVfx",
+    ):
+        # 画布（场景之外那张屏幕空间的面）。四类 item 共用一个 order 顺序空间；
+        # 这里只拦运行时会**静默跳过**的写法（缺句柄 / 角色不存在 / 枚举写错 / 百分比越界）。
+        name = str(p.get("name") or "").strip()
+        if not name:
+            issues.append(Issue("error", data_type, item_id, f"{t} 缺少 name（画布上的句柄）"))
+
+        if t == "showCanvasEntity":
+            character = str(p.get("character") or "").strip()
+            anim_file = str(p.get("animFile") or "").strip()
+            if not character and not anim_file:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    "showCanvasEntity 既没给 character 也没给 animFile——放不出任何东西",
+                ))
+            if character:
+                known = {cid for cid, _ in model.all_character_ids()}
+                if known and character not in known:
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"showCanvasEntity 的 character {character!r} 不在 character_registry.json 中",
+                    ))
+
+        if t == "setCanvasOrder":
+            kind = str(p.get("kind") or "").strip()
+            if kind not in ("image", "document", "entity", "vfx"):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setCanvasOrder 的 kind {kind!r} 非法；"
+                    "只能是 image（叠图句柄）/ document（documentId）/ entity / vfx",
+                ))
+            ov = p.get("order")
+            try:
+                if not math.isfinite(float(ov)):
+                    raise ValueError
+            except (TypeError, ValueError):
+                issues.append(Issue("error", data_type, item_id, "setCanvasOrder 的 order 须为有限数值"))
+
+        if t == "playCanvasVfx":
+            eff = str(p.get("effect") or "").strip()
+            if not eff:
+                issues.append(Issue("error", data_type, item_id, "playCanvasVfx 缺少 effect"))
+            else:
+                # 候选面 = 校验面：与 playVfx 用同一个镜像函数，也与编辑器的 vfx_effect 下拉同源
+                known = _known_vfx_effect_ids(model)
+                if known and eff not in known:
+                    issues.append(Issue(
+                        "error", data_type, item_id,
+                        f"playCanvasVfx 的 effect {eff!r} 不在粒子效果库中",
+                    ))
+            for key in ("xPercent", "yPercent", "scale", "order"):
+                raw = p.get(key)
+                if raw is None or raw == "":
+                    continue
+                try:
+                    fv = float(raw)
+                except (TypeError, ValueError):
+                    issues.append(Issue("error", data_type, item_id, f"playCanvasVfx 的 {key} 须为数值"))
+                    continue
+                if not math.isfinite(fv):
+                    issues.append(Issue("error", data_type, item_id, f"playCanvasVfx 的 {key} 须为有限数"))
+                elif key == "scale" and fv <= 0:
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"playCanvasVfx 的 scale = {fv}，运行时会回落 1",
+                    ))
+
+        if t == "playCanvasEntityAnimation" and not str(p.get("state") or "").strip():
+            issues.append(Issue("error", data_type, item_id, "playCanvasEntityAnimation 缺少 state"))
+
+        if t in ("showCanvasEntity", "setCanvasEntityTransform"):
+            for key in ("xPercent", "yPercent", "heightPercent", "widthPercent", "order", "alpha"):
+                raw = p.get(key)
+                if raw is None or raw == "":
+                    continue
+                try:
+                    fv = float(raw)
+                except (TypeError, ValueError):
+                    issues.append(Issue("error", data_type, item_id, f"{t} 的 {key} 须为数值"))
+                    continue
+                if not math.isfinite(fv):
+                    issues.append(Issue("error", data_type, item_id, f"{t} 的 {key} 须为有限数"))
+                elif key in ("xPercent", "yPercent") and not (0.0 <= fv <= 100.0):
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"{t} 的 {key} = {fv}，运行时会夹到 0..100（屏幕百分比）",
+                    ))
+                elif key == "alpha" and not (0.0 <= fv <= 1.0):
+                    issues.append(Issue(
+                        "warning", data_type, item_id,
+                        f"{t} 的 alpha = {fv}，运行时会夹到 0..1",
+                    ))
+            facing = str(p.get("facing") or "").strip()
+            if facing and facing not in ("left", "right"):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"{t} 的 facing {facing!r} 非法；只能是 left 或 right（缺省朝右）",
                 ))
 
     if t == "attachToSocket":
@@ -5687,6 +6020,9 @@ def _append_action_param_ref_issues(
 
     if t == "setPropLevel":
         _set_prop_level_issues(model, p, data_type, item_id, issues)
+
+    if t == "setFollowerFootsteps":
+        _follower_footsteps_issues(model, p, data_type, item_id, issues)
 
     if t in ("igniteBurnable", "extinguishBurnable", "resetBurnable"):
         _burn_action_issues(model, issues, t, p, data_type, item_id, scene_id)
@@ -5761,6 +6097,18 @@ def _append_action_param_ref_issues(
             issues.append(Issue(
                 "warning", data_type, item_id,
                 f"startObjectExamine id {eid!r} 不在 object_examine/index.json 登记中",
+            ))
+
+    for key in _ref_keys_by_kind("zone").get(t, ()):
+        zid = str(p.get(key) or "").strip()
+        if not zid:
+            continue
+        scene_ids = [scene_id] if scene_id else list(model.scenes)
+        known = {ref for sid in scene_ids for ref, _label in model.standard_zone_ids_for_scene(sid)}
+        if zid not in known:
+            issues.append(Issue(
+                "warning", data_type, item_id,
+                f"{t} {key}={zid!r} 无法解析为当前场景普通区域；随机表现落雷将跳过，不回退全场",
             ))
 
     for key in _emote_subject_ref_keys(t):
@@ -5911,7 +6259,7 @@ def _append_action_param_ref_issues(
                 ))
         elif t in ("stopVfx", "setVfxState"):
             inst = str(p.get("instanceId") or "").strip()
-            if not inst:
+            if t == "setVfxState" and not inst:
                 issues.append(Issue("error", data_type, item_id, f"{t} 缺 instanceId"))
             _warn_unplaced_instance(inst)
             if t == "setVfxState":
@@ -9041,6 +9389,12 @@ def _validate_vfx_placements(model: ProjectModel, issues: list[Issue]) -> None:
             f"{err}——运行时读不到布置库，所有场景的粒子一条都不会出现",
         ))
         return
+    # 全局缺省表面材质（没画区域的地方）：坏了运行时整张图都退回缺省
+    if isinstance(lib, dict) and lib.get("defaultSurface") is not None:
+        try:
+            _vp.normalize_default_surface(lib["defaultSurface"])
+        except ValueError as exc:
+            issues.append(Issue("error", dt, "defaultSurface", str(exc)))
     scenes = lib.get("scenes") if isinstance(lib, dict) else None
     if not isinstance(scenes, dict):
         return
@@ -9063,6 +9417,13 @@ def _validate_vfx_placements(model: ProjectModel, issues: list[Issue]) -> None:
                 "场景这一项要是 {base, variants} 对象（base = 场景顶层外观，variants = 各时段外观）",
             ))
             continue
+
+        # 表面材质区（水面 / 湿地）：形状走共享闸门，坏了运行时那块区整块不画反光、落点判不出水面
+        if ent.get("surfaces") is not None:
+            try:
+                _vp.normalize_surfaces(ent["surfaces"], f"{sid} · 表面材质区")
+            except ValueError as exc:
+                issues.append(Issue("error", dt, f"{sid} · 表面材质区", str(exc)))
 
         lists: list[tuple[str, object]] = []
         if ent.get("base") is not None:
@@ -9250,6 +9611,231 @@ def _report_unparseable_vfx_files(model: ProjectModel, loaded: dict, issues: lis
             continue
         if not isinstance(doc, dict):
             issues.append(Issue("error", "vfx", path.stem, f"vfx/{path.name} 根不是 JSON 对象"))
+
+
+# --------------------------------------------------------------------------- #
+# 呼吸图（breathing overlay）：三条动作 + 资产文件
+# --------------------------------------------------------------------------- #
+
+def _known_breathing_overlay_ids(model: ProjectModel) -> set[str] | None:
+    """呼吸图资产 id（= 文件名 stem）集合；``None`` = 取不到（假模型 / 没装载工程），调用方不做悬垂判断。
+
+    与编辑器 `breathing_overlay` 选择器同一个函数（``ProjectModel.all_breathing_overlay_ids``）——候选面 = 校验面。
+    """
+    fn = getattr(model, "all_breathing_overlay_ids", None)
+    if not callable(fn) or getattr(model, "project_path", None) is None:
+        return None
+    try:
+        return {str(i) for i, _lab in fn()}
+    except Exception:  # noqa: BLE001 — 假模型
+        return None
+
+
+def _is_finite_real(v: object) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(float(v))
+
+
+def _js_number(v: object) -> float | None:
+    """运行时 ``typeof v === 'number' ? v : Number(v)`` 的投影；转出来不是有限数返回 ``None``。
+
+    JSON 里的 null / 布尔 / 空串在 JS 里都转成有限数（0 / 1 / 0），照 JS 算。
+    """
+    if v is None:
+        return 0.0
+    if isinstance(v, bool):
+        return 1.0 if v else 0.0
+    if isinstance(v, (int, float)):
+        return float(v) if math.isfinite(float(v)) else None
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return 0.0
+        try:
+            f = float(s)
+        except ValueError:
+            return None
+        return f if math.isfinite(f) else None
+    return None
+
+
+def _js_number_is_finite(v: object) -> bool:
+    """只用来判「运行时会不会因为它不是数而整条跳过」（缺键的 undefined 由调用方另判）。"""
+    return _js_number(v) is not None
+
+
+def _js_string_param(v: object) -> str:
+    """运行时 ``String(v ?? '').trim()`` 的投影。"""
+    return "" if v is None else str(v).strip()
+
+
+def _append_breathing_action_issues(
+    model: ProjectModel, issues: list[Issue], t: str, p: dict, data_type: str, item_id: str,
+) -> None:
+    """showBreathingOverlay / breathingPerform / setBreathingParams。
+
+    只拦运行时会**静默跳过 / 丢掉**的写法（ActionRegistry 里 warn 一行就 return 的那些）：
+    缺句柄、资产文件不存在、act 不认识、百分比不是数、params 不是对象 / 键不认识 / 值不是数。
+    越出参数表量程运行时会夹（行为照走、只是和写的不一样）⇒ warning。
+    """
+    if not _js_string_param(p.get("id")):
+        issues.append(Issue("error", data_type, item_id, f"{t} 缺少 id（呼吸图句柄，与叠图同一套 id）"))
+
+    if t == "showBreathingOverlay":
+        bid = _js_string_param(p.get("breathing"))
+        if not bid:
+            issues.append(Issue("error", data_type, item_id, "showBreathingOverlay 缺少 breathing（呼吸图资产）"))
+        else:
+            known = _known_breathing_overlay_ids(model)
+            if known is not None and bid not in known:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"showBreathingOverlay 的 breathing {bid!r} 找不到资产 "
+                    f"public/assets/data/breathing/{bid}.json——运行时拉不到、这张图不显示",
+                ))
+        for key in ("xPercent", "yPercent", "widthPercent"):
+            # 缺键（undefined → NaN）或转不成数的串：运行时 warn 一行、整条跳过
+            if key not in p or not _js_number_is_finite(p.get(key)):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"showBreathingOverlay 的 {key} 须为数值（现为 {p.get(key)!r}）——运行时整条跳过",
+                ))
+        ov = p.get("order")
+        if ov is not None and ov != "":
+            try:
+                if not math.isfinite(float(ov)):
+                    raise ValueError
+            except (TypeError, ValueError):
+                issues.append(Issue("error", data_type, item_id, "showBreathingOverlay 的 order 须为有限数值"))
+        return
+
+    if t == "breathingPerform":
+        from .shared.breathing_params import BREATHING_ACT_ROWS, BREATHING_ACTS
+
+        act = _js_string_param(p.get("act"))
+        if act not in BREATHING_ACTS:
+            allowed = " / ".join(f"{v}（{lab}）" for v, lab in BREATHING_ACT_ROWS)
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"breathingPerform 的 act {act!r} 不认识；只能是 {allowed}——运行时整条跳过",
+            ))
+        # wait：运行时只认严格 true，写成 "true" / 1 会静默退回「不等」
+        if "wait" in p and p.get("wait") is not None and not isinstance(p.get("wait"), bool):
+            issues.append(Issue(
+                "error", data_type, item_id,
+                f"breathingPerform 的 wait 须为 true / false（现为 {p.get('wait')!r}）",
+            ))
+        return
+
+    # setBreathingParams
+    from .shared.breathing_params import breathing_param_defs
+
+    raw = p.get("params")
+    if not isinstance(raw, dict):
+        issues.append(Issue(
+            "error", data_type, item_id,
+            f"setBreathingParams 的 params 须为「参数名 → 数值」的对象（现为 {raw!r}）——运行时整条跳过",
+        ))
+    else:
+        defs = breathing_param_defs(getattr(model, "project_path", None))
+        for k, v in raw.items():
+            d = defs.get(str(k))
+            if defs and d is None:
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setBreathingParams 的参数 {k!r} 不在 src/data/breathingParams.json 里——运行时丢掉这一项",
+                ))
+                continue
+            if not _is_finite_real(v):
+                issues.append(Issue(
+                    "error", data_type, item_id,
+                    f"setBreathingParams 的参数 {k!r} 须为数值（现为 {v!r}）——运行时丢掉这一项",
+                ))
+                continue
+            if d is not None and not (d.min <= float(v) <= d.max):
+                issues.append(Issue(
+                    "warning", data_type, item_id,
+                    f"setBreathingParams 的参数 {k!r}（{d.label}）= {v} 超出范围 "
+                    f"{d.min:g}–{d.max:g}{d.unit}，运行时会夹到范围内",
+                ))
+    # 运行时 parseDurationMsParam：`durationMs ?? duration ?? 0` 转成数，非有限或负数按 0（瞬间改到位）
+    dur = p.get("durationMs")
+    dur_n = _js_number(dur)
+    if dur is not None and (dur_n is None or dur_n < 0):
+        issues.append(Issue(
+            "warning", data_type, item_id,
+            f"setBreathingParams 的 durationMs 须为 ≥ 0 的数（现为 {dur!r}）——运行时按 0（瞬间改到位）",
+        ))
+
+
+def _validate_breathing_overlays(model: ProjectModel, issues: list[Issue]) -> None:
+    """呼吸图资产文件（`assets/data/breathing/<id>.json`，唯一写者是呼吸工作台）。
+
+    只报 TS ``resolveBreathingOverlay`` 会**拒收**的形态（缺了它就返回 ``{error}``、这张图不显示），
+    外加读不懂的文件与文档 id ≠ 文件名。图层 / 位移场文件在不在由素材审计查（它也是打包清单的来源）。
+    """
+    loaded = getattr(model, "breathing_overlays", None)
+    if not isinstance(loaded, dict):
+        return
+    try:
+        d = model.paths.breathing_dir
+    except Exception:  # noqa: BLE001
+        d = None
+    if d is not None and d.is_dir():
+        for path in sorted(d.glob("*.json")):
+            if path.stem in loaded:
+                continue
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                issues.append(Issue(
+                    "error", "breathing", path.stem,
+                    f"breathing/{path.name} 无法解析（{type(exc).__name__}）；引用它的 showBreathingOverlay 运行时不显示",
+                ))
+                continue
+            if not isinstance(doc, dict):
+                issues.append(Issue("error", "breathing", path.stem, f"breathing/{path.name} 根不是 JSON 对象"))
+
+    def pair(v: object) -> bool:
+        return isinstance(v, list) and len(v) == 2 and all(_is_finite_real(x) for x in v)
+
+    def nonzero(v: object) -> bool:
+        return _is_finite_real(v) and float(v) != 0.0
+
+    for stem, doc in sorted(loaded.items()):
+        if not isinstance(doc, dict):
+            continue
+        stem = str(stem)
+        inner = str(doc.get("id") or "").strip() if isinstance(doc.get("id"), str) else ""
+        if inner and inner != stem:
+            issues.append(Issue(
+                "warning", "breathing", stem,
+                f"文档 id {inner!r} ≠ 文件名 {stem!r}：动作按文件名找这张图（breathing/{stem}.json）",
+            ))
+        size = doc.get("size")
+        if not (pair(size) and float(size[0]) > 0 and float(size[1]) > 0):
+            issues.append(Issue("error", "breathing", stem, "size 须为 [宽, 高]（正数）——运行时拒收这张图"))
+        layers = doc.get("layers") if isinstance(doc.get("layers"), dict) else {}
+        base = layers.get("base")
+        if not (isinstance(base, str) and base.strip()):
+            issues.append(Issue("error", "breathing", stem, "缺 layers.base（底图）——运行时拒收这张图"))
+        fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else {}
+        f_file = fields.get("file")
+        if not (isinstance(f_file, str) and f_file.strip() and nonzero(fields.get("width")) and nonzero(fields.get("height"))):
+            issues.append(Issue("error", "breathing", stem, "fields 需要 file / width / height——运行时拒收这张图"))
+        rig = doc.get("rig") if isinstance(doc.get("rig"), dict) else {}
+        lim = rig.get("limits") if isinstance(rig.get("limits"), dict) else {}
+        rig_ok = (
+            nonzero(rig.get("pxPerMm")) and pair(rig.get("root")) and pair(rig.get("rootDisp"))
+            and nonzero(rig.get("flapLengthPx")) and pair(rig.get("flapNormal")) and pair(rig.get("lampDir"))
+            and _is_finite_real(rig.get("shade"))
+            and nonzero(lim.get("sheetMm")) and nonzero(lim.get("ventMm")) and nonzero(lim.get("cranMm"))
+        )
+        if not rig_ok:
+            issues.append(Issue(
+                "error", "breathing", stem,
+                "rig 不完整（pxPerMm / root / rootDisp / flapLengthPx / flapNormal / lampDir / shade / "
+                "limits.sheetMm|ventMm|cranMm）——运行时拒收这张图",
+            ))
 
 
 def _validate_vfx_curve(raw: object, stem: str, where: str, issues: list[Issue]) -> None:
@@ -10927,6 +11513,28 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
                 f"效果资产 id {eid_top!r} 与文件名 {stem!r} 不一致（运行时按文件名装、按 id 引用，"
                 f"不一致 = 引用永远命不中）",
             ))
+        # 雷电样式生成器（工作台工作态，运行时忽略）：形状读不懂 / 样式库里没有这套样式 → 工作台里套不了、也重生成不了
+        if "generator" in row:
+            from pathlib import Path as _Path
+            from tools.editor.shared.vfx_generator import generator_problems, style_ids
+            gen_problems = generator_problems(row["generator"])
+            for problem in gen_problems:
+                issues.append(Issue("error", "vfx", stem, problem))
+            assets_dir = getattr(model, "assets_path", None)
+            if not gen_problems and assets_dir is not None:
+                known_styles = style_ids(_Path(assets_dir) / "data")
+                if known_styles is None:
+                    issues.append(Issue("warning", "vfx", stem,
+                                        "效果用了雷电样式，但 assets/data/vfx_lightning_styles.json 不存在或读不懂——"
+                                        "粒子工作台里套不了样式、也重新生成不了"))
+                elif row["generator"]["style"] not in known_styles:
+                    issues.append(Issue("warning", "vfx", stem,
+                                        f"雷电样式「{row['generator']['style']}」不在样式库里——"
+                                        "游戏里照旧显示已经套用好的那几层，但粒子工作台里换不了参数、重新套用不了"))
+        # 雷（bolts[] + 画它的发射器 appearance.bolt + 发射器 onSurface）：与工作台写盘闸门同一份
+        from tools.editor.shared.vfx_bolt import effect_bolt_problems
+        for problem in effect_bolt_problems(row):
+            issues.append(Issue("error", "vfx", stem, problem))
         ems = row.get("emitters")
         beams = row.get("beams")
         has_beams = isinstance(beams, list) and bool(beams)
@@ -10967,7 +11575,9 @@ def _validate_vfx_effects(model: ProjectModel, issues: list[Issue]) -> None:
             if not isinstance(ap, dict):
                 issues.append(Issue("error", "vfx", stem, f"发射器 {eid!r} 缺 appearance"))
             else:
-                if not str(ap.get("animFile") or "").strip() and not str(ap.get("image") or "").strip():
+                # 画雷的发射器（appearance.bolt）不贴图：雷身是运行时现画的折线
+                if ("bolt" not in ap and not str(ap.get("animFile") or "").strip()
+                        and not str(ap.get("image") or "").strip()):
                     issues.append(Issue(
                         "error", "vfx", stem,
                         f"发射器 {eid!r} 的 appearance 既没有 animFile 也没有 image（运行时装不到贴图 = 整个发射器不画）",

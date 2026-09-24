@@ -3,19 +3,22 @@ id: dvc-oss-restore
 title: 异地/新机 DVC 资源还原(勿用裸 dvc pull)
 domain: meta
 type: recipe
-summary: 大文件还原钦定路径 = ./dev.sh pull;裸 dvc pull 在慢速直连下必挂且无配置面可救
+summary: 大文件还原/推送钦定路径 = tools.dev pull / push(内部走 sync-dvc-cache.py);裸 dvc pull 在慢速直连下必挂、裸 dvc push 对 OSS 必失败,都不是网络问题
 status: active
 authority:
   - scripts/sync-dvc-cache.py
   - tools/dev/sync.py
   - tools/dev/__main__.py
 triggers:
-  topics: [DVC, OSS, 资源还原, 异地部署, 新机, dvc pull, 超时]
-  tasks: [异地部署, 新机还原资源, 拉取大文件资源, 还原运行时媒体]
-last_governed: 2026-08-05
+  topics: [DVC, OSS, 资源还原, 异地部署, 新机, dvc pull, dvc push, 超时, AsyncPayload]
+  tasks: [异地部署, 新机还原资源, 拉取大文件资源, 还原运行时媒体, 推送大文件资源]
+last_governed: 2026-09-23
 ---
 
-**实测环境与日期**:2026-07-13,本机直连阿里云 OSS(约 ~367KB/s)完整性验证通过。
+**实测环境与日期**:2026-07-13,本机直连阿里云 OSS(约 ~367KB/s)完整性验证通过;2026-09-08 / 09-11 推送侧两处必现故障实测。
+
+**Windows 上 `./dev.sh` 起不来**,下面每条换成 `.tools/venv/Scripts/python.exe -m tools.dev <同名任务>`
+(见 [windows-dev-environment](windows-dev-environment.md))。
 
 ## 钦定路径
 
@@ -64,6 +67,17 @@ last_governed: 2026-08-05
   是客户端超时——**别去查数据坏没坏**。
 - **根因**:dvc-oss 的异步栈(`aiooss2`)把 `connect_timeout` 当 aiohttp **总超时**用,
   且不认环境代理;`dvc_oss` 无超时透传旋钮,配置面救不了(故只能绕开,不能调参)。
+
+## 推送:别用裸 dvc push
+
+- **钦定 = `tools.dev push`**(内部 `scripts/sync-dvc-cache.py push`,同步 SDK、按对象查远端已有就跳过;实测四千多个对象查完约一分钟)。
+- **裸 `dvc push` 对 OSS 每个对象都必失败**,报 `Can't instantiate abstract class AsyncPayload with abstract method decode`:
+  约束集钉的 aiohttp(3.12 起 `Payload.decode` 成了抽象方法)与 dvc-oss 用的异步 OSS 适配层(最新版也只实现了 `write`)不兼容。
+  长得像传输抖动,**实际一个字节都没发出去,重试、查 endpoint / 凭证都没用**。
+  大文件分片路径还有第二处必现错误(`'coroutine' object has no attribute 'parts'`)。
+- 只想用 dvc 自己做验收(`dvc status -c` 应输出 in sync)时,可在进程内给那个适配类补一个抛错的 `decode`
+  **并清空它的 `__abstractmethods__`**(只挂方法不清集合照样实例化失败)再调 `dvc.cli.main`;上传路径不调 `decode`。
+  **别改共享 venv**。根治(钉回 aiohttp < 3.12 或包一层)要改受控依赖集,先问制作人。
 
 ## 相关
 

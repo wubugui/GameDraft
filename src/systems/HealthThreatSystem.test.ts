@@ -17,17 +17,20 @@ function setup(def = ghost) {
 }
 
 describe('鬼物实体侵袭', () => {
-  it('跟脚声按游戏时钟在行进后方发声，停步/暂停/火光驱退不补播', () => {
-    const h = setup({ ...ghost, presenceSfx: 'steps', soundOnlyMoving: true, soundBehindPlayer: 60, soundInterval: .8, soundVolume: .6 });
+  /**
+   * 存在声：在这东西**自己待的地方**按固定间隔响（喘息、拖曳这类）。
+   * ❗ 它**不是**“跟着你走的脚步”：那一条 2026-09-21 已拆成 FollowerFootstepSystem
+   *   （接玩家落脚做延迟重放），这里的“钉在玩家身后”与“只在走动时响”两个字段随之删掉。
+   */
+  it('存在声按间隔在实体自己位置发声，暂停/火光驱退/拆除不补播', () => {
+    const h = setup({ ...ghost, presenceSfx: 'steps', soundInterval: .8, soundVolume: .6 });
     h.system.update(.2);
-    expect(h.sound).not.toHaveBeenCalled();
-    h.state.x += 10; h.system.update(.2);
-    expect(h.sound).toHaveBeenLastCalledWith('steps', { x: 100, y: 0 }, .6);
+    expect(h.sound).toHaveBeenLastCalledWith('steps', { x: 0, y: 0 }, .6);
     h.state.running = false; h.system.update(100);
-    h.state.running = true; h.state.fire = true; h.state.x += 10; h.system.update(1);
+    h.state.running = true; h.state.fire = true; h.system.update(1);
     expect(h.sound).toHaveBeenCalledTimes(1);
-    h.state.fire = false; h.state.x -= 10; h.system.update(.2);
-    expect(h.sound).toHaveBeenLastCalledWith('steps', { x: 220, y: 0 }, .6);
+    h.state.fire = false; h.system.update(.2);
+    expect(h.sound).toHaveBeenLastCalledWith('steps', { x: 0, y: 0 }, .6);
     h.system.clear(); h.system.update(1);
     expect(h.sound).toHaveBeenCalledTimes(2);
   });

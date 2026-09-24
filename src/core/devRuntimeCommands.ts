@@ -1,5 +1,6 @@
 import type { FlagValue } from './FlagStore';
 import type { ActionDef } from '../data/types';
+import { SAVE_SLOT_COUNT } from '../data/types';
 
 export type RuntimeCommand =
   | { id?: unknown; type: 'captureSnapshot'; reason?: unknown }
@@ -608,8 +609,8 @@ function coerceDurationMs(value: unknown, fallback: number): number {
 function coerceSaveSlot(value: unknown, fallback: number): number {
   if (value === undefined || value === null || value === '') return fallback;
   const n = typeof value === 'number' ? value : Number(String(value).trim());
-  if (!Number.isFinite(n) || n < 0 || n > 2) {
-    throw new Error(`save slot must be 0, 1, or 2: ${String(value)}`);
+  if (!Number.isFinite(n) || n < 0 || n >= SAVE_SLOT_COUNT) {
+    throw new Error(`save slot must be 0..${SAVE_SLOT_COUNT - 1}: ${String(value)}`);
   }
   return Math.trunc(n);
 }

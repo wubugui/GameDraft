@@ -359,6 +359,63 @@ describe('BurnSystem · 场景实例', () => {
   });
 });
 
+describe('BurnSystem · 雷劈', () => {
+  /** 稻草（开了「雷劈能点着」）三堆：一堆在落点旁、一堆不许玩家点（留给脚本）、一堆离得远；纸堆没开 */
+  function strawWorld(): World {
+    const w = world();
+    w.burnables.straw = { ...w.burnables.paper, id: 'straw', lightningIgnites: true };
+    (w.scenes.sA.hotspots as unknown as HotspotLike[]).push(
+      { id: 'straw_near', x: 1000, y: 300, burnable: { template: 'straw' } },
+      { id: 'straw_script', x: 1040, y: 300, burnable: { template: 'straw', playerIgnite: false } },
+      { id: 'straw_far', x: 1500, y: 300, burnable: { template: 'straw' } },
+    );
+    return w;
+  }
+  const worldAt = (x: number) => createPlanarVfxSpace().anchorToWorld({ x, y: 300, h: 0 });
+
+  it('只点落点半径内、模板开了开关的；不许玩家点的（留给脚本）不点；半径外不点；没开开关的劈在身上也不点', async () => {
+    const h = harness(strawWorld());
+    h.enter('sA');
+    await h.flush();
+    h.run(0.2);
+    expect(h.sys.igniteByLightning(worldAt(1000), 80, 80)).toBe(1);
+    h.run(0.3);
+    expect(h.sys.statusOf('straw_near')).toBe('burning');
+    expect(h.sys.statusOf('straw_script')).toBe('unburnt');
+    expect(h.sys.statusOf('straw_far')).toBe('unburnt');
+    expect(h.sys.igniteByLightning(worldAt(600), 80, 80)).toBe(0);
+    h.run(0.3);
+    expect(h.sys.statusOf('paper')).toBe('unburnt');
+    // 半径 0 = 不点
+    expect(h.sys.igniteByLightning(worldAt(1500), 0, 0)).toBe(0);
+  });
+
+  it('雷点着的进存档：读档接着烧；开关不进指纹——模板里关掉它，存档里烧到一半的不被收束成烧完', async () => {
+    const w = strawWorld();
+    const a = harness(w);
+    a.enter('sA');
+    await a.flush();
+    a.run(0.2);
+    a.sys.igniteByLightning(worldAt(1000), 80, 80);
+    a.run(0.3);
+    expect(a.sys.statusOf('straw_near')).toBe('burning');
+    const save = roundtrip(a.sys);
+
+    const w2 = JSON.parse(JSON.stringify(w)) as World;
+    w2.scenes = w.scenes;
+    delete w2.burnables.straw.lightningIgnites;
+    const b = harness(w2);
+    b.sys.deserialize(save);
+    b.enter('sA');
+    await b.flush();
+    b.run(DT);
+    expect(b.sys.statusOf('straw_near')).toBe('burning');
+    expect(b.sys.statusOf('straw_far')).toBe('unburnt');
+    // 关掉之后雷就不点了
+    expect(b.sys.igniteByLightning(worldAt(1500), 80, 80)).toBe(0);
+  });
+});
+
 describe('BurnSystem · 挪位 / 生成 / 收掉', () => {
   it('场景没有任何过去时挪了不记事件；有过去之后挪了记挪位，读档重放逐位相同', async () => {
     const w = world();

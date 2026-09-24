@@ -1,17 +1,17 @@
 {
   "id": "storm_clouds",
-  "label": "雷云：压在头顶的一片厚云（符纸雷击 / 变天）",
+  "label": "黑云压顶：稳聚云腹与平地生雾",
   "emitters": [
     {
-      "id": "cloud_mass",
+      "id": "cloud_belly",
       "simulation": {
         "solver": "particle",
         "spawnPlacement": "shape",
         "initialVelocity": "configured",
         "influences": {
-          "sceneWind": true,
-          "wind": true,
-          "airflow": true,
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
           "stimulus": false
         },
         "recycle": {
@@ -20,24 +20,24 @@
       },
       "offset": [
         0,
-        620,
+        920,
         0
       ],
       "appearance": {
-        "image": "/resources/runtime/images/vfx/smoke_puff.png",
-        "sizeWu": 520,
+        "image": "/resources/runtime/images/vfx/storm_mist_20260920.png",
+        "sizeWu": 1000,
         "sizeJitter": [
-          0.75,
-          1.5
+          0.8,
+          1.28
         ],
         "sizeOverLife": [
           [
             0,
-            0.85
+            0.88
           ],
           [
             1,
-            1.25
+            1.24
           ]
         ],
         "alphaOverLife": [
@@ -46,12 +46,16 @@
             0
           ],
           [
-            0.12,
-            0.62
+            0.1,
+            0.22
           ],
           [
-            0.85,
-            0.62
+            0.22,
+            0.38
+          ],
+          [
+            0.8,
+            0.38
           ],
           [
             1,
@@ -59,69 +63,67 @@
           ]
         ],
         "tint": [
-          0.2,
-          0.22,
-          0.28
+          0.45,
+          0.49,
+          0.55
         ],
-        "lit": false,
+        "lit": true,
+        "emissive": 0.24,
+        "lightGain": 1.2,
+        "softEdgeWu": 110,
         "spin": {
           "rate": [
-            -4,
-            4
+            0,
+            0
           ],
-          "randomPhase": true
+          "randomPhase": false
         }
       },
       "spawn": {
-        "max": 28,
-        "rate": 2.2,
-        "burst": 18,
+        "max": 5,
+        "rate": 2,
+        "burst": 5,
         "shape": {
           "kind": "box",
           "size": [
-            2600,
-            260,
-            700
+            2400,
+            90,
+            480
           ]
         },
         "speed": [
-          4,
-          14
-        ],
-        "direction": [
-          1,
           0,
           0
         ],
-        "spread": 25,
-        "duration": 9.0
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 0
       },
       "motion": {
-        "drag": 0.35,
-        "turbulence": {
-          "strength": 6,
-          "scale": 300,
-          "speed": 0.15
-        },
-        "maxSpeed": 70
+        "drag": 0.6,
+        "maxSpeed": 250,
+        "followAnchor": "none"
       },
       "life": {
         "seconds": [
-          7.6,
-          11.9
+          10,
+          22
         ]
       }
     },
     {
-      "id": "cloud_underbelly",
+      "id": "distant_mist",
       "simulation": {
         "solver": "particle",
         "spawnPlacement": "shape",
         "initialVelocity": "configured",
         "influences": {
-          "sceneWind": true,
-          "wind": true,
-          "airflow": true,
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
           "stimulus": false
         },
         "recycle": {
@@ -130,15 +132,25 @@
       },
       "offset": [
         0,
-        470,
+        50,
         0
       ],
       "appearance": {
-        "image": "/resources/runtime/images/vfx/smoke_puff.png",
-        "sizeWu": 340,
+        "image": "/resources/runtime/images/vfx/storm_wisps_20260920.png",
+        "sizeWu": 700,
         "sizeJitter": [
           0.8,
-          1.4
+          1.28
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.88
+          ],
+          [
+            1,
+            1.24
+          ]
         ],
         "alphaOverLife": [
           [
@@ -146,12 +158,12 @@
             0
           ],
           [
-            0.15,
-            0.4
+            0.25,
+            0.065
           ],
           [
-            0.85,
-            0.4
+            0.65,
+            0.09
           ],
           [
             1,
@@ -159,56 +171,54 @@
           ]
         ],
         "tint": [
-          0.12,
-          0.13,
-          0.17
+          0.78,
+          0.84,
+          0.9
         ],
-        "lit": false,
+        "lit": true,
+        "emissive": 0.4,
+        "lightGain": 1.2,
+        "softEdgeWu": 35,
         "spin": {
           "rate": [
-            -6,
-            6
+            0,
+            0
           ],
-          "randomPhase": true
+          "randomPhase": false
         }
       },
       "spawn": {
-        "max": 20,
-        "rate": 1.6,
-        "burst": 12,
+        "max": 23,
+        "rate": 1.4,
+        "burst": 7,
         "shape": {
           "kind": "box",
           "size": [
-            2400,
-            160,
-            620
+            1800,
+            40,
+            950
           ]
         },
         "speed": [
-          6,
-          18
+          5,
+          9
         ],
         "direction": [
-          1,
           0,
+          1,
           0
         ],
-        "spread": 30,
-        "duration": 9.0
+        "spread": 0
       },
       "motion": {
-        "drag": 0.4,
-        "turbulence": {
-          "strength": 9,
-          "scale": 260,
-          "speed": 0.2
-        },
-        "maxSpeed": 80
+        "drag": 0.6,
+        "maxSpeed": 250,
+        "followAnchor": "none"
       },
       "life": {
         "seconds": [
-          6.8,
-          11.0
+          3.5,
+          4.5
         ]
       }
     }

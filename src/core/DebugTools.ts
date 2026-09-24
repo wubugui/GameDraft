@@ -2695,14 +2695,26 @@ export class DebugTools {
       const hint = this.debugMiddleButtonCameraZoomEnabled
         ? `中键摄像机缩放：开启\n仅在探索模式下生效。\n滚轮 / 中键拖动缩放；调试范围约 ${DEBUG_CAMERA_ZOOM_MIN}～${DEBUG_CAMERA_ZOOM_MAX}（场景配置的 zoom 过低时，继续缩小会先被夹到最小值）。`
         : '中键摄像机缩放：关闭\n开启后可在探索模式下用滚轮或中键拖动缩放镜头。';
+      // 调试滚轮一滚就把 zoom 标成「显式占用」，配了相机跟随透视的场景从此不再自动改景别——
+      // 这正是调试想要的（手动接管），但得有条路把它交回去，否则只能靠切场景。
+      const overridden = this.deps.camera.isZoomOverridden();
+      const followLine = `相机跟随透视：${overridden ? '让位中（zoom 被显式占着）' : '连续通道空闲（场景配了跟随即生效）'}`;
       return {
-        text: `${zoomLine}\n\n${hint}`,
+        text: `${zoomLine}\n${followLine}\n\n${hint}`,
         actions: [
           {
             label: this.debugMiddleButtonCameraZoomEnabled ? '关闭中键缩放' : '开启中键缩放',
             fn: () => {
               this.debugMiddleButtonCameraZoomEnabled = !this.debugMiddleButtonCameraZoomEnabled;
               debugPanelUI.log(`中键摄像机缩放: ${this.debugMiddleButtonCameraZoomEnabled ? 'on' : 'off'}`);
+            },
+          },
+          {
+            label: 'zoom 交回相机跟随透视',
+            fn: () => {
+              this.deps.camera.releaseZoomOverride();
+              debugPanelUI.log('zoom 已交回连续通道（场景没配 perspectiveScale.cameraFollow 时无变化）');
+              debugPanelUI.refresh();
             },
           },
         ],

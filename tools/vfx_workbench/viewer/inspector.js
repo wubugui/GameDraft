@@ -14,7 +14,10 @@
 /** 颜色关键点的新值取三位小数（插值出来的 0.54999… 不往资产里写一长串） */
 const round3 = (v) => Math.round(v * 1000) / 1000;
 
-const INS_OPEN = { effect: true, placement: true, appearance: true, spawn: true, motion: true, life: true, collision: false, behavior: false, sound: false };
+const INS_OPEN = { effect: true, lightning: true, lightningOff: false, placement: true, surfaces: false, appearance: true, spawn: true, motion: true, life: true, collision: false, behavior: false, sound: false };
+/** 雷电样式生成器拥有的那几层（与 `tools/vfx_workbench/lightning.py` 的 OWNED 同一份）：贴图 / 宽度由样式定，检视器里锁住 */
+/** 雷电样式那几层（与 tools/vfx_workbench/lightning.py 的 OWNED 同一份名单） */
+const LIGHTNING_OWNED = ['bolt', 'bolt_stroke', 'ground_arcs', 'water_arcs'];
 
 const Inspector = {
   /** 折叠状态（UI 态，不进历史） */
@@ -885,6 +888,15 @@ const Inspector = {
       sec.firstElementChild?.appendChild(h('span', { class: 'dim' }, ' · 未启用'));
     }
     if (c.errors.length) container.prepend(h('div', { class: 'pad warn' }, c.errors.join('；')));
+    // 雷电样式那几层：画法（雷的形状 / 粗细 / 光晕）是样式写进来的（改了下一次套用就被覆盖），贴图 / 宽度锁住；
+    // 时间曲线（亮度 / 颜色 / 粗细随寿命）照常可调，重新套用时保留
+    const doc = host.doc;
+    if (doc && doc.generator && doc.generator.kind === 'lightning' && LIGHTNING_OWNED.includes(em.id)) {
+      for (const label of ['动画包', '单图', '状态', '栖息状态', '宽度']) disable(row('appearance', label), '这一层由雷电样式来画，在上面「雷电样式」里改');
+      const sec = container.querySelector('.sec[data-sec="appearance"]');
+      if (sec) sec.insertBefore(h('div', { class: 'pad dim', 'data-role': 'lightning-owned' },
+        '这一层由「雷电样式」来画：形状、粗细、光晕在上面「雷电样式」里改；亮度 / 颜色 / 粗细随寿命可以在这里调，重新套用时保留'), sec.children[1] || null);
+    }
   },
 
   _renderBody(host, container) {
@@ -894,6 +906,8 @@ const Inspector = {
     const doc = host.doc;
     const em = host.currentEmitter();
     container.appendChild(this.effectSection(host, doc));
+    // classic script 顶层的 const 不挂 window：按裸标识符判（与 app.js 的 S 同理）
+    if (typeof LightningPanel !== 'undefined') container.appendChild(LightningPanel.section(this, host, doc));
     container.appendChild(this.section('timing', '起播错峰', () => [
       this.row('随机预热', this.chk(() => doc.prewarmSeconds !== undefined,
         (v) => host.edit('改随机预热', () => { if (v) doc.prewarmSeconds = [1, 4]; else delete doc.prewarmSeconds; }),
@@ -902,6 +916,7 @@ const Inspector = {
         (v) => host.edit('改预热时长', () => { doc.prewarmSeconds = v.map((x) => clamp(x, 0, 15)).sort((a, b) => a - b); }), '秒')) : null,
     ]));
     container.appendChild(this.placementSection(host, doc));
+    container.appendChild(this.surfaceSection(host));
     // 选中的是光柱把手：检视器换成这根光柱（发射器那几块不出——左栏点发射器回来）
     const bm = host.currentBeam();
     if (bm) { for (const n of this.beamSections(host, doc, bm)) if (n) container.appendChild(n); return; }
@@ -1290,6 +1305,59 @@ const Inspector = {
         this.row('限高', this.num(() => (conf ? conf.ceiling : null), (v) => E('改限高', (r) => { if (!r.confine) return; if (v != null && v > 0) r.confine.ceiling = v; else delete r.confine.ceiling; }), 'wu',
           { placeholder: '不限', disabled: !conf, title: '离地真实高度上限；空 = 不限' })),
       ];
+    });
+  },
+
+  /**
+   * 「表面材质区」一节：本场景的水面 / 湿地（布置库 `scenes[场景].surfaces`，**所有时段共用**，不跟着效果走）。
+   * 落雷与所有标了反光的灯在这里照出倒影 / 高光；落在水面的雷改放水面电弧与水花（发射器 onSurface）。
+   * 渲染只读：每个写入都经 host 在写入时按下标现找那一块。
+   */
+  surfaceSection(host) {
+    const rs = host.scene ? host.sceneSurfaces() : [];
+    return this.section('surfaces', rs.length ? `表面材质区 · ${rs.length} 块` : '表面材质区', () => {
+      if (!host.scene) return [h('div', { class: 'pad dim' }, '还没装场景')];
+      const D = host.surfaceDefaults, L = host.surfaceLabel;
+      const G = D.ground, ds = host.defaultSurface;
+      const out = [
+        h('h4', { 'data-role': 'surfDefault' }, '没画区域的地方（全局：所有场景一份）'),
+        h('div', { class: 'pad dim' }, '雷是任意地方随机落的：没画区域的地方一律按这里的材质照出反光。细节起伏 = 地面上把高光打碎的细小起伏（程序化，不对应原画）；水面雨纹 = 所有水面上雨点打出的涟漪。'),
+        this.row('反光', this.num(() => ds.reflect, (v) => host.setDefaultSurfaceField('reflect', v == null ? null : Math.max(0, Math.min(1, v)), '反光'), '0..1',
+          { placeholder: String(G.reflect), title: `整片地面照出多少反光（0..1；空 = 缺省 ${G.reflect}）` })),
+        this.row('粗糙度', this.num(() => ds.roughness, (v) => host.setDefaultSurfaceField('roughness', v == null ? null : Math.max(0, Math.min(1, v)), '粗糙度'), '0..1',
+          { placeholder: String(G.roughness), title: `越小越像湿透、高光越集中；越大越干、越散（空 = 缺省 ${G.roughness}）` })),
+        this.row('细节起伏', this.num(() => ds.detail, (v) => host.setDefaultSurfaceField('detail', v == null ? null : Math.max(0, Math.min(2, v)), '细节起伏'), '0..2',
+          { placeholder: String(G.detail), title: `地面与湿地上把高光打碎的细小起伏有多强（0 = 光滑一片；空 = 缺省 ${G.detail}）` })),
+        this.row('水面雨纹', this.num(() => ds.ripple, (v) => host.setDefaultSurfaceField('ripple', v == null ? null : Math.max(0, Math.min(2, v)), '水面雨纹'), '0..2',
+          { placeholder: String(G.ripple), title: `所有水面上雨点涟漪与细浪有多强（0 = 平静如镜；空 = 缺省 ${G.ripple}）` })),
+        h('h4', {}, '本场景的表面材质区'),
+        h('div', { class: 'pad dim' }, `「${host.scene.name || host.scene.id}」里材质真正不一样的地方（水面、石板地；整个场景所有时段共用）：水面上的雷改放水花与水面电弧。后画的盖在先画的上面——水面里画一块湿地 = 挖出一块露出来的滩。`),
+        h('div', { class: 'row' }, h('span', {}, ''), this.chk(() => host.surfEdit, (v) => host.setSurfEdit(v), '在画面上显示并编辑', { role: 'surfEdit', title: '关着时画面上不画、不能拖（不影响游戏）' })),
+        h('div', { class: 'btns' },
+          h('button', { class: 'areaBtn', 'data-role': 'surfWater', disabled: !!host.libErr, title: '按住拖一个框 = 新的一块水面（蓝）', onclick: () => host.setTool('areaWater') }, '拉一块水面'),
+          h('button', { class: 'areaBtn', 'data-role': 'surfWet', disabled: !!host.libErr, title: '按住拖一个框 = 新的一块湿地（青绿）', onclick: () => host.setTool('areaWet') }, '拉一块湿地')),
+      ];
+      if (!rs.length) out.push(h('div', { class: 'pad dim' }, '这个场景没有表面材质区：整张图都按上面的缺省材质反光，落点一律按地面放碎石扬尘'));
+      rs.forEach((r, ri) => {
+        if (!r || typeof r !== 'object') return;
+        const kind = r.kind === 'wet' ? 'wet' : 'water';
+        const d = D[kind];
+        const n = Array.isArray(r.polygon) ? r.polygon.length : 0;
+        out.push(h('h4', { 'data-role': 'surfRow' }, `${L[kind]} · ${r.id}（${n} 个顶点）`));
+        out.push(this.row('id', this.txt(() => r.id, (v) => host.renameSurface(ri, v), 'water_1')));
+        out.push(this.row('种类', this.sel(() => kind, (v) => host.setSurfaceField(ri, 'kind', v === 'wet' ? 'wet' : 'water', '种类'),
+          [{ value: 'water', label: '水面（倒影 + 雨点细波纹；雷落上去放水花）' }, { value: 'wet', label: '湿地（湿亮一片；雷落上去照常放碎石）' }])));
+        out.push(this.row('反光', this.num(() => r.reflect, (v) => host.setSurfaceField(ri, 'reflect', v == null ? null : Math.max(0, Math.min(1, v)), '反光'), '0..1',
+          { placeholder: String(d.reflect), title: `照出多少倒影 / 高光（0..1；空 = 缺省 ${d.reflect}）` })));
+        out.push(this.row('粗糙度', this.num(() => r.roughness, (v) => host.setSurfaceField(ri, 'roughness', v == null ? null : Math.max(0, Math.min(1, v)), '粗糙度'), '0..1',
+          { placeholder: String(d.roughness), title: `越小倒影越清、越大越糊成一片（0..1；空 = 缺省 ${d.roughness}）` })));
+        out.push(this.row('边缘羽化', this.num(() => r.feather, (v) => host.setSurfaceField(ri, 'feather', v == null ? null : Math.max(0, v), '边缘羽化'), 'wu',
+          { placeholder: String(D.feather), title: `边缘这么宽的一带慢慢淡出（空 = 缺省 ${D.feather} wu）` })));
+        out.push(h('div', { class: 'btns' },
+          h('button', { title: '选中它的第一个顶点（画面上显示出来）', onclick: () => host.selectSurface(ri) }, '选中'),
+          h('button', { class: 'danger', 'data-role': 'surfDelete', onclick: () => host.deleteSurface(ri) }, '删掉这块')));
+      });
+      return out;
     });
   },
 };

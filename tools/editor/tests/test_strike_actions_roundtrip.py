@@ -110,10 +110,10 @@ FULL = [
     {"type": "setSceneDim", "params": {"scale": 0.3, "fadeMs": 700, "wait": True}},
     {"type": "strikeThreat", "params": {
         "rank": "distance", "maxDistance": 1800, "fallback": "none", "fallbackRadius": 340,
-        "effect": "lightning_bolt", "effectHeight": 12, "lightIntensity": 260, "lightHeight": 300,
+        "effect": "lightning_bolt", "effectHeight": 12, "effectSeed": 0, "lightIntensity": 260, "lightHeight": 300,
         "lightRange": 5000, "lightKelvin": 9000, "lightMs": 460, "removeTarget": False, "seed": 7,
         # 绑在落点上的雷声 + 连劈 + 每道雷自带的闪白/震屏
-        "sfx": "sfx_thunder_crack", "sfxVolume": 1.0,
+        "sfx": "sfx_thunder_crack", "sfxVolume": 1.0, "sfxVoices": 0, "vfxVoices": 0,
         "strikes": 3, "extraChance": 0.45, "gapMs": 240, "gapJitterMs": 110,
         "flashAlpha": 0.42, "flashMs": 150, "shakeAmplitude": 26, "shakeMs": 750,
     }},

@@ -42,8 +42,6 @@ export class HealthThreatSystem implements IGameSystem {
   private deps: HealthThreatDeps | null = null;
   private yinSources: string[] = [];
   private soundClocks = new Map<string, number>();
-  private playerPrevious: { x: number; y: number } | null = null;
-  private heading = { x: 1, y: 0 };
   private readings: { id: string; state: HealthThreatState; distance: number | null; attackPerSecond: number }[] = [];
 
   connect(deps: HealthThreatDeps): void { this.deps = deps; }
@@ -62,10 +60,6 @@ export class HealthThreatSystem implements IGameSystem {
     if (!d || !d.canUpdate() || !Number.isFinite(dt) || dt <= 0) return;
     const gen = this.generation;
     const player = d.playerPosition();
-    const dx = player.x - (this.playerPrevious?.x ?? player.x), dy = player.y - (this.playerPrevious?.y ?? player.y);
-    const moved = Math.hypot(dx, dy);
-    if (moved > .01) this.heading = { x: dx / moved, y: dy / moved };
-    this.playerPrevious = { ...player };
     const night = d.isNight(), protectedByFire = d.hasFireProtection();
     const yinSources: string[] = [];
     this.readings = [];
@@ -106,10 +100,11 @@ export class HealthThreatSystem implements IGameSystem {
       else if (def.presenceSfx && d.canUpdate()) {
         const remaining = Math.max(0, (this.soundClocks.get(def.id) ?? 0) - dt);
         this.soundClocks.set(def.id, remaining);
-        if (remaining === 0 && (!def.soundOnlyMoving || moved > .01)) {
-          const behind = def.soundBehindPlayer;
-          const at = behind === undefined ? position! : { x: player.x - this.heading.x * behind, y: player.y - this.heading.y * behind };
-          d.playSound?.(def.presenceSfx, at, def.soundVolume ?? 1);
+        if (remaining === 0) {
+          // 存在声就在这东西自己待的地方响。**没有「钉在玩家身后」那一档**——
+          // 跟着你走的脚步是 FollowerFootstepSystem 的事（接玩家落脚做延迟重放），
+          // 不是这里按固定间隔推一个音源（2026-09-21 拆开，见 survival.ts 的 presenceSfx 注释）。
+          d.playSound?.(def.presenceSfx, position!, def.soundVolume ?? 1);
           this.soundClocks.set(def.id, def.soundInterval ?? .7);
         }
       }
@@ -181,7 +176,7 @@ export class HealthThreatSystem implements IGameSystem {
   clear(): void {
     this.generation++;
     this.sources = []; this.states.clear(); this.readings = []; this.yinSources = [];
-    this.soundClocks.clear(); this.playerPrevious = null; this.heading = { x: 1, y: 0 };
+    this.soundClocks.clear();
     this.deps?.setYinSources([]);
   }
   serialize(): object { return {}; }
@@ -200,9 +195,7 @@ export function validThreat(def: HealthThreatDef): boolean {
   if (def.fireResponse !== undefined && def.fireResponse !== 'repelled' && def.fireResponse !== 'ignore') return false;
   if ([def.nightOnly, def.affectsWhenHidden, def.duringPresentation].some((v) => v !== undefined && typeof v !== 'boolean')) return false;
   if (def.presenceSfx !== undefined && typeof def.presenceSfx !== 'string') return false;
-  if (def.soundOnlyMoving !== undefined && typeof def.soundOnlyMoving !== 'boolean') return false;
   if (def.soundInterval !== undefined && (!Number.isFinite(def.soundInterval) || def.soundInterval < .1)) return false;
-  if (def.soundBehindPlayer !== undefined && (!Number.isFinite(def.soundBehindPlayer) || def.soundBehindPlayer < 0)) return false;
   if (def.soundVolume !== undefined && (!Number.isFinite(def.soundVolume) || def.soundVolume < 0 || def.soundVolume > 1)) return false;
   return true;
 }

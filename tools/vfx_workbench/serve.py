@@ -40,6 +40,13 @@
                                           效果过不了闸门就推上一份过了闸门的（没有就盘上那份）、布置照推，回 defErr）
   GET  /api/link/status                   游戏回传的状态（场景 / 实例 / stats / 玩家脚点）
   POST /api/link/launch  {sceneId}        一键拉起游戏进本场景
+  GET  /api/lightning                     雷电样式库 + 参数表 + 内置预设 + 谁在用哪套 + 每份雷电效果是否按现在的样式套用
+  POST /api/lightning/apply {library, base, assign?, regenerate?}
+                                          「套用」：存样式库（带基线）+ 受影响的效果全部按样式重新套用、落盘
+  POST /api/lightning/compose {style, seed, doc?}   只读：按草稿样式拼出套用之后的 bolts 与那几层（预览用，不落盘）
+  POST /api/lightning/sync_group {effectId}   把这份效果样式以外的那几层抄给同组其余几份
+  GET  /api/lightning/progress            套用进度（套用是同步的，恒为空闲；留给页面的旧轮询）
+  （雷的预览在页面里现画：bundle 里的 vfxBolt / vfxBoltGlsl，与游戏同一份代码）
 
 一切响应 ``Cache-Control: no-store``；错误以 ``{ok:false, err}`` 回给前端而不是断连。
 几何直接用轨迹工作台的 ``get_geometry``（同一份 LRU 缓存、同一份 ``SceneGeometry``）。
@@ -63,7 +70,7 @@ from tools.editor.shared import vfx_burn                                        
 from tools.editor.shared import vfx_placements as vp                                  # noqa: E402
 from tools.trajectory_workbench.geometry import SCENES_RT, list_scenes, scene_paths  # noqa: E402
 from tools.trajectory_workbench.serve import get_geometry, scaled_background         # noqa: E402
-from tools.vfx_workbench import assets, bundle, placements                           # noqa: E402
+from tools.vfx_workbench import assets, bundle, lightning, placements                # noqa: E402
 from tools.vfx_workbench.game_link import VfxLink                                    # noqa: E402
 
 PORT = 5341
@@ -394,6 +401,10 @@ class H(SimpleHTTPRequestHandler):
                 return self._json({"ok": True, **appearance_sources()})
             if u.path == "/api/burnables":
                 return self._json({"ok": True, **burnable_table()})
+            if u.path == "/api/lightning":
+                return self._json({"ok": True, **lightning_state()})
+            if u.path == "/api/lightning/progress":
+                return self._json({"ok": True, **lightning.progress()})
             if u.path == "/api/link/config":
                 return self._json({"ok": True, "gameUrl": LINK.base, "writer": LINK.writer})
             if u.path == "/api/link/status":
@@ -453,6 +464,41 @@ class H(SimpleHTTPRequestHandler):
                     return self._json(open_burn_workbench(str(body.get("id") or "")))
                 except ValueError as e:
                     return self._json({"ok": False, "err": str(e)}, 400)
+            if u.path == "/api/lightning/compose":
+                # 只读：按草稿样式把这份效果「套用之后」的样子拼出来（不落盘），页面拿它的 bolts 与那几层现画预览。
+                # 参数 → 效果的映射只在 lightning.apply_style 一处，页面不另写
+                style, seed = body.get("style"), body.get("seed")
+                if not isinstance(style, dict) or not isinstance(seed, int) or isinstance(seed, bool):
+                    return self._json({"ok": False, "err": "需要 style（对象）+ seed（整数）"}, 400)
+                try:
+                    st = lightning.normalize_style(style)
+                    base_doc = body.get("doc") if isinstance(body.get("doc"), dict) else {"id": "preview", "emitters": []}
+                    doc = lightning.apply_style(base_doc, st, seed)
+                except ValueError as e:
+                    return self._json({"ok": False, "err": str(e)}, 400)
+                owned = [e for e in doc["emitters"] if e.get("id") in lightning.OWNED]
+                return self._json({"ok": True, "bolts": doc["bolts"], "emitters": owned})
+            if u.path == "/api/lightning/sync_group":
+                # 把这份效果样式以外的那几层（落点光团、碎石、水花……）抄给同组其余几份
+                eid = str(body.get("effectId") or "").strip()
+                if not eid:
+                    return self._json({"ok": False, "err": "需要 effectId"}, 400)
+                try:
+                    res = lightning.sync_group(eid)
+                except (ValueError, OSError) as e:
+                    return self._json({"ok": False, "err": str(e)}, 400)
+                return self._json({"ok": True, "results": res, **lightning_state()})
+            if u.path == "/api/lightning/apply":
+                lib = body.get("library")
+                if not isinstance(lib, dict):
+                    return self._json({"ok": False, "err": "需要 library"}, 400)
+                assign = body.get("assign") if isinstance(body.get("assign"), dict) else {}
+                regen = [str(x) for x in body.get("regenerate") or [] if isinstance(x, str)]
+                try:
+                    r = lightning.apply(lib, body.get("base", assets.UNCHECKED_BASE), assign, regen)
+                except ValueError as e:
+                    return self._json({"ok": False, "err": str(e)}, 400)
+                return self._json({"ok": True, **r, **lightning_state()})
             if u.path == "/api/link/config":
                 return self._json({"ok": True, "gameUrl": LINK.set_base(str(body.get("gameUrl") or ""))})
             if u.path == "/api/link/publish":
@@ -503,6 +549,22 @@ class H(SimpleHTTPRequestHandler):
             return self._json({"ok": False, "err": "unknown endpoint"}, 404)
         except Exception as e:  # noqa: BLE001
             return self._json({"ok": False, "err": f"{type(e).__name__}: {e}"}, 500)
+
+
+def lightning_state() -> dict:
+    """雷电样式区要的一切：样式库（读不懂 → libraryErr，页面只读）、参数表、内置预设、形状模型名、
+    每份雷电效果（样式 / 种子 / 组 / 产物是不是按现在的样式生成的）、谁在用哪套。"""
+    lib, err = lightning.load_library()
+    rows: list = []
+    if lib is not None:
+        try:
+            rows = lightning.status_rows()
+        except ValueError:
+            rows = []
+    return {"library": lib, "libraryErr": err, "libraryPath": _rel(lightning.LIB_PATH),
+            "libraryOnDisk": lightning.LIB_PATH.is_file(), "spec": lightning.SPEC,
+            "presets": lightning.PRESETS, "kinds": lightning.KIND_LABEL, "effects": rows,
+            "usage": lightning.usage(rows), "progress": lightning.progress()}
 
 
 def _disk_def(eid: str) -> dict | None:

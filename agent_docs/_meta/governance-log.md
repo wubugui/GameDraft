@@ -33,6 +33,12 @@
 | 09-03 | **对话立绘尺寸以代码为准 = 360**;首版 240 降入被否列表 | 三处口径打架,制作人裁定 |
 | 09-03 | editor-tools 不变量4 去掉写死的"三处同步"、改为逐处对齐并点明加工台例外;验收门"全量绿"改为平台化判据(靶向绿 + 双树失败集合一致) | 审批面① |
 | 09-03 | **宪法 §7 的 CLI 命令改走 `sh scripts/py.sh`**(`python3` 在本机是商店占位程序,静默空转) | 唯一一次改宪法 |
+| 09-23 | **content norms 过程义务 1**:故事文档冲突按总纲一·1 正典优先级裁(设定对账 > 总纲 > 其余 Demo 资料),取代「四权威源」;写怪/台词/拆拍前先认基调「俗的怪、静的怕」 | 审批面①;xungouji-doc-authority 就地取代 |
+| 09-23 | **validate-data 验收门 = error/警告集合与改动前一致、只减不增**(runtime + editor-tools 两份 norms 同口径) | 审批面①;起点存量 66 error |
+| 09-23 | **character-animation-production 骨架改为「批次准备(人批)→整批生成→统一验收」;重生只认 A clip / B 非正侧面 / C 画风整体漂移,候选须人批** | 审批面②;源自 09-14 Meshy 强制规范,推广为通则 |
+| 09-23 | **生成底色铁律的唯一例外 = fal gpt-image-2.5 可直出透明底**,按模型划界不按用途;Lib Image 等标称支持的也不许 | 审批面④;制作人原话"只有 gptimage2.5 支持直出透明底" |
+| 09-23 | 删 `editor-tools/mechanisms/scene-trajectory-authoring`(superseded,条款已全在 trajectory-workbench) | 审批面③ |
+| 09-23 | **method 久未用分诊改按使用痕迹**(triggers.paths / 库外引用的 git 活动 / 组合层继承 / 手填 last_used 取最大),`last_used` 降为可选证据 | §3 第 16 条销账;audit.py 已改 |
 
 **长期冻结项**:`CLAUDE.md` 全面路由器化——08-05 前一直未批;本轮处置见 §2。
 
@@ -75,7 +81,44 @@
   asset-pipeline 与 meta 补齐),管线 B 五片并行蒸馏。两路对抗核查抓回 1 条真误删 + 6 条事实错误,
   另有 4 条核查员自己的假阳性被主脑实测驳回。审批四题全部拍板(见 §1)。详见 §2.2。
 
-## §2.2 本轮(2026-09-03)明细
+- **09-23 全域深度治理(积压最大的一轮)** — inbox **103 → 0**;文档 148 → 166(新卡 19、删 1);
+  管线 A 四片盲重建(音频栈 / 威胁·暂停·时钟 / 火·挂件·粒子·风 / 动作与条件登记面),管线 B 七片并行蒸馏;
+  两路对抗核查补回 8 条真误删、订正 1 条事实错误、驳回约 75 条"看似误删"。审批六题全部拍板(见 §1)。详见 §2.3。
+
+## §2.3 本轮(2026-09-23)明细
+
+**分片**:lighting / runtime-flow / editor-workbench / content-meta(三片不依赖盲重建,先行);
+audio-threat / fire-vfx / editor-registration(各自拿对应盲重建图谱对账后再蒸馏)。卡片按分片独占所有权,
+跨片改动一律走「跨片提案」由主脑统一落——本轮约 30 条跨片提案,零写冲突。
+
+**新卡(19)**:runtime/mechanisms/{game-state-handoff, dialogue-layout-styles, character-probe-bake,
+audio-mix-and-ownership, audio-listener-space, strike-threat, health-and-threat, death-and-retry-checkpoint,
+vfx-rendering, vfx-beams, vfx-plates-and-areas, held-prop-system, background-sway, condition-leaf-registration-surfaces}、
+editor-tools/mechanisms/action-host-fields、meta/mechanisms/desktop-window-no-cache、
+meta/recipes/{windows-dev-environment, shared-tree-and-worktrees}、asset-pipeline/recipes/fal-generation。
+**拆卡瘦身**:character-lighting 271→134、vfx-system 475→133、held-prop-lights 314→82、scene-wind 251→71、
+vfx-workbench 441→128、sway-workbench 429→86、scene-acoustics 215→130、acoustic-workbench 184→110
+(删的是轮次流水与实测数字表;对抗核查逐条比对快照,补回 8 条仍对代码成立的契约/坑)。
+
+**管线 A 的主要收获**:
+- 音频/威胁:过场基线还原不受 restoreState 门控(卡写反);"setAudioListener 动作"不存在;动作批的探索锁是**逐条**加的
+  ——批内相邻两条之间路过 Exploring,挂起面板在此弹出、普通威胁在批中冻结(免伤窗口)。
+- 火/粒子/风:图谱标【推断】的三条代码缺陷全部实锤(燃烧火光闪烁器每帧重建、阵风倍率让涡场瞬移、燃尽火把可能卸不下);
+  运行时灯合并次序与"在烧"判据两处卡已漂移。**图谱自己错了一条**(无主背景场景是没风,不是沿用上一场景)。
+- 登记面:validate-data **完全不查内容 id 悬垂**(约 20 个参数,与注释承诺矛盾,实测注入确认);三处动作宿主运行时执行
+  却不被校验器遍历;randomBranch 同时在过场白名单与"写存档"分类里,必互斥。**图谱错一条**:Graph Editor 外置写盘
+  有外部修改检测,不是静默覆盖。
+- 管线 A 本轮首次让盲重建代理**实测**(往内存工程注入假数据跑 validator),比纯读代码的推断可信得多——下轮可保留。
+
+**记忆升格**:约 40 条 09-04 之后的私有记忆过筛;32 条改指针(内容已在库或本轮升格入库),其余是偏好/协作口味或实验分支,不动。
+
+**主脑拦下的两处越权**:runtime-flow 片把 runtime norms 的"零 error"改成"不高于基线"、editor-registration 片往
+editor norms 加了一条布局条款——前者按 09-03 先例属审批面①,先回退再上题(后获批);后者内容已在验证门配方,撤出 norms 免双源。
+
+**自打脸**:① 主脑的跨片链接检查脚本第一版把 `ls a b` 的整体退出码当单个文件是否存在,报了 80 条假断链;
+② 删卡时用了 `git rm` 把删除写进了暂存区(在多会话共用的树上等于替别人暂存),已 `git reset` 回只删工作树。
+
+## §2.2 上一轮(2026-09-03)明细
 
 **范围**:五域全覆盖。管线 A 按代码分六片盲重建(叙事存档 / 渲染光影 / 场景实体命令通道 /
 编辑器 / 内容 / asset-pipeline+meta),管线 B 按域分五片蒸馏 85 条积压偏差记录。
@@ -188,6 +231,7 @@ audio-workbench-config-write}`、`editor-tools/recipes/live-editor-forensics`、
     `lighting2/skyvis_grid.bin` 与 `gi_hitmap.bin`(仍装载)、`SceneLightingDef` 的
     `radianceScale`/`characterShape`/`giGain`、`lighting.placeholder`(零消费者)、
     以及 F2 里对应的旋钮 —— 全部"接着但没人读"。删还是留(等日夜整条线跑通再决定)要人拍板。
+    **09-23 现状**:skyvis_grid / gi_hitmap 已不装载,GiBouncePass 不再构造;其余仍"接着没人读"。
 13. **角色不吃雾**:雾目前只在背景那一级,角色侧的雾实现只存在于已停用的统一角色 shader 里。
     开雾场景里角色会"贴"在雾前面。是补进 probe 路径还是接受,要人拍板。
 14. **一批说"统一光影/重打光"的代码注释已与实现不符**(`GiBouncePass` 头注释、
@@ -197,12 +241,8 @@ audio-workbench-config-write}`、`editor-tools/recipes/live-editor-forensics`、
 
 ### 2026-09-03 新挂(本轮查出;判定不在治理疆域内,或需另立项)
 
-15. **`character-lighting.md` 已 236 行,远超"机制卡限一页"**。建议拆三份:①运行时着色契约
-    留原卡;②probe/烘焙参数与阶数选型另立;③"滤镜容器里从屏幕反推世界坐标"那族引擎陷阱
-    并进 pixi 卡。本轮只做了裁剪(迁走时效性待办、去重),没做结构拆分。
-16. **`last_used` 没有写入者**:它本该由"用了这个 method 的人"更新,实践中无人维护,
-    于是机械体检每轮重报同样两条"method 久未使用"。要么定一个写入时机,要么让体检改按别的
-    信号判、或去掉该字段。**不定则每轮都会重新发现一次**(与第 9 条同型)。
+15. ~~`character-lighting.md` 远超一页~~ —— **09-23 已按建议拆完**(271→134,拆出 character-probe-bake,陷阱并入 pixi 卡)。
+16. ~~`last_used` 没有写入者~~ —— **09-23 制作人批:体检改按使用痕迹判**,audit.py 已改(见 §1)。
 17. **时段切换竞态(已知未修)**:推进时段后立刻切场景约 1/3 概率把切场景卡死
     (挂起的时段换装与场景装载互等)。本轮从一条被蒸馏的记录里捞回来,值得单独立案修。
 18. **`tools/lightvolume_lab` 仍挂在启动器上**(早于 08-30 收束,不被任何现役路径引用),
@@ -216,8 +256,35 @@ audio-workbench-config-write}`、`editor-tools/recipes/live-editor-forensics`、
     卡与"四件套"措辞。治理只写 `agent_docs/`,需人工或另派 agent 同步。
 22. **包体与工具杂项**:修复抽取规则后 dev 目标显著变大(按规则出处是有意的),release 也有增长,
     要有人知道;另有桌面壳显式端口路径的双绑风险、窗口模式启动清 localStorage 顺带灭掉查看器
-    折叠状态、开发者控制台起的工具不随它退出(是否该随退是 UX 决策,别顺手改)、
+    折叠状态、~~开发者控制台起的工具不随它退出~~(09-23 核:已由控制台 atexit 回收 + 防双开解决)、
     若干存量 CRLF 载荷(重烘会自愈)。
+    **09-23 补(第 21 条)**:add-game-action skill 的卡名死链已在工作树修好未提交;正文仍有三处过期
+    (子动作递归→登记容器槽位表;可选参数兜底那条已不成立;缺持久化分类/专用表单必填白名单/内容 id 引用三类登记面)。
+
+### 2026-09-23 新挂(本轮查出;代码/数据/skill 属库外,只入卡未修)
+
+23. ~~跑马梁的 `acousticSpace` 又被抹了~~ —— **错判,已撤**:制作人 09-23 当面说明跑马梁本就不该有回音空间,删是对的。
+    根因是 scene-acoustics 卡把"acousticSpace 行被删"一律写成误删,09-14 还据此把它补回过一次。卡已改正:哪些场景挂回音由制作人定。
+24. **两处铁律 0 活违例**:F2「测试太阳」在 q 里算 N·L(缺省关);实体影浓度 CPU 估算停在"世界朝向 + q 尺度"混合态
+    (`entityShadowBinding.ts`,注释把它写成设计)。见 coordinate-spaces 欠账表。
+25. **校验器三个盲区**:内容 id 悬垂完全不报(约 20 参数,注释承诺与实测不符);压力条 onAborted / 糖画转盘充能动作 /
+    全局配置 missActions 运行时执行却不被遍历;randomBranch 同在过场白名单与写存档分类(必互斥)。
+    另:运行时过场存档黑名单是手写表,与编辑器持久化分类未对账。
+26. **validate-data 存量 66 条 error**(全来自并行会话)需立项清;门已改为"只减不增",但存量本身仍是债。
+27. **火 / 风 / 雷的代码缺陷(已实锤)**:燃烧火光闪烁器每帧重建(蔓延期几乎不闪);阵风/F2 倍率直改 speed 让涡场与阵风相位瞬移;
+    燃尽火把在一次性烟实例装不上时卸不下;演出会话收尾无条件清阵风;雷光被清时不重推灯表(残留雷光)。
+28. **音频代码缺陷**:动作层 volume 空值被读成 0(静音);playSignalCue 不转发执行作用域(脱手批里当场锁玩家);
+    账本的 duck/sfx 释放是生产死码;存在声/粒子事件音绕过音频解算器;主编辑器内嵌游戏页缺免手势播放。
+29. **陈旧/恒红测试**:tools/narrative_debugger 4 条、tools/narrative_xref 2 条(缺 gameConfig 主体类别)、
+    轨迹工作台 coin_drop_demo 那条(需制作人在工作台手修数据)——干净 HEAD 上就红。
+30. **要制作人裁的内容/作者面**:过场能否用 HUD 首现类动作与说明卡(白名单/校验器/快进表三处要同改);
+    崖墓入口世界尺寸配 zoom 1 露出地图外;"动作批 = 免伤窗口"是不是设计本意;系绳抑制 flag 零写入方(在 flag 纪律下改还是删);
+    粒子两条动作的 `at` 仍是裸框(接统一位置选择器要点头)。
+31. **skill 侧(库外)**:animation-production skill 仍写旧的自动重摇阶梯(与本轮 ② 批的新骨架冲突);production-mode 两份
+    SKILL 写死故事仓 `E:\` 绝对路径;`scripts/py.sh` 末档 `python` 在本机是 Py2.7 且探测能过。
+32. **超长卡(下轮拆)**:build-pipeline ~300、trajectory-workbench ~330、entity-trajectory ~220、coordinate-spaces ~235、
+    lighting-scale-reference ~220、scene-lighting ~210、narrative-state-editor ~135 行。
+33. **下轮建议**:盲重建片可覆盖 叙事/存档/对话(本轮未跑)与 编辑器画布/工作台壳;保留"盲重建代理可实测"的做法。
 
 ## §4 intake 收编史(一行一次)
 
@@ -254,3 +321,4 @@ audio-workbench-config-write}`、`editor-tools/recipes/live-editor-forensics`、
 - 09-13 intake(第八轮):改1 —— 制作人定"草木走 UV 图:先用屏幕 uv 读扭曲后的 uv,再采样原图的任何信息;露出来的地方颜色能补法线也能补",要跑马梁夜景 + 连通的崖墓入口 / 崖墓前段 / 牛头凼全部接上。运行时:网格改渲进 rgba16f 位移图(RG=源减本×覆盖度、A=覆盖度),不打光由合成面读、打光由 LitBackground 读(植物取主光照缓存的源 uv,露出处取"扣掉植物"那份缓存,两份同脏同算、植物动零光照重算),SceneLightingSystem.attach/detachSway,卸载先解绑;打光场景原先不重设风(粒子吃上一场景的风)一并修。烘焙:plate_plan/fill_plate 抽出,底板按时段各用自己原画补(原先抄白天字节),打光场景另出三张补图并登记四处载荷镜像;重构前后白天产物逐字节相同。数据:装 numba(经用户同意走代理,修好 3 条环境失败);崖墓前段只重烘光照 + 补写 sha;跑马梁 / 崖墓前段 / 崖墓入口 / 牛头凼夜景用白天几何 + 夜景画面 rebake;崖墓入口 / 牛头凼夜景补 9 行对齐白天;牛头凼首次完整 build + 导出深度(新增碰撞,出生点 / NPC 可走、出口可达、79% 可走);三张图加 wind(同跑马梁)。改:runtime/mechanisms/scene-wind。
 - 09-13 intake(第九轮):改2 —— 制作人要"大植物整体一起扭、不要被扭成波浪,频率可调""刚体要能自己定锚点,F2 和工作台都要加"。运行时:`wind.waveSize`(缺省 20 wu,按株内相对位置收拢湍流相位**与阵风**——只收湍流不够,测试抓到阵风沿风向扫过一株照样错开)、`instances[].coherent` 整体摆、`instances[].anchors` 逐顶点支点(刚体绕最近锚点转)、叶片细抖大小 / 速度可调,F2 三根滑条。烘焙:`sway_overrides.json`(存位置不存 id)→ `apply_overrides` 按位置落株、24 px 吸附、有锚点重算 reach;never_extract。工作台:锚点 / 整体摆两个工具,随涂层保存、撤销、草稿、留历史。缺省值从 180 改成 20 是因为实测相关长度就是二十来 wu(数字要说真话)。收尾时补:夜景载荷目录缺 skyao_probe / skyvis / gi_hitmap / vol_*(崖墓入口夜里角色会静默偏亮),按几何同构从白天拷,validate-data 回到既有 39 条。改:runtime/mechanisms/scene-wind、editor-tools/mechanisms/sway-workbench。
 - 09-13 intake(第十轮):改1 —— 制作人报草木工作台"切了场景没反应,画面都不变"。第一版诊断(画布 / 解码大图只进不出、连切几次图片加载不出来)只在内嵌浏览器面板里复现,桌面壳真窗口里旧写法连切 15 次也不卡,**不是他那边的根因**;画布复用 + 清空照样保留(S10)。真窗口里用下拉框把 36 个场景逐个切一遍才抓到:`dev_room` 没有背景图 → `/api/layers` 500 → 异常没人接、零日志,而 `S.scene` 已经改成 dev_room(再 Ctrl+S 会把旧场景涂层存进它名下)。修:全部读到才换场景、失败退回并写日志、确认取消退回下拉框、清单带 `hasBackground` 并禁选。自检 S11 + pytest 2 条,变异验过。取证教训:内嵌浏览器面板不是制作人的环境,复现要在桌面壳真窗口里、按人的操作路径(下拉框 change)全量扫。改:editor-tools/mechanisms/sway-workbench(两条硬契约)。
+- 09-23~09-24 收1(配方 editor-tools/recipes/collision-from-art + 技能 scene-collision-from-art + 工具 tools/terrain_workbench/art_review.py) —— 制作人要"看图修全部场景碰撞、子代理摆人独立复查、迭代式修、总结方法论写成技能并验证技能真能产出正确碰撞",中途两次定口径:碰撞与深度 / 遮挡无关(只看画)→ 世界是 3D 的、被挡住的地要估、不依赖深度(有的图深度整张是错的)。**验证记录**:34 场(崖墓入口按制作人要求不动)。第一遍:主代理手做跑马梁 / 雾津街头定型,其余 32 场由 8 个子代理只读技能 + 卡去修,8 个复查子代理按协议摆人复查——复查抓到的真问题:屋顶后坡 / 塌棚木料可站(雾津 11 处,主代理自己圈的也漏)、碑后死角、柱础 / 石墩上站人、网格没盖满整张画(temple_exterior 画底 120 高挡不住)、跳完切场景的落点被误当成要能站、空 inspect / 剧情限定实体碰撞造成的假阳性、触发区与 NPC 摆在屋顶上(旧布局遗留)。第二遍(3D 遮挡口径):9 个子代理把按轮廓封的物体全改成"占地 + 物体高 h"并按连续性判物体后面的地,9 个复查子代理复查;复查抓到的真问题:只露一头被桌面挡住的凳子占地可走(茶馆两版)、说书台 / 女客身后通道原被按轮廓封死(观众区只能从凳下钻)、桥下栈道与水面共格被压成 1–3 宽斜缝(去 temple 的出口实际走不到,check 的 10 单位步长漏报)、`屋_南中_缝` 封过头把癞子与巡逻点封在阻挡里、薄墙漏缝(用 connected 堵门查,全部不漏)、桶排 / 柱础 / 屋角碎楔。每组复查 1–3 轮收口到"无问题"。技能 / 卡片 / 工具按子代理回报迭代了约 13 轮:自动生成可走集以外的阻挡、before.png、grid --fit、move、brush --clear、实现度按真实厚度、islands / smallIslands / zoneUnreachable、实体碰撞与空 inspect 与运行时同口径、h / h0 / flat、摆人图按 h 抠遮挡、黄虚线、connected(含 --seal 与就近落点)、footprint(轮廓 → 占地)、crop --no-grid / 10 单位格、render --out、外围块保留画外那截可走集;tools/terrain_workbench 自检改为在临时树里清空作者层(真场景有作者层后按块序号断言会错)。audit_walkable 同步:跳完切场景的落点不再要求可站。

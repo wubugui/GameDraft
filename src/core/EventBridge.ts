@@ -91,6 +91,11 @@ export class EventBridge {
        *    链条全部接续失败时 GraphDialogueManager 会补发一次 willContinue=false 的最终 end。 */
       if (dialogueManager.isActive || graphDialogueManager.isActive) return;
       if (p?.willContinue === true) return;
+      /** 对话里最后那几条动作已经把状态切走了（`openShop` → UIOverlay、开小游戏、切场景……）：
+       *  收尾归那一边（关铺子 `shop:closed` 自己回探索态）。这里再硬写 Exploring，就是把人从
+       *  开着的铺子底下放出来——实测能在铺子窗后面走动，Esc 还会在铺子上面再叠一层暂停菜单
+       *  （打更人 / 拉客女对话末尾开铺子都是这条路，2026-09-23）。 */
+      if (stateController.currentState !== GameState.Dialogue) return;
       stateController.setState(GameState.Exploring);
     });
 

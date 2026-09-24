@@ -64,8 +64,8 @@ def test_runtime_register_param_names_match_manifest() -> None:
     reg = (REPO / "src/core/ActionRegistry.ts").read_text("utf-8")
     man = (REPO / "src/core/actionParamManifest.ts").read_text("utf-8")
     expect = {
-        "playVfx": {"instanceId", "effect", "at", "x", "y", "h", "surface", "seed", "countScale", "restart", "oneShot"},
-        "stopVfx": {"instanceId"},
+        "playVfx": {"instanceId", "effect", "at", "x", "y", "h", "surface", "seed", "countScale", "restart", "oneShot", "followCamera", "handle"},
+        "stopVfx": {"instanceId", "handle", "soft", "fadeMs"},
         "setVfxState": {"instanceId", "state"},
         "emitVfxField": {"kind", "tag", "radius", "strength", "duration", "at", "x", "y", "h", "direction"},
     }
@@ -129,6 +129,8 @@ def test_every_optional_with_a_widget_is_covered_by_a_roundtrip_table() -> None:
                 (act, pname) in _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT
                 or (act, pname) in _ACTION_PARAM_RUNTIME_DEFAULTS
                 or pname in _OMIT_WHEN_ABSENT_AND_DEFAULT
+                # 指定/继承控件自行区分缺键和显式 0，不经过中性值剔除表。
+                or dict(_PARAM_SCHEMAS[act])[pname] in ("optional_number", "optional_int")
             )
             assert covered, (
                 f"{act}.{pname} 是可选参数且建了控件，但两张往返表都没登记："
@@ -149,11 +151,117 @@ def test_selector_kinds_map_to_real_universes() -> None:
     assert CONTENT_ID_PARAMS.get(("playVfx", "effect")) == "vfx_effects"
 
 
+def test_presentation_action_python_gate_matches_typescript() -> None:
+    """新增表现参数在 TS 与 Python 里同判，避免编辑器比运行时权威更严。"""
+    import subprocess
+    from tools.editor.validator import _presentation_action_errors
+
+    cases = []
+    for key in ("visualStrikes", "visualExtraChance", "visualGapMs", "visualGapJitterMs",
+                "fallbackMargin", "fallbackMinDistance", "fallbackSeparation", "fallbackMaxSlopeDeg", "sfxVoices", "vfxVoices", "effectSeed"):
+        for value in (None, "0", False, -1, 0, 0.45, 1, 5, 16, 32, 33, 90, 91, 1200):
+            cases.append(["strikeThreat", {key: value}])
+    for value in (None, False, True, "false", 0):
+        cases.extend([["strikeThreat", {"fallbackGroundOnly": value}],
+                      ["strikeThreat", {"fallbackStrictSeparation": value}], ["playSfx", {"loop": value}],
+                      ["stopVfx", {"handle": "cloud", "soft": value}]])
+    for value in (None, "", " ", "surface_zone", False, 0, []):
+        cases.append(["strikeThreat", {"fallbackSurfaceZone": value}])
+    cases.extend([
+        ["playVfx", {"handle": "cloud", "effect": "storm", "x": 0, "y": 0}],
+        ["playVfx", {"handle": "cloud", "instanceId": "placed", "effect": "storm"}],
+        ["playVfx", {"handle": "cloud"}], ["playVfx", {"handle": ""}],
+        ["stopVfx", {}], ["stopVfx", {"instanceId": "placed"}],
+        ["stopVfx", {"handle": "cloud", "fadeMs": 0}],
+        ["stopVfx", {"handle": "cloud", "fadeMs": -1}],
+        ["stopVfx", {"handle": "cloud", "instanceId": "placed"}],
+        ["strikeThreat", {"strikes": 0, "gapMs": -1}],  # 本轮不能借机收紧旧参数
+    ])
+    script = """
+const fs = require('fs'), ts = require('typescript');
+const source = fs.readFileSync('src/core/actionParamManifest.ts', 'utf8');
+const moduleObject = {exports: {}};
+new Function('module', 'exports', ts.transpileModule(source,
+  {compilerOptions: {module: ts.ModuleKind.CommonJS}}).outputText)(moduleObject, moduleObject.exports);
+const cases = JSON.parse(fs.readFileSync(0, 'utf8'));
+process.stdout.write(JSON.stringify(cases.map(([type, params]) => moduleObject.exports.presentationActionErrors(type, params).length > 0)));
+"""
+    completed = subprocess.run(["node", "-e", script], cwd=REPO, input=json.dumps(cases),
+                               text=True, capture_output=True, check=True, timeout=30)
+    expected = json.loads(completed.stdout)
+    actual = [bool(_presentation_action_errors(action, params)) for action, params in cases]
+    assert actual == expected, [(case, py, ts) for case, py, ts in zip(cases, actual, expected) if py != ts]
+    assert not _presentation_action_errors("strikeThreat", {"sfxVoices": 0, "vfxVoices": 0, "effectSeed": 0})
+    assert _presentation_action_errors("strikeThreat", {"effectSeed": 0.45})
+
+
+def test_presentation_numbers_keep_zero_and_can_return_to_inheritance() -> None:
+    from PySide6.QtWidgets import QApplication
+    from tools.editor.shared.action_editor import ActionEditor
+    from tools.editor.shared.collapsible_section import CollapsibleSection
+
+    app = QApplication.instance() or QApplication([])
+    editor = ActionEditor("雷链表现")
+    params = {"strikes": 3, "extraChance": 0.45, "gapMs": 240, "gapJitterMs": 110,
+              "sfxVolume": 0.4, "seed": 7, "effectSeed": 91, "lightHeight": 260,
+              "visualStrikes": 5, "visualExtraChance": 0.6, "visualGapMs": 600,
+              "visualGapJitterMs": 250, "fallbackMargin": 0.15, "fallbackMinDistance": 80,
+              "fallbackSeparation": 100, "fallbackMaxSlopeDeg": 30,
+              "fallbackStrictSeparation": False, "fallbackGroundOnly": False,
+              "fallbackSurfaceZone": "unresolved_surface_zone",
+              "sfxVoices": 2, "vfxVoices": 4, "futureParam": "keep"}
+    action = {"type": "strikeThreat", "params": params}
+    editor.set_data([action])
+    assert editor.to_list() == [action]
+    row = editor._rows[0]
+    assert "visualStrikes" not in row._param_widgets  # 默认折叠且懒建
+    section = next(s for s in row.findChildren(CollapsibleSection) if s._plain_title == "空地落雷与补足表现")
+    section._header.click()
+    app.processEvents()
+    assert editor.to_list() == [action]
+    assert row._param_widgets["fallbackSurfaceZone"].current_value() == "unresolved_surface_zone"
+    row._param_widgets["fallbackSurfaceZone"].set_value("")
+    assert "fallbackSurfaceZone" not in editor.to_list()[0]["params"]
+    row._param_widgets["fallbackStrictSeparation"].click()
+    assert editor.to_list()[0]["params"]["fallbackStrictSeparation"] is True
+    row._param_widgets["fallbackStrictSeparation"].click()
+    assert editor.to_list()[0]["params"]["fallbackStrictSeparation"] is False
+    zero_keys = ("sfxVolume", "seed", "effectSeed", "lightHeight", "strikes", "extraChance", "gapMs", "gapJitterMs", "visualStrikes", "visualExtraChance",
+                 "visualGapMs", "visualGapJitterMs", "fallbackMinDistance", "fallbackMaxSlopeDeg", "sfxVoices", "vfxVoices")
+    for key in zero_keys:
+        row._param_widgets[key].spin.setValue(0)
+    output = editor.to_list()[0]["params"]
+    for key in zero_keys:
+        assert key in output and output[key] == 0
+        row._param_widgets[key].enabled.click()
+    output = editor.to_list()[0]["params"]
+    assert not set(zero_keys) & output.keys()
+    assert output["futureParam"] == "keep"
+    editor.set_data([{"type": "strikeThreat", "params": {}}])
+    section = next(s for s in editor._rows[0].findChildren(CollapsibleSection) if s._plain_title == "空地落雷与补足表现")
+    section._header.click()
+    app.processEvents()
+    assert editor.to_list() == [{"type": "strikeThreat", "params": {}}]
+
+
+def _raw_occurrences(lib: dict, sid: str) -> dict[str, list[tuple[str, str]]]:
+    """直接走布置库原始 JSON（不经共享模块的查询）：实例 id → ``[(时段键, 效果 id), …]``，base 记作 ``""``。
+
+    真数据的期望值一律从这里现算——布置库是作者面、一直在长（09-21 各场景加了一批 pml_atmo_*），
+    写死 id 清单一加布置就失配。"""
+    ent = lib["scenes"][sid]
+    out: dict[str, list[tuple[str, str]]] = {}
+    for ph, rows in [("", ent.get("base") or [])] + list((ent.get("variants") or {}).items()):
+        for r in rows:
+            out.setdefault(str(r["id"]).strip(), []).append((ph, str(r["effect"]).strip()))
+    return out
+
+
 def test_json_lang_instance_universe_reads_the_placement_library() -> None:
     """json_lang 的实例宇宙读**布置库**（场景 JSON 已没有 vfx），每个场景 = 各时段外观 id 的并集。
 
-    逐场景与共享模块 `instance_ids_for_scene` 对账（语义级，不只锁存在性），再钉两处真数据：
-    崖墓前段的蝙蝠 / 滴水在基底与夜各一份 → 候选各出现一次；萤火虫只摆在崖墓入口的夜里 → 照样是候选。
+    逐场景与共享模块 `instance_ids_for_scene` 对账（语义级，不只锁存在性），再与原始 JSON 现算的并集对账：
+    同 id 在基底与夜各摆一份 → 候选只出现一次；只摆在某个时段外观里的（萤火虫只在崖墓入口的夜里）→ 照样是候选。
     """
     from tools.editor.shared import vfx_placements as vp
     from tools.json_lang.id_universes import collect_id_universes
@@ -164,11 +272,12 @@ def test_json_lang_instance_universe_reads_the_placement_library() -> None:
     scene_vfx = ud.scoped["scene_vfx"]
     for sid in ud.ids["scenes"]:
         assert scene_vfx.get(sid) == sorted(vp.instance_ids_for_scene(lib, sid)), sid
-    assert scene_vfx["崖墓前段"] == ["vfx_bats", "vfx_drip"]
-    assert scene_vfx["崖墓入口"] == ["vfx_fireflies"]
-    assert scene_vfx["跑马梁"] == ["纸钱_山顶", "纸钱_引路过场"]
+    placed = [sid for sid in lib["scenes"] if sid in scene_vfx]
+    assert placed, "布置库里的场景一个都不在场景宇宙里？"
+    for sid in placed:
+        assert scene_vfx[sid] == sorted(_raw_occurrences(lib, sid)), sid
     assert ud.ids["vfx_instances"] == sorted({i for ids in scene_vfx.values() for i in ids})
-    assert {"vfx_bats", "vfx_fireflies", "纸钱_山顶"} <= set(ud.ids["vfx_instances"])
+    assert {i for sid in placed for i in _raw_occurrences(lib, sid)} <= set(ud.ids["vfx_instances"])
 
 
 def test_json_lang_instance_universe_honours_overlay_and_ignores_scene_vfx(tmp_path: Path) -> None:
@@ -223,6 +332,18 @@ def test_position_params_are_registered_as_entity_refs() -> None:
     from tools.editor.shared.entity_refactor import ENTITY_REF_PARAMS
     assert ENTITY_REF_PARAMS.get("playVfx", {}).get("at") == "position_ref"
     assert ENTITY_REF_PARAMS.get("emitVfxField", {}).get("at") == "position_ref"
+    assert ENTITY_REF_PARAMS.get("strikeThreat", {}).get("fallbackSurfaceZone") == "zone"
+    from tools.editor.project_model import ProjectModel
+    from tools.editor.validator import _append_action_param_ref_issues
+    model = ProjectModel()
+    model.scenes = {"s": {"id": "s", "zones": [{"id": "surface_zone", "polygon": [[0, 0], [1, 0], [1, 1]]}]},
+                    "other": {"id": "other", "zones": []}}
+    for sid, zone, expected_warning in (("s", "surface_zone", False), ("s", "missing", True),
+                                         ("other", "surface_zone", True)):
+        issues = []
+        _append_action_param_ref_issues(model, issues, {"type": "strikeThreat", "params": {"fallbackSurfaceZone": zone}},
+                                       "scene", sid, sid)
+        assert any("fallbackSurfaceZone" in issue.message for issue in issues) is expected_warning
 
 
 def test_vfx_dir_is_read_only_for_the_main_editor() -> None:
@@ -256,11 +377,18 @@ def test_effect_mirror_and_id_providers() -> None:
     ids = dict(m.all_vfx_effect_ids())
     assert "bat_cliff" in ids
     assert "发射器" in ids["bat_cliff"], "候选 label 应带发射器数，下拉里才分得清"
-    # 实例候选读布置库：崖墓前段的 vfx_bats / vfx_drip 在基底与夜各摆一份 → 并集里各出现一次
-    pairs = m.vfx_instance_ids_for_scene("崖墓前段")
-    assert sorted(iid for iid, _lab in pairs) == ["vfx_bats", "vfx_drip"], pairs  # 行序是作者面的顺序，不写死
-    rows = dict(pairs)
-    assert "bat_cliff" in rows["vfx_bats"], "候选 label 要带效果 id"
+    # 实例候选读布置库：同 id 在基底与夜各摆一份 → 并集里只出现一次；期望从真库原始 JSON 现算
+    from tools.editor.shared import vfx_placements as vp
+    lib, err = vp.load_library(REPO)
+    assert err == "" and lib["scenes"], "布置库是空的？"
+    for sid in lib["scenes"]:
+        occ = _raw_occurrences(lib, sid)
+        pairs = m.vfx_instance_ids_for_scene(sid)
+        assert sorted(iid for iid, _lab in pairs) == sorted(occ), (sid, pairs)  # 行序是作者面的顺序，不写死
+        for iid, lab in pairs:
+            for ph, eff in occ[iid]:
+                assert eff in lab, f"{sid} · {iid}：候选 label 要带效果 id「{eff}」：{lab}"
+                assert (ph or "基底") in lab, f"{sid} · {iid}：候选 label 要写出现在哪几份（缺「{ph or '基底'}」）：{lab}"
     assert m.vfx_instance_ids_for_scene(None) == []
     assert m.vfx_instance_ids_for_scene("不存在的场景") == []
 
@@ -276,8 +404,12 @@ def test_instance_candidates_are_the_placement_library_union() -> None:
     for sid in lib["scenes"]:
         got = [iid for iid, _lab in m.vfx_instance_ids_for_scene(sid)]
         assert got == vp.instance_ids_for_scene(lib, sid), sid
-    # 只摆在夜里的萤火虫照样是候选（动作可能在夜里播）
-    assert [iid for iid, _ in m.vfx_instance_ids_for_scene("崖墓入口")] == ["vfx_fireflies"]
+    # 只摆在某个时段外观里的（萤火虫只在崖墓入口的夜里）照样是候选（动作可能就在那个时段播）；从真库现算，不写死 id
+    for sid in lib["scenes"]:
+        got = {iid for iid, _ in m.vfx_instance_ids_for_scene(sid)}
+        for iid, where in _raw_occurrences(lib, sid).items():
+            if all(ph for ph, _eff in where):
+                assert iid in got, f"{sid} · {iid} 只摆在 {[ph for ph, _ in where]} 里，也得是候选"
     # 场景 JSON 已经不带 vfx：候选不许再从那里来
     for sid, sc in m.scenes.items():
         assert "vfx" not in (sc or {}), f"{sid} 的场景 JSON 还带着 vfx（运行时不读，校验器会报 error）"

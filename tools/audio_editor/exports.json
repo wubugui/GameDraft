@@ -1612,6 +1612,42 @@
     "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
    },
    "duration": 1.388
+  },
+  "dfee61614521ca40fe5b19f97aec579657995ba21f1a50f3ad5ef534ebc4d12e": {
+   "src": "/resources/runtime/audio/edited/minigame_win_dfee6161.wav",
+   "bytes": 224252,
+   "firstSeen": "2026-09-22T23:28:24",
+   "origin": {
+    "sourceKey": "project/edited/minigame_win.wav",
+    "sourceHash": "a886d43dce165d2e7f77dcaffb65333c12293f027b167a8a18a20db9fafd36ab",
+    "params": {
+     "trim": {
+      "start": 0.1947,
+      "end": 1.5831
+     }
+    },
+    "fingerprint": "137ba7e656d2d898e16bd11adebc4d2070102bada1de42ae617e459a73d08e36",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 1.388
+  },
+  "e0b4bc9c77a7fa7763ac788757398942f1b99e7f0f2d3e7108e634bffbc4ed7d": {
+   "src": "/resources/runtime/audio/edited/encounter_start_e0b4bc9c.wav",
+   "bytes": 309388,
+   "firstSeen": "2026-09-22T23:28:24",
+   "origin": {
+    "sourceKey": "project/edited/encounter_start.wav",
+    "sourceHash": "1c1933141cbf485d8d189eef50e36ab20a8f21cd13f1628867edfcd571dfa4c8",
+    "params": {
+     "trim": {
+      "start": 0.4303,
+      "end": 2.3508
+     }
+    },
+    "fingerprint": "db86a4525d9df14092228b6367fae969484701ac344c81aff5447636c90666aa",
+    "ffmpeg": "ffmpeg version 9.0.1-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+   },
+   "duration": 1.921
   }
  },
  "keys": {
@@ -1634,16 +1670,14 @@
    "inferred": true
   },
   "sfx/quest_accepted": {
-   "hash": "942ac6b3a94ea571c1af40f7e4efdebff3e859e96fbdbf32096f7a3f62e9cc8b",
-   "src": "/resources/runtime/audio/edited/quest_accepted.wav",
-   "exportedAt": "2026-08-10T20:33:32",
-   "inferred": true
+   "hash": "dfee61614521ca40fe5b19f97aec579657995ba21f1a50f3ad5ef534ebc4d12e",
+   "src": "/resources/runtime/audio/edited/minigame_win_dfee6161.wav",
+   "exportedAt": "2026-09-22T23:28:24"
   },
   "sfx/quest_completed": {
-   "hash": "f63a38bbee76a8cd70bcae578512db90b52faf61069be7e6cca63fef6f38fac1",
-   "src": "/resources/runtime/audio/edited/quest_completed.wav",
-   "exportedAt": "2026-08-10T20:33:32",
-   "inferred": true
+   "hash": "e0b4bc9c77a7fa7763ac788757398942f1b99e7f0f2d3e7108e634bffbc4ed7d",
+   "src": "/resources/runtime/audio/edited/encounter_start_e0b4bc9c.wav",
+   "exportedAt": "2026-09-22T23:28:24"
   },
   "sfx/quest_updated": {
    "hash": "49554ea866dc078c80f556396c0e9e5cd2f8fffbd30c5199b19f83891b290d83",
@@ -2066,6 +2100,8 @@
   "13a2270019b7e30c05baf9b6a9549b0416338e1b6beff188f4559b00c7d6c400": "2362b811a79165952c012345b327c5b913ebdd55e2dec981f8fe7a91315512cd",
   "01cfb4781fd06cda1613583b2e6f3228c8718da3b041fe86c5db68aa82e727e7": "f2c64a54977539c89c02fbf2f484e26e7b85dd9a2b3d840a7dd0e4ddd0ae07de",
   "46b571fb13c07fdcae6ebee564e9b405a6c30eee9dfb0e8cf463bf6b7addede3": "64b9c6e053934589e9ea3f06bfe1d960a03b98bdb509b813fda215e193f5c76e",
-  "c03a58566f3a10810584f9245e64105ae16eb7f36cff442a1435fc19355c8245": "6aa2ffc146fdbaf270041de26538a6c56e299a1d4da7ddad16c090e736f2a81f"
+  "c03a58566f3a10810584f9245e64105ae16eb7f36cff442a1435fc19355c8245": "6aa2ffc146fdbaf270041de26538a6c56e299a1d4da7ddad16c090e736f2a81f",
+  "137ba7e656d2d898e16bd11adebc4d2070102bada1de42ae617e459a73d08e36": "dfee61614521ca40fe5b19f97aec579657995ba21f1a50f3ad5ef534ebc4d12e",
+  "db86a4525d9df14092228b6367fae969484701ac344c81aff5447636c90666aa": "e0b4bc9c77a7fa7763ac788757398942f1b99e7f0f2d3e7108e634bffbc4ed7d"
  }
 }

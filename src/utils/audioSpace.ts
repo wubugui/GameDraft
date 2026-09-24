@@ -153,6 +153,27 @@ export function resolveWorld(r: AudioSpaceResolver, t: AudioSpaceTarget): Vec3 {
 }
 
 /**
+ * A sampled visible surface retains its offset from the visual ground in all three axes.
+ * Only the ground reference is remapped with the listener's perspective. The offset is a
+ * physical wu displacement (like heightWu), never divided by the screen scale or discarded.
+ * Supplying the visual ground explicitly also keeps the planar audio fallback independent of
+ * the VFX coordinate origin. Omit surface for a normal contact-point sound.
+ */
+export function resolveSurfaceWorld(
+  r: AudioSpaceResolver,
+  t: AudioSpaceTarget,
+  surface?: { world: Vec3; groundWorld: Vec3 },
+): Vec3 {
+  const world = resolveWorld(r, t);
+  if (!surface) return world;
+  return [
+    world[0] + (surface.world[0] - surface.groundWorld[0]),
+    world[1] + (surface.world[1] - surface.groundWorld[1]),
+    world[2] + (surface.world[2] - surface.groundWorld[2]),
+  ];
+}
+
+/**
  * 相机听者这一帧的实际视距（wu）：`基准视距 × (sceneBaseZoom / zoom) ÷ f(画面中心)`。
  *
  * 两个因子各管各的、**相乘不相干**：zoom 是运行时推拉镜头，`f` 是这张画本身的透视纵深。

@@ -3,7 +3,7 @@ id: pixi-v8-traps
 title: Pixi v8 静默陷阱
 domain: runtime
 type: mechanism
-summary: 一批"写法看着对、行为静默错"的引擎事实:渲染抛一次异常=整局死透(ticker 再不排帧)、实际编译在 GLSL ES 1.00、clear 不认 target、BindGroup 见死即自毁、解码期预乘吃掉 alpha 数据、leading 裁末行、Container 无 hitArea 恒不命中
+summary: 一批"写法看着对、行为静默错"的引擎事实:渲染抛一次异常=整局死透(ticker 再不排帧)、没写 #version 300 es 的源按 GLSL ES 1.00 编、clear 不认 target、BindGroup 见死即自毁、滤镜容器里 screen 是临时 RT 局部坐标、解码期预乘吃掉 alpha 数据、leading 裁末行、Container 无 hitArea 恒不命中
 status: active
 authority:
   - src/core/AssetManager.ts
@@ -17,8 +17,8 @@ authority:
   - src/rendering/glProgramWarmup.ts
 triggers:
   paths: ["src/rendering/**", "src/ui/**", "src/core/AssetManager.ts", "src/systems/objectExamine/**"]
-  topics: [Pixi, pixi v8, RenderTarget, BindGroup, 预乘, hitArea, leading, 滤镜烧毁, ticker, GLSL, WebGL1, 卡死, shader 编译, 首帧卡顿, KHR_parallel_shader_compile]
-last_governed: 2026-09-03
+  topics: [Pixi, pixi v8, RenderTarget, BindGroup, 预乘, hitArea, leading, 滤镜烧毁, ticker, GLSL, WebGL1, 卡死, shader 编译, 首帧卡顿, KHR_parallel_shader_compile, 滤镜容器, 临时 RT, 屏幕反推世界]
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -39,11 +39,13 @@ Pixi v8 里几条**不报错、只是行为不对**的引擎事实。每条都�
   凡是"另一处维护一份槽位/资源清单"的写法(卸载前退回占位图之类),那份清单必须与
   **创建 shader 的那一处同处维护**;分开放着,新加一个纹理槽就会漏掉,
   于是跨场景长活的对象身上还绑着已销毁的纹理 → 下一帧渲染即抛 → 见上一条。
-- **实际编译目标是 GLSL ES 1.00,别照着源码里的 ES3 语法推断环境。**
-  源码里的 `in` / `out` / `texture()` 是 Pixi **反向转译**过去的,而转译只管那几个关键字:
-  **数组构造式、first-class 数组、`const` 数组一律不转**,写了就是
-  `array constructor supported in GLSL ES 3.00 and above only` + shader 起不来(那个效果直接没了)。
-  抽样点一类要手写展开。这条**只有真机跑才会现**——`tsc` 与单测全绿。
+- **编译目标按片元源码逐个决定:写了 `#version 300 es` 就是真 ES3,没写就是 GLSL ES 1.00。**
+  `GlProgram` 看片元源里有没有那一行(有就剥掉再插回、按 ES3 编);没有时源码里的 `in` / `out` /
+  `texture()` 是 Pixi **反向转译**到 ES 1.00 的,而转译只管那几个关键字:**数组构造式、first-class 数组、
+  `const` 数组一律不转**,写了就是 `array constructor supported in GLSL ES 3.00 and above only` +
+  shader 起不来(那个效果直接没了)。所以要用这些语法就在源头写 `#version 300 es`(光照/角色/燃烧/粒子
+  着色器都这么做),别为一条不存在的限制手写展开;没写那一行的源才需要展开。
+  这条**只有真机跑才会现**——`tsc` 与单测全绿。
 - **GLSL 模板字符串里不许出现反引号**(包括中文注释里)。那段 GLSL 是 TS 模板字符串,
   一个反引号就把模板提前闭合,后面的内容被当成正则字面量解析,整个模块 500,
   而报错信息离根因极远。
@@ -59,6 +61,11 @@ Pixi v8 里几条**不报错、只是行为不对**的引擎事实。每条都�
 - **「alpha 当数据用」的纹理必须走 `data.alphaMode: 'premultiplied-alpha'` 装载**。
   装载器用 `createImageBitmap` 不带选项解码,浏览器默认预乘,rgb 在**解码期**就被 ×alpha,
   GL 层的 alphaMode 怎么设都救不回。那个取值的语义是"已预乘、别再动",名字反直觉。
+- **挂在带滤镜的容器下的东西,shader 里不许从 screen 反推世界坐标**:Pixi 先把整棵子树渲进一张按包围盒
+  对齐的临时 RT,那一趟 shader 见到的 screen 是**临时 RT 的局部坐标**,`(screen − 相机位移) / 缩放` 这类重建
+  被整体平移。**`gl_Position` 不受影响 ⇒ 画面位置一直对、只有采样位置错**,误差随镜头与包围盒漂
+  (实测角色光照偏 500+ wu,表现为"强度怎么调都和场景对不齐")。要世界坐标就由 CPU 每帧喂 local→世界的仿射。
+  同族:`extract.pixels({target: 某 mesh})` 的隔离渲染也会把目标平移到包围盒原点,位置类取证须整舞台抽取。
 - **行距一律用 `lineHeight`,禁用 `leading`**:量高公式比实际绘制矮半个 leading,
   末行被文字贴图当场裁掉,按 `text.height` 反推盒高的调用方还会把 `scrollable` 判成 false。
 - **「子件 `eventMode:'none'` + 容器 `static`」的按钮必须给容器补 `hitArea`**:

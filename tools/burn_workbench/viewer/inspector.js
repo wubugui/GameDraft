@@ -345,6 +345,10 @@ function docSections() {
     numRow('余烬 emberSeconds', ['emberSeconds'], { def: D && D.emberSeconds, min: 0, unit: 's' }),
     numRow('火焰长 flameLength', ['flameLength'], { def: D && D.flameLength, gt: 0, unit: 'cm', tip: '引燃别人够得着多远、浮力速度、火光中心高度' }),
     numRow('引燃延迟 ignitionDelay', ['ignitionDelay'], { def: D && D.ignitionDelay, min: 0, unit: 's' }),
+    checkRow('雷劈能点着 lightningIgnites', doc.lightningIgnites === true,
+      (on) => edit(on ? '雷劈能点着' : '雷劈不点着', () => { const d = curDoc(); if (on) d.lightningIgnites = true; else delete d.lightningIgnites; }),
+      '落雷落点一定半径内、开了这一项的当场着（场景里摆的、手上拿的、纸钱薄片绑的都算）；点着会进存档、烧完永久没了。'
+      + '场景里摆的还要过宿主那道门：不许玩家点 / 能点的条件没满足的，雷也不点', 'doc.lightningIgnites'),
   ));
   out.push(sec('look', '样子 look',
     numRow('烤黄提前 scorchSeconds', ['look', 'scorchSeconds'], { def: L.scorchSeconds, min: 0, unit: 's' }),

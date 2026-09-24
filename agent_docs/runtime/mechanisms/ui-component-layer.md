@@ -13,7 +13,7 @@ authority:
 triggers:
   paths: ["src/ui/components/*.ts", "src/ui/*UI.ts", "src/ui/uiPointerCoords.ts", "src/ui/TouchMobileControls.ts", "src/ui/HUD.ts"]
   topics: [UI 组件, UIWindow, UIScrollView, UIButton, 面板重绘, 滚动, 命中, 触屏, 手机 UI, HUD 入口条]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -53,6 +53,12 @@ last_governed: 2026-09-03
     退回窗口尺寸就又判成手机;**窗口能被随手拖窄,设备不会——取不到时宁可判桌面。**
   - **判据来源必须两侧同源**(逐帧现算的那侧与构造时取值的那侧)。一侧冻结、一侧现算,
     判据一变(模拟开关、外接触屏拔插)就会错位成"两套入口都在 / 都不在"。
+- **文字输入模态的键盘纪律与确认框相反**(`UITextPromptDialog`,2026-09-23 首个 DOM 输入件):
+  确认框在 window 捕获阶段吞全部按键,输入框若照抄则一个字都打不进;这里是**在输入框自身上
+  `stopPropagation`**——按键照常落进输入框(含输入法组字),但不再冒泡到挂在 window 冒泡阶段的
+  InputManager / 菜单 / 面板快捷键,另有"输入框开着"判据接进控制器的按键压制钩子兜底。
+  输入法组字中的回车 / Esc 属于输入法,不许当确定 / 取消。中文要输入法,所以输入这一格必须是
+  真 `<input>` 盖在 Pixi 框上,别在 Pixi 里自绘文本框。
 - **`[img:…]` 富文本走的是只读缓存**:不在预载清单里的图恒走占位分支。缺图要现装 +
   回调让调用方整段重排,重排要带"面板已关 / 已翻页"的守卫。
 - **「返回主菜单」= 整页重启到标题态**,URL 带一次性引导参数;标题分支**不装载世界**

@@ -147,7 +147,7 @@ describe('DocumentRevealManager 三态显示', () => {
     });
     await manager.loadDefinitions();
     await manager.checkAndReveal('doc');
-    expect(show).toHaveBeenCalledWith('doc', 'blur.png', 50, 50, 40);
+    expect(show).toHaveBeenCalledWith('doc', 'blur.png', 50, 50, 40, undefined);
     expect(blend).not.toHaveBeenCalled();
     expect(manager.isRevealed('doc')).toBe(false);
     expect(executeAwait).not.toHaveBeenCalled();
@@ -158,7 +158,7 @@ describe('DocumentRevealManager 三态显示', () => {
     const { manager, show, blend } = makeManager({});
     await manager.loadDefinitions();
     await manager.checkAndReveal('doc');
-    expect(blend).toHaveBeenCalledWith('doc', 'blur.png', 'clear.png', 50, 50, 40, 100, 0);
+    expect(blend).toHaveBeenCalledWith('doc', 'blur.png', 'clear.png', 50, 50, 40, 100, 0, undefined);
     expect(show).not.toHaveBeenCalled();
     expect(manager.isRevealed('doc')).toBe(true);
   });
@@ -172,7 +172,7 @@ describe('DocumentRevealManager 三态显示', () => {
     executeAwait.mockClear();
     revealedPayloads.length = 0;
     await manager.checkAndReveal('doc');
-    expect(show).toHaveBeenCalledWith('doc', 'clear.png', 50, 50, 40);
+    expect(show).toHaveBeenCalledWith('doc', 'clear.png', 50, 50, 40, undefined);
     expect(blend).toHaveBeenCalledTimes(1);
     expect(executeAwait).not.toHaveBeenCalled();
     expect(revealedPayloads).toEqual([]);
@@ -185,7 +185,7 @@ describe('DocumentRevealManager 三态显示', () => {
     manager.hideDocument('doc');
     expect(hide).toHaveBeenCalledWith('doc');
     await manager.checkAndReveal('doc');
-    expect(show).toHaveBeenCalledWith('doc', 'clear.png', 50, 50, 40);
+    expect(show).toHaveBeenCalledWith('doc', 'clear.png', 50, 50, 40, undefined);
     expect(blend).toHaveBeenCalledTimes(1);
   });
 
@@ -204,7 +204,7 @@ describe('DocumentRevealManager 三态显示', () => {
     await manager.checkAndReveal('doc', { force: true });
     await manager.checkAndReveal('doc', { force: true });
     expect(blend).toHaveBeenCalledTimes(1);
-    expect(show).toHaveBeenCalledWith('doc', 'clear.png', 50, 50, 40);
+    expect(show).toHaveBeenCalledWith('doc', 'clear.png', 50, 50, 40, undefined);
   });
 
   it('同态重复触发是幂等的：只是重贴同一张，不会再叠化', async () => {
@@ -213,15 +213,26 @@ describe('DocumentRevealManager 三态显示', () => {
     await manager.checkAndReveal('doc');
     await manager.checkAndReveal('doc');
     expect(show).toHaveBeenCalledTimes(2);
-    expect(show).toHaveBeenNthCalledWith(2, 'doc', 'blur.png', 50, 50, 40);
+    expect(show).toHaveBeenNthCalledWith(2, 'doc', 'blur.png', 50, 50, 40, undefined);
     expect(blend).not.toHaveBeenCalled();
+  });
+
+  it('order 透传到显示层：作者把文书当底图用时靠它排到实体 / 特效后面', async () => {
+    const { manager, show, blend } = makeManager({ order: -50, revealCondition: 不成立条件 });
+    await manager.loadDefinitions();
+    await manager.checkAndReveal('doc');
+    // 条件不满足那一态：出模糊图，order 照样往下给
+    expect(show).toHaveBeenCalledWith('doc', 'blur.png', 50, 50, 40, -50);
+    await manager.checkAndReveal('doc', { force: true });
+    // 揭示动画那一态同样要带上（两条路各有一个调用点，漏哪条都是"填了没反应"）
+    expect(blend).toHaveBeenCalledWith('doc', 'blur.png', 'clear.png', 50, 50, 40, 100, 0, -50);
   });
 
   it('overlayId 已作废：配了也不参与寻址，显示层的键恒为 documentId', async () => {
     const { manager, blend, hide } = makeManager({ overlayId: '_img' });
     await manager.loadDefinitions();
     await manager.checkAndReveal('doc');
-    expect(blend).toHaveBeenCalledWith('doc', 'blur.png', 'clear.png', 50, 50, 40, 100, 0);
+    expect(blend).toHaveBeenCalledWith('doc', 'blur.png', 'clear.png', 50, 50, 40, 100, 0, undefined);
     manager.hideDocument('doc');
     expect(hide).toHaveBeenCalledWith('doc');
   });

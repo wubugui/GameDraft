@@ -72,7 +72,7 @@ def test_editor_action_types_are_known_to_manifest() -> None:
 # 锁"喂一个绝不存在的 id 进去，校验真的会报"。
 
 # npc_soft 是软引用：命中不了就当显示名用，报不报由各调用点自行决定，不进硬 parity。
-_HARD_BARE_REF_KINDS = ("actor", "emote_subject", "bubble_speaker", "npc", "burn_target")
+_HARD_BARE_REF_KINDS = ("actor", "emote_subject", "bubble_speaker", "npc", "burn_target", "zone")
 
 
 def test_every_registered_bare_entity_ref_param_is_actually_validated() -> None:

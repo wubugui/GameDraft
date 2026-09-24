@@ -184,10 +184,6 @@
         {
           "narrative": "flow_xungou_main",
           "state": "state_8"
-        },
-        {
-          "narrative": "scenario_夜出南门",
-          "state": "未出城"
         }
       ],
       "onEnter": [
@@ -195,6 +191,16 @@
           "type": "emitNarrativeSignal",
           "params": {
             "signal": "nanmen_road_end",
+            "sourceType": "zone",
+            "sourceId": "梦_醒来土路:z_南门小路_南头"
+          }
+        }
+      ],
+      "onExit": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "nanmen_road_left",
             "sourceType": "zone",
             "sourceId": "梦_醒来土路:z_南门小路_南头"
           }

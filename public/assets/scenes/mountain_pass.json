@@ -60,7 +60,7 @@
   ],
   "spawnPoint": {
     "x": 485.9,
-    "y": 762.7
+    "y": 630.0
   },
   "spawnPoints": {
     "from_street": {
@@ -68,12 +68,12 @@
       "y": 911.0
     },
     "from_temple_exterior": {
-      "x": 1423.95,
-      "y": 119.99
+      "x": 1300.0,
+      "y": 95.0
     },
     "spawn_0": {
-      "x": 1470.0,
-      "y": 911.0
+      "x": 1015.0,
+      "y": 745.0
     }
   },
   "hotspots": [
@@ -93,8 +93,8 @@
       "id": "exit_to_temple",
       "type": "transition",
       "label": "去庙宇",
-      "x": 1445.6,
-      "y": 113.3,
+      "x": 1320.0,
+      "y": 40.0,
       "interactionRange": 53.5,
       "data": {
         "targetScene": "temple_exterior",

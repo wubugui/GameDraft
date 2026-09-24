@@ -10,10 +10,10 @@ authority:
   - vite.config.ts#persistentStoreApi
   - src-tauri/src/gamedata.rs
 triggers:
-  paths: ["src/core/storage/**", "src/core/SaveManager.ts", "src/core/TextDisplaySettings.ts", "src-tauri/src/gamedata.rs", "vite.config.ts"]
+  paths: ["src/core/storage/**", "src/core/SaveManager.ts", "src/core/TextDisplaySettings.ts", "src/audio/audioMixPreferences.ts", "src-tauri/src/gamedata.rs", "vite.config.ts"]
   topics: [存档, 玩家设置, 持久化, localStorage, origin, PersistentStore, Tauri, gamedata]
   tasks: [加玩家偏好, 改存档, 接打包壳]
-last_governed: 2026-08-28
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -62,6 +62,10 @@ last_governed: 2026-08-28
   "重启后存档回退了一步",极难复现。镜像的更新也要放在同一条链里。
 - **删除失败不动镜像**,与写失败同一道理:镜像已删而磁盘还在,重启后档会"复活",
   玩家会以为删除坏了、或者更糟——以为自己删错了。
+- **偏好 ≠ 存档**:玩家偏好(文字呈现、气味指向、各通道与总音量……以 `settings/` 下实际的键为准)
+  落 `settings/<键>.json`,**不进存档**。音量曾一直随存档存读(读老档把设置页冲回去、
+  刷新即丢),2026-09-23 起改落 `settings/audio.json`,音频系统的 serialize 恒空、
+  deserialize 不读老档里的音量键。判据:**"换一个档,这个值该不该跟着变?"** 不该 → 偏好。
 - 新增一类玩家偏好:加一个 `settings` 命名空间下的键,照 `TextDisplaySettings` 的
   `hydrate()` + 即发即走 `persist()` 范式写。**偏好写失败只记日志**(拖个滑条不该弹错误框),
   **存档写失败必须回报**——两者诚实度要求不同。

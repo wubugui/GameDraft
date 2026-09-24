@@ -1,4 +1,4 @@
-import type { ConditionExpr, GameContext, IEmoteBubbleAnchor, IGameSystem } from '../data/types';
+import { isEmoteAnchorShown, type ConditionExpr, type GameContext, type IEmoteBubbleAnchor, type IGameSystem } from '../data/types';
 import type { EmoteBubbleManager } from './EmoteBubbleManager';
 import type { ConditionEvalContext } from './graphDialogue/evaluateGraphCondition';
 import { evaluateConditionExpr } from './graphDialogue/evaluateGraphCondition';
@@ -18,6 +18,8 @@ import type { DeterministicRandom } from '../utils/deterministicRandom';
  * 2. **不与导演式抢同一个头**。`hasBubbleFor` 命中就整组跳过，绝不叠气泡。
  * 3. **时钟走 tick 累加，不走 wall clock**。非 Exploring 态自然不推进——切出去看了半天背包
  *    回来不该立刻被一堆"攒够冷却"的闲聊淹没。
+ * 4. **人藏着就不说**（2026-09-23）。时段 / 条件 / 会话覆盖把人藏了，他就不在场：不参选、
+ *    走近型也不算"走进半径"。判据与气泡跟随显隐同一个（`isEmoteAnchorShown`）。
  */
 
 /**
@@ -392,7 +394,9 @@ export class BubbleChatterSystem implements IGameSystem {
     for (const def of this.defs.values()) {
       if (def.trigger !== 'approach') continue;
       const pos = this.speakerPosition(def.speaker);
-      const inRange = pos !== null
+      // 藏着的人不在场：走到他站的地方不算走近；他在玩家跟前现身才算走近一次（铁律 4）
+      const anchor = pos !== null ? this.resolveAnchor(def.speaker) : null;
+      const inRange = pos !== null && anchor !== null && isEmoteAnchorShown(anchor)
         && Math.hypot(pos.x - player.x, pos.y - player.y) <= (def.approachRange ?? DEFAULT_APPROACH_RANGE);
       const wasIn = this.wasInRange.get(def.id) === true;
       this.wasInRange.set(def.id, inRange);
@@ -429,6 +433,8 @@ export class BubbleChatterSystem implements IGameSystem {
 
       const anchor = this.resolveAnchor(def.speaker);
       if (!anchor) continue;
+      // 人被藏了（夜里按作息隐掉等）→ 不参选（铁律 4）
+      if (!isEmoteAnchorShown(anchor)) continue;
       // 导演式气泡占着这个头 → 整组跳过（铁律 2）
       if (this.deps.emoteBubbleManager.hasBubbleFor(anchor)) continue;
 

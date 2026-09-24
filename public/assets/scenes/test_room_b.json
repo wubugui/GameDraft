@@ -65,12 +65,12 @@
   },
   "spawnPoints": {
     "from_a": {
-      "x": 179.26,
-      "y": 426.78
+      "x": 415.0,
+      "y": 700.0
     },
     "from_wujin": {
-      "x": 1436.6,
-      "y": 51.9
+      "x": 1437.0,
+      "y": 32.0
     }
   },
   "hotspots": [
@@ -101,8 +101,8 @@
       "id": "taomu_pickup",
       "type": "pickup",
       "label": "桃木片",
-      "x": 198.0,
-      "y": 124.7,
+      "x": 200.0,
+      "y": 715.0,
       "interactionRange": 350,
       "data": {
         "itemId": "taomu",

@@ -38,8 +38,9 @@ last_governed: 2026-08-05
 
 ## 硬契约
 
-- **params 内含 `ActionDef[]`(子动作)时**,必须在 `validator.py` 的 `_walk_action_defs`
-  加递归,否则子动作不参与"类型已登记"校验。
+- **params 内含 `ActionDef[]`(子动作)时**,登记容器槽位表(`NESTED_ACTION_SLOTS` 及其 TS 镜像)并转发执行作用域;
+  校验器那条容器分支仍是手写链,要同步补,否则子动作不参与"类型已登记"校验。
+  全部登记面见 [action-registration-registry-surfaces](../../runtime/mechanisms/action-registration-registry-surfaces.md)。
 - **要进 cutscene 用**,同步 `src/data/cutscene_action_allowlist.json`。
 - **参数含实体/场景/出生点引用时**,同步登记 `entity_refactor.py` 的 `ENTITY_REF_PARAMS`
   ——漏登记会让该引用对重构与校验**双双隐形**(parity 测试只拦 `_PARAM_SCHEMAS` 内的漏网,
@@ -53,9 +54,8 @@ last_governed: 2026-08-05
 
 ## 已知坑
 
-- **可选参数会被 Python 兜底当必填**、拦住保存:兜底校验把 `_PARAM_SCHEMAS` 的参数一律视为
-  必填,可选参数须按 `emitNarrativeSignal` 范式覆盖 required;TS 侧 `actionParamManifest.ts`
-  才是参数权威。
+- 必填集只认 TS 侧 `actionParamManifest.ts`(Python 兜底按它解析、解析失败 fail-open);别再给可选参数
+  另写 required 覆盖——那是 07-20 之前"兜底把控件清单整表当必填"时代的绕法。
 - 只改 TS 不更新 action_editor:策划选不到、校验报 error,等于没加。
 
 ## 怎么验证

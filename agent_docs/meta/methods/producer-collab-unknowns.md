@@ -8,8 +8,8 @@ status: active
 triggers:
   tasks: [系统设计, 玩法设计, 方案撰写, 需求对齐]
   topics: [协作, 访谈, unknowns, 制作人]
-last_governed: 2026-08-05
-last_used: 2026-07-10
+last_governed: 2026-09-23
+last_used: 2026-09-10
 ---
 
 # 制作人协作法(先访谈对齐再出稿)

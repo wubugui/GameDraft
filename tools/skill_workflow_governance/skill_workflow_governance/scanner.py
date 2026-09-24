@@ -435,7 +435,12 @@ def _resolve_reference(root: Path, source_path: Path, ref: Reference) -> None:
         target = target[len(root.name) + 1 :]
         ref.target = target
     if "*" in target or "?" in target:
-        matches = list(root.glob(target))
+        # 文档里常写 `tools/**.py` 这种 shell 口语写法,pathlib 只认独立的 `**` 段
+        pattern = re.sub(r"\*\*(?=[^/])", "**/*", target)
+        try:
+            matches = list(root.glob(pattern))
+        except ValueError:
+            matches = []
         if not matches:
             matches = _find_by_suffix(root, target)
         ref.status = "ok" if matches else "missing"

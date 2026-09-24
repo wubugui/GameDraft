@@ -18,10 +18,22 @@
       "hudAnchor": "smell"
     },
     {
+      "id": "torch_light",
+      "title": "点火把",
+      "body": "[c:emphasis]背包里点火把「拿在手上」，再点一种火种「设为火种」。[/c]\n站稳了按 T 点火，火苗装满就点着了。\n点一回用掉一份火种；走动会打断，有风时同时按住 Q 护着点。",
+      "image": "images/illustrations/torch_relight_gpt.png"
+    },
+    {
       "id": "torch_guard",
       "title": "护火",
       "body": "风要把火吹灭了。\n[c:emphasis]按住 Q 护火，再往前走。[/c]\n护住火头，火苗才稳得下来。",
       "image": "images/illustrations/torch_guard_gpt.png"
+    },
+    {
+      "id": "torch_out_omen",
+      "title": "火灭了",
+      "body": "[c:emphasis]火一灭，怪事就挨过来了。[/c]\n后头跟着走的、前头喊你的，都是趁火灭才敢近身的东西。\n三把火是你身上的阳气——它们靠得越近，耗得越快。",
+      "hudAnchor": "threeFires"
     },
     {
       "id": "torch_relight",

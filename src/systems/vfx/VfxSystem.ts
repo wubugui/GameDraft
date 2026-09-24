@@ -43,14 +43,17 @@ import type {
   VfxInstanceDef,
   VfxInstanceState,
   VfxPlacementLibrary,
+  VfxSurfaceKind,
+  VfxSurfaceDefaultsDef,
+  VfxSurfaceRegionDef,
 } from '../../data/types';
 import { TEXT_URLS, burnableJsonUrl, vfxEffectJsonUrl } from '../../core/projectPaths';
 import { resolveBurnable, type ResolvedBurnable } from '../../data/burnables';
 import type { VfxRenderer, VfxSortHost, VfxSpriteSheet } from '../../rendering/vfx/VfxRenderer';
 import type { Vec3 } from '../../utils/sceneSpace';
-import type { SceneWindParams } from '../../utils/sceneWind';
+import type { SceneWindParams, WindBlast } from '../../utils/sceneWind';
 import { evaluateConditionExpr, type ConditionEvalContext } from '../graphDialogue/evaluateGraphCondition';
-import type { ConfineField } from './vfxConfine';
+import { pointInPolygon, type ConfineField } from './vfxConfine';
 import { hashSeed } from './vfxRandom';
 import { flockHarassmentRate } from './vfxHarassment';
 import { VfxMotionAirflow } from './vfxMotionSource';
@@ -75,6 +78,14 @@ export interface VfxInstanceDebugRow {
 }
 
 /** 玩家动静场：半径 / 满强度对应的速度（wu/s） */
+/**
+ * 画雷的发射器（`appearance.bolt`）的占位贴图表：雷身是渲染侧现画的折线，走它自己的网格与程序，
+ * **不读这张表的贴图**；给它只是为了让"没贴图的发射器跳过"那道闸放行。
+ */
+const BOLT_STUB_SHEET: VfxSpriteSheet = {
+  texture: null as unknown as Texture, frames: [{ u0: 0, v0: 0, u1: 1, v1: 1 }], aspect: 1, frameRate: 0,
+};
+
 const PLAYER_MOTION_RADIUS_WU = 320;
 const PLAYER_MOTION_FULL_SPEED = 420;
 /** 玩家动静场挂在脚点上方这么高（胸口） */
@@ -103,6 +114,8 @@ export interface VfxSystemDeps {
   buildSpace: () => VfxSpace;
   /** 玩家脚点（场景坐标） */
   getPlayerContact: () => { x: number; y: number } | null;
+  /** 当前视域的发射锚点（场景坐标）；仅供临时天气效果，新生粒子跟随，已发粒子不搬动。 */
+  getViewAnchor?: () => { x: number; y: number } | null;
   /**
    * 当前场景此刻用哪套时段外观：`timeVariants` 的键，空串 = 顶层基底；没进场景 null。
    * 布置按它取份（`SceneManager.appearancePhaseFor(当前时段)`）。
@@ -128,12 +141,21 @@ export interface VfxSystemDeps {
    * 场景风（组装层持有的那一份 + 它的钟；背景摆动读同一份）。没有风的场景返回 null 或 params 为 null。
    * 可不注入（旧调用方 / 测试）＝ 没有风。
    */
-  getWind?: () => { params: SceneWindParams | null; time: number } | null;
+  getWind?: () => {
+    params: SceneWindParams | null; time: number;
+    /** 冲击风（落雷落地那一下）与它自己的钟；没有就不给 */
+    blasts?: readonly WindBlast[]; blastTime?: number;
+  } | null;
   /**
    * 燃烧系统：某个**布置实例**里哪些可燃薄片已经烧没了（发射器序号 → 槽位）。建模拟时恢复（永久没了、不补回）。
    * 不注入 / 返回 null = 一张没烧。临时实例不问。
    */
   burntPlatesOf?: (instanceId: string) => ReadonlyMap<number, readonly number[]> | null;
+  /**
+   * 本场景的表面材质区或全局缺省表面材质换了（进场景 / 离场景 / 工作台推来工作态）：场景照明据它画反光遮罩。
+   * 同一份内容不重复通知。`defaults` = 布置库 `defaultSurface`（没写 = null，取运行时缺省）。
+   */
+  onSurfacesChanged?: (regions: readonly VfxSurfaceRegionDef[], defaults: VfxSurfaceDefaultsDef | null) => void;
   /**
    * 可燃薄片烧没了（含模拟被收掉 / 离场那一刻**还在烧**的——它们推不出来，按烧没了算）：交给燃烧系统进存档。
    * 只报布置实例（临时实例切场景即散，没有存档意义）。
@@ -146,6 +168,14 @@ export interface VfxBurningPlateReport {
   instanceId: string;
   transient: boolean;
   group: VfxBurningPlateGroup;
+}
+
+/** `playVfx({ onStart })` 回调拿到的：这一次的效果定义、实例种子、世界锚点、落点表面 */
+export interface VfxInstanceStartInfo {
+  effect: VfxEffectDef;
+  seed: number;
+  anchorWorld: Vec3;
+  surfaceKind: VfxSurfaceKind;
 }
 
 interface InstanceRuntime {
@@ -165,6 +195,11 @@ interface InstanceRuntime {
    * 由 `moveInstanceAnchor` 逐帧写（手持光源的火焰），见 `systems/heldProp`。
    */
   followWorld: Vec3 | null;
+  /** 仅临时天气实例：每帧重新解算视域锚点，不携带已发出的粒子。 */
+  followCamera?: boolean;
+  /** 作者命名的临时句柄；账本仍持有 def.id，旧会话不能误停同名新实例。 */
+  handle?: string;
+  fadeOut?: { elapsedMs: number; durationMs: number; fromAlpha: number };
   /**
    * 实例倍率（发射率 / 新生粒子大小 / 吃场景风）：手持火把逐帧推（燃烧强度、闪烁、护火）。
    * 存在实例上，模拟重建时重新套上；没被设过 = undefined（全 1）。
@@ -184,6 +219,11 @@ interface InstanceRuntime {
   draining?: boolean;
   /** 薄片绑的可燃物模板（装效果时一起装好；建模拟时交给它） */
   burnTemplates?: ReadonlyMap<string, ResolvedBurnable>;
+  /**
+   * 临时实例的模拟**第一次建起来**那一刻回调一次（效果装到了、画面上要出现了）。
+   * 落雷用它把灯与雷同一拍点亮：灯要按这道雷的形状摆，而且不该比雷早亮。
+   */
+  onStart?: (info: VfxInstanceStartInfo) => void;
   /** Retry only when the effect changes or the scene space is rebuilt. */
   failedConstruction?: { effect: VfxEffectDef; space: VfxSpace };
   loadRevision?: number;
@@ -195,6 +235,7 @@ export class VfxSystem implements IGameSystem {
   private eventBus: EventBus | null = null;
   private renderer: VfxRenderer | null = null;
   private readonly instances = new Map<string, InstanceRuntime>();
+  private readonly transientHandles = new Map<string, string>();
   private readonly fields: VfxFieldRuntime[] = [];
   private readonly effectCache = new Map<string, Promise<VfxEffectDef | null>>();
   /** 可燃物模板（薄片绑的；燃烧工作台联动的工作态覆盖在 `burnTemplateOverrides`） */
@@ -236,6 +277,9 @@ export class VfxSystem implements IGameSystem {
    * 缓存的旧库——哪怕他刚存过盘（`loadJson` 按 URL 缓存），游戏里看到的就不是工作台里那份。
    */
   private libraryOverride: VfxPlacementLibrary | null = null;
+  /** 本场景的表面材质区（`surfacesFor` 取的那份）及其内容键（没变不重复通知） */
+  private sceneSurfaces: VfxSurfaceRegionDef[] = [];
+  private surfacesKey = '[[],null]';
   private readonly onPhaseChanged: () => void;
   /** 在途的场景重建（scene:ready / 载荷晚到自愈）；揭幕闸要等它把布置表建出来 */
   private rebuilding: Promise<void> | null = null;
@@ -429,6 +473,7 @@ export class VfxSystem implements IGameSystem {
     this.generation++;
     for (const inst of this.instances.values()) this.retireSim(inst);
     this.instances.clear();
+    this.transientHandles.clear();
     // 实例都没了，等着收的那张单子也要清——否则旧场景的 id 永远留在集合里
     this.softStopped.clear();
     this.fireSources.clear();
@@ -445,9 +490,50 @@ export class VfxSystem implements IGameSystem {
     this.playerSpeed = 0;
     this.builtPlacement = null;
     this.placementKeyDirty = false;
+    this.setSurfaces([]);
     // 旧场景的装载各自按世代作废；揭幕闸不必再等它们
     this.pendingLoads.clear();
     this.renderer?.clear();
+  }
+
+  /** 本场景的表面材质区：工作态（工作台推来的）优先，没推这张图就读盘 */
+  private surfacesFor(lib: VfxPlacementLibrary | null, sceneId: string): VfxSurfaceRegionDef[] {
+    const pre = this.libraryOverride?.scenes?.[sceneId]?.surfaces;
+    if (Array.isArray(pre)) return pre;
+    const disk = lib?.scenes?.[sceneId]?.surfaces;
+    return Array.isArray(disk) ? disk : [];
+  }
+
+  /** 全局缺省表面材质：工作态（工作台推来的库里写了这一键）优先，否则读盘 */
+  private surfaceDefaultsFor(lib: VfxPlacementLibrary | null): VfxSurfaceDefaultsDef | null {
+    const pre = this.libraryOverride;
+    if (pre && Object.prototype.hasOwnProperty.call(pre, 'defaultSurface')) return pre.defaultSurface ?? null;
+    return lib?.defaultSurface ?? null;
+  }
+
+  private setSurfaces(regions: VfxSurfaceRegionDef[], defaults: VfxSurfaceDefaultsDef | null = null): void {
+    const key = JSON.stringify([regions, defaults]);
+    if (key === this.surfacesKey) return;
+    this.surfacesKey = key;
+    this.sceneSurfaces = regions;
+    this.deps.onSurfacesChanged?.(regions, defaults);
+  }
+
+  /** 本场景此刻的表面材质区（只读） */
+  get surfaces(): readonly VfxSurfaceRegionDef[] { return this.sceneSurfaces; }
+
+  /**
+   * 画面点落在什么表面上：盖着它的**最后一块**区是水面 = `water`，是湿地或没有区盖着 = `ground`。
+   * 与反光遮罩同一个次序（后画的盖前面的：水面里画一块湿地 = 挖出一块露出水面的滩）。
+   */
+  surfaceKindAt(x: number, y: number): VfxSurfaceKind {
+    const rs = this.sceneSurfaces;
+    for (let i = rs.length - 1; i >= 0; i--) {
+      const r = rs[i];
+      if ((r?.kind === 'water' || r?.kind === 'wet') && Array.isArray(r.polygon) && r.polygon.length >= 3
+        && pointInPolygon(r.polygon, x, y)) return r.kind === 'water' ? 'water' : 'ground';
+    }
+    return 'ground';
   }
 
   /** 重建本场景并记住在途的那一次（揭幕闸要等它）。失败出声，不留未处理的拒绝。 */
@@ -471,6 +557,7 @@ export class VfxSystem implements IGameSystem {
     const phase = this.deps.getAppearancePhase() ?? '';
     this.builtPlacement = { sceneId: sd.id, phase };
     this.placementKeyDirty = false;
+    this.setSurfaces(this.surfacesFor(lib, sd.id), this.surfaceDefaultsFor(lib));
     this.applyPlacementRows(this.placementRows(lib, sd.id, phase));
   }
 
@@ -521,7 +608,7 @@ export class VfxSystem implements IGameSystem {
       const next = want.get(id);
       if (next && JSON.stringify(next) === JSON.stringify(inst.def)) { want.delete(id); continue; }
       this.retireSim(inst);
-      this.instances.delete(id);
+      this.removeInstance(id);
     }
     for (const def of want.values()) {
       this.instances.set(def.id, { def, effect: null, sim: null, eligible: false, stopped: def.autoStart === false, loopAt: -Infinity, transient: false, followWorld: null });
@@ -558,6 +645,27 @@ export class VfxSystem implements IGameSystem {
       this.effectCache.set(id, p);
     }
     return p;
+  }
+
+  /**
+   * 预备一批效果：效果 JSON 与各发射器贴图 / 光柱遮罩装进缓存，**不建实例、不模拟、不画**。
+   * 脱手演出开场时把后面要放的效果先装好（与 `AudioManager.prepareSfx` 同一个位置、同一个用意）；
+   * 之后 `playVfx` 按 id 建实例，`loadInstanceEffect` 直接命中缓存，同一帧就能画。
+   *
+   * 为什么要有：临时实例要等效果与贴图装完才画，而落雷的雷柱在发车后 210 ms（游戏时钟）就软停 ——
+   * 冷启动时第一道雷 64–68 ms 才装完、比雷光雷声晚四帧；负载一高软停先到，那道雷**整个不画**
+   * （2026-09-23 实测）。装不到的只记日志，真正播放时那条路径照常报。
+   */
+  prepareEffects(ids: readonly string[]): Promise<void> {
+    const unique = [...new Set(ids.map((id) => String(id ?? '').trim()).filter(Boolean))];
+    return Promise.all(unique.map(async (id) => {
+      const effect = await this.loadEffect(id);
+      if (!effect) return;
+      await Promise.all([
+        ...effect.emitters.map((e) => this.loadSheet(e.appearance)),
+        ...(effect.beams ?? []).map((b) => (b.cookie?.image ? this.loadBeamTexture(b.cookie.image) : null)),
+      ]);
+    })).then(() => undefined, () => undefined);
   }
 
   private loadInstanceEffect(inst: InstanceRuntime): void {
@@ -664,6 +772,8 @@ export class VfxSystem implements IGameSystem {
   }
 
   private loadSheet(ap: VfxAppearanceDef): Promise<VfxSpriteSheet | null> {
+    // 画雷的发射器不贴图（雷身是现画的折线，见 appearance.bolt）：给一张占位的白图，渲染侧按 bolt 走自己的网格
+    if (ap.bolt) return Promise.resolve(BOLT_STUB_SHEET);
     const key = `${ap.animFile ?? ''}|${ap.image ?? ''}|${ap.state ?? ''}|${ap.restState ?? ''}`;
     let p = this.sheetCache.get(key);
     if (p) return p;
@@ -715,17 +825,27 @@ export class VfxSystem implements IGameSystem {
     if (inst.sim || !inst.effect || !this.space) return;
     if (inst.failedConstruction?.effect === inst.effect && inst.failedConstruction.space === this.space) return;
     try {
+      this.syncViewAnchor(inst);
       const seed = typeof inst.def.seed === 'number' ? (inst.def.seed >>> 0) : hashSeed(inst.def.id);
       // 跟随锚点已经是世界点；条件刷新或换空间不能把它弹回静态布置位置。
       const anchor = inst.followWorld
         ? ([inst.followWorld[0], inst.followWorld[1], inst.followWorld[2]] as Vec3)
         : this.space.anchorToWorld(inst.def.anchor);
+      const surfaceKind = this.surfaceKindAt(inst.def.anchor.x, inst.def.anchor.y);
       inst.sim = new VfxInstanceSim(inst.def.id, inst.effect, anchor, seed, this.space, inst.def.countScale ?? 1,
         {
           area: Array.isArray(inst.def.area) ? inst.def.area : null,
           confine: inst.def.confine && typeof inst.def.confine === 'object' ? inst.def.confine : null,
           burnTemplates: inst.burnTemplates ?? null,
+          surfaceKind,
         });
+      // 只回调一次：之后换空间重建模拟（几何载荷晚到）不再重点一遍灯
+      const onStart = inst.onStart;
+      if (onStart) {
+        inst.onStart = undefined;
+        try { onStart({ effect: inst.effect, seed, anchorWorld: [anchor[0], anchor[1], anchor[2]], surfaceKind }); }
+        catch (e) { this.deps.log(`vfx: 实例 ${inst.def.id} 的起播回调出错：${String(e)}`); }
+      }
       // 烧没了的纸永久没了：建模拟时（第一次发射之前）恢复，起播铺撒按原次序抽签后收掉
       if (!inst.transient) {
         const burnt = this.deps.burntPlatesOf?.(inst.def.id);
@@ -757,7 +877,7 @@ export class VfxSystem implements IGameSystem {
       // 软停的临时实例 `stopped` 也是 true，但它的模拟要留着让在飞的粒子飞完、由收尸那段删——
       // 这里一并清掉的话，任何一次条件重算（另一个实例装完效果就会触发）都让整团当场消失
       // （2026-09-15 真跑抓到：火把切状态，46 颗粒子下一拍 43、再下一拍 0）
-      else if (inst.sim && !this.softStopped.has(inst.def.id)) {
+      else if (inst.sim && !inst.fadeOut && !this.softStopped.has(inst.def.id)) {
         // 带光柱的：先按 fadeOut 淡掉，淡完 update 里再收（光柱不许"啪"一下没了）
         if (!inst.sim.beamsDark) {
           if (!inst.draining) { inst.draining = true; inst.sim.stop(); }
@@ -789,13 +909,21 @@ export class VfxSystem implements IGameSystem {
     restart?: boolean;
     /** 跟随锚点（世界 wu）：给了就用它当锚，随后由 `moveInstanceAnchor` 逐帧挪 */
     followWorld?: Vec3;
+    /** 临时天气实例的发射原点跟随视域；保留 anchor 的高度/表面，已发粒子留在世界里。 */
+    followCamera?: boolean;
+    /** 仅 effect 创建的临时实例可命名；重名替换，不复用真实实例 id。 */
+    handle?: string;
     /** 一次性临时实例：效果放完就自己收（手持挂件上的 `playPropVfx`）。一直发的发射器永远放不完 */
     oneShot?: boolean;
+    /** 模拟第一次建起来时回调一次（见 `InstanceRuntime.onStart`） */
+    onStart?: (info: VfxInstanceStartInfo) => void;
   }): string | null {
     if (opts.instanceId) {
       const inst = this.instances.get(opts.instanceId);
       if (!inst) { this.deps.log(`playVfx: 当前场景没有实例「${opts.instanceId}」`); return null; }
       inst.stopped = false;
+      delete inst.fadeOut;
+      this.softStopped.delete(opts.instanceId);
       if (opts.restart) {
         this.retireSim(inst);
         inst.draining = false;
@@ -811,6 +939,11 @@ export class VfxSystem implements IGameSystem {
       return null;
     }
     const id = `__vfx_${opts.effect}_${++this.transientSeq}`;
+    const handle = opts.handle?.trim();
+    if (handle) {
+      const previous = this.resolveHandle(handle);
+      if (previous) this.stopVfx(previous);
+    }
     const anchor: VfxAnchorDef = opts.anchor ?? { x: 0, y: 0 };
     const def: VfxInstanceDef = { id, effect: opts.effect, anchor, seed: opts.seed, countScale: opts.countScale, autoStart: true };
     const inst: InstanceRuntime = {
@@ -818,9 +951,24 @@ export class VfxSystem implements IGameSystem {
       followWorld: opts.followWorld ? [opts.followWorld[0], opts.followWorld[1], opts.followWorld[2]] : null,
     };
     if (opts.oneShot) inst.oneShot = true;
+    if (opts.followCamera) inst.followCamera = true;
+    if (opts.onStart) inst.onStart = opts.onStart;
+    if (handle) {
+      inst.handle = handle;
+      this.transientHandles.set(handle, id);
+    }
     this.instances.set(id, inst);
     this.loadInstanceEffect(inst);
     return id;
+  }
+
+  private syncViewAnchor(inst: InstanceRuntime): void {
+    if (!inst.followCamera || !inst.transient || !this.space) return;
+    const view = this.deps.getViewAnchor?.();
+    if (!view || !Number.isFinite(view.x) || !Number.isFinite(view.y)) return;
+    const world = this.space.anchorToWorld({ ...inst.def.anchor, x: view.x, y: view.y });
+    inst.followWorld = world;
+    inst.sim?.moveAnchor(world, null, true);
   }
 
   /**
@@ -902,6 +1050,19 @@ export class VfxSystem implements IGameSystem {
     return out;
   }
 
+  /**
+   * 雷劈：当前场景里所有实例的可燃薄片，落点 `at`（M-world）竖直往上 `heightWu`、半径 `radiusWu` 内还没着的当场着
+   * （只点绑的模板开了「雷劈能点着」的）。还在预热的模拟不点（那是"过去"）。返回点着了几张。
+   */
+  igniteByLightning(at: Vec3, radiusWu: number, heightWu: number): number {
+    let n = 0;
+    for (const inst of this.instances.values()) {
+      if (!inst.sim || inst.sim.prewarmRemaining > 0) continue;
+      n += inst.sim.lightningIgnitePlates(at[0], at[1], at[2], radiusWu, heightWu);
+    }
+    return n;
+  }
+
   /** 此刻还在烧的布置实例纸片槽位（存档那一刻它们推不出来 ⇒ 按烧没了进档；不改动模拟） */
   burningPlateSlots(): { instanceId: string; emitterIndex: number; slots: number[] }[] {
     const out: { instanceId: string; emitterIndex: number; slots: number[] }[] = [];
@@ -922,12 +1083,41 @@ export class VfxSystem implements IGameSystem {
 
   private transientSeq = 0;
 
-  stopVfx(instanceId: string): void {
+  resolveHandle(handle: string): string | null {
+    const id = this.transientHandles.get(handle.trim());
+    return id && this.instances.has(id) ? id : null;
+  }
+
+  private removeInstance(id: string): void {
+    const inst = this.instances.get(id);
+    if (inst?.handle && this.transientHandles.get(inst.handle) === id) this.transientHandles.delete(inst.handle);
+    this.instances.delete(id);
+    this.softStopped.delete(id);
+  }
+
+  stopVfx(instanceId: string, opts?: { soft?: boolean; fadeMs?: number; handle?: boolean }): void {
+    if (opts?.handle) {
+      const resolved = this.resolveHandle(instanceId);
+      if (!resolved) return;
+      instanceId = resolved;
+    }
     const inst = this.instances.get(instanceId);
     if (!inst) return;
+    if (Number.isFinite(opts?.fadeMs) && opts!.fadeMs! > 0) {
+      const f = inst.fadeOut;
+      const fromAlpha = f ? f.fromAlpha * Math.max(0, 1 - f.elapsedMs / f.durationMs) : 1;
+      inst.fadeOut = { elapsedMs: 0, durationMs: opts!.fadeMs!, fromAlpha };
+      // Keep the existing simulation/emission alive while the whole instance fades.
+      // Otherwise short-lived fog expires before the requested visual fade completes.
+      inst.stopped = true;
+      if (inst.transient) this.softStopped.add(instanceId);
+      return;
+    }
+    if (opts?.soft) { this.stopVfxSoft(instanceId); return; }
     inst.stopped = true;
+    delete inst.fadeOut;
     this.softStopped.delete(instanceId);
-    if (inst.transient) { this.instances.delete(instanceId); return; }
+    if (inst.transient) { this.removeInstance(instanceId); return; }
     inst.sim?.stop();
   }
 
@@ -940,6 +1130,8 @@ export class VfxSystem implements IGameSystem {
   stopVfxSoft(instanceId: string): void {
     const inst = this.instances.get(instanceId);
     if (!inst) return;
+    // Normal session cleanup must not cut short an explicitly authored whole-instance fade.
+    if (inst.fadeOut) return;
     inst.stopped = true;
     inst.sim?.stop();
     if (inst.transient) this.softStopped.add(instanceId);
@@ -1014,7 +1206,10 @@ export class VfxSystem implements IGameSystem {
     // 保存 / 撤销 / 放弃后某份退出预览：重新读取正式资源，不回到游戏会话最初缓存的旧值。
     const dropped = Object.entries(this.libraryOverride?.scenes ?? {}).some(([sid, ent]) =>
       (Array.isArray(ent.base) && this.previewRows(sid, '', next) === undefined)
-      || Object.keys(ent.variants ?? {}).some((phase) => this.previewRows(sid, phase, next) === undefined));
+      || Object.keys(ent.variants ?? {}).some((phase) => this.previewRows(sid, phase, next) === undefined)
+      || (Array.isArray(ent.surfaces) && !Array.isArray(next?.scenes?.[sid]?.surfaces)))
+      || (!!this.libraryOverride && Object.prototype.hasOwnProperty.call(this.libraryOverride, 'defaultSurface')
+        && !(next && Object.prototype.hasOwnProperty.call(next, 'defaultSurface')));
     if (dropped) {
       this.deps.assetManager.dropJson(TEXT_URLS.vfxPlacements);
       this.library = null;
@@ -1027,6 +1222,7 @@ export class VfxSystem implements IGameSystem {
       if (gen !== this.generation) return;
       const b = this.builtPlacement;
       if (!b) return;
+      this.setSurfaces(this.surfacesFor(disk, b.sceneId), this.surfaceDefaultsFor(disk));
       this.applyPlacementRows(this.placementRows(disk, b.sceneId, b.phase));
     });
   }
@@ -1163,15 +1359,27 @@ export class VfxSystem implements IGameSystem {
     }
     const ctx: VfxStepContext = {
       fields: this.fields, contacts: contact ? [contact] : [], player, time: this.time,
-      wind: wind?.params ?? null, windTime: wind?.time ?? 0, fires,
+      wind: wind?.params ?? null, windTime: wind?.time ?? 0, blasts: wind?.blasts ?? null, blastTime: wind?.blastTime ?? 0, fires,
     };
     const sims: VfxInstanceSim[] = [];
+    const instanceAlphas = new Map<string, number>();
     let live = 0;
     const hosts = new Map<string, VfxSortHost>();
     let prewarmBudget = PREWARM_UNITS_PER_FRAME;
     for (const inst of this.instances.values()) {
+      const fade = inst.fadeOut;
+      if (fade) {
+        fade.elapsedMs += dt * 1000;
+        if (fade.elapsedMs >= fade.durationMs) {
+          if (inst.transient) this.removeInstance(inst.def.id);
+          else { this.retireSim(inst); delete inst.fadeOut; }
+          continue;
+        }
+        instanceAlphas.set(inst.def.id, fade.fromAlpha * (1 - fade.elapsedMs / fade.durationMs));
+      }
       const sim = inst.sim;
       if (!sim) continue;
+      if (dt > 0 && (!inst.stopped || inst.fadeOut)) this.syncViewAnchor(inst);
       if (sim.prewarmRemaining > 0) {
         // 还在预热 = 还是"过去"：不画、不正常推进、不出事件。按帧预算推一截；跑完的这一帧照常接上
         // （预算够一帧跑完时，与原来"第一次 step 里一口气补完"逐位相同）
@@ -1199,8 +1407,7 @@ export class VfxSystem implements IGameSystem {
     // ---- 收尸：一次性临时实例放完就删（手持挂件上播的熄灭烟）
     for (const [id, inst] of this.instances) {
       if (inst.transient && inst.oneShot && inst.sim?.finished) {
-        this.instances.delete(id);
-        this.softStopped.delete(id);
+        this.removeInstance(id);
       }
     }
     /**
@@ -1212,22 +1419,20 @@ export class VfxSystem implements IGameSystem {
      */
     for (const [id, inst] of this.instances) {
       if (!inst.transient || inst.sim || !inst.stopped) continue;
-      this.instances.delete(id);
-      this.softStopped.delete(id);
+      this.removeInstance(id);
     }
     // ---- 收尸：软停的临时实例等在飞的粒子老化完再删（火舌停了，空中那几点火星该飞完）
     if (this.softStopped.size > 0) {
       for (const id of [...this.softStopped]) {
         const inst = this.instances.get(id);
         if (!inst) { this.softStopped.delete(id); continue; }
-        if (!inst.sim || inst.sim.liveCount === 0) {
-          this.instances.delete(id);
-          this.softStopped.delete(id);
+        if (!inst.fadeOut && (!inst.sim || inst.sim.liveCount === 0)) {
+          this.removeInstance(id);
         }
       }
     }
     // ---- 渲染
-    if (this.renderer) this.renderer.render(sims, this.sheets, hosts, this.beamTextures);
+    if (this.renderer) this.renderer.render(sims, this.sheets, hosts, this.beamTextures, instanceAlphas);
     this.lastStats = {
       instances: sims.length, live, drawCalls: this.renderer?.drawCallCount ?? 0,
       fields: this.fields.length, simMs, beams: this.renderer?.beamStats.visible ?? 0,

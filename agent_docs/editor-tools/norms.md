@@ -9,7 +9,7 @@ triggers:
   paths: ["tools/editor/**", "tools/dialogue_graph_editor/**", "tools/parallax_editor/**", "tools/narrative_editor/**"]
   topics: [编辑器, PyQt, 往返保真, 布局, 选择器]
   tasks: [改编辑器, 加编辑器面板, 改策划工具]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 # 编辑器/策划工具开发规范
@@ -53,7 +53,7 @@ last_governed: 2026-09-03
 1. 新面板先判编辑模式、对齐同类编辑器骨架(主从列表 + `_refresh/_on_select/_apply`、
    命名脏桶),不造一次性写法。
 2. **布局纪律**:新表单用 compact_form;短字段设宽度上限(禁 setMinimumWidth 地板堆叠
-   顶爆小屏);**重块默认折叠且懒建**(首次展开才造控件——未展开块原样透传磁盘值,
+   顶爆小屏;宽度上限裁字这类塌陷的判据见验证门配方「布局塌陷」);**重块默认折叠且懒建**(首次展开才造控件——未展开块原样透传磁盘值,
    既保往返保真又躲开控件数的 O(N²) 成本);说明进 tooltip;
    字号/主题只动 theme.py,禁止 QSS 写死 font-size。
    动态加行时另有两条 Qt 纪律:**加进布局的控件要显式 `show()`**(未显示项被布局整个跳过,
@@ -78,7 +78,8 @@ last_governed: 2026-09-03
   有效判据 = 靶向跑受影响文件全绿 **+** 与 HEAD 双树对照失败集合一致。口径见
   [验证门配方](recipes/editor-change-verification-gate.md),别拿"绿不了"当放行理由;
 - 素材引用审计 `--strict` 零问题;
-- `./dev.sh validate-data` 零 error;
+- `validate-data` 的 **error / 警告集合与改动前一致、只减不增**(2026-09-23 制作人批,与 runtime 验收门同口径;
+  Windows 上 `dev.sh` 不可用,入口与按集合对照的做法见验证门配方);
 - 声称"格式零影响"的改动须字节级验收(见 [验证门配方](recipes/editor-change-verification-gate.md))。
 
 ## 红线
@@ -90,7 +91,7 @@ last_governed: 2026-09-03
 - 绕过统一保存出口自行写盘(限业务数据;编辑器专用 sidecar——UI 偏好/画布布局等运行时
   永不加载的文件——按 debug-ui-persistence 范式直写不算违反,2026-07-13 用户批准)。
 
-> **这条今天有活的违例**(2026-09-03 盲重建实测):几个独立工具与主编辑器写同一批业务数据,
+> **这条今天有活的违例**(2026-09-03 盲重建实测,09-23 复核仍在):几个独立工具与主编辑器写同一批业务数据,
 > 却各走各的写盘口、安全等级不一,其中一处还与统一保存互删。**违例都在现役可达路径上,
 > 不是死码**——动这些工具前先读
 > [save-all-dirty-buckets](mechanisms/save-all-dirty-buckets.md) 的已知坑,别照现状抄。

@@ -57,5 +57,13 @@
   "cameraShake",
   "setSceneDim",
   "duckAudio",
-  "restoreAudio"
+  "restoreAudio",
+  "showCanvasEntity",
+  "hideCanvasEntity",
+  "playCanvasEntityAnimation",
+  "setCanvasEntityTransform",
+  "setCanvasOrder",
+  "playCanvasVfx",
+  "stopCanvasVfx",
+  "clearCanvas"
 ]

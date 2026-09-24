@@ -369,10 +369,10 @@
       "src": "/resources/runtime/audio/edited/minigame_win.wav"
     },
     "quest_accepted": {
-      "src": "/resources/runtime/audio/edited/quest_accepted.wav"
+      "src": "/resources/runtime/audio/edited/minigame_win_dfee6161.wav"
     },
     "quest_completed": {
-      "src": "/resources/runtime/audio/edited/quest_completed.wav"
+      "src": "/resources/runtime/audio/edited/encounter_start_e0b4bc9c.wav"
     },
     "quest_updated": {
       "src": "/resources/runtime/audio/edited/quest_updated.wav"
@@ -759,19 +759,25 @@
       "src": "/resources/runtime/audio/hud_20260910/sfx_smell_hide.wav"
     },
     "sfx_thunder_crack": {
-      "src": "/resources/runtime/audio/leifu_20260919/sfx_thunder_crack.wav"
+      "src": "/resources/runtime/audio/leifu_20260920/sfx_thunder_crack.wav"
     },
     "sfx_thunder_rumble": {
-      "src": "/resources/runtime/audio/leifu_20260918/sfx_thunder_rumble.wav"
+      "src": "/resources/runtime/audio/leifu_20260920/sfx_thunder_rumble.wav"
     },
     "sfx_wind_gust": {
-      "src": "/resources/runtime/audio/leifu_20260918/sfx_wind_gust.wav"
+      "src": "/resources/runtime/audio/leifu_20260920/sfx_wind_gust.wav"
     },
     "sfx_storm_brew": {
-      "src": "/resources/runtime/audio/leifu_20260918/sfx_storm_brew.wav"
+      "src": "/resources/runtime/audio/leifu_20260920/sfx_storm_brew.wav"
     },
     "sfx_thunder_near": {
       "src": "/resources/runtime/audio/leifu_20260918/sfx_thunder_near.wav"
+    },
+    "sfx_storm_rain": {
+      "src": "/resources/runtime/audio/leifu_20260920/sfx_storm_rain.wav"
+    },
+    "sfx_thunder_attack": {
+      "src": "/resources/runtime/audio/leifu_20260920/sfx_thunder_attack.wav"
     }
   },
   "voice": {
@@ -954,8 +960,8 @@
     }
   },
   "systemSfx": {
-    "questAccepted": "ui_quest_update",
-    "questCompleted": "ui_quest_complete",
+    "questAccepted": "quest_accepted",
+    "questCompleted": "quest_completed",
     "dialogueStart": "dialogue_start",
     "dialogueEnd": "dialogue_end",
     "dialogueAdvance": "ui_dialogue_advance",

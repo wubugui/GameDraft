@@ -25,7 +25,7 @@ verified_by:
   - src/utils/worldReconstruct.test.ts
   - src/rendering/lighting/lightPacking.test.ts
   - tools/editor/editors/tests/test_scene_lights.py
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -63,7 +63,7 @@ native px ─────────────┐                └──> w
 `ground_d` 是正交斜平面、纵深不含透视,而画面上人缩小 6.76 倍时声音只降 3.8 dB——视听脱节。
 所以音频侧把由场景坐标解出的点按 `f ∝ 1/d` 重整了纵深(**只重整听者/声源,不动声学空间的反射面**)。
 后果:**这 6 个场景里,同一个 NPC 的"摆灯坐标"与"发声坐标"不是同一个点**,两边不许互相借用。
-判据与式子在 [footstep-and-spatial-audio](footstep-and-spatial-audio.md) 硬契约 13;
+判据与式子在 [audio-listener-space](audio-listener-space.md);
 其余 30 个场景 `persp === undefined`,两者逐位相同。
 
 ⚠ **灯的作者面与 NPC 坐标只共用「wu」这把尺,不共用原点与朝向。**
@@ -138,6 +138,8 @@ q ↔ M-world 之间就是一个**纯旋转 R**,这一点全项目逐场景验�
 | 灯位 `A.xyz` | **原样就是 wu**。作者面 `pos` 已是世界空间 wu(编辑器 `scene_lights.q_to_world` 折过 R),`packLights` **不做任何缩放** | `lightPacking.ts` |
 | 灯方向 `D.xyz` | **原样透传即可**。作者用编辑视图的三维 gizmo 在**世界空间**调(制作人 2026-08-30 确认),本来就是世界向量 | `lightPacking.ts` |
 | 长度类(`range` / `softeningRadius` / area `size` / 灯体与光晕半径 / 阴影 bias 与厚度) | **原样是 wu,不缩放** | `lightPacking.ts` |
+| 点/聚光强度 `intensity` | 作者面相对 q ⇒ **× `wuPerQUnit²`**(`pointIntensityWu`)。凡进 `1/r²` 的量换空间都要一起换尺,**含强度**;面光(辐亮度)/平行光(照度)与长度无关、原样 | `lightPacking.ts` |
+| 必须留在 q 的灯位(线扫前缀) | `worldWuToQ`:朝向过 Rᵀ **且**除 `wuPerQUnit`,两样都要 | `lightPacking.ts` |
 
 **允许留在 q 的只有三类**,因为它们不是光照计算:
 ① 深度场 march(视线恰好是 q 的 z 轴,反投影回像素取深度);
@@ -167,14 +169,15 @@ q ↔ M-world 之间就是一个**纯旋转 R**,这一点全项目逐场景验�
 **机械闸**:`src/rendering/lighting/worldSpaceShading.test.ts` 两头都锁 ——
 `lc*Light` 的法线实参必须是 `n`(出现 `nW` 就红)、`probeE`/`gatherRT` 必须收 `nQ`。
 
-### 当前欠账(2026-08-30 收口后)
+### 当前欠账(2026-08-30 收口后;2026-09-23 复核补两条 ❌)
 
 | 位置 | 状态 |
 |---|---|
-| 场景灯循环 / sDay 太阳项 | ✅ 用法线图直出的 `n`(它已是世界) |
+| 场景灯循环 | ✅ 用法线图直出的 `n`(它已是世界);sDay 太阳项已随 S_day 搬去离线端 |
 | 角色灯循环 | ✅ 同上 |
 | 角色 GI(`probeE` / `gatherRT`) | ✅ 用 `nQ = Rᵀ·n`,与 q 空间烘的球谐对齐 |
-| 角色太阳项 | ✅ 用 `nQ` 配 `uSunDirQ` —— 它与 probe 同源,同在 q |
+| 角色 F2「测试太阳」 | ❌ **欠账**:`dot(nQ, uSunDirQ)` 是拿 q 量**算光**(方向由 q 里的方位/仰角拼,仰角相对屏幕上),不是查表;缺省关、只有 F2 开。应改为世界方向配 `n` |
+| 实体影浓度 CPU 估算(`entityShadowBinding`) | ❌ **欠账**:角色点过 R、灯位只除 `wuPerQUnit` ——停在「世界朝向 + q 尺度」混合态(上文「朝向转了、尺度没转」否掉的那个)。应在 wu 里算、I 过 `pointIntensityWu` |
 | 长度单位 | ✅ 灯位 / range / 软化 / 面光尺寸 / 灯体与光晕半径全是 **wu**;`P = R·q × wuPerQUnit` |
 | 点/聚光 intensity | ✅ 作者面相对 q,打包处 × `wuPerQUnit²`(`lightPacking.pointIntensityWu`)。**2026-08-30 ~ 09-10 缺席**:r 换了尺、I 没换,灯全灭零报错 |
 | 线扫前缀的灯位 | ✅ `lightPacking.worldWuToQ`(朝向过 Rᵀ **且**除 `wuPerQUnit`)。**2026-08-30 ~ 09-10 只转朝向**:带影灯全被判成被挡 |

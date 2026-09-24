@@ -76,6 +76,41 @@ const PHASE_SWITCH_WAIT_MS = 60000;
 const AREA_ROLES = ['emit', 'range'];
 const AREA_RGB = { emit: [110, 205, 255], range: [255, 209, 102] };
 const AREA_LABEL = { emit: '发射区域', range: '范围区域' };
+/**
+ * 表面材质区（布置库 `scenes[场景].surfaces`，**场景级、所有时段共用**）：水面 / 湿地。落雷与所有标了反光的灯在这里
+ * 照出倒影与高光；落在水面上的雷改放水面电弧、水花（发射器 `onSurface`）。本台是唯一作者面（主编辑器只读）。
+ * 顶点键 `area:s<第几块>:<第几个点>`，与粒子区域的顶点共用一套拖拽 / 加点 / 删点；拉框工具 `areaWater` / `areaWet` 拉出新的一块。
+ */
+const SURF_RGB = { water: [90, 160, 255], wet: [120, 220, 170] };
+const SURF_LABEL = { water: '水面', wet: '湿地' };
+/** 与 `tools/editor/shared/vfx_placements.py` 的 SURFACE_ORDER / `types.ts` 的 `VfxSurfaceRegionDef` 同序 */
+const SURFACE_ORDER = ['id', 'kind', 'polygon', 'reflect', 'roughness', 'feather'];
+/** 与运行时 `surfaceMask.ts` 的 SURFACE_DEFAULTS 同值（检视器里当占位提示；不写进文件） */
+const SURFACE_DEFAULTS = {
+  ground: { reflect: 1, roughness: 0.45, detail: 1, ripple: 1 },
+  water: { reflect: 1, roughness: 0.08 }, wet: { reflect: 1, roughness: 0.25 }, feather: 24,
+};
+/** 全局缺省表面材质（库顶层 `defaultSurface`）的键序（与 `vfx_placements.DEFAULT_SURFACE_ORDER` 同序） */
+const DEFAULT_SURFACE_ORDER = ['reflect', 'roughness', 'detail', 'ripple'];
+/** 拉框工具 → 拉出来的是哪一种（粒子区域两种写活动布置；表面两种新建一块表面区） */
+const AREA_TOOL_ROLE = { areaEmit: 'emit', areaRange: 'range', areaWater: 'water', areaWet: 'wet' };
+function isSurfRole(role) { return /^s\d+$/.test(role || ''); }
+function isSurfDraftRole(role) { return role === 'water' || role === 'wet'; }
+/** 当前场景的表面区（只读视图；行对象是库里的原对象） */
+function sceneSurfaces(lib) {
+  const L = lib || S.lib, sid = S.scene && S.scene.id;
+  const ent = sid && L && L.scenes && typeof L.scenes === 'object' ? L.scenes[sid] : null;
+  return ent && Array.isArray(ent.surfaces) ? ent.surfaces : [];
+}
+function surfOfRole(role) { return isSurfRole(role) ? sceneSurfaces()[+role.slice(1)] || null : null; }
+function roleRgb(role) {
+  if (isSurfRole(role)) { const r = surfOfRole(role); return SURF_RGB[r && r.kind] || SURF_RGB.water; }
+  return SURF_RGB[role] || AREA_RGB[role] || [200, 200, 200];
+}
+function roleLabel(role) {
+  if (isSurfRole(role)) { const r = surfOfRole(role); return `${SURF_LABEL[r && r.kind] || '表面区'}「${r ? r.id : ''}」`; }
+  return SURF_LABEL[role] || AREA_LABEL[role] || role;
+}
 /** 3D 里区域折线沿边的采样步长（画面 wu）与离地抬高（wu）：贴着地形走，又不被地面网格吃掉 */
 const AREA_STEP = 12;
 const AREA_LIFT = 2;
@@ -92,6 +127,8 @@ const S = {
   confineStash: {},
   /** 正在拉的区域框（画面坐标两角）；null = 没在拉 */
   areaDraft: null,
+  /** 画面上显示并可编辑本场景的表面材质区（水面 / 湿地）；UI 态，不进历史 */
+  surfEdit: false,
   rt: null, rtErr: '', geo: null, shellField: null, space: null, wind: null, area: null, simInput: null,
   sim: null, simErr: '', simTime: 0, frames: 0, playing: false, speed: 1, seed: 1234,
   evCount: { sound: 0, field: 0, hit: 0, flockState: 0 }, lastFlock: '',
@@ -129,6 +166,14 @@ const S = {
     /** 关窗选了「不保存」：已把盘上那份推给游戏，之后一发工作态都不许再推 */
     discarded: false },
   cursor: '',
+  /**
+   * 雷电样式（`lightning.js` 那一节 + `/api/lightning*`）：`lib` = 样式库草稿（改参数 / 另存 / 删都写它），`baseLib` = 上次读到 / 套用后的盘上那份，
+   * `assign` = 待换样式的效果 `{效果 id: 样式 id}`。草稿与 `assign` 进撤销栈（与 doc / 布置库同一个复合快照），
+   * 但脏态单独记（`lsDirty`、「●未套用」）：它们只有「生成并套用」才落盘，Ctrl+S 不管。
+   * `effects` = 服务端给的每份雷电效果（样式 / 种子 / 组 / 产物是否最新），`spec` / `presets` / `kinds` = 参数表 / 内置预设 / 形状模型名。
+   */
+  ls: { loaded: false, err: '', lib: null, baseLib: null, assign: {}, clean: '', spec: {}, presets: [], kinds: {}, effects: [], usage: {}, path: '' },
+  lsDirty: false,
 };
 let v3 = null;
 let v2 = null;
@@ -173,7 +218,14 @@ function changedPlacementLibrary() {
       if (phase) (ent.variants || (ent.variants = {}))[phase] = a || [];
       else ent.base = a || [];
     }
+    // 表面材质区是场景级的一份：改了就整份提交（空数组 = 清空）
+    if (canonJson(before.surfaces || []) !== canonJson(after.surfaces || [])) {
+      (out.scenes[sid] || (out.scenes[sid] = {})).surfaces = Array.isArray(after.surfaces) ? after.surfaces : [];
+    }
   }
+  // 全局缺省表面材质（库顶层，所有场景一份）：改了就整份提交（空对象 = 回运行时缺省）
+  const dsAfter = (S.lib && S.lib.defaultSurface) || {};
+  if (canonJson(baseline.defaultSurface || {}) !== canonJson(dsAfter)) out.defaultSurface = dsAfter;
   return out;
 }
 /** 只接回本次提交的份，防止外部变化污染未编辑范围的撤销快照和脏态基线。 */
@@ -183,6 +235,15 @@ function acceptSavedPlacements(saved, changes, source = S.lib) {
     const target = local.scenes[sid] || (local.scenes[sid] = {});
     if ('base' in ent) target.base = libRows(sid, '', saved);
     for (const phase of Object.keys(ent.variants || {})) (target.variants || (target.variants = {}))[phase] = libRows(sid, phase, saved);
+    if ('surfaces' in ent) {
+      const sv = saved && saved.scenes && saved.scenes[sid] ? saved.scenes[sid].surfaces : null;
+      if (Array.isArray(sv) && sv.length) target.surfaces = JSON.parse(JSON.stringify(sv)); else delete target.surfaces;
+    }
+  }
+  if ('defaultSurface' in changes) {
+    const ds = saved && saved.defaultSurface;
+    if (ds && typeof ds === 'object' && Object.keys(ds).length) local.defaultSurface = JSON.parse(JSON.stringify(ds));
+    else delete local.defaultSurface;
   }
   return local;
 }
@@ -196,8 +257,11 @@ function refreshDirty() {
   S.docDirty = docKey() !== S.cleanDoc;
   S.libDirty = libKey() !== S.cleanLib;
   S.dirty = S.docDirty || S.libDirty;
+  S.lsDirty = !!S.ls.loaded && lsKey() !== S.ls.clean;
   renderDocState();
 }
+/** 雷电样式的工作态（草稿样式库 + 待换样式清单）的规范串；与 `S.ls.clean` 比出「●未套用」 */
+function lsKey() { return canonJson({ lib: S.ls.lib, assign: S.ls.assign || {} }); }
 function touchDoc() { S.rev++; }
 /** 焦点还在输入框里、值改了没提交：失焦让 `change` 同步写进 doc（存盘 / 关窗前调） */
 function commitFocusedInput() {
@@ -253,12 +317,14 @@ function rowsArr(sid, phase) {
 }
 /** 空的份 / 空场景剥掉（没配 = 没有，不留空壳——否则加一条再删掉，库就一直"脏"着） */
 function pruneLib() {
+  if (S.lib && S.lib.defaultSurface && typeof S.lib.defaultSurface === 'object' && !Object.keys(S.lib.defaultSurface).length) delete S.lib.defaultSurface;
   const sc = S.lib && S.lib.scenes;
   if (!sc || typeof sc !== 'object') return;
   for (const sid of Object.keys(sc)) {
     const ent = sc[sid];
     if (!ent || typeof ent !== 'object') continue;
     if (Array.isArray(ent.base) && !ent.base.length) delete ent.base;
+    if (Array.isArray(ent.surfaces) && !ent.surfaces.length) delete ent.surfaces;
     if (ent.variants && typeof ent.variants === 'object') {
       for (const k of Object.keys(ent.variants)) if (Array.isArray(ent.variants[k]) && !ent.variants[k].length) delete ent.variants[k];
       if (!Object.keys(ent.variants).length) delete ent.variants;
@@ -317,6 +383,7 @@ function activePlacement() {
 }
 function stashKey(id) { return `${S.scene ? S.scene.id : ''}\n${S.phase}\n${id}`; }
 function areaPoly(p, role) {
+  if (isSurfRole(role)) { const r = surfOfRole(role); return r && isPoly(r.polygon) ? r.polygon : null; }
   if (!p) return null;
   if (role === 'range') return p.confine && typeof p.confine === 'object' && isPoly(p.confine.area) ? p.confine.area : null;
   return isPoly(p.area) ? p.area : null;
@@ -656,7 +723,7 @@ function rebuildSim() {
     if (!snap.emitters.length && !hasBeams) { S.simErr = '还没有发射器也没有光柱'; return; }
     // 薄片绑的可燃物模板：与 VfxSystem 同形（id → resolveBurnable 清洗后的模板）；表没读到 = null（纸不可燃，状态栏说）
     S.sim = new S.rt.vfxSim.VfxInstanceSim(inp.id, snap, a, inp.seed, S.space, inp.countScale,
-      { area: inp.area, confine: inp.confine, burnTemplates: S.burn.map });
+      { area: inp.area, confine: inp.confine, burnTemplates: S.burn.map, surfaceKind: previewSurfaceKind(effectiveAnchor()) });
   } catch (e) {
     S.simErr = String(e && e.message || e);
   }
@@ -1053,6 +1120,17 @@ function objects() {
       });
     }
   }
+  // 表面材质区的顶点（打开「显示并编辑表面材质区」时）：与粒子区域顶点同一套拖 / 加点 / 删点
+  if (S.cal && S.surfEdit) {
+    sceneSurfaces().forEach((r, ri) => {
+      if (!r || !isPoly(r.polygon)) return;
+      const role = `s${ri}`, c = roleRgb(role);
+      r.polygon.forEach((pt, i) => {
+        const key = `area:${role}:${i}`, sel = S.sel.key === key;
+        out.push({ key, label: sel ? `${roleLabel(role)} · 顶点 ${i + 1}` : '', pos: vertexWorld(pt), color: [c[0] / 255, c[1] / 255, c[2] / 255, 1], size: 7, selected: sel, vertex: true });
+      });
+    });
+  }
   // 光柱的两个把手：起点（带名字）/ 终点（选中时才写名字）。拖起点 / 终点改的是效果里这根光柱的 from / to
   for (const b of (S.doc.beams || [])) {
     if (!b || !b.id) continue;
@@ -1353,8 +1431,9 @@ function radiusOf(key) {
 /** 区域顶点（画面点）→ 世界地面点：与运行时的判据同一个点（"粒子正下方的地面点"落在画面上的位置） */
 function vertexWorld(pt) { return S.cal ? S.cal.sceneToWorldGround(pt[0], pt[1]) : [0, 0, 0]; }
 function areaKey(key) {
-  const m = /^area:(emit|range):(\d+)$/.exec(key || '');
+  const m = /^area:(emit|range|s\d+):(\d+)$/.exec(key || '');
   if (!m) return null;
+  if (isSurfRole(m[1]) && !S.surfEdit) return null;
   const p = activePlacement(), poly = areaPoly(p, m[1]), i = +m[2];
   return poly && i < poly.length ? { role: m[1], i, p, poly, pt: poly[i] } : null;
 }
@@ -1368,7 +1447,7 @@ function gizmoPivot() {
   }
   const ak = areaKey(key);
   // 顶点只在地上挪：`slot` = X / Z 两根轴 + XZ 面 + 贴地中心（2D 原画里同一份配置投到画上）
-  if (ak) return S.cal ? { pivot: vertexWorld(ak.pt), kind: 'slot', n: 1, label: `${AREA_LABEL[ak.role]} · 顶点 ${ak.i + 1} · ${ak.p.id}` } : null;
+  if (ak) return S.cal ? { pivot: vertexWorld(ak.pt), kind: 'slot', n: 1, label: `${roleLabel(ak.role)} · 顶点 ${ak.i + 1}${ak.p && !isSurfRole(ak.role) ? ` · ${ak.p.id}` : ''}` } : null;
   if (key === 'player') return S.player.world ? { pivot: S.player.world.slice(), kind: 'slot', n: 1, label: '玩家标记' } : null;
   const bk = beamKeyOf(key);
   if (bk) {
@@ -1395,7 +1474,7 @@ function gizmoPivot() {
 function gizmoLabel() {
   const key = S.sel.key;
   if (key === 'anchor') return attachOn() ? '挪角色挂点' : activePlacement() ? '移动布置锚点' : '移动锚点';
-  const ak = areaKey(key); if (ak) return `挪${AREA_LABEL[ak.role]}顶点`;
+  const ak = areaKey(key); if (ak) return `挪${roleLabel(ak.role)}顶点`;
   if (key === 'player') return '移动玩家';
   const bk = beamKeyOf(key); if (bk) return `挪光柱${bk.which === 'from' ? '起点' : '终点'}`;
   if (/^probe:/.test(key)) return '移动刺激点';
@@ -1422,7 +1501,7 @@ function gizmoBase(key) {
     return { kind: 'anchor', pos: a.slice(), anchor: JSON.parse(JSON.stringify(an)), surfPos: surfPos.slice(), h: an.h || 0 };
   }
   const ak = areaKey(key);
-  if (ak) return S.cal ? { kind: 'vertex', role: ak.role, i: ak.i, id: ak.p.id, pos: vertexWorld(ak.pt).slice(), scene: ak.pt.slice() } : null;
+  if (ak) return S.cal ? { kind: 'vertex', role: ak.role, i: ak.i, id: ak.p && !isSurfRole(ak.role) ? ak.p.id : '', pos: vertexWorld(ak.pt).slice(), scene: ak.pt.slice() } : null;
   if (key === 'player') return S.player.world ? { kind: 'player', pos: S.player.world.slice() } : null;
   const bk = beamKeyOf(key);
   if (bk) {
@@ -2218,6 +2297,7 @@ function writeArea(p, role, pts) {
   }
 }
 function clearArea(role) {
+  if (isSurfRole(role)) return deleteSurface(+role.slice(1));
   const p = activePlacement(); if (!p || !areaPoly(p, role)) return false;
   const ok = editPlacement(p.id, `清除${AREA_LABEL[role]}`, (r) => writeArea(r, role, null));
   if (/^area:/.test(S.sel.key)) S.sel.key = '';
@@ -2238,6 +2318,10 @@ function setConfine(on) {
   return editPlacement(p.id, '去掉限定（范围区域先收着）', (r) => { S.confineStash[key] = clone(r.confine); delete r.confine; });
 }
 function areaToolBegin(role) {
+  if (isSurfDraftRole(role)) {
+    if (!S.scene || !S.cal) { status('这个场景没有深度载荷，拉不了表面区', 'warn'); return false; }
+    return libEditable();
+  }
   if (!S.doc || !S.cal) { status('这个场景没有深度载荷，拉不了区域', 'warn'); return false; }
   if (S.libErr) { libEditable(); return false; }
   if (!activePlacement()) { status(`本场景本时段没有布置这个效果：先点左栏「把当前效果布置到这里」，再拉${AREA_LABEL[role]}`, 'warn'); return false; }
@@ -2250,6 +2334,7 @@ function setAreaDraft(role, a, b) {
 /** 松手：拖出来的框 = 那一块区域（4 个点，画面坐标）。太小的框当手滑，不写 */
 function commitAreaDraft() {
   const d = S.areaDraft; S.areaDraft = null;
+  if (d && isSurfDraftRole(d.role)) return commitSurfaceDraft(d);
   const p = activePlacement();
   if (!d || !p) { draw(); return false; }
   const x0 = Math.min(d.a[0], d.b[0]), x1 = Math.max(d.a[0], d.b[0]), y0 = Math.min(d.a[1], d.b[1]), y1 = Math.max(d.a[1], d.b[1]);
@@ -2267,6 +2352,14 @@ function commitAreaDraft() {
 }
 /** 双击边线加点：插在 `after` 之后，新点立刻选中（gizmo 马上在它身上） */
 function insertAreaVertex(role, after, pt) {
+  if (isSurfRole(role)) {
+    const ri = +role.slice(1);
+    const ok = editSurfaces(`${roleLabel(role)}加点`, (arr) => {
+      const r = arr[ri]; if (r && isPoly(r.polygon)) r.polygon.splice(after + 1, 0, [round1(pt[0]), round1(pt[1])]);
+    });
+    if (ok) select(`area:${role}:${after + 1}`);
+    return ok;
+  }
   const p = activePlacement(); if (!p || !areaPoly(p, role)) return false;
   const ok = editPlacement(p.id, `${AREA_LABEL[role]}加点`, (r) => {
     const poly = areaPoly(r, role); if (poly) poly.splice(after + 1, 0, [round1(pt[0]), round1(pt[1])]);
@@ -2277,6 +2370,7 @@ function insertAreaVertex(role, after, pt) {
 /** 删点；只剩 3 个时再删 = 删掉整块（先确认） */
 async function deleteAreaVertexKey(key) {
   const ak = areaKey(key); if (!ak) return false;
+  if (isSurfRole(ak.role)) return deleteSurfaceVertex(ak, key);
   if (ak.poly.length <= 3) {
     const sure = await confirmDialog(`删掉整块${AREA_LABEL[ak.role]}？`,
       `只剩 3 个顶点，再删就不成多边形了。${ak.role === 'range' ? '删掉范围区域 = 退回用发射区域（限定照开）' : '删掉发射区域 = 纸钱铺撒退成锚点周围的圆盘'}`);
@@ -2285,7 +2379,7 @@ async function deleteAreaVertexKey(key) {
   }
   // 选中的是同一块里**后面**的顶点：删掉前面一个，它的下标跟着减一——原来选中键原样不动，指到了原来的下一个点，
   // gizmo 跳过去，接着按 Delete 删的是另一个点
-  const cur = /^area:(emit|range):(\d+)$/.exec(S.sel.key || '');
+  const cur = /^area:(emit|range|s\d+):(\d+)$/.exec(S.sel.key || '');
   const ok = editPlacement(ak.p.id, `${AREA_LABEL[ak.role]}删点`, (r) => { const poly = areaPoly(r, ak.role); if (poly) poly.splice(ak.i, 1); });
   if (ok && cur && cur[1] === ak.role) {
     const idx = +cur[2];
@@ -2300,9 +2394,11 @@ async function deleteAreaVertexKey(key) {
  * 3D 与 2D 共用，只差 `projScene(sx, sy) → 画布 px`。返回 `{role, after, pt(画面点), d}` 或 null。
  */
 function areaEdgeHit(projScene, mx, my, tol) {
-  const p = activePlacement(); if (!p) return null;
+  const p = activePlacement();
+  const roles = (p ? AREA_ROLES : []).concat(S.surfEdit ? sceneSurfaces().map((_, i) => `s${i}`) : []);
+  if (!roles.length) return null;
   let best = null;
-  for (const role of AREA_ROLES) {
+  for (const role of roles) {
     const poly = areaPoly(p, role); if (!poly) continue;
     for (let j = 0; j < poly.length; j++) {
       const A = poly[j], B = poly[(j + 1) % poly.length];
@@ -2333,6 +2429,9 @@ function areaEdgeHit(projScene, mx, my, tol) {
 let areaCache = { key: '', contour: null };
 function areaShapes() {
   const out = { polys: [], contour: null, draft: null };
+  if (S.surfEdit) {
+    sceneSurfaces().forEach((r, i) => { if (r && isPoly(r.polygon)) out.polys.push({ role: `s${i}`, poly: r.polygon, surf: r.kind === 'wet' ? 'wet' : 'water' }); });
+  }
   const p = activePlacement();
   if (p) {
     for (const role of AREA_ROLES) { const poly = areaPoly(p, role); if (poly) out.polys.push({ role, poly }); }
@@ -2378,7 +2477,7 @@ function areaLines3() {
     }
     out.push({ pts: new Float32Array(arr), color: [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, alpha] });
   };
-  for (const s of sh.polys) ring(s.poly, AREA_RGB[s.role], 0.95, s.role === 'emit');
+  for (const s of sh.polys) ring(s.poly, roleRgb(s.role), 0.95, s.role === 'emit');
   if (sh.contour && sh.contour.segs.length) {
     const arr = [], c = sh.contour.segs;
     for (let i = 0; i + 3 < c.length; i += 4) {
@@ -2388,8 +2487,112 @@ function areaLines3() {
     const rgb = AREA_RGB.range;
     out.push({ pts: new Float32Array(arr), color: [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, 0.5] });
   }
-  if (sh.draft) ring(sh.draft.poly, AREA_RGB[sh.draft.role], 0.8, true);
+  if (sh.draft) ring(sh.draft.poly, roleRgb(sh.draft.role), 0.8, true);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// 表面材质区（水面 / 湿地；场景级、所有时段共用）
+// ---------------------------------------------------------------------------
+/** 当前场景表面区的**真数组**（没有就建）——只许在写入闭包里调（删空的由 `pruneLib` 剥掉） */
+function surfacesArr() {
+  if (!S.lib || typeof S.lib !== 'object') S.lib = { scenes: {} };
+  if (!S.lib.scenes || typeof S.lib.scenes !== 'object') S.lib.scenes = {};
+  const ent = S.lib.scenes[S.scene.id] || (S.lib.scenes[S.scene.id] = {});
+  if (!Array.isArray(ent.surfaces)) ent.surfaces = [];
+  return ent.surfaces;
+}
+/** 一次表面区编辑（与布置同一条历史 / 脏态 / 联动）；写完逐块收键序 */
+function editSurfaces(label, fn) {
+  if (!S.scene) return false;
+  return editLib(label, () => { const arr = surfacesArr(); fn(arr); for (const r of arr) if (r && typeof r === 'object') orderKeys(r, SURFACE_ORDER); });
+}
+function uniqueSurfaceId(kind) {
+  const used = new Set(sceneSurfaces().map((r) => r && r.id));
+  let n = 1; while (used.has(`${kind}_${n}`)) n++;
+  return `${kind}_${n}`;
+}
+/** 松手：拖出来的框 = 新的一块表面区（4 个点，画面坐标）；太小的框当手滑 */
+function commitSurfaceDraft(d) {
+  const x0 = Math.min(d.a[0], d.b[0]), x1 = Math.max(d.a[0], d.b[0]), y0 = Math.min(d.a[1], d.b[1]), y1 = Math.max(d.a[1], d.b[1]);
+  if (x1 - x0 < 4 || y1 - y0 < 4) { status(`框太小（${fmt(x1 - x0, 0)} × ${fmt(y1 - y0, 0)} wu），没写`, 'warn'); draw(); return false; }
+  const kind = d.role, id = uniqueSurfaceId(kind);
+  const polygon = [[round1(x0), round1(y0)], [round1(x1), round1(y0)], [round1(x1), round1(y1)], [round1(x0), round1(y1)]];
+  const ok = editSurfaces(`拉一块${SURF_LABEL[kind]}「${id}」`, (arr) => { arr.push({ id, kind, polygon }); });
+  setTool('select');
+  if (ok) {
+    S.surfEdit = true;
+    select(`area:s${sceneSurfaces().length - 1}:0`);
+    status(`${SURF_LABEL[kind]}「${id}」：${fmt(x1 - x0, 0)} × ${fmt(y1 - y0, 0)} wu（整个场景所有时段共用；拖顶点贴着原画里的${SURF_LABEL[kind]}描边 · 双击边线加点）`, 'ok');
+  }
+  return ok;
+}
+/** 删一块（可撤） */
+function deleteSurface(ri) {
+  const r = sceneSurfaces()[ri]; if (!r) return false;
+  const ok = editSurfaces(`删${SURF_LABEL[r.kind] || '表面区'}「${r.id}」`, (arr) => { arr.splice(ri, 1); });
+  if (/^area:s\d+:/.test(S.sel.key)) S.sel.key = '';
+  renderAll();
+  return ok;
+}
+/** 删表面区的一个顶点；只剩 3 个时再删 = 删掉整块（先确认） */
+async function deleteSurfaceVertex(ak, key) {
+  const ri = +ak.role.slice(1);
+  if (ak.poly.length <= 3) {
+    const sure = await confirmDialog(`删掉整块${roleLabel(ak.role)}？`, '只剩 3 个顶点，再删就不成多边形了。');
+    if (!sure) return false;
+    return deleteSurface(ri);
+  }
+  const cur = /^area:(s\d+):(\d+)$/.exec(S.sel.key || '');
+  const ok = editSurfaces(`${roleLabel(ak.role)}删点`, (arr) => { const r = arr[ri]; if (r && isPoly(r.polygon)) r.polygon.splice(ak.i, 1); });
+  if (ok && cur && cur[1] === ak.role) {
+    const idx = +cur[2];
+    if (idx === ak.i) S.sel.key = '';
+    else if (idx > ak.i) S.sel.key = `area:${ak.role}:${idx - 1}`;
+  } else if (S.sel.key === key) S.sel.key = '';
+  renderAll();
+  return ok;
+}
+/** 改一块的一个量（检视器用；`v == null` = 删掉那个键、回缺省） */
+function setSurfaceField(ri, key, v, label) {
+  const r = sceneSurfaces()[ri]; if (!r) return false;
+  return editSurfaces(`改${SURF_LABEL[r.kind] || '表面区'}「${r.id}」的${label}`, (arr) => {
+    const x = arr[ri]; if (!x) return;
+    if (v == null || v === '') delete x[key]; else x[key] = v;
+  });
+}
+/** 全局缺省表面材质的一个量（`v == null` = 删掉那个键、回运行时缺省）；所有场景一份 */
+function setDefaultSurfaceField(key, v, label) {
+  return editLib(`改没画区域的地方的${label}（所有场景）`, () => {
+    if (!S.lib || typeof S.lib !== 'object') S.lib = { scenes: {} };
+    const d = S.lib.defaultSurface && typeof S.lib.defaultSurface === 'object' ? S.lib.defaultSurface : (S.lib.defaultSurface = {});
+    if (v == null || v === '') delete d[key]; else d[key] = v;
+    orderKeys(d, DEFAULT_SURFACE_ORDER);
+  });
+}
+/** 改一块的 id（本场景里唯一；不许空） */
+function renameSurface(ri, v) {
+  const r = sceneSurfaces()[ri]; const id = String(v || '').trim();
+  if (!r || !id || id === r.id) return false;
+  if (sceneSurfaces().some((x, i) => i !== ri && x && x.id === id)) { status(`本场景已经有叫「${id}」的表面区`, 'warn'); renderInspector(); return false; }
+  return editSurfaces(`表面区「${r.id}」改名为「${id}」`, (arr) => { if (arr[ri]) arr[ri].id = id; });
+}
+function setSurfEdit(on) {
+  S.surfEdit = !!on;
+  if (!S.surfEdit && /^area:s\d+:/.test(S.sel.key)) S.sel.key = '';
+  if (!S.surfEdit && isSurfDraftRole(AREA_TOOL_ROLE[S.tool])) setTool('select');
+  renderInspector(); draw();
+}
+/** 本地预览：锚点落在哪种表面（与 `VfxSystem.surfaceKindAt` 同一个判据：盖着它的最后一块区是水面才算 water） */
+function previewSurfaceKind(anchor) {
+  const pip = S.rt && S.rt.vfxConfine && S.rt.vfxConfine.pointInPolygon;
+  if (!pip || !anchor || !Number.isFinite(anchor.x) || !Number.isFinite(anchor.y)) return 'ground';
+  const rs = sceneSurfaces();
+  for (let i = rs.length - 1; i >= 0; i--) {
+    const r = rs[i];
+    if (r && isPoly(r.polygon) && pip(r.polygon, anchor.x, anchor.y)) return r.kind === 'water' ? 'water' : 'ground';
+  }
+  return 'ground';
 }
 
 // ---- 发射器列表操作
@@ -2538,8 +2741,14 @@ function select(key) {
 function setTool(t) {
   S.tool = t;
   if (!/^area/.test(t)) S.areaDraft = null;
-  if (/^area/.test(t) && S.doc && !activePlacement()) {
-    status(`本场景本时段没有布置这个效果：先点左栏「把当前效果布置到这里」，再拉${AREA_LABEL[t === 'areaEmit' ? 'emit' : 'range']}`, 'warn');
+  const tr = AREA_TOOL_ROLE[t];
+  if ((tr === 'emit' || tr === 'range') && S.doc && !activePlacement()) {
+    status(`本场景本时段没有布置这个效果：先点左栏「把当前效果布置到这里」，再拉${AREA_LABEL[tr]}`, 'warn');
+  }
+  if (isSurfDraftRole(tr)) {
+    // 拉表面区就把表面区显示出来（拉完要能看见、能拖顶点）
+    if (!S.surfEdit) { S.surfEdit = true; renderInspector(); }
+    status(`拉一块${SURF_LABEL[tr]}：按住拖一个框（之后拖顶点改形状 · 双击边线加点 · 选中顶点 Delete / 右键删点）。Esc 退出`, '');
   }
   if (t === 'fire' && S.doc) {
     // 武装火工具就先说清楚放了火能点着什么（绑了模板但装不上要说为什么），别等点下去才发现什么都不着
@@ -2609,6 +2818,8 @@ async function openEffect(id, opts) {
     if (o.placeId) S.placeId = o.placeId;
     // 重开效果 = 重读可燃物模板表（燃烧工作台可能刚改过模板）：第一次建模拟就按盘上最新的模板烧；读不到照旧开
     await refreshBurnTemplates({ rebuild: false });
+    // 雷电效果：重读「每份效果的产物是不是最新」那张表（复制 / 别处刚生成过，开页时读的那张已经旧了）
+    if (S.doc && S.doc.generator) await refreshLightningRows();
     rebuildSim();
     if (o.placeId && activePlacement() && activePlacement().id === o.placeId) S.sel.key = 'anchor';
     renderAll();
@@ -2684,7 +2895,7 @@ async function saveEffect() {
   if (!S.doc && !S.libDirty) return;
   if (S.busy) { status('装载中不存盘（doc 与画布还没对上）', 'warn'); return; }
   if (history.inDrag()) { status('手势没松开，不存盘', 'warn'); return; }
-  if (!S.dirty) { status('没有未保存的改动', 'ok'); return; }
+  if (!S.dirty) { status(S.lsDirty ? '雷电样式的改动要点检视器里「生成并套用」才落盘（Ctrl+S 只存效果与布置库）' : '没有未保存的改动', S.lsDirty ? 'warn' : 'ok'); return; }
   const revAt = S.rev;
   const id = S.doc ? S.doc.id : '';
   return runIO(async () => {
@@ -2722,6 +2933,7 @@ async function saveEffect() {
     // 存盘**不清撤销栈**：存完才发现刚才删错了布置 / 拉错了区域，Ctrl+Z 还得回得去（撤回来就又是未保存）
     if (!sameDoc || !sameLib) { touchDoc(); rebuildSim(); }
     await refreshEffects();
+    if (docRes && S.doc && S.doc.generator) await refreshLightningRows();
     if (S.doc) el('effectSel').value = S.doc.id;
     renderAll(); schedulePublish();
     const warns = [].concat((docRes && docRes.warnings) || [], (libRes && libRes.warnings) || []);
@@ -2780,6 +2992,89 @@ function rebaseHistoryOnDoc(doc) {
   rebase(history.redoStack);
   renderDocState();
 }
+// ---------------------------------------------------------------------------
+// 雷电样式（`lightning.js` 那一节的读写；数据规矩在 tools/vfx_workbench/lightning.py）
+// ---------------------------------------------------------------------------
+/** 服务端那份（`/api/lightning` 或套用的回包）装进 `S.ls`：草稿 = 盘上那份、待换清单清空、脏态基线重记 */
+function acceptLightningState(j) {
+  const L = S.ls;
+  L.spec = j.spec || {}; L.presets = j.presets || []; L.kinds = j.kinds || {};
+  L.effects = Array.isArray(j.effects) ? j.effects : []; L.usage = j.usage || {};
+  L.path = j.libraryPath || ''; L.err = j.libraryErr || '';
+  L.baseLib = j.library ? clone(j.library) : null;
+  L.lib = j.library ? clone(j.library) : null;
+  L.assign = {};
+  L.loaded = true;
+  L.clean = lsKey();
+}
+async function loadLightning() {
+  try { acceptLightningState(await API.json('/api/lightning')); }
+  catch (e) { S.ls.err = String(e && e.message || e); S.ls.loaded = true; S.ls.clean = lsKey(); }
+  refreshDirty();
+}
+/** 只刷新「每份效果的产物是不是最新」那张表（存了效果之后种子 / 组可能变了），不动草稿 */
+async function refreshLightningRows() {
+  try {
+    const j = await API.json('/api/lightning');
+    S.ls.effects = Array.isArray(j.effects) ? j.effects : [];
+    S.ls.usage = j.usage || {};
+  } catch (e) { /* 表不刷新不拦着干活 */ }
+}
+/**
+ * 「套用」：样式库草稿（带基线）+ 待换清单交给服务端，它存样式库、把受影响的效果全部按样式重新套用并落盘。
+ * 当前效果有没存的改动就不做（服务端要重写这份效果文件，页面上的改动会对不上）。完了重开当前效果（盘上那份）并推给游戏。
+ */
+async function applyLightning() {
+  commitFocusedInput();
+  const L = S.ls;
+  if (!L.lib || L.err) { status(`样式库读不懂，不能套用：${L.err || '还没读到'}`, 'err'); return; }
+  if (S.busy) { status('装载中，等一下', 'warn'); return; }
+  if (history.inDrag()) { status('手势没松开', 'warn'); return; }
+  if (S.docDirty) { status('当前效果有没保存的改动：先 Ctrl+S 再「套用」（套用会重写效果文件）', 'warn'); return; }
+  return runIO(async () => {
+    setBusy(true, '套用雷电样式…');
+    let r = null, err = '';
+    try {
+      r = await API.post('/api/lightning/apply', { library: L.lib, base: L.baseLib, assign: L.assign || {} });
+    } catch (e) { err = String(e && e.message || e); }
+    setBusy(false);
+    if (err) { status(`没套用：${err}`, 'err'); return; }
+    acceptLightningState(r);
+    const bad = (r.results || []).filter((x) => !x.ok);
+    await refreshEffects();
+    const id = S.doc ? S.doc.id : '';
+    if (id) await openEffect(id, { force: true, keepScene: true });
+    refreshDirty(); renderAll();
+    const done = (r.results || []).filter((x) => x.ok).length;
+    if (bad.length) status(`套用了 ${done} 个；${bad.length} 个没成：${bad.map((x) => `${x.id}：${x.err}`).join('；')}`, 'err');
+    else status(`已套用 ${done} 个效果、存了样式库 ${r.libraryPath || ''}${done ? '（当前这道已推给游戏；同组别的几道游戏里刷新后生效）' : ''}`, 'ok');
+  });
+}
+/**
+ * 「把别的层同步给同组」：这份效果样式以外的那几层（落点光团、碎石、水花……）抄给同组其余几份（服务端落盘，
+ * 带基线核对）。当前效果有没存的改动就不做（抄的是盘上那份）。
+ */
+async function syncLightningGroup() {
+  commitFocusedInput();
+  if (!S.doc || !S.doc.generator || !S.doc.generator.group) { status('这份效果不在雷电样式组里', 'warn'); return; }
+  if (S.busy) { status('装载中，等一下', 'warn'); return; }
+  if (S.docDirty) { status('当前效果有没保存的改动：先 Ctrl+S 再同步（同步抄的是盘上那份）', 'warn'); return; }
+  return runIO(async () => {
+    setBusy(true, '同步给同组…');
+    let r = null, err = '';
+    try { r = await API.post('/api/lightning/sync_group', { effectId: S.doc.id }); }
+    catch (e) { err = String(e && e.message || e); }
+    setBusy(false);
+    if (err) { status(`没同步：${err}`, 'err'); return; }
+    acceptLightningState(r);
+    await refreshEffects();
+    refreshDirty(); renderAll();
+    const res = r.results || [], bad = res.filter((x) => !x.ok), changed = res.filter((x) => x.ok && x.changed).length;
+    if (bad.length) status(`同步了 ${changed} 份；${bad.length} 份没成：${bad.map((x) => `${x.id}：${x.err}`).join('；')}`, 'err');
+    else status(`同组 ${res.length} 份里改了 ${changed} 份（其余本来就一样）`, 'ok');
+  });
+}
+
 async function newEffect() {
   if (!await resolveDirtyBefore('新建', false)) return;
   const v = await promptDialog('新建效果', 'id（= 文件名）', suggestId('新效果'));
@@ -3198,7 +3493,8 @@ function rebuildInspector() {
 }
 function renderDocState() {
   el('docState').textContent = (S.doc ? `${S.doc.id}${S.docDirty ? ' ●未保存' : ''}` : '（没打开效果）')
-    + (S.libErr ? ' · ⚠ 布置库读不懂（只读）' : S.libDirty ? ' · 布置库 ●未保存' : '');
+    + (S.libErr ? ' · ⚠ 布置库读不懂（只读）' : S.libDirty ? ' · 布置库 ●未保存' : '')
+    + (S.lsDirty ? ' · 雷电样式 ●未套用（点「生成并套用」）' : '');
   // 保存按钮自己说有没有没存的（原来只有底栏左下角一行小字，改完找不到"存了没"）
   const save = el('btnSave');
   save.classList.toggle('dirty', S.dirty);
@@ -3719,7 +4015,7 @@ function followPlace(at) {
     S.placeId = row.id;
   } else {
     S.placeId = '';
-    if (S.sel.key === 'anchor' || /^area:/.test(S.sel.key)) S.sel.key = '';
+    if (S.sel.key === 'anchor' || /^area:(emit|range):/.test(S.sel.key)) S.sel.key = '';
   }
 }
 /** 作废在飞的拉区域框（两个视图的手势 + 草稿）：Esc 用；松手时 `_up` 也只在还是区域工具时才提交 */
@@ -3768,6 +4064,13 @@ const host = {
   placeHere, editPlacement, renamePlacement, setConfine, clearArea,
   areaToolBegin, setAreaDraft, commitAreaDraft, areaEdgeHit, insertAreaVertex, deleteAreaVertexKey,
   areaShapes, areaLines3, areaPointWorld,
+  areaToolRole: (t) => AREA_TOOL_ROLE[t] || null,
+  roleCss: (role, a) => { const c = roleRgb(role); return `rgba(${c[0]},${c[1]},${c[2]},${a})`; },
+  sceneSurfaces: () => sceneSurfaces(), surfaceDefaults: SURFACE_DEFAULTS, surfaceLabel: SURF_LABEL,
+  get surfEdit() { return S.surfEdit; }, setSurfEdit,
+  deleteSurface, setSurfaceField, renameSurface, setDefaultSurfaceField,
+  get defaultSurface() { return (S.lib && S.lib.defaultSurface) || {}; },
+  selectSurface: (ri) => { if (sceneSurfaces()[ri]) { if (!S.surfEdit) S.surfEdit = true; select(`area:s${ri}:0`); } },
   status, select, setTool, edit, dragBegin, dragTick, dragEnd,
   objects, spheres, particlePoints, fieldMarks, anchorWorld, bodyLines, previewMarks, addFireAt,
   gizmoPivot, gizmoBase, applyGizmo, gizmoLabel, dragObjectTo, dragObjectToScene, dragObjectByScene, nudgeSelected,
@@ -3778,6 +4081,11 @@ const host = {
   currentBeam, renameBeam, beamRefs, beamLines3, drawBeams2d,
   beamApi: () => (S.rt && S.rt.vfxBeam) || null,
   onCursorWorld, onCursorScene, renderInspector,
+  get ls() { return S.ls; },
+  get lightningDirty() { return S.lsDirty; },
+  get docDirty() { return S.docDirty; },
+  applyLightning: () => applyLightning(),
+  syncLightningGroup: () => syncLightningGroup(),
 };
 
 // ---------------------------------------------------------------------------
@@ -3786,8 +4094,9 @@ const host = {
 async function boot() {
   // 复合快照：一次撤销同时回滚效果 doc 与布置库（拖一个区域顶点与改一个发射参数是同一条历史栈）
   history = new History({
-    get: () => ({ doc: S.doc, lib: S.lib }),
-    set: (v) => { S.doc = v.doc; S.lib = v.lib; },
+    // 雷电样式的草稿与待换清单也在快照里：改参数 / 换样式可以 Ctrl+Z（落盘另走「生成并套用」）
+    get: () => ({ doc: S.doc, lib: S.lib, ls: { lib: S.ls.lib, assign: S.ls.assign } }),
+    set: (v) => { S.doc = v.doc; S.lib = v.lib; if (v.ls) { S.ls.lib = v.ls.lib; S.ls.assign = v.ls.assign || {}; } },
     onChange: () => renderDocState(),
   });
   v3 = new View3D(el('view3d'), el('overlay3d'), host);
@@ -3880,6 +4189,7 @@ async function boot() {
     status(`布置库读不懂（只读，不会覆盖）：${S.libErr}`, 'err');
   }
   markClean('lib');
+  await loadLightning();
   await refreshEffects();
   renderScenePickers();
   // 先开效果、由它决定装哪个场景（`syncEnvWithDoc`）：原来先装第一个有深度的场景、再跳去效果的场景，开页要装两遍
@@ -3992,6 +4302,7 @@ function unsavedSummary() {
   const parts = [];
   if (S.docDirty && S.doc) parts.push(`效果「${S.doc.id}」`);
   if (S.libDirty) parts.push('布置库');
+  if (S.lsDirty) parts.push('雷电样式（要点「生成并套用」才落盘，「保存并关闭」不管它）');
   return parts.length ? `${parts.join('、')}有未保存的改动。` : '';
 }
 window.__unsavedSummary = unsavedSummary;
@@ -4005,7 +4316,7 @@ window.__saveUnsaved = () => {
 window.__onDiscardUnsaved = () => discardLiveWorkingCopy();
 window.addEventListener('beforeunload', (e) => {
   if (!window.__discardUnsaved) commitFocusedInput();
-  if (S.dirty && !window.__discardUnsaved) { e.preventDefault(); e.returnValue = ''; }
+  if ((S.dirty || S.lsDirty) && !window.__discardUnsaved) { e.preventDefault(); e.returnValue = ''; }
 });
 
 /** 桌面壳 `--open <id>` / 主编辑器打进来：装载门内与手势没松开时一律拒 */

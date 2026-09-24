@@ -1,7 +1,8 @@
 """全项目场景实体（npc / hotspot / zone / 出生点）引用扫描与重构引擎（迁移 / 改名 / 安全删除 / 复制）。
 
 四类的引用形态：npc/hotspot 有裸引用（最危险,详见下）+ 场景限定引用;zone 的入站引用
-（setZoneEnabled / persistZoneEnabled）全部 sceneId+zoneId 限定,spawn 的入站引用
+（setZoneEnabled / persistZoneEnabled）以 sceneId+zoneId 限定,雷击表面范围另有当前场景裸引用。
+spawn 的入站引用
 （transition 热点 data、switchScene/changeScene 动作）全部 targetScene 限定——后两类
 迁移/改名时引用可 100% 机械改写,只有几何（polygon / 坐标）需要人工在目标场景重画。
 
@@ -71,6 +72,7 @@ _COLLISION_KINDS: dict[str, tuple[str, ...]] = {
 #   scene_entity  实体 id，由同 action 的 sceneId + entityKind 限定
 #   scene_hotspot 热点 id，由同 action 的 sceneId 限定
 #   scene_zone    zone id，由同 action 的 sceneId 限定
+#   zone          当前场景普通 zone id（无 sceneId；按可达场景处理歧义）
 #   burn_target   燃烧动作的 target（运行时按当前场景解析）：没写 socket = 场景里开了可燃的实体（热点 / NPC /
 #                 演出生成留下的对象）；写了 socket = 拿东西的人（player / NPC）。两档合起来命中面 = NPC + 热点
 #   position_ref  位置引用对象 `at`（{kind:'point'|'entity'|'slot'|'curve'}，src/utils/positionRef.ts）：
@@ -103,6 +105,7 @@ ENTITY_REF_PARAMS: dict[str, dict[str, str]] = {
     # 后者是全局效果资产 id）。
     "playVfx": {"at": "position_ref"},
     "emitVfxField": {"at": "position_ref"},
+    "strikeThreat": {"fallbackSurfaceZone": "zone"},
     "moveEntityTo": {"target": "actor", "sceneId": "scene_hint", "at": "position_ref"},
     "jumpEntityTo": {"target": "actor", "sceneId": "scene_hint", "at": "position_ref"},
     "teleportEntityTo": {"target": "actor", "sceneId": "scene_hint", "at": "position_ref"},
@@ -159,6 +162,7 @@ _BARE_KIND_SCOPE: dict[str, tuple[str, ...]] = {
     "npc": ("npc",),
     "npc_soft": ("npc",),
     "burn_target": ("npc", "hotspot"),
+    "zone": ("zone",),
 }
 
 _TAG_NPC_RE_TMPL = r"\[tag:npc:{}\]"
@@ -2001,8 +2005,8 @@ def _paste_bbox(rows: list[dict[str, Any]]) -> tuple[float, float, float, float]
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _remap_pasted_refs(node: Any, mapping: dict[str, str]) -> int:
-    """跨场景粘贴：把指向本批成员（npc / hotspot，旧 id → 新 id）的裸引用改到副本上。
+def _remap_pasted_refs(node: Any, mapping: dict[str, str], zone_mapping: dict[str, str] | None = None) -> int:
+    """跨场景粘贴：把指向本批成员的裸引用改到副本上，zone 独立命名空间。
 
     新 id 从不与本批任何旧 id 相同（取号时预留了），所以逐项改写不会串成链。"""
     count = 0
@@ -2012,8 +2016,9 @@ def _remap_pasted_refs(node: Any, mapping: dict[str, str]) -> int:
         for param, spec_kind in ENTITY_REF_PARAMS[act_type].items():
             value = params.get(param)
             if spec_kind in _BARE_KIND_SCOPE:
-                if isinstance(value, str) and value.strip() in mapping:
-                    params[param] = mapping[value.strip()]
+                remap = (zone_mapping or {}) if spec_kind == "zone" else mapping
+                if isinstance(value, str) and value.strip() in remap:
+                    params[param] = remap[value.strip()]
                     count += 1
             elif spec_kind == "position_ref":
                 eid = position_ref_entity_id(value)
@@ -2026,7 +2031,7 @@ def _remap_pasted_refs(node: Any, mapping: dict[str, str]) -> int:
     return count
 
 
-def _pasted_dangling_refs(node: Any, known: set[str]) -> list[tuple[str, str, str]]:
+def _pasted_dangling_refs(node: Any, known: set[str], known_zones: set[str] | None = None) -> list[tuple[str, str, str]]:
     """粘贴后在目标场景里解析不到的裸引用 → (动作, 参数, 值)。
 
     ``known`` = 目标场景（含本批副本）的 npc ∪ hotspot id。**不按族细分**：两族共用
@@ -2041,7 +2046,11 @@ def _pasted_dangling_refs(node: Any, known: set[str]) -> list[tuple[str, str, st
     def visit(act_type: str, params: dict[str, Any]) -> None:
         for param, spec_kind in ENTITY_REF_PARAMS[act_type].items():
             value = params.get(param)
-            if spec_kind in _PASTE_CHECKED_BARE:
+            if spec_kind == "zone":
+                v = value.strip() if isinstance(value, str) else ""
+                if v and v not in (known_zones or set()):
+                    out.append((act_type, param, v))
+            elif spec_kind in _PASTE_CHECKED_BARE:
                 v = value.strip() if isinstance(value, str) else ""
                 if not special(spec_kind, v) and v not in known:
                     out.append((act_type, param, v))
@@ -2187,6 +2196,8 @@ def plan_entity_paste(
                   for g in scene.get("entityGroups") or [] if isinstance(g, dict)}
     mapping = {str(r["id"]).strip(): new for r, new in zip(rows, new_ids)
                if r["kind"] in ("npc", "hotspot") and str(r["id"]).strip() != new}
+    zone_mapping = {str(r["id"]).strip(): new for r, new in zip(rows, new_ids)
+                    if r["kind"] == "zone" and str(r["id"]).strip() != new}
 
     entries: list[dict[str, Any]] = []
     stripped_cutscenes: list[dict[str, Any]] = []
@@ -2215,8 +2226,8 @@ def plan_entity_paste(
                 body.pop("group", None)
                 stripped_groups.append({"ref": label, "group": gid})
             if cross:
-                if mapping:
-                    remapped += _remap_pasted_refs(body, mapping)
+                if mapping or zone_mapping:
+                    remapped += _remap_pasted_refs(body, mapping, zone_mapping)
                 if body.get("renderRaw"):
                     needs_review.append(f"{label} 的 renderRaw（贴图烤自源场景背景）")
                 if kind == "zone" and (str(body.get("zoneKind") or "") == "depth_floor"
@@ -2230,11 +2241,13 @@ def plan_entity_paste(
              for list_key in ("npcs", "hotspots")
              for r in scene.get(list_key) or [] if isinstance(r, dict)}
     known |= {e["newId"] for e in entries if e["kind"] in ("npc", "hotspot")}
+    known_zones = {str(r.get("id") or "").strip() for r in scene.get("zones") or [] if isinstance(r, dict)}
+    known_zones |= {e["newId"] for e in entries if e["kind"] == "zone"}
     dangling: list[dict[str, str]] = []
     for e in entries:
         if e["kind"] == SPAWN_KIND:
             continue
-        for act_type, param, value in _pasted_dangling_refs(e["def"], known):
+        for act_type, param, value in _pasted_dangling_refs(e["def"], known, known_zones):
             item = {"ref": f"{e['kind']}:{e['newId']}", "action": act_type,
                     "param": param, "value": value}
             if item not in dangling:

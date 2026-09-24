@@ -42,6 +42,7 @@ REF_KIND_UNIVERSE: dict[str, str | None] = {
     "scene_entity": "scene_entities",
     "scene_hotspot": "hotspots",
     "scene_zone": "zones",
+    "zone": "zones",
     "owner": None,
     # 位置引用 `at`（{kind:'point'|'entity'|'slot'}）：对象不是裸 id，实体档的 id 在对象里，无法静态套宇宙
     "position_ref": None,
@@ -81,6 +82,8 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("appendFlag", "key"): "__flag__",
     ("addFlagValue", "key"): "__flag__",
     ("setSmell", "scent"): "smells",
+    # 跟脚声的脚步集覆盖:与 scene.footstepSet / zone.footstepSet 同一份表(footstep_sets.json 的 sets)
+    ("setFollowerFootsteps", "footstepSet"): "footstep_sets",
     ("attachToSocket", "prop"): "prop_presets",
     # 火把养成的升级:只收**配了等级表**的挂件——prop_presets 的子集,与编辑器候选 / 校验器接受面同口径
     ("setPropLevel", "prop"): "prop_leveled",
@@ -109,6 +112,8 @@ CONTENT_ID_PARAMS: dict[tuple[str, str], str] = {
     ("playPropVfx", "effect"): "vfx_effects",
     # 落雷的雷柱：同一份效果资产宇宙（雷柱就是个挂了光柱的粒子效果）
     ("strikeThreat", "effect"): "vfx_effects",
+    # 呼吸图资产是全局独立文件(assets/data/breathing/<id>.json),id = 文件名 → 直接烤成枚举
+    ("showBreathingOverlay", "breathing"): "breathing_overlays",
     # 绑在落点上的雷声：与 playSfx.id 同一份音效宇宙
     ("strikeThreat", "sfx"): "sfx",
     ("emitNarrativeSignal", "signal"): "narrative_signals",
@@ -141,6 +146,9 @@ SCOPED_PARAM_RULES: list[tuple[str, str, str, str, bool, str | None]] = [
 _WIDGET_JSON_TYPE: dict[str, dict] = {
     "int": {"type": "number"},
     "float": {"type": "number"},
+    # 指定/继承数字控件只改变缺键的编辑方式；类型口径与原 int/float 相同，不收紧旧值。
+    "optional_int": {"type": "number"},
+    "optional_number": {"type": "number"},
     "optional_health_number": {"type": "number", "minimum": 0},
     "health_number": {"type": "number", "minimum": 0},
     "bool": {"type": "boolean"},
@@ -152,6 +160,8 @@ _WIDGET_JSON_TYPE: dict[str, dict] = {
     "spawn_spec": {"type": "object"},
     # 贴图上的归一化点 [u, v]（playPropVfx.point）：只约束成数组，元素清洗交给运行时 / 校验器
     "unit_point": {"type": "array"},
+    # 呼吸图参数表（setBreathingParams.params）：参数名 → 数值的对象；键与量程由校验器按 breathingParams.json 查
+    "breathing_params": {"type": "object"},
 }
 
 # 脚手架占位值:必填参数按控件类型给默认

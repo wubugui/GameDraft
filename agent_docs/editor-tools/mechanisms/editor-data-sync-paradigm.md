@@ -15,7 +15,7 @@ verified_by:
   - tools/editor/tests/test_canvas_roundtrip_safety.py
   - tools/editor/tests/test_form_editor_persistence.py
   - tools/editor/tests/test_scene_group_canvas_move.py
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -47,6 +47,10 @@ last_governed: 2026-09-03
 - 以表单为真相源做 commit-on-leave:表单与模型脱节(拖拽后/残留旧值)时会反向污染模型。
 - **画布 live 手势就地 mutate 的 cfg/几何 dict 必须与模型隔离**(深拷贝或每次重建):持 model 子对象引用做 live mutate = 撤销基线被拖动本身污染(踩过:拖深度轴后撤销回不去)+ 脏态失真;提交仍走正规 flush。契约 4"原地更新"说的是**画布图元**,不是共用模型 dict。
 - 新建 id 用 `len(列表)` 命名的家族:删中间项后再新建必撞 id。
+- **载入守卫会吞掉"载入后选中第一条"**:主从列表在 `_loading` 里 `setCurrentRow(0)`,选择回调被同一个守卫早退,
+  游标停在无效位——列表看着高亮、右侧表单空白却可编辑,打进去的字提交不到任何一条、只把整页判脏(数据丢失级,
+  model 层测试全绿)。载入后**自己**把游标与详情摆到位,别指望被守卫吞掉的信号;另,点已选中那一行 Qt 不发
+  `currentRowChanged`,要接 `itemClicked` 才回得来。样板护栏 `tools/editor/tests/test_prop_editor_usability_fixes.py`。
 
 ## 怎么验证
 

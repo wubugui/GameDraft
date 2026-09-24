@@ -43,6 +43,8 @@ export interface PlateBurnParams {
   fire: { effect: string; refArea: number }[];
   /** 火光（模板 `light`；强度 = 每平方米强度 × 燃着的面积） */
   light: BurnLightDef | null;
+  /** 模板开了「雷劈能点着」：落雷落点一定半径内的这几张当场着 */
+  lightningIgnites: boolean;
 }
 
 export function resolvePlateBurnParams(b: ResolvedBurnable): PlateBurnParams {
@@ -62,6 +64,7 @@ export function resolvePlateBurnParams(b: ResolvedBurnable): PlateBurnParams {
     glowStrength: b.look.glowStrength,
     fire: b.particles.filter((s) => s.from === 'flame').map((s) => ({ effect: s.effect, refArea: s.refArea })),
     light: b.light,
+    lightningIgnites: b.lightningIgnites,
   };
 }
 
@@ -130,6 +133,31 @@ export function plateIgnite(
   S.dur[i] = Math.max(0.05, (widthWu / BURN_WU_PER_CM) / Math.max(1e-6, v));
   S.burnT[i] = 0;
   S.heat[i] = 0;
+}
+
+/**
+ * 雷劈：落点 (x, y, z) 竖直往上 `heightWu` 这一段、半径 `radiusWu`（+ 片的半尺寸 × 片处透视度量）内还没着的片当场着
+ * （不走受热累积：雷不是一截慢慢烤的火）。火从落点那一段来，定扫的方向。返回点着了几张。
+ * 模板没开「雷劈能点着」的一张不点——筛选在这里，调用方不用另判。
+ */
+export function plateLightningIgnite(
+  S: PlateBurnState, b: PlateBurnBody, cap: number, halfSize: number, widthWu: number,
+  metric: Float32Array, orient: PlateBurnOrient,
+  x: number, y: number, z: number, radiusWu: number, heightWu: number, wake: (i: number) => void,
+): number {
+  if (!S.P.lightningIgnites || !(radiusWu > 0)) return 0;
+  let n = 0;
+  for (let i = 0; i < cap; i++) {
+    if (!b.alive[i] || S.burnT[i] >= 0 || S.burnt[i]) continue;
+    const s = Math.min(Math.max(0, heightWu), Math.max(0, b.y[i] - y));
+    const d = Math.hypot(b.x[i] - x, b.y[i] - y - s, b.z[i] - z);
+    if (d > radiusWu + halfSize * Math.max(metric[i] || 1, 1e-6)) continue;
+    plateIgnite(S, i, orient, x - b.x[i], y + s - b.y[i], z - b.z[i], widthWu);
+    wake(i);
+    n++;
+  }
+  S.burning += n;
+  return n;
 }
 
 /**

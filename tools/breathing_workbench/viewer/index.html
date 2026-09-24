@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>呼吸工作台</title>
+<script src="/vendor/dropdown.js"></script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d0b09; --panel: #16120e; --panel2: #1f1a14; --line: #2e261d; --fg: #ddd0b8; --dim: #8c806e;
+    --accent: #d0924f; --accent-dim: #6b4a28; --flow: #7fa3b8; --warn: #ffb454; --err: #ff6b6b; --ok: #7ed492;
+    --band-in: rgba(127, 163, 184, 0.16); --band-ex: rgba(208, 146, 79, 0.16);
+    --font: 13px/1.5 "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    --mono: 12px/1.5 Consolas, "Cascadia Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; background: var(--bg); color: var(--fg); font: var(--font); }
+  input, textarea { user-select: text; }
+  button, select, input, textarea { font: inherit; color: var(--fg); background: var(--panel2); border: 1px solid var(--line); border-radius: 3px; padding: 3px 9px; }
+  button { cursor: pointer; white-space: nowrap; }
+  button:hover { border-color: var(--accent-dim); }
+  button.primary { border-color: var(--accent-dim); }
+  button.primary.dirty { background: #6a4a16; border-color: var(--warn); color: #ffe2b0; }
+  button[aria-pressed="true"] { background: var(--accent-dim); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .hint { color: var(--dim); font-size: 12px; }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .err { color: var(--err); }
+  /* 上面这块(图 + 按钮 + 曲线)钉住,往下滚参数时一直看得见 */
+  #top { position: sticky; top: 0; z-index: 10; background: var(--bg); border-bottom: 1px solid var(--line); padding: 8px 12px; }
+  #topInner { display: grid; grid-template-columns: auto minmax(320px, 1fr); gap: 12px; align-items: start; }
+  #stage { position: relative; width: min(calc(100vw - 24px - 12px - 320px - 20px), calc(54vh * var(--aspect, 1.793))); aspect-ratio: var(--aspect, 1.793); background: #000; border: 1px solid var(--line); }
+  #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #stage.story canvas { left: 9%; top: 7%; width: 82%; height: 82%; }
+  #stageState { position: absolute; left: 10px; top: 8px; font: var(--mono); opacity: .85; pointer-events: none; }
+  #stageMsg { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); text-align: center; padding: 20px; }
+  #dlg { position: absolute; left: 8%; right: 8%; bottom: 3%; background: rgba(14, 11, 8, .9); border: 1px solid var(--line); padding: 8px 16px 6px; cursor: pointer; }
+  #dlg b { color: var(--accent); font-weight: 500; font-size: 12px; letter-spacing: .1em; }
+  #dlg div { font-size: 16px; }
+  #dlg em { display: block; text-align: right; font-style: normal; color: var(--dim); font-size: 11px; }
+  #side { display: grid; gap: 6px; align-content: start; min-width: 0; }
+  #side h1 { margin: 0; font-size: 16px; font-weight: 600; letter-spacing: .06em; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  #side h1 small { font-size: 12px; font-weight: 400; color: var(--dim); letter-spacing: 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 5px 7px; align-items: center; }
+  .row .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 3px; }
+  .row b { color: var(--dim); font-weight: 500; font-size: 12px; }
+  #trace { width: 100%; height: 130px; display: block; background: var(--panel); border: 1px solid var(--line); }
+  .legend { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 11px; color: var(--dim); }
+  .legend i { display: inline-block; width: 12px; height: 9px; vertical-align: -1px; margin-right: 5px; }
+  .legend i.ln { height: 2px; vertical-align: middle; }
+  #checkMsg { font-size: 12px; white-space: pre-wrap; }
+  #main { padding: 12px 12px 40px; display: grid; gap: 12px; }
+  .params { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 10px; align-items: start; }
+  details.grp { border: 1px solid var(--line); background: var(--panel); padding: 6px 12px 10px; min-width: 0; }
+  details.grp summary { cursor: pointer; letter-spacing: .06em; padding: 2px 0 6px; }
+  details.grp summary small { color: var(--dim); letter-spacing: 0; margin-left: 8px; font-size: 12px; }
+  .sliders { display: grid; gap: 8px; }
+  .sl { display: grid; grid-template-columns: 1fr auto; gap: 0 8px; align-items: baseline; }
+  .sl label { font-size: 13px; user-select: none; }
+  .sl output { font: var(--mono); color: var(--dim); }
+  .sl output.chg { color: var(--accent); }
+  .sl output.chg::before { content: "● "; font-size: 9px; vertical-align: 1px; }
+  .sl input { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); margin: 2px 0 0; padding: 0; }
+  .sl small { grid-column: 1 / -1; color: var(--dim); font-size: 12px; line-height: 1.4; }
+  .box { border: 1px solid var(--line); background: var(--panel); padding: 8px 12px 10px; display: grid; gap: 7px; }
+  .box h2 { margin: 0; font-size: 14px; font-weight: 500; letter-spacing: .06em; }
+  .box p { margin: 0; color: var(--dim); font-size: 12px; }
+  textarea { width: 100%; min-height: 150px; font: var(--mono); background: var(--bg); resize: vertical; }
+  input[type=number] { width: 70px; }
+</style>
+</head>
+<body>
+<div id="top">
+  <div id="topInner">
+    <div id="stage">
+      <canvas id="gl"></canvas>
+      <div id="stageState"></div>
+      <div id="stageMsg">加载中…</div>
+      <div id="dlg" role="button" tabindex="0" hidden><b id="dlgWho"></b><div id="dlgText"></div><em>点击继续 ▸</em></div>
+    </div>
+    <div id="side">
+      <h1>呼吸工作台 <small id="assetInfo"></small></h1>
+      <div class="row">
+        <b>呼吸图</b><select id="assetSel" aria-label="呼吸图"></select>
+        <button id="bSave" class="primary" title="写进资源(Ctrl+S)">导出到游戏</button>
+        <span class="hint" id="saveNote"></span>
+      </div>
+      <div id="checkMsg"></div>
+      <div class="row" role="group" aria-label="本地演">
+        <b>本地</b>
+        <button id="bBreathe">呼吸</button>
+        <button id="bFade">渐弱至停</button>
+        <button id="bGasp">猛抽一口气</button>
+        <button id="bStop">立刻停住</button>
+        <button id="bRestart">从头来</button>
+        <span class="sep"></span>
+        <select id="storySel" aria-label="剧情"></select>
+        <button id="bStory">按剧情走一遍</button>
+      </div>
+      <div class="row" role="group" aria-label="播放">
+        <button id="bPause" aria-pressed="false">暂停</button>
+        <button id="bStep" title="暂停时往前走 1/15 秒">下一帧</button>
+        <b>速度</b>
+        <button data-speed="1" aria-pressed="true">1×</button>
+        <button data-speed="0.5" aria-pressed="false">½×</button>
+        <button data-speed="0.25" aria-pressed="false">¼×</button>
+        <button data-speed="0.1" aria-pressed="false">⅒×</button>
+        <span class="sep"></span>
+        <button id="bCompare" title="按住看原图">按住看原图</button>
+        <button id="bMute" aria-pressed="false">静音</button>
+      </div>
+      <div class="row" role="group" aria-label="游戏">
+        <b>游戏</b>
+        <button id="bPush" title="把现在的工作态(存没存都算)立即推给正在跑的游戏,不写资源">推给游戏</button>
+        <label class="hint"><input type="checkbox" id="livePush"> 拖参数时实时推</label>
+        <button id="bGameShow">在游戏里显示</button>
+        <button id="bGameHide">收起</button>
+        <button id="bGameRestart">从头来</button>
+        <button id="bGameFade">渐弱至停</button>
+        <button id="bGameGasp">猛抽一口气</button>
+        <button id="bLaunch">拉起游戏</button>
+      </div>
+      <div class="hint" id="linkStatus">游戏:未连接</div>
+      <canvas id="trace"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--band-in);border:1px solid var(--flow)"></i>胸口在起(吸气)</span>
+        <span><i style="background:var(--band-ex);border:1px solid var(--accent-dim)"></i>胸口在落(呼气)</span>
+        <span><i class="ln" style="background:var(--fg)"></i>上:胸口高度</span>
+        <span><i class="ln" style="background:var(--accent)"></i>下:纸(零线以上飞起、以下贴下,mm)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="main">
+  <p class="hint">上面的图一直钉着,往下滚着调参数;每个参数拖了立刻生效。改过的值标橙色,双击参数名恢复这张图盘上的值。「导出到游戏」才写进资源;「推给游戏」只把工作态推给正在跑的游戏看效果。</p>
+  <div class="params" id="params"></div>
+
+  <div class="box">
+    <h2>参数文本</h2>
+    <p>整段复制出去、或把别处给的参数文本贴进来点「套用」。</p>
+    <textarea id="ptext" spellcheck="false" aria-label="参数文本"></textarea>
+    <div class="row">
+      <button id="bCopy">复制</button>
+      <button id="bApply">套用框里的参数</button>
+      <button id="bRevert">全部恢复盘上的值</button>
+      <span class="hint" id="textNote"></span>
+    </div>
+  </div>
+
+  <div class="box">
+    <h2>出片</h2>
+    <p>用这里的参数、同一份模拟和着色逐帧渲染;成品落在工程的 local/breathing_renders/ 下。</p>
+    <div class="row">
+      <button id="bRenderLoop">出一口循环 GIF</button>
+      <span class="sep"></span>
+      <b>剧情</b>
+      <label class="hint">第一句前正常呼吸 <input type="number" id="rBreaths" min="0" max="10" step="1" value="2"> 口(不算第一口深叹)</label>
+      <label class="hint">其余每句停 <input type="number" id="rRead" min="0.5" max="20" step="0.5" value="2.5"> 秒</label>
+      <button id="bRenderStory">出剧情 MP4</button>
+    </div>
+    <div class="row"><span class="hint" id="renderNote"></span><button id="bReveal" hidden>打开文件夹</button></div>
+  </div>
+</div>
+
+<script type="module" src="/viewer/app.js"></script>
+</body>
+</html>

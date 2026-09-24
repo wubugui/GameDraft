@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "id": "主线_崖墓入口_栈道口",
+  "entry": "a_show",
+  "meta": {
+    "title": "崖墓入口·栈道口（第一视角叠图；认得路之前只嘀咕不给前进）"
+  },
+  "preconditions": [],
+  "defaultLayout": "firstPerson",
+  "nodes": {
+    "a_show": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "cliff_plankway_view",
+            "image": "崖墓_栈道口",
+            "xPercent": 50,
+            "yPercent": 50,
+            "widthPercent": 100,
+            "fill": true
+          }
+        }
+      ],
+      "next": "sw_known"
+    },
+    "sw_known": {
+      "type": "switch",
+      "cases": [
+        {
+          "conditions": [
+            {
+              "narrative": "wrapper_崖墓入口_认路",
+              "state": "认得路",
+              "reached": true
+            }
+          ],
+          "next": "c_go"
+        }
+      ],
+      "defaultNext": "l_high"
+    },
+    "l_high": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "哎哟，日你妈这么高。",
+      "next": "a_close"
+    },
+    "c_go": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "go",
+          "text": "前进",
+          "next": "a_go"
+        },
+        {
+          "id": "back",
+          "text": "算了",
+          "next": "a_close"
+        }
+      ]
+    },
+    "a_go": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "cliff_plankway_view"
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "崖墓前段",
+            "targetSpawnPoint": "spawn_1"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "a_close": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "cliff_plankway_view"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

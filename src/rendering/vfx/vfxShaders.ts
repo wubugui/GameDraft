@@ -29,6 +29,7 @@ import { CHAR_LIGHT_COMMON_GLSL } from '../CharacterShadingFilter';
 import { MAX_STATIC_LIGHTS } from '../lighting/lightPacking';
 import LIGHTING_CORE from '../lighting/lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT from '../lighting/worldReconstruct.glsl?raw';
+import { BOLT_GLSL_KERNEL } from './vfxBoltGlsl';
 
 function sliceGlsl(src: string, tag: string): string {
   const b = `//__${tag}_BEGIN__`;
@@ -295,9 +296,71 @@ __VFX_NORMAL__
 }
 `;
 
+/**
+ * 雷（`appearance.bolt`）：一张 quad = 一小段折线的一层光斑（芯 / 光晕 / 外晕），片元里算这段线与高斯光斑的
+ * 卷积（`BOLT_GLSL_KERNEL`，与工作台预览同一份），加法混合——整条折线的卷积 = 各段之和，接缝不断不叠。
+ * 逐顶点带 q（雷身直立面上那一点的伪世界深度，插值后逐片元比壳：前面的屋顶挡住它，后面的不挡）。
+ * 雷是光源，不吃灯、不过显示变换（曝光不该把闪电压暗），直接加到画面上。
+ */
+const VERT_BOLT = /* glsl */ `#version 300 es
+in vec2 aPosition;   // quad 角的场景坐标 wu
+in vec4 aSeg;        // 这一段两端（场景 wu）
+in vec2 aK;          // x = σ（场景 wu），y = 峰值亮度
+in vec4 aColor;      // 预乘 rgba（层颜色 × 寿命曲线）
+in vec3 aQ;          // 这个角在雷身直立面上的伪世界 q
+uniform mat3 uProjectionMatrix;
+uniform mat3 uWorldTransformMatrix;
+uniform mat3 uTransformMatrix;
+uniform vec4 uColor;
+out vec2 vWorld;
+out vec4 vSeg;
+out vec2 vK;
+out vec4 vColor;
+out vec3 vQ;
+void main(void) {
+    mat3 model = uWorldTransformMatrix * uTransformMatrix;
+    vec2 screen = (model * vec3(aPosition, 1.0)).xy;
+    gl_Position = vec4((uProjectionMatrix * vec3(screen, 1.0)).xy, 0.0, 1.0);
+    vWorld = aPosition;
+    vSeg = aSeg;
+    vK = aK;
+    vColor = aColor * uColor;
+    vQ = aQ;
+}
+`;
+
+const FRAG_BOLT = /* glsl */ `#version 300 es
+precision highp float;
+in vec2 vWorld;
+in vec4 vSeg;
+in vec2 vK;
+in vec4 vColor;
+in vec3 vQ;
+out vec4 finalColor;
+${OCCLUSION_GLSL}
+${BOLT_GLSL_KERNEL}
+void main(void) {
+    float k = boltSeg(vWorld, vSeg.xy, vSeg.zw, vK.x) * vK.y;
+    if (k < 1e-4) { discard; }
+    float vis = vfxVisibility(vWorld, vQ.z, 0.0);
+    if (vis <= 0.0) { discard; }
+    vec3 rgb = min(vColor.rgb * k, vec3(1.0)) * vis;
+    finalColor = vec4(rgb, clamp(vColor.a * k, 0.0, 1.0) * vis);
+}
+`;
+
+/** 测试钉源码用 */
+export const VFX_BOLT_FRAGMENT_SOURCE = FRAG_BOLT;
+
 let unlitProgram: GlProgram | null = null;
 let litProgram: GlProgram | null = null;
 let plateLitProgram: GlProgram | null = null;
+let boltProgram: GlProgram | null = null;
+
+export function getVfxBoltProgram(): GlProgram {
+  if (!boltProgram) boltProgram = new GlProgram({ vertex: VERT_BOLT, fragment: FRAG_BOLT });
+  return boltProgram;
+}
 
 export function getVfxUnlitProgram(): GlProgram {
   if (!unlitProgram) unlitProgram = new GlProgram({ vertex: VERT, fragment: FRAG_UNLIT });

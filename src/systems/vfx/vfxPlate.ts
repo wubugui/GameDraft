@@ -31,7 +31,7 @@
  * 纯函数式、零 Pixi、零挂钟：时间只来自调用方。
  */
 import type { VfxPlateDef } from '../../data/types';
-import { sampleSceneWind, type SceneWindParams } from '../../utils/sceneWind';
+import { addWindBlasts, sampleSceneWind, type SceneWindParams, type WindBlast } from '../../utils/sceneWind';
 import type { Vec3 } from '../../utils/sceneSpace';
 import {
   CONFINE_EXIT_FADE_S, CONFINE_EXIT_WEIGHT, CONFINE_SETTLE_FADE_S, CONFINE_SETTLE_MEAN_S,
@@ -257,6 +257,9 @@ export interface PlateStepEnv {
   wind: SceneWindParams | null;
   /** 风的钟（与背景摆动同一个） */
   windTime: number;
+  /** 冲击风（落雷落地那一下）与它自己的钟；没有 = null */
+  blasts?: readonly WindBlast[] | null;
+  blastTime?: number;
   /** 发射器自己的湍流（旧语义：加速度扰动），可无 */
   turb: { strength: number; invScale: number; speed: number } | null;
   /** 噪声相位用的累计时间 */
@@ -356,6 +359,14 @@ export function stepPlates(
     if (wind) {
       sampleSceneWind(wind, env.windTime, x, z, hExp, U);
       ux = U[0] * gainV; uy = U[1] * gainV; uz = U[2] * gainV;
+    }
+    // 冲击风（落雷）：纸钱被落点那一下从中心掀开（没写风的场景也有）
+    if (env.blasts) {
+      U[0] = 0; U[1] = 0; U[2] = 0;
+      if (addWindBlasts(env.blasts, env.blastTime ?? 0, x, z, hExp, U) > 0) {
+        const gb = wind ? gainV : (env.windScale ?? 1);
+        ux += U[0] * gb; uy += U[1] * gb; uz += U[2] * gb;
+      }
     }
     // 燃着的纸：燃烧热托起的上升气流（真实量，与风同一处叠；纸自己的气动决定它飘多高）
     if (env.burn && env.burn.burnT[i] >= 0) uy += env.burn.liftWu;

@@ -315,6 +315,10 @@ def reach_issues(scene_json: Path, step_wu: float | None = None) -> list[str]:
     issues: list[str] = []
     for h in data.get('hotspots') or []:
         if isinstance(h, dict) and h.get('type') == 'act_spot':
+            # 跳完当拍就切场景的跨点（动作里有 switchScene）：落点只是跳的弧线终点，玩家不会在这儿站着接着走
+            acts = (h.get('data') or {}).get('actions') or []
+            if any(isinstance(a, dict) and a.get('type') == 'switchScene' for a in acts):
+                continue
             ld = (h.get('data') or {}).get('landing')
             if isinstance(ld, dict) and g.blocked_at(float(ld.get('x', 0)), float(ld.get('y', 0))) is True:
                 issues.append(f"跨点 {h.get('id')} 的落点 ({float(ld['x']):.0f},{float(ld['y']):.0f}) 落在**阻挡格**内——跳过去就卡死")

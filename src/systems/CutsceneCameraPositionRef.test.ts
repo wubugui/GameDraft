@@ -21,7 +21,7 @@ function makeManager() {
   const mgr = new CutsceneManager(eventBus, {} as any, actionExecutor, cutsceneRenderer);
   const snapTo = vi.fn();
   const setZoom = vi.fn();
-  (mgr as any).cameraAccessor = { snapTo, setZoom, getSceneBaseZoom: () => 1 };
+  (mgr as any).cameraAccessor = { snapTo, setZoom, getSceneBaseZoom: () => 1, isZoomOverridden: () => false, releaseZoomOverride: () => {} };
   return { mgr, cameraMove, snapTo, setZoom };
 }
 

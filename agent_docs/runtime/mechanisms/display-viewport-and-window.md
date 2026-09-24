@@ -13,10 +13,10 @@ authority:
   - src-tauri/src/main.rs#preferred_window_size
   - tools/editor/main_window.py#_get_game_window_size
 triggers:
-  paths: ["src/rendering/Renderer.ts", "src/rendering/viewportFit.ts", "index.html", "src/ui/debug-panel-dock.css", "src-tauri/src/main.rs", "src/ui/TouchMobileControls.ts"]
+  paths: ["src/rendering/Renderer.ts", "src/rendering/viewportFit.ts", "index.html", "src/ui/debug-panel-dock.css", "src-tauri/src/main.rs", "src/ui/TouchMobileControls.ts", "src/rendering/Camera.ts"]
   tasks: [改分辨率, 改窗口尺寸, 改布局 CSS, 排查画面拉伸, 排查黑边, 排查触屏 HUD 误出]
-  topics: [分辨率, 视口, viewport, windowSize, 宽高比, 信箱, letterbox, 拉伸, 窗口尺寸, DPI, 触屏 HUD]
-last_governed: 2026-09-06
+  topics: [分辨率, 视口, viewport, windowSize, 宽高比, 信箱, letterbox, 拉伸, 窗口尺寸, DPI, 触屏 HUD, camera.zoom, 露边, 地图外]
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -67,6 +67,11 @@ last_governed: 2026-09-06
   编辑器预览窗恰好是 `windowSize` 的 1024×768,所以开发期永远看不见;指针分轴换算让点击照样命中,
   ResizeObserver 在固定视口时直接 return,没有任何断言暴露"显示矩形比例 ≠ 逻辑比例"。
   修法即上面的硬契约(等比信箱 + 壳读 game_config + CSS 规则收口)。
+- **场景世界尺寸与基线 `camera.zoom` 是一对量**:视野(视口 ÷ 投影缩放)一旦比地图大,相机钳位退化成
+  钉在地图中心、四周露出地图外。只有连续通道(相机跟随透视)自带"视野不超地图"的下限,
+  **显式 zoom(场景基线 / 过场 cameraZoom)没有**。2026-09-23 实例:崖墓入口世界约 759×427,
+  制作人要 zoom 1 → 1024×768 视野露边。要 zoom 1 又不露边只能重定世界尺寸(牵动全部实体坐标与
+  depthConfig),属制作人决策,别在相机里偷偷夹。
 - **游戏没有全屏切换**(无 F11/`requestFullscreen`/`set_fullscreen`);玩家只能拖大/最大化,表现按等比信箱。
 - 编辑器 Config 页两组 spinbox 的**未勾选缺省**曾是 1280×720——一勾就把标准换成 16:9;现与标准一致。
 

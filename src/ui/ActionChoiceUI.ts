@@ -8,6 +8,13 @@ import { UIFocus, type FocusItem } from './components/UIFocus';
 import type { Renderer } from '../rendering/Renderer';
 import type { StringsProvider } from '../core/StringsProvider';
 import { createStyledText } from '../core/styledText';
+import { stripStyleMarkup } from '../core/textStyle';
+import type { DialogueLayoutStyle } from '../utils/dialogueSpeakerSide';
+import {
+  FIRST_PERSON, FIRST_PERSON_TEXT_SHADOW, drawFirstPersonShade,
+  layoutFirstPersonChoices, layoutFirstPersonLine,
+} from '../rendering/firstPersonDialogue';
+import { buildFirstPersonChoiceCell } from './components/FirstPersonChoiceCell';
 
 export interface ActionChoiceOption {
   text: string;
@@ -50,13 +57,28 @@ export class ActionChoiceUI {
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
   /** 键盘/手柄焦点（与鼠标共用同一个"当前项"）；随本条一同装卸 */
   private focus: UIFocus | null = null;
+  /** 这一次选择的参数（resize 重建要用）；关掉即清 */
+  private current: {
+    prompt: string;
+    options: ActionChoiceOption[];
+    allowCancel: boolean;
+    layout?: DialogueLayoutStyle;
+  } | null = null;
+  /** 画布尺寸变化订阅；随这一次选择一同装卸 */
+  private unsubResize: (() => void) | null = null;
 
   constructor(renderer: Renderer, strings: StringsProvider) {
     this.renderer = renderer;
     this.strings = strings;
   }
 
-  choose(prompt: string, options: ActionChoiceOption[], allowCancel: boolean): Promise<number | null> {
+  choose(
+    prompt: string,
+    options: ActionChoiceOption[],
+    allowCancel: boolean,
+    /** 版式档：`firstPerson` = 第一人称（屏底横排、不要木框）；不给 = 现行的屏底选项条 */
+    layout?: DialogueLayoutStyle,
+  ): Promise<number | null> {
     this.close(null);
     const cleanOptions = options
       .map((o) => ({ text: String(o.text ?? '').trim() }))
@@ -65,228 +87,349 @@ export class ActionChoiceUI {
 
     return new Promise((resolve) => {
       this.resolveChoice = resolve;
-      this.container = new Container();
-      this.renderer.uiLayer.addChild(this.container);
+      this.current = { prompt: String(prompt ?? '').trim(), options: cleanOptions, allowCancel, layout };
+      // 改窗口 / 开合 F2 侧栏：整条按新屏幕尺寸重建（焦点留在原来那一项）。
+      // ⚠ 必须订 renderer.subscribeAfterResize，理由同 DialogueUI（侧栏挤压不发 window resize）
+      this.unsubResize = this.renderer.subscribeAfterResize(() => this.rebuild());
+      this.render(null);
+    });
+  }
 
-      const margin = UITheme.spacing.xl;
-      // 内边距要越过 15px 的木条才不会让内容压在框料上
-      const pad = UITheme.spacing.xxl;
-      const sw = this.renderer.screenWidth;
-      const sh = this.renderer.screenHeight;
+  /** 按当前参数与屏幕尺寸建整条（首次打开与 resize 重建共用）；`keepFocusId` = 重建前的焦点。 */
+  private render(keepFocusId: string | null): void {
+    const cur = this.current;
+    if (!cur) return;
+    this.container = new Container();
+    this.renderer.uiLayer.addChild(this.container);
+    if (cur.layout === 'firstPerson') this.buildFirstPerson(cur.prompt, cur.options, cur.allowCancel);
+    else this.buildPanel(cur.prompt, cur.options, cur.allowCancel);
+    if (keepFocusId) this.focus?.focusDefault(keepFocusId);
+    this.installKeys(cur.options.length, cur.allowCancel);
+  }
 
-      const boxWidth = Math.min(sw - margin * 2, BOX_MAX_W);
-      const x = (sw - boxWidth) / 2;
-      const promptText = String(prompt ?? '').trim();
-      // 先把提示语量出来再排版：写死一行高的话，长提示会压到第一行选项上
-      const title = promptText
-        ? createStyledText({
-          text: promptText,
-          style: {
-            fontSize: UITheme.fontSize.title,
-            fill: UITheme.colors.title,
-            fontFamily: UITheme.fonts.display,
-            fontWeight: 'bold',
-            // 设计稿里中文标题一律拉字距；居中 + 下方一条渐隐横线
-            letterSpacing: UITheme.letterSpacing.title,
-            align: 'center',
-            wordWrap: true,
-            breakWords: true,
-            wordWrapWidth: boxWidth - pad * 2,
-          },
-        })
-        : null;
-      const promptHeight = title ? Math.max(PROMPT_H, Math.ceil(title.height) + pad) : 0;
-      const hintHeight = allowCancel ? HINT_H : 0;
-      // 选项再多也不越过屏幕上沿——超出部分交给滚动
-      const maxListH = Math.max(ROW_H, sh - margin * 2 - promptHeight - hintHeight - pad * 2);
-      const listH = Math.min(cleanOptions.length * ROW_H, maxListH);
-      const boxHeight = promptHeight + listH + hintHeight + pad * 2;
-      const y = sh - boxHeight - margin;
+  /** 屏幕尺寸变了：拆掉视图按新尺寸重建，**不结束这次选择**（Promise 照旧等玩家选）。 */
+  private rebuild(): void {
+    if (!this.current || !this.container) return;
+    const keep = this.focus?.current?.id ?? null;
+    this.teardownView();
+    this.render(keep);
+  }
 
-      // 纸纹底 + 做旧木框 + 内金线：面板级一律走 createPanel（drawPanelBase 画不出木框）
-      this.container.addChild(createPanel(x, y, boxWidth, boxHeight, SKINS.panel));
+  /** 现行版式：贴屏幕下沿的木框选项条（提示语 + 木钮列表 + 可选的「Esc 取消」）。 */
+  private buildPanel(prompt: string, cleanOptions: ActionChoiceOption[], allowCancel: boolean): void {
+    if (!this.container) return;
+    const margin = UITheme.spacing.xl;
+    // 内边距要越过 15px 的木条才不会让内容压在框料上
+    const pad = UITheme.spacing.xxl;
+    const sw = this.renderer.screenWidth;
+    const sh = this.renderer.screenHeight;
 
-      if (title) {
-        title.x = x + Math.round((boxWidth - title.width) / 2);
-        title.y = y + pad;
-        this.container.addChild(title);
-        const rule = createRule(boxWidth - pad * 2);
-        rule.position.set(x + pad, y + pad + Math.ceil(title.height) + UITheme.spacing.sm);
-        this.container.addChild(rule);
-      }
-
-      const listX = x + pad;
-      const listY = y + pad + promptHeight;
-      const rowW = boxWidth - pad * 2;
-      const list = new UIScrollView(this.renderer, {
-        width: rowW,
-        height: listH,
-        // 只吃落在本条上的滚轮，别把整屏滚轮都吞了（这条不铺遮罩，屏幕其余部分仍是场景）
-        hitTest: (hx, hy) => hx >= x && hx <= x + boxWidth && hy >= y && hy <= y + boxHeight,
-      });
-      list.container.position.set(listX, listY);
-      this.container.addChild(list.container);
-      this.list = list;
-
-      const rowBodyH = ROW_H - ROW_GAP;
-      /**
-       * 序号是**键位提示**（玩家按 1/2/3 选），不是选项内容：拆成独立一小列走 small，
-       * 别再和 bodyLarge 的正文拼进同一个 Text 一起放大。列宽取最宽者，各行对齐同一列；
-       * 正文两侧按同宽对称收边，居中之后也压不到序号上。
-       */
-      const prefixTexts = cleanOptions.map((_opt, idx) => createStyledText({
-        text: `${idx + 1}.`,
+    const boxWidth = Math.min(sw - margin * 2, BOX_MAX_W);
+    const x = (sw - boxWidth) / 2;
+    const promptText = String(prompt ?? '').trim();
+    // 先把提示语量出来再排版：写死一行高的话，长提示会压到第一行选项上
+    const title = promptText
+      ? createStyledText({
+        text: promptText,
         style: {
+          fontSize: UITheme.fontSize.title,
+          fill: UITheme.colors.title,
+          fontFamily: UITheme.fonts.display,
+          fontWeight: 'bold',
+          // 设计稿里中文标题一律拉字距；居中 + 下方一条渐隐横线
+          letterSpacing: UITheme.letterSpacing.title,
+          align: 'center',
+          wordWrap: true,
+          breakWords: true,
+          wordWrapWidth: boxWidth - pad * 2,
+        },
+      })
+      : null;
+    const promptHeight = title ? Math.max(PROMPT_H, Math.ceil(title.height) + pad) : 0;
+    const hintHeight = allowCancel ? HINT_H : 0;
+    // 选项再多也不越过屏幕上沿——超出部分交给滚动
+    const maxListH = Math.max(ROW_H, sh - margin * 2 - promptHeight - hintHeight - pad * 2);
+    const listH = Math.min(cleanOptions.length * ROW_H, maxListH);
+    const boxHeight = promptHeight + listH + hintHeight + pad * 2;
+    const y = sh - boxHeight - margin;
+
+    // 纸纹底 + 做旧木框 + 内金线：面板级一律走 createPanel（drawPanelBase 画不出木框）
+    this.container.addChild(createPanel(x, y, boxWidth, boxHeight, SKINS.panel));
+
+    if (title) {
+      title.x = x + Math.round((boxWidth - title.width) / 2);
+      title.y = y + pad;
+      this.container.addChild(title);
+      const rule = createRule(boxWidth - pad * 2);
+      rule.position.set(x + pad, y + pad + Math.ceil(title.height) + UITheme.spacing.sm);
+      this.container.addChild(rule);
+    }
+
+    const listX = x + pad;
+    const listY = y + pad + promptHeight;
+    const rowW = boxWidth - pad * 2;
+    const list = new UIScrollView(this.renderer, {
+      width: rowW,
+      height: listH,
+      // 只吃落在本条上的滚轮，别把整屏滚轮都吞了（这条不铺遮罩，屏幕其余部分仍是场景）
+      hitTest: (hx, hy) => hx >= x && hx <= x + boxWidth && hy >= y && hy <= y + boxHeight,
+    });
+    list.container.position.set(listX, listY);
+    this.container.addChild(list.container);
+    this.list = list;
+
+    const rowBodyH = ROW_H - ROW_GAP;
+    /**
+     * 序号是**键位提示**（玩家按 1/2/3 选），不是选项内容：拆成独立一小列走 small，
+     * 别再和 bodyLarge 的正文拼进同一个 Text 一起放大。列宽取最宽者，各行对齐同一列；
+     * 正文两侧按同宽对称收边，居中之后也压不到序号上。
+     */
+    const prefixTexts = cleanOptions.map((_opt, idx) => createStyledText({
+      text: `${idx + 1}.`,
+      style: {
+        fontSize: UITheme.fontSize.small,
+        // subtle 而非 hintMid：序号压在点亮的琥珀行底上，hintMid 那一档灰在这块底上读不出来
+        fill: UITheme.colors.descText,
+        fontFamily: UITheme.fonts.ui,
+      },
+    }));
+    const prefixCol = Math.ceil(Math.max(0, ...prefixTexts.map((t) => t.width)));
+    const labelWrapW = Math.max(80, rowW - (UITheme.spacing.xl + prefixCol + PREFIX_GAP) * 2);
+    const focusItems: FocusItem[] = [];
+    cleanOptions.forEach((opt, idx) => {
+      const ry = idx * ROW_H;
+
+      // 近方正的木边按钮（设计稿 2.「选择按钮」）：暗底 + 做旧木条 + 内金线
+      list.content.addChild(createPanel(0, ry, rowW, rowBodyH, SKINS.nameplate, {
+        fill: UITheme.colors.rowBg,
+      }));
+
+      // 悬停 = 点亮一档琥珀 + 金描边（不是换个深色），按木条厚度内缩落在框里侧
+      const hoverBg = new Graphics();
+      drawSelectedRow(hoverBg, ROW_FRAME, ry + ROW_FRAME, rowW - ROW_FRAME * 2, rowBodyH - ROW_FRAME * 2);
+      hoverBg.visible = false;
+      hoverBg.eventMode = 'none';
+      list.content.addChild(hoverBg);
+
+      const label = createStyledText({
+        text: opt.text,
+        style: {
+          fontSize: UITheme.fontSize.bodyLarge,
+          fill: UITheme.colors.choiceEnabled,
+          fontFamily: UITheme.fonts.ui,
+          align: 'center',
+          wordWrap: true,
+          breakWords: true,
+          wordWrapWidth: labelWrapW,
+        },
+      });
+      label.x = Math.round((rowW - label.width) / 2);
+      label.y = ry + Math.round((rowBodyH - label.height) / 2);
+      list.content.addChild(label);
+
+      const prefix = prefixTexts[idx];
+      prefix.x = UITheme.spacing.xl;
+      prefix.y = ry + Math.round((rowBodyH - prefix.height) / 2);
+      list.content.addChild(prefix);
+
+      /**
+       * 高亮**只有这一处画法**：木框留着不动，只把内里点亮成琥珀、文字转金。
+       * 鼠标悬停与键盘焦点共用它——焦点框不另发明一种，否则同一条上会出现两套选中语汇。
+       */
+      const setHighlight = (on: boolean): void => {
+        hoverBg.visible = on;
+        label.style.fill = on ? UITheme.colors.title : UITheme.colors.choiceEnabled;
+        prefix.style.fill = on ? UITheme.colors.title : UITheme.colors.descText;
+      };
+
+      // 整行命中：命中区自己是一块 Graphics，压在按钮面板之上整条接管，
+      // 不靠 Text 本身（Pixi 逐子元素命中，只给 Text 会让行内空白成死区）
+      const hit = new Graphics();
+      hit.rect(0, ry, rowW, rowBodyH);
+      hit.fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
+      hit.eventMode = 'static';
+      hit.cursor = 'pointer';
+      // 悬停即移焦（不直接画高亮）：鼠标和手柄共用同一个"当前项"，指针挪开后
+      // 焦点仍留在这一条上，接着按方向键是从这里继续走，而不是跳回原处。
+      hit.on('pointerover', () => { this.focus?.syncHover(`opt-${idx}`); });
+      hit.on('pointerout', () => { this.focus?.clearHover(`opt-${idx}`); });
+      hit.on('pointerdown', (e) => {
+        // 不标记已消费的话，同一个原生事件还会被 DialogueUI/EncounterUI 挂在 window 上的
+        // 推进监听再吃一次（选完选项顺手把下一段对白跳满）
+        markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
+        this.close(idx);
+      });
+      list.content.addChild(hit);
+
+      focusItems.push({
+        id: `opt-${idx}`,
+        x: 0, y: ry, w: rowW, h: rowBodyH,
+        group: 'options',
+        onFocus: setHighlight,
+        onActivate: () => this.close(idx),
+      });
+    });
+    list.refresh();
+
+    // 默认焦点 = 第一项（本条的选项全都可选，没有禁用态）；setItems 已把它点亮
+    const focus = new UIFocus();
+    focus.setItems(focusItems);
+    this.focus = focus;
+
+    if (allowCancel) {
+      const hint = createStyledText({
+        text: this.strings.get('actionChoice', 'cancelHint'),
+        style: {
+          // 键位提示走 small：micro 是角标/计数档，一句「Esc 取消」在 720 宽的条上会缩成灰渣
           fontSize: UITheme.fontSize.small,
-          // subtle 而非 hintMid：序号压在点亮的琥珀行底上，hintMid 那一档灰在这块底上读不出来
-          fill: UITheme.colors.descText,
+          fill: UITheme.colors.hintMid,
           fontFamily: UITheme.fonts.ui,
         },
-      }));
-      const prefixCol = Math.ceil(Math.max(0, ...prefixTexts.map((t) => t.width)));
-      const labelWrapW = Math.max(80, rowW - (UITheme.spacing.xl + prefixCol + PREFIX_GAP) * 2);
-      const focusItems: FocusItem[] = [];
-      cleanOptions.forEach((opt, idx) => {
-        const ry = idx * ROW_H;
-
-        // 近方正的木边按钮（设计稿 2.「选择按钮」）：暗底 + 做旧木条 + 内金线
-        list.content.addChild(createPanel(0, ry, rowW, rowBodyH, SKINS.nameplate, {
-          fill: UITheme.colors.rowBg,
-        }));
-
-        // 悬停 = 点亮一档琥珀 + 金描边（不是换个深色），按木条厚度内缩落在框里侧
-        const hoverBg = new Graphics();
-        drawSelectedRow(hoverBg, ROW_FRAME, ry + ROW_FRAME, rowW - ROW_FRAME * 2, rowBodyH - ROW_FRAME * 2);
-        hoverBg.visible = false;
-        hoverBg.eventMode = 'none';
-        list.content.addChild(hoverBg);
-
-        const label = createStyledText({
-          text: opt.text,
-          style: {
-            fontSize: UITheme.fontSize.bodyLarge,
-            fill: UITheme.colors.choiceEnabled,
-            fontFamily: UITheme.fonts.ui,
-            align: 'center',
-            wordWrap: true,
-            breakWords: true,
-            wordWrapWidth: labelWrapW,
-          },
-        });
-        label.x = Math.round((rowW - label.width) / 2);
-        label.y = ry + Math.round((rowBodyH - label.height) / 2);
-        list.content.addChild(label);
-
-        const prefix = prefixTexts[idx];
-        prefix.x = UITheme.spacing.xl;
-        prefix.y = ry + Math.round((rowBodyH - prefix.height) / 2);
-        list.content.addChild(prefix);
-
-        /**
-         * 高亮**只有这一处画法**：木框留着不动，只把内里点亮成琥珀、文字转金。
-         * 鼠标悬停与键盘焦点共用它——焦点框不另发明一种，否则同一条上会出现两套选中语汇。
-         */
-        const setHighlight = (on: boolean): void => {
-          hoverBg.visible = on;
-          label.style.fill = on ? UITheme.colors.title : UITheme.colors.choiceEnabled;
-          prefix.style.fill = on ? UITheme.colors.title : UITheme.colors.descText;
-        };
-
-        // 整行命中：命中区自己是一块 Graphics，压在按钮面板之上整条接管，
-        // 不靠 Text 本身（Pixi 逐子元素命中，只给 Text 会让行内空白成死区）
-        const hit = new Graphics();
-        hit.rect(0, ry, rowW, rowBodyH);
-        hit.fill({ color: 0xffffff, alpha: UITheme.alpha.hitArea });
-        hit.eventMode = 'static';
-        hit.cursor = 'pointer';
-        // 悬停即移焦（不直接画高亮）：鼠标和手柄共用同一个"当前项"，指针挪开后
-        // 焦点仍留在这一条上，接着按方向键是从这里继续走，而不是跳回原处。
-        hit.on('pointerover', () => { this.focus?.syncHover(`opt-${idx}`); });
-        hit.on('pointerout', () => { this.focus?.clearHover(`opt-${idx}`); });
-        hit.on('pointerdown', (e) => {
-          // 不标记已消费的话，同一个原生事件还会被 DialogueUI/EncounterUI 挂在 window 上的
-          // 推进监听再吃一次（选完选项顺手把下一段对白跳满）
-          markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
-          this.close(idx);
-        });
-        list.content.addChild(hit);
-
-        focusItems.push({
-          id: `opt-${idx}`,
-          x: 0, y: ry, w: rowW, h: rowBodyH,
-          group: 'options',
-          onFocus: setHighlight,
-          onActivate: () => this.close(idx),
-        });
       });
-      list.refresh();
+      hint.x = x + boxWidth - pad - hint.width;
+      // 贴在列表下方**自己那一格**里，而不是按框底倒推——倒推会把它顶到 15px 木条上
+      hint.y = listY + listH + Math.round((HINT_H - hint.height) / 2);
+      this.container.addChild(hint);
+    }
 
-      // 默认焦点 = 第一项（本条的选项全都可选，没有禁用态）；setItems 已把它点亮
-      const focus = new UIFocus();
-      focus.setItems(focusItems);
-      this.focus = focus;
+  }
 
-      if (allowCancel) {
-        const hint = createStyledText({
-          text: this.strings.get('actionChoice', 'cancelHint'),
-          style: {
-            // 键位提示走 small：micro 是角标/计数档，一句「Esc 取消」在 720 宽的条上会缩成灰渣
-            fontSize: UITheme.fontSize.small,
-            fill: UITheme.colors.hintMid,
-            fontFamily: UITheme.fonts.ui,
-          },
-        });
-        hint.x = x + boxWidth - pad - hint.width;
-        // 贴在列表下方**自己那一格**里，而不是按框底倒推——倒推会把它顶到 15px 木条上
-        hint.y = listY + listH + Math.round((HINT_H - hint.height) / 2);
-        this.container.addChild(hint);
-      }
+  /**
+   * 第一人称版式（`layout: 'firstPerson'`）：不要木框、不要木钮——底部渐变托底，
+   * 提示语按字幕式压在选项上面，选项一排字横在屏底（放不下折行、每行居中）。
+   * 几何与画法与对白框同一份（rendering/firstPersonDialogue.ts + FirstPersonChoiceCell）。
+   */
+  private buildFirstPerson(prompt: string, options: ActionChoiceOption[], allowCancel: boolean): void {
+    const container = this.container!;
+    const sw = this.renderer.screenWidth;
+    const sh = this.renderer.screenHeight;
 
-      /**
-       * 被本条吃掉的**导航/激活键**必须就地截断，不能再往下漏。
-       *
-       * 这是三行开外那个 `markPointerConsumed` 的键盘孪生：`DialogueUI` 在 window 上挂着
-       * 推进监听，对白框还在屏上时按回车会**一键双吃**——既选中本条的动作，又把底下那句
-       * 台词推过去。指针侧早就用「标记已消费」堵掉了同一个洞，键盘侧没有对应设施
-       * （见报告里的地基缺口），所以这里退回 DOM 自己的截断：监听登记在**捕获阶段**，
-       * 真实按键（target 是 body/canvas）会先经过 window 捕获，早于任何 window 冒泡监听。
-       *
-       * ⚠ 只截断本轮新加的那几个键（方向/WASD/回车/空格/翻页）。Esc 与数字直选**照旧放行**，
-       * 它们的既有传播关系不在这次改动的范围里。
-       */
-      this.keyHandler = (e: KeyboardEvent) => {
-        if (allowCancel && e.code === 'Escape') {
-          e.preventDefault();
-          this.close(null);
-          return;
-        }
-        // 方向键先给焦点：**焦点优先、滚动兜底**（PageUp/PageDown 这类焦点不认的键才落到滚动区）。
-        // 焦点挪出视口时把它滚进来，否则长清单里按方向键会"高亮跑到看不见的地方"。
-        if (this.focus?.handleKey(e.code)) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          this.scrollFocusIntoView();
-          return;
-        }
-        // 选项超屏时翻页键滚列表（不与数字键、Esc 冲突）
-        if (this.list?.handleKey(e.code)) {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          return;
-        }
-        if (e.code.startsWith('Digit') || e.code.startsWith('Numpad')) {
-          const raw = e.code.startsWith('Digit')
-            ? e.code.slice('Digit'.length)
-            : e.code.slice('Numpad'.length);
-          const n = Number(raw);
-          if (Number.isInteger(n) && n >= 1 && n <= cleanOptions.length) {
-            e.preventDefault();
-            this.close(n - 1);
-          }
-        }
-      };
-      window.addEventListener('keydown', this.keyHandler, true);
+    const shade = new Graphics();
+    shade.eventMode = 'none';
+    drawFirstPersonShade(shade, sw, sh);
+    container.addChild(shade);
+
+    const cells = options.map((opt, idx) => buildFirstPersonChoiceCell({
+      label: String(idx + 1),
+      text: opt.text,
+      fill: UITheme.colors.choiceEnabled,
+      enabled: true,
+    }));
+    const { places, top } = layoutFirstPersonChoices(cells.map((c) => c.width), sw, sh);
+    const focusItems: FocusItem[] = [];
+    cells.forEach((cell, idx) => {
+      const { x, y } = places[idx];
+      cell.view.position.set(x, y);
+      // 悬停即移焦、点下即选：与木钮那套同一交互（见上面 hit 的注释）
+      cell.view.on('pointerover', () => { this.focus?.syncHover(`opt-${idx}`); });
+      cell.view.on('pointerout', () => { this.focus?.clearHover(`opt-${idx}`); });
+      cell.view.on('pointerdown', (e) => {
+        markPointerConsumed((e as { nativeEvent?: unknown }).nativeEvent);
+        this.close(idx);
+      });
+      container.addChild(cell.view);
+      focusItems.push({
+        id: `opt-${idx}`,
+        x, y, w: cell.width, h: FIRST_PERSON.choiceRowHeight,
+        group: 'options',
+        onFocus: cell.setHighlight,
+        onActivate: () => this.close(idx),
+      });
     });
+
+    if (prompt) {
+      const body = createStyledText({
+        text: prompt,
+        style: {
+          fontSize: FIRST_PERSON.fontSize,
+          fill: FIRST_PERSON.bodyFill,
+          fontFamily: UITheme.fonts.ui,
+          wordWrap: true,
+          breakWords: true,
+          wordWrapWidth: FIRST_PERSON.textMaxWidth,
+          lineHeight: FIRST_PERSON.lineHeight,
+          dropShadow: { ...FIRST_PERSON_TEXT_SHADOW },
+        },
+      });
+      const lay = layoutFirstPersonLine(
+        stripStyleMarkup(prompt), body.style, 0, sw, top - FIRST_PERSON.textAboveChoices,
+      );
+      body.position.set(lay.bodyX, lay.top);
+      body.eventMode = 'none';
+      container.addChild(body);
+    }
+
+    if (allowCancel) {
+      const hint = createStyledText({
+        text: this.strings.get('actionChoice', 'cancelHint'),
+        style: {
+          fontSize: UITheme.fontSize.small,
+          fill: UITheme.colors.hintMid,
+          fontFamily: UITheme.fonts.ui,
+          dropShadow: { ...FIRST_PERSON_TEXT_SHADOW },
+        },
+      });
+      // 贴右下角：不跟选项行抢中间那条
+      hint.position.set(
+        sw - FIRST_PERSON.sideMargin / 2 - hint.width,
+        sh - FIRST_PERSON.choiceBottomInset / 2 - hint.height / 2,
+      );
+      hint.eventMode = 'none';
+      container.addChild(hint);
+    }
+
+    // 默认焦点 = 第一项（本条的选项全都可选，没有禁用态）
+    const focus = new UIFocus();
+    focus.setItems(focusItems);
+    this.focus = focus;
+  }
+
+  /** 键盘：方向键挪焦点、回车/空格选中、数字直选、可取消时 Esc 取消。两种版式共用。 */
+  private installKeys(optionCount: number, allowCancel: boolean): void {
+    /**
+     * 被本条吃掉的**导航/激活键**必须就地截断，不能再往下漏。
+     *
+     * 这是三行开外那个 `markPointerConsumed` 的键盘孪生：`DialogueUI` 在 window 上挂着
+     * 推进监听，对白框还在屏上时按回车会**一键双吃**——既选中本条的动作，又把底下那句
+     * 台词推过去。指针侧早就用「标记已消费」堵掉了同一个洞，键盘侧没有对应设施
+     * （见报告里的地基缺口），所以这里退回 DOM 自己的截断：监听登记在**捕获阶段**，
+     * 真实按键（target 是 body/canvas）会先经过 window 捕获，早于任何 window 冒泡监听。
+     *
+     * ⚠ 只截断本轮新加的那几个键（方向/WASD/回车/空格/翻页）。Esc 与数字直选**照旧放行**，
+     * 它们的既有传播关系不在这次改动的范围里。
+     */
+    this.keyHandler = (e: KeyboardEvent) => {
+      if (allowCancel && e.code === 'Escape') {
+        e.preventDefault();
+        this.close(null);
+        return;
+      }
+      // 方向键先给焦点：**焦点优先、滚动兜底**（PageUp/PageDown 这类焦点不认的键才落到滚动区）。
+      // 焦点挪出视口时把它滚进来，否则长清单里按方向键会"高亮跑到看不见的地方"。
+      if (this.focus?.handleKey(e.code)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this.scrollFocusIntoView();
+        return;
+      }
+      // 选项超屏时翻页键滚列表（不与数字键、Esc 冲突）
+      if (this.list?.handleKey(e.code)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (e.code.startsWith('Digit') || e.code.startsWith('Numpad')) {
+        const raw = e.code.startsWith('Digit')
+          ? e.code.slice('Digit'.length)
+          : e.code.slice('Numpad'.length);
+        const n = Number(raw);
+        if (Number.isInteger(n) && n >= 1 && n <= optionCount) {
+          e.preventDefault();
+          this.close(n - 1);
+        }
+      }
+    };
+    window.addEventListener('keydown', this.keyHandler, true);
   }
 
   /** 焦点落在视口外的那一行时把它滚进来（列表本身没有"跟随选中"的概念，得由这里推）。 */
@@ -301,6 +444,17 @@ export class ActionChoiceUI {
   }
 
   close(result: number | null = null): void {
+    this.unsubResize?.();
+    this.unsubResize = null;
+    this.current = null;
+    this.teardownView();
+    const resolve = this.resolveChoice;
+    this.resolveChoice = null;
+    resolve?.(result);
+  }
+
+  /** 拆掉这一条的全部视图与监听（关闭与 resize 重建共用；不结束这次选择）。 */
+  private teardownView(): void {
     if (this.keyHandler) {
       // ⚠ 摘监听必须带上与登记时相同的 capture 标志，否则摘不掉、每开一次条就积一个死监听
       window.removeEventListener('keydown', this.keyHandler, true);
@@ -317,9 +471,6 @@ export class ActionChoiceUI {
       this.container.destroy({ children: true });
       this.container = null;
     }
-    const resolve = this.resolveChoice;
-    this.resolveChoice = null;
-    resolve?.(result);
   }
 
   destroy(): void {

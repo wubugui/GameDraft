@@ -68,11 +68,12 @@ describe('对白框几何 · DialogueUI ↔ CutsceneRenderer 镜像 parity', () 
     });
   }
 
-  /** 语义级：三档在两处都要被认，缺一档就是「写了 layout 什么都不发生」的静默半瘫。 */
-  it('三档版式两处都认', () => {
+  /** 语义级：各档在两处都要被认，缺一档就是「写了 layout 什么都不发生」的静默半瘫。 */
+  it('四档版式两处都认', () => {
     for (const src of [UI, CUT]) {
       expect(src).toContain("'top'");
       expect(src).toContain("'bubble'");
+      expect(src).toContain("'firstPerson'");
     }
   });
 

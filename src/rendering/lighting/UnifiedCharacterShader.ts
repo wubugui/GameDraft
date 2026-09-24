@@ -357,6 +357,8 @@ void main(void) {
             vec3 hu, hv;
             areaAxes(normalize(D.xyz), C.z, C.w, C.y, hu, hv);
             S += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, vis);
+        } else if (kind == LC_LINE) {
+            S += lcLineLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, vis);
         } else {
             S += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
         }

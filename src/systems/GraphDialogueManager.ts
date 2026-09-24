@@ -15,6 +15,7 @@ import { isSpeakerSide, resolveDialogueLayout } from '../utils/dialogueSpeakerSi
 import type {
   ActionDef,
   DialogueChoice,
+  DialogueChoicesPayload,
   DialogueEndPayload,
   DialogueGraphFile,
   DialogueGraphNodeDef,
@@ -856,7 +857,13 @@ export class GraphDialogueManager implements IGameSystem {
       this.endDialogue();
       return;
     }
-    this.eventBus.emit('dialogue:choices', choices);
+    // 选项的版式与台词同一套口径：提示句的版式 > 图级 defaultLayout > 缺省（不写 = 选项位置照旧固定）
+    const layoutRaw = node.promptLine?.layout ?? this.graph?.defaultLayout;
+    const payload: DialogueChoicesPayload = {
+      choices,
+      ...(layoutRaw !== undefined ? { layout: resolveDialogueLayout(layoutRaw) } : {}),
+    };
+    this.eventBus.emit('dialogue:choices', payload);
   }
 
   private buildChoicesForNode(node: Extract<DialogueGraphNodeDef, { type: 'choice' }>): DialogueChoice[] {

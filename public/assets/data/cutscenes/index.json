@@ -6289,6 +6289,19 @@
         ]
       },
       {
+        "kind": "action",
+        "type": "cameraStopFollow",
+        "params": {}
+      },
+      {
+        "kind": "present",
+        "type": "cameraMove",
+        "x": 1770.34,
+        "y": 1862.79,
+        "duration": 600,
+        "easing": "easeInOut"
+      },
+      {
         "kind": "present",
         "type": "waitTime",
         "duration": 300
@@ -6355,9 +6368,9 @@
           "trajectoryId": "coin_drop_demo",
           "spawn": {
             "kind": "image",
-            "src": "/resources/runtime/images/props/copper_coin.png",
-            "worldWidth": 17.0,
-            "worldHeight": 17.0,
+            "src": "/resources/runtime/images/props/copper_coin_bright.png",
+            "worldWidth": 10.0,
+            "worldHeight": 10.0,
             "anchor": {
               "x": 0.5,
               "y": 0.5
@@ -7075,7 +7088,7 @@
             "kind": "present",
             "type": "cameraMove",
             "x": 2150,
-            "y": 2010,
+            "y": 1945,
             "duration": 1200,
             "easing": "easeInOut"
           },
@@ -7094,7 +7107,8 @@
         "params": {
           "target": "player",
           "smooth": true
-        }
+        },
+        "disabled": true
       },
       {
         "kind": "action",
@@ -7270,12 +7284,6 @@
         }
       },
       {
-        "kind": "present",
-        "type": "showDialogue",
-        "speaker": "{{player}}",
-        "text": "狗日的，这往囊开走呀？"
-      },
-      {
         "kind": "action",
         "type": "moveEntityTo",
         "params": {
@@ -7283,10 +7291,16 @@
           "sceneId": "跑马梁",
           "x": 485,
           "y": 935,
-          "speed": 75,
+          "speed": 90,
           "moveAnimState": "walk",
           "faceTowardMovement": true
         }
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "狗日的，这往囊开走呀？"
       },
       {
         "kind": "action",
@@ -7313,6 +7327,36 @@
         "kind": "present",
         "type": "waitTime",
         "duration": 450
+      },
+      {
+        "kind": "action",
+        "type": "playSfx",
+        "params": {
+          "id": "sfx_wind_gust"
+        }
+      },
+      {
+        "kind": "action",
+        "type": "sceneWindGust",
+        "params": {
+          "speedMultiplier": 4,
+          "durationMs": 3600,
+          "attackMs": 300,
+          "releaseMs": 1500,
+          "id": "可怕的呼啸风声3",
+          "volume": 1
+        }
+      },
+      {
+        "kind": "present",
+        "type": "waitTime",
+        "duration": 3800
+      },
+      {
+        "kind": "present",
+        "type": "showDialogue",
+        "speaker": "{{player}}",
+        "text": "火！火遭吹熄了……"
       },
       {
         "kind": "action",
@@ -7355,7 +7399,6 @@
         "type": "hideMovieBar"
       }
     ],
-    "targetScene": "跑马梁",
-    "targetSpawnPoint": "spawn_1"
+    "targetScene": "跑马梁"
   }
 ]

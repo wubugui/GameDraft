@@ -26,7 +26,7 @@ verified_by:
   - tools/burn_workbench/tests/test_bundle.py
   - tools/burn_workbench/tests/test_selftest.py
   - tools/burn_workbench/viewer/tests/selftest.js
-last_governed: 2026-09-16
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -37,7 +37,7 @@ last_governed: 2026-09-16
 
 启动 `sh scripts/py.sh -m tools.burn_workbench`（`--open <模板id>` 已开着就切过去；`--smoke` / `--selftest` / `--check` / `--bundle` / `--list` /
 `--serve --port N` / `--game-url`）。单实例、桌面壳零缓存（`tools/desktop_shell.py`）。主编辑器只读显示、菜单「燃烧工作台…」打开
-（[[workbench-owns-authoring-editor-only-displays]] 同一条规矩）。
+（与 [[vfx-workbench]]「主编辑器只是显示器」同一条规矩）。
 
 ## 权威源(读代码从哪进)
 
@@ -81,7 +81,7 @@ last_governed: 2026-09-16
 - **「在游戏里点着 / 熄灭 / 复原」从游戏回传的 items 里选用这份模板的实例**（场景实体 `target` = 实体 id；手上的 `target` = 拿着的人 + `socket`），不猜。
 - **自检与 pytest 绝不碰真库**：读写全指到临时工程（`fixtures.py`），游戏地址钉死端口 `127.0.0.1:9`；`test_selftest.py` 核对真模板目录逐字节不变、
   真工程里不出现自检改名用的 id。
-- **推给游戏 ≠ 导出到游戏**（[[push-to-game-vs-export-to-game]]）：推 = 模板工作态进游戏内存；写资源只有 Ctrl+S（改名 / 删除另走各自的确认）。
+- **推给游戏 ≠ 导出到游戏**（命名口径见 [[sway-workbench]]「推给游戏 ≠ 导出到游戏」）：推 = 模板工作态进游戏内存；写资源只有 Ctrl+S（改名 / 删除另走各自的确认）。
 
 ## 已知坑
 

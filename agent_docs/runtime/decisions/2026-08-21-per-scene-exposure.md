@@ -5,7 +5,7 @@ domain: runtime
 type: decision
 summary: display（ev/tonemap/对比/饱和/lift）留在场景 JSON 里逐场景调;不把 albedo 标定接进背景、不提全局曝光层——精度不是这个项目要的东西
 status: active
-last_governed: 2026-08-21
+last_governed: 2026-09-23
 ---
 
 ## 拍板
@@ -63,7 +63,8 @@ last_governed: 2026-08-21
 
 - `radianceScale` / `day_hemi` / `albedo` 这些**烘焙期反解的标定量**算错 ——
   它们描述的是原画的性质,不是美术意图,错了就是错了(见 `lighting-scale-reference`)。
-- 角色与背景在**同一个场景内**对不上 —— 那是 `radianceScale` 的活,与本决定无关。
+- 角色与背景在**同一个场景内**对不上 —— 与本决定无关。现行路径上那是逐场景受光倍率
+  (`lighting.lightFactors`,见 [[character-lighting]])的活;`radianceScale` 只在停用的统一角色路径里。
 - 拿一个场景的 `display` 抄到另一个场景当"起点"**不算对齐**,只是省事;
   抄完必须重调,否则就是本决定明确接受的那个代价在咬人。
 

@@ -9,8 +9,8 @@ triggers:
   paths: ["tools/animation_pipeline/ambient_fx/**", "public/assets/scenes/*.json"]
   tasks: [背景人物动起来, 场景群像活化, 环境动效]
   topics: [烤入背景, 呼吸动画, 擦人, overlay]
-last_governed: 2026-09-03
-last_used: 2026-07-04
+last_governed: 2026-09-23
+last_used: 2026-09-16
 ---
 
 ## 适用时机

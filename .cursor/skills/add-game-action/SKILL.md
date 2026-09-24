@@ -7,7 +7,7 @@ description: Registers a new ActionExecutor action in GameDraft with editor supp
 
 在 GameDraft 中，**一条可用的 Action = 运行时注册 + 主编辑器可配置 + 数据校验认可**。只做其中一步视为未完成。
 
-> 登记面全景与已知坑（可选参数被 Python 兜底当必填、参数往返保真登记等）：`agent_docs/content/mechanisms/l2-action-primitive-registration.md`、`agent_docs/runtime/mechanisms/action-registration-quadruple.md`。
+> 登记面全景与已知坑（可选参数被 Python 兜底当必填、参数往返保真登记等）：`agent_docs/content/mechanisms/l2-action-primitive-registration.md`、`agent_docs/runtime/mechanisms/action-registration-registry-surfaces.md`。
 
 ## 术语
 

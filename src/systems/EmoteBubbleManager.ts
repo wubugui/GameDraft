@@ -1,6 +1,6 @@
 import { CanvasTextMetrics, Container, Graphics, Text, TextStyle } from 'pixi.js';
 import type { EmoteBubbleOffsetOpts, EmoteBubbleVariant, IEmoteBubbleAnchor, IGameSystem, GameContext } from '../data/types';
-import { normalizeEmoteBubbleScale } from '../data/types';
+import { isEmoteAnchorShown, normalizeEmoteBubbleScale } from '../data/types';
 import { Hotspot } from '../entities/Hotspot';
 import { createStyledText } from '../core/styledText';
 import { hasStyleMarkup } from '../core/textStyle';
@@ -383,6 +383,8 @@ export class EmoteBubbleManager implements IGameSystem {
 
     bubble.x = bx;
     bubble.y = by;
+    // 挂在一个此刻藏着的人头上：挂载当帧就不画（每帧的显隐跟随见 update）
+    bubble.visible = isEmoteAnchorShown(anchor);
     attachParent.addChild(bubble);
     if (attachParent.sortableChildren) {
       attachParent.sortChildren();
@@ -502,6 +504,10 @@ export class EmoteBubbleManager implements IGameSystem {
         entry.bubble.x = displayObj.x - bw / 2 + ox;
         entry.bubble.y = displayObj.y + f.smoothedAnchorY + oy - bh;
       }
+      // 气泡紧跟着它挂的那个人显隐（2026-09-23：到了夜里人按作息隐掉，话还挂在原地）。
+      // 气泡是实体层里的兄弟节点、不是实体的子节点，实体藏了不会连带它——只能每帧照着抄。
+      // 人藏着时倒计时照走；倒计时没完人又现身，话跟着回来。
+      entry.bubble.visible = isEmoteAnchorShown(entry.anchor);
       // 入场：140ms 淡入 + 自尾尖 0.85→1 轻回弹。与倒计时并行；极短 duration 下与退场
       // 同帧叠加时透明度取两段较小者，不会先亮后跳。
       if (entry.inMs < BUBBLE_IN_MS) {

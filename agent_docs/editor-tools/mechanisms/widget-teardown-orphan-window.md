@@ -57,7 +57,7 @@ last_governed: 2026-09-12
 - 抓现场的姿势：桌面级顶层窗口采样器（`EnumWindows` 轮询，记类名/标题/所属进程）比
   Qt 事件过滤器可靠——**app 级 `installEventFilter` 收不到 `QEvent.Show`**（实测），
   只有对象级过滤器收得到，而新造的控件装不上过滤器。见
-  [live-editor-forensics](live-editor-forensics.md)。
+  [live-editor-forensics](../recipes/live-editor-forensics.md)。
 - 组合框的弹出容器（`QComboBoxPrivateContainer`，一个带 `QListView` 的 QFrame）本身就是
   顶层窗口，`topLevelWidgets()` 里一大片是它们——排查时别把它们当成野窗口；判据看
   `isVisible()` 与内容。

@@ -41,6 +41,16 @@ def isolate_for_selftest(sid: str, tmp: Path) -> None:
     for f in src.iterdir():
         if f.is_file() and (f.suffix.lower() in (".png", ".jpg", ".jpeg", ".json")):
             shutil.copyfile(f, dst / f.name)
+    # 自检从**空作者层**起（它按"自己画的是第几块"断言）：真场景的作者层随时会被人 / 批量修碰撞写上东西，
+    # 只在临时树里清空，真数据一个字节不动
+    tj = dst / "terrain" / tc.TERRAIN_JSON
+    if tj.is_file():
+        doc = json.loads(tj.read_text(encoding="utf-8"))
+        doc.update(regions=[], heightOps=[], brush=None, height=None)
+        tj.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+        for f in (tc.BRUSH_FILE, tc.HEIGHT_FILE):
+            if (dst / "terrain" / f).exists():
+                (dst / "terrain" / f).unlink()
     tc.SCENES_RT = tmp / "scenes"
     authoring.PREVIEW_ROOT = tmp / "preview"
     authoring.DRAFT_ROOT = tmp / "drafts"

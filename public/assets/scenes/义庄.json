@@ -441,8 +441,8 @@
     {
       "id": "npc_义庄门口拦活",
       "name": "袖手的老汉",
-      "x": 520.0,
-      "y": 490.0,
+      "x": 545.0,
+      "y": 460.0,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
       "initialAnimState": "idle",

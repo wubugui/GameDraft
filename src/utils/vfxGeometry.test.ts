@@ -10,8 +10,11 @@ import { describe, expect, it } from 'vitest';
 import golden from './vfxGeometry.golden.json';
 import {
   buildDepthShellField,
+  decodeDepthShellField,
   decodeDepthRG16Bytes,
+  resampleDepthBytes,
   resampleFloatField,
+  sampleStrictShellSurface,
   shellContactAt,
   shellDepthWuAt,
   pushInFrontOfShell,
@@ -135,5 +138,78 @@ describe('解码与重采样', () => {
     expect(out.length).toBe(8);
     expect(out[0]).toBeCloseTo(0.5, 9);
     expect(out[3]).toBeCloseTo(6.5, 9);
+  });
+});
+
+describe('精确可见壳采样（不影响碰撞壳）', () => {
+  const basis = { basisRows: [1, 0, 0, 0, 1, 0, 0, 0, 1], wuPerQUnit: 20 };
+  const cal = { ppu: 10, cx: 4, cy: 4 };
+  const direct = (value: (x: number, y: number) => number) => {
+    const depth = new Float32Array(9 * 9);
+    for (let y = 0; y < 9; y++) for (let x = 0; x < 9; x++) depth[y * 9 + x] = value(x, y);
+    return buildDepthShellField(depth, 9, 9, cal, basis.basisRows);
+  };
+  const rgbaOf = (w: number, h: number, raw: (x: number, y: number) => number) => {
+    const out = new Uint8Array(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4, v = raw(x, y);
+      out[i] = v >> 8; out[i + 1] = v & 255; out[i + 3] = 255;
+    }
+    return out;
+  };
+
+  it('点在未平滑平面上，面积按世界单位缩放，竖直世界面仍可采', () => {
+    const f = direct((x, y) => 1 + x * 0.02 + y * 0.01);
+    const s = sampleStrictShellSurface(f, basis, 4, 4)!;
+    expect(s).not.toBeNull();
+    expect(s.p[0]).toBe(0); expect(s.p[1]).toBe(0);
+    expect(s.p[2]).toBeCloseTo(22.4, 5);
+    expect(s.areaWu2).toBeCloseTo(4 * Math.sqrt(1 + 0.2 ** 2 + 0.1 ** 2), 5);
+    expect(Math.hypot(...s.normal)).toBeCloseTo(1, 10);
+    expect(s.normal[2]).toBeLessThan(0);
+    const larger = sampleStrictShellSurface(f, { ...basis, wuPerQUnit: 40 }, 4, 4)!;
+    expect(larger.areaWu2 / s.areaWu2).toBeCloseTo(4, 9);
+    const wall = sampleStrictShellSurface(direct(() => 1), basis, 4, 4)!;
+    expect(wall.normal[1]).toBeCloseTo(0, 10);
+    expect(wall.areaWu2).toBeCloseTo(4, 9);
+  });
+
+  it('PNG 取真实源像素中心，深度图与背景不同长宽比也不借另一套标定', () => {
+    const srcW = 25, srcH = 31;
+    const rgba = rgbaOf(srcW, srcH, (x, y) => 10000 + 31 * x + 53 * y);
+    const mapping = { invert: false, scale: 1, offset: 0 };
+    const f = decodeDepthShellField(rgba, srcW, srcH, 24, 18, mapping,
+      { ppu: 30, cx: 12, cy: 9 }, basis.basisRows, 8);
+    const s = sampleStrictShellSurface(f, basis, 3, 2)!;
+    expect(s).not.toBeNull();
+    const sx = Math.floor(3.5 * srcW / f.w), sy = Math.floor(2.5 * srcH / f.h);
+    expect(s.px).toBeCloseTo((sx + 0.5) / srcW * f.w, 6);
+    expect(s.py).toBeCloseTo((sy + 0.5) / srcH * f.h, 6);
+    expect(s.p[2]).toBeCloseTo((10000 + 31 * sx + 53 * sy) / 65535 * basis.wuPerQUnit, 6);
+    expect(f.data).toEqual(resampleDepthBytes(rgba, srcW, srcH, mapping, f.w, f.h));
+    const legacy = buildDepthShellField(f.data, f.w, f.h, f.cal, basis.basisRows);
+    expect(f.normal).toEqual(legacy.normal);
+  });
+
+  it('源图足迹中的细小前景会拒绝采样，不让盒平均制造悬空表面', () => {
+    const rgba = rgbaOf(24, 24, (x, y) => x === 9 && y === 10 ? 65535 : 1000);
+    const f = decodeDepthShellField(rgba, 24, 24, 24, 24,
+      { invert: false, scale: 20, offset: 0 }, { ppu: 30, cx: 12, cy: 12 }, basis.basisRows, 8);
+    expect(f.data[3 * f.w + 3]).toBeGreaterThan(f.surfaceSamples!.data[3 * f.w + 3]);
+    expect(sampleStrictShellSurface(f, basis, 3, 3)).toBeNull();
+    expect(sampleStrictShellSurface(f, basis, 6, 6)).not.toBeNull();
+  });
+
+  it('边缘、非法格点、非有限源值和深度断层都不钳制到合法点', () => {
+    const f = direct(() => 1);
+    for (const [x, y] of [[0, 4], [8, 4], [-1, 4], [4, 9], [4.5, 4], [NaN, 4]]) {
+      expect(sampleStrictShellSurface(f, basis, x, y)).toBeNull();
+    }
+    expect(sampleStrictShellSurface(direct((x) => x < 4 ? 1 : 30), basis, 4, 4)).toBeNull();
+    expect(sampleStrictShellSurface(direct((x, y) => x === 4 && y === 4 ? NaN : 1), basis, 4, 4)).toBeNull();
+    expect(sampleStrictShellSurface(f, { ...basis, wuPerQUnit: 0 }, 4, 4)).toBeNull();
+    expect(sampleStrictShellSurface(f, { ...basis, basisRows: new Array(9).fill(0) }, 4, 4)).toBeNull();
+    delete f.surfaceSamples;
+    expect(sampleStrictShellSurface(f, basis, 4, 4)).toBeNull();
   });
 });

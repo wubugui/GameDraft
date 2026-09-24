@@ -59,6 +59,8 @@ export interface PerformanceLedger {
   sfxIds: Set<string>;
   /** 本会话放出的粒子实例 id */
   vfxIds: string[];
+  /** Instance-owned presentation resources (audio handles, transient overlays). */
+  cleanups: Set<() => void>;
 }
 
 function emptyLedger(): PerformanceLedger {
@@ -71,6 +73,7 @@ function emptyLedger(): PerformanceLedger {
     gusted: false,
     sfxIds: new Set<string>(),
     vfxIds: [],
+    cleanups: new Set(),
   };
 }
 
@@ -83,6 +86,7 @@ export interface PerformanceRelease {
   clearGust(): void;
   stopSfx(id: string): void;
   stopVfxSoft(id: string): void;
+  stopVfxNow?(id: string): void;
 }
 
 export class PerformanceSession {
@@ -227,8 +231,16 @@ export class PerformanceSessionManager {
     const L = session.ledger;
     const r = this.deps.release;
 
+    for (const cleanup of L.cleanups) {
+      try { cleanup(); } catch { /* The owning presentation may already have ended. */ }
+    }
+    L.cleanups.clear();
+
     for (let i = L.vfxIds.length - 1; i >= 0; i--) {
-      try { r.stopVfxSoft(L.vfxIds[i]); } catch { /* 实例已随场景散掉 */ }
+      try {
+        if (session.endReason === 'interrupted' && r.stopVfxNow) r.stopVfxNow(L.vfxIds[i]);
+        else r.stopVfxSoft(L.vfxIds[i]);
+      } catch { /* 实例已随场景散掉 */ }
     }
     for (const id of L.sfxIds) {
       try { r.stopSfx(id); } catch { /* 已停 */ }
@@ -295,6 +307,12 @@ export function ledgerTakeSfx(session: PerformanceSession | undefined, id: strin
 export function ledgerTakeVfx(session: PerformanceSession | undefined, id: string | null | undefined): void {
   if (!session || !id) return;
   session.ledger.vfxIds.push(id);
+}
+
+export function ledgerTakeCleanup(session: PerformanceSession | undefined, cleanup: () => void): void {
+  if (!session) return;
+  if (session.finished || session.hurried) { cleanup(); return; }
+  session.ledger.cleanups.add(cleanup);
 }
 
 export function ledgerTakeShake(session: PerformanceSession | undefined): void {

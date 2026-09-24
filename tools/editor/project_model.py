@@ -123,6 +123,10 @@ class ProjectModel(QObject):
         #: 谁是可燃物写在宿主自己身上（热点 / NPC / 挂件预设 / 轨迹 spawn 的 ``burnable`` 块），随各自的数据走。
         self.burnables: dict[str, dict] = {}
         self.burnables_errors: dict[str, str] = {}
+        #: 呼吸图资产 `assets/data/breathing/<stem>.json` 的**只读镜像**（文件名 stem → 原始文档）。
+        #: 唯一写者是呼吸工作台；与 vfx_effects 同一待遇——没有脏桶、不进 save_all、不进外部改动基线。
+        #: 动作 `showBreathingOverlay.breathing` 写的就是文件名 stem（运行时按 `breathing/<id>.json` 拉）。
+        self.breathing_overlays: dict[str, dict] = {}
         #: `burnable_spawn_specs()` 的编辑缓存（`mark_dirty` / 重读燃烧数据时作废）
         self._burnable_spawn_cache: list[dict] | None = None
         self.flag_registry: dict = {}
@@ -469,6 +473,7 @@ class ProjectModel(QObject):
         self._scan_vfx_from_disk()
         self._scan_vfx_placements_from_disk()
         self._scan_burn_from_disk()
+        self._scan_breathing_from_disk()
 
         from .flag_registry import flag_registry_path, load_flag_registry
         self.flag_registry = load_flag_registry(flag_registry_path(self.assets_path))
@@ -675,6 +680,52 @@ class ProjectModel(QObject):
         if (self.burnables, self.burnables_errors) == before:
             return False
         self.data_changed.emit("burn", "")
+        return True
+
+    def _scan_breathing_from_disk(self) -> None:
+        """重扫 `assets/data/breathing/*.json` 进只读镜像 `self.breathing_overlays`。
+
+        与 :meth:`_scan_vfx_from_disk` 同一条理由**刻意不走 ``_load``**：唯一写者是呼吸工作台（另一个进程），
+        登记了外部改动基线，下一次 Save All 就把工作台刚存的东西当"外部并发改动"拦下来。
+        坏文件记 ``load_anomalies`` 跳过（validator 另按目录重扫补成 error）；可重复调用（先清本目录的旧告警）。
+        """
+        self.load_anomalies[:] = [
+            a for a in self.load_anomalies if not str(a).startswith("breathing/")
+        ]
+        self.breathing_overlays = {}
+        if self.project_path is None:
+            return
+        bdir = self.paths.breathing_dir
+        if not bdir.is_dir():
+            return
+        for path in list_json_files(bdir):
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                self.load_anomalies.append(
+                    f"breathing/{path.name}: 无法解析（{type(exc).__name__}），载入时被跳过"
+                    f"（磁盘文件保持不动；该目录由呼吸工作台维护）",
+                )
+                continue
+            if not isinstance(doc, dict):
+                self.load_anomalies.append(
+                    f"breathing/{path.name}: 根不是 JSON 对象，载入时被跳过（磁盘文件保持不动）",
+                )
+                continue
+            self.breathing_overlays[path.stem] = doc
+
+    def reload_breathing_from_disk(self) -> bool:
+        """重读呼吸图资产（呼吸工作台存盘后同步候选；**不标脏、不动基线**）。
+
+        口径与 :meth:`reload_vfx_from_disk` 一致：盘上与内存真不一样才发一次 ``data_changed("breathing", "")``。
+        """
+        if self.project_path is None:
+            return False
+        before = self.breathing_overlays
+        self._scan_breathing_from_disk()
+        if self.breathing_overlays == before:
+            return False
+        self.data_changed.emit("breathing", "")
         return True
 
     def reload_trajectories_from_disk(self) -> bool:
@@ -1906,6 +1957,21 @@ class ProjectModel(QObject):
             ems = doc.get("emitters")
             n = len(ems) if isinstance(ems, list) else 0
             out.append((eid, f"{label}（{n} 发射器）"))
+        out.sort(key=lambda r: r[0])
+        return out
+
+    def all_breathing_overlay_ids(self) -> list[tuple[str, str]]:
+        """`(id, label)`：呼吸图资产（`assets/data/breathing/*.json`），供 showBreathingOverlay 选择器 / 校验用。
+
+        **取值是文件名 stem**——运行时按 `breathing/<id>.json` 拉（`breathingJsonUrl`），不看文档里的 `id`
+        （两者不一致由校验器报 warning）。label 取文档 `label`，没写就是 id。按 id 排序。
+        """
+        out: list[tuple[str, str]] = []
+        for stem, doc in self.breathing_overlays.items():
+            if not isinstance(doc, dict):
+                continue
+            label = str(doc.get("label") or "").strip()
+            out.append((str(stem), label or str(stem)))
         out.sort(key=lambda r: r[0])
         return out
 

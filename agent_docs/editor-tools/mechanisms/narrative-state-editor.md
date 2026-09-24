@@ -18,7 +18,7 @@ verified_by:
   - tools/editor/tests/test_narrative_state_editor.py
   - tools/narrative_editor_web/src/hooks/useEditorHistory.test.ts
   - tools/narrative_editor_web/src/canvas/edgeRouting.test.ts
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -84,7 +84,8 @@ last_governed: 2026-08-05
     `host_data_served()`(getData 至少交付过一次)为假时**一律拒收**并留可读原因——老 dist 不带
     isLoaded 也拦得住。护栏:`test_narrative_state_editor.py` 的事故重放测试 + `hostDataGate.test.ts`。
     判事故形状:数据文件"整块字段消失、别的字段完好、键序变成代码里的 EMPTY 常量"= 半加载
-    全量写回,先查有没有起于旧代码的编辑器进程(`tools/dev_console` 现在会报孤儿),别先找会话。
+    全量写回,先查有没有起于旧代码的编辑器进程(`tools/dev_console` 现在会报孤儿),别先找会话
+    (取证手法与进程归属见 [live-editor-forensics](../recipes/live-editor-forensics.md))。
 
 13. **「编排全貌」面板与画布引用小标只认「游戏里真实存在的东西」，且与「关系」面板同一次扫描**
     (2026-09-17 制作人定):一张图的关联分三组——推它的(发信号的区域/热点/对话图/别的图)、
@@ -112,6 +113,8 @@ last_governed: 2026-08-05
 
 ## 已知坑
 
+- 叙事页的资产遍历(信号/引用扫描面)**不扫物品、线索、挂件预设**里的动作——这些宿主里发的信号、引用的状态
+  在叙事页看不见;宿主清单的对账见 [action-host-fields](action-host-fields.md)。
 - 同一事件连打两次 `updateData` = 第二次赢、第一次被静默丢弃(根因:绕过持有串行基线的撤销核,直接读渲染期 data 再 setData);直接 `setDataInternal` 的路径(初次加载、adopt 重构结果)必须同 tick 追平基线。
 - 目录里"看得见的信号"≠"注册过的信号":只被监听/黑盒声明的信号会被补成影子条目,长得和真注册行一样,判据只有 `entry.registered`。
 - 桥接原生 ConditionEditor 的往返对某些叶子(空 phase scenario、未登记 id)会静默丢:web 侧回写前有丢叶比对护栏,发现丢即放弃修改——动条件链路别拆掉它。

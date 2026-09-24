@@ -14,7 +14,7 @@ triggers:
   tasks: [改位面编辑器, 加位面槽字段]
 verified_by:
   - tools/editor/tests/test_plane_editor_inheritance.py
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)

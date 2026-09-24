@@ -10,6 +10,7 @@ import {
   packShadowBias, worldWuToQ,
 } from './lightPacking';
 import { LIGHTS_PER_SLAB, type PrefixLight, ShadowPrefixPass } from './shadowPrefix';
+import { SURFACE_DEFAULTS } from './surfaceMask';
 import { PROBE_SAMPLING_GLSL, SKYAO_SAMPLING_GLSL } from '../CharacterShadingFilter';
 import LIGHTING_CORE from './lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
@@ -112,6 +113,7 @@ const LC_POINT = 0;
 const LC_SPOT = 1;
 const LC_AREA = 2;
 const LC_DIRECTIONAL = 3;
+const LC_LINE = 4;
 
 const BAKE_FRAG = /* glsl */ `#version 300 es
 precision highp float;
@@ -123,6 +125,16 @@ uniform sampler2D uPainting;     // 原画（sRGB）
 uniform sampler2D uNormal;       // lighting/<背景基名>/normal.png
 uniform sampler2D uAlbedo;       // lighting/<背景基名>/albedo.png（sRGB8，灯乘在它上面）
 uniform sampler2D uDepth;        // raw_depth_rg.png
+/**
+ * 表面材质的反光遮罩（底色 = 全局缺省材质，上面画布置库 surfaces，覆盖整张场景）：
+ * r = 反光多强 0..1，g = 粗糙度 0..1，b = 水面（1 = 水）。本场景一块区都没有 = uSurfOn 0，整张都用 uSurfDefault。
+ */
+uniform sampler2D uSurfMask;
+uniform float uSurfOn;
+/** 全局缺省材质：反光, 粗糙度(0..1), 细节起伏强度(地面), 雨纹强度(水面) */
+uniform vec4 uSurfDefault;
+/** 秒：水面雨纹随它动（只有打了反光位的灯在场时才会重烘，平时这一项不存在） */
+uniform float uTime;
 
 uniform vec2  uDepthTexSize;
 uniform vec3  uCal;              // ppu, cx, cy（native 分辨率标定）
@@ -253,6 +265,125 @@ void areaAxes(vec3 n, float halfW, float halfH, float roll, out vec3 halfU, out 
     halfV = rv * halfH;
 }
 
+// ---------------------------------------------------------------- 镜面反光（只给打了 reflect 位的灯）
+//
+// 场景照明本来是纯漫反射（原画 + 反照率 × 灯）。落雷的参考图里最显眼的是湿石板上一道道亮痕、
+// 水面上朝观众拉长的一条反光柱——那是**镜面反射**，漫反射给不出来。于是只在作者圈出来的
+// 水面 / 湿地上、只对落雷那几盏灯加一项 GGX 镜面（世界空间，视线 = 标定 R 的第三列，铁律 0）。
+// 反光柱不是贴图，是 GGX 的瓣在斜看的水平面上自然拉长出来的；水面的雨点细波纹把它打碎成一串亮点。
+//
+// 口径：漫反射这里写的是 albedo × E（不除 π），镜面与它同尺 = π × f_spec × E。
+float specGGX(vec3 n, vec3 v, vec3 l, float rough, float f0) {
+    float nl = dot(n, l);
+    if (nl <= 0.0) return 0.0;
+    vec3 h = normalize(v + l);
+    float nv = max(dot(n, v), 1e-3);
+    float nh = max(dot(n, h), 0.0);
+    float vh = max(dot(v, h), 0.0);
+    float a = max(rough * rough, 2e-3);
+    float a2 = a * a;
+    float dd = nh * nh * (a2 - 1.0) + 1.0;
+    float D = a2 / (LC_PI * dd * dd);
+    float vis = 0.5 / (nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2));
+    float F = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+    return LC_PI * D * vis * F * nl;
+}
+
+// ---------------------------------------------------------------- 细节法线（程序化微表面）
+//
+// 真实的湿地面，高光是碎的：砂粒、石子、泥面的起伏把一片高光打散成一粒粒闪点；水面上是雨点打出的一圈圈涟漪。
+// 原画烘出来的法线只有大形，光改粗糙度只得到一片平滑光斑（09-24 制作人："光改粗糙度没有法线效果很假"）。
+// 这里的起伏**不对应原画**（制作人："不需要和场景匹配，只要能看到光照效果"），只进镜面项，漫反射照旧用烘的法线。
+//
+// 做法是给表面一张程序化的高度场，法线 = 基础法线沿高度梯度倾斜：
+//   - 地面：四级值噪声（波长 22 / 9 / 4 / 1.8 wu），**自相似**——每级坡度幅度相同（高度幅度随波长）。
+//   - 水面：基础法线取世界向上（水是平的），叠雨点涟漪（每格一个雨点、圈往外扩、振幅随时间衰减）+ 弱的细浪。
+// 逐级按像素足迹淡出：波长小过两三个像素的起伏看不清，它的斜率方差并进粗糙度
+// （Toksvig 2005：看不清的起伏 = 更糙的表面，α² 加上丢掉的均方坡度），所以远处 / 斜看自然退成一片柔光、不闪烁。
+// 取样平面按法线的主轴选（地面 XZ、朝左右的墙 ZY、朝前后的墙 XY），墙上的起伏不会被拉成竖条。
+float rippleHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+vec2 rippleGrad(vec2 p) {
+    vec2 i = floor(p), f = fract(p);
+    vec2 u = f * f * (3.0 - 2.0 * f), du = 6.0 * f * (1.0 - f);
+    float a = rippleHash(i), b = rippleHash(i + vec2(1.0, 0.0));
+    float c = rippleHash(i + vec2(0.0, 1.0)), d = rippleHash(i + vec2(1.0, 1.0));
+    float k = a - b - c + d;
+    return du * vec2(b - a + k * u.y, c - a + k * u.x);
+}
+/** 值噪声梯度的均方（单位坡度幅度下，两轴合计）：丢掉一级时并进 α² 的量 */
+const float DN_VAR = 0.45;
+/** 地面每级的坡度幅度（× 细节起伏强度） */
+const float DN_SLOPE = 0.2;
+
+/** 地面 / 墙的细节法线；a2 进来是本来的 α²，出去加上看不清那几级的坡度方差 */
+vec3 detailNormal(vec3 n, vec3 P, float fp, float amt, inout float a2) {
+    vec3 an = abs(n);
+    vec2 uv;
+    int ax;
+    if (an.y >= an.x && an.y >= an.z) { uv = P.xz; ax = 1; }
+    else if (an.x >= an.z) { uv = P.zy; ax = 0; }
+    else { uv = P.xy; ax = 2; }
+    vec2 g = vec2(0.0);
+    float s = DN_SLOPE * amt;
+    for (int k = 0; k < 4; k++) {
+        float lam = k == 0 ? 22.0 : k == 1 ? 9.0 : k == 2 ? 4.0 : 1.8;
+        // 每级转一个角（值噪声是方格上插的，几级同向叠起来看得出横平竖直的格子）
+        float ang = float(k) * 1.1 + 0.4;
+        mat2 rot = mat2(cos(ang), sin(ang), -sin(ang), cos(ang));
+        // 波长至少要三个像素才画（值噪声的能量有一截高过它的名义频率）；更细的并进粗糙度
+        float w = smoothstep(3.0 * fp, 6.0 * fp, lam);
+        g += (w * s) * (transpose(rot) * rippleGrad(rot * uv / lam + vec2(float(k) * 17.3, float(k) * 5.1)));
+        a2 += (1.0 - w * w) * s * s * DN_VAR;
+    }
+    vec3 gv = ax == 1 ? vec3(g.x, 0.0, g.y) : ax == 0 ? vec3(0.0, g.y, g.x) : vec3(g.x, g.y, 0.0);
+    return normalize(n - (gv - n * dot(n, gv)));
+}
+
+/** 雨点涟漪：每格（9 wu）一个雨点，随机位置、随机相位，每秒约 0.9 点；圈扩到 5 wu 平掉，波长 1.6 wu */
+const float RAIN_CELL = 9.0;
+const float RAIN_RATE = 0.9;
+const float RAIN_WAVE = 1.6;
+const float RAIN_REACH = 5.0;
+const float RAIN_SLOPE = 0.3;
+
+/** 水面的细节法线：世界向上 + 雨点涟漪 + 弱细浪 */
+vec3 waterNormal(vec3 P, float t, float fp, float amt, inout float a2) {
+    vec3 up = vec3(0.0, 1.0, 0.0);
+    vec2 xz = P.xz;
+    float s = RAIN_SLOPE * amt;
+    float w = smoothstep(3.0 * fp, 6.0 * fp, RAIN_WAVE);
+    a2 += (1.0 - w * w) * s * s * 0.25;
+    vec2 g = vec2(0.0);
+    if (w > 0.0 && s > 0.0) {
+        vec2 c = floor(xz / RAIN_CELL);
+        for (int j = -1; j <= 1; j++) {
+            for (int i = -1; i <= 1; i++) {
+                vec2 cell = c + vec2(float(i), float(j));
+                float h1 = rippleHash(cell), h2 = rippleHash(cell + 31.7), h3 = rippleHash(cell + 71.3);
+                vec2 drop = (cell + vec2(h1, h2)) * RAIN_CELL;
+                float ph = fract(t * RAIN_RATE + h3);
+                vec2 d = xz - drop;
+                float dist = length(d);
+                float x = (dist - ph * RAIN_REACH) / RAIN_WAVE;
+                if (abs(x) > 1.5) continue;
+                float env = (1.0 - ph) * (1.0 - ph) * (1.0 - smoothstep(0.5, 1.5, abs(x)));
+                g += (d / max(dist, 1e-3)) * (cos(x * 6.2831853) * env);
+            }
+        }
+        g *= s * w;
+    }
+    // 细浪：两级会流动的值噪声，幅度只有地面的三成
+    float sw = DN_SLOPE * 0.3 * amt;
+    for (int k = 0; k < 2; k++) {
+        float lam = k == 0 ? 16.0 : 6.0;
+        float ww = smoothstep(3.0 * fp, 6.0 * fp, lam);
+        vec2 flow = k == 0 ? vec2(0.6, 0.35) : vec2(-0.5, -0.9);
+        g += (ww * sw) * rippleGrad(xz / lam + t * flow);
+        a2 += (1.0 - ww * ww) * sw * sw * DN_VAR;
+    }
+    return normalize(up - vec3(g.x, 0.0, g.y));
+}
+
 void main(void) {
     vec3 painting = lcSrgbToLinear(texture(uPainting, vUv).rgb);
     // ---- 场景法线 ----
@@ -351,6 +482,29 @@ void main(void) {
     // ★ 这是"这是夜晚"最强的视觉信号——白天的原画里根本没有发光体，
     //   只把画整体压暗永远得不到它（那只会得到"低亮度的白天"）。
     vec3 emissive = vec3(0.0);
+    // ---- 表面材质（只进打了反光位的灯的镜面项）：没画区域的地方 = 全局缺省材质 ----
+    vec3 specE = vec3(0.0);
+    float surfK = uSurfDefault.x, surfRough01 = uSurfDefault.y, surfWater = 0.0;
+    // 视线：M-world 里朝相机的方向 = −(R 的第三列)
+    vec3 V = -normalize(vec3(uMRow0.z, uMRow1.z, uMRow2.z));
+    if (uSurfOn > 0.5) {
+        vec4 sm = texture(uSurfMask, vUv);
+        surfK = sm.r;
+        surfRough01 = sm.g;
+        surfWater = sm.b;
+    }
+    // 细节法线：地面沿烘的法线加起伏，水面取平面加雨纹；看不清的起伏并进粗糙度（见 detailNormal 头注释）
+    float surfRough = mix(0.04, 0.8, surfRough01);
+    vec3 ns = n;
+    if (surfK > 0.0) {
+        float fp = max(max(length(dFdx(P)), length(dFdy(P))), 1e-3);
+        float a0 = max(surfRough * surfRough, 2e-3);
+        float a2g = a0 * a0, a2w = a0 * a0;
+        vec3 ng = detailNormal(n, P, fp, uSurfDefault.z, a2g);
+        vec3 nw = surfWater > 0.0 ? waterNormal(P, uTime, fp, uSurfDefault.w, a2w) : ng;
+        ns = normalize(mix(ng, nw, surfWater));
+        surfRough = sqrt(sqrt(mix(a2g, a2w, surfWater)));
+    }
     for (int i = 0; i < ${MAX_STATIC_LIGHTS}; i++) {
         if (i >= uLightCount) break;
         vec4 A = uLightA[i], B = uLightB[i], C = uLightC[i], D = uLightD[i];
@@ -372,6 +526,8 @@ void main(void) {
         //    算出一个随后被丢掉的可见性。
         if (kind != ${LC_DIRECTIONAL}) {
             vec3 dl = A.xyz - P;
+            // 线光：截断看线上离这个像素最近的那一点（不是起点）
+            if (kind == ${LC_LINE}) dl += D.xyz * clamp(dot(P - A.xyz, D.xyz) / max(dot(D.xyz, D.xyz), 1e-6), 0.0, 1.0);
             if (exp(-dot(dl, dl) / max(C.x * C.x, 1e-6)) < 1e-4) continue;
         }
 
@@ -389,9 +545,49 @@ void main(void) {
             vec3 hu, hv;
             areaAxes(normalize(D.xyz), C.z, C.w, C.y, hu, hv);
             lampE += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, vis);
+        } else if (kind == ${LC_LINE}) {
+            lampE += lcLineLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, vis);
         } else {
             // directional：方向光的遮挡走 uShadow 那条（与日月同一套），这里不再 march
             lampE += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
+        }
+        // ---- 镜面反光：只有打了 reflect 位的灯（落雷）、只在反光遮罩里 ----
+        if ((flags & 4) != 0 && surfK > 0.0) {
+            float f0 = mix(0.04, 0.02, surfWater);
+            if (kind == ${LC_DIRECTIONAL}) {
+                // 平行光在这里是"被雷照亮的整片云"：一块铺满天的面光，不是一个点。均匀天空的镜面反射
+                // = 菲涅耳 × 天空辐亮度；天空辐亮度 L 与它在水平面上给的照度 E 的关系是 E = π·L，
+                // 而本管线的输出按 π·辐亮度 记（见 specGGX 的口径）⇒ 这一项 = F(n·v) × E_水平。
+                // 平静水面正看只有 2% 左右、越斜越亮——整片水面随雷一起亮一下，是物理本来的样子
+                float Eh = B.w * max(dot(vec3(0.0, 1.0, 0.0), normalize(D.xyz)), 0.0);
+                float nv = max(dot(ns, V), 0.0);
+                specE += B.rgb * (Eh * (f0 + (1.0 - f0) * pow(1.0 - nv, 5.0)));
+            } else if (kind == ${LC_LINE}) {
+                // 线光的镜面 = 沿线积分 ∫ f(ω(l)) · (I/ℓ) · cosθ / r² dl。
+                // 瓣比线窄时，被积函数只在「线上离反射光线最近的那一点」（代表点，Karis 2013）附近不为零：
+                //   f 取代表点的值，乘上瓣沿线方向张开的那一截长度 w。
+                //   GGX 的 D 在半角 θh 上 ∫ D/D峰 dθh = π·α/2（α = 粗糙度²），反射方向转过的角是半角的两倍 ⇒ π·α；
+                //   从 P 看，线上走 dl 视线转过 sinφ·dl / r（φ = 线的方向与视线的夹角）⇒ w = π·α·r / sinφ。
+                // 瓣比线宽时整条线都在瓣里，w 取线长（代表点即整条线的等效点）。两头都是这个积分的极限，不是凑的系数
+                vec3 R = reflect(-V, ns);
+                vec3 L0 = A.xyz - P;
+                float rl0 = dot(R, L0), rld = dot(R, D.xyz), l0ld = dot(L0, D.xyz), ld2 = dot(D.xyz, D.xyz);
+                float tt = clamp((rl0 * rld - l0ld) / max(ld2 - rld * rld, 1e-6), 0.0, 1.0);
+                vec3 Lr = L0 + D.xyz * tt;
+                float r2 = dot(Lr, Lr);
+                float r = sqrt(max(r2, 1e-9));
+                float len = sqrt(ld2);
+                vec3 ldir = D.xyz / max(len, 1e-6);
+                float sinPhi = max(length(cross(ldir, Lr / r)), 0.05);
+                float alpha = max(surfRough * surfRough, 2e-3);
+                float lenEff = min(len, LC_PI * alpha * r / sinPhi);
+                float Ie = B.w / max(len, 1e-3) * lenEff;
+                specE += B.rgb * (Ie * lcFalloff(r2, C.x, C.y) * specGGX(ns, V, Lr / r, surfRough, f0));
+            } else {
+                vec3 Lp = A.xyz - P;
+                float r2 = dot(Lp, Lp);
+                specE += B.rgb * (B.w * lcFalloff(r2, C.x, C.y) * specGGX(ns, V, Lp * inversesqrt(max(r2, 1e-9)), surfRough, f0));
+            }
         }
         // ---- 灯体 + 大气光晕：沿**视线**积分，不是拿表面点到灯的距离 ----
         //
@@ -411,7 +607,8 @@ void main(void) {
         //
         // ★ 这不是屏幕空间效果：r⊥ 是伪世界里灯到视线的**垂距**，积分沿真实视线走，
         //   上限是真实表面深度。深度分离是精确的，不是"屏幕上糊一圈"。
-        if (kind != ${LC_DIRECTIONAL} && uCore.x > 0.0) {
+        // 打了 reflect 位的是落雷的灯：雷的光斑由雷的粒子自己画，不再在灯位上画一个灯笼式的灯体光晕
+        if (kind != ${LC_DIRECTIONAL} && kind != ${LC_LINE} && (flags & 4) == 0 && uCore.x > 0.0) {
             // 豁免③：大气光晕积的是**沿视线的路径**，不是表面着色，所以留在
             // q 的朝向里（视线恰好是 q 的 z 轴，闭式解才成立）。但**长度统一成 wu**
             // ——像素乘 uWuPerQUnit、灯位 A.xyz 本来就是 wu（wrWorldToQ 只转朝向不改尺度），
@@ -512,7 +709,7 @@ void main(void) {
         fragColor = vec4(Ep * mix(0.45, 1.0, par), 1.0);
         return;
     }
-    vec3 surf = painting + albedo * lampE;
+    vec3 surf = painting + albedo * lampE + specE * surfK;
     float emitLum = dot(emissive, LC_LUMA);
     float emitFrac = emitLum / max(emitLum + dot(surf, LC_LUMA), 1e-6);
     fragColor = vec4(surf + emissive, emitFrac);
@@ -588,6 +785,39 @@ export class SceneLightingPass {
     this.dirty = true;
   }
 
+  /**
+   * 表面材质区的反光遮罩（整张场景一张；null = 这张图没有水面 / 湿地）。换了就标脏。
+   * 遮罩只对打了 reflect 位的灯（落雷）起作用，平时换它画面一个像素都不变。
+   */
+  setSurfaceMask(mask: Texture | null): void {
+    this.ensure();
+    const sh = this.shader;
+    if (!sh) return;
+    sh.resources.uSurfMask = (mask ?? Texture.WHITE).source;
+    const u = sh.resources.sceneLight?.uniforms;
+    if (u) u.uSurfOn = mask ? 1 : 0;
+    this.dirty = true;
+  }
+
+  /**
+   * 全局缺省表面材质（布置库 `defaultSurface` 解析后）：没画区域的地方的反光 / 粗糙度，
+   * 与所有地面的细节起伏、所有水面的雨纹强度。换了就标脏；只影响打了反光位的灯。
+   */
+  setSurfaceDefaults(d: { reflect: number; roughness: number; detail: number; ripple: number }): void {
+    this.ensure();
+    const u = this.shader?.resources.sceneLight?.uniforms;
+    if (!u) return;
+    const v = u.uSurfDefault as Float32Array;
+    v[0] = d.reflect; v[1] = d.roughness; v[2] = d.detail; v[3] = d.ripple;
+    this.dirty = true;
+  }
+
+  /** 水面雨纹的时钟（秒）。**不标脏**：只在灯本来就要重烘的那几帧（落雷亮着）跟着动。 */
+  setTime(seconds: number): void {
+    const u = this.shader?.resources.sceneLight?.uniforms;
+    if (u) u.uTime = seconds;
+  }
+
   private ensure(): void {
     if (this.rt || this.destroyed) return;
     const [w, h] = this.geo.depthSize;
@@ -623,6 +853,8 @@ export class SceneLightingPass {
         uPBin: Texture.WHITE.source,
         uValid: Texture.WHITE.source,
         uSkyaoTex: Texture.WHITE.source,
+        // 反光遮罩：没有表面材质区时拿白图占位（uSurfOn = 0，不会被读到）
+        uSurfMask: Texture.WHITE.source,
         sceneLight: {
           uDepthTexSize: { value: new Float32Array(this.geo.depthSize), type: 'vec2<f32>' },
           uCal: { value: new Float32Array(this.geo.cal), type: 'vec3<f32>' },
@@ -669,6 +901,12 @@ export class SceneLightingPass {
           uSkyaoScale: { value: new Float32Array([1, 1, 1]), type: 'vec3<f32>' },
           uSkyaoM: { value: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]), type: 'mat3x3<f32>' },
           uSkyaoOn: { value: 0, type: 'f32' },
+          uSurfOn: { value: 0, type: 'f32' },
+          uSurfDefault: { value: new Float32Array([
+            SURFACE_DEFAULTS.ground.reflect, SURFACE_DEFAULTS.ground.roughness,
+            SURFACE_DEFAULTS.ground.detail, SURFACE_DEFAULTS.ground.ripple,
+          ]), type: 'vec4<f32>' },
+          uTime: { value: 0, type: 'f32' },
         },
       },
     });

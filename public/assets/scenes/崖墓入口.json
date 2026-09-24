@@ -62,22 +62,6 @@
   },
   "hotspots": [
     {
-      "id": "T_到前段",
-      "type": "transition",
-      "label": "",
-      "x": 370.8,
-      "y": 414.5,
-      "interactionRange": 15.2,
-      "data": {
-        "targetScene": "崖墓前段",
-        "targetSpawnPoint": "spawn_1",
-        "text": ""
-      },
-      "rotation": -11.5,
-      "autoTrigger": true,
-      "castShadow": false
-    },
-    {
       "id": "T_到跑马梁",
       "type": "transition",
       "label": "",
@@ -86,21 +70,6 @@
       "interactionRange": 50,
       "data": {
         "targetScene": "跑马梁",
-        "targetSpawnPoint": "spawn_0",
-        "text": ""
-      },
-      "autoTrigger": true,
-      "castShadow": false
-    },
-    {
-      "id": "T_到牛头凼",
-      "x": 738.2,
-      "y": 295.2,
-      "type": "transition",
-      "label": "",
-      "interactionRange": 40.8,
-      "data": {
-        "targetScene": "牛头凼",
         "targetSpawnPoint": "spawn_0",
         "text": ""
       },
@@ -119,6 +88,17 @@
         "itemName": "火把",
         "count": 1
       }
+    },
+    {
+      "id": "H_崖墓入口_神龛",
+      "type": "inspect",
+      "label": "神龛",
+      "x": 470.0,
+      "y": 280.0,
+      "interactionRange": 60.0,
+      "data": {
+        "graphId": "主线_崖墓入口_神龛"
+      }
     }
   ],
   "npcs": [
@@ -133,7 +113,66 @@
       "initialFacing": "left"
     }
   ],
-  "zones": [],
+  "zones": [
+    {
+      "id": "Zone_崖墓入口_栈道口",
+      "polygon": [
+        {
+          "x": 322.0,
+          "y": 396.0
+        },
+        {
+          "x": 432.0,
+          "y": 396.0
+        },
+        {
+          "x": 440.0,
+          "y": 427.2
+        },
+        {
+          "x": 314.0,
+          "y": 427.2
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "主线_崖墓入口_栈道口"
+          }
+        }
+      ]
+    },
+    {
+      "id": "Zone_崖墓入口_牛头凼口",
+      "polygon": [
+        {
+          "x": 690.0,
+          "y": 240.0
+        },
+        {
+          "x": 759.46,
+          "y": 240.0
+        },
+        {
+          "x": 759.46,
+          "y": 350.0
+        },
+        {
+          "x": 690.0,
+          "y": 350.0
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "startDialogueGraph",
+          "params": {
+            "graphId": "主线_崖墓入口_牛头凼口"
+          }
+        }
+      ]
+    }
+  ],
   "spawnPoints": {
     "spawn_0": {
       "x": 347.8,
@@ -144,12 +183,12 @@
       "y": 325.5
     },
     "spawn_2": {
-      "x": 391.8,
-      "y": 390.2
+      "x": 388.0,
+      "y": 372.0
     }
   },
   "camera": {
-    "zoom": 2.05,
+    "zoom": 1.0,
     "pixelsPerUnit": 1.0
   },
   "depthConfig": {
@@ -274,6 +313,32 @@
       "params": {
         "visible": false,
         "style": "fade"
+      }
+    },
+    {
+      "type": "setRetryCheckpoint",
+      "params": {
+        "id": "cliff_entrance",
+        "label": "崖墓入口"
+      }
+    },
+    {
+      "type": "runActionsIf",
+      "params": {
+        "condition": {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "闻到香火"
+        },
+        "actions": [
+          {
+            "type": "emitNarrativeSignal",
+            "params": {
+              "signal": "跑马梁_下梁",
+              "sourceType": "scene",
+              "sourceId": "wrapper_跑马梁_风火引路"
+            }
+          }
+        ]
       }
     }
   ],

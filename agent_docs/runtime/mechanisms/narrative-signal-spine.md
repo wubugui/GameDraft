@@ -32,7 +32,7 @@ last_governed: 2026-09-03
 ## 硬契约(违反即 bug)
 
 1. **世界层**(zone/hotspot/npc):玩家动手;zone.onEnter 挂 startDialogueGraph,`conditions` 读 narrative 状态当门闸。
-2. **对话/动作层**:只"演 + 打信号"(`emitNarrativeSignal` 是第一主导动词),**绝不碰存档/换场景/setFlag 推进度**;防重入用 switch 节点读 `{narrative, state, reached}`。
+2. **对话/动作层**:只"演 + 打信号"(`emitNarrativeSignal` 是第一主导动词),**绝不碰存档/setFlag 推进度**(换场景=玩家移动是例外:可反复进出的路口出口写在 choice 分支里,见 [[wire-demo-beat]]);防重入用 switch 节点读 `{narrative, state, reached}`。
 3. **拍子状态机层**(narrative 的 scenario_* 子图):消费信号沿 states 走;演出/发钱/发物放 state 的 `onEnterActions`(**initialState 的不执行**;禁 setNarrativeState);末态开 `broadcastOnEnter` 自动广播派生信号 `state:<图id>:<末态>`;多路汇聚用 reactiveAll/reactiveAny。
 4. **主线脊椎层**(主图纯里程碑 state):transition 全靠监听子图末态派生信号线性推进,**唯一进度真相源**。挂进主线监听 = 主线拍,不挂 = 可选支线。
 5. **任务清单层**(quests.json):**镜像 + 一个玩家意图槽**。镜像部分不驱动,

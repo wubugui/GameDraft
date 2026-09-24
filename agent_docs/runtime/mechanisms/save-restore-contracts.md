@@ -14,7 +14,7 @@ authority:
 triggers:
   paths: ["src/core/SaveManager.ts", "src/core/storage/**", "src/systems/ZoneSystem.ts", "src/core/NarrativeStateManager.ts"]
   topics: [存档, 读档, save, load, deserialize, migrations, 改名迁移, 玩家站位]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -40,6 +40,12 @@ last_governed: 2026-09-03
   - **一次性水化要记住"在飞的那个 Promise",不能记一个布尔完成位**——布尔版是已知陷阱:
     第二个并发调用方会拿到一个立刻 resolve 的 promise,而镜像其实还是空的。当前只有一处
     串行调用方,所以这是"装好了但还没踩的陷阱";加第二个调用点前先读这一条。
+- **槽位数只有一个真值**(`data/types.ts` 的 `SAVE_SLOT_COUNT`),菜单 / 命令通道都读它,
+  别在 UI 里再抄一份数。菜单卡片信息在写盘成功那一刻解析一次缓存,槽位多了以后
+  **不许每次重建菜单就把全部槽 JSON.parse 一遍**。
+- **存档名是信封顶层的可选 `name`**(与 systems 平级,2026-09-23):读档不读它、不升版本号。
+  改名只改名——**排在同槽写入链上**、读链上那一刻的镜像(前面排着的存档先落地),
+  不刷新时间戳、不动 systems;重存不传名 = 沿用原名(命令通道/调试重存不抹掉玩家起的名)。
 - **旧档的一次性迁移标记写在来源侧,不写目标侧**。目标那一侧的目录会随 worktree 切换/清理
   消失,标记跟着没了就会**把旧档反复重灌**一遍。
 - **读档静默清活跃 zone、不跑 onExit 动作**(走 `clearActiveZonesForRestore`)——读档瞬间跑 onExit

@@ -35,6 +35,7 @@ precision highp float;
 precision highp int;
 in vec2 vWorld;
 out vec4 finalColor;
+uniform vec4 uColor;
 
 uniform sampler2D uDepthMap;
 uniform vec2  uSceneSize;
@@ -87,6 +88,8 @@ void main(void) {
     } else {
         finalColor = vec4(col * r.a, 0.0);
     }
+    // Pixi 实例 alpha 在显示变换与 normal 饱和之后乘，整根退场不改变颜色/亮度算法。
+    finalColor *= uColor.a;
 }
 `;
 

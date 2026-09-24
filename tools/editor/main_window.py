@@ -440,6 +440,9 @@ class MainWindow(QMainWindow):
         # 实体 / 挂件 / 轨迹生成规格的「可燃」块选模板，画布按模板图画、标着火点，燃烧动作 / 条件叶出候选
         self._act(ext, "燃烧工作台…", self.open_burn_workbench)
         self._act(ext, "刷新燃烧数据", self._reload_burn_from_disk)
+        # 呼吸图资产 assets/data/breathing/ 的唯一写者是呼吸工作台；主编辑器只读（showBreathingOverlay 的候选 / 校验）
+        self._act(ext, "呼吸工作台…", self.open_breathing_workbench)
+        self._act(ext, "刷新呼吸图数据", self._reload_breathing_from_disk)
         # 草木工作台是 lighting/<背景基名>/sway_paint.png 的唯一写者；拆层产物由它按需重烘
         self._act(ext, "草木工作台…", self.open_sway_workbench)
         # 地形工作台是 runtime/scenes/<id>/terrain/ 作者层的唯一写者；collision.png / collision.json / ground_d.png 由它合成
@@ -1214,6 +1217,7 @@ class MainWindow(QMainWindow):
             self._resync_trajectories_from_disk()
             self._resync_vfx_from_disk()
             self._resync_burn_from_disk()
+            self._resync_breathing_from_disk()
             self._resync_terrain_from_disk()
             self._reload_all_reference_catalogs()
             self._resync_audio_config_from_disk()
@@ -1233,6 +1237,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self, self._resync_trajectories_from_disk)
             QTimer.singleShot(0, self, self._resync_vfx_from_disk)
             QTimer.singleShot(0, self, self._resync_burn_from_disk)
+            QTimer.singleShot(0, self, self._resync_breathing_from_disk)
             QTimer.singleShot(0, self, self._resync_terrain_from_disk)
             # 图对话目录**真变了才重建**（轨迹/vfx/音频那三条各自已经这么门控了）：
             # 这条路每 alt-tab 一次就跑一次，而一次全页重建实测 218~1105ms。
@@ -3625,6 +3630,56 @@ class MainWindow(QMainWindow):
             + (f"（{bad} 份读不懂，校验里有原因）" if bad else "")
             + ("（有变化，模板候选与画布已同步）" if changed else "（与内存里的一致）"),
             6000 if bad else 4000)
+
+    def _reload_breathing_from_disk(self) -> None:
+        """重读呼吸图资产并让**当前页**立刻用上（「工具 → 刷新呼吸图数据」）。
+
+        与燃烧那条同构：先换只读镜像（showBreathingOverlay 的呼吸图候选与校验都读它），再重拉已打开页的候选。
+        用户显式点时**无条件**刷当前页。
+        """
+        if self._model.project_path is None:
+            return
+        changed = self._model.reload_breathing_from_disk()
+        self._refresh_open_pages_after_disk_change()
+        self._status.showMessage(
+            f"已刷新呼吸图数据：{len(self._model.breathing_overlays)} 张呼吸图"
+            + ("（有变化，候选与校验已同步）" if changed else "（与内存里的一致）"),
+            4000)
+
+    def open_breathing_workbench(self, breathing_id: str = "") -> None:
+        """另起独立进程打开「呼吸工作台」(「工具 → 呼吸工作台…」)。
+
+        呼吸图资产 `assets/data/breathing/<id>.json` 的**唯一写者**是工作台进程(只改表演参数与名字;分层 / 位移场 /
+        骨架常数是离线拆层产物);主编辑器只读(showBreathingOverlay 的呼吸图候选与校验)。起法与燃烧工作台逐条相同:
+        detached、不等它、**登记进外置进程监视表**——工作台导出到游戏之后,工作台退出或主窗回到前台时静默重读
+        (``_resync_breathing_from_disk``);手动那一下在「工具 → 刷新呼吸图数据」。
+        """
+        root = self._ensure_valid_tool_root()
+        if root is None:
+            return
+        bid = (breathing_id or "").strip()
+        cmd = [sys.executable, "-m", "tools.breathing_workbench", *(["--open", bid] if bid else [])]
+        kwargs: dict = {"cwd": str(root.resolve())}
+        if sys.platform == "win32":
+            kwargs["creationflags"] = (
+                subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            )
+        try:
+            proc = subprocess.Popen(cmd, **kwargs)
+        except OSError as e:
+            QMessageBox.critical(self, "External tools", f"Failed to start 呼吸工作台:\n{e}")
+            return
+        self._dialogue_external_processes.append(proc)
+        self._dialogue_process_watch_timer.start()
+        self._status.showMessage(
+            f"Started in new process: 呼吸工作台{f'({bid})' if bid else ''}", 4000)
+
+    def _resync_breathing_from_disk(self) -> None:
+        """静默重读呼吸图资产(呼吸工作台还开着时主窗回到前台 / 工作台退出时自动走这条)。"""
+        if self._model.project_path is None:
+            return
+        if self._model.reload_breathing_from_disk():
+            self._refresh_open_pages_after_disk_change()
 
     def _resync_burn_from_disk(self) -> None:
         """静默重读可燃物模板（工作台还开着时主窗回到前台 / 工作台退出时自动走这条）。"""

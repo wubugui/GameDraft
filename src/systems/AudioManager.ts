@@ -2,12 +2,32 @@ import { Howl, Howler } from 'howler';
 import type { EventBus } from '../core/EventBus';
 import type { AssetManager, AssetRef } from '../core/AssetManager';
 import { resolveAssetPath } from '../core/assetPath';
-import { SpatialAudioBus } from '../audio/SpatialAudioBus';
+import { SpatialAudioBus, type SpatialMixRoute } from '../audio/SpatialAudioBus';
 import type { AcousticPoint, AcousticSpaceDef, DirectPath } from '../audio/acousticSpace';
 import { TEXT_URLS } from '../core/projectPaths';
 import type { AudioChannel, AudioCueRef, DialogueEndPayload, IGameSystem, GameContext, IAudioSettingsProvider, AudioPlaybackHandle, TransientSfxOptions } from '../data/types';
 import { audioCueId, audioCueIds, audioCueVolume, normalizeAudioCues } from '../data/audioCue';
 import type { OverlaySfxCue } from '../data/overlayImages';
+import { createBreathSynth, type BreathSynth } from '../audio/breathSynth';
+import { resolvePersistentStore, type PersistentStore } from '../core/storage/persistentStore';
+import {
+  AUDIO_MIX_DEFAULTS, clampMixLevel, parseAudioMixPreferences, serializeAudioMixPreferences,
+  type AudioMixPreferences,
+} from '../audio/audioMixPreferences';
+
+/** 合成呼吸声的句柄:`setFlow(鼻息流量, 这张图的音量 0..1)` 每帧调一次 */
+export interface ProceduralBreathHandle extends AudioPlaybackHandle {
+  setFlow(flow: number, volume: number): void;
+}
+
+/** 玩家混音偏好的落盘位置：`settings/audio.json`（与 textDisplay / smellDisplay 同一个命名空间）。 */
+const MIX_SETTINGS_NAMESPACE = 'settings';
+const MIX_SETTINGS_KEY = 'audio';
+/**
+ * 拖滑条时每个像素都会调一次 setVolume；每次都写一遍文件（dev server PUT / Tauri 写盘）纯属浪费。
+ * 停手这么久才落一次盘。这是 I/O 节流，不是游戏时间，所以用墙钟定时器（世界暂停时设置页照样要能存）。
+ */
+const MIX_PERSIST_DEBOUNCE_MS = 300;
 
 interface AudioEntry {
   src: string;
@@ -24,6 +44,12 @@ interface AudioEntry {
   spatial?: { wet?: number; dry?: number };
 }
 
+/** Runtime preparation hint, derived from an action tree; never an author-facing parameter. */
+export interface SfxPreparation {
+  id: string;
+  positional?: boolean;
+}
+
 interface AudioConfig {
   bgm: Record<string, AudioEntry>;
   ambient: Record<string, AudioEntry>;
@@ -38,6 +64,26 @@ interface AudioConfig {
 }
 
 type EventCallback = (payload?: any) => void;
+
+interface AudioDuckLayer {
+  name: string;
+  owner?: object;
+  scales: Partial<Record<AudioChannel, number>>;
+  weight: number;
+  releasing: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  ramp: ReturnType<typeof setTimeout> | null;
+}
+
+interface AudioBed {
+  howl: Howl;
+  sid: number;
+  channel: 'bgm' | 'ambient';
+  ambientId?: string;
+  base: number;
+  envelope: number;
+  rampToken: number;
+}
 
 /** JSON 里的 spatial 字段可能是任何东西（策划手写/编辑器旧版），一律收敛成合法值或 undefined。 */
 function normalizeSpatial(raw: unknown): { wet?: number; dry?: number } | undefined {
@@ -75,6 +121,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   private bgmRequestSeq = 0;
   /** 当前 BGM 的基础音量乘数（配置 entry.volume ?? 1）；setVolume('bgm') 按 base×全局 重算而非直接覆盖 */
   private currentBgmBaseVolume = 1.0;
+  /** Keep fading-out beds mixed until actually silent, after they leave the scene baseline. */
+  private audioBeds = new Map<Howl, AudioBed>();
   private ambientLayers: Map<string, Howl> = new Map();
   /** 数据/动作层要求的环境音集合；用于跨运行时确定性快照。 */
   private requestedAmbientIds = new Set<string>();
@@ -89,15 +137,14 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    * 代次只增不清零：destroy 后残留的在途回调靠单调计数保证永远过期。
    */
   private ambientRequestSeq: Map<string, number> = new Map();
-  private sfxCache: Map<string, Howl> = new Map();
 
   /**
    * 过场「一次性音效捕获」作用域：beginCutsceneSfxCapture 开启后，playSfx 会把本次 play 的
-   * (共享 Howl, soundId) 登记进 cutsceneSfxSounds；endCutsceneSfxCapture(true)（过场中断收尾）只停这些
-   * 具体 soundId（不 unload 共享缓存、不影响过场外同名音效的其它并发实例）。
+   * 实例句柄登记进 cutsceneSfxSounds；中断只停这些实例（不 unload 共享缓存）。
    */
   private cutsceneSfxActive = false;
-  private cutsceneSfxSounds: Array<{ howl: Howl; sid: number }> = [];
+  private cutsceneSfxSounds = new Set<AudioPlaybackHandle>();
+  private cutsceneLoopSfx = new Set<AudioPlaybackHandle>();
 
   /**
    * 演出闪避（ducking）层。每一层是一段演出临时压低的通道倍率，效果取**所有活层里最狠的那档**。
@@ -106,22 +153,23 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    * 这里只是演出期间的临时覆盖，绝不碰偏好、不进存档。分不清就会出现"放了个技能，
    * 玩家的背景音乐档位被永久改小了"。
    *
-   * 每层自带**到期时间**：演出被打断（死亡/读档/切场景）时没人来还原，靠它兜底自己抬起来——
-   * 世界一直闷着而玩家不知道为什么，是比"少压一会儿"坏得多的故障。
-   * 同名多层各算一层（同一个道具连放两次，先放的那次还原不会把后一次的压低一起抬掉）。
+   * 有会话时随会话存续，精确句柄释放；普通批另有到期兜底。只豁免同一 owner 自己的音源，
+   * 其它声音无论先播后播都持续合成当前各层；释放一个状态不覆盖其它状态。
    */
-  private duckLayers: Array<{ name: string; scales: Partial<Record<AudioChannel, number>>; timer: ReturnType<typeof setTimeout> | null }> = [];
-  private duckScale: Record<AudioChannel, number> = { bgm: 1, ambient: 1, sfx: 1, voice: 1 };
-  /** 闪避渐变的接管令牌：后发的渐变让在跑的当场退场（同 rampSceneDim 的理由）。 */
-  private duckRampToken = 0;
+  private duckLayers: AudioDuckLayer[] = [];
+  private spatialMixRoutes = new Map<object | undefined, SpatialMixRoute>();
+  private retiredAudioOwners = new WeakSet<object>();
+  private audioPreparationGeneration = 0;
+  private audioPreparations = new Map<object, { cancel(): void; done: Promise<void> }>();
   /**
    * 还在响的**空间音**实例，按 sfx id 记。
    *
-   * ⚠ 为什么不能只靠 `sfxCache`：走 `playSfxAt` 的声音根本不经 Howler，而是原生 Web Audio
-   * 的 `SpatialAudioBus`，`sfxCache` 里连条目都没有。少了这张表，`stopSfxById` 对
+   * 走 `playSfxAt` 的声音不经 Howler，而是原生 Web Audio 的 `SpatialAudioBus`。少了这张表，`stopSfxById` 对
    * "绑在落点上的那记炸雷"就是**安静地什么都没做**——而调用方以为已经掐掉了。
    */
   private liveSpatialSfx = new Map<string, Set<AudioPlaybackHandle>>();
+  /** Every live instance reads the current mix, including one-shots and pending loads. */
+  private liveMixSounds = new Map<AudioPlaybackHandle, { id: string; channel: AudioChannel; owner?: object; update: () => void }>();
 
   private bgmVolume = 0.6;
   private sfxVolume = 0.8;
@@ -129,6 +177,18 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   /** 对白音量。**默认满档**：台词是"听不见就玩不下去"的信息，
    *  其余通道相对它让位，而不是反过来把台词压在音效之下（对白锚定）。 */
   private voiceVolume = 1.0;
+  /**
+   * 总音量（2026-09-23）。**不进任何一条混音公式**：它乘在整个游戏唯一的出口
+   * （Howler 主增益）上——Howler 的声音、空间音总线、解锁提示音全汇在那一个节点，
+   * 所以一个数管住所有声音，任何播放路径都不需要（也不许）自己再乘它一遍。
+   * 见 {@link applyMasterToOutput}。
+   */
+  private masterVolume = AUDIO_MIX_DEFAULTS.master;
+  /** 玩家混音偏好的落盘后端（hydrateMixPreferences 取得；取不到 = 本局有效、记不住）。 */
+  private mixStore: PersistentStore | null = null;
+  private mixHydrating: Promise<void> | null = null;
+  /** 等着落盘的那一次写（节流中）；destroy 时立刻兑现，不丢玩家最后一下调的值。 */
+  private mixPersistTimer: ReturnType<typeof setTimeout> | null = null;
   private pendingTimers = new Set<ReturnType<typeof setTimeout>>();
 
   private assetManager!: AssetManager;
@@ -230,6 +290,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    * 改一个数字立刻重算，不用等烘焙。
    */
   setAcousticSpace(id: string | null | undefined): void {
+    this.cancelAudioPreparations();
     const def = id ? this.acousticSpaces[id] : null;
     if (id && !def) {
       console.warn(`[AudioManager] 未知声学空间 "${id}"，本场景按无空间处理`);
@@ -390,22 +451,91 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     return this.spatialBus;
   }
 
-  /** 返回 true 表示已由空间通道接管；false 表示回落到 Howler。 */
-  private playViaSpatial(entry: AudioEntry, volume?: number): boolean {
-    const bus = this.ensureSpatialBus();
-    if (!bus) return false;
-    const optionVolume = typeof volume === 'number' && Number.isFinite(volume) ? volume : undefined;
-    const base = optionVolume ?? entry.volume ?? 1.0;
-    bus.playAt(entry.src, null, {
-      volume: this.clamp01(base * this.chanVol('sfx')),
-      wet: entry.spatial?.wet ?? 0.6,
-      dry: entry.spatial?.dry ?? 1.0,
-    });
-    return true;
-  }
-
   /** 没标 `spatial` 的素材（脚步等）从有位置的发声点播时的缺省湿量。 */
   static DEFAULT_POSITIONAL_WET = 0.5;
+
+  /**
+   * Silently prepare a performance's later SFX. Never awaits on the action timeline, plays a
+   * sound, or changes RNG. Two loaders at most, yielding between entries; owner/scene teardown
+   * cancels every continuation. AssetManager owns shared Howls; the bus owns decoded buffers.
+   */
+  prepareSfx(requests: readonly SfxPreparation[], owner: object): Promise<void> {
+    if (this.retiredAudioOwners.has(owner)) return Promise.resolve();
+    const existing = this.audioPreparations.get(owner);
+    if (existing) return existing.done;
+    const entries = new Map<string, { entry: AudioEntry; positional: boolean }>();
+    for (const request of requests) {
+      const id = request.id.trim();
+      const entry = this.config.sfx[id];
+      if (!entry) continue; // The actual action remains the authoritative missing-id diagnostic.
+      const previous = entries.get(id);
+      entries.set(id, { entry, positional: !!(previous?.positional || request.positional || entry.spatial) });
+    }
+    if (!entries.size) return Promise.resolve();
+    const generation = this.audioPreparationGeneration;
+    let active = true;
+    let cancelWait!: () => void;
+    const cancelled = new Promise<void>((resolve) => { cancelWait = resolve; });
+    const turns = new Map<ReturnType<typeof setTimeout>, () => void>();
+    // These are work-queue yields, not presentation timing. They never advance GameClock.
+    const nextTurn = (): Promise<void> => new Promise((resolve) => {
+      const timer = setTimeout(() => { turns.delete(timer); resolve(); }, 0);
+      turns.set(timer, resolve);
+    });
+    const valid = (): boolean => active && generation === this.audioPreparationGeneration
+      && !this.retiredAudioOwners.has(owner);
+    const task = {
+      cancel: (): void => {
+        active = false;
+        cancelWait();
+        for (const [timer, resolve] of turns) { clearTimeout(timer); resolve(); }
+        turns.clear();
+      },
+      done: Promise.resolve(),
+    };
+    this.audioPreparations.set(owner, task);
+    task.done = (async () => {
+      await nextTurn();
+      if (!valid()) return;
+      const wantsSpatial = [...entries.values()].some((ref) => ref.positional);
+      const bus = wantsSpatial ? this.ensureSpatialBus() : null;
+      if (bus) bus.prepareMix(this.spatialMixRoute(owner));
+      const queue = [...entries.entries()];
+      let cursor = 0;
+      const worker = async (): Promise<void> => {
+        while (valid() && cursor < queue.length) {
+          await nextTurn();
+          if (!valid() || cursor >= queue.length) return;
+          const [id, { entry, positional }] = queue[cursor++];
+          const jobs: Promise<unknown>[] = [];
+          if (!this.assetManager.getAudio(entry.src, { loop: false })) {
+            jobs.push(this.assetManager.loadAudio(entry.src, { loop: false }));
+          }
+          if (positional && bus && this.spatialBus === bus) jobs.push(bus.preload(entry.src));
+          const loaded = Promise.allSettled(jobs).then((results) => {
+            if (!valid()) return;
+            for (const result of results) if (result.status === 'rejected') {
+              console.warn(`AudioManager: SFX preparation "${id}" failed; playback may retry`, result.reason);
+            }
+          });
+          await Promise.race([loaded, cancelled]);
+        }
+      };
+      await Promise.all([worker(), worker()]);
+    })().catch((error) => {
+      if (valid()) console.warn('AudioManager: SFX preparation failed; performance continues', error);
+    }).finally(() => {
+      task.cancel();
+      if (this.audioPreparations.get(owner) === task) this.audioPreparations.delete(owner);
+    });
+    return task.done;
+  }
+
+  private cancelAudioPreparations(): void {
+    ++this.audioPreparationGeneration;
+    for (const task of this.audioPreparations.values()) task.cancel();
+    this.audioPreparations.clear();
+  }
 
   /**
    * 从 M-world 里的一个发声点播一条音效（**有物理位置的声源**：脚步、NPC、试听声源……）。
@@ -418,7 +548,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     id: string,
     at: AcousticPoint | null,
     options: {
-      volume?: number; onEnd?: () => void; onStart?: () => void;
+      volume?: number; onEnd?: () => void; onStart?: () => void; mixOwner?: object;
       /**
        * `false` = 绕开整条空间音通道，就播一个声音（无距离 / 声像 / 延迟 / 空气低通 / 回音）。
        * 与"没有 AudioContext"走的是**同一条**退路，所以音量口径天然一致
@@ -427,37 +557,53 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       spatialized?: boolean;
     } = {},
   ): AudioPlaybackHandle | null {
+    if (options.mixOwner && this.retiredAudioOwners.has(options.mixOwner)) return null;
     const entry = this.config.sfx[id];
     if (!entry) {
       console.warn(`AudioManager: audio_config.sfx 里没有 "${id}"——这条不发声`);
       return null;
     }
     if (options.spatialized === false) {
-      return this.playTransientSfx(id, { volume: options.volume, onEnd: options.onEnd });
+      return this.playTransientSfx(id, { volume: options.volume, onEnd: options.onEnd, mixOwner: options.mixOwner });
     }
     const bus = this.ensureSpatialBus();
-    if (!bus) return this.playTransientSfx(id, { volume: options.volume, onEnd: options.onEnd });
+    if (!bus) return this.playTransientSfx(id, { volume: options.volume, onEnd: options.onEnd, mixOwner: options.mixOwner });
     // 播放门还关着（还没解锁）：有位置的声音**丢掉**，不排队——排队会在解锁那一刻把攒下的几十步脚步
     // 按早已过时的位置一齐放出来
     if (!this.audioUnblocked) return null;
     let stopped = false;
-    let inner: { stop(): void } | null = null;
+    let inner: { stop(): void; setVolume?(volume: number): void } | null = null;
     const handle: AudioPlaybackHandle = {
-      stop: () => { stopped = true; inner?.stop(); inner = null; this.forgetSpatialSfx(id, handle); },
+      stop: () => {
+        stopped = true; inner?.stop(); inner = null;
+        this.forgetSpatialSfx(id, handle); this.liveMixSounds.delete(handle); this.cutsceneSfxSounds.delete(handle);
+      },
     };
     this.rememberSpatialSfx(id, handle);
     const optionVolume = typeof options.volume === 'number' && Number.isFinite(options.volume) ? options.volume : undefined;
     const base = optionVolume ?? entry.volume ?? 1.0;
+    this.liveMixSounds.set(handle, { id, channel: 'sfx', owner: options.mixOwner,
+      update: () => inner?.setVolume?.(this.clamp01(base * this.getVolume('sfx'))) });
     this.runWhenAudioAllowed(() => {
       if (stopped) return;
       const b = this.ensureSpatialBus() ?? bus;
       inner = b.playAt(entry.src, at, {
-        volume: this.clamp01(base * this.chanVol('sfx')),
+        volume: this.clamp01(base * this.getVolume('sfx')),
+        mix: this.spatialMixRoute(options.mixOwner),
         wet: entry.spatial?.wet ?? AudioManager.DEFAULT_POSITIONAL_WET,
         dry: entry.spatial?.dry ?? 1.0,
-        onEnd: () => { this.forgetSpatialSfx(id, handle); options.onEnd?.(); },
+        onEnd: () => {
+          this.forgetSpatialSfx(id, handle); this.liveMixSounds.delete(handle); this.cutsceneSfxSounds.delete(handle);
+          options.onEnd?.();
+        },
         onStart: options.onStart,
+        onDispose: () => {
+          stopped = true; inner = null;
+          this.forgetSpatialSfx(id, handle); this.liveMixSounds.delete(handle); this.cutsceneSfxSounds.delete(handle);
+        },
       });
+      // Cached decode can start synchronously; its onStart may end the owning session.
+      if (stopped) { inner.stop(); inner = null; }
     });
     return handle;
   }
@@ -511,19 +657,18 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       // currentBgm 与 currentBgmId 一起更新，无中间空窗。
       if (this.currentBgm && this.currentBgm !== howl) {
         const old = this.currentBgm;
-        old.fade(old.volume(), 0, fadeMs);
+        this.fadeAudioBed(old, 0, fadeMs);
         // 若淡出期间该 Howl 又被重新设为当前（A→B→A 且共享缓存实例），延时到点时不要再 stop。
-        this.scheduleCleanup(() => { if (this.currentBgm !== old) old.stop(); }, fadeMs);
       }
       // 复用缓存 Howl 前，先停掉其上任何残留发声实例（如 A→B→A 中被淡出但仍在循环的旧实例）：
       // Howler 的 play() 在已有发声时会再开一个并发实例，volume(0) 不会停旧实例，故不先 stop 会叠音。
       howl.stop();
       howl.loop(true);
-      howl.volume(0);
-      howl.play();
+      const sid = howl.play();
       // 本处音量**替换**素材级（不是相乘）——与 playSfx / addAmbient 同口径。
       const baseVol = requestedVolume ?? entry.volume ?? 1.0;
-      howl.fade(0, this.clamp01(baseVol * this.chanVol('bgm')), fadeMs);
+      this.audioBeds.set(howl, { howl, sid, channel: 'bgm', base: baseVol, envelope: 0, rampToken: 0 });
+      this.fadeAudioBed(howl, 1, fadeMs);
 
       this.currentBgm = howl;
       this.currentBgmId = id;
@@ -540,9 +685,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.runWhenAudioAllowed(() => {
       if (!this.currentBgm) return;
       const bgm = this.currentBgm;
-      bgm.fade(bgm.volume(), 0, fadeMs);
+      this.fadeAudioBed(bgm, 0, fadeMs);
       // 若淡出期间又有 playBgm 重新起用同一 Howl，到点时不要把它 stop 掉。
-      this.scheduleCleanup(() => { if (this.currentBgm !== bgm) bgm.stop(); }, fadeMs);
       this.currentBgm = null;
       this.currentBgmId = null;
       this.currentBgmSiteVolume = undefined;
@@ -576,8 +720,9 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       const playing = this.ambientLayers.get(id);
       if (playing) {
         if (this.ambientBaseVolume.get(id) !== baseVol) {
-          playing.volume(this.ambientEffectiveVolume(id, baseVol));
           this.ambientBaseVolume.set(id, baseVol);
+          const bed = this.audioBeds.get(playing);
+          if (bed) { bed.base = baseVol; this.updateAudioBed(bed); }
         }
         return;
       }
@@ -590,8 +735,10 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       // 复用缓存 Howl 前先停残留发声实例（如淡出中的旧层），否则 play() 会另起并发实例叠音（同 playBgm）
       howl.stop();
       howl.loop(true);
-      howl.volume(this.ambientEffectiveVolume(id, baseVol));
-      howl.play();
+      const sid = howl.play();
+      const bed: AudioBed = { howl, sid, channel: 'ambient', ambientId: id, base: baseVol, envelope: 1, rampToken: 0 };
+      this.audioBeds.set(howl, bed);
+      this.updateAudioBed(bed);
       this.ambientLayers.set(id, howl);
       this.ambientBaseVolume.set(id, baseVol);
     });
@@ -605,9 +752,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.runWhenAudioAllowed(() => {
       const howl = this.ambientLayers.get(id);
       if (!howl) return;
-      howl.fade(howl.volume(), 0, fadeMs);
+      this.fadeAudioBed(howl, 0, fadeMs);
       // 淡出期间同 id 被重新 add（共享缓存实例）时，到点不要把新层停掉（同 stopBgm 的守卫）
-      this.scheduleCleanup(() => { if (this.ambientLayers.get(id) !== howl) howl.stop(); }, fadeMs);
       this.ambientLayers.delete(id);
       this.ambientBaseVolume.delete(id);
     });
@@ -620,8 +766,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     for (const key of this.ambientRequestSeq.keys()) this.bumpAmbientSeq(key);
     this.runWhenAudioAllowed(() => {
       this.ambientLayers.forEach((howl, id) => {
-        howl.fade(howl.volume(), 0, fadeMs);
-        this.scheduleCleanup(() => { if (this.ambientLayers.get(id) !== howl) howl.stop(); }, fadeMs);
+        this.fadeAudioBed(howl, 0, fadeMs);
       });
       this.ambientLayers.clear();
       this.ambientBaseVolume.clear();
@@ -634,39 +779,30 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    * 允许 >1 表示"调大"，但最终经 clamp01 封顶到 1.0（Howler / 浏览器音频满幅上限）——
    * 即只能在"当前播放音量→满幅"这段余量内变大，超过满幅需放大素材文件本身。
    */
-  playSfx(id: string, volume?: number): void {
+  playSfx(id: string, volume?: number, mixOwner?: object): void {
     // 在同步入口捕获作用域标志：runWhenAudioAllowed 的回调可能被推迟异步执行，
     // 届时以 sync 时刻的意图为准，再在回调内复查 cutsceneSfxActive 决定是否登记。
     const captureForCutscene = this.cutsceneSfxActive;
-    this.runWhenAudioAllowed(async () => {
+    this.runWhenAudioAllowed(() => {
+      if (mixOwner && this.retiredAudioOwners.has(mixOwner)) return;
       const entry = this.config.sfx[id];
       if (!entry) return;
 
-      // 标了 spatial 的走并行的空间音通道（原生 Web Audio + 卷积），不进 Howler。
-      // 没标的行为与以前完全一致。
-      if (entry.spatial && this.playViaSpatial(entry, volume)) return;
-
-      const howl = this.sfxCache.get(id)
-        ?? this.assetManager.getAudio(entry.src, { loop: false })
-        ?? await this.assetManager.loadAudio(entry.src, { loop: false });
-      if (!this.sfxCache.has(id)) this.sfxCache.set(id, howl);
-      // 配置里的 per-entry volume 是基础乘数，与全局 sfxVolume 相乘（与 playTransientSfx 口径一致）
-      const optionVolume = typeof volume === 'number' && Number.isFinite(volume) ? volume : undefined;
-      const baseVolume = optionVolume ?? entry.volume ?? 1.0;
-      howl.volume(this.clamp01(baseVolume * this.chanVol('sfx')));
-      const sid = howl.play();
+      const handle = entry.spatial
+        ? this.playSfxAt(id, null, { volume, mixOwner })
+        : this.playTransientSfx(id, { volume, mixOwner });
       // 过场作用域内起的一次性音效登记句柄：过场结束（cleanup）统一停，避免尾音在切画面后继续响。
       // 复查 cutsceneSfxActive：runWhenAudioAllowed 可能把本次播放推迟到过场结束后才执行，此时不登记。
-      if (captureForCutscene && this.cutsceneSfxActive) {
-        this.cutsceneSfxSounds.push({ howl, sid });
-      }
+      if (handle && captureForCutscene && this.cutsceneSfxActive) this.cutsceneSfxSounds.add(handle);
     });
   }
 
   /** 过场开始：开启一次性音效捕获并清空上一轮登记（防跨过场残留）。 */
   beginCutsceneSfxCapture(): void {
+    for (const handle of [...this.cutsceneLoopSfx]) handle.stop();
+    this.cutsceneLoopSfx.clear();
     this.cutsceneSfxActive = true;
-    this.cutsceneSfxSounds = [];
+    this.cutsceneSfxSounds.clear();
   }
 
   /**
@@ -678,12 +814,15 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    */
   endCutsceneSfxCapture(stopPlaying: boolean): void {
     this.cutsceneSfxActive = false;
+    // A loop has no natural tail. Both completion and interruption release its instance.
+    for (const handle of [...this.cutsceneLoopSfx]) handle.stop();
+    this.cutsceneLoopSfx.clear();
     if (stopPlaying) {
       for (const s of this.cutsceneSfxSounds) {
-        try { s.howl.stop(s.sid); } catch { /* 已卸载/已停止安全忽略 */ }
+        try { s.stop(); } catch { /* 已卸载/已停止安全忽略 */ }
       }
     }
-    this.cutsceneSfxSounds = [];
+    this.cutsceneSfxSounds.clear();
   }
 
   /**
@@ -718,9 +857,15 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
 
   /** 自动化听感门禁：读取实际 Howler 播放实例，不参与存档或玩法判断。 */
   getDebugOutputState(): Record<string, unknown> {
-    const bgmVolume = this.currentBgm ? Number(this.currentBgm.volume()) : 0;
+    const bedVolume = (howl: Howl): number => {
+      const bed = this.audioBeds.get(howl);
+      return Number(bed ? howl.volume(bed.sid) : howl.volume()) || 0;
+    };
+    const bgmVolume = this.currentBgm ? bedVolume(this.currentBgm) : 0;
     return {
       audioUnblocked: this.audioUnblocked,
+      // 各路 linearVolume 都是**进出口之前**的值；真正出声还要再乘这一个（Howler 主增益）
+      masterVolume: this.masterVolume,
       bgm: {
         requestedId: this.requestedBgmId,
         currentId: this.currentBgmId,
@@ -728,9 +873,9 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         playing: this.currentBgm?.playing() === true,
       },
       ambient: Array.from(this.ambientLayers.entries())
-        .map(([id, howl]) => ({ id, linearVolume: Number(howl.volume()) || 0, playing: howl.playing() === true }))
+        .map(([id, howl]) => ({ id, linearVolume: bedVolume(howl), playing: howl.playing() === true }))
         .sort((left, right) => left.id.localeCompare(right.id)),
-      activeSfxCount: this.sfxCache.size,
+      activeSfxCount: this.liveMixSounds.size,
     };
   }
 
@@ -751,7 +896,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    * 共享 Howl**（会毁缓存、令后续重播重新解码）。适合字幕配音这类“离开本步即释放”的声音。
    * 加载失败 / 加载归来发现已 stop 均安全退化为不发声（onEnd 不触发，调用方退化为等待点击）。
    */
-  playTransientSfx(id: string, options: TransientSfxOptions = {}): AudioPlaybackHandle | null {
+  playTransientSfx(id: string, options: TransientSfxOptions & { loop?: boolean } = {}): AudioPlaybackHandle | null {
     return this.playTransientEntry(id, options, 'sfx');
   }
 
@@ -764,10 +909,12 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    */
   private playTransientEntry(
     id: string,
-    options: TransientSfxOptions,
-    channel: 'sfx' | 'voice',
+    options: TransientSfxOptions & { loop?: boolean },
+    channel: AudioChannel,
+    entryOverride?: AudioEntry,
   ): AudioPlaybackHandle | null {
-    const entry = this.config[channel][id];
+    if (options.mixOwner && this.retiredAudioOwners.has(options.mixOwner)) return null;
+    const entry = entryOverride ?? this.config[channel][id];
     if (!entry) {
       console.warn(`AudioManager: audio_config.${channel} 里没有 "${id}"——不回落别的区，这条不发声`);
       return null;
@@ -778,22 +925,45 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     let soundId: number | null = null;
     /** 绑在本次 soundId 上的 'end' 监听：手动 stop 时须一并 off，否则死闭包永久残留在长寿共享 Howl 上。 */
     let endListener: (() => void) | null = null;
+    let stopListener: (() => void) | null = null;
+    const baseVolume = typeof options.volume === 'number' && Number.isFinite(options.volume)
+      ? options.volume : entry.volume ?? 1.0;
+    const forget = (): void => {
+      this.forgetSpatialSfx(id, handle);
+      this.liveMixSounds.delete(handle);
+      this.cutsceneLoopSfx.delete(handle);
+      this.cutsceneSfxSounds.delete(handle);
+      if (howl && soundId !== null) {
+        if (endListener) howl.off('end', endListener, soundId);
+        if (stopListener) howl.off('stop', stopListener, soundId);
+      }
+    };
 
     const handle: AudioPlaybackHandle = {
       stop: () => {
         if (stopped) return;
         stopped = true;
+        forget();
         // 只停本次实例，不 unload 共享缓存 Howl（其它调用/后续重播仍复用）。
         if (howl !== null && soundId !== null) {
           // Howler 的 stop() 不会触发 'end'，故 once('end') 不会自动摘除——手动 off 防监听器累积。
-          if (endListener) howl.off('end', endListener, soundId);
           howl.stop(soundId);
         }
         howl = null;
         soundId = null;
         endListener = null;
+        stopListener = null;
       },
     };
+    const update = (): void => {
+      if (!stopped && howl && soundId !== null) {
+        howl.volume(this.mixedVolume(channel, baseVolume, options.mixOwner), soundId);
+      }
+    };
+    this.liveMixSounds.set(handle, { id, channel, owner: options.mixOwner, update });
+    // Looping action SFX use the same instance-owned stop registry as positional SFX.
+    if (options.loop) this.rememberSpatialSfx(id, handle);
+    if (options.loop && this.cutsceneSfxActive) this.cutsceneLoopSfx.add(handle);
 
     this.runWhenAudioAllowed(async () => {
       if (stopped) return;
@@ -804,19 +974,17 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       } catch (error) {
         console.warn(`AudioManager: transient ${channel} "${id}" failed to load`, error);
         stopped = true;
+        forget();
         return;
       }
       // await 期间被 handle.stop() 取消：不 play（否则起一个无人停止的实例）。
       if (stopped) return;
 
-      const optionVolume = typeof options.volume === 'number' && Number.isFinite(options.volume)
-        ? options.volume
-        : undefined;
-      const baseVolume = optionVolume ?? entry.volume ?? 1.0;
-
       const sid = shared.play();
-      const channelVolume = this.chanVol(channel);
-      shared.volume(this.clamp01(baseVolume * channelVolume), sid);
+      if (options.loop === true) shared.loop(true, sid);
+      howl = shared;
+      soundId = sid;
+      update();
       // 声像**一律带 soundId**：共享 Howl 上的组级写入会被后续所有实例继承且清不掉
       // （Howler 的 Sound.init/reset 每次从 parent 复制 _stereo）。见 TransientSfxOptions。
       if (typeof options.pan === 'number' && Number.isFinite(options.pan)) {
@@ -824,18 +992,21 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
         // 此刻 seek≈0，等于重头播——听不出来。晚调（声音已经放出去一截）才会咔哒。
         shared.stereo(Math.max(-1, Math.min(1, options.pan)), sid);
       }
-      howl = shared;
-      soundId = sid;
       // 结束事件绑到本次 soundId：只在本实例自然播完时触发一次（手动 stop 不会走到这里）。
       endListener = () => {
         if (stopped) return;
+        // A loop emits end at every iteration; it remains owned and mixed until stopped.
+        if (options.loop) return;
         stopped = true;
+        forget();
         howl = null;
         soundId = null;
         endListener = null;
         options.onEnd?.();
       };
-      shared.once('end', endListener, sid);
+      stopListener = () => { if (!stopped) { stopped = true; forget(); howl = null; soundId = null; } };
+      if (!options.loop) shared.once('end', endListener, sid);
+      shared.once('stop', stopListener, sid);
     });
 
     return handle;
@@ -864,24 +1035,52 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       if (previous?.volume === next.volume && previous.weight === next.weight) return;
       this.ambientPulses.set(id, next);
     }
-    this.ambientLayers.get(id)?.volume(this.ambientEffectiveVolume(id, this.ambientBaseVolume.get(id) ?? 1));
+    const howl = this.ambientLayers.get(id);
+    const bed = howl && this.audioBeds.get(howl);
+    if (bed) this.updateAudioBed(bed);
   }
 
   private ambientEffectiveVolume(id: string, base: number): number {
     const pulse = this.ambientPulses.get(id);
-    return this.clamp01((pulse ? base + (pulse.volume - base) * pulse.weight : base) * this.chanVol('ambient'));
+    return this.mixedVolume('ambient', pulse ? base + (pulse.volume - base) * pulse.weight : base);
   }
 
-  /** 播放口径的通道音量 = 玩家偏好 × 演出闪避。设置页的显示与试听走 `getVolume`，不含闪避。 */
-  private chanVol(channel: AudioChannel): number {
-    return this.getVolume(channel) * this.duckScale[channel];
+  private updateAudioBed(bed: AudioBed): void {
+    const gain = bed.channel === 'ambient'
+      ? this.ambientEffectiveVolume(bed.ambientId!, bed.base)
+      : this.mixedVolume('bgm', bed.base);
+    bed.howl.volume(gain * bed.envelope, bed.sid);
+  }
+
+  /** Fade only the instance envelope, never a stale, already-mixed absolute volume. */
+  private fadeAudioBed(howl: Howl, target: number, durationMs: number): void {
+    const bed = this.audioBeds.get(howl);
+    if (!bed) return;
+    const token = ++bed.rampToken;
+    const from = bed.envelope;
+    const began = performance.now();
+    const tick = (): void => {
+      if (this.audioBeds.get(howl) !== bed || bed.rampToken !== token) return;
+      const k = durationMs > 0 ? Math.min(1, (performance.now() - began) / durationMs) : 1;
+      bed.envelope = from + (target - from) * k;
+      this.updateAudioBed(bed);
+      if (k < 1) this.scheduleCleanup(tick, Math.min(16, Math.max(1, durationMs - (performance.now() - began))));
+      else if (target === 0) { this.audioBeds.delete(howl); howl.stop(bed.sid); }
+    };
+    tick();
+  }
+
+  /** 播放口径 = 玩家偏好 × 当前混音状态；设置页数值与存档仍只读 getVolume。 */
+  private mixedVolume(channel: AudioChannel, base: number, owner?: object): number {
+    // Post-fader duck: even a boosted source already at full volume must quiet down.
+    return this.clamp01(base * this.getVolume(channel)) * this.getAudioDuck(channel, owner);
   }
 
   /**
    * 压一层演出闪避。`scales` 只写要压的通道（0.05 = 压到二十分之一，1 = 不压）。
    *
    * @param name  还原时按这个名字找层；同名可以叠多层，一次 `releaseAudioDuck` 只抬掉**最早**那层。
-   * @param holdMs 到期自动抬起的兜底上限（必给且有限）。演出被打断时没人还原，全靠它。
+   * @param holdMs 普通批的到期兜底；managed 会话由精确释放句柄托管。
    * @param fadeMs 渐变毫秒；0 = 立刻。
    */
   pushAudioDuck(
@@ -889,28 +1088,37 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     scales: Partial<Record<AudioChannel, number>>,
     holdMs: number,
     fadeMs = 0,
-  ): void {
+    managed = false,
+    owner?: object,
+  ): (fadeMs?: number) => void {
     const clean: Partial<Record<AudioChannel, number>> = {};
     for (const ch of ['bgm', 'ambient', 'sfx', 'voice'] as AudioChannel[]) {
       const v = scales[ch];
       if (typeof v === 'number' && Number.isFinite(v)) clean[ch] = this.clamp01(v);
     }
-    if (Object.keys(clean).length === 0) return;
+    if (Object.keys(clean).length === 0 || (owner && this.retiredAudioOwners.has(owner))) return () => {};
     const hold = Number.isFinite(holdMs) && holdMs > 0 ? holdMs : 20000;
-    const layer: { name: string; scales: Partial<Record<AudioChannel, number>>; timer: ReturnType<typeof setTimeout> | null } =
-      { name, scales: clean, timer: null };
-    layer.timer = setTimeout(() => {
+    const layer: AudioDuckLayer =
+      { name, owner, scales: clean, weight: 0, releasing: false, timer: null, ramp: null };
+    // Exact instance release: a stale session must never pop another same-name layer.
+    // An omitted fade preserves a release already authored by restoreAudio.
+    const release = (releaseMs?: number): void => {
+      if (!this.duckLayers.includes(layer) || (releaseMs === undefined && layer.releasing)) return;
+      this.dropDuckLayer(layer, releaseMs ?? 0);
+    };
+    if (!managed) layer.timer = setTimeout(() => {
       console.warn(`AudioManager: 闪避层「${name}」到期自动还原（${hold}ms 内没人来抬）`);
       this.dropDuckLayer(layer, fadeMs);
     }, hold);
-    this.pendingTimers.add(layer.timer);
+    if (layer.timer) this.pendingTimers.add(layer.timer);
     this.duckLayers.push(layer);
-    this.applyDuck(fadeMs);
+    this.rampDuckLayer(layer, 1, fadeMs);
+    return release;
   }
 
   /** 抬掉最早一层同名闪避。找不到＝已到期自动抬过了，安静返回。 */
-  releaseAudioDuck(name: string, fadeMs = 0): void {
-    const layer = this.duckLayers.find((l) => l.name === name);
+  releaseAudioDuck(name: string, fadeMs = 0, owner?: object): void {
+    const layer = this.duckLayers.find((l) => l.name === name && l.owner === owner && !l.releasing);
     if (!layer) return;
     this.dropDuckLayer(layer, fadeMs);
   }
@@ -919,73 +1127,132 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   clearAudioDucks(): void {
     for (const l of this.duckLayers) {
       if (l.timer) { clearTimeout(l.timer); this.pendingTimers.delete(l.timer); }
+      if (l.ramp) { clearTimeout(l.ramp); this.pendingTimers.delete(l.ramp); }
     }
     this.duckLayers = [];
-    this.applyDuck(0);
+    this.pushDuckToLivePlayers();
   }
 
   /** 当前生效的闪避倍率（1 = 没压）。测试与 dev 面板用。 */
-  getAudioDuck(channel: AudioChannel): number {
-    return this.duckScale[channel];
+  getAudioDuck(channel: AudioChannel, owner?: object): number {
+    let scale = 1;
+    for (const l of this.duckLayers) {
+      if (owner && l.owner === owner) continue;
+      const target = l.scales[channel];
+      if (target !== undefined) scale = Math.min(scale, 1 + (target - 1) * l.weight);
+    }
+    return scale;
   }
 
-  private dropDuckLayer(layer: { timer: ReturnType<typeof setTimeout> | null }, fadeMs: number): void {
-    const i = this.duckLayers.indexOf(layer as never);
+  private dropDuckLayer(layer: AudioDuckLayer, fadeMs: number): void {
+    const i = this.duckLayers.indexOf(layer);
     if (i < 0) return;
     if (layer.timer) { clearTimeout(layer.timer); this.pendingTimers.delete(layer.timer); }
-    this.duckLayers.splice(i, 1);
-    this.applyDuck(fadeMs);
+    layer.timer = null;
+    layer.releasing = true;
+    this.rampDuckLayer(layer, 0, fadeMs);
   }
 
-  /** 把「所有活层取最狠」的结果推到各通道；fadeMs > 0 时分档滑过去。 */
-  private applyDuck(fadeMs: number): void {
-    const target: Record<AudioChannel, number> = { bgm: 1, ambient: 1, sfx: 1, voice: 1 };
-    for (const l of this.duckLayers) {
-      for (const ch of ['bgm', 'ambient', 'sfx', 'voice'] as AudioChannel[]) {
-        const v = l.scales[ch];
-        if (v !== undefined && v < target[ch]) target[ch] = v;
-      }
-    }
-    const token = ++this.duckRampToken;
-    const from = { ...this.duckScale };
-    if (!(fadeMs > 0)) { this.duckScale = target; this.pushDuckToLivePlayers(); return; }
-    const steps = 16;
-    const gap = Math.max(1, fadeMs / steps);
+  /** Each layer owns its envelope; overlapping states cannot overwrite one another's fade. */
+  private rampDuckLayer(layer: AudioDuckLayer, target: number, fadeMs: number): void {
+    if (layer.ramp) { clearTimeout(layer.ramp); this.pendingTimers.delete(layer.ramp); layer.ramp = null; }
+    const from = layer.weight;
+    const steps = fadeMs > 0 ? 16 : 1;
     const tick = (i: number): void => {
-      if (token !== this.duckRampToken) return; // 已被后一次闪避接管
-      const k = i / steps;
-      for (const ch of ['bgm', 'ambient', 'sfx', 'voice'] as AudioChannel[]) {
-        this.duckScale[ch] = from[ch] + (target[ch] - from[ch]) * k;
-      }
+      layer.ramp = null;
+      if (!this.duckLayers.includes(layer)) return;
+      layer.weight = from + (target - from) * i / steps;
+      if (i === steps && target === 0) this.duckLayers.splice(this.duckLayers.indexOf(layer), 1);
       this.pushDuckToLivePlayers();
-      if (i < steps) this.scheduleCleanup(() => tick(i + 1), gap);
+      if (i < steps) {
+        const timer = setTimeout(() => { this.pendingTimers.delete(timer); tick(i + 1); }, Math.max(1, fadeMs / steps));
+        layer.ramp = timer;
+        this.pendingTimers.add(timer);
+      }
     };
     tick(1);
   }
 
-  /**
-   * 闪避只对**正在响的循环层**（BGM / 环境音）需要现推——一次性音效在 play 那一刻就乘过了。
-   */
+  /** Continuous mix state, not a snapshot of sounds that happened to exist at entry. */
   private pushDuckToLivePlayers(): void {
-    if (this.currentBgm) this.currentBgm.volume(this.clamp01(this.currentBgmBaseVolume * this.chanVol('bgm')));
-    this.ambientLayers.forEach((howl, id) =>
-      howl.volume(this.ambientEffectiveVolume(id, this.ambientBaseVolume.get(id) ?? 1.0)));
+    for (const bed of this.audioBeds.values()) this.updateAudioBed(bed);
+    for (const sound of this.liveMixSounds.values()) sound.update();
+    for (const [owner, route] of this.spatialMixRoutes) route.gain = this.getAudioDuck('sfx', owner);
+    this.spatialBus?.refreshMixGains();
+  }
+
+  private spatialMixRoute(owner?: object): SpatialMixRoute {
+    let route = this.spatialMixRoutes.get(owner);
+    if (!route) { route = { gain: this.getAudioDuck('sfx', owner) }; this.spatialMixRoutes.set(owner, route); }
+    return route;
+  }
+
+  /**
+   * 合成呼吸声(呼吸图用;合成本体在 `audio/breathSynth.ts`,呼吸工作台同一份):响度随鼻息流量走。
+   * 走唯一出口 `Howler.masterGain`、按 sfx 通道混音(玩家偏好 × 演出闪避,登进 liveMixSounds 随混音变化即时跟随),
+   * 按 owner 归属(owner 退役即停)。音频未解锁时先挂起,解锁后才建节点。
+   * **看门狗**:每次 `setFlow` 顺带预约 0.25 s 后淡出;调用方不再更新(世界暂停、系统提示把整帧截住)声音自己落下去,
+   * 不会卡在最后一个流量上一直响。
+   */
+  startProceduralBreath(owner?: object): ProceduralBreathHandle | null {
+    if (owner && this.retiredAudioOwners.has(owner)) return null;
+    let synth: BreathSynth | null = null;
+    let stopped = false;
+    let flow = 0;
+    let vol = 0;
+    const apply = (): void => {
+      if (stopped) return;
+      const H = Howler as unknown as { ctx?: AudioContext; masterGain?: GainNode };
+      // Howler 换过 AudioContext(采样率不对时会关掉重开):挂在旧 ctx 上的节点全哑且不报错,重建
+      if (synth && (synth.ctx.state === 'closed' || (H.ctx && synth.ctx !== H.ctx))) { synth.stop(); synth = null; }
+      if (!synth) {
+        if (!H.ctx || !H.masterGain || H.ctx.state === 'closed') return;
+        synth = createBreathSynth(H.ctx, H.masterGain);
+      }
+      synth.update(flow, vol * this.mixedVolume('sfx', 1, owner));
+    };
+    const handle: ProceduralBreathHandle = {
+      stop: () => {
+        if (stopped) return;
+        stopped = true;
+        this.liveMixSounds.delete(handle);
+        synth?.stop();
+        synth = null;
+      },
+      setFlow: (f: number, v: number) => {
+        flow = Number.isFinite(f) ? f : 0;
+        vol = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : 0;
+        if (this.audioUnblocked) apply();
+      },
+    };
+    this.liveMixSounds.set(handle, { id: 'procedural:breath', channel: 'sfx', owner, update: apply });
+    this.runWhenAudioAllowed(() => { if (!stopped) apply(); });
+    return handle;
+  }
+
+  /** End one presentation's audio ownership, including pending decodes and reverb tails. */
+  releaseAudioOwner(owner: object): void {
+    this.retiredAudioOwners.add(owner);
+    this.audioPreparations.get(owner)?.cancel();
+    this.audioPreparations.delete(owner);
+    for (const [handle, sound] of [...this.liveMixSounds]) if (sound.owner === owner) handle.stop();
+    const route = this.spatialMixRoutes.get(owner);
+    if (route) this.spatialBus?.releaseMix(route);
+    this.spatialMixRoutes.delete(owner);
   }
 
   /**
    * 按 id 停掉这条音效**当前所有在响的实例**（`playSfx` 起的那种没有句柄可停）。
    *
-   * 两条播放路都要收：Howler 那条靠共享 Howl 的 `stop()`；**有位置的那条不经 Howler**，
-   * 得挨个停登记在案的空间音句柄。只收一条的话，"绑在落点上的炸雷"会掐不掉。
+   * 两条播放路均按实例收，不能 stop 共享 Howl 整组，否则同素材的其它会话会被误停。
    * 只 `stop`，绝不 `unload`——共享 Howl 卸了就要重新解码。没在响 / 没缓存过都是安全 no-op。
    */
-  stopSfxById(id: string): void {
-    const howl = this.sfxCache.get(id);
-    if (howl) {
-      try { howl.stop(); } catch { /* 已卸载安全忽略 */ }
+  stopSfxById(id: string, owner?: object): void {
+    for (const [handle, sound] of [...this.liveMixSounds]) {
+      if (sound.channel === 'sfx' && sound.id === id && (owner === undefined || sound.owner === owner)) handle.stop();
     }
     const live = this.liveSpatialSfx.get(id);
-    if (live) {
+    if (live && owner === undefined) {
       // stop() 会回头改这个 Set（forgetSpatialSfx），先拷一份再遍历
       for (const h of [...live]) {
         try { h.stop(); } catch { /* 已停安全忽略 */ }
@@ -999,7 +1266,6 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     switch (channel) {
       case 'bgm':
         this.bgmVolume = v;
-        if (this.currentBgm) this.currentBgm.volume(this.clamp01(this.currentBgmBaseVolume * this.chanVol('bgm')));
         break;
       case 'sfx':
         this.sfxVolume = v;
@@ -1007,19 +1273,117 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
       case 'ambient':
         this.ambientVolume = v;
         // 按「每层基础乘数 × 新全局值」重算，不能直接覆盖成 v（会把配置/入参的层级音量冲掉）
-        this.ambientLayers.forEach((howl, id) =>
-          howl.volume(this.ambientEffectiveVolume(id, this.ambientBaseVolume.get(id) ?? 1.0)));
         break;
       case 'voice':
         this.voiceVolume = v;
         break;
     }
+    this.pushDuckToLivePlayers();
+    this.schedulePersistMix();
+  }
+
+  /** 总音量（0..1）。管游戏里的**全部**声音，见 {@link masterVolume}。 */
+  getMasterVolume(): number {
+    return this.masterVolume;
+  }
+
+  setMasterVolume(vol: number): void {
+    this.masterVolume = clampMixLevel(vol);
+    this.applyMasterToOutput();
+    this.schedulePersistMix();
+  }
+
+  /**
+   * 设置页「总音量」松手试听。总音量乘在出口上，任何正在响的声音拖的时候就听得见变化；
+   * 一片安静时补一声样本（走音效通道——总音量对它同样生效，听到的就是调好之后的真实响度）。
+   */
+  previewMasterVolume(): void {
+    if (this.currentBgm?.playing() === true || this.ambientLayers.size > 0) return;
+    this.previewVolume('sfx');
+  }
+
+  /**
+   * 把总音量写到出口上。`Howler.volume(v)` 设的是 Howler 的主增益（Web Audio 下是
+   * `masterGain.gain`，HTML5 回退下它自己逐个乘到 <audio> 上），而且 Howler 重建 AudioContext 时
+   * （采样率不是 44.1k 会被它 unload 重建一次，见 keepAudioAlive）按它记住的这个值重建主增益——
+   * 所以设一次就一直有效，重建上下文也不会丢。
+   *
+   * ⚠ 调用 `Howler.volume(v)` 在还没有 AudioContext 时会顺手把它建出来；保活心跳本来就每秒
+   * 借 `Howler.volume()` 做同一件事，这里不额外引入"手势之前建上下文"的新行为。
+   */
+  private applyMasterToOutput(): void {
+    try {
+      const H = Howler as unknown as { volume(v?: number): number; noAudio?: boolean };
+      if (H.noAudio) return;
+      H.volume(this.masterVolume);
+    } catch { /* 没有音频设备：没有出口可设 */ }
+  }
+
+  /** 当前完整的玩家混音偏好（落盘内容与调试面板读数同一份）。 */
+  getMixPreferences(): AudioMixPreferences {
+    return {
+      master: this.masterVolume,
+      bgm: this.bgmVolume,
+      sfx: this.sfxVolume,
+      ambient: this.ambientVolume,
+      voice: this.voiceVolume,
+    };
+  }
+
+  /**
+   * 启动时调一次（进标题界面之前）：取后端、读回 `settings/audio.json`、立即生效。
+   * 记在飞的 Promise 而不是布尔（理由同 SaveManager / TextDisplaySettings）。读写全程不抛：
+   * 偏好读不回来就按出厂值跑，绝不因为一份偏好文件把开场炸掉。
+   */
+  hydrateMixPreferences(): Promise<void> {
+    if (!this.mixHydrating) this.mixHydrating = this.doHydrateMix();
+    return this.mixHydrating;
+  }
+
+  private async doHydrateMix(): Promise<void> {
+    try {
+      this.mixStore = await resolvePersistentStore();
+      const all = await this.mixStore.readAll(MIX_SETTINGS_NAMESPACE);
+      const raw = all[MIX_SETTINGS_KEY];
+      const prefs = typeof raw === 'string' ? parseAudioMixPreferences(raw) : null;
+      if (prefs) {
+        this.bgmVolume = prefs.bgm;
+        this.sfxVolume = prefs.sfx;
+        this.ambientVolume = prefs.ambient;
+        this.voiceVolume = prefs.voice;
+        this.masterVolume = prefs.master;
+        this.pushDuckToLivePlayers();
+      }
+    } catch (e) {
+      console.warn('AudioManager: 混音偏好读取失败，按出厂值', e);
+    }
+    this.applyMasterToOutput();
+  }
+
+  private schedulePersistMix(): void {
+    if (this.mixPersistTimer) clearTimeout(this.mixPersistTimer);
+    this.mixPersistTimer = setTimeout(() => {
+      this.mixPersistTimer = null;
+      this.persistMixNow();
+    }, MIX_PERSIST_DEBOUNCE_MS);
+  }
+
+  /** 即发即走：偏好写失败只记日志（与存档不同，不打断玩家手上的动作）。 */
+  private persistMixNow(): void {
+    const store = this.mixStore;
+    if (!store) {
+      // 从没 hydrate 过（单测 / 工具里裸建的实例）就没有"该落盘"这回事；hydrate 过却没后端才是要说的事
+      if (this.mixHydrating) console.warn('AudioManager: 没有可用的持久化后端，音量本局有效、下次记不住');
+      return;
+    }
+    void store.write(MIX_SETTINGS_NAMESPACE, MIX_SETTINGS_KEY, serializeAudioMixPreferences(this.getMixPreferences()))
+      .catch((e) => console.warn('AudioManager: 混音偏好写入失败，本局仍然生效', e));
   }
 
   /**
    * 设置页「松手试听」：按**这条通道刚调好的响度**放一声样本。语义见 IAudioSettingsProvider。
    *
-   * ⚠ 音量取的是 `getVolume(channel)` 而**不是** `sfxVolume`——调环境音时听到的响度
+   * ⚠ 音量取的是当前 channel 而**不是** `sfxVolume`——调环境音时听到的响度
    * 必须就是环境音那条的响度，拿音效通道的音量放一声等于给了个假参照。
    * 所以这里不能图省事走 `playSfx()`（那条恒乘 sfxVolume）。
    * 样本取 `systemSfx.volumePreview`，没配就退到确认音/悬停音——这三个都没有就静默不响。
@@ -1038,18 +1402,10 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     const cueId = audioCueId(cueRef);
     const entry = cueId ? this.config.sfx[cueId] : undefined;
     if (!entry) return;
-    const channelVolume = this.getVolume(channel);
     // 本处音量（表里给这条样本单独配的）优先于素材级——与 playSystemSfx 同口径。
     const cueBaseVolume = audioCueVolume(cueRef) ?? entry.volume ?? 1.0;
 
-    this.runWhenAudioAllowed(async () => {
-      const howl = this.sfxCache.get(cueId)
-        ?? this.assetManager.getAudio(entry.src, { loop: false })
-        ?? await this.assetManager.loadAudio(entry.src, { loop: false });
-      if (!this.sfxCache.has(cueId)) this.sfxCache.set(cueId, howl);
-      howl.volume(this.clamp01(cueBaseVolume * channelVolume));
-      howl.play();
-    });
+    this.playTransientEntry(cueId, { volume: cueBaseVolume }, channel, entry);
   }
 
   getVolume(channel: AudioChannel): number {
@@ -1076,24 +1432,19 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     }
   }
 
+  /**
+   * 音量是**玩家偏好**，不是这一局的状态：落 `settings/audio.json`，**不进存档**（2026-09-23）。
+   * 以前四条通道音量随档存、随档读，读一个老档就把玩家刚调好的音量冲回存档那一刻的值。
+   */
   serialize(): object {
-    return {
-      bgmVolume: this.bgmVolume,
-      sfxVolume: this.sfxVolume,
-      ambientVolume: this.ambientVolume,
-      voiceVolume: this.voiceVolume,
-    };
+    return {};
   }
 
-  deserialize(data: {
-    bgmVolume?: number; sfxVolume?: number; ambientVolume?: number; voiceVolume?: number;
-  }): void {
-    if (data.bgmVolume !== undefined) this.bgmVolume = data.bgmVolume;
-    if (data.sfxVolume !== undefined) this.sfxVolume = data.sfxVolume;
-    if (data.ambientVolume !== undefined) this.ambientVolume = data.ambientVolume;
-    // 旧档没有这个键：保持默认满档，不要按 0 处理（那会让老存档一读进来台词全哑）
-    if (data.voiceVolume !== undefined) this.voiceVolume = data.voiceVolume;
-  }
+  /**
+   * 老存档里还躺着 `bgmVolume` / `sfxVolume` / … 这几个键：**一律不读**。
+   * 读了就是"读档把设置页改了"——正是这次要消灭的那个行为。
+   */
+  deserialize(_data: object): void { /* 见上：音量不随档走 */ }
 
   private clamp01(v: number): number {
     return Math.max(0, Math.min(1, v));
@@ -1339,6 +1690,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     // 总线若挂在已关掉 / 被换掉的上下文上，这里主动重建（不等下一次播放才发现全哑）
     if (this.spatialBus) this.ensureSpatialBus();
     this.ensureOutputMeter(ctx);
+    // 出口增益对账：总音量只认 AudioManager 这一份。谁绕过它改了 Howler 主增益，下一拍就拉回来
+    try { if (Math.abs(H.volume() - this.masterVolume) > 1e-4) this.applyMasterToOutput(); } catch { /* 无设备 */ }
     if (ctx.state === 'running') {
       this.audioUnlockedSeen = true;
       // 门还关着、也没有手势在解锁途中，而上下文已经 running：没有手势它就自己开了 = 免手势环境
@@ -1515,11 +1868,24 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
   }
 
   destroy(): void {
+    // 节流中的那次偏好写立刻兑现：玩家最后一下调的音量不能因为关页面 / 重启而丢
+    if (this.mixPersistTimer) {
+      clearTimeout(this.mixPersistTimer);
+      this.mixPersistTimer = null;
+      this.persistMixNow();
+    }
+    this.cancelAudioPreparations();
     this.clearAudioDucks();
+    for (const handle of [...this.liveMixSounds.keys()]) handle.stop();
     for (const set of this.liveSpatialSfx.values()) {
       for (const h of [...set]) { try { h.stop(); } catch { /* 已停安全忽略 */ } }
     }
     this.liveSpatialSfx.clear();
+    this.liveMixSounds.clear();
+    this.spatialMixRoutes.clear();
+    for (const bed of this.audioBeds.values()) bed.howl.stop(bed.sid);
+    this.audioBeds.clear();
+    this.cutsceneLoopSfx.clear();
     this.ambientPulses.clear();
     // 使任何仍在 await loadAudio 的 playBgm/addAmbient 失效：到点 resume 时代次不匹配即放弃 play()，
     // 否则会在 destroy 之后才起一个永不被停止的 Howl。
@@ -1552,10 +1918,8 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
     this.requestedBgmId = null;
     this.requestedAmbientIds.clear();
     this.currentBgmBaseVolume = 1.0;
-    this.sfxCache.forEach((howl) => howl.stop());
-    this.sfxCache.clear();
-    // 过场一次性音效句柄随 sfxCache 全停一并作废（其 howl 均来自 sfxCache）；复位作用域标志。
+    // 实例已全停；复位过场捕获作用域。
     this.cutsceneSfxActive = false;
-    this.cutsceneSfxSounds = [];
+    this.cutsceneSfxSounds.clear();
   }
 }

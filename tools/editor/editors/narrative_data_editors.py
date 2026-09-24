@@ -1596,13 +1596,23 @@ class DocumentRevealsEditor(QWidget):
         self._dr_w.setRange(1, 100)
         self._dr_w.setValue(40)
         self._dr_w.setToolTip("图的显示大小：占屏幕宽度的百分之几（高度按图自身比例自动算）。40=占四成屏宽")
-        for sp in (self._dr_x, self._dr_y, self._dr_w):
+        self._dr_order = QSpinBox()
+        # 负数是真用档：把这份文书当"背景一张图"用时，它得能排到别的东西后面。
+        self._dr_order.setRange(-100000, 100000)
+        self._dr_order.setValue(0)
+        self._dr_order.setToolTip(
+            "在画布上的绘制顺序：越大越靠前。0=缺省。"
+            "画布是场景之外那张屏幕空间的面，叠图 / 文档揭示 / 实体 / 特效共用同一个顺序空间；"
+            "把这张当底图用就给 0 或负数，再把实体 / 特效排到它前面。"
+        )
+        for sp in (self._dr_x, self._dr_y, self._dr_w, self._dr_order):
             sp.setMaximumWidth(90)
             sp.valueChanged.connect(self._dr_on_edit)
         opt.addRow("revealedFlag", self._dr_rflag)
         opt.addRow("xPercent", self._dr_x)
         opt.addRow("yPercent", self._dr_y)
         opt.addRow("widthPercent", self._dr_w)
+        opt.addRow("order（画布绘制顺序）", self._dr_order)
         rfl.addWidget(opt_g)
 
         prev_g = CollapsibleSection(
@@ -1959,6 +1969,10 @@ class DocumentRevealsEditor(QWidget):
             self._dr_x.setValue(int(d.get("xPercent", 50) or 50))
             self._dr_y.setValue(int(d.get("yPercent", 50) or 50))
             self._dr_w.setValue(int(d.get("widthPercent", 40) or 40))
+            try:
+                self._dr_order.setValue(int(d.get("order", 0) or 0))
+            except (TypeError, ValueError):
+                self._dr_order.setValue(0)
 
             # 音效候选每次从模型重取（跨面板刷新约定）；当前值未登记时前置保值，
             # 由选择器自己标 [未登记]，绝不顶替或清空。
@@ -2103,6 +2117,11 @@ class DocumentRevealsEditor(QWidget):
         d["xPercent"] = int(self._dr_x.value())
         d["yPercent"] = int(self._dr_y.value())
         d["widthPercent"] = int(self._dr_w.value())
+        # order 是可选项：缺省 0。**原本没有且仍是 0 就不写键** ——
+        # 否则打开一遍再存，全项目的文书都会凭空长出一个 order: 0（往返掉字节）。
+        _order_v = int(self._dr_order.value())
+        if _order_v != 0 or "order" in d:
+            d["order"] = _order_v
         sfx = self._dr_sfx.current_id().strip()
         if sfx:
             d["revealSfx"] = sfx

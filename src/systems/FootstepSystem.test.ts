@@ -739,3 +739,47 @@ describe('FootstepSystem：逐条本处音量（乘在 gainDb 之上）', () => 
     expect(b.played[0].opts.volume!).toBeCloseTo(a.played[0].opts.volume!, 6);
   });
 });
+
+describe('playExternalStep：没有身体的脚步（跟脚声走的就是这条）', () => {
+  it('复用同一条出声路径：按脚点解集、进空间总线、记进调试环', () => {
+    const h = harness();
+    const ok = h.sys.playExternalStep({ emitterId: 'follower:ridge', clip: 'walk', sceneX: 12, sceneY: 34 });
+    expect(ok).toBe(true);
+    expect(h.played).toHaveLength(1);
+    expect(h.played[0].id).toBe('step_plank');
+    const dbg = h.sys.getDebugOutputState() as { recent: Array<{ emitterId: string; setId: string }> };
+    expect(dbg.recent[dbg.recent.length - 1]).toMatchObject({ emitterId: 'follower:ridge', setId: 'plank' });
+  });
+
+  it('指定集盖过脚下那块地（幻听恒为纸钱声）', () => {
+    const h = harness();
+    h.sys.playExternalStep({ emitterId: 'f', clip: 'walk', sceneX: 0, sceneY: 0, setId: 'paper' });
+    expect(h.played[0].id).toBe('step_paper');
+  });
+
+  it('相对增益是**第三级 dB**，与集/全局相加而不是另起一个线性乘子', () => {
+    const h = harness();
+    h.sys.playExternalStep({ emitterId: 'f', clip: 'walk', sceneX: 0, sceneY: 0 });
+    h.sys.playExternalStep({ emitterId: 'f', clip: 'walk', sceneX: 0, sceneY: 0, gainDb: -6 });
+    expect(h.played[1].opts.volume!).toBeCloseTo(h.played[0].opts.volume! * 0.5011872336, 6);
+  });
+
+  it('这块地没配集 / 音频没解锁 / 脚步被关掉，一律安静返回 false', () => {
+    const h = harness();
+    h.setSet(null);
+    expect(h.sys.playExternalStep({ emitterId: 'f', clip: 'walk', sceneX: 0, sceneY: 0 })).toBe(false);
+
+    const noAudio = harness({ getSpatialContext: () => null });
+    expect(noAudio.sys.playExternalStep({ emitterId: 'f', clip: 'walk', sceneX: 0, sceneY: 0 })).toBe(false);
+
+    const off = harness();
+    off.sys.setEnabled(false);
+    expect(off.sys.playExternalStep({ emitterId: 'f', clip: 'walk', sceneX: 0, sceneY: 0 })).toBe(false);
+    expect(off.played).toHaveLength(0);
+  });
+
+  it('未登记的片段照样不发声（没有隐式兜底到 walk 这条底线对它同样成立）', () => {
+    const h = harness();
+    expect(h.sys.playExternalStep({ emitterId: 'f', clip: 'idle', sceneX: 0, sceneY: 0 })).toBe(false);
+  });
+});

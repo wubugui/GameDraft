@@ -1,6 +1,7 @@
 import { Application, Container, type Filter } from 'pixi.js';
 import { WorldFilterPipeline, loadFilter } from './filter';
 import { entitySortZ, type EntitySortBand } from './entitySortRule';
+import { CanvasStage } from './CanvasStage';
 import { containBox } from './viewportFit';
 import { describeError, reportDevError } from '../core/devErrorOverlay';
 import type { AssetManager } from '../core/AssetManager';
@@ -20,7 +21,22 @@ export class Renderer {
   /** 投影阴影层：世界单位，位于背景之上、实体之下 */
   public shadowLayer: Container;
   public entityLayer: Container;
-  /** 演出用覆盖层：图片、电影黑边等，位于世界之上、UI之下 */
+  /**
+   * **画布**：场景之外那张屏幕空间的面（叠图 / 文档揭示 / 实体 / 特效共用一个 `order` 顺序空间）。
+   * 位于世界之上、`cutsceneOverlay` 之下——画布是"画面"的一部分，所以过场的字幕、电影黑边、
+   * 对白框在它之上；但它不是世界，所以不吃相机变换、不吃世界滤镜。规则见 {@link CanvasStage}。
+   */
+  public canvasStage: CanvasStage;
+  /**
+   * **世界渐黑**那一层（`fadeWorldToBlack`）：位于世界之上、**画布之下**。
+   *
+   * 它只黑掉世界；画布（场景之外的面）上的东西照样画在黑场上。这是 2026-09-21 画布落地后
+   * **还原**出来的行为：迁移前渐黑与叠图同在 `cutsceneOverlay`，谁在上面取决于谁先加进去，
+   * 而现有内容里唯一两者重叠的用法（梦段 D 「先渐黑、再出盖脸纸」）要的正是图在黑场上。
+   * 摆在 `cutsceneOverlay` 里就会把盖脸纸整张吞掉（不报错，只是一片黑）。
+   */
+  public worldFadeLayer: Container;
+  /** 演出用覆盖层：字幕、电影黑边、对白框、小游戏等，位于画布之上、UI之下 */
   public cutsceneOverlay: Container;
   public uiLayer: Container;
 
@@ -50,6 +66,8 @@ export class Renderer {
     this.backgroundLayer = new Container();
     this.shadowLayer = new Container();
     this.entityLayer = new Container();
+    this.worldFadeLayer = new Container();
+    this.canvasStage = new CanvasStage();
     this.cutsceneOverlay = new Container();
     this.uiLayer = new Container();
     this.worldFilterPipeline = new WorldFilterPipeline(this.worldContainer);
@@ -135,6 +153,8 @@ export class Renderer {
     this.worldContainer.addChild(this.entityLayer);
 
     this.app.stage.addChild(this.worldContainer);
+    this.app.stage.addChild(this.worldFadeLayer);
+    this.app.stage.addChild(this.canvasStage.layer);
     this.app.stage.addChild(this.cutsceneOverlay);
     this.app.stage.addChild(this.uiLayer);
 
@@ -196,6 +216,13 @@ export class Renderer {
   }
 
   private notifyAfterResize(): void {
+    // 画布上的 item 按屏幕百分比定位，尺寸一变必须重摆；放在订阅者之前，
+    // 免得订阅方（CutsceneRenderer 的 relayoutForScreenSize 等）读到还没重摆的位置。
+    try {
+      this.canvasStage.relayout(this.screenWidth, this.screenHeight);
+    } catch (e) {
+      console.warn('Renderer: canvasStage relayout failed', e);
+    }
     for (const cb of this.afterResizeCallbacks) {
       try {
         cb();

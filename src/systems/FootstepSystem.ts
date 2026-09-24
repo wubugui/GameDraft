@@ -24,8 +24,11 @@ import type { Vec3 } from '../utils/sceneSpace';
  *
  * ## 三条设计约束（都是被证据逼出来的，不是偏好）
  *
- * 1. **玩家不是特例。** 发声体是一个 {@link FootstepEmitter} 鸭子协议，玩家 / NPC /
- *    将来的「幻听脚步」注册进来走同一条路径。系统内部一处 `if (isPlayer)` 都没有。
+ * 1. **玩家不是特例。** 发声体是一个 {@link FootstepEmitter} 鸭子协议，玩家与 NPC
+ *    注册进来走同一条路径。系统内部一处 `if (isPlayer)` 都没有。
+ *    **没有身体的脚步**（跟脚声/幻听，见 `FollowerFootstepSystem`）没有动画可绑，
+ *    走 {@link FootstepSystem.playExternalStep} 进来——**出声那一半仍是这一条**
+ *    （脚步集、音效 key、两级增益、空间化、句柄回收），只是不参与帧驱动的落脚判定。
  * 2. **帧驱动，不按时间间隔。** 实测两套装扮步频差一倍且互不相同：常态 `walk`
  *    16 帧 @8fps + `referenceSpeed=50`，默认 walkSpeed=100 把倍率顶到
  *    `LOCOMOTION_RATE_MAX=2` ⇒ 循环 1.000 s；背尸 `carry_walk` 12 帧 @6fps、
@@ -298,7 +301,42 @@ export class FootstepSystem implements IGameSystem {
     if (ctx) this.emitSound(emitter.id, cfg, ctx, clip, frame, x, y);
   }
 
-  /** 这一步的声音：脚步集 → 片段音效 → 空间化播放。任何一环缺了就这一步无声（落脚事件已经发过了）。 */
+  /**
+   * 外部驱动的一步：**没有身体的脚步**（跟脚声/幻听）从这里进来，复用脚步集解析、
+   * 空间化、增益两级与句柄管理——另起一条播放路径就会出现「跟脚声不吃 zone 换地、
+   * 关了空间化它还在总线上」这类只有听感能发现的分裂。
+   *
+   * 与 {@link registerEmitter} 的分工：发声体是**有动画**的东西（玩家/NPC），由帧驱动；
+   * 这条是调用方自己决定「此刻响一步」，帧号只用于查音效与记调试。
+   *
+   * @returns 真的播出了声音（音频没解锁 / 没配脚步集 / 被 `setEnabled(false)` 关着都返回 false）
+   */
+  playExternalStep(args: {
+    emitterId: string;
+    clip: string;
+    /** 脚点场景坐标 wu（与发声体的 contactX/contactY 同口径） */
+    sceneX: number;
+    sceneY: number;
+    /** 指定脚步集；不给 = 按脚点那块地解（zone 覆盖场景） */
+    setId?: string;
+    /** 叠在「集 + 缺省」之上的相对增益（dB） */
+    gainDb?: number;
+  }): boolean {
+    if (!this.enabled) return false;
+    const cfg = this.deps.getConfig();
+    if (!cfg) return false;
+    const ctx = this.deps.getSpatialContext();
+    if (!ctx) return false;
+    return this.emitSound(
+      args.emitterId, cfg, ctx, args.clip, -1, args.sceneX, args.sceneY,
+      { setId: args.setId, gainDb: args.gainDb },
+    );
+  }
+
+  /**
+   * 这一步的声音：脚步集 → 片段音效 → 空间化播放。任何一环缺了就这一步无声（落脚事件已经发过了）。
+   * @returns 是否真的播出了声音
+   */
   private emitSound(
     emitterId: string,
     cfg: FootstepConfig,
@@ -307,13 +345,15 @@ export class FootstepSystem implements IGameSystem {
     frame: number,
     x: number,
     y: number,
-  ): void {
-    const setId = this.deps.resolveSetAt(x, y);
-    if (!setId) return;
+    override?: { setId?: string; gainDb?: number },
+  ): boolean {
+    // 指定集优先于按地解：跟脚声可以「踩在石板上也响纸钱」（幻听不吃这块地的材质）
+    const setId = override?.setId || this.deps.resolveSetAt(x, y);
+    if (!setId) return false;
     const set = cfg.sets?.[setId];
     if (!set) {
       this.warnOnce(`footstep: 脚步集 "${setId}" 不在 footstep_sets.json 里`);
-      return;
+      return false;
     }
 
     const cue = resolveSfx(set.sfx, cfg.clipFallback, clip);
@@ -322,7 +362,7 @@ export class FootstepSystem implements IGameSystem {
       // 走到这里的片段都登记过（= 被认定为移动片段，tryEmit 已判），查不到音效就是配置错误。
       // 没登记的片段在 tryEmit 就静默返回了——对它们 warn 只会把控制台刷满。
       this.warnOnce(`footstep: 脚步集 "${setId}" 没有片段 "${clip}" 的音效（回落链也没命中）`);
-      return;
+      return false;
     }
 
     // 脚点 → 音频 M-world：脚步恒在行走面上 ⇒ 高度 0。距离 / 声像 / 回音全交给空间音总线按这个点算。
@@ -331,7 +371,10 @@ export class FootstepSystem implements IGameSystem {
 
     // 两级：dB 管“这块地整体多响”，本条 volume 管“这个片段相对本集多响”（相乘，不是替换）。
     // ≠ playSfx 的“替换素材级”口径：脚步根本不读素材级 volume，它的基准就是 gainDb。
-    const gainDb = firstNum(set.gainDb, 0, 0) + firstNum(cfg.defaults?.gainDb, 0, 0);
+    // 第三级是**调用方**的相对增益（跟脚声通常比自己的脚步轻）：与前两级同为 dB 相加，
+    // 不是另起一个线性乘子——三级混着两种口径时「-6 dB」和「0.5」会被写串。
+    const gainDb = firstNum(set.gainDb, 0, 0) + firstNum(cfg.defaults?.gainDb, 0, 0)
+      + firstNum(override?.gainDb, 0, 0);
     const volume = dbToLin(gainDb) * (audioCueVolume(cue) ?? 1);
     // 缺省走空间化；只有显式写 false 才退成"就播一个声音"（作者面的对照开关）。
     // 用 !== false 而不是 === true：这个键在绝大多数文件里根本不存在。
@@ -359,6 +402,7 @@ export class FootstepSystem implements IGameSystem {
       mode: ctx.resolver.mode,
       spatialized,
     });
+    return true;
   }
 
   private warnOnce(msg: string): void {

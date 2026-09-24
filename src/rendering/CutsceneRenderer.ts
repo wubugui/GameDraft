@@ -2,6 +2,7 @@ import { Container, Graphics, Text, HTMLText, Sprite, Texture, Rectangle, type M
 import type { Renderer } from './Renderer';
 import type { Camera } from './Camera';
 import { createOverlayBlendMesh } from './overlayBlendShader';
+import type { CanvasItemKind } from './CanvasStage';
 import type { AssetManager } from '../core/AssetManager';
 import type {
   CutsceneKenBurns, AnimationSetDef, ParallaxSceneDef, ParallaxLayerDef, ParallaxKeyframe,
@@ -13,8 +14,11 @@ import {
   type DialogueLayoutStyle, type SpeakerSide,
 } from '../utils/dialogueSpeakerSide';
 import { createStyledText, setStyledReveal, styledPlainLength } from '../core/styledText';
-import { plainTextLength, sliceStyledMarkup } from '../core/textStyle';
+import { plainTextLength, sliceStyledMarkup, stripStyleMarkup } from '../core/textStyle';
 import { sampleKeyframeTrack } from '../utils/keyframeSampler';
+import {
+  FIRST_PERSON, FIRST_PERSON_TEXT_SHADOW, drawFirstPersonShade, layoutFirstPersonLine,
+} from './firstPersonDialogue';
 
 /**
  * 过场对话框(present:showDialogue)的观感样式，由组装层(Game)注入，令其与常规对话框
@@ -63,6 +67,11 @@ export interface CutsceneDialoguePanelStyle {
   fontFamily: string;
   /** 名字用的展示字族；不给就退回 fontFamily（与常规对话框名牌保持同一套字） */
   displayFontFamily?: string;
+  /**
+   * 旁白的显示名（strings.dialogue.narratorLabel）。第一人称档句首只给「别人开口」写名字，
+   * 旁白与主角自己说的都不写——渲染层读不到字符串表，由组装层注入。
+   */
+  narratorLabel?: string;
   /**
    * 建「继续」点捺（等玩家推进的那枚小记号）。
    *
@@ -160,6 +169,11 @@ type CutsceneLayerEntry = {
   isPlaceholder?: boolean;
   /** 自建 Mesh（叠化）的 geometry/shader 释放钩子：Pixi 8 Mesh.destroy 只解引用不销毁两者 */
   disposeGpu?: () => void;
+  /**
+   * 铺满视口（cover：等比放大到盖满整屏、超出的裁掉）。窗口尺寸一变就按新尺寸重铺，
+   * 始终和窗口一样大。带 Ken Burns 的不算——它每帧自己按缩放余量定位。
+   */
+  cover?: boolean;
 };
 
 /**
@@ -181,7 +195,11 @@ export class CutsceneRenderer {
   private assetManager: AssetManager;
 
   private fadeOverlay: Graphics | null = null;
-  /** 仅遮住世界与 cutsceneOverlay 内容，不遮住 uiLayer（供对话期间「游戏画面渐黑」、台词仍用 DialogueUI 显示）。 */
+  /**
+   * 只黑掉**世界**：挂在 `Renderer.worldFadeLayer`（世界之上、画布之下）。
+   * 画布上的叠图 / 文档揭示 / 实体 / 特效照样画在黑场上，UI 层的台词也不受影响。
+   * 为什么不再放 `cutsceneOverlay`：见 `Renderer.worldFadeLayer` 的注释。
+   */
   private worldFadeOverlay: Graphics | null = null;
   private titleContainer: Container | null = null;
   /** 叠图动作（show/blend/hideOverlayImage）的句柄表：键是作者起的 id */
@@ -204,6 +222,7 @@ export class CutsceneRenderer {
   /** 在跑的打字机，键是台词容器（对白框 / 字幕）；dismiss / cleanup 时按键销号 */
   private typewriters = new Map<Container, TypewriterEntry>();
   private pendingRafIds = new Set<number>();
+  private activeFlash: { view: Graphics; finish: () => void } | null = null;
   private pendingTimerIds = new Set<ReturnType<typeof setTimeout>>();
   /** 过场跳过 / cleanup 时需立即 settle 的异步（animateAlpha、wait、镜头插值等） */
   private cutsceneOpResolvers = new Set<() => void>();
@@ -221,7 +240,8 @@ export class CutsceneRenderer {
   private liveDialogueBoxes = 0;
   /** 活着的「继续」点捺，逐帧驱动它们的浮动；对白框销毁时自行摘除 */
   private dialogueMarks = new Set<{ view: Container; update: (dt: number) => void }>();
-  constructor(renderer: Renderer, camera: Camera, assetManager: AssetManager) {
+  constructor(renderer: Renderer, camera: Camera, assetManager: AssetManager,
+    private readonly flashNow: () => number = () => performance.now()) {
     this.renderer = renderer;
     this.camera = camera;
     this.assetManager = assetManager;
@@ -487,7 +507,7 @@ export class CutsceneRenderer {
       this.worldFadeOverlay.x = -100;
       this.worldFadeOverlay.y = -100;
       this.worldFadeOverlay.alpha = 0;
-      this.renderer.cutsceneOverlay.addChild(this.worldFadeOverlay);
+      this.renderer.worldFadeLayer.addChild(this.worldFadeOverlay);
     }
     return this.worldFadeOverlay;
   }
@@ -519,8 +539,9 @@ export class CutsceneRenderer {
    * 与 fade 系列不同，这一层**用完即销毁**：闪光是瞬态，不该留一个常驻 overlay 在 uiLayer 上。
    */
   async flashScreen(duration: number, color = 0xffffff, alpha = 1): Promise<void> {
+    this.clearScreenFlash();
     const peak = Number.isFinite(alpha) ? Math.max(0, Math.min(1, alpha)) : 1;
-    if (peak <= 0) return;
+    if (peak <= 0 || !(duration > 0) || !Number.isFinite(duration)) return;
     const flash = new Graphics();
     flash.rect(0, 0, this.screenWidth + 200, this.screenHeight + 200);
     flash.fill(Number.isFinite(color) ? color : 0xffffff);
@@ -529,9 +550,34 @@ export class CutsceneRenderer {
     flash.alpha = peak;
     this.renderer.uiLayer.addChild(flash);
 
-    await this.animateAlpha(flash, peak, 0, duration);
-    if (flash.parent) flash.parent.removeChild(flash);
-    flash.destroy();
+    await new Promise<void>(resolve => {
+      let rafId: number | null = null;
+      const finish = this.createOpFinisher(() => {
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId);
+          this.pendingRafIds.delete(rafId);
+        }
+        if (this.activeFlash?.view === flash) this.activeFlash = null;
+        if (flash.parent) flash.parent.removeChild(flash);
+        flash.destroy();
+        resolve();
+      });
+      this.activeFlash = { view: flash, finish };
+      const start = this.flashNow();
+      const tick = () => {
+        rafId = null;
+        const t = Math.min(1, (this.flashNow() - start) / duration);
+        flash.alpha = peak * (1 - t);
+        if (t < 1) rafId = this.trackRaf(tick);
+        else finish();
+      };
+      rafId = this.trackRaf(tick);
+    });
+  }
+
+  /** 只收瞬态闪光；替换、跳过或演出归位时同时结束它的 Promise。 */
+  clearScreenFlash(): void {
+    this.activeFlash?.finish();
   }
 
   async showTitle(text: string, duration: number): Promise<void> {
@@ -584,6 +630,7 @@ export class CutsceneRenderer {
    * `typewriter` = 本拍编排要不要逐字（默认由 CutsceneManager 按台词面定）；玩家关了逐字则一律整句。
    */
   showDialogueBox(opts: CutsceneDialogueBoxOptions): Container {
+    if (opts.layout === 'firstPerson') return this.showFirstPersonDialogueBox(opts);
     const {
       text,
       speaker,
@@ -735,12 +782,91 @@ export class CutsceneRenderer {
       boxX + boxWidth / 2,
       boxY + BOX_HEIGHT - TEXT_PADDING - 18,
     );
+    this.mountDialogueBox(box, bodyText, mk, typewriter);
+    if (isBubble) {
+      // 先摆一次再交给每帧跟随，免得第一帧闪在原点
+      this.dialogueBubbles.set(box, opts.bubbleAnchor ?? null);
+      this.tickDialogueBubbles();
+      box.once('destroyed', () => { this.dialogueBubbles.delete(box); });
+    }
+    return box;
+  }
+
+  /**
+   * 过场对白的第一人称档（`layout: 'firstPerson'`）：不要木框、名牌、立绘，字幕式压在画面上，
+   * 底部渐变托字；别人开口名字写在句首，主角自己说的与旁白不写。
+   * 几何、渐变、影子与常规对话框同一份（rendering/firstPersonDialogue.ts）。
+   */
+  private showFirstPersonDialogueBox(opts: CutsceneDialogueBoxOptions): Container {
+    const { text, speaker, isSelf = false, typewriter = false } = opts;
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const style = this.dialoguePanelStyle;
+    const fontFamily = style?.fontFamily ?? 'sans-serif';
+    const box = new Container();
+
+    const shade = new Graphics();
+    shade.eventMode = 'none';
+    drawFirstPersonShade(shade, sw, sh);
+    box.addChild(shade);
+
+    const speakerName = speaker ? stripStyleMarkup(this.r(speaker)).trim() : '';
+    const showName = !isSelf && !!speakerName && speakerName !== (style?.narratorLabel ?? '');
+    const name = showName
+      ? new Text({
+        text: `${speakerName}：`,
+        style: {
+          fontSize: FIRST_PERSON.fontSize,
+          fill: style?.speakerColor ?? 0xffcc88,
+          fontFamily: style?.displayFontFamily ?? fontFamily,
+          lineHeight: FIRST_PERSON.lineHeight,
+          dropShadow: { ...FIRST_PERSON_TEXT_SHADOW },
+        },
+      })
+      : null;
+
+    const resolved = this.r(text);
+    const bodyText = createStyledText({
+      text: resolved,
+      style: {
+        fontSize: FIRST_PERSON.fontSize,
+        fill: FIRST_PERSON.bodyFill,
+        fontFamily,
+        wordWrap: true,
+        breakWords: true,
+        wordWrapWidth: FIRST_PERSON.textMaxWidth,
+        lineHeight: FIRST_PERSON.lineHeight,
+        dropShadow: { ...FIRST_PERSON_TEXT_SHADOW },
+      },
+    });
+    const lay = layoutFirstPersonLine(
+      stripStyleMarkup(resolved), bodyText.style, name ? Math.ceil(name.width) : 0, sw,
+      sh - FIRST_PERSON.textBottomInset,
+    );
+    if (name) {
+      name.position.set(lay.nameX, lay.top);
+      box.addChild(name);
+    }
+    bodyText.position.set(lay.bodyX, lay.top);
+    box.addChild(bodyText);
+
+    const mk = style?.buildContinueMark?.(lay.markX, lay.markY);
+    this.mountDialogueBox(box, bodyText, mk, typewriter);
+    return box;
+  }
+
+  /** 对白框建好后的公共收尾：挂「继续」点捺、起打字机、上屏、记账。两种画法共用。 */
+  private mountDialogueBox(
+    box: Container,
+    bodyText: Text,
+    mk: ReturnType<NonNullable<CutsceneDialoguePanelStyle['buildContinueMark']>> | undefined,
+    typewriter: boolean,
+  ): void {
     if (mk) {
       box.addChild(mk.view);
       this.dialogueMarks.add(mk);
       box.once('destroyed', () => this.dialogueMarks.delete(mk));
     }
-
     if (typewriter && this.textSettings?.isTypewriterEnabled()) {
       this.beginTypewriter(
         box,
@@ -749,18 +875,10 @@ export class CutsceneRenderer {
         mk ? (v) => { if (mk.setVisible) mk.setVisible(v); else mk.view.visible = v; } : null,
       );
     }
-
     this.renderer.uiLayer.addChild(box);
-    if (isBubble) {
-      // 先摆一次再交给每帧跟随，免得第一帧闪在原点
-      this.dialogueBubbles.set(box, opts.bubbleAnchor ?? null);
-      this.tickDialogueBubbles();
-      box.once('destroyed', () => { this.dialogueBubbles.delete(box); });
-    }
     // 记账：生命周期归 CutsceneManager，这里只在它被销毁时把计数减回去
     this.liveDialogueBoxes += 1;
     box.once('destroyed', () => { this.liveDialogueBoxes = Math.max(0, this.liveDialogueBoxes - 1); });
-    return box;
   }
 
   /** 屏底此刻是否有过场对白框占着。 */
@@ -779,12 +897,13 @@ export class CutsceneRenderer {
     box.destroy({ children: true });
   }
 
-  private trackRaf(fn: () => void): void {
+  private trackRaf(fn: () => void): number {
     const id = requestAnimationFrame(() => {
       this.pendingRafIds.delete(id);
       fn();
     });
     this.pendingRafIds.add(id);
+    return id;
   }
 
   private createOpFinisher(onDone: () => void): () => void {
@@ -973,9 +1092,8 @@ export class CutsceneRenderer {
       placeholder.rect(0, 0, sw, sh);
       placeholder.fill({ color: 0x333344, alpha: 0.9 });
       placeholder.label = id;
-      if (z !== undefined) { placeholder.zIndex = z; this.renderer.cutsceneOverlay.sortableChildren = true; }
-      this.renderer.cutsceneOverlay.addChild(placeholder);
-      this.images.set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true });
+      this.attachToCanvas('overlay', id, placeholder, z);
+      this.images.set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true, cover: true });
       return;
     }
     if (this.imageOpStale(ep, id, seq)) return;
@@ -993,16 +1111,36 @@ export class CutsceneRenderer {
     sprite.x = sw / 2;
     sprite.y = sh / 2;
     sprite.label = id;
-    // 叠层顺序：传了 zIndex 就参与排序（多层视差合成需确定 z 序，不再只靠 addChild 先后）。
-    if (z !== undefined) { sprite.zIndex = z; this.renderer.cutsceneOverlay.sortableChildren = true; }
     // 先把新贴图加载、布置好，最后一刻才移除旧图并加入新图：
     // 避免「先 hideImg → 再 await 加载」期间叠加层出现空帧，导致切图闪烁/漏出底层（旧图或场景）。
     this.hideImg(id);
-    this.renderer.cutsceneOverlay.addChild(sprite);
-    this.images.set(id, { sprite, imagePath: resolvedPath });
+    // 叠层顺序：`zIndex` 参数即画布上的 `order`（越大越靠前）；不传走画布缺省 0，
+    // 与迁移前"按 addChild 先后"同效（画布对同 order 保持登记先后）。
+    this.attachToCanvas('overlay', id, sprite, z);
+    const withKenBurns = !!kenBurns && typeof kenBurns === 'object';
+    this.images.set(id, { sprite, imagePath: resolvedPath, cover: !withKenBurns });
     if (kenBurns && typeof kenBurns === 'object') {
       this.startKenBurns(sprite, id, kenBurns, scale, iw, ih);
     }
+  }
+
+  /** 按当前屏幕尺寸把一张 cover 图层重新铺满（resize 重排用；几何与 showImg 首铺同式）。 */
+  private applyCover(entry: CutsceneLayerEntry): void {
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const view = entry.sprite;
+    if (entry.isPlaceholder && view instanceof Graphics) {
+      view.clear();
+      view.rect(0, 0, sw, sh);
+      view.fill({ color: 0x333344, alpha: 0.9 });
+      return;
+    }
+    if (!(view instanceof Sprite)) return;
+    const iw = Math.max(1, view.texture.width);
+    const ih = Math.max(1, view.texture.height);
+    view.scale.set(Math.max(sw / iw, sh / ih));
+    view.x = sw / 2;
+    view.y = sh / 2;
   }
 
   /**
@@ -1015,8 +1153,10 @@ export class CutsceneRenderer {
     xPercent: number,
     yPercent: number,
     widthPercent: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ): Promise<void> {
-    return this.percentImgInto('overlay', imagePath, id, xPercent, yPercent, widthPercent);
+    return this.percentImgInto('overlay', imagePath, id, xPercent, yPercent, widthPercent, order);
   }
 
   /**
@@ -1029,8 +1169,48 @@ export class CutsceneRenderer {
     xPercent: number,
     yPercent: number,
     widthPercent: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ): Promise<void> {
-    return this.percentImgInto('document', imagePath, documentId, xPercent, yPercent, widthPercent);
+    return this.percentImgInto('document', imagePath, documentId, xPercent, yPercent, widthPercent, order);
+  }
+
+  /**
+   * 呼吸图:按 showPercentImg 同一套百分比布局挂一张自建 Mesh,与 hideImg / 同 id 换层 / 过场 cleanup 共用 images 表与句柄
+   * (所以 `hideOverlayImage` 能直接收掉它)。
+   *
+   * `prepare` 做异步备料(贴图、位移场),返回「按布局造节点」的函数;备料期间旧层留着(不闪空),备好才换。
+   * 这一层被收掉时调它的 `disposeGpu`(连同调用方挂的收尾)。返回 false = 备料期间这一层已过期
+   * (同 id 又被换 / 收,或过场被清),调用方应放弃这次显示。
+   */
+  async showBreathingLayer(
+    id: string,
+    texW: number,
+    texH: number,
+    xPercent: number,
+    yPercent: number,
+    widthPercent: number,
+    order: number | undefined,
+    prepare: () => Promise<(cx: number, cy: number, dispW: number, dispH: number) => { node: Container; disposeGpu: () => void }>,
+  ): Promise<boolean> {
+    const kind: CutsceneLayerKind = 'overlay';
+    const ep = this.opEpoch;
+    const seq = this.nextLayerSeq(kind, id);
+    const build = await prepare();
+    if (this.layerOpStale(kind, ep, id, seq)) return false;
+    this.hideLayer(kind, id);
+    const sw = this.screenWidth;
+    const sh = this.screenHeight;
+    const xp = Math.max(0, Math.min(100, xPercent));
+    const yp = Math.max(0, Math.min(100, yPercent));
+    const wPct = Math.max(0.01, Math.min(100, widthPercent));
+    const dispW = sw * (wPct / 100);
+    const dispH = dispW * (Math.max(1, texH) / Math.max(1, texW));
+    const { node, disposeGpu } = build(sw * (xp / 100), sh * (yp / 100), dispW, dispH);
+    node.label = id;
+    this.attachToCanvas(kind, id, node, order);
+    this.layerMap(kind).set(id, { sprite: node, imagePath: `breathing:${id}`, disposeGpu });
+    return true;
   }
 
   private async percentImgInto(
@@ -1040,6 +1220,7 @@ export class CutsceneRenderer {
     xPercent: number,
     yPercent: number,
     widthPercent: number,
+    order?: number,
   ): Promise<void> {
     const ep = this.opEpoch;
     const seq = this.nextLayerSeq(kind, id);
@@ -1068,7 +1249,7 @@ export class CutsceneRenderer {
       placeholder.x = cx;
       placeholder.y = cy;
       placeholder.label = id;
-      this.renderer.cutsceneOverlay.addChild(placeholder);
+      this.attachToCanvas(kind, id, placeholder, order);
       this.layerMap(kind).set(id, { sprite: placeholder, imagePath: resolvedPath, isPlaceholder: true });
       return;
     }
@@ -1086,7 +1267,7 @@ export class CutsceneRenderer {
     sprite.x = cx;
     sprite.y = cy;
     sprite.label = id;
-    this.renderer.cutsceneOverlay.addChild(sprite);
+    this.attachToCanvas(kind, id, sprite, order);
     this.layerMap(kind).set(id, { sprite, imagePath: resolvedPath });
   }
 
@@ -1171,10 +1352,9 @@ export class CutsceneRenderer {
       : 1;
     sprite.label = id;
     const z = typeof opts.zIndex === 'number' && Number.isFinite(opts.zIndex) ? opts.zIndex : undefined;
-    if (z !== undefined) { sprite.zIndex = z; this.renderer.cutsceneOverlay.sortableChildren = true; }
 
     this.hideImg(id);
-    this.renderer.cutsceneOverlay.addChild(sprite);
+    this.attachToCanvas('overlay', id, sprite, z);
 
     let stopped = false;
     const disposeGpu = () => {
@@ -1241,7 +1421,7 @@ export class CutsceneRenderer {
    * `handleId` 作为整场句柄（存入 images 表；hideImg(handleId) / abort / cleanup 即停并释放）。
    * 坐标：授权画布 (widthRef×heightRef) px，按 cover 映射到屏幕、居中。fire-and-forget。
    */
-  async showParallaxScene(def: ParallaxSceneDef, handleId: string): Promise<void> {
+  async showParallaxScene(def: ParallaxSceneDef, handleId: string, order?: number): Promise<void> {
     const ep = this.opEpoch;
     const seq = this.nextImageRequestSeq(handleId);
     const widthRef = Math.max(1, Number(def.widthRef) || 1);
@@ -1277,8 +1457,7 @@ export class CutsceneRenderer {
     wrap.label = handleId;
     wrap.sortableChildren = true;
     for (const l of loaded) wrap.addChild(l.sprite);
-    this.renderer.cutsceneOverlay.sortableChildren = true;
-    this.renderer.cutsceneOverlay.addChild(wrap);
+    this.attachToCanvas('overlay', handleId, wrap, order);
     this.images.set(handleId, { sprite: wrap, imagePath: `parallax:${def.id}` });
 
     const applyAll = (nowMs: number) => {
@@ -1319,10 +1498,31 @@ export class CutsceneRenderer {
     this.hideLayer('document', documentId);
   }
 
+  /**
+   * 画布 item 的 kind 映射：叠图句柄 → `image`，文档揭示 → `document`。
+   * **两个命名空间必须保持分开**——`hideOverlayImage` 收不到文档揭示这条硬契约
+   * （2026-09-12 制作人定调解耦）在画布里就是靠这个前缀落地的，见 {@link CanvasStage}。
+   */
+  private canvasKind(kind: CutsceneLayerKind): CanvasItemKind {
+    return kind === 'document' ? 'document' : 'image';
+  }
+
+  /**
+   * 把一层放上**画布**（2026-09-21 起不再是 `cutsceneOverlay`）。
+   *
+   * 叠图 / 文档揭示 / 视差 / 动画层自此与实体、特效共用画布那一个 `order` 顺序空间，
+   * 于是"实体和特效能不能画到文档揭示前面"才有得谈——在此之前它们分属两个兄弟容器，
+   * 父子关系压着，填什么 zIndex 都没用。
+   */
+  private attachToCanvas(kind: CutsceneLayerKind, id: string, node: Container, order?: number): void {
+    this.renderer.canvasStage.attach(this.canvasKind(kind), id, node, order);
+  }
+
   private hideLayer(kind: CutsceneLayerKind, id: string): void {
     const map = this.layerMap(kind);
     const entry = map.get(id);
     if (!entry) return;
+    this.renderer.canvasStage.detach(this.canvasKind(kind), id);
     if (entry.sprite.parent) entry.sprite.parent.removeChild(entry.sprite);
     entry.sprite.destroy({ children: true, texture: false, textureSource: false });
     // 自建 Mesh 的 geometry/shader 不随 destroy 释放（Pixi 8 语义），须显式补销
@@ -1344,10 +1544,12 @@ export class CutsceneRenderer {
     widthPercent: number,
     durationMs: number,
     delayMs: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ): Promise<void> {
     return this.blendPercentInto(
       'overlay', fromImagePath, toImagePath, id,
-      xPercent, yPercent, widthPercent, durationMs, delayMs,
+      xPercent, yPercent, widthPercent, durationMs, delayMs, order,
     );
   }
 
@@ -1364,10 +1566,12 @@ export class CutsceneRenderer {
     widthPercent: number,
     durationMs: number,
     delayMs: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ): Promise<void> {
     return this.blendPercentInto(
       'document', fromImagePath, toImagePath, documentId,
-      xPercent, yPercent, widthPercent, durationMs, delayMs,
+      xPercent, yPercent, widthPercent, durationMs, delayMs, order,
     );
   }
 
@@ -1381,6 +1585,7 @@ export class CutsceneRenderer {
     widthPercent: number,
     durationMs: number,
     delayMs: number,
+    order?: number,
   ): Promise<void> {
     const ep = this.opEpoch;
     const seq = this.nextLayerSeq(kind, id);
@@ -1422,7 +1627,7 @@ export class CutsceneRenderer {
 
     const { mesh, setT, disposeGpu } = createOverlayBlendMesh(texFrom!, texTo!, cx, cy, dispW, dispH);
     mesh.label = id;
-    this.renderer.cutsceneOverlay.addChild(mesh);
+    this.attachToCanvas(kind, id, mesh, order);
 
     const finalizeStill = (): void => {
       const sprite = new Sprite(texTo!);
@@ -1437,7 +1642,7 @@ export class CutsceneRenderer {
       mesh.destroy({ children: true, texture: false, textureSource: false });
       disposeGpu();
 
-      this.renderer.cutsceneOverlay.addChild(sprite);
+      this.attachToCanvas(kind, id, sprite, order);
       this.layerMap(kind).set(id, { sprite, imagePath: resolvedTo });
     };
 
@@ -1639,6 +1844,10 @@ export class CutsceneRenderer {
     };
     if (this.fadeOverlay) redrawFullscreen(this.fadeOverlay);
     if (this.worldFadeOverlay) redrawFullscreen(this.worldFadeOverlay);
+    // 铺满视口的叠图：按新尺寸重铺，始终和窗口一样大
+    for (const entry of this.images.values()) {
+      if (entry.cover) this.applyCover(entry);
+    }
 
     // 黑边先于字幕重建：movie 槽位字幕的 y 依赖新的 movieBarHeightPx
     if (this.movieBarContainer && this.movieBarHeightPercent > 0) {
@@ -1690,8 +1899,9 @@ export class CutsceneRenderer {
     this.activeSubtitles.clear();
     // 打字机同理：容器归 CutsceneManager 销毁，这里只是不再逐帧去碰它们（跳过/读档/拆除都经此）
     this.typewriters.clear();
-    // showImg/showAnimLayer/showMovieBar 用到 zIndex 时会把共享 cutsceneOverlay 的 sortableChildren
-    // 置 true；overlay 已清空，复位为 false，不把本过场的排序开关残留给后续过场。
+    // 只剩 showMovieBar 还在用 cutsceneOverlay 的 zIndex（叠图 / 文档揭示 / 视差 / 动画层
+    // 2026-09-21 已整批移到**画布**）。黑边已在 hideMovieBar 里收掉，这里复位开关，
+    // 不把本过场的排序开关残留给后续过场。画布自己那一层恒为可排序，不在此列。
     this.renderer.cutsceneOverlay.sortableChildren = false;
   }
 }

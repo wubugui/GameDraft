@@ -1024,6 +1024,17 @@ export class HeldPropSystem implements IGameSystem {
     const burning = entry.state === control.litState || entry.state === control.guardState || entry.state === emberState;
     if (entry.playerGuarding && entry.state !== control.guardState) entry.playerGuarding = false;
     const guardHeld = !!input?.guardHeld;
+    /**
+     * 反向同步（2026-09-23）：跨场景 / 读档重挂挂件时状态跟着走、`playerGuarding` 不跟着走
+     * （`attach` 建的新 entry 恒 false），于是"按住 Q 走进下一张图"之后火把永远钉在护火态：
+     * 松手不回 lit（下面那条要求 playerGuarding 为真）、再按 Q 也不动（上面那条要求当前是 lit），
+     * 而 `guardBlocksRun` 还一直挡着跑步（实测：过了崖墓入口再也跑不起来）。
+     *
+     * 判据是**此刻还按着 Q**：那就是玩家自己护着的，认领回来，松手照常回 lit。
+     * 动作摆出来的护火态（`setPropState guarding`）不按 Q，因此不受影响——
+     * "动作切的护火，松键不动它"那条契约原样成立。
+     */
+    if (!entry.playerGuarding && guardHeld && entry.state === control.guardState) entry.playerGuarding = true;
     // 本帧先收下挡风输入，Q 与 T 同时按下也必须在点火首帧生效。
     entry.extraShelter = guardHeld && entry.state !== control.litState && entry.state !== control.guardState
       ? (preset?.states?.[control.guardState]?.windShelter ?? 0)

@@ -11,16 +11,19 @@ authority:
 triggers:
   topics: [LibTV, 出图, image2image, 模型选型, 洋红底, 灰底, 透明底, 生成底色, 串行提交, 并行槽, 2020057, 1K, Seedream]
   tasks: [生成素材图, 生成动画视频, 换背景出分层]
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 **实测环境与日期**:2026-07-02~05(并发铁律 2026-07-14 复测),动画批产/过场插画/分层/环境动效
-均经此出图。CLI 手册见用户级 skill `~/.claude/skills/libtv-cli`,本卡只记项目实测坑。
+均经此出图;2026-09-19 CLI 重装后 `libtv model search` 核过 Lib Image 家族。fal 那条路见 [fal-generation](fal-generation.md)。CLI 手册见用户级 skill `~/.claude/skills/libtv-cli`,本卡只记项目实测坑。
 
 ## 生成底色铁律(最高优先,一切素材出图适用)
 
 - **绝对禁止让模型直接生成透明底(alpha/PNG 透明)**——出来的"透明底"边缘脏、半透飞边、
   镂空不可控,回收不了。生成必须落在**纯色实底**上,透明交给本地抠图管线做。
+- **唯一例外:fal 上的 gpt-image-2.5 可以直出透明底**(2026-09-23 制作人裁定:"只有 gptimage2.5 支持直出透明底")。
+  划界按模型、不按用途:除它之外的一切模型——包括标称"可要透明底"的 Lib Image 家族——一律纯色实底。
+  用法见 [fal-generation](fal-generation.md)。
 - **底色首选中性灰(摄影棚灰底)**:配 `fusion` 抠得最干净(见
   [抠图路线](../mechanisms/matting-toolbox.md)),且中性灰不像洋红那样在毛发/浅色边缘染出彩色
   halo。洋红/纯色底也可(走 [纯色底色键配方](colorkey-matting.md)),但毛发/浅色主体优先灰底。
@@ -52,6 +55,7 @@ last_governed: 2026-08-05
 | nebula-ultra("Lib Navo Pro") | 一致性最好、编辑向;平滑径向 glow | 单独抠人(inverse isolate)已证伪:漂空+halo+重绘 |
 | 悠船 V8.1(mj-v8.1) | 美学电影感最强,风景/大场面首选 | 见下方三连坑 |
 | Seedream 5.0 Pro(doubao-seedream-5-0-pro) | 中式题材;**支持 1K**(schema `quality.enum=["1K","2K"]`,出素材可用 1K) | 径向 glow 会画成螺旋纹 |
+| Lib Image 2.5 Pro(`lib-image-2.5-s`) | 制作人口中的"libimage"= Lib Image 家族,这是其中最强的一档:quality 到 max、1K/2K/4K、可要透明/不透明底、图生图最多 14 张参照 | 另有 Fast(`lib-image-2.5-f`)与上一代 `lib-image-2`;标称能出透明底,但**不许用**(底色铁律的例外只有 gpt-image-2.5) |
 | Seedream 4.5 / 早期 5.0 | 中式题材 | 最低 2K 无 1K(旧"最低2K"仅指这批;拿不准先 `libtv model "<名>"` 看 quality enum) |
 
 **悠船 V8.1 三连坑**:①必须 `-s "model=悠船 V8.1"`(名字非 key);②带图参考必须

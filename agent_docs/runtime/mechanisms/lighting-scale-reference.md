@@ -24,7 +24,7 @@ verified_by:
   - src/rendering/entityShadowBinding.test.ts
   - tools/editor/editors/tests/test_scene_lights.py
   - tools/editor/tests/test_shadow_bias_validation.py
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -33,7 +33,7 @@ last_governed: 2026-09-03
 shader 里 march 走的是**伪世界 q**(深度重建出来的),两者差一个**逐场景的比例**,
 那次 transform 只在打包处折一次,作者不必知道。
 
-光照模型本身(原画 + 加性实体灯、S_day 只当 albedo 除数)见 [[scene-lighting]] ——
+光照模型本身(原画 + 加性实体灯,灯乘在烘出来的 albedo 贴图上)见 [[scene-lighting]] ——
 本卡只管"参数住在哪个空间、用哪把尺"。
 
 ## 两个空间(定义见总表)
@@ -58,7 +58,8 @@ shader 里 march 走的是**伪世界 q**(深度重建出来的),两者差一个
   —— **transform 就这几处**,别的地方不许再折(shader 里 `P = R·q × wuPerQUnit` 是铁律 0
   落地清单点名的那一次,不算"别的地方")。
 - `SceneLightingSystem.wuPerQUnit`。
-- `entityShadowBinding.ts`:CPU 侧的影子浓度估算,**在 q 里算**(见下 §③)。
+- `entityShadowBinding.ts`:CPU 侧的影子浓度估算——现状停在「世界朝向 + q 尺度」的混合态,
+  是铁律 0 的欠账,不是设计(见下 §③)。
 - `scene_lights.SceneLightSpace`:编辑器侧的同一条链(`q_to_world` / `world_to_q`)。
 
 ## 硬契约(违反即 bug 的机制约束)
@@ -101,9 +102,13 @@ shader 里 march 走的是**伪世界 q**(深度重建出来的),两者差一个
 ### ③ intensity 的量纲绑在距离单位上
 
 照度 = `I / r²`,所以 `intensity` 的尺跟着 r 的尺走。**作者面的 intensity 相对 q 定义**
-(编辑器缺省 2.5、雾津街头的灯笼 8.6 都是这把尺),`entityShadowBinding` 那份 CPU 估算
-因此**在 q 里算**——一度把它改成在 wu 里算,同一个 `intensity` 给出的照度差了
-`wuPerQUnit²`(雾津街头 **774400 倍**),影子浓度会整片归零,**而且不报错**。
+(编辑器缺省 2.5、雾津街头的灯笼 8.6 都是这把尺)。**凡进 1/r² 的量(含强度)换空间时都要一起换尺。**
+
+`entityShadowBinding` 那份 CPU 估算一度直接搬到 wu 里算、却没折 I,同一个 `intensity` 给出的照度差了
+`wuPerQUnit²`(雾津街头 **774400 倍**),影子浓度整片归零,**而且不报错**。于是它被退回 q 尺度——
+但退回去的是「角色点过 R 到世界朝向、灯位只除 `wuPerQUnit`」的**世界朝向 + q 尺度**混合态,正是
+[coordinate-spaces](coordinate-spaces.md) 里制作人否掉的那个没名字的第四空间。**它是铁律 0 的现存欠账,
+不是"强度相对 q 所以该在 q 里算"的依据**;正路是在 wu 里算、I 过 `pointIntensityWu`(比值不变,零行为变化)。
 
 铁律 0(2026-08-30)之后 shader 里的 r 是 **wu**,同一个照度要求 `I_wu = I_q × wuPerQUnit²`
 ——这一折在**打包处**做(`lightPacking.pointIntensityWu`,只折走 1/r² 的点光/聚光;
@@ -188,18 +193,12 @@ native 那套在 `depthConfig.M` 里(ppu 450.56、cx 1024、cy 576),shader 用�
 
 ### ② 只积分不加包络 ⇒ 1/r⊥ 长尾把整张画淹了
 
-闭式解在 `r⊥ ≫ R` 时退化成 `Δθ·R/(π·r⊥)`,**没有任何衰减**。实测:光晕在
-**≈100%** 的像素上非零、中位发光亮度是中位表面亮度的 **277 倍**、机位整帧平均
-RGB 从 48.3 涨到 **162.0**,而且 `haloRadius` 只剩幅度语义、框不住光。
-其中 **55%** 来自 `core` 项——灯体变成了第二圈更紧的光晕,不是灯泡。
+闭式解在 `r⊥ ≫ R` 时退化成 `Δθ·R/(π·r⊥)`,**没有任何衰减**。实测光晕在 ≈100% 的像素上非零、
+整帧平均亮度涨到三倍多,`haloRadius` 只剩幅度语义、框不住光;一半多来自 `core` 项——灯体变成了
+第二圈更紧的光晕,不是灯泡(`lcFalloff` 的注释里同一教训写过一次:没有截断,一盏灯把整张夜景染暖)。
 
-同一个教训 `lcFalloff` 的注释里已经写过一次:
-「截断是必须的:没有它,夜景里一盏灯会把整张图都染暖(实测过)」。
-
-**分工:积分管遮挡与深度,高斯包络管范围**,两者相乘。加了包络之后:
-非零像素 100% → **31.3%**,均值倍数 ≫1 → **0.34×**,整帧平均 162.0 → **58.4**
-(gain 0 是 48.3,即光晕的贡献从 +113.7 收到 **+10.1**),`haloRadius` 70/140/280 wu
-对应轮廓半径 24/34/54 px —— 单调了。
+**分工:积分管遮挡与深度,高斯包络管范围**,两者相乘。加了包络之后非零像素收到三成左右、
+光晕贡献降一个量级,`haloRadius` 与轮廓半径单调了。
 
 ### ③ 灯体自发光的增益与灯强度是**同一个工作点**上标的
 

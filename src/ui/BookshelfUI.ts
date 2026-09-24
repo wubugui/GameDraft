@@ -185,6 +185,9 @@ export class BookshelfUI {
     this.focusPlaques = [];
     this.focusChrome = [];
     this.container = new Container();
+    // 书架是面板（只是没走 UIWindow，自己铺的遮罩 + createPanel）：层序归面板带，
+    // 否则写了 z 的展示层（任务引导浮标 z=5）会画在它上面。见 rendering/uiLayerOrder。
+    this.container.zIndex = UITheme.z.panel;
     const sw = this.renderer.screenWidth;
     const sh = this.renderer.screenHeight;
 

@@ -23,7 +23,7 @@ verified_by:
   - src/data/audioCue.test.ts
   - src/systems/AudioManagerSiteVolume.test.ts
   - tools/editor/tests/test_audio_site_volume.py
-last_governed: 2026-09-09
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -55,6 +55,9 @@ last_governed: 2026-09-09
 
 1. **口径只有一条:替换,不是相乘。**
    `最终线性增益 = clamp01( (本处 volume ?? 素材 volume ?? 1) × 通道音量 )`。
+   (再往后还有两层,都**不许**写进这条式子:演出闪避 `× duck`,以及**总音量**——它乘在唯一出口上,
+   所有播放路径天然被它管着,自己再乘一遍 = 双乘。通道音量是玩家偏好、闪避是演出临时层,两者的归属与生命周期
+   见 [audio-mix-and-ownership](audio-mix-and-ownership.md)。)
    写成相乘会让"素材已经压到 0.5、这里再写 0.5"变成 0.25,作者按听感调出来的数全废。
    **唯一的例外是脚步**:它根本不读素材级 volume(基准是 `gainDb`),本条 volume 是
    **乘**在 `dbToLin(集 gainDb + 全局 gainDb)` 之上的——dB 管"这块地整体多响",
@@ -67,8 +70,8 @@ last_governed: 2026-09-09
 4. **幂等守卫要按 (id, 本处音量) 判。** 只比 id 的话,「同一首曲子换个音量」会被当成
    "已经在播这首了"直接吞掉。`playBgm` 按此判断是否重播;`addAmbient` 更进一步——
    已在播的层**不重播**(避免爆音)但**要认新音量**。
-5. **快照要连音量一起存。** 过场音频基线用 `getCurrentBgmCue()` / `getActiveAmbientCues()`,
-   不是 `getCurrentBgmId()` / `getActiveAmbientIds()`。只记 id 的话,过场里被停掉的那层
+5. **快照要连音量一起存。** 过场音频基线用 `getCurrentBgmCue()` / `getActiveAmbientCues()`
+   (只返回 id 的 getter 刻意不提供,别补一个)。只记 id 的话,过场里被停掉的那层
    还原时按素材原音量回来——变响一大截,且只在真机听得出来。
 6. **新字段一律用对象形态,别再造兄弟键。** 兄弟键(`bgmVolume`)在"时段变体只覆盖 bgm、
    不覆盖 bgmVolume"这类合并路径上会走散;音量跟着 id 一起走才不会漏。
@@ -89,6 +92,9 @@ last_governed: 2026-09-09
 
 ## 已知坑
 
+- **动作层把 `volume: null` / `""` 读成 0(静音)**:`playBgm` / `playSfx` / `playSceneAmbient` 用 `Number(raw)`,
+  与第 2 条"没配 ≠ 0"相反;配音通道的解析器专门防了,动作层没有。编辑器侧不写空值即可避开。
+- 场景 bgm / 环境音的时段变体一旦判为不同就整场景重载(音频只在装场景时套用)——所以第 3 条的判等才要紧。
 - `config.systemSfx` 的值现在可能是对象:`a || b || c` 串起来再 `.trim()` 会当场崩
   (对象是真值)。`playAudioUnlockCue` / `previewVolume` 两处都改成了先按 `audioCueId` 挑。
 - 脚步集编辑器把"本页不认识的形状"判为只读透传;判据是 `isinstance(raw, (str, dict))`,

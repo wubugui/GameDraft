@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "id": "主线_牛头凼_远眺",
+  "entry": "a_lock",
+  "meta": {
+    "title": "牛头凼·首到（狂风吹灭火把 → 叠远方的图 → 关二狗认路；期间掉火锁底不死）"
+  },
+  "preconditions": [],
+  "nodes": {
+    "a_lock": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "lockHealth",
+          "params": {
+            "id": "niutoudang_gaze",
+            "min": 30,
+            "scope": "scene"
+          }
+        }
+      ],
+      "next": "l_fire"
+    },
+    "l_fire": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "好大的风！火都遭吹熄了……",
+      "next": "a_gaze"
+    },
+    "a_gaze": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 900
+          }
+        },
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "niutoudang_gaze",
+            "image": "牛头凼_远眺",
+            "xPercent": 50,
+            "yPercent": 50,
+            "widthPercent": 100,
+            "fill": true
+          }
+        }
+      ],
+      "next": "l_light"
+    },
+    "l_light": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "（凼对面那点……崖壁上头有点亮光。）",
+      "layout": "firstPerson",
+      "next": "l_people"
+    },
+    "l_people": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "有亮就有人撒。刚才那条栈道，怕就是往那点绕过去的。",
+      "layout": "firstPerson",
+      "next": "a_hide"
+    },
+    "a_hide": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "niutoudang_gaze"
+          }
+        }
+      ],
+      "next": "l_leave"
+    },
+    "l_leave": {
+      "type": "line",
+      "speaker": {
+        "kind": "player"
+      },
+      "text": "勒个凼凼阴得很，莫在这点久站，走！",
+      "next": "a_done"
+    },
+    "a_done": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "unlockHealth",
+          "params": {
+            "id": "niutoudang_gaze"
+          }
+        },
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "牛头凼_远眺看完",
+            "sourceType": "dialogue",
+            "sourceId": "主线_牛头凼_远眺"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

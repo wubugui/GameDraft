@@ -38,6 +38,9 @@ last_governed: 2026-08-05
    [动画产物契约](../mechanisms/sprite-atlas-anim-contract.md)。
 5. **放场景(装饰 NPC 范式)**:NpcDef 只给 animFile + `interactionRange:0` +
    `castShadow:false` + 无 dialogueGraphId → 自动循环 idle、不可交互、参与 Y 排序。
+   **不站在地上的特效(热气 / 灯焰 / 烟)再加 `contactAo: {"enabled": false}`**:2026-09-23 起接触 AO 与投影
+   分开、缺省开(见 [entity-lighting](../../runtime/mechanisms/entity-lighting.md)),只写 `castShadow:false`
+   的话脚下会冒出一圈接触 AO。茶馆的 `fx_steam_*` / `fx_glow_*` 已这样补过。
    与背景的前后关系是**画出来的**(群像、前景路人)时,再给 `spriteSort:'back'|'front'`
    强制叠放档位——按 Y 排会穿帮,且穿帮不报错只是看着别扭。
    贴图取自已烤光照的背景时必须 `renderRaw:true`(不再吃逐 entity 光照/深度遮挡/像素密度

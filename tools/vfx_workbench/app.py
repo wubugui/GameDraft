@@ -55,10 +55,20 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
             if real.is_file():
                 fake.write_bytes(real.read_bytes())
             placements.LIB_ROOT = tmp
+            # 雷电样式库同理：库拷一份到临时目录（真效果据此仍判「最新」）。自检里套用样式只会写临时库和 zz_selftest_* 效果
+            from tools.vfx_workbench import lightning
+            saved_ls = lightning.LIB_PATH
+            if lightning.LIB_PATH.is_file():
+                shutil.copyfile(lightning.LIB_PATH, tmp / "vfx_lightning_styles.json")
+            lightning.LIB_PATH = tmp / "vfx_lightning_styles.json"
             return run_desktop(handler_cls=serve.H, title=TITLE + "（自检）", app_id=APP_ID + "-selftest", port=port,
                                selftest=str(path))
         finally:
             placements.LIB_ROOT = ROOT
+            try:
+                lightning.LIB_PATH = saved_ls
+            except NameError:
+                pass
             shutil.rmtree(tmp, ignore_errors=True)
 
     def _on_activate(data: bytes, view) -> None:

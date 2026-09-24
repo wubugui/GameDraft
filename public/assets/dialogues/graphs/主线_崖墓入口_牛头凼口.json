@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "id": "主线_崖墓入口_牛头凼口",
+  "entry": "a_show",
+  "meta": {
+    "title": "崖墓入口·牛头凼口（第一视角叠图 + 翻上去）"
+  },
+  "preconditions": [],
+  "defaultLayout": "firstPerson",
+  "nodes": {
+    "a_show": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "showOverlayImage",
+          "params": {
+            "id": "cliff_niutou_view",
+            "image": "崖墓_牛头凼口",
+            "xPercent": 50,
+            "yPercent": 50,
+            "widthPercent": 100,
+            "fill": true
+          }
+        }
+      ],
+      "next": "c_climb"
+    },
+    "c_climb": {
+      "type": "choice",
+      "options": [
+        {
+          "id": "climb",
+          "text": "翻上去",
+          "next": "a_go"
+        },
+        {
+          "id": "back",
+          "text": "算了",
+          "next": "a_close"
+        }
+      ]
+    },
+    "a_go": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "cliff_niutou_view"
+          }
+        },
+        {
+          "type": "switchScene",
+          "params": {
+            "targetScene": "牛头凼",
+            "targetSpawnPoint": "spawn_0"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "a_close": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "hideOverlayImage",
+          "params": {
+            "id": "cliff_niutou_view"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

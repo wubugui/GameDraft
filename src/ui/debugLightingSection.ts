@@ -36,6 +36,7 @@ const KIND_LABEL: Record<LightKind, string> = {
   spot: '聚光',
   area: '面光',
   directional: '平行光',
+  line: '线光（雷身）',
 };
 
 export interface DebugLightingDeps {

@@ -1,0 +1,63 @@
+{
+  "id": "dream_face_paper",
+  "label": "做梦待死之礼·盖脸纸(侧面近景)",
+  "size": [1664, 928],
+  "layers": {
+    "base": "/resources/runtime/images/breathing/dream_face_paper/base.png",
+    "body": "/resources/runtime/images/breathing/dream_face_paper/body.png",
+    "sheet": "/resources/runtime/images/breathing/dream_face_paper/sheet.png",
+    "flap": "/resources/runtime/images/breathing/dream_face_paper/flap.png"
+  },
+  "fields": {
+    "file": "/resources/runtime/images/breathing/dream_face_paper/fields.bin",
+    "width": 832,
+    "height": 464
+  },
+  "rig": {
+    "pxPerMm": 2.8,
+    "root": [745.0, 361.57642413022205],
+    "rootDisp": [0.047870783894372534, -0.6074150575406626],
+    "flapLengthPx": 187.01801161241298,
+    "flapNormal": [0.94, -0.35],
+    "lampDir": [0.985, 0.17],
+    "shade": 0.12,
+    "limits": { "sheetMm": 15, "ventMm": 24, "cranMm": 12 }
+  },
+  "params": {
+    "ti": 5.6,
+    "te": 7.25,
+    "tp": 1.25,
+    "jitter": 6,
+    "sighDepth": 135,
+    "sighLen": 115,
+    "vent": 10,
+    "cran": 4,
+    "inflate": 3.5,
+    "sink": 4,
+    "swing": 4,
+    "back": 4.8,
+    "upLimit": 14,
+    "sinkLimit": 5,
+    "lag": 1.5,
+    "inA": 0,
+    "inB": 100,
+    "exA": 0,
+    "exB": 100,
+    "edge": 12,
+    "freq": 6,
+    "damp": 0.18,
+    "gaspT": 1,
+    "gaspPow": 3,
+    "gaspChest": 200,
+    "gaspKick": 0,
+    "fadeTo": 70,
+    "fadeSec": 2.5,
+    "f1Depth": 50,
+    "f1Len": 80,
+    "apnea": 0,
+    "f2Depth": 30,
+    "f2Len": 75,
+    "stillHold": 2.5,
+    "volume": 0.6
+  }
+}

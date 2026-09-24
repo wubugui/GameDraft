@@ -14,12 +14,12 @@ authority:
   - resources/editor_projects/editor_data/debug_dock_pins.json
 triggers:
   paths: ["src/ui/**", "src/dev/**", "vite.config.ts", "tools/editor/editors/scene_lights.py"]
-  topics: [调试面板, 偏好持久化, localStorage, F2, sidecar, 实时同步, 同步槽, 长挂通道]
+  topics: [调试面板, 偏好持久化, localStorage, F2, sidecar, 实时同步, 同步槽, 长挂通道, F2 日志, 日志刷屏]
   tasks: [加调试UI, 记用户偏好, 做游戏与编辑器的实时同步]
 verified_by:
   - src/dev/runtimeLightingSync.test.ts
   - tools/editor/editors/tests/test_scene_lights.py
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -91,6 +91,10 @@ last_governed: 2026-09-03
 - **`localhost` 可能静默连不通**:dev server 只监听 IPv4 而 Python 的 urllib 先试 IPv6,
   表现为整整数秒超时后失败;而 vite 启动日志打的恰恰是 `localhost`,照抄进来就是
   "同步永远连不上且不报错"。Python 侧连接层统一改写主机名,有同名护栏测试。
+- **F2 日志是一条很短的环形缓冲,每帧路径上的无条件记日志会把它冲光**(2026-09-14:头顶闲聊选人与
+  气泡跟人每帧解析表情目标、每帧记一行,别的诊断全被挤掉)。往 F2 日志写之前先问这个调用点在不在
+  每帧路径上:在 → 只记**结果变了**的那一刻(按"调用方 × 目标"去重,见 `Game.pollEmoteTarget`);
+  一次性动作路径照常每次记。
 - 同一面板的偏好散进多个文件会难以对齐;新键先看现成 JSON 的范式再加。
 - 交换档里的"临时视图状态"(独奏之类)交出去前要还原成真实值,但**不要强退**——
   同步每秒都在跑,强退会让人刚点开就被踢出来。忙时(拖动中 / 表单有焦点)只发不收。

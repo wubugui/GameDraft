@@ -5,6 +5,7 @@ import type { Renderer } from '../rendering/Renderer';
 import { Hotspot } from '../entities/Hotspot';
 import { Npc } from '../entities/Npc';
 import { createPlaceholderBackground } from '../rendering/PlaceholderFactory';
+import { UI_LAYER_Z } from '../rendering/uiLayerOrder';
 import type {
   ActionDef,
   SceneData,
@@ -149,6 +150,15 @@ export class SceneManager implements IGameSystem {
   private characterRegistry: CharacterRegistry = {};
   setCharacterRegistry(reg: CharacterRegistry): void {
     this.characterRegistry = reg;
+  }
+
+  /**
+   * 角色 id → 动画包 URL（`character_registry.json` 的 `animFile`）。
+   * 画布实体（{@link CanvasStageSystem}）用它把作者填的角色 id 解成动画包——它不摆在任何场景里，
+   * 走不到 `instantiateNpc` 那条合并路，所以要一个只读的窄出口，而不是把整张注册表交出去。
+   */
+  getCharacterAnimFile(characterId: string): string | undefined {
+    return this.characterRegistry[characterId?.trim()]?.animFile;
   }
 
   /** 当前游戏会话内禁用的 standard zone id（按 sceneId 分桶，不写档）；depth_floor 不可在此关闭 */
@@ -2275,6 +2285,12 @@ export class SceneManager implements IGameSystem {
     const root = new Container();
     root.x = -100;
     root.y = -100;
+    /**
+     * 遮幕必须压过面板（层序表见 `rendering/uiLayerOrder`）：暂停菜单点「读档」是
+     * **读完才关菜单**的（`MenuUI.commitSlot`），标题页「继续」同理，加载全程菜单都还挂着。
+     * 以前靠"遮幕是最后挂上去的"这条插入序盖住它，面板拿到 z 之后插入序就不管用了。
+     */
+    root.zIndex = UI_LAYER_Z.curtain;
 
     const bg = new Graphics();
     bg.rect(0, 0, sw + 200, sh + 200).fill(0x000000);
@@ -2390,6 +2406,9 @@ export class SceneManager implements IGameSystem {
       g.x = -100;
       g.y = -100;
       g.alpha = 0;
+      // 与切场遮幕同带（见 uiLayerOrder）：同值之间仍按插入序，showBlackout 里那句
+      // 「移到 uiLayer 末尾」的语义不变，只是现在连面板一起盖住。
+      g.zIndex = UI_LAYER_Z.curtain;
       this.renderer.uiLayer.addChild(g);
       this.blackoutOverlay = g;
     }

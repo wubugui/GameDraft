@@ -12,7 +12,7 @@ authority:
 triggers:
   paths: ["src/entities/Hotspot.ts", "src/entities/Npc.ts", "src/systems/InteractionSystem.ts", "src/systems/SceneManager.ts", "src/core/Game.ts"]
   topics: [显隐, 实体可见性, enabled, conditionHidesEntity, 运行时字段, 实体字段写回, 分组显隐, 时段归属, phases]
-last_governed: 2026-08-26
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -28,6 +28,12 @@ last_governed: 2026-08-26
 运行时覆盖都在那里串成一串 and(见 [plane-system](plane-system.md)、
 [day-night-npc-schedule](day-night-npc-schedule.md));位面切换 / 时刻推进时同样经
 SceneManager 批量重贴派生基底,不是等下一帧慢慢刷。
+
+**刷新时机**:`InteractionSystem.update` 只在探索态跑,所以**条件通道**平时只在探索态刷;
+非探索态里靠两处补刀(`refreshVisibilityChannels`,只重贴显隐、不选目标不触发):时刻变化、
+叙事状态变化(2026-09-23 补,此前动作链里推进的叙事状态要等回探索态实体才现身)。
+新增一种"会在演出/动作链里改变条件结论"的状态源,要么接进这个补刀,要么接受延迟——
+整族形态见 [game-state-handoff](game-state-handoff.md)。
 
 ## 硬契约(违反即 bug)
 

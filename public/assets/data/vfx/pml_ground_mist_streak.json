@@ -1,0 +1,251 @@
+{
+  "id": "pml_ground_mist_streak",
+  "label": "跑马梁 · 掠地薄雾（昼） · 长丝",
+  "prewarmSeconds": [
+    12,
+    15
+  ],
+  "emitters": [
+    {
+      "id": "body",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        31,
+        0,
+        22
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/pml_water_film_v3.png",
+        "sizeWu": 440.8,
+        "sizeJitter": [
+          0.55,
+          1.5
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.73
+          ],
+          [
+            0.55,
+            1
+          ],
+          [
+            1,
+            1.19
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0.0
+          ],
+          [
+            0.16,
+            0.2778
+          ],
+          [
+            0.4,
+            0.3268
+          ],
+          [
+            0.72,
+            0.2614
+          ],
+          [
+            1,
+            0.0
+          ]
+        ],
+        "tint": [
+          0.76,
+          0.8,
+          0.82
+        ],
+        "blend": "normal",
+        "lit": false,
+        "softEdgeWu": 18,
+        "spin": {
+          "rate": [
+            -0.022,
+            0.018
+          ],
+          "randomPhase": false
+        }
+      },
+      "spawn": {
+        "max": 3,
+        "rate": 0.19,
+        "intervalJitter": 0.75,
+        "burst": 2,
+        "shape": {
+          "kind": "box",
+          "size": [
+            150,
+            12,
+            26
+          ]
+        },
+        "speed": [
+          10.2,
+          13.6
+        ],
+        "direction": [
+          -1,
+          0.025,
+          -0.12
+        ],
+        "spread": 8
+      },
+      "motion": {
+        "drag": 0.045,
+        "turbulence": {
+          "strength": 0.18,
+          "scale": 120,
+          "speed": 0.07
+        },
+        "maxSpeed": 10.4
+      },
+      "life": {
+        "seconds": [
+          14,
+          20
+        ]
+      }
+    },
+    {
+      "id": "wisps",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        31,
+        8,
+        22
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/pml_ground_streak_v3.png",
+        "sizeWu": 361.46,
+        "sizeJitter": [
+          0.55,
+          1.5
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.73
+          ],
+          [
+            0.55,
+            1
+          ],
+          [
+            1,
+            1.19
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0.0
+          ],
+          [
+            0.22,
+            0.2222
+          ],
+          [
+            0.68,
+            0.1634
+          ],
+          [
+            1,
+            0.0
+          ]
+        ],
+        "tint": [
+          0.76,
+          0.8,
+          0.82
+        ],
+        "blend": "normal",
+        "lit": false,
+        "softEdgeWu": 18,
+        "spin": {
+          "rate": [
+            -0.022,
+            0.018
+          ],
+          "randomPhase": false
+        }
+      },
+      "spawn": {
+        "max": 2,
+        "rate": 0.19,
+        "intervalJitter": 0.75,
+        "burst": 1,
+        "shape": {
+          "kind": "box",
+          "size": [
+            150,
+            12,
+            26
+          ]
+        },
+        "speed": [
+          5.44,
+          7.89
+        ],
+        "direction": [
+          1,
+          0.025,
+          0.08
+        ],
+        "spread": 8
+      },
+      "motion": {
+        "drag": 0.045,
+        "turbulence": {
+          "strength": 0.18,
+          "scale": 120,
+          "speed": 0.07
+        },
+        "maxSpeed": 10.4
+      },
+      "life": {
+        "seconds": [
+          11.2,
+          17.0
+        ]
+      }
+    }
+  ],
+  "authoring": {
+    "sceneId": "跑马梁",
+    "background": "background.png",
+    "note": "2026-09-21返修：大小/高度/疏密/速度错开，三种轮廓交替；水雾贴水薄层。"
+  }
+}

@@ -1,4 +1,4 @@
-import { getActionParamManifest } from './actionParamManifest';
+import { getActionParamManifest, presentationActionErrors } from './actionParamManifest';
 import { windGustErrors } from '../data/windGust';
 import { healthActionErrors } from '../data/healthActionValidation';
 
@@ -1149,6 +1149,9 @@ function validateActionDef(action: ActionLike, path: string, issues: NarrativeVa
     addIssue(issues, 'error', 'action.param.invalid', `${owner}: sceneWindGust ${error}`, `${path}.params`, owner, target);
   }
   for (const error of healthActionErrors(type, params)) {
+    addIssue(issues, 'error', 'action.param.invalid', `${owner}: ${type} ${error}`, `${path}.params`, owner, target);
+  }
+  for (const error of presentationActionErrors(type, params)) {
     addIssue(issues, 'error', 'action.param.invalid', `${owner}: ${type} ${error}`, `${path}.params`, owner, target);
   }
   // 动作参数唯一权威源：src/core/actionParamManifest.ts（三方同步契约见该文件头注释）。

@@ -12,8 +12,12 @@ triggers:
   paths:
     - "src/core/Game.ts"
     - "src/systems/gameClock.ts"
-  topics: [暂停, 冻结, 游戏时钟, waitMs, UIOverlay, 菜单]
-last_governed: 2026-09-19
+  topics: [暂停, 冻结, 游戏时钟, GameClock, waitMs, UIOverlay, 菜单, cancelAll, 开背包]
+  tasks: [加一个随时间演进的表现, 加暂停源, 写演出等待]
+verified_by:
+  - src/systems/gameClock.test.ts
+  - src/core/ActionRegistryGameClock.test.ts
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -48,11 +52,24 @@ last_governed: 2026-09-19
 
 音频不冻是刻意的：开菜单时音乐掐掉太突兀。要冻要另说，别顺手加。
 
+过场 / 对话 / 动作批 / 遭遇 / 小游戏**都不是暂停**（世界照走）。说明卡与 Dead 比暂停更狠：tick 第一行就早退，
+连镜头、雷光、HUD 横幅都不推——判据函数里列它们是为了"单一判据"，实际生效点是那一行早退。
+
 ## 已知坑
 
 - `fixedTickMode`（无头/逐帧）下主循环不调 `tick`，靠 `debugStepTicks` 走 —— 那条路照常推时钟，
   所以 `waitMs` 在无头里是**按步**前进的（这正是确定性想要的）。别为了"跑快点"把时钟改回墙钟。
 - 暂停期间 `setTimeout` 仍在走。凡是新写的、玩家看得见的延时，一律接 `GameClock`。
+  反过来，把"只管可见性"的 UI 放进闸里会冻住上一帧的可见性（引导层就是因此被挪出闸的）。
+- **因为 `cancelAll` 是兑现不是丢弃，每个 `after` / `wait` 调用方都要自带世代或场景闸**，否则死亡 / 读档那一刻
+  凭空执行一步。正例：跟脚声（世代闸 + 到点闸）。反例：天色渐变只认自己的 token、非会话批里的落雷连劈只认
+  "粒子空间还在"——死亡 / 读档后它们会再走一步。
+- **`wait(0)` 不是"一个微任务后兑现"**（源码注释不准）：它也要等下一次 `advance`，暂停中会一直挂着。
+  `waitMs` 自己规避了（`ms > 0` 才排队）；新调用方自己留意。
+- **切场景不兑现在途等待**（只有死亡 / 读档 / 拆除调 `cancelAll`）：等待跨场景继续走完，调用方要自己判场景变没变。
+- 由对话 / 过场态发起的切场景用 Cutscene 锁（不是暂停态）⇒ 那种加载期间时钟照走；探索态发起的走 SceneTransition ⇒ 时钟停。
+- `playTimeMs` 在面板暂停期间照涨，只在说明卡 / 死亡早退时停。
+- **音频不冻**：闪避层的渐变与到期兜底、床的淡入淡出都是墙钟（见 [audio-mix-and-ownership](audio-mix-and-ownership.md)）。
 
 ## 怎么验证
 

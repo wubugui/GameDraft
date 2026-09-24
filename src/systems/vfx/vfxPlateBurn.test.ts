@@ -193,3 +193,33 @@ describe('外部供点发射形状', () => {
     }
   });
 });
+
+describe('可燃薄片 · 雷劈', () => {
+  it('只点模板开了「雷劈能点着」的；落点半径内当场着（不等受热），半径外不动', () => {
+    const on = new Map([['paper_t', paperTemplate({ lightningIgnites: true })]]);
+    const sim = new VfxInstanceSim('i', paperEffect(), [0, 0, 0], 7, space, 1, { burnTemplates: on });
+    sim.step(1 / 60, ctx());
+    const e = sim.emitters[0];
+    const p = e.p;
+    const burn = e.burn!;
+    const k = 5;
+    const n = sim.lightningIgnitePlates(p.x[k], p.y[k], p.z[k], 30, 30);
+    expect(n).toBeGreaterThanOrEqual(1);
+    expect(burn.burnT[k]).toBeGreaterThanOrEqual(0);
+    expect(burn.burning).toBe(n);
+    for (let i = 0; i < p.cap; i++) {
+      if (!p.alive[i]) continue;
+      if (Math.hypot(p.x[i] - p.x[k], p.z[i] - p.z[k]) > 60) expect(burn.burnT[i]).toBeLessThan(0);
+    }
+    // 已经着了的不重算
+    expect(sim.lightningIgnitePlates(p.x[k], p.y[k], p.z[k], 1, 1)).toBe(0);
+  });
+
+  it('模板没开开关：劈在纸上一张都不着', () => {
+    const sim = new VfxInstanceSim('i', paperEffect(), [0, 0, 0], 7, space, 1, opts);
+    sim.step(1 / 60, ctx());
+    const p = sim.emitters[0].p;
+    expect(sim.lightningIgnitePlates(p.x[3], p.y[3], p.z[3], 500, 500)).toBe(0);
+    expect(sim.emitters[0].burn!.burning).toBe(0);
+  });
+});

@@ -32,11 +32,12 @@ const float LC_PI = 3.14159265358979323846;
 const vec3  LC_LUMA = vec3(0.2126, 0.7152, 0.0722);
 
 // ---------------------------------------------------------------- 光源类型
-// 与 LightDef.kind 对应：0=point 1=spot 2=area 3=directional
+// 与 LightDef.kind 对应：0=point 1=spot 2=area 3=directional 4=line
 #define LC_POINT       0
 #define LC_SPOT        1
 #define LC_AREA        2
 #define LC_DIRECTIONAL 3
+#define LC_LINE        4
 
 // ---------------------------------------------------------------- 衰减
 // 物理 1/r² + 有限作用半径的高斯截断。
@@ -136,6 +137,36 @@ vec3 lcAreaLight(vec3 P, vec3 N, vec3 center, vec3 halfU, vec3 halfV,
     // 未做 horizon clip 的数值残差，钳掉。
     E = twoSided ? abs(E) : max(E, 0.0);
     return color * (intensity * E * cut * vis);
+}
+
+// ---------------------------------------------------------------- 线光（落雷那一道雷身，只给运行时灯用）
+// 从 a 到 a + seg 的一整条均匀发光线，总强度 intensity（= 同一强度的点光均匀摊在整条线上，
+// 离得远时与点光一样；打包处与点光同样 × wuPerQUnit²）。
+//
+// Lambert（N·L）× 1/(r² + 软化) 沿线的**闭式积分**，零采样（逐点采样在贴近雷身的墙上会是一串亮斑）：
+//
+//     E = λ ∫ (α + β s) / (s² + b²)^{3/2} ds            λ = intensity / len
+//       = λ [ α/b² · s/√(s²+b²) − β/√(s²+b²) ]  从 s0 到 s1
+//
+// s = 沿线坐标（原点取着色点在这条直线上的垂足），b² = 垂距² + 软化，α = N·(着色点→垂足)，β = N·线方向。
+// 作用半径的截断取线上离着色点最近那一点（线远长于截断半径时才有误差）。
+// ⚠ 未做 horizon clip：线有一截在着色点地平线以下时那一截贡献负值，本式偏小；外层 max(0) 兜底。
+vec3 lcLineLight(vec3 P, vec3 N, vec3 a, vec3 seg, vec3 color,
+                 float intensity, float range, float softening, float vis) {
+    float len = length(seg);
+    if (len < 1e-3) return lcPointLight(P, N, a, color, intensity, range, softening, vis);
+    vec3 u = seg / len;
+    vec3 w = a - P;
+    float s0 = dot(w, u);
+    vec3 perp = w - s0 * u;
+    float b2 = dot(perp, perp) + softening;
+    float s1 = s0 + len;
+    float r0 = inversesqrt(s0 * s0 + b2);
+    float r1 = inversesqrt(s1 * s1 + b2);
+    float I = (dot(N, perp) / b2) * (s1 * r1 - s0 * r0) - dot(N, u) * (r1 - r0);
+    vec3 nearest = w + clamp(-s0, 0.0, len) * u;
+    float cut = exp(-dot(nearest, nearest) / max(range * range, 1e-6));
+    return color * (intensity / len * max(I, 0.0) * cut * vis);
 }
 
 // ---------------------------------------------------------------- 平行光（日/月）

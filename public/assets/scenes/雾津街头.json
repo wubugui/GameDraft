@@ -5,7 +5,7 @@
   "worldWidth": 4000.0,
   "worldHeight": 2251.2,
   "camera": {
-    "zoom": 0.87,
+    "zoom": 1.0,
     "pixelsPerUnit": 1.0
   },
   "backgrounds": [
@@ -276,7 +276,7 @@
       "type": "inspect",
       "label": "水果摊",
       "x": 2200.0,
-      "y": 1550.0,
+      "y": 1960.0,
       "interactionRange": 64.0,
       "data": {
         "graphId": "线外_寻狗_摸橘子"
@@ -391,7 +391,7 @@
       "id": "hs_雷符_拉客女",
       "type": "pickup",
       "label": "她塞过来的一张符",
-      "x": 1175.0,
+      "x": 1278.6,
       "y": 1630.0,
       "interactionRange": 160,
       "data": {
@@ -574,7 +574,7 @@
     },
     "display": {
       "ev": -0.05,
-      "tonemap": "filmic",
+      "tonemap": "none",
       "whiteKelvin": 6500,
       "contrast": 1,
       "saturation": 1,
@@ -744,8 +744,8 @@
     {
       "id": "npc_义庄管事",
       "name": "脸色发白的义庄管事",
-      "x": 2288.0,
-      "y": 1608.0,
+      "x": 2360.0,
+      "y": 1840.0,
       "interactionRange": 70.0,
       "animFile": "/resources/runtime/animation/npc_yizhuang_keeper_anim/anim.json",
       "initialAnimState": "idle",
@@ -783,8 +783,8 @@
     {
       "id": "npc_街头脚夫",
       "name": "歇脚的脚夫",
-      "x": 3572.0,
-      "y": 1732.0,
+      "x": 3440.0,
+      "y": 1822.0,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
       "initialAnimState": "idle",
@@ -809,7 +809,7 @@
       ],
       "name": "卦摊瞎子李",
       "x": 3516.0,
-      "y": 1516.0,
+      "y": 1300.0,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/npc_blind_li_anim/anim.json",
       "initialAnimState": "idle",
@@ -860,8 +860,8 @@
     {
       "id": "npc_街头瘦猫",
       "name": "屋檐下的瘦猫",
-      "x": 600.0,
-      "y": 1600.0,
+      "x": 620.0,
+      "y": 1790.0,
       "interactionRange": 56.0,
       "animFile": "/resources/runtime/animation/cat_anim/anim.json",
       "initialAnimState": "idle",
@@ -873,8 +873,8 @@
     {
       "id": "npc_街头袍哥",
       "name": "裹头的袍哥",
-      "x": 1900.0,
-      "y": 1300.0,
+      "x": 1880.0,
+      "y": 1030.0,
       "interactionRange": 64.0,
       "animFile": "/resources/runtime/animation/guanchai_anim/anim.json",
       "initialAnimState": "idle",
@@ -1186,7 +1186,7 @@
       ],
       "interactionRange": 0,
       "displayImage": {
-        "image": "/resources/runtime/images/props/copper_coin.png",
+        "image": "/resources/runtime/images/props/copper_coin_bright.png",
         "worldWidth": 7.0,
         "worldHeight": 7.0
       },
@@ -1226,7 +1226,7 @@
         "conditions": [
           {
             "narrative": "wrapper_序章_路遇私铸钱",
-            "state": "教学中"
+            "state": "怪人近身"
           }
         ]
       }
@@ -1368,20 +1368,20 @@
       "id": "z_找活_起意",
       "polygon": [
         {
-          "x": 1043.9,
-          "y": 118.2
+          "x": 1040.0,
+          "y": 380.0
         },
         {
-          "x": 1283.9,
-          "y": 118.2
+          "x": 1280.0,
+          "y": 380.0
         },
         {
-          "x": 1283.9,
-          "y": 278.2
+          "x": 1280.0,
+          "y": 520.0
         },
         {
-          "x": 1043.9,
-          "y": 278.2
+          "x": 1040.0,
+          "y": 520.0
         }
       ],
       "conditions": [
@@ -1465,20 +1465,20 @@
       "id": "z_淹尸_水腥",
       "polygon": [
         {
-          "x": 100.0,
-          "y": 470.0
+          "x": 340.0,
+          "y": 520.0
+        },
+        {
+          "x": 580.0,
+          "y": 520.0
+        },
+        {
+          "x": 580.0,
+          "y": 700.0
         },
         {
           "x": 340.0,
-          "y": 470.0
-        },
-        {
-          "x": 340.0,
-          "y": 660.0
-        },
-        {
-          "x": 100.0,
-          "y": 660.0
+          "y": 700.0
         }
       ],
       "conditions": [
@@ -1911,20 +1911,20 @@
       "id": "z_袍哥秒怂",
       "polygon": [
         {
-          "x": 1780.0,
-          "y": 1360.0
+          "x": 1700.0,
+          "y": 950.0
         },
         {
-          "x": 2060.0,
-          "y": 1360.0
+          "x": 2000.0,
+          "y": 950.0
         },
         {
-          "x": 2060.0,
-          "y": 1560.0
+          "x": 2000.0,
+          "y": 1070.0
         },
         {
-          "x": 1780.0,
-          "y": 1560.0
+          "x": 1700.0,
+          "y": 1070.0
         }
       ],
       "conditions": [
@@ -2253,6 +2253,24 @@
           },
           "particles": {
             "indirectFactor": 1.0,
+            "directFactor": 1,
+            "totalFactor": 5.850272682217821,
+            "eChroma": 0
+          }
+        }
+      }
+    },
+    "午": {
+      "lighting": {
+        "lightFactors": {
+          "character": {
+            "indirectFactor": 5.850272682217821,
+            "directFactor": 1,
+            "totalFactor": 1,
+            "eChroma": 0
+          },
+          "particles": {
+            "indirectFactor": 1,
             "directFactor": 1,
             "totalFactor": 5.850272682217821,
             "eChroma": 0

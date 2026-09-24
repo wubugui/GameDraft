@@ -14,8 +14,8 @@ authority:
   - src/rendering/lighting/lightingCore.glsl#lcAreaLight
 triggers:
   paths: ["src/authoring/*", "src/ui/debugLightingSection.ts", "tools/editor/editors/scene_lights.py"]
-  topics: [摆灯, gizmo, 聚光, 面光, 光锥, 锥角, 朝向, orientation, 手柄, 运行时编辑]
-last_governed: 2026-09-03
+  topics: [摆灯, gizmo, 聚光, 面光, 光锥, 锥角, 朝向, orientation, 手柄, 运行时编辑, 跟随灯, follow]
+last_governed: 2026-09-23
 ---
 
 # 运行时摆灯的可视化手柄：哪些参数必须能拖，哪些数字框就够
@@ -44,6 +44,17 @@ last_governed: 2026-09-03
 | `intensity` / `kelvin` / `color` | 数字 | 标量 |
 
 点光**只有位置需要手柄**。这就是为什么它一直没有形状 gizmo 也能用。
+⚠ 例外见下「`follow`」:跟随灯连位置手柄都不该有。
+
+### 跟随灯 `follow`(任何灯型都可能带)
+
+| 参数 | 结论 | 为什么 |
+|---|---|---|
+| `follow` 块 | **不是手柄参数,是把 `pos` 整个作废的开关** | 配了 `follow` 的灯,原件的 `pos` **完全不参与光照**:`SceneLightingSystem.effectiveLights` 见 `follow` 就跳过原件,由 `HeldPropSystem` 每帧解出一盏运行时灯。此时位置手柄 / 画布定位是纯骗人——作者摆半天,进游戏灯在别处,而"摆错了"与"灯坏了"在画面上无法区分 |
+
+门控判据是**"`follow` 块在不在"**,不是"`target` 填没填"。摆灯手柄一律按它停用,并说出**跟着谁走**。
+主编辑器已这么做(`scene_editor._sync_sl_place_affordance`,护栏 `test_scene_lights_follow.py::TestPlaceAffordance`);
+运行时 `src/authoring` 的拖拽**尚未**按它停用(2026-09-23 复核),改那边时补上。
 
 ### 聚光 `spot`
 

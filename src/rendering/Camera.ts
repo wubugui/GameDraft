@@ -18,6 +18,11 @@ export class Camera {
 
   private pixelsPerUnit: number = 1;
   private zoom: number = 1;
+  /**
+   * zoom 是否被显式占用（见 {@link setZoom} / {@link setDrivenZoom}）。
+   * 缺省 false：没人用连续通道时这个字段不改变任何行为。
+   */
+  private zoomOverridden: boolean = false;
   /** 场景配置基线缩放（scene.camera.zoom），进场景时由装配层记录 */
   private sceneBaseZoom: number = 1;
   private worldScale: number = 1;
@@ -88,10 +93,57 @@ export class Camera {
     this.applyTransform();
   }
 
+  /**
+   * 显式设定 zoom（过场 `cameraZoom`、`setCameraZoom`、对话拉近、调试滚轮、编导模式…）。
+   *
+   * 行为与历史完全一致，只多记一笔「zoom 现在有人显式占着」：占着期间
+   * {@link setDrivenZoom} 那条连续通道让位（需求清单 A3.5「显式 zoom 赢」）。
+   * 没有任何人用连续通道时这个布尔是惰性的，一个字节的行为都不变。
+   */
   setZoom(z: number): void {
+    this.zoomOverridden = true;
     this.zoom = z;
     this.syncBoundsIntoState();
     this.applyTransform();
+  }
+
+  /**
+   * 连续通道：**相机跟随透视**每帧写这里。有显式占用时整条让位（连 zoom 都不读）。
+   *
+   * 下限在这里钳：视野一旦比地图大，`clampCenterWorld` 就把镜头钉死在地图中轴、
+   * 不再跟人，还会露出地图外——所以往外拉最多拉到「视野刚好铺满地图」。
+   */
+  setDrivenZoom(z: number): void {
+    if (this.zoomOverridden) return;
+    if (!Number.isFinite(z) || z <= 0) return;
+    const floor = this.getMinZoomFittingBounds();
+    const next = floor > 0 && z < floor ? floor : z;
+    if (Math.abs(next - this.zoom) < 1e-6) return;
+    this.zoom = next;
+    this.syncBoundsIntoState();
+    this.applyTransform();
+  }
+
+  /** 交回连续通道（恢复场景 zoom 的各条路径、进场景、过场快照恢复时调）。 */
+  releaseZoomOverride(): void {
+    this.zoomOverridden = false;
+  }
+
+  /** zoom 此刻是否被显式占着（过场快照要连它一起存，才能原样恢复） */
+  isZoomOverridden(): boolean { return this.zoomOverridden; }
+
+  /**
+   * 视野恰好铺满地图所需的最小 zoom；没设边界时返回 0（无下限）。
+   * `viewWorldW = screenW / (ppu × zoom × worldScale) ≤ boundsWidth` 反解而来。
+   */
+  getMinZoomFittingBounds(): number {
+    const unit = this.pixelsPerUnit * this.worldScale;
+    if (!(unit > 0) || this.boundsWidth <= 0 || this.boundsHeight <= 0) return 0;
+    if (this.screenWidth <= 0 || this.screenHeight <= 0) return 0;
+    return Math.max(
+      this.screenWidth / (unit * this.boundsWidth),
+      this.screenHeight / (unit * this.boundsHeight),
+    );
   }
 
   /** 场景配置基线缩放（scene.camera.zoom，缺省 1）。进场景时记录，供过场 cameraZoom

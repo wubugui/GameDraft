@@ -377,7 +377,8 @@ def _compare_save_load_check(
         add("warning", "saveLoadCheck", text, "", "没有 runtime command results，无法确认存读档/重进是否执行")
         return
 
-    slot = save_slot_from_text(text) or 2
+    parsed_slot = save_slot_from_text(text)
+    slot = 2 if parsed_slot is None else parsed_slot
     if wants_save_load:
         save_ok = _runtime_command_ok(results, "debugSaveGame")
         load_ok = _runtime_command_ok(results, "debugLoadGame")

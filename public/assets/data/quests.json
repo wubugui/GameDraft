@@ -877,9 +877,18 @@
         "text": "出南门，顺到小路往南边走",
         "completeWhen": [
           {
-            "narrative": "scenario_夜出南门",
-            "state": "望山",
-            "reached": true
+            "any": [
+              {
+                "narrative": "scenario_夜出南门",
+                "state": "点火",
+                "reached": true
+              },
+              {
+                "narrative": "scenario_夜出南门",
+                "state": "望山",
+                "reached": true
+              }
+            ]
           }
         ],
         "guidance": [
@@ -900,6 +909,24 @@
             "entityId": "z_南门小路_南头",
             "offscreenArrow": true,
             "showDistance": true
+          }
+        ]
+      },
+      {
+        "id": "o_dianhuo",
+        "text": "把火把点起来",
+        "completeWhen": [
+          {
+            "narrative": "scenario_夜出南门",
+            "state": "望山",
+            "reached": true
+          }
+        ],
+        "visibleConditions": [
+          {
+            "narrative": "scenario_夜出南门",
+            "state": "点火",
+            "reached": true
           }
         ]
       },

@@ -404,6 +404,9 @@ def semantic_check(norm: dict, baseline: dict | None = None) -> tuple[list[str],
     for sid in (norm.get("scenes") or {}):
         sc = scene_doc(sid)
         keys = vp.scene_phase_keys(sc) if sc is not None else []
+        if sc is None and vp.surfaces_for(norm, sid):
+            changed = json.dumps(vp.surfaces_for(norm, sid), ensure_ascii=False) !=                 json.dumps(vp.surfaces_for(base, sid), ensure_ascii=False)
+            (errors if changed else warns).append(f"{sid} · 表面材质区：场景「{sid}」不存在（场景 JSON 找不到）")
         on = bool(sc) and isinstance(sc.get("dayNight"), dict) and sc["dayNight"].get("enabled") is True
         for ph in vp.phases_in_library(norm, sid):
             where = f"{sid} · {ph or '基底'}"
@@ -447,19 +450,24 @@ def save(doc: Any) -> tuple[Path, dict, list[str]]:
 
 
 def normalize_changes(doc: Any) -> dict:
-    """显式修改的场景 × 外观；空数组表示清空该份，缺席表示未编辑。"""
+    """显式修改的场景 × 外观（及场景的表面材质区、库顶层的全局缺省表面材质）；空数组 / 空对象表示清空，缺席表示未编辑。"""
     if not isinstance(doc, dict) or not isinstance(doc.get("scenes"), dict):
         raise ValueError("需要 changes.scenes；旧版整库保存已停用，请刷新工作台")
     out: dict = {"scenes": {}}
+    if "defaultSurface" in doc:
+        ds = doc["defaultSurface"]
+        out["defaultSurface"] = vp.normalize_default_surface(ds) if ds else {}
     for sid, ent in doc["scenes"].items():
-        if not isinstance(ent, dict) or set(ent) - {"base", "variants"}:
-            raise ValueError(f"{sid}：修改范围只能包含 base / variants")
+        if not isinstance(ent, dict) or set(ent) - {"base", "variants", "surfaces"}:
+            raise ValueError(f"{sid}：修改范围只能包含 base / variants / surfaces")
         normalized = vp.normalize_library({"scenes": {sid: ent}})
         target: dict = {}
         if "base" in ent:
             target["base"] = vp.rows_for(normalized, sid, "")
         if "variants" in ent:
             target["variants"] = {ph: vp.rows_for(normalized, sid, ph) for ph in ent["variants"]}
+        if "surfaces" in ent:
+            target["surfaces"] = vp.surfaces_for(normalized, sid)
         if target:
             out["scenes"][sid] = target
     return out
@@ -478,19 +486,32 @@ def save_changes(changes: Any, base: Any = assets.UNCHECKED_BASE) -> tuple[Path,
         if err:
             raise ValueError(f"盘上的布置库读不懂，不覆盖它：{err}")
         if base is not assets.UNCHECKED_BASE:
+            if "defaultSurface" in patch:
+                cur_ds = disk.get("defaultSurface") or {}
+                if cur_ds != (base.get("defaultSurface") or {}) and cur_ds != patch["defaultSurface"]:
+                    raise ValueError("全局缺省表面材质已被外部修改，未覆盖磁盘；页面改动仍保留，请先核对")
             for sid, ent in patch["scenes"].items():
                 scopes = ([('', ent['base'])] if 'base' in ent else []) + list(ent.get('variants', {}).items())
                 for phase, rows in scopes:
                     current = vp.rows_for(disk, sid, phase)
                     if current != vp.rows_for(base, sid, phase) and current != rows:
                         raise ValueError(f"{sid} · {phase or '基底'} 的布置已被外部修改，未覆盖磁盘；页面改动仍保留，请先核对")
+                if "surfaces" in ent:
+                    current = vp.surfaces_for(disk, sid)
+                    if current != vp.surfaces_for(base, sid) and current != ent["surfaces"]:
+                        raise ValueError(f"{sid} 的表面材质区已被外部修改，未覆盖磁盘；页面改动仍保留，请先核对")
+        # 逐份走 set_rows：空表 = 删掉那一份（不留空壳）、被改的场景条目键序同闸门——
+        # 原地赋值时给只有 variants 的场景加 base 会排在 variants 后面，盘上那份就不再是归一化不动点
         merged = copy.deepcopy(disk)
+        if "defaultSurface" in patch:
+            merged = vp.set_default_surface(merged, patch["defaultSurface"] or None)
         for sid, ent in patch["scenes"].items():
-            target = merged["scenes"].setdefault(sid, {})
             if "base" in ent:
-                target["base"] = ent["base"]
+                merged = vp.set_rows(merged, sid, vp.BASE, ent["base"])
             for ph, rows in ent.get("variants", {}).items():
-                target.setdefault("variants", {})[ph] = rows
+                merged = vp.set_rows(merged, sid, ph, rows)
+            if "surfaces" in ent:
+                merged = vp.set_surfaces(merged, sid, ent["surfaces"])
         # 校验全库引用，但不拿全库归一化结果重写未编辑的份。
         _norm, warns = validate(merged, disk)
         if merged == disk:

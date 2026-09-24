@@ -1,4 +1,5 @@
-import type { SaveSlotMeta, ISaveDataProvider } from '../data/types';
+import { SAVE_SLOT_COUNT, normalizeSaveName } from '../data/types';
+import type { SaveSlotMeta, ISaveDataProvider, SaveOptions } from '../data/types';
 import type { StringsProvider } from './StringsProvider';
 import { resolvePersistentStore, type PersistentStore } from './storage/persistentStore';
 
@@ -18,7 +19,8 @@ const LEGACY_STORAGE_PREFIX = 'gamedraft_save_';
 const LEGACY_MIGRATED_FLAG = 'gamedraft_saves_migrated_to_files';
 /** 文件存储的命名空间（对应 `local/gamedata/saves/` 或 exe 旁 `gamedata/saves/`）。 */
 const SAVE_NAMESPACE = 'saves';
-const MAX_SLOTS = 3;
+/** 槽位数的真值在 `data/types.ts` 的 {@link SAVE_SLOT_COUNT}（菜单 / 命令通道同读那一份）。 */
+const MAX_SLOTS = SAVE_SLOT_COUNT;
 /** 存档结构版本。结构破坏性变更时递增，并在 load() 处补迁移。 */
 const SAVE_VERSION = 1;
 
@@ -43,8 +45,8 @@ function slotKey(slot: number): string {
  *
  * 文件 I/O 天然是异步的，而 `getSlotMeta` / `hasSave` 被**菜单的同步构建路径**调用
  * （`MenuUI.build()`：切页、存完档、导入完各重建一次槽位卡片；不是逐帧，但它是同步的，
- * 没法在中间 await）。所以启动时 `hydrate()` 一次性把三个槽读进内存镜像，
- * 查询全部走镜像保持同步；只有真正改动的 `save` / `deleteSlot` / `importSlotPayload`
+ * 没法在中间 await）。所以启动时 `hydrate()` 一次性把全部槽位读进内存镜像（同时解析好卡片信息），
+ * 查询全部走镜像保持同步；只有真正改动的 `save` / `renameSlot` / `deleteSlot` / `importSlotPayload`
  * 是异步的，它们要等真的写成了才敢回报成功。
  *
  * 未 `hydrate()` 就查询 = 一律当作无档，而不是抛错：主菜单在极早期就要画。
@@ -60,6 +62,14 @@ export class SaveManager implements ISaveDataProvider {
 
   /** 槽位 → 原始 JSON 信封。文件的内存镜像，查询一律读它。 */
   private mirror = new Map<number, string>();
+  /**
+   * 槽位 → 解析好的卡片信息，与 {@link mirror} 同进同出（只经 {@link setMirror} / {@link dropMirror} 改）。
+   *
+   * 槽位从 3 个涨到 99 个之后，菜单每次重建（切页 / 存完档 / 导入完）都要问一遍全部槽位；
+   * 每问一次就把一整份 30–40 KB 的档 `JSON.parse` 一遍，99 格就是一次重建几 MB 的解析。
+   * 档内容只在写盘成功那一刻变，所以在那一刻解析一次、之后只读缓存。
+   */
+  private metaCache = new Map<number, SaveSlotMeta | null>();
   private store: PersistentStore | null = null;
   /**
    * 记住的是**在飞的 hydrate**，不是一个布尔。
@@ -93,7 +103,7 @@ export class SaveManager implements ISaveDataProvider {
   }
 
   /**
-   * 启动时调一次：挑后端、读三个槽进镜像、把 localStorage 里的旧档搬上来。
+   * 启动时调一次：挑后端、读全部槽位进镜像、把 localStorage 里的旧档搬上来。
    *
    * 任何一步失败都不抛——存档读不出来不该让游戏起不来，降级成"无档"，
    * 后续 `save()` 仍会如实报告写盘成败。
@@ -114,7 +124,7 @@ export class SaveManager implements ISaveDataProvider {
       const all = await this.store.readAll(SAVE_NAMESPACE);
       for (let i = 0; i < MAX_SLOTS; i++) {
         const raw = all[slotKey(i)];
-        if (typeof raw === 'string' && raw.trim()) this.mirror.set(i, raw);
+        if (typeof raw === 'string' && raw.trim()) this.setMirror(i, raw);
       }
       await this.migrateLegacySaves();
     } catch (e) {
@@ -163,7 +173,7 @@ export class SaveManager implements ISaveDataProvider {
       }
       try {
         await this.store.write(SAVE_NAMESPACE, slotKey(i), raw);
-        this.mirror.set(i, raw);
+        this.setMirror(i, raw);
         moved++;
       } catch (e) {
         console.error(`SaveManager: 旧档槽 ${i} 迁移失败`, e);
@@ -202,9 +212,34 @@ export class SaveManager implements ISaveDataProvider {
     return this.canSave ? this.canSave() : true;
   }
 
-  /** 返回是否真正写盘成功（写失败 / 无后端 / 非可存档态均为 false），供 UI 区分提示 */
-  async save(slot: number): Promise<boolean> {
-    if (slot < 0 || slot >= MAX_SLOTS) return false;
+  /** 镜像与卡片缓存的唯一写入口：两边必须同进同出，否则菜单显示的和磁盘上的对不上。 */
+  private setMirror(slot: number, raw: string): void {
+    this.mirror.set(slot, raw);
+    this.metaCache.set(slot, this.parseMeta(slot, raw));
+  }
+
+  private dropMirror(slot: number): void {
+    this.mirror.delete(slot);
+    this.metaCache.delete(slot);
+  }
+
+  /** 槽位是否合法（整数、在 [0, 槽位数) 内）。非整数一律拒绝——`slot1.5` 这种键写得进磁盘但永远读不回来。 */
+  private validSlot(slot: number): boolean {
+    return Number.isInteger(slot) && slot >= 0 && slot < MAX_SLOTS;
+  }
+
+  slotCount(): number {
+    return MAX_SLOTS;
+  }
+
+  /**
+   * 返回是否真正写盘成功（写失败 / 无后端 / 非可存档态均为 false），供 UI 区分提示。
+   *
+   * `opts.name` 不传 = 沿用这个槽原来的名字（命令通道 / 调试重存不抹掉玩家起的名）；
+   * 传了就按 {@link normalizeSaveName} 规整，规整后为空 = 这一档不带名字。
+   */
+  async save(slot: number, opts?: SaveOptions): Promise<boolean> {
+    if (!this.validSlot(slot)) return false;
     // 对话/遭遇/演出/小游戏进行中存档会丢失这些瞬时进行态（其 serialize 本就不持久化在途状态）。
     // 玩家路径（暂停菜单）只在探索态可达，安全；此处统一拦截调试/脚本路径的非安全态存档。
     if (this.canSave && !this.canSave()) {
@@ -217,28 +252,32 @@ export class SaveManager implements ISaveDataProvider {
     }
 
     const systems = this.collector();
-    const payload = {
-      version: SAVE_VERSION,
-      timestamp: Date.now(),
-      systems,
-    };
-
-    let raw: string;
-    try {
-      raw = JSON.stringify(payload);
-    } catch (e) {
-      console.error('SaveManager: 存档序列化失败', e);
-      return false;
-    }
+    const timestamp = Date.now();
+    /** 显式给了名字（含空串 = 清掉）就用它；没给 = 排到链尾那一刻这个槽叫什么，就接着叫什么。 */
+    const explicitName = opts && Object.prototype.hasOwnProperty.call(opts, 'name')
+      ? normalizeSaveName(opts.name) ?? ''
+      : null;
     const store = this.store;
     const key = slotKey(slot);
     try {
       // 同槽写入排队：并发两次存档时磁盘与镜像不能各留各的
       await this.enqueueWrite(key, async () => {
+        // 名字在**链里**定：不传名字的那次存档若在一次改名后面排队，调用时刻读到的还是旧名，
+        // 写下去就等于把刚改好的名字顶回去。状态（systems）是调用那一刻的快照，名字不是。
+        const name = explicitName !== null ? explicitName : this.metaCache.get(slot)?.name;
+        // 名字放信封顶层、与 systems 平级：它是"这一格档"的属性，不是哪个系统的状态，
+        // 读档（loadFromRaw 只读 systems）完全看不见它。可选键不升版本号——
+        // 老档没有它照读，老版本读新档也只是多一个不认识的顶层键（导入本来就保留顶层额外键）。
+        const raw = JSON.stringify({
+          version: SAVE_VERSION,
+          timestamp,
+          ...(name ? { name } : {}),
+          systems,
+        });
         await store.write(SAVE_NAMESPACE, key, raw);
         // 写盘成功才更新镜像，且在同一条链里更新——否则后 resolve 的那次会把镜像
         // 写成和磁盘不一致的内容。菜单绝不该显示一个磁盘上并不存在的档。
-        this.mirror.set(slot, raw);
+        this.setMirror(slot, raw);
       });
     } catch (e) {
       console.error('SaveManager: failed to save', e);
@@ -248,9 +287,41 @@ export class SaveManager implements ISaveDataProvider {
   }
 
   /**
+   * 只改名字、存档内容一个字节不动（systems 原样、时间戳也不刷新——改名不是"又存了一次"）。
+   *
+   * 读的是**写入链里那一刻的镜像**，不是调用这一刻的：同槽前面还排着一次存档时，
+   * 名字要落在那次存档的结果上，不能拿旧内容把刚存的档盖回去。
+   */
+  async renameSlot(slot: number, name: string): Promise<boolean> {
+    if (!this.validSlot(slot) || !this.store || !this.mirror.has(slot)) return false;
+    const store = this.store;
+    const key = slotKey(slot);
+    const normalized = normalizeSaveName(name);
+    try {
+      await this.enqueueWrite(key, async () => {
+        const current = this.mirror.get(slot);
+        if (!current) throw new Error(`槽位 ${slot} 在改名前被删掉了`);
+        const parsed = JSON.parse(current) as Record<string, unknown>;
+        if (!parsed || typeof parsed !== 'object' || typeof parsed.systems !== 'object' || parsed.systems === null) {
+          throw new Error(`槽位 ${slot} 的存档结构无效，拒绝改名`);
+        }
+        if (normalized) parsed.name = normalized;
+        else delete parsed.name;
+        const raw = JSON.stringify(parsed);
+        await store.write(SAVE_NAMESPACE, key, raw);
+        this.setMirror(slot, raw);
+      });
+    } catch (e) {
+      console.error('SaveManager: 存档改名失败', e);
+      return false;
+    }
+    return true;
+  }
+
+  /**
    * 调试用：不经存储直接拍一份全量存档 payload。
    * 与 save() 同一条 collector 路径与同一道 canSave 闸门，只是不落槽——
-   * 调试器的"拍子档案库"用它，不占玩家的三个槽。
+   * 调试器的"拍子档案库"用它，不占玩家的存档槽。
    */
   capturePayload(): string | null {
     if (this.canSave && !this.canSave()) return null;
@@ -272,7 +343,7 @@ export class SaveManager implements ISaveDataProvider {
   }
 
   async load(slot: number): Promise<boolean> {
-    if (slot < 0 || slot >= MAX_SLOTS) return false;
+    if (!this.validSlot(slot)) return false;
     const raw = this.mirror.get(slot);
     if (!raw) return false;
     return this.loadFromRaw(raw);
@@ -326,23 +397,31 @@ export class SaveManager implements ISaveDataProvider {
   }
 
   getSlotMeta(slot: number): SaveSlotMeta | null {
-    if (slot < 0 || slot >= MAX_SLOTS) return null;
-    const raw = this.mirror.get(slot);
-    if (!raw) return null;
+    if (!this.validSlot(slot)) return null;
+    const meta = this.metaCache.get(slot);
+    if (!meta) return null;
+    // 场景名回落到"未知场景"放在读的这一刻：hydrate 可能早于字符串表就绪，缓存里只存真值
+    return meta.sceneName ? { ...meta } : { ...meta, sceneName: this.strings.get('menu', 'unknownScene') };
+  }
+
+  /** 把一份原始信封解析成卡片信息；坏档返回 null（hasSave 仍为 true，与改动前同一口径）。 */
+  private parseMeta(slot: number, raw: string): SaveSlotMeta | null {
     try {
       const payload = JSON.parse(raw);
       const systems = payload.systems as Record<string, object>;
       const scene = systems['sceneManager'] as { currentSceneId?: string } | undefined;
       const day = systems['dayManager'] as { currentDay?: number } | undefined;
       const game = systems['game'] as { playTimeMs?: number; sceneName?: string } | undefined;
+      const name = normalizeSaveName(payload.name);
 
       return {
         slot,
         timestamp: payload.timestamp ?? 0,
         sceneId: scene?.currentSceneId ?? 'unknown',
-        sceneName: game?.sceneName ?? scene?.currentSceneId ?? this.strings.get('menu', 'unknownScene'),
+        sceneName: game?.sceneName ?? scene?.currentSceneId ?? '',
         dayNumber: day?.currentDay ?? 1,
         playTimeMs: game?.playTimeMs ?? 0,
+        ...(name ? { name } : {}),
       };
     } catch {
       return null;
@@ -350,7 +429,7 @@ export class SaveManager implements ISaveDataProvider {
   }
 
   hasSave(slot: number): boolean {
-    return this.mirror.has(slot);
+    return this.validSlot(slot) && this.mirror.has(slot);
   }
 
   /**
@@ -360,14 +439,14 @@ export class SaveManager implements ISaveDataProvider {
    * 玩家会以为删除功能坏了（或者更糟——以为自己删错了）。与 `save()` 同一条诚实度要求。
    */
   async deleteSlot(slot: number): Promise<boolean> {
-    if (slot < 0 || slot >= MAX_SLOTS) return false;
+    if (!this.validSlot(slot)) return false;
     if (!this.store) return false;
     const store = this.store;
     const key = slotKey(slot);
     try {
       await this.enqueueWrite(key, async () => {
         await store.remove(SAVE_NAMESPACE, key);
-        this.mirror.delete(slot);
+        this.dropMirror(slot);
       });
       return true;
     } catch (e) {
@@ -377,14 +456,11 @@ export class SaveManager implements ISaveDataProvider {
   }
 
   hasAnySave(): boolean {
-    for (let i = 0; i < MAX_SLOTS; i++) {
-      if (this.hasSave(i)) return true;
-    }
-    return false;
+    return this.mirror.size > 0;
   }
 
   exportSlotPayload(slot: number): string | null {
-    if (slot < 0 || slot >= MAX_SLOTS) return null;
+    if (!this.validSlot(slot)) return null;
     const raw = this.mirror.get(slot);
     if (!raw) return null;
     try {
@@ -396,7 +472,7 @@ export class SaveManager implements ISaveDataProvider {
   }
 
   async importSlotPayload(slot: number, raw: string): Promise<boolean> {
-    if (slot < 0 || slot >= MAX_SLOTS || typeof raw !== 'string' || !raw.trim()) return false;
+    if (!this.validSlot(slot) || typeof raw !== 'string' || !raw.trim()) return false;
     if (!this.store) return false;
     let normalized: string;
     try {
@@ -411,7 +487,7 @@ export class SaveManager implements ISaveDataProvider {
     try {
       await this.enqueueWrite(key, async () => {
         await store.write(SAVE_NAMESPACE, key, normalized);
-        this.mirror.set(slot, normalized);
+        this.setMirror(slot, normalized);
       });
     } catch (e) {
       console.error('SaveManager: 导入存档写盘失败', e);

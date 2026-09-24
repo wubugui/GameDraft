@@ -14,7 +14,7 @@ triggers:
   paths: ["public/assets/data/**", "public/assets/scenes/*.json", "public/assets/dialogues/graphs/*.json"]
   topics: [command, action, cutscene, 条件, 对话图, ACTION_TYPES]
   tasks: [做内容, 写动作, 写条件, 编演出]
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -48,6 +48,11 @@ last_governed: 2026-08-05
 - **条件引用一个不存在的叙事图 ⇒ 该条件恒为 false,不抛异常**:玩家侧不崩、无告警,
   只有 dev 运行时打一条红。真实后果是那些分支**永远走不到**,而且看起来"游戏好好的"。
   所以写条件时引用的叙事图/状态必须自证存在;dev 运行时那条红是唯一的现场信号,别当噪音略过。
+- **过场白名单与校验器的"禁改存档"口径不同源,目前打架**:白名单里有一批会写存档的动作
+  (`persist*` 布景类是校验器显式豁免的;HUD 首现类 `setThreeFiresVisible` / `setSmellVisible`
+  白名单放行、运行时真能执行,但校验器按"持久性 = save"一刀切报 ERR),说明卡 `showSystemNote`
+  则不在白名单——过场中段弹引导卡纯数据做不到。制作人未裁定前:HUD 首现放过场**外层**
+  (或接受那条 ERR 并在汇报里点名),别自己改白名单或豁免表(2026-09-12 路遇私铸钱过场撞上)。
 - 缺通道能力时不要硬塞,那是 L2/L3 升级信号(见 [production-mode-workflow](../methods/production-mode-workflow.md))。
 
 ## 怎么验证

@@ -192,6 +192,9 @@ export const REPLAY_SILENCED_ACTION_TYPES: ReadonlySet<string> = new Set([
   'startCutscene',
   'showOverlayImage',
   'blendOverlayImage',
+  'showBreathingOverlay',
+  // 呼吸图表演可能等到渐弱走完(几十秒),中间跳点不该等
+  'breathingPerform',
   'openMap',
   // 需要玩家逐句点或做选择
   'playScriptedDialogue',

@@ -1,0 +1,1 @@
+../../../.cursor/skills/scene-collision-from-art/SKILL.md

@@ -18,7 +18,7 @@
 | `triggers` | decision 外必填 | `paths`(路径 glob 列表)/`topics`(主题词)/`tasks`(任务形状词),至少一项非空 |
 | `verified_by` | 可选 | 绑定行为断言的测试文件路径列表(测试在=断言活) |
 | `last_governed` | 全部 | `YYYY-MM-DD`,治理 run 盖章,禁止手写更新 |
-| `last_used` | method 可选 | `YYYY-MM-DD`,最近一次被实际使用;久未用触发标疑分诊 |
+| `last_used` | method 可选 | `YYYY-MM-DD`,手填的使用证据(可不填)。**久未用分诊不靠它**:audit 取 max(triggers.paths 的 git 活动, 库外引用该 id 的文件的 git 活动, 引用它的组合层 method 的痕迹, 本字段)(2026-09-23 制作人批) |
 
 ## authority 锚点形式
 

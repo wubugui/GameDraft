@@ -23,6 +23,7 @@ import {
   setLitShaderTexture,
 } from '../rendering/CharacterLitSprite';
 import type { PackedLights } from '../rendering/lighting/lightPacking';
+import type { ProbeCpuData } from '../rendering/lighting/probeCpuSampler';
 
 const T = 'CharLighting';
 
@@ -436,6 +437,42 @@ export class CharacterLightingSystem implements IGameSystem {
     if (!m) return null;
     const cosT = Math.cos(m.cal.theta);
     return (worldH * (m.work.h / Math.max(this.sceneWorldH, 1e-6))) / Math.max(cosT * m.cal.ppu, 1e-6);
+  }
+
+  /**
+   * 角色间接光查表的 CPU 输入（与此刻 shader 用的同一份图集、同一组开关），给接触 AO 的方向部分用
+   * （`contactAoSources.indirectUpperMoment`）。没有载荷 / 只借了几何 / 图集还没到 → null。
+   * 数组都是**直接引用**，调用方只读。
+   */
+  indirectProbeData(): ProbeCpuData | null {
+    const r = this.resources;
+    const atlas = this.probeAtlasU16;
+    const valid = this.validU8;
+    if (!this.active || this.geometryOnly || !r || !atlas || !valid) return null;
+    const sk = r.skyao;
+    const skData = sk?.tex.resource;
+    const p = this.params;
+    return {
+      atlas, nCol: this.probeAtlasCol, valid,
+      pn: r.pn, wMin: r.wMin, wScale: r.wScale, mCol: r.mCol,
+      mode: p.mode, shK: r.shK, binOb: r.binOb, fold: p.fold,
+      ambSH: r.ambSH, ambStrength: p.ambStrength,
+      skyao: sk && skData instanceof Uint16Array
+        ? { data: skData, width: sk.tex.width, n: sk.n, tiles: sk.tiles, wMin: sk.wMin, wScale: sk.wScale, mCol: sk.mCol }
+        : null,
+      skyaoBlend: this.skyaoBlend,
+    };
+  }
+
+  /** 角色此刻吃的实体灯（与 shader 同一次 packLights）；基还没到 / 没有灯 → null。 */
+  get characterPackedLights(): PackedLights | null {
+    return this.shadowBasis && this.pendingLights && this.pendingLights.count > 0 ? this.pendingLights : null;
+  }
+
+  /** 角色着色此刻的间接 / 直接倍率（与 syncFrame 推给 shader 的同式）。 */
+  get characterLightMix(): { indirect: number; direct: number } {
+    const p = this.params;
+    return { indirect: lightFactor(p.indirectFactor, p.giStrength), direct: lightFactor(p.directFactor) };
   }
 
   get active(): boolean { return this.enabled && this.resources !== null; }

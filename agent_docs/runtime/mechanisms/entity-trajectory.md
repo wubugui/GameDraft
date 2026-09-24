@@ -47,7 +47,7 @@ last_governed: 2026-09-12
 只做"给定 t 求姿态"——所以任意时刻都能一步瞬间求值到终态。作者面见 [[trajectory-workbench]]。
 
 2026-09-04 起取代"轨迹住在场景 JSON `trajectories` 里、目标写死在数据里、相机也能被驱动"的
-原型形态(那一版的作者面卡 [[scene-trajectory-authoring]] 已 superseded)。
+原型形态(那一版的画布作者面已整体删除,仍成立的条款并入 [[trajectory-workbench]])。
 
 ## 权威源(读代码从哪进)
 

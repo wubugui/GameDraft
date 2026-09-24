@@ -1,10 +1,11 @@
-import { BufferImageSource, type Renderer, type Texture, type TextureSource } from 'pixi.js';
+import { BufferImageSource, Texture, type Renderer, type TextureSource } from 'pixi.js';
 
-import type { LightDef, SceneData, SceneDepthConfig, SceneLightingDef } from '../data/types';
+import type { LightDef, SceneData, SceneDepthConfig, SceneLightingDef, VfxSurfaceRegionDef } from '../data/types';
+import { buildSurfaceMaskCanvas, resolveSurfaceDefaults, type ResolvedSurfaceDefaults } from '../rendering/lighting/surfaceMask';
 import { LitBackground } from '../rendering/lighting/LitBackground';
 import { SceneLightingPass, type SceneLightingGeometry } from '../rendering/lighting/SceneLightingPass';
 import { GiBouncePass } from '../rendering/lighting/GiBouncePass';
-import type { PackedLights } from '../rendering/lighting/lightPacking';
+import { isLightInPhase, type PackedLights } from '../rendering/lighting/lightPacking';
 import { resolveDepthPerSy } from '../utils/worldReconstruct';
 import type { AssetManager } from './AssetManager';
 import { depthError, depthLog } from './depthLog';
@@ -130,6 +131,15 @@ export class SceneLightingSystem {
    * 输入换成"扣掉植物"的原画 / 法线 / albedo / 深度。与主缓存同脏同算，稳态同样零成本。
    */
   private passPlate: SceneLightingPass | null = null;
+  /**
+   * 表面材质区（布置库 surfaces，由粒子系统在进场景 / 工作台推工作态时交来）与画成的反光遮罩。
+   * 区跨 unload 留着（新场景的区由粒子系统随后交来覆盖），遮罩随 pass 一起建、一起销毁。
+   */
+  private surfaceRegions: readonly VfxSurfaceRegionDef[] = [];
+  private surfaceWorld: [number, number] = [1, 1];
+  /** 全局缺省表面材质（布置库 `defaultSurface` 解析后）：遮罩的底色 + 细节起伏 / 雨纹强度 */
+  private surfaceDefaults: ResolvedSurfaceDefaults = resolveSurfaceDefaults(null);
+  private surfaceMask: Texture | null = null;
   private geo: SceneLightingGeometry | null = null;
   private def: SceneLightingDef | null = null;
   /** 运行时灯（跟随灯等）。见 {@link setDynamicLights} —— 不落盘、不进 `params` */
@@ -505,6 +515,7 @@ export class SceneLightingSystem {
     this.pass = new SceneLightingPass(paintingTexture, geo);
     this.pass.applyParams(def, this.filterPhase());
     this.pass.markDirty();
+    this.applySurfaceMask();
 
     // LitBackground 采样 pass 的 RT，所以必须先让 pass 建出 RT
     // （update 时才真正渲染，这里只是把资源建出来）
@@ -555,7 +566,6 @@ export class SceneLightingSystem {
   applyParams(def: SceneLightingDef): void {
     this.def = def;
     this.pushEffective();
-    this.litBg?.applyParams(def);
   }
 
   /**
@@ -614,6 +624,50 @@ export class SceneLightingSystem {
   getEnvDim(): number { return this.envDim; }
 
   /**
+   * 表面材质区（哪里是水面、哪里是湿地）：落雷的灯在这里照出反光。`worldW/H` = 场景世界尺寸
+   * （遮罩覆盖整个场景）。同样不落盘；内容没变不重画。
+   */
+  setSurfaceRegions(
+    regions: readonly VfxSurfaceRegionDef[], worldW: number, worldH: number,
+    defaults: ResolvedSurfaceDefaults = resolveSurfaceDefaults(null),
+  ): void {
+    const same = worldW === this.surfaceWorld[0] && worldH === this.surfaceWorld[1]
+      && JSON.stringify(regions) === JSON.stringify(this.surfaceRegions)
+      && JSON.stringify(defaults) === JSON.stringify(this.surfaceDefaults);
+    if (same && (this.surfaceMask || regions.length === 0)) return;
+    this.surfaceRegions = regions.map((r) => ({ ...r }));
+    this.surfaceWorld = [worldW, worldH];
+    this.surfaceDefaults = { ...defaults };
+    this.applySurfaceMask();
+  }
+
+  /** 按存着的区重画遮罩、交给两份光照缓存（没有 pass 时等 load 再画） */
+  private applySurfaceMask(): void {
+    if (!this.pass || !this.geo) return;
+    const old = this.surfaceMask;
+    this.surfaceMask = null;
+    if (this.surfaceRegions.length > 0 && typeof document !== 'undefined') {
+      const [dw, dh] = this.geo.depthSize;
+      const canvas = buildSurfaceMaskCanvas(this.surfaceRegions, this.surfaceWorld[0], this.surfaceWorld[1],
+        Math.max(64, Math.round(dw / 2)), Math.max(36, Math.round(dh / 2)), this.surfaceDefaults);
+      if (canvas) this.surfaceMask = Texture.from(canvas);
+    }
+    this.pass.setSurfaceMask(this.surfaceMask);
+    this.passPlate?.setSurfaceMask(this.surfaceMask);
+    this.pass.setSurfaceDefaults(this.surfaceDefaults);
+    this.passPlate?.setSurfaceDefaults(this.surfaceDefaults);
+    // ⚠ Pixi 坑②：旧遮罩还绑在两份 shader 的 BindGroup 上时销毁它，BindGroup 会被永久烧毁
+    //   （之后每帧 setTime 都抛、整条光照停摆；工作台联动一改表面区就触发）。先换绑、再销毁
+    old?.destroy(true);
+  }
+
+  /** 水面细波纹的时钟（秒，游戏时钟）。不标脏：只在落雷的灯亮着、本来就逐帧重烘的那几帧跟着动 */
+  setSurfaceTime(seconds: number): void {
+    this.pass?.setTime(seconds);
+    this.passPlate?.setTime(seconds);
+  }
+
+  /**
    * 作者灯 + 运行时灯（带强度倍率）。粒子把灯当恐惧源、影子绑灯都该看这一份。
    *
    * ⚠ **运行时灯排在最前面**，这不是随意的顺序：`packLights` 超过 `MAX_STATIC_LIGHTS`
@@ -635,6 +689,16 @@ export class SceneLightingSystem {
     return out;
   }
 
+  /**
+   * 此刻真正亮着的灯：{@link effectiveLights}（作者灯 + 运行时灯）里本时段的、没关的、强度大于 0 的。
+   * 接触 AO 方向「最近的灯」挑的就是这一份——挑中一盏这个时段不亮的灯，影子就朝着一盏看不见的灯拖。
+   */
+  activeLights(): LightDef[] {
+    const phase = this.filterPhase();
+    return this.effectiveLights().filter((l) =>
+      (l.enabled ?? true) && l.intensity > 0 && isLightInPhase(l, phase));
+  }
+
   /** 把「作者灯 + 运行时灯」推进 pass 并标脏。`def` 本身一个字节都不动。 */
   private pushEffective(): void {
     const def = this.def;
@@ -648,6 +712,8 @@ export class SceneLightingSystem {
       const stops = this.envDim > 0 ? Math.log2(this.envDim) : -24;
       effective = { ...effective, display: { ...effective.display, ev: effective.display.ev + stops } };
     }
+    // 曝光只由第二级显示 shader 消费。写入线性辐射缓存的 pass 不会改变屏幕亮度。
+    this.litBg?.applyParams(effective);
     this.pass.applyParams(effective, this.filterPhase());
     this.pass.markDirty();
     if (this.passPlate) {
@@ -665,6 +731,8 @@ export class SceneLightingSystem {
     this.detachSway();
     this.passPlate = new SceneLightingPass(sw.plate, { ...this.geo, normal: sw.normal, albedo: sw.albedo, depth: sw.depth });
     this.pushEffective();
+    this.passPlate.setSurfaceMask(this.surfaceMask);
+    this.passPlate.setSurfaceDefaults(this.surfaceDefaults);
     const rad = this.passPlate.radiance;
     if (!rad) {
       depthError(T, '草木摆动：露出处的光照缓存没建起来，草木不接');
@@ -723,6 +791,8 @@ export class SceneLightingSystem {
     this.litBg = null;
     this.pass?.destroy();
     this.pass = null;
+    this.surfaceMask?.destroy(true);
+    this.surfaceMask = null;
     this.geo = null;
     this.meta = null;
     this.def = null;

@@ -583,8 +583,9 @@ class View3D {
     if (this.spaceDown || !host.doc) return this._pan(e);
     const tool = host.tool;
     if (tool === 'pan') return this._pan(e);
-    if (tool === 'areaEmit' || tool === 'areaRange') {
-      const role = tool === 'areaEmit' ? 'emit' : 'range';
+    const areaRole = host.areaToolRole(tool);
+    if (areaRole) {
+      const role = areaRole;
       const s = this._groundScene(mx, my);
       if (!s) { host.status('点到地面上再拉（光标下拾取不到地面）', 'warn'); return; }
       if (!host.areaToolBegin(role)) return;

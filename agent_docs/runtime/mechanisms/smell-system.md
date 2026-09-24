@@ -13,7 +13,7 @@ authority:
 triggers:
   paths: ["src/systems/SmellSystem.ts", "src/ui/smell/**", "src/ui/HudDebut.ts", "public/assets/data/smell_profiles.json"]
   topics: [气味, smell, 香粉味, 嗅, 气味显隐, 鼻子教程]
-last_governed: 2026-09-12
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -70,6 +70,11 @@ last_governed: 2026-09-12
 
 - "闻不到"先查 profile 再查代码:衰减参数在数据里(hold 时长不够就是秒衰减)。
 - 分不清谁在压谁:F2「系统」页标记生效来源;`?smellDebug` 暴露 `__smell*` 钩子。
+- **"方位完全不准"先查数据里的手填坐标**:气味源其实是某个实体(入口、NPC)时一律写 `at` 引用,
+  不手填 x/y——实体一挪位,手填坐标就指回老地方且没人报(2026-09-23 跑马梁:入口挪了,烟还指山下)。
+  编辑器已禁手输,但老数据里仍可能留着纯数字源。另:闻香区别直接套在源上,一闻到就已到门口、指向无意义。
+- **看 HUD 判方向前先确认本机偏好**:`local/gamedata/settings/smellDisplay.json` 若是
+  「烟背着东西」,画面方向与规范值相反,是对的,不是 bug。
 
 ## 怎么验证
 

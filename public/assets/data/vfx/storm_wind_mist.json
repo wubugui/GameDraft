@@ -1,0 +1,114 @@
+{
+  "id": "storm_wind_mist",
+  "label": "平地生烟：原地缓升的贴地雾",
+  "emitters": [
+    {
+      "id": "wind_sheets",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        35,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/storm_wisps_20260920.png",
+        "sizeWu": 560,
+        "sizeJitter": [
+          0.8,
+          1.28
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.88
+          ],
+          [
+            1,
+            1.24
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.22,
+            0.1
+          ],
+          [
+            0.57,
+            0.16
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.8,
+          0.86,
+          0.92
+        ],
+        "lit": true,
+        "emissive": 0.4,
+        "lightGain": 1.2,
+        "softEdgeWu": 25,
+        "spin": {
+          "rate": [
+            0,
+            0
+          ],
+          "randomPhase": false
+        }
+      },
+      "spawn": {
+        "max": 21,
+        "rate": 2.5,
+        "burst": 5,
+        "shape": {
+          "kind": "box",
+          "size": [
+            1200,
+            30,
+            650
+          ]
+        },
+        "speed": [
+          7,
+          12
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 0
+      },
+      "motion": {
+        "drag": 0.6,
+        "maxSpeed": 250,
+        "followAnchor": "none"
+      },
+      "life": {
+        "seconds": [
+          2.2,
+          3.1
+        ]
+      }
+    }
+  ]
+}

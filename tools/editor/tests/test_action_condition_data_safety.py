@@ -243,6 +243,17 @@ class ActionDataSafetyTests(unittest.TestCase):
             "params": {"effect": "dust", "x": 0, "y": 0, "surface": "ground", "seed": 7, "countScale": 1.5},
         })
 
+    def test_play_vfx_follow_camera_roundtrip_and_clear(self) -> None:
+        for value in (True, False):
+            self._assert_roundtrip({
+                "type": "playVfx", "params": {"effect": "dust", "at": "player", "followCamera": value},
+            })
+        editor = ActionEditor("test")
+        editor.set_project_context(self.model, self.scene_id)
+        editor.set_data([{"type": "playVfx", "params": {"effect": "dust", "at": "player", "followCamera": True}}])
+        editor._rows[0]._param_widgets["followCamera"].setChecked(False)
+        self.assertNotIn("followCamera", editor.to_list()[0]["params"])
+
     def test_emit_vfx_field_minimal_form_does_not_grow_optional_params(self) -> None:
         """strength 运行时缺省 1（`numOr(p.strength, 1)`）——凭空写 0 = 刺激场强度归零；
         at:"" 同 playVfx，会让整个 emit 静默跳过。"""

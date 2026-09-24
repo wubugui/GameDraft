@@ -63,7 +63,8 @@ DEFAULTS: dict[str, Any] = {
 #: 资产键序（与 ``src/data/burnables.ts`` 的 ``BurnableDef`` 逐字同序）
 BURNABLE_ORDER = (
     "id", "label", "image", "widthCm", "heightCm", "grip", "mode", "orientation", "gridCells", "fuel", "ignitionPoints",
-    "spread", "consume", "flameSeconds", "emberSeconds", "flameLength", "ignitionDelay", "look", "particles", "light", "blowout",
+    "spread", "consume", "flameSeconds", "emberSeconds", "flameLength", "ignitionDelay", "lightningIgnites", "look", "particles",
+    "light", "blowout",
 )
 _GRIP_ORDER = ("u", "v")
 _FUEL_ORDER = ("alphaThreshold", "maskData")
@@ -226,6 +227,9 @@ def normalize_burnable(raw: Any, file_id: str | None = None) -> tuple[dict, list
     for k in ("emberSeconds", "ignitionDelay"):
         if k in doc and not (_is_num(doc[k]) and doc[k] >= 0):
             raise BurnShapeError(f"{k} 必须是 ≥ 0 的数")
+    # 雷劈能点着（缺省否）：点着会进存档、烧完永久没了，逐个模板由作者开
+    if "lightningIgnites" in doc and not isinstance(doc["lightningIgnites"], bool):
+        raise BurnShapeError("lightningIgnites 必须是布尔（雷劈能不能点着它）")
 
     if "look" in doc:
         look = doc["look"]

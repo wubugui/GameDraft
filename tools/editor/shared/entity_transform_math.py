@@ -344,3 +344,144 @@ def entity_perspective_factor(
     if foot_x is None or foot_y is None:
         return 1.0
     return perspective_scale_at(cfg, foot_x, foot_y)
+
+
+# ---------------------------------------------------------------------------
+# 相机跟随透视（需求清单 A3.5，2026-09-20 拍板）
+#
+# TS 权威源：src/utils/perspectiveScale.ts::createPerspectiveCameraFollowResolver
+# parity 锁：tools/editor/tests/test_perspective_scale_parity.py（黄金数值与
+# src/utils/perspectiveScale.test.ts 一字不差）
+# ---------------------------------------------------------------------------
+
+#: zoom 相对基线的上限倍数缺省值（镜像 TS DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO）
+DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO = 1.5
+
+
+def _persp_follow_stops(cfg: dict | None):
+    """带跟随开关的停靠点表：(nx, ny, ax, ay, len_sq, [(pos, scale, follow_next), ...]) 或 None。
+
+    与 :func:`perspective_axis_data` 同一套合法性判定与排序（稳定排序 + 同比较键 ⇒ 同顺序），
+    只是每个停靠点多带一个"**从这里到下一个停靠点**是否跟随"。开关挂在停靠点上而不是独立的
+    段数组，是为了对 midStops 乱序免疫——独立数组在排序后会静默错位。"""
+    a = perspective_axis_data(cfg)
+    if a is None:
+        return None
+    nx, ny, ax, ay, len_sq, _ = a
+    d = cfg if isinstance(cfg, dict) else {}
+    follow_cfg = d.get("cameraFollow")
+    first = True
+    if isinstance(follow_cfg, dict):
+        first = follow_cfg.get("firstSegment") is not False
+    near_s = _persp_point(d.get("near"))[2]
+    far_s = _persp_point(d.get("far"))[2]
+    stops: list[tuple[float, float, bool]] = [(0.0, near_s, first)]
+    mids = d.get("midStops")
+    if isinstance(mids, list):
+        for m in mids:
+            if not isinstance(m, dict):
+                continue
+            pos = _persp_num(m.get("pos"))
+            s = _persp_num(m.get("scale"))
+            if pos is None or s is None or not (0.0 < pos < 1.0) or s <= 0:
+                continue
+            stops.append((pos, s, m.get("cameraFollow") is not False))
+    stops.append((1.0, far_s, False))
+    stops.sort(key=lambda t: t[0])
+    return (nx, ny, ax, ay, len_sq, stops)
+
+
+def _persp_scale_at_t(stops, t: float) -> float:
+    """停靠点表上 t 处的系数（:func:`perspective_scale_at` 的 t 空间版，同口径）。"""
+    if t <= stops[0][0]:
+        return max(PERSPECTIVE_SCALE_MIN, stops[0][1])
+    if t >= stops[-1][0]:
+        return max(PERSPECTIVE_SCALE_MIN, stops[-1][1])
+    for i in range(1, len(stops)):
+        lo_p, lo_s = stops[i - 1][0], stops[i - 1][1]
+        hi_p, hi_s = stops[i][0], stops[i][1]
+        if t <= hi_p:
+            if hi_p == lo_p:
+                return max(PERSPECTIVE_SCALE_MIN, hi_s)
+            k = (t - lo_p) / (hi_p - lo_p)
+            return max(PERSPECTIVE_SCALE_MIN, lo_s + (hi_s - lo_s) * k)
+    return max(PERSPECTIVE_SCALE_MIN, stops[-1][1])
+
+
+def _persp_follow_ratio_raw(stops, t: float) -> float:
+    """累计倍数 R(t)：t 之前每个**开启**段贡献 f(段起点)/f(段内走到处)，关闭段贡献 1。"""
+    r = 1.0
+    for i in range(len(stops) - 1):
+        lo_p, lo_s, lo_follow = stops[i]
+        hi_p, hi_s, _ = stops[i + 1]
+        if t <= lo_p:
+            break
+        if not lo_follow:
+            continue
+        end_s = max(PERSPECTIVE_SCALE_MIN, hi_s) if t >= hi_p else _persp_scale_at_t(stops, t)
+        r *= max(PERSPECTIVE_SCALE_MIN, lo_s) / end_s
+    return r
+
+
+def perspective_camera_follow_info(cfg: dict | None) -> dict | None:
+    """相机跟随透视的解析结果；**没写 ``cameraFollow`` 键就返回 None**（= 不跟随）。
+
+    返回 ``{ref_pos, max_zoom_ratio, raw_ratio_at_far, segments}``，其中 ``segments`` 是
+    逐段 ``{from_pos, to_pos, from_scale, to_scale, follow, ratio_at_to}``——
+    ``ratio_at_to`` 是走完该段的累计 zoom 倍数（已按基准点归一，**未钳上限**），
+    编辑器拿它在轴上标"×1.32"、校验器拿它判超限。"""
+    if not isinstance(cfg, dict):
+        return None
+    follow_cfg = cfg.get("cameraFollow")
+    if not isinstance(follow_cfg, dict):
+        return None
+    a = _persp_follow_stops(cfg)
+    if a is None:
+        return None
+    stops = a[5]
+    raw_ref = _persp_num(follow_cfg.get("refPos"))
+    ref_pos = 0.0 if raw_ref is None else min(1.0, max(0.0, raw_ref))
+    raw_max = _persp_num(follow_cfg.get("maxZoomRatio"))
+    max_ratio = (raw_max if raw_max is not None and raw_max >= 1.0
+                 else DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO)
+    ref_ratio = _persp_follow_ratio_raw(stops, ref_pos)
+    norm = ref_ratio if ref_ratio > 0 and math.isfinite(ref_ratio) else 1.0
+    segments = []
+    for i in range(len(stops) - 1):
+        lo_p, lo_s, lo_follow = stops[i]
+        hi_p, hi_s, _ = stops[i + 1]
+        segments.append({
+            "from_pos": lo_p, "to_pos": hi_p,
+            "from_scale": lo_s, "to_scale": hi_s,
+            "follow": lo_follow,
+            "ratio_at_to": _persp_follow_ratio_raw(stops, hi_p) / norm,
+        })
+    return {
+        "ref_pos": ref_pos,
+        "max_zoom_ratio": max_ratio,
+        "raw_ratio_at_far": _persp_follow_ratio_raw(stops, 1.0) / norm,
+        "segments": segments,
+    }
+
+
+def perspective_camera_zoom_ratio_at(cfg: dict | None, foot_x: float, foot_y: float) -> float:
+    """镜头锚点处的 zoom 相对基线倍数（已钳上限）；未配置跟随时恒 1.0。
+
+    下限不在这里钳——"视野不超出地图"是相机的事（TS ``Camera.setDrivenZoom``）。"""
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("cameraFollow"), dict):
+        return 1.0
+    a = _persp_follow_stops(cfg)
+    if a is None or not math.isfinite(foot_x) or not math.isfinite(foot_y):
+        return 1.0
+    nx, ny, ax, ay, len_sq, stops = a
+    info = perspective_camera_follow_info(cfg)
+    if info is None:
+        return 1.0
+    raw = ((foot_x - nx) * ax + (foot_y - ny) * ay) / len_sq
+    t = 0.0 if raw <= 0.0 else (1.0 if raw >= 1.0 else raw)
+    ref_ratio = _persp_follow_ratio_raw(stops, info["ref_pos"])
+    norm = ref_ratio if ref_ratio > 0 and math.isfinite(ref_ratio) else 1.0
+    r = _persp_follow_ratio_raw(stops, t) / norm
+    if not math.isfinite(r) or r <= 0:
+        return 1.0
+    return min(r, info["max_zoom_ratio"])

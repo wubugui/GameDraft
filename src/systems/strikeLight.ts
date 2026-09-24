@@ -21,9 +21,15 @@ export const STRIKE_LIGHT_PUSH_HZ = 24;
 export const STRIKE_LIGHT_DEFAULT_RANGE_WU = 4000;
 /** 缺省色温（K）。雷是惨白偏蓝的冷光。 */
 export const STRIKE_LIGHT_DEFAULT_KELVIN = 9000;
+/**
+ * 雷身沿主干切几段线光、另加几根分叉。每一段都是一盏运行时灯（灯表上限 24，作者灯排在后面）：
+ * 8 段主干足够让墙上照出来的亮区跟着雷的折线走，再多就是在抢作者灯的槽位。
+ */
+export const STRIKE_CHANNEL_LIGHT_SEGMENTS = 8;
+export const STRIKE_BRANCH_LIGHTS = 2;
 
 export interface StrikeLightSpec {
-  /** 灯位（M-world wu） */
+  /** 灯位（M-world wu）：落点那一盏 */
   pos: [number, number, number];
   /** 峰值强度（包络的 1.0 处） */
   intensity: number;
@@ -33,6 +39,21 @@ export interface StrikeLightSpec {
   color?: RgbColor;
   /** 总时长（ms）；到点必然熄灭并撤灯 */
   durationMs: number;
+  /**
+   * 三盏都打 reflect 位：在表面材质区的水面 / 湿地上照出反光（2026-09-24，落雷对齐参考图）。
+   * 旧的单灯写法不打（与改动前逐位相同）。
+   */
+  reflect?: boolean;
+  /**
+   * 雷身：沿这道雷真实的折线一段一条线光（主干几段 + 最长的几根分叉），M-world wu；
+   * 强度与落点那盏同一套包络。整道雷的形状都在发光，照亮沿途的墙、树、地面（09-24 制作人：「整个形状都是亮的」）。
+   */
+  lines?: { from: [number, number, number]; to: [number, number, number]; intensity: number; range: number }[];
+  /**
+   * 天上那一记平行光（云被雷照亮，整片场景一起亮一下）。反光位照打：镜面那一项按「铺满天的面光」算
+   * （菲涅耳 × 水平照度，见 SceneLightingPass），平静水面正看只亮 2% 左右，不是一个点光的高光
+   */
+  sky?: { intensity: number; elevationDeg: number; azimuthDeg: number };
 }
 
 /**
@@ -121,14 +142,32 @@ export class StrikeLightRig {
     this.sincePushMs = 0;
     this.pushedOnce = true;
     const k = strikeEnvelope(this.elapsedMs / spec.durationMs);
-    return [{
+    const tone = spec.color ? { color: spec.color } : { kelvin: spec.kelvin ?? STRIKE_LIGHT_DEFAULT_KELVIN };
+    const reflect = spec.reflect ? { reflect: true } : {};
+    const out: LightDef[] = [{
       id: STRIKE_LIGHT_ID,
       kind: 'point',
       pos: spec.pos,
       intensity: spec.intensity * k,
       range: spec.range ?? STRIKE_LIGHT_DEFAULT_RANGE_WU,
       softeningRadius: spec.softeningRadius ?? 60,
-      ...(spec.color ? { color: spec.color } : { kelvin: spec.kelvin ?? STRIKE_LIGHT_DEFAULT_KELVIN }),
+      ...tone,
+      ...reflect,
     }];
+    (spec.lines ?? []).forEach((l, i) => {
+      if (!(l.intensity > 0)) return;
+      out.push({
+        id: `${STRIKE_LIGHT_ID}_line${i}`, kind: 'line', pos: l.from, to: l.to,
+        intensity: l.intensity * k, range: l.range, softeningRadius: spec.softeningRadius ?? 60,
+        ...tone, ...reflect,
+      });
+    });
+    if (spec.sky && spec.sky.intensity > 0) {
+      out.push({
+        id: `${STRIKE_LIGHT_ID}_sky`, kind: 'directional', elevationDeg: spec.sky.elevationDeg, azimuthDeg: spec.sky.azimuthDeg,
+        intensity: spec.sky.intensity * k, ...tone, ...reflect,
+      });
+    }
+    return out;
   }
 }

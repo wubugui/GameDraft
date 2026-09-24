@@ -31,7 +31,7 @@ await 揭幕前闸 `revealGate?(sceneId)` → await `onReveal?()` → 跑 onEnte
 
 - `scene:ready` 给实体挂深度遮挡/光照滤镜、启动巡逻——必须在揭幕**前**,揭出来才是完整表现。
 - **揭幕前闸**(`setRevealGate`,`Game` 注入):scene:ready 的监听全跑完之后、撤遮罩之前 await。
-  给"必须在遮罩下做完、否则就停在可见画面上"的活——粒子 shader 交给 Pixi、粒子预热(见 [vfx-system](vfx-system.md);
+  给"必须在遮罩下做完、否则就停在可见画面上"的活——粒子 shader 交给 Pixi、粒子预热(见 [vfx-rendering](vfx-rendering.md);
   2026-09-16 之前它们落在揭幕后第一帧,进茶馆那一帧 11 s)。**闸自己限时、永不悬挂**(`Game` 里 shader 15 s、粒子 8 s,
   超时放行、剩下的按帧接着做);抛了只记一笔照常揭幕。没有 `onReveal` 的直达 / 重载也过闸(不影响即时性,只是 onEnter 晚一点)。
   往闸里加东西之前先问:它能不能在揭幕后按帧分摊?能就别加——闸越长,每次切场景的黑屏越长。

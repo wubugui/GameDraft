@@ -1028,11 +1028,15 @@
           edit('自检改夜里这条的锚点', () => { activePlacement().anchor.h = 55; });
           renderLeft();
           const nightBefore = canonJson(libRows(SC, NIGHT));
+          // 别的外观有几套按场景现算（跑马梁 09-20 起多了「午」）：每套一行、每行只有这一条的拷过去 / 拷过来
+          const otherPhases = S.scene.phases.filter((p) => p.key !== NIGHT);
+          const ppBtns = [...el('placePhases').querySelectorAll('button')];
           ok('S18 per-placement copy: the other appearance\'s row for the selected placement says it differs, push + pull enabled, no other buttons in the section',
             S.phase === NIGHT && activePlacement().id === PID && /这条不一样/.test(phaseRow('') ? phaseRow('').textContent : '')
             && !!copyBtn('', PID, 'push') && !copyBtn('', PID, 'push').disabled && !copyBtn('', PID, 'pull').disabled
-            && el('placePhases').querySelectorAll('button').length === 2,
-            { row: phaseRow('') && phaseRow('').textContent, buttons: el('placePhases').querySelectorAll('button').length });
+            && otherPhases.every((p) => !!phaseRow(p.key)) && ppBtns.length === 2 * otherPhases.length
+            && ppBtns.every((b) => /^(push|pull)$/.test(b.getAttribute('data-act') || '') && !!b.closest(`[data-copy-id="${PID}"]`)),
+            { row: phaseRow('') && phaseRow('').textContent, buttons: ppBtns.length, others: otherPhases.map((p) => p.key) });
           copyBtn('', PID, 'pull').click(); await wait(80);
           ok('S18 pulling onto an existing row asks before overwriting, naming the row',
             !el('dialog').hidden && el('dialogForm').textContent.includes(PID) && !!dlgBtn('overwrite'), { txt: el('dialogForm').textContent });

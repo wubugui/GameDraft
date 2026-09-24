@@ -40,7 +40,7 @@ _MODELED_LEAVES = {
 _KNOWN_REF_KINDS = {
     "actor", "emote_subject", "npc", "npc_soft", "owner", "bubble_speaker",
     "scene", "scene_hint", "spawn", "scene_entity", "scene_hotspot", "scene_zone",
-    "position_ref", "burn_target",
+    "position_ref", "burn_target", "zone",
 }
 
 

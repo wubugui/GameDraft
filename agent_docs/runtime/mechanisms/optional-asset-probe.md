@@ -8,10 +8,10 @@ status: active
 authority:
   - src/core/AssetManager.ts#loadOptionalJson
 triggers:
-  paths: ["src/core/AssetManager.ts", "vite.config.ts"]
+  paths: ["src/core/AssetManager.ts", "vite.config.ts", "src/rendering/spriteNormalAtlas.ts"]
   tasks: [加可选资源, 加 sidecar, 逐包配置, 资源加载排错]
-  topics: [可选资源, sidecar, content-type, SPA fallback, 404, DEV 红条]
-last_governed: 2026-08-05
+  topics: [可选资源, sidecar, content-type, SPA fallback, 404, DEV 红条, 法线图, normal.png, InvalidStateError]
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -34,6 +34,11 @@ last_governed: 2026-08-05
 
 - 症状"每进一个场景刷一屏 `[json] 加载失败 … Unexpected token '<'`"= 某处用 `res.ok` 探可选资源;
   报错次数 = 该场景实体数(未命中缓存)。
+- **纹理型可选 sidecar 不走这个入口,吃同一个坑但更响**:法线图(`<图>.normal.png`)是当纹理进预载清单的,
+  取不到时 dev server 回 200+HTML、Pixi 拿去解码抛 `InvalidStateError`——表现是 **dev 红条 + 控制台异常**,
+  不是静默回落(功能本身照走平面法线)。常见窗口是"图刚加进场景、还没跑法线烘焙";根治靠烘焙发现口径
+  与预载口径对齐(见 [sprite-atlas-anim-contract](../../asset-pipeline/mechanisms/sprite-atlas-anim-contract.md))。
+  无头截图取证前先把 `#gamedraft-dev-error-overlay` 藏掉,否则整段画面被它盖住。
 
 ## 怎么验证
 

@@ -8,6 +8,7 @@ import { SCENE_INDEX_REL, buildSceneIndex } from './scripts/lib/scene_index.mjs'
 import { validSceneLightFactors } from './src/data/lightFactors';
 import { runtimeSwayApi } from './src/dev/runtimeSwayApiPlugin';
 import { runtimeBurnApi } from './src/dev/runtimeBurnApiPlugin';
+import { runtimeBreathingApi } from './src/dev/runtimeBreathingApiPlugin';
 import { runtimeTerrainApi } from './src/dev/runtimeTerrainApiPlugin';
 
 /** 开发服：读写 resources/editor_projects/editor_data/debug_flag_favorites.json，供 F2 Flag 收藏持久化（不使用 localStorage）。 */
@@ -1163,6 +1164,7 @@ export default defineConfig({
     runtimeAcousticsApi(),
     runtimeVfxApi(),
     runtimeBurnApi(),
+    runtimeBreathingApi(),
     runtimeSwayApi(),
     runtimeTerrainApi(),
     narrativeDebugBridgeApi(),

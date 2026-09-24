@@ -194,9 +194,22 @@ describe('narrative condition context injection', () => {
     };
     const choice = graphDialogue(true, choiceGraph);
     let enabled = false;
-    choice.eventBus.on('dialogue:choices', (payload) => { enabled = payload?.[0]?.enabled === true; });
+    let layout: unknown = 'unset';
+    choice.eventBus.on('dialogue:choices', (payload) => {
+      enabled = payload?.choices?.[0]?.enabled === true;
+      layout = payload?.layout;
+    });
     await choice.manager.startDialogueGraph({ graphId: 'choice', npcName: 'NPC' });
     expect(enabled).toBe(true);
+    // 图没设版式：选项组不带版式（选项位置照旧固定）
+    expect(layout).toBeUndefined();
+
+    // 图级 defaultLayout = firstPerson：选项组跟着这一档（屏底横排）
+    const fpChoice = graphDialogue(true, { ...choiceGraph, defaultLayout: 'firstPerson' });
+    let fpLayout: unknown;
+    fpChoice.eventBus.on('dialogue:choices', (payload) => { fpLayout = payload?.layout; });
+    await fpChoice.manager.startDialogueGraph({ graphId: 'choice', npcName: 'NPC' });
+    expect(fpLayout).toBe('firstPerson');
 
     const switchGraph = {
       id: 'switch',

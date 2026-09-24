@@ -23,6 +23,13 @@
       "sfx": {
         "walk": "sfx_step_paper_money_5"
       }
+    },
+    "跟脚者": {
+      "label": "跟脚者（不是一块地）：后头那位的脚步，刻意与玩家自己的不同一条素材",
+      "sfx": {
+        "walk": "sfx_step_paper_money_2"
+      },
+      "gainDb": 12
     }
   },
   "clipFallback": {

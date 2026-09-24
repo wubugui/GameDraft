@@ -13,7 +13,7 @@ authority:
 triggers:
   paths: ["src/ui/DialogueUI.ts", "src/systems/GraphDialogueManager.ts", "src/utils/scriptedDialogueSpeaker.ts", "public/resources/runtime/images/dialogue_portraits/**"]
   topics: [立绘, 头像, portrait, 对话UI, 换装, 说话人]
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -49,6 +49,8 @@ last_governed: 2026-08-05
 - 共同拥有一张对话图的多个 NPC,行 speaker 不能用"跟随点击者"那种 kind(会解析成错的人),
   必须显式指名。
 - 主角装扮状态不进存档(既有缺口)。
+- 立绘"不出来"也可能是版式在收:气泡 / 第一人称档、以及提示句为空只画选项时,立绘按设计不画,
+  见 [dialogue-layout-styles](dialogue-layout-styles.md)。
 
 ## 怎么验证
 

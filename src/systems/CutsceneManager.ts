@@ -220,6 +220,14 @@ interface CutsceneSnapshot {
   cameraY: number;
   cameraZoom: number;
   /**
+   * 过场前 zoom 是否被**显式**占着（`Camera.isZoomOverridden`）。
+   *
+   * 只存 `cameraZoom` 不够：配了「相机跟随透视」的场景，过场前 zoom 归连续通道所有，
+   * 恢复时若只 `setZoom` 就把它永久标成显式占用 ——「恢复成过场之前的样子」反而让
+   * 跟随再也不生效（且不报错，只是景别从此不对）。存这一笔才能原样交回去。
+   */
+  cameraZoomOverridden: boolean;
+  /**
    * 过场前音频基线：当前 BGM 与活跃环境层，供同场景过场结束后还原。
    *
    * 存的是**带本处音量的引用**而不是裸 id：场景把某层环境音压到 0.3、过场里把它停了，
@@ -517,8 +525,13 @@ export class CutsceneManager implements IGameSystem {
     xPercent: number,
     yPercent: number,
     widthPercent: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
+    /** 铺满窗口（等比盖满整屏、随窗口缩放重铺）；此时 x/y/width 不参与布局 */
+    fill?: boolean,
   ): Promise<void> {
-    return this.cutsceneRenderer.showPercentImg(imagePath, overlayId, xPercent, yPercent, widthPercent);
+    if (fill) return this.cutsceneRenderer.showImg(imagePath, overlayId, undefined, order);
+    return this.cutsceneRenderer.showPercentImg(imagePath, overlayId, xPercent, yPercent, widthPercent, order);
   }
 
   hideOverlayImage(overlayId: string): void {
@@ -534,9 +547,11 @@ export class CutsceneManager implements IGameSystem {
     xPercent: number,
     yPercent: number,
     widthPercent: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ): Promise<void> {
     return this.cutsceneRenderer.showDocumentImage(
-      documentId, imagePath, xPercent, yPercent, widthPercent,
+      documentId, imagePath, xPercent, yPercent, widthPercent, order,
     );
   }
 
@@ -550,9 +565,11 @@ export class CutsceneManager implements IGameSystem {
     widthPercent: number,
     durationMs: number,
     delayMs: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ): Promise<void> {
     return this.cutsceneRenderer.blendDocumentImage(
-      documentId, fromPath, toPath, xPercent, yPercent, widthPercent, durationMs, delayMs,
+      documentId, fromPath, toPath, xPercent, yPercent, widthPercent, durationMs, delayMs, order,
     );
   }
 
@@ -571,6 +588,8 @@ export class CutsceneManager implements IGameSystem {
     widthPercent: number,
     durationMs: number,
     delayMs: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ): Promise<void> {
     return this.cutsceneRenderer.blendPercentImg(
       fromPath,
@@ -581,6 +600,7 @@ export class CutsceneManager implements IGameSystem {
       widthPercent,
       durationMs,
       delayMs,
+      order,
     );
   }
 
@@ -605,6 +625,8 @@ export class CutsceneManager implements IGameSystem {
       console.warn('CutsceneManager: screenFlash failed', e);
     });
   }
+
+  clearScreenFlash(): void { this.cutsceneRenderer.clearScreenFlash(); }
 
   fadeWorldFromBlack(durationMs: number): Promise<void> {
     const d = Math.max(0, durationMs);
@@ -909,6 +931,7 @@ export class CutsceneManager implements IGameSystem {
       cameraX: this.cameraAccessor?.getX() ?? 0,
       cameraY: this.cameraAccessor?.getY() ?? 0,
       cameraZoom: this.cameraAccessor?.getZoom() ?? 1,
+      cameraZoomOverridden: this.cameraAccessor?.isZoomOverridden() ?? false,
       bgmCue: this.audioManager?.getCurrentBgmCue() ?? null,
       ambientCues: this.audioManager?.getActiveAmbientCues() ?? [],
     };
@@ -921,7 +944,7 @@ export class CutsceneManager implements IGameSystem {
       // same-scene: just restore player + camera position/zoom, no scene reload
       this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
       this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
-      this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
+      this.restoreSnapshotZoom();
       this.restoreAudioBaseline();
       return;
     }
@@ -930,7 +953,14 @@ export class CutsceneManager implements IGameSystem {
     }
     this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
     this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
+    this.restoreSnapshotZoom();
+  }
+
+  /** 恢复过场前的 zoom **连同它的归属**（见 `CutsceneSnapshot.cameraZoomOverridden`）。 */
+  private restoreSnapshotZoom(): void {
+    if (!this.snapshot) return;
     this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
+    if (!this.snapshot.cameraZoomOverridden) this.cameraAccessor?.releaseZoomOverride();
   }
 
   /**

@@ -41,9 +41,11 @@ from .anim_atlas_preview import (
     content_box_local,
     crop_atlas_cell,
     frame_slots_of_state,
+    lower_frame_to_foot,
     reference_world_size,
     resolved_anim_world_pair,
     spritesheet_public_path,
+    state_foot_offset,
 )
 from .character_dialogue import npc_uses_graph
 from .form_layout import compact_form
@@ -718,10 +720,15 @@ class BubbleAnchorPickField(QWidget):
             cell_w=int(cell[0]) if cell else None,
             cell_h=int(cell[1]) if cell else None,
         )
-        content = content_box_local(a.anim_data, slot, a.world_w, a.world_h, atlas=atlas)
+        # 舞台按「帧底 = 脚」摆帧：状态有脚底偏移时先把画挪下去，与运行时同样落在脚点上
+        state = self._state.currentText()
+        off = state_foot_offset(a.anim_data, state)
+        frame_pm = lower_frame_to_foot(frame_pm, off)
+        content = content_box_local(
+            a.anim_data, slot, a.world_w, a.world_h, atlas=atlas, foot_offset=off)
         auto = auto_bubble_anchor_y(
             a.anim_data, slot, a.world_w, a.world_h, atlas=atlas,
-            state=self._state.currentText(),
+            state=state,
             inst_scale=a.inst_scale, inst_rot_deg=a.inst_rot_deg,
         )
         return frame_pm, content, auto

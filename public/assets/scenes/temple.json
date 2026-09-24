@@ -78,8 +78,8 @@
       "id": "city_god_altar",
       "type": "inspect",
       "label": "香案",
-      "x": 400.0,
-      "y": 200.9,
+      "x": 438.0,
+      "y": 258.0,
       "interactionRange": 51.4,
       "data": {
         "text": "香案上只剩些断香和灰烬。城隍爷的泥身斑驳得厉害，半边脸都裂开了，看着比庙外的夜色还阴。"
@@ -89,8 +89,8 @@
       "id": "hide_iron_box",
       "type": "inspect",
       "label": "城隍像后的暗角",
-      "x": 400.0,
-      "y": 111.6,
+      "x": 510.0,
+      "y": 232.0,
       "interactionRange": 51.4,
       "conditions": [
         {

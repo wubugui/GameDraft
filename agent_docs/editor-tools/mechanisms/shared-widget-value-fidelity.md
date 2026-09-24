@@ -3,7 +3,7 @@ id: shared-widget-value-fidelity
 title: 共享选择器控件的保值契约
 domain: editor-tools
 type: mechanism
-summary: IdRefSelector 等共享控件被约 40 处调用点依赖——未知/悬垂值必须保值展示而非静默顶替或清空,候选去重不得让一部分数据在 UI 上不可达;一处控件破坏 = 全编辑器数据面污染
+summary: IdRefSelector 等共享控件被约 40 处调用点依赖——未知/悬垂值必须保值展示而非静默顶替或清空,候选去重不得让一部分数据在 UI 上不可达,严格选择器的候选面必须等于校验器同上下文的放行面(逐个宿主面核);一处控件破坏 = 全编辑器数据面污染
 status: active
 authority:
   - tools/editor/shared/id_ref_selector.py
@@ -11,11 +11,12 @@ authority:
   - tools/editor/shared/audio_picker_dialog.py
   - tools/editor/shared/qt_icon_buttons.py
   - tools/editor/shared/position_ref_field.py
+  - tools/editor/shared/form_layout.py#compact_icon_button
 triggers:
   paths: ["tools/editor/shared/id_ref_selector.py", "tools/editor/shared/action_editor.py", "tools/editor/shared/qt_combo_wheel_guard.py", "tools/editor/shared/audio_picker_dialog.py", "tools/editor/shared/qt_icon_buttons.py", "tools/editor/shared/position_ref_field.py", "tools/editor/shared/move_entity_map_picker.py"]
-  topics: [IdRefSelector, 悬垂引用, select_only, 保值, 滚轮误改, 候选去重, 弹窗选择器, 位置引用, PositionRefField, at, 地图拾取]
+  topics: [IdRefSelector, 悬垂引用, select_only, 保值, 滚轮误改, 候选去重, 候选面等于校验面, 弹窗选择器, 位置引用, PositionRefField, at, 地图拾取, 窄按钮]
   tasks: [改共享选择器控件, 把裸输入框换成选择器, 做弹窗选择器]
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -25,12 +26,10 @@ last_governed: 2026-08-05
 ## 权威源(读代码从哪进)
 
 `id_ref_selector.py`(id 引用选择器)/ `action_editor.py`(`FilterableTypeCombo(select_only)` 的未知值注入)/ `qt_combo_wheel_guard.py`(全局滚轮误改防护,`__main__.py` 安装)/
-`position_ref_field.py`(**位置引用 `at` 的统一复合控件**,2026-09-11:数字坐标(手输 / `WorldPointPickDialog` 地图拾取)/ 实体此刻位置 / 场景曲线插槽 / 曲线上的点,
-六条位置动作 + playTrajectory + cameraMove 共用;数字模式不写 `at`、老数据一个字节不动;实体 / 插槽写 `at`,x/y 写编辑期快照当回落,引用没动就保留磁盘 x/y;
-候选全部取自 ProjectModel(`actor_id_items_for_scene / hotspot_ids_for_scene / trajectory_slot_rows / trajectory_slots / trajectory_curve_rows`),悬垂值经 IdRefSelector 保值)。
-2026-09-12 起:曲线点多一档「此刻播到的点」(`current`,播放头,快照取起点);曲线候选**只列场景曲线**(相对曲线不许引用);
-`cameraFollowActor` / `faceEntity` 也用它,但**实体档映射老键**(`target` / `faceTarget`,构造参数 `entity_rows` 把候选收窄到演员),
-其余档写 `at`——见 `ActionRow._add_entity_or_ref_field / _write_entity_or_ref`。控件选型对照表见 `.cursor/skills/editor-tools-iteration/SKILL.md`。
+`position_ref_field.py`(**位置引用 `at` 的统一复合控件**:数字坐标 / 地图拾取 / 实体此刻位置 / 场景曲线插槽 /
+曲线上的点;数字模式不写 `at`、老数据一个字节不动;引用档写 `at`,x/y 写编辑期快照当回落,引用没动就保留磁盘 x/y;
+候选全部取自 ProjectModel,悬垂值经 IdRefSelector 保值。有的动作实体档映射到老键,见 `ActionRow._add_entity_or_ref_field`)。
+哪些动作接了它以代码为准(**并非全部**,见已知坑)。控件选型对照表见 `.cursor/skills/editor-tools-iteration/SKILL.md`。
 
 ## 硬契约
 
@@ -49,6 +48,12 @@ last_governed: 2026-08-05
 6. **保值必须与"用户动没动过"配对判断**:只凭"盘上是坏值"就无条件保值,会把用户刚改的值
    又盖回去**且不标脏**——改动凭空消失,而且那个字段从编辑器里**永远修不好**。
    判据要拿载入时的控件快照来比。
+7. **候选面 == 校验面**:严格选择器(只能选、不能手输)的候选集合必须等于校验器**在同一上下文**放行的集合,
+   最好就是调 `ProjectModel` 的同一个函数。候选比校验窄 → 那一档在编辑器里**根本配不出来**且不报错;
+   候选比校验宽 → 能配出校验必拒的值。**同一个控件嵌在多个宿主面**(主编辑器过场 / 场景动作 / 对话图检查器 /
+   叙事网页 / 无场景的任务规矩页…),各宿主给的上下文不同,要逐面过一遍——踩过:对话图检查器建上下文时
+   场景恒为空,实体下拉只剩过场临时演员,而校验器同上下文放行全工程 NPC;离屏只测了主编辑器那一面,全绿。
+   用户说"选不到"而离屏全绿时,先问是哪个编辑器面。**没有通用对账**,只有各功能自己的测试在守。
 
 ## 已知坑
 
@@ -56,6 +61,11 @@ last_governed: 2026-08-05
   登记表),没登记的参数落到兜底的裸文本框、**不受任何检查**。2026-09-03 实测现存一例:
   一个调试用动作的两个图/状态 id 参数就是裸框(UI 上挂了危险标签,但打错了没有任何一道门会拦)。
   ⇒ **加了选择器不等于加了护栏**,要先进登记表;审这类问题别只看"有没有测试",要看测试遍历的是什么。
+  反向也没护栏:建了选择器却没进那张登记表的参数,json_lang 不做宇宙校验、叙事关联也不把它当目标。
+- **位置引用并没有全部收进复合控件**:没有专用表单的动作(粒子播放 / 粒子场两条)的 `at` 仍落在泛型面的
+  **裸文本框**里。数据安全那一半已兜住(文本没动就按磁盘原值回写,否则对象形态的 `at` 会被存成 Python repr
+  字符串、运行时解析不出、整条动作静默跳过——回归锁 `test_vfx_dict_position_ref_not_stringified`);
+  真修法是接上复合控件,属于改作者面、要制作人点头。别以为全项目 `at` 都已经是选择器。
 - 滚轮误改:主编辑器有全局 combo 滚轮 guard,但 QSpinBox 不在防护内、独立小工具(未走 `tools/editor/__main__.py` 启动)未安装——评估滚轮风险时别以为全覆盖。
 - 未登记 flag 的数值条件曾被 bool 化(类型查询兜底到 "bool")——涉及 flag 类型推断的控件要考虑未登记键。
 
@@ -67,8 +77,10 @@ last_governed: 2026-08-05
   再开排序;顺序反了就是"打开弹窗东西全乱了"。
 - **后台线程往已析构的 Qt 对象发信号会抛"信号源已被删除"**(全套测试里真的报出来过)。
   断路要用**不持有 self 的共享存活标志**,别用弱引用外的临时补丁。
-- **窄图标按钮一律走共享工具按钮出口**(`shared/qt_icon_buttons`):某些主题下按钮内边距会把
-  30px 窄按钮里的字形整个挤没——按钮还在、还能点,只是**看不见**。
+- **窄图标按钮一律走共享出口**(`shared/qt_icon_buttons`、`shared/form_layout.compact_icon_button`,或 QToolButton):
+  现用主题给 `QPushButton` 的左右内边距合计就有 28px,≤30px 宽的单字形按钮字形被整个挤没——按钮还在、还能点,
+  只是**看不见**(动作编辑器每行的上移/下移/删除曾长期是三个空色块)。判据与跨字号验收见
+  [验证门配方](../recipes/editor-change-verification-gate.md)「布局塌陷」。
 
 ## 怎么验证
 

@@ -1,0 +1,3 @@
+- 卡:asset-pipeline/mechanisms/scene-bake-downstream(「2026-09-14 起:碰撞的作者面搬进地形工作台」一节)
+- 偏差:只写了"改碰撞一律去地形工作台";09-23~24 起全部场景的碰撞已按原画 + 3D 遮挡用命令行作者面 `tools/terrain_workbench/art_review.py` 重做(同一作者层),卡里"自动碰撞 / 深度推出的碰撞可用"的隐含前提已不成立——自动碰撞在大多数画上不能用,深度也可能整张是错的
+- 建议:该节补一句指向 editor-tools/recipes/collision-from-art(看原画修碰撞的方法 + 技能 scene-collision-from-art),并注明重烘深度后作者层多边形是网格坐标、画面上的位置会随新行走面漂,要重跑 art_review check + crowd 复核

@@ -32,7 +32,7 @@
         "facing": "left",
         "align": {
           "x": 111.4,
-          "y": 117.0
+          "y": 138.0
         },
         "landing": {
           "x": 98.5,
@@ -89,7 +89,7 @@
     }
   },
   "camera": {
-    "zoom": 1.08,
+    "zoom": 1.0,
     "pixelsPerUnit": 1.0
   },
   "depthConfig": {

@@ -16,7 +16,7 @@ verified_by:
   - tools/editor/tests/test_cutscene_roundtrip_fidelity.py
   - tools/editor/tests/test_anim_editor_save_fidelity.py
   - tools/editor/tests/test_action_condition_data_safety.py
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -31,14 +31,22 @@ Qt 数值控件天然破坏 JSON 数值表示(QDoubleSpinBox 一律 float、量�
 ## 硬契约
 
 1. **运行时非零默认的 int / float 参数必须登记**(action 侧 `_ACTION_PARAM_RUNTIME_DEFAULTS`、present 侧 timeline 的对应表;键 = (类型, 参数),同名参数在不同宿主默认不同):按运行时默认 seed 控件 + 缺键且仍为默认时不回写。不登记的后果是**行为级** bug——控件默认 0 盖掉运行时的非零默认,"打开即保存"把不给物品/瞬切写进数据。
-   泛型 int 与泛型 float 两条控件分支都吃这张表,但**泛型 float 那条 2026-09-12 才接上**:此前它硬编码 `setValue(0.0)`,登记了也只是摆着(控件照样显示 0、照样回写 0)——`setEntityShadow` 的 darkness/azimuth、`playVfx.countScale`、`emitVfxField.strength` 就是这么漏出去的。给 float 参数登记完记得确认它没被上面的按 action 特判分支(attachToSocket 支点、playNpcAnimation.speed)抢走。
+   泛型 int 与泛型 float 两条控件分支都吃这张表;登记完要确认该参数没被按 action 特判的控件分支抢走
+   (特判分支不读这张表,登记了也只是摆着——控件照样显示 0、照样回写 0)。
 2. **坐标控件量程给足世界坐标**:泛型小量程会把数千的世界坐标 clamp 成量程上限,真数据丢失;坐标本应走地图点选。
 3. **控件量化(如 QSpinBox 截断 float)会让等值恢复失效**:用种子快照法——载入记原字面值 + 截断种子,保存时控件仍==种子则写回原字面值;保存成功后用盘面新值重建种子。样板 `anim_editor.py`。
-4. **键序**:重建 dict 时原有键回原位置,只有新增键才插固定位置。
+4. **键序**:重建 dict 时原有键回原位置,只有新增键才插固定位置。**业务 dict 别经 Qt 条目数据中转**:
+   `setData(UserRole, d)` 读回来是 QVariantMap,键按字母重排(嵌套也是)——要挂就把原始 dict 存旁路角色、按原序重建。
+5. **浮点噪声在写入方消掉,不在编辑器里容忍**:等值恢复是精确相等比较,而数值控件按小数位取整——
+   磁盘上的 `1.8000000000000003` 打开即变 `1.8`,往返测试随之变红。这类噪声来自**非编辑器写入方**
+   (脚本、agent 直接改 JSON、工作台导出):在那一侧按控件精度 round 后再写,**不要去放宽编辑器的往返比较**。
 
 ## 已知坑
 
 - 真实过场数据曾因 QDoubleSpinBox 一次往返漂移 125 处——"只是打开看了一眼再保存"不是无害操作,保真必须在 to_dict 出口兜住。
+- **单值版"相等就回吐原表示"与"按磁盘原序重排键"目前没有共享出口**(本模块只有整 dict、不递归的一版),
+  已被两个编辑器各写了一份逐字等价的私有函数(场景灯跟随表单、挂件预设块)。嵌套块要保真时先把它们提进
+  `numeric_roundtrip.py`,别写第三份。
 
 ## 怎么验证
 

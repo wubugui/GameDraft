@@ -11,6 +11,7 @@ authority:
   - src/core/AssetManager.ts#SAFE_MAX_TEXTURE_SIZE
   - tools/video_to_atlas/atlas_core.py#PRESERVED_STATE_FIELDS
   - tools/animation_pipeline/bake_normal_atlas.py
+  - tools/animation_pipeline/qa_gate.py#atlas_gate
   - public/resources/runtime/animation
 triggers:
   paths: ["public/resources/runtime/animation/**", "tools/video_to_atlas/**", "tools/animation_pipeline/**"]
@@ -20,7 +21,7 @@ verified_by:
   - tools/editor/tests/test_anim_editor_save_fidelity.py
   - tools/editor/tests/test_anim_reexport_preserves_manual_fields.py
   - tools/animation_pipeline/tests/test_normal_bake_discovery.py
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -45,6 +46,12 @@ last_governed: 2026-08-05
   [单帧静态动画包](static-single-frame-bundle.md)——它只写 `worldHeight`、紧裁到脚。
 - **锚点 = anchor(0.5,1) 底中,即脚**:实体的 (x,y) 是精灵**脚底**世界坐标,不是中心。按中心
   锚减半个身高摆位会让全体角色漂高半身位。
+  **格底不是脚时靠 per-state `footOffset` 补,不改像素**(制作人 2026-09-24 定):它是「脚底线高于
+  帧底几成」(帧高比例),`SpriteEntity` 把它打进**画面锚点**(`effectiveAnchorY`),画往下挪、
+  接地点/阴影落点/排序不动;光照 mesh 的 local 原点 = 脚,所以**必须落在锚点上,不能落在 sprite.y**。
+  值由 `tools.animation_pipeline.foot_offset` 按图量(本状态最贴地那帧的最低不透明行,alpha≥128),
+  编辑器动画面板「按图测脚底」同一个函数;`fx_*` 不量。旧产线 `cld_reprocess_20260711` 有 6 套
+  因跳跃/躺下片段定格高而整体悬空 5–11 wu(2026-09-24 扫描),42 个包已写入。
 - **贴图每边 ≤2048**:`AssetManager` 的 `SAFE_MAX_TEXTURE_SIZE` 超限拒载;多帧用网格摊平,
   不是加大单边。
 - **`npc.animFile` 存完整 manifest URL** `/resources/runtime/animation/<id>/anim.json`,不是裸
@@ -61,10 +68,11 @@ last_governed: 2026-08-05
   spawn 里照样受光,法线是图的派生物、不是摆放的派生物。
 - **人工字段必须扛得住重导出**:导出器"从零拼 dict"整份覆盖 anim.json,人手填的值靠
   `merge_preserved_anim_fields` 并回——per-state 走白名单 `PRESERVED_STATE_FIELDS`
-  (`referenceSpeed`/`bubbleAnchor`),顶层走"导出器自产键"黑名单取反(`normalBake` 即此类)。
+  (`referenceSpeed`/`bubbleAnchor`/`footOffset`),顶层走"导出器自产键"黑名单取反(`normalBake` 即此类)。
+  ⚠ `footOffset` 是按**那一版像素**量的:重导出改了格子/对位要重测。
   **加新人工 per-state 字段必须登记白名单**(漏登记 = 静默丢数据);**加新导出产物顶层键必须
   登记黑名单**(漏登记 = 旧值盖新值,至少看得见)。
-- **编辑边界**:states(帧序/帧率/循环/增删/重排)、`referenceSpeed`、`normalBake` 与世界尺寸
+- **编辑边界**:states(帧序/帧率/循环/增删/重排)、`referenceSpeed`、`footOffset`、`normalBake` 与世界尺寸
   是"廉价参数",主编辑器动画面板可格式保真写回;**改图集像素布局(cols/rows/cell/atlasFrames/
   重抠拼帧)必须回产线重导**,这些字段在主面板只读。
 
@@ -74,6 +82,11 @@ last_governed: 2026-08-05
   缺省 1/4(约 54×51)实测不闪。
 - 播放头参数(`speed`/`reverse`/`holdFrame`/`thenState`/`startFrame`)属 **action 与 NpcDef 层**,
   不是 anim.json 层;anim.json 只声明 `referenceSpeed` 这个步速匹配基准(留空即不参与)。
+- **"合法 anim.json"运行时与 QA 门口径不一**:运行时对缺 `cellWidth`/`cellHeight` 的旧包按
+  `图宽/cols`、`图高/rows` 推导,缺 `atlasFrames` 时内容框按未知处理(照常播放);而产线的图集门
+  (`qa_gate.atlas_gate`)直接索引这几个字段、并要求 `atlasFrames`——在用的旧包(茶馆 `fx_patron_*` 与若干氛围 `fx_*` 包)会被判挂或直接抛。
+  判"这个包坏没坏"以运行时消费端为准;别为过 QA 去改在用的 anim.json,要补派生字段只补在 QA 副本上
+  (2026-09-16)。统一两边推导口径是未做的活。
 - 保存 anim.json 须保留未知键与键序(深拷贝原包、只施加差异),否则丢 `notes` 等旁注字段。
 - `video_to_atlas/gui.py`、`project_model.py` 是已删除的旧实现,现役 = `workspace_model.Workspace`
   + `main_window.py`;照旧文件名找入口会扑空。

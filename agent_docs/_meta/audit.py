@@ -11,7 +11,7 @@
   - authority 锚点可解析(文件存在 / glob 命中 / 文件#符号 命中)
   - verified_by 测试文件存在
   - triggers 非空(decision 豁免)
-  - method 新鲜度分诊信号(last_used 缺失或过旧 → info)
+  - method 新鲜度分诊信号(按使用痕迹:triggers.paths 与库外引用的 git 活动,取不到或过旧 → info)
   - inbox 偏差记录的 target 指向存在的文档
 退出码:有 error 则 1,否则 0(warn/info 不影响)。
 """
@@ -22,6 +22,7 @@ import argparse
 import fnmatch
 import json
 import re
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -240,14 +241,71 @@ def check_doc(doc: Doc, issues: list[Issue]) -> None:
 
     if dtype == "method":
         lu = meta.get("last_used")
-        if not lu:
-            issues.append(Issue("info", doc.rel, "method 未记录 last_used(治理 run 分诊信号缺失)"))
-        elif DATE_RE.match(str(lu)):
-            days = (date.today() - datetime.strptime(str(lu), "%Y-%m-%d").date()).days
-            if days > METHOD_STALE_DAYS:
-                issues.append(Issue("info", doc.rel, f"method 已 {days} 天未使用 → 治理 run 应分诊(标疑或盖章)"))
-        else:
+        if lu and not DATE_RE.match(str(lu)):
             issues.append(Issue("error", doc.rel, "last_used 须为 YYYY-MM-DD"))
+
+
+def check_method_freshness(docs: list[Doc], issues: list[Issue]) -> None:
+    """2026-09-23 制作人批:method 新鲜度按机械可取的使用痕迹判,不靠人填 last_used
+    (它没有写入者,每轮都报假警)。痕迹 = max(自身 git 痕迹, 手填 last_used, 引用它的组合层 method 的痕迹)
+    ——正交原语经组合层被使用,组合层在用它就在用。"""
+    methods = [d for d in docs if d.meta.get("type") == "method"]
+    own: dict[str, tuple[date | None, str]] = {}
+    for d in methods:
+        seen, source = method_trace_date(d)
+        lu = str(d.meta.get("last_used") or "")
+        if DATE_RE.match(lu) and (seen is None or lu > seen.isoformat()):
+            seen, source = datetime.strptime(lu, "%Y-%m-%d").date(), "last_used"
+        own[str(d.meta.get("id"))] = (seen, source)
+    for d in methods:
+        mid = str(d.meta.get("id"))
+        seen, source = own[mid]
+        for other in methods:
+            oid = str(other.meta.get("id"))
+            if oid == mid or f"{mid}.md" not in other.path.read_text(encoding="utf-8"):
+                continue
+            o_seen = own[oid][0]
+            if o_seen is not None and (seen is None or o_seen > seen):
+                seen, source = o_seen, f"组合层 {oid}"
+        if seen is None:
+            issues.append(Issue("info", d.rel, "method 取不到任何使用痕迹(triggers.paths / 库外引用 / 组合层都无活动)→ 治理 run 应分诊"))
+        elif (days := (date.today() - seen).days) > METHOD_STALE_DAYS:
+            issues.append(Issue("info", d.rel, f"method 最近使用痕迹在 {days} 天前({source})→ 治理 run 应分诊(标疑或盖章)"))
+
+
+def _git(args: list[str]) -> str:
+    try:
+        out = subprocess.run(["git", *args], cwd=REPO_ROOT, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace", timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def method_trace_date(doc: Doc) -> tuple[date | None, str]:
+    """method 的最近使用痕迹 = max(triggers.paths 的最近提交, 库外引用该 id 的文件的最近提交)。
+
+    库外引用 = skill / hook / artifact / 代码里点名这张卡;agent_docs 自身与 worktree 副本不算
+    (治理 run 每轮都会动库,算进来等于永远新鲜)。取不到 git 时返回 None,不报错。
+    """
+    best: tuple[date | None, str] = (None, "")
+
+    def consider(stamp: str, source: str) -> None:
+        nonlocal best
+        if DATE_RE.match(stamp) and (best[0] is None or stamp > best[0].isoformat()):
+            best = (datetime.strptime(stamp, "%Y-%m-%d").date(), source)
+
+    triggers = doc.meta.get("triggers")
+    paths = _as_list(triggers.get("paths")) if isinstance(triggers, dict) else []
+    if paths:
+        consider(_git(["log", "-1", "--format=%cs", "--", *[f":(glob){p}" for p in paths]]), "triggers.paths 提交")
+    doc_id = str(doc.meta.get("id", ""))
+    if doc_id:
+        refs = _git(["grep", "-l", "-F", doc_id, "--", ".", ":(exclude)agent_docs", ":(exclude).claude/worktrees"])
+        files = [f for f in refs.splitlines() if f]
+        if files:
+            consider(_git(["log", "-1", "--format=%cs", "--", *files]), "库外引用文件提交")
+    return best
 
 
 def check_inbox(doc_ids: set[str], issues: list[Issue]) -> int:
@@ -377,6 +435,7 @@ def main() -> int:
     issues: list[Issue] = []
     docs = collect_docs(issues)
     valid_docs = [d for d in docs if d.meta.get("id") and d.meta.get("domain") in DOMAINS]
+    check_method_freshness(valid_docs, issues)
     check_inbox({str(d.meta["id"]) for d in valid_docs}, issues)
 
     new_index = build_index(valid_docs)

@@ -8,7 +8,7 @@ import { resolveLightColor } from './kelvin';
 export const MAX_STATIC_LIGHTS = 24;
 
 /** shader 里 `kind` 的编码。与 `lightingCore.glsl` 的 `LC_*` 常量同值。 */
-export const LIGHT_KIND_CODE = { point: 0, spot: 1, area: 2, directional: 3 } as const;
+export const LIGHT_KIND_CODE = { point: 0, spot: 1, area: 2, directional: 3, line: 4 } as const;
 
 /**
  * `D.w` 的位标志。四组 vec4 已排满，布尔量挤在一个分量里。
@@ -16,6 +16,12 @@ export const LIGHT_KIND_CODE = { point: 0, spot: 1, area: 2, directional: 3 } as
  */
 export const LIGHT_FLAG_CAST_SHADOW = 1;
 export const LIGHT_FLAG_TWO_SIDED = 2;
+/**
+ * 在表面材质区的水面 / 湿地上照出镜面反光（`LightDef.reflect`，落雷的运行时灯）。
+ * 只有场景这一级（背景）吃；角色与粒子的灯循环只认 bit0 / bit1，这一位对它们透明。
+ * 打了这一位的灯也**不画灯体光晕**（雷的光斑由雷的粒子自己画，灯体光晕是灯笼那种实体灯的）。
+ */
+export const LIGHT_FLAG_REFLECT = 4;
 
 /**
  * ## 尺度锚:角色高 **150 wu**
@@ -96,7 +102,8 @@ export function worldWuToQ(
  * A = pos.xyz,   kind
  * B = color.rgb, intensity（点/聚光已折成 **wu 强度** = I_q × wuPerQUnit²，见 pointIntensityWu；面光/平行光原样）
  * C = range, softening, [spot: cosInner, cosOuter] | [area: halfW, halfH]
- * D = dir.xyz,   flags（bit0=castShadow bit1=twoSided）
+ * D = dir.xyz,   flags（bit0=castShadow bit1=twoSided bit2=reflect）
+ *     line：D.xyz = 从 pos 到 to 的那一段向量（不归一）
  * ```
  *
  * 一盏灯要么是 spot 要么是 area，所以 `C.zw` 两个位置按 kind 复用。
@@ -152,6 +159,14 @@ export function directionFromAngles(elevationDeg: number, azimuthDeg: number): [
  * ⚠ 别再把 q 单位叫成 wu —— 那是两个空间。q 的尺度随相机标定走，
  *   wu 不随；角色在 q 里从 0.17 变到 0.97，在 wu 里**恒为 150**。
  */
+/**
+ * 灯在当前时段亮不亮（`phases` 缺省 = 全时段；`phase` 传空串 = 不做时段过滤）。
+ * 打包与「此刻亮着的灯」（`SceneLightingSystem.activeLights`）共用这一份判据。
+ */
+export function isLightInPhase(l: { phases?: string[] }, phase: string): boolean {
+  return !phase || !l.phases || l.phases.length === 0 || l.phases.includes(phase);
+}
+
 export function packLights(
   def: SceneLightingDef,
   wuPerQUnit: number,
@@ -164,9 +179,7 @@ export function packLights(
 ): PackedLights {
   // 时段过滤（2026-08-30「灯就是实体，和其他实体一样配 phase」）。
   // 缺省全时段 —— 与热点/zone 同缺省，**不是** NPC 那条「只在 daylight 段」。
-  const inPhase = (l: { phases?: string[] }): boolean =>
-    !phase || !l.phases || l.phases.length === 0 || l.phases.includes(phase);
-  const lights = def.lights.filter(inPhase);
+  const lights = def.lights.filter((l) => isLightInPhase(l, phase));
   // ⛔ 2026-08-30 起**不再单独抽 sun 槽**。
   //
   // 原来第一盏 enabled 的 directional 会被抽进 out.sunColor/sunIntensity/sunDir/shadow，
@@ -219,7 +232,7 @@ export function packLights(
     out.b[o] = col[0]; out.b[o + 1] = col[1]; out.b[o + 2] = col[2];
     // 强度：作者面相对 q 定义（照度 = I / r_q²），shader 的 r 是 wu ⇒ 点/聚光在这里折成
     // I_wu = I_q × wuPerQUnit²（见 pointIntensityWu）。面光是辐亮度、平行光直接是照度，不折。
-    out.b[o + 3] = (l.kind === 'point' || l.kind === 'spot')
+    out.b[o + 3] = (l.kind === 'point' || l.kind === 'spot' || l.kind === 'line')
       ? pointIntensityWu(l.intensity, wuPerQUnit)
       : l.intensity;
 
@@ -240,14 +253,18 @@ export function packLights(
       out.c[o + 3] = s[1] * 0.5;                  // wu 半高
     }
 
+    const to = l.to ?? p;
     const dir = l.kind === 'directional'
       ? directionFromAngles(l.elevationDeg ?? 45, l.azimuthDeg ?? 180)
-      : (l.dir ?? l.orientation ?? [0, 0, -1]);
+      : l.kind === 'line'
+        ? [to[0] - p[0], to[1] - p[1], to[2] - p[2]]
+        : (l.dir ?? l.orientation ?? [0, 0, -1]);
     out.d[o] = dir[0]; out.d[o + 1] = dir[1]; out.d[o + 2] = dir[2];
     // D.w 是**位标志**，不是布尔：bit0=castShadow bit1=twoSided。
     // 挤在一个分量里是因为四组 vec4 已经排满，再加一组要动所有 shader 的 uniform 布局。
     out.d[o + 3] = LIGHT_FLAG_CAST_SHADOW * ((l.castShadow ?? false) ? 1 : 0)
-                 + LIGHT_FLAG_TWO_SIDED * ((l.twoSided ?? false) ? 1 : 0);
+                 + LIGHT_FLAG_TWO_SIDED * ((l.twoSided ?? false) ? 1 : 0)
+                 + LIGHT_FLAG_REFLECT * ((l.reflect ?? false) ? 1 : 0);
   }
   out.count = n;
   return out;

@@ -226,10 +226,10 @@ class View2D {
     if (gz) Gizmo.draw(g, gz, this._hotPart());
     if (this.readout) Gizmo.drawReadout(g, this.readout);
   }
-  /** 活动布置的区域：画面坐标多边形直接画（边带内沿是运行时 `confineDistanceContour` 的线段） */
+  /** 活动布置的区域 + 表面材质区：画面坐标多边形直接画（边带内沿是运行时 `confineDistanceContour` 的线段） */
   _drawAreas(g) {
-    const sh = this.host.areaShapes();
-    const rgb = { emit: '110,205,255', range: '255,209,102' };
+    const host = this.host;
+    const sh = host.areaShapes();
     const poly = (pts, css, dash, width) => {
       g.strokeStyle = css; g.lineWidth = width; g.setLineDash(dash || []);
       g.beginPath();
@@ -237,17 +237,19 @@ class View2D {
       g.closePath(); g.stroke(); g.setLineDash([]);
     };
     for (const s of sh.polys) {
-      if (s.role === 'range') { g.fillStyle = `rgba(${rgb.range},0.06)`; g.beginPath(); s.poly.forEach((p, i) => { const c = this.toCanvas(p[0], p[1]); if (i) g.lineTo(c[0], c[1]); else g.moveTo(c[0], c[1]); }); g.closePath(); g.fill(); }
-      poly(s.poly, `rgba(${rgb[s.role]},0.95)`, s.role === 'emit' ? [8, 5] : null, 2);
+      // 范围区域与表面区（水面 / 湿地）铺一层淡色：一眼看出那一块是什么
+      const fillA = s.role === 'range' ? 0.06 : s.surf ? 0.14 : 0;
+      if (fillA) { g.fillStyle = host.roleCss(s.role, fillA); g.beginPath(); s.poly.forEach((p, i) => { const c = this.toCanvas(p[0], p[1]); if (i) g.lineTo(c[0], c[1]); else g.moveTo(c[0], c[1]); }); g.closePath(); g.fill(); }
+      poly(s.poly, host.roleCss(s.role, 0.95), s.role === 'emit' ? [8, 5] : null, 2);
     }
     if (sh.contour && sh.contour.segs.length) {
-      g.strokeStyle = `rgba(${rgb.range},0.5)`; g.lineWidth = 1; g.setLineDash([3, 3]);
+      g.strokeStyle = host.roleCss('range', 0.5); g.lineWidth = 1; g.setLineDash([3, 3]);
       g.beginPath();
       const c = sh.contour.segs;
       for (let i = 0; i + 3 < c.length; i += 4) { const a = this.toCanvas(c[i], c[i + 1]), b = this.toCanvas(c[i + 2], c[i + 3]); g.moveTo(a[0], a[1]); g.lineTo(b[0], b[1]); }
       g.stroke(); g.setLineDash([]);
     }
-    if (sh.draft) poly(sh.draft.poly, `rgba(${rgb[sh.draft.role]},0.85)`, [6, 4], 1.5);
+    if (sh.draft) poly(sh.draft.poly, host.roleCss(sh.draft.role, 0.85), [6, 4], 1.5);
   }
   // ------------------------------------------------------------- 交互
   _bind() {
@@ -290,8 +292,9 @@ class View2D {
     }
     if (e.button !== 0 || !host.doc) return;
     const sc = this.toScene(mx, my);
-    if (host.tool === 'areaEmit' || host.tool === 'areaRange') {
-      const role = host.tool === 'areaEmit' ? 'emit' : 'range';
+    const areaRole = host.areaToolRole(host.tool);
+    if (areaRole) {
+      const role = areaRole;
       if (!host.areaToolBegin(role)) return;
       this.drag = { kind: 'area', role, a: sc };
       host.setAreaDraft(role, sc, sc);

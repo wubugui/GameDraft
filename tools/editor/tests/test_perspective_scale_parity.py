@@ -20,6 +20,8 @@ from tools.editor.shared.entity_transform_math import (
     entity_perspective_factor,
     has_perspective_scale,
     perspective_axis_data,
+    perspective_camera_follow_info,
+    perspective_camera_zoom_ratio_at,
     perspective_scale_at,
 )
 
@@ -107,6 +109,117 @@ class PerspectiveScaleParityTests(unittest.TestCase):
         # 坐标非法 → 1
         self.assertEqual(entity_perspective_factor(VERT, {"x": "z", "y": 300}, "npc"), 1.0)
         self.assertTrue(math.isfinite(entity_perspective_factor(None, npc, "npc")))
+
+
+
+# ---------------------------------------------------------------------------
+# 相机跟随透视（需求清单 A3.5）——黄金数值与 src/utils/perspectiveScale.test.ts 一字不差
+# ---------------------------------------------------------------------------
+
+# 竖直轴 f: 2.0 →(0.5) 1.0 → 0.5；f(0.25)=1.5、f(0.75)=0.75
+FOLLOW_AXIS = {
+    "near": {"x": 0, "y": 0, "scale": 2.0},
+    "far": {"x": 0, "y": 100, "scale": 0.5},
+    "midStops": [{"pos": 0.5, "scale": 1.0}],
+}
+FOLLOW_ALL = dict(FOLLOW_AXIS, cameraFollow={"maxZoomRatio": 10})
+FOLLOW_OFF_FIRST = dict(FOLLOW_AXIS, cameraFollow={"firstSegment": False, "maxZoomRatio": 10})
+FOLLOW_OFF_SECOND = dict(
+    FOLLOW_AXIS,
+    midStops=[{"pos": 0.5, "scale": 1.0, "cameraFollow": False}],
+    cameraFollow={"maxZoomRatio": 10},
+)
+FOLLOW_REF_MID = dict(FOLLOW_AXIS, cameraFollow={"refPos": 0.5, "maxZoomRatio": 10})
+FOLLOW_CLAMPED = dict(FOLLOW_AXIS, cameraFollow={})
+
+# (cfg, foot_x, foot_y, 期望 zoom 倍数)
+FOLLOW_GOLDEN = [
+    (FOLLOW_ALL, 0, 0, 1.0),
+    (FOLLOW_ALL, 0, 25, 4 / 3),
+    (FOLLOW_ALL, 0, 50, 2.0),
+    (FOLLOW_ALL, 0, 75, 8 / 3),
+    (FOLLOW_ALL, 0, 100, 4.0),
+    (FOLLOW_ALL, 0, -50, 1.0),
+    (FOLLOW_ALL, 0, 500, 4.0),
+    (FOLLOW_OFF_FIRST, 0, 25, 1.0),
+    (FOLLOW_OFF_FIRST, 0, 50, 1.0),
+    (FOLLOW_OFF_FIRST, 0, 75, 4 / 3),
+    (FOLLOW_OFF_FIRST, 0, 100, 2.0),
+    (FOLLOW_OFF_SECOND, 0, 25, 4 / 3),
+    (FOLLOW_OFF_SECOND, 0, 50, 2.0),
+    (FOLLOW_OFF_SECOND, 0, 75, 2.0),
+    (FOLLOW_OFF_SECOND, 0, 100, 2.0),
+    (FOLLOW_REF_MID, 0, 0, 0.5),
+    (FOLLOW_REF_MID, 0, 50, 1.0),
+    (FOLLOW_REF_MID, 0, 100, 2.0),
+    (FOLLOW_CLAMPED, 0, 25, 4 / 3),
+    (FOLLOW_CLAMPED, 0, 50, 1.5),
+    (FOLLOW_CLAMPED, 0, 100, 1.5),
+]
+
+
+class CameraFollowParityTest(unittest.TestCase):
+    def test_golden(self) -> None:
+        for cfg, fx, fy, want in FOLLOW_GOLDEN:
+            with self.subTest(cfg=cfg, foot=(fx, fy)):
+                self.assertAlmostEqual(
+                    perspective_camera_zoom_ratio_at(cfg, fx, fy), want, places=6)
+
+    def test_no_key_means_no_follow(self) -> None:
+        """不写 cameraFollow 键 = 不跟随（运行时一次 zoom 都不多写）。"""
+        for cfg in (VERT, MID, FOLLOW_AXIS, None, {"cameraFollow": "x"}):
+            self.assertIsNone(perspective_camera_follow_info(cfg))
+            self.assertEqual(perspective_camera_zoom_ratio_at(cfg, 0, 50), 1.0)
+
+    def test_degenerate_axis_with_key(self) -> None:
+        self.assertIsNone(perspective_camera_follow_info(dict(DEGEN, cameraFollow={})))
+        self.assertIsNone(perspective_camera_follow_info(
+            {"near": VERT["near"], "cameraFollow": {}}))
+
+    def test_info_fields(self) -> None:
+        info = perspective_camera_follow_info(FOLLOW_CLAMPED)
+        self.assertAlmostEqual(info["raw_ratio_at_far"], 4.0, places=6)
+        self.assertAlmostEqual(info["max_zoom_ratio"], 1.5, places=6)
+        self.assertEqual(info["ref_pos"], 0.0)
+        segs = info["segments"]
+        self.assertEqual([(s["from_pos"], s["to_pos"]) for s in segs], [(0.0, 0.5), (0.5, 1.0)])
+        self.assertEqual([s["follow"] for s in segs], [True, True])
+        self.assertAlmostEqual(segs[0]["ratio_at_to"], 2.0, places=6)
+        self.assertAlmostEqual(segs[1]["ratio_at_to"], 4.0, places=6)
+        off = perspective_camera_follow_info(FOLLOW_OFF_SECOND)
+        self.assertEqual([s["follow"] for s in off["segments"]], [True, False])
+        self.assertAlmostEqual(off["raw_ratio_at_far"], 2.0, places=6)
+
+    def test_midstops_order_immunity(self) -> None:
+        """开关挂在停靠点上 ⇒ midStops 乱序结果不变（独立段数组会静默错位）。"""
+        ordered = {
+            "near": {"x": 0, "y": 0, "scale": 2.0},
+            "far": {"x": 0, "y": 100, "scale": 0.5},
+            "midStops": [
+                {"pos": 0.25, "scale": 1.5, "cameraFollow": False},
+                {"pos": 0.5, "scale": 1.0},
+            ],
+            "cameraFollow": {"maxZoomRatio": 10},
+        }
+        shuffled = dict(ordered, midStops=[ordered["midStops"][1], ordered["midStops"][0]])
+        for y in (0, 10, 25, 40, 50, 75, 100):
+            with self.subTest(y=y):
+                self.assertAlmostEqual(
+                    perspective_camera_zoom_ratio_at(shuffled, 0, y),
+                    perspective_camera_zoom_ratio_at(ordered, 0, y), places=9)
+        self.assertAlmostEqual(perspective_camera_zoom_ratio_at(ordered, 0, 25), 4 / 3, places=6)
+        self.assertAlmostEqual(perspective_camera_zoom_ratio_at(ordered, 0, 50), 4 / 3, places=6)
+        self.assertAlmostEqual(perspective_camera_zoom_ratio_at(ordered, 0, 100), 8 / 3, places=6)
+
+    def test_position_determined_not_direction(self) -> None:
+        """正走反走同一点景别一样，且关闭段边界不跳变。"""
+        ys = [0, 20, 49.999, 50, 50.001, 80, 100]
+        fwd = [perspective_camera_zoom_ratio_at(FOLLOW_OFF_SECOND, 0, y) for y in ys]
+        bwd = [perspective_camera_zoom_ratio_at(FOLLOW_OFF_SECOND, 0, y) for y in reversed(ys)]
+        self.assertEqual(list(reversed(bwd)), fwd)
+        self.assertAlmostEqual(
+            perspective_camera_zoom_ratio_at(FOLLOW_OFF_SECOND, 0, 50.001),
+            perspective_camera_zoom_ratio_at(FOLLOW_OFF_SECOND, 0, 49.999), places=4)
 
 
 if __name__ == "__main__":

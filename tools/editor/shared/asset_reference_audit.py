@@ -423,6 +423,30 @@ def _audit_scene_required_media(paths: ProjectPaths, scene_json: Path, report: A
             )
 
 
+def _audit_breathing_overlay_media(paths: ProjectPaths, json_path: Path, report: AuditReport) -> None:
+    """呼吸图资产（``assets/data/breathing/<id>.json``）里的图层与位移场引用。
+
+    它们长在**结构位置**上（``layers.{base,body,sheet,flap}`` 与 ``fields.file``，见 TS
+    ``BreathingOverlayDef``），键名 base / body / file 太通用，不能进上面的全局媒体键名表（会把别的
+    数据里同名的普通字段误当路径）。所以按结构单独收：引用写错 = 审计 issue（``--strict`` 停包）；
+    解析到的文件进 ``resolved_media`` = 打包清单的 JSON 引用闭包（``fields.bin`` 这种非图片后缀也一样）。
+    """
+    data = _load_json_for_audit(json_path, report, paths)
+    if not isinstance(data, dict):
+        return
+    file_rel = str(json_path.relative_to(paths.project_root)).replace("\\", "/")
+    layers = data.get("layers")
+    if isinstance(layers, dict):
+        for key, raw in layers.items():
+            if isinstance(raw, str) and raw.strip():
+                report.media_count += 1
+                _check_media_value(paths, raw, file_rel=file_rel, field_path=f"layers.{key}", report=report)
+    fields = data.get("fields")
+    if isinstance(fields, dict) and isinstance(fields.get("file"), str) and fields["file"].strip():
+        report.media_count += 1
+        _check_media_value(paths, fields["file"], file_rel=file_rel, field_path="fields.file", report=report)
+
+
 def audit_project_assets(project_root: Path) -> AuditReport:
     paths = ProjectPaths(project_root)
     report = AuditReport(project_root=project_root)
@@ -448,6 +472,12 @@ def audit_project_assets(project_root: Path) -> AuditReport:
     if paths.data_dir.is_dir():
         for jp in sorted(paths.data_dir.rglob("*.json")):
             _audit_one_file(paths, jp, is_text_only=False, report=report)
+
+    # 呼吸图资产：图层 / 位移场按结构位置收（见 _audit_breathing_overlay_media）
+    breathing_dir = paths.data_dir / "breathing"
+    if breathing_dir.is_dir():
+        for jp in sorted(breathing_dir.glob("*.json")):
+            _audit_breathing_overlay_media(paths, jp, report)
 
     # scenes/*.json：传入 scene_id（文件名 stem），让短名按 scene_runtime_dir 解析
     if paths.scenes_dir.is_dir():

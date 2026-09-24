@@ -105,6 +105,20 @@
         "name": "旁白"
       },
       "text": "纸随他的呼吸，一起，一伏。一起，一伏。",
+      "next": "n_fade"
+    },
+    "n_fade": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "breathingPerform",
+          "params": {
+            "id": "dream_face_paper",
+            "act": "fadeOut",
+            "wait": true
+          }
+        }
+      ],
       "next": "n22"
     },
     "n22": {
@@ -125,12 +139,6 @@
             "sourceType": "dialogue",
             "sourceId": "线外_寻狗_梦待死之礼",
             "signal": "meng_paper_stopped"
-          }
-        },
-        {
-          "type": "playSfx",
-          "params": {
-            "id": "sfx_force_swallowed_thud"
           }
         },
         {
@@ -169,6 +177,25 @@
         "name": "旁白"
       },
       "text": "极远处，飘来半句跑了调的小调。",
+      "next": "n_gasp"
+    },
+    "n_gasp": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "breathingPerform",
+          "params": {
+            "id": "dream_face_paper",
+            "act": "gasp"
+          }
+        },
+        {
+          "type": "waitMs",
+          "params": {
+            "durationMs": 200
+          }
+        }
+      ],
       "next": "n24"
     },
     "n24": {
@@ -242,10 +269,10 @@
           }
         },
         {
-          "type": "showOverlayImage",
+          "type": "showBreathingOverlay",
           "params": {
             "id": "dream_face_paper",
-            "image": "dream_face_paper_breath_hires",
+            "breathing": "dream_face_paper",
             "xPercent": 50,
             "yPercent": 48,
             "widthPercent": 82

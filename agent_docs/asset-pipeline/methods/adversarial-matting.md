@@ -8,8 +8,8 @@ status: active
 triggers:
   tasks: [抠图, 扣图, 重扣, 去背景, 主体分离, 立绘切片]
   topics: [抠图, matting, cutout, 去背景, alpha, despill]
-last_governed: 2026-08-05
-last_used: 2026-07-10
+last_governed: 2026-09-23
+last_used: 2026-09-16
 ---
 
 ## 适用时机

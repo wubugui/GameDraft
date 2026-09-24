@@ -53,6 +53,8 @@
   .item.other button { opacity: 1; }
   #tools button.areaTool.emit { color: rgb(110,205,255); }
   #tools button.areaTool.range { color: rgb(255,209,102); }
+  #tools button.areaTool.water { color: rgb(90,160,255); }
+  #tools button.areaTool.wet { color: rgb(120,220,170); }
   .item .ic { width: 16px; color: var(--warn); }
   .item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item button { padding: 0 5px; font-size: 11px; }
@@ -107,6 +109,9 @@
   #dialogForm h3 { margin: 0 0 4px; } #dialogForm p { margin: 0; color: var(--dim); }
   #dialogForm .row > span:first-child { width: 120px; }
   #dialogForm .btns { justify-content: flex-end; }
+  /* 雷电样式的动态预览：宽跟检视器、高固定（播放器按实际宽重设画布缓冲） */
+  .lightningPreview { display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
+  .lightningCanvas { width: 100%; height: 300px; display: block; border-radius: 4px; border: 1px solid var(--line); background: #0d0f13; }
 </style>
 </head>
 <body>
@@ -152,6 +157,8 @@
     <button data-tool="fire" title="放一段调试火焰（I）：点场景表面 = 在那里立一段竖直火焰（高 40 wu），绑了可燃模板（面燃烧）的薄片碰到会着、焦黑、成灰消失。只在本地预览里（不存盘、不推游戏），预览条「清火」清掉">火</button>
     <button data-tool="areaEmit" class="areaTool emit" title="拉发射区域（写活动布置的 area，青色虚线）：按住拖一个框 = 那块区域；之后拖顶点 / 双击边线加点 / Delete 或右键删点。Esc 退出">▭</button>
     <button data-tool="areaRange" class="areaTool range" title="拉范围区域（写活动布置的 confine.area 并打开限定，黄色实线 + 边带）：按住拖一个框 = 那块区域。Esc 退出">▣</button>
+    <button data-tool="areaWater" class="areaTool water" title="拉一块水面（表面材质区，整个场景所有时段共用，蓝色）：按住拖一个框 = 新的一块。落雷在水面上照出倒影与高光、落在上面改放水花与水面电弧。之后拖顶点 / 双击边线加点 / Delete 或右键删点。Esc 退出">≈</button>
+    <button data-tool="areaWet" class="areaTool wet" title="拉一块湿地（表面材质区，整个场景所有时段共用，青绿）：湿路面 / 湿石板这类会反一点光的地面，落雷在上面照出一片湿亮。按住拖一个框 = 新的一块。Esc 退出">⋯</button>
     <button data-tool="pan" title="平移（H）">✋</button>
     <div class="sep"></div>
     <button id="btnView3" title="3D 视图（1）">3D</button>
@@ -237,6 +244,7 @@
 <script src="/viewer/view3d.js"></script>
 <script src="/viewer/view2d.js"></script>
 <script src="/viewer/beams.js"></script>
+<script src="/viewer/lightning.js"></script>
 <script src="/viewer/inspector.js"></script>
 <script src="/viewer/app.js"></script>
 </body>

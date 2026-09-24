@@ -19,6 +19,10 @@
       "npcall": {
         "state_1": "initial",
         "在捡钱": "initial"
+      },
+      "wrapper_跑马梁_风火引路": {
+        "引路": "点火选择",
+        "寻香": "点火选择"
       }
     }
   },
@@ -1066,18 +1070,82 @@
             "states": {
               "未出城": {
                 "id": "未出城",
-                "label": "还在城头",
+                "label": "还没走到小路南头",
                 "meta": {
                   "editor": {
                     "x": -64,
                     "y": 41
                   }
-                }
+                },
+                "description": "开局在这。走到南头又退回来（出了 z_南门小路_南头）也回到这里——下次再走拢南头，重新验一遍火把、重新弹地图。"
+              },
+              "点火": {
+                "id": "点火",
+                "label": "南门小路走到头·先把火把点起",
+                "description": "小路走到头、天黑尽了：手上的火把没燃着就不给地图——拿在手上、设好火种、按 T 点着了才进「望山」。走出南头就退回「还没走到小路南头」，再走拢再验一遍。",
+                "meta": {
+                  "editor": {
+                    "x": 90,
+                    "y": 230
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "playScriptedDialogue",
+                    "params": {
+                      "lines": [
+                        {
+                          "speaker": "{{player}}",
+                          "text": "（天黑尽了，路都看不清——先把火把点起再走。）"
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "showSystemNote",
+                    "params": {
+                      "noteId": "torch_light"
+                    }
+                  },
+                  {
+                    "type": "runActionsIf",
+                    "params": {
+                      "condition": {
+                        "all": [
+                          {
+                            "not": {
+                              "flag": "has_item_yanghuo"
+                            }
+                          },
+                          {
+                            "not": {
+                              "flag": "has_item_huorong"
+                            }
+                          },
+                          {
+                            "not": {
+                              "flag": "has_item_huozhezi"
+                            }
+                          }
+                        ]
+                      },
+                      "actions": [
+                        {
+                          "type": "showNotification",
+                          "params": {
+                            "text": "身上没得火种——回城头找打更的要。",
+                            "type": "info"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
               },
               "望山": {
                 "id": "望山",
                 "label": "南门小路走到头·地图认得跑马梁",
-                "description": "醒来小路南头触发：跑马梁在地图上解锁（map_config 读本状态 reached），弹地图提示传送。",
+                "description": "每回走拢南头、手上火把燃着就进这里：跑马梁在地图上认得到（map_config 读本状态 reached 且此刻火把燃着——火把灭了地图上就没有跑马梁），弹地图提示传送。关了地图没传走也不卡：走出南头退回去、再走拢又弹；火把燃着时自己按 M 也去得到。",
                 "meta": {
                   "editor": {
                     "x": 217,
@@ -1177,7 +1245,8 @@
                     "x": 493,
                     "y": 0
                   }
-                }
+                },
+                "description": "真的传到了跑马梁（跑马梁 onEnter 头一回发 跑马梁_进场）才收：主图 state_8→state_9，南门小路南头那个区跟着关。"
               }
             },
             "transitions": [
@@ -1185,13 +1254,64 @@
                 "id": "t_望山",
                 "from": "未出城",
                 "to": "望山",
-                "signal": "nanmen_road_end"
+                "signal": "nanmen_road_end",
+                "conditions": [
+                  {
+                    "heldProp": "player",
+                    "burning": true
+                  }
+                ]
+              },
+              {
+                "id": "t_点火",
+                "from": "未出城",
+                "to": "点火",
+                "signal": "nanmen_road_end",
+                "conditions": [
+                  {
+                    "not": {
+                      "heldProp": "player",
+                      "burning": true
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "t_点着了",
+                "from": "点火",
+                "to": "望山",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "heldProp": "player",
+                    "burning": true
+                  }
+                ]
+              },
+              {
+                "id": "t_离开南头_望山",
+                "from": "望山",
+                "to": "未出城",
+                "signal": "nanmen_road_left"
+              },
+              {
+                "id": "t_离开南头_点火",
+                "from": "点火",
+                "to": "未出城",
+                "signal": "nanmen_road_left"
               },
               {
                 "id": "t_到跑马梁",
                 "from": "望山",
                 "to": "到跑马梁",
-                "signal": "paomaliang_arrived"
+                "signal": "跑马梁_进场"
+              },
+              {
+                "id": "t_到跑马梁_未在南头",
+                "from": "未出城",
+                "to": "到跑马梁",
+                "signal": "跑马梁_进场"
               }
             ]
           }
@@ -1289,6 +1409,17 @@
                   }
                 ]
               },
+              "往前走": {
+                "id": "往前走",
+                "label": "往前走",
+                "meta": {
+                  "editor": {
+                    "x": 330,
+                    "y": 250
+                  }
+                },
+                "description": "到梁上时手里没燃着的火（或者护火那一课火就灭了）：跳过护火，直接沿路往前走，走一段进风口过场。"
+              },
               "阵风": {
                 "id": "阵风",
                 "label": "阵风",
@@ -1298,71 +1429,88 @@
                     "y": -7
                   }
                 },
+                "description": "往前走了一段进风口：过场——关二狗不晓得往哪走、风声猛地大起来、风把火把吹灭、纸钱遭风卷起来。演完发 paomaliang_arrived（推到跟脚）。",
                 "onEnterActions": [
                   {
-                    "type": "runActionsIf",
+                    "type": "startDialogueGraph",
                     "params": {
-                      "condition": {
-                        "timePhase": "夜"
-                      },
-                      "actions": [
-                        {
-                          "type": "sceneWindGust",
-                          "params": {
-                            "speedMultiplier": 3.5,
-                            "durationMs": 1300,
-                            "attackMs": 90,
-                            "releaseMs": 650,
-                            "id": "可怕的呼啸风声3",
-                            "volume": 0.95
-                          }
-                        }
-                      ],
-                      "elseActions": [
-                        {
-                          "type": "sceneWindGust",
-                          "params": {
-                            "speedMultiplier": 3.5,
-                            "durationMs": 1300,
-                            "attackMs": 90,
-                            "releaseMs": 650,
-                            "id": "呼呼的风",
-                            "volume": 0.95
-                          }
-                        }
-                      ]
+                      "graphId": "主线_初上跑马梁"
+                    }
+                  }
+                ]
+              },
+              "跟脚": {
+                "id": "跟脚",
+                "label": "跟脚",
+                "meta": {
+                  "editor": {
+                    "x": 1010,
+                    "y": 90
+                  }
+                },
+                "description": "过场完、交回玩家。跟脚声开：玩家走两步，后头就跟着响（延迟一步半，玩家停了后头还多响一两下）。火点着就不响。",
+                "onEnterActions": [
+                  {
+                    "type": "setFollowerFootsteps",
+                    "params": {
+                      "enabled": true,
+                      "id": "ridge_follower",
+                      "footstepSet": "跟脚者",
+                      "delayPercent": 150,
+                      "fireStops": true
+                    }
+                  }
+                ]
+              },
+              "有人喊": {
+                "id": "有人喊",
+                "label": "有人喊",
+                "meta": {
+                  "editor": {
+                    "x": 1010,
+                    "y": 260
+                  }
+                },
+                "description": "跟着走了几步：前头路边身影现出来喊他，关二狗回一句。随后进点火教学（三把火在那一拍亮）。",
+                "onEnterActions": [
+                  {
+                    "type": "waitMs",
+                    "params": {
+                      "durationMs": 400
+                    }
+                  },
+                  {
+                    "type": "showSpeechBubble",
+                    "params": {
+                      "target": "npc_跑马梁_路边身影",
+                      "text": "过来嘛，挨近点……我跟你说句话。",
+                      "duration": 3200
                     }
                   },
                   {
                     "type": "waitMs",
                     "params": {
-                      "durationMs": 260
+                      "durationMs": 2000
                     }
                   },
                   {
-                    "type": "runActionsIf",
+                    "type": "showSpeechBubble",
                     "params": {
-                      "condition": {
-                        "heldProp": "player",
-                        "burning": true
-                      },
-                      "actions": [
-                        {
-                          "type": "setPropState",
-                          "params": {
-                            "target": "player",
-                            "socket": "right_hand",
-                            "state": "out",
-                            "fadeMs": 120
-                          }
-                        }
-                      ]
+                      "target": "player",
+                      "text": "……哪个在喊？",
+                      "duration": 2200
+                    }
+                  },
+                  {
+                    "type": "waitMs",
+                    "params": {
+                      "durationMs": 1600
                     }
                   },
                   {
                     "type": "emitNarrativeSignal",
                     "params": {
-                      "signal": "跑马梁_阵风吹灭",
+                      "signal": "跑马梁_有人喊过",
                       "sourceType": "state",
                       "sourceId": "wrapper_跑马梁_风火引路"
                     }
@@ -1374,11 +1522,19 @@
                 "label": "点火教学",
                 "meta": {
                   "editor": {
-                    "x": 585,
-                    "y": 138
+                    "x": 800,
+                    "y": 380
                   }
                 },
+                "description": "三把火冒出来（跟脚那位开始耗阳气）→ 说明卡：火灭了会出怪事 → 说明卡：怎么点火。期间锁底 60 不死。",
                 "onEnterActions": [
+                  {
+                    "type": "setThreeFiresVisible",
+                    "params": {
+                      "visible": true,
+                      "style": "flare"
+                    }
+                  },
                   {
                     "type": "lockHealth",
                     "params": {
@@ -1390,7 +1546,13 @@
                   {
                     "type": "waitMs",
                     "params": {
-                      "durationMs": 800
+                      "durationMs": 1200
+                    }
+                  },
+                  {
+                    "type": "showSystemNote",
+                    "params": {
+                      "noteId": "torch_out_omen"
                     }
                   },
                   {
@@ -1403,6 +1565,13 @@
                     "type": "unlockHealth",
                     "params": {
                       "id": "ridge_relight_lesson"
+                    }
+                  },
+                  {
+                    "type": "setThreeFiresVisible",
+                    "params": {
+                      "visible": false,
+                      "style": "fade"
                     }
                   },
                   {
@@ -1421,7 +1590,7 @@
                 "meta": {
                   "editor": {
                     "x": 642,
-                    "y": 351
+                    "y": 520
                   }
                 },
                 "onEnterActions": [
@@ -1432,46 +1601,26 @@
                       "label": "跑马梁·风口"
                     }
                   }
-                ]
-              },
-              "引路": {
-                "id": "引路",
-                "label": "引路",
-                "meta": {
-                  "editor": {
-                    "x": 380,
-                    "y": 388
-                  }
-                },
-                "onEnterActions": [
-                  {
-                    "type": "startDialogueGraph",
-                    "params": {
-                      "graphId": "主线_初上跑马梁"
-                    }
-                  }
-                ]
-              },
-              "寻香": {
-                "id": "寻香",
-                "label": "寻香",
-                "meta": {
-                  "editor": {
-                    "x": 128,
-                    "y": 335
-                  }
-                }
+                ],
+                "description": "教完了：点火（普通阴间东西怕火，跟脚声停、火隐下去）或者不点冒险往前走 / 去搭理路边身影。沿路往上走到半梁闻到香火味。"
               },
               "闻到香火": {
                 "id": "闻到香火",
                 "label": "闻到香火",
                 "meta": {
                   "editor": {
-                    "x": -110,
-                    "y": 243
+                    "x": 300,
+                    "y": 520
                   }
                 },
                 "onEnterActions": [
+                  {
+                    "type": "setFollowerFootsteps",
+                    "params": {
+                      "enabled": false,
+                      "id": "ridge_follower"
+                    }
+                  },
                   {
                     "type": "setSmell",
                     "params": {
@@ -1489,8 +1638,12 @@
                   {
                     "type": "setSmellSource",
                     "params": {
-                      "x": 382.2,
-                      "y": 762.6,
+                      "x": 1301.5,
+                      "y": 288.4,
+                      "at": {
+                        "kind": "entity",
+                        "id": "T_到崖墓"
+                      },
                       "scene": "跑马梁"
                     }
                   },
@@ -1515,6 +1668,28 @@
                       "label": "跑马梁·纸钱堆"
                     }
                   }
+                ],
+                "description": "走到半梁：闻到香火味，气缕指向和尚坡入口（T_到崖墓），顺着烟走到跟前入口才开。跟脚声在这里正式收掉。"
+              },
+              "下梁": {
+                "id": "下梁",
+                "label": "下梁",
+                "meta": {
+                  "editor": {
+                    "x": -110,
+                    "y": 420
+                  }
+                },
+                "description": "顺香火味进了和尚坡、到崖墓入口：香火味与气味源撤掉（气味源只在跑马梁生效，味却会一直带着走）。",
+                "onEnterActions": [
+                  {
+                    "type": "clearSmell",
+                    "params": {}
+                  },
+                  {
+                    "type": "clearSmellSource",
+                    "params": {}
+                  }
                 ]
               }
             },
@@ -1532,9 +1707,9 @@
                 ]
               },
               {
-                "id": "initial_到_点火教学",
+                "id": "initial_到_往前走",
                 "from": "initial",
-                "to": "点火教学",
+                "to": "往前走",
                 "signal": "跑马梁_进场",
                 "conditions": [
                   {
@@ -1560,9 +1735,22 @@
                 ]
               },
               {
-                "id": "迎风_到_点火教学",
+                "id": "迎风_到_护好",
                 "from": "迎风",
-                "to": "点火教学",
+                "to": "护好",
+                "signal": "__draft__",
+                "trigger": "reactive",
+                "conditions": [
+                  {
+                    "heldProp": "player",
+                    "propState": "guarding"
+                  }
+                ]
+              },
+              {
+                "id": "迎风_到_往前走",
+                "from": "迎风",
+                "to": "往前走",
                 "signal": "__draft__",
                 "trigger": "reactive",
                 "conditions": [
@@ -1587,9 +1775,9 @@
                 ]
               },
               {
-                "id": "护火教学_到_点火教学",
+                "id": "护火教学_到_往前走",
                 "from": "护火教学",
-                "to": "点火教学",
+                "to": "往前走",
                 "signal": "__draft__",
                 "trigger": "reactive",
                 "conditions": [
@@ -1615,10 +1803,28 @@
                 "signal": "跑马梁_走进风口"
               },
               {
-                "id": "阵风_到_点火教学",
+                "id": "往前走_到_阵风",
+                "from": "往前走",
+                "to": "阵风",
+                "signal": "跑马梁_走进风口"
+              },
+              {
+                "id": "阵风_到_跟脚",
                 "from": "阵风",
+                "to": "跟脚",
+                "signal": "paomaliang_arrived"
+              },
+              {
+                "id": "跟脚_到_有人喊",
+                "from": "跟脚",
+                "to": "有人喊",
+                "signal": "跑马梁_走到喊声处"
+              },
+              {
+                "id": "有人喊_到_点火教学",
+                "from": "有人喊",
                 "to": "点火教学",
-                "signal": "跑马梁_阵风吹灭"
+                "signal": "跑马梁_有人喊过"
               },
               {
                 "id": "点火教学_到_点火选择",
@@ -1627,22 +1833,16 @@
                 "signal": "跑马梁_点火说明读完"
               },
               {
-                "id": "点火选择_到_引路",
+                "id": "点火选择_到_闻到香火",
                 "from": "点火选择",
-                "to": "引路",
-                "signal": "跑马梁_走进引路拍"
-              },
-              {
-                "id": "引路_到_寻香",
-                "from": "引路",
-                "to": "寻香",
-                "signal": "paomaliang_arrived"
-              },
-              {
-                "id": "寻香_到_闻到香火",
-                "from": "寻香",
                 "to": "闻到香火",
                 "signal": "跑马梁_靠近纸钱"
+              },
+              {
+                "id": "闻到香火_到_下梁",
+                "from": "闻到香火",
+                "to": "下梁",
+                "signal": "跑马梁_下梁"
               }
             ]
           },
@@ -1685,7 +1885,16 @@
                     "x": 0,
                     "y": 0
                   }
-                }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "setFollowerFootsteps",
+                    "params": {
+                      "enabled": false,
+                      "id": "ridge_follower"
+                    }
+                  }
+                ]
               }
             },
             "transitions": [
@@ -1694,6 +1903,131 @@
                 "from": "未交谈",
                 "to": "说完散去",
                 "signal": "跑马梁_身影交谈完"
+              }
+            ]
+          },
+          "meta": {
+            "emits": [],
+            "reads": [],
+            "commands": []
+          }
+        },
+        {
+          "id": "el_wrapper_崖墓入口_认路",
+          "kind": "wrapperGraph",
+          "label": "崖墓入口·首到认路",
+          "ownerType": "scene",
+          "ownerId": "崖墓入口",
+          "x": 2150,
+          "y": -300,
+          "graph": {
+            "id": "wrapper_崖墓入口_认路",
+            "ownerType": "scene",
+            "ownerId": "崖墓入口",
+            "label": "崖墓入口·首到认路",
+            "initialState": "未去牛头凼",
+            "states": {
+              "未去牛头凼": {
+                "id": "未去牛头凼",
+                "label": "未去牛头凼",
+                "description": "刚下跑马梁到崖墓入口。栈道口只出第一视角图、关二狗嘀咕一句，不给「前进」；牛头凼口正常给「翻上去」。",
+                "meta": {
+                  "editor": {
+                    "x": 0,
+                    "y": 0
+                  }
+                }
+              },
+              "牛头凼远眺": {
+                "id": "牛头凼远眺",
+                "label": "牛头凼远眺",
+                "description": "第一次翻进牛头凼：一阵狂风卷过来把火把吹灭（场景风本来就大到没升级的火把在这里怎么都点不住），三把火冒出来快掉（牛头阴气），随后放远眺叠图 + 关二狗认路（期间锁底不死）。",
+                "meta": {
+                  "editor": {
+                    "x": 300,
+                    "y": 0
+                  }
+                },
+                "onEnterActions": [
+                  {
+                    "type": "sceneWindGust",
+                    "params": {
+                      "speedMultiplier": 1.6,
+                      "durationMs": 3200,
+                      "attackMs": 150,
+                      "releaseMs": 1400
+                    }
+                  },
+                  {
+                    "type": "playSfx",
+                    "params": {
+                      "id": "sfx_wind_gust"
+                    }
+                  },
+                  {
+                    "type": "waitMs",
+                    "params": {
+                      "durationMs": 500
+                    }
+                  },
+                  {
+                    "type": "runActionsIf",
+                    "params": {
+                      "condition": {
+                        "heldProp": "player",
+                        "burning": true
+                      },
+                      "actions": [
+                        {
+                          "type": "setPropState",
+                          "params": {
+                            "target": "player",
+                            "socket": "right_hand",
+                            "state": "out",
+                            "fadeMs": 120
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "type": "waitMs",
+                    "params": {
+                      "durationMs": 500
+                    }
+                  },
+                  {
+                    "type": "startDialogueGraph",
+                    "params": {
+                      "graphId": "主线_牛头凼_远眺"
+                    }
+                  }
+                ]
+              },
+              "认得路": {
+                "id": "认得路",
+                "label": "认得路",
+                "description": "看过远方、晓得往栈道走。之后栈道口出图就给「前进」；牛头凼不再放剧情，但风照样大：没升级的火把进去照样被吹灭，三把火照样掉。",
+                "meta": {
+                  "editor": {
+                    "x": 600,
+                    "y": 0
+                  }
+                }
+              }
+            },
+            "transitions": [
+              {
+                "id": "t_进牛头凼",
+                "from": "未去牛头凼",
+                "to": "牛头凼远眺",
+                "signal": "牛头凼_进场"
+              },
+              {
+                "id": "t_认得路",
+                "from": "牛头凼远眺",
+                "to": "认得路",
+                "signal": "牛头凼_远眺看完"
               }
             ]
           },
@@ -7058,7 +7392,7 @@
               },
               "教学中": {
                 "id": "教学中",
-                "label": "怪人靠近·真实损耗与说明卡",
+                "label": "怪人靠近·看见人·三把火与说明卡",
                 "onEnterActions": [
                   {
                     "type": "lockHealth",
@@ -7104,6 +7438,28 @@
                       "noteId": "three_fires"
                     }
                   },
+                  {
+                    "type": "emitNarrativeSignal",
+                    "params": {
+                      "signal": "路遇私铸钱_火亮了",
+                      "sourceType": "state",
+                      "sourceId": "wrapper_序章_路遇私铸钱"
+                    }
+                  }
+                ],
+                "meta": {
+                  "editor": {
+                    "x": 130,
+                    "y": 150
+                  }
+                },
+                "description": "过场先演到镜头摇过去看见怪人，再出三把火（debut）和说明卡。这一格里怪人的阴气还不耗火——威胁只认下一格，免得人还没看见火就先淡出来。"
+              },
+              "怪人近身": {
+                "id": "怪人近身",
+                "label": "怪人近身·真实损耗",
+                "description": "说明卡看完才进这里：npc_路遇_怪人 的 coin_stranger 威胁只在这一格生效，后半段过场里三把火被他真耗下去；演完怪人走掉、钱回到脚边。",
+                "onEnterActions": [
                   {
                     "type": "startCutscene",
                     "params": {
@@ -7177,8 +7533,8 @@
                 ],
                 "meta": {
                   "editor": {
-                    "x": 130,
-                    "y": 150
+                    "x": 215,
+                    "y": 290
                   }
                 }
               }
@@ -7197,8 +7553,14 @@
                 "signal": "路遇私铸钱_开始"
               },
               {
-                "id": "t_教学结束",
+                "id": "t_火亮了",
                 "from": "教学中",
+                "to": "怪人近身",
+                "signal": "路遇私铸钱_火亮了"
+              },
+              {
+                "id": "t_教学结束",
+                "from": "怪人近身",
                 "to": "钱回来了",
                 "signal": "路遇私铸钱_完结"
               }
@@ -7726,44 +8088,74 @@
     {
       "id": "nanmen_road_end",
       "label": "夜出南门·小路走到南头",
-      "notes": "梦_醒来土路（南门外小路）南头 z_南门小路_南头 进区发射，推 scenario_夜出南门 到「望山」：解锁地图跑马梁并弹地图。"
+      "notes": "梦_醒来土路（南门外小路）南头 z_南门小路_南头 每回进区都发射（主图还在 state_8 这个区就一直开着）：手上火把燃着就推 scenario_夜出南门 到「望山」（弹地图），没燃着先进「点火」，点着了才到「望山」。"
+    },
+    {
+      "id": "nanmen_road_left",
+      "label": "夜出南门·走出小路南头",
+      "notes": "z_南门小路_南头 出区发射：scenario_夜出南门 从「望山」「点火」退回「还没走到小路南头」，再走拢南头重新验火把、重新弹地图。地图传送切场景时也会出区——无妨，跑马梁_进场 从这两处都收得到。"
     },
     {
       "id": "paomaliang_arrived",
       "label": "初上跑马梁·那一拍演完",
-      "notes": "跑马梁进场（scenario_夜出南门=望山 时）起对话 主线_初上跑马梁，演完发射，推 scenario_夜出南门 到「到跑马梁」，主图 state_8→state_9。"
+      "notes": "跑马梁风口过场（主线_初上跑马梁：迷路 → 风灭火 → 纸钱）演完发射；推 wrapper_跑马梁_风火引路 阵风→跟脚。（夜出南门那一拍改由 跑马梁_进场 收——真传到了才算。）"
     },
     {
       "id": "路遇私铸钱_开始",
       "label": "路遇私铸钱·走进那一拍"
     },
     {
+      "id": "路遇私铸钱_火亮了",
+      "label": "路遇私铸钱·看见怪人、三把火亮了",
+      "notes": "「教学中」演完看见怪人 + 三把火出场 + 说明卡后由本图自己发射，推到「怪人近身」：怪人的阴气从这一刻才开始耗火。"
+    },
+    {
       "id": "跑马梁_进场",
-      "label": "跑马梁_进场"
+      "label": "跑马梁_进场",
+      "notes": "跑马梁 onEnter、风火引路还在 initial 时发射（= 头一回真的到了跑马梁）：推风火引路进迎风 / 往前走；同时推 scenario_夜出南门 到「到跑马梁」，主图 state_8→state_9。"
     },
     {
       "id": "跑马梁_走进风口",
-      "label": "跑马梁_走进风口"
-    },
-    {
-      "id": "跑马梁_阵风吹灭",
-      "label": "跑马梁_阵风吹灭"
+      "label": "跑马梁_走进风口",
+      "notes": "护火课之后往前走一段、跨过 Zone_跑马梁_阵风 那道线：进风口过场。"
     },
     {
       "id": "跑马梁_点火说明读完",
       "label": "跑马梁_点火说明读完"
     },
     {
-      "id": "跑马梁_走进引路拍",
-      "label": "跑马梁_走进引路拍"
+      "id": "跑马梁_走到喊声处",
+      "label": "跑马梁_走到喊声处",
+      "notes": "风口过场后跟脚声开着、又往前走了几步（Zone_跑马梁_喊声）：路边身影开口喊他。"
+    },
+    {
+      "id": "跑马梁_有人喊过",
+      "label": "跑马梁_有人喊过",
+      "notes": "路边身影喊完、关二狗回过一句：进点火教学（三把火亮起）。"
+    },
+    {
+      "id": "跑马梁_下梁",
+      "label": "跑马梁_下梁",
+      "notes": "顺香火味进和尚坡、到了崖墓入口（崖墓入口 onEnter 在「闻到香火」时发）：撤掉香火味与气味源。"
     },
     {
       "id": "跑马梁_靠近纸钱",
-      "label": "跑马梁_靠近纸钱"
+      "label": "跑马梁_靠近纸钱",
+      "notes": "教完点火之后沿路走到半梁（Zone_跑马梁_香火）：闻到香火味、气缕指向和尚坡入口。"
     },
     {
       "id": "跑马梁_身影交谈完",
       "label": "跑马梁_身影交谈完"
+    },
+    {
+      "id": "牛头凼_进场",
+      "label": "牛头凼_进场",
+      "notes": "牛头凼进场时（wrapper_崖墓入口_认路=未去牛头凼）场景 onEnter 发射，推到「牛头凼远眺」起远眺对话。"
+    },
+    {
+      "id": "牛头凼_远眺看完",
+      "label": "牛头凼_远眺看完",
+      "notes": "主线_牛头凼_远眺 演完发射，推 wrapper_崖墓入口_认路 到「认得路」：栈道口放行「前进」。"
     }
   ]
 }

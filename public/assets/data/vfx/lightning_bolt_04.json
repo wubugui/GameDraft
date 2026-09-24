@@ -1,6 +1,6 @@
 {
   "id": "lightning_bolt_04",
-  "label": "天雷 04：介质击穿模型离线烘成贴图（1 个 draw call）+ 云内闪 / 溅射 / 焦烟",
+  "label": "天雷 04：介质击穿模型离线烘成主通道 / 枝两张贴图 + 云内闪 / 溅射 / 焦烟",
   "emitters": [
     {
       "id": "bolt",
@@ -24,24 +24,939 @@
         0
       ],
       "appearance": {
-        "image": "/resources/runtime/images/vfx/lightning_bolt_04.png",
-        "sizeWu": 1275.9,
+        "sizeWu": 1,
         "alphaOverLife": [
           [
             0,
             1.0
           ],
           [
-            0.08,
+            0.075,
+            1.0
+          ],
+          [
+            0.09,
+            0.4
+          ],
+          [
+            0.108,
+            0.4
+          ],
+          [
+            0.12,
+            1.0
+          ],
+          [
+            0.15,
+            0.95
+          ],
+          [
+            0.2,
+            0.45
+          ],
+          [
+            0.225,
+            0.45
+          ],
+          [
+            0.237,
             1.0
           ],
           [
             0.3,
+            0.9
+          ],
+          [
+            0.45,
+            0.75
+          ],
+          [
+            0.65,
+            0.45
+          ],
+          [
+            0.87,
+            0.15
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          0.98,
+          1
+        ],
+        "tintOverLife": [
+          [
+            0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          [
+            0.55,
+            1.0,
+            1.0,
+            1.0
+          ],
+          [
+            0.8,
+            0.86,
+            0.8,
+            1.0
+          ],
+          [
+            1,
+            0.72,
+            0.62,
+            1.0
+          ]
+        ],
+        "blend": "add",
+        "lit": false,
+        "bolt": {
+          "bolt": "sky",
+          "part": "all",
+          "coreWu": 1.5,
+          "coreMinPx": 4.5,
+          "glowWu": 4,
+          "glowMinPx": 10,
+          "haloWu": 20,
+          "haloMinPx": 34,
+          "coreGain": 3.5,
+          "glowGain": 1.0,
+          "haloGain": 0.12,
+          "coreColor": [
+            1,
+            1,
+            1
+          ],
+          "glowColor": [
+            0.72,
+            0.78,
+            1.0
+          ]
+        }
+      },
+      "spawn": {
+        "max": 1,
+        "burst": 1,
+        "shape": {
+          "kind": "point"
+        },
+        "speed": [
+          0,
+          0
+        ]
+      },
+      "motion": {},
+      "life": {
+        "seconds": [
+          0.46,
+          0.46
+        ]
+      }
+    },
+    {
+      "id": "bolt_stroke",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "appearance": {
+        "sizeWu": 1,
+        "alphaOverLife": [
+          [
+            0,
+            1.0
+          ],
+          [
+            0.075,
+            1.0
+          ],
+          [
+            0.082,
+            0.0
+          ],
+          [
+            0.113,
+            0.0
+          ],
+          [
+            0.12,
+            1.0
+          ],
+          [
+            0.15,
+            0.9
+          ],
+          [
+            0.16,
+            0.0
+          ],
+          [
+            0.23,
+            0.0
+          ],
+          [
+            0.237,
+            1.0
+          ],
+          [
+            0.28,
+            0.85
+          ],
+          [
+            0.33,
+            0.0
+          ],
+          [
+            1,
+            0.0
+          ]
+        ],
+        "tint": [
+          1,
+          0.98,
+          1
+        ],
+        "tintOverLife": [
+          [
+            0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          [
+            0.55,
+            1.0,
+            1.0,
+            1.0
+          ],
+          [
+            0.8,
+            0.86,
+            0.8,
+            1.0
+          ],
+          [
+            1,
+            0.72,
+            0.62,
+            1.0
+          ]
+        ],
+        "blend": "add",
+        "lit": false,
+        "bolt": {
+          "bolt": "sky",
+          "part": "main",
+          "coreWu": 1.5,
+          "coreMinPx": 5,
+          "glowWu": 4,
+          "glowMinPx": 9,
+          "coreGain": 1.6,
+          "glowGain": 0.3,
+          "coreColor": [
+            1,
+            1,
+            1
+          ],
+          "glowColor": [
+            0.72,
+            0.78,
+            1.0
+          ]
+        }
+      },
+      "spawn": {
+        "max": 1,
+        "burst": 1,
+        "shape": {
+          "kind": "point"
+        },
+        "speed": [
+          0,
+          0
+        ]
+      },
+      "motion": {},
+      "life": {
+        "seconds": [
+          0.46,
+          0.46
+        ]
+      }
+    },
+    {
+      "id": "ground_arcs",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "appearance": {
+        "sizeWu": 1,
+        "alphaOverLife": [
+          [
+            0,
+            1.0
+          ],
+          [
+            0.075,
+            1.0
+          ],
+          [
+            0.09,
+            0.4
+          ],
+          [
+            0.108,
+            0.4
+          ],
+          [
+            0.12,
+            1.0
+          ],
+          [
+            0.15,
+            0.95
+          ],
+          [
+            0.2,
+            0.45
+          ],
+          [
+            0.225,
+            0.45
+          ],
+          [
+            0.237,
+            1.0
+          ],
+          [
+            0.3,
+            0.9
+          ],
+          [
+            0.45,
+            0.75
+          ],
+          [
+            0.65,
+            0.45
+          ],
+          [
+            0.87,
+            0.15
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "blend": "add",
+        "lit": false,
+        "bolt": {
+          "bolt": "ground",
+          "part": "all",
+          "coreWu": 0.8,
+          "coreMinPx": 2.0,
+          "glowWu": 3,
+          "glowMinPx": 6,
+          "coreGain": 2.2,
+          "glowGain": 0.7,
+          "coreColor": [
+            1,
+            1,
+            1
+          ],
+          "glowColor": [
+            0.72,
+            0.8,
+            1.0
+          ]
+        }
+      },
+      "spawn": {
+        "max": 1,
+        "burst": 1,
+        "shape": {
+          "kind": "point"
+        },
+        "speed": [
+          0,
+          0
+        ]
+      },
+      "motion": {},
+      "life": {
+        "seconds": [
+          0.46,
+          0.46
+        ]
+      },
+      "onSurface": [
+        "ground"
+      ]
+    },
+    {
+      "id": "water_arcs",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        0,
+        0
+      ],
+      "appearance": {
+        "sizeWu": 1,
+        "alphaOverLife": [
+          [
+            0,
+            1.0
+          ],
+          [
+            0.1,
+            0.9
+          ],
+          [
+            0.6,
+            0.8
+          ],
+          [
+            1,
+            0.0
+          ]
+        ],
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "tintOverLife": [
+          [
+            0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          [
+            0.5,
+            0.85,
+            0.9,
+            1.0
+          ],
+          [
+            1,
+            0.55,
+            0.62,
+            1.0
+          ]
+        ],
+        "blend": "add",
+        "lit": false,
+        "bolt": {
+          "bolt": "water",
+          "part": "all",
+          "coreWu": 0.8,
+          "coreMinPx": 2.0,
+          "glowWu": 3,
+          "glowMinPx": 6,
+          "coreGain": 2.2,
+          "glowGain": 0.7,
+          "coreColor": [
+            1,
+            1,
+            1
+          ],
+          "glowColor": [
+            0.72,
+            0.8,
+            1.0
+          ]
+        }
+      },
+      "spawn": {
+        "max": 1,
+        "burst": 1,
+        "shape": {
+          "kind": "point"
+        },
+        "speed": [
+          0,
+          0
+        ]
+      },
+      "motion": {},
+      "life": {
+        "seconds": [
+          0.6,
+          0.6
+        ]
+      },
+      "onSurface": [
+        "water"
+      ]
+    },
+    {
+      "id": "dirt_spray",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        6,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/smoke_puff.png",
+        "sizeWu": 26,
+        "sizeJitter": [
+          0.7,
+          1.4
+        ],
+        "sizeOverLife": [
+          [
+            0,
             0.5
           ],
           [
-            0.62,
-            0.22
+            0.3,
+            1.2
+          ],
+          [
+            1,
+            2.2
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0.0
+          ],
+          [
+            0.12,
+            0.45
+          ],
+          [
+            0.5,
+            0.25
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.2,
+          0.17,
+          0.14
+        ],
+        "lit": true,
+        "softEdgeWu": 12,
+        "spin": {
+          "rate": [
+            -40,
+            40
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 18,
+        "burst": 16,
+        "shape": {
+          "kind": "disc",
+          "radius": 12
+        },
+        "speed": [
+          180,
+          480
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 62
+      },
+      "motion": {
+        "gravity": 380,
+        "drag": 2.6
+      },
+      "life": {
+        "seconds": [
+          0.55,
+          0.95
+        ]
+      },
+      "onSurface": [
+        "ground"
+      ]
+    },
+    {
+      "id": "debris",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        6,
+        0
+      ],
+      "appearance": {
+        "animFile": "/resources/runtime/images/vfx/debris_chips/anim.json",
+        "frameRate": 0,
+        "sizeWu": 18,
+        "sizeJitter": [
+          0.5,
+          1.8
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            1
+          ],
+          [
+            0.85,
+            1
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          1,
+          1,
+          1
+        ],
+        "lit": true,
+        "lightGain": 1.3,
+        "spin": {
+          "rate": [
+            -600,
+            600
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 44,
+        "burst": 40,
+        "shape": {
+          "kind": "disc",
+          "radius": 10
+        },
+        "speed": [
+          260,
+          680
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 70
+      },
+      "motion": {
+        "gravity": 980,
+        "drag": 0.25
+      },
+      "life": {
+        "seconds": [
+          1.0,
+          1.8
+        ]
+      },
+      "collision": {
+        "ground": "bounce",
+        "restitution": 0.25,
+        "friction": 0.5,
+        "radiusWu": 3
+      },
+      "onSurface": [
+        "ground"
+      ]
+    },
+    {
+      "id": "grit",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        4,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/dust.png",
+        "sizeWu": 4.5,
+        "sizeJitter": [
+          0.5,
+          1.5
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            1
+          ],
+          [
+            0.7,
+            0.8
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.3,
+          0.29,
+          0.28
+        ],
+        "lit": true,
+        "lightGain": 1.4
+      },
+      "spawn": {
+        "max": 110,
+        "burst": 96,
+        "shape": {
+          "kind": "disc",
+          "radius": 12
+        },
+        "speed": [
+          260,
+          820
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 80
+      },
+      "motion": {
+        "gravity": 900,
+        "drag": 0.9
+      },
+      "life": {
+        "seconds": [
+          0.45,
+          1.0
+        ]
+      },
+      "collision": {
+        "ground": "kill",
+        "radiusWu": 1
+      },
+      "onSurface": [
+        "ground"
+      ]
+    },
+    {
+      "id": "impact_core",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        16,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/flame_glow.png",
+        "sizeWu": 130,
+        "sizeOverLife": [
+          [
+            0,
+            0.35
+          ],
+          [
+            0.18,
+            1
+          ],
+          [
+            1,
+            1.4
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            1.0
+          ],
+          [
+            0.25,
+            0.45
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.85,
+          0.92,
+          1.0
+        ],
+        "blend": "add",
+        "lit": false
+      },
+      "spawn": {
+        "max": 1,
+        "burst": 1,
+        "shape": {
+          "kind": "point"
+        },
+        "speed": [
+          0,
+          0
+        ]
+      },
+      "motion": {},
+      "life": {
+        "seconds": [
+          0.3,
+          0.3
+        ]
+      }
+    },
+    {
+      "id": "impact_hot",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        8,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/flame_glow.png",
+        "sizeWu": 48,
+        "sizeOverLife": [
+          [
+            0,
+            1
+          ],
+          [
+            1,
+            1.2
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            1.0
+          ],
+          [
+            0.4,
+            0.8
           ],
           [
             1,
@@ -70,92 +985,8 @@
       "motion": {},
       "life": {
         "seconds": [
-          0.42,
-          0.42
-        ]
-      }
-    },
-    {
-      "id": "cloud_flash",
-      "simulation": {
-        "solver": "particle",
-        "spawnPlacement": "shape",
-        "initialVelocity": "configured",
-        "influences": {
-          "sceneWind": false,
-          "wind": false,
-          "airflow": false,
-          "stimulus": false
-        },
-        "recycle": {
-          "mode": "none"
-        }
-      },
-      "offset": [
-        0,
-        1450,
-        0
-      ],
-      "appearance": {
-        "image": "/resources/runtime/images/vfx/flame_glow.png",
-        "sizeWu": 420,
-        "sizeJitter": [
-          0.7,
-          1.4
-        ],
-        "sizeOverLife": [
-          [
-            0,
-            0.8
-          ],
-          [
-            1,
-            1.35
-          ]
-        ],
-        "alphaOverLife": [
-          [
-            0,
-            0.4
-          ],
-          [
-            0.35,
-            0.22
-          ],
-          [
-            1,
-            0
-          ]
-        ],
-        "tint": [
-          0.55,
-          0.7,
-          1.0
-        ],
-        "blend": "add",
-        "lit": false
-      },
-      "spawn": {
-        "max": 5,
-        "burst": 4,
-        "shape": {
-          "kind": "box",
-          "size": [
-            900,
-            220,
-            400
-          ]
-        },
-        "speed": [
-          0,
-          6
-        ]
-      },
-      "motion": {},
-      "life": {
-        "seconds": [
-          0.22,
-          0.5
+          0.2,
+          0.2
         ]
       }
     },
@@ -177,7 +1008,7 @@
       },
       "appearance": {
         "image": "/resources/runtime/images/vfx/spark.png",
-        "sizeWu": 4,
+        "sizeWu": 3,
         "sizeJitter": [
           0.6,
           1.5
@@ -220,7 +1051,7 @@
       },
       "spawn": {
         "max": 140,
-        "burst": 110,
+        "burst": 40,
         "shape": {
           "kind": "disc",
           "radius": 10
@@ -271,7 +1102,7 @@
       ],
       "appearance": {
         "image": "/resources/runtime/images/vfx/smoke_puff.png",
-        "sizeWu": 26,
+        "sizeWu": 30,
         "sizeJitter": [
           0.8,
           1.3
@@ -293,7 +1124,7 @@
           ],
           [
             0.2,
-            0.35
+            0.18
           ],
           [
             1,
@@ -306,6 +1137,7 @@
           0.24
         ],
         "lit": true,
+        "emissive": 0.18,
         "spin": {
           "rate": [
             -25,
@@ -316,7 +1148,7 @@
       },
       "spawn": {
         "max": 24,
-        "burst": 14,
+        "burst": 6,
         "shape": {
           "kind": "disc",
           "radius": 14
@@ -344,10 +1176,545 @@
       },
       "life": {
         "seconds": [
-          1.1,
-          2.2
+          1.6,
+          2.7
+        ]
+      },
+      "onSurface": [
+        "ground"
+      ]
+    },
+    {
+      "id": "impact_dust",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        12,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/storm_mist_20260920.png",
+        "sizeWu": 70,
+        "sizeJitter": [
+          0.7,
+          1.35
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.35
+          ],
+          [
+            0.18,
+            1
+          ],
+          [
+            1,
+            1.9
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.1,
+            0.16
+          ],
+          [
+            0.4,
+            0.1
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.5,
+          0.52,
+          0.55
+        ],
+        "lit": true,
+        "emissive": 0.2,
+        "softEdgeWu": 25
+      },
+      "spawn": {
+        "max": 10,
+        "burst": 4,
+        "shape": {
+          "kind": "disc",
+          "radius": 24
+        },
+        "speed": [
+          120,
+          230
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 84
+      },
+      "motion": {
+        "gravity": 240,
+        "drag": 3.5,
+        "maxSpeed": 280
+      },
+      "life": {
+        "seconds": [
+          0.65,
+          1.15
+        ]
+      },
+      "collision": {
+        "ground": "slide",
+        "friction": 0.7,
+        "radiusWu": 4
+      },
+      "onSurface": [
+        "ground"
+      ]
+    },
+    {
+      "id": "dust_cloud",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        10,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/smoke_puff.png",
+        "sizeWu": 95,
+        "sizeJitter": [
+          0.7,
+          1.35
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.35
+          ],
+          [
+            0.25,
+            1
+          ],
+          [
+            1,
+            1.9
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.07,
+            0.45
+          ],
+          [
+            0.5,
+            0.22
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.55,
+          0.56,
+          0.6
+        ],
+        "lit": true,
+        "emissive": 0.08,
+        "softEdgeWu": 30,
+        "spin": {
+          "rate": [
+            -20,
+            20
+          ],
+          "randomPhase": true
+        }
+      },
+      "spawn": {
+        "max": 14,
+        "burst": 11,
+        "shape": {
+          "kind": "disc",
+          "radius": 30
+        },
+        "speed": [
+          70,
+          240
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 82
+      },
+      "motion": {
+        "drag": 2.4,
+        "buoyancy": 35,
+        "turbulence": {
+          "strength": 40,
+          "scale": 60,
+          "speed": 0.6
+        }
+      },
+      "life": {
+        "seconds": [
+          1.6,
+          2.8
+        ]
+      },
+      "onSurface": [
+        "ground"
+      ]
+    },
+    {
+      "id": "water_splash",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": false,
+          "wind": false,
+          "airflow": false,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        4,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/drop.png",
+        "sizeWu": 6,
+        "sizeJitter": [
+          0.5,
+          1.6
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0.95
+          ],
+          [
+            0.7,
+            0.7
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.85,
+          0.9,
+          1.0
+        ],
+        "lit": true,
+        "emissive": 0.5,
+        "stretchByVelocity": 0.035
+      },
+      "spawn": {
+        "max": 70,
+        "burst": 56,
+        "shape": {
+          "kind": "disc",
+          "radius": 18
+        },
+        "speed": [
+          220,
+          600
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 50
+      },
+      "motion": {
+        "gravity": 900,
+        "drag": 0.5
+      },
+      "life": {
+        "seconds": [
+          0.5,
+          1.0
+        ]
+      },
+      "collision": {
+        "ground": "kill",
+        "radiusWu": 1
+      },
+      "onSurface": [
+        "water"
+      ]
+    },
+    {
+      "id": "water_mist",
+      "simulation": {
+        "solver": "particle",
+        "spawnPlacement": "shape",
+        "initialVelocity": "configured",
+        "influences": {
+          "sceneWind": true,
+          "wind": true,
+          "airflow": true,
+          "stimulus": false
+        },
+        "recycle": {
+          "mode": "none"
+        }
+      },
+      "offset": [
+        0,
+        8,
+        0
+      ],
+      "appearance": {
+        "image": "/resources/runtime/images/vfx/storm_mist_20260920.png",
+        "sizeWu": 110,
+        "sizeJitter": [
+          0.8,
+          1.3
+        ],
+        "sizeOverLife": [
+          [
+            0,
+            0.4
+          ],
+          [
+            0.3,
+            1
+          ],
+          [
+            1,
+            1.7
+          ]
+        ],
+        "alphaOverLife": [
+          [
+            0,
+            0
+          ],
+          [
+            0.08,
+            0.3
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "tint": [
+          0.75,
+          0.8,
+          0.88
+        ],
+        "lit": true,
+        "emissive": 0.2,
+        "softEdgeWu": 30
+      },
+      "spawn": {
+        "max": 8,
+        "burst": 6,
+        "shape": {
+          "kind": "disc",
+          "radius": 30
+        },
+        "speed": [
+          40,
+          140
+        ],
+        "direction": [
+          0,
+          1,
+          0
+        ],
+        "spread": 70
+      },
+      "motion": {
+        "drag": 2.0,
+        "buoyancy": 25
+      },
+      "life": {
+        "seconds": [
+          1.2,
+          2.0
+        ]
+      },
+      "onSurface": [
+        "water"
+      ]
+    }
+  ],
+  "bolts": [
+    {
+      "id": "sky",
+      "kind": "sky",
+      "seed": 310,
+      "sky": {
+        "tiltDeg": [
+          0,
+          10
+        ],
+        "bendDeg": 10,
+        "bendLenWu": 700,
+        "stepWu": [
+          160,
+          320
+        ],
+        "kinkDeg": [
+          4,
+          12
+        ],
+        "zigzag": 0.6,
+        "roughness": 0.3,
+        "detailWu": 3,
+        "branchPerKWu": 28,
+        "branchFromWu": 150,
+        "branchMinWu": 15,
+        "branchMaxWu": 1600,
+        "branchAngleDeg": [
+          25,
+          70
+        ],
+        "branchIntensity": [
+          0.3,
+          0.65
+        ],
+        "branchWidth": 0.4,
+        "forkPerKWu": 10,
+        "forkDepth": 2,
+        "lowBoostGain": 1.15,
+        "lowBoostWu": 150,
+        "cloudWu": 30000
+      },
+      "light": {
+        "kelvin": 11000,
+        "contact": {
+          "gain": 0.12,
+          "heightWu": 40,
+          "rangeWu": 4000
+        },
+        "channel": {
+          "gain": 1.0,
+          "heightWu": 2400,
+          "rangeWu": 5000
+        },
+        "sky": {
+          "gain": 0.004,
+          "elevationDeg": 65
+        }
+      },
+      "impact": {
+        "blast": {
+          "strengthWu": 1000,
+          "radiusWu": 600,
+          "seconds": 1.2
+        },
+        "igniteRadiusWu": 80
+      }
+    },
+    {
+      "id": "ground",
+      "kind": "surface",
+      "seed": 311,
+      "surface": {
+        "count": [
+          14,
+          22
+        ],
+        "lenWu": [
+          12,
+          85
+        ],
+        "kinkDeg": [
+          10,
+          35
+        ],
+        "roughness": 0.25,
+        "detailWu": 2,
+        "forkPerKWu": 20,
+        "intensity": [
+          0.3,
+          0.8
+        ]
+      }
+    },
+    {
+      "id": "water",
+      "kind": "surface",
+      "seed": 312,
+      "surface": {
+        "count": [
+          16,
+          26
+        ],
+        "lenWu": [
+          40,
+          180
+        ],
+        "kinkDeg": [
+          10,
+          30
+        ],
+        "roughness": 0.28,
+        "detailWu": 2,
+        "forkPerKWu": 18,
+        "intensity": [
+          0.4,
+          0.9
         ]
       }
     }
-  ]
+  ],
+  "generator": {
+    "kind": "lightning",
+    "style": "ref_bolt",
+    "seed": 310,
+    "group": "雷符天雷",
+    "built": "2906941ced74"
+  }
 }

@@ -16,7 +16,7 @@ verified_by:
   - tools/editor/tests/test_dirty_bucket_parity.py
   - tools/editor/tests/test_audio_config_external_resync.py
   - tools/editor/tests/test_lsp_overlay_parity.py
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -36,16 +36,10 @@ last_governed: 2026-09-03
    **新增数据域要同步的不止"登记 + save_all 分支 + mark_dirty 调用点"三处**——还有
    `ProjectModel._planned_write_paths`(外部改动检测与基线要认得这个文件,与 save_all if 链
    同步维护)与 `tools/editor/shared/lsp_client.py` 的 overlay 镜像表(漏了该桶的未保存内容
-   IDE 就看不见,见 [json_lang 工具链](json-lang-schema-tooling.md))。清单以这几处代码为准,
+   IDE 就看不见,见 [json_lang 工具链](json-lang-schema-tooling.md));新数据域若引用图片等资源,
+   打包收集(`tools/build/asset_manifest.py`)也要认得那些字段,否则发行包静默缺图。清单以这几处代码为准,
    接新桶前逐个对一遍。
 4. **测试打桩缝**:保存类测试拦截写盘用 `tools/editor/tests/save_test_utils.py` 的 `patch_staged_add`,不要再 patch `write_json`(staged 路径不经过它)。
-
-## 2026-09-16 新增的桶:`prop_effects`
-
-挂件效果块库 `public/assets/data/prop_effects.json`(火把养成,玩法清单 A3.7)自己一个脏桶:
-`project_model.py` 里 load / save 分支 + `_planned_write_paths` 分支 + `all_prop_effect_ids` / `prop_effect_tags` 等候选源;
-页面 `editors/prop_effects_editor.py`(写穿模型、无本地脏态,与气味 Profile 同范式)。
-打包侧 `tools/build/asset_manifest.py` 另外要收 `prop_presets.levels[*].image`——漏了它打出来的包里火把永远是没升级那张图。
 
 ## 已知坑
 

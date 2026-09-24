@@ -18,8 +18,8 @@ from __future__ import annotations
 import math
 from pathlib import Path, PurePosixPath
 
-from PySide6.QtCore import QRect
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QPainter, QPixmap
 
 from .entity_transform_math import (
     content_top_local_y_around_foot,
@@ -129,6 +129,40 @@ def crop_atlas_cell(
     if x + sw > pw or y + sh > ph:
         return None
     return atlas.copy(QRect(x, y, sw, sh))
+
+
+#: 与运行时 ``FOOT_OFFSET_MAX``（SpriteEntity.ts）同值：超过一半按数据写错夹住。
+FOOT_OFFSET_MAX = 0.5
+
+
+def state_foot_offset(anim_data: dict, state: str) -> float:
+    """状态的脚底偏移（``states[*].footOffset``，帧高比例）；缺省 / 非法 / ≤0 → 0，超上限夹住。
+
+    镜像运行时 ``footOffsetOfState``。
+    """
+    states = anim_data.get("states") if isinstance(anim_data, dict) else None
+    sd = states.get(state) if isinstance(states, dict) else None
+    v = _pos_num(sd.get("footOffset")) if isinstance(sd, dict) else None
+    return min(FOOT_OFFSET_MAX, v) if v else 0.0
+
+
+def lower_frame_to_foot(frame: QPixmap | None, foot_offset: float) -> QPixmap | None:
+    """把帧画往下挪 ``foot_offset × 帧高``（尺寸不变，顶上补透明）。
+
+    编辑器画布按「帧底 = 脚」摆帧；挪过之后摆出来就是运行时的样子（运行时挪的是画面锚点，
+    接地点不动）。挪出帧底的那一截按定义是空的（偏移量的就是最贴地那帧的留白）。
+    """
+    if frame is None or frame.isNull() or not (foot_offset > 0):
+        return frame
+    dy = int(round(foot_offset * frame.height()))
+    if dy <= 0:
+        return frame
+    out = QPixmap(frame.size())
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.drawPixmap(0, dy, frame)
+    p.end()
+    return out
 
 
 def reference_world_size(model) -> tuple[float, float]:
@@ -251,10 +285,12 @@ def content_box_local(
     *,
     atlas: QPixmap | None = None,
     depth_scale: float = 1.0,
+    foot_offset: float = 0.0,
 ) -> tuple[float, float, float] | None:
     """当前帧内容框（世界单位，不含实例 scale）→ ``(width, height, bottom_gap)``。
 
     镜像 ``SpriteEntity.getContentBoxLocal``（跳跃视觉抬升是纯运行时态，编辑器恒 0）。
+    ``foot_offset`` = 所在状态的脚底偏移：内容底边取 pad 与它的大者，再减去画面下挪的那一截。
     无 atlasFrames 等数据缺失 → None，调用方回落格子 quad。
     """
     cell = cell_pixel_size(anim_data, atlas)
@@ -273,7 +309,9 @@ def content_box_local(
     d = depth_scale if (isinstance(depth_scale, (int, float)) and math.isfinite(depth_scale) and depth_scale > 0) else 1.0
     scale_x = (world_w * d) / frame_w
     scale_y = (world_h * d) / frame_h
-    return (box[0] * scale_x, box[1] * scale_y, pad * scale_y)
+    off = foot_offset if (isinstance(foot_offset, (int, float)) and foot_offset > 0) else 0.0
+    gap = max(pad, off * frame_h) * scale_y - off * world_h * d
+    return (box[0] * scale_x, box[1] * scale_y, gap)
 
 
 def authored_state_anchor(anim_data: dict, state: str) -> float | None:
@@ -305,12 +343,15 @@ def auto_bubble_anchor_y(
     rot = math.radians(inst_rot_deg or 0.0)
 
     authored = authored_state_anchor(anim_data, state) if state else None
+    off = state_foot_offset(anim_data, state) if state else 0.0
     if authored is not None:
-        # 授权锚是轴上一个点（不是框），按实例 transform 直接变换即可
-        _, y = transform_local_vec(0.0, -authored * world_h * d, s, inst_rot_deg or 0.0)
+        # 授权锚是轴上一个点（不是框），按实例 transform 直接变换即可；
+        # 它从格底量起，画面按脚底偏移下挪过，所以离脚是 (authored - off) 格高
+        _, y = transform_local_vec(0.0, -(authored - off) * world_h * d, s, inst_rot_deg or 0.0)
         return y - HEAD_GAP
 
-    box = content_box_local(anim_data, slot, world_w, world_h, atlas=atlas, depth_scale=d)
+    box = content_box_local(
+        anim_data, slot, world_w, world_h, atlas=atlas, depth_scale=d, foot_offset=off)
     if box is not None:
         cw, ch, gap = box
         return content_top_local_y_around_foot(

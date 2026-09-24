@@ -96,7 +96,7 @@ describe('cutscene step disabled', () => {
     const { mgr } = makeManager();
     const setZoom = vi.fn();
     const snapTo = vi.fn();
-    (mgr as any).cameraAccessor = { setZoom, snapTo, getSceneBaseZoom: () => 1 };
+    (mgr as any).cameraAccessor = { setZoom, snapTo, getSceneBaseZoom: () => 1, isZoomOverridden: () => false, releaseZoomOverride: () => {} };
     const def: NewCutsceneDef = {
       id: 'c',
       steps: [

@@ -11,7 +11,7 @@ triggers:
   paths: ["src/systems/AudioManager.ts", "public/assets/data/audio_config.json"]
   topics: [音效, sfx, systemSfx, 系统音, 双响]
   tasks: [给功能加音效, 查某功能有没有音效, 改音频配置]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -40,6 +40,11 @@ last_governed: 2026-09-03
 
 - 表里有若干条带**条件跳过**(读档补发的事件、嵌套/链式接续的中间态、节流)。
   加新监听前先看邻居怎么写的:同一个事件在"真发生"与"恢复/中途"两种语境下都会来。
+- **节流收在消费端**:悬停 / 切换音统一在这张表那一处节流(多个发射端同帧双发、鼠标横扫连发都在这里治),
+  别在各 UI 组件里各写一套。
+- **代码引用、表里没有的键是合法的**(缺省静默;例如叠图出现 / 叠图混合 / 音量试听样本)。查"为什么没声"先看
+  `audio_config.systemSfx` 里有没有这个键,再怀疑代码。
+- 系统音走 `playSfx`,所以同样受过场捕获、演出闪避、sfx 通道音量约束。
 - 这类横切能力**靠 grep 功能模块必漏**。要确认到底响不响,真机上 hook 播放入口跑一遍最快
   (走[命令通道](../recipes/runtime-command-channel.md))。
 

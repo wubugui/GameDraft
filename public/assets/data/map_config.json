@@ -164,9 +164,26 @@
       "y": 573,
       "unlockConditions": [
         {
-          "narrative": "scenario_夜出南门",
-          "state": "望山",
-          "reached": true
+          "any": [
+            {
+              "all": [
+                {
+                  "narrative": "scenario_夜出南门",
+                  "state": "望山",
+                  "reached": true
+                },
+                {
+                  "heldProp": "player",
+                  "burning": true
+                }
+              ]
+            },
+            {
+              "narrative": "scenario_夜出南门",
+              "state": "到跑马梁",
+              "reached": true
+            }
+          ]
         }
       ]
     },

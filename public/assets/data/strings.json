@@ -42,6 +42,7 @@
     "slotDay": "第{day}天",
     "slotSub": "{date} · 游玩{minutes}分钟",
     "unknownScene": "未知",
+    "masterVolume": "总音量",
     "bgm": "背景音乐",
     "sfx": "音效",
     "ambient": "环境音",
@@ -54,7 +55,15 @@
     "smellDirToward": "烟指着东西",
     "smellDirAway": "烟背着东西",
     "saveFailed": "存档失败",
-    "loadFailed": "读档失败，进度未改变"
+    "loadFailed": "读档失败，进度未改变",
+    "slotSubNamed": "{scene} · {date} · 游玩{minutes}分钟",
+    "saveNameTitle": "给存档起个名字",
+    "saveNameHint": "不填就显示场景名。",
+    "saveNamePlaceholder": "比如：上跑马梁之前",
+    "rename": "改名",
+    "renameTitle": "改存档名字",
+    "renamed": "存档已改名",
+    "renameFailed": "改名失败"
   },
   "encounter": {
     "panelTitle": "遭遇",

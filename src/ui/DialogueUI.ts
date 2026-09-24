@@ -10,16 +10,22 @@ import type { EventBus } from '../core/EventBus';
 import type { StringsProvider } from '../core/StringsProvider';
 import type { AssetManager } from '../core/AssetManager';
 import type {
-  DialogueLine, DialogueChoice, DialoguePortraitRef, ITextDisplaySettingsProvider,
+  DialogueLine, DialogueChoice, DialogueChoicesPayload, DialoguePortraitRef, ITextDisplaySettingsProvider,
 } from '../data/types';
 import {
   DEFAULT_DIALOGUE_LAYOUT, DEFAULT_SPEAKER_SIDE, resolveSpeakerSide,
   type DialogueLayoutStyle, type SpeakerSide,
 } from '../utils/dialogueSpeakerSide';
 import { createStyledText, setStyledReveal, setStyledText } from '../core/styledText';
-import { plainTextLength } from '../core/textStyle';
+import { plainTextLength, stripStyleMarkup } from '../core/textStyle';
 import { getClueAccess } from './clueAccess';
+import { HUD_BOTTOM_BAND_TOP } from './hudBottomBand';
 import { measureClueSpans, type TextLinkSpan } from './clueSpans';
+import {
+  FIRST_PERSON, FIRST_PERSON_TEXT_SHADOW, drawFirstPersonShade,
+  layoutFirstPersonChoices, layoutFirstPersonLine,
+} from '../rendering/firstPersonDialogue';
+import { buildFirstPersonChoiceCell } from './components/FirstPersonChoiceCell';
 
 const BOX_MARGIN = UITheme.spacing.xl;
 /** 正文左右内缩：木框本身占 15px，缩进必须明显越过木条才有设计稿那种阔气的留白 */
@@ -96,6 +102,12 @@ const CHOICE_FRAME = 5;
  * NPC 飘，两种都点不准。
  */
 const CHOICES_BOTTOM_INSET = BOX_HEIGHT + BOX_MARGIN + PLATE_RISE + UITheme.spacing.sm;
+/**
+ * 「只画选项」时选项摞底沿距屏幕下沿的距离：没有框了，选项往下落到屏底，
+ * 但要停在 HUD 底部那一条（右下角入口条 + 正中提示带）之上——框在时是木框把那一条整个压住，
+ * 框没了选项就会压着入口钮（2026-09-21 真跑实测）。
+ */
+const CHOICES_ONLY_BOTTOM_INSET = HUD_BOTTOM_BAND_TOP + UITheme.spacing.md;
 
 /** VN 式半身像：方形立绘显示边长；出现时正文/名牌/选项向右让出的横向宽度。
  * 立绘压在面板前景、底边伸出画面底边之外（裁切边永不可见）；脸部允许覆在面板上（前景不遮挡）。 */
@@ -207,6 +219,25 @@ export class DialogueUI {
   private waitingForAdvance: boolean = false;
   private waitingForChoice: boolean = false;
   private willEndAfterAdvance: boolean = false;
+  /**
+   * 此刻是不是「只有选项、框里没有台词」（无 promptLine 的选项节点，前一拍已被 prepareBeat 清空）。
+   * 这时**只画选项**：面板层 / 立绘 / 名牌正文层一律收起，选项摞贴屏幕下沿。
+   * 原来照样开一个空木框垫在选项下面（2026-09-21 制作人：不许画空框）。
+   * 下一句台词进来即恢复（showLine）。
+   */
+  private choicesOnly: boolean = false;
+  /**
+   * 此刻是不是第一人称版式（`layout: 'firstPerson'`，由台词行 / 选项组的版式档决定）。
+   * 这时不画木框、名牌、立绘：正文按字幕式压在图上（底部渐变托字），别人开口名字写在句首，
+   * 选项换成屏底横排（见 rendering/firstPersonDialogue.ts）。切换时经事件告诉 HUD 收起屏底那几样。
+   */
+  private firstPerson: boolean = false;
+  /** 第一人称：底部渐变托底（随屏幕尺寸重画） */
+  private fpShade: Graphics | null = null;
+  /** 第一人称：句首的说话人名（别人开口才有；主角自己说的、旁白不写） */
+  private fpName: Text | null = null;
+  /** 第一人称：选项摞顶边（台词同屏时字幕块压在它上面）；没有选项为 null */
+  private fpChoicesTop: number | null = null;
   private currentChoices: DialogueChoice[] = [];
   /**
    * 选项的键盘/手柄焦点。**只在有选项时装着东西**：没有选项时 `setItems([])`，
@@ -217,7 +248,7 @@ export class DialogueUI {
   private onClickBound: (e: PointerEvent) => void;
   private onKeyBound: (e: KeyboardEvent) => void;
   private dialogueLineCb: (line: DialogueLine) => void;
-  private dialogueChoicesCb: (choices: DialogueChoice[]) => void;
+  private dialogueChoicesCb: (payload: DialogueChoicesPayload | DialogueChoice[]) => void;
   private dialogueWillEndCb: () => void;
   private dialogueEndCb: () => void;
   private dialoguePrepareBeatCb: () => void;
@@ -321,7 +352,10 @@ export class DialogueUI {
     this.onKeyBound = this.onKey.bind(this);
 
     this.dialogueLineCb = (line) => this.showLine(line);
-    this.dialogueChoicesCb = (choices) => this.showChoices(choices);
+    // 载荷是 { choices, layout }；兼容老的纯数组（没有版式 = 选项照旧）
+    this.dialogueChoicesCb = (payload) => this.showChoices(
+      Array.isArray(payload) ? { choices: payload } : payload,
+    );
     this.dialogueWillEndCb = () => { this.willEndAfterAdvance = true; };
     this.dialogueEndCb = () => this.hide();
     this.dialoguePrepareBeatCb = () => this.onPrepareBeat();
@@ -379,8 +413,9 @@ export class DialogueUI {
       this.speakerText.visible = false;
       return;
     }
-    // 气泡档没有名牌：气泡直接指着那个人，名字是冗余；旁白居中档本来也没有名字
-    if (this.currentLayout === 'bubble') {
+    // 气泡档没有名牌：气泡直接指着那个人，名字是冗余；旁白居中档本来也没有名字。
+    // 第一人称档也没有名牌：名字改写在字幕句首（fpName），不骑框
+    if (this.currentLayout === 'bubble' || this.firstPerson) {
       this.speakerPlate.visible = false;
       this.speakerText.visible = false;
       return;
@@ -407,6 +442,10 @@ export class DialogueUI {
   /** 正文区（正文位置/换行宽度/裁剪遮罩）随头像 inset 重排；立绘在右时正文不左移、只收窄。 */
   private relayout(): void {
     if (!this.container || !this.bodyText || !this.bodyMask) return;
+    if (this.firstPerson) {
+      this.layoutFirstPersonText();
+      return;
+    }
     const boxWidth = this.boxWidth;
     const boxY = this.boxY;
     const left = this.boxX + TEXT_PADDING + this.insetLeft();
@@ -421,6 +460,32 @@ export class DialogueUI {
     );
     this.bodyMask.fill({ color: 0xffffff });
     // 换行宽变了 → 词条落点全变（立绘进出、开合 F2 侧栏、改窗口都会走到这）
+    if (this.isShowingFullText) this.buildClueLayer();
+  }
+
+  /**
+   * 第一人称版式的字幕排版：名字（可无）+ 正文整块居中、行在块内左对齐，块底落在屏底
+   * （有选项同屏时压在选项摞上面）。版面按**整句**量——打字时块不动、字不左右漂。
+   */
+  private layoutFirstPersonText(): void {
+    const body = this.bodyText;
+    const mask = this.bodyMask;
+    const name = this.fpName;
+    if (!body || !mask || !name) return;
+    const sw = this.renderer.screenWidth;
+    const sh = this.renderer.screenHeight;
+    const nameW = name.text ? Math.ceil(name.width) : 0;
+    const bottom = this.fpChoicesTop !== null
+      ? this.fpChoicesTop - FIRST_PERSON.textAboveChoices
+      : sh - FIRST_PERSON.textBottomInset;
+    const lay = layoutFirstPersonLine(stripStyleMarkup(this.fullText), body.style, nameW, sw, bottom);
+    name.position.set(lay.nameX, lay.top);
+    body.position.set(lay.bodyX, lay.top);
+    // 没有框了，遮罩只是兜底：放宽到整条屏底，长句往上长也不被削
+    mask.clear();
+    mask.rect(0, 0, sw, sh);
+    mask.fill({ color: 0xffffff });
+    this.continueMark?.setPosition(lay.markX, lay.markY);
     if (this.isShowingFullText) this.buildClueLayer();
   }
 
@@ -447,7 +512,10 @@ export class DialogueUI {
 
     // 越过遮罩下沿的行是被裁掉的，别给看不见的字挂命中框
     const boxY = this.boxY;
-    const maskBottom = boxY + BOX_HEIGHT - BODY_MASK_BOTTOM_INSET;
+    // 第一人称档没有框：遮罩放到整屏（见 layoutFirstPersonText），可见的字都能挂框
+    const maskBottom = this.firstPerson
+      ? this.renderer.screenHeight
+      : boxY + BOX_HEIGHT - BODY_MASK_BOTTOM_INSET;
     const maxLocalY = maskBottom - body.y;
 
     const layer = new Container();
@@ -553,6 +621,7 @@ export class DialogueUI {
     this.sceneDim.clear();
     this.sceneDim.rect(0, 0, sw, sh);
     this.sceneDim.fill({ color: UITheme.colors.overlay, alpha: DIM_ALPHA });
+    if (this.fpShade) drawFirstPersonShade(this.fpShade, sw, sh);
 
     // 木框 + 内金线 + 暗角是 Sprite/渐变，画不进 Graphics：整层重建
     DialogueUI.resetLayer(this.boxBg);
@@ -601,6 +670,8 @@ export class DialogueUI {
       const keepFocusId = this.choiceFocus.current?.id ?? null;
       this.clearChoices();
       this.buildChoices(choices, keepFocusId);
+      // 第一人称：选项摞顶边随新屏宽重算了，字幕块跟着重新压到它上面
+      if (this.firstPerson && !this.choicesOnly) this.layoutFirstPersonText();
     }
   }
 
@@ -610,8 +681,9 @@ export class DialogueUI {
    */
   private showPortrait(ref?: DialoguePortraitRef): void {
     const token = ++this.portraitToken;
-    // 气泡档没有立绘（拍板项）：连横向让位也一并取消，否则正文白缩掉 248px
-    if (this.currentLayout === 'bubble' || !ref || !ref.slug || !ref.emotion) {
+    // 气泡档、第一人称档没有立绘（拍板项）：连横向让位也一并取消，否则正文白缩掉 248px
+    if (this.currentLayout === 'bubble' || this.currentLayout === 'firstPerson'
+      || !ref || !ref.slug || !ref.emotion) {
       this.currentInset = 0;
       if (this.portraitSprite) this.portraitSprite.visible = false;
       return;
@@ -642,7 +714,8 @@ export class DialogueUI {
     s.width = PORTRAIT_SIZE;
     s.height = PORTRAIT_SIZE;
     this.positionPortrait();
-    s.visible = true;
+    // 异步加载可能落在「只画选项」/ 第一人称期间（上一句的立绘晚到）：那时不许把脸贴出来
+    s.visible = !this.choicesOnly && !this.firstPerson;
   }
 
   private ensureContainer(): void {
@@ -658,6 +731,12 @@ export class DialogueUI {
     this.sceneDim.eventMode = 'none';
     this.sceneDim.visible = false;
     this.container.addChild(this.sceneDim);
+
+    // 第一人称档的底部渐变托底：压在面板 / 正文之下，平时收起（几何由 layoutFrame 按屏幕尺寸画）
+    this.fpShade = new Graphics();
+    this.fpShade.eventMode = 'none';
+    this.fpShade.visible = false;
+    this.container.addChild(this.fpShade);
 
     // 面板层（随框平移的下半）
     this.frameLayer = new Container();
@@ -691,6 +770,21 @@ export class DialogueUI {
       },
     });
     this.textLayer.addChild(this.speakerText);
+
+    // 第一人称档句首的说话人名：金色展示字族、与正文同号同行距（名字只占第一行）
+    this.fpName = new Text({
+      text: '',
+      style: {
+        fontSize: FIRST_PERSON.fontSize,
+        fill: UITheme.colors.title,
+        fontFamily: UITheme.fonts.display,
+        lineHeight: FIRST_PERSON.lineHeight,
+        dropShadow: { ...FIRST_PERSON_TEXT_SHADOW },
+      },
+    });
+    this.fpName.eventMode = 'none';
+    this.fpName.visible = false;
+    this.textLayer.addChild(this.fpName);
 
     this.bodyText = createStyledText({
       text: '',
@@ -737,6 +831,7 @@ export class DialogueUI {
   private showLine(line: DialogueLine): void {
     this.ensureContainer();
     this.clearChoices();
+    this.setChoicesOnly(false);
     /** 新一句必须清掉上一句的「点按结束」标记，否则连续多段 playScriptedDialogue 时首句会误走 advanceEnd 直接关对话 */
     this.willEndAfterAdvance = false;
     // 词条命中层与"整句已显示"标记要**在 relayout 之前**归零：
@@ -761,6 +856,9 @@ export class DialogueUI {
     this.currentSpeakerEntity = line.speakerEntity;
     this.currentSide = resolveSpeakerSide(line.speakerEntity, line.speakerSide);
     this.currentIsSelf = line.speakerEntity?.kind === 'player';
+    // 第一人称档：先定档（立绘 / 名牌 / 正文排版都读它），再写句首名字
+    this.setFirstPerson(this.currentLayout === 'firstPerson');
+    this.setFirstPersonName(line.speaker);
     this.showPortrait(line.portrait);
     this.layoutSpeaker();
     this.relayout();
@@ -772,6 +870,8 @@ export class DialogueUI {
     this.waitingForAdvance = false;
     this.waitingForChoice = false;
     setStyledText(this.bodyText!, this.fullText, 0);
+    // 第一人称的字幕块按整句量版面：上面那次 relayout 时新句还没写进来，这里按新句重排
+    if (this.firstPerson) this.layoutFirstPersonText();
 
     // 两条一样的出路：**逐字显示关掉**时整句直接出全；空文本台词则是打字机循环走不到
     // 完成分支（0 个字永远"打不完"），同样必须当场判完，否则整段对话卡死推不动。
@@ -787,12 +887,79 @@ export class DialogueUI {
     this.onLineFullyShown();
   }
 
-  private showChoices(choices: DialogueChoice[]): void {
+  private showChoices(payload: DialogueChoicesPayload): void {
     this.ensureContainer();
     this.clearChoices();
     this.waitingForChoice = true;
     this.waitingForAdvance = false;
-    this.buildChoices(choices);
+    // 选项组的版式：第一人称档换屏底横排；其余档选项位置照旧固定
+    this.setFirstPerson(payload.layout === 'firstPerson');
+    // 框里一个字都没有（没说话人、没正文）→ 只画选项，不垫空框
+    this.setChoicesOnly(this.fullTextVisible === 0 && !this.speakerText?.text);
+    this.buildChoices(payload.choices);
+    // 第一人称且提示句还在屏上：字幕块上移，压到选项摞上面
+    if (this.firstPerson && !this.choicesOnly) this.layoutFirstPersonText();
+  }
+
+  /**
+   * 切换「只画选项」。只动三层的可见性，不拆不建——下一句台词进来时原样亮回去，
+   * 立绘则交还给 showPortrait 按那一句自己的立绘决定亮不亮。
+   */
+  private setChoicesOnly(on: boolean): void {
+    this.choicesOnly = on;
+    this.applyLayerVisibility();
+  }
+
+  /** 按「只画选项」与第一人称两个开关定各层可见性（唯一决定处，两个开关谁变都走这里）。 */
+  private applyLayerVisibility(): void {
+    const noBox = this.choicesOnly || this.firstPerson;
+    if (this.frameLayer) this.frameLayer.visible = !noBox;
+    // 第一人称的字幕就在正文层里：只画选项时才整层收起
+    if (this.textLayer) this.textLayer.visible = !this.choicesOnly;
+    if (noBox && this.portraitSprite) this.portraitSprite.visible = false;
+    if (this.fpShade) this.fpShade.visible = this.firstPerson;
+  }
+
+  /**
+   * 切换第一人称版式。只换外观（正文字色与影子、各层可见性），不拆不建；
+   * 进出时经 `ui:firstPerson` 告诉 HUD 收起 / 放回屏底那几样（三把火与气味照留）。
+   */
+  private setFirstPerson(on: boolean): void {
+    const changed = this.firstPerson !== on;
+    this.firstPerson = on;
+    if (this.bodyText) {
+      const st = this.bodyText.style;
+      // 没有深色框垫着了：正文提亮一档并加影子，亮图上也读得清
+      st.fill = on ? FIRST_PERSON.bodyFill : UITheme.colors.body;
+      st.dropShadow = on ? { ...FIRST_PERSON_TEXT_SHADOW } : false;
+    }
+    if (!on && this.fpName) {
+      this.fpName.text = '';
+      this.fpName.visible = false;
+    }
+    this.applyLayerVisibility();
+    if (!changed) return;
+    // 回到框：「继续」三角等几何回到框上（第一人称期间挪到了字幕下面）
+    if (!on) this.layoutFrame();
+    this.eventBus.emit('ui:firstPerson', { source: 'dialogue', active: on });
+  }
+
+  /**
+   * 第一人称档句首的名字：别人开口才写（「路边身影：」）；主角自己说的不写（第一人称就是他），
+   * 旁白也不写（旁白不是有人在说话）。旁白的显示名走字符串表，不在代码里写死。
+   */
+  private setFirstPersonName(speakerRaw: string | undefined): void {
+    if (!this.fpName) return;
+    const name = stripStyleMarkup(speakerRaw ?? '').trim();
+    const show = this.firstPerson && !!name && !this.currentIsSelf && name !== this.narratorLabel();
+    this.fpName.text = show ? `${name}：` : '';
+    this.fpName.visible = show;
+  }
+
+  /** 旁白的显示名（strings.dialogue.narratorLabel；没配则视为无旁白名） */
+  private narratorLabel(): string {
+    const v = this.strings.get('dialogue', 'narratorLabel');
+    return v && v !== 'narratorLabel' ? v : '';
   }
 
   /**
@@ -802,21 +969,22 @@ export class DialogueUI {
    * 在「让开立绘之后剩下的那段横向区间」里居中（立绘在右时整体偏左，正是稿子里的样子）。
    */
   private buildChoices(choices: DialogueChoice[], keepFocusId: string | null = null): void {
+    if (this.firstPerson) {
+      this.buildFirstPersonChoices(choices, keepFocusId);
+      return;
+    }
     this.currentChoices = choices;
     const focusItems: FocusItem[] = [];
 
     // 选项恒定按**整屏**排（固定位置、不随版式变窄），故这里不走 this.boxWidth
     const boxWidth = this.renderer.screenWidth - BOX_MARGIN * 2;
-    const availX = BOX_MARGIN + this.insetLeft();
-    const availW = Math.max(120, boxWidth - this.currentInset);
+    // 只画选项时立绘已收起，不再给它让位：整屏居中
+    const availX = BOX_MARGIN + (this.choicesOnly ? 0 : this.insetLeft());
+    const availW = Math.max(120, boxWidth - (this.choicesOnly ? 0 : this.currentInset));
     const rowWidth = Math.min(availW, CHOICE_MAX_W);
 
     this.choicesContainer = new Container();
-
-    // 选项配色：规矩选项走琥珀（这是玩法信号，不靠字号表达），其余走常规正文色
-    const fillOf = (c: DialogueChoice): number => (c.ruleHintId
-      ? (c.enabled ? UITheme.colors.choiceRule : UITheme.colors.choiceRuleDisabled)
-      : (c.enabled ? UITheme.colors.choiceEnabled : UITheme.colors.choiceDisabled));
+    const fillOf = (c: DialogueChoice): number => this.choiceFill(c);
 
     /**
      * 序号 / 规矩标记：**键位提示级的配角，不许与选项正文同号**。
@@ -893,53 +1061,7 @@ export class DialogueUI {
         prefixText.style.fill = fill;
       };
 
-      row.eventMode = 'static';
-      if (choice.enabled) {
-        row.cursor = 'pointer';
-
-        // 悬停即移焦（不直接画高亮）：鼠标和手柄共用同一个"当前项"。
-        // 指针挪开后不再清高亮——屏幕上恒有一个可见的焦点，接着按方向键从这条继续走。
-        // 切换音由 UIFocus 的移焦钩子统一发（键盘/手柄挪选项也才有声）——
-        // 这里原来自己补发一次 ui:hover，两条一起就是同一次悬停响两下
-        row.on('pointerover', () => {
-          this.choiceFocus.syncHover(`c${choice.index}`);
-        });
-        row.on('pointerout', () => {
-          this.choiceFocus.clearHover(`c${choice.index}`);
-        });
-        row.on('pointerdown', (ev) => {
-          markPointerConsumed(ev.nativeEvent);
-          this.waitingForChoice = false;
-          this.eventBus.emit('dialogue:choiceSelected', { index: choice.index });
-        });
-
-        focusItems.push({
-          id: `c${choice.index}`,
-          x: 0, y: row.y, w: rowWidth, h: rowHeight,
-          group: 'choices',
-          onFocus: setHighlight,
-          onActivate: () => {
-            this.waitingForChoice = false;
-            this.eventBus.emit('dialogue:choiceSelected', { index: choice.index });
-          },
-        });
-      } else {
-        // 禁用项登记成 disabled：方向键直接跳过它（`disableHint` 仍留给鼠标点）
-        focusItems.push({
-          id: `c${choice.index}`,
-          x: 0, y: row.y, w: rowWidth, h: rowHeight,
-          group: 'choices',
-          disabled: true,
-          onFocus: setHighlight,
-        });
-        row.cursor = 'default';
-        row.on('pointerdown', (ev) => {
-          markPointerConsumed(ev.nativeEvent);
-          if (choice.disableHint) {
-            this.eventBus.emit('notification:show', { text: choice.disableHint, type: 'warning' });
-          }
-        });
-      }
+      focusItems.push(this.wireChoice(row, choice, setHighlight, { x: 0, y: row.y, w: rowWidth, h: rowHeight }));
 
       this.choicesContainer.addChild(row);
       cursorY += rowHeight + CHOICE_GAP;
@@ -947,17 +1069,117 @@ export class DialogueUI {
 
     const stackHeight = Math.max(0, cursorY - CHOICE_GAP);
     this.choicesContainer.x = Math.round(availX + (availW - rowWidth) / 2);
-    // 底沿让开骑边名牌凸出的那一截，免得长名字的牌子顶到最后一个按钮
-    this.choicesContainer.y = this.renderer.screenHeight - CHOICES_BOTTOM_INSET - stackHeight;
+    // 底沿让开骑边名牌凸出的那一截，免得长名字的牌子顶到最后一个按钮；
+    // 只画选项时没有框和名牌，选项摞直接落到屏底
+    this.choicesContainer.y = this.renderer.screenHeight
+      - (this.choicesOnly ? CHOICES_ONLY_BOTTOM_INSET : CHOICES_BOTTOM_INSET) - stackHeight;
 
     this.container!.addChild(this.choicesContainer);
+    this.applyChoiceFocus(focusItems, keepFocusId);
+  }
 
-    /**
-     * 登记焦点。`setItems` 会滤掉禁用项，所以「首个可选项」天然就是默认落点
-     * （主机 UI 的惯例：默认焦点不放最上面那个不可用的，放玩家真正要按的那一项）。
-     * resize 重建时用 `keepFocusId` 复位——`clearChoices` 已把旧表清空，
-     * 这里必须显式 focusDefault，否则新建的那条不会被点亮。
-     */
+  /**
+   * 第一人称版式的选项：一排字横在屏底（不要木钮），放不下就折成几行，每行居中。
+   * 交互（悬停 / 点选 / 禁用提示 / 键盘焦点）与木钮那套走同一个 {@link wireChoice}；
+   * 方向键左右在同一行里挪、上下跨行（UIFocus 按几何找最近邻）。
+   */
+  private buildFirstPersonChoices(choices: DialogueChoice[], keepFocusId: string | null): void {
+    this.currentChoices = choices;
+    const ruleTag = this.strings.get('dialogue', 'ruleTag');
+    const cells = choices.map((c, i) => buildFirstPersonChoiceCell({
+      label: c.ruleHintId ? `${ruleTag} ${i + 1}` : String(i + 1),
+      text: c.text,
+      fill: this.choiceFill(c),
+      enabled: c.enabled,
+    }));
+    const { places, top } = layoutFirstPersonChoices(
+      cells.map((c) => c.width), this.renderer.screenWidth, this.renderer.screenHeight,
+    );
+    this.choicesContainer = new Container();
+    const focusItems: FocusItem[] = [];
+    cells.forEach((cell, i) => {
+      const { x, y } = places[i];
+      cell.view.position.set(x, y);
+      this.choicesContainer!.addChild(cell.view);
+      focusItems.push(this.wireChoice(cell.view, choices[i], cell.setHighlight,
+        { x, y, w: cell.width, h: FIRST_PERSON.choiceRowHeight }));
+    });
+    this.fpChoicesTop = top;
+    this.container!.addChild(this.choicesContainer);
+    this.applyChoiceFocus(focusItems, keepFocusId);
+  }
+
+  /** 选项配色：规矩选项走琥珀（这是玩法信号，不靠字号表达），其余走常规正文色 */
+  private choiceFill(c: DialogueChoice): number {
+    return c.ruleHintId
+      ? (c.enabled ? UITheme.colors.choiceRule : UITheme.colors.choiceRuleDisabled)
+      : (c.enabled ? UITheme.colors.choiceEnabled : UITheme.colors.choiceDisabled);
+  }
+
+  /**
+   * 给一个选项视图挂交互，返回它的焦点项。木钮与第一人称横排共用这一处——
+   * 选中怎么发、禁用怎么提示、悬停怎么移焦只有一份。
+   * `rect` 是焦点导航用的几何（与视图同一坐标系）。
+   */
+  private wireChoice(
+    view: Container,
+    choice: DialogueChoice,
+    setHighlight: (on: boolean) => void,
+    rect: { x: number; y: number; w: number; h: number },
+  ): FocusItem {
+    view.eventMode = 'static';
+    if (choice.enabled) {
+      view.cursor = 'pointer';
+      // 悬停即移焦（不直接画高亮）：鼠标和手柄共用同一个"当前项"。
+      // 指针挪开后不再清高亮——屏幕上恒有一个可见的焦点，接着按方向键从这条继续走。
+      // 切换音由 UIFocus 的移焦钩子统一发（键盘/手柄挪选项也才有声）——
+      // 这里原来自己补发一次 ui:hover，两条一起就是同一次悬停响两下
+      view.on('pointerover', () => {
+        this.choiceFocus.syncHover(`c${choice.index}`);
+      });
+      view.on('pointerout', () => {
+        this.choiceFocus.clearHover(`c${choice.index}`);
+      });
+      view.on('pointerdown', (ev) => {
+        markPointerConsumed(ev.nativeEvent);
+        this.waitingForChoice = false;
+        this.eventBus.emit('dialogue:choiceSelected', { index: choice.index });
+      });
+      return {
+        id: `c${choice.index}`,
+        ...rect,
+        group: 'choices',
+        onFocus: setHighlight,
+        onActivate: () => {
+          this.waitingForChoice = false;
+          this.eventBus.emit('dialogue:choiceSelected', { index: choice.index });
+        },
+      };
+    }
+    // 禁用项登记成 disabled：方向键直接跳过它（`disableHint` 仍留给鼠标点）
+    view.cursor = 'default';
+    view.on('pointerdown', (ev) => {
+      markPointerConsumed(ev.nativeEvent);
+      if (choice.disableHint) {
+        this.eventBus.emit('notification:show', { text: choice.disableHint, type: 'warning' });
+      }
+    });
+    return {
+      id: `c${choice.index}`,
+      ...rect,
+      group: 'choices',
+      disabled: true,
+      onFocus: setHighlight,
+    };
+  }
+
+  /**
+   * 登记焦点。`setItems` 会滤掉禁用项，所以「首个可选项」天然就是默认落点
+   * （主机 UI 的惯例：默认焦点不放最上面那个不可用的，放玩家真正要按的那一项）。
+   * resize 重建时用 `keepFocusId` 复位——`clearChoices` 已把旧表清空，
+   * 这里必须显式 focusDefault，否则新建的那条不会被点亮。
+   */
+  private applyChoiceFocus(focusItems: FocusItem[], keepFocusId: string | null): void {
     this.choiceFocus.setItems(focusItems);
     const wanted = keepFocusId
       ?? focusItems.find((i) => !i.disabled)?.id
@@ -966,6 +1188,7 @@ export class DialogueUI {
   }
 
   private clearChoices(): void {
+    this.fpChoicesTop = null;
     // 必须先断焦点：它的 onFocus 回调抓着下面就要销毁的那批行
     this.choiceFocus.setItems([]);
     if (this.choicesContainer) {
@@ -1118,6 +1341,8 @@ export class DialogueUI {
       this.portraitSprite = null;
       this.sceneDim = null;
       this.continueMark = null;
+      this.fpShade = null;
+      this.fpName = null;
     }
     this.currentInset = 0;
     this.fullText = '';
@@ -1128,11 +1353,17 @@ export class DialogueUI {
     this.waitingForAdvance = false;
     this.waitingForChoice = false;
     this.willEndAfterAdvance = false;
+    this.choicesOnly = false;
+    const wasFirstPerson = this.firstPerson;
+    this.firstPerson = false;
+    this.fpChoicesTop = null;
 
     window.removeEventListener('pointerdown', this.onClickBound);
     window.removeEventListener('keydown', this.onKeyBound);
     this.unsubResize?.();
     this.unsubResize = null;
+    // 对话收了：第一人称期间收起的 HUD 放回来
+    if (wasFirstPerson) this.eventBus.emit('ui:firstPerson', { source: 'dialogue', active: false });
   }
 
   destroy(): void {

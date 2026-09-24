@@ -11,8 +11,10 @@ authority:
   - src/core/Game.ts#resolveOverlayImageIdToPath
 triggers:
   paths: ["public/assets/data/overlay_images.json", "src/systems/DocumentRevealManager.ts"]
-  topics: [叠图, overlay, showOverlayImage, blendOverlayImage, 文档揭示, revealDocument, hideDocument]
-last_governed: 2026-09-12
+  topics: [叠图, overlay, showOverlayImage, blendOverlayImage, 文档揭示, revealDocument, hideDocument, 铺满窗口, fill]
+verified_by:
+  - src/systems/CutsceneOverlayFill.test.ts
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -34,6 +36,14 @@ last_governed: 2026-09-12
   按 documentId 收发。`DocumentRevealDef.overlayId` 已**降级为运行时忽略的兼容字段**
   (老数据保留、编辑器不再给入口),别再把它当句柄读。两张表**永不互访**:
   `hideOverlayImage` 收不到文档揭示,反之亦然。
+- **两者的宿主 2026-09-21 都换成了「画布」**(场景之外那张屏幕空间的面):叠图是画布上
+  `image:<句柄>`、文档揭示是 `document:<documentId>`,与实体 / 特效共用一个 `order` 顺序空间。
+  `showOverlayImage` / `blendOverlayImage` 新增可选参数 `order`(越大越靠前,可为负)。
+  命名空间隔离没变——现在靠键的 kind 前缀落地。见 [canvas-stage](canvas-stage.md)。
+- **两种布局档,只有一种跟窗口走**(2026-09-21):`showOverlayImage` 可选 `fill:true` = 铺满窗口
+  (与过场 `showImg` 同一个 cover 画法),窗口尺寸一变按新尺寸重铺;给了百分比定位的叠图
+  **不随 resize 重排**。要"和窗口一样大"的第一视角画面用 `fill`,别拿 100% 宽去凑
+  (编辑器勾了 fill 会置灰百分比字段)。
 - 踩过的两脚(都不报错、只是画面不对):① 编辑器下拉把「文档揭示 X」这个**展示串**当取值
   存进了 JSON 的 `hideOverlayImage.id`,运行时找不到图层,收不掉;② 让作者去填句柄这件事
   本身就是把内部寻址抬成作者面——句柄与"哪份文书"零关系,写错无人拦。

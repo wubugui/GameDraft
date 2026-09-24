@@ -325,6 +325,77 @@ export function resolveBoundShadow(
 }
 
 /**
+ * 接触 AO 方向部分用的「指向光」单位向量：仰角**只钳下限** `MIN_ELEVATION_DEG`（水平分量方向不变）。
+ *
+ * 不封投影剪影那个 80° 顶：剪影要一个屏幕朝向，灯到头顶就没得画；胶囊 AO 在正上方就是脚下一团，
+ * 画得出来。封顶反而让方向过头顶时水平朝向瞬间反向（一步翻 20°，2026-09-24 方向混合的单测抓到）。
+ * 与 `contactAoSources.clampAoElevation` 同式（那边管缺省档「按光照」的几路光）。
+ * 下限那一侧是凸锥，钳它不破坏连续。
+ */
+function clampedLightDir(lx: number, ly: number, lz: number): [number, number, number] | null {
+  const hn = Math.hypot(lx, lz);
+  if (hn < 1e-9 && Math.abs(ly) < 1e-9) return null;
+  if (hn < 1e-9) return ly > 0 ? [0, 1, 0] : null;          // 正上方：脚下一团；正下方无从谈起
+  const el = Math.max(MIN_ELEVATION_DEG, (Math.atan2(ly, hn) * 180) / Math.PI) * (Math.PI / 180);
+  return [(lx / hn) * Math.cos(el), Math.sin(el), (lz / hn) * Math.cos(el)];
+}
+
+/**
+ * **影子在屏幕上的朝向**（度，屏幕 x 右 y 下）+ 光的仰角 → 指向光的 M-world 单位向量。
+ *
+ * 场景光环境的主光（`env.key`，影朝 az+180）与虚拟灯（方位就是影子的屏幕朝向）都是**屏幕约定**；
+ * 胶囊 AO 在世界里算，要先翻回世界：地面上哪个水平方向投到屏幕正好是这个朝向，
+ * 光就在它的反方向、抬起这个仰角。是 `shadowScreenAngle` 的逆（同一套 world → q 投屏）。
+ */
+export function lightDirFromShadowScreenAngle(
+  shadowScreenDeg: number,
+  elevationDeg: number,
+  mRows: ArrayLike<number>,
+): [number, number, number] | null {
+  const phi = (shadowScreenDeg * Math.PI) / 180;
+  // 屏幕 (x, y) = (q.x, -q.y)；地面水平向量 (hx, 0, hz) 的 q.x = r00·hx + r20·hz，q.y = r01·hx + r21·hz
+  const a = mRows[0], b = mRows[6], c = -mRows[1], d = -mRows[7];
+  const det = a * d - b * c;
+  if (Math.abs(det) < 1e-9) return null;
+  const sx = Math.cos(phi), sy = Math.sin(phi);
+  const hx = (d * sx - b * sy) / det;
+  const hz = (-c * sx + a * sy) / det;
+  const hn = Math.hypot(hx, hz);
+  if (hn < 1e-9) return null;
+  const el = (elevationDeg * Math.PI) / 180;
+  // 光在影子的反方向
+  return clampedLightDir((-hx / hn) * Math.cos(el), Math.sin(el), (-hz / hn) * Math.cos(el));
+}
+
+/**
+ * 一条绑定 → 指向光的 M-world 单位向量（仰角钳到可读区间）。胶囊 AO 的方向部分只要方向，
+ * 与灯的远近、强弱无关（接触阴影与灯无关，制作人 2026-09-02）；`'none'` / 灯查不到 / 灯关着 → null。
+ */
+export function resolveBindingLightDir(
+  binding: EntityShadowBinding,
+  ctx: ShadowBindingContext,
+): [number, number, number] | null {
+  if (binding.source === 'none') return null;
+  if (binding.source === 'virtual') {
+    const v = binding.virtual;
+    if (!v) return null;
+    // 虚拟灯的方位角就是影子的屏幕朝向（见 resolveBoundShadow 的 virtual 分支）
+    return lightDirFromShadowScreenAngle(v.azimuthDeg, v.elevationDeg, ctx.mRows);
+  }
+  const id = parseLightRef(binding.source);
+  if (!id) return null;
+  const light = ctx.lights.find((l) => l.id === id);
+  if (!light || !(light.enabled ?? true)) return null;
+  if (light.kind === 'directional') {
+    const [x, y, z] = directionFromAngles(light.elevationDeg ?? 45, light.azimuthDeg ?? 180);
+    return clampedLightDir(x, y, z);
+  }
+  const k = 1 / Math.max(ctx.wuPerQUnit, 1e-9);
+  const p = light.pos ?? [0, 0, 0];
+  return clampedLightDir(p[0] * k - ctx.charWorld[0], p[1] * k - ctx.charWorld[1], p[2] * k - ctx.charWorld[2]);
+}
+
+/**
  * 解一整组绑定。返回的条目与输入**同序**（作者列表里的第几条就是第几条），
  * 不投影的位置留 null —— 调用方按下标复用 planar 实例，避免影子在列表里跳位。
  */

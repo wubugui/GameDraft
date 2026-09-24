@@ -139,6 +139,8 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
   clearActiveZonesForRestore(): void {
     this.activeZoneIds.clear();
     this.zoneStayNextAt.clear();
+    // 换一局 / 换一张图之后重新播报一次，别让 HUD 那行提示停在上一局的结论
+    this.lastRuleAvailable = null;
   }
 
   clearZones(): void {
@@ -151,6 +153,7 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.activeZoneIds.clear();
     this.zoneStayNextAt.clear();
     this.zoneActionTail.clear();
+    this.lastRuleAvailable = null;
   }
 
   /**
@@ -283,13 +286,20 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.emitRuleAvailability();
   }
 
+  /**
+   * 上一次播报出去的「这儿有没有规矩可用」。`null` = 本局还没播报过。
+   * 只在**变了**的时候播报（2026-09-23）：这两个事件除了改 HUD 那行提示，还各挂着一声系统音效，
+   * 而进出每一个 zone 都会走一次播报——于是玩家每跨一条叙事线（进区、出区各一次）
+   * 就听见一声"没有规矩可用"的提示音，而那一刻什么也没发生。真机抓到：跑马梁三条线一路叮叮响。
+   * 与上面注册表那条（`(slotsBefore > 0) !== (slotsAfter > 0)` 才播报）同一个口径。
+   */
+  private lastRuleAvailable: boolean | null = null;
+
   private emitRuleAvailability(): void {
-    const slots = this.getCurrentRuleSlots();
-    if (slots.length > 0) {
-      this.eventBus.emit('zone:ruleAvailable', {});
-    } else {
-      this.eventBus.emit('zone:ruleUnavailable', {});
-    }
+    const available = this.getCurrentRuleSlots().length > 0;
+    if (available === this.lastRuleAvailable) return;
+    this.lastRuleAvailable = available;
+    this.eventBus.emit(available ? 'zone:ruleAvailable' : 'zone:ruleUnavailable', {});
   }
 
   getCurrentRuleSlots(): ZoneRuleSlot[] {
@@ -310,5 +320,6 @@ export class ZoneSystem implements IGameSystem, IZoneDataProvider {
     this.activeZoneIds.clear();
     this.zoneStayNextAt.clear();
     this.zoneActionTail.clear();
+    this.lastRuleAvailable = null;
   }
 }

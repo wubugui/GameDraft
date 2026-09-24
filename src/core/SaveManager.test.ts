@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SaveManager } from './SaveManager';
+import { SAVE_SLOT_COUNT, SAVE_NAME_MAX_LENGTH } from '../data/types';
 import { StringsProvider } from './StringsProvider';
 import {
   MemoryStore,
@@ -347,7 +348,9 @@ describe('SaveManager save failure reporting', () => {
   it('returns false for an out-of-range slot', async () => {
     const manager = await makeManager(() => ({}));
     expect(await manager.save(-1)).toBe(false);
-    expect(await manager.save(3)).toBe(false);
+    expect(await manager.save(SAVE_SLOT_COUNT)).toBe(false);
+    // 非整数的槽位写得进磁盘（slot1.5）却永远读不回来——一律拒
+    expect(await manager.save(1.5)).toBe(false);
   });
 
   it('没 hydrate 就存档 = 拒绝并报错，而不是假装成功', async () => {
@@ -515,5 +518,102 @@ describe('SaveManager storage access hardening', () => {
     expect(manager.getSlotMeta(0)).toBeNull();
     await expect(manager.deleteSlot(0)).resolves.toBe(true);
     await expect(manager.load(0)).resolves.toBe(false);
+  });
+});
+
+describe('SaveManager 99 个槽位 + 玩家起名（2026-09-23）', () => {
+  beforeEach(() => {
+    useFreshStore();
+  });
+
+  it('槽位数是 99，最后一格能存能读，slotCount 与常量同一个数', async () => {
+    const manager = await makeManager(() => ({ sceneManager: { currentSceneId: 'street' } }));
+    expect(SAVE_SLOT_COUNT).toBe(99);
+    expect(manager.slotCount()).toBe(SAVE_SLOT_COUNT);
+    expect(await manager.save(SAVE_SLOT_COUNT - 1)).toBe(true);
+    expect(manager.hasSave(SAVE_SLOT_COUNT - 1)).toBe(true);
+    expect(manager.getSlotMeta(SAVE_SLOT_COUNT - 1)?.sceneId).toBe('street');
+    expect(await manager.load(SAVE_SLOT_COUNT - 1)).toBe(true);
+  });
+
+  it('重启后 hydrate 读得回全部 99 格（不再只扫前 3 格）', async () => {
+    const store = new MemoryStore();
+    __setPersistentStoreForTests(store);
+    await store.write('saves', 'slot57', JSON.stringify({
+      version: 1, timestamp: 7, name: '第五十八格', systems: { sceneManager: { currentSceneId: 'river' } },
+    }));
+    const manager = await makeManager(() => ({}));
+    expect(manager.hasAnySave()).toBe(true);
+    expect(manager.getSlotMeta(57)).toMatchObject({ slot: 57, name: '第五十八格', sceneId: 'river' });
+  });
+
+  it('起的名字写在信封顶层、与 systems 平级，读档完全看不见它', async () => {
+    const store = useFreshStore();
+    const distributor = vi.fn();
+    const manager = await makeManager(
+      () => ({ sceneManager: { currentSceneId: 'ridge' } }),
+      distributor,
+    );
+    expect(await manager.save(4, { name: '  上跑马梁\n之前  ' })).toBe(true);
+    const raw = JSON.parse((await store.readAll('saves')).slot4);
+    expect(raw.name).toBe('上跑马梁 之前');
+    expect(Object.keys(raw.systems)).toEqual(['sceneManager']);
+    expect(manager.getSlotMeta(4)?.name).toBe('上跑马梁 之前');
+    expect(await manager.load(4)).toBe(true);
+    expect(distributor).toHaveBeenCalledWith({ sceneManager: { currentSceneId: 'ridge' } });
+  });
+
+  it('不传 name = 沿用原名；传空串 = 清掉名字；超长按字符截断', async () => {
+    const manager = await makeManager(() => ({ sceneManager: { currentSceneId: 'ridge' } }));
+    await manager.save(2, { name: '老名字' });
+    await manager.save(2);
+    expect(manager.getSlotMeta(2)?.name).toBe('老名字');
+    await manager.save(2, { name: '   ' });
+    expect(manager.getSlotMeta(2)?.name).toBeUndefined();
+    const long = '𠀀'.repeat(SAVE_NAME_MAX_LENGTH + 5); // 每个字占两个 UTF-16 码元
+    await manager.save(2, { name: long });
+    expect(Array.from(manager.getSlotMeta(2)?.name ?? '')).toHaveLength(SAVE_NAME_MAX_LENGTH);
+  });
+
+  it('改名只动名字：systems 与时间戳逐字节不变；空槽改名失败', async () => {
+    const store = useFreshStore();
+    const manager = await makeManager(() => ({ sceneManager: { currentSceneId: 'ridge' }, dayManager: { currentDay: 3 } }));
+    await manager.save(9, { name: 'A' });
+    const before = JSON.parse((await store.readAll('saves')).slot9);
+    expect(await manager.renameSlot(9, '牛头凼门口')).toBe(true);
+    const after = JSON.parse((await store.readAll('saves')).slot9);
+    expect(after.name).toBe('牛头凼门口');
+    expect(after.timestamp).toBe(before.timestamp);
+    expect(after.systems).toEqual(before.systems);
+    expect(manager.getSlotMeta(9)).toMatchObject({ name: '牛头凼门口', dayNumber: 3 });
+    expect(await manager.renameSlot(9, '')).toBe(true);
+    expect(manager.getSlotMeta(9)?.name).toBeUndefined();
+    expect(await manager.renameSlot(10, '空的')).toBe(false);
+    expect(await manager.renameSlot(SAVE_SLOT_COUNT, 'x')).toBe(false);
+  });
+
+  it('改名排在同槽写入链上：紧跟一次存档的改名落在新存的内容上', async () => {
+    const store = useFreshStore();
+    let scene = 'first';
+    const manager = await makeManager(() => ({ sceneManager: { currentSceneId: scene } }));
+    await manager.save(1, { name: '旧' });
+    scene = 'second';
+    const saving = manager.save(1);
+    const renaming = manager.renameSlot(1, '新');
+    expect(await saving).toBe(true);
+    expect(await renaming).toBe(true);
+    const raw = JSON.parse((await store.readAll('saves')).slot1);
+    expect(raw.systems.sceneManager.currentSceneId).toBe('second');
+    expect(raw.name).toBe('新');
+  });
+
+  it('改名写盘失败：镜像与卡片信息都不动', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = useFreshStore();
+    const manager = await makeManager(() => ({ sceneManager: { currentSceneId: 'ridge' } }));
+    await manager.save(0, { name: '原名' });
+    vi.spyOn(store, 'write').mockRejectedValueOnce(new Error('disk full'));
+    expect(await manager.renameSlot(0, '新名')).toBe(false);
+    expect(manager.getSlotMeta(0)?.name).toBe('原名');
   });
 });

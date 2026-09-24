@@ -45,7 +45,8 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   // ---- 组合 / 分支 ----
   runActions: { required: ['actions'] },
   runActionsDetached: { required: ['actions'], optional: ['id'] },
-  chooseAction: { required: ['options'], optional: ['prompt', 'allowCancel'] },
+  // layout = 版式档（与对白同一套；firstPerson = 屏底横排、不要木框）；不写 = 现行选项条
+  chooseAction: { required: ['options'], optional: ['prompt', 'allowCancel', 'layout'] },
   randomBranch: { required: [], optional: ['probability', 'aboveActions', 'belowActions'] },
   // condition 是统一条件表达式（与热区/zone 的 conditions 同一套叶子）；不写 = 恒真。
   // elseActions 为空时不写键（往返保真）。
@@ -94,7 +95,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   startEncounter: { required: ['id'], nonEmpty: ['id'] },
   playBgm: { required: ['id'], nonEmpty: ['id'], optional: ['fadeMs', 'volume'] },
   stopBgm: { required: [], optional: ['fadeMs'] },
-  playSfx: { required: ['id'], nonEmpty: ['id'], optional: ['volume'] },
+  playSfx: { required: ['id'], nonEmpty: ['id'], optional: ['volume', 'loop'] },
   stopSceneAmbient: { required: [], optional: ['id', 'fadeMs'] },
   playSceneAmbient: { required: ['id'], nonEmpty: ['id'], optional: ['volume'] },
   endDay: { required: [] },
@@ -155,6 +156,14 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   clearSmellSource: { required: [] },
   setSmellTracking: { required: ['enabled'] },
   sniff: { required: [] },
+
+  // ---- 跟脚声（玩家落脚事件的延迟重放；只管声音，扣血在 healthThreat 那边）----
+  // 参数全可选：延迟按**步间隔的百分比**给（50 = 半步，正好踏在你两步中间），
+  // 距离不用配——它等于你在这段延迟里走过的路。
+  setFollowerFootsteps: {
+    required: ['enabled'],
+    optional: ['id', 'delayPercent', 'minDelayMs', 'footstepSet', 'gainDb', 'fireStops', 'abrupt'],
+  },
 
   // ---- 位面 ----
   activatePlane: { required: ['id'], nonEmpty: ['id'] },
@@ -229,14 +238,18 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   cameraShake: { required: ['amplitude'], optional: ['durationMs', 'frequency'] },
   // 环境压暗（背景 + 角色 + 粒子同值）。scale 必填：1 = 恢复
   setSceneDim: { required: ['scale'], optional: ['fadeMs', 'wait'] },
-  // 落雷：选靶 → 雷 → 靶消失。全可选——最小形态 `{}` 就是"照缺省挑最凶的劈了"
+  // 压音随脱手会话托管；holdMs 仅是无会话普通批的墙钟兜底（缺省 20 秒）。
   duckAudio: { required: [], optional: ['id', 'bgm', 'ambient', 'sfx', 'voice', 'fadeMs', 'holdMs'] },
+  // 同会话内按 id 还原；会话结束不截断已经开始的还原渐变，打断则立即还原。
   restoreAudio: { required: [], optional: ['id', 'fadeMs', 'stopSfx'] },
+  // 落雷：选靶 → 雷 → 靶消失。全可选——最小形态 `{}` 就是"照缺省挑最凶的劈了"
   strikeThreat: {
     required: [],
-    optional: ['rank', 'maxDistance', 'fallback', 'fallbackRadius', 'effect', 'effects', 'effectHeight',
+    optional: ['rank', 'maxDistance', 'fallback', 'fallbackRadius', 'effect', 'effects', 'effectHeight', 'effectSeed',
       'lightIntensity', 'lightHeight', 'lightRange', 'lightKelvin', 'lightMs', 'removeTarget', 'seed',
       'sfx', 'sfxVolume', 'strikes', 'extraChance', 'gapMs', 'gapJitterMs',
+      'visualStrikes', 'visualExtraChance', 'visualGapMs', 'visualGapJitterMs',
+      'fallbackMargin', 'fallbackMinDistance', 'fallbackSeparation', 'fallbackStrictSeparation', 'fallbackSurfaceZone', 'fallbackGroundOnly', 'fallbackMaxSlopeDeg', 'sfxVoices', 'vfxVoices',
       'flashAlpha', 'flashMs', 'shakeAmplitude', 'shakeMs'],
   },
   detachFromSocket: { required: ['target', 'socket'] },
@@ -282,12 +295,62 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   showOverlayImage: {
     required: ['id', 'image', 'xPercent', 'yPercent', 'widthPercent'],
     nonEmpty: ['id', 'image'],
+    // order = 在画布上的绘制顺序（与文档揭示 / 实体 / 特效共用一个顺序空间）
+    // fill = 铺满窗口（true 时 x/y/width 不参与布局；编辑器照样写着，关掉即回到百分比布局）
+    optional: ['order', 'fill'],
   },
   hideOverlayImage: { required: ['id'], nonEmpty: ['id'] },
+
+  // ---- 呼吸图(叠图同一层、同一套 id 句柄;hideOverlayImage 收掉它)----
+  // breathing = assets/data/breathing/<id>.json 的 id;布局口径同 showOverlayImage
+  showBreathingOverlay: {
+    required: ['id', 'breathing', 'xPercent', 'yPercent', 'widthPercent'],
+    nonEmpty: ['id', 'breathing'],
+    optional: ['order'],
+  },
+  // act = breathe | fadeOut | gasp | stopNow | restart;wait = 渐弱等停住走完 / 猛吸等猛吸结束才往下走
+  breathingPerform: { required: ['id', 'act'], nonEmpty: ['id', 'act'], optional: ['wait'] },
+  // params = 参数名 → 数值(键见 src/data/breathingParams.json);durationMs > 0 时平滑过渡
+  setBreathingParams: { required: ['id', 'params'], nonEmpty: ['id'], optional: ['durationMs'] },
+
+  // ---- 画布（场景之外那张屏幕空间的面）----
+  // character / animFile 是"二选一"，两个都不是 required（运行时自己判至少给一个）；
+  // 位置 / 大小 / 顺序全有缺省，所以只有句柄 name 是必填的。
+  showCanvasEntity: {
+    required: ['name'],
+    nonEmpty: ['name'],
+    optional: [
+      'character', 'animFile', 'state',
+      'xPercent', 'yPercent', 'heightPercent', 'widthPercent',
+      'order', 'facing', 'alpha',
+    ],
+  },
+  hideCanvasEntity: { required: ['name'], nonEmpty: ['name'] },
+  playCanvasEntityAnimation: {
+    required: ['name', 'state'],
+    nonEmpty: ['name', 'state'],
+    optional: ['speed', 'reverse', 'loop', 'holdFrame', 'thenState'],
+  },
+  setCanvasEntityTransform: {
+    required: ['name'],
+    nonEmpty: ['name'],
+    optional: ['xPercent', 'yPercent', 'heightPercent', 'widthPercent', 'facing', 'alpha'],
+  },
+  setCanvasOrder: {
+    required: ['kind', 'name', 'order'],
+    nonEmpty: ['kind', 'name'],
+  },
+  playCanvasVfx: {
+    required: ['name', 'effect'],
+    nonEmpty: ['name', 'effect'],
+    optional: ['xPercent', 'yPercent', 'scale', 'order'],
+  },
+  stopCanvasVfx: { required: ['name'], nonEmpty: ['name'] },
+  clearCanvas: { required: [] },
   blendOverlayImage: {
     required: ['id', 'fromImage', 'toImage', 'xPercent', 'yPercent', 'widthPercent'],
     nonEmpty: ['id', 'fromImage', 'toImage'],
-    optional: ['durationMs', 'delayMs'],
+    optional: ['durationMs', 'delayMs', 'order'],
   },
   setHotspotDisplayImage: {
     required: ['sceneId', 'hotspotId', 'image'],
@@ -319,7 +382,8 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     optional: ['entry', 'npcId', 'ownerType', 'ownerId', 'dimBackground'],
   },
   waitClickContinue: { required: [], optional: ['text'] },
-  playScriptedDialogue: { required: ['lines'], optional: ['scriptedNpcId', 'dimBackground'] },
+  // layout = 动作级版式档（各行默认；行内 layout 覆盖之）——运行时一直认、编辑器一直写，此前漏登这里
+  playScriptedDialogue: { required: ['lines'], optional: ['scriptedNpcId', 'dimBackground', 'layout'] },
   waitMs: { required: [], optional: ['durationMs'] },
   moveEntityTo: {
     required: ['target', 'x', 'y'],
@@ -358,8 +422,8 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   // ---- 世界空间粒子 / 群体（VfxSystem）----
   // playVfx：instanceId（场景实例）或 effect + 位置（临时实例）二选一，运行时校验至少一个。
   // 位置 = at（'player' / NPC id / {x,y,h}）或 x/y/h；surface 缺省 ground；seed / countScale 可选。
-  playVfx: { required: [], optional: ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale', 'restart', 'oneShot'] },
-  stopVfx: { required: ['instanceId'], nonEmpty: ['instanceId'] },
+  playVfx: { required: [], optional: ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale', 'restart', 'oneShot', 'followCamera', 'handle'] },
+  stopVfx: { required: [], optional: ['instanceId', 'handle', 'soft', 'fadeMs'] },
   // playPropVfx：在手持挂件上播一个效果（跟着挂件走、效果自己放完就收）。target / socket 在挂件预设状态的
   // onEnterActions 里可以不写 = 这件挂件自己；别处必填（运行时缺了 warn 跳过，校验器按所在位置判）。
   // point = 贴图上的点 [u, v]（0..1），不写 = 起火点，再没有 = 挂点本身。
@@ -399,6 +463,53 @@ export function getActionParamManifest(type: string): ActionParamManifestEntry |
   return isKnownActionType(type) ? ACTION_PARAM_MANIFEST[type] : undefined;
 }
 
+/** 新增演出参数的构建期契约；不收紧旧雷链的结算参数。Python 兜底与此同口径。 */
+export function presentationActionErrors(type: string, params: Record<string, unknown>): string[] {
+  const errors: string[] = [];
+  const number = (key: string, min: number, max = Infinity, integer = false): void => {
+    const value = params[key];
+    if (value === undefined || value === null) return;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max || (integer && !Number.isInteger(value))) {
+      errors.push(`${key} must be ${integer ? 'an integer' : 'a finite number'} in ${min}..${max}`);
+    }
+  };
+  const bool = (key: string): void => {
+    if (params[key] !== undefined && params[key] !== null && typeof params[key] !== 'boolean') errors.push(`${key} must be a boolean`);
+  };
+  if (type === 'strikeThreat') {
+    number('visualStrikes', 0, Infinity, true);
+    number('visualExtraChance', 0, 1);
+    number('visualGapMs', 0);
+    number('visualGapJitterMs', 0);
+    number('fallbackMargin', 0, 0.45);
+    number('fallbackMinDistance', 0);
+    number('fallbackSeparation', 0);
+    number('fallbackMaxSlopeDeg', 0, 90);
+    number('sfxVoices', 0, 16, true);
+    number('vfxVoices', 0, 32, true);
+    number('effectSeed', -Infinity, Infinity, true);
+    bool('fallbackGroundOnly');
+    bool('fallbackStrictSeparation');
+    const zone = params.fallbackSurfaceZone;
+    if (zone !== undefined && zone !== null && (typeof zone !== 'string' || !zone.trim())) errors.push('fallbackSurfaceZone must be a non-empty string');
+  }
+  if (type === 'playSfx') bool('loop');
+  if (type === 'playVfx' || type === 'stopVfx') {
+    const handle = params.handle;
+    if (handle !== undefined && handle !== null && (typeof handle !== 'string' || !handle.trim())) errors.push('handle must be a non-empty string');
+    const hasHandle = typeof handle === 'string' && !!handle.trim();
+    const hasInstance = String(params.instanceId ?? '').trim() !== '';
+    if (hasHandle && hasInstance) errors.push('instanceId and handle are mutually exclusive');
+    if (type === 'playVfx' && hasHandle && !String(params.effect ?? '').trim()) errors.push('handle requires a temporary effect');
+    if (type === 'stopVfx') {
+      if (!hasHandle && !hasInstance) errors.push('instanceId or handle is required');
+      bool('soft');
+      number('fadeMs', 0);
+    }
+  }
+  return errors;
+}
+
 // =========================================================================== //
 // 脱手演出（runActionsDetached）的两张分类表
 //
@@ -429,6 +540,12 @@ export const PRESENTATION_ONLY_ACTIONS: ReadonlySet<string> = new Set([
   'setCameraZoom', 'restoreSceneCameraZoom', 'fadingZoom', 'fadingRestoreSceneCameraZoom',
   'cameraFollowActor', 'cameraStopFollow',
   'showOverlayImage', 'hideOverlayImage', 'blendOverlayImage',
+  // 呼吸图:纯表演(不写存档),跳过时跟叠图同一待遇
+  'showBreathingOverlay', 'breathingPerform', 'setBreathingParams',
+  // 画布：纯表演（不写存档），跳过过场时跟叠图同一待遇
+  'showCanvasEntity', 'hideCanvasEntity', 'playCanvasEntityAnimation',
+  'setCanvasEntityTransform', 'setCanvasOrder',
+  'playCanvasVfx', 'stopCanvasVfx', 'clearCanvas',
   // 声音
   'playSfx', 'playBgm', 'stopBgm', 'playSceneAmbient', 'stopSceneAmbient',
   'duckAudio', 'restoreAudio',

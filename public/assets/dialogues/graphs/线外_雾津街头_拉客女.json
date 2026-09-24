@@ -114,6 +114,12 @@
           "params": {
             "id": "torch"
           }
+        },
+        {
+          "type": "openShop",
+          "params": {
+            "shopId": "teahouse_shop"
+          }
         }
       ],
       "next": "end1"

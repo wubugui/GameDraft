@@ -153,8 +153,8 @@
       "id": "hs_长明灯",
       "type": "inspect",
       "label": "长明灯 · 续点油",
-      "x": 420.0,
-      "y": 300.0,
+      "x": 457.0,
+      "y": 420.0,
       "interactionRange": 70.0,
       "data": {
         "graphId": "线外_寻狗_守夜续油"
@@ -164,8 +164,8 @@
       "id": "hs_供桌",
       "type": "inspect",
       "label": "供桌",
-      "x": 760.0,
-      "y": 240.0,
+      "x": 790.0,
+      "y": 398.0,
       "interactionRange": 70.0,
       "data": {
         "graphId": "线外_寻狗_城隍庙供桌"

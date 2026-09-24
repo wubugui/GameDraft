@@ -60,8 +60,8 @@
     }
   ],
   "spawnPoint": {
-    "x": 800,
-    "y": 600
+    "x": 770,
+    "y": 580
   },
   "depthConfig": {
     "depth_map": "raw_depth_rg.png",

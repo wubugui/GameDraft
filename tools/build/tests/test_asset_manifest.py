@@ -269,6 +269,32 @@ class ManifestBaseTests(unittest.TestCase):
         self.assertTrue(any("orphan" in key or "images" in key for key, _, _ in rows))
         self.assertTrue((self.root / "public" / "resources" / "runtime" / "images" / "orphan.png").is_file())
 
+    def test_呼吸图资产的图层与位移场进包_写错的进审计(self) -> None:
+        """呼吸图资产（assets/data/breathing/<id>.json）的 layers.* 与 fields.file 是结构位置上的引用，
+        键名 base / body / file 不在全局媒体键名表里——不专门收就一个都进不了包（dev 服整个 public/ 都在，看不出来）。
+        位移场是 .bin，同样按引用进包；写错的路径进审计 issue（--strict 停包）。"""
+        from tools.editor.shared.asset_reference_audit import audit_project_assets
+        rt = "/resources/runtime/images/breathing/face/"
+        disk = self.root / "public" / "resources" / "runtime" / "images" / "breathing" / "face"
+        for n in ("base.png", "sheet.png"):
+            _write_png(disk / n)
+        (disk / "fields.bin").write_bytes(b"\0" * 16)
+        _write_png(disk / "orphan.png")
+        _write(self.root / "public" / "assets" / "data" / "breathing" / "face.json", json.dumps({
+            "id": "face", "size": [4, 4],
+            "layers": {"base": rt + "base.png", "body": "", "sheet": rt + "sheet.png", "flap": rt + "missing_flap.png"},
+            "fields": {"file": rt + "fields.bin", "width": 2, "height": 2},
+        }))
+        rep = self.run_manifest()
+        for n in ("base.png", "sheet.png", "fields.bin"):
+            self.assertIn(f"resources/runtime/images/breathing/face/{n}", rep.files, n)
+            # 来源是 JSON 引用闭包（与素材审计同一套语义），不是某条宽 glob 规则
+            self.assertEqual(rep.origin[f"resources/runtime/images/breathing/face/{n}"], "JSON 引用")
+        self.assertNotIn("resources/runtime/images/breathing/face/orphan.png", rep.files, "没人引用的不进包")
+        report = audit_project_assets(self.root)
+        bad = {i.field_path for i in report.issues if i.file.endswith("breathing/face.json")}
+        self.assertEqual(bad, {"layers.flap"})
+
     def test_引用指向不存在的文件会被审计记成_issue(self) -> None:
         """打包管线据此 --strict 停下：带着这种状态打出来的包必然 404。"""
         _write(self.root / "public" / "assets" / "scenes" / "s2.json", json.dumps({
@@ -546,6 +572,19 @@ class RealTreeLightingTests(unittest.TestCase):
 
     def test_展开器对真实载荷零硬伤(self) -> None:
         self.assertEqual(self.release.problems, [])
+
+    def test_真实呼吸图资产的图层与位移场都在发行清单里(self) -> None:
+        bdir = _ROOT / "public" / "assets" / "data" / "breathing"
+        docs = sorted(bdir.glob("*.json")) if bdir.is_dir() else []
+        if not docs:
+            self.skipTest("仓库里没有呼吸图资产")
+        files = set(self.release.files)
+        for jp in docs:
+            doc = json.loads(jp.read_text(encoding="utf-8"))
+            refs = [v for v in (doc.get("layers") or {}).values() if isinstance(v, str) and v.strip()]
+            refs.append((doc.get("fields") or {}).get("file") or "")
+            for ref in refs:
+                self.assertIn(ref.strip().lstrip("/"), files, f"{jp.name}：{ref} 没进发行清单")
 
     def test_每份真实载荷_发行清单含其_mode_的图集与必读旁挂(self) -> None:
         files = set(self.release.files)

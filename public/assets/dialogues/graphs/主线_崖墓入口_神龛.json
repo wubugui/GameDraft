@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "id": "主线_崖墓入口_神龛",
+  "entry": "n_reveal",
+  "meta": {
+    "title": "崖墓入口·神龛（文档揭示：假图→真图）"
+  },
+  "preconditions": [],
+  "nodes": {
+    "n_reveal": {
+      "type": "runActions",
+      "actions": [
+        {
+          "type": "revealDocument",
+          "params": {
+            "documentId": "主线_和尚嘴神龛"
+          }
+        },
+        {
+          "type": "waitClickContinue",
+          "params": {
+            "text": ""
+          }
+        },
+        {
+          "type": "hideDocument",
+          "params": {
+            "documentId": "主线_和尚嘴神龛"
+          }
+        }
+      ],
+      "next": "end"
+    },
+    "end": {
+      "type": "end"
+    }
+  }
+}

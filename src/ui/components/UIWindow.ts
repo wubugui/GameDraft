@@ -187,6 +187,15 @@ export class UIWindow {
     this.container.addChild(this.chrome);
     this.container.addChild(this.body);
     this.container.addChild(this.overlay);
+    /**
+     * 窗体恒在 HUD / 对话框 / 世界浮标之上（层序表见 `rendering/uiLayerOrder`）。
+     *
+     * 在此之前面板一律没设 z（= 0 带），"面板盖住底下的东西"全靠"面板挂得晚"这条插入序，
+     * 于是任何显式设了 z 的展示层都**恒压在所有面板之上**：任务引导浮标（z=5）就这么画在
+     * 暂停菜单存档页 / 设置页的正中间（制作人截图）。挂遮罩的窗体压不住一枚浮标，
+     * 是层序没接上，不是浮标画错了位置。
+     */
+    this.container.zIndex = UITheme.z.panel;
 
     // 此前只有 HUD 监听 resize，面板一旦打开就把居中坐标算死，改窗口大小必歪。
     //

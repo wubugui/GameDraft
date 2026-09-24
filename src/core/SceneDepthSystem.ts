@@ -452,7 +452,12 @@ export class SceneDepthSystem implements IGameSystem {
      * @param worldY 世界坐标 Y
      */
     isCollision(worldX: number, worldY: number): boolean {
-        if (!this.enabled || !this.collisionData) return false;
+        return this.collisionAt(worldX, worldY) === true;
+    }
+
+    /** Read-only collision sample. Unknown/outside the baked grid is distinct from open ground. */
+    collisionAt(worldX: number, worldY: number): boolean | null {
+        if (!this.enabled || !this.collisionData) return null;
 
         // 世界坐标 → 像素坐标
         const sx = worldX * this.worldToPixelX;
@@ -465,7 +470,7 @@ export class SceneDepthSystem implements IGameSystem {
         // `wrQToWorldRow` 按行展开且不用 dot()）。本函数是 `./dev.sh audit-walkable` 的
         // 裁决基准，判据必须与它逐位一致——所以迁移只换调用，不动任何表达式顺序。
         const dFloor = this.sampleGroundDepth(worldX, worldY);
-        if (dFloor === null) return false;
+        if (dFloor === null) return null;
         const px = wrQx(sx, this.ppu, this.cx);
         const py = wrQy(sy, this.ppu, this.cy);
 
@@ -475,9 +480,8 @@ export class SceneDepthSystem implements IGameSystem {
         const gx = Math.floor(wrWorldXZToCell(wx, this.colXMin, this.colCellSize));
         const gz = Math.floor(wrWorldXZToCell(wz, this.colZMin, this.colCellSize));
 
-        // NaN 与越界都判"不碰撞"：wrCellInside 的 NaN→false 与原文 `gx<0||gx>=w` 对
-        // NaN 全假后落到 data[NaN] === undefined > 127 === false 的结果一致。
-        if (!wrCellInside(gx, gz, this.collisionW, this.collisionH)) return false;
+        // Keep unknown separate for presentation queries; isCollision retains false for unknown.
+        if (!wrCellInside(gx, gz, this.collisionW, this.collisionH)) return null;
         return this.collisionData[gz * this.collisionW + gx] > 127;
     }
 

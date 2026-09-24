@@ -40,5 +40,17 @@
   "龛前_烟长_假": {
     "image": "/resources/runtime/images/illustrations/背尸上山/01_龛前_烟长_假.png",
     "playSfx": false
+  },
+  "崖墓_栈道口": {
+    "image": "/resources/runtime/scenes/崖墓前段/background_night.png",
+    "playSfx": false
+  },
+  "崖墓_牛头凼口": {
+    "image": "/resources/runtime/scenes/牛头凼/牛头凼－深夜.png",
+    "playSfx": false
+  },
+  "牛头凼_远眺": {
+    "image": "/resources/runtime/scenes/牛头凼/background.png",
+    "sfx": "reveal_sting"
   }
 }

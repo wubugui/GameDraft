@@ -362,7 +362,9 @@ export class BurnSystem implements IGameSystem {
     const grid = buildBurnGrid(b, img, mask, order);
     let fuelSum = 0;
     for (let i = 0; i < grid.fuel.length; i++) fuelSum += Math.round(grid.fuel[i] * 255);
-    const fp = burnHash(JSON.stringify({ b, g: [grid.nx, grid.ny, fuelSum] }));
+    // 「雷劈能点着」不进指纹：它只决定以后雷来了点不点，不改这件东西怎么烧——开关它不该让存档里的记录作废
+    const { lightningIgnites: _lightning, ...core } = b;
+    const fp = burnHash(JSON.stringify({ b: core, g: [grid.nx, grid.ny, fuelSum] }));
     return { burnable: b, grid, fp };
   }
 
@@ -1299,6 +1301,42 @@ export class BurnSystem implements IGameSystem {
       ? { t: this.clock, k: 'igniteAll' }
       : { t: this.clock, k: 'ignite', u: at.u, v: at.v };
     return this.recordEvent(rec, target, e);
+  }
+
+  /**
+   * 雷劈（与画出来的那道雷同一拍）：落点 `at`（M-world wu）竖直往上 `heightWu`、半径 `radiusWu` 这一段胶囊里，
+   * 模板开了「雷劈能点着」的可燃物在离雷最近的那一格当场着（不等引燃延迟：雷不是一截慢慢烤的火）。
+   * 场景里摆的与手上拿的都算；粒子薄片归粒子系统（`VfxSystem.igniteByLightning`）。
+   *
+   * 场景里摆的与玩家手点过同一道门：宿主不许玩家点（`playerIgnite: false`，留给脚本点的）、
+   * 能点的条件没满足的，雷也不点——雷不能把编排里还没到时候的火提前点掉。返回点着了几件。
+   */
+  igniteByLightning(at: readonly number[], radiusWu: number, heightWu: number): number {
+    if (!(radiusWu > 0) || this.restoring) return 0;
+    const h = Math.max(0, heightWu);
+    let n = 0;
+    const rec = this.liveRecord();
+    const sim = rec?.sim;
+    if (rec && sim?.ready) {
+      let ctx: ConditionEvalContext | null = null;
+      for (const hit of sim.findContacts(at[0], at[1], at[2], 0, 1, 0, h, radiusWu)) {
+        const b = rec.builds.get(hit.key);
+        if (!b?.host || !b.burnable.lightningIgnites || !sim.isPresent(hit.key)) continue;
+        if (b.host.playerIgnite === false) continue;
+        const conds = b.host.igniteConditions;
+        if (conds?.length) {
+          const c = ctx ??= this.deps.conditionContext();
+          if (!(conds as ConditionExpr[]).every((x) => evaluateConditionExpr(x, c))) continue;
+        }
+        if (this.recordEvent(rec, hit.key, { t: this.clock, k: 'ignite', u: hit.u, v: hit.v })) n++;
+      }
+    }
+    for (const inst of this.held.values()) {
+      if (!inst.burnable.lightningIgnites || !inst.sim.ready) continue;
+      const hit = inst.sim.findContacts(at[0], at[1], at[2], 0, 1, 0, h, radiusWu).find((x) => x.key === inst.key);
+      if (hit && inst.sim.addEvent(inst.key, { t: this.clock, k: 'ignite', u: hit.u, v: hit.v })) n++;
+    }
+    return n;
   }
 
   private liveHost(id: string): BurnEntityHost | null {

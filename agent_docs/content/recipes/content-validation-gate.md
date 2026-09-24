@@ -13,12 +13,14 @@ triggers:
   paths: ["public/assets/data/**", "public/assets/scenes/*.json", "public/assets/dialogues/graphs/*.json"]
   topics: [validate-data, 素材审计, 数据校验, 收尾校验]
   tasks: [做内容, 改JSON, 收尾校验]
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 **实测环境与日期**:2026-07-11,macOS(darwin),仓库根目录直接跑,两条命令均通过(素材审计 0 issues;validate-data 退出码 0、仅 warning)。
 2026-08-17 Windows 复测:**`./dev.sh` 这个入口在 Windows 上零启动**(它按 POSIX 布局找 venv),
 门本身没问题,换等价入口即可(见下)。
+2026-09-23 Windows 复测:`sh scripts/py.sh -m tools.dev validate-data` 跑通,但**基线本身带存量 error**
+(退出码因此非 0)——"跑完退出码 0"不再是可用判据,一律按下文「基线怎么用」的增量判据判。
 
 ## 命令
 
@@ -48,7 +50,7 @@ last_governed: 2026-08-05
    解释器入口为什么统一走 `scripts/py.sh`,见
    [挑项目 Python 的入口](../../meta/mechanisms/project-interpreter-entrypoint.md)。
 
-不通过就继续改数据修复再跑,迭代到干净才算完成。
+不通过就继续改数据修复再跑,迭代到**本次改动那一族**干净才算完成(存量见下节)。
 
 ## 基线怎么用(**不要记数字**)
 

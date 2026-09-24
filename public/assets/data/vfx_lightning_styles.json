@@ -1,0 +1,383 @@
+{
+  "_comment": "雷电样式库：粒子工作台是唯一写入者（效果资产的 generator.style 按 id 引用这里）。雷在游戏里现画，套用 = 把这里的参数写进效果的 bolts 与那几层发射器。见 tools/vfx_workbench/lightning.py",
+  "styles": [
+    {
+      "id": "ref_bolt",
+      "label": "参考图天雷",
+      "kind": "bolt",
+      "params": {
+        "tiltDeg": [
+          0,
+          10
+        ],
+        "bendDeg": 10,
+        "bendLenWu": 700,
+        "stepWu": [
+          160,
+          320
+        ],
+        "kinkDeg": [
+          4,
+          12
+        ],
+        "zigzag": 0.6,
+        "roughness": 0.3,
+        "detailWu": 3,
+        "branchPerKWu": 28,
+        "branchFromWu": 150,
+        "branchMinWu": 15,
+        "branchMaxWu": 1600,
+        "branchAngleDeg": [
+          25,
+          70
+        ],
+        "branchIntensity": [
+          0.3,
+          0.65
+        ],
+        "branchWidth": 0.4,
+        "forkPerKWu": 10,
+        "forkDepth": 2,
+        "lowBoostGain": 1.15,
+        "lowBoostWu": 150,
+        "coreWu": 1.5,
+        "coreMinPx": 4.5,
+        "glowWu": 4,
+        "glowMinPx": 10,
+        "haloWu": 20,
+        "haloMinPx": 34,
+        "coreGain": 3.5,
+        "glowGain": 1.0,
+        "haloGain": 0.12,
+        "coreColor": [
+          1,
+          1,
+          1
+        ],
+        "glowColor": [
+          0.72,
+          0.78,
+          1.0
+        ],
+        "strokeCoreGain": 1.6,
+        "strokeCoreWu": 1.5,
+        "strokeCoreMinPx": 5,
+        "strokeGlowWu": 4,
+        "strokeGlowMinPx": 9,
+        "strokeGlowGain": 0.3,
+        "groundArcCount": [
+          14,
+          22
+        ],
+        "groundArcLenWu": [
+          12,
+          85
+        ],
+        "groundArcKinkDeg": [
+          10,
+          35
+        ],
+        "groundArcRoughness": 0.25,
+        "groundArcForkPerKWu": 20,
+        "groundArcIntensity": [
+          0.3,
+          0.8
+        ],
+        "waterArcCount": [
+          16,
+          26
+        ],
+        "waterArcLenWu": [
+          40,
+          180
+        ],
+        "waterArcKinkDeg": [
+          10,
+          30
+        ],
+        "waterArcRoughness": 0.28,
+        "waterArcForkPerKWu": 18,
+        "waterArcIntensity": [
+          0.4,
+          0.9
+        ],
+        "arcCoreWu": 0.8,
+        "arcCoreMinPx": 2.0,
+        "arcGlowWu": 3,
+        "arcGlowMinPx": 6,
+        "arcCoreGain": 2.2,
+        "arcGlowGain": 0.7,
+        "arcGlowColor": [
+          0.72,
+          0.8,
+          1.0
+        ],
+        "lightKelvin": 11000,
+        "contactGain": 0.12,
+        "contactHeightWu": 40,
+        "contactRangeWu": 4000,
+        "channelGain": 1.0,
+        "channelHeightWu": 2400,
+        "channelRangeWu": 5000,
+        "skyGain": 0.004,
+        "skyElevationDeg": 65,
+        "blastStrengthWu": 1000,
+        "blastRadiusWu": 600,
+        "blastSeconds": 1.2,
+        "igniteRadiusWu": 80
+      }
+    },
+    {
+      "id": "ref_bolt_straight",
+      "label": "直一点、少分叉",
+      "kind": "bolt",
+      "params": {
+        "tiltDeg": [
+          0,
+          6
+        ],
+        "bendDeg": 10,
+        "bendLenWu": 700,
+        "stepWu": [
+          160,
+          320
+        ],
+        "kinkDeg": [
+          3,
+          9
+        ],
+        "zigzag": 0.6,
+        "roughness": 0.24,
+        "detailWu": 3,
+        "branchPerKWu": 12,
+        "branchFromWu": 150,
+        "branchMinWu": 15,
+        "branchMaxWu": 1600,
+        "branchAngleDeg": [
+          25,
+          70
+        ],
+        "branchIntensity": [
+          0.3,
+          0.65
+        ],
+        "branchWidth": 0.4,
+        "forkPerKWu": 10,
+        "forkDepth": 2,
+        "lowBoostGain": 1.15,
+        "lowBoostWu": 150,
+        "coreWu": 1.5,
+        "coreMinPx": 4.5,
+        "glowWu": 4,
+        "glowMinPx": 10,
+        "haloWu": 20,
+        "haloMinPx": 34,
+        "coreGain": 3.5,
+        "glowGain": 1.0,
+        "haloGain": 0.12,
+        "coreColor": [
+          1,
+          1,
+          1
+        ],
+        "glowColor": [
+          0.72,
+          0.78,
+          1.0
+        ],
+        "strokeCoreGain": 1.6,
+        "strokeCoreWu": 1.5,
+        "strokeCoreMinPx": 5,
+        "strokeGlowWu": 4,
+        "strokeGlowMinPx": 9,
+        "strokeGlowGain": 0.3,
+        "groundArcCount": [
+          14,
+          22
+        ],
+        "groundArcLenWu": [
+          12,
+          85
+        ],
+        "groundArcKinkDeg": [
+          10,
+          35
+        ],
+        "groundArcRoughness": 0.25,
+        "groundArcForkPerKWu": 20,
+        "groundArcIntensity": [
+          0.3,
+          0.8
+        ],
+        "waterArcCount": [
+          16,
+          26
+        ],
+        "waterArcLenWu": [
+          40,
+          180
+        ],
+        "waterArcKinkDeg": [
+          10,
+          30
+        ],
+        "waterArcRoughness": 0.28,
+        "waterArcForkPerKWu": 18,
+        "waterArcIntensity": [
+          0.4,
+          0.9
+        ],
+        "arcCoreWu": 0.8,
+        "arcCoreMinPx": 2.0,
+        "arcGlowWu": 3,
+        "arcGlowMinPx": 6,
+        "arcCoreGain": 2.2,
+        "arcGlowGain": 0.7,
+        "arcGlowColor": [
+          0.72,
+          0.8,
+          1.0
+        ],
+        "lightKelvin": 11000,
+        "contactGain": 0.12,
+        "contactHeightWu": 40,
+        "contactRangeWu": 4000,
+        "channelGain": 1.0,
+        "channelHeightWu": 2400,
+        "channelRangeWu": 5000,
+        "skyGain": 0.004,
+        "skyElevationDeg": 65,
+        "blastStrengthWu": 1000,
+        "blastRadiusWu": 600,
+        "blastSeconds": 1.2,
+        "igniteRadiusWu": 80
+      }
+    },
+    {
+      "id": "ref_bolt_branchy",
+      "label": "多分叉",
+      "kind": "bolt",
+      "params": {
+        "tiltDeg": [
+          0,
+          10
+        ],
+        "bendDeg": 10,
+        "bendLenWu": 700,
+        "stepWu": [
+          160,
+          320
+        ],
+        "kinkDeg": [
+          4,
+          12
+        ],
+        "zigzag": 0.6,
+        "roughness": 0.3,
+        "detailWu": 3,
+        "branchPerKWu": 55,
+        "branchFromWu": 100,
+        "branchMinWu": 15,
+        "branchMaxWu": 1600,
+        "branchAngleDeg": [
+          25,
+          70
+        ],
+        "branchIntensity": [
+          0.3,
+          0.65
+        ],
+        "branchWidth": 0.4,
+        "forkPerKWu": 18,
+        "forkDepth": 2,
+        "lowBoostGain": 1.15,
+        "lowBoostWu": 150,
+        "coreWu": 1.5,
+        "coreMinPx": 4.5,
+        "glowWu": 4,
+        "glowMinPx": 10,
+        "haloWu": 20,
+        "haloMinPx": 34,
+        "coreGain": 3.5,
+        "glowGain": 1.0,
+        "haloGain": 0.12,
+        "coreColor": [
+          1,
+          1,
+          1
+        ],
+        "glowColor": [
+          0.72,
+          0.78,
+          1.0
+        ],
+        "strokeCoreGain": 1.6,
+        "strokeCoreWu": 1.5,
+        "strokeCoreMinPx": 5,
+        "strokeGlowWu": 4,
+        "strokeGlowMinPx": 9,
+        "strokeGlowGain": 0.3,
+        "groundArcCount": [
+          14,
+          22
+        ],
+        "groundArcLenWu": [
+          12,
+          85
+        ],
+        "groundArcKinkDeg": [
+          10,
+          35
+        ],
+        "groundArcRoughness": 0.25,
+        "groundArcForkPerKWu": 20,
+        "groundArcIntensity": [
+          0.3,
+          0.8
+        ],
+        "waterArcCount": [
+          16,
+          26
+        ],
+        "waterArcLenWu": [
+          40,
+          180
+        ],
+        "waterArcKinkDeg": [
+          10,
+          30
+        ],
+        "waterArcRoughness": 0.28,
+        "waterArcForkPerKWu": 18,
+        "waterArcIntensity": [
+          0.4,
+          0.9
+        ],
+        "arcCoreWu": 0.8,
+        "arcCoreMinPx": 2.0,
+        "arcGlowWu": 3,
+        "arcGlowMinPx": 6,
+        "arcCoreGain": 2.2,
+        "arcGlowGain": 0.7,
+        "arcGlowColor": [
+          0.72,
+          0.8,
+          1.0
+        ],
+        "lightKelvin": 11000,
+        "contactGain": 0.12,
+        "contactHeightWu": 40,
+        "contactRangeWu": 4000,
+        "channelGain": 1.0,
+        "channelHeightWu": 2400,
+        "channelRangeWu": 5000,
+        "skyGain": 0.004,
+        "skyElevationDeg": 65,
+        "blastStrengthWu": 1000,
+        "blastRadiusWu": 600,
+        "blastSeconds": 1.2,
+        "igniteRadiusWu": 80
+      }
+    }
+  ]
+}

@@ -167,6 +167,11 @@ export interface BurnableDef {
   flameLength?: number;
   /** 被火焰碰到多少秒才着 */
   ignitionDelay?: number;
+  /**
+   * 雷劈能点着（缺省否）：落雷落点一定半径内、开了这一项的才被雷点着（场景里摆的、手上拿的、粒子薄片绑的都算）。
+   * 点着会进存档、烧完永久没了，所以逐个模板由作者开——不开的，雷劈在旁边也不着。
+   */
+  lightningIgnites?: boolean;
   look?: BurnLookDef;
   particles?: BurnParticleSlotDef[];
   light?: BurnLightDef;
@@ -276,6 +281,8 @@ export interface ResolvedBurnable {
   emberSeconds: number;
   flameLengthCm: number;
   ignitionDelay: number;
+  /** 雷劈能点着（不进燃烧指纹：开关它不改这件东西怎么烧，不该让存档里的记录作废） */
+  lightningIgnites: boolean;
   look: Required<BurnLookDef>;
   particles: Required<BurnParticleSlotDef>[];
   light: BurnLightDef | null;
@@ -458,6 +465,7 @@ export function resolveBurnable(raw: unknown, fileId?: string): ResolvedBurnable
     emberSeconds: nonNeg(o.emberSeconds) ?? BURN_DEFAULTS.emberSeconds,
     flameLengthCm: pos(o.flameLength) ?? BURN_DEFAULTS.flameLength,
     ignitionDelay: nonNeg(o.ignitionDelay) ?? BURN_DEFAULTS.ignitionDelay,
+    lightningIgnites: o.lightningIgnites === true,
     look: look(o.look),
     particles: particles(o.particles),
     light: light(o.light),

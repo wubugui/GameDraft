@@ -3,7 +3,7 @@ import { BubbleChatterSystem, bubbleSpeakerFromActionTarget, type BubbleChatterD
 import { DeterministicRandom } from '../utils/deterministicRandom';
 import { FlagStore } from '../core/FlagStore';
 import { EventBus } from '../core/EventBus';
-import type { GameContext, IEmoteBubbleAnchor } from '../data/types';
+import { isEmoteAnchorShown, type GameContext, type IEmoteBubbleAnchor } from '../data/types';
 
 const anchorA: IEmoteBubbleAnchor = { getDisplayObject: () => ({}), getEmoteBubbleAnchorLocalY: () => -10 };
 const anchorB: IEmoteBubbleAnchor = { getDisplayObject: () => ({}), getEmoteBubbleAnchorLocalY: () => -10 };
@@ -567,5 +567,92 @@ describe('bubbleSpeakerFromActionTarget（动作 target 串 → 说话人）', (
     expect(h.sys.setLineSetFor(bubbleSpeakerFromActionTarget('character:clara'), 'clara_alt')).toBe(true);
     h.tick(1);
     expect(h.said.map((s) => s.text)).toEqual(['换过的词']);
+  });
+});
+
+describe('说话人被藏起来就不说（2026-09-23：时段到了夜里人没了，头顶那句还挂着）', () => {
+  /** 显隐可拨的锚：显示对象就是实体容器，`visible` 即实体四通道合成后的那一个布尔 */
+  function hideableAnchor(): { host: { visible: boolean }; anchor: IEmoteBubbleAnchor } {
+    const host = { visible: true };
+    return { host, anchor: { getDisplayObject: () => host, getEmoteBubbleAnchorLocalY: () => -10 } };
+  }
+
+  it('常驻闲聊：人藏着整组不参选，人回来照常说', () => {
+    const { host, anchor } = hideableAnchor();
+    const h = makeHarness({ resolveEmoteTarget: (id) => (id === 'npc_a' ? anchor : null) });
+    h.sys.applyDefs({
+      tuning: { globalMinIntervalMs: 0, perSpeakerMinIntervalMs: 0 },
+      lineSets: [{ id: 'set_a', speaker: { kind: 'entity', id: 'npc_a' }, cooldownMs: 0, lines: [{ text: '一句话' }] }],
+    });
+    host.visible = false;
+    h.tick(3);
+    expect(h.said).toHaveLength(0);
+
+    host.visible = true;
+    h.step();
+    expect(h.said.map((s) => s.text)).toEqual(['一句话']);
+  });
+
+  it('走近型：人藏着时走进半径不算走近；人在跟前现身才算走近一次', () => {
+    const { host, anchor } = hideableAnchor();
+    const h = makeHarness({ resolveEmoteTarget: (id) => (id === 'npc_a' ? anchor : null) });
+    h.sys.applyDefs({
+      tuning: { globalMinIntervalMs: 0, perSpeakerMinIntervalMs: 0 },
+      lineSets: [{
+        id: 'near', speaker: { kind: 'entity', id: 'npc_a' },
+        trigger: 'approach', approachRange: 50, cooldownMs: 0,
+        lines: [{ text: '走近了' }],
+      }],
+    });
+    host.visible = false;
+    h.state.positions.npc_a = { x: 500, y: 0 };
+    h.tick(1);
+    h.state.positions.npc_a = { x: 10, y: 0 };   // 人藏着，玩家走到他站的地方
+    h.tick(3);
+    expect(h.said).toHaveLength(0);
+
+    host.visible = true;                          // 人在玩家跟前现身
+    h.tick(0.1);
+    expect(h.said).toHaveLength(1);
+    h.tick(3);                                    // 站着不动不会一直念
+    expect(h.said).toHaveLength(1);
+  });
+
+  it('走近型：闩住还没说出口时人被藏了，名额空出来也不冒（对着空地说话）', () => {
+    const { host, anchor } = hideableAnchor();
+    const h = makeHarness({ resolveEmoteTarget: (id) => (id === 'npc_a' ? anchor : null) });
+    h.sys.applyDefs({
+      tuning: { globalMinIntervalMs: 0, perSpeakerMinIntervalMs: 0 },
+      lineSets: [{
+        id: 'near', speaker: { kind: 'entity', id: 'npc_a' },
+        trigger: 'approach', approachRange: 50, cooldownMs: 0,
+        lines: [{ text: '走近了' }],
+      }],
+    });
+    h.state.positions.npc_a = { x: 500, y: 0 };
+    h.tick(1);
+    h.state.activeBubbles = 99;                   // 同屏满了：走近被闩住、说不出口
+    h.state.positions.npc_a = { x: 10, y: 0 };
+    h.tick(0.5);
+    host.visible = false;                         // 人被藏了（夜里按时段隐掉）
+    h.tick(0.5);
+    h.state.activeBubbles = 0;
+    h.tick(3);
+    expect(h.said).toHaveLength(0);
+  });
+});
+
+describe('isEmoteAnchorShown（气泡与闲聊共用的「这人此刻看得见」判据）', () => {
+  const anchorOf = (obj: unknown): IEmoteBubbleAnchor => ({ getDisplayObject: () => obj, getEmoteBubbleAnchorLocalY: () => 0 });
+
+  it('只看实体显示容器的 visible：藏了就是藏了', () => {
+    expect(isEmoteAnchorShown(anchorOf({ visible: true }))).toBe(true);
+    expect(isEmoteAnchorShown(anchorOf({ visible: false }))).toBe(false);
+  });
+
+  it('没有显示对象 / 已销毁 = 看不见；没有 visible 字段的桩按看得见算', () => {
+    expect(isEmoteAnchorShown(anchorOf(null))).toBe(false);
+    expect(isEmoteAnchorShown(anchorOf({ visible: true, destroyed: true }))).toBe(false);
+    expect(isEmoteAnchorShown(anchorOf({}))).toBe(true);
   });
 });

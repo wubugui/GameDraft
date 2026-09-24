@@ -32,7 +32,9 @@ const BASELINE: ResolvedLightEnv = {
     mode: 'real',
     // length 为占位：resolveLightEnv 末端统一按「显式值 > 最终 elevation 推导」定值
     enabled: true, darkness: 0.4, softness: 1.0, length: 0,
-    contact: 0.5, contactSize: 1.0,
+    // contact 0.75:2026-09-24 接触阴影改成跟着脚宽走的暗池后按「一眼看得出」定的(见 EntityShadow CONTACT_*)。
+    // 编辑器镜像:scene_editor._LC_BASELINE_ENV 与 shared/light_env_visual,对账测试钉着。
+    contact: 0.75, contactSize: 1.0,
     softSamples: 1, softRadius: 0.05, billboard: 'light',
   },
   toneStrength: 0.45,

@@ -10,7 +10,7 @@ authority:
 triggers:
   paths: ["src/systems/minigameSession.ts", "src/systems/*Minigame*"]
   topics: [小游戏, minigame, session]
-last_governed: 2026-08-05
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -28,6 +28,13 @@ last_governed: 2026-08-05
   active 后抛还会卡死 Minigame 态。
 - 新小游戏管理器继承基类,不自造 session 簿记。
 - 小游戏是"接管态"例外;背尸这类**任务态**玩法不是小游戏,走位面(见 [plane-system](plane-system.md))。
+- 进 `Minigame` 态是全屏接管:当场打断所有脱手演出(结算补齐、归位做满,见
+  [detached-performance-session](detached-performance-session.md));威胁与护火在小游戏期间整条不跑。
+
+## 已知坑
+
+- 会话临时铺的环境音按 id 加减、无引用计数:物件检视会话加了一层与场景基线**同 id** 的环境音,关会话时会把场景那层
+  一起撤掉(见 [audio-mix-and-ownership](audio-mix-and-ownership.md))。会话环境音用场景里没有的 id。
 
 ## 怎么验证
 

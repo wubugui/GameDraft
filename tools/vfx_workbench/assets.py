@@ -36,6 +36,8 @@ from tools.editor.shared.vfx_life import max_distance_ignored, max_distance_prob
 from tools.editor.shared.vfx_motion import follow_anchor_ignored, follow_anchor_problem
 from tools.editor.shared.vfx_timing import timing_problems
 from tools.editor.shared.vfx_program import effective_solver, new_program, program_errors
+from tools.editor.shared.vfx_generator import generator_problems
+from tools.editor.shared.vfx_bolt import effect_bolt_problems
 
 ROOT = Path(__file__).resolve().parents[2]
 VFX_DIR = ROOT / "public" / "assets" / "data" / "vfx"
@@ -62,15 +64,21 @@ _ID_RE = re.compile(r'^[^\\/:*?"<>|\x00-\x1f]{1,120}$')
 _EMITTER_ID_RE = re.compile(r'^[^\s./\\:*?"<>|\x00-\x1f]{1,60}$')
 
 #: 顶层键序（运行时真相在前、工作态在后）
-_ORDER = ("id", "label", "prewarmSeconds", "emitters", "beams", "authoring")
+_ORDER = ("id", "label", "prewarmSeconds", "emitters", "beams", "bolts", "generator", "authoring")
+#: ``bolts[]`` 的键序（与 types.ts 的 VfxBoltDef 同序）；画雷那一层 ``appearance.bolt`` 的键序
+_BOLT_ORDER = ("id", "kind", "seed", "sky", "surface", "light", "impact")
+_BOLT_LAYER_ORDER = ("bolt", "part", "coreWu", "coreMinPx", "glowWu", "glowMinPx", "haloWu", "haloMinPx",
+                     "coreGain", "glowGain", "haloGain", "coreColor", "glowColor")
+#: ``generator`` 的键序（雷电样式生成器，工作台的工作态，运行时忽略；见 ``lightning.py``）
+_GENERATOR_ORDER = ("kind", "style", "seed", "group", "built")
 #: 发射器键序（与 types.ts 的 VfxEmitterDef 逐字同序）
 _EMITTER_ORDER = ("id", "simulation", "offset", "subOnly", "appearance", "spawn", "motion", "life", "collision", "behavior",
-                  "plate", "sound")
+                  "plate", "sound", "onSurface")
 #: 各模块的键序（同上，按 types.ts）
 _MODULE_ORDER = {
     "appearance": ("animFile", "image", "state", "restState", "frameRate", "sizeWu", "sizeJitter",
                    "sizeOverLife", "alphaOverLife", "tint", "tintOverLife", "blend", "lit", "emissive", "lightGain",
-                   "stretchByVelocity", "faceVelocity", "softEdgeWu", "spin", "beamLit"),
+                   "stretchByVelocity", "faceVelocity", "softEdgeWu", "spin", "beamLit", "bolt"),
     "spawn": ("max", "rate", "intervalJitter", "burst", "shape", "speed", "direction", "spread", "duration"),
     "motion": ("gravity", "drag", "wind", "buoyancy", "turbulence", "maxSpeed", "stimulus", "followAnchor"),
     "life": ("seconds", "maxDistance"),
@@ -187,7 +195,8 @@ def _appearance(ap: Any, where: str, warn: list[str]) -> dict:
     size = ap.get("sizeWu")
     if not _is_num(size) or size <= 0:
         raise ValueError(f"{where}.appearance.sizeWu 必须 > 0（收到 {size!r}）")
-    if not str(ap.get("animFile") or "").strip() and not str(ap.get("image") or "").strip():
+    # 画雷的发射器（appearance.bolt）不贴图：雷身是运行时现画的折线
+    if "bolt" not in ap and not str(ap.get("animFile") or "").strip() and not str(ap.get("image") or "").strip():
         warn.append(f"{where}: 外观既没有 animFile 也没有 image，游戏里装不到贴图（会跳过这个发射器）")
     # 状态名是对动画包的引用：打错了运行时不报错——state 静默退回第一个状态、restState 直接忽略（VfxSystem.loadTexture）
     anim = str(ap.get("animFile") or "").strip()
@@ -228,6 +237,8 @@ def _appearance(ap: Any, where: str, warn: list[str]) -> dict:
     if isinstance(out.get("spin"), dict) and "rate" in out["spin"]:
         out["spin"] = dict(out["spin"])
         out["spin"]["rate"] = _pair(out["spin"]["rate"], f"{where}.appearance.spin.rate")
+    if isinstance(out.get("bolt"), dict):
+        out["bolt"] = _order(dict(out["bolt"]), _BOLT_LAYER_ORDER)
     return _order(out, _MODULE_ORDER["appearance"])
 
 
@@ -561,6 +572,16 @@ def normalize_effect(doc: Any, warnings: list[str] | None = None) -> dict:
             out["beams"] = [_beam(b) for b in beams_raw]
         else:
             out.pop("beams", None)
+    # 雷（bolts[] + 画它的层 appearance.bolt + 发射器 onSurface）：形状 / 引用不对一律拒存（与校验器同一份）
+    probe["beams"] = out.get("beams")
+    probe["bolts"] = out.get("bolts")
+    if problems := effect_bolt_problems(probe):
+        raise ValueError("; ".join(problems))
+    if isinstance(out.get("bolts"), list):
+        if out["bolts"]:
+            out["bolts"] = [_order(dict(b), _BOLT_ORDER) for b in out["bolts"]]
+        else:
+            out.pop("bolts", None)
     if not emitters and not out.get("beams"):
         warn.append("这份效果还没有发射器也没有光柱，游戏里什么都不会画")
     out["emitters"] = emitters
@@ -589,6 +610,10 @@ def normalize_effect(doc: Any, warnings: list[str] | None = None) -> dict:
             out.pop("authoring", None)
     elif "authoring" in out:
         out.pop("authoring", None)
+    if "generator" in out:
+        if problems := generator_problems(out["generator"]):
+            raise ValueError("; ".join(problems))
+        out["generator"] = _order(dict(out["generator"]), _GENERATOR_ORDER)
     return _order(out, _ORDER)
 
 
@@ -625,6 +650,10 @@ def list_assets() -> list[dict]:
             "background": str(au.get("background") or ""),
             "idMismatch": str(doc.get("id") or "") != p.stem,
         })
+        gen = doc.get("generator")
+        if isinstance(gen, dict) and gen.get("kind") == "lightning":
+            row["generator"] = {"kind": "lightning", "style": str(gen.get("style") or ""),
+                                "group": str(gen.get("group") or ""), "seed": gen.get("seed")}
         out.append(row)
     return out
 

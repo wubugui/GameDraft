@@ -44,7 +44,41 @@ export interface DepthShellField {
   /** 深度范围（诊断用） */
   dMin: number;
   dMax: number;
+  /** 不经平均的可见面采样，供必须精确落壳的表现查询；不改变碰撞场。 */
+  surfaceSamples?: StrictShellSamples;
 }
+
+export interface StrictShellSamples {
+  /** 每格保留一个真实源像素的深度（q），不做双线性或盒平均。 */
+  data: Float32Array;
+  /** 源覆盖范围（另扩一像素保护边缘）的深度跨度（q）。 */
+  span: Float32Array;
+  /** 同一覆盖范围在视平面的对角长度（q），用于连续性检验。 */
+  footprintQ: Float32Array;
+  /** 真实源像素中心在壳栅格标定里的坐标。 */
+  px: Float32Array;
+  py: Float32Array;
+}
+
+export interface StrictShellSurface {
+  p: Vec3;
+  /** 未平滑局部切面的单位世界法线，朝相机。 */
+  normal: Vec3;
+  /** 此采样格代表的局部世界表面积（wu²），供面积加权抽样。 */
+  areaWu2: number;
+  px: number;
+  py: number;
+}
+
+/** Immutable scene geometry: prepare expensive surface differentials while loading,
+ * not synchronously on the first lightning frame. Weak ownership follows the field. */
+const strictGeometryCache = new WeakMap<DepthShellField, {
+  samples: StrictShellSamples;
+  basis: number[];
+  cal: number[];
+  positionQ: Float64Array;
+  normalAreaQ: Float64Array;
+}>();
 
 /** 世界点相对壳的关系（`geometry.py shell_contact` 的 TS 版） */
 export interface ShellContact {
@@ -156,6 +190,46 @@ export function resampleFloatField(src: Float32Array, srcW: number, srcH: number
     }
   }
   return out;
+}
+
+/**
+ * 给精确落壳查询留一条不滤波的数据通道。PNG 的样本在归一化 UV 的像素中心；
+ * 直接传入的几何场（包括跨语言金标）则已按整数栅格坐标标定。
+ * span 同时看覆盖区及外扩一像素，防止缩小时把遮挡断层平均成空中的假面。
+ */
+function buildStrictShellSamples(
+  src: Float32Array, srcW: number, srcH: number, w: number, h: number,
+  ppu: number, fromTexture: boolean,
+): StrictShellSamples {
+  const data = new Float32Array(w * h), span = new Float32Array(w * h);
+  const footprintQ = new Float32Array(w * h);
+  const px = new Float32Array(w * h), py = new Float32Array(w * h);
+  const sx = srcW / w, sy = srcH / h;
+  for (let y = 0; y < h; y++) {
+    const iy = Math.min(srcH - 1, Math.floor((y + 0.5) * sy));
+    const y0 = Math.max(0, Math.floor(y * sy) - 1);
+    const y1 = Math.min(srcH, Math.ceil((y + 1) * sy) + 1);
+    for (let x = 0; x < w; x++) {
+      const ix = Math.min(srcW - 1, Math.floor((x + 0.5) * sx));
+      const x0 = Math.max(0, Math.floor(x * sx) - 1);
+      const x1 = Math.min(srcW, Math.ceil((x + 1) * sx) + 1);
+      const i = y * w + x;
+      data[i] = src[iy * srcW + ix];
+      px[i] = fromTexture ? (ix + 0.5) / sx : x;
+      py[i] = fromTexture ? (iy + 0.5) / sy : y;
+      let lo = Infinity, hi = -Infinity;
+      for (let yy = y0; yy < y1; yy++) {
+        for (let xx = x0; xx < x1; xx++) {
+          const d = src[yy * srcW + xx];
+          if (!Number.isFinite(d)) { lo = -Infinity; hi = Infinity; }
+          else { lo = Math.min(lo, d); hi = Math.max(hi, d); }
+        }
+      }
+      span[i] = hi - lo;
+      footprintQ[i] = Math.hypot((x1 - x0 - 1) / sx, (y1 - y0 - 1) / sy) / ppu;
+    }
+  }
+  return { data, span, footprintQ, px, py };
 }
 
 /**
@@ -275,6 +349,7 @@ export function buildDepthShellField(
   cal: DepthShellCal,
   basisRows: ArrayLike<number>,
   normalSigma?: number,
+  surfaceSamples?: StrictShellSamples,
 ): DepthShellField {
   let dMin = Infinity, dMax = -Infinity;
   for (let i = 0; i < depth.length; i++) {
@@ -282,11 +357,25 @@ export function buildDepthShellField(
     if (v < dMin) dMin = v;
     if (v > dMax) dMax = v;
   }
-  return {
+  const field: DepthShellField = {
     data: depth, w, h, cal,
     normal: computeShellNormals(depth, w, h, cal, basisRows, normalSigma),
     dMin, dMax,
+    surfaceSamples: surfaceSamples ?? buildStrictShellSamples(depth, w, h, w, h, cal.ppu, false),
   };
+  const positionQ = new Float64Array(w * h * 3), normalAreaQ = new Float64Array(w * h * 4);
+  const unitBasis = { basisRows, wuPerQUnit: 1 };
+  for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+    const hit = computeStrictShellSurface(field, unitBasis, x, y);
+    if (!hit) continue;
+    const i = y * w + x;
+    positionQ.set(hit.p, i * 3);
+    normalAreaQ.set(hit.normal, i * 4);
+    normalAreaQ[i * 4 + 3] = hit.areaWu2;
+  }
+  strictGeometryCache.set(field, { samples: field.surfaceSamples!, basis: Array.from(basisRows),
+    cal: [cal.ppu, cal.cx, cal.cy, w, h], positionQ, normalAreaQ });
+  return field;
 }
 
 /**
@@ -309,7 +398,10 @@ export function decodeDepthShellField(
   const s = w / nativeW;
   const depth = resampleDepthBytes(rgba, srcW, srcH, mapping, w, h);
   const cal = { ppu: nativeCal.ppu * s, cx: nativeCal.cx * s, cy: nativeCal.cy * s };
-  return buildDepthShellField(depth, w, h, cal, basisRows);
+  const exact = new Float32Array(srcW * srcH);
+  for (let i = 0; i < exact.length; i++) exact[i] = decodeDepthRG16Bytes(rgba[i * 4], rgba[i * 4 + 1], mapping);
+  const surfaceSamples = buildStrictShellSamples(exact, srcW, srcH, w, h, cal.ppu, true);
+  return buildDepthShellField(depth, w, h, cal, basisRows, undefined, surfaceSamples);
 }
 
 /** M-world → 壳栅格像素（只要 x/y；z 由调用方另用）。 */
@@ -335,6 +427,76 @@ export function shellPxToWorld(f: DepthShellField, b: ShellBasis, px: number, py
     wrQToWorldRow(r[3], r[4], r[5], qx, qy, qz) * k,
     wrQToWorldRow(r[6], r[7], r[8], qx, qy, qz) * k,
   ];
+}
+
+/**
+ * 一个栅格上的真实可见壳点；无边界钳制、无深度插值、无平面兜底。
+ *
+ * 连续性界限是视平面跨度的 8 倍：允许约 83° 的掠射切面，但拒绝一个像素覆盖
+ * 巨大纵深差的不可解析边缘。它只决定采样足迹是否可信，不按世界坡度筛地面，
+ * 更不猜测「是不是天空」；表面类型/作者有效范围必须由调用方另行验证。
+ */
+export function sampleStrictShellSurface(
+  f: DepthShellField, b: ShellBasis, xCell: number, yCell: number,
+): StrictShellSurface | null {
+  const cache = strictGeometryCache.get(f);
+  if (!cache || cache.samples !== f.surfaceSamples
+    || cache.cal[0] !== f.cal.ppu || cache.cal[1] !== f.cal.cx || cache.cal[2] !== f.cal.cy
+    || cache.cal[3] !== f.w || cache.cal[4] !== f.h
+    || cache.basis.some((v, i) => v !== b.basisRows[i])) {
+    return computeStrictShellSurface(f, b, xCell, yCell);
+  }
+  if (!Number.isInteger(xCell) || !Number.isInteger(yCell)
+    || xCell <= 0 || yCell <= 0 || xCell >= f.w - 1 || yCell >= f.h - 1
+    || !(b.wuPerQUnit > 0) || !Number.isFinite(b.wuPerQUnit)) return null;
+  const i = yCell * f.w + xCell, k = b.wuPerQUnit;
+  const p = cache.positionQ, n = cache.normalAreaQ, area = n[i * 4 + 3];
+  if (!(area > 0)) return null;
+  return { p: [p[i * 3] * k, p[i * 3 + 1] * k, p[i * 3 + 2] * k],
+    normal: [n[i * 4], n[i * 4 + 1], n[i * 4 + 2]], areaWu2: area * k * k,
+    px: cache.samples.px[i], py: cache.samples.py[i] };
+}
+
+function computeStrictShellSurface(
+  f: DepthShellField, b: ShellBasis, xCell: number, yCell: number,
+): StrictShellSurface | null {
+  if (!Number.isInteger(xCell) || !Number.isInteger(yCell)
+    || xCell <= 0 || yCell <= 0 || xCell >= f.w - 1 || yCell >= f.h - 1
+    || !(f.cal.ppu > 0) || !Number.isFinite(f.cal.ppu)
+    || !(b.wuPerQUnit > 0) || !Number.isFinite(b.wuPerQUnit)) return null;
+  const s = f.surfaceSamples;
+  if (!s) return null;
+  const i = yCell * f.w + xCell;
+  const ids = [i, i - 1, i + 1, i - f.w, i + f.w];
+  const maxDepthPerViewDistance = 8;
+  for (const j of ids) {
+    if (!Number.isFinite(s.data[j]) || !Number.isFinite(s.span[j])
+      || !(s.footprintQ[j] > 0) || !Number.isFinite(s.footprintQ[j])
+      || s.span[j] < 0 || s.span[j] > maxDepthPerViewDistance * s.footprintQ[j]
+      || !Number.isFinite(s.px[j]) || !Number.isFinite(s.py[j])
+      || s.px[j] < 0 || s.py[j] < 0 || s.px[j] >= f.w || s.py[j] >= f.h) return null;
+    if (j !== i) {
+      const viewDistanceQ = Math.hypot(s.px[j] - s.px[i], s.py[j] - s.py[i]) / f.cal.ppu;
+      if (!(viewDistanceQ > 0)
+        || Math.abs(s.data[j] - s.data[i]) > maxDepthPerViewDistance * viewDistanceQ) return null;
+    }
+  }
+  const pointAt = (j: number): Vec3 => shellPxToWorld(f, b, s.px[j], s.py[j], s.data[j]);
+  const p = pointAt(i), l = pointAt(i - 1), r = pointAt(i + 1);
+  const u = pointAt(i - f.w), d = pointAt(i + f.w);
+  const dx = [(r[0] - l[0]) * 0.5, (r[1] - l[1]) * 0.5, (r[2] - l[2]) * 0.5];
+  const dy = [(d[0] - u[0]) * 0.5, (d[1] - u[1]) * 0.5, (d[2] - u[2]) * 0.5];
+  let nx = dy[1] * dx[2] - dy[2] * dx[1];
+  let ny = dy[2] * dx[0] - dy[0] * dx[2];
+  let nz = dy[0] * dx[1] - dy[1] * dx[0];
+  const areaWu2 = Math.hypot(nx, ny, nz);
+  if (!(areaWu2 > 0) || !Number.isFinite(areaWu2) || !p.every(Number.isFinite)) return null;
+  const basis = b.basisRows;
+  const facing = nx * basis[2] + ny * basis[5] + nz * basis[8];
+  if (!Number.isFinite(facing)) return null;
+  if (facing > 0) { nx = -nx; ny = -ny; nz = -nz; }
+  return { p, normal: [nx / areaWu2, ny / areaWu2, nz / areaWu2], areaWu2,
+    px: s.px[i], py: s.py[i] };
 }
 
 /**

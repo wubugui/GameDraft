@@ -6,7 +6,7 @@
       "intensity": 1.15
     },
     "wind": {
-      "windSpeed": 1.25,
+      "windSpeed": 2,
       "drainSeconds": 1.4
     },
     "tags": [

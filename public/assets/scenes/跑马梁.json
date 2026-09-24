@@ -1,6 +1,5 @@
 {
   "id": "跑马梁",
-  "acousticSpace": "山谷_大",
   "name": "跑马梁",
   "footstepSet": "纸钱路",
   "worldWidth": 2048.0,
@@ -45,8 +44,8 @@
       "id": "H_跑马梁_跟脚声",
       "type": "inspect",
       "label": "跟脚声来源",
-      "x": 408.6,
-      "y": 909.0,
+      "x": 605.8,
+      "y": 801.6,
       "visible": false,
       "phases": [
         "夜"
@@ -78,10 +77,6 @@
         "damageRadius": 900,
         "attackPerSecond": 1.5,
         "affectsWhenHidden": true,
-        "presenceSfx": "sfx_step_paper_money_2",
-        "soundInterval": 0.8,
-        "soundBehindPlayer": 85,
-        "soundVolume": 0.65,
         "deathNoteId": "yin_boundary_death"
       }
     },
@@ -89,8 +84,8 @@
       "id": "H_跑马梁_点火教学跟脚声",
       "type": "inspect",
       "label": "点火教学·跟脚声",
-      "x": 469.4,
-      "y": 1011.9,
+      "x": 701.9,
+      "y": 841.2,
       "visible": false,
       "phases": [
         "夜"
@@ -121,10 +116,6 @@
         "damageRadius": 900,
         "attackPerSecond": 1.5,
         "affectsWhenHidden": true,
-        "presenceSfx": "sfx_step_paper_money_2",
-        "soundInterval": 0.8,
-        "soundBehindPlayer": 85,
-        "soundVolume": 0.65,
         "deathNoteId": "yin_boundary_death",
         "duringPresentation": true
       }
@@ -147,7 +138,7 @@
       "conditions": [
         {
           "narrative": "wrapper_跑马梁_风火引路",
-          "state": "点火教学",
+          "state": "有人喊",
           "reached": true
         },
         {
@@ -178,26 +169,38 @@
       "id": "Zone_跑马梁_阵风",
       "polygon": [
         {
-          "x": 995.3,
-          "y": 444.6
+          "x": 0.0,
+          "y": 110.0
         },
         {
-          "x": 1220.3,
-          "y": 444.6
+          "x": 0.0,
+          "y": 0.0
         },
         {
-          "x": 1220.3,
-          "y": 634.6
+          "x": 2048.0,
+          "y": 0.0
         },
         {
-          "x": 995.3,
-          "y": 634.6
+          "x": 2048.0,
+          "y": 1152.0
+        },
+        {
+          "x": 540.0,
+          "y": 1152.0
         }
       ],
       "conditions": [
         {
-          "narrative": "wrapper_跑马梁_风火引路",
-          "state": "护好"
+          "any": [
+            {
+              "narrative": "wrapper_跑马梁_风火引路",
+              "state": "护好"
+            },
+            {
+              "narrative": "wrapper_跑马梁_风火引路",
+              "state": "往前走"
+            }
+          ]
         }
       ],
       "onEnter": [
@@ -222,23 +225,70 @@
       ]
     },
     {
-      "id": "Zone_跑马梁_纸钱过场",
+      "id": "Zone_跑马梁_喊声",
       "polygon": [
         {
-          "x": 369.7,
-          "y": 724.5
+          "x": 270.0,
+          "y": 0.0
         },
         {
-          "x": 759.7,
-          "y": 724.5
+          "x": 2048.0,
+          "y": 0.0
         },
         {
-          "x": 759.7,
-          "y": 934.5
+          "x": 2048.0,
+          "y": 1152.0
         },
         {
-          "x": 369.7,
-          "y": 934.5
+          "x": 840.0,
+          "y": 1152.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "跟脚"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_走到喊声处",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_喊声"
+          }
+        }
+      ],
+      "onStay": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_走到喊声处",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_喊声"
+          }
+        }
+      ]
+    },
+    {
+      "id": "Zone_跑马梁_香火",
+      "polygon": [
+        {
+          "x": 550.0,
+          "y": 0.0
+        },
+        {
+          "x": 2048.0,
+          "y": 0.0
+        },
+        {
+          "x": 2048.0,
+          "y": 1152.0
+        },
+        {
+          "x": 1414.0,
+          "y": 1152.0
         }
       ],
       "conditions": [
@@ -251,9 +301,9 @@
         {
           "type": "emitNarrativeSignal",
           "params": {
-            "signal": "跑马梁_走进引路拍",
+            "signal": "跑马梁_靠近纸钱",
             "sourceType": "zone",
-            "sourceId": "跑马梁:Zone_跑马梁_纸钱过场"
+            "sourceId": "跑马梁:Zone_跑马梁_香火"
           }
         }
       ],
@@ -261,70 +311,12 @@
         {
           "type": "emitNarrativeSignal",
           "params": {
-            "signal": "跑马梁_走进引路拍",
+            "signal": "跑马梁_靠近纸钱",
             "sourceType": "zone",
-            "sourceId": "跑马梁:Zone_跑马梁_纸钱过场"
+            "sourceId": "跑马梁:Zone_跑马梁_香火"
           }
         }
       ]
-    },
-    {
-      "id": "Zone_跑马梁_香火",
-      "polygon": [
-        {
-          "x": 1229.7,
-          "y": 271.2
-        },
-        {
-          "x": 1362.1,
-          "y": 264.6
-        },
-        {
-          "x": 1401.8,
-          "y": 355.3
-        },
-        {
-          "x": 1314.7,
-          "y": 381.8
-        },
-        {
-          "x": 1229.1,
-          "y": 376.4
-        }
-      ],
-      "conditions": [
-        {
-          "narrative": "wrapper_跑马梁_风火引路",
-          "state": "寻香"
-        }
-      ],
-      "onEnter": [
-        {
-          "type": "emitNarrativeSignal",
-          "params": {
-            "signal": "跑马梁_靠近纸钱",
-            "sourceType": "zone",
-            "sourceId": "跑马梁:Zone_跑马梁_香火"
-          }
-        }
-      ],
-      "onStay": [
-        {
-          "type": "emitNarrativeSignal",
-          "params": {
-            "signal": "跑马梁_靠近纸钱",
-            "sourceType": "zone",
-            "sourceId": "跑马梁:Zone_跑马梁_香火"
-          }
-        }
-      ],
-      "smell": {
-        "scent": "incense",
-        "source": {
-          "x": 1216.69,
-          "y": 283.65
-        }
-      }
     }
   ],
   "perspectiveScale": {
@@ -351,12 +343,12 @@
       "y": 333.5
     },
     "spawn_1": {
-      "x": 550.2,
-      "y": 878.6
+      "x": 223.5,
+      "y": 1019.9
     }
   },
   "camera": {
-    "zoom": 0.68,
+    "zoom": 1.28,
     "pixelsPerUnit": 1.0
   },
   "depthConfig": {

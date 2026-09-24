@@ -139,10 +139,18 @@ class ClipEngineTests(unittest.TestCase):
         self.assertEqual(summary["entries"][0]["newId"], "老王_copy")
 
     def test_cross_scene_zone_and_spawn_keep_their_ids(self) -> None:
+        self.model.scenes["街"]["zones"][0]["onEnter"] = [
+            {"type": "strikeThreat", "params": {"fallbackSurfaceZone": "z"}},
+            {"type": "strikeThreat", "params": {"fallbackSurfaceZone": "missing_surface"}},
+        ]
         summary = er.paste_entity_clip(
             self.model, "河边", self.clip([("zone", "z"), ("spawn", "门口")]))
         self.assertEqual([e["newId"] for e in summary["entries"]], ["z", "门口"])
         self.assertEqual(self.model.scenes["河边"]["spawnPoints"]["门口"], {"x": 5, "y": 6})
+        self.assertEqual([d["value"] for d in summary["danglingRefs"]], ["missing_surface"])
+        repeated = er.paste_entity_clip(self.model, "河边", self.clip([("zone", "z")]))
+        new_zone = repeated["entries"][0]
+        self.assertEqual(new_zone["def"]["onEnter"][0]["params"]["fallbackSurfaceZone"], new_zone["newId"])
 
     def test_id_that_exists_nowhere_is_kept(self) -> None:
         clip = self.clip([("npc", "老王")])

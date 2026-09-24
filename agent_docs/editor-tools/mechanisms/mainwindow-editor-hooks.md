@@ -20,7 +20,7 @@ verified_by:
   - tools/editor/tests/test_cross_page_reference_refresh.py
   - tools/editor/tests/test_flush_hook_parity.py
   - tools/editor/tests/test_trajectory_disk_sync.py
-last_governed: 2026-09-11
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -55,15 +55,14 @@ last_governed: 2026-09-11
    **外置进程退出那条仍是无条件重建**(那是真写盘边界,且一次性)。
    重扫函数要能被反复调用:每次重扫前先清掉自己上一轮记进 `load_anomalies` 的告警,不然同一个坏文件会越记越多。
 
-## 2026-09-16 新接入的页面:挂件效果块
-
-`editors/prop_effects_editor.py` 按本卡四步接进来(注册页面 + `project_model` 的 load/save 分支与脏桶 +
-搜索落点 `prop_effects.json` + 校验器认这张表)。它是**挂件预设编辑器的候选源**:效果块 id / 标签喂
-「效果块」picker 与 `heldProp` 条件叶的 `effect`——改这张表要让预设页 `reload_refs_from_model` 跟着刷。
-
 ## 已知坑
 
-- 契约 4 尚未普及:只有场景编辑器实现,item 编辑器有 Apply 却没钩子(未 Apply 的编辑切页即丢)——接新 staging 面板照契约补,别假定同类已接。
+- 契约 4 是 opt-in,不是每个 staging 面板都接了(2026-09-23 有场景 / 物品 / 气泡台词 / 全局配置 / 系统说明几页)——
+  接新 staging 面板照契约补,别假定同类已接。**页内切条目**同理:主从列表换选中项前也要先提交当前条目
+  (挂件预设页踩过"切条目丢编辑",护栏 `test_prop_preset_editor.py`)。
+- **外置 Graph Editor 不进契约 6 的监视表**,而它自己原子写任务 / 遭遇 / 物品 / 规矩 / 场景这些主编辑器也管的文件;
+  主窗不会重读它们。于是主编辑器里看到的一直是旧内容,下一次 Save All 若恰好也脏了这些桶,会弹「检测到外部修改」——
+  **点"是"即覆盖掉 Graph Editor 的改动**(不是静默,但很容易顺手点掉)。接这类外置写者照契约 6 两步办。
 - `_editor_instances` 与 stack 页前缀必须对齐(末尾浏览页不入列表):插页顺序错 → 鸭子调用打到错的编辑器。
 - 已有 showEvent/data_changed 自刷新的面板别再叠 `reload_refs_from_model` → 双重刷新。
 - `ActionEditor.reload_refs_from_model()` 是**真重建**(候选是构建期快照):幂等但不便宜,靠 `bump_reference_refresh_epoch()` 一轮去重;钩子里手写 `set_data(to_list())` 会绕过去重被重建两遍。

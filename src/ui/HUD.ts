@@ -4,6 +4,9 @@ import { SmellIndicatorRenderer, type SmellProfilesRaw, type SmellRenderState, t
 import { HudDebut } from './HudDebut';
 import { UITheme } from './UITheme';
 import { createPanel, SKINS, WOOD_CHIP } from './PanelSkin';
+import {
+  ENTRY_BTN_H, ENTRY_ICON, ENTRY_MARGIN, HINT_BAR_BOTTOM, HINT_BAR_H, HINT_BAR_ROW_GAP,
+} from './hudBottomBand';
 import { createChip, createIcon, createKeyCap } from './components/UIDecor';
 import { uiIcon, type UIIconName } from './UIIcons';
 import { markPointerConsumed } from './uiPointerCoords';
@@ -50,14 +53,8 @@ const CHIP_ORIGIN = UITheme.spacing.md;
  */
 const QUEST_CHIP_MAX_TEXT_W = 260;
 
-/**
- * 底部提示带高度：键帽（{@link createKeyCap} 的方框 = 字高 + 4）+ 上下木边 + 各 2px 呼吸。
- * 提示带是**配角中的配角**（键位说明），高度跟着键帽走，不另外撑一条厚带子。
- */
-const HINT_BAR_H = UITheme.fontSize.small + UITheme.spacing.xs + WOOD_CHIP * 2 + UITheme.spacing.xs;
+// 底部提示带的高度 / 离屏底净空、右下角入口条的高度 / 净空与对白框共用，定义在 hudBottomBand.ts
 const HINT_BAR_PAD = UITheme.spacing.lg;
-/** 提示带离屏幕下沿的净空 */
-const HINT_BAR_BOTTOM = UITheme.spacing.xxl;
 
 /**
  * 三把阳火 + 气味丝合装进一根 `metaColumn`，锚点是**下限**不是定值：
@@ -96,14 +93,9 @@ const META_SCALE_MAX = 2.2;
 // 触屏端由 TouchMobileControls 出整套 chip，桌面端一直是裸的。两端判据共用
 // `useCoarsePointerOrTouchDevice`，触屏时本条不建（否则重复两套入口）。
 // ---------------------------------------------------------------------------
-/** 入口钮图标边长 */
-const ENTRY_ICON = 22;
-/** 入口钮宽：图标 + 左右木边 + 呼吸 */
+/** 入口钮宽：图标 + 左右木边 + 呼吸（图标边长 / 钮高 / 净空见 hudBottomBand.ts） */
 const ENTRY_BTN_W = ENTRY_ICON + WOOD_CHIP * 2 + UITheme.spacing.sm;
-/** 入口钮高：图标 + 键帽字行 + 上下木边 + 缝 */
-const ENTRY_BTN_H = ENTRY_ICON + UITheme.fontSize.micro + WOOD_CHIP * 2 + UITheme.spacing.xs * 2;
 const ENTRY_GAP = UITheme.spacing.sm;
-const ENTRY_MARGIN = UITheme.spacing.xl;
 
 /**
  * 入口定义：`panel` 与 `GameStateController.registerPanel` 的注册名一一对应，
@@ -317,7 +309,25 @@ export class HUD {
    */
   private cutsceneStartCb: (p?: { hideMetaHud?: boolean }) => void;
   private cutsceneEndCb: () => void;
+  /** 过场正在收 HUD（及它是否连三把火/气味一起收） */
+  private cutsceneHidesHud = false;
+  private cutsceneHidesMeta = false;
+  /**
+   * 第一人称版式（`layout: 'firstPerson'`）正在用画面的来源：对白框 / 动作选项条各自报进报出。
+   * 有任何一个在，屏底与角上那几样（铜钱、场景名、入口条、提示带）收起，
+   * **三把火与气味照留**——第一人称画面里掉火得看得见（牛头凼就是这么用的）。
+   */
+  private firstPersonSources = new Set<string>();
+  private firstPersonCb: (p?: { source?: string; active?: boolean }) => void;
   private hudFadeRaf = 0;
+
+  /** 过场与第一人称两个来源合起来定 HUD 该不该收（唯一决定处，谁变都走这里）。 */
+  private applyHudFade(): void {
+    const hidden = this.cutsceneHidesHud || this.firstPersonSources.size > 0;
+    // 收起时入口条等也不许再吃点击：看不见的钮在屏底占着位置，点到那里对白推不动
+    this.fadeLayer.interactiveChildren = !hidden;
+    this.fadeHudTo(hidden ? 0 : 1, this.cutsceneHidesHud && this.cutsceneHidesMeta);
+  }
 
   /**
    * HUD 淡入淡出。用 alpha 不用 visible——过场结束要淡回来，
@@ -473,8 +483,22 @@ export class HUD {
 
     // 过场开演：默认只淡出 fadeLayer；该过场自己声明了 hideMetaHud 才连三把火/气味一起收。
     // 收尾一律两层都淡回来（没被收过的那层是 1→1 的空动画，不用记状态）。
-    this.cutsceneStartCb = (p) => this.fadeHudTo(0, p?.hideMetaHud === true);
-    this.cutsceneEndCb = () => this.fadeHudTo(1, true);
+    this.cutsceneStartCb = (p) => {
+      this.cutsceneHidesHud = true;
+      this.cutsceneHidesMeta = p?.hideMetaHud === true;
+      this.applyHudFade();
+    };
+    this.cutsceneEndCb = () => {
+      this.cutsceneHidesHud = false;
+      this.cutsceneHidesMeta = false;
+      this.applyHudFade();
+    };
+    this.firstPersonCb = (p) => {
+      const source = String(p?.source ?? '');
+      if (p?.active === true) this.firstPersonSources.add(source);
+      else this.firstPersonSources.delete(source);
+      this.applyHudFade();
+    };
 
     this.sceneEnterCb = (p) => {
       const raw = p.sceneName ?? p.sceneId ?? '';
@@ -531,6 +555,7 @@ export class HUD {
 
     this.eventBus.on('cutscene:start', this.cutsceneStartCb);
     this.eventBus.on('cutscene:end', this.cutsceneEndCb);
+    this.eventBus.on('ui:firstPerson', this.firstPersonCb);
     this.eventBus.on('scene:enter', this.sceneEnterCb);
     this.eventBus.on('currency:changed', this.currencyCb);
     this.eventBus.on('quest:changed', this.questChangedCb);
@@ -976,7 +1001,7 @@ export class HUD {
       this.zoneHintChip.x = Math.round((this.renderer.screenWidth - this.zoneHintWidth) / 2);
       // 两条同时在时区域提示让到规矩提示上方一格，不叠成一坨看不清
       this.zoneHintChip.y = this.ruleHintChip.visible
-        ? bottomY - HINT_BAR_H - UITheme.spacing.sm
+        ? bottomY - HINT_BAR_H - HINT_BAR_ROW_GAP
         : bottomY;
     }
     this.mapNameText.x = (this.renderer.screenWidth - this.mapNameText.width) / 2;
@@ -1671,6 +1696,7 @@ export class HUD {
     if (this.sceneNameFadeRaf) { cancelAnimationFrame(this.sceneNameFadeRaf); this.sceneNameFadeRaf = 0; }
     this.eventBus.off('cutscene:start', this.cutsceneStartCb);
     this.eventBus.off('cutscene:end', this.cutsceneEndCb);
+    this.eventBus.off('ui:firstPerson', this.firstPersonCb);
     this.eventBus.off('scene:enter', this.sceneEnterCb);
     this.eventBus.off('currency:changed', this.currencyCb);
     this.eventBus.off('quest:changed', this.questChangedCb);

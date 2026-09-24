@@ -410,12 +410,15 @@ class AnimEditor(QWidget):
             "frameRate=每秒帧数（≥1）；loop=是否循环；refSpeed=步速匹配基准（世界单位/秒）——\n"
             "该循环在此移动速度下不滑步，配置后移动时按 实际速度/refSpeed 自动缩放播放倍率（夹取 0.5~2），\n"
             "留空=不参与匹配（恒 1 倍速，现状行为）。仅移动类状态（walk/run 等）需要填。\n"
+            "脚底偏移%=这个状态的脚底线高于帧底多少（占帧高的百分比，留空=0=帧底就是脚）。\n"
+            "游戏里按它把画往下挪，脚落在角色位置上；位置、阴影、遮挡排序都不动。\n"
+            "不用手算：点下面「按图测脚底」按图集像素量（取本状态最贴地那一帧）。预览里橙线就是脚底线。\n"
             "改这些只写 anim.json，不重打图集。"
         )
         dl.addWidget(states_hdr)
-        self._state_table = QTableWidget(0, 5)
+        self._state_table = QTableWidget(0, 6)
         self._state_table.setHorizontalHeaderLabels(
-            ["name", "frames", "frameRate", "loop", "refSpeed"])
+            ["name", "frames", "frameRate", "loop", "refSpeed", "脚底偏移%"])
         self._state_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch)
         self._state_table.verticalHeader().setDefaultSectionSize(32)
@@ -443,6 +446,13 @@ class AnimEditor(QWidget):
         btn_dn_state = QPushButton("下移")
         btn_dn_state.clicked.connect(lambda: self._move_selected_state(1))
         st_tools.addWidget(btn_dn_state)
+        btn_measure_foot = QPushButton("按图测脚底")
+        btn_measure_foot.setToolTip(
+            "按图集像素给每个状态量脚底偏移，填进表格「脚底偏移%」列（保存才写盘）。\n"
+            "量法：本状态最贴地那一帧，最低的不透明行到帧底的距离 ÷ 帧高。\n"
+            "与批量工具 tools.animation_pipeline.foot_offset 是同一个函数。")
+        btn_measure_foot.clicked.connect(self._measure_foot_offsets)
+        st_tools.addWidget(btn_measure_foot)
         st_tools.addStretch()
         dl.addLayout(st_tools)
 
@@ -860,6 +870,7 @@ class AnimEditor(QWidget):
                     int(sdef.get("frameRate", 8)),
                     bool(sdef.get("loop", True)),
                     self._ref_speed_to_cell_text(sdef.get("referenceSpeed")),
+                    self._foot_to_cell_text(sdef.get("footOffset")),
                 )
             if self._state_table.rowCount() > 0:
                 self._state_table.selectRow(0)
@@ -878,11 +889,19 @@ class AnimEditor(QWidget):
             return ""
         return str(v)
 
+    @staticmethod
+    def _foot_to_cell_text(v: object) -> str:
+        """footOffset（帧高比例）→ 单元格文本（百分比两位小数）；缺省 / 非法 / ≤0 → 空（= 0）。"""
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not (v > 0):
+            return ""
+        return f"{float(v) * 100:.2f}"
+
     def _set_state_row(
         self, r: int, name: str, frames_text: str, rate: int, loop: bool,
         ref_speed_text: str = "",
+        foot_text: str = "",
     ) -> None:
-        """填一行 state：name/frames/frameRate/refSpeed 为可编辑文本，loop 为复选框（无文本）。"""
+        """填一行 state：name/frames/frameRate/refSpeed/脚底偏移 为可编辑文本，loop 为复选框（无文本）。"""
         name_it = QTableWidgetItem(name)
         name_it.setData(Qt.ItemDataRole.UserRole, name)  # 旧名快照，重名/空名时回退
         self._state_table.setItem(r, 0, name_it)
@@ -897,6 +916,7 @@ class AnimEditor(QWidget):
             Qt.CheckState.Checked if loop else Qt.CheckState.Unchecked)
         self._state_table.setItem(r, 3, loop_it)
         self._state_table.setItem(r, 4, QTableWidgetItem(ref_speed_text))
+        self._state_table.setItem(r, 5, QTableWidgetItem(foot_text))
 
     # ---- 编辑 / 脏标记 / 保存 ------------------------------------------------
 
@@ -1026,8 +1046,10 @@ class AnimEditor(QWidget):
                 return
             item.setData(Qt.ItemDataRole.UserRole, new_name)
         self._mark_dirty()
-        if col in (1, 2, 3) and item.row() == self._state_table.currentRow():
+        if col in (1, 2, 3, 5) and item.row() == self._state_table.currentRow():
             self._restart_preview_animation()
+            if col == 5:
+                self._sync_bubble_field_to_row()
         elif col == 4 and item.row() == self._state_table.currentRow():
             # refSpeed 列改动 → 只同步调校 spinbox/走带倍率，不重置走位
             self._sync_calib_ref_from_row()
@@ -1088,7 +1110,7 @@ class AnimEditor(QWidget):
         self._state_table.selectRow(j)
         self._mark_dirty()
 
-    def _read_state_row(self, r: int) -> tuple[str, str, int, bool, str]:
+    def _read_state_row(self, r: int) -> tuple[str, str, int, bool, str, str]:
         name_it = self._state_table.item(r, 0)
         frames_it = self._state_table.item(r, 1)
         rate_it = self._state_table.item(r, 2)
@@ -1102,7 +1124,9 @@ class AnimEditor(QWidget):
             rate = 8
         loop = bool(loop_it and loop_it.checkState() == Qt.CheckState.Checked)
         ref_text = ref_it.text().strip() if ref_it else ""
-        return name, frames_text, max(1, rate), loop, ref_text
+        foot_it = self._state_table.item(r, 5)
+        foot_text = foot_it.text().strip() if foot_it else ""
+        return name, frames_text, max(1, rate), loop, ref_text, foot_text
 
     def _parse_frames_strict(self, text: str) -> list[int] | None:
         t = (text or "").strip()
@@ -1188,6 +1212,24 @@ class AnimEditor(QWidget):
                 sdef.pop("bubbleAnchor", None)
             elif isinstance(bub_edit, (int, float)) and not isinstance(bub_edit, bool):
                 sdef["bubbleAnchor"] = round(float(bub_edit), 4)
+            # 脚底偏移：表格文本等于磁盘值的显示 ⇒ 没动过，沿用上面透传来的原值（字面与键位都不变）
+            foot_it = self._state_table.item(r, 5)
+            foot_text = foot_it.text().strip().rstrip("%").strip() if foot_it else ""
+            disk_foot = src.get("footOffset") if isinstance(src, dict) else None
+            if foot_text != self._foot_to_cell_text(disk_foot):
+                if not foot_text:
+                    sdef.pop("footOffset", None)
+                else:
+                    try:
+                        pct = float(foot_text)
+                    except ValueError:
+                        return None, f"状态 {name!r} 的脚底偏移必须是数字（占帧高的百分比，留空=0）。"
+                    if not (0.0 <= pct <= 50.0):
+                        return None, f"状态 {name!r} 的脚底偏移须在 0~50（%）之间。"
+                    if pct == 0.0:
+                        sdef.pop("footOffset", None)
+                    else:
+                        sdef["footOffset"] = round(pct / 100.0, 4)
             if ref_text:
                 try:
                     ref_val = float(ref_text)
@@ -1205,6 +1247,11 @@ class AnimEditor(QWidget):
                     sdef["referenceSpeed"] = orig_ref
                 else:
                     sdef["referenceSpeed"] = int(ref_val) if ref_val.is_integer() else ref_val
+            if isinstance(src, dict):
+                # 键序跟磁盘走：本面板管的键（referenceSpeed 等）重建时是后写的，按原文件顺序排回去，
+                # 新加的键排在最后——否则只要一个状态同时有 referenceSpeed 与后来的键，无改动保存也会换序
+                order = [k for k in src if k in sdef] + [k for k in sdef if k not in src]
+                sdef = {k: sdef[k] for k in order}
             out[name] = sdef
         return out, None
 
@@ -1561,6 +1608,13 @@ class AnimEditor(QWidget):
                 sd.pop("bubbleAnchor", None)
             else:
                 sd["bubbleAnchor"] = edit
+        # 本行表格里的脚底偏移（可能还没保存）同样反映进去：舞台把画挪到脚点上
+        foot = self._current_row_foot_ratio()
+        sd = data.setdefault("states", {}).setdefault(name, {})
+        if foot > 0:
+            sd["footOffset"] = foot
+        else:
+            sd.pop("footOffset", None)
         return BubbleAnchorActor(
             kind="actor",
             label=f"{self._current_key} / {name}",
@@ -1611,6 +1665,63 @@ class AnimEditor(QWidget):
         frac = None if v is None else max(0.0, (-float(v) - BUBBLE_HEAD_GAP) / wh)
         it.setData(Qt.ItemDataRole.UserRole + 1, "clear" if frac is None else frac)
         self._mark_dirty()
+
+    # ---- 脚底偏移 ------------------------------------------------------------
+
+    def _current_row_foot_ratio(self) -> float:
+        """当前选中行表格里的脚底偏移（帧高比例，未保存的也算）；空 / 非法 → 0，超 50% 夹住。"""
+        row = self._state_table.currentRow()
+        it = self._state_table.item(row, 5) if row >= 0 else None
+        txt = it.text().strip().rstrip("%").strip() if it else ""
+        if not txt:
+            return 0.0
+        try:
+            v = float(txt) / 100.0
+        except ValueError:
+            return 0.0
+        return min(0.5, v) if v > 0 else 0.0
+
+    def _measure_foot_offsets(self) -> None:
+        """按图集像素给每一行量脚底偏移，填进表格（保存才写盘）。
+
+        帧序、格子按**表单当前值**（可能还没保存），像素按磁盘上的图集。
+        """
+        if not self._current_key or self._model.project_path is None:
+            return
+        man = self._manifest_url(self._current_key)
+        full = _spritesheet_disk(self._model.project_path, man, self._a_sheet.text().strip())
+        if full is None or not full.is_file():
+            QMessageBox.warning(self, "无法测量", f"找不到图集文件：{full}")
+            return
+        from tools.animation_pipeline.foot_offset import load_alpha, state_foot_offset
+        alpha = load_alpha(full)
+        base = dict(self._original_anim or {})
+        base["cols"] = max(1, int(self._a_cols.value()))
+        base["rows"] = max(1, int(self._a_rows.value()))
+        for key, ctrl in (("cellWidth", self._a_cell_w), ("cellHeight", self._a_cell_h)):
+            v = int(ctrl.value())
+            if v > 0:
+                base[key] = v
+            else:
+                base.pop(key, None)
+        changed = []
+        for r in range(self._state_table.rowCount()):
+            frames = self._parse_frames_from_cell(self._state_table.item(r, 1), quiet=True) or []
+            ratio = state_foot_offset(base, alpha, frames)
+            text = self._foot_to_cell_text(round(ratio, 4) if ratio else 0)
+            it = self._state_table.item(r, 5)
+            if it is None:
+                it = QTableWidgetItem("")
+                self._state_table.setItem(r, 5, it)
+            if it.text().strip() != text:
+                it.setText(text)   # itemChanged → 标脏，保存路径与手改表格一致
+                name_it = self._state_table.item(r, 0)
+                changed.append(name_it.text() if name_it else f"#{r}")
+        QMessageBox.information(
+            self, "按图测脚底",
+            (f"{len(changed)} 个状态的值变了：{'、'.join(changed)}。保存后生效。" if changed
+             else "每个状态的值都和表格里一致，没有变化。"),
+        )
 
     # ---- 步速匹配调校走廊 ----------------------------------------------------
 
@@ -1766,6 +1877,14 @@ class AnimEditor(QWidget):
             Qt.AspectRatioMode.KeepAspectRatio,
             mode,
         )
+        foot = self._current_row_foot_ratio()
+        if foot > 0:
+            # 脚底线：游戏里这条线落在角色位置上（线以下那截空白被挪到地面以下）
+            painter = QPainter(scaled)
+            painter.setPen(QPen(QColor(255, 140, 40), 2))
+            y = int(round((1.0 - foot) * scaled.height()))
+            painter.drawLine(0, y, scaled.width(), y)
+            painter.end()
         self._preview.setPixmap(scaled)
         self._preview.setFixedSize(scaled.size())
         self._preview.setText("")
@@ -1821,6 +1940,10 @@ class AnimEditor(QWidget):
         if panel is not None and frames and 0 <= self._preview_seq_i < len(frames) \
                 and panel.ignite_contact_order([int(s) for s in frames]) == self._preview_seq_i:
             base = f"{base}  ·  ◆ 点火接触帧（火头碰到可燃物）"
+        foot = self._current_row_foot_ratio()
+        if foot > 0:
+            wh = float(max(1, self._a_wh.value()))
+            base = f"{base}  ·  橙线=脚底线（高于帧底 {foot * 100:.2f}% ≈ {foot * wh:.1f} 世界单位）"
         self._lbl_preview_info.setText(base)
 
     def _advance_preview_frame(self) -> None:

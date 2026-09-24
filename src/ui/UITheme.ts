@@ -1,3 +1,5 @@
+import { UI_LAYER_Z } from '../rendering/uiLayerOrder';
+
 export const UITheme = {
   colors: {
     // 面板底：**逐块量过设计稿**（行囊内部 #191611、规矩本右页 #191714、
@@ -282,29 +284,11 @@ export const UITheme = {
   },
 
   /**
-   * UI 层内的堆叠次序。
-   *
-   * **写了就生效，不需要手动开 `sortableChildren`**：Pixi v8 的 zIndex setter 会走
-   * `sortMixin.depthOfChildModified()`，它自动把父容器的 `sortableChildren` 置 true
-   * （`node_modules/pixi.js/lib/scene/container/container-mixins/sortMixin.mjs`）。
-   * `Renderer` 只显式给 `entityLayer` 开过，但 uiLayer 会因为子节点写 zIndex 而自动开启。
-   *
-   * 排序是稳定的：没设 zIndex 的元素都是 0，彼此之间仍按添加顺序叠放；**只有显式设了值的
-   * 会整体上浮**。所以给 toast 设 `z.toast` 的效果是「toast 恒在所有面板之上」——
-   * 包括在 toast 之后才打开的面板，这正是要的。
-   *
-   * ⚠ 反过来说：随手给某个面板设 `z.panel` 就会让它压过所有未设值的元素。
-   * 加新值之前先想清楚它该压过谁。
+   * UI 层内的堆叠次序。**正文与全部说明在 {@link UI_LAYER_Z}**（住渲染层，因为切场遮幕那些
+   * 系统层的 uiLayer 子节点也要用同一张表；留在这儿的话系统层就得反向依赖 UI）。
+   * 这里只是 UI 侧的老名字，别在本文件里另起一套值。
    */
-  z: {
-    panel: 10,
-    overlay: 5,
-    toast: 50,
-    /** 任务横幅：与 toast 同带不同车道，但真撞上时大事（新任务）压过流水播报 */
-    banner: 51,
-    tooltip: 60,
-    debug: 100,
-  },
+  z: UI_LAYER_Z,
 
   /**
    * 顶中浮层的**车道表**。场景名 / 引导提示条 / 任务横幅 / 事件 toast 四家共用屏幕顶带，

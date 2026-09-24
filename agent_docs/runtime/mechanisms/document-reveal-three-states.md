@@ -40,6 +40,11 @@ last_governed: 2026-09-12
 
 - `CutsceneRenderer` 有**两张**登记表:`images`(叠图动作的作者句柄)与 `documentLayers`
   (键 **documentId**)。两者永不互访——`hideOverlayImage` 收不到文档揭示,反之亦然。
+- **宿主 2026-09-21 换成了「画布」**(不再是 `cutsceneOverlay`):文档揭示的显示层是画布上
+  `document:<documentId>` 那个 item,与叠图 / 实体 / 特效**共用一个 `order` 顺序空间**——
+  实体与特效自此可以排到文书前面或后面。`DocumentRevealDef.order` 是它在画布上的顺序
+  (缺省 0,可为负);运行时还能用 `setCanvasOrder` 随时改。两个命名空间仍然隔着
+  (画布的键带 kind 前缀),解耦那条一字未改。见 [canvas-stage](canvas-stage.md)。
 - 二者共用 `opEpoch` 与 `cleanup()`:换场景 / 过场中断 / 读档时 **两张表都要清**
   (`cleanup` 里逐键 `hideDocumentLayer`,漏掉就是上一场的告示挂在覆盖层上)。
 - `DocumentRevealDef.overlayId` 自此**运行时忽略**(兼容字段,老数据保留、编辑器不给入口)。

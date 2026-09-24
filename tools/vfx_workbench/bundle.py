@@ -64,6 +64,10 @@ ENTRY_MODULES = [
     # 与光柱着色的**同一段 GLSL 核心 + 同一个 uniform 打包函数**（原画视图的 WebGL 预览层编译它，不在 JS 里另写着色）
     SRC / "systems" / "vfx" / "vfxBeam.ts",
     SRC / "rendering" / "vfx" / "vfxBeamGlsl.ts",
+    # 雷（现画）：形状（vfxBolt）与画法（逐段卷积的 GLSL 核 + 挑细分级 / 定粗细 / 剔除的逐段发放）——
+    # 雷电样式那一节的预览与原画视图里的雷编译的就是这两份，不在 JS 里另写
+    SRC / "systems" / "vfx" / "vfxBolt.ts",
+    SRC / "rendering" / "vfx" / "vfxBoltGlsl.ts",
 ]
 GEN_DIR = TOOL / "viewer" / "_gen"
 OUT = GEN_DIR / "vfx.bundle.js"

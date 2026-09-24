@@ -122,6 +122,8 @@ from .position_ref_field import (
     parse_position_ref as _parse_position_ref,
 )
 from .socket_image_list import SocketImageListField
+from .breathing_params import BREATHING_ACT_ROWS, BREATHING_DIR_REL
+from .breathing_params_field import ABSENT as BREATHING_PARAMS_ABSENT, BreathingParamsField
 
 #: 历史私有名，保留给既有引用（控件本体已提到 socket_image_list 供挂件预设页复用）
 _SocketImageListField = SocketImageListField
@@ -316,6 +318,15 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     ("playVfx", "instanceId"): "",
     ("playVfx", "restart"): False,
     ("playVfx", "oneShot"): False,
+    ("playVfx", "followCamera"): False,
+    ("playVfx", "handle"): "",
+    ("stopVfx", "instanceId"): "",
+    ("stopVfx", "handle"): "",
+    ("stopVfx", "soft"): False,
+    ("playSfx", "loop"): False,
+    ("strikeThreat", "fallbackGroundOnly"): False,
+    ("strikeThreat", "fallbackStrictSeparation"): False,
+    ("strikeThreat", "fallbackSurfaceZone"): "",
     ("playVfx", "effect"): "",
     # 位置引用 `at`：缺键 = 走散写 x/y。**空串绝不能写出去**——运行时
     # `p.at != null` 对 "" 成立，parsePositionRef("") → null → resolveVfxAt warn 后整个动作
@@ -366,20 +377,13 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     ("strikeThreat", "fallbackRadius"): 0.0,
     ("strikeThreat", "effectHeight"): 0.0,
     ("strikeThreat", "lightIntensity"): 0.0,
-    ("strikeThreat", "lightHeight"): 0.0,
     ("strikeThreat", "lightRange"): 0.0,
     ("strikeThreat", "lightKelvin"): 0.0,
     ("strikeThreat", "lightMs"): 0,
-    ("strikeThreat", "seed"): 0,
     # 绑在落点上的雷声与连劈参数：同样全可选。凭空写也全是行为级——
     # sfx:"" = 这道雷不响、strikes:0 会被夹成 1 但键是噪音、extraChance:0 = 第二道永远不落、
     # flashAlpha:0 / shakeAmplitude:0 = 不闪不震（那是缺省，写出来只是多一个键）。
     ("strikeThreat", "sfx"): "",
-    ("strikeThreat", "sfxVolume"): 0.0,
-    ("strikeThreat", "strikes"): 0,
-    ("strikeThreat", "extraChance"): 0.0,
-    ("strikeThreat", "gapMs"): 0,
-    ("strikeThreat", "gapJitterMs"): 0,
     ("strikeThreat", "flashAlpha"): 0.0,
     ("strikeThreat", "flashMs"): 0,
     ("strikeThreat", "shakeAmplitude"): 0.0,
@@ -387,6 +391,16 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # ---- 演出闪避（duckAudio / restoreAudio）----
     # 全可选。压 0 是合法的"压到听不见"，所以中性值不能用 0 当"没填"——这两条的控件
     # 中性态就是 0，凭空写 0 等于"把这条通道摁死"，是行为级的。
+    # ---- 跟脚声（setFollowerFootsteps）----
+    # 除 enabled 外全可选。凭空写中性值在这里全是行为级的：
+    # id:"" 会在下面被 `or "default"` 兜住（只是多一个键），但 footstepSet:"" 等于"指定了一个
+    # 不存在的集"（运行时 `set || undefined` 同义于缺键，仍是多一个键）、fireStops:false 会把
+    # 作者写过的 true 意外覆盖不了但多一个键、abrupt:false 同理。
+    # delayPercent / minDelayMs / gainDb 的**非零缺省**走 _ACTION_PARAM_RUNTIME_DEFAULTS。
+    ("setFollowerFootsteps", "id"): "",
+    ("setFollowerFootsteps", "footstepSet"): "",
+    ("setFollowerFootsteps", "fireStops"): False,
+    ("setFollowerFootsteps", "abrupt"): False,
     ("duckAudio", "id"): "",
     ("duckAudio", "bgm"): 0.0,
     ("duckAudio", "ambient"): 0.0,
@@ -429,6 +443,19 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # 点击继续的提示文案：运行时 trim 后空串 = 不给提示，与缺键同义。全局表把 text 列为只剔缺键
     #（appendFlag / showNotification 里 `text:""` 是合法必填值），这里单给唯一可选的宿主清空去键。
     ("waitClickContinue", "text"): "",
+    # 画布：character / animFile 是二选一，state 缺省走 idle，facing 缺省朝右——
+    # 四个的"未设"都是空串。不剔的话「打开→不改→保存」会给最小形态
+    # （只有 name + character）凭空写上 animFile:"" / facing:""。
+    ("showCanvasEntity", "character"): "",
+    ("showCanvasEntity", "animFile"): "",
+    ("showCanvasEntity", "state"): "",
+    ("showCanvasEntity", "facing"): "",
+    ("setCanvasEntityTransform", "facing"): "",
+    # 呼吸图：wait 缺省 false（不等，动作链接着往下走）＝勾选框中性态；durationMs 缺省 0（瞬间改到位）
+    # ＝整数格中性态。不登记的话「打开→不改→保存」会凭空写出 wait:false / durationMs:0。
+    # 不能进全局表：wait / durationMs 是通用词（playTrajectory.wait 是三态、别处 durationMs 有非零缺省）。
+    ("breathingPerform", "wait"): False,
+    ("setBreathingParams", "durationMs"): 0,
 }
 
 # 运行时默认为 true 的可选 bool：控件用三态（""/"true"/"false"）表达"未设"，
@@ -442,6 +469,8 @@ _TRISTATE_BOOL_PARAMS: dict[str, tuple[str, ...]] = {
     # JSON 里混类型会让人以为是两种语义，也直接违反「往返类型保真」。
     # 由 test_inspector_roundtrip 逐图守着（生态_* 那批新图就是这么暴露出来的）。
     "playNpcAnimation": ("loop",),
+    # 画布实体播动画与 playNpcAnimation 同一套播放参数，loop 同属三态
+    "playCanvasEntityAnimation": ("loop",),
     # playTrajectory.wait 运行时缺省 **true**（等轨迹播完再走下一步）：勾选框的中性态
     # 是 false，用它就配不出"不等"。三档＝""（不写键=等）/ "true" / "false"。
     "playTrajectory": ("wait",),
@@ -538,6 +567,9 @@ _ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], float] = {
     #（1.0 == 1 成立）；holdFrame 的 seed 与剔除都由本表驱动。
     ("playNpcAnimation", "speed"): 1,
     ("playNpcAnimation", "holdFrame"): -1,
+    # 画布实体播动画：与 playNpcAnimation 共用 parseAnimationPlaybackParams，缺省口径完全一致
+    ("playCanvasEntityAnimation", "speed"): 1,
+    ("playCanvasEntityAnimation", "holdFrame"): -1,
     # setEntityShadow 虚拟灯的五个量（ActionRegistry.ts 的 num(p.X, N)）：控件默认 0 全是错的——
     # darkness:0 = 影子直接看不见、azimuth/elevation 归 0 = 方向错、softness:0 = 硬边。
     # 绑真实灯（source='light:*'）那一支更凶：运行时按 `p.darkness !== undefined` 判断要不要覆盖，
@@ -554,6 +586,12 @@ _ACTION_PARAM_RUNTIME_DEFAULTS: dict[tuple[str, str], float] = {
     # emitVfxField.strength 缺省 1（ActionRegistry.ts `numOr(p.strength, 1)`）：写 0 = 刺激场强度
     # 归零 = 群体收不到这一脚。
     ("emitVfxField", "strength"): 1.0,
+    # 跟脚声（FOLLOWER_DEFAULTS）：delayPercent 缺省 50（半步）、minDelayMs 缺省 180。
+    # 控件默认 0 全是错的——0% 会让跟脚声与玩家的脚步**完全重叠**（听不见，正是要避免的那件事），
+    # minDelayMs:0 则在跑起来时贴成回声。gainDb 缺省 0 与控件中性同值，一并登记只为往返剔除。
+    ("setFollowerFootsteps", "delayPercent"): 50,
+    ("setFollowerFootsteps", "minDelayMs"): 180,
+    ("setFollowerFootsteps", "gainDb"): 0,
 }
 
 ACTION_TYPES = [
@@ -576,6 +614,7 @@ ACTION_TYPES = [
     "setThreeFiresVisible", "showSystemNote",
     "setSmell", "clearSmell", "sniff", "setSmellVisible",
     "setSmellSource", "clearSmellSource", "setSmellTracking",
+    "setFollowerFootsteps",
     "activatePlane", "deactivatePlane",
     "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
     "sugarWheelResetPointer",
@@ -596,8 +635,14 @@ ACTION_TYPES = [
     "cameraFollowActor", "cameraStopFollow",
     "hideOverlayImage", "playScriptedDialogue", "showOverlayImage", "setHotspotDisplayImage",
     "tempSetHotspotDisplayFacing", "setEntityField", "setSceneEntityPosition", "blendOverlayImage",
+    # 呼吸图（静帧实时呼吸；与叠图同一层、同一套 id 句柄，hideOverlayImage 收掉它）
+    "showBreathingOverlay", "breathingPerform", "setBreathingParams",
     "setEntityShadow",
     "revealDocument", "hideDocument", "startDialogueGraph",
+    # 画布（场景之外那张屏幕空间的面；叠图 / 文档揭示 / 实体 / 特效共用一个 order）
+    "showCanvasEntity", "hideCanvasEntity", "playCanvasEntityAnimation",
+    "setCanvasEntityTransform", "setCanvasOrder",
+    "playCanvasVfx", "stopCanvasVfx", "clearCanvas",
     "waitClickContinue",
     "waitMs",
     "enableRuleOffers", "disableRuleOffers",
@@ -623,6 +668,10 @@ DIALOGUE_LAYOUT_CHOICES: list[tuple[str, str, str]] = [
      "正文浮在说话人头顶并实时跟随；无立绘、无名牌。"
      "解析不出在场实体的行（旁白）自动落到屏幕正中。"
      "推进方式与选项位置与另两档完全一致。"),
+    ("firstPerson", "第一人称（字压在图上）",
+     "配铺满窗口的叠图用（画面就是关二狗眼睛看到的）：不要木框、名牌、立绘，"
+     "台词字幕式压在屏底（底部渐变托字）；别人开口名字写在句首，主角自己说的与旁白不写名字。"
+     "选项也跟着换：一排字横在屏底，不要木钮。设在图级 / 选项提示句上，选项就跟这一档。"),
 ]
 
 
@@ -655,8 +704,8 @@ def _make_dialogue_layout_combo(
         cur = "" if allow_inherit else DIALOGUE_LAYOUT_DEFAULT
     idx = cb.findData(cur)
     cb.setCurrentIndex(idx if idx >= 0 else 0)
-    cb.setToolTip("对白的版式档。只改**位置与外观**——推进方式、选项位置、打字机、"
-                  "对话记录在三档下完全一致。"
+    cb.setToolTip("对白的版式档。只改**位置与外观**——推进方式、打字机、对话记录各档完全一致；"
+                  "选项位置只有「第一人称」档会变（屏底横排）。"
                   + ("不设 = 跟随所在节点／动作。" if allow_inherit else "不设 = 屏底对话框。"))
     return cb
 
@@ -745,6 +794,9 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     # 标成宽的 prop_presets 就等于声称"任何挂件都收"，而校验器只收有等级表的那些。
     # 改名 / 查引用仍走 prop_preset_refs（那边认的是 prop_presets 这张表本身）。
     "prop_preset_leveled": "prop_leveled",
+    # 脚步集（跟脚声的 footstepSet 覆盖）：候选=footstep_sets.json 的 sets，
+    # 与 scene.footstepSet / zone.footstepSet 同一份表、同一个只读函数。
+    "footstep_set": "footstep_sets",
     "bubble_line_set": "bubble_line_sets",
     "bubble_speaker": "bubble_speakers",
     # 叙事活计生命周期（S1）：候选=声明 run 的活计图，宇宙沿用 narrative 条件叶的图 id 集合
@@ -759,6 +811,8 @@ _SELECTOR_KIND_UNIVERSE: dict[str, str] = {
     "trajectory": "trajectories",
     # 效果资产（世界空间粒子 / 群体）：候选=assets/data/vfx/*.json（只读镜像 ProjectModel.vfx_effects）
     "vfx_effect": "vfx_effects",
+    # 呼吸图资产：候选=assets/data/breathing/*.json 的文件名（只读镜像 ProjectModel.breathing_overlays）
+    "breathing_overlay": "breathing_overlays",
     # 场景里摆的效果实例：候选=当前上下文场景的 `vfx[*].id`（与 zone / hotspot 同为场景作用域）
     "vfx_instance": "vfx_instances",
     # 场景灯：候选=当前上下文场景 `lighting.lights[*].id`（场景作用域，同 vfx_instance）。
@@ -907,6 +961,138 @@ def _prop_state_name_rows(model) -> list[tuple[str, str]]:
         shown = "、".join(props[:4]) + ("…" if len(props) > 4 else "")
         rows.append((f"{name}　（挂件：{shown}）", name))
     return rows
+
+
+def _vfx_handle_rows(model) -> list[tuple[str, str, str]]:
+    """只收 playVfx 的临时实例定义；候选来自内存动作登记表，包含未保存与嵌套动作。"""
+    if model is None:
+        return []
+    from ..editors.action_registry_editor import _scan_actions
+    found: dict[str, str] = {}
+    for record in _scan_actions(model):
+        params = record.action.get("params") or {}
+        if record.action_type != "playVfx" or not params.get("effect") or params.get("instanceId"):
+            continue
+        key = str(params.get("handle") or "").strip()
+        if key:
+            found[key] = record.full_source
+    return [(key, key, source) for key, source in sorted(found.items())]
+
+
+# 值域与 TS presentationActionErrors 对齐。None 默认由同一动作的原雷链参数推导。
+_STRIKE_PRESENTATION_FIELDS = {
+    "visualStrikes": ("画面雷数上限", 0, 0, 1000000, "原雷链结束后，用无伤害空地雷补足到此总数；0 不补。真实雷数更多时不会隐藏真实雷。"),
+    "visualExtraChance": ("补雷继续概率", 1, 0, 1, "每道补雷前独立判定；0 不补，1 一直补到画面上限。不会改变真实打击概率。"),
+    "visualGapMs": ("补雷间隔（ms）", None, 0, 1000000, "不指定沿用 gapMs；指定 0 不加固定等待，间隔浮动仍生效。"),
+    "visualGapJitterMs": ("补雷间隔浮动（±ms）", None, 0, 1000000, "不指定沿用 gapJitterMs；每道独立随机。指定 0 表示不浮动。"),
+    "fallbackMargin": ("画面每侧留白", 0, 0, 0.45, "0 不限制视口边距；大于 0 时空地雷落点限制在当前视口留白后的区域。真实敌人位置不变。"),
+    "fallbackMinDistance": ("距玩家至少（世界 wu）", None, 0, 1000000, "按世界三维距离（含纵深与高差），不指定沿用半径的 45%；指定 0 允许靠近玩家。"),
+    "fallbackSeparation": ("落点间距（世界 wu）", 0, 0, 1000000, "按落点之间的世界三维距离；默认在有效表面不足时允许放宽。勾选严格间距后，距离不足就跳过该道表现雷。"),
+    "fallbackStrictSeparation": ("严格保持落点间距", False, 0, 1, "勾选后不能放宽落点间距；没有满足条件的表面就跳过。未勾选允许在有效表面上放宽间距。"),
+    "fallbackSurfaceZone": ("已确认实体表面区域", "", 0, 0, "选择当前场景区域后，所有随机落点限制在区内。作者须确认区内均为实体表面，避开天空/空洞；仍会检查深度连续性。不指定只接受可确认的地面；所选区域失效时跳过，不回退全场。"),
+    "fallbackGroundOnly": ("随机雷只落地面", False, 0, 1, "勾选只接受地面；未勾选仅在已确认实体表面区域内允许石壁等物体表面。不改变真实威胁的选取和结算。"),
+    "fallbackMaxSlopeDeg": ("地面最大坡度（度）", 90, 0, 90, "对所有地面落点生效，物体表面不受此项约束。不指定为 90 度，0 仅允许水平地面。"),
+    "sfxVoices": ("雷声并发上限（0 不抢停）", 0, 0, 16, "0 或不指定时，每道雷声按素材完整播放；正数限制同一雷链保留的声部，超出时立即停止最早声部。演出打断与显式停止仍生效。"),
+    "vfxVoices": ("雷柱并发上限（0 不抢停）", 0, 0, 32, "0 或不指定时，每道特效按自身寿命自然消散；正数限制同一雷链保留的实例，超出时立即删除最早实例。演出打断与显式停止仍生效。"),
+}
+
+_STRIKE_INLINE_NUMBER_FIELDS = {
+    "strikes": ("真实雷链最多道数", 1, 0, 1000000, "原有真实打击次数上限；默认 1。0 在运行时仍按至少 1 道处理。"),
+    "extraChance": ("真实雷链继续概率", 1, 0, 1, "原有第二道起逐道判定；掷不中整条真实雷链停止。指定 0 表示只打一击，取消指定沿用默认 1。"),
+    "gapMs": ("真实雷链间隔（ms）", 220, 0, 1000000, "原有真实打击之间的间隔；不指定为 220ms，指定 0 不加固定等待，间隔浮动仍生效。"),
+    "gapJitterMs": ("真实雷链浮动（±ms）", 0, 0, 1000000, "原有真实打击间隔的随机浮动；0 无浮动。"),
+    "sfxVolume": ("本次雷声音量", 1, 0, 1, "指定本次落雷音量；0 静音，取消指定沿用音频设置。"),
+    "seed": ("随机种子", 0, -1000000, 1000000, "指定种子可复现雷链；0 也是有效的确定种子。取消指定恢复随机。"),
+    "effectSeed": ("粒子表现种子", 0, -1000000, 1000000, "每道雷使用相同粒子种子；0 是有效值。不改变选靶、雷链概率、随机间隔或落点，也不改变效果池的随机选图。不指定时沿用雷链 seed；两者都不指定时按特效实例生成。"),
+    "lightHeight": ("雷光离地高度（wu）", 260, -1000000, 1000000, "指定 0 把雷光放在地面；取消指定使用默认离地高度 260wu。只影响雷光位置。"),
+}
+
+
+#: 画布（场景之外那张屏幕空间的面）上那几个**可选数值**的量程与缺省。
+#:
+#: 单列一张而不是塞进 `_STRIKE_*`：那两张是落雷专用的，名字与取值范围都不通用。
+#:
+#: ⚠ `order` **必须允许负数** —— 负 order 正是"把这东西排到底图后面"，
+#: 而可选数值控件的缺省下限是 0：不登记就是"负顺序配不出来，而且不报错"。
+_CANVAS_NUMBER_FIELDS = {
+    "order": ("绘制顺序（越大越靠前，可为负）", 0, -1000000, 1000000,
+              "画布上叠图 / 文档揭示 / 实体 / 特效共用同一个顺序空间；不指定 = 0。负数 = 排到底图后面。"),
+    "xPercent": ("水平位置（占屏宽 %）", 50, 0, 100, "实体指的是**脚底点**；不指定 = 50。"),
+    "yPercent": ("垂直位置（占屏高 %）", 100, 0, 100, "实体指的是**脚底点**，100 = 站在画面底边。"),
+    "heightPercent": ("高度（占屏高 %）", 40, 0, 400, "与宽度二选一；都不指定按 40。"),
+    "widthPercent": ("宽度（占屏宽 %）", 0, 0, 400, "与高度二选一；指定它就不看高度。"),
+    "alpha": ("透明度", 1, 0, 1, "0 全透明、1 不透明；不指定 = 1。"),
+    "scale": ("整团缩放", 1, 0, 1000, "特效：1 = 1 wu 画成 1 屏幕像素；不指定 = 1。"),
+}
+
+#: 用 `_CANVAS_NUMBER_FIELDS` 那张量程表的动作（参数名跟别的 action 重，所以要按动作限定）。
+#: 呼吸图只借 `order` 那一格（x / y / width 是必填的屏幕百分比，走下面自己的控件与行标签）。
+_CANVAS_NUMBER_ACTIONS = frozenset((
+    "showCanvasEntity", "setCanvasEntityTransform", "playCanvasVfx",
+    "showOverlayImage", "blendOverlayImage", "showBreathingOverlay",
+))
+
+#: breathingPerform.act 的下拉（短枚举）。取值与中文名住在 shared/breathing_params（与 TS BREATHING_ACTS 对账）；
+#: 空值那一行 = 还没选（manifest 必填非空，校验器报 error）。
+_BREATHING_ACT_COMBO_ROWS: list[tuple[str, str]] = [("", "（选：恢复呼吸 / 渐弱至停 / 猛抽一口气 / 立刻停住 / 从头来）")] + [
+    (v, f"{label}（{v}）") for v, label in BREATHING_ACT_ROWS
+]
+
+#: 呼吸图三条动作（句柄一格走同一个下拉：候选 = 全工程 showBreathingOverlay 写过的 id，可手输新句柄）
+_BREATHING_ACTION_TYPES = ("showBreathingOverlay", "breathingPerform", "setBreathingParams")
+
+
+def _breathing_overlay_rows(model) -> list[tuple[str, str]]:
+    """呼吸图资产候选 `(id, label)`。与 :func:`_vfx_effect_rows` 同一条回落链：
+    有工程读 `ProjectModel.breathing_overlays` 的只读镜像，无工程上下文现扫仓库目录（读不到就空表，绝不抛）。
+    取值是**文件名 stem**（运行时按 `breathing/<id>.json` 拉）。
+    """
+    fn = getattr(model, "all_breathing_overlay_ids", None) if model is not None else None
+    if callable(fn) and getattr(model, "project_path", None) is not None:
+        try:
+            return [(str(i), str(lab)) for i, lab in fn()]
+        except Exception:  # noqa: BLE001 — 候选是锦上添花，不许把表单打挂
+            return []
+    from pathlib import Path
+    out: list[tuple[str, str]] = []
+    try:
+        root = Path(__file__).resolve().parents[3]
+        d = root.joinpath(*BREATHING_DIR_REL)
+        for path in sorted(d.glob("*.json")) if d.is_dir() else []:
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(doc, dict):
+                continue
+            out.append((path.stem, str(doc.get("label") or "").strip() or path.stem))
+    except Exception:  # noqa: BLE001
+        return []
+    return out
+
+
+def _breathing_handle_rows(model) -> list[tuple[str, str]]:
+    """全工程 `showBreathingOverlay` 写过的句柄 `(id, 出处)`。
+
+    与 stopVfx 的临时特效名（:func:`_vfx_handle_rows`）同一个数据源：内存动作登记表（含未保存的改动、
+    嵌套动作、对话图 runActions 节点）。句柄是开放命名空间——这里只是候选，控件照样允许手输。
+    """
+    if model is None or getattr(model, "project_path", None) is None:
+        return []
+    try:
+        from ..editors.action_registry_editor import _scan_actions
+        records = _scan_actions(model)
+    except Exception:  # noqa: BLE001 — 候选是锦上添花，扫描失败不许把表单打挂
+        return []
+    found: dict[str, str] = {}
+    for record in records:
+        if record.action_type != "showBreathingOverlay":
+            continue
+        params = record.action.get("params") or {}
+        key = str(params.get("id") or "").strip() if isinstance(params, dict) else ""
+        if key:
+            found.setdefault(key, record.full_source)
+    return sorted(found.items(), key=lambda kv: (kv[0].lower(), kv[0]))
 
 
 def _vfx_effect_rows(model) -> list[tuple[str, str]]:
@@ -1059,6 +1245,9 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "setSmellSource": "save",
     "clearSmellSource": "save",
     "setSmellTracking": "save",
+    # 跟脚声：「有个东西在跟着你」是世界事实，进档。不进的话这一段的重试检查点一读回来
+    # 跟脚声就没了，而且没有任何报错（叙事状态的 onEnter 不会因为读档重跑）。
+    "setFollowerFootsteps": "save",
     "showSystemNote": "save",
     "setSmell": "save",
     "clearSmell": "save",
@@ -1137,6 +1326,19 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "setEntityShadow": "memory",
     "setSceneEntityPosition": "save",
     "blendOverlayImage": "memory",
+    # 呼吸图与叠图同待遇：纯表演、不入存档（BreathingOverlaySystem 无序列化桶）
+    "showBreathingOverlay": "memory",
+    "breathingPerform": "memory",
+    "setBreathingParams": "memory",
+    # 画布全系都是表演态：不写存档（读档 / 换场景整批收掉）
+    "showCanvasEntity": "memory",
+    "hideCanvasEntity": "memory",
+    "playCanvasEntityAnimation": "memory",
+    "setCanvasEntityTransform": "memory",
+    "setCanvasOrder": "memory",
+    "playCanvasVfx": "memory",
+    "stopCanvasVfx": "memory",
+    "clearCanvas": "memory",
     "revealDocument": "save",
     # 收图只动显示层，不碰「已揭示」状态，故不入存档
     "hideDocument": "memory",
@@ -1282,7 +1484,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "startEncounter": [("id", "str")],
     "playBgm": [("id", "str"), ("fadeMs", "int")],
     "stopBgm": [("fadeMs", "int")],
-    "playSfx": [("id", "str")],
+    "playSfx": [("id", "str"), ("loop", "bool")],
     "playSceneAmbient": [("id", "str")],
     "stopSceneAmbient": [("id", "str"), ("fadeMs", "int")],
     "endDay": [],
@@ -1303,6 +1505,15 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "setSmellSource": [("x", "float"), ("y", "float"), ("scene", "str"), ("at", "position_ref")],
     "clearSmellSource": [],
     "setSmellTracking": [("enabled", "bool")],
+    # 跟脚声（「后头好像有人跟着走」）：玩家落脚事件的延迟重放，你走他才走。
+    # 延迟按**步间隔的百分比**给（50 = 半步，正好踏在你两步中间），距离不用配——
+    # 它等于你在这段延迟里走过的路（声音落在你刚才那个脚点上）。
+    "setFollowerFootsteps": [
+        ("enabled", "bool"), ("id", "str"),
+        ("delayPercent", "int"), ("minDelayMs", "int"),
+        ("footstepSet", "str"), ("gainDb", "float"),
+        ("fireStops", "bool"), ("abrupt", "bool"),
+    ],
     # 系统说明卡（K4）：noteId=system_notes.json；force 可选（每档一次，force 重弹）
     "showSystemNote": [("noteId", "str"), ("force", "bool")],
     "startCutscene": [("id", "str")],
@@ -1345,6 +1556,53 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("thenState", "str"),
     ],
     "setEntityEnabled": [("target", "str"), ("enabled", "bool")],
+    # ── 画布（场景之外那张屏幕空间的面）──
+    # 数值全走 optional_number：它们在运行时都有缺省，而 0 是**合法取值**
+    # （xPercent:0 = 靠左边）——用普通 float 控件的话"没填"与"填 0"分不开，
+    # 等于把靠左边那一档配不出来（而且不报错）。
+    "showCanvasEntity": [
+        ("name", "str"),
+        ("character", "character"),
+        ("animFile", "str"),
+        ("state", "str"),
+        ("xPercent", "optional_number"),
+        ("yPercent", "optional_number"),
+        ("heightPercent", "optional_number"),
+        ("widthPercent", "optional_number"),
+        ("order", "optional_number"),
+        ("facing", "facing_lr"),
+        ("alpha", "optional_number"),
+    ],
+    "hideCanvasEntity": [("name", "str")],
+    "playCanvasEntityAnimation": [
+        ("name", "str"),
+        ("state", "str"),
+        ("speed", "float"),
+        ("reverse", "bool"),
+        ("loop", "str"),
+        ("holdFrame", "int"),
+        ("thenState", "str"),
+    ],
+    "setCanvasEntityTransform": [
+        ("name", "str"),
+        ("xPercent", "optional_number"),
+        ("yPercent", "optional_number"),
+        ("heightPercent", "optional_number"),
+        ("widthPercent", "optional_number"),
+        ("facing", "facing_lr"),
+        ("alpha", "optional_number"),
+    ],
+    "setCanvasOrder": [("kind", "canvas_item_kind"), ("name", "str"), ("order", "float")],
+    "playCanvasVfx": [
+        ("name", "str"),
+        ("effect", "vfx_effect"),
+        ("xPercent", "optional_number"),
+        ("yPercent", "optional_number"),
+        ("scale", "optional_number"),
+        ("order", "optional_number"),
+    ],
+    "stopCanvasVfx": [("name", "str")],
+    "clearCanvas": [],
     "openShop": [("shopId", "str")],
     "openMap": [],
     "switchScene": [("targetScene", "str"), ("targetSpawnPoint", "str")],
@@ -1406,6 +1664,23 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "cameraFollowActor": [("target", "str"), ("at", "position_ref"), ("smooth", "bool")],
     "cameraStopFollow": [],
     "hideOverlayImage": [("id", "str")],
+    # ---- 呼吸图（与叠图同一层、同一套 id 句柄；hideOverlayImage 收掉它）----
+    # id = 句柄（候选 = 全工程 showBreathingOverlay 写过的 id，可手输新句柄）；
+    # breathing = assets/data/breathing/<id>.json 的文件名（呼吸图资产选择器）；
+    # x / y / width 与 showOverlayImage 同口径（0–100 的屏幕百分比，图心在 (x, y)）；order 可选、可为负。
+    "showBreathingOverlay": [
+        ("id", "str"),
+        ("breathing", "str"),
+        ("xPercent", "float"),
+        ("yPercent", "float"),
+        ("widthPercent", "float"),
+        ("order", "optional_number"),
+    ],
+    # act 五档短枚举走下拉；wait 缺省 false（不等）。
+    "breathingPerform": [("id", "str"), ("act", "str"), ("wait", "bool")],
+    # params = 参数名 → 数值（专用行表，键 / 中文名 / 量程读 src/data/breathingParams.json）；
+    # durationMs > 0 = 平滑过渡（缺省 0 = 瞬间改到位，不写键）。
+    "setBreathingParams": [("id", "str"), ("params", "breathing_params"), ("durationMs", "int")],
     "waitClickContinue": [("text", "str")],
     "waitMs": [("durationMs", "int")],
     "moveEntityTo": [
@@ -1474,8 +1749,10 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("countScale", "float"),
         ("restart", "bool"),
         ("oneShot", "bool"),
+        ("followCamera", "bool"),
+        ("handle", "str"),
     ],
-    "stopVfx": [("instanceId", "str")],
+    "stopVfx": [("instanceId", "str"), ("handle", "str"), ("soft", "bool"), ("fadeMs", "optional_number")],
     # playPropVfx：在手持挂件上播一个效果（跟着挂件走、放完自己收、卸下即停）。effect 必填；
     # target / socket = 挂在谁的哪个挂点上（挂件预设状态 onEnterActions 顶层留空 = 这件挂件自己，别处必填，
     # 校验器按所在位置判）；point = 贴图上的点 [u, v]（0..1），控件带「不写」档，不写 = 起火点 → 挂点。
@@ -1499,21 +1776,36 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         # 一组效果 id，逗号分隔（每次随机挑一道；同一道具反复放不会每次同一张图）
         ("effects", "str"),
         ("effectHeight", "float"),
+        ("effectSeed", "optional_int"),
         ("lightIntensity", "float"),
-        ("lightHeight", "float"),
+        ("lightHeight", "optional_number"),
         ("lightRange", "float"),
         ("lightKelvin", "float"),
         ("lightMs", "int"),
         ("removeTarget", "str"),
-        ("seed", "int"),
+        ("seed", "optional_int"),
         # 与这道雷绑在一起的雷声：放在**落点**上，每道雷各响一次（不是没有位置的一声）。
         ("sfx", "str"),
-        ("sfxVolume", "float"),
+        ("sfxVolume", "optional_number"),
         # 连劈：最多几道 / 第二道起每道落下的概率（掷不中整条链就停）/ 间隔 ± 抖动
-        ("strikes", "int"),
-        ("extraChance", "float"),
-        ("gapMs", "int"),
-        ("gapJitterMs", "int"),
+        ("strikes", "optional_int"),
+        ("extraChance", "optional_number"),
+        ("gapMs", "optional_int"),
+        ("gapJitterMs", "optional_int"),
+        # 独立表现补足：不改上面真实雷链的次数、概率与结算。
+        ("visualStrikes", "optional_int"),
+        ("visualExtraChance", "optional_number"),
+        ("visualGapMs", "optional_int"),
+        ("visualGapJitterMs", "optional_int"),
+        ("fallbackMargin", "optional_number"),
+        ("fallbackMinDistance", "optional_number"),
+        ("fallbackSeparation", "optional_number"),
+        ("fallbackStrictSeparation", "bool"),
+        ("fallbackSurfaceZone", "str"),
+        ("fallbackGroundOnly", "bool"),
+        ("fallbackMaxSlopeDeg", "optional_number"),
+        ("sfxVoices", "optional_int"),
+        ("vfxVoices", "optional_int"),
         # 每道雷自带的闪白与震屏（0 = 不带，交给单独的 screenFlash / cameraShake 动作排）
         ("flashAlpha", "float"),
         ("flashMs", "int"),
@@ -1522,7 +1814,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     ],
     # duckAudio：把背景层临时压下去（0..1 的倍率，只写要压的那几条）。压的是**演出层**，
     # 不是玩家在设置页调的那四个档——那个进存档，动它等于替玩家改了偏好。
-    # holdMs = 兜底上限：演出被打断时没人来抬，到点自己抬（缺省 20 秒）。
+    # 脱手会话全程托管，不按墙钟到期；holdMs 仅作无会话普通批的兜底（缺省 20 秒）。
     "duckAudio": [
         ("id", "str"), ("bgm", "float"), ("ambient", "float"), ("sfx", "float"),
         ("voice", "float"), ("fadeMs", "int"), ("holdMs", "int"),
@@ -5361,18 +5653,52 @@ class ActionRow(QWidget):
         sc_w.typeCommitted.connect(lambda _t: refresh_state())
         refresh_state()
 
-    def _build_overlay_id_combo(self, value: str) -> FilterableTypeCombo:
-        """show/hide/blend 叠图 id：overlay_images.json 短 id + 自由输入（非 select_only）。"""
+    def _build_overlay_id_combo(self, value: str, *, with_breathing: bool = False) -> FilterableTypeCombo:
+        """show/hide/blend 叠图 id：overlay_images.json 短 id + 自由输入（非 select_only）。
+
+        ``with_breathing``（hideOverlayImage 用）：呼吸图与叠图共用同一套句柄、由 hideOverlayImage 收掉，
+        所以再追加全工程 showBreathingOverlay 写过的句柄（排在短 id 之后，缺省选中项不变）。
+        """
         m = self._ctx_model
         entries = m.overlay_short_id_entries() if m else []
+        if with_breathing:
+            have = {v for _l, v in entries}
+            entries = list(entries) + [
+                (f"{hid}　（呼吸图 · {src}）", hid) for hid, src in _breathing_handle_rows(m) if hid not in have
+            ]
         w = FilterableTypeCombo(entries, self, select_only=False)
         w.setToolTip(
             "与 hideOverlayImage / blendOverlayImage 共用的标记；"
-            "下拉为 overlay_images.json 的短 id，也可输入任意新 id。\n"
+            "下拉为 overlay_images.json 的短 id"
+            + ("与 showBreathingOverlay 写过的呼吸图句柄" if with_breathing else "")
+            + "，也可输入任意新 id。\n"
             "文档揭示不走这里：它自己一套显示层，用 revealDocument / hideDocument 按 documentId 收发。",
         )
         cur = (value or "").strip()
         w.set_committed_type(cur)
+        w.typeCommitted.connect(lambda _t: self.changed.emit())
+        return w
+
+    def _build_breathing_handle_combo(self, value: str, act_type: str) -> FilterableTypeCombo:
+        """呼吸图三条动作的句柄：候选 = 全工程 showBreathingOverlay 写过的 id，可手输（句柄是开放命名空间）。
+
+        首行是空值占位——新建的一行不会被静默填成别处的句柄（manifest 必填非空，留空校验器报 error）。
+        """
+        rows = [("（输入或选择呼吸图句柄）", "")] + [
+            (f"{hid}　（{src}）", hid) for hid, src in _breathing_handle_rows(self._ctx_model)
+        ]
+        w = FilterableTypeCombo(rows, self, select_only=False)
+        if act_type == "showBreathingOverlay":
+            w.setToolTip(
+                "这张呼吸图的句柄（与叠图同一套 id）：之后 breathingPerform / setBreathingParams 按它找这张图，"
+                "hideOverlayImage 按它收掉。\n同一句柄再 show 一次 = 换成新的这张。下拉是全工程已用过的句柄，也可输入新名字。"
+            )
+        else:
+            w.setToolTip(
+                "要操作哪张呼吸图：showBreathingOverlay 里写的那个句柄（下拉 = 全工程已用过的，也可手输）。\n"
+                "运行时那张图此刻没在显示 = 控制台警告一行、什么都不做。"
+            )
+        w.set_committed_type((value or "").strip())
         w.typeCommitted.connect(lambda _t: self.changed.emit())
         return w
 
@@ -5412,6 +5738,79 @@ class ActionRow(QWidget):
         if isinstance(w, AudioIdPreviewSelector):
             w.set_volume(raw_volume)
 
+    def _make_presentation_number(
+        self, pname: str, ptype: str, params: dict, act_type: str | None = None,
+    ) -> OptionalHealthNumber:
+        if act_type in _CANVAS_NUMBER_ACTIONS and pname in _CANVAS_NUMBER_FIELDS:
+            # 画布那几个的量程单管（order 要能填负数）
+            spec = _CANVAS_NUMBER_FIELDS[pname]
+        else:
+            spec = _STRIKE_PRESENTATION_FIELDS.get(pname) or _STRIKE_INLINE_NUMBER_FIELDS.get(pname)
+        default, minimum, maximum = spec[1:4] if spec else (0, 0, 1000000)
+        if default is None:
+            inherited_key = {"visualGapMs": "gapMs", "visualGapJitterMs": "gapJitterMs",
+                             "fallbackMinDistance": "fallbackRadius"}[pname]
+            inherited_default = {"gapMs": 220, "gapJitterMs": 0, "fallbackRadius": 320}[inherited_key]
+            raw = params.get(inherited_key, inherited_default)
+            default = raw if isinstance(raw, (int, float)) and not isinstance(raw, bool) else inherited_default
+            if pname == "fallbackMinDistance":
+                default = (default if default > 0 else 320) * 0.45
+        field = OptionalHealthNumber(params.get(pname, HEALTH_ABSENT), self, default=default,
+                                     minimum=minimum, maximum=maximum)
+        if ptype == "optional_int":
+            field.spin.blockSignals(True)
+            field.spin.setDecimals(0)
+            field.spin.blockSignals(False)
+        field.changed.connect(self.changed)
+        return field
+
+    def _add_strike_presentation_section(self, params: dict) -> None:
+        section = CollapsibleSection("空地落雷与补足表现", start_open=False, parent=self)
+        section.set_header_tool_tip("以下半径、表面、屏幕边界和间距仅约束无目标时的随机表现雷。有真实目标时始终服从目标位置，不受这些限制；原真实雷链的选择和结算保持独立。")
+        built = False
+
+        def ensure_built(expanded: bool) -> None:
+            nonlocal built
+            if not expanded or built:
+                return
+            built = True
+            body = QWidget(section)
+            form = compact_form(QFormLayout(body))
+            schema = dict(_PARAM_SCHEMAS["strikeThreat"])
+            for key, (label, _default, _minimum, _maximum, hint) in _STRIKE_PRESENTATION_FIELDS.items():
+                if key == "fallbackSurfaceZone":
+                    field = ReferencePickerField(
+                        lambda: self._ctx_model.standard_zone_ids_for_scene(self._ctx_scene_id)
+                        if self._ctx_model is not None and self._ctx_scene_id else [],
+                        body, allow_empty=True, title="选择已确认实体表面区域",
+                        geometry_key="strike_surface_zone_reference_picker",
+                    )
+                    field.set_value(str(params.get(key) or ""))
+                    field.value_changed.connect(self.changed)
+                    _tag_content_universe(field, "zones")
+                elif schema[key] == "bool":
+                    field = QCheckBox(body)
+                    field.setChecked(_coerce_bool_param(params.get(key, False)))
+                    field.toggled.connect(self.changed)
+                else:
+                    field = self._make_presentation_number(key, schema[key], params)
+                field.setToolTip(hint)
+                self._param_widgets[key] = field
+                form.addRow(label, field)
+                field.show()
+            section.add_body(body)
+            body.show()
+            form.invalidate()
+            body.updateGeometry()
+            section.layout().invalidate()
+            section.updateGeometry()
+            self._params_layout.invalidate()
+            self._params_frame.updateGeometry()
+            self.updateGeometry()
+
+        section.expanded_changed.connect(ensure_built)
+        self._params_layout.addRow(section)
+
     def _make_selector(
         self,
         kind: str,
@@ -5437,7 +5836,9 @@ class ActionRow(QWidget):
             "smell", "plane", "pressure_hold", "signal_cue", "prop_preset", "prop_preset_leveled",
             "time_phase", "time_transition", "character", "clue", "trajectory",
             "vfx_effect", "vfx_instance", "scene_light",
+            "canvas_item_kind", "facing_lr",
             "system_note", "burn_target",
+            "breathing_overlay",
         )
 
         pairs: list[tuple[str, str]] = []
@@ -5502,6 +5903,8 @@ class ActionRow(QWidget):
             pairs = _trajectory_asset_rows(m)
         elif kind == "vfx_effect":
             pairs = _vfx_effect_rows(m)
+        elif kind == "breathing_overlay":
+            pairs = _breathing_overlay_rows(m)
         elif kind == "vfx_instance":
             # 场景作用域：当前上下文场景摆了哪些效果实例（与 zone / hotspot 同一条口径）
             pairs = m.vfx_instance_ids_for_scene(self._ctx_scene_id) if m else []
@@ -5559,6 +5962,9 @@ class ActionRow(QWidget):
             pairs = m.all_object_examine_ids() if m else []
         elif kind == "smell":
             pairs = m.all_smell_profile_ids() if m else []
+        elif kind == "footstep_set":
+            # 与场景编辑器那一格同一个只读函数（候选面 = 校验面）
+            pairs = m.all_footstep_set_ids() if m else []
         elif kind == "plane":
             pairs = m.all_plane_ids() if m else []
         elif kind == "time_phase":
@@ -5602,6 +6008,17 @@ class ActionRow(QWidget):
                 for c in (clue_registry_rows(m) if m else [])
                 if str(c.get("id", "")).strip()
             ]
+        elif kind == "canvas_item_kind":
+            # 画布上 item 的命名空间（四类永不互访）。候选就是运行时认的全集：
+            # setCanvasOrder 的 handler 只放行这四个串，多一档少一档都是"候选面 ≠ 校验面"。
+            pairs = [
+                ("image", "image（叠图：句柄）"),
+                ("document", "document（文档揭示：documentId）"),
+                ("entity", "entity（画布实体）"),
+                ("vfx", "vfx（画布特效）"),
+            ]
+        elif kind == "facing_lr":
+            pairs = [("right", "right（朝右，缺省）"), ("left", "left（朝左）")]
         else:
             pairs = []
 
@@ -5656,6 +6073,11 @@ class ActionRow(QWidget):
                 "仅下拉选择；列表来自 assets/data/trajectories/*.json（轨迹工作台产出）。\n"
                 "主编辑器对该目录只读：改轨迹去「工具 → 轨迹工作台…」。悬垂 id 原样保留并标「缺失」。"
             ),
+            "breathing_overlay": (
+                "仅下拉选择：呼吸图资产（assets/data/breathing/*.json 的文件名，呼吸工作台产出）。\n"
+                "主编辑器对该目录只读；工作台存盘后用「工具 → 刷新呼吸图数据」同步候选。\n"
+                "标了「缺失」的值是找不到文件的引用，已保值、不会被改写，校验器报 error。"
+            ),
             "bubble_speaker": (
                 "头顶闲聊的说话人，三档：player（当前受控角色）/ character:<角色id>"
                 "（角色注册表，运行时落到当前场景里那个摆放）/ 场景实体 id。\n"
@@ -5674,6 +6096,12 @@ class ActionRow(QWidget):
             "paper_craft_minigame": "仅下拉选择；列表来自 paper_craft/index.json。",
             "object_examine": "仅下拉选择；列表来自 object_examine/index.json。",
             "smell": "仅下拉选择；列表来自 smell_profiles.json 的 profiles（香火/阴腥/尸臭/血腥/霉/香粉…）。留空=回落正常态。",
+            "footstep_set": (
+                "跟脚者踩在什么上（footstep_sets.json 的集 id，「脚步集」页维护）。\n"
+                "**留空 = 跟玩家踩同一块地**（他走在你刚走过的脚点上，过 zone 自动换声）——一般就该留空。\n"
+                "填了 = 不管脚下是什么，永远响这一套（「幻听恒为纸钱声」这种）。\n"
+                "素材还没入库时可以先把 id 填进去；集不存在时这位跟脚者全程不发声，校验器报 warning。"
+            ),
             "plane": "仅下拉选择；列表来自 planes.json（位面面板维护）。\n"
                      "activatePlane 作用域：过场内激活随过场结束自动清除；"
                      "过场外持续至 deactivatePlane / 读档，且压过叙事点名。",
@@ -6383,12 +6811,34 @@ class ActionRow(QWidget):
                 sp.valueChanged.connect(self.changed)
                 return sp
 
+            # 铺满窗口：等比盖满整屏、随窗口缩放重铺；勾上时下面三格不参与布局（置灰，值照存）
+            fill_cb = QCheckBox("铺满窗口（和窗口一样大）", self)
+            fill_cb.setChecked(params.get("fill") is True)
+            fill_cb.setToolTip("勾选后图等比放大盖满整个窗口（多出的边裁掉），窗口缩放时跟着重铺；"
+                               "此时 x / y / width 不起作用。默认不勾 = 按下面的百分比定位。")
+            fill_cb.toggled.connect(self.changed)
+            self._param_widgets["fill"] = fill_cb
+            self._params_layout.addRow("fill", fill_cb)
             self._param_widgets["xPercent"] = _pct_spin("xPercent", 50.0)
             self._params_layout.addRow("xPercent（水平中心）", self._param_widgets["xPercent"])
             self._param_widgets["yPercent"] = _pct_spin("yPercent", 50.0)
             self._params_layout.addRow("yPercent（垂直中心）", self._param_widgets["yPercent"])
             self._param_widgets["widthPercent"] = _pct_spin("widthPercent", 40.0)
             self._params_layout.addRow("widthPercent（占屏宽）", self._param_widgets["widthPercent"])
+            pct_widgets = [self._param_widgets[k] for k in ("xPercent", "yPercent", "widthPercent")]
+
+            def _sync_pct_enabled(checked: bool) -> None:
+                for w in pct_widgets:
+                    w.setEnabled(not checked)
+
+            fill_cb.toggled.connect(_sync_pct_enabled)
+            _sync_pct_enabled(fill_cb.isChecked())
+            # 画布上的绘制顺序：叠图 / 文档揭示 / 实体 / 特效共用一个顺序空间。
+            # 可选数值控件（带"不写"档）：不指定 = 0，不凭空往最小形态里塞键。
+            order_w = self._make_presentation_number("order", "optional_number", params, act_type)
+            order_w.setToolTip(_CANVAS_NUMBER_FIELDS["order"][4])
+            self._param_widgets["order"] = order_w
+            self._params_layout.addRow("order（画布绘制顺序）", order_w)
             self._sync_foldable_visibility()
             return
 
@@ -6679,6 +7129,11 @@ class ActionRow(QWidget):
             self._params_layout.addRow("yPercent（垂直中心）", self._param_widgets["yPercent"])
             self._param_widgets["widthPercent"] = _pct_spin("widthPercent", 40.0)
             self._params_layout.addRow("widthPercent（占屏宽）", self._param_widgets["widthPercent"])
+            # 画布上的绘制顺序（与叠图 / 文档揭示 / 实体 / 特效共用一个顺序空间）
+            border_w = self._make_presentation_number("order", "optional_number", params, act_type)
+            border_w.setToolTip(_CANVAS_NUMBER_FIELDS["order"][4])
+            self._param_widgets["order"] = border_w
+            self._params_layout.addRow("order（画布绘制顺序）", border_w)
 
             bprev = BlendOverlayPreviewWidget(self._ctx_model, self._blend_preview_params, self)
             # 预览是辅助查看面板，默认折叠，避免常驻占大块固定区域。
@@ -7003,6 +7458,11 @@ class ActionRow(QWidget):
             allow_cb.stateChanged.connect(self.changed)
             self._param_widgets["allowCancel"] = allow_cb
             self._params_layout.addRow("allowCancel", allow_cb)
+            # 版式档与对白同一张表：「第一人称」= 屏底横排、不要木框；不设 = 现行的屏底选项条
+            layout_cb = _make_dialogue_layout_combo(self, params.get("layout"))
+            layout_cb.currentIndexChanged.connect(self.changed)
+            self._param_widgets["layout"] = layout_cb
+            self._params_layout.addRow("layout（版式）", layout_cb)
             if self._outline_children is not None:
                 self._params_layout.addRow(self._outline_children_hint(act_type))
                 self._sync_foldable_visibility()
@@ -7272,6 +7732,10 @@ class ActionRow(QWidget):
         self._params_frame.setVisible(True)
 
         for pname, ptype in schema:
+            if act_type == "strikeThreat" and pname in _STRIKE_PRESENTATION_FIELDS:
+                if pname == "visualStrikes":
+                    self._add_strike_presentation_section(params)
+                continue
             val = params.get(pname, "")
             w: QWidget
             if ptype == "bubble_scale":
@@ -7351,6 +7815,8 @@ class ActionRow(QWidget):
                     w = QLineEdit(ps, self)
                     w.setPlaceholderText("打开工程后可用「引用」插 [tag:…]")
                     w.textChanged.connect(self.changed)
+            elif ptype in ("optional_int", "optional_number"):
+                w = self._make_presentation_number(pname, ptype, params, act_type)
             elif ptype == "int":
                 w = QSpinBox(self)
                 w.setRange(-999999, 999999)
@@ -7378,6 +7844,16 @@ class ActionRow(QWidget):
                     w.setToolTip(
                         "升到第几级（1 起；第 1 级 = 这根火把出厂的样子）。\n"
                         "上限跟着上面选的挂件走（= 它 levels 的条数）；超范围运行时 log 一行、什么都不改。")
+                if act_type == "setFollowerFootsteps" and pname == "delayPercent":
+                    # 0 与负数是"听不见"与"写了不生效"，两条都由校验器报 error；
+                    # 这里把量程收在能配出来的范围内，不给人踩进去的机会（说明在下面的 labels 表）。
+                    w.setRange(1, 200)
+                if act_type == "setFollowerFootsteps" and pname == "minDelayMs":
+                    w.setRange(0, 3000)
+                if act_type == "setBreathingParams" and pname == "durationMs":
+                    # 过渡时长不能为负（运行时负数按 0 = 瞬间改到位）；说明在下面的 labels 表
+                    w.setRange(min(0, w.value()), 999999)
+                    w.setSingleStep(100)
                 w.valueChanged.connect(self.changed)
             elif ptype in ("optional_health_number", "health_number"):
                 w = OptionalHealthNumber(params.get(pname, HEALTH_ABSENT), self,
@@ -7423,6 +7899,22 @@ class ActionRow(QWidget):
                         w.setValue(float(val) if val != "" else 0.0)
                     except (TypeError, ValueError):
                         w.setValue(0.0)
+                elif act_type == "showBreathingOverlay" and pname in ("xPercent", "yPercent", "widthPercent"):
+                    # 与 showOverlayImage 同口径：0–100 的屏幕百分比，新建一行给 50 / 50 / 40。
+                    # 盘上越界的值不夹（量程放宽到装得下它）——夹了就是静默改数据。
+                    seed = {"xPercent": 50.0, "yPercent": 50.0, "widthPercent": 40.0}[pname]
+                    try:
+                        fv = float(val) if val not in ("", None) else seed
+                    except (TypeError, ValueError):
+                        fv = seed
+                    if not math.isfinite(fv):
+                        fv = seed
+                    # 小数位至少 2、盘上写得更细就跟到 4 位（否则控件取整，打开即保存改数）
+                    frac = repr(fv).split(".")[1].rstrip("0") if "." in repr(fv) and "e" not in repr(fv) else ""
+                    w.setDecimals(max(2, min(4, len(frac))))
+                    w.setRange(min(0.0, fv), max(100.0, fv))
+                    w.setSingleStep(0.5)
+                    w.setValue(fv)
                 elif act_type == "cutsceneSpawnActor" and pname in ("x", "y"):
                     # 出生点是世界坐标（可达数千），不能用下面 ±50 的偏移量程，否则会被 clamp 成
                     # 50 造成坐标丢失。给足世界坐标量程，小数位与既有数据一致。
@@ -7518,6 +8010,7 @@ class ActionRow(QWidget):
                         "交还目标时把被轨迹改过的量还原到进入前（叠加旋转/缩放/透明、排序锚、相机缩放）。\n"
                         "缺省不勾＝保留轨迹留下的姿态，不写键。"
                     )
+                # setFollowerFootsteps 的三个勾选框：说明在下面的 labels 表（那一处会覆盖 setToolTip）
                 w.stateChanged.connect(self.changed)
             elif ptype == "flag_val":
                 w = FlagValueEdit(self, self._ctx_model.flag_registry if self._ctx_model else {})
@@ -7551,8 +8044,17 @@ class ActionRow(QWidget):
                 w = self._make_selector("spawn", str(val) if val is not None else "")
             elif act_type == "setSmell" and pname == "scent":
                 w = self._make_selector("smell", str(val) if val is not None else "")
+            elif act_type == "setFollowerFootsteps" and pname == "footstepSet":
+                # 脚步集引用（候选 = 校验面 = scene.footstepSet 那一份表）；
+                # 与场景编辑器同样允许手输（素材未入库时先占位，校验器只报 warning）
+                w = self._make_selector("footstep_set", str(val) if val is not None else "")
             elif act_type in ("playVfx", "stopVfx", "setVfxState") and pname == "instanceId":
                 w = self._make_selector("vfx_instance", str(val) if val is not None else "")
+            elif act_type == "stopVfx" and pname == "handle":
+                w = ReferencePickerField(lambda: _vfx_handle_rows(self._ctx_model), self,
+                                         title="选择临时特效", geometry_key="vfx_handle_picker")
+                w.set_value(str(val or ""))
+                w.value_changed.connect(self.changed)
             elif act_type == "playVfx" and pname == "effect":
                 w = self._make_selector("vfx_effect", str(val) if val is not None else "")
             elif act_type == "playVfx" and pname == "surface":
@@ -8019,7 +8521,25 @@ class ActionRow(QWidget):
                 w = FilterableTypeCombo([("（选 state）", "")], self, select_only=True)
                 w.typeCommitted.connect(lambda _t: self.changed.emit())
             elif act_type == "hideOverlayImage" and pname == "id":
-                w = self._build_overlay_id_combo(str(val) if val is not None else "")
+                # 呼吸图也挂在叠图层、共用句柄：收它也是这条，所以候选里带上呼吸图句柄
+                w = self._build_overlay_id_combo(str(val) if val is not None else "", with_breathing=True)
+            elif act_type in _BREATHING_ACTION_TYPES and pname == "id":
+                w = self._build_breathing_handle_combo(str(val) if val is not None else "", act_type)
+            elif act_type == "showBreathingOverlay" and pname == "breathing":
+                w = self._make_selector("breathing_overlay", str(val) if val is not None else "")
+            elif act_type == "breathingPerform" and pname == "act":
+                # 短枚举（五档）走下拉；数据里的未知值保值展示（_enum_combo 追加「未知」行）
+                w = _enum_combo(self, _BREATHING_ACT_COMBO_ROWS, str(val) if val is not None else "")
+                w.typeCommitted.connect(lambda _t: self.changed.emit())
+            elif act_type == "setBreathingParams" and pname == "params":
+                # 专用行表：参数名下拉（按分组列、中文名）→ 数值格（量程 / 步长 / 单位读参数表）；
+                # 不认识的键与非数值原样保值（见 BreathingParamsField）
+                m = self._ctx_model
+                w = BreathingParamsField(
+                    params.get("params", BREATHING_PARAMS_ABSENT), self,
+                    project_root=getattr(m, "project_path", None) if m is not None else None,
+                )
+                w.changed.connect(self.changed)
             elif act_type in ("attachToSocket", "detachFromSocket") and pname == "target":
                 w = self._make_selector("actor", str(val) if val is not None else "")
                 w.setToolTip("挂点宿主：player 或场景 NPC id（挂点住在它的动画包里）")
@@ -8273,10 +8793,91 @@ class ActionRow(QWidget):
                 w.textChanged.connect(self.changed)
             self._param_widgets[pname] = w
             labels = {
+                ("duckAudio", "id"): ("压音层名称", "restoreAudio 按此名称还原同一会话的压音层；本会话自己的声音不被这层压低。"),
+                ("duckAudio", "holdMs"): ("普通批兜底时长（ms）", "仅无会话的普通动作批使用墙钟兜底，未指定或不大于 0 时为 20000ms。脱手演出忽略此值，由会话托管：结束自动还原，打断立即还原；自然结束保留已开始的还原渐变。"),
+                ("restoreAudio", "id"): ("压音层名称", "还原同一会话内最早的同名压音层，不影响其它会话。"),
+                ("restoreAudio", "stopSfx"): ("停止的音效", "逗号分隔的音效 id。有会话时只停止本会话的实例；无会话时停止这些音效的全部实例。留空只还原压音。"),
+                ("strikeThreat", "fallbackRadius"): ("随机落雷半径（世界 wu）", "表现落点距玩家脚底的世界三维距离上限，包含纵深与高差；不指定为 320wu。真实敌人搜索距离由 maxDistance 独立控制。"),
                 ("playVfx", "restart"): ("从头重播固定种子", "场景实例已播放过时重置模拟；未勾选则沿用实例。只对 instanceId 生效。"),
                 ("playVfx", "oneShot"): ("播完自动回收", "临时 effect 实例停止发射且粒子全部结束后自动回收。常驻场景实例由 stopVfx 管理。"),
+                ("playVfx", "followCamera"): ("发射区域跟随镜头", "仅临时 effect：雾雨等发射原点跟随当前画面，保留高度与表面；已发出的粒子留在场景空间，不粘住屏幕。位置仍用作无镜头时的回落。"),
+                ("playVfx", "handle"): ("临时特效名称", "给本次 effect 实例命名，供 stopVfx 选择并收尾；不能同时指定 instanceId。同名重播会替换前一个临时实例。"),
+                ("stopVfx", "instanceId"): ("场景特效实例", "与临时特效名称二选一；停止已在场景布置的实例。"),
+                ("stopVfx", "handle"): ("临时特效名称", "从项目 playVfx 定义中选择；候选即时刷新，已失效的名称仍保留显示。与 instanceId 二选一。"),
+                ("stopVfx", "soft"): ("停止发射后自然消散", "仅在淡出时长为 0 或未指定时生效：勾选后停止发射，已发出的粒子自然消散；未勾选立即收回。"),
+                ("stopVfx", "fadeMs"): ("淡出时长（ms）", "大于 0 时保持原模拟与连续发射，整团特效透明度在指定时长内降到 0 后回收。为 0 或未指定时，按「停止发射后自然消散」选项处理。"),
+                ("playSfx", "loop"): ("循环播放", "开启后持续循环，直到演出归位或显式停止；未勾选只播放一次。"),
+                # ---- 跟脚声：「后头好像有人跟着走」----
+                ("setFollowerFootsteps", "enabled"): ("开着跟脚声", (
+                    "勾＝从此刻起后头有人跟着走：你迈一步，慢半拍之后你刚才站的那个脚点上也落一步。\n"
+                    "不勾＝关掉同 id 的那位跟脚者。\n"
+                    "⚠ 它接的是**玩家的落脚**，不是计时器——玩家站着不动就没有跟脚声，\n"
+                    "   步频也自动跟着当前装扮走（常态一步约 0.5 秒、背着尸体约 1 秒）。\n"
+                    "⚠ 只管**声音**。要「跟着你还掉血」照旧在场景实体上配 healthThreat，两者互不知道。"
+                )),
+                ("setFollowerFootsteps", "id"): ("跟脚者 id", (
+                    "留空＝default。同时开两个不同 id（各配各的延迟）＝后头不止一个人。\n"
+                    "关的时候要用同一个 id 才关得掉。"
+                )),
+                ("setFollowerFootsteps", "delayPercent"): ("慢多少（占一步的 %）", (
+                    "他比你慢多少，按**一步间隔**的百分比给。50＝半步：正好踏在你两步中间。\n"
+                    "这一格管的就是「别和玩家自己的脚步重叠」——写小了两声叠在一起，等于听不见。\n"
+                    "用比例不用毫秒：玩家步频随装扮差一倍，固定毫秒必与其中一种贴成回声。\n"
+                    "⚠ 它同时决定**距离**：那一声落在你这段时间之前站的脚点上，\n"
+                    "   所以走得快离得远、走得慢贴得近，永远是「后面半步」——不用再配「身后多远」。"
+                )),
+                ("setFollowerFootsteps", "minDelayMs"): ("延迟下限（ms）", (
+                    "跑起来时步间隔很短，按比例算出来的延迟会短到像回声而不像第二个人——这一格兜住。\n"
+                    "缺省 180。"
+                )),
+                # footstepSet 的说明在选择器自己身上（_make_selector 的 footstep_set 分支），
+                # 这里只给行标签：hint 留空才不会把那条更细的说明覆盖掉。
+                ("setFollowerFootsteps", "footstepSet"): ("脚步集（留空＝跟你踩同一块地）", ""),
+                ("setFollowerFootsteps", "gainDb"): ("相对音量（dB）", (
+                    "叠在「这块地的集 + 全局缺省」之上，0＝与玩家自己的脚步同响。\n"
+                    "跟脚声一般给负值（-4 ~ -8）：听得见、但不抢你自己的脚步。"
+                )),
+                ("setFollowerFootsteps", "fireStops"): ("举着火就不跟", (
+                    "玩家手上有有效火源时不响。缺省不勾＝有没有火都照跟。\n"
+                    "只管声音，与 healthThreat 的「被火逼退」是两件事（那边照旧按自己的规则走）。"
+                )),
+                ("setFollowerFootsteps", "abrupt"): ("关掉时连排队的那声一起掐", (
+                    "缺省不勾＝让已经排队的最后一声响完：你停下了/进屋了，后头还有一下——通常要的就是这一下。\n"
+                    "只在「不勾开着跟脚声」时有意义。"
+                )),
+                # ---- 呼吸图（静帧实时呼吸：盖脸纸 + 胸口）----
+                # id / breathing 两格的说明在控件自己身上（hint 留空才不会把那条更细的说明覆盖掉）
+                ("showBreathingOverlay", "id"): ("句柄（与叠图同一套 id）", ""),
+                ("showBreathingOverlay", "breathing"): ("呼吸图", ""),
+                ("showBreathingOverlay", "xPercent"): ("水平中心（占屏宽 %）", (
+                    "图心的水平位置，0–100 的屏幕百分比（与 showOverlayImage 同口径）。")),
+                ("showBreathingOverlay", "yPercent"): ("垂直中心（占屏高 %）", (
+                    "图心的垂直位置，0–100 的屏幕百分比（与 showOverlayImage 同口径）。")),
+                ("showBreathingOverlay", "widthPercent"): ("宽度（占屏宽 %）", (
+                    "图宽占屏宽的百分比；高度按这张图的宽高比自动算（与 showOverlayImage 同口径）。")),
+                ("breathingPerform", "id"): ("句柄", ""),
+                ("breathingPerform", "act"): ("表演", (
+                    "· 恢复呼吸：从停着 / 渐弱里接着正常呼吸；\n"
+                    "· 渐弱至停：这口收浅 → 变浅一口 →（可选假停）→ 最后一丝 → 停住（各段参数在「渐弱」组）；\n"
+                    "· 猛抽一口气：纸贴死、胸口挺起，松开后纸弹一下（参数在「猛地一颤」组）；\n"
+                    "· 立刻停住：当场不动；\n"
+                    "· 从头来：回到出图时的第一口深叹气重新开始。")),
+                ("breathingPerform", "wait"): ("等表演走完再往下", (
+                    "勾 = 对话 / 动作链停在这一步：渐弱等到真停住再静「真停后多久出字」那么久；猛吸等到这一下结束。\n"
+                    "其余三档是瞬时的，勾不勾一样。缺省不勾（不写键）= 不等，接着往下走。")),
+                ("setBreathingParams", "id"): ("句柄", ""),
+                ("setBreathingParams", "params"): ("改哪些参数", (
+                    "一行一个：左边选参数（按分组列，名字与呼吸工作台一致），右边填数（量程 / 单位跟着参数走）。\n"
+                    "没列出来的参数保持原样。参数表：src/data/breathingParams.json。")),
+                ("setBreathingParams", "durationMs"): ("过渡时长（ms）", (
+                    "大于 0 = 在这么长时间里平滑改过去；0（缺省，不写键）= 瞬间改到位。")),
             }
             label, hint = labels.get((act_type, pname), (pname, ""))
+            if act_type == "strikeThreat" and pname in _STRIKE_INLINE_NUMBER_FIELDS:
+                label, _default, _minimum, _maximum, hint = _STRIKE_INLINE_NUMBER_FIELDS[pname]
+            if act_type in _CANVAS_NUMBER_ACTIONS and pname in _CANVAS_NUMBER_FIELDS \
+                    and (act_type, pname) not in labels:
+                label, _default, _minimum, _maximum, hint = _CANVAS_NUMBER_FIELDS[pname]
             if hint:
                 w.setToolTip(hint)
             self._params_layout.addRow(label, w)
@@ -8597,7 +9198,7 @@ class ActionRow(QWidget):
         w_w = self._param_widgets.get("widthPercent")
         pid = _read_overlay_id_value(id_w)
         pimg = img_w.path() if isinstance(img_w, CutsceneImagePathRow) else ""
-        return {
+        out = {
             "type": "showOverlayImage",
             "params": {
                 "id": pid,
@@ -8607,6 +9208,12 @@ class ActionRow(QWidget):
                 "widthPercent": float(w_w.value()) if isinstance(w_w, QDoubleSpinBox) else 0.0,
             },
         }
+        # 铺满窗口：勾上才写（缺键 = 按百分比定位，与运行时缺省同义）
+        fill_w = self._param_widgets.get("fill")
+        if isinstance(fill_w, QCheckBox) and fill_w.isChecked():
+            out["params"]["fill"] = True
+        self._write_canvas_order(out["params"])
+        return out
 
     def _to_dict_blend_overlay_image(self) -> dict:
         id_w = self._param_widgets.get("id")
@@ -8622,7 +9229,7 @@ class ActionRow(QWidget):
         pto = to_w.path() if isinstance(to_w, CutsceneImagePathRow) else ""
         dms = int(dur_w.value()) if isinstance(dur_w, QSpinBox) else 600
         ddelay = int(del_w.value()) if isinstance(del_w, QSpinBox) else 0
-        return {
+        out = {
             "type": "blendOverlayImage",
             "params": {
                 "id": pid,
@@ -8635,6 +9242,26 @@ class ActionRow(QWidget):
                 "widthPercent": float(w_w.value()) if isinstance(w_w, QDoubleSpinBox) else 0.0,
             },
         }
+        self._write_canvas_order(out["params"])
+        return out
+
+    def _write_canvas_order(self, params: dict) -> None:
+        """把「画布绘制顺序」写进自定义表单的产物——**控件给了值才写键**。
+
+        控件带"不写"档（`OptionalHealthNumber`），没指定就是 `HEALTH_ABSENT`，
+        此时一个键都不落：最小形态的叠图「打开→不改→保存」不得凭空多出 `order: 0`
+        （`test_minimal_forms_do_not_grow_keys` 守着这一条）。
+        """
+        w = self._param_widgets.get("order")
+        if w is None:
+            return
+        v = w.value() if hasattr(w, "value") else HEALTH_ABSENT
+        if v is HEALTH_ABSENT:
+            return
+        try:
+            params["order"] = float(v)
+        except (TypeError, ValueError):
+            pass
 
     def _to_dict_start_dialogue_graph(self) -> dict:
         gid_w = self._param_widgets.get("graphId")
@@ -9074,11 +9701,11 @@ class ActionRow(QWidget):
             frozenset(("sceneId", "zoneId", "enabled"))),
         "showOverlayImage": (
             lambda row: row._to_dict_show_overlay_image(),
-            frozenset(("id", "image", "xPercent", "yPercent", "widthPercent"))),
+            frozenset(("id", "image", "xPercent", "yPercent", "widthPercent", "order", "fill"))),
         "blendOverlayImage": (
             lambda row: row._to_dict_blend_overlay_image(),
             frozenset(("id", "fromImage", "toImage", "durationMs", "delayMs",
-                       "xPercent", "yPercent", "widthPercent"))),
+                       "xPercent", "yPercent", "widthPercent", "order"))),
         "startDialogueGraph": (
             lambda row: row._to_dict_start_dialogue_graph(),
             frozenset(("graphId", "entry", "npcId", "ownerType", "ownerId", "dimBackground"))),
@@ -9192,6 +9819,12 @@ class ActionRow(QWidget):
                 txt = w.text() if isinstance(w, QLineEdit) else ""
                 orig = (self._original_params or {}).get(pname)
                 params[pname] = deepcopy(orig) if orig is not None and txt == str(orig) else txt
+            elif ptype in ("optional_int", "optional_number"):
+                value = w.value()
+                if value is not HEALTH_ABSENT:
+                    if ptype == "optional_int" and isinstance(value, (int, float)) and not isinstance(value, bool) and float(value).is_integer():
+                        value = int(value)
+                    params[pname] = value
             elif ptype == "int":
                 params[pname] = w.value()
             elif ptype in ("optional_health_number", "health_number"):
@@ -9207,6 +9840,9 @@ class ActionRow(QWidget):
                 items = w.to_list() if hasattr(w, "to_list") else []
                 if items:
                     params[pname] = items
+            elif ptype == "breathing_params" and isinstance(w, BreathingParamsField):
+                # setBreathingParams.params 必填：空表也写 `{}`；逐项原表示 / 未知键 / 坏形态由控件自己保真
+                params[pname] = w.value()
             elif ptype == "flag_val" and isinstance(w, FlagValueEdit):
                 # 不做 float() 强转：FlagValueEdit 原值保留（int 保 int、raw 保原类型）
                 params[pname] = w.get_value()
@@ -9255,6 +9891,16 @@ class ActionRow(QWidget):
         if act_type == "chooseAction" and (outline or self._choice_options_editor is not None):
             params["options"] = _nested("options", self._choice_options_editor)
             owned.add("options")
+        if act_type == "chooseAction":
+            # 版式下拉：屏底选项条（缺省）不写键，其余档写出（与 playScriptedDialogue 同口径）
+            lay_w = self._param_widgets.get("layout")
+            if isinstance(lay_w, QComboBox):
+                lay = _layout_combo_value(lay_w)
+                if lay:
+                    params["layout"] = lay
+                else:
+                    params.pop("layout", None)
+                owned.add("layout")
         if act_type == "randomBranch":
             pw = self._param_widgets.get("probability")
             if isinstance(pw, QDoubleSpinBox):

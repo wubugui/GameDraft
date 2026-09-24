@@ -30,6 +30,8 @@ export interface DocumentLayerPresenter {
     xPercent: number,
     yPercent: number,
     widthPercent: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ): Promise<void>;
   /** 揭示动画:模糊 → 清晰 */
   blend(
@@ -41,6 +43,8 @@ export interface DocumentLayerPresenter {
     widthPercent: number,
     durationMs: number,
     delayMs: number,
+    /** 画布上的绘制顺序（越大越靠前）；不给走画布缺省 0 */
+    order?: number,
   ): Promise<void>;
   /** 收掉这份文档的显示层 */
   hide(documentId: string): void;
@@ -217,11 +221,13 @@ export class DocumentRevealManager implements IGameSystem {
     const px = def.xPercent ?? 50;
     const py = def.yPercent ?? 50;
     const pw = def.widthPercent ?? 40;
+    // 画布上的绘制顺序：不填 = 0，与迁移前"按 addChild 先后"同效
+    const po = def.order;
 
     // 已揭示：瞬时显示揭示后的图。不叠化、不响音效、不发 document:revealed
     // ——这三样只属于「真的在播那一次动画」。
     if (this.revealed.has(id)) {
-      await presenter.show(id, def.clearImagePath, px, py, pw);
+      await presenter.show(id, def.clearImagePath, px, py, pw, po);
       return;
     }
     // 重入守卫：blend 动画期间重复触发同一揭示会双跑叠化并重发 document:revealed；
@@ -231,7 +237,7 @@ export class DocumentRevealManager implements IGameSystem {
     // 这一档必须**出图**——早期实现在这里直接 return，于是"没到条件"和"没配这条"
     // 在画面上都是一片空白，作者无从分辨。
     if (opts?.force !== true && !evaluateConditionExpr(def.revealCondition, this.ctx())) {
-      await presenter.show(id, def.blurredImagePath, px, py, pw);
+      await presenter.show(id, def.blurredImagePath, px, py, pw, po);
       return;
     }
 
@@ -254,6 +260,7 @@ export class DocumentRevealManager implements IGameSystem {
         pw,
         dur,
         delay,
+        po,
       );
       this.revealed.add(id);
       const rf = def.revealedFlag?.trim();

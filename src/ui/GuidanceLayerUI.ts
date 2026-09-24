@@ -80,7 +80,9 @@ export class GuidanceLayerUI {
     this.layer = new Container();
     // 引导是**纯展示**：可命中会把它底下的场景点击全挡掉（浮标正好压在要点的 NPC 头上）
     this.layer.eventMode = 'none';
-    this.layer.zIndex = UITheme.z.overlay;
+    // 贴在世界上的标记：压过 HUD（出屏箭头贴边时不该被 HUD 吃掉），但被任何弹出面板压住
+    // （面板 = z.panel，见 rendering/uiLayerOrder）。
+    this.layer.zIndex = UITheme.z.worldMarker;
     this.renderer.uiLayer.addChild(this.layer);
 
     this.questChangedCb = () => this.rebuild();
@@ -260,10 +262,24 @@ export class GuidanceLayerUI {
     return null;
   }
 
-  /** 由 Game 主循环驱动：镜头一动浮标就得跟着动，所以每帧重算屏幕位 */
-  update(_dt: number): void {
+  /**
+   * 现算一次「此刻收不收起来」并落到 `layer.visible`，返回是否收起。
+   *
+   * **与 `update` 分开、且必须每帧无条件跑一次**：可见性是写在容器上的**状态**，
+   * 不跑就等于把上一帧的可见性冻住。`update` 挂在主循环的「世界没暂停」闸后面
+   * （2026-09-19 起）、而主循环在说明卡 / 死亡时更是第一行就 return——于是玩家一开面板，
+   * 浮标就定格在按下那一刻的位置挂在画面上（制作人截图：存档页/设置页上的菱形 + 「打更的 235」）。
+   * 层序上浮标已在面板之下（见构造里的 zIndex），这里管的是它在 HUD 之上那一段。
+   */
+  applyVisibility(): boolean {
     const hidden = this.isHidden?.() === true;
     this.layer.visible = !hidden;
+    return hidden;
+  }
+
+  /** 由 Game 主循环驱动：镜头一动浮标就得跟着动，所以每帧重算屏幕位 */
+  update(_dt: number): void {
+    const hidden = this.applyVisibility();
     if (hidden) return;
     // 提示条居中位每帧跟一次画布宽：调试侧栏挤压 #game-mount 不发 window resize，
     // 只在构建时算一次的话，改完宽度它就一直歪着（一个 chip，代价可以忽略）

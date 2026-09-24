@@ -38,12 +38,17 @@ def _has_webengine() -> bool:
 
 
 _LIB = _ROOT / "public" / "assets" / "data" / "vfx_placements.json"
+_LS = _ROOT / "public" / "assets" / "data" / "vfx_lightning_styles.json"
+_LS_OUT = _ROOT / "public" / "resources" / "runtime" / "images" / "vfx" / "lightning"
 
 
 def _fingerprint() -> dict:
     fp = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(_VFX.glob("*.json"))}
     # 布置库：自检进程把读写指到临时拷贝（app.py），真库必须逐字节不动
     fp["<vfx_placements.json>"] = hashlib.sha256(_LIB.read_bytes()).hexdigest() if _LIB.is_file() else None
+    # 雷电样式库与生成目录：自检进程同样指到临时拷贝（app.py），真的必须逐字节不动、不多不少
+    fp["<vfx_lightning_styles.json>"] = hashlib.sha256(_LS.read_bytes()).hexdigest() if _LS.is_file() else None
+    fp["<lightning outputs>"] = sorted(str(p.relative_to(_LS_OUT)) for p in _LS_OUT.rglob("*")) if _LS_OUT.is_dir() else None
     return fp
 
 
@@ -53,7 +58,11 @@ def test_interaction_layer_selftest() -> None:
     # 两个真实页面用例串行，避免临时效果的指纹检查互相干扰。
     for script in ("tools/vfx_workbench/viewer/tests/selftest.js", "tools/vfx_workbench/viewer/tests/scoped-save-selftest.js", "tools/vfx_workbench/viewer/tests/pipeline-selftest.js", "tools/vfx_workbench/viewer/tests/timing-selftest.js",
                    # 光柱：加光柱 / 选中立刻有 gizmo / 原画视图真实预览 / 从画布拖把手 / 检视器 / 尘埃挂光柱 / 存盘往返 / 改名删除 / 平面近似
-                   "tools/vfx_workbench/viewer/tests/beam-selftest.js"):
+                   "tools/vfx_workbench/viewer/tests/beam-selftest.js",
+                   # 雷电样式：检视器一节 / 现画预览真画出了雷 / 改参数只脏样式库 / 撤销 / 换样式 / 效果没存拒套用 / 套用写 bolts 后重开 / 样式层锁宽度 / 同步给同组
+                   "tools/vfx_workbench/viewer/tests/lightning-selftest.js",
+                   # 表面材质区：工具条按钮 / 2D 里真拖出一块水面 / 顶点微移加点删点 / 检视器改种类反光可撤 / 预览只带本场景 surfaces / 存盘删光
+                   "tools/vfx_workbench/viewer/tests/surface-selftest.js"):
         before = _fingerprint()
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", PYTHONUTF8="1", QT_QPA_PLATFORM="offscreen")
         r = subprocess.run([sys.executable, "-m", "tools.vfx_workbench", "--selftest", script], cwd=str(_ROOT),

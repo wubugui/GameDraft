@@ -3,7 +3,7 @@
   "id": "主线_初上跑马梁",
   "entry": "n_start",
   "meta": {
-    "title": "跑马梁·纸钱引路"
+    "title": "跑马梁·风口（迷路 → 风灭火 → 纸钱）"
   },
   "preconditions": [],
   "defaultLayout": "bubble",
@@ -21,6 +21,26 @@
           "type": "stopVfx",
           "params": {
             "instanceId": "纸钱_引路过场"
+          }
+        },
+        {
+          "type": "runActionsIf",
+          "params": {
+            "condition": {
+              "heldProp": "player",
+              "burning": true
+            },
+            "actions": [
+              {
+                "type": "setPropState",
+                "params": {
+                  "target": "player",
+                  "socket": "right_hand",
+                  "state": "out",
+                  "fadeMs": 300
+                }
+              }
+            ]
           }
         },
         {

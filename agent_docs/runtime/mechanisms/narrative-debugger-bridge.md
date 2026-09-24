@@ -8,14 +8,15 @@ status: active
 authority:
   - src/core/NarrativeStateManager.ts#breakpointGate
   - src/core/Game.ts
+  - src/dev/narrativeDebugBridge.ts
   - tools/narrative_debugger/breakpoints.py
 verified_by:
   - src/core/NarrativeBreakpoint.test.ts
 triggers:
-  paths: ["src/core/NarrativeStateManager.ts", "tools/narrative_debugger/**"]
+  paths: ["src/core/NarrativeStateManager.ts", "src/dev/narrativeDebugBridge.ts", "tools/narrative_debugger/**"]
   topics: [叙事调试器, 断点, breakpoint, 单步, 冻结, 时间线]
   tasks: [改叙事调试器, 加断点, 查"断住就再也动不了", 改冻结/暂停]
-last_governed: 2026-09-03
+last_governed: 2026-09-23
 ---
 
 ## 是什么(一句话)
@@ -26,7 +27,8 @@ last_governed: 2026-09-03
 ## 权威源(读代码从哪进)
 
 放行闸挂在 `src/core/NarrativeStateManager.ts` 的 `breakpointGate` 静态钩子上;
-游戏侧的装/拆与多目标协商在 `src/core/Game.ts`;工具侧在 `tools/narrative_debugger/`。
+闸的实现(放行集合、冻结、断点徽标)在 `src/dev/narrativeDebugBridge.ts`,`src/core/Game.ts` 负责装/拆与现场开关;
+工具侧在 `tools/narrative_debugger/`。
 
 ## 硬契约(违反即 bug)
 
@@ -46,6 +48,9 @@ last_governed: 2026-09-03
 
 - 想开调试器的时刻恰恰是刚出问题那一刻,所以开关必须**可热插拔**——只留"改地址栏再整页重启"
   这一条路,等于每次都把现场弄没。
+- **`tools/narrative_debugger/tests` 里有几条断言写死了真实编排数据的形状**(主线拍名、某张主图挂几张子图、
+  拍子行数下限),编排一重构就在干净 HEAD 上红(2026-09-17 起 4 条,与调试器代码无关)。改调试器前先在基线上跑一遍
+  认清既有红;修这类测试要改成按真实数据现算或用合成 fixture,别再把内容数据写进断言。
 - 拆桥的多份实现漂开的症状是"点一下上报两条"(热替换后尤其明显),
   单一拆桥路径见 [teardown-ordering](teardown-ordering.md)。
 
