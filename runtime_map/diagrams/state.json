@@ -1,7 +1,7 @@
 {
   "id": "state",
   "title": "状态与存档",
-  "summary": "运行时状态主要分四处:全局 flag 表(FlagStore)、叙事/剧情线状态机、各玩法系统自己的字段、场景管理器按场景分桶的\"场景记忆\";模态状态(探索/对话/过场…)与面板返回栈归 GameStateController,不入档。存档是一次同步快照:Game.collectSaveData 先收 flag 表,再按一张 45 项的注册表逐个系统 serialize(其中 23 项恒为空桶——表演态/派生态/状态放在 flag 里的系统;3 项写出内容但读档不用——对话、图对话、过场),最后手写游玩时长+玩法随机数、玩家站位两桶;SaveManager 包成 {version:1,timestamp,name?,systems} 一个 JSON,按槽串行写到持久化后端(exe 用 Tauri 文件、开发用 dev 服文件接口、都没有时退化为内存),写成才更新内存镜像。读档从内存镜像取档,先拍回滚快照,再同步分发:作废旧时间线(演出、动作批、计时器、轨迹、save:restoring 广播、四个系统进\"恢复中\")→ flag 表 → 按注册表同序 deserialize → 玩家朝向与待落位坐标;然后 await 重载存档里的场景(玩家落在存档坐标),失败则回滚。文字/气味/音量三份玩家偏好单独存在 settings 命名空间,不在存档槽里;调试器开关、调试 pin、flag 收藏仅开发期经 dev 服写工程文件。",
+  "summary": "运行时状态主要分四处:全局 flag 表(FlagStore)、叙事/剧情线状态机、各玩法系统自己的字段、场景管理器按场景分桶的\"场景记忆\";模态状态(探索/对话/过场…)与面板返回栈归 GameStateController,不入档。存档是一次同步快照:Game.collectSaveData 先收 flag 表,再按一张 45 项的注册表逐个系统 serialize(其中 23 项恒写空桶 {};3 项写出内容但读档不读——对话、图对话、过场),最后手写游玩时长+玩法随机数、玩家站位两桶;SaveManager 包成 {version:1,timestamp,name?,systems} 一个 JSON,按槽串行写到持久化后端(按 Tauri 文件 → dev 服文件接口 → 内存 的顺序探测,探到哪个用哪个),写成才更新内存镜像。槽位读档从内存镜像取档(死亡重试则直接用内存里的安全点快照),先拍回滚快照,再同步分发:作废旧时间线(演出、动作批、计时器、轨迹、save:restoring 广播、四个系统进\"恢复中\")→ flag 表 → 按注册表同序 deserialize → 玩家朝向与待落位坐标;然后 await 重载存档里的场景(玩家落在存档坐标),失败则回滚。文字/气味/音量三份玩家偏好单独存在 settings 命名空间,不在存档槽里;调试器开关、调试 pin、flag 收藏仅开发期经 dev 服写工程文件。",
   "stores": [
     {
       "id": "st1",
@@ -9,7 +9,7 @@
       "owner": "FlagStore(Game 持有)",
       "file": "src/core/FlagStore.ts",
       "kind": "flag",
-      "what": "全局键值表(布尔/数字/字符串),条件求值的主要真相源。除作者写的 flag 外,背包、铜钱、天数/时刻、规矩、线索、说明卡已读、三把火/气味 HUD 显隐等都由各自系统投影成派生 flag 写进来;这些派生 flag 与各系统自己的桶在存档里各存一份,读档时先整表恢复 flag,各系统 deserialize 再把派生 flag 重写一遍。",
+      "what": "全局键值表(布尔/数字/字符串),条件求值的主要真相源。除作者写的 flag 外,各系统也把自己的状态投影成派生 flag 写进来:背包/铜钱、天数/时刻、规矩、三把火读数等——这几类系统自己的存档桶里另有一份,读档时先整表恢复 flag,各系统 deserialize 再重写一遍;线索、说明卡已读、三把火/气味 HUD 显隐则只存在 flag 表里(对应系统的存档桶为空)。",
       "saved": "yes",
       "saveKey": "flagStore",
       "cites": [
@@ -39,9 +39,29 @@
           "m": "this.flagStore.set(FlagKeys.systemNoteShown(id), true);"
         },
         {
+          "f": "src/systems/RulesManager.ts",
+          "l": 260,
+          "m": "this.flagStore.set(`rule_${ruleId}_acquired`, full);"
+        },
+        {
+          "f": "src/systems/HealthSystem.ts",
+          "l": 318,
+          "m": "this.flagStore.set('player_health', this.currentHealth);"
+        },
+        {
+          "f": "src/systems/ClueManager.ts",
+          "l": 123,
+          "m": "this.flagStore.set(`${FLAG_PREFIX}${id}`, true);"
+        },
+        {
           "f": "src/core/Game.ts",
-          "l": 8840,
-          "m": "this.syncThreeFiresFromFlags();"
+          "l": 8866,
+          "m": "this.flagStore.set(FlagKeys.threeFiresVisible, visible);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8849,
+          "m": "this.flagStore.set(FlagKeys.smellHudVisible, visible);"
         }
       ]
     },
@@ -226,7 +246,7 @@
       "owner": "SceneManager",
       "file": "src/systems/SceneManager.ts",
       "kind": "scene-memory",
-      "what": "过场开始时新建一份空的场景记忆暂存区,过场结束丢弃;暂存期间不把当前场景落进正式场景记忆。",
+      "what": "过场开始时(CutsceneManager 在切场景前)新建一份空的场景记忆暂存区,过场结束丢弃。暂存期间:对过场所在场景的记忆写入落进暂存区,对其它场景的写入被忽略;存档前\"把当前场景落桶\"这一步也直接跳过。",
       "saved": "no",
       "saveKey": "",
       "cites": [
@@ -249,6 +269,21 @@
           "f": "src/systems/SceneManager.ts",
           "l": 2239,
           "m": "if (this.cutsceneStaging) return;"
+        },
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 770,
+          "m": "this.sceneManagerAPI.beginCutsceneStaging(id, sid);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1190,
+          "m": "if (this.cutsceneStaging) {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1197,
+          "m": "return this.normalizeMemory(this.cutsceneStaging.memory);"
         }
       ]
     },
@@ -497,7 +532,7 @@
       "owner": "RetrySystem",
       "file": "src/systems/RetrySystem.ts",
       "kind": "system",
-      "what": "\"上一个安全点\"的完整存档快照(字符串,不含自身桶)及其 id/标签。探索态每帧检查,满足条件就经 SaveManager.capturePayload 拍一份放内存;这份快照会随正式存档一起写进槽位。待建安全点请求、死亡演出进行中标记不入档。",
+      "what": "\"上一个安全点\"的完整存档快照(字符串,已剔除自身桶)及其 id/标签。RetrySystem.update 只挂在每帧的探索分支里:当有待建安全点请求(动作 requestCheckpoint 登记)、或本局还没有任何安全点时,且此刻可存档,就经 SaveManager.capturePayload 拍一份放内存;已有安全点且无新请求时不再拍。这份快照会随正式存档一起写进槽位。待建请求、死亡演出进行中标记不入档。",
       "saved": "partial",
       "saveKey": "retrySystem.checkpoint",
       "cites": [
@@ -525,6 +560,21 @@
           "f": "src/core/Game.ts",
           "l": 2632,
           "m": "capture: () => this.saveManager.capturePayload(),"
+        },
+        {
+          "f": "src/systems/RetrySystem.ts",
+          "l": 39,
+          "m": "(!this.pending && this.checkpoint)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10578,
+          "m": "this.retrySystem.update(dt);"
+        },
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 1561,
+          "m": "d.retrySystem.requestCheckpoint("
         }
       ]
     },
@@ -1076,7 +1126,7 @@
       "key": "sceneManager",
       "producer": "SceneManager.serialize(经 Game.collectSaveData 按注册表循环)",
       "consumer": "SceneManager.deserialize(经 Game.distributeSaveData 按注册表同序循环)",
-      "detail": "{currentSceneId, memory:{场景id:{inspected 已查看热点, pickedUp 已拾取热点, entityOverrides{npcs,hotspots,zones} 实体覆盖, spawned? 演出留下的实体}}}。存前先把当前场景记忆落桶;读档时清空全部场景记忆与会话级覆盖桶,再按档重建。currentSceneId 另被 SaveManager 用来决定重载哪个场景、被槽位卡片读作场景名。",
+      "detail": "{currentSceneId, memory:{场景id:{inspected 已查看热点, pickedUp 已拾取热点, entityOverrides{npcs,hotspots,zones} 实体覆盖, spawned? 演出留下的实体}}}。存前先把当前场景记忆落桶;读档时清空全部场景记忆与会话级覆盖桶,再按档重建。currentSceneId 另被 SaveManager 用来决定重载哪个场景、被槽位卡片读作场景名。 读档端还兼容旧档里的 npcSnapshots / hotspotDisplayImageOverrides 两个旧键,并入实体覆盖。",
       "content": "data",
       "cites": [
         {
@@ -1108,6 +1158,16 @@
           "f": "src/core/SaveManager.ts",
           "l": 383,
           "m": "const sceneId = sceneMgr?.currentSceneId ?? this.fallbackSce"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2654,
+          "m": "this.sceneMemory.clear();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2667,
+          "m": "if (mem.npcSnapshots) {"
         }
       ]
     },
@@ -1141,7 +1201,7 @@
       "key": "playerActionSystem",
       "producer": "PlayerActionSystem.serialize(经 Game.collectSaveData 按注册表循环)",
       "consumer": "PlayerActionSystem.deserialize(经 Game.distributeSaveData 按注册表同序循环)",
-      "detail": "空桶(主角姿态是表现态);读档把主角复位为站立。",
+      "detail": "空桶;读档把主角复位为站立。",
       "content": "empty",
       "cites": [
         {
@@ -1158,6 +1218,11 @@
           "f": "src/systems/PlayerActionSystem.ts",
           "l": 162,
           "m": "deserialize(_data: object): void {"
+        },
+        {
+          "f": "src/systems/PlayerActionSystem.ts",
+          "l": 163,
+          "m": "this.resetToStand('hard');"
         }
       ]
     },
@@ -1791,7 +1856,7 @@
       "key": "smellSystem",
       "producer": "SmellSystem.serialize(经 Game.collectSaveData 按注册表循环)",
       "consumer": "SmellSystem.deserialize(经 Game.distributeSaveData 按注册表同序循环)",
-      "detail": "{action{scent, intensity, flicker} 动作层气味, source 气味源(点坐标或引用)|null, tracking 追踪开关};zone 层不入档(进场后由 zone:enter 重建);兼容旧版扁平形状。",
+      "detail": "{action{scent, intensity, flicker} 动作层气味, source 气味源(点坐标或引用)|null, tracking 追踪开关};兼容旧版扁平形状。zone 层不入档:deserialize 不改 zone 层,zone 层只随 zone:enter / zone:exit 事件增删(代码注释写的是\"读档进场后由 zone:enter 自然重建\")。",
       "content": "data",
       "cites": [
         {
@@ -1808,6 +1873,21 @@
           "f": "src/systems/SmellSystem.ts",
           "l": 396,
           "m": "deserialize(data: object): void {"
+        },
+        {
+          "f": "src/systems/SmellSystem.ts",
+          "l": 384,
+          "m": "zone 层是玩家位置的瞬时函数"
+        },
+        {
+          "f": "src/systems/SmellSystem.ts",
+          "l": 107,
+          "m": "this.activeZoneSmells.set(zone.id, normalizeLayer("
+        },
+        {
+          "f": "src/systems/SmellSystem.ts",
+          "l": 113,
+          "m": "if (id && this.activeZoneSmells.delete(id))"
         }
       ]
     },
@@ -1978,6 +2058,16 @@
           "f": "src/systems/ZoneSystem.ts",
           "l": 74,
           "m": "deserialize(_data: object): void {}"
+        },
+        {
+          "f": "src/data/types.ts",
+          "l": 2028,
+          "m": "zones: Record<string, ZoneRuntimeOverride>;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 899,
+          "m": "mem.entityOverrides.zones[zid] = { enabled: false };"
         }
       ]
     },
@@ -2211,7 +2301,7 @@
       "key": "burnSystem",
       "producer": "BurnSystem.serialize(经 Game.collectSaveData 按注册表循环)",
       "consumer": "BurnSystem.deserialize(经 Game.distributeSaveData 按注册表同序循环)",
-      "detail": "{v 版本, clock 燃烧时钟, scenes{场景id:可燃物状态}, held 手上的, pocket 包里的};版本号不符整桶不认;读档对离场仍在烧的场景后台重建(不等待)。",
+      "detail": "{v 版本, clock 燃烧时钟, scenes{场景id:可燃物状态}, held 手上的(含挂件换下来暂存的), pocket 包里的};读档先清空全部燃烧记录并取档里的时钟,版本号不符则其余内容整桶不认;对离场仍在烧的场景后台重建(不等待)。",
       "content": "data",
       "cites": [
         {
@@ -2228,6 +2318,16 @@
           "f": "src/systems/burn/BurnSystem.ts",
           "l": 1516,
           "m": "deserialize(data: Record<string, unknown>): void {"
+        },
+        {
+          "f": "src/systems/burn/BurnSystem.ts",
+          "l": 1529,
+          "m": "this.clock = typeof raw.clock"
+        },
+        {
+          "f": "src/systems/burn/BurnSystem.ts",
+          "l": 1530,
+          "m": "raw.v !== BURN_SAVE_VERSION"
         }
       ]
     },
@@ -2288,6 +2388,16 @@
           "f": "src/core/SaveManager.ts",
           "l": 421,
           "m": "sceneName: game?.sceneName ?? scene?.currentSceneId"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3038,
+          "m": "randomValue: () => this.runtimeRandom.next(),"
+        },
+        {
+          "f": "src/core/ActionRegistry.ts",
+          "l": 1026,
+          "m": "const r = d.randomValue();"
         }
       ]
     },
@@ -2377,7 +2487,7 @@
       "order": 2,
       "label": "选择持久化后端(介质)",
       "async": "await",
-      "detail": "探测顺序:打包 exe 的 Tauri 文件后端 → 开发期 dev 服的 HTTP 文件接口 → 内存后端(persisted=false,关页即失)。结果缓存为进程内单例,存档、三份偏好、入口卫兵共用。",
+      "detail": "探测顺序:Tauri 文件后端(有 __TAURI__ 且能读 saves)→ dev 服的 HTTP 文件接口(真发一次 GET 探测,不看构建标志)→ 内存后端(persisted=false,关页即失)。结果缓存为进程内单例,存档、三份偏好、入口卫兵共用;第一次探测实际发生在 main.ts 的入口卫兵里(Game 启动之前,探不到持久后端会挂一条横幅),SaveManager.hydrate 拿到的是同一份缓存。",
       "cites": [
         {
           "f": "src/core/storage/persistentStore.ts",
@@ -2398,6 +2508,26 @@
           "f": "src/core/storage/persistentStore.ts",
           "l": 221,
           "m": "export function resolvePersistentStore(): Promise<Persistent"
+        },
+        {
+          "f": "src/core/storage/persistentStore.ts",
+          "l": 202,
+          "m": "await http.readAll('saves');"
+        },
+        {
+          "f": "src/core/storage/persistentStore.ts",
+          "l": 222,
+          "m": "if (cached) return Promise.resolve(cached);"
+        },
+        {
+          "f": "src/main.ts",
+          "l": 180,
+          "m": "void runEntryGuard(isDevBuild)"
+        },
+        {
+          "f": "src/core/entryGuard.ts",
+          "l": 129,
+          "m": "const store = await resolvePersistentStore();"
         }
       ]
     },
@@ -2406,7 +2536,7 @@
       "order": 3,
       "label": "玩家在暂停菜单点\"保存\"",
       "async": "fire-and-forget",
-      "detail": "MenuUI 调 save(slot,{name}) 后不等待,结果回来时再发提示与刷新卡片。另有两条不落槽的\"拍快照\"入口走同一收集器:重试系统的安全点(capturePayload)、叙事调试器导出(仅开发);开发命令通道也能直接 save(仅开发)。",
+      "detail": "\"保存\"按钮只在暂停页;选槽后若槽里已有档先弹覆盖确认,再弹起名框,然后 MenuUI 调 save(slot,{name}) 不等待,结果回来时再发提示与刷新卡片。另有两条不落槽的\"拍快照\"入口走同一收集器与同一道可存档闸门:重试系统的安全点(capturePayload)、叙事调试器导出(仅开发);开发命令通道也能直接 save(仅开发)。",
       "cites": [
         {
           "f": "src/ui/MenuUI.ts",
@@ -2422,6 +2552,26 @@
           "f": "src/core/Game.ts",
           "l": 9851,
           "m": "debugSaveGame: (slot) => this.saveManager.save(slot),"
+        },
+        {
+          "f": "src/ui/MenuUI.ts",
+          "l": 601,
+          "m": "label: this.strings.get('menu', 'save')"
+        },
+        {
+          "f": "src/ui/MenuUI.ts",
+          "l": 976,
+          "m": "void this.promptSaveName(slot).then((name) => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2632,
+          "m": "capture: () => this.saveManager.capturePayload(),"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4524,
+          "m": "exportSave: () => this.saveManager.capturePayload(),"
         }
       ]
     },
@@ -2603,6 +2753,45 @@
           "m": "this.onSfx('save:completed', () => this.playSystemSfx('saveD"
         }
       ]
+    },
+    {
+      "id": "sv10",
+      "order": 10,
+      "label": "旁路:改名 / JSON 导入 / JSON 导出(不经收集器)",
+      "detail": "存读档页每格旁的文字链。改名:排进同一条槽位写入链,只改信封顶层的 name,systems 与时间戳原样写回。JSON 导入:把玩家选的外部文件只校验\"有 systems\",规整后整份写进该槽并更新镜像——只写槽,不读档、不分发。JSON 导出:把镜像里的原始信封作为 gamedraft_save_N.json 交给浏览器下载。SaveManager 另有 deleteSlot(同一条写入链上删文件并删镜像)。",
+      "async": "await",
+      "cites": [
+        {
+          "f": "src/ui/MenuUI.ts",
+          "l": 1078,
+          "m": "const ok = await this.saveData.renameSlot(slot, name);"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 308,
+          "m": "if (normalized) parsed.name = normalized;"
+        },
+        {
+          "f": "src/ui/MenuUI.ts",
+          "l": 1110,
+          "m": "await this.saveData.importSlotPayload(slot, await file.text())"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 489,
+          "m": "await store.write(SAVE_NAMESPACE, key, normalized);"
+        },
+        {
+          "f": "src/ui/MenuUI.ts",
+          "l": 1098,
+          "m": "anchor.download = `gamedraft_save_${slot + 1}.json`;"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 448,
+          "m": "await store.remove(SAVE_NAMESPACE, key);"
+        }
+      ]
     }
   ],
   "loadFlow": [
@@ -2611,21 +2800,26 @@
       "order": 1,
       "label": "入口 A:游戏内暂停菜单读档",
       "async": "fire-and-forget",
-      "detail": "MenuUI 调 load(slot) 不等待,回调里成功则关菜单并提示,失败提示\"读档失败\"(此时已回滚)。",
+      "detail": "从暂停页进读档页,选槽后先弹\"读档会丢当前进度\"确认框;确认后 MenuUI 调 load(slot) 不等待,回调里成功则关菜单并提示,失败提示\"读档失败\"(此时已回滚)。",
       "cites": [
         {
           "f": "src/ui/MenuUI.ts",
           "l": 994,
           "m": "this.saveData.load(slot).then((ok) => {"
+        },
+        {
+          "f": "src/ui/MenuUI.ts",
+          "l": 1011,
+          "m": "if (this.previousMode === 'pause') {"
         }
       ]
     },
     {
       "id": "ld2",
       "order": 2,
-      "label": "入口 B:标题界面\"继续\" = 整页重启",
+      "label": "入口 B:标题界面\"继续\"→选槽 = 整页重启",
       "async": "sync",
-      "detail": "标题态下世界没装载,菜单拿到的读档函数不直接读,而是把 load_slot=N 写进地址栏后整页 reload;新页面 main.ts 解析出 loadSlot 传给 Game.start,启动分叉里先于新游戏走 tryBootFromSaveSlot → await saveManager.load,成功后置为探索态,不再跑开局引导。",
+      "detail": "标题态下世界没装载,菜单拿到的读档函数不直接读,而是把 load_slot=N 写进地址栏后整页 reload(给菜单的 Promise 永不返回);新页面 main.ts 解析出 loadSlot 传给 Game.start,启动分叉里排在\"停标题\"之后、开发直达与正常开局之前走 tryBootFromSaveSlot → await saveManager.load,成功后置为探索态,不再跑开局引导;读失败退回正常开局。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -2661,6 +2855,16 @@
           "f": "src/core/Game.ts",
           "l": 4943,
           "m": "this.stateController.setState(GameState.Exploring);"
+        },
+        {
+          "f": "src/ui/MenuUI.ts",
+          "l": 460,
+          "m": "label: this.strings.get('menu', 'continueGame')"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4291,
+          "m": "if (options.startAtTitle) {"
         }
       ]
     },
@@ -2698,7 +2902,7 @@
       "order": 4,
       "label": "取镜像、解析、校验",
       "async": "sync",
-      "detail": "从内存镜像取该槽原始 JSON(不重新读盘);解析失败或缺 systems 直接拒绝(此时还没动任何状态);版本号高于 1 只告警照读。",
+      "detail": "槽位读档从内存镜像取该槽原始 JSON(不重新读盘);解析失败或缺 systems 直接拒绝(此时还没动任何状态);版本号高于 1 只告警照读。读档路径没有存档那样的\"可存档\"状态闸门,只校验槽号与内容。",
       "cites": [
         {
           "f": "src/core/SaveManager.ts",
@@ -2719,6 +2923,11 @@
           "f": "src/core/SaveManager.ts",
           "l": 366,
           "m": "payload.version > SAVE_VERSION"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 346,
+          "m": "if (!this.validSlot(slot)) return false;"
         }
       ]
     },
@@ -2873,7 +3082,7 @@
       "order": 9,
       "label": "恢复 flag 表",
       "async": "sync",
-      "detail": "最先恢复 FlagStore(整表替换,不广播 flag:changed)。",
+      "detail": "最先恢复 FlagStore(存档里有 flagStore 桶时):清表后逐键直接写入内部表,不经 set,因此不广播 flag:changed。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -2884,6 +3093,16 @@
           "f": "src/core/NarrativeStateManager.ts",
           "l": 1271,
           "m": "读档后的状态组合可能已满足某些 reactive 迁移条件"
+        },
+        {
+          "f": "src/core/FlagStore.ts",
+          "l": 371,
+          "m": "this.flags.clear();"
+        },
+        {
+          "f": "src/core/FlagStore.ts",
+          "l": 388,
+          "m": "this.flags.set(k, v);"
         }
       ]
     },
@@ -3003,7 +3222,7 @@
       "order": 14,
       "label": "重载场景(读档专用)",
       "async": "await",
-      "detail": "SaveManager await 注入的重载函数:先静默撤下旧场景的活跃区域(不跑离开动作),再卸载当前场景,然后 await 装载存档场景,并把\"待落位\"坐标作为出生点覆盖传入(落点在进场动作之前)。读档一定重载场景。",
+      "detail": "SaveManager await 注入的重载函数:先静默撤下旧场景的活跃区域(不跑离开动作、不发 zone:exit),再卸载当前场景,然后 await loadScene 装载存档场景(走的是 loadScene 而不是 switchScene,不传揭幕回调,即没有切场遮罩与淡入淡出),并把\"待落位\"坐标作为位置覆盖传入;装载中玩家落位与镜头定位在场景根 onEnter 之前。读档一定重载场景。",
       "cites": [
         {
           "f": "src/core/SaveManager.ts",
@@ -3029,6 +3248,26 @@
           "f": "src/core/Game.ts",
           "l": 9421,
           "m": "await this.sceneManager.loadScene(sceneId, undefined, restor"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1909,
+          "m": "this.applyPlayerSpawnAndCamera(sceneData, spawnPointId, cameraPosition);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2004,
+          "m": "if (rootEnter?.length && this.sceneEnterRunner"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1727,
+          "m": "不传（初始进场/重载）= 无遮罩，跳过"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2163,
+          "m": "await this.fadeOut(300);"
         }
       ]
     },
@@ -3397,6 +3636,11 @@
           "f": "src/core/Game.ts",
           "l": 8777,
           "m": "private collectSaveData(): Record<string, object>"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2072,
+          "m": "this.cameraSetter?.(sceneData.worldWidth"
         }
       ]
     },
@@ -3404,7 +3648,7 @@
       "id": "ns12",
       "what": "正在播放的 BGM 与环境音层",
       "owner": "AudioManager",
-      "note": "serialize 为空桶(注释说明音量走偏好文件);播放中的声音对象不入档。",
+      "note": "serialize 为空桶(注释说明音量走偏好文件);播放中的声音对象不入档;读档重载场景时按场景数据重新设定 BGM / 环境音。",
       "cites": [
         {
           "f": "src/systems/AudioManager.ts",
@@ -3425,6 +3669,11 @@
           "f": "src/core/Game.ts",
           "l": 8777,
           "m": "private collectSaveData(): Record<string, object>"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1911,
+          "m": "this.audioApplier?.(sceneData.bgm"
         }
       ]
     },
@@ -3498,7 +3747,7 @@
       "id": "ns15",
       "what": "玩家当前所在的区域集合",
       "owner": "ZoneSystem",
-      "note": "serialize 为空桶;读档由重载函数静默清空,进场后重新判定。",
+      "note": "serialize 为空桶;读档由重载函数静默清空活跃集,装载新场景时重新下发区域表。",
       "cites": [
         {
           "f": "src/systems/ZoneSystem.ts",
@@ -3519,6 +3768,11 @@
           "f": "src/core/Game.ts",
           "l": 8777,
           "m": "private collectSaveData(): Record<string, object>"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1912,
+          "m": "this.zoneSetter?.(this.computeEffectiveZones("
         }
       ]
     },
@@ -3526,7 +3780,7 @@
       "id": "ns16",
       "what": "区域贡献的气味层",
       "owner": "SmellSystem",
-      "note": "serialize 只存动作层;zone 层进场后由 zone:enter 重建。",
+      "note": "serialize 只存动作层;deserialize 不碰 zone 层;zone 层只随 zone:enter / zone:exit 事件增删,读档前的静默撤区不发 zone:exit。",
       "cites": [
         {
           "f": "src/systems/SmellSystem.ts",
@@ -3542,6 +3796,16 @@
           "f": "src/core/Game.ts",
           "l": 8777,
           "m": "private collectSaveData(): Record<string, object>"
+        },
+        {
+          "f": "src/systems/SmellSystem.ts",
+          "l": 113,
+          "m": "if (id && this.activeZoneSmells.delete(id))"
+        },
+        {
+          "f": "src/systems/ZoneSystem.ts",
+          "l": 139,
+          "m": "clearActiveZonesForRestore(): void {"
         }
       ]
     },
@@ -3873,6 +4137,62 @@
           "m": "private collectSaveData(): Record<string, object>"
         }
       ]
+    },
+    {
+      "id": "ns30",
+      "what": "场景风的在途阵风",
+      "owner": "SceneWindState(Game 持有)",
+      "note": "不在注册表里,collectSaveData 不收;读档开头 clearGust() 清掉。",
+      "cites": [
+        {
+          "f": "src/utils/sceneWind.ts",
+          "l": 394,
+          "m": "private gust: { def: WindGustDef; elapsed: number;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 781,
+          "m": "private readonly sceneWind = new SceneWindState("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8796,
+          "m": "this.sceneWind.clearGust();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8777,
+          "m": "private collectSaveData(): Record<string, object>"
+        }
+      ]
+    },
+    {
+      "id": "ns31",
+      "what": "章节导演的章节行表与当前场景",
+      "owner": "NarrativePackageDirector",
+      "note": "serialize 为空桶,注释写明 live 集在叙事档、done 由记录重查、当前场景由世界事件重建。",
+      "cites": [
+        {
+          "f": "src/systems/NarrativePackageDirector.ts",
+          "l": 52,
+          "m": "private rows: NarrativePackageRow[] = [];"
+        },
+        {
+          "f": "src/systems/NarrativePackageDirector.ts",
+          "l": 53,
+          "m": "private currentSceneId: string = '';"
+        },
+        {
+          "f": "src/systems/NarrativePackageDirector.ts",
+          "l": 136,
+          "m": "live 集在叙事档"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8777,
+          "m": "private collectSaveData(): Record<string, object>"
+        }
+      ]
     }
   ],
   "otherPersistence": [
@@ -4009,7 +4329,7 @@
     {
       "id": "op6",
       "what": "跨整页重启的引导态(读哪个槽 / 停标题 / 新游戏)",
-      "where": "地址栏 URL 参数 load_slot 等;重启前写入,新页面启动时读出,属一次性参数",
+      "where": "地址栏 URL 参数:load_slot(读哪个槽)、screen_title(停标题)、new_game(新游戏);重启前写入,新页面启动时读出,再次重启前一律清掉,属一次性参数",
       "cites": [
         {
           "f": "src/core/EventBridge.ts",
@@ -4025,6 +4345,16 @@
           "f": "src/main.ts",
           "l": 77,
           "m": "const loadSlotRaw = urlParams.get(LOAD_SLOT_PARAM);"
+        },
+        {
+          "f": "src/core/EventBridge.ts",
+          "l": 15,
+          "m": "export const TITLE_BOOT_PARAM = 'screen_title';"
+        },
+        {
+          "f": "src/core/EventBridge.ts",
+          "l": 24,
+          "m": "export const NEW_GAME_PARAM = 'new_game';"
         }
       ]
     },
@@ -4089,7 +4419,7 @@
     },
     {
       "id": "op10",
-      "what": "编辑器↔游戏的实时同步槽(光照/燃烧/特效/声学/呼吸等,仅开发)",
+      "what": "编辑器↔游戏的实时同步槽(光照/燃烧/特效/声学/呼吸/摆动/地形,仅开发)",
       "where": "dev 服的若干 /__gamedraft-api/runtime-* 接口;同步的是作者数据,不是游戏进度",
       "status": "dev-only",
       "cites": [
@@ -4107,6 +4437,61 @@
           "f": "src/dev/runtimeVfxSync.ts",
           "l": 44,
           "m": "export const RUNTIME_VFX_API = '/__gamedraft-api/runtime-vfx"
+        },
+        {
+          "f": "src/dev/runtimeAcousticsSync.ts",
+          "l": 45,
+          "m": "export const RUNTIME_ACOUSTICS_API = '/__gamedraft-api"
+        },
+        {
+          "f": "src/dev/runtimeBreathingSync.ts",
+          "l": 15,
+          "m": "export const RUNTIME_BREATHING_API = '/__gamedraft-api"
+        },
+        {
+          "f": "src/dev/runtimeSwaySync.ts",
+          "l": 25,
+          "m": "export const RUNTIME_SWAY_API = '/__gamedraft-api"
+        },
+        {
+          "f": "src/dev/runtimeTerrainSync.ts",
+          "l": 18,
+          "m": "export const RUNTIME_TERRAIN_API = '/__gamedraft-api"
+        }
+      ]
+    },
+    {
+      "id": "op11",
+      "what": "运行时调试快照上报(仅开发)",
+      "where": "POST 到 dev 服 /__gamedraft-api/runtime-debug-snapshot;服务端怎么落盘不在 src 里",
+      "status": "dev-only",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 9682,
+          "m": "if (!import.meta.env.DEV) return;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9701,
+          "m": "await fetch('/__gamedraft-api/runtime-debug-snapshot', {"
+        }
+      ]
+    },
+    {
+      "id": "op12",
+      "what": "存档 JSON 导出文件",
+      "where": "浏览器下载 gamedraft_save_N.json(内容 = 镜像里该槽的原始信封);可经\"JSON ↑\"再导回任一槽",
+      "cites": [
+        {
+          "f": "src/ui/MenuUI.ts",
+          "l": 1089,
+          "m": "const raw = this.saveData.exportSlotPayload(slot);"
+        },
+        {
+          "f": "src/ui/MenuUI.ts",
+          "l": 1098,
+          "m": "anchor.download = `gamedraft_save_${slot + 1}.json`;"
         }
       ]
     }
