@@ -321,12 +321,16 @@ export class InteractionCoordinator {
       await actionExecutor.executeAwait({
         type: 'pickup',
         params: { itemId: data.itemId, itemName: data.itemName, count: data.count, isCurrency: data.isCurrency },
-      });
+      }, null, { detached: false, initiator: { kind: 'hotspot', id: hotspot.def.id } });
     } finally {
       eventBus.off('inventory:full', onFull);
     }
     if (bagFull) return;
-    await actionExecutor.executeAwait({ type: 'setFlag', params: { key: FlagKeys.hotspotPickedUp(hotspot.def.id), value: true } });
+    await actionExecutor.executeAwait(
+      { type: 'setFlag', params: { key: FlagKeys.hotspotPickedUp(hotspot.def.id), value: true } },
+      null,
+      { detached: false, initiator: { kind: 'hotspot', id: hotspot.def.id } },
+    );
     eventBus.emit('hotspot:pickup:done', { hotspotId: hotspot.def.id });
   }
 
@@ -345,7 +349,7 @@ export class InteractionCoordinator {
       await actionExecutor.executeAwait({
         type: 'startEncounter',
         params: { id: data.encounterId },
-      });
+      }, null, { detached: false, initiator: { kind: 'hotspot', id: hotspot.def.id } });
     } catch (e) {
       console.warn('InteractionCoordinator: startEncounter failed', e);
     } finally {

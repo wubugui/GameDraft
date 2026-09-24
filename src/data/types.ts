@@ -579,6 +579,43 @@ export interface PerspectivePoint {
 export interface PerspectiveMidStop {
   pos: number;
   scale: number;
+  /**
+   * 相机跟随透视：**从本停靠点到下一个停靠点那一段**是否跟随；缺省 true。
+   * 只在场景配了 {@link PerspectiveScaleConfig.cameraFollow} 时有意义。
+   *
+   * ⚠ 开关挂在停靠点上而不是「第 i 段」的数组里，是为了对 midStops 重排序免疫：
+   * 求值前按 pos 排序会打乱下标，独立的段数组会**静默错位**（段开关跑到别的段上，不报错）。
+   */
+  cameraFollow?: boolean;
+}
+
+/**
+ * 相机跟随透视（2026-09-20 拍板，需求清单 A3.5）：写这个键 = 本场景开启；
+ * **不写 = 完全不跟随，效果与开此功能之前严格一致**（运行时一次 zoom 都不多写）。
+ *
+ * 相机 zoom 吃同一根深度轴，让角色在屏幕上的大小（景别）基本不变：
+ * ```
+ * zoom(t) = 相机基线zoom × ∏（t 之前的每个开启段）f(段起点) / f(段内走到的位置)
+ * ```
+ * 关闭的段把当前倍数**原样带过去**（人物在那一段里正常地变小）——回落基线会跨段跳变。
+ * 这样写出来的 zoom 只由位置决定：从近往远走和从远往近走，同一点的景别一样。
+ */
+export interface PerspectiveCameraFollowConfig {
+  /**
+   * 近端到第一个停靠点那一段是否跟随；缺省 true。
+   *
+   * （其余各段的开关在 {@link PerspectiveMidStop.cameraFollow} 上；近端不是 midStop，
+   * 没地方挂，只能落在这里。远端没有后续段，不存开关。）
+   */
+  firstSegment?: boolean;
+  /** 基准位置 t∈[0,1]：该处 zoom 恰为相机基线 zoom。缺省 0（近端）⇒ 只往里推不往外拉。 */
+  refPos?: number;
+  /**
+   * zoom 相对基线的上限倍数；缺省 1.5（`DEFAULT_PERSPECTIVE_CAMERA_MAX_ZOOM_RATIO`）。
+   * 撞上限即停止补偿（人物继续变小），防止背景被放大糊掉——全段开启时最远端的放大倍数
+   * 就是 `f近/f远`。下限不在这里：由相机按「视野不超出地图」自动钳，没有作者旋钮。
+   */
+  maxZoomRatio?: number;
 }
 
 /**
@@ -597,6 +634,8 @@ export interface PerspectiveScaleConfig {
   midStops?: PerspectiveMidStop[];
   /** 移动步长是否同步 × f（防远处滑步）；缺省 true */
   affectsSpeed?: boolean;
+  /** 相机跟随透视；**不写键 = 不跟随**（存量场景零变化）。见 {@link PerspectiveCameraFollowConfig} */
+  cameraFollow?: PerspectiveCameraFollowConfig;
 }
 
 export interface SceneData {
@@ -819,6 +858,19 @@ export interface SceneCameraConfig {
 
 export type HotspotType = 'inspect' | 'pickup' | 'transition' | 'npc' | 'encounter' | 'act_spot';
 
+/**
+ * 玩家碰一个热点时，旁人眼里他在干啥（玩家状态串 `PlayerActivity` 用；`{name}` = 热点的名字）。
+ * 加热点类型时类型逼着补一句。
+ */
+export const HOTSPOT_TYPE_ACTIVITY: Record<HotspotType, string> = {
+  inspect: '凑过去看{name}',
+  pickup: '弯腰去捡{name}',
+  transition: '往{name}那边走',
+  npc: '去找{name}',
+  encounter: '去碰{name}',
+  act_spot: '走到{name}那点',
+};
+
 // ============================================================
 // 玩家身体动词（姿态 + 一次性动作）
 // ============================================================
@@ -831,6 +883,18 @@ export type HotspotType = 'inspect' | 'pickup' | 'transition' | 'npc' | 'encount
  */
 export const PLAYER_VERBS = ['crouch', 'gaze', 'kick', 'jump', 'lie'] as const;
 export type PlayerVerb = (typeof PLAYER_VERBS)[number];
+
+/**
+ * 动词的人话说法（玩家状态串 `PlayerActivity` 用：旁人眼里"他在干啥"）。加动词时类型逼着这里补一句，
+ * 不在任何消费方另开"每个动作一个 case"的表。
+ */
+export const PLAYER_VERB_LABELS: Record<PlayerVerb, string> = {
+  crouch: '蹲下去了',
+  gaze: '站定了，定定地望',
+  kick: '抬脚踢',
+  jump: '原地蹦了一下',
+  lie: '躺到地上',
+};
 
 /** 姿态槽（`stand` 为无姿态的缺省态，不属于动词） */
 export const PLAYER_POSTURES = ['crouch', 'gaze', 'lie'] as const;

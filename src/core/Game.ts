@@ -229,7 +229,9 @@ import { UniformShadowField, type ShadowProjectionField } from '../rendering/sha
 import { resolveDepthFloorOffsetBoost } from '../utils/depthFloorZones';
 import { transitionIsCovered } from '../utils/sceneAppearance';
 import {
+  createPerspectiveCameraFollowResolver,
   createPerspectiveScaleResolver,
+  type PerspectiveCameraFollowResolver,
   type PerspectiveScaleResolver as ScenePerspectiveScaleResolver,
 } from '../utils/perspectiveScale';
 import type { ConditionEvalContext } from '../systems/graphDialogue/evaluateGraphCondition';
@@ -292,7 +294,7 @@ import {
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
 import { Container, Culler, Graphics, Rectangle, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
-import { bakeKeyFromBackground, dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
+import { bakeKeyFromBackground, dataSubdirJsonUrl, dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl, vfxEffectJsonUrl } from './projectPaths';
 import type { TrajectoryAsset, TrajectoryKeyframe } from '../data/types';
 import type { TrajectoryEndReason } from '../systems/TrajectorySystem';
 import {
@@ -322,6 +324,12 @@ import {
 } from '../debug/webglPanelDiagnostics';
 import { warmUpBackgroundDebugGlProgramForDiagnostics } from '../rendering/BackgroundDebugFilter';
 import { warmUpDepthOcclusionGlProgramForDiagnostics } from '../rendering/DepthOcclusionFilter';
+import { WorldBrainSystem, brainNpcAdapter } from '../systems/worldBrain/WorldBrainSystem';
+import { PackedJevTransport } from '../systems/worldBrain/packTransport';
+import { WorldBrainOverlay } from '../debug/WorldBrainOverlay';
+import { WorldBrainNameTags } from '../debug/WorldBrainNameTags';
+import { WorldBrainInspector } from '../debug/WorldBrainInspector';
+import { PlayerActivity } from '../systems/PlayerActivity';
 
 export interface GameStartOptions {
   devMode?: boolean;
@@ -639,6 +647,20 @@ export class Game {
   private pressureHoldManager: PressureHoldManager;
   private signalCueManager: SignalCueManager;
   private bubbleChatterSystem: BubbleChatterSystem;
+  /**
+   * 世界脑（Jev 驱动街面群体行为）：缺省关，只在有 `world_brain/<场景>.json` 的场景起作用。
+   * 不进 registeredSystems（无存档态，全是内存态操作），显式 destroy。
+   */
+  private worldBrain: WorldBrainSystem;
+  private worldBrainOverlay: WorldBrainOverlay | null = null;
+  /** 世界脑的名字牌 / 详情面板（开发期 DOM 浮层） */
+  private worldBrainNameTags: WorldBrainNameTags | null = null;
+  private worldBrainInspector: WorldBrainInspector | null = null;
+  /**
+   * 玩家状态串：玩家干的任何事 → 一句话（用道具、踢、蹲、找人说话、捡、点火、买、扔、手上换东西……）。
+   * 纯旁听，不改游戏状态；没人订阅时不拼句子。世界脑对玩家的感知只走这一路。
+   */
+  private playerActivity: PlayerActivity;
   private playerIdleBehaviorSystem: PlayerIdleBehaviorSystem;
   private healthSystem: HealthSystem;
   private retrySystem: RetrySystem;
@@ -694,6 +716,17 @@ export class Game {
   private charModeSwitching = false;
   /** 场景透视缩放（近大远小）句柄：scene:ready 从场景数据构建、beforeUnload 清空；实体注入共享同一实例 */
   private perspectiveScaleResolver: ScenePerspectiveScaleResolver | null = null;
+  /**
+   * 相机跟随透视（需求清单 A3.5，2026-09-20）：场景写了 `perspectiveScale.cameraFollow` 才有；
+   * **null 时全流程一次 zoom 都不多写**，效果与开此功能之前严格一致。与上面那个句柄同生同死。
+   */
+  private perspectiveCameraFollow: PerspectiveCameraFollowResolver | null = null;
+  /**
+   * 这一帧镜头锚在哪（世界坐标）——`applyCameraFollow` 与探索态的 `camera.follow` 各自记一笔。
+   * 透视跟随按它求 f：镜头跟谁就按谁的纵深定景别（缺省玩家脚底，过场里是被跟的实体 / 曲线点）。
+   */
+  private cameraAnchorX = 0;
+  private cameraAnchorY = 0;
   /** 世界空间粒子 / 群体（蝙蝠、滴水、香火烟、萤火）：模拟在系统层，画在实体层的批网格里 */
   private vfxSystem: VfxSystem;
   /**
@@ -717,6 +750,8 @@ export class Game {
    * 场景风：一份参数 + 一个钟。粒子（经 `VfxSystem.getWind`）与背景草木摆动（`swayBackground`）
    * 读的是同一个，所以一阵风两边同一拍（见 [[scene-wind]]）。组装层持有，逐帧推钟。
    */
+  /** 此刻的环境压暗倍率（`applyEnvDim` 唯一写入；只给世界脑读"天色"用） */
+  private envDimNow = 1;
   private readonly sceneWind = new SceneWindState((id, volume, weight) =>
     this.audioManager?.setAmbientPulse(id, volume, weight));
   /** 风采样的复用缓冲（热路径零分配，与粒子侧同一习惯） */
@@ -1007,6 +1042,105 @@ export class Game {
       resolveRichText: (raw) => this.resolveRichText(raw),
       random: this.presentationRandom,
     });
+    const entityName = (id: string): string | null => {
+      const npc = this.sceneManager.getNpcById(id);
+      if (npc) return npc.def.name || null;
+      const hs = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === id);
+      return hs ? ((hs.def as { name?: string; label?: string }).name ?? (hs.def as { label?: string }).label ?? null) : null;
+    };
+    this.playerActivity = new PlayerActivity({
+      eventBus: this.eventBus,
+      playerPos: () => ({ x: this.player.x, y: this.player.y }),
+      itemInfo: (itemId) => {
+        const d = this.inventoryManager.getItemDef(itemId);
+        // use.label 可含 [tag:…]：按显示时的口径解开
+        return d ? { name: d.name, useLabel: d.use?.label ? this.resolveRichText(d.use.label).trim() || null : null } : null;
+      },
+      entityName,
+      held: () => {
+        const h = this.heldPropSystem.statusOf('player')[0];
+        return h ? { label: this.propPresetRegistry[h.prop]?.label ?? h.prop, burning: h.burning } : null;
+      },
+      posture: () => this.playerActionSystem.getPosture(),
+    });
+    this.worldBrain = new WorldBrainSystem({
+      eventBus: this.eventBus,
+      loadConfig: (sid) => this.assetManager.loadOptionalJson(dataSubdirJsonUrl('world_brain', `${sid}.json`)),
+      currentSceneId: () => this.sceneManager.currentSceneData?.id ?? '',
+      isExploring: () => this.stateController.currentState === GameState.Exploring,
+      isWorldPaused: () => this.isWorldPaused(),
+      getNpc: (id) => {
+        const npc = this.sceneManager.getNpcById(id);
+        return npc ? brainNpcAdapter(npc) : null;
+      },
+      npcAuthored: (id) => {
+        const npc = this.sceneManager.getNpcById(id);
+        return npc ? { x: npc.def.x, y: npc.def.y, hasPatrol: !!npc.def.patrol?.route?.length } : null;
+      },
+      stopNpcPatrol: (id) => this.stopNpcPatrol(id),
+      startNpcPatrol: (id) => this.startNpcPatrolForNpc(id),
+      playerPos: () => ({ x: this.player.x, y: this.player.y }),
+      isRunHeld: () => this.inputManager.isRunning(),
+      playerActivity: this.playerActivity,
+      timeOfDay: () => this.dayManager.currentPhaseLabel || this.dayManager.currentPhase,
+      // 通用感知：旁听动作执行器与粒子系统（第一次打开世界脑才订阅；从没开过就什么都没挂）
+      addActionListener: (fn) => this.actionExecutor.addActionListener(fn),
+      addRunEndListener: (fn) => this.actionExecutor.addRunEndListener(fn),
+      addVfxListener: (fn) => this.vfxSystem.addWorldListener(fn),
+      worldLook: () => {
+        const live = this.sceneWind.params;
+        const base = this.sceneWind.authored;
+        return {
+          dim: this.envDimNow,
+          wind: live && base ? { speed: live.speed, base: base.speed } : null,
+          effects: this.vfxSystem.runningEffectIds(),
+        };
+      },
+      vfxLabel: (effectId) => this.assetManager.getJson<{ label?: string }>(vfxEffectJsonUrl(effectId))?.label ?? null,
+      itemName: (itemId) => this.inventoryManager.getItemDef(itemId)?.name ?? null,
+      itemCount: (itemId) => this.inventoryManager.getItemCount(itemId),
+      // 发道具的职责：走背包的正式加物品入口（与调试面板"给一件"、剧情 giveItem 同一个口子）
+      giveItem: (itemId, count) => this.inventoryManager.addItem(itemId, count),
+      entityName,
+      entityPos: (id) => {
+        const npc = this.sceneManager.getNpcById(id);
+        if (npc) return { x: npc.x, y: npc.y };
+        const hs = this.sceneManager.getCurrentHotspots().find((h) => h.def.id === id);
+        return hs ? { x: hs.def.x, y: hs.def.y } : null;
+      },
+      speak: (npcId, text, ms, opts) => {
+        const anchor = this.pollEmoteTarget('世界脑', npcId);
+        if (!anchor) return false;
+        // 回玩家的话顶掉世界脑自己挂在他头上的旧话；别的系统的气泡不动（世界脑排队等它）
+        if (opts.reply) this.emoteBubbleManager.removeFor(anchor, 'worldBrain');
+        if (this.emoteBubbleManager.hasBubbleFor(anchor)) return false;
+        this.emoteBubbleManager.show(
+          anchor,
+          this.resolveRichText(text),
+          ms,
+          { variant: opts.reply ? 'speech' : 'chatter', scale: opts.scale },
+          'worldBrain',
+        );
+        return true;
+      },
+      onScreen: (x, y) => {
+        const p = this.camera.worldToScreen(x, y);
+        const w = this.renderer.screenWidth;
+        const h = this.renderer.screenHeight;
+        // 脚底点在屏内、且离上沿留出一个气泡的高度（人站在屏幕顶上，气泡就冒到屏外去了）
+        return p.x >= 16 && p.x <= w - 16 && p.y >= 140 && p.y <= h + 20;
+      },
+      bubbleCount: () => this.emoteBubbleManager.activeBubbleCount(),
+      clearBubbles: () => this.emoteBubbleManager.cleanupByOwner('worldBrain'),
+      // 一拍一包：同一帧的题打成一个包，结果从推送通道回来；熔断、撤单都在通道里（设计稿 §13）
+      transport: new PackedJevTransport(),
+      // 自己一条随机序列：开着世界脑也不去消耗闲聊 / 待机共用的那条（它们读档可复现）
+      random: (() => {
+        const rng = new DeterministicRandom('gamedraft-world-brain-v1');
+        return () => rng.next();
+      })(),
+      wallMs: () => (typeof performance !== 'undefined' ? performance.now() : Date.now()),
+    });
     this.playerIdleBehaviorSystem = new PlayerIdleBehaviorSystem({
       emoteBubbleManager: this.emoteBubbleManager,
       playerAnchor: () => this.player,
@@ -1169,13 +1303,14 @@ export class Game {
           guardHeld: this.inputManager.isKeyDown(PROP_CONTROL_KEYS.guard),
         };
       },
-      runStateActions: (actions) => this.actionExecutor.executeBatchAwait(actions),
+      runStateActions: (actions) =>
+        this.actionExecutor.executeBatchAwait(actions, null, { detached: false, initiator: { kind: 'heldProp' } }),
       attachView: (targetId, socket, resolved) => this.attachSocketView(targetId, socket, resolved),
       detachView: (targetId, socket) => this.detachSocketView(targetId, socket),
       setDynamicLights: (lights) => this.setDynamicLightsFrom('prop', lights),
       setLightIntensityScales: (scales) => this.applySceneLightIntensityScales(scales),
-      playVfx: (effect, world, host, oneShot) => {
-        const id = this.vfxSystem.playVfx({ effect, followWorld: world, oneShot });
+      playVfx: (effect, world, host, oneShot, runId) => {
+        const id = this.vfxSystem.playVfx({ effect, followWorld: world, oneShot, runId });
         if (id) this.vfxSystem.setInstanceSortHost(id, () => this.vfxSortHostOf(host.targetId, host.socket));
         return id;
       },
@@ -1571,6 +1706,45 @@ export class Game {
    * 但只在「这个调用方问这个 id」的结果**变了**（命中↔未命中、换了场景）时记一次——未命中照样带热点枚举，
    * 只是不逐帧重刷；结果没变的帧连诊断串都不拼。
    */
+  /**
+   * 世界脑名字牌每帧跟人走：人身旁、齐胸高（头顶留给气泡）。世界脑关着 / 本场景没配置时全收起。
+   * 世界坐标 → 渲染器屏幕像素（相机投影）→ 页面 CSS 像素（画布在页面里的位置与缩放）。
+   */
+  private updateWorldBrainNameTags(): void {
+    const tags = this.worldBrainNameTags;
+    if (!tags) return;
+    const brain = this.worldBrain;
+    if (!brain.isEnabled || !tags.isVisible) {
+      tags.update([], null);
+      return;
+    }
+    const canvas = this.renderer.app.canvas as HTMLCanvasElement | undefined;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const kx = rect.width / Math.max(1, this.renderer.screenWidth);
+    const ky = rect.height / Math.max(1, this.renderer.screenHeight);
+    const out: { npcId: string; label: string; x: number; y: number; takenOver: boolean }[] = [];
+    for (const p of brain.listPeople()) {
+      if (p.away) continue;
+      const npc = this.sceneManager.getNpcById(p.npcId);
+      if (!npc || npc.container.destroyed || !npc.container.visible) continue;
+      const headLocal = npc.getEmoteBubbleAnchorLocalY();
+      const chest = this.camera.worldToScreen(npc.x, npc.y + headLocal * 0.55);
+      const foot = this.camera.worldToScreen(npc.x, npc.y);
+      const head = this.camera.worldToScreen(npc.x, npc.y + headLocal);
+      // 身体的半宽按身高的四分之一估（牌子贴在身体右边一点）
+      const halfW = Math.abs(foot.y - head.y) * 0.25;
+      out.push({
+        npcId: p.npcId,
+        label: p.label,
+        x: rect.left + (chest.x + halfW + 4) * kx,
+        y: rect.top + chest.y * ky,
+        takenOver: p.takenOver,
+      });
+    }
+    tags.update(out, brain.inspectTargetId);
+  }
+
   private pollEmoteTarget(source: string, raw: string): IEmoteBubbleAnchor | null {
     const anchor = this.lookupEmoteTarget(raw, null);
     const panel = this.debugPanelUI;
@@ -2800,7 +2974,9 @@ export class Game {
       setCameraZoom: (z) => this.camera.setZoom(z),
       restoreSceneCameraZoom: () => {
         // 对账器在"离开位面"时调，此刻激活位面已切走 → 基线即场景 zoom；用统一基线口保持一致。
-        this.camera.setZoom(this.getCameraBaselineZoom());
+        // 配了相机跟随透视的场景恢复到**此刻位置该有的** zoom，并把 zoom 交回连续通道。
+        this.camera.setZoom(this.currentPerspectiveZoom());
+        this.camera.releaseZoomOverride();
       },
       applyPlaneLightEnvOverride: (partial) => this.applyPlaneLightEnvOverride(partial),
       damagePlayer: (amount) => this.healthSystem.damage(amount),
@@ -2967,7 +3143,8 @@ export class Game {
       detachFromSocket: (targetId, socket) => this.detachFromSocketFromAction(targetId, socket),
       setPropState: (targetId, socket, state, fadeMs) =>
         this.heldPropSystem.setStateAwait(targetId, socket, state, fadeMs),
-      playPropVfx: (targetId, socket, effect, point) => this.heldPropSystem.playOneShot(targetId, socket, effect, point),
+      playPropVfx: (targetId, socket, effect, point, runId) =>
+        this.heldPropSystem.playOneShot(targetId, socket, effect, point, runId),
       lockPropState: (targetId, socket, lock) => this.heldPropSystem.setLock(targetId, socket, lock),
       setPropLevel: (propId, level) => this.heldPropSystem.setPropLevel(propId, level),
       igniteBurnable: (target, socket, pointId) => this.burnSystem.igniteBurnable(target, socket, pointId),
@@ -2987,10 +3164,12 @@ export class Game {
       setCameraZoom: (z) => { this.camera.setZoom(z); },
       restoreSceneCameraZoom: () => {
         // 基线=位面相机档(激活时) ?? 场景 zoom：对话/演出收尾恢复到位面态该有的值，不盖掉位面档。
-        this.camera.setZoom(this.getCameraBaselineZoom());
+        // 配了相机跟随透视的场景再乘上此刻位置的透视倍数，并把 zoom 交回连续通道。
+        this.camera.setZoom(this.currentPerspectiveZoom());
+        this.camera.releaseZoomOverride();
       },
       fadingRestoreSceneCameraZoom: (durationMs) => {
-        return this.cutsceneManager.fadingCameraZoom(this.getCameraBaselineZoom(), durationMs);
+        return this.fadingRestoreCameraZoom(durationMs);
       },
       setCameraFollowTarget: (targetId, snap) => {
         this.cameraFollowTargetId = targetId;
@@ -3258,7 +3437,7 @@ export class Game {
       fadingRestoreSceneCameraZoom: (durationMs) => {
         // NPC 对话收尾的 550ms 渐变必须以"位面基线"为目标——按场景 zoom 渐变会把
         // 对账器在 Dialogue→Exploring 边沿重贴的位面相机档静默盖掉。
-        return this.cutsceneManager.fadingCameraZoom(this.getCameraBaselineZoom(), durationMs);
+        return this.fadingRestoreCameraZoom(durationMs);
       },
     });
     this.interactionCoordinator.init();
@@ -3266,7 +3445,7 @@ export class Game {
     this.listenEvent('archive:firstView', (p: { actions: ActionDef[] }) => {
       void (async () => {
         try {
-          await this.actionExecutor.executeBatchAwait(p.actions);
+          await this.actionExecutor.executeBatchAwait(p.actions, null, { detached: false, initiator: { kind: 'archive' } });
         } catch (e) {
           console.warn('Game: archive:firstView actions failed', e);
         }
@@ -3296,7 +3475,10 @@ export class Game {
     this.listenEvent('clue:collectActions', (p: { id: string; actions: ActionDef[] }) => {
       void (async () => {
         try {
-          await this.actionExecutor.executeBatchAwait(p.actions);
+          await this.actionExecutor.executeBatchAwait(p.actions, null, {
+            detached: false,
+            initiator: { kind: 'clue', id: p.id },
+          });
         } catch (e) {
           console.warn(`Game: clue:collectActions(${p.id}) failed`, e);
         }
@@ -3549,6 +3731,30 @@ export class Game {
     /** T1：调试工具与 F2 面板注册统一按 import.meta.env.DEV 门控（判据与
      *  TouchMobileControls 的「调试」chip 一致），生产玩家无任何调试入口。 */
     if (import.meta.env.DEV) this.debugTools = new DebugTools({
+      worldBrain: {
+        isEnabled: () => this.worldBrain.isEnabled,
+        setEnabled: (on) => this.worldBrain.setEnabled(on),
+        forceReplanAll: () => this.worldBrain.forceReplanAll(),
+        getDebugState: () => this.worldBrain.getDebugState(),
+        getLastRequest: () => this.worldBrain.getLastRequest(),
+        isOverlayVisible: () => this.worldBrainOverlay?.isVisible ?? false,
+        setOverlayVisible: (v) => this.worldBrainOverlay?.setVisible(v),
+        getBackend: () => this.worldBrain.currentBackend,
+        setBackend: (b) => this.worldBrain.setBackend(b),
+        getDecisionMode: () => this.worldBrain.decisionModeSetting,
+        setDecisionMode: (m) => this.worldBrain.setDecisionMode(m),
+        isNameTagsVisible: () => this.worldBrainNameTags?.isVisible ?? false,
+        setNameTagsVisible: (v) => {
+          this.worldBrainNameTags?.setVisible(v);
+          if (!v) this.worldBrainNameTags?.hideAll();
+        },
+        isInspectOnInteract: () => this.worldBrain.inspectOnInteract,
+        setInspectOnInteract: (v) => this.worldBrain.setInspectOnInteract(v),
+        listUsableItems: () => {
+          const defs = this.assetManager.getJson<{ id: string; name: string; use?: unknown }[]>(TEXT_URLS.items) ?? [];
+          return defs.filter((d) => d && d.use).map((d) => ({ id: d.id, name: d.name }));
+        },
+      },
       renderer: this.renderer,
       assetManager: this.assetManager,
       getPropPresets: () => this.propPresetRegistry,
@@ -3997,6 +4203,36 @@ export class Game {
     await this.setupPlayer({ deferAvatar: this.isDevMode });
     if (this.tearDownComplete) return;
     this.setupRuntimeDebugSnapshotPublishing();
+    // 世界脑（Jev）：只在开发构建挂状态牌与入口；URL 加 ?jevBrain=1 进场即开（调试面板里是同一个开关）
+    if (import.meta.env.DEV && typeof window !== 'undefined') {
+      const tags = new WorldBrainNameTags((id) => this.worldBrain.setInspectTarget(id));
+      tags.mount();
+      this.worldBrainNameTags = tags;
+      this.worldBrainInspector = new WorldBrainInspector(
+        () => (this.worldBrain.isEnabled ? this.worldBrain.inspectTargetId : null),
+        (id) => this.worldBrain.inspect(id),
+        () => this.worldBrain.setInspectTarget(null),
+      );
+      this.worldBrainInspector.mount();
+      this.worldBrainOverlay = new WorldBrainOverlay(() => this.worldBrain.getDebugState(), {
+        setBackend: (b) => this.worldBrain.setBackend(b),
+        setDecisionMode: (m) => this.worldBrain.setDecisionMode(m),
+        isNameTagsVisible: () => tags.isVisible,
+        setNameTagsVisible: (v) => {
+          tags.setVisible(v);
+          if (!v) tags.hideAll();
+        },
+        isInspectOnInteract: () => this.worldBrain.inspectOnInteract,
+        setInspectOnInteract: (v) => this.worldBrain.setInspectOnInteract(v),
+        inspect: (id) => this.worldBrain.setInspectTarget(id),
+      });
+      this.worldBrainOverlay.mount();
+      const wbParams = new URLSearchParams(window.location.search);
+      // ?jevBackend=jev|laya：进场就用这一路（状态牌上的切换按钮是同一个开关）
+      const wbBackend = wbParams.get('jevBackend');
+      if (wbBackend === 'jev' || wbBackend === 'laya') this.worldBrain.setBackend(wbBackend);
+      if (wbParams.has('jevBrain')) this.worldBrain.setEnabled(true);
+    }
     // 气味调试 hook（平时关；URL 加 ?smellDebug 开启）：console 里 __smell(scent,intensity,dir,flicker) /
     // __smellSniff() / __smellStep(n) 驱动 HUD 气味指示器看效果。隐藏页 rAF 被节流时 __smell 会强制步进给截图用。
     if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('smellDebug')) {
@@ -4996,7 +5232,7 @@ export class Game {
     const scopeOf = (session: PerformanceSession): ActionExecScope => {
       let scope = scopes.get(session);
       if (!scope) {
-        scope = { detached: true, session };
+        scope = session.run ? { detached: true, session, run: session.run } : { detached: true, session };
         scopes.set(session, scope);
       }
       return scope;
@@ -5051,6 +5287,7 @@ export class Game {
    */
   private applyEnvDim(scale: number): void {
     const s = Number.isFinite(scale) ? Math.max(0, Math.min(1, scale)) : 1;
+    this.envDimNow = s;
     this.sceneLighting.setEnvDim(s);
     this.characterLighting.setEnvDim(s);
     // 背景那一侧改的是 display，灯没变；但角色侧读的是同一份 packed，稳妥起见一并重推。
@@ -5235,6 +5472,7 @@ export class Game {
         anchor: { x: at.x, y: at.y, h: opts.effectHeight ?? 0, surface: 'ground' },
         ...(opts.seed !== undefined && Number.isFinite(opts.seed) ? { seed: opts.seed } : {}),
         oneShot: true,
+        ...(opts.runId !== undefined ? { runId: opts.runId } : {}),
       });
       /**
        * 雷柱是**光柱**（`beams`），而光柱没有寿命——只有开关。`oneShot` 的自动收尸要求
@@ -5890,9 +6128,13 @@ export class Game {
       }
       // 场景基线缩放：过场 cameraZoom「恢复场景缩放」语义（scale 缺省/≤0）的回读源
       this.camera.setSceneBaseZoom(cameraConfig?.zoom ?? 1);
+      // 进场景 = zoom 交回连续通道：上一行的 setZoom 会把它标成「显式占用」，不放开的话
+      // 这个场景的相机跟随透视永远不生效（没配跟随的场景这句是纯 no-op）。
+      this.camera.releaseZoomOverride();
       if (worldScale !== undefined) {
         this.camera.setWorldScale(worldScale);
       }
+      this.setCameraAnchor(snapX, snapY);
       this.camera.snapTo(snapX, snapY);
     });
     this.sceneManager.setBoundsOnlySetter((boundsW, boundsH) => {
@@ -7434,6 +7676,7 @@ export class Game {
       this.trajectorySystem.cancelAll();
       // 透视缩放随场景走：先清句柄防旧场景系数漂到新场景（NPC/热点随实例销毁）
       this.perspectiveScaleResolver = null;
+      this.perspectiveCameraFollow = null;
       this.player.setPerspectiveScale(null);
       for (const h of this.sceneManager.getCurrentHotspots()) {
         const f = h.detachDepthOcclusionFilter();
@@ -7465,6 +7708,15 @@ export class Game {
       this.perspectiveScaleResolver = createPerspectiveScaleResolver(
         this.sceneManager.currentSceneData?.perspectiveScale,
       );
+      // 相机跟随透视：没写 cameraFollow 键就恒 null，下面每帧那一步整条不跑
+      this.perspectiveCameraFollow = createPerspectiveCameraFollowResolver(
+        this.sceneManager.currentSceneData?.perspectiveScale,
+      );
+      // 进场景第一帧就该是对的景别（不是先按基线画一帧再跳）：锚点此刻就是玩家落点
+      if (this.perspectiveCameraFollow) {
+        this.setCameraAnchor(this.player.x, this.player.y);
+        this.applyPerspectiveCameraZoom();
+      }
       this.player.setPerspectiveScale(this.perspectiveScaleResolver);
       // 场景风：点亮的场景不走摆动装载钩子，这里保证每个场景都按自己的 wind 重设（没有 = 无风）
       if (!this.swayBackground) this.sceneWind.reset(this.sceneManager.currentSceneData?.wind);
@@ -9212,7 +9464,8 @@ export class Game {
     return applyDevRuntimeCommand(command, {
       captureSnapshot: (reason) => this.publishRuntimeDebugSnapshot(reason),
       clearEventTrace: () => this.eventBus.clearDebugTrace(),
-      debugExecuteAction: (action) => this.actionExecutor.executeAwait(action),
+      debugExecuteAction: (action) =>
+        this.actionExecutor.executeAwait(action, null, { detached: false, initiator: { kind: 'debug' } }),
       debugSetFixedTickMode: (enabled) => {
         this.fixedTickMode = enabled;
         this.hud.setFixedTickMode(enabled);
@@ -9376,6 +9629,7 @@ export class Game {
       // 引用点还没产生，没东西可跟（2026-09-12 制作人定）。
       const p = this.evaluatePositionRefNow(this.cameraFollowRef);
       if (p) {
+        this.setCameraAnchor(p.x, p.y);
         if (this.cameraFollowSnap) this.camera.snapTo(p.x, p.y);
         else this.camera.follow(p.x, p.y);
       }
@@ -9384,6 +9638,7 @@ export class Game {
     if (this.cameraFollowTargetId !== null) {
       const followed = this.resolveActorFn(this.cameraFollowTargetId);
       if (followed) {
+        this.setCameraAnchor(followed.x, followed.y);
         if (this.cameraFollowSnap) this.camera.snapTo(followed.x, followed.y);
         else this.camera.follow(followed.x, followed.y);
         return;
@@ -9391,8 +9646,49 @@ export class Game {
       this.cameraFollowTargetId = null;
     }
     if (fallbackToPlayer) {
+      this.setCameraAnchor(this.player.x, this.player.y);
       this.camera.follow(this.player.x, this.player.y);
     }
+  }
+
+  /**
+   * 「渐变恢复场景 zoom」的唯一实现（对话收尾 550ms、演出收尾都走它）。
+   *
+   * 目标是 {@link currentPerspectiveZoom}——配了相机跟随透视的场景要回到**此刻位置该有的**
+   * 景别，不是静态场景 zoom。渐变期间 zoom 仍归显式通道所有（否则连续通道会和渐变打架，
+   * 每帧把它拽回目标值、550ms 的淡出变成瞬切）；渐变收尾才交回去。
+   */
+  private fadingRestoreCameraZoom(durationMs: number): Promise<void> {
+    const p = this.cutsceneManager.fadingCameraZoom(this.currentPerspectiveZoom(), durationMs);
+    return p.finally(() => { this.camera.releaseZoomOverride(); });
+  }
+
+  /** 记下这一帧镜头锚在哪（透视跟随按它求 f）。与真正摆镜头的那一句成对，不单独调。 */
+  private setCameraAnchor(x: number, y: number): void {
+    this.cameraAnchorX = x;
+    this.cameraAnchorY = y;
+  }
+
+  /**
+   * 「此刻位置该有的那个 zoom」：相机基线 zoom × 跟随点处的透视倍数。
+   *
+   * **没配相机跟随透视的场景恒等于 `getCameraBaselineZoom()`**——所有恢复路径照旧，
+   * 一个字节的行为都不变（需求清单 A3.5）。
+   */
+  private currentPerspectiveZoom(): number {
+    const base = this.getCameraBaselineZoom();
+    const follow = this.perspectiveCameraFollow;
+    if (!follow) return base;
+    return base * follow.zoomRatioAt(this.cameraAnchorX, this.cameraAnchorY);
+  }
+
+  /**
+   * 相机跟随透视：把 zoom 写进连续通道。显式占用期间（过场 cameraZoom / setCameraZoom /
+   * 对话拉近 / 调试滚轮）Camera 自己让位，这里不必判。没配跟随的场景整条不跑。
+   */
+  private applyPerspectiveCameraZoom(): void {
+    if (!this.perspectiveCameraFollow) return;
+    this.camera.setDrivenZoom(this.currentPerspectiveZoom());
   }
 
   /**
@@ -9413,7 +9709,12 @@ export class Game {
             && (state === GameState.Exploring || state === GameState.ActionSequence);
     if (!anchored) return;
     const actor = this.resolveActorFn(entityId);
-    if (actor) this.camera.snapTo(actor.x, actor.y);
+    if (actor) {
+      this.setCameraAnchor(actor.x, actor.y);
+      this.camera.snapTo(actor.x, actor.y);
+      // 瞬移跨了纵深就得当场换景别，不能等下一帧——否则跳的那一帧人物大小是错的
+      this.applyPerspectiveCameraZoom();
+    }
   }
 
   private async debugSetPlayerPosition(x: number, y: number, snapCamera: boolean): Promise<void> {
@@ -9676,6 +9977,15 @@ export class Game {
     this.eventBridge?.destroy();
     /** 配音导演不在 registeredSystems 里（无存档态），显式摘监听 + 停在播人声 */
     this.dialogueVoiceDirector?.destroy();
+    /** 世界脑同样不在 registeredSystems 里：摘监听、作废在途请求；状态牌摘掉 DOM 与定时器 */
+    this.worldBrain?.destroy();
+    this.worldBrainOverlay?.destroy();
+    this.worldBrainOverlay = null;
+    this.worldBrainNameTags?.destroy();
+    this.worldBrainNameTags = null;
+    this.worldBrainInspector?.destroy();
+    this.worldBrainInspector = null;
+    this.playerActivity?.destroy();
     this.voiceChannel?.stopAll();
     this.debugTools?.destroy();
     this.debugTools = null;
@@ -9924,6 +10234,9 @@ export class Game {
     //  - 闲聊：进对话的那一下要靠这一帧把在飞的气泡撤掉，否则和对白的「……」气泡重叠。
     this.playerIdleBehaviorSystem.update(dt);
     this.bubbleChatterSystem.update(dt);
+    // 世界脑：关着时只做"换没换场景"的判断；内部自判探索态 / 暂停，离开探索态那一下撤掉自己的气泡
+    this.worldBrain.update(dt);
+    this.updateWorldBrainNameTags();
 
     if (this.stateController.currentState === GameState.Exploring) {
       this.retrySystem.update(dt);
@@ -9945,6 +10258,7 @@ export class Game {
       for (const npc of this.sceneManager.getCurrentNpcs()) {
         npc.cutsceneUpdate(dt);
       }
+      this.setCameraAnchor(this.player.x, this.player.y);
       this.camera.follow(this.player.x, this.player.y);
     }
 
@@ -10020,6 +10334,14 @@ export class Game {
       // cameraFollowActor 指定了跟随目标则改跟该 NPC，播完回 Exploring 自动复位跟玩家。
       this.applyCameraFollow(true);
     }
+
+    /**
+     * 相机跟随透视（需求清单 A3.5）：**在所有摆镜头的分支之后**，按这一帧镜头真正锚住的
+     * 那个点求 zoom。放在这里而不是各分支里，是因为它对每个状态都成立——没在跟人的状态
+     * （遭遇 / 小游戏 / 面板）锚点不动，zoom 自然也不动。
+     * 没配 `perspectiveScale.cameraFollow` 的场景整条不跑，一次 zoom 都不多写。
+     */
+    this.applyPerspectiveCameraZoom();
 
     this.emoteBubbleManager.update(dt);
     this.notificationUI.update(dt);

@@ -1,0 +1,491 @@
+{
+  "lighting": {
+    "sky": {
+      "color": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "intensity": 1.0,
+      "hemi": 0.5
+    },
+    "lights": [],
+    "display": {
+      "ev": 0.0,
+      "tonemap": "none",
+      "whiteKelvin": 6500.0,
+      "contrast": 1.0,
+      "saturation": 1.0,
+      "lift": 0.0,
+      "liftKelvin": 6500.0
+    },
+    "aoStrength": 1.0,
+    "ratioMax": 8,
+    "dehaze": 0.0,
+    "emissive": {
+      "gain": 0.0
+    },
+    "giGain": 0.0,
+    "placeholder": true,
+    "_migration": "identity-2026-08-21",
+    "lightFactors": {
+      "character": {
+        "indirectFactor": 0.3183098861837907,
+        "directFactor": 1,
+        "totalFactor": 1,
+        "eChroma": 0
+      },
+      "particles": {
+        "indirectFactor": 1.0,
+        "directFactor": 1,
+        "totalFactor": 0.3183098861837907,
+        "eChroma": 0
+      }
+    }
+  },
+  "id": "jev_街巷",
+  "name": "Jev 街巷（世界脑试验）",
+  "footstepSet": "石地",
+  "worldWidth": 4000.0,
+  "camera": {
+    "zoom": 1.0,
+    "pixelsPerUnit": 0.87
+  },
+  "backgrounds": [
+    {
+      "image": "background.png",
+      "x": 0,
+      "y": 0
+    }
+  ],
+  "spawnPoint": {
+    "x": 2083.2,
+    "y": 2195.2
+  },
+  "spawnPoints": {
+    "from_b": {
+      "x": 1482.7,
+      "y": 1075.9
+    },
+    "from_teahouse": {
+      "x": 1755.12,
+      "y": 1915.36
+    },
+    "from_temple": {
+      "x": 1482.7,
+      "y": 1075.9
+    },
+    "from_bridge": {
+      "x": 3774.9,
+      "y": 2124.6
+    },
+    "from_mountain_pass": {
+      "x": 3810,
+      "y": 176.8
+    },
+    "spawn_0": {
+      "x": 445.7,
+      "y": 1104.2
+    },
+    "spawn_1": {
+      "x": 3754.6,
+      "y": 713.7
+    }
+  },
+  "hotspots": [],
+  "npcs": [
+    {
+      "id": "jev_noodle",
+      "name": "面摊老板",
+      "x": 1118.0,
+      "y": 1512.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_c_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right"
+    },
+    {
+      "id": "jev_washer",
+      "name": "洗衣婆",
+      "x": 826.0,
+      "y": 1766.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_popo_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right"
+    },
+    {
+      "id": "jev_sugar_kid",
+      "name": "守糖画的娃",
+      "x": 812.0,
+      "y": 1256.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/boy_ring_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right"
+    },
+    {
+      "id": "jev_fortune",
+      "name": "算命先生",
+      "x": 620.0,
+      "y": 1110.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "jev_paoge",
+      "name": "袍哥",
+      "x": 1650.0,
+      "y": 1740.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_b_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "jev_runner",
+      "name": "跑腿伙计",
+      "x": 1548.0,
+      "y": 1648.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_lifu_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right",
+      "patrol": {
+        "route": [
+          {
+            "x": 1520.0,
+            "y": 1690.0
+          },
+          {
+            "x": 1740.0,
+            "y": 1830.0
+          },
+          {
+            "x": 2040.0,
+            "y": 2010.0
+          },
+          {
+            "x": 2420.0,
+            "y": 1960.0
+          }
+        ],
+        "speed": 75,
+        "moveAnimState": "slow_walk"
+      }
+    },
+    {
+      "id": "jev_rice",
+      "name": "扛米的脚夫",
+      "x": 2032.0,
+      "y": 1988.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "jev_porter",
+      "name": "等活的脚帮汉",
+      "x": 2068.0,
+      "y": 1050.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_coolie_a_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right"
+    },
+    {
+      "id": "jev_lifu",
+      "name": "赶脚的力夫",
+      "x": 2576.0,
+      "y": 1088.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_lifu_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "patrol": {
+        "route": [
+          {
+            "x": 2450.0,
+            "y": 1130.0
+          },
+          {
+            "x": 2700.0,
+            "y": 1045.0
+          },
+          {
+            "x": 2930.0,
+            "y": 930.0
+          }
+        ],
+        "speed": 55,
+        "moveAnimState": "slow_walk"
+      }
+    },
+    {
+      "id": "jev_yang",
+      "name": "洋行伙计",
+      "x": 2740.0,
+      "y": 1030.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_yangren_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "jev_chess",
+      "name": "看棋的老汉",
+      "x": 2560.0,
+      "y": 1700.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_dream_old_man_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "jev_monk",
+      "name": "化缘和尚",
+      "x": 3108.0,
+      "y": 1188.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_ascetic_monk_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right"
+    },
+    {
+      "id": "jev_blade",
+      "name": "巡街的刀差",
+      "x": 3390.0,
+      "y": 1260.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/官差刀_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "patrol": {
+        "route": [
+          {
+            "x": 3390.0,
+            "y": 1260.0
+          },
+          {
+            "x": 3200.0,
+            "y": 1440.0
+          },
+          {
+            "x": 3000.0,
+            "y": 1640.0
+          }
+        ],
+        "speed": 45,
+        "moveAnimState": "slow_walk"
+      }
+    },
+    {
+      "id": "jev_rest",
+      "name": "墙根歇脚的差役",
+      "x": 3572.0,
+      "y": 1732.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/guanchai_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "jev_incense",
+      "name": "卖香烛的婆婆",
+      "x": 3516.0,
+      "y": 1516.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/npc_dream_old_woman_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "jev_hoop_kid",
+      "name": "滚铁环的娃",
+      "x": 3380.0,
+      "y": 1900.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/boy_ring_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "patrol": {
+        "route": [
+          {
+            "x": 3300.0,
+            "y": 1870.0
+          },
+          {
+            "x": 3000.0,
+            "y": 1640.0
+          },
+          {
+            "x": 3200.0,
+            "y": 1440.0
+          }
+        ],
+        "speed": 70,
+        "moveAnimState": "boy_run_ring"
+      }
+    },
+    {
+      "id": "jev_gun",
+      "name": "背枪的兵",
+      "x": 2960.0,
+      "y": 960.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/官差枪_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "jev_dog",
+      "name": "土狗",
+      "x": 1200.0,
+      "y": 1620.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/dog_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left",
+      "patrol": {
+        "route": [
+          {
+            "x": 1110.0,
+            "y": 1560.0
+          },
+          {
+            "x": 930.0,
+            "y": 1600.0
+          },
+          {
+            "x": 1290.0,
+            "y": 1730.0
+          }
+        ],
+        "speed": 50,
+        "moveAnimState": "slow_walk"
+      }
+    },
+    {
+      "id": "jev_cat",
+      "name": "瘦猫",
+      "x": 1500.0,
+      "y": 1050.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/cat_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right"
+    },
+    {
+      "id": "jev_hen1",
+      "name": "花母鸡",
+      "x": 760.0,
+      "y": 1840.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/chicken_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "right"
+    },
+    {
+      "id": "jev_hen2",
+      "name": "黑母鸡",
+      "x": 470.0,
+      "y": 1960.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/chicken_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    },
+    {
+      "id": "jev_goose",
+      "name": "大白鹅",
+      "x": 2420.0,
+      "y": 1930.0,
+      "interactionRange": 64.0,
+      "animFile": "/resources/runtime/animation/goose_anim/anim.json",
+      "initialAnimState": "idle",
+      "initialFacing": "left"
+    }
+  ],
+  "zones": [],
+  "ambientSounds": [
+    "人声闹市"
+  ],
+  "filterId": "day",
+  "depthConfig": {
+    "depth_map": "raw_depth_rg.png",
+    "collision_map": "collision.png",
+    "M": {
+      "R": [
+        [
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.7071067811865476,
+          -0.7071067811865475
+        ],
+        [
+          0.0,
+          0.7071067811865475,
+          0.7071067811865476
+        ]
+      ],
+      "ppu": 450.56,
+      "cx": 1024.0,
+      "cy": 576.0
+    },
+    "depth_mapping": {
+      "invert": false,
+      "scale": 3.336518612098694,
+      "offset": -1.9268865419387817
+    },
+    "shader": {
+      "depth_per_sy": 0.002219460227272727
+    },
+    "depth_tolerance": 0.05,
+    "floor_offset": 0.0
+  },
+  "worldHeight": 2251.2,
+  "perspectiveScale": {
+    "near": {
+      "x": 1200,
+      "y": 2100,
+      "scale": 1.0
+    },
+    "far": {
+      "x": 2800,
+      "y": 400,
+      "scale": 0.45
+    },
+    "cameraFollow": {
+      "refPos": 0.2296
+    }
+  },
+  "wind": {
+    "direction": [
+      -1,
+      0,
+      -0.3
+    ],
+    "speed": 160,
+    "gust": {
+      "amount": 0.4,
+      "period": 9
+    },
+    "veer": 10,
+    "turbulence": {
+      "intensity": 0.6,
+      "scale": 3000
+    },
+    "roughness": 1,
+    "gain": {
+      "vfx": 1,
+      "sway": 1
+    }
+  }
+}

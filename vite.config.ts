@@ -9,6 +9,8 @@ import { validSceneLightFactors } from './src/data/lightFactors';
 import { runtimeSwayApi } from './src/dev/runtimeSwayApiPlugin';
 import { runtimeBurnApi } from './src/dev/runtimeBurnApiPlugin';
 import { runtimeTerrainApi } from './src/dev/runtimeTerrainApiPlugin';
+// 世界脑的 Jev 转发（key 只在服务端读 .env.local）；见模块头注释
+import { jevProxyApi } from './src/dev/jevProxyPlugin';
 
 /** 开发服：读写 resources/editor_projects/editor_data/debug_flag_favorites.json，供 F2 Flag 收藏持久化（不使用 localStorage）。 */
 function debugFlagFavoritesApi(): Plugin {
@@ -1169,6 +1171,7 @@ export default defineConfig({
     runtimeDebugSnapshotApi(),
     runtimeCommandApi(),
     sceneIndexApi(),
+    jevProxyApi(),
   ],
   base: './',
   build: {

@@ -242,6 +242,8 @@ function parseBubbleDurationParam(params: Record<string, unknown>, fallback = 15
 
 /** {@link ActionRegistryDeps.strikeThreat} 的入参。语义逐项见 `strikeThreat` 动作的注册处。 */
 export interface StrikeThreatOptions {
+  /** 放这道雷的动作串 id（handler 从执行作用域里取，不是作者参数）；只转给效果旁听者 */
+  runId?: number;
   rank?: ThreatRank;
   maxDistance?: number;
   fallback?: 'random' | 'none';
@@ -352,7 +354,7 @@ export interface ActionRegistryDeps {
   gameClock: GameClock;
   vfx: {
     /** 返回实例 id：脱手演出要把自己放出来的实例记进归位账本 */
-    play: (opts: { instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number; restart?: boolean; oneShot?: boolean }) => string | null;
+    play: (opts: { instanceId?: string; effect?: string; anchor?: VfxAnchorDef; seed?: number; countScale?: number; restart?: boolean; oneShot?: boolean; runId?: number }) => string | null;
     stop: (instanceId: string) => void;
     setState: (instanceId: string, state: VfxFlockState) => void;
     emitField: (def: VfxFieldDef, sceneX: number, sceneY: number, h: number) => void;
@@ -437,7 +439,7 @@ export interface ActionRegistryDeps {
   extinguishBurnable: (target: string, socket: string | undefined) => boolean;
   resetBurnable: (target: string, socket: string | undefined) => boolean;
   /** 在挂着的挂件上播一次性效果（跟着挂件走、放完自己收）；挂点上没有挂件 ⇒ false */
-  playPropVfx: (targetId: string, socket: string, effect: string, point: [number, number] | null) => boolean;
+  playPropVfx: (targetId: string, socket: string, effect: string, point: [number, number] | null, runId?: number) => boolean;
   /**
    * 场景灯的运行时**强度倍率**渐变（门口那盏灯笼被风吹灭：`scale` 给 0）。
    * 存倍率而不是绝对强度，作者后续在编辑器里调那盏灯仍然有效。演出态、不入档。
@@ -813,7 +815,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    * - ⚠ **不进过场白名单**：脱手批会活过过场自己的执行窗口，过场压的动作黑名单
    *   （禁改存档）到时已经弹掉了，等于给了条绕过去的路。
    */
-  executor.register('runActionsDetached', (p, zctx) => {
+  executor.register('runActionsDetached', (p, zctx, scope) => {
     const actions = actionListFromParam(p.actions);
     if (actions.length === 0) return;
     /**
@@ -822,7 +824,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
      * 不写就都叫 `detached`，于是任意两段脱手演出互相顶替；想让两段共存就各起各的名字。
      */
     const id = String(p.id ?? '').trim() || 'detached';
-    d.performanceSessions.start(id, actions, zctx);
+    // 带上开它的那一串：会话占着这一串直到播完 / 被打断（旁听者按它判"这件事完了没有"）
+    d.performanceSessions.start(id, actions, zctx, scope?.run);
     // 故意不 return Promise：返回它就又变成"等它跑完"，这条动作就白写了。
   }, ['id', 'actions']);
 
@@ -1821,7 +1824,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    * 挂件预设状态的进入动作里不写 target / socket = 这件挂件自己（HeldPropSystem 注入）；别处必须写全。
    * `point` = 贴图上的点 [u, v]，不写 = 起火点 → 挂点。
    */
-  executor.register('playPropVfx', (p) => {
+  executor.register('playPropVfx', (p, _zctx, scope) => {
     const target = String(p.target ?? '').trim();
     const socket = String(p.socket ?? '').trim();
     const effect = String(p.effect ?? '').trim();
@@ -1833,7 +1836,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     const point = pt && Number.isFinite(pt[0]) && Number.isFinite(pt[1])
       ? [Math.min(1, Math.max(0, pt[0]!)), Math.min(1, Math.max(0, pt[1]!))] as [number, number]
       : null;
-    if (!d.playPropVfx(target, socket, effect, point)) {
+    if (!d.playPropVfx(target, socket, effect, point, scope?.run?.id)) {
       console.warn(`playPropVfx: ${target}.${socket} 上没有挂件，效果「${effect}」没有播`);
     }
   }, ['target', 'socket', 'effect', 'point']);
@@ -1950,6 +1953,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       : (typeof p.effects === 'string' ? p.effects.split(',') : []);
     const effects = effectsRaw.map((e) => String(e).trim()).filter(Boolean);
     const done = d.strikeThreat({
+      ...(scope?.run ? { runId: scope.run.id } : {}),
       ...(rank ? { rank } : {}),
       ...(fallback ? { fallback } : {}),
       ...(effect ? { effect } : {}),
@@ -2534,7 +2538,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
    */
   executor.register('playVfx', async (p, _zctx, scope) => {
     const instanceId = String(p.instanceId ?? '').trim();
-    if (instanceId) { d.vfx.play({ instanceId, restart: p.restart === true }); return; }
+    const runId = scope?.run?.id;
+    if (instanceId) { d.vfx.play({ instanceId, restart: p.restart === true, runId }); return; }
     const effect = String(p.effect ?? '').trim();
     if (!effect) { console.warn('playVfx: 需要 instanceId，或 effect + 位置'); return; }
     const at = await resolveVfxAt(p, 'playVfx');
@@ -2546,6 +2551,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       seed: Number.isFinite(Number(p.seed)) ? Number(p.seed) : undefined,
       countScale: Number.isFinite(Number(p.countScale)) ? Number(p.countScale) : undefined,
       oneShot: p.oneShot === true,
+      runId,
     });
     ledgerTakeVfx(scope?.session, vid);
   }, ['instanceId', 'effect', 'at', 'x', 'y', 'h', 'surface', 'seed', 'countScale', 'restart', 'oneShot']);

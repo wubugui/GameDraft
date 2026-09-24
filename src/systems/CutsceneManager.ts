@@ -1,6 +1,6 @@
 import type { EventBus } from '../core/EventBus';
 import type { FlagStore } from '../core/FlagStore';
-import type { ActionExecutor } from '../core/ActionExecutor';
+import type { ActionExecScope, ActionExecutor } from '../core/ActionExecutor';
 import type { AssetManager } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { CutsceneRenderer, ShowSubtitleLayout, CutsceneCameraEasing } from '../rendering/CutsceneRenderer';
@@ -220,6 +220,14 @@ interface CutsceneSnapshot {
   cameraY: number;
   cameraZoom: number;
   /**
+   * 过场前 zoom 是否被**显式**占着（`Camera.isZoomOverridden`）。
+   *
+   * 只存 `cameraZoom` 不够：配了「相机跟随透视」的场景，过场前 zoom 归连续通道所有，
+   * 恢复时若只 `setZoom` 就把它永久标成显式占用 ——「恢复成过场之前的样子」反而让
+   * 跟随再也不生效（且不报错，只是景别从此不对）。存这一笔才能原样交回去。
+   */
+  cameraZoomOverridden: boolean;
+  /**
    * 过场前音频基线：当前 BGM 与活跃环境层，供同场景过场结束后还原。
    *
    * 存的是**带本处音量的引用**而不是裸 id：场景把某层环境音压到 0.3、过场里把它停了，
@@ -250,6 +258,8 @@ export class CutsceneManager implements IGameSystem {
   private flagStore: FlagStore;
   private actionExecutor: ActionExecutor;
   private cutsceneRenderer: CutsceneRenderer;
+  /** 在播这段过场的动作串作用域（只给旁听者分串用；过场同一时刻只有一段，见 `playing`） */
+  private playbackRunScope: ActionExecScope | undefined;
 
   private cutsceneDefs: Map<string, NewCutsceneDef> = new Map();
   /** parallax_scenes.json 惰性加载缓存（present:parallaxScene 按 id 检索） */
@@ -760,6 +770,9 @@ export class CutsceneManager implements IGameSystem {
         /** L1 根因修复：黑名单在 ActionExecutor 唯一执行入口强制（含 randomBranch /
          *  playSignalCue 嵌套批次）；executeOneStep 的顶层 step 过滤保留作纵深防御。 */
         this.actionExecutor.pushActionPolicy(CUTSCENE_GLOBAL_SAVE_ACTION_BLOCKLIST, `cutscene:${id}`);
+        /** 整段过场一串（旁听者看到的是"过场 X"这一件事，播完 / 被跳过时收到一次结束） */
+        const run = this.actionExecutor.openRun({ kind: 'cutscene', id });
+        this.playbackRunScope = run.scope;
         try {
           const steps = (def as NewCutsceneDef).steps;
           const rawFf = Math.floor(opts?.fastForwardTo ?? 0);
@@ -767,6 +780,8 @@ export class CutsceneManager implements IGameSystem {
           const ff = Number.isFinite(rawFf) ? Math.max(0, Math.min(rawFf, steps.length)) : 0;
           await this.executeSteps(steps, stepEpochAtStart, ff);
         } finally {
+          if (this.playbackRunScope === run.scope) this.playbackRunScope = undefined;
+          run.end(this.skipping || this.stepEpoch !== stepEpochAtStart);
           this.actionExecutor.popActionPolicy();
         }
       }
@@ -909,6 +924,7 @@ export class CutsceneManager implements IGameSystem {
       cameraX: this.cameraAccessor?.getX() ?? 0,
       cameraY: this.cameraAccessor?.getY() ?? 0,
       cameraZoom: this.cameraAccessor?.getZoom() ?? 1,
+      cameraZoomOverridden: this.cameraAccessor?.isZoomOverridden() ?? false,
       bgmCue: this.audioManager?.getCurrentBgmCue() ?? null,
       ambientCues: this.audioManager?.getActiveAmbientCues() ?? [],
     };
@@ -921,7 +937,7 @@ export class CutsceneManager implements IGameSystem {
       // same-scene: just restore player + camera position/zoom, no scene reload
       this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
       this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
-      this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
+      this.restoreSnapshotZoom();
       this.restoreAudioBaseline();
       return;
     }
@@ -930,7 +946,14 @@ export class CutsceneManager implements IGameSystem {
     }
     this.playerPositionSetter?.(this.snapshot.playerX, this.snapshot.playerY);
     this.cameraAccessor?.snapTo(this.snapshot.cameraX, this.snapshot.cameraY);
+    this.restoreSnapshotZoom();
+  }
+
+  /** 恢复过场前的 zoom **连同它的归属**（见 `CutsceneSnapshot.cameraZoomOverridden`）。 */
+  private restoreSnapshotZoom(): void {
+    if (!this.snapshot) return;
     this.cameraAccessor?.setZoom(this.snapshot.cameraZoom);
+    if (!this.snapshot.cameraZoomOverridden) this.cameraAccessor?.releaseZoomOverride();
   }
 
   /**
@@ -1216,7 +1239,7 @@ export class CutsceneManager implements IGameSystem {
          *  playBgm / 环境音**不在**此列——它们建立音频基线，跳过会让排演起点听感不对
          *  （见 cutscene-audio-reclamation 契约）。 */
         if (this.fastForwarding && CUTSCENE_FAST_FORWARD_SKIP_ACTIONS.has(step.type)) break;
-        await this.actionExecutor.executeAwait({ type: step.type, params: step.params });
+        await this.actionExecutor.executeAwait({ type: step.type, params: step.params }, null, this.playbackRunScope);
         break;
       case 'present':
         await this.executePresent(step);

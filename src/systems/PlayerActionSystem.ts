@@ -450,7 +450,7 @@ export class PlayerActionSystem implements IGameSystem {
     if (posture === 'lie' && spot) {
       this.alignToSpot(spot.data);
       if (spot.data.actions?.length) {
-        this.runActions(spot.data.actions);
+        this.runActions(spot.data.actions, 'lie');
         handledBySpot = true; // act_spot 自己接住了：匹配到即停，不再往目标/区域层叠
       }
     }
@@ -517,7 +517,7 @@ export class PlayerActionSystem implements IGameSystem {
     this.player.setPostureMovement(null);
     this.player.setInputLocked(true);
 
-    if (posture === 'lie' && spot) this.runActions(spot.data.exitActions);
+    if (posture === 'lie' && spot) this.runActions(spot.data.exitActions, 'lie');
     // 上闩：只在"退出时该键仍按着"才闩，且只闩这一个键。
     // 正常的松键退出不上闩——否则「点一下 C 起身、还没到 300ms 又按住 C」会假死到松手。
     const key = VERB_KEYS[posture];
@@ -676,7 +676,7 @@ export class PlayerActionSystem implements IGameSystem {
       run: () => {
         // 目标级（开图）→ 区域级 → 全局兜底（可以什么都不配）
         if (this.dispatchVerb('kick')) return;
-        this.runActions(cfg?.missActions);
+        this.runActions(cfg?.missActions, 'kick');
         this.emitAct('kick', null, false);
       },
     };
@@ -715,7 +715,7 @@ export class PlayerActionSystem implements IGameSystem {
       fired: false,
       run: () => {
         if (spot?.data.actions?.length) {
-          this.runActions(spot.data.actions);
+          this.runActions(spot.data.actions, 'jump');
           this.emitAct('jump', spot.id, true);
           return;
         }
@@ -738,10 +738,10 @@ export class PlayerActionSystem implements IGameSystem {
   }
 
   /** 动作批一律走统一执行器；失败只记不抛（内容错误不许把输入卡死）。 */
-  private runActions(actions: ActionDef[] | undefined): void {
+  private runActions(actions: ActionDef[] | undefined, verb: string): void {
     if (!actions || actions.length === 0) return;
     void this.actionExecutor
-      .executeBatchAwait(actions)
+      .executeBatchAwait(actions, null, { detached: false, initiator: { kind: 'playerAction', id: verb } })
       .catch((e: unknown) => console.warn('PlayerActionSystem: 动作批执行失败', e));
   }
 

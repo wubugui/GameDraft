@@ -1,4 +1,5 @@
 import type { ActionDef, ActionOriginContext } from '../data/types';
+import type { ActionRun } from '../core/actionRun';
 
 /**
  * 脱手演出会话（detached performance session）。
@@ -97,11 +98,28 @@ export class PerformanceSession {
   endReason: PerformanceEndReason | null = null;
   /** 下一条要跑的动作下标。异步循环取走一条就 +1，所以打断时从这里往后补 */
   cursor = 0;
+  /**
+   * 开这段演出的那一串（见 `core/actionRun.ts`）：会话占着它直到播完 / 被打断，
+   * 于是"掷出雷符"那一串要等雷劈完才算结束。只给旁听者用，演出本身不看它。
+   */
+  readonly run: ActionRun | undefined;
+  private releaseRun: (() => void) | undefined;
 
-  constructor(id: string, actions: ActionDef[], originContext: ActionOriginContext | null) {
+  constructor(id: string, actions: ActionDef[], originContext: ActionOriginContext | null, run?: ActionRun) {
     this.id = id;
     this.actions = actions;
     this.originContext = originContext;
+    this.run = run;
+    this.releaseRun = run?.hold();
+  }
+
+  /** 会话收场时放掉占着的串（幂等） */
+  releaseRunHold(interrupted: boolean): void {
+    const release = this.releaseRun;
+    if (!release) return;
+    this.releaseRun = undefined;
+    if (interrupted) this.run?.markInterrupted();
+    release();
   }
 }
 
@@ -142,9 +160,14 @@ export class PerformanceSessionManager {
    * 开一段脱手演出。同名的旧会话**当场按打断收掉**（制作人 2026-09-19 定：顶替，不叠加——
    * 两片雷云叠在一起没有表达价值，只会让人以为是 bug）。
    */
-  start(id: string, actions: ActionDef[], originContext: ActionOriginContext | null = null): PerformanceSession {
+  start(
+    id: string,
+    actions: ActionDef[],
+    originContext: ActionOriginContext | null = null,
+    run?: ActionRun,
+  ): PerformanceSession {
     this.interrupt(id, 'superseded');
-    const session = new PerformanceSession(id, actions, originContext);
+    const session = new PerformanceSession(id, actions, originContext, run);
     this.sessions.set(id, session);
     void this.run(session).catch((e) => {
       console.warn(`PerformanceSession「${id}」执行失败`, e);
@@ -217,6 +240,8 @@ export class PerformanceSessionManager {
     session.endReason = reason;
     if (this.sessions.get(session.id) === session) this.sessions.delete(session.id);
     this.releaseLedger(session);
+    // 归位做完再放串：旁听者收到"这一串结束"时，世界已经回到演出前
+    session.releaseRunHold(reason === 'interrupted');
   }
 
   /**

@@ -1,0 +1,784 @@
+{
+  "sceneId": "jev_街巷",
+  "setting": "雾津城的一条老街巷，民国年间川江边上的小城。青石板路，两条街在面摊那点交成十字口，东边是一大间茶馆，后街住的多是下力人，街尾有土路上山、有路下码头。街坊都信菩萨、怕鬼神，哪家有点事一条街都晓得。",
+  "brief": "民国川江边小城的一条老街，青石板路，街坊都信菩萨、怕鬼神",
+  "player": {
+    "label": "关二狗",
+    "identity": "街上混饭吃的年轻二流子，背死人子、打零工，街坊个个认得他，名声不咋个好"
+  },
+  "places": [
+    { "id": "w_north", "name": "西街北头", "desc": "西街到头的地方，墙根堆着箩筐", "x": 120, "y": 900 },
+    { "id": "fortune", "name": "算命摊前", "desc": "算命先生的卦摊", "x": 560, "y": 1190 },
+    { "id": "sugar", "name": "糖画摊", "desc": "搭着布棚的糖画摊", "x": 740, "y": 1360, "shelter": true },
+    { "id": "cross", "name": "十字口", "desc": "两条街交叉的地方，人来人往", "x": 930, "y": 1600, "capacity": 5 },
+    { "id": "wash", "name": "洗衣台", "desc": "街坊洗衣裳的石台子", "x": 800, "y": 1790 },
+    { "id": "sw_lane", "name": "西南巷", "desc": "窄巷子，住家户多", "x": 430, "y": 1985 },
+    { "id": "sw_end", "name": "西南巷口", "desc": "巷子尽头", "x": 230, "y": 2170 },
+    { "id": "noodle", "name": "面摊", "desc": "冒着热气的牛肉面摊，搭了布棚", "x": 1110, "y": 1560, "shelter": true, "capacity": 4 },
+    { "id": "front_yard", "name": "前街空坝", "desc": "一块空坝子，娃娃爱在这点耍", "x": 1290, "y": 1730, "capacity": 5 },
+    { "id": "errand", "name": "跑腿铺", "desc": "茶馆边上的跑腿铺子，有屋檐", "x": 1520, "y": 1690, "shelter": true },
+    { "id": "hall_gate", "name": "茶馆门口", "desc": "大茶馆的门廊，能躲雨", "x": 1740, "y": 1830, "shelter": true, "capacity": 6 },
+    { "id": "south", "name": "南街", "desc": "堆着米包的南街", "x": 2040, "y": 2010 },
+    { "id": "dock_road", "name": "下码头的路口", "desc": "往下走就是码头", "x": 2080, "y": 2170, "exit": true, "capacity": 6 },
+    { "id": "south_east", "name": "南街东头", "x": 2420, "y": 1960 },
+    { "id": "east_front", "name": "东前街", "desc": "茶馆背后的空坝，老汉些在这点下棋", "x": 2650, "y": 1690, "capacity": 5 },
+    { "id": "pole", "name": "电杆底下", "desc": "立着一根电杆的街口", "x": 3000, "y": 1640 },
+    { "id": "east_mid", "name": "东街", "x": 3200, "y": 1440 },
+    { "id": "incense", "name": "香烛铺前", "desc": "卖香蜡纸钱的铺子，有屋檐", "x": 3430, "y": 1500, "shelter": true },
+    { "id": "east_up", "name": "东街上段", "x": 3390, "y": 1260 },
+    { "id": "east_north", "name": "东街北口", "x": 3620, "y": 1020 },
+    { "id": "wall_rest", "name": "墙根", "desc": "背风的墙根，差役爱在这点歇脚", "x": 3520, "y": 1760 },
+    { "id": "se_lane", "name": "东南街", "x": 3300, "y": 1870 },
+    { "id": "bridge_road", "name": "桥头路口", "desc": "往桥头去的路口", "x": 3740, "y": 2080, "exit": true, "capacity": 6 },
+    { "id": "back_west", "name": "后街西口", "x": 1240, "y": 1066 },
+    { "id": "mid_link", "name": "斜街", "desc": "连着前街后街的斜巷子", "x": 1121, "y": 1293 },
+    { "id": "taoist", "name": "后街檐下", "desc": "后街一溜屋檐，能躲雨", "x": 1480, "y": 1080, "shelter": true },
+    { "id": "back_mid", "name": "后街中段", "x": 1760, "y": 1060 },
+    { "id": "porters", "name": "脚帮等活处", "desc": "棒棒们扛起扁担等活路的地方", "x": 2060, "y": 1090, "capacity": 5 },
+    { "id": "back_east", "name": "后街东段", "x": 2450, "y": 1130 },
+    { "id": "gambling", "name": "杂货铺前", "desc": "杂货铺门口，有屋檐", "x": 2700, "y": 1045, "shelter": true },
+    { "id": "back_fork", "name": "后街岔口", "desc": "后街和出街土路交岔的地方", "x": 2930, "y": 930 },
+    { "id": "monk_lane", "name": "化缘巷", "desc": "窄巷子口", "x": 3110, "y": 1180 },
+    { "id": "dock2_road", "name": "上码头的路口", "x": 3730, "y": 700, "exit": true, "capacity": 6 },
+    { "id": "dirt_road", "name": "出街的土路", "desc": "出街的烂泥路", "x": 3230, "y": 610 },
+    { "id": "north_yard", "name": "后坡土坝", "desc": "后街和东街背后的一片土坝子，从这点能从后街绕到东街", "x": 3470, "y": 660, "capacity": 5 },
+    { "id": "mountain_road", "name": "上山的路口", "desc": "往山上去的路口", "x": 3790, "y": 200, "exit": true, "capacity": 6 }
+  ],
+  "links": [
+    ["w_north", "fortune"], ["fortune", "sugar"], ["sugar", "cross"], ["cross", "wash"], ["wash", "sw_lane"], ["sw_lane", "sw_end"],
+    ["cross", "noodle"], ["noodle", "front_yard"], ["front_yard", "errand"], ["errand", "hall_gate"], ["hall_gate", "south"],
+    ["south", "dock_road"], ["south", "south_east"], ["south_east", "east_front"], ["east_front", "pole"], ["pole", "east_mid"],
+    ["east_mid", "east_up"], ["east_up", "east_north"], ["east_mid", "incense"], ["pole", "se_lane"], ["se_lane", "wall_rest"],
+    ["se_lane", "bridge_road"], ["noodle", "mid_link"], ["mid_link", "back_west"], ["back_west", "taoist"], ["taoist", "back_mid"],
+    ["back_mid", "porters"], ["porters", "back_east"], ["back_east", "gambling"], ["gambling", "back_fork"], ["back_fork", "dirt_road"],
+    ["dirt_road", "mountain_road"], ["east_north", "dock2_road"], ["monk_lane", "east_up"],
+    ["dirt_road", "north_yard"], ["north_yard", "dock2_road"]
+  ],
+  "lineCategories": {
+    "hawk": "吆喝生意、招呼客人",
+    "chat": "跟旁边的人摆龙门阵、说闲话",
+    "greet_player": "招呼关二狗、跟他搭话",
+    "shoo_player": "撵关二狗走、骂他",
+    "ask_player": "问关二狗在搞啥子名堂",
+    "scream": "吓得惊叫",
+    "curse_sky": "骂老天爷、骂这鬼天气",
+    "pray": "求菩萨保佑、念经",
+    "call_home": "喊自家人、娃娃赶紧回屋",
+    "gawk": "起哄、喊人来看热闹",
+    "omen": "神神叨叨说这事不对头、有啥子兆头",
+    "calm": "劝旁边的人莫慌",
+    "sell_charm": "趁机卖符、卖香烛",
+    "complain": "抱怨生意、抱怨世道"
+  },
+  "ambientCategories": ["hawk", "chat", "complain", "sell_charm"],
+  "genericLines": {
+    "scream": ["哦豁！", "妈哟！", "哎呀！"],
+    "curse_sky": ["背时的天！", "这天是要翻了迈！"],
+    "pray": ["菩萨保佑……", "老天爷莫怪……"],
+    "gawk": ["快来看！", "{where}出事了！"],
+    "calm": ["莫慌莫慌。"],
+    "chat": ["今天这天不对头。", "刚才那{event}，你看到没得？"]
+  },
+  "genericReplies": {
+    "greet": ["二狗，来了索。", "哟，二狗，今天咋个有空？"],
+    "gossip": ["听说没得，东头那家又吵起来了。", "这条街上，哪家有点事瞒得住嘛。"],
+    "busy": ["等哈，我这点忙起的。", "莫打岔，手上活路还没做完。"],
+    "leaving": ["我要去{dest}，莫拦到我。", "走了走了，{dest}那边还等到我的。"],
+    "ask_player": ["二狗，找我做啥子？", "你娃又在搞啥子名堂？"],
+    "about_event": ["刚才{where}那{event}，你看到没得？", "刚才那{event}，吓死个人。"],
+    "blame": ["刚才那{event}，是不是你搞的？", "二狗，说老实话，刚才那{event}跟你有没得关系？"],
+    "shoo": ["爬远点，莫来烦我。", "二狗，你去别处晃。"],
+    "scared": ["莫、莫过来……", "我啥子都不晓得，你莫问我……"]
+  },
+  "people": [
+    {
+      "npcId": "jev_noodle",
+      "label": "面摊老板",
+      "identity": "在十字口摆牛肉面摊子的中年汉子，一年四季守着一口大锅",
+      "temper": "胆小怕事、嘴碎，最心疼他那口锅和摊子，见了袍哥就点头哈腰",
+      "activity": "守着锅煮面、招呼吃面的",
+      "home": "noodle",
+      "haunts": ["cross", "front_yard", "mid_link", "wash"],
+      "relations": [
+        { "npcId": "jev_paoge", "text": "给袍哥递烟、赔笑脸" },
+        { "npcId": "jev_washer", "text": "跟洗衣婆摆两句龙门阵" }
+      ],
+      "says": ["hawk", "chat", "greet_player", "scream", "curse_sky", "pray", "complain"],
+      "lines": {
+        "hawk": ["牛肉面！热和的牛肉面！", "二两小面，辣子管够哈！", "吃面不嘛？汤是熬了一晚上的！"],
+        "chat": ["今天生意淡得很。", "听说没得，码头上又捞起来一个。", "刚才那{event}，把我锅铲都吓掉了。"],
+        "greet_player": ["二狗！吃碗面不？赊账莫想哈。", "哟，关二狗，今天有活路没得？"],
+        "scream": ["哦豁！我的锅！", "妈呀！"],
+        "curse_sky": ["背时的天，说变就变！", "老天爷你莫把我摊子掀了撒！"],
+        "pray": ["菩萨保佑，菩萨保佑……", "菩萨老爷，我是正经做生意的哟！"],
+        "complain": ["这年生，吃得起面的都没几个了。", "今天这生意，白守了一天。"]
+      },
+      "replies": {
+        "greet": ["二狗！吃碗面不？赊账莫想哈。", "哟，关二狗，今天有活路没得？"],
+        "gossip": ["听说没得，码头上又捞起来一个死人子。", "袍哥这个月又要涨份子钱了，你莫说是我说的哈。"],
+        "busy": ["等哈等哈，锅里的面要糊了！", "二狗，要吃面就坐，不吃莫挡到我下面。"],
+        "trade": ["二两小面，辣子管够，来一碗撒？", "牛肉面，汤是熬了一晚上的，你闻嘛！"],
+        "leaving": ["我去{dest}一趟，锅帮我看到哈！", "莫拉我，我要去{dest}。"],
+        "ask_player": ["你手头那个{held}，莫拿到我摊子跟前来。", "二狗，找我有事？先说好，不赊账。"],
+        "about_event": ["刚才{where}那{event}，吓得我锅铲都掉了。", "你看到刚才那{event}没得？我这心还在跳。"],
+        "blame": ["二狗，刚才那{event}……不会是你搞的撒？", "你莫害我哈，刚才那{event}是不是你弄出来的？"],
+        "shoo": ["二狗，你站远点，莫把我生意冲了。", "去去去，一身死人子味道，客都遭你吓跑了。"],
+        "scared": ["我、我就是个卖面的，你莫找我……", "二狗，你莫过来，我怕……"]
+      }
+    },
+    {
+      "npcId": "jev_washer",
+      "label": "洗衣婆",
+      "identity": "住洗衣台边上的老婆婆，给街坊洗衣裳挣几个铜板，孙娃子成天在街上疯",
+      "temper": "嘴巴凶、心肠软，最信菩萨，一有动静就喊孙娃子回屋",
+      "activity": "在洗衣台搓衣裳",
+      "home": "wash",
+      "haunts": ["cross", "sw_lane", "sugar", "noodle"],
+      "relations": [
+        { "npcId": "jev_sugar_kid", "text": "拉起孙娃子往屋头拖" },
+        { "npcId": "jev_noodle", "text": "找面摊老板说闲话" }
+      ],
+      "says": ["chat", "call_home", "pray", "shoo_player", "scream", "curse_sky", "omen"],
+      "lines": {
+        "call_home": ["幺儿！回来！快点回屋！", "死娃娃，还在外头疯，天都要黑了！"],
+        "pray": ["南无阿弥陀佛……", "观音菩萨，保佑我屋头一家老小……"],
+        "shoo_player": ["关二狗，你莫在我这点晃！", "爬远点，一身死人子味道！"],
+        "chat": ["东头那家媳妇又跑回娘屋了。", "今年水大，河边莫去哈。"],
+        "scream": ["哎呀我的衣裳！", "妈哟——"],
+        "curse_sky": ["刚晾出去的衣裳，又白洗了！"],
+        "omen": ["刚才那{event}，要出事哟。", "是哪个在作法，惹到天上的了。"]
+      },
+      "replies": {
+        "greet": ["二狗，又来了？吃了饭没得？", "你娃今天还晓得来看哈婆婆。"],
+        "gossip": ["东头那家媳妇又跑回娘屋了。", "今年水大，河边莫去哈。"],
+        "busy": ["莫站到这点，水溅你一身。", "衣裳还有一大盆，没空跟你扯。"],
+        "leaving": ["我去{dest}看哈我孙娃子。", "莫拦到，我要去{dest}。"],
+        "ask_player": ["你手上拿个{held}做啥子？莫乱来哈。", "二狗，你找我做啥子？"],
+        "about_event": ["刚才{where}那{event}，把我孙娃子吓哭了。", "你看到刚才那{event}没得？菩萨保佑……"],
+        "blame": ["刚才那{event}，是不是你在作法？", "关二狗，说实话，刚才那{event}是不是你搞的鬼？"],
+        "shoo": ["关二狗，你莫在我这点晃！", "爬远点，一身死人子味道！"],
+        "scared": ["南无阿弥陀佛……你莫过来……", "我一个老婆子，你莫吓我……"]
+      }
+    },
+    {
+      "npcId": "jev_sugar_kid",
+      "label": "守糖画的娃",
+      "identity": "洗衣婆的孙娃子，七八岁，天天守在糖画摊边上流口水",
+      "temper": "胆子大、好奇心重、爱凑热闹，大人越喊越要跑去看",
+      "activity": "守着糖画摊看人家画糖画",
+      "home": "sugar",
+      "haunts": ["cross", "fortune", "wash", "noodle", "front_yard"],
+      "relations": [
+        { "npcId": "jev_washer", "text": "跑回婆婆身边" },
+        { "npcId": "jev_hoop_kid", "text": "去找滚铁环的娃一起耍" }
+      ],
+      "says": ["gawk", "ask_player", "scream", "greet_player", "chat"],
+      "lines": {
+        "gawk": ["快来看！快来看！", "二狗哥又在变戏法了！", "{where}出事了，快来看！"],
+        "ask_player": ["二狗哥，你手头那个{held}是啥子？", "刚才那{event}是你弄的迈？再来一个嘛！"],
+        "scream": ["婆婆——！", "呜呜……婆婆！"],
+        "greet_player": ["二狗哥！", "二狗哥，带我去耍嘛！"],
+        "chat": ["我要吃糖画，我要那个龙！"]
+      },
+      "replies": {
+        "greet": ["二狗哥！", "二狗哥，带我去耍嘛！"],
+        "gossip": ["我跟你说，糖画爷爷今天画了条龙！", "婆婆说你背死人子，是真的迈？"],
+        "busy": ["等哈，我在看画糖画！", "莫挡到我，我要看他画龙。"],
+        "leaving": ["我要去{dest}耍，二狗哥你来不来？", "婆婆喊我去{dest}，我走了哈。"],
+        "ask_player": ["二狗哥，你手头那个{held}给我耍哈嘛！", "二狗哥，你在做啥子？"],
+        "about_event": ["二狗哥，刚才{where}那{event}你看到没得？好凶哦！", "刚才那{event}，我看得清清楚楚的！"],
+        "blame": ["刚才那{event}是你弄的迈？再来一个嘛！", "二狗哥，刚才那{event}是不是你变的戏法？"],
+        "shoo": ["不跟你耍了，哼！"],
+        "scared": ["婆婆——！", "二狗哥，我怕……"]
+      }
+    },
+    {
+      "npcId": "jev_fortune",
+      "label": "算命先生",
+      "identity": "在街边摆卦摊的瘦老头，戴一副破眼镜，吃的是嘴巴饭",
+      "temper": "见风使舵、爱卖弄，街上一出怪事就说他早就算到了，趁机卖符",
+      "activity": "坐在卦摊后头等生意",
+      "home": "fortune",
+      "haunts": ["w_north", "sugar", "cross", "noodle"],
+      "relations": [
+        { "npcId": "jev_monk", "text": "去找和尚抬杠" },
+        { "npcId": "jev_noodle", "text": "去面摊蹭口汤" }
+      ],
+      "says": ["omen", "sell_charm", "greet_player", "ask_player", "chat", "calm"],
+      "lines": {
+        "omen": ["我早就算到了，今天冲煞！", "刚才那{event}，天上开了口子，有人动了不该动的东西。"],
+        "sell_charm": ["平安符，三个铜板一张，挡灾挡煞！", "来来来，镇宅符，贴起就不怕！"],
+        "greet_player": ["关二狗，过来，先生跟你看个相。", "年轻人，你印堂发黑哦。"],
+        "ask_player": ["你娃手头那个{held}，哪里来的？", "刚才那{event}，是不是你搞的名堂？"],
+        "chat": ["世道乱，鬼神也乱。"],
+        "calm": ["莫慌莫慌，有先生在。"]
+      },
+      "replies": {
+        "greet": ["关二狗，过来，先生跟你看个相。", "年轻人，你印堂发黑哦。"],
+        "gossip": ["我跟你说，这条街上哪个的命我没算过？", "世道乱，鬼神也乱。"],
+        "busy": ["莫挡到我的卦摊，等生意的。", "先生在排卦，莫出声。"],
+        "trade": ["平安符，三个铜板一张，挡灾挡煞！", "来来来，先生给你算一卦，不准不要钱。"],
+        "leaving": ["先生去{dest}走一趟，回来再跟你算。"],
+        "ask_player": ["你娃手头那个{held}，哪里来的？", "年轻人，找先生算啥子？"],
+        "about_event": ["刚才{where}那{event}，我早就算到了，今天冲煞！", "刚才那{event}，天上开了口子，有人动了不该动的东西。"],
+        "blame": ["刚才那{event}，是不是你搞的名堂？先生一看就晓得。", "年轻人，刚才那{event}跟你脱不了干系。"],
+        "shoo": ["去去去，你这命先生不算。"],
+        "scared": ["这、这卦象不对，先生先走一步……"]
+      }
+    },
+    {
+      "npcId": "jev_paoge",
+      "label": "袍哥",
+      "identity": "街上管事的袍哥老幺，腰杆上别把短刀，吃这条街的份子钱",
+      "temper": "横得很，欺软怕硬，嘴上凶，真遇到邪门的事比哪个跑得都快",
+      "activity": "叉起腰在茶馆门口看街",
+      "home": "hall_gate",
+      "haunts": ["errand", "noodle", "front_yard", "south"],
+      "relations": [
+        { "npcId": "jev_noodle", "text": "去面摊收份子钱" },
+        { "npcId": "jev_runner", "text": "使唤跑腿伙计去办事" }
+      ],
+      "says": ["shoo_player", "ask_player", "chat", "curse_sky", "scream", "gawk"],
+      "lines": {
+        "shoo_player": ["关二狗！你龟儿又来找事迈？", "爬爬爬，莫在老子眼前晃！"],
+        "ask_player": ["你在搞啥子名堂？嗯？", "刚才那{event}，是不是你娃在作怪？"],
+        "chat": ["这个月的钱，莫忘了哈。", "有啥子事，报我的名字。"],
+        "curse_sky": ["格老子，这天是要翻了迈！"],
+        "scream": ["妈哟！", "格老子——"],
+        "gawk": ["让开让开，老子看哈！"]
+      },
+      "replies": {
+        "greet": ["关二狗，最近手头松活没得？", "二狗，有事报我的名字。"],
+        "gossip": ["这个月的钱，莫忘了哈。", "码头上那帮人，最近不安分。"],
+        "busy": ["老子在看街，莫来烦。", "一边去，老子忙到的。"],
+        "leaving": ["老子去{dest}收钱，莫挡路。"],
+        "ask_player": ["你在搞啥子名堂？嗯？", "你手头那个{held}，拿来老子看哈。"],
+        "about_event": ["刚才{where}那{event}，格老子，吓老子一跳。", "刚才那{event}，是哪个在这条街上撒野？"],
+        "blame": ["刚才那{event}，是不是你娃在作怪？", "关二狗，刚才那{event}要是你搞的，老子饶不了你！"],
+        "shoo": ["关二狗！你龟儿又来找事迈？", "爬爬爬，莫在老子眼前晃！"],
+        "scared": ["你、你莫过来，老子……老子有刀的！", "格老子，今天邪门得很，老子先走了。"]
+      }
+    },
+    {
+      "npcId": "jev_runner",
+      "label": "跑腿伙计",
+      "identity": "给茶馆跑腿送信的半大小伙子，腿快嘴快",
+      "temper": "机灵、爱传闲话，哪点出了事第一个跑去看，看完又满街去说",
+      "activity": "在跑腿铺门口等差事",
+      "home": "errand",
+      "haunts": ["hall_gate", "front_yard", "noodle", "south", "south_east"],
+      "relations": [
+        { "npcId": "jev_paoge", "text": "跑到袍哥跟前等吩咐" },
+        { "npcId": "jev_rice", "text": "找脚夫打听消息" }
+      ],
+      "says": ["gawk", "chat", "greet_player", "scream", "ask_player"],
+      "lines": {
+        "gawk": ["出事了出事了！", "快来看，{where}出事了！"],
+        "chat": ["刚才那{event}你看到没得？", "等哈我去茶馆头说。"],
+        "greet_player": ["二狗！今天有啥子新鲜事没得？"],
+        "scream": ["哎呀我的妈！"],
+        "ask_player": ["二狗，你刚才在干啥子？"]
+      },
+      "replies": {
+        "greet": ["二狗！今天有啥子新鲜事没得？", "二狗哥，要送信不？便宜。"],
+        "gossip": ["我跟你说，茶馆头昨晚上打起来了。", "罗二爷那边又在找人，你去不去？"],
+        "busy": ["等差事的，莫拉我。", "等哈，袍哥喊我随时要走。"],
+        "trade": ["送信跑腿，一个铜板一趟，二狗你要不要？"],
+        "leaving": ["我去{dest}送个信，回头再说！", "走了走了，{dest}那边等到的。"],
+        "ask_player": ["二狗，你刚才在干啥子？", "你手头那个{held}，哪里弄的？"],
+        "about_event": ["刚才{where}那{event}你看到没得？我要去茶馆头说！", "刚才那{event}，满街都在说！"],
+        "blame": ["二狗，刚才那{event}是不是你搞的？你给我说，我不说出去。"],
+        "shoo": ["莫挡路，我忙得很。"],
+        "scared": ["哎呀我的妈，我啥子都没看到！"]
+      }
+    },
+    {
+      "npcId": "jev_rice",
+      "label": "扛米的脚夫",
+      "identity": "在南街扛米包的下力人，光起脚板，一肩能扛两包",
+      "temper": "老实、闷，只晓得干活挣钱，最怕活路遭耽搁",
+      "activity": "蹲在米包边上歇气",
+      "home": "south",
+      "haunts": ["dock_road", "hall_gate", "south_east", "errand"],
+      "relations": [
+        { "npcId": "jev_porter", "text": "去找脚帮的兄弟伙" }
+      ],
+      "says": ["complain", "curse_sky", "chat", "scream", "calm"],
+      "lines": {
+        "complain": ["米包又重了，老板还要扣钱。", "下力人，挣几个钱不容易。"],
+        "curse_sky": ["背时的天！"],
+        "chat": ["今天船来得晚。"],
+        "scream": ["哦豁！"],
+        "calm": ["莫怕，天塌下来有高个子顶到。"]
+      },
+      "replies": {
+        "greet": ["二狗，来了。", "嗯，二狗。"],
+        "gossip": ["今天船来得晚。", "码头上说，下游又涨水了。"],
+        "busy": ["米包还没扛完，莫耽搁我。", "歇口气就走，没空扯。"],
+        "leaving": ["我去{dest}，活路等不得。"],
+        "ask_player": ["二狗，有啥子事？"],
+        "about_event": ["刚才{where}那{event}，吓得我米包都摔了。", "刚才那{event}……下力人，管不到那么多。"],
+        "blame": ["刚才那{event}，是你？莫乱来哈。"],
+        "shoo": ["你走你的，我干我的。"],
+        "scared": ["我、我只是扛米的……"]
+      }
+    },
+    {
+      "npcId": "jev_porter",
+      "label": "等活的脚帮汉",
+      "identity": "脚帮的棒棒，靠扁担绳子吃饭，天天在后街等活路",
+      "temper": "促狭、爱开玩笑，爱损关二狗，但讲义气",
+      "activity": "扛起扁担在后街等活路",
+      "home": "porters",
+      "haunts": ["back_mid", "back_east", "taoist", "back_west"],
+      "relations": [
+        { "npcId": "jev_lifu", "text": "跟力夫摆龙门阵" },
+        { "npcId": "jev_rice", "text": "去南街找扛米的兄弟" }
+      ],
+      "says": ["greet_player", "chat", "gawk", "shoo_player", "curse_sky", "ask_player"],
+      "lines": {
+        "greet_player": ["哟，关二狗，今天又背了几个死人子？", "二狗，有活路没得？分一个嘛。"],
+        "chat": ["罗二爷那边又在招人。", "这年生，活路难找哦。"],
+        "gawk": ["看嘛，看嘛，又有热闹看了！"],
+        "shoo_player": ["你离我远点，晦气！"],
+        "curse_sky": ["这鬼天，今天又没得活路了。"],
+        "ask_player": ["你娃手头那个{held}是啥子？", "你娃又在搞啥子名堂？"]
+      },
+      "replies": {
+        "greet": ["哟，关二狗，今天又背了几个死人子？", "二狗，有活路没得？分一个嘛。"],
+        "gossip": ["罗二爷那边又在招人。", "这年生，活路难找哦。"],
+        "busy": ["等活路的，莫把我的主顾挡了。"],
+        "trade": ["要扛啥子？一趟两个铜板，看在熟人面上。"],
+        "leaving": ["我去{dest}看哈有没得活路。"],
+        "ask_player": ["你娃手头那个{held}是啥子？", "二狗，找我有啥子好事？"],
+        "about_event": ["刚才{where}那{event}，看得老子眼睛都直了。", "刚才那{event}，你娃看到没得？稀奇！"],
+        "blame": ["刚才那{event}，是不是你娃搞的？你娃出息了哈！"],
+        "shoo": ["你离我远点，晦气！"],
+        "scared": ["二狗，你今天身上邪门得很，莫挨到我。"]
+      }
+    },
+    {
+      "npcId": "jev_lifu",
+      "label": "赶脚的力夫",
+      "identity": "牵牲口驮货的力夫，常年在后街和土路之间来回",
+      "temper": "急性子，赶时间，嫌东嫌西",
+      "activity": "在后街东段整理驮子",
+      "home": "back_east",
+      "haunts": ["gambling", "back_fork", "porters", "dirt_road", "north_yard"],
+      "relations": [
+        { "npcId": "jev_porter", "text": "跟脚帮汉扯两句" }
+      ],
+      "says": ["complain", "curse_sky", "shoo_player", "chat"],
+      "lines": {
+        "complain": ["路又烂了，驮子咋个走嘛。"],
+        "curse_sky": ["天杀的，把我牲口吓惊了！"],
+        "shoo_player": ["让开让开，莫挡路！"],
+        "chat": ["上山那条路，天黑了莫走。"]
+      },
+      "replies": {
+        "greet": ["二狗，有事快说。"],
+        "gossip": ["上山那条路，天黑了莫走。", "路又烂了，驮子咋个走嘛。"],
+        "busy": ["驮子还没捆好，莫打岔。"],
+        "leaving": ["我赶去{dest}，莫挡路！"],
+        "ask_player": ["你要做啥子？快点说。"],
+        "about_event": ["刚才{where}那{event}，把我牲口吓惊了！", "刚才那{event}，牲口到现在还在抖。"],
+        "blame": ["刚才那{event}是不是你搞的？我牲口遭吓惊了你赔！"],
+        "shoo": ["让开让开，莫挡路！"],
+        "scared": ["你莫过来，牲口要惊！"]
+      }
+    },
+    {
+      "npcId": "jev_yang",
+      "label": "洋行伙计",
+      "identity": "给洋行跑货的伙计，穿一身洋装，看不起街上的人",
+      "temper": "胆小、讲究，又爱摆谱，遇到怪事第一个往屋头钻",
+      "activity": "在杂货铺前点货",
+      "home": "gambling",
+      "haunts": ["back_east", "back_fork", "porters"],
+      "says": ["complain", "scream", "shoo_player", "chat"],
+      "lines": {
+        "complain": ["这些货点不清楚，洋老板要骂人的。"],
+        "scream": ["天哪！"],
+        "shoo_player": ["你莫挨到我，衣裳是新的。"],
+        "chat": ["洋人说那些都是迷信，我看也是。"]
+      },
+      "replies": {
+        "greet": ["哦，是你索。有啥子事？"],
+        "gossip": ["洋人说那些都是迷信，我看也是。", "洋老板说下个月要来一船新货。"],
+        "busy": ["我在点货，莫把数给我搅乱了。"],
+        "trade": ["洋火洋碱，要不要？贵是贵点。"],
+        "leaving": ["我去{dest}送货，失陪。"],
+        "ask_player": ["你拿个{held}做啥子？莫挨到我。", "你找我做啥子？"],
+        "about_event": ["刚才{where}那{event}……不科学，不科学。", "刚才那{event}，把我吓得货都掉了。"],
+        "blame": ["刚才那{event}，是不是你搞的？我要去报告洋老板。"],
+        "shoo": ["你莫挨到我，衣裳是新的。"],
+        "scared": ["天哪……你、你站远点！"]
+      }
+    },
+    {
+      "npcId": "jev_chess",
+      "label": "看棋的老汉",
+      "identity": "天天坐在东前街墙根看人下棋的老账房，退下来好些年了",
+      "temper": "慢条斯理、见过世面，爱讲老辈子的事，不容易慌",
+      "activity": "坐在墙根看人下棋",
+      "home": "east_front",
+      "haunts": ["pole", "south_east", "hall_gate", "east_mid"],
+      "relations": [
+        { "npcId": "jev_incense", "text": "去找卖香烛的婆婆说古" },
+        { "npcId": "jev_rest", "text": "跟歇脚的差役扯闲篇" }
+      ],
+      "says": ["omen", "chat", "calm", "ask_player", "greet_player"],
+      "lines": {
+        "omen": ["光绪年间也出过恁个一回事，后来河里就浮起来好几个死人子。", "刚才那{event}，不是好兆头。"],
+        "chat": ["我年轻的时候，这条街还没得茶馆。"],
+        "calm": ["莫慌，报应落的是恶人。", "躲到屋檐底下就是了，慌啥子。"],
+        "ask_player": ["二狗，你娃是不是惹到啥子了？"],
+        "greet_player": ["二狗，过来陪老汉坐哈。"]
+      },
+      "replies": {
+        "greet": ["二狗，过来陪老汉坐哈。", "年轻人，来看棋？"],
+        "gossip": ["我年轻的时候，这条街还没得茶馆。", "光绪年间，这条街上出过一个举人的。"],
+        "busy": ["莫出声，这步棋要紧。"],
+        "leaving": ["老汉去{dest}走走，腿坐麻了。"],
+        "ask_player": ["二狗，你娃是不是惹到啥子了？", "你手头那个{held}，老汉年轻时也见过。"],
+        "about_event": ["刚才{where}那{event}，光绪年间也出过一回，后来河里就浮起来好几个死人子。", "刚才那{event}，不是好兆头。"],
+        "blame": ["二狗，刚才那{event}，老汉晓得是你。收到点。"],
+        "shoo": ["去去，莫挡到老汉看棋。"],
+        "scared": ["活了几十年，没见过恁个邪门的……"]
+      }
+    },
+    {
+      "npcId": "jev_monk",
+      "label": "化缘和尚",
+      "identity": "外地来的苦行和尚，端个钵钵沿街化缘",
+      "temper": "木讷、虔诚，遇事就念经，不跟人争",
+      "activity": "端着钵钵在巷子口化缘",
+      "home": "monk_lane",
+      "haunts": ["east_up", "east_mid", "pole", "incense"],
+      "relations": [
+        { "npcId": "jev_fortune", "text": "去跟算命先生辩经" }
+      ],
+      "says": ["pray", "calm", "omen"],
+      "lines": {
+        "pray": ["阿弥陀佛……阿弥陀佛……", "南无大慈大悲观世音菩萨……"],
+        "calm": ["心正不怕邪，莫慌。"],
+        "omen": ["有东西醒了。", "刚才那{event}……天怒了，天怒了。"]
+      },
+      "replies": {
+        "greet": ["阿弥陀佛，施主。", "施主，结个善缘？"],
+        "gossip": ["贫僧从下游来，一路上都不太平。"],
+        "busy": ["阿弥陀佛……贫僧在化缘。"],
+        "trade": ["施主，布施一文，积个功德。"],
+        "leaving": ["贫僧往{dest}去了，施主保重。"],
+        "ask_player": ["施主手上那个{held}，戾气重。", "施主找贫僧何事？"],
+        "about_event": ["刚才{where}那{event}……有东西醒了。", "刚才那{event}，天怒了，阿弥陀佛。"],
+        "blame": ["施主，刚才那{event}，是你造的业。"],
+        "shoo": ["施主请回。"],
+        "scared": ["阿弥陀佛……阿弥陀佛……"]
+      }
+    },
+    {
+      "npcId": "jev_blade",
+      "label": "巡街的刀差",
+      "identity": "衙门的差役，腰上挎刀，在东街一带巡街",
+      "temper": "凶，爱摆官威，最烦关二狗这种二流子，见到可疑的事要去盘问",
+      "activity": "挎起刀在东街巡街",
+      "home": "east_up",
+      "haunts": ["east_mid", "pole", "east_north", "monk_lane", "incense"],
+      "relations": [
+        { "npcId": "jev_rest", "text": "去踢醒偷懒的同僚" },
+        { "npcId": "jev_hoop_kid", "text": "去撵滚铁环的娃" }
+      ],
+      "says": ["shoo_player", "ask_player", "calm", "curse_sky", "scream"],
+      "lines": {
+        "shoo_player": ["爬爬爬！个龟儿死叫花！", "关二狗，又是你！滚远点！"],
+        "ask_player": ["站到起！你在搞啥子？", "刚才那{event}，跟你娃有没得关系？"],
+        "calm": ["都莫乱跑！回屋头去！"],
+        "curse_sky": ["啷个恁个邪门……"],
+        "scream": ["妈哟！"]
+      },
+      "replies": {
+        "greet": ["关二狗，又是你。"],
+        "gossip": ["衙门里说，最近码头上不太平。"],
+        "busy": ["老子在巡街，莫挡道。"],
+        "leaving": ["老子去{dest}巡一圈，你老实点。"],
+        "ask_player": ["站到起！你在搞啥子？", "你手头拿的{held}，哪里来的？"],
+        "about_event": ["刚才{where}那{event}，你看到是哪个搞的没得？", "刚才那{event}，衙门里要查的。"],
+        "blame": ["刚才那{event}，跟你娃有没得关系？", "关二狗，刚才那{event}是不是你搞的？跟我去衙门走一趟！"],
+        "shoo": ["爬爬爬！个龟儿死叫花！", "关二狗，又是你！滚远点！"],
+        "scared": ["你、你站到那点莫动！"]
+      }
+    },
+    {
+      "npcId": "jev_rest",
+      "label": "墙根歇脚的差役",
+      "identity": "另一个差役，懒得出奇，成天靠在墙根打瞌睡",
+      "temper": "懒、怕事，能躲就躲，被吵醒就骂人",
+      "activity": "靠在墙根打瞌睡",
+      "home": "wall_rest",
+      "haunts": ["se_lane", "pole", "bridge_road"],
+      "relations": [
+        { "npcId": "jev_blade", "text": "去跟刀差报告" }
+      ],
+      "says": ["shoo_player", "complain", "scream", "curse_sky"],
+      "lines": {
+        "shoo_player": ["莫吵老子睡瞌睡！"],
+        "complain": ["当个差，一天到黑不得安生。"],
+        "scream": ["啥子啥子？出啥子事了？"],
+        "curse_sky": ["龟儿的，把老子吓醒了。"]
+      },
+      "replies": {
+        "greet": ["嗯？二狗？莫吵。"],
+        "gossip": ["当个差，一天到黑不得安生。"],
+        "busy": ["老子在打瞌睡，没看到？"],
+        "leaving": ["我去{dest}换个地方睡。"],
+        "ask_player": ["你要做啥子嘛，快说，说完我好睡。"],
+        "about_event": ["刚才{where}那{event}，把老子吓醒了。", "刚才那{event}，老子瞌睡都遭吓跑了。"],
+        "blame": ["刚才那{event}是你搞的？龟儿，害老子睡不成。"],
+        "shoo": ["莫吵老子睡瞌睡！"],
+        "scared": ["啥子啥子？出啥子事了？莫过来！"]
+      }
+    },
+    {
+      "npcId": "jev_incense",
+      "label": "卖香烛的婆婆",
+      "identity": "在东街开香烛铺的婆婆，卖香、蜡、纸钱，信得虔诚",
+      "temper": "精明、会做生意，信鬼神，一出怪事就拿香出来拜，也不忘了卖",
+      "activity": "守在香烛铺前理香",
+      "home": "incense",
+      "haunts": ["east_mid", "pole", "east_front"],
+      "relations": [
+        { "npcId": "jev_chess", "text": "去找看棋的老汉说道" },
+        { "npcId": "jev_monk", "text": "请和尚念两句" }
+      ],
+      "says": ["sell_charm", "pray", "omen", "hawk", "call_home"],
+      "lines": {
+        "sell_charm": ["香蜡纸钱！拜一拜，保平安！", "刚才那{event}邪得很，快买炷香敬一敬！"],
+        "pray": ["各路神仙莫怪，莫怪……"],
+        "omen": ["刚才那{event}邪得很，是有人冲撞了。"],
+        "hawk": ["香蜡纸钱，便宜卖了哈！"],
+        "call_home": ["屋头的，把门关到！"]
+      },
+      "replies": {
+        "greet": ["二狗，来买香的？"],
+        "gossip": ["前头那家死了人，香蜡买了一大包。"],
+        "busy": ["理香的，莫碰到。"],
+        "trade": ["香蜡纸钱！拜一拜，保平安！", "二狗，你背死人子的，多买点纸钱烧，免得遭缠到。"],
+        "leaving": ["我去{dest}一趟，铺子你莫乱碰。"],
+        "ask_player": ["你手上那个{held}，要不要拿来开个光？", "二狗，找我做啥子？买香就说。"],
+        "about_event": ["刚才{where}那{event}邪得很，是有人冲撞了。", "刚才那{event}，快买炷香敬一敬！"],
+        "blame": ["刚才那{event}是你冲撞的？快买炷香赔罪！"],
+        "shoo": ["不买东西就莫挡到铺子。"],
+        "scared": ["各路神仙保佑……你莫过来……"],
+        "give": ["拿到，这几样你用得着，莫说是我给的。", "拿去拿去，香火钱下回再给。"]
+      },
+      "handOut": [
+        { "item": "leifu" },
+        { "item": "bug_jar" },
+        { "item": "mugwort" },
+        { "item": "songming" },
+        { "item": "huozhezi" },
+        { "item": "shaojiu" },
+        { "item": "juzi" }
+      ]
+    },
+    {
+      "npcId": "jev_hoop_kid",
+      "label": "滚铁环的娃",
+      "identity": "东南街上滚铁环的野娃娃，没得人管",
+      "temper": "野、胆大，爱跟到关二狗屁股后头跑",
+      "activity": "在东南街滚铁环",
+      "home": "se_lane",
+      "haunts": ["pole", "east_mid", "bridge_road", "wall_rest", "south_east"],
+      "relations": [
+        { "npcId": "jev_sugar_kid", "text": "跑去找守糖画的娃耍" }
+      ],
+      "says": ["gawk", "ask_player", "greet_player", "scream"],
+      "lines": {
+        "gawk": ["刚才那{event}好凶！再来一个！", "快看快看！"],
+        "ask_player": ["二狗哥，你是神仙迈？"],
+        "greet_player": ["二狗哥，等到我！"],
+        "scream": ["哎呀！"]
+      },
+      "replies": {
+        "greet": ["二狗哥！", "二狗哥，等到我！"],
+        "gossip": ["我跟你说，刀差昨天追我追了半条街，没追到！"],
+        "busy": ["我在滚铁环，你看我滚得好不好！"],
+        "leaving": ["我去{dest}耍，二狗哥跟上！"],
+        "ask_player": ["二狗哥，你手头那个{held}给我耍哈！", "二狗哥，你是神仙迈？"],
+        "about_event": ["刚才那{event}好凶！再来一个！", "刚才{where}那{event}你看到没得？"],
+        "blame": ["刚才那{event}是不是二狗哥弄的？教我嘛！"],
+        "shoo": ["不跟你耍了！"],
+        "scared": ["哎呀！二狗哥我怕！"]
+      }
+    },
+    {
+      "npcId": "jev_gun",
+      "label": "背枪的兵",
+      "identity": "驻在街尾的兵，背一杆老套筒，守着出街的土路",
+      "temper": "木、听令，遇事先端枪，吓到了会乱喊",
+      "activity": "背起枪守在后街岔口",
+      "home": "back_fork",
+      "haunts": ["dirt_road", "gambling", "back_east", "north_yard"],
+      "relations": [
+        { "npcId": "jev_blade", "text": "去找刀差商量" }
+      ],
+      "says": ["shoo_player", "ask_player", "scream", "calm"],
+      "lines": {
+        "shoo_player": ["站住！不准过来！"],
+        "ask_player": ["干啥子的？"],
+        "scream": ["哪个？哪个在那点？"],
+        "calm": ["都莫动，原地莫动！"]
+      },
+      "replies": {
+        "greet": ["干啥子的？哦，是你。"],
+        "gossip": ["上头说土路那边有土匪。"],
+        "busy": ["站岗的，莫跟我说话。"],
+        "leaving": ["我去{dest}换岗。"],
+        "ask_player": ["干啥子的？", "你手头那个{held}，放下！"],
+        "about_event": ["刚才{where}那{event}，你看到是哪个没得？", "刚才那{event}，上头要问起来的。"],
+        "blame": ["刚才那{event}是你搞的？站住！"],
+        "shoo": ["站住！不准过来！"],
+        "scared": ["哪个？哪个在那点？莫过来！"]
+      }
+    },
+    {
+      "npcId": "jev_dog",
+      "label": "土狗",
+      "kind": "animal",
+      "identity": "面摊边上的土狗，靠吃剩面条过日子",
+      "temper": "护食、怕响动，一吓就往桌子底下钻，认得关二狗",
+      "activity": "趴在面摊边上等剩面",
+      "home": "noodle",
+      "haunts": ["cross", "front_yard", "wash"],
+      "acts": ["carry_on", "go", "go_home", "run_shelter", "approach_player", "avoid_player", "follow_player", "watch_event", "flee", "bark", "stretch"],
+      "anims": { "bark": "bark", "stretch": "stretch" },
+      "walkSpeed": 70,
+      "runSpeed": 220,
+      "replies": {
+        "friendly": ["汪！（摇尾巴）", "呜呜～（蹭你的腿）"],
+        "wary": ["呜……（往后缩）"],
+        "hostile": ["汪汪汪！", "呜——（龇起牙）"],
+        "ignore": ["（打个呵欠，又趴下了）"]
+      }
+    },
+    {
+      "npcId": "jev_cat",
+      "label": "瘦猫",
+      "kind": "animal",
+      "identity": "后街屋檐底下的野猫",
+      "temper": "警觉，一有响动就炸毛，不亲人",
+      "activity": "蹲在屋檐底下舔毛",
+      "home": "taoist",
+      "haunts": ["back_mid", "back_west"],
+      "acts": ["carry_on", "go", "go_home", "run_shelter", "avoid_player", "watch_event", "flee", "arch", "stretch"],
+      "anims": { "arch": "arch_alert", "stretch": "stretch" },
+      "walkSpeed": 55,
+      "runSpeed": 200,
+      "replies": {
+        "friendly": ["喵～"],
+        "wary": ["喵？（盯到你）"],
+        "hostile": ["哈——！（炸起毛）"],
+        "ignore": ["（舔毛，不理你）"]
+      }
+    },
+    {
+      "npcId": "jev_hen1",
+      "label": "花母鸡",
+      "kind": "animal",
+      "identity": "洗衣婆喂的花母鸡",
+      "temper": "傻，一吓就满街乱扑",
+      "activity": "在洗衣台边上啄食",
+      "home": "wash",
+      "haunts": ["cross", "sw_lane"],
+      "acts": ["carry_on", "go", "go_home", "avoid_player", "flee", "peck", "flap"],
+      "anims": { "peck": "peck", "flap": "wing_flap" },
+      "walkSpeed": 45,
+      "runSpeed": 150,
+      "replies": {
+        "friendly": ["咯咯咯～"],
+        "wary": ["咯？"],
+        "hostile": ["咯咯咯咯！（扑腾翅膀）"],
+        "ignore": ["（低头啄食）"]
+      }
+    },
+    {
+      "npcId": "jev_hen2",
+      "label": "黑母鸡",
+      "kind": "animal",
+      "identity": "西南巷散养的黑母鸡",
+      "temper": "胆小，跟到花母鸡跑",
+      "activity": "在巷子里啄食",
+      "home": "sw_lane",
+      "haunts": ["wash", "sw_end"],
+      "acts": ["carry_on", "go", "go_home", "avoid_player", "flee", "peck", "flap"],
+      "anims": { "peck": "peck", "flap": "wing_flap" },
+      "walkSpeed": 45,
+      "runSpeed": 150,
+      "replies": {
+        "friendly": ["咯咯～"],
+        "wary": ["咯……咯？"],
+        "hostile": ["咯咯咯！（扑腾）"],
+        "ignore": ["（啄它的，理都不理）"]
+      }
+    },
+    {
+      "npcId": "jev_goose",
+      "label": "大白鹅",
+      "kind": "animal",
+      "identity": "南街人家养的大白鹅",
+      "temper": "凶得很，见人就追，连差役都怕它",
+      "activity": "在南街东头踱来踱去",
+      "home": "south_east",
+      "haunts": ["south", "east_front", "pole"],
+      "acts": ["carry_on", "go", "go_home", "approach_player", "charge_player", "watch_event", "flee", "honk", "flap"],
+      "anims": { "run": "charge", "honk": "honk_stand", "flap": "wing_flap", "charge": "charge" },
+      "walkSpeed": 50,
+      "runSpeed": 170,
+      "replies": {
+        "friendly": ["嘎。"],
+        "wary": ["嘎？（伸长颈杆）"],
+        "hostile": ["嘎嘎嘎！（张开翅膀冲过来）"],
+        "ignore": ["（踱开了）"]
+      }
+    }
+  ],
+  "soundWords": {
+    "sfx_storm_brew": "天上闷闷地滚过一阵响，像是要变天",
+    "sfx_thunder_rumble": "远处滚过一阵闷雷",
+    "sfx_thunder_near": "头顶上炸开一声响雷，震得耳朵嗡嗡响",
+    "sfx_wind_gust": "一阵狂风呼呼地刮过去"
+  },
+  "tuning": {
+    "carryOnBonus": 0.25,
+    "lodNearRange": 500,
+    "lodMidRange": 1200,
+    "lodFarRange": 2400,
+    "routineGapNearSec": 4,
+    "routineGapMidSec": 12,
+    "routineGapFarSec": 40,
+    "commitSec": 3,
+    "farEventGapSec": 10,
+    "backgroundRefreshSec": 15,
+    "carryOnSec": [15, 30],
+    "dwellSec": [10, 20],
+    "maxRequestsPerMinute": 1200,
+    "maxConcurrentRequests": 64,
+    "requestTimeoutMs": 10000,
+    "maxPacksInFlight": 4,
+    "breakerWindow": 20,
+    "breakerMinSamples": 6,
+    "breakerProbeSec": 5,
+    "probeExpireMs": 1500,
+    "darkWordDim": 0.75,
+    "nightWordDim": 0.35,
+    "gustWordRatio": 1.6,
+    "vfxBlinkSec": 2,
+    "stateTokenBudget": 1500,
+    "salienceMin": 0.75,
+    "sightRange": 1000,
+    "nearRange": 220,
+    "maxBubbles": 5,
+    "bubbleScale": 2.2
+  }
+}

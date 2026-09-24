@@ -168,6 +168,8 @@ export interface HeldPropDeps {
    */
   playVfx: (
     effect: string, world: Vec3, host: { targetId: string; socket: string }, oneShot: boolean,
+    /** 开它的动作串 id（`playPropVfx` 动作才有）；只转给效果旁听者 */
+    runId?: number,
   ) => string | null;
   /**
    * 挪跟随效果的锚点。`carry` = 在飞的粒子一起平移的量（M-world wu；null = 不带，已发射的留在世界里自己飘）。
@@ -321,6 +323,8 @@ interface HeldParticleMount {
   id: string | null;
   /** 上一帧挪到的锚点（null = 这条还没挪过）：算"相对宿主的位移"要它 */
   last?: Vec3 | null;
+  /** 一次性效果：开它的动作串 id（锚点晚一帧才解出来时也照带） */
+  runId?: number;
 }
 
 /**
@@ -1504,14 +1508,17 @@ export class HeldPropSystem implements IGameSystem {
    * 在挂着的挂件上播一个一次性效果（`playPropVfx` 动作）。`point` = 贴图上的点，null = 起火点 → 挂点。
    * 挂点上没有挂件 ⇒ false（调用方报警）。锚点这一刻解不出来就等 update 解出来再开。
    */
-  playOneShot(targetId: string, socket: string, effect: string, point: [number, number] | null): boolean {
+  playOneShot(
+    targetId: string, socket: string, effect: string, point: [number, number] | null, runId?: number,
+  ): boolean {
     const entry = this.entries.get(this.key(targetId.trim(), socket.trim()));
     const id = effect.trim();
     if (!entry || !id) return false;
     const m: HeldParticleMount = { effect: id, point, id: null };
+    if (runId !== undefined) m.runId = runId;
     entry.oneShots.push(m);
     const at = this.mountWorld(entry, m, point ? null : this.resolveAnchor(entry));
-    if (at) m.id = this.deps.playVfx(m.effect, at, { targetId: entry.target, socket: entry.socket }, true);
+    if (at) m.id = this.deps.playVfx(m.effect, at, { targetId: entry.target, socket: entry.socket }, true, m.runId);
     return true;
   }
 
@@ -2202,7 +2209,7 @@ export class HeldPropSystem implements IGameSystem {
       const at = this.mountWorld(entry, m, fire);
       if (!m.id) {
         if (at) {
-          m.id = this.deps.playVfx(m.effect, at, { targetId: entry.target, socket: entry.socket }, true);
+          m.id = this.deps.playVfx(m.effect, at, { targetId: entry.target, socket: entry.socket }, true, m.runId);
           m.last = at;
         }
         return true;

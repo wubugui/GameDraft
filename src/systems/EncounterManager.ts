@@ -220,19 +220,21 @@ export class EncounterManager implements IGameSystem {
     // 进入结算即清空选项：opt.enabled 是生成时缓存值，await 边界上不再可信；
     // 清空后第二次进入会因 currentOptions[index] 为空而短路，杜绝重复消耗/重复结果。
     this.currentOptions = [];
+    // 选一个选项 = 一件事：扣物品与结果动作同一串（旁听者看到的是一件事）
+    const run = this.actionExecutor.openRun({ kind: 'encounter', id: this.currentEncounter?.id });
     try {
       if (opt.consumeItems) {
         for (const req of opt.consumeItems) {
           await this.actionExecutor.executeAwait({
             type: 'removeItem',
             params: { id: req.id, count: req.count },
-          });
+          }, null, run.scope);
         }
       }
 
       if (opt.resultActions.length > 0) {
         try {
-          await this.actionExecutor.executeBatchAwait(opt.resultActions);
+          await this.actionExecutor.executeBatchAwait(opt.resultActions, null, run.scope);
         } catch (e) {
           console.warn('EncounterManager: resultActions failed', e);
         }
@@ -244,6 +246,7 @@ export class EncounterManager implements IGameSystem {
         this.endEncounter();
       }
     } finally {
+      run.end();
       this.resolving = false;
     }
   }

@@ -177,6 +177,8 @@ interface InstanceRuntime {
   sortHost?: () => VfxSortHost | null;
   /** 一次性（`playVfx({oneShot})`）：放完了（`VfxInstanceSim.finished`）就自己收，不用谁来停 */
   oneShot?: boolean;
+  /** 最近一次把它开起来的动作串 id（见 `core/actionRun.ts`）；只转给旁听者，收掉时也报这一串 */
+  runId?: number;
   /**
    * 带光柱的模拟被条件翻假时不当场收：先 `stop()` 让光柱按 fadeOut 淡掉，淡完再收（`update` 里判 `beamsDark`）。
    * 没有光柱的效果永远不进这个态（与原来"条件一假当场收"逐位相同）。
@@ -190,6 +192,17 @@ interface InstanceRuntime {
 }
 
 const NO_BURN_TEMPLATES: ReadonlyMap<string, ResolvedBurnable> = new Map();
+
+/**
+ * 旁听"世界里冒出 / 收掉了一个效果"。`runId` = 开它的动作串（见 `core/actionRun.ts`）；
+ * 代码直接放的（燃烧、手持挂件）没有串，为 null。
+ */
+export type VfxWorldListener = (
+  kind: 'start' | 'stop',
+  effectId: string,
+  anchor: VfxAnchorDef | null,
+  runId: number | null,
+) => void;
 
 export class VfxSystem implements IGameSystem {
   private eventBus: EventBus | null = null;
@@ -791,10 +804,16 @@ export class VfxSystem implements IGameSystem {
     followWorld?: Vec3;
     /** 一次性临时实例：效果放完就自己收（手持挂件上的 `playPropVfx`）。一直发的发射器永远放不完 */
     oneShot?: boolean;
+    /** 开它的动作串 id（动作 handler 从执行作用域里取）；只转给旁听者，不影响效果本身 */
+    runId?: number;
   }): string | null {
     if (opts.instanceId) {
       const inst = this.instances.get(opts.instanceId);
       if (!inst) { this.deps.log(`playVfx: 当前场景没有实例「${opts.instanceId}」`); return null; }
+      if (inst.stopped || opts.restart) {
+        inst.runId = opts.runId;
+        this.notifyWorldListeners('start', inst.def.effect, inst.def.anchor ?? null, inst.runId);
+      }
       inst.stopped = false;
       if (opts.restart) {
         this.retireSim(inst);
@@ -810,6 +829,7 @@ export class VfxSystem implements IGameSystem {
       this.deps.log('playVfx: 需要 instanceId，或 effect + anchor/followWorld');
       return null;
     }
+    this.notifyWorldListeners('start', opts.effect, opts.anchor ?? null, opts.runId);
     const id = `__vfx_${opts.effect}_${++this.transientSeq}`;
     const anchor: VfxAnchorDef = opts.anchor ?? { x: 0, y: 0 };
     const def: VfxInstanceDef = { id, effect: opts.effect, anchor, seed: opts.seed, countScale: opts.countScale, autoStart: true };
@@ -818,6 +838,7 @@ export class VfxSystem implements IGameSystem {
       followWorld: opts.followWorld ? [opts.followWorld[0], opts.followWorld[1], opts.followWorld[2]] : null,
     };
     if (opts.oneShot) inst.oneShot = true;
+    if (opts.runId !== undefined) inst.runId = opts.runId;
     this.instances.set(id, inst);
     this.loadInstanceEffect(inst);
     return id;
@@ -925,6 +946,7 @@ export class VfxSystem implements IGameSystem {
   stopVfx(instanceId: string): void {
     const inst = this.instances.get(instanceId);
     if (!inst) return;
+    if (!inst.stopped) this.notifyWorldListeners('stop', inst.def.effect, inst.def.anchor ?? null, inst.runId);
     inst.stopped = true;
     this.softStopped.delete(instanceId);
     if (inst.transient) { this.instances.delete(instanceId); return; }
@@ -940,6 +962,7 @@ export class VfxSystem implements IGameSystem {
   stopVfxSoft(instanceId: string): void {
     const inst = this.instances.get(instanceId);
     if (!inst) return;
+    if (!inst.stopped) this.notifyWorldListeners('stop', inst.def.effect, inst.def.anchor ?? null, inst.runId);
     inst.stopped = true;
     inst.sim?.stop();
     if (inst.transient) this.softStopped.add(instanceId);
@@ -947,6 +970,33 @@ export class VfxSystem implements IGameSystem {
 
   /** 软停待收的临时实例 id（等在飞的粒子老化完） */
   private softStopped = new Set<string>();
+
+  /**
+   * 旁听"世界里冒出 / 收掉了一个效果"（演出与代码直接放的都算，场景布置库自带的常驻效果不算）。
+   * 世界脑靠它看见雷、雨、火光……不必逐个技能接线。纯旁听：抛了也吞掉，没人订阅时是一次空集合判断。
+   */
+  private worldListeners = new Set<VfxWorldListener>();
+
+  addWorldListener(fn: VfxWorldListener): () => void {
+    this.worldListeners.add(fn);
+    return () => { this.worldListeners.delete(fn); };
+  }
+
+  private notifyWorldListeners(
+    kind: 'start' | 'stop',
+    effectId: string | undefined,
+    anchor: VfxAnchorDef | null,
+    runId: number | undefined,
+  ): void {
+    if (this.worldListeners.size === 0 || !effectId) return;
+    for (const fn of this.worldListeners) {
+      try {
+        fn(kind, effectId, anchor, runId ?? null);
+      } catch {
+        /* 旁听方故障绝不影响粒子系统 */
+      }
+    }
+  }
 
   setVfxState(instanceId: string, state: VfxFlockState): void {
     const inst = this.instances.get(instanceId);
@@ -1049,6 +1099,19 @@ export class VfxSystem implements IGameSystem {
 
   get stats(): { instances: number; live: number; drawCalls: number; fields: number; simMs: number; beams: number } {
     return this.lastStats;
+  }
+
+  /**
+   * 此刻在场、开着的效果 id（去重）：世界脑拼"世界此刻的样子"用（雨、烟、火光……）。
+   * 被条件关掉的、停了的不算。
+   */
+  runningEffectIds(): string[] {
+    const out = new Set<string>();
+    for (const inst of this.instances.values()) {
+      if (!inst.eligible || inst.stopped || !inst.sim || !inst.def.effect) continue;
+      out.add(inst.def.effect);
+    }
+    return [...out];
   }
 
   /** 调试面板读：每个实例的状态（限定了粒子区域的另带区域统计） */

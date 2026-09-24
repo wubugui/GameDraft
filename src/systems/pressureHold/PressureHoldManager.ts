@@ -1,4 +1,4 @@
-import type { ActionExecutor } from '../../core/ActionExecutor';
+import type { ActionExecScope, ActionExecutor } from '../../core/ActionExecutor';
 import type { AssetManager } from '../../core/AssetManager';
 import type { GameContext, IGameSystem } from '../../data/types';
 import { TEXT_URLS } from '../../core/projectPaths';
@@ -100,9 +100,12 @@ export class PressureHoldManager implements IGameSystem {
       return 'completed';
     }
     this.running = true;
+    // 一次长按 = 一件事：按住音、中途打断、完成 / 放弃的动作同一串（旁听者看到的是一件事）
+    const run = this.actionExecutor.openRun({ kind: 'pressureHold', id });
     try {
-      return await this.runFlow(def, this.binding);
+      return await this.runFlow(def, this.binding, run.scope);
     } finally {
+      run.end();
       this.running = false;
     }
   }
@@ -130,6 +133,7 @@ export class PressureHoldManager implements IGameSystem {
   private async runFlow(
     def: PressureHoldDef,
     binding: PressureHoldRuntimeBinding,
+    scope: ActionExecScope,
   ): Promise<PressureHoldOutcome> {
     const interrupts = [...(def.interrupts ?? [])].sort((a, b) => a.atRatio - b.atRatio);
     const prompt = binding.resolveDisplayText(def.prompt);
@@ -145,7 +149,7 @@ export class PressureHoldManager implements IGameSystem {
         params: holdCue.volume === undefined
           ? { id: holdCue.id }
           : { id: holdCue.id, volume: holdCue.volume },
-      });
+      }, null, scope);
     }
 
     let startRatio = 0;
@@ -161,9 +165,9 @@ export class PressureHoldManager implements IGameSystem {
         abortOnReleaseFromRatio: def.abortOnReleaseFromRatio,
       });
       if (seg === 'released') {
-        return this.finishAborted(def);
+        return this.finishAborted(def, scope);
       }
-      await this.actionExecutor.executeBatchAwait(interrupt.actions ?? []);
+      await this.actionExecutor.executeBatchAwait(interrupt.actions ?? [], null, scope);
       if (interrupt.abort) {
         return 'aborted';
       }
@@ -181,18 +185,18 @@ export class PressureHoldManager implements IGameSystem {
       abortOnReleaseFromRatio: def.abortOnReleaseFromRatio,
     });
     if (lastSeg === 'released') {
-      return this.finishAborted(def);
+      return this.finishAborted(def, scope);
     }
     if (def.onComplete) {
-      await this.actionExecutor.executeBatchAwait(def.onComplete);
+      await this.actionExecutor.executeBatchAwait(def.onComplete, null, scope);
     }
     return 'completed';
   }
 
   /** abortOnReleaseFromRatio 触发的失败收场：执行 onAborted 后整次以 aborted 结束。 */
-  private async finishAborted(def: PressureHoldDef): Promise<PressureHoldOutcome> {
+  private async finishAborted(def: PressureHoldDef, scope: ActionExecScope): Promise<PressureHoldOutcome> {
     if (def.onAborted) {
-      await this.actionExecutor.executeBatchAwait(def.onAborted);
+      await this.actionExecutor.executeBatchAwait(def.onAborted, null, scope);
     }
     return 'aborted';
   }

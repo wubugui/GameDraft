@@ -28,6 +28,7 @@ import type {
 } from '../systems/objectExamine/types';
 import { OBJECT_EXAMINE_BACKGROUND_PRESETS } from '../systems/objectExamine/types';
 import type { SceneLightingDef } from '../data/types';
+import type { WorldBrainDebugState } from '../systems/worldBrain/WorldBrainSystem';
 
 /** F2 气味指示器调试：驱动味种 + 实时调烟形参数（只影响显示，不写盘/不动存档）。 */
 export interface SmellDebugController {
@@ -260,6 +261,27 @@ export interface DebugToolsDeps {
     getResolvedAmbience: () => ResolvedObjectExamineAmbience;
     setAmbiencePatch: (patch: Partial<ObjectExamineAmbience>) => void;
     resetAmbienceOverrides: () => void;
+  };
+  /** Jev 世界脑（开关 / 状态牌 / 全街重算 / 看最近一次请求） */
+  worldBrain?: {
+    isEnabled: () => boolean;
+    setEnabled: (on: boolean) => void;
+    forceReplanAll: () => void;
+    getDebugState: () => WorldBrainDebugState;
+    getLastRequest: () => unknown;
+    isOverlayVisible: () => boolean;
+    setOverlayVisible: (v: boolean) => void;
+    /** 游戏里切决策服务（Laya / Jev，null = .env.local 的缺省）与问法（null = 配置里的） */
+    getBackend: () => 'laya' | 'jev' | null;
+    setBackend: (b: 'laya' | 'jev' | null) => void;
+    getDecisionMode: () => 'auto' | 'choice' | 'perOption';
+    setDecisionMode: (m: 'choice' | 'perOption' | null) => void;
+    isNameTagsVisible: () => boolean;
+    setNameTagsVisible: (v: boolean) => void;
+    isInspectOnInteract: () => boolean;
+    setInspectOnInteract: (v: boolean) => void;
+    /** 道具表里所有带 use 的道具 */
+    listUsableItems: () => { id: string; name: string }[];
   };
 }
 
@@ -2177,6 +2199,84 @@ export class DebugTools {
     });
     debugPanelUI.addSection(LIGHTING_DEBUG_SECTION_ID, () => this.lightingSection!.build());
 
+    const brain = this.deps.worldBrain;
+    if (brain) {
+      debugPanelUI.addSection('Jev 世界脑', () => {
+        const s = brain.getDebugState();
+        const on = brain.isEnabled();
+        const jev = s.jev
+          ? !s.jev.reachable ? `开发服务器上没有${s.decider}转发` : s.jev.configured ? `已接通（${s.jev.provider} · ${s.jev.model ?? '自动选'}）` : `.env.local 缺 ${s.jev.missing ?? ''}`
+          : '还没查';
+        const backend = brain.getBackend() ?? s.jev?.defaultBackend ?? null;
+        const mode = brain.getDecisionMode();
+        const modeName = mode === 'perOption' ? '逐项是非' : mode === 'choice' ? '选择题' : '自动（Laya 逐项是非、Jev 选择题）';
+        return {
+          text:
+            `当前：${on ? `开（街上的人由 ${s.decider} 决定）` : '关（街上是默认逻辑）'}\n` +
+            `场景：${s.sceneId}${s.hasConfig ? '' : '（本场景没有世界脑配置，开了也不起作用）'}\n` +
+            `状态：${s.statusText}\n${s.decider}：${jev}\n问法：${modeName}\n` +
+            `请求 ${s.requests} 次 · 平均 ${s.avgLatencyMs ?? '—'} ms · $${s.cost.toFixed(4)}\n` +
+            '地址与 key 在仓库根 .env.local（LAYA_* / JEV_*）；改了不用重启。右上状态牌顶上也能切。',
+          actions: [
+            {
+              label: on ? '关掉世界脑' : '打开世界脑',
+              fn: () => {
+                brain.setEnabled(!on);
+                debugPanelUI.log(`世界脑：${on ? '已关（街上的人走回原位、恢复默认逻辑）' : '已开'}`);
+              },
+            },
+            {
+              label: backend === 'laya' ? '决策服务切到 Jev（公网）' : '决策服务切到 Laya（局域网）',
+              fn: () => {
+                const to = backend === 'laya' ? 'jev' : 'laya';
+                brain.setBackend(to);
+                debugPanelUI.log(`世界脑：决策服务切到 ${to === 'laya' ? 'Laya' : 'Jev'}，全街重想一遍`);
+              },
+            },
+            {
+              label: `问法：切到${mode === 'perOption' ? '选择题' : mode === 'choice' ? '自动' : '逐项是非'}`,
+              fn: () => brain.setDecisionMode(mode === 'perOption' ? 'choice' : mode === 'choice' ? null : 'perOption'),
+            },
+            {
+              label: brain.isNameTagsVisible() ? '收起名字牌' : '显示名字牌',
+              fn: () => brain.setNameTagsVisible(!brain.isNameTagsVisible()),
+            },
+            {
+              label: brain.isInspectOnInteract() ? '按 E 不再开详情' : '按 E 开详情',
+              fn: () => brain.setInspectOnInteract(!brain.isInspectOnInteract()),
+            },
+            {
+              label: brain.isOverlayVisible() ? '收起状态牌' : '显示状态牌',
+              fn: () => brain.setOverlayVisible(!brain.isOverlayVisible()),
+            },
+            {
+              label: '全街立刻重算',
+              fn: () => {
+                brain.forceReplanAll();
+                debugPanelUI.log('Jev 世界脑：全街重算');
+              },
+            },
+            {
+              label: '控制台打印最近一次请求',
+              fn: () => {
+                console.log('[Jev 世界脑] 最近一次请求', brain.getLastRequest());
+                debugPanelUI.log('最近一次请求已打印到控制台');
+              },
+              noRefresh: true,
+            },
+            // 道具表里所有"能用"的道具各给一件（带 use 的），方便当场试街上的反应——不认哪一件
+            ...brain.listUsableItems().map((it) => ({
+              label: `给一件「${it.name}」`,
+              fn: () => {
+                const ok = this.deps.inventoryManager.addItem(it.id, 1, { bypassSlotLimit: true });
+                debugPanelUI.log(ok ? `已给「${it.name}」（按 I 开背包使用）` : `给「${it.name}」失败`);
+              },
+            })),
+          ],
+        };
+      });
+    }
+
     debugPanelUI.addSection('Quick Actions', () => {
       const actions: { label: string; fn: () => void }[] = [
         {
@@ -2695,14 +2795,26 @@ export class DebugTools {
       const hint = this.debugMiddleButtonCameraZoomEnabled
         ? `中键摄像机缩放：开启\n仅在探索模式下生效。\n滚轮 / 中键拖动缩放；调试范围约 ${DEBUG_CAMERA_ZOOM_MIN}～${DEBUG_CAMERA_ZOOM_MAX}（场景配置的 zoom 过低时，继续缩小会先被夹到最小值）。`
         : '中键摄像机缩放：关闭\n开启后可在探索模式下用滚轮或中键拖动缩放镜头。';
+      // 调试滚轮一滚就把 zoom 标成「显式占用」，配了相机跟随透视的场景从此不再自动改景别——
+      // 这正是调试想要的（手动接管），但得有条路把它交回去，否则只能靠切场景。
+      const overridden = this.deps.camera.isZoomOverridden();
+      const followLine = `相机跟随透视：${overridden ? '让位中（zoom 被显式占着）' : '连续通道空闲（场景配了跟随即生效）'}`;
       return {
-        text: `${zoomLine}\n\n${hint}`,
+        text: `${zoomLine}\n${followLine}\n\n${hint}`,
         actions: [
           {
             label: this.debugMiddleButtonCameraZoomEnabled ? '关闭中键缩放' : '开启中键缩放',
             fn: () => {
               this.debugMiddleButtonCameraZoomEnabled = !this.debugMiddleButtonCameraZoomEnabled;
               debugPanelUI.log(`中键摄像机缩放: ${this.debugMiddleButtonCameraZoomEnabled ? 'on' : 'off'}`);
+            },
+          },
+          {
+            label: 'zoom 交回相机跟随透视',
+            fn: () => {
+              this.deps.camera.releaseZoomOverride();
+              debugPanelUI.log('zoom 已交回连续通道（场景没配 perspectiveScale.cameraFollow 时无变化）');
+              debugPanelUI.refresh();
             },
           },
         ],

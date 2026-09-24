@@ -7,6 +7,8 @@ import type { FlagStore, FlagValue } from './FlagStore';
 import type { GameStateController } from './GameStateController';
 import { reportDevError } from './devErrorOverlay';
 import { makeOwnerOrigin } from './actionOrigin';
+import { ActionRun, initiatorFromOrigin } from './actionRun';
+import type { ActionRunEnd, ActionRunInfo, ActionRunInitiator } from './actionRun';
 
 /**
  * 所有 action 统一走 executeAwait：顺序 await handler 返回的 Promise。
@@ -35,7 +37,25 @@ export interface ActionExecScope {
    * （见 `systems/performanceSession.ts`）。普通批恒为 undefined，一切照旧。
    */
   session?: PerformanceSession;
+  /**
+   * 这一批属于哪一串（见 `core/actionRun.ts`）。顶层批 / 单条动作进门时没有就现开一串，
+   * 嵌套容器原样往下传，于是同一件事引出的动作共用一个串 id。**只给旁听者用**，执行语义不看它。
+   */
+  run?: ActionRun;
+  /** 顶层调用方声明"这一串是谁起的头"；只在现开一串时读，缺省按来源上下文推 */
+  initiator?: ActionRunInitiator;
 }
+
+/** 旁听者拿到的执行上下文：这是哪一串、谁起的头、从哪来、是不是脱手演出里的。 */
+export interface ActionListenContext {
+  readonly run: ActionRunInfo;
+  readonly origin: ActionOriginContext | null;
+  /** 所属脱手演出会话的名字（`runActionsDetached` 的 id）；不在脱手演出里为 undefined */
+  readonly session?: string;
+  readonly detached: boolean;
+}
+
+export type ActionListener = (type: string, params: Record<string, unknown>, ctx: ActionListenContext) => void;
 
 /** 缺省作用域：锁住玩家。冻结导出，免得任何一处就地改写殃及全局。 */
 export const SCOPE_ATTACHED: ActionExecScope = Object.freeze({ detached: false });
@@ -74,6 +94,71 @@ export class ActionExecutor {
    * 默认 null——生产环境无任何设置方，行为与从前一致。
    */
   static actionObserver: ((type: string, params: Record<string, unknown>) => void) | null = null;
+  /**
+   * 旁听每一条真正要执行的动作（世界脑靠它"看见"世界里发生的事，不必逐个技能接线）。
+   * 纯旁听：拿不到返回值、改不了参数、抛了也吞掉；没人订阅时就是一次空集合判断。
+   */
+  private actionListeners = new Set<ActionListener>();
+
+  addActionListener(fn: ActionListener): () => void {
+    this.actionListeners.add(fn);
+    return () => { this.actionListeners.delete(fn); };
+  }
+
+  /**
+   * 旁听"这一串结束了"：串里最后一处占用放掉时发一次（见 `core/actionRun.ts`）。
+   * 与动作旁听同一口径：纯旁听、抛了也吞掉，没人订阅时是一次空集合判断。
+   */
+  private runEndListeners = new Set<(end: ActionRunEnd) => void>();
+  private runSeq = 0;
+
+  addRunEndListener(fn: (end: ActionRunEnd) => void): () => void {
+    this.runEndListeners.add(fn);
+    return () => { this.runEndListeners.delete(fn); };
+  }
+
+  private readonly notifyRunEnd = (end: ActionRunEnd): void => {
+    if (this.runEndListeners.size === 0) return;
+    for (const fn of this.runEndListeners) {
+      try {
+        fn(end);
+      } catch {
+        /* 旁听方故障绝不影响动作执行 */
+      }
+    }
+  };
+
+  private newRun(initiator: ActionRunInitiator | undefined): ActionRun {
+    return new ActionRun(++this.runSeq, initiator, this.notifyRunEnd);
+  }
+
+  /** 作用域里没有串就现开一串（发起方：调用方声明的 → 来源上下文推的 → unknown） */
+  private withRun(scope: ActionExecScope, originContext: ActionOriginContext | null): ActionExecScope {
+    if (scope.run) return scope;
+    return { ...scope, run: this.newRun(scope.initiator ?? initiatorFromOrigin(originContext)) };
+  }
+
+  /**
+   * 手动开一串：给"一件事要跨很多次 `executeAwait`"的宿主用（过场逐步执行）。
+   * 每一步都传回 `scope`；整件事完了调 `end()`（幂等），`interrupted` 标它是被收掉的。
+   */
+  openRun(
+    initiator: ActionRunInitiator,
+    base: ActionExecScope = SCOPE_ATTACHED,
+  ): { scope: ActionExecScope; end(interrupted?: boolean): void } {
+    const run = this.newRun(initiator);
+    const release = run.hold();
+    let ended = false;
+    return {
+      scope: { ...base, run },
+      end: (interrupted = false) => {
+        if (ended) return;
+        ended = true;
+        if (interrupted) run.markInterrupted();
+        release();
+      },
+    };
+  }
 
   private static normalizeActionTypeKey(raw: unknown): string {
     if (raw === null || raw === undefined) return '';
@@ -229,19 +314,43 @@ export class ActionExecutor {
         /* 调试通道故障绝不影响动作执行 */
       }
     }
-    await this.runWithExploreActionLock(scope, async () => {
-      const handler = this.handlers.get(typeKey);
-      if (!handler) {
-        console.warn(`ActionExecutor: unknown action type "${typeKey}"`);
-        // dev 必须打到屏上（authoring 期错误要响）：编辑器/validator 拦不住绕过编辑器手改的
-        // JSON 与数据漂移；prod 保持 warn+跳过的容错取向（reportDevError 在 prod 是 no-op）。
-        reportDevError(
-          `ActionExecutor: 数据引用了未注册的动作类型 "${typeKey}"（已跳过）——检查拼写，或按 add-game-action 三件套补注册`,
-        );
-        return;
+    // 串：进门时没有就现开（顶层单条动作自成一串），占到本条动作跑完。这一段全同步、不插 await——
+    // 脱手演出的同步补跑靠"handler 在第一个 await 之前就被调掉"（见 Game.buildPerformanceSessions）。
+    const runScope = this.withRun(scope, originContext);
+    const run = runScope.run as ActionRun;
+    const release = run.hold();
+    try {
+      if (this.actionListeners.size > 0) {
+        const ctx: ActionListenContext = {
+          run,
+          origin: originContext,
+          session: runScope.session?.id,
+          detached: runScope.detached,
+        };
+        for (const fn of this.actionListeners) {
+          try {
+            fn(typeKey, action.params ?? {}, ctx);
+          } catch {
+            /* 旁听方故障绝不影响动作执行 */
+          }
+        }
       }
-      await Promise.resolve(handler(action.params, originContext, scope));
-    });
+      await this.runWithExploreActionLock(runScope, async () => {
+        const handler = this.handlers.get(typeKey);
+        if (!handler) {
+          console.warn(`ActionExecutor: unknown action type "${typeKey}"`);
+          // dev 必须打到屏上（authoring 期错误要响）：编辑器/validator 拦不住绕过编辑器手改的
+          // JSON 与数据漂移；prod 保持 warn+跳过的容错取向（reportDevError 在 prod 是 no-op）。
+          reportDevError(
+            `ActionExecutor: 数据引用了未注册的动作类型 "${typeKey}"（已跳过）——检查拼写，或按 add-game-action 三件套补注册`,
+          );
+          return;
+        }
+        await Promise.resolve(handler(action.params, originContext, runScope));
+      });
+    } finally {
+      release();
+    }
   }
 
   /** 顺序执行批量动作并 await 每一条；originContext 与 scope 原样传给批内每条动作。 */
@@ -251,8 +360,30 @@ export class ActionExecutor {
     scope: ActionExecScope = SCOPE_ATTACHED,
   ): Promise<void> {
     const gen = this.generation;
+    // 整批共用一串（嵌套容器传进来的已经带着，原样用），占到整批跑完
+    const runScope = this.withRun(scope, originContext);
+    const run = runScope.run as ActionRun;
+    const release = run.hold();
+    try {
+      await this.runBatch(actions, originContext, runScope, gen, run);
+    } finally {
+      release();
+    }
+  }
+
+  private async runBatch(
+    actions: ActionDef[],
+    originContext: ActionOriginContext | null,
+    scope: ActionExecScope,
+    gen: number,
+    run: ActionRun,
+  ): Promise<void> {
     for (const action of actions) {
-      if (gen !== this.generation || this.destroyed) return;
+      if (gen !== this.generation || this.destroyed) {
+        // 死亡 / 读档把剩下的动作作废了：这一串是被收掉的，不是走完的
+        run.markInterrupted();
+        return;
+      }
       /**
        * 所属会话已被打断 ⇒ 本批剩下的按**快进**跑：纯演出整条跳过，结算照做。
        *
@@ -290,6 +421,8 @@ export class ActionExecutor {
     this.handlers.clear();
     this.paramNamesMap.clear();
     this.actionPolicyStack = [];
+    this.actionListeners.clear();
+    this.runEndListeners.clear();
   }
 
   /**

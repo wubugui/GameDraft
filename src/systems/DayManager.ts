@@ -286,7 +286,7 @@ export class DayManager implements IGameSystem {
     due.sort((a, b) => a.targetDay - b.targetDay);
     for (const evt of due) {
       try {
-        await this.actionExecutor.executeBatchAwait(evt.actions);
+        await this.actionExecutor.executeBatchAwait(evt.actions, null, { detached: false, initiator: { kind: 'day' } });
       } catch (e) {
         console.warn('DayManager: delayed actions failed', e);
       }

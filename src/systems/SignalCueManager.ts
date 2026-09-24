@@ -78,7 +78,10 @@ export class SignalCueManager implements IGameSystem {
     }
     this.inFlight.add(id);
     try {
-      await this.actionExecutor.executeBatchAwait(def.actions);
+      await this.actionExecutor.executeBatchAwait(def.actions, null, {
+        detached: false,
+        initiator: { kind: 'signalCue', id },
+      });
     } finally {
       this.inFlight.delete(id);
     }

@@ -301,7 +301,7 @@ export class HealthSystem implements IGameSystem {
           params: { sourceType: 'system', sourceId: 'health', signal: 'death_tether' },
         },
       ];
-      await this.actionExecutor.executeBatchAwait(actions);
+      await this.actionExecutor.executeBatchAwait(actions, null, { detached: false, initiator: { kind: 'health' } });
     } catch (e) {
       console.warn('HealthSystem: death-tether actions failed', e);
     }

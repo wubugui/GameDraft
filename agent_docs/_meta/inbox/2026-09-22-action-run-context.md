@@ -1,0 +1,3 @@
+- 现实：ActionExecutor 新增「动作串」（src/core/actionRun.ts）：顶层批 / 单条动作进门现开一串，随 ActionExecScope.run 显式线程化；脱手演出会话占着开它的那一串直到播完/被打断；过场、遭遇、长按、用规矩用 openRun 整件事一串；旁听口 addActionListener 第三参带 {run, origin, session, detached}，另有 addRunEndListener（串结束，带 interrupted）；VfxSystem.addWorldListener 第四参带 runId。
+- 库内：detached-performance-session / zone-lifecycle-contracts 卡没提动作串；ActionExecScope 现在多了 run / initiator 两个可选字段（只给旁听者用，执行语义不看）。
+- 建议：给 runtime/mechanisms 补一张「动作串与旁听口」卡，写明"发起方从 scope.initiator → 来源上下文推 → unknown"、"没订阅者时行为不变"、"新的无来源顶层调用点要带 initiator"。

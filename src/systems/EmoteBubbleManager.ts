@@ -557,6 +557,22 @@ export class EmoteBubbleManager implements IGameSystem {
     }
   }
 
+  /**
+   * 只拆某个锚点头上、某个归属方的气泡（立刻拆，不播退场）；返回拆了几个。
+   * 供同一归属方"新话顶掉自己的旧话"——别的归属方（导演 action / 过场）的气泡一律不动。
+   */
+  removeFor(anchor: IEmoteBubbleAnchor, owner: string): number {
+    let n = 0;
+    for (let i = this.activeBubbles.length - 1; i >= 0; i--) {
+      const entry = this.activeBubbles[i];
+      if (entry.anchor !== anchor || entry.owner !== owner) continue;
+      this.removeBubble(entry);
+      this.activeBubbles.splice(i, 1);
+      n++;
+    }
+    return n;
+  }
+
   cleanup(): void {
     for (const id of this.pendingTimers) clearTimeout(id);
     this.pendingTimers.clear();

@@ -107,14 +107,22 @@ export class EventBridge {
 
     this.listen('shop:purchase', async (p: { itemId: string; price: number }) => {
       try {
-        await actionExecutor.executeAwait({ type: 'shopPurchase', params: { itemId: p.itemId, price: p.price } });
+        await actionExecutor.executeAwait(
+          { type: 'shopPurchase', params: { itemId: p.itemId, price: p.price } },
+          null,
+          { detached: false, initiator: { kind: 'shop', id: p.itemId } },
+        );
       } catch (e) {
         console.warn('EventBridge: shopPurchase failed', e);
       }
     });
     this.listen('inventory:discard', async (p: { itemId: string }) => {
       try {
-        await actionExecutor.executeAwait({ type: 'inventoryDiscard', params: { itemId: p.itemId } });
+        await actionExecutor.executeAwait(
+          { type: 'inventoryDiscard', params: { itemId: p.itemId } },
+          null,
+          { detached: false, initiator: { kind: 'item', id: p.itemId } },
+        );
       } catch (e) {
         console.warn('EventBridge: inventoryDiscard failed', e);
       }
@@ -138,7 +146,7 @@ export class EventBridge {
         await actionExecutor.executeAwait({
           type: 'switchScene',
           params: { targetScene: p.sceneId },
-        });
+        }, null, { detached: false, initiator: { kind: 'mapTravel', id: p.sceneId } });
       } catch (e) {
         console.warn('EventBridge: map:travel switchScene action failed', e);
       }
@@ -181,12 +189,22 @@ export class EventBridge {
       // R11：无论有无 resultText，状态恢复都在这一步完成——closePanel 统一关面板 + 弹栈
       // 恢复（RuleUseUI 不再自关）。此后有 resultText 才另起一段 UIOverlay 包裹展示。
       stateController.closePanel('ruleUse');
+      // 用规矩这一件事：结算批与"用过"标记同一串（旁听者看到的是一件事，不是两件）
+      const rule = actionExecutor.openRun({ kind: 'rule', id: p.ruleId });
       try {
-        await actionExecutor.executeBatchAwait(p.actions);
-      } catch (e) {
-        console.warn('EventBridge: ruleUse:apply actions failed', e);
+        try {
+          await actionExecutor.executeBatchAwait(p.actions, null, rule.scope);
+        } catch (e) {
+          console.warn('EventBridge: ruleUse:apply actions failed', e);
+        }
+        await actionExecutor.executeAwait(
+          { type: 'setFlag', params: { key: FlagKeys.ruleUsed(p.ruleId), value: true } },
+          null,
+          rule.scope,
+        );
+      } finally {
+        rule.end();
       }
-      await actionExecutor.executeAwait({ type: 'setFlag', params: { key: FlagKeys.ruleUsed(p.ruleId), value: true } });
       if (p.resultText) {
         stateController.setState(GameState.UIOverlay);
         await inspectBox.show(p.resultText);
@@ -217,7 +235,10 @@ export class EventBridge {
         }
         stateController.closePanel('inventory');
         try {
-          await actionExecutor.executeBatchAwait(p.actions);
+          await actionExecutor.executeBatchAwait(p.actions, null, {
+            detached: false,
+            initiator: { kind: 'item', id: p.itemId },
+          });
         } catch (e) {
           console.warn('EventBridge: item:use actions failed', e);
         }
