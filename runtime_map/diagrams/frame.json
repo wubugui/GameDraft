@@ -1,0 +1,5057 @@
+{
+  "id": "frame",
+  "title": "一帧：每帧更新顺序与各游戏状态下的系统开停",
+  "summary": "主循环挂在 Pixi 的 ticker 上，一个渲染帧调一次 Game.tick(dt)（可变步长，dt 上限 0.1 秒，没有固定步长累加器）。同一次 ticker 回调里依次是：主逻辑 tick → 角色着色帧组同步 → Pixi 渲染 → WebGL 错误排空。tick 内部先做帧头（引导浮标、说明卡/死亡早退、时钟），再跑不分状态的世界级系统，然后按当前游戏状态进入探索 / 过场 / 对话 / 遭遇 / 小游戏 / 动作链各自的分支，之后是 UI、吃暂停闸的世界模拟、相机定稿、声音、深度与着色驱动、光照阴影，最后排序并清输入沿。\"世界暂停\"= 说明卡打开或处于主菜单 / 切场景 / 界面覆盖 / 死亡。",
+  "entry": [
+    {
+      "id": "e1",
+      "label": "主循环挂到 Pixi ticker",
+      "detail": "Game.start 里先记下起始时间，再把 mainTick 挂进 Pixi 的 ticker（未指定优先级）。挂载时机早于任何场景装载：开场演出期间世界侧实体也靠它驱动。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4240,
+          "m": "主 tick 必须在任何场景装载**之前**挂载"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4252,
+          "m": "this.lastTime = performance.now()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4269,
+          "m": "ticker.add(this.mainTick)"
+        }
+      ]
+    },
+    {
+      "id": "e2",
+      "label": "可变步长：每个渲染帧最多调一次 tick",
+      "detail": "mainTick 用真实时间差算 dt，上限夹到 0.1 秒；没有累加器、没有固定步长循环。一次 mainTick 至多调用一次 tick(dt)。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4254,
+          "m": "const now = performance.now()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4255,
+          "m": "const dt = Math.min((now - this.lastTime) / 1000, 0.1)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4267,
+          "m": "if (!this.fixedTickMode) this.tick(dt)"
+        }
+      ]
+    },
+    {
+      "id": "e3",
+      "label": "逻辑冻结：整帧跳过 tick，只清输入沿",
+      "detail": "冻结原因集合非空时（叙事断点命中 / 运行时编辑模式），mainTick 只做一次输入沿清理就返回；Pixi 照常渲染。两个冻结来源都只在开发构建里接得上。",
+      "status": "dev-only",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4257,
+          "m": "if (this.logicFreezeReasons.size > 0)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4264,
+          "m": "this.inputManager.endFrame()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4536,
+          "m": "setLogicFrozen: (frozen) => this.setLogicFrozen('narrative', frozen)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3517,
+          "m": "this.setLogicFrozen('authoring', frozen)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4411,
+          "m": "if (!import.meta.env.DEV) return false;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3513,
+          "m": "if (import.meta.env.DEV) {"
+        }
+      ]
+    },
+    {
+      "id": "e4",
+      "label": "固定步调试模式：tick 改由调试命令驱动",
+      "detail": "fixedTickMode 打开时 mainTick 不调 tick；改由调试命令一次推 N 个固定步：每步 tick(dt) → HUD 固定步 → 让出一轮事件循环，最后手动提交一次渲染。开关只能经开发构建的运行时命令通道打开。",
+      "status": "dev-only",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 9802,
+          "m": "this.fixedTickMode = enabled"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9891,
+          "m": "this.tick(dt);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9892,
+          "m": "this.hud.stepFixedTick(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9899,
+          "m": "this.renderer.app.render();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9715,
+          "m": "if (!import.meta.env.DEV) return;"
+        }
+      ]
+    },
+    {
+      "id": "e5",
+      "label": "同一个 ticker 上的先后",
+      "detail": "同一次 ticker 回调里依优先级排：主逻辑 mainTick（未指定优先级）→ 角色网格着色帧组同步（LOW+1）→ Pixi 自己的渲染（LOW）→ WebGL 错误排空（UTILITY，渲染之后）。LOW/UTILITY 的数值关系来自 Pixi 库，代码里只有注释说明。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4269,
+          "m": "ticker.add(this.mainTick)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4286,
+          "m": "ticker.add(this.charLitFrameSync, undefined, UPDATE_PRIORITY.LOW + 1)"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 134,
+          "m": "ticker.add(this.render, this, LOW)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4617,
+          "m": "ticker.add(this.glPostRenderDrain, undefined, UPDATE_PRIORITY.UTILITY)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 886,
+          "m": "优先级 UTILITY，低于内置 render"
+        }
+      ]
+    },
+    {
+      "id": "e6",
+      "label": "拆除时摘掉",
+      "detail": "destroy 时把 mainTick 从 ticker 上摘除。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10196,
+          "m": "this.renderer.app.ticker.remove(this.mainTick)"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "id": "s1",
+      "order": 1,
+      "label": "引导浮标：收不收起来",
+      "code": "this.guidanceLayerUI?.applyVisibility()",
+      "gate": "always",
+      "gateText": "无条件，排在所有早退之前",
+      "group": "帧头（早退之前）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10527,
+          "m": "this.guidanceLayerUI?.applyVisibility()"
+        }
+      ]
+    },
+    {
+      "id": "s2",
+      "order": 2,
+      "label": "记录帧率",
+      "code": "this.lastFps = dt > 0 ? 1 / dt : 0",
+      "gate": "always",
+      "gateText": "过了帧头早退即执行",
+      "group": "帧统计与时钟",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10533,
+          "m": "this.lastFps = dt > 0 ? 1 / dt : 0"
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "order": 3,
+      "label": "累计游玩时长",
+      "code": "this.playTimeMs += dt * 1000",
+      "gate": "always",
+      "gateText": "过了帧头早退即执行",
+      "group": "帧统计与时钟",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10534,
+          "m": "this.playTimeMs += dt * 1000"
+        }
+      ]
+    },
+    {
+      "id": "s4",
+      "order": 4,
+      "label": "求本帧\"世界是否暂停\"",
+      "code": "const worldPaused = this.isWorldPaused()",
+      "gate": "always",
+      "gateText": "算一次，本帧后面的暂停闸都读它",
+      "group": "帧统计与时钟",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10535,
+          "m": "const worldPaused = this.isWorldPaused()"
+        }
+      ]
+    },
+    {
+      "id": "s5",
+      "order": 5,
+      "label": "推进游戏时钟（到期的演出等待在此兑现）",
+      "code": "this.gameClock.advance(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "帧统计与时钟",
+      "status": "active",
+      "async": "sync",
+      "note": "到期定时器的回调在 advance 内同步执行（gameClock.ts drain）。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10537,
+          "m": "if (!worldPaused) this.gameClock.advance(dt)"
+        },
+        {
+          "f": "src/systems/gameClock.ts",
+          "l": 46,
+          "m": "advance(dtSec: number): void"
+        }
+      ]
+    },
+    {
+      "id": "s6",
+      "order": 6,
+      "label": "相机像素吸附开关",
+      "code": "this.camera.setPixelSnapTranslation(this.isEntityPixelDensityMatchRenderingOn())",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "帧统计与时钟",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10539,
+          "m": "this.camera.setPixelSnapTranslation("
+        }
+      ]
+    },
+    {
+      "id": "s7",
+      "order": 7,
+      "label": "位面对账",
+      "code": "this.planeReconciler.update(dt)",
+      "gate": "always",
+      "gateText": "无条件（排在探索分支之前）",
+      "group": "世界级系统（不分游戏状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10543,
+          "m": "this.planeReconciler.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s8",
+      "order": 8,
+      "label": "气味方向",
+      "code": "this.smellSystem.update(dt)",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "世界级系统（不分游戏状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10545,
+          "m": "this.smellSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s9",
+      "order": 9,
+      "label": "画布舞台实体动画",
+      "code": "this.canvasStageSystem.update(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "世界级系统（不分游戏状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10549,
+          "m": "if (!worldPaused) this.canvasStageSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s10",
+      "order": 10,
+      "label": "呼吸图",
+      "code": "this.breathingOverlaySystem.update(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "世界级系统（不分游戏状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10551,
+          "m": "if (!worldPaused) this.breathingOverlaySystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s11",
+      "order": 11,
+      "label": "时段换装（等安全窗口）",
+      "code": "this.drainPendingPhaseSwap()",
+      "gate": "always",
+      "gateText": "每帧调用；内部只在探索态、未切场、无换装在途时才动手",
+      "group": "世界级系统（不分游戏状态）",
+      "status": "active",
+      "async": "fire-and-forget",
+      "note": "需要换背景时发起场景重载，不等它完成。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10553,
+          "m": "this.drainPendingPhaseSwap()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9347,
+          "m": "if (this.stateController.currentState !== GameState.Exploring) return;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9373,
+          "m": "void this.reloadSceneForPhase("
+        }
+      ]
+    },
+    {
+      "id": "s12",
+      "order": 12,
+      "label": "NPC 日程走位",
+      "code": "this.npcScheduleSystem.update(dt)",
+      "gate": "always",
+      "gateText": "每帧调用；内部非探索态直接返回",
+      "group": "世界级系统（不分游戏状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10555,
+          "m": "this.npcScheduleSystem.update(dt)"
+        },
+        {
+          "f": "src/systems/NpcScheduleSystem.ts",
+          "l": 287,
+          "m": "if (!b.isExploring()) return;"
+        }
+      ]
+    },
+    {
+      "id": "s13",
+      "order": 13,
+      "label": "回到探索态时解除演出镜头跟随",
+      "code": "this.cameraFollowTargetId = null; this.cameraFollowRef = null",
+      "gate": "state:Exploring",
+      "gateText": "有跟随目标且当前是探索态",
+      "group": "镜头",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10561,
+          "m": "this.cameraFollowTargetId !== null || this.cameraFollowRef !== null"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10562,
+          "m": "this.stateController.currentState === GameState.Exploring"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10563,
+          "m": "this.cameraFollowTargetId = null;"
+        }
+      ]
+    },
+    {
+      "id": "s14",
+      "order": 14,
+      "label": "玩家身体动词（姿态与一次性动作）",
+      "code": "this.playerActionSystem.update(dt)",
+      "gate": "always",
+      "gateText": "每帧调用；内部不能接受输入时复位姿态后返回",
+      "group": "世界级系统（不分游戏状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10570,
+          "m": "this.playerActionSystem.update(dt)"
+        },
+        {
+          "f": "src/systems/PlayerActionSystem.ts",
+          "l": 271,
+          "m": "this.binding.canAcceptInput()"
+        }
+      ]
+    },
+    {
+      "id": "s15",
+      "order": 15,
+      "label": "玩家待机行为",
+      "code": "this.playerIdleBehaviorSystem.update(dt)",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "世界级系统（不分游戏状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10574,
+          "m": "this.playerIdleBehaviorSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s16",
+      "order": 16,
+      "label": "NPC 闲聊气泡",
+      "code": "this.bubbleChatterSystem.update(dt)",
+      "gate": "always",
+      "gateText": "每帧调用；内部非探索态撤气泡后返回",
+      "group": "世界级系统（不分游戏状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10575,
+          "m": "this.bubbleChatterSystem.update(dt)"
+        },
+        {
+          "f": "src/systems/BubbleChatterSystem.ts",
+          "l": 364,
+          "m": "if (!exploring || this.defs.size === 0) return;"
+        }
+      ]
+    },
+    {
+      "id": "s17",
+      "order": 17,
+      "label": "重试存档点抓取",
+      "code": "this.retrySystem.update(dt)",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10578,
+          "m": "this.retrySystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10577,
+          "m": "if (this.stateController.currentState === GameState.Exploring) {"
+        }
+      ]
+    },
+    {
+      "id": "s18",
+      "order": 18,
+      "label": "点击寻路（转成移动轴）",
+      "code": "this.updatePlayerNav()",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10579,
+          "m": "this.updatePlayerNav()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10577,
+          "m": "if (this.stateController.currentState === GameState.Exploring) {"
+        }
+      ]
+    },
+    {
+      "id": "s19",
+      "order": 19,
+      "label": "健康（三把火）",
+      "code": "this.healthSystem.update(dt)",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10580,
+          "m": "this.healthSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10577,
+          "m": "if (this.stateController.currentState === GameState.Exploring) {"
+        }
+      ]
+    },
+    {
+      "id": "s20",
+      "order": 20,
+      "label": "玩家移动与动画",
+      "code": "this.player.update(dt)",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10581,
+          "m": "this.player.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10577,
+          "m": "if (this.stateController.currentState === GameState.Exploring) {"
+        }
+      ]
+    },
+    {
+      "id": "s21",
+      "order": 21,
+      "label": "护火",
+      "code": "this.fireProtectionSystem.update(dt)",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10582,
+          "m": "this.fireProtectionSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10577,
+          "m": "if (this.stateController.currentState === GameState.Exploring) {"
+        }
+      ]
+    },
+    {
+      "id": "s22",
+      "order": 22,
+      "label": "健康威胁（侵袭）",
+      "code": "this.healthThreatSystem.update(dt)",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10583,
+          "m": "this.healthThreatSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10577,
+          "m": "if (this.stateController.currentState === GameState.Exploring) {"
+        }
+      ]
+    },
+    {
+      "id": "s23",
+      "order": 23,
+      "label": "嗅（按嗅键那一帧）",
+      "code": "this.smellSystem.sniff()",
+      "gate": "state:Exploring",
+      "gateText": "探索态且本帧刚按下嗅键",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10587,
+          "m": "if (this.inputManager.wasKeyJustPressed(SNIFF_KEY)) this.smellSystem.sniff()"
+        }
+      ]
+    },
+    {
+      "id": "s24",
+      "order": 24,
+      "label": "交互（热点 / NPC）",
+      "code": "this.interactionSystem.update(dt)",
+      "gate": "state:Exploring",
+      "gateText": "探索态（且上一步后仍是探索态）",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10588,
+          "m": "this.interactionSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s25",
+      "order": 25,
+      "label": "补刷挂起的区域重注册",
+      "code": "this.sceneManager.flushPendingTimeZoneRefresh()",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10592,
+          "m": "this.sceneManager.flushPendingTimeZoneRefresh()"
+        }
+      ]
+    },
+    {
+      "id": "s26",
+      "order": 26,
+      "label": "区域进出判定",
+      "code": "this.zoneSystem.update(dt)",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10593,
+          "m": "this.zoneSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s27",
+      "order": 27,
+      "label": "NPC 动画推进",
+      "code": "npc.cutsceneUpdate(dt)（逐个当前场景 NPC）",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10595,
+          "m": "npc.cutsceneUpdate(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s28",
+      "order": 28,
+      "label": "记镜头锚点（玩家）",
+      "code": "this.setCameraAnchor(this.player.x, this.player.y)",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10597,
+          "m": "this.setCameraAnchor(this.player.x, this.player.y)"
+        }
+      ]
+    },
+    {
+      "id": "s29",
+      "order": 29,
+      "label": "镜头跟玩家",
+      "code": "this.camera.follow(this.player.x, this.player.y)",
+      "gate": "state:Exploring",
+      "gateText": "探索态",
+      "group": "探索态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10598,
+          "m": "this.camera.follow(this.player.x, this.player.y)"
+        }
+      ]
+    },
+    {
+      "id": "s30",
+      "order": 30,
+      "label": "玩家演出动画",
+      "code": "this.player.cutsceneUpdate(dt)",
+      "gate": "state:Cutscene",
+      "gateText": "过场态",
+      "group": "过场态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10602,
+          "m": "this.player.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10601,
+          "m": "if (this.stateController.currentState === GameState.Cutscene) {"
+        }
+      ]
+    },
+    {
+      "id": "s31",
+      "order": 31,
+      "label": "NPC 演出动画",
+      "code": "npc.cutsceneUpdate(dt)（逐个当前场景 NPC）",
+      "gate": "state:Cutscene",
+      "gateText": "过场态",
+      "group": "过场态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10604,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10601,
+          "m": "if (this.stateController.currentState === GameState.Cutscene) {"
+        }
+      ]
+    },
+    {
+      "id": "s32",
+      "order": 32,
+      "label": "过场临时演员动画",
+      "code": "npc.cutsceneUpdate(dt)（逐个过场临时演员）",
+      "gate": "state:Cutscene",
+      "gateText": "过场态",
+      "group": "过场态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10606,
+          "m": "this.cutsceneManager.getTempActors()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10607,
+          "m": "npc.cutsceneUpdate(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s33",
+      "order": 33,
+      "label": "演出镜头跟随（无目标不动镜头）",
+      "code": "this.applyCameraFollow(false)",
+      "gate": "state:Cutscene",
+      "gateText": "过场态",
+      "group": "过场态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10610,
+          "m": "this.applyCameraFollow(false)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10601,
+          "m": "if (this.stateController.currentState === GameState.Cutscene) {"
+        }
+      ]
+    },
+    {
+      "id": "s34",
+      "order": 34,
+      "label": "护火",
+      "code": "this.fireProtectionSystem.update(dt)",
+      "gate": "states:Cutscene|ActionSequence|Dialogue",
+      "gateText": "过场、动作链、对话三态",
+      "group": "演出态生存（过场 / 动作链 / 对话）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10614,
+          "m": "this.fireProtectionSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10613,
+          "m": "[GameState.Cutscene, GameState.ActionSequence, GameState.Dialogue]"
+        }
+      ]
+    },
+    {
+      "id": "s35",
+      "order": 35,
+      "label": "健康威胁（侵袭）",
+      "code": "this.healthThreatSystem.update(dt)",
+      "gate": "states:Cutscene|ActionSequence|Dialogue",
+      "gateText": "过场、动作链、对话三态",
+      "group": "演出态生存（过场 / 动作链 / 对话）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10615,
+          "m": "this.healthThreatSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10613,
+          "m": "[GameState.Cutscene, GameState.ActionSequence, GameState.Dialogue]"
+        }
+      ]
+    },
+    {
+      "id": "s36",
+      "order": 36,
+      "label": "对白框「继续」点捺",
+      "code": "this.cutsceneRenderer.tickDialogueMarks(dt)",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "过场对白框（不分状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10621,
+          "m": "this.cutsceneRenderer.tickDialogueMarks(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s37",
+      "order": 37,
+      "label": "台词逐字显示",
+      "code": "this.cutsceneRenderer.tickTypewriters(dt)",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "过场对白框（不分状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10623,
+          "m": "this.cutsceneRenderer.tickTypewriters(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s38",
+      "order": 38,
+      "label": "气泡对白框跟随说话人",
+      "code": "this.cutsceneRenderer.tickDialogueBubbles()",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "过场对白框（不分状态）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10625,
+          "m": "this.cutsceneRenderer.tickDialogueBubbles()"
+        }
+      ]
+    },
+    {
+      "id": "s39",
+      "order": 39,
+      "label": "对话界面",
+      "code": "this.dialogueUI.update(dt)",
+      "gate": "state:Dialogue",
+      "gateText": "对话态",
+      "group": "对话态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10628,
+          "m": "this.dialogueUI.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10627,
+          "m": "if (this.stateController.currentState === GameState.Dialogue) {"
+        }
+      ]
+    },
+    {
+      "id": "s40",
+      "order": 40,
+      "label": "玩家演出动画",
+      "code": "this.player.cutsceneUpdate(dt)",
+      "gate": "state:Dialogue",
+      "gateText": "对话态",
+      "group": "对话态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10629,
+          "m": "this.player.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10627,
+          "m": "if (this.stateController.currentState === GameState.Dialogue) {"
+        }
+      ]
+    },
+    {
+      "id": "s41",
+      "order": 41,
+      "label": "NPC 演出动画",
+      "code": "npc.cutsceneUpdate(dt)",
+      "gate": "state:Dialogue",
+      "gateText": "对话态",
+      "group": "对话态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10631,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10627,
+          "m": "if (this.stateController.currentState === GameState.Dialogue) {"
+        }
+      ]
+    },
+    {
+      "id": "s42",
+      "order": 42,
+      "label": "演出镜头跟随（无目标不动镜头）",
+      "code": "this.applyCameraFollow(false)",
+      "gate": "state:Dialogue",
+      "gateText": "对话态",
+      "group": "对话态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10636,
+          "m": "this.applyCameraFollow(false)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10627,
+          "m": "if (this.stateController.currentState === GameState.Dialogue) {"
+        }
+      ]
+    },
+    {
+      "id": "s43",
+      "order": 43,
+      "label": "遭遇界面",
+      "code": "this.encounterUI.update(dt)",
+      "gate": "state:Encounter",
+      "gateText": "遭遇态",
+      "group": "遭遇态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10640,
+          "m": "this.encounterUI.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10639,
+          "m": "if (this.stateController.currentState === GameState.Encounter) {"
+        }
+      ]
+    },
+    {
+      "id": "s44",
+      "order": 44,
+      "label": "玩家演出动画",
+      "code": "this.player.cutsceneUpdate(dt)",
+      "gate": "state:Encounter",
+      "gateText": "遭遇态",
+      "group": "遭遇态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10641,
+          "m": "this.player.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10639,
+          "m": "if (this.stateController.currentState === GameState.Encounter) {"
+        }
+      ]
+    },
+    {
+      "id": "s45",
+      "order": 45,
+      "label": "NPC 演出动画",
+      "code": "npc.cutsceneUpdate(dt)",
+      "gate": "state:Encounter",
+      "gateText": "遭遇态",
+      "group": "遭遇态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10643,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10639,
+          "m": "if (this.stateController.currentState === GameState.Encounter) {"
+        }
+      ]
+    },
+    {
+      "id": "s46",
+      "order": 46,
+      "label": "水中小游戏（water）",
+      "code": "this.waterMinigameManager.update(dt)",
+      "gate": "state:Minigame",
+      "gateText": "小游戏态（三个小游戏管理器都会被调用，各自判断是否在玩）",
+      "group": "小游戏态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10648,
+          "m": "this.waterMinigameManager.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10647,
+          "m": "if (this.stateController.currentState === GameState.Minigame) {"
+        }
+      ]
+    },
+    {
+      "id": "s47",
+      "order": 47,
+      "label": "糖画转盘小游戏",
+      "code": "this.sugarWheelMinigameManager.update(dt)",
+      "gate": "state:Minigame",
+      "gateText": "小游戏态",
+      "group": "小游戏态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10649,
+          "m": "this.sugarWheelMinigameManager.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10647,
+          "m": "if (this.stateController.currentState === GameState.Minigame) {"
+        }
+      ]
+    },
+    {
+      "id": "s48",
+      "order": 48,
+      "label": "扎纸小游戏",
+      "code": "this.paperCraftMinigameManager.update(dt)",
+      "gate": "state:Minigame",
+      "gateText": "小游戏态",
+      "group": "小游戏态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10650,
+          "m": "this.paperCraftMinigameManager.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10647,
+          "m": "if (this.stateController.currentState === GameState.Minigame) {"
+        }
+      ]
+    },
+    {
+      "id": "s49",
+      "order": 49,
+      "label": "物件检视",
+      "code": "this.objectExamineManager.update(dt)",
+      "gate": "state:Minigame",
+      "gateText": "小游戏态",
+      "group": "小游戏态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10651,
+          "m": "this.objectExamineManager.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10647,
+          "m": "if (this.stateController.currentState === GameState.Minigame) {"
+        }
+      ]
+    },
+    {
+      "id": "s50",
+      "order": 50,
+      "label": "玩家演出动画",
+      "code": "this.player.cutsceneUpdate(dt)",
+      "gate": "state:Minigame",
+      "gateText": "小游戏态",
+      "group": "小游戏态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10652,
+          "m": "this.player.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10647,
+          "m": "if (this.stateController.currentState === GameState.Minigame) {"
+        }
+      ]
+    },
+    {
+      "id": "s51",
+      "order": 51,
+      "label": "NPC 演出动画",
+      "code": "npc.cutsceneUpdate(dt)",
+      "gate": "state:Minigame",
+      "gateText": "小游戏态",
+      "group": "小游戏态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10654,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10647,
+          "m": "if (this.stateController.currentState === GameState.Minigame) {"
+        }
+      ]
+    },
+    {
+      "id": "s52",
+      "order": 52,
+      "label": "玩家演出动画",
+      "code": "this.player.cutsceneUpdate(dt)",
+      "gate": "state:ActionSequence",
+      "gateText": "动作链态",
+      "group": "动作链态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10662,
+          "m": "this.player.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10661,
+          "m": "if (this.stateController.currentState === GameState.ActionSequence) {"
+        }
+      ]
+    },
+    {
+      "id": "s53",
+      "order": 53,
+      "label": "点火表演",
+      "code": "this.ignitePerformer.update(dt)",
+      "gate": "state:ActionSequence",
+      "gateText": "动作链态",
+      "group": "动作链态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10664,
+          "m": "this.ignitePerformer.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10661,
+          "m": "if (this.stateController.currentState === GameState.ActionSequence) {"
+        }
+      ]
+    },
+    {
+      "id": "s54",
+      "order": 54,
+      "label": "NPC 演出动画",
+      "code": "npc.cutsceneUpdate(dt)",
+      "gate": "state:ActionSequence",
+      "gateText": "动作链态",
+      "group": "动作链态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10666,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10661,
+          "m": "if (this.stateController.currentState === GameState.ActionSequence) {"
+        }
+      ]
+    },
+    {
+      "id": "s55",
+      "order": 55,
+      "label": "镜头跟随（无目标回落跟玩家）",
+      "code": "this.applyCameraFollow(true)",
+      "gate": "state:ActionSequence",
+      "gateText": "动作链态",
+      "group": "动作链态分支",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10671,
+          "m": "this.applyCameraFollow(true)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10661,
+          "m": "if (this.stateController.currentState === GameState.ActionSequence) {"
+        }
+      ]
+    },
+    {
+      "id": "s56",
+      "order": 56,
+      "label": "相机跟随透视（按锚点求缩放）",
+      "code": "this.applyPerspectiveCameraZoom()",
+      "gate": "always",
+      "gateText": "每帧调用；场景没配跟随透视时内部直接返回",
+      "group": "镜头透视与界面",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10680,
+          "m": "this.applyPerspectiveCameraZoom()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10022,
+          "m": "if (!this.perspectiveCameraFollow) return;"
+        }
+      ]
+    },
+    {
+      "id": "s57",
+      "order": 57,
+      "label": "表情气泡",
+      "code": "this.emoteBubbleManager.update(dt)",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "镜头透视与界面",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10682,
+          "m": "this.emoteBubbleManager.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s58",
+      "order": 58,
+      "label": "提示条",
+      "code": "this.notificationUI.update(dt)",
+      "gate": "always",
+      "gateText": "无条件（UI 不吃暂停闸）",
+      "group": "镜头透视与界面",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10683,
+          "m": "this.notificationUI.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s59",
+      "order": 59,
+      "label": "任务横幅",
+      "code": "this.questBannerUI.update(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "镜头透视与界面",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10688,
+          "m": "this.questBannerUI.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10687,
+          "m": "if (!worldPaused) {"
+        }
+      ]
+    },
+    {
+      "id": "s60",
+      "order": 60,
+      "label": "引导层（浮标跟镜头）",
+      "code": "this.guidanceLayerUI.update(dt)",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "镜头透视与界面",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10696,
+          "m": "this.guidanceLayerUI.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s61",
+      "order": 61,
+      "label": "烘焙轨迹回放",
+      "code": "this.trajectorySystem.update(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10709,
+          "m": "this.trajectorySystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10708,
+          "m": "if (!worldPaused) {"
+        }
+      ]
+    },
+    {
+      "id": "s62",
+      "order": 62,
+      "label": "场景风的钟",
+      "code": "this.sceneWind.advance(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10711,
+          "m": "this.sceneWind.advance(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10708,
+          "m": "if (!worldPaused) {"
+        }
+      ]
+    },
+    {
+      "id": "s63",
+      "order": 63,
+      "label": "背景摆动（草木）",
+      "code": "this.swayBackground?.update(...)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停且当前场景有摆动背景",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10712,
+          "m": "this.swayBackground?.update(this.sceneWind.params"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10708,
+          "m": "if (!worldPaused) {"
+        }
+      ]
+    },
+    {
+      "id": "s64",
+      "order": 64,
+      "label": "手持挂件（火把等）",
+      "code": "this.heldPropSystem.update(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时（必须在粒子之前）",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10718,
+          "m": "this.heldPropSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10708,
+          "m": "if (!worldPaused) {"
+        }
+      ]
+    },
+    {
+      "id": "s65",
+      "order": 65,
+      "label": "点火提示标记",
+      "code": "this.fireHintMarker.tick(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10719,
+          "m": "this.fireHintMarker.tick(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10708,
+          "m": "if (!worldPaused) {"
+        }
+      ]
+    },
+    {
+      "id": "s66",
+      "order": 66,
+      "label": "收集手上火头的火焰段",
+      "code": "this.heldPropSystem.igniterFireSegments(this.heldFireScratch)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10721,
+          "m": "this.heldFireScratch.length = 0"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10722,
+          "m": "this.heldPropSystem.igniterFireSegments(this.heldFireScratch)"
+        }
+      ]
+    },
+    {
+      "id": "s67",
+      "order": 67,
+      "label": "把手持火源交给粒子系统",
+      "code": "this.vfxSystem.setFireSources('heldProp', ...)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10723,
+          "m": "this.vfxSystem.setFireSources('heldProp', this.heldFireScratch)"
+        }
+      ]
+    },
+    {
+      "id": "s68",
+      "order": 68,
+      "label": "燃烧模拟",
+      "code": "this.burnSystem.update(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时（在粒子之前）",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10725,
+          "m": "this.burnSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10708,
+          "m": "if (!worldPaused) {"
+        }
+      ]
+    },
+    {
+      "id": "s69",
+      "order": 69,
+      "label": "粒子 / 群体",
+      "code": "this.vfxSystem.update(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10727,
+          "m": "this.vfxSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10708,
+          "m": "if (!worldPaused) {"
+        }
+      ]
+    },
+    {
+      "id": "s70",
+      "order": 70,
+      "label": "群体惊吓伤害",
+      "code": "void this.healthSystem.applyDamage({ kind: 'fright', ... })",
+      "gate": "notPaused&state:Exploring",
+      "gateText": "世界没暂停、探索态、三把火未耗尽；逐个骚扰源结算",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "fire-and-forget",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10729,
+          "m": "!this.healthSystem.isDepleted()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10730,
+          "m": "this.vfxSystem.playerHarassment()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10731,
+          "m": "void this.healthSystem.applyDamage("
+        }
+      ]
+    },
+    {
+      "id": "s71",
+      "order": 71,
+      "label": "落雷的灯",
+      "code": "this.updateStrikeLight(dt)",
+      "gate": "notPaused",
+      "gateText": "世界没暂停时（不分游戏状态）",
+      "group": "世界模拟（吃暂停闸）",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10738,
+          "m": "if (!worldPaused) this.updateStrikeLight(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s72",
+      "order": 72,
+      "label": "相机平滑 / 震屏 / 应用变换",
+      "code": "this.camera.update(worldPaused ? 0 : dt)",
+      "gate": "always",
+      "gateText": "无条件；暂停时喂 0（不推进，只照旧应用变换）",
+      "group": "镜头定稿与声音",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10740,
+          "m": "this.camera.update(worldPaused ? 0 : dt)"
+        }
+      ]
+    },
+    {
+      "id": "s73",
+      "order": 73,
+      "label": "声学听者位置",
+      "code": "this.updateAcousticListener(false)",
+      "gate": "always",
+      "gateText": "无条件（必须在相机定稿后）",
+      "group": "镜头定稿与声音",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10747,
+          "m": "this.updateAcousticListener(false)"
+        }
+      ]
+    },
+    {
+      "id": "s74",
+      "order": 74,
+      "label": "脚步声",
+      "code": "this.footstepSystem.update(dt)",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "镜头定稿与声音",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10748,
+          "m": "this.footstepSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "s75",
+      "order": 75,
+      "label": "调试工具",
+      "code": "this.debugTools?.update(dt)",
+      "gate": "always",
+      "gateText": "仅开发构建实例化；正式构建里为空，不调",
+      "group": "调试钩子（正式帧里的调试调用点）",
+      "status": "dev-only",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10749,
+          "m": "this.debugTools?.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3743,
+          "m": "if (import.meta.env.DEV) this.debugTools = new DebugTools({"
+        }
+      ]
+    },
+    {
+      "id": "s76",
+      "order": 76,
+      "label": "深度调试可视化",
+      "code": "this.depthDebugVisualizer?.update()",
+      "gate": "always",
+      "gateText": "正式构建也实例化并每帧调用；模式为 off 时内部直接返回",
+      "group": "调试钩子（正式帧里的调试调用点）",
+      "status": "active",
+      "async": "sync",
+      "note": "来自 src/debug，被正式运行路径直接引用。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10750,
+          "m": "this.depthDebugVisualizer?.update()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3498,
+          "m": "this.depthDebugVisualizer = new DepthDebugVisualizer("
+        },
+        {
+          "f": "src/debug/DepthDebugVisualizer.ts",
+          "l": 155,
+          "m": "if (this.currentMode === 'off') return;"
+        }
+      ]
+    },
+    {
+      "id": "s77",
+      "order": 77,
+      "label": "粒子区域叠加层",
+      "code": "this.vfxConfineOverlay.update(this.camera, this.vfxSystem.confineFields())",
+      "gate": "devToggle",
+      "gateText": "只有在开发构建 F2 粒子页打开叠加层时才存在；画失败就关掉",
+      "group": "调试钩子（正式帧里的调试调用点）",
+      "status": "dev-only",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10752,
+          "m": "if (this.vfxConfineOverlay) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10754,
+          "m": "this.vfxConfineOverlay.update(this.camera, this.vfxSystem.confineFields())"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4131,
+          "m": "this.vfxConfineOverlay = new VfxConfineOverlay("
+        }
+      ]
+    },
+    {
+      "id": "s78",
+      "order": 78,
+      "label": "视锥剔除",
+      "code": "this.updateFrustumCulling()",
+      "gate": "always",
+      "gateText": "无条件（关闭时内部只做一次复原）",
+      "group": "渲染前准备",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10763,
+          "m": "this.updateFrustumCulling()"
+        }
+      ]
+    },
+    {
+      "id": "s79",
+      "order": 79,
+      "label": "燃烧滤镜的相机参数 / 燃烧场纹理上传",
+      "code": "this.burnRenderer.update(performance.now(), {...})",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "渲染前准备",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10766,
+          "m": "this.burnRenderer.update(performance.now(), {"
+        }
+      ]
+    },
+    {
+      "id": "s80",
+      "order": 80,
+      "label": "实体像素密度匹配",
+      "code": "this.syncEntityPixelDensityMatch()",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "渲染前准备",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10772,
+          "m": "this.syncEntityPixelDensityMatch()"
+        }
+      ]
+    },
+    {
+      "id": "s81",
+      "order": 81,
+      "label": "场景深度每帧参数（相机位姿）",
+      "code": "this.sceneDepthSystem.updatePerFrame(...)",
+      "gate": "sceneDepthActive",
+      "gateText": "当前场景深度系统激活",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10776,
+          "m": "this.sceneDepthSystem.updatePerFrame("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10774,
+          "m": "if (this.sceneDepthSystem.isActive) {"
+        }
+      ]
+    },
+    {
+      "id": "s82",
+      "order": 82,
+      "label": "筛出本位面、已启用分组的区域",
+      "code": "zonesRaw?.filter(isEntityInActivePlane) → filter(isCurrentSceneGroupEnabled)",
+      "gate": "sceneDepthActive",
+      "gateText": "场景深度激活",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10787,
+          "m": "this.sceneManager.isEntityInActivePlane(z)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10789,
+          "m": "const zones = zonesInPlane?.filter("
+        }
+      ]
+    },
+    {
+      "id": "s83",
+      "order": 83,
+      "label": "建条件求值上下文（本帧共享）",
+      "code": "this.buildConditionEvalContext()",
+      "gate": "sceneDepthActive",
+      "gateText": "场景深度激活",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10794,
+          "m": "const floorCondCtx = this.buildConditionEvalContext()"
+        }
+      ]
+    },
+    {
+      "id": "s84",
+      "order": 84,
+      "label": "玩家：深度地面偏移",
+      "code": "resolveDepthFloorOffsetBoost(zones, 玩家脚点, ...)",
+      "gate": "sceneDepthActive",
+      "gateText": "场景深度激活且玩家有深度滤镜",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10797,
+          "m": "if (this.playerDepthFilter) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10801,
+          "m": "resolveDepthFloorOffsetBoost("
+        }
+      ]
+    },
+    {
+      "id": "s85",
+      "order": 85,
+      "label": "玩家：深度遮挡",
+      "code": "this.sceneDepthSystem.updateEntityDepthOcclusion(this.playerDepthFilter, ...)",
+      "gate": "sceneDepthActive",
+      "gateText": "场景深度激活且玩家有深度滤镜",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10809,
+          "m": "this.sceneDepthSystem.updateEntityDepthOcclusion("
+        }
+      ]
+    },
+    {
+      "id": "s86",
+      "order": 86,
+      "label": "玩家：逐像素着色驱动",
+      "code": "this.driveBakedShading(this.playerDepthFilter, ...)",
+      "gate": "sceneDepthActive",
+      "gateText": "场景深度激活且玩家有深度滤镜",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10818,
+          "m": "this.driveBakedShading(this.playerDepthFilter, pFootX, pFootY, {"
+        }
+      ]
+    },
+    {
+      "id": "s87",
+      "order": 87,
+      "label": "建 NPC 容器索引",
+      "code": "npcByContainer.set(npc.container, npc)",
+      "gate": "sceneDepthActive",
+      "gateText": "场景深度激活",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10827,
+          "m": "npcByContainer.set(npc.container, npc)"
+        }
+      ]
+    },
+    {
+      "id": "s88",
+      "order": 88,
+      "label": "实体层其余实体：深度地面偏移",
+      "code": "resolveDepthFloorOffsetBoost(zones, fx, fy, ...)",
+      "gate": "sceneDepthActive",
+      "gateText": "场景深度激活；逐个未被剔除、挂了深度滤镜的实体",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10828,
+          "m": "for (const child of this.renderer.entityLayer.children) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10829,
+          "m": "if (child.culled) continue;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10843,
+          "m": "if (f._isDepthOcclusion && f !== this.playerDepthFilter) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10844,
+          "m": "resolveDepthFloorOffsetBoost("
+        }
+      ]
+    },
+    {
+      "id": "s89",
+      "order": 89,
+      "label": "实体层其余实体：深度遮挡",
+      "code": "this.sceneDepthSystem.updateEntityDepthOcclusion(f, fx, fy, ex)",
+      "gate": "sceneDepthActive",
+      "gateText": "同上",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10847,
+          "m": "this.sceneDepthSystem.updateEntityDepthOcclusion("
+        }
+      ]
+    },
+    {
+      "id": "s90",
+      "order": 90,
+      "label": "实体层其余实体：逐像素着色驱动",
+      "code": "this.driveBakedShading(f, fx, fy, ...)",
+      "gate": "sceneDepthActive",
+      "gateText": "同上",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10855,
+          "m": "this.driveBakedShading(f as unknown as IEntityShadingFilter"
+        }
+      ]
+    },
+    {
+      "id": "s91",
+      "order": 91,
+      "label": "热点：深度地面偏移",
+      "code": "resolveDepthFloorOffsetBoost(zones, 热点脚点, ...)",
+      "gate": "sceneDepthActive",
+      "gateText": "场景深度激活；逐个未剔除且有深度滤镜的热点",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10868,
+          "m": "for (const h of this.sceneManager.getCurrentHotspots()) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10873,
+          "m": "const ex = resolveDepthFloorOffsetBoost("
+        }
+      ]
+    },
+    {
+      "id": "s92",
+      "order": 92,
+      "label": "热点：深度遮挡",
+      "code": "this.sceneDepthSystem.updateEntityDepthOcclusion(hf, ...)",
+      "gate": "sceneDepthActive",
+      "gateText": "同上",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10876,
+          "m": "this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex)"
+        }
+      ]
+    },
+    {
+      "id": "s93",
+      "order": 93,
+      "label": "热点：逐像素着色驱动",
+      "code": "this.driveBakedShading(hf, ...)",
+      "gate": "sceneDepthActive",
+      "gateText": "同上",
+      "group": "深度遮挡与逐像素着色驱动",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10880,
+          "m": "this.driveBakedShading(hf, h.container.x, footY, {"
+        }
+      ]
+    },
+    {
+      "id": "s94",
+      "order": 94,
+      "label": "光照环境曲线（按玩家位置插值）",
+      "code": "this.updateLightEnvFromCurve()",
+      "gate": "always",
+      "gateText": "每帧调用；无曲线、位面光照档激活、F2 打开时内部直接返回",
+      "group": "光照与阴影",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10890,
+          "m": "this.updateLightEnvFromCurve()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7328,
+          "m": "if (!this.currentLightCurve || !env) return;"
+        }
+      ]
+    },
+    {
+      "id": "s95",
+      "order": 95,
+      "label": "草木位移图离屏渲染",
+      "code": "this.swayBackground?.renderUv(this.renderer.app.renderer)",
+      "gate": "always",
+      "gateText": "当前场景有摆动背景时（在主画面渲染之前的一次离屏绘制）",
+      "group": "光照与阴影",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10893,
+          "m": "this.swayBackground?.renderUv(this.renderer.app.renderer)"
+        }
+      ]
+    },
+    {
+      "id": "s96",
+      "order": 96,
+      "label": "水面波纹的钟",
+      "code": "this.sceneLighting.setSurfaceTime(this.gameClock.now / 1000)",
+      "gate": "always",
+      "gateText": "无条件（读游戏时钟，暂停时不前进）",
+      "group": "光照与阴影",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10895,
+          "m": "this.sceneLighting.setSurfaceTime(this.gameClock.now / 1000)"
+        }
+      ]
+    },
+    {
+      "id": "s97",
+      "order": 97,
+      "label": "场景灯光：脏才重算",
+      "code": "this.sceneLighting.update(this.renderer.app.renderer)",
+      "gate": "always",
+      "gateText": "每帧调用；稳态只是一次\"脏不脏\"判断",
+      "group": "光照与阴影",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10897,
+          "m": "this.sceneLighting.update(this.renderer.app.renderer)"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 779,
+          "m": "const recomputed = this.pass?.update(renderer) ?? false"
+        }
+      ]
+    },
+    {
+      "id": "s98",
+      "order": 98,
+      "label": "（场景灯光内部）GI 反弹 pass",
+      "code": "this.giPass?.render(renderer)",
+      "gate": "always",
+      "gateText": "在上一步里：本帧重算过且场景烘了 GI 命中图时执行；产物唯一读者在已关停的统一角色路径",
+      "group": "光照与阴影",
+      "status": "disabled",
+      "async": "sync",
+      "note": "调用仍在执行，但产出无消费者（除 F2 光照页读\"是否就绪\"）。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 783,
+          "m": "if (recomputed) this.giPass?.render(renderer)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6640,
+          "m": "giBounce: this.sceneLighting.giBounceTexture"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6608,
+          "m": "if (!UNIFIED_CHAR_PATH_ENABLED) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 443,
+          "m": "const UNIFIED_CHAR_PATH_ENABLED = false"
+        }
+      ]
+    },
+    {
+      "id": "s99",
+      "order": 99,
+      "label": "实体投影阴影",
+      "code": "this.updateEntityShadows()",
+      "gate": "always",
+      "gateText": "每帧调用；无光照环境或无阴影实例时内部直接返回",
+      "group": "光照与阴影",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10898,
+          "m": "this.updateEntityShadows()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7348,
+          "m": "if (!env || this.entityShadows.size === 0) return;"
+        }
+      ]
+    },
+    {
+      "id": "s100",
+      "order": 100,
+      "label": "实体层按脚点排序",
+      "code": "this.renderer.sortEntityLayer(this.player.x, this.player.y)",
+      "gate": "always",
+      "gateText": "无条件",
+      "group": "帧尾",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10900,
+          "m": "this.renderer.sortEntityLayer(this.player.x, this.player.y)"
+        }
+      ]
+    },
+    {
+      "id": "s101",
+      "order": 101,
+      "label": "触屏控件",
+      "code": "this.touchMobileControls?.update()",
+      "gate": "always",
+      "gateText": "页面有 #game-mount 时才创建",
+      "group": "帧尾",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10901,
+          "m": "this.touchMobileControls?.update()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7924,
+          "m": "this.touchMobileControls = new TouchMobileControls("
+        }
+      ]
+    },
+    {
+      "id": "s102",
+      "order": 102,
+      "label": "清本帧输入沿（刚按下 / 刚点击）",
+      "code": "this.inputManager.endFrame()",
+      "gate": "always",
+      "gateText": "无条件（tick 最后一句）",
+      "group": "帧尾",
+      "status": "active",
+      "async": "sync",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10902,
+          "m": "this.inputManager.endFrame()"
+        }
+      ]
+    }
+  ],
+  "pauseRule": {
+    "label": "世界暂停判据 isWorldPaused()",
+    "detail": "说明卡计数 > 0，或当前状态是 切场景(SceneTransition) / 主菜单(MainMenu) / 界面覆盖(UIOverlay) / 死亡(Dead) 之一，即为\"世界暂停\"。其余六态（探索、动作链、对话、遭遇、过场、小游戏）不暂停。暂停时：游戏时钟、画布舞台、呼吸图、任务横幅、整段世界模拟（轨迹/风/挂件/燃烧/粒子）、落雷的灯都不调；相机照调但喂 0。说明卡打开时计数 +1 并把状态切到 UIOverlay。",
+    "cites": [
+      {
+        "f": "src/core/Game.ts",
+        "l": 10511,
+        "m": "private isWorldPaused(): boolean"
+      },
+      {
+        "f": "src/core/Game.ts",
+        "l": 10512,
+        "m": "if (this.systemNotePauseDepth > 0) return true;"
+      },
+      {
+        "f": "src/core/Game.ts",
+        "l": 10514,
+        "m": "return s === GameState.SceneTransition"
+      },
+      {
+        "f": "src/core/Game.ts",
+        "l": 10515,
+        "m": "|| s === GameState.MainMenu"
+      },
+      {
+        "f": "src/core/Game.ts",
+        "l": 10516,
+        "m": "|| s === GameState.UIOverlay"
+      },
+      {
+        "f": "src/core/Game.ts",
+        "l": 10517,
+        "m": "|| s === GameState.Dead;"
+      },
+      {
+        "f": "src/core/Game.ts",
+        "l": 2365,
+        "m": "this.systemNotePauseDepth++"
+      },
+      {
+        "f": "src/core/Game.ts",
+        "l": 2367,
+        "m": "await this.runInGameState(GameState.UIOverlay"
+      }
+    ]
+  },
+  "earlyExits": [
+    {
+      "id": "x0",
+      "label": "逻辑冻结（mainTick 层）",
+      "condition": "冻结原因集合非空（叙事断点 / 运行时编辑模式），仅开发构建",
+      "effect": "整个 tick 不调，只清输入沿；Pixi 照常渲染",
+      "status": "dev-only",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4257,
+          "m": "if (this.logicFreezeReasons.size > 0)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4264,
+          "m": "this.inputManager.endFrame()"
+        }
+      ]
+    },
+    {
+      "id": "x0b",
+      "label": "固定步调试模式（mainTick 层）",
+      "condition": "fixedTickMode 为真，仅开发构建",
+      "effect": "mainTick 不调 tick，由调试命令手动步进",
+      "status": "dev-only",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4267,
+          "m": "if (!this.fixedTickMode) this.tick(dt)"
+        }
+      ]
+    },
+    {
+      "id": "x1",
+      "label": "说明卡阅读中 / 死亡",
+      "condition": "说明卡计数 > 0 或 当前状态 = Dead",
+      "effect": "本帧只做了\"引导浮标可见性\"，随后清输入沿返回；其后全部步骤（含相机、光照、排序）不调",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10529,
+          "m": "if (this.systemNotePauseDepth > 0 || this.stateController.currentState === GameState.Dead)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10530,
+          "m": "this.inputManager.endFrame();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10531,
+          "m": "return;"
+        }
+      ]
+    },
+    {
+      "id": "x2",
+      "label": "探索中被打断（受伤开死亡卡 / 叙事信号开过场）",
+      "condition": "探索分支里跑完健康、护火、威胁之后，状态已不是 Exploring",
+      "effect": "清输入沿后返回；本帧余下的嗅、交互、区域、镜头、世界模拟、相机、光照、排序都不调",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10585,
+          "m": "if (this.stateController.currentState !== GameState.Exploring) { this.inputManager.endFrame(); return; }"
+        }
+      ]
+    },
+    {
+      "id": "x3",
+      "label": "演出中健康耗尽",
+      "condition": "过场 / 动作链 / 对话态，护火与威胁更新后三把火已耗尽",
+      "effect": "清输入沿后返回；余下步骤不调",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10616,
+          "m": "if (this.healthSystem.isDepleted()) { this.inputManager.endFrame(); return; }"
+        }
+      ]
+    },
+    {
+      "id": "x4",
+      "label": "群体惊吓打空三把火",
+      "condition": "世界模拟段里逐个结算惊吓伤害后已耗尽",
+      "effect": "直接返回，这条出口不调清输入沿；余下的落雷灯、相机、声音、光照、排序都不调",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10732,
+          "m": "if (this.healthSystem.isDepleted()) return;"
+        }
+      ]
+    }
+  ],
+  "states": [
+    {
+      "id": "MainMenu",
+      "label": "主菜单",
+      "detail": "标题态启动时世界一律不装；暂停态。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 38,
+          "m": "MainMenu = 'MainMenu'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10515,
+          "m": "|| s === GameState.MainMenu"
+        }
+      ]
+    },
+    {
+      "id": "Exploring",
+      "label": "探索",
+      "detail": "玩家自由可控；唯一跑玩家移动、交互、区域、镜头跟玩家的状态。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 39,
+          "m": "Exploring = 'Exploring'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10577,
+          "m": "if (this.stateController.currentState === GameState.Exploring) {"
+        }
+      ]
+    },
+    {
+      "id": "SceneTransition",
+      "label": "切场景 / 加载遮罩",
+      "detail": "切场与加载期间的独立状态；暂停态。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 48,
+          "m": "SceneTransition = 'SceneTransition'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10514,
+          "m": "return s === GameState.SceneTransition"
+        }
+      ]
+    },
+    {
+      "id": "ActionSequence",
+      "label": "动作链",
+      "detail": "探索中下发的指令链执行中（不接收移动与交互）；镜头无目标时回落跟玩家。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 50,
+          "m": "ActionSequence = 'ActionSequence'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10661,
+          "m": "if (this.stateController.currentState === GameState.ActionSequence) {"
+        }
+      ]
+    },
+    {
+      "id": "Dialogue",
+      "label": "对话",
+      "detail": "对话界面 + 角色演出动画 + 演出镜头跟随。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 51,
+          "m": "Dialogue = 'Dialogue'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10627,
+          "m": "if (this.stateController.currentState === GameState.Dialogue) {"
+        }
+      ]
+    },
+    {
+      "id": "Encounter",
+      "label": "遭遇",
+      "detail": "遭遇界面 + 角色演出动画；不跑护火/威胁，不动镜头。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 52,
+          "m": "Encounter = 'Encounter'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10639,
+          "m": "if (this.stateController.currentState === GameState.Encounter) {"
+        }
+      ]
+    },
+    {
+      "id": "Cutscene",
+      "label": "过场",
+      "detail": "角色演出动画（含临时演员）+ 演出镜头跟随 + 护火/威胁。过场步骤本身不在 tick 里推进（见 outsideTick 与 uncertain）。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 53,
+          "m": "Cutscene = 'Cutscene'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10601,
+          "m": "if (this.stateController.currentState === GameState.Cutscene) {"
+        }
+      ]
+    },
+    {
+      "id": "UIOverlay",
+      "label": "界面覆盖（面板 / 菜单 / 说明卡）",
+      "detail": "tick 里没有这个状态的专属分支；暂停态，角色动画不推进。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 54,
+          "m": "UIOverlay = 'UIOverlay'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10658,
+          "m": "UIOverlay（面板 / 菜单 / 说明卡）**不推角色动画**"
+        }
+      ]
+    },
+    {
+      "id": "Minigame",
+      "label": "小游戏",
+      "detail": "三个小游戏管理器 + 物件检视 + 角色演出动画；不跑护火/威胁，不动镜头。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 55,
+          "m": "Minigame = 'Minigame'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10647,
+          "m": "if (this.stateController.currentState === GameState.Minigame) {"
+        }
+      ]
+    },
+    {
+      "id": "Dead",
+      "label": "死亡",
+      "detail": "三把火耗尽；tick 在帧头早退，只剩引导浮标可见性与清输入沿。",
+      "cites": [
+        {
+          "f": "src/data/types.ts",
+          "l": 57,
+          "m": "Dead = 'Dead'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10529,
+          "m": "this.stateController.currentState === GameState.Dead"
+        }
+      ]
+    }
+  ],
+  "stateColumns": [
+    "MainMenu",
+    "Exploring",
+    "SceneTransition",
+    "ActionSequence",
+    "Dialogue",
+    "Encounter",
+    "Cutscene",
+    "UIOverlay",
+    "Minigame",
+    "Dead"
+  ],
+  "matrixNote": "单元格含义：run = 本帧会被调用；stop = 不会；partial = 条件性（见 note）。说明卡打开期间（不论状态）与死亡态相同：tick 在帧头早退，只剩\"引导浮标可见性\"和\"清输入沿\"。探索 / 演出态的中途早退（earlyExits x2–x4）会让当帧余下的所有行都不调。",
+  "stateMatrix": [
+    {
+      "id": "m1",
+      "system": "引导浮标可见性",
+      "code": "guidanceLayerUI?.applyVisibility()",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "run"
+      },
+      "note": "排在所有早退之前，含死亡与说明卡期间。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10527,
+          "m": "this.guidanceLayerUI?.applyVisibility()"
+        }
+      ]
+    },
+    {
+      "id": "m2",
+      "system": "清本帧输入沿",
+      "code": "inputManager.endFrame()",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "run"
+      },
+      "note": "正常帧尾调；帧头早退、探索中被打断、演出中耗尽三条出口也各自调。唯一不调的是\"群体惊吓打空三把火\"那条出口。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10902,
+          "m": "this.inputManager.endFrame()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10530,
+          "m": "this.inputManager.endFrame();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10732,
+          "m": "if (this.healthSystem.isDepleted()) return;"
+        }
+      ]
+    },
+    {
+      "id": "m3",
+      "system": "帧率 / 游玩时长统计",
+      "code": "lastFps / playTimeMs",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "死亡与说明卡期间不累计游玩时长。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10534,
+          "m": "this.playTimeMs += dt * 1000"
+        }
+      ]
+    },
+    {
+      "id": "m4",
+      "system": "游戏时钟（演出等待）",
+      "code": "gameClock.advance(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "暂停态不前进：挂在它上面的演出等待也停。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10537,
+          "m": "if (!worldPaused) this.gameClock.advance(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m5",
+      "system": "相机像素吸附开关",
+      "code": "camera.setPixelSnapTranslation(...)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10539,
+          "m": "this.camera.setPixelSnapTranslation("
+        }
+      ]
+    },
+    {
+      "id": "m6",
+      "system": "位面对账",
+      "code": "planeReconciler.update(dt)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "内部在\"回到探索态\"那一帧重贴位面的镜头与光照档。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10543,
+          "m": "this.planeReconciler.update(dt)"
+        },
+        {
+          "f": "src/systems/PlaneReconciler.ts",
+          "l": 306,
+          "m": "const entered = state === GameState.Exploring"
+        }
+      ]
+    },
+    {
+      "id": "m7",
+      "system": "气味方向",
+      "code": "smellSystem.update(dt)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "不分探索 / 演出态。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10545,
+          "m": "this.smellSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m8",
+      "system": "画布舞台实体动画",
+      "code": "canvasStageSystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10549,
+          "m": "if (!worldPaused) this.canvasStageSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m9",
+      "system": "呼吸图",
+      "code": "breathingOverlaySystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10551,
+          "m": "if (!worldPaused) this.breathingOverlaySystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m10",
+      "system": "时段换装",
+      "code": "drainPendingPhaseSwap()",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "每帧都调；内部只在探索态、未切场、无换装在途时真正动手，其余状态直接返回。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10553,
+          "m": "this.drainPendingPhaseSwap()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9347,
+          "m": "if (this.stateController.currentState !== GameState.Exploring) return;"
+        }
+      ]
+    },
+    {
+      "id": "m11",
+      "system": "NPC 日程走位",
+      "code": "npcScheduleSystem.update(dt)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "每帧都调；内部非探索态原地挂起（直接返回）。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10555,
+          "m": "this.npcScheduleSystem.update(dt)"
+        },
+        {
+          "f": "src/systems/NpcScheduleSystem.ts",
+          "l": 287,
+          "m": "if (!b.isExploring()) return;"
+        }
+      ]
+    },
+    {
+      "id": "m12",
+      "system": "解除演出镜头跟随",
+      "code": "cameraFollowTargetId = null",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "只在探索态且存在跟随目标时。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10562,
+          "m": "this.stateController.currentState === GameState.Exploring"
+        }
+      ]
+    },
+    {
+      "id": "m13",
+      "system": "玩家身体动词",
+      "code": "playerActionSystem.update(dt)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "每帧都调；内部不能接受输入时（非探索态）复位姿态后返回。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10570,
+          "m": "this.playerActionSystem.update(dt)"
+        },
+        {
+          "f": "src/systems/PlayerActionSystem.ts",
+          "l": 271,
+          "m": "this.binding.canAcceptInput()"
+        }
+      ]
+    },
+    {
+      "id": "m14",
+      "system": "玩家待机行为",
+      "code": "playerIdleBehaviorSystem.update(dt)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "每帧都调（离开探索态那一帧要撤气泡、还动画所有权）。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10574,
+          "m": "this.playerIdleBehaviorSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m15",
+      "system": "NPC 闲聊气泡",
+      "code": "bubbleChatterSystem.update(dt)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "每帧都调；内部非探索态撤气泡后返回。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10575,
+          "m": "this.bubbleChatterSystem.update(dt)"
+        },
+        {
+          "f": "src/systems/BubbleChatterSystem.ts",
+          "l": 364,
+          "m": "if (!exploring || this.defs.size === 0) return;"
+        }
+      ]
+    },
+    {
+      "id": "m16",
+      "system": "重试存档点抓取",
+      "code": "retrySystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10578,
+          "m": "this.retrySystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m17",
+      "system": "点击寻路",
+      "code": "updatePlayerNav()",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10579,
+          "m": "this.updatePlayerNav()"
+        }
+      ]
+    },
+    {
+      "id": "m18",
+      "system": "健康（三把火）",
+      "code": "healthSystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10580,
+          "m": "this.healthSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m19",
+      "system": "玩家移动与动画",
+      "code": "player.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "其它会动角色的状态走\"玩家演出动画\"那一行。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10581,
+          "m": "this.player.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m20",
+      "system": "护火",
+      "code": "fireProtectionSystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "stop",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "探索分支一处 + 演出三态一处，同一帧不会两处都调（状态互斥，除非本帧中途切态）。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10582,
+          "m": "this.fireProtectionSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10614,
+          "m": "this.fireProtectionSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m21",
+      "system": "健康威胁（侵袭）",
+      "code": "healthThreatSystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "stop",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "同上。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10583,
+          "m": "this.healthThreatSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10615,
+          "m": "this.healthThreatSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m22",
+      "system": "嗅",
+      "code": "smellSystem.sniff()",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "partial",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "探索态且本帧刚按下嗅键。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10587,
+          "m": "this.smellSystem.sniff()"
+        }
+      ]
+    },
+    {
+      "id": "m23",
+      "system": "交互（热点 / NPC）",
+      "code": "interactionSystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10588,
+          "m": "this.interactionSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m24",
+      "system": "区域重注册补刷 + 区域进出",
+      "code": "flushPendingTimeZoneRefresh() / zoneSystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10592,
+          "m": "this.sceneManager.flushPendingTimeZoneRefresh()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10593,
+          "m": "this.zoneSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m25",
+      "system": "NPC 动画推进",
+      "code": "npc.cutsceneUpdate(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "六个分支各调一遍；暂停态（主菜单 / 切场 / 界面覆盖）与死亡不推。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10595,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10604,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10631,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10643,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10654,
+          "m": "npc.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10666,
+          "m": "npc.cutsceneUpdate(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m26",
+      "system": "玩家演出动画",
+      "code": "player.cutsceneUpdate(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "stop",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "探索态走 player.update。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10602,
+          "m": "this.player.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10629,
+          "m": "this.player.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10641,
+          "m": "this.player.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10652,
+          "m": "this.player.cutsceneUpdate(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10662,
+          "m": "this.player.cutsceneUpdate(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m27",
+      "system": "过场临时演员动画",
+      "code": "tempActors → cutsceneUpdate(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "stop",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10606,
+          "m": "this.cutsceneManager.getTempActors()"
+        }
+      ]
+    },
+    {
+      "id": "m28",
+      "system": "镜头跟玩家",
+      "code": "setCameraAnchor + camera.follow(player)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10598,
+          "m": "this.camera.follow(this.player.x, this.player.y)"
+        }
+      ]
+    },
+    {
+      "id": "m29",
+      "system": "演出镜头跟随",
+      "code": "applyCameraFollow(...)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "stop",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "stop",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "过场 / 对话无目标时不动镜头；动作链无目标时回落跟玩家。遭遇、小游戏不动镜头。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10610,
+          "m": "this.applyCameraFollow(false)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10636,
+          "m": "this.applyCameraFollow(false)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10671,
+          "m": "this.applyCameraFollow(true)"
+        }
+      ]
+    },
+    {
+      "id": "m30",
+      "system": "过场对白框（点捺 / 逐字 / 气泡跟随）",
+      "code": "cutsceneRenderer.tick*",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "刻意不挂任何状态分支。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10621,
+          "m": "this.cutsceneRenderer.tickDialogueMarks(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10623,
+          "m": "this.cutsceneRenderer.tickTypewriters(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10625,
+          "m": "this.cutsceneRenderer.tickDialogueBubbles()"
+        }
+      ]
+    },
+    {
+      "id": "m31",
+      "system": "对话界面",
+      "code": "dialogueUI.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "stop",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "run",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10628,
+          "m": "this.dialogueUI.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m32",
+      "system": "遭遇界面",
+      "code": "encounterUI.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "stop",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "run",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10640,
+          "m": "this.encounterUI.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m33",
+      "system": "小游戏（水中 / 糖画转盘 / 扎纸）+ 物件检视",
+      "code": "water/sugarWheel/paperCraft/objectExamine .update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "stop",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "小游戏态时四个管理器都被调用。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10648,
+          "m": "this.waterMinigameManager.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10651,
+          "m": "this.objectExamineManager.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m34",
+      "system": "点火表演",
+      "code": "ignitePerformer.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "stop",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10664,
+          "m": "this.ignitePerformer.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m35",
+      "system": "相机跟随透视缩放",
+      "code": "applyPerspectiveCameraZoom()",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "场景没配跟随透视时内部直接返回。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10680,
+          "m": "this.applyPerspectiveCameraZoom()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10022,
+          "m": "if (!this.perspectiveCameraFollow) return;"
+        }
+      ]
+    },
+    {
+      "id": "m36",
+      "system": "表情气泡 / 提示条",
+      "code": "emoteBubbleManager.update / notificationUI.update",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "UI 不吃暂停闸。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10682,
+          "m": "this.emoteBubbleManager.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10683,
+          "m": "this.notificationUI.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m37",
+      "system": "任务横幅",
+      "code": "questBannerUI.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10688,
+          "m": "this.questBannerUI.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m38",
+      "system": "引导层",
+      "code": "guidanceLayerUI.update(dt)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "不吃暂停闸。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10696,
+          "m": "this.guidanceLayerUI.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m39",
+      "system": "烘焙轨迹回放",
+      "code": "trajectorySystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10709,
+          "m": "this.trajectorySystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m40",
+      "system": "场景风 / 背景摆动",
+      "code": "sceneWind.advance / swayBackground?.update",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "背景摆动只在场景有摆动背景时调。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10711,
+          "m": "this.sceneWind.advance(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10712,
+          "m": "this.swayBackground?.update("
+        }
+      ]
+    },
+    {
+      "id": "m41",
+      "system": "手持挂件 / 点火提示 / 手持火源",
+      "code": "heldPropSystem.update / fireHintMarker.tick / setFireSources",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10718,
+          "m": "this.heldPropSystem.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10719,
+          "m": "this.fireHintMarker.tick(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10723,
+          "m": "this.vfxSystem.setFireSources('heldProp'"
+        }
+      ]
+    },
+    {
+      "id": "m42",
+      "system": "燃烧模拟",
+      "code": "burnSystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10725,
+          "m": "this.burnSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m43",
+      "system": "粒子 / 群体",
+      "code": "vfxSystem.update(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10727,
+          "m": "this.vfxSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m44",
+      "system": "群体惊吓伤害",
+      "code": "healthSystem.applyDamage(fright)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "stop",
+        "Dialogue": "stop",
+        "Encounter": "stop",
+        "Cutscene": "stop",
+        "UIOverlay": "stop",
+        "Minigame": "stop",
+        "Dead": "stop"
+      },
+      "note": "还要求三把火未耗尽。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10729,
+          "m": "if (this.stateController.currentState === GameState.Exploring && !this.healthSystem.isDepleted())"
+        }
+      ]
+    },
+    {
+      "id": "m45",
+      "system": "落雷的灯",
+      "code": "updateStrikeLight(dt)",
+      "cells": {
+        "MainMenu": "stop",
+        "Exploring": "run",
+        "SceneTransition": "stop",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "stop",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "不分游戏状态，只吃暂停闸。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10738,
+          "m": "if (!worldPaused) this.updateStrikeLight(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m46",
+      "system": "相机平滑 / 震屏",
+      "code": "camera.update(worldPaused ? 0 : dt)",
+      "cells": {
+        "MainMenu": "partial",
+        "Exploring": "run",
+        "SceneTransition": "partial",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "partial",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "暂停态（主菜单 / 切场 / 界面覆盖）照调但 dt 喂 0：不推进，只应用变换。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10740,
+          "m": "this.camera.update(worldPaused ? 0 : dt)"
+        }
+      ]
+    },
+    {
+      "id": "m47",
+      "system": "声学听者 / 脚步声",
+      "code": "updateAcousticListener / footstepSystem.update",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10747,
+          "m": "this.updateAcousticListener(false)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10748,
+          "m": "this.footstepSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "m48",
+      "system": "调试工具",
+      "code": "debugTools?.update(dt)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "仅开发构建存在。",
+      "status": "dev-only",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10749,
+          "m": "this.debugTools?.update(dt)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3743,
+          "m": "if (import.meta.env.DEV) this.debugTools"
+        }
+      ]
+    },
+    {
+      "id": "m49",
+      "system": "深度调试可视化",
+      "code": "depthDebugVisualizer?.update()",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "正式构建也调；模式 off 时内部直接返回。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10750,
+          "m": "this.depthDebugVisualizer?.update()"
+        }
+      ]
+    },
+    {
+      "id": "m50",
+      "system": "粒子区域叠加层",
+      "code": "vfxConfineOverlay.update(...)",
+      "cells": {
+        "MainMenu": "partial",
+        "Exploring": "partial",
+        "SceneTransition": "partial",
+        "ActionSequence": "partial",
+        "Dialogue": "partial",
+        "Encounter": "partial",
+        "Cutscene": "partial",
+        "UIOverlay": "partial",
+        "Minigame": "partial",
+        "Dead": "stop"
+      },
+      "note": "只在开发构建 F2 打开叠加层后存在。",
+      "status": "dev-only",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10752,
+          "m": "if (this.vfxConfineOverlay) {"
+        }
+      ]
+    },
+    {
+      "id": "m51",
+      "system": "视锥剔除",
+      "code": "updateFrustumCulling()",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10763,
+          "m": "this.updateFrustumCulling()"
+        }
+      ]
+    },
+    {
+      "id": "m52",
+      "system": "燃烧滤镜相机参数",
+      "code": "burnRenderer.update(...)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10766,
+          "m": "this.burnRenderer.update(performance.now(), {"
+        }
+      ]
+    },
+    {
+      "id": "m53",
+      "system": "实体像素密度匹配",
+      "code": "syncEntityPixelDensityMatch()",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10772,
+          "m": "this.syncEntityPixelDensityMatch()"
+        }
+      ]
+    },
+    {
+      "id": "m54",
+      "system": "深度遮挡与逐像素着色驱动（玩家 / 实体 / 热点）",
+      "code": "sceneDepthSystem.* + driveBakedShading",
+      "cells": {
+        "MainMenu": "partial",
+        "Exploring": "partial",
+        "SceneTransition": "partial",
+        "ActionSequence": "partial",
+        "Dialogue": "partial",
+        "Encounter": "partial",
+        "Cutscene": "partial",
+        "UIOverlay": "partial",
+        "Minigame": "partial",
+        "Dead": "stop"
+      },
+      "note": "只在当前场景深度系统激活时；逐实体还要求挂了深度滤镜且未被剔除。与游戏状态无关。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10774,
+          "m": "if (this.sceneDepthSystem.isActive) {"
+        }
+      ]
+    },
+    {
+      "id": "m55",
+      "system": "光照环境曲线",
+      "code": "updateLightEnvFromCurve()",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "无曲线 / 位面光照档 / F2 打开时内部直接返回。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10890,
+          "m": "this.updateLightEnvFromCurve()"
+        }
+      ]
+    },
+    {
+      "id": "m56",
+      "system": "草木位移图离屏渲染",
+      "code": "swayBackground?.renderUv(...)",
+      "cells": {
+        "MainMenu": "partial",
+        "Exploring": "partial",
+        "SceneTransition": "partial",
+        "ActionSequence": "partial",
+        "Dialogue": "partial",
+        "Encounter": "partial",
+        "Cutscene": "partial",
+        "UIOverlay": "partial",
+        "Minigame": "partial",
+        "Dead": "stop"
+      },
+      "note": "场景有摆动背景时。暂停态也照渲（位移图内容取决于风的钟，暂停时钟不走）。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10893,
+          "m": "this.swayBackground?.renderUv("
+        }
+      ]
+    },
+    {
+      "id": "m57",
+      "system": "场景灯光（水面钟 + 脏才重算）",
+      "code": "sceneLighting.setSurfaceTime / sceneLighting.update",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10895,
+          "m": "this.sceneLighting.setSurfaceTime("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10897,
+          "m": "this.sceneLighting.update(this.renderer.app.renderer)"
+        }
+      ]
+    },
+    {
+      "id": "m58",
+      "system": "GI 反弹 pass（场景灯光内部）",
+      "code": "giPass?.render(renderer)",
+      "cells": {
+        "MainMenu": "partial",
+        "Exploring": "partial",
+        "SceneTransition": "partial",
+        "ActionSequence": "partial",
+        "Dialogue": "partial",
+        "Encounter": "partial",
+        "Cutscene": "partial",
+        "UIOverlay": "partial",
+        "Minigame": "partial",
+        "Dead": "stop"
+      },
+      "note": "仍会执行（重算且烘了 GI 命中图时），产物只被已关停的统一角色路径读取。",
+      "status": "disabled",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 783,
+          "m": "if (recomputed) this.giPass?.render(renderer)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6608,
+          "m": "if (!UNIFIED_CHAR_PATH_ENABLED) {"
+        }
+      ]
+    },
+    {
+      "id": "m59",
+      "system": "实体投影阴影",
+      "code": "updateEntityShadows()",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10898,
+          "m": "this.updateEntityShadows()"
+        }
+      ]
+    },
+    {
+      "id": "m60",
+      "system": "实体层排序",
+      "code": "renderer.sortEntityLayer(...)",
+      "cells": {
+        "MainMenu": "run",
+        "Exploring": "run",
+        "SceneTransition": "run",
+        "ActionSequence": "run",
+        "Dialogue": "run",
+        "Encounter": "run",
+        "Cutscene": "run",
+        "UIOverlay": "run",
+        "Minigame": "run",
+        "Dead": "stop"
+      },
+      "note": "",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10900,
+          "m": "this.renderer.sortEntityLayer("
+        }
+      ]
+    },
+    {
+      "id": "m61",
+      "system": "触屏控件",
+      "code": "touchMobileControls?.update()",
+      "cells": {
+        "MainMenu": "partial",
+        "Exploring": "partial",
+        "SceneTransition": "partial",
+        "ActionSequence": "partial",
+        "Dialogue": "partial",
+        "Encounter": "partial",
+        "Cutscene": "partial",
+        "UIOverlay": "partial",
+        "Minigame": "partial",
+        "Dead": "stop"
+      },
+      "note": "页面有 #game-mount 时才创建。",
+      "status": "active",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10901,
+          "m": "this.touchMobileControls?.update()"
+        }
+      ]
+    }
+  ],
+  "outsideTick": [
+    {
+      "id": "o1",
+      "label": "Pixi 渲染本身（整棵舞台绘制一次）",
+      "kind": "pixi-render",
+      "status": "active",
+      "detail": "Pixi 应用初始化时把 render 挂在 ticker 的 LOW 优先级；本项目在初始化前把 render 换成\"抛错只报不崩\"的包装版。排在 mainTick 与角色着色帧组同步之后。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 134,
+          "m": "ticker.add(this.render, this, LOW)"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 136,
+          "m": "this.installRenderCrashGuard();"
+        },
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 124,
+          "m": ".render = guarded;"
+        }
+      ]
+    },
+    {
+      "id": "o2",
+      "label": "角色网格着色共享帧组同步（charLitFrameSync）",
+      "kind": "ticker",
+      "status": "active",
+      "detail": "优先级 LOW+1：每帧渲染前把世界容器位姿与投影缩放推给角色照明系统。不经任何游戏状态分支，逻辑冻结时也跑。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4286,
+          "m": "ticker.add(this.charLitFrameSync, undefined, UPDATE_PRIORITY.LOW + 1)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4275,
+          "m": "this.characterLighting.syncFrame(wc.x, wc.y, scale)"
+        }
+      ]
+    },
+    {
+      "id": "o3",
+      "label": "统一角色照明帧同步（同一回调里）",
+      "kind": "ticker",
+      "status": "disabled",
+      "detail": "只在统一角色照明启用时调；总闸 UNIFIED_CHAR_PATH_ENABLED=false，建立入口一进来就拆除返回，因此 active 恒为假，这一支不执行。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4278,
+          "m": "if (this.unifiedCharLighting.active) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4283,
+          "m": "this.unifiedCharLighting.syncFrame(wc.x, wc.y, scale, { aoContact, aoForm })"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 443,
+          "m": "const UNIFIED_CHAR_PATH_ENABLED = false"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6608,
+          "m": "if (!UNIFIED_CHAR_PATH_ENABLED) {"
+        }
+      ]
+    },
+    {
+      "id": "o4",
+      "label": "WebGL 错误排空到调试面板（glPostRenderDrain）",
+      "kind": "ticker",
+      "status": "active",
+      "detail": "优先级 UTILITY，Pixi 渲染之后读 gl.getError 写进 F2 日志。安装调用在 start() 里无开发门控。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4617,
+          "m": "ticker.add(this.glPostRenderDrain, undefined, UPDATE_PRIORITY.UTILITY)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4332,
+          "m": "this.setupWebGlPanelDiagnostics();"
+        }
+      ]
+    },
+    {
+      "id": "o5",
+      "label": "运行时编辑模式（摆灯）",
+      "kind": "ticker",
+      "status": "dev-only",
+      "detail": "进入编辑模式时挂 LOW+1 回调（排在渲染前），同时冻结主 tick。",
+      "cites": [
+        {
+          "f": "src/authoring/AuthoringMode.ts",
+          "l": 272,
+          "m": "ticker.add(this.tickerFn, undefined, UPDATE_PRIORITY.LOW + 1)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3513,
+          "m": "if (import.meta.env.DEV) {"
+        }
+      ]
+    },
+    {
+      "id": "o6",
+      "label": "切场景淡入淡出 / 黑幕",
+      "kind": "raf",
+      "status": "active",
+      "detail": "场景管理器自己用浏览器动画帧推 alpha，按真实时间走，不吃游戏暂停，也不经 tick。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2398,
+          "m": "this.animRafId = requestAnimationFrame(tick)"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2477,
+          "m": "this.blackoutRafId = requestAnimationFrame(tick)"
+        }
+      ]
+    },
+    {
+      "id": "o7",
+      "label": "HUD 三把火与气缕动画",
+      "kind": "raf",
+      "status": "active",
+      "detail": "HUD 自带动画帧循环推火苗与气味显示；固定步调试模式下不启动，改由调试步进驱动。",
+      "cites": [
+        {
+          "f": "src/ui/HUD.ts",
+          "l": 1022,
+          "m": "this.flameRafId = requestAnimationFrame(step)"
+        },
+        {
+          "f": "src/ui/HUD.ts",
+          "l": 1012,
+          "m": "if (this.fixedTickMode || this.flameRafId !== null"
+        }
+      ]
+    },
+    {
+      "id": "o8",
+      "label": "HUD 整体淡入淡出 / 场景名淡出",
+      "kind": "raf",
+      "status": "active",
+      "detail": "一次性动画帧循环。",
+      "cites": [
+        {
+          "f": "src/ui/HUD.ts",
+          "l": 357,
+          "m": "this.hudFadeRaf = requestAnimationFrame(tick)"
+        },
+        {
+          "f": "src/ui/HUD.ts",
+          "l": 749,
+          "m": "this.sceneNameFadeRaf = requestAnimationFrame(tick)"
+        }
+      ]
+    },
+    {
+      "id": "o9",
+      "label": "过场步骤的\"已上屏\"屏障与点击等待",
+      "kind": "raf",
+      "status": "active",
+      "detail": "过场逻辑是异步步链，不在 tick 里推进；步与步之间用双动画帧确认画面已渲染，点击等待也用动画帧布防。",
+      "cites": [
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 1194,
+          "m": "requestAnimationFrame(finish)"
+        },
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 1223,
+          "m": "requestAnimationFrame(() => { framePassed = true; })"
+        },
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 1261,
+          "m": "skipRafId = requestAnimationFrame(check)"
+        },
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 1532,
+          "m": "requestAnimationFrame(arm)"
+        },
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 1756,
+          "m": "requestAnimationFrame(arm)"
+        }
+      ]
+    },
+    {
+      "id": "o10",
+      "label": "过场渲染器的延后回调",
+      "kind": "raf",
+      "status": "active",
+      "detail": "过场渲染器登记的单次动画帧回调。",
+      "cites": [
+        {
+          "f": "src/rendering/CutsceneRenderer.ts",
+          "l": 901,
+          "m": "const id = requestAnimationFrame(() => {"
+        }
+      ]
+    },
+    {
+      "id": "o11",
+      "label": "界面组件动画（窗口开合、列表行淡入、滚动惯性、主题淡入）",
+      "kind": "raf",
+      "status": "active",
+      "detail": "各组件自带一次性动画帧循环，按真实时间，不经 tick。",
+      "cites": [
+        {
+          "f": "src/ui/components/UIWindow.ts",
+          "l": 405,
+          "m": "requestAnimationFrame(tick)"
+        },
+        {
+          "f": "src/ui/components/UIWindow.ts",
+          "l": 445,
+          "m": "requestAnimationFrame(tick)"
+        },
+        {
+          "f": "src/ui/components/UIListRow.ts",
+          "l": 129,
+          "m": "requestAnimationFrame(tick)"
+        },
+        {
+          "f": "src/ui/components/UIScrollView.ts",
+          "l": 343,
+          "m": "requestAnimationFrame(step)"
+        },
+        {
+          "f": "src/ui/UITheme.ts",
+          "l": 325,
+          "m": "requestAnimationFrame(tick)"
+        }
+      ]
+    },
+    {
+      "id": "o12",
+      "label": "对话 / 富文本 / 说明卡 / 点击继续 / 压力小游戏 / 背包图标",
+      "kind": "raf",
+      "status": "active",
+      "detail": "各界面自带的动画帧循环或单次回调。",
+      "cites": [
+        {
+          "f": "src/ui/DialogueUI.ts",
+          "l": 591,
+          "m": "requestAnimationFrame(fade)"
+        },
+        {
+          "f": "src/ui/RichContent.ts",
+          "l": 347,
+          "m": "requestAnimationFrame(fade)"
+        },
+        {
+          "f": "src/ui/SystemNoteUI.ts",
+          "l": 214,
+          "m": "requestAnimationFrame(tick)"
+        },
+        {
+          "f": "src/ui/ClickContinuePrompt.ts",
+          "l": 82,
+          "m": "requestAnimationFrame(tick)"
+        },
+        {
+          "f": "src/ui/ClickContinuePrompt.ts",
+          "l": 104,
+          "m": "requestAnimationFrame(arm)"
+        },
+        {
+          "f": "src/ui/PressureHoldUI.ts",
+          "l": 127,
+          "m": "requestAnimationFrame(step)"
+        },
+        {
+          "f": "src/ui/InventoryUI.ts",
+          "l": 907,
+          "m": "requestAnimationFrame(() => {"
+        }
+      ]
+    },
+    {
+      "id": "o13",
+      "label": "画布尺寸跟随舞台",
+      "kind": "raf",
+      "status": "active",
+      "detail": "舞台尺寸变化（自由视口时）推迟到下一动画帧 resize。",
+      "cites": [
+        {
+          "f": "src/rendering/Renderer.ts",
+          "l": 175,
+          "m": "requestAnimationFrame(() => {"
+        }
+      ]
+    },
+    {
+      "id": "o14",
+      "label": "音频保活（每秒）",
+      "kind": "interval",
+      "status": "active",
+      "detail": "每秒检查音频上下文，挂起就恢复。",
+      "cites": [
+        {
+          "f": "src/systems/AudioManager.ts",
+          "l": 1578,
+          "m": "this.keepAliveTimer = setInterval(tick, 1000)"
+        }
+      ]
+    },
+    {
+      "id": "o15",
+      "label": "输出电平采样（每 100ms）",
+      "kind": "interval",
+      "status": "active",
+      "detail": "音频上下文就绪后挂分析器，每 100ms 记一次峰值。",
+      "cites": [
+        {
+          "f": "src/systems/AudioManager.ts",
+          "l": 1611,
+          "m": "setInterval(() => this.sampleOutputMeter(), 100)"
+        },
+        {
+          "f": "src/systems/AudioManager.ts",
+          "l": 1692,
+          "m": "this.ensureOutputMeter(ctx)"
+        }
+      ]
+    },
+    {
+      "id": "o16",
+      "label": "音频淡变分段",
+      "kind": "timeout",
+      "status": "active",
+      "detail": "音量淡变按真实时间分段 setTimeout 推进。",
+      "cites": [
+        {
+          "f": "src/systems/AudioManager.ts",
+          "l": 1168,
+          "m": "const timer = setTimeout(() => {"
+        }
+      ]
+    },
+    {
+      "id": "o17",
+      "label": "运行时命令轮询（每 600ms）",
+      "kind": "interval",
+      "status": "dev-only",
+      "detail": "外部工具下发的调试命令通道。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 9719,
+          "m": "window.setInterval(() => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9715,
+          "m": "if (!import.meta.env.DEV) return;"
+        }
+      ]
+    },
+    {
+      "id": "o18",
+      "label": "F2 调试面板的刷新定时器",
+      "kind": "interval",
+      "status": "dev-only",
+      "detail": "声学 / 粒子 / 燃烧页、屏幕标注、系统页实时刷新、叙事桥页。这些页只在开发构建挂上（F2 面板本身也只在开发构建注册）。",
+      "cites": [
+        {
+          "f": "src/ui/debugAcousticSection.ts",
+          "l": 181,
+          "m": "setInterval(() => { if (sec.isConnected) render(); }, REFRESH_MS)"
+        },
+        {
+          "f": "src/ui/debugVfxSection.ts",
+          "l": 280,
+          "m": "window.setInterval(render, REFRESH_MS)"
+        },
+        {
+          "f": "src/ui/debugBurnSection.ts",
+          "l": 156,
+          "m": "window.setInterval(() => { if (sec.isConnected) refresh(); }"
+        },
+        {
+          "f": "src/ui/DebugPanelUI.ts",
+          "l": 1054,
+          "m": "window.setInterval(() => {"
+        },
+        {
+          "f": "src/ui/DebugPanelUI.ts",
+          "l": 387,
+          "m": "this.systemLiveRafId = requestAnimationFrame(tick)"
+        },
+        {
+          "f": "src/core/DebugTools.ts",
+          "l": 2047,
+          "m": "window.setInterval(() => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4107,
+          "m": "if (import.meta.env.DEV) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7909,
+          "m": "if (import.meta.env.DEV) {"
+        }
+      ]
+    },
+    {
+      "id": "o19",
+      "label": "src/dev 下的同步桥与轮询",
+      "kind": "interval",
+      "status": "dev-only",
+      "detail": "叙事调试桥批量上报、摆动/地形热同步、截图辅助的隐藏页动画帧泵、各工作台热同步（setTimeout 链）、开发模式面板的日夜轮询。",
+      "cites": [
+        {
+          "f": "src/dev/narrativeDebugBridge.ts",
+          "l": 600,
+          "m": "window.setInterval(flush, FLUSH_INTERVAL_MS)"
+        },
+        {
+          "f": "src/dev/runtimeSwaySync.ts",
+          "l": 144,
+          "m": "window.setInterval(() => void this.tick(), POLL_MS)"
+        },
+        {
+          "f": "src/dev/runtimeTerrainSync.ts",
+          "l": 117,
+          "m": "window.setInterval(() => void this.tick(), POLL_MS)"
+        },
+        {
+          "f": "src/dev/uiShotHarness.ts",
+          "l": 160,
+          "m": "window.setInterval(() => {"
+        },
+        {
+          "f": "src/dev/runtimeLightingSync.ts",
+          "l": 293,
+          "m": "this.timer = setTimeout(() => { void this.tick(); }, delayMs)"
+        },
+        {
+          "f": "src/dev/runtimeVfxSync.ts",
+          "l": 310,
+          "m": "this.timer = setTimeout(() => { void this.tick(); }, delayMs)"
+        },
+        {
+          "f": "src/dev/runtimeAcousticsSync.ts",
+          "l": 279,
+          "m": "this.timer = setTimeout(() => { void this.tick(); }, delayMs)"
+        },
+        {
+          "f": "src/dev/runtimeBurnSync.ts",
+          "l": 149,
+          "m": "this.timer = setTimeout(() => { void this.tick(); }, delayMs)"
+        },
+        {
+          "f": "src/dev/runtimeBreathingSync.ts",
+          "l": 146,
+          "m": "this.timer = setTimeout(() => { void this.tick(); }, delayMs)"
+        },
+        {
+          "f": "src/ui/DevModeUI.ts",
+          "l": 149,
+          "m": "setInterval(() => {"
+        }
+      ]
+    },
+    {
+      "id": "o20",
+      "label": "气味预览页自己的 ticker（另一入口）",
+      "kind": "ticker",
+      "status": "other-entry",
+      "detail": "smell_preview.html 的独立入口，不属于游戏主循环。",
+      "cites": [
+        {
+          "f": "src/smell_preview_entry.ts",
+          "l": 97,
+          "m": "app.ticker.add((tk) => {"
+        }
+      ]
+    }
+  ],
+  "uncertain": [
+    {
+      "id": "u1",
+      "what": "mainTick 在 ticker 上的优先级与 Pixi 渲染的相对先后",
+      "where": "src/core/Game.ts:4269 ticker.add(this.mainTick)",
+      "why": "这里没传优先级，用的是 Pixi 库的缺省值；LOW / UTILITY / 缺省值的大小关系都定义在 Pixi 库里（node_modules 不在仓库），src 里只有注释（Renderer.ts:134、AuthoringMode.ts:270、Game.ts:886）说明 render 在 LOW。\"mainTick 在渲染之前\"是按库的缺省值推出来的，静态抽取拿不到库源码佐证。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 4269,
+          "m": "ticker.add(this.mainTick)"
+        },
+        {
+          "f": "src/authoring/AuthoringMode.ts",
+          "l": 270,
+          "m": "排在 Pixi 渲染（LOW）之前"
+        }
+      ]
+    },
+    {
+      "id": "u2",
+      "what": "各处独立的 requestAnimationFrame 回调与 Pixi ticker 的先后",
+      "where": "SceneManager / HUD / CutsceneManager / UI 组件的 rAF",
+      "why": "Pixi ticker 本身也挂在浏览器动画帧上，同一帧里谁先跑取决于注册顺序（代码注释自己也这么说），静态看不出具体哪一帧里谁在前。",
+      "cites": [
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 1170,
+          "m": "本回调与 Pixi ticker 同挂 rAF，注册顺序决定谁先跑"
+        }
+      ]
+    },
+    {
+      "id": "u3",
+      "what": "同一帧里可能跑不止一个状态分支",
+      "where": "Game.tick 的状态分支（10577 / 10601 / 10613 / 10627 / 10639 / 10647 / 10661）",
+      "why": "各分支是依次独立的 if，每个都重新读当前状态。若前面某一步同步切了状态（例如交互、界面更新里直接开对话），后面对应新状态的分支会在同一帧接着跑。哪些调用会同步切状态要看被调用方内部与事件处理器，本图没有展开，不下结论。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10577,
+          "m": "if (this.stateController.currentState === GameState.Exploring) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10627,
+          "m": "if (this.stateController.currentState === GameState.Dialogue) {"
+        }
+      ]
+    },
+    {
+      "id": "u4",
+      "what": "tick 内调用引发的同步事件处理",
+      "where": "tick 里的所有系统调用",
+      "why": "事件总线的 emit 是同步逐个调用监听者的，所以 tick 里任何一步发出的事件，其处理器都在这一帧的这一步里执行。本图只列 tick 直接调用的一层，不展开被调用者内部发了哪些事件。",
+      "cites": [
+        {
+          "f": "src/core/EventBus.ts",
+          "l": 27,
+          "m": "emit(event: string, payload?: any): void"
+        },
+        {
+          "f": "src/core/EventBus.ts",
+          "l": 34,
+          "m": "cb(payload);"
+        }
+      ]
+    },
+    {
+      "id": "u5",
+      "what": "过场 / 动作链 / 对话的\"剧情推进\"落在哪一帧",
+      "where": "CutsceneManager 的异步步链、gameClock 等待",
+      "why": "演出逻辑是 async 步链，由游戏时钟兑现（在 tick 的 gameClock.advance 里）、动画帧屏障、点击等推动；await 之后的续跑在微任务里执行，具体落在渲染前还是渲染后取决于浏览器事件循环，静态抽取看不出来。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10537,
+          "m": "if (!worldPaused) this.gameClock.advance(dt)"
+        },
+        {
+          "f": "src/systems/CutsceneManager.ts",
+          "l": 1179,
+          "m": "private awaitPresentedFrame(epoch: number): Promise<void>"
+        }
+      ]
+    },
+    {
+      "id": "u6",
+      "what": "每帧被调、但内部按状态自我门控的系统",
+      "where": "矩阵里标 run 的\"不分状态\"行",
+      "why": "矩阵只按 tick 里的分支与暂停闸判断\"会不会被调用\"。其中位面对账、时段换装、NPC 日程、身体动词、闲聊气泡等已读过内部并在 note 写明自判；其余被调用系统（如气味、待机、对白框、表情气泡、相机透视以外的 UI 等）内部是否还按状态空转，未逐个核对。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10555,
+          "m": "this.npcScheduleSystem.update(dt)"
+        }
+      ]
+    },
+    {
+      "id": "u7",
+      "what": "Pixi 库内部挂在 ticker 上的其它回调",
+      "where": "pixi.js 库（不在 src）",
+      "why": "Pixi 自带插件（例如事件系统）可能在 ticker 上挂自己的回调；库代码不在仓库，无法从 src 抽出，未画。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 316,
+          "m": "UPDATE_PRIORITY } from 'pixi.js'"
+        }
+      ]
+    },
+    {
+      "id": "u8",
+      "what": "F2 调试面板\"系统\"页的动画帧刷新是否可能在正式构建里启动",
+      "where": "src/ui/DebugPanelUI.ts:385-387",
+      "why": "DebugPanelUI 在正式构建也实例化，但 F2 注册只在开发构建（Game.ts:7909）。\"正式构建打不开面板所以这条循环不会跑\"是按注册门控推出的，未逐条核对所有打开面板的入口。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 2680,
+          "m": "this.debugPanelUI = new DebugPanelUI("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7909,
+          "m": "if (import.meta.env.DEV) {"
+        }
+      ]
+    }
+  ]
+}
