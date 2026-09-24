@@ -63,6 +63,10 @@ import { isPresentationOnlyAction } from './actionParamManifest';
 import { FireProtectionSystem, type ProtectionFireSource } from '../systems/FireProtectionSystem';
 import type { ConditionExpr } from '../data/types';
 import { SmellSystem } from '../systems/SmellSystem';
+import {
+  WindowWorldSystem,
+  type WindowVfxAttachCtx, type WindowVfxHandle,
+} from '../systems/windowWorld/WindowWorldSystem';
 import { FootstepSystem, type FootstepEmitter, type FootstepSpatialContext } from '../systems/FootstepSystem';
 import {
   DEFAULT_LISTENER_BACK_AT_BASE_ZOOM_WU,
@@ -149,7 +153,7 @@ import type {
   DialogueLogEntry,
   GameLogLink,
 } from '../data/types';
-import { buildCharacterRegistry } from '../data/characterRegistry';
+import { buildCharacterRegistry, type CharacterRegistry } from '../data/characterRegistry';
 import { DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE } from '../rendering/EntityPixelDensityMatch';
 import type { AnimationSetDefInput } from '../data/resolveAnimationSet';
 import { loadSocketsForAnim, type ResolvedSockets } from '../data/animationSockets';
@@ -291,7 +295,7 @@ import {
   type ScriptedSpeakerEntity,
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
-import { Container, Culler, Graphics, Rectangle, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { Container, Culler, Graphics, Point, Rectangle, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
 import { bakeKeyFromBackground, dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
 import type { TrajectoryAsset, TrajectoryKeyframe } from '../data/types';
 import type { TrajectoryEndReason } from '../systems/TrajectorySystem';
@@ -645,6 +649,15 @@ export class Game {
   private healthThreatSystem = new HealthThreatSystem();
   private fireProtectionSystem = new FireProtectionSystem();
   private yinThreatsVisible = false;
+  /**
+   * 举着窥夜法宝 = 过界（玩法清单 F.5）。与威胁系统那一路**并列**，不是同一个变量：
+   * 两者都能单独把三把火请出来，`setYinSources` 每帧回写，共用一个变量会互相冲掉。
+   */
+  private windowYinActive = false;
+  /** 阴间侧要不要显火：两路请求任一成立即可。 */
+  private get yinVisibleNow(): boolean {
+    return this.yinThreatsVisible || this.windowYinActive;
+  }
   private systemNotePauseDepth = 0;
   /**
    * 游戏时钟：**演出时间的唯一来源**（`waitMs` / 天色渐变 / 连劈间隔 / 雷柱软停）。
@@ -652,6 +665,25 @@ export class Game {
    */
   private readonly gameClock = new GameClock();
   private smellSystem: SmellSystem;
+  /**
+   * 法宝「窥夜」的窗户世界（玩法清单 F.5）。它是一份 **fork**：自己读数据、自己装载荷、
+   * 自己建辐射场，不持有主场景任何活引用。Game 只做组装与逐帧推进。
+   */
+  private windowWorld: WindowWorldSystem;
+  /** DEV 调试按键（F9 开合窥夜）。存住引用才摘得掉——不摘就是 HMR 后越挂越多。 */
+  private nightWindowDebugKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+  /** 角色注册表（组装层留的引用；窗户世界 fork 与 SceneManager 用的是同一张）。 */
+  private characterRegistryTable: CharacterRegistry = {};
+  /**
+   * 窥夜演出作用域的**嵌套深度**（`runActionsInNightWindow`，F.5）。
+   *
+   * ⚠ 是计数不是布尔：作用域可以嵌套（域内再嵌一层容器），裸布尔的话内层退出时
+   * 会把外层的作用域一起关掉，后半段演出静默打回主世界——那种错极难查，
+   * 画面上只是"窗里的人突然不听话了"。
+   */
+  private nightWindowActorScope = 0;
+  /** 屏幕→舞台映射的临时点，避免每帧新建对象。 */
+  private readonly aimStagePoint = new Point();
   private planeReconciler: PlaneReconciler;
   private npcScheduleSystem: NpcScheduleSystem;
   /** 烘焙式实体轨迹动画的播放系统（表演态，不入档；切场景/读档由本类显式 cancelAll） */
@@ -979,6 +1011,56 @@ export class Game {
     this.healthSystem = new HealthSystem(this.eventBus, this.flagStore, this.actionExecutor);
     this.retrySystem = new RetrySystem();
     this.smellSystem = new SmellSystem(this.eventBus, this.flagStore);
+    this.windowWorld = new WindowWorldSystem({
+      assetManager: this.assetManager,
+      // 窗盖在主场景背景之上、阴影层之下：它是"那一段的背景"，不是实体。
+      backgroundLayer: this.renderer.backgroundLayer,
+      getPixiRenderer: () => this.renderer.app.renderer ?? null,
+      getSceneId: () => this.sceneManager.currentSceneData?.id ?? null,
+      getPhase: () => this.dayManager.currentPhase,
+      getPhases: () => this.dayManager.phaseList,
+      getApexUv: () => this.playerSceneUv(),
+      getAimUv: () => this.aimSceneUv(),
+      characterRegistry: () => this.characterRegistryTable,
+      getNpcDefaultPhases: () => this.dayManager.daylightPhases,
+      // fork 的记忆：拷一份过去，拷完就是窗自己的（只读出口，没有回写的路）
+      snapshotSceneMemory: (sceneId) => this.sceneManager.snapshotSceneMemory(sceneId),
+      // 几何各时段共享 ⇒ 窗里的人该被同一道崖壁挡住，用主场景这一份就是对的
+      makeOcclusionFilter: (blend) => this.sceneDepthSystem.createFilterForEntity(blend),
+      // 同上：透视缩放是几何量，各时段共享。窗不注入就是"窗里的人比真夜小一圈"（实测）
+      perspectiveScale: () => this.perspectiveScaleResolver,
+      // 像素密度低通同样是几何量（各时段原画同尺寸是硬契约）：不接窗里的人会锐一档
+      pixelDensityMatch: () => {
+        const texelsPerWorld = this.sceneManager.getBackgroundTexelsPerWorld();
+        return {
+          active: texelsPerWorld != null && this.getEntityPixelDensityMatchEffective(),
+          texelsPerWorld,
+          blurScale: this.getEntityPixelDensityMatchBlurScale(),
+        };
+      },
+      attachVfx: (ctx) => this.attachWindowVfx(ctx),
+      rules: {
+        // 走与普通鬼物同一条扣血通道：防护、死亡系绳、说明一律照旧（G.5）
+        applyYinDamage: (amount, sourceId) => {
+          void this.healthSystem.applyDamage({ amount, kind: 'yin', sourceId });
+        },
+        // ⚠ 只发信号，绝不写 flag：进度 / 门控 / "做过没有" 一律走叙事状态机（编排铁律）
+        emitSignal: (signal, entityId) => {
+          void this.narrativeStateManager.emitNarrativeSignal({
+            signal, sourceType: 'entity', sourceId: entityId,
+            owner: { ownerType: 'npc', ownerId: entityId },
+          });
+        },
+        // 开窗即过界：与「进入阴间威胁范围」同一个三把火显示请求
+        setYinActive: (active) => {
+          if (this.windowYinActive === active) return;
+          this.windowYinActive = active;
+          if (this.flagStore.get(FlagKeys.threeFiresVisible) !== true) {
+            this.hud?.setThreeFiresVisible(this.yinVisibleNow, 'fade');
+          }
+        },
+      },
+    });
     this.planeReconciler = new PlaneReconciler(this.eventBus);
     this.npcScheduleSystem = new NpcScheduleSystem(this.eventBus);
     this.archiveManager = new ArchiveManager(this.eventBus, this.flagStore);
@@ -2072,6 +2154,7 @@ export class Game {
       (window as unknown as Record<string, unknown>).__game = this;
       // UI 取景台（__uiPose / __uiShot / __uiShotAll）：观感改造的审查循环靠它出全分辨率对照图
       void import('../dev/uiShotHarness').then(m => m.installUIShotHarness(this));
+      this.installNightWindowDebugKey();
     }
     await this.renderer.init(options.visualCapture ? { resolution: 1 } : undefined);
     /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
@@ -2169,6 +2252,12 @@ export class Game {
     /** game_config.dayNight → DayManager：无条件调用（缺省段也要落到时段表上）。
      *  configure 只在时刻尚未被动过时同步开局时刻，故不必像 health 那样重跑 init。 */
     this.dayManager.configure(this.gameConfig.dayNight);
+    // 窥夜的作者参数（F.5）：整块缺省就不调，保持运行时内置值。
+    {
+      const nw = this.gameConfig.nightWindow;
+      if (nw?.cone) this.windowWorld.applyConeConfig(nw.cone);
+      if (nw?.rules) this.windowWorld.applyRules(nw.rules);
+    }
 
     this.inspectBox = new InspectBox(this.renderer, this.stringsProvider);
     // eventBus 给到回执条做电影化静默（过场里入队、cutscene:end 补冒）
@@ -2377,6 +2466,18 @@ export class Game {
      * showEmote 另见 resolveEmoteTarget：在以上结果之外可解析当前场景热点 id。
      */
     this.resolveActorFn = (id: string) => {
+      /**
+       * 窥夜作用域（`runActionsInNightWindow`，F.5）：域内**先**找窗里那一批。
+       * 插在这一个入口上，域内的气泡 / 播动画 / 走位 / 轨迹**全部现成动作**就都落到
+       * 窗里了 —— 不必为窗另写一套动作，编辑器的目标选择器也一个都不用改。
+       *
+       * 找不到同 id 的就**照常往下走**：一段演出里既要让窗里的身影转头、又要推主世界的
+       * 镜头或让玩家说话，是常态；域内一律拦死反而写不出戏。
+       */
+      if (this.nightWindowActorScope > 0) {
+        const inWindow = this.windowWorld.findNpc(id);
+        if (inWindow) return inWindow;
+      }
       const temp = this.cutsceneManager.getTempActors().get(id);
       if (temp) return temp;
       const npc = this.sceneManager.getNpcById(id);
@@ -2713,7 +2814,7 @@ export class Game {
         this.yinThreatsVisible = ids.length > 0;
         // 已有作者请求时不重发显隐，尤其不能中途打断首次 debut 仪式。
         if (this.flagStore.get(FlagKeys.threeFiresVisible) !== true)
-          this.hud?.setThreeFiresVisible(this.yinThreatsVisible, 'fade');
+          this.hud?.setThreeFiresVisible(this.yinVisibleNow, 'fade');
       },
       signal: (signal, sourceId) => {
         const scene = this.sceneManager.currentSceneData;
@@ -2725,6 +2826,8 @@ export class Game {
       },
     });
     this.listenEvent('scene:beforeUnload', () => {
+      // 窗是那一张画的 fork，整份随场景丢：留着就是拿上一场的原画盖这一场。
+      this.windowWorld.unload();
       this.healthThreatSystem.clear();
       this.fireProtectionSystem.clear();
       this.sceneWind.clearGust();
@@ -2734,6 +2837,7 @@ export class Game {
       this.dynamicLightsByOwner.delete('strike');
       this.camera.clearShake();
       this.characterLighting.setEnvDim(1);
+      this.windowWorld.setEnvDim(1);   // 窗那份压暗同样不跨场景
       // 演出把背景音压下去了、人却走出了这张场景：新场景该按新场景的响度来。
       this.audioManager.clearAudioDucks();
       /**
@@ -3137,6 +3241,17 @@ export class Game {
       pressureHoldManager: this.pressureHoldManager,
       signalCueManager: this.signalCueManager,
       bubbleChatterSystem: this.bubbleChatterSystem,
+      setNightWindowOpen: (open) => this.setNightWindowOpen(open),
+      runInNightWindowScope: async (run) => {
+        // try/finally 不能省：域内动作抛了而作用域没退，之后**整局**的演员解析都会
+        // 先往窗里找——窗早关了，找不到就回落，表现上是"偶尔有条动作打错人"。
+        this.nightWindowActorScope += 1;
+        try {
+          await run();
+        } finally {
+          this.nightWindowActorScope -= 1;
+        }
+      },
       healthSystem: this.healthSystem,
       retrySystem: this.retrySystem,
       sceneWind: this.sceneWind,
@@ -4090,6 +4205,10 @@ export class Game {
         const { aoContact, aoForm } = this.characterLighting.shapeParams;
         this.unifiedCharLighting.syncFrame(wc.x, wc.y, scale, { aoContact, aoForm });
       }
+      // 窗户世界那**第二份**角色照明载荷吃同一个位姿 —— 也必须挂在这儿而不是它自己的
+      // update(dt)：那条路在游戏 tick 上，冻结/定帧会整段跳过。AO 借主世界算好的那两个数。
+      const ao = this.characterLighting.shapeParams;
+      this.windowWorld.syncRenderFrame(wc.x, wc.y, scale, { contact: ao.aoContact, form: ao.aoForm });
     };
     ticker.add(this.charLitFrameSync, undefined, UPDATE_PRIORITY.LOW + 1);
 
@@ -4535,10 +4654,13 @@ export class Game {
   private async loadCharacterRegistry(): Promise<void> {
     try {
       const raw = await this.assetManager.loadJson<CharacterRegistryFile>(TEXT_URLS.characterRegistry);
-      this.sceneManager.setCharacterRegistry(buildCharacterRegistry(raw?.characters));
+      // 组装层自己也留一份：窗户世界（fork）要用同一张表做身份合并，而那张表在
+      // SceneManager 里是私有的。这里留引用比再开一个读口轻，且两处拿到的是同一个对象。
+      this.characterRegistryTable = buildCharacterRegistry(raw?.characters);
     } catch {
-      this.sceneManager.setCharacterRegistry({});
+      this.characterRegistryTable = {};
     }
+    this.sceneManager.setCharacterRegistry(this.characterRegistryTable);
   }
 
   /** 气味 profiles（方案 E·气味指示器的数据源）→ 交给 HUD 建渲染器。失败则降级无气味指示器。 */
@@ -4940,6 +5062,11 @@ export class Game {
     const id = targetId.trim();
     if (!id) return null;
     if (id === 'player') return this.player ? { x: this.player.contactX, y: this.player.contactY } : null;
+    // 窥夜作用域：同 spriteEntityOf 的理由——这一口也不走 resolveActorFn。
+    if (this.nightWindowActorScope > 0) {
+      const inWindow = this.windowWorld.findNpc(id);
+      if (inWindow) return { x: inWindow.contactX, y: inWindow.contactY };
+    }
     const npc = this.sceneManager.getNpcById(id);
     return npc ? { x: npc.contactX, y: npc.contactY } : null;
   }
@@ -5053,6 +5180,8 @@ export class Game {
     const s = Number.isFinite(scale) ? Math.max(0, Math.min(1, scale)) : 1;
     this.sceneLighting.setEnvDim(s);
     this.characterLighting.setEnvDim(s);
+    // 窗户世界是第三处：它有自己的辐射场与自己的角色载荷，不跟就是暴雨里开了个亮洞。
+    this.windowWorld.setEnvDim(s);
     // 背景那一侧改的是 display，灯没变；但角色侧读的是同一份 packed，稳妥起见一并重推。
     this.pushPackedLightsToCharacters();
   }
@@ -5498,6 +5627,13 @@ export class Game {
     const id = targetId.trim();
     if (!id) return null;
     if (id === 'player') return this.player.sprite;
+    // 窥夜作用域：与 resolveActorFn 同一条取舍（先窗内、找不到回落主世界）。
+    // 这一口不走 resolveActorFn，所以必须单独认作用域——漏了的话域内挂件 / 特效
+    // 会静默挂到主世界的同名实体身上。
+    if (this.nightWindowActorScope > 0) {
+      const inWindow = this.windowWorld.findNpc(id);
+      if (inWindow) return inWindow.spriteEntity ?? null;
+    }
     const npc = this.sceneManager.getNpcById(id);
     return npc?.spriteEntity ?? null;
   }
@@ -8283,7 +8419,7 @@ export class Game {
       // 首次出场仪式 = 一段演出：整段切到 Cutscene 态（与 startCutscene 同一把锁），演完恢复原状态
       return this.runInGameState(GameState.Cutscene, () => Promise.resolve(this.hud.setThreeFiresVisible(visible, style)));
     }
-    return this.hud.setThreeFiresVisible(visible || this.yinThreatsVisible, style);
+    return this.hud.setThreeFiresVisible(visible || this.yinVisibleNow, style);
   }
 
   /**
@@ -8304,7 +8440,7 @@ export class Game {
   }
 
   private syncThreeFiresFromFlags(): void {
-    this.hud.setThreeFiresVisible(this.yinThreatsVisible || this.flagStore.get(FlagKeys.threeFiresVisible) === true, 'instant');
+    this.hud.setThreeFiresVisible(this.yinVisibleNow || this.flagStore.get(FlagKeys.threeFiresVisible) === true, 'instant');
   }
 
   /** 读档待落位的玩家坐标：由 distribute 收下、由紧随其后的场景重载消费（见 restorePlayerPose）。 */
@@ -9524,6 +9660,219 @@ export class Game {
     return this.debugPanelUI;
   }
 
+
+
+
+  /**
+   * 指针此刻指着场景里的哪儿（UV 0..1）。窥夜的楔形**朝着鼠标**张开
+   * （制作人 2026-09-20 定：法宝是举在手上往哪儿照的，不跟角色 facing）。
+   *
+   * 三段都走现成的链，不自己拼：
+   * 1. `InputManager.getMousePos()` —— 输入层已经在跟指针了，再挂一个 pointermove
+   *    就是同一件事两处在做（架构铁律：系统解耦 / 单一真相源）。
+   * 2. `renderer.events.mapPositionToPoint` —— Pixi 自己的 client→舞台映射，
+   *    分辨率与画布盒都由它管。手写 `getBoundingClientRect` 换算在画布 CSS 盒
+   *    被压成 0 的宿主里会整条失效（实测预览面板就是 0×0），而且和游戏自己的
+   *    点击命中用的不是同一套，迟早对不上。
+   * 3. `Camera.screenToWorld` —— 舞台→世界，与点哪儿走哪儿同一条。
+   *
+   * 指针一次都没动过时返回 null（窗这一帧不画），而不是默认指向左上角。
+   */
+  private aimSceneUv(): [number, number] | null {
+    const sd = this.sceneManager.currentSceneData;
+    if (!sd || !(sd.worldWidth > 0 && sd.worldHeight > 0)) return null;
+    const m = this.inputManager.getMousePos();
+    // (0,0) 视作"还没动过"：客户端原点不是一个有意义的瞄准位置，
+    // 而输入层的初值就是它。宁可这一帧不画，也不要先朝左上角扫一下。
+    if (!m || (m.x === 0 && m.y === 0)) return null;
+    const r = this.renderer.app.renderer;
+    r.events.mapPositionToPoint(this.aimStagePoint, m.x, m.y);
+    const w = this.camera.screenToWorld(this.aimStagePoint.x, this.aimStagePoint.y);
+    return [
+      Math.min(1, Math.max(0, w.x / sd.worldWidth)),
+      Math.min(1, Math.max(0, w.y / sd.worldHeight)),
+    ];
+  }
+
+  /**
+   * DEV 调试按键：**F9 开合窥夜的窗**。
+   *
+   * 法宝本身（道具 / 挂件 / 动作）还没做，这条是给制作人现在就能看一眼手感的临时入口。
+   * 选 F9 是因为 F2（调试坞）与 F10（坐标拾取）已被占用。
+   *
+   * ⚠ 只在 DEV 挂，且句柄存字段里 —— destroy 要摘掉，否则 HMR 一次多一个监听。
+   */
+  private installNightWindowDebugKey(): void {
+    if (this.nightWindowDebugKeyHandler) return;
+    this.nightWindowDebugKeyHandler = (e: KeyboardEvent) => {
+      if (e.key !== 'F9') return;
+      e.preventDefault();
+      const next = !this.windowWorld.isOpen;
+      void this.setNightWindowOpen(next).then((ok) => {
+        const t = this.windowWorld.target;
+        const msg = !next
+          ? '窥夜：收起'
+          : ok
+            ? `窥夜：看见「${t?.phase || '白日'}」（${(t?.backgroundImage ?? '').split('/').pop()}）`
+            : '窥夜：这个场景没有对面那一副样子（没画过夜），法宝无反应';
+        console.log(msg);
+        this.eventBus.emit('notification:show', { text: msg, type: 'info' });
+      });
+    };
+    window.addEventListener('keydown', this.nightWindowDebugKeyHandler);
+  }
+
+
+  /**
+   * 装配**窗里的环境粒子**（窥夜，F.5）：第二份 `VfxSystem` + 第二份 `VfxRenderer`。
+   *
+   * 为什么非得再来一份：粒子布置库按「场景 × 时段外观」各配一份，窗要的是**对面那一段**
+   * 那一份（崖墓入口的夜就配了萤火）。主世界那一份的 `getAppearancePhase` 恒取当前时段，
+   * 拿不到对面那一份。
+   *
+   * 几何各时段共享，所以**空间直接借主世界那一份**（`buildVfxSpace`）——那不是耦合，
+   * 是同一份几何这个事实；另建一份只会多一次 147k 点的反投影。
+   *
+   * 两处刻意不给：
+   * - **音频**：窗只有画面，声音整屏按当前时段（F.5 定的）。`playSfxAt` 是空函数。
+   * - **燃烧挂钩**：fork 不跑会改状态的模拟，纸钱在窗里不烧。
+   */
+  private attachWindowVfx(ctx: WindowVfxAttachCtx): WindowVfxHandle | null {
+    try {
+      // 渲染器：逐条抄主世界那份，只把「照明载荷」与「画进哪一层」换成窗自己的。
+      const renderer = new VfxRenderer({
+        entityLayer: ctx.layer,
+        createLitShader: (program, colorTex, extra) =>
+          ctx.lighting.createCustomLitShader(program, colorTex, extra),
+        releaseLitShader: (sh) => ctx.lighting.releaseEntityLitShader(sh),
+        canLight: () => ctx.lighting.canCreateCustomLitShader,
+        getLightFactors: () => ctx.lighting.getLightFactors('particles'),
+        displayUniforms: ctx.lighting.displayUniforms,
+        // 窗里有自己的照明载荷，不需要退化的色调融入那条路
+        getToneEnv: () => null,
+        // 深度逐场景一张（各时段共享几何），与主世界同一份
+        getDepth: () => {
+          const tex = this.sceneDepthSystem.currentDepthTexture;
+          const cfg = this.sceneDepthSystem.currentConfig;
+          return tex && cfg ? { tex, cfg } : null;
+        },
+        getSceneSize: () => ({
+          w: ctx.sceneData.worldWidth || 1,
+          h: ctx.sceneData.worldHeight || 1,
+        }),
+        perspective: (fx, fy) => this.perspectiveScaleResolver?.scaleAt(fx, fy) ?? 1,
+        // 窗里的草木是静的（夜那张画没有自己的摆动拆层），所以不接摆动
+        swayAt: () => false,
+        getScreen: () => ({ w: this.renderer.app.screen.width, h: this.renderer.app.screen.height }),
+      });
+
+      const sys = new VfxSystem({
+        assetManager: this.assetManager,
+        getSceneData: () => ctx.sceneData,
+        // 几何各时段共享 ⇒ 空间借主世界那一份。另建一份只会多一次 147k 点反投影。
+        buildSpace: () => this.buildVfxSpace(),
+        hasFieldGeometry: () => this.buildAudioSceneGeometry() !== null,
+        getPlayerContact: () => (this.player ? { x: this.player.contactX, y: this.player.contactY } : null),
+        // 这就是要第二份系统的全部理由：取**对面那一段**的布置
+        getAppearancePhase: () => ctx.appearancePhase,
+        // ⚠ 不能用 activeSceneLightsForVfx()：那一路按**当前**时段筛灯，窗里的萤火会被
+        //    白天的灯照着、还拿不到夜里那几盏。窗自己那份已按目标时段筛好传进来。
+        getActiveLights: () => ctx.lights,
+        conditionContext: () => this.buildConditionEvalContext(),
+        // 窗只有画面：声音整屏按当前时段走（F.5）
+        playSfxAt: () => {},
+        log: (m) => { this.debugPanelUI?.log(`[vfx/窥夜] ${m}`); },
+        getWind: () => ({ params: this.sceneWind.params, time: this.sceneWind.time }),
+        // 燃烧挂钩不给：fork 不跑会改状态的模拟，纸钱在窗里不烧
+      });
+      sys.setRenderer(renderer);
+      /**
+       * ⚠ 给它**自己一条事件总线**，不接主世界那条。两个理由，都不是洁癖：
+       *
+       * 1. 它必须听得到一次 `scene:ready` 才会建空间与实例，而窗是在场景**早就绪之后**
+       *    才开的——挂主世界那条总线就永远等不到，`update` 在没有 space 时直接早退，
+       *    表现是"粒子系统接上了，一个粒子都没有"（本次实测就是这样）。
+       * 2. fork 不该跟着主世界的场景事件走：主世界推时段会发 `time:phaseChanged`，
+       *    那会把窗的布置键改成**当前时段**那一份 —— 而窗要的恒是对面那一段。
+       */
+      const bus = new EventBus();
+      sys.init({
+        eventBus: bus,
+        flagStore: this.flagStore,
+        strings: this.stringsProvider,
+        assetManager: this.assetManager,
+      });
+      bus.emit('scene:ready', {});
+      return {
+        update: (dt) => sys.update(dt),
+        destroy: () => { sys.destroy(); },
+      };
+    } catch (e) {
+      // 粒子装不起来不该把整扇窗搞坏（烘焙 / 布置缺省不许影响运行）
+      console.warn('[vfx/窥夜] 窗里的环境粒子装配失败，窗照常开', e);
+      return null;
+    }
+  }
+
+  /**
+   * 玩家**脚点**在当前场景里的 UV（0..1），交给窥夜的着色器当楔形顶点。
+   *
+   * 只给 UV、不给 M-world 坐标是有意的：这一侧能拿到的深度是烘焙的行走面深度场
+   * （ground_d 族），而窗的着色器读的是场景深度图（depth_map 族）。两族"同量纲"
+   * 按 `worldReconstruct.glsl` 的原话**只靠烘焙保证、运行时无交叉校验**——实测跑马梁
+   * 两族值域就差着一截。顶点从这头算好传进去，等于把两族焊在一起，锥体的深度整体错位、
+   * 角度全不对，而且一句报错都没有。交给着色器用它自己那张图去采，两族从此不见面。
+   */
+  private playerSceneUv(): [number, number] | null {
+    const sd = this.sceneManager.currentSceneData;
+    if (!sd) return null;
+    const w = sd.worldWidth;
+    const h = sd.worldHeight;
+    if (!(w > 0 && h > 0)) return null;
+    return [
+      Math.min(1, Math.max(0, this.player.x / w)),
+      Math.min(1, Math.max(0, this.player.y / h)),
+    ];
+  }
+
+  /**
+   * 举起 / 收起窥夜法宝。**窗自己去读一份场景数据**（`loadSceneData` 每次返回深拷贝），
+   * 不借主场景那份——那份已被 `applySceneAppearance` 就地改成当前时段的样子，
+   * 拿它解析"对面"会解析出当前这一段。
+   *
+   * 返回窗有没有开起来；`false` = 这个场景没有对面那一副样子（合法，不是错误）。
+   */
+  async setNightWindowOpen(open: boolean): Promise<boolean> {
+    if (!open) { this.windowWorld.close(); return false; }
+    const sceneId = this.sceneManager.currentSceneData?.id;
+    if (!sceneId) return false;
+    const own = await this.assetManager.loadSceneData(sceneId);
+    return this.windowWorld.open(sceneId, own);
+  }
+
+  /** 窥夜楔形的作者参数（编辑器 / 调试面板写）。 */
+  applyNightWindowCone(cfg: Parameters<WindowWorldSystem['applyConeConfig']>[0]): void {
+    this.windowWorld.applyConeConfig(cfg);
+  }
+
+  /** 当前楔形参数 + 解析出的目标，供调试面板与无头取证直读。 */
+  get nightWindowDebug(): object {
+    return {
+      open: this.windowWorld.isOpen,
+      target: this.windowWorld.target,
+      cone: this.windowWorld.coneConfig,
+      rules: this.windowWorld.rulesConfig,
+      seen: this.windowWorld.seenDebug,
+      health: this.healthSystem.getHealth(),
+      yinVisible: this.yinVisibleNow,
+    };
+  }
+
+  /** 窥夜的玩法规则（编辑器 / 调试面板写）。 */
+  applyNightWindowRules(cfg: Parameters<WindowWorldSystem['applyRules']>[0]): void {
+    this.windowWorld.applyRules(cfg);
+  }
+
   destroy(): void {
     if (this.tearDownComplete) return;
     this.tearDownComplete = true;
@@ -9543,6 +9892,11 @@ export class Game {
     // 还原叠加量是安全的；等排到 registeredSystems 里的 trajectorySystem.destroy()
     // 时场景实体已被 sceneManager 拆完（那时也不会漏，只是还原动作打在空气上）。
     this.trajectorySystem.cancelAll();
+    if (this.nightWindowDebugKeyHandler) {
+      window.removeEventListener('keydown', this.nightWindowDebugKeyHandler);
+      this.nightWindowDebugKeyHandler = null;
+    }
+    this.windowWorld.destroy();
     this.characterLighting.destroy();
 
     // 生命周期对称：先摘挂点再关连接，HMR 重建时不留悬挂 observer/socket。
@@ -9900,6 +10254,8 @@ export class Game {
     this.planeReconciler.update(dt);
     // 气缕飘向按玩家相对气味源每帧现算（G.6）：不分探索/演出态——演出里走位也该跟着歪
     this.smellSystem.update(dt);
+    // 窥夜的窗跟着角色朝向走，同样不分探索/演出态：演出里举着法宝走位，窗该跟着扫。
+    this.windowWorld.update(dt);
     // 时段换装：等一个"没人在演、也没在切场"的安全窗口再动场景（见 pendingPhaseSwap）。
     this.drainPendingPhaseSwap();
     // 日程演出（离场/入场走位）：内部自判探索态，非探索态原地挂起。

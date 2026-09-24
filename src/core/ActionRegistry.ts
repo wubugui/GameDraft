@@ -371,6 +371,10 @@ export interface ActionRegistryDeps {
   sceneManager: SceneManager;
   emoteBubbleManager: EmoteBubbleManager;
   bubbleChatterSystem: BubbleChatterSystem;
+  /** 窥夜法宝开合（F.5）；返回窗有没有真开起来（场景没夜画时 false）。 */
+  setNightWindowOpen: (open: boolean) => Promise<boolean>;
+  /** 在窥夜作用域里跑一批动作：域内目标解析落到窗户世界（F.5）。 */
+  runInNightWindowScope: (run: () => Promise<void>) => Promise<void>;
   stateController: GameStateController;
   stringsProvider: StringsProvider;
   eventBus: EventBus;
@@ -1261,6 +1265,38 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     if (rawStyle && !style) console.warn(`setSmellVisible: 未知 style ${JSON.stringify(rawStyle)}，按缺省出场`);
     return d.setSmellVisible(visible, style) ?? undefined;
   }, ['visible', 'style']);
+
+  /**
+   * **在窗户世界里演**（玩法清单 F.5）。
+   *
+   * 这条不是"另一套动作"，是一个**作用域**：域内那批动作照常是现成的那些
+   * （气泡 / 播动画 / 走位 / 特效…），只是**目标解析落到窗里那一批实体**。
+   * 作者按场景里本来的实体 id 写就行，编辑器的目标选择器也不用改。
+   *
+   * ⚠ 域内找不到同 id 的窗内实体时**照常回落到主世界**：一段演出里既要让窗里的
+   *   身影转头、又要推主世界的镜头，是常态。
+   *
+   * ⚠ 窗是 fork：域内动作改到的是窗自己那份拷贝，关窗即散，一个字节不写回主世界。
+   */
+  executor.register('runActionsInNightWindow', async (p, zctx, scope) => {
+    await d.runInNightWindowScope(
+      () => executor.executeBatchAwait(actionListFromParam(p.actions), zctx, scope),
+    );
+  }, ['actions']);
+
+  /**
+   * 举起 / 收起窥夜法宝（玩法清单 F.5）。
+   *
+   * 开窗那一刻角色前方按鼠标方向张开一片楔形，里头是同一处、对面那一段的真实样子。
+   * 这个场景没画过夜（或没画过白天）时**安静地什么都不发生**——那是合法的场景状态，
+   * 不是错误，所以不报警、不抛。
+   *
+   * ⚠ 不写存档：窗是当场的东西，读档回来法宝该是收着的。
+   */
+  executor.register('setNightWindowOpen', (p) => {
+    const open = p.open === true || p.open === 'true';
+    return d.setNightWindowOpen(open).then(() => undefined);
+  }, ['open']);
 
   /**
    * 系统说明卡（玩法清单 K4）：压暗 + 小图 + 两三行，点一下关；关卡即落 flag `sysnote_<id>`。

@@ -575,6 +575,7 @@ ACTION_TYPES = [
     "sceneWindGust",
     "setThreeFiresVisible", "showSystemNote",
     "setSmell", "clearSmell", "sniff", "setSmellVisible",
+    "setNightWindowOpen", "runActionsInNightWindow",
     "setSmellSource", "clearSmellSource", "setSmellTracking",
     "activatePlane", "deactivatePlane",
     "sugarWheelShowSpeech", "sugarWheelDismissSpeech", "sugarWheelDismissAllSpeech",
@@ -1056,6 +1057,10 @@ ACTION_PERSISTENCE: dict[str, str] = {
     "triggerDeathTether": "save",
     "setThreeFiresVisible": "save",
     "setSmellVisible": "save",
+    # 窗是当场的东西，不进存档：读档回来法宝该是收着的
+    "setNightWindowOpen": "memory",
+    # 容器：里头装什么就是什么，按最坏情况当会改存档处理（与 runActions 同档）
+    "runActionsInNightWindow": "save",
     "setSmellSource": "save",
     "clearSmellSource": "save",
     "setSmellTracking": "save",
@@ -1298,6 +1303,10 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "setThreeFiresVisible": [("visible", "bool"), ("style", "str")],
     # 气味指示器显隐（G.6）：与三把火同一套 style 词汇（显缺省 flare=聚拢浮现 / 隐缺省 fade=散开）
     "setSmellVisible": [("visible", "bool"), ("style", "str")],
+    # 窥夜法宝（F.5）：举起 / 收起
+    "setNightWindowOpen": [("open", "bool")],
+    # 只有一个子动作列表，走自定义表单（与 runActions 同）；空表只作授权面。
+    "runActionsInNightWindow": [],
     # 气味源 / 飘向追踪（G.6）：气缕飘向的方向 = 源；scene 缺省当前场景；追踪缺省开、关了一直直的
     # 走专用表单（_rebuild_set_smell_source_params）：scene 下拉 + PositionRefField（at 每帧现求，x/y 快照）。
     "setSmellSource": [("x", "float"), ("y", "float"), ("scene", "str"), ("at", "position_ref")],

@@ -40,6 +40,13 @@ NESTED_ACTION_SLOTS: dict[str, tuple[ActionListSlot, ...]] = {
     "runActions": (
         ActionListSlot("actions", "依次执行", hint="按顺序逐条执行（等待型动作会等它结束再往下）。"),
     ),
+    "runActionsInNightWindow": (
+        ActionListSlot(
+            "actions", "在窗户世界里演",
+            hint="域内动作的目标解析落到窥夜窗里那一批实体：按场景里本来的实体 id 写就行。\n"
+                 "窗里没有同 id 的就照常打到主世界（一段戏里既要动窗里的人、又要推镜头是常态）。",
+        ),
+    ),
     "runActionsDetached": (
         ActionListSlot(
             "actions", "脱手执行",

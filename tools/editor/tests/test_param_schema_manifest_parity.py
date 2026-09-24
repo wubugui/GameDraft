@@ -32,6 +32,7 @@ REPO = Path(__file__).resolve().parents[3]
 # 这些是列表/复合参数，泛型 (name, kind) schema 表达不了，各有专用子编辑器：
 #   runActions.actions      → _run_actions_editor
 #   runActionsDetached.actions → _run_actions_editor（与 runActions 共用同一个子编辑器）
+#   runActionsInNightWindow.actions → _run_actions_editor（同上；容器只换目标解析域）
 #   chooseAction.options    → _choice_options_editor
 #   addDelayedEvent.actions → _delayed_editor
 #   runActionsIf.condition  → _cond_if_expr（ConditionExprTreeRootWidget；条件表达式树，
@@ -40,6 +41,7 @@ REPO = Path(__file__).resolve().parents[3]
 _BESPOKE_BUILT_REQUIRED: set[tuple[str, str]] = {
     ("runActions", "actions"),
     ("runActionsDetached", "actions"),
+    ("runActionsInNightWindow", "actions"),
     ("chooseAction", "options"),
     ("addDelayedEvent", "actions"),
     ("runActionsIf", "condition"),

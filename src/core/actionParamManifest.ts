@@ -150,6 +150,10 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   clearSmell: { required: [] },
   // 气味指示器显隐（G.6）：与三把火同一套 style 词汇 flare|fade|instant|debut（显缺省 flare=聚拢浮现 / 隐缺省 fade=散开）
   setSmellVisible: { required: ['visible'], optional: ['style'] },
+  // 窥夜法宝开合（F.5）：场景没画过对面那一段时安静无事发生
+  setNightWindowOpen: { required: ['open'], optional: [] },
+  // 在窗户世界里演：域内动作的目标解析落到窗里那一批实体（F.5）
+  runActionsInNightWindow: { required: ['actions'], optional: [] },
   // 气味源 / 飘向追踪（G.6）：气缕飘向的方向 = 源；scene 缺省当前场景；追踪可随时开关，缺省开
   setSmellSource: { required: ['x', 'y'], optional: ['scene', 'at'] },
   clearSmellSource: { required: [] },

@@ -7,7 +7,8 @@
  * 于是 SpriteEntity / 阴影 / 透视 / 排序 / 光照那一路一个分支都不用加。
  */
 import { describe, expect, it } from 'vitest';
-import { SceneManager, buildStaticDisplayAnimationSet } from './SceneManager';
+import { SceneManager } from './SceneManager';
+import { buildStaticDisplayAnimationSet } from '../data/staticDisplayEntity';
 import { normalizeAnimationSetDef } from '../data/resolveAnimationSet';
 import type { AssetManager, AssetManifest, AssetRef } from '../core/AssetManager';
 import type { EventBus } from '../core/EventBus';

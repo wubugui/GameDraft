@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import CHAR from './UnifiedCharacterShader.ts?raw';
 import LIT_BG from './LitBackground.ts?raw';
 import SCENE from './SceneLightingPass.ts?raw';
+import WINDOW_BG from '../windowWorld/WindowBackground.ts?raw';
 
 /**
  * GLSL 是拼在 **JS 模板字符串**里的,所以里面**一个反引号都不能有**。
@@ -39,6 +40,7 @@ const FILES: [string, string][] = [
   ['SceneLightingPass.ts', SCENE],
   ['UnifiedCharacterShader.ts', CHAR],
   ['LitBackground.ts', LIT_BG],
+  ['windowWorld/WindowBackground.ts', WINDOW_BG],
 ];
 
 describe('GLSL 模板串里不许出现反引号', () => {

@@ -41,6 +41,8 @@
   "sugarWheelDismissAllSpeech",
   "sugarWheelResetPointer",
   "randomBranch",
+  "setNightWindowOpen",
+  "runActionsInNightWindow",
   "activatePlane",
   "deactivatePlane",
   "showBlackout",

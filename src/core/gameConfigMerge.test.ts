@@ -34,6 +34,7 @@ function fullConfig(): Required<Omit<GameConfig, 'startupFlags'>> & Pick<GameCon
     viewport: { width: 1280, height: 720 },
     windowSize: { width: 1600, height: 900 },
     playerAvatar: { animManifest: '/x/anim.json', stateMap: { idle: 'i' }, portraitSlug: 'hero' },
+    nightWindow: { cone: { halfAngleDeg: 20 }, rules: { drainPerSecond: 1 } },
     initialControlledCharacter: 'char_a',
     initialParty: ['char_a', 'char_b'],
     playerActs: { crouch: { enabled: false } } as GameConfig['playerActs'] & object,

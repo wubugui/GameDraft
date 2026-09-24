@@ -667,5 +667,14 @@
     "burnable": {
       "template": "incense_stick"
     }
+  },
+  "kuiye_jing": {
+    "label": "窥夜镜（占位图标美术）",
+    "image": "/resources/runtime/images/icons/taomu_sword.png",
+    "anchorX": 0.5,
+    "anchorY": 0.5,
+    "rotation": 0,
+    "scale": 0.35,
+    "persistent": true
   }
 }

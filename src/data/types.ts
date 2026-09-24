@@ -3670,6 +3670,44 @@ export interface PlayerIdleEntry {
   when?: ConditionExpr;
 }
 
+/**
+ * 窥夜法宝（玩法清单 F.5）的作者参数。整块缺省不写 = 用运行时内置值。
+ *
+ * 单位一律 **wu / 度 / 秒**，与摆灯、声学那几处同尺，别在这儿引入第二套单位。
+ */
+export interface NightWindowConfig {
+  /** 楔形：张多宽、铺多远、边界多软。 */
+  cone?: {
+    halfAngleDeg?: number;
+    nearWu?: number;
+    farWu?: number;
+    /** 相对顶点的下/上世界 Y 偏移；上 <= 下 = 不限高。 */
+    heightDownWu?: number;
+    heightUpWu?: number;
+    /** 三条边界各自的软化；全 0 = 硬边（切口感）。 */
+    softAngleDeg?: number;
+    softRangeWu?: number;
+    softHeightWu?: number;
+    /** 顶点从脚点往上抬多少。 */
+    apexLiftWu?: number;
+    /** 开合渐变时长（秒）；0 = 瞬开瞬关。 */
+    fadeSeconds?: number;
+  };
+  /** 玩法：被对面看着的代价，与「它记住你了」的门槛。 */
+  rules?: {
+    /** 每秒扣多少阳气（走与普通鬼物同一条扣血通道）。0 = 不扣。 */
+    drainPerSecond?: number;
+    /** 距离衰减：顶点满额，远端降到这个倍率。 */
+    drainFalloffAtFar?: number;
+    /** 同一只东西连续看够这么多秒 = 记住你，发一次派生信号。0 = 不发。 */
+    rememberSeconds?: number;
+    /** 派生信号前缀；实发 `<前缀>:<实体 id>`，叙事图监听它。 */
+    rememberSignalPrefix?: string;
+    /** 扣血来源 id（防护匹配 / 死亡说明用）。 */
+    damageSourceId?: string;
+  };
+}
+
 export interface GameConfig {
   initialScene: string;
   initialQuest: string;
@@ -3699,6 +3737,8 @@ export interface GameConfig {
    * 迁移到角色注册表不是硬门槛，两种写法长期并存。
    */
   playerAvatar?: PlayerAvatarConfig;
+  /** 窥夜法宝的楔形与玩法参数（F.5）；整块缺省 = 用运行时内置值。 */
+  nightWindow?: NightWindowConfig;
   /**
    * 开局受控角色的 `characterId`（须在 character_registry.json 中且带 `avatar` 段）。
    * 缺省=走 `playerAvatar` 兼容路径。

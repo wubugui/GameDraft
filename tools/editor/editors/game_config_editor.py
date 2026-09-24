@@ -243,6 +243,7 @@ class GameConfigEditor(QWidget):
 
         lay.addWidget(self._build_day_night_section())
         lay.addWidget(self._build_player_acts_section())
+        lay.addWidget(self._build_night_window_section())
         self._health_section = CollapsibleSection("三把火与剧情系绳", start_open=False)
         self._health_form = None
         self._health_section.expanded_changed.connect(self._expand_health)
@@ -709,6 +710,144 @@ class GameConfigEditor(QWidget):
                 mw.set_data(raw_actions if isinstance(raw_actions, list) else [])
         self._load_ignite(cfg)
 
+
+    # ── 窥夜法宝（玩法清单 F.5）──────────────────────────────────────
+    #
+    # 整块不勾 = 不写 nightWindow 键，运行时用内置值。与日夜那一节同一个取舍：
+    # 作者没表态就别在 JSON 里留一堆等于缺省的数字，将来改内置值才不会被它们钉死。
+    _NW_FIELDS = (
+        # (键, 标签, 最小, 最大, 步长, 小数位, 缺省, 提示)
+        ("halfAngleDeg", "半角(度)", 1.0, 89.0, 1.0, 1, 34.0,
+         "楔形张多宽。越小越像一道缝，越大越像一片扇面。"),
+        ("nearWu", "近截距(wu)", 0.0, 2000.0, 5.0, 0, 10.0,
+         "顶点附近这一截不显示，免得脚底下糊成一片。"),
+        ("farWu", "远截距(wu)", 50.0, 50000.0, 100.0, 0, 5000.0,
+         "铺多远。给小了窗只罩住脚下一条带，看着像地上一摊影子而不是一扇窗。"),
+        ("heightDownWu", "下沿(wu)", -5000.0, 5000.0, 10.0, 0, 0.0,
+         "相对顶点的世界 Y 下界。上沿 <= 下沿 = 不限高。"),
+        ("heightUpWu", "上沿(wu)", -5000.0, 5000.0, 10.0, 0, 0.0,
+         "相对顶点的世界 Y 上界。与下沿相等 = 不限高。"),
+        ("softAngleDeg", "角度软化(度)", 0.0, 45.0, 0.5, 1, 4.0,
+         "两侧边界的羽化宽度。0 = 硬边，切口感。"),
+        ("softRangeWu", "距离软化(wu)", 0.0, 2000.0, 5.0, 0, 60.0,
+         "远近两端的羽化宽度。0 = 硬边。"),
+        ("softHeightWu", "高度软化(wu)", 0.0, 2000.0, 5.0, 0, 0.0,
+         "上下沿的羽化宽度（只在限高时有意义）。"),
+        ("apexLiftWu", "顶点抬高(wu)", 0.0, 2000.0, 5.0, 0, 0.0,
+         "楔形顶点从脚点往上抬多少，免得窗像从地缝里长出来。"),
+        ("fadeSeconds", "开合渐变(秒)", 0.0, 5.0, 0.05, 2, 0.18,
+         "举起 / 收起的淡入淡出时长。0 = 瞬开瞬关。"),
+    )
+    _NW_RULE_FIELDS = (
+        ("drainPerSecond", "阳气/秒", 0.0, 100.0, 0.5, 2, 2.0,
+         "被对面的东西看着时每秒扣多少阳气。走与普通鬼物同一条扣血通道（防护、死亡系绳照旧）。\n"
+         "0 = 只看不掉血。"),
+        ("drainFalloffAtFar", "远端倍率", 0.0, 4.0, 0.05, 2, 0.25,
+         "距离衰减：顶点处按满额扣，到远截距降到这个倍率。1 = 远近一个样。"),
+        ("rememberSeconds", "记住你(秒)", 0.0, 60.0, 0.5, 2, 1.5,
+         "同一只东西连续看够这么多秒 = 它记住你了，发一次派生信号。0 = 不发。"),
+    )
+
+    def _build_night_window_section(self) -> CollapsibleSection:
+        """窥夜法宝：楔形形状 + 被看见的代价。"""
+        sec = CollapsibleSection("窥夜法宝（楔形 / 被看见的代价）", start_open=False)
+        sec.set_header_tool_tip(
+            "举起法宝，从角色身上朝**鼠标指的方向**张开一片楔形，\n"
+            "里头显示的是同一处、对面那一段的真实样子（白天看见夜、夜里看见白天）。\n\n"
+            "只在画过夜原画的场景有效——没画过的场景法宝安静地没反应，这是合法状态不是错误。\n"
+            "整块不勾＝不写 nightWindow 键，运行时用内置值。",
+        )
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+
+        self._nw_custom = QCheckBox("自定义窥夜参数（不勾＝用运行时内置值）")
+        self._nw_custom.setToolTip(
+            "勾上后下面的值会写进 game_config.json；不勾＝不写这一块。",
+        )
+        self._nw_custom.toggled.connect(self._on_nw_custom_toggled)
+        body_lay.addWidget(self._nw_custom)
+
+        self._nw_spins: dict[str, QDoubleSpinBox] = {}
+        for title, fields in (("楔形", self._NW_FIELDS), ("玩法", self._NW_RULE_FIELDS)):
+            box = QGroupBox(title)
+            form = compact_form(QFormLayout())
+            for key, label, lo, hi, step, dec, default, tip in fields:
+                sp = QDoubleSpinBox()
+                sp.setRange(lo, hi)
+                sp.setSingleStep(step)
+                sp.setDecimals(dec)
+                sp.setValue(default)
+                sp.setMaximumWidth(120)
+                sp.setToolTip(tip)
+                self._nw_spins[key] = sp
+                form.addRow(label, sp)
+            box.setLayout(form)
+            body_lay.addWidget(box)
+
+        sig_box = QGroupBox("被记住时发的信号")
+        sig_form = compact_form(QFormLayout())
+        self._nw_signal_prefix = QLineEdit()
+        self._nw_signal_prefix.setPlaceholderText("peek_seen")
+        self._nw_signal_prefix.setToolTip(
+            "实际发出的是「前缀:实体 id」这种派生信号，叙事图监听它。\n"
+            "⚠ 这条不写 flag：进度 / 门控 / 做过没有一律走叙事状态机。",
+        )
+        sig_form.addRow("信号前缀", self._nw_signal_prefix)
+        self._nw_damage_source = QLineEdit()
+        self._nw_damage_source.setPlaceholderText("peek_window")
+        self._nw_damage_source.setToolTip("扣血的来源 id，供护身物匹配与死亡说明用。")
+        sig_form.addRow("扣血来源 id", self._nw_damage_source)
+        sig_box.setLayout(sig_form)
+        body_lay.addWidget(sig_box)
+
+        self._nw_body = body
+        sec.add_body(body)
+        return sec
+
+    def _on_nw_custom_toggled(self, on: bool) -> None:
+        for sp in self._nw_spins.values():
+            sp.setEnabled(on)
+        self._nw_signal_prefix.setEnabled(on)
+        self._nw_damage_source.setEnabled(on)
+
+    def _load_night_window(self) -> None:
+        nw = self._model.game_config.get("nightWindow")
+        has = isinstance(nw, dict) and bool(nw)
+        self._nw_custom.setChecked(has)
+        cone = (nw or {}).get("cone") if has else {}
+        rules = (nw or {}).get("rules") if has else {}
+        for key, _l, _lo, _hi, _st, _d, default, _t in self._NW_FIELDS:
+            src = cone if isinstance(cone, dict) else {}
+            v = src.get(key)
+            self._nw_spins[key].setValue(float(v) if isinstance(v, (int, float)) else default)
+        for key, _l, _lo, _hi, _st, _d, default, _t in self._NW_RULE_FIELDS:
+            src = rules if isinstance(rules, dict) else {}
+            v = src.get(key)
+            self._nw_spins[key].setValue(float(v) if isinstance(v, (int, float)) else default)
+        r = rules if isinstance(rules, dict) else {}
+        self._nw_signal_prefix.setText(str(r.get("rememberSignalPrefix", "") or ""))
+        self._nw_damage_source.setText(str(r.get("damageSourceId", "") or ""))
+        self._on_nw_custom_toggled(has)
+
+    def _read_night_window_ui(self) -> dict | None:
+        """返回要写进 cfg 的那一块；不勾自定义时返回 None（= 删键）。"""
+        if not self._nw_custom.isChecked():
+            return None
+        cone = {}
+        for key, _l, _lo, _hi, _st, dec, _def, _t in self._NW_FIELDS:
+            cone[key] = round(self._nw_spins[key].value(), dec)
+        rules = {}
+        for key, _l, _lo, _hi, _st, dec, _def, _t in self._NW_RULE_FIELDS:
+            rules[key] = round(self._nw_spins[key].value(), dec)
+        pre = self._nw_signal_prefix.text().strip()
+        if pre:
+            rules["rememberSignalPrefix"] = pre
+        src = self._nw_damage_source.text().strip()
+        if src:
+            rules["damageSourceId"] = src
+        return {"cone": cone, "rules": rules}
+
     def _expand_health(self, expanded: bool) -> None:
         if expanded and self._health_form is None:
             self._health_form = HealthConfigForm(self._model, self._health_data, self)
@@ -884,6 +1023,7 @@ class GameConfigEditor(QWidget):
         return out
 
     def _load(self) -> None:
+        self._load_night_window()
         cfg = self._model.game_config
         self._initial_scene.set_current(cfg.get("initialScene", ""))
         self._initial_quest.set_current(cfg.get("initialQuest", ""))
@@ -1028,6 +1168,12 @@ class GameConfigEditor(QWidget):
             cfg["initialCutsceneDoneFlag"] = cf_s
         elif "initialCutsceneDoneFlag" in cfg:
             del cfg["initialCutsceneDoneFlag"]
+
+        nw = self._read_night_window_ui()
+        if nw is not None:
+            cfg["nightWindow"] = nw
+        elif "nightWindow" in cfg:
+            del cfg["nightWindow"]
 
         if self._vp_chk.isChecked() and self._vp_w.value() > 0 and self._vp_h.value() > 0:
             cfg["viewport"] = {"width": self._vp_w.value(), "height": self._vp_h.value()}

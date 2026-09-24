@@ -5,6 +5,7 @@ import LIT_BG from './LitBackground.ts?raw';
 import LIGHTING_CORE from './lightingCore.glsl?raw';
 import PREFIX from './shadowPrefix.ts?raw';
 import SCENE from './SceneLightingPass.ts?raw';
+import WINDOW_BG from '../windowWorld/WindowBackground.ts?raw';
 import { PROBE_SAMPLING_GLSL, SKYAO_SAMPLING_GLSL } from '../CharacterShadingFilter';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
 
@@ -121,6 +122,8 @@ const TARGETS: { name: string; own: string; deps: string[] }[] = [
   { name: 'SceneLightingPass.ts', own: SCENE, deps: [WR_CORE, LC, PROBE_SAMPLING_GLSL, SKYAO_SAMPLING_GLSL] },
   { name: 'UnifiedCharacterShader.ts', own: CHAR, deps: [WORLD_RECONSTRUCT, LIGHTING_CORE] },
   { name: 'LitBackground.ts', own: LIT_BG, deps: [WR_CORE, LC] },
+  // 窗户世界的背景与 LitBackground 同构：拼的是同一对切片，所以漏了它就是漏了半条同样的管线
+  { name: 'windowWorld/WindowBackground.ts', own: WINDOW_BG, deps: [WR_CORE, LC] },
   // 线扫求解器是自洽的：不拼任何切片，所有函数都在自己的模板串里
   { name: 'shadowPrefix.ts', own: PREFIX, deps: [] },
 ];

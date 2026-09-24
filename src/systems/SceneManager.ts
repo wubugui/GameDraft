@@ -41,6 +41,9 @@ import {
   coerceRuntimeFieldValue,
   type SceneEntityKind,
 } from '../data/EntityRuntimeFieldSchema';
+import {
+  buildStaticDisplayAnimationSet, staticDisplayImageOf,
+} from '../data/staticDisplayEntity';
 import type { ActivePlaneSnapshot } from './plane/types';
 import { createStyledText } from '../core/styledText';
 import { isEntityInPhaseWithGroup } from '../utils/dayTime';
@@ -48,40 +51,6 @@ import {
   applySceneAppearance, resolveSceneAppearance, sameAppearance,
   type ResolvedSceneAppearance,
 } from '../utils/sceneAppearance';
-
-/**
- * 静态贴图实体（没有动画包的道具）：把 `NpcDef.displayImage` 合成**一份单帧动画集**，
- * 喂给与普通 NPC 逐字相同的 `SpriteEntity` 路径。
- *
- * 这是本特性唯一的实现手段 —— **不新开实体族、不新开渲染分支**。合成之后，阴影 /
- * 透视 / 深度遮挡 / 内容层排序 / 逐 entity 光照 / 位面 / 分组 / cameraFollowActor /
- * attachToSocket 全都走 NPC 那一条，一处也不需要写"如果是静态贴图就……"。
- *
- * `worldWidth` / `worldHeight` 原样透传给 `normalizeAnimationSetDef`：它对 `undefined`
- * 与非正数一视同仁（见 `resolveAnimationWorldSize`），只填一维时按单格像素长宽比推另一维，
- * 两维都缺时回落 `DEFAULT_WORLD_WIDTH`。`resolvedSheetUrl` 由调用方传 `di.image`，
- * 于是法线图集按 `<图名>.normal.png` 的同一套约定寻址（烘过就用、没烘就平面法线）。
- */
-export function buildStaticDisplayAnimationSet(di: HotspotDisplayImage): AnimationSetDefInput {
-  return {
-    spritesheet: di.image,
-    cols: 1,
-    rows: 1,
-    worldWidth: di.worldWidth,
-    worldHeight: di.worldHeight,
-    states: { idle: { frames: [0], frameRate: 1, loop: true } },
-  };
-}
-
-/**
- * 静态贴图实体是否成立：只看图路径。尺寸交给 `normalizeAnimationSetDef` 兜底推导，
- * 这里不再复述一遍"多大才算有效"（复述就是第二处真相）。
- */
-function staticDisplayImageOf(def: NpcDef): HotspotDisplayImage | null {
-  if (def.animFile) return null; // 两者都写时以动画包为准（types.ts NpcDef.displayImage 契约）
-  const di = def.displayImage;
-  return di && typeof di.image === 'string' && di.image.trim() ? di : null;
-}
 
 /**
  * 开了可燃的实体（A3.8：可燃物是模板，渲染由实例接管）的展示图：模板的图、按模板真实尺寸；
@@ -1174,6 +1143,41 @@ export class SceneManager implements IGameSystem {
   private getCommittedMemory(sceneId: string): SceneMemory | undefined {
     const mem = this.sceneMemory.get(sceneId);
     return mem ? this.normalizeMemory(mem) : undefined;
+  }
+
+  /**
+   * 某个场景记忆的**只读深拷贝快照**。
+   *
+   * 为窗户世界（法宝「窥夜」，玩法清单 F.5）而开：它是一份 fork，开窗时要把主世界这份
+   * 记忆**拷**过去当自己的初值——不拷的话，这周目已经拾走 / 已经关掉的东西会在窗里复活。
+   *
+   * 给的是**深拷贝**，不是引用：拷过去那份从此归窗所有，窗怎么改都碰不到这一份。
+   * 这也是这条出口只读的原因——写回的路一条都不开，`fork 不回写`就成了结构事实而非纪律。
+   *
+   * ⚠ 不只是**落盘的**那份记忆。`setEntityEnabled` / `setZoneEnabled` 这类**会话级**隐藏
+   * 存在另外两个桶里（不写档），窗照样得认：一个刚被演出藏起来的人在窗里若无其事地站着，
+   * 玩家看到的就是"这法宝把不该在的人照出来了"。两个桶都给的是 id 拷贝。
+   *
+   * 场景既没记忆也没会话覆盖时返回 null，调用方按"出厂状态"处理。
+   */
+  snapshotSceneMemory(sceneId: string): {
+    pickedUpHotspots: string[];
+    entityOverrides: SceneEntityRuntimeOverrides;
+    sessionHiddenNpcIds: string[];
+    sessionDisabledGroupIds: string[];
+  } | null {
+    const mem = this.getCommittedMemory(sceneId);
+    const hidden = this.entitySessionOverrides.get(sceneId);
+    const groups = this.groupSessionDisabled.get(sceneId);
+    if (!mem && !hidden?.npcs.size && !groups?.size) return null;
+    return {
+      pickedUpHotspots: mem ? [...mem.pickedUpHotspots] : [],
+      entityOverrides: mem
+        ? JSON.parse(JSON.stringify(mem.entityOverrides)) as SceneEntityRuntimeOverrides
+        : { npcs: {}, hotspots: {}, zones: {} },
+      sessionHiddenNpcIds: hidden ? [...hidden.npcs] : [],
+      sessionDisabledGroupIds: groups ? [...groups] : [],
+    };
   }
 
   private getWritableMemory(sceneId: string): SceneMemory | null {

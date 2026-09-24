@@ -895,5 +895,27 @@
     "type": "consumable",
     "description": "一张旧草席，边上脱了线。卷起来，刚好裹得下一个人。",
     "maxStack": 1
+  },
+  {
+    "id": "kuiye_jing",
+    "name": "窥夜镜",
+    "type": "key",
+    "description": "一面蒙了灰的旧镜子，照不清人脸。举起来对着哪头，哪头就是夜。老辈人说这东西不是给人看的，是给那头看人的。",
+    "tags": [
+      "辟邪"
+    ],
+    "use": {
+      "label": "举起来照",
+      "consume": false,
+      "actions": [
+        {
+          "type": "setNightWindowOpen",
+          "params": {
+            "open": true
+          }
+        }
+      ],
+      "resultText": "镜面里没有你。镜面里是这地方入夜之后的样子——而你手上这面镜子，正把那头的天光放进来。"
+    }
   }
 ]
