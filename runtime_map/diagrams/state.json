@@ -2480,7 +2480,8 @@
           "l": 129,
           "m": "await this.migrateLegacySaves();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "sv2",
@@ -2529,7 +2530,8 @@
           "l": 129,
           "m": "const store = await resolvePersistentStore();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "sv3",
@@ -2573,7 +2575,8 @@
           "l": 4524,
           "m": "exportSave: () => this.saveManager.capturePayload(),"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "sv4",
@@ -2607,7 +2610,8 @@
           "l": 2625,
           "m": "if (s !== GameState.Exploring && s !== GameState.UIOverlay)"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "sv5",
@@ -2651,7 +2655,8 @@
           "l": 2613,
           "m": "this.saveCurrentSceneMemory();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "sv6",
@@ -2675,7 +2680,8 @@
           "l": 267,
           "m": "const name = explicitName !== null ? explicitName"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "sv7",
@@ -2714,7 +2720,8 @@
           "l": 168,
           "m": "this.data.set(MemoryStore.k(namespace, key), value);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "sv8",
@@ -2733,7 +2740,8 @@
           "l": 216,
           "m": "private setMirror(slot: number, raw: string): void {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "sv9",
@@ -2752,7 +2760,8 @@
           "l": 1800,
           "m": "this.onSfx('save:completed', () => this.playSystemSfx('saveD"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "sv10",
@@ -2791,7 +2800,8 @@
           "l": 448,
           "m": "await store.remove(SAVE_NAMESPACE, key);"
         }
-      ]
+      ],
+      "track": "side"
     }
   ],
   "loadFlow": [
@@ -2812,7 +2822,8 @@
           "l": 1011,
           "m": "if (this.previousMode === 'pause') {"
         }
-      ]
+      ],
+      "track": "entry"
     },
     {
       "id": "ld2",
@@ -2866,7 +2877,8 @@
           "l": 4291,
           "m": "if (options.startAtTitle) {"
         }
-      ]
+      ],
+      "track": "entry"
     },
     {
       "id": "ld3",
@@ -2895,7 +2907,8 @@
           "l": 9852,
           "m": "debugLoadGame: (slot) => this.saveManager.load(slot),"
         }
-      ]
+      ],
+      "track": "entry"
     },
     {
       "id": "ld4",
@@ -2929,7 +2942,8 @@
           "l": 346,
           "m": "if (!this.validSlot(slot)) return false;"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld5",
@@ -2948,7 +2962,8 @@
           "l": 377,
           "m": "(snapshot['sceneManager'] as { currentSceneId?: string }"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld6",
@@ -2992,7 +3007,8 @@
           "l": 8806,
           "m": "this.trajectorySystem.cancelAll();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld7",
@@ -3041,7 +3057,8 @@
           "l": 7998,
           "m": "this.listenEvent('save:restoring', () => { this.ignitePerfor"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld8",
@@ -3075,7 +3092,8 @@
           "l": 8834,
           "m": "this.questManager.setRestoring(false);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld9",
@@ -3104,7 +3122,8 @@
           "l": 388,
           "m": "this.flags.set(k, v);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld10",
@@ -3143,7 +3162,8 @@
           "l": 2351,
           "m": "void this.attach(target, socket, prop, state || undefined"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld11",
@@ -3177,7 +3197,8 @@
           "l": 8915,
           "m": "this.player.setFacing("
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld12",
@@ -3201,7 +3222,8 @@
           "l": 8841,
           "m": "this.syncSmellVisibleFromFlags();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld13",
@@ -3215,7 +3237,8 @@
           "l": 383,
           "m": "const sceneId = sceneMgr?.currentSceneId ?? this.fallbackSce"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld14",
@@ -3269,7 +3292,8 @@
           "l": 2163,
           "m": "await this.fadeOut(300);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld15",
@@ -3288,7 +3312,8 @@
           "l": 9431,
           "m": "this.stateController.setState(GameState.Exploring);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "ld16",
@@ -3307,7 +3332,8 @@
           "l": 391,
           "m": "await this.sceneReloader(snapshotSceneId);"
         }
-      ]
+      ],
+      "track": "branch"
     }
   ],
   "notSaved": [
@@ -4597,5 +4623,6 @@
         }
       ]
     }
-  ]
+  ],
+  "trackNote": "track: main = 主干先后;entry = 几个入口之一(并列,不是先后);branch = 失败分叉;side = 旁路。"
 }

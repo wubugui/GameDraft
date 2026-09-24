@@ -354,7 +354,8 @@ for (const sf of sourceFiles) {
         for (const tnode of h.types) {
           const s = resolveSym(tnode.expression);
           const d = s && s.declarations && s.declarations[0];
-          heritage.push({ rel: h.token === ts.SyntaxKind.ExtendsKeyword ? 'extends' : 'implements', name: tnode.expression.getText(), file: d ? rel(d.getSourceFile().fileName) : null });
+          const hf = d ? d.getSourceFile().fileName : null;
+          heritage.push({ rel: h.token === ts.SyntaxKind.ExtendsKeyword ? 'extends' : 'implements', name: tnode.expression.getText(), file: hf ? (isSrcFile(hf) ? rel(hf) : (/node_modules\/typescript\/lib\//.test(hf) ? '(内置类型)' : '(外部包)')) : null });
         }
       }
       classes.push({ name: node.name.text, file: r, line: nodeLine(node), heritage });
@@ -466,7 +467,7 @@ for (const sf of sourceFiles) {
           const recvText = clip(callee.expression.getText(), 50);
           const busId = (r === 'src/systems/canvas/CanvasVfxHost.ts' && recvText === 'this.bus') ? 'canvasVfxHost.bus' : 'main';
           const handler = m !== 'emit' && node.arguments[1] ? clip(node.arguments[1].getText(), 70) : null;
-          const base = { file: r, line: nodeLine(node), op: m, enclosing: enclosingName(node), receiver: recvText, bus: busId, handler, boundary: isBoundaryFile(r) };
+          const base = { file: r, line: nodeLine(node), op: m, enclosing: enclosingName(node), receiver: recvText, bus: busId, handler, boundary: isBoundaryFile(r), devGuarded: underDevGuard(node) };
           if (lit) {
             for (const v of lit.values) events.push({ ...base, event: v, how: lit.how });
           } else {
@@ -595,7 +596,7 @@ const wrapperResolved = [];
               const handler = w.handlerParam != null && node.arguments[w.handlerParam] ? clip(node.arguments[w.handlerParam].getText(), 70) : null;
               if (lit) {
                 for (const v of lit.values) {
-                  events.push({ file: r, line: nodeLine(node), op: w.op, enclosing: enclosingName(node), receiver: w.receiver, bus: w.bus, handler, event: v, how: `via ${w.symbol.name}()`, via: { name: w.symbol.name, file: w.file, line: w.line }, boundary: isBoundaryFile(r) });
+                  events.push({ file: r, line: nodeLine(node), op: w.op, enclosing: enclosingName(node), receiver: w.receiver, bus: w.bus, handler, event: v, how: `via ${w.symbol.name}()`, via: { name: w.symbol.name, file: w.file, line: w.line }, boundary: isBoundaryFile(r), devGuarded: underDevGuard(node) });
                 }
               } else {
                 // 包装套包装?

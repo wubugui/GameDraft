@@ -1,0 +1,522 @@
+[
+  {
+    "arrow": "src/ui/DialogueUI.ts → src/ui/PanelSkin.ts",
+    "check": {
+      "result": "ok",
+      "note": "DialogueUI.ts 第 3 行确实写着 `import { createPanel, SKINS } from './PanelSkin'`，这是普通 import，不是 import type。两个名字都在值位置用到了：第 628 行把 createPanel(...) 当函数调用、把 SKINS.dialogue 当参数传入，第 431 和 1032 行也调用了 createPanel。所以编译后这条 import 还在，是运行时依赖。PanelSkin.ts 里 createPanel 在第 207 行导出为函数，SKINS 在第 99 行导出为常量，两者都是值。",
+      "cites": [
+        {
+          "f": "src/ui/DialogueUI.ts",
+          "l": 3,
+          "m": "import { createPanel, SKINS } from './PanelSkin';"
+        },
+        {
+          "f": "src/ui/DialogueUI.ts",
+          "l": 628,
+          "m": "this.boxBg.addChild(createPanel(boxX, boxY, boxWidth, BOX_HEIGHT, SKINS.dialogue));"
+        },
+        {
+          "f": "src/ui/PanelSkin.ts",
+          "l": 207,
+          "m": "export function createPanel("
+        },
+        {
+          "f": "src/ui/PanelSkin.ts",
+          "l": 99,
+          "m": "export const SKINS = {"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "src/ui/ShopUI.ts → src/ui/components/UIButton.ts",
+    "check": {
+      "result": "ok",
+      "note": "箭头属实。ShopUI.ts 第 6 行是非 type-only 的 `import { UIButton } from './components/UIButton'`，UIButton 在第 234、418 行被 `new UIButton({` 当值使用，所以编译后这条 import 会留下。UIButton 这个类定义在 src/ui/components/UIButton.ts 第 83 行。",
+      "cites": [
+        {
+          "f": "src/ui/ShopUI.ts",
+          "l": 6,
+          "m": "import { UIButton } from './components/UIButton'"
+        },
+        {
+          "f": "src/ui/ShopUI.ts",
+          "l": 234,
+          "m": "const leave = new UIButton({"
+        },
+        {
+          "f": "src/ui/ShopUI.ts",
+          "l": 418,
+          "m": "const buy = new UIButton({"
+        },
+        {
+          "f": "src/ui/components/UIButton.ts",
+          "l": 83,
+          "m": "export class UIButton {"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "src/systems/objectExamine/critterSim.ts → src/systems/objectExamine/crawlField.ts",
+    "check": {
+      "result": "ok",
+      "note": "critterSim.ts 第 19–25 行从 './crawlField' 引入 bakeObjectExamineCrawlField、pickWeightedContour、sampleCrawlField、sampleCrawlHeight 等四个值（ObjectExamineCrawlField 只作类型引入）。这四个函数都在 crawlField.ts 中 export function 定义，并在本文件有值位置的调用，例如第 247 行 await bakeObjectExamineCrawlField(imageUrl)、第 566 行 sampleCrawlHeight(...)、第 887 行 pickWeightedContour(...)。因此这是运行时依赖，编译后 import 仍会保留。",
+      "cites": [
+        {
+          "f": "src/systems/objectExamine/critterSim.ts",
+          "l": 20,
+          "m": "bakeObjectExamineCrawlField,"
+        },
+        {
+          "f": "src/systems/objectExamine/critterSim.ts",
+          "l": 25,
+          "m": "} from './crawlField';"
+        },
+        {
+          "f": "src/systems/objectExamine/critterSim.ts",
+          "l": 247,
+          "m": "const field = await bakeObjectExamineCrawlField(imageUrl);"
+        },
+        {
+          "f": "src/systems/objectExamine/critterSim.ts",
+          "l": 566,
+          "m": "const s = sampleCrawlHeight(this.field, x, y);"
+        },
+        {
+          "f": "src/systems/objectExamine/critterSim.ts",
+          "l": 887,
+          "m": "const c = pickWeightedContour(field, Math.random)!;"
+        },
+        {
+          "f": "src/systems/objectExamine/crawlField.ts",
+          "l": 235,
+          "m": "export function bakeObjectExamineCrawlField("
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "src/core/NarrativeStateManager.ts ─\"narrative:stateChanged\"→ src/core/Game.ts",
+    "check": {
+      "result": "ok",
+      "note": "NarrativeStateManager.ts:2135 调用 this.eventBus.emit('narrative:stateChanged', …)。这个 eventBus 是构造函数传进来的,也就是 Game.ts:999 把 Game 在 967 行 new 出来的 EventBus 交给了它。Game.ts:9666 在 events 数组上循环调用 this.listenEvent(event, …),数组第 9655 行就是 'narrative:stateChanged',两边字符串逐字相同。listenEvent 在 10144 行实际执行的是 this.eventBus.on(event, fn),所以收发确实在同一条主总线上。唯一的前提是这个订阅只在 DEV 下才注册(import.meta.env.DEV)。",
+      "cites": [
+        {
+          "f": "src/core/NarrativeStateManager.ts",
+          "l": 2135,
+          "m": "this.eventBus.emit('narrative:stateChanged', {"
+        },
+        {
+          "f": "src/core/NarrativeStateManager.ts",
+          "l": 441,
+          "m": "this.eventBus = eventBus;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 967,
+          "m": "this.eventBus = new EventBus();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 999,
+          "m": "new NarrativeStateManager(this.eventBus, this.flagStore"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9655,
+          "m": "'narrative:stateChanged',"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9666,
+          "m": "this.listenEvent(event, () => "
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10144,
+          "m": "this.eventBus.on(event, fn);"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "src/systems/InventoryManager.ts ─\"item:consumed\"→ src/core/Game.ts",
+    "check": {
+      "result": "ok",
+      "note": "箭头属实。InventoryManager.removeItem 在第 110 行调用 this.eventBus.emit('item:consumed', ...)。这个 eventBus 是构造参数，由 Game 在 994 行 new InventoryManager(this.eventBus, ...) 时传入，而它正是 Game 在 967 行 new EventBus() 创建的主总线。Game.ts 第 2802 行 this.listenEvent('item:consumed', ...) 内部实际执行的是 this.eventBus.on(event, fn)（10144 行）。两边事件名逐字相同，一边 emit、一边 on。",
+      "cites": [
+        {
+          "f": "src/systems/InventoryManager.ts",
+          "l": 110,
+          "m": "this.eventBus.emit('item:consumed', { itemId: id, count });"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2802,
+          "m": "this.listenEvent('item:consumed'"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10144,
+          "m": "this.eventBus.on(event, fn);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 967,
+          "m": "this.eventBus = new EventBus();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 994,
+          "m": "new InventoryManager(this.eventBus, this.flagStore)"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "src/core/SceneLightingSystem.ts ─new→ src/rendering/lighting/GiBouncePass.ts",
+    "check": {
+      "result": "ok",
+      "note": "第 282 行位于 private async loadGiHitmap(第 252 行起)内，写的是 `this.giPass = new GiBouncePass(radiance.source, {...})`。GiBouncePass 在第 7 行从 '../rendering/lighting/GiBouncePass' import，而 src/rendering/lighting/GiBouncePass.ts:108 定义了 `export class GiBouncePass`，所以箭头属实。补充一点：现在全 src 找不到 loadGiHitmap() 的调用方(第 546 行注释说明运行时已不再加载 gi_hitmap)，这条 new 在实际运行中执行不到，是保留下来的死代码。",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 282,
+          "m": "this.giPass = new GiBouncePass(radiance.source"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 252,
+          "m": "private async loadGiHitmap(sceneId: string"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 7,
+          "m": "import { GiBouncePass } from '../rendering/lighting/GiBouncePass';"
+        },
+        {
+          "f": "src/rendering/lighting/GiBouncePass.ts",
+          "l": 108,
+          "m": "export class GiBouncePass"
+        },
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 546,
+          "m": "`loadGiHitmap()` ← gi_hitmap.bin"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "「执行进场动作里登记的切场景」→「序章过场」",
+    "check": {
+      "result": "ok",
+      "note": "Game 在 4325 行 await loadInitialScene,它内部 await loadScene。loadScene 末尾在 isSwitching 为 false 时调用 consumePendingReentrantSwitch,把 onEnter 批里登记的 changeScene 发起出去。loadInitialScene 返回后,Game 才在 4326 行调 tryStartInitialPrologue 起播序章,所以两步的先后与图一致。补充时序:consumePendingReentrantSwitch 用 void switchScene 发出切场,不等它完成;切场 job 虽然先起跑(置 isSwitching、fadeOut),但卸旧场、装新场会和序章过场并行进行。另外这一步只有在首场景 onEnter 里确实登记过 changeScene 时才会发生。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2019,
+          "m": "if (!this.isSwitching) {"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2020,
+          "m": "this.consumePendingReentrantSwitch();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2225,
+          "m": "void this.switchScene(req.targetSceneId"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4325,
+          "m": "await this.sceneManager.loadInitialScene("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4326,
+          "m": "await this.tryStartInitialPrologue()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8766,
+          "m": "await this.cutsceneManager.startCutscene(cutsceneId)"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "「UI 皮肤贴图」→「UI 图标」",
+    "check": {
+      "result": "ok",
+      "note": "在 Game.ts 的同一个启动函数里，第 2247 行先 `await preloadUITextures()`（加载木框九宫格和纸纹两张皮肤贴图，等全部加载完才往下走），第 2249 行才 `void preloadUIIcons()`（发起图标预载但不等它完成）。所以「UI 皮肤贴图」确实先于「UI 图标」，两步的描述也和 src/ui/UITextures.ts、src/ui/UIIcons.ts 的实现对得上。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 2247,
+          "m": "await preloadUITextures();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2249,
+          "m": "void preloadUIIcons();"
+        },
+        {
+          "f": "src/ui/UITextures.ts",
+          "l": 33,
+          "m": "export async function preloadUITextures(): Promise<void>"
+        },
+        {
+          "f": "src/ui/UIIcons.ts",
+          "l": 33,
+          "m": "export async function preloadUIIcons(): Promise<void>"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "「点击寻路（转成移动轴）」→「健康（三把火）」",
+    "check": {
+      "result": "ok",
+      "note": "箭头属实。Game.ts 帧更新里 Exploring 分支的第 10579 行调用 updatePlayerNav()，第 10580 行紧接着调用 healthSystem.update(dt)，两者都是同步调用，中间没有 await、回调或提前 return，所以先寻路、后健康。两步的描述也对得上：updatePlayerNav 按 playerNavTarget 算出方向，用 inputManager.setTouchMoveAxes(ax, ay) 写成移动轴；HealthSystem.update 负责给限时防护倒计时，HUD 用三把火显示这份血量。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10579,
+          "m": "this.updatePlayerNav();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10580,
+          "m": "this.healthSystem.update(dt);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10577,
+          "m": "if (this.stateController.currentState === GameState.Exploring)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9535,
+          "m": "this.inputManager.setTouchMoveAxes(ax, ay);"
+        },
+        {
+          "f": "src/systems/HealthSystem.ts",
+          "l": 96,
+          "m": "update(dt: number): void {"
+        },
+        {
+          "f": "src/ui/HUD.ts",
+          "l": 234,
+          "m": "三把火显隐（玩法清单 G.5：默认不显、动作控显、入存档）"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "「热点：深度地面偏移」→「热点：深度遮挡」",
+    "check": {
+      "result": "ok",
+      "note": "Game.ts 第 10868 行开始逐个遍历热点。在同一次循环里，先在 10873 行调用 resolveDepthFloorOffsetBoost 算出地面偏移 ex，然后 10876 行把 ex 传给 sceneDepthSystem.updateEntityDepthOcclusion 做深度遮挡。两步是同步的，按行序执行，后一步还要用到前一步的结果，所以先偏移、后遮挡的顺序没错。另外，图给的第一处出处（10868 行）只是循环头，真正计算偏移的是 10873 行。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10868,
+          "m": "for (const h of this.sceneManager.getCurrentHotspots()) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10873,
+          "m": "const ex = resolveDepthFloorOffsetBoost("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10876,
+          "m": "this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex)"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "「清\"切场进行中\" · 发出\"切场结束\"」→「放行 onEnter 批内登记的切场」",
+    "check": {
+      "result": "ok",
+      "note": "箭头属实。switchScene 里 job 的 finally 块先执行 isSwitching = false（2201 行），再发出 'scene:transitionEnd'（2204 行）。外层把 job 串到队尾（p = sceneSwitchTail.then(job, job)），在 await p 之后的 finally 里才调 consumePendingReentrantSwitch（2216 行），所以要等 job 整个跑完（包括它的 finally）才放行登记的切场。loadScene 尾部也有一处放行（2020 行），但它受 if (!this.isSwitching) 保护，走 switchScene 这条路时 isSwitching 为 true，会跳过，不会抢在前面。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2201,
+          "m": "this.isSwitching = false;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2204,
+          "m": "this.eventBus.emit('scene:transitionEnd', { toSceneId: tid });"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2208,
+          "m": "const p = this.sceneSwitchTail.then(job, job);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2213,
+          "m": "await p;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2216,
+          "m": "this.consumePendingReentrantSwitch();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2019,
+          "m": "if (!this.isSwitching) {"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "「生成\"演出留下的\"对象」→「交互表换上新实体」",
+    "check": {
+      "result": "ok",
+      "note": "这两步在 SceneManager.ts 的同一个函数里、中间没有分支隔开：第 1899 行的 for 循环逐个 await instantiateNpc，把 sceneMemory.spawnedNpcs（演出留下的对象）生成出来并 push 进 currentNpcs；循环结束后，第 1907 行才调 interactionSetter(currentHotspots, currentNpcs)。这个回调由 Game.ts 第 6372 行注册，会调用 interactionSystem.setHotspots 和 setNpcs 换上新的交互表。所以先后顺序和图上一致，两步的描述也与代码相符。",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1899,
+          "m": "for (const npcDef of Object.values(this.getCommittedMemory(s"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1902,
+          "m": "const npc = await this.instantiateNpc(npcDef, snap);"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1907,
+          "m": "this.interactionSetter?.(this.currentHotspots, this.currentN"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6372,
+          "m": "this.sceneManager.setInteractionSetter((hotspots, npcs) => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6373,
+          "m": "this.interactionSystem.setHotspots(hotspots);"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "「取镜像、解析、校验」→「先拍一份当前状态作回滚快照」",
+    "check": {
+      "result": "ok",
+      "note": "load(slot) 在第 347 行先 this.mirror.get(slot) 取镜像，然后调用 loadFromRaw(raw)。loadFromRaw 里依次做 JSON.parse（357 行）、结构校验（缺 systems 就拒绝）和版本检查，全部通过后才在 375 行 this.collector() 拍回滚快照。这几步之间没有 await，是同步按行序执行的，所以顺序与图上一致。",
+      "cites": [
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 347,
+          "m": "const raw = this.mirror.get(slot);"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 349,
+          "m": "return this.loadFromRaw(raw);"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 357,
+          "m": "payload = JSON.parse(raw) as SavePayload;"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 362,
+          "m": "typeof payload.systems !== 'object'"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 375,
+          "m": "const snapshot = this.collector();"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "「重载场景(读档专用)」→「还权为探索态」",
+    "check": {
+      "result": "ok",
+      "note": "顺序属实。SaveManager.loadFromRaw 先 distributor,再在 384 行 await this.sceneReloader(sceneId)。这个回调是 Game 构造 SaveManager 时传入的读档专用闭包:先 clearActiveZonesForRestore,再调 this.reloadScene。Game.reloadScene 里先 unloadScene,再 await sceneManager.loadScene(读档落位),场景加载完后才在 9424 行读 currentState,只有当前不处于 Dialogue/Cutscene/Encounter/Minigame 时才 setState(GameState.Exploring)。所以场景重载先完成,之后才还权为探索态。需要说明两点:还权这一步其实包在 sceneReloader 这次调用的末尾;而且它是有条件的。",
+      "cites": [
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 384,
+          "m": "await this.sceneReloader(sceneId);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2602,
+          "m": "return this.reloadScene(sceneId);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9421,
+          "m": "await this.sceneManager.loadScene(sceneId, undefined, restorePos ?? undefined);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9424,
+          "m": "const s = this.stateController.currentState;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9431,
+          "m": "this.stateController.setState(GameState.Exploring);"
+        }
+      ]
+    }
+  },
+  {
+    "arrow": "「装深度图与碰撞图」→「烘辐照探针小图（GPU 离屏一次）」",
+    "check": {
+      "result": "ok",
+      "note": "在 setDepthLoader 回调里，先 await this.sceneDepthSystem.load(...)（第 6419 行），这一步在 SceneDepthSystem.load 内部依次装入深度纹理（216 行）和 collision_map 碰撞位图（236 行）。load 返回后才同步调用 setupSceneLighting（第 6446 行），其中第 7038 行调用 buildIrradianceProbe，把背景降采样并模糊后，用 app.renderer.render 一次性渲染到一张小 RenderTexture 上（irradianceProbe.ts 第 42 行）。所以两步先后顺序属实，描述也和代码一致。不过烘探针只在 entityLighting.enabled 为真、且背景纹理存在时才会执行。",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6419,
+          "m": "await this.sceneDepthSystem.load("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6446,
+          "m": "this.setupSceneLighting(sceneData, worldToPixelX, worldToPixelY);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7038,
+          "m": "this.currentProbe = buildIrradianceProbe(this.renderer.app, bgTex);"
+        },
+        {
+          "f": "src/core/SceneDepthSystem.ts",
+          "l": 216,
+          "m": "this.depthTexture = await assetManager.loadTexture(p);"
+        },
+        {
+          "f": "src/core/SceneDepthSystem.ts",
+          "l": 236,
+          "m": "await this.loadCollisionBitmap(cp, assetManager);"
+        },
+        {
+          "f": "src/rendering/irradianceProbe.ts",
+          "l": 42,
+          "m": "app.renderer.render({ container: root, target: rt, clear: true });"
+        }
+      ]
+    }
+  }
+]

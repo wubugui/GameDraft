@@ -103,8 +103,8 @@ const events = an.events.map((g) => {
   for (const s of [...g.emit, ...g.on, ...g.off]) want(s.f, s.l);
   return {
     e: g.event, bus: g.bus,
-    emit: g.emit.map((s) => [fi(s.f), s.l, s.by, s.how]),
-    on: g.on.map((s) => [fi(s.f), s.l, s.by, s.handler || '', s.how, s.viaBinding ? 1 : 0]),
+    emit: g.emit.map((s) => [fi(s.f), s.l, s.by, s.how, s.dev ? 1 : 0]),
+    on: g.on.map((s) => [fi(s.f), s.l, s.by, s.handler || '', s.how, s.viaBinding ? 1 : 0, s.dev ? 1 : 0]),
     off: g.off.map((s) => [fi(s.f), s.l, s.by]),
     eNL: g.emitNoListener ? 1 : 0, lNE: g.listenNoEmitter ? 1 : 0,
     rt: g.runtimeOnly,

@@ -61,7 +61,7 @@ for (const e of raw.events) {
   const key = `${e.bus}::${e.event}`;
   if (!byEvent.has(key)) byEvent.set(key, { bus: e.bus, event: e.event, emit: [], on: [], off: [] });
   const g = byEvent.get(key);
-  const site = { f: e.file, l: e.line, by: e.enclosing, handler: e.handler || undefined, how: e.how, boundary: !!fileInfo.get(e.file)?.boundary };
+  const site = { f: e.file, l: e.line, by: e.enclosing, handler: e.handler || undefined, how: e.how, boundary: !!fileInfo.get(e.file)?.boundary, dev: !!e.devGuarded };
   if (e.op === 'emit') g.emit.push(site);
   else if (e.op === 'on' || e.op === 'once') g.on.push(site);
   else g.off.push(site);

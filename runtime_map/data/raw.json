@@ -4,7 +4,7 @@
   "typescript": "5.9.3",
   "fileCount": 338,
   "note": "范围:src/**/*.ts,排除 *.test.ts。边界(boundary)= src/dev、src/debug、src/authoring。行号 1 起算。",
-  "elapsedMs": 17570
+  "elapsedMs": 17792
  },
  "files": [
   {
@@ -2116,7 +2116,7 @@
     {
      "rel": "extends",
      "name": "Error",
-     "file": "../../../tmp/claude-0/-home-user-GameDraft/198c03f2-c296-5229-99c9-049512d57ecf/scratchpad/node_modules/typescript/lib/lib.es5.d.ts"
+     "file": "(内置类型)"
     }
    ]
   },
@@ -2128,7 +2128,7 @@
     {
      "rel": "extends",
      "name": "Error",
-     "file": "../../../tmp/claude-0/-home-user-GameDraft/198c03f2-c296-5229-99c9-049512d57ecf/scratchpad/node_modules/typescript/lib/lib.es5.d.ts"
+     "file": "(内置类型)"
     }
    ]
   },
@@ -57185,6 +57185,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:panelClose",
    "how": "literal"
   },
@@ -57197,6 +57198,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:panelOpen",
    "how": "literal"
   },
@@ -57209,6 +57211,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:cancel",
    "how": "literal"
   },
@@ -57221,6 +57224,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:cancel",
    "how": "literal"
   },
@@ -57233,6 +57237,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:cancel",
    "how": "literal"
   },
@@ -57245,6 +57250,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57257,6 +57263,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57269,6 +57276,7 @@
    "bus": "main",
    "handler": "this.onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -57281,6 +57289,7 @@
    "bus": "main",
    "handler": "this.onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -57293,6 +57302,7 @@
    "bus": "main",
    "handler": "this.onRunStarted",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:runStarted",
    "how": "literal"
   },
@@ -57305,6 +57315,7 @@
    "bus": "main",
    "handler": "this.onRunSettled",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:runSettled",
    "how": "literal"
   },
@@ -57317,6 +57328,7 @@
    "bus": "main",
    "handler": "this.onRunActivated",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:runActivated",
    "how": "literal"
   },
@@ -57329,6 +57341,7 @@
    "bus": "main",
    "handler": "this.onRunDiscarded",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -57341,6 +57354,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:changed",
    "how": "literal"
   },
@@ -57353,6 +57367,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:accepted",
    "how": "literal"
   },
@@ -57365,6 +57380,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:accepted",
    "how": "literal"
   },
@@ -57377,6 +57393,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:completed",
    "how": "literal"
   },
@@ -57389,6 +57406,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57401,6 +57419,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:announce",
    "how": "literal"
   },
@@ -57413,6 +57432,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57425,6 +57445,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:accepted",
    "how": "literal"
   },
@@ -57437,6 +57458,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:completed",
    "how": "literal"
   },
@@ -57449,6 +57471,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57461,6 +57484,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:untracked",
    "how": "literal"
   },
@@ -57473,6 +57497,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:accepted",
    "how": "literal"
   },
@@ -57485,6 +57510,7 @@
    "bus": "main",
    "handler": "this.onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -57497,6 +57523,7 @@
    "bus": "main",
    "handler": "this.onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -57509,6 +57536,7 @@
    "bus": "main",
    "handler": "this.onRunStarted",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:runStarted",
    "how": "literal"
   },
@@ -57521,6 +57549,7 @@
    "bus": "main",
    "handler": "this.onRunSettled",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:runSettled",
    "how": "literal"
   },
@@ -57533,6 +57562,7 @@
    "bus": "main",
    "handler": "this.onRunActivated",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:runActivated",
    "how": "literal"
   },
@@ -57545,6 +57575,7 @@
    "bus": "main",
    "handler": "this.onRunDiscarded",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -57557,6 +57588,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57569,6 +57601,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57581,6 +57614,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -57593,6 +57627,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "inventory:full",
    "how": "literal"
   },
@@ -57605,6 +57640,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57617,6 +57653,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "item:acquired",
    "how": "literal"
   },
@@ -57629,6 +57666,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "item:consumed",
    "how": "literal"
   },
@@ -57641,6 +57679,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "currency:changed",
    "how": "literal"
   },
@@ -57653,6 +57692,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "currency:changed",
    "how": "literal"
   },
@@ -57665,6 +57705,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "inventory:igniterChanged",
    "how": "literal"
   },
@@ -57677,6 +57718,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "inventory:igniterChanged",
    "how": "literal"
   },
@@ -57689,6 +57731,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "currency:changed",
    "how": "literal"
   },
@@ -57701,6 +57744,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "rule:acquired",
    "how": "literal"
   },
@@ -57713,6 +57757,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57725,6 +57770,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "rule:layer",
    "how": "literal"
   },
@@ -57737,6 +57783,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "rule:layer",
    "how": "literal"
   },
@@ -57749,6 +57796,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "rule:fragment",
    "how": "literal"
   },
@@ -57761,6 +57809,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57773,6 +57822,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57785,6 +57835,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -57797,6 +57848,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:start",
    "how": "literal"
   },
@@ -57809,6 +57861,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:narrative",
    "how": "literal"
   },
@@ -57821,6 +57874,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:options",
    "how": "literal"
   },
@@ -57833,6 +57887,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:result",
    "how": "literal"
   },
@@ -57845,6 +57900,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:end",
    "how": "literal"
   },
@@ -57857,6 +57913,7 @@
    "bus": "main",
    "handler": "callback",
    "boundary": false,
+   "devGuarded": false,
    "event": null,
    "how": "unresolved",
    "argText": "event"
@@ -57870,6 +57927,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "time:changed",
    "how": "literal"
   },
@@ -57882,6 +57940,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "time:phaseChanged",
    "how": "literal"
   },
@@ -57894,6 +57953,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "day:end",
    "how": "literal"
   },
@@ -57906,6 +57966,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "day:start",
    "how": "literal"
   },
@@ -57918,6 +57979,7 @@
    "bus": "main",
    "handler": "this.onTimeChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "time:changed",
    "how": "literal"
   },
@@ -57930,6 +57992,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -57942,6 +58005,7 @@
    "bus": "main",
    "handler": "this.onEntitiesRebuilt",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:entitiesRebuilt",
    "how": "literal"
   },
@@ -57954,6 +58018,7 @@
    "bus": "main",
    "handler": "this.onTimeChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "time:changed",
    "how": "literal"
   },
@@ -57966,6 +58031,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -57978,6 +58044,7 @@
    "bus": "main",
    "handler": "this.onEntitiesRebuilt",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:entitiesRebuilt",
    "how": "literal"
   },
@@ -57990,6 +58057,7 @@
    "bus": "main",
    "handler": "this.onTimeChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "time:changed",
    "how": "literal"
   },
@@ -58002,6 +58070,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -58014,6 +58083,7 @@
    "bus": "main",
    "handler": "this.onEntitiesRebuilt",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:entitiesRebuilt",
    "how": "literal"
   },
@@ -58026,6 +58096,7 @@
    "bus": "main",
    "handler": "this.onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -58038,6 +58109,7 @@
    "bus": "main",
    "handler": "this.onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -58050,6 +58122,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "archive:updated",
    "how": "literal"
   },
@@ -58062,6 +58135,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -58074,6 +58148,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "archive:firstView",
    "how": "literal"
   },
@@ -58086,6 +58161,7 @@
    "bus": "main",
    "handler": "this.onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -58098,6 +58174,7 @@
    "bus": "main",
    "handler": "this.onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -58110,6 +58187,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "clue:collected",
    "how": "literal"
   },
@@ -58122,6 +58200,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -58134,6 +58213,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "clue:collectActions",
    "how": "literal"
   },
@@ -58146,6 +58226,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "systemNote:shown",
    "how": "literal"
   },
@@ -58158,6 +58239,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:start",
    "how": "literal"
   },
@@ -58170,6 +58252,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -58182,6 +58265,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:end",
    "how": "literal"
   },
@@ -58194,6 +58278,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:step",
    "how": "literal"
   },
@@ -58206,6 +58291,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:end",
    "how": "literal"
   },
@@ -58218,6 +58304,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:step",
    "how": "literal"
   },
@@ -58230,6 +58317,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:step",
    "how": "literal"
   },
@@ -58242,6 +58330,7 @@
    "bus": "main",
    "handler": "this.onHotspotPickup",
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:pickup:done",
    "how": "literal"
   },
@@ -58254,6 +58343,7 @@
    "bus": "main",
    "handler": "this.onHotspotInspected",
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:inspected",
    "how": "literal"
   },
@@ -58266,6 +58356,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:entitiesRebuilt",
    "how": "literal"
   },
@@ -58278,6 +58369,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:enter",
    "how": "literal"
   },
@@ -58290,6 +58382,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -58302,6 +58395,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:revealed",
    "how": "literal"
   },
@@ -58314,6 +58408,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:beforeUnload",
    "how": "literal"
   },
@@ -58326,6 +58421,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:transition",
    "how": "literal"
   },
@@ -58338,6 +58434,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -58350,6 +58447,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:transitionEnd",
    "how": "literal"
   },
@@ -58362,6 +58460,7 @@
    "bus": "main",
    "handler": "this.onHotspotPickup",
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:pickup:done",
    "how": "literal"
   },
@@ -58374,6 +58473,7 @@
    "bus": "main",
    "handler": "this.onHotspotInspected",
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:inspected",
    "how": "literal"
   },
@@ -58386,6 +58486,7 @@
    "bus": "main",
    "handler": "this.onFlagChangedListener",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -58398,6 +58499,7 @@
    "bus": "main",
    "handler": "this.onFlagChangedListener",
    "boundary": false,
+   "devGuarded": false,
    "event": "heldProp:changed",
    "how": "literal"
   },
@@ -58410,6 +58512,7 @@
    "bus": "main",
    "handler": "this.onFlagChangedListener",
    "boundary": false,
+   "devGuarded": false,
    "event": "burn:changed",
    "how": "literal"
   },
@@ -58422,6 +58525,7 @@
    "bus": "main",
    "handler": "this.onSaveRestoringListener",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -58434,6 +58538,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:packageChanged",
    "how": "literal"
   },
@@ -58446,6 +58551,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:runStarted",
    "how": "literal"
   },
@@ -58458,6 +58564,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -58470,6 +58577,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -58482,6 +58590,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:runActivated",
    "how": "literal"
   },
@@ -58494,6 +58603,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:runSettled",
    "how": "literal"
   },
@@ -58506,6 +58616,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -58518,6 +58629,7 @@
    "bus": "main",
    "handler": "this.onFlagChangedListener",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -58530,6 +58642,7 @@
    "bus": "main",
    "handler": "this.onFlagChangedListener",
    "boundary": false,
+   "devGuarded": false,
    "event": "heldProp:changed",
    "how": "literal"
   },
@@ -58542,6 +58655,7 @@
    "bus": "main",
    "handler": "this.onFlagChangedListener",
    "boundary": false,
+   "devGuarded": false,
    "event": "burn:changed",
    "how": "literal"
   },
@@ -58554,6 +58668,7 @@
    "bus": "main",
    "handler": "this.onSaveRestoringListener",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -58566,6 +58681,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -58578,6 +58694,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "document:revealed",
    "how": "literal"
   },
@@ -58590,6 +58707,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "minigame:sugarWheelResult",
    "how": "literal"
   },
@@ -58602,6 +58720,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "minigame:paperCraftResult",
    "how": "literal"
   },
@@ -58614,6 +58733,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -58626,6 +58746,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "objectExamine:allFound",
    "how": "literal"
   },
@@ -58638,6 +58759,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "objectExamine:result",
    "how": "literal"
   },
@@ -58650,6 +58772,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "player:damaged",
    "how": "literal"
   },
@@ -58662,6 +58785,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "player:depleted",
    "how": "literal"
   },
@@ -58674,6 +58798,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "player:healthChanged",
    "how": "literal"
   },
@@ -58686,6 +58811,7 @@
    "bus": "main",
    "handler": "this.onZoneEnter",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:enter",
    "how": "literal"
   },
@@ -58698,6 +58824,7 @@
    "bus": "main",
    "handler": "this.onZoneExit",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:exit",
    "how": "literal"
   },
@@ -58710,6 +58837,7 @@
    "bus": "main",
    "handler": "this.onZoneEnter",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:enter",
    "how": "literal"
   },
@@ -58722,6 +58850,7 @@
    "bus": "main",
    "handler": "this.onZoneExit",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:exit",
    "how": "literal"
   },
@@ -58734,6 +58863,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "player:smellSniff",
    "how": "literal"
   },
@@ -58746,6 +58876,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "player:smellChanged",
    "how": "literal"
   },
@@ -58758,6 +58889,7 @@
    "bus": "main",
    "handler": "this.onZoneEnter",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:enter",
    "how": "literal"
   },
@@ -58770,6 +58902,7 @@
    "bus": "main",
    "handler": "this.onZoneExit",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:exit",
    "how": "literal"
   },
@@ -58782,6 +58915,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "burn:igniteRequested",
    "how": "literal"
   },
@@ -58794,6 +58928,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:interactUnavailable",
    "how": "literal"
   },
@@ -58806,6 +58941,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:interactAvailable",
    "how": "literal"
   },
@@ -58818,6 +58954,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:triggered",
    "how": "literal"
   },
@@ -58830,6 +58967,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "npc:interact",
    "how": "literal"
   },
@@ -58842,6 +58980,7 @@
    "bus": "main",
    "handler": "this.onNarrativeStateChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -58854,6 +58993,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -58866,6 +59006,7 @@
    "bus": "main",
    "handler": "this.onEntitiesRebuilt",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:entitiesRebuilt",
    "how": "literal"
   },
@@ -58878,6 +59019,7 @@
    "bus": "main",
    "handler": "this.onSaveRestoring",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -58890,6 +59032,7 @@
    "bus": "main",
    "handler": "this.onCutsceneStart",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:start",
    "how": "literal"
   },
@@ -58902,6 +59045,7 @@
    "bus": "main",
    "handler": "this.onCutsceneEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:end",
    "how": "literal"
   },
@@ -58914,6 +59058,7 @@
    "bus": "main",
    "handler": "this.onNarrativeStateChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -58926,6 +59071,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -58938,6 +59084,7 @@
    "bus": "main",
    "handler": "this.onEntitiesRebuilt",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:entitiesRebuilt",
    "how": "literal"
   },
@@ -58950,6 +59097,7 @@
    "bus": "main",
    "handler": "this.onSaveRestoring",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -58962,6 +59110,7 @@
    "bus": "main",
    "handler": "this.onCutsceneStart",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:start",
    "how": "literal"
   },
@@ -58974,6 +59123,7 @@
    "bus": "main",
    "handler": "this.onCutsceneEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:end",
    "how": "literal"
   },
@@ -58986,6 +59136,7 @@
    "bus": "main",
    "handler": "this.onNarrativeStateChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -58998,6 +59149,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -59010,6 +59162,7 @@
    "bus": "main",
    "handler": "this.onEntitiesRebuilt",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:entitiesRebuilt",
    "how": "literal"
   },
@@ -59022,6 +59175,7 @@
    "bus": "main",
    "handler": "this.onSaveRestoring",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -59034,6 +59188,7 @@
    "bus": "main",
    "handler": "this.onCutsceneStart",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:start",
    "how": "literal"
   },
@@ -59046,6 +59201,7 @@
    "bus": "main",
    "handler": "this.onCutsceneEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:end",
    "how": "literal"
   },
@@ -59058,6 +59214,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -59070,6 +59227,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "overlay:show",
    "how": "literal"
   },
@@ -59082,6 +59240,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "overlay:blend",
    "how": "literal"
   },
@@ -59094,6 +59253,7 @@
    "bus": "main",
    "handler": "onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -59106,6 +59266,7 @@
    "bus": "main",
    "handler": "onFlagChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -59118,6 +59279,7 @@
    "bus": "main",
    "handler": "this.sceneUnloadCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:beforeUnload",
    "how": "literal"
   },
@@ -59130,6 +59292,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -59142,6 +59305,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -59154,6 +59318,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:hudHealthOverrideChanged",
    "how": "literal"
   },
@@ -59166,6 +59331,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:threeFiresVisibleChanged",
    "how": "literal"
   },
@@ -59178,6 +59344,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:threeFiresVisibleChanged",
    "how": "literal"
   },
@@ -59190,6 +59357,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:smellVisibleChanged",
    "how": "literal"
   },
@@ -59202,6 +59370,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:smellVisibleChanged",
    "how": "literal"
   },
@@ -59214,6 +59383,7 @@
    "bus": "main",
    "handler": "this.sceneUnloadCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:beforeUnload",
    "how": "literal"
   },
@@ -59226,6 +59396,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:start",
    "how": "literal"
   },
@@ -59238,6 +59409,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:line",
    "how": "literal"
   },
@@ -59250,6 +59422,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:prepareBeat",
    "how": "literal"
   },
@@ -59262,6 +59435,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:line",
    "how": "literal"
   },
@@ -59274,6 +59448,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:willEnd",
    "how": "literal"
   },
@@ -59286,6 +59461,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -59298,6 +59474,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:start",
    "how": "literal"
   },
@@ -59310,6 +59487,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:line",
    "how": "literal"
   },
@@ -59322,6 +59500,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:willEnd",
    "how": "literal"
   },
@@ -59334,6 +59513,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:prepareBeat",
    "how": "literal"
   },
@@ -59346,6 +59526,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:prepareBeat",
    "how": "literal"
   },
@@ -59358,6 +59539,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:choiceSelected:log",
    "how": "literal"
   },
@@ -59370,6 +59552,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -59382,6 +59565,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -59394,6 +59578,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:hidePanel",
    "how": "literal"
   },
@@ -59406,6 +59591,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:line",
    "how": "literal"
   },
@@ -59418,6 +59604,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:willEnd",
    "how": "literal"
   },
@@ -59430,6 +59617,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:line",
    "how": "literal"
   },
@@ -59442,6 +59630,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:prepareBeat",
    "how": "literal"
   },
@@ -59454,6 +59643,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:choices",
    "how": "literal"
   },
@@ -59466,6 +59656,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:confirm",
    "how": "literal"
   },
@@ -59478,6 +59669,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:confirm",
    "how": "literal"
   },
@@ -59490,6 +59682,7 @@
    "bus": "main",
    "handler": "fn",
    "boundary": false,
+   "devGuarded": false,
    "event": null,
    "how": "unresolved",
    "argText": "event"
@@ -59503,6 +59696,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "player:posture",
    "how": "literal"
   },
@@ -59515,6 +59709,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "player:posture",
    "how": "literal"
   },
@@ -59527,6 +59722,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "player:posture",
    "how": "literal"
   },
@@ -59539,6 +59735,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "player:act",
    "how": "literal"
   },
@@ -59551,6 +59748,7 @@
    "bus": "main",
    "handler": "this.onSceneRevealed",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:revealed",
    "how": "literal"
   },
@@ -59563,6 +59761,7 @@
    "bus": "main",
    "handler": "this.onStateChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -59575,6 +59774,7 @@
    "bus": "main",
    "handler": "this.onSceneRevealed",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:revealed",
    "how": "literal"
   },
@@ -59587,6 +59787,7 @@
    "bus": "main",
    "handler": "this.onStateChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -59599,6 +59800,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:autoAdvance",
    "how": "literal"
   },
@@ -59611,6 +59813,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:autoAdvance",
    "how": "literal"
   },
@@ -59623,6 +59826,7 @@
    "bus": "main",
    "handler": "b.fn",
    "boundary": false,
+   "devGuarded": false,
    "event": null,
    "how": "unresolved",
    "argText": "b.event"
@@ -59636,6 +59840,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "gameLog:changed",
    "how": "literal"
   },
@@ -59648,6 +59853,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "gameLog:changed",
    "how": "literal"
   },
@@ -59660,6 +59866,7 @@
    "bus": "main",
    "handler": "fn",
    "boundary": false,
+   "devGuarded": false,
    "event": null,
    "how": "unresolved",
    "argText": "event"
@@ -59673,6 +59880,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:enter",
    "how": "literal"
   },
@@ -59685,6 +59893,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:exit",
    "how": "literal"
   },
@@ -59697,6 +59906,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:ruleAvailable",
    "how": "union"
   },
@@ -59709,6 +59919,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:ruleUnavailable",
    "how": "union"
   },
@@ -59721,6 +59932,7 @@
    "bus": "main",
    "handler": "this.itemAcquiredCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "item:acquired",
    "how": "literal"
   },
@@ -59733,6 +59945,7 @@
    "bus": "main",
    "handler": "this.cutsceneStartCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:start",
    "how": "literal"
   },
@@ -59745,6 +59958,7 @@
    "bus": "main",
    "handler": "this.cutsceneEndCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:end",
    "how": "literal"
   },
@@ -59757,6 +59971,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:pickup",
    "how": "literal"
   },
@@ -59769,6 +59984,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:pickup:clear",
    "how": "literal"
   },
@@ -59781,6 +59997,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:pickup:clear",
    "how": "literal"
   },
@@ -59793,6 +60010,7 @@
    "bus": "main",
    "handler": "this.itemAcquiredCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "item:acquired",
    "how": "literal"
   },
@@ -59805,6 +60023,7 @@
    "bus": "main",
    "handler": "this.cutsceneStartCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:start",
    "how": "literal"
   },
@@ -59817,6 +60036,7 @@
    "bus": "main",
    "handler": "this.cutsceneEndCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:end",
    "how": "literal"
   },
@@ -59829,6 +60049,7 @@
    "bus": "main",
    "handler": "this.dialogueLineCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:line",
    "how": "literal"
   },
@@ -59841,6 +60062,7 @@
    "bus": "main",
    "handler": "this.dialogueChoicesCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:choices",
    "how": "literal"
   },
@@ -59853,6 +60075,7 @@
    "bus": "main",
    "handler": "this.dialogueWillEndCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:willEnd",
    "how": "literal"
   },
@@ -59865,6 +60088,7 @@
    "bus": "main",
    "handler": "this.dialogueEndCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -59877,6 +60101,7 @@
    "bus": "main",
    "handler": "this.dialoguePrepareBeatCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:prepareBeat",
    "how": "literal"
   },
@@ -59889,6 +60114,7 @@
    "bus": "main",
    "handler": "this.dialogueHidePanelCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:hidePanel",
    "how": "literal"
   },
@@ -59901,6 +60127,7 @@
    "bus": "main",
    "handler": "this.dialogueAutoAdvanceCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:autoAdvance",
    "how": "literal"
   },
@@ -59913,6 +60140,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:firstPerson",
    "how": "literal"
   },
@@ -59925,6 +60153,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:choiceSelected",
    "how": "literal"
   },
@@ -59937,6 +60166,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:choiceSelected",
    "how": "literal"
   },
@@ -59949,6 +60179,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -59961,6 +60192,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:choiceSelected",
    "how": "literal"
   },
@@ -59973,6 +60205,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -59985,6 +60218,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:advanceEnd",
    "how": "literal"
   },
@@ -59997,6 +60231,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:advance",
    "how": "literal"
   },
@@ -60009,6 +60244,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:advanceInput",
    "how": "literal"
   },
@@ -60021,6 +60257,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:advanceInput",
    "how": "literal"
   },
@@ -60033,6 +60270,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:advanceEnd",
    "how": "literal"
   },
@@ -60045,6 +60283,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:advance",
    "how": "literal"
   },
@@ -60057,6 +60296,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:firstPerson",
    "how": "literal"
   },
@@ -60069,6 +60309,7 @@
    "bus": "main",
    "handler": "this.dialogueLineCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:line",
    "how": "literal"
   },
@@ -60081,6 +60322,7 @@
    "bus": "main",
    "handler": "this.dialogueChoicesCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:choices",
    "how": "literal"
   },
@@ -60093,6 +60335,7 @@
    "bus": "main",
    "handler": "this.dialogueWillEndCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:willEnd",
    "how": "literal"
   },
@@ -60105,6 +60348,7 @@
    "bus": "main",
    "handler": "this.dialogueEndCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -60117,6 +60361,7 @@
    "bus": "main",
    "handler": "this.dialoguePrepareBeatCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:prepareBeat",
    "how": "literal"
   },
@@ -60129,6 +60374,7 @@
    "bus": "main",
    "handler": "this.dialogueHidePanelCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:hidePanel",
    "how": "literal"
   },
@@ -60141,6 +60387,7 @@
    "bus": "main",
    "handler": "this.dialogueAutoAdvanceCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:autoAdvance",
    "how": "literal"
   },
@@ -60153,6 +60400,7 @@
    "bus": "main",
    "handler": "this.narrativeCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:narrative",
    "how": "literal"
   },
@@ -60165,6 +60413,7 @@
    "bus": "main",
    "handler": "this.optionsCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:options",
    "how": "literal"
   },
@@ -60177,6 +60426,7 @@
    "bus": "main",
    "handler": "this.resultCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:result",
    "how": "literal"
   },
@@ -60189,6 +60439,7 @@
    "bus": "main",
    "handler": "this.endCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:end",
    "how": "literal"
   },
@@ -60201,6 +60452,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -60213,6 +60465,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:choiceSelected",
    "how": "literal"
   },
@@ -60225,6 +60478,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:narrativeDone",
    "how": "literal"
   },
@@ -60237,6 +60491,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:resultDone",
    "how": "literal"
   },
@@ -60249,6 +60504,7 @@
    "bus": "main",
    "handler": "this.narrativeCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:narrative",
    "how": "literal"
   },
@@ -60261,6 +60517,7 @@
    "bus": "main",
    "handler": "this.optionsCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:options",
    "how": "literal"
   },
@@ -60273,6 +60530,7 @@
    "bus": "main",
    "handler": "this.resultCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:result",
    "how": "literal"
   },
@@ -60285,6 +60543,7 @@
    "bus": "main",
    "handler": "this.endCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:end",
    "how": "literal"
   },
@@ -60297,6 +60556,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -60309,6 +60569,7 @@
    "bus": "main",
    "handler": "this.onSceneUnload",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:beforeUnload",
    "how": "literal"
   },
@@ -60321,6 +60582,7 @@
    "bus": "main",
    "handler": "this.onConditionsMaybeChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -60333,6 +60595,7 @@
    "bus": "main",
    "handler": "this.onConditionsMaybeChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -60345,6 +60608,7 @@
    "bus": "main",
    "handler": "this.onPhaseChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "time:phaseChanged",
    "how": "literal"
   },
@@ -60357,6 +60621,7 @@
    "bus": "main",
    "handler": "this.onConditionsMaybeChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:statusChanged",
    "how": "literal"
   },
@@ -60369,6 +60634,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -60381,6 +60647,7 @@
    "bus": "main",
    "handler": "this.onSceneUnload",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:beforeUnload",
    "how": "literal"
   },
@@ -60393,6 +60660,7 @@
    "bus": "main",
    "handler": "this.onConditionsMaybeChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "flag:changed",
    "how": "literal"
   },
@@ -60405,6 +60673,7 @@
    "bus": "main",
    "handler": "this.onConditionsMaybeChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "narrative:stateChanged",
    "how": "literal"
   },
@@ -60417,6 +60686,7 @@
    "bus": "main",
    "handler": "this.onPhaseChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "time:phaseChanged",
    "how": "literal"
   },
@@ -60429,6 +60699,7 @@
    "bus": "main",
    "handler": "this.onConditionsMaybeChanged",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:statusChanged",
    "how": "literal"
   },
@@ -60441,6 +60712,7 @@
    "bus": "main",
    "handler": "this.flamesDebugVisibleCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:threeFiresVisibleChanged",
    "how": "literal"
   },
@@ -60453,6 +60725,7 @@
    "bus": "main",
    "handler": "this.smellDebugVisibleCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:smellVisibleChanged",
    "how": "literal"
   },
@@ -60465,6 +60738,7 @@
    "bus": "main",
    "handler": "this.cutsceneStartCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:start",
    "how": "literal"
   },
@@ -60477,6 +60751,7 @@
    "bus": "main",
    "handler": "this.cutsceneEndCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:end",
    "how": "literal"
   },
@@ -60489,6 +60764,7 @@
    "bus": "main",
    "handler": "this.firstPersonCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:firstPerson",
    "how": "literal"
   },
@@ -60501,6 +60777,7 @@
    "bus": "main",
    "handler": "this.sceneEnterCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:enter",
    "how": "literal"
   },
@@ -60513,6 +60790,7 @@
    "bus": "main",
    "handler": "this.currencyCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "currency:changed",
    "how": "literal"
   },
@@ -60525,6 +60803,7 @@
    "bus": "main",
    "handler": "this.questChangedCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:changed",
    "how": "literal"
   },
@@ -60537,6 +60816,7 @@
    "bus": "main",
    "handler": "this.saveRestoringCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -60549,6 +60829,7 @@
    "bus": "main",
    "handler": "this.zoneEnterCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:ruleAvailable",
    "how": "literal"
   },
@@ -60561,6 +60842,7 @@
    "bus": "main",
    "handler": "this.zoneExitCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:ruleUnavailable",
    "how": "literal"
   },
@@ -60573,6 +60855,7 @@
    "bus": "main",
    "handler": "this.zoneInteractCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:interactAvailable",
    "how": "literal"
   },
@@ -60585,6 +60868,7 @@
    "bus": "main",
    "handler": "this.zoneInteractOffCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:interactUnavailable",
    "how": "literal"
   },
@@ -60597,6 +60881,7 @@
    "bus": "main",
    "handler": "this.healthCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "player:healthChanged",
    "how": "literal"
   },
@@ -60609,6 +60894,7 @@
    "bus": "main",
    "handler": "this.healthDebugOverrideCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:hudHealthOverrideChanged",
    "how": "literal"
   },
@@ -60621,6 +60907,7 @@
    "bus": "main",
    "handler": "this.smellCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "player:smellChanged",
    "how": "literal"
   },
@@ -60633,6 +60920,7 @@
    "bus": "main",
    "handler": "this.sniffCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "player:smellSniff",
    "how": "literal"
   },
@@ -60645,6 +60933,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "threeFires:debut",
    "how": "literal"
   },
@@ -60657,6 +60946,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "smell:show",
    "how": "literal"
   },
@@ -60669,6 +60959,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "smell:hide",
    "how": "literal"
   },
@@ -60681,6 +60972,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "smell:debut",
    "how": "literal"
   },
@@ -60693,6 +60985,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "threeFires:show",
    "how": "literal"
   },
@@ -60705,6 +60998,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "threeFires:hide",
    "how": "literal"
   },
@@ -60717,6 +61011,7 @@
    "bus": "main",
    "handler": "this.flamesDebugVisibleCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:threeFiresVisibleChanged",
    "how": "literal"
   },
@@ -60729,6 +61024,7 @@
    "bus": "main",
    "handler": "this.smellDebugVisibleCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:smellVisibleChanged",
    "how": "literal"
   },
@@ -60741,6 +61037,7 @@
    "bus": "main",
    "handler": "this.cutsceneStartCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:start",
    "how": "literal"
   },
@@ -60753,6 +61050,7 @@
    "bus": "main",
    "handler": "this.cutsceneEndCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "cutscene:end",
    "how": "literal"
   },
@@ -60765,6 +61063,7 @@
    "bus": "main",
    "handler": "this.firstPersonCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:firstPerson",
    "how": "literal"
   },
@@ -60777,6 +61076,7 @@
    "bus": "main",
    "handler": "this.sceneEnterCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:enter",
    "how": "literal"
   },
@@ -60789,6 +61089,7 @@
    "bus": "main",
    "handler": "this.currencyCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "currency:changed",
    "how": "literal"
   },
@@ -60801,6 +61102,7 @@
    "bus": "main",
    "handler": "this.questChangedCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:changed",
    "how": "literal"
   },
@@ -60813,6 +61115,7 @@
    "bus": "main",
    "handler": "this.saveRestoringCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -60825,6 +61128,7 @@
    "bus": "main",
    "handler": "this.zoneEnterCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:ruleAvailable",
    "how": "literal"
   },
@@ -60837,6 +61141,7 @@
    "bus": "main",
    "handler": "this.zoneExitCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:ruleUnavailable",
    "how": "literal"
   },
@@ -60849,6 +61154,7 @@
    "bus": "main",
    "handler": "this.zoneInteractCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:interactAvailable",
    "how": "literal"
   },
@@ -60861,6 +61167,7 @@
    "bus": "main",
    "handler": "this.zoneInteractOffCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:interactUnavailable",
    "how": "literal"
   },
@@ -60873,6 +61180,7 @@
    "bus": "main",
    "handler": "this.healthCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "player:healthChanged",
    "how": "literal"
   },
@@ -60885,6 +61193,7 @@
    "bus": "main",
    "handler": "this.healthDebugOverrideCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "debug:hudHealthOverrideChanged",
    "how": "literal"
   },
@@ -60897,6 +61206,7 @@
    "bus": "main",
    "handler": "this.smellCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "player:smellChanged",
    "how": "literal"
   },
@@ -60909,6 +61219,7 @@
    "bus": "main",
    "handler": "this.sniffCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "player:smellSniff",
    "how": "literal"
   },
@@ -60921,6 +61232,7 @@
    "bus": "main",
    "handler": "this.showCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -60933,6 +61245,7 @@
    "bus": "main",
    "handler": "this.pickupCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:pickup",
    "how": "literal"
   },
@@ -60945,6 +61258,7 @@
    "bus": "main",
    "handler": "this.clearPickupsCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:pickup:clear",
    "how": "literal"
   },
@@ -60957,6 +61271,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:itemPresented",
    "how": "literal"
   },
@@ -60969,6 +61284,7 @@
    "bus": "main",
    "handler": "this.showCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -60981,6 +61297,7 @@
    "bus": "main",
    "handler": "this.pickupCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:pickup",
    "how": "literal"
   },
@@ -60993,6 +61310,7 @@
    "bus": "main",
    "handler": "this.clearPickupsCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:pickup:clear",
    "how": "literal"
   },
@@ -61005,6 +61323,7 @@
    "bus": "main",
    "handler": "this.questChangedCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:changed",
    "how": "literal"
   },
@@ -61017,6 +61336,7 @@
    "bus": "main",
    "handler": "this.questChangedCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:changed",
    "how": "literal"
   },
@@ -61029,6 +61349,7 @@
    "bus": "main",
    "handler": "this.announceCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:announce",
    "how": "literal"
   },
@@ -61041,6 +61362,7 @@
    "bus": "main",
    "handler": "this.restoringCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -61053,6 +61375,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -61065,6 +61388,7 @@
    "bus": "main",
    "handler": "this.announceCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:announce",
    "how": "literal"
   },
@@ -61077,6 +61401,7 @@
    "bus": "main",
    "handler": "this.restoringCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -61089,6 +61414,7 @@
    "bus": "main",
    "handler": "this.questChangedCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:changed",
    "how": "literal"
   },
@@ -61101,6 +61427,7 @@
    "bus": "main",
    "handler": "this.sceneEnterCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:enter",
    "how": "literal"
   },
@@ -61113,6 +61440,7 @@
    "bus": "main",
    "handler": "this.questChangedCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "quest:changed",
    "how": "literal"
   },
@@ -61125,6 +61453,7 @@
    "bus": "main",
    "handler": "this.sceneEnterCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:enter",
    "how": "literal"
   },
@@ -61137,6 +61466,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:hover",
    "how": "literal"
   },
@@ -61149,6 +61479,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "item:use",
    "how": "literal"
   },
@@ -61161,6 +61492,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "inventory:discard",
    "how": "literal"
   },
@@ -61173,6 +61505,7 @@
    "bus": "main",
    "handler": "this.logChangedCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "gameLog:changed",
    "how": "literal"
   },
@@ -61185,6 +61518,7 @@
    "bus": "main",
    "handler": "this.logChangedCb",
    "boundary": false,
+   "devGuarded": false,
    "event": "gameLog:changed",
    "how": "literal"
   },
@@ -61197,6 +61531,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:confirm",
    "how": "literal"
   },
@@ -61209,6 +61544,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:confirm",
    "how": "literal"
   },
@@ -61221,6 +61557,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "shop:opened",
    "how": "literal"
   },
@@ -61233,6 +61570,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "shop:closed",
    "how": "literal"
   },
@@ -61245,6 +61583,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:hover",
    "how": "literal"
   },
@@ -61257,6 +61596,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "shop:purchase",
    "how": "literal"
   },
@@ -61269,6 +61609,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "map:travel",
    "how": "literal"
   },
@@ -61281,6 +61622,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "menu:newGame",
    "how": "literal"
   },
@@ -61293,6 +61635,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "menu:resume",
    "how": "literal"
   },
@@ -61305,6 +61648,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "menu:returnToMain",
    "how": "literal"
   },
@@ -61317,6 +61661,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -61329,6 +61674,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -61341,6 +61687,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "save:completed",
    "how": "literal"
   },
@@ -61353,6 +61700,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -61365,6 +61713,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -61377,6 +61726,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -61389,6 +61739,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -61401,6 +61752,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ruleUse:apply",
    "how": "literal"
   },
@@ -61413,6 +61765,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:interact",
    "how": "literal"
   },
@@ -61425,6 +61778,7 @@
    "bus": "main",
    "handler": "onDialogueEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -61437,6 +61791,7 @@
    "bus": "main",
    "handler": "onDialogueEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -61449,6 +61804,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:inspected",
    "how": "literal"
   },
@@ -61461,6 +61817,7 @@
    "bus": "main",
    "handler": "onDialogueEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -61473,6 +61830,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:inspected",
    "how": "literal"
   },
@@ -61485,6 +61843,7 @@
    "bus": "main",
    "handler": "onDialogueEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -61497,6 +61856,7 @@
    "bus": "main",
    "handler": "onDialogueEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -61509,6 +61869,7 @@
    "bus": "main",
    "handler": "onDialogueEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -61521,6 +61882,7 @@
    "bus": "main",
    "handler": "onFull",
    "boundary": false,
+   "devGuarded": false,
    "event": "inventory:full",
    "how": "literal"
   },
@@ -61533,6 +61895,7 @@
    "bus": "main",
    "handler": "onFull",
    "boundary": false,
+   "devGuarded": false,
    "event": "inventory:full",
    "how": "literal"
   },
@@ -61545,6 +61908,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:pickup:done",
    "how": "literal"
   },
@@ -61557,6 +61921,7 @@
    "bus": "main",
    "handler": "onEncounterStart",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:start",
    "how": "literal"
   },
@@ -61569,6 +61934,7 @@
    "bus": "main",
    "handler": "onEncounterStart",
    "boundary": false,
+   "devGuarded": false,
    "event": "encounter:start",
    "how": "literal"
   },
@@ -61581,6 +61947,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:pickup:done",
    "how": "literal"
   },
@@ -61593,6 +61960,7 @@
    "bus": "main",
    "handler": "fn",
    "boundary": false,
+   "devGuarded": false,
    "event": null,
    "how": "unresolved",
    "argText": "event"
@@ -61606,6 +61974,7 @@
    "bus": "canvasVfxHost.bus",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -61618,6 +61987,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -61630,6 +62000,7 @@
    "bus": "main",
    "handler": "this.onSceneUnload",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:beforeUnload",
    "how": "literal"
   },
@@ -61642,6 +62013,7 @@
    "bus": "main",
    "handler": "this.onRestoring",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -61654,6 +62026,7 @@
    "bus": "main",
    "handler": "this.onSceneReady",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:ready",
    "how": "literal"
   },
@@ -61666,6 +62039,7 @@
    "bus": "main",
    "handler": "this.onSceneUnload",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:beforeUnload",
    "how": "literal"
   },
@@ -61678,6 +62052,7 @@
    "bus": "main",
    "handler": "this.onRestoring",
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -61690,6 +62065,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "burn:changed",
    "how": "literal"
   },
@@ -61702,6 +62078,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "burn:changed",
    "how": "literal"
   },
@@ -61714,6 +62091,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "burn:changed",
    "how": "literal"
   },
@@ -61726,6 +62104,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "heldProp:changed",
    "how": "literal"
   },
@@ -61738,6 +62117,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -61750,6 +62130,7 @@
    "bus": "main",
    "handler": "(line: DialogueLine) => { this.emoteBubbleManager.cleanupByOwner(SPEA…",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:line",
    "how": "literal"
   },
@@ -61762,6 +62143,7 @@
    "bus": "main",
    "handler": "clearSpeakingBubble",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -61774,6 +62156,7 @@
    "bus": "main",
    "handler": "clearSpeakingBubble",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:hidePanel",
    "how": "literal"
   },
@@ -61786,6 +62169,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:hover",
    "how": "literal"
   },
@@ -61798,6 +62182,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "menu:returnToMain",
    "how": "literal"
   },
@@ -61810,6 +62195,7 @@
    "bus": "main",
    "handler": "(e) => { // ⚠ **只登记，不当场换**。`advanceTimeTo` 常常正是从对话/过场里发出的 //（赌坊那一拍就是）…",
    "boundary": false,
+   "devGuarded": false,
    "event": "time:phaseChanged",
    "how": "literal"
   },
@@ -61822,6 +62208,7 @@
    "bus": "main",
    "handler": "onEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -61834,6 +62221,7 @@
    "bus": "main",
    "handler": "onEnd",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:end",
    "how": "literal"
   },
@@ -61846,6 +62234,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:firstPerson",
    "how": "literal"
   },
@@ -61858,6 +62247,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "ui:firstPerson",
    "how": "literal"
   },
@@ -61870,6 +62260,7 @@
    "bus": "main",
    "handler": "cb",
    "boundary": false,
+   "devGuarded": true,
    "event": "scene:enter",
    "how": "literal"
   },
@@ -61882,6 +62273,7 @@
    "bus": "main",
    "handler": "cb",
    "boundary": false,
+   "devGuarded": true,
    "event": "scene:enter",
    "how": "literal"
   },
@@ -61894,6 +62286,7 @@
    "bus": "main",
    "handler": "cb",
    "boundary": false,
+   "devGuarded": true,
    "event": "scene:enter",
    "how": "literal"
   },
@@ -61906,6 +62299,7 @@
    "bus": "main",
    "handler": "cb",
    "boundary": false,
+   "devGuarded": true,
    "event": "scene:enter",
    "how": "literal"
   },
@@ -61918,6 +62312,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": true,
    "event": "zone:enter",
    "how": "literal"
   },
@@ -61930,6 +62325,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": true,
    "event": "zone:exit",
    "how": "literal"
   },
@@ -61942,6 +62338,7 @@
    "bus": "main",
    "handler": "callback",
    "boundary": false,
+   "devGuarded": false,
    "event": "hotspot:triggered",
    "how": "loop-literal"
   },
@@ -61954,6 +62351,7 @@
    "bus": "main",
    "handler": "callback",
    "boundary": false,
+   "devGuarded": false,
    "event": "npc:interact",
    "how": "loop-literal"
   },
@@ -61966,6 +62364,7 @@
    "bus": "main",
    "handler": "callback",
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:start",
    "how": "loop-literal"
   },
@@ -61978,6 +62377,7 @@
    "bus": "main",
    "handler": "callback",
    "boundary": false,
+   "devGuarded": false,
    "event": "zone:enter",
    "how": "loop-literal"
   },
@@ -61990,6 +62390,7 @@
    "bus": "main",
    "handler": "callback",
    "boundary": false,
+   "devGuarded": false,
    "event": "scene:enter",
    "how": "loop-literal"
   },
@@ -62002,6 +62403,7 @@
    "bus": "main",
    "handler": "callback",
    "boundary": false,
+   "devGuarded": false,
    "event": null,
    "how": "unresolved",
    "argText": "event"
@@ -62015,6 +62417,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -62027,6 +62430,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -62039,6 +62443,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "notification:show",
    "how": "literal"
   },
@@ -62051,6 +62456,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "save:restoring",
    "how": "literal"
   },
@@ -62063,6 +62469,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:advance",
    "how": "literal"
   },
@@ -62075,6 +62482,7 @@
    "bus": "main",
    "handler": null,
    "boundary": false,
+   "devGuarded": false,
    "event": "dialogue:choiceSelected",
    "how": "literal"
   },
@@ -62087,6 +62495,7 @@
    "bus": "main",
    "handler": "fn",
    "boundary": false,
+   "devGuarded": false,
    "event": null,
    "how": "unresolved",
    "argText": "event"
@@ -62106,7 +62515,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62123,7 +62533,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62140,7 +62551,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62157,7 +62569,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62174,7 +62587,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62191,7 +62605,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62208,7 +62623,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62225,7 +62641,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62242,7 +62659,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62259,7 +62677,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62276,7 +62695,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62293,7 +62713,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62310,7 +62731,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62327,7 +62749,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62344,7 +62767,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62361,7 +62785,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62378,7 +62803,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62395,7 +62821,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62412,7 +62839,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62429,7 +62857,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62446,7 +62875,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62463,7 +62893,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62480,7 +62911,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62497,7 +62929,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62514,7 +62947,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62531,7 +62965,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62548,7 +62983,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62565,7 +63001,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62582,7 +63019,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62599,7 +63037,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62616,7 +63055,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62633,7 +63073,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62650,7 +63091,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62667,7 +63109,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62684,7 +63127,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62701,7 +63145,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62718,7 +63163,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62735,7 +63181,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62752,7 +63199,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62769,7 +63217,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62786,7 +63235,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62803,7 +63253,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62820,7 +63271,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62837,7 +63289,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62854,7 +63307,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/AudioManager.ts",
@@ -62871,7 +63325,8 @@
     "file": "src/systems/AudioManager.ts",
     "line": 1761
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -62888,7 +63343,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -62905,7 +63361,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -62922,7 +63379,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -62939,7 +63397,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -62956,7 +63415,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -62973,7 +63433,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -62990,7 +63451,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63007,7 +63469,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63024,7 +63487,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63041,7 +63505,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63058,7 +63523,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63075,7 +63541,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63092,7 +63559,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63109,7 +63577,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63126,7 +63595,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63143,7 +63613,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63160,7 +63631,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/EventBridge.ts",
@@ -63177,7 +63649,8 @@
     "file": "src/core/EventBridge.ts",
     "line": 309
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/DialogueVoiceDirector.ts",
@@ -63194,7 +63667,8 @@
     "file": "src/systems/DialogueVoiceDirector.ts",
     "line": 49
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/DialogueVoiceDirector.ts",
@@ -63211,7 +63685,8 @@
     "file": "src/systems/DialogueVoiceDirector.ts",
     "line": 49
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/DialogueVoiceDirector.ts",
@@ -63228,7 +63703,8 @@
     "file": "src/systems/DialogueVoiceDirector.ts",
     "line": 49
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63245,7 +63721,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63262,7 +63739,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63279,7 +63757,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63296,7 +63775,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63313,7 +63793,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63330,7 +63811,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63347,7 +63829,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63364,7 +63847,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63381,7 +63865,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/systems/GameLogManager.ts",
@@ -63398,7 +63883,8 @@
     "file": "src/systems/GameLogManager.ts",
     "line": 346
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/InteractionCoordinator.ts",
@@ -63415,7 +63901,8 @@
     "file": "src/core/InteractionCoordinator.ts",
     "line": 88
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/InteractionCoordinator.ts",
@@ -63432,7 +63919,8 @@
     "file": "src/core/InteractionCoordinator.ts",
     "line": 88
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63449,7 +63937,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63466,7 +63955,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63483,7 +63973,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63500,7 +63991,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63517,7 +64009,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63534,7 +64027,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63551,7 +64045,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63568,7 +64063,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63585,7 +64081,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63602,7 +64099,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63619,7 +64117,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63636,7 +64135,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   },
   {
    "file": "src/core/Game.ts",
@@ -63653,7 +64153,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63670,7 +64171,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63687,7 +64189,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63704,7 +64207,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63721,7 +64225,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63738,7 +64243,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": false
   },
   {
    "file": "src/core/Game.ts",
@@ -63755,7 +64261,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   },
   {
    "file": "src/core/Game.ts",
@@ -63772,7 +64279,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   },
   {
    "file": "src/core/Game.ts",
@@ -63789,7 +64297,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   },
   {
    "file": "src/core/Game.ts",
@@ -63806,7 +64315,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   },
   {
    "file": "src/core/Game.ts",
@@ -63823,7 +64333,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   },
   {
    "file": "src/core/Game.ts",
@@ -63840,7 +64351,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   },
   {
    "file": "src/core/Game.ts",
@@ -63857,7 +64369,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   },
   {
    "file": "src/core/Game.ts",
@@ -63874,7 +64387,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   },
   {
    "file": "src/core/Game.ts",
@@ -63891,7 +64405,8 @@
     "file": "src/core/Game.ts",
     "line": 10144
    },
-   "boundary": false
+   "boundary": false,
+   "devGuarded": true
   }
  ],
  "eventWrappers": [

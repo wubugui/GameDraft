@@ -70267,7 +70267,8 @@
      "l": 474,
      "by": "ArchiveManager.triggerFirstViewIfNeeded",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70277,7 +70278,8 @@
      "by": "Game.start",
      "handler": "(p: { actions: ActionDef[] }) => { void (async () => { try { await th…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -70297,7 +70299,8 @@
      "l": 458,
      "by": "ArchiveManager.emitUpdate",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70307,7 +70310,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('archiveUpdated')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
@@ -70315,7 +70319,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "(p: { bookType: string; entryId: string; text?: string }) => { const …",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -70335,21 +70340,24 @@
      "l": 546,
      "by": "BurnSystem.announce",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/burn/BurnSystem.ts",
      "l": 877,
      "by": "BurnSystem.announceHeld",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/burn/BurnSystem.ts",
      "l": 1265,
      "by": "BurnSystem.primeSceneInfo",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70359,7 +70367,8 @@
      "by": "NarrativeStateManager.constructor",
      "handler": "this.onFlagChangedListener",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -70369,7 +70378,8 @@
      "by": "NarrativeStateManager.destroy",
      "handler": "this.onFlagChangedListener",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -70388,7 +70398,8 @@
      "l": 334,
      "by": "InteractionSystem.update",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70398,7 +70409,8 @@
      "by": "Game.setupSceneReadyHandler",
      "handler": "(p: { targetId?: string }) => { if (this.gameConfig.playerActs?.ignit…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -70418,7 +70430,8 @@
      "l": 135,
      "by": "ClueManager.collect",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70428,7 +70441,8 @@
      "by": "Game.start",
      "handler": "(p: { id: string; actions: ActionDef[] }) => { void (async () => { tr…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -70448,7 +70462,8 @@
      "l": 126,
      "by": "ClueManager.collect",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70458,7 +70473,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "(p: { id: string; title: string; hidden?: boolean }) => { // hidden =…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -70478,21 +70494,24 @@
      "l": 142,
      "by": "InventoryManager.addCoins",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/InventoryManager.ts",
      "l": 153,
      "by": "InventoryManager.removeCoins",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/InventoryManager.ts",
      "l": 343,
      "by": "InventoryManager.deserialize",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70502,7 +70521,8 @@
      "by": "HUD.constructor",
      "handler": "this.currencyCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -70510,7 +70530,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "(payload?: { amount?: number }) => { const amount = payload?.amount ?…",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -70520,7 +70541,8 @@
      "by": "HUD.destroy",
      "handler": "this.currencyCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -70539,14 +70561,16 @@
      "l": 809,
      "by": "CutsceneManager.startCutscene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/CutsceneManager.ts",
      "l": 861,
      "by": "CutsceneManager.startCutscene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70556,7 +70580,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onCutsceneEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/PickupNotification.ts",
@@ -70564,7 +70589,8 @@
      "by": "PickupNotification.constructor",
      "handler": "this.cutsceneEndCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/HUD.ts",
@@ -70572,7 +70598,8 @@
      "by": "HUD.constructor",
      "handler": "this.cutsceneEndCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -70580,7 +70607,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('cutsceneEnd')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -70588,7 +70616,8 @@
      "by": "Game.start",
      "handler": "() => this.sceneWind.clearGust()",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -70598,7 +70627,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onCutsceneEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -70606,7 +70636,8 @@
      "by": "PlaneReconciler.destroy",
      "handler": "this.onCutsceneEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/PickupNotification.ts",
@@ -70614,7 +70645,8 @@
      "by": "PickupNotification.destroy",
      "handler": "this.cutsceneEndCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/HUD.ts",
@@ -70622,7 +70654,8 @@
      "by": "HUD.destroy",
      "handler": "this.cutsceneEndCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -70641,7 +70674,8 @@
      "l": 709,
      "by": "CutsceneManager.startCutscene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70651,7 +70685,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onCutsceneStart",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/PickupNotification.ts",
@@ -70659,7 +70694,8 @@
      "by": "PickupNotification.constructor",
      "handler": "this.cutsceneStartCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/HUD.ts",
@@ -70667,7 +70703,8 @@
      "by": "HUD.constructor",
      "handler": "this.cutsceneStartCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -70675,7 +70712,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('cutsceneStart')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -70685,7 +70723,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onCutsceneStart",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -70693,7 +70732,8 @@
      "by": "PlaneReconciler.destroy",
      "handler": "this.onCutsceneStart",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/PickupNotification.ts",
@@ -70701,7 +70741,8 @@
      "by": "PickupNotification.destroy",
      "handler": "this.cutsceneStartCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/HUD.ts",
@@ -70709,7 +70750,8 @@
      "by": "HUD.destroy",
      "handler": "this.cutsceneStartCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -70728,21 +70770,24 @@
      "l": 860,
      "by": "CutsceneManager.startCutscene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/CutsceneManager.ts",
      "l": 1161,
      "by": "CutsceneManager.emitPlaybackStep",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/CutsceneManager.ts",
      "l": 1818,
      "by": "CutsceneManager.deserialize",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70752,7 +70797,8 @@
      "by": "Game.setupCutsceneStepHud",
      "handler": "onStep",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -70772,7 +70818,8 @@
      "l": 257,
      "by": "DayManager.endDay",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70782,7 +70829,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('dayEnd')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -70802,7 +70850,8 @@
      "l": 269,
      "by": "DayManager.finishEndDayAfterDelayed",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70812,7 +70861,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('dayStart')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -70832,7 +70882,8 @@
      "l": 559,
      "by": "DebugTools.emitHudHealthDebugOverride",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70842,7 +70893,8 @@
      "by": "HUD.constructor",
      "handler": "this.healthDebugOverrideCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -70852,7 +70904,8 @@
      "by": "HUD.destroy",
      "handler": "this.healthDebugOverrideCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -70871,14 +70924,16 @@
      "l": 2334,
      "by": "DebugTools.setupDebugPanelSections",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/DebugTools.ts",
      "l": 2342,
      "by": "DebugTools.setupDebugPanelSections",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70888,7 +70943,8 @@
      "by": "HUD.constructor",
      "handler": "this.smellDebugVisibleCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -70898,7 +70954,8 @@
      "by": "HUD.destroy",
      "handler": "this.smellDebugVisibleCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -70917,14 +70974,16 @@
      "l": 2317,
      "by": "DebugTools.setupDebugPanelSections",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/DebugTools.ts",
      "l": 2325,
      "by": "DebugTools.setupDebugPanelSections",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70934,7 +70993,8 @@
      "by": "HUD.constructor",
      "handler": "this.flamesDebugVisibleCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -70944,7 +71004,8 @@
      "by": "HUD.destroy",
      "handler": "this.flamesDebugVisibleCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -70963,21 +71024,24 @@
      "l": 1294,
      "by": "DialogueUI.handleAutoAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueUI.ts",
      "l": 1314,
      "by": "DialogueUI.handleAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 9858,
      "by": "Game.applyRuntimeCommand",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -70987,7 +71051,8 @@
      "by": "EventBridge.init",
      "handler": "() => { const run = dialogueManager.isActive ? dialogueManager.advanc…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -71007,14 +71072,16 @@
      "l": 1292,
      "by": "DialogueUI.handleAutoAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueUI.ts",
      "l": 1312,
      "by": "DialogueUI.handleAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71024,7 +71091,8 @@
      "by": "EventBridge.init",
      "handler": "() => { if (dialogueManager.isActive) dialogueManager.endDialogue(); …",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -71044,14 +71112,16 @@
      "l": 1302,
      "by": "DialogueUI.handleAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueUI.ts",
      "l": 1308,
      "by": "DialogueUI.handleAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71061,7 +71131,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('dialogueAdvance')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -71081,14 +71152,16 @@
      "l": 71,
      "by": "DialogueVoiceDirector.armAutoAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/DialogueVoiceDirector.ts",
      "l": 79,
      "by": "DialogueVoiceDirector.armAutoAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71098,7 +71171,8 @@
      "by": "DialogueUI.constructor",
      "handler": "this.dialogueAutoAdvanceCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -71108,7 +71182,8 @@
      "by": "DialogueUI.destroy",
      "handler": "this.dialogueAutoAdvanceCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71127,7 +71202,8 @@
      "l": 866,
      "by": "GraphDialogueManager.emitChoicesForNode",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71137,7 +71213,8 @@
      "by": "DialogueUI.constructor",
      "handler": "this.dialogueChoicesCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -71145,7 +71222,8 @@
      "by": "Game.setupRuntimeDebugSnapshotPublishing",
      "handler": "() => this.scheduleRuntimeDebugSnapshotPublish(event)",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "off": [
@@ -71155,7 +71233,8 @@
      "by": "DialogueUI.destroy",
      "handler": "this.dialogueChoicesCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71174,28 +71253,32 @@
      "l": 1146,
      "by": "DialogueUI.wireChoice",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueUI.ts",
      "l": 1155,
      "by": "DialogueUI.wireChoice",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueUI.ts",
      "l": 1270,
      "by": "DialogueUI.onKey",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 9859,
      "by": "Game.applyRuntimeCommand",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71205,7 +71288,8 @@
      "by": "EventBridge.init",
      "handler": "(p: { index: number }) => { // ui:confirm/ui:cancel 映射约定（B4）：对话/遭遇选项点…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -71225,7 +71309,8 @@
      "l": 598,
      "by": "GraphDialogueManager.chooseOption",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71235,7 +71320,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('dialogueChoice')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
@@ -71243,7 +71329,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "(p: { index: number; text?: string }) => { if (!p?.text) return; this…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -71263,21 +71350,24 @@
      "l": 101,
      "by": "DialogueManager.endDialogue",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 667,
      "by": "GraphDialogueManager.endDialogue",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 718,
      "by": "GraphDialogueManager.runDeferredChainContinuation",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71287,7 +71377,8 @@
      "by": "DialogueUI.constructor",
      "handler": "this.dialogueEndCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
@@ -71295,7 +71386,8 @@
      "by": "InteractionCoordinator.handleNpc",
      "handler": "onDialogueEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
@@ -71303,7 +71395,8 @@
      "by": "InteractionCoordinator.handleInspectGraph",
      "handler": "onDialogueEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -71311,7 +71404,8 @@
      "by": "Game.start",
      "handler": "clearSpeakingBubble",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -71319,7 +71413,8 @@
      "by": "Game.start",
      "handler": "onEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -71327,7 +71422,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "(payload?: DialogueEndPayload) => { /** 仅最外层对话结束播结束音效（与 EventBridge 状…",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/EventBridge.ts",
@@ -71335,7 +71431,8 @@
      "by": "EventBridge.init",
      "handler": "(p?: DialogueEndPayload) => { /** 状态恢复只认**最外层**对话结束（R5/R6 根因收敛）： * - …",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/DialogueVoiceDirector.ts",
@@ -71343,7 +71440,8 @@
      "by": "DialogueVoiceDirector.init",
      "handler": "() => this.endCurrentBeat()",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -71351,7 +71449,8 @@
      "by": "Game.setupRuntimeDebugSnapshotPublishing",
      "handler": "() => this.scheduleRuntimeDebugSnapshotPublish(event)",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "off": [
@@ -71361,7 +71460,8 @@
      "by": "DialogueUI.destroy",
      "handler": "this.dialogueEndCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
@@ -71369,7 +71469,8 @@
      "by": "InteractionCoordinator.handleNpc",
      "handler": "onDialogueEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
@@ -71377,7 +71478,8 @@
      "by": "InteractionCoordinator.handleInspectGraph",
      "handler": "onDialogueEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
@@ -71385,7 +71487,8 @@
      "by": "InteractionCoordinator.handleInspectGraph",
      "handler": "onDialogueEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
@@ -71393,7 +71496,8 @@
      "by": "InteractionCoordinator.handleInspectGraph",
      "handler": "onDialogueEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -71401,7 +71505,8 @@
      "by": "Game.start",
      "handler": "onEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71420,7 +71525,8 @@
      "l": 766,
      "by": "GraphDialogueManager.drainUntilBlocking",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71430,7 +71536,8 @@
      "by": "DialogueUI.constructor",
      "handler": "this.dialogueHidePanelCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -71438,7 +71545,8 @@
      "by": "Game.start",
      "handler": "clearSpeakingBubble",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -71448,7 +71556,8 @@
      "by": "DialogueUI.destroy",
      "handler": "this.dialogueHidePanelCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71467,35 +71576,40 @@
      "l": 59,
      "by": "DialogueManager.startScriptedDialogue",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/DialogueManager.ts",
      "l": 80,
      "by": "DialogueManager.advance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 547,
      "by": "GraphDialogueManager.advanceCore",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 794,
      "by": "GraphDialogueManager.drainUntilBlocking",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 810,
      "by": "GraphDialogueManager.drainUntilBlocking",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71505,7 +71619,8 @@
      "by": "DialogueUI.constructor",
      "handler": "this.dialogueLineCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -71513,7 +71628,8 @@
      "by": "Game.start",
      "handler": "(line: DialogueLine) => { this.emoteBubbleManager.cleanupByOwner(SPEA…",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/DialogueVoiceDirector.ts",
@@ -71521,7 +71637,8 @@
      "by": "DialogueVoiceDirector.init",
      "handler": "(line: DialogueLine) => this.onLine(line)",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
@@ -71529,7 +71646,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "(line: DialogueLine) => { this.push({ channel: 'dialogue', type: 'lin…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -71537,7 +71655,8 @@
      "by": "Game.setupRuntimeDebugSnapshotPublishing",
      "handler": "() => this.scheduleRuntimeDebugSnapshotPublish(event)",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "off": [
@@ -71547,7 +71666,8 @@
      "by": "DialogueUI.destroy",
      "handler": "this.dialogueLineCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71566,28 +71686,32 @@
      "l": 68,
      "by": "DialogueManager.advance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 558,
      "by": "GraphDialogueManager.advanceCore",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 572,
      "by": "GraphDialogueManager.advanceCore",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 815,
      "by": "GraphDialogueManager.drainUntilBlocking",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71597,7 +71721,8 @@
      "by": "DialogueUI.constructor",
      "handler": "this.dialoguePrepareBeatCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -71607,7 +71732,8 @@
      "by": "DialogueUI.destroy",
      "handler": "this.dialoguePrepareBeatCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71626,14 +71752,16 @@
      "l": 54,
      "by": "DialogueManager.startScriptedDialogue",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 511,
      "by": "GraphDialogueManager.startDialogueGraph",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71643,7 +71771,8 @@
      "by": "Game.attachNarrativeDebugBridge",
      "handler": "callback",
      "how": "loop-literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -71651,7 +71780,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('dialogueStart')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
@@ -71659,7 +71789,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "(p: DialogueStartPayload) => { const name = String(p?.npcName ?? '').…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -71667,7 +71798,8 @@
      "by": "Game.setupRuntimeDebugSnapshotPublishing",
      "handler": "() => this.scheduleRuntimeDebugSnapshotPublish(event)",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "off": [],
@@ -71687,21 +71819,24 @@
      "l": 91,
      "by": "DialogueManager.scheduleEnd",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 551,
      "by": "GraphDialogueManager.advanceCore",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GraphDialogueManager.ts",
      "l": 798,
      "by": "GraphDialogueManager.drainUntilBlocking",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71711,7 +71846,8 @@
      "by": "DialogueUI.constructor",
      "handler": "this.dialogueWillEndCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -71721,7 +71857,8 @@
      "by": "DialogueUI.destroy",
      "handler": "this.dialogueWillEndCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71740,7 +71877,8 @@
      "l": 251,
      "by": "DocumentRevealManager.checkAndReveal",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71750,7 +71888,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "(payload?: { customSfx?: boolean }) => { if (payload?.customSfx) retu…",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -71770,7 +71909,8 @@
      "l": 728,
      "by": "EncounterUI.selectOption",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71780,7 +71920,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('encounterChoice')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/EventBridge.ts",
@@ -71788,7 +71929,8 @@
      "by": "EventBridge.init",
      "handler": "(p: { index: number }) => { // 同 dialogue:choiceSelected：选项点选=ui:conf…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -71808,7 +71950,8 @@
      "l": 256,
      "by": "EncounterManager.endEncounter",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71818,7 +71961,8 @@
      "by": "EncounterUI.constructor",
      "handler": "this.endCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/EventBridge.ts",
@@ -71826,7 +71970,8 @@
      "by": "EventBridge.init",
      "handler": "() => stateController.setState(GameState.Exploring)",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -71836,7 +71981,8 @@
      "by": "EncounterUI.destroy",
      "handler": "this.endCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71855,7 +72001,8 @@
      "l": 108,
      "by": "EncounterManager.startEncounter",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71865,7 +72012,8 @@
      "by": "EncounterUI.constructor",
      "handler": "this.narrativeCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -71875,7 +72023,8 @@
      "by": "EncounterUI.destroy",
      "handler": "this.narrativeCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71894,7 +72043,8 @@
      "l": 740,
      "by": "EncounterUI.handleAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71904,7 +72054,8 @@
      "by": "EventBridge.init",
      "handler": "() => encounterManager.generateOptions()",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -71924,7 +72075,8 @@
      "l": 211,
      "by": "EncounterManager.generateOptions",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71934,7 +72086,8 @@
      "by": "EncounterUI.constructor",
      "handler": "this.optionsCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -71944,7 +72097,8 @@
      "by": "EncounterUI.destroy",
      "handler": "this.optionsCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -71963,7 +72117,8 @@
      "l": 242,
      "by": "EncounterManager.chooseOption",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -71973,7 +72128,8 @@
      "by": "EncounterUI.constructor",
      "handler": "this.resultCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -71981,7 +72137,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('encounterResult')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -71991,7 +72148,8 @@
      "by": "EncounterUI.destroy",
      "handler": "this.resultCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72010,7 +72168,8 @@
      "l": 742,
      "by": "EncounterUI.handleAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72020,7 +72179,8 @@
      "by": "EventBridge.init",
      "handler": "() => encounterManager.endEncounter()",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72040,7 +72200,8 @@
      "l": 106,
      "by": "EncounterManager.startEncounter",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72050,7 +72211,8 @@
      "by": "InteractionCoordinator.handleEncounterTrigger",
      "handler": "onEncounterStart",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -72058,7 +72220,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('encounterStart')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -72068,7 +72231,8 @@
      "by": "InteractionCoordinator.handleEncounterTrigger",
      "handler": "onEncounterStart",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72090,6 +72254,7 @@
      "handler": "this.onConditionsMaybeChanged",
      "how": "literal",
      "boundary": false,
+     "dev": false,
      "viaBinding": {
       "f": "src/systems/canvas/CanvasVfxHost.ts",
       "l": 147,
@@ -72114,7 +72279,8 @@
      "l": 230,
      "by": "FlagStore.set",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72124,7 +72290,8 @@
      "by": "QuestManager.init",
      "handler": "this.onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/ArchiveManager.ts",
@@ -72132,7 +72299,8 @@
      "by": "ArchiveManager.init",
      "handler": "this.onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/NarrativeStateManager.ts",
@@ -72140,7 +72308,8 @@
      "by": "NarrativeStateManager.constructor",
      "handler": "this.onFlagChangedListener",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/debugFlagSection.ts",
@@ -72148,7 +72317,8 @@
      "by": "createDebugFlagSection",
      "handler": "onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/vfx/VfxSystem.ts",
@@ -72156,7 +72326,8 @@
      "by": "VfxSystem.init",
      "handler": "this.onConditionsMaybeChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -72164,7 +72335,8 @@
      "by": "Game.setupRuntimeDebugSnapshotPublishing",
      "handler": "() => this.scheduleRuntimeDebugSnapshotPublish(event)",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "off": [
@@ -72174,7 +72346,8 @@
      "by": "QuestManager.destroy",
      "handler": "this.onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/ArchiveManager.ts",
@@ -72182,7 +72355,8 @@
      "by": "ArchiveManager.destroy",
      "handler": "this.onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/NarrativeStateManager.ts",
@@ -72190,7 +72364,8 @@
      "by": "NarrativeStateManager.destroy",
      "handler": "this.onFlagChangedListener",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/debugFlagSection.ts",
@@ -72198,7 +72373,8 @@
      "by": "destroy",
      "handler": "onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/vfx/VfxSystem.ts",
@@ -72206,7 +72382,8 @@
      "by": "VfxSystem.destroy",
      "handler": "this.onConditionsMaybeChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72225,14 +72402,16 @@
      "l": 166,
      "by": "GameLogManager.push",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
      "l": 182,
      "by": "GameLogManager.push",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72242,7 +72421,8 @@
      "by": "DialogueLogUI.open",
      "handler": "this.logChangedCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -72252,7 +72432,8 @@
      "by": "DialogueLogUI.open",
      "handler": "this.logChangedCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72271,7 +72452,8 @@
      "l": 1249,
      "by": "Game.constructor",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72281,7 +72463,8 @@
      "by": "NarrativeStateManager.constructor",
      "handler": "this.onFlagChangedListener",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -72291,7 +72474,8 @@
      "by": "NarrativeStateManager.destroy",
      "handler": "this.onFlagChangedListener",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72310,14 +72494,16 @@
      "l": 229,
      "by": "InteractionCoordinator.handleInspect",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
      "l": 266,
      "by": "InteractionCoordinator.handleInspectGraph",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72327,7 +72513,8 @@
      "by": "SceneManager.init",
      "handler": "this.onHotspotInspected",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -72337,7 +72524,8 @@
      "by": "SceneManager.destroy",
      "handler": "this.onHotspotInspected",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72356,7 +72544,8 @@
      "l": 97,
      "by": "InteractionCoordinator.handleHotspot",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72366,7 +72555,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('hotspotInteract')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72386,14 +72576,16 @@
      "l": 330,
      "by": "InteractionCoordinator.handlePickup",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
      "l": 355,
      "by": "InteractionCoordinator.handleEncounterTrigger",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72403,7 +72595,8 @@
      "by": "SceneManager.init",
      "handler": "this.onHotspotPickup",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -72413,7 +72606,8 @@
      "by": "SceneManager.destroy",
      "handler": "this.onHotspotPickup",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72432,7 +72626,8 @@
      "l": 588,
      "by": "InteractionSystem.triggerTarget",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72442,7 +72637,8 @@
      "by": "Game.attachNarrativeDebugBridge",
      "handler": "callback",
      "how": "loop-literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
@@ -72450,7 +72646,8 @@
      "by": "InteractionCoordinator.init",
      "handler": "(payload: { hotspot: Hotspot; def: HotspotDef }) => { const job = () …",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72470,7 +72667,8 @@
      "l": 854,
      "by": "InventoryUI.discard",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72480,7 +72678,8 @@
      "by": "EventBridge.init",
      "handler": "async (p: { itemId: string }) => { try { await actionExecutor.execute…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72500,7 +72699,8 @@
      "l": 83,
      "by": "InventoryManager.addItem",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72510,7 +72710,8 @@
      "by": "InteractionCoordinator.handlePickup",
      "handler": "onFull",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -72518,7 +72719,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('inventoryFull')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -72528,7 +72730,8 @@
      "by": "InteractionCoordinator.handlePickup",
      "handler": "onFull",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72547,14 +72750,16 @@
      "l": 249,
      "by": "InventoryManager.setActiveIgniter",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/InventoryManager.ts",
      "l": 284,
      "by": "InventoryManager.consumeIgniterUse",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -72575,7 +72780,8 @@
      "l": 91,
      "by": "InventoryManager.addItem",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72585,7 +72791,8 @@
      "by": "PickupNotification.constructor",
      "handler": "this.itemAcquiredCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
@@ -72593,7 +72800,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "(p: { itemId: string; itemName: string; count: number }) => { const i…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -72601,7 +72809,8 @@
      "by": "Game.start",
      "handler": "() => this.healthSystem.refreshProtection()",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -72611,7 +72820,8 @@
      "by": "PickupNotification.destroy",
      "handler": "this.itemAcquiredCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72630,7 +72840,8 @@
      "l": 110,
      "by": "InventoryManager.removeItem",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72640,7 +72851,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('itemConsumed')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -72648,7 +72860,8 @@
      "by": "Game.start",
      "handler": "() => this.healthSystem.refreshProtection()",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72668,7 +72881,8 @@
      "l": 843,
      "by": "InventoryUI.useItem",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72678,7 +72892,8 @@
      "by": "EventBridge.init",
      "handler": "async (p: { itemId: string; consume: boolean; actions: ActionDef[]; r…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72698,7 +72913,8 @@
      "l": 420,
      "by": "MapUI.travelTo",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72708,7 +72924,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => { this.lastMapTravelSfxAt = Date.now(); this.playSystemSfx('map…",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/EventBridge.ts",
@@ -72716,7 +72933,8 @@
      "by": "EventBridge.init",
      "handler": "async (p: { sceneId: string }) => { // 保留手工恢复（特殊时序，不可换成 closePanel('m…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72736,7 +72954,8 @@
      "l": 457,
      "by": "MenuUI.buildMainMenu",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72746,7 +72965,8 @@
      "by": "EventBridge.init",
      "handler": "() => { if (this.hasStartedSession) { // R20：开过局后 flag/背包/任务/叙事全是旧局残留…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72766,7 +72986,8 @@
      "l": 600,
      "by": "MenuUI.buildPauseMenu",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72776,7 +72997,8 @@
      "by": "EventBridge.init",
      "handler": "() => { if (stateController.currentState === GameState.UIOverlay) { s…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72796,14 +73018,16 @@
      "l": 616,
      "by": "MenuUI.buildPauseMenu",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 2659,
      "by": "Game.start",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72813,7 +73037,8 @@
      "by": "EventBridge.init",
      "handler": "() => { // **回标题＝彻底退出这一局**，不是\"拿一张大图盖住还在跑的游戏\"。 // // 旧做法只 setState(Mai…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72833,7 +73058,8 @@
      "l": 86,
      "by": "PaperCraftMinigameManager.publishResult",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -72854,7 +73080,8 @@
      "l": 123,
      "by": "SugarWheelMinigameManager.publishResult",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72864,7 +73091,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('minigameResult')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -72884,7 +73112,8 @@
      "l": 738,
      "by": "NarrativeStateManager.applyPackageLifecycle",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -72905,7 +73134,8 @@
      "l": 1184,
      "by": "NarrativeStateManager.setActivatedArchetype",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72915,7 +73145,8 @@
      "by": "QuestManager.init",
      "handler": "this.onRunActivated",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -72925,7 +73156,8 @@
      "by": "QuestManager.destroy",
      "handler": "this.onRunActivated",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72944,7 +73176,8 @@
      "l": 1194,
      "by": "NarrativeStateManager.settleRunInstance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72954,7 +73187,8 @@
      "by": "QuestManager.init",
      "handler": "this.onRunSettled",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -72964,7 +73198,8 @@
      "by": "QuestManager.destroy",
      "handler": "this.onRunSettled",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -72983,7 +73218,8 @@
      "l": 1100,
      "by": "NarrativeStateManager.applyStartRun",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -72993,7 +73229,8 @@
      "by": "QuestManager.init",
      "handler": "this.onRunStarted",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -73003,7 +73240,8 @@
      "by": "QuestManager.destroy",
      "handler": "this.onRunStarted",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -73025,6 +73263,7 @@
      "handler": "this.onConditionsMaybeChanged",
      "how": "literal",
      "boundary": false,
+     "dev": false,
      "viaBinding": {
       "f": "src/systems/canvas/CanvasVfxHost.ts",
       "l": 147,
@@ -73049,28 +73288,32 @@
      "l": 1116,
      "by": "NarrativeStateManager.applyResetRun",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/NarrativeStateManager.ts",
      "l": 1138,
      "by": "NarrativeStateManager.applyRevertRun",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/NarrativeStateManager.ts",
      "l": 1209,
      "by": "NarrativeStateManager.discardRunInstance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/NarrativeStateManager.ts",
      "l": 2135,
      "by": "NarrativeStateManager.enterState",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73080,7 +73323,8 @@
      "by": "QuestManager.init",
      "handler": "this.onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
@@ -73088,7 +73332,8 @@
      "by": "QuestManager.init",
      "handler": "this.onRunDiscarded",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/ArchiveManager.ts",
@@ -73096,7 +73341,8 @@
      "by": "ArchiveManager.init",
      "handler": "this.onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -73104,7 +73350,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onNarrativeStateChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/NarrativePackageDirector.ts",
@@ -73112,7 +73359,8 @@
      "by": "NarrativePackageDirector.init",
      "handler": "this.onStateChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/vfx/VfxSystem.ts",
@@ -73120,7 +73368,8 @@
      "by": "VfxSystem.init",
      "handler": "this.onConditionsMaybeChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -73128,7 +73377,8 @@
      "by": "Game.start",
      "handler": "() => this.interactionSystem.refreshVisibilityChannels()",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -73136,7 +73386,8 @@
      "by": "Game.setupRuntimeDebugSnapshotPublishing",
      "handler": "() => this.scheduleRuntimeDebugSnapshotPublish(event)",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "off": [
@@ -73146,7 +73397,8 @@
      "by": "QuestManager.destroy",
      "handler": "this.onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
@@ -73154,7 +73406,8 @@
      "by": "QuestManager.destroy",
      "handler": "this.onRunDiscarded",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/ArchiveManager.ts",
@@ -73162,7 +73415,8 @@
      "by": "ArchiveManager.destroy",
      "handler": "this.onFlagChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -73170,7 +73424,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onNarrativeStateChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -73178,7 +73433,8 @@
      "by": "PlaneReconciler.destroy",
      "handler": "this.onNarrativeStateChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/NarrativePackageDirector.ts",
@@ -73186,7 +73442,8 @@
      "by": "NarrativePackageDirector.destroy",
      "handler": "this.onStateChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/vfx/VfxSystem.ts",
@@ -73194,7 +73451,8 @@
      "by": "VfxSystem.destroy",
      "handler": "this.onConditionsMaybeChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -73213,7 +73471,8 @@
      "l": 155,
      "by": "NotificationUI.addNotification",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73223,7 +73482,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('itemAcquired')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -73243,7 +73503,8 @@
      "l": 46,
      "by": "PickupNotification.show",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73253,7 +73514,8 @@
      "by": "NotificationUI.constructor",
      "handler": "this.pickupCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -73263,7 +73525,8 @@
      "by": "NotificationUI.destroy",
      "handler": "this.pickupCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -73282,14 +73545,16 @@
      "l": 50,
      "by": "PickupNotification.forceCleanup",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/PickupNotification.ts",
      "l": 54,
      "by": "PickupNotification.destroy",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73299,7 +73564,8 @@
      "by": "NotificationUI.constructor",
      "handler": "this.clearPickupsCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -73309,7 +73575,8 @@
      "by": "NotificationUI.destroy",
      "handler": "this.clearPickupsCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -73328,238 +73595,272 @@
      "l": 130,
      "by": "ActionExecutor.registerBuiltinHandlers",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
      "l": 94,
      "by": "QuestManager.constructor",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
      "l": 269,
      "by": "QuestManager.completeQuest",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
      "l": 696,
      "by": "QuestManager.flushAnnounce",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
      "l": 724,
      "by": "QuestManager.handleRunSettled",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/ScenarioStateManager.ts",
      "l": 194,
      "by": "ScenarioStateManager.notifyScenarioLifecycleError",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/ScenarioStateManager.ts",
      "l": 328,
      "by": "ScenarioStateManager.setScenarioPhase",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/InventoryManager.ts",
      "l": 84,
      "by": "InventoryManager.addItem",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/RulesManager.ts",
      "l": 174,
      "by": "RulesManager.emitRuleAcquired",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/RulesManager.ts",
      "l": 233,
      "by": "RulesManager.giveFragment",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/RulesManager.ts",
      "l": 290,
      "by": "RulesManager.tryAutoSynthesize",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/RulesManager.ts",
      "l": 299,
      "by": "RulesManager.tryAutoSynthesize",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/ArchiveManager.ts",
      "l": 459,
      "by": "ArchiveManager.emitUpdate",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/ClueManager.ts",
      "l": 128,
      "by": "ClueManager.collect",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/CutsceneManager.ts",
      "l": 737,
      "by": "CutsceneManager.startCutscene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/SceneManager.ts",
      "l": 2190,
      "by": "SceneManager.switchScene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/objectExamine/ObjectExamineScene.ts",
      "l": 1582,
      "by": "ObjectExamineScene.runHotspotActions",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/ActionRegistry.ts",
      "l": 2298,
      "by": "registerActionHandlers",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/DebugTools.ts",
      "l": 403,
      "by": "DebugTools.setupPositionDebugTool",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/DebugTools.ts",
      "l": 448,
      "by": "DebugTools.setupPositionDebugTool",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueUI.ts",
      "l": 1164,
      "by": "DialogueUI.wireChoice",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueUI.ts",
      "l": 1273,
      "by": "DialogueUI.onKey",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/EncounterUI.ts",
      "l": 607,
      "by": "EncounterUI.showOptions",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/QuestBannerUI.ts",
      "l": 183,
      "by": "QuestBannerUI.update",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/MenuUI.ts",
      "l": 997,
      "by": "MenuUI.commitSlot",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/MenuUI.ts",
      "l": 1003,
      "by": "MenuUI.commitSlot",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/MenuUI.ts",
      "l": 1049,
      "by": "MenuUI.performSave",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/MenuUI.ts",
      "l": 1079,
      "by": "MenuUI.renameSaveSlot",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/MenuUI.ts",
      "l": 1091,
      "by": "MenuUI.exportSaveFile",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/MenuUI.ts",
      "l": 1112,
      "by": "MenuUI.importSaveFile",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 2109,
      "by": "Game.jumpFromLog",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 5973,
      "by": "Game.onPlayerIgniteResult",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 7825,
      "by": "Game.guardMapTravel",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 7892,
      "by": "Game.registerUIPanels",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73569,7 +73870,8 @@
      "by": "NotificationUI.constructor",
      "handler": "this.showCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -73577,7 +73879,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "(payload?: { type?: string; customSfx?: boolean }) => { if (payload?.…",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -73587,7 +73890,8 @@
      "by": "NotificationUI.destroy",
      "handler": "this.showCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -73606,7 +73910,8 @@
      "l": 590,
      "by": "InteractionSystem.triggerTarget",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73616,7 +73921,8 @@
      "by": "Game.attachNarrativeDebugBridge",
      "handler": "callback",
      "how": "loop-literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/InteractionCoordinator.ts",
@@ -73624,7 +73930,8 @@
      "by": "InteractionCoordinator.init",
      "handler": "(payload: { npc: Npc }) => { void this.handleNpc(payload.npc).catch((…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -73644,7 +73951,8 @@
      "l": 1583,
      "by": "ObjectExamineScene.runHotspotActions",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -73665,7 +73973,8 @@
      "l": 421,
      "by": "ObjectExamineManager.publishResult",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -73686,7 +73995,8 @@
      "l": 3050,
      "by": "registerActionHandlers",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73696,7 +74006,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "(p?: OverlaySfxCue) => this.playOverlaySfx(p, 'overlayBlend')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -73716,7 +74027,8 @@
      "l": 2649,
      "by": "registerActionHandlers",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73726,7 +74038,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "(p?: OverlaySfxCue) => this.playOverlaySfx(p, 'overlayShow')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -73746,7 +74059,8 @@
      "l": 731,
      "by": "PlayerActionSystem.emitAct",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -73767,7 +74081,8 @@
      "l": 230,
      "by": "HealthSystem.applyDamage",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -73788,7 +74103,8 @@
      "l": 236,
      "by": "HealthSystem.applyDamage",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -73809,7 +74125,8 @@
      "l": 323,
      "by": "HealthSystem.emitChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73819,7 +74136,8 @@
      "by": "HUD.constructor",
      "handler": "this.healthCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -73829,7 +74147,8 @@
      "by": "HUD.destroy",
      "handler": "this.healthCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -73848,21 +74167,24 @@
      "l": 251,
      "by": "PlayerActionSystem.resetToStand",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlayerActionSystem.ts",
      "l": 464,
      "by": "PlayerActionSystem.enterPosture",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlayerActionSystem.ts",
      "l": 526,
      "by": "PlayerActionSystem.exitPosture",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -73883,7 +74205,8 @@
      "l": 371,
      "by": "SmellSystem.emitChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73893,7 +74216,8 @@
      "by": "HUD.constructor",
      "handler": "this.smellCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -73903,7 +74227,8 @@
      "by": "HUD.destroy",
      "handler": "this.smellCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -73922,7 +74247,8 @@
      "l": 306,
      "by": "SmellSystem.sniff",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73932,7 +74258,8 @@
      "by": "HUD.constructor",
      "handler": "this.sniffCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -73942,7 +74269,8 @@
      "by": "HUD.destroy",
      "handler": "this.sniffCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -73961,28 +74289,32 @@
      "l": 231,
      "by": "QuestManager.acceptQuest",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
      "l": 234,
      "by": "QuestManager.acceptQuest",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
      "l": 712,
      "by": "QuestManager.handleRunStarted",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
      "l": 760,
      "by": "QuestManager.reemitRepeatableTracking",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -73992,7 +74324,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "(p?: { restored?: boolean }) => { /** 读档时 QuestManager.deserialize 补发…",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
@@ -74000,7 +74333,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "(p: { questId: string; title: string; repeatable?: boolean; restored?…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74008,7 +74342,8 @@
      "by": "Game.setupRuntimeDebugSnapshotPublishing",
      "handler": "() => this.scheduleRuntimeDebugSnapshotPublish(event)",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "off": [],
@@ -74028,7 +74363,8 @@
      "l": 686,
      "by": "QuestManager.flushAnnounce",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74038,7 +74374,8 @@
      "by": "QuestBannerUI.constructor",
      "handler": "this.announceCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -74048,7 +74385,8 @@
      "by": "QuestBannerUI.destroy",
      "handler": "this.announceCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -74067,7 +74405,8 @@
      "l": 189,
      "by": "QuestManager.emitChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74077,7 +74416,8 @@
      "by": "HUD.constructor",
      "handler": "this.questChangedCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/QuestPanelUI.ts",
@@ -74085,7 +74425,8 @@
      "by": "QuestPanelUI.constructor",
      "handler": "this.questChangedCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/GuidanceLayerUI.ts",
@@ -74093,7 +74434,8 @@
      "by": "GuidanceLayerUI.constructor",
      "handler": "this.questChangedCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -74103,7 +74445,8 @@
      "by": "HUD.destroy",
      "handler": "this.questChangedCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/QuestPanelUI.ts",
@@ -74111,7 +74454,8 @@
      "by": "QuestPanelUI.destroy",
      "handler": "this.questChangedCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/GuidanceLayerUI.ts",
@@ -74119,7 +74463,8 @@
      "by": "GuidanceLayerUI.destroy",
      "handler": "this.questChangedCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -74138,14 +74483,16 @@
      "l": 268,
      "by": "QuestManager.completeQuest",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/QuestManager.ts",
      "l": 723,
      "by": "QuestManager.handleRunSettled",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74155,7 +74502,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('questCompleted')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
@@ -74163,7 +74511,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "(p: { questId: string; title: string; repeatable?: boolean }) => { co…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74171,7 +74520,8 @@
      "by": "Game.setupRuntimeDebugSnapshotPublishing",
      "handler": "() => this.scheduleRuntimeDebugSnapshotPublish(event)",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "off": [],
@@ -74194,6 +74544,7 @@
      "handler": "this.onConditionsMaybeChanged",
      "how": "literal",
      "boundary": false,
+     "dev": false,
      "viaBinding": {
       "f": "src/systems/canvas/CanvasVfxHost.ts",
       "l": 147,
@@ -74220,7 +74571,8 @@
      "by": "VfxSystem.init",
      "handler": "this.onConditionsMaybeChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -74230,7 +74582,8 @@
      "by": "VfxSystem.destroy",
      "handler": "this.onConditionsMaybeChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -74249,7 +74602,8 @@
      "l": 736,
      "by": "QuestManager.handleRunActivated",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -74270,7 +74624,8 @@
      "l": 173,
      "by": "RulesManager.emitRuleAcquired",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74280,7 +74635,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('ruleAcquired')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
@@ -74288,7 +74644,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "(p: { ruleId: string; name: string }) => { const id = String(p?.ruleI…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -74308,7 +74665,8 @@
      "l": 232,
      "by": "RulesManager.giveFragment",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74318,7 +74676,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('ruleFragment')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/GameLogManager.ts",
@@ -74326,7 +74685,8 @@
      "by": "GameLogManager.bindListeners",
      "handler": "() => { this.push({ channel: 'rule', type: 'event', text: this.s('not…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -74346,14 +74706,16 @@
      "l": 202,
      "by": "RulesManager.grantLayer",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/RulesManager.ts",
      "l": 228,
      "by": "RulesManager.giveFragment",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74363,7 +74725,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "(payload?: { source?: string }) => { if (payload?.source === 'fragmen…",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -74383,7 +74746,8 @@
      "l": 398,
      "by": "RuleUseUI.selectSlot",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74393,7 +74757,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('ruleUseApply')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/EventBridge.ts",
@@ -74401,7 +74766,8 @@
      "by": "EventBridge.init",
      "handler": "async (p: { ruleId: string; actions: ActionDef[]; resultText?: string…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -74421,7 +74787,8 @@
      "l": 1048,
      "by": "MenuUI.performSave",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74431,7 +74798,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('saveDone')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -74451,7 +74819,8 @@
      "l": 8803,
      "by": "Game.distributeSaveData",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74461,7 +74830,8 @@
      "by": "NarrativeStateManager.constructor",
      "handler": "this.onSaveRestoringListener",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -74469,7 +74839,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onSaveRestoring",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/HUD.ts",
@@ -74477,7 +74848,8 @@
      "by": "HUD.constructor",
      "handler": "this.saveRestoringCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/QuestBannerUI.ts",
@@ -74485,7 +74857,8 @@
      "by": "QuestBannerUI.constructor",
      "handler": "this.restoringCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/burn/BurnSystem.ts",
@@ -74493,7 +74866,8 @@
      "by": "BurnSystem.init",
      "handler": "this.onRestoring",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/DialogueVoiceDirector.ts",
@@ -74501,7 +74875,8 @@
      "by": "DialogueVoiceDirector.init",
      "handler": "() => this.stopAll()",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74509,7 +74884,8 @@
      "by": "Game.setupSceneReadyHandler",
      "handler": "() => { this.ignitePerformer.abort(false); }",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -74519,7 +74895,8 @@
      "by": "NarrativeStateManager.destroy",
      "handler": "this.onSaveRestoringListener",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -74527,7 +74904,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onSaveRestoring",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -74535,7 +74913,8 @@
      "by": "PlaneReconciler.destroy",
      "handler": "this.onSaveRestoring",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/HUD.ts",
@@ -74543,7 +74922,8 @@
      "by": "HUD.destroy",
      "handler": "this.saveRestoringCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/QuestBannerUI.ts",
@@ -74551,7 +74931,8 @@
      "by": "QuestBannerUI.destroy",
      "handler": "this.restoringCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/burn/BurnSystem.ts",
@@ -74559,7 +74940,8 @@
      "by": "BurnSystem.destroy",
      "handler": "this.onRestoring",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -74581,6 +74963,7 @@
      "handler": "this.onSceneUnload",
      "how": "literal",
      "boundary": false,
+     "dev": false,
      "viaBinding": {
       "f": "src/systems/canvas/CanvasVfxHost.ts",
       "l": 147,
@@ -74605,7 +74988,8 @@
      "l": 2077,
      "by": "SceneManager.unloadScene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74615,7 +74999,8 @@
      "by": "DebugTools.init",
      "handler": "this.sceneUnloadCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/vfx/VfxSystem.ts",
@@ -74623,7 +75008,8 @@
      "by": "VfxSystem.init",
      "handler": "this.onSceneUnload",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/burn/BurnSystem.ts",
@@ -74631,7 +75017,8 @@
      "by": "BurnSystem.init",
      "handler": "this.onSceneUnload",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74639,7 +75026,8 @@
      "by": "Game.start",
      "handler": "() => { this.healthThreatSystem.clear(); this.fireProtectionSystem.cl…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74647,7 +75035,8 @@
      "by": "Game.setupSceneReadyHandler",
      "handler": "() => { this.burnSceneReadyId = null; this.ignitePerformer.abort(); t…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -74657,7 +75046,8 @@
      "by": "DebugTools.destroy",
      "handler": "this.sceneUnloadCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/vfx/VfxSystem.ts",
@@ -74665,7 +75055,8 @@
      "by": "VfxSystem.destroy",
      "handler": "this.onSceneUnload",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/burn/BurnSystem.ts",
@@ -74673,7 +75064,8 @@
      "by": "BurnSystem.destroy",
      "handler": "this.onSceneUnload",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -74692,7 +75084,8 @@
      "l": 1969,
      "by": "SceneManager.loadScene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74702,7 +75095,8 @@
      "by": "HUD.constructor",
      "handler": "this.sceneEnterCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/GuidanceLayerUI.ts",
@@ -74710,7 +75104,8 @@
      "by": "GuidanceLayerUI.constructor",
      "handler": "this.sceneEnterCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74718,7 +75113,8 @@
      "by": "Game.start",
      "handler": "cb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     },
     {
      "f": "src/core/Game.ts",
@@ -74726,7 +75122,8 @@
      "by": "Game.start",
      "handler": "cb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     },
     {
      "f": "src/core/Game.ts",
@@ -74734,7 +75131,8 @@
      "by": "Game.attachNarrativeDebugBridge",
      "handler": "callback",
      "how": "loop-literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/EventBridge.ts",
@@ -74742,7 +75140,8 @@
      "by": "EventBridge.init",
      "handler": "(p: { sceneId: string }) => mapUI.setCurrentScene(p.sceneId)",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74750,7 +75149,8 @@
      "by": "Game.setupRuntimeDebugSnapshotPublishing",
      "handler": "() => this.scheduleRuntimeDebugSnapshotPublish(event)",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "off": [
@@ -74760,7 +75160,8 @@
      "by": "HUD.destroy",
      "handler": "this.sceneEnterCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/GuidanceLayerUI.ts",
@@ -74768,7 +75169,8 @@
      "by": "GuidanceLayerUI.destroy",
      "handler": "this.sceneEnterCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74776,7 +75178,8 @@
      "by": "Game.start",
      "handler": "cb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     },
     {
      "f": "src/core/Game.ts",
@@ -74784,7 +75187,8 @@
      "by": "Game.start",
      "handler": "cb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "emitNoListener": false,
@@ -74803,7 +75207,8 @@
      "l": 1169,
      "by": "SceneManager.emitEntitiesRebuilt",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74813,7 +75218,8 @@
      "by": "NpcScheduleSystem.init",
      "handler": "this.onEntitiesRebuilt",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -74821,7 +75227,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onEntitiesRebuilt",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74829,7 +75236,8 @@
      "by": "Game.setupSceneReadyHandler",
      "handler": "(p: { cutsceneId: string; phase: 'enter' | 'exit'; hotspotIds: string…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -74839,7 +75247,8 @@
      "by": "NpcScheduleSystem.init",
      "handler": "this.onEntitiesRebuilt",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/NpcScheduleSystem.ts",
@@ -74847,7 +75256,8 @@
      "by": "NpcScheduleSystem.destroy",
      "handler": "this.onEntitiesRebuilt",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -74855,7 +75265,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onEntitiesRebuilt",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -74863,7 +75274,8 @@
      "by": "PlaneReconciler.destroy",
      "handler": "this.onEntitiesRebuilt",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -74882,7 +75294,8 @@
      "l": 149,
      "by": "CanvasVfxHost.init",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74893,6 +75306,7 @@
      "handler": "this.onSceneReady",
      "how": "literal",
      "boundary": false,
+     "dev": false,
      "viaBinding": {
       "f": "src/systems/canvas/CanvasVfxHost.ts",
       "l": 147,
@@ -74917,7 +75331,8 @@
      "l": 1970,
      "by": "SceneManager.loadScene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -74927,7 +75342,8 @@
      "by": "NpcScheduleSystem.init",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -74935,7 +75351,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/vfx/VfxSystem.ts",
@@ -74943,7 +75360,8 @@
      "by": "VfxSystem.init",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/burn/BurnSystem.ts",
@@ -74951,7 +75369,8 @@
      "by": "BurnSystem.init",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74959,7 +75378,8 @@
      "by": "Game.start",
      "handler": "() => { this.healthSystem.enterScene(this.sceneManager.currentSceneDa…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -74967,7 +75387,8 @@
      "by": "Game.start",
      "handler": "() => { this.swayReadySceneId = this.sceneManager.currentSceneData?.i…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     },
     {
      "f": "src/core/Game.ts",
@@ -74975,7 +75396,8 @@
      "by": "Game.setupSceneReadyHandler",
      "handler": "() => { this.burnSceneReadyId = this.sceneManager.currentSceneData?.i…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -74985,7 +75407,8 @@
      "by": "NpcScheduleSystem.init",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/NpcScheduleSystem.ts",
@@ -74993,7 +75416,8 @@
      "by": "NpcScheduleSystem.destroy",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -75001,7 +75425,8 @@
      "by": "PlaneReconciler.init",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/PlaneReconciler.ts",
@@ -75009,7 +75434,8 @@
      "by": "PlaneReconciler.destroy",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/vfx/VfxSystem.ts",
@@ -75017,7 +75443,8 @@
      "by": "VfxSystem.destroy",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/burn/BurnSystem.ts",
@@ -75025,7 +75452,8 @@
      "by": "BurnSystem.destroy",
      "handler": "this.onSceneReady",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -75044,7 +75472,8 @@
      "l": 1995,
      "by": "SceneManager.loadScene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75054,7 +75483,8 @@
      "by": "NarrativePackageDirector.init",
      "handler": "this.onSceneRevealed",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -75062,7 +75492,8 @@
      "by": "Game.start",
      "handler": "endSceneTransition",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -75072,7 +75503,8 @@
      "by": "NarrativePackageDirector.destroy",
      "handler": "this.onSceneRevealed",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -75091,7 +75523,8 @@
      "l": 2157,
      "by": "SceneManager.switchScene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75101,7 +75534,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => { if (Date.now() - this.lastMapTravelSfxAt < 500) return; this.…",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -75109,7 +75543,8 @@
      "by": "Game.start",
      "handler": "() => { if (this.stateController.currentState === GameState.Exploring…",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75129,7 +75564,8 @@
      "l": 2204,
      "by": "SceneManager.switchScene",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75139,7 +75575,8 @@
      "by": "Game.start",
      "handler": "endSceneTransition",
      "how": "via listenEvent()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75159,7 +75596,8 @@
      "l": 152,
      "by": "ShopUI.close",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75169,7 +75607,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('shopClose')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/EventBridge.ts",
@@ -75177,7 +75616,8 @@
      "by": "EventBridge.init",
      "handler": "() => stateController.setState(GameState.Exploring)",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75197,7 +75637,8 @@
      "l": 135,
      "by": "ShopUI.openShop",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75207,7 +75648,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('shopOpen')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75227,7 +75669,8 @@
      "l": 475,
      "by": "ShopUI.doPurchase",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75237,7 +75680,8 @@
      "by": "EventBridge.init",
      "handler": "async (p: { itemId: string; price: number }) => { try { await actionE…",
      "how": "via listen()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75257,7 +75701,8 @@
      "l": 1467,
      "by": "HUD.playSmellDebut",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75267,7 +75712,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('smellDebut')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75287,7 +75733,8 @@
      "l": 1430,
      "by": "HUD.setSmellVisible",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75297,7 +75744,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('smellHide')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75317,7 +75765,8 @@
      "l": 1425,
      "by": "HUD.setSmellVisible",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75327,7 +75776,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('smellShow')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75347,7 +75797,8 @@
      "l": 122,
      "by": "SystemNoteManager.show",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [],
@@ -75368,7 +75819,8 @@
      "l": 1308,
      "by": "HUD.playThreeFiresDebut",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75378,7 +75830,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('threeFiresDebut')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75398,7 +75851,8 @@
      "l": 1658,
      "by": "HUD.setThreeFiresVisible",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75408,7 +75862,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('threeFiresHide')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75428,7 +75883,8 @@
      "l": 1644,
      "by": "HUD.setThreeFiresVisible",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75438,7 +75894,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('threeFiresShow')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75458,7 +75915,8 @@
      "l": 231,
      "by": "DayManager.runAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75468,7 +75926,8 @@
      "by": "NpcScheduleSystem.init",
      "handler": "this.onTimeChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -75478,7 +75937,8 @@
      "by": "NpcScheduleSystem.init",
      "handler": "this.onTimeChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/NpcScheduleSystem.ts",
@@ -75486,7 +75946,8 @@
      "by": "NpcScheduleSystem.destroy",
      "handler": "this.onTimeChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -75508,6 +75969,7 @@
      "handler": "this.onPhaseChanged",
      "how": "literal",
      "boundary": false,
+     "dev": false,
      "viaBinding": {
       "f": "src/systems/canvas/CanvasVfxHost.ts",
       "l": 147,
@@ -75532,7 +75994,8 @@
      "l": 240,
      "by": "DayManager.runAdvance",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75542,7 +76005,8 @@
      "by": "VfxSystem.init",
      "handler": "this.onPhaseChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -75550,7 +76014,8 @@
      "by": "Game.start",
      "handler": "(e) => { // ⚠ **只登记，不当场换**。`advanceTimeTo` 常常正是从对话/过场里发出的 //（赌坊那一拍就是）…",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -75560,7 +76025,8 @@
      "by": "VfxSystem.destroy",
      "handler": "this.onPhaseChanged",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -75579,21 +76045,24 @@
      "l": 341,
      "by": "GameStateController.handleEscape",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/GameStateController.ts",
      "l": 348,
      "by": "GameStateController.handleEscape",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/GameStateController.ts",
      "l": 353,
      "by": "GameStateController.handleEscape",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75603,7 +76072,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('uiCancel')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75623,28 +76093,32 @@
      "l": 81,
      "by": "EventBridge.init",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/EventBridge.ts",
      "l": 105,
      "by": "EventBridge.init",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueLogUI.ts",
      "l": 462,
      "by": "DialogueLogUI.setFilter",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueLogUI.ts",
      "l": 863,
      "by": "DialogueLogUI.activate",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75654,7 +76128,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('uiConfirm')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75674,28 +76149,32 @@
      "l": 944,
      "by": "DialogueUI.setFirstPerson",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/DialogueUI.ts",
      "l": 1366,
      "by": "DialogueUI.hide",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 3299,
      "by": "Game.start",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 3303,
      "by": "Game.start",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75705,7 +76184,8 @@
      "by": "HUD.constructor",
      "handler": "this.firstPersonCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -75715,7 +76195,8 @@
      "by": "HUD.destroy",
      "handler": "this.firstPersonCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -75734,21 +76215,24 @@
      "l": 202,
      "by": "InventoryUI.sound",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/ui/ShopUI.ts",
      "l": 178,
      "by": "ShopUI.sound",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 2494,
      "by": "Game.start",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75758,7 +76242,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => { const now = Date.now(); if (now - this.lastUiHoverSfxAt < UI_…",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75778,7 +76263,8 @@
      "l": 239,
      "by": "GameStateController.closePanel",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75788,7 +76274,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('uiPanelClose')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75808,7 +76295,8 @@
      "l": 267,
      "by": "GameStateController.togglePanel",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75818,7 +76306,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('uiPanelOpen')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [],
@@ -75838,14 +76327,16 @@
      "l": 272,
      "by": "ZoneSystem.enterZone",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 4230,
      "by": "Game.start",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "on": [
@@ -75855,7 +76346,8 @@
      "by": "SmellSystem.init",
      "handler": "this.onZoneEnter",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
@@ -75863,7 +76355,8 @@
      "by": "Game.attachNarrativeDebugBridge",
      "handler": "callback",
      "how": "loop-literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -75873,7 +76366,8 @@
      "by": "SmellSystem.init",
      "handler": "this.onZoneEnter",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/SmellSystem.ts",
@@ -75881,7 +76375,8 @@
      "by": "SmellSystem.destroy",
      "handler": "this.onZoneEnter",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -75900,14 +76395,16 @@
      "l": 285,
      "by": "ZoneSystem.exitZone",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/core/Game.ts",
      "l": 4234,
      "by": "Game.start",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": true
     }
    ],
    "on": [
@@ -75917,7 +76414,8 @@
      "by": "SmellSystem.init",
      "handler": "this.onZoneExit",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -75927,7 +76425,8 @@
      "by": "SmellSystem.init",
      "handler": "this.onZoneExit",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/SmellSystem.ts",
@@ -75935,7 +76434,8 @@
      "by": "SmellSystem.destroy",
      "handler": "this.onZoneExit",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -75954,7 +76454,8 @@
      "l": 562,
      "by": "InteractionSystem.setPromptedZone",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -75964,7 +76465,8 @@
      "by": "HUD.constructor",
      "handler": "this.zoneInteractCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -75974,7 +76476,8 @@
      "by": "HUD.destroy",
      "handler": "this.zoneInteractCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -75993,7 +76496,8 @@
      "l": 556,
      "by": "InteractionSystem.setPromptedZone",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -76003,7 +76507,8 @@
      "by": "HUD.constructor",
      "handler": "this.zoneInteractOffCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -76013,7 +76518,8 @@
      "by": "HUD.destroy",
      "handler": "this.zoneInteractOffCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -76032,7 +76538,8 @@
      "l": 302,
      "by": "ZoneSystem.emitRuleAvailability",
      "how": "union",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -76042,7 +76549,8 @@
      "by": "HUD.constructor",
      "handler": "this.zoneEnterCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -76050,7 +76558,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('zoneRuleAvailable')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -76060,7 +76569,8 @@
      "by": "HUD.destroy",
      "handler": "this.zoneEnterCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,
@@ -76079,7 +76589,8 @@
      "l": 302,
      "by": "ZoneSystem.emitRuleAvailability",
      "how": "union",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "on": [
@@ -76089,7 +76600,8 @@
      "by": "HUD.constructor",
      "handler": "this.zoneExitCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     },
     {
      "f": "src/systems/AudioManager.ts",
@@ -76097,7 +76609,8 @@
      "by": "AudioManager.installSystemSfxListeners",
      "handler": "() => this.playSystemSfx('zoneRuleUnavailable')",
      "how": "via onSfx()",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "off": [
@@ -76107,7 +76620,8 @@
      "by": "HUD.destroy",
      "handler": "this.zoneExitCb",
      "how": "literal",
-     "boundary": false
+     "boundary": false,
+     "dev": false
     }
    ],
    "emitNoListener": false,

@@ -372,7 +372,8 @@
           "l": 2255,
           "m": "d.stateController.setState(lockState);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s2",
@@ -398,7 +399,8 @@
           "l": 2524,
           "m": "this.pickupNotification.forceCleanup();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s3",
@@ -419,7 +421,8 @@
           "l": 2127,
           "m": "this.pendingReentrantSwitch = { targetSceneId, spawnPointId,"
         }
-      ]
+      ],
+      "track": "branch"
     },
     {
       "id": "s4",
@@ -445,7 +448,8 @@
           "l": 2213,
           "m": "await p;"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s5",
@@ -466,7 +470,8 @@
           "l": 2151,
           "m": "this.applyPlayerSpawnAndCamera(this.currentScene, spawnPoint"
         }
-      ]
+      ],
+      "track": "branch"
     },
     {
       "id": "s6",
@@ -487,7 +492,8 @@
           "l": 957,
           "m": "get switching(): boolean {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s7",
@@ -504,7 +510,8 @@
           "l": 2157,
           "m": "this.eventBus.emit('scene:transition', {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s8",
@@ -525,7 +532,8 @@
           "l": 3459,
           "m": "this.stateController.setState(GameState.SceneTransition);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s9",
@@ -551,7 +559,8 @@
           "l": 2240,
           "m": "this.ensureSceneMemory(this.currentScene.id);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s10",
@@ -582,7 +591,8 @@
           "l": 989,
           "m": "this.sceneManager.setTransitionPalette({"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s11",
@@ -608,7 +618,8 @@
           "l": 2398,
           "m": "this.animRafId = requestAnimationFrame(tick);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s12",
@@ -634,7 +645,8 @@
           "l": 2076,
           "m": "this.sceneEpoch++;"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s13",
@@ -651,7 +663,8 @@
           "l": 2077,
           "m": "this.eventBus.emit('scene:beforeUnload');"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s14",
@@ -672,7 +685,8 @@
           "l": 6373,
           "m": "this.interactionSystem.setHotspots(hotspots);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s15",
@@ -703,7 +717,8 @@
           "l": 225,
           "m": "while (overLimits()) {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s16",
@@ -729,7 +744,8 @@
           "l": 6387,
           "m": "this.sceneManager.setEntityFilterReleaser((filters) => {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s17",
@@ -770,7 +786,8 @@
           "l": 3548,
           "m": "this.lightingSync = new RuntimeLightingSync({"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s18",
@@ -791,7 +808,8 @@
           "l": 6516,
           "m": "this.sceneManager.setSwayUnloader(() => {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s19",
@@ -812,7 +830,8 @@
           "l": 2107,
           "m": "this.sceneContainerBg.destroy({ children: true });"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s20",
@@ -843,7 +862,8 @@
           "l": 6544,
           "m": "this.characterLighting.destroy();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s21",
@@ -869,7 +889,8 @@
           "l": 6369,
           "m": "this.zoneSystem.setZones(zones);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s22",
@@ -890,7 +911,8 @@
           "l": 2171,
           "m": "await this.loadScene(tid, spawnPointId, cameraPosition, from"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s23",
@@ -911,7 +933,8 @@
           "l": 1732,
           "m": "const sceneData = await this.assetManager.loadSceneData(scen"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s24",
@@ -947,7 +970,8 @@
           "l": 149,
           "m": "if (!r.phase) return '';"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s25",
@@ -988,7 +1012,8 @@
           "l": 1644,
           "m": "for (const npcDef of sceneData.npcs ?? []) {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s26",
@@ -1009,7 +1034,8 @@
           "l": 1763,
           "m": "const activeCutsceneId = this.cutsceneStaging?.sceneId === s"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s27",
@@ -1035,7 +1061,8 @@
           "l": 1802,
           "m": "this.currentSceneScopeId = manifest.scopeId;"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s28",
@@ -1066,7 +1093,8 @@
           "l": 1845,
           "m": "this.sceneContainerBg = createPlaceholderBackground("
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s29",
@@ -1082,7 +1110,8 @@
           "l": 1851,
           "m": "this.renderer.backgroundLayer.addChild(this.sceneContainerBg"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s30",
@@ -1118,7 +1147,8 @@
           "l": 1337,
           "m": "this.sceneManager.setBurnTemplateResolver((id) => this.burnS"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s31",
@@ -1144,7 +1174,8 @@
           "l": 1558,
           "m": "this.renderer.entityLayer.addChild(npc.container);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s32",
@@ -1160,7 +1191,8 @@
           "l": 1899,
           "m": "for (const npcDef of Object.values(this.getCommittedMemory(s"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s33",
@@ -1186,7 +1218,8 @@
           "l": 6382,
           "m": "this.refreshFootstepEmitters();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s34",
@@ -1217,7 +1250,8 @@
           "l": 6348,
           "m": "this.camera.snapTo(snapX, snapY);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s35",
@@ -1243,7 +1277,8 @@
           "l": 6357,
           "m": "this.audioManager.setAcousticSpace(acousticSpace);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s36",
@@ -1279,7 +1314,8 @@
           "l": 941,
           "m": "if (z.zoneKind === 'depth_floor') return true;"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s37",
@@ -1315,7 +1351,8 @@
           "l": 6453,
           "m": "await this.characterLighting.load("
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s38",
@@ -1366,7 +1403,8 @@
           "l": 457,
           "m": "albedo = await assetManager.loadTexture("
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s39",
@@ -1392,7 +1430,8 @@
           "l": 6608,
           "m": "if (!UNIFIED_CHAR_PATH_ENABLED) {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s40",
@@ -1413,7 +1452,8 @@
           "l": 6507,
           "m": "this.sceneManager.setSwayLoader(async (sceneId, sceneData, p"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s41",
@@ -1434,7 +1474,8 @@
           "l": 1960,
           "m": "this.renderer.clearWorldFilter();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s42",
@@ -1450,7 +1491,8 @@
           "l": 1964,
           "m": "onLoadProgress(1, `就绪 · ${sceneId}`);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s43",
@@ -1467,7 +1509,8 @@
           "l": 1969,
           "m": "this.eventBus.emit('scene:enter', { sceneId, fromSceneId: fr"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s44",
@@ -1484,7 +1527,8 @@
           "l": 1970,
           "m": "this.eventBus.emit('scene:ready');"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s45",
@@ -1505,7 +1549,8 @@
           "l": 128,
           "m": "this.applyScheduledPositions();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s46",
@@ -1526,7 +1571,8 @@
           "l": 280,
           "m": "this.onSceneReady = () => { void this.activateLiveScene(); }"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s47",
@@ -1542,7 +1588,8 @@
           "l": 2880,
           "m": "this.healthSystem.enterScene(this.sceneManager.currentSceneD"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s48",
@@ -1583,7 +1630,8 @@
           "l": 9502,
           "m": "void this.assetManager"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s49",
@@ -1619,7 +1667,8 @@
           "l": 8084,
           "m": "this.depthDebugVisualizer.onSceneLoaded("
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s50",
@@ -1665,7 +1714,8 @@
           "l": 1974,
           "m": "if (this.revealGate) {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s51",
@@ -1691,7 +1741,8 @@
           "l": 2276,
           "m": "this.removeTransitionOverlay();"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s52",
@@ -1728,7 +1779,8 @@
           "l": 384,
           "m": "await this.sceneReloader(sceneId);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s53",
@@ -1749,7 +1801,8 @@
           "l": 3467,
           "m": "this.listenEvent('scene:revealed', endSceneTransition);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s54",
@@ -1780,7 +1833,8 @@
           "l": 6562,
           "m": "await this.actionExecutor.executeBatchAwait(actions, makeOwn"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s55",
@@ -1801,7 +1855,8 @@
           "l": 2020,
           "m": "this.consumePendingReentrantSwitch();"
         }
-      ]
+      ],
+      "track": "side"
     },
     {
       "id": "s56",
@@ -1832,7 +1887,8 @@
           "l": 2196,
           "m": "this.removeTransitionOverlay();"
         }
-      ]
+      ],
+      "track": "branch"
     },
     {
       "id": "s57",
@@ -1859,7 +1915,8 @@
           "l": 3468,
           "m": "this.listenEvent('scene:transitionEnd', endSceneTransition);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s58",
@@ -1880,7 +1937,8 @@
           "l": 2221,
           "m": "private consumePendingReentrantSwitch(): void {"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s59",
@@ -1906,7 +1964,8 @@
           "l": 2265,
           "m": "d.stateController.setState(GameState.ActionSequence);"
         }
-      ]
+      ],
+      "track": "main"
     },
     {
       "id": "s60",
@@ -1932,7 +1991,8 @@
           "l": 2038,
           "m": "await this.loadScene("
         }
-      ]
+      ],
+      "track": "side"
     },
     {
       "id": "s61",
@@ -1948,7 +2008,8 @@
           "l": 4326,
           "m": "await this.tryStartInitialPrologue();"
         }
-      ]
+      ],
+      "track": "side"
     },
     {
       "id": "s62",
@@ -1979,7 +2040,8 @@
           "l": 391,
           "m": "await this.sceneReloader(snapshotSceneId);"
         }
-      ]
+      ],
+      "track": "side"
     },
     {
       "id": "s63",
@@ -2015,7 +2077,8 @@
           "l": 9353,
           "m": "if (this.phaseSwapInFlight) return;"
         }
-      ]
+      ],
+      "track": "side"
     },
     {
       "id": "s64",
@@ -2036,7 +2099,8 @@
           "l": 4943,
           "m": "this.stateController.setState(GameState.Exploring);"
         }
-      ]
+      ],
+      "track": "side"
     },
     {
       "id": "s65",
@@ -2082,7 +2146,8 @@
           "l": 968,
           "m": "return this.transitionOverlay !== null || this.blackoutOverlay !== null;"
         }
-      ]
+      ],
+      "track": "side"
     },
     {
       "id": "s66",
@@ -2128,7 +2193,8 @@
           "l": 831,
           "m": "this.sceneManagerAPI?.endCutsceneStaging();"
         }
-      ]
+      ],
+      "track": "side"
     }
   ],
   "events": [
@@ -3049,5 +3115,6 @@
         }
       ]
     }
-  ]
+  ],
+  "trackNote": "track: main = 一次正常切场的主干先后;branch = 主干上的分叉(条件满足才走、走了就不按主干继续,如重入只登记、同场景、装载失败);side = 不经 switchScene 的其它路径(开局首场景、读档/时段换装的重载、过场舞台),各自内部的先后见说明。"
 }

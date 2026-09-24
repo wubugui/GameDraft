@@ -28,6 +28,7 @@ function mulberry32(a) {
   };
 }
 const rnd = mulberry32(seed);
+// 注:池只含主干步骤(见 seqPairs)
 const pick = (pool, n) => {
   const a = pool.slice();
   const out = [];
@@ -40,7 +41,10 @@ const firstCite = (s) => (s.cites || [])[0];
 
 // ── 模块图池
 const depPool = raw.imports.filter((i) => i.kind === 'internal' && i.runtime && an.files.some((f) => f.path === i.to))
-  .map((i) => ({ source: '模块图 · 依赖', arrow: `${i.from} → ${i.to}`, claim: `${i.from} 第 ${i.line} 行 import 了 ${i.to}("${i.spec}"),且编译后仍保留(运行时依赖)`, cites: [{ f: i.from, l: i.line, m: i.spec }] }));
+  .map((i) => {
+    const t = lineText(i.from, i.line);
+    return { source: '模块图 · 依赖', arrow: `${i.from} → ${i.to}`, claim: `${i.from} 第 ${i.line} 行起的 import 语句引入了 ${i.to}("${i.spec}"),且编译后仍保留(运行时依赖)`, cites: [{ f: i.from, l: i.line, m: t.includes(i.spec) ? i.spec : t.slice(0, 24) }] };
+  });
 const evtPool = [];
 for (const g of an.events) {
   if (g.bus !== 'main') continue;
@@ -52,7 +56,9 @@ const crtPool = raw.news.filter((n) => n.target.kind === 'internal' && n.target.
   .map((n) => ({ source: '模块图 · 创建', arrow: `${n.file} ─new→ ${n.target.file}`, claim: `${n.file}:${n.line}(${n.enclosing})里 new 了 ${n.target.name},该类定义在 ${n.target.file}`, cites: [{ f: n.file, l: n.line, m: n.target.name }] }));
 
 // ── 顺序图池:相邻两步
-const seqPairs = (name, steps) => {
+// 只取主干上相邻的两步:track 为 branch(分叉)/entry(并列入口)/side(旁路)的步骤不构成"先后"箭头
+const seqPairs = (name, steps0) => {
+  const steps = steps0.filter((x) => !x.track || x.track === 'main');
   const out = [];
   for (let i = 0; i + 1 < steps.length; i++) {
     const a = steps[i];

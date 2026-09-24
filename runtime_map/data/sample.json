@@ -1,0 +1,288 @@
+{
+  "seed": 1599759263,
+  "commit": "5f5a639f63a4e04e8a27991c11df7a674a09e81e",
+  "method": "从页面画出的全部箭头里分层随机抽 15 条:模块图 6 条(依赖 3 / 事件 2 / 创建 1),图 2~6 的\"先后\"箭头 9 条(启动 2 / 一帧 2 / 场景 2 / 存读档 2 / 渲染 1)。随机源 mulberry32,种子 = 代码版本前 8 位(0x5f5a639f),同一版本可复现。",
+  "poolSizes": {
+    "dep": 892,
+    "evt": 388,
+    "crt": 261,
+    "boot": 121,
+    "frame": 101,
+    "scene": 54,
+    "state": 19,
+    "render": 39
+  },
+  "items": [
+    {
+      "source": "模块图 · 依赖",
+      "arrow": "src/ui/DialogueUI.ts → src/ui/PanelSkin.ts",
+      "claim": "src/ui/DialogueUI.ts 第 3 行起的 import 语句引入了 src/ui/PanelSkin.ts(\"./PanelSkin\"),且编译后仍保留(运行时依赖)",
+      "cites": [
+        {
+          "f": "src/ui/DialogueUI.ts",
+          "l": 3,
+          "m": "./PanelSkin"
+        }
+      ]
+    },
+    {
+      "source": "模块图 · 依赖",
+      "arrow": "src/ui/ShopUI.ts → src/ui/components/UIButton.ts",
+      "claim": "src/ui/ShopUI.ts 第 6 行起的 import 语句引入了 src/ui/components/UIButton.ts(\"./components/UIButton\"),且编译后仍保留(运行时依赖)",
+      "cites": [
+        {
+          "f": "src/ui/ShopUI.ts",
+          "l": 6,
+          "m": "./components/UIButton"
+        }
+      ]
+    },
+    {
+      "source": "模块图 · 依赖",
+      "arrow": "src/systems/objectExamine/critterSim.ts → src/systems/objectExamine/crawlField.ts",
+      "claim": "src/systems/objectExamine/critterSim.ts 第 19 行起的 import 语句引入了 src/systems/objectExamine/crawlField.ts(\"./crawlField\"),且编译后仍保留(运行时依赖)",
+      "cites": [
+        {
+          "f": "src/systems/objectExamine/critterSim.ts",
+          "l": 19,
+          "m": "import {"
+        }
+      ]
+    },
+    {
+      "source": "模块图 · 事件",
+      "arrow": "src/core/NarrativeStateManager.ts ─\"narrative:stateChanged\"→ src/core/Game.ts",
+      "claim": "src/core/NarrativeStateManager.ts:2135 在主事件总线上发出 \"narrative:stateChanged\",src/core/Game.ts:9666 在主事件总线上收听同名事件",
+      "cites": [
+        {
+          "f": "src/core/NarrativeStateManager.ts",
+          "l": 2135,
+          "m": "narrative:stateChanged"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9666,
+          "m": "this.listenEvent(event, () => "
+        }
+      ]
+    },
+    {
+      "source": "模块图 · 事件",
+      "arrow": "src/systems/InventoryManager.ts ─\"item:consumed\"→ src/core/Game.ts",
+      "claim": "src/systems/InventoryManager.ts:110 在主事件总线上发出 \"item:consumed\",src/core/Game.ts:2802 在主事件总线上收听同名事件",
+      "cites": [
+        {
+          "f": "src/systems/InventoryManager.ts",
+          "l": 110,
+          "m": "item:consumed"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2802,
+          "m": "item:consumed"
+        }
+      ]
+    },
+    {
+      "source": "模块图 · 创建",
+      "arrow": "src/core/SceneLightingSystem.ts ─new→ src/rendering/lighting/GiBouncePass.ts",
+      "claim": "src/core/SceneLightingSystem.ts:282(SceneLightingSystem.loadGiHitmap)里 new 了 GiBouncePass,该类定义在 src/rendering/lighting/GiBouncePass.ts",
+      "cites": [
+        {
+          "f": "src/core/SceneLightingSystem.ts",
+          "l": 282,
+          "m": "GiBouncePass"
+        }
+      ]
+    },
+    {
+      "source": "图 2 · 启动",
+      "arrow": "「执行进场动作里登记的切场景」→「序章过场」",
+      "claim": "图上画的是先「执行进场动作里登记的切场景」后「序章过场」",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2019,
+          "m": "if (!this.isSwitching) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4326,
+          "m": "await this.tryStartInitialPrologue()"
+        }
+      ],
+      "ids": [
+        "p11s14",
+        "p11s15"
+      ]
+    },
+    {
+      "source": "图 2 · 启动",
+      "arrow": "「UI 皮肤贴图」→「UI 图标」",
+      "claim": "图上画的是先「UI 皮肤贴图」后「UI 图标」",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 2247,
+          "m": "await preloadUITextures()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2249,
+          "m": "void preloadUIIcons()"
+        }
+      ],
+      "ids": [
+        "p4s7",
+        "p4s8"
+      ]
+    },
+    {
+      "source": "图 3 · 一帧",
+      "arrow": "「点击寻路（转成移动轴）」→「健康（三把火）」",
+      "claim": "图上画的是先「点击寻路（转成移动轴）」后「健康（三把火）」",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10579,
+          "m": "this.updatePlayerNav()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10580,
+          "m": "this.healthSystem.update(dt)"
+        }
+      ],
+      "ids": [
+        "s18",
+        "s19"
+      ]
+    },
+    {
+      "source": "图 3 · 一帧",
+      "arrow": "「热点：深度地面偏移」→「热点：深度遮挡」",
+      "claim": "图上画的是先「热点：深度地面偏移」后「热点：深度遮挡」",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10868,
+          "m": "for (const h of this.sceneManager.getCurrentHotspots()) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10876,
+          "m": "this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex)"
+        }
+      ],
+      "ids": [
+        "s91",
+        "s92"
+      ]
+    },
+    {
+      "source": "图 4 · 场景生命周期",
+      "arrow": "「清\"切场进行中\" · 发出\"切场结束\"」→「放行 onEnter 批内登记的切场」",
+      "claim": "图上画的是先「清\"切场进行中\" · 发出\"切场结束\"」后「放行 onEnter 批内登记的切场」",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2201,
+          "m": "this.isSwitching = false;"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2216,
+          "m": "this.consumePendingReentrantSwitch();"
+        }
+      ],
+      "ids": [
+        "s57",
+        "s58"
+      ]
+    },
+    {
+      "source": "图 4 · 场景生命周期",
+      "arrow": "「生成\"演出留下的\"对象」→「交互表换上新实体」",
+      "claim": "图上画的是先「生成\"演出留下的\"对象」后「交互表换上新实体」",
+      "cites": [
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1899,
+          "m": "for (const npcDef of Object.values(this.getCommittedMemory(s"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 1907,
+          "m": "this.interactionSetter?.(this.currentHotspots, this.currentN"
+        }
+      ],
+      "ids": [
+        "s32",
+        "s33"
+      ]
+    },
+    {
+      "source": "图 5 · 读档流程",
+      "arrow": "「取镜像、解析、校验」→「先拍一份当前状态作回滚快照」",
+      "claim": "图上画的是先「取镜像、解析、校验」后「先拍一份当前状态作回滚快照」",
+      "cites": [
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 347,
+          "m": "const raw = this.mirror.get(slot);"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 375,
+          "m": "const snapshot = this.collector();"
+        }
+      ],
+      "ids": [
+        "ld4",
+        "ld5"
+      ]
+    },
+    {
+      "source": "图 5 · 读档流程",
+      "arrow": "「重载场景(读档专用)」→「还权为探索态」",
+      "claim": "图上画的是先「重载场景(读档专用)」后「还权为探索态」",
+      "cites": [
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 384,
+          "m": "await this.sceneReloader(sceneId);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9424,
+          "m": "const s = this.stateController.currentState;"
+        }
+      ],
+      "ids": [
+        "ld14",
+        "ld15"
+      ]
+    },
+    {
+      "source": "图 6 · 渲染管线",
+      "arrow": "「装深度图与碰撞图」→「烘辐照探针小图（GPU 离屏一次）」",
+      "claim": "图上画的是先「装深度图与碰撞图」后「烘辐照探针小图（GPU 离屏一次）」",
+      "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 6419,
+          "m": "await this.sceneDepthSystem.load("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 6446,
+          "m": "this.setupSceneLighting(sceneData, worldToPixelX, worldToPix"
+        }
+      ],
+      "ids": [
+        "p-load-depth",
+        "p-load-irr"
+      ]
+    }
+  ]
+}

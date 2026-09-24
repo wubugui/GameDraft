@@ -249,6 +249,8 @@ svg.dig .colhead { font-size: 10px; fill: var(--muted); font-family: var(--f-bod
 .lane-n { font-family: var(--f-mono); font-size: 11px; color: var(--muted); text-align: right; padding: 7px 6px 0 0; }
 .lane-card { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px; cursor: pointer; }
 .lane-card:hover, .lane-card.sel { border-color: var(--ink2); }
+.lane-card.alt { border-style: dashed; background: var(--paper2); }
+.step.alt { background: color-mix(in srgb, var(--paper2) 60%, transparent); }
 .lane-card .lt { font-weight: 500; }
 .lane-card .ld { color: var(--muted); font-size: 11.5px; }
 .lane-card .io { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 3px; }
@@ -289,6 +291,11 @@ svg.dig .colhead { font-size: 10px; fill: var(--muted); font-family: var(--f-bod
 .kv dd { margin: 0; overflow-wrap: anywhere; }
 .note { font-size: 12px; color: var(--muted); border-left: 3px solid var(--line); padding: 2px 8px; }
 .empty { color: var(--muted); font-style: italic; }
+.vrow td:nth-child(2) { min-width: 96px; }
+.vrow td:nth-child(3) { min-width: 180px; overflow-wrap: anywhere; }
+.vrow td:nth-child(4) { white-space: nowrap; }
+.vrow td:nth-child(5) { min-width: 260px; }
+.vrow td:nth-child(6) { min-width: 200px; }
 .vrow td.res-ok { color: var(--ok); font-weight: 700; }
 .vrow td.res-bad { color: var(--bad); font-weight: 700; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -722,7 +729,7 @@ function edgeItemNodes(kind, e) {
     for (const v of e.evs) {
       out.push(el('div', { class: 'row small' }, chip(v.e, 'evt'), v.bus !== 'main' ? chip(`私有总线 ${v.bus}`, 'warn') : null));
       for (const s of v.emit) out.push(citeBox({ f: P(s[0]), l: s[1], why: `发:${s[2]}` }));
-      for (const s of v.on) out.push(citeBox({ f: P(s[0]), l: s[1], why: `收:${s[2]}${s[5] ? '(经私有总线装配)' : ''}` }));
+      for (const s of v.on) out.push(citeBox({ f: P(s[0]), l: s[1], why: `收:${s[2]}${s[5] ? '(经私有总线装配)' : ''}${s[6] ? ' · DEV 守卫内' : ''}` }));
     }
     return out;
   }
@@ -919,6 +926,8 @@ function drill(id) {
 // ════════════════════════════════════ 通用:顺序步骤
 const ASYNC_LABEL = { await: ['等完成', 'warn'], parallel: ['并行', 'warn'], 'fire-and-forget': ['发出不等', 'bad'], sync: ['同步', ''], event: ['发事件', 'evt'] };
 function asyncChip(a) { if (!a || a === 'sync') return null; const x = ASYNC_LABEL[a] || [a, '']; return chip(x[0], x[1], `async: ${a}`); }
+const TRACK_ZH = { branch: ['分叉', 'warn', '主干上的条件分叉,走了就不按主干继续'], entry: ['并列入口', 'dep', '几个入口之一,彼此不是先后'], side: ['旁路', 'crt', '不走主干的另一条路径'] };
+function trackChip(t) { const x = TRACK_ZH[t]; return x ? chip(x[0], x[1], x[2]) : null; }
 function statusChip(s) { if (s === 'disabled') return chip('已关停', 'off'); if (s === 'dev-only') return chip('仅开发构建', 'dev'); return null; }
 function stepDetail(title, s, extra) {
   const nodes = [];
@@ -939,10 +948,10 @@ function stepDetail(title, s, extra) {
 const KIND_ZH = { create: '创建', load: '加载', init: '初始化', wire: '接线', register: '注册', branch: '分叉', await: '等待', frame: '主循环', guard: '守卫' };
 const kindChip = (k) => (k && KIND_ZH[k] ? chip(KIND_ZH[k]) : null);
 function stepRow(no, s, onSel) {
-  const row = el('div', { class: `step${s.status === 'disabled' ? ' disabled' : ''}`, tabindex: 0, role: 'button' },
+  const row = el('div', { class: `step${s.status === 'disabled' ? ' disabled' : ''}${s.track && s.track !== 'main' ? ' alt' : ''}`, tabindex: 0, role: 'button' },
     el('div', { class: 'sn' }, no),
     el('div', { class: 'sl' }, s.label),
-    el('div', { class: 'tags' }, statusChip(s.status), kindChip(s.kind), asyncChip(s.async), s.event ? chip(s.event, 'evt') : null),
+    el('div', { class: 'tags' }, trackChip(s.track), statusChip(s.status), kindChip(s.kind), asyncChip(s.async), s.event ? chip(s.event, 'evt') : null),
     s.detail ? el('div', { class: 'sd' }, s.detail) : null,
     s.code ? el('div', { class: 'sc' }, s.code) : null);
   const act = () => { for (const r of document.querySelectorAll('.step.sel')) r.classList.remove('sel'); row.classList.add('sel'); (onSel || (() => stepDetail(s.label, s)))(); };
@@ -1091,9 +1100,10 @@ RENDER.scene = (root) => {
   if (!d) return missing(root, 'scene');
   root.append(el('h3', { style: 'margin:6px 0 8px' }, '切一次场景的实际顺序(泳道 = 谁在做)'));
   root.append(el('div', { class: 'row small muted', style: 'margin-bottom:6px' }, '标签:', asyncChip('await'), asyncChip('parallel'), asyncChip('fire-and-forget'), asyncChip('event'), '(没标的是同步)。点卡片看出处。'));
-  root.append(laneGrid(d.lanes || [], d.steps || [], (s) => s.lane, (s) => el('div', { class: 'lane-card', onclick: () => stepDetail(s.label, s) },
-    el('div', { class: 'row' }, el('span', { class: 'lt' }, s.label), asyncChip(s.async), s.event ? chip(s.event, 'evt') : null, statusChip(s.status)),
+  root.append(laneGrid(d.lanes || [], d.steps || [], (s) => s.lane, (s) => el('div', { class: `lane-card${s.track && s.track !== 'main' ? ' alt' : ''}`, onclick: () => stepDetail(s.label, s) },
+    el('div', { class: 'row' }, el('span', { class: 'lt' }, s.label), trackChip(s.track), asyncChip(s.async), s.event ? chip(s.event, 'evt') : null, statusChip(s.status)),
     s.detail ? el('div', { class: 'ld' }, s.detail) : null)));
+  if (d.trackNote) root.append(el('p', { class: 'note' }, d.trackNote));
   calloutList(root, '入口(都汇到这条切场路径)', d.entryPoints);
   if (d.events?.length) {
     root.append(el('h3', { style: 'margin:18px 0 8px' }, '切场景期间总线上的事件'));
@@ -1128,6 +1138,7 @@ RENDER.state = (root) => {
   const flow = (title, list) => { const p = el('div', { class: 'panel', style: 'padding:6px 0' }, el('h3', { style: 'padding:6px 12px' }, title)); (list || []).forEach((s, i) => p.append(stepRow(String(s.order ?? i + 1), s))); return p; };
   flows.append(flow('存档:实际步骤', d.saveFlow), flow('读档:实际步骤', d.loadFlow));
   root.append(flows);
+  if (d.trackNote) root.append(el('p', { class: 'note' }, d.trackNote));
   if (d.payload?.length) {
     root.append(el('h3', { style: 'margin:18px 0 8px' }, '存档对象里实际的键'));
     const t = el('table', { class: 't' }, el('thead', null, el('tr', null, el('th', null, '键'), el('th', null, '谁产出(serialize)'), el('th', null, '读档交给谁'), el('th', null, '说明'), el('th', null, '出处'))));
@@ -1273,8 +1284,10 @@ RENDER.anomalies = (root) => {
 
   // 事件
   const evb = el('div', { class: 'panel pad', style: 'margin-top:14px' }, el('h3', null, '事件总线:有人发没人收 / 有人收没人发'));
+  evb.append(el('p', { class: 'small muted' }, '"DEV 守卫内"只认同一个函数里的 import.meta.env.DEV / isDevBuild / devMode 守卫;守卫写在调用方的认不出(见"抽不准")。'));
   evb.append(el('p', { class: 'small' }, `按事件名字符串配对(主总线 ${D.events.filter((e) => e.bus === 'main').length} 个事件名)。事件名经包装函数转手的(`, D.wrappers.map((w) => el('span', { class: 'mono' }, `${w[0]}() `)), `)已追到调用点;destroy 里按登记表逐条 off 的不参与配对(见"抽不准")。`));
-  const evRow = (ev, side) => fold(`${ev.e}${ev.bus !== 'main' ? `(私有总线 ${ev.bus})` : ''}`, false, (side === 'emit' ? ev.emit : ev.on).map((s) => citeBox({ f: P(s[0]), l: s[1], why: `${side === 'emit' ? '发' : '收'}:${s[2]}` })));
+  const devIdx = (side) => (side === 'emit' ? 4 : 6);
+  const evRow = (ev, side) => fold(`${ev.e}${ev.bus !== 'main' ? `(私有总线 ${ev.bus})` : ''}${(side === 'emit' ? ev.emit : ev.on).every((s) => s[devIdx(side)]) ? '(仅开发构建)' : ''}`, false, (side === 'emit' ? ev.emit : ev.on).map((s) => citeBox({ f: P(s[0]), l: s[1], why: `${side === 'emit' ? '发' : '收'}:${s[2]}${s[devIdx(side)] ? ' · DEV 守卫内' : ''}` })));
   const eNL = D.events.filter((e) => e.eNL);
   const lNE = D.events.filter((e) => e.lNE);
   evb.append(el('div', { class: 'grid2' },
@@ -1371,13 +1384,20 @@ RENDER.disabled = (root) => {
 };
 RENDER.verify = (root) => {
   const v = D.verification;
-  head(root, '抽样核对', v?.method || '随机抽 15 条箭头,回代码逐条核对出处。');
+  head(root, '抽样核对', '收尾前从页面画出的全部箭头里随机抽 15 条,回代码逐条核对出处。');
   if (!v) return root.append(el('p', { class: 'empty' }, '尚未核对。'));
   const ok = v.items.filter((x) => x.result === 'ok').length;
-  root.append(el('p', null, el('b', null, `${ok} / ${v.items.length} 条与代码一致`), v.summary ? `。${v.summary}` : ''));
-  const t = el('table', { class: 't' }, el('thead', null, el('tr', null, el('th', null, '#'), el('th', null, '来自'), el('th', null, '箭头'), el('th', null, '核对结果'), el('th', null, '核对说明'), el('th', null, '出处'))));
+  root.append(el('p', null, el('b', null, `${ok} / ${v.items.length} 条与代码一致。`), ' ', v.summary || ''));
+  root.append(el('p', { class: 'small muted' }, v.method));
+  if (v.poolSizes) root.append(el('p', { class: 'small muted' }, '箭头池大小:', Object.entries(v.poolSizes).map(([k, n]) => `${({ dep: '依赖', evt: '事件', crt: '创建', boot: '启动', frame: '一帧', scene: '场景', state: '存读档', render: '渲染' })[k] || k} ${n}`).join(' · '), `。种子 0x${(v.seed >>> 0).toString(16)},代码版本 ${String(v.commit).slice(0, 10)}。`));
+  const t = el('table', { class: 't' }, el('thead', null, el('tr', null, el('th', null, '#'), el('th', null, '来自'), el('th', null, '箭头'), el('th', null, '结论'), el('th', null, '独立代理回代码核对'), el('th', null, '脚本机械复核'), el('th', null, '出处'))));
   const tb = el('tbody');
-  v.items.forEach((x, i) => tb.append(el('tr', { class: 'vrow' }, el('td', { class: 'num mono' }, i + 1), el('td', { class: 'small' }, x.source), el('td', null, x.arrow), el('td', { class: x.result === 'ok' ? 'res-ok' : 'res-bad' }, x.result === 'ok' ? '一致' : '不一致'), el('td', { class: 'small' }, x.note), el('td', null, crefs(x.cites, x.arrow)))));
+  v.items.forEach((x, i) => tb.append(el('tr', { class: 'vrow' },
+    el('td', { class: 'num mono' }, i + 1), el('td', { class: 'small' }, x.source), el('td', { class: 'small' }, x.arrow),
+    el('td', { class: x.result === 'ok' ? 'res-ok' : 'res-bad' }, x.result === 'ok' ? '一致' : '不一致'),
+    el('td', { class: 'small' }, x.note),
+    el('td', { class: 'small' }, x.mechanical ? [chip(x.mechanical.ok === true ? '一致' : x.mechanical.ok === false ? '不一致' : '交代理核', x.mechanical.ok === true ? 'ok' : x.mechanical.ok === false ? 'bad' : 'warn'), ' ', x.mechanical.text] : ''),
+    el('td', null, crefs(x.cites, x.arrow)))));
   t.append(tb);
   root.append(el('div', { class: 'tbl-wrap panel' }, t));
 };
