@@ -1,7 +1,7 @@
 {
   "id": "boot",
   "title": "启动:从 main.ts 到第一帧",
-  "summary": "页面脚本 main.ts 同步解析启动参数并注册卸载钩子,入口卫兵异步放行后(必要时经“点击开始”手势门)new Game 并发出 game.start(不等)。Game 构造同步创建约 50 个系统并逐个 init;start() 依次 await 渲染器初始化、配置与偏好、叙事资产、22 项定义并行加载、玩家形象,随后在任何场景装载之前把主 tick 挂到 Pixi ticker,最后按“标题态 → 读档 → dev 直达 → 新游戏”分叉;新游戏路径在全黑遮罩下装完首场景,400ms 淡入后再跑场景进场动作与序章过场。",
+  "summary": "页面脚本 main.ts 同步解析启动参数并注册卸载钩子,入口卫兵异步放行后(必要时经“点击开始”手势门)new Game 并发出 game.start(不等)。Game 构造函数体同步 new 出 60 个对象(另有若干字段初始化),把注册表里 44 个非空系统逐个 init;start() 依次 await 渲染器初始化、配置与偏好、叙事资产、21 项定义并行加载、玩家形象,随后在任何场景装载之前把主 tick 挂到 Pixi ticker,最后按“标题态 → 读档 → dev 直达 → 新游戏”分叉;新游戏路径在全黑遮罩下装完首场景,400ms 淡入后再跑场景进场动作与序章过场。",
   "phases": [
     {
       "id": "p1",
@@ -140,7 +140,7 @@
         {
           "id": "p1s6",
           "label": "引导态标记:标题态 / 读档槽",
-          "detail": "screen_title 参数 → 停在标题界面、不装世界;load_slot 参数 → 开局直接读该存档槽。二者由上一次整页重启写进地址栏,在所有构建里都生效。",
+          "detail": "screen_title 参数 → 停在标题界面、不装世界;load_slot 参数 → 开局直接读该存档槽。二者来自上一次整页重启写进地址栏的参数,或地址栏无任何引导参数时打包烘入的缺省;在所有构建里都生效。",
           "kind": "other",
           "async": "sync",
           "status": "active",
@@ -290,9 +290,9 @@
         {
           "id": "p2s1",
           "label": "环境检查",
-          "detail": "检查当前地址能否运行(例如 file:// 不行);不行就画拦截页并返回 false,main.ts 随即放弃启动。",
+          "detail": "同步判断当前地址能否运行(file:// 直接拦;dev 构建下非规范 origin 只在控制台提示),不碰网络;拦下时画拦截页并返回 false,main.ts 随即放弃启动。",
           "kind": "guard",
-          "async": "await",
+          "async": "sync",
           "status": "active",
           "cites": [
             {
@@ -309,6 +309,11 @@
               "f": "src/main.ts",
               "l": 186,
               "m": "if (!ok) return;"
+            },
+            {
+              "f": "src/core/entryGuard.ts",
+              "l": 43,
+              "m": "if (href.startsWith('file://')) {"
             }
           ]
         },
@@ -941,7 +946,7 @@
         {
           "id": "p3s12",
           "label": "表现系统(窄回调注入)",
-          "detail": "脚步声、跟脚声、场景深度、角色照明、场景照明、画布舞台、世界粒子、手持挂件、燃烧、点火表演。依赖全部以回调传入,系统之间不互持实例。",
+          "detail": "脚步声、跟脚声、场景深度、角色照明、场景照明、画布舞台、世界粒子、手持挂件、燃烧、点火表演。依赖以回调注入为主;画布舞台与世界粒子另外直接拿到资源管理器实例(画布舞台还拿到渲染器的画布舞台层)。",
           "kind": "create",
           "async": "sync",
           "status": "active",
@@ -995,6 +1000,21 @@
               "f": "src/core/Game.ts",
               "l": 1340,
               "m": "this.ignitePerformer = new IgnitePerformer"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 1145,
+              "m": "assetManager: this.assetManager,"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 1146,
+              "m": "canvasStage: this.renderer.canvasStage,"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 1158,
+              "m": "assetManager: this.assetManager,"
             }
           ]
         },
@@ -1076,7 +1096,7 @@
         {
           "id": "p3s17",
           "label": "逐个 init(ctx)",
-          "detail": "ctx = 事件总线 / 旗标库 / 文案 / 资源管理;非空的 44 个系统依次 init(在这里订阅事件)。音频管理器在 init 中装“首次手势解锁”门。",
+          "detail": "ctx = 事件总线 / 旗标库 / 文案 / 资源管理;非空的 44 个系统依次 init(在这里订阅事件)。音频管理器在 init 中装三样:“首次手势解锁”门、每秒一次的音频上下文保活定时器、系统音效事件监听。",
           "kind": "init",
           "async": "sync",
           "status": "active",
@@ -1095,6 +1115,21 @@
               "f": "src/systems/AudioManager.ts",
               "l": 221,
               "m": "this.installAudioGestureGate();"
+            },
+            {
+              "f": "src/systems/AudioManager.ts",
+              "l": 222,
+              "m": "this.installAudioKeepAlive();"
+            },
+            {
+              "f": "src/systems/AudioManager.ts",
+              "l": 1578,
+              "m": "this.keepAliveTimer = setInterval(tick, 1000);"
+            },
+            {
+              "f": "src/systems/AudioManager.ts",
+              "l": 223,
+              "m": "this.installSystemSfxListeners();"
             }
           ]
         }
@@ -1103,7 +1138,7 @@
     {
       "id": "p4",
       "title": "start() ①:渲染器初始化与基础配置",
-      "summary": "start() 先 await 渲染器初始化(建 WebGL 上下文、画布挂进页面、装配舞台层序),之后串行 await:UI 皮肤贴图 → 文案表 → game_config 及三张可选表;图标与着色器预编译发出去不等。每个主要 await 之后都检查实例是否已被销毁并早退。",
+      "summary": "start() 先 await 渲染器初始化(建 WebGL 上下文、画布挂进页面、装配舞台层序),之后串行 await:UI 皮肤贴图 → 文案表 → game_config 及三张附表;图标与着色器预编译发出去不等。实例已被销毁的早退检查在渲染器初始化与 game_config 之后各有一处(UI 皮肤、文案表之后没有)。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -1114,6 +1149,11 @@
           "f": "src/core/Game.ts",
           "l": 2179,
           "m": "await this.renderer.init("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2254,
+          "m": "if (this.tearDownComplete) return;"
         }
       ],
       "steps": [
@@ -1251,7 +1291,7 @@
         {
           "id": "p4s6",
           "label": "注入揭幕前闸",
-          "detail": "只注入,不执行:每次装场景到 scene:ready 之后、揭幕之前,并行等“着色器编好”与“粒子预热”(都限时)。",
+          "detail": "只注入,不执行:每次装场景到 scene:ready 之后、揭幕之前,并行等“着色器编好”与“粒子预热”(都限时),随后在有行走面壳场时预建雷击落点候选。",
           "kind": "wire",
           "async": "sync",
           "status": "active",
@@ -1270,6 +1310,11 @@
               "f": "src/core/Game.ts",
               "l": 2233,
               "m": "this.vfxSystem.prepareForReveal(REVEAL_GATE_VFX_TIMEOUT_MS)"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 2240,
+              "m": "buildStrikeSurfaceCandidates({ space, shell"
             }
           ]
         },
@@ -1320,8 +1365,8 @@
         },
         {
           "id": "p4s10",
-          "label": "game_config 与三张可选表",
-          "detail": "串行读:game_config(整包合并进缺省)→ 叠图表 → 挂件预设 → 挂件效果;缺文件回落缺省。",
+          "label": "game_config 与三张附表",
+          "detail": "串行读:game_config(整包合并进缺省)→ 叠图表 → 挂件预设 → 挂件效果(后两张走“可选”读取);任一张读失败都回落缺省或空表,不抛。",
           "kind": "load",
           "async": "await",
           "status": "active",
@@ -1361,7 +1406,7 @@
         {
           "id": "p4s11",
           "label": "开局旗标 startupFlags",
-          "detail": "配置里的开局旗标只在非 dev 模式时写进旗标库;mode=dev 时跳过。",
+          "detail": "配置里的开局旗标只在非 dev 模式时写进旗标库;mode=dev 时跳过。此步在启动方式分叉之前,所以标题态、读档、新游戏三种启动都会执行。",
           "kind": "load",
           "async": "sync",
           "status": "active",
@@ -1386,7 +1431,7 @@
         {
           "id": "p4s12",
           "label": "按配置落窗口/视口/文字色板/健康/昼夜",
-          "detail": "色板必须早于任何 UI 建文字;健康系统 configure 后按“重 init 与首次一致”重跑 init;昼夜无条件 configure。",
+          "detail": "色板必须早于任何 UI 建文字;配置了 health 时健康系统 configure 后按“重 init 与首次一致”重跑 init;昼夜无条件 configure。另落玩家待机行为与头顶气泡缺省缩放。",
           "kind": "init",
           "async": "sync",
           "status": "active",
@@ -1420,6 +1465,16 @@
               "f": "src/core/Game.ts",
               "l": 2282,
               "m": "this.dayManager.configure(this.gameConfig.dayNight)"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 2271,
+              "m": "if (this.gameConfig.health) {"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 2264,
+              "m": "this.playerIdleBehaviorSystem.setConfig("
             }
           ]
         }
@@ -1428,7 +1483,7 @@
     {
       "id": "p5",
       "title": "start() ②:UI、过场与存档装配",
-      "summary": "同步创建全部 UI 件与面板、过场渲染器与过场管理器(并回填进系统注册表);然后创建存档管理器,串行 await 四份持久化内容:存档槽镜像、文字显示偏好、气味显示偏好、混音偏好。",
+      "summary": "同步创建常驻展示件、对白/遭遇/HUD 等 UI 件与全屏面板、过场渲染器与过场管理器(并回填进系统注册表);然后创建存档管理器,串行 await 四份持久化内容:存档槽镜像、文字显示偏好、气味显示偏好、混音偏好;之后接可存档判据与重试系统,再建主菜单(它在构造时就要同步查存档槽)、规矩使用面板与调试面板。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -1439,6 +1494,11 @@
           "f": "src/core/Game.ts",
           "l": 2594,
           "m": "this.saveManager = new SaveManager("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2665,
+          "m": "this.menuUI = new MenuUI("
         }
       ],
       "steps": [
@@ -1665,7 +1725,7 @@
         {
           "id": "p5s9",
           "label": "读入存档槽镜像",
-          "detail": "取持久化后端,把全部存档槽一次性读进内存镜像(菜单同步查询用);失败降级为无档,不抛。",
+          "detail": "取持久化后端,把全部存档槽一次性读进内存镜像(菜单同步查询用),再把 localStorage 旧档迁移上来;失败降级为无档,不抛。",
           "kind": "load",
           "async": "await",
           "status": "active",
@@ -1684,6 +1744,11 @@
               "f": "src/core/SaveManager.ts",
               "l": 124,
               "m": "await this.store.readAll(SAVE_NAMESPACE)"
+            },
+            {
+              "f": "src/core/SaveManager.ts",
+              "l": 129,
+              "m": "await this.migrateLegacySaves();"
             }
           ]
         },
@@ -1715,7 +1780,7 @@
         {
           "id": "p5s11",
           "label": "可存档判据与重试系统接线",
-          "detail": "只有探索/界面态、未倒下、叙事空闲时可存档;重试检查点的拍快照/读回/死亡处理接上存档管理器。",
+          "detail": "可存档 = 未倒下 且 无系统说明卡打开 且 处于探索/界面覆盖态 且 叙事空闲;重试检查点的拍快照/读回/死亡处理接上存档管理器,健康耗尽交给重试系统。",
           "kind": "wire",
           "async": "sync",
           "status": "active",
@@ -1729,6 +1794,16 @@
               "f": "src/core/Game.ts",
               "l": 2629,
               "m": "this.retrySystem.connect({"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 2624,
+              "m": "this.systemNotePauseDepth > 0) return false;"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 2663,
+              "m": "this.healthSystem.setDepletionHandler("
             }
           ]
         },
@@ -1839,7 +1914,7 @@
         {
           "id": "p6s1",
           "label": "场景装载回调注入",
-          "detail": "玩家落点、镜头、场景音频、交互表、深度/照明载荷装载器、场景照明装载器、背景摆动装载器、进场动作执行器——都只在场景装载时被调用。",
+          "detail": "玩家落点、镜头、场景音频、区域表、交互表、深度/照明载荷装载器、场景照明装载器、背景摆动装载器、进场动作执行器,以及对应的三个卸载器——都只在场景装载/卸载时被调用。",
           "kind": "wire",
           "async": "sync",
           "status": "active",
@@ -1888,13 +1963,33 @@
               "f": "src/core/Game.ts",
               "l": 6555,
               "m": "this.sceneManager.setSceneEnterRunner(async"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 6368,
+              "m": "this.sceneManager.setZoneSetter("
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 6491,
+              "m": "this.sceneManager.setLightingUnloader("
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 6516,
+              "m": "this.sceneManager.setSwayUnloader("
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 6530,
+              "m": "this.sceneManager.setDepthUnloader("
             }
           ]
         },
         {
           "id": "p6s2",
           "label": "统一角色光路装配(已关停)",
-          "detail": "场景照明装载回调里仍调用统一角色光照装配,但该函数第一句就因开关为 false 拆除并返回。",
+          "detail": "场景照明装载回调里仍调用统一角色光照装配;该函数开头因开关为 false 走早退分支:拆除统一路径、让场上实体重新取一次受光着色器,然后返回,统一路径本身不装。",
           "kind": "wire",
           "async": "sync",
           "status": "disabled",
@@ -1913,6 +2008,11 @@
               "f": "src/core/Game.ts",
               "l": 6609,
               "m": "this.unifiedCharLighting.teardown();"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 6610,
+              "m": "this.rebuildEntityLitShaders();"
             }
           ]
         },
@@ -2495,7 +2595,7 @@
     {
       "id": "p9",
       "title": "start() ⑥:定义表并行加载与玩家装配",
-      "summary": "启动里唯一一处大并行:Promise.all 同时读 22 份定义/配置;全部完成后 await 文本引用查找表,接文本解析与游戏日志,挂调试面板页;最后 await 玩家形象装配(dev 模式先挂占位、后台补真形象)。",
+      "summary": "定义表一次性并行加载:Promise.all 同时读 21 份定义/配置;全部完成后 await 文本引用查找表(其内部又并行读一批场景 JSON),接文本解析与游戏日志,挂调试面板页;最后 await 玩家形象装配(dev 模式先挂占位、后台补真形象)。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -2511,8 +2611,8 @@
       "steps": [
         {
           "id": "p9s1",
-          "label": "22 项定义并行加载",
-          "detail": "旗标注册表、角色注册表、气味档案、脚步集、物品、规矩、任务、叙事包、遭遇、压力条、位面、日程、信号提示、闲聊、音频配置、过场、档案、线索、说明卡、商店、地图配置同时读;全部完成才继续,之后检查销毁早退。",
+          "label": "21 项定义并行加载",
+          "detail": "旗标注册表、角色注册表、气味档案、脚步集、物品、规矩、任务、叙事包、遭遇、压力条、位面、日程、信号提示、闲聊、音频配置、过场、档案、线索、说明卡、商店、地图配置,共 21 项同时读;全部完成才继续,之后检查销毁早退。",
           "kind": "load",
           "async": "parallel",
           "status": "active",
@@ -2551,6 +2651,11 @@
               "f": "src/core/Game.ts",
               "l": 4098,
               "m": "if (this.tearDownComplete) return;"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 4096,
+              "m": "this.mapUI.loadConfig(),"
             }
           ]
         },
@@ -2582,7 +2687,7 @@
         {
           "id": "p9s3",
           "label": "文本引用查找表",
-          "detail": "构建富文本引用([tag:…])解析所需的名称查找表。",
+          "detail": "构建富文本引用([tag:…])解析所需的场景名/NPC 名查找表:先 await 读地图配置,再 Promise.all 并行读地图上所有场景外加首场景、回退场景的场景 JSON,取其中 NPC 名。",
           "kind": "load",
           "async": "await",
           "status": "active",
@@ -2591,6 +2696,21 @@
               "f": "src/core/Game.ts",
               "l": 4100,
               "m": "await this.refreshTextResolveLookups()"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 2017,
+              "m": "await this.assetManager.loadJson<MapNodeDef[] | MapConfigFile>(TEXT_URLS.mapConfig)"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 2032,
+              "m": "await Promise.all("
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 2036,
+              "m": "sceneJsonUrl(sid),"
             }
           ]
         },
@@ -2816,7 +2936,7 @@
         {
           "id": "p10s2",
           "label": "主 tick 包装",
-          "detail": "每帧算 dt(上限 0.1 秒);有逻辑冻结原因(断点/编辑模式)时只清输入沿;固定步进调试模式下不走 tick;否则调用 tick(dt)。",
+          "detail": "每帧算 dt(上限 0.1 秒);有逻辑冻结原因(叙事调试断点 narrative / 编辑模式 authoring)时只清输入沿;固定步进调试模式下不走 tick;否则调用 tick(dt)。",
           "kind": "frame",
           "async": "sync",
           "status": "active",
@@ -2850,6 +2970,11 @@
               "f": "src/core/Game.ts",
               "l": 4267,
               "m": "if (!this.fixedTickMode) this.tick(dt);"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 500,
+              "m": "type LogicFreezeReason = 'narrative' | 'authoring';"
             }
           ]
         },
@@ -3041,7 +3166,7 @@
         {
           "id": "p11s5",
           "label": "背景、热点、NPC 实例化",
-          "detail": "背景容器加进背景层;热点与 NPC 逐个 await 实例化。",
+          "detail": "背景各层按 z 排序后逐张 await 读贴图并铺满世界尺寸(无背景配置时生成占位背景),背景容器加进背景层;热点与 NPC 逐个 await 实例化,再补上演出留下的 NPC。",
           "kind": "create",
           "async": "await",
           "status": "active",
@@ -3060,6 +3185,16 @@
               "f": "src/systems/SceneManager.ts",
               "l": 1884,
               "m": "const npc = await this.instantiateNpc("
+            },
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 1819,
+              "m": "await this.assetManager.loadTexture(layer.image)"
+            },
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 1903,
+              "m": "await this.instantiateNpc(npcDef, snap)"
             }
           ]
         },
@@ -3095,8 +3230,8 @@
         },
         {
           "id": "p11s7",
-          "label": "深度/照明载荷、场景照明、背景摆动",
-          "detail": "串行 await:深度载荷(内含角色照明载荷)→ 场景照明(成功则用受光网格替换原背景精灵)→ 背景摆动。",
+          "label": "深度与角色照明载荷、场景照明、背景摆动",
+          "detail": "串行 await:① 深度装载器 = 深度系统载入 → 同步建实体光照环境与辐照 probe(game_config.entityLighting 开启时)→ await 角色照明烘焙载荷;② 场景照明装载器 = 读场景照明,成功则先渲一次缓存、把同一次打包的实体灯交给角色照明、调用已关停的统一角色装配(早退)、并在此装“打光版”草木摆动,返回受光网格替换原背景精灵(原精灵设为不渲染);③ 背景摆动装载器只在背景仍是原精灵(未打光)时才跑。",
           "kind": "load",
           "async": "await",
           "status": "active",
@@ -3105,6 +3240,16 @@
               "f": "src/systems/SceneManager.ts",
               "l": 1916,
               "m": "await this.depthLoader(sceneId, sceneData"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 6419,
+              "m": "await this.sceneDepthSystem.load("
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 6446,
+              "m": "this.setupSceneLighting(sceneData, worldToPixelX, worldToPixelY)"
             },
             {
               "f": "src/core/Game.ts",
@@ -3122,6 +3267,31 @@
               "m": "await this.sceneLighting.load(sceneId, sceneData"
             },
             {
+              "f": "src/core/Game.ts",
+              "l": 6469,
+              "m": "this.sceneLighting.update(this.renderer.app.renderer);"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 6475,
+              "m": "this.characterLighting.applyLights("
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 6485,
+              "m": "await this.buildSway(sceneId, sceneData, primary, undefined, 'lit')"
+            },
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 1929,
+              "m": "this.primaryBgSprite.renderable = false;"
+            },
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 1938,
+              "m": "this.primaryBgSprite?.renderable && this.sceneContainerBg"
+            },
+            {
               "f": "src/systems/SceneManager.ts",
               "l": 1940,
               "m": "await this.swayLoader("
@@ -3130,6 +3300,36 @@
         },
         {
           "id": "p11s8",
+          "label": "世界滤镜",
+          "detail": "场景配了 filterId 时 await 读入并挂上整个世界容器的滤镜(失败则清掉);没配则清掉滤镜。之后进度条置满。",
+          "kind": "load",
+          "async": "await",
+          "status": "active",
+          "cites": [
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 1951,
+              "m": "if (sceneData.filterId) {"
+            },
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 1954,
+              "m": "await this.renderer.loadAndSetWorldFilter(sceneData.filterId)"
+            },
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 1960,
+              "m": "this.renderer.clearWorldFilter();"
+            },
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 1964,
+              "m": "onLoadProgress(1, `就绪 · ${sceneId}`)"
+            }
+          ]
+        },
+        {
+          "id": "p11s9",
           "label": "发 scene:enter / scene:ready",
           "detail": "同步发出;监听方(HUD、生存系统、场景就绪处理等)在此给实体挂滤镜/影子、重建侵袭源,都在揭幕之前完成。",
           "kind": "wire",
@@ -3154,7 +3354,7 @@
           ]
         },
         {
-          "id": "p11s9",
+          "id": "p11s10",
           "label": "揭幕前闸",
           "detail": "遮罩仍在:限时等着色器编好、粒子预热完;闸失败只记警告照常揭幕。",
           "kind": "await",
@@ -3174,7 +3374,7 @@
           ]
         },
         {
-          "id": "p11s10",
+          "id": "p11s11",
           "label": "400ms 淡入(首场景揭幕)",
           "detail": "遮罩 alpha 1→0 后移除;淡入由场景管理器自己的 requestAnimationFrame 循环驱动,不走 Pixi ticker。",
           "kind": "frame",
@@ -3199,7 +3399,7 @@
           ]
         },
         {
-          "id": "p11s11",
+          "id": "p11s12",
           "label": "发 scene:revealed",
           "detail": "场景可见之后的事实通报(叙事包导演在此评估开拍;若处于切场态则切回探索)。",
           "kind": "wire",
@@ -3224,7 +3424,7 @@
           ]
         },
         {
-          "id": "p11s12",
+          "id": "p11s13",
           "label": "场景根进场动作 onEnter",
           "detail": "场景 JSON 里配的进场动作批经动作执行器 await 执行(以场景为 owner)。",
           "kind": "await",
@@ -3244,9 +3444,29 @@
           ]
         },
         {
-          "id": "p11s13",
+          "id": "p11s14",
+          "label": "执行进场动作里登记的切场景",
+          "detail": "首场景走的是直接装载(不经切场景队列),所以进场动作批里发出的切场景请求只登记不执行,在进场动作跑完后由这里统一执行。",
+          "kind": "other",
+          "async": "sync",
+          "status": "active",
+          "cites": [
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 2019,
+              "m": "if (!this.isSwitching) {"
+            },
+            {
+              "f": "src/systems/SceneManager.ts",
+              "l": 2020,
+              "m": "this.consumePendingReentrantSwitch();"
+            }
+          ]
+        },
+        {
+          "id": "p11s15",
           "label": "序章过场",
-          "detail": "game_config 配了 initialCutscene 且“已播过”旗标未置时:切过场态 → await 播完 → 置已播旗标 → 无论成败回探索态。",
+          "detail": "game_config 配了 initialCutscene 且“已播过”旗标未置时:切过场态 → await 播完 → 播成功才置已播旗标(失败不置,下次启动重试)→ 无论成败回探索态。在首场景装载(含进场动作)整个完成之后才开始。",
           "kind": "await",
           "async": "await",
           "status": "active",
@@ -3280,6 +3500,11 @@
               "f": "src/core/Game.ts",
               "l": 8773,
               "m": "this.stateController.setState(GameState.Exploring);"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 8771,
+              "m": "console.warn('Game: 序章过场播放失败'"
             }
           ]
         }
@@ -3340,9 +3565,9 @@
         {
           "id": "p12s2",
           "label": "叙事调试桥(仅 DEV)",
-          "detail": "放在 dev 直达路由之前装,以便 warp 过程可被调试器观测;生产构建函数首句返回。",
+          "detail": "只在 DEV 构建:先装控制台调试口;桥本身只在地址栏 ?ndbg=1 时立即装,?ndbg=0 时不装,地址栏没写时发请求问工程文件里的开关、不等结果,回来后若开着再装。放在 dev 直达路由之前调用。生产构建函数首句返回。",
           "kind": "wire",
-          "async": "sync",
+          "async": "fire-and-forget",
           "status": "dev-only",
           "cites": [
             {
@@ -3354,6 +3579,21 @@
               "f": "src/core/Game.ts",
               "l": 4365,
               "m": "if (!import.meta.env.DEV) return;"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 4366,
+              "m": "this.installNarrativeDebugConsoleApi();"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 4370,
+              "m": "if (startup.mode === 'on') {"
+            },
+            {
+              "f": "src/core/Game.ts",
+              "l": 4379,
+              "m": "void fetchNarrativeDebugPref().then("
             }
           ]
         },
@@ -3515,7 +3755,7 @@
     {
       "id": "b4",
       "label": "读档槽启动(load_slot)",
-      "detail": "跳过首场景,直接读档:先对当前全系统状态拍快照 → 把存档分发到各系统 → 卸载并重载存档里的场景(调用 loadScene 时不带遮罩/淡入回调)→ 成功置探索态。无槽位/空槽/坏档返回 false,继续往下判 dev 直达或新游戏;中途失败按快照回滚。",
+      "detail": "跳过首场景,直接读档:先标记“本页已开过局”;存档先解析校验(坏档直接拒绝)→ 对当前全系统状态拍快照 → 把存档分发到各系统 → 撤掉旧区域后卸载并重载存档里的场景(调用 loadScene 时不带遮罩/淡入回调)→ 成功置探索态。无槽位/空槽/坏档返回 false;分发或重载中途失败先按快照回滚并重载快照场景,同样返回 false;返回 false 时继续往下判 dev 直达或新游戏。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -3561,13 +3801,33 @@
           "f": "src/core/Game.ts",
           "l": 4943,
           "m": "this.stateController.setState(GameState.Exploring);"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 357,
+          "m": "payload = JSON.parse(raw) as SavePayload;"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 390,
+          "m": "this.distributor(snapshot);"
+        },
+        {
+          "f": "src/core/SaveManager.ts",
+          "l": 391,
+          "m": "await this.sceneReloader(snapshotSceneId);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2601,
+          "m": "this.zoneSystem.clearActiveZonesForRestore();"
         }
       ]
     },
     {
       "id": "b5",
       "label": "dev 直达(DEV 构建 + mode=dev)",
-      "detail": "先 loadScene('dev_room')(不经 loadInitialScene,无遮罩/淡入回调),读叙事 warp 表,建 DevModeUI(visualCapture 时不打开)与 window.__gameDevAPI,把过场/叙事 warp/场景/小游戏预览直达动作存成 devStartupRoute,等收尾阶段再执行。生产构建整支被编译期常量剔除。",
+      "detail": "先 loadScene('dev_room')(不经 loadInitialScene,无遮罩/淡入回调),读叙事 warp 表,建 DevModeUI(visualCapture 时不打开)与 window.__gameDevAPI,把直达动作存成 devStartupRoute,等收尾阶段再执行:有 play_cutscene 先播过场;之后按 叙事 warp → 跳场景 → 水域 / 转盘 / 扎纸预览 的先后只走第一条命中的。生产构建整支被编译期常量剔除。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -3608,6 +3868,26 @@
           "f": "src/core/Game.ts",
           "l": 8634,
           "m": "this.devStartupRoute = async () =>"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8635,
+          "m": "if (playCutscene) await this.devPlayCutscene("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8638,
+          "m": "await this.enterNarrativeWarp(nw);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8643,
+          "m": "if (ds !== DEV_SCENE) await this.devLoadScene(ds);"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8649,
+          "m": "await this.waterMinigameManager.start(wp);"
         }
       ]
     },
@@ -3658,7 +3938,7 @@
     {
       "id": "b8",
       "label": "new_game 参数",
-      "detail": "不参与 start() 的分叉;只列在“显式引导参数”里,作用是让打包烘入的启动缺省让位。main.ts 引入了该常量但未使用。",
+      "detail": "不参与 start() 的分叉;标题界面点「新游戏」整页重启时带上它,它只列在“显式引导参数”里,作用是让打包烘入的启动缺省整体让位(否则缺省会把玩家又送回标题)。",
       "cites": [
         {
           "f": "src/core/EventBridge.ts",
@@ -3666,21 +3946,26 @@
           "m": "export const NEW_GAME_PARAM = 'new_game'"
         },
         {
+          "f": "src/core/EventBridge.ts",
+          "l": 252,
+          "m": "this.restartPage({ [NEW_GAME_PARAM]: '1' });"
+        },
+        {
           "f": "src/core/bootParams.ts",
           "l": 34,
           "m": "NEW_GAME_PARAM,"
         },
         {
-          "f": "src/main.ts",
-          "l": 3,
-          "m": "import { LOAD_SLOT_PARAM, NEW_GAME_PARAM, TITLE_BOOT_PARAM }"
+          "f": "src/core/bootParams.ts",
+          "l": 61,
+          "m": "if (hasExplicitBoot(params)) return params;"
         }
       ]
     },
     {
       "id": "b9",
       "label": "visualCapture(自动视觉基准,仅 dev 构建)",
-      "detail": "渲染分辨率固定为 1;dev 分支里不打开 DevModeUI 遮罩。",
+      "detail": "渲染分辨率固定为 1;dev 分支里不打开 DevModeUI 遮罩。它不在跳过“点击开始”门的条件里,单独带它仍要过门。",
       "cites": [
         {
           "f": "src/main.ts",
@@ -3696,13 +3981,18 @@
           "f": "src/core/Game.ts",
           "l": 8515,
           "m": "if (!visualCapture) this.devModeUI.open()"
+        },
+        {
+          "f": "src/main.ts",
+          "l": 168,
+          "m": "const skipStartGate = Boolean("
         }
       ]
     },
     {
       "id": "b10",
       "label": "启动失败",
-      "detail": "start() 任一处抛出(包括 22 项并行加载中任一项被拒)都会让 Promise 被拒 → main.ts 销毁实例并显示 DOM 错误提示。",
+      "detail": "start() 任一处抛出(包括 21 项并行加载中任一项被拒、首场景装载失败——此时先撤全黑遮罩再抛)都会让 Promise 被拒 → main.ts 销毁实例并显示 DOM 错误提示。",
       "cites": [
         {
           "f": "src/main.ts",
@@ -3718,6 +4008,16 @@
           "f": "src/core/Game.ts",
           "l": 4073,
           "m": "await Promise.all(["
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2049,
+          "m": "this.removeTransitionOverlay();"
+        },
+        {
+          "f": "src/systems/SceneManager.ts",
+          "l": 2050,
+          "m": "throw e;"
         }
       ]
     }
@@ -3864,8 +4164,8 @@
       ]
     },
     {
-      "label": "22 项并行加载的完成顺序与出错传播",
-      "why": "各项并行,谁先完成取决于 I/O;任一项被拒会让整个 start() 被拒,但 22 个 loadDefs 内部是否各自吞错本图未逐项核对。",
+      "label": "21 项并行加载的完成顺序与出错传播",
+      "why": "各项并行,谁先完成取决于 I/O;任一项被拒会让整个 start() 被拒,但 21 个 loadDefs 内部是否各自吞错本图未逐项核对。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -3907,7 +4207,7 @@
     },
     {
       "label": "首帧时音频是否已解锁",
-      "why": "音频管理器 init 时装手势门,是否直接解锁取决于浏览器 navigator.userActivation 的运行时状态(是否经过“点击开始”门、宿主是否免手势),静态不可知。",
+      "why": "音频管理器 init 时装手势门并起保活定时器;是否直接解锁取决于浏览器 navigator.userActivation 与自动播放策略的运行时状态(是否经过“点击开始”门、宿主是否免手势),静态不可知。",
       "cites": [
         {
           "f": "src/systems/AudioManager.ts",
@@ -3918,6 +4218,11 @@
           "f": "src/systems/AudioManager.ts",
           "l": 1719,
           "m": "return ua?.hasBeenActive === true;"
+        },
+        {
+          "f": "src/systems/AudioManager.ts",
+          "l": 1578,
+          "m": "this.keepAliveTimer = setInterval(tick, 1000);"
         }
       ]
     }

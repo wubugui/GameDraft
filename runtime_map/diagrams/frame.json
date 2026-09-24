@@ -88,7 +88,7 @@
     {
       "id": "e4",
       "label": "固定步调试模式：tick 改由调试命令驱动",
-      "detail": "fixedTickMode 打开时 mainTick 不调 tick；改由调试命令一次推 N 个固定步：每步 tick(dt) → HUD 固定步 → 让出一轮事件循环，最后手动提交一次渲染。开关只能经开发构建的运行时命令通道打开。",
+      "detail": "fixedTickMode 打开时 mainTick 不调 tick；改由调试命令一次推 N 个固定步：每步 tick(dt) → HUD 固定步 → 让出一轮事件循环，最后手动提交一次渲染。开关只经开发构建的运行时命令通道打开；同一个步进函数还经开发模式页内接口 stepFixedTicks 直接暴露（该入口不检查开关，开关关着时会在 mainTick 之外额外调 tick）。",
       "status": "dev-only",
       "cites": [
         {
@@ -114,6 +114,16 @@
         {
           "f": "src/core/Game.ts",
           "l": 9715,
+          "m": "if (!import.meta.env.DEV) return;"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8596,
+          "m": "stepFixedTicks: (ticks, dtMs) => this.debugStepTicks(ticks, dtMs)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8426,
           "m": "if (!import.meta.env.DEV) return;"
         }
       ]
@@ -153,12 +163,22 @@
     {
       "id": "e6",
       "label": "拆除时摘掉",
-      "detail": "destroy 时把 mainTick 从 ticker 上摘除。",
+      "detail": "destroy 时把 mainTick、WebGL 错误排空、角色着色帧组同步三个回调依次从 ticker 上摘除。",
       "cites": [
         {
           "f": "src/core/Game.ts",
           "l": 10196,
           "m": "this.renderer.app.ticker.remove(this.mainTick)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10204,
+          "m": "this.renderer.app.ticker.remove(this.glPostRenderDrain)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 10212,
+          "m": "this.renderer.app.ticker.remove(this.charLitFrameSync)"
         }
       ]
     }
@@ -180,6 +200,18 @@
           "l": 10527,
           "m": "this.guidanceLayerUI?.applyVisibility()"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame",
+        "Dead"
       ]
     },
     {
@@ -198,6 +230,17 @@
           "l": 10533,
           "m": "this.lastFps = dt > 0 ? 1 / dt : 0"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -216,6 +259,17 @@
           "l": 10534,
           "m": "this.playTimeMs += dt * 1000"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -234,6 +288,17 @@
           "l": 10535,
           "m": "const worldPaused = this.isWorldPaused()"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -258,6 +323,14 @@
           "l": 46,
           "m": "advance(dtSec: number): void"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -276,6 +349,17 @@
           "l": 10539,
           "m": "this.camera.setPixelSnapTranslation("
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -284,7 +368,7 @@
       "label": "位面对账",
       "code": "this.planeReconciler.update(dt)",
       "gate": "always",
-      "gateText": "无条件（排在探索分支之前）",
+      "gateText": "每帧调用（排在探索分支之前）；内部：状态刚回到探索态那一帧重贴位面镜头 / 光照档并补刷挂起的区域，非探索态随即返回；探索态且当前位面配了掉阳气时按秒扣（发出不等）",
       "group": "世界级系统（不分游戏状态）",
       "status": "active",
       "async": "sync",
@@ -293,7 +377,33 @@
           "f": "src/core/Game.ts",
           "l": 10543,
           "m": "this.planeReconciler.update(dt)"
+        },
+        {
+          "f": "src/systems/PlaneReconciler.ts",
+          "l": 306,
+          "m": "const entered = state === GameState.Exploring"
+        },
+        {
+          "f": "src/systems/PlaneReconciler.ts",
+          "l": 319,
+          "m": "if (state !== GameState.Exploring) return;"
+        },
+        {
+          "f": "src/systems/PlaneReconciler.ts",
+          "l": 328,
+          "m": "void b.damagePlayer(whole)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -312,6 +422,17 @@
           "l": 10545,
           "m": "this.smellSystem.update(dt)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -330,6 +451,14 @@
           "l": 10549,
           "m": "if (!worldPaused) this.canvasStageSystem.update(dt)"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -348,6 +477,14 @@
           "l": 10551,
           "m": "if (!worldPaused) this.breathingOverlaySystem.update(dt)"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -360,7 +497,7 @@
       "group": "世界级系统（不分游戏状态）",
       "status": "active",
       "async": "fire-and-forget",
-      "note": "需要换背景时发起场景重载，不等它完成。",
+      "note": "外观随时段变化时发起场景重载，不等它完成；外观不变只重贴本场景灯光参数（同步）。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -376,7 +513,23 @@
           "f": "src/core/Game.ts",
           "l": 9373,
           "m": "void this.reloadSceneForPhase("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 9367,
+          "m": "if (def) this.applySceneLightingParams(def);"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -400,6 +553,17 @@
           "l": 287,
           "m": "if (!b.isExploring()) return;"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -428,6 +592,9 @@
           "l": 10563,
           "m": "this.cameraFollowTargetId = null;"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -451,6 +618,17 @@
           "l": 271,
           "m": "this.binding.canAcceptInput()"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -469,6 +647,17 @@
           "l": 10574,
           "m": "this.playerIdleBehaviorSystem.update(dt)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -492,6 +681,17 @@
           "l": 364,
           "m": "if (!exploring || this.defs.size === 0) return;"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -515,6 +715,9 @@
           "l": 10577,
           "m": "if (this.stateController.currentState === GameState.Exploring) {"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -538,6 +741,9 @@
           "l": 10577,
           "m": "if (this.stateController.currentState === GameState.Exploring) {"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -561,6 +767,9 @@
           "l": 10577,
           "m": "if (this.stateController.currentState === GameState.Exploring) {"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -584,6 +793,9 @@
           "l": 10577,
           "m": "if (this.stateController.currentState === GameState.Exploring) {"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -607,6 +819,9 @@
           "l": 10577,
           "m": "if (this.stateController.currentState === GameState.Exploring) {"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -630,6 +845,9 @@
           "l": 10577,
           "m": "if (this.stateController.currentState === GameState.Exploring) {"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -648,6 +866,9 @@
           "l": 10587,
           "m": "if (this.inputManager.wasKeyJustPressed(SNIFF_KEY)) this.smellSystem.sniff()"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -666,6 +887,9 @@
           "l": 10588,
           "m": "this.interactionSystem.update(dt)"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -684,6 +908,9 @@
           "l": 10592,
           "m": "this.sceneManager.flushPendingTimeZoneRefresh()"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -702,6 +929,9 @@
           "l": 10593,
           "m": "this.zoneSystem.update(dt)"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -720,6 +950,9 @@
           "l": 10595,
           "m": "npc.cutsceneUpdate(dt)"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -738,6 +971,9 @@
           "l": 10597,
           "m": "this.setCameraAnchor(this.player.x, this.player.y)"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -756,6 +992,9 @@
           "l": 10598,
           "m": "this.camera.follow(this.player.x, this.player.y)"
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -779,6 +1018,9 @@
           "l": 10601,
           "m": "if (this.stateController.currentState === GameState.Cutscene) {"
         }
+      ],
+      "runsIn": [
+        "Cutscene"
       ]
     },
     {
@@ -802,6 +1044,9 @@
           "l": 10601,
           "m": "if (this.stateController.currentState === GameState.Cutscene) {"
         }
+      ],
+      "runsIn": [
+        "Cutscene"
       ]
     },
     {
@@ -825,6 +1070,9 @@
           "l": 10607,
           "m": "npc.cutsceneUpdate(dt)"
         }
+      ],
+      "runsIn": [
+        "Cutscene"
       ]
     },
     {
@@ -848,6 +1096,9 @@
           "l": 10601,
           "m": "if (this.stateController.currentState === GameState.Cutscene) {"
         }
+      ],
+      "runsIn": [
+        "Cutscene"
       ]
     },
     {
@@ -871,6 +1122,11 @@
           "l": 10613,
           "m": "[GameState.Cutscene, GameState.ActionSequence, GameState.Dialogue]"
         }
+      ],
+      "runsIn": [
+        "Cutscene",
+        "ActionSequence",
+        "Dialogue"
       ]
     },
     {
@@ -894,6 +1150,11 @@
           "l": 10613,
           "m": "[GameState.Cutscene, GameState.ActionSequence, GameState.Dialogue]"
         }
+      ],
+      "runsIn": [
+        "Cutscene",
+        "ActionSequence",
+        "Dialogue"
       ]
     },
     {
@@ -912,6 +1173,17 @@
           "l": 10621,
           "m": "this.cutsceneRenderer.tickDialogueMarks(dt)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -930,6 +1202,17 @@
           "l": 10623,
           "m": "this.cutsceneRenderer.tickTypewriters(dt)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -948,6 +1231,17 @@
           "l": 10625,
           "m": "this.cutsceneRenderer.tickDialogueBubbles()"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -971,6 +1265,9 @@
           "l": 10627,
           "m": "if (this.stateController.currentState === GameState.Dialogue) {"
         }
+      ],
+      "runsIn": [
+        "Dialogue"
       ]
     },
     {
@@ -994,6 +1291,9 @@
           "l": 10627,
           "m": "if (this.stateController.currentState === GameState.Dialogue) {"
         }
+      ],
+      "runsIn": [
+        "Dialogue"
       ]
     },
     {
@@ -1017,6 +1317,9 @@
           "l": 10627,
           "m": "if (this.stateController.currentState === GameState.Dialogue) {"
         }
+      ],
+      "runsIn": [
+        "Dialogue"
       ]
     },
     {
@@ -1040,6 +1343,9 @@
           "l": 10627,
           "m": "if (this.stateController.currentState === GameState.Dialogue) {"
         }
+      ],
+      "runsIn": [
+        "Dialogue"
       ]
     },
     {
@@ -1063,6 +1369,9 @@
           "l": 10639,
           "m": "if (this.stateController.currentState === GameState.Encounter) {"
         }
+      ],
+      "runsIn": [
+        "Encounter"
       ]
     },
     {
@@ -1086,6 +1395,9 @@
           "l": 10639,
           "m": "if (this.stateController.currentState === GameState.Encounter) {"
         }
+      ],
+      "runsIn": [
+        "Encounter"
       ]
     },
     {
@@ -1109,15 +1421,18 @@
           "l": 10639,
           "m": "if (this.stateController.currentState === GameState.Encounter) {"
         }
+      ],
+      "runsIn": [
+        "Encounter"
       ]
     },
     {
       "id": "s46",
       "order": 46,
-      "label": "水中小游戏（water）",
+      "label": "水边小游戏",
       "code": "this.waterMinigameManager.update(dt)",
       "gate": "state:Minigame",
-      "gateText": "小游戏态（三个小游戏管理器都会被调用，各自判断是否在玩）",
+      "gateText": "小游戏态（四个管理器都会被调用；共同基类里没有进行中的一局就直接返回）",
       "group": "小游戏态分支",
       "status": "active",
       "async": "sync",
@@ -1131,7 +1446,20 @@
           "f": "src/core/Game.ts",
           "l": 10647,
           "m": "if (this.stateController.currentState === GameState.Minigame) {"
+        },
+        {
+          "f": "src/systems/waterMinigame/WaterMinigameManager.ts",
+          "l": 44,
+          "m": "水边小游戏局内"
+        },
+        {
+          "f": "src/systems/minigameSession.ts",
+          "l": 158,
+          "m": "if (!this.scene || !this.active) return;"
         }
+      ],
+      "runsIn": [
+        "Minigame"
       ]
     },
     {
@@ -1155,6 +1483,9 @@
           "l": 10647,
           "m": "if (this.stateController.currentState === GameState.Minigame) {"
         }
+      ],
+      "runsIn": [
+        "Minigame"
       ]
     },
     {
@@ -1178,6 +1509,9 @@
           "l": 10647,
           "m": "if (this.stateController.currentState === GameState.Minigame) {"
         }
+      ],
+      "runsIn": [
+        "Minigame"
       ]
     },
     {
@@ -1201,6 +1535,9 @@
           "l": 10647,
           "m": "if (this.stateController.currentState === GameState.Minigame) {"
         }
+      ],
+      "runsIn": [
+        "Minigame"
       ]
     },
     {
@@ -1224,6 +1561,9 @@
           "l": 10647,
           "m": "if (this.stateController.currentState === GameState.Minigame) {"
         }
+      ],
+      "runsIn": [
+        "Minigame"
       ]
     },
     {
@@ -1247,6 +1587,9 @@
           "l": 10647,
           "m": "if (this.stateController.currentState === GameState.Minigame) {"
         }
+      ],
+      "runsIn": [
+        "Minigame"
       ]
     },
     {
@@ -1270,6 +1613,9 @@
           "l": 10661,
           "m": "if (this.stateController.currentState === GameState.ActionSequence) {"
         }
+      ],
+      "runsIn": [
+        "ActionSequence"
       ]
     },
     {
@@ -1293,6 +1639,9 @@
           "l": 10661,
           "m": "if (this.stateController.currentState === GameState.ActionSequence) {"
         }
+      ],
+      "runsIn": [
+        "ActionSequence"
       ]
     },
     {
@@ -1316,6 +1665,9 @@
           "l": 10661,
           "m": "if (this.stateController.currentState === GameState.ActionSequence) {"
         }
+      ],
+      "runsIn": [
+        "ActionSequence"
       ]
     },
     {
@@ -1339,6 +1691,9 @@
           "l": 10661,
           "m": "if (this.stateController.currentState === GameState.ActionSequence) {"
         }
+      ],
+      "runsIn": [
+        "ActionSequence"
       ]
     },
     {
@@ -1362,6 +1717,17 @@
           "l": 10022,
           "m": "if (!this.perspectiveCameraFollow) return;"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1380,6 +1746,17 @@
           "l": 10682,
           "m": "this.emoteBubbleManager.update(dt)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1398,6 +1775,17 @@
           "l": 10683,
           "m": "this.notificationUI.update(dt)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1421,6 +1809,14 @@
           "l": 10687,
           "m": "if (!worldPaused) {"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1439,6 +1835,17 @@
           "l": 10696,
           "m": "this.guidanceLayerUI.update(dt)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1462,6 +1869,14 @@
           "l": 10708,
           "m": "if (!worldPaused) {"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1485,6 +1900,14 @@
           "l": 10708,
           "m": "if (!worldPaused) {"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1508,6 +1931,14 @@
           "l": 10708,
           "m": "if (!worldPaused) {"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1531,6 +1962,14 @@
           "l": 10708,
           "m": "if (!worldPaused) {"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1554,6 +1993,14 @@
           "l": 10708,
           "m": "if (!worldPaused) {"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1577,6 +2024,14 @@
           "l": 10722,
           "m": "this.heldPropSystem.igniterFireSegments(this.heldFireScratch)"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1595,6 +2050,14 @@
           "l": 10723,
           "m": "this.vfxSystem.setFireSources('heldProp', this.heldFireScratch)"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1618,6 +2081,14 @@
           "l": 10708,
           "m": "if (!worldPaused) {"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1641,6 +2112,14 @@
           "l": 10708,
           "m": "if (!worldPaused) {"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1669,6 +2148,9 @@
           "l": 10731,
           "m": "void this.healthSystem.applyDamage("
         }
+      ],
+      "runsIn": [
+        "Exploring"
       ]
     },
     {
@@ -1687,6 +2169,14 @@
           "l": 10738,
           "m": "if (!worldPaused) this.updateStrikeLight(dt)"
         }
+      ],
+      "runsIn": [
+        "Exploring",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "Minigame"
       ]
     },
     {
@@ -1705,6 +2195,17 @@
           "l": 10740,
           "m": "this.camera.update(worldPaused ? 0 : dt)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1723,6 +2224,17 @@
           "l": 10747,
           "m": "this.updateAcousticListener(false)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1741,6 +2253,17 @@
           "l": 10748,
           "m": "this.footstepSystem.update(dt)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1748,7 +2271,7 @@
       "order": 75,
       "label": "调试工具",
       "code": "this.debugTools?.update(dt)",
-      "gate": "always",
+      "gate": "devBuild",
       "gateText": "仅开发构建实例化；正式构建里为空，不调",
       "group": "调试钩子（正式帧里的调试调用点）",
       "status": "dev-only",
@@ -1764,6 +2287,17 @@
           "l": 3743,
           "m": "if (import.meta.env.DEV) this.debugTools = new DebugTools({"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1793,6 +2327,17 @@
           "l": 155,
           "m": "if (this.currentMode === 'off') return;"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1820,7 +2365,23 @@
           "f": "src/core/Game.ts",
           "l": 4131,
           "m": "this.vfxConfineOverlay = new VfxConfineOverlay("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4107,
+          "m": "if (import.meta.env.DEV) {"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1838,7 +2399,23 @@
           "f": "src/core/Game.ts",
           "l": 10763,
           "m": "this.updateFrustumCulling()"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7215,
+          "m": "if (!this.frustumCullingEnabled) {"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1857,6 +2434,17 @@
           "l": 10766,
           "m": "this.burnRenderer.update(performance.now(), {"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1875,6 +2463,17 @@
           "l": 10772,
           "m": "this.syncEntityPixelDensityMatch()"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1898,6 +2497,17 @@
           "l": 10774,
           "m": "if (this.sceneDepthSystem.isActive) {"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1921,6 +2531,17 @@
           "l": 10789,
           "m": "const zones = zonesInPlane?.filter("
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1939,6 +2560,17 @@
           "l": 10794,
           "m": "const floorCondCtx = this.buildConditionEvalContext()"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1962,6 +2594,17 @@
           "l": 10801,
           "m": "resolveDepthFloorOffsetBoost("
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1980,6 +2623,17 @@
           "l": 10809,
           "m": "this.sceneDepthSystem.updateEntityDepthOcclusion("
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -1998,6 +2652,17 @@
           "l": 10818,
           "m": "this.driveBakedShading(this.playerDepthFilter, pFootX, pFootY, {"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2016,6 +2681,17 @@
           "l": 10827,
           "m": "npcByContainer.set(npc.container, npc)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2049,6 +2725,17 @@
           "l": 10844,
           "m": "resolveDepthFloorOffsetBoost("
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2067,6 +2754,17 @@
           "l": 10847,
           "m": "this.sceneDepthSystem.updateEntityDepthOcclusion("
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2085,6 +2783,17 @@
           "l": 10855,
           "m": "this.driveBakedShading(f as unknown as IEntityShadingFilter"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2108,6 +2817,17 @@
           "l": 10873,
           "m": "const ex = resolveDepthFloorOffsetBoost("
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2126,6 +2846,17 @@
           "l": 10876,
           "m": "this.sceneDepthSystem.updateEntityDepthOcclusion(hf, h.container.x, footY, ex)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2144,6 +2875,17 @@
           "l": 10880,
           "m": "this.driveBakedShading(hf, h.container.x, footY, {"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2167,6 +2909,17 @@
           "l": 7328,
           "m": "if (!this.currentLightCurve || !env) return;"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2174,7 +2927,7 @@
       "order": 95,
       "label": "草木位移图离屏渲染",
       "code": "this.swayBackground?.renderUv(this.renderer.app.renderer)",
-      "gate": "always",
+      "gate": "hasSwayBackground",
       "gateText": "当前场景有摆动背景时（在主画面渲染之前的一次离屏绘制）",
       "group": "光照与阴影",
       "status": "active",
@@ -2185,6 +2938,17 @@
           "l": 10893,
           "m": "this.swayBackground?.renderUv(this.renderer.app.renderer)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2203,6 +2967,17 @@
           "l": 10895,
           "m": "this.sceneLighting.setSurfaceTime(this.gameClock.now / 1000)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2226,6 +3001,17 @@
           "l": 779,
           "m": "const recomputed = this.pass?.update(renderer) ?? false"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2240,6 +3026,11 @@
       "async": "sync",
       "note": "调用仍在执行，但产出无消费者（除 F2 光照页读\"是否就绪\"）。",
       "cites": [
+        {
+          "f": "src/core/Game.ts",
+          "l": 10897,
+          "m": "this.sceneLighting.update(this.renderer.app.renderer)"
+        },
         {
           "f": "src/core/SceneLightingSystem.ts",
           "l": 783,
@@ -2260,6 +3051,17 @@
           "l": 443,
           "m": "const UNIFIED_CHAR_PATH_ENABLED = false"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2283,6 +3085,17 @@
           "l": 7348,
           "m": "if (!env || this.entityShadows.size === 0) return;"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2301,6 +3114,17 @@
           "l": 10900,
           "m": "this.renderer.sortEntityLayer(this.player.x, this.player.y)"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2308,7 +3132,7 @@
       "order": 101,
       "label": "触屏控件",
       "code": "this.touchMobileControls?.update()",
-      "gate": "always",
+      "gate": "hasTouchControls",
       "gateText": "页面有 #game-mount 时才创建",
       "group": "帧尾",
       "status": "active",
@@ -2323,7 +3147,23 @@
           "f": "src/core/Game.ts",
           "l": 7924,
           "m": "this.touchMobileControls = new TouchMobileControls("
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 7922,
+          "m": "document.getElementById('game-mount')"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     },
     {
@@ -2342,8 +3182,28 @@
           "l": 10902,
           "m": "this.inputManager.endFrame()"
         }
+      ],
+      "runsIn": [
+        "MainMenu",
+        "Exploring",
+        "SceneTransition",
+        "ActionSequence",
+        "Dialogue",
+        "Encounter",
+        "Cutscene",
+        "UIOverlay",
+        "Minigame"
       ]
     }
+  ],
+  "pausedStates": [
+    "SceneTransition",
+    "MainMenu",
+    "UIOverlay",
+    "Dead"
+  ],
+  "earlyExitStates": [
+    "Dead"
   ],
   "pauseRule": {
     "label": "世界暂停判据 isWorldPaused()",
@@ -2388,6 +3248,11 @@
         "f": "src/core/Game.ts",
         "l": 2367,
         "m": "await this.runInGameState(GameState.UIOverlay"
+      },
+      {
+        "f": "src/core/Game.ts",
+        "l": 8881,
+        "m": "this.stateController.setState(state)"
       }
     ]
   },
@@ -2503,6 +3368,11 @@
           "f": "src/core/Game.ts",
           "l": 10515,
           "m": "|| s === GameState.MainMenu"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4292,
+          "m": "标题态启动：**世界一律不装**"
         }
       ]
     },
@@ -2830,7 +3700,7 @@
         "Minigame": "run",
         "Dead": "stop"
       },
-      "note": "内部在\"回到探索态\"那一帧重贴位面的镜头与光照档。",
+      "note": "每帧都调；内部在\"回到探索态\"那一帧重贴位面的镜头与光照档、补刷挂起的区域；非探索态随即返回（探索态才按位面配置扣阳气）。",
       "status": "active",
       "cites": [
         {
@@ -2842,6 +3712,11 @@
           "f": "src/systems/PlaneReconciler.ts",
           "l": 306,
           "m": "const entered = state === GameState.Exploring"
+        },
+        {
+          "f": "src/systems/PlaneReconciler.ts",
+          "l": 319,
+          "m": "if (state !== GameState.Exploring) return;"
         }
       ]
     },
@@ -3649,6 +4524,11 @@
           "f": "src/core/Game.ts",
           "l": 10651,
           "m": "this.objectExamineManager.update(dt)"
+        },
+        {
+          "f": "src/systems/minigameSession.ts",
+          "l": 158,
+          "m": "if (!this.scene || !this.active) return;"
         }
       ]
     },
@@ -3943,7 +4823,7 @@
       "code": "healthSystem.applyDamage(fright)",
       "cells": {
         "MainMenu": "stop",
-        "Exploring": "run",
+        "Exploring": "partial",
         "SceneTransition": "stop",
         "ActionSequence": "stop",
         "Dialogue": "stop",
@@ -3953,7 +4833,7 @@
         "Minigame": "stop",
         "Dead": "stop"
       },
-      "note": "还要求三把火未耗尽。",
+      "note": "探索态、世界未暂停、三把火未耗尽，且粒子系统本帧报出了骚扰源时才结算；伤害调用发出不等。",
       "status": "active",
       "cites": [
         {
@@ -4504,7 +5384,7 @@
       "label": "WebGL 错误排空到调试面板（glPostRenderDrain）",
       "kind": "ticker",
       "status": "active",
-      "detail": "优先级 UTILITY，Pixi 渲染之后读 gl.getError 写进 F2 日志。安装调用在 start() 里无开发门控。",
+      "detail": "优先级 UTILITY，Pixi 渲染之后读 gl.getError 写进 F2 日志。安装调用在 start() 里无开发门控，但排在首场景装载与开场演出两次 await 之后——之前的帧没有这一项。",
       "cites": [
         {
           "f": "src/core/Game.ts",
@@ -4515,6 +5395,16 @@
           "f": "src/core/Game.ts",
           "l": 4332,
           "m": "this.setupWebGlPanelDiagnostics();"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4325,
+          "m": "await this.sceneManager.loadInitialScene(this.gameConfig.initialScene)"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 4326,
+          "m": "await this.tryStartInitialPrologue()"
         }
       ]
     },
@@ -4769,15 +5659,20 @@
     },
     {
       "id": "o16",
-      "label": "音频淡变分段",
+      "label": "音频压低层（ducking）淡变分段",
       "kind": "timeout",
       "status": "active",
-      "detail": "音量淡变按真实时间分段 setTimeout 推进。",
+      "detail": "压低层的权重按真实时间分段用 setTimeout 推进，不经 tick、不吃游戏暂停。",
       "cites": [
         {
           "f": "src/systems/AudioManager.ts",
           "l": 1168,
           "m": "const timer = setTimeout(() => {"
+        },
+        {
+          "f": "src/systems/AudioManager.ts",
+          "l": 1157,
+          "m": "private rampDuckLayer(layer: AudioDuckLayer"
         }
       ]
     },
@@ -4905,6 +5800,21 @@
           "f": "src/ui/DevModeUI.ts",
           "l": 149,
           "m": "setInterval(() => {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 3513,
+          "m": "if (import.meta.env.DEV) {"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 2174,
+          "m": "if (import.meta.env.DEV && typeof window"
+        },
+        {
+          "f": "src/core/Game.ts",
+          "l": 8431,
+          "m": "this.devModeUI = new DevModeUI("
         }
       ]
     },

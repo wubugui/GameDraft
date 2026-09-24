@@ -22,7 +22,7 @@ for (const d of DIAGRAMS) diagrams[d] = tryJson(`diagrams/${d}.json`);
 const verification = tryJson('data/verification.json');
 
 let commit = 'unknown';
-try { commit = execSync('git rev-parse HEAD', { cwd: ROOT }).toString().trim(); } catch { /* not a repo */ }
+try { commit = execSync('git log -1 --format=%H -- src', { cwd: ROOT }).toString().trim(); } catch { /* not a repo */ }
 
 // ─────────────────────── 1) 图上出处校验
 let bad = 0;

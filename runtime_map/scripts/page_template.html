@@ -227,7 +227,8 @@ svg.dig .colhead { font-size: 10px; fill: var(--muted); font-family: var(--f-bod
 .step .sl { font-weight: 500; }
 .step .sd { color: var(--muted); font-size: 12.5px; grid-column: 2 / 3; }
 .step .sc { grid-column: 2 / 3; font-family: var(--f-mono); font-size: 11px; color: var(--ink2); overflow-wrap: anywhere; }
-.step .tags { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.step .tags { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: 46%; }
+.step .tags .chip { white-space: normal; line-height: 1.4; padding: 2px 7px; border-radius: 10px; text-align: left; }
 .step.disabled .sl { text-decoration: line-through; color: var(--off); }
 .step.faded { opacity: .28; }
 .grouphead { font-size: 11px; letter-spacing: .08em; color: var(--muted); padding: 10px 12px 2px 72px; text-transform: uppercase; }

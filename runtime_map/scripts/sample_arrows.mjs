@@ -16,7 +16,7 @@ const J = (p) => JSON.parse(fs.readFileSync(path.join(MAP_DIR, p), 'utf8'));
 const raw = J('data/raw.json');
 const an = J('data/analysis.json');
 const dg = Object.fromEntries(['boot', 'frame', 'scene', 'state', 'render'].map((k) => [k, J(`diagrams/${k}.json`)]));
-const commit = execSync('git rev-parse HEAD', { cwd: ROOT }).toString().trim();
+const commit = execSync('git log -1 --format=%H -- src', { cwd: ROOT }).toString().trim();
 const seed = parseInt(commit.slice(0, 8), 16) >>> 0;
 
 function mulberry32(a) {

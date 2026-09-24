@@ -1,0 +1,321 @@
+{
+  "id": "disabled",
+  "title": "已关停但保留的代码路径",
+  "summary": "代码里一个总闸（统一角色光影）加上几处写死的常量/空值，把一批光照相关路径关掉但没删；另有糖画转盘小游戏里一层从不显示的输入遮罩。每一条都写了：开关原文、关掉了什么、相关文件是否仍在运行时被 import。",
+  "items": [
+    {
+      "id": "dz1",
+      "label": "统一角色光影路径（总闸）",
+      "switch": "const UNIFIED_CHAR_PATH_ENABLED = false;",
+      "value": "false",
+      "what": "角色受光的第二条路：角色与背景共用同一份天光×天穹可见性、同一批灯、再加 GI 反弹的统一着色。总闸是 Game.ts 里的模块级常量（代码里不是 Game 类的静态成员；项目文档写作 Game.UNIFIED_CHAR_PATH_ENABLED）。每次装载带光照的场景都会走到『接统一光影』这一步，但它第一句就被总闸挡回：拆空、重建角色着色器后返回，全仓唯一启用它的 setup 调用永远到不了。结果是：① 角色着色器供给每次先问统一光影，它恒答『没有』，改用 probe 路径的着色器；② 每帧的角色光照同步里『统一光影在用吗』恒为否，跳过；③ 改灯、改光照参数时推给它的调用在入口处直接返回。协调者 UnifiedCharacterLighting 与着色器 UnifiedCharacterShader 整份保留；共享 GLSL 库里的天光函数 lcSkyLight 只有统一角色着色器一个调用者。",
+      "affectedFiles": [
+        "src/core/UnifiedCharacterLighting.ts",
+        "src/rendering/lighting/UnifiedCharacterShader.ts",
+        "src/core/Game.ts",
+        "src/rendering/lighting/lightingCore.glsl"
+      ],
+      "stillImported": "是。UnifiedCharacterLighting.ts 由 Game.ts:217 运行时 import，并在 Game.ts:663 实例化、常驻 Game；UnifiedCharacterShader.ts 由 UnifiedCharacterLighting.ts:4 运行时 import；lightingCore.glsl 以 ?raw 形式被场景、角色、特效等多个着色器引入（lcSkyLight 以外的部分是现役的）。Game.ts 里受影响的只是 setupUnifiedCharacterLighting 这一段。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/core/Game.ts", "l": 443, "m": "const UNIFIED_CHAR_PATH_ENABLED = false;" },
+        { "f": "src/core/Game.ts", "l": 6477, "m": "this.setupUnifiedCharacterLighting();" },
+        { "f": "src/core/Game.ts", "l": 6608, "m": "if (!UNIFIED_CHAR_PATH_ENABLED) {" },
+        { "f": "src/core/Game.ts", "l": 6625, "m": "this.unifiedCharLighting.setup({" },
+        { "f": "src/core/UnifiedCharacterLighting.ts", "l": 60, "m": "this.enabled = true;" },
+        { "f": "src/core/UnifiedCharacterLighting.ts", "l": 112, "m": "if (!this.enabled || !this.geometryGroup" },
+        { "f": "src/core/Game.ts", "l": 873, "m": "return this.unifiedCharLighting.createShader(colorTex, nrm)" },
+        { "f": "src/core/Game.ts", "l": 874, "m": "this.characterLighting.createEntityLitShader(colorTex, nrm)" },
+        { "f": "src/core/Game.ts", "l": 4278, "m": "if (this.unifiedCharLighting.active) {" },
+        { "f": "src/core/UnifiedCharacterLighting.ts", "l": 68, "m": "if (!this.lightGroup) return;" },
+        { "f": "src/core/Game.ts", "l": 217, "m": "from './UnifiedCharacterLighting';" },
+        { "f": "src/core/Game.ts", "l": 663, "m": "new UnifiedCharacterLighting()" },
+        { "f": "src/core/UnifiedCharacterLighting.ts", "l": 11, "m": "'../rendering/lighting/UnifiedCharacterShader'" },
+        { "f": "src/rendering/lighting/lightingCore.glsl", "l": 189, "m": "vec3 lcSkyLight(vec3 color, float intensity" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 324, "m": "lcSkyLight(uSkyColor, uSkyIntensity, skyvis" }
+      ]
+    },
+    {
+      "id": "dz2",
+      "label": "3D 天穹可见性网格（角色用）",
+      "switch": "this.skyvisGrid = null;",
+      "value": "null（装载处直接置空，不读 skyvis_grid.bin）",
+      "what": "场景装载时本该读进来的 3D 天穹可见性网格，在装载函数里改成了直接置空，运行时不再抓取这份烘焙文件（烘焙侧照旧产出）。网格的 CPU 读口 skyVisibilityGrid 没有任何调用者；GPU 纹理读口 skyVisibilityTexture 因网格为空恒返回空，它唯一的调用者在统一角色路径总闸之后。即使把总闸打开，这一项仍是空，统一光影也会在『缺料就拆掉』那一步退出——这是独立的第二道关闭。",
+      "affectedFiles": [
+        "src/core/SceneLightingSystem.ts",
+        "src/rendering/lighting/UnifiedCharacterShader.ts"
+      ],
+      "stillImported": "是。相关代码在 SceneLightingSystem.ts 内部（该文件由 Game.ts:216 运行时 import），本项没有独立文件。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/core/SceneLightingSystem.ts", "l": 536, "m": "3D 天穹可见性网格与 GI 命中图不再装载" },
+        { "f": "src/core/SceneLightingSystem.ts", "l": 548, "m": "this.skyvisGrid = null;" },
+        { "f": "src/core/SceneLightingSystem.ts", "l": 167, "m": "get skyVisibilityGrid()" },
+        { "f": "src/core/SceneLightingSystem.ts", "l": 185, "m": "if (!this.skyvisGrid || !this.meta) return null;" },
+        { "f": "src/core/Game.ts", "l": 6620, "m": "const skyGrid = this.sceneLighting.skyVisibilityTexture;" },
+        { "f": "src/core/Game.ts", "l": 6621, "m": "if (!half || !charGeo || !skyGrid) {" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 183, "m": "texelFetch(uSkyGrid, ivec2(x + z * nx, y), 0).r" }
+      ]
+    },
+    {
+      "id": "dz3",
+      "label": "GI 反弹光（GiBouncePass）",
+      "switch": "private async loadGiHitmap(...)（全仓没有调用点）",
+      "value": "从不调用",
+      "what": "给角色加『被场景反射回来的光』的一趟离屏计算。它的装载函数 loadGiHitmap（读 gi_hitmap.bin、建 GiBouncePass）在代码里没有任何调用者，所以反弹 pass 从不创建：每帧场景光照更新里『辐射场重算后跑一遍 GI』是空操作，反弹纹理读口恒为空，统一角色协调者据此把 GI 增益压成 0。读这张反弹纹理的只有两处：统一角色路径（总闸之后）和仅开发构建的 F2 读数 giReady。",
+      "affectedFiles": [
+        "src/rendering/lighting/GiBouncePass.ts",
+        "src/core/SceneLightingSystem.ts"
+      ],
+      "stillImported": "是。GiBouncePass.ts 由 SceneLightingSystem.ts:7 运行时静态 import，但全仓唯一一处 new GiBouncePass 在从不被调用的 loadGiHitmap 里（SceneLightingSystem.ts:282）。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/core/SceneLightingSystem.ts", "l": 252, "m": "private async loadGiHitmap(sceneId: string" },
+        { "f": "src/core/SceneLightingSystem.ts", "l": 282, "m": "this.giPass = new GiBouncePass(radiance.source, {" },
+        { "f": "src/core/SceneLightingSystem.ts", "l": 7, "m": "from '../rendering/lighting/GiBouncePass';" },
+        { "f": "src/core/SceneLightingSystem.ts", "l": 783, "m": "if (recomputed) this.giPass?.render(renderer);" },
+        { "f": "src/core/SceneLightingSystem.ts", "l": 242, "m": "return this.giPass?.bounce ?? null;" },
+        { "f": "src/core/UnifiedCharacterLighting.ts", "l": 70, "m": "const giGain = this.giBounce ? (def.giGain ?? 1) : 0;" },
+        { "f": "src/core/Game.ts", "l": 6640, "m": "giBounce: this.sceneLighting.giBounceTexture," },
+        { "f": "src/core/Game.ts", "l": 3743, "m": "if (import.meta.env.DEV) this.debugTools = new DebugTools({" },
+        { "f": "src/core/Game.ts", "l": 3909, "m": "giReady: this.sceneLighting.giBounceTexture !== null," },
+        { "f": "src/rendering/lighting/GiBouncePass.ts", "l": 108, "m": "export class GiBouncePass {" }
+      ]
+    },
+    {
+      "id": "dz4",
+      "label": "场景光照的『恒等占位』标记（lighting.placeholder）",
+      "switch": "if (this.sceneLighting.params?.placeholder) {",
+      "value": "数据字段；运行时唯一的读取点排在总闸 return 之后，执行不到",
+      "what": "场景光照数据里的 placeholder 标记（原意：占位场景的角色暂不切到统一光影）。运行时代码里只有一处读它，就在『接统一光影』函数里、总闸早退的下一段，永远走不到；场景背景着色与角色 probe 路径都不读它。所以这个字段在运行时不影响任何行为。",
+      "affectedFiles": [
+        "src/data/types.ts",
+        "src/core/Game.ts"
+      ],
+      "stillImported": "无独立文件：字段声明在 src/data/types.ts，读取点在 src/core/Game.ts，两者都在运行时。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/data/types.ts", "l": 457, "m": "placeholder?: boolean;" },
+        { "f": "src/core/Game.ts", "l": 6608, "m": "if (!UNIFIED_CHAR_PATH_ENABLED) {" },
+        { "f": "src/core/Game.ts", "l": 6610, "m": "this.rebuildEntityLitShaders();" },
+        { "f": "src/core/Game.ts", "l": 6613, "m": "if (this.sceneLighting.params?.placeholder) {" }
+      ]
+    },
+    {
+      "id": "dz5",
+      "label": "角色标定常数 radianceScale",
+      "switch": "get radianceScale(): number {",
+      "value": "照常算出，但只送往已关停的统一角色着色参数",
+      "what": "场景辐射尺度与角色贴图反射率之间的标定常数（数据里可写，缺省由烘焙期反射率推出）。SceneLightingSystem 仍会算它，正式运行路径上它的三处去向都是 unifiedCharLighting.applyParams：改灯推送、改光照参数这两处能执行到，但 applyParams 因统一光影从未 setup、uniform 组为空而在第一句返回；装载时那一处在总闸之后，执行不到。真正把它写进 shader（uRadianceScale）的只有统一角色着色器。另有一处读取是仅开发构建的 F2 光照读数。",
+      "affectedFiles": [
+        "src/core/SceneLightingSystem.ts",
+        "src/core/UnifiedCharacterLighting.ts",
+        "src/rendering/lighting/UnifiedCharacterShader.ts",
+        "src/data/types.ts"
+      ],
+      "stillImported": "是。所在文件都在运行时 import 链上；关停的是这个数的去向，不是文件。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/data/types.ts", "l": 481, "m": "radianceScale?: number;" },
+        { "f": "src/core/SceneLightingSystem.ts", "l": 335, "m": "get radianceScale(): number {" },
+        { "f": "src/core/Game.ts", "l": 5797, "m": "this.sceneLighting.radianceScale);" },
+        { "f": "src/core/Game.ts", "l": 6999, "m": "this.sceneLighting.radianceScale);" },
+        { "f": "src/core/Game.ts", "l": 6649, "m": "this.sceneLighting.radianceScale);" },
+        { "f": "src/core/UnifiedCharacterLighting.ts", "l": 68, "m": "if (!this.lightGroup) return;" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 542, "m": "num('uRadianceScale', radianceScale);" },
+        { "f": "src/core/Game.ts", "l": 3908, "m": "radianceScale: this.sceneLighting.radianceScale," }
+      ]
+    },
+    {
+      "id": "dz6",
+      "label": "只喂统一角色着色器的其余光照参数",
+      "switch": "applyUnifiedCharLight(...)（唯一调用者是 UnifiedCharacterLighting.applyParams）",
+      "value": "统一光影未启用 → 从不执行到写 uniform",
+      "what": "场景光照数据里还有几项只有统一角色着色器读：天光的 hemi（半球权重）、color / kelvin（颜色、色温），角色形体 characterShape（flatten 压平 / bulge 鼓起），GI 反弹增益 giGain。它们只在 applyUnifiedCharLight 里被写进统一角色 shader 的 uniform，而这个函数唯一的调用者就是入口即返回的 applyParams。同一块里的天光强度 sky.intensity 不在此列：它仍被实体影子浓度解算读取。",
+      "affectedFiles": [
+        "src/data/types.ts",
+        "src/rendering/lighting/UnifiedCharacterShader.ts",
+        "src/core/UnifiedCharacterLighting.ts"
+      ],
+      "stillImported": "是（同上，文件都在运行时 import 链上）。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/core/UnifiedCharacterLighting.ts", "l": 71, "m": "applyUnifiedCharLight(this.lightGroup, def, packed" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 521, "m": "resolveLightColor(def.sky.color, def.sky.kelvin)" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 523, "m": "num('uSkyHemi', def.sky.hemi);" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 547, "m": "def.characterShape?.flatten ?? 0" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 548, "m": "def.characterShape?.bulge ?? 0.22" },
+        { "f": "src/data/types.ts", "l": 390, "m": "hemi: number;" },
+        { "f": "src/data/types.ts", "l": 512, "m": "characterShape?: {" },
+        { "f": "src/data/types.ts", "l": 530, "m": "giGain?: number;" },
+        { "f": "src/core/Game.ts", "l": 7571, "m": "skyIntensity: lighting.sky.intensity," }
+      ]
+    },
+    {
+      "id": "dz7",
+      "label": "灯打包里的『太阳槽』",
+      "switch": "const sun = null as (typeof lights)[number] | null;",
+      "value": "null（写死）",
+      "what": "打包场景灯时，原本会把第一盏平行光单独抽出来当『太阳』（颜色、强度、方向、阴影参数）。现在这个变量写死为空，抽太阳那段分支永远不进，打包结果里的太阳字段恒为缺省的『无太阳』，平行光一律按普通灯进灯数组。这组太阳字段的读者：统一角色着色器（已关停）；场景光照 pass 仍把 packed.shadow 写进 uShadow，但场景片元着色器只声明 uShadow、不读它（按名字检索全部着色器源码，读取只出现在统一角色着色器里）。",
+      "affectedFiles": [
+        "src/rendering/lighting/lightPacking.ts",
+        "src/rendering/lighting/SceneLightingPass.ts",
+        "src/rendering/lighting/UnifiedCharacterShader.ts"
+      ],
+      "stillImported": "是。lightPacking.ts 与 SceneLightingPass.ts 都是现役文件（lightPacking.ts 被 SceneLightingPass.ts:7、CharacterLitSprite.ts:32 等运行时 import）；关停的只是其中一个分支和一组字段。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/rendering/lighting/lightPacking.ts", "l": 183, "m": "2026-08-30 起**不再单独抽 sun 槽**" },
+        { "f": "src/rendering/lighting/lightPacking.ts", "l": 193, "m": "const sun = null as (typeof lights)[number] | null;" },
+        { "f": "src/rendering/lighting/lightPacking.ts", "l": 197, "m": "sunIntensity: 0," },
+        { "f": "src/rendering/lighting/lightPacking.ts", "l": 208, "m": "if (sun) {" },
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 156, "m": "uniform vec4  uShadow;" },
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 958, "m": "u.uShadow.set(packed.shadow);" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 527, "m": "num('uSunIntensity', packed.sunIntensity);" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 329, "m": "if (uShadow.x > 0.0) {" }
+      ]
+    },
+    {
+      "id": "dz8",
+      "label": "场景光照着色器里的『去霾』段",
+      "switch": "if (false && uHaze.y > 0.0) {",
+      "value": "false（GLSL 里写死）",
+      "what": "场景背景着色器里『从原画里减掉白天大气散射』的那一段，条件前加了常量 false，整段永不执行。CPU 侧照旧：装载时从烘焙元数据取出霾参数，每次改光照参数仍按 dehaze 数值把 uHaze / uHazeColor 填进 uniform，只是着色器不用。",
+      "affectedFiles": [
+        "src/rendering/lighting/SceneLightingPass.ts",
+        "src/core/SceneLightingSystem.ts",
+        "src/data/types.ts"
+      ],
+      "stillImported": "是。SceneLightingPass.ts 由 SceneLightingSystem.ts:6 运行时 import，是现役的场景光照 pass；关停的只是着色器里这一段。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 436, "m": "去霾整段停用（2026-08-30）" },
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 448, "m": "if (false && uHaze.y > 0.0) {" },
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 1001, "m": "u.uHaze.set([hz.k, hz.strength * (def.dehaze ?? 1)" },
+        { "f": "src/core/SceneLightingSystem.ts", "l": 501, "m": "haze: meta.haze" },
+        { "f": "src/data/types.ts", "l": 539, "m": "dehaze?: number;" }
+      ]
+    },
+    {
+      "id": "dz9",
+      "label": "场景光照着色器里写入但不读的两个参数",
+      "switch": "uniform float uAoStrength; / uniform float uRatioMax;（照常写入，场景着色器不读）",
+      "value": "无显式开关",
+      "what": "场景光照数据的 aoStrength（天穹遮蔽强度）与 ratioMax（比值上限）。场景光照 pass 每次改参数仍把它们写进 uAoStrength / uRatioMax，场景着色器也还留着这两个声明；但按名字检索全部着色器源码，读取它们的只有统一角色着色器里的一处（aoStrength 进 lcSkyLight），场景侧没有读取。",
+      "affectedFiles": [
+        "src/rendering/lighting/SceneLightingPass.ts",
+        "src/data/types.ts"
+      ],
+      "stillImported": "是（现役文件，关停的是两个参数的效果）。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 149, "m": "uniform float uAoStrength;" },
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 159, "m": "uniform float uRatioMax;" },
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 937, "m": "u.uAoStrength = def.aoStrength ?? 1;" },
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 938, "m": "u.uRatioMax = def.ratioMax ?? 8;" },
+        { "f": "src/rendering/lighting/UnifiedCharacterShader.ts", "l": 324, "m": "skyvis, uSkyHemi, uAoStrength" },
+        { "f": "src/data/types.ts", "l": 541, "m": "aoStrength?: number;" },
+        { "f": "src/data/types.ts", "l": 543, "m": "ratioMax?: number;" }
+      ]
+    },
+    {
+      "id": "dz10",
+      "label": "糖画转盘：局内全屏吞指针层",
+      "switch": "this.actionInputShield.visible = false;",
+      "value": "false（三处赋值全是 false，没有置 true 的地方）",
+      "what": "糖画转盘小游戏里，局内播放动作时用来吞掉鼠标 / 触摸的全屏透明层。它仍被创建、挂上指针事件、挂进 UI 层，但所有可见性赋值都是『隐藏』，给它画全屏矩形的布局函数 layoutActionInputShield 没有调用者，所以它从不显示、也从不拦截输入。锁输入期间现在是把转盘各层切成不可交互来实现。",
+      "affectedFiles": [
+        "src/systems/sugarWheel/SugarWheelMinigameScene.ts"
+      ],
+      "stillImported": "是。SugarWheelMinigameScene.ts 由 SugarWheelMinigameManager.ts:12 运行时 import；关停的只是这一层。",
+      "status": "disabled",
+      "cites": [
+        { "f": "src/systems/sugarWheel/SugarWheelMinigameScene.ts", "l": 158, "m": "旧版全屏输入层保留为子节点占位" },
+        { "f": "src/systems/sugarWheel/SugarWheelMinigameScene.ts", "l": 370, "m": "this.actionInputShield = new Graphics();" },
+        { "f": "src/systems/sugarWheel/SugarWheelMinigameScene.ts", "l": 372, "m": "this.actionInputShield.visible = false;" },
+        { "f": "src/systems/sugarWheel/SugarWheelMinigameScene.ts", "l": 384, "m": "this.uiLayer.addChild(this.actionInputShield);" },
+        { "f": "src/systems/sugarWheel/SugarWheelMinigameScene.ts", "l": 434, "m": "private layoutActionInputShield(): void {" },
+        { "f": "src/systems/sugarWheel/SugarWheelMinigameScene.ts", "l": 463, "m": "this.actionInputShield.visible = false;" },
+        { "f": "src/systems/sugarWheel/SugarWheelMinigameScene.ts", "l": 475, "m": "this.actionInputShield.visible = false;" },
+        { "f": "src/systems/sugarWheel/SugarWheelMinigameScene.ts", "l": 445, "m": "this.wheelLayer.eventMode = locked ? 'none' : 'static';" }
+      ]
+    }
+  ],
+  "uncertain": [
+    {
+      "label": "注释里说是『死码』的 DeferredEntityShadow：代码里已不存在",
+      "why": "只在两处 GLSL 注释和一处接口注释里出现，src/ 下找不到这个类或文件。它是已删除而不是『关停但保留』，所以没列。",
+      "cites": [
+        { "f": "src/rendering/lighting/worldReconstruct.glsl", "l": 506, "m": "D-DEAD DeferredEntityShadow(死码)" },
+        { "f": "src/rendering/entityShadowTypes.ts", "l": 98, "m": "PlanarEntityShadow / DeferredEntityShadow" }
+      ]
+    },
+    {
+      "label": "注释说 wrQToWorld『现役无消费者』，代码里有调用",
+      "why": "worldReconstruct.glsl 的注释这样写，但场景光照、角色受光、特效三个着色器里都有调用。以代码为准，它是现役函数，没列。",
+      "cites": [
+        { "f": "src/rendering/lighting/worldReconstruct.glsl", "l": 234, "m": "完整 M-world。现役无消费者" },
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 479, "m": "wrQToWorld(uMRow0, uMRow1, uMRow2, q)" },
+        { "f": "src/rendering/CharacterLitSprite.ts", "l": 79, "m": "wrQToWorld(uSMRow0, uSMRow1, uSMRow2, q)" },
+        { "f": "src/rendering/vfx/vfxShaders.ts", "l": 202, "m": "wrQToWorld(uSMRow0, uSMRow1, uSMRow2, nQ)" }
+      ]
+    },
+    {
+      "label": "标着『现役未启用』的两个 GLSL 采样函数",
+      "why": "wrSampleGroundWorldBilinear 与 wrSampleCollisionCellNearest 已定义，没有任何调用点。注释说它们是准备接入的收敛版本（P1），是『还没接上』而不是『接过又关掉』，算不算关停看不准，没列。",
+      "cites": [
+        { "f": "src/rendering/lighting/worldReconstruct.glsl", "l": 402, "m": "[P1,现役未启用] 行走面场双线性" },
+        { "f": "src/rendering/lighting/worldReconstruct.glsl", "l": 409, "m": "float wrSampleGroundWorldBilinear(" },
+        { "f": "src/rendering/lighting/worldReconstruct.glsl", "l": 442, "m": "bool wrSampleCollisionCellNearest(" }
+      ]
+    },
+    {
+      "label": "@deprecated 数据字段与函数别名（数十处）",
+      "why": "types.ts、acousticSpace.ts、sugarWheel/types.ts 等处标了 @deprecated 或『运行时不读』，还有 projectFlags 这种读到就报警告然后忽略的字段。它们是旧数据兼容字段或旧函数名的别名，不是被开关挡住的一段代码；哪些别名还有调用方要逐个查，本图没做，所以都没列。",
+      "cites": [
+        { "f": "src/audio/acousticSpace.ts", "l": 143, "m": "@deprecated v2 的单个声源" },
+        { "f": "src/data/types.ts", "l": 4322, "m": "@deprecated 运行时不读" },
+        { "f": "src/core/NarrativeStateManager.ts", "l": 613, "m": "graph.projectFlags is deprecated and ignored" }
+      ]
+    },
+    {
+      "label": "由数据决定的开关（值不在代码里）",
+      "why": "场景有没有 lighting 块、有没有开日夜、game_config 里的逐实体光照开关等，开关值写在 JSON 数据里，代码只读不定。静态看代码判断不了哪个场景开着、哪个关着，所以都没列。",
+      "cites": [
+        { "f": "src/core/DebugTools.ts", "l": 2507, "m": "game_config.entityLighting.enabled 关或 lightEnv.shadow 关" },
+        { "f": "src/systems/SceneManager.ts", "l": 578, "m": "场景没开日夜 = 时段归属整套不生效" }
+      ]
+    },
+    {
+      "label": "『着色器不读某个 uniform』靠的是按名字检索源码",
+      "why": "着色器源码是 TS 里的模板字符串，再拼上以 ?raw 引入的 .glsl 文件。dz7（uShadow）和 dz9（uAoStrength / uRatioMax）的『场景侧不读』，结论来自对 src/ 下全部 .ts 和 .glsl 文本按 uniform 名检索。如果将来有运行时拼出来的 uniform 名，这种检索看不见；目前没发现这种写法，但没做运行时验证。",
+      "cites": [
+        { "f": "src/rendering/lighting/SceneLightingPass.ts", "l": 15, "m": "lightingCore.glsl?raw" }
+      ]
+    },
+    {
+      "label": "旧兼容代码仍在运行路径上，不算关停",
+      "why": "旧存档从浏览器存储迁移到文件、仍然注册着的旧扣血/回血动作、旧的扁平烘焙目录回退，这些代码仍按条件执行，是活的兼容分支，所以没列。真实数据还会不会触发它们，静态看不出来。",
+      "cites": [
+        { "f": "src/core/SaveManager.ts", "l": 151, "m": "private async migrateLegacySaves(): Promise<void> {" },
+        { "f": "src/core/ActionRegistry.ts", "l": 1535, "m": "【legacy】damagePlayer/healPlayer" },
+        { "f": "src/core/CharacterLightingSystem.ts", "l": 841, "m": "const legacy = sceneRuntimeAssetUrl(sceneId, 'lighting');" }
+      ]
+    },
+    {
+      "label": "注释里的『旧路径』指 probe 路径，它是现役的",
+      "why": "角色受光相关注释把 probe / 体素路径叫『旧路径』，但总闸关掉统一光影以后，所有角色走的正是这条路。它不是关停代码，没列，写在这里免得看图时误读。",
+      "cites": [
+        { "f": "src/core/Game.ts", "l": 865, "m": "否则 → 回落旧的 probe/体素路径" },
+        { "f": "src/core/Game.ts", "l": 6599, "m": "所有场景一律走 probe + 加性灯" }
+      ]
+    },
+    {
+      "label": "仅开发构建生效的守卫，按规则不列",
+      "why": "例如开发模式入口 startDevMode 方法体里第一句就判断『不是开发构建就返回』。这类守卫挡住的是开发工具，不是弃用路径，所以没列。",
+      "cites": [
+        { "f": "src/core/Game.ts", "l": 8426, "m": "if (!import.meta.env.DEV) return;" }
+      ]
+    }
+  ]
+}
