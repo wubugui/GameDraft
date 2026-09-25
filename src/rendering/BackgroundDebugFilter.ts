@@ -1,4 +1,4 @@
-import { Filter, GlProgram, Texture, type TextureSource } from 'pixi.js';
+import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from 'pixi.js';
 import type { SceneDepthConfig } from '../data/types';
 
 const VERT = /* glsl */ `
@@ -150,13 +150,190 @@ void main(void) {
 }
 `;
 
+/**
+ * WebGPU 版(与上面 GLSL 逐段对应,四个视图全在)。约定与坑:
+ * - `@group(0)` 是 Pixi 滤镜固定的 gfu / uTexture / uSampler;本滤镜的放 `@group(1)`,
+ *   **变量名 = resources 键名**(`bgDebug` 与各纹理),每张纹理配一个 `<名>Sampler`;
+ * - `BgDebugUniforms` 成员顺序 = 构造里 `bgDebug` 的声明顺序(Pixi 按声明顺序、WGSL 对齐算偏移);
+ * - 深度 / 行走面 / 碰撞三张图的采样都在「uv 越界提前返回」之后 —— 那是非一致控制流,
+ *   WGSL 的 textureSample 在那里编不过,改用 `textureSampleLevel(.., 0)`:这几张图都是单级(无 mip),
+ *   与 GLSL `texture()` 等价。透传视图那次采样只受 uniform 条件控制,照用 textureSample。
+ */
+const WGSL = /* wgsl */ `
+struct GlobalFilterUniforms {
+  uInputSize: vec4<f32>,
+  uInputPixel: vec4<f32>,
+  uInputClamp: vec4<f32>,
+  uOutputFrame: vec4<f32>,
+  uGlobalFrame: vec4<f32>,
+  uOutputTexture: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;
+@group(0) @binding(1) var uTexture: texture_2d<f32>;
+@group(0) @binding(2) var uSampler: sampler;
+
+struct BgDebugUniforms {
+  uMode: f32,
+  uTexSize: vec2<f32>,
+  uWorldContainerPos: vec2<f32>,
+  uSceneSize: vec2<f32>,
+  uInvert: f32,
+  uScale: f32,
+  uOffset: f32,
+  uM_ppu: f32,
+  uM_cx: f32,
+  uM_cy: f32,
+  uM_R00: f32,
+  uM_R01: f32,
+  uM_R02: f32,
+  uM_R20: f32,
+  uM_R21: f32,
+  uM_R22: f32,
+  uGroundMin: f32,
+  uGroundMax: f32,
+  uHasGroundTex: f32,
+  uCol_xMin: f32,
+  uCol_zMin: f32,
+  uCol_cellSize: f32,
+  uCol_gridW: f32,
+  uCol_gridH: f32,
+  uDbgDepthLo: f32,
+  uDbgDepthHi: f32,
+};
+@group(1) @binding(0) var<uniform> bgDebug: BgDebugUniforms;
+@group(1) @binding(1) var uDepthMap: texture_2d<f32>;
+@group(1) @binding(2) var uDepthMapSampler: sampler;
+@group(1) @binding(3) var uCollisionMap: texture_2d<f32>;
+@group(1) @binding(4) var uCollisionMapSampler: sampler;
+@group(1) @binding(5) var uGroundD: texture_2d<f32>;
+@group(1) @binding(6) var uGroundDSampler: sampler;
+
+struct VSOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) vTextureCoord: vec2<f32>,
+  @location(1) vScreenPos: vec2<f32>,
+};
+
+fn filterVertexPosition(aPosition: vec2<f32>) -> vec4<f32> {
+  var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;
+  position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;
+  position.y = position.y * (2.0 * gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;
+  return vec4<f32>(position, 0.0, 1.0);
+}
+
+fn filterTextureCoord(aPosition: vec2<f32>) -> vec2<f32> {
+  return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>) -> VSOutput {
+  return VSOutput(
+    filterVertexPosition(aPosition),
+    filterTextureCoord(aPosition),
+    aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy,
+  );
+}
+
+fn asinh_fast(x: f32) -> f32 {
+  return log(x + sqrt(x * x + 1.0));
+}
+
+// 近似 Viridis:保序,突出全局深浅
+fn depth_debug_colormap(t0: f32) -> vec3<f32> {
+  let t = clamp(t0, 0.0, 1.0);
+  let c0 = vec3<f32>(0.05, 0.02, 0.38);
+  let c1 = vec3<f32>(0.02, 0.40, 0.72);
+  let c2 = vec3<f32>(0.18, 0.75, 0.55);
+  let c3 = vec3<f32>(0.85, 0.75, 0.20);
+  let c4 = vec3<f32>(0.92, 0.35, 0.12);
+  let p = t * 4.0;
+  if (p < 1.0) { return mix(c0, c1, smoothstep(0.0, 1.0, p)); }
+  if (p < 2.0) { return mix(c1, c2, smoothstep(0.0, 1.0, p - 1.0)); }
+  if (p < 3.0) { return mix(c2, c3, smoothstep(0.0, 1.0, p - 2.0)); }
+  return mix(c3, c4, smoothstep(0.0, 1.0, p - 3.0));
+}
+
+@fragment
+fn mainFragment(
+  @location(0) vTextureCoord: vec2<f32>,
+  @location(1) vScreenPos: vec2<f32>,
+) -> @location(0) vec4<f32> {
+  if (bgDebug.uMode < 0.5) {
+    return textureSample(uTexture, uSampler, vTextureCoord);
+  }
+
+  // 从屏幕位置算出背景 UV(与 DepthOcclusionFilter 同理)
+  let sx = vScreenPos.x - bgDebug.uWorldContainerPos.x;
+  let sy = vScreenPos.y - bgDebug.uWorldContainerPos.y;
+  let uv = vec2<f32>(sx / bgDebug.uSceneSize.x, sy / bgDebug.uSceneSize.y);
+
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+    return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+  }
+
+  if (bgDebug.uMode < 1.5) {
+    // 深度调试可视化:单调 asinh + 全局线性区间归一化 + colormap
+    let depthSample = textureSampleLevel(uDepthMap, uDepthMapSampler, uv, 0.0);
+    let rawDepth = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
+    var d = rawDepth;
+    if (bgDebug.uInvert > 0.5) { d = 1.0 - rawDepth; }
+    let depth = d * bgDebug.uScale + bgDebug.uOffset;
+    let z = asinh_fast(depth);
+    let z0 = asinh_fast(bgDebug.uDbgDepthLo);
+    let z1 = asinh_fast(bgDebug.uDbgDepthHi);
+    let t = clamp((z - z0) / max(z1 - z0, 1e-6), 0.0, 1.0);
+    return vec4<f32>(depth_debug_colormap(t), 1.0);
+  } else if (bgDebug.uMode < 2.5) {
+    // 碰撞可视化
+    let texX = uv.x * bgDebug.uTexSize.x;
+    let texY = uv.y * bgDebug.uTexSize.y;
+
+    if (bgDebug.uHasGroundTex < 0.5) { return vec4<f32>(0.25, 0.25, 0.28, 1.0); }
+    let gsm = textureSampleLevel(uGroundD, uGroundDSampler, uv, 0.0);
+    let dFloor = bgDebug.uGroundMin
+      + ((gsm.r * 255.0 * 256.0 + gsm.g * 255.0) / 65535.0) * (bgDebug.uGroundMax - bgDebug.uGroundMin);
+    let px = (texX - bgDebug.uM_cx) / bgDebug.uM_ppu;
+    let py = (bgDebug.uM_cy - texY) / bgDebug.uM_ppu;
+
+    let wx = bgDebug.uM_R00 * px + bgDebug.uM_R01 * py + bgDebug.uM_R02 * dFloor;
+    let wz = bgDebug.uM_R20 * px + bgDebug.uM_R21 * py + bgDebug.uM_R22 * dFloor;
+
+    let gx = (wx - bgDebug.uCol_xMin) / bgDebug.uCol_cellSize;
+    let gz = (wz - bgDebug.uCol_zMin) / bgDebug.uCol_cellSize;
+
+    var isCollision = 0.0;
+    if (gx >= 0.0 && gx < bgDebug.uCol_gridW && gz >= 0.0 && gz < bgDebug.uCol_gridH) {
+      let colUV = vec2<f32>(gx / bgDebug.uCol_gridW, gz / bgDebug.uCol_gridH);
+      let colSample = textureSampleLevel(uCollisionMap, uCollisionMapSampler, colUV, 0.0);
+      if (colSample.r > 0.5) { isCollision = 1.0; }
+    }
+
+    return vec4<f32>(0.0, isCollision, 0.0, 1.0);
+  }
+  // UV 可视化
+  return vec4<f32>(uv.x, uv.y, 0.0, 1.0);
+}
+`;
+
 let sharedProgram: GlProgram | null = null;
+let sharedGpuProgram: GpuProgram | null = null;
 
 function getProgram(): GlProgram {
     if (!sharedProgram) {
         sharedProgram = new GlProgram({ vertex: VERT, fragment: FRAG });
     }
     return sharedProgram;
+}
+
+function getGpuProgram(): GpuProgram {
+    if (!sharedGpuProgram) {
+        sharedGpuProgram = GpuProgram.from({
+            name: 'background-debug-filter',
+            vertex: { source: WGSL, entryPoint: 'mainVertex' },
+            fragment: { source: WGSL, entryPoint: 'mainFragment' },
+        });
+    }
+    return sharedGpuProgram;
 }
 
 /** 调试：强制创建共享 GlProgram，便于随后对 gl.getError 做 drain */
@@ -169,6 +346,7 @@ export class BackgroundDebugFilter extends Filter {
         const placeholder = Texture.WHITE;
         super({
             glProgram: getProgram(),
+            gpuProgram: getGpuProgram(),
             resources: {
                 bgDebug: {
                     uMode: { value: 0, type: 'f32' },
@@ -187,6 +365,13 @@ export class BackgroundDebugFilter extends Filter {
                     uM_R20: { value: 0, type: 'f32' },
                     uM_R21: { value: 0, type: 'f32' },
                     uM_R22: { value: 1, type: 'f32' },
+                    // 行走面场的解码区间与「有没有场」:必须在这里声明。Pixi 的 uniform 组只认构造时声明的键,
+                    // 事后往 uniforms 上挂新键——WebGL 首次生成同步函数时会去读不存在的类型描述而抛
+                    // (整帧渲染失败);若同步函数先于挂键生成,新键则永远不上传(碰撞视图恒置灰);
+                    // WebGPU 的 uniform 缓冲布局也只按声明的键排。
+                    uGroundMin: { value: 0, type: 'f32' },
+                    uGroundMax: { value: 1, type: 'f32' },
+                    uHasGroundTex: { value: 0, type: 'f32' },
                     uCol_xMin: { value: 0, type: 'f32' },
                     uCol_zMin: { value: 0, type: 'f32' },
                     uCol_cellSize: { value: 1, type: 'f32' },
@@ -196,8 +381,11 @@ export class BackgroundDebugFilter extends Filter {
                     uDbgDepthHi: { value: 1, type: 'f32' },
                 },
                 uDepthMap: placeholder.source,
+                uDepthMapSampler: placeholder.source.style,
                 uCollisionMap: placeholder.source,
+                uCollisionMapSampler: placeholder.source.style,
                 uGroundD: placeholder.source,
+                uGroundDSampler: placeholder.source.style,
             },
         });
     }
@@ -233,6 +421,7 @@ export class BackgroundDebugFilter extends Filter {
         if (!u) return;
 
         (this.resources as Record<string, unknown>)['uDepthMap'] = depthTexture.source;
+        (this.resources as Record<string, unknown>)['uDepthMapSampler'] = depthTexture.source.style;
 
         const sz = u['uTexSize'] as Float32Array;
         sz[0] = texWidth; sz[1] = texHeight;
@@ -301,7 +490,9 @@ export class BackgroundDebugFilter extends Filter {
     setGroundTexture(g: { tex: TextureSource; min: number; max: number } | null): void {
         const u = this._u;
         if (!u) return;
-        (this.resources as Record<string, unknown>)['uGroundD'] = g?.tex ?? Texture.WHITE.source;
+        const ground = g?.tex ?? Texture.WHITE.source;
+        (this.resources as Record<string, unknown>)['uGroundD'] = ground;
+        (this.resources as Record<string, unknown>)['uGroundDSampler'] = ground.style;
         u['uGroundMin'] = g?.min ?? 0;
         u['uGroundMax'] = g?.max ?? 1;
         u['uHasGroundTex'] = g ? 1 : 0;
@@ -311,6 +502,7 @@ export class BackgroundDebugFilter extends Filter {
         const u = this._u;
         if (!u) return;
         (this.resources as Record<string, unknown>)['uCollisionMap'] = tex.source;
+        (this.resources as Record<string, unknown>)['uCollisionMapSampler'] = tex.source.style;
     }
 
     /**
@@ -328,8 +520,11 @@ export class BackgroundDebugFilter extends Filter {
         const white = Texture.WHITE.source;
         const r = this.resources as Record<string, unknown>;
         r['uGroundD'] = white;
+        r['uGroundDSampler'] = white.style;
         r['uDepthMap'] = white;
+        r['uDepthMapSampler'] = white.style;
         r['uCollisionMap'] = white;
+        r['uCollisionMapSampler'] = white.style;
         u['uHasGroundTex'] = 0;
     }
 }

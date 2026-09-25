@@ -1,4 +1,4 @@
-import { Filter, GlProgram, Texture } from 'pixi.js';
+import { Filter, GlProgram, GpuProgram, Texture } from 'pixi.js';
 
 const VERT = /* glsl */ `
 in vec2 aPosition;
@@ -86,11 +86,125 @@ void main(void) {
 }
 `;
 
+/**
+ * WebGPU 版(与上面 GLSL 逐行对应)。约定:
+ * - `@group(0)` 是 Pixi 滤镜固定的 gfu / uTexture / uSampler;本滤镜自己的放 `@group(1)`,
+ *   **变量名 = resources 的键名**(Pixi 按名字对槽位);
+ * - `WaterUniforms` 成员顺序 = 下面 `waterUniforms` 的声明顺序(vec3 按 16 对齐,后面的 f32 紧贴其尾);
+ * - 纹理各配一个 `<名>Sampler`,取该纹理自己的采样状态(法线图的 uv 越出 0..1,寻址模式要跟纹理走)。
+ * 法线图那次采样在 `uUseNormalMap` 分支里:条件是 uniform,属一致控制流,textureSample 合法。
+ */
+const WGSL = /* wgsl */ `
+struct GlobalFilterUniforms {
+  uInputSize: vec4<f32>,
+  uInputPixel: vec4<f32>,
+  uInputClamp: vec4<f32>,
+  uOutputFrame: vec4<f32>,
+  uGlobalFrame: vec4<f32>,
+  uOutputTexture: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;
+@group(0) @binding(1) var uTexture: texture_2d<f32>;
+@group(0) @binding(2) var uSampler: sampler;
+
+struct WaterUniforms {
+  uTime: f32,
+  uMurk: f32,
+  uDarkness: f32,
+  uRain: f32,
+  uSigma: vec3<f32>,
+  uMinAlpha: f32,
+  uUseNormalMap: f32,
+  uWaterBottomDepth: f32,
+};
+@group(1) @binding(0) var<uniform> waterUniforms: WaterUniforms;
+@group(1) @binding(1) var uNormalMap: texture_2d<f32>;
+@group(1) @binding(2) var uNormalMapSampler: sampler;
+@group(1) @binding(3) var uParams: texture_2d<f32>;
+@group(1) @binding(4) var uParamsSampler: sampler;
+
+struct VSOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) vTextureCoord: vec2<f32>,
+};
+
+fn filterVertexPosition(aPosition: vec2<f32>) -> vec4<f32> {
+  var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;
+  position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;
+  position.y = position.y * (2.0 * gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;
+  return vec4<f32>(position, 0.0, 1.0);
+}
+
+fn filterTextureCoord(aPosition: vec2<f32>) -> vec2<f32> {
+  return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>) -> VSOutput {
+  return VSOutput(filterVertexPosition(aPosition), filterTextureCoord(aPosition));
+}
+
+@fragment
+fn mainFragment(@location(0) vTextureCoord: vec2<f32>) -> @location(0) vec4<f32> {
+  let uv = vTextureCoord;
+  let uTime = waterUniforms.uTime;
+  let uMurk = waterUniforms.uMurk;
+
+  var ripple = vec2<f32>(
+    sin(uv.x * 48.0 + uTime * 1.7) * cos(uv.y * 31.0 - uTime * 1.1),
+    cos(uv.y * 44.0 + uTime * 1.4) * sin(uv.x * 29.0 + uTime * 0.9)
+  ) * 0.012 * (0.35 + uMurk);
+
+  if (waterUniforms.uUseNormalMap > 0.5) {
+    let n = textureSample(uNormalMap, uNormalMapSampler, uv * 2.5 + uTime * 0.03).rgb * 2.0 - 1.0;
+    ripple += n.xy * 0.018;
+  }
+
+  let suv = clamp(uv + ripple, vec2<f32>(0.001), vec2<f32>(0.999));
+  let col = textureSample(uTexture, uSampler, suv);
+
+  let pm = textureSample(uParams, uParamsSampler, suv);
+  let pMask = step(0.5, pm.b) * pm.a;
+  let bgOpticalPath = max(waterUniforms.uWaterBottomDepth * suv.y, 0.0001);
+  let entityRelDepth = max(pm.r, 0.0);
+  let entityOpticalPath = max(waterUniforms.uWaterBottomDepth * entityRelDepth, 0.0001);
+  let depthGrad = mix(bgOpticalPath, entityOpticalPath, pMask);
+
+  let absorb = exp(-waterUniforms.uSigma * depthGrad * (1.2 + uMurk * 2.5));
+  var rgb = col.rgb * absorb;
+
+  rgb *= clamp(1.0 - waterUniforms.uDarkness, 0.15, 1.0);
+
+  let fog = uMurk * 0.35 + waterUniforms.uRain * 0.08;
+  rgb = mix(rgb, vec3<f32>(0.55, 0.62, 0.72), clamp(fog, 0.0, 0.85));
+
+  let glowAmt = pMask * pm.g;
+  rgb += vec3<f32>(0.82, 0.90, 1.0) * glowAmt * 0.48;
+
+  let rainTint = waterUniforms.uRain * 0.22;
+  rgb = mix(rgb, vec3<f32>(0.72, 0.78, 0.88), rainTint);
+
+  return vec4<f32>(rgb, max(col.a, waterUniforms.uMinAlpha));
+}
+`;
+
 let sharedProgram: GlProgram | null = null;
+let sharedGpuProgram: GpuProgram | null = null;
 
 function program(): GlProgram {
   if (!sharedProgram) sharedProgram = new GlProgram({ vertex: VERT, fragment: FRAG });
   return sharedProgram;
+}
+
+function gpuProgram(): GpuProgram {
+  if (!sharedGpuProgram) {
+    sharedGpuProgram = GpuProgram.from({
+      name: 'water-surface-filter',
+      vertex: { source: WGSL, entryPoint: 'mainVertex' },
+      fragment: { source: WGSL, entryPoint: 'mainFragment' },
+    });
+  }
+  return sharedGpuProgram;
 }
 
 export class WaterShaderFilter extends Filter {
@@ -98,6 +212,7 @@ export class WaterShaderFilter extends Filter {
     const ph = Texture.WHITE;
     super({
       glProgram: program(),
+      gpuProgram: gpuProgram(),
       resources: {
         waterUniforms: {
           uTime: { value: 0, type: 'f32' },
@@ -110,7 +225,9 @@ export class WaterShaderFilter extends Filter {
           uWaterBottomDepth: { value: 1.0, type: 'f32' },
         },
         uNormalMap: ph.source,
+        uNormalMapSampler: ph.source.style,
         uParams: ph.source,
+        uParamsSampler: ph.source.style,
       },
     });
   }
@@ -157,6 +274,7 @@ export class WaterShaderFilter extends Filter {
   setNormalTexture(tex: Texture | null): void {
     const src = tex?.source ?? Texture.WHITE.source;
     (this.resources as Record<string, unknown>)['uNormalMap'] = src;
+    (this.resources as Record<string, unknown>)['uNormalMapSampler'] = src.style;
     const u = this._u;
     if (u) u['uUseNormalMap'] = tex ? 1 : 0;
   }
@@ -164,6 +282,7 @@ export class WaterShaderFilter extends Filter {
   setParamsTexture(tex: Texture | null): void {
     const src = tex?.source ?? Texture.WHITE.source;
     (this.resources as Record<string, unknown>)['uParams'] = src;
+    (this.resources as Record<string, unknown>)['uParamsSampler'] = src.style;
   }
 
   /** 水域水底光学系数（>=0）；缺省 1。与背景 suv.y、参数 RT 的 R 相乘后进入贝尔定律，不做 1 上限 */

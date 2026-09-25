@@ -1,7 +1,8 @@
-import type { Container, RenderSurface } from 'pixi.js';
+import type { RenderSurface } from 'pixi.js';
 import {
   AlphaFilter,
   BlurFilter,
+  Container,
   Filter,
   GlProgram,
   GpuProgram,
@@ -165,6 +166,9 @@ void main(void) {
 }
 `;
 
+// WebGPU 版合成。Pixi 按**变量名 = resources 键名**给 WGSL 槽位配资源:uniform 组的变量必须叫
+// compositeUniforms(与下面 resources 的键同名),叫别的名字那组 uniform 会被 Pixi 甩进无人认领的
+// 第 99 组、@group(1) @binding(0) 空着,WebGPU 上建 bind group 直接失败。
 const WGSL_COMPOSITE = WGSL_HEAD + /* wgsl */ `
 struct CompositeUniforms {
   uMaskX: vec4<f32>,
@@ -174,7 +178,7 @@ struct CompositeUniforms {
   _pad0: f32,
   _pad1: f32,
 };
-@group(1) @binding(0) var<uniform> cu: CompositeUniforms;
+@group(1) @binding(0) var<uniform> compositeUniforms: CompositeUniforms;
 @group(1) @binding(1) var uBodyRaw: texture_2d<f32>;
 @group(1) @binding(2) var uBodyRawSampler: sampler;
 @group(1) @binding(3) var uBodyBlur: texture_2d<f32>;
@@ -189,8 +193,8 @@ fn mainFragment(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
   let aPos = uv / (gfu.uOutputFrame.zw * gfu.uInputSize.zw);
   let gpos = gfu.uOutputFrame.xy + aPos * gfu.uOutputFrame.zw;
   let muv = vec2<f32>(
-      dot(cu.uMaskX.xyz, vec3<f32>(gpos, 1.0)),
-      dot(cu.uMaskY.xyz, vec3<f32>(gpos, 1.0))
+      dot(compositeUniforms.uMaskX.xyz, vec3<f32>(gpos, 1.0)),
+      dot(compositeUniforms.uMaskY.xyz, vec3<f32>(gpos, 1.0))
   );
   let inArea = step(0.0, muv.x) * step(muv.x, 1.0)
              * step(0.0, muv.y) * step(muv.y, 1.0);
@@ -198,8 +202,8 @@ fn mainFragment(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
   let bodyBlur = textureSample(uBodyBlur, uBodyBlurSampler, muv).a * inArea;
   let critRaw = textureSample(uCritRaw, uCritRawSampler, muv).a * inArea;
   let critBlur = textureSample(uCritBlur, uCritBlurSampler, muv).a * inArea;
-  let shBody = (1.0 - exp(-max(bodyBlur, 0.0) * cu.uBodyStrength)) * (1.0 - bodyRaw);
-  let shCrit = (1.0 - exp(-max(critBlur, 0.0) * cu.uCritStrength)) * (1.0 - critRaw);
+  let shBody = (1.0 - exp(-max(bodyBlur, 0.0) * compositeUniforms.uBodyStrength)) * (1.0 - bodyRaw);
+  let shCrit = (1.0 - exp(-max(critBlur, 0.0) * compositeUniforms.uCritStrength)) * (1.0 - critRaw);
   let rgb = base.rgb * (1.0 - shCrit);
   let aoA = max(shBody, shCrit) * (1.0 - base.a);
   return vec4<f32>(rgb, base.a + aoA);
@@ -283,6 +287,8 @@ export class ObjectExamineContactAoFilter extends Filter {
   private readonly tmpShader = new Matrix();
   private readonly tmpTranslate = new Matrix();
   private readonly tmpScale = new Matrix();
+  /** WebGPU 上清 mask RT 用的空场景(见 clearMask)。 */
+  private readonly emptyScene = new Container();
 
   constructor() {
     super({
@@ -410,12 +416,7 @@ export class ObjectExamineContactAoFilter extends Filter {
     // caster 烘焙变换：texel = S(maskScale) · T(-x,-y) · casterLocal(相对 objectRoot)
     this.tmpScale.set(this.maskScale, 0, 0, this.maskScale, 0, 0);
     try {
-      // 必须 bind(target, clear) 而不是 renderer.clear({target})：WebGL 的
-      // GlRenderTargetAdaptor.clear 忽略 target 参数，只对「当前已绑定的 FBO」
-      // 发 gl.clear。用 renderer.clear({target: rtCrit}) 会把上一步刚烘好的
-      // rtBody 抹成全 0（物件 AO 整条通道失效），而 rtCrit 自己从不被清空
-      // （爬虫轮廓逐帧累积成拖影）。bind 会先绑 FBO+viewport 再清。
-      renderer.renderTarget.bind(this.rtBody, true, [0, 0, 0, 0]);
+      this.clearMask(renderer, this.rtBody);
       if (this.bodyCaster.visible) {
         this.casterTransform(this.bodyCaster, objectRoot);
         renderer.render({
@@ -425,7 +426,7 @@ export class ObjectExamineContactAoFilter extends Filter {
           transform: this.tmpCaster,
         });
       }
-      renderer.renderTarget.bind(this.rtCrit, true, [0, 0, 0, 0]);
+      this.clearMask(renderer, this.rtCrit);
       for (const caster of this.critterCasters) {
         if (!caster.visible) continue;
         this.casterTransform(caster, objectRoot);
@@ -444,6 +445,29 @@ export class ObjectExamineContactAoFilter extends Filter {
         console.warn('objectExamine: contact AO mask bake failed; disabling this pass', e);
       }
     }
+  }
+
+  /**
+   * 把一张 mask RT 清成全透明（bake 在主渲染之外调用）。
+   *
+   * - WebGL：必须 bind(target, clear) 而不是 renderer.clear({target})：WebGL 的
+   *   GlRenderTargetAdaptor.clear 忽略 target 参数，只对「当前已绑定的 FBO」
+   *   发 gl.clear。用 renderer.clear({target: rtCrit}) 会把上一步刚烘好的
+   *   rtBody 抹成全 0（物件 AO 整条通道失效），而 rtCrit 自己从不被清空
+   *   （爬虫轮廓逐帧累积成拖影）。bind 会先绑 FBO+viewport 再清。
+   * - WebGPU：渲染之外没有 command encoder（每次 render 收尾 postrender 把它置空），
+   *   renderTarget.bind 开 pass 当场抛 → 整条 AO 被 catch 关掉。renderer.clear 也不可靠：
+   *   它「自建 encoder 单独提交」的分支判的是 `commandEncoder === null`，而渲染器建好后
+   *   第一次 render 之前那里是 undefined，照样走开 pass 那条路抛（实测：会话第一帧 AO 就被关掉）；
+   *   且单独提交时视口用的是上一个绑定目标的，不是本 RT 的。所以走一次空场景的
+   *   render(clear)：清屏随 pass 的 loadOp 生效，视口按本 RT 设。
+   */
+  private clearMask(renderer: PixiRenderer, rt: RenderTexture): void {
+    if (renderer.type === RendererType.WEBGPU) {
+      renderer.render({ container: this.emptyScene, target: rt, clear: true, clearColor: [0, 0, 0, 0] });
+      return;
+    }
+    renderer.renderTarget.bind(rt, true, [0, 0, 0, 0]);
   }
 
   /**
@@ -573,6 +597,7 @@ export class ObjectExamineContactAoFilter extends Filter {
     this.blurCrit.destroy(false);
     this.compositePass.destroy(false);
     this.passthrough.destroy(false);
+    this.emptyScene.destroy();
     super.destroy(false);
   }
 }
