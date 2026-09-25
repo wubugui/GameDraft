@@ -230,10 +230,10 @@ describe('VfxRenderer · 受光强度（lightGain）', () => {
     const extras: Record<string, unknown>[] = [];
     const deps: VfxRenderDeps = {
       entityLayer: new Container(),
-      createLitShader: (program, colorTex, extra) => {
+      createLitShader: (programs, colorTex, extra) => {
         if (!opts.canLight) return null;
         extras.push(extra);
-        return new Shader({ glProgram: program, resources: { ...shared, uColorTex: colorTex, ...extra } });
+        return new Shader({ glProgram: programs.gl, gpuProgram: programs.gpu, resources: { ...shared, uColorTex: colorTex, ...extra } });
       },
       releaseLitShader: (sh) => sh.destroy(),
       canLight: () => opts.canLight,

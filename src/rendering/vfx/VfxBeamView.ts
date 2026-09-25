@@ -12,8 +12,9 @@ import { Buffer, BufferUsage, Geometry, Mesh, Shader, Texture, type TextureSourc
 import type { VfxBeamSort } from '../../data/types';
 import { VFX_BEAM_MAX_CURVE_KEYS, VFX_BEAM_MAX_HULL, VFX_BEAM_MAX_PLANES } from '../../systems/vfx/vfxBeam';
 import type { VfxBeamRuntime } from '../../systems/vfx/vfxSim';
+import { samplerOf } from '../legacy/gpuSampler';
 import { createBeamUniformValues, type VfxBeamUniformValues } from './vfxBeamGlsl';
-import { getVfxBeamProgram } from './vfxBeamShaders';
+import { getVfxBeamGpuProgram, getVfxBeamProgram } from './vfxBeamShaders';
 
 type SortableMesh = Mesh<Geometry, Shader> & { entitySortFootY?: number; entitySortBand?: 'back' | 'front' };
 
@@ -45,12 +46,16 @@ export class VfxBeamView {
     displayUniforms: UniformGroup,
   ) {
     const v = this.values;
+    // ⚠ 声明顺序 = WebGPU 缓冲布局（Pixi 按声明顺序、WGSL 对齐规则排偏移），与 vfxBeamWgsl.ts 的结构逐项对应。
+    // uBeamAlong 紧跟 uBeamPlanes：WGSL 里它是同一块内存的 array<vec4<f32>, N/2>（uniform 数组步长须 16 的倍数），
+    // 偏移必须落在 16 的倍数上。WebGL 侧按名字逐个传 uniform，声明顺序不影响画面。
     this.beamGroup = new UniformGroup({
       uBeamMode: { value: 0, type: 'f32' },
       uBeamS2W0: { value: v.uBeamS2W0, type: 'vec4<f32>' },
       uBeamS2W1: { value: v.uBeamS2W1, type: 'vec4<f32>' },
       uBeamS2W2: { value: v.uBeamS2W2, type: 'vec4<f32>' },
       uBeamPlanes: { value: v.uBeamPlanes, type: 'vec4<f32>', size: VFX_BEAM_MAX_PLANES },
+      uBeamAlong: { value: v.uBeamAlong, type: 'vec2<f32>', size: VFX_BEAM_MAX_CURVE_KEYS },
       uBeamPlaneCount: { value: 0, type: 'i32' },
       uBeamOrigin: { value: v.uBeamOrigin, type: 'vec3<f32>' },
       uBeamAxis: { value: v.uBeamAxis, type: 'vec3<f32>' },
@@ -71,7 +76,6 @@ export class VfxBeamView {
       uBeamContactSoft: { value: 0, type: 'f32' },
       uBeamWuPerQ: { value: 1, type: 'f32' },
       uBeamBlend: { value: 0, type: 'i32' },
-      uBeamAlong: { value: v.uBeamAlong, type: 'vec2<f32>', size: VFX_BEAM_MAX_CURVE_KEYS },
       uBeamAlongCount: { value: 0, type: 'i32' },
       uBeamNoise: { value: v.uBeamNoise, type: 'vec4<f32>' },
       uBeamNoiseVel: { value: v.uBeamNoiseVel, type: 'vec3<f32>' },
@@ -89,13 +93,20 @@ export class VfxBeamView {
       uOffset: { value: 0, type: 'f32' },
       uTolerance: { value: 0.05, type: 'f32' },
     });
+    const depthTex = depthSrc ?? Texture.WHITE.source;
+    const cookieTex = cookieSrc ?? Texture.WHITE.source;
     this.shader = new Shader({
       glProgram: getVfxBeamProgram(),
+      // WebGPU 路径的 WGSL 孪生：资源键与下面逐个同名；「纹理名 + Sampler」是 WGSL 的采样器（samplerOf：按参数共享、
+      // 不挂在纹理生命期上，见 legacy/gpuSampler；WebGL 不认这些键）
+      gpuProgram: getVfxBeamGpuProgram(),
       resources: {
         vfxBeam: this.beamGroup,
         vfxDepth: this.depthGroup,
-        uDepthMap: depthSrc ?? Texture.WHITE.source,
-        uBeamCookie: cookieSrc ?? Texture.WHITE.source,
+        uDepthMap: depthTex,
+        uDepthMapSampler: samplerOf(depthTex),
+        uBeamCookie: cookieTex,
+        uBeamCookieSampler: samplerOf(cookieTex),
         // 显示变换：与背景 / 角色 / 粒子同一组数（这组里其余的灯 uniform 本程序不声明，Pixi 按名跳过）
         charLights: displayUniforms,
       },
