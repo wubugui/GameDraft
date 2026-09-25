@@ -59,6 +59,8 @@ export interface CustomDrawable {
 
 /** 收集器:场景遍历时把要画的东西按顺序交给它 */
 export interface RenderCollector {
+  /** 渲染器分辨率(文字等按它决定位图分辨率,照 Pixi 的 autoResolution) */
+  readonly resolution: number;
   addBatchable(element: BatchableElement): void;
   addCustom(drawable: CustomDrawable): void;
   pushFilter(container: Container, effect: FilterEffect): void;
