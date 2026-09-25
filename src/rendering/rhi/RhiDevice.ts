@@ -122,6 +122,8 @@ export interface RhiRenderPassEncoder {
   setIndexBuffer(buffer: RhiBuffer | null): void;
   setViewport(x: number, y: number, width: number, height: number): void;
   setScissor(x: number, y: number, width: number, height: number): void;
+  /** 模板参考值(管线带 `stencil` 时用);pass 开始时为 0 */
+  setStencilReference(reference: number): void;
   draw(vertexCount: number, instanceCount?: number, firstVertex?: number, firstInstance?: number): void;
   drawIndexed(indexCount: number, instanceCount?: number, firstIndex?: number, baseVertex?: number, firstInstance?: number): void;
   end(): void;
@@ -148,7 +150,13 @@ export interface RhiCommandList {
 export interface RhiFrame {
   readonly index: number;
   readonly commands: RhiCommandList;
+  /** 画布后备缓冲(只有颜色附件) */
   readonly swapchain: RhiRenderTarget;
+  /**
+   * 画布后备缓冲 + 一张跟画布同尺寸的深度 / 模板附件(设备持有,尺寸随画布变)。要在画布上用模板
+   * (遮罩)时用它;同一帧里与 `swapchain` 共用同一张颜色纹理。
+   */
+  swapchainWithDepth(format: import('./types').RhiDepthFormat): RhiRenderTarget;
 }
 
 export interface RhiFrameStats {

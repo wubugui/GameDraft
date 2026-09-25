@@ -196,6 +196,7 @@ class NullCommandList implements RhiCommandList {
       },
       setViewport: () => {},
       setScissor: () => {},
+      setStencilReference: () => {},
       draw: (count) => {
         if (!pipeline) throw new RhiError('invalid-usage', 'draw 之前没 setPipeline');
         for (const s of pipeline.streams) if (!streams.has(s)) throw new RhiError('invalid-usage', `顶点流「${s}」没绑定缓冲`);
@@ -304,6 +305,7 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   private readonly releases: RhiReleaseQueue;
   private readonly listeners = new Set<RhiDiagnosticListener>();
   private readonly swapchain: NullSwapchain;
+  private readonly swapchainDepth = new Map<RhiDepthFormat, NullSwapchain>();
   private readonly recordings: NullCommandList[] = [];
   private frameIndex = 0;
   private stats: RhiFrameStats = { frame: -1, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
@@ -430,7 +432,22 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   runFrame(record: (frame: RhiFrame) => void): boolean {
     const stats: RhiFrameStats = { frame: this.frameIndex, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
     const commands = new NullCommandList(this, `帧 ${this.frameIndex}`, stats);
-    return this.record(commands, () => record({ index: this.frameIndex, commands, swapchain: this.swapchain }), () => {
+    const swapchainWithDepth = (format: RhiDepthFormat): RhiRenderTarget => {
+      let t = this.swapchainDepth.get(format);
+      if (!t) {
+        const depth = new NullTexture(
+          this.rootScope,
+          this.releases,
+          { label: `画布深度 ${format}`, width: this.swapchain.width, height: this.swapchain.height, format, usage: RhiTextureUsage.RENDER_TARGET },
+          RhiTextureUsage.RENDER_TARGET,
+          this.log,
+        );
+        t = new NullSwapchain(this.rootScope, this.releases, `画布后备缓冲+${format}`, this.swapchain.width, this.swapchain.height, [], depth, this.log);
+        this.swapchainDepth.set(format, t);
+      }
+      return t;
+    };
+    return this.record(commands, () => record({ index: this.frameIndex, commands, swapchain: this.swapchain, swapchainWithDepth }), () => {
       this.stats = stats;
       this.frameIndex++;
     });

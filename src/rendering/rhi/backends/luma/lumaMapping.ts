@@ -82,6 +82,15 @@ export function toLumaPipelineParameters(desc: RhiRenderPipelineDesc): RenderPip
     params.depthCompare = desc.depth?.compare ?? 'less-equal';
     params.depthFormat = desc.depthFormat;
   }
+  if (desc.stencil) {
+    params.stencilCompare = desc.stencil.compare;
+    params.stencilPassOperation = desc.stencil.passOp ?? 'keep';
+    params.stencilFailOperation = desc.stencil.failOp ?? 'keep';
+    params.stencilDepthFailOperation = desc.stencil.depthFailOp ?? 'keep';
+    params.stencilReadMask = desc.stencil.readMask ?? 0xff;
+    params.stencilWriteMask = desc.stencil.writeMask ?? 0xff;
+  }
+  if (desc.colorWriteMask !== undefined) params.colorMask = desc.colorWriteMask;
   return params;
 }
 

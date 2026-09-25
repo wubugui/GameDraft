@@ -322,7 +322,6 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
  * ——这一帧没画到画布就不取(不空耗一次呈现,加载期只做离屏烘焙的帧也不碰画布)。不归任何作用域销毁。
  */
 class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements RhiRenderTarget {
-  private current: Framebuffer | null = null;
   private armed = false;
 
   constructor(
@@ -330,14 +329,19 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
     releases: RhiReleaseQueue,
     private readonly context: CanvasContext,
     private readonly format: RhiColorFormat,
+    /** 附带的深度 / 模板格式(由画布上下文持有、随画布尺寸重建) */
+    private readonly depth: RhiDepthFormat | null = null,
   ) {
-    super('render-target', '画布后备缓冲', scope, releases);
+    super('render-target', depth ? `画布后备缓冲+${depth}` : '画布后备缓冲', scope, releases);
   }
 
+  /**
+   * 每次取都向画布上下文要(同一帧拿到的是同一张颜色纹理)。luma 的画布帧缓冲对象只有一个,
+   * 带不带深度附件是取的时候重新挂的,所以不能缓存。
+   */
   get framebuffer(): Framebuffer {
     if (!this.armed) throw new RhiError('invalid-usage', '画布后备缓冲只能在 runFrame 的录制期内使用');
-    this.current ??= this.context.getCurrentFramebuffer({ depthStencilFormat: false });
-    return this.current;
+    return this.context.getCurrentFramebuffer({ depthStencilFormat: (this.depth ?? false) as never });
   }
 
   get width(): number {
@@ -353,7 +357,7 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
   }
 
   get depthFormat(): RhiDepthFormat | null {
-    return null;
+    return this.depth;
   }
 
   override destroy(): void {
@@ -362,12 +366,10 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
 
   _beginFrame(): void {
     this.armed = true;
-    this.current = null;
   }
 
   _endFrame(): void {
     this.armed = false;
-    this.current = null;
   }
 
   protected releaseBackend(): void {}
@@ -401,22 +403,43 @@ class LumaCommandList implements RhiCommandList {
     if (colorOps.length > target.colorFormats.length) {
       throw new RhiError('invalid-usage', `render pass「${desc.label}」给了 ${colorOps.length} 个颜色附件操作,目标只有 ${target.colorFormats.length} 个附件`);
     }
-    const clearColors = target.colorFormats.map((format, i) => {
+    // pass 描述符自己拼(luma 的 WebGPU pass 不设模板附件的 load / store,带模板的深度格式会校验失败),
+    // 再把现成的 GPURenderPassEncoder 交给 luma 包装(luma 的 `handle` 属性)。
+    const framebuffer = target.framebuffer as Framebuffer & {
+      colorAttachments: Array<{ handle: GPUTextureView }>;
+      depthStencilAttachment: { handle: GPUTextureView } | null;
+    };
+    const colorAttachments: GPURenderPassColorAttachment[] = target.colorFormats.map((format, i) => {
       const op = colorOps[i] ?? { load: 'clear' as const };
-      if (op.load !== 'clear') return false as const;
-      const v = op.clearValue ?? [0, 0, 0, 0];
-      // 整数格式要用整数清屏值
-      return format.endsWith('uint') ? new Uint32Array(v) : new Float32Array(v);
+      const v = op.load === 'clear' ? op.clearValue ?? [0, 0, 0, 0] : [0, 0, 0, 0];
+      return {
+        view: framebuffer.colorAttachments[i].handle,
+        loadOp: op.load,
+        storeOp: 'store',
+        // 整数格式的清屏值按整数解释;浮点 / 归一化格式按浮点
+        clearValue: format.endsWith('uint') ? v.map((x) => Math.trunc(x)) : v,
+      };
     });
-    const depthOp = desc.depthOp ?? { load: 'clear' as const };
-    const pass = this.encoder.beginRenderPass({
-      id: desc.label,
-      framebuffer: target.framebuffer,
-      clearColors,
-      clearColor: clearColors.length === 1 && clearColors[0] ? (Array.from(clearColors[0]) as [number, number, number, number]) : false,
-      clearDepth: target.depthFormat ? (depthOp.load === 'clear' ? depthOp.clearValue ?? 1 : false) : false,
-      clearStencil: false,
-    });
+    let depthStencilAttachment: GPURenderPassDepthStencilAttachment | undefined;
+    const depthFormat = target.depthFormat;
+    if (depthFormat && framebuffer.depthStencilAttachment) {
+      const depthOp = desc.depthOp ?? { load: 'clear' as const };
+      depthStencilAttachment = {
+        view: framebuffer.depthStencilAttachment.handle,
+        depthLoadOp: depthOp.load,
+        depthStoreOp: 'store',
+        depthClearValue: depthOp.load === 'clear' ? depthOp.clearValue ?? 1 : undefined,
+      };
+      if (depthFormat.includes('stencil')) {
+        const stencilOp = desc.stencilOp ?? { load: 'clear' as const };
+        depthStencilAttachment.stencilLoadOp = stencilOp.load;
+        depthStencilAttachment.stencilStoreOp = 'store';
+        if (stencilOp.load === 'clear') depthStencilAttachment.stencilClearValue = stencilOp.clearValue ?? 0;
+      }
+    }
+    const gpuEncoder = (this.encoder as CommandEncoder & { handle: GPUCommandEncoder }).handle;
+    const handle = gpuEncoder.beginRenderPass({ label: desc.label, colorAttachments, depthStencilAttachment });
+    const pass = this.encoder.beginRenderPass({ id: desc.label, framebuffer: target.framebuffer, handle } as never);
     this.stats.renderPasses++;
     const enc = new LumaRenderPassEncoder(this.device, this, pass, target, desc.label, this.stats);
     this.openPass = enc;
@@ -584,6 +607,11 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     this.pass.setParameters({ scissorRect: [x, y, width, height] });
   }
 
+  setStencilReference(reference: number): void {
+    // luma 的 setParameters 把参考值 0 当"没给"跳过,直接调底层
+    (this.pass as RenderPass & { handle: GPURenderPassEncoder }).handle.setStencilReference(reference);
+  }
+
   draw(vertexCount: number, instanceCount = 1, firstVertex = 0, firstInstance = 0): void {
     const p = this.prepareDraw(false);
     const drawn = this.pass.draw({ vertexCount, instanceCount, firstVertex, firstInstance, isInstanced: instanceCount > 1 });
@@ -701,6 +729,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   private readonly releases: RhiReleaseQueue;
   private readonly listeners = new Set<RhiDiagnosticListener>();
   private readonly swapchain: LumaSwapchainTarget;
+  private readonly swapchainDepth = new Map<RhiDepthFormat, LumaSwapchainTarget>();
   private readonly warnedSkips = new WeakSet<object>();
   private frameIndex = 0;
   /** 正在录制的命令表(submit 里可以嵌套 runFrame 之外的 submit,所以是栈) */
@@ -974,9 +1003,19 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     this.releases.beginRecording();
     try {
       this.swapchain._beginFrame();
+      for (const t of this.swapchainDepth.values()) t._beginFrame();
       commands = new LumaCommandList(this, `帧 ${this.frameIndex}`, stats);
       this.recordings.push(commands);
-      record({ index: this.frameIndex, commands, swapchain: this.swapchain });
+      const swapchainWithDepth = (format: RhiDepthFormat): RhiRenderTarget => {
+        let t = this.swapchainDepth.get(format);
+        if (!t) {
+          t = new LumaSwapchainTarget(this.rootScope, this.releases, this.luma.getDefaultCanvasContext(), this.caps.swapchainFormat, format);
+          this.swapchainDepth.set(format, t);
+          t._beginFrame();
+        }
+        return t;
+      };
+      record({ index: this.frameIndex, commands, swapchain: this.swapchain, swapchainWithDepth });
       commands._submit();
       return true;
     } catch (e) {
@@ -986,6 +1025,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     } finally {
       if (commands) this.recordings.splice(this.recordings.indexOf(commands), 1);
       this.swapchain._endFrame();
+      for (const t of this.swapchainDepth.values()) t._endFrame();
       this._lastFrameStats = stats;
       this.frameIndex++;
       this.releases.endRecording();

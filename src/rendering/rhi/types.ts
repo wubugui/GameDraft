@@ -207,6 +207,32 @@ export interface RhiDepthState {
   compare: RhiCompareFunction;
 }
 
+export type RhiStencilOperation =
+  | 'keep'
+  | 'zero'
+  | 'replace'
+  | 'invert'
+  | 'increment-clamp'
+  | 'decrement-clamp'
+  | 'increment-wrap'
+  | 'decrement-wrap';
+
+/**
+ * 模板测试(正反面相同)。目标要有带模板的深度附件(`depth24plus-stencil8`);参考值在 pass 里用
+ * `setStencilReference` 设,pass 开始时为 0。
+ */
+export interface RhiStencilState {
+  compare: RhiCompareFunction;
+  passOp?: RhiStencilOperation;
+  failOp?: RhiStencilOperation;
+  depthFailOp?: RhiStencilOperation;
+  readMask?: number;
+  writeMask?: number;
+}
+
+/** 颜色写掩码位(`RhiRenderPipelineDesc.colorWriteMask`) */
+export const RhiColorWrite = { RED: 1, GREEN: 2, BLUE: 4, ALPHA: 8, ALL: 15, NONE: 0 } as const;
+
 /** 渲染管线 = 着色器 + 顶点布局 + 光栅 / 混合 / 深度状态 + 目标格式。创建后不可变。 */
 export interface RhiRenderPipelineDesc {
   label: string;
@@ -219,6 +245,10 @@ export interface RhiRenderPipelineDesc {
   /** null / 不给 = 不混合(直接覆盖) */
   blend?: RhiBlendState | null;
   depth?: RhiDepthState;
+  /** 模板测试;给了就要求 `depthFormat` 是带模板的格式 */
+  stencil?: RhiStencilState;
+  /** 颜色写掩码(`RhiColorWrite` 位组合),缺省全写 */
+  colorWriteMask?: number;
   cullMode?: 'none' | 'front' | 'back';
 }
 
@@ -236,6 +266,7 @@ export interface RhiRenderTargetDesc {
 /** 颜色附件在 pass 开始时的处理:清成某色,或保留原内容 */
 export type RhiColorLoad = { load: 'clear'; clearValue?: [number, number, number, number] } | { load: 'load' };
 export type RhiDepthLoad = { load: 'clear'; clearValue?: number } | { load: 'load' };
+export type RhiStencilLoad = { load: 'clear'; clearValue?: number } | { load: 'load' };
 
 export interface RhiRenderPassDesc {
   label: string;
@@ -244,6 +275,8 @@ export interface RhiRenderPassDesc {
   colorOps?: RhiColorLoad[];
   /** 缺省清成 1 */
   depthOp?: RhiDepthLoad;
+  /** 目标的深度附件带模板时生效;缺省清成 0 */
+  stencilOp?: RhiStencilLoad;
 }
 
 export type RhiErrorCode =
