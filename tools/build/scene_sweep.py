@@ -264,8 +264,9 @@ def run_sweep(
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
     os.environ.setdefault(
         "QTWEBENGINE_CHROMIUM_FLAGS",
-        # 没有 GPU 的环境退到 SwiftShader 软 WebGL；自动播放不等手势（音频请求也要看见）
-        "--ignore-gpu-blocklist --enable-unsafe-swiftshader --autoplay-policy=no-user-gesture-required",
+        # 渲染只有 WebGPU（engine2d → RHI，2026-09-25 起不再有 Pixi / WebGL）：放开 WebGPU；
+        # 没有 GPU 的环境退到 SwiftShader；自动播放不等手势（音频请求也要看见）
+        "--ignore-gpu-blocklist --enable-unsafe-webgpu --enable-unsafe-swiftshader --autoplay-policy=no-user-gesture-required",
     )
     # 禁缓存的开关要**并进**上面这份、且排在 WebEngine import 之前（顺序反了会把上面的开关吃掉）
     disable_all_caches()
@@ -313,22 +314,10 @@ def run_sweep(
     profile = QWebEngineProfile()                      # 无参构造 = off-the-record，不落磁盘
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)   # 每个请求都要被看见
     profile.setUrlRequestInterceptor(recorder)
-    # 把 navigator.gpu 藏起来，让 PixiJS 直接走 WebGL。
-    # 实测（2026-09-06，QtWebEngine 6.11 / Chromium 140，离屏）：Pixi 的 autoDetectRenderer 先试
-    # WebGPU，"Failed to create WebGPU Context Provider" 之后 GPU 进程上下文一起丢
-    # （"Context lost during MakeCurrent"），随后的 WebGL 也建不出来 → 退到 Canvas2D，
-    # 所有滤镜被跳过、每帧抛 validateRenderable。单独建 WebGL 是好的（GTX 970 / ANGLE D3D11），
-    # 罪魁只是那一次 WebGPU 尝试。`--disable-features=WebGPU` 压不住它，藏掉 navigator.gpu 才行。
-    no_webgpu = QWebEngineScript()
-    no_webgpu.setName("gamedraft-sweep-no-webgpu")
-    no_webgpu.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-    no_webgpu.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
-    no_webgpu.setRunsOnSubFrames(False)
-    no_webgpu.setSourceCode(
-        "try { Object.defineProperty(navigator, 'gpu', { get() { return undefined; }, configurable: true }); }"
-        " catch (e) {}"
-    )
-    profile.scripts().insert(no_webgpu)
+    # 以前这里把 navigator.gpu 藏起来逼 Pixi 走 WebGL（离屏下 Pixi 先试 WebGPU 会把 GPU 进程拖垮）。
+    # 渲染已经换成只有 WebGPU 的 engine2d：再藏 navigator.gpu 游戏就起不来，所以不再藏。
+    # ⚠ 2026-09-06 实测离屏（--offscreen）QtWebEngine 6.11 建 WebGPU 上下文失败；缺省真窗口下是否可用
+    # 要在制作人机器上验（见 artifact/Reviews/engine2d迁移审查-2026-09-25.md 的「宿主」一节）。
     page = Page(profile, console)
     page.settings().setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
     page.settings().setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
@@ -600,10 +589,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"结果：{summary['verdict']} —— {s['scenes']} 个场景（{s['scenesFailed']} 个没跑起来），"
           f"{s['requests']} 次请求，漏抽 {s['gaps']}，开发树也没有 {s['missingInDev']}，"
           f"耗时 {report['durationSeconds']}s")
-    non_webgl = [r["id"] for r in results if r.get("renderer") and r["renderer"] != "webgl"]
-    if non_webgl:
-        print(f"\n⚠ {len(non_webgl)} 个场景 Pixi 没跑在 WebGL 上（{non_webgl[:3]}…）：滤镜被跳过，"
-              "与真机表现有差；资源请求仍完整，但别拿这份去判画面。")
+    non_webgpu = [r["id"] for r in results if r.get("renderer") and r["renderer"] != "webgpu"]
+    if non_webgpu:
+        print(f"\n⚠ {len(non_webgpu)} 个场景的渲染器不是 WebGPU（{non_webgpu[:3]}…）：与真机表现有差；"
+              "资源请求仍完整，但别拿这份去判画面。")
     if summary["gaps"]:
         print("\n✖ 运行时真会请求、清单却没有的文件（打包出去必 404）：")
         for g in summary["gaps"][:40]:
