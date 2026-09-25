@@ -3,7 +3,8 @@
  * - 录制时绑定表原样交给 RHI:uniform 片段本身就是 { buffer, offset, size },规划完统一填上本次的 uniform 缓冲,
  *   同一个全局 uniform 片段在各 draw 之间是同一个对象(以前每个 draw 另拼一张绑定表、逐个 new 区段对象);
  * - 管线缓存的快路径(程序 × 布局对象 × 状态整数)与按串的慢键逐字段一致:任何一个字段不同都是另一条管线,
- *   不同布局对象同键时共用管线,reset 之后重建。
+ *   不同布局对象同键时共用管线,reset 之后重建;
+ * - 局部 uniform 的颜色走暂存、值不变;几何顶点布局命中缓存时不枚举属性(addAttribute 才重建),流上的 Buffer 按名现取。
  */
 import { describe, expect, it, vi } from 'vitest';
 import { NullRhiDevice } from '../../rendering/rhi/backends/null/NullRhiDevice';
@@ -16,8 +17,14 @@ import { BufferImageSource } from '../textures/TextureSource';
 import { AlphaFilter } from '../filters/defaults/alpha/AlphaFilter';
 import { GpuProgram } from '../shader/GpuProgram';
 import { Pipelines, type PipelineKey, type VertexLayout } from './Pipelines';
-import { BATCH_LAYOUT } from './FrameBuilder';
+import { BATCH_LAYOUT, FrameBuilder } from './FrameBuilder';
 import { WebGPURenderer } from './WebGPURenderer';
+import { GpuBuffers } from './GpuBuffers';
+import { Mesh } from '../mesh/Mesh';
+import { Graphics } from '../graphics/Graphics';
+import { Buffer, BufferUsage } from '../shader/Buffer';
+import { Geometry } from '../shader/Geometry';
+import { Shader } from '../shader/Shader';
 
 /** 截下每次 setBindings 收到的绑定表(包一层 submit 的命令表 / pass 编码器) */
 function captureBindings(rhi: NullRhiDevice): RhiBindings[] {
@@ -131,5 +138,96 @@ describe('管线缓存快路径与慢键一致', () => {
     expect(b).not.toBe(a);
     expect(a.destroyed).toBe(true);
     expect(pipelines.get({ ...base, layout: sameKey })).toBe(b);
+  });
+});
+
+describe('逐 draw 不分配局部颜色、不重拼几何布局版本', () => {
+  it('网格 / 不合批图形的 uColor 走同一块暂存(写进 Arena 时就拷走),打包出的值不变', () => {
+    const rhi = new NullRhiDevice();
+    const canvas = { width: 32, height: 32, style: {} } as unknown as HTMLCanvasElement;
+    const renderer = new WebGPURenderer({ rhi, canvas, width: 32, height: 32 });
+    const colors: { ref: unknown; value: number[] }[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const orig = (FrameBuilder.prototype as any).writeUbo;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const spy = vi.spyOn(FrameBuilder.prototype as any, 'writeUbo').mockImplementation(function (this: unknown, ...args: unknown[]) {
+      const values = args[1] as Record<string, unknown>;
+      if (values.uColor instanceof Float32Array) colors.push({ ref: values.uColor, value: [...values.uColor] });
+      return orig.apply(this, args);
+    });
+    const root = new Container();
+    const m1 = new Mesh({ geometry: new Geometry({ attributes: { aPosition: new Float32Array([0, 0, 8, 0, 0, 8]), aUV: new Float32Array(6) }, indexBuffer: new Uint32Array([0, 1, 2]) }), texture: Texture.WHITE });
+    m1.tint = 0xff0000;
+    const m2 = new Mesh({ geometry: new Geometry({ attributes: { aPosition: new Float32Array([0, 0, 8, 0, 0, 8]), aUV: new Float32Array(6) }, indexBuffer: new Uint32Array([0, 1, 2]) }), texture: Texture.WHITE });
+    m2.alpha = 0.5;
+    const g = new Graphics().rect(0, 0, 8, 8).fill(0x00ff00);
+    // 顶点数超过合批上限的图形不合批,走 drawUnbatched
+    const big = new Graphics();
+    for (let i = 0; i < 120; i++) big.circle(i % 32, (i * 7) % 32, 3);
+    big.fill(0x0000ff);
+    big.tint = 0x00ffff;
+    root.addChild(m1, m2, g, big);
+    renderer.render({ container: root, target: RenderTexture.create({ width: 32, height: 32 }) });
+    spy.mockRestore();
+
+    expect(colors.length).toBeGreaterThanOrEqual(3);
+    // 同一块暂存
+    for (const c of colors) expect(c.ref).toBe(colors[0].ref);
+    // 值仍是各自的(红色 tint、半透明、青色 tint 的不合批图形)
+    const values = colors.map((c) => c.value.map((v) => Math.round(v * 100) / 100).join(','));
+    expect(values).toContain('1,0,0,1');
+    expect(values).toContain('0.5,0.5,0.5,0.5'); // 预乘 alpha
+    expect(values).toContain('0,1,1,1');
+  });
+
+  it('几何布局命中缓存时不枚举属性(照 Pixi 的 geometry._layoutKey 只算一次);加属性后重建,流上的 Buffer 每次现取', () => {
+    const rhi = new NullRhiDevice();
+    const canvas = { width: 16, height: 16, style: {} } as unknown as HTMLCanvasElement;
+    const renderer = new WebGPURenderer({ rhi, canvas, width: 16, height: 16 });
+    const geometry = new Geometry({
+      attributes: { aPosition: new Float32Array([0, 0, 8, 0, 0, 8]), aUV: new Float32Array(6) },
+      indexBuffer: new Uint32Array([0, 1, 2]),
+    });
+    const mesh = new Mesh({ geometry, texture: Texture.WHITE });
+    const target = RenderTexture.create({ width: 16, height: 16 });
+    renderer.render({ container: mesh, target });
+
+    let enumerations = 0;
+    geometry.attributes = new Proxy(geometry.attributes, {
+      ownKeys(t) {
+        enumerations++;
+        return Reflect.ownKeys(t);
+      },
+    });
+    for (let i = 0; i < 5; i++) renderer.render({ container: mesh, target });
+    expect(enumerations).toBe(0);
+
+    // 直接换掉某个属性的 Buffer(Pixi 的 setGeometry 每次按名现取 attributes[name].buffer):下一帧绑新的
+    const get = vi.spyOn(GpuBuffers.prototype, 'get');
+    const replacement = new Buffer({ data: new Float32Array([0, 0, 4, 0, 0, 4]), usage: BufferUsage.VERTEX | BufferUsage.COPY_DST });
+    geometry.attributes.aPosition.buffer = replacement;
+    renderer.render({ container: mesh, target });
+    expect(get.mock.calls.some((c) => c[0] === replacement)).toBe(true);
+    get.mockRestore();
+
+    expect(rhi.lastFrameStats.skippedDraws).toBe(0);
+  });
+
+  it('addAttribute 之后布局重建:着色器声明了的新属性进流', () => {
+    const rhi = new NullRhiDevice();
+    const pipelines = new Pipelines(rhi.rootScope);
+    const wgsl = `
+@vertex fn v(@location(0) aPosition: vec2<f32>, @location(1) aColor: vec4<f32>) -> @builtin(position) vec4<f32> { return vec4<f32>(aPosition, aColor.x, 1.0); }
+@fragment fn f() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }`;
+    const program = new GpuProgram({ name: 'attr', vertex: { source: wgsl, entryPoint: 'v' }, fragment: { source: wgsl, entryPoint: 'f' } });
+    const geometry = new Geometry({ attributes: { aPosition: { buffer: new Float32Array(6), format: 'float32x2' } } });
+    const a = pipelines.layout(geometry, program);
+    expect(pipelines.layout(geometry, program)).toBe(a);
+    expect(a.buffers.flatMap((b) => b.attributes.map((x) => x.name))).toEqual(['aPosition']);
+    geometry.addAttribute('aColor', { buffer: new Float32Array(12), format: 'float32x4' });
+    const b = pipelines.layout(geometry, program);
+    expect(b).not.toBe(a);
+    expect(b.buffers.flatMap((x) => x.attributes.map((y) => y.name))).toEqual(['aPosition', 'aColor']);
+    expect(pipelines.layout(geometry, program)).toBe(b);
   });
 });

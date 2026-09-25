@@ -119,9 +119,50 @@ const meshProgram = new GpuProgram({
   fragment: { source: MESH_WGSL, entryPoint: 'mainFragment' },
 });
 
-/** 合批着色器的纹理 / 采样器绑定名(常量表:每个 draw 都要填 16 对,不逐次拼串) */
-const BATCH_TEXTURE_NAMES = Array.from({ length: MAX_BATCH_TEXTURES }, (_, i) => `textureSource${i + 1}`);
-const BATCH_SAMPLER_NAMES = Array.from({ length: MAX_BATCH_TEXTURES }, (_, i) => `textureSampler${i + 1}`);
+/**
+ * 合批 draw 的绑定表(着色器的 16 对 textureSource / textureSampler 加全局 / 局部 uniform)。用一个对象字面量一次建好:
+ * 逐个用计算键往空对象里填 34 项,V8 会把它转成字典模式(之后 RHI 按名逐项取都是哈希查找)。
+ * 局部 uniform 只有不合批图形才有,没有时是 undefined(RHI 只按着色器声明的名字取,合批着色器不声明它)
+ */
+function batchBindings(gu: ArenaRef, local: ArenaRef | undefined, t: readonly RhiTexture[], s: readonly RhiSampler[]): Record<string, BindingValue | undefined> {
+  return {
+    globalUniforms: gu,
+    localUniforms: local,
+    textureSource1: t[0],
+    textureSampler1: s[0],
+    textureSource2: t[1],
+    textureSampler2: s[1],
+    textureSource3: t[2],
+    textureSampler3: s[2],
+    textureSource4: t[3],
+    textureSampler4: s[3],
+    textureSource5: t[4],
+    textureSampler5: s[4],
+    textureSource6: t[5],
+    textureSampler6: s[5],
+    textureSource7: t[6],
+    textureSampler7: s[6],
+    textureSource8: t[7],
+    textureSampler8: s[7],
+    textureSource9: t[8],
+    textureSampler9: s[8],
+    textureSource10: t[9],
+    textureSampler10: s[9],
+    textureSource11: t[10],
+    textureSampler11: s[10],
+    textureSource12: t[11],
+    textureSampler12: s[11],
+    textureSource13: t[12],
+    textureSampler13: s[12],
+    textureSource14: t[13],
+    textureSampler14: s[13],
+    textureSource15: t[14],
+    textureSampler15: s[14],
+    textureSource16: t[15],
+    textureSampler16: s[15],
+  };
+}
+if (MAX_BATCH_TEXTURES !== 16) throw new Error('[engine2d] batchBindings 按 16 张纹理写死,改了 MAX_BATCH_TEXTURES 要同步');
 
 export const BATCH_LAYOUT: VertexLayout = {
   key: 'engine2d-batch',
@@ -305,6 +346,17 @@ export class FrameBuilder implements FilterSystemLike {
     globalFrame: new Float32Array(4),
     outputTexture: new Float32Array(4),
   };
+  /** 全局 / 局部 uniform 的颜色暂存(writeUbo 当场拷进 Arena,不逐 draw new) */
+  private readonly colorScratch = new Float32Array(4);
+  /** 局部 uniform(LOCAL_LAYOUT)的取值暂存,同上 */
+  private readonly localScratch: { uTransformMatrix: Matrix | null; uColor: Float32Array; uRound: number } = {
+    uTransformMatrix: null,
+    uColor: this.colorScratch,
+    uRound: 0,
+  };
+  /** 合批 draw 的纹理 / 采样器暂存(batchBindings 当场拷进绑定表) */
+  private readonly batchTextureScratch: RhiTexture[] = [];
+  private readonly batchSamplerScratch: RhiSampler[] = [];
   /** 本次 render 分出去的全部 uniform 片段(uniform 缓冲建好后统一填 buffer) */
   private readonly arenaRefs: ArenaRef[] = [];
 
@@ -506,7 +558,7 @@ export class FrameBuilder implements FilterSystemLike {
     const wt = data.worldTransformMatrix.clone();
     wt.tx -= data.offset.x;
     wt.ty -= data.offset.y;
-    const color = new Float32Array(4);
+    const color = this.colorScratch;
     color32BitToUniform(data.worldColor, color, 0);
     data.arena.offset = this.writeUbo(GLOBAL_LAYOUT, {
       uProjectionMatrix: data.projectionMatrix,
@@ -560,29 +612,21 @@ export class FrameBuilder implements FilterSystemLike {
   /** 不合批图形(照 Pixi GraphicsPipe.execute + GpuGraphicsAdaptor.execute) */
   private drawUnbatched(item: UnbatchedGraphics, batches: readonly BatchRecord[]): void {
     if (!item.isRenderable) return;
-    const color = new Float32Array(4);
-    color32BitToUniform(item.groupColorAlpha, color, 0);
-    const local = this.arenaRef(
-      this.writeUbo(LOCAL_LAYOUT, {
-        uTransformMatrix: item.groupTransform,
-        uColor: color,
-        uRound: this.ctx.roundPixels | item._roundPixels,
-      }),
-      LOCAL_LAYOUT.size,
-    );
+    const local = this.arenaRef(this.writeLocal(item.groupTransform, item.groupColorAlpha, this.ctx.roundPixels | item._roundPixels), LOCAL_LAYOUT.size);
     for (const batch of batches) this.drawBatch(batch, graphicsProgram, item.groupBlendMode, local);
   }
 
   private drawBatch(batch: BatchRecord, program = batchProgram, blend: BlendMode = batch.blendMode, local?: ArenaRef): void {
-    const bindings: Record<string, BindingValue> = { globalUniforms: this.currentGU.arena };
-    if (local) bindings.localUniforms = local;
     const empty = Texture.EMPTY.source;
     const textures = this.ctx.textures;
+    const t = this.batchTextureScratch;
+    const smp = this.batchSamplerScratch;
     for (let i = 0; i < MAX_BATCH_TEXTURES; i++) {
       const source = batch.textures[i] ?? empty;
-      bindings[BATCH_TEXTURE_NAMES[i]] = textures.get(source);
-      bindings[BATCH_SAMPLER_NAMES[i]] = textures.sampler(source.style);
+      t[i] = textures.get(source);
+      smp[i] = textures.sampler(source.style);
     }
+    const bindings = batchBindings(this.currentGU.arena, local, t, smp) as Record<string, BindingValue>;
     this.pushDraw({
       program,
       layout: BATCH_LAYOUT,
@@ -603,16 +647,7 @@ export class FrameBuilder implements FilterSystemLike {
     const shader = mesh.shader;
     const texture = mesh.texture;
     const blend = adjustedBlendMode(mesh.groupBlendMode, texture.source);
-    const local = new Float32Array(4);
-    color32BitToUniform(mesh.groupColorAlpha, local, 0);
-    const localRef = this.arenaRef(
-      this.writeUbo(LOCAL_LAYOUT, {
-        uTransformMatrix: mesh.groupTransform,
-        uColor: local,
-        uRound: this.ctx.roundPixels | (m._roundPixels ?? 0),
-      }),
-      LOCAL_LAYOUT.size,
-    );
+    const localRef = this.arenaRef(this.writeLocal(mesh.groupTransform, mesh.groupColorAlpha, this.ctx.roundPixels | (m._roundPixels ?? 0)), LOCAL_LAYOUT.size);
     // 照 Pixi GpuMeshAdapter:带 shader 却没有 WGSL 程序时告警并跳过这次绘制,不拿缺省网格程序顶替
     if (shader && !shader.gpuProgram) {
       warn('Mesh shader has no gpuProgram', shader);
@@ -643,7 +678,8 @@ export class FrameBuilder implements FilterSystemLike {
 
   private drawGeometry(program: GpuProgram, geometry: Geometry, blend: BlendMode, bindings: Record<string, BindingValue>, instanceCount?: number): void {
     const layout = this.ctx.pipelines.layout(geometry, program);
-    const streams = layout.buffers.map((b, i) => ({ name: b.name, buffer: this.ctx.buffers.get(layout.sources[i]) as RhiBuffer | 'batch' }));
+    const attributes = geometry.attributes;
+    const streams = layout.buffers.map((b, i) => ({ name: b.name, buffer: this.ctx.buffers.get(attributes[layout.sources[i]].buffer) as RhiBuffer | 'batch' }));
     const index = geometry.indexBuffer ? this.ctx.buffers.get(geometry.indexBuffer) : null;
     const count = geometry.indexBuffer ? geometry.indexBuffer.data.length : geometry.getSize();
     this.pushDraw({
@@ -735,6 +771,17 @@ export class FrameBuilder implements FilterSystemLike {
     const ref = this.arenaRef(offset, layout.size);
     this.groupSlices.set(g, ref);
     return ref;
+  }
+
+  /** 局部 uniform(照 Pixi GraphicsPipe / MeshPipe 的 localUniforms):变换 + 颜色(32 位 ABGR 拆成 vec4)+ 取整 */
+  private writeLocal(transform: Matrix, colorAlpha: number, round: number): number {
+    const v = this.localScratch;
+    color32BitToUniform(colorAlpha, v.uColor, 0);
+    v.uTransformMatrix = transform;
+    v.uRound = round;
+    const offset = this.writeUbo(LOCAL_LAYOUT, v);
+    v.uTransformMatrix = null;
+    return offset;
   }
 
   private writeUbo(layout: ReturnType<typeof createUboLayout>, values: Record<string, unknown>): number {

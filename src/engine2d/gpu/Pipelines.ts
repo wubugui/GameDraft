@@ -48,8 +48,11 @@ const NON_BLENDABLE = /^(r|rg|rgba)32float$|int$/;
 export interface VertexLayout {
   key: string;
   buffers: RhiVertexBufferLayout[];
-  /** 与 buffers 一一对应的数据源 */
-  sources: Buffer[];
+  /**
+   * 与 buffers 一一对应的数据源:该路流上第一个属性的名字。绘制时按名现取 `geometry.attributes[name].buffer`
+   * (照 Pixi GpuEncoderSystem.setGeometry 的 getBufferNamesToBind),直接换掉属性的 Buffer 下一次绘制就生效
+   */
+  sources: string[];
 }
 
 export interface PipelineKey {
@@ -81,7 +84,7 @@ export class Pipelines {
   private fast = new WeakMap<GpuProgram, WeakMap<VertexLayout, Map<number, RhiRenderPipeline>>>();
   /** 串值 → 小整数(快路径键用) */
   private readonly stateIds = new Map<string, number>();
-  private readonly layouts = new WeakMap<Geometry, Map<number, { version: string; layout: VertexLayout }>>();
+  private readonly layouts = new WeakMap<Geometry, Map<number, { version: number; layout: VertexLayout }>>();
   /** 已补过格式 / 跨度的几何(照 Pixi getPipeline 的 `!geometry._layoutKey` 门:每个几何只补一次,之后加属性也不重补) */
   private readonly ensuredGeometries = new WeakSet<Geometry>();
 
@@ -190,7 +193,8 @@ export class Pipelines {
       ensureAttributes(geometry, program.attributes);
       this.ensuredGeometries.add(geometry);
     }
-    const version = geometryVersion(geometry);
+    // 照 Pixi 的 geometry._layoutKey:布局只在属性表变了(addAttribute)才重推,命中时不枚举属性
+    const version = geometry._attributesVersion;
     const cached = byProgram.get(program.uid);
     if (cached && cached.version === version) return cached.layout;
     const wanted = new Set(program.attributes.map((a) => a.name));
@@ -202,9 +206,9 @@ export class Pipelines {
       list.push({ name, format: attr.format!, offset: attr.offset ?? 0, stride: attr.stride, instance: !!attr.instance });
     }
     const buffers: RhiVertexBufferLayout[] = [];
-    const sources: Buffer[] = [];
+    const sources: string[] = [];
     let i = 0;
-    for (const [buffer, attrs] of groups) {
+    for (const attrs of groups.values()) {
       const explicit = attrs.find((a) => a.stride)?.stride;
       const stride = explicit ?? (attrs.length === 1 ? vertexFormatBytes(attrs[0].format) : attrs.reduce((s, a) => s + vertexFormatBytes(a.format), 0));
       buffers.push({
@@ -213,7 +217,7 @@ export class Pipelines {
         stepMode: attrs[0].instance ? 'instance' : 'vertex',
         attributes: attrs.map((a) => ({ name: a.name, format: a.format as RhiVertexFormat, offset: a.offset })),
       });
-      sources.push(buffer);
+      sources.push(attrs[0].name);
     }
     const key = buffers.map((b) => `${b.stride}:${b.stepMode}:${b.attributes.map((a) => `${a.name}/${a.format}/${a.offset}`).join(',')}`).join(';');
     const layout = { key, buffers, sources };
@@ -236,10 +240,4 @@ export class Pipelines {
     this.shaders.clear();
     this.fast = new WeakMap();
   }
-}
-
-function geometryVersion(g: Geometry): string {
-  let v = '';
-  for (const [name, a] of Object.entries(g.attributes)) v += `${name}:${a.buffer.uid}:${a.format}:${a.offset}:${a.stride}:${a.instance ? 1 : 0};`;
-  return v;
 }

@@ -114,6 +114,8 @@ export class Geometry extends EventEmitter {
   indexBuffer?: Buffer;
   instanceCount: number;
   destroyed = false;
+  /** 属性表的版本:addAttribute 时加一,渲染器的顶点布局缓存按它失效(不在每次绘制时逐属性拼串比对) */
+  _attributesVersion = 0;
   _boundsDirty = true;
   private readonly _bounds = new Bounds();
 
@@ -139,6 +141,7 @@ export class Geometry extends EventEmitter {
       instance: opt.instance ?? false,
       start: opt.start,
     };
+    this._attributesVersion++;
     if (!this.buffers.includes(buffer)) {
       this.buffers.push(buffer);
       buffer.on('update', this.onBufferUpdate, this);

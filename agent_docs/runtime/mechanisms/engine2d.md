@@ -41,7 +41,9 @@ last_governed: 2026-09-25
 4. 写本帧的合批顶点 / 索引 / uniform 缓冲 → 在 RHI 上录制(画布走 `runFrame`,纯离屏走 `submit`)。
    **录制期间不写任何资源**(RHI 硬契约)。嵌套 render(滤镜里再 render)用独立的 RenderState。
    uniform 片段(`ArenaRef`)本身就是 RHI 的缓冲区段绑定 `{ buffer, offset, size }`,uniform 缓冲建好后统一填 `buffer`,
-   绑定表原样交给 RHI(不逐 draw 另拼);管线缓存先按(程序 × 布局对象 × 状态整数)查,没命中才拼串键。
+   绑定表原样交给 RHI(不逐 draw 另拼;合批的 34 项绑定表用对象字面量一次建好,不逐键填成字典模式);管线缓存先按
+(程序 × 布局对象 × 状态整数)查,没命中才拼串键;几何的顶点布局按 `Geometry._attributesVersion`(addAttribute 加一)失效,
+流上的 Buffer 绘制时按属性名现取(照 Pixi setGeometry)。
 
 ## 硬契约
 
@@ -89,8 +91,9 @@ resolve 回目标——32 位浮点 / 整数这类不能 resolve 的格式照常
 Sprite 的合批四边形只在换纹理 / 改锚点 / 动态纹理 update 时重算(非动态 RenderTexture 改尺寸后停在旧尺寸);
 `renderer.render({ container })` 的根自己的 `blendMode` 不生效(按 normal 画,要混合就挂一层父节点);
 带 shader 却没有 `gpuProgram` 的网格告警并跳过绘制;
-纹理的**采样参数第一次用到时定下**(TextureStyle 的采样键照 Pixi `_resourceId` 缓存),之后改 `scaleMode` / `addressMode`
-等字段要调 `style.update()` 才生效(master 的 WebGL 同理:只在源初始化和 style 发 change 时下发采样参数)。
+纹理的**采样参数第一次用到时定下**(TextureStyle 的采样键照 Pixi WebGPU 的 `_resourceId` 缓存,GPU 采样器也按算键当时的参数建),
+之后改 `scaleMode` / `addressMode` 等字段要调 `style.update()` 才生效。与 master(WebGL)只在「第一次用之前改」时一致:
+master 在源初始化(第一次绑定 / 第一次渲染进 RT、被回收后重建)时按字段现值下发,用过之后改字段不 update 的写法两边会不同,别这么写。
 
 ## 怎么验证
 

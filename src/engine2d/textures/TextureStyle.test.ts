@@ -63,4 +63,36 @@ describe('TextureStyle 采样键(对照 Pixi TextureStyle._resourceId)', () => {
     renderer.render({ container: root, target: rt });
     expect(filters()).toContain('nearest');
   });
+
+  it('采样器按算键当时的参数建:用过后改字段不 update,采样器表重建(新渲染器 / 设备丢失恢复)时旧键不配新参数', () => {
+    const source = new BufferImageSource({ resource: new Uint8Array(4 * 4 * 4), width: 4, height: 4, format: 'rgba8unorm', label: 'src' });
+    const root = new Container();
+    root.addChild(new Sprite(new Texture({ source })));
+    const canvas = { width: 16, height: 16, style: {} } as unknown as HTMLCanvasElement;
+
+    const rhi1 = new NullRhiDevice();
+    const r1 = new WebGPURenderer({ rhi: rhi1, canvas, width: 16, height: 16 });
+    r1.render({ container: root, target: RenderTexture.create({ width: 16, height: 16 }) });
+    const key = source.style._key;
+
+    // 用过之后改字段、不 update:键不变(Pixi 同),采样器表重建后仍按这个键的参数(线性)建,不是字段现值(最近邻)
+    source.scaleMode = 'nearest';
+    source.addressMode = 'repeat';
+    expect(source.style._key).toBe(key);
+    const rhi2 = new NullRhiDevice();
+    const createSampler = vi.spyOn(rhi2, 'createSampler');
+    const r2 = new WebGPURenderer({ rhi: rhi2, canvas, width: 16, height: 16 });
+    r2.render({ container: root, target: RenderTexture.create({ width: 16, height: 16 }) });
+    const descs = createSampler.mock.calls.map((c) => c[1] as { label?: string; magFilter?: string; addressModeU?: string });
+    const mine = descs.filter((d) => d.label?.includes(key));
+    expect(mine).toHaveLength(1);
+    expect(mine[0].magFilter).toBe('linear');
+    expect(mine[0].addressModeU).toBe('clamp-to-edge');
+
+    // update 之后才换
+    source.style.update();
+    r2.render({ container: root, target: RenderTexture.create({ width: 16, height: 16 }) });
+    const after = createSampler.mock.calls.map((c) => c[1] as { magFilter?: string; addressModeU?: string });
+    expect(after.some((d) => d.magFilter === 'nearest' && d.addressModeU === 'repeat')).toBe(true);
+  });
 });

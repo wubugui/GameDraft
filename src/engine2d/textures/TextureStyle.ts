@@ -19,6 +19,20 @@ export interface TextureStyleOptions {
   maxAnisotropy?: number;
 }
 
+/** 采样键所含的全部参数(`TextureStyle._keyFields`) */
+export interface TextureStyleKeyFields {
+  addressModeU: WRAP_MODE;
+  addressModeV: WRAP_MODE;
+  addressModeW: WRAP_MODE;
+  magFilter: SCALE_MODE;
+  minFilter: SCALE_MODE;
+  mipmapFilter: SCALE_MODE;
+  lodMinClamp?: number;
+  lodMaxClamp?: number;
+  compare?: COMPARE_FUNCTION;
+  maxAnisotropy: number;
+}
+
 /**
  * 采样状态(= GPU 采样器)。照 Pixi:`scaleMode` 同时设 mag / min / mipmap,`addressMode` 同时设 U / V / W;
  * 改了参数调 `update()` 通知使用方。
@@ -38,8 +52,9 @@ export class TextureStyle extends EventEmitter {
   compare?: COMPARE_FUNCTION;
   destroyed = false;
   private _maxAnisotropy = 1;
-  /** `_key` 的缓存(update 时清) */
+  /** `_key` 与算键当时的采样参数(update 时清) */
   private _cachedKey: string | null = null;
+  private _cachedFields: TextureStyleKeyFields | null = null;
 
   constructor(options: TextureStyleOptions = {}) {
     super();
@@ -92,15 +107,44 @@ export class TextureStyle extends EventEmitter {
   }
 
   /**
-   * 采样参数的键(GPU 采样器按它共享)。照 Pixi 的 `_resourceId`:第一次取时算好缓存,之后改字段不生效,
-   * `update()` 才重算(master 的 WebGL 也只在源初始化与 style 发 change 时下发采样参数)
+   * 采样参数的键(GPU 采样器按它共享)。照 Pixi 8.17 的 `_resourceId`:第一次取时算好缓存,之后改字段不生效,
+   * `update()` 才重算。master 的 WebGL 在源初始化(第一次绑定 / 第一次渲染进 RT,以及回收后重建)时按字段现值下发,
+   * 所以只有「第一次用之前改」与 master 一致;用过之后改字段必须 update()(游戏里都是这么做的)
    */
   get _key(): string {
-    return (this._cachedKey ??= `${this.addressModeU}|${this.addressModeV}|${this.addressModeW}|${this.magFilter}|${this.minFilter}|${this.mipmapFilter}|${this.lodMinClamp}|${this.lodMaxClamp}|${this.compare}|${this._maxAnisotropy}`);
+    if (this._cachedKey === null) this.captureKey();
+    return this._cachedKey!;
+  }
+
+  /**
+   * 算 `_key` 当时的采样参数:建 GPU 采样器一律用它,不读字段现值——否则用过之后改了字段没 update,
+   * 采样器表重建(设备丢失恢复)时旧键会配上新参数,连带同键的其他 style 一起错
+   */
+  get _keyFields(): Readonly<TextureStyleKeyFields> {
+    if (this._cachedFields === null) this.captureKey();
+    return this._cachedFields!;
+  }
+
+  private captureKey(): void {
+    const f: TextureStyleKeyFields = {
+      addressModeU: this.addressModeU,
+      addressModeV: this.addressModeV,
+      addressModeW: this.addressModeW,
+      magFilter: this.magFilter,
+      minFilter: this.minFilter,
+      mipmapFilter: this.mipmapFilter,
+      lodMinClamp: this.lodMinClamp,
+      lodMaxClamp: this.lodMaxClamp,
+      compare: this.compare,
+      maxAnisotropy: this._maxAnisotropy,
+    };
+    this._cachedFields = f;
+    this._cachedKey = `${f.addressModeU}|${f.addressModeV}|${f.addressModeW}|${f.magFilter}|${f.minFilter}|${f.mipmapFilter}|${f.lodMinClamp}|${f.lodMaxClamp}|${f.compare}|${f.maxAnisotropy}`;
   }
 
   update(): void {
     this._cachedKey = null;
+    this._cachedFields = null;
     this.emit('change', this);
   }
 

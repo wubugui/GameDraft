@@ -129,22 +129,24 @@ export class GpuTextures {
     return this.entries.has(source);
   }
 
+  /** 按 style 的采样键共享;参数取算键当时的那一份(`_keyFields`),保证同键必同参数 */
   sampler(style: TextureStyle): RhiSampler {
     const key = style._key;
     let s = this.samplers.get(key);
     if (!s) {
+      const f = style._keyFields;
       s = this.scope.createSampler({
         label: `engine2d-sampler ${key}`,
-        addressModeU: style.addressModeU,
-        addressModeV: style.addressModeV,
-        addressModeW: style.addressModeW,
-        magFilter: style.magFilter,
-        minFilter: style.minFilter,
-        mipmapFilter: style.mipmapFilter,
-        lodMinClamp: style.lodMinClamp,
-        lodMaxClamp: style.lodMaxClamp,
-        maxAnisotropy: style.maxAnisotropy,
-        compare: style.compare,
+        addressModeU: f.addressModeU,
+        addressModeV: f.addressModeV,
+        addressModeW: f.addressModeW,
+        magFilter: f.magFilter,
+        minFilter: f.minFilter,
+        mipmapFilter: f.mipmapFilter,
+        lodMinClamp: f.lodMinClamp,
+        lodMaxClamp: f.lodMaxClamp,
+        maxAnisotropy: f.maxAnisotropy,
+        compare: f.compare,
       });
       this.samplers.set(key, s);
     }
