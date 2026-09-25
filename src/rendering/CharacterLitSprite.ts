@@ -105,6 +105,101 @@ vec3 entitySceneLightsE(vec3 q, vec3 n) {
 }
 `;
 
+/**
+ * `charLights` 组（{@link createCharLightUniforms}）的 WGSL 结构 —— WebGPU 迁移期用，WebGL 路径不读。
+ *
+ * 成员**同名同序**对应 `createCharLightUniforms` 的声明顺序（Pixi 按 JS 声明顺序、WGSL 对齐规则排
+ * uniform 缓冲；顺序一错整组错位且不报错，`wgslChunks.test.ts` 钉着两边一致）。
+ * 宿主在自己的着色器里拼它，再声明一个**名叫 charLights** 的 uniform 绑定变量（名字 = resources 键名，
+ * 角色网格与粒子都是这个键；组号 / 绑定号宿主自定，自定义组从 2 起）：
+ *
+ *     var<uniform> charLights: CharLights;      // 前面加上宿主自己的组号 / 绑定号属性
+ *
+ * 只要显示变换（uDisp*）的宿主（光柱）同样拼这一段就行，不必拼灯循环。
+ * ⚠ struct 体内不许写注释：Pixi 按正则抽 struct，注释里的「名: 类型」会被当成成员。
+ */
+export const CHAR_LIGHTS_WGSL = /* wgsl */ `
+struct CharLights {
+    uSceneLightCount: i32,
+    uSceneLightA: array<vec4<f32>, ${MAX_STATIC_LIGHTS}>,
+    uSceneLightB: array<vec4<f32>, ${MAX_STATIC_LIGHTS}>,
+    uSceneLightC: array<vec4<f32>, ${MAX_STATIC_LIGHTS}>,
+    uSceneLightD: array<vec4<f32>, ${MAX_STATIC_LIGHTS}>,
+    uSMWuPerQUnit: f32,
+    uSMRow0: vec3<f32>,
+    uSMRow1: vec3<f32>,
+    uSMRow2: vec3<f32>,
+    uDispEv: f32,
+    uDispTonemap: i32,
+    uDispWhite: vec3<f32>,
+    uDispSaturation: f32,
+    uDispContrast: f32,
+    uDispLift: f32,
+    uDispLiftColor: vec3<f32>,
+}
+`;
+
+/**
+ * {@link ENTITY_SCENE_LIGHTS_GLSL} 的 WGSL 版：角色网格与粒子受光共用的实体灯循环（WebGPU 迁移期并存，
+ * 数学逐式相同，等价由 render_parity「光照片段 / 实体灯循环」钉住；改一边必须同步改另一边）。
+ *
+ * 宿主要拼好 {@link CHAR_LIGHTS_WGSL} 并声明 `charLights` 绑定（见上），再拼 WGSL 版的 WR_CORE 与 LC
+ * （lighting/worldReconstruct.wgsl、lighting/lightingCore.wgsl 的切片）。与其余 WGSL 片段不同，本段
+ * **直接读 charLights 绑定**而不是走形参：那是所有宿主共用的同一个 UniformGroup 对象、名字与布局
+ * 处处一样，而四个 24 元灯数组按值当形参传会在每个片元里整份拷贝。
+ * 面光两条半轴经函数指针形参带回（GLSL 的 out 形参）。
+ */
+export const ENTITY_SCENE_LIGHTS_WGSL = /* wgsl */ `
+/** 面光两条半轴。与 SceneLightingPass 的同名函数同式（绕法线自转 roll）。 */
+fn litAreaAxes(n: vec3<f32>, halfW: f32, halfH: f32, roll: f32,
+               halfU: ptr<function, vec3<f32>>, halfV: ptr<function, vec3<f32>>) {
+    var up = vec3<f32>(0.0, 1.0, 0.0);
+    if (abs(n.y) > 0.95) { up = vec3<f32>(1.0, 0.0, 0.0); }
+    let u = normalize(cross(up, n));
+    let v = cross(n, u);
+    let c = cos(roll);
+    let s = sin(roll);
+    *halfU = (u * c + v * s) * halfW;
+    *halfV = (v * c - u * s) * halfH;
+}
+
+/**
+ * q = 伪世界点；n = **世界**法线（已在 M-world）。返回各盏灯的照度之和。
+ * 铁律 0：P 朝向过 R、尺度过 uSMWuPerQUnit，一次转到底；法线直接用 n（世界对世界）。
+ */
+fn entitySceneLightsE(q: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    var E = vec3<f32>(0.0);
+    if (charLights.uSceneLightCount <= 0) { return E; }
+    let P = wrQToWorld(charLights.uSMRow0, charLights.uSMRow1, charLights.uSMRow2, q) * charLights.uSMWuPerQUnit;
+    for (var i = 0; i < ${MAX_STATIC_LIGHTS}; i++) {
+        if (i >= charLights.uSceneLightCount) { break; }
+        let A = charLights.uSceneLightA[i];
+        let B = charLights.uSceneLightB[i];
+        let C = charLights.uSceneLightC[i];
+        let D = charLights.uSceneLightD[i];
+        if (B.w <= 0.0) { continue; }             // 强度 0 的灯贡献恒等于 0
+        let kind = i32(A.w + 0.5);
+        let flags = i32(D.w + 0.5);               // bit0=castShadow bit1=twoSided
+        // 实体不吃灯的阴影（理由见 GLSL 版）：vis 恒 1
+        if (kind == LC_POINT) {
+            E += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, 1.0);
+        } else if (kind == LC_SPOT) {
+            E += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, 1.0);
+        } else if (kind == LC_AREA) {
+            var hu: vec3<f32>;
+            var hv: vec3<f32>;
+            litAreaAxes(normalize(D.xyz), C.z, C.w, C.y, &hu, &hv);
+            E += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, 1.0);
+        } else if (kind == LC_LINE) {
+            E += lcLineLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, 1.0);
+        } else {
+            E += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
+        }
+    }
+    return E;
+}
+`;
+
 const VERT = /* glsl */ `#version 300 es
 in vec2 aPosition;   // sprite 局部坐标(帧像素空间,锚点已含)
 in vec2 aUV;         // 图集 UV —— 与 color 帧同一套(法线采样直接用它)

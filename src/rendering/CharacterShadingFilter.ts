@@ -2,6 +2,9 @@ import { lightFactor } from '../data/lightFactors';
 import { Filter, GlProgram, Texture, type TextureSource } from 'pixi.js';
 // 角色着色核心 GLSL 的唯一真相源(与灯光实验室共用同一份,消灭 shader 镜像漂移)。
 import CHAR_SHADE_CORE from './charShadeCore.glsl?raw';
+// WebGPU 迁移期的 WGSL 版(与上面的 GLSL 并存,WebGL 路径不读它们;等价由 render_parity 钉住)
+import CHAR_SHADE_CORE_WGSL from './charShadeCore.wgsl?raw';
+import CLC_WGSL_SRC from './charLightCommon.wgsl?raw';
 import type { SceneDepthConfig } from '../data/types';
 import type { IEntityShadingFilter } from './EntityLightingFilter';
 
@@ -730,6 +733,40 @@ export const PROBE_SAMPLING_GLSL: string = (() => {
   if (i < 0 || j < 0) throw new Error('[CharacterShadingFilter] 缺 PROBE_SAMPLING 切片标记');
   return CHAR_LIGHT_COMMON_GLSL.substring(i + b.length, j);
 })();
+
+// ---------------------------------------------------------------------------
+// 上面三份的 WGSL 版(WebGPU 迁移期并存;WebGL 路径不读)。源在 charLightCommon.wgsl,
+// 设计(uniform 打成值结构 ClcProbe/ClcSkyao/ClcVol/ClcRt 当形参传、纹理也走形参)与
+// 宿主怎么建结构写在那个文件头。切片方式与 GLSL 逐一对应:CLC 整段(注入 charShadeCore.wgsl)、
+// PROBE 段不含标记、SKYAO 段含标记。同一模块里每段只许拼一次。
+
+/** CLC_WGSL_SRC 里 `//__${tag}_BEGIN__` 到 `_END__` 之间(不含标记)。 */
+function sliceClcWgsl(src: string, tag: string): string {
+  const b = `//__${tag}_BEGIN__`;
+  const e = `//__${tag}_END__`;
+  const i = src.indexOf(b);
+  const j = src.indexOf(e);
+  if (i < 0 || j < 0) throw new Error(`[CharacterShadingFilter] charLightCommon.wgsl 缺切片标记 ${tag}`);
+  return src.substring(i + b.length, j);
+}
+
+export const CHAR_LIGHT_COMMON_WGSL: string = (() => {
+  const body = sliceClcWgsl(CLC_WGSL_SRC, 'CLC');
+  const inc = '//__CHAR_SHADE_CORE_WGSL__';
+  if (!body.includes(inc)) throw new Error('[CharacterShadingFilter] charLightCommon.wgsl 缺着色核心注入点');
+  return body.replace(inc, () => CHAR_SHADE_CORE_WGSL);   // 函数式替换:不解释源里的 $ 序列
+})();
+
+export const SKYAO_SAMPLING_WGSL: string = (() => {
+  const b = '//__SKYAO_SAMPLING_BEGIN__';
+  const e = '//__SKYAO_SAMPLING_END__';
+  const i = CHAR_LIGHT_COMMON_WGSL.indexOf(b);
+  const j = CHAR_LIGHT_COMMON_WGSL.indexOf(e);
+  if (i < 0 || j < 0) throw new Error('[CharacterShadingFilter] 缺 SKYAO_SAMPLING 切片标记(WGSL)');
+  return CHAR_LIGHT_COMMON_WGSL.slice(i, j + e.length);
+})();
+
+export const PROBE_SAMPLING_WGSL: string = sliceClcWgsl(CHAR_LIGHT_COMMON_WGSL, 'PROBE_SAMPLING');
 
 export interface CharShadingSceneResources {
   atlasL1: TextureSource;
