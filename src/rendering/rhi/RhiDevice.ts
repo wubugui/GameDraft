@@ -59,6 +59,8 @@ export interface RhiTexture extends RhiResource {
   readonly format: RhiTextureFormat;
   readonly usage: number;
   readonly mipLevels: number;
+  /** 多重采样数(1 = 普通纹理) */
+  readonly sampleCount: number;
 }
 
 export interface RhiSampler extends RhiResource {
@@ -84,6 +86,7 @@ export interface RhiRenderPipeline extends RhiResource, RhiPipelineStatus {
   readonly kind: 'render-pipeline';
   readonly colorFormats: readonly RhiColorFormat[];
   readonly depthFormat: RhiDepthFormat | null;
+  readonly sampleCount: number;
 }
 
 export interface RhiComputePipeline extends RhiResource, RhiPipelineStatus {
@@ -96,6 +99,8 @@ export interface RhiRenderTarget extends RhiResource {
   readonly height: number;
   readonly colorFormats: readonly RhiColorFormat[];
   readonly depthFormat: RhiDepthFormat | null;
+  /** 附件的多重采样数(1 = 不做 MSAA) */
+  readonly sampleCount: number;
 }
 
 /**
@@ -157,6 +162,12 @@ export interface RhiFrame {
    * (遮罩)时用它;同一帧里与 `swapchain` 共用同一张颜色纹理。
    */
   swapchainWithDepth(format: import('./types').RhiDepthFormat): RhiRenderTarget;
+  /**
+   * 多重采样(MSAA)画布目标:颜色画进设备持有的多重采样纹理(尺寸随画布),每个 pass 结束 resolve 到这一帧的画布纹理;
+   * 给了 depthFormat 就另带同采样数的深度 / 模板附件。多重采样纹理跨 pass、跨帧保留(load 读到的是上一个 pass 的结果),
+   * 同采样数下带不带深度的目标共用同一张多重采样颜色(中途补模板以 load 重开,读到的就是刚画的)。
+   */
+  swapchainMultisampled(sampleCount: number, depthFormat?: import('./types').RhiDepthFormat | null): RhiRenderTarget;
 }
 
 export interface RhiFrameStats {

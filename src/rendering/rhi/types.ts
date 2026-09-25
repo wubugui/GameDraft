@@ -117,6 +117,11 @@ export interface RhiTextureDesc {
   flipY?: boolean;
   /** 纹理自带的采样状态:着色器声明了「纹理名Sampler」而绑定时没单独给采样器时用它(见 `RhiBindings`) */
   sampler?: RhiSamplerDesc;
+  /**
+   * 多重采样数:1(缺省)或 4。4 的纹理只能当渲染附件(用途只许 RENDER_TARGET),不能采样 / 拷贝 / 带初始数据 / 多级 mip;
+   * 画完经渲染目标的 `resolveTargets` 落到单采样纹理上再用(MSAA 抗锯齿)。
+   */
+  sampleCount?: number;
 }
 
 /** 着色器源:一个 WGSL 模块,可同时含顶点、片元、计算入口(入口名缺省按 `@vertex` 等标注自动找)。 */
@@ -268,6 +273,8 @@ export interface RhiRenderPipelineDesc {
   /** 颜色写掩码(`RhiColorWrite` 位组合),缺省全写 */
   colorWriteMask?: number;
   cullMode?: 'none' | 'front' | 'back';
+  /** 多重采样数,必须与绘制时渲染目标的 `sampleCount` 相同;缺省 1 */
+  sampleCount?: number;
 }
 
 export interface RhiComputePipelineDesc {
@@ -279,6 +286,11 @@ export interface RhiRenderTargetDesc {
   label: string;
   colors: import('./RhiDevice').RhiTexture[];
   depth?: import('./RhiDevice').RhiTexture | null;
+  /**
+   * 逐颜色附件的 resolve 目标(单采样、与附件同尺寸同格式、带 RENDER_TARGET 用途)。颜色附件是多重采样时,
+   * 每个 pass 结束都把结果 resolve 进去;附件与深度附件的采样数必须一致。
+   */
+  resolveTargets?: (import('./RhiDevice').RhiTexture | null)[];
 }
 
 /** 颜色附件在 pass 开始时的处理:清成某色,或保留原内容 */

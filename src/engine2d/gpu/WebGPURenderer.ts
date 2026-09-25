@@ -31,7 +31,7 @@ import { Filter } from '../filters/Filter';
 import { GpuProgram } from '../shader/GpuProgram';
 import { GpuTextures } from './GpuTextures';
 import { GpuBuffers } from './GpuBuffers';
-import { Pipelines, STENCIL_DEPTH_FORMAT } from './Pipelines';
+import { Pipelines, STENCIL_DEPTH_FORMAT, targetSampleCount } from './Pipelines';
 import { Batcher, adjustedBlendMode } from './Batcher';
 import type { BlendMode } from '../core/blendModes';
 import type { Geometry } from '../shader/Geometry';
@@ -103,6 +103,14 @@ interface TargetEntry {
   plain?: RhiRenderTarget;
   stencil?: RhiRenderTarget;
   depth?: RhiTexture;
+  /**
+   * 抗锯齿目标(照 Pixi 的 msaaTextures):同尺寸同格式的多重采样颜色,带不带模板的两种目标共用它(中途补模板以 load
+   * 重开读到的是刚画的),pass 结束 resolve 回纹理本身
+   */
+  msaaColor?: RhiTexture;
+  msaaDepth?: RhiTexture;
+  msaaPlain?: RhiRenderTarget;
+  msaaStencil?: RhiRenderTarget;
 }
 
 /** 一组要预建的管线:程序 + 它会配的几何(只看顶点布局)+ 会用到的混合;目标格式缺省画布 + 离屏缺省 */
@@ -112,7 +120,10 @@ export interface PipelinePrewarmSpec {
   blendModes: readonly BlendMode[];
   /** 网格的纹理(只影响非预乘纹理的混合变体);缺省 Texture.WHITE,与没给纹理的自定义网格相同 */
   texture?: Texture;
+  /** 缺省:画布格式(采样数随渲染器 antialias)+ 离屏缺省 bgra8unorm(单采样) */
   colorFormats?: readonly RhiColorFormat[];
+  /** 给了 colorFormats 时这些目标的采样数;缺省 1 */
+  sampleCount?: number;
 }
 
 export class WebGPURenderer extends RendererBase {
@@ -289,11 +300,13 @@ export class WebGPURenderer extends RendererBase {
   private passTarget(cmd: PassCmd, frame: RhiFrame | null): RhiRenderTarget {
     if (cmd.target === 'canvas') {
       if (!frame) throw new Error('[engine2d] 画到画布必须在帧内');
+      if (cmd.samples > 1) return frame.swapchainMultisampled(cmd.samples, cmd.stencil ? STENCIL_DEPTH_FORMAT : null);
       return cmd.stencil ? frame.swapchainWithDepth(STENCIL_DEPTH_FORMAT) : frame.swapchain;
     }
     const color = cmd.color!;
     let e = this.targets.get(color);
     if (!e) this.targets.set(color, (e = {}));
+    if (cmd.samples > 1) return this.msaaTarget(color, e, cmd.samples, cmd.stencil);
     if (!cmd.stencil) {
       return (e.plain ??= this.scope.createRenderTarget({ label: `${color.label} 目标`, colors: [color] }));
     }
@@ -310,12 +323,51 @@ export class WebGPURenderer extends RendererBase {
     return e.stencil;
   }
 
+  private msaaTarget(color: RhiTexture, e: TargetEntry, samples: number, stencil: boolean): RhiRenderTarget {
+    e.msaaColor ??= this.scope.createTexture({
+      label: `${color.label} MSAA×${samples}`,
+      width: color.width,
+      height: color.height,
+      format: color.format,
+      usage: RhiTextureUsage.RENDER_TARGET,
+      sampleCount: samples,
+    });
+    if (!stencil) {
+      return (e.msaaPlain ??= this.scope.createRenderTarget({
+        label: `${color.label} 目标 MSAA×${samples}`,
+        colors: [e.msaaColor],
+        resolveTargets: [color],
+      }));
+    }
+    if (!e.msaaStencil) {
+      e.msaaDepth = this.scope.createTexture({
+        label: `${color.label} 模板 MSAA×${samples}`,
+        width: color.width,
+        height: color.height,
+        format: STENCIL_DEPTH_FORMAT,
+        usage: RhiTextureUsage.RENDER_TARGET,
+        sampleCount: samples,
+      });
+      e.msaaStencil = this.scope.createRenderTarget({
+        label: `${color.label} 目标+模板 MSAA×${samples}`,
+        colors: [e.msaaColor],
+        depth: e.msaaDepth,
+        resolveTargets: [color],
+      });
+    }
+    return e.msaaStencil;
+  }
+
   private releaseTargets(texture: RhiTexture): void {
     const e = this.targets.get(texture);
     if (!e) return;
     e.plain?.destroy();
     e.stencil?.destroy();
     e.depth?.destroy();
+    e.msaaPlain?.destroy();
+    e.msaaStencil?.destroy();
+    e.msaaDepth?.destroy();
+    e.msaaColor?.destroy();
     this.targets.delete(texture);
   }
 
@@ -328,17 +380,22 @@ export class WebGPURenderer extends RendererBase {
    */
   prewarmPipelines(specs: readonly PipelinePrewarmSpec[]): void {
     if (this.destroyed) return;
-    const defaults = [...new Set<RhiColorFormat>([this.rhi.caps.swapchainFormat, 'bgra8unorm'])];
+    const swapchainFormat = this.rhi.caps.swapchainFormat;
+    const defaults: Array<{ format: RhiColorFormat; samples: number }> = [
+      { format: swapchainFormat, samples: targetSampleCount(this.antialias, swapchainFormat) },
+    ];
+    if (swapchainFormat !== 'bgra8unorm' || defaults[0].samples !== 1) defaults.push({ format: 'bgra8unorm', samples: 1 });
     for (const s of specs) {
       try {
         const layout = this.pipelines.layout(s.geometry, s.program);
         const texture = s.texture ?? Texture.WHITE;
         for (const mode of s.blendModes) {
           const blend = adjustedBlendMode(mode, texture.source);
-          for (const colorFormat of s.colorFormats ?? defaults) {
+          const targets = s.colorFormats?.map((format) => ({ format, samples: s.sampleCount ?? 1 })) ?? defaults;
+          for (const t of targets) {
             this.pipelines.get({
               program: s.program, layout, topology: s.geometry.topology, blend,
-              colorFormat, depthFormat: null, stencil: 'disabled', colorMask: 15,
+              colorFormat: t.format, depthFormat: null, stencil: 'disabled', colorMask: 15, sampleCount: t.samples,
             });
           }
         }

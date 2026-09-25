@@ -74,6 +74,7 @@ class NullTexture extends RhiResourceBase<'texture'> implements RhiTexture {
   readonly format: RhiTextureFormat;
   readonly usage: number;
   readonly mipLevels: number;
+  readonly sampleCount: number;
   constructor(scope: RhiResourceScope, releases: RhiReleaseQueue, desc: RhiTextureDesc, usage: number, private readonly log: string[]) {
     super('texture', desc.label, scope, releases);
     this.width = desc.width;
@@ -81,6 +82,7 @@ class NullTexture extends RhiResourceBase<'texture'> implements RhiTexture {
     this.format = desc.format;
     this.usage = usage;
     this.mipLevels = desc.mipLevels ?? 1;
+    this.sampleCount = desc.sampleCount ?? 1;
   }
   protected releaseBackend(): void {
     this.log.push(`release texture ${this.label}`);
@@ -108,6 +110,7 @@ class NullRenderPipeline extends RhiResourceBase<'render-pipeline'> implements R
     readonly colorFormats: readonly RhiColorFormat[],
     readonly depthFormat: RhiDepthFormat | null,
     readonly streams: readonly string[],
+    readonly sampleCount = 1,
   ) {
     super('render-pipeline', label, scope, releases);
   }
@@ -130,8 +133,14 @@ class NullRenderTarget extends RhiResourceBase<'render-target'> implements RhiRe
     readonly colors: readonly NullTexture[],
     readonly depth: NullTexture | null,
     private readonly log: string[],
+    private readonly samples?: number,
+    /** 逐颜色附件的 resolve 目标(画布 MSAA 的 resolve 目标是这一帧的画布,记成 'canvas') */
+    readonly resolves: readonly (NullTexture | 'canvas' | null)[] = [],
   ) {
     super('render-target', label, scope, releases);
+  }
+  get sampleCount(): number {
+    return this.samples ?? (this.colors[0] ?? this.depth)?.sampleCount ?? 1;
   }
   get colorFormats(): readonly RhiColorFormat[] {
     return this.colors.map((c) => c.format as RhiColorFormat);
@@ -143,6 +152,7 @@ class NullRenderTarget extends RhiResourceBase<'render-target'> implements RhiRe
     super.assertAlive(usage);
     for (const c of this.colors) c.assertAlive(`${usage}(渲染目标「${this.label}」的颜色附件)`);
     this.depth?.assertAlive(`${usage}(渲染目标「${this.label}」的深度附件)`);
+    for (const r of this.resolves) if (r && r !== 'canvas') r.assertAlive(`${usage}(渲染目标「${this.label}」的 resolve 目标)`);
   }
   protected releaseBackend(): void {
     this.log.push(`release target ${this.label}`);
@@ -169,9 +179,11 @@ class NullCommandList implements RhiCommandList {
     t.assertAlive(`render pass「${desc.label}」的目标`);
     for (const c of t.colors) this.used.add(c);
     if (t.depth) this.used.add(t.depth);
+    for (const r of t.resolves) if (r && r !== 'canvas') this.used.add(r);
     this.stats.renderPasses++;
     const ops = t.colorFormats.map((_, i) => desc.colorOps?.[i]?.load ?? 'clear').join(',');
-    this.device.log.push(`begin render ${desc.label} -> ${t.label} [${ops}]`);
+    const resolves = t.resolves.map((r) => (r === 'canvas' ? '画布' : r?.label ?? '-')).join(',');
+    this.device.log.push(`begin render ${desc.label} -> ${t.label} [${ops}]${t.resolves.length ? ` resolve→${resolves}` : ''}`);
     let pipeline: NullRenderPipeline | null = null;
     const streams = new Set<string>();
     const enc: RhiRenderPassEncoder = {
@@ -181,6 +193,9 @@ class NullCommandList implements RhiCommandList {
         const same = np.colorFormats.length === t.colorFormats.length && np.colorFormats.every((f, i) => f === t.colorFormats[i]);
         if (!same || np.depthFormat !== t.depthFormat) {
           throw new RhiError('invalid-usage', `管线「${np.label}」的目标格式与 render pass「${desc.label}」不一致`);
+        }
+        if (np.sampleCount !== t.sampleCount) {
+          throw new RhiError('invalid-usage', `管线「${np.label}」的采样数 ${np.sampleCount} 与 render pass「${desc.label}」的目标(${t.sampleCount})不一致`);
         }
         pipeline = np;
       },
@@ -306,6 +321,7 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   private readonly listeners = new Set<RhiDiagnosticListener>();
   private readonly swapchain: NullSwapchain;
   private readonly swapchainDepth = new Map<RhiDepthFormat, NullSwapchain>();
+  private readonly swapchainMsaa = new Map<string, NullSwapchain>();
   private readonly recordings: NullCommandList[] = [];
   private frameIndex = 0;
   private stats: RhiFrameStats = { frame: -1, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
@@ -355,6 +371,11 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
 
   createTexture(scope: RhiResourceScope, desc: RhiTextureDesc): RhiTexture {
     if (!(desc.width > 0 && desc.height > 0)) throw new RhiError('invalid-usage', `纹理「${desc.label}」尺寸非法`);
+    const samples = desc.sampleCount ?? 1;
+    if (samples !== 1 && samples !== 4) throw new RhiError('unsupported', `纹理「${desc.label}」的采样数 ${samples} 不支持`);
+    if (samples > 1 && (desc.usage !== RhiTextureUsage.RENDER_TARGET || desc.data != null)) {
+      throw new RhiError('invalid-usage', `多重采样纹理「${desc.label}」只能当渲染附件、不能带初始数据`);
+    }
     let usage = desc.usage;
     if (desc.data != null) usage |= RhiTextureUsage.COPY_DST;
     this.log.push(`create texture ${desc.label}`);
@@ -375,7 +396,7 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
 
   createRenderPipeline(scope: RhiResourceScope, desc: RhiRenderPipelineDesc): RhiRenderPipeline {
     if (!desc.shader.hasRender) throw new RhiError('invalid-usage', `管线「${desc.label}」:着色器没有顶点 + 片元入口`);
-    return new NullRenderPipeline(scope, this.releases, desc.label, [...desc.colorFormats], desc.depthFormat ?? null, (desc.vertexBuffers ?? []).map((v) => v.name));
+    return new NullRenderPipeline(scope, this.releases, desc.label, [...desc.colorFormats], desc.depthFormat ?? null, (desc.vertexBuffers ?? []).map((v) => v.name), desc.sampleCount ?? 1);
   }
 
   createComputePipeline(scope: RhiResourceScope, desc: RhiComputePipelineDesc): RhiComputePipeline {
@@ -396,8 +417,20 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
     }
     for (const c of colors) if (isDepthFormat(c.format)) throw new RhiError('invalid-usage', `「${c.label}」是深度格式,不能当颜色附件`);
     if (depth && !isDepthFormat(depth.format)) throw new RhiError('invalid-usage', `「${depth.label}」不是深度格式`);
+    const samples = all[0].sampleCount;
+    if (all.some((t) => t.sampleCount !== samples)) throw new RhiError('invalid-usage', `渲染目标「${desc.label}」附件采样数不一致`);
+    (desc.resolveTargets ?? []).forEach((r, i) => {
+      if (!r) return;
+      const c = colors[i];
+      if (!c || c.sampleCount === 1) throw new RhiError('invalid-usage', `渲染目标「${desc.label}」的 resolve 目标 ${i} 没有对应的多重采样颜色附件`);
+      if (r.sampleCount !== 1 || r.width !== width || r.height !== height || r.format !== c.format) {
+        throw new RhiError('invalid-usage', `resolve 目标「${r.label}」须是与附件同尺寸同格式的单采样纹理`);
+      }
+    });
     this.log.push(`create target ${desc.label}`);
-    return new NullRenderTarget(scope, this.releases, desc.label, width, height, colors, depth, this.log);
+    return new NullRenderTarget(
+      scope, this.releases, desc.label, width, height, colors, depth, this.log, undefined, (desc.resolveTargets ?? []) as (NullTexture | null)[],
+    );
   }
 
   writeBuffer(buffer: RhiBuffer, data: ArrayBufferView, byteOffset = 0): void {
@@ -449,7 +482,24 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
       }
       return t;
     };
-    return this.record(commands, () => record({ index: this.frameIndex, commands, swapchain: this.swapchain, swapchainWithDepth }), () => {
+    const swapchainMultisampled = (sampleCount: number, depthFormat: RhiDepthFormat | null = null): RhiRenderTarget => {
+      if (sampleCount === 1) return depthFormat ? swapchainWithDepth(depthFormat) : this.swapchain;
+      const key = `${sampleCount}|${depthFormat ?? ''}`;
+      let t = this.swapchainMsaa.get(key);
+      if (!t) {
+        const depth = depthFormat
+          ? new NullTexture(this.rootScope, this.releases, {
+              label: `画布 MSAA 深度 ${depthFormat}`, width: this.swapchain.width, height: this.swapchain.height,
+              format: depthFormat, usage: RhiTextureUsage.RENDER_TARGET, sampleCount,
+            }, RhiTextureUsage.RENDER_TARGET, this.log)
+          : null;
+        t = new NullSwapchain(this.rootScope, this.releases, `画布后备缓冲 MSAA×${sampleCount}${depthFormat ? `+${depthFormat}` : ''}`,
+          this.swapchain.width, this.swapchain.height, [], depth, this.log, sampleCount, ['canvas']);
+        this.swapchainMsaa.set(key, t);
+      }
+      return t;
+    };
+    return this.record(commands, () => record({ index: this.frameIndex, commands, swapchain: this.swapchain, swapchainWithDepth, swapchainMultisampled }), () => {
       this.stats = stats;
       this.frameIndex++;
     });

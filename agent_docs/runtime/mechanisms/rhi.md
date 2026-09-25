@@ -55,6 +55,11 @@ last_governed: 2026-09-25
   也会读到新值(不是"写在哪儿从哪儿生效"),所以直接报错。逐 draw 变化的数据用不同缓冲 / 偏移,或在录制前写好。
 - **不静默降级**:环境没有 WebGPU,`createRhiDevice` 抛 `unsupported`,不换别的 API。
 - **图像上传缺省不预乘**(`premultiplyAlpha: false`):alpha 当数据的图不会被乘掉;颜色图要预乘就显式传 true。
+- **多重采样(MSAA)只有 1 / 4**:`sampleCount: 4` 的纹理只能当渲染附件(用途只许 RENDER_TARGET,不带数据、单级 mip),
+  渲染目标的 `resolveTargets` 给同尺寸同格式的单采样纹理,每个 pass 结束 resolve 进去;管线的 `sampleCount` 必须与目标一致,
+  不一致 setPipeline 当场 `invalid-usage`。多重采样纹理跨 pass 保留(load 读到的是上一 pass 的多重采样结果,不是 resolve 目标)。
+  画布用 `frame.swapchainMultisampled(4, depthFormat?)`:多重采样颜色由设备持有、随画布尺寸重建,**同采样数下带不带深度共用一张**
+  (中途补模板以 load 重开读到的就是刚画的)。32 位浮点 / 整数格式不能 resolve。
 - **渲染图每帧新建**:pass 只能取自己在 reads / writes 里声明过的资源;结果没人要的 pass 被剔除
   (根 = `sideEffect` 或写导入资源);读了此前没人写过的图内资源 = 编译错误;瞬时资源由 `RgTransientPool`
   跨帧复用、同帧内生命期不重叠者共用一块,闲置 `maxIdleTicks` 次后销毁。
@@ -65,6 +70,8 @@ last_governed: 2026-09-25
   engine2d 的 WebGPURenderer 只经 RHI 接口建资源、录命令;`Renderer.destroy` 由 engine2d 负责拆设备(`ownsDevice`)。
 - 画布尺寸由 engine2d 改 `canvas.width/height`,改完调 `rhi.resizeSwapchain(w, h)`(luma 自己记着绘制缓冲尺寸,
   不告诉它深度缓冲会停在旧尺寸);零面积忽略,那一帧 engine2d 也不录。
+- 抗锯齿:engine2d 目标 antialias(画布跟渲染器选项、RenderTexture 跟纹理源)⇒ 画布走 `swapchainMultisampled(4, …)`,
+  离屏给每张目标纹理配一张同格式 ×4 颜色(带模板时再配 ×4 深度)并以 `resolveTargets` 落回;管线键带采样数。
 - 模板遮罩:engine2d 用 `frame.swapchainWithDepth(format)` / 离屏深度模板纹理;pass 描述里的 `stencilOp` 与管线的 `stencil`
   状态由 luma 后端自己拼 GPURenderPassDescriptor 下发(luma 9.4 不传模板操作,且给了 depthStencilAttachmentFormat 会把模板参数弄坏)。
 - 着色器 / 渲染对照:`tools/render_parity` 已改成 **master(Pixi WebGL)对本分支(engine2d)**,见 engine2d 卡。

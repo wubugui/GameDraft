@@ -100,7 +100,7 @@ async function initRenderer(): Promise<boolean> {
   overlay = new Graphics(); app.stage.addChild(overlay);
   app.ticker.add(() => tick(app.ticker.deltaMS / 1000));
   // resizeTo 只跟 window 的 resize 事件;页签切换 / 侧栏变化只改元素尺寸,这里同步跟上。
-  // (隐藏页时元素是 0×0:engine2d 的 renderer.resize 会如实把画布缩到 0,Pixi 则保留旧尺寸)
+  // (隐藏页时元素是 0×0:resize 把 0 当"沿用旧尺寸",画布停在隐藏前的大小,显示出来要重新量)
   new ResizeObserver(() => { app.resize(); layout(); }).observe($('stageWrap'));
   layout();
   syncPreviewPageActivity(document.getElementById('previewPage')?.classList.contains('active') === true);
@@ -139,7 +139,7 @@ function syncPreviewPageActivity(active: boolean) {
   app.ticker.start();
   requestAnimationFrame(() => {
     if (!previewPageActive || !app) return;
-    // 这一帧早于 ResizeObserver:先把渲染器按刚显示出来的舞台定尺寸,适配缩放才不会拿 0 高去算
+    // 这一帧早于 ResizeObserver:先把渲染器按刚显示出来的舞台定尺寸,适配缩放才不会拿隐藏前的旧尺寸去算
     app.resize();
     layout();
     if (previewNeedsFit && curDef) {

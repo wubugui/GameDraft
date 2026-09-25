@@ -86,7 +86,8 @@ last_governed: 2026-08-05
 - **游戏真实预览页只用游戏同一套 2D 层 engine2d**(`@src/engine2d`,只有 WebGPU),不许再 import `pixi.js`
   (守门测试 `src/engine2d/noPixiInRuntime.test.ts`):SpriteEntity / 光照滤镜 / 阴影都是 engine2d 对象,
   挂到 Pixi 的 Application 上既过不了类型也画不出来。没有 WebGPU 时舞台区显示明确提示,不回落 WebGL。
-  差异(异步 extract、隐藏页签时画布 0×0)见 [engine2d](../../runtime/mechanisms/engine2d.md)。
+  与 Pixi 的差异(异步 extract)见 [engine2d](../../runtime/mechanisms/engine2d.md);`resizeTo` 只跟 window 的 resize,
+  页签切换 / 侧栏变化要自己 `app.resize()`(ResizeObserver 里与页签显示那一帧各一次)。
 - **场景背景模式铁律**:角色保持舒适大小(≈屏高 55%)、背景按同一世界比例放大、镜头怼在 spawn
   上只显示一块——**不是**把整场景塞进画面(会把角色缩成芝麻,**被用户明确否过**)。
 - 远程是**公开**只读镜像:对源素材 copy-only(部署前后源树哈希相同),不得公开 agent-context/锁/

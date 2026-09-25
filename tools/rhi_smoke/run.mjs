@@ -7,6 +7,7 @@
  *   node tools/rhi_smoke/run.mjs
  *   node tools/rhi_smoke/run.mjs --browser <chrome/edge 可执行文件>
  *   node tools/rhi_smoke/run.mjs --case 渲染图 --verbose   # 只跑名字含关键字的用例,打印浏览器控制台错误
+ *   xvfb-run -a node tools/rhi_smoke/run.mjs --headed --swiftshader   # 云端 Linux:无头 WebGPU 上屏会丢设备,上屏用例要有头
  *
  * 依赖 playwright-core(仓库不装;装在别处时用环境变量 PLAYWRIGHT_CORE 指到它的包目录)。
  * 没有也行:`npx vite --config tools/rhi_smoke/vite.config.ts` 起服,浏览器里直接开,页面自己出表。
@@ -44,7 +45,10 @@ const base = server.resolvedUrls.local[0];
 
 const launch = {
   headless: !args.includes('--headed'),
-  args: ['--enable-unsafe-webgpu'],
+  args: [
+    '--enable-unsafe-webgpu',
+    ...(args.includes('--swiftshader') ? ['--enable-features=Vulkan', '--use-vulkan=swiftshader', '--use-angle=swiftshader'] : []),
+  ],
   ...(browserPath ? { executablePath: browserPath } : { channel: process.platform === 'win32' ? 'msedge' : 'chrome' }),
 };
 

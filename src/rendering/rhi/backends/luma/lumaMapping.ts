@@ -91,6 +91,7 @@ export function toLumaPipelineParameters(desc: RhiRenderPipelineDesc): RenderPip
     params.stencilWriteMask = desc.stencil.writeMask ?? 0xff;
   }
   if (desc.colorWriteMask !== undefined) params.colorMask = desc.colorWriteMask;
+  if ((desc.sampleCount ?? 1) > 1) params.sampleCount = desc.sampleCount;
   return params;
 }
 

@@ -108,33 +108,40 @@ export abstract class RendererBase {
     this.resize(options.width ?? this.canvas.width / this.resolution, options.height ?? this.canvas.height / this.resolution, this.resolution);
   }
 
-  /** 画布像素宽 */
+  /** 逻辑宽(CSS 像素,= screen.width;照 Pixi 的 `view.texture.frame.width`,画布像素宽是 `canvas.width`) */
   get width(): number {
-    return this.canvas.width;
+    return this.screen.width;
   }
 
-  /** 画布像素高 */
+  /** 逻辑高(CSS 像素,= screen.height) */
   get height(): number {
-    return this.canvas.height;
+    return this.screen.height;
   }
 
   get view(): { canvas: HTMLCanvasElement; resolution: number; screen: Rectangle } {
     return { canvas: this.canvas, resolution: this.resolution, screen: this.screen };
   }
 
-  resize(width: number, height: number, resolution = this.resolution): void {
-    if (resolution !== this.resolution) this.events?.resolutionChange(resolution);
-    this.resolution = resolution;
-    this.screen.width = width;
-    this.screen.height = height;
+  /**
+   * 照 Pixi(TextureSource.resize):宽 / 高 / 分辨率给 0(或不给分辨率)= 沿用当前值——隐藏的挂载点量出 0 时画布不缩没;
+   * 逻辑尺寸取整到整像素后回算(`round(w × res) / res`),screen 与 autoDensity 的 CSS 尺寸都用回算后的值。
+   */
+  resize(width: number, height: number, resolution?: number): void {
+    resolution ||= this.resolution;
+    width ||= this.screen.width;
+    height ||= this.screen.height;
     const pw = Math.round(width * resolution);
     const ph = Math.round(height * resolution);
+    if (resolution !== this.resolution) this.events?.resolutionChange(resolution);
+    this.resolution = resolution;
+    this.screen.width = pw / resolution;
+    this.screen.height = ph / resolution;
     if (this.canvas.width !== pw) this.canvas.width = pw;
     if (this.canvas.height !== ph) this.canvas.height = ph;
     this.rhi.resizeSwapchain(pw, ph);
     if (this.autoDensity && 'style' in this.canvas) {
-      this.canvas.style.width = `${width}px`;
-      this.canvas.style.height = `${height}px`;
+      this.canvas.style.width = `${this.screen.width}px`;
+      this.canvas.style.height = `${this.screen.height}px`;
     }
   }
 

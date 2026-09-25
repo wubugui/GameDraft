@@ -1,5 +1,5 @@
 /**
- * 程序 → RHI 着色器;(程序, 顶点布局, 拓扑, 混合, 目标格式, 模板状态, 颜色写掩码) → RHI 渲染管线。全部按键缓存,
+ * 程序 → RHI 着色器;(程序, 顶点布局, 拓扑, 混合, 目标格式, 模板状态, 颜色写掩码, 采样数) → RHI 渲染管线。全部按键缓存,
  * 挂在渲染器的根作用域上,渲染器销毁时一起收。
  */
 import type {
@@ -31,6 +31,17 @@ const STENCIL_STATES: Record<StencilMode, RhiStencilState> = {
   inverse: { compare: 'not-equal', passOp: 'keep', writeMask: 0 },
 };
 
+/** WebGPU 核心里能多重采样**且**能 resolve 的颜色格式(32 位浮点 / 整数不行) */
+const MSAA_RESOLVABLE = /^(r|rg|rgba)8unorm$|^rgba8unorm-srgb$|^bgra8unorm$|^(r|rg|rgba)16float$/;
+
+/**
+ * 目标的多重采样数(照 Pixi:目标纹理源 antialias ⇒ MSAA×4,画布跟渲染器的 antialias 选项)。
+ * 格式不支持 resolve 的目标照常单采样画(Pixi 在这里会直接校验失败)。
+ */
+export function targetSampleCount(antialias: boolean, format: RhiColorFormat): number {
+  return antialias && MSAA_RESOLVABLE.test(format) ? 4 : 1;
+}
+
 /** 32 位浮点 / 整数格式在 WebGPU 核心里不可混合:这类目标一律覆盖写 */
 const NON_BLENDABLE = /^(r|rg|rgba)32float$|int$/;
 
@@ -50,6 +61,8 @@ export interface PipelineKey {
   depthFormat: RhiDepthFormat | null;
   stencil: StencilMode;
   colorMask: number;
+  /** 目标的多重采样数(1 = 不抗锯齿;抗锯齿目标是 4) */
+  sampleCount: number;
 }
 
 export class Pipelines {
@@ -73,13 +86,13 @@ export class Pipelines {
   }
 
   get(k: PipelineKey): RhiRenderPipeline {
-    const key = `${k.program.uid}|${k.layout.key}|${k.topology}|${k.blend}|${k.colorFormat}|${k.depthFormat}|${k.depthFormat ? k.stencil : '-'}|${k.colorMask}`;
+    const key = `${k.program.uid}|${k.layout.key}|${k.topology}|${k.blend}|${k.colorFormat}|${k.depthFormat}|${k.depthFormat ? k.stencil : '-'}|${k.colorMask}|${k.sampleCount}`;
     let p = this.pipelines.get(key);
     if (!p) {
       let blend = (BLEND_STATES[k.blend === 'inherit' ? 'normal' : k.blend] as RhiBlendState | null | undefined) ?? null;
       if (NON_BLENDABLE.test(k.colorFormat)) blend = null;
       p = this.scope.createRenderPipeline({
-        label: `${k.program.name ?? `program-${k.program.uid}`} → ${k.colorFormat}${k.depthFormat ? `+${k.stencil}` : ''} ${k.blend}`,
+        label: `${k.program.name ?? `program-${k.program.uid}`} → ${k.colorFormat}${k.sampleCount > 1 ? `×${k.sampleCount}` : ''}${k.depthFormat ? `+${k.stencil}` : ''} ${k.blend}`,
         shader: this.shader(k.program),
         vertexBuffers: k.layout.buffers,
         topology: k.topology,
@@ -90,6 +103,7 @@ export class Pipelines {
         blend,
         colorWriteMask: k.colorMask,
         cullMode: 'none',
+        sampleCount: k.sampleCount,
       });
       this.pipelines.set(key, p);
     }

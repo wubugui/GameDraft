@@ -27,7 +27,7 @@ import type { CustomDrawable, UnbatchedGraphics } from '../core/contracts';
 import { Arena } from './Arena';
 import { adjustedBlendMode, type BatchRecord } from './Batcher';
 import { BATCH_WGSL, GRAPHICS_WGSL, MAX_BATCH_TEXTURES, MESH_WGSL } from './batchShader';
-import { STENCIL_DEPTH_FORMAT, type PipelineKey, type Pipelines, type StencilMode, type VertexLayout } from './Pipelines';
+import { STENCIL_DEPTH_FORMAT, targetSampleCount, type PipelineKey, type Pipelines, type StencilMode, type VertexLayout } from './Pipelines';
 import type { GpuTextures } from './GpuTextures';
 import type { GpuBuffers } from './GpuBuffers';
 import type { Instruction } from './collect';
@@ -48,6 +48,8 @@ export interface PassCmd {
   stencil: boolean;
   stencilLoad: 'clear' | 'load';
   viewport: [number, number, number, number];
+  /** 多重采样数:>1 时画进目标配套的多重采样纹理,pass 结束 resolve 回目标(antialias) */
+  samples: number;
 }
 
 /** uniform 在 Arena 里的片段(录制时换成真正的缓冲) */
@@ -231,6 +233,7 @@ export class FrameBuilder implements FilterSystemLike {
   private readonly viewport = new Rectangle();
   private readonly projectionMatrix = new Matrix();
   private passStencil = false;
+  private passSamples = 1;
   // 全局 uniform
   private guStack: GlobalUniformData[] = [];
   private currentGU!: GlobalUniformData;
@@ -308,7 +311,9 @@ export class FrameBuilder implements FilterSystemLike {
   private startPass(clearColor: boolean, color: [number, number, number, number], clearStencil: boolean): void {
     const t = this.current;
     const stencil = this.ctx.stencilTargets.has(t.key);
+    const samples = targetSampleCount(t.antialias, t.format);
     this.passStencil = stencil;
+    this.passSamples = samples;
     this.commands.push({
       t: 'pass',
       target: t.ref,
@@ -318,6 +323,7 @@ export class FrameBuilder implements FilterSystemLike {
       stencil,
       stencilLoad: clearStencil ? 'clear' : 'load',
       viewport: [this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height],
+      samples,
     });
   }
 
@@ -552,6 +558,7 @@ export class FrameBuilder implements FilterSystemLike {
         depthFormat: this.passStencil ? STENCIL_DEPTH_FORMAT : null,
         stencil: st.mode,
         colorMask: this.colorMask,
+        sampleCount: this.passSamples,
       },
       bindings: d.bindings,
       streams: d.streams,

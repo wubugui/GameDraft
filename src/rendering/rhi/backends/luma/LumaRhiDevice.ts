@@ -175,6 +175,10 @@ class LumaRhiTexture extends RhiResourceBase<'texture'> implements RhiTexture {
     return this.handle.mipLevels;
   }
 
+  get sampleCount(): number {
+    return (this.handle as Texture & { samples?: number }).samples ?? 1;
+  }
+
   protected releaseBackend(): void {
     this.handle.destroy();
   }
@@ -228,6 +232,7 @@ class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implement
     readonly streamSlots: ReadonlyMap<string, number>,
     readonly colorFormats: readonly RhiColorFormat[],
     readonly depthFormat: RhiDepthFormat | null,
+    readonly sampleCount: number,
     shaders: readonly Shader[],
     onFail: (e: unknown) => void,
   ) {
@@ -284,8 +289,20 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
     readonly framebuffer: Framebuffer,
     readonly colors: readonly LumaRhiTexture[],
     readonly depth: LumaRhiTexture | null,
+    /** 逐颜色附件的 resolve 目标(多重采样附件才有) */
+    readonly resolves: readonly (LumaRhiTexture | null)[] = [],
   ) {
     super('render-target', label, scope, releases);
+  }
+
+  get sampleCount(): number {
+    return (this.colors[0] ?? this.depth)?.sampleCount ?? 1;
+  }
+
+  /** 第 i 个颜色附件的 resolve 视图 */
+  resolveView(i: number): GPUTextureView | undefined {
+    const r = this.resolves[i];
+    return r ? (r.handle as Texture & { view: { handle: GPUTextureView } }).view.handle : undefined;
   }
 
   get width(): number {
@@ -309,6 +326,7 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
     super.assertAlive(usage);
     for (const c of this.colors) c.assertAlive(`${usage}(渲染目标「${this.label}」的颜色附件)`);
     this.depth?.assertAlive(`${usage}(渲染目标「${this.label}」的深度附件)`);
+    for (const r of this.resolves) r?.assertAlive(`${usage}(渲染目标「${this.label}」的 resolve 目标)`);
   }
 
   protected releaseBackend(): void {
@@ -360,6 +378,10 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
     return this.depth;
   }
 
+  get sampleCount(): number {
+    return 1;
+  }
+
   override destroy(): void {
     throw new RhiError('invalid-usage', '画布后备缓冲归设备所有,不能单独销毁');
   }
@@ -373,6 +395,145 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
   }
 
   protected releaseBackend(): void {}
+}
+
+/**
+ * 画布 MSAA 的多重采样颜色纹理:同一采样数下、带不带深度的各个画布目标**共用这一张**——遮罩中途给画布补模板时
+ * (无深度 pass 以 load 重开成带深度 pass)读到的必须是刚画的内容。按画布纹理尺寸懒建、尺寸变了重建。
+ */
+class LumaMsaaSwapchainColor {
+  texture: Texture | null = null;
+  /** 纹理每重建一次加一(带深度的目标据此重建帧缓冲) */
+  generation = 0;
+
+  constructor(
+    private readonly luma: Device,
+    private readonly label: string,
+    private readonly format: RhiColorFormat,
+    readonly sampleCount: number,
+  ) {}
+
+  ensure(w: number, h: number): Texture {
+    const t = this.texture;
+    if (t && t.width === w && t.height === h) return t;
+    t?.destroy();
+    this.generation++;
+    return (this.texture = this.luma.createTexture({
+      id: this.label, width: w, height: h, format: toLumaTextureFormat(this.format),
+      usage: toLumaTextureUsage(RhiTextureUsage.RENDER_TARGET), samples: this.sampleCount,
+    } as never));
+  }
+
+  release(): void {
+    this.texture?.destroy();
+    this.texture = null;
+  }
+}
+
+/**
+ * 多重采样(MSAA)画布目标:颜色(与可选的深度 / 模板)画进设备持有的多重采样纹理,每个 pass 结束 resolve 到
+ * 这一帧的画布纹理。多重采样颜色同采样数共用一张(见 LumaMsaaSwapchainColor),深度各目标自带;都按画布纹理尺寸懒建、
+ * 尺寸变了重建;跨 pass、跨帧保留内容。设备销毁时释放。
+ */
+class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implements RhiRenderTarget {
+  private armed = false;
+  private depthTex: Texture | null = null;
+  private fb: Framebuffer | null = null;
+  private fbGeneration = -1;
+
+  constructor(
+    scope: RhiResourceScope,
+    releases: RhiReleaseQueue,
+    private readonly luma: Device,
+    private readonly context: CanvasContext,
+    private readonly format: RhiColorFormat,
+    private readonly colorStore: LumaMsaaSwapchainColor,
+    private readonly depth: RhiDepthFormat | null,
+  ) {
+    super('render-target', `画布后备缓冲 MSAA×${colorStore.sampleCount}${depth ? `+${depth}` : ''}`, scope, releases);
+  }
+
+  get sampleCount(): number {
+    return this.colorStore.sampleCount;
+  }
+
+  private get canvasFramebuffer(): Framebuffer {
+    if (!this.armed) throw new RhiError('invalid-usage', '画布后备缓冲只能在 runFrame 的录制期内使用');
+    return this.context.getCurrentFramebuffer({ depthStencilFormat: false as never });
+  }
+
+  /** 这一帧画布纹理的视图(resolve 目标) */
+  get resolveView(): GPUTextureView {
+    return (this.canvasFramebuffer as Framebuffer & { colorAttachments: Array<{ handle: GPUTextureView }> }).colorAttachments[0].handle;
+  }
+
+  /** 多重采样附件组成的帧缓冲(先取这一帧的画布纹理,按它的尺寸建 / 重建多重采样纹理) */
+  get framebuffer(): Framebuffer {
+    const canvasFb = this.canvasFramebuffer;
+    const w = canvasFb.width;
+    const h = canvasFb.height;
+    const color = this.colorStore.ensure(w, h);
+    if (!this.fb || this.fbGeneration !== this.colorStore.generation) {
+      this.releaseOwn();
+      this.depthTex = this.depth
+        ? this.luma.createTexture({
+            id: `${this.label} 深度`, width: w, height: h, format: toLumaTextureFormat(this.depth),
+            usage: toLumaTextureUsage(RhiTextureUsage.RENDER_TARGET), samples: this.sampleCount,
+          } as never)
+        : null;
+      this.fb = this.luma.createFramebuffer({
+        id: this.label, width: w, height: h, colorAttachments: [color], depthStencilAttachment: this.depthTex,
+      });
+      this.fbGeneration = this.colorStore.generation;
+    }
+    return this.fb;
+  }
+
+  get width(): number {
+    return this.context.getDrawingBufferSize()[0];
+  }
+
+  get height(): number {
+    return this.context.getDrawingBufferSize()[1];
+  }
+
+  get colorFormats(): readonly RhiColorFormat[] {
+    return [this.format];
+  }
+
+  get depthFormat(): RhiDepthFormat | null {
+    return this.depth;
+  }
+
+  override destroy(): void {
+    throw new RhiError('invalid-usage', '画布后备缓冲归设备所有,不能单独销毁');
+  }
+
+  _beginFrame(): void {
+    this.armed = true;
+  }
+
+  _endFrame(): void {
+    this.armed = false;
+  }
+
+  /** 只放自己的帧缓冲与深度(共用的多重采样颜色归设备放) */
+  private releaseOwn(): void {
+    this.fb?.destroy();
+    this.depthTex?.destroy();
+    this.fb = null;
+    this.depthTex = null;
+    this.fbGeneration = -1;
+  }
+
+  /** @internal 设备销毁时调 */
+  releaseTextures(): void {
+    this.releaseOwn();
+  }
+
+  protected releaseBackend(): void {
+    this.releaseOwn();
+  }
 }
 
 // ───────────────────────────── 命令
@@ -398,6 +559,7 @@ class LumaCommandList implements RhiCommandList {
     if (target instanceof LumaRhiRenderTarget) {
       for (const c of target.colors) this._use(c);
       if (target.depth) this._use(target.depth);
+      for (const r of target.resolves) if (r) this._use(r);
     }
     const colorOps = desc.colorOps ?? [];
     if (colorOps.length > target.colorFormats.length) {
@@ -412,8 +574,11 @@ class LumaCommandList implements RhiCommandList {
     const colorAttachments: GPURenderPassColorAttachment[] = target.colorFormats.map((format, i) => {
       const op = colorOps[i] ?? { load: 'clear' as const };
       const v = op.load === 'clear' ? op.clearValue ?? [0, 0, 0, 0] : [0, 0, 0, 0];
+      const resolveTarget = target instanceof LumaRhiRenderTarget ? target.resolveView(i)
+        : target instanceof LumaMsaaSwapchainTarget && i === 0 ? target.resolveView : undefined;
       return {
         view: framebuffer.colorAttachments[i].handle,
+        ...(resolveTarget ? { resolveTarget } : {}),
         loadOp: op.load,
         storeOp: 'store',
         // 整数格式的清屏值按整数解释;浮点 / 归一化格式按浮点
@@ -554,13 +719,19 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     private readonly device: LumaRhiDevice,
     private readonly list: LumaCommandList,
     private readonly pass: RenderPass,
-    private readonly target: LumaRhiRenderTarget | LumaSwapchainTarget,
+    private readonly target: LumaRhiRenderTarget | LumaSwapchainTarget | LumaMsaaSwapchainTarget,
     private readonly label: string,
     private readonly stats: RhiFrameStats,
   ) {}
 
   setPipeline(pipeline: RhiRenderPipeline): void {
     const p = asRenderPipeline(pipeline, `render pass「${this.label}」setPipeline`);
+    if (p.sampleCount !== this.target.sampleCount) {
+      throw new RhiError(
+        'invalid-usage',
+        `管线「${p.label}」的采样数 ${p.sampleCount} 与 render pass「${this.label}」的目标(${this.target.sampleCount})不一致`,
+      );
+    }
     if (!sameFormats(p.colorFormats, this.target.colorFormats) || p.depthFormat !== this.target.depthFormat) {
       throw new RhiError(
         'invalid-usage',
@@ -730,6 +901,9 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   private readonly listeners = new Set<RhiDiagnosticListener>();
   private readonly swapchain: LumaSwapchainTarget;
   private readonly swapchainDepth = new Map<RhiDepthFormat, LumaSwapchainTarget>();
+  /** 多重采样画布目标:`${采样数}|${深度格式}` → 目标(设备持有,销毁时释放) */
+  private readonly swapchainMsaa = new Map<string, LumaMsaaSwapchainTarget>();
+  private readonly swapchainMsaaColors = new Map<number, LumaMsaaSwapchainColor>();
   private readonly warnedSkips = new WeakSet<object>();
   private frameIndex = 0;
   /** 正在录制的命令表(submit 里可以嵌套 runFrame 之外的 submit,所以是栈) */
@@ -826,6 +1000,18 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     if ((desc.usage & RhiTextureUsage.RENDER_TARGET) && !isDepthFormat(desc.format) && !this.luma.isTextureFormatRenderable(toLumaTextureFormat(desc.format))) {
       throw new RhiError('unsupported', `纹理「${desc.label}」的格式 ${desc.format} 在当前后端不能当渲染目标`);
     }
+    const samples = desc.sampleCount ?? 1;
+    if (samples !== 1 && samples !== 4) {
+      throw new RhiError('unsupported', `纹理「${desc.label}」的采样数 ${samples} 不支持(WebGPU 只有 1 / 4)`);
+    }
+    if (samples > 1) {
+      if (desc.usage !== RhiTextureUsage.RENDER_TARGET) {
+        throw new RhiError('invalid-usage', `多重采样纹理「${desc.label}」只能当渲染附件(用途只许 RENDER_TARGET),画完 resolve 到单采样纹理再采样 / 拷贝`);
+      }
+      if (desc.data != null || (desc.mipLevels ?? 1) !== 1) {
+        throw new RhiError('invalid-usage', `多重采样纹理「${desc.label}」不能带初始数据、不能多级 mip`);
+      }
+    }
     const isImage = desc.data != null && !ArrayBuffer.isView(desc.data);
     // 上传初始内容需要拷贝目标用途;图像源走 copyExternalImageToTexture,还要求可作渲染附件
     let usage = desc.usage;
@@ -838,9 +1024,10 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       format: toLumaTextureFormat(desc.format),
       usage: toLumaTextureUsage(usage),
       mipLevels: desc.mipLevels ?? 1,
+      ...(samples > 1 ? { samples } : {}),
       // 总是显式给采样状态,缺省值由 RHI 定(clamp + 线性),不依赖 luma 的设备缺省采样器
       sampler: toLumaSamplerProps(desc.sampler ?? {}),
-    });
+    } as never);
     const tex = new LumaRhiTexture(scope, this.releases, handle, usage, desc.label);
     if (isImage) this.uploadImage(tex, desc.data as RhiImageSource, { premultiplyAlpha: desc.premultiplyAlpha, flipY: desc.flipY });
     else if (desc.data != null) this.writeTexture(tex, desc.data as ArrayBufferView);
@@ -890,7 +1077,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     const streamSlots = this.resolveStreamSlots(vertexArray, desc);
     return new LumaRhiRenderPipeline(
       scope, this.releases, desc.label, handle, vertexArray, streamSlots,
-      [...desc.colorFormats], desc.depthFormat ?? null,
+      [...desc.colorFormats], desc.depthFormat ?? null, desc.sampleCount ?? 1,
       [shader.module],
       (e) => this.report(e, 'error'),
     );
@@ -921,6 +1108,25 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       if (isDepthFormat(c.format)) throw new RhiError('invalid-usage', `「${c.label}」是深度格式,不能当颜色附件`);
     }
     if (depth && !isDepthFormat(depth.format)) throw new RhiError('invalid-usage', `「${depth.label}」不是深度格式,不能当深度附件`);
+    const samples = all[0].sampleCount;
+    for (const t of all) {
+      if (t.sampleCount !== samples) {
+        throw new RhiError('invalid-usage', `渲染目标「${desc.label}」附件采样数不一致:「${t.label}」${t.sampleCount} ≠ ${samples}`);
+      }
+    }
+    const resolves = (desc.resolveTargets ?? []).map((r, i) => {
+      if (!r) return null;
+      const t = asTexture(r, `渲染目标「${desc.label}」resolve 目标 ${i}`);
+      const c = colors[i];
+      if (!c) throw new RhiError('invalid-usage', `渲染目标「${desc.label}」的 resolve 目标 ${i} 没有对应的颜色附件`);
+      if (c.sampleCount === 1) throw new RhiError('invalid-usage', `渲染目标「${desc.label}」颜色附件 ${i} 不是多重采样,不需要 resolve`);
+      if (t.sampleCount !== 1) throw new RhiError('invalid-usage', `resolve 目标「${t.label}」必须是单采样纹理`);
+      if (t.width !== width || t.height !== height || t.format !== c.format) {
+        throw new RhiError('invalid-usage', `resolve 目标「${t.label}」须与附件「${c.label}」同尺寸同格式`);
+      }
+      requireUsage(t.usage, RhiTextureUsage.RENDER_TARGET, `纹理「${t.label}」作 resolve 目标`, 'RENDER_TARGET');
+      return t;
+    });
     const framebuffer = this.luma.createFramebuffer({
       id: desc.label,
       width,
@@ -928,7 +1134,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       colorAttachments: colors.map((c) => c.handle),
       depthStencilAttachment: depth?.handle ?? null,
     });
-    return new LumaRhiRenderTarget(scope, this.releases, desc.label, framebuffer, colors, depth);
+    return new LumaRhiRenderTarget(scope, this.releases, desc.label, framebuffer, colors, depth, resolves);
   }
 
   // ── 数据上传 / 回读
@@ -1012,6 +1218,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     try {
       this.swapchain._beginFrame();
       for (const t of this.swapchainDepth.values()) t._beginFrame();
+      for (const t of this.swapchainMsaa.values()) t._beginFrame();
       commands = new LumaCommandList(this, `帧 ${this.frameIndex}`, stats);
       this.recordings.push(commands);
       const swapchainWithDepth = (format: RhiDepthFormat): RhiRenderTarget => {
@@ -1023,7 +1230,26 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
         }
         return t;
       };
-      record({ index: this.frameIndex, commands, swapchain: this.swapchain, swapchainWithDepth });
+      const swapchainMultisampled = (sampleCount: number, depthFormat: RhiDepthFormat | null = null): RhiRenderTarget => {
+        if (sampleCount === 1) return depthFormat ? swapchainWithDepth(depthFormat) : this.swapchain;
+        if (sampleCount !== 4) throw new RhiError('unsupported', `画布多重采样数 ${sampleCount} 不支持(WebGPU 只有 1 / 4)`);
+        const key = `${sampleCount}|${depthFormat ?? ''}`;
+        let t = this.swapchainMsaa.get(key);
+        if (!t) {
+          let color = this.swapchainMsaaColors.get(sampleCount);
+          if (!color) {
+            color = new LumaMsaaSwapchainColor(this.luma, `画布后备缓冲 MSAA×${sampleCount} 颜色`, this.caps.swapchainFormat, sampleCount);
+            this.swapchainMsaaColors.set(sampleCount, color);
+          }
+          t = new LumaMsaaSwapchainTarget(
+            this.rootScope, this.releases, this.luma, this.luma.getDefaultCanvasContext(), this.caps.swapchainFormat, color, depthFormat,
+          );
+          this.swapchainMsaa.set(key, t);
+          t._beginFrame();
+        }
+        return t;
+      };
+      record({ index: this.frameIndex, commands, swapchain: this.swapchain, swapchainWithDepth, swapchainMultisampled });
       commands._submit();
       return true;
     } catch (e) {
@@ -1034,6 +1260,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       if (commands) this.recordings.splice(this.recordings.indexOf(commands), 1);
       this.swapchain._endFrame();
       for (const t of this.swapchainDepth.values()) t._endFrame();
+      for (const t of this.swapchainMsaa.values()) t._endFrame();
       this._lastFrameStats = stats;
       this.frameIndex++;
       this.releases.endRecording();
@@ -1070,6 +1297,10 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     if (this._destroyed) return;
     this._destroyed = true;
     this.rootScope.destroy();
+    for (const t of this.swapchainMsaa.values()) t.releaseTextures();
+    this.swapchainMsaa.clear();
+    for (const c of this.swapchainMsaaColors.values()) c.release();
+    this.swapchainMsaaColors.clear();
     this.releases.flush();
     this.listeners.clear();
     this.luma.destroy();
@@ -1257,8 +1488,8 @@ function asComputePipeline(p: RhiComputePipeline, what: string): LumaRhiComputeP
   return p;
 }
 
-function asTarget(t: RhiRenderTarget, what = '渲染目标'): LumaRhiRenderTarget | LumaSwapchainTarget {
-  if (!(t instanceof LumaRhiRenderTarget) && !(t instanceof LumaSwapchainTarget)) {
+function asTarget(t: RhiRenderTarget, what = '渲染目标'): LumaRhiRenderTarget | LumaSwapchainTarget | LumaMsaaSwapchainTarget {
+  if (!(t instanceof LumaRhiRenderTarget) && !(t instanceof LumaSwapchainTarget) && !(t instanceof LumaMsaaSwapchainTarget)) {
     throw new RhiError('invalid-usage', `${what}:不是本设备的渲染目标`);
   }
   return t;

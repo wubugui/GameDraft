@@ -70,10 +70,11 @@ last_governed: 2026-09-25
 - 需要背景纹理的混合滤镜(`blendRequired`)没实现(运行时没有用到;用到会直接抛)。
 - **`renderer.extract.*` 全是异步**(返回 Promise;WebGPU 回读)。Pixi 的 `extract.canvas / pixels` 是同步的,
   照搬的调用点要补 `await`。调用当下就同步把目标画进离屏纹理,之后只等像素回来。
-- **`renderer.resize(0, h)` 会如实把画布缩到 0**;Pixi 的 `TextureSource.resize` 把 0 当"沿用旧尺寸"。
-  `resizeTo` 指向一个会被 `display:none` 的元素时(工作台的页签),隐藏期间画布就是 0×0,显示出来那一帧
-  若先于 resize 读 `renderer.width/height` 会拿到 0——消费方要先 `app.resize()` 再算布局。
-- `renderer.width / height` 是**画布像素**尺寸;Pixi 是逻辑尺寸(`resolution ≠ 1` 时两者不同,要逻辑尺寸用 `screen`)。
+
+与 Pixi **相同**、容易误以为不同的:`renderer.width / height` 是逻辑尺寸(= `screen`,画布像素看 `canvas.width`);
+`renderer.resize(0, h)` 把 0 当"沿用旧尺寸"(隐藏的 `resizeTo` 元素量出 0×0 时画布不缩没),逻辑尺寸按整像素回算
+(`round(w × res) / res`);`antialias: true`(画布跟渲染器选项、RenderTexture 跟纹理源)= MSAA×4,每个 pass 结束
+resolve 回目标——32 位浮点 / 整数这类不能 resolve 的格式照常单采样。游戏自己 `antialias: false`,不受影响。
 
 ## 怎么验证
 
@@ -91,5 +92,5 @@ last_governed: 2026-09-25
   `SpriteEntity` / `EntityLightingFilter` / `PlanarEntityShadow`(2026-09-25 从 Pixi 迁过来):浏览器没有 WebGPU 时
   舞台区显示明确提示,不留空白画布;GIF 导出走异步 extract。它的公开镜像 `dist-remote/` 是**手工构建后入库**的产物
   (没有 CI 构建它),改了预览页或它引到的运行时渲染代码要重跑 `npm run build:anim-preview-remote` 一并提交。
-  `tools/parallax_editor` 自成一体,仍用 Pixi,不受影响。
+  视差编辑器 `tools/parallax_editor` 同样走 engine2d(2026-09-25 迁过来,自带 tsconfig 把 `@src` 指到 src)。
 - 两个 dev 服共用一份 `node_modules/.vite` 会互相把预构建判过期(`504 Outdated Optimize Dep`),game_sweep 给基准侧单独建了 node_modules 链接目录。

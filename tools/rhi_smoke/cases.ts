@@ -668,6 +668,74 @@ struct FOut { @location(0) a: vec4<f32>, @location(1) b: vec4<f32> };
     },
   },
   {
+    name: '多重采样(MSAA×4)离屏:resolve 出平滑边 + load 跨 pass 保留 + 采样数不配当场报错',
+    async run(ctx) {
+      const { dev, scope } = ctx;
+      const W = 32;
+      const ms = scope.createTexture({ label: 'MSAA 颜色', width: W, height: W, format: 'rgba8unorm', usage: RhiTextureUsage.RENDER_TARGET, sampleCount: 4 });
+      check(ms.sampleCount === 4, `多重采样纹理 sampleCount 应为 4,实得 ${ms.sampleCount}`);
+      const resolved = scope.createTexture({
+        label: 'resolve 目标', width: W, height: W, format: 'rgba8unorm', usage: RhiTextureUsage.RENDER_TARGET | RhiTextureUsage.COPY_SRC,
+      });
+      const target = scope.createRenderTarget({ label: 'MSAA 目标', colors: [ms], resolveTargets: [resolved] });
+      check(target.sampleCount === 4, `目标 sampleCount 应为 4,实得 ${target.sampleCount}`);
+      const shader = scope.createShader(VERTEX_COLOR);
+      const pipe4 = scope.createRenderPipeline({ label: '三角形×4', shader, vertexBuffers: VERTEX_COLOR_LAYOUT, colorFormats: ['rgba8unorm'], sampleCount: 4 });
+      const pipe1 = scope.createRenderPipeline({ label: '三角形×1', shader, vertexBuffers: VERTEX_COLOR_LAYOUT, colorFormats: ['rgba8unorm'] });
+      // 白色斜边三角形:(-1,1) (1,1) (-1,-1),斜边穿过对角线
+      const white = scope.createBuffer({
+        label: '白三角', usage: RhiBufferUsage.VERTEX,
+        data: new Float32Array([-1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, -1, -1, 1, 1, 1, 1]),
+      });
+      // 红色小三角形放右下(第二个 pass 以 load 叠上)
+      const red = scope.createBuffer({
+        label: '红三角', usage: RhiBufferUsage.VERTEX,
+        data: new Float32Array([0.5, -0.5, 1, 0, 0, 1, 1, -0.5, 1, 0, 0, 1, 1, -1, 1, 0, 0, 1]),
+      });
+      await ready(pipe4, pipe1);
+      submitOk(ctx, 'MSAA 第一遍', (c) => {
+        const p = c.beginRenderPass({ label: 'MSAA 第一遍', target, colorOps: [{ load: 'clear', clearValue: [0, 0, 0, 1] }] });
+        p.setPipeline(pipe4);
+        p.setVertexBuffer('verts', white);
+        p.draw(3);
+        p.end();
+      });
+      submitOk(ctx, 'MSAA 第二遍', (c) => {
+        const p = c.beginRenderPass({ label: 'MSAA 第二遍', target, colorOps: [{ load: 'load' }] });
+        p.setPipeline(pipe4);
+        p.setVertexBuffer('verts', red);
+        p.draw(3);
+        p.end();
+      });
+      const rb = await dev.readTexture(resolved);
+      expectPx(rb, 2, 2, [255, 255, 255, 255], '三角形内部');
+      expectPx(rb, 30, 26, [255, 0, 0, 255], '第二遍的红三角(第一遍的内容由多重采样纹理保留)');
+      expectPx(rb, 20, 28, [0, 0, 0, 255], '三角形之外是清屏色');
+      // 斜边上的像素是覆盖率混出的中间灰(单采样只会是 0 或 255)
+      let partial = 0;
+      for (let y = 0; y < W; y++) {
+        for (let x = 0; x < W; x++) {
+          const v = px(rb, x, y)[1];
+          if (v > 20 && v < 235) partial++;
+        }
+      }
+      check(partial >= W - 2, `斜边应有约 ${W} 个中间灰像素,实得 ${partial}`);
+      submitFails(ctx, '单采样管线画多重采样目标', 'invalid-usage', /采样数/, (c) => {
+        const p = c.beginRenderPass({ label: '不配', target });
+        p.setPipeline(pipe1);
+        p.end();
+      });
+      let threw = '';
+      try {
+        scope.createTexture({ label: '可采样的多重采样', width: 4, height: 4, format: 'rgba8unorm', usage: RhiTextureUsage.RENDER_TARGET | RhiTextureUsage.SAMPLED, sampleCount: 4 });
+      } catch (e) {
+        threw = e instanceof RhiError ? e.code : String(e);
+      }
+      check(threw === 'invalid-usage', `多重采样纹理带 SAMPLED 用途应当场 invalid-usage,实得 ${threw || '没抛'}`);
+      return `斜边中间灰 ${partial} 像素`;
+    },
+  },
+  {
     // 放最后:画布呈现出问题(设备丢失)不会连累别的用例
     name: '上屏:画布后备缓冲的朝向与视口',
     async run(ctx) {
@@ -709,6 +777,60 @@ struct FOut { @location(0) a: vec4<f32>, @location(1) b: vec4<f32> };
       check(same(at(w - 2, h - 2), [0, 0, 255, 255]), `右下角应为清屏蓝,实得 [${at(w - 2, h - 2)}]`);
       check(same(at(w / 2 + w / 8, h / 2 + h / 8), [0, 255, 0, 255]), `右下视口的左上应为绿,实得 [${at(w / 2 + w / 8, h / 2 + h / 8)}]`);
       return `画布 ${size}`;
+    },
+  },
+  {
+    name: '上屏:多重采样画布(resolve 到画布;带不带模板共用同一张多重采样颜色)',
+    async run(ctx) {
+      const { dev, scope } = ctx;
+      const fmt = dev.caps.swapchainFormat;
+      const shader = scope.createShader(SOLID);
+      const pipe = scope.createRenderPipeline({ label: 'MSAA 上屏', shader, colorFormats: [fmt], sampleCount: 4 });
+      const pipeDs = scope.createRenderPipeline({
+        label: 'MSAA 上屏+模板', shader, colorFormats: [fmt], depthFormat: 'depth24plus-stencil8', sampleCount: 4,
+        depth: { write: false, compare: 'always' },
+      });
+      const red = scope.createBuffer({ label: '红', usage: RhiBufferUsage.UNIFORM, data: solidParams([1, 0, 0, 1], [-1, 0, 0, 1]) });
+      const green = scope.createBuffer({ label: '绿', usage: RhiBufferUsage.UNIFORM, data: solidParams([0, 1, 0, 1], [0, -1, 1, 0]) });
+      await ready(pipe, pipeDs);
+      const canvas = document.getElementById('view') as HTMLCanvasElement;
+      const probe = document.createElement('canvas');
+      probe.width = canvas.width;
+      probe.height = canvas.height;
+      const g2d = probe.getContext('2d', { willReadFrequently: true })!;
+      const before = ctx.diagnostics.length;
+      const ok = dev.runFrame((f) => {
+        const t = f.swapchainMultisampled(4);
+        check(t.sampleCount === 4, `多重采样画布目标 sampleCount 应为 4,实得 ${t.sampleCount}`);
+        let p = f.commands.beginRenderPass({ label: 'MSAA 上屏', target: t, colorOps: [{ load: 'clear', clearValue: [0, 0, 1, 1] }] });
+        p.setPipeline(pipe);
+        p.setBindings({ params: red });
+        p.draw(6); // 左上象限
+        p.end();
+        // 换成带模板的多重采样画布目标,以 load 重开:左上的红必须还在
+        p = f.commands.beginRenderPass({
+          label: 'MSAA 上屏+模板', target: f.swapchainMultisampled(4, 'depth24plus-stencil8'), colorOps: [{ load: 'load' }],
+          depthOp: { load: 'clear', clearValue: 1 }, stencilOp: { load: 'clear', clearValue: 0 },
+        });
+        p.setPipeline(pipeDs);
+        p.setBindings({ params: green });
+        p.draw(6); // 右下象限
+        p.end();
+      });
+      g2d.drawImage(canvas, 0, 0);
+      const at = (x: number, y: number) => Array.from(g2d.getImageData(x, y, 1, 1).data);
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      const errs = ctx.diagnostics.slice(before);
+      if (errs.length) throw errs[0];
+      check(ok, 'MSAA 上屏帧提交失败');
+      check(!dev.isLost, 'MSAA 上屏后设备丢失');
+      const w = canvas.width;
+      const h = canvas.height;
+      const same = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]) <= 3);
+      check(same(at(w / 8, h / 8), [255, 0, 0, 255]), `左上应为红(换目标后仍保留),实得 [${at(w / 8, h / 8)}]`);
+      check(same(at(w - w / 8, h - h / 8), [0, 255, 0, 255]), `右下应为绿,实得 [${at(w - w / 8, h - h / 8)}]`);
+      check(same(at(w - w / 8, h / 8), [0, 0, 255, 255]), `右上应为清屏蓝,实得 [${at(w - w / 8, h / 8)}]`);
+      return `画布 ${w}×${h}`;
     },
   },
 ];
