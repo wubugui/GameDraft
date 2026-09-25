@@ -5,6 +5,27 @@
  */
 export const MAX_BATCH_TEXTURES = 16;
 
+/**
+ * Pixi 的 roundPixelsBit(原样)+ 离屏目标的 y 翻转。master 的 Pixi WebGL 对非根目标(RenderTexture / 滤镜纹理)
+ * 用翻转投影(calculateProjection(..., !isRoot)),取整量的是「从内容顶边往下」的 y,平局 k + 0.5 落到 k + 1;
+ * 这里 WebGPU 的离屏目标投影不翻(纹理存储本就自上而下),直接取整会反向断平,整行差一像素(R2-6)。
+ * 所以离屏目标(globalUniforms.uRoundFlipY = 1)先把 clip y 取反、取整、再取反回来 —— 取反是精确运算,
+ * 与 master 逐位一致;画布(根目标)两边都不翻,uRoundFlipY = 0 原样取整。x 不受影响。
+ */
+const ROUND_PIXELS_WGSL = /* wgsl */ `
+fn roundPixels(position: vec2<f32>, targetSize: vec2<f32>) -> vec2<f32> {
+  return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;
+}
+
+fn roundPixelsTarget(position: vec2<f32>) -> vec2<f32> {
+  var p = position;
+  if (globalUniforms.uRoundFlipY > 0.5) { p.y = -p.y; }
+  p = roundPixels(p, globalUniforms.uResolution);
+  if (globalUniforms.uRoundFlipY > 0.5) { p.y = -p.y; }
+  return p;
+}
+`;
+
 function textureDecls(n: number): string {
   let s = '';
   for (let i = 1; i <= n; i++) {
@@ -30,6 +51,7 @@ struct GlobalUniforms {
   uWorldTransformMatrix: mat3x3<f32>,
   uWorldColorAlpha: vec4<f32>,
   uResolution: vec2<f32>,
+  uRoundFlipY: f32,
 }
 @group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
 ${textureDecls(MAX_BATCH_TEXTURES)}${local ? `
@@ -40,10 +62,7 @@ struct LocalUniforms {
 }
 @group(2) @binding(0) var<uniform> localUniforms: LocalUniforms;
 ` : ''}
-fn roundPixels(position: vec2<f32>, targetSize: vec2<f32>) -> vec2<f32> {
-  return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;
-}
-
+${ROUND_PIXELS_WGSL}
 struct VSOutput {
   @builtin(position) vPosition: vec4<f32>,
   @location(0) @interpolate(flat) vTextureId: u32,
@@ -72,10 +91,10 @@ fn mainVertex(
   var vPosition = vec4<f32>((modelViewProjectionMatrix * vec3<f32>(position, 1.0)).xy, 0.0, 1.0);
   vColor *= globalUniforms.uWorldColorAlpha;
   if (aTextureIdAndRound.x == 1u) {
-    vPosition = vec4<f32>(roundPixels(vPosition.xy, globalUniforms.uResolution), vPosition.zw);
+    vPosition = vec4<f32>(roundPixelsTarget(vPosition.xy), vPosition.zw);
   }${local ? `
   if (localUniforms.uRound == 1.0) {
-    vPosition = vec4(roundPixels(vPosition.xy, globalUniforms.uResolution), vPosition.zw);
+    vPosition = vec4(roundPixelsTarget(vPosition.xy), vPosition.zw);
   }` : ''}
   return VSOutput(vPosition, vTextureId, vColor, vUV);
 }
@@ -113,6 +132,7 @@ struct GlobalUniforms {
   uWorldTransformMatrix: mat3x3<f32>,
   uWorldColorAlpha: vec4<f32>,
   uResolution: vec2<f32>,
+  uRoundFlipY: f32,
 }
 @group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
 struct LocalUniforms {
@@ -128,10 +148,7 @@ struct TextureUniforms {
 @group(2) @binding(1) var uSampler: sampler;
 @group(2) @binding(2) var<uniform> textureUniforms: TextureUniforms;
 
-fn roundPixels(position: vec2<f32>, targetSize: vec2<f32>) -> vec2<f32> {
-  return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;
-}
-
+${ROUND_PIXELS_WGSL}
 struct VSOutput {
   @builtin(position) vPosition: vec4<f32>,
   @location(0) vColor: vec4<f32>,
@@ -150,7 +167,7 @@ fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) ->
   var vPosition = vec4<f32>((modelViewProjectionMatrix * vec3<f32>(aPosition, 1.0)).xy, 0.0, 1.0);
   vColor *= globalUniforms.uWorldColorAlpha;
   if (localUniforms.uRound == 1.0) {
-    vPosition = vec4(roundPixels(vPosition.xy, globalUniforms.uResolution), vPosition.zw);
+    vPosition = vec4(roundPixelsTarget(vPosition.xy), vPosition.zw);
   }
   return VSOutput(vPosition, vColor, uv);
 }

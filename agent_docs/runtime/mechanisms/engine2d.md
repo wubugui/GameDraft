@@ -82,6 +82,8 @@ last_governed: 2026-09-25
 resolve 回目标——32 位浮点 / 整数这类不能 resolve 的格式照常单采样。游戏自己 `antialias: false`,不受影响。
 合批节点(Sprite / 合批 Mesh / NineSlice / Text / HTMLText)的 `roundPixels` 在**第一次被渲染时锁定**
 (`渲染器 roundPixels | 节点 roundPixels`),之后再改不生效,`unload()` / destroy 后才重取——运行中切换取整要先 `unload()`;
+`roundPixels` 在离屏目标(RenderTexture / 滤镜纹理)里的平局方向照 master 的 WebGL 翻转投影:离屏投影本身不翻,
+全局 uniform 尾字段 `uRoundFlipY`(离屏 1 / 画布 0)让内置合批 / 图形 / 网格着色器翻 y 再取整(`batchShader` 的 `roundPixelsTarget`);
 Sprite 的合批四边形只在换纹理 / 改锚点 / 动态纹理 update 时重算(非动态 RenderTexture 改尺寸后停在旧尺寸);
 `renderer.render({ container })` 的根自己的 `blendMode` 不生效(按 normal 画,要混合就挂一层父节点);
 带 shader 却没有 `gpuProgram` 的网格告警并跳过绘制。

@@ -144,6 +144,9 @@ const GLOBAL_LAYOUT = createUboLayout([
   { name: 'uWorldTransformMatrix', type: 'mat3x3<f32>', size: 1 },
   { name: 'uWorldColorAlpha', type: 'vec4<f32>', size: 1 },
   { name: 'uResolution', type: 'vec2<f32>', size: 1 },
+  // 引擎自加的尾字段(Pixi 没有):离屏目标 1 / 画布 0,内置合批 / 图形 / 网格着色器的 roundPixels 按它翻 y 断平
+  // (见 batchShader 的 ROUND_PIXELS_WGSL)。放在末尾,只声明前四个字段的游戏 WGSL 布局不受影响。
+  { name: 'uRoundFlipY', type: 'f32', size: 1 },
 ]);
 
 const LOCAL_LAYOUT = createUboLayout([
@@ -476,6 +479,7 @@ export class FrameBuilder implements FilterSystemLike {
       uWorldTransformMatrix: wt,
       uWorldColorAlpha: color,
       uResolution: data.resolution,
+      uRoundFlipY: this.current.ref === 'canvas' ? 0 : 1,
     });
     this.guStack.push(data);
     this.currentGU = data;
