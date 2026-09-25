@@ -230,6 +230,211 @@ void main(void) {
 }
 `;
 
+// ───────────────────────────── WGSL(WebGPU 路径;上面的 GLSL 一个字不动,WebGL 仍跑它)
+//
+// 与 GLSL 逐式对应,差别只在语言:
+// - 组 0 / 1 是 Pixi 网格约定(globalUniforms / localUniforms,声明了 Pixi 才自动绑);自己的资源在组 2,
+//   变量名 = resources 的键名;uniform 结构体成员顺序 = JS 里 shadowUniforms 的声明顺序(Pixi 按声明顺序排偏移)。
+// - WGSL 纹理要单独的采样器:resources 里「纹理名 + Sampler」给该纹理自己的 style(与 WebGL 用纹理自带采样状态一致)。
+// - 分支 / 循环里取样一律 textureSampleLevel(.., 0.0):WGSL 的 textureSample 只许在一致控制流里调;
+//   这几张纹理都没有 mip,与 GLSL 的 texture() 等价。
+// - 结构体里不写注释:Pixi 用正则解析 WGSL 的结构体与 group 声明,注释里的冒号 / 花括号会被当成成员。
+
+/** 网格顶点(cast 与 contact 共用):与 GLSL VERT 同式,vWorld = 顶点即地面落点。 */
+const VERT_WGSL = /* wgsl */ `
+struct GlobalUniforms {
+    uProjectionMatrix: mat3x3<f32>,
+    uWorldTransformMatrix: mat3x3<f32>,
+    uWorldColorAlpha: vec4<f32>,
+    uResolution: vec2<f32>,
+};
+
+struct LocalUniforms {
+    uTransformMatrix: mat3x3<f32>,
+    uColor: vec4<f32>,
+    uRound: f32,
+};
+
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+
+struct VSOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) vWorld: vec2<f32>,
+    @location(1) vUV: vec2<f32>,
+};
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) -> VSOutput {
+    let mvp = globalUniforms.uProjectionMatrix * globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+    var out: VSOutput;
+    out.position = vec4<f32>((mvp * vec3<f32>(aPosition, 1.0)).xy, 0.0, 1.0);
+    out.vWorld = aPosition;
+    out.vUV = aUV;
+    return out;
+}
+`;
+
+/** cast 剪影片元(对应 GLSL FRAG)。 */
+const FRAG_WGSL = /* wgsl */ `
+struct ShadowUniforms {
+    uDarkness: f32,
+    uShadowColor: vec3<f32>,
+    uColEnabled: f32,
+    uOccEnabled: f32,
+    uShearX: f32,
+    uShearY: f32,
+    uHalfW: f32,
+    uSpreadTop: f32,
+    uTipFadeStart: f32,
+    uTipAlpha: f32,
+    uPenGrow: f32,
+    uU0: f32,
+    uV0: f32,
+    uU1: f32,
+    uV1: f32,
+    uSceneSize: vec2<f32>,
+    uFootX: f32,
+    uFootY: f32,
+    uW2pX: f32,
+    uW2pY: f32,
+    uInvert: f32,
+    uScale: f32,
+    uOffset: f32,
+    uFloorOffset: f32,
+    uTolerance: f32,
+    uOccBlend: f32,
+    uGroundMin: f32,
+    uGroundMax: f32,
+    uHasGroundTex: f32,
+    uM_ppu: f32,
+    uM_cx: f32,
+    uM_cy: f32,
+    uM_R00: f32,
+    uM_R01: f32,
+    uM_R02: f32,
+    uM_R20: f32,
+    uM_R21: f32,
+    uM_R22: f32,
+    uCol_xMin: f32,
+    uCol_zMin: f32,
+    uCol_cell: f32,
+    uCol_gw: f32,
+    uCol_gh: f32,
+};
+
+@group(2) @binding(0) var<uniform> shadowUniforms: ShadowUniforms;
+@group(2) @binding(1) var uTexture: texture_2d<f32>;
+@group(2) @binding(2) var uTextureSampler: sampler;
+@group(2) @binding(3) var uDepthMap: texture_2d<f32>;
+@group(2) @binding(4) var uDepthMapSampler: sampler;
+@group(2) @binding(5) var uCollisionMap: texture_2d<f32>;
+@group(2) @binding(6) var uCollisionMapSampler: sampler;
+@group(2) @binding(7) var uGroundD: texture_2d<f32>;
+@group(2) @binding(8) var uGroundDSampler: sampler;
+
+// 地面深度:逐像素取行走面场(与 GLSL groundDepthAt 同式)
+fn groundDepthAt(wp: vec2<f32>) -> f32 {
+    let u = shadowUniforms;
+    let uv = vec2<f32>(wp.x / max(u.uSceneSize.x, 1e-3), wp.y / max(u.uSceneSize.y, 1e-3));
+    let g = textureSampleLevel(uGroundD, uGroundDSampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
+    let t = (g.r * 255.0 * 256.0 + g.g * 255.0) / 65535.0;
+    return u.uGroundMin + t * (u.uGroundMax - u.uGroundMin);
+}
+
+fn isCollisionAt(wp: vec2<f32>) -> bool {
+    let u = shadowUniforms;
+    let sx = wp.x * u.uW2pX;
+    let sy = wp.y * u.uW2pY;
+    let dFloor = groundDepthAt(wp);
+    let px = (sx - u.uM_cx) / u.uM_ppu;
+    let py = (u.uM_cy - sy) / u.uM_ppu;
+    let cwx = u.uM_R00 * px + u.uM_R01 * py + u.uM_R02 * dFloor;
+    let cwz = u.uM_R20 * px + u.uM_R21 * py + u.uM_R22 * dFloor;
+    let gx = (cwx - u.uCol_xMin) / u.uCol_cell;
+    let gz = (cwz - u.uCol_zMin) / u.uCol_cell;
+    if (gx < 0.0 || gx >= u.uCol_gw || gz < 0.0 || gz >= u.uCol_gh) { return false; }
+    return textureSampleLevel(uCollisionMap, uCollisionMapSampler, vec2<f32>(gx / u.uCol_gw, gz / u.uCol_gh), 0.0).r > 0.5;
+}
+
+// 取剪影 alpha,必须 clamp 在当前帧框内(越界采到图集相邻帧 = 条纹复发)
+fn silAt(uv: vec2<f32>) -> f32 {
+    let u = shadowUniforms;
+    let lo = vec2<f32>(min(u.uU0, u.uU1), min(u.uV0, u.uV1));
+    let hi = vec2<f32>(max(u.uU0, u.uU1), max(u.uV0, u.uV1));
+    return textureSampleLevel(uTexture, uTextureSampler, clamp(uv, lo, hi), 0.0).a;
+}
+
+const RING_K: f32 = 0.7071;
+
+// 变半径半影:内圈 8 抽(权 1)+ 外圈 4 抽(权 .5)+ 中心(权 2),权和 12(与 GLSL silSoft 同序同权)
+fn silSoft(uv: vec2<f32>, r: f32) -> f32 {
+    if (r < 1e-4) { return silAt(uv); }
+    let u = shadowUniforms;
+    let rad = r * vec2<f32>(abs(u.uU1 - u.uU0), abs(u.uV1 - u.uV0));
+    var sum = silAt(uv) * 2.0
+        + silAt(uv + vec2<f32>( rad.x, 0.0))
+        + silAt(uv + vec2<f32>(-rad.x, 0.0))
+        + silAt(uv + vec2<f32>( 0.0,  rad.y))
+        + silAt(uv + vec2<f32>( 0.0, -rad.y))
+        + silAt(uv + vec2<f32>( RING_K * rad.x,  RING_K * rad.y))
+        + silAt(uv + vec2<f32>(-RING_K * rad.x,  RING_K * rad.y))
+        + silAt(uv + vec2<f32>( RING_K * rad.x, -RING_K * rad.y))
+        + silAt(uv + vec2<f32>(-RING_K * rad.x, -RING_K * rad.y));
+    sum += 0.5 * (
+          silAt(uv + vec2<f32>( 2.0 * rad.x, 0.0))
+        + silAt(uv + vec2<f32>(-2.0 * rad.x, 0.0))
+        + silAt(uv + vec2<f32>( 0.0,  2.0 * rad.y))
+        + silAt(uv + vec2<f32>( 0.0, -2.0 * rad.y)));
+    return sum / 12.0;
+}
+
+@fragment
+fn mainFragment(@location(0) vWorld: vec2<f32>) -> @location(0) vec4<f32> {
+    let u = shadowUniforms;
+    // 梯形反解(见 GLSL 注释):t 是 y 的一次式,与 uSpreadTop 无关
+    var offY = u.uShearY;
+    if (abs(u.uShearY) < 1e-3) {
+        if (u.uShearY < 0.0) { offY = -1e-3; } else { offY = 1e-3; }
+    }
+    let t = (vWorld.y - u.uFootY) / offY;
+    let halfAt = u.uHalfW * mix(1.0, u.uSpreadTop, clamp(t, 0.0, 1.0));
+    let s = ((vWorld.x - u.uFootX) - u.uShearX * t) / max(halfAt * 2.0, 1e-3) + 0.5;
+    if (t < 0.0 || t > 1.0 || s < 0.0 || s > 1.0) { discard; }
+    let uv = vec2<f32>(mix(u.uU0, u.uU1, s), mix(u.uV0, u.uV1, t));
+    let sil = silSoft(uv, u.uPenGrow * t);
+    if (sil < 0.01) { discard; }
+    var a = sil * u.uDarkness * mix(1.0, u.uTipAlpha, smoothstep(u.uTipFadeStart, 1.0, t));
+
+    // 碰撞方向阻挡:从脚底沿投射方向 march,撞到碰撞格则其后整段裁掉
+    if (u.uColEnabled > 0.5 && u.uHasGroundTex > 0.5) {
+        let foot = vec2<f32>(u.uFootX, u.uFootY);
+        let d = vWorld - foot;
+        var blocked = false;
+        for (var i = 1; i <= 24; i++) {
+            if (isCollisionAt(foot + d * (f32(i) / 24.0))) { blocked = true; break; }
+        }
+        if (blocked) { discard; }
+    }
+
+    // 前景遮挡 blend
+    if (u.uOccEnabled > 0.5 && u.uHasGroundTex > 0.5) {
+        let dUV = vec2<f32>(vWorld.x / u.uSceneSize.x, vWorld.y / u.uSceneSize.y);
+        if (dUV.x >= 0.0 && dUV.x <= 1.0 && dUV.y >= 0.0 && dUV.y <= 1.0) {
+            let ds = textureSampleLevel(uDepthMap, uDepthMapSampler, dUV, 0.0);
+            let rawD = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
+            var dRaw = rawD;
+            if (u.uInvert > 0.5) { dRaw = 1.0 - rawD; }
+            let sceneDepth = dRaw * u.uScale + u.uOffset;
+            let shadowDepth = groundDepthAt(vWorld) + u.uFloorOffset;
+            if (sceneDepth + u.uTolerance < shadowDepth) { a *= u.uOccBlend; }
+        }
+    }
+
+    return vec4<f32>(u.uShadowColor, a);
+}
+`;
+
 function f32(value: number) {
   return { value, type: 'f32' as const };
 }
@@ -452,6 +657,216 @@ void main(void) {
 }
 `;
 
+/**
+ * 接触阴影(胶囊 AO)片元的 WGSL 版,与 CONTACT_FRAG 逐式对应(推导与取舍见它的头注释)。
+ * GLSL 那边受 WebGL1 兼容头所限不能用 texelFetch,这里为了与它逐像素一致,行走面纹素仍按
+ * 「纹素中心 + 纹理自带采样器」取(nearest 纹理在中心取 = 取到这个纹素本身),尺寸仍走 uniform。
+ */
+const CONTACT_FRAG_WGSL = /* wgsl */ `
+struct ContactUniforms {
+    uDarkness: f32,
+    uShadowColor: vec3<f32>,
+    uFootX: f32,
+    uFootY: f32,
+    uAxisOffX: f32,
+    uRadiusWu: f32,
+    uHeightWu: f32,
+    uNearField: f32,
+    uConeK: f32,
+    uDirReach: f32,
+    uDirWeight: f32,
+    uGroundFeather: f32,
+    uS0X: f32,
+    uS0Y: f32,
+    uS0Z: f32,
+    uS0W: f32,
+    uS0P: f32,
+    uS1X: f32,
+    uS1Y: f32,
+    uS1Z: f32,
+    uS1W: f32,
+    uS1P: f32,
+    uS2X: f32,
+    uS2Y: f32,
+    uS2Z: f32,
+    uS2W: f32,
+    uS2P: f32,
+    uS3X: f32,
+    uS3Y: f32,
+    uS3Z: f32,
+    uS3W: f32,
+    uS3P: f32,
+    uInvert: f32,
+    uScale: f32,
+    uOffset: f32,
+    uFloorOffset: f32,
+    uTolerance: f32,
+    uHasDepth: f32,
+    uWuPerQ: f32,
+    uGroundMin: f32,
+    uGroundMax: f32,
+    uGroundW: f32,
+    uGroundH: f32,
+    uHasGroundTex: f32,
+    uSceneSize: vec2<f32>,
+    uW2pX: f32,
+    uW2pY: f32,
+    uM_ppu: f32,
+    uM_cx: f32,
+    uM_cy: f32,
+    uM_R00: f32,
+    uM_R01: f32,
+    uM_R02: f32,
+    uM_R10: f32,
+    uM_R11: f32,
+    uM_R12: f32,
+    uM_R20: f32,
+    uM_R21: f32,
+    uM_R22: f32,
+};
+
+@group(2) @binding(0) var<uniform> shadowUniforms: ContactUniforms;
+@group(2) @binding(1) var uGroundD: texture_2d<f32>;
+@group(2) @binding(2) var uGroundDSampler: sampler;
+@group(2) @binding(3) var uDepthMap: texture_2d<f32>;
+@group(2) @binding(4) var uDepthMapSampler: sampler;
+
+const PI: f32 = 3.14159265;
+
+// 行走面深度场第 (i, j) 个纹素(RG16 打包,解码到 0..1)
+fn groundTexel(i: f32, j: f32) -> f32 {
+    let u = shadowUniforms;
+    let sz = vec2<f32>(max(u.uGroundW, 1.0), max(u.uGroundH, 1.0));
+    let g = textureSampleLevel(uGroundD, uGroundDSampler, (clamp(vec2<f32>(i, j), vec2<f32>(0.0), sz - 1.0) + 0.5) / sz, 0.0);
+    return (g.r * 255.0 * 256.0 + g.g * 255.0) / 65535.0;
+}
+
+// 行走面深度场在场景 px 处的深度(q.z),手写双线性(与 CPU sampleGroundField 同口径)
+fn groundDepthAt(wp: vec2<f32>) -> f32 {
+    let u = shadowUniforms;
+    let uv = clamp(vec2<f32>(wp.x / max(u.uSceneSize.x, 1e-3), wp.y / max(u.uSceneSize.y, 1e-3)), vec2<f32>(0.0), vec2<f32>(1.0));
+    let sz = vec2<f32>(max(u.uGroundW, 1.0), max(u.uGroundH, 1.0));
+    let t = clamp(uv * sz, vec2<f32>(0.0), sz - 1.001);
+    let i0 = floor(t);
+    let f = t - i0;
+    let a = mix(groundTexel(i0.x, i0.y), groundTexel(i0.x + 1.0, i0.y), f.x);
+    let b = mix(groundTexel(i0.x, i0.y + 1.0), groundTexel(i0.x + 1.0, i0.y + 1.0), f.x);
+    return u.uGroundMin + mix(a, b, f.y) * (u.uGroundMax - u.uGroundMin);
+}
+
+// 场景 px 到该处地面的 M-world 坐标(wu);有行走面深度场取它,没有就按世界 y=0 的平地解深度
+fn groundWorldWu(wp: vec2<f32>) -> vec3<f32> {
+    let u = shadowUniforms;
+    let px = (wp.x * u.uW2pX - u.uM_cx) / u.uM_ppu;
+    let py = (u.uM_cy - wp.y * u.uW2pY) / u.uM_ppu;
+    var d: f32;
+    if (u.uHasGroundTex > 0.5) {
+        d = groundDepthAt(wp);
+    } else {
+        var r12 = 1e-6;
+        if (abs(u.uM_R12) > 1e-6) { r12 = u.uM_R12; }
+        d = -(u.uM_R10 * px + u.uM_R11 * py) / r12;
+    }
+    let w = vec3<f32>(u.uM_R00 * px + u.uM_R01 * py + u.uM_R02 * d,
+                      u.uM_R10 * px + u.uM_R11 * py + u.uM_R12 * d,
+                      u.uM_R20 * px + u.uM_R21 * py + u.uM_R22 * d);
+    return w * u.uWuPerQ;
+}
+
+// 射线 ro + rd * t 上 t 处这一点对胶囊的锥形软遮挡 0..1,含沿射线的淡出
+fn capsuleOccAt(ro: vec3<f32>, rd: vec3<f32>, ca: vec3<f32>, ba: vec3<f32>, baba: f32, r: f32, k: f32, reach: f32, t0: f32) -> f32 {
+    let t = max(t0, 1e-4);
+    let q = ro + rd * t;
+    let h = clamp(dot(q - ca, ba) / baba, 0.0, 1.0);
+    let d = length(q - ca - ba * h) - r;
+    let s = clamp(k * d / t + 0.5, 0.0, 1.0);
+    let f = t / reach;
+    return (1.0 - s * s * (3.0 - 2.0 * s)) * exp(-f * f);
+}
+
+// 胶囊锥形软阴影(方向部分)= 两直线最近点 + 正对胶囊底 / 腰 / 顶三点,遮挡取最大
+fn capsuleDirOcc(ro: vec3<f32>, rd: vec3<f32>, ca: vec3<f32>, cb: vec3<f32>, r: f32, k: f32, reach: f32) -> f32 {
+    let ba = cb - ca;
+    let baba = max(dot(ba, ba), 1e-6);
+    let dba = dot(rd, ba);
+    let den = baba - dba * dba;
+    var occ = 0.0;
+    if (den > 1e-4 * baba) {
+        let oa = ro - ca;
+        let t0 = (-dot(oa, rd) * baba + dba * dot(oa, ba)) / den;
+        occ = capsuleOccAt(ro, rd, ca, ba, baba, r, k, reach, t0);
+    }
+    occ = max(occ, capsuleOccAt(ro, rd, ca, ba, baba, r, k, reach, dot(ca - ro, rd)));
+    occ = max(occ, capsuleOccAt(ro, rd, ca, ba, baba, r, k, reach, dot(ca + 0.5 * ba - ro, rd)));
+    occ = max(occ, capsuleOccAt(ro, rd, ca, ba, baba, r, k, reach, dot(cb - ro, rd)));
+    return occ;
+}
+
+const MIN_EL: f32 = ${((CONTACT_AO_MIN_ELEVATION_DEG * Math.PI) / 180).toFixed(6)};
+
+// 指向光的向量到单位向量,仰角只钳下限(与 contactAoSources.clampAoElevation 同式,正上方原样)
+fn aoLightDir(v: vec3<f32>) -> vec3<f32> {
+    let hn = length(v.xz);
+    if (hn < 1e-6) { return vec3<f32>(0.0, 1.0, 0.0); }
+    let el = max(MIN_EL, atan2(v.y, hn));
+    return vec3<f32>(v.x / hn * cos(el), sin(el), v.z / hn * cos(el));
+}
+
+// 一路光对地面点 P 的方向遮挡:灯位型逐像素朝灯,方向型用定向
+fn sourceOcc(P: vec3<f32>, sx: f32, sy: f32, sz: f32, isPoint: f32, ca: vec3<f32>, cb: vec3<f32>, reach: f32) -> f32 {
+    let u = shadowUniforms;
+    var v = vec3<f32>(sx, sy, sz);
+    if (isPoint > 0.5) { v = v - P; }
+    return capsuleDirOcc(P, aoLightDir(v), ca, cb, u.uRadiusWu, u.uConeK, reach);
+}
+
+@fragment
+fn mainFragment(@location(0) vWorld: vec2<f32>) -> @location(0) vec4<f32> {
+    let u = shadowUniforms;
+    // 这个像素看到的不是地面(墙、桶、屋顶挡在该处地面点前面)就淡掉(判据见 GLSL 版注释)
+    var onGround = 1.0;
+    if (u.uHasDepth > 0.5) {
+        let dUV = vec2<f32>(vWorld.x / max(u.uSceneSize.x, 1e-3), vWorld.y / max(u.uSceneSize.y, 1e-3));
+        if (dUV.x >= 0.0 && dUV.x <= 1.0 && dUV.y >= 0.0 && dUV.y <= 1.0) {
+            let ds = textureSampleLevel(uDepthMap, uDepthMapSampler, dUV, 0.0);
+            let rawD = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
+            var dRaw = rawD;
+            if (u.uInvert > 0.5) { dRaw = 1.0 - rawD; }
+            let sceneDepth = dRaw * u.uScale + u.uOffset;
+            let nearer = groundDepthAt(vWorld) + u.uFloorOffset - sceneDepth;
+            onGround = 1.0 - smoothstep(u.uTolerance, u.uTolerance + max(u.uGroundFeather, 1e-4), nearer);
+            if (onGround < 0.003) { discard; }
+        }
+    }
+
+    let P = groundWorldWu(vWorld);
+    let F = groundWorldWu(vec2<f32>(u.uFootX + u.uAxisOffX, u.uFootY));
+    let away = normalize(vec3<f32>(u.uM_R01, 0.0, u.uM_R21));
+    let base = F + away * u.uRadiusWu;
+
+    let x = length(P.xz - base.xz);
+    let he = u.uHeightWu * u.uNearField;
+    let omni = (2.0 / PI) * asin(min(1.0, u.uRadiusWu / max(x, 1e-4))) * he * he / (he * he + x * x);
+
+    // 有方向部分:每一路光各投各的胶囊软影,按它占地面照度的比例加权(权重和不超过 1)
+    var dirOcc = 0.0;
+    if (u.uS0W + u.uS1W + u.uS2W + u.uS3W > 0.0) {
+        let ca = base + vec3<f32>(0.0, u.uRadiusWu, 0.0);
+        let cb = base + vec3<f32>(0.0, max(u.uHeightWu - u.uRadiusWu, u.uRadiusWu * 1.01), 0.0);
+        let reach = max(u.uHeightWu * u.uDirReach, 1e-3);
+        if (u.uS0W > 0.0) { dirOcc += u.uS0W * sourceOcc(P, u.uS0X, u.uS0Y, u.uS0Z, u.uS0P, ca, cb, reach); }
+        if (u.uS1W > 0.0) { dirOcc += u.uS1W * sourceOcc(P, u.uS1X, u.uS1Y, u.uS1Z, u.uS1P, ca, cb, reach); }
+        if (u.uS2W > 0.0) { dirOcc += u.uS2W * sourceOcc(P, u.uS2X, u.uS2Y, u.uS2Z, u.uS2P, ca, cb, reach); }
+        if (u.uS3W > 0.0) { dirOcc += u.uS3W * sourceOcc(P, u.uS3X, u.uS3Y, u.uS3Z, u.uS3P, ca, cb, reach); }
+        dirOcc *= u.uDirWeight;
+    }
+
+    let alpha = onGround * u.uDarkness * (1.0 - (1.0 - omni) * (1.0 - dirOcc));
+    if (alpha < 0.003) { discard; }
+    return vec4<f32>(u.uShadowColor, alpha);
+}
+`;
+
 /** 方向 AO 几路光的 uniform 名（uS0X … uS3P），与 CONTACT_FRAG 同序。 */
 const SOURCE_KEYS = Array.from({ length: MAX_CONTACT_AO_SOURCES }, (_, i) =>
   (['X', 'Y', 'Z', 'W', 'P'] as const).map((c) => `uS${i}${c}`));
@@ -462,9 +877,21 @@ function sourceUniformDefaults(): Record<string, ReturnType<typeof f32>> {
   return out;
 }
 
+/** WGSL 程序描述:顶点与片元拼成一个模块,两个入口。 */
+function gpuProgramOf(fragment: string) {
+  const source = VERT_WGSL + fragment;
+  return {
+    vertex: { source, entryPoint: 'mainVertex' },
+    fragment: { source, entryPoint: 'mainFragment' },
+  };
+}
+
 function makeContactShader(ctx: ShadowSceneContext | null): Shader {
+  const groundSrc = ctx?.groundTexture ?? Texture.WHITE.source;
+  const depthSrc = ctx?.depthTexture?.source ?? Texture.WHITE.source;
   return Shader.from({
     gl: { vertex: VERT, fragment: CONTACT_FRAG },
+    gpu: gpuProgramOf(CONTACT_FRAG_WGSL),
     resources: {
       // 组名与 cast 相同:setU / setShadowColor 按这个名字找
       shadowUniforms: {
@@ -504,8 +931,11 @@ function makeContactShader(ctx: ShadowSceneContext | null): Shader {
         uM_R10: f32(ctx?.r10 ?? 0), uM_R11: f32(ctx?.r11 ?? 1), uM_R12: f32(ctx?.r12 ?? 0),
         uM_R20: f32(ctx?.r20 ?? 0), uM_R21: f32(ctx?.r21 ?? 0), uM_R22: f32(ctx?.r22 ?? 1),
       },
-      uGroundD: ctx?.groundTexture ?? Texture.WHITE.source,
-      uDepthMap: ctx?.depthTexture?.source ?? Texture.WHITE.source,
+      uGroundD: groundSrc,
+      // WGSL 的采样器(「纹理名 + Sampler」):用纹理自己的 style,与 WebGL 用纹理自带采样状态一致;WebGL 不认这些键
+      uGroundDSampler: groundSrc.style,
+      uDepthMap: depthSrc,
+      uDepthMapSampler: depthSrc.style,
     },
   });
 }
@@ -513,8 +943,12 @@ function makeContactShader(ctx: ShadowSceneContext | null): Shader {
 /** 用 context 构建 cast(投影剪影)shader。接触阴影另走 makeContactShader。 */
 function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSource): Shader {
   const on = !!ctx;
+  const depthSrc = ctx?.depthTexture?.source ?? Texture.WHITE.source;
+  const colSrc = ctx?.collisionTexture?.source ?? Texture.WHITE.source;
+  const groundSrc = ctx?.groundTexture ?? Texture.WHITE.source;
   return Shader.from({
     gl: { vertex: VERT, fragment: FRAG },
+    gpu: gpuProgramOf(FRAG_WGSL),
     resources: {
       shadowUniforms: {
         uDarkness: f32(0.4),
@@ -555,9 +989,13 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
         uCol_gh: f32(ctx?.colGridH ?? 0),
       },
       uTexture: texSource,
-      uDepthMap: ctx?.depthTexture?.source ?? Texture.WHITE.source,
-      uCollisionMap: ctx?.collisionTexture?.source ?? Texture.WHITE.source,
-      uGroundD: ctx?.groundTexture ?? Texture.WHITE.source,
+      uTextureSampler: texSource.style,
+      uDepthMap: depthSrc,
+      uDepthMapSampler: depthSrc.style,
+      uCollisionMap: colSrc,
+      uCollisionMapSampler: colSrc.style,
+      uGroundD: groundSrc,
+      uGroundDSampler: groundSrc.style,
     },
   });
 }
@@ -640,6 +1078,8 @@ export class PlanarEntityShadow implements IEntityShadow {
     const source = tex.source;
     if (source !== this.boundSource) {
       (this.castShader.resources as Record<string, unknown>)['uTexture'] = source;
+      // WebGPU 的采样器是独立资源,跟着换成这张图集自己的 style(WebGL 忽略这个键)
+      (this.castShader.resources as Record<string, unknown>)['uTextureSampler'] = source.style;
       this.castMesh.texture = tex;
       this.boundSource = source;
     }

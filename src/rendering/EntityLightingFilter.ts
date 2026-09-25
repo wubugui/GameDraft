@@ -1,4 +1,4 @@
-import { Filter, GlProgram, Texture, type TextureSource } from 'pixi.js';
+import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from 'pixi.js';
 import type { RgbColor, SceneDepthConfig } from '../data/types';
 import type { ResolvedLightEnv } from './lightEnv';
 
@@ -174,12 +174,177 @@ void main(void) {
 }
 `;
 
+/**
+ * WGSL 版(WebGPU 路径),与上面 VERT / FRAG 逐式对应;GLSL 一个字不动,WebGL(含 anim_preview 自建的 Pixi)仍跑它。
+ * 组 0 是 Pixi 滤镜约定(gfu + uTexture + uSampler);自己的资源在组 1,变量名 = resources 的键名,
+ * uniform 结构体成员顺序 = JS 里 lightUniforms 的声明顺序(Pixi 按声明顺序排偏移)。
+ * 提前 return / discard 之后的取样用 textureSampleLevel(.., 0.0)(WGSL 只许在一致控制流里 textureSample;
+ * 深度图、probe 都没有 mip,等价)。结构体里不写注释:Pixi 用正则解析结构体成员与 group 声明。
+ */
+const WGSL = /* wgsl */ `
+struct GlobalFilterUniforms {
+    uInputSize: vec4<f32>,
+    uInputPixel: vec4<f32>,
+    uInputClamp: vec4<f32>,
+    uOutputFrame: vec4<f32>,
+    uGlobalFrame: vec4<f32>,
+    uOutputTexture: vec4<f32>,
+};
+
+struct LightUniforms {
+    uSceneSize: vec2<f32>,
+    uProjectionScale: f32,
+    uWorldToPixelX: f32,
+    uWorldToPixelY: f32,
+    uWorldContainerPos: vec2<f32>,
+    uEntityFootWorldX: f32,
+    uEntityFootWorldY: f32,
+    uSampleLiftWorld: f32,
+    uDepthEnabled: f32,
+    uInvert: f32,
+    uScale: f32,
+    uOffset: f32,
+    uDepthPerSy: f32,
+    uFloorOffset: f32,
+    uFloorOffsetExtra: f32,
+    uTolerance: f32,
+    uOcclusionBlendFactor: f32,
+    uDebug: f32,
+    uFootDepthQ: f32,
+    uHasFootDepth: f32,
+    uFootBias: f32,
+    uKeyColor: vec3<f32>,
+    uKeyIntensity: f32,
+    uAmbientColor: vec3<f32>,
+    uAmbientIntensity: f32,
+    uToneStrength: f32,
+    uAOContact: f32,
+    uAOForm: f32,
+};
+
+@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;
+@group(0) @binding(1) var uTexture: texture_2d<f32>;
+@group(0) @binding(2) var uSampler: sampler;
+
+@group(1) @binding(0) var<uniform> lightUniforms: LightUniforms;
+@group(1) @binding(1) var uDepthMap: texture_2d<f32>;
+@group(1) @binding(2) var uDepthMapSampler: sampler;
+@group(1) @binding(3) var uProbe: texture_2d<f32>;
+@group(1) @binding(4) var uProbeSampler: sampler;
+
+struct VSOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) vTextureCoord: vec2<f32>,
+    @location(1) vScreenPos: vec2<f32>,
+};
+
+fn filterVertexPosition(aPosition: vec2<f32>) -> vec4<f32> {
+    var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;
+    position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;
+    position.y = position.y * (2.0 * gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;
+    return vec4<f32>(position, 0.0, 1.0);
+}
+
+fn filterTextureCoord(aPosition: vec2<f32>) -> vec2<f32> {
+    return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>) -> VSOutput {
+    var out: VSOutput;
+    out.position = filterVertexPosition(aPosition);
+    out.vTextureCoord = filterTextureCoord(aPosition);
+    out.vScreenPos = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;
+    return out;
+}
+
+fn luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }
+
+@fragment
+fn mainFragment(
+    @location(0) vTextureCoord: vec2<f32>,
+    @location(1) vScreenPos: vec2<f32>,
+) -> @location(0) vec4<f32> {
+    let u = lightUniforms;
+    let color = textureSample(uTexture, uSampler, vTextureCoord);
+    if (color.a < 0.004) { discard; }
+
+    let S = max(u.uProjectionScale, 1e-6);
+    let wx = (vScreenPos.x - u.uWorldContainerPos.x) / S;
+    let wy = (vScreenPos.y - u.uWorldContainerPos.y) / S;
+
+    var occluded = false;
+    // 深度遮挡(需深度图 + 行走面脚点深度;缺一不做,绝不退回旧模型)
+    if (u.uDepthEnabled > 0.5 && u.uHasFootDepth > 0.5) {
+        let depthUV = vec2<f32>(wx / u.uSceneSize.x, wy / u.uSceneSize.y);
+        if (depthUV.x >= 0.0 && depthUV.x <= 1.0 && depthUV.y >= 0.0 && depthUV.y <= 1.0) {
+            let depthSample = textureSampleLevel(uDepthMap, uDepthMapSampler, depthUV, 0.0);
+            let rawDepth = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
+            var d_raw = rawDepth;
+            if (u.uInvert > 0.5) { d_raw = 1.0 - rawDepth; }
+            let sceneDepth = d_raw * u.uScale + u.uOffset;
+            // 精灵深度代理:立在伪世界里的直立 quad(见 GLSL 注释)
+            let syTexFoot = u.uEntityFootWorldY * u.uWorldToPixelY;
+            let syTex = wy * u.uWorldToPixelY;
+            let upright = u.uDepthPerSy * (syTex - syTexFoot);
+            let spriteDepth = u.uFootDepthQ + upright + u.uFloorOffset + u.uFloorOffsetExtra - u.uFootBias;
+            occluded = sceneDepth + u.uTolerance < spriteDepth;
+        }
+    }
+
+    if (u.uDebug > 0.5) {
+        if (occluded) { return vec4<f32>(1.0, 0.0, 0.0, 0.7); }
+        return vec4<f32>(0.0, 0.0, 1.0, 0.7);
+    }
+
+    if (occluded) {
+        if (u.uOcclusionBlendFactor < 1e-5) { discard; }
+        return vec4<f32>(color.rgb * u.uOcclusionBlendFactor, color.a * u.uOcclusionBlendFactor);
+    }
+
+    var rgb = color.rgb;
+
+    // 色调:probe 保亮度白平衡(光环境曲线管线)
+    if (u.uToneStrength > 1e-4) {
+        let su = clamp(u.uEntityFootWorldX / max(u.uSceneSize.x, 1e-3), 0.0, 1.0);
+        let sv = clamp((u.uEntityFootWorldY - u.uSampleLiftWorld) / max(u.uSceneSize.y, 1e-3), 0.0, 1.0);
+        let amb = textureSampleLevel(uProbe, uProbeSampler, vec2<f32>(su, sv), 0.0).rgb;
+        let net = amb * u.uAmbientIntensity + u.uKeyColor * (u.uKeyIntensity * 0.5);
+        let l = max(luma(net), 0.04);
+        let wb = clamp(net / l, vec3<f32>(0.5), vec3<f32>(1.7));
+        rgb *= mix(vec3<f32>(1.0), wb, u.uToneStrength);
+    }
+
+    // AO:sprite 空间纵向梯度(vTextureCoord.y 从 0 顶到 1 底)
+    let vy = clamp(vTextureCoord.y, 0.0, 1.0);
+    let contact = u.uAOContact * smoothstep(0.78, 1.0, vy);
+    let form = u.uAOForm * vy;
+    let ao = clamp(1.0 - contact - form, 0.0, 1.0);
+    rgb *= ao;
+
+    // 预乘不变量 rgb 不超过 a,杜绝发白 / 发亮
+    rgb = min(rgb, vec3<f32>(color.a));
+    return vec4<f32>(rgb, color.a);
+}
+`;
+
 let sharedProgram: GlProgram | null = null;
 function getSharedProgram(): GlProgram {
   if (!sharedProgram) {
     sharedProgram = new GlProgram({ vertex: VERT, fragment: FRAG });
   }
   return sharedProgram;
+}
+
+let sharedGpuProgram: GpuProgram | null = null;
+function getSharedGpuProgram(): GpuProgram {
+  if (!sharedGpuProgram) {
+    sharedGpuProgram = GpuProgram.from({
+      vertex: { source: WGSL, entryPoint: 'mainVertex' },
+      fragment: { source: WGSL, entryPoint: 'mainFragment' },
+    });
+  }
+  return sharedGpuProgram;
 }
 
 export interface EntityLightingFilterOptions {
@@ -203,8 +368,12 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
     const dm = cfg?.depth_mapping;
     const sh = cfg?.shader;
 
+    const depthSrc = depthTexture?.source ?? Texture.WHITE.source;
+    const probeSrc = probeSource ?? Texture.WHITE.source;
+
     super({
       glProgram: program,
+      gpuProgram: getSharedGpuProgram(),
       resources: {
         lightUniforms: {
           uSceneSize: { value: new Float32Array([0, 0]), type: 'vec2<f32>' },
@@ -238,8 +407,11 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
           uAOContact: { value: lightEnv.ao.contact, type: 'f32' },
           uAOForm: { value: lightEnv.ao.form, type: 'f32' },
         },
-        uDepthMap: depthTexture?.source ?? Texture.WHITE.source,
-        uProbe: probeSource ?? Texture.WHITE.source,
+        uDepthMap: depthSrc,
+        // WGSL 的采样器:各用纹理自己的 style(WebGL 用纹理自带采样状态,不认这些键)
+        uDepthMapSampler: depthSrc.style,
+        uProbe: probeSrc,
+        uProbeSampler: probeSrc.style,
       },
     });
   }
