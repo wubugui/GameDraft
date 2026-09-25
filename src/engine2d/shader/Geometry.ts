@@ -2,6 +2,7 @@ import { EventEmitter } from '../utils/EventEmitter';
 import { uid } from '../utils/uid';
 import { Bounds } from '../scene/Bounds';
 import { Buffer, BufferUsage, type BufferData } from './Buffer';
+import { warn } from '../assets/utils/warn';
 
 export type VertexFormat =
   | 'uint8x2' | 'uint8x4' | 'sint8x2' | 'sint8x4' | 'unorm8x2' | 'unorm8x4' | 'snorm8x2' | 'snorm8x4'
@@ -13,8 +14,9 @@ export type Topology = 'point-list' | 'line-list' | 'line-strip' | 'triangle-lis
 
 export interface Attribute {
   buffer: Buffer;
-  format: VertexFormat;
-  /** 字节跨度;缺省 = 格式大小(紧排) */
+  /** 缺省:第一次配着色器画时按其 `@location` 参数的 WGSL 类型推(照 Pixi ensureAttributes) */
+  format?: VertexFormat;
+  /** 字节跨度;缺省 = 同一 Buffer 上全部属性格式大小之和(照 Pixi ensureStartAndStride) */
   stride?: number;
   /** 字节偏移 */
   offset?: number;
@@ -46,6 +48,48 @@ const FORMAT_BYTES: Record<string, number> = {
   float16x2: 4, float16x4: 8, float32: 4, float32x2: 8, float32x3: 12, float32x4: 16,
   uint32: 4, uint32x2: 8, uint32x3: 12, uint32x4: 16, sint32: 4, sint32x2: 8, sint32x3: 12, sint32x4: 16,
 };
+
+/** 照 Pixi `getAttributeInfoFromFormat`:认不出(含未定)的格式按 float32 算 */
+function formatBytesOrFloat32(format: string | undefined): number {
+  return (format && FORMAT_BYTES[format]) || FORMAT_BYTES.float32;
+}
+
+/** 照 Pixi extractAttributesFromGpuProgram 的 WGSL_TO_VERTEX_TYPES(认不出的类型按 float32) */
+const WGSL_TO_VERTEX_TYPES: Record<string, VertexFormat> = {
+  f32: 'float32', 'vec2<f32>': 'float32x2', 'vec3<f32>': 'float32x3', 'vec4<f32>': 'float32x4',
+  vec2f: 'float32x2', vec3f: 'float32x3', vec4f: 'float32x4',
+  i32: 'sint32', 'vec2<i32>': 'sint32x2', 'vec3<i32>': 'sint32x3', 'vec4<i32>': 'sint32x4',
+  vec2i: 'sint32x2', vec3i: 'sint32x3', vec4i: 'sint32x4',
+  u32: 'uint32', 'vec2<u32>': 'uint32x2', 'vec3<u32>': 'uint32x3', 'vec4<u32>': 'uint32x4',
+  vec2u: 'uint32x2', vec3u: 'uint32x3', vec4u: 'uint32x4',
+  bool: 'uint32', 'vec2<bool>': 'uint32x2', 'vec3<bool>': 'uint32x3', 'vec4<bool>': 'uint32x4',
+};
+
+/**
+ * 照 Pixi `ensureAttributes` + `ensureStartAndStride`:没给格式的属性取着色器同名 `@location` 参数的类型;
+ * 没给跨度的属性,跨度 = 同一 Buffer 上**全部**属性(不只着色器用到的)格式大小之和。只补没给的(`??=`),
+ * 所以第一次配的着色器说了算(Pixi 也是每个几何只补一次)。
+ */
+export function ensureAttributes(geometry: Geometry, programAttributes: readonly { name: string; type: string }[]): void {
+  const attributes = geometry.attributes;
+  for (const name in attributes) {
+    const attribute = attributes[name];
+    const declared = programAttributes.find((a) => a.name === name);
+    if (declared) attribute.format ??= WGSL_TO_VERTEX_TYPES[declared.type] ?? 'float32';
+    else if (attribute.format === undefined) {
+      warn(`Attribute ${name} is not present in the shader, but is present in the geometry. Unable to infer attribute details.`);
+    }
+  }
+  const stride = new Map<Buffer, number>();
+  for (const name in attributes) {
+    const a = attributes[name];
+    stride.set(a.buffer, (stride.get(a.buffer) ?? 0) + formatBytesOrFloat32(a.format));
+  }
+  for (const name in attributes) {
+    const a = attributes[name];
+    a.stride ??= stride.get(a.buffer);
+  }
+}
 
 export function vertexFormatBytes(format: string): number {
   const b = FORMAT_BYTES[format];
@@ -87,10 +131,9 @@ export class Geometry extends EventEmitter {
       ? { buffer: attributeOption as Buffer }
       : (attributeOption as AttributeOption);
     const buffer = ensureBuffer(opt.buffer, false);
-    const format = opt.format ?? 'float32x2';
     this.attributes[name] = {
       buffer,
-      format,
+      format: opt.format,
       stride: opt.stride,
       offset: opt.offset ?? 0,
       instance: opt.instance ?? false,
@@ -127,7 +170,7 @@ export class Geometry extends EventEmitter {
     for (const name in this.attributes) {
       const a = this.attributes[name];
       if (a.instance) continue;
-      const stride = a.stride || vertexFormatBytes(a.format);
+      const stride = a.stride || formatBytesOrFloat32(a.format);
       return a.buffer.data.byteLength / stride;
     }
     return 0;

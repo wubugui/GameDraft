@@ -9,6 +9,8 @@
  * - 其它节点 `culled = false`;
  * - `cullableChildren` 为 false、节点已 culled、不可渲染 / 不计包围盒 / 不进收集时,**不再往下走**
  *   (子节点保留上一次的 culled 值,与 Pixi 相同)。
+ * - 未激活(setActive(false))的节点照样判,结果同 Pixi 里 visible=false 的节点:getGlobalBounds 对它给空盒,
+ *   归一成 (0,0,0,0) 后与 view 比(可剔除的据此定 culled,不可剔除的 culled = false),也照样往下走子节点。
  *
  * 与 Pixi 的差别只在变换的"新鲜度":Pixi 在 `skipUpdateTransform = true`(缺省)时读的是**上一次渲染**
  * 留下的 worldTransform(本帧逻辑里挪过的节点要晚一帧才反映);engine2d 的 Container 的 worldTransform /
@@ -46,7 +48,6 @@ export class Culler {
   }
 
   private _cullRecursive(container: Container, view: RectangleLike, skipUpdateTransform = true): void {
-    if (!container._activeSelf) return; // 未激活的子树不画,不用剔除
     if (container.cullable && container.measurable && container.includeInBuild) {
       if (container.cullArea) {
         tempRectangle.x = view.x;

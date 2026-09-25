@@ -142,7 +142,7 @@ export class Mesh<G extends Geometry = MeshGeometry, S extends Shader = Shader> 
     b.texture = this._texture;
     b.transform = this.groupTransform;
     b.color = this.groupColorAlpha;
-    b.roundPixels = this._roundPixels;
+    b.roundPixels = this._latchRoundPixels(collector);
     b.blendMode = this.groupBlendMode;
     b.topology = g.topology;
     b.positions = g.positions;

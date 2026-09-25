@@ -16,7 +16,7 @@ import type {
 import { BLEND_STATES, type BlendMode } from '../core/blendModes';
 import type { GpuProgram } from '../shader/GpuProgram';
 import type { Buffer } from '../shader/Buffer';
-import { vertexFormatBytes, type Geometry, type Topology } from '../shader/Geometry';
+import { ensureAttributes, vertexFormatBytes, type Geometry, type Topology } from '../shader/Geometry';
 
 /** 模板用法(照 Pixi 的 STENCIL_MODES) */
 export type StencilMode = 'disabled' | 'add' | 'remove' | 'active' | 'inverse';
@@ -130,11 +130,13 @@ export class Pipelines {
 
   /**
    * 几何对某个程序的顶点布局:只取着色器顶点入口声明了的属性(luma 对着色器不用的属性会报错),
-   * 同一个 Buffer 上的属性并成一路流(交错布局)。
+   * 同一个 Buffer 上的属性并成一路流(交错布局)。没给的格式 / 跨度先按 Pixi 的 ensureAttributes 补上
+   * (格式取着色器的参数类型,跨度按同一 Buffer 上全部属性算,不只着色器用到的)。
    */
   layout(geometry: Geometry, program: GpuProgram): VertexLayout {
     let byProgram = this.layouts.get(geometry);
     if (!byProgram) this.layouts.set(geometry, (byProgram = new Map()));
+    ensureAttributes(geometry, program.attributes);
     const version = geometryVersion(geometry);
     const cached = byProgram.get(program.uid);
     if (cached && cached.version === version) return cached.layout;
@@ -144,7 +146,7 @@ export class Pipelines {
       if (!wanted.has(name)) continue;
       let list = groups.get(attr.buffer);
       if (!list) groups.set(attr.buffer, (list = []));
-      list.push({ name, format: attr.format, offset: attr.offset ?? 0, stride: attr.stride, instance: !!attr.instance });
+      list.push({ name, format: attr.format!, offset: attr.offset ?? 0, stride: attr.stride, instance: !!attr.instance });
     }
     const buffers: RhiVertexBufferLayout[] = [];
     const sources: Buffer[] = [];

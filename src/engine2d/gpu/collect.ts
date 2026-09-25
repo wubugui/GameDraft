@@ -19,7 +19,14 @@ export type Instruction =
   | { readonly t: 'pushMaskBegin'; inverse: boolean }
   | { readonly t: 'pushMaskEnd'; inverse: boolean }
   | { readonly t: 'popMaskBegin'; inverse: boolean }
-  | { readonly t: 'popMaskEnd'; inverse: boolean };
+  // 照 Pixi StencilMaskPipe.pop:popMaskEnd 不带 inverse,执行时总恢复 MASK_ACTIVE
+  | { readonly t: 'popMaskEnd' };
+
+/**
+ * 最近一次 prepareTree 的渲染器级 roundPixels(0 / 1)。WebGPURenderer 每次 render 都是 prepareTree 紧接 collector.begin,
+ * begin 不另给时取它(嵌套 render 发生在 prepareTree 的 onRender 回调里,早于这里赋值,不会串)
+ */
+let preparedRoundPixels = 0;
 
 function clamp01(v: number): number {
   return v < 0 ? 0 : v > 1 ? 1 : v;
@@ -36,12 +43,16 @@ function runOnRender(c: Container, renderer: unknown): void {
 /** 算本次渲染的相对根变换与外观。返回本次的 tick(遮罩等据此判断节点是否在本次算过) */
 export function prepareTree(root: Container, renderer: unknown, tick: number): void {
   runOnRender(root, renderer);
+  preparedRoundPixels = (renderer as { roundPixels?: boolean } | null)?.roundPixels ? 1 : 0;
   root.updateLocalTransform();
   root.groupTransform.identity();
   root.groupColor = 0xffffff;
   root.groupAlpha = 1;
   root.groupColorAlpha = 0xffffffff;
-  root.groupBlendMode = root.localBlendMode === 'inherit' ? 'normal' : root.localBlendMode;
+  // 照 Pixi:渲染根不经过 updateColorBlendVisibility,根自己的可画内容按 'normal' 混合、白色顶点色(根的 tint / alpha
+  // 只经全局 uniform 的 worldColor 施加一次)。Pixi 里根若曾作为别的树的子节点被算过,会沿用那次留下的 groupBlendMode /
+  // groupColorAlpha(与历史有关的旧缓存,颜色还会与 worldColor 叠乘两次);这个怪癖不复刻,一律取无历史时的确定值
+  root.groupBlendMode = 'normal';
   root.globalDisplayStatus = root.localDisplayStatus;
   root._renderTick = tick;
   const children = root.children;
@@ -132,6 +143,8 @@ function updateSingle(c: Container, parent: Container | null): void {
 
 export class Collector implements RenderCollector {
   readonly instructions: Instruction[] = [];
+  /** 渲染器级 roundPixels(见 RenderCollector.roundPixels) */
+  roundPixels = 0;
   private readonly batches: BatchRecord[] = [];
   private readonly maskRanges = new Map<MaskEffect, [number, number]>();
   private root!: Container;
@@ -142,8 +155,9 @@ export class Collector implements RenderCollector {
     public resolution: number,
   ) {}
 
-  begin(root: Container, tick: number, resolution: number): void {
+  begin(root: Container, tick: number, resolution: number, roundPixels: number = preparedRoundPixels): void {
     this.instructions.length = 0;
+    this.roundPixels = roundPixels;
     this.maskRanges.clear();
     this.batcher.begin();
     this.root = root;
@@ -208,9 +222,10 @@ export class Collector implements RenderCollector {
     this.instructions.push({ t: 'popFilter' });
   }
 
-  pushMask(_container: Container, effect: MaskEffect): void {
+  pushMask(container: Container, effect: MaskEffect): void {
     this.flush();
-    this.instructions.push({ t: 'pushMaskBegin', inverse: effect.inverse });
+    const inverse = !!container._maskOptions.inverse;
+    this.instructions.push({ t: 'pushMaskBegin', inverse });
     const start = this.instructions.length;
     const mask = effect.mask;
     prepareDetached(mask, this.root, this.tick);
@@ -219,16 +234,16 @@ export class Collector implements RenderCollector {
     mask.includeInBuild = false;
     this.flush();
     const end = this.instructions.length;
-    this.instructions.push({ t: 'pushMaskEnd', inverse: effect.inverse });
+    this.instructions.push({ t: 'pushMaskEnd', inverse });
     this.maskRanges.set(effect, [start, end]);
   }
 
-  popMask(_container: Container, effect: MaskEffect): void {
+  popMask(container: Container, effect: MaskEffect): void {
     this.flush();
-    this.instructions.push({ t: 'popMaskBegin', inverse: effect.inverse });
+    this.instructions.push({ t: 'popMaskBegin', inverse: !!container._maskOptions.inverse });
     const range = this.maskRanges.get(effect);
     if (range) for (let i = range[0]; i < range[1]; i++) this.instructions.push(this.instructions[i]);
-    this.instructions.push({ t: 'popMaskEnd', inverse: effect.inverse });
+    this.instructions.push({ t: 'popMaskEnd' });
   }
 
   private flush(): void {

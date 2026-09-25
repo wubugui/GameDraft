@@ -26,6 +26,11 @@ export class Sprite extends ViewContainer {
   private _texture!: Texture;
   private readonly _anchor: ObservablePoint;
   private readonly _visualBounds: QuadBounds = { minX: 0, maxX: 1, minY: 0, maxY: 0 };
+  /**
+   * 合批四边形要不要按当前纹理 / 锚点重算(照 Pixi SpritePipe:`batchableSprite.bounds` 只在 didViewUpdate 时刷新)。
+   * 不跟 texture 'update' 的非动态纹理(如 RenderTexture.create 缺省)改尺寸后,四边形与滤镜 / 命中包围盒一起停在旧尺寸
+   */
+  private _visualBoundsDirty = true;
   private _width?: number;
   private _height?: number;
   private readonly _batchable: BatchableElement;
@@ -35,7 +40,7 @@ export class Sprite extends ViewContainer {
     const { texture = Texture.EMPTY, anchor, roundPixels, width, height, ...rest } = o;
     super({ label: 'Sprite', ...rest });
     this._anchor = new ObservablePoint({ _onUpdate: () => this.onViewUpdate() });
-    if (anchor !== undefined) this.anchor = anchor;
+    if (anchor) this.anchor = anchor; // 照 Pixi:`anchor: 0` / null 落到纹理的 defaultAnchor
     else if (texture.defaultAnchor) this.anchor = texture.defaultAnchor;
     this.texture = texture;
     this.roundPixels = roundPixels ?? false;
@@ -89,6 +94,11 @@ export class Sprite extends ViewContainer {
     return this._visualBounds;
   }
 
+  override onViewUpdate(): void {
+    super.onViewUpdate();
+    this._visualBoundsDirty = true;
+  }
+
   protected updateBounds(): void {
     const { width, height } = this._texture.orig;
     const b = this._bounds;
@@ -138,9 +148,13 @@ export class Sprite extends ViewContainer {
     b.texture = this._texture;
     b.transform = this.groupTransform;
     b.color = this.groupColorAlpha;
-    b.roundPixels = this._roundPixels;
+    b.roundPixels = this._latchRoundPixels(collector);
     b.blendMode = this.groupBlendMode;
-    b.bounds = this.visualBounds;
+    if (this._visualBoundsDirty) {
+      updateQuadBounds(this._visualBounds, this._anchor, this._texture);
+      this._visualBoundsDirty = false;
+    }
+    b.bounds = this._visualBounds;
     collector.addBatchable(b);
   }
 

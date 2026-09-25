@@ -9,6 +9,7 @@ import { Geometry } from '../shader/Geometry';
 import { GpuProgram } from '../shader/GpuProgram';
 import { Shader } from '../shader/Shader';
 import { Mesh } from '../mesh/Mesh';
+import { Container } from '../scene/Container';
 import { RenderTexture } from '../textures/RenderTexture';
 import { WebGPURenderer } from './WebGPURenderer';
 
@@ -51,12 +52,15 @@ describe('管线预建', () => {
 
     const mesh = new Mesh({ geometry: makeGeometry(), shader: new Shader({ gpuProgram: program, resources: {} }) });
     mesh.blendMode = 'add';
+    // 网格挂在根下:渲染根自己的混合模式不生效(照 Pixi),要画出 add 得是子节点
+    const root = new Container();
+    root.addChild(mesh);
     const rt = RenderTexture.create({ width: 8, height: 8 });
-    renderer.render({ container: mesh, target: rt });
+    renderer.render({ container: root, target: rt });
     expect(created).toHaveBeenCalledTimes(1);
 
     mesh.blendMode = 'screen';
-    renderer.render({ container: mesh, target: rt });
+    renderer.render({ container: root, target: rt });
     expect(created).toHaveBeenCalledTimes(2);
     renderer.destroy();
   });

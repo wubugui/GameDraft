@@ -74,6 +74,8 @@ export interface UnbatchedGraphics {
 export interface RenderCollector {
   /** 渲染器分辨率(文字等按它决定位图分辨率,照 Pixi 的 autoResolution) */
   readonly resolution: number;
+  /** 渲染器级 roundPixels(0 / 1);合批元素首次收集时与节点自己的取整或起来(照 Pixi `renderer._roundPixels`) */
+  readonly roundPixels?: number;
   addBatchable(element: BatchableElement): void;
   addCustom(drawable: CustomDrawable): void;
   /** `node` 是图形节点本身,`elements` 是它 context 的区段(本地坐标、颜色不乘节点) */

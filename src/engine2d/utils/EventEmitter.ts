@@ -42,7 +42,8 @@ export class EventEmitter<_Events extends EventMap = EventMap> {
       this._events!.delete(event);
       return this;
     }
-    const kept = list.filter((l) => l.fn !== fn || (once && !l.once) || (context !== undefined && l.ctx !== context));
+    // 照 eventemitter3:context 为假值(undefined / null / 0 / '')时不比上下文
+    const kept = list.filter((l) => l.fn !== fn || (once && !l.once) || (context && l.ctx !== context));
     if (kept.length) this._events!.set(event, kept);
     else this._events!.delete(event);
     return this;
@@ -83,7 +84,7 @@ export class EventEmitter<_Events extends EventMap = EventMap> {
     this._events ??= new Map();
     let list = this._events.get(event);
     if (!list) this._events.set(event, (list = []));
-    list.push({ fn, ctx: ctx ?? this, once });
+    list.push({ fn, ctx: ctx || this, once }); // 照 eventemitter3 的 `context || emitter`
     return this;
   }
 }

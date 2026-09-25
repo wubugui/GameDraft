@@ -273,7 +273,7 @@ export class NineSliceSprite extends ViewContainer {
     b.texture = this._texture;
     b.transform = this.groupTransform;
     b.color = this.groupColorAlpha;
-    b.roundPixels = this._roundPixels;
+    b.roundPixels = this._latchRoundPixels(collector);
     b.blendMode = this.groupBlendMode;
     b.topology = geometry.topology;
     b.positions = geometry.positions;

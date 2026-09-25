@@ -93,6 +93,8 @@ export class HTMLText extends AbstractText<HTMLTextStyle, HTMLTextStyleOptions, 
   /** 渲染核心在收集阶段调用(照 HTMLTextPipe.addRenderable) */
   override collectRenderables(collector: RenderCollector): void {
     const gpuText = this._getGpuText(collector.resolution);
+    // 照 HTMLTextPipe.initGpuText:取整标志在第一次收集时锁定(纹理还没出来也算)
+    const roundPixels = this._latchRoundPixels(collector);
     const resolution = this._autoResolution ? collector.resolution : this.resolution;
     if (this._autoResolution && this._resolution !== resolution) this._didTextUpdate = true;
     if (this._didTextUpdate) {
@@ -110,7 +112,7 @@ export class HTMLText extends AbstractText<HTMLTextStyle, HTMLTextStyleOptions, 
     b.texture = gpuText.texture;
     b.transform = this.groupTransform;
     b.color = this.groupColorAlpha;
-    b.roundPixels = this._roundPixels;
+    b.roundPixels = roundPixels;
     b.blendMode = this.groupBlendMode;
     collector.addBatchable(b);
   }

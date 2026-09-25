@@ -75,6 +75,11 @@ last_governed: 2026-09-25
 `renderer.resize(0, h)` 把 0 当"沿用旧尺寸"(隐藏的 `resizeTo` 元素量出 0×0 时画布不缩没),逻辑尺寸按整像素回算
 (`round(w × res) / res`);`antialias: true`(画布跟渲染器选项、RenderTexture 跟纹理源)= MSAA×4,每个 pass 结束
 resolve 回目标——32 位浮点 / 整数这类不能 resolve 的格式照常单采样。游戏自己 `antialias: false`,不受影响。
+合批节点(Sprite / 合批 Mesh / NineSlice / Text / HTMLText)的 `roundPixels` 在**第一次被渲染时锁定**
+(`渲染器 roundPixels | 节点 roundPixels`),之后再改不生效,`unload()` / destroy 后才重取——运行中切换取整要先 `unload()`;
+Sprite 的合批四边形只在换纹理 / 改锚点 / 动态纹理 update 时重算(非动态 RenderTexture 改尺寸后停在旧尺寸);
+`renderer.render({ container })` 的根自己的 `blendMode` 不生效(按 normal 画,要混合就挂一层父节点);
+带 shader 却没有 `gpuProgram` 的网格告警并跳过绘制。
 
 ## 怎么验证
 

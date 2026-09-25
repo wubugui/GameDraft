@@ -27,8 +27,9 @@ last_governed: 2026-09-25
 
 ## 硬契约
 
-- **激活 ≠ 可见**。`setActive(false)`:整棵子树不渲染(连变换准备与 `onRender` 都跳过)、不参与命中 / 包围盒 / 剔除、
-  组件 onDisable 且不再 update。`visible = false`:只是不画(Pixi 语义,等价 Unity 的 Renderer.enabled),
+- **激活 ≠ 可见**。`setActive(false)`:整棵子树不渲染(连变换准备与 `onRender` 都跳过)、不参与命中 / 包围盒
+  (含滤镜区域)、组件 onDisable 且不再 update。Culler 对它照样判,结果同 Pixi 里 `visible = false` 的节点
+  (空盒归一成 (0,0,0,0) 再与 view 比;master 的 NPC / 热点就是这么被剔的),不留隐藏前的旧 `culled`。`visible = false`:只是不画(Pixi 语义,等价 Unity 的 Renderer.enabled),
   节点照样命中测试之外的一切。**"这个东西现在不存在"用 setActive,"存在但先别画"用 visible。**
 - **组件只在场景根下活着**。`activeInHierarchy` = 自己与全部祖先 activeSelf **且**最顶上的祖先 `isSceneRoot`
   (Application 的 stage 是;离屏另起的树要自己标)。`removeChild` 而不 `destroy` ⇒ 子树组件 onDisable、不再 update;

@@ -109,7 +109,7 @@ export class Text extends AbstractText<TextStyle, TextStyleOptions, CanvasTextOp
     const b = gpuText.batchable;
     b.transform = this.groupTransform;
     b.color = this.groupColorAlpha;
-    b.roundPixels = this._roundPixels;
+    b.roundPixels = this._latchRoundPixels(collector);
     b.blendMode = this.groupBlendMode;
     collector.addBatchable(b);
   }
@@ -137,12 +137,5 @@ export class Text extends AbstractText<TextStyle, TextStyleOptions, CanvasTextOp
       canvasTextSystem.returnTexture(gpuData.texture);
     }
     this._gpuText = null;
-  }
-
-  /** 释放 GPU 侧数据(纹理引用);再次渲染时重新生成(Pixi `ViewContainer.unload`) */
-  unload(): void {
-    this.emit('unload', this);
-    this._releaseGpuData();
-    this.onViewUpdate();
   }
 }

@@ -94,7 +94,6 @@ export interface ContainerEffect {
 export class MaskEffect implements ContainerEffect {
   readonly kind = 'mask' as const;
   priority = 0;
-  inverse = false;
 
   constructor(public mask: Container) {
     mask.includeInBuild = false;
@@ -130,7 +129,8 @@ export class MaskEffect implements ContainerEffect {
 
 export class FilterEffect implements ContainerEffect {
   readonly kind = 'filters' as const;
-  priority = 0;
+  /** 照 Pixi FilterEffect(1):遮罩(0)总在滤镜外层,与赋值先后无关 */
+  priority = 1;
   filters: readonly Filter[] | null = null;
   filterArea?: Rectangle;
 }
@@ -234,6 +234,8 @@ export class Container extends EventEmitter {
   // 效果
   effects: ContainerEffect[] = [];
   _maskEffect: MaskEffect | null = null;
+  /** 遮罩选项(照 Pixi `_maskOptions`):挂在容器上而不是遮罩效果上,先设 inverse 再给遮罩、换遮罩都保留 */
+  _maskOptions: { inverse?: boolean; mask?: Container | null } = { inverse: false };
   _filterEffect: FilterEffect | null = null;
   boundsArea?: Rectangle;
 
@@ -1248,9 +1250,10 @@ export class Container extends EventEmitter {
     this.addEffect(this._maskEffect);
   }
 
+  /** 照 Pixi `setMask`:选项并进 `_maskOptions`;只有给了(真值)mask 才换遮罩 */
   setMask(options: { mask?: Container | null; inverse?: boolean }): void {
-    if (options.mask !== undefined) this.mask = options.mask;
-    if (this._maskEffect && options.inverse !== undefined) this._maskEffect.inverse = options.inverse;
+    this._maskOptions = { ...this._maskOptions, ...options };
+    if (options.mask) this.mask = options.mask;
   }
 
   get filters(): readonly Filter[] | null {
@@ -1380,10 +1383,8 @@ export class Container extends EventEmitter {
     if (this.children.length) oldChildren = this.removeChildren(0, this.children.length);
     this.removeFromParent();
     this.parent = null;
-    if (this._maskEffect) {
-      this._maskEffect.reset();
-      this._maskEffect = null;
-    }
+    // 照 Pixi:只断开遮罩效果,不 reset —— 遮罩体仍是 includeInBuild / measurable = false(不画、不计包围盒)
+    this._maskEffect = null;
     this._filterEffect = null;
     this.effects = [];
     this.emit('destroyed', this);

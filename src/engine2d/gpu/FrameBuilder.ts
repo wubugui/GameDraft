@@ -24,6 +24,7 @@ import type { Shader } from '../shader/Shader';
 import type { Filter, FilterSystemLike } from '../filters/Filter';
 import type { BlendMode } from '../core/blendModes';
 import type { CustomDrawable, UnbatchedGraphics } from '../core/contracts';
+import { warn } from '../assets/utils/warn';
 import { Arena } from './Arena';
 import { adjustedBlendMode, type BatchRecord } from './Batcher';
 import { BATCH_WGSL, GRAPHICS_WGSL, MAX_BATCH_TEXTURES, MESH_WGSL } from './batchShader';
@@ -491,7 +492,12 @@ export class FrameBuilder implements FilterSystemLike {
       }),
       size: LOCAL_LAYOUT.size,
     };
-    const program = shader?.gpuProgram ?? meshProgram;
+    // 照 Pixi GpuMeshAdapter:带 shader 却没有 WGSL 程序时告警并跳过这次绘制,不拿缺省网格程序顶替
+    if (shader && !shader.gpuProgram) {
+      warn('Mesh shader has no gpuProgram', shader);
+      return;
+    }
+    const program = shader ? shader.gpuProgram! : meshProgram;
     const bindings: Record<string, BindingValue> = {
       globalUniforms: this.currentGU.arena,
       localUniforms: localRef,
@@ -499,9 +505,9 @@ export class FrameBuilder implements FilterSystemLike {
     if (!shader) {
       bindings.uTexture = this.ctx.textures.get(texture.source);
       bindings.uSampler = this.ctx.textures.sampler(texture.source.style);
-      const tm = texture.textureMatrix;
+      // 照 Pixi GlMeshAdaptor / GpuTextureSystem:总是纹理矩阵的 mapCoord(isSimple 只说帧是整张源,trim 仍会进矩阵)
       bindings.textureUniforms = {
-        arena: this.writeUbo(TEXTURE_UNIFORMS_LAYOUT, { uTextureMatrix: tm.isSimple ? Matrix.IDENTITY : tm.mapCoord }),
+        arena: this.writeUbo(TEXTURE_UNIFORMS_LAYOUT, { uTextureMatrix: texture.textureMatrix.mapCoord }),
         size: TEXTURE_UNIFORMS_LAYOUT.size,
       };
     } else {
@@ -622,7 +628,7 @@ export class FrameBuilder implements FilterSystemLike {
     this.stencilState.set(this.current.key, { mode, ref });
   }
 
-  private maskExecute(instr: Extract<Instruction, { inverse: boolean }>): void {
+  private maskExecute(instr: Extract<Instruction, { t: 'pushMaskBegin' | 'pushMaskEnd' | 'popMaskBegin' | 'popMaskEnd' }>): void {
     const key = this.current.key;
     let maskStackIndex = this.maskStack.get(key) ?? 0;
     if (instr.t === 'pushMaskBegin') {
@@ -642,7 +648,8 @@ export class FrameBuilder implements FilterSystemLike {
       }
       maskStackIndex--;
     } else if (instr.t === 'popMaskEnd') {
-      this.setStencilMode(instr.inverse ? 'inverse' : 'active', maskStackIndex);
+      // 照 Pixi StencilMaskPipe.execute:弹出后总回到 MASK_ACTIVE(外层反向遮罩也不例外)
+      this.setStencilMode('active', maskStackIndex);
       this.colorMask = 15;
     }
     this.maskStack.set(key, maskStackIndex);
@@ -948,7 +955,8 @@ export class FrameBuilder implements FilterSystemLike {
  * 坐标用相对渲染根的 groupTransform;带效果的节点先在自己的局部盒里收集,遮罩效果按世界空间求交。
  */
 function fastBoundsRecursive(c: Container, bounds: Bounds, rootWorld: Matrix): void {
-  if (c.localDisplayStatus !== 7 || !c.measurable) return;
+  // 未激活的子树与 Pixi 里 visible=false 的一样不计(它的 groupTransform 本次也没算过)
+  if (!c._activeSelf || c.localDisplayStatus !== 7 || !c.measurable) return;
   const manageEffects = c.effects.length > 0;
   const local = manageEffects ? new Bounds() : bounds;
   if (c.boundsArea) {

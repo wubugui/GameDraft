@@ -168,6 +168,14 @@ export abstract class AbstractText<
   /** 子类释放自己的纹理(destroy 时先调) */
   protected abstract _releaseGpuData(): void;
 
+  /** 释放 GPU 侧数据(纹理引用);再次渲染时重新生成(Pixi `ViewContainer.unload` → 文字 pipe 的 onTextUnload) */
+  override unload(): void {
+    this.emit('unload', this);
+    this._releaseGpuData();
+    this._batchRoundPixels = -1;
+    this.onViewUpdate();
+  }
+
   override destroy(options: boolean | DestroyOptions = false): void {
     if (this.destroyed) return;
     this._releaseGpuData();
