@@ -202,7 +202,7 @@ describe('HTMLText 与 pixi 一致', () => {
     const collector: RenderCollector = {
       resolution: 2,
       addBatchable: (e) => items.push({ ...e, bounds: { ...e.bounds! } }),
-      addCustom() {}, pushFilter() {}, popFilter() {}, pushMask() {}, popMask() {},
+      addCustom() {}, addUnbatched() {}, pushFilter() {}, popFilter() {}, pushMask() {}, popMask() {},
     };
     const t = new HTMLText({ text: '第一句', anchor: 0.5, style: { fontSize: 18, fill: '#ffffff' } });
     t.collectRenderables(collector);

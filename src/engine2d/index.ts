@@ -57,6 +57,29 @@ export type { UnresolvedAsset, ResolvedAsset, LoadOptions, AssetInitOptions } fr
 export { DOMAdapter, BrowserAdapter, type Adapter, type ICanvas } from './environment/adapter';
 export { createRenderer, type CreateRendererOptions } from './gpu/createRenderer';
 export * from './events';
+
+export { Graphics, type GraphicsOptions } from './graphics/Graphics';
+export { GraphicsContext, type BatchMode } from './graphics/GraphicsContext';
+export { GraphicsPath } from './graphics/path/GraphicsPath';
+export { FillGradient, type GradientOptions, type LinearGradientOptions, type RadialGradientOptions } from './graphics/fill/FillGradient';
+export { FillPattern } from './graphics/fill/FillPattern';
+export type { FillInput, FillStyle, StrokeInput, StrokeStyle, StrokeAttributes } from './graphics/FillTypes';
+export type { LineCap, LineJoin } from './graphics/const';
+export { Circle } from './math/shapes/Circle';
+export { Ellipse } from './math/shapes/Ellipse';
+export { Polygon } from './math/shapes/Polygon';
+export { RoundedRectangle } from './math/shapes/RoundedRectangle';
+export { Triangle } from './math/shapes/Triangle';
+
+export { Text, type CanvasTextOptions } from './text/Text';
+export {
+  TextStyle, type TextStyleOptions, type TextDropShadow, type TextStyleAlign, type TextStyleFontWeight,
+  type TextStyleFontStyle, type TextStyleFontVariant, type TextStyleTextBaseline, type TextStyleWhiteSpace,
+} from './text/TextStyle';
+export { AbstractText, type TextOptions, type TextString } from './text/AbstractText';
+export { CanvasTextMetrics, type FontMetrics } from './text/canvas/CanvasTextMetrics';
+export { HTMLText, type HTMLTextOptions } from './text/html/HTMLText';
+export { HTMLTextStyle, type HTMLTextStyleOptions } from './text/html/HTMLTextStyle';
 export { RendererBase, type RendererOptions, type RenderOptions, type GenerateTextureOptions } from './gpu/Renderer';
 export { WebGPURenderer, WebGPURenderer as Renderer } from './gpu/WebGPURenderer';
 export type { RenderSurface } from './gpu/renderTargets';

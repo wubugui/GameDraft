@@ -26,6 +26,7 @@ class FakeCollector implements RenderCollector {
     this.items.push(e);
   }
   addCustom(): void {}
+  addUnbatched(): void {}
   pushFilter(): void {}
   popFilter(): void {}
   pushMask(): void {}
