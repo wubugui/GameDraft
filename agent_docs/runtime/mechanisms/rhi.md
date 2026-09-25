@@ -93,8 +93,12 @@ last_governed: 2026-09-25
 - 画布后备缓冲只在 `runFrame` 期内可用,且**第一次当 pass 目标时才向画布取纹理**;没画画布的帧不碰画布。
 - 管线建好后首次使用前 await `pipeline.ready`,否则 luma 可能跳过 draw(计入 `skippedDraws` 并告警一次)。
 - bind group 由 luma 后端按「着色器声明的每个绑定所指资源的身份(+ 缓冲区段偏移 / 尺寸、纹理当前采样器)」缓存在管线上
-  (照 Pixi 8 的 BindGroupSystem),命中时直接设给原生 pass、不经 luma 的 setBindings;依赖 luma 9.4 render pass 的
-  `bindingsPipeline` 字段(`LumaRhiDevice.test.ts` 有一条守着,升级 luma 时先看它)。
+  (照 Pixi 8 的 BindGroupSystem),命中时直接设给原生 pass、不经 luma 的 setBindings。
+- render pass 热路径(setPipeline / bind group / 顶点流 / 索引 / draw / viewport / scissor)不经 luma 的 RenderPass,
+  直接调原生 `GPURenderPassEncoder`,并照 Pixi 8 GpuEncoderSystem 按 pass 记已绑状态、相同不重发(luma 那条路每个 draw
+  都重设全部顶点缓冲、逐槽分配日志参数,每次 setPipeline 还分配闭包 + Promise)。原生顶点槽 / 偏移取自 luma 9.4
+  `WebGPUVertexArray` 的 `resolvedBufferSlots` / `logicalBufferSlots`(建管线时缺了直接报 backend;
+  `LumaRhiDevice.test.ts` 有一条拿 luma 自己的 bindBeforeRender 对照,升级 luma 时先看它)。
 - 图像源上传(`uploadImage`)可能有 ±2 的舍入:浏览器解码 / 拷贝链路内部会做一次预乘往返;没有被乘上 alpha。
 - 云端容器里**无头** Chromium 的 WebGPU 呈现到画布会丢设备(裸 WebGPU 也一样);离屏与 compute 正常。
   **有头**(`xvfb-run`)+ `--enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader` 上屏正常(2026-09-25 实测),

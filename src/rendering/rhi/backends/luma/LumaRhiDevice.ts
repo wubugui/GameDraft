@@ -248,9 +248,11 @@ class LumaPipelineState {
 
 class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implements RhiRenderPipeline {
   private readonly state: LumaPipelineState;
-  /** 顶点流名与 luma 逻辑缓冲槽(数组形式,draw 时不走 Map 迭代器) */
+  /** 顶点流名(数组形式,draw 时不走 Map 迭代器) */
   readonly streamNames: readonly string[];
-  readonly streamSlotList: readonly number[];
+  /** 原生顶点缓冲槽:第 i 个槽绑 streamNames[vertexSlotStream[i]](-1 = 没有对应的流,不绑),偏移 vertexSlotOffset[i] */
+  readonly vertexSlotStream: readonly number[];
+  readonly vertexSlotOffset: readonly number[];
   readonly bindings: LumaBindingPlan;
 
   constructor(
@@ -270,7 +272,10 @@ class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implement
   ) {
     super('render-pipeline', label, scope, releases);
     this.streamNames = [...streamSlots.keys()];
-    this.streamSlotList = [...streamSlots.values()];
+    const physical = resolvePhysicalVertexSlots(vertexArray, label);
+    const logical = [...streamSlots.values()];
+    this.vertexSlotStream = physical.map((slot) => logical.indexOf(slot.logicalSlot));
+    this.vertexSlotOffset = physical.map((slot) => slot.bindingOffset);
     this.bindings = new LumaBindingPlan(handle.shaderLayout);
     this.state = new LumaPipelineState(waitPipelineReady(label, [handle], shaders, [creationError]), onFail);
   }
@@ -900,9 +905,16 @@ class LumaCommandList implements RhiCommandList {
   }
 }
 
-/** luma 9.4 WebGPURenderPass 里 draw 前校验用的字段(`setPipeline` 之后 `setBindings` 过没有看它) */
-type LumaRenderPassInternals = RenderPass & { handle: GPURenderPassEncoder; pipeline: unknown; bindingsPipeline: unknown };
+/** luma 9.4 WebGPURenderPass 的原生 pass 句柄 */
+type LumaRenderPassInternals = RenderPass & { handle: GPURenderPassEncoder };
 
+/**
+ * render pass 录制。热路径(setPipeline / setBindings / 顶点流 / 索引 / draw)不经 luma 的 RenderPass:
+ * luma 每次 setPipeline 都新建闭包 + popErrorScope 的 Promise,每个 draw 都经顶点数组 bindBeforeRender
+ * 重设全部顶点 / 索引缓冲,且逐槽拼日志参数(关了日志也照样分配)。这里照 Pixi 8 GpuEncoderSystem:
+ * 记下本 pass 已绑的原生管线 / bind group / 顶点缓冲 / 索引缓冲,只在变了时下发原生调用,draw 直接调原生。
+ * (WebGPU 里这些绑定状态跨 setPipeline 保留、只在 pass 内有效,所以每个 pass 各记一份。)
+ */
 class LumaRenderPassEncoder implements RhiRenderPassEncoder {
   private pipeline: LumaRhiRenderPipeline | null = null;
   private bindingsSet = false;
@@ -911,10 +923,16 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
   private readonly streams = new Map<string, LumaRhiBuffer>();
   private indexBuffer: LumaRhiBuffer | null = null;
   private ended = false;
-  private readonly native: LumaRenderPassInternals;
-  /** 交给 luma 的 draw 参数(逐 draw 复用,不每次新建) */
-  private readonly drawArgs = { vertexCount: 0, instanceCount: 1, firstVertex: 0, firstInstance: 0, isInstanced: false };
-  private readonly drawIndexedArgs = { indexCount: 0, instanceCount: 1, firstIndex: 0, baseVertex: 0, firstInstance: 0, isInstanced: false };
+  private readonly native: GPURenderPassEncoder;
+  /** 本 pass 已下发给原生层的状态(相同就不再下发) */
+  private boundPipeline: GPURenderPipeline | null = null;
+  private readonly boundGroups: (GPUBindGroup | undefined)[] = [];
+  private readonly boundVertex: (GPUBuffer | undefined)[] = [];
+  private readonly boundVertexOffset: number[] = [];
+  private boundIndex: GPUBuffer | null = null;
+  private boundIndexFormat: GPUIndexFormat | null = null;
+  /** draw 时按流序号取缓冲(逐 draw 复用) */
+  private readonly drawStreams: LumaRhiBuffer[] = [];
 
   constructor(
     private readonly device: LumaRhiDevice,
@@ -924,7 +942,7 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     private readonly label: string,
     private readonly stats: RhiFrameStats,
   ) {
-    this.native = pass as LumaRenderPassInternals;
+    this.native = (pass as LumaRenderPassInternals).handle;
   }
 
   setPipeline(pipeline: RhiRenderPipeline): void {
@@ -945,7 +963,13 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
       );
     }
     this.skipping = p.failed;
-    if (!this.skipping) this.pass.setPipeline(p.handle);
+    if (!this.skipping) {
+      const native = p.handle.handle as GPURenderPipeline;
+      if (native !== this.boundPipeline) {
+        this.native.setPipeline(native);
+        this.boundPipeline = native;
+      }
+    }
     this.pipeline = p;
     this.bindingsSet = false;
   }
@@ -959,10 +983,11 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     const groups = p.bindings.resolve(this.device, p.handle, bindings, p.label, this.list);
     for (let g = 0; g < groups.length; g++) {
       const bg = groups[g];
-      if (bg) this.native.handle.setBindGroup(g, bg);
+      if (bg && bg !== this.boundGroups[g]) {
+        this.native.setBindGroup(g, bg);
+        this.boundGroups[g] = bg;
+      }
     }
-    // bind group 直接设给了原生 pass,luma 的 draw 仍要看到「这条管线 setBindings 过」
-    this.native.bindingsPipeline = this.native.pipeline;
     this.bindingsSet = true;
   }
 
@@ -991,41 +1016,30 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
 
   /** 坐标左上角为原点 */
   setViewport(x: number, y: number, width: number, height: number): void {
-    this.pass.setParameters({ viewport: [x, y, width, height, 0, 1] });
+    this.native.setViewport(x, y, width, height, 0, 1);
   }
 
   setScissor(x: number, y: number, width: number, height: number): void {
-    this.pass.setParameters({ scissorRect: [x, y, width, height] });
+    this.native.setScissorRect(x, y, width, height);
   }
 
   setStencilReference(reference: number): void {
     // luma 的 setParameters 把参考值 0 当"没给"跳过,直接调底层
-    this.native.handle.setStencilReference(reference);
+    this.native.setStencilReference(reference);
   }
 
   draw(vertexCount: number, instanceCount = 1, firstVertex = 0, firstInstance = 0): void {
     const p = this.prepareDraw(false);
     if (!p) return;
-    const a = this.drawArgs;
-    a.vertexCount = vertexCount;
-    a.instanceCount = instanceCount;
-    a.firstVertex = firstVertex;
-    a.firstInstance = firstInstance;
-    a.isInstanced = instanceCount > 1;
-    this.count(p, this.pass.draw(a));
+    this.native.draw(vertexCount, instanceCount, firstVertex, firstInstance);
+    this.count(p, true);
   }
 
   drawIndexed(indexCount: number, instanceCount = 1, firstIndex = 0, baseVertex = 0, firstInstance = 0): void {
     const p = this.prepareDraw(true);
     if (!p) return;
-    const a = this.drawIndexedArgs;
-    a.indexCount = indexCount;
-    a.instanceCount = instanceCount;
-    a.firstIndex = firstIndex;
-    a.baseVertex = baseVertex;
-    a.firstInstance = firstInstance;
-    a.isInstanced = instanceCount > 1;
-    this.count(p, this.pass.draw(a));
+    this.native.drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
+    this.count(p, true);
   }
 
   end(): void {
@@ -1042,7 +1056,7 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     return p;
   }
 
-  /** 校验并把顶点流 / 索引交给 luma;当前管线已确认建坏时记一次跳过、返回 null */
+  /** 校验并把变了的顶点流 / 索引设给原生 pass;当前管线已确认建坏时记一次跳过、返回 null */
   private prepareDraw(indexed: boolean): LumaRhiRenderPipeline | null {
     const p = this.requirePipeline('draw');
     if (this.skipping) {
@@ -1052,20 +1066,39 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     if (!this.bindingsSet && p.handle.shaderLayout.bindings.length > 0) {
       throw new RhiError('invalid-usage', `管线「${p.label}」需要资源绑定:setPipeline 之后先 setBindings 再 draw`);
     }
-    const va = p.vertexArray;
     const names = p.streamNames;
+    const bufs = this.drawStreams;
     for (let i = 0; i < names.length; i++) {
       const buf = this.streams.get(names[i]);
       if (!buf) throw new RhiError('invalid-usage', `管线「${p.label}」的顶点流「${names[i]}」没绑定缓冲`);
       if (buf.destroyed) buf.assertAlive(`顶点流「${names[i]}」`);
-      va.setBuffer(p.streamSlotList[i], buf.handle);
+      bufs[i] = buf;
     }
     if (indexed) {
-      if (!this.indexBuffer) throw new RhiError('invalid-usage', `drawIndexed 之前没 setIndexBuffer(管线「${p.label}」)`);
-      this.indexBuffer.assertAlive('索引缓冲');
-      va.setIndexBuffer(this.indexBuffer.handle);
+      const ib = this.indexBuffer;
+      if (!ib) throw new RhiError('invalid-usage', `drawIndexed 之前没 setIndexBuffer(管线「${p.label}」)`);
+      ib.assertAlive('索引缓冲');
+      const native = ib.handle.handle as GPUBuffer;
+      const format = ib.indexFormat as GPUIndexFormat;
+      if (native !== this.boundIndex || format !== this.boundIndexFormat) {
+        this.native.setIndexBuffer(native, format);
+        this.boundIndex = native;
+        this.boundIndexFormat = format;
+      }
     }
-    this.pass.setVertexArray(va);
+    const slotStream = p.vertexSlotStream;
+    for (let slot = 0; slot < slotStream.length; slot++) {
+      const stream = slotStream[slot];
+      if (stream < 0) continue;
+      const native = bufs[stream].handle.handle as GPUBuffer;
+      const offset = p.vertexSlotOffset[slot];
+      if (native !== this.boundVertex[slot] || offset !== this.boundVertexOffset[slot]) {
+        this.native.setVertexBuffer(slot, native, offset);
+        this.boundVertex[slot] = native;
+        this.boundVertexOffset[slot] = offset;
+      }
+    }
+    bufs.length = 0;
     return p;
   }
 
@@ -1686,6 +1719,28 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
 }
 
 // ───────────────────────────── 辅助
+
+/** luma 9.4 WebGPUVertexArray 推好的槽位(与建管线时的 GPUVertexBufferLayout 同一份推导) */
+type LumaWebGpuVertexArrayInternals = VertexArray & {
+  resolvedBufferSlots?: readonly { bufferName: string; shaderSlot: number; bindingOffset: number }[];
+  logicalBufferSlots?: Readonly<Record<string, number>>;
+};
+
+/**
+ * 原生顶点缓冲槽 → 逻辑缓冲槽 + 偏移。照 luma WebGPUVertexArray.bindBeforeRender 的映射
+ * (`logicalBufferSlots[bufferName] ?? shaderSlot`),draw 时由 RHI 自己按这张表设原生顶点缓冲。
+ */
+function resolvePhysicalVertexSlots(va: VertexArray, label: string): { logicalSlot: number; bindingOffset: number }[] {
+  const { resolvedBufferSlots, logicalBufferSlots } = va as LumaWebGpuVertexArrayInternals;
+  if (!resolvedBufferSlots || !logicalBufferSlots) {
+    throw new RhiError('backend', `管线「${label}」:luma 顶点数组缺 resolvedBufferSlots / logicalBufferSlots(luma 版本变了?)`);
+  }
+  const out: { logicalSlot: number; bindingOffset: number }[] = [];
+  for (const r of resolvedBufferSlots) {
+    out[r.shaderSlot] = { logicalSlot: logicalBufferSlots[r.bufferName] ?? r.shaderSlot, bindingOffset: r.bindingOffset };
+  }
+  return out;
+}
 
 /** GPUTextureUsage 位 → RHI 纹理用途位(数值取自 WebGPU 规范,避免在非浏览器环境依赖全局常量) */
 function fromGpuTextureUsage(usage: number): number {

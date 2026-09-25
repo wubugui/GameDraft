@@ -5,7 +5,6 @@
  * - destroy 拆掉画布上下文
  * - 图像上传的 flipY 不支持就当场报,不静默丢
  */
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -72,7 +71,7 @@ describe('建坏的管线只丢它自己的 draw(D7)', () => {
     });
     expect(frame()).toBe(true);
     expect(fake.log.filter((c) => c[0] === 'setPipeline')).toEqual([['setPipeline', { nativePipeline: 'good' }]]);
-    expect(fake.log.filter((c) => c[0] === 'draw')).toEqual([['draw', 6]]);
+    expect(fake.log.filter((c) => c[0] === 'draw')).toEqual([['draw', 6, 1, 0, 0]]);
     expect(fake.log.some((c) => c[0] === 'submit')).toBe(true);
     expect(dev.lastFrameStats).toMatchObject({ draws: 1, skippedDraws: 1 });
 
@@ -173,9 +172,8 @@ describe('bind group 按资源身份缓存(D12)', () => {
     })).toBe(true);
     expect(fake.counts.bindGroups).toBe(1);
     expect(dev.lastFrameStats.draws).toBe(draws);
-    const sets = fake.log.filter((c) => c[0] === 'setBindGroup');
-    expect(sets).toHaveLength(draws);
-    expect(new Set(sets.map((c) => c[2])).size).toBe(1);
+    // 同一个 bind group 已绑着就不重设(Pixi GpuEncoderSystem 同理)
+    expect(fake.log.filter((c) => c[0] === 'setBindGroup')).toHaveLength(1);
 
     // 下一帧同样的资源:仍然命中
     dev.runFrame((f) => {
@@ -237,12 +235,134 @@ describe('bind group 按资源身份缓存(D12)', () => {
     expect(draw({ u: ubo, uTex: tex })).toBe(false);
     expect(diags[diags.length - 1]?.code).toBe('destroyed-resource');
   });
+});
 
-  it('luma 9.4 的 render pass 仍以 bindingsPipeline 判「setBindings 过没有」(RHI 绕过 luma 直接设 bind group 依赖这一点)', () => {
-    const req = createRequire(import.meta.url);
-    const entry = req.resolve('@luma.gl/webgpu');
-    const src = readFileSync(join(dirname(entry), 'adapter/resources/webgpu-render-pass.js'), 'utf8');
-    expect(src).toContain('this.bindingsPipeline !== this.pipeline');
+const TWO_STREAM_WGSL = /* wgsl */ `
+@vertex fn vs(@location(0) aPos: vec2<f32>, @location(1) aUV: vec2<f32>) -> @builtin(position) vec4<f32> { return vec4<f32>(aPos + aUV, 0.0, 1.0); }
+@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }
+`;
+
+/** 原生 render pass 上的状态设置 / draw,转成好比对的短串 */
+function nativeState(log: readonly unknown[][]): string[] {
+  const out: string[] = [];
+  for (const c of log) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const a = c as [string, ...any[]];
+    if (a[0] === 'setPipeline') out.push(`pipe:${a[1].nativePipeline}`);
+    else if (a[0] === 'setBindGroup') out.push(`bg${a[1]}:#${a[2].bindGroup}`);
+    else if (a[0] === 'setVertexBuffer') out.push(`vb${a[1]}:${a[2].buffer}@${a[3]}`);
+    else if (a[0] === 'setIndexBuffer') out.push(`ib:${a[1].buffer}:${a[2]}`);
+    else if (a[0] === 'draw' || a[0] === 'drawIndexed') out.push(`${a[0]}(${a.slice(1).join(',')})`);
+  }
+  return out;
+}
+
+describe('pass 编码器热路径只下发变了的原生状态(D12,照 Pixi 8 GpuEncoderSystem)', () => {
+  function streamSetup() {
+    const s = setup();
+    const { dev } = s;
+    const shader = dev.rootScope.createShader({ label: 'bound', wgsl: BOUND_WGSL });
+    const mk = (label: string, cullMode?: 'back') => dev.rootScope.createRenderPipeline({
+      label, shader, colorFormats: ['bgra8unorm'], cullMode,
+      vertexBuffers: [{ name: 'pos', stride: 8, attributes: [{ name: 'aPos', format: 'float32x2', offset: 0 }] }],
+    });
+    const ubo = dev.rootScope.createBuffer({ label: 'ubo', size: 1024, usage: RhiBufferUsage.UNIFORM | RhiBufferUsage.COPY_DST });
+    const vboA = dev.rootScope.createBuffer({ label: 'vboA', size: 64, usage: RhiBufferUsage.VERTEX });
+    const vboB = dev.rootScope.createBuffer({ label: 'vboB', size: 64, usage: RhiBufferUsage.VERTEX });
+    const ibo = dev.rootScope.createBuffer({ label: 'ibo', size: 64, usage: RhiBufferUsage.INDEX, indexFormat: 'uint16' });
+    const tex = dev.rootScope.createTexture({ label: 'tex', width: 4, height: 4, format: 'rgba8unorm', usage: RhiTextureUsage.SAMPLED });
+    return { ...s, p1: mk('p1'), p2: mk('p2', 'back'), ubo, vboA, vboB, ibo, tex };
+  }
+
+  it('重复的相同 draw:原生 setPipeline / setBindGroup / setVertexBuffer / setIndexBuffer 各只下发一次,draw 直接走原生', () => {
+    const { fake, dev, p1, ubo, vboA, ibo, tex } = streamSetup();
+    const draws = 200;
+    expect(dev.runFrame((f) => {
+      const pass = f.commands.beginRenderPass({ label: 'main', target: f.swapchain });
+      for (let i = 0; i < draws; i++) {
+        pass.setPipeline(p1);
+        pass.setBindings({ u: { buffer: ubo, offset: 0, size: 16 }, uTex: tex });
+        pass.setVertexBuffer('pos', vboA);
+        pass.setIndexBuffer(ibo);
+        pass.drawIndexed(6, 1, 3);
+      }
+      pass.end();
+    })).toBe(true);
+    const state = nativeState(fake.log);
+    expect(state.filter((c) => !c.startsWith('drawIndexed'))).toEqual(['pipe:p1', 'bg0:#1', 'ib:ibo:uint16', 'vb0:vboA@0']);
+    expect(state.filter((c) => c.startsWith('drawIndexed'))).toEqual(new Array(draws).fill('drawIndexed(6,1,3,0,0)'));
+    expect(dev.lastFrameStats.draws).toBe(draws);
+  });
+
+  it('状态变了才重发;换管线后回来重设 bind group;新 pass 从零开始', () => {
+    const { fake, dev, p1, p2, ubo, vboA, vboB, ibo, tex } = streamSetup();
+    const b = () => ({ u: { buffer: ubo, offset: 0, size: 16 }, uTex: tex });
+    expect(dev.runFrame((f) => {
+      for (let n = 0; n < 2; n++) {
+        const pass = f.commands.beginRenderPass({ label: `pass${n}`, target: f.swapchain });
+        pass.setPipeline(p1); pass.setBindings(b()); pass.setVertexBuffer('pos', vboA); pass.setIndexBuffer(ibo); pass.drawIndexed(3);
+        pass.setPipeline(p1); pass.setBindings(b()); pass.setVertexBuffer('pos', vboB); pass.setIndexBuffer(ibo); pass.drawIndexed(3);
+        pass.setPipeline(p2); pass.setBindings(b()); pass.setVertexBuffer('pos', vboB); pass.setIndexBuffer(ibo); pass.drawIndexed(3);
+        pass.setPipeline(p1); pass.setBindings(b()); pass.setVertexBuffer('pos', vboB); pass.setIndexBuffer(null); pass.draw(3);
+        pass.setPipeline(p1); pass.setBindings(b()); pass.setVertexBuffer('pos', vboB); pass.setIndexBuffer(ibo); pass.drawIndexed(3);
+        pass.end();
+      }
+    })).toBe(true);
+    const onePass = [
+      'pipe:p1', 'bg0:#1', 'ib:ibo:uint16', 'vb0:vboA@0', 'drawIndexed(3,1,0,0,0)',
+      'vb0:vboB@0', 'drawIndexed(3,1,0,0,0)',
+      'pipe:p2', 'bg0:#2', 'drawIndexed(3,1,0,0,0)',
+      'pipe:p1', 'bg0:#1', 'draw(3,1,0,0)',
+      'drawIndexed(3,1,0,0,0)',
+    ];
+    expect(nativeState(fake.log)).toEqual([...onePass, ...onePass]);
+  });
+
+  it('缓冲重建(新的原生缓冲)照样重设顶点流', () => {
+    const { fake, dev, p1, ubo, tex } = streamSetup();
+    let vbo = dev.rootScope.createBuffer({ label: 'v1', size: 64, usage: RhiBufferUsage.VERTEX });
+    expect(dev.runFrame((f) => {
+      const pass = f.commands.beginRenderPass({ label: 'main', target: f.swapchain });
+      pass.setPipeline(p1); pass.setBindings({ u: ubo, uTex: tex }); pass.setVertexBuffer('pos', vbo); pass.draw(3);
+      vbo = dev.rootScope.createBuffer({ label: 'v2', size: 64, usage: RhiBufferUsage.VERTEX });
+      pass.setPipeline(p1); pass.setBindings({ u: ubo, uTex: tex }); pass.setVertexBuffer('pos', vbo); pass.draw(3);
+      pass.end();
+    })).toBe(true);
+    expect(nativeState(fake.log).filter((c) => c.startsWith('vb'))).toEqual(['vb0:v1@0', 'vb0:v2@0']);
+  });
+
+  it('多个顶点流:原生槽位 / 偏移与 luma 自己的 WebGPUVertexArray.bindBeforeRender 一致', () => {
+    const { fake, dev } = setup();
+    const shader = dev.rootScope.createShader({ label: 'two', wgsl: TWO_STREAM_WGSL });
+    // 描述里的流顺序故意与着色器 location 顺序相反
+    const p = dev.rootScope.createRenderPipeline({
+      label: 'two', shader, colorFormats: ['bgra8unorm'],
+      vertexBuffers: [
+        { name: 'uv', stride: 8, attributes: [{ name: 'aUV', format: 'float32x2', offset: 0 }] },
+        { name: 'pos', stride: 8, attributes: [{ name: 'aPos', format: 'float32x2', offset: 0 }] },
+      ],
+    });
+    const uv = dev.rootScope.createBuffer({ label: 'uvBuf', size: 64, usage: RhiBufferUsage.VERTEX });
+    const pos = dev.rootScope.createBuffer({ label: 'posBuf', size: 64, usage: RhiBufferUsage.VERTEX });
+    expect(dev.runFrame((f) => {
+      const pass = f.commands.beginRenderPass({ label: 'main', target: f.swapchain });
+      pass.setPipeline(p);
+      pass.setVertexBuffer('uv', uv);
+      pass.setVertexBuffer('pos', pos);
+      pass.draw(3);
+      pass.end();
+    })).toBe(true);
+    const got = nativeState(fake.log).filter((c) => c.startsWith('vb'));
+
+    // 同一个顶点数组交给 luma 自己绑,作为基准
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const va = (p as unknown as { vertexArray: any }).vertexArray;
+    va.setBuffer(va.getBufferSlot('uv'), (uv as unknown as { handle: unknown }).handle);
+    va.setBuffer(va.getBufferSlot('pos'), (pos as unknown as { handle: unknown }).handle);
+    const ref: unknown[][] = [];
+    va.bindBeforeRender({ handle: { setVertexBuffer: (...a: unknown[]) => ref.push(['setVertexBuffer', ...a]), setIndexBuffer() {} } });
+    expect(got).toEqual(nativeState(ref));
+    expect([...got].sort()).toEqual(['vb0:posBuf@0', 'vb1:uvBuf@0']);
   });
 });
 

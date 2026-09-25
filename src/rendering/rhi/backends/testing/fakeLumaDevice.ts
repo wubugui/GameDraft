@@ -5,11 +5,22 @@
  *   只把最底层的「建 bind group / 取布局」换成计数桩。
  * - luma 这一层的 push / popErrorScope 是空操作(照 luma 关调试时的行为);原生 GPUDevice 桩有真正的错误作用域栈,
  *   `failCreate` 命中的对象在创建时往最近的匹配作用域里报错。
- * - 原生 pass 桩把调用记进 `log`;luma 的 render / compute pass 桩的 setBindings 与 draw 前校验照 luma 9.4
- *   WebGPURenderPass(经 BindGroupFactory 取 bind group 再设给原生 pass;`bindingsPipeline !== pipeline` 就抛)。
+ * - 原生 pass 桩把调用记进 `log`;luma 的 render / compute pass 桩照 luma 9.4 WebGPURenderPass:setPipeline 直接转原生,
+ *   setBindings 经 BindGroupFactory 取 bind group 再设给原生 pass,draw 前校验(`bindingsPipeline !== pipeline` 就抛)
+ *   后经顶点数组的 bindBeforeRender 设顶点 / 索引缓冲再 draw。
+ * - 顶点数组用 luma 真的 WebGPUVertexArray(物理槽位 / 逻辑槽位与真设备同一份推导)。
  */
-import { _getDefaultBindGroupFactory, getLogicalBufferSlots } from '@luma.gl/core';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { _getDefaultBindGroupFactory, luma } from '@luma.gl/core';
 import { scanWGSLInterface } from '@luma.gl/shadertools/wgsl';
+
+// WebGPUVertexArray 不在 @luma.gl/webgpu 的入口导出里,按包内路径取
+const lumaWebgpuDist = dirname(createRequire(import.meta.url).resolve('@luma.gl/webgpu'));
+const { WebGPUVertexArray } = (await import(
+  pathToFileURL(join(lumaWebgpuDist, 'adapter/resources/webgpu-vertex-array.js')).href
+)) as { WebGPUVertexArray: new (device: unknown, props: unknown) => unknown };
 
 export interface FakeLumaOptions {
   /** 编译信息里带 error 的着色器(按 id) */
@@ -78,13 +89,13 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
     label,
     setPipeline: (p: unknown) => log.push(['setPipeline', p]),
     setBindGroup: (g: number, bg: unknown) => log.push(['setBindGroup', g, bg]),
-    setVertexBuffer() {},
-    setIndexBuffer() {},
-    setViewport() {},
-    setScissorRect() {},
-    setStencilReference() {},
-    draw: (n: number) => log.push(['draw', n]),
-    drawIndexed: (n: number) => log.push(['drawIndexed', n]),
+    setVertexBuffer: (slot: number, b: unknown, offset?: number) => log.push(['setVertexBuffer', slot, b, offset ?? 0]),
+    setIndexBuffer: (b: unknown, format: unknown) => log.push(['setIndexBuffer', b, format]),
+    setViewport: (...a: number[]) => log.push(['setViewport', ...a]),
+    setScissorRect: (...a: number[]) => log.push(['setScissorRect', ...a]),
+    setStencilReference: (r: number) => log.push(['setStencilReference', r]),
+    draw: (n: number, ...rest: unknown[]) => log.push(['draw', n, ...rest]),
+    drawIndexed: (n: number, ...rest: unknown[]) => log.push(['drawIndexed', n, ...rest]),
     end: () => log.push(['pass.end', label]),
   });
 
@@ -92,7 +103,7 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
   class LumaRenderPass {
     pipeline: { handle: unknown; shaderLayout: { bindings: unknown[] } } | null = null;
     bindingsPipeline: unknown = null;
-    vertexArray: unknown = null;
+    vertexArray: { bindBeforeRender(pass: unknown): void } | null = null;
     constructor(readonly handle: ReturnType<typeof nativeRenderPass>) {}
     setPipeline(p: { handle: unknown; shaderLayout: { bindings: unknown[] } }) {
       this.pipeline = p;
@@ -103,7 +114,7 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
       this.bindingsPipeline = this.pipeline;
       setBindGroups(this.handle, this.pipeline, bindings, options?._bindGroupCacheKeys);
     }
-    setVertexArray(va: unknown) {
+    setVertexArray(va: { bindBeforeRender(pass: unknown): void }) {
       this.vertexArray = va;
     }
     setParameters() {}
@@ -112,6 +123,7 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
       if (this.pipeline.shaderLayout.bindings.length > 0 && this.bindingsPipeline !== this.pipeline) {
         throw new Error('RenderPass.setBindings() must be called after setPipeline() before draw()');
       }
+      this.vertexArray?.bindBeforeRender(this);
       if (o.indexCount !== undefined) this.handle.drawIndexed(o.indexCount);
       else this.handle.draw(o.vertexCount ?? 0);
       return true;
@@ -132,6 +144,7 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
     handle: gpu,
     limits: {
       maxTextureDimension2D: options.maxTextureSize ?? 8192,
+      maxVertexAttributes: 16,
       maxColorAttachments: 8,
       maxComputeWorkgroupSizeX: 256,
       maxComputeWorkgroupSizeY: 256,
@@ -139,6 +152,9 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
       maxComputeInvocationsPerWorkgroup: 256,
     },
     info: { vendor: 'fake', renderer: 'fake' },
+    // luma Resource 基类建对象时要的统计 / 用户数据
+    statsManager: luma.stats,
+    userData: {},
     preferredColorFormat: 'bgra8unorm',
     lost: new Promise(() => {}),
     isTextureFormatFilterable: () => false,
@@ -179,18 +195,11 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
       maybeFail(props.id);
       return { id: props.id, handle: { nativePipeline: props.id }, shaderLayout: { bindings: scanned.bindings }, destroy() {} };
     },
-    createVertexArray: (props: { shaderLayout: never; bufferLayout: never }) => {
-      const slots = getLogicalBufferSlots(props.shaderLayout, props.bufferLayout);
-      return {
-        getBufferSlot: (name: string) => slots[name] ?? null,
-        setBuffer() {},
-        setIndexBuffer() {},
-        destroy() {},
-      };
-    },
-    createBuffer: (props: { id: string; byteLength: number }) => ({
+    createVertexArray: (props: unknown) => new WebGPUVertexArray(device, props),
+    createBuffer: (props: { id: string; byteLength: number; indexType?: string }) => ({
       id: props.id,
       byteLength: props.byteLength,
+      indexType: props.indexType,
       handle: { buffer: props.id },
       write() {},
       readAsync: async () => new Uint8Array(props.byteLength),
