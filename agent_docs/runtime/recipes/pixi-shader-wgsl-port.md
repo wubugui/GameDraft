@@ -42,6 +42,11 @@ GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意
 - **补了 gpu 程序后资源分组会变**:原来全在第 99 组,之后按 WGSL 声明的组号走;WebGL 按组号升序分配纹理单元,
   所以 WGSL 里纹理的声明顺序要与原 resources 对象里的相对顺序一致,纹理单元才不挪(这是「GL 侧逐字节不变」的前提)。
 - 运行时换某个纹理资源(ping-pong 等)时,它的 `<名>Sampler` 要一起换,否则采样器挂在别的纹理上。
+- **共用同一份 GLSL 源的所有 Shader 必须在同一次改动里一起补上同一个 gpu 程序、同样的资源布局**:WebGL 侧
+  按 GLSL 程序缓存 uniform 同步函数,按第一个 Shader 的分组布局生成;布局不一致会让别的 Shader 的 uniform 错位。
+- 每个资源键都要在 WGSL 里有同名声明(掉进第 99 组 → WebGPU `setBindGroup(99)` 失败);Pixi 的解析要求
+  `var` / `var<uniform>` 后面正好一个空格。自定义 Geometry 属性按 WGSL `@location` 参数名匹配。
+- WGSL 不许给多分量 swizzle 赋值(`c.rgb /= c.a`),整向量重建。`discard` 之后不许 `textureSample`:采样挪到前面。
 - WGSL 模板字符串标 `/* wgsl */`,别标 `/* glsl */`(`glslSymbols.test.ts` 会把所有 `/* glsl */` 当 GLSL 检查)。
 - 共享 WGSL 函数文件可以直接引用一个模块作用域的 uniform 变量,只要每个包含它的程序都用同一个变量名声明它
   (WGSL 模块作用域不讲声明先后)。

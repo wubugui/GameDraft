@@ -93,6 +93,10 @@ breathe / fadeOut / gasp / stopNow。撤销覆盖时丢 JSON 缓存,下次显示
   工作台自己上传不预乘 `uPremul = 0`。两边别混。
 - 参数表只在 `src/data/breathingParams.json` 维护;名称(label)是给制作人的「参数文本」用的键,**不许重名**(单测守着)。
 
+- **着色本体有两份,算法改动两份一起改**:`breathingShade.glsl`(WebGL,工作台也切片用它,原样保留)与
+  `breathingShade.wgsl`(WebGPU,逐句对应)。改完跑 `node tools/render_parity/run.mjs --case 摆动呼吸淡入` 证明两边一致
+  (见 pixi-shader-wgsl-port)。
+
 ## 已知坑
 
 - 逐帧同步推进的调用方(工作台出片)不能靠 `fadeOut()` / `gasp()` 返回的 Promise 判"走完了"——微任务要等回到事件循环才跑;

@@ -56,6 +56,9 @@ last_governed: 2026-09-23
   ——"同一阵风同一拍"成立,"逐点采样同一个风矢量"不成立。
 - 纸钱躺在植被上取的是这一帧**画出来的**位移(按三角形插值),不另算公式。
 
+- **位移图 / 合成两个程序都有 GLSL 与 WGSL 两份**(`backgroundSway.ts` 里并排),算法改动两份一起改,改完跑
+  `node tools/render_parity/run.mjs --case 摆动呼吸淡入`;位移图在两后端间允许半精度 1 ulp 的插值舍入差(见 pixi-shader-wgsl-port)。
+
 ## 已知坑
 
 | 坑 | 症状 |
