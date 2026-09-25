@@ -17,6 +17,7 @@ import {
 import LIGHTING_CORE from './lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
 import { LC_WGSL, WR_CORE_WGSL } from './wgslChunks';
+import { samplerOf } from '../legacy/gpuSampler';
 
 /**
  * 场景光照 pass —— 把实体灯加到原画上，产出**线性 HDR 辐射场**。
@@ -731,8 +732,8 @@ void main(void) {
 // 绑定按 Pixi 网格约定:第 0 组 globalUniforms、第 1 组 localUniforms 由 Pixi 挂;本 pass 的
 // 纹理 / 采样器 / uniform 组全在第 2 组,变量名 = resources 键名。纹理的声明顺序与 resources
 // 对象里的相对顺序一致(WebGL 按组号、绑定号升序分配纹理单元,顺序不变 GL 侧才逐字节不变);
-// 采样器紧跟它的纹理(WebGL 侧不认识 *Sampler 这些键,Pixi 忽略)。probe / skyao 图集只用
-// textureLoad,不配采样器。sceneLight 结构体成员顺序 = JS 里 uniforms 的声明顺序。
+// 采样器紧跟它的纹理,取 samplerOf(source)(按参数共享、永不销毁;WebGL 侧不认识 *Sampler 这些键,
+// Pixi 忽略)。probe / skyao 图集只用 textureLoad,不配采样器。sceneLight 结构体成员顺序 = JS 里 uniforms 的声明顺序。
 //
 // 与 GLSL 的形式差异(数值不变):
 //   · 片元坐标只用插值出来的 vUv(离屏目标上两后端 uv(0,0) 都落在存储第 0 行,不翻转)。
@@ -1287,7 +1288,7 @@ export class SceneLightingPass {
     if (!sh) return;
     const src = (mask ?? Texture.WHITE).source;
     sh.resources.uSurfMask = src;
-    sh.resources.uSurfMaskSampler = src.style;
+    sh.resources.uSurfMaskSampler = samplerOf(src);
     const u = sh.resources.sceneLight?.uniforms;
     if (u) u.uSurfOn = mask ? 1 : 0;
     this.dirty = true;
@@ -1336,23 +1337,24 @@ export class SceneLightingPass {
         vertex: { source: BAKE_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: BAKE_WGSL, entryPoint: 'mainFragment' },
       },
-      // *Sampler:WGSL 的纹理要单独的采样器(WebGL 侧没有这些名字,Pixi 忽略);
-      // 换纹理的地方(update / setSurfaceMask)要把它的采样器一起换。probe / skyao 图集只 textureLoad,不配。
+      // *Sampler:WGSL 的纹理要单独的采样器(WebGL 侧没有这些名字,Pixi 忽略)。一律 samplerOf(source):
+      // 按采样参数共享、永不销毁,不挂在任何纹理的生命期上(直接放 source.style 的话纹理一销毁同组 BindGroup 就自毁);
+      // 换纹理的地方(update / setSurfaceMask)跟着换成 samplerOf(新纹理)。probe / skyao 图集只 textureLoad,不配。
       resources: {
         uPainting: this.painting.source,
-        uPaintingSampler: this.painting.source.style,
+        uPaintingSampler: samplerOf(this.painting.source),
         // 线扫前缀的两张 slab。solve() 之前先拿深度纹理占位（尺寸一致，
         // 内容不会被读到 —— uLightPx[i].w = 0 时 lightVisibilityPrefix 直接返回 1）。
         uPrefix0: this.geo.depth.source,
-        uPrefix0Sampler: this.geo.depth.source.style,
+        uPrefix0Sampler: samplerOf(this.geo.depth.source),
         uPrefix1: this.geo.depth.source,
-        uPrefix1Sampler: this.geo.depth.source.style,
+        uPrefix1Sampler: samplerOf(this.geo.depth.source),
         uNormal: this.geo.normal.source,
-        uNormalSampler: this.geo.normal.source.style,
+        uNormalSampler: samplerOf(this.geo.normal.source),
         uAlbedo: this.geo.albedo.source,
-        uAlbedoSampler: this.geo.albedo.source.style,
+        uAlbedoSampler: samplerOf(this.geo.albedo.source),
         uDepth: this.geo.depth.source,
-        uDepthSampler: this.geo.depth.source.style,
+        uDepthSampler: samplerOf(this.geo.depth.source),
         // 「GI体」视图的 probe 图集:创建期占位白图,开启视图时由 setProbeResources 换真图
         uPL1: Texture.WHITE.source,
         uPL2: Texture.WHITE.source,
@@ -1361,7 +1363,7 @@ export class SceneLightingPass {
         uSkyaoTex: Texture.WHITE.source,
         // 反光遮罩：没有表面材质区时拿白图占位（uSurfOn = 0，不会被读到）
         uSurfMask: Texture.WHITE.source,
-        uSurfMaskSampler: Texture.WHITE.source.style,
+        uSurfMaskSampler: samplerOf(Texture.WHITE.source),
         sceneLight: {
           uDepthTexSize: { value: new Float32Array(this.geo.depthSize), type: 'vec2<f32>' },
           uCal: { value: new Float32Array(this.geo.cal), type: 'vec3<f32>' },
@@ -1619,13 +1621,13 @@ export class SceneLightingPass {
       if (r) {
         if (s0) {
           r.uPrefix0 = s0.source;
-          r.uPrefix0Sampler = s0.source.style;
+          r.uPrefix0Sampler = samplerOf(s0.source);
         }
         // 只有一组时把第二张也指向第一张 —— 采样器不许悬空，
         // 而 uLightPx[i].w=0 保证那些通道根本不会被读。
         const p1 = (s1 ?? s0 ?? this.geo.depth).source;
         r.uPrefix1 = p1;
-        r.uPrefix1Sampler = p1.style;
+        r.uPrefix1Sampler = samplerOf(p1);
       }
     }
     renderer.render({ container: this.mesh, target: this.rt, clear: true });

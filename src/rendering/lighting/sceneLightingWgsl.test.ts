@@ -7,15 +7,17 @@
  * - WGSL 声明的每个绑定都要有资源;
  * - uniform 组:Pixi 按 JS 声明顺序、WGSL 对齐规则排偏移 ⇒ struct 成员名 / 类型 / 数组长度 / 顺序与 JS 逐项相同;
  * - 第 2 组的绑定号顺序 = resources 对象的键顺序(WebGL 按组号、绑定号升序分配纹理单元,顺序不变 GL 侧才逐字节不变);
- * - 每张 WGSL 里采样的纹理都有 `<名>Sampler`,且它就是**那张纹理**的采样状态 —— 运行时换纹理
- *   (setSurfaceMask / setSway / 线扫 slab)忘了换采样器,采样器就挂在别的纹理上。
+ * - 每张 WGSL 里采样的纹理都有 `<名>Sampler`,且它就是 `samplerOf(那张纹理)`(按采样参数共享、永不销毁的那份,
+ *   见 legacy/gpuSampler.ts)—— 运行时换纹理(setSurfaceMask / setSway)忘了换采样器,换上的纹理参数不同时
+ *   采样器就是错的(本测试换上的纹理故意用 nearest,与初始的 linear 不同)。
  * 用的是 Pixi 自己解析 WGSL 的结果(`gpuProgram.structsAndGroups`),与运行时同一口径;
  * 数组成员 Pixi 的正则抽不全(`array<vec4<f32>, 24>` 只抽到半截),这里自己按源码解析 struct。
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { DOMAdapter, Shader, Texture, UniformGroup, type TextureSource } from 'pixi.js';
+import { BufferImageSource, DOMAdapter, Shader, Texture, UniformGroup, type TextureSource } from 'pixi.js';
 
 import { defaultSceneLighting } from '../../data/sceneLightingDefault';
+import { samplerOf } from '../legacy/gpuSampler';
 import { LitBackground } from './LitBackground';
 import { SceneLightingPass, type SceneLightingGeometry } from './SceneLightingPass';
 
@@ -69,7 +71,7 @@ function checkShader(shader: Shader, jsResources: Record<string, unknown>, label
   expect(sampled, `${label}: 一处绑定纹理的采样都没抽到(正则失配)`).toBeGreaterThan(0);
 }
 
-/** 每个 <名>Sampler 资源都是 <名> 那张纹理自己的采样状态 */
+/** 每个 <名>Sampler 资源都是 samplerOf(<名> 那张纹理)(与它同采样参数的共享采样器) */
 function checkSamplersFollowTextures(shader: Shader, label: string): void {
   const r = shader.resources as Record<string, unknown>;
   const sg = shader.gpuProgram!.structsAndGroups as StructsAndGroups;
@@ -77,7 +79,7 @@ function checkSamplersFollowTextures(shader: Shader, label: string): void {
   for (const g of sg.groups) {
     if (!g.name.endsWith('Sampler')) continue;
     const texName = g.name.slice(0, -'Sampler'.length);
-    expect(r[g.name], `${label}: ${g.name} 不是 ${texName} 的采样状态(换纹理没换采样器)`).toBe((r[texName] as TextureSource).style);
+    expect(r[g.name], `${label}: ${g.name} 不是 samplerOf(${texName})(换纹理没换采样器 / 直接放了 style)`).toBe(samplerOf(r[texName] as TextureSource));
     n++;
   }
   expect(n).toBeGreaterThan(0);
@@ -99,6 +101,10 @@ describe('场景光照两级:WGSL 与 JS 资源对齐', () => {
   afterAll(() => { DOMAdapter.set(adapter0); vi.restoreAllMocks(); });
 
   const tex = () => Texture.from({ resource: new Uint8Array(16), width: 2, height: 2 } as never);
+  /** 换上去的纹理用 nearest:与初始的 linear 采样参数不同,换纹理漏换采样器才抓得到 */
+  const texNearest = () => new Texture({
+    source: new BufferImageSource({ resource: new Uint8Array(16), width: 2, height: 2, scaleMode: 'nearest' }),
+  });
   const geo = (): SceneLightingGeometry => ({
     normal: tex(), albedo: tex(), depth: tex(), depthSize: [2, 2], cal: [1, 1, 1], wuPerQUnit: 100,
     depthMapping: [0, 2, -1], mRows: [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
@@ -126,7 +132,7 @@ describe('场景光照两级:WGSL 与 JS 资源对齐', () => {
     checkShader(shader, js, '烘焙');
     checkGlslSamplersInWgsl(shader, '烘焙');
     checkSamplersFollowTextures(shader, '烘焙 · 初始');
-    pass.setSurfaceMask(tex());
+    pass.setSurfaceMask(texNearest());
     checkSamplersFollowTextures(shader, '烘焙 · 换上遮罩');
     pass.setSurfaceMask(null);
     checkSamplersFollowTextures(shader, '烘焙 · 摘掉遮罩');
@@ -141,7 +147,7 @@ describe('场景光照两级:WGSL 与 JS 资源对齐', () => {
     checkShader(shader, js, '显示');
     checkGlslSamplersInWgsl(shader, '显示');
     checkSamplersFollowTextures(shader, '显示 · 初始');
-    bg.setSway({ uvMap: tex(), radiancePlate: tex(), depthPlate: tex() });
+    bg.setSway({ uvMap: texNearest(), radiancePlate: texNearest(), depthPlate: texNearest() });
     checkSamplersFollowTextures(shader, '显示 · 接上草木');
     bg.setSway(null);
     checkSamplersFollowTextures(shader, '显示 · 拆下草木');

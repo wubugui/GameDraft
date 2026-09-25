@@ -6,6 +6,7 @@ import LIGHTING_CORE from './lightingCore.glsl?raw';
 import type { SceneLightingGeometry } from './SceneLightingPass';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
 import { LC_WGSL, WR_CORE_WGSL } from './wgslChunks';
+import { samplerOf } from '../legacy/gpuSampler';
 
 /**
  * 被点亮的背景 —— 两级结构的**第二级（逐帧）**。
@@ -136,7 +137,7 @@ void main(void) {
 // 拼接:WR_CORE / LIGHTING_CORE 的 WGSL 切片(wgslChunks)各拼一次,片段一个绑定都不读。
 // 绑定按 Pixi 网格约定:第 0 / 1 组由 Pixi 挂,本类的纹理 / 采样器 / uniform 组在第 2 组,
 // 变量名 = resources 键名,纹理声明顺序 = resources 里的相对顺序(WebGL 纹理单元不挪);
-// 每张纹理紧跟一个 *Sampler(WebGL 侧不认识这些键,Pixi 忽略),setSway 换图时一并换。
+// 每张纹理紧跟一个 *Sampler = samplerOf(source)(WebGL 侧不认识这些键,Pixi 忽略),setSway 换图时一并换。
 // litBg 结构体成员顺序 = JS 里 uniforms 的声明顺序。
 //
 // 与 GLSL 的形式差异(数值不变):露出处那两次采样在「cover < 0.999」这个逐像素分支里,
@@ -279,18 +280,19 @@ export class LitBackground {
         vertex: { source: WGSL, entryPoint: 'mainVertex' },
         fragment: { source: WGSL, entryPoint: 'mainFragment' },
       },
-      // *Sampler:WGSL 的纹理要单独的采样器(WebGL 侧没有这些名字,Pixi 忽略);setSway 换图时一并换
+      // *Sampler:WGSL 的纹理要单独的采样器(WebGL 侧没有这些名字,Pixi 忽略)。一律 samplerOf(source)
+      // (按参数共享、永不销毁,不挂在纹理的生命期上);setSway 换图时跟着换成 samplerOf(新图)
       resources: {
         uRadiance: radiance.source,
-        uRadianceSampler: radiance.source.style,
+        uRadianceSampler: samplerOf(radiance.source),
         uDepth: geo.depth.source,
-        uDepthSampler: geo.depth.source.style,
+        uDepthSampler: samplerOf(geo.depth.source),
         uUvMap: Texture.EMPTY.source,
-        uUvMapSampler: Texture.EMPTY.source.style,
+        uUvMapSampler: samplerOf(Texture.EMPTY.source),
         uRadiancePlate: radiance.source,
-        uRadiancePlateSampler: radiance.source.style,
+        uRadiancePlateSampler: samplerOf(radiance.source),
         uDepthPlate: geo.depth.source,
-        uDepthPlateSampler: geo.depth.source.style,
+        uDepthPlateSampler: samplerOf(geo.depth.source),
         litBg: {
           uSwayOn: { value: 0, type: 'i32' },
           uCal: { value: new Float32Array(geo.cal), type: 'vec3<f32>' },
@@ -325,11 +327,11 @@ export class LitBackground {
     const r = this.shader.resources as Record<string, unknown> & { litBg: { uniforms: { uSwayOn: number } } };
     const use = sw ?? this.placeholders;
     r.uUvMap = use.uvMap.source;
-    r.uUvMapSampler = use.uvMap.source.style;
+    r.uUvMapSampler = samplerOf(use.uvMap.source);
     r.uRadiancePlate = use.radiancePlate.source;
-    r.uRadiancePlateSampler = use.radiancePlate.source.style;
+    r.uRadiancePlateSampler = samplerOf(use.radiancePlate.source);
     r.uDepthPlate = use.depthPlate.source;
-    r.uDepthPlateSampler = use.depthPlate.source.style;
+    r.uDepthPlateSampler = samplerOf(use.depthPlate.source);
     r.litBg.uniforms.uSwayOn = sw ? 1 : 0;
   }
 

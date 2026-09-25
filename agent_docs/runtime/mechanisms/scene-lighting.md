@@ -195,7 +195,7 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 
 - 烘焙 pass(`SceneLightingPass`)与显示级(`LitBackground`)都有 GLSL 与 WGSL 两份(同文件并排),改合成式 / 灯循环 /
   镜面 / 细节法线 / 雾要两份一起改,改完跑 `node tools/render_parity/run.mjs --case 场景光照`(`sceneLightingWgsl.test.ts`
-  在 Node 里钉资源键、uniform 布局、换纹理时采样器跟着换)。WGSL 侧细节法线的 smoothstep 是手写定义式,别换回内建
+  在 Node 里钉资源键、uniform 布局、采样器一律 samplerOf 且换纹理时跟着换)。WGSL 侧细节法线的 smoothstep 是手写定义式,别换回内建
   (内建与 GLSL 差个位 ulp,被 GGX 近峰值放大到几十 ulp,见文件内注释)。
 - **换表面材质区的遮罩:先换绑、再销毁旧的**(Pixi 坑②同一个):旧遮罩还绑在两份 shader 的 BindGroup 上时 `destroy(true)`,
   BindGroup 永久烧毁,之后每帧 `setTime` 都抛、整条光照停摆。只在**运行时改区**时触发(工作台联动一改表面区就中),
