@@ -54,7 +54,7 @@ function capture(y: number, h: number, filtered: boolean): Captured {
   const draw = cmds[pi + 1];
   expect(draw.t).toBe('draw');
   const a = st.builder.arena.f32 as Float32Array;
-  const o = draw.bindings.globalUniforms.arena / 4;
+  const o = draw.bindings.globalUniforms.offset / 4;
   // UBO 里 mat3x3 列跨 4 个 float;uResolution 在 28,uRoundFlipY 在 30
   const out: Captured = {
     P: { d: a[o + 5], ty: a[o + 9] },
