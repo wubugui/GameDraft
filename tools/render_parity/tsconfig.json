@@ -4,10 +4,13 @@
     "baseUrl": "../..",
     "paths": {
       "@src/*": ["src/*"],
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@parity-side": ["tools/render_parity/side_cand.ts"],
+      "pixi.js": ["src/engine2d/index.ts"]
     },
     "types": ["node", "vite/client"],
     "noEmit": true
   },
-  "include": ["./*.ts", "./cases/*.ts"]
+  "include": ["./*.ts", "./cases/*.ts"],
+  "exclude": ["./side_ref.ts"]
 }

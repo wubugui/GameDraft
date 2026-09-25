@@ -27,14 +27,15 @@ import {
   LC_WGSL, LIGHTING_CORE_WGSL, WORLD_RECONSTRUCT_WGSL, WR_CORE_WGSL, WR_SPRITE_WGSL, WR_TEX_WGSL,
 } from '@src/rendering/lighting/wgslChunks';
 import { MAX_STATIC_LIGHTS, type PackedLights } from '@src/rendering/lighting/lightPacking';
-import {
-  CHAR_LIGHT_COMMON_GLSL, CHAR_LIGHT_COMMON_WGSL,
-  PROBE_SAMPLING_GLSL, PROBE_SAMPLING_WGSL, SKYAO_SAMPLING_GLSL, SKYAO_SAMPLING_WGSL,
-} from '@src/rendering/CharacterShadingFilter';
-import {
-  applyCharLights, CHAR_LIGHTS_WGSL, createCharLightUniforms,
-  ENTITY_SCENE_LIGHTS_GLSL, ENTITY_SCENE_LIGHTS_WGSL,
-} from '@src/rendering/CharacterLitSprite';
+import { CHAR_LIGHT_COMMON_GLSL, PROBE_SAMPLING_GLSL, SKYAO_SAMPLING_GLSL } from '@src/rendering/CharacterShadingFilter';
+import { applyCharLights, createCharLightUniforms, ENTITY_SCENE_LIGHTS_GLSL } from '@src/rendering/CharacterLitSprite';
+// WGSL 常量是本分支才导出的:按命名空间取(master 的模块没有这些导出,参考侧取到 undefined,
+// 参考侧只跑 GLSL、从不读它们;具名 import 会让 master 那侧的模块链接直接失败)
+import * as CSF from '@src/rendering/CharacterShadingFilter';
+import * as CLS from '@src/rendering/CharacterLitSprite';
+
+const { CHAR_LIGHT_COMMON_WGSL, PROBE_SAMPLING_WGSL, SKYAO_SAMPLING_WGSL } = CSF;
+const { CHAR_LIGHTS_WGSL, ENTITY_SCENE_LIGHTS_WGSL } = CLS;
 
 // ───────────────────────────── GLSL 切片(与运行时宿主同一行切片器)
 

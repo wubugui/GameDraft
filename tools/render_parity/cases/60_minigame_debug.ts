@@ -210,13 +210,17 @@ interface DbgState {
   cfg?: SceneDepthConfig;
   ground?: 'none' | 'field';
   collision?: boolean;
+  refKnownError?: string;
 }
 
 // 碰撞 + 行走面场排第一:这是本滤镜在 WebGL 上第一次生成 uniform 同步函数的那一帧。
 // 行走面三个 uniform 当初没在 uniform 组里声明,那时「先注入场、后首帧渲染」会让 WebGL 生成同步函数时抛错
 // (见 BackgroundDebugFilter 构造处注释);放在首位,回归时参考侧会直接报错。
 const DBG_STATES: DbgState[] = [
-  { label: '2 碰撞 有行走面场', mode: 2, cfg: depthCfg(false, 1, 0), ground: 'field', collision: true },
+  {
+    label: '2 碰撞 有行走面场', mode: 2, cfg: depthCfg(false, 1, 0), ground: 'field', collision: true,
+    refKnownError: 'master 的行走面三个 uniform 没在 uniform 组里声明,先注入场、后首帧渲染时 WebGL 生成同步函数抛错(F2 碰撞视图)',
+  },
   { label: '0 透传', mode: 0, cfg: depthCfg(false, 1, 0) },
   { label: '1 深度 正向 scale 3 offset -1', mode: 1, cfg: depthCfg(false, 3, -1) },
   { label: '1 深度 反向 scale 0.5 offset 2', mode: 1, cfg: depthCfg(true, 0.5, 2) },
@@ -228,6 +232,7 @@ const DBG_STATES: DbgState[] = [
 
 const bgDebugCases: ParityCase[] = DBG_STATES.map((st) => ({
   name: `${PREFIX}背景调试滤镜 模式 ${st.label}`,
+  refKnownError: st.refKnownError,
   width: DBG_W,
   height: DBG_H,
   tolerance: TOL8,

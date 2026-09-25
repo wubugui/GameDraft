@@ -1,23 +1,18 @@
 /**
- * 渲染像素对照框架。
+ * 渲染像素对照框架:**master 对本分支**。
  *
- * 同一段运行时代码(真实的 Mesh / Filter / Shader 类)分别交给两个渲染器画进同尺寸的离屏目标,
- * 回读后逐像素比:
- *   - 参考:Pixi WebGL 渲染器,跑 GLSL —— 就是 master 上游戏的行为;
- *   - 候选:Pixi WebGPU 渲染器,跑 WGSL,且**用 RHI 的 GPUDevice**(迁移后的真实结构)。
- * 移植一个着色器 = 给它补上 WGSL,再写一个用例证明两边像素一致。
+ * 同一份用例(真实的运行时 Mesh / Filter / Shader 类)在两个页面里各跑一遍,画进同尺寸的离屏目标,回读后逐像素比:
+ *   - 参考(side_ref.ts):master 的 src 树 + Pixi WebGL,跑 GLSL —— 就是 master 上游戏的行为;
+ *   - 候选(side_cand.ts):本分支的 src 树 + engine2d(RHI → WebGPU),跑 WGSL,用例里的 `pixi.js` 也别名到 engine2d。
+ * 两侧由两个 Vite 服务分别提供(`@src` / `pixi.js` 的指向不同),见 vite.config.ts 与 run.mjs。
  */
 import {
-  autoDetectRenderer,
   BufferImageSource,
   Container,
   RenderTexture,
   Texture,
   type Renderer,
-  type WebGLRenderer,
 } from 'pixi.js';
-import { createRhiDevice, type RhiDevice } from '@src/rendering/rhi';
-import { installPixiWebGpuPatches } from '@src/rendering/legacy/pixiWebGpuPatches';
 
 export type ParityTarget = 'rgba8unorm' | 'rgba16float' | 'rgba32float';
 export type ParityDataFormat = 'rgba8unorm' | 'r8unorm' | 'rgba16float' | 'rgba32float';
@@ -60,6 +55,11 @@ export interface ParityCase {
   tolerance: number;
   /** 超出容差的像素最多几个(缺省 0) */
   maxBadPixels?: number;
+  /**
+   * 参考侧(master)已知会抛错、本分支已修的用例:写明原因。参考侧真抛错时不算不一致,只要求候选侧正常出图
+   * (报告里单列「master 已知出错」);参考侧不再抛错(master 修了)就照常逐像素比。
+   */
+  refKnownError?: string;
   clearColor?: [number, number, number, number];
   /** 用真实运行时代码搭出要画的东西。两个渲染器各调一次,各拿各的对象 */
   build(env: ParityEnv): Container | Promise<Container>;
@@ -88,42 +88,14 @@ export interface ParityResult {
 // ───────────────────────────── 渲染器
 
 /**
- * 每一侧只建一个渲染器,且两侧在不同的 iframe 里跑:Pixi 有模块级单例(批处理着色器的纹理槽数等),
+ * 每一侧只建一个渲染器,且两侧在不同的 iframe(不同的 Vite 服务)里跑:Pixi 有模块级单例,
  * 同页两个渲染器会互相覆盖,和真实游戏(只有一个渲染器)的环境不一样。
  */
 export interface SideRenderer {
   side: 'gl' | 'gpu';
   renderer: Renderer;
-  rhi: RhiDevice | null;
-}
-
-export async function createSideRenderer(side: 'gl' | 'gpu'): Promise<SideRenderer> {
-  if (side === 'gl') {
-    const renderer = await autoDetectRenderer({ preference: 'webgl', width: 16, height: 16, antialias: false, resolution: 1, backgroundAlpha: 0 });
-    if (renderer.type !== 1 /* RendererType.WEBGL */) throw new Error(`参考渲染器不是 WebGL(type=${renderer.type})`);
-    return { side, renderer, rhi: null };
-  }
-  const rhiCanvas = document.createElement('canvas');
-  rhiCanvas.width = 16;
-  rhiCanvas.height = 16;
-  const rhi = await createRhiDevice({ canvas: rhiCanvas, useDevicePixels: false, autoResize: false });
-  // 与游戏切换后一致:建 WebGPU 渲染器前装上 Pixi 补丁(目标格式进管线)
-  installPixiWebGpuPatches();
-  const renderer = await autoDetectRenderer({
-    preference: 'webgpu',
-    width: 16,
-    height: 16,
-    antialias: false,
-    resolution: 1,
-    backgroundAlpha: 0,
-    // 与 RHI 共用同一个 GPUDevice:迁移后的结构就是这样
-    webgpu: { gpu: { adapter: rhi.native.adapter, device: rhi.native.device } } as never,
-  });
-  if (renderer.type !== 2 /* RendererType.WEBGPU */) throw new Error(`候选渲染器不是 WebGPU(type=${renderer.type})`);
-  if ((renderer as unknown as { gpu: { device: GPUDevice } }).gpu.device !== rhi.native.device) {
-    throw new Error('Pixi WebGPU 渲染器没有用上 RHI 的 GPUDevice');
-  }
-  return { side, renderer, rhi };
+  /** 回读一张渲染目标为 w*h*4 的浮点数组(RGBA 通道序) */
+  read(rt: RenderTexture, target: ParityTarget): Promise<Float32Array>;
 }
 
 // ───────────────────────────── 输入
@@ -169,10 +141,7 @@ function makeEnv(sr: SideRenderer): ParityEnv {
   return {
     side,
     renderer,
-    async readTexture(texture: Texture, target: ParityTarget): Promise<Float32Array> {
-      const rt = texture as RenderTexture;
-      return side === 'gl' ? readGl(renderer as WebGLRenderer, rt, target) : readGpu(sr.rhi!, renderer, rt, target);
-    },
+    readTexture: (texture: Texture, target: ParityTarget) => sr.read(texture as RenderTexture, target),
     rng: mulberry32,
     dataTexture(o: DataTextureOptions): Texture {
       const format = o.format ?? 'rgba8unorm';
@@ -211,56 +180,6 @@ function makeEnv(sr: SideRenderer): ParityEnv {
   };
 }
 
-// ───────────────────────────── 回读
-
-function readGl(renderer: WebGLRenderer, rt: RenderTexture, target: ParityTarget): Float32Array {
-  const { width, height } = rt.source;
-  const gl = renderer.gl;
-  // 让 Pixi 自己绑上这张 RT 的帧缓冲(它有状态缓存,手绑会和它打架)
-  renderer.renderTarget.bind(rt, false);
-  const out = new Float32Array(width * height * 4);
-  if (target === 'rgba8unorm') {
-    const u8 = new Uint8Array(width * height * 4);
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, u8);
-    for (let i = 0; i < u8.length; i++) out[i] = u8[i] / 255;
-  } else {
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.FLOAT, out);
-  }
-  return out;
-}
-
-async function readGpu(rhi: RhiDevice, renderer: Renderer, rt: RenderTexture, target: ParityTarget): Promise<Float32Array> {
-  const gpuTexture = (renderer as unknown as { texture: { getGpuSource(s: unknown): GPUTexture } }).texture.getGpuSource(rt.source);
-  // 经 RHI 互通口包成 RHI 纹理再回读 —— 顺带验证互通口
-  const scope = rhi.createScope('对照回读');
-  try {
-    const tex = rhi.native.wrapTexture(scope, { label: '对照目标', texture: gpuTexture });
-    const rb = await rhi.readTexture(tex);
-    const { width, height } = rb;
-    const out = new Float32Array(width * height * 4);
-    if (target === 'rgba8unorm') {
-      for (let i = 0; i < out.length; i++) out[i] = rb.data[i] / 255;
-      // 没指定格式的 Pixi 渲染目标缺省是 bgra8unorm:WebGPU 显存里真是 BGRA 字节序(WebGL 侧照样存 RGBA),
-      // 回读按存储格式换回 RGBA 再比
-      if (rb.format === 'bgra8unorm') {
-        for (let i = 0; i < out.length; i += 4) {
-          const b = out[i];
-          out[i] = out[i + 2];
-          out[i + 2] = b;
-        }
-      }
-    } else if (target === 'rgba16float') {
-      const u16 = new Uint16Array(rb.data.buffer, rb.data.byteOffset, rb.data.byteLength / 2);
-      for (let i = 0; i < out.length; i++) out[i] = fromHalf(u16[i]);
-    } else {
-      out.set(new Float32Array(rb.data.buffer, rb.data.byteOffset, out.length));
-    }
-    return out;
-  } finally {
-    scope.destroy();
-  }
-}
-
 export interface SideOutput {
   name: string;
   data: Float32Array | null;
@@ -293,9 +212,7 @@ export async function renderSide(sr: SideRenderer, c: ParityCase): Promise<SideO
         c.beforeFrame?.(env, root, f);
         sr.renderer.render({ container: root, target: rt, clear: true, clearColor: c.clearColor ?? [0, 0, 0, 0] });
       }
-      const data = sr.side === 'gl'
-        ? readGl(sr.renderer as WebGLRenderer, rt, target)
-        : await readGpu(sr.rhi!, sr.renderer, rt, target);
+      const data = await sr.read(rt, target);
       return { name: c.name, data, error: null, warnings };
     } finally {
       root.destroy({ children: true });
@@ -370,11 +287,14 @@ function diffImage(ref: Float32Array, cand: Float32Array, tolerance: number): Fl
 
 export function judge(c: ParityCase, ref: SideOutput, cand: SideOutput, ms: number, withImages: boolean): ParityResult {
   const base = { name: c.name, maxDiff: 0, meanDiff: 0, badPixels: 0, bbox: null, ms };
+  if ((ref.error || !ref.data) && c.refKnownError && cand.data && !cand.error) {
+    return { ...base, status: 'pass', detail: `master 已知出错(本分支已修):${c.refKnownError}\n参考侧报错:${ref.error}\n候选侧正常出图,未逐像素比` };
+  }
   if (ref.error || !ref.data) {
-    return { ...base, status: 'error', detail: `参考(WebGL)出错:${ref.error}\n${ref.warnings.slice(0, 6).join('\n')}` };
+    return { ...base, status: 'error', detail: `参考(master · Pixi WebGL)出错:${ref.error}\n${ref.warnings.slice(0, 6).join('\n')}` };
   }
   if (cand.error || !cand.data) {
-    return { ...base, status: 'error', detail: `候选(WebGPU)出错:${cand.error}\n${cand.warnings.slice(0, 6).join('\n')}` };
+    return { ...base, status: 'error', detail: `候选(本分支 · engine2d WebGPU)出错:${cand.error}\n${cand.warnings.slice(0, 6).join('\n')}` };
   }
   if (ref.data.length !== cand.data.length) {
     return { ...base, status: 'error', detail: `两侧结果长度不同:${ref.data.length} ≠ ${cand.data.length}` };
