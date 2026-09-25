@@ -325,6 +325,25 @@ describe('VideoSource(对照 Pixi 8.17)', () => {
     }
   });
 
+  it('构造时显式给的 alphaMode 被 load() 覆盖成探测结果(Pixi 的 detectVideoAlphaMode;WebGPU 下恒为 premultiply-alpha-on-upload)', async () => {
+    for (const E of [PIXI_REF, ENGINE2D]) {
+      for (const alphaMode of ['premultiplied-alpha', 'no-premultiply-alpha']) {
+        const src = track(E, new FakeVideo([]), { alphaMode });
+        await flush();
+        expect(src.alphaMode, `${E.name} ${alphaMode}`).toBe('premultiply-alpha-on-upload');
+        src.destroy();
+        // autoLoad: false 时构造值保留到 load() 才被覆盖
+        const lazy = track(E, new FakeVideo([]), { alphaMode, autoLoad: false });
+        await flush();
+        expect(lazy.alphaMode, `${E.name} ${alphaMode} lazy`).toBe(alphaMode);
+        void lazy.load();
+        await flush();
+        expect(lazy.alphaMode, `${E.name} ${alphaMode} lazy+load`).toBe('premultiply-alpha-on-upload');
+        lazy.destroy();
+      }
+    }
+  });
+
   it('rVFC 路径:加载 → 自动播放 → 逐帧更新 → 暂停 → seeked → destroy,轨迹与 Pixi 一致', async () => {
     const ours = await rvfcStory(ENGINE2D);
     const pixi = await rvfcStory(PIXI_REF);

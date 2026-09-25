@@ -346,10 +346,11 @@ type VideoElement = HTMLVideoElement & {
  * 暂停 / 播完 / `autoUpdate = false` 时停。不参与空闲回收(autoGarbageCollect 缺省 false)。
  *
  * 与 Pixi 的差别(都不影响画面):
- * - Pixi 的 `load()` 会 `await detectVideoAlphaMode()`(建 WebGL 画布探测浏览器传视频时是否已预乘),结果写进 alphaMode。
- *   那是给 WebGL `texImage2D` 用的;engine2d 只走 WebGPU 的 `copyExternalImageToTexture`,预乘与否由规范保证,
- *   不需要探测:alphaMode 保持构造时的值(缺省 premultiply-alpha-on-upload,传上去就是预乘的,与 master 的 WebGL 结果相同)。
- *   不 await 也就没有 Pixi 那个重进窗口(构造后立刻再调 `load()`,Pixi 会第二次 element.load()、构造时那个 promise 永不 resolve)。
+ * - Pixi 的 `load()` 会 `await detectVideoAlphaMode()`(建 WebGL 画布探测浏览器传视频时是否已预乘),结果覆盖 alphaMode
+ *   (构造时显式给的也被覆盖)。那是给 WebGL `texImage2D` 用的;engine2d 只走 WebGPU 的 `copyExternalImageToTexture`,
+ *   预乘与否由规范保证,不需要探测:`load()` 里同步写成 premultiply-alpha-on-upload(传上去就是预乘的,与 master 的 WebGL 结果相同)。
+ *   写入时机从 Pixi 的 await 之后提前到同步(构造 + autoLoad 时当场就是这个值);不 await 也就没有 Pixi 那个重进窗口
+ *   (构造后立刻再调 `load()`,Pixi 会第二次 element.load()、构造时那个 promise 永不 resolve)。
  * - Pixi 的 `destroy()` 在挂着 `Ticker.shared` 播放时不摘 ticker 监听(已销毁的源永远空转一个回调),这里摘掉。
  */
 export class VideoSource extends TextureSource<HTMLVideoElement> {
@@ -441,7 +442,8 @@ export class VideoSource extends TextureSource<HTMLVideoElement> {
     } else {
       this._mediaReady();
     }
-    // (Pixi 在这里 await detectVideoAlphaMode();WebGPU 下不需要,见类注释)
+    // Pixi 在这里 `this.alphaMode = await detectVideoAlphaMode()`,构造时给的值一律被覆盖;WebGPU 下探测结果恒为上传时预乘(见类注释)
+    this.alphaMode = 'premultiply-alpha-on-upload';
     this._load = new Promise<this>((resolve, reject) => {
       if (this.isValid) {
         resolve(this);
