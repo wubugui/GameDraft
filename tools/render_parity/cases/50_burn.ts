@@ -167,21 +167,9 @@ const BASE_W = 36;
 const BASE_H = 28;
 const FRAME = new Rectangle(3, 2, 30, 22);
 
-/**
- * 回读宿主拿到的 RT。⚠ `BurnRenderer` 的 RT 没指定格式 = Pixi 缺省的 `bgra8unorm`:WebGL 侧照样存成 RGBA,
- * WebGPU 侧显存里真是 BGRA 字节序,而 `env.readTexture` 按原样字节回读——这里把 B / R 换回来再比
- * (运行时这两张图是被采样的,采样出来的通道是对的;只是回读要按存储格式解释)。
- */
+/** 回读宿主拿到的 RT(`BurnRenderer` 的 RT 没指定格式 = Pixi 缺省 `bgra8unorm`;通道序由框架按存储格式换好) */
 async function readRt(env: ParityEnv, tex: Texture): Promise<Float32Array> {
-  const data = await env.readTexture(tex, 'rgba8unorm');
-  if (env.side === 'gpu' && tex.source.format === 'bgra8unorm') {
-    for (let i = 0; i < data.length; i += 4) {
-      const b = data[i];
-      data[i] = data[i + 2];
-      data[i + 2] = b;
-    }
-  }
-  return data;
+  return env.readTexture(tex, 'rgba8unorm');
 }
 
 /**

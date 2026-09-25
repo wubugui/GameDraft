@@ -43,7 +43,7 @@ export interface ParityEnv {
   rng(seed: number): () => number;
   dataTexture(opts: DataTextureOptions): Texture;
   /**
-   * 回读一张渲染目标(`RenderTexture`)为 w*h*4 的浮点数组(8 位目标归一到 0..1)。
+   * 回读一张渲染目标(`RenderTexture`)为 w*h*4 的浮点数组(8 位目标归一到 0..1,`bgra8unorm` 已换成 RGBA 通道序)。
    * 多 pass 的离屏链在 `produce()` 里自己驱动宿主类渲染,再用它回读结果。
    */
   readTexture(texture: Texture, target: ParityTarget): Promise<Float32Array>;
@@ -240,6 +240,15 @@ async function readGpu(rhi: RhiDevice, renderer: Renderer, rt: RenderTexture, ta
     const out = new Float32Array(width * height * 4);
     if (target === 'rgba8unorm') {
       for (let i = 0; i < out.length; i++) out[i] = rb.data[i] / 255;
+      // 没指定格式的 Pixi 渲染目标缺省是 bgra8unorm:WebGPU 显存里真是 BGRA 字节序(WebGL 侧照样存 RGBA),
+      // 回读按存储格式换回 RGBA 再比
+      if (rb.format === 'bgra8unorm') {
+        for (let i = 0; i < out.length; i += 4) {
+          const b = out[i];
+          out[i] = out[i + 2];
+          out[i + 2] = b;
+        }
+      }
     } else if (target === 'rgba16float') {
       const u16 = new Uint16Array(rb.data.buffer, rb.data.byteOffset, rb.data.byteLength / 2);
       for (let i = 0; i < out.length; i++) out[i] = fromHalf(u16[i]);
