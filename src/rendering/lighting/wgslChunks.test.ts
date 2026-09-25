@@ -12,7 +12,7 @@
  *   textureSample（片段函数会被宿主从分支 / 循环里调用）。
  */
 import { describe, expect, it } from 'vitest';
-import type { UniformGroup } from 'pixi.js';
+import type { UniformGroup } from '../../engine2d';
 
 import LC_GLSL from './lightingCore.glsl?raw';
 import WR_GLSL from './worldReconstruct.glsl?raw';

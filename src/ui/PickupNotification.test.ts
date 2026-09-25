@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 import { EventBus } from '../core/EventBus';
 import { FlagStore } from '../core/FlagStore';
 import { ActionExecutor } from '../core/ActionExecutor';

@@ -1,5 +1,5 @@
 import { lightFactor } from '../data/lightFactors';
-import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from 'pixi.js';
+import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from '../engine2d';
 // 角色着色核心 GLSL 的唯一真相源(与灯光实验室共用同一份,消灭 shader 镜像漂移)。
 import CHAR_SHADE_CORE from './charShadeCore.glsl?raw';
 // WebGPU 迁移期的 WGSL 版(与上面的 GLSL 并存,WebGL 路径不读它们;等价由 render_parity 钉住)

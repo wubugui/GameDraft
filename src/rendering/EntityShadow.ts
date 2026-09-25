@@ -1,5 +1,4 @@
-import 'pixi.js/mesh';
-import { BlurFilter, Container, Mesh, MeshGeometry, Shader, Texture, type TextureSource } from 'pixi.js';
+import { BlurFilter, Container, Mesh, MeshGeometry, Shader, Texture, type TextureSource } from '../engine2d';
 import type { ResolvedLightEnv } from './lightEnv';
 import type { ShadowProjectionField } from './shadowField';
 import { footprintOf, mirrorFootprint } from './footprintExtent';

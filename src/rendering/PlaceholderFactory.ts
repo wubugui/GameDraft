@@ -1,4 +1,4 @@
-import { Graphics, Container, RenderTexture, Application } from 'pixi.js';
+import { Graphics, Container, RenderTexture, Application } from '../engine2d';
 
 export function createPlaceholderBackground(
   _app: Application,

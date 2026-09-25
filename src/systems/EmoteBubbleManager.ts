@@ -1,4 +1,4 @@
-import { CanvasTextMetrics, Container, Graphics, Text, TextStyle } from 'pixi.js';
+import { CanvasTextMetrics, Container, Graphics, Text, TextStyle } from '../engine2d';
 import type { EmoteBubbleOffsetOpts, EmoteBubbleVariant, IEmoteBubbleAnchor, IGameSystem, GameContext } from '../data/types';
 import { isEmoteAnchorShown, normalizeEmoteBubbleScale } from '../data/types';
 import { Hotspot } from '../entities/Hotspot';

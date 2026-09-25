@@ -35,7 +35,7 @@
  * 渲染侧不写模拟状态（只读池），不 import 任何系统。
  */
 import { resolveLightFactors, type LightFactors } from '../../data/lightFactors';
-import { Container, type GlProgram, type GpuProgram, Shader, Texture, type TextureSource, UniformGroup } from 'pixi.js';
+import { Container, type GlProgram, type GpuProgram, Shader, Texture, type TextureSource, UniformGroup } from '../../engine2d';
 
 import type { SceneDepthConfig } from '../../data/types';
 import { sampleColorCurve, sampleCurve } from '../../systems/vfx/vfxCurve';

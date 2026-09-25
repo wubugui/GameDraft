@@ -1,4 +1,4 @@
-import type { TextureSource } from 'pixi.js';
+import type { TextureSource } from '../engine2d';
 import type { AssetManager } from '../core/AssetManager';
 
 /**

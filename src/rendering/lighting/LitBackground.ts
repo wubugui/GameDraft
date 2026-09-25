@@ -1,4 +1,4 @@
-import { Mesh, MeshGeometry, Shader, Texture, type Renderer } from 'pixi.js';
+import { Mesh, MeshGeometry, Shader, Texture, type Renderer } from '../../engine2d';
 
 import type { SceneLightingDef } from '../../data/types';
 import { resolveLightColor } from './kelvin';

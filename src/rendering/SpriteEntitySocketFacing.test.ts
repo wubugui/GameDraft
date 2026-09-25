@@ -10,7 +10,7 @@
  * 判据是容器里的**子节点顺序**（身前 = 排在身体后面画 = 下标更大），不是某个内部标志。
  */
 import { describe, expect, it } from 'vitest';
-import { Rectangle, Sprite, Texture, TextureSource } from 'pixi.js';
+import { Rectangle, Sprite, Texture, TextureSource } from '../engine2d';
 
 import { SpriteEntity } from './SpriteEntity';
 import type { AnimationSetDef, SocketFramePose } from '../data/types';

@@ -1,4 +1,4 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Text } from '../engine2d';
 import { UITheme } from './UITheme';
 import { createPanel, drawPanelBase, SKINS } from './PanelSkin';
 import { ContinueIndicator, CONTINUE_MARK_SIZE } from './components/ContinueIndicator';

@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 // 只把两个渲染对象换成空壳（Shader.from 在无 DOM 的测试环境要 document），网格与 update 全走真实的 SwayBackground
-vi.mock('pixi.js', async (importOriginal) => {
-  const real = await importOriginal<typeof import('pixi.js')>();
+vi.mock('../engine2d', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../engine2d')>();
   return { ...real, Shader: { from: () => ({ resources: {} }) }, Mesh: class extends real.Container {} };
 });
 
-import { Texture } from 'pixi.js';
+import { Texture } from '../engine2d';
 import {
   SwayBackground, grayRange, swayPivotSplits, type BackgroundSwayInput, type GrayMap, type SwayInstanceDef,
 } from './backgroundSway';

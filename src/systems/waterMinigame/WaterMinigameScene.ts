@@ -12,7 +12,7 @@ import { UITheme } from '../../ui/UITheme';
 import { createKeyCap } from '../../ui/components/UIDecor';
 import { fillToken } from '../../utils/fillTemplate';
 import { createDeterministicRandom } from '../../utils/deterministicRandom';
-import type { Application } from 'pixi.js';
+import type { Application } from '../../engine2d';
 import {
   Container,
   FederatedPointerEvent,
@@ -21,7 +21,7 @@ import {
   RenderTexture,
   Sprite,
   Text,
-} from 'pixi.js';
+} from '../../engine2d';
 import { createStyledText } from '../../core/styledText';
 
 type Phase = 'search' | 'pull';

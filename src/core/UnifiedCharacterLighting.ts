@@ -1,4 +1,4 @@
-import type { Shader, TextureSource, UniformGroup } from 'pixi.js';
+import type { Shader, TextureSource, UniformGroup } from '../engine2d';
 
 import type { SceneLightingDef } from '../data/types';
 import {

@@ -1,4 +1,4 @@
-import { BlurFilter, Container, Graphics, Sprite, Text, Texture, type Filter } from 'pixi.js';
+import { BlurFilter, Container, Graphics, Sprite, Text, Texture, type Filter } from '../engine2d';
 import type { HotspotDef } from '../data/types';
 import type { IEntityShadingFilter } from '../rendering/EntityLightingFilter';
 import {

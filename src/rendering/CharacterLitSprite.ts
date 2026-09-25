@@ -29,7 +29,7 @@ import {
   Texture,
   type TextureSource,
   UniformGroup,
-} from 'pixi.js';
+} from '../engine2d';
 
 import { CHAR_LIGHT_COMMON_GLSL, CHAR_LIGHT_COMMON_WGSL } from './CharacterShadingFilter';
 import type { SceneLightingDef } from '../data/types';

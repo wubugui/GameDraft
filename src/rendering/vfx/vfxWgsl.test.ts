@@ -2,8 +2,8 @@
  * 粒子 WGSL 的静默出错点守门(不需要 GPU):WebGPU 下这几条错了**不报错、只是画面不对 / 那一批不画**,
  * 而像素对照(tools/render_parity/cases/90_vfx.ts)要真浏览器才跑得起来。
  *
- * - uniform 组:Pixi 按 JS 声明顺序、WGSL 对齐规则排缓冲(`createUboElementsWGSL`)⇒ WGSL 结构里每个成员的**字节偏移**
- *   必须与 Pixi 给同名 JS 成员算的偏移相同(光柱的 `uBeamAlong` 在 WGSL 里是同一块内存的 vec4 数组,见 vfxBeamWgsl.ts,
+ * - uniform 组:引擎按 JS 声明顺序、WGSL 对齐规则排缓冲(`UniformGroup.layout`,照 Pixi `createUboElementsWGSL`)⇒ WGSL 结构里每个成员的**字节偏移**
+ *   必须与给同名 JS 成员算的偏移相同(光柱的 `uBeamAlong` 在 WGSL 里是同一块内存的 vec4 数组,见 vfxBeamWgsl.ts,
  *   所以这里比偏移与大小,不比类型串);
  * - resources 的每个键都要在 WGSL 里有同名绑定(没有的被塞进第 99 组,WebGPU 下整个 draw 作废);
  * - WGSL 声明的每个自有绑定都要有资源;采样器 = samplerOf(同名纹理);
@@ -11,9 +11,8 @@
  * 用的是运行时真实的建 shader 路径(VfxRenderer / VfxBeamView / 照明系统的 createCustomLitShader)。
  */
 import {
-  Container, DOMAdapter, Texture, TextureSource, UniformGroup, WGSL_ALIGN_SIZE_DATA,
-  createUboElementsWGSL, type Shader, type UboElement,
-} from 'pixi.js';
+  Container, DOMAdapter, Texture, TextureSource, UniformGroup, WGSL_ALIGN_SIZE_DATA, type Shader,
+} from '../../engine2d';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { CharacterLightingSystem } from '../../core/CharacterLightingSystem';
@@ -69,12 +68,11 @@ function wgslLayout(members: Array<[string, string]>): { offsets: Record<string,
   return { offsets, size: Math.ceil(off / maxAlign) * maxAlign };
 }
 
-/** Pixi 给 JS uniform 组算的布局(WebGPU 缓冲就是按它写的) */
+/** 运行时给 JS uniform 组算的布局(WebGPU 缓冲就是按它写的;照 Pixi createUboElementsWGSL) */
 function pixiLayout(g: UniformGroup): { offsets: Record<string, [number, number]>; size: number } {
-  const els = Object.values(g.uniformStructures) as unknown as UboElement['data'][];
-  const { uboElements, size } = createUboElementsWGSL(els);
+  const { elements, size } = g.layout;
   const offsets: Record<string, [number, number]> = {};
-  for (const e of uboElements) offsets[e.data.name as string] = [e.offset, e.size];
+  for (const e of elements) offsets[e.name] = [e.offset, e.byteSize];
   return { offsets, size };
 }
 
@@ -93,12 +91,12 @@ function checkShader(shader: Shader, label: string): void {
   const src = prog.fragment!.source;
   const sg = prog.structsAndGroups as StructsAndGroups;
   // 1) 每个资源键都落在 WGSL 声明的绑定上(没有第 99 组)
-  expect(Object.keys(shader.groups).map(Number).filter((g) => g >= 99), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
+  expect(Object.keys(shader.resources).filter((k) => !sg.groups.some((g) => g.name === k)), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
   // 2) WGSL 声明的每个自有绑定都有资源(组 0 / 1 由网格管线补)
   const res = shader.resources as Record<string, unknown>;
   for (const g of sg.groups) {
     if (g.group < 2) continue;
-    const r = shader.groups[g.group]?.resources[g.binding];
+    const r = (shader.resources as Record<string, unknown>)[g.name];
     expect(r, `${label}: WGSL 绑定 ${g.name} 没有资源`).toBeTruthy();
     // 3) 采样器 = 与同名纹理采样参数相同的共享采样器(samplerOf,不挂在纹理生命期上)
     if (g.type === 'sampler') {

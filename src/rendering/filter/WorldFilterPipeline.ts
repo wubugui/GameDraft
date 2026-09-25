@@ -2,7 +2,7 @@
  * 世界滤镜管线：管理施加于 worldContainer 的 shader 滤镜栈
  * 架构可扩展，后续可串联：氛围滤镜、深度效果、Bloom 等
  */
-import type { Container, Filter } from 'pixi.js';
+import type { Container, Filter } from '../../engine2d';
 
 export class WorldFilterPipeline {
   private target: Container;

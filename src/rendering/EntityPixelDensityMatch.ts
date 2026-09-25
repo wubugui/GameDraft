@@ -1,4 +1,4 @@
-import { BlurFilter } from 'pixi.js';
+import { BlurFilter } from '../engine2d';
 
 /** 未配置 game_config.entityPixelDensityMatchBlurScale 时的默认模糊倍率 */
 export const DEFAULT_ENTITY_PIXEL_DENSITY_BLUR_SCALE = 0.25;

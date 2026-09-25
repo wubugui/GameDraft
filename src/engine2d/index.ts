@@ -1,5 +1,5 @@
 /**
- * engine2d 公共入口:与 Pixi v8 同名的导出(游戏迁移时把 `from 'pixi.js'` 换成这里)。
+ * engine2d 公共入口:与 Pixi v8 同名的导出(运行时已全部从这里取,不再依赖 pixi.js)。
  * 只导出游戏实际用到的子集;子模块的实现细节不从这里导出。
  */
 export { EventEmitter } from './utils/EventEmitter';
@@ -34,6 +34,7 @@ export { Sprite, type SpriteOptions } from './sprite/Sprite';
 export { Buffer, BufferUsage, BufferResource, type BufferOptions } from './shader/Buffer';
 export { Geometry, type GeometryDescriptor, type Attribute, type VertexFormat, type Topology } from './shader/Geometry';
 export { UniformGroup, type UniformData } from './shader/UniformGroup';
+export { WGSL_ALIGN_SIZE_DATA, createUboLayout, type UboLayout, type UboElement } from './shader/uboLayout';
 export { GpuProgram, type GpuProgramOptions } from './shader/GpuProgram';
 export { GlProgram, type GlProgramOptions } from './shader/GlProgram';
 export { Shader, RendererType } from './shader/Shader';

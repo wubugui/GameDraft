@@ -2,7 +2,7 @@ import type { SceneDepthSystem } from '../core/SceneDepthSystem';
 import type { Renderer } from '../rendering/Renderer';
 import type { Camera } from '../rendering/Camera';
 import type { AssetManager } from '../core/AssetManager';
-import { Texture, type TextureSource } from 'pixi.js';
+import { Texture, type TextureSource } from '../engine2d';
 import type { SceneDepthConfig } from '../data/types';
 import { BackgroundDebugFilter } from '../rendering/BackgroundDebugFilter';
 

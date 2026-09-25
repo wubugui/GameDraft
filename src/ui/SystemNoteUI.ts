@@ -1,4 +1,4 @@
-import { Container, Graphics, Rectangle, Sprite, type Texture } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, type Texture } from '../engine2d';
 import { UITheme, fadeIn } from './UITheme';
 import { createPanel, SKINS } from './PanelSkin';
 import { createTitleRow } from './components/UIDecor';

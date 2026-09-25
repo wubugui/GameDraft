@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, HTMLText, Sprite, Texture, Rectangle, type Mesh } from 'pixi.js';
+import { Container, Graphics, Text, HTMLText, Sprite, Texture, Rectangle, type Mesh } from '../engine2d';
 import type { Renderer } from './Renderer';
 import type { Camera } from './Camera';
 import { createOverlayBlendMesh } from './overlayBlendShader';

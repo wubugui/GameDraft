@@ -1,4 +1,4 @@
-import { Assets, Texture, type Filter } from 'pixi.js';
+import { Assets, Texture, type Filter } from '../engine2d';
 import { Howl } from 'howler';
 import type { SceneData, SceneDataRaw } from '../data/types';
 import { resolveAssetPath } from './assetPath';

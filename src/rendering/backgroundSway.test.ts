@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Texture } from 'pixi.js';
+import type { Texture } from '../engine2d';
 import {
   depthScaleLookup, loadBackgroundSwayInput, stepSwayOscillator, swayBendAngle, swayInsertIndex,
 } from './backgroundSway';

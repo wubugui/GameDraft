@@ -1,4 +1,4 @@
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 import { UITheme } from './UITheme';
 import { createPanel, SKINS } from './PanelSkin';
 import { createRule } from './components/UIDecor';

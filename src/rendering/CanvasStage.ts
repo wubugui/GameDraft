@@ -1,4 +1,4 @@
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 
 /**
  * **画布**(制作人 2026-09-21 定名):场景之外的那一张**屏幕空间的面**。

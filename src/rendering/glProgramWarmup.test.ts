@@ -1,4 +1,4 @@
-import { DOMAdapter, GlProgram, type Shader } from 'pixi.js';
+import { DOMAdapter, GlProgram, type Shader } from '../engine2d';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { GlProgramWarmup, glWarmupTargetOf, type GlWarmupTarget } from './glProgramWarmup';
@@ -34,7 +34,7 @@ function fakeGl(opts: { parallel: boolean }) {
 function rig(opts: { parallel: boolean }) {
   const g = fakeGl(opts);
   const bound: GlProgram[] = [];
-  const target: GlWarmupTarget = { gl: g.gl, shader: { bind: (sh: Shader, skip?: boolean) => { expect(skip).toBe(true); bound.push(sh.glProgram); } } };
+  const target: GlWarmupTarget = { gl: g.gl, shader: { bind: (sh: Shader, skip?: boolean) => { expect(skip).toBe(true); bound.push(sh.glProgram!); } } };
   let current: GlWarmupTarget | null = target;
   const logs: string[] = [];
   const warm = new GlProgramWarmup(() => current, (m) => logs.push(m));
@@ -94,7 +94,7 @@ describe('GlProgramWarmup', () => {
     expect(await r.warm.whenReady(100)).toBe(true);
     const g2 = fakeGl({ parallel: true });
     const bound2: GlProgram[] = [];
-    r.setTarget({ gl: g2.gl, shader: { bind: (sh: Shader) => { bound2.push(sh.glProgram); } } });
+    r.setTarget({ gl: g2.gl, shader: { bind: (sh: Shader) => { bound2.push(sh.glProgram!); } } });
     expect(await r.warm.whenReady(20)).toBe(false);          // 新上下文上还在编
     expect(g2.calls.filter((c) => c === 'linkProgram')).toHaveLength(1);
     g2.state.done = true;

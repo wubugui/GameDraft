@@ -1,4 +1,4 @@
-import { Container, Sprite, Text, Texture } from 'pixi.js';
+import { Container, Sprite, Text, Texture } from '../../engine2d';
 import { createStyledText, setStyledText } from '../../core/styledText';
 
 /**

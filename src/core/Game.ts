@@ -14,7 +14,7 @@ import { InputManager } from './InputManager';
 import { AssetManager, type AssetRef } from './AssetManager';
 import { ActionExecutor } from './ActionExecutor';
 import { SaveManager } from './SaveManager';
-import { Renderer, type RendererBackend } from '../rendering/Renderer';
+import { Renderer } from '../rendering/Renderer';
 import { Camera } from '../rendering/Camera';
 import { Player, ANIM_IDLE, ANIM_WALK, ANIM_RUN } from '../entities/Player';
 import { InteractionSystem } from '../systems/InteractionSystem';
@@ -313,7 +313,7 @@ import {
   type ScriptedSpeakerEntity,
 } from '../utils/scriptedDialogueSpeaker';
 import { resolveSpeakerSide } from '../utils/dialogueSpeakerSide';
-import { Container, Culler, Graphics, Rectangle, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from 'pixi.js';
+import { Container, Culler, Graphics, Rectangle, RenderTexture, Sprite, Texture, UPDATE_PRIORITY } from '../engine2d';
 import { bakeKeyFromBackground, breathingJsonUrl, dialogueGraphJsonUrl, sceneBakeDirUrl, sceneJsonUrl, sceneRuntimeAssetUrl, TEXT_URLS, trajectoryJsonUrl } from './projectPaths';
 import type { TrajectoryAsset, TrajectoryKeyframe } from '../data/types';
 import type { TrajectoryEndReason } from '../systems/TrajectorySystem';
@@ -362,11 +362,6 @@ export interface GameStartOptions {
   paperCraftPreview?: string;
   /** 自动视觉基准模式：保留 dev 直达能力，但不打开 DevMode 遮罩。 */
   visualCapture?: boolean;
-  /**
-   * 图形后端(迁移期开发开关,URL `renderer=webgpu`):缺省 WebGL = 与 master 相同;
-   * `webgpu` = Pixi 跑在 RHI 的 WebGPU 设备上,没有 WebGPU 就明确失败(不回落)。
-   */
-  renderer?: RendererBackend;
   /**
    * 停在标题界面启动，**不装载世界**（URL `screen_title`，由「返回主菜单」整页重启带入）。
    * 标题界面因此是真正的"已退出这一局"：没有场景在跑、没有 HUD、子面板底下也没有东西可漏。
@@ -932,7 +927,7 @@ export class Game {
    */
   private readonly logicFreezeReasons = new Set<LogicFreezeReason>();
   /** 冻结前 stage 的交互模式；全部解冻时原样还回去（不是写死 'static'）。 */
-  private stageEventModeBeforeFreeze: import('pixi.js').EventMode | null = null;
+  private stageEventModeBeforeFreeze: import('../engine2d').EventMode | null = null;
   /** 主 ticker 与启动直达路由均已落地后才开放自动化命令，防启动场景覆盖测试场景。 */
   private runtimeReady = false;
   private runtimeCommandPollErrorLogged = false;
@@ -2181,10 +2176,7 @@ export class Game {
       // UI 取景台（__uiPose / __uiShot / __uiShotAll）：观感改造的审查循环靠它出全分辨率对照图
       void import('../dev/uiShotHarness').then(m => m.installUIShotHarness(this));
     }
-    await this.renderer.init({
-      ...(options.visualCapture ? { resolution: 1 } : {}),
-      backend: options.renderer ?? 'webgl',
-    });
+    await this.renderer.init(options.visualCapture ? { resolution: 1 } : {});
     /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
     if (this.tearDownComplete) return;
     this.emoteBubbleManager.setEntityAttachLayer(this.renderer.entityLayer);

@@ -1,4 +1,4 @@
-import { Container, Graphics, Rectangle } from 'pixi.js';
+import { Container, Graphics, Rectangle } from '../../engine2d';
 import { UITheme } from '../UITheme';
 import { createStyledText } from '../../core/styledText';
 import { FIRST_PERSON, FIRST_PERSON_TEXT_SHADOW } from '../../rendering/firstPersonDialogue';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 import { CutsceneRenderer } from './CutsceneRenderer';
 import { CanvasStage } from './CanvasStage';
 import RENDERER_SRC from './Renderer.ts?raw';

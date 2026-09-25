@@ -28,7 +28,7 @@
  * ⚠ 实际编译目标是 GLSL ES 1.00（pixi-v8-traps）：不用数组构造式、不用 first-class 数组。
  * ⚠ 模板字符串里不许出现反引号。
  */
-import { GlProgram, GpuProgram } from 'pixi.js';
+import { GlProgram, GpuProgram } from '../../engine2d';
 
 import {
   CHAR_LIGHTS_WGSL, ENTITY_SCENE_LIGHTS_GLSL, ENTITY_SCENE_LIGHTS_WGSL, FRAME_SHADE_WGSL, SCENE_SHADE_WGSL,

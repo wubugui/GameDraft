@@ -9,7 +9,7 @@
  * 两侧必须成对：生成侧建的阴影 entry 不随实体自毁，移除侧不拆就是地上一坨冻住的鬼影。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 
 import { SceneManager } from './SceneManager';
 import type { AssetManager } from '../core/AssetManager';

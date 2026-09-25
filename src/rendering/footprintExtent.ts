@@ -15,7 +15,7 @@
  * 也有整套都悬着的素材）。直接取帧底那一截，这些帧会整个找不到脚、接触阴影凭空消失。
  * 竖直位置仍用实体的接地点（脚点）——那是物理上的着地处；这里只管横向形状。
  */
-import type { Texture, TextureSource } from 'pixi.js';
+import type { Texture, TextureSource } from '../engine2d';
 
 /** 一帧贴地那一截最左 / 最右不透明列，帧内比例 0..1（图集原朝向，未按 facing 镜像）。 */
 export interface FootprintExtent {

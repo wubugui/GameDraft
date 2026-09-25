@@ -1,4 +1,4 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics } from '../engine2d';
 
 /**
  * 「火要灭了」提示：玩家手上那支火旁边的一个**符号**（不是字、不在头顶——制作人 2026-09-15 定）。

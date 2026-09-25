@@ -5,10 +5,10 @@
  * - uniform 组:Pixi 按 JS 对象的声明顺序、WGSL 对齐规则排偏移 ⇒ WGSL struct 的成员名 / 类型 / 顺序必须与 JS 逐项相同;
  * - resources 的每个键都要在 WGSL 里有同名绑定(没有的被 Pixi 塞进第 99 组,WebGPU 下整个 draw 作废);
  * - WGSL 声明的每个绑定都要有资源(缺了建不出 bind group)。
- * 用的是 Pixi 自己解析 WGSL 的结果(`gpuProgram.structsAndGroups`),与运行时同一口径。
+ * 绑定表用 engine2d 解析 WGSL 的结果(`gpuProgram.structsAndGroups`,按变量名绑定,与渲染核心同一口径)。
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { DOMAdapter, RenderTexture, Texture, UniformGroup, type Renderer, type Shader } from 'pixi.js';
+import { DOMAdapter, RenderTexture, Texture, UniformGroup, type Renderer, type Shader } from '../../engine2d';
 import { BurnFieldTexture, BurnGlowFilter, BurnMaterialFilter } from './BurnFilters';
 import { BurnRenderer } from './BurnRenderer';
 import { burnShadeParamsOf } from './burnShadeParams';
@@ -21,12 +21,12 @@ type StructsAndGroups = {
 function checkShader(shader: Shader, label: string): void {
   const sg = shader.gpuProgram!.structsAndGroups as StructsAndGroups;
   // 1) 每个资源键都落在 WGSL 声明的绑定上(没有第 99 组)
-  expect(Object.keys(shader.groups).map(Number).filter((g) => g >= 99), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
+  expect(Object.keys(shader.resources).filter((k) => !sg.groups.some((g) => g.name === k)), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
   // 2) WGSL 声明的每个自有绑定都有资源(第 0 组滤镜 / 第 0、1 组网格由 Pixi 补)
   const autoGroups = new Set(shader.gpuProgram!.autoAssignGlobalUniforms ? [0, 1] : [0]);
   for (const g of sg.groups) {
     if (autoGroups.has(g.group)) continue;
-    expect(shader.groups[g.group]?.resources[g.binding], `${label}: WGSL 绑定 ${g.name} 没有资源`).toBeTruthy();
+    expect((shader.resources as Record<string, unknown>)[g.name], `${label}: WGSL 绑定 ${g.name} 没有资源`).toBeTruthy();
   }
   // 3) uniform 组:WGSL struct 与 JS 声明逐项同名同类型同顺序
   const resources = shader.resources as Record<string, unknown>;

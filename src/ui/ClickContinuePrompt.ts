@@ -1,4 +1,4 @@
-import { Container, Text } from 'pixi.js';
+import { Container, Text } from '../engine2d';
 import type { Renderer } from '../rendering/Renderer';
 import type { InputManager } from '../core/InputManager';
 import { UITheme } from './UITheme';

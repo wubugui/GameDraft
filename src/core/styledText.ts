@@ -10,8 +10,8 @@
  * 不含标记的文本走快路径，行为与迁移前逐像素一致（同字号 ⇒ 行高、换行、面板高度都不变）。
  */
 
-import { Text, TextStyle } from 'pixi.js';
-import type { TextOptions, TextStyleOptions } from 'pixi.js';
+import { Text, TextStyle } from '../engine2d';
+import type { TextOptions, TextStyleOptions } from '../engine2d';
 import { hasStyleMarkup, paletteTagStyles, plainTextLength, sliceStyledMarkup, toPixiTagged } from './textStyle';
 
 /** Text → 它当前承载的「原始带标记文本」。用 WeakMap 是为了不往 Pixi 对象上挂私有字段。 */

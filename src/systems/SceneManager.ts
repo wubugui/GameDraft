@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Text, type Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, type Texture } from '../engine2d';
 import type { AssetManager, AssetManifest, AssetRef } from '../core/AssetManager';
 import type { EventBus } from '../core/EventBus';
 import type { Renderer } from '../rendering/Renderer';

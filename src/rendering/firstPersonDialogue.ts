@@ -1,4 +1,4 @@
-import { CanvasTextMetrics, type Graphics, type TextStyle } from 'pixi.js';
+import { CanvasTextMetrics, type Graphics, type TextStyle } from '../engine2d';
 
 /**
  * 对白版式「第一人称」（`layout: 'firstPerson'`，2026-09-22 制作人定：设计稿方案一）的共用几何与画法。

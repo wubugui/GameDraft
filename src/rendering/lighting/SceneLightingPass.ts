@@ -1,7 +1,7 @@
 import {
   Mesh, MeshGeometry, RenderTexture, Shader, Texture,
   type Renderer,
-} from 'pixi.js';
+} from '../../engine2d';
 
 import type { SceneLightingDef } from '../../data/types';
 import {
@@ -1544,10 +1544,10 @@ export class SceneLightingPass {
    * 一个调试视图不值得那个耦合。
    */
   setProbeResources(res: {
-    atlasL1: import('pixi.js').TextureSource;
-    atlasL2: import('pixi.js').TextureSource;
-    atlasBin: import('pixi.js').TextureSource;
-    valid: import('pixi.js').TextureSource;
+    atlasL1: import('../../engine2d').TextureSource;
+    atlasL2: import('../../engine2d').TextureSource;
+    atlasBin: import('../../engine2d').TextureSource;
+    valid: import('../../engine2d').TextureSource;
     mCol: Float32Array;
     wMin: [number, number, number];
     wScale: [number, number, number];
@@ -1559,7 +1559,7 @@ export class SceneLightingPass {
     binOb: number;
     /** skyao probe(可缺:老载荷没有,视图 11 显示全白) */
     skyao: {
-      tex: import('pixi.js').TextureSource;
+      tex: import('../../engine2d').TextureSource;
       n: [number, number, number];
       tiles: [number, number];
       wMin: [number, number, number];

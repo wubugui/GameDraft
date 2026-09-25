@@ -14,7 +14,7 @@
  * 数组成员 Pixi 的正则抽不全(`array<vec4<f32>, 24>` 只抽到半截),这里自己按源码解析 struct。
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { BufferImageSource, DOMAdapter, Shader, Texture, UniformGroup, type TextureSource } from 'pixi.js';
+import { BufferImageSource, DOMAdapter, Shader, Texture, UniformGroup, type TextureSource } from '../../engine2d';
 
 import { defaultSceneLighting } from '../../data/sceneLightingDefault';
 import { samplerOf } from '../legacy/gpuSampler';
@@ -42,11 +42,11 @@ function checkShader(shader: Shader, jsResources: Record<string, unknown>, label
   const sg = prog.structsAndGroups as StructsAndGroups;
   const src = prog.fragment!.source;
   // 1) 每个资源键都落在 WGSL 声明的绑定上(没有第 99 组)
-  expect(Object.keys(shader.groups).map(Number).filter((g) => g >= 99), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
+  expect(Object.keys(shader.resources).filter((k) => !sg.groups.some((g) => g.name === k)), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
   // 2) WGSL 声明的每个自有绑定都有资源(网格的第 0、1 组由 Pixi 补)
   const own = sg.groups.filter((g) => g.group >= 2);
   for (const g of own) {
-    expect(shader.groups[g.group]?.resources[g.binding], `${label}: WGSL 绑定 ${g.name} 没有资源`).toBeTruthy();
+    expect((shader.resources as Record<string, unknown>)[g.name], `${label}: WGSL 绑定 ${g.name} 没有资源`).toBeTruthy();
   }
   // 3) 第 2 组绑定号顺序 = resources 键顺序
   const byBinding = own.filter((g) => g.group === 2).sort((a, b) => a.binding - b.binding).map((g) => g.name);

@@ -1,4 +1,4 @@
-import { Circle, Container, Graphics, Rectangle, Sprite, Text, type Texture, type FederatedPointerEvent } from 'pixi.js';
+import { Circle, Container, Graphics, Rectangle, Sprite, Text, type Texture, type FederatedPointerEvent } from '../engine2d';
 import { UITheme } from './UITheme';
 import { drawPanelBase } from './PanelSkin';
 import { markPointerConsumed } from './uiPointerCoords';

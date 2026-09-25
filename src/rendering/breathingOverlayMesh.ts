@@ -1,5 +1,4 @@
-import 'pixi.js/mesh';
-import { BufferImageSource, Mesh, MeshGeometry, Shader, Texture } from 'pixi.js';
+import { BufferImageSource, Mesh, MeshGeometry, Shader, Texture } from '../engine2d';
 import type { BreathingOverlayRig } from '../data/breathingOverlays';
 import BREATHING_SHADE_SRC from './breathingShade.glsl?raw';
 import BREATHING_SHADE_WGSL from './breathingShade.wgsl?raw';

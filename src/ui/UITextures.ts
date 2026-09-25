@@ -1,4 +1,4 @@
-import { Assets, Texture } from 'pixi.js';
+import { Assets, Texture } from '../engine2d';
 import { mediaUrlForRoot } from '../core/projectPaths';
 
 /**

@@ -1,4 +1,4 @@
-import { Assets, Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { Assets, Container, Graphics, Sprite, Text, Texture } from '../engine2d';
 import { UITheme } from './UITheme';
 import { drawPanelBase, SKINS } from './PanelSkin';
 import { markPointerConsumed } from './uiPointerCoords';

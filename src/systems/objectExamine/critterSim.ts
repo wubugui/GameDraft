@@ -14,7 +14,7 @@
  * 蛆使用单张完整贴图 MeshPlane，仅变形顶点，不切片、不重建纹理。
  */
 
-import { Container, MeshPlane, Rectangle, Sprite, Texture } from 'pixi.js';
+import { Container, MeshPlane, Rectangle, Sprite, Texture } from '../../engine2d';
 import type { AssetManager } from '../../core/AssetManager';
 import {
   bakeObjectExamineCrawlField,

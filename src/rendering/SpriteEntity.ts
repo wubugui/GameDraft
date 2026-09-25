@@ -1,4 +1,4 @@
-import { BlurFilter, Container, Sprite, Texture, Rectangle, type Shader, type TextureSource } from 'pixi.js';
+import { BlurFilter, Container, Sprite, Texture, Rectangle, type Shader, type TextureSource } from '../engine2d';
 import type {
   AnimationPlaybackParams,
   AnimationSetDef,

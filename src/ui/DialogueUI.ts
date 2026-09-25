@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Texture } from '../engine2d';
 import { UITheme, fadeIn } from './UITheme';
 import { createPanel, SKINS } from './PanelSkin';
 import { ContinueIndicator } from './components/ContinueIndicator';

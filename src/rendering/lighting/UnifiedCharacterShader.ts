@@ -30,7 +30,7 @@ import {
   Texture,
   type TextureSource,
   UniformGroup,
-} from 'pixi.js';
+} from '../../engine2d';
 
 import type { SceneLightingDef } from '../../data/types';
 import { resolveLightColor } from './kelvin';

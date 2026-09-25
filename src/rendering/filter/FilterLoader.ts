@@ -2,7 +2,7 @@
  * 滤镜加载器：从 JSON 定义创建 PixiJS Filter 实例
  * 支持扩展：后续可增加自定义 shader 类型
  */
-import { ColorMatrixFilter, type Filter } from 'pixi.js';
+import { ColorMatrixFilter, type Filter } from '../../engine2d';
 import { resolveAssetPath } from '../../core/assetPath';
 import type { FilterDef } from './types';
 import { isValidFilterDef, IDENTITY_MATRIX } from './types';

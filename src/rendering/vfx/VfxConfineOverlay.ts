@@ -1,4 +1,4 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics } from '../../engine2d';
 
 import type { ConfineField } from '../../systems/vfx/vfxConfine';
 import { confineDistanceContour } from '../../systems/vfx/vfxConfine';

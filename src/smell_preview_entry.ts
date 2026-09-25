@@ -4,7 +4,7 @@
  * 编辑器经 window.__setProfiles / __setScent / __sniff 注入当前编辑的 profile 与状态。
  * `?grid=1`：九宫格对照（G.6 飘向：横向 × 纵深各 -1/0/+1），调幅度、给制作人看用。
  */
-import { Application, Container, Text } from 'pixi.js';
+import { Application, Container, Text } from './engine2d';
 import { SmellIndicatorRenderer, type SmellProfilesRaw } from './ui/smell/SmellIndicatorRenderer';
 import { fetchAsset } from './core/assetPath';
 import { TEXT_URLS } from './core/projectPaths';

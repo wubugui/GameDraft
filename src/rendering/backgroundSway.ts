@@ -47,7 +47,7 @@
  */
 import {
   Buffer, BufferUsage, Container, Geometry, Mesh, MeshGeometry, RenderTexture, Shader, type Renderer, type Texture,
-} from 'pixi.js';
+} from '../engine2d';
 
 import type { SceneData } from '../data/types';
 import {

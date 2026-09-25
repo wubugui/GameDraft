@@ -1,4 +1,4 @@
-import type { Container } from 'pixi.js';
+import type { Container } from '../../engine2d';
 
 /**
  * 手柄/键盘的**焦点导航**。全站面板共用一套，行为对齐主机 UI 的通行做法。

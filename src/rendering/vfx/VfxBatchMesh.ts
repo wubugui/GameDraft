@@ -14,7 +14,7 @@ import {
   Geometry,
   Mesh,
   type Shader,
-} from 'pixi.js';
+} from '../../engine2d';
 
 export interface VfxQuad {
   /** 四角场景坐标（wu）：TL TR BR BL */

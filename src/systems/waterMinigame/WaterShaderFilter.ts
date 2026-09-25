@@ -1,4 +1,4 @@
-import { Filter, GlProgram, GpuProgram, Texture } from 'pixi.js';
+import { Filter, GlProgram, GpuProgram, Texture } from '../../engine2d';
 import { samplerOf } from '../../rendering/legacy/gpuSampler';
 
 const VERT = /* glsl */ `

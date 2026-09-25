@@ -10,7 +10,7 @@
  * 3. **确定性**：只吃传进来的 `dt`，不读挂钟；同一份 def + 同一串 dt ⇒ 逐位相同。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { Texture, TextureSource } from 'pixi.js';
+import { Texture, TextureSource } from '../engine2d';
 
 import { TrajectorySystem, type TrajectoryEndReason, type TrajectoryPlayDef } from './TrajectorySystem';
 import { Npc } from '../entities/Npc';

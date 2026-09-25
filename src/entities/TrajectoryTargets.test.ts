@@ -9,7 +9,7 @@
  * - 玩家的位置写入平时晚一帧（`Player.x` 只是 `sprite.x` 字段），轨迹必须当帧落位。
  */
 import { describe, expect, it, vi } from 'vitest';
-import { Container, Texture, TextureSource } from 'pixi.js';
+import { Container, Texture, TextureSource } from '../engine2d';
 
 import { Npc } from './Npc';
 import { Player } from './Player';

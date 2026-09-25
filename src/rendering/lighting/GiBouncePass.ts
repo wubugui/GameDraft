@@ -33,7 +33,7 @@ import {
   type Renderer,
   Shader,
   type TextureSource,
-} from 'pixi.js';
+} from '../../engine2d';
 import { samplerOf } from '../legacy/gpuSampler';
 
 /** 与 `bake.py#GI_DIRS` 同值。改一边必须改另一边（载荷版本要 +1）。 */

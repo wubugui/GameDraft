@@ -20,7 +20,7 @@
  * 不碰 Pixi 私有字段：哪些已经交给 Pixi 由本类自己记。上下文换了（丢失后重建，Pixi 的程序缓存随之清空）
  * 整份作废、在新上下文上重来。
  */
-import { Shader, type GlProgram } from 'pixi.js';
+import { Shader, type GlProgram } from '../engine2d';
 
 /** 本类用到的那一小块渲染器：WebGL 渲染器天然满足（WebGPU 渲染器没有 `gl`，交不出来就什么都不做） */
 export interface GlWarmupTarget {

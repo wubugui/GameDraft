@@ -36,7 +36,7 @@ import {
   Rectangle,
   Sprite,
   Text,
-} from 'pixi.js';
+} from '../../engine2d';
 import { createStyledText, setStyledText } from '../../core/styledText';
 import { plainTextLength, sliceStyledMarkup } from '../../core/textStyle';
 

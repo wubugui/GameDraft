@@ -1,4 +1,4 @@
-import { CanvasTextMetrics, TextStyle } from 'pixi.js';
+import { CanvasTextMetrics, TextStyle } from '../engine2d';
 import { styledRuns } from '../core/textStyle';
 
 /**

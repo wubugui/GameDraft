@@ -1,4 +1,4 @@
-import { Filter, GlProgram, GpuProgram } from 'pixi.js';
+import { Filter, GlProgram, GpuProgram } from '../../engine2d';
 
 const VERT = /* glsl */ `
 in vec2 aPosition;

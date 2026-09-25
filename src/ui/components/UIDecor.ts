@@ -1,4 +1,4 @@
-import { Container, FillGradient, Graphics, Rectangle, Sprite, Text, Texture } from 'pixi.js';
+import { Container, FillGradient, Graphics, Rectangle, Sprite, Text, Texture } from '../../engine2d';
 import { UITheme } from '../UITheme';
 import { drawPanelBase, SKINS } from '../PanelSkin';
 import { uiIcon, type UIIconName } from '../UIIcons';

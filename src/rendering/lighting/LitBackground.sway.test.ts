@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 // Shader.from 在没有 DOM 的测试环境要 document：换成只记资源表的空壳，Mesh 换成普通容器。
 // 这里要验的正是资源表里绑的是哪张图——渲染本身不在测试范围。
-vi.mock('pixi.js', async (importOriginal) => {
-  const real = await importOriginal<typeof import('pixi.js')>();
+vi.mock('../../engine2d', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../../engine2d')>();
   return {
     ...real,
     Shader: {
@@ -18,7 +18,7 @@ vi.mock('pixi.js', async (importOriginal) => {
   };
 });
 
-import { Texture } from 'pixi.js';
+import { Texture } from '../../engine2d';
 import { LitBackground } from './LitBackground';
 import type { SceneLightingGeometry } from './SceneLightingPass';
 

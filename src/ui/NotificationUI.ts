@@ -1,4 +1,4 @@
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 import { UITheme } from './UITheme';
 import { buildToastChip } from './components/UIToast';
 import { eventChannelColor, eventChannelIcon } from './eventChannelStyle';

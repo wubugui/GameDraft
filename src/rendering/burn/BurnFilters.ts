@@ -16,7 +16,7 @@
  * 资源有主：燃烧场纹理归 `BurnFieldTexture`（BurnSystem 的渲染侧持有）；滤镜只引用。卸载顺序 = 先从链上摘滤镜、
  * 再销毁滤镜、最后销毁纹理（pixi-v8-traps：BindGroup 见死即自毁）。
  */
-import { BufferImageSource, Filter, GlProgram, GpuProgram, Texture } from 'pixi.js';
+import { BufferImageSource, Filter, GlProgram, GpuProgram, Texture } from '../../engine2d';
 import BURN_SHADE_SRC from './burnShade.glsl?raw';
 import BURN_SHADE_WGSL_SRC from './burnShade.wgsl?raw';
 import type { BurnShadeParams } from './burnShadeParams';

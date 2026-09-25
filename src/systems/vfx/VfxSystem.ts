@@ -23,7 +23,7 @@
  *
  * 每个来源都是同一种 `VfxFieldRuntime`，群体按标签查自己的权重——不认识的标签权重 0，等于没发。
  */
-import type { Texture } from 'pixi.js';
+import type { Texture } from '../../engine2d';
 
 import type { AssetManager } from '../../core/AssetManager';
 import type { EventBus } from '../../core/EventBus';

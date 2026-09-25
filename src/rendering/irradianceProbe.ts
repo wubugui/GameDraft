@@ -1,4 +1,4 @@
-import { Application, BlurFilter, Container, RenderTexture, Sprite, Texture } from 'pixi.js';
+import { Application, BlurFilter, Container, RenderTexture, Sprite, Texture } from '../engine2d';
 
 export interface IrradianceProbeOptions {
   /** 探针纹理最大宽度（高按背景比例），默认 96。越小越平滑、越省。 */

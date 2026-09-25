@@ -29,7 +29,7 @@ import {
   Sprite,
   Text,
   Texture,
-} from 'pixi.js';
+} from '../../engine2d';
 import { createStyledText, setStyledText } from '../../core/styledText';
 
 const DEFAULT_PART_IMAGE_ROOT = '/resources/runtime/images/minigames/paper_craft/parts/';

@@ -5,7 +5,7 @@
  * 早于 scene:ready 就拿不到实体与载荷几何，晚于揭幕就又回到"揭幕后第一帧卡住"。
  * 闸抛错也必须照常揭幕——不许把首屏锁在黑幕后（scene-onenter-reveal-timing）。
  */
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 import { describe, expect, it } from 'vitest';
 
 import { EventBus } from '../core/EventBus';

@@ -4,7 +4,7 @@
  * 分桶是玩家唯一能直接看见的排序结果（蝙蝠飞到关二狗身前还是身后），而它没有任何
  * 画面之外的痕迹——排错了只是"层级有点怪"。这里直接测渲染器导出的纯函数，不再写镜像。
  */
-import { Container, DOMAdapter, Shader, Texture, UniformGroup } from 'pixi.js';
+import { Container, DOMAdapter, Shader, Texture, UniformGroup } from '../../engine2d';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { VfxEmitterRuntime, VfxInstanceSim } from '../../systems/vfx/vfxSim';

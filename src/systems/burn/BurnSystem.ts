@@ -26,7 +26,7 @@
  * ## 日志只增不删
  * 复原也不截断：复原之前那一段点着过别的可燃物，重放别人要用到。
  */
-import type { Container } from 'pixi.js';
+import type { Container } from '../../engine2d';
 import {
   burnableWorldSize,
   resolveBurnable,

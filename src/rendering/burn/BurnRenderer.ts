@@ -20,7 +20,7 @@ import {
   type Filter,
   type Renderer,
   type Texture,
-} from 'pixi.js';
+} from '../../engine2d';
 import {
   BURN_SHADE_GLSL,
   BURN_SHADE_WGSL,

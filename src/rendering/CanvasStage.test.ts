@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 import { CanvasStage, CANVAS_ORDER_DEFAULT } from './CanvasStage';
 
 /**

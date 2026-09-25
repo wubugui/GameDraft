@@ -1,7 +1,7 @@
 import {
   Mesh, MeshGeometry, RenderTexture, Shader,
   type Renderer, type Texture,
-} from 'pixi.js';
+} from '../../engine2d';
 import { samplerOf } from '../legacy/gpuSampler';
 
 /**

@@ -1,4 +1,4 @@
-import { Graphics, Text } from 'pixi.js';
+import { Graphics, Text } from '../engine2d';
 import { UITheme } from './UITheme';
 import { drawPanelBase, SKINS } from './PanelSkin';
 import { createBadge, drawFocusRing, drawHoverRow } from './components/UIDecor';

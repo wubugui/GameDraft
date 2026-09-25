@@ -1,4 +1,4 @@
-import { Container, FillGradient, Graphics, Matrix, NineSliceSprite } from 'pixi.js';
+import { Container, FillGradient, Graphics, Matrix, NineSliceSprite } from '../engine2d';
 import { UITheme } from './UITheme';
 import { FRAME_BORDER_PX, uiTexture } from './UITextures';
 

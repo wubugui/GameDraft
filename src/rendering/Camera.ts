@@ -1,4 +1,4 @@
-import type { Container } from 'pixi.js';
+import type { Container } from '../engine2d';
 
 /**
  * 2D正交相机 — 标准 View-Projection 管线

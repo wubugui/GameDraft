@@ -24,6 +24,11 @@ export interface ProgramBinding {
   type: string;
 }
 
+export interface ProgramStruct {
+  name: string;
+  members: Record<string, string>;
+}
+
 export interface ProgramAttribute {
   name: string;
   location: number;
@@ -48,6 +53,7 @@ export class GpuProgram {
   readonly fragmentEntry: string;
   private _attributes: ProgramAttribute[] | null = null;
   private _bindings: ProgramBinding[] | null = null;
+  private _structs: ProgramStruct[] | null = null;
 
   constructor(options: GpuProgramOptions) {
     this.vertex = options.vertex;
@@ -71,9 +77,11 @@ export class GpuProgram {
     return (this._bindings ??= extractBindings(this.source));
   }
 
-  /** 与 Pixi 同形的 `structsAndGroups.groups`(测试 / 诊断用) */
-  get structsAndGroups(): { groups: ProgramBinding[] } {
-    return { groups: this.bindings };
+  /** 与 Pixi 同形的 `structsAndGroups`(测试 / 诊断用):绑定表 + 被绑定引用到的结构体(成员名 → 类型串) */
+  get structsAndGroups(): { groups: ProgramBinding[]; structs: ProgramStruct[] } {
+    const groups = this.bindings;
+    const structs = (this._structs ??= extractStructs(this.source)).filter((st) => groups.some((g) => g.type === st.name));
+    return { groups, structs };
   }
 
   /** 着色器是否声明了 `globalUniforms`(渲染核心据此提供;与 Pixi 字段同名) */
@@ -118,6 +126,20 @@ function extractAttributes(src: string, entry: string): ProgramAttribute[] {
   const re = /@location\s*\(\s*(\d+)\s*\)\s*(?:@interpolate\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z0-9_<>]+)/g;
   let a: RegExpExecArray | null;
   while ((a = re.exec(params))) out.push({ location: Number(a[1]), name: a[2], type: a[3] });
+  return out;
+}
+
+/** 照 Pixi extractStructAndGroups 的结构体解析(成员类型按 `[\w<>]+` 取,数组类型只到第一个逗号前) */
+function extractStructs(src: string): ProgramStruct[] {
+  const clean = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const out: ProgramStruct[] = [];
+  const re = /struct\s+(\w+)\s*{([^}]+)}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(clean))) {
+    const members: Record<string, string> = {};
+    for (const mm of m[2].matchAll(/(\w+)\s*:\s*([\w<>]+)/g)) members[mm[1]] = mm[2];
+    out.push({ name: m[1], members });
+  }
   return out;
 }
 

@@ -1,4 +1,4 @@
-import { BufferImageSource, Texture, type Renderer, type TextureSource } from 'pixi.js';
+import { BufferImageSource, Texture, type Renderer, type TextureSource } from '../engine2d';
 
 import type { LightDef, SceneData, SceneDepthConfig, SceneLightingDef, VfxSurfaceRegionDef } from '../data/types';
 import { buildSurfaceMaskCanvas, resolveSurfaceDefaults, type ResolvedSurfaceDefaults } from '../rendering/lighting/surfaceMask';

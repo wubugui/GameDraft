@@ -1,4 +1,4 @@
-import { CanvasTextMetrics, Container, Graphics, Rectangle, Sprite, Text, TextStyle, Texture } from 'pixi.js';
+import { CanvasTextMetrics, Container, Graphics, Rectangle, Sprite, Text, TextStyle, Texture } from '../engine2d';
 import type { AssetManager } from '../core/AssetManager';
 import { mediaUrlFromShortPath } from '../core/projectPaths';
 import { UITheme } from './UITheme';

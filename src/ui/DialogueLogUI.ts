@@ -1,4 +1,4 @@
-import { CanvasTextMetrics, Container, Graphics, Rectangle, Text, TextStyle } from 'pixi.js';
+import { CanvasTextMetrics, Container, Graphics, Rectangle, Text, TextStyle } from '../engine2d';
 import { UITheme } from './UITheme';
 import { createIcon, createRule, drawFocusRing, drawHoverRow } from './components/UIDecor';
 import { UIWindow, WINDOW_SIZES } from './components/UIWindow';

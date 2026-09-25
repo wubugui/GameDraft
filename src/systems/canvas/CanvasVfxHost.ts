@@ -1,4 +1,4 @@
-import { Container, type UniformGroup } from 'pixi.js';
+import { Container, type UniformGroup } from '../../engine2d';
 import type { AssetManager } from '../../core/AssetManager';
 import { EventBus } from '../../core/EventBus';
 import type { GameContext, SceneData } from '../../data/types';

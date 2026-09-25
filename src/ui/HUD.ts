@@ -1,4 +1,4 @@
-import { Assets, Container, Graphics, Rectangle, Sprite, Text, Texture, type FederatedPointerEvent } from 'pixi.js';
+import { Assets, Container, Graphics, Rectangle, Sprite, Text, Texture, type FederatedPointerEvent } from '../engine2d';
 import { mediaUrlForRoot } from '../core/projectPaths';
 import { SmellIndicatorRenderer, type SmellProfilesRaw, type SmellRenderState, type SmellFormParams } from './smell/SmellIndicatorRenderer';
 import { HudDebut } from './HudDebut';

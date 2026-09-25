@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 import { UI_LAYER_Z } from '../rendering/uiLayerOrder';
 import { UITheme } from './UITheme';
 import { UIWindow } from './components/UIWindow';
@@ -13,7 +13,7 @@ import type { Camera } from '../rendering/Camera';
  * 本仓库 vitest 跑在 node 环境、没有 document。层序与皮肤无关，把画底框那一层换成空容器即可。
  */
 vi.mock('./PanelSkin', async () => {
-  const { Container } = await import('pixi.js');
+  const { Container } = await import('../engine2d');
   return {
     createPanel: (): unknown => new Container(),
     SKINS: { panel: {}, chip: {}, toast: {} },

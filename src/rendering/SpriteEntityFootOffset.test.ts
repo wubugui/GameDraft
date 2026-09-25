@@ -8,7 +8,7 @@
  * - 投影剪影裁掉脚底线以下那截空白，底边就是脚。
  */
 import { describe, expect, it } from 'vitest';
-import { Sprite, Texture, TextureSource } from 'pixi.js';
+import { Sprite, Texture, TextureSource } from '../engine2d';
 
 import { SpriteEntity, footOffsetOfState, FOOT_OFFSET_MAX } from './SpriteEntity';
 import type { AnimationSetDef, SocketFramePose } from '../data/types';

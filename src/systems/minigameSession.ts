@@ -10,7 +10,7 @@
  * - destroy 在会话中时同样恢复 GameState 并触发 onSessionEnd。
  */
 
-import type { Container } from 'pixi.js';
+import type { Container } from '../engine2d';
 import type { AssetManager, AssetRef } from '../core/AssetManager';
 import type { InputManager } from '../core/InputManager';
 import type { GameStateController } from '../core/GameStateController';

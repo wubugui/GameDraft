@@ -1,4 +1,4 @@
-import { Container, Graphics, Rectangle, type FederatedPointerEvent } from 'pixi.js';
+import { Container, Graphics, Rectangle, type FederatedPointerEvent } from '../../engine2d';
 import { drawPanelBase, SKINS, type PanelDrawOverrides } from '../PanelSkin';
 import { drawFocusRing, drawHoverRow, drawSelectedRow } from './UIDecor';
 import { isPointerDragScrolling, markPointerConsumed } from '../uiPointerCoords';

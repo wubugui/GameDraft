@@ -14,7 +14,7 @@
  *
  * ⚠ 实际编译目标见 pixi-v8-traps：不用数组构造式；模板字符串里不许出现反引号。
  */
-import { GlProgram, GpuProgram } from 'pixi.js';
+import { GlProgram, GpuProgram } from '../../engine2d';
 
 import { CHAR_LIGHTS_WGSL } from '../CharacterLitSprite';
 import { LC_WGSL, WR_CORE_WGSL } from '../lighting/wgslChunks';

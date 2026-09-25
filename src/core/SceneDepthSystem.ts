@@ -1,4 +1,4 @@
-import { Texture, type TextureSource } from 'pixi.js';
+import { Texture, type TextureSource } from '../engine2d';
 import type { AssetManager } from './AssetManager';
 import type {
     SceneDepthConfig, IGameSystem, GameContext, RgbColor, CollisionGridMeta, CollisionSidecar,

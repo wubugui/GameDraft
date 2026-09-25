@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container } from '../engine2d';
 import { FIRE_HINT_DISTANCE_OF_BODY, FireHintMarker, clipPolygonBelow, fireHintLook, flameGlyphOutline, type FireHintTarget } from './FireHintMarker';
 
 const area = (p: readonly [number, number][]) => {

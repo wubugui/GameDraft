@@ -9,11 +9,11 @@
  * - WGSL 声明的每个绑定都要有资源;
  * - 每张纹理的「纹理名 + Sampler」就是该纹理自己的 style(WebGL 用纹理自带采样状态,两边才一致),
  *   运行时换图集时采样器跟着换。
- * 用的是 Pixi 自己解析 WGSL 的结果(`gpuProgram.structsAndGroups`),与运行时同一口径。
+ * 绑定表用 engine2d 解析 WGSL 的结果(`gpuProgram.structsAndGroups`,按变量名绑定,与渲染核心同一口径)。
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { samplerOf } from './legacy/gpuSampler';
-import { BufferImageSource, Container, DOMAdapter, Texture, TextureSource, UniformGroup, type Shader } from 'pixi.js';
+import { BufferImageSource, Container, DOMAdapter, Texture, TextureSource, UniformGroup, type Shader } from '../engine2d';
 import { PlanarEntityShadow } from './EntityShadow';
 import type { ShadowSceneContext, ShadowSource } from './entityShadowTypes';
 import { DepthOcclusionFilter } from './DepthOcclusionFilter';
@@ -29,12 +29,12 @@ type StructsAndGroups = {
 function checkShader(shader: Shader, label: string): void {
   const sg = shader.gpuProgram!.structsAndGroups as StructsAndGroups;
   // 1) 每个资源键都落在 WGSL 声明的绑定上(没有第 99 组)
-  expect(Object.keys(shader.groups).map(Number).filter((g) => g >= 99), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
+  expect(Object.keys(shader.resources).filter((k) => !sg.groups.some((g) => g.name === k)), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
   // 2) WGSL 声明的每个自有绑定都有资源(第 0 组滤镜 / 第 0、1 组网格由 Pixi 补)
   const autoGroups = new Set(shader.gpuProgram!.autoAssignGlobalUniforms ? [0, 1] : [0]);
   for (const g of sg.groups) {
     if (autoGroups.has(g.group)) continue;
-    expect(shader.groups[g.group]?.resources[g.binding], `${label}: WGSL 绑定 ${g.name} 没有资源`).toBeTruthy();
+    expect((shader.resources as Record<string, unknown>)[g.name], `${label}: WGSL 绑定 ${g.name} 没有资源`).toBeTruthy();
   }
   const resources = shader.resources as Record<string, unknown>;
   // 3) uniform 组:WGSL struct 与 JS 声明逐项同名同类型同顺序

@@ -6,7 +6,7 @@
  * 2. 粒子目录里的每个 GL 程序都必须在 `vfxGlPrograms()` 清单里：漏了的不会被开局预编译，
  *    第一次出现时又在可见画面上同步编。
  */
-import { DOMAdapter } from 'pixi.js';
+import { DOMAdapter } from '../../engine2d';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import CHAR_LIGHTING_SRC from '../../core/CharacterLightingSystem.ts?raw';

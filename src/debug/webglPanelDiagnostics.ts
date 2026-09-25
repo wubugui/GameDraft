@@ -1,5 +1,5 @@
-import type { Application, Renderer } from 'pixi.js';
-import type { Texture } from 'pixi.js';
+import type { Application, Renderer } from '../engine2d';
+import type { Texture } from '../engine2d';
 
 /** 从 Pixi Application 取 WebGL 上下文（WebGPU 渲染器时返回 null） */
 export function tryGetWebGlFromApplication(

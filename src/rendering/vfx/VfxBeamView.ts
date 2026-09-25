@@ -7,7 +7,7 @@
  *
  * 资源有主：网格 / 几何 / 着色器 / uniform 组都归本视图，`destroy` 一并收（深度图、图案贴图归系统，不收）。
  */
-import { Buffer, BufferUsage, Geometry, Mesh, Shader, Texture, type TextureSource, UniformGroup } from 'pixi.js';
+import { Buffer, BufferUsage, Geometry, Mesh, Shader, Texture, type TextureSource, UniformGroup } from '../../engine2d';
 
 import type { VfxBeamSort } from '../../data/types';
 import { VFX_BEAM_MAX_CURVE_KEYS, VFX_BEAM_MAX_HULL, VFX_BEAM_MAX_PLANES } from '../../systems/vfx/vfxBeam';

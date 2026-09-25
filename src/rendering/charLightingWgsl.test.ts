@@ -14,7 +14,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { samplerOf } from './legacy/gpuSampler';
-import { BufferImageSource, DOMAdapter, Texture, TextureSource, UniformGroup, type Shader } from 'pixi.js';
+import { BufferImageSource, DOMAdapter, Texture, TextureSource, UniformGroup, type Shader } from '../engine2d';
 import {
   createCharLightUniforms, createFrameLitUniforms, createLitShader, createSceneLitUniforms,
   LIT_SHADER_SCENE_TEXTURE_SLOTS, setLitShaderTexture, type LitSceneStatics,
@@ -44,12 +44,12 @@ function checkShader(shader: Shader, label: string): void {
   const sg = prog.structsAndGroups as StructsAndGroups;
   const src = prog.fragment!.source;
   // 1) 每个资源键都落在 WGSL 声明的绑定上(没有第 99 组)
-  expect(Object.keys(shader.groups).map(Number).filter((g) => g >= 99), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
+  expect(Object.keys(shader.resources).filter((k) => !sg.groups.some((g) => g.name === k)), `${label}: 有资源键在 WGSL 里没有同名绑定`).toEqual([]);
   // 2) WGSL 声明的每个自有绑定都有资源(第 0 组滤镜 / 第 0、1 组网格由 Pixi 补)
   const autoGroups = new Set(prog.autoAssignGlobalUniforms ? [0, 1] : [0]);
   for (const g of sg.groups) {
     if (autoGroups.has(g.group)) continue;
-    expect(shader.groups[g.group]?.resources[g.binding], `${label}: WGSL 绑定 ${g.name} 没有资源`).toBeTruthy();
+    expect((shader.resources as Record<string, unknown>)[g.name], `${label}: WGSL 绑定 ${g.name} 没有资源`).toBeTruthy();
   }
   const resources = shader.resources as Record<string, unknown>;
   // 3) uniform 组:WGSL struct 与 JS 声明逐项同名同类型同长度同顺序

@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, Texture } from 'pixi.js';
+import { Container, Graphics, Text, Texture } from '../engine2d';
 import type {
   NpcDef,
   AnimationPlaybackParams,

@@ -1,5 +1,5 @@
 import { lightFactor, lightChroma, legacyLightFactors, resolveLightResponse, type EntityLightResponse } from '../data/lightFactors';
-import { BufferImageSource, GlProgram, type GpuProgram, Shader, Texture, type TextureSource, UniformGroup } from 'pixi.js';
+import { BufferImageSource, GlProgram, type GpuProgram, Shader, Texture, type TextureSource, UniformGroup } from '../engine2d';
 import type { IGameSystem, GameContext, SceneLightingDef } from '../data/types';
 import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 import { depthLog, depthError } from './depthLog';

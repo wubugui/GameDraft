@@ -3,12 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 // 只把两个渲染对象换成空壳：`Shader.from` 在没有 DOM 的测试环境里要 `document`。
 // 其余全是真的——网格、振子、封顶、整株转角与逐顶点位移都走 `SwayBackground.update`，
 // 所以运行时哪天又被塞回"减掉平均风弯角"，这里会红（照抄一份公式去模拟是看不出调用处被改的）。
-vi.mock('pixi.js', async (importOriginal) => {
-  const real = await importOriginal<typeof import('pixi.js')>();
+vi.mock('../engine2d', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../engine2d')>();
   return { ...real, Shader: { from: () => ({ resources: {} }) }, Mesh: class extends real.Container {} };
 });
 
-import { Texture } from 'pixi.js';
+import { Texture } from '../engine2d';
 import { SwayBackground, type BackgroundSwayInput } from './backgroundSway';
 import { resolveSceneWind } from '../utils/sceneWind';
 

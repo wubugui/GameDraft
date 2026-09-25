@@ -1,5 +1,5 @@
-import { Assets, Container, FillGradient, Graphics, Sprite, Text, Texture } from 'pixi.js';
-import type { FederatedPointerEvent } from 'pixi.js';
+import { Assets, Container, FillGradient, Graphics, Sprite, Text, Texture } from '../engine2d';
+import type { FederatedPointerEvent } from '../engine2d';
 import { MEDIA_URLS } from '../core/projectPaths';
 import { UITheme, fadeIn } from './UITheme';
 import { createPanel, drawPanelBase, SKINS } from './PanelSkin';

@@ -3,7 +3,7 @@
  * 解出的站位让接触帧火头落在着火点上（残差 ≈ 0，含透视系数随脚点变）；点火表演的拒绝 / 中止路径把状态还回来。
  */
 import { describe, expect, it } from 'vitest';
-import { Sprite, Texture, TextureSource } from 'pixi.js';
+import { Sprite, Texture, TextureSource } from '../../engine2d';
 import { SpriteEntity } from '../../rendering/SpriteEntity';
 import { GameState, type AnimationSetDef, type SocketFramePose } from '../../data/types';
 import { igniteContactOf, igniteStancesFor, igniteTipOffset, type IgniteStanceData } from './igniteStance';

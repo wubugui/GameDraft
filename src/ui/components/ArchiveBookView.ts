@@ -1,4 +1,4 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Text } from '../../engine2d';
 import { UITheme } from '../UITheme';
 import { SKINS } from '../PanelSkin';
 import { buildRichContent, buildRichDoc, RICH_DARK, type RichBlock, type RichContentOptions } from '../RichContent';

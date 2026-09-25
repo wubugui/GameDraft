@@ -1,15 +1,13 @@
 /**
  * WGSL 着色器独立采样器资源(`<纹理名>Sampler`)的取值口。**一律用 `samplerOf(source)`,不要直接放 `source.style`。**
  *
- * 为什么:Pixi 里 `TextureSource.destroy()` 会连带销毁它的 `style`,style 销毁时发 `change`,含它的 BindGroup
- * 随即自毁(pixi-v8-traps「BindGroup 见死即自毁」)。采样器槽和纹理槽在同一个组里——宿主换了纹理却漏换采样器,
- * 旧纹理一销毁,这一组就死了,**WebGL 下整帧照样抛**(WebGL 虽然不用这个采样器资源,组还是那个组)。
- * 「换纹理时记得换采样器」靠每个宿主手工维护必然会漏,所以采样器资源干脆不挂在任何纹理的生命期上:
- * 按采样参数共享一份、永不销毁。采样器本身无状态,共享不影响任何结果。
+ * 按采样参数共享一份、永不销毁:采样器本身无状态,共享不影响任何结果;也不挂在任何纹理的生命期上
+ * (Pixi 时代直接放 `source.style` 会在纹理销毁时连带弄死整个绑定组、整帧抛错;engine2d 按名字绑定、
+ * 采样器按参数缓存,已没有那条路径,但保留同一纪律:采样状态跟着纹理参数走,不跟着纹理对象走)。
  *
  * 纹理之后若改了自己的 style 参数,调用方要重新 `samplerOf(source)` 取一次(参数不同就是另一份)。
  */
-import { TextureStyle } from 'pixi.js';
+import { TextureStyle } from '../../engine2d';
 
 const shared = new Map<string, TextureStyle>();
 

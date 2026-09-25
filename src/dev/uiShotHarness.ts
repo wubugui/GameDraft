@@ -1,4 +1,4 @@
-import { Rectangle } from 'pixi.js';
+import { Rectangle } from '../engine2d';
 import type { Game } from '../core/Game';
 
 /**

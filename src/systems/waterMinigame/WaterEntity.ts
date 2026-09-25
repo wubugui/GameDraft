@@ -1,4 +1,4 @@
-import { Container, FederatedPointerEvent, Sprite, Texture } from 'pixi.js';
+import { Container, FederatedPointerEvent, Sprite, Texture } from '../../engine2d';
 import type { AssetManager } from '../../core/AssetManager';
 import type { WaterCategory, WaterEntityDef } from './types';
 import { WaterParamEncodeFilter } from './WaterParamEncodeFilter';

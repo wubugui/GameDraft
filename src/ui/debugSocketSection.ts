@@ -1,4 +1,4 @@
-import { Rectangle, Sprite, Texture } from 'pixi.js';
+import { Rectangle, Sprite, Texture } from '../engine2d';
 import type { AssetManager } from '../core/AssetManager';
 import type { SpriteEntity } from '../rendering/SpriteEntity';
 import type { DebugSectionContent } from './DebugPanelUI';

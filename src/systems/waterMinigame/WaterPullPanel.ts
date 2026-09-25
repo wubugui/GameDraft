@@ -1,4 +1,4 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Text } from '../../engine2d';
 import { createPanel, SKINS, WOOD_PANEL } from '../../ui/PanelSkin';
 import { UITheme } from '../../ui/UITheme';
 import { createProgressBar, createTitleRow } from '../../ui/components/UIDecor';

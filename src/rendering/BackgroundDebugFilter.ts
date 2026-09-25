@@ -1,4 +1,4 @@
-import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from 'pixi.js';
+import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from '../engine2d';
 import type { SceneDepthConfig } from '../data/types';
 import { samplerOf } from './legacy/gpuSampler';
 

@@ -1,5 +1,4 @@
-import 'pixi.js/mesh';
-import { Mesh, MeshGeometry, Shader, Texture } from 'pixi.js';
+import { Mesh, MeshGeometry, Shader, Texture } from '../engine2d';
 import { samplerOf } from './legacy/gpuSampler';
 
 /**

@@ -1,4 +1,4 @@
-import type { Texture } from 'pixi.js';
+import type { Texture } from '../engine2d';
 import type { ResolvedLightEnv } from './lightEnv';
 import type { ShadowProjectionField } from './shadowField';
 import type { ResolvedContactAo } from './contactAo';
@@ -37,7 +37,7 @@ export interface ShadowSceneContext {
   offset: number;
   floorOffset: number;
   /** 行走面深度场(GPU,RG16)+解码区间。影子落地面逐像素取它,floor 拟合直线已废除 */
-  groundTexture: import('pixi.js').TextureSource | null;
+  groundTexture: import('../engine2d').TextureSource | null;
   groundMin: number;
   groundMax: number;
   tolerance: number;

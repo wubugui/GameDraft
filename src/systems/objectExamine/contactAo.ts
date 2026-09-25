@@ -1,4 +1,3 @@
-import type { RenderSurface } from 'pixi.js';
 import {
   AlphaFilter,
   BlurFilter,
@@ -12,8 +11,9 @@ import {
   Texture,
   UniformGroup,
   type FilterSystem,
+  type RenderSurface,
   type Renderer as PixiRenderer,
-} from 'pixi.js';
+} from '../../engine2d';
 import {
   OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM,
   OBJECT_EXAMINE_MAX_CRITTER_AO_RADIUS_CM,
@@ -449,26 +449,12 @@ export class ObjectExamineContactAoFilter extends Filter {
   }
 
   /**
-   * 把一张 mask RT 清成全透明（bake 在主渲染之外调用）。
-   *
-   * - WebGL：必须 bind(target, clear) 而不是 renderer.clear({target})：WebGL 的
-   *   GlRenderTargetAdaptor.clear 忽略 target 参数，只对「当前已绑定的 FBO」
-   *   发 gl.clear。用 renderer.clear({target: rtCrit}) 会把上一步刚烘好的
-   *   rtBody 抹成全 0（物件 AO 整条通道失效），而 rtCrit 自己从不被清空
-   *   （爬虫轮廓逐帧累积成拖影）。bind 会先绑 FBO+viewport 再清。
-   * - WebGPU：渲染之外没有 command encoder（每次 render 收尾 postrender 把它置空），
-   *   renderTarget.bind 开 pass 当场抛 → 整条 AO 被 catch 关掉。renderer.clear 也不可靠：
-   *   它「自建 encoder 单独提交」的分支判的是 `commandEncoder === null`，而渲染器建好后
-   *   第一次 render 之前那里是 undefined，照样走开 pass 那条路抛（实测：会话第一帧 AO 就被关掉）；
-   *   且单独提交时视口用的是上一个绑定目标的，不是本 RT 的。所以走一次空场景的
-   *   render(clear)：清屏随 pass 的 loadOp 生效，视口按本 RT 设。
+   * 把一张 mask RT 清成全透明(bake 在主渲染之外调用):走一次空场景的 render(clear),
+   * 清屏随 pass 的 loadOp 生效、视口按本 RT 设。
+   * (WebGL 时代要 bind(target, clear) 手清,因为 WebGL 的 clear 只作用于当前已绑的 FBO;engine2d 没有这条路径。)
    */
   private clearMask(renderer: PixiRenderer, rt: RenderTexture): void {
-    if (renderer.type === RendererType.WEBGPU) {
-      renderer.render({ container: this.emptyScene, target: rt, clear: true, clearColor: [0, 0, 0, 0] });
-      return;
-    }
-    renderer.renderTarget.bind(rt, true, [0, 0, 0, 0]);
+    renderer.render({ container: this.emptyScene, target: rt, clear: true, clearColor: [0, 0, 0, 0] });
   }
 
   /**

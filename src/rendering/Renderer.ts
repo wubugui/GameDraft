@@ -1,4 +1,4 @@
-import { Application, Container, RendererType, type Filter } from 'pixi.js';
+import { Application, Container, type Filter } from '../engine2d';
 import type { RhiDevice } from './rhi';
 import { WorldFilterPipeline, loadFilter } from './filter';
 import { entitySortZ, type EntitySortBand } from './entitySortRule';
@@ -6,9 +6,6 @@ import { CanvasStage } from './CanvasStage';
 import { containBox } from './viewportFit';
 import { describeError, reportDevError } from '../core/devErrorOverlay';
 import type { AssetManager } from '../core/AssetManager';
-
-/** 图形后端:`webgl` = 原路径;`webgpu` = Pixi 跑在 RHI 的 WebGPU 设备上(迁移期,开发开关 `?renderer=webgpu`) */
-export type RendererBackend = 'webgl' | 'webgpu';
 
 /** 同一条渲染错误每复现多少帧打一次日志(它通常每帧都在,全打会把控制台冲爆) */
 const RENDER_ERROR_REPEAT_LOG_EVERY = 300;
@@ -64,13 +61,10 @@ export class Renderer {
   /** `game_config.windowSize`：宿主窗口的期望尺寸（编辑器预览窗 / exe 窗按它开）。只记录，不参与布局。 */
   private preferredWindowSize: { width: number; height: number } | null = null;
 
-  /**
-   * 图形后端(迁移期)。`webgl` = 与 master 完全相同的原路径;`webgpu` = RHI 持有 WebGPU 设备,
-   * Pixi 的 WebGPU 渲染器跑在同一个设备上(见 agent_docs rhi 卡「迁移期结构」)。
-   */
-  backend: RendererBackend = 'webgl';
-  /** `backend === 'webgpu'` 时的 RHI 设备(设备的所有者;Pixi 不销毁它) */
-  rhi: RhiDevice | null = null;
+  /** 渲染器底下的 RHI 设备(engine2d 在 app.init 里建;没有 WebGPU 时 init 抛错,不回落) */
+  get rhi(): RhiDevice | null {
+    return this.initialized ? this.app.renderer.rhi : null;
+  }
 
   constructor() {
     this.app = new Application();
@@ -136,7 +130,7 @@ export class Renderer {
     (this.app as Application & { render: () => void }).render = guarded;
   }
 
-  async init(options: { resolution?: number; backend?: RendererBackend } = {}): Promise<void> {
+  async init(options: { resolution?: number } = {}): Promise<void> {
     const mount = document.getElementById('game-mount');
     const resolution = Number.isFinite(options.resolution) && (options.resolution ?? 0) > 0
       ? Number(options.resolution)
@@ -147,36 +141,14 @@ export class Renderer {
     // 就没有人看得见。
     this.installRenderCrashGuard();
 
-    const backend = options.backend ?? 'webgl';
-    let gpuOptions = {};
-    if (backend === 'webgpu') {
-      // 只有选了 WebGPU 才加载 RHI / luma 与 Pixi 补丁:缺省路径的包体与行为都与 master 相同
-      const [{ createRhiDevice }, { installPixiWebGpuPatches }] = await Promise.all([
-        import('./rhi'),
-        import('./legacy/pixiWebGpuPatches'),
-      ]);
-      // RHI 持有 GPUDevice;迁移期画布由 Pixi 呈现,RHI 自己暂不上屏,给它一张不挂 DOM 的画布
-      this.rhi = await createRhiDevice({ canvas: document.createElement('canvas'), useDevicePixels: false, autoResize: false });
-      installPixiWebGpuPatches();
-      gpuOptions = {
-        preference: 'webgpu',
-        webgpu: { gpu: { adapter: this.rhi.native.adapter, device: this.rhi.native.device } },
-      };
-    }
-
+    // engine2d 在 init 里建 RHI 的 WebGPU 设备并在画布上呈现;环境没有 WebGPU 就在这里抛错(不回落)
     await this.app.init({
       background: '#1a1a2e',
       resizeTo: mount ?? window,
       antialias: false,
       resolution,
       autoDensity: true,
-      ...gpuOptions,
     });
-    // Pixi 选不上首选后端会悄悄换下一个;这里不许悄悄换(没有 WebGPU 就明确失败)
-    if (backend === 'webgpu' && this.app.renderer.type !== RendererType.WEBGPU) {
-      throw new Error(`要求 WebGPU 渲染,实际得到 ${this.app.renderer.name}(Pixi 回落了)`);
-    }
-    this.backend = backend;
 
     const canvas = this.app.canvas as HTMLCanvasElement;
     if (mount) mount.appendChild(canvas);
@@ -420,17 +392,11 @@ export class Renderer {
       /* ignore */
     }
     try {
+      // 渲染器拆自己的资源,再拆它建的 RHI 设备
       app.destroy(true);
     } catch (e) {
       console.warn('Renderer: Application.destroy failed', e);
     }
-    // 设备归 RHI:Pixi 拆完再拆设备(Pixi 自己从不销毁传进去的设备)
-    try {
-      this.rhi?.destroy();
-    } catch (e) {
-      console.warn('Renderer: RHI destroy failed', e);
-    }
-    this.rhi = null;
   }
 
   // ---------- 世界滤镜 API（仅作用于 worldContainer，GUI 不受影响） ----------

@@ -20,9 +20,9 @@ import {
   Sprite,
   Texture,
   TextureSource,
-  updateRenderGroupTransforms,
   type Shader,
-} from 'pixi.js';
+} from '../engine2d';
+import { prepareTree } from '../engine2d/gpu/collect';
 
 import { SpriteEntity, type LitShaderProvider } from './SpriteEntity';
 import type { AnimationSetDef } from '../data/types';
@@ -339,14 +339,13 @@ describe('透明度：写共同父容器，sprite 与 lit mesh 一起淡', () =>
 
   it('实测传导：容器 alpha → lit mesh 的 groupAlpha/groupColorAlpha（= 着色器里的 uColor）', () => {
     // CharacterLitSprite 的 VERT 写 `vColor = uColor`、FRAG 末尾 `* vColor`，
-    // 而 uColor 由 Pixi 的 MeshPipe 从 mesh.groupColorAlpha 填。所以只要 groupAlpha 到位，
+    // 而 uColor 由渲染器(engine2d FrameBuilder,照 Pixi MeshPipe)从 mesh.groupColorAlpha 填。所以只要 groupAlpha 到位，
     // lit 路径就不需要单独设 mesh.alpha —— 这条断言就是那个"实测"。
     const root = new Container();
-    root.enableRenderGroup();
     const { e, sprite, mesh } = makeEntity({ lit: true });
     root.addChild(e.container);
     e.setTrajectoryOverlay(0, 1, 1, 0.25);
-    updateRenderGroupTransforms(root.renderGroup, true);
+    prepareTree(root, null, Container._nextRenderTick());
     expect(mesh!.groupAlpha).toBeCloseTo(0.25, 6);
     expect(sprite.groupAlpha).toBeCloseTo(0.25, 6);
     // 高位字节就是 alpha（Pixi 按 `alpha*255 | 0` 截断）：0.25 → 63 = 0x3f

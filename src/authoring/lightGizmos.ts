@@ -1,4 +1,4 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics, Text } from '../engine2d';
 
 import type { LightDef } from '../data/types';
 import type { Camera } from '../rendering/Camera';

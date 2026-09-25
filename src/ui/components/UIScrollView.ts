@@ -1,5 +1,5 @@
-import { Container, Graphics, Rectangle } from 'pixi.js';
-import type { FederatedPointerEvent } from 'pixi.js';
+import { Container, Graphics, Rectangle } from '../../engine2d';
+import type { FederatedPointerEvent } from '../../engine2d';
 import { UITheme } from '../UITheme';
 import { canvasPointFromEvent, clientToCanvas, markPointerConsumed, setPointerDragScrolling } from '../uiPointerCoords';
 import type { Renderer } from '../../rendering/Renderer';

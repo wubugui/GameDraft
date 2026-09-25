@@ -5,7 +5,7 @@
  * 顶点流：aPosition(2) aSeg(4) aK(2) aColor(4) aQ(3)。段数每帧不同（镜头远近决定画到第几级细分），
  * 容量不够时按两倍重建缓冲（`reserve`，写之前调）；没写入的槽位缩成零面积。
  */
-import { Buffer, BufferUsage, Geometry, Mesh, type Shader } from 'pixi.js';
+import { Buffer, BufferUsage, Geometry, Mesh, type Shader } from '../../engine2d';
 
 const FLOATS = { pos: 8, seg: 16, k: 8, col: 16, q: 12 } as const;
 

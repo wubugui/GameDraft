@@ -1,4 +1,4 @@
-import type { Container } from 'pixi.js';
+import type { Container } from '../engine2d';
 
 import { SpriteEntity } from '../rendering/SpriteEntity';
 import type { InputManager } from '../core/InputManager';

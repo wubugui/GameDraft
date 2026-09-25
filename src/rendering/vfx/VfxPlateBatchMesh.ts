@@ -9,7 +9,7 @@
  *
  * 顶点排布：第 k 列上 `2k` = 上沿、`2k+1` = 下沿；没写入的槽位缩成零面积，索引缓冲恒满不重建。
  */
-import { Buffer, BufferUsage, Geometry, Mesh, type Shader } from 'pixi.js';
+import { Buffer, BufferUsage, Geometry, Mesh, type Shader } from '../../engine2d';
 
 /** 一张片的逐顶点数据（由渲染器按 `2·(segs+1)` 个顶点填满后 push） */
 export interface VfxPlateStrip {

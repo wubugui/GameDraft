@@ -1,4 +1,4 @@
-import { Graphics } from 'pixi.js';
+import { Graphics } from '../engine2d';
 import type { Renderer } from '../rendering/Renderer';
 import type { Camera } from '../rendering/Camera';
 import type { EventBus } from './EventBus';

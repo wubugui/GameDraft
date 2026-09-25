@@ -1,4 +1,4 @@
-import { UPDATE_PRIORITY } from 'pixi.js';
+import { UPDATE_PRIORITY } from '../engine2d';
 
 import type { LightDef, SceneLightingDef } from '../data/types';
 import type { Camera } from '../rendering/Camera';

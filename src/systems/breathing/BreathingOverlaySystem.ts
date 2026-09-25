@@ -1,4 +1,4 @@
-import type { Container, Texture } from 'pixi.js';
+import type { Container, Texture } from '../../engine2d';
 import { type BreathingOverlayDef, isBreathingOverlayError, resolveBreathingOverlay } from '../../data/breathingOverlays';
 import { createBreathingFieldTextures, createBreathingOverlayMesh } from '../../rendering/breathingOverlayMesh';
 import { breathingUniforms } from '../../rendering/breathingUniforms';
