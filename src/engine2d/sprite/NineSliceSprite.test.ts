@@ -141,6 +141,9 @@ function makeTextures(spec: TexSpec): { ours: Texture; pixi: PixiTexture } {
 }
 
 class FakeCollector implements RenderCollector {
+  addUnbatched(): void {
+    throw new Error('九宫格不该交不合批图形');
+  }
   readonly resolution = 1;
   readonly elements: BatchableElement[] = [];
   addBatchable(element: BatchableElement): void {

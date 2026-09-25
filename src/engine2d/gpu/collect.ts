@@ -6,13 +6,14 @@
  */
 import { Matrix } from '../math/Matrix';
 import { bgr2rgb, multiplyColors, type Container, type FilterEffect, type MaskEffect } from '../scene/Container';
-import type { BatchableElement, CustomDrawable, RenderCollector } from '../core/contracts';
+import type { BatchableElement, CustomDrawable, RenderCollector, UnbatchedGraphics } from '../core/contracts';
 import type { BlendMode } from '../core/blendModes';
 import { Batcher, type BatchRecord } from './Batcher';
 
 export type Instruction =
   | BatchRecord
   | { readonly t: 'custom'; drawable: CustomDrawable }
+  | { readonly t: 'unbatched'; item: UnbatchedGraphics; batches: BatchRecord[] }
   | { readonly t: 'pushFilter'; container: Container; effect: FilterEffect }
   | { readonly t: 'popFilter' }
   | { readonly t: 'pushMaskBegin'; inverse: boolean }
@@ -180,6 +181,14 @@ export class Collector implements RenderCollector {
   addCustom(drawable: CustomDrawable): void {
     this.flush();
     this.instructions.push({ t: 'custom', drawable });
+  }
+
+  addUnbatched(item: UnbatchedGraphics, elements: readonly BatchableElement[]): void {
+    this.flush();
+    for (const el of elements) this.batcher.add(el);
+    const batches: BatchRecord[] = [];
+    this.batcher.break(batches);
+    if (batches.length) this.instructions.push({ t: 'unbatched', item, batches });
   }
 
   pushFilter(container: Container, effect: FilterEffect): void {

@@ -23,7 +23,8 @@ function textureSwitch(n: number): string {
   return s;
 }
 
-export const BATCH_WGSL = /* wgsl */ `
+function batchWgsl(local: boolean): string {
+  return /* wgsl */ `
 struct GlobalUniforms {
   uProjectionMatrix: mat3x3<f32>,
   uWorldTransformMatrix: mat3x3<f32>,
@@ -31,7 +32,14 @@ struct GlobalUniforms {
   uResolution: vec2<f32>,
 }
 @group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
-${textureDecls(MAX_BATCH_TEXTURES)}
+${textureDecls(MAX_BATCH_TEXTURES)}${local ? `
+struct LocalUniforms {
+  uTransformMatrix: mat3x3<f32>,
+  uColor: vec4<f32>,
+  uRound: f32,
+}
+@group(2) @binding(0) var<uniform> localUniforms: LocalUniforms;
+` : ''}
 fn roundPixels(position: vec2<f32>, targetSize: vec2<f32>) -> vec2<f32> {
   return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;
 }
@@ -56,14 +64,19 @@ fn mainVertex(
   var uv = aUV;
   var vColor = vec4<f32>(1., 1., 1., 1.);
   vColor *= vec4<f32>(aColor.rgb * aColor.a, aColor.a);
-  let vTextureId = aTextureIdAndRound.y;
+  let vTextureId = aTextureIdAndRound.y;${local ? `
+  vColor *= localUniforms.uColor;
+  modelMatrix *= localUniforms.uTransformMatrix;` : ''}
   let vUV = uv;
   var modelViewProjectionMatrix = globalUniforms.uProjectionMatrix * worldTransformMatrix * modelMatrix;
   var vPosition = vec4<f32>((modelViewProjectionMatrix * vec3<f32>(position, 1.0)).xy, 0.0, 1.0);
   vColor *= globalUniforms.uWorldColorAlpha;
   if (aTextureIdAndRound.x == 1u) {
     vPosition = vec4<f32>(roundPixels(vPosition.xy, globalUniforms.uResolution), vPosition.zw);
-  }
+  }${local ? `
+  if (localUniforms.uRound == 1.0) {
+    vPosition = vec4(roundPixels(vPosition.xy, globalUniforms.uResolution), vPosition.zw);
+  }` : ''}
   return VSOutput(vPosition, vTextureId, vColor, vUV);
 }
 
@@ -80,6 +93,15 @@ fn mainFragment(
   return outColor * vColor;
 }
 `;
+}
+
+export const BATCH_WGSL = batchWgsl(false);
+
+/**
+ * 不合批图形的程序:与 Pixi 8.17 的 graphics 程序(colorBit + generateTextureBatchBit + localUniformBitGroup2 +
+ * roundPixelsBit)等价 —— 合批着色器外加第 2 组的 localUniforms(节点变换 / 颜色 / 取整)。
+ */
+export const GRAPHICS_WGSL = batchWgsl(true);
 
 /**
  * 缺省网格着色器(不合批的无自定义着色器网格):与 Pixi 8.17 的 GpuMeshAdapter 程序

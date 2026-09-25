@@ -23,10 +23,10 @@ import { packUbo, createUboLayout } from '../shader/uboLayout';
 import type { Shader } from '../shader/Shader';
 import type { Filter, FilterSystemLike } from '../filters/Filter';
 import type { BlendMode } from '../core/blendModes';
-import type { CustomDrawable } from '../core/contracts';
+import type { CustomDrawable, UnbatchedGraphics } from '../core/contracts';
 import { Arena } from './Arena';
 import { adjustedBlendMode, type BatchRecord } from './Batcher';
-import { BATCH_WGSL, MAX_BATCH_TEXTURES, MESH_WGSL } from './batchShader';
+import { BATCH_WGSL, GRAPHICS_WGSL, MAX_BATCH_TEXTURES, MESH_WGSL } from './batchShader';
 import { STENCIL_DEPTH_FORMAT, type PipelineKey, type Pipelines, type StencilMode, type VertexLayout } from './Pipelines';
 import type { GpuTextures } from './GpuTextures';
 import type { GpuBuffers } from './GpuBuffers';
@@ -94,6 +94,12 @@ const batchProgram = new GpuProgram({
   name: 'engine2d-batch',
   vertex: { source: BATCH_WGSL, entryPoint: 'mainVertex' },
   fragment: { source: BATCH_WGSL, entryPoint: 'mainFragment' },
+});
+
+const graphicsProgram = new GpuProgram({
+  name: 'engine2d-graphics',
+  vertex: { source: GRAPHICS_WGSL, entryPoint: 'mainVertex' },
+  fragment: { source: GRAPHICS_WGSL, entryPoint: 'mainFragment' },
 });
 
 const meshProgram = new GpuProgram({
@@ -410,6 +416,9 @@ export class FrameBuilder implements FilterSystemLike {
       case 'custom':
         this.drawCustom(instr.drawable);
         return;
+      case 'unbatched':
+        this.drawUnbatched(instr.item, instr.batches);
+        return;
       case 'pushFilter':
         this.filterPush(instr.container, instr.effect);
         return;
@@ -421,8 +430,25 @@ export class FrameBuilder implements FilterSystemLike {
     }
   }
 
-  private drawBatch(batch: BatchRecord): void {
+  /** 不合批图形(照 Pixi GraphicsPipe.execute + GpuGraphicsAdaptor.execute) */
+  private drawUnbatched(item: UnbatchedGraphics, batches: readonly BatchRecord[]): void {
+    if (!item.isRenderable) return;
+    const color = new Float32Array(4);
+    color32BitToUniform(item.groupColorAlpha, color, 0);
+    const local: ArenaRef = {
+      arena: this.writeUbo(LOCAL_LAYOUT, {
+        uTransformMatrix: item.groupTransform,
+        uColor: color,
+        uRound: this.ctx.roundPixels | item._roundPixels,
+      }),
+      size: LOCAL_LAYOUT.size,
+    };
+    for (const batch of batches) this.drawBatch(batch, graphicsProgram, item.groupBlendMode, local);
+  }
+
+  private drawBatch(batch: BatchRecord, program = batchProgram, blend: BlendMode = batch.blendMode, local?: ArenaRef): void {
     const bindings: Record<string, BindingValue> = { globalUniforms: this.currentGU.arena };
+    if (local) bindings.localUniforms = local;
     const empty = Texture.EMPTY.source;
     for (let i = 0; i < MAX_BATCH_TEXTURES; i++) {
       const source = batch.textures[i] ?? empty;
@@ -430,10 +456,10 @@ export class FrameBuilder implements FilterSystemLike {
       bindings[`textureSampler${i + 1}`] = this.ctx.textures.sampler(source.style);
     }
     this.pushDraw({
-      program: batchProgram,
+      program,
       layout: BATCH_LAYOUT,
       topology: batch.topology,
-      blend: batch.blendMode,
+      blend,
       bindings,
       streams: [{ name: 'stream0', buffer: 'batch' }],
       index: 'batch',

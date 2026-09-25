@@ -107,6 +107,11 @@ export class Graphics extends ViewContainer {
     if (!context) return;
     const gpuContext = GraphicsContextSystem.updateGpuContext(context);
     this.batched = gpuContext.isBatchable;
+    if (!gpuContext.isBatchable) {
+      // 照 Pixi:大图形不进合批,context 的区段按本地坐标画,节点变换 / 颜色走 localUniforms
+      if (gpuContext.batches.length) collector.addUnbatched(this, gpuContext.batches);
+      return;
+    }
     if (this.didViewUpdate || this._builtFrom !== gpuContext) {
       this._rebuild(gpuContext);
     }

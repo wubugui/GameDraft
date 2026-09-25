@@ -57,12 +57,27 @@ export interface CustomDrawable {
   readonly roundPixels: boolean;
 }
 
+/**
+ * 不合批的图形(照 Pixi 的 GraphicsPipe 非合批分支 + GpuGraphicsAdaptor):context 的区段按**本地坐标**打包
+ * (元素的 transform 为单位阵、颜色不乘节点),绘制时由 localUniforms 施加节点的变换 / 颜色 / 取整,
+ * 混合模式取节点的 groupBlendMode。Pixi 对顶点数 ≥ 200 的图形走这条路,像素结果与合批路径有量化差,所以单独实现。
+ */
+export interface UnbatchedGraphics {
+  readonly groupTransform: Matrix;
+  readonly groupColorAlpha: number;
+  readonly groupBlendMode: BlendMode;
+  readonly _roundPixels: number;
+  readonly isRenderable: boolean;
+}
+
 /** 收集器:场景遍历时把要画的东西按顺序交给它 */
 export interface RenderCollector {
   /** 渲染器分辨率(文字等按它决定位图分辨率,照 Pixi 的 autoResolution) */
   readonly resolution: number;
   addBatchable(element: BatchableElement): void;
   addCustom(drawable: CustomDrawable): void;
+  /** `node` 是图形节点本身,`elements` 是它 context 的区段(本地坐标、颜色不乘节点) */
+  addUnbatched(node: UnbatchedGraphics, elements: readonly BatchableElement[]): void;
   pushFilter(container: Container, effect: FilterEffect): void;
   popFilter(): void;
   pushMask(container: Container, effect: MaskEffect): void;

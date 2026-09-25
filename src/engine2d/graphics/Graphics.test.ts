@@ -23,6 +23,11 @@ class FakeCollector implements RenderCollector {
   addCustom(_d: CustomDrawable): void {
     throw new Error('Graphics 不该交自定义绘制');
   }
+  unbatchedNodes: unknown[] = [];
+  addUnbatched(node: unknown, elements: readonly BatchableElement[]): void {
+    this.unbatchedNodes.push(node);
+    this.elements.push(...elements);
+  }
   pushFilter(): void {}
   popFilter(): void {}
   pushMask(): void {}
@@ -70,10 +75,19 @@ function pack(elements: any[]): { f32: number[]; u32: number[]; indices: number[
   return { f32, u32, indices, meta };
 }
 
-/** Pixi 这边:GraphicsPipe._updateBatchesForRenderable 的做法(context 区段复制一份挂到节点) */
+/**
+ * Pixi 这边:可合批时照 GraphicsPipe._updateBatchesForRenderable(context 区段复制一份挂到节点);
+ * 不可合批(顶点 ≥ 200)时照 GraphicsContextSystem._initContextRenderData,直接用 context 层区段
+ * (本地坐标、颜色不乘节点,节点量在着色器里乘)。
+ */
 function pixiElements(pg: PIXI.Graphics, roundPixels = 0): any[] {
   const gpu = new PIXI.GpuGraphicsContext();
   PIXI.buildContextBatches(pg.context, gpu);
+  gpu.isBatchable = isBatchableLikePixi(pg.context, gpu);
+  if (!gpu.isBatchable) {
+    for (const b of gpu.batches as any[]) b.applyTransform = false;
+    return gpu.batches;
+  }
   return gpu.batches.map((batch: any) => {
     const clone = new PIXI.BatchableGraphics();
     batch.copyTo(clone);
@@ -81,6 +95,13 @@ function pixiElements(pg: PIXI.Graphics, roundPixels = 0): any[] {
     clone.roundPixels = roundPixels as 0 | 1;
     return clone;
   });
+}
+
+/** 照 Pixi GraphicsContextSystem.updateGpuContext 的判定:auto 下顶点浮点数 < 400(即 < 200 个顶点) */
+function isBatchableLikePixi(context: any, gpu: any): boolean {
+  if (context.customShader || context.batchMode === 'no-batch') return false;
+  if (context.batchMode === 'auto') return gpu.geometryData.vertices.length < 400;
+  return true;
 }
 
 function collect(g: Graphics): BatchableElement[] {
@@ -138,11 +159,17 @@ describe('Graphics 渲染输出与 Pixi 对照', () => {
         setGroup(pg, color, alpha, transform, blend);
         setGroup(eg, color, alpha, transform, blend);
         const pEls = pixiElements(pg);
-        const eEls = collect(eg);
+        const c = new FakeCollector();
+        eg.collectRenderables(c);
+        const eEls = c.elements;
+        const unbatched = c.unbatchedNodes.length > 0;
+        // 与 Pixi 同一判定:顶点 ≥ 200 的走非合批(本地坐标,节点量在着色器里乘)
+        expect(unbatched).toBe(!eg.batched);
         expect(eEls.length).toBe(pEls.length);
         for (const el of eEls) {
           expect(el.packAsQuad).toBe(false);
-          expect(el.transform).toBe(eg.groupTransform);
+          if (unbatched) expect(c.unbatchedNodes[0]).toBe(eg);
+          else expect(el.transform).toBe(eg.groupTransform);
           expect(el.positions).toBe(eEls[0].positions);
         }
         const p = pack(pEls);
