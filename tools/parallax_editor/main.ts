@@ -1,4 +1,5 @@
-import { Application, Container, Sprite, Texture, Assets, Graphics } from 'pixi.js';
+// 渲染走运行时同一套 engine2d(Pixi v8 同名 API,底下是 RHI / WebGPU,没有 WebGL 回落)
+import { Application, Container, Sprite, Texture, Assets, Graphics } from '@src/engine2d';
 
 // ---------- 类型（与 src/data/types.ts 的 Parallax* 一致） ----------
 interface Keyframe { atMs: number; x: number; y: number; scale?: number; rotation?: number; alpha?: number }
@@ -37,15 +38,45 @@ const texCache = new Map<string, Texture>();
 const spriteMap = new Map<string, Sprite>();
 const alphaMaps = new Map<string, { w: number; h: number; data: Uint8ClampedArray } | null>();
 
-// ---------- Pixi ----------
+// ---------- 渲染(engine2d) ----------
 const app = new Application();
 const stage = new Container();
 const overlay = new Graphics();
 let images: { url: string; name: string }[] = [];
 
+/** 画布区显示一条说明(建渲染器失败时用;不然只剩一块空画布,看不出是环境问题)。 */
+function showStageError(title: string, detail: string) {
+  const box = document.createElement('div');
+  box.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;'
+    + 'gap:8px;padding:24px;text-align:center;background:#14161a;color:#e6e6e6;';
+  const h = document.createElement('div');
+  h.style.cssText = 'font-size:15px;color:#ff9a7a;';
+  h.textContent = title;
+  const p = document.createElement('div');
+  p.style.cssText = 'font-size:12px;color:#9aa;max-width:560px;white-space:pre-wrap;';
+  p.textContent = detail;
+  box.append(h, p);
+  $('stage-wrap').appendChild(box);
+}
+
 async function boot() {
-  await app.init({ background: '#0e0f12', antialias: true, resizeTo: $('stage-wrap') as HTMLElement });
-  ($('pixi') as HTMLElement).appendChild(app.canvas);
+  try {
+    await app.init({ background: '#0e0f12', antialias: true, resizeTo: $('stage-wrap') as HTMLElement });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error('[parallax_editor] 渲染器初始化失败', e);
+    // RHI 在没有 navigator.gpu / 拿不到适配器 / 建设备失败时抛 RhiError('unsupported')
+    const noWebGpu = (e as { code?: unknown } | null)?.code === 'unsupported';
+    showStageError(
+      noWebGpu ? '画布无法启动:此浏览器没有可用的 WebGPU' : '画布无法启动:渲染器初始化失败',
+      (noWebGpu
+        ? '编辑器与游戏同样只用 WebGPU 渲染(没有 WebGL 回落)。请用最新版 Chrome / Edge 打开本页,'
+          + '并确认地址是 localhost / 127.0.0.1(WebGPU 只在安全上下文可用)、显卡加速未被禁用。\n\n'
+        : '') + msg,
+    );
+    return;
+  }
+  ($('canvas-host') as HTMLElement).appendChild(app.canvas);
   app.stage.addChild(stage);
   stage.sortableChildren = true;
   overlay.zIndex = 1e6;

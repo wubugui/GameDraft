@@ -1,4 +1,4 @@
-"""Parallax 场景编辑器启动器：起独立 Vite dev（复用游戏 Pixi 渲染 + 读 public/ 资源，
+"""Parallax 场景编辑器启动器：起独立 Vite dev（复用游戏的 engine2d/WebGPU 渲染 + 读 public/ 资源，
 带图片扫描 / 场景读写后端插件）+ 开浏览器。与 anim_preview / 叙事编辑器同款独立 Web 工具。
 
   ./dev.sh parallax-editor                       # 起服 + 开浏览器
