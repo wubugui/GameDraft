@@ -1,0 +1,23 @@
+{
+ "descs": [
+  {
+   "label": "engine2d-tex-2",
+   "width": 588,
+   "height": 612,
+   "format": "rgba8unorm",
+   "usage": 25
+  }
+ ],
+ "mip": 1,
+ "samplers": [
+  {
+   "label": "engine2d-sampler clamp-to-edge|clamp-to-edge|clamp-to-edge|linear|linear|linear|undefined|undefined|undefined|1",
+   "addressModeU": "clamp-to-edge",
+   "addressModeV": "clamp-to-edge",
+   "magFilter": "linear",
+   "minFilter": "linear",
+   "mipmapFilter": "linear"
+  }
+ ],
+ "miplog": []
+}

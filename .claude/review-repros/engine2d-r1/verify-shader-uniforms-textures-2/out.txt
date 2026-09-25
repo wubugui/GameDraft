@@ -1,0 +1,8 @@
+engine2d vertexBuffers [{"name":"stream0","stride":8,"stepMode":"vertex","attributes":[{"name":"aPosition","format":"float32x2","offset":0}]},{"name":"stream1","stride":8,"stepMode":"vertex","attributes":[{"name":"aColor","format":"float32x2","offset":0}]}]
+pixi attributes {"aPosition":{"format":"float32x2","stride":8,"offset":0},"aColor":{"format":"float32x4","stride":16,"offset":0}}
+engine2d interleaved subset layout [{"name":"stream0","stride":16,"stepMode":"vertex","attributes":[{"name":"aPosition","format":"float32x2","offset":0},{"name":"aColor","format":"float32x2","offset":16}]}]
+pixi interleaved {"aPosition":{"format":"float32x2","stride":24,"offset":0},"aUnused":{"format":"float32x2","stride":24,"offset":8},"aColor":{"format":"float32x2","stride":24,"offset":16}}
+engine2d vertexBuffers [{"name":"stream0","stride":8,"stepMode":"vertex","attributes":[{"name":"aPosition","format":"float32x2","offset":0}]},{"name":"stream1","stride":8,"stepMode":"vertex","attributes":[{"name":"aColor","format":"float32x2","offset":0}]}]
+pixi attributes {"aPosition":{"format":"float32x2","stride":8,"offset":0},"aColor":{"format":"float32x4","stride":16,"offset":0}}
+engine2d interleaved subset layout [{"name":"stream0","stride":16,"stepMode":"vertex","attributes":[{"name":"aPosition","format":"float32x2","offset":0},{"name":"aColor","format":"float32x2","offset":16}]}]
+pixi interleaved {"aPosition":{"format":"float32x2","stride":24,"offset":0},"aUnused":{"format":"float32x2","stride":24,"offset":8},"aColor":{"format":"float32x2","stride":24,"offset":16}}
