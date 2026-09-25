@@ -38,6 +38,10 @@
   "type": "module",
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
+    "@luma.gl/core": "~9.4.2",
+    "@luma.gl/shadertools": "~9.4.2",
+    "@luma.gl/webgl": "~9.4.2",
+    "@luma.gl/webgpu": "~9.4.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",

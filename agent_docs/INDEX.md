@@ -61,16 +61,17 @@
 - [Pixi v8 静默陷阱](runtime/mechanisms/pixi-v8-traps.md) — 一批"写法看着对、行为静默错"的引擎事实:渲染抛一次异常=整局死透(ticker 再不排帧)、没写 #version 300 es 的源按 GLSL ES 1.00 编、clear 不认 target、BindGroup 见死即自毁、滤镜容器里 screen 是临时 RT 局部坐标、解码期预乘吃掉 alpha 数据、leading 裁末行、Container 无 hitArea 恒不命中
 - [位面系统(PlaneReconciler)](runtime/mechanisms/plane-system.md) — 位面=全局一等资产(normal 也是位面),实体归属位面;PlaneReconciler 从叙事状态派生一切、每个边界重派生、零自持久化
 - [私有叙事信号(按 owner 定向投递)](runtime/mechanisms/private-narrative-signal.md) — signals 登记表标 scope:private 的信号只投递给发射方 owner 拥有的 wrapper 图;让 N 个同类实体共用一个信号名和一张发射端对话图
+- [RHI(渲染硬件接口 · 显式 pass · 渲染图 · luma.gl 后端)](runtime/mechanisms/rhi.md) — 取代 Pixi 做底层图形的引擎式 RHI——显式 render/compute pass、创建后不可变的管线、按名字绑定、资源一律经作用域创建(有主);渲染图按声明的读写剔除 pass、算生命期、别名复用瞬时资源;唯一实现是 luma.gl(WebGPU 优先、WebGL2 回落),两后端差异(compute、Y 朝向、命令时序、采样器)在后端里抹平或经 caps 暴露,不静默降级。游戏尚未接入
 - [运行时持久化(存档/玩家设置)落文件,不落浏览器存储](runtime/mechanisms/runtime-persistence.md) — 存档与玩家偏好一律经 PersistentStore 落本地文件;三后端 Tauri>dev server>内存;localStorage 只剩一次性迁移读取;内存降级必须让 UI 说实话
 - [存读档硬契约](runtime/mechanisms/save-restore-contracts.md) — load 坏档先拒+快照回滚、save 返 Promise<boolean>(落盘是文件 I/O);查询走内存镜像保持同步;读档静默清 zone、清位面 manual override;新游戏=净化 URL 整页 reload
 - [scenarios.json 运行时消费语义(退役中)](runtime/mechanisms/scenario-catalog-semantics.md) — 一等公民 scenario 已数据侧退役、零数据喂养;新内容一律走 narrative scenario_* 子图,别把活儿写进 Scenarios 面板
 - [场景声学（实时回音 + 有位置的声源）](runtime/mechanisms/scene-acoustics.md) — 声学空间→IR→ConvolverNode 的实时回音；几何一律 M-world wu + 全局距离缩放；每条空间音 = 直达 + 早期反射 + 晚期尾，走与 Howler 并行的空间音总线；作者面只有声学工作台，游戏是预览器（dev server 双槽实时联动）；三条硬判据（首回晚于干声时长 / 晚期尾延后 / 不套点源 1/r）
-- [场景背景受光(原画 + 加性实体灯)](runtime/mechanisms/scene-lighting.md) — 原画就是最终的光照,运行时只把作者摆的实体灯加上去(乘在**烘出来的 albedo 贴图**上);天光与太阳的运行时加光项已删,「夜」靠换一张夜原画;两级 RT 缓存,稳态每帧零光照计算
+- [场景背景受光(原画 + 加性实体灯)](runtime/mechanisms/scene-lighting.md) — 原画就是最终的光照,运行时只把作者摆的实体灯加上去(乘在**烘出来的 albedo 贴图**上);天光与太阳的运行时加光项已删,「夜」靠换一张夜原画;两级 RT 缓存,稳态每帧零光照计算;唯一的镜面项 = 打了反光位的灯(落雷)在**任何地方**的 GGX 反射(没画区域的地方用全局缺省材质,水面 / 石板地另画区;程序化细节法线把高光打碎),平时画面一个像素都不变
 - [场景 onEnter 揭幕时机契约](runtime/mechanisms/scene-onenter-reveal-timing.md) — loadScene 尾序=scene:ready → 揭幕前闸(限时,遮罩下做完会卡帧的准备) → 揭幕(onReveal) → onEnter;初始进场同样先遮罩后揭幕;主 tick 必须先于任何场景装载挂载
 - [场景风(一份空气速度场 · 一个钟 · 阵风 · 各消费者读哪份)](runtime/mechanisms/scene-wind.md) — 场景 JSON 的 wind 是空气的速度场(不是加速度):对数廓线平均风 + 顺流推进的阵风 + 风向摆动 + 共享的无散度涡,唯一实现在 sampleSceneWind(CPU);组装层一份参数一个钟(SceneWindState,世界暂停时不走),粒子 / 挂件 / 草木同读,消费者只乘自己的增益;脚本阵风与 F2 倍率只进运行时那份——燃烧读的是作者那份,所以同一阵风吹得灭火把吹不灭蜡烛;风速是玩法量(火把能不能活),画面观感用 gain 解耦;草木摆动见 background-sway
 - [气味系统(双层 action/zone)](runtime/mechanisms/smell-system.md) — action 层永远压过 zone 层;zone 气味声明式挂 ZoneDef.smell,SmellSystem 听 zone:enter 驱动,ZoneSystem 不动
 - [播放门、音频解锁与保活(这是桌面游戏,不是网页)](runtime/mechanisms/start-gate-audio-unlock.md) — 浏览器"没点过不出声 / 没焦点就降级"一律禁止——宿主窗口带免手势与不后台降级开关、运行时关 autoSuspend 每秒保活;首启遮罩给 sticky 激活让 init 时直接解锁;没解锁时普通播放排队、有位置的声音直接丢
-- [落雷(strikeThreat:结算与表现分离的一记雷)](runtime/mechanisms/strike-threat.md) — 一道雷 = 挑靶收靶(结算,写存档)+ 粒子/雷光/定位雷声/闪白/震屏(表现,同一句发车);装饰补雷只补表现不碰结算与随机流;无靶落点只落在观测到的真实表面上;会话被打断时静默档只结算不演
+- [落雷(strikeThreat:结算与表现分离的一记雷)](runtime/mechanisms/strike-threat.md) — 一道雷 = 挑靶收靶(结算,写存档)+ 现画的雷/雷自带的灯/定位雷声/闪白/震屏(表现,同一句发车);雷是世界单位大小、运行时现画(不是贴图);灯沿雷身摆、在水面湿地上照出物理反光;落地那一下有冲击风(只进表现)和点火(只点开了「雷劈能点着」的模板);装饰补雷只补表现不碰结算与随机流;无靶落点只落在观测到的真实表面上;会话被打断时静默档只结算不演
 - [系统音效事件表(横切,挂在音频管理器上)](runtime/mechanisms/system-sfx-event-table.md) — 系统音效统一挂音频管理器的事件映射表、不在各功能自己的 manager 里;判"某功能有没有声音"必须先读那张表,靠 grep 功能模块必漏、必做出双响
 - [拆除顺序与世代作废](runtime/mechanisms/teardown-ordering.md) — 拆一局/拆一个场景是强排序不是清单;跨 await 的异步流程靠世代号自杀,不靠"记得取消"
 - [UI 组件层(窗体/按钮/滚动区)](runtime/mechanisms/ui-component-layer.md) — 面板不再各自手搭遮罩·标题栏·滚动·按钮,统一走 src/ui/components;重绘用 attach 不用 open、量高前必须摘 mask、行内点击必须消费
@@ -129,7 +130,7 @@
 - [地形工作台(碰撞 · 可走区 · 行走面修补 · 推给游戏 / 导出到游戏)](editor-tools/mechanisms/terrain-workbench.md) — 碰撞 / 可走区 / 行走面的唯一作者面:烘焙器只留自动结果(collision_auto.png),作者层(多边形 / 笔刷 / 高度增量)住 runtime/scenes/<id>/terrain/,唯一合成器 terrain_compose 把两者合成 collision.png + collision.json 旁挂 + 各时段 ground_d.png;推给游戏 = 页面此刻那份合成进 local/ 预览、游戏原地换上、资源不动,导出到游戏 = 先存盘再合成进资源;运行时对齐靠游戏用自己的 isCollision 答探测;文档一律网格单位(没乘 wu/q 的 M-world)
 - [过场步骤编辑器(TimelineEditor)契约](editor-tools/mechanisms/timeline-editor-contracts.md) — UI/交互改动不得改 StepWidget.to_dict 序列化输出;已有搜索/撤销/剪贴板等能力勿重复造;含一个 PySide takeAt 布局级深坑
 - [轨迹工作台(独立桌面应用 · 画面/世界两种空间 · 烘成独立资产)](editor-tools/mechanisms/trajectory-workbench.md) — 轨迹资产唯一的作者面与唯一写入者;曲线没有锚点(播放位置在播放时给),只有一种曲线两种配置(场景曲线绑作者场景 / 相对曲线不绑),命名插槽是曲线暴露给场景的站位;加载任一场景(可把 q 空间还原成 3D 伪世界)拉线/抛体,保存=烘一次再原子写盘(保存即迁移老锚点资产);世界空间物理与地面高度场+深度壳碰撞、控制点是 {x,z,h};投影与运行时同一份金标;桌面壳零浏览器缓存
-- [粒子工作台(独立桌面应用 · 页内跑同一份运行时模拟 · 效果资产与布置库唯一写入者)](editor-tools/mechanisms/vfx-workbench.md) — 效果资产与布置库(场景 × 时段外观)唯一的作者面与写入者;页内跑的是打包进来的运行时 vfxSim 本体、喂的输入与游戏同形;相机与 gizmo 经 /vendor 原样复用轨迹台那两份;保存与推给游戏都只带"真改了的那几份"(scoped),盘上被外部改过拒写;效果改名 / 删除查全部外部引用(挂件预设、playVfx / playPropVfx、可燃物模板);光柱在这里摆(原画视图真预览);燃烧用的外部给点与可燃模板在这里配;雷的长相是雷电样式库(参数化、可换样式,生成物按哈希分目录),在这里改、预览、生成并套用;主编辑器只显示;桌面壳零缓存
+- [粒子工作台(独立桌面应用 · 页内跑同一份运行时模拟 · 效果资产与布置库唯一写入者)](editor-tools/mechanisms/vfx-workbench.md) — 效果资产与布置库(场景 × 时段外观)唯一的作者面与写入者;页内跑的是打包进来的运行时 vfxSim 本体、喂的输入与游戏同形;相机与 gizmo 经 /vendor 原样复用轨迹台那两份;保存与推给游戏都只带"真改了的那几份"(scoped),盘上被外部改过拒写;效果改名 / 删除查全部外部引用(挂件预设、playVfx / playPropVfx、可燃物模板);光柱在这里摆(原画视图真预览);燃烧用的外部给点与可燃模板在这里配;雷的长相是雷电样式库(现画天雷的形状 / 粗细 / 灯 / 落地那一下,参数化可换),在这里改、现画预览、套用;表面材质区(水面 / 湿地)在这里画;主编辑器只显示;桌面壳零缓存
 - [控件丢弃：摘 parent 之前必须先 hide](editor-tools/mechanisms/widget-teardown-orphan-window.md) — 对可见控件直接 setParent(None) 会让它变成一个真顶层窗口并被 Qt 显示出来（屏幕中央光速开关的小窗）；销毁走 discard_widget/discard_layout_widgets，重新安家走 detach_widget 且必须同回合安家
 
 ### 配方

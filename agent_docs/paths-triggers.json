@@ -896,6 +896,12 @@
       ]
     },
     {
+      "glob": "src/rendering/contactAoSources.ts",
+      "docs": [
+        "entity-lighting"
+      ]
+    },
+    {
       "glob": "src/rendering/entityShadowBinding.ts",
       "docs": [
         "entity-lighting",
@@ -949,6 +955,18 @@
       ]
     },
     {
+      "glob": "src/rendering/lighting/probeCpuSampler.ts",
+      "docs": [
+        "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/rhi/**",
+      "docs": [
+        "rhi"
+      ]
+    },
+    {
       "glob": "src/rendering/spriteNormalAtlas.ts",
       "docs": [
         "character-lighting",
@@ -983,6 +1001,12 @@
       "glob": "src/rendering/vfx/vfxBeam*",
       "docs": [
         "vfx-beams"
+      ]
+    },
+    {
+      "glob": "src/rendering/vfx/vfxBoltGlsl.ts",
+      "docs": [
+        "strike-threat"
       ]
     },
     {
@@ -1233,6 +1257,12 @@
       "glob": "src/systems/vfx/vfxBeam.ts",
       "docs": [
         "vfx-beams"
+      ]
+    },
+    {
+      "glob": "src/systems/vfx/vfxBolt.ts",
+      "docs": [
+        "strike-threat"
       ]
     },
     {
@@ -2104,6 +2134,12 @@
       "glob": "tools/production_workbench/**",
       "docs": [
         "widget-teardown-orphan-window"
+      ]
+    },
+    {
+      "glob": "tools/rhi_smoke/**",
+      "docs": [
+        "rhi"
       ]
     },
     {
