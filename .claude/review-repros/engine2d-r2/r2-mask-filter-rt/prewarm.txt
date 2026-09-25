@@ -1,0 +1,4 @@
+frame without any mask: new pipelines 0
+after first mask, same VFX mesh: new pipelines 1
+PASS canvas stencil=true
+  draw undefined depth=depth24plus-stencil8 stencil=disabled

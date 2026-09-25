@@ -1,0 +1,283 @@
+######## frame 0
+=== render container=stage target=canvas clear=undefined
+PASS canvas col=clear st=- vp=0,0,200,150
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+PASS canvas col=load st=load vp=0,0,200,150
+  draw engine2d-batch stencil=add/0 cm=0 depth=depth24plus-stencil8 blend=normal
+PASS src#10 col=clear st=- vp=0,0,212,162
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#11 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#13 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#11 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#12 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#13 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#12 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS canvas col=load st=load vp=0,0,200,150
+  draw ? stencil=active/1 cm=15 depth=depth24plus-stencil8 blend=normal
+PASS src#14 col=clear st=- vp=0,0,128,108
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#15 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#7 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#15 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#9 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS canvas col=load st=load vp=0,0,200,150
+  draw object-examine-contact-composite stencil=active/1 cm=15 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=remove/1 cm=0 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=active/0 cm=15 depth=depth24plus-stencil8 blend=normal
+=== render container=? target=src#6 clear=true
+PASS src#6 col=clear st=- vp=0,0,136,111
+=== render container=Sprite target=src#6 clear=false
+PASS src#6 col=load st=- vp=0,0,136,111
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+=== render container=? target=src#8 clear=true
+PASS src#8 col=clear st=- vp=0,0,136,111
+=== render container=? target=src#8 clear=false
+PASS src#8 col=load st=- vp=0,0,136,111
+=== render container=? target=src#8 clear=false
+PASS src#8 col=load st=- vp=0,0,136,111
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+=== render container=stage target=canvas clear=undefined
+PASS canvas col=clear st=clear vp=0,0,200,150
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=add/0 cm=0 depth=depth24plus-stencil8 blend=normal
+PASS src#10 col=clear st=- vp=0,0,212,162
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#11 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#13 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#11 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#12 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#13 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#12 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS canvas col=load st=load vp=0,0,200,150
+  draw ? stencil=active/1 cm=15 depth=depth24plus-stencil8 blend=normal
+PASS src#15 col=clear st=- vp=0,0,136,116
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#7 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#9 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS canvas col=load st=load vp=0,0,200,150
+  draw object-examine-contact-composite stencil=active/1 cm=15 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=remove/1 cm=0 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=active/0 cm=15 depth=depth24plus-stencil8 blend=normal
+######## frame 1
+=== render container=stage target=canvas clear=undefined
+PASS canvas col=clear st=clear vp=0,0,200,150
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=add/0 cm=0 depth=depth24plus-stencil8 blend=normal
+PASS src#10 col=clear st=- vp=0,0,212,162
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#11 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#13 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#11 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#12 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#13 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#12 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS canvas col=load st=load vp=0,0,200,150
+  draw ? stencil=active/1 cm=15 depth=depth24plus-stencil8 blend=normal
+PASS src#15 col=clear st=- vp=0,0,136,116
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#7 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#9 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS canvas col=load st=load vp=0,0,200,150
+  draw object-examine-contact-composite stencil=active/1 cm=15 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=remove/1 cm=0 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=active/0 cm=15 depth=depth24plus-stencil8 blend=normal
+=== render container=? target=src#6 clear=true
+PASS src#6 col=clear st=- vp=0,0,136,111
+=== render container=Sprite target=src#6 clear=false
+PASS src#6 col=load st=- vp=0,0,136,111
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+=== render container=? target=src#8 clear=true
+PASS src#8 col=clear st=- vp=0,0,136,111
+=== render container=? target=src#8 clear=false
+PASS src#8 col=load st=- vp=0,0,136,111
+=== render container=? target=src#8 clear=false
+PASS src#8 col=load st=- vp=0,0,136,111
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+=== render container=stage target=canvas clear=undefined
+PASS canvas col=clear st=clear vp=0,0,200,150
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=add/0 cm=0 depth=depth24plus-stencil8 blend=normal
+PASS src#10 col=clear st=- vp=0,0,212,162
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#11 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#13 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#11 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#12 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#13 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#12 col=clear st=- vp=0,0,212,162
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS canvas col=load st=load vp=0,0,200,150
+  draw ? stencil=active/1 cm=15 depth=depth24plus-stencil8 blend=normal
+PASS src#15 col=clear st=- vp=0,0,136,116
+  draw engine2d-batch stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#7 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#16 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#17 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS src#9 col=clear st=- vp=0,0,136,111
+  draw ? stencil=disabled/0 cm=15 depth=- blend=normal
+PASS canvas col=load st=load vp=0,0,200,150
+  draw object-examine-contact-composite stencil=active/1 cm=15 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=remove/1 cm=0 depth=depth24plus-stencil8 blend=normal
+  draw engine2d-batch stencil=active/0 cm=15 depth=depth24plus-stencil8 blend=normal
+----
+begin render engine2d pass 0 -> 画布后备缓冲 [clear]
+begin render engine2d pass 1 -> 画布后备缓冲+depth24plus-stencil8 [load]
+begin render engine2d pass 2 -> engine2d-tex-10 目标 [clear]
+begin render engine2d pass 3 -> engine2d-tex-11 目标 [clear]
+begin render engine2d pass 4 -> engine2d-tex-13 目标 [clear]
+begin render engine2d pass 5 -> engine2d-tex-11 目标 [clear]
+begin render engine2d pass 6 -> engine2d-tex-12 目标 [clear]
+begin render engine2d pass 7 -> engine2d-tex-13 目标 [clear]
+begin render engine2d pass 8 -> engine2d-tex-12 目标 [clear]
+begin render engine2d pass 9 -> 画布后备缓冲+depth24plus-stencil8 [load]
+begin render engine2d pass 10 -> engine2d-tex-14 目标 [clear]
+begin render engine2d pass 11 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 12 -> engine2d-tex-15 目标 [clear]
+begin render engine2d pass 13 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 14 -> engine2d-tex-7 目标 [clear]
+begin render engine2d pass 15 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 16 -> engine2d-tex-15 目标 [clear]
+begin render engine2d pass 17 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 18 -> engine2d-tex-9 目标 [clear]
+begin render engine2d pass 19 -> 画布后备缓冲+depth24plus-stencil8 [load]
+begin render engine2d pass 0 -> engine2d-tex-6 目标 [clear]
+begin render engine2d pass 0 -> engine2d-tex-6 目标 [load]
+begin render engine2d pass 0 -> engine2d-tex-8 目标 [clear]
+begin render engine2d pass 0 -> engine2d-tex-8 目标 [load]
+begin render engine2d pass 0 -> engine2d-tex-8 目标 [load]
+begin render engine2d pass 0 -> 画布后备缓冲+depth24plus-stencil8 [clear]
+begin render engine2d pass 1 -> engine2d-tex-10 目标 [clear]
+begin render engine2d pass 2 -> engine2d-tex-11 目标 [clear]
+begin render engine2d pass 3 -> engine2d-tex-13 目标 [clear]
+begin render engine2d pass 4 -> engine2d-tex-11 目标 [clear]
+begin render engine2d pass 5 -> engine2d-tex-12 目标 [clear]
+begin render engine2d pass 6 -> engine2d-tex-13 目标 [clear]
+begin render engine2d pass 7 -> engine2d-tex-12 目标 [clear]
+begin render engine2d pass 8 -> 画布后备缓冲+depth24plus-stencil8 [load]
+begin render engine2d pass 9 -> engine2d-tex-15 目标 [clear]
+begin render engine2d pass 10 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 11 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 12 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 13 -> engine2d-tex-7 目标 [clear]
+begin render engine2d pass 14 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 15 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 16 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 17 -> engine2d-tex-9 目标 [clear]
+begin render engine2d pass 18 -> 画布后备缓冲+depth24plus-stencil8 [load]
+begin render engine2d pass 0 -> 画布后备缓冲+depth24plus-stencil8 [clear]
+begin render engine2d pass 1 -> engine2d-tex-10 目标 [clear]
+begin render engine2d pass 2 -> engine2d-tex-11 目标 [clear]
+begin render engine2d pass 3 -> engine2d-tex-13 目标 [clear]
+begin render engine2d pass 4 -> engine2d-tex-11 目标 [clear]
+begin render engine2d pass 5 -> engine2d-tex-12 目标 [clear]
+begin render engine2d pass 6 -> engine2d-tex-13 目标 [clear]
+begin render engine2d pass 7 -> engine2d-tex-12 目标 [clear]
+begin render engine2d pass 8 -> 画布后备缓冲+depth24plus-stencil8 [load]
+begin render engine2d pass 9 -> engine2d-tex-15 目标 [clear]
+begin render engine2d pass 10 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 11 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 12 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 13 -> engine2d-tex-7 目标 [clear]
+begin render engine2d pass 14 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 15 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 16 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 17 -> engine2d-tex-9 目标 [clear]
+begin render engine2d pass 18 -> 画布后备缓冲+depth24plus-stencil8 [load]
+begin render engine2d pass 0 -> engine2d-tex-6 目标 [clear]
+begin render engine2d pass 0 -> engine2d-tex-6 目标 [load]
+begin render engine2d pass 0 -> engine2d-tex-8 目标 [clear]
+begin render engine2d pass 0 -> engine2d-tex-8 目标 [load]
+begin render engine2d pass 0 -> engine2d-tex-8 目标 [load]
+begin render engine2d pass 0 -> 画布后备缓冲+depth24plus-stencil8 [clear]
+begin render engine2d pass 1 -> engine2d-tex-10 目标 [clear]
+begin render engine2d pass 2 -> engine2d-tex-11 目标 [clear]
+begin render engine2d pass 3 -> engine2d-tex-13 目标 [clear]
+begin render engine2d pass 4 -> engine2d-tex-11 目标 [clear]
+begin render engine2d pass 5 -> engine2d-tex-12 目标 [clear]
+begin render engine2d pass 6 -> engine2d-tex-13 目标 [clear]
+begin render engine2d pass 7 -> engine2d-tex-12 目标 [clear]
+begin render engine2d pass 8 -> 画布后备缓冲+depth24plus-stencil8 [load]
+begin render engine2d pass 9 -> engine2d-tex-15 目标 [clear]
+begin render engine2d pass 10 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 11 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 12 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 13 -> engine2d-tex-7 目标 [clear]
+begin render engine2d pass 14 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 15 -> engine2d-tex-16 目标 [clear]
+begin render engine2d pass 16 -> engine2d-tex-17 目标 [clear]
+begin render engine2d pass 17 -> engine2d-tex-9 目标 [clear]
+begin render engine2d pass 18 -> 画布后备缓冲+depth24plus-stencil8 [load]

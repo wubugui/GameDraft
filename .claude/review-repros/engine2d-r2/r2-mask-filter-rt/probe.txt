@@ -1,0 +1,19 @@
+probe 96x54
+PASS 3 clear vp=0,0,96,54
+PASS 4 clear vp=0,0,116,74
+  draw engine2d-batch blend=normal
+PASS 6 clear vp=0,0,116,74
+  draw undefined blend=normal
+PASS 4 clear vp=0,0,116,74
+  draw undefined blend=normal
+PASS 5 clear vp=0,0,116,74
+  draw undefined blend=normal
+PASS 6 clear vp=0,0,116,74
+  draw undefined blend=normal
+PASS 5 clear vp=0,0,116,74
+  draw undefined blend=normal
+PASS 3 load vp=0,0,96,54
+  draw undefined blend=normal
+placeholder
+PASS clear vp=0,0,192,48
+  draw engine2d-batch n=756

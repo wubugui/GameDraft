@@ -1,0 +1,84 @@
+src/rendering/lighting/GiBouncePass.ts:232 [uRadiance] samplerOf(this.radiance)  <= prev:  // WGSL 要单独的采样器(WebGL 侧没有这个名字,Pixi 忽略)
+src/rendering/lighting/SceneLightingPass.ts:1291 [uSurfMask] samplerOf(src)  <= prev:  sh.resources.uSurfMask = src;
+src/rendering/lighting/SceneLightingPass.ts:1345 [uPainting] samplerOf(this.painting.source)  <= prev:  uPainting: this.painting.source,
+src/rendering/lighting/SceneLightingPass.ts:1349 [uPrefix0] samplerOf(this.geo.depth.source)  <= prev:  uPrefix0: this.geo.depth.source,
+src/rendering/lighting/SceneLightingPass.ts:1351 [uPrefix1] samplerOf(this.geo.depth.source)  <= prev:  uPrefix1: this.geo.depth.source,
+src/rendering/lighting/SceneLightingPass.ts:1353 [uNormal] samplerOf(this.geo.normal.source)  <= prev:  uNormal: this.geo.normal.source,
+src/rendering/lighting/SceneLightingPass.ts:1355 [uAlbedo] samplerOf(this.geo.albedo.source)  <= prev:  uAlbedo: this.geo.albedo.source,
+src/rendering/lighting/SceneLightingPass.ts:1357 [uDepth] samplerOf(this.geo.depth.source)  <= prev:  uDepth: this.geo.depth.source,
+src/rendering/lighting/SceneLightingPass.ts:1366 [uSurfMask] samplerOf(Texture.WHITE.source)  <= prev:  uSurfMask: Texture.WHITE.source,
+src/rendering/lighting/SceneLightingPass.ts:1624 [uPrefix0] samplerOf(s0.source)  <= prev:  r.uPrefix0 = s0.source;
+src/rendering/lighting/SceneLightingPass.ts:1630 [uPrefix1] samplerOf(p1)  <= prev:  r.uPrefix1 = p1;
+src/rendering/lighting/shadowPrefix.ts:368 [uDepth] samplerOf(this.geo.depth.source)  <= prev:  // WGSL 要单独的采样器(WebGL 侧没有这个名字,Pixi 忽略)
+src/rendering/lighting/shadowPrefix.ts:389 [uPrev] samplerOf(this.slabs[0].source)  <= prev:  // slab 与 scratch 同一个 mk() 建的,采样状态相同;逐趟换 uPrev 时一并换(见 solve)
+src/rendering/lighting/shadowPrefix.ts:448 [uPrev] samplerOf(src.source)  <= prev:  scan.resources.uPrev = src.source;
+src/rendering/lighting/shadowPrefix.ts:455 [uPrev] samplerOf(src.source)  <= prev:  scan.resources.uPrev = src.source;
+src/rendering/lighting/LitBackground.ts:287 [uRadiance] samplerOf(radiance.source)  <= prev:  uRadiance: radiance.source,
+src/rendering/lighting/LitBackground.ts:289 [uDepth] samplerOf(geo.depth.source)  <= prev:  uDepth: geo.depth.source,
+src/rendering/lighting/LitBackground.ts:291 [uUvMap] samplerOf(Texture.EMPTY.source)  <= prev:  uUvMap: Texture.EMPTY.source,
+src/rendering/lighting/LitBackground.ts:293 [uRadiancePlate] samplerOf(radiance.source)  <= prev:  uRadiancePlate: radiance.source,
+src/rendering/lighting/LitBackground.ts:295 [uDepthPlate] samplerOf(geo.depth.source)  <= prev:  uDepthPlate: geo.depth.source,
+src/rendering/lighting/LitBackground.ts:330 [uUvMap] samplerOf(use.uvMap.source)  <= prev:  r.uUvMap = use.uvMap.source;
+src/rendering/lighting/LitBackground.ts:332 [uRadiancePlate] samplerOf(use.radiancePlate.source)  <= prev:  r.uRadiancePlate = use.radiancePlate.source;
+src/rendering/lighting/LitBackground.ts:334 [uDepthPlate] samplerOf(use.depthPlate.source)  <= prev:  r.uDepthPlate = use.depthPlate.source;
+src/rendering/backgroundSway.ts:1061 [uMatte] samplerOf(inp.matteTex.source)  <= prev:  uMatte: inp.matteTex.source,
+src/rendering/backgroundSway.ts:1063 [uIds] samplerOf(inp.idsTex.source)  <= prev:  uIds: inp.idsTex.source,
+src/rendering/backgroundSway.ts:1086 [uPainting] samplerOf(painting.source)  <= prev:  uPainting: painting.source,
+src/rendering/backgroundSway.ts:1088 [uPlate] samplerOf(inp.plateTex.source)  <= prev:  uPlate: inp.plateTex.source,
+src/rendering/backgroundSway.ts:1090 [uUvMap] samplerOf(this.uvMap.source)  <= prev:  uUvMap: this.uvMap.source,
+src/rendering/BackgroundDebugFilter.ts:380 [uDepthMap] samplerOf(placeholder.source)  <= prev:  uDepthMap: placeholder.source,
+src/rendering/BackgroundDebugFilter.ts:382 [uCollisionMap] samplerOf(placeholder.source)  <= prev:  uCollisionMap: placeholder.source,
+src/rendering/BackgroundDebugFilter.ts:384 [uGroundD] samplerOf(placeholder.source)  <= prev:  uGroundD: placeholder.source,
+src/rendering/BackgroundDebugFilter.ts:420 [uDepthMap] samplerOf(depthTexture.source)  <= prev:  (this.resources as Record<string, unknown>)['uDepthMap'] = depthTexture.source;
+src/rendering/BackgroundDebugFilter.ts:491 [uGroundD] samplerOf(ground)  <= prev:  (this.resources as Record<string, unknown>)['uGroundD'] = ground;
+src/rendering/BackgroundDebugFilter.ts:501 [uCollisionMap] samplerOf(tex.source)  <= prev:  (this.resources as Record<string, unknown>)['uCollisionMap'] = tex.source;
+src/rendering/BackgroundDebugFilter.ts:519 [uGroundD] samplerOf(white)  <= prev:  r['uGroundD'] = white;
+src/rendering/BackgroundDebugFilter.ts:521 [uDepthMap] samplerOf(white)  <= prev:  r['uDepthMap'] = white;
+src/rendering/BackgroundDebugFilter.ts:523 [uCollisionMap] samplerOf(white)  <= prev:  r['uCollisionMap'] = white;
+src/rendering/vfx/VfxRenderer.ts:513 [uDepthMap] samplerOf(boltDepth)  <= prev:  gpuProgram: getVfxBoltGpuProgram(),
+src/rendering/vfx/VfxRenderer.ts:534 [uColorTex] samplerOf(colorSrc)  <= prev:  vfxParams: paramGroup,
+src/rendering/vfx/VfxRenderer.ts:535 [uDepthMap] samplerOf(depthTex)  <= prev:  uColorTexSampler: samplerOf(colorSrc),
+src/rendering/vfx/VfxRenderer.ts:552 [uColorTex] samplerOf(colorSrc)  <= prev:  resources: {
+src/rendering/vfx/VfxRenderer.ts:553 [uDepthMap] samplerOf(depthTex)  <= prev:  uColorTex: colorSrc, uColorTexSampler: samplerOf(colorSrc),
+src/rendering/vfx/VfxRenderer.ts:558 [uProbe] samplerOf(probeSrc)  <= prev:  vfxToneOn: paramGroup,
+src/rendering/vfx/VfxBeamView.ts:107 [uDepthMap] samplerOf(depthTex)  <= prev:  uDepthMap: depthTex,
+src/rendering/vfx/VfxBeamView.ts:109 [uBeamCookie] samplerOf(cookieTex)  <= prev:  uBeamCookie: cookieTex,
+src/rendering/CharacterShadingFilter.ts:1262 [uDepthMap] samplerOf(depthSrc)  <= prev:  // WGSL 的采样器(「纹理名 + Sampler」):该纹理自己的 style,与 WebGL 用纹理自带采样状态一致;WebGL 不认这些键
+src/rendering/CharacterShadingFilter.ts:1264 [uNrm] samplerOf(nrmSrc)  <= prev:  uNrm: nrmSrc,
+src/rendering/CharacterShadingFilter.ts:1393 [uNrm] samplerOf(next)  <= prev:  // WGSL 采样器跟着换:旧图集销毁时它的 style 一起销毁,留着会让 BindGroup 当场作废
+src/rendering/breathingOverlayMesh.ts:136 [uBase] samplerOf(tex.base.source)  <= prev:  uBase: tex.base.source,
+src/rendering/breathingOverlayMesh.ts:138 [uBody] samplerOf((tex.body ?? empty).source)  <= prev:  uBody: (tex.body ?? empty).source,
+src/rendering/breathingOverlayMesh.ts:140 [uSheet] samplerOf((tex.sheet ?? empty).source)  <= prev:  uSheet: (tex.sheet ?? empty).source,
+src/rendering/breathingOverlayMesh.ts:142 [uFlap] samplerOf((tex.flap ?? empty).source)  <= prev:  uFlap: (tex.flap ?? empty).source,
+src/rendering/breathingOverlayMesh.ts:144 [uF1] samplerOf(tex.field1.source)  <= prev:  uF1: tex.field1.source,
+src/rendering/breathingOverlayMesh.ts:146 [uF2] samplerOf(tex.field2.source)  <= prev:  uF2: tex.field2.source,
+src/rendering/burn/BurnRenderer.ts:431 [uBaseTex] samplerOf(src)  <= prev:  // 两个 *Sampler 只有 WGSL 用（WebGPU 纹理与采样器分开绑）；GLSL 侧 Pixi 忽略这两个名字
+src/rendering/burn/BurnRenderer.ts:433 [uBurnField] samplerOf(e.field.source)  <= prev:  uBurnField: e.field.source,
+src/rendering/burn/BurnFilters.ts:306 [uBurnField] samplerOf(field.source)  <= prev:  // 只有 WGSL 用（WebGPU 的纹理与采样器分开绑）；GLSL 侧 Pixi 忽略这个名字
+src/rendering/EntityShadow.ts:936 [uGroundD] samplerOf(groundSrc)  <= prev:  // WGSL 的采样器(「纹理名 + Sampler」):用纹理自己的 style,与 WebGL 用纹理自带采样状态一致;WebGL 不认这些键
+src/rendering/EntityShadow.ts:938 [uDepthMap] samplerOf(depthSrc)  <= prev:  uDepthMap: depthSrc,
+src/rendering/EntityShadow.ts:992 [uTexture] samplerOf(texSource)  <= prev:  uTexture: texSource,
+src/rendering/EntityShadow.ts:994 [uDepthMap] samplerOf(depthSrc)  <= prev:  uDepthMap: depthSrc,
+src/rendering/EntityShadow.ts:996 [uCollisionMap] samplerOf(colSrc)  <= prev:  uCollisionMap: colSrc,
+src/rendering/EntityShadow.ts:998 [uGroundD] samplerOf(groundSrc)  <= prev:  uGroundD: groundSrc,
+src/rendering/EntityShadow.ts:1082 [uTexture] samplerOf(source)  <= prev:  // WebGPU 的采样器是独立资源,跟着换成这张图集自己的 style(WebGL 忽略这个键)
+src/rendering/CharacterLitSprite.ts:1137 [uColorTex] samplerOf(tex.colorTex)  <= prev:  // WebGL 不认这些键。换纹理走 setLitShaderTexture,采样器跟着换。
+src/rendering/CharacterLitSprite.ts:1139 [uNrm] samplerOf(nrm)  <= prev:  uNrm: nrm,
+src/rendering/CharacterLitSprite.ts:1141 [uGround] samplerOf(tex.ground)  <= prev:  uGround: tex.ground,
+src/rendering/DepthOcclusionFilter.ts:306 [uDepthMap] samplerOf(depthTexture.source)  <= prev:  // WGSL 的采样器:深度图自己的 style(WebGL 用纹理自带采样状态,不认这个键)
+src/rendering/EntityLightingFilter.ts:413 [uDepthMap] samplerOf(depthSrc)  <= prev:  // WGSL 的采样器:各用纹理自己的 style(WebGL 用纹理自带采样状态,不认这些键)
+src/rendering/EntityLightingFilter.ts:415 [uProbe] samplerOf(probeSrc)  <= prev:  uProbe: probeSrc,
+src/rendering/overlayBlendShader.ts:154 [uTextureFrom] samplerOf(texFrom.source)  <= prev:  uTextureFrom: texFrom.source,
+src/rendering/overlayBlendShader.ts:156 [uTextureTo] samplerOf(texTo.source)  <= prev:  uTextureTo: texTo.source,
+src/systems/waterMinigame/WaterShaderFilter.ts:229 [uNormalMap] samplerOf(ph.source)  <= prev:  uNormalMap: ph.source,
+src/systems/waterMinigame/WaterShaderFilter.ts:231 [uParams] samplerOf(ph.source)  <= prev:  uParams: ph.source,
+src/systems/waterMinigame/WaterShaderFilter.ts:278 [uNormalMap] samplerOf(src)  <= prev:  (this.resources as Record<string, unknown>)['uNormalMap'] = src;
+src/systems/waterMinigame/WaterShaderFilter.ts:286 [uParams] samplerOf(src)  <= prev:  (this.resources as Record<string, unknown>)['uParams'] = src;
+src/systems/objectExamine/contactAo.ts:238 [uBodyRaw] samplerOf(Texture.WHITE.source)  <= prev:  uBodyRaw: Texture.WHITE.source,
+src/systems/objectExamine/contactAo.ts:240 [uBodyBlur] samplerOf(Texture.WHITE.source)  <= prev:  uBodyBlur: Texture.WHITE.source,
+src/systems/objectExamine/contactAo.ts:242 [uCritRaw] samplerOf(Texture.WHITE.source)  <= prev:  uCritRaw: Texture.WHITE.source,
+src/systems/objectExamine/contactAo.ts:244 [uCritBlur] samplerOf(Texture.WHITE.source)  <= prev:  uCritBlur: Texture.WHITE.source,
+src/systems/objectExamine/contactAo.ts:499 [uBodyRaw] samplerOf(this.rtBody.source)  <= prev:  this.compositePass.resources.uBodyRaw = this.rtBody.source;
+src/systems/objectExamine/contactAo.ts:501 [uBodyBlur] samplerOf(this.rtBodyBlur.source)  <= prev:  this.compositePass.resources.uBodyBlur = this.rtBodyBlur.source;
+src/systems/objectExamine/contactAo.ts:503 [uCritRaw] samplerOf(this.rtCrit.source)  <= prev:  this.compositePass.resources.uCritRaw = this.rtCrit.source;
+src/systems/objectExamine/contactAo.ts:505 [uCritBlur] samplerOf(this.rtCritBlur.source)  <= prev:  this.compositePass.resources.uCritBlur = this.rtCritBlur.source;

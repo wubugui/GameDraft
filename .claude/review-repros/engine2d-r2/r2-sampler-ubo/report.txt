@@ -1,0 +1,151 @@
+## shader at makePlanarShader (./src/rendering/EntityShadow.ts:949:17) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) shadowUniforms:ShadowUniforms uTexture:texture_2d<f32> uTextureSampler:sampler uDepthMap:texture_2d<f32> uDepthMapSampler:sampler uCollisionMap:texture_2d<f32> uCollisionMapSampler:sampler uGroundD:texture_2d<f32> uGroundDSampler:sampler
+ok shadowUniforms: ShadowUniforms  (at makePlanarShader (./src/rendering/EntityShadow.ts:949:17))
+## shader at makeContactShader (./src/rendering/EntityShadow.ts:892:17) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) shadowUniforms:ContactUniforms uGroundD:texture_2d<f32> uGroundDSampler:sampler uDepthMap:texture_2d<f32> uDepthMapSampler:sampler
+ok shadowUniforms: ContactUniforms  (at makeContactShader (./src/rendering/EntityShadow.ts:892:17))
+## shader at makePlanarShader (./src/rendering/EntityShadow.ts:949:17) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) shadowUniforms:ShadowUniforms uTexture:texture_2d<f32> uTextureSampler:sampler uDepthMap:texture_2d<f32> uDepthMapSampler:sampler uCollisionMap:texture_2d<f32> uCollisionMapSampler:sampler uGroundD:texture_2d<f32> uGroundDSampler:sampler
+## shader at makeContactShader (./src/rendering/EntityShadow.ts:892:17) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) shadowUniforms:ContactUniforms uGroundD:texture_2d<f32> uGroundDSampler:sampler uDepthMap:texture_2d<f32> uDepthMapSampler:sampler
+## shader at makePlanarShader (./src/rendering/EntityShadow.ts:949:17) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) shadowUniforms:ShadowUniforms uTexture:texture_2d<f32> uTextureSampler:sampler uDepthMap:texture_2d<f32> uDepthMapSampler:sampler uCollisionMap:texture_2d<f32> uCollisionMapSampler:sampler uGroundD:texture_2d<f32> uGroundDSampler:sampler
+## shader at makeContactShader (./src/rendering/EntityShadow.ts:892:17) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) shadowUniforms:ContactUniforms uGroundD:texture_2d<f32> uGroundDSampler:sampler uDepthMap:texture_2d<f32> uDepthMapSampler:sampler
+## shader at new DepthOcclusionFilter (./src/rendering/DepthOcclusionFilter.ts:281:9) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) depthUniforms:DepthUniforms uDepthMap:texture_2d<f32> uDepthMapSampler:sampler
+ok depthUniforms: DepthUniforms  (at new DepthOcclusionFilter (./src/rendering/DepthOcclusionFilter.ts:281:9))
+## shader at new EntityLightingFilter (./src/rendering/EntityLightingFilter.ts:375:5) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) lightUniforms:LightUniforms uDepthMap:texture_2d<f32> uDepthMapSampler:sampler uProbe:texture_2d<f32> uProbeSampler:sampler
+ok lightUniforms: LightUniforms  (at new EntityLightingFilter (./src/rendering/EntityLightingFilter.ts:375:5))
+## shader at new EntityLightingFilter (./src/rendering/EntityLightingFilter.ts:375:5) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) lightUniforms:LightUniforms uDepthMap:texture_2d<f32> uDepthMapSampler:sampler uProbe:texture_2d<f32> uProbeSampler:sampler
+## shader at createLitShader (./src/rendering/CharacterLitSprite.ts:1120:10) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) sceneShade:SceneShade frameShade:FrameShade charLights:CharLights entityShade:EntityShade uColorTex:texture_2d<f32> uColorTexSampler:sampler uNrm:texture_2d<f32> uNrmSampler:sampler uGround:texture_2d<f32> uGroundSampler:sampler uPL1:texture_2d<f32> uPL2:texture_2d<f32> uPBin:texture_2d<f32> uValid:texture_2d<f32> uVolRad:texture_2d<f32> uVolEmit:texture_2d<f32> uSkyaoTex:texture_2d<f32>
+ok sceneShade: SceneShade  (at createLitShader (./src/rendering/CharacterLitSprite.ts:1120:10))
+ok frameShade: FrameShade  (at createLitShader (./src/rendering/CharacterLitSprite.ts:1120:10))
+ok charLights: CharLights  (at createLitShader (./src/rendering/CharacterLitSprite.ts:1120:10))
+ok entityShade: EntityShade  (at createLitShader (./src/rendering/CharacterLitSprite.ts:1120:10))
+## shader at createLitShader (./src/rendering/CharacterLitSprite.ts:1120:10) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) sceneShade:SceneShade frameShade:FrameShade charLights:CharLights entityShade:EntityShade uColorTex:texture_2d<f32> uColorTexSampler:sampler uNrm:texture_2d<f32> uNrmSampler:sampler uGround:texture_2d<f32> uGroundSampler:sampler uPL1:texture_2d<f32> uPL2:texture_2d<f32> uPBin:texture_2d<f32> uValid:texture_2d<f32> uVolRad:texture_2d<f32> uVolEmit:texture_2d<f32> uSkyaoTex:texture_2d<f32>
+## shader at createLitShader (./src/rendering/CharacterLitSprite.ts:1120:10) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) sceneShade:SceneShade frameShade:FrameShade charLights:CharLights entityShade:EntityShade uColorTex:texture_2d<f32> uColorTexSampler:sampler uNrm:texture_2d<f32> uNrmSampler:sampler uGround:texture_2d<f32> uGroundSampler:sampler uPL1:texture_2d<f32> uPL2:texture_2d<f32> uPBin:texture_2d<f32> uValid:texture_2d<f32> uVolRad:texture_2d<f32> uVolEmit:texture_2d<f32> uSkyaoTex:texture_2d<f32>
+## shader at new CharacterShadingFilter (./src/rendering/CharacterShadingFilter.ts:1165:5) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) shadeUniforms:ShadeUniforms uDepthMap:texture_2d<f32> uDepthMapSampler:sampler uNrm:texture_2d<f32> uNrmSampler:sampler uPL1:texture_2d<f32> uPL2:texture_2d<f32> uPBin:texture_2d<f32> uValid:texture_2d<f32> uSkyaoTex:texture_2d<f32> uVolRad:texture_2d<f32> uVolEmit:texture_2d<f32>
+ok shadeUniforms: ShadeUniforms  (at new CharacterShadingFilter (./src/rendering/CharacterShadingFilter.ts:1165:5))
+## shader at new CharacterShadingFilter (./src/rendering/CharacterShadingFilter.ts:1165:5) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) shadeUniforms:ShadeUniforms uDepthMap:texture_2d<f32> uDepthMapSampler:sampler uNrm:texture_2d<f32> uNrmSampler:sampler uPL1:texture_2d<f32> uPL2:texture_2d<f32> uPBin:texture_2d<f32> uValid:texture_2d<f32> uSkyaoTex:texture_2d<f32> uVolRad:texture_2d<f32> uVolEmit:texture_2d<f32>
+## shader at SceneLightingPass.ensure (./src/rendering/lighting/SceneLightingPass.ts:1334:26) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) uPainting:texture_2d<f32> uPaintingSampler:sampler uPrefix0:texture_2d<f32> uPrefix0Sampler:sampler uPrefix1:texture_2d<f32> uPrefix1Sampler:sampler uNormal:texture_2d<f32> uNormalSampler:sampler uAlbedo:texture_2d<f32> uAlbedoSampler:sampler uDepth:texture_2d<f32> uDepthSampler:sampler uPL1:texture_2d<f32> uPL2:texture_2d<f32> uPBin:texture_2d<f32> uValid:texture_2d<f32> uSkyaoTex:texture_2d<f32> uSurfMask:texture_2d<f32> uSurfMaskSampler:sampler sceneLight:SceneLightUniforms
+ok sceneLight: SceneLightUniforms  (at SceneLightingPass.ensure (./src/rendering/lighting/SceneLightingPass.ts:1334:26))
+## shader at new LitBackground (./src/rendering/lighting/LitBackground.ts:277:26) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) uRadiance:texture_2d<f32> uRadianceSampler:sampler uDepth:texture_2d<f32> uDepthSampler:sampler uUvMap:texture_2d<f32> uUvMapSampler:sampler uRadiancePlate:texture_2d<f32> uRadiancePlateSampler:sampler uDepthPlate:texture_2d<f32> uDepthPlateSampler:sampler litBg:LitBgUniforms
+ok litBg: LitBgUniforms  (at new LitBackground (./src/rendering/lighting/LitBackground.ts:277:26))
+## shader at new BurnFilterBase (./src/rendering/burn/BurnFilters.ts:299:5) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) burnUniforms:BurnFilterUniforms uBurnField:texture_2d<f32> uBurnFieldSampler:sampler
+ok burnUniforms: BurnFilterUniforms  (at new BurnFilterBase (./src/rendering/burn/BurnFilters.ts:299:5))
+## shader at new BurnFilterBase (./src/rendering/burn/BurnFilters.ts:299:5) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) burnUniforms:BurnFilterUniforms uBurnField:texture_2d<f32> uBurnFieldSampler:sampler
+ok burnUniforms: BurnFilterUniforms  (at new BurnFilterBase (./src/rendering/burn/BurnFilters.ts:299:5))
+## shader at mk (./src/rendering/burn/BurnRenderer.ts:421:21) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) burnUniforms:BurnImageUniforms uBaseTex:texture_2d<f32> uBaseTexSampler:sampler uBurnField:texture_2d<f32> uBurnFieldSampler:sampler
+ok burnUniforms: BurnImageUniforms  (at mk (./src/rendering/burn/BurnRenderer.ts:421:21))
+## shader at mk (./src/rendering/burn/BurnRenderer.ts:421:21) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) burnUniforms:BurnImageUniforms uBaseTex:texture_2d<f32> uBaseTexSampler:sampler uBurnField:texture_2d<f32> uBurnFieldSampler:sampler
+ok burnUniforms: BurnImageUniforms  (at mk (./src/rendering/burn/BurnRenderer.ts:421:21))
+## shader at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) sceneShade:SceneShade frameShade:FrameShade charLights:CharLights entityShade:VfxEntityShade uColorTex:texture_2d<f32> uColorTexSampler:sampler uNrm:texture_2d<f32> uGround:texture_2d<f32> uPL1:texture_2d<f32> uPL2:texture_2d<f32> uPBin:texture_2d<f32> uValid:texture_2d<f32> uVolRad:texture_2d<f32> uVolEmit:texture_2d<f32> uSkyaoTex:texture_2d<f32> vfxDepth:VfxDepth uDepthMap:texture_2d<f32> uDepthMapSampler:sampler vfxParams:VfxParams
+ok sceneShade: SceneShade  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+ok frameShade: FrameShade  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+     GL- uWCPos: vec2<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uWCScale: f32 not declared in GLSL (master never uploads; WGSL reads live value)
+ok charLights: CharLights  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+ok entityShade: VfxEntityShade  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+     GL- uL2W0: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uL2W1: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+ok vfxDepth: VfxDepth  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+ok vfxParams: VfxParams  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+## shader at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) sceneShade:SceneShade frameShade:FrameShade charLights:CharLights entityShade:VfxEntityShade uColorTex:texture_2d<f32> uColorTexSampler:sampler uNrm:texture_2d<f32> uGround:texture_2d<f32> uPL1:texture_2d<f32> uPL2:texture_2d<f32> uPBin:texture_2d<f32> uValid:texture_2d<f32> uVolRad:texture_2d<f32> uVolEmit:texture_2d<f32> uSkyaoTex:texture_2d<f32> vfxDepth:VfxDepth uDepthMap:texture_2d<f32> uDepthMapSampler:sampler vfxParams:VfxParams
+ok sceneShade: SceneShade  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+ok frameShade: FrameShade  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+     GL- uWCPos: vec2<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uWCScale: f32 not declared in GLSL (master never uploads; WGSL reads live value)
+ok charLights: CharLights  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+ok entityShade: VfxEntityShade  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+     GL- uL2W0: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uL2W1: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+ok vfxDepth: VfxDepth  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+ok vfxParams: VfxParams  (at CharacterLightingSystem.createCustomLitShader (./src/core/CharacterLightingSystem.ts:1370:16))
+## shader at VfxRenderer.ensureView (./src/rendering/vfx/VfxRenderer.ts:548:16) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) uColorTex:texture_2d<f32> uColorTexSampler:sampler vfxDepth:VfxDepth uDepthMap:texture_2d<f32> uDepthMapSampler:sampler charLights:CharLights vfxTone:VfxTone vfxToneOn:VfxToneOn uProbe:texture_2d<f32> uProbeSampler:sampler
+ok vfxDepth: VfxDepth  (at VfxRenderer.ensureView (./src/rendering/vfx/VfxRenderer.ts:548:16))
+ok charLights: CharLights  (at VfxRenderer.ensureView (./src/rendering/vfx/VfxRenderer.ts:548:16))
+     GL- uSceneLightCount: i32 not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSceneLightA: vec4<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSceneLightB: vec4<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSceneLightC: vec4<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSceneLightD: vec4<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSMWuPerQUnit: f32 not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSMRow0: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSMRow1: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSMRow2: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+ok vfxTone: VfxTone  (at VfxRenderer.ensureView (./src/rendering/vfx/VfxRenderer.ts:548:16))
+ok vfxToneOn: VfxToneOn  (at VfxRenderer.ensureView (./src/rendering/vfx/VfxRenderer.ts:548:16))
+## shader at VfxRenderer.ensureView (./src/rendering/vfx/VfxRenderer.ts:548:16) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) uColorTex:texture_2d<f32> uColorTexSampler:sampler vfxDepth:VfxDepth uDepthMap:texture_2d<f32> uDepthMapSampler:sampler charLights:CharLights vfxTone:VfxTone vfxToneOn:VfxToneOn uProbe:texture_2d<f32> uProbeSampler:sampler
+## shader at VfxRenderer.ensureView (./src/rendering/vfx/VfxRenderer.ts:510:16) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) vfxDepth:VfxDepth uDepthMap:texture_2d<f32> uDepthMapSampler:sampler
+ok vfxDepth: VfxDepth  (at VfxRenderer.ensureView (./src/rendering/vfx/VfxRenderer.ts:510:16))
+## shader at new VfxBeamView (./src/rendering/vfx/VfxBeamView.ts:98:19) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) vfxBeam:VfxBeamUniforms vfxDepth:VfxBeamDepth uDepthMap:texture_2d<f32> uDepthMapSampler:sampler uBeamCookie:texture_2d<f32> uBeamCookieSampler:sampler charLights:CharLights
+ok vfxBeam: VfxBeamUniforms  (at new VfxBeamView (./src/rendering/vfx/VfxBeamView.ts:98:19))
+     [info-reinterpret]  5 JS uBeamAlong:vec2<f32>[8] @224+64  |  WGSL uBeamAlong:array<vec4<f32>,4> @224+64 (JS vec2<f32>[8] contiguous reinterpreted as array<vec4<f32>,4>)
+ok vfxDepth: VfxBeamDepth  (at new VfxBeamView (./src/rendering/vfx/VfxBeamView.ts:98:19))
+ok charLights: CharLights  (at new VfxBeamView (./src/rendering/vfx/VfxBeamView.ts:98:19))
+     GL- uSceneLightCount: i32 not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSceneLightA: vec4<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSceneLightB: vec4<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSceneLightC: vec4<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSceneLightD: vec4<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSMWuPerQUnit: f32 not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSMRow0: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSMRow1: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+     GL- uSMRow2: vec3<f32> not declared in GLSL (master never uploads; WGSL reads live value)
+## shader at stub (./src/rendering/vfx/VfxRenderer.ts:78:44) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) uColorTex:texture_2d<f32>(MISSING) uColorTexSampler:sampler(MISSING) vfxDepth:VfxDepth(MISSING) uDepthMap:texture_2d<f32>(MISSING) uDepthMapSampler:sampler(MISSING) charLights:CharLights(MISSING) vfxTone:VfxTone(MISSING) vfxToneOn:VfxToneOn(MISSING) uProbe:texture_2d<f32>(MISSING) uProbeSampler:sampler(MISSING)
+SS missing sampler resource uColorTexSampler (texture uColorTex present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+SS missing sampler resource uDepthMapSampler (texture uDepthMap present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+SS missing sampler resource uProbeSampler (texture uProbe present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+## shader at stub (./src/rendering/vfx/VfxRenderer.ts:78:44) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) sceneShade:SceneShade(MISSING) frameShade:FrameShade(MISSING) charLights:CharLights(MISSING) entityShade:VfxEntityShade(MISSING) uColorTex:texture_2d<f32>(MISSING) uColorTexSampler:sampler(MISSING) uNrm:texture_2d<f32>(MISSING) uGround:texture_2d<f32>(MISSING) uPL1:texture_2d<f32>(MISSING) uPL2:texture_2d<f32>(MISSING) uPBin:texture_2d<f32>(MISSING) uValid:texture_2d<f32>(MISSING) uVolRad:texture_2d<f32>(MISSING) uVolEmit:texture_2d<f32>(MISSING) uSkyaoTex:texture_2d<f32>(MISSING) vfxDepth:VfxDepth(MISSING) uDepthMap:texture_2d<f32>(MISSING) uDepthMapSampler:sampler(MISSING) vfxParams:VfxParams(MISSING)
+SS missing sampler resource uColorTexSampler (texture uColorTex present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+SS missing sampler resource uDepthMapSampler (texture uDepthMap present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+## shader at stub (./src/rendering/vfx/VfxRenderer.ts:78:44) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) vfxDepth:VfxDepth(MISSING) uDepthMap:texture_2d<f32>(MISSING) uDepthMapSampler:sampler(MISSING)
+SS missing sampler resource uDepthMapSampler (texture uDepthMap present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+## shader at stub (./src/rendering/vfx/VfxRenderer.ts:78:44) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) uColorTex:texture_2d<f32>(MISSING) uColorTexSampler:sampler(MISSING) vfxDepth:VfxDepth(MISSING) uDepthMap:texture_2d<f32>(MISSING) uDepthMapSampler:sampler(MISSING) charLights:CharLights(MISSING) vfxTone:VfxTone(MISSING) vfxToneOn:VfxToneOn(MISSING) uProbe:texture_2d<f32>(MISSING) uProbeSampler:sampler(MISSING)
+SS missing sampler resource uColorTexSampler (texture uColorTex present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+SS missing sampler resource uDepthMapSampler (texture uDepthMap present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+SS missing sampler resource uProbeSampler (texture uProbe present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+## shader at stub (./src/rendering/vfx/VfxRenderer.ts:78:44) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) sceneShade:SceneShade(MISSING) frameShade:FrameShade(MISSING) charLights:CharLights(MISSING) entityShade:VfxEntityShade(MISSING) uColorTex:texture_2d<f32>(MISSING) uColorTexSampler:sampler(MISSING) uNrm:texture_2d<f32>(MISSING) uGround:texture_2d<f32>(MISSING) uPL1:texture_2d<f32>(MISSING) uPL2:texture_2d<f32>(MISSING) uPBin:texture_2d<f32>(MISSING) uValid:texture_2d<f32>(MISSING) uVolRad:texture_2d<f32>(MISSING) uVolEmit:texture_2d<f32>(MISSING) uSkyaoTex:texture_2d<f32>(MISSING) vfxDepth:VfxDepth(MISSING) uDepthMap:texture_2d<f32>(MISSING) uDepthMapSampler:sampler(MISSING) vfxParams:VfxParams(MISSING)
+SS missing sampler resource uColorTexSampler (texture uColorTex present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+SS missing sampler resource uDepthMapSampler (texture uDepthMap present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+## shader at stub (./src/rendering/vfx/VfxRenderer.ts:78:44) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) vfxDepth:VfxDepth(MISSING) uDepthMap:texture_2d<f32>(MISSING) uDepthMapSampler:sampler(MISSING)
+SS missing sampler resource uDepthMapSampler (texture uDepthMap present: false) at stub (./src/rendering/vfx/VfxRenderer.ts:78:44)
+## shader at GiBouncePass.ensure (./src/rendering/lighting/GiBouncePass.ts:223:26) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) uRadiance:texture_2d<f32> uRadianceSampler:sampler uHitmap:texture_2d<f32> giBounce:GiBounce
+ok giBounce: GiBounce  (at GiBouncePass.ensure (./src/rendering/lighting/GiBouncePass.ts:223:26))
+## shader at ShadowPrefixPass.ensure (./src/rendering/lighting/shadowPrefix.ts:359:30) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) uDepth:texture_2d<f32> uDepthSampler:sampler prefixInit:PrefixInit
+ok prefixInit: PrefixInit  (at ShadowPrefixPass.ensure (./src/rendering/lighting/shadowPrefix.ts:359:30))
+## shader at ShadowPrefixPass.ensure (./src/rendering/lighting/shadowPrefix.ts:380:30) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) uPrev:texture_2d<f32> uPrevSampler:sampler prefixScan:PrefixScan
+ok prefixScan: PrefixScan  (at ShadowPrefixPass.ensure (./src/rendering/lighting/shadowPrefix.ts:380:30))
+## shader at new BackgroundDebugFilter (./src/rendering/BackgroundDebugFilter.ts:343:9) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) bgDebug:BgDebugUniforms uDepthMap:texture_2d<f32> uDepthMapSampler:sampler uCollisionMap:texture_2d<f32> uCollisionMapSampler:sampler uGroundD:texture_2d<f32> uGroundDSampler:sampler
+ok bgDebug: BgDebugUniforms  (at new BackgroundDebugFilter (./src/rendering/BackgroundDebugFilter.ts:343:9))
+## shader at Module.createBreathingOverlayMesh (./src/rendering/breathingOverlayMesh.ts:113:25) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) breathingUniforms:BreathingUniforms uBase:texture_2d<f32> uBaseSampler:sampler uBody:texture_2d<f32> uBodySampler:sampler uSheet:texture_2d<f32> uSheetSampler:sampler uFlap:texture_2d<f32> uFlapSampler:sampler uF1:texture_2d<f32> uF1Sampler:sampler uF2:texture_2d<f32> uF2Sampler:sampler
+ok breathingUniforms: BreathingUniforms  (at Module.createBreathingOverlayMesh (./src/rendering/breathingOverlayMesh.ts:113:25))
+## shader at Module.createOverlayBlendMesh (./src/rendering/overlayBlendShader.ts:143:25) bindings=globalUniforms:GlobalUniforms(MISSING) localUniforms:LocalUniforms(MISSING) blendUniforms:BlendUniforms uTextureFrom:texture_2d<f32> uTextureFromSampler:sampler uTextureTo:texture_2d<f32> uTextureToSampler:sampler
+ok blendUniforms: BlendUniforms  (at Module.createOverlayBlendMesh (./src/rendering/overlayBlendShader.ts:143:25))
+## shader at new WaterShaderFilter (./src/systems/waterMinigame/WaterShaderFilter.ts:214:5) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) waterUniforms:WaterUniforms uNormalMap:texture_2d<f32> uNormalMapSampler:sampler uParams:texture_2d<f32> uParamsSampler:sampler
+ok waterUniforms: WaterUniforms  (at new WaterShaderFilter (./src/systems/waterMinigame/WaterShaderFilter.ts:214:5))
+## shader at new WaterParamEncodeFilter (./src/systems/waterMinigame/WaterParamEncodeFilter.ts:118:5) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) paramUniforms:ParamUniforms
+ok paramUniforms: ParamUniforms  (at new WaterParamEncodeFilter (./src/systems/waterMinigame/WaterParamEncodeFilter.ts:118:5))
+## shader at new ObjectExamineContactAoFilter (./src/systems/objectExamine/contactAo.ts:263:34) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) alphaUniforms:AlphaUniforms
+ok alphaUniforms: AlphaUniforms  (at new ObjectExamineContactAoFilter (./src/systems/objectExamine/contactAo.ts:263:34))
+## shader at new ObjectExamineContactAoFilter (./src/systems/objectExamine/contactAo.ts:308:21) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) blurUniforms:BlurUniforms
+ok blurUniforms: BlurUniforms  (at new ObjectExamineContactAoFilter (./src/systems/objectExamine/contactAo.ts:308:21))
+## shader at new ObjectExamineContactAoFilter (./src/systems/objectExamine/contactAo.ts:308:21) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) blurUniforms:BlurUniforms
+## shader at new ObjectExamineContactAoFilter (./src/systems/objectExamine/contactAo.ts:315:21) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) blurUniforms:BlurUniforms
+## shader at new ObjectExamineContactAoFilter (./src/systems/objectExamine/contactAo.ts:315:21) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) blurUniforms:BlurUniforms
+## shader at new ContactCompositePass (./src/systems/objectExamine/contactAo.ts:224:5) bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) compositeUniforms:CompositeUniforms uBodyRaw:texture_2d<f32> uBodyRawSampler:sampler uBodyBlur:texture_2d<f32> uBodyBlurSampler:sampler uCritRaw:texture_2d<f32> uCritRawSampler:sampler uCritBlur:texture_2d<f32> uCritBlurSampler:sampler
+XX compositeUniforms: CompositeUniforms  (at new ContactCompositePass (./src/systems/objectExamine/contactAo.ts:224:5))
+     [count]  4 JS -  |  WGSL _pad0:f32 @40+4
+     [count]  5 JS -  |  WGSL _pad1:f32 @44+4
+        0 JS uMaskX:vec4<f32> @0+16  |  WGSL uMaskX:vec4<f32> @0+16
+        1 JS uMaskY:vec4<f32> @16+16  |  WGSL uMaskY:vec4<f32> @16+16
+        2 JS uBodyStrength:f32 @32+4  |  WGSL uBodyStrength:f32 @32+4
+        3 JS uCritStrength:f32 @36+4  |  WGSL uCritStrength:f32 @36+4
+        4 JS -  |  WGSL _pad0:f32 @40+4
+        5 JS -  |  WGSL _pad1:f32 @44+4
+          total JS 48 WGSL 48
+## shader  bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) blurUniforms:BlurUniforms
+ok blurUniforms: BlurUniforms  ()
+## shader  bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) blurUniforms:BlurUniforms
+## shader  bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) blurUniforms:BlurUniforms
+## shader  bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) blurUniforms:BlurUniforms
+## shader  bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) alphaUniforms:AlphaUniforms
+## shader  bindings=gfu:GlobalFilterUniforms(MISSING) uTexture:texture_2d<f32>(MISSING) uSampler:sampler(MISSING) colorMatrixUniforms:ColorMatrixUniforms
+ok colorMatrixUniforms: ColorMatrixUniforms  ()
+     [info-reinterpret]  0 JS uColorMatrix:f32[20] @0+80  |  WGSL uColorMatrix:array<vec4<f32>,5> @0+80 (JS f32[20] contiguous reinterpreted as array<vec4<f32>,5>)
+
+problems=1 shaders=57

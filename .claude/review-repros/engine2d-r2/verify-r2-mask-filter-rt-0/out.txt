@@ -1,0 +1,4 @@
+1920x1080 dpr1 step3.2: caps=8192 bounds(css)=4243x2829 pad=186 pixiPoolTex=8192x4096 engine2d frames=["ok","ok","ok"]
+1920x1080 dpr2 step3.2: caps=8192 bounds(css)=4243x2829 pad=186 pixiPoolTex=16384x8192 engine2d frames=["[RHI:unsupported] 纹理「engine2d-tex-21」16384×8192 超过设备上限 8192","[RHI:unsupported] 纹理「engine2d-tex-22」16384×8192 超过设备上限 8192","[RHI:unsupported] 纹理「engine2d-tex-23」16384×8192 超过设备上限 8192"]
+1920x1080 dpr1.5 step3.2: caps=8192 bounds(css)=4243x2829 pad=186 pixiPoolTex=8192x8192 engine2d frames=["ok","ok","ok"]
+1920x1080 dpr1 step6: caps=8192 bounds(css)=7956x5304 pad=345 pixiPoolTex=16384x8192 engine2d frames=["[RHI:unsupported] 纹理「engine2d-tex-41」16384×8192 超过设备上限 8192","[RHI:unsupported] 纹理「engine2d-tex-42」16384×8192 超过设备上限 8192","[RHI:unsupported] 纹理「engine2d-tex-43」16384×8192 超过设备上限 8192"]
