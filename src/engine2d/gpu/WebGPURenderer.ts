@@ -163,7 +163,7 @@ export class WebGPURenderer extends RendererBase {
       container.updateLocalTransform();
       transform = container.localTransform;
     }
-    if (!container.visible) return;
+    if (!container.visible || !container.activeSelf) return;
 
     const tick = Container._nextRenderTick();
     prepareTree(container, this, tick);

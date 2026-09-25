@@ -26,6 +26,8 @@ import { createRenderer, type CreateRendererOptions } from '../gpu/createRendere
 import { DOMAdapter } from '../environment/adapter';
 import { ResizePlugin, type ResizePluginOptions } from './ResizePlugin';
 import { TickerPlugin, type TickerPluginOptions } from './TickerPlugin';
+import { PlayerLoop } from '../scene/PlayerLoop';
+import { UPDATE_PRIORITY } from '../ticker/Ticker';
 
 /** 渲染后端偏好(Pixi 的取值;engine2d 只有 WebGPU,一律忽略) */
 export type RendererPreference = 'webgl' | 'webgpu' | 'canvas';
@@ -106,7 +108,14 @@ export class Application<R extends RendererBase = WebGPURenderer> {
     Application._plugins.forEach((plugin) => {
       plugin.init.call(this as unknown as Application, options as Partial<ApplicationOptions>);
     });
+
+    // 层级(照 Unity):stage 是一个场景根;玩家循环(组件的 Start / Update / LateUpdate)挂在 ticker 上、渲染之前
+    this.stage.isSceneRoot = true;
+    this._playerLoopTick = () => PlayerLoop.shared.tick(this.ticker.deltaMS / 1000);
+    this.ticker.add(this._playerLoopTick, null, UPDATE_PRIORITY.NORMAL);
   }
+
+  private _playerLoopTick: (() => void) | null = null;
 
   /** 把 stage 画到画布(TickerPlugin 每帧以 LOW 优先级调用) */
   render(): void {
@@ -138,6 +147,10 @@ export class Application<R extends RendererBase = WebGPURenderer> {
    * @param options stage 的销毁参数(同 Container.destroy)
    */
   destroy(rendererDestroyOptions: RendererDestroyOptions = false, options: boolean | DestroyOptions = false): void {
+    if (this._playerLoopTick) {
+      this.ticker?.remove(this._playerLoopTick, null);
+      this._playerLoopTick = null;
+    }
     const plugins = Application._plugins.slice(0);
     plugins.reverse();
     plugins.forEach((plugin) => {

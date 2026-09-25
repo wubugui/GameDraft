@@ -427,7 +427,7 @@ export class EventBoundary {
 
   private _interactivePrune(container: Container): boolean {
     // 遮罩、不可见、不可渲染的节点不能被直接命中
-    if (!container || !container.visible || !container.renderable || !container.measurable) {
+    if (!container || !container.activeSelf || !container.visible || !container.renderable || !container.measurable) {
       return true;
     }
 

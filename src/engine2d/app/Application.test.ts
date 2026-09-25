@@ -199,15 +199,16 @@ describe('Application.init', () => {
     app.destroy();
   });
 
-  it('sharedTicker:用 Ticker.shared,destroy 只摘掉 render、不销毁共享 ticker', async () => {
+  it('sharedTicker:用 Ticker.shared,destroy 只摘掉自己挂的(render + 玩家循环)、不销毁共享 ticker', async () => {
     const app = new Application();
     await app.init({ sharedTicker: true, autoStart: false });
     expect(app.ticker).toBe(Ticker.shared);
     const before = Ticker.shared.count;
     app.destroy();
-    expect(Ticker.shared.count).toBe(before - 1);
+    // Pixi 只有 render 一个;engine2d 另挂了组件的玩家循环(见 scene/PlayerLoop)
+    expect(Ticker.shared.count).toBe(before - 2);
     Ticker.shared.add(() => {});
-    expect(Ticker.shared.count).toBe(before);
+    expect(Ticker.shared.count).toBe(before - 1);
   });
 });
 

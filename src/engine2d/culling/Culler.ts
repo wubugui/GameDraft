@@ -46,6 +46,7 @@ export class Culler {
   }
 
   private _cullRecursive(container: Container, view: RectangleLike, skipUpdateTransform = true): void {
+    if (!container._activeSelf) return; // 未激活的子树不画,不用剔除
     if (container.cullable && container.measurable && container.includeInBuild) {
       if (container.cullArea) {
         tempRectangle.x = view.x;

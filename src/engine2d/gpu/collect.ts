@@ -26,6 +26,7 @@ function clamp01(v: number): number {
 }
 
 function runOnRender(c: Container, renderer: unknown): void {
+  if (!c._activeSelf) return; // 未激活的子树不回调(照 Unity)
   const fn = c.onRender;
   if (fn) fn.call(c, renderer);
   const children = c.children;
@@ -48,6 +49,12 @@ export function prepareTree(root: Container, renderer: unknown, tick: number): v
 }
 
 function updateChild(c: Container, parent: Container | null, tick: number): void {
+  if (!c._activeSelf) {
+    // 未激活:整棵子树不算、不画(收集器见 globalDisplayStatus < 7 即跳过,不会再往下看)
+    c.globalDisplayStatus = 0;
+    c._renderTick = tick;
+    return;
+  }
   c.updateLocalTransform();
   if (!parent) {
     // 根的直接子节点:父按"白色、不透明、normal、全可见"算(Pixi 用 tempContainer)

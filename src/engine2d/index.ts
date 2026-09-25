@@ -29,6 +29,8 @@ export { TexturePool, TexturePoolClass } from './textures/TexturePool';
 export { Bounds } from './scene/Bounds';
 export { Container, type ContainerOptions, type DestroyOptions, type EventMode, type Cursor, type IHitArea } from './scene/Container';
 export { ViewContainer } from './scene/ViewContainer';
+export { Component, type ComponentType } from './scene/Component';
+export { PlayerLoop } from './scene/PlayerLoop';
 export { Sprite, type SpriteOptions } from './sprite/Sprite';
 
 export { Buffer, BufferUsage, BufferResource, type BufferOptions } from './shader/Buffer';
