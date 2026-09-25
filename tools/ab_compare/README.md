@@ -12,6 +12,8 @@ xvfb-run -a node tools/ab_compare/run.mjs --browser /opt/pw-browsers/chromium-11
 ```
 
 依赖 `playwright-core`(仓库不装;`PLAYWRIGHT_CORE=<包目录>` 指过去)。全部选项见 `run.mjs` 头注释或 `--help`。
+锁文件里的 `resolved` 指向 npmmirror;连不上它的环境(比如云端容器)加 `--npm-registry https://registry.npmjs.org/`
+(`npm ci --replace-registry-host=always`,tarball 的 integrity 不变)。
 结果在 `.tools/ab_out/latest/`:`report.html`(按分歧排序)、`summary.json`、`img/<场景>/…`(A | B | 差异热图)。
 退出码:0 一致;1 有超噪声分歧 / B 新增报错 / 有场景无法对照(A 一轮都没起来)/ 独立性复核不过;2 工具自身失败。
 带 `--keep-raw` 跑过之后,可以 `--recompare --out <同一目录>` 只换判定参数(`--margin`、`--ignore-row-shift` …)重出报告,不用重跑游戏。
@@ -55,6 +57,11 @@ xvfb-run -a node tools/ab_compare/run.mjs --browser /opt/pw-browsers/chromium-11
      这类东西不走逻辑 tick,光 stepFixedTicks 会卡住)+ `stepFixedTicks(k, 1000/60)`(逻辑 tick 并显式出一帧);
      有网络活动就等它静下来再走下一步。命令 / API 一律「发出去不等」,兑现与否在后续检查点里记录。
    - 截图 `animations: 'disabled'`(DOM 上的 CSS 动画按 Playwright 的规则收尾 / 取消,两边一样)。
+   - `--freeze boot`:游戏一挂出 `window.__game` 就经它自己的 `applyRuntimeCommand` 开固定帧模式(init script 用原生
+     setTimeout 轮询),装载期一帧真实时间的逻辑都不跑。缺省的 `ready` 模式下,装载期逻辑按墙钟跑到就绪为止,
+     **两边装载快慢不同**(实测 master 的 teahouse 冷启动约 11 s、分支约 6 s)就可能留下不同的状态,且 A/A 量不出来——
+     实测叙事跳转「听书」在 `ready` 下 `retry.checkpoint` 一边是 `session_start` 一边是 `null`,换 `boot` 后两边都是 `null`。
+     看到「状态分歧」先用 `--freeze boot` 复核。
 7. **检查点取证**:两张截图——**整页**(画布 + DOM 覆盖层,判定依据)与**画布层**(把不含画布的 DOM 元素临时
    `visibility:hidden` 再截,截完原样还回;不改布局、不触发 ResizeObserver,游戏无感)——分得清差异出在渲染器还是
    DOM(比如 dev 报错浮层);自上个检查点以来的 console error / warning / pageerror /
@@ -73,7 +80,7 @@ xvfb-run -a node tools/ab_compare/run.mjs --browser /opt/pw-browsers/chromium-11
 
 `scenarios.mjs` 里数据驱动(改节拍改 `TEMPLATES`):scene(进场景 +30 / +180 帧)、npc(每场景前几个有对话图的
 NPC:交互 → 补完打字机 → 推进 → 选第 0 项)、minigame(`startMinigame` + 点击 + 拖拽)、cutscene(`playCutscene`,
-每 60 帧一个检查点并补完台词 + 点一下)、warp(`?narrativeWarp=`)、resize(改视口再还原)、dpr(DPR=2,去掉
+每 60 帧一个检查点并补完台词 + 点一下)、warp(`?narrativeWarp=`,之后每 60 帧补完打字机并点一下,把最后一跳的开场演出往前推)、resize(改视口再还原)、dpr(DPR=2,去掉
 `visualCapture`——它把渲染分辨率钉死在 1)。`--perf` 另跑真实时间的帧耗时与 JS 堆(三轮切场景后 gc 再读)。
 
 ## 局限
@@ -87,7 +94,7 @@ NPC:交互 → 补完打字机 → 推进 → 选第 0 项)、minigame(`startMin
 - master 的 Pixi 走 WebGL、分支的 engine2d 走 WebGPU:恰好落在半像素上的水平边(1 像素线、面板上下沿)会有
   一行系统性差异(默认帧缓冲光栅化方向相反),属已知项;报告里按「±1 行位移可解释」单独标出。
 - dev 报错浮层(「运行时问题 (dev)」)按报错到达的先后排列,而装载期是真实时间,所以缺素材时它在整页图上
-  A/A 就会抖(几个百分点);这正是要看画布层数字的原因。有素材、没报错时浮层不出现。
+  A/A 就会抖(几个百分点);这正是要看画布层数字的原因。浮层只在有报错时出现,有素材时应少得多(未在有素材的机器上实测)。
 - 缺素材时(比如云端容器)画面对照只覆盖「无原画、无光照数据」路径,光照 / 原画相关的回归看不到。
 - NPC 对话、小游戏、过场的输入是固定脚本(不看状态分支);没走到的分支不在对照范围内。
 - 树放在 `.tools/ab/` 下,父目录链上就是主工作区:模块解析若在树内找不到依赖会爬到主工作区的 node_modules。

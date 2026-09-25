@@ -80,11 +80,18 @@ resolve 回目标——32 位浮点 / 整数这类不能 resolve 的格式照常
 
 - 单测:`npx vitest run src/engine2d`(大量用例直接拿 Pixi 当参考实现比对,Pixi 只作为测试依赖)。
 - 核心逐位对照(engine2d vs Pixi WebGL,29 个用例):`node tools/engine2d_parity/run.mjs`。
-- 运行时着色器对照(**master 对本分支**,176 个用例):`node tools/render_parity/run.mjs`——
-  用 git archive 抽出 master 的 src 跑 Pixi WebGL,工作区 src 跑 engine2d,逐像素比。
-- 整局画面对照(master 对本分支,逐场景截图 + 新增报错):`node tools/render_parity/game_sweep.mjs`;
-  Linux 无显示环境要 `xvfb-run ... --swiftshader`(无头 Chromium 的 WebGPU 上屏会丢设备,有头 + SwiftShader Vulkan 正常)。
-  这三个都要 playwright-core(`PLAYWRIGHT_CORE` 指过去),见各文件头。
+- **与 master 的对照以 `tools/ab_compare` 为准**(制作人 2026-09-25 定:两个分支各自跑起来比,不许把 master 的代码拿进本分支比)。
+  它的做法:
+  - master 与本分支各检出一棵独立工作树,各自 `npm ci`、各自起未改动的 dev 服;
+  - 外部用同一套输入和确定性控制(假时钟、随机种子、固定步长)驱动两局真游戏;
+  - 逐检查点比截图、状态、报错,并用 A/A、B/B 量出噪声底。
+  用法、方法与局限见 `tools/ab_compare/README.md`。光照与美术只有在素材齐全(DVC)的机器上才比得到。
+- 着色器单元级辅助(**不是**干净的 master 对照):`node tools/render_parity/run.mjs`(176 个用例)。
+  它把 master 的 src 放进**本分支**的对照框架里跑,master 缺的模块还从本分支补。
+  只能用来快速看着色器移植,不能当 master 行为对照的证据。
+- `tools/render_parity/game_sweep.mjs` 已被 ab_compare 取代:它共用本分支的 node_modules,又按真实时间跑,两边动画不同步、噪声大。
+  Linux 无显示环境跑浏览器类工具一律 `xvfb-run` + 有头 + `--swiftshader`(无头 Chromium 的 WebGPU 上屏会丢设备)。
+  这些工具都要 playwright-core(用 `PLAYWRIGHT_CORE` 指过去),见各文件头。
 
 ## 已知坑
 

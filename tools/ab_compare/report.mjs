@@ -133,6 +133,7 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0}dt{c
 <dt>浏览器</dt><dd>${esc(m.browser)}</dd>
 </dl>
 <div class="banner ${nBad ? 'bad' : ''}"><b>${nBad ? `${nBad} / ${scs.length} 个场景 B 相对 A 超出噪声底或有新报错` : nInc ? `可对照的 ${scs.length - nInc} 个场景在噪声底内一致、无新增报错` : `全部 ${scs.length} 个场景在噪声底内一致、无新增报错`}</b></div>
+${m.opts.freezeAt !== 'boot' && scs.some((s) => s.flags.includes('状态分歧')) ? `<div class="banner warn">有「状态分歧」:本次冻结时机是 <code>${esc(m.opts.freezeAt)}</code>,装载期逻辑按墙钟跑,两边装载快慢不同也会留下不同状态(A/A 量不出来)。先用 <code>--freeze boot</code> 复核再下结论。</div>` : ''}
 ${nInc ? `<div class="banner warn"><b>${nInc} 个场景无法对照</b>(A 一轮都没起来):${scs.filter((s) => s.inconclusive).map((s) => esc(s.id)).join('、')}</div>` : ''}
 ${m.assets.linked ? '' : `<div class="banner warn"><b>⚠ 没有素材目录(${esc(m.assets.src)}):场景是在缺原画、缺光照数据的情况下渲染的</b>。画面对照只反映「无素材」路径;缺素材类报错两边一样,已单列不计。</div>`}
 ${m.mainDirty.tracked.length || m.mainDirty.untracked.length ? `<div class="banner warn">⚠ 主工作区有 ${m.mainDirty.tracked.length} 处未提交的已跟踪改动、${m.mainDirty.untracked.length} 个未跟踪文件 / 目录,它们<b>不在</b> B(${esc(m.B.sha.slice(0, 10))})里。</div>` : ''}

@@ -74,7 +74,8 @@ last_governed: 2026-09-25
   离屏给每张目标纹理配一张同格式 ×4 颜色(带模板时再配 ×4 深度)并以 `resolveTargets` 落回;管线键带采样数。
 - 模板遮罩:engine2d 用 `frame.swapchainWithDepth(format)` / 离屏深度模板纹理;pass 描述里的 `stencilOp` 与管线的 `stencil`
   状态由 luma 后端自己拼 GPURenderPassDescriptor 下发(luma 9.4 不传模板操作,且给了 depthStencilAttachmentFormat 会把模板参数弄坏)。
-- 着色器 / 渲染对照:`tools/render_parity` 已改成 **master(Pixi WebGL)对本分支(engine2d)**,见 engine2d 卡。
+- 着色器 / 渲染对照:`tools/render_parity` 把 master 的 src 放进本分支的对照框架里跑,只算着色器单元级的辅助检查。
+  与 master 的行为对照以 `tools/ab_compare` 为准(两棵独立检出各自跑),见 engine2d 卡。
   Pixi 的 WebGPU 渲染器与 `pixiWebGpuPatches` 已删除,`?renderer=webgpu` 开关不再存在(只有 WebGPU)。
 
 ## 已知坑

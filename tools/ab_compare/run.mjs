@@ -254,7 +254,10 @@ async function main() {
     for (const side of [A, B]) await warmUp(chromium, opts, side, log);
 
     // ---- 逐场景:A1 B1 A2 B2
-    const shared = has('reuse-browser') ? { A: await launchBrowser(chromium, opts), B: await launchBrowser(chromium, opts) } : null;
+    // 复用浏览器也按侧分开,各带本侧的解析改道规则(不带就会真去连本机 5173)
+    const shared = has('reuse-browser')
+      ? { A: await launchBrowser(chromium, opts, A.browserArgs), B: await launchBrowser(chromium, opts, B.browserArgs) }
+      : null;
     const order = [];
     for (let r = 1; r <= opts.repeats; r++) order.push([A, r], [B, r]);
     for (const [si, sc] of scenarios.entries()) {
@@ -359,6 +362,9 @@ async function main() {
       if (dirt.tracked.length) log(`⚠ 主工作区未提交改动 ${dirt.tracked.length} 处不在 B 里。`);
       log(`\n${summary.verdict.diverged.length} / ${results.length} 个场景 B 相对 A 超出噪声底或有新报错${summary.verdict.diverged.length ? `:${summary.verdict.diverged.join(', ')}` : ''}`);
       if (summary.verdict.inconclusive.length) log(`⚠ ${summary.verdict.inconclusive.length} 个场景无法对照(A 没起来):${summary.verdict.inconclusive.join(', ')}`);
+      if (opts.freezeAt !== 'boot' && results.some((r) => r.flags.includes('状态分歧'))) {
+        log(`⚠ 有「状态分歧」而冻结时机是 ${opts.freezeAt}:装载快慢不同也会留下不同状态,先用 --freeze boot 复核`);
+      }
       log(`报告:${path.join(outDir, 'report.html')}`);
     }
     return summary;

@@ -197,7 +197,7 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
     const flags = [];
     if (missingB) flags.push('B 缺检查点');
     const rs = (l) => (l.rowShiftOnly ? `(${ROW_SHIFT_NOTE})` : '');
-    if (pixelDiverged) flags.push(`整页像素超噪声${rs(px)}`);
+    if (pixelDiverged) flags.push(`整页像素超噪声${pxCanvas.diverged ? rs(px) : '(画布层在噪声内 → 差在 DOM 覆盖层)'}`);
     if (pxCanvas.diverged) flags.push(`画布层像素超噪声${rs(pxCanvas)}`);
     if (stateDiv.length) flags.push('状态分歧');
     if (cpNewStable.length) flags.push('新增报错');
