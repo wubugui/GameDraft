@@ -16,5 +16,6 @@ export async function createRenderer(options: CreateRendererOptions = {}): Promi
   const canvas = options.canvas ?? document.createElement('canvas');
   const alphaMode = options.alphaMode ?? ((options.backgroundAlpha ?? 1) < 1 ? 'premultiplied' : 'opaque');
   const rhi = options.rhi ?? (await createRhiDevice({ canvas, alphaMode, useDevicePixels: false, autoResize: false }));
-  return new WebGPURenderer({ ...options, rhi, canvas });
+  // 缺省尺寸与 Pixi 的 ViewSystem 相同
+  return new WebGPURenderer({ width: 800, height: 600, ...options, rhi, canvas });
 }

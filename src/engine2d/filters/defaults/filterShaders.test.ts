@@ -237,9 +237,8 @@ describe('内置滤镜 WGSL', () => {
     });
   }
 
-  // 核心已知缺陷(不在本任务可改范围,见报告):GpuProgram.extractAttributes 用 `\(([^)]*)\)` 取参数表,
-  // 在 `@location(0` 的右括号处就截断了,于是 `attributes` 恒为空。修好后这条会变红,届时去掉 `.fails`。
-  it.fails('【核心已知缺陷】GpuProgram.attributes 解析出 @location(0) aPosition', () => {
+  // 回归:参数表里的 `@location(0)` 括号不能截断解析(早先的正则在这里截断,attributes 恒为空)
+  it('GpuProgram.attributes 解析出 @location(0) aPosition', () => {
     expect(new PassthroughFilter().gpuProgram!.attributes).toEqual([{ name: 'aPosition', location: 0, type: 'vec2<f32>' }]);
   });
 });
