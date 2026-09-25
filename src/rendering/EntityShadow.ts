@@ -12,6 +12,7 @@ import {
   IDENTITY_SHADOW_SHAPE,
   type ShadowSource, type ShadowSceneContext, type IEntityShadow, type ShadowShapeParams, type ContactAoParams,
 } from './entityShadowTypes';
+import { samplerOf } from './legacy/gpuSampler';
 
 export type { ShadowSource, ShadowSceneContext } from './entityShadowTypes';
 
@@ -933,9 +934,9 @@ function makeContactShader(ctx: ShadowSceneContext | null): Shader {
       },
       uGroundD: groundSrc,
       // WGSL 的采样器(「纹理名 + Sampler」):用纹理自己的 style,与 WebGL 用纹理自带采样状态一致;WebGL 不认这些键
-      uGroundDSampler: groundSrc.style,
+      uGroundDSampler: samplerOf(groundSrc),
       uDepthMap: depthSrc,
-      uDepthMapSampler: depthSrc.style,
+      uDepthMapSampler: samplerOf(depthSrc),
     },
   });
 }
@@ -989,13 +990,13 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
         uCol_gh: f32(ctx?.colGridH ?? 0),
       },
       uTexture: texSource,
-      uTextureSampler: texSource.style,
+      uTextureSampler: samplerOf(texSource),
       uDepthMap: depthSrc,
-      uDepthMapSampler: depthSrc.style,
+      uDepthMapSampler: samplerOf(depthSrc),
       uCollisionMap: colSrc,
-      uCollisionMapSampler: colSrc.style,
+      uCollisionMapSampler: samplerOf(colSrc),
       uGroundD: groundSrc,
-      uGroundDSampler: groundSrc.style,
+      uGroundDSampler: samplerOf(groundSrc),
     },
   });
 }
@@ -1079,7 +1080,7 @@ export class PlanarEntityShadow implements IEntityShadow {
     if (source !== this.boundSource) {
       (this.castShader.resources as Record<string, unknown>)['uTexture'] = source;
       // WebGPU 的采样器是独立资源,跟着换成这张图集自己的 style(WebGL 忽略这个键)
-      (this.castShader.resources as Record<string, unknown>)['uTextureSampler'] = source.style;
+      (this.castShader.resources as Record<string, unknown>)['uTextureSampler'] = samplerOf(source);
       this.castMesh.texture = tex;
       this.boundSource = source;
     }

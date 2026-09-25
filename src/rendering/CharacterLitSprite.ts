@@ -38,6 +38,7 @@ import { MAX_STATIC_LIGHTS, type PackedLights } from './lighting/lightPacking';
 import LIGHTING_CORE from './lighting/lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT from './lighting/worldReconstruct.glsl?raw';
 import { LC_WGSL, WR_CORE_WGSL } from './lighting/wgslChunks';
+import { samplerOf } from './legacy/gpuSampler';
 
 /** GLSL 切片器：与 SceneLightingPass 同一行代码（两处都从 `//__TAG_BEGIN__` 取到 `_END__`）。 */
 function sliceGlsl(src: string, tag: string): string {
@@ -1133,11 +1134,11 @@ export function createLitShader(
       uColorTex: tex.colorTex,
       // WGSL 的采样器(「纹理名 + Sampler」):该纹理自己的 style,与 WebGL 用纹理自带采样状态一致;
       // WebGL 不认这些键。换纹理走 setLitShaderTexture,采样器跟着换。
-      uColorTexSampler: tex.colorTex.style,
+      uColorTexSampler: samplerOf(tex.colorTex),
       uNrm: nrm,
-      uNrmSampler: nrm.style,
+      uNrmSampler: samplerOf(nrm),
       uGround: tex.ground,
-      uGroundSampler: tex.ground.style,
+      uGroundSampler: samplerOf(tex.ground),
       uPL1: tex.atlasL1,
       uPL2: tex.atlasL2,
       uPBin: tex.atlasBin,
@@ -1182,7 +1183,7 @@ export function setLitShaderTexture(sh: Shader, key: string, src: TextureSource 
   if (res[key] === next) return;
   res[key] = next;
   const samplerKey = `${key}Sampler`;
-  if (samplerKey in res) res[samplerKey] = next.style;
+  if (samplerKey in res) res[samplerKey] = samplerOf(next);
   if (key === 'uNrm') {
     (res['entityShade'] as UniformGroup).uniforms['uHasNrm'] = src ? 1 : 0;
   }

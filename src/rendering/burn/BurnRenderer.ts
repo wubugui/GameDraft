@@ -29,6 +29,7 @@ import {
   BurnMaterialFilter,
   type BurnShadeParams,
 } from './BurnFilters';
+import { samplerOf } from '../legacy/gpuSampler';
 
 /** 能挂燃烧滤镜的宿主（热点展示图） */
 export interface BurnFilterHost {
@@ -427,9 +428,9 @@ export class BurnRenderer {
           burnUniforms,
           uBaseTex: src,
           // 两个 *Sampler 只有 WGSL 用（WebGPU 纹理与采样器分开绑）；GLSL 侧 Pixi 忽略这两个名字
-          uBaseTexSampler: src.style,
+          uBaseTexSampler: samplerOf(src),
           uBurnField: e.field.source,
-          uBurnFieldSampler: e.field.source.style,
+          uBurnFieldSampler: samplerOf(e.field.source),
         },
       });
     };

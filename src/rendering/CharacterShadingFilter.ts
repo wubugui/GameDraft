@@ -7,6 +7,7 @@ import CHAR_SHADE_CORE_WGSL from './charShadeCore.wgsl?raw';
 import CLC_WGSL_SRC from './charLightCommon.wgsl?raw';
 import type { SceneDepthConfig } from '../data/types';
 import type { IEntityShadingFilter } from './EntityLightingFilter';
+import { samplerOf } from './legacy/gpuSampler';
 
 /**
  * 角色物理着色滤镜:character_lighting_lab 查看器 CHAR_FS 的逐像素移植。
@@ -1258,9 +1259,9 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
         },
         uDepthMap: depthSrc,
         // WGSL 的采样器(「纹理名 + Sampler」):该纹理自己的 style,与 WebGL 用纹理自带采样状态一致;WebGL 不认这些键
-        uDepthMapSampler: depthSrc.style,
+        uDepthMapSampler: samplerOf(depthSrc),
         uNrm: nrmSrc,
-        uNrmSampler: nrmSrc.style,
+        uNrmSampler: samplerOf(nrmSrc),
         uPL1: scene.atlasL1,
         uPL2: scene.atlasL2,
         uPBin: scene.atlasBin,
@@ -1389,7 +1390,7 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
     const res = this.resources as Record<string, unknown>;
     res['uNrm'] = next;
     // WGSL 采样器跟着换:旧图集销毁时它的 style 一起销毁,留着会让 BindGroup 当场作废
-    res['uNrmSampler'] = next.style;
+    res['uNrmSampler'] = samplerOf(next);
   }
   applyParams(p: CharShadingParams): void {
     const u = this._u;

@@ -1,6 +1,7 @@
 import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from 'pixi.js';
 import type { RgbColor, SceneDepthConfig } from '../data/types';
 import type { ResolvedLightEnv } from './lightEnv';
+import { samplerOf } from './legacy/gpuSampler';
 
 /**
  * 既有 DepthOcclusionFilter 与新 EntityLightingFilter 的公共驱动接口。
@@ -409,9 +410,9 @@ export class EntityLightingFilter extends Filter implements IEntityShadingFilter
         },
         uDepthMap: depthSrc,
         // WGSL 的采样器:各用纹理自己的 style(WebGL 用纹理自带采样状态,不认这些键)
-        uDepthMapSampler: depthSrc.style,
+        uDepthMapSampler: samplerOf(depthSrc),
         uProbe: probeSrc,
-        uProbeSampler: probeSrc.style,
+        uProbeSampler: samplerOf(probeSrc),
       },
     });
   }

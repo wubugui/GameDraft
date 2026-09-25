@@ -13,6 +13,7 @@
  * (Pixi 的成员正则切不开 `array<vec3<f32>, 9>`)。
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { samplerOf } from './legacy/gpuSampler';
 import { BufferImageSource, DOMAdapter, Texture, TextureSource, UniformGroup, type Shader } from 'pixi.js';
 import {
   createCharLightUniforms, createFrameLitUniforms, createLitShader, createSceneLitUniforms,
@@ -65,7 +66,7 @@ function checkShader(shader: Shader, label: string): void {
     const tex = resources[g.name];
     expect(tex, `${label}: ${g.name}`).toBeInstanceOf(TextureSource);
     if (names.has(`${g.name}Sampler`)) {
-      expect(resources[`${g.name}Sampler`], `${label}: ${g.name}Sampler 不是 ${g.name} 自己的 style`).toBe((tex as TextureSource).style);
+      expect(resources[`${g.name}Sampler`], `${label}: ${g.name}Sampler 不是 ${g.name} 对应的共享采样器(samplerOf)`).toBe(samplerOf(tex as TextureSource));
     }
   }
 }
@@ -132,14 +133,14 @@ describe('角色受光 WGSL 与 JS 资源对齐', () => {
     const res = sh.resources as Record<string, unknown>;
     const g2 = src(20, 10);
     setLitShaderTexture(sh, 'uGround', g2);
-    expect(res['uGroundSampler']).toBe(g2.style);
+    expect(res['uGroundSampler']).toBe(samplerOf(g2));
     const c2 = src(48, 40, 'rgba8unorm', 'linear');
     setLitShaderTexture(sh, 'uColorTex', c2);
-    expect(res['uColorTexSampler']).toBe(c2.style);
+    expect(res['uColorTexSampler']).toBe(samplerOf(c2));
     // 与 CharacterLightingSystem.parkLitShaders 同一条循环
     for (const k of LIT_SHADER_SCENE_TEXTURE_SLOTS) setLitShaderTexture(sh, k, null);
-    expect(res['uGroundSampler']).toBe(Texture.WHITE.source.style);
-    expect(res['uNrmSampler']).toBe(Texture.WHITE.source.style);
+    expect(res['uGroundSampler']).toBe(samplerOf(Texture.WHITE.source));
+    expect(res['uNrmSampler']).toBe(samplerOf(Texture.WHITE.source));
     expect((res['entityShade'] as UniformGroup).uniforms['uHasNrm']).toBe(0);
     checkShader(sh, 'lit 网格(退白图后)');
     // 没声明采样器的槽位(textureLoad 那几张)不许凭空挂上一个键
@@ -155,9 +156,9 @@ describe('角色受光 WGSL 与 JS 资源对齐', () => {
     const n2 = src(48, 40);
     f.setNormalTexture(n2);
     const res = f.resources as Record<string, unknown>;
-    expect(res['uNrmSampler']).toBe(n2.style);
+    expect(res['uNrmSampler']).toBe(samplerOf(n2));
     f.setNormalTexture(null);
-    expect(res['uNrmSampler']).toBe(Texture.WHITE.source.style);
+    expect(res['uNrmSampler']).toBe(samplerOf(Texture.WHITE.source));
     checkShader(f, '滤镜(换回白图后)');
   });
 });

@@ -54,6 +54,7 @@ import {
   addWindBlasts, resolveSceneWind, windGustBasis, windGustClock, windGustFromBasis, windGustMul, windPhase, windProfile, windVeer,
   SWAY_WAVE_SIZE_DEFAULT, WIND_GUST_BASIS, type SceneWindParams, type WindBlast,
 } from '../utils/sceneWind';
+import { samplerOf } from './legacy/gpuSampler';
 
 /** 拆层载荷版本（`sway.json` 的 `version`）；与 `tools/character_lighting_lab/sway_field.py` 的 `SWAY_VERSION` 同步 */
 export const SWAY_MAP_VERSION = 3;
@@ -1057,9 +1058,9 @@ export class SwayBackground {
       },
       resources: {
         uMatte: inp.matteTex.source,
-        uMatteSampler: inp.matteTex.source.style,
+        uMatteSampler: samplerOf(inp.matteTex.source),
         uIds: inp.idsTex.source,
-        uIdsSampler: inp.idsTex.source.style,
+        uIdsSampler: samplerOf(inp.idsTex.source),
         // ⚠ 成员顺序 = SWAY_WGSL 里 SwayU 的成员顺序
         swayU: {
           uPaintSize: { value: new Float32Array(inp.paintSize), type: 'vec2<f32>' },
@@ -1082,11 +1083,11 @@ export class SwayBackground {
         },
         resources: {
           uPainting: painting.source,
-          uPaintingSampler: painting.source.style,
+          uPaintingSampler: samplerOf(painting.source),
           uPlate: inp.plateTex.source,
-          uPlateSampler: inp.plateTex.source.style,
+          uPlateSampler: samplerOf(inp.plateTex.source),
           uUvMap: this.uvMap.source,
-          uUvMapSampler: this.uvMap.source.style,
+          uUvMapSampler: samplerOf(this.uvMap.source),
         },
       });
       this.comp = new Mesh({

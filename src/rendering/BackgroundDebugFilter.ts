@@ -1,5 +1,6 @@
 import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from 'pixi.js';
 import type { SceneDepthConfig } from '../data/types';
+import { samplerOf } from './legacy/gpuSampler';
 
 const VERT = /* glsl */ `
 in vec2 aPosition;
@@ -381,11 +382,11 @@ export class BackgroundDebugFilter extends Filter {
                     uDbgDepthHi: { value: 1, type: 'f32' },
                 },
                 uDepthMap: placeholder.source,
-                uDepthMapSampler: placeholder.source.style,
+                uDepthMapSampler: samplerOf(placeholder.source),
                 uCollisionMap: placeholder.source,
-                uCollisionMapSampler: placeholder.source.style,
+                uCollisionMapSampler: samplerOf(placeholder.source),
                 uGroundD: placeholder.source,
-                uGroundDSampler: placeholder.source.style,
+                uGroundDSampler: samplerOf(placeholder.source),
             },
         });
     }
@@ -421,7 +422,7 @@ export class BackgroundDebugFilter extends Filter {
         if (!u) return;
 
         (this.resources as Record<string, unknown>)['uDepthMap'] = depthTexture.source;
-        (this.resources as Record<string, unknown>)['uDepthMapSampler'] = depthTexture.source.style;
+        (this.resources as Record<string, unknown>)['uDepthMapSampler'] = samplerOf(depthTexture.source);
 
         const sz = u['uTexSize'] as Float32Array;
         sz[0] = texWidth; sz[1] = texHeight;
@@ -492,7 +493,7 @@ export class BackgroundDebugFilter extends Filter {
         if (!u) return;
         const ground = g?.tex ?? Texture.WHITE.source;
         (this.resources as Record<string, unknown>)['uGroundD'] = ground;
-        (this.resources as Record<string, unknown>)['uGroundDSampler'] = ground.style;
+        (this.resources as Record<string, unknown>)['uGroundDSampler'] = samplerOf(ground);
         u['uGroundMin'] = g?.min ?? 0;
         u['uGroundMax'] = g?.max ?? 1;
         u['uHasGroundTex'] = g ? 1 : 0;
@@ -502,7 +503,7 @@ export class BackgroundDebugFilter extends Filter {
         const u = this._u;
         if (!u) return;
         (this.resources as Record<string, unknown>)['uCollisionMap'] = tex.source;
-        (this.resources as Record<string, unknown>)['uCollisionMapSampler'] = tex.source.style;
+        (this.resources as Record<string, unknown>)['uCollisionMapSampler'] = samplerOf(tex.source);
     }
 
     /**
@@ -520,11 +521,11 @@ export class BackgroundDebugFilter extends Filter {
         const white = Texture.WHITE.source;
         const r = this.resources as Record<string, unknown>;
         r['uGroundD'] = white;
-        r['uGroundDSampler'] = white.style;
+        r['uGroundDSampler'] = samplerOf(white);
         r['uDepthMap'] = white;
-        r['uDepthMapSampler'] = white.style;
+        r['uDepthMapSampler'] = samplerOf(white);
         r['uCollisionMap'] = white;
-        r['uCollisionMapSampler'] = white.style;
+        r['uCollisionMapSampler'] = samplerOf(white);
         u['uHasGroundTex'] = 0;
     }
 }

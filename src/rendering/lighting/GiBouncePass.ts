@@ -34,6 +34,7 @@ import {
   Shader,
   type TextureSource,
 } from 'pixi.js';
+import { samplerOf } from '../legacy/gpuSampler';
 
 /** 与 `bake.py#GI_DIRS` 同值。改一边必须改另一边（载荷版本要 +1）。 */
 export const GI_MAX_DIRS = 16;
@@ -228,7 +229,7 @@ export class GiBouncePass {
       resources: {
         uRadiance: this.radiance,
         // WGSL 要单独的采样器(WebGL 侧没有这个名字,Pixi 忽略)
-        uRadianceSampler: this.radiance.style,
+        uRadianceSampler: samplerOf(this.radiance),
         uHitmap: this.geo.hitmap,
         giBounce: {
           uOutSize: { value: new Float32Array([w, h]), type: 'vec2<f32>' },

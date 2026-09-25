@@ -12,6 +12,7 @@
  * 用的是 Pixi 自己解析 WGSL 的结果(`gpuProgram.structsAndGroups`),与运行时同一口径。
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { samplerOf } from './legacy/gpuSampler';
 import { BufferImageSource, Container, DOMAdapter, Texture, TextureSource, UniformGroup, type Shader } from 'pixi.js';
 import { PlanarEntityShadow } from './EntityShadow';
 import type { ShadowSceneContext, ShadowSource } from './entityShadowTypes';
@@ -51,7 +52,7 @@ function checkShader(shader: Shader, label: string): void {
   for (const g of sg.groups.filter((x) => x.type.startsWith('texture_2d') && !autoGroups.has(x.group))) {
     const tex = resources[g.name];
     expect(tex, `${label}: ${g.name}`).toBeInstanceOf(TextureSource);
-    expect(resources[`${g.name}Sampler`], `${label}: ${g.name}Sampler 不是 ${g.name} 自己的 style`).toBe((tex as TextureSource).style);
+    expect(resources[`${g.name}Sampler`], `${label}: ${g.name}Sampler 不是 ${g.name} 对应的共享采样器(samplerOf)`).toBe(samplerOf(tex as TextureSource));
   }
 }
 
