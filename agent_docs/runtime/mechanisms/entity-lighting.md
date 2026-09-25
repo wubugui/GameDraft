@@ -165,6 +165,9 @@ planar 阴影 / 深度遮挡)与它们并存,2026-08-30 的「原画 + 加性灯
 
 ## 已知坑
 
+- 影子(cast / 接触 AO)、深度遮挡滤镜、实体光照滤镜都有 GLSL 与 WGSL 两份(同文件并排),算法改动两份一起改,
+  改完跑 `node tools/render_parity/run.mjs --case 实体`。「EntityShadow 不能用 texelFetch / textureSize」只约束 GLSL(ES1 翻译),WGSL 侧没有这个限制。
+
 - F2 滑块必须 `noRefresh` + 就地 sync,否则点按钮 / 切模式滑块复位;F2 只改
   `currentLightEnv`,不进存档。
 - 未做,勿当缺陷重报:灯光方向场(`shadowField.ts` 只留了接口)、点光、多角色阴影 RT 并集。

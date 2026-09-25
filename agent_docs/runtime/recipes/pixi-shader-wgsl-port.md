@@ -47,6 +47,11 @@ GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意
 - 每个资源键都要在 WGSL 里有同名声明(掉进第 99 组 → WebGPU `setBindGroup(99)` 失败);Pixi 的解析要求
   `var` / `var<uniform>` 后面正好一个空格。自定义 Geometry 属性按 WGSL `@location` 参数名匹配。
 - WGSL 不许给多分量 swizzle 赋值(`c.rgb /= c.a`),整向量重建。`discard` 之后不许 `textureSample`:采样挪到前面。
+- WGSL 的 `clamp` / `min` / `max` 不许向量配标量(写 `vec2<f32>(0.0)`)。几何体的每个属性(哪怕没用到,如 `aUV`)都要在
+  WGSL 顶点输入里声明,否则 Pixi 每次绘制都告警。
+- **光栅化填充规则两后端相反**:Pixi-WebGL 画 RT 时翻了投影,水平三角形边若恰好落在像素中心(1/32 像素内),
+  两边一个画这一行、一个不画(整行差)。这是光栅化差异不是着色器差异:用例几何避开这种边;整画面对比 master 时
+  出现零星的整行差也按这个归因。
 - WGSL 模板字符串标 `/* wgsl */`,别标 `/* glsl */`(`glslSymbols.test.ts` 会把所有 `/* glsl */` 当 GLSL 检查)。
 - 共享 WGSL 函数文件可以直接引用一个模块作用域的 uniform 变量,只要每个包含它的程序都用同一个变量名声明它
   (WGSL 模块作用域不讲声明先后)。
