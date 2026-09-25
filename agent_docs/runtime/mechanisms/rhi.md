@@ -107,6 +107,15 @@ last_governed: 2026-09-25
   都重设全部顶点缓冲、逐槽分配日志参数,每次 setPipeline 还分配闭包 + Promise)。原生顶点槽 / 偏移取自 luma 9.4
   `WebGPUVertexArray` 的 `resolvedBufferSlots` / `logicalBufferSlots`(建管线时缺了直接报 backend;
   `LumaRhiDevice.test.ts` 有一条拿 luma 自己的 bindBeforeRender 对照,升级 luma 时先看它)。
+- 开 / 结束 render pass、命令编码与提交也不经 luma:pass 描述符自己拼、在**原生** `GPUCommandEncoder` 上开,
+  finish 后直接 `queue.submit`(luma 的 WebGPURenderPass 构造时每次都 JSON.stringify 描述符、经 probe 读
+  `performance.memory`、做资源统计;CommandEncoder / CommandBuffer 也各是一个带统计的 Resource——每帧几十个 pass 就是几毫秒)。
+  拷贝 / 计算 pass / 调试组仍经 luma,用到时才把同一个原生编码器包一层。画布目标的附件视图每帧只向画布取一次
+  (缓存视图,不缓存 luma 在带 / 不带深度目标间共用的那个帧缓冲对象)。关着 luma 调试时它的错误作用域本来就是空操作,
+  校验错误照旧经 uncapturederror 进诊断。
+- 画布类图像源(Text 的画布)的 `copyExternalImageToTexture` 在 Chrome 里是同步的:要等 GPU 进程,软件光栅
+  (SwiftShader)下每次上传主线程卡 100 ms 上下(master 的 WebGL `texImage2D` 不卡)。Pixi 的 WebGPU 路径同样如此;
+  改走 `getImageData` + `writeTexture` 也要回读(实测十几 ms),且依赖浏览器反预乘的舍入,没改。
 - 图像源上传(`uploadImage`)可能有 ±2 的舍入:浏览器解码 / 拷贝链路内部会做一次预乘往返;没有被乘上 alpha。
 - 云端容器里**无头** Chromium 的 WebGPU 呈现到画布会丢设备(裸 WebGPU 也一样);离屏与 compute 正常。
   **有头**(`xvfb-run`)+ `--enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader` 上屏正常(2026-09-25 实测),

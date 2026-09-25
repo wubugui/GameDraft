@@ -38,7 +38,11 @@ export interface FakeLuma {
   device: unknown;
   /** 原生层调用记录 */
   log: Call[];
-  counts: { bindGroups: number; bindGroupLayouts: number };
+  /**
+   * bindGroups / bindGroupLayouts:原生建的个数;lumaRenderPasses:经 luma 包装开的 render pass 数;
+   * lumaEncoders:经 luma 建的命令编码器数;canvasFramebuffers:取画布帧缓冲的次数
+   */
+  counts: { bindGroups: number; bindGroupLayouts: number; lumaRenderPasses: number; lumaEncoders: number; canvasFramebuffers: number };
   /** 画布上下文桩 */
   canvasContext: { destroyed: boolean };
   /** 模拟设备丢失(GPU 进程崩溃 / 驱动重置 / 原生 GPUDevice.destroy()) */
@@ -47,7 +51,7 @@ export interface FakeLuma {
 
 export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
   const log: Call[] = [];
-  const counts = { bindGroups: 0, bindGroupLayouts: 0 };
+  const counts = { bindGroups: 0, bindGroupLayouts: 0, lumaRenderPasses: 0, lumaEncoders: 0, canvasFramebuffers: 0 };
   const scopes: { filter: string; error: { message: string } | null }[] = [];
   const raise = (filter: string, message: string): void => {
     for (let i = scopes.length - 1; i >= 0; i--) {
@@ -63,6 +67,8 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
     if (filter) raise(filter, `「${id}」建坏了(测试注入)`);
   };
   const gpu = {
+    createCommandEncoder: (d: { label: string }) => nativeEncoder(d.label),
+    queue: { submit: (cbs: unknown[]) => log.push(['submit', cbs[0]]) },
     pushErrorScope: (filter: string) => {
       scopes.push({ filter, error: null });
     },
@@ -80,12 +86,15 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
   const makeSampler = (props: unknown) => ({ handle: { sampler: props }, props, destroy() {} });
   const canvasContext = {
     destroyed: false,
-    getCurrentFramebuffer: (opts?: { depthStencilFormat?: unknown }) => ({
-      width: 16,
-      height: 16,
-      colorAttachments: [{ handle: { view: 'canvas' } }],
-      depthStencilAttachment: opts?.depthStencilFormat ? { handle: { view: 'canvas-depth' } } : null,
-    }),
+    getCurrentFramebuffer: (opts?: { depthStencilFormat?: unknown }) => {
+      counts.canvasFramebuffers++;
+      return {
+        width: 16,
+        height: 16,
+        colorAttachments: [{ handle: { view: 'canvas' } }],
+        depthStencilAttachment: opts?.depthStencilFormat ? { handle: { view: 'canvas-depth' } } : null,
+      };
+    },
     getDrawingBufferSize: () => [16, 16],
     setDrawingBufferSize: (w: number, h: number) => log.push(['setDrawingBufferSize', w, h]),
     destroy() {
@@ -93,6 +102,19 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
       log.push(['canvasContext.destroy']);
     },
   };
+
+  /** 原生命令编码器桩:开 render pass、finish(记进 log) */
+  const nativeEncoder = (label: string) => ({
+    label,
+    beginRenderPass: (d: { label: string; colorAttachments: { view: unknown }[]; depthStencilAttachment?: { view: unknown } }) => {
+      log.push(['pass.begin', d.label, d.colorAttachments.map((c) => c.view), d.depthStencilAttachment?.view ?? null]);
+      return nativeRenderPass(d.label);
+    },
+    finish: () => {
+      log.push(['encoder.finish', label]);
+      return { commandBuffer: label };
+    },
+  });
 
   const nativeRenderPass = (label: string) => ({
     label,
@@ -241,9 +263,12 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
       depthStencilAttachment: props.depthStencilAttachment ? { handle: { view: props.depthStencilAttachment.id } } : null,
       destroy() {},
     }),
-    createCommandEncoder: (props: { id: string }) => ({
-      handle: { beginRenderPass: (d: { label: string }) => nativeRenderPass(d.label) },
-      beginRenderPass: (p: { handle: ReturnType<typeof nativeRenderPass> }) => new LumaRenderPass(p.handle),
+    createCommandEncoder: (props: { id: string; handle?: ReturnType<typeof nativeEncoder> }) => (counts.lumaEncoders++, {
+      handle: props.handle ?? nativeEncoder(props.id),
+      beginRenderPass: (p: { handle: ReturnType<typeof nativeRenderPass> }) => {
+        counts.lumaRenderPasses++;
+        return new LumaRenderPass(p.handle);
+      },
       beginComputePass: (p: { id: string }) => {
         const handle = {
           setPipeline: (x: unknown) => log.push(['compute.setPipeline', x]),

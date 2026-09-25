@@ -17,7 +17,6 @@ import type {
   ComputeShaderLayout,
   Device,
   Framebuffer,
-  RenderPass,
   RenderPipeline,
   Sampler,
   Shader,
@@ -434,8 +433,11 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
     return this.framebuffer.height;
   }
 
+  /** 附件格式建后不变:算一次(setPipeline 每次都要比对) */
+  private formats: readonly RhiColorFormat[] | null = null;
+
   get colorFormats(): readonly RhiColorFormat[] {
-    return this.colors.map((c) => c.format as RhiColorFormat);
+    return (this.formats ??= this.colors.map((c) => c.format as RhiColorFormat));
   }
 
   get depthFormat(): RhiDepthFormat | null {
@@ -463,6 +465,12 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
  */
 class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements RhiRenderTarget {
   private armed = false;
+  private formats: readonly RhiColorFormat[] | null = null;
+  /**
+   * 本帧开 pass 用的附件视图(第一次取时从画布帧缓冲拿)。同一帧里画布纹理与深度缓冲不变;luma 的画布帧缓冲对象
+   * 在带 / 不带深度的目标之间共用、取的时候才重挂附件,所以缓存视图、不缓存那个对象
+   */
+  private views: { color: GPUTextureView; depth: GPUTextureView | null } | null = null;
 
   constructor(
     scope: RhiResourceScope,
@@ -484,6 +492,18 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
     return this.context.getCurrentFramebuffer({ depthStencilFormat: (this.depth ?? false) as never });
   }
 
+  /** 本帧开 pass 用的颜色 / 深度附件视图(每帧只向画布取一次帧缓冲) */
+  passViews(): { color: GPUTextureView; depth: GPUTextureView | null } {
+    if (!this.views) {
+      const fb = this.framebuffer as Framebuffer & {
+        colorAttachments: Array<{ handle: GPUTextureView }>;
+        depthStencilAttachment: { handle: GPUTextureView } | null;
+      };
+      this.views = { color: fb.colorAttachments[0].handle, depth: fb.depthStencilAttachment?.handle ?? null };
+    }
+    return this.views;
+  }
+
   get width(): number {
     return this.context.getDrawingBufferSize()[0];
   }
@@ -493,7 +513,7 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
   }
 
   get colorFormats(): readonly RhiColorFormat[] {
-    return [this.format];
+    return (this.formats ??= [this.format]);
   }
 
   get depthFormat(): RhiDepthFormat | null {
@@ -510,10 +530,12 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
 
   _beginFrame(): void {
     this.armed = true;
+    this.views = null;
   }
 
   _endFrame(): void {
     this.armed = false;
+    this.views = null;
   }
 
   protected releaseBackend(): void {}
@@ -559,6 +581,7 @@ class LumaMsaaSwapchainColor {
  */
 class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implements RhiRenderTarget {
   private armed = false;
+  private formats: readonly RhiColorFormat[] | null = null;
   private depthTex: Texture | null = null;
   private fb: Framebuffer | null = null;
   private fbGeneration = -1;
@@ -620,7 +643,7 @@ class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implement
   }
 
   get colorFormats(): readonly RhiColorFormat[] {
-    return [this.format];
+    return (this.formats ??= [this.format]);
   }
 
   get depthFormat(): RhiDepthFormat | null {
@@ -799,7 +822,13 @@ class LumaBindingPlan {
 // ───────────────────────────── 命令
 
 class LumaCommandList implements RhiCommandList {
-  private readonly encoder: CommandEncoder;
+  /**
+   * 原生命令编码器,finish 后直接交原生队列提交。luma 的 CommandEncoder / CommandBuffer 各是一个带资源统计的 Resource
+   * (每批一建一拆),提交时的错误作用域关调试时是空操作,对原生命令没有作用,所以热路径(每帧的 render pass)不经它
+   */
+  private readonly native: GPUCommandEncoder;
+  /** 拷贝 / 计算 pass / 调试组仍经 luma 的编码器:用到时才包同一个原生编码器(一批最多包一次) */
+  private lumaEncoder: CommandEncoder | null = null;
   private openPass: { end(): void } | null = null;
   /** 本批命令里已经引用过的缓冲 / 纹理(录制期写入冲突检查用) */
   private readonly used = new Set<LumaRhiBuffer | LumaRhiTexture>();
@@ -809,7 +838,11 @@ class LumaCommandList implements RhiCommandList {
     readonly label: string,
     private readonly stats: RhiFrameStats,
   ) {
-    this.encoder = device.luma.createCommandEncoder({ id: label });
+    this.native = device.gpuDevice.createCommandEncoder({ label });
+  }
+
+  private get encoder(): CommandEncoder {
+    return (this.lumaEncoder ??= this.device.luma.createCommandEncoder({ id: this.label, handle: this.native } as never));
   }
 
   beginRenderPass(desc: RhiRenderPassDesc): RhiRenderPassEncoder {
@@ -827,10 +860,14 @@ class LumaCommandList implements RhiCommandList {
     }
     // pass 描述符自己拼(luma 的 WebGPU pass 不设模板附件的 load / store,带模板的深度格式会校验失败),
     // 再把现成的 GPURenderPassEncoder 交给 luma 包装(luma 的 `handle` 属性)。
-    const framebuffer = target.framebuffer as Framebuffer & {
-      colorAttachments: Array<{ handle: GPUTextureView }>;
-      depthStencilAttachment: { handle: GPUTextureView } | null;
-    };
+    // 画布目标用本帧缓存的附件视图;其余目标的帧缓冲是自己的对象,直接取
+    const swapViews = target instanceof LumaSwapchainTarget ? target.passViews() : null;
+    const framebuffer = swapViews
+      ? { colorAttachments: [{ handle: swapViews.color }], depthStencilAttachment: swapViews.depth ? { handle: swapViews.depth } : null }
+      : target.framebuffer as Framebuffer & {
+        colorAttachments: Array<{ handle: GPUTextureView }>;
+        depthStencilAttachment: { handle: GPUTextureView } | null;
+      };
     const colorAttachments: GPURenderPassColorAttachment[] = target.colorFormats.map((format, i) => {
       const op = colorOps[i] ?? { load: 'clear' as const };
       const v = op.load === 'clear' ? op.clearValue ?? [0, 0, 0, 0] : [0, 0, 0, 0];
@@ -862,11 +899,12 @@ class LumaCommandList implements RhiCommandList {
         if (stencilOp.load === 'clear') depthStencilAttachment.stencilClearValue = stencilOp.clearValue ?? 0;
       }
     }
-    const gpuEncoder = (this.encoder as CommandEncoder & { handle: GPUCommandEncoder }).handle;
-    const handle = gpuEncoder.beginRenderPass({ label: desc.label, colorAttachments, depthStencilAttachment });
-    const pass = this.encoder.beginRenderPass({ id: desc.label, framebuffer: target.framebuffer, handle } as never);
+    // 直接在原生 encoder 上开 pass,不再交给 luma 包装:luma 9.4 的 WebGPURenderPass 构造时每次都 JSON.stringify
+    // 整个描述符去打(关着的)日志、经 probe 读 performance.memory、做资源统计,end 时再拆统计;这些对原生 pass
+    // 没有任何作用(关调试时它的错误作用域也是空操作),每帧几十个 pass 就是几毫秒纯开销。
+    const handle = this.native.beginRenderPass({ label: desc.label, colorAttachments, depthStencilAttachment });
     this.stats.renderPasses++;
-    const enc = new LumaRenderPassEncoder(this.device, this, pass, target, desc.label, this.stats);
+    const enc = new LumaRenderPassEncoder(this.device, this, handle, target, desc.label, this.stats);
     this.openPass = enc;
     return enc;
   }
@@ -945,7 +983,11 @@ class LumaCommandList implements RhiCommandList {
   /** @internal */
   _submit(): void {
     this.assertNoOpenPass(`提交「${this.label}」`);
-    this.device.luma.submit(this.encoder.finish());
+    const commandBuffer = this.native.finish();
+    // luma 的包装只用来编码,拆掉它的资源统计(不再经它 finish / 提交)
+    this.lumaEncoder?.destroy();
+    this.lumaEncoder = null;
+    this.device.gpuDevice.queue.submit([commandBuffer]);
   }
 
   /** @internal 录制失败:收尾开着的 pass,整批丢弃 */
@@ -957,10 +999,12 @@ class LumaCommandList implements RhiCommandList {
     }
     this.openPass = null;
     try {
-      this.encoder.destroy();
+      // 原生编码器不 finish 就直接丢弃(WebGPU 没有别的撤销方式);luma 的包装拆掉统计
+      this.lumaEncoder?.destroy();
     } catch {
       /* 同上 */
     }
+    this.lumaEncoder = null;
   }
 
   private assertNoOpenPass(what: string): void {
@@ -968,11 +1012,8 @@ class LumaCommandList implements RhiCommandList {
   }
 }
 
-/** luma 9.4 WebGPURenderPass 的原生 pass 句柄 */
-type LumaRenderPassInternals = RenderPass & { handle: GPURenderPassEncoder };
-
 /**
- * render pass 录制。热路径(setPipeline / setBindings / 顶点流 / 索引 / draw)不经 luma 的 RenderPass:
+ * render pass 录制。整个 pass 都不经 luma 的 RenderPass(开 pass 见 LumaCommandList.beginRenderPass),直接操作原生 pass:
  * luma 每次 setPipeline 都新建闭包 + popErrorScope 的 Promise,每个 draw 都经顶点数组 bindBeforeRender
  * 重设全部顶点 / 索引缓冲,且逐槽拼日志参数(关了日志也照样分配)。这里照 Pixi 8 GpuEncoderSystem:
  * 记下本 pass 已绑的原生管线 / bind group / 顶点缓冲 / 索引缓冲,只在变了时下发原生调用,draw 直接调原生。
@@ -986,7 +1027,6 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
   private readonly streams = new Map<string, LumaRhiBuffer>();
   private indexBuffer: LumaRhiBuffer | null = null;
   private ended = false;
-  private readonly native: GPURenderPassEncoder;
   /** 本 pass 已下发给原生层的状态(相同就不再下发) */
   private boundPipeline: GPURenderPipeline | null = null;
   private readonly boundGroups: (GPUBindGroup | undefined)[] = [];
@@ -1000,13 +1040,11 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
   constructor(
     private readonly device: LumaRhiDevice,
     private readonly list: LumaCommandList,
-    private readonly pass: RenderPass,
+    private readonly native: GPURenderPassEncoder,
     private readonly target: LumaRhiRenderTarget | LumaSwapchainTarget | LumaMsaaSwapchainTarget,
     private readonly label: string,
     private readonly stats: RhiFrameStats,
-  ) {
-    this.native = (pass as LumaRenderPassInternals).handle;
-  }
+  ) {}
 
   setPipeline(pipeline: RhiRenderPipeline): void {
     if (!(pipeline instanceof LumaRhiRenderPipeline)) throw new RhiError('invalid-usage', `render pass「${this.label}」setPipeline:不是本设备的渲染管线`);
@@ -1108,7 +1146,7 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
   end(): void {
     if (this.ended) return;
     this.ended = true;
-    this.pass.end();
+    this.native.end();
     this.list._passEnded();
   }
 
@@ -1298,6 +1336,11 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   /** 当前这一代的 luma 设备(恢复后换成新的) */
   get luma(): Device {
     return this._luma;
+  }
+
+  /** @internal 当前这一代的原生 GPUDevice(命令编码 / 提交直接用它) */
+  get gpuDevice(): GPUDevice {
+    return (this._luma as Device & { handle: GPUDevice }).handle;
   }
 
   get isLost(): boolean {

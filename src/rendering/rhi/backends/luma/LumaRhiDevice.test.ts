@@ -454,3 +454,86 @@ describe('图像上传不支持 flipY,当场报而不是静默丢掉(D26)', () =
     })).toThrow(expect.objectContaining({ code: 'unsupported' }));
   });
 });
+
+describe('render pass 直接用原生 pass,不经 luma 的 RenderPass 包装(性能)', () => {
+  it('每个 pass 只在原生 encoder 上开一次、画布帧缓冲只取一次;end 直接结束原生 pass', () => {
+    const { fake, dev } = setup();
+    const p = pipeline(dev, 'plain');
+    const passes = 5;
+    expect(dev.runFrame((f) => {
+      for (let i = 0; i < passes; i++) {
+        const pass = f.commands.beginRenderPass({ label: `p${i}`, target: f.swapchain, colorOps: [{ load: i === 0 ? 'clear' : 'load' }] });
+        pass.setPipeline(p);
+        pass.setBindings({});
+        pass.draw(3);
+        pass.end();
+      }
+    })).toBe(true);
+    // luma 的 WebGPURenderPass 每次构造都 JSON.stringify 描述符、读 performance.memory、记资源统计,
+    // 游戏每帧几十个 pass:这些开销 Pixi 没有,一个都不要
+    expect(fake.counts.lumaRenderPasses).toBe(0);
+    // 画布帧缓冲(luma 每取一次都重挂附件)每帧每个画布目标只取一次
+    expect(fake.counts.canvasFramebuffers).toBe(1);
+    expect(fake.log.filter((c) => c[0] === 'pass.end').map((c) => c[1])).toEqual(['p0', 'p1', 'p2', 'p3', 'p4']);
+    expect(fake.log.filter((c) => c[0] === 'draw')).toHaveLength(passes);
+    expect(dev.lastFrameStats).toMatchObject({ renderPasses: passes, draws: passes });
+  });
+
+  it('同一帧里不带深度与带深度的画布目标交替:各自拿到自己的附件(缓存的是附件视图,不是 luma 共用的帧缓冲对象)', () => {
+    const { fake, dev } = setup();
+    expect(dev.runFrame((f) => {
+      const depth = f.swapchainWithDepth('depth24plus-stencil8');
+      for (const target of [f.swapchain, depth, f.swapchain, depth]) {
+        const pass = f.commands.beginRenderPass({ label: target === depth ? 'd' : 'c', target });
+        pass.end();
+      }
+    })).toBe(true);
+    const begins = fake.log.filter((c) => c[0] === 'pass.begin').map((c) => [c[1], (c[2] as { view: string }[])[0].view, (c[3] as { view: string } | null)?.view ?? null]);
+    expect(begins).toEqual([['c', 'canvas', null], ['d', 'canvas', 'canvas-depth'], ['c', 'canvas', null], ['d', 'canvas', 'canvas-depth']]);
+    expect(fake.counts.canvasFramebuffers).toBe(2);
+    // 下一帧重新取
+    dev.runFrame((f) => {
+      f.commands.beginRenderPass({ label: 'c', target: f.swapchain }).end();
+    });
+    expect(fake.counts.canvasFramebuffers).toBe(3);
+  });
+
+  it('命令表直接用原生编码器 / 队列提交:只画 render pass 的一批不建 luma 的 CommandEncoder;用到拷贝时才包一层', () => {
+    const { fake, dev } = setup();
+    const p = pipeline(dev, 'plain');
+    for (let i = 0; i < 3; i++) {
+      expect(dev.runFrame((f) => {
+        const pass = f.commands.beginRenderPass({ label: 'main', target: f.swapchain });
+        pass.setPipeline(p);
+        pass.setBindings({});
+        pass.draw(3);
+        pass.end();
+      })).toBe(true);
+    }
+    // luma 的 CommandEncoder / CommandBuffer 各是一个带资源统计的 Resource,每批一建一拆,不要
+    expect(fake.counts.lumaEncoders).toBe(0);
+    expect(fake.log.filter((c) => c[0] === 'encoder.finish')).toHaveLength(3);
+    expect(fake.log.filter((c) => c[0] === 'submit')).toHaveLength(3);
+
+    // 拷贝仍经 luma(包同一个原生编码器),同一批里只包一次
+    const a = dev.rootScope.createBuffer({ label: 'a', size: 16, usage: RhiBufferUsage.COPY_SRC });
+    const b = dev.rootScope.createBuffer({ label: 'b', size: 16, usage: RhiBufferUsage.COPY_DST });
+    expect(dev.submit('copy', (c) => {
+      c.copyBufferToBuffer(a, 0, b, 0, 16);
+      c.copyBufferToBuffer(a, 0, b, 0, 8);
+    })).toBe(true);
+    expect(fake.counts.lumaEncoders).toBe(1);
+    expect(fake.log.filter((c) => c[0] === 'copyBufferToBuffer')).toHaveLength(2);
+    expect(fake.log.filter((c) => c[0] === 'submit')).toHaveLength(4);
+  });
+
+  it('录制失败时开着的原生 pass 照样收尾,整批丢弃', () => {
+    const { fake, dev } = setup();
+    expect(dev.runFrame((f) => {
+      f.commands.beginRenderPass({ label: 'open', target: f.swapchain });
+      throw new Error('录制中途出错');
+    })).toBe(false);
+    expect(fake.log.filter((c) => c[0] === 'pass.end').map((c) => c[1])).toEqual(['open']);
+    expect(fake.log.some((c) => c[0] === 'submit')).toBe(false);
+  });
+});
