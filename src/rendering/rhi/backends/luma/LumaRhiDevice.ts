@@ -1227,6 +1227,11 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   private _luma: Device;
   private _lost!: Promise<string>;
   private _isLost = false;
+  /**
+   * 挂着的异步回读的 reject:当前这一代设备丢失时统一 reject 并清空,回读完成时自行摘掉。
+   * 不能在 `_lost` 上逐次挂 then:它跨整个设备寿命挂着,每次回读的结果都会经那条反应链被扣住直到丢失(实际就是永远)
+   */
+  private readonly pendingReadbacks = new Set<(reason: string) => void>();
   private readonly releases: RhiReleaseQueue;
   private readonly listeners = new Set<RhiDiagnosticListener>();
   private readonly restoredListeners = new Set<() => void>();
@@ -1683,6 +1688,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       const reason = info?.message || info?.reason || '未知原因';
       if (device !== this._luma) return reason;
       this._isLost = true;
+      this.rejectPendingReadbacks(reason);
       if (this._destroyed) return reason;
       this.report(new RhiError('backend', `图形设备丢失:${reason}`), 'error');
       void this.restore();
@@ -1789,10 +1795,18 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
 
   /** 异步回读与这一代设备的丢失赛跑:设备丢了就 reject,不让调用方永远等着(GPU 进程崩溃时 mapAsync 可能迟迟不回) */
   private untilLost<T>(work: Promise<T>, what: string): Promise<T> {
-    const lost = this._lost.then((reason): never => {
-      throw new RhiError('backend', `${what}:等待期间图形设备丢失(${reason})`);
+    return new Promise<T>((resolve, reject) => {
+      const onLost = (reason: string): void => reject(new RhiError('backend', `${what}:等待期间图形设备丢失(${reason})`));
+      this.pendingReadbacks.add(onLost);
+      work.then(resolve, reject).finally(() => this.pendingReadbacks.delete(onLost));
     });
-    return Promise.race([work, lost]);
+  }
+
+  /** 当前这一代设备丢了:挂着的回读全部 reject(已完成的早已摘掉,不受影响) */
+  private rejectPendingReadbacks(reason: string): void {
+    const pending = [...this.pendingReadbacks];
+    this.pendingReadbacks.clear();
+    for (const onLost of pending) onLost(reason);
   }
 
   // ── 内部

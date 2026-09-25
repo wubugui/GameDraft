@@ -8,8 +8,10 @@
  * - 反复丢失各自恢复;重建期间 destroy / 重建失败重试 / 回读期间丢失都有交代
  */
 import { describe, expect, it } from 'vitest';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import type { Device } from '@luma.gl/core';
-import { RhiError, RhiTextureUsage } from '../../types';
+import { RhiBufferUsage, RhiError, RhiTextureUsage } from '../../types';
 import { createFakeLuma, type FakeLuma } from '../testing/fakeLumaDevice';
 import { LumaRhiDevice } from './LumaRhiDevice';
 
@@ -192,6 +194,39 @@ describe('设备丢失后在同一画布上重建设备(D6,对照 Pixi GlContext
     await flush();
     // 恢复后旧纹理已作废,回读当场报
     await expect(dev.readTexture(tex)).rejects.toThrow(RhiError);
+    dev.destroy();
+  });
+
+  it('正常完成的回读不被设备扣住:结果交给调用方后即可回收(与丢失赛跑不能挂在跨整个设备寿命的 Promise 上)', async () => {
+    // 手动触发完整 GC:v8 标志运行中打开后,新上下文里才拿得到 gc()
+    setFlagsFromString('--expose-gc');
+    const gc = runInNewContext('gc') as () => void;
+    // 工程的 lib 不含 es2021.weakref,运行时(Node)有,这里按最小类型取
+    type WeakRefOf<T> = { deref(): T | undefined };
+    const WeakRefCtor = (globalThis as unknown as { WeakRef: new <T extends object>(target: T) => WeakRefOf<T> }).WeakRef;
+    const { fakes, dev } = setup();
+    const buf = dev.rootScope.createBuffer({ label: 'rb', size: 1 << 20, usage: RhiBufferUsage.COPY_SRC });
+    // 回读放在单独的函数里跑完,测试自己的帧里不留结果的引用
+    const readMany = async (): Promise<WeakRefOf<Uint8Array>[]> => {
+      const out: WeakRefOf<Uint8Array>[] = [];
+      for (let i = 0; i < 8; i++) {
+        const data = await dev.readBuffer(buf);
+        expect(data.byteLength).toBe(1 << 20);
+        out.push(new WeakRefCtor(data));
+      }
+      return out;
+    };
+    const refs = await readMany();
+    // WeakRef 在创建它的那一轮任务里保活目标,换一轮再收
+    await new Promise((r) => setTimeout(r, 0));
+    gc();
+    expect(refs.filter((r) => r.deref() !== undefined)).toHaveLength(0);
+    // 回收之后赛跑照旧:再丢失时挂着的回读仍会 reject
+    const handle = (buf as unknown as { handle: Record<string, unknown> }).handle;
+    handle.readAsync = () => new Promise(() => {});
+    const pending = dev.readBuffer(buf).then(() => null, (e: unknown) => e);
+    fakes[0].lose('TDR');
+    expect(await pending).toBeInstanceOf(RhiError);
     dev.destroy();
   });
 });
