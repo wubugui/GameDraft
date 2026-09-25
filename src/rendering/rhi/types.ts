@@ -71,9 +71,16 @@ export interface RhiSamplerDesc {
   label?: string;
   addressModeU?: RhiAddressMode;
   addressModeV?: RhiAddressMode;
+  /** 只对 3D 纹理有意义;缺省 clamp-to-edge */
+  addressModeW?: RhiAddressMode;
   magFilter?: RhiFilterMode;
   minFilter?: RhiFilterMode;
   mipmapFilter?: 'none' | RhiFilterMode;
+  /** mip 级夹取(WebGPU 语义;缺省 0 / 32) */
+  lodMinClamp?: number;
+  lodMaxClamp?: number;
+  /** 各向异性过滤上限(1..16,缺省 1);大于 1 时 WebGPU 要求 mag / min / mipmap 过滤全是 linear */
+  maxAnisotropy?: number;
   /** 给了就是比较采样器(阴影图之类) */
   compare?: RhiCompareFunction;
 }

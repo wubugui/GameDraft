@@ -104,6 +104,11 @@ export function toLumaSamplerProps(desc: RhiSamplerDesc): SamplerProps {
     minFilter: desc.minFilter ?? 'linear',
     mipmapFilter: desc.mipmapFilter ?? 'none',
   };
+  // 没给的不写,luma 按 WebGPU 缺省补(W clamp-to-edge、LOD 0..32、各向异性 1)
+  if (desc.addressModeW !== undefined) props.addressModeW = desc.addressModeW;
+  if (desc.lodMinClamp !== undefined) props.lodMinClamp = desc.lodMinClamp;
+  if (desc.lodMaxClamp !== undefined) props.lodMaxClamp = desc.lodMaxClamp;
+  if (desc.maxAnisotropy !== undefined) props.maxAnisotropy = desc.maxAnisotropy;
   if (desc.compare) {
     props.type = 'comparison-sampler';
     props.compare = desc.compare;

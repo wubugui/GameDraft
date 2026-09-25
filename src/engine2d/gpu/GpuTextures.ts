@@ -3,8 +3,9 @@
  *
  * - 源的尺寸 / 格式变了(`_resourceId` 变)就重建;内容变了(`_updateId` 变)就重传。
  * - 上传语义照 Pixi 的 WebGPU 路径:图像 / 视频源 `copyExternalImageToTexture`,`alphaMode === 'premultiply-alpha-on-upload'`
- *   时预乘;像素数组原样写入;没有资源的源(RenderTexture / 池里的临时纹理)建成可当渲染目标的空纹理。
- * - 采样器按采样参数共享,永不销毁(与 rendering/legacy/gpuSampler.ts 同一原则)。
+ *   时预乘(ImageBitmap 例外,按 master WebGL 的字节语义,见 uploadPremultiplied);像素数组原样写入;没有资源的源(RenderTexture / 池里的临时纹理)建成可当渲染目标的空纹理。
+ * - 采样器按采样参数共享,永不销毁(与 rendering/legacy/gpuSampler.ts 同一原则);参数照 Pixi GpuTextureSystem
+ *   整个 style 交给 createSampler(含 W 寻址、LOD 夹取、各向异性)。
  * - mip 照 Pixi 的 GpuTextureSystem:`autoGenerateMipmaps` 的源建纹理时按 `floor(log2(max(pw, ph))) + 1` 定级数
  *   (写回 `source.mipLevelCount`),每次上传后、以及源发 `updateMipmaps` 时重新生成;其余纹理单级不变。
  * - 空闲回收照 Pixi 的 GCSystem:每次取用记「最近用过」(`gc.now`),`collect` 对 `autoGarbageCollect` 的源
@@ -48,6 +49,20 @@ const BYTES_PER_PIXEL: Partial<Record<string, number>> = {
 export function toRhiColorFormat(format: string): RhiColorFormat {
   if (!(format in BYTES_PER_PIXEL)) throw new Error(`[engine2d] 纹理格式 ${format} 不支持`);
   return format as RhiColorFormat;
+}
+
+/**
+ * 图像源上传后纹理里要不要是预乘字节(对照 master 的 Pixi WebGL,R2-4):
+ * - `<img>` / 画布 / 视频:WebGL 照 UNPACK_PREMULTIPLY_ALPHA_WEBGL(= alphaMode 为 'premultiply-alpha-on-upload')
+ *   决定,与 Pixi WebGPU 的 copyExternalImageToTexture 同一规则;
+ * - ImageBitmap:WebGL 不看 UNPACK_* 标志,纹理字节就是位图解码时的状态。装载器(同 Pixi loadTextures)只有
+ *   'premultiplied-alpha' 用 `premultiplyAlpha: 'none'` 解码,其余缺省解码(解码期预乘)——所以除它之外都要预乘字节。
+ *   照 Pixi WebGPU 的规则,'no-premultiply-alpha' 的位图会被 copyExternalImageToTexture 反预乘成直通 alpha(低 alpha 处有损),
+ *   与 master 不同(游戏实测 master 上它与缺省逐字节相同,见 AssetManager.loadTexture)。
+ */
+function uploadPremultiplied(resource: unknown, alphaMode: string): boolean {
+  if (typeof ImageBitmap !== 'undefined' && resource instanceof ImageBitmap) return alphaMode !== 'premultiplied-alpha';
+  return alphaMode === 'premultiply-alpha-on-upload';
 }
 
 export class GpuTextures {
@@ -122,9 +137,13 @@ export class GpuTextures {
         label: `engine2d-sampler ${key}`,
         addressModeU: style.addressModeU,
         addressModeV: style.addressModeV,
+        addressModeW: style.addressModeW,
         magFilter: style.magFilter,
         minFilter: style.minFilter,
         mipmapFilter: style.mipmapFilter,
+        lodMinClamp: style.lodMinClamp,
+        lodMaxClamp: style.lodMaxClamp,
+        maxAnisotropy: style.maxAnisotropy,
         compare: style.compare,
       });
       this.samplers.set(key, s);
@@ -205,7 +224,7 @@ export class GpuTextures {
     // 尺寸看资源的固有尺寸(naturalWidth / videoWidth / displayWidth / width,同 Pixi 上传器用的 resourceWidth):
     // 视频元素的 `width` 是 HTML 属性(缺省 0),拿它判断会让视频永远传不上去
     if (!source.resourceWidth || !source.resourceHeight) return false;
-    this.rhi.uploadImage(texture, r as ImageBitmap, { premultiplyAlpha: source.alphaMode === 'premultiply-alpha-on-upload' });
+    this.rhi.uploadImage(texture, r as ImageBitmap, { premultiplyAlpha: uploadPremultiplied(r, source.alphaMode) });
     return true;
   }
 }

@@ -17,7 +17,9 @@ import { RenderTexture } from '../textures/RenderTexture';
 import { BufferImageSource, ImageSource } from '../textures/TextureSource';
 import { Rectangle } from '../math/Rectangle';
 import { Buffer, BufferUsage } from '../shader/Buffer';
+import { TextureStyle } from '../textures/TextureStyle';
 import { GpuBuffers } from './GpuBuffers';
+import { GpuTextures } from './GpuTextures';
 import { WebGPURenderer } from './WebGPURenderer';
 
 function setup() {
@@ -230,5 +232,84 @@ describe('extract(对照 master 的 Pixi WebGL)', () => {
     }
     expect(calls).toEqual([['image/jpeg', 1], ['image/png', 1], ['image/webp', 0.5]]);
     renderer.destroy();
+  });
+});
+
+describe('图像源上传的预乘(R2-4,对照 master 的 Pixi WebGL)', () => {
+  const MODES = ['premultiply-alpha-on-upload', 'premultiplied-alpha', 'no-premultiply-alpha'] as const;
+
+  /** 画一张以 resource 为资源的 ImageSource,返回交给 rhi.uploadImage 的 premultiplyAlpha */
+  function uploadFlag(resource: object, alphaMode: (typeof MODES)[number]): boolean {
+    const { rhi, draw } = setup();
+    const up = vi.spyOn(rhi, 'uploadImage');
+    draw(new ImageSource({ resource: resource as any, alphaMode }));
+    expect(up).toHaveBeenCalledTimes(1);
+    return !!up.mock.calls[0][2]?.premultiplyAlpha;
+  }
+
+  /**
+   * master 的 ImageBitmap 纹理字节 = 位图解码时的 alpha 状态:Pixi 装载器只有 'premultiplied-alpha' 用
+   * createImageBitmap(blob, { premultiplyAlpha: 'none' }) 解码,其余用缺省(解码期预乘);WebGL 对 ImageBitmap
+   * 不看 UNPACK_PREMULTIPLY_ALPHA_WEBGL(游戏实测 no-premultiply-alpha 与缺省逐字节相同,见 AssetManager.loadTexture)
+   */
+  async function pixiDecodePremultiplied(alphaMode: string): Promise<boolean> {
+    const decode = vi.fn(async (_blob: unknown, _opts?: ImageBitmapOptions) => ({ width: 4, height: 4 }));
+    vi.stubGlobal('fetch', async () => ({ ok: true, blob: async () => ({}) }));
+    vi.stubGlobal('createImageBitmap', decode);
+    try {
+      await PIXI.loadImageBitmap('x.png', { src: 'x.png', data: { alphaMode } } as any);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    return decode.mock.calls[0][1]?.premultiplyAlpha !== 'none';
+  }
+
+  it('ImageBitmap:纹理拿到的字节与位图解码状态一致(除 premultiplied-alpha 外都是预乘的)', async () => {
+    class FakeImageBitmap {
+      width = 4;
+      height = 4;
+    }
+    const expected: boolean[] = [];
+    for (const m of MODES) expected.push(await pixiDecodePremultiplied(m));
+    expect(expected).toEqual([true, false, true]);
+    vi.stubGlobal('ImageBitmap', FakeImageBitmap);
+    try {
+      expect(MODES.map((m) => uploadFlag(new FakeImageBitmap(), m))).toEqual(expected);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('其它图像源(<img> / 画布)照 UNPACK_PREMULTIPLY_ALPHA_WEBGL:只有 premultiply-alpha-on-upload 预乘', () => {
+    const canvasLike = { width: 4, height: 4 };
+    expect(MODES.map((m) => uploadFlag(canvasLike, m))).toEqual([true, false, false]);
+  });
+});
+
+describe('采样器参数(R2-3,对照 Pixi GpuTextureSystem:整个 style 交给 device.createSampler)', () => {
+  /** WebGPU 按 GPUSamplerDescriptor 的字段名从 style 上读:Pixi 那边实际生效的就是这些字段 */
+  const SAMPLER_FIELDS = [
+    'addressModeU', 'addressModeV', 'addressModeW', 'magFilter', 'minFilter', 'mipmapFilter',
+    'lodMinClamp', 'lodMaxClamp', 'compare', 'maxAnisotropy',
+  ] as const;
+  const pixiSamplerFields = (s: PIXI.TextureStyle) => {
+    const out: Record<string, unknown> = {};
+    for (const k of SAMPLER_FIELDS) if ((s as any)[k] !== undefined) out[k] = (s as any)[k];
+    return out;
+  };
+
+  it('各向异性 / LOD 夹取 / W 寻址照 style 传给 RHI 采样器', () => {
+    const rhi = new NullRhiDevice();
+    const createSampler = vi.spyOn(rhi, 'createSampler');
+    const textures = new GpuTextures(rhi, rhi.rootScope, { now: 0 });
+    const opts = { scaleMode: 'linear', mipmapFilter: 'linear', maxAnisotropy: 8, lodMinClamp: 0, lodMaxClamp: 2, addressModeW: 'repeat' } as const;
+    textures.sampler(new TextureStyle(opts));
+    textures.sampler(new TextureStyle({ scaleMode: 'nearest' }));
+    const [aniso, plain] = createSampler.mock.calls.map((c) => {
+      const { label: _label, ...rest } = c[1] as Record<string, unknown>;
+      return Object.fromEntries(Object.entries(rest).filter(([, v]) => v !== undefined));
+    });
+    expect(aniso).toEqual(pixiSamplerFields(new PIXI.TextureStyle(opts)));
+    expect(plain).toEqual(pixiSamplerFields(new PIXI.TextureStyle({ scaleMode: 'nearest' })));
   });
 });

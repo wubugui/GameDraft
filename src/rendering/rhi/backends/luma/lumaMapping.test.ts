@@ -67,4 +67,12 @@ describe('lumaMapping', () => {
     expect(toLumaSamplerProps({})).toMatchObject({ addressModeU: 'clamp-to-edge', magFilter: 'linear', mipmapFilter: 'none' });
     expect(toLumaSamplerProps({ compare: 'less' })).toMatchObject({ type: 'comparison-sampler', compare: 'less' });
   });
+
+  it('W 寻址 / LOD 夹取 / 各向异性给了就转发,没给不写(R2-3)', () => {
+    expect(toLumaSamplerProps({ addressModeW: 'repeat', lodMinClamp: 1, lodMaxClamp: 3, maxAnisotropy: 8 })).toMatchObject({
+      addressModeW: 'repeat', lodMinClamp: 1, lodMaxClamp: 3, maxAnisotropy: 8,
+    });
+    const plain = toLumaSamplerProps({});
+    for (const k of ['addressModeW', 'lodMinClamp', 'lodMaxClamp', 'maxAnisotropy']) expect(k in plain).toBe(false);
+  });
 });
