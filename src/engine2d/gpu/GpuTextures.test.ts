@@ -98,6 +98,28 @@ describe('mipmap(autoGenerateMipmaps)', () => {
     renderer.destroy();
   });
 
+  it('generateTexture 带 autoGenerateMipmaps:画完即生成各级(同 Pixi GenerateTextureSystem 的 updateMipmaps)', () => {
+    const { renderer, rhi, mipGens } = setup();
+    const root = new Container();
+    const s = new Sprite(Texture.WHITE);
+    s.width = 64;
+    s.height = 32;
+    root.addChild(s);
+    const tex = renderer.generateTexture({ target: root, textureSourceOptions: { autoGenerateMipmaps: true, label: 'gen' } as any });
+    // Pixi:floor(log2(64)) + 1 = 7 级
+    expect(tex.source.mipLevelCount).toBe(7);
+    expect(mipGens()).toEqual(['generate mips gen 7']);
+    // 生成在渲染之后(各级要从画好的 level 0 缩)
+    const iGen = rhi.log.findIndex((l) => l.startsWith('generate mips'));
+    const iDraw = rhi.log.findIndex((l) => l.startsWith('draw'));
+    expect(iDraw).toBeGreaterThanOrEqual(0);
+    expect(iDraw).toBeLessThan(iGen);
+    // 缺省(不带 textureSourceOptions)不生成
+    renderer.generateTexture(root);
+    expect(mipGens()).toHaveLength(1);
+    renderer.destroy();
+  });
+
   it('没开 autoGenerateMipmaps 的纹理照旧单级、不生成', () => {
     const { renderer, descs, draw, mipGens } = setup();
     const src = new BufferImageSource({ resource: new Uint8Array(64 * 64 * 4), width: 64, height: 64, label: 'plain' });

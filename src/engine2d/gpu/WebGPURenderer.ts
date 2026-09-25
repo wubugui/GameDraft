@@ -448,6 +448,8 @@ export class WebGPURenderer extends RendererBase {
     });
     const transform = new Matrix().translate(-region.x, -region.y);
     this.render({ container, transform, target, clearColor });
+    // 同 Pixi GenerateTextureSystem:画完按 level 0 生成各级(只有 autoGenerateMipmaps 的多级纹理才真的生成)
+    target.source.updateMipmaps();
     return target;
   }
 
