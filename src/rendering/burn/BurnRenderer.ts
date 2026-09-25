@@ -7,7 +7,7 @@
  *   "模板图 × 燃烧材质"画进一张颜色图、"燃烧自发光"画进一张自发光图，宿主拿颜色图顶替它的颜色纹理（照常受光）、
  *   自发光图叠加在上面（不受光，被同一个容器的深度遮挡一起挡住）。
  *
- * 着色数学只在 `burnShade.glsl`（两种接法与燃烧工作台拼的是同一份）。
+ * 着色数学只在 `burnShade.glsl`（两种接法与燃烧工作台拼的是同一份）；WebGPU 渲染器跑它的逐句译本 `burnShade.wgsl`。
  *
  * 资源有主：纹理 / 滤镜 / 渲染纹理都归本类；宿主只持有引用。拆的顺序（pixi-v8-traps / teardown-ordering）：
  * **先从宿主上摘 → 再销毁滤镜 / mesh → 最后销毁纹理**。本类不 import 实体层（渲染层不许往上依赖），只认最小接口。
@@ -21,7 +21,14 @@ import {
   type Renderer,
   type Texture,
 } from 'pixi.js';
-import { BURN_SHADE_GLSL, BurnFieldTexture, BurnGlowFilter, BurnMaterialFilter, type BurnShadeParams } from './BurnFilters';
+import {
+  BURN_SHADE_GLSL,
+  BURN_SHADE_WGSL,
+  BurnFieldTexture,
+  BurnGlowFilter,
+  BurnMaterialFilter,
+  type BurnShadeParams,
+} from './BurnFilters';
 
 /** 能挂燃烧滤镜的宿主（热点展示图） */
 export interface BurnFilterHost {
@@ -130,6 +137,89 @@ void main(void) {
     vec4 b = burnSample(vUv, emit);
     // 叠加用：颜色 = 发光 × 烧过之后的覆盖度；alpha 0（加法混合不改底下的覆盖度）
     fragColor = vec4(burnGlowAdd(emit) * c.a * b.w, 0.0);
+}
+`;
+
+// ───────────── WGSL（Pixi WebGPU 渲染器）：与上面的 GLSL 逐句对应
+// 网格约定：第 0 组 globalUniforms、第 1 组 localUniforms（Pixi 自动绑），本程序的资源在第 2 组，变量名 = resources 的键名。
+// BurnImageUniforms 的成员顺序必须与 imageUniforms() 的声明顺序一致（Pixi 按声明顺序、WGSL 对齐规则排偏移）。
+const IMG_WGSL_HEAD = /* wgsl */ `
+struct GlobalUniforms {
+  uProjectionMatrix: mat3x3<f32>,
+  uWorldTransformMatrix: mat3x3<f32>,
+  uWorldColorAlpha: vec4<f32>,
+  uResolution: vec2<f32>,
+};
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+
+struct LocalUniforms {
+  uTransformMatrix: mat3x3<f32>,
+  uColor: vec4<f32>,
+  uRound: f32,
+};
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+
+struct BurnImageUniforms {
+  uBaseFrame: vec4<f32>,
+  uBurnGrid: vec2<f32>,
+  uBurnNow: f32,
+  uBurnStep: f32,
+  uBurnFlame: f32,
+  uBurnEmber: f32,
+  uBurnScorch: f32,
+  uBurnAshFade: f32,
+  uBurnEdgeNoise: f32,
+  uBurnScorchColor: vec3<f32>,
+  uBurnCharColor: vec3<f32>,
+  uBurnAshColor: vec3<f32>,
+  uBurnAshAlpha: f32,
+  uBurnGlow: vec3<f32>,
+  uBurnEmberGlow: vec3<f32>,
+};
+@group(2) @binding(0) var<uniform> burnUniforms: BurnImageUniforms;
+@group(2) @binding(1) var uBaseTex: texture_2d<f32>;
+@group(2) @binding(2) var uBaseTexSampler: sampler;
+@group(2) @binding(3) var uBurnField: texture_2d<f32>;
+@group(2) @binding(4) var uBurnFieldSampler: sampler;
+
+struct VSOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) vUv: vec2<f32>,
+};
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) -> VSOutput {
+  let mvp = globalUniforms.uProjectionMatrix * globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+  return VSOutput(vec4<f32>((mvp * vec3<f32>(aPosition, 1.0)).xy, 0.0, 1.0), aUV);
+}
+${BURN_SHADE_WGSL}
+// 一致控制流里调（片元入口第一句），与 GLSL texture() 同样按导数选级
+fn burnBaseSample(uv: vec2<f32>) -> vec4<f32> {
+  return textureSample(uBaseTex, uBaseTexSampler, mix(burnUniforms.uBaseFrame.xy, burnUniforms.uBaseFrame.zw, uv));
+}
+`;
+
+const IMG_WGSL_MATERIAL = IMG_WGSL_HEAD + /* wgsl */ `
+@fragment
+fn mainFragment(@location(0) vUv: vec2<f32>) -> @location(0) vec4<f32> {
+  let c = burnBaseSample(vUv);
+  if (c.a < 1e-4) { return vec4<f32>(0.0); }
+  var emit: vec3<f32>;
+  let b = burnSample(vUv, &emit);
+  let m = burnMaterial(c.rgb / c.a, c.a, b);
+  return vec4<f32>(m.rgb * m.a, m.a);
+}
+`;
+
+const IMG_WGSL_GLOW = IMG_WGSL_HEAD + /* wgsl */ `
+@fragment
+fn mainFragment(@location(0) vUv: vec2<f32>) -> @location(0) vec4<f32> {
+  let c = burnBaseSample(vUv);
+  if (c.a < 1e-4) { return vec4<f32>(0.0); }
+  var emit: vec3<f32>;
+  let b = burnSample(vUv, &emit);
+  // 叠加用：颜色 = 发光 × 烧过之后的覆盖度；alpha 0（加法混合不改底下的覆盖度）
+  return vec4<f32>(burnGlowAdd(emit) * c.a * b.w, 0.0);
 }
 `;
 
@@ -291,8 +381,8 @@ export class BurnRenderer {
       this.buildTextureResources(e, base);
     }
     if (!e.materialMesh || !e.glowMesh || !e.albedo || !e.emissive) return;
-    const mu = (e.materialShader!.resources as Record<string, { uniforms: Record<string, unknown> }>)['burnImg'].uniforms;
-    const gu = (e.glowShader!.resources as Record<string, { uniforms: Record<string, unknown> }>)['burnImg'].uniforms;
+    const mu = (e.materialShader!.resources as Record<string, { uniforms: Record<string, unknown> }>)['burnUniforms'].uniforms;
+    const gu = (e.glowShader!.resources as Record<string, { uniforms: Record<string, unknown> }>)['burnUniforms'].uniforms;
     writeShade(mu, e.shade);
     writeShade(gu, e.shade);
     // ⚠ Pixi 坑：渲离屏 RT 必须显式 clear，否则串到上一次的内容
@@ -323,16 +413,28 @@ export class BurnRenderer {
       base.frame.x / src.width, base.frame.y / src.height,
       (base.frame.x + base.frame.width) / src.width, (base.frame.y + base.frame.height) / src.height,
     ]);
-    const mk = (fragment: string): Shader => {
-      const burnImg = imageUniforms(e.field);
-      (burnImg.uBaseFrame.value as Float32Array).set(frame);
+    const mk = (fragment: string, wgsl: string): Shader => {
+      // 键名 = WGSL 变量名（burnShade.wgsl 按 burnUniforms 取 uniform）；GLSL 侧按 uniform 名逐个对，与键名无关
+      const burnUniforms = imageUniforms(e.field);
+      (burnUniforms.uBaseFrame.value as Float32Array).set(frame);
       return Shader.from({
         gl: { vertex: IMG_VERT, fragment },
-        resources: { uBaseTex: src, uBurnField: e.field.source, burnImg },
+        gpu: {
+          vertex: { source: wgsl, entryPoint: 'mainVertex' },
+          fragment: { source: wgsl, entryPoint: 'mainFragment' },
+        },
+        resources: {
+          burnUniforms,
+          uBaseTex: src,
+          // 两个 *Sampler 只有 WGSL 用（WebGPU 纹理与采样器分开绑）；GLSL 侧 Pixi 忽略这两个名字
+          uBaseTexSampler: src.style,
+          uBurnField: e.field.source,
+          uBurnFieldSampler: e.field.source.style,
+        },
       });
     };
-    e.materialShader = mk(IMG_FRAG_MATERIAL);
-    e.glowShader = mk(IMG_FRAG_GLOW);
+    e.materialShader = mk(IMG_FRAG_MATERIAL, IMG_WGSL_MATERIAL);
+    e.glowShader = mk(IMG_FRAG_GLOW, IMG_WGSL_GLOW);
     e.materialMesh = new Mesh({ geometry: e.geometry, shader: e.materialShader });
     e.glowMesh = new Mesh({ geometry: e.geometry, shader: e.glowShader });
   }

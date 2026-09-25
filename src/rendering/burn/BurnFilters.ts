@@ -9,14 +9,16 @@
  * - **自发光在受光之后**：火线自己发光，不吃漫反射着色；乘着上一步输出的覆盖度加，
  *   被前景挡住（深度遮挡丢掉的片元）的火线也就一起挡住。
  *
- * 着色数学只在 `burnShade.glsl`（燃烧工作台拼的是同一份）。片元的场景坐标由屏幕位置 − 世界容器位置
+ * 着色数学只在 `burnShade.glsl`（燃烧工作台拼的是同一份）；WebGPU 渲染器跑它的逐句译本 `burnShade.wgsl`
+ * （两份同改，像素对照 `tools/render_parity/cases/50_burn.ts`）。片元的场景坐标由屏幕位置 − 世界容器位置
  * ÷ 投影缩放得到（与角色着色滤镜同一条），再乘"场景 → 图 uv"仿射——热点的镜像 / 缩放 / 旋转都在仿射里。
  *
  * 资源有主：燃烧场纹理归 `BurnFieldTexture`（BurnSystem 的渲染侧持有）；滤镜只引用。卸载顺序 = 先从链上摘滤镜、
  * 再销毁滤镜、最后销毁纹理（pixi-v8-traps：BindGroup 见死即自毁）。
  */
-import { BufferImageSource, Filter, GlProgram, Texture } from 'pixi.js';
+import { BufferImageSource, Filter, GlProgram, GpuProgram, Texture } from 'pixi.js';
 import BURN_SHADE_SRC from './burnShade.glsl?raw';
+import BURN_SHADE_WGSL_SRC from './burnShade.wgsl?raw';
 import type { BurnShadeParams } from './burnShadeParams';
 
 export type { BurnShadeParams } from './burnShadeParams';
@@ -31,6 +33,8 @@ function sliceGlsl(src: string, tag: string): string {
 }
 
 export const BURN_SHADE_GLSL = sliceGlsl(BURN_SHADE_SRC, 'BURN_SHADE');
+/** `burnShade.glsl` 的 WGSL 译本（整份都是函数；拼它的程序要声明 `burnUniforms` / `uBurnField` / `uBurnFieldSampler`） */
+export const BURN_SHADE_WGSL: string = BURN_SHADE_WGSL_SRC;
 
 const VERT = /* glsl */ `#version 300 es
 in vec2 aPosition;
@@ -107,16 +111,131 @@ void main(void) {
 }
 `;
 
-let materialProgram: GlProgram | null = null;
-let glowProgram: GlProgram | null = null;
+// ───────────── WGSL（Pixi WebGPU 渲染器）：与上面的 GLSL 逐句对应
+// 滤镜约定：第 0 组 = Pixi 的 gfu / uTexture / uSampler；本滤镜的资源在第 1 组，变量名 = resources 的键名。
+// BurnFilterUniforms 的成员顺序必须与 uniformsFor() 的声明顺序一致（Pixi 按声明顺序、WGSL 对齐规则排偏移）。
+const WGSL_HEAD = /* wgsl */ `
+struct GlobalFilterUniforms {
+  uInputSize: vec4<f32>,
+  uInputPixel: vec4<f32>,
+  uInputClamp: vec4<f32>,
+  uOutputFrame: vec4<f32>,
+  uGlobalFrame: vec4<f32>,
+  uOutputTexture: vec4<f32>,
+};
+@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;
+@group(0) @binding(1) var uTexture: texture_2d<f32>;
+@group(0) @binding(2) var uSampler: sampler;
 
-function getMaterialProgram(): GlProgram {
-  if (!materialProgram) materialProgram = new GlProgram({ vertex: VERT, fragment: FRAG_MATERIAL });
+struct BurnFilterUniforms {
+  uWorldContainerPos: vec2<f32>,
+  uProjectionScale: f32,
+  uUvAffine: vec4<f32>,
+  uUvOffset: vec2<f32>,
+  uBurnGrid: vec2<f32>,
+  uBurnNow: f32,
+  uBurnStep: f32,
+  uBurnFlame: f32,
+  uBurnEmber: f32,
+  uBurnScorch: f32,
+  uBurnAshFade: f32,
+  uBurnEdgeNoise: f32,
+  uBurnScorchColor: vec3<f32>,
+  uBurnCharColor: vec3<f32>,
+  uBurnAshColor: vec3<f32>,
+  uBurnAshAlpha: f32,
+  uBurnGlow: vec3<f32>,
+  uBurnEmberGlow: vec3<f32>,
+};
+@group(1) @binding(0) var<uniform> burnUniforms: BurnFilterUniforms;
+@group(1) @binding(1) var uBurnField: texture_2d<f32>;
+@group(1) @binding(2) var uBurnFieldSampler: sampler;
+
+struct VSOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) vTextureCoord: vec2<f32>,
+  @location(1) vScreenPos: vec2<f32>,
+};
+
+fn filterVertexPosition(aPosition: vec2<f32>) -> vec4<f32> {
+  var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;
+  position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;
+  position.y = position.y * (2.0 * gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;
+  return vec4<f32>(position, 0.0, 1.0);
+}
+
+fn filterTextureCoord(aPosition: vec2<f32>) -> vec2<f32> {
+  return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>) -> VSOutput {
+  return VSOutput(
+    filterVertexPosition(aPosition),
+    filterTextureCoord(aPosition),
+    aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy
+  );
+}
+${BURN_SHADE_WGSL}
+fn burnUvOfFragment(screenPos: vec2<f32>) -> vec2<f32> {
+  let S = max(burnUniforms.uProjectionScale, 1e-6);
+  let w = (screenPos - burnUniforms.uWorldContainerPos) / S;
+  return vec2<f32>(burnUniforms.uUvAffine.x * w.x + burnUniforms.uUvAffine.y * w.y + burnUniforms.uUvOffset.x,
+                   burnUniforms.uUvAffine.z * w.x + burnUniforms.uUvAffine.w * w.y + burnUniforms.uUvOffset.y);
+}
+`;
+
+const WGSL_MATERIAL = WGSL_HEAD + /* wgsl */ `
+@fragment
+fn mainFragment(@location(0) vTextureCoord: vec2<f32>, @location(1) vScreenPos: vec2<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(uTexture, uSampler, vTextureCoord);
+  if (c.a < 1e-4) { return c; }
+  var emit: vec3<f32>;
+  let b = burnSample(burnUvOfFragment(vScreenPos), &emit);
+  let m = burnMaterial(c.rgb / c.a, c.a, b);
+  return vec4<f32>(m.rgb * m.a, m.a);
+}
+`;
+
+const WGSL_GLOW = WGSL_HEAD + /* wgsl */ `
+@fragment
+fn mainFragment(@location(0) vTextureCoord: vec2<f32>, @location(1) vScreenPos: vec2<f32>) -> @location(0) vec4<f32> {
+  let c = textureSample(uTexture, uSampler, vTextureCoord);
+  if (c.a < 1e-4) { return c; }
+  var emit: vec3<f32>;
+  _ = burnSample(burnUvOfFragment(vScreenPos), &emit);
+  // 加在覆盖度上（输入已是显示域的预乘色）
+  let add = burnGlowAdd(emit);
+  return vec4<f32>(min(c.rgb + add * c.a, vec3<f32>(c.a * 4.0)), c.a);
+}
+`;
+
+interface BurnPrograms {
+  gl: GlProgram;
+  gpu: GpuProgram;
+}
+
+let materialProgram: BurnPrograms | null = null;
+let glowProgram: BurnPrograms | null = null;
+
+function programsOf(fragment: string, wgsl: string, name: string): BurnPrograms {
+  return {
+    gl: new GlProgram({ vertex: VERT, fragment }),
+    gpu: GpuProgram.from({
+      name,
+      vertex: { source: wgsl, entryPoint: 'mainVertex' },
+      fragment: { source: wgsl, entryPoint: 'mainFragment' },
+    }),
+  };
+}
+
+function getMaterialProgram(): BurnPrograms {
+  if (!materialProgram) materialProgram = programsOf(FRAG_MATERIAL, WGSL_MATERIAL, 'burn-material-filter');
   return materialProgram;
 }
 
-function getGlowProgram(): GlProgram {
-  if (!glowProgram) glowProgram = new GlProgram({ vertex: VERT, fragment: FRAG_GLOW });
+function getGlowProgram(): BurnPrograms {
+  if (!glowProgram) glowProgram = programsOf(FRAG_GLOW, WGSL_GLOW, 'burn-glow-filter');
   return glowProgram;
 }
 
@@ -175,12 +294,15 @@ function uniformsFor(field: BurnFieldTexture): Record<string, { value: unknown; 
 }
 
 abstract class BurnFilterBase extends Filter {
-  protected constructor(program: GlProgram, field: BurnFieldTexture) {
+  protected constructor(program: BurnPrograms, field: BurnFieldTexture) {
     super({
-      glProgram: program,
+      glProgram: program.gl,
+      gpuProgram: program.gpu,
       resources: {
         burnUniforms: uniformsFor(field),
         uBurnField: field.source,
+        // 只有 WGSL 用（WebGPU 的纹理与采样器分开绑）；GLSL 侧 Pixi 忽略这个名字
+        uBurnFieldSampler: field.source.style,
       },
     });
   }
