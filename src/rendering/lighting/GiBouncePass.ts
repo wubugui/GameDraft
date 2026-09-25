@@ -94,6 +94,82 @@ void main(void) {
 }
 `;
 
+/**
+ * WebGPU 版(WGSL),与上面的 GLSL 逐句对应;GLSL 原样保留(WebGL 仍走它)。
+ *
+ * 绑定按 Pixi 网格约定:第 0 组 `globalUniforms`、第 1 组 `localUniforms` 由 Pixi 自动挂;
+ * 本 pass 的资源放第 2 组,**变量名 = resources 的键名**,`giBounce` 结构体成员顺序 = JS 声明顺序。
+ *
+ * ## 格子寻址的行序(已用像素对照验过,别凭印象翻)
+ *
+ * GLSL 用 `ivec2(gl_FragCoord.xy)` 直接当格子下标。离屏 RT 上它与 WGSL 的 `@builtin(position)`
+ * **指的是同一存储行**:Pixi WebGL 画 RT 时翻了投影,`gl_FragCoord.y = 0.5` 落在存储第 0 行;
+ * WebGPU 的 position.y = 0.5 也是存储第 0 行。命中图 `texelFetch` / `textureLoad` 也都按存储行寻址,
+ * 所以这里**原样取整、不翻 y**(`阴影与GI / GI 反弹` 用例用上下不对称的命中图锁住)。
+ *
+ * 循环里对辐射场的采样在非一致控制流里,改 `textureSampleLevel(…, 0)`:辐射场只有一级 mip,
+ * 与 GLSL `texture()` 等价。命中图只 `textureLoad`,不需要采样器。
+ * ⚠ 结构体体内不写注释:Pixi 用正则抽结构体成员,注释里的冒号会被当成成员。
+ */
+const WGSL = /* wgsl */ `
+struct GlobalUniforms {
+    uProjectionMatrix: mat3x3<f32>,
+    uWorldTransformMatrix: mat3x3<f32>,
+    uWorldColorAlpha: vec4<f32>,
+    uResolution: vec2<f32>,
+}
+
+struct LocalUniforms {
+    uTransformMatrix: mat3x3<f32>,
+    uColor: vec4<f32>,
+    uRound: f32,
+}
+
+struct GiBounce {
+    uOutSize: vec2<f32>,
+    uNdir: i32,
+    uGain: f32,
+    uEmitReject: f32,
+}
+
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+
+@group(2) @binding(0) var uRadiance: texture_2d<f32>;
+@group(2) @binding(1) var uRadianceSampler: sampler;
+@group(2) @binding(2) var uHitmap: texture_2d<f32>;
+@group(2) @binding(3) var<uniform> giBounce: GiBounce;
+
+struct VSOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) vUv: vec2<f32>,
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) -> VSOutput {
+    let mvp = globalUniforms.uProjectionMatrix * globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+    return VSOutput(vec4<f32>((mvp * vec3<f32>(aPosition, 1.0)).xy, 0.0, 1.0), aUV);
+}
+
+@fragment
+fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
+    let g = vec2<i32>(input.position.xy);
+    let ny = i32(giBounce.uOutSize.y);
+    var acc = vec3<f32>(0.0);
+    var wsum = 0.0;
+    for (var d = 0; d < ${GI_MAX_DIRS}; d++) {
+        if (d >= giBounce.uNdir) { break; }
+        let hm = textureLoad(uHitmap, vec2<i32>(g.x, d * ny + g.y), 0);
+        wsum += 1.0;
+        if (hm.b < 0.5) { continue; }
+        let r = textureSampleLevel(uRadiance, uRadianceSampler, vec2<f32>(hm.r, hm.g), 0.0);
+        if (r.a > giBounce.uEmitReject) { continue; }
+        acc += r.rgb;
+    }
+    return vec4<f32>(acc / max(wsum, 1.0) * giBounce.uGain, 1.0);
+}
+`;
+
 export interface GiBounceGeometry {
   /** gi_hitmap 纹理（RGBA8，尺寸 nx*nz × ny*ndir） */
   hitmap: TextureSource;
@@ -145,8 +221,14 @@ export class GiBouncePass {
     });
     this.shader = Shader.from({
       gl: { vertex: VERT, fragment: FRAG },
+      gpu: {
+        vertex: { source: WGSL, entryPoint: 'mainVertex' },
+        fragment: { source: WGSL, entryPoint: 'mainFragment' },
+      },
       resources: {
         uRadiance: this.radiance,
+        // WGSL 要单独的采样器(WebGL 侧没有这个名字,Pixi 忽略)
+        uRadianceSampler: this.radiance.style,
         uHitmap: this.geo.hitmap,
         giBounce: {
           uOutSize: { value: new Float32Array([w, h]), type: 'vec2<f32>' },

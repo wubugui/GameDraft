@@ -177,6 +177,133 @@ void main(void) {
 }
 `;
 
+/**
+ * WebGPU 版(WGSL)。与上面两段 GLSL 逐句对应,GLSL 原样保留(WebGL 仍走它)。
+ *
+ * 绑定按 Pixi 网格约定:第 0 组 `globalUniforms`、第 1 组 `localUniforms` 由 Pixi 自动挂;
+ * 本 pass 自己的纹理 / 采样器 / uniform 组放第 2 组,**变量名 = resources 的键名**,
+ * uniform 结构体成员顺序 = JS 里 uniforms 的声明顺序(Pixi 按声明顺序、WGSL 对齐算偏移)。
+ *
+ * 片元坐标:两边都只用插值出来的 `vUv`,离屏目标上 uv(0,0) 在两个后端都落在存储第 0 行
+ * (Pixi WebGL 画 RT 时翻了投影),所以不需要任何翻转——像素对照 `阴影与GI /` 用例验过。
+ * ⚠ 结构体体内不写注释:Pixi 用正则抽结构体成员,注释里的冒号会被当成成员。
+ */
+const WGSL_VERT = /* wgsl */ `
+struct GlobalUniforms {
+    uProjectionMatrix: mat3x3<f32>,
+    uWorldTransformMatrix: mat3x3<f32>,
+    uWorldColorAlpha: vec4<f32>,
+    uResolution: vec2<f32>,
+}
+
+struct LocalUniforms {
+    uTransformMatrix: mat3x3<f32>,
+    uColor: vec4<f32>,
+    uRound: f32,
+}
+
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+
+struct VSOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) vUv: vec2<f32>,
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) -> VSOutput {
+    let model = globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+    let screen = (model * vec3<f32>(aPosition, 1.0)).xy;
+    let clip = (globalUniforms.uProjectionMatrix * vec3<f32>(screen, 1.0)).xy;
+    return VSOutput(vec4<f32>(clip, 0.0, 1.0), aUV);
+}
+`;
+
+/** 初始化 pass 的 WGSL,对应 `INIT_FRAG`。 */
+const INIT_WGSL = /* wgsl */ `${WGSL_VERT}
+struct PrefixInit {
+    uTexSize: vec2<f32>,
+    uDepthMap: vec3<f32>,
+    uLightPx: array<vec4<f32>, 4>,
+    uLightZ: vec4<f32>,
+    uBias: f32,
+    uNearPx: f32,
+    uSentinel: f32,
+}
+
+@group(2) @binding(0) var uDepth: texture_2d<f32>;
+@group(2) @binding(1) var uDepthSampler: sampler;
+@group(2) @binding(2) var<uniform> prefixInit: PrefixInit;
+
+fn prefixDecodeDepth(t: vec4<f32>) -> f32 {
+    let raw = t.r * 255.0 * 256.0 + t.g * 255.0;
+    var u = raw / 65535.0;
+    if (prefixInit.uDepthMap.x > 0.5) { u = 1.0 - u; }
+    return u * prefixInit.uDepthMap.y + prefixInit.uDepthMap.z;
+}
+
+@fragment
+fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
+    let vUv = input.vUv;
+    let px = vUv * prefixInit.uTexSize;
+    let d = prefixDecodeDepth(textureSample(uDepth, uDepthSampler, vUv));
+    var g = vec4<f32>(prefixInit.uSentinel);
+    for (var i = 0; i < 4; i++) {
+        let lp = prefixInit.uLightPx[i];
+        if (lp.w < 0.5) { continue; }
+        let k = length(px - lp.xy);
+        if (k < prefixInit.uNearPx) { continue; }
+        let v = ((d - prefixInit.uLightZ[i]) + prefixInit.uBias) / k;
+        if (i == 0) { g.x = v; }
+        else if (i == 1) { g.y = v; }
+        else if (i == 2) { g.z = v; }
+        else { g.w = v; }
+    }
+    return g;
+}
+`;
+
+/**
+ * 扫描 pass 的 WGSL,对应 `SCAN_FRAG`。
+ * 循环里的采样在非一致控制流里(WGSL 不许 `textureSample`),改 `textureSampleLevel(…, 0)`:
+ * slab 只有一级 mip,与 GLSL `texture()` 等价。
+ */
+const SCAN_WGSL = /* wgsl */ `${WGSL_VERT}
+struct PrefixScan {
+    uTexSize: vec2<f32>,
+    uLightPx: array<vec4<f32>, 4>,
+    uOffset: f32,
+}
+
+@group(2) @binding(0) var uPrev: texture_2d<f32>;
+@group(2) @binding(1) var uPrevSampler: sampler;
+@group(2) @binding(2) var<uniform> prefixScan: PrefixScan;
+
+@fragment
+fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
+    let vUv = input.vUv;
+    var cur = textureSample(uPrev, uPrevSampler, vUv);
+    if (prefixScan.uOffset <= 0.0) { return cur; }
+    let px = vUv * prefixScan.uTexSize;
+    for (var i = 0; i < 4; i++) {
+        let lp = prefixScan.uLightPx[i];
+        if (lp.w < 0.5) { continue; }
+        let toLight = lp.xy - px;
+        let k = length(toLight);
+        if (k < 1e-4) { continue; }
+        let adv = min(prefixScan.uOffset, k);
+        let sUv = (px + toLight / k * adv) / prefixScan.uTexSize;
+        if (sUv.x < 0.0 || sUv.x > 1.0 || sUv.y < 0.0 || sUv.y > 1.0) { continue; }
+        let s = textureSampleLevel(uPrev, uPrevSampler, sUv, 0.0);
+        if (i == 0) { cur.x = min(cur.x, s.x); }
+        else if (i == 1) { cur.y = min(cur.y, s.y); }
+        else if (i == 2) { cur.z = min(cur.z, s.z); }
+        else { cur.w = min(cur.w, s.w); }
+    }
+    return cur;
+}
+`;
+
 export interface ShadowPrefixGeometry {
   depth: Texture;
   /** [w, h] native */
@@ -230,8 +357,14 @@ export class ShadowPrefixPass {
     });
     this.initShader = Shader.from({
       gl: { vertex: VERT, fragment: INIT_FRAG },
+      gpu: {
+        vertex: { source: INIT_WGSL, entryPoint: 'mainVertex' },
+        fragment: { source: INIT_WGSL, entryPoint: 'mainFragment' },
+      },
       resources: {
         uDepth: this.geo.depth.source,
+        // WGSL 要单独的采样器(WebGL 侧没有这个名字,Pixi 忽略)
+        uDepthSampler: this.geo.depth.source.style,
         prefixInit: {
           uTexSize: { value: new Float32Array([w, h]), type: 'vec2<f32>' },
           uDepthMap: { value: new Float32Array(this.geo.depthMapping), type: 'vec3<f32>' },
@@ -245,8 +378,14 @@ export class ShadowPrefixPass {
     });
     this.scanShader = Shader.from({
       gl: { vertex: VERT, fragment: SCAN_FRAG },
+      gpu: {
+        vertex: { source: SCAN_WGSL, entryPoint: 'mainVertex' },
+        fragment: { source: SCAN_WGSL, entryPoint: 'mainFragment' },
+      },
       resources: {
         uPrev: this.slabs[0].source,
+        // slab 与 scratch 同一个 mk() 建的,采样状态相同;逐趟换 uPrev 时一并换(见 solve)
+        uPrevSampler: this.slabs[0].source.style,
         prefixScan: {
           uTexSize: { value: new Float32Array([w, h]), type: 'vec2<f32>' },
           uLightPx: { value: new Float32Array(16), type: 'vec4<f32>', size: 4 },
@@ -305,12 +444,14 @@ export class ShadowPrefixPass {
       for (let j = 0; j < passes; j++) {
         us.uOffset = 2 ** j;
         scan.resources.uPrev = src.source;
+        scan.resources.uPrevSampler = src.source.style;
         renderer.render({ container: mesh, target: dst, clear: true });
         const t = src; src = dst; dst = t;
       }
       if (src !== this.slabs[s]) {
         us.uOffset = 0;                         // 位移 0 ＝ 纯拷贝
         scan.resources.uPrev = src.source;
+        scan.resources.uPrevSampler = src.source.style;
         renderer.render({ container: mesh, target: this.slabs[s], clear: true });
       }
     }
