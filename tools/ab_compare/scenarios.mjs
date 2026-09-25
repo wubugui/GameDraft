@@ -2,8 +2,9 @@
  * 对照场景表(数据驱动)。每个场景 = 一次**冷启动**(新浏览器、新上下文、新页面)+ 一串步骤,A、B 两边一字不差地执行。
  *
  * 启动(boot):
- *   { scene }                 → `/?mode=dev&visualCapture&devScene=<scene>`,就绪 = 当前场景数据 id === scene
- *   { warp, scene }           → `/?mode=dev&visualCapture&narrativeWarp=<warp>`,就绪 = 进到 warp 的目标场景
+ *   { scene }                 → `/?mode=dev&visualCapture&devScene=<scene>`,就绪 = 当前场景数据 id === scene 且切换收尾
+ *                               (或开场演出正攥着切换——见 driver.mjs 的 READY_FN)
+ *   { warp, scene }           → `/?mode=dev&visualCapture&narrativeWarp=<warp>`,就绪 = 进到 warp 的目标场景(同上)
  *   visualCapture:false       → 去掉 visualCapture(它把渲染分辨率钉死在 1,DPR 那一轮必须去掉才测得到真 DPR 路径)
  *   dpr / viewport            → 覆盖该场景的 deviceScaleFactor / 视口
  *
@@ -73,11 +74,20 @@ export const TEMPLATES = {
     }
     return steps;
   },
-  /** 叙事跳转:进到目标场景后 +30、+180 */
-  warp: () => [
-    { advance: 30 }, { checkpoint: 'enter+30' },
-    { advance: 150 }, { checkpoint: 'enter+180' },
-  ],
+  /**
+   * 叙事跳转:进到目标场景后 +30 帧一个检查点;最后一跳的开场演出(过场 / 图对话)要点击才走,
+   * 之后 4 次「补完打字机 → 点一下 → 60 帧 → 检查点」把它往前推(两边同一时刻同一输入)。
+   */
+  warp: (taps = 4, every = 60) => {
+    const steps = [{ advance: 30 }, { checkpoint: 'enter+30' }];
+    for (let i = 1; i <= taps; i++) {
+      steps.push(
+        { api: 'completeCutsceneText' }, { api: 'completeDialogueText' }, { cmd: { type: 'playerTap' } },
+        { advance: every }, { checkpoint: `tap${i}+${every}` },
+      );
+    }
+    return steps;
+  },
   /** 改视口:缩到 960×540 再还原 */
   resize: (vw, vh) => [
     { advance: 30 }, { checkpoint: 'base' },

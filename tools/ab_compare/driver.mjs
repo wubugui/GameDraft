@@ -10,7 +10,8 @@
  * 时间模型(两边完全一致):
  *   1. 装载期:假时钟从固定纪元起**随墙钟流动**,游戏照常装载;
  *   2. 就绪(__gameDevAPI.isReady() 且 sceneManager 不在切换且 currentSceneData.id === 目标)的**同一个任务里**
- *      发 debugSetFixedTickMode(true) 冻住逻辑(缺省;--freeze settled 则按原顺序先墙钟沉淀再冻);
+ *      发 debugSetFixedTickMode(true) 冻住逻辑(缺省 --freeze ready;--freeze settled 则按原顺序先墙钟沉淀再冻;
+ *      --freeze boot 则游戏一挂出 __game 就冻,装载期一帧真实时间的逻辑都不跑——见 EARLY_FREEZE_SCRIPT);
  *   3. 墙钟沉淀若干毫秒(只让在途 I/O 落地),再 clock.pauseAt(纪元 + 固定偏移) —— 两边停在同一个绝对时刻,
  *      performance.now() 也相同;随后再发一次 debugSetFixedTickMode(true)(把动画时钟在同一刻归零)并重播种;
  *   4. 之后每推进 k 帧 = 假时钟前进 round(k×1000/60) ms(兑现 setTimeout / rAF 驱动的淡入淡出、过场补间)
@@ -60,7 +61,8 @@ export function browserArgs(opts, extra = []) {
     '--disable-backgrounding-occluded-windows',
     '--enable-precise-memory-info',
     `--window-size=${Math.max(width, 960) + 40},${Math.max(height, 540) + 160}`,
-    ...(opts.swiftshader ? ['--enable-features=Vulkan', '--use-vulkan=swiftshader', '--use-angle=swiftshader'] : []),
+    // --enable-unsafe-swiftshader:master 的 WebGL 在 SwiftShader 上靠「自动回落软件 WebGL」,新版 Chrome 要显式允许
+    ...(opts.swiftshader ? ['--enable-features=Vulkan', '--use-vulkan=swiftshader', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] : []),
     ...extra,
   ];
 }
@@ -94,6 +96,27 @@ export function seedInitScript(seed) {
   Object.defineProperty(globalThis, '__abReseed', { value: (v) => { a = v | 0; }, configurable: true });
 })();`;
 }
+
+/**
+ * --freeze boot 用:游戏一挂出 window.__game 就经它自己的命令入口开固定帧模式,装载期一帧真实时间的逻辑都不跑。
+ * 用的是加这段脚本时的**原生** setTimeout(本脚本排在假时钟脚本之前),轮询不受假时钟影响。
+ * 只调游戏已有的 applyRuntimeCommand;启动早期它后半截(快照)可能因系统未就绪报错,但开关在第一句就已置上。
+ */
+export const EARLY_FREEZE_SCRIPT = `(() => {
+  const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const tryFreeze = () => {
+    const g = globalThis.__game;
+    if (g && typeof g.applyRuntimeCommand === 'function') {
+      try {
+        Promise.resolve(g.applyRuntimeCommand({ id: 'ab-freeze-early', type: 'debugSetFixedTickMode', enabled: true })).catch(() => {});
+      } catch (e) { /* 开关已置上,后半截失败不要紧 */ }
+      globalThis.__abFrozeEarly = true;
+      return;
+    }
+    nativeSetTimeout(tryFreeze, 1);
+  };
+  nativeSetTimeout(tryFreeze, 1);
+})();`;
 
 // ---------------------------------------------------------------- 报错归类
 
@@ -217,10 +240,19 @@ function evalT(page, fn, arg, ms, what = 'evaluate') {
 
 // ---------------------------------------------------------------- 页内函数(序列化进页面执行)
 
-/** 等就绪;就绪的同一个任务里冻住逻辑(applyDevRuntimeCommand 在第一个 await 之前就同步置上 fixedTickMode) */
-const READY_FN = async ({ expectScene, timeoutMs, freeze }) => {
-  const t0 = Date.now(); // 装载期假时钟随墙钟流动
+/**
+ * 等就绪;就绪的同一个任务里冻住逻辑(applyDevRuntimeCommand 在第一个 await 之前就同步置上 fixedTickMode)。
+ *
+ * 就绪 = __gameDevAPI.isReady() 且 当前场景数据 id === 目标(currentSceneId 在切换**开始**就变了,不能用)且
+ *   (a) 切换已收尾(sceneManager.switching === false 且启动直达路由已落地 runtimeReady !== false),或
+ *   (b) 场景已装上、但开场演出(过场 / 图对话)正攥着切换没放——叙事跳转的最后一跳、带 onEnter 演出的场景都这样,
+ *       演出要点击才往下走,不认 (b) 就永远等不到 (a)。
+ * 超时由 node 侧掌握(装载期假时钟虽随墙钟流动,实测比墙钟慢好几倍,页内拿 Date.now() 计时不可靠):
+ * node 超时后置 window.__abStopWait,页内循环看到就退出。
+ */
+const READY_FN = async ({ expectScene, freeze }) => {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  window.__abStopWait = false;
   const state = () => {
     const g = window.__game;
     const api = window.__gameDevAPI;
@@ -231,13 +263,18 @@ const READY_FN = async ({ expectScene, timeoutMs, freeze }) => {
       runtimeReady: typeof g?.runtimeReady === 'boolean' ? g.runtimeReady : null,
       switching: sm ? !!sm.switching : null,
       sceneId: sm?.currentSceneData?.id ?? null,
+      cutscene: !!g?.cutsceneManager?.isPlaying,
+      dialogue: !!g?.graphDialogueManager?.isActive,
+      gameState: g?.stateController?.currentState ?? null,
       fatal: document.getElementById('game-fatal-error')?.textContent?.slice(0, 300) ?? null,
     };
   };
+  const ready = (s) => s.apiReady && s.sceneId === expectScene
+    && ((s.switching === false && s.runtimeReady !== false) || (s.switching === true && (s.cutscene || s.dialogue)));
   let s = state();
-  while (!(s.apiReady && s.switching === false && s.runtimeReady !== false && s.sceneId === expectScene)) {
+  while (!ready(s)) {
     if (s.fatal) return { ok: false, reason: `启动失败:${s.fatal}`, state: s };
-    if (Date.now() - t0 > timeoutMs) return { ok: false, reason: `就绪等待超时(${timeoutMs} ms)`, state: s };
+    if (window.__abStopWait) return { ok: false, reason: '就绪等待超时', state: s };
     await wait(4);
     s = state();
   }
@@ -253,7 +290,7 @@ const READY_FN = async ({ expectScene, timeoutMs, freeze }) => {
       if (r && r.ok === false) froze = `failed: ${r.message}`;
     }
   }
-  return { ok: true, state: s, froze };
+  return { ok: true, state: s, froze, heldByPerformance: s.switching === true };
 };
 
 const SYNC_FN = async ({ seed }) => {
@@ -468,17 +505,31 @@ async function waitReady(page, expectScene, timeoutMs, freeze) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
+    const left = Math.max(1000, deadline - Date.now());
     try {
-      const left = Math.max(1000, deadline - Date.now());
-      return await evalT(page, READY_FN, { expectScene, timeoutMs: left, freeze }, left + 15000, '就绪等待');
+      return await evalT(page, READY_FN, { expectScene, freeze }, left, '就绪等待');
     } catch (e) {
-      // 整页重载(vite 依赖重新预构建)会毁掉执行上下文:等新文档起来接着等
       last = e;
-      if (!/Execution context was destroyed|navigat|Cannot find context|Target (page, context or browser )?closed/i.test(String(e))) throw e;
-      await sleep(500);
+      // 整页重载(vite 依赖重新预构建)会毁掉执行上下文:等新文档起来接着等
+      if (/Execution context was destroyed|navigat|Cannot find context/i.test(String(e))) {
+        await sleep(500);
+        continue;
+      }
+      if (!/就绪等待 超时/.test(String(e))) throw e;
     }
   }
-  return { ok: false, reason: `就绪等待超时(${timeoutMs} ms)${last ? `;${msgOf(last)}` : ''}` };
+  // 到点了:叫停页内循环,顺手读一下卡在哪
+  const state = await evalT(page, () => {
+    window.__abStopWait = true;
+    const g = window.__game;
+    const sm = g?.sceneManager;
+    return {
+      sceneId: sm?.currentSceneData?.id ?? null, switching: sm ? !!sm.switching : null,
+      runtimeReady: typeof g?.runtimeReady === 'boolean' ? g.runtimeReady : null,
+      gameState: g?.stateController?.currentState ?? null, cutscene: !!g?.cutsceneManager?.isPlaying,
+    };
+  }, null, 10000, '读启动状态').catch(() => null);
+  return { ok: false, reason: `就绪等待超时(${timeoutMs} ms)${state ? `,卡在 ${JSON.stringify(state)}` : ''}${last && !/超时/.test(String(last)) ? `;${msgOf(last)}` : ''}`, state };
 }
 
 const cpFileName = (i, name) => `${String(i).padStart(2, '0')}_${String(name).replace(/[\\/:*?"<>|\s]+/g, '_')}.png`;
@@ -502,6 +553,7 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
   try {
     ctx = await browser.newContext({ viewport, deviceScaleFactor: dpr, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
     await ctx.addInitScript(seedInitScript(opts.seed));
+    if (opts.freezeAt === 'boot') await ctx.addInitScript(EARLY_FREEZE_SCRIPT);
     await ctx.clock.install({ time: opts.epoch });
     const page = await ctx.newPage();
     watch = new PageWatch(page, side.dir);
@@ -524,7 +576,7 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
     await sleep(opts.settle);
     await watch.quiesce();
     if (!freezeAtReady) {
-      const r = await evalT(page, READY_FN, { expectScene, timeoutMs: 5000, freeze: true }, 20000, '冻结');
+      const r = await evalT(page, READY_FN, { expectScene, freeze: true }, 20000, '冻结');
       res.boot.froze = r.froze;
     }
     try {

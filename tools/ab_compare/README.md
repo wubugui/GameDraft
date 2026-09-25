@@ -13,7 +13,7 @@ xvfb-run -a node tools/ab_compare/run.mjs --browser /opt/pw-browsers/chromium-11
 
 依赖 `playwright-core`(仓库不装;`PLAYWRIGHT_CORE=<包目录>` 指过去)。全部选项见 `run.mjs` 头注释或 `--help`。
 结果在 `.tools/ab_out/latest/`:`report.html`(按分歧排序)、`summary.json`、`img/<场景>/…`(A | B | 差异热图)。
-退出码:0 一致;1 有超噪声分歧 / B 新增报错 / 独立性复核不过;2 工具自身失败。
+退出码:0 一致;1 有超噪声分歧 / B 新增报错 / 有场景无法对照(A 一轮都没起来)/ 独立性复核不过;2 工具自身失败。
 带 `--keep-raw` 跑过之后,可以 `--recompare --out <同一目录>` 只换判定参数(`--margin`、`--ignore-row-shift` …)重出报告,不用重跑游戏。
 
 ## 为什么要有它
@@ -38,14 +38,16 @@ xvfb-run -a node tools/ab_compare/run.mjs --browser /opt/pw-browsers/chromium-11
    `completeDialogueText` …)。不注入游戏代码、不走 HTTP 命令队列。某一侧缺某入口 → 该步记 `unsupported`,不补丁。
 6. **确定性控制(两边完全相同)**
    - 固定视口与 deviceScaleFactor;固定 locale / 时区;`--force-color-profile=srgb`;
-   - **同源**:两边页面都开在 `http://127.0.0.1:5200/`(`--origin-port`),各侧浏览器用
-     `--host-resolver-rules=MAP 127.0.0.1:5200 127.0.0.1:<本侧 dev 服端口>` 改道(这是两边浏览器参数唯一的不同)。
-     否则报错文案、dev 报错浮层里的 URL 端口两边不同,本身就是像素 / 报错差异;
-     vite 对 IP 形式的 Host 头一律放行,HMR websocket 走同一条改道;
+   - **同源**:两边页面都开在 `http://127.0.0.1:5173/`(仓库规范的 dev 源,`--origin-port` 可改),各侧浏览器用
+     `--host-resolver-rules=MAP 127.0.0.1:5173 127.0.0.1:<本侧 dev 服端口>` 改道(这是两边浏览器参数唯一的不同;
+     浏览器不会真去连本机 5173,人手里开着的 dev 服不受影响)。否则报错文案、dev 报错浮层里的 URL 端口两边不同,
+     本身就是像素 / 报错差异,入口卫兵还会因「不是规范源」多打一条告警;vite 对 IP 形式的 Host 头一律放行,
+     HMR websocket 走同一条改道;
    - `page.clock.install({ time: 固定纪元 })`(导航前);`Math.random` 换成定种子的 mulberry32(init script,
      浏览器环境控制,不是游戏补丁);
    - 冷启动 `/?mode=dev&visualCapture&devScene=<id>`,装载期假时钟随墙钟流动;
-   - 就绪(`isReady()`、不在切场景、`currentSceneData.id === 目标`;注意 `currentSceneId` 在切换**开始**就变了)的
+   - 就绪(`isReady()`、`currentSceneData.id === 目标`,且切换已收尾——或开场演出(过场 / 图对话)正攥着切换等点击;
+     注意 `currentSceneId` 在切换**开始**就变了)的
      **同一个任务里**发 `debugSetFixedTickMode(true)` 冻住逻辑,墙钟沉淀一段只让 I/O 落地,
      再 `clock.pauseAt(纪元 + 固定偏移)`——两边停在同一个绝对时刻、同一个 `performance.now()`;
      随后再冻一次(动画时钟在同一刻归零)并重播种;
@@ -79,6 +81,8 @@ NPC:交互 → 补完打字机 → 推进 → 选第 0 项)、minigame(`startMin
 - **不是逐位确定**:装载期是真实时间(异步加载完成的先后、就绪到冻结之间的那一两帧),Web Worker 里的
   `Math.random`、`crypto.getRandomValues`、GPU 驱动的非确定性都不受控;所以才要 A/A 噪声底。噪声底只来自
   两轮,偶发的大抖动可能漏进 / 漏出判定——看报告里的 A/A、B/B 热图。
+- 装载期 Playwright 假时钟虽是「随墙钟流动」,实测走得比墙钟慢好几倍(页面定时器多时尤甚),所以装载比平常慢;
+  只影响装载耗时,不影响之后的确定性。就绪等待的超时因此由 node 侧按墙钟掌握(`--boot-timeout`)。
 - 锁步推进里「假时钟前进」与「逻辑 tick」是先后两段,不是游戏真实运行时的逐帧交错;两边一致,但不等于真机节奏。
 - master 的 Pixi 走 WebGL、分支的 engine2d 走 WebGPU:恰好落在半像素上的水平边(1 像素线、面板上下沿)会有
   一行系统性差异(默认帧缓冲光栅化方向相反),属已知项;报告里按「±1 行位移可解释」单独标出。

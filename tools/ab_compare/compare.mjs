@@ -40,10 +40,11 @@ export function diffPaths(fa, fb, eps = 1e-3) {
 
 /** 只提示、不判失败的标记 */
 export const INFO_FLAG = '偶发新报错';
+export const INFO_BOOT_FLAKY = '启动不稳定(部分轮没就绪)';
 export const ROW_SHIFT_NOTE = '≥95% 可由 ±1 行位移解释';
 
 /** 这个标记算不算失败:偶发新报错永远不算;「≥95% 可由行位移解释」的像素差在 --ignore-row-shift 下不算 */
-export const isFailFlag = (f, opts) => f !== INFO_FLAG && !(opts?.ignoreRowShift && f.includes(ROW_SHIFT_NOTE));
+export const isFailFlag = (f, opts) => f !== INFO_FLAG && f !== INFO_BOOT_FLAKY && !(opts?.ignoreRowShift && f.includes(ROW_SHIFT_NOTE));
 
 const isErr = (it) => !it.asset && (it.type === 'error' || it.type === 'pageerror' || it.type === 'requestfailed' || it.type === 'http');
 const isWarn = (it) => !it.asset && it.type === 'warning';
@@ -227,12 +228,21 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
   const bootB = runs.B.map((r) => r?.boot?.ok ?? false);
   const fatal = { A: runs.A.map((r) => r?.fatal ?? null), B: runs.B.map((r) => r?.fatal ?? null) };
   const flags = new Set(checkpoints.flatMap((c) => c.flags));
+  // 起没起来:两边都没起来 / 只有 B 起得来 = 这个场景没法对照(不是 B 的回归,但也绝不能算「一致」)
+  const inconclusive = !bootA.some(Boolean)
+    ? (bootB.some(Boolean) ? '只有 B 起得来(A 全部没就绪),无法对照' : '两边都没起来,无法对照')
+    : null;
+  if (inconclusive) flags.clear();
   if (bootA.some(Boolean) && !bootB.some(Boolean)) flags.add('B 起不来');
+  if (!inconclusive && (bootA.some((x) => !x) || bootB.some((x) => !x)) && !flags.has('B 起不来')) flags.add(INFO_BOOT_FLAKY);
   if (newErrorsStable.length) flags.add('新增报错');
-  if (fatal.B.some(Boolean) && !fatal.A.some(Boolean)) flags.add('B 运行中断');
+  // 起来之后才中断的(卡死 / 整页重载 / 截图失败…);没起来的已经记在上面
+  const ranThenDied = (side, boot) => fatal[side].some((f, i) => f && boot[i]);
+  if (ranThenDied('B', bootB) && !ranThenDied('A', bootA)) flags.add('B 运行中断');
   const unsupported = { A: [...new Set(runs.A.flatMap((r) => r?.unsupported ?? []))], B: [...new Set(runs.B.flatMap((r) => r?.unsupported ?? []))] };
   const diverged = [...flags].some((f) => isFailFlag(f, opts));
-  const score = Math.max(0, ...checkpoints.map((c) => c.score)) + (flags.has('B 起不来') ? 200 : 0) + (newErrorsStable.length ? 50 : 0);
+  const score = Math.max(0, ...checkpoints.map((c) => c.score)) + (flags.has('B 起不来') ? 200 : 0) + (inconclusive ? 150 : 0)
+    + (newErrorsStable.length ? 50 : 0);
   return {
     id: scenario.id,
     kind: scenario.kind,
@@ -257,6 +267,7 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
     },
     checkpoints,
     flags: [...flags],
+    inconclusive,
     diverged,
     score: +score.toFixed(4),
     wallMs: { A: runs.A.map((r) => r?.wallMs ?? null), B: runs.B.map((r) => r?.wallMs ?? null) },

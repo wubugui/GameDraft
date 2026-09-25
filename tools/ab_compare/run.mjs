@@ -31,7 +31,8 @@
  *   --viewport 1280x720 --dpr 1    视口与 deviceScaleFactor
  *   --chunk <n>                    锁步粒度:每次假时钟前进 n 帧再 stepFixedTicks(n)(缺省 1)
  *   --settle <ms>                  就绪后墙钟沉淀(缺省 2500)
- *   --freeze ready|settled         冻结逻辑的时机:就绪同一任务里(缺省)| 沉淀之后(按原始顺序)
+ *   --freeze ready|settled|boot    冻结逻辑的时机:就绪同一任务里(缺省)| 沉淀之后(按原始顺序)|
+ *                                  一挂出 __game 就冻(装载期不跑任何真实时间的逻辑帧;消掉「装载快慢不同 → 状态不同」)
  *   --boot-timeout <ms>            冷启动就绪上限(缺省 180000)
  *   --step-timeout <ms>            单次推进上限(缺省 180000)
  *   --epoch <ISO>  --pause-offset <ms>  --seed <int>   确定性参数(两边相同)
@@ -42,13 +43,14 @@
  *   --npm-registry <url>           npm ci 改走这个源(--replace-registry-host=always)
  *   --no-install                   不跑 npm ci(依赖缺了直接报错)
  *   --port <n>                     dev 服起始端口(缺省 5211)
- *   --origin-port <n>              页面看到的源端口(缺省 5200;两边相同,浏览器解析规则改道到各自真端口,不实际监听)
+ *   --origin-port <n>              页面看到的源端口(缺省 5173 = 规范 dev 源;两边相同,浏览器解析规则改道到各自真端口,不实际连它)
  *   --out <dir>                    输出目录(缺省 .tools/ab_out/latest;只清自己建的目录)
  *   --embed-images  --keep-raw     报告内嵌缩略图 / 保留每轮原始截图与运行记录
  *   --recompare                    不重跑:拿 --out 目录里 --keep-raw 留下的原始截图,按当前判定参数重比、重出报告
  *   --perf --perf-scenes <id,…> --perf-seconds 4   真实时间性能 + JS 堆对照(--perf-only:只跑这一项)
  *
- * 退出码:0 = B 在噪声底内与 A 一致且无新增报错;1 = 有超噪声的分歧或 B 新增报错;2 = 工具自身失败。
+ * 退出码:0 = B 在噪声底内与 A 一致且无新增报错;1 = 有超噪声的分歧 / B 新增报错 / 有场景无法对照(A 没起来)/
+ *        独立性复核不过;2 = 工具自身失败。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -93,7 +95,7 @@ const opts = {
   repeats: Math.max(1, Math.min(2, Number(arg('repeats', '2')))),
   chunk: Math.max(1, Math.min(200, Number(arg('chunk', '1')))),
   settle: Number(arg('settle', '2500')),
-  freezeAt: arg('freeze', 'ready') === 'settled' ? 'settled' : 'ready',
+  freezeAt: ['settled', 'boot'].includes(arg('freeze', 'ready')) ? arg('freeze', 'ready') : 'ready',
   bootTimeout: Number(arg('boot-timeout', '180000')),
   stepTimeout: Number(arg('step-timeout', '180000')),
   epoch: Date.parse(arg('epoch', '2026-01-01T09:00:00+08:00')),
@@ -220,7 +222,9 @@ async function main() {
     cleanup();
     process.exit(143);
   });
-  const originPort = Number(arg('origin-port', '5200'));
+  // 缺省用 5173 = 仓库规范的 dev 源:游戏的入口卫兵就不会因「不是规范源」告警,与平常开发时一致。
+  // 浏览器永远不会真去连本机 5173(解析规则改道了),人手里开着的 dev 服不受影响;上下文是全新的,也碰不到人手里的存储。
+  const originPort = Number(arg('origin-port', '5173'));
   const taken = new Set([originPort]);
   const results = [];
   let perf = null;
@@ -274,9 +278,9 @@ async function main() {
       if (!has('keep-raw')) fs.rmSync(path.join(rawRoot, sc.id), { recursive: true, force: true });
       const worst = (k) => row.checkpoints.reduce((m, c) => (c[k].ab !== null && c[k].ab > m ? c[k].ab : m), 0);
       const noise = (k) => row.checkpoints.reduce((m, c) => Math.max(m, c[k].noisePct), 0);
-      log(`[${si + 1}/${scenarios.length}] ${row.diverged ? '✗' : '✓'} ${sc.id}  整页 A/B ${worst('px').toFixed(3)}% 噪声 ${noise('px').toFixed(3)}%`
+      log(`[${si + 1}/${scenarios.length}] ${row.inconclusive ? '?' : row.diverged ? '✗' : '✓'} ${sc.id}  整页 A/B ${worst('px').toFixed(3)}% 噪声 ${noise('px').toFixed(3)}%`
         + ` · 画布 A/B ${worst('pxCanvas').toFixed(3)}% 噪声 ${noise('pxCanvas').toFixed(3)}%`
-        + `${row.flags.length ? `  ${row.flags.join(' · ')}` : ''}  (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+        + `${row.flags.length ? `  ${row.flags.join(' · ')}` : ''}${row.inconclusive ? `  ${row.inconclusive}` : ''}  (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
       writeOutputs();
     }
     if (shared) for (const b of Object.values(shared)) await b.close().catch(() => {});
@@ -336,6 +340,7 @@ async function main() {
       verdict: {
         scenarios: results.length,
         diverged: results.filter((r) => r.diverged).map((r) => r.id),
+        inconclusive: results.filter((r) => r.inconclusive).map((r) => r.id),
         isolationProblems: isoBad,
       },
       perf,
@@ -353,6 +358,7 @@ async function main() {
       if (!assets.linked) log('⚠ 本次没有素材:画面对照只反映缺素材路径。');
       if (dirt.tracked.length) log(`⚠ 主工作区未提交改动 ${dirt.tracked.length} 处不在 B 里。`);
       log(`\n${summary.verdict.diverged.length} / ${results.length} 个场景 B 相对 A 超出噪声底或有新报错${summary.verdict.diverged.length ? `:${summary.verdict.diverged.join(', ')}` : ''}`);
+      if (summary.verdict.inconclusive.length) log(`⚠ ${summary.verdict.inconclusive.length} 个场景无法对照(A 没起来):${summary.verdict.inconclusive.join(', ')}`);
       log(`报告:${path.join(outDir, 'report.html')}`);
     }
     return summary;
@@ -417,19 +423,25 @@ function recompareMain() {
     ...prev,
     meta: { ...prev.meta, opts: judge, unsupported: unsupportedOf(results), recomparedAt: new Date().toISOString() },
     noise: { lines: noiseSummary(results, judge) },
-    verdict: { ...prev.verdict, scenarios: results.length, diverged: results.filter((r) => r.diverged).map((r) => r.id) },
+    verdict: {
+      ...prev.verdict,
+      scenarios: results.length,
+      diverged: results.filter((r) => r.diverged).map((r) => r.id),
+      inconclusive: results.filter((r) => r.inconclusive).map((r) => r.id),
+    },
     scenarios: results,
   };
   fs.writeFileSync(path.join(outDir, 'summary.json'), JSON.stringify(summary, null, 1));
   fs.writeFileSync(path.join(outDir, 'report.html'), renderReport(summary));
   log(summary.noise.lines.join('\n'));
   log(`\n重判:${summary.verdict.diverged.length} / ${results.length} 个场景超出噪声底或有新报错${summary.verdict.diverged.length ? `:${summary.verdict.diverged.join(', ')}` : ''}`);
+  if (summary.verdict.inconclusive.length) log(`⚠ ${summary.verdict.inconclusive.length} 个场景无法对照(A 没起来):${summary.verdict.inconclusive.join(', ')}`);
   log(`报告:${path.join(outDir, 'report.html')}`);
   return summary;
 }
 
 (has('recompare') ? Promise.resolve().then(recompareMain) : main()).then(
-  (summary) => process.exit(summary.verdict.diverged.length || summary.verdict.isolationProblems ? 1 : 0),
+  (summary) => process.exit(summary.verdict.diverged.length || summary.verdict.inconclusive?.length || summary.verdict.isolationProblems ? 1 : 0),
   (e) => {
     console.error(`\n工具失败:${e?.stack ?? e}`);
     process.exit(2);

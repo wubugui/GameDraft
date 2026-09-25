@@ -56,8 +56,8 @@ function scenarioBlock(sc, opts) {
   const boot = (arr) => arr.map((b) => (b ? (b.ok ? `✓ ${(b.ms / 1000).toFixed(1)}s` : `✗ ${esc(b.reason ?? '')}`) : '—')).join(' / ');
   const steps = (arr) => arr.map((s) => `<li><code>${esc(s.desc)}</code> @${s.atTick} → ${esc(s.final ?? s.immediate)}${s.result ? ` <small>${esc(String(s.result).slice(0, 160))}</small>` : ''}</li>`).join('');
   const errs = sc.errors;
-  return `<details class="sc" data-bad="${sc.diverged ? 1 : 0}" data-kind="${esc(sc.kind)}" data-name="${esc(sc.id)}" ${sc.diverged ? 'open' : ''}>
-<summary><span class="kind">${esc(sc.kind)}</span> <b>${esc(sc.name)}</b> ${sc.flags.map((f) => `<span class="tag">${esc(f)}</span>`).join(' ')}${sc.diverged ? '' : ' <span class="ok">一致</span>'} <small class="muted">分 ${sc.score}</small></summary>
+  return `<details class="sc" data-bad="${sc.diverged || sc.inconclusive ? 1 : 0}" data-kind="${esc(sc.kind)}" data-name="${esc(sc.id)}" ${sc.diverged ? 'open' : ''}>
+<summary><span class="kind">${esc(sc.kind)}</span> <b>${esc(sc.name)}</b> ${sc.flags.map((f) => `<span class="tag">${esc(f)}</span>`).join(' ')}${sc.inconclusive ? ` <span class="tag">${esc(sc.inconclusive)}</span>` : sc.diverged ? '' : ' <span class="ok">一致</span>'} <small class="muted">分 ${sc.score}</small></summary>
 <div class="meta">
 <div>启动 A:${boot(sc.boot.A)} · B:${boot(sc.boot.B)}</div>
 ${sc.fatal.A.some(Boolean) || sc.fatal.B.some(Boolean) ? `<div class="warn">中断 A:${esc(sc.fatal.A.join(' / '))} · B:${esc(sc.fatal.B.join(' / '))}</div>` : ''}
@@ -93,6 +93,7 @@ export function renderReport(summary) {
   const m = summary.meta;
   const scs = [...summary.scenarios].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   const nBad = scs.filter((s) => s.diverged).length;
+  const nInc = scs.filter((s) => s.inconclusive).length;
   const iso = m.isolation;
   const isoLines = [
     ...['A', 'B'].map((k) => `${k}:树 ${esc(iso[k].dir)} · 已跟踪文件改动 ${iso[k].trackedChanges.length ? `<b class="bad">${esc(iso[k].trackedChanges.join(' | '))}</b>` : '无'}`
@@ -131,7 +132,8 @@ dl{display:grid;grid-template-columns:max-content 1fr;gap:2px 12px;margin:0}dt{c
 <dt>控制</dt><dd>视口 ${m.opts.viewport.width}×${m.opts.viewport.height} @${m.opts.dpr} · 假时钟纪元 ${esc(new Date(m.opts.epoch).toISOString())} · 暂停于 +${m.opts.pauseOffset} ms · 种子 ${m.opts.seed} · 冻结时机 ${esc(m.opts.freezeAt)} · 每步 ${m.opts.chunk} 帧 · 轮数 ${m.opts.repeats} · 阈值 单通道>${m.opts.threshold} · 判定线 = 噪声×${m.opts.noiseFactor}+${m.opts.margin} 个百分点${m.opts.ignoreRowShift ? ' · 「≥95% 可由 ±1 行位移解释」的像素差不判失败' : ''}</dd>
 <dt>浏览器</dt><dd>${esc(m.browser)}</dd>
 </dl>
-<div class="banner ${nBad ? 'bad' : ''}"><b>${nBad ? `${nBad} / ${scs.length} 个场景 B 相对 A 超出噪声底或有新报错` : `全部 ${scs.length} 个场景在噪声底内一致、无新增报错`}</b></div>
+<div class="banner ${nBad ? 'bad' : ''}"><b>${nBad ? `${nBad} / ${scs.length} 个场景 B 相对 A 超出噪声底或有新报错` : nInc ? `可对照的 ${scs.length - nInc} 个场景在噪声底内一致、无新增报错` : `全部 ${scs.length} 个场景在噪声底内一致、无新增报错`}</b></div>
+${nInc ? `<div class="banner warn"><b>${nInc} 个场景无法对照</b>(A 一轮都没起来):${scs.filter((s) => s.inconclusive).map((s) => esc(s.id)).join('、')}</div>` : ''}
 ${m.assets.linked ? '' : `<div class="banner warn"><b>⚠ 没有素材目录(${esc(m.assets.src)}):场景是在缺原画、缺光照数据的情况下渲染的</b>。画面对照只反映「无素材」路径;缺素材类报错两边一样,已单列不计。</div>`}
 ${m.mainDirty.tracked.length || m.mainDirty.untracked.length ? `<div class="banner warn">⚠ 主工作区有 ${m.mainDirty.tracked.length} 处未提交的已跟踪改动、${m.mainDirty.untracked.length} 个未跟踪文件 / 目录,它们<b>不在</b> B(${esc(m.B.sha.slice(0, 10))})里。</div>` : ''}
 ${m.unsupported.length ? `<div class="banner warn">以下入口在某一侧不存在,相应步骤记为 unsupported:<br>${m.unsupported.map((u) => esc(u)).join('<br>')}</div>` : ''}
