@@ -166,10 +166,12 @@ describe('HTMLText 与 pixi 一致', () => {
     m.destroy();
   });
 
-  for (const res of [1, 2]) {
+  // 对照 master 的 WebGL 路径(_createCanvas = false:SVG 图直接当池纹理的资源,纹理 = nextPow2(图的像素尺寸));
+  // Pixi 自己的 WebGPU 路径先画进按分辨率又乘一遍的池化画布,HiDPI 下纹理每边大一倍(R2-5)
+  for (const res of [1, 1.25, 2, 2.5]) {
     for (const [name, opts] of STYLES) {
       it(`出图(SVG / 画布 / 纹理):${name} @${res}x`, async () => {
-        const system = new PIXI.HTMLTextSystem({ type: PIXI.RendererType.WEBGPU, texture: { initSource() {} } } as unknown as PIXI.Renderer);
+        const system = new PIXI.HTMLTextSystem({ type: PIXI.RendererType.WEBGL } as unknown as PIXI.Renderer);
         const ps = new PIXI.HTMLTextStyle(structuredClone(opts) as PIXI.HTMLTextStyleOptions);
         srcLog.length = 0;
         const ptex = await system.getTexturePromise({ text: SUBTITLE, style: ps, resolution: res });
