@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
- * 无头跑 RHI 冒烟页:起 Vite → 用 Chromium 内核浏览器分别以 WebGPU / WebGL2 打开 → 读 `window.__rhiSmoke`
- * → 打表,有失败退出码非零。
+ * 无头跑 RHI 冒烟页:起 Vite → 用 Chromium 内核浏览器打开(WebGPU)→ 读 `window.__rhiSmoke` → 打表,
+ * 有失败退出码非零。
  *
  * 用法:
- *   node tools/rhi_smoke/run.mjs                        # 两个后端都跑
- *   node tools/rhi_smoke/run.mjs --backend webgl2
+ *   node tools/rhi_smoke/run.mjs
  *   node tools/rhi_smoke/run.mjs --browser <chrome/edge 可执行文件>
  *   node tools/rhi_smoke/run.mjs --case 渲染图 --verbose   # 只跑名字含关键字的用例,打印浏览器控制台错误
  *
@@ -23,7 +22,6 @@ const flag = (name, fallback) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 && args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : fallback;
 };
-const backends = String(flag('backend', 'webgpu,webgl2')).split(',');
 const browserPath = flag('browser', process.env.RHI_SMOKE_BROWSER);
 const caseFilter = flag('case', '');
 
@@ -53,36 +51,30 @@ const launch = {
 let failed = 0;
 try {
   const browser = await chromium.launch(launch);
-  for (const backend of backends) {
-    const page = await browser.newPage();
-    const pageErrors = [];
-    page.on('pageerror', (e) => pageErrors.push(String(e)));
-    const consoleErrors = [];
-    page.on('console', (m) => {
-      if (m.type() === 'error') consoleErrors.push(m.text());
-    });
-    await page.goto(`${base}?backend=${backend}${caseFilter ? `&case=${encodeURIComponent(caseFilter)}` : ''}`);
-    await page.waitForFunction(() => window.__rhiSmoke?.done, null, { timeout: 300_000 });
-    const r = await page.evaluate(() => window.__rhiSmoke);
-    console.log(`\n══ ${backend} ══ 实际后端:${r.backend ?? '无'} · ${r.renderer}`);
-    if (r.fatal) {
-      console.log(`  ✗ 设备创建失败:${r.fatal}`);
-      failed++;
-    } else if (r.backend !== backend) {
-      console.log(`  ✗ 请求 ${backend} 却得到 ${r.backend}`);
-      failed++;
-    }
-    for (const c of r.results) {
-      const mark = { pass: '✓', fail: '✗', skip: '–' }[c.status];
-      console.log(`  ${mark} ${c.name}(${c.ms}ms)${c.detail ? `\n      ${c.detail.replace(/\n/g, '\n      ')}` : ''}`);
-      if (c.status === 'fail') failed++;
-    }
-    if (args.includes('--verbose')) for (const e of consoleErrors) console.log(`  · 控制台:${e}`);
-    for (const e of pageErrors) {
-      console.log(`  ✗ 页面异常:${e}`);
-      failed++;
-    }
-    await page.close();
+  const page = await browser.newPage();
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push(String(e)));
+  const consoleErrors = [];
+  page.on('console', (m) => {
+    if (m.type() === 'error') consoleErrors.push(m.text());
+  });
+  await page.goto(`${base}${caseFilter ? `?case=${encodeURIComponent(caseFilter)}` : ''}`);
+  await page.waitForFunction(() => window.__rhiSmoke?.done, null, { timeout: 300_000 });
+  const r = await page.evaluate(() => window.__rhiSmoke);
+  console.log(`\n══ WebGPU ══ ${r.renderer}`);
+  if (r.fatal) {
+    console.log(`  ✗ 设备创建失败:${r.fatal}`);
+    failed++;
+  }
+  for (const c of r.results) {
+    const mark = { pass: '✓', fail: '✗' }[c.status];
+    console.log(`  ${mark} ${c.name}(${c.ms}ms)${c.detail ? `\n      ${c.detail.replace(/\n/g, '\n      ')}` : ''}`);
+    if (c.status === 'fail') failed++;
+  }
+  if (args.includes('--verbose')) for (const e of consoleErrors) console.log(`  · 控制台:${e}`);
+  for (const e of pageErrors) {
+    console.log(`  ✗ 页面异常:${e}`);
+    failed++;
   }
   await browser.close();
 } finally {

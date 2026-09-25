@@ -1,11 +1,11 @@
 /**
- * RHI 的 luma.gl 后端(WebGPU / WebGL2 两条路都走 luma.gl 9.4)。
+ * RHI 的 luma.gl 后端(只有 WebGPU,luma.gl 9.4)。
  *
- * 这一层只做三件事:把 RHI 描述符翻成 luma 调用;把 luma 里"静默"的行为(WebGL2 着色器未链接完
- * 就跳过 draw、绑定缺项、格式不配)变成当场可见的 RhiError / 诊断;以及执行 RHI 的资源所有权与
- * 帧级异常隔离。上层不许直接碰 luma 对象。
+ * 这一层只做三件事:把 RHI 描述符翻成 luma 调用;把 luma 里"静默"的行为(管线未就绪就跳过 draw、
+ * 绑定缺项、格式不配)变成当场可见的 RhiError / 诊断;以及执行 RHI 的资源所有权与帧级异常隔离。
+ * 上层不许直接碰 luma 对象。
  */
-import { luma, getAttributeInfosFromLayouts, Buffer as LumaBufferClass } from '@luma.gl/core';
+import { luma, Buffer as LumaBufferClass } from '@luma.gl/core';
 import type {
   Binding,
   Bindings,
@@ -26,13 +26,11 @@ import type {
   VertexArray,
 } from '@luma.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
-import { webgl2Adapter } from '@luma.gl/webgl';
 import {
   RhiBufferUsage,
   RhiError,
   RhiTextureUsage,
   isDepthFormat,
-  type RhiBackendType,
   type RhiBufferDesc,
   type RhiColorFormat,
   type RhiComputePipelineDesc,
@@ -71,7 +69,6 @@ import type {
 } from '../../RhiDevice';
 import { RhiReleaseQueue, RhiResourceBase, RhiResourceScope } from '../../RhiResourceScope';
 import {
-  backendAttemptOrder,
   stripRowPadding,
   toLumaBufferLayout,
   toLumaBufferUsage,
@@ -79,13 +76,10 @@ import {
   toLumaSamplerProps,
   toLumaTextureFormat,
   toLumaTextureUsage,
-  toRhiBackend,
 } from './lumaMapping';
 
 export interface LumaRhiDeviceOptions {
   canvas: HTMLCanvasElement | OffscreenCanvas;
-  /** `auto`:有 WebGPU 用 WebGPU,否则 WebGL2 */
-  backend?: 'auto' | RhiBackendType;
   /** 画布合成方式:世界画布在最底层用 opaque;需要透出下层时用 premultiplied */
   alphaMode?: 'opaque' | 'premultiplied';
   /** true = 按 devicePixelRatio;数字 = 固定比例;false = 1 */
@@ -96,48 +90,38 @@ export interface LumaRhiDeviceOptions {
   debug?: boolean;
 }
 
-/** 按顺序尝试后端,第一个成功的胜出;全部失败抛 RhiError('unsupported') 并列出每个后端的原因 */
+/** 建 WebGPU 设备。环境没有 WebGPU(或拿不到适配器)时抛 RhiError('unsupported'),不回落到别的图形 API。 */
 export async function createLumaRhiDevice(options: LumaRhiDeviceOptions): Promise<RhiDevice> {
-  const order = backendAttemptOrder(options.backend ?? 'auto', await hasUsableWebGPU());
-  const failures: string[] = [];
-  for (const backend of order) {
-    const sink: { target: LumaRhiDevice | null; early: unknown[] } = { target: null, early: [] };
-    try {
-      const device = await luma.createDevice({
-        type: backend === 'webgpu' ? 'webgpu' : 'webgl',
-        adapters: [webgpuAdapter, webgl2Adapter],
-        createCanvasContext: {
-          canvas: options.canvas,
-          alphaMode: options.alphaMode ?? 'opaque',
-          useDevicePixels: options.useDevicePixels ?? true,
-          autoResize: options.autoResize ?? true,
-        },
-        debug: options.debug ?? false,
-        debugShaders: options.debug ? 'errors' : 'never',
-        onError: (error: Error) => {
-          if (sink.target) sink.target._reportBackendError(error);
-          else sink.early.push(error);
-        },
-      });
-      const rhi = new LumaRhiDevice(device);
-      sink.target = rhi;
-      for (const e of sink.early) rhi._reportBackendError(e);
-      return rhi;
-    } catch (e) {
-      failures.push(`${backend}: ${e instanceof Error ? e.message : String(e)}`);
-    }
+  const gpu = (globalThis.navigator as Navigator & { gpu?: unknown } | undefined)?.gpu;
+  if (!gpu) {
+    throw new RhiError('unsupported', '此环境没有 WebGPU(navigator.gpu 不存在;需要 https 或 localhost,且浏览器 / WebView 开启 WebGPU)');
   }
-  throw new RhiError('unsupported', `没有可用的图形后端(${failures.join(';') || '无候选'})`);
-}
-
-async function hasUsableWebGPU(): Promise<boolean> {
-  const gpu = (globalThis.navigator as Navigator & { gpu?: { requestAdapter(): Promise<unknown> } } | undefined)?.gpu;
-  if (!gpu) return false;
+  const sink: { target: LumaRhiDevice | null; early: unknown[] } = { target: null, early: [] };
+  let device: Device;
   try {
-    return (await gpu.requestAdapter()) != null;
-  } catch {
-    return false;
+    device = await luma.createDevice({
+      type: 'webgpu',
+      adapters: [webgpuAdapter],
+      createCanvasContext: {
+        canvas: options.canvas,
+        alphaMode: options.alphaMode ?? 'opaque',
+        useDevicePixels: options.useDevicePixels ?? true,
+        autoResize: options.autoResize ?? true,
+      },
+      debug: options.debug ?? false,
+      debugShaders: options.debug ? 'errors' : 'never',
+      onError: (error: Error) => {
+        if (sink.target) sink.target._reportBackendError(error);
+        else sink.early.push(error);
+      },
+    });
+  } catch (e) {
+    throw new RhiError('unsupported', `WebGPU 设备创建失败:${e instanceof Error ? e.message : String(e)}`);
   }
+  const rhi = new LumaRhiDevice(device);
+  sink.target = rhi;
+  for (const e of sink.early) rhi._reportBackendError(e);
+  return rhi;
 }
 
 // ───────────────────────────── 资源
@@ -203,55 +187,27 @@ class LumaRhiSampler extends RhiResourceBase<'sampler'> implements RhiSampler {
 }
 
 class LumaRhiShader extends RhiResourceBase<'shader'> implements RhiShader {
-  private _flippedVs: Shader | null = null;
-
   constructor(
     scope: RhiResourceScope,
     releases: RhiReleaseQueue,
     label: string,
-    readonly vs: Shader | null,
-    readonly fs: Shader | null,
-    readonly cs: Shader | null,
+    readonly module: Shader,
     readonly entryPoints: { vertex?: string; fragment?: string; compute?: string },
-    /** WebGL2:顶点着色器源(用来生成 Y 翻转变体) */
-    private readonly glslVertex: string | null = null,
   ) {
     super('shader', label, scope, releases);
   }
 
-  /** WebGL2 离屏渲染用的 Y 翻转顶点着色器(见 `flipClipSpaceY`),首次要时建 */
-  flippedVs(device: Device): Shader {
-    if (!this._flippedVs) {
-      this._flippedVs = device.createShader({
-        id: `${this.label}:vs:flipY`,
-        stage: 'vertex',
-        source: flipClipSpaceY(this.glslVertex!, this.label),
-        language: 'glsl',
-      });
-    }
-    return this._flippedVs;
-  }
-
   get hasRender(): boolean {
-    return this.vs != null && this.fs != null;
+    return this.entryPoints.vertex != null && this.entryPoints.fragment != null;
   }
 
   get hasCompute(): boolean {
-    return this.cs != null;
+    return this.entryPoints.compute != null;
   }
 
   protected releaseBackend(): void {
-    // 同一个 WGSL 模块可能同时充当 vs / fs / cs,只销毁一次
-    for (const s of new Set([this.vs, this.fs, this.cs, this._flippedVs])) s?.destroy();
+    this.module.destroy();
   }
-}
-
-/** 一条管线在后端的一个具体实例 */
-interface PipelineVariant {
-  handle: RenderPipeline;
-  vertexArray: VertexArray;
-  /** 顶点流名 → 后端槽位(WebGPU 是逻辑缓冲槽,WebGL2 是该流里各属性的 location) */
-  streamSlots: ReadonlyMap<string, readonly number[]>;
 }
 
 class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implements RhiRenderPipeline {
@@ -262,18 +218,17 @@ class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implement
     scope: RhiResourceScope,
     releases: RhiReleaseQueue,
     label: string,
-    /** 画到离屏目标用的实例(WebGL2 下是 Y 翻转变体) */
-    readonly offscreen: PipelineVariant,
-    /** 画到画布后备缓冲用的实例(WebGPU 下与 offscreen 是同一个) */
-    readonly onscreen: PipelineVariant,
+    readonly handle: RenderPipeline,
+    readonly vertexArray: VertexArray,
+    /** 顶点流名 → luma 的逻辑缓冲槽 */
+    readonly streamSlots: ReadonlyMap<string, number>,
     readonly colorFormats: readonly RhiColorFormat[],
     readonly depthFormat: RhiDepthFormat | null,
     shaders: readonly Shader[],
     onFail: (e: unknown) => void,
   ) {
     super('render-pipeline', label, scope, releases);
-    const handles = [...new Set([offscreen.handle, onscreen.handle])];
-    this.ready = waitPipelineReady(label, handles, shaders).then(() => {
+    this.ready = waitPipelineReady(label, [handle], shaders).then(() => {
       this._isReady = true;
     });
     this.ready.catch(onFail);
@@ -283,15 +238,9 @@ class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implement
     return this._isReady;
   }
 
-  variant(toSwapchain: boolean): PipelineVariant {
-    return toSwapchain ? this.onscreen : this.offscreen;
-  }
-
   protected releaseBackend(): void {
-    for (const v of new Set([this.offscreen, this.onscreen])) {
-      v.vertexArray.destroy();
-      v.handle.destroy();
-    }
+    this.vertexArray.destroy();
+    this.handle.destroy();
   }
 }
 
@@ -452,7 +401,7 @@ class LumaCommandList implements RhiCommandList {
       const op = colorOps[i] ?? { load: 'clear' as const };
       if (op.load !== 'clear') return false as const;
       const v = op.clearValue ?? [0, 0, 0, 0];
-      // 整数格式要用整数清屏值(WebGL2 走 clearBufferuiv)
+      // 整数格式要用整数清屏值
       return format.endsWith('uint') ? new Uint32Array(v) : new Float32Array(v);
     });
     const depthOp = desc.depthOp ?? { load: 'clear' as const };
@@ -471,9 +420,6 @@ class LumaCommandList implements RhiCommandList {
   }
 
   beginComputePass(label: string): RhiComputePassEncoder {
-    if (!this.device.caps.compute) {
-      throw new RhiError('unsupported', `compute pass「${label}」:当前后端(${this.device.caps.backend})没有 compute`);
-    }
     this.assertNoOpenPass(`beginComputePass「${label}」`);
     const pass = this.encoder.beginComputePass({ id: label });
     this.stats.computePasses++;
@@ -493,13 +439,13 @@ class LumaCommandList implements RhiCommandList {
     if (srcOffset < 0 || dstOffset < 0 || srcOffset + size > s.size || dstOffset + size > d.size) {
       throw new RhiError('invalid-usage', `copyBufferToBuffer 越界:源「${s.label}」[${srcOffset}, +${size}) / 目标「${d.label}」[${dstOffset}, +${size})`);
     }
-    this.inOrder((enc) => enc.copyBufferToBuffer({
+    this.encoder.copyBufferToBuffer({
       sourceBuffer: s.handle,
       sourceOffset: srcOffset,
       destinationBuffer: d.handle,
       destinationOffset: dstOffset,
       size,
-    }));
+    });
   }
 
   copyTextureToTexture(src: RhiTexture, dst: RhiTexture, width?: number, height?: number): void {
@@ -518,7 +464,7 @@ class LumaCommandList implements RhiCommandList {
     if (s.format !== d.format) {
       throw new RhiError('invalid-usage', `copyTextureToTexture 格式不同:「${s.label}」${s.format} → 「${d.label}」${d.format}`);
     }
-    this.inOrder((enc) => enc.copyTextureToTexture({ sourceTexture: s.handle, destinationTexture: d.handle, width: w, height: h }));
+    this.encoder.copyTextureToTexture({ sourceTexture: s.handle, destinationTexture: d.handle, width: w, height: h });
   }
 
   pushDebugGroup(label: string): void {
@@ -568,25 +514,10 @@ class LumaCommandList implements RhiCommandList {
   private assertNoOpenPass(what: string): void {
     if (this.openPass) throw new RhiError('invalid-usage', `${what}:上一个 pass 还没 end()`);
   }
-
-  /**
-   * 保证命令按录制顺序执行。luma 的 WebGL2 后端里 render pass 是**当场执行**的,拷贝却攒到
-   * submit 才执行——照原样用,"先拷贝再在 pass 里读"会读到拷贝前的内容。WebGL2 下拷贝因此也当场执行。
-   */
-  private inOrder(record: (encoder: CommandEncoder) => void): void {
-    if (this.device.caps.backend !== 'webgl2') {
-      record(this.encoder);
-      return;
-    }
-    const immediate = this.device.luma.createCommandEncoder({ id: `${this.label}:copy` });
-    record(immediate);
-    this.device.luma.submit(immediate.finish());
-  }
 }
 
 class LumaRenderPassEncoder implements RhiRenderPassEncoder {
   private pipeline: LumaRhiRenderPipeline | null = null;
-  private variant: PipelineVariant | null = null;
   private bindingsSet = false;
   private readonly streams = new Map<string, LumaRhiBuffer>();
   private indexBuffer: LumaRhiBuffer | null = null;
@@ -610,17 +541,14 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
           + `与 render pass「${this.label}」的目标 [${this.target.colorFormats.join(', ')}|${this.target.depthFormat ?? '无深度'}] 不一致`,
       );
     }
-    const variant = p.variant(this.target instanceof LumaSwapchainTarget);
-    this.pass.setPipeline(variant.handle);
+    this.pass.setPipeline(p.handle);
     this.pipeline = p;
-    this.variant = variant;
     this.bindingsSet = false;
   }
 
   setBindings(bindings: RhiBindings): void {
     const p = this.requirePipeline('setBindings');
-    const layout = this.variant!.handle.shaderLayout;
-    this.pass.setBindings(this.device._toLumaBindings(layout, bindings, `管线「${p.label}」`, (r) => this.list._use(r)));
+    this.pass.setBindings(this.device._toLumaBindings(p.handle.shaderLayout, bindings, `管线「${p.label}」`, (r) => this.list._use(r)));
     this.bindingsSet = true;
   }
 
@@ -643,21 +571,13 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     this.indexBuffer = b;
   }
 
-  /** 坐标一律左上角为原点(WebGPU 约定);WebGL2 画布的左下原点由后端换算 */
+  /** 坐标左上角为原点 */
   setViewport(x: number, y: number, width: number, height: number): void {
-    this.pass.setParameters({ viewport: [x, this.glY(y, height), width, height, 0, 1] });
+    this.pass.setParameters({ viewport: [x, y, width, height, 0, 1] });
   }
 
   setScissor(x: number, y: number, width: number, height: number): void {
-    this.pass.setParameters({ scissorRect: [x, this.glY(y, height), width, height] });
-  }
-
-  /** WebGL2 离屏目标已经按 Y 翻转渲染,行序与 WebGPU 相同;只有画布要从左下原点换算 */
-  private glY(y: number, height: number): number {
-    if (this.device.caps.backend === 'webgl2' && this.target instanceof LumaSwapchainTarget) {
-      return this.target.height - y - height;
-    }
-    return y;
+    this.pass.setParameters({ scissorRect: [x, y, width, height] });
   }
 
   draw(vertexCount: number, instanceCount = 1, firstVertex = 0, firstInstance = 0): void {
@@ -687,24 +607,20 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
 
   private prepareDraw(indexed: boolean): LumaRhiRenderPipeline {
     const p = this.requirePipeline('draw');
-    const v = this.variant!;
-    if (!this.bindingsSet && v.handle.shaderLayout.bindings.length > 0) {
+    if (!this.bindingsSet && p.handle.shaderLayout.bindings.length > 0) {
       throw new RhiError('invalid-usage', `管线「${p.label}」需要资源绑定:setPipeline 之后先 setBindings 再 draw`);
     }
-    const va = v.vertexArray;
-    for (const [name, slots] of v.streamSlots) {
+    const va = p.vertexArray;
+    for (const [name, slot] of p.streamSlots) {
       const buf = this.streams.get(name);
       if (!buf) throw new RhiError('invalid-usage', `管线「${p.label}」的顶点流「${name}」没绑定缓冲`);
       buf.assertAlive(`顶点流「${name}」`);
-      for (const slot of slots) va.setBuffer(slot, buf.handle);
+      va.setBuffer(slot, buf.handle);
     }
     if (indexed) {
       if (!this.indexBuffer) throw new RhiError('invalid-usage', `drawIndexed 之前没 setIndexBuffer(管线「${p.label}」)`);
       this.indexBuffer.assertAlive('索引缓冲');
       va.setIndexBuffer(this.indexBuffer.handle);
-    } else if (this.device.caps.backend === 'webgl2') {
-      // WebGL2 下"有没有索引缓冲"就是"是不是索引绘制",非索引绘制必须摘掉
-      va.setIndexBuffer(null);
     }
     this.pass.setVertexArray(va);
     return p;
@@ -789,23 +705,16 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   private _destroyed = false;
 
   constructor(readonly luma: Device) {
-    const backend = toRhiBackend(luma.type);
-    const compute = backend === 'webgpu';
     const L = luma.limits;
     this.caps = {
-      backend,
-      compute,
-      storageTextures: compute,
-      float16RenderTargets: luma.isTextureFormatRenderable('rgba16float'),
-      float32RenderTargets: luma.isTextureFormatRenderable('rgba32float'),
       float32Filterable: luma.isTextureFormatFilterable('rgba32float'),
       maxTextureSize: L.maxTextureDimension2D,
       maxColorAttachments: L.maxColorAttachments,
-      maxComputeWorkgroupSize: compute ? [L.maxComputeWorkgroupSizeX, L.maxComputeWorkgroupSizeY, L.maxComputeWorkgroupSizeZ] : [0, 0, 0],
-      maxComputeInvocationsPerWorkgroup: compute ? L.maxComputeInvocationsPerWorkgroup : 0,
+      maxComputeWorkgroupSize: [L.maxComputeWorkgroupSizeX, L.maxComputeWorkgroupSizeY, L.maxComputeWorkgroupSizeZ],
+      maxComputeInvocationsPerWorkgroup: L.maxComputeInvocationsPerWorkgroup,
       swapchainFormat: luma.preferredColorFormat as RhiColorFormat,
     };
-    this.info = { backend, vendor: luma.info.vendor, renderer: luma.info.renderer };
+    this.info = { vendor: luma.info.vendor, renderer: luma.info.renderer };
     this.releases = new RhiReleaseQueue((e) => this.report(e, 'error'));
     this.rootScope = new RhiResourceScope('设备', this, null);
     this.swapchain = new LumaSwapchainTarget(this.rootScope, this.releases, luma.getDefaultCanvasContext(), this.caps.swapchainFormat);
@@ -837,9 +746,6 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     if (desc.data && desc.data.byteLength > size) {
       throw new RhiError('invalid-usage', `缓冲「${desc.label}」的初始数据(${desc.data.byteLength} 字节)超过大小 ${size}`);
     }
-    if ((desc.usage & RhiBufferUsage.STORAGE) && !this.caps.compute) {
-      throw new RhiError('unsupported', `缓冲「${desc.label}」要存储用途,当前后端(${this.caps.backend})不支持`);
-    }
     if ((desc.usage & RhiBufferUsage.INDEX) && !desc.indexFormat) {
       throw new RhiError('invalid-usage', `索引缓冲「${desc.label}」要给 indexFormat`);
     }
@@ -860,14 +766,11 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     if (desc.width > this.caps.maxTextureSize || desc.height > this.caps.maxTextureSize) {
       throw new RhiError('unsupported', `纹理「${desc.label}」${desc.width}×${desc.height} 超过设备上限 ${this.caps.maxTextureSize}`);
     }
-    if ((desc.usage & RhiTextureUsage.STORAGE) && !this.caps.storageTextures) {
-      throw new RhiError('unsupported', `纹理「${desc.label}」要存储用途,当前后端(${this.caps.backend})不支持`);
-    }
     if ((desc.usage & RhiTextureUsage.RENDER_TARGET) && !isDepthFormat(desc.format) && !this.luma.isTextureFormatRenderable(toLumaTextureFormat(desc.format))) {
       throw new RhiError('unsupported', `纹理「${desc.label}」的格式 ${desc.format} 在当前后端不能当渲染目标`);
     }
     const isImage = desc.data != null && !ArrayBuffer.isView(desc.data);
-    // 上传初始内容需要拷贝目标用途;图像源在 WebGPU 上走 copyExternalImageToTexture,还要求可作渲染附件
+    // 上传初始内容需要拷贝目标用途;图像源走 copyExternalImageToTexture,还要求可作渲染附件
     let usage = desc.usage;
     if (desc.data != null) usage |= RhiTextureUsage.COPY_DST;
     if (isImage) usage |= RhiTextureUsage.RENDER_TARGET;
@@ -878,7 +781,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       format: toLumaTextureFormat(desc.format),
       usage: toLumaTextureUsage(usage),
       mipLevels: desc.mipLevels ?? 1,
-      // 总是显式给采样状态:两个后端的缺省采样器不一样,缺省值统一由 RHI 定(clamp + 线性)
+      // 总是显式给采样状态,缺省值由 RHI 定(clamp + 线性),不依赖 luma 的设备缺省采样器
       sampler: toLumaSamplerProps(desc.sampler ?? {}),
     });
     const tex = new LumaRhiTexture(scope, this.releases, handle, usage, desc.label);
@@ -893,24 +796,17 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   }
 
   createShader(scope: RhiResourceScope, desc: RhiShaderDesc): RhiShader {
-    if (this.caps.backend === 'webgpu') {
-      if (!desc.wgsl) throw new RhiError('unsupported', `着色器「${desc.label}」没有 WGSL 源,WebGPU 后端用不了`);
-      const entry = {
-        vertex: desc.entryPoints?.vertex ?? findEntry(desc.wgsl, 'vertex'),
-        fragment: desc.entryPoints?.fragment ?? findEntry(desc.wgsl, 'fragment'),
-        compute: desc.entryPoints?.compute ?? findEntry(desc.wgsl, 'compute'),
-      };
-      const module = this.luma.createShader({ id: desc.label, source: desc.wgsl, language: 'wgsl' });
-      const render = entry.vertex && entry.fragment ? module : null;
-      return new LumaRhiShader(scope, this.releases, desc.label, render, render, entry.compute ? module : null, entry);
+    if (!desc.wgsl) throw new RhiError('invalid-usage', `着色器「${desc.label}」没有 WGSL 源`);
+    const entry = {
+      vertex: desc.entryPoints?.vertex ?? findEntry(desc.wgsl, 'vertex'),
+      fragment: desc.entryPoints?.fragment ?? findEntry(desc.wgsl, 'fragment'),
+      compute: desc.entryPoints?.compute ?? findEntry(desc.wgsl, 'compute'),
+    };
+    if (!entry.vertex && !entry.fragment && !entry.compute) {
+      throw new RhiError('invalid-usage', `着色器「${desc.label}」里找不到 @vertex / @fragment / @compute 入口`);
     }
-    if (!desc.glsl) {
-      const why = desc.wgsl && findEntry(desc.wgsl, 'compute') ? '(计算着色器在 WebGL2 上不可用)' : '';
-      throw new RhiError('unsupported', `着色器「${desc.label}」没有 GLSL 源,WebGL2 后端用不了${why}`);
-    }
-    const vs = this.luma.createShader({ id: `${desc.label}:vs`, stage: 'vertex', source: desc.glsl.vertex, language: 'glsl' });
-    const fs = this.luma.createShader({ id: `${desc.label}:fs`, stage: 'fragment', source: desc.glsl.fragment, language: 'glsl' });
-    return new LumaRhiShader(scope, this.releases, desc.label, vs, fs, null, {}, desc.glsl.vertex);
+    const module = this.luma.createShader({ id: desc.label, source: desc.wgsl, language: 'wgsl' });
+    return new LumaRhiShader(scope, this.releases, desc.label, module, entry);
   }
 
   createRenderPipeline(scope: RhiResourceScope, desc: RhiRenderPipelineDesc): RhiRenderPipeline {
@@ -920,42 +816,33 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       throw new RhiError('unsupported', `管线「${desc.label}」要 ${desc.colorFormats.length} 个颜色附件,设备上限 ${this.caps.maxColorAttachments}`);
     }
     const bufferLayout = toLumaBufferLayout(desc.vertexBuffers);
-    const build = (vs: Shader, flipY: boolean): PipelineVariant => {
-      const handle = this.luma.createRenderPipeline({
-        id: flipY ? `${desc.label}:flipY` : desc.label,
-        vs,
-        fs: shader.fs,
-        vertexEntryPoint: shader.entryPoints.vertex,
-        fragmentEntryPoint: shader.entryPoints.fragment,
-        bufferLayout,
-        topology: desc.topology ?? 'triangle-list',
-        colorAttachmentFormats: desc.colorFormats.map(toLumaTextureFormat) as never,
-        depthStencilAttachmentFormat: desc.depthFormat ? (toLumaTextureFormat(desc.depthFormat) as never) : undefined,
-        parameters: toLumaPipelineParameters(flipY ? { ...desc, cullMode: swapCull(desc.cullMode) } : desc),
-      });
-      const vertexArray = this.luma.createVertexArray({ shaderLayout: handle.shaderLayout, bufferLayout });
-      return { handle, vertexArray, streamSlots: this.resolveStreamSlots(handle, vertexArray, desc) };
-    };
-    const onscreen = build(shader.vs!, false);
-    // WebGL2:离屏目标用 Y 翻转变体渲染,纹理行序与 WebGPU 一致(第 0 行 = 画面顶部)。两个变体都预先建好,
-    // 不在第一次用到时现建——现建的那几帧 draw 会因为还没链接完被跳过。
-    const offscreen = this.caps.backend === 'webgl2' ? build(shader.flippedVs(this.luma), true) : onscreen;
+    const handle = this.luma.createRenderPipeline({
+      id: desc.label,
+      vs: shader.module,
+      fs: shader.module,
+      vertexEntryPoint: shader.entryPoints.vertex,
+      fragmentEntryPoint: shader.entryPoints.fragment,
+      bufferLayout,
+      topology: desc.topology ?? 'triangle-list',
+      colorAttachmentFormats: desc.colorFormats.map(toLumaTextureFormat) as never,
+      depthStencilAttachmentFormat: desc.depthFormat ? (toLumaTextureFormat(desc.depthFormat) as never) : undefined,
+      parameters: toLumaPipelineParameters(desc),
+    });
+    const vertexArray = this.luma.createVertexArray({ shaderLayout: handle.shaderLayout, bufferLayout });
+    const streamSlots = this.resolveStreamSlots(vertexArray, desc);
     return new LumaRhiRenderPipeline(
-      scope, this.releases, desc.label, offscreen, onscreen,
+      scope, this.releases, desc.label, handle, vertexArray, streamSlots,
       [...desc.colorFormats], desc.depthFormat ?? null,
-      [...new Set([shader.vs!, shader.fs!, offscreen.handle.vs ?? shader.vs!])],
+      [shader.module],
       (e) => this.report(e, 'error'),
     );
   }
 
   createComputePipeline(scope: RhiResourceScope, desc: RhiComputePipelineDesc): RhiComputePipeline {
-    if (!this.caps.compute) {
-      throw new RhiError('unsupported', `计算管线「${desc.label}」:当前后端(${this.caps.backend})没有 compute`);
-    }
     const shader = asShader(desc.shader, `计算管线「${desc.label}」`);
-    if (!shader.cs) throw new RhiError('invalid-usage', `计算管线「${desc.label}」:着色器「${shader.label}」没有计算入口`);
-    const handle = this.luma.createComputePipeline({ id: desc.label, shader: shader.cs, entryPoint: shader.entryPoints.compute });
-    return new LumaRhiComputePipeline(scope, this.releases, desc.label, handle, [shader.cs], (e) => this.report(e, 'error'));
+    if (!shader.hasCompute) throw new RhiError('invalid-usage', `计算管线「${desc.label}」:着色器「${shader.label}」没有计算入口`);
+    const handle = this.luma.createComputePipeline({ id: desc.label, shader: shader.module, entryPoint: shader.entryPoints.compute });
+    return new LumaRhiComputePipeline(scope, this.releases, desc.label, handle, [shader.module], (e) => this.report(e, 'error'));
   }
 
   createRenderTarget(scope: RhiResourceScope, desc: RhiRenderTargetDesc): RhiRenderTarget {
@@ -1118,9 +1005,8 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
    * @internal RHI 绑定 → luma 绑定;只保留着色器里声明了的名字,缺项当场报。
    *
    * 采样器按命名约定配给纹理:「纹理名 + Sampler」。配上的采样器**不单独进绑定**,而是设成纹理当前的
-   * 采样器——luma 的 WebGPU 路径会按「纹理名Sampler」自动补上纹理自带的采样器(再单独传一份就是重复
-   * 绑定,建 bind group 失败),WebGL2 本来就没有独立采样器。两个后端于是走同一条路。
-   * 着色器声明了「纹理名Sampler」而调用方没给采样器时,用纹理创建时的采样状态。
+   * 采样器——luma 会按「纹理名Sampler」自动补上纹理自带的采样器,再单独传一份就是同一槽位绑两次,
+   * 建 bind group 失败。着色器声明了「纹理名Sampler」而调用方没给采样器时,用纹理创建时的采样状态。
    */
   _toLumaBindings(
     layout: ShaderLayout | ComputeShaderLayout,
@@ -1161,7 +1047,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     this.report(error instanceof RhiError ? error : new RhiError('backend', error instanceof Error ? error.message : String(error)), 'error');
   }
 
-  /** @internal WebGL2 着色器还没链接完时 luma 会跳过 draw;每条管线只报一次 */
+  /** @internal 管线还没就绪时 luma 会跳过 draw;每条管线只报一次 */
   _warnSkippedDraw(p: LumaRhiRenderPipeline): void {
     if (this.warnedSkips.has(p)) return;
     this.warnedSkips.add(p);
@@ -1172,8 +1058,8 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   }
 
   /**
-   * 录制期间,本批命令已经引用过的资源不许再写:WebGPU 的写入走队列,在整批命令执行**之前**生效
-   * (前面的 draw 也会看到新值);WebGL2 当场生效(前面的 draw 看到旧值)。两个后端结果不同,
+   * 录制期间,本批命令已经引用过的资源不许再写:WebGPU 的写入走队列,在**整批命令执行之前**生效,
+   * 前面已经录进去的 draw 也会看到新值——不是"写在哪儿就从哪儿生效"。这类 bug 画面上只是数值不对,
    * 所以直接拒绝。逐次变化的数据用不同缓冲 / 偏移,或者在录制前写好。
    */
   private assertNotInFlight(resource: LumaRhiBuffer | LumaRhiTexture, what: string): void {
@@ -1182,27 +1068,17 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       throw new RhiError(
         'invalid-usage',
         `${what}:「${resource.label}」已被正在录制的「${list.label}」引用,录制期间不能再写`
-          + '(WebGPU 下写入在整批命令之前生效、WebGL2 下当场生效,两后端结果会不同;请换缓冲 / 偏移,或在录制前写好)',
+          + '(写入在整批命令执行之前生效,前面录好的命令也会读到新值;请换缓冲 / 偏移,或在录制前写好)',
       );
     }
   }
 
-  private resolveStreamSlots(handle: RenderPipeline, va: VertexArray, desc: RhiRenderPipelineDesc): Map<string, number[]> {
-    const slots = new Map<string, number[]>();
-    const layouts = desc.vertexBuffers ?? [];
-    if (layouts.length === 0) return slots;
-    if (this.caps.backend === 'webgpu') {
-      for (const l of layouts) {
-        const slot = va.getBufferSlot(l.name);
-        if (slot != null) slots.set(l.name, [slot]);
-      }
-      return slots;
-    }
-    const infos = getAttributeInfosFromLayouts(handle.shaderLayout, toLumaBufferLayout(layouts));
-    for (const info of Object.values(infos)) {
-      const list = slots.get(info.bufferName) ?? [];
-      list.push(info.location);
-      slots.set(info.bufferName, list);
+  private resolveStreamSlots(va: VertexArray, desc: RhiRenderPipelineDesc): Map<string, number> {
+    const slots = new Map<string, number>();
+    for (const l of desc.vertexBuffers ?? []) {
+      const slot = va.getBufferSlot(l.name);
+      if (slot == null) throw new RhiError('invalid-usage', `管线「${desc.label}」:顶点流「${l.name}」在着色器里没有对应的属性`);
+      slots.set(l.name, slot);
     }
     return slots;
   }
@@ -1234,7 +1110,7 @@ function findEntry(wgsl: string, stage: 'vertex' | 'fragment' | 'compute'): stri
   return m?.[1];
 }
 
-/** 等着色器编译、管线链接完成(WebGL2 并行编译、WebGPU 异步校验) */
+/** 等着色器编译、管线校验完成 */
 async function waitPipelineReady(label: string, pipelines: readonly RenderPipeline[], shaders: readonly Shader[]): Promise<void> {
   for (const s of new Set(shaders)) {
     const status = await s.asyncCompilationStatus;
@@ -1254,30 +1130,6 @@ async function waitPipelineReady(label: string, pipelines: readonly RenderPipeli
       await new Promise((r) => setTimeout(r, 4));
     }
   }
-}
-
-/**
- * GLSL 顶点着色器的 Y 翻转变体:把用户的 main 改名,外面包一层,末尾把裁剪空间 Y 取反。
- * WebGL2 的帧缓冲第 0 行在底部、WebGPU 在顶部;离屏渲染时翻一下,纹理行序、回读结果、
- * 视口 / 裁剪矩形坐标、gl_FragCoord 就都与 WebGPU 相同,多 pass 链不会一层层倒过来。
- */
-function flipClipSpaceY(source: string, label: string): string {
-  const re = /\bvoid\s+main\s*\(\s*(?:void\s*)?\)/g;
-  const hits = source.match(re)?.length ?? 0;
-  if (hits !== 1) {
-    throw new RhiError('invalid-usage', `着色器「${label}」的 GLSL 顶点源里要有且只有一个 void main(),实际 ${hits} 个`);
-  }
-  return `${source.replace(re, 'void rhi_userMain()')}
-void main() {
-  rhi_userMain();
-  gl_Position.y = -gl_Position.y;
-}
-`;
-}
-
-/** Y 翻转后三角形绕序反过来,剔除面跟着换,剔除结果才与 WebGPU 一致 */
-function swapCull(mode: RhiRenderPipelineDesc['cullMode']): RhiRenderPipelineDesc['cullMode'] {
-  return mode === 'front' ? 'back' : mode === 'back' ? 'front' : mode;
 }
 
 function sameFormats(a: readonly string[], b: readonly string[]): boolean {

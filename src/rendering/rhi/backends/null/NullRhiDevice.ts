@@ -33,7 +33,6 @@ import {
   RhiError,
   RhiTextureUsage,
   isDepthFormat,
-  type RhiBackendType,
   type RhiBufferDesc,
   type RhiColorFormat,
   type RhiComputePipelineDesc,
@@ -49,8 +48,6 @@ import {
 } from '../../types';
 
 export interface NullRhiDeviceOptions {
-  /** 模拟哪个后端的能力(缺省 webgpu) */
-  backend?: RhiBackendType;
   swapchainSize?: [number, number];
 }
 
@@ -220,7 +217,6 @@ class NullCommandList implements RhiCommandList {
   }
 
   beginComputePass(label: string): RhiComputePassEncoder {
-    if (!this.device.caps.compute) throw new RhiError('unsupported', `compute pass「${label}」:当前后端没有 compute`);
     this.assertClosed(`beginComputePass「${label}」`);
     this.stats.computePasses++;
     this.device.log.push(`begin compute ${label}`);
@@ -312,22 +308,15 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   private stats: RhiFrameStats = { frame: -1, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
 
   constructor(options: NullRhiDeviceOptions = {}) {
-    const backend = options.backend ?? 'webgpu';
-    const compute = backend === 'webgpu';
     this.caps = {
-      backend,
-      compute,
-      storageTextures: compute,
-      float16RenderTargets: true,
-      float32RenderTargets: compute,
       float32Filterable: false,
       maxTextureSize: 8192,
       maxColorAttachments: 8,
-      maxComputeWorkgroupSize: compute ? [256, 256, 64] : [0, 0, 0],
-      maxComputeInvocationsPerWorkgroup: compute ? 256 : 0,
+      maxComputeWorkgroupSize: [256, 256, 64],
+      maxComputeInvocationsPerWorkgroup: 256,
       swapchainFormat: 'bgra8unorm',
     };
-    this.info = { backend, vendor: 'null', renderer: 'null' };
+    this.info = { vendor: 'null', renderer: 'null' };
     this.releases = new RhiReleaseQueue((e) => this.report(e, 'error'));
     this.rootScope = new RhiResourceScope('设备', this, null);
     const [w, h] = options.swapchainSize ?? [640, 360];
@@ -351,7 +340,6 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   createBuffer(scope: RhiResourceScope, desc: RhiBufferDesc): RhiBuffer {
     const size = desc.size ?? desc.data?.byteLength ?? 0;
     if (!(size > 0)) throw new RhiError('invalid-usage', `缓冲「${desc.label}」大小必须 > 0`);
-    if ((desc.usage & RhiBufferUsage.STORAGE) && !this.caps.compute) throw new RhiError('unsupported', `缓冲「${desc.label}」要存储用途`);
     if ((desc.usage & RhiBufferUsage.INDEX) && !desc.indexFormat) throw new RhiError('invalid-usage', `索引缓冲「${desc.label}」要给 indexFormat`);
     this.log.push(`create buffer ${desc.label}`);
     return new NullBuffer(scope, this.releases, desc, size, this.log);
@@ -359,7 +347,6 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
 
   createTexture(scope: RhiResourceScope, desc: RhiTextureDesc): RhiTexture {
     if (!(desc.width > 0 && desc.height > 0)) throw new RhiError('invalid-usage', `纹理「${desc.label}」尺寸非法`);
-    if ((desc.usage & RhiTextureUsage.STORAGE) && !this.caps.storageTextures) throw new RhiError('unsupported', `纹理「${desc.label}」要存储用途`);
     let usage = desc.usage;
     if (desc.data != null) usage |= RhiTextureUsage.COPY_DST;
     this.log.push(`create texture ${desc.label}`);
@@ -372,9 +359,9 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
 
   createShader(scope: RhiResourceScope, desc: RhiShaderDesc): RhiShader {
     const wgsl = desc.wgsl ?? '';
-    const hasRender = this.caps.backend === 'webgpu' ? /@vertex/.test(wgsl) && /@fragment/.test(wgsl) : desc.glsl != null;
-    const hasCompute = this.caps.backend === 'webgpu' && /@compute/.test(wgsl);
-    if (!hasRender && !hasCompute) throw new RhiError('unsupported', `着色器「${desc.label}」没有当前后端可用的源`);
+    const hasRender = /@vertex/.test(wgsl) && /@fragment/.test(wgsl);
+    const hasCompute = /@compute/.test(wgsl);
+    if (!hasRender && !hasCompute) throw new RhiError('invalid-usage', `着色器「${desc.label}」里找不到 @vertex / @fragment / @compute 入口`);
     return new NullShader(scope, this.releases, desc.label, hasRender, hasCompute);
   }
 
@@ -384,7 +371,6 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   }
 
   createComputePipeline(scope: RhiResourceScope, desc: RhiComputePipelineDesc): RhiComputePipeline {
-    if (!this.caps.compute) throw new RhiError('unsupported', `计算管线「${desc.label}」:当前后端没有 compute`);
     if (!desc.shader.hasCompute) throw new RhiError('invalid-usage', `计算管线「${desc.label}」:着色器没有计算入口`);
     return new NullComputePipeline('compute-pipeline', desc.label, scope, this.releases);
   }

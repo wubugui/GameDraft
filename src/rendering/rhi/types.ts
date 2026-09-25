@@ -1,14 +1,12 @@
 /**
  * RHI(渲染硬件接口)的公共类型。
  *
- * 上层渲染代码只认这里的类型;具体图形 API 由后端(`backends/`)翻译。命名与语义照 WebGPU:
- * 显式的 render pass / compute pass、创建后不可变的管线、按名字绑定资源、资源必须有所有者。
- * WebGL2 后端是降级实现:没有 compute、没有存储纹理,能力差异一律经 `RhiCaps` 暴露,不静默退化。
+ * 上层渲染代码只认这里的类型;具体图形 API 由后端(`backends/`)翻译。只有 WebGPU 一个图形后端,
+ * 命名与语义照 WebGPU:显式的 render pass / compute pass、创建后不可变的管线、按名字绑定资源、
+ * 资源必须有所有者。没有 WebGL 回落:环境没有 WebGPU 就在创建设备时明确失败。
  */
 
-export type RhiBackendType = 'webgpu' | 'webgl2';
-
-/** 颜色格式(取 WebGPU 名)。能不能当渲染目标 / 能不能线性过滤因后端而异,查 `RhiCaps`。 */
+/** 颜色格式(取 WebGPU 名)。32 位浮点能否线性过滤取决于设备特性,查 `RhiCaps`。 */
 export type RhiColorFormat =
   | 'r8unorm'
   | 'rg8unorm'
@@ -50,7 +48,7 @@ export const RhiTextureUsage = {
   SAMPLED: 1 << 0,
   /** 作颜色 / 深度附件 */
   RENDER_TARGET: 1 << 1,
-  /** 存储纹理(compute 读写),仅 WebGPU */
+  /** 存储纹理(compute 读写) */
   STORAGE: 1 << 2,
   /** 可作拷贝源;回读(`readTexture`)要求有这一位 */
   COPY_SRC: 1 << 3,
@@ -117,20 +115,14 @@ export interface RhiTextureDesc {
    */
   premultiplyAlpha?: boolean;
   flipY?: boolean;
-  /** WebGL2 下纹理自带的采样状态(WebGPU 下另绑采样器,见 `RhiBindings` 的命名约定) */
+  /** 纹理自带的采样状态:着色器声明了「纹理名Sampler」而绑定时没单独给采样器时用它(见 `RhiBindings`) */
   sampler?: RhiSamplerDesc;
 }
 
-/**
- * 着色器源。两个后端各用各的语言,运行时只取当前后端那一份:
- * - WebGPU:`wgsl`,一个模块里可同时含顶点、片元、计算入口;
- * - WebGL2:`glsl`,GLSL ES 3.00(源码第一行写 `#version 300 es`),只有顶点 + 片元。
- * 只写了 wgsl 的着色器在 WebGL2 上创建会直接报"不支持",不做静默降级。
- */
+/** 着色器源:一个 WGSL 模块,可同时含顶点、片元、计算入口(入口名缺省按 `@vertex` 等标注自动找)。 */
 export interface RhiShaderDesc {
   label: string;
-  wgsl?: string;
-  glsl?: { vertex: string; fragment: string };
+  wgsl: string;
   entryPoints?: { vertex?: string; fragment?: string; compute?: string };
 }
 
@@ -255,7 +247,7 @@ export interface RhiRenderPassDesc {
 }
 
 export type RhiErrorCode =
-  /** 当前后端没有这项能力(例如 WebGL2 上的 compute) */
+  /** 环境 / 设备没有这项能力(没有 WebGPU、超出设备上限、格式不支持) */
   | 'unsupported'
   /** 用了已销毁的资源 */
   | 'destroyed-resource'

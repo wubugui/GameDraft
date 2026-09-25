@@ -5,20 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>RHI 冒烟</title>
   <style>
-    :root { color-scheme: light dark; --ok: #1a7f37; --bad: #cf222e; --skip: #8c959f; }
+    :root { color-scheme: light dark; --ok: #1a7f37; --bad: #cf222e; }
     body { font: 14px/1.5 system-ui, sans-serif; margin: 16px; }
-    nav a { margin-right: 12px; }
     table { border-collapse: collapse; margin-top: 12px; width: 100%; max-width: 1100px; }
     td, th { border-bottom: 1px solid #8884; padding: 4px 8px; text-align: left; vertical-align: top; }
-    .pass { color: var(--ok); } .fail { color: var(--bad); } .skip { color: var(--skip); }
+    .pass { color: var(--ok); } .fail { color: var(--bad); }
     #summary { font-weight: 600; margin-top: 8px; }
     canvas { width: 64px; height: 64px; border: 1px solid #8886; }
     pre { white-space: pre-wrap; margin: 0; }
   </style>
 </head>
 <body>
-  <h1>RHI 真机冒烟</h1>
-  <nav>后端:<a href="?backend=auto">auto</a><a href="?backend=webgpu">webgpu</a><a href="?backend=webgl2">webgl2</a></nav>
+  <h1>RHI 真机冒烟(WebGPU)</h1>
   <p>画布(上屏用例画在这里):<canvas id="view" width="64" height="64"></canvas></p>
   <div id="summary">运行中…</div>
   <table><thead><tr><th>用例</th><th>结果</th><th>说明</th></tr></thead><tbody id="rows"></tbody></table>

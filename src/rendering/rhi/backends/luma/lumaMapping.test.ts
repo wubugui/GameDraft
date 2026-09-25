@@ -3,7 +3,6 @@ import { Buffer as LumaBuffer, Texture as LumaTexture } from '@luma.gl/core';
 import { RhiBlend, RhiBufferUsage, RhiTextureUsage } from '../../types';
 import type { RhiShader } from '../../RhiDevice';
 import {
-  backendAttemptOrder,
   stripRowPadding,
   toLumaBufferLayout,
   toLumaBufferUsage,
@@ -13,13 +12,6 @@ import {
 } from './lumaMapping';
 
 describe('lumaMapping', () => {
-  it('后端尝试顺序:auto 先 WebGPU 后 WebGL2;指定了就只试那一个(不偷偷换)', () => {
-    expect(backendAttemptOrder('auto', true)).toEqual(['webgpu', 'webgl2']);
-    expect(backendAttemptOrder('auto', false)).toEqual(['webgl2']);
-    expect(backendAttemptOrder('webgpu', false)).toEqual(['webgpu']);
-    expect(backendAttemptOrder('webgl2', true)).toEqual(['webgl2']);
-  });
-
   it('用途位逐位映射到 luma 的常量(不是自家位值原样透传)', () => {
     expect(toLumaBufferUsage(RhiBufferUsage.VERTEX | RhiBufferUsage.COPY_DST)).toBe(LumaBuffer.VERTEX | LumaBuffer.COPY_DST);
     expect(toLumaBufferUsage(RhiBufferUsage.STORAGE | RhiBufferUsage.COPY_SRC)).toBe(LumaBuffer.STORAGE | LumaBuffer.COPY_SRC);
@@ -30,7 +22,7 @@ describe('lumaMapping', () => {
       .toBe(LumaTexture.STORAGE | LumaTexture.COPY_SRC | LumaTexture.COPY_DST);
   });
 
-  it('去行填充:WebGPU 回读按 256 字节对齐行跨度', () => {
+  it('去行填充:纹理回读的行跨度按 256 字节对齐', () => {
     // 3×2 的 rgba8,每行真实 12 字节,填充到 16
     const src = new Uint8Array(32);
     for (let i = 0; i < 12; i++) {

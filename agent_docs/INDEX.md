@@ -61,7 +61,7 @@
 - [Pixi v8 静默陷阱](runtime/mechanisms/pixi-v8-traps.md) — 一批"写法看着对、行为静默错"的引擎事实:渲染抛一次异常=整局死透(ticker 再不排帧)、没写 #version 300 es 的源按 GLSL ES 1.00 编、clear 不认 target、BindGroup 见死即自毁、滤镜容器里 screen 是临时 RT 局部坐标、解码期预乘吃掉 alpha 数据、leading 裁末行、Container 无 hitArea 恒不命中
 - [位面系统(PlaneReconciler)](runtime/mechanisms/plane-system.md) — 位面=全局一等资产(normal 也是位面),实体归属位面;PlaneReconciler 从叙事状态派生一切、每个边界重派生、零自持久化
 - [私有叙事信号(按 owner 定向投递)](runtime/mechanisms/private-narrative-signal.md) — signals 登记表标 scope:private 的信号只投递给发射方 owner 拥有的 wrapper 图;让 N 个同类实体共用一个信号名和一张发射端对话图
-- [RHI(渲染硬件接口 · 显式 pass · 渲染图 · luma.gl 后端)](runtime/mechanisms/rhi.md) — 取代 Pixi 做底层图形的引擎式 RHI——显式 render/compute pass、创建后不可变的管线、按名字绑定、资源一律经作用域创建(有主);渲染图按声明的读写剔除 pass、算生命期、别名复用瞬时资源;唯一实现是 luma.gl(WebGPU 优先、WebGL2 回落),两后端差异(compute、Y 朝向、命令时序、采样器)在后端里抹平或经 caps 暴露,不静默降级。游戏尚未接入
+- [RHI(渲染硬件接口 · 显式 pass · 渲染图 · 只有 WebGPU)](runtime/mechanisms/rhi.md) — 取代 Pixi 做底层图形的引擎式 RHI——显式 render/compute pass、创建后不可变的管线、按名字绑定(WGSL)、资源一律经作用域创建(有主);渲染图按声明的读写剔除 pass、算生命期、别名复用瞬时资源;唯一图形后端是 WebGPU(经 luma.gl),没有 WebGL 回落,环境没 WebGPU 就在建设备时明确失败。游戏尚未接入
 - [运行时持久化(存档/玩家设置)落文件,不落浏览器存储](runtime/mechanisms/runtime-persistence.md) — 存档与玩家偏好一律经 PersistentStore 落本地文件;三后端 Tauri>dev server>内存;localStorage 只剩一次性迁移读取;内存降级必须让 UI 说实话
 - [存读档硬契约](runtime/mechanisms/save-restore-contracts.md) — load 坏档先拒+快照回滚、save 返 Promise<boolean>(落盘是文件 I/O);查询走内存镜像保持同步;读档静默清 zone、清位面 manual override;新游戏=净化 URL 整页 reload
 - [scenarios.json 运行时消费语义(退役中)](runtime/mechanisms/scenario-catalog-semantics.md) — 一等公民 scenario 已数据侧退役、零数据喂养;新内容一律走 narrative scenario_* 子图,别把活儿写进 Scenarios 面板

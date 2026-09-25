@@ -12,7 +12,6 @@ import type {
 import {
   RhiBufferUsage,
   RhiTextureUsage,
-  type RhiBackendType,
   type RhiRenderPipelineDesc,
   type RhiSamplerDesc,
   type RhiTextureFormat,
@@ -102,23 +101,8 @@ export function toLumaSamplerProps(desc: RhiSamplerDesc): SamplerProps {
   return props;
 }
 
-/** luma 的设备类型名 → RHI 后端名 */
-export function toRhiBackend(type: string): RhiBackendType {
-  return type === 'webgpu' ? 'webgpu' : 'webgl2';
-}
-
 /**
- * 后端尝试顺序。`auto` = 能用 WebGPU 就先试 WebGPU,失败回落 WebGL2;
- * 指定了就只试那一个(指定 WebGPU 而环境没有,直接失败,不偷偷换成 WebGL2)。
- */
-export function backendAttemptOrder(requested: 'auto' | RhiBackendType, hasWebGPU: boolean): RhiBackendType[] {
-  if (requested === 'webgpu') return ['webgpu'];
-  if (requested === 'webgl2') return ['webgl2'];
-  return hasWebGPU ? ['webgpu', 'webgl2'] : ['webgl2'];
-}
-
-/**
- * 把一份紧排或带行填充的回读数据去掉行填充。
+ * 把回读数据去掉行填充(WebGPU 的纹理→缓冲拷贝要求行跨度按 256 字节对齐)。
  * `bytesPerRow` 是带填充的行跨度,`rowBytes` 是一行真实像素的字节数。
  */
 export function stripRowPadding(src: Uint8Array, width: number, height: number, bytesPerPixel: number, bytesPerRow: number): Uint8Array {

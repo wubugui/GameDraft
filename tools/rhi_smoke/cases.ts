@@ -1,6 +1,5 @@
 /**
- * RHI 真机冒烟用例。每个用例在真设备上画 / 算,然后回读像素或缓冲逐一核对。
- * 同一套用例在 WebGPU 与 WebGL2 上各跑一遍,核对的是**同一组期望值**——两个后端结果一致才算过。
+ * RHI 真机冒烟用例(WebGPU)。每个用例在真设备上画 / 算,然后回读像素或缓冲逐一核对。
  *
  * 约定(与 RHI 一致):纹理第 0 行 = 画面顶部;uv (0,0) = 左上;视口 / 裁剪矩形左上为原点。
  */
@@ -30,7 +29,6 @@ export interface CaseContext {
 
 export interface SmokeCase {
   name: string;
-  only?: 'webgpu' | 'webgl2';
   run(ctx: CaseContext): Promise<string | void>;
 }
 
@@ -99,20 +97,6 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) color: vec4<f32> }
 }
 @fragment fn fs(i: VOut) -> @location(0) vec4<f32> { return i.color; }
 `,
-  glsl: {
-    vertex: `#version 300 es
-in vec2 aPos;
-in vec4 aColor;
-out vec4 vColor;
-void main() { vColor = aColor; gl_Position = vec4(aPos, 0.0, 1.0); }
-`,
-    fragment: `#version 300 es
-precision highp float;
-in vec4 vColor;
-out vec4 fragColor;
-void main() { fragColor = vColor; }
-`,
-  },
 };
 
 const VERTEX_COLOR_LAYOUT = [{
@@ -131,15 +115,6 @@ struct VOut { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
   return o;
 }
 `;
-const FULLSCREEN_GLSL_VS = `#version 300 es
-out vec2 vUv;
-void main() {
-  vec2 p = vec2(gl_VertexID == 1 ? 3.0 : -1.0, gl_VertexID == 2 ? 3.0 : -1.0);
-  vUv = vec2(p.x * 0.5 + 0.5, 0.5 - p.y * 0.5);
-  gl_Position = vec4(p, 0.0, 1.0);
-}
-`;
-
 /** 采样纹理 × 统一缓冲里的颜色 */
 const TINTED_TEXTURE: RhiShaderDesc = {
   label: '纹理×颜色',
@@ -152,17 +127,6 @@ struct Params { tint: vec4<f32> };
   return textureSample(uImage, uImageSampler, i.uv) * params.tint;
 }
 `,
-  glsl: {
-    vertex: FULLSCREEN_GLSL_VS,
-    fragment: `#version 300 es
-precision highp float;
-layout(std140) uniform params { vec4 tint; };
-uniform sampler2D uImage;
-in vec2 vUv;
-out vec4 fragColor;
-void main() { fragColor = texture(uImage, vUv) * tint; }
-`,
-  },
 };
 
 /** 纯色(统一缓冲),可选深度 */
@@ -177,23 +141,7 @@ struct Params { color: vec4<f32>, rect: vec4<f32>, depth: vec4<f32> };
 }
 @fragment fn fs() -> @location(0) vec4<f32> { return params.color; }
 `;
-const SOLID_GLSL = {
-  vertex: `#version 300 es
-layout(std140) uniform params { vec4 color; vec4 rect; vec4 depth; };
-void main() {
-  int i = gl_VertexID;
-  vec2 c = vec2((i == 1 || i == 4 || i == 5) ? 1.0 : 0.0, (i == 2 || i == 3 || i == 5) ? 1.0 : 0.0);
-  gl_Position = vec4(mix(rect.xy, rect.zw, c), depth.x, 1.0);
-}
-`,
-  fragment: `#version 300 es
-precision highp float;
-layout(std140) uniform params { vec4 color; vec4 rect; vec4 depth; };
-out vec4 fragColor;
-void main() { fragColor = color; }
-`,
-};
-const SOLID: RhiShaderDesc = { label: '纯色', wgsl: SOLID_WGSL, glsl: SOLID_GLSL };
+const SOLID: RhiShaderDesc = { label: '纯色', wgsl: SOLID_WGSL };
 
 function solidParams(color: number[], rect = [-1, -1, 1, 1], depth = 0.5): Float32Array {
   return new Float32Array([...color, ...rect, depth, 0, 0, 0]);
@@ -208,9 +156,8 @@ export const CASES: SmokeCase[] = [
       const c = dev.caps;
       check(c.maxTextureSize >= 4096, `maxTextureSize=${c.maxTextureSize}`);
       check(c.maxColorAttachments >= 4, `maxColorAttachments=${c.maxColorAttachments}`);
-      check(c.compute === (c.backend === 'webgpu'), `compute=${c.compute} 与后端 ${c.backend} 不符`);
-      if (c.compute) check(c.maxComputeInvocationsPerWorkgroup >= 64, 'compute 限额异常');
-      return `${dev.info.backend} · ${dev.info.renderer} · 画布格式 ${c.swapchainFormat} · f16RT=${c.float16RenderTargets} f32RT=${c.float32RenderTargets}`;
+      check(c.maxComputeInvocationsPerWorkgroup >= 64, `maxComputeInvocationsPerWorkgroup=${c.maxComputeInvocationsPerWorkgroup}`);
+      return `${dev.info.renderer || dev.info.vendor || '(适配器没报名字)'} · 画布格式 ${c.swapchainFormat} · f32 可过滤=${c.float32Filterable}`;
     },
   },
   {
@@ -290,18 +237,6 @@ export const CASES: SmokeCase[] = [
 }
 @fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(0.0, 1.0, 0.0, 1.0); }
 `,
-        glsl: {
-          vertex: `#version 300 es
-in vec2 aCorner;
-in vec2 aOffset;
-void main() { gl_Position = vec4(aCorner * 0.25 + aOffset, 0.0, 1.0); }
-`,
-          fragment: `#version 300 es
-precision highp float;
-out vec4 fragColor;
-void main() { fragColor = vec4(0.0, 1.0, 0.0, 1.0); }
-`,
-        },
       });
       const pipe = scope.createRenderPipeline({
         label: '实例方块', shader, colorFormats: ['rgba8unorm'],
@@ -402,16 +337,6 @@ struct FOut { @location(0) a: vec4<f32>, @location(1) b: vec4<f32> };
   return o;
 }
 `,
-        glsl: {
-          vertex: FULLSCREEN_GLSL_VS,
-          fragment: `#version 300 es
-precision highp float;
-in vec2 vUv;
-layout(location = 0) out vec4 outA;
-layout(location = 1) out vec4 outB;
-void main() { outA = vec4(1.0, 0.0, 0.0, 1.0); outB = vec4(vUv, 0.0, 1.0); }
-`,
-        },
       });
       const usage = RhiTextureUsage.RENDER_TARGET | RhiTextureUsage.COPY_SRC;
       const a = scope.createTexture({ label: 'A', width: 16, height: 16, format: 'rgba8unorm', usage });
@@ -457,7 +382,7 @@ void main() { outA = vec4(1.0, 0.0, 0.0, 1.0); outB = vec4(vUv, 0.0, 1.0); }
     },
   },
   {
-    name: '背面剔除两后端一致',
+    name: '背面剔除(逆时针为正面)',
     async run(ctx) {
       const { dev, scope } = ctx;
       const shader = scope.createShader(VERTEX_COLOR);
@@ -517,7 +442,7 @@ void main() { outA = vec4(1.0, 0.0, 0.0, 1.0); outB = vec4(vUv, 0.0, 1.0); }
     async run(ctx) {
       const { dev, scope } = ctx;
       const pool = new RgTransientPool(scope);
-      const hdr: RhiColorFormat = dev.caps.float16RenderTargets ? 'rgba16float' : 'rgba8unorm';
+      const hdr: RhiColorFormat = 'rgba16float';
       const solid = scope.createShader(SOLID);
       const scenePipe = scope.createRenderPipeline({ label: '场景', shader: solid, colorFormats: [hdr] });
       const post = scope.createShader(TINTED_TEXTURE);
@@ -533,7 +458,7 @@ void main() { outA = vec4(1.0, 0.0, 0.0, 1.0); outB = vec4(vUv, 0.0, 1.0); }
       const frame = () => {
         const before = ctx.diagnostics.length;
         const ok = dev.runFrame((f) => {
-          const g = new RenderGraph({ label: '冒烟', caps: dev.caps, pool });
+          const g = new RenderGraph({ label: '冒烟', pool });
           void f;
           const back = g.importRenderTarget('合成目标', compositeTarget);
           const out = g.importTexture('结果', result);
@@ -588,7 +513,6 @@ void main() { outA = vec4(1.0, 0.0, 0.0, 1.0); outB = vec4(vUv, 0.0, 1.0); }
   },
   {
     name: 'compute:存储缓冲读写 + 回读',
-    only: 'webgpu',
     async run(ctx) {
       const { dev, scope } = ctx;
       const shader = scope.createShader({
@@ -617,7 +541,6 @@ void main() { outA = vec4(1.0, 0.0, 0.0, 1.0); outB = vec4(vUv, 0.0, 1.0); }
   },
   {
     name: '渲染图:compute 写存储纹理 → render 采样',
-    only: 'webgpu',
     async run(ctx) {
       const { dev, scope } = ctx;
       const pool = new RgTransientPool(scope);
@@ -640,7 +563,7 @@ void main() { outA = vec4(1.0, 0.0, 0.0, 1.0); outB = vec4(vUv, 0.0, 1.0); }
       await Promise.all([gen.ready, show.ready]);
       const nearest = scope.createSampler({ label: '最近点', magFilter: 'nearest', minFilter: 'nearest' });
       submitOk(ctx, '图', (c) => {
-        const g = new RenderGraph({ label: 'compute→render', caps: dev.caps, pool });
+        const g = new RenderGraph({ label: 'compute→render', pool });
         const field = g.createTexture('场', { width: 16, height: 16, format: 'rgba8unorm' });
         const out = g.importTexture('结果', result);
         g.addComputePass('生成场', {
@@ -667,24 +590,6 @@ void main() { outA = vec4(1.0, 0.0, 0.0, 1.0); outB = vec4(vUv, 0.0, 1.0); }
       const rb = await dev.readTexture(result);
       expectPx(rb, 3, 8, [255, 255, 0, 255], '左半 compute 写黄');
       expectPx(rb, 12, 8, [0, 0, 255, 255], '右半 compute 写蓝');
-    },
-  },
-  {
-    name: 'WebGL2 上 compute 明确报不支持',
-    only: 'webgl2',
-    async run({ dev, scope }) {
-      const code = (fn: () => unknown) => {
-        try {
-          fn();
-        } catch (e) {
-          return e instanceof RhiError ? e.code : String(e);
-        }
-        return 'no-error';
-      };
-      check(code(() => scope.createShader({ label: 'cs', wgsl: '@compute @workgroup_size(1) fn main() {}' })) === 'unsupported', '只有 WGSL 的着色器应报 unsupported');
-      check(code(() => scope.createBuffer({ label: 's', size: 16, usage: RhiBufferUsage.STORAGE })) === 'unsupported', '存储缓冲应报 unsupported');
-      const g = new RenderGraph({ label: 'g', caps: dev.caps, pool: new RgTransientPool(scope) });
-      check(code(() => g.addComputePass('c', { sideEffect: true, execute: () => {} })) === 'unsupported', '渲染图 compute pass 应报 unsupported');
     },
   },
   {
@@ -728,7 +633,6 @@ void main() { outA = vec4(1.0, 0.0, 0.0, 1.0); outB = vec4(vUv, 0.0, 1.0); }
         shader: scope.createShader({
           label: '坏',
           wgsl: '@vertex fn vs() -> @builtin(position) vec4<f32> { return undefined_thing; }\n@fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }',
-          glsl: { vertex: '#version 300 es\nvoid main() { gl_Position = undefined_thing; }', fragment: '#version 300 es\nprecision highp float;\nout vec4 c;\nvoid main() { c = vec4(1.0); }' },
         }),
       });
       let rejected: unknown = null;

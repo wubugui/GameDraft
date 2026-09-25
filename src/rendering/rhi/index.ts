@@ -2,7 +2,7 @@
  * RHI 公共入口。上层渲染代码只从这里取东西,不直接碰 luma.gl 或任何图形 API。
  *
  * 分层:`types` / `RhiDevice`(接口)→ `RhiResourceScope`(资源所有权)→ `graph/`(渲染图,只依赖接口)
- * → `backends/luma`(唯一实现:WebGPU,回落 WebGL2)。
+ * → `backends/luma`(唯一图形实现:WebGPU,没有回落)、`backends/null`(不碰 GPU,单测用)。
  */
 export * from './types';
 export type * from './RhiDevice';

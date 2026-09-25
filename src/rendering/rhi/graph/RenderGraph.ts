@@ -12,7 +12,6 @@
  */
 import type {
   RhiBuffer,
-  RhiCaps,
   RhiCommandList,
   RhiComputePassEncoder,
   RhiRenderPassEncoder,
@@ -184,13 +183,11 @@ interface PassNode {
 
 export interface RenderGraphOptions {
   label: string;
-  caps: RhiCaps;
   pool: RgTransientPool;
 }
 
 export class RenderGraph {
   readonly label: string;
-  private readonly caps: RhiCaps;
   private readonly pool: RgTransientPool;
   private readonly resources: ResNode[] = [];
   private readonly passes: PassNode[] = [];
@@ -200,7 +197,6 @@ export class RenderGraph {
 
   constructor(options: RenderGraphOptions) {
     this.label = options.label;
-    this.caps = options.caps;
     this.pool = options.pool;
   }
 
@@ -272,12 +268,8 @@ export class RenderGraph {
     this.addPass(name, 'render', accesses, desc.sideEffect ?? false).render = desc;
   }
 
-  /** 设备没有 compute(WebGL2)时当场抛 RhiError('unsupported'),上层据此走别的路径 */
   addComputePass(name: string, desc: RgComputePassDesc): void {
     this.assertOpen(`addComputePass「${name}」`);
-    if (!this.caps.compute) {
-      throw new RhiError('unsupported', `compute pass「${name}」:当前后端(${this.caps.backend})没有 compute`);
-    }
     const accesses: Access[] = [];
     for (const r of desc.reads ?? []) {
       const n = this.node(r, name);
@@ -459,11 +451,8 @@ export class RenderGraph {
   private validate(): void {
     for (const r of this.resources) {
       if (r.first < 0) continue;
-      if (r.kind === 'texture') {
-        if ((r.usage & RhiTextureUsage.STORAGE) && !this.caps.storageTextures) {
-          throw new RhiError('unsupported', `「${r.name}」要当存储纹理,当前后端(${this.caps.backend})不支持`);
-        }
-        if (r.imported) this.requireImportedUsage(r, (r.imported as RhiTexture).usage);
+      if (r.kind === 'texture' && r.imported) {
+        this.requireImportedUsage(r, (r.imported as RhiTexture).usage);
       } else if (r.kind === 'buffer' && r.imported) {
         this.requireImportedUsage(r, (r.imported as RhiBuffer).usage);
       }

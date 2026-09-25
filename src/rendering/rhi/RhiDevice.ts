@@ -1,5 +1,4 @@
 import type {
-  RhiBackendType,
   RhiBufferDesc,
   RhiColorFormat,
   RhiComputePipelineDesc,
@@ -15,22 +14,13 @@ import type {
 } from './types';
 import type { RhiResourceScope } from './RhiResourceScope';
 
-/** 设备能力。后端之间的差异全部经这里暴露,上层按它选路径,RHI 不做静默降级。 */
+/** 设备能力与上限(WebGPU 核心能力之外、因设备而异的部分) */
 export interface RhiCaps {
-  backend: RhiBackendType;
-  /** compute pass / 存储缓冲(仅 WebGPU) */
-  compute: boolean;
-  /** 存储纹理(compute 直接写纹理,仅 WebGPU) */
-  storageTextures: boolean;
-  /** rgba16float 能当渲染目标 */
-  float16RenderTargets: boolean;
-  /** rgba32float 能当渲染目标 */
-  float32RenderTargets: boolean;
-  /** rgba32float 能线性过滤 */
+  /** rgba32float 能线性过滤(WebGPU 可选特性 float32-filterable) */
   float32Filterable: boolean;
   maxTextureSize: number;
   maxColorAttachments: number;
-  /** compute 工作组最大尺寸与单组最大线程数(无 compute 时为 0) */
+  /** compute 工作组最大尺寸与单组最大线程数 */
   maxComputeWorkgroupSize: [number, number, number];
   maxComputeInvocationsPerWorkgroup: number;
   /** 交换链(画布)的颜色格式 */
@@ -38,7 +28,6 @@ export interface RhiCaps {
 }
 
 export interface RhiDeviceInfo {
-  backend: RhiBackendType;
   vendor: string;
   renderer: string;
 }
@@ -83,7 +72,7 @@ export interface RhiShader extends RhiResource {
   readonly hasCompute: boolean;
 }
 
-/** 管线的着色器编译 / 链接可能是异步的(WebGL2 的并行编译、WebGPU 的异步校验)。 */
+/** 管线的着色器编译 / 校验是异步的。 */
 export interface RhiPipelineStatus {
   /** 编译链接成功后 resolve,失败 reject(RhiError 'backend') */
   readonly ready: Promise<void>;
@@ -109,12 +98,9 @@ export interface RhiRenderTarget extends RhiResource {
 }
 
 /**
- * 按名字绑定的资源。名字就是着色器里的名字:
- * - 统一缓冲:WGSL 里 `var<uniform>` 的变量名 = GLSL 里 uniform block 的块名;
- * - 纹理:WGSL 纹理变量名 = GLSL `sampler2D` 名;
- * - 采样器:WGSL 里单独声明,命名约定为「纹理名 + Sampler」(`uColor` → `uColorSampler`)。
- *   传了就设成该纹理的采样状态(WebGL2 没有独立采样器,两个后端因此一致);不传就用纹理创建时的
- *   `sampler` 描述(缺省 clamp + 线性)。不按约定命名的独立采样器(仅 WGSL)照名字直接绑。
+ * 按名字绑定的资源。名字就是 WGSL 里的变量名(统一缓冲 / 存储缓冲 / 纹理 / 采样器)。
+ * 采样器命名约定「纹理名 + Sampler」(`uColor` → `uColorSampler`):传了就设成该纹理的采样状态,
+ * 不传就用纹理创建时的 `sampler` 描述(缺省 clamp + 线性)。不按约定命名的采样器照名字直接绑。
  * 着色器里没有的名字会被忽略(同一份绑定可以喂给不同着色器);着色器要的名字没给,当场报错。
  */
 export type RhiBindingResource =
@@ -150,7 +136,6 @@ export interface RhiComputePassEncoder {
 export interface RhiCommandList {
   readonly label: string;
   beginRenderPass(desc: RhiRenderPassDesc): RhiRenderPassEncoder;
-  /** 设备没有 compute 能力时抛 RhiError('unsupported') */
   beginComputePass(label: string): RhiComputePassEncoder;
   copyBufferToBuffer(src: RhiBuffer, srcOffset: number, dst: RhiBuffer, dstOffset: number, size: number): void;
   copyTextureToTexture(src: RhiTexture, dst: RhiTexture, width?: number, height?: number): void;
@@ -171,7 +156,7 @@ export interface RhiFrameStats {
   computePasses: number;
   draws: number;
   dispatches: number;
-  /** 后端因着色器未就绪等原因跳过的 draw(WebGL2 并行编译期间会发生) */
+  /** 后端因管线未就绪等原因跳过的 draw */
   skippedDraws: number;
 }
 

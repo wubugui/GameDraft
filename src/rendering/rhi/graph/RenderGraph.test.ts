@@ -5,10 +5,10 @@ import { RhiBufferUsage, RhiError, RhiTextureUsage } from '../types';
 import { RenderGraph } from './RenderGraph';
 import { RgTransientPool } from './RgTransientPool';
 
-function setup(backend: 'webgpu' | 'webgl2' = 'webgpu') {
-  const dev = new NullRhiDevice({ backend });
+function setup() {
+  const dev = new NullRhiDevice();
   const pool = new RgTransientPool(dev.rootScope);
-  const graph = (label = '帧') => new RenderGraph({ label, caps: dev.caps, pool });
+  const graph = (label = '帧') => new RenderGraph({ label, pool });
   return { dev, pool, graph };
 }
 
@@ -157,13 +157,6 @@ describe('RenderGraph · 声明纪律', () => {
     expect(() => g2.compile()).toThrow(/深度格式/);
   });
 
-  it('WebGL2 设备上加 compute pass:当场 unsupported(上层据此走别的路径)', () => {
-    const { graph } = setup('webgl2');
-    const g = graph();
-    const buf = g.createBuffer('粒子', { size: 256, usage: RhiBufferUsage.VERTEX });
-    expect(codeOf(() => g.addComputePass('模拟', { writes: [buf], sideEffect: true, execute: () => {} }))).toBe('unsupported');
-  });
-
   it('导入资源缺图里用法需要的用途位:编译报错并点名', () => {
     const { dev, graph } = setup();
     const history = dev.rootScope.createTexture({ label: '历史帧', ...HDR, usage: RhiTextureUsage.SAMPLED });
@@ -192,7 +185,7 @@ describe('RenderGraph · 声明纪律', () => {
 describe('RenderGraph · 瞬时资源', () => {
   function chain(dev: NullRhiDevice, pool: RgTransientPool, seen: RhiTexture[][]) {
     run(dev, (f) => {
-      const g = new RenderGraph({ label: '后处理', caps: dev.caps, pool });
+      const g = new RenderGraph({ label: '后处理', pool });
       const back = g.importRenderTarget('后备缓冲', f.swapchain);
       const a = g.createTexture('a', HDR);
       const b = g.createTexture('b', HDR);
@@ -252,7 +245,7 @@ describe('RenderGraph · 瞬时资源', () => {
     const physical = seen[0][0];
     for (let i = 0; i < 2; i++) {
       run(dev, (f) => {
-        const g = new RenderGraph({ label: '空帧', caps: dev.caps, pool });
+        const g = new RenderGraph({ label: '空帧', pool });
         const back = g.importRenderTarget('后备缓冲', f.swapchain);
         g.addRenderPass('清屏', { target: { renderTarget: back }, execute: () => {} });
         g.execute(f.commands);
