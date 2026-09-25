@@ -124,6 +124,8 @@ export class FilterEffect implements ContainerEffect {
 }
 
 let renderTick = 0;
+const chainScratch: Container[] = [];
+const tempAppend = new Matrix();
 
 export class Container extends EventEmitter {
   readonly uid = uid('renderable');
@@ -573,9 +575,18 @@ export class Container extends EventEmitter {
 
   getGlobalTransform(matrix: Matrix = new Matrix(), skipUpdate = false): Matrix {
     void skipUpdate;
-    this.updateLocalTransform();
-    const parent = updateTransformBackwards(this, new Matrix());
-    matrix.appendFrom(this.localTransform, parent);
+    // 自顶向下逐级 append(与 Pixi 的 updateTransformBackwards 同一乘法顺序),不分配临时对象
+    const chain = chainScratch;
+    let n = 0;
+    for (let c: Container | null = this; c; c = c.parent) chain[n++] = c;
+    matrix.identity();
+    for (let i = n - 1; i >= 0; i--) {
+      const c = chain[i];
+      c.updateLocalTransform();
+      if (i === 0) matrix.copyFrom(tempAppend.appendFrom(c.localTransform, matrix));
+      else matrix.append(c.localTransform);
+      chain[i] = null as unknown as Container;
+    }
     return matrix;
   }
 

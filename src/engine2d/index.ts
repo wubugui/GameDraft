@@ -56,6 +56,7 @@ export { Cache } from './assets/cache/Cache';
 export type { UnresolvedAsset, ResolvedAsset, LoadOptions, AssetInitOptions } from './assets/types';
 export { DOMAdapter, BrowserAdapter, type Adapter, type ICanvas } from './environment/adapter';
 export { createRenderer, type CreateRendererOptions } from './gpu/createRenderer';
+export * from './events';
 export { RendererBase, type RendererOptions, type RenderOptions, type GenerateTextureOptions } from './gpu/Renderer';
 export { WebGPURenderer, WebGPURenderer as Renderer } from './gpu/WebGPURenderer';
 export type { RenderSurface } from './gpu/renderTargets';

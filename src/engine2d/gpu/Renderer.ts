@@ -71,12 +71,8 @@ export interface BackgroundSystem {
   readonly colorRgba: [number, number, number, number];
 }
 
-/** 事件系统挂在渲染器上的最小接口(events 模块实现) */
-export interface RendererEventSystem {
-  destroy(): void;
-  resolution: number;
-  setTargetElement(element: HTMLElement): void;
-}
+/** 事件系统(events 模块的 EventSystem;这里只要类型) */
+export type RendererEventSystem = import('../events/EventSystem').EventSystem;
 
 export abstract class RendererBase {
   readonly type = 2;
@@ -127,6 +123,7 @@ export abstract class RendererBase {
   }
 
   resize(width: number, height: number, resolution = this.resolution): void {
+    if (resolution !== this.resolution) this.events?.resolutionChange(resolution);
     this.resolution = resolution;
     this.screen.width = width;
     this.screen.height = height;

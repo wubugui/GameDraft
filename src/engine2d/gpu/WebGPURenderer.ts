@@ -116,6 +116,8 @@ export class WebGPURenderer extends RendererBase {
   private readonly canvasKey = {};
   private destroyed = false;
   antialias: boolean;
+  /** 设备是 createRenderer 替它建的:渲染器销毁时一起销毁 */
+  ownsDevice = false;
 
   constructor(options: RendererOptions) {
     super(options);
@@ -376,6 +378,7 @@ export class WebGPURenderer extends RendererBase {
     this.buffers.destroy();
     this.textures.destroy();
     this.scope.destroy();
+    if (this.ownsDevice) this.rhi.destroy();
     const removeView = typeof options === 'boolean' ? options : !!options.removeView;
     if (removeView) this.canvas.parentNode?.removeChild(this.canvas);
   }
