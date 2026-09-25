@@ -24,6 +24,7 @@ verified_by:
   - src/rendering/rhi/graph/RenderGraph.test.ts
   - src/rendering/rhi/backends/luma/lumaMapping.test.ts
   - src/rendering/rhi/backends/luma/LumaRhiDevice.test.ts
+  - src/rendering/rhi/backends/luma/LumaRhiDevice.deviceLoss.test.ts
   - src/rendering/rhi/backends/null/NullRhiDevice.test.ts
   - tools/rhi_smoke/cases.ts
   - tools/render_parity/cases/00_harness.ts
@@ -70,6 +71,13 @@ last_governed: 2026-09-25
   不一致 setPipeline 当场 `invalid-usage`。多重采样纹理跨 pass 保留(load 读到的是上一 pass 的多重采样结果,不是 resolve 目标)。
   画布用 `frame.swapchainMultisampled(4, depthFormat?)`:多重采样颜色由设备持有、随画布尺寸重建,**同采样数下带不带深度共用一张**
   (中途补模板以 load 重开读到的就是刚画的)。32 位浮点 / 整数格式不能 resolve。
+- **设备丢失自动恢复**(对照 master 的 Pixi WebGL:contextlost → 浏览器恢复 → `runners.contextChange` 重传):
+  `createRhiDevice` 建的设备丢失后(自己 `destroy()` 引起的除外)报 error「图形设备丢失」→ 先拆旧画布上下文 →
+  按原参数在**同一画布**上重新要适配器 / 设备(失败按 0 / 0.25 / 1 / 2 / 4 / 8 秒重试,用尽报「恢复失败」)→
+  旧设备上的**资源全部作废**(按已销毁处理,作用域保留、照常可建)→ 补回画布尺寸 → 报 warning「图形设备已恢复」→
+  `onRestored` 回调。同一个 `RhiDevice` 对象跨代存活;`lost` 每次取都是当前这一代的;恢复前 `runFrame` / `submit` 作废;
+  挂着的 `readTexture` / `readBuffer` 遇到丢失就 reject。**持有 RHI 资源的一方必须订 `onRestored` 丢缓存重建**
+  (engine2d 已订);只在 GPU 上的内容(渲染纹理画过的)没了,同 WebGL。空后端用 `NullRhiDevice.loseDevice()` 模拟。
 - **渲染图每帧新建**:pass 只能取自己在 reads / writes 里声明过的资源;结果没人要的 pass 被剔除
   (根 = `sideEffect` 或写导入资源);读了此前没人写过的图内资源 = 编译错误;瞬时资源由 `RgTransientPool`
   跨帧复用、同帧内生命期不重叠者共用一块,闲置 `maxIdleTicks` 次后销毁。

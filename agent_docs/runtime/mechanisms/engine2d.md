@@ -19,6 +19,7 @@ triggers:
   tasks: [改渲染核心, 加引擎 API, 迁移 Pixi 写法, 渲染对照, 整局截图对照]
 verified_by:
   - src/engine2d/noPixiInRuntime.test.ts
+  - src/engine2d/gpu/deviceLoss.test.ts
   - tools/engine2d_parity/run.mjs
   - tools/render_parity/run.mjs
   - tools/render_parity/game_sweep.mjs
@@ -54,6 +55,9 @@ last_governed: 2026-09-25
   大着色器要提前:`renderer.prewarmPipelines(specs)` 按(程序 × 几何顶点布局 × 混合 × 目标格式)预建进同一份缓存,
   `renderer.pipelinesReady(timeout)` 等全部已建管线编完(揭幕前闸在用,见 vfx-rendering)。
   预建的键必须与真画时逐项相同:几何取自真实网格类、混合按网格纹理算非预乘变体、格式缺省画布 + 离屏 bgra8unorm。
+- **设备丢失恢复后照常画**(照 Pixi `runners.contextChange`):WebGPURenderer 订 `rhi.onRestored`,丢掉全部 GPU 缓存
+  (纹理 / 采样器、缓冲、着色器 / 管线含预建的、模板 / MSAA 目标、合批顶点 / 索引 / uniform 缓冲),下一次 render 按需重建、
+  CPU 源重传;RenderTexture 重建成空的(画过的内容丢了,同 WebGL)。新加持有 RHI 资源的缓存必须一并在 `contextChange` 里清。
 - **画布零面积整帧不录**(布局前的头几帧);画布尺寸变化经 `Renderer.resize → rhi.resizeSwapchain` 通知 RHI 重配交换链与深度缓冲。
 - **绑定已销毁的纹理源 = 当帧抛错**(`GpuTextures.get` 直接抛,等价 Pixi 的 BindGroup 自毁):卸载时先解绑再销毁
   那一条 pixi-v8-traps 的契约照旧成立;游戏 `Renderer` 的渲染兜错(crash guard)仍然必要——engine2d 的 Ticker
