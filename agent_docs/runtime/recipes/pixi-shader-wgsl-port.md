@@ -72,6 +72,10 @@ GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意
 - **Pixi 用正则解析 WGSL**(`extractStructAndGroups`):结构体体内不许写注释(注释里的 `名: 类型` 会被当成成员),
   注释里不许出现 `@group(` / `@binding(`。
 - GLSL 三目改写成 `if / else`,不要用 `select()`:`select` 两边都求值,`smoothstep` 两端相等时出 NaN。
+- WGSL 内建 `smoothstep` 与 GLSL 内建差几个 ulp(SwiftShader 实测);会被放大的地方(GGX 峰值、灯锥边缘)写成规范定义的
+  展开式 `t = clamp((x - e0) / (e1 - e0), 0, 1); t * t * (3 - 2 * t)`,两边逐位一致。
+- `dpdx` / `dpdy` 不许在非一致分支里:挪到分支前算(结果与 GLSL 在分支里算相同)。追查半精度以下的差异时,
+  临时把目标改成 `rgba32float` 逐侧比原始输出。
 
 - `mod(x, y)`(GLSL,向下取整)≠ WGSL `x % y`(向零截断):负数结果不同。写 `x - y * floor(x / y)`。
 - WGSL 的 `textureSample` 只能在一致控制流里调(否则编译失败);分支里改用 `textureSampleLevel(t, s, uv, 0.0)`

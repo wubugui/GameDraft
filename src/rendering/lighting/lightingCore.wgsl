@@ -72,7 +72,10 @@ fn lcSpotLight(P: vec3<f32>, N: vec3<f32>, lightPos: vec3<f32>, spotDir: vec3<f3
     let v = lightPos - P;
     let r2 = dot(v, v);
     let L = v * inverseSqrt(max(r2, 1e-12));
-    let cone = smoothstep(cosOuter, cosInner, dot(-L, normalize(spotDir)));
+    // 锥角过渡按规范定义的式子展开写:WGSL 内建 smoothstep 与 GLSL 内建差几个 ulp(SwiftShader 实测),
+    // 锥边附近会被放大成可见的半精度差;展开式两边逐位一致(对照「场景光照 /」「光照片段 /」)
+    let coneT = clamp((dot(-L, normalize(spotDir)) - cosOuter) / (cosInner - cosOuter), 0.0, 1.0);
+    let cone = coneT * coneT * (3.0 - 2.0 * coneT);
     if (cone <= 0.0) { return vec3<f32>(0.0); }
     let ndl = max(dot(N, L), 0.0);
     return color * (intensity * ndl * cone * lcFalloff(r2, range, softening) * vis);
