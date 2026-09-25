@@ -2,7 +2,7 @@
  * TextureSource → RHI 纹理 / TextureStyle → RHI 采样器。
  *
  * - 源的尺寸 / 格式变了(`_resourceId` 变)就重建;内容变了(`_updateId` 变)就重传。
- * - 上传语义照 Pixi 的 WebGPU 路径:图像源 `copyExternalImageToTexture`,`alphaMode === 'premultiply-alpha-on-upload'`
+ * - 上传语义照 Pixi 的 WebGPU 路径:图像 / 视频源 `copyExternalImageToTexture`,`alphaMode === 'premultiply-alpha-on-upload'`
  *   时预乘;像素数组原样写入;没有资源的源(RenderTexture / 池里的临时纹理)建成可当渲染目标的空纹理。
  * - 采样器按采样参数共享,永不销毁(与 rendering/legacy/gpuSampler.ts 同一原则)。
  * - mip 照 Pixi 的 GpuTextureSystem:`autoGenerateMipmaps` 的源建纹理时按 `floor(log2(max(pw, ph))) + 1` 定级数
@@ -80,7 +80,7 @@ export class GpuTextures {
       const mipLevels = Math.max(1, source.mipLevelCount | 0);
       let usage = RhiTextureUsage.SAMPLED | RhiTextureUsage.COPY_DST | RhiTextureUsage.COPY_SRC;
       // 没有 CPU 资源的源只能靠渲染写入;图像源的上传(copyExternalImage)也要求可作附件;生成 mip 逐级渲染,同样要
-      if (!hasResource || renderTarget || source.uploadMethodId === 'image' || mipLevels > 1) usage |= RhiTextureUsage.RENDER_TARGET;
+      if (!hasResource || renderTarget || source.uploadMethodId === 'image' || source.uploadMethodId === 'video' || mipLevels > 1) usage |= RhiTextureUsage.RENDER_TARGET;
       const texture = this.scope.createTexture({
         label: source.label || `engine2d-tex-${source.uid}`,
         width: Math.max(1, source.pixelWidth),

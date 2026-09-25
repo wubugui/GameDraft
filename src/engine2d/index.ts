@@ -16,8 +16,10 @@ export {
   TextureSource,
   ImageSource,
   CanvasSource,
+  VideoSource,
   BufferImageSource,
   type TextureSourceOptions,
+  type VideoSourceOptions,
   type TEXTURE_FORMATS,
   type ALPHA_MODES,
 } from './textures/TextureSource';
