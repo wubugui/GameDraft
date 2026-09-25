@@ -6,9 +6,8 @@
  * 绑定缺项、格式不配)变成当场可见的 RhiError / 诊断;以及执行 RHI 的资源所有权与帧级异常隔离。
  * 上层不许直接碰 luma 对象。
  */
-import { luma, Buffer as LumaBufferClass } from '@luma.gl/core';
+import { luma, Buffer as LumaBufferClass, _getDefaultBindGroupFactory } from '@luma.gl/core';
 import type {
-  Binding,
   Bindings,
   Buffer as LumaBuffer,
   CanvasContext,
@@ -47,7 +46,6 @@ import {
   type RhiTextureFormat,
 } from '../../types';
 import type {
-  RhiBindingResource,
   RhiBindings,
   RhiNativeInterop,
   RhiBuffer,
@@ -81,6 +79,7 @@ import {
   toLumaTextureUsage,
 } from './lumaMapping';
 import { WebGpuMipmapGenerator } from './lumaMipmaps';
+import { SAMPLER_SUFFIX, missingBindings, resolveShaderEntries } from '../backendRules';
 
 export interface LumaRhiDeviceOptions {
   canvas: HTMLCanvasElement | OffscreenCanvas;
@@ -203,6 +202,8 @@ class LumaRhiShader extends RhiResourceBase<'shader'> implements RhiShader {
     label: string,
     readonly module: Shader,
     readonly entryPoints: { vertex?: string; fragment?: string; compute?: string },
+    /** 建着色器模块时原生错误作用域接到的错误(没有为 null) */
+    readonly creationError: Promise<GPUError | null>,
   ) {
     super('shader', label, scope, releases);
   }
@@ -220,9 +221,37 @@ class LumaRhiShader extends RhiResourceBase<'shader'> implements RhiShader {
   }
 }
 
-class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implements RhiRenderPipeline {
-  private _isReady = false;
+/**
+ * 管线的失败状态。着色器编译失败、建管线校验 / 内部错误都会让管线成为无效对象;WebGPU 里拿无效管线 setPipeline
+ * 会让整个 pass、进而整批命令作废(一帧全黑)。master(Pixi GL)里坏掉的程序只影响它自己的 draw,
+ * 所以确认失败后这条管线的 draw / dispatch 在录制时跳过(计入 skippedDraws、告警一次),帧里其余内容照常提交。
+ * 失败是异步才知道的(错误作用域 / 编译信息都是 Promise):知道之前照常画,与未失败的管线行为一致。
+ */
+class LumaPipelineState {
+  isReady = false;
+  failed = false;
   readonly ready: Promise<void>;
+
+  constructor(wait: Promise<void>, onFail: (e: unknown) => void) {
+    this.ready = wait.then(
+      () => {
+        this.isReady = true;
+      },
+      (e: unknown) => {
+        this.failed = true;
+        throw e;
+      },
+    );
+    this.ready.catch(onFail);
+  }
+}
+
+class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implements RhiRenderPipeline {
+  private readonly state: LumaPipelineState;
+  /** 顶点流名与 luma 逻辑缓冲槽(数组形式,draw 时不走 Map 迭代器) */
+  readonly streamNames: readonly string[];
+  readonly streamSlotList: readonly number[];
+  readonly bindings: LumaBindingPlan;
 
   constructor(
     scope: RhiResourceScope,
@@ -235,18 +264,28 @@ class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implement
     readonly colorFormats: readonly RhiColorFormat[],
     readonly depthFormat: RhiDepthFormat | null,
     readonly sampleCount: number,
-    shaders: readonly Shader[],
+    shaders: readonly LumaRhiShader[],
+    creationError: Promise<GPUError | null>,
     onFail: (e: unknown) => void,
   ) {
     super('render-pipeline', label, scope, releases);
-    this.ready = waitPipelineReady(label, [handle], shaders).then(() => {
-      this._isReady = true;
-    });
-    this.ready.catch(onFail);
+    this.streamNames = [...streamSlots.keys()];
+    this.streamSlotList = [...streamSlots.values()];
+    this.bindings = new LumaBindingPlan(handle.shaderLayout);
+    this.state = new LumaPipelineState(waitPipelineReady(label, [handle], shaders, [creationError]), onFail);
+  }
+
+  get ready(): Promise<void> {
+    return this.state.ready;
   }
 
   get isReady(): boolean {
-    return this._isReady;
+    return this.state.isReady;
+  }
+
+  /** 已确认建坏了(着色器编译 / 管线校验 / 内部错误):录制时跳过它的 draw */
+  get failed(): boolean {
+    return this.state.failed;
   }
 
   protected releaseBackend(): void {
@@ -256,26 +295,34 @@ class LumaRhiRenderPipeline extends RhiResourceBase<'render-pipeline'> implement
 }
 
 class LumaRhiComputePipeline extends RhiResourceBase<'compute-pipeline'> implements RhiComputePipeline {
-  private _isReady = false;
-  readonly ready: Promise<void>;
+  private readonly state: LumaPipelineState;
+  readonly bindings: LumaBindingPlan;
 
   constructor(
     scope: RhiResourceScope,
     releases: RhiReleaseQueue,
     label: string,
     readonly handle: ComputePipeline,
-    shaders: readonly Shader[],
+    shaders: readonly LumaRhiShader[],
+    creationError: Promise<GPUError | null>,
     onFail: (e: unknown) => void,
   ) {
     super('compute-pipeline', label, scope, releases);
-    this.ready = waitPipelineReady(label, [], shaders).then(() => {
-      this._isReady = true;
-    });
-    this.ready.catch(onFail);
+    this.bindings = new LumaBindingPlan(handle.shaderLayout);
+    this.state = new LumaPipelineState(waitPipelineReady(label, [], shaders, [creationError]), onFail);
+  }
+
+  get ready(): Promise<void> {
+    return this.state.ready;
   }
 
   get isReady(): boolean {
-    return this._isReady;
+    return this.state.isReady;
+  }
+
+  /** 已确认建坏了:录制时跳过它的 dispatch */
+  get failed(): boolean {
+    return this.state.failed;
   }
 
   protected releaseBackend(): void {
@@ -543,6 +590,144 @@ class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implement
   }
 }
 
+// ───────────────────────────── 绑定(bind group 缓存)
+
+/** 一条管线最多缓存的 bind group 组合数;超了整棵清掉重来(缓冲区段偏移组合多时防无界增长) */
+const MAX_BIND_GROUP_ENTRIES = 1024;
+
+/** 缓存树的一个节点:资源对象走 WeakMap、偏移 / 尺寸走 Map,叶子存逐组的原生 bind group */
+interface BindCacheNode {
+  objects?: WeakMap<object, BindCacheNode>;
+  numbers?: Map<number, BindCacheNode>;
+  groups?: readonly (GPUBindGroup | null)[];
+}
+
+function stepObject(node: BindCacheNode, key: object): BindCacheNode {
+  const m = (node.objects ??= new WeakMap());
+  let next = m.get(key);
+  if (!next) m.set(key, (next = {}));
+  return next;
+}
+
+function stepNumber(node: BindCacheNode, key: number): BindCacheNode {
+  const m = (node.numbers ??= new Map());
+  let next = m.get(key);
+  if (!next) m.set(key, (next = {}));
+  return next;
+}
+
+/**
+ * 一条管线的绑定计划(按着色器布局算一次)+ bind group 缓存。
+ *
+ * luma 的 setBindings 不给缓存键时每次都新建 GPUBindGroup,外加标签字符串、分组对象等一串临时对象;engine2d 每个 draw
+ * 都 setBindings 一次。Pixi 8 的 WebGPU BindGroupSystem 按资源键缓存 bind group,这里照做:键 = 着色器声明的每个绑定
+ * 所指资源的身份(缓冲区段再加偏移 / 尺寸;纹理再加它当前的采样器——配对的「纹理名Sampler」随纹理进 bind group)。
+ * 命中就把缓存的 bind group 直接设给原生 pass,不经 luma、不分配;没命中才经 luma 的工厂建。
+ *
+ * 采样器按命名约定配给纹理(「纹理名 + Sampler」):配上的采样器**不单独进绑定**,而是设成纹理当前的采样器——
+ * luma 建 bind group 时会按「纹理名Sampler」自动补上纹理自带的采样器,再单独传一份就是同一槽位绑两次、建 bind group 失败。
+ * 着色器声明了「纹理名Sampler」而调用方没给采样器时,用纹理创建时的采样状态。
+ *
+ * 资源对象作 WeakMap 键:已销毁的资源过不了存活检查、走不到缓存(等于随销毁失效),对象回收后条目随之消失;
+ * 重建出来的是新对象、新键。
+ */
+class LumaBindingPlan {
+  /** 着色器声明的绑定名(布局顺序) */
+  private readonly names: readonly string[];
+  /** names[i] + Sampler:按约定配给纹理 names[i] 的采样器名 */
+  private readonly pairedSampler: readonly string[];
+  /** names[i] + Sampler 本身也是声明了的绑定:采样器随纹理进 bind group,键里要带上纹理当前的采样器 */
+  private readonly pairedSamplerDeclared: readonly boolean[];
+  /** names[i] 形如「纹理名Sampler」时的纹理名,否则 null */
+  private readonly textureOf: readonly (string | null)[];
+  private root: BindCacheNode = {};
+  private entries = 0;
+
+  constructor(layout: ShaderLayout | ComputeShaderLayout) {
+    this.names = layout.bindings.map((b) => b.name);
+    const declared = new Set(this.names);
+    this.pairedSampler = this.names.map((n) => n + SAMPLER_SUFFIX);
+    this.pairedSamplerDeclared = this.pairedSampler.map((n) => declared.has(n));
+    this.textureOf = this.names.map((n) => (n.endsWith(SAMPLER_SUFFIX) ? n.slice(0, -SAMPLER_SUFFIX.length) : null));
+  }
+
+  /**
+   * 解析一次 setBindings:只看着色器声明了的名字;缺项 / 已销毁 / 外来资源当场报;配对的采样器设成纹理当前的采样器;
+   * 登记本批引用;返回逐组的 bind group。热路径:命中缓存时不分配(报错文字只在出错时拼)。
+   */
+  resolve(
+    device: LumaRhiDevice,
+    pipeline: RenderPipeline | ComputePipeline,
+    bindings: RhiBindings,
+    owner: string,
+    list: LumaCommandList,
+  ): readonly (GPUBindGroup | null)[] {
+    if (this.entries >= MAX_BIND_GROUP_ENTRIES) {
+      this.root = {};
+      this.entries = 0;
+    }
+    let node = this.root;
+    const names = this.names;
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      const res = bindings[name];
+      const texName = this.textureOf[i];
+      if (texName !== null && (res === undefined || res instanceof LumaRhiSampler) && bindings[texName] instanceof LumaRhiTexture) {
+        // 「纹理名Sampler」:纹理给了就用纹理的采样器(传了采样器的已在纹理那一项设进去),不单独进绑定
+        if (res !== undefined && res.destroyed) res.assertAlive(`管线「${owner}」绑定 ${name}`);
+        continue;
+      }
+      if (res === undefined) {
+        throw new RhiError('invalid-usage', `管线「${owner}」:着色器需要的绑定没给 —— ${missingBindings(names, bindings).join(', ')}`);
+      }
+      if (res instanceof LumaRhiTexture) {
+        if (res.destroyed) res.assertAlive(`管线「${owner}」绑定 ${name}`);
+        const sampler = bindings[this.pairedSampler[i]];
+        if (sampler instanceof LumaRhiSampler) {
+          if (sampler.destroyed) sampler.assertAlive(`管线「${owner}」绑定 ${this.pairedSampler[i]}`);
+          if (res.handle.sampler !== sampler.handle) res.handle.setSampler(sampler.handle);
+        }
+        list._use(res);
+        node = stepObject(node, res);
+        if (this.pairedSamplerDeclared[i]) node = stepObject(node, res.handle.sampler);
+      } else if (res instanceof LumaRhiBuffer || res instanceof LumaRhiSampler) {
+        if (res.destroyed) res.assertAlive(`管线「${owner}」绑定 ${name}`);
+        if (res instanceof LumaRhiBuffer) list._use(res);
+        node = stepObject(node, res);
+      } else if (typeof res === 'object' && res !== null && 'buffer' in res) {
+        const b = res.buffer;
+        if (!(b instanceof LumaRhiBuffer)) throw new RhiError('invalid-usage', `管线「${owner}」绑定 ${name}:不是本设备的缓冲`);
+        if (b.destroyed) b.assertAlive(`管线「${owner}」绑定 ${name}`);
+        list._use(b);
+        node = stepNumber(stepNumber(stepObject(node, b), res.offset ?? -1), res.size ?? -1);
+      } else {
+        throw new RhiError('invalid-usage', `管线「${owner}」绑定 ${name}:不认识的绑定资源`);
+      }
+    }
+    if (!node.groups) {
+      node.groups = device._createBindGroups(pipeline, this.toLuma(bindings));
+      this.entries++;
+    }
+    return node.groups;
+  }
+
+  /** 没命中缓存时才调:拼给 luma 的绑定表(已由 resolve 校验过) */
+  private toLuma(bindings: RhiBindings): Bindings {
+    const out: Bindings = {};
+    for (let i = 0; i < this.names.length; i++) {
+      const name = this.names[i];
+      const res = bindings[name];
+      const texName = this.textureOf[i];
+      if (texName !== null && (res === undefined || res instanceof LumaRhiSampler) && bindings[texName] instanceof LumaRhiTexture) continue;
+      if (res instanceof LumaRhiBuffer || res instanceof LumaRhiTexture || res instanceof LumaRhiSampler) out[name] = res.handle;
+      else if (typeof res === 'object' && res !== null && 'buffer' in res) {
+        out[name] = { buffer: (res.buffer as LumaRhiBuffer).handle, offset: res.offset, size: res.size };
+      }
+    }
+    return out;
+  }
+}
+
 // ───────────────────────────── 命令
 
 class LumaCommandList implements RhiCommandList {
@@ -715,12 +900,21 @@ class LumaCommandList implements RhiCommandList {
   }
 }
 
+/** luma 9.4 WebGPURenderPass 里 draw 前校验用的字段(`setPipeline` 之后 `setBindings` 过没有看它) */
+type LumaRenderPassInternals = RenderPass & { handle: GPURenderPassEncoder; pipeline: unknown; bindingsPipeline: unknown };
+
 class LumaRenderPassEncoder implements RhiRenderPassEncoder {
   private pipeline: LumaRhiRenderPipeline | null = null;
   private bindingsSet = false;
+  /** 当前管线已确认建坏:它的绑定 / draw 一律跳过,不碰原生 pass(见 LumaPipelineState) */
+  private skipping = false;
   private readonly streams = new Map<string, LumaRhiBuffer>();
   private indexBuffer: LumaRhiBuffer | null = null;
   private ended = false;
+  private readonly native: LumaRenderPassInternals;
+  /** 交给 luma 的 draw 参数(逐 draw 复用,不每次新建) */
+  private readonly drawArgs = { vertexCount: 0, instanceCount: 1, firstVertex: 0, firstInstance: 0, isInstanced: false };
+  private readonly drawIndexedArgs = { indexCount: 0, instanceCount: 1, firstIndex: 0, baseVertex: 0, firstInstance: 0, isInstanced: false };
 
   constructor(
     private readonly device: LumaRhiDevice,
@@ -729,10 +923,14 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
     private readonly target: LumaRhiRenderTarget | LumaSwapchainTarget | LumaMsaaSwapchainTarget,
     private readonly label: string,
     private readonly stats: RhiFrameStats,
-  ) {}
+  ) {
+    this.native = pass as LumaRenderPassInternals;
+  }
 
   setPipeline(pipeline: RhiRenderPipeline): void {
-    const p = asRenderPipeline(pipeline, `render pass「${this.label}」setPipeline`);
+    if (!(pipeline instanceof LumaRhiRenderPipeline)) throw new RhiError('invalid-usage', `render pass「${this.label}」setPipeline:不是本设备的渲染管线`);
+    const p = pipeline;
+    if (p.destroyed) p.assertAlive(`render pass「${this.label}」setPipeline`);
     if (p.sampleCount !== this.target.sampleCount) {
       throw new RhiError(
         'invalid-usage',
@@ -746,20 +944,33 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
           + `与 render pass「${this.label}」的目标 [${this.target.colorFormats.join(', ')}|${this.target.depthFormat ?? '无深度'}] 不一致`,
       );
     }
-    this.pass.setPipeline(p.handle);
+    this.skipping = p.failed;
+    if (!this.skipping) this.pass.setPipeline(p.handle);
     this.pipeline = p;
     this.bindingsSet = false;
   }
 
   setBindings(bindings: RhiBindings): void {
     const p = this.requirePipeline('setBindings');
-    this.pass.setBindings(this.device._toLumaBindings(p.handle.shaderLayout, bindings, `管线「${p.label}」`, (r) => this.list._use(r)));
+    if (this.skipping) {
+      this.bindingsSet = true;
+      return;
+    }
+    const groups = p.bindings.resolve(this.device, p.handle, bindings, p.label, this.list);
+    for (let g = 0; g < groups.length; g++) {
+      const bg = groups[g];
+      if (bg) this.native.handle.setBindGroup(g, bg);
+    }
+    // bind group 直接设给了原生 pass,luma 的 draw 仍要看到「这条管线 setBindings 过」
+    this.native.bindingsPipeline = this.native.pipeline;
     this.bindingsSet = true;
   }
 
   setVertexBuffer(name: string, buffer: RhiBuffer): void {
-    const b = asBuffer(buffer, `顶点流「${name}」`);
-    requireUsage(b.usage, RhiBufferUsage.VERTEX, `缓冲「${b.label}」作顶点流`, 'VERTEX');
+    if (!(buffer instanceof LumaRhiBuffer)) throw new RhiError('invalid-usage', `顶点流「${name}」:不是本设备的缓冲`);
+    const b = buffer;
+    if (b.destroyed) b.assertAlive(`顶点流「${name}」`);
+    if ((b.usage & RhiBufferUsage.VERTEX) === 0) requireUsage(b.usage, RhiBufferUsage.VERTEX, `缓冲「${b.label}」作顶点流`, 'VERTEX');
     this.list._use(b);
     this.streams.set(name, b);
   }
@@ -769,8 +980,10 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
       this.indexBuffer = null;
       return;
     }
-    const b = asBuffer(buffer, '索引缓冲');
-    requireUsage(b.usage, RhiBufferUsage.INDEX, `缓冲「${b.label}」作索引`, 'INDEX');
+    if (!(buffer instanceof LumaRhiBuffer)) throw new RhiError('invalid-usage', '索引缓冲:不是本设备的缓冲');
+    const b = buffer;
+    b.assertAlive('索引缓冲');
+    if ((b.usage & RhiBufferUsage.INDEX) === 0) requireUsage(b.usage, RhiBufferUsage.INDEX, `缓冲「${b.label}」作索引`, 'INDEX');
     if (!b.indexFormat) throw new RhiError('invalid-usage', `索引缓冲「${b.label}」创建时没给 indexFormat`);
     this.list._use(b);
     this.indexBuffer = b;
@@ -787,19 +1000,32 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
 
   setStencilReference(reference: number): void {
     // luma 的 setParameters 把参考值 0 当"没给"跳过,直接调底层
-    (this.pass as RenderPass & { handle: GPURenderPassEncoder }).handle.setStencilReference(reference);
+    this.native.handle.setStencilReference(reference);
   }
 
   draw(vertexCount: number, instanceCount = 1, firstVertex = 0, firstInstance = 0): void {
     const p = this.prepareDraw(false);
-    const drawn = this.pass.draw({ vertexCount, instanceCount, firstVertex, firstInstance, isInstanced: instanceCount > 1 });
-    this.count(p, drawn);
+    if (!p) return;
+    const a = this.drawArgs;
+    a.vertexCount = vertexCount;
+    a.instanceCount = instanceCount;
+    a.firstVertex = firstVertex;
+    a.firstInstance = firstInstance;
+    a.isInstanced = instanceCount > 1;
+    this.count(p, this.pass.draw(a));
   }
 
   drawIndexed(indexCount: number, instanceCount = 1, firstIndex = 0, baseVertex = 0, firstInstance = 0): void {
     const p = this.prepareDraw(true);
-    const drawn = this.pass.draw({ indexCount, instanceCount, firstIndex, baseVertex, firstInstance, isInstanced: instanceCount > 1 });
-    this.count(p, drawn);
+    if (!p) return;
+    const a = this.drawIndexedArgs;
+    a.indexCount = indexCount;
+    a.instanceCount = instanceCount;
+    a.firstIndex = firstIndex;
+    a.baseVertex = baseVertex;
+    a.firstInstance = firstInstance;
+    a.isInstanced = instanceCount > 1;
+    this.count(p, this.pass.draw(a));
   }
 
   end(): void {
@@ -810,22 +1036,29 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
   }
 
   private requirePipeline(what: string): LumaRhiRenderPipeline {
-    if (!this.pipeline) throw new RhiError('invalid-usage', `render pass「${this.label}」${what}:还没 setPipeline`);
-    this.pipeline.assertAlive(`render pass「${this.label}」${what}`);
-    return this.pipeline;
+    const p = this.pipeline;
+    if (!p) throw new RhiError('invalid-usage', `render pass「${this.label}」${what}:还没 setPipeline`);
+    if (p.destroyed) p.assertAlive(`render pass「${this.label}」${what}`);
+    return p;
   }
 
-  private prepareDraw(indexed: boolean): LumaRhiRenderPipeline {
+  /** 校验并把顶点流 / 索引交给 luma;当前管线已确认建坏时记一次跳过、返回 null */
+  private prepareDraw(indexed: boolean): LumaRhiRenderPipeline | null {
     const p = this.requirePipeline('draw');
+    if (this.skipping) {
+      this.count(p, false);
+      return null;
+    }
     if (!this.bindingsSet && p.handle.shaderLayout.bindings.length > 0) {
       throw new RhiError('invalid-usage', `管线「${p.label}」需要资源绑定:setPipeline 之后先 setBindings 再 draw`);
     }
     const va = p.vertexArray;
-    for (const [name, slot] of p.streamSlots) {
-      const buf = this.streams.get(name);
-      if (!buf) throw new RhiError('invalid-usage', `管线「${p.label}」的顶点流「${name}」没绑定缓冲`);
-      buf.assertAlive(`顶点流「${name}」`);
-      va.setBuffer(slot, buf.handle);
+    const names = p.streamNames;
+    for (let i = 0; i < names.length; i++) {
+      const buf = this.streams.get(names[i]);
+      if (!buf) throw new RhiError('invalid-usage', `管线「${p.label}」的顶点流「${names[i]}」没绑定缓冲`);
+      if (buf.destroyed) buf.assertAlive(`顶点流「${names[i]}」`);
+      va.setBuffer(p.streamSlotList[i], buf.handle);
     }
     if (indexed) {
       if (!this.indexBuffer) throw new RhiError('invalid-usage', `drawIndexed 之前没 setIndexBuffer(管线「${p.label}」)`);
@@ -848,6 +1081,8 @@ class LumaRenderPassEncoder implements RhiRenderPassEncoder {
 class LumaComputePassEncoder implements RhiComputePassEncoder {
   private pipeline: LumaRhiComputePipeline | null = null;
   private bindingsSet = false;
+  /** 当前管线已确认建坏:绑定 / dispatch 跳过 */
+  private skipping = false;
   private ended = false;
 
   constructor(
@@ -860,23 +1095,35 @@ class LumaComputePassEncoder implements RhiComputePassEncoder {
 
   setPipeline(pipeline: RhiComputePipeline): void {
     const p = asComputePipeline(pipeline, `compute pass「${this.label}」setPipeline`);
-    this.pass.setPipeline(p.handle);
+    this.skipping = p.failed;
+    if (!this.skipping) this.pass.setPipeline(p.handle);
     this.pipeline = p;
     this.bindingsSet = false;
   }
 
   setBindings(bindings: RhiBindings): void {
-    if (!this.pipeline) throw new RhiError('invalid-usage', `compute pass「${this.label}」setBindings:还没 setPipeline`);
-    // luma 的 ComputePass 基类没声明 setBindings,只有 WebGPU 实现有;compute 只在 WebGPU 上开放
-    (this.pass as ComputePass & { setBindings(b: Bindings): void }).setBindings(
-      this.device._toLumaBindings(this.pipeline.handle.shaderLayout, bindings, `管线「${this.pipeline.label}」`, (r) => this.list._use(r)),
-    );
+    const p = this.pipeline;
+    if (!p) throw new RhiError('invalid-usage', `compute pass「${this.label}」setBindings:还没 setPipeline`);
+    if (this.skipping) {
+      this.bindingsSet = true;
+      return;
+    }
+    const groups = p.bindings.resolve(this.device, p.handle, bindings, p.label, this.list);
+    const native = (this.pass as ComputePass & { handle: GPUComputePassEncoder }).handle;
+    for (let g = 0; g < groups.length; g++) {
+      const bg = groups[g];
+      if (bg) native.setBindGroup(g, bg);
+    }
     this.bindingsSet = true;
   }
 
   dispatch(x: number, y = 1, z = 1): void {
     if (!this.pipeline) throw new RhiError('invalid-usage', `compute pass「${this.label}」dispatch:还没 setPipeline`);
     this.pipeline.assertAlive(`compute pass「${this.label}」dispatch`);
+    if (this.skipping) {
+      this.device._warnSkippedDraw(this.pipeline);
+      return;
+    }
     if (!this.bindingsSet && this.pipeline.handle.shaderLayout.bindings.length > 0) {
       throw new RhiError('invalid-usage', `管线「${this.pipeline.label}」需要资源绑定:setPipeline 之后先 setBindings 再 dispatch`);
     }
@@ -1000,6 +1247,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   }
 
   createTexture(scope: RhiResourceScope, desc: RhiTextureDesc): RhiTexture {
+    if (desc.flipY) throw unsupportedFlipY(desc.label);
     if (!(desc.width > 0 && desc.height > 0)) {
       throw new RhiError('invalid-usage', `纹理「${desc.label}」尺寸非法:${desc.width}×${desc.height}`);
     }
@@ -1038,7 +1286,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       sampler: toLumaSamplerProps(desc.sampler ?? {}),
     } as never);
     const tex = new LumaRhiTexture(scope, this.releases, handle, usage, desc.label);
-    if (isImage) this.uploadImage(tex, desc.data as RhiImageSource, { premultiplyAlpha: desc.premultiplyAlpha, flipY: desc.flipY });
+    if (isImage) this.uploadImage(tex, desc.data as RhiImageSource, { premultiplyAlpha: desc.premultiplyAlpha });
     else if (desc.data != null) this.writeTexture(tex, desc.data as ArrayBufferView);
     return tex;
   }
@@ -1049,17 +1297,9 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   }
 
   createShader(scope: RhiResourceScope, desc: RhiShaderDesc): RhiShader {
-    if (!desc.wgsl) throw new RhiError('invalid-usage', `着色器「${desc.label}」没有 WGSL 源`);
-    const entry = {
-      vertex: desc.entryPoints?.vertex ?? findEntry(desc.wgsl, 'vertex'),
-      fragment: desc.entryPoints?.fragment ?? findEntry(desc.wgsl, 'fragment'),
-      compute: desc.entryPoints?.compute ?? findEntry(desc.wgsl, 'compute'),
-    };
-    if (!entry.vertex && !entry.fragment && !entry.compute) {
-      throw new RhiError('invalid-usage', `着色器「${desc.label}」里找不到 @vertex / @fragment / @compute 入口`);
-    }
-    const module = this.luma.createShader({ id: desc.label, source: desc.wgsl, language: 'wgsl' });
-    return new LumaRhiShader(scope, this.releases, desc.label, module, entry);
+    const entry = resolveShaderEntries(desc);
+    const [module, creationError] = this.captureErrors(() => this.luma.createShader({ id: desc.label, source: desc.wgsl, language: 'wgsl' }));
+    return new LumaRhiShader(scope, this.releases, desc.label, module, entry, creationError);
   }
 
   createRenderPipeline(scope: RhiResourceScope, desc: RhiRenderPipelineDesc): RhiRenderPipeline {
@@ -1069,7 +1309,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       throw new RhiError('unsupported', `管线「${desc.label}」要 ${desc.colorFormats.length} 个颜色附件,设备上限 ${this.caps.maxColorAttachments}`);
     }
     const bufferLayout = toLumaBufferLayout(desc.vertexBuffers);
-    const handle = this.luma.createRenderPipeline({
+    const [handle, creationError] = this.captureErrors(() => this.luma.createRenderPipeline({
       id: desc.label,
       vs: shader.module,
       fs: shader.module,
@@ -1081,13 +1321,13 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       // 深度 / 模板格式只经 parameters.depthFormat 给:luma 见到 depthStencilAttachmentFormat 会先建一个
       // 不带 stencilFront / stencilBack 的 depthStencil,之后再设模板参数时解引用 undefined 崩掉
       parameters: toLumaPipelineParameters(desc),
-    });
+    }));
     const vertexArray = this.luma.createVertexArray({ shaderLayout: handle.shaderLayout, bufferLayout });
     const streamSlots = this.resolveStreamSlots(vertexArray, desc);
     return new LumaRhiRenderPipeline(
       scope, this.releases, desc.label, handle, vertexArray, streamSlots,
       [...desc.colorFormats], desc.depthFormat ?? null, desc.sampleCount ?? 1,
-      [shader.module],
+      [shader], creationError,
       (e) => this.report(e, 'error'),
     );
   }
@@ -1095,8 +1335,10 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   createComputePipeline(scope: RhiResourceScope, desc: RhiComputePipelineDesc): RhiComputePipeline {
     const shader = asShader(desc.shader, `计算管线「${desc.label}」`);
     if (!shader.hasCompute) throw new RhiError('invalid-usage', `计算管线「${desc.label}」:着色器「${shader.label}」没有计算入口`);
-    const handle = this.luma.createComputePipeline({ id: desc.label, shader: shader.module, entryPoint: shader.entryPoints.compute });
-    return new LumaRhiComputePipeline(scope, this.releases, desc.label, handle, [shader.module], (e) => this.report(e, 'error'));
+    const [handle, creationError] = this.captureErrors(
+      () => this.luma.createComputePipeline({ id: desc.label, shader: shader.module, entryPoint: shader.entryPoints.compute }),
+    );
+    return new LumaRhiComputePipeline(scope, this.releases, desc.label, handle, [shader], creationError, (e) => this.report(e, 'error'));
   }
 
   createRenderTarget(scope: RhiResourceScope, desc: RhiRenderTargetDesc): RhiRenderTarget {
@@ -1179,13 +1421,10 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
 
   uploadImage(texture: RhiTexture, image: RhiImageSource, opts: { premultiplyAlpha?: boolean; flipY?: boolean } = {}): void {
     const t = asTexture(texture, 'uploadImage');
+    if (opts.flipY) throw unsupportedFlipY(t.label);
     this.assertNotInFlight(t, 'uploadImage');
     requireUsage(t.usage, RhiTextureUsage.COPY_DST, `纹理「${t.label}」上传图像`, 'COPY_DST');
-    t.handle.copyExternalImage({
-      image,
-      premultipliedAlpha: opts.premultiplyAlpha ?? false,
-      flipY: opts.flipY ?? false,
-    });
+    t.handle.copyExternalImage({ image, premultipliedAlpha: opts.premultiplyAlpha ?? false });
   }
 
   generateMipmaps(texture: RhiTexture): void {
@@ -1341,50 +1580,25 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     for (const c of this.swapchainMsaaColors.values()) c.release();
     this.swapchainMsaaColors.clear();
     this.releases.flush();
+    // 画布上下文要单独拆:luma 的 WebGPUDevice.destroy 不碰它——不拆的话 GPUCanvasContext 仍配置着,
+    // ResizeObserver / IntersectionObserver / devicePixelRatio 监听都还挂着、引用着已销毁的设备
+    try {
+      this.luma.getDefaultCanvasContext().destroy();
+    } catch (e) {
+      this.report(e, 'warning');
+    }
     this.listeners.clear();
     this.luma.destroy();
   }
 
   // ── 内部
 
-  /**
-   * @internal RHI 绑定 → luma 绑定;只保留着色器里声明了的名字,缺项当场报。
-   *
-   * 采样器按命名约定配给纹理:「纹理名 + Sampler」。配上的采样器**不单独进绑定**,而是设成纹理当前的
-   * 采样器——luma 会按「纹理名Sampler」自动补上纹理自带的采样器,再单独传一份就是同一槽位绑两次,
-   * 建 bind group 失败。着色器声明了「纹理名Sampler」而调用方没给采样器时,用纹理创建时的采样状态。
-   */
-  _toLumaBindings(
-    layout: ShaderLayout | ComputeShaderLayout,
-    bindings: RhiBindings,
-    where: string,
-    use: (r: LumaRhiBuffer | LumaRhiTexture) => void,
-  ): Bindings {
-    const declared = new Set(layout.bindings.map((b) => b.name));
-    const out: Bindings = {};
-    for (const [name, res] of Object.entries(bindings)) {
-      if (res instanceof LumaRhiSampler && name.endsWith(SAMPLER_SUFFIX)) {
-        const texName = name.slice(0, -SAMPLER_SUFFIX.length);
-        const tex = bindings[texName];
-        if (tex instanceof LumaRhiTexture) {
-          res.assertAlive(`${where} 绑定 ${name}`);
-          tex.assertAlive(`${where} 绑定 ${texName}`);
-          if (declared.has(texName) && tex.handle.sampler !== res.handle) tex.handle.setSampler(res.handle);
-          continue;
-        }
-      }
-      if (!declared.has(name)) continue;
-      out[name] = unwrapBinding(res, `${where} 绑定 ${name}`, use);
-    }
-    const missing = [...declared].filter((n) => {
-      if (n in out) return false;
-      if (!n.endsWith(SAMPLER_SUFFIX)) return true;
-      // 「纹理名Sampler」:纹理给了就用纹理的采样器
-      return !(bindings[n.slice(0, -SAMPLER_SUFFIX.length)] instanceof LumaRhiTexture);
-    });
-    if (missing.length) {
-      throw new RhiError('invalid-usage', `${where}:着色器需要的绑定没给 —— ${missing.join(', ')}`);
-    }
+  /** @internal 经 luma 的工厂建一组 bind group(没命中 LumaBindingPlan 缓存时才走到) */
+  _createBindGroups(pipeline: RenderPipeline | ComputePipeline, bindings: Bindings): (GPUBindGroup | null)[] {
+    const map = _getDefaultBindGroupFactory(this.luma).getBindGroups(pipeline, bindings) as Record<number, GPUBindGroup | null | undefined>;
+    const out: (GPUBindGroup | null)[] = [];
+    for (const key of Object.keys(map)) out[Number(key)] = map[Number(key)] ?? null;
+    for (let g = 0; g < out.length; g++) out[g] ??= null;
     return out;
   }
 
@@ -1393,14 +1607,39 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     this.report(error instanceof RhiError ? error : new RhiError('backend', error instanceof Error ? error.message : String(error)), 'error');
   }
 
-  /** @internal 管线还没就绪时 luma 会跳过 draw;每条管线只报一次 */
-  _warnSkippedDraw(p: LumaRhiRenderPipeline): void {
+  /** @internal draw 被跳过(luma 判管线未就绪,或管线已确认建坏);每条管线只报一次 */
+  _warnSkippedDraw(p: LumaRhiRenderPipeline | LumaRhiComputePipeline): void {
     if (this.warnedSkips.has(p)) return;
     this.warnedSkips.add(p);
     this.report(
-      new RhiError('backend', `管线「${p.label}」的 draw 被后端跳过(着色器尚未就绪或纹理未就绪);要避免就在首次使用前 await pipeline.ready`),
+      p.failed
+        ? new RhiError('backend', `管线「${p.label}」创建失败,用它的 draw / dispatch 一律跳过(只丢这些 draw,帧里其余内容照常提交)`)
+        : new RhiError('backend', `管线「${p.label}」的 draw 被后端跳过(着色器尚未就绪或纹理未就绪);要避免就在首次使用前 await pipeline.ready`),
       'warning',
     );
+  }
+
+  /**
+   * 在原生错误作用域(validation + internal)里建 GPU 对象,返回对象与作用域接到的错误。
+   * luma 关着调试时(缺省关)它自己的 push / popErrorScope 是空操作,建坏的着色器模块 / 管线不会反映到 linkStatus 上,
+   * 只能在这里自己接住;接不到的话坏管线照常 setPipeline,整批命令作废。
+   */
+  private captureErrors<T>(create: () => T): [T, Promise<GPUError | null>] {
+    const gpu = (this.luma as Device & { handle?: GPUDevice }).handle;
+    if (!gpu || typeof gpu.pushErrorScope !== 'function') return [create(), Promise.resolve(null)];
+    gpu.pushErrorScope('validation');
+    gpu.pushErrorScope('internal');
+    let value: T;
+    let errors!: Promise<GPUError | null>;
+    try {
+      value = create();
+    } finally {
+      // 作用域后进先出:先弹 internal 再弹 validation(建对象抛了也要弹,保持作用域栈平衡);弹失败(设备已丢等)当没有错误
+      const internal = gpu.popErrorScope().catch(() => null);
+      const validation = gpu.popErrorScope().catch(() => null);
+      errors = Promise.all([internal, validation]).then(([a, b]) => a ?? b);
+    }
+    return [value, errors];
   }
 
   /**
@@ -1448,8 +1687,6 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
 
 // ───────────────────────────── 辅助
 
-const SAMPLER_SUFFIX = 'Sampler';
-
 /** GPUTextureUsage 位 → RHI 纹理用途位(数值取自 WebGPU 规范,避免在非浏览器环境依赖全局常量) */
 function fromGpuTextureUsage(usage: number): number {
   let out = 0;
@@ -1461,21 +1698,30 @@ function fromGpuTextureUsage(usage: number): number {
   return out;
 }
 
-function findEntry(wgsl: string, stage: 'vertex' | 'fragment' | 'compute'): string | undefined {
-  const m = new RegExp(`@${stage}(?:\\s+@workgroup_size\\([^)]*\\))?\\s+fn\\s+([A-Za-z_][A-Za-z0-9_]*)`).exec(wgsl)
-    ?? new RegExp(`@workgroup_size\\([^)]*\\)\\s+@${stage}\\s+fn\\s+([A-Za-z_][A-Za-z0-9_]*)`).exec(wgsl);
-  return m?.[1];
-}
-
-/** 等着色器编译、管线校验完成 */
-async function waitPipelineReady(label: string, pipelines: readonly RenderPipeline[], shaders: readonly Shader[]): Promise<void> {
-  for (const s of new Set(shaders)) {
+/**
+ * 等着色器编译、管线校验完成。建坏的判据:着色器编译信息里有 error、建着色器模块 / 管线时原生错误作用域接到错误、
+ * luma 报链接失败(开调试时)。
+ */
+async function waitPipelineReady(
+  label: string,
+  pipelines: readonly RenderPipeline[],
+  shaders: readonly LumaRhiShader[],
+  creationErrors: readonly Promise<GPUError | null>[],
+): Promise<void> {
+  for (const shader of new Set(shaders)) {
+    const s = shader.module;
     const status = await s.asyncCompilationStatus;
     if (status === 'error') {
       const messages = await s.getCompilationInfo().catch(() => []);
       const text = messages.filter((m) => m.type === 'error').map((m) => `${m.lineNum}:${m.linePos} ${m.message}`).join('\n');
       throw new RhiError('backend', `管线「${label}」:着色器「${s.id}」编译失败\n${text}`);
     }
+    const error = await shader.creationError;
+    if (error) throw new RhiError('backend', `管线「${label}」:着色器「${shader.label}」创建失败\n${error.message}`);
+  }
+  for (const pending of creationErrors) {
+    const error = await pending;
+    if (error) throw new RhiError('backend', `管线「${label}」创建 / 校验失败\n${error.message}`);
   }
   const start = Date.now();
   for (const pipeline of pipelines) {
@@ -1515,12 +1761,6 @@ function asShader(s: RhiShader, what: string): LumaRhiShader {
   return s;
 }
 
-function asRenderPipeline(p: RhiRenderPipeline, what: string): LumaRhiRenderPipeline {
-  if (!(p instanceof LumaRhiRenderPipeline)) throw new RhiError('invalid-usage', `${what}:不是本设备的渲染管线`);
-  p.assertAlive(what);
-  return p;
-}
-
 function asComputePipeline(p: RhiComputePipeline, what: string): LumaRhiComputePipeline {
   if (!(p instanceof LumaRhiComputePipeline)) throw new RhiError('invalid-usage', `${what}:不是本设备的计算管线`);
   p.assertAlive(what);
@@ -1534,16 +1774,7 @@ function asTarget(t: RhiRenderTarget, what = '渲染目标'): LumaRhiRenderTarge
   return t;
 }
 
-function unwrapBinding(res: RhiBindingResource, what: string, use: (r: LumaRhiBuffer | LumaRhiTexture) => void): Binding {
-  if (res instanceof LumaRhiBuffer || res instanceof LumaRhiTexture || res instanceof LumaRhiSampler) {
-    res.assertAlive(what);
-    if (!(res instanceof LumaRhiSampler)) use(res);
-    return res.handle;
-  }
-  if (typeof res === 'object' && res !== null && 'buffer' in res) {
-    const b = asBuffer(res.buffer, what);
-    use(b);
-    return { buffer: b.handle, offset: res.offset, size: res.size };
-  }
-  throw new RhiError('invalid-usage', `${what}:不认识的绑定资源`);
+function unsupportedFlipY(label: string): RhiError {
+  // luma 9.4 的 WebGPU 图像拷贝把 flipY 写死成 false(CPU 适配器的回落上传也不翻),传了只会被静默丢掉;没有调用方用它,不如当场报
+  return new RhiError('unsupported', `纹理「${label}」:图像上传不支持 flipY(luma WebGPU 固定不翻转);要翻转请在着色器里翻 uv 或上传前翻好`);
 }

@@ -114,6 +114,7 @@ export interface RhiTextureDesc {
    * ——Pixi 时代这是一个要靠特殊装载参数才能躲开的坑,这里默认就不乘。要预乘的颜色图显式传 true。
    */
   premultiplyAlpha?: boolean;
+  /** **不支持**:传 true 当场报 `unsupported`(luma 的 WebGPU 图像拷贝把 flipY 写死成 false,不报就是静默丢掉);要翻转在着色器里翻 uv */
   flipY?: boolean;
   /** 纹理自带的采样状态:着色器声明了「纹理名Sampler」而绑定时没单独给采样器时用它(见 `RhiBindings`) */
   sampler?: RhiSamplerDesc;

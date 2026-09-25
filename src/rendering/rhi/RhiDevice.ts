@@ -77,7 +77,10 @@ export interface RhiShader extends RhiResource {
 
 /** 管线的着色器编译 / 校验是异步的。 */
 export interface RhiPipelineStatus {
-  /** 编译链接成功后 resolve,失败 reject(RhiError 'backend') */
+  /**
+   * 编译链接成功后 resolve,失败 reject(RhiError 'backend')。确认建坏的管线录制时只跳过它自己的 draw / dispatch
+   * (计入 skippedDraws、告警一次),不让整批命令作废。
+   */
   readonly ready: Promise<void>;
   readonly isReady: boolean;
 }
@@ -235,8 +238,9 @@ export interface RhiDevice {
   createScope(label: string, parent?: RhiResourceScope): RhiResourceScope;
 
   writeBuffer(buffer: RhiBuffer, data: ArrayBufferView, byteOffset?: number): void;
-  /** 写像素:图像源(可选预乘 / 翻转)或紧排像素数据 */
+  /** 写紧排像素数据 */
   writeTexture(texture: RhiTexture, data: ArrayBufferView, region?: { x?: number; y?: number; width?: number; height?: number }): void;
+  /** 上传图像源(可选预乘);`flipY: true` 不支持,当场报 `unsupported`(见 `RhiTextureDesc.flipY`) */
   uploadImage(texture: RhiTexture, image: import('./types').RhiImageSource, opts?: { premultiplyAlpha?: boolean; flipY?: boolean }): void;
   /**
    * 由 level 0 逐级生成其余 mip(线性下采样,同 Pixi 的 GpuMipmapGenerator / WebGL generateMipmap)。

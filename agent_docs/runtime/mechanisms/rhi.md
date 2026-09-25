@@ -23,6 +23,8 @@ verified_by:
   - src/rendering/rhi/RhiResourceScope.test.ts
   - src/rendering/rhi/graph/RenderGraph.test.ts
   - src/rendering/rhi/backends/luma/lumaMapping.test.ts
+  - src/rendering/rhi/backends/luma/LumaRhiDevice.test.ts
+  - src/rendering/rhi/backends/null/NullRhiDevice.test.ts
   - tools/rhi_smoke/cases.ts
   - tools/render_parity/cases/00_harness.ts
 last_governed: 2026-09-25
@@ -55,6 +57,14 @@ last_governed: 2026-09-25
   也会读到新值(不是"写在哪儿从哪儿生效"),所以直接报错。逐 draw 变化的数据用不同缓冲 / 偏移,或在录制前写好。
 - **不静默降级**:环境没有 WebGPU,`createRhiDevice` 抛 `unsupported`,不换别的 API。
 - **图像上传缺省不预乘**(`premultiplyAlpha: false`):alpha 当数据的图不会被乘掉;颜色图要预乘就显式传 true。
+  `flipY: true` **不支持**,当场报 `unsupported`(luma 的 WebGPU 拷贝写死不翻,不报就是静默丢)。
+- **建坏的管线只丢自己的 draw**:着色器编译失败 / 建模块或管线时原生错误作用域(validation + internal,luma 关调试时
+  自己不开,后端自己开)接到错误 → `ready` reject、上报一次 error;之后用它的 draw / dispatch 录制时跳过(计入 `skippedDraws`、
+  告警一次),帧照常提交——WebGPU 里拿无效管线 setPipeline 会让整批命令作废(一帧全黑),master 的 GL 里坏程序只影响自己。
+  失败是异步才知道的:确认之前的那几帧照常画(与正常管线同路)。
+- **空后端与真后端校验逐条一致**(`NullRhiDevice.test.ts` 同一段用法两边跑、比错误码):新增真后端校验时空后端同步加,
+  两边共用的规则写在 `backends/backendRules.ts`;空后端的着色器布局用 luma 同一个 WGSL 扫描器推。
+  要模拟建坏的管线用 `new NullRhiDevice({ failPipeline: (label) => … })`。
 - **多重采样(MSAA)只有 1 / 4**:`sampleCount: 4` 的纹理只能当渲染附件(用途只许 RENDER_TARGET,不带数据、单级 mip),
   渲染目标的 `resolveTargets` 给同尺寸同格式的单采样纹理,每个 pass 结束 resolve 进去;管线的 `sampleCount` 必须与目标一致,
   不一致 setPipeline 当场 `invalid-usage`。多重采样纹理跨 pass 保留(load 读到的是上一 pass 的多重采样结果,不是 resolve 目标)。
@@ -82,6 +92,9 @@ last_governed: 2026-09-25
 
 - 画布后备缓冲只在 `runFrame` 期内可用,且**第一次当 pass 目标时才向画布取纹理**;没画画布的帧不碰画布。
 - 管线建好后首次使用前 await `pipeline.ready`,否则 luma 可能跳过 draw(计入 `skippedDraws` 并告警一次)。
+- bind group 由 luma 后端按「着色器声明的每个绑定所指资源的身份(+ 缓冲区段偏移 / 尺寸、纹理当前采样器)」缓存在管线上
+  (照 Pixi 8 的 BindGroupSystem),命中时直接设给原生 pass、不经 luma 的 setBindings;依赖 luma 9.4 render pass 的
+  `bindingsPipeline` 字段(`LumaRhiDevice.test.ts` 有一条守着,升级 luma 时先看它)。
 - 图像源上传(`uploadImage`)可能有 ±2 的舍入:浏览器解码 / 拷贝链路内部会做一次预乘往返;没有被乘上 alpha。
 - 云端容器里**无头** Chromium 的 WebGPU 呈现到画布会丢设备(裸 WebGPU 也一样);离屏与 compute 正常。
   **有头**(`xvfb-run`)+ `--enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader` 上屏正常(2026-09-25 实测),
