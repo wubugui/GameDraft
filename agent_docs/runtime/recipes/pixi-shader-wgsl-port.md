@@ -55,6 +55,13 @@ GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意
 - WGSL 模板字符串标 `/* wgsl */`,别标 `/* glsl */`(`glslSymbols.test.ts` 会把所有 `/* glsl */` 当 GLSL 检查)。
 - 共享 WGSL 函数文件可以直接引用一个模块作用域的 uniform 变量,只要每个包含它的程序都用同一个变量名声明它
   (WGSL 模块作用域不讲声明先后)。
+- **共享光照片段的 WGSL 版已就位**(各文件顶部写了用法约定):`src/rendering/lighting/wgslChunks.ts` 导出
+  `WR_CORE_WGSL` / `WR_TEX_WGSL` / `WR_SPRITE_WGSL` / `LC_WGSL`(与 GLSL 同样的切片)及整文件;`CharacterShadingFilter.ts`
+  导出 `CHAR_LIGHT_COMMON_WGSL` / `PROBE_SAMPLING_WGSL` / `SKYAO_SAMPLING_WGSL`;`CharacterLitSprite.ts` 导出
+  `CHAR_LIGHTS_WGSL`(结构体)/ `ENTITY_SCENE_LIGHTS_WGSL`(灯循环);`charShadeCore.wgsl`。要点:片段不读绑定,纹理与采样器作
+  函数参数;GLSL 片段自带的 uniform 变成按名赋值的值结构体(`ClcProbe` 等,**逐字段按名赋值,别用位置构造**——
+  同为 f32 的字段会静默错位);灯循环读模块作用域的 `charLights` 绑定,由宿主以自己的 group/binding 声明;
+  WGSL 没有 include 守卫,每个片段每个模块只拼一次。
 - 共享片段(lightingCore / worldReconstruct 等)的 WGSL 版放同目录 `.wgsl` 文件,`import x from './foo.wgsl?raw'` 打进包里,
   不要运行时 fetch(发行包的 MIME 表没有 wgsl)。
 
@@ -74,7 +81,8 @@ GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意
 - `bool` / 整型 uniform:Pixi 的 uniform 类型串只有 f32/i32/u32 系列;GLSL 里 `if (uFlag > 0.5)` 这类照搬。
 - 浮点目标(`rgba16float`)对照时容差按值域给(1e-3 相对量级),8 位目标 `2/255` 起;**不许为了过对照调大容差掩盖真差异**,
   差异集中在某片区域时先查翻译。
-- `rgba32float` 目标在 WebGPU 核心里不可混合:画进去的管线要关混合,否则建管线失败。
+- `rgba32float` 目标在 WebGPU 核心里不可混合:`installPixiWebGpuPatches` 已在建管线时对 32 位浮点 / 整数格式去掉混合。
+  `rgba32float` **输入**纹理则不可过滤(Pixi 按可过滤浮点声明纹理绑定)——运行时别用 32F 做被采样的纹理。
 - 没指定 `format` 的 Pixi 渲染目标缺省是 `bgra8unorm`:WebGPU 显存里真是 BGRA 字节序(WebGL 侧照样存 RGBA)。
   采样出来通道是对的,只有回读要按存储格式解释——`env.readTexture` 已经按格式换好,用例里别再自己换。
 - Node 单测里构造 `GlProgram` 需要 canvas 桩(它要探精度):照 `VfxRenderer.test.ts` 用

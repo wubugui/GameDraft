@@ -7,11 +7,16 @@
  * GI、阴影前缀、草木摆动都画进 `rgba16float`,不补就全黑。
  *
  * 补法:开 pass 时记下当前目标各颜色附件的真实格式;管线缓存键并上这组格式;建管线时按它填 `targets[i].format`。
+ * 顺带:Pixi 总给颜色目标配混合,而 32 位浮点 / 整数格式在 WebGPU 核心里**不可混合**,带混合建管线必失败——
+ * 这类格式建管线时去掉混合(等价于覆盖写入;这些目标本来就是数据图,不该混合)。
  * 只改这三处,WebGL 渲染器不受影响。安装幂等,必须在建 WebGPU 渲染器之前调用。
  */
 import { GpuRenderTargetAdaptor, PipelineSystem } from 'pixi.js';
 
 const INSTALLED = Symbol.for('gamedraft.pixiWebGpuPatches');
+
+/** WebGPU 核心里不可混合的颜色格式(32 位浮点需要可选特性 float32-blendable,整数格式一律不可混合) */
+const NON_BLENDABLE = /^(r|rg|rgba)32float$|int$/;
 
 interface PatchedPipelineSystem {
   _rtFormats?: string[];
@@ -69,7 +74,12 @@ export function installPixiWebGpuPatches(): void {
     const stateSystem = this._renderer.state;
     const origGet = stateSystem.getColorTargets;
     stateSystem.getColorTargets = (state: unknown, count: number) =>
-      origGet.call(stateSystem, state, count).map((t, i) => ({ ...t, format: (formats[i] ?? t.format) as GPUTextureFormat }));
+      origGet.call(stateSystem, state, count).map((t, i) => {
+        const format = (formats[i] ?? t.format) as GPUTextureFormat;
+        if (!NON_BLENDABLE.test(format)) return { ...t, format };
+        const { blend: _blend, ...rest } = t;
+        return { ...rest, format };
+      });
     try {
       return origCreate.apply(this, args);
     } finally {

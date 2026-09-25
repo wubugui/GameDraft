@@ -38,6 +38,21 @@ export const cases: ParityCase[] = [
     },
   },
   {
+    // Pixi 总给目标配混合,rgba32float 在 WebGPU 核心不可混合:由 pixiWebGpuPatches 在建管线时去掉混合
+    name: '框架自检 / 浮点目标 rgba32float(不可混合格式)',
+    width: 8,
+    height: 8,
+    target: 'rgba32float',
+    tolerance: 1e-3,
+    build(env) {
+      // 输入用 16F:32 位浮点纹理在 WebGPU 核心里不可过滤,Pixi 的批处理着色器按可过滤声明纹理(运行时也没有 32F 输入)
+      const tex = env.dataTexture({ width: 8, height: 8, seed: 9, format: 'rgba16float', fill: (x, y, c) => (c === 3 ? 1 : (x * 8 + y + c) / 70 - 0.2) });
+      const root = new Container();
+      root.addChild(new Sprite(tex));
+      return root;
+    },
+  },
+  {
     name: '框架自检 / 浮点目标 rgba16float',
     width: 8,
     height: 8,
