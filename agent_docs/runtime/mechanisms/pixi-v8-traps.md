@@ -74,6 +74,13 @@ Pixi v8 里几条**不报错、只是行为不对**的引擎事实。每条都�
 
 ## 已知坑
 
+- **uniform 组的键必须在构造时声明**:构造后才往 `uniforms` 上挂的新键,WebGL 侧 `generateUniformsSync` 按 `uniforms`
+  遍历、却从 `uniformStructures` 取类型——同步函数若在挂键之后生成就每帧抛 `reading 'type'`(渲染路径抛异常,见第一条),
+  若在之前生成则新键永远传不上去(静默恒为缺省);WebGPU 侧缓冲布局里也没有它。setter 只许改已声明的键
+  (实例:F2 背景调试滤镜的地面场三个键,2026-09-25 补声明)。
+- **WebGPU 渲染器在一次 `render()` 之外没有命令编码器**:`renderTarget.bind(...)` 当场抛;`renderer.clear({target})`
+  在首次 render 之前也抛,且单独提交时用的是上一个目标的视口。渲染之外要清一张 RT,就 `render({container: 空容器, target, clear: true})`。
+
 - **GlProgram 第一次被用来画东西时才编译,而且同步等链接结果**(`generateProgram` 里直接 `getProgramParameter(LINK_STATUS)`)。
   Windows 上 ANGLE → D3D11 的 FXC 编大 shader 是秒级的:拼了大循环 / 循环里采纹理的 shader 能到 10 s 级,
   主线程整个停住,症状是"某个东西第一次出现时卡死几秒、之后再也不卡"。游戏预览窗口带 `--disable-gpu-shader-disk-cache`,
