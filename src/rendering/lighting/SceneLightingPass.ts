@@ -11,9 +11,12 @@ import {
 } from './lightPacking';
 import { LIGHTS_PER_SLAB, type PrefixLight, ShadowPrefixPass } from './shadowPrefix';
 import { SURFACE_DEFAULTS } from './surfaceMask';
-import { PROBE_SAMPLING_GLSL, SKYAO_SAMPLING_GLSL } from '../CharacterShadingFilter';
+import {
+  PROBE_SAMPLING_GLSL, PROBE_SAMPLING_WGSL, SKYAO_SAMPLING_GLSL, SKYAO_SAMPLING_WGSL,
+} from '../CharacterShadingFilter';
 import LIGHTING_CORE from './lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
+import { LC_WGSL, WR_CORE_WGSL } from './wgslChunks';
 
 /**
  * 场景光照 pass —— 把实体灯加到原画上，产出**线性 HDR 辐射场**。
@@ -716,6 +719,495 @@ void main(void) {
 }
 `;
 
+// ============================================================================
+// WebGPU 版(WGSL)。与上面 BAKE_VERT / BAKE_FRAG 逐句对应,GLSL 原样保留(WebGL 仍走它);
+// 两边的等价由 tools/render_parity 的「场景光照 /」用例钉住,改一边必须同步改另一边并重跑对照。
+//
+// 拼接:共享片段各拼一次 —— WR_CORE / LIGHTING_CORE(wgslChunks)与角色公共块里的
+// PROBE_SAMPLING / SKYAO_SAMPLING(CharacterShadingFilter 的 WGSL 导出)。片段一个绑定都不读:
+// 灯函数全走形参;probe / skyao 的 uniform 在 main 里从 sceneLight 按字段名逐个赋值成
+// ClcProbe / ClcSkyao 值结构(只在 GI 体调试档里建),四张 probe 图集与 skyao 图集当形参传。
+//
+// 绑定按 Pixi 网格约定:第 0 组 globalUniforms、第 1 组 localUniforms 由 Pixi 挂;本 pass 的
+// 纹理 / 采样器 / uniform 组全在第 2 组,变量名 = resources 键名。纹理的声明顺序与 resources
+// 对象里的相对顺序一致(WebGL 按组号、绑定号升序分配纹理单元,顺序不变 GL 侧才逐字节不变);
+// 采样器紧跟它的纹理(WebGL 侧不认识 *Sampler 这些键,Pixi 忽略)。probe / skyao 图集只用
+// textureLoad,不配采样器。sceneLight 结构体成员顺序 = JS 里 uniforms 的声明顺序。
+//
+// 与 GLSL 的形式差异(数值不变):
+//   · 片元坐标只用插值出来的 vUv(离屏目标上两后端 uv(0,0) 都落在存储第 0 行,不翻转)。
+//   · 细节法线的像素足迹 fp:GLSL 在分支 surfK > 0 里取 dFdx / dFdy,WGSL 的 dpdx / dpdy 只许在
+//     一致控制流里调,所以提到分支之前(P 在分支前已算好,四邻取的是同一组值;只取长度,
+//     两后端 y 导数的正负号约定不影响)。实测(对照页 SwiftShader)fp 在 f32 下两侧逐位相同,
+//     对照用例让 fp 落在细节法线 / 雨纹的淡出区间里。
+//   · 灯循环里的线扫前缀查表(非一致控制流)用 textureSampleLevel(…, 0):slab 是单级 RT,
+//     与 GLSL texture() 等价;其余采样(含 uSurfOn 这个 uniform 分支里的遮罩)照 GLSL 用 textureSample。
+//   · 三元式一律 if / else;inout / out 形参改成 function 指针;GLSL 的 #define / const 写成
+//     WGSL 的 const。
+//   · 细节法线里的 smoothstep 走手写定义式 glslSmoothstep,不用 WGSL 内建(内建与 GLSL 差个位
+//     ulp、被 GGX 放大,见该函数注释)。灯锥那一处在共享片段 lcSpotLight 里,仍是内建。
+//   · 去霾整段在 GLSL 里是 if (false && …) 的死代码,这里照样留着同一个守卫(不删,理由同 GLSL)。
+// ⚠ Pixi 用正则从整段源里抽绑定与 struct:struct 体内不写注释,注释里不写「at 号 + group(」这类字样。
+// ============================================================================
+
+const BAKE_WGSL_VERT = /* wgsl */ `
+struct GlobalUniforms {
+    uProjectionMatrix: mat3x3<f32>,
+    uWorldTransformMatrix: mat3x3<f32>,
+    uWorldColorAlpha: vec4<f32>,
+    uResolution: vec2<f32>,
+}
+
+struct LocalUniforms {
+    uTransformMatrix: mat3x3<f32>,
+    uColor: vec4<f32>,
+    uRound: f32,
+}
+
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+
+struct VSOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) vUv: vec2<f32>,
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) -> VSOutput {
+    let model = globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+    let screen = (model * vec3<f32>(aPosition, 1.0)).xy;
+    let clip = (globalUniforms.uProjectionMatrix * vec3<f32>(screen, 1.0)).xy;
+    return VSOutput(vec4<f32>(clip, 0.0, 1.0), aUV);
+}
+`;
+
+const BAKE_WGSL = /* wgsl */ `${BAKE_WGSL_VERT}
+struct SceneLightUniforms {
+    uDepthTexSize: vec2<f32>,
+    uCal: vec3<f32>,
+    uDepthMap: vec3<f32>,
+    uAoStrength: f32,
+    uShadow: vec4<f32>,
+    uShadowBias: vec2<f32>,
+    uRatioMax: f32,
+    uDebug: i32,
+    uGiFixedN: i32,
+    uWuPerQUnit: f32,
+    uMRow0: vec3<f32>,
+    uMRow1: vec3<f32>,
+    uMRow2: vec3<f32>,
+    uCore: vec4<f32>,
+    uLightPx: array<vec4<f32>, ${MAX_STATIC_LIGHTS}>,
+    uHaze: vec4<f32>,
+    uHazeColor: vec3<f32>,
+    uLightCount: i32,
+    uLightA: array<vec4<f32>, ${MAX_STATIC_LIGHTS}>,
+    uLightB: array<vec4<f32>, ${MAX_STATIC_LIGHTS}>,
+    uLightC: array<vec4<f32>, ${MAX_STATIC_LIGHTS}>,
+    uLightD: array<vec4<f32>, ${MAX_STATIC_LIGHTS}>,
+    uM: mat3x3<f32>,
+    uWMin: vec3<f32>,
+    uWScale: vec3<f32>,
+    uPN: vec3<f32>,
+    uProbeT: f32,
+    uShK: f32,
+    uBinOb: f32,
+    uFold: f32,
+    uAmbSH: array<vec3<f32>, 9>,
+    uMode: f32,
+    uAmbStrength: f32,
+    uProbeBeta: f32,
+    uSkyaoN: vec3<f32>,
+    uSkyaoTiles: vec2<f32>,
+    uSkyaoMin: vec3<f32>,
+    uSkyaoScale: vec3<f32>,
+    uSkyaoM: mat3x3<f32>,
+    uSkyaoOn: f32,
+    uSurfOn: f32,
+    uSurfDefault: vec4<f32>,
+    uTime: f32,
+}
+
+@group(2) @binding(0) var uPainting: texture_2d<f32>;
+@group(2) @binding(1) var uPaintingSampler: sampler;
+@group(2) @binding(2) var uPrefix0: texture_2d<f32>;
+@group(2) @binding(3) var uPrefix0Sampler: sampler;
+@group(2) @binding(4) var uPrefix1: texture_2d<f32>;
+@group(2) @binding(5) var uPrefix1Sampler: sampler;
+@group(2) @binding(6) var uNormal: texture_2d<f32>;
+@group(2) @binding(7) var uNormalSampler: sampler;
+@group(2) @binding(8) var uAlbedo: texture_2d<f32>;
+@group(2) @binding(9) var uAlbedoSampler: sampler;
+@group(2) @binding(10) var uDepth: texture_2d<f32>;
+@group(2) @binding(11) var uDepthSampler: sampler;
+@group(2) @binding(12) var uPL1: texture_2d<f32>;
+@group(2) @binding(13) var uPL2: texture_2d<f32>;
+@group(2) @binding(14) var uPBin: texture_2d<f32>;
+@group(2) @binding(15) var uValid: texture_2d<f32>;
+@group(2) @binding(16) var uSkyaoTex: texture_2d<f32>;
+@group(2) @binding(17) var uSurfMask: texture_2d<f32>;
+@group(2) @binding(18) var uSurfMaskSampler: sampler;
+@group(2) @binding(19) var<uniform> sceneLight: SceneLightUniforms;
+
+// 去霾时每个通道至少留下的比例(见 GLSL 的 HAZE_KEEP;该段现为死代码)
+const HAZE_KEEP: f32 = 0.1;
+
+${WR_CORE_WGSL}
+${LC_WGSL}
+${PROBE_SAMPLING_WGSL}
+${SKYAO_SAMPLING_WGSL}
+
+// 一盏灯的可见性(0 = 被挡):一次查表 + 一次比较,零步进(推导见 GLSL 同名函数)。
+// 在灯循环的分支里调 ⇒ 采样用 textureSampleLevel(slab 是单级 RT)。
+fn lightVisibilityPrefix(idx: i32, fragPx: vec2<f32>, myDepth: f32) -> f32 {
+    let lp = sceneLight.uLightPx[idx];
+    if (lp.w < 0.5) { return 1.0; }
+    let k = length(fragPx - lp.xy);
+    if (k < 1.0) { return 1.0; }
+    let uv = fragPx / sceneLight.uDepthTexSize;
+    var slab: vec4<f32>;
+    if (idx < 4) {
+        slab = textureSampleLevel(uPrefix0, uPrefix0Sampler, uv, 0.0);
+    } else {
+        slab = textureSampleLevel(uPrefix1, uPrefix1Sampler, uv, 0.0);
+    }
+    var base = 4;
+    if (idx < 4) { base = 0; }
+    let c = idx - base;
+    var M: f32;
+    if (c == 0) { M = slab.x; } else if (c == 1) { M = slab.y; } else if (c == 2) { M = slab.z; } else { M = slab.w; }
+    let sp = (myDepth - lp.z) / k;
+    if (sp > M) { return 0.0; }
+    return 1.0;
+}
+
+// 面光的两条半轴:法线造参考基,再在 n 张的平面里转 roll(说明见 GLSL 同名函数)。
+fn areaAxes(n: vec3<f32>, halfW: f32, halfH: f32, roll: f32,
+            halfU: ptr<function, vec3<f32>>, halfV: ptr<function, vec3<f32>>) {
+    var up = vec3<f32>(0.0, 1.0, 0.0);
+    if (abs(n.y) > 0.95) { up = vec3<f32>(1.0, 0.0, 0.0); }
+    let u = normalize(cross(up, n));
+    let v = cross(n, u);
+    let c = cos(roll);
+    let s = sin(roll);
+    let ru = u * c + v * s;
+    let rv = v * c - u * s;
+    *halfU = ru * halfW;
+    *halfV = rv * halfH;
+}
+
+// GGX 镜面(只给打了 reflect 位的灯),口径与漫反射同尺 = π × f_spec × E(见 GLSL 同名函数)。
+fn specGGX(n: vec3<f32>, v: vec3<f32>, l: vec3<f32>, rough: f32, f0: f32) -> f32 {
+    let nl = dot(n, l);
+    if (nl <= 0.0) { return 0.0; }
+    let h = normalize(v + l);
+    let nv = max(dot(n, v), 1e-3);
+    let nh = max(dot(n, h), 0.0);
+    let vh = max(dot(v, h), 0.0);
+    let a = max(rough * rough, 2e-3);
+    let a2 = a * a;
+    let dd = nh * nh * (a2 - 1.0) + 1.0;
+    let D = a2 / (LC_PI * dd * dd);
+    let vis = 0.5 / (nl * sqrt(nv * nv * (1.0 - a2) + a2) + nv * sqrt(nl * nl * (1.0 - a2) + a2));
+    let F = f0 + (1.0 - f0) * pow(1.0 - vh, 5.0);
+    return LC_PI * D * vis * F * nl;
+}
+
+// ---- 细节法线(程序化微表面,只进镜面项;设计见 GLSL 的同一段注释)----
+// smoothstep 按 GLSL / WGSL 两份规范共同的定义式手写,不用 WGSL 内建:内建那个与 GLSL 的
+// 在过渡区差 1~4 ulp(实测,Tint 与 ANGLE 编出来的不是同一串指令),经 GGX 近峰值处
+// dd = nh²(a2−1)+1 的相消放大到几十 ulp;定义式实测与 GLSL 逐位相同。数学上与内建等价。
+fn glslSmoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+fn rippleHash(p: vec2<f32>) -> f32 { return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453); }
+fn rippleGrad(p: vec2<f32>) -> vec2<f32> {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let du = 6.0 * f * (1.0 - f);
+    let a = rippleHash(i);
+    let b = rippleHash(i + vec2<f32>(1.0, 0.0));
+    let c = rippleHash(i + vec2<f32>(0.0, 1.0));
+    let d = rippleHash(i + vec2<f32>(1.0, 1.0));
+    let k = a - b - c + d;
+    return du * vec2<f32>(b - a + k * u.y, c - a + k * u.x);
+}
+const DN_VAR: f32 = 0.45;
+const DN_SLOPE: f32 = 0.2;
+
+// 地面 / 墙的细节法线;a2 进来是本来的 α²,出去加上看不清那几级的坡度方差
+fn detailNormal(n: vec3<f32>, P: vec3<f32>, fp: f32, amt: f32, a2: ptr<function, f32>) -> vec3<f32> {
+    let an = abs(n);
+    var uv: vec2<f32>;
+    var ax: i32;
+    if (an.y >= an.x && an.y >= an.z) { uv = P.xz; ax = 1; }
+    else if (an.x >= an.z) { uv = P.zy; ax = 0; }
+    else { uv = P.xy; ax = 2; }
+    var g = vec2<f32>(0.0);
+    let s = DN_SLOPE * amt;
+    for (var k = 0; k < 4; k++) {
+        var lam: f32;
+        if (k == 0) { lam = 22.0; } else if (k == 1) { lam = 9.0; } else if (k == 2) { lam = 4.0; } else { lam = 1.8; }
+        let ang = f32(k) * 1.1 + 0.4;
+        let rot = mat2x2<f32>(cos(ang), sin(ang), -sin(ang), cos(ang));
+        let w = glslSmoothstep(3.0 * fp, 6.0 * fp, lam);
+        g += (w * s) * (transpose(rot) * rippleGrad(rot * uv / lam + vec2<f32>(f32(k) * 17.3, f32(k) * 5.1)));
+        *a2 += (1.0 - w * w) * s * s * DN_VAR;
+    }
+    var gv: vec3<f32>;
+    if (ax == 1) { gv = vec3<f32>(g.x, 0.0, g.y); }
+    else if (ax == 0) { gv = vec3<f32>(0.0, g.y, g.x); }
+    else { gv = vec3<f32>(g.x, g.y, 0.0); }
+    return normalize(n - (gv - n * dot(n, gv)));
+}
+
+const RAIN_CELL: f32 = 9.0;
+const RAIN_RATE: f32 = 0.9;
+const RAIN_WAVE: f32 = 1.6;
+const RAIN_REACH: f32 = 5.0;
+const RAIN_SLOPE: f32 = 0.3;
+
+// 水面的细节法线:世界向上 + 雨点涟漪 + 弱细浪
+fn waterNormal(P: vec3<f32>, t: f32, fp: f32, amt: f32, a2: ptr<function, f32>) -> vec3<f32> {
+    let up = vec3<f32>(0.0, 1.0, 0.0);
+    let xz = P.xz;
+    let s = RAIN_SLOPE * amt;
+    let w = glslSmoothstep(3.0 * fp, 6.0 * fp, RAIN_WAVE);
+    *a2 += (1.0 - w * w) * s * s * 0.25;
+    var g = vec2<f32>(0.0);
+    if (w > 0.0 && s > 0.0) {
+        let c = floor(xz / RAIN_CELL);
+        for (var j = -1; j <= 1; j++) {
+            for (var i = -1; i <= 1; i++) {
+                let cell = c + vec2<f32>(f32(i), f32(j));
+                let h1 = rippleHash(cell);
+                let h2 = rippleHash(cell + 31.7);
+                let h3 = rippleHash(cell + 71.3);
+                let drop = (cell + vec2<f32>(h1, h2)) * RAIN_CELL;
+                let ph = fract(t * RAIN_RATE + h3);
+                let d = xz - drop;
+                let dist = length(d);
+                let x = (dist - ph * RAIN_REACH) / RAIN_WAVE;
+                if (abs(x) > 1.5) { continue; }
+                let env = (1.0 - ph) * (1.0 - ph) * (1.0 - glslSmoothstep(0.5, 1.5, abs(x)));
+                g += (d / max(dist, 1e-3)) * (cos(x * 6.2831853) * env);
+            }
+        }
+        g *= s * w;
+    }
+    // 细浪:两级会流动的值噪声,幅度只有地面的三成
+    let sw = DN_SLOPE * 0.3 * amt;
+    for (var k = 0; k < 2; k++) {
+        var lam = 6.0;
+        var flow = vec2<f32>(-0.5, -0.9);
+        if (k == 0) { lam = 16.0; flow = vec2<f32>(0.6, 0.35); }
+        let ww = glslSmoothstep(3.0 * fp, 6.0 * fp, lam);
+        g += (ww * sw) * rippleGrad(xz / lam + t * flow);
+        *a2 += (1.0 - ww * ww) * sw * sw * DN_VAR;
+    }
+    return normalize(up - vec3<f32>(g.x, 0.0, g.y));
+}
+
+@fragment
+fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
+    let vUv = input.vUv;
+    var painting = lcSrgbToLinear(textureSample(uPainting, uPaintingSampler, vUv).rgb);
+    // 场景法线:rg 做 *2-1,b 是 |z| 直存、直接取负(编码说明见 GLSL)
+    let nrmTex = textureSample(uNormal, uNormalSampler, vUv).rgb;
+    let n = normalize(vec3<f32>(nrmTex.r * 2.0 - 1.0,
+                                nrmTex.g * 2.0 - 1.0,
+                                -max(nrmTex.b, 0.05)));
+    // 反照率:烘出来的一张贴图(sRGB8,与原画同一条解码路径)
+    let albedo = lcSrgbToLinear(textureSample(uAlbedo, uAlbedoSampler, vUv).rgb);
+
+    let px = vec2<f32>(vUv.x, vUv.y) * sceneLight.uDepthTexSize;
+    let d = wrDecodeSceneDepth(textureSample(uDepth, uDepthSampler, vUv),
+                               sceneLight.uDepthMap.x, sceneLight.uDepthMap.y, sceneLight.uDepthMap.z);
+    let q = wrPixelToQ(px, sceneLight.uCal.x, sceneLight.uCal.y, sceneLight.uCal.z, d);
+
+    // 去霾整段停用(2026-08-30,理由见 GLSL):同一个 false 守卫,代码不删
+    if (false && sceneLight.uHaze.y > 0.0) {
+        let dn = clamp((d - sceneLight.uHaze.z) / max(sceneLight.uHaze.w - sceneLight.uHaze.z, 1e-5), 0.0, 1.0);
+        let T = exp(-sceneLight.uHaze.x * dn);
+        let hazeAmt = sceneLight.uHazeColor * (sceneLight.uHaze.y * (1.0 - T));
+        painting = (painting - min(hazeAmt, painting * (1.0 - HAZE_KEEP))) / max(T, 0.15);
+    }
+
+    // ---- 实体灯的辐照度累加(铁律 0:世界空间、单位 wu)----
+    var lampE = vec3<f32>(0.0);
+    let P = wrQToWorld(sceneLight.uMRow0, sceneLight.uMRow1, sceneLight.uMRow2, q) * sceneLight.uWuPerQUnit;
+    var emissive = vec3<f32>(0.0);
+    // ---- 表面材质(只进打了反光位的灯的镜面项):没画区域的地方 = 全局缺省材质 ----
+    var specE = vec3<f32>(0.0);
+    var surfK = sceneLight.uSurfDefault.x;
+    var surfRough01 = sceneLight.uSurfDefault.y;
+    var surfWater = 0.0;
+    // 视线:M-world 里朝相机的方向 = -(R 的第三列)
+    let V = -normalize(vec3<f32>(sceneLight.uMRow0.z, sceneLight.uMRow1.z, sceneLight.uMRow2.z));
+    if (sceneLight.uSurfOn > 0.5) {
+        let sm = textureSample(uSurfMask, uSurfMaskSampler, vUv);
+        surfK = sm.r;
+        surfRough01 = sm.g;
+        surfWater = sm.b;
+    }
+    // 像素足迹:导数只许在一致控制流里取,提到 surfK 分支之前(见文件里 WGSL 段的头注释)
+    let fpAll = max(max(length(dpdx(P)), length(dpdy(P))), 1e-3);
+    var surfRough = mix(0.04, 0.8, surfRough01);
+    var ns = n;
+    if (surfK > 0.0) {
+        let fp = fpAll;
+        let a0 = max(surfRough * surfRough, 2e-3);
+        var a2g = a0 * a0;
+        var a2w = a0 * a0;
+        let ng = detailNormal(n, P, fp, sceneLight.uSurfDefault.z, &a2g);
+        var nw = ng;
+        if (surfWater > 0.0) { nw = waterNormal(P, sceneLight.uTime, fp, sceneLight.uSurfDefault.w, &a2w); }
+        ns = normalize(mix(ng, nw, surfWater));
+        surfRough = sqrt(sqrt(mix(a2g, a2w, surfWater)));
+    }
+    for (var i = 0; i < ${MAX_STATIC_LIGHTS}; i++) {
+        if (i >= sceneLight.uLightCount) { break; }
+        let A = sceneLight.uLightA[i];
+        let B = sceneLight.uLightB[i];
+        let C = sceneLight.uLightC[i];
+        let D = sceneLight.uLightD[i];
+        let kind = i32(A.w + 0.5);
+
+        // 两条可证明无损的早退(理由见 GLSL):强度 0;超出高斯截断
+        if (B.w <= 0.0) { continue; }
+        if (kind != LC_DIRECTIONAL) {
+            var dl = A.xyz - P;
+            // 线光:截断看线上离这个像素最近的那一点
+            if (kind == LC_LINE) { dl += D.xyz * clamp(dot(P - A.xyz, D.xyz) / max(dot(D.xyz, D.xyz), 1e-6), 0.0, 1.0); }
+            if (exp(-dot(dl, dl) / max(C.x * C.x, 1e-6)) < 1e-4) { continue; }
+        }
+
+        var vis = 1.0;
+        // D.w 是位标志:bit0=castShadow bit1=twoSided bit2=reflect
+        let flags = i32(D.w + 0.5);
+        if ((flags & 1) != 0 && kind != LC_DIRECTIONAL) {
+            vis = lightVisibilityPrefix(i, px, d);
+        }
+        if (kind == LC_POINT) {
+            lampE += lcPointLight(P, n, A.xyz, B.rgb, B.w, C.x, C.y, vis);
+        } else if (kind == LC_SPOT) {
+            lampE += lcSpotLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, C.z, C.w, vis);
+        } else if (kind == LC_AREA) {
+            var hu: vec3<f32>;
+            var hv: vec3<f32>;
+            areaAxes(normalize(D.xyz), C.z, C.w, C.y, &hu, &hv);
+            lampE += lcAreaLight(P, n, A.xyz, hu, hv, B.rgb, B.w, C.x, (flags & 2) != 0, vis);
+        } else if (kind == LC_LINE) {
+            lampE += lcLineLight(P, n, A.xyz, D.xyz, B.rgb, B.w, C.x, C.y, vis);
+        } else {
+            // directional:遮挡不走线扫(与 GLSL 同)
+            lampE += lcDirectionalLight(n, D.xyz, B.rgb, B.w, 1.0);
+        }
+        // ---- 镜面反光:只有打了 reflect 位的灯、只在反光遮罩里(各分支推导见 GLSL)----
+        if ((flags & 4) != 0 && surfK > 0.0) {
+            let f0 = mix(0.04, 0.02, surfWater);
+            if (kind == LC_DIRECTIONAL) {
+                let Eh = B.w * max(dot(vec3<f32>(0.0, 1.0, 0.0), normalize(D.xyz)), 0.0);
+                let nv = max(dot(ns, V), 0.0);
+                specE += B.rgb * (Eh * (f0 + (1.0 - f0) * pow(1.0 - nv, 5.0)));
+            } else if (kind == LC_LINE) {
+                let R = reflect(-V, ns);
+                let L0 = A.xyz - P;
+                let rl0 = dot(R, L0);
+                let rld = dot(R, D.xyz);
+                let l0ld = dot(L0, D.xyz);
+                let ld2 = dot(D.xyz, D.xyz);
+                let tt = clamp((rl0 * rld - l0ld) / max(ld2 - rld * rld, 1e-6), 0.0, 1.0);
+                let Lr = L0 + D.xyz * tt;
+                let r2 = dot(Lr, Lr);
+                let r = sqrt(max(r2, 1e-9));
+                let len = sqrt(ld2);
+                let ldir = D.xyz / max(len, 1e-6);
+                let sinPhi = max(length(cross(ldir, Lr / r)), 0.05);
+                let alpha = max(surfRough * surfRough, 2e-3);
+                let lenEff = min(len, LC_PI * alpha * r / sinPhi);
+                let Ie = B.w / max(len, 1e-3) * lenEff;
+                specE += B.rgb * (Ie * lcFalloff(r2, C.x, C.y) * specGGX(ns, V, Lr / r, surfRough, f0));
+            } else {
+                let Lp = A.xyz - P;
+                let r2 = dot(Lp, Lp);
+                specE += B.rgb * (B.w * lcFalloff(r2, C.x, C.y) * specGGX(ns, V, Lp * inverseSqrt(max(r2, 1e-9)), surfRough, f0));
+            }
+        }
+        // ---- 灯体 + 大气光晕:沿视线积分(闭式解与高斯包络的理由见 GLSL)----
+        if (kind != LC_DIRECTIONAL && kind != LC_LINE && (flags & 4) == 0 && sceneLight.uCore.x > 0.0) {
+            // 豁免③:光晕积的是视线路径,留在 q 的朝向里,长度统一成 wu
+            let qw = q * sceneLight.uWuPerQUnit;
+            let lq = wrWorldToQ(sceneLight.uMRow0, sceneLight.uMRow1, sceneLight.uMRow2, A.xyz);
+            let r2 = dot(qw.xy - lq.xy, qw.xy - lq.xy);
+            let dNear = min(sceneLight.uDepthMap.z, sceneLight.uDepthMap.z + sceneLight.uDepthMap.y) * sceneLight.uWuPerQUnit;
+            let rc = sqrt(r2 + sceneLight.uCore.y * sceneLight.uCore.y);
+            let rh = sqrt(r2 + sceneLight.uCore.z * sceneLight.uCore.z);
+            let ac = (atan((qw.z - lq.z) / rc) - atan((dNear - lq.z) / rc)) / rc;
+            let ah = (atan((qw.z - lq.z) / rh) - atan((dNear - lq.z) / rh)) / rh;
+            let visC = clamp(ac * sceneLight.uCore.y / 3.14159265, 0.0, 1.0);
+            let visH = clamp(ah * sceneLight.uCore.z / 3.14159265, 0.0, 1.0);
+            let core = visC * exp(-r2 / max(sceneLight.uCore.y * sceneLight.uCore.y, 1e-9));
+            let halo = visH * exp(-r2 / max(sceneLight.uCore.z * sceneLight.uCore.z, 1e-9));
+            // 作者面的强度数:点 / 聚光在打包处 × uWuPerQUnit²,这里除回去;面光原样
+            var iAuthor = B.w;
+            if (kind == LC_POINT || kind == LC_SPOT) { iAuthor = B.w / (sceneLight.uWuPerQUnit * sceneLight.uWuPerQUnit); }
+            emissive += B.rgb * (iAuthor * sceneLight.uCore.x * (core + halo * sceneLight.uCore.w));
+        }
+    }
+
+    if (sceneLight.uDebug == 1) { return vec4<f32>(n * 0.5 + 0.5, 1.0); }
+    if (sceneLight.uDebug == 2) { return vec4<f32>(albedo, 1.0); }
+    if (sceneLight.uDebug == 3) { return vec4<f32>(lampE, 1.0); }
+    if (sceneLight.uDebug == 4) { return vec4<f32>(painting, 1.0); }
+
+    // ---- uDebug 5..9「GI体 / skyao体」:与角色吃同一份 probe 体(口径见 GLSL)----
+    // probeE 查表吃 q 空间法线:场景法线 n 是 M-world,过 Rᵀ 转回去(查表豁免)
+    if (sceneLight.uDebug >= 5 && sceneLight.uDebug <= 9) {
+        var pp: ClcProbe;
+        pp.uM = sceneLight.uM;
+        pp.uWMin = sceneLight.uWMin;
+        pp.uWScale = sceneLight.uWScale;
+        pp.uPN = sceneLight.uPN;
+        pp.uProbeT = sceneLight.uProbeT;
+        pp.uShK = sceneLight.uShK;
+        pp.uBinOb = sceneLight.uBinOb;
+        pp.uFold = sceneLight.uFold;
+        pp.uAmbSH = sceneLight.uAmbSH;
+        pp.uMode = sceneLight.uMode;
+        pp.uAmbStrength = sceneLight.uAmbStrength;
+        var sk: ClcSkyao;
+        sk.uSkyaoN = sceneLight.uSkyaoN;
+        sk.uSkyaoTiles = sceneLight.uSkyaoTiles;
+        sk.uSkyaoMin = sceneLight.uSkyaoMin;
+        sk.uSkyaoScale = sceneLight.uSkyaoScale;
+        sk.uSkyaoM = sceneLight.uSkyaoM;
+        sk.uSkyaoOn = sceneLight.uSkyaoOn;
+
+        var nQ = normalize(wrWorldToQ(sceneLight.uMRow0, sceneLight.uMRow1, sceneLight.uMRow2, n));
+        // 诊断·定法线:0=正常 1=世界水平朝相机(q 常量) 2=世界向上
+        if (sceneLight.uGiFixedN == 1) { nQ = vec3<f32>(0., 0., -1.); }
+        else if (sceneLight.uGiFixedN == 2) { nQ = normalize(wrWorldToQ(sceneLight.uMRow0, sceneLight.uMRow1, sceneLight.uMRow2, vec3<f32>(0., 1., 0.))); }
+        if (sceneLight.uDebug == 9) { return vec4<f32>(vec3<f32>(skyaoAt(q, nQ, sk, uSkyaoTex)), 1.0); }
+        if (sceneLight.uDebug == 8) { return vec4<f32>(probeENearest(q, nQ, pp, uPL1, uPL2, uPBin, uValid) * sceneLight.uProbeBeta, 1.0); }
+        let Ep = probeE(q, nQ, pp, uPL1, uPL2, uPBin, uValid) * sceneLight.uProbeBeta;
+        if (sceneLight.uDebug == 5) { return vec4<f32>(albedo * Ep, 1.0); }
+        if (sceneLight.uDebug == 6) { return vec4<f32>(Ep, 1.0); }
+        // 7 = 纯E × probe 棋盘:映射与采样共用 probeGridT
+        let cell = vec3<i32>(probeGridT(q, pp));
+        let par = f32((cell.x + cell.y + cell.z) & 1);
+        return vec4<f32>(Ep * mix(0.45, 1.0, par), 1.0);
+    }
+    // 合成:原画原样 + albedo 贴图 × 实体灯 + 镜面;alpha 存灯体自发光占该像素的比例
+    let surf = painting + albedo * lampE + specE * surfK;
+    let emitLum = dot(emissive, LC_LUMA);
+    let emitFrac = emitLum / max(emitLum + dot(surf, LC_LUMA), 1e-6);
+    return vec4<f32>(surf + emissive, emitFrac);
+}
+`;
+
 export interface SceneLightingGeometry {
   /** lighting/<背景基名>/normal.png */
   normal: Texture;
@@ -793,7 +1285,9 @@ export class SceneLightingPass {
     this.ensure();
     const sh = this.shader;
     if (!sh) return;
-    sh.resources.uSurfMask = (mask ?? Texture.WHITE).source;
+    const src = (mask ?? Texture.WHITE).source;
+    sh.resources.uSurfMask = src;
+    sh.resources.uSurfMaskSampler = src.style;
     const u = sh.resources.sceneLight?.uniforms;
     if (u) u.uSurfOn = mask ? 1 : 0;
     this.dirty = true;
@@ -838,15 +1332,27 @@ export class SceneLightingPass {
 
     this.shader = Shader.from({
       gl: { vertex: BAKE_VERT, fragment: BAKE_FRAG },
+      gpu: {
+        vertex: { source: BAKE_WGSL, entryPoint: 'mainVertex' },
+        fragment: { source: BAKE_WGSL, entryPoint: 'mainFragment' },
+      },
+      // *Sampler:WGSL 的纹理要单独的采样器(WebGL 侧没有这些名字,Pixi 忽略);
+      // 换纹理的地方(update / setSurfaceMask)要把它的采样器一起换。probe / skyao 图集只 textureLoad,不配。
       resources: {
         uPainting: this.painting.source,
+        uPaintingSampler: this.painting.source.style,
         // 线扫前缀的两张 slab。solve() 之前先拿深度纹理占位（尺寸一致，
         // 内容不会被读到 —— uLightPx[i].w = 0 时 lightVisibilityPrefix 直接返回 1）。
         uPrefix0: this.geo.depth.source,
+        uPrefix0Sampler: this.geo.depth.source.style,
         uPrefix1: this.geo.depth.source,
+        uPrefix1Sampler: this.geo.depth.source.style,
         uNormal: this.geo.normal.source,
+        uNormalSampler: this.geo.normal.source.style,
         uAlbedo: this.geo.albedo.source,
+        uAlbedoSampler: this.geo.albedo.source.style,
         uDepth: this.geo.depth.source,
+        uDepthSampler: this.geo.depth.source.style,
         // 「GI体」视图的 probe 图集:创建期占位白图,开启视图时由 setProbeResources 换真图
         uPL1: Texture.WHITE.source,
         uPL2: Texture.WHITE.source,
@@ -855,6 +1361,7 @@ export class SceneLightingPass {
         uSkyaoTex: Texture.WHITE.source,
         // 反光遮罩：没有表面材质区时拿白图占位（uSurfOn = 0，不会被读到）
         uSurfMask: Texture.WHITE.source,
+        uSurfMaskSampler: Texture.WHITE.source.style,
         sceneLight: {
           uDepthTexSize: { value: new Float32Array(this.geo.depthSize), type: 'vec2<f32>' },
           uCal: { value: new Float32Array(this.geo.cal), type: 'vec3<f32>' },
@@ -1110,10 +1617,15 @@ export class SceneLightingPass {
       const s1 = this.prefix.slab(1);
       const r = this.shader?.resources;
       if (r) {
-        if (s0) r.uPrefix0 = s0.source;
+        if (s0) {
+          r.uPrefix0 = s0.source;
+          r.uPrefix0Sampler = s0.source.style;
+        }
         // 只有一组时把第二张也指向第一张 —— 采样器不许悬空，
         // 而 uLightPx[i].w=0 保证那些通道根本不会被读。
-        r.uPrefix1 = (s1 ?? s0 ?? this.geo.depth).source;
+        const p1 = (s1 ?? s0 ?? this.geo.depth).source;
+        r.uPrefix1 = p1;
+        r.uPrefix1Sampler = p1.style;
       }
     }
     renderer.render({ container: this.mesh, target: this.rt, clear: true });

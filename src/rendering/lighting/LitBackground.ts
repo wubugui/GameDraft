@@ -5,6 +5,7 @@ import { resolveLightColor } from './kelvin';
 import LIGHTING_CORE from './lightingCore.glsl?raw';
 import type { SceneLightingGeometry } from './SceneLightingPass';
 import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
+import { LC_WGSL, WR_CORE_WGSL } from './wgslChunks';
 
 /**
  * 被点亮的背景 —— 两级结构的**第二级（逐帧）**。
@@ -128,6 +129,127 @@ void main(void) {
 }
 `;
 
+// ============================================================================
+// WebGPU 版(WGSL)。与上面 VERT / FRAG 逐句对应,GLSL 原样保留(WebGL 仍走它);等价由
+// tools/render_parity 的「场景光照 /」用例钉住,改一边必须同步改另一边并重跑对照。
+//
+// 拼接:WR_CORE / LIGHTING_CORE 的 WGSL 切片(wgslChunks)各拼一次,片段一个绑定都不读。
+// 绑定按 Pixi 网格约定:第 0 / 1 组由 Pixi 挂,本类的纹理 / 采样器 / uniform 组在第 2 组,
+// 变量名 = resources 键名,纹理声明顺序 = resources 里的相对顺序(WebGL 纹理单元不挪);
+// 每张纹理紧跟一个 *Sampler(WebGL 侧不认识这些键,Pixi 忽略),setSway 换图时一并换。
+// litBg 结构体成员顺序 = JS 里 uniforms 的声明顺序。
+//
+// 与 GLSL 的形式差异(数值不变):露出处那两次采样在「cover < 0.999」这个逐像素分支里,
+// WGSL 的 textureSample 只许在一致控制流里调,改 textureSampleLevel(…, 0)(光照缓存与深度图都是
+// 单级纹理,与 GLSL texture() 等价);其余采样照 GLSL 用 textureSample。
+// ⚠ struct 体内不写注释(Pixi 用正则抽成员)。
+// ============================================================================
+
+const WGSL_VERT = /* wgsl */ `
+struct GlobalUniforms {
+    uProjectionMatrix: mat3x3<f32>,
+    uWorldTransformMatrix: mat3x3<f32>,
+    uWorldColorAlpha: vec4<f32>,
+    uResolution: vec2<f32>,
+}
+
+struct LocalUniforms {
+    uTransformMatrix: mat3x3<f32>,
+    uColor: vec4<f32>,
+    uRound: f32,
+}
+
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+
+struct VSOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) vUv: vec2<f32>,
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) -> VSOutput {
+    let model = globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+    let screen = (model * vec3<f32>(aPosition, 1.0)).xy;
+    let clip = (globalUniforms.uProjectionMatrix * vec3<f32>(screen, 1.0)).xy;
+    return VSOutput(vec4<f32>(clip, 0.0, 1.0), aUV);
+}
+`;
+
+const WGSL = /* wgsl */ `${WGSL_VERT}
+struct LitBgUniforms {
+    uSwayOn: i32,
+    uCal: vec3<f32>,
+    uDepthMap: vec3<f32>,
+    uDepthTexSize: vec2<f32>,
+    uMRow1: vec3<f32>,
+    uFogSigma: f32,
+    uFogScaleH: f32,
+    uFogBaseY: f32,
+    uFogColor: vec3<f32>,
+    uEv: f32,
+    uTonemap: i32,
+    uWhiteBalance: vec3<f32>,
+    uContrast: f32,
+    uSaturation: f32,
+    uLift: f32,
+    uLiftColor: vec3<f32>,
+}
+
+@group(2) @binding(0) var uRadiance: texture_2d<f32>;
+@group(2) @binding(1) var uRadianceSampler: sampler;
+@group(2) @binding(2) var uDepth: texture_2d<f32>;
+@group(2) @binding(3) var uDepthSampler: sampler;
+@group(2) @binding(4) var uUvMap: texture_2d<f32>;
+@group(2) @binding(5) var uUvMapSampler: sampler;
+@group(2) @binding(6) var uRadiancePlate: texture_2d<f32>;
+@group(2) @binding(7) var uRadiancePlateSampler: sampler;
+@group(2) @binding(8) var uDepthPlate: texture_2d<f32>;
+@group(2) @binding(9) var uDepthPlateSampler: sampler;
+@group(2) @binding(10) var<uniform> litBg: LitBgUniforms;
+
+${WR_CORE_WGSL}
+${LC_WGSL}
+
+@fragment
+fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
+    let vUv = input.vUv;
+    // 草木摆动:先读位移图,植物像素去源 uv 取光照缓存与深度;露出处取扣掉植物那份
+    var src = vUv;
+    var cover = 1.0;
+    if (litBg.uSwayOn > 0) {
+        let m = textureSample(uUvMap, uUvMapSampler, vUv);
+        cover = clamp(m.a, 0.0, 1.0);
+        if (m.a > 0.002) { src = vUv + m.rg / m.a; }
+    }
+    var lin = textureSample(uRadiance, uRadianceSampler, src).rgb;
+    if (litBg.uSwayOn > 0 && cover < 0.999) {
+        lin = mix(textureSampleLevel(uRadiancePlate, uRadiancePlateSampler, vUv, 0.0).rgb, lin, cover);
+    }
+
+    if (litBg.uFogSigma > 0.0) {
+        // 伪世界位置 → 世界 Y 与视距(正交相机 ⇒ 视线方向恒定,积分有闭式解;推导见 GLSL)
+        let px = vUv * litBg.uDepthTexSize;
+        var d = wrDecodeSceneDepth(textureSample(uDepth, uDepthSampler, src),
+                                   litBg.uDepthMap.x, litBg.uDepthMap.y, litBg.uDepthMap.z);
+        if (litBg.uSwayOn > 0 && cover < 0.999) {
+            let dPlate = wrDecodeSceneDepth(textureSampleLevel(uDepthPlate, uDepthPlateSampler, vUv, 0.0),
+                                            litBg.uDepthMap.x, litBg.uDepthMap.y, litBg.uDepthMap.z);
+            d = mix(dPlate, d, cover);
+        }
+        let q = wrPixelToQ(px, litBg.uCal.x, litBg.uCal.y, litBg.uCal.z, d);
+        let worldY = wrQToWorldRow(litBg.uMRow1, q);
+        let dist = max(d - litBg.uDepthMap.z, 0.0);
+        let yCam = worldY - litBg.uMRow1.z * dist;
+        let od = lcOpticalDepth(dist, yCam, worldY, litBg.uFogSigma, litBg.uFogScaleH, litBg.uFogBaseY);
+        lin = lcApplyFog(lin, od, litBg.uFogColor);
+    }
+
+    return vec4<f32>(lcDisplayTransform(lin, litBg.uEv, litBg.uTonemap, litBg.uWhiteBalance,
+                                        litBg.uSaturation, litBg.uContrast, litBg.uLift, litBg.uLiftColor), 1.0);
+}
+`;
+
 export class LitBackground {
   readonly mesh: Mesh<MeshGeometry, Shader>;
   private readonly shader: Shader;
@@ -153,12 +275,22 @@ export class LitBackground {
     });
     this.shader = Shader.from({
       gl: { vertex: VERT, fragment: FRAG },
+      gpu: {
+        vertex: { source: WGSL, entryPoint: 'mainVertex' },
+        fragment: { source: WGSL, entryPoint: 'mainFragment' },
+      },
+      // *Sampler:WGSL 的纹理要单独的采样器(WebGL 侧没有这些名字,Pixi 忽略);setSway 换图时一并换
       resources: {
         uRadiance: radiance.source,
+        uRadianceSampler: radiance.source.style,
         uDepth: geo.depth.source,
+        uDepthSampler: geo.depth.source.style,
         uUvMap: Texture.EMPTY.source,
+        uUvMapSampler: Texture.EMPTY.source.style,
         uRadiancePlate: radiance.source,
+        uRadiancePlateSampler: radiance.source.style,
         uDepthPlate: geo.depth.source,
+        uDepthPlateSampler: geo.depth.source.style,
         litBg: {
           uSwayOn: { value: 0, type: 'i32' },
           uCal: { value: new Float32Array(geo.cal), type: 'vec3<f32>' },
@@ -193,8 +325,11 @@ export class LitBackground {
     const r = this.shader.resources as Record<string, unknown> & { litBg: { uniforms: { uSwayOn: number } } };
     const use = sw ?? this.placeholders;
     r.uUvMap = use.uvMap.source;
+    r.uUvMapSampler = use.uvMap.source.style;
     r.uRadiancePlate = use.radiancePlate.source;
+    r.uRadiancePlateSampler = use.radiancePlate.source.style;
     r.uDepthPlate = use.depthPlate.source;
+    r.uDepthPlateSampler = use.depthPlate.source.style;
     r.litBg.uniforms.uSwayOn = sw ? 1 : 0;
   }
 
