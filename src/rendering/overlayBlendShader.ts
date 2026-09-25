@@ -1,5 +1,6 @@
 import 'pixi.js/mesh';
 import { Mesh, MeshGeometry, Shader, Texture } from 'pixi.js';
+import { samplerOf } from './legacy/gpuSampler';
 
 /**
  * 顶点变换与 Pixi v8 默认 Mesh shader 完全一致（见 high-shader/defaultProgramTemplate 的 vertexGlTemplate）：
@@ -151,9 +152,9 @@ export function createOverlayBlendMesh(
         uT: { value: 0, type: 'f32' },
       },
       uTextureFrom: texFrom.source,
-      uTextureFromSampler: texFrom.source.style,
+      uTextureFromSampler: samplerOf(texFrom.source),
       uTextureTo: texTo.source,
-      uTextureToSampler: texTo.source.style,
+      uTextureToSampler: samplerOf(texTo.source),
     },
   });
 

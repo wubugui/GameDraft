@@ -2,6 +2,7 @@ import {
   Mesh, MeshGeometry, RenderTexture, Shader,
   type Renderer, type Texture,
 } from 'pixi.js';
+import { samplerOf } from '../legacy/gpuSampler';
 
 /**
  * 阴影的**线扫（前缀最小）**求解器 —— 取代逐像素光线步进。
@@ -364,7 +365,7 @@ export class ShadowPrefixPass {
       resources: {
         uDepth: this.geo.depth.source,
         // WGSL 要单独的采样器(WebGL 侧没有这个名字,Pixi 忽略)
-        uDepthSampler: this.geo.depth.source.style,
+        uDepthSampler: samplerOf(this.geo.depth.source),
         prefixInit: {
           uTexSize: { value: new Float32Array([w, h]), type: 'vec2<f32>' },
           uDepthMap: { value: new Float32Array(this.geo.depthMapping), type: 'vec3<f32>' },
@@ -385,7 +386,7 @@ export class ShadowPrefixPass {
       resources: {
         uPrev: this.slabs[0].source,
         // slab 与 scratch 同一个 mk() 建的,采样状态相同;逐趟换 uPrev 时一并换(见 solve)
-        uPrevSampler: this.slabs[0].source.style,
+        uPrevSampler: samplerOf(this.slabs[0].source),
         prefixScan: {
           uTexSize: { value: new Float32Array([w, h]), type: 'vec2<f32>' },
           uLightPx: { value: new Float32Array(16), type: 'vec4<f32>', size: 4 },
@@ -444,14 +445,14 @@ export class ShadowPrefixPass {
       for (let j = 0; j < passes; j++) {
         us.uOffset = 2 ** j;
         scan.resources.uPrev = src.source;
-        scan.resources.uPrevSampler = src.source.style;
+        scan.resources.uPrevSampler = samplerOf(src.source);
         renderer.render({ container: mesh, target: dst, clear: true });
         const t = src; src = dst; dst = t;
       }
       if (src !== this.slabs[s]) {
         us.uOffset = 0;                         // 位移 0 ＝ 纯拷贝
         scan.resources.uPrev = src.source;
-        scan.resources.uPrevSampler = src.source.style;
+        scan.resources.uPrevSampler = samplerOf(src.source);
         renderer.render({ container: mesh, target: this.slabs[s], clear: true });
       }
     }

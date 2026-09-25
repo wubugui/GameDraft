@@ -5,6 +5,7 @@ import BREATHING_SHADE_SRC from './breathingShade.glsl?raw';
 import BREATHING_SHADE_WGSL from './breathingShade.wgsl?raw';
 import { breathingStaticUniforms, sliceBreathingShade } from './breathingUniforms';
 import { OVERLAY_QUAD_WGSL_VERTEX } from './overlayBlendShader';
+import { samplerOf } from './legacy/gpuSampler';
 
 /**
  * 呼吸图的渲染:一张 Mesh(与 showOverlayImage 的 Sprite 同一套 local 像素空间,顶点变换同 overlayBlendShader)
@@ -133,17 +134,17 @@ export function createBreathingOverlayMesh(
         uPremul: { value: st.uPremul, type: 'f32' },
       },
       uBase: tex.base.source,
-      uBaseSampler: tex.base.source.style,
+      uBaseSampler: samplerOf(tex.base.source),
       uBody: (tex.body ?? empty).source,
-      uBodySampler: (tex.body ?? empty).source.style,
+      uBodySampler: samplerOf((tex.body ?? empty).source),
       uSheet: (tex.sheet ?? empty).source,
-      uSheetSampler: (tex.sheet ?? empty).source.style,
+      uSheetSampler: samplerOf((tex.sheet ?? empty).source),
       uFlap: (tex.flap ?? empty).source,
-      uFlapSampler: (tex.flap ?? empty).source.style,
+      uFlapSampler: samplerOf((tex.flap ?? empty).source),
       uF1: tex.field1.source,
-      uF1Sampler: tex.field1.source.style,
+      uF1Sampler: samplerOf(tex.field1.source),
       uF2: tex.field2.source,
-      uF2Sampler: tex.field2.source.style,
+      uF2Sampler: samplerOf(tex.field2.source),
     },
   });
   // Pixi v8 Mesh 管线会读取 mesh.texture(及 source.alphaMode);仅传 shader 时 texture 为 null 会报错

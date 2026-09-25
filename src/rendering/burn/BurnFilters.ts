@@ -20,6 +20,7 @@ import { BufferImageSource, Filter, GlProgram, GpuProgram, Texture } from 'pixi.
 import BURN_SHADE_SRC from './burnShade.glsl?raw';
 import BURN_SHADE_WGSL_SRC from './burnShade.wgsl?raw';
 import type { BurnShadeParams } from './burnShadeParams';
+import { samplerOf } from '../legacy/gpuSampler';
 
 export type { BurnShadeParams } from './burnShadeParams';
 
@@ -302,7 +303,7 @@ abstract class BurnFilterBase extends Filter {
         burnUniforms: uniformsFor(field),
         uBurnField: field.source,
         // 只有 WGSL 用（WebGPU 的纹理与采样器分开绑）；GLSL 侧 Pixi 忽略这个名字
-        uBurnFieldSampler: field.source.style,
+        uBurnFieldSampler: samplerOf(field.source),
       },
     });
   }

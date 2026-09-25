@@ -18,6 +18,7 @@ import {
   OBJECT_EXAMINE_MAX_CONTACT_AO_RADIUS_CM,
   OBJECT_EXAMINE_MAX_CRITTER_AO_RADIUS_CM,
 } from './types';
+import { samplerOf } from '../../rendering/legacy/gpuSampler';
 
 /**
  * 接触 AO（SSAO 式单管线）：caster 轮廓 mask → 半分辨率高斯 → 一次合成。
@@ -234,13 +235,13 @@ class ContactCompositePass extends Filter {
       resources: {
         compositeUniforms: uniforms,
         uBodyRaw: Texture.WHITE.source,
-        uBodyRawSampler: Texture.WHITE.source.style,
+        uBodyRawSampler: samplerOf(Texture.WHITE.source),
         uBodyBlur: Texture.WHITE.source,
-        uBodyBlurSampler: Texture.WHITE.source.style,
+        uBodyBlurSampler: samplerOf(Texture.WHITE.source),
         uCritRaw: Texture.WHITE.source,
-        uCritRawSampler: Texture.WHITE.source.style,
+        uCritRawSampler: samplerOf(Texture.WHITE.source),
         uCritBlur: Texture.WHITE.source,
-        uCritBlurSampler: Texture.WHITE.source.style,
+        uCritBlurSampler: samplerOf(Texture.WHITE.source),
       },
       antialias: 'off',
     });
@@ -509,13 +510,13 @@ export class ObjectExamineContactAoFilter extends Filter {
       this.blurBody.apply(filterManager, this.rtBody, this.rtBodyBlur, true);
       this.blurCrit.apply(filterManager, this.rtCrit, this.rtCritBlur, true);
       this.compositePass.resources.uBodyRaw = this.rtBody.source;
-      this.compositePass.resources.uBodyRawSampler = this.rtBody.source.style;
+      this.compositePass.resources.uBodyRawSampler = samplerOf(this.rtBody.source);
       this.compositePass.resources.uBodyBlur = this.rtBodyBlur.source;
-      this.compositePass.resources.uBodyBlurSampler = this.rtBodyBlur.source.style;
+      this.compositePass.resources.uBodyBlurSampler = samplerOf(this.rtBodyBlur.source);
       this.compositePass.resources.uCritRaw = this.rtCrit.source;
-      this.compositePass.resources.uCritRawSampler = this.rtCrit.source.style;
+      this.compositePass.resources.uCritRawSampler = samplerOf(this.rtCrit.source);
       this.compositePass.resources.uCritBlur = this.rtCritBlur.source;
-      this.compositePass.resources.uCritBlurSampler = this.rtCritBlur.source.style;
+      this.compositePass.resources.uCritBlurSampler = samplerOf(this.rtCritBlur.source);
       this.compositePass.apply(filterManager, input, output, clearMode);
     } catch (e) {
       this.failed = true;

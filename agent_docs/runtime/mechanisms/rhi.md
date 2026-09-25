@@ -14,6 +14,7 @@ authority:
   - src/rendering/rhi/backends/luma/LumaRhiDevice.ts
   - src/rendering/rhi/backends/null/NullRhiDevice.ts
   - src/rendering/legacy/pixiWebGpuPatches.ts
+  - src/rendering/Renderer.ts#init
 triggers:
   paths: ["src/rendering/rhi/**", "src/rendering/legacy/**", "tools/rhi_smoke/**", "tools/render_parity/**"]
   topics: [RHI, luma.gl, WebGPU, WGSL, compute shader, render pass, 渲染图, render graph, frame graph, 瞬时资源, 替换 Pixi, 移植渲染]
@@ -63,6 +64,10 @@ last_governed: 2026-09-25
   纹理经 `native.gpuTexture` / `native.wrapTexture` 两边互通。`native` 只许 Pixi 桥(`src/rendering/legacy/`)用。
 - 建 Pixi WebGPU 渲染器前必须 `installPixiWebGpuPatches()`:原版 Pixi 8.17 把管线颜色目标格式写死 `bgra8unorm`
   且不进缓存键,画 `rgba16float` / `rgba8unorm` 离屏目标会整批校验失败(画面全黑、只在控制台报错)。
+- 整游戏试跑 WebGPU:开发构建 URL 加 `?renderer=webgpu`(`src/main.ts` → `Game.start({renderer})` → `Renderer.init({backend})`)。
+  此时 Renderer 先建 RHI 设备、装补丁,再让 Pixi 用同一个设备初始化;Pixi 若回落到别的后端直接报错(不悄悄换)。
+  不带参数 = WebGL 原路径,连 RHI / luma 的代码都不加载(动态 import),与 master 相同。设备归 RHI,`Renderer.destroy`
+  先拆 Pixi 再拆设备(Pixi 从不销毁传进去的设备)。
 - 移植着色器的验收:`tools/render_parity`——同一段运行时代码在 Pixi-WebGL(原 GLSL = master 行为)与
   Pixi-WebGPU(RHI 设备上的 WGSL)各画一遍,回读逐像素比。两侧分在两个 iframe 里跑(Pixi 有模块级单例,
   同页两个渲染器会互相覆盖批处理着色器的纹理槽数)。

@@ -1,6 +1,7 @@
 import { Filter, GlProgram, GpuProgram, Texture } from 'pixi.js';
 import type { SceneDepthConfig } from '../data/types';
 import { depthLog, depthError } from '../core/depthLog';
+import { samplerOf } from './legacy/gpuSampler';
 
 const T = 'DepthFilter';
 
@@ -307,7 +308,7 @@ export class DepthOcclusionFilter extends Filter {
                 },
                 uDepthMap: depthTexture.source,
                 // WGSL 的采样器:深度图自己的 style(WebGL 用纹理自带采样状态,不认这个键)
-                uDepthMapSampler: depthTexture.source.style,
+                uDepthMapSampler: samplerOf(depthTexture.source),
             },
         });
 

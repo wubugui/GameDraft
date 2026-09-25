@@ -36,12 +36,14 @@ GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意
   参考 `node_modules/pixi.js/lib/rendering/high-shader/shader-bits/*.mjs`。
 - 滤镜 WGSL 约定:`@group(0)` 固定 `gfu`(GlobalFilterUniforms)、`uTexture`、`uSampler`;滤镜自己的 uniform 组放 `@group(1)` 起。
   参考 `node_modules/pixi.js/lib/filters/defaults/alpha/alpha.wgsl.mjs`。
-- 纹理在 WGSL 里要单独的采样器:resources 里补 `<名>Sampler: source.style`(GLSL 侧多出来的资源名 Pixi 会忽略;以对照结果为准)。
+- 纹理在 WGSL 里要单独的采样器:resources 里补 `<名>Sampler: samplerOf(source)`(`src/rendering/legacy/gpuSampler.ts`),
+  **不许直接放 `source.style`**——纹理销毁会连带销毁它的 style,style 销毁让同组 BindGroup 自毁,WebGL 下整帧也抛
+  (换了纹理漏换采样器就中招)。`samplerOf` 按采样参数共享、永不销毁;`gpuSampler.test.ts` 扫源码拦 `.style` 写法。
 - **uniform 组成员在 WGSL struct 里的顺序必须与 JS 里 uniforms 对象的声明顺序一致**(Pixi 按声明顺序、WGSL 对齐规则算偏移)。
   `size: N` 的数组 → `array<T, N>`。
 - **补了 gpu 程序后资源分组会变**:原来全在第 99 组,之后按 WGSL 声明的组号走;WebGL 按组号升序分配纹理单元,
   所以 WGSL 里纹理的声明顺序要与原 resources 对象里的相对顺序一致,纹理单元才不挪(这是「GL 侧逐字节不变」的前提)。
-- 运行时换某个纹理资源(ping-pong 等)时,它的 `<名>Sampler` 要一起换,否则采样器挂在别的纹理上。
+- 运行时换某个纹理资源(ping-pong 等)时,它的 `<名>Sampler` 跟着换成 `samplerOf(新纹理)`(参数不同就是另一份采样器)。
 - **共用同一份 GLSL 源的所有 Shader 必须在同一次改动里一起补上同一个 gpu 程序、同样的资源布局**:WebGL 侧
   按 GLSL 程序缓存 uniform 同步函数,按第一个 Shader 的分组布局生成;布局不一致会让别的 Shader 的 uniform 错位。
 - 每个资源键都要在 WGSL 里有同名声明(掉进第 99 组 → WebGPU `setBindGroup(99)` 失败);Pixi 的解析要求

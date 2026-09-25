@@ -74,6 +74,10 @@ Pixi v8 里几条**不报错、只是行为不对**的引擎事实。每条都�
 
 ## 已知坑
 
+- **`TextureSource.destroy()` 连带销毁 `style`,style 销毁发 `change` → 含它的 BindGroup 自毁**。着色器资源里放了
+  `source.style`(WGSL 独立采样器)就多了一条自毁路径,WebGL 下同样整帧抛。一律用 `samplerOf(source)` 取不死的共享采样器
+  (见 pixi-shader-wgsl-port;`gpuSampler.test.ts` 有对照组证明这条路径真实存在)。
+
 - **uniform 组的键必须在构造时声明**:构造后才往 `uniforms` 上挂的新键,WebGL 侧 `generateUniformsSync` 按 `uniforms`
   遍历、却从 `uniformStructures` 取类型——同步函数若在挂键之后生成就每帧抛 `reading 'type'`(渲染路径抛异常,见第一条),
   若在之前生成则新键永远传不上去(静默恒为缺省);WebGPU 侧缓冲布局里也没有它。setter 只许改已声明的键

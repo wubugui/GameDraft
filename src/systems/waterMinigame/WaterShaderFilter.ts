@@ -1,4 +1,5 @@
 import { Filter, GlProgram, GpuProgram, Texture } from 'pixi.js';
+import { samplerOf } from '../../rendering/legacy/gpuSampler';
 
 const VERT = /* glsl */ `
 in vec2 aPosition;
@@ -225,9 +226,9 @@ export class WaterShaderFilter extends Filter {
           uWaterBottomDepth: { value: 1.0, type: 'f32' },
         },
         uNormalMap: ph.source,
-        uNormalMapSampler: ph.source.style,
+        uNormalMapSampler: samplerOf(ph.source),
         uParams: ph.source,
-        uParamsSampler: ph.source.style,
+        uParamsSampler: samplerOf(ph.source),
       },
     });
   }
@@ -274,7 +275,7 @@ export class WaterShaderFilter extends Filter {
   setNormalTexture(tex: Texture | null): void {
     const src = tex?.source ?? Texture.WHITE.source;
     (this.resources as Record<string, unknown>)['uNormalMap'] = src;
-    (this.resources as Record<string, unknown>)['uNormalMapSampler'] = src.style;
+    (this.resources as Record<string, unknown>)['uNormalMapSampler'] = samplerOf(src);
     const u = this._u;
     if (u) u['uUseNormalMap'] = tex ? 1 : 0;
   }
@@ -282,7 +283,7 @@ export class WaterShaderFilter extends Filter {
   setParamsTexture(tex: Texture | null): void {
     const src = tex?.source ?? Texture.WHITE.source;
     (this.resources as Record<string, unknown>)['uParams'] = src;
-    (this.resources as Record<string, unknown>)['uParamsSampler'] = src.style;
+    (this.resources as Record<string, unknown>)['uParamsSampler'] = samplerOf(src);
   }
 
   /** 水域水底光学系数（>=0）；缺省 1。与背景 suv.y、参数 RT 的 R 相乘后进入贝尔定律，不做 1 上限 */

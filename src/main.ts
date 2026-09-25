@@ -69,6 +69,11 @@ const sugarWheelPreview = (isDevBuild && urlParams.get('sugarWheelPreview')) || 
 const paperCraftPreview = (isDevBuild && urlParams.get('paperCraftPreview')) || undefined;
 const visualCapture = isDevBuild && urlParams.has('visualCapture');
 /**
+ * 迁移期图形后端开关(仅开发构建):`?renderer=webgpu` 让 Pixi 跑在 RHI 的 WebGPU 设备上;
+ * 缺省不带 = WebGL 原路径(与 master 相同,发行包与扫描工具不受影响)。
+ */
+const rendererBackend = isDevBuild && urlParams.get('renderer') === 'webgpu' ? ('webgpu' as const) : undefined;
+/**
  * 引导态标记（由 EventBridge 在整页重启时写入，见 TITLE_BOOT_PARAM / LOAD_SLOT_PARAM）：
  * - `startAtTitle`：停在标题界面，**不装载世界**（「回主菜单」＝彻底退出这一局）；
  * - `loadSlot`：正常启动，但开局直接读这个存档槽（标题界面上点「继续」走的路）。
@@ -92,6 +97,7 @@ function startGame(): void {
     sugarWheelPreview,
     paperCraftPreview,
     visualCapture,
+    renderer: rendererBackend,
     startAtTitle,
     loadSlot,
   }).catch((e) => {
