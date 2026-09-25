@@ -58,12 +58,17 @@ last_governed: 2026-09-25
 子树里没有组件时,增删子节点 / setActive / 场景根开关都是 O(1)(每个节点记着子树组件数 `_subtreeComponents`);
 有组件时按子树里带组件的分支下探。`activeInHierarchy` / `inScene` / `root` 是 O(深度) 现算,不缓存。
 
-## 把现有结构改到层级上(思路,不是现状)
+## 游戏里已经上层级的结构(2026-09-25)
 
-- 实体显隐四通道([entity-visibility-channels](entity-visibility-channels.md))的**合成结果**可以落到 `setActive`
-  (实体不存在 = 不画、不命中、组件停),各通道照旧只写自己那条——别让某个通道直接调 setActive,那就又回到"一方冲掉另一方"。
-- 逐帧同步类代码(跟随、挂点、朝向、光照参数同步)适合做成组件的 `lateUpdate`,生命期随节点走,换场景 destroy 即清干净。
-- 需要"随父节点移动但保持世界位置"的挂接(拾起 / 放下、换层)用 `setParent(p, true)`。
+- **常驻层有名字**:`stage / worldContainer / backgroundLayer / shadowLayer / entityLayer / worldFadeLayer /
+  canvasStage / cutsceneOverlay / uiLayer`(= Renderer 字段名),可 `stage.find('worldContainer/entityLayer')`。
+- **实体 = GameObject**:玩家 / NPC / 热点的根节点名 `player` / `npc:<id>` / `hotspot:<id>`,各挂一个身份组件
+  (`src/entities/entityComponents.ts`:`PlayerComponent` / `NpcComponent` / `HotspotComponent`,基类 `EntityComponent`)。
+  从实体子树任一节点反查实体:`node.getComponentInParent(EntityComponent)`。
+- **NPC / 热点的在场走 setActive**,读用 `present`(见 [entity-visibility-channels](entity-visibility-channels.md));
+  玩家的过场隐藏仍是 visible(玩家始终在场)。
+- **逐帧更新顺序没动**:仍由 `Game.tick` 显式编排(世界暂停、状态门控、系统先后都在那里),身份组件不挂 update。
+  要把某段逐帧逻辑挪进组件,先让玩家循环跟游戏时钟走(见上面「玩家循环」那条),再逐段迁、逐段对照。
 
 ## 怎么验证
 

@@ -299,7 +299,7 @@ export class InteractionSystem implements IGameSystem {
 
     for (const npc of this.npcs) {
       const condOk = this.applyNpcVisibilityAndBase(npc, ctx);
-      if (!npc.container.visible) continue;
+      if (!npc.present) continue;
       if (policy && !policy.canTalkNpcs) continue;
       if (npc.def.conditions && npc.def.conditions.length > 0 && !condOk) continue;
       const dx = pos.x - npc.x;
@@ -405,7 +405,7 @@ export class InteractionSystem implements IGameSystem {
       );
     }
     for (const npc of this.npcs) {
-      if (!npc.container.visible) continue;
+      if (!npc.present) continue;
       if (policy && !policy.canTalkNpcs) continue;
       if (npc.def.conditions?.length && !this.evalConditionsList(npc.def.conditions)) continue;
       consider(
@@ -462,7 +462,7 @@ export class InteractionSystem implements IGameSystem {
       }
     }
     for (const n of this.npcs) {
-      if (!n.container.visible) continue;
+      if (!n.present) continue;
       out.push({ kind: 'npc', label: n.def.name, x: n.x, y: n.y });
     }
     return out;
@@ -520,7 +520,7 @@ export class InteractionSystem implements IGameSystem {
     }
     for (const npc of this.npcs) {
       const available =
-        npc.container.visible &&
+        npc.present &&
         (!planePolicy || planePolicy.canTalkNpcs) &&
         (!npc.def.conditions?.length || this.evalConditionsList(npc.def.conditions));
       const dx = px - npc.x;

@@ -42,7 +42,7 @@
 - [场景光环境 / 实体阴影 / 深度遮挡](runtime/mechanisms/entity-lighting.md) — 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影但形状量从灯位现算;角色阴影**手动绑灯,禁止自动 resolve**;接触斑与灯无关;深度自比较必须留容差;色调与阴影解耦
 - [实体位移的朝向语义(faceTowardMovement)](runtime/mechanisms/entity-move-facing.md) — 不勾选=完全不碰朝向(勿回退成"起点偷改一次");需要转身的内部调用必须显式传 true;朝向只有左右镜像,up/down 不存在
 - [实体轨迹动画(烘焙式 · 独立资产)运行时语义](runtime/mechanisms/entity-trajectory.md) — 一条轨迹一个资产文件、帧相对**曲线原点**(作者摆的参考点,不是第一帧);曲线没有锚点,播放位置在播放时给(at 位置引用:数字 / 实体此刻位置 / 场景曲线插槽 / 曲线上的点,含播放头 current);位置引用只认场景曲线(相对曲线是资源、每次播放一个实例,不许引用);运动对象是场景实体(target)或播放时临时生成的图片 / 角色模板(spawn,keep = 播完留下成场景实体进存档);场景曲线可原地播、相对曲线必须给位置;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;轨迹不驱动相机,镜头跟曲线走 = cameraFollowActor 的 at 引用播放头;音效关键点 cues 按时间轴触发(不带位置,跳过/被停不补声)
-- [实体显隐四通道合成](runtime/mechanisms/entity-visibility-channels.md) — 四个独立通道(派生基底/条件/会话覆盖/拾取位)在实体内单点合成;任何一方只写自己的通道,禁止直接 setEnabled 冲掉运行态
+- [实体显隐四通道合成](runtime/mechanisms/entity-visibility-channels.md) — 四个独立通道(派生基底/条件/会话覆盖/拾取位)在实体内单点合成,结果落在根节点激活(setActive)上、读用 present;任何一方只写自己的通道,禁止直接 setEnabled 冲掉运行态
 - [脚步声与空间化音频(帧驱动 + 两级精度 + 可插拔听者)](runtime/mechanisms/footstep-and-spatial-audio.md) — 脚步由动画落脚帧驱动不由计时器,落脚帧住动画包 sockets.json 的 contactSlots(动画浏览页看图标);脚步集一片段一条音效 key 无随机;落脚与出声是两件事;出声只有一份实现(脚步集/两级增益/空间化/句柄回收),跟脚声是玩家落脚事件的延迟重放、走同一条出声路;听者与音频坐标见 audio-listener-space
 - [游戏状态机与控制权交接(进出 Exploring)](runtime/mechanisms/game-state-handoff.md) — GameState 只有一个写入口、状态变了才同步通知唯一旁听席;Exploring 是唯一"玩家有控制权"的态,主循环一大批系统只挂在它的分支上——"只在探索态做 / 收尾硬写回探索态"是一族静默 bug 的共同形态
 - [血量·威胁·护火(夜间生存的伤害链)](runtime/mechanisms/health-and-threat.md) — 血量有两条写入通道——玩法伤害走 applyDamage(护盾/下限/耗尽→系绳或死亡),编排置数走 setHealth(永不致死);威胁按距离扣血、有火即驱退;"演出态"= 非 Exploring,普通动作批期间普通威胁冻结;player_health / player_fire_protected 是派生 flag 只读

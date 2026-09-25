@@ -18,6 +18,7 @@ import { hotspotCollisionPolygonToWorld } from '../utils/hotspotCollision';
 import { isValidZonePolygon } from '../utils/zoneGeometry';
 import type { PerspectiveScaleResolver } from '../utils/perspectiveScale';
 import { createStyledText } from '../core/styledText';
+import { HotspotComponent } from './entityComponents';
 
 const TYPE_COLORS: Record<string, number> = {
   inspect: 0x44aaff,
@@ -73,6 +74,9 @@ export class Hotspot {
   constructor(def: HotspotDef) {
     this.def = def;
     this.container = new Container();
+    // 层级身份:节点名 hotspot:<id>,挂实体组件(节点 → 实体可反查,见 entityComponents)
+    this.container.label = `hotspot:${def.id}`;
+    this.container.addComponent(new HotspotComponent(this));
 
     const color = TYPE_COLORS[def.type] ?? 0xffffff;
     this.marker = new Graphics();
@@ -414,10 +418,16 @@ export class Hotspot {
       this.conditionEnabled &&
       this.sessionEnabledOverride !== false &&
       !this._pickedUp;
-    if (this._active === next && this.container.visible === next) return;
+    if (this._active === next && this.container.activeSelf === next) return;
     this._active = next;
     if (!next) this.hidePrompt();
-    this.container.visible = next;
+    // 合成结果落在节点激活上(照 Unity 的 SetActive):不在场 = 整棵子树不画、不命中、组件停
+    this.container.setActive(next);
+  }
+
+  /** 在场(显隐四通道的合成结果 = 节点 activeSelf,与 {@link active} 同值) */
+  get present(): boolean {
+    return this.container.activeSelf;
   }
 
   /**

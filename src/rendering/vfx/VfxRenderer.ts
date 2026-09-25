@@ -639,7 +639,7 @@ export class VfxRenderer {
       if (own.has(child)) continue;
       const ext = child as Container & { entitySortBand?: string; entitySortFootY?: number };
       if (ext.entitySortBand) continue;
-      if (!child.visible) continue;
+      if (!child.visible || !child.activeSelf) continue;
       const footY = ext.entitySortFootY ?? child.y;
       const g = space.groundWorldAtScene(child.x, footY);
       anchors.push({ footY, depthKey: g[0] * hx + g[2] * hz });

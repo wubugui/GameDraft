@@ -39,6 +39,7 @@ import { portraitSlugFromAnimFile } from '../data/characterRegistry';
 import type { TexelsPerWorld } from '../rendering/EntityPixelDensityMatch';
 import type { ResolvedSockets } from '../data/animationSockets';
 import { SpriteEntity, type LitShaderProvider } from '../rendering/SpriteEntity';
+import { NpcComponent } from './entityComponents';
 import {
   entityAnchorOf,
   entityRotationRadOf,
@@ -145,6 +146,9 @@ export class Npc implements ICutsceneActor, ITrajectoryTarget {
     this._x = def.x;
     this._y = def.y;
     this.container = new Container();
+    // 层级身份:节点名 npc:<id>,挂实体组件(节点 → 实体可反查,见 entityComponents)
+    this.container.label = `npc:${def.id}`;
+    this.container.addComponent(new NpcComponent(this));
     this._syncContainerPosition();
 
     this.marker = new Graphics();
@@ -538,7 +542,7 @@ export class Npc implements ICutsceneActor, ITrajectoryTarget {
       id: this.id,
       x: this.x,
       y: this.y,
-      visible: this.container.visible,
+      visible: this.present && this.container.visible,
       scaleX: this.container.scale.x,
       scaleY: this.container.scale.y,
       animation: this.sprite?.getDebugVisualState() ?? null,
@@ -647,10 +651,20 @@ export class Npc implements ICutsceneActor, ITrajectoryTarget {
     this.applyEffectiveVisible();
   }
 
-  /** 三通道合成的唯一出口。 */
+  /**
+   * 三通道合成的唯一出口。合成结果落在节点的**激活**上(照 Unity 的 SetActive):不在场的 NPC 整棵子树
+   * 不画、不命中、不算包围盒、身上组件停;`container.visible` 不再承载在场语义(恒为 true,留给纯渲染用途)。
+   * 读在场一律用 {@link present}。
+   */
   private applyEffectiveVisible(): void {
-    this.container.visible =
-      this.derivedBaseVisible && this.conditionVisible && this.sessionEnabledOverride !== false;
+    this.container.setActive(
+      this.derivedBaseVisible && this.conditionVisible && this.sessionEnabledOverride !== false,
+    );
+  }
+
+  /** 在场(显隐三通道的合成结果 = 节点 activeSelf)。旧代码读 `container.visible` 的地方都改读它 */
+  get present(): boolean {
+    return this.container.activeSelf;
   }
 
   playAnimation(name: string, playback?: AnimationPlaybackParams): void {

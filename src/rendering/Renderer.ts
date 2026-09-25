@@ -77,6 +77,16 @@ export class Renderer {
     this.cutsceneOverlay = new Container();
     this.uiLayer = new Container();
     this.worldFilterPipeline = new WorldFilterPipeline(this.worldContainer);
+    // 层级名(照 Unity:节点可按路径 find,F2「层级」页直接可读);名字 = 字段名,代码里不按名字找这些层
+    this.app.stage.label = 'stage';
+    this.worldContainer.label = 'worldContainer';
+    this.backgroundLayer.label = 'backgroundLayer';
+    this.shadowLayer.label = 'shadowLayer';
+    this.entityLayer.label = 'entityLayer';
+    this.worldFadeLayer.label = 'worldFadeLayer';
+    this.canvasStage.layer.label = 'canvasStage';
+    this.cutsceneOverlay.label = 'cutsceneOverlay';
+    this.uiLayer.label = 'uiLayer';
   }
 
   setAssetManager(assetManager: AssetManager): void {

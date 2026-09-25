@@ -2681,14 +2681,15 @@ export interface IEmoteBubbleAnchor {
  * 这个锚点此刻看不看得见——气泡跟着人显隐、头顶闲聊不挑藏起来的人，两处共用这一个判据
  * （2026-09-23 制作人：时段到了夜里人按作息隐掉了，头顶那句闲聊还挂在原地）。
  *
- * 判据就是实体自己的显示容器 `visible`：实体显隐的几条通道（派生基底 / 条件 / 会话覆盖 / 拾取）
+ * 判据就是实体自己的显示容器（NPC / 热点看激活 activeSelf，玩家的过场隐藏看 `visible`）：实体显隐的几条通道（派生基底 / 条件 / 会话覆盖 / 拾取）
  * 只在实体内一处合成、落到这一个布尔上，所以时段、条件、setEntityEnabled 任何一路把人藏了，这里都跟着变。
  * 没有 `visible` 字段的桩按看得见算；没有显示对象或已销毁 = 看不见。
  */
 export function isEmoteAnchorShown(anchor: IEmoteBubbleAnchor): boolean {
-  const obj = anchor.getDisplayObject() as { visible?: unknown; destroyed?: unknown } | null | undefined;
+  // NPC / 热点的显隐合成落在节点激活(activeSelf)上,玩家的过场隐藏落在 visible 上:两样有一样关着就算看不见
+  const obj = anchor.getDisplayObject() as { visible?: unknown; activeSelf?: unknown; destroyed?: unknown } | null | undefined;
   if (!obj || typeof obj !== 'object') return false;
-  return obj.destroyed !== true && obj.visible !== false;
+  return obj.destroyed !== true && obj.visible !== false && obj.activeSelf !== false;
 }
 
 export interface ICutsceneActor extends IEmoteBubbleAnchor {

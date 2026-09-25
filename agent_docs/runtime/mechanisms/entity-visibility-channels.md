@@ -3,7 +3,7 @@ id: entity-visibility-channels
 title: 实体显隐四通道合成
 domain: runtime
 type: mechanism
-summary: 四个独立通道(派生基底/条件/会话覆盖/拾取位)在实体内单点合成;任何一方只写自己的通道,禁止直接 setEnabled 冲掉运行态
+summary: 四个独立通道(派生基底/条件/会话覆盖/拾取位)在实体内单点合成,结果落在根节点激活(setActive)上、读用 present;任何一方只写自己的通道,禁止直接 setEnabled 冲掉运行态
 status: active
 authority:
   - src/entities/Hotspot.ts
@@ -12,7 +12,7 @@ authority:
 triggers:
   paths: ["src/entities/Hotspot.ts", "src/entities/Npc.ts", "src/systems/InteractionSystem.ts", "src/systems/SceneManager.ts", "src/core/Game.ts"]
   topics: [显隐, 实体可见性, enabled, conditionHidesEntity, 运行时字段, 实体字段写回, 分组显隐, 时段归属, phases]
-last_governed: 2026-09-23
+last_governed: 2026-09-25
 ---
 
 ## 是什么(一句话)
@@ -34,6 +34,14 @@ SceneManager 批量重贴派生基底,不是等下一帧慢慢刷。
 叙事状态变化(2026-09-23 补,此前动作链里推进的叙事状态要等回探索态实体才现身)。
 新增一种"会在演出/动作链里改变条件结论"的状态源,要么接进这个补刀,要么接受延迟——
 整族形态见 [game-state-handoff](game-state-handoff.md)。
+
+## 合成结果落在哪(2026-09-25 起)
+
+合成结果落在实体根节点的**激活**上(`container.setActive`,照 Unity 的 SetActive,见 [scene-hierarchy](scene-hierarchy.md)):
+不在场 = 整棵子树不画、不命中、不计包围盒、身上组件停。**读在场一律用 `npc.present` / `hotspot.present`**
+(= `container.activeSelf`),**不要再读 `container.visible`**——它不再承载在场语义(恒为 true,留给纯渲染用途);
+读 visible 的旧写法不会报错,只会把不在场的人当成在场(阴影、脚步、交互、巡逻、伤害源、气泡全会跟着错)。
+玩家不在此列:玩家始终在场,过场隐藏仍是 `sprite.container.visible`。
 
 ## 硬契约(违反即 bug)
 

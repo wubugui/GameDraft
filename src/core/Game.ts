@@ -1710,7 +1710,7 @@ export class Game {
     }
     log?.(
       `命中热点: def.id=${JSON.stringify(h.def.id)} active=${h.active} ` +
-      `container.visible=${h.container.visible} ` +
+      `present=${h.present} ` +
       `parent=${h.container.parent ? 'yes' : 'no'} y=${Math.round(h.container.y)}`,
     );
     return h;
@@ -1993,7 +1993,7 @@ export class Game {
     let fallback: string | null = null;
     for (const npc of this.sceneManager.getCurrentNpcs()) {
       if (String(npc.def.characterId ?? '').trim() !== want) continue;
-      if (npc.container.visible) return npc.def.id;
+      if (npc.present) return npc.def.id;
       if (fallback === null) fallback = npc.def.id;
     }
     return fallback;
@@ -2878,7 +2878,7 @@ export class Game {
         sources.push({ def: threat, position: () => { const n = entity(); return n ? { x: n.x, y: n.y } : null; },
           active: () => { const n = entity(); return !!n && this.sceneManager.getNpcBaseVisibleForInteraction(n)
             && conditionsPass(def.conditions)
-            && (threat.affectsWhenHidden === true || n.container.visible) && conditionsPass(threat.conditions); } });
+            && (threat.affectsWhenHidden === true || n.present) && conditionsPass(threat.conditions); } });
       }
       for (const def of scene?.hotspots ?? []) {
         const threat = def.healthThreat;
@@ -4172,7 +4172,6 @@ export class Game {
         getRoot: () => (this.renderer.isInitialized() ? this.renderer.app.stage : null),
         getCanvas: () => (this.renderer.isInitialized() ? (this.renderer.app.canvas as HTMLCanvasElement) : null),
         getScreenSize: () => ({ width: this.renderer.screenWidth, height: this.renderer.screenHeight }),
-        getNodeAliases: () => this.debugHierarchyAliases(),
         log: (m) => this.debugPanelUI.log(m),
       });
     }
@@ -4848,7 +4847,7 @@ export class Game {
         npc.id,
         () => ({ x: npc.contactX, y: npc.contactY }),
         () => npc.spriteEntity,
-        () => npc.container.visible,
+        () => npc.present,
       ));
     }
   }
@@ -5832,7 +5831,7 @@ export class Game {
             const bl = se?.bodyUvToLayer(layer, 0, 1);
             return tl && tr && bl ? burnFrameFromCorners(tl, tr, bl, { x: npc.contactX, y: npc.contactY }) : null;
           },
-          get active() { return npc.container.visible; },
+          get active() { return npc.present; },
           render: {
             kind: 'texture',
             host: {
@@ -6552,7 +6551,7 @@ export class Game {
         if (worldPoly && isValidZonePolygon(worldPoly) && isPointInPolygon(worldPoly, wx, wy)) return true;
       }
       for (const n of this.sceneManager.getCurrentNpcs()) {
-        if (!n.container.visible) continue;
+        if (!n.present) continue;
         const worldPoly = npcCollisionPolygonToWorld(n);
         if (worldPoly && isValidZonePolygon(worldPoly) && isPointInPolygon(worldPoly, wx, wy)) return true;
       }
@@ -7627,7 +7626,7 @@ export class Game {
       getWorldHeight: () => npc.getWorldSize().height,
       getTexture: () => npc.getDisplayTexture(),
       getFacing: () => npc.getFacing(),
-      isVisible: () => npc.container.visible,
+      isVisible: () => npc.present,
     };
   }
 
@@ -7639,7 +7638,7 @@ export class Game {
       getWorldHeight: () => h.getWorldSize().height,
       getTexture: () => h.getDisplayTexture(),
       getFacing: () => h.getFacing(),
-      isVisible: () => h.container.visible,
+      isVisible: () => h.present,
     };
   }
 
@@ -8198,7 +8197,7 @@ export class Game {
   private startNpcPatrolIfEligible(npc: Npc): void {
     const patrol = npc.def.patrol;
     if (
-      npc.container.visible &&
+      npc.present &&
       patrol?.route &&
       patrol.route.length > 0 &&
       !this.sceneManager.isNpcPatrolPersistentlyDisabled(npc.id)
@@ -8638,30 +8637,6 @@ export class Game {
     const indexed = await fetchSceneIndex();
     if (indexed.length > 0) return indexed;
     return this.getDerivedDevSceneEntries();
-  }
-
-  /**
-   * F2「层级」页给无名节点的显示别名：渲染器各层、玩家、当前场景 NPC / 热点的容器。
-   * 只用于树里显示与按名过滤，**不写回节点的 label**（有代码按 label 找节点）。
-   */
-  private debugHierarchyAliases(): Map<Container, string> {
-    const m = new Map<Container, string>();
-    const r = this.renderer;
-    if (!r.isInitialized()) return m;
-    m.set(r.app.stage, 'stage');
-    m.set(r.worldContainer, 'worldContainer');
-    m.set(r.backgroundLayer, 'backgroundLayer');
-    m.set(r.shadowLayer, 'shadowLayer');
-    m.set(r.entityLayer, 'entityLayer');
-    m.set(r.worldFadeLayer, 'worldFadeLayer');
-    m.set(r.canvasStage.layer, 'canvasStage');
-    m.set(r.cutsceneOverlay, 'cutsceneOverlay');
-    m.set(r.uiLayer, 'uiLayer');
-    const playerNode = this.player?.getDisplayObject();
-    if (playerNode instanceof Container) m.set(playerNode, 'player');
-    for (const npc of this.sceneManager.getCurrentNpcs()) m.set(npc.container, `npc:${npc.id}`);
-    for (const h of this.sceneManager.getCurrentHotspots()) m.set(h.container, `hotspot:${h.def.id}`);
-    return m;
   }
 
   /** 兜底清单的 id 集：地图节点 + game_config 入口/回退 + dev_room，去重排序 */

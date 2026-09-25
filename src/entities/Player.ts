@@ -1,6 +1,7 @@
 import type { Container } from '../engine2d';
 
 import { SpriteEntity } from '../rendering/SpriteEntity';
+import { PlayerComponent } from './entityComponents';
 import type { InputManager } from '../core/InputManager';
 import type {
   AnimationPlaybackParams,
@@ -120,6 +121,9 @@ export class Player implements ICutsceneActor, ITrajectoryTarget {
 
   constructor(inputManager: InputManager) {
     this.sprite = new SpriteEntity();
+    // 层级身份:节点名 player,挂实体组件。玩家的隐藏(过场)是纯渲染上的 visible,玩家始终在场,不走 setActive
+    this.sprite.container.label = 'player';
+    this.sprite.container.addComponent(new PlayerComponent(this));
     this.inputManager = inputManager;
   }
 
