@@ -636,3 +636,137 @@ details[open] > summary.debug-dock__section-title::before {
 .debug-acoustic__slider > span:first-child { min-width: 3.6em; font-size: 11px; }
 .debug-acoustic__slider input[type=range] { flex: 1; }
 .debug-acoustic__num { min-width: 3.4em; text-align: right; font-size: 11px; }
+
+/* ---- F2「层级」页：活场景树 + 检视器（照 Unity 的 Hierarchy / Inspector） ---- */
+.debug-hier {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.5rem 0.75rem 0.4rem;
+  font-size: 0.75rem;
+}
+.debug-hier__hint { flex: 0 0 auto; font-size: 0.68rem; color: #8a7a55; }
+.debug-hier__bar { flex: 0 0 auto; display: flex; gap: 3px; align-items: center; }
+.debug-hier__bar .debug-hier__search { flex: 1 1 auto; min-width: 0; margin: 0; }
+.debug-hier__bar .debug-dock__btn { flex: 0 0 auto; white-space: nowrap; }
+.debug-hier__bar .debug-dock__btn.is-on { background: #3a5570; border-color: #7fd8ff; color: #eaf6ff; }
+.debug-hier__status { flex: 0 0 auto; font-size: 0.68rem; color: #778; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 树：固定行高的虚拟列表；底边可拖（resize）调高度 */
+.debug-hier__tree {
+  flex: 0 0 auto;
+  height: 16rem;
+  min-height: 5rem;
+  max-height: 80%;
+  resize: vertical;
+  overflow: auto;
+  background: #0a0a10;
+  border: 1px solid #2a3344;
+  border-radius: 4px;
+  outline: none;
+}
+.debug-hier__tree:focus-visible { border-color: #4a6a8a; }
+.debug-hier__spacer { position: relative; min-width: 100%; width: max-content; }
+.debug-hier__row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 20px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding-right: 6px;
+  white-space: nowrap;
+  cursor: default;
+  color: #c8d0e0;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+}
+/* 行池里暂时用不上的行：作者样式的 display:flex 会压过 [hidden] 的 UA 样式，必须显式写 */
+.debug-hier__row[hidden] { display: none; }
+.debug-hier__row:hover { background: #161c28; }
+.debug-hier__row.is-selected { background: #24405e; color: #fff; }
+.debug-hier__row.is-inactive { color: #5c6272; }
+.debug-hier__row.is-inactive.is-selected { color: #aab4c4; }
+.debug-hier__row.is-context { opacity: 0.55; }
+.debug-hier__tog { flex: 0 0 12px; text-align: center; color: #8899aa; cursor: pointer; user-select: none; }
+.debug-hier__tog.is-static { cursor: default; color: #556; }
+.debug-hier__act { flex: 0 0 auto; margin: 0; width: 12px; height: 12px; }
+.debug-hier__name.is-alias { color: #9fd0a0; font-style: italic; }
+.debug-hier__name.is-anon { color: #8a93a6; }
+.debug-hier__row.is-selected .debug-hier__name { color: #fff; }
+.debug-hier__cls { color: #6a7a96; font-size: 10px; }
+.debug-hier__badges { color: #9a8a5a; font-size: 10px; }
+
+/* 检视器 */
+.debug-hier__insp { flex: 1 1 auto; min-height: 4rem; overflow: auto; padding-right: 2px; }
+.debug-hier__empty { color: #667; padding: 0.4rem 0; }
+.debug-hier__group { border-top: 1px solid #2a3344; padding: 0.3rem 0 0.35rem; }
+.debug-hier__group-title { font-size: 0.68rem; font-weight: 700; color: #8899cc; margin-bottom: 0.2rem; letter-spacing: 0.03em; }
+.debug-hier__head { display: flex; gap: 5px; align-items: center; }
+.debug-hier__name-input {
+  flex: 1 1 auto; min-width: 0; padding: 0.15rem 0.3rem; font-size: 0.78rem;
+  background: #141820; border: 1px solid #3a4a60; color: #eef; border-radius: 3px;
+}
+.debug-hier__sub { font-size: 0.68rem; color: #7a8598; }
+.debug-hier__inline { margin-left: 0.2rem; }
+.debug-hier__crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 1px 2px; margin: 0.15rem 0; }
+.debug-hier__crumb {
+  padding: 0 0.2rem; font-size: 0.68rem; background: transparent; border: none; border-radius: 3px;
+  color: #7fb8ff; cursor: pointer;
+}
+.debug-hier__crumb:hover { background: #1e2a3c; text-decoration: underline; }
+.debug-hier__sep { color: #445; font-size: 0.68rem; }
+.debug-hier__checks { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin: 0.15rem 0; }
+.debug-hier__check { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; font-size: 0.72rem; }
+.debug-hier__check input { margin: 0; }
+.debug-hier__field { display: flex; align-items: center; gap: 3px; margin: 2px 0; }
+.debug-hier__label { flex: 0 0 6.6em; color: #a9b3c6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.debug-hier__axis { flex: 0 0 auto; color: #7a8598; padding: 0 1px; }
+.debug-hier__label.is-scrub, .debug-hier__axis.is-scrub { cursor: ew-resize; user-select: none; touch-action: none; }
+.debug-hier__label.is-scrub:hover, .debug-hier__axis.is-scrub:hover { color: #dfe8ff; }
+.debug-hier__num {
+  flex: 1 1 0; min-width: 0; width: 4em; padding: 0.1rem 0.25rem; font-size: 0.72rem;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  background: #141820; border: 1px solid #3a4a60; color: #dde; border-radius: 3px;
+}
+.debug-hier__num:focus, .debug-hier__name-input:focus { border-color: #7fb8ff; outline: none; }
+.debug-hier__read { color: #c8d0e0; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 0.7rem; }
+.debug-hier__comps { display: flex; flex-direction: column; gap: 2px; }
+
+/* 画面上的高亮框 / 拾取板：挂在 #game-mount（画布的父元素）上，随等比信箱盒一起走、被它裁剪 */
+.debug-hier__hl {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  z-index: 55;
+  border: 1px solid #ffd24a;
+  background: rgba(255, 210, 74, 0.08);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+.debug-hier__hl.is-hover { border: 1px dashed #4ad8ff; background: rgba(74, 216, 255, 0.07); z-index: 54; }
+.debug-hier__hl.is-marker { border-radius: 50%; border-style: dashed; }
+.debug-hier__hl-chip {
+  position: absolute;
+  left: -1px;
+  bottom: 100%;
+  padding: 0 4px;
+  white-space: nowrap;
+  font: 11px/16px ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color: #ffd24a;
+  background: rgba(13, 13, 20, 0.85);
+}
+.debug-hier__hl.is-hover .debug-hier__hl-chip { color: #4ad8ff; }
+.debug-hier__hl-chip.is-inside { bottom: auto; top: 0; }
+.debug-hier__catcher {
+  position: absolute;
+  inset: 0;
+  z-index: 58;
+  cursor: crosshair;
+  background: rgba(74, 216, 255, 0.04);
+  outline: 2px dashed rgba(74, 216, 255, 0.5);
+  outline-offset: -2px;
+}

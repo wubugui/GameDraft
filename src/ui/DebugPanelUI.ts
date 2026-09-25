@@ -19,6 +19,11 @@ import {
   type DebugVfxSectionHandle,
 } from './debugVfxSection';
 import { createDebugBurnSection, type DebugBurnDeps, type DebugBurnSectionHandle } from './debugBurnSection';
+import {
+  createDebugHierarchySection,
+  type DebugHierarchyDeps,
+  type DebugHierarchySectionHandle,
+} from './debugHierarchySection';
 
 /** 可注册的 debug 区块内容：纯文本或带操作按钮；可选附加 DOM（如滑条） */
 export type DebugSectionContent =
@@ -55,6 +60,7 @@ const TAB_SCENE = 'scene';
 const TAB_ACOUSTIC = 'acoustic';
 const TAB_VFX = 'vfx';
 const TAB_BURN = 'burn';
+const TAB_HIERARCHY = 'hierarchy';
 const TAB_LOG = 'log';
 
 /** 与 DebugTools.setupDebugPanelSections 注册的区块 id 一致 */
@@ -107,6 +113,7 @@ type TabId =
   | typeof TAB_ACOUSTIC
   | typeof TAB_VFX
   | typeof TAB_BURN
+  | typeof TAB_HIERARCHY
   | typeof TAB_LOG;
 
 /** 区块渲染上下文：tools / screen 默认折叠；其余默认展开。screen=游戏画面常驻卡（只有 ✕ 取消常驻） */
@@ -170,6 +177,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
   private vfxSectionHandle: DebugVfxSectionHandle | null = null;
   private panelBurn!: HTMLElement;
   private burnSectionHandle: DebugBurnSectionHandle | null = null;
+  private panelHierarchy!: HTMLElement;
+  private hierarchySectionHandle: DebugHierarchySectionHandle | null = null;
   private panelLog: HTMLElement;
   private logPre: HTMLElement;
   private tabButtons: Map<TabId, HTMLButtonElement> = new Map();
@@ -253,6 +262,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     mkTab(TAB_VFX, '粒子');
     mkTab(TAB_BURN, '燃烧');
     mkTab(TAB_SCENE, '场景');
+    mkTab(TAB_HIERARCHY, '层级');
     mkTab(TAB_LOG, '日志');
 
     const panels = document.createElement('div');
@@ -271,6 +281,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelAcoustic = this.mkPanel('acoustic-panel');
     this.panelVfx = this.mkPanel('vfx-panel');
     this.panelBurn = this.mkPanel('burn-panel');
+    this.panelHierarchy = this.mkPanel('hierarchy-panel');
     this.panelLog = this.mkPanel('log-panel');
 
     const logScroll = document.createElement('div');
@@ -304,6 +315,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     panels.appendChild(this.panelAcoustic);
     panels.appendChild(this.panelVfx);
     panels.appendChild(this.panelBurn);
+    panels.appendChild(this.panelHierarchy);
     panels.appendChild(this.panelLog);
 
     this.root.appendChild(header);
@@ -360,6 +372,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelAcoustic.classList.toggle('is-active', id === TAB_ACOUSTIC);
     this.panelVfx.classList.toggle('is-active', id === TAB_VFX);
     this.panelBurn.classList.toggle('is-active', id === TAB_BURN);
+    this.panelHierarchy.classList.toggle('is-active', id === TAB_HIERARCHY);
     this.panelLog.classList.toggle('is-active', id === TAB_LOG);
     // 切到「场景」页时重取清单：改了场景 JSON / 换了当前场景都不必刷页面
     if (id === TAB_SCENE) this.sceneSectionHandle?.refresh();
@@ -367,6 +380,12 @@ export class DebugPanelUI implements IDebugPanelAPI {
     if (id === TAB_VFX) this.vfxSectionHandle?.refresh();
     if (id === TAB_BURN) this.burnSectionHandle?.refresh();
     this.updateSystemLiveLoop();
+    this.syncHierarchyActive();
+  }
+
+  /** 「层级」页只在被看着时（面板打开且停在这一页）轮询、画高亮、能拾取；切走 / 收起即全停 */
+  private syncHierarchyActive(): void {
+    this.hierarchySectionHandle?.setActive(this._isOpen && this.activeTab === TAB_HIERARCHY);
   }
 
   /** 打开且停在「系统」标签时，每帧刷新 FPS 等；切走或收起则停止 */
@@ -415,6 +434,14 @@ export class DebugPanelUI implements IDebugPanelAPI {
     if (this._isOpen) this.render();
   }
 
+  /** 挂载「层级」页（活场景树 + 检视器，改动只在内存）；仅 dev 构建调用一次 */
+  attachHierarchyDebug(deps: DebugHierarchyDeps): void {
+    if (this.hierarchySectionHandle) return;
+    this.hierarchySectionHandle = createDebugHierarchySection(deps);
+    if (this._isOpen) this.render();
+    this.syncHierarchyActive();
+  }
+
   /** 挂载「场景」页（跳到任意场景）；仅 dev 构建调用一次 */
   attachSceneDebug(deps: DebugSceneSectionDeps): void {
     if (this.sceneSectionHandle) return;
@@ -445,6 +472,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     if (this.activeTab === TAB_SCENE) this.sceneSectionHandle?.refresh();
     void this.syncPinsFromFile();
     this.updateSystemLiveLoop();
+    this.syncHierarchyActive();
   }
 
   close(): void {
@@ -454,6 +482,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
       this.systemLiveRafId = null;
     }
     this._isOpen = false;
+    this.syncHierarchyActive();
     this.inputManager?.setGameKeyboardBlocked(false);
     this.root.classList.remove('is-open');
     this.root.setAttribute('aria-hidden', 'true');
@@ -578,6 +607,7 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.renderAcoustic();
     this.renderVfx();
     this.renderBurn();
+    this.renderHierarchy();
     this.renderLogOnly();
     this.restorePanelScrollState(scrollState);
   }
@@ -1007,6 +1037,23 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.panelBurn.appendChild(scroll);
   }
 
+  /**
+   * 「层级」页的树与检视器是活的（选中、展开、滚动位置、正在编辑的框），**挂上一次就不再重建**：
+   * render() 随任何 addSection / refresh 都会跑，每次重挂会把树的滚动位置与输入焦点冲掉。
+   */
+  private renderHierarchy(): void {
+    const h = this.hierarchySectionHandle;
+    if (h) {
+      if (h.root.parentElement !== this.panelHierarchy) this.panelHierarchy.replaceChildren(h.root);
+      return;
+    }
+    this.panelHierarchy.replaceChildren();
+    const scroll = document.createElement('div');
+    scroll.className = 'debug-dock__scroll';
+    scroll.appendChild(this.p('（层级调试仅在 npm run dev 的开发构建挂载）'));
+    this.panelHierarchy.appendChild(scroll);
+  }
+
   private renderScene(): void {
     this.panelScene.replaceChildren();
     const scroll = document.createElement('div');
@@ -1091,6 +1138,8 @@ export class DebugPanelUI implements IDebugPanelAPI {
     this.vfxSectionHandle = null;
     this.burnSectionHandle?.destroy();
     this.burnSectionHandle = null;
+    this.hierarchySectionHandle?.destroy();
+    this.hierarchySectionHandle = null;
     this.sceneSectionHandle = null;
     this.close();
     this.sections.clear();

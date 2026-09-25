@@ -4167,6 +4167,14 @@ export class Game {
         hasPendingSpace: () => this.audioManager.hasPendingAcoustic(),
         log: (m) => this.debugPanelUI.log(m),
       });
+      /** F2「层级」页：活场景树 + 检视器（照 Unity 的 Hierarchy / Inspector）；改动只落在内存里的活对象上，不落盘。 */
+      this.debugPanelUI.attachHierarchyDebug({
+        getRoot: () => (this.renderer.isInitialized() ? this.renderer.app.stage : null),
+        getCanvas: () => (this.renderer.isInitialized() ? (this.renderer.app.canvas as HTMLCanvasElement) : null),
+        getScreenSize: () => ({ width: this.renderer.screenWidth, height: this.renderer.screenHeight }),
+        getNodeAliases: () => this.debugHierarchyAliases(),
+        log: (m) => this.debugPanelUI.log(m),
+      });
     }
     this.setupCutsceneStepHud();
     this.setupPlaneDebugSection();
@@ -8630,6 +8638,30 @@ export class Game {
     const indexed = await fetchSceneIndex();
     if (indexed.length > 0) return indexed;
     return this.getDerivedDevSceneEntries();
+  }
+
+  /**
+   * F2「层级」页给无名节点的显示别名：渲染器各层、玩家、当前场景 NPC / 热点的容器。
+   * 只用于树里显示与按名过滤，**不写回节点的 label**（有代码按 label 找节点）。
+   */
+  private debugHierarchyAliases(): Map<Container, string> {
+    const m = new Map<Container, string>();
+    const r = this.renderer;
+    if (!r.isInitialized()) return m;
+    m.set(r.app.stage, 'stage');
+    m.set(r.worldContainer, 'worldContainer');
+    m.set(r.backgroundLayer, 'backgroundLayer');
+    m.set(r.shadowLayer, 'shadowLayer');
+    m.set(r.entityLayer, 'entityLayer');
+    m.set(r.worldFadeLayer, 'worldFadeLayer');
+    m.set(r.canvasStage.layer, 'canvasStage');
+    m.set(r.cutsceneOverlay, 'cutsceneOverlay');
+    m.set(r.uiLayer, 'uiLayer');
+    const playerNode = this.player?.getDisplayObject();
+    if (playerNode instanceof Container) m.set(playerNode, 'player');
+    for (const npc of this.sceneManager.getCurrentNpcs()) m.set(npc.container, `npc:${npc.id}`);
+    for (const h of this.sceneManager.getCurrentHotspots()) m.set(h.container, `hotspot:${h.def.id}`);
+    return m;
   }
 
   /** 兜底清单的 id 集：地图节点 + game_config 入口/回退 + dev_room，去重排序 */
