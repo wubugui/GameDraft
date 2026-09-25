@@ -2145,6 +2145,7 @@
     {
       "glob": "tools/render_parity/**",
       "docs": [
+        "pixi-shader-wgsl-port",
         "rhi"
       ]
     },

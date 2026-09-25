@@ -85,6 +85,7 @@
 
 ### 配方
 - [无头画面/逻辑全自动验证](runtime/recipes/headless-visual-verification.md) — 隐藏页 rAF 完全暂停——dev模式+命令通道+rAF pump/forceFrame 出帧截图;含 MessageChannel 让步与合成钟追平配方
+- [把 Pixi 自定义着色器补上 WGSL(迁移到 WebGPU 的逐个移植配方)](runtime/recipes/pixi-shader-wgsl-port.md) — 给运行时每个 GLSL 自定义着色器补一份 WGSL(Shader/Filter 的 gpu 程序),GLSL 原样保留;用 tools/render_parity 证明 Pixi-WebGL(= master)与 Pixi-WebGPU(RHI 设备)逐像素一致才算完成;列出 WGSL 与 GLSL 语义不同、翻译时静默出错的点和工具依赖的禁改清单
 - [运行时命令通道(脚本化驱动游戏)](runtime/recipes/runtime-command-channel.md) — HTTP 命令队列驱动 DEV 游戏+读快照断言;测试/操作游戏一律走它,不用 computer-use/点像素
 
 ### 决策记录
