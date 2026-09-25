@@ -1,3 +1,4 @@
+/// <reference types="@webgpu/types" />
 /**
  * RHI 的 luma.gl 后端(只有 WebGPU,luma.gl 9.4)。
  *
