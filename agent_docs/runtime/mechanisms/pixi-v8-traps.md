@@ -96,12 +96,12 @@ Pixi v8 里几条**不报错、只是行为不对**的引擎事实。每条都�
 - **WebGPU 渲染器在一次 `render()` 之外没有命令编码器**:`renderTarget.bind(...)` 当场抛;`renderer.clear({target})`
   在首次 render 之前也抛,且单独提交时用的是上一个目标的视口。渲染之外要清一张 RT,就 `render({container: 空容器, target, clear: true})`。
 
-- **GlProgram 第一次被用来画东西时才编译,而且同步等链接结果**(`generateProgram` 里直接 `getProgramParameter(LINK_STATUS)`)。
+- **(仅 Pixi WebGL:编辑器 / master 对照侧;运行时的对应物见 engine2d 卡「管线预建」)GlProgram 第一次被用来画东西时才编译,而且同步等链接结果**(`generateProgram` 里直接 `getProgramParameter(LINK_STATUS)`)。
   Windows 上 ANGLE → D3D11 的 FXC 编大 shader 是秒级的:拼了大循环 / 循环里采纹理的 shader 能到 10 s 级,
   主线程整个停住,症状是"某个东西第一次出现时卡死几秒、之后再也不卡"。游戏预览窗口带 `--disable-gpu-shader-disk-cache`,
-  每次开窗口重来。对策:① 不可达的分支别拼进 shader(编译器照样展开);② 开局用 `GlProgramWarmup`
-  (`KHR_parallel_shader_compile` 后台编,主线程只轮询)并在遮罩下经 `renderer.shader.bind(shader, true)` 交给 Pixi——
-  同源同上下文命中 ANGLE 程序缓存,交接只要几十 ms。量它:包 `WebGL2RenderingContext.prototype.getProgramParameter` 计时。
+  每次开窗口重来。对策:① 不可达的分支别拼进 shader(编译器照样展开);② 开局用 `KHR_parallel_shader_compile`
+  后台编(主线程只轮询)并在遮罩下经 `renderer.shader.bind(shader, true)` 交给 Pixi——同源同上下文命中 ANGLE 程序缓存,
+  交接只要几十 ms(master 上的 `GlProgramWarmup` 就是这么做的,本分支已删)。量它:包 `WebGL2RenderingContext.prototype.getProgramParameter` 计时。
 
 - `Sprite` 的子节点不渲染:bounds / visible / renderable 全正常、shader 编译通过、
   恒色调试 shader 也零像素;改挂成**兄弟节点**立刻显示。
