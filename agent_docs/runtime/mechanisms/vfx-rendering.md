@@ -10,20 +10,18 @@ authority:
   - src/rendering/vfx/vfxShaders.ts
   - src/rendering/vfx/VfxBatchMesh.ts
   - src/rendering/vfx/VfxPlateBatchMesh.ts
-  - src/rendering/glProgramWarmup.ts
+  - src/engine2d/gpu/WebGPURenderer.ts#prewarmPipelines
   - src/rendering/CharacterLitSprite.ts
   - src/core/CharacterLightingSystem.ts#getLightFactors
   - src/systems/SceneManager.ts#setRevealGate
 triggers:
   paths:
     - "src/rendering/vfx/**"
-    - "src/rendering/glProgramWarmup.ts"
   topics: [粒子受光, 粒子着色, lit, tone, unlit, lightGain, emissive, 粒子发黑, 粒子排序, 分桶, 粒子在人前后, 粒子卡顿, shader 编译, 揭幕前闸, 预编译]
   tasks: [改粒子渲染, 加粒子 shader, 查粒子卡顿, 查粒子发黑, 查粒子前后关系]
 verified_by:
   - src/rendering/vfx/VfxRenderer.test.ts
-  - src/rendering/vfx/vfxGlPrograms.test.ts
-  - src/rendering/glProgramWarmup.test.ts
+  - src/rendering/vfx/vfxPipelineSpecs.test.ts
   - src/rendering/lighting/worldSpaceShading.test.ts
   - src/systems/SceneManagerRevealGate.test.ts
   - src/systems/vfx/VfxSystem.prewarm.test.ts
@@ -59,8 +57,9 @@ last_governed: 2026-09-23
 - **长活 shader 的场景纹理槽位与 `createLitShader` 同处维护**;切场景前粒子先销毁自己的 shader——漏一个槽 = 整局卡死([[pixi-v8-traps]])。
 - 🔴 **首帧不卡三件事,缺一件回到原样**(09-16 实测进茶馆第一帧 11 s):
   ① 受光粒子主函数只 `probeE`,**不拼 `gatherRT`**(uMode 0 体素步进对粒子不可达,拼进来画面不变、D3D 编译 3 s → 11 s);
-  ② 全部粒子 GL 程序列在 `vfxGlPrograms()`,开局 `GlProgramWarmup` 用并行编译扩展后台编,揭幕前闸里等编完再交给 Pixi——
-  **新增粒子程序必须进这张清单**(测试扫目录拦);
+  ② 全部粒子管线(程序 × 网格布局 × 混合)列在 `vfxPipelineSpecs()`,开局交给渲染器 `prewarmPipelines` 预建(WebGPU 在建管线时
+  才编后端着色器,GPU 进程里编、不挡 JS),揭幕前闸里 `pipelinesReady` 等全部已建管线编完——
+  **新增粒子程序 / 网格必须进这张清单**(测试扫目录拦);
   ③ 进场景的实例在揭幕前闸里建好模拟并跑完预热;中途新建的按**工作量**预算分帧跑(不按毫秒,第几帧跑完可复现),
   预热中的模拟不画。闸的时序见 [[scene-onenter-reveal-timing]]。
 
@@ -81,8 +80,8 @@ last_governed: 2026-09-23
 
 ## 怎么验证
 
-- `npx vitest run src/rendering/vfx src/rendering/glProgramWarmup.test.ts src/rendering/lighting/worldSpaceShading.test.ts src/systems/SceneManagerRevealGate.test.ts`。
+- `npx vitest run src/rendering/vfx src/rendering/lighting/worldSpaceShading.test.ts src/systems/SceneManagerRevealGate.test.ts`。
 - 真机着色路:`window.__game.vfxRenderer.views`(`lit` / `toneSrc` / `depthGroup.uniforms.uHasDepth`);夜里是否借了几何看
-  `characterLighting.isGeometryOnly`。量卡帧:包 `WebGL2RenderingContext.prototype.getProgramParameter` / `shaderSource` 计时,
-  `fixedTickMode` + `debugStepTicks(1)` 逐帧推;`window.__game.glProgramWarmup.pending` 看交接。
+  `characterLighting.isGeometryOnly`。量卡帧:`await __game.renderer.app.renderer.pipelinesReady(0)` 看有没有还在编的管线,
+  `fixedTickMode` + `debugStepTicks(1)` 逐帧推。
   画面取证走 [headless-visual-verification](../recipes/headless-visual-verification.md)。

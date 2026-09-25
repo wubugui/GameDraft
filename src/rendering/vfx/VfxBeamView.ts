@@ -113,11 +113,7 @@ export class VfxBeamView {
     });
     this.posBuf = new Buffer({ data: this.posData, usage: BufferUsage.VERTEX | BufferUsage.COPY_DST });
     this.idxBuf = new Buffer({ data: this.idxData, usage: BufferUsage.INDEX | BufferUsage.COPY_DST });
-    const geometry = new Geometry({
-      attributes: { aPosition: { buffer: this.posBuf, format: 'float32x2' } },
-      indexBuffer: this.idxBuf,
-    });
-    this.mesh = new Mesh({ geometry, shader: this.shader }) as SortableMesh;
+    this.mesh = new Mesh({ geometry: createVfxBeamGeometry(this.posBuf, this.idxBuf), shader: this.shader }) as SortableMesh;
     this.mesh.position.set(0, 0);
     this.mesh.cullable = false;
   }
@@ -169,4 +165,15 @@ export class VfxBeamView {
     g.destroy(true);
     this.shader.destroy();
   }
+}
+
+/** 光柱网格的几何(包络三角扇):视图与管线预建(`vfxPipelineSpecs`)共用这一份,顶点布局不会分叉 */
+export function createVfxBeamGeometry(
+  posBuf = new Buffer({ data: new Float32Array(6), usage: BufferUsage.VERTEX | BufferUsage.COPY_DST }),
+  idxBuf = new Buffer({ data: new Uint32Array(3), usage: BufferUsage.INDEX | BufferUsage.COPY_DST }),
+): Geometry {
+  return new Geometry({
+    attributes: { aPosition: { buffer: posBuf, format: 'float32x2' } },
+    indexBuffer: idxBuf,
+  });
 }

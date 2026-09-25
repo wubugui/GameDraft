@@ -933,12 +933,6 @@
       ]
     },
     {
-      "glob": "src/rendering/glProgramWarmup.ts",
-      "docs": [
-        "vfx-rendering"
-      ]
-    },
-    {
       "glob": "src/rendering/legacy/**",
       "docs": [
         "rhi"

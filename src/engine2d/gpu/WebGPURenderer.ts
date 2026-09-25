@@ -32,7 +32,9 @@ import { GpuProgram } from '../shader/GpuProgram';
 import { GpuTextures } from './GpuTextures';
 import { GpuBuffers } from './GpuBuffers';
 import { Pipelines, STENCIL_DEPTH_FORMAT } from './Pipelines';
-import { Batcher } from './Batcher';
+import { Batcher, adjustedBlendMode } from './Batcher';
+import type { BlendMode } from '../core/blendModes';
+import type { Geometry } from '../shader/Geometry';
 import { Collector, prepareTree } from './collect';
 import { FrameBuilder, type ArenaRef, type BindingValue, type PassCmd, type VirtualCommand } from './FrameBuilder';
 import type { RenderSurface } from './renderTargets';
@@ -101,6 +103,16 @@ interface TargetEntry {
   plain?: RhiRenderTarget;
   stencil?: RhiRenderTarget;
   depth?: RhiTexture;
+}
+
+/** 一组要预建的管线:程序 + 它会配的几何(只看顶点布局)+ 会用到的混合;目标格式缺省画布 + 离屏缺省 */
+export interface PipelinePrewarmSpec {
+  program: GpuProgram;
+  geometry: Geometry;
+  blendModes: readonly BlendMode[];
+  /** 网格的纹理(只影响非预乘纹理的混合变体);缺省 Texture.WHITE,与没给纹理的自定义网格相同 */
+  texture?: Texture;
+  colorFormats?: readonly RhiColorFormat[];
 }
 
 export class WebGPURenderer extends RendererBase {
@@ -305,6 +317,45 @@ export class WebGPURenderer extends RendererBase {
     e.stencil?.destroy();
     e.depth?.destroy();
     this.targets.delete(texture);
+  }
+
+  // ───────────────────────── 管线预建
+
+  /**
+   * 按(程序 × 几何的顶点布局 × 混合 × 目标格式)提前建好管线,真画时命中同一份缓存。
+   * WebGPU 在建管线时才把 WGSL 编成后端着色器,大着色器(受光粒子这类)秒级;不预建就落在它第一次出现的那一帧。
+   * 缺省目标格式 = 画布格式 + 离屏缺省格式(滤镜 / RenderTexture 的 bgra8unorm)。建不起来的只告警,不抛。
+   */
+  prewarmPipelines(specs: readonly PipelinePrewarmSpec[]): void {
+    if (this.destroyed) return;
+    const defaults = [...new Set<RhiColorFormat>([this.rhi.caps.swapchainFormat, 'bgra8unorm'])];
+    for (const s of specs) {
+      try {
+        const layout = this.pipelines.layout(s.geometry, s.program);
+        const texture = s.texture ?? Texture.WHITE;
+        for (const mode of s.blendModes) {
+          const blend = adjustedBlendMode(mode, texture.source);
+          for (const colorFormat of s.colorFormats ?? defaults) {
+            this.pipelines.get({
+              program: s.program, layout, topology: s.geometry.topology, blend,
+              colorFormat, depthFormat: null, stencil: 'disabled', colorMask: 15,
+            });
+          }
+        }
+      } catch (e) {
+        console.warn(`[engine2d] 预建管线失败(${s.program.name ?? `program-${s.program.uid}`}):`, e);
+      }
+    }
+  }
+
+  /** 纹理源在 GPU 侧的纹理:没建就按真画时同一条路建好并上传(诊断 / 取证用;源已销毁时抛) */
+  gpuTextureOf(source: TextureSource): RhiTexture {
+    return this.textures.get(source);
+  }
+
+  /** 已建的全部管线都编完、校验完;超时返回 false(见 Pipelines.whenAllReady) */
+  pipelinesReady(timeoutMs = 10_000): Promise<boolean> {
+    return this.pipelines.whenAllReady(timeoutMs);
   }
 
   // ───────────────────────── 生成纹理 / 回读

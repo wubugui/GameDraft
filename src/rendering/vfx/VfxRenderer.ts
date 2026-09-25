@@ -35,7 +35,9 @@
  * 渲染侧不写模拟状态（只读池），不 import 任何系统。
  */
 import { resolveLightFactors, type LightFactors } from '../../data/lightFactors';
-import { Container, type GlProgram, type GpuProgram, Shader, Texture, type TextureSource, UniformGroup } from '../../engine2d';
+import {
+  type BlendMode, Container, type GlProgram, type GpuProgram, type PipelinePrewarmSpec, Shader, Texture, type TextureSource, UniformGroup,
+} from '../../engine2d';
 
 import type { SceneDepthConfig } from '../../data/types';
 import { sampleColorCurve, sampleCurve } from '../../systems/vfx/vfxCurve';
@@ -53,9 +55,9 @@ import type { VfxBeamRuntime } from '../../systems/vfx/vfxSim';
 import { samplerOf } from '../legacy/gpuSampler';
 import { VfxBatchMesh, type VfxQuad } from './VfxBatchMesh';
 import { packBeamUniforms, type VfxBeamPackEnv } from './vfxBeamGlsl';
-import { VfxBeamView } from './VfxBeamView';
+import { VfxBeamView, createVfxBeamGeometry } from './VfxBeamView';
 import { VfxPlateBatchMesh, createPlateStrip, type VfxPlateStrip } from './VfxPlateBatchMesh';
-import { getVfxBeamProgram } from './vfxBeamShaders';
+import { getVfxBeamGpuProgram } from './vfxBeamShaders';
 import {
   getVfxBoltGpuProgram, getVfxBoltProgram, getVfxLitGpuProgram, getVfxLitProgram, getVfxPlateLitGpuProgram,
   getVfxPlateLitProgram, getVfxUnlitGpuProgram, getVfxUnlitProgram,
@@ -68,12 +70,25 @@ import type { VfxBoltDef } from '../../data/types';
 export const MAX_BUCKETS = 8;
 
 /**
- * 粒子渲染会用到的全部 GL 程序（无光 / 受光 / 薄片受光 / 光柱）。组装层开局交给 `GlProgramWarmup`
- * 在后台编、切场景遮罩下交给 Pixi——否则第一个受光粒子出现那一帧同步编秒级（见 `rendering/glProgramWarmup.ts`）。
- * 新增一种粒子程序就加进这里，漏了它就回到"第一次出现卡一下"。
+ * 粒子渲染会用到的全部管线(程序 × 网格顶点布局 × 混合)。组装层开局交给渲染器预建、揭幕前在遮罩下等它们编完
+ * ——否则第一个受光粒子出现那一帧要等 GPU 进程把大着色器编完(WebGL 时代实测秒级,见 engine2d 卡)。
+ * 几何取自各网格类本身(容量 1),布局与真画时逐项相同。新增一种粒子程序 / 网格就加进这里,漏了它就回到"第一次出现卡一下"。
  */
-export function vfxGlPrograms(): GlProgram[] {
-  return [getVfxUnlitProgram(), getVfxLitProgram(), getVfxPlateLitProgram(), getVfxBeamProgram(), getVfxBoltProgram()];
+export function vfxPipelineSpecs(): PipelinePrewarmSpec[] {
+  const stub = (gpuProgram: GpuProgram) => new Shader({ gpuProgram, resources: {} });
+  const quad = new VfxBatchMesh(1, stub(getVfxUnlitGpuProgram())).mesh.geometry;
+  const plate = new VfxPlateBatchMesh(1, 1, stub(getVfxPlateLitGpuProgram())).mesh.geometry;
+  const bolt = new VfxBoltBatchMesh(1, stub(getVfxBoltGpuProgram())).mesh.geometry;
+  // 粒子网格的混合只有 normal / add(见 bucketMesh);雷恒 add;光柱三种(VfxBeamView.setBlend)
+  const particle: BlendMode[] = ['normal', 'add'];
+  return [
+    { program: getVfxUnlitGpuProgram(), geometry: quad, blendModes: particle },
+    { program: getVfxLitGpuProgram(), geometry: quad, blendModes: particle },
+    { program: getVfxUnlitGpuProgram(), geometry: plate, blendModes: particle },
+    { program: getVfxPlateLitGpuProgram(), geometry: plate, blendModes: particle },
+    { program: getVfxBoltGpuProgram(), geometry: bolt, blendModes: ['add'] },
+    { program: getVfxBeamGpuProgram(), geometry: createVfxBeamGeometry(), blendModes: ['add', 'screen', 'normal'] },
+  ];
 }
 
 /**

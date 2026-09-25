@@ -14,7 +14,6 @@ authority:
   - src/rendering/EntityShadow.ts
   - src/ui/components/UIDecor.ts
   - src/ui/InspectBox.ts
-  - src/rendering/glProgramWarmup.ts
 triggers:
   paths: ["src/rendering/**", "src/ui/**", "src/core/AssetManager.ts", "src/systems/objectExamine/**"]
   topics: [Pixi, pixi v8, RenderTarget, BindGroup, 预乘, hitArea, leading, 滤镜烧毁, ticker, GLSL, WebGL1, 卡死, shader 编译, 首帧卡顿, KHR_parallel_shader_compile, 滤镜容器, 临时 RT, 屏幕反推世界]
@@ -33,7 +32,8 @@ Pixi v8 里几条**不报错、只是行为不对**的引擎事实。每条都�
 >   alpha 当数据的纹理按 `premultiplied-alpha` 装载(装载器照 Pixi 的解码规则);滤镜容器里 screen 是临时 RT 局部坐标;
 >   uniform 组的键必须构造时声明(WGSL 缓冲布局只认构造时的键);`leading`;无 `hitArea` 的容器恒不命中;标签样式表。
 > - **已失效**(只对 Pixi WebGL 成立):`#version 300 es` / GLSL ES 1.00 编译目标、`renderer.clear({target})` 与
->   `renderTarget.bind` 清屏、GlProgram 首用同步编译卡顿与 `GlProgramWarmup`(engine2d 没有 WebGL,`GlProgram` 只是壳)。
+>   `renderTarget.bind` 清屏、GlProgram 首用同步编译卡顿与 GL 预编译(engine2d 没有 WebGL,`GlProgram` 只是壳;
+>   WebGPU 的对应物是管线预建 `prewarmPipelines` / `pipelinesReady`,见 vfx-rendering)。
 >   渲染之外清一张 RT 仍用 `render({ container: 空容器, target, clear: true })`。
 > - 编辑器(`tools/anim_preview`、`tools/parallax_editor`)仍直接跑 Pixi,整卡对它们照旧适用。
 

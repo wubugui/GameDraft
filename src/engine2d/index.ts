@@ -82,5 +82,5 @@ export { CanvasTextMetrics, type FontMetrics } from './text/canvas/CanvasTextMet
 export { HTMLText, type HTMLTextOptions } from './text/html/HTMLText';
 export { HTMLTextStyle, type HTMLTextStyleOptions } from './text/html/HTMLTextStyle';
 export { RendererBase, type RendererOptions, type RenderOptions, type GenerateTextureOptions } from './gpu/Renderer';
-export { WebGPURenderer, WebGPURenderer as Renderer } from './gpu/WebGPURenderer';
+export { WebGPURenderer, WebGPURenderer as Renderer, type PipelinePrewarmSpec } from './gpu/WebGPURenderer';
 export type { RenderSurface } from './gpu/renderTargets';

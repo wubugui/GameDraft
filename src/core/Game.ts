@@ -275,14 +275,13 @@ import { RuntimeSwaySync, swayPreviewDirUrl } from '../dev/runtimeSwaySync';
 import { RuntimeTerrainSync, terrainPreviewDirUrl } from '../dev/runtimeTerrainSync';
 import { SceneWindState, sampleSceneWind } from '../utils/sceneWind';
 import { SwayBackground, findSwayHostSprite, loadBackgroundSwayInput, swayInsertIndex } from '../rendering/backgroundSway';
-import { VfxRenderer, vfxGlPrograms, type VfxSortHost } from '../rendering/vfx/VfxRenderer';
+import { VfxRenderer, vfxPipelineSpecs, type VfxSortHost } from '../rendering/vfx/VfxRenderer';
 import { VfxConfineOverlay } from '../rendering/vfx/VfxConfineOverlay';
-import { GlProgramWarmup, glWarmupTargetOf } from '../rendering/glProgramWarmup';
 import { socketLightWorld, viewDirWorld, worldToScene } from '../utils/sceneSpace';
 import { FireHintMarker } from '../rendering/FireHintMarker';
 
 /**
- * 揭幕前闸的限时（毫秒）。过了就先揭幕：没交给 Pixi 的 shader 第一次用到时自己编（会卡），
+ * 揭幕前闸的限时（毫秒）。过了就先揭幕：没编完的管线第一次用到的那一帧等它编完（会卡），
  * 没跑完的粒子预热按帧接着跑。shader 那头放得宽——等在遮罩下总比停在可见画面上强。
  */
 const REVEAL_GATE_SHADER_TIMEOUT_MS = 15000;
@@ -336,14 +335,7 @@ import {
   type SceneEntityKind,
 } from '../data/EntityRuntimeFieldSchema';
 import { installRuntimeErrorsToDebugPanel } from '../debug/debugPanelRuntimeLog';
-import {
-  drainWebGLErrorsToPanel,
-  logDepthTextureGpuStatus,
-  pixiInitTextureSourceForGpu,
-  tryGetWebGlFromApplication,
-} from '../debug/webglPanelDiagnostics';
-import { warmUpBackgroundDebugGlProgramForDiagnostics } from '../rendering/BackgroundDebugFilter';
-import { warmUpDepthOcclusionGlProgramForDiagnostics } from '../rendering/DepthOcclusionFilter';
+import { describeTextureOnGpu, installGpuDiagnosticsToPanel } from '../debug/gpuPanelDiagnostics';
 
 export interface GameStartOptions {
   devMode?: boolean;
@@ -803,8 +795,6 @@ export class Game {
   /** 当前这份拆层装了哪几个纹理 URL（热重载时按它把上一份丢掉，否则每推一次漏一套显存） */
   private swayTexUrls: string[] = [];
   private vfxRenderer: VfxRenderer | null = null;
-  /** 粒子 shader 预编译：开局后台编、切场景遮罩下交给 Pixi（见 `rendering/glProgramWarmup`） */
-  private glProgramWarmup: GlProgramWarmup | null = null;
   /** F2「粒子」页勾上才建：粒子区域的框线 + 边带内沿（调试叠加，不入档、不持久） */
   private vfxConfineOverlay: VfxConfineOverlay | null = null;
 
@@ -883,10 +873,8 @@ export class Game {
       else this.characterLighting.releaseEntityLitShader(sh);
     },
   };
-  /** Pixi 渲染之后 drain gl.getError（优先级 UTILITY，低于内置 render） */
-  private glPostRenderDrain: (() => void) | null = null;
-  private webglContextLostHandler: ((ev: Event) => void) | null = null;
-  private webglContextRestoredHandler: (() => void) | null = null;
+  /** F2 面板对 RHI 诊断的订阅（退订函数） */
+  private gpuDiagnosticsOff: (() => void) | null = null;
   private runtimeDebugLogCleanup: (() => void) | null = null;
   private runtimeDebugSnapshotTimer: number | null = null;
   /** 当前场景绑定的声学空间 id；每帧把解出来的听者喂给 AudioManager。 */
@@ -2218,20 +2206,22 @@ export class Game {
     });
     this.vfxSystem.setRenderer(this.vfxRenderer);
     /**
-     * 粒子 shader 第一次用到时 Pixi 同步编译：受光粒子秒级（2026-09-16 实测进茶馆第一帧 11 s、第一次点火把同样）。
-     * 开局就在后台线程编（不阻塞），每次装场景在揭幕前闸里（遮罩下）等它编完并交给 Pixi；
+     * 大着色器第一次用到时要编成后端代码：受光粒子秒级（WebGL 时代 2026-09-16 实测进茶馆第一帧 11 s、第一次点火把同样；
+     * WebGPU 在建管线时编，同样落在第一次出现的那一帧）。开局就把粒子的全部管线交给渲染器预建（GPU 进程里编，不挡 JS），
+     * 每次装场景在揭幕前闸里（遮罩下）等**全部已建管线**编完——本场景遮罩下已经画过的背景 / 角色 / 滤镜管线一并等到；
      * 同一个闸里把本场景的粒子预热也跑完（原来挤在揭幕后第一帧）。两件都限时、永不悬挂。
      */
-    this.glProgramWarmup = new GlProgramWarmup(
-      () => glWarmupTargetOf(this.renderer.app.renderer),
-      (m) => { if (import.meta.env.DEV) console.warn(m); this.debugPanelUI?.log(m); },
-    );
-    this.glProgramWarmup.request(vfxGlPrograms());
+    this.renderer.app.renderer.prewarmPipelines(vfxPipelineSpecs());
     this.sceneManager.setRevealGate(async () => {
-      await Promise.all([
-        this.glProgramWarmup?.whenReady(REVEAL_GATE_SHADER_TIMEOUT_MS),
+      const [shadersReady] = await Promise.all([
+        this.renderer.app.renderer.pipelinesReady(REVEAL_GATE_SHADER_TIMEOUT_MS),
         this.vfxSystem.prepareForReveal(REVEAL_GATE_VFX_TIMEOUT_MS),
       ]);
+      if (!shadersReady && !this.tearDownComplete) {
+        const m = `[管线预建] 揭幕前 ${REVEAL_GATE_SHADER_TIMEOUT_MS} ms 内着色器没编完,照常揭幕(之后第一次用到的那一帧会等编译)`;
+        if (import.meta.env.DEV) console.warn(m);
+        this.debugPanelUI?.log(m);
+      }
       // Static sampling geometry belongs to loading, never to the first visible bolt.
       const space = this.vfxSystem.currentSpace;
       const shell = this.sceneDepthSystem.depthShellField;
@@ -4329,7 +4319,7 @@ export class Game {
     if (this.tearDownComplete || !this.renderer.isInitialized()) {
       return;
     }
-    this.setupWebGlPanelDiagnostics();
+    this.setupGpuPanelDiagnostics();
 
     // 调试器桥要抢在直达路由**之前**装：warp 直达会 await 一长串状态推进与演出，
     // 装在后面的话，策划用 ?narrative_warp= 直奔某一拍时调试器根本连不上
@@ -4590,31 +4580,15 @@ export class Game {
     this.narrativeDebugBridge = null;
   }
 
-  /** F2「日志」页：WebGL getError、深度 GPU 纹理、shader 预热与上下文丢失；JS/Pixi 运行时错误镜像 */
-  private setupWebGlPanelDiagnostics(): void {
+  /**
+   * F2「日志」页：GPU 后端报错（校验失败 / 管线编译失败 / 设备丢失 / 被跳过的 draw，RHI 统一推送）与 JS 运行时错误镜像。
+   * WebGL 时代要每帧 drain gl.getError、听 webglcontextlost；WebGPU 下这些都由 RHI 的诊断流给出。
+   */
+  private setupGpuPanelDiagnostics(): void {
     this.runtimeDebugLogCleanup?.();
     this.runtimeDebugLogCleanup = installRuntimeErrorsToDebugPanel((m) => this.debugPanelUI?.log(m));
-
-    const canvas = this.renderer.app.canvas as HTMLCanvasElement | undefined;
-    if (!canvas) return;
-
-    this.webglContextLostHandler = (e: Event) => {
-      const msg = (e as WebGLContextEvent).statusMessage || '';
-      this.debugPanelUI?.log(`[GL诊断] webglcontextlost: ${msg || '(no message)'}`);
-    };
-    canvas.addEventListener('webglcontextlost', this.webglContextLostHandler);
-
-    this.webglContextRestoredHandler = () => {
-      this.debugPanelUI?.log('[GL诊断] webglcontextrestored');
-    };
-    canvas.addEventListener('webglcontextrestored', this.webglContextRestoredHandler);
-
-    this.glPostRenderDrain = () => {
-      const gl = tryGetWebGlFromApplication(this.renderer.app);
-      if (!gl) return;
-      drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), '每帧(Pixi渲染后)');
-    };
-    this.renderer.app.ticker.add(this.glPostRenderDrain, undefined, UPDATE_PRIORITY.UTILITY);
+    this.gpuDiagnosticsOff?.();
+    this.gpuDiagnosticsOff = installGpuDiagnosticsToPanel(this.renderer.rhi, (m) => this.debugPanelUI?.log(m));
   }
 
   /** 开发模式或 URL 带 `cutsceneDebug` 时显示左上角过场 step 预览 */
@@ -6432,16 +6406,10 @@ export class Game {
             `depthLoader ${sceneId}: 深度纹理未加载成功时 F2 深度调试仍为占位白图，遮挡滤镜不会创建`,
           );
         }
-        this.runDepthAndShaderGlDiagnostics(sceneId, dt, en);
+        this.runDepthGpuDiagnostics(sceneId, dt, en);
       } else {
         this.sceneDepthSystem.loadDefault();
         this.logDepthDiag(`depthLoader ${sceneId}: 无 depthConfig，深度系统关闭`);
-        const gl = tryGetWebGlFromApplication(this.renderer.app);
-        if (!gl) {
-          this.debugPanelUI?.log('[GL诊断] 无 WebGL 上下文（可能 WebGPU），跳过 getError');
-        } else {
-          drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} 无depthConfig`);
-        }
       }
       this.setupSceneLighting(sceneData, worldToPixelX, worldToPixelY);
       // 角色照明烘焙载荷:**必须 await 纳入加载门**——否则进度条/黑屏已撤,这批图集
@@ -7945,46 +7913,13 @@ export class Game {
     this.debugPanelUI?.log(`[深度诊断] ${message}`);
   }
 
-  /**
-   * 深度图 GPU 侧 isTexture、两个自定义 GlProgram 预热，并在每步后 drain gl.getError 到调试面板。
-   */
-  private runDepthAndShaderGlDiagnostics(sceneId: string, dt: Texture | null, depthEnabled: boolean): void {
-    const gl = tryGetWebGlFromApplication(this.renderer.app);
-    if (!gl) {
-      this.debugPanelUI?.log('[GL诊断] 当前渲染器无 gl（可能为 WebGPU），跳过 getError / isTexture');
-      return;
-    }
+  /** 深度图在 GPU 侧的状态（按真画时同一条路建 / 上传后报 RHI 纹理尺寸与格式）；GPU 报错另由 RHI 诊断流进面板 */
+  private runDepthGpuDiagnostics(sceneId: string, dt: Texture | null, depthEnabled: boolean): void {
     if (depthEnabled && dt) {
-      pixiInitTextureSourceForGpu(this.renderer.app.renderer, dt.source);
-      drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} 深度 initSource 后`);
-      logDepthTextureGpuStatus(
-        `${sceneId} 深度贴图(GPU)`,
-        dt,
-        this.renderer.app.renderer,
-        gl,
-        (m) => this.debugPanelUI?.log(m),
-      );
+      this.debugPanelUI?.log(describeTextureOnGpu(`${sceneId} 深度贴图`, dt, this.renderer.app.renderer));
     } else if (!depthEnabled) {
-      this.debugPanelUI?.log(`[GL诊断] ${sceneId}: depthEnabled=false，跳过深度 GPU 探测`);
+      this.debugPanelUI?.log(`[GPU诊断] ${sceneId}: depthEnabled=false，跳过深度 GPU 探测`);
     }
-
-    try {
-      warmUpDepthOcclusionGlProgramForDiagnostics();
-      this.debugPanelUI?.log('[GL诊断] DepthOcclusion GlProgram 已创建/命中缓存');
-    } catch (e) {
-      this.debugPanelUI?.log(`[GL诊断] DepthOcclusion GlProgram 失败: ${String(e)}`);
-    }
-    drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} DepthOcclusion shader 后`);
-
-    try {
-      warmUpBackgroundDebugGlProgramForDiagnostics();
-      this.debugPanelUI?.log('[GL诊断] BackgroundDebug GlProgram 已创建/命中缓存');
-    } catch (e) {
-      this.debugPanelUI?.log(`[GL诊断] BackgroundDebug GlProgram 失败: ${String(e)}`);
-    }
-    drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} BackgroundDebug shader 后`);
-
-    drainWebGLErrorsToPanel(gl, (m) => this.debugPanelUI?.log(m), `${sceneId} depthLoader 收尾`);
   }
 
   private setupSceneReadyHandler(): void {
@@ -8093,18 +8028,7 @@ export class Game {
         this.logDepthDiag(
           `scene:ready: 背景调试已绑定 uid=${dTex.uid} ${dTex.width}x${dTex.height} WHITE=${dTex === Texture.WHITE}`,
         );
-        const glR = tryGetWebGlFromApplication(this.renderer.app);
-        if (glR) {
-          pixiInitTextureSourceForGpu(this.renderer.app.renderer, dTex.source);
-          logDepthTextureGpuStatus(
-            `scene:ready ${sd.id} 深度贴图(GPU)`,
-            dTex,
-            this.renderer.app.renderer,
-            glR,
-            (m) => this.debugPanelUI?.log(m),
-          );
-          drainWebGLErrorsToPanel(glR, (m) => this.debugPanelUI?.log(m), `scene:ready ${sd.id}`);
-        }
+        this.debugPanelUI?.log(describeTextureOnGpu(`scene:ready ${sd.id} 深度贴图`, dTex, this.renderer.app.renderer));
       }
     });
 
@@ -10199,14 +10123,8 @@ export class Game {
       }
       this.mainTick = null;
     }
-    if (this.glPostRenderDrain && this.renderer?.app?.ticker) {
-      try {
-        this.renderer.app.ticker.remove(this.glPostRenderDrain);
-      } catch {
-        /* ignore */
-      }
-      this.glPostRenderDrain = null;
-    }
+    this.gpuDiagnosticsOff?.();
+    this.gpuDiagnosticsOff = null;
     if (this.charLitFrameSync && this.renderer?.app?.ticker) {
       try {
         this.renderer.app.ticker.remove(this.charLitFrameSync);
@@ -10215,17 +10133,6 @@ export class Game {
       }
       this.charLitFrameSync = null;
     }
-    const canvas = this.renderer?.app?.canvas as HTMLCanvasElement | undefined;
-    if (canvas) {
-      if (this.webglContextLostHandler) {
-        canvas.removeEventListener('webglcontextlost', this.webglContextLostHandler);
-      }
-      if (this.webglContextRestoredHandler) {
-        canvas.removeEventListener('webglcontextrestored', this.webglContextRestoredHandler);
-      }
-    }
-    this.webglContextLostHandler = null;
-    this.webglContextRestoredHandler = null;
     this.runtimeDebugLogCleanup?.();
     this.runtimeDebugLogCleanup = null;
     if (this.runtimeDebugSnapshotTimer !== null) {
@@ -10332,8 +10239,6 @@ export class Game {
     this.swayBackground = null;
     // 揭幕前闸摘掉；预编译器放行在途等待、删掉后台编译的 GL 对象（早于渲染器销毁）
     this.sceneManager.setRevealGate(null);
-    this.glProgramWarmup?.destroy();
-    this.glProgramWarmup = null;
     // 模块级注入复位（生命周期对称：destroy 后再 init 与首启一致；
     // 切换音的钩子还捏着已销毁那局的 eventBus，不摘就是一条跨局的死引用）
     setClueAccess(null);

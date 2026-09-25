@@ -46,8 +46,11 @@ last_governed: 2026-09-25
 - **与 Pixi 的一致性口径 = 离屏逐位相同**:合批打包公式、顶点格式(24 字节)、每批 16 张纹理、非预乘混合变体、
   投影 / 视口取整、FilterSystem(纹理池、gfu、padding、嵌套偏移)、模板遮罩、不合批图形、UBO 布局都照 Pixi 做。
   改这些地方必须跑 `tools/engine2d_parity`(对 Pixi WebGL 逐位)。
-- **着色器只有 WGSL**:`GlProgram` 只是为兼容构造签名留的壳,不参与渲染;`renderer.gl` 不存在,
-  `glProgramWarmup` / WebGL 诊断面板在运行时是空转(只保留类型)。
+- **着色器只有 WGSL**:`GlProgram` 只是为兼容构造签名留的壳,不参与渲染;`renderer.gl` 不存在。
+- **管线在第一次用到时才建,建的时候 GPU 进程才把 WGSL 编成后端着色器**(不挡 JS,但用到它的那一帧要等编完)。
+  大着色器要提前:`renderer.prewarmPipelines(specs)` 按(程序 × 几何顶点布局 × 混合 × 目标格式)预建进同一份缓存,
+  `renderer.pipelinesReady(timeout)` 等全部已建管线编完(揭幕前闸在用,见 vfx-rendering)。
+  预建的键必须与真画时逐项相同:几何取自真实网格类、混合按网格纹理算非预乘变体、格式缺省画布 + 离屏 bgra8unorm。
 - **画布零面积整帧不录**(布局前的头几帧);画布尺寸变化经 `Renderer.resize → rhi.resizeSwapchain` 通知 RHI 重配交换链与深度缓冲。
 - **绑定已销毁的纹理源 = 当帧抛错**(`GpuTextures.get` 直接抛,等价 Pixi 的 BindGroup 自毁):卸载时先解绑再销毁
   那一条 pixi-v8-traps 的契约照旧成立;游戏 `Renderer` 的渲染兜错(crash guard)仍然必要——engine2d 的 Ticker

@@ -97,6 +97,24 @@ export class Pipelines {
   }
 
   /**
+   * 已建的全部管线都就绪(着色器编成后端代码、管线校验完)。超时返回 false,不抛——失败的管线在录制时照常报错。
+   * WebGPU 在**建管线**时才把 WGSL 编成后端着色器(Windows 上经 HLSL → FXC / DXC,大着色器秒级),
+   * 这一步不挡 JS,但用到它的那一帧要等 GPU 进程编完;揭幕前等它,就把这段等待落在遮罩下。
+   */
+  async whenAllReady(timeoutMs: number): Promise<boolean> {
+    const all = Promise.allSettled([...this.pipelines.values()].map((p) => p.ready)).then(() => true);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+    });
+    try {
+      return await Promise.race([all, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
    * 几何对某个程序的顶点布局:只取着色器顶点入口声明了的属性(luma 对着色器不用的属性会报错),
    * 同一个 Buffer 上的属性并成一路流(交错布局)。
    */

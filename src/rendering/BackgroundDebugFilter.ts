@@ -337,11 +337,6 @@ function getGpuProgram(): GpuProgram {
     return sharedGpuProgram;
 }
 
-/** 调试：强制创建共享 GlProgram，便于随后对 gl.getError 做 drain */
-export function warmUpBackgroundDebugGlProgramForDiagnostics(): GlProgram {
-    return getProgram();
-}
-
 export class BackgroundDebugFilter extends Filter {
     constructor() {
         const placeholder = Texture.WHITE;
