@@ -56,9 +56,14 @@ export interface PassCmd {
   samples: number;
 }
 
-/** uniform 在 Arena 里的片段(录制时换成真正的缓冲) */
+/**
+ * uniform 在 Arena 里的片段。本身就是 RHI 的缓冲区段绑定:`buffer` 在规划完、本次的 uniform 缓冲建好后统一填上
+ * (FrameBuilder.bindUniformBuffer),录制时绑定表原样交给 RHI,不再逐 draw 另拼一份
+ */
 export interface ArenaRef {
-  arena: number;
+  buffer: RhiBuffer | null;
+  /** Arena 里的字节偏移(= uniform 缓冲里的偏移) */
+  offset: number;
   size: number;
 }
 
@@ -113,6 +118,10 @@ const meshProgram = new GpuProgram({
   vertex: { source: MESH_WGSL, entryPoint: 'mainVertex' },
   fragment: { source: MESH_WGSL, entryPoint: 'mainFragment' },
 });
+
+/** 合批着色器的纹理 / 采样器绑定名(常量表:每个 draw 都要填 16 对,不逐次拼串) */
+const BATCH_TEXTURE_NAMES = Array.from({ length: MAX_BATCH_TEXTURES }, (_, i) => `textureSource${i + 1}`);
+const BATCH_SAMPLER_NAMES = Array.from({ length: MAX_BATCH_TEXTURES }, (_, i) => `textureSampler${i + 1}`);
 
 export const BATCH_LAYOUT: VertexLayout = {
   key: 'engine2d-batch',
@@ -287,6 +296,17 @@ export class FrameBuilder implements FilterSystemLike {
   private readonly groupSlices = new Map<UniformGroup, ArenaRef>();
   /** 本次规划从纹理池借出、还没还的纹理(规划中途抛错时由 abort 归还) */
   private readonly borrowed = new Set<Texture>();
+  /** updateFilterUniforms 的暂存数组 */
+  private readonly filterScratch = {
+    outputFrame: new Float32Array(4),
+    inputSize: new Float32Array(4),
+    inputPixel: new Float32Array(4),
+    inputClamp: new Float32Array(4),
+    globalFrame: new Float32Array(4),
+    outputTexture: new Float32Array(4),
+  };
+  /** 本次 render 分出去的全部 uniform 片段(uniform 缓冲建好后统一填 buffer) */
+  private readonly arenaRefs: ArenaRef[] = [];
 
   constructor(private readonly makePassthrough: () => Filter) {}
 
@@ -302,6 +322,7 @@ export class FrameBuilder implements FilterSystemLike {
     this.activeFilterData = null;
     this.activeMaskStage.length = 0;
     this.groupSlices.clear();
+    this.arenaRefs.length = 0;
     this.passStencil = false;
   }
 
@@ -323,6 +344,19 @@ export class FrameBuilder implements FilterSystemLike {
   private returnPoolTexture(t: Texture): void {
     this.borrowed.delete(t);
     TexturePool.returnTexture(t);
+  }
+
+  /** 本次的 uniform 缓冲建好了:填进本次分出去的每个片段(之后绑定表可以直接交给 RHI) */
+  bindUniformBuffer(buffer: RhiBuffer | null): void {
+    const refs = this.arenaRefs;
+    for (let i = 0; i < refs.length; i++) refs[i].buffer = buffer;
+  }
+
+  /** 新的 uniform 片段(登记到本次的片段表) */
+  private arenaRef(offset: number, size: number): ArenaRef {
+    const ref: ArenaRef = { buffer: null, offset, size };
+    this.arenaRefs.push(ref);
+    return ref;
   }
 
   // ───────────────────────── 目标(RenderTargetSystem)
@@ -467,14 +501,14 @@ export class FrameBuilder implements FilterSystemLike {
       worldTransformMatrix: options.worldTransformMatrix ?? cur.worldTransformMatrix,
       worldColor: options.worldColor ?? cur.worldColor,
       offset: options.offset ?? cur.offset,
-      arena: { arena: 0, size: GLOBAL_LAYOUT.size },
+      arena: this.arenaRef(0, GLOBAL_LAYOUT.size),
     };
     const wt = data.worldTransformMatrix.clone();
     wt.tx -= data.offset.x;
     wt.ty -= data.offset.y;
     const color = new Float32Array(4);
     color32BitToUniform(data.worldColor, color, 0);
-    data.arena.arena = this.writeUbo(GLOBAL_LAYOUT, {
+    data.arena.offset = this.writeUbo(GLOBAL_LAYOUT, {
       uProjectionMatrix: data.projectionMatrix,
       uWorldTransformMatrix: wt,
       uWorldColorAlpha: color,
@@ -528,14 +562,14 @@ export class FrameBuilder implements FilterSystemLike {
     if (!item.isRenderable) return;
     const color = new Float32Array(4);
     color32BitToUniform(item.groupColorAlpha, color, 0);
-    const local: ArenaRef = {
-      arena: this.writeUbo(LOCAL_LAYOUT, {
+    const local = this.arenaRef(
+      this.writeUbo(LOCAL_LAYOUT, {
         uTransformMatrix: item.groupTransform,
         uColor: color,
         uRound: this.ctx.roundPixels | item._roundPixels,
       }),
-      size: LOCAL_LAYOUT.size,
-    };
+      LOCAL_LAYOUT.size,
+    );
     for (const batch of batches) this.drawBatch(batch, graphicsProgram, item.groupBlendMode, local);
   }
 
@@ -543,10 +577,11 @@ export class FrameBuilder implements FilterSystemLike {
     const bindings: Record<string, BindingValue> = { globalUniforms: this.currentGU.arena };
     if (local) bindings.localUniforms = local;
     const empty = Texture.EMPTY.source;
+    const textures = this.ctx.textures;
     for (let i = 0; i < MAX_BATCH_TEXTURES; i++) {
       const source = batch.textures[i] ?? empty;
-      bindings[`textureSource${i + 1}`] = this.ctx.textures.get(source);
-      bindings[`textureSampler${i + 1}`] = this.ctx.textures.sampler(source.style);
+      bindings[BATCH_TEXTURE_NAMES[i]] = textures.get(source);
+      bindings[BATCH_SAMPLER_NAMES[i]] = textures.sampler(source.style);
     }
     this.pushDraw({
       program,
@@ -570,14 +605,14 @@ export class FrameBuilder implements FilterSystemLike {
     const blend = adjustedBlendMode(mesh.groupBlendMode, texture.source);
     const local = new Float32Array(4);
     color32BitToUniform(mesh.groupColorAlpha, local, 0);
-    const localRef: ArenaRef = {
-      arena: this.writeUbo(LOCAL_LAYOUT, {
+    const localRef = this.arenaRef(
+      this.writeUbo(LOCAL_LAYOUT, {
         uTransformMatrix: mesh.groupTransform,
         uColor: local,
         uRound: this.ctx.roundPixels | (m._roundPixels ?? 0),
       }),
-      size: LOCAL_LAYOUT.size,
-    };
+      LOCAL_LAYOUT.size,
+    );
     // 照 Pixi GpuMeshAdapter:带 shader 却没有 WGSL 程序时告警并跳过这次绘制,不拿缺省网格程序顶替
     if (shader && !shader.gpuProgram) {
       warn('Mesh shader has no gpuProgram', shader);
@@ -592,10 +627,10 @@ export class FrameBuilder implements FilterSystemLike {
       bindings.uTexture = this.ctx.textures.get(texture.source);
       bindings.uSampler = this.ctx.textures.sampler(texture.source.style);
       // 照 Pixi GlMeshAdaptor / GpuTextureSystem:总是纹理矩阵的 mapCoord(isSimple 只说帧是整张源,trim 仍会进矩阵)
-      bindings.textureUniforms = {
-        arena: this.writeUbo(TEXTURE_UNIFORMS_LAYOUT, { uTextureMatrix: texture.textureMatrix.mapCoord }),
-        size: TEXTURE_UNIFORMS_LAYOUT.size,
-      };
+      bindings.textureUniforms = this.arenaRef(
+        this.writeUbo(TEXTURE_UNIFORMS_LAYOUT, { uTextureMatrix: texture.textureMatrix.mapCoord }),
+        TEXTURE_UNIFORMS_LAYOUT.size,
+      );
     } else {
       this.resolveResources(shader, bindings);
       if (!('uTexture' in bindings)) {
@@ -693,11 +728,11 @@ export class FrameBuilder implements FilterSystemLike {
     const mark = this.arena.size;
     const offset = this.writeUbo(layout, g.uniforms);
     const prev = this.groupSlices.get(g);
-    if (prev && this.arena.equal(prev.arena, offset, layout.size)) {
+    if (prev && this.arena.equal(prev.offset, offset, layout.size)) {
       this.arena.size = mark;
       return prev;
     }
-    const ref = { arena: offset, size: layout.size };
+    const ref = this.arenaRef(offset, layout.size);
     this.groupSlices.set(g, ref);
     return ref;
   }
@@ -925,12 +960,14 @@ export class FrameBuilder implements FilterSystemLike {
     isFinalTarget: boolean,
     clear: boolean,
   ): ArenaRef {
-    const outputFrame = new Float32Array(4);
-    const inputSize = new Float32Array(4);
-    const inputPixel = new Float32Array(4);
-    const inputClamp = new Float32Array(4);
-    const globalFrame = new Float32Array(4);
-    const outputTexture = new Float32Array(4);
+    // 暂存数组复用(写进 Arena 时就拷走了,不跨调用保留)
+    const { outputFrame, inputSize, inputPixel, inputClamp, globalFrame, outputTexture } = this.filterScratch;
+    outputFrame.fill(0);
+    inputSize.fill(0);
+    inputPixel.fill(0);
+    inputClamp.fill(0);
+    globalFrame.fill(0);
+    outputTexture.fill(0);
     if (isFinalTarget) {
       outputFrame[0] = filterData.bounds.minX - offsetX;
       outputFrame[1] = filterData.bounds.minY - offsetY;
@@ -963,8 +1000,8 @@ export class FrameBuilder implements FilterSystemLike {
       outputTexture[1] = this.current.height;
     }
     outputTexture[2] = -1;
-    return {
-      arena: this.writeUbo(FILTER_LAYOUT, {
+    return this.arenaRef(
+      this.writeUbo(FILTER_LAYOUT, {
         uInputSize: inputSize,
         uInputPixel: inputPixel,
         uInputClamp: inputClamp,
@@ -972,8 +1009,8 @@ export class FrameBuilder implements FilterSystemLike {
         uGlobalFrame: globalFrame,
         uOutputTexture: outputTexture,
       }),
-      size: FILTER_LAYOUT.size,
-    };
+      FILTER_LAYOUT.size,
+    );
   }
 
   private getPassthrough(): Filter {

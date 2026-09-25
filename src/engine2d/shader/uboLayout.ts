@@ -94,6 +94,34 @@ function isUint(type: string): boolean {
   return type === 'u32' || type.endsWith('<u32>');
 }
 
+/** 按类型串推一次、之后查表的打包信息(打包在每个 draw / 滤镜上都要跑,不在热路径里跑正则 / 串操作) */
+interface TypeInfo {
+  /** 0 = f32 视图,1 = i32,2 = u32 */
+  view: 0 | 1 | 2;
+  /** 矩阵的列数与分量总数(非矩阵为 0) */
+  matCol: number;
+  matTotal: number;
+  /** 非矩阵的分量数(vecN → N,标量 → 1) */
+  comps: number;
+}
+
+const TYPE_INFO = new Map<string, TypeInfo>();
+
+function typeInfo(type: string): TypeInfo {
+  let t = TYPE_INFO.get(type);
+  if (!t) {
+    const m = /^mat(\d)x(\d)/.exec(type);
+    t = {
+      view: isInt(type) ? 1 : isUint(type) ? 2 : 0,
+      matCol: m ? Number(m[1]) : 0,
+      matTotal: m ? Number(m[1]) * Number(m[2]) : 0,
+      comps: type.startsWith('vec') ? Number(type[3]) : 1,
+    };
+    TYPE_INFO.set(type, t);
+  }
+  return t;
+}
+
 /** 把一组 uniform 值按布局写进 f32 / i32 / u32 视图(起点 `base` 以 4 字节为单位) */
 export function packUbo(
   layout: UboLayout,
@@ -106,7 +134,8 @@ export function packUbo(
   for (const el of layout.elements) {
     const v = values[el.name] as Value;
     const o = base + el.offset / 4;
-    const view: Float32Array | Int32Array | Uint32Array = isInt(el.type) ? i32 : isUint(el.type) ? u32 : f32;
+    const kind = typeInfo(el.type).view;
+    const view: Float32Array | Int32Array | Uint32Array = kind === 1 ? i32 : kind === 2 ? u32 : f32;
     if (el.size > 1) {
       // 数组:每元素复制 size/4 个分量,再跳过对齐余量
       const { size, align } = WGSL_ALIGN_SIZE_DATA[el.type];
@@ -179,14 +208,14 @@ function writeSingle(type: string, v: Value, view: Float32Array | Int32Array | U
       for (let i = 0; i < 16; i++) view[o + i] = a[i];
       return;
     default: {
-      const m = /^mat(\d)x(\d)/.exec(type);
-      if (m) {
-        const col = Number(m[1]);
-        const total = col * Number(m[2]);
+      const info = typeInfo(type);
+      if (info.matCol) {
+        const col = info.matCol;
+        const total = info.matTotal;
         for (let i = 0; i < total; i++) view[o + ((i / col) | 0) * 4 + (i % col)] = a[i];
         return;
       }
-      const n = type.startsWith('vec') ? Number(type[3]) : 1;
+      const n = info.comps;
       for (let i = 0; i < n; i++) view[o + i] = a[i];
     }
   }

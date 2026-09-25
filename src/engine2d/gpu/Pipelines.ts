@@ -65,9 +65,22 @@ export interface PipelineKey {
   sampleCount: number;
 }
 
+/** 快路径键里模板用法的序号(只在带深度 / 模板时参与,同慢键) */
+const STENCIL_INDEX: Record<StencilMode, number> = { disabled: 0, add: 1, remove: 2, active: 3, inverse: 4 };
+
+/** 快路径键里串值(拓扑 / 混合 / 格式)的序号上限:超了就只走慢键 */
+const STATE_ID_LIMIT = 1024;
+
 export class Pipelines {
   private readonly shaders = new Map<number, RhiShader>();
   private readonly pipelines = new Map<string, RhiRenderPipeline>();
+  /**
+   * 快路径:程序对象 → 顶点布局对象 → 其余状态压成的整数 → 管线。每个 draw 都要取一次管线,
+   * 命中时不拼 9 段的键串(拼串 + 串哈希是录制期的一大块开销);没命中再走按串的慢键(不同布局对象同键时共用管线)
+   */
+  private fast = new WeakMap<GpuProgram, WeakMap<VertexLayout, Map<number, RhiRenderPipeline>>>();
+  /** 串值 → 小整数(快路径键用) */
+  private readonly stateIds = new Map<string, number>();
   private readonly layouts = new WeakMap<Geometry, Map<number, { version: string; layout: VertexLayout }>>();
   /** 已补过格式 / 跨度的几何(照 Pixi getPipeline 的 `!geometry._layoutKey` 门:每个几何只补一次,之后加属性也不重补) */
   private readonly ensuredGeometries = new WeakSet<Geometry>();
@@ -88,6 +101,40 @@ export class Pipelines {
   }
 
   get(k: PipelineKey): RhiRenderPipeline {
+    let byLayout = this.fast.get(k.program);
+    if (!byLayout) this.fast.set(k.program, (byLayout = new WeakMap()));
+    let byState = byLayout.get(k.layout);
+    if (!byState) byLayout.set(k.layout, (byState = new Map()));
+    const state = this.stateKey(k);
+    if (state >= 0) {
+      const hit = byState.get(state);
+      if (hit) return hit;
+    }
+    const p = this.getSlow(k);
+    if (state >= 0) byState.set(state, p);
+    return p;
+  }
+
+  /** 除程序与布局外的状态压成一个整数(各字段互不重叠);串值序号超限返回 -1(只走慢键) */
+  private stateKey(k: PipelineKey): number {
+    const topology = this.stateId(k.topology);
+    const blend = this.stateId(k.blend);
+    const color = this.stateId(k.colorFormat);
+    const depth = k.depthFormat ? this.stateId(k.depthFormat) + 1 : 0;
+    if (topology >= STATE_ID_LIMIT || blend >= STATE_ID_LIMIT || color >= STATE_ID_LIMIT || depth >= STATE_ID_LIMIT) return -1;
+    if (!(k.colorMask >= 0 && k.colorMask < 16) || !(k.sampleCount >= 1 && k.sampleCount < 32)) return -1;
+    const stencil = k.depthFormat ? STENCIL_INDEX[k.stencil] : 0;
+    // 10 + 10 + 10 + 10 + 3 + 4 + 5 = 52 位,在双精度整数范围内
+    return ((((((topology * STATE_ID_LIMIT + blend) * STATE_ID_LIMIT + color) * STATE_ID_LIMIT + depth) * 8 + stencil) * 16 + k.colorMask) * 32) + k.sampleCount;
+  }
+
+  private stateId(v: string): number {
+    let id = this.stateIds.get(v);
+    if (id === undefined) this.stateIds.set(v, (id = this.stateIds.size));
+    return id;
+  }
+
+  private getSlow(k: PipelineKey): RhiRenderPipeline {
     const key = `${k.program.uid}|${k.layout.key}|${k.topology}|${k.blend}|${k.colorFormat}|${k.depthFormat}|${k.depthFormat ? k.stencil : '-'}|${k.colorMask}|${k.sampleCount}`;
     let p = this.pipelines.get(key);
     if (!p) {
@@ -187,6 +234,7 @@ export class Pipelines {
     for (const s of this.shaders.values()) s.destroy();
     this.pipelines.clear();
     this.shaders.clear();
+    this.fast = new WeakMap();
   }
 }
 

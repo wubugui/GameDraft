@@ -38,6 +38,8 @@ export class TextureStyle extends EventEmitter {
   compare?: COMPARE_FUNCTION;
   destroyed = false;
   private _maxAnisotropy = 1;
+  /** `_key` 的缓存(update 时清) */
+  private _cachedKey: string | null = null;
 
   constructor(options: TextureStyleOptions = {}) {
     super();
@@ -89,12 +91,16 @@ export class TextureStyle extends EventEmitter {
     return this._maxAnisotropy;
   }
 
-  /** 采样参数的键(GPU 采样器按它共享) */
+  /**
+   * 采样参数的键(GPU 采样器按它共享)。照 Pixi 的 `_resourceId`:第一次取时算好缓存,之后改字段不生效,
+   * `update()` 才重算(master 的 WebGL 也只在源初始化与 style 发 change 时下发采样参数)
+   */
   get _key(): string {
-    return `${this.addressModeU}|${this.addressModeV}|${this.addressModeW}|${this.magFilter}|${this.minFilter}|${this.mipmapFilter}|${this.lodMinClamp}|${this.lodMaxClamp}|${this.compare}|${this._maxAnisotropy}`;
+    return (this._cachedKey ??= `${this.addressModeU}|${this.addressModeV}|${this.addressModeW}|${this.magFilter}|${this.minFilter}|${this.mipmapFilter}|${this.lodMinClamp}|${this.lodMaxClamp}|${this.compare}|${this._maxAnisotropy}`);
   }
 
   update(): void {
+    this._cachedKey = null;
     this.emit('change', this);
   }
 

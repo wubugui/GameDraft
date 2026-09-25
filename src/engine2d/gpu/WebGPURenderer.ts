@@ -37,7 +37,7 @@ import { Batcher, adjustedBlendMode } from './Batcher';
 import type { BlendMode } from '../core/blendModes';
 import type { Geometry } from '../shader/Geometry';
 import { Collector, prepareTree } from './collect';
-import { FrameBuilder, type ArenaRef, type BindingValue, type PassCmd, type VirtualCommand } from './FrameBuilder';
+import { FrameBuilder, type PassCmd, type VirtualCommand } from './FrameBuilder';
 import type { RenderSurface } from './renderTargets';
 
 const PASSTHROUGH_WGSL = /* wgsl */ `
@@ -282,6 +282,8 @@ export class WebGPURenderer extends RendererBase {
       state.uniformBuffer = this.ensureBuffer(state.uniformBuffer, u.byteLength, RhiBufferUsage.UNIFORM | RhiBufferUsage.COPY_DST, 'engine2d-uniforms');
       this.rhi.writeBuffer(state.uniformBuffer, u);
     }
+    // 规划时分出的 uniform 片段此时才知道落在哪个缓冲:填上后绑定表直接交给 RHI
+    builder.bindUniformBuffer(state.uniformBuffer);
   }
 
   private ensureBuffer(cur: RhiBuffer | null, bytes: number, usage: number, label: string, indexFormat?: 'uint32'): RhiBuffer {
@@ -313,7 +315,7 @@ export class WebGPURenderer extends RendererBase {
       }
       if (!pass) throw new Error('[engine2d] 绘制命令之前没有 pass');
       pass.setPipeline(this.pipelines.get(cmd.pipeline));
-      pass.setBindings(this.resolveBindings(cmd.bindings, state));
+      pass.setBindings(cmd.bindings as RhiBindings);
       for (const s of cmd.streams) pass.setVertexBuffer(s.name, s.buffer === 'batch' ? state.vertexBuffer! : s.buffer);
       if (cmd.pipeline.depthFormat && cmd.stencilRef !== stencilRef) {
         pass.setStencilReference(cmd.stencilRef);
@@ -328,18 +330,6 @@ export class WebGPURenderer extends RendererBase {
       }
     }
     pass?.end();
-  }
-
-  private resolveBindings(b: Record<string, BindingValue>, state: RenderState): RhiBindings {
-    const out: RhiBindings = {};
-    for (const name in b) {
-      const v = b[name];
-      if ((v as ArenaRef).arena !== undefined) {
-        const r = v as ArenaRef;
-        out[name] = { buffer: state.uniformBuffer!, offset: r.arena, size: r.size };
-      } else out[name] = v as RhiBindings[string];
-    }
-    return out;
   }
 
   private passTarget(cmd: PassCmd, frame: RhiFrame | null): RhiRenderTarget {
