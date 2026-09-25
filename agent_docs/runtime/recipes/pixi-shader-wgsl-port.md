@@ -19,7 +19,9 @@ last_governed: 2026-09-25
 
 迁移期游戏仍在 Pixi-WebGL 上跑(与 master 一致);每个自定义着色器**补一份 WGSL,GLSL 一个字不动**
 (多个工具直接切片编译这些 GLSL,见文末禁改清单)。一个着色器算移植完成 =
-`tools/render_parity/cases/<模块>.ts` 里有覆盖它全部分支 / 开关的用例,且 `node tools/render_parity/run.mjs --case <前缀>` 全绿。
+`tools/render_parity/cases/<模块>.ts` 里有覆盖它全部分支 / 开关的用例,且 `node tools/render_parity/run.mjs --case <前缀>` 全绿,
+**并且**证明 WebGL 一侧的输出与移植前逐字节相同(对移植前后的源码各跑一遍对照,哈希 GL 侧结果)——
+GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意义。
 
 像素对照的两侧:参考 = Pixi WebGL 渲染器跑 GLSL;候选 = Pixi WebGPU 渲染器(用 RHI 的 GPUDevice,装了
 `installPixiWebGpuPatches`)跑 WGSL。同一个 `build(env)` 各调一次,输入(`env.dataTexture` 固定种子)逐字节相同。
@@ -37,10 +39,20 @@ last_governed: 2026-09-25
 - 纹理在 WGSL 里要单独的采样器:resources 里补 `<名>Sampler: source.style`(GLSL 侧多出来的资源名 Pixi 会忽略;以对照结果为准)。
 - **uniform 组成员在 WGSL struct 里的顺序必须与 JS 里 uniforms 对象的声明顺序一致**(Pixi 按声明顺序、WGSL 对齐规则算偏移)。
   `size: N` 的数组 → `array<T, N>`。
+- **补了 gpu 程序后资源分组会变**:原来全在第 99 组,之后按 WGSL 声明的组号走;WebGL 按组号升序分配纹理单元,
+  所以 WGSL 里纹理的声明顺序要与原 resources 对象里的相对顺序一致,纹理单元才不挪(这是「GL 侧逐字节不变」的前提)。
+- 运行时换某个纹理资源(ping-pong 等)时,它的 `<名>Sampler` 要一起换,否则采样器挂在别的纹理上。
+- WGSL 模板字符串标 `/* wgsl */`,别标 `/* glsl */`(`glslSymbols.test.ts` 会把所有 `/* glsl */` 当 GLSL 检查)。
+- 共享 WGSL 函数文件可以直接引用一个模块作用域的 uniform 变量,只要每个包含它的程序都用同一个变量名声明它
+  (WGSL 模块作用域不讲声明先后)。
 - 共享片段(lightingCore / worldReconstruct 等)的 WGSL 版放同目录 `.wgsl` 文件,`import x from './foo.wgsl?raw'` 打进包里,
   不要运行时 fetch(发行包的 MIME 表没有 wgsl)。
 
 ## 静默出错的翻译点(每条都会编过、画面不对)
+
+- **Pixi 用正则解析 WGSL**(`extractStructAndGroups`):结构体体内不许写注释(注释里的 `名: 类型` 会被当成成员),
+  注释里不许出现 `@group(` / `@binding(`。
+- GLSL 三目改写成 `if / else`,不要用 `select()`:`select` 两边都求值,`smoothstep` 两端相等时出 NaN。
 
 - `mod(x, y)`(GLSL,向下取整)≠ WGSL `x % y`(向零截断):负数结果不同。写 `x - y * floor(x / y)`。
 - WGSL 的 `textureSample` 只能在一致控制流里调(否则编译失败);分支里改用 `textureSampleLevel(t, s, uv, 0.0)`
@@ -53,6 +65,13 @@ last_governed: 2026-09-25
 - 浮点目标(`rgba16float`)对照时容差按值域给(1e-3 相对量级),8 位目标 `2/255` 起;**不许为了过对照调大容差掩盖真差异**,
   差异集中在某片区域时先查翻译。
 - `rgba32float` 目标在 WebGPU 核心里不可混合:画进去的管线要关混合,否则建管线失败。
+- 没指定 `format` 的 Pixi 渲染目标缺省是 `bgra8unorm`:WebGPU 显存里真是 BGRA 字节序(WebGL 侧照样存 RGBA)。
+  采样出来通道是对的,只有回读要按存储格式解释——`env.readTexture` 已经按格式换好,用例里别再自己换。
+- Node 单测里构造 `GlProgram` 需要 canvas 桩(它要探精度):照 `VfxRenderer.test.ts` 用
+  `DOMAdapter.set({ ...adapter, createCanvas: () => ({ getContext: () => null }) })`。
+- 值得加一条 Node 单测:用 Pixi 自己的 WGSL 解析器核对「每个 resources 键都有同名 WGSL 绑定、uniform 结构体成员
+  名 / 类型 / 顺序与 JS 声明一致」(见 `src/rendering/burn/burnWgsl.test.ts`)——键名对不上时资源掉进第 99 组,
+  WebGPU 下那次绘制直接失败,对照里只表现为「那一 pass 什么都没画」。
 
 ## 禁改清单(工具直接读这些,改了工具或工具测试会坏)
 
