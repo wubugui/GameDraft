@@ -42,6 +42,11 @@ export interface ParityEnv {
   readonly renderer: Renderer;
   rng(seed: number): () => number;
   dataTexture(opts: DataTextureOptions): Texture;
+  /**
+   * 回读一张渲染目标(`RenderTexture`)为 w*h*4 的浮点数组(8 位目标归一到 0..1)。
+   * 多 pass 的离屏链在 `produce()` 里自己驱动宿主类渲染,再用它回读结果。
+   */
+  readTexture(texture: Texture, target: ParityTarget): Promise<Float32Array>;
 }
 
 export interface ParityCase {
@@ -159,10 +164,15 @@ export function fromHalf(h: number): number {
   return s * (1 + m / 1024) * 2 ** (e - 15);
 }
 
-function makeEnv(side: 'gl' | 'gpu', renderer: Renderer): ParityEnv {
+function makeEnv(sr: SideRenderer): ParityEnv {
+  const { side, renderer } = sr;
   return {
     side,
     renderer,
+    async readTexture(texture: Texture, target: ParityTarget): Promise<Float32Array> {
+      const rt = texture as RenderTexture;
+      return side === 'gl' ? readGl(renderer as WebGLRenderer, rt, target) : readGpu(sr.rhi!, renderer, rt, target);
+    },
     rng: mulberry32,
     dataTexture(o: DataTextureOptions): Texture {
       const format = o.format ?? 'rgba8unorm';
@@ -263,7 +273,7 @@ export async function renderSide(sr: SideRenderer, c: ParityCase): Promise<SideO
     origError(...a);
   };
   try {
-    const env = makeEnv(sr.side, sr.renderer);
+    const env = makeEnv(sr);
     if (c.produce) return { name: c.name, data: await c.produce(env), error: null, warnings };
     const target = c.target ?? 'rgba8unorm';
     const root = await c.build(env);
