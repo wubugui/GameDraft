@@ -1541,6 +1541,12 @@
       ]
     },
     {
+      "glob": "tools/anim_preview/main.ts",
+      "docs": [
+        "engine2d"
+      ]
+    },
+    {
       "glob": "tools/animation_pipeline/**",
       "docs": [
         "animation-pipeline",

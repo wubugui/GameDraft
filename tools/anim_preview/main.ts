@@ -1,4 +1,6 @@
-import { Application, Container, Graphics, Assets, Texture, Sprite, Rectangle } from 'pixi.js';
+// 与游戏同一套 2D 层(engine2d → RHI → WebGPU):SpriteEntity / 光照滤镜 / 阴影都是 engine2d 对象,
+// 必须挂在 engine2d 的 Application 上渲染(Pixi 的渲染器画不了它们)。没有 WebGL 回落。
+import { Application, Container, Graphics, Assets, Texture, Sprite, Rectangle } from '@src/engine2d';
 import { SpriteEntity } from '@src/rendering/SpriteEntity';
 import { normalizeAnimationSetDef } from '@src/data/resolveAnimationSet';
 import { EntityLightingFilter } from '@src/rendering/EntityLightingFilter';
@@ -78,10 +80,17 @@ let curDefB: any = null;
 let curScene: any = null;
 let sceneList: any[] = [];
 
-// ---------- Pixi ----------
-async function initPixi() {
-  app = new Application();
-  await app.init({ backgroundAlpha: 0, antialias: true, resizeTo: $('stageWrap') });
+// ---------- renderer (engine2d / WebGPU) ----------
+/** 建渲染器;环境没有 WebGPU(或设备建不出来)时在舞台区给出明确提示并返回 false,不留空白画布 */
+async function initRenderer(): Promise<boolean> {
+  const next = new Application();
+  try {
+    await next.init({ backgroundAlpha: 0, antialias: true, resizeTo: $('stageWrap') });
+  } catch (error) {
+    showRendererUnavailable(error);
+    return false;
+  }
+  app = next;
   $('stage').appendChild(app.canvas);
   sceneBgSprite = new Sprite(); sceneBgSprite.visible = false; app.stage.addChild(sceneBgSprite);
   bgLayer = new Graphics(); app.stage.addChild(bgLayer);
@@ -90,9 +99,34 @@ async function initPixi() {
   onionLayer = new Container(); world.addChild(onionLayer);
   overlay = new Graphics(); app.stage.addChild(overlay);
   app.ticker.add(() => tick(app.ticker.deltaMS / 1000));
-  new ResizeObserver(() => layout()).observe($('stageWrap'));
+  // resizeTo 只跟 window 的 resize 事件;页签切换 / 侧栏变化只改元素尺寸,这里同步跟上。
+  // (隐藏页时元素是 0×0:engine2d 的 renderer.resize 会如实把画布缩到 0,Pixi 则保留旧尺寸)
+  new ResizeObserver(() => { app.resize(); layout(); }).observe($('stageWrap'));
   layout();
   syncPreviewPageActivity(document.getElementById('previewPage')?.classList.contains('active') === true);
+  return true;
+}
+
+function showRendererUnavailable(error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error ?? '');
+  const box = document.createElement('div');
+  box.className = 'renderer-unavailable';
+  box.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;'
+    + 'justify-content:center;gap:8px;padding:24px;text-align:center;color:var(--fg);background:var(--bg);';
+  const title = document.createElement('b');
+  title.style.color = 'var(--warn)';
+  title.textContent = '游戏真实渲染预览不可用：此浏览器没有可用的 WebGPU';
+  const hint = document.createElement('div');
+  hint.className = 'muted';
+  hint.textContent = '预览用的是游戏同一套渲染器（engine2d，只支持 WebGPU，没有 WebGL 回落）。'
+    + '请用开启了 WebGPU 的 Chrome / Edge 打开（需要 localhost 或 https）。资源流程与人工装配两页不受影响。';
+  const code = document.createElement('div');
+  code.className = 'mono muted';
+  code.textContent = detail;
+  box.append(title, hint, code);
+  $('stage').replaceChildren(box);
+  $('stageInfo').textContent = '';
+  console.error('[anim_preview] 渲染器初始化失败(WebGPU 不可用):', error);
 }
 
 function syncPreviewPageActivity(active: boolean) {
@@ -105,6 +139,8 @@ function syncPreviewPageActivity(active: boolean) {
   app.ticker.start();
   requestAnimationFrame(() => {
     if (!previewPageActive || !app) return;
+    // 这一帧早于 ResizeObserver:先把渲染器按刚显示出来的舞台定尺寸,适配缩放才不会拿 0 高去算
+    app.resize();
     layout();
     if (previewNeedsFit && curDef) {
       if (($('bg') as HTMLSelectElement).value === 'scene' && curScene) {
@@ -402,6 +438,7 @@ function installWorkbenchPreviewBridge() {
 }
 
 async function selectChar(b: any) {
+  if (!app) { toast('游戏真实渲染预览不可用（没有 WebGPU）'); return; }
   const generation = ++selectionGeneration;
   try {
     current = b; renderCharList();
@@ -583,14 +620,16 @@ async function exportGif() {
     const fps = curDef.states[curState].frameRate || 8;
     setPlaying(false);
     const W = app.renderer.width, H = app.renderer.height;
+    // 显式按画面取景:不按 stage 包围盒裁(透明背景时包围盒只剩角色,会被贴到 GIF 左上角)
+    const frame = new Rectangle(0, 0, app.screen.width, app.screen.height);
     const off = document.createElement('canvas'); off.width = W; off.height = H;
     const octx = off.getContext('2d')!;
     const gif = GIFEncoder();
     overlay.visible = false;
     for (let i = 0; i < seq.length; i++) {
       entity.setFrameIndex(i); driveLighting(); drawOnion(); world.scale.set(zoom);
-      app.renderer.render(app.stage);
-      const canvas: HTMLCanvasElement = (app.renderer.extract as any).canvas(app.stage);
+      // engine2d 的 extract 是异步回读(WebGPU):调用当下就把这一帧画进离屏纹理,之后只等像素回来
+      const canvas = await app.renderer.extract.canvas({ target: app.stage, frame });
       octx.clearRect(0, 0, W, H); octx.drawImage(canvas, 0, 0);
       const { data } = octx.getImageData(0, 0, W, H);
       const palette = quantize(data, 256);
@@ -680,7 +719,9 @@ let toastTimer: any;
 function toast(msg: string) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2200); }
 
 async function main() {
-  await initPixi(); bindControls(); bindLiveRefresh(); await loadIndex(); await loadScenes();
+  // 没有渲染器时这一页的其余功能(选角色 / 播放 / 光照 / GIF)全都依赖它,停在提示上
+  if (!await initRenderer()) return;
+  bindControls(); bindLiveRefresh(); await loadIndex(); await loadScenes();
   previewRuntimeReady = true;
   if (candidateBundle) {
     await selectChar(candidateBundle);

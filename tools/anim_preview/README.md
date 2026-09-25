@@ -26,7 +26,8 @@ npm run test:anim-preview
 - 锚点与缩放 R：全部 accepted G 动作同屏，拖拽各动作脚点对准统一落脚点，逐动作统一等比缩放；
   硬切检查动作切换位移，世界网格与“1 世界单位”标尺实时显示角色 world size。
 - 游戏真实预览：运行时扫描已发布 bundle，也可直接加载未发布 H revision；两者都使用游戏真实
-  `SpriteEntity` 渲染，候选明确标为“未发布”，不会触发发布。
+  `SpriteEntity` 渲染，候选明确标为“未发布”，不会触发发布。渲染走游戏同一套 engine2d（只有 WebGPU，
+  没有 WebGL 回落），需要开启 WebGPU 的 Chrome / Edge；没有 WebGPU 时预览区会直接提示。
 
 E/F/G 的 PNG 序列按 `manifest.frames` 权威顺序播放，支持循环、FPS、逐帧、scrub 和首尾叠加；
 manifest 异常会显式标红 fallback，不能被误认为权威帧序。

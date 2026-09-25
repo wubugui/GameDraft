@@ -3,7 +3,7 @@ id: engine2d
 title: engine2d(Pixi v8 同名 API 的 2D 层 · 跑在 RHI / WebGPU 上 · 运行时已不依赖 Pixi)
 domain: runtime
 type: mechanism
-summary: 运行时全部渲染走 src/engine2d——照 Pixi 8.17 移植的同名 API(Container/Sprite/Mesh/Filter/Graphics/Text/事件/Ticker/Assets…),底下是引擎式 RHI(只有 WebGPU)。离屏结果与 Pixi WebGL 逐位一致;与 master 的整局对照只差半像素水平边一行。src 运行时代码不许再 import pixi.js(守门测试);编辑器(anim_preview)仍用 Pixi
+summary: 运行时全部渲染走 src/engine2d——照 Pixi 8.17 移植的同名 API(Container/Sprite/Mesh/Filter/Graphics/Text/事件/Ticker/Assets…),底下是引擎式 RHI(只有 WebGPU)。离屏结果与 Pixi WebGL 逐位一致;与 master 的整局对照只差半像素水平边一行。src 运行时代码与动画工作台 anim_preview 都不许再 import pixi.js(守门测试)
 status: active
 authority:
   - src/engine2d/index.ts
@@ -14,7 +14,7 @@ authority:
   - src/engine2d/gpu/createRenderer.ts
   - src/engine2d/noPixiInRuntime.test.ts
 triggers:
-  paths: ["src/engine2d/**", "tools/engine2d_parity/**", "tools/render_parity/**"]
+  paths: ["src/engine2d/**", "tools/engine2d_parity/**", "tools/render_parity/**", "tools/anim_preview/main.ts"]
   topics: [engine2d, 脱离 Pixi, pixi.js, 渲染器, 合批, 滤镜, 遮罩, 模板缓冲, RenderTexture, generateTexture, 上屏, 对照 master]
   tasks: [改渲染核心, 加引擎 API, 迁移 Pixi 写法, 渲染对照, 整局截图对照]
 verified_by:
@@ -29,7 +29,8 @@ last_governed: 2026-09-25
 
 `src/engine2d/` 是运行时唯一的 2D 渲染层:**对外是 Pixi v8.17 的同名 API**(游戏代码只是把 `from 'pixi.js'`
 换成了 engine2d 的入口,上层逻辑没动),**对内是引擎式结构**——收集 → 规划 → 上传 → 在 RHI 上录制,只有 WebGPU。
-(2026-09-25 整体迁移,制作人定:不要 WebGL 后端、编辑器不动、数据格式不动。)
+(2026-09-25 整体迁移,制作人定:不要 WebGL 后端、编辑器不动、数据格式不动。
+同日制作人另批:动画工作台 `tools/anim_preview` 的游戏真实预览页也迁到 engine2d,见「已知坑」。)
 
 ## 一帧怎么走(WebGPURenderer.render)
 
@@ -41,7 +42,9 @@ last_governed: 2026-09-25
 
 ## 硬契约
 
-- **src 运行时代码不许 import `pixi.js`**(含子路径 / 类型 / 动态 import):`src/engine2d/noPixiInRuntime.test.ts` 守门。
+- **src 运行时代码不许 import `pixi.js`**(含子路径 / 类型 / 动态 import):`src/engine2d/noPixiInRuntime.test.ts` 守门;
+  同一个测试也守 `tools/anim_preview`(构建产物 `dist-remote/` 除外)——它直接渲染运行时的 SpriteEntity 等类,
+  两套渲染器的对象不能混挂。
   缺 API 就在 engine2d 里照 Pixi 8.17 补(对照 Pixi 源码的行为,不是凭名字猜),再从 `index.ts` 导出。
 - **与 Pixi 的一致性口径 = 离屏逐位相同**:合批打包公式、顶点格式(24 字节)、每批 16 张纹理、非预乘混合变体、
   投影 / 视口取整、FilterSystem(纹理池、gfu、padding、嵌套偏移)、模板遮罩、不合批图形、UBO 布局都照 Pixi 做。
@@ -65,6 +68,12 @@ last_governed: 2026-09-25
   WebGL 默认帧缓冲自下而上光栅化、WebGPU 自上而下,平局归属相反。离屏目标两边一致。整局对照里这是唯一的系统性差异。
 - `Container.worldTransform` 与当前父链一致(按版本缓存,不走 Pixi 的"上一帧渲染结果");Culler 因此用的是**当帧**变换(Pixi 用上一帧)。
 - 需要背景纹理的混合滤镜(`blendRequired`)没实现(运行时没有用到;用到会直接抛)。
+- **`renderer.extract.*` 全是异步**(返回 Promise;WebGPU 回读)。Pixi 的 `extract.canvas / pixels` 是同步的,
+  照搬的调用点要补 `await`。调用当下就同步把目标画进离屏纹理,之后只等像素回来。
+- **`renderer.resize(0, h)` 会如实把画布缩到 0**;Pixi 的 `TextureSource.resize` 把 0 当"沿用旧尺寸"。
+  `resizeTo` 指向一个会被 `display:none` 的元素时(工作台的页签),隐藏期间画布就是 0×0,显示出来那一帧
+  若先于 resize 读 `renderer.width/height` 会拿到 0——消费方要先 `app.resize()` 再算布局。
+- `renderer.width / height` 是**画布像素**尺寸;Pixi 是逻辑尺寸(`resolution ≠ 1` 时两者不同,要逻辑尺寸用 `screen`)。
 
 ## 怎么验证
 
@@ -78,6 +87,9 @@ last_governed: 2026-09-25
 
 ## 已知坑
 
-- 编辑器 `tools/anim_preview` 直接用 Pixi 的 `Application` 渲染运行时的 `SpriteEntity` 等类:运行时迁走后两边类型对不上,
-  需要把它的 `pixi.js` import 换成 engine2d(编辑器改动归制作人定,迁移时没动)。`tools/parallax_editor` 自成一体,不受影响。
+- 动画工作台 `tools/anim_preview` 的游戏真实预览页(`main.ts`)用 engine2d 的 `Application` 渲染运行时的
+  `SpriteEntity` / `EntityLightingFilter` / `PlanarEntityShadow`(2026-09-25 从 Pixi 迁过来):浏览器没有 WebGPU 时
+  舞台区显示明确提示,不留空白画布;GIF 导出走异步 extract。它的公开镜像 `dist-remote/` 是**手工构建后入库**的产物
+  (没有 CI 构建它),改了预览页或它引到的运行时渲染代码要重跑 `npm run build:anim-preview-remote` 一并提交。
+  `tools/parallax_editor` 自成一体,仍用 Pixi,不受影响。
 - 两个 dev 服共用一份 `node_modules/.vite` 会互相把预构建判过期(`504 Outdated Optimize Dep`),game_sweep 给基准侧单独建了 node_modules 链接目录。
