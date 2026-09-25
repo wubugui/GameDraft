@@ -26,6 +26,17 @@ last_governed: 2026-09-23
 Pixi v8 里几条**不报错、只是行为不对**的引擎事实。每条都是现场买来的:症状离根因很远,
 不知道就会往自己代码里找一整天。
 
+> **2026-09-25 起运行时不再用 Pixi**,渲染走 [engine2d](engine2d.md)(照 Pixi 8.17 移植的同名 API,跑在 RHI / WebGPU 上)。
+> 下面各条对运行时的适用性:
+> - **仍然成立**(engine2d 照搬了同样的行为):渲染抛错 = 主循环死、crash guard 必须在 init 前装(Ticker / Application 照 Pixi 移植);
+>   手抄槽位镜像必漏;模板字符串里不许有反引号(WGSL 源同样是模板字符串);先解绑再销毁(engine2d 绑到已销毁的纹理源当帧抛);
+>   alpha 当数据的纹理按 `premultiplied-alpha` 装载(装载器照 Pixi 的解码规则);滤镜容器里 screen 是临时 RT 局部坐标;
+>   uniform 组的键必须构造时声明(WGSL 缓冲布局只认构造时的键);`leading`;无 `hitArea` 的容器恒不命中;标签样式表。
+> - **已失效**(只对 Pixi WebGL 成立):`#version 300 es` / GLSL ES 1.00 编译目标、`renderer.clear({target})` 与
+>   `renderTarget.bind` 清屏、GlProgram 首用同步编译卡顿与 `GlProgramWarmup`(engine2d 没有 WebGL,`GlProgram` 只是壳)。
+>   渲染之外清一张 RT 仍用 `render({ container: 空容器, target, clear: true })`。
+> - 编辑器(`tools/anim_preview`、`tools/parallax_editor`)仍直接跑 Pixi,整卡对它们照旧适用。
+
 ## 硬契约(照这么写,别试别的)
 
 - **渲染路径抛一次异常 = 整局死透,所以渲染入口必须在 `app.init()` 之前套 crash guard。**

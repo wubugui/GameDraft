@@ -38,6 +38,7 @@
 - [台词配音通道(voice/autoAdvance · 跨拍留声)](runtime/mechanisms/dialogue-voice-channel.md) — 全部台词面共用一条单声道配音通道;默认跟本拍停、hold 留声给后面、声明跟随配音的那拍接管并收尾
 - [显示链:逻辑视口 · 等比信箱 · 宿主窗口(4:3 标准)](runtime/mechanisms/display-viewport-and-window.md) — 标准视口 1024×768(4:3)定义在 game_config.viewport;app.screen 恒为它,显示只许等比缩放(Renderer.layoutMount 在 #game-stage 里放最大同比例盒);windowSize 只是宿主窗口期望尺寸,编辑器 F5 与 exe(main.rs 启动时读同一份 JSON)按它开窗;三个布局元素的尺寸规则只住在 index.html
 - [文档揭示是「一个入口三态」,且自己一张显示层](runtime/mechanisms/document-reveal-three-states.md) — revealDocument 三态(条件不满足出模糊图/未揭示播动画/已揭示瞬时出清晰图)+force 只跳条件;显示层键是 documentId、与叠图句柄两张表永不互访;收图走 hideDocument
+- [engine2d(Pixi v8 同名 API 的 2D 层 · 跑在 RHI / WebGPU 上 · 运行时已不依赖 Pixi)](runtime/mechanisms/engine2d.md) — 运行时全部渲染走 src/engine2d——照 Pixi 8.17 移植的同名 API(Container/Sprite/Mesh/Filter/Graphics/Text/事件/Ticker/Assets…),底下是引擎式 RHI(只有 WebGPU)。离屏结果与 Pixi WebGL 逐位一致;与 master 的整局对照只差半像素水平边一行。src 运行时代码不许再 import pixi.js(守门测试);编辑器(anim_preview)仍用 Pixi
 - [场景光环境 / 实体阴影 / 深度遮挡](runtime/mechanisms/entity-lighting.md) — 行走面深度场是遮挡·阴影·碰撞的唯一脚点锚(没场就整体关,不回落拟合直线);阴影一律 planar 剪影但形状量从灯位现算;角色阴影**手动绑灯,禁止自动 resolve**;接触斑与灯无关;深度自比较必须留容差;色调与阴影解耦
 - [实体位移的朝向语义(faceTowardMovement)](runtime/mechanisms/entity-move-facing.md) — 不勾选=完全不碰朝向(勿回退成"起点偷改一次");需要转身的内部调用必须显式传 true;朝向只有左右镜像,up/down 不存在
 - [实体轨迹动画(烘焙式 · 独立资产)运行时语义](runtime/mechanisms/entity-trajectory.md) — 一条轨迹一个资产文件、帧相对**曲线原点**(作者摆的参考点,不是第一帧);曲线没有锚点,播放位置在播放时给(at 位置引用:数字 / 实体此刻位置 / 场景曲线插槽 / 曲线上的点,含播放头 current);位置引用只认场景曲线(相对曲线是资源、每次播放一个实例,不许引用);运动对象是场景实体(target)或播放时临时生成的图片 / 角色模板(spawn,keep = 播完留下成场景实体进存档);场景曲线可原地播、相对曲线必须给位置;世界空间资产开播时只用 depthConfig.M.R 做一次线性投影;烘出的帧恒不写 easing;一实体一驱动,跳过=一步落终态;轨迹不驱动相机,镜头跟曲线走 = cameraFollowActor 的 at 引用播放头;音效关键点 cues 按时间轴触发(不带位置,跳过/被停不补声)
@@ -61,7 +62,7 @@
 - [Pixi v8 静默陷阱](runtime/mechanisms/pixi-v8-traps.md) — 一批"写法看着对、行为静默错"的引擎事实:渲染抛一次异常=整局死透(ticker 再不排帧)、没写 #version 300 es 的源按 GLSL ES 1.00 编、clear 不认 target、BindGroup 见死即自毁、滤镜容器里 screen 是临时 RT 局部坐标、解码期预乘吃掉 alpha 数据、leading 裁末行、Container 无 hitArea 恒不命中
 - [位面系统(PlaneReconciler)](runtime/mechanisms/plane-system.md) — 位面=全局一等资产(normal 也是位面),实体归属位面;PlaneReconciler 从叙事状态派生一切、每个边界重派生、零自持久化
 - [私有叙事信号(按 owner 定向投递)](runtime/mechanisms/private-narrative-signal.md) — signals 登记表标 scope:private 的信号只投递给发射方 owner 拥有的 wrapper 图;让 N 个同类实体共用一个信号名和一张发射端对话图
-- [RHI(渲染硬件接口 · 显式 pass · 渲染图 · 只有 WebGPU)](runtime/mechanisms/rhi.md) — 取代 Pixi 做底层图形的引擎式 RHI——显式 render/compute pass、创建后不可变的管线、按名字绑定(WGSL)、资源一律经作用域创建(有主);渲染图按声明的读写剔除 pass、算生命期、别名复用瞬时资源;唯一图形后端是 WebGPU(经 luma.gl),没有 WebGL 回落,环境没 WebGPU 就在建设备时明确失败。游戏尚未接入
+- [RHI(渲染硬件接口 · 显式 pass · 渲染图 · 只有 WebGPU)](runtime/mechanisms/rhi.md) — 取代 Pixi 做底层图形的引擎式 RHI——显式 render/compute pass、创建后不可变的管线、按名字绑定(WGSL)、资源一律经作用域创建(有主);渲染图按声明的读写剔除 pass、算生命期、别名复用瞬时资源;唯一图形后端是 WebGPU(经 luma.gl),没有 WebGL 回落,环境没 WebGPU 就在建设备时明确失败。运行时全部 2D 渲染经 engine2d 跑在它上面
 - [运行时持久化(存档/玩家设置)落文件,不落浏览器存储](runtime/mechanisms/runtime-persistence.md) — 存档与玩家偏好一律经 PersistentStore 落本地文件;三后端 Tauri>dev server>内存;localStorage 只剩一次性迁移读取;内存降级必须让 UI 说实话
 - [存读档硬契约](runtime/mechanisms/save-restore-contracts.md) — load 坏档先拒+快照回滚、save 返 Promise<boolean>(落盘是文件 I/O);查询走内存镜像保持同步;读档静默清 zone、清位面 manual override;新游戏=净化 URL 整页 reload
 - [scenarios.json 运行时消费语义(退役中)](runtime/mechanisms/scenario-catalog-semantics.md) — 一等公民 scenario 已数据侧退役、零数据喂养;新内容一律走 narrative scenario_* 子图,别把活儿写进 Scenarios 面板
@@ -85,7 +86,7 @@
 
 ### 配方
 - [无头画面/逻辑全自动验证](runtime/recipes/headless-visual-verification.md) — 隐藏页 rAF 完全暂停——dev模式+命令通道+rAF pump/forceFrame 出帧截图;含 MessageChannel 让步与合成钟追平配方
-- [把 Pixi 自定义着色器补上 WGSL(迁移到 WebGPU 的逐个移植配方)](runtime/recipes/pixi-shader-wgsl-port.md) — 给运行时每个 GLSL 自定义着色器补一份 WGSL(Shader/Filter 的 gpu 程序),GLSL 原样保留;用 tools/render_parity 证明 Pixi-WebGL(= master)与 Pixi-WebGPU(RHI 设备)逐像素一致才算完成;列出 WGSL 与 GLSL 语义不同、翻译时静默出错的点和工具依赖的禁改清单
+- [把 Pixi 自定义着色器补上 WGSL(迁移到 WebGPU 的逐个移植配方)](runtime/recipes/pixi-shader-wgsl-port.md) — 运行时自定义着色器的 WGSL 写法与验收(运行时只跑 WGSL,经 engine2d);GLSL 原样保留给 master 对照与编辑器;用 tools/render_parity(master 的 Pixi WebGL 对本分支 engine2d)证明逐像素一致;列出 WGSL 与 GLSL 语义不同、翻译时静默出错的点和工具依赖的禁改清单
 - [运行时命令通道(脚本化驱动游戏)](runtime/recipes/runtime-command-channel.md) — HTTP 命令队列驱动 DEV 游戏+读快照断言;测试/操作游戏一律走它,不用 computer-use/点像素
 
 ### 决策记录

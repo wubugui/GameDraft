@@ -3,7 +3,7 @@ id: rhi
 title: RHI(渲染硬件接口 · 显式 pass · 渲染图 · 只有 WebGPU)
 domain: runtime
 type: mechanism
-summary: 取代 Pixi 做底层图形的引擎式 RHI——显式 render/compute pass、创建后不可变的管线、按名字绑定(WGSL)、资源一律经作用域创建(有主);渲染图按声明的读写剔除 pass、算生命期、别名复用瞬时资源;唯一图形后端是 WebGPU(经 luma.gl),没有 WebGL 回落,环境没 WebGPU 就在建设备时明确失败。游戏尚未接入
+summary: 取代 Pixi 做底层图形的引擎式 RHI——显式 render/compute pass、创建后不可变的管线、按名字绑定(WGSL)、资源一律经作用域创建(有主);渲染图按声明的读写剔除 pass、算生命期、别名复用瞬时资源;唯一图形后端是 WebGPU(经 luma.gl),没有 WebGL 回落,环境没 WebGPU 就在建设备时明确失败。运行时全部 2D 渲染经 engine2d 跑在它上面
 status: active
 authority:
   - src/rendering/rhi/types.ts
@@ -13,8 +13,8 @@ authority:
   - src/rendering/rhi/graph/RgTransientPool.ts
   - src/rendering/rhi/backends/luma/LumaRhiDevice.ts
   - src/rendering/rhi/backends/null/NullRhiDevice.ts
-  - src/rendering/legacy/pixiWebGpuPatches.ts
   - src/rendering/Renderer.ts#init
+  - src/engine2d/gpu/WebGPURenderer.ts
 triggers:
   paths: ["src/rendering/rhi/**", "src/rendering/legacy/**", "tools/rhi_smoke/**", "tools/render_parity/**"]
   topics: [RHI, luma.gl, WebGPU, WGSL, compute shader, render pass, 渲染图, render graph, frame graph, 瞬时资源, 替换 Pixi, 移植渲染]
@@ -31,7 +31,8 @@ last_governed: 2026-09-25
 ## 是什么(一句话)
 
 `src/rendering/rhi/` 是照游戏引擎做的图形层:上层只认 `index.ts` 导出的接口,具体图形 API 由后端翻译。
-目标是把 Pixi 从世界渲染里换走(Pixi 没有 compute、没有 pass 概念);**截至本卡,游戏代码还没有任何一处接入它**。
+它的第一个使用者是 [engine2d](engine2d.md)(Pixi v8 同名 API 的 2D 层,2026-09-25 起运行时全部渲染经它走);
+游戏代码不直接碰 RHI,只有 engine2d 与少数光照 / 诊断代码经 `renderer.rhi` 拿设备。
 
 ## 分层(依赖只许往下)
 
@@ -58,27 +59,25 @@ last_governed: 2026-09-25
   (根 = `sideEffect` 或写导入资源);读了此前没人写过的图内资源 = 编译错误;瞬时资源由 `RgTransientPool`
   跨帧复用、同帧内生命期不重叠者共用一块,闲置 `maxIdleTicks` 次后销毁。
 
-## 迁移期结构(Pixi 跑在 RHI 的设备上)
+## 与 engine2d 的分工
 
-- RHI 持有 GPUDevice;Pixi 的 WebGPU 渲染器经 `rhi.native`(`RhiNativeInterop`)拿同一个 `{adapter, device}`,
-  纹理经 `native.gpuTexture` / `native.wrapTexture` 两边互通。`native` 只许 Pixi 桥(`src/rendering/legacy/`)用。
-- 建 Pixi WebGPU 渲染器前必须 `installPixiWebGpuPatches()`:原版 Pixi 8.17 把管线颜色目标格式写死 `bgra8unorm`
-  且不进缓存键,画 `rgba16float` / `rgba8unorm` 离屏目标会整批校验失败(画面全黑、只在控制台报错)。
-- 整游戏试跑 WebGPU:开发构建 URL 加 `?renderer=webgpu`(`src/main.ts` → `Game.start({renderer})` → `Renderer.init({backend})`)。
-  此时 Renderer 先建 RHI 设备、装补丁,再让 Pixi 用同一个设备初始化;Pixi 若回落到别的后端直接报错(不悄悄换)。
-  不带参数 = WebGL 原路径,连 RHI / luma 的代码都不加载(动态 import),与 master 相同。设备归 RHI,`Renderer.destroy`
-  先拆 Pixi 再拆设备(Pixi 从不销毁传进去的设备)。
-- 移植着色器的验收:`tools/render_parity`——同一段运行时代码在 Pixi-WebGL(原 GLSL = master 行为)与
-  Pixi-WebGPU(RHI 设备上的 WGSL)各画一遍,回读逐像素比。两侧分在两个 iframe 里跑(Pixi 有模块级单例,
-  同页两个渲染器会互相覆盖批处理着色器的纹理槽数)。
+- 设备归 RHI:`createRenderer` 在画布上建 RHI 设备(建前先把画布摆到目标尺寸,零面积会配出 0×0 的深度缓冲),
+  engine2d 的 WebGPURenderer 只经 RHI 接口建资源、录命令;`Renderer.destroy` 由 engine2d 负责拆设备(`ownsDevice`)。
+- 画布尺寸由 engine2d 改 `canvas.width/height`,改完调 `rhi.resizeSwapchain(w, h)`(luma 自己记着绘制缓冲尺寸,
+  不告诉它深度缓冲会停在旧尺寸);零面积忽略,那一帧 engine2d 也不录。
+- 模板遮罩:engine2d 用 `frame.swapchainWithDepth(format)` / 离屏深度模板纹理;pass 描述里的 `stencilOp` 与管线的 `stencil`
+  状态由 luma 后端自己拼 GPURenderPassDescriptor 下发(luma 9.4 不传模板操作,且给了 depthStencilAttachmentFormat 会把模板参数弄坏)。
+- 着色器 / 渲染对照:`tools/render_parity` 已改成 **master(Pixi WebGL)对本分支(engine2d)**,见 engine2d 卡。
+  Pixi 的 WebGPU 渲染器与 `pixiWebGpuPatches` 已删除,`?renderer=webgpu` 开关不再存在(只有 WebGPU)。
 
 ## 已知坑
 
 - 画布后备缓冲只在 `runFrame` 期内可用,且**第一次当 pass 目标时才向画布取纹理**;没画画布的帧不碰画布。
 - 管线建好后首次使用前 await `pipeline.ready`,否则 luma 可能跳过 draw(计入 `skippedDraws` 并告警一次)。
 - 图像源上传(`uploadImage`)可能有 ±2 的舍入:浏览器解码 / 拷贝链路内部会做一次预乘往返;没有被乘上 alpha。
-- 本仓库云端容器(无头 SwiftShader)里 WebGPU **呈现到画布**会丢设备,裸 WebGPU 也一样(试过 7 组启动参数);
-  离屏与 compute 正常。画布上屏的验证要在真显卡的 Chrome / Edge 上跑。
+- 云端容器里**无头** Chromium 的 WebGPU 呈现到画布会丢设备(裸 WebGPU 也一样);离屏与 compute 正常。
+  **有头**(`xvfb-run`)+ `--enable-features=Vulkan --use-vulkan=swiftshader --use-angle=swiftshader` 上屏正常(2026-09-25 实测),
+  整局截图对照(`tools/render_parity/game_sweep.mjs --swiftshader`)就这么跑。
 
 ## 怎么验证
 

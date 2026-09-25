@@ -742,6 +742,12 @@
       ]
     },
     {
+      "glob": "src/engine2d/**",
+      "docs": [
+        "engine2d"
+      ]
+    },
+    {
       "glob": "src/entities/**",
       "docs": [
         "teardown-ordering"
@@ -2066,6 +2072,12 @@
       ]
     },
     {
+      "glob": "tools/engine2d_parity/**",
+      "docs": [
+        "engine2d"
+      ]
+    },
+    {
       "glob": "tools/json_lang/**",
       "docs": [
         "json-lang-schema-tooling"
@@ -2145,6 +2157,7 @@
     {
       "glob": "tools/render_parity/**",
       "docs": [
+        "engine2d",
         "pixi-shader-wgsl-port",
         "rhi"
       ]

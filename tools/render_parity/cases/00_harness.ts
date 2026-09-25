@@ -38,7 +38,7 @@ export const cases: ParityCase[] = [
     },
   },
   {
-    // Pixi 总给目标配混合,rgba32float 在 WebGPU 核心不可混合:由 pixiWebGpuPatches 在建管线时去掉混合
+    // 渲染器总给目标配混合,rgba32float 在 WebGPU 核心不可混合:参考侧 Pixi WebGL 无此限制,候选侧 engine2d 建管线时去掉混合
     name: '框架自检 / 浮点目标 rgba32float(不可混合格式)',
     width: 8,
     height: 8,

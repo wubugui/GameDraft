@@ -1,6 +1,6 @@
 /**
  * 混合模式。名字与 Pixi 相同;**因子按 Pixi 的 WebGL 表**(= master 的行为)定义,不是 Pixi 的 WebGPU 表
- * (那张表 add / none / erase 三处与 WebGL 不一致,见 pixi-v8-traps / pixiWebGpuPatches)。
+ * (那张表 add / none / erase 三处与 WebGL 不一致,见 pixi-shader-wgsl-port 配方卡「混合表以 Pixi WebGL 为准」)。
  * 纹理与顶点色一律是预乘 alpha。
  */
 export type BlendMode =
