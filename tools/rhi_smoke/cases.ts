@@ -736,6 +736,101 @@ struct FOut { @location(0) a: vec4<f32>, @location(1) b: vec4<f32> };
     },
   },
   {
+    name: 'mip 生成:逐级线性缩小,采样指定级拿到平均值(HUD 火焰图集同路)',
+    async run(ctx) {
+      const { dev, scope } = ctx;
+      const W = 64;
+      // 左半白、右半黑;level 5(2×2)应是左白右黑,level 6(1×1)是两者平均 ≈ 128
+      const data = new Uint8Array(W * W * 4);
+      for (let y = 0; y < W; y++) {
+        for (let x = 0; x < W; x++) {
+          const v = x < W / 2 ? 255 : 0;
+          data.set([v, v, v, 255], (y * W + x) * 4);
+        }
+      }
+      const tex = scope.createTexture({
+        label: '左白右黑', width: W, height: W, format: 'rgba8unorm', mipLevels: 7,
+        usage: RhiTextureUsage.SAMPLED | RhiTextureUsage.RENDER_TARGET | RhiTextureUsage.COPY_DST,
+      });
+      check(tex.mipLevels === 7, `纹理应有 7 级,实得 ${tex.mipLevels}`);
+      dev.writeTexture(tex, data);
+      const before = ctx.diagnostics.length;
+      dev.generateMipmaps(tex);
+      const sampler = scope.createSampler({ label: '三线性', magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear' });
+      const shader = scope.createShader({
+        label: '按级采样',
+        wgsl: FULLSCREEN_WGSL_VS + /* wgsl */ `
+struct Params { lod: vec4<f32> };
+@group(0) @binding(0) var<uniform> params: Params;
+@group(0) @binding(1) var uImage: texture_2d<f32>;
+@group(0) @binding(2) var uImageSampler: sampler;
+@fragment fn fs(i: VOut) -> @location(0) vec4<f32> {
+  return textureSampleLevel(uImage, uImageSampler, i.uv, params.lod.x);
+}
+`,
+      });
+      const pipe = scope.createRenderPipeline({ label: '按级采样', shader, colorFormats: ['rgba8unorm'] });
+      await ready(pipe);
+      const readLevel = async (lod: number) => {
+        const params = scope.createBuffer({ label: `lod ${lod}`, usage: RhiBufferUsage.UNIFORM, data: new Float32Array([lod, 0, 0, 0]) });
+        const { tex: out, target } = colorTarget(scope, `level ${lod}`, 8, 8);
+        submitOk(ctx, `采样 level ${lod}`, (c) => {
+          const p = c.beginRenderPass({ label: `level ${lod}`, target });
+          p.setPipeline(pipe);
+          p.setBindings({ params, uImage: tex, uImageSampler: sampler });
+          p.draw(3);
+          p.end();
+        });
+        return dev.readTexture(out);
+      };
+      const l0 = await readLevel(0);
+      expectPx(l0, 1, 4, [255, 255, 255, 255], 'level 0 左半白');
+      expectPx(l0, 6, 4, [0, 0, 0, 255], 'level 0 右半黑');
+      const l5 = await readLevel(5);
+      expectPx(l5, 0, 4, [255, 255, 255, 255], 'level 5(2×2)左列白', 8);
+      expectPx(l5, 7, 4, [0, 0, 0, 255], 'level 5(2×2)右列黑', 8);
+      const l6 = await readLevel(6);
+      expectPx(l6, 4, 4, [128, 128, 128, 255], 'level 6(1×1)= 左右平均', 3);
+      const errs = ctx.diagnostics.slice(before).filter((e) => !e.message.includes('被后端跳过'));
+      if (errs.length) throw errs[0];
+      return 'level 0 / 5 / 6 与期望一致';
+    },
+  },
+  {
+    name: '坏管线只丢自己的 draw:同一帧里好管线照常出图(master 的 GL 行为)',
+    async run(ctx) {
+      const { dev, scope } = ctx;
+      const { tex, target } = colorTarget(scope, '目标', 8, 8);
+      const good = scope.createRenderPipeline({ label: '好管线', shader: scope.createShader(SOLID), colorFormats: ['rgba8unorm'] });
+      // 顶点属性格式与着色器类型不配(uint32 喂给 vec2<f32>):建管线校验失败(WebGPU 的校验错误是异步的)
+      const bad = scope.createRenderPipeline({
+        label: '坏管线', shader: scope.createShader(VERTEX_COLOR), colorFormats: ['rgba8unorm'],
+        vertexBuffers: [{ name: 'verts', stride: 24, attributes: [{ name: 'aPos', format: 'uint32' as never, offset: 0 }, { name: 'aColor', format: 'float32x4', offset: 8 }] }],
+      });
+      const red = scope.createBuffer({ label: '红', usage: RhiBufferUsage.UNIFORM, data: solidParams([1, 0, 0, 1]) });
+      const verts = scope.createBuffer({ label: '顶点', usage: RhiBufferUsage.VERTEX, data: new Float32Array(18) });
+      await good.ready;
+      const badReady = await bad.ready.then(() => 'ready', () => 'failed');
+      check(badReady === 'failed', `坏管线的 ready 应拒绝,实得 ${badReady}`);
+      const before = ctx.diagnostics.length;
+      const ok = dev.submit('好坏混画', (c) => {
+        const p = c.beginRenderPass({ label: '好坏混画', target, colorOps: [{ load: 'clear', clearValue: [0, 0, 1, 1] }] });
+        p.setPipeline(bad);
+        p.setVertexBuffer('verts', verts);
+        p.draw(3);
+        p.setPipeline(good);
+        p.setBindings({ params: red });
+        p.draw(6);
+        p.end();
+      });
+      check(ok, '整批提交失败:坏管线把整帧拖下水了');
+      expectPx(await dev.readTexture(tex), 4, 4, [255, 0, 0, 255], '好管线的 draw 照常出图');
+      const errs = ctx.diagnostics.slice(before).filter((e) => !e.message.includes('跳过'));
+      if (errs.length) throw errs[0];
+      return '坏管线的 draw 被跳过,其余照常';
+    },
+  },
+  {
     // 放最后:画布呈现出问题(设备丢失)不会连累别的用例
     name: '上屏:画布后备缓冲的朝向与视口',
     async run(ctx) {
