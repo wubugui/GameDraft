@@ -282,6 +282,8 @@ export class FrameBuilder implements FilterSystemLike {
   private readonly alphaMaskPool: AlphaMaskEntry[] = [];
   // 本次 render 内去重
   private readonly groupSlices = new Map<UniformGroup, ArenaRef>();
+  /** 本次规划从纹理池借出、还没还的纹理(规划中途抛错时由 abort 归还) */
+  private readonly borrowed = new Set<Texture>();
 
   constructor(private readonly makePassthrough: () => Filter) {}
 
@@ -298,6 +300,26 @@ export class FrameBuilder implements FilterSystemLike {
     this.activeMaskStage.length = 0;
     this.groupSlices.clear();
     this.passStencil = false;
+  }
+
+  /**
+   * 规划中途抛错(如池纹理超过设备上限、建纹理抛 unsupported)后调用:把借出的池纹理还回池里。
+   * Pixi 在 WebGPU 上建出无效纹理也不抛,照常走到 filterPop / popAlphaMask 归还;这里不补还的话每失败一帧池里多一张
+   */
+  abort(): void {
+    for (const t of this.borrowed) TexturePool.returnTexture(t);
+    this.borrowed.clear();
+  }
+
+  private takePoolTexture(frameWidth: number, frameHeight: number, resolution: number, antialias: boolean): Texture {
+    const t = TexturePool.getOptimalTexture(frameWidth, frameHeight, resolution, antialias);
+    this.borrowed.add(t);
+    return t;
+  }
+
+  private returnPoolTexture(t: Texture): void {
+    this.borrowed.delete(t);
+    TexturePool.returnTexture(t);
   }
 
   // ───────────────────────── 目标(RenderTargetSystem)
@@ -729,7 +751,7 @@ export class FrameBuilder implements FilterSystemLike {
         maskContainer.measurable = false;
         bounds.ceil();
         const target = this.current;
-        const filterTexture = TexturePool.getOptimalTexture(bounds.width, bounds.height, target.resolution, target.antialias);
+        const filterTexture = this.takePoolTexture(bounds.width, bounds.height, target.resolution, target.antialias);
         this.pushRenderTarget(filterTexture, true);
         this.globalPush({ offset: bounds, worldColor: 0xffffffff });
         const sprite = entry.internalSprite;
@@ -753,7 +775,7 @@ export class FrameBuilder implements FilterSystemLike {
     } else {
       this.filterPop();
       const maskData = this.activeMaskStage.pop()!;
-      if (renderMask) TexturePool.returnTexture(maskData.filterTexture!);
+      if (renderMask) this.returnPoolTexture(maskData.filterTexture!);
       // 进池前换回内部精灵:不替用户的遮罩精灵续命(Pixi 池里的效果会一直指着它,之后走画进纹理的路径时还会改它的纹理)
       maskData.entry.filter.sprite = maskData.entry.internalSprite;
       this.alphaMaskPool.push(maskData.entry);
@@ -825,7 +847,7 @@ export class FrameBuilder implements FilterSystemLike {
     gf.height = this.current.height * globalResolution;
     // _setupFilterTextures
     filterData.backTexture = Texture.EMPTY;
-    filterData.inputTexture = TexturePool.getOptimalTexture(bounds.width, bounds.height, filterData.resolution, filterData.antialias);
+    filterData.inputTexture = this.takePoolTexture(bounds.width, bounds.height, filterData.resolution, filterData.antialias);
     if (filterData.blendRequired) {
       filterData.backTexture = this.getBackTexture(bounds, previousFilterData?.bounds);
     }
@@ -839,15 +861,15 @@ export class FrameBuilder implements FilterSystemLike {
     this.globalPop();
     this.activeFilterData = filterData;
     this.applyFiltersToTexture(filterData, false);
-    if (filterData.blendRequired && filterData.backTexture) TexturePool.returnTexture(filterData.backTexture);
-    TexturePool.returnTexture(filterData.inputTexture!);
+    if (filterData.blendRequired && filterData.backTexture) this.returnPoolTexture(filterData.backTexture);
+    this.returnPoolTexture(filterData.inputTexture!);
   }
 
   /** 混合型滤镜要的"背景"纹理:把输出目标上对应区域拷一份(本实现用绘制拷贝,录制时生效) */
   private getBackTexture(bounds: Bounds, previousBounds?: Bounds): Texture {
     const out = this.current;
     const res = out.resolution;
-    const back = TexturePool.getOptimalTexture(bounds.width, bounds.height, res, false);
+    const back = this.takePoolTexture(bounds.width, bounds.height, res, false);
     let x = bounds.minX;
     let y = bounds.minY;
     if (previousBounds) {
@@ -1047,7 +1069,7 @@ export class FrameBuilder implements FilterSystemLike {
       filters[first].apply(this, inputTexture, output as RenderSurface, clear);
     } else {
       let flip = inputTexture;
-      const temp = TexturePool.getOptimalTexture(bounds.width, bounds.height, flip.source._resolution, false);
+      const temp = this.takePoolTexture(bounds.width, bounds.height, flip.source._resolution, false);
       let flop = temp;
       for (let i = first; i < last; i++) {
         const filter = filters[i];
@@ -1058,7 +1080,7 @@ export class FrameBuilder implements FilterSystemLike {
         flop = t;
       }
       filters[last].apply(this, flip, output as RenderSurface, clear);
-      TexturePool.returnTexture(temp);
+      this.returnPoolTexture(temp);
     }
   }
 

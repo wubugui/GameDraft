@@ -94,6 +94,36 @@ export interface LumaRhiDeviceOptions {
 }
 
 /**
+ * 向适配器要设备时带上它支持的 2D 纹理尺寸上限(R2-1)。master 的 Pixi WebGL 拿的是 GPU 的 MAX_TEXTURE_SIZE
+ * (桌面常见 16384);WebGPU 不显式要就只给规范缺省 8192——放大观察物件时 contact-AO 滤镜的池纹理(不裁到视口,
+ * 向上取 2 的幂)要 16384 宽,建不出来就整帧失败。luma 只在 featureLevel 'max' 时转发适配器上限,但那一档连
+ * 全部特性一起要(会改变 float32-filterable 等),没有按项要的口子,所以在适配器上包一层 requestDevice,
+ * 只补这一项;特性照 core 档不多要(Pixi 8.17 的 GpuDeviceSystem 只额外要纹理压缩特性,运行时不用)。
+ */
+export function requestAdapterTextureLimit(adapter: GPUAdapter): GPUAdapter {
+  const requestDevice = adapter.requestDevice.bind(adapter);
+  adapter.requestDevice = (desc: GPUDeviceDescriptor = {}) =>
+    requestDevice({
+      ...desc,
+      requiredLimits: { ...desc.requiredLimits, maxTextureDimension2D: adapter.limits.maxTextureDimension2D },
+    });
+  return adapter;
+}
+
+/**
+ * luma 的 WebGPU 适配器,只换掉取原生适配器这一步(WebGPUAdapter.requestGPUAdapter:每次建设备都重新
+ * `navigator.gpu.requestAdapter`,这里照做再包一层)
+ */
+const webgpuAdapterWithTextureLimit: typeof webgpuAdapter = Object.create(webgpuAdapter, {
+  requestGPUAdapter: {
+    value: async (options: GPURequestAdapterOptions): Promise<GPUAdapter | null> => {
+      const adapter = await (globalThis.navigator as Navigator & { gpu: GPU }).gpu.requestAdapter(options);
+      return adapter && requestAdapterTextureLimit(adapter);
+    },
+  },
+});
+
+/**
  * 建 WebGPU 设备。环境没有 WebGPU(或拿不到适配器)时抛 RhiError('unsupported'),不回落到别的图形 API。
  * 设备丢失(GPU 进程崩溃 / 驱动重置 / TDR / 切显卡)后按同一套参数在同一画布上重建(见 LumaRhiDevice 的「丢失与恢复」)。
  */
@@ -108,7 +138,7 @@ export async function createLumaRhiDevice(options: LumaRhiDeviceOptions): Promis
     try {
       return await luma.createDevice({
         type: 'webgpu',
-        adapters: [webgpuAdapter],
+        adapters: [webgpuAdapterWithTextureLimit],
         createCanvasContext: {
           canvas: options.canvas,
           alphaMode: options.alphaMode ?? 'opaque',

@@ -251,6 +251,10 @@ export class WebGPURenderer extends RendererBase {
       if (usesCanvas && (this.canvas.width === 0 || this.canvas.height === 0)) return;
       if (usesCanvas) this.rhi.runFrame((frame) => this.record(state, cmds, frame.commands, frame));
       else this.rhi.submit('engine2d render', (commands) => this.record(state, cmds, commands, null));
+    } catch (e) {
+      // 规划中途失败:借出的池纹理还回去(不然每失败一帧池里多一张),异常照旧抛给调用方(游戏的渲染兜错)
+      state.builder.abort();
+      throw e;
     } finally {
       this.depth--;
       // 最外层这一次都已提交:到点就回收空闲资源(Pixi GCSystem.postrender)

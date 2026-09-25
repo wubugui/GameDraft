@@ -58,6 +58,8 @@ export interface NullRhiDeviceOptions {
   swapchainSize?: [number, number];
   /** 模拟建坏的管线:按管线标签判,返回 true 的管线 `ready` reject、draw / dispatch 被跳过 */
   failPipeline?: (label: string) => boolean;
+  /** 设备的 2D 纹理尺寸上限(缺省 8192 = WebGPU 规范缺省;真设备按适配器要,桌面常见 16384) */
+  maxTextureSize?: number;
 }
 
 class NullBuffer extends RhiResourceBase<'buffer'> implements RhiBuffer {
@@ -482,7 +484,7 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   constructor(options: NullRhiDeviceOptions = {}) {
     this.caps = {
       float32Filterable: false,
-      maxTextureSize: 8192,
+      maxTextureSize: options.maxTextureSize ?? 8192,
       maxColorAttachments: 8,
       maxComputeWorkgroupSize: [256, 256, 64],
       maxComputeInvocationsPerWorkgroup: 256,
