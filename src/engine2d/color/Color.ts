@@ -80,114 +80,156 @@ function parseString(raw: string, allowCss = true): [number, number, number, num
 
 export class Color {
   static readonly shared = new Color();
+  private static readonly _temp = new Color();
 
   /** 分量存 float32(与 Pixi 相同;依赖分量做运算的地方 —— 颜色矩阵、渐变 —— 才与 master 逐数一致) */
-  private readonly _c = new Float32Array([1, 1, 1, 1]);
+  private readonly _components = new Float32Array([1, 1, 1, 1]);
+  private _int = 0xffffff;
   private _value: ColorSource = 0xffffff;
-
-  private get _r(): number { return this._c[0]; }
-  private set _r(v: number) { this._c[0] = v; }
-  private get _g(): number { return this._c[1]; }
-  private set _g(v: number) { this._c[1] = v; }
-  private get _b(): number { return this._c[2]; }
-  private set _b(v: number) { this._c[2] = v; }
-  private get _a(): number { return this._c[3]; }
-  private set _a(v: number) { this._c[3] = v; }
+  private _arrayRgb: number[] | undefined;
+  private _arrayRgba: number[] | undefined;
 
   constructor(value: ColorSource = 0xffffff) {
     this.setValue(value);
   }
 
-  get red(): number { return this._r; }
-  get green(): number { return this._g; }
-  get blue(): number { return this._b; }
-  get alpha(): number { return this._a; }
+  get red(): number { return this._components[0]; }
+  get green(): number { return this._components[1]; }
+  get blue(): number { return this._components[2]; }
+  get alpha(): number { return this._components[3]; }
   get value(): ColorSource { return this._value; }
   set value(v: ColorSource) { this.setValue(v); }
 
   setValue(value: ColorSource): this {
+    if (value instanceof Color) {
+      this._value = value._value;
+      this._components.set(value._components);
+      this._int = value._int;
+      return this;
+    }
     this._value = value;
-    this._c.set(Color.normalize(value));
+    this._components.set(Color.normalize(value));
+    this._refreshInt();
     return this;
   }
 
   setAlpha(alpha: number): this {
-    this._a = alpha;
+    this._components[3] = clamp(alpha);
+    this._value = null;
     return this;
   }
 
-  /** 0xRRGGBB */
+  /** 0xRRGGBB(各分量 ×255 截断,与 Pixi 相同) */
   toNumber(): number {
-    return ((Math.round(this._r * 255) << 16) | (Math.round(this._g * 255) << 8) | Math.round(this._b * 255)) >>> 0;
+    return this._int;
   }
 
-  /** 0xBBGGRR(Pixi 内部 tint 存法) */
+  /** 0xBBGGRR(各分量 ×255 四舍五入,与 Pixi 相同;tint 用它) */
   toBgrNumber(): number {
-    return ((Math.round(this._b * 255) << 16) | (Math.round(this._g * 255) << 8) | Math.round(this._r * 255)) >>> 0;
+    const [r, g, b] = this.toUint8RgbArray();
+    return (b << 16) + (g << 8) + r;
   }
 
-  /** 预乘后打包成 ABGR 小端(与顶点 unorm8x4 顺序 r,g,b,a 一致) */
   toLittleEndianNumber(): number {
-    const v = this.toNumber();
+    const v = this._int;
     return (v >> 16) + (v & 0xff00) + ((v & 0xff) << 16);
   }
 
+  toUint8RgbArray<T extends number[] | Uint8Array | Uint8ClampedArray>(out?: T): T {
+    const o = (out ?? (this._arrayRgb ??= [])) as number[];
+    const [r, g, b] = this._components;
+    o[0] = Math.round(r * 255);
+    o[1] = Math.round(g * 255);
+    o[2] = Math.round(b * 255);
+    return o as T;
+  }
+
   toArray<T extends number[] | Float32Array>(out?: T): T {
-    const o = (out ?? []) as number[];
-    o[0] = this._r;
-    o[1] = this._g;
-    o[2] = this._b;
-    o[3] = this._a;
+    const o = (out ?? (this._arrayRgba ??= [])) as number[];
+    const [r, g, b, a] = this._components;
+    o[0] = r;
+    o[1] = g;
+    o[2] = b;
+    o[3] = a;
     return o as T;
   }
 
   toRgbArray<T extends number[] | Float32Array>(out?: T): T {
-    const o = (out ?? []) as number[];
-    o[0] = this._r;
-    o[1] = this._g;
-    o[2] = this._b;
+    const o = (out ?? (this._arrayRgb ??= [])) as number[];
+    const [r, g, b] = this._components;
+    o[0] = r;
+    o[1] = g;
+    o[2] = b;
     return o as T;
   }
 
   toRgba(): { r: number; g: number; b: number; a: number } {
-    return { r: this._r, g: this._g, b: this._b, a: this._a };
+    const [r, g, b, a] = this._components;
+    return { r, g, b, a };
   }
 
   toRgb(): { r: number; g: number; b: number } {
-    return { r: this._r, g: this._g, b: this._b };
-  }
-
-  toHex(): string {
-    return `#${this.toNumber().toString(16).padStart(6, '0')}`;
-  }
-
-  toHexa(): string {
-    return this.toHex() + Math.round(this._a * 255).toString(16).padStart(2, '0');
+    const [r, g, b] = this._components;
+    return { r, g, b };
   }
 
   toRgbaString(): string {
-    return `rgba(${Math.round(this._r * 255)},${Math.round(this._g * 255)},${Math.round(this._b * 255)},${this._a})`;
+    const [r, g, b] = this.toUint8RgbArray();
+    return `rgba(${r},${g},${b},${this.alpha})`;
+  }
+
+  toHex(): string {
+    const hex = this._int.toString(16);
+    return `#${'000000'.substring(0, 6 - hex.length) + hex}`;
+  }
+
+  toHexa(): string {
+    const a = Math.round(this._components[3] * 255).toString(16);
+    return this.toHex() + '00'.substring(0, 2 - a.length) + a;
   }
 
   multiply(value: ColorSource): this {
-    const [r, g, b, a] = Color.normalize(value);
-    this._r *= r;
-    this._g *= g;
-    this._b *= b;
-    this._a *= a;
+    const [r, g, b, a] = Color._temp.setValue(value)._components;
+    this._components[0] *= r;
+    this._components[1] *= g;
+    this._components[2] *= b;
+    this._components[3] *= a;
+    this._refreshInt();
     this._value = null;
     return this;
   }
 
   premultiply(alpha: number, applyToRGB = true): this {
     if (applyToRGB) {
-      this._r *= alpha;
-      this._g *= alpha;
-      this._b *= alpha;
+      this._components[0] *= alpha;
+      this._components[1] *= alpha;
+      this._components[2] *= alpha;
     }
-    this._a = alpha;
+    this._components[3] = alpha;
+    this._refreshInt();
     this._value = null;
     return this;
+  }
+
+  toPremultiplied(alpha: number, applyToRGB = true): number {
+    if (alpha === 1) return (255 << 24) + this._int;
+    if (alpha === 0) return applyToRGB ? 0 : this._int;
+    let r = (this._int >> 16) & 255;
+    let g = (this._int >> 8) & 255;
+    let b = this._int & 255;
+    if (applyToRGB) {
+      r = (r * alpha + 0.5) | 0;
+      g = (g * alpha + 0.5) | 0;
+      b = (b * alpha + 0.5) | 0;
+    }
+    return ((alpha * 255) << 24) + (r << 16) + (g << 8) + b;
+  }
+
+  private _refreshInt(): void {
+    const c = this._components;
+    for (let i = 0; i < 4; i++) c[i] = clamp(c[i]);
+    const [r, g, b] = c;
+    this._int = ((r * 255) << 16) + ((g * 255) << 8) + ((b * 255) | 0);
   }
 
   static isColorLike(value: unknown): value is ColorSource {
@@ -199,9 +241,10 @@ export class Color {
     }
   }
 
+  /** 解析成 0..1 的 [r, g, b, a](超出范围的会被 _refreshInt 夹到 0..1) */
   static normalize(value: ColorSource): [number, number, number, number] {
     if (value === null || value === undefined) throw new Error('[engine2d] Color: 空值');
-    if (value instanceof Color) return [value._r, value._g, value._b, value._a];
+    if (value instanceof Color) return [value.red, value.green, value.blue, value.alpha];
     if (typeof value === 'number') {
       const v = value >>> 0;
       return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255, 1];
@@ -212,7 +255,7 @@ export class Color {
       return c;
     }
     if (Array.isArray(value) || value instanceof Float32Array) {
-      return [value[0] ?? 0, value[1] ?? 0, value[2] ?? 0, value[3] ?? 1];
+      return [clamp(value[0] ?? 0), clamp(value[1] ?? 0), clamp(value[2] ?? 0), clamp(value[3] ?? 1)];
     }
     if (value instanceof Uint8Array || value instanceof Uint8ClampedArray) {
       return [value[0] / 255, value[1] / 255, value[2] / 255, (value[3] ?? 255) / 255];
@@ -222,4 +265,8 @@ export class Color {
     }
     throw new Error(`[engine2d] Color: 不认识的颜色值 ${String(value)}`);
   }
+}
+
+function clamp(v: number, min = 0, max = 1): number {
+  return Math.min(Math.max(v, min), max);
 }
