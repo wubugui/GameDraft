@@ -66,6 +66,10 @@ last_governed: 2026-09-23
 
 ## 已知坑(都不报错)
 
+- 粒子 / 薄片 / 雷 / 光柱的着色器都有 GLSL 与 WGSL 两份:WGSL 在 `vfxShaders.ts` / `vfxBeamShaders.ts` 并排,雷与光柱的核函数
+  另有 `vfxBoltWgsl.ts` / `vfxBeamWgsl.ts`(与 `vfxBoltGlsl.ts` / `vfxBeamGlsl.ts` 对应;GLSL 版粒子工作台也在用,原样保留)。
+  算法改动两份一起改,改完跑 `node tools/render_parity/run.mjs --case 粒子`(见 pixi-shader-wgsl-port)。
+
 | 坑 | 症状 |
 |---|---|
 | 粒子 GLSL 只拼 `LC` 不拼 `WR_CORE` | 编译失败,Pixi 只报 "Could not initialize shader",整批不画 |

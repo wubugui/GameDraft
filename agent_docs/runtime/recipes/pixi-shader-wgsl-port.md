@@ -40,7 +40,10 @@ GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意
   **不许直接放 `source.style`**——纹理销毁会连带销毁它的 style,style 销毁让同组 BindGroup 自毁,WebGL 下整帧也抛
   (换了纹理漏换采样器就中招)。`samplerOf` 按采样参数共享、永不销毁;`gpuSampler.test.ts` 扫源码拦 `.style` 写法。
 - **uniform 组成员在 WGSL struct 里的顺序必须与 JS 里 uniforms 对象的声明顺序一致**(Pixi 按声明顺序、WGSL 对齐规则算偏移)。
-  `size: N` 的数组 → `array<T, N>`。
+  `size: N` 的 `vec4` 数组 → `array<vec4<f32>, N>`;**`vec2` / 标量数组不能照搬**:Pixi 按 8 / 4 字节紧排,WGSL uniform 数组
+  要 16 字节步长(`array<vec2<f32>, N>` 直接编译失败)——在 WGSL 里把同一段内存看成 `array<vec4<f32>, N/2>` 再拆,
+  且该成员在 JS 声明里要落在 16 字节边界上(见 `VfxBeamView` 的 `uBeamAlong`)。Pixi 的 WGSL 数组上传会越界写到后面约 4 倍
+  长度(填 NaN),只因后面成员随后覆写才无害——别依赖缓冲里的填充字节。
 - **补了 gpu 程序后资源分组会变**:原来全在第 99 组,之后按 WGSL 声明的组号走;WebGL 按组号升序分配纹理单元,
   所以 WGSL 里纹理的声明顺序要与原 resources 对象里的相对顺序一致,纹理单元才不挪(这是「GL 侧逐字节不变」的前提)。
 - 运行时换某个纹理资源(ping-pong 等)时,它的 `<名>Sampler` 跟着换成 `samplerOf(新纹理)`(参数不同就是另一份采样器)。
@@ -87,6 +90,11 @@ GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意
 - `bool` / 整型 uniform:Pixi 的 uniform 类型串只有 f32/i32/u32 系列;GLSL 里 `if (uFlag > 0.5)` 这类照搬。
 - 浮点目标(`rgba16float`)对照时容差按值域给(1e-3 相对量级),8 位目标 `2/255` 起;**不许为了过对照调大容差掩盖真差异**,
   差异集中在某片区域时先查翻译。
+- **Pixi 自带的混合表两后端不一致**:原版 WebGPU 的 `add` alpha 是 src-alpha / 1-src-alpha(WebGL 是 ONE / ONE),
+  `none` 的 alpha、`erase` 的颜色因子也不同;`installPixiWebGpuPatches` 已全部对齐到 WebGL(= master)。
+- WebGL 侧 Pixi 从不改 `UNPACK_ALIGNMENT`(缺省 4):单 / 双通道缓冲纹理行宽不是 4 字节倍数时 **WebGL 读偏、WebGPU 读对**。
+  运行时现存两张 r8:probe 有效性图行宽经 `probeTiling` 补齐到 4 的倍数(无差);天穹可见性网格行宽不对齐,但那条路径无消费者。
+  新增这类纹理要么补齐行宽,要么接受两后端不同。
 - `rgba32float` 目标在 WebGPU 核心里不可混合:`installPixiWebGpuPatches` 已在建管线时对 32 位浮点 / 整数格式去掉混合。
   `rgba32float` **输入**纹理则不可过滤(Pixi 按可过滤浮点声明纹理绑定)——运行时别用 32F 做被采样的纹理。
 - 没指定 `format` 的 Pixi 渲染目标缺省是 `bgra8unorm`:WebGPU 显存里真是 BGRA 字节序(WebGL 侧照样存 RGBA)。

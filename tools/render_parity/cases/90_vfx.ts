@@ -14,10 +14,10 @@
  *
  * ## add 混合的 alpha(Pixi 两个后端的混合表不同,不是着色器差异)
  *
- * Pixi-WebGL 的 `add` = blendFunc(ONE, ONE)(颜色与 alpha 都相加);Pixi-WebGPU 的 `add` 颜色同为 one/one,
- * **alpha 却是 src-alpha / one-minus-src-alpha**(`GpuBlendModesToPixi.add`)。同一个着色器输出画进透明目标,
- * 两侧 RGB 相同、alpha 不同。所以带 add 粒子 / 雷的用例画两遍拼成一张(左右并排):左半 = 真实混合、**只比 RGB**
- * (alpha 通道两侧都置 1);右半 = 同一帧把这些网格临时改成 normal 混合再画,RGBA 全比——着色器输出的 alpha 在这里钉住。
+ * Pixi-WebGL 的 `add` = blendFunc(ONE, ONE)(颜色与 alpha 都相加);原版 Pixi-WebGPU 的 `add` 颜色同为 one/one,
+ * **alpha 却是 src-alpha / one-minus-src-alpha**。`installPixiWebGpuPatches` 已把它对齐到 WebGL(= master),
+ * 所以左半 = 真实混合、RGBA 全比(顺带钉住这条补丁);右半 = 同一帧把这些网格临时改成 normal 混合再画,
+ * RGBA 全比——着色器输出的 alpha 在这里单独钉住(add 下 alpha 会被目标里已有的值叠掉一部分信息)。
  * 光柱的 add / screen 输出 alpha 恒 0,两张混合表结果相同,不需要这一步。
  *
  * 容差 2/255(8 位目标)。GL 侧与移植前逐字节相同的核对见提交说明(对移植前 / 后的源码各跑一遍,哈希参考侧输出)。
@@ -581,8 +581,7 @@ async function runCase(env: ParityEnv, cfg: VfxCaseCfg): Promise<Float32Array> {
     const out = await env.readTexture(rt, 'rgba8unorm');
     assertNonVacuous(out, '真实混合');
     if (!cfg.addAlpha) return out;
-    // 左:真实混合只比 RGB;右:同一帧改 normal 混合再画,RGBA 全比(见文件头)
-    for (let i = 3; i < out.length; i += 4) out[i] = 1;
+    // 左:真实混合;右:同一帧改 normal 混合再画;两半都 RGBA 全比(见文件头)
     for (const m of root.children) if (m instanceof Mesh && m.blendMode === 'add') m.blendMode = 'normal';
     env.renderer.render({ container: root, target: rt, clear: true, clearColor: [0, 0, 0, 0] });
     const second = await env.readTexture(rt, 'rgba8unorm');

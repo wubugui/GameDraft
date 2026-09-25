@@ -9,9 +9,12 @@
  * 补法:开 pass 时记下当前目标各颜色附件的真实格式;管线缓存键并上这组格式;建管线时按它填 `targets[i].format`。
  * 顺带:Pixi 总给颜色目标配混合,而 32 位浮点 / 整数格式在 WebGPU 核心里**不可混合**,带混合建管线必失败——
  * 这类格式建管线时去掉混合(等价于覆盖写入;这些目标本来就是数据图,不该混合)。
- * 只改这三处,WebGL 渲染器不受影响。安装幂等,必须在建 WebGPU 渲染器之前调用。
+ * 再顺带:Pixi 的 WebGPU 混合表有三处与 WebGL 表不一致(逐项比过):`add` 的 alpha(GPU 是 src-alpha / 1-src-alpha,
+ * GL 是 ONE / ONE)、`none` 的 alpha、`erase` 的颜色目标因子。颜色结果不受影响,但 alpha 不同会在画进 RT / 滤镜再合成时
+ * 露出来(粒子对照实测 alpha 差到 0.96)。一律对齐到 WebGL 表 = master 的行为。
+ * 只改这些,WebGL 渲染器不受影响。安装幂等,必须在建 WebGPU 渲染器之前调用。
  */
-import { GpuRenderTargetAdaptor, PipelineSystem } from 'pixi.js';
+import { GpuBlendModesToPixi, GpuRenderTargetAdaptor, PipelineSystem } from 'pixi.js';
 
 const INSTALLED = Symbol.for('gamedraft.pixiWebGpuPatches');
 
@@ -38,6 +41,12 @@ export function installPixiWebGpuPatches(): void {
   const proto = PipelineSystem.prototype as unknown as Record<string | symbol, unknown>;
   if (proto[INSTALLED]) return;
   proto[INSTALLED] = true;
+
+  // 0) 混合表对齐到 WebGL(= master):GL 的 add 是 blendFunc(ONE, ONE),none 是 (ZERO, ZERO),erase 是 (ZERO, 1-SRC_ALPHA)
+  const blend = GpuBlendModesToPixi as unknown as Record<string, { color: GPUBlendComponent; alpha: GPUBlendComponent }>;
+  blend.add.alpha = { srcFactor: 'one', dstFactor: 'one', operation: 'add' };
+  blend.none.alpha = { srcFactor: 'zero', dstFactor: 'zero', operation: 'add' };
+  blend.erase.color = { srcFactor: 'zero', dstFactor: 'one-minus-src-alpha', operation: 'add' };
 
   // 1) 开 pass 时记下目标格式(原版随后会调 pipeline.setRenderTarget → _updatePipeHash)
   const adaptorProto = GpuRenderTargetAdaptor.prototype as unknown as {
