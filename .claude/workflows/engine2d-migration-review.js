@@ -1,7 +1,7 @@
 export const meta = {
   name: 'engine2d-migration-review',
   description: 'engine2d/RHI 迁移审查:分片审查员对照 master + Pixi 8.17 找偏差,对抗核实员复现或反驳每条发现',
-  whenToUse: '审查 engine2d / RHI 迁移分支与 master 的行为偏差。args: { repo: 仓库绝对路径, master: master 只读检出绝对路径(可用 tools/ab_compare 建的 .tools/ab/master-<sha>), slices?: 只跑这些分片 key, extraFocus?: 追加给每个审查员的说明 }',
+  whenToUse: '审查 engine2d / RHI 迁移分支与 master 的行为偏差。args: { repo: 仓库绝对路径, master: master 只读检出绝对路径(可用 tools/ab_compare 建的 .tools/ab/A-<sha10>), slices?: 只跑这些分片 key, customSlices?: [{key, focus}] 自定分片(后续轮次), extraFocus?: 追加给每个审查员的说明 }',
   phases: [
     { title: 'Review', detail: '15 slice reviewers vs master + Pixi 8.17 reference' },
     { title: 'Verify', detail: 'adversarial verifier per finding (repro required); second vote for high/critical' },
@@ -99,7 +99,9 @@ function verifyPrompt(f, slice, i, lens) {
   return `${PREAMBLE}\n\nYou are an adversarial VERIFIER for one finding from the '${slice}' reviewer.\n\n${describe(f)}\n\n${lensText}\n\nAlso assess: does the game actually hit this path (game_hits_path, cite call sites), and what is the correct severity. If confirmed, give a precise minimal fix_suggestion consistent with Pixi 8.17 / master behaviour. Do not modify tracked repo files.`
 }
 
-const RUN = Array.isArray(args.slices) && args.slices.length ? SLICES.filter((s) => args.slices.includes(s.key)) : SLICES
+// args.customSlices: [{ key, focus }] —— 后续轮次按上一轮的缺口自定分片(给了就不用内置的 15 片)
+const BASE = Array.isArray(args.customSlices) && args.customSlices.length ? args.customSlices : SLICES
+const RUN = Array.isArray(args.slices) && args.slices.length ? BASE.filter((s) => args.slices.includes(s.key)) : BASE
 if (!RUN.length) throw new Error(`没有匹配的分片;可选:${SLICES.map((s) => s.key).join(', ')}`)
 log(`分片 ${RUN.length} 个:${RUN.map((s) => s.key).join(', ')}`)
 
