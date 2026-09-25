@@ -69,6 +69,8 @@ export class Pipelines {
   private readonly shaders = new Map<number, RhiShader>();
   private readonly pipelines = new Map<string, RhiRenderPipeline>();
   private readonly layouts = new WeakMap<Geometry, Map<number, { version: string; layout: VertexLayout }>>();
+  /** 已补过格式 / 跨度的几何(照 Pixi getPipeline 的 `!geometry._layoutKey` 门:每个几何只补一次,之后加属性也不重补) */
+  private readonly ensuredGeometries = new WeakSet<Geometry>();
 
   constructor(private readonly scope: RhiResourceScope) {}
 
@@ -131,12 +133,16 @@ export class Pipelines {
   /**
    * 几何对某个程序的顶点布局:只取着色器顶点入口声明了的属性(luma 对着色器不用的属性会报错),
    * 同一个 Buffer 上的属性并成一路流(交错布局)。没给的格式 / 跨度先按 Pixi 的 ensureAttributes 补上
-   * (格式取着色器的参数类型,跨度按同一 Buffer 上全部属性算,不只着色器用到的)。
+   * (格式取着色器的参数类型,跨度按同一 Buffer 上全部属性算,不只着色器用到的);同 Pixi,每个几何只在第一次配程序时补一次,
+   * 不在每次绘制重跑(否则每帧都分配、缺格式的多余属性每帧告警,把 500 条告警上限耗光)。
    */
   layout(geometry: Geometry, program: GpuProgram): VertexLayout {
     let byProgram = this.layouts.get(geometry);
     if (!byProgram) this.layouts.set(geometry, (byProgram = new Map()));
-    ensureAttributes(geometry, program.attributes);
+    if (!this.ensuredGeometries.has(geometry)) {
+      ensureAttributes(geometry, program.attributes);
+      this.ensuredGeometries.add(geometry);
+    }
     const version = geometryVersion(geometry);
     const cached = byProgram.get(program.uid);
     if (cached && cached.version === version) return cached.layout;

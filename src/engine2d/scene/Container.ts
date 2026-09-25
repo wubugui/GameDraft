@@ -30,6 +30,9 @@ import type { Filter } from '../filters/Filter';
 import { callHook, syncComponentLiveness, type Component, type ComponentType } from './Component';
 import { PlayerLoop } from './PlayerLoop';
 
+/** 缺省遮罩选项:全体容器共享一份冻结对象(照 Pixi effectsMixin 挂在原型上),setMask 总是换新对象、从不就地改 */
+const DEFAULT_MASK_OPTIONS: Readonly<{ inverse?: boolean; mask?: Container | null }> = Object.freeze({ inverse: false });
+
 export const RAD_TO_DEG = 180 / Math.PI;
 export const DEG_TO_RAD = Math.PI / 180;
 
@@ -235,7 +238,7 @@ export class Container extends EventEmitter {
   effects: ContainerEffect[] = [];
   _maskEffect: MaskEffect | null = null;
   /** 遮罩选项(照 Pixi `_maskOptions`):挂在容器上而不是遮罩效果上,先设 inverse 再给遮罩、换遮罩都保留 */
-  _maskOptions: { inverse?: boolean; mask?: Container | null } = { inverse: false };
+  _maskOptions: Readonly<{ inverse?: boolean; mask?: Container | null }> = DEFAULT_MASK_OPTIONS;
   _filterEffect: FilterEffect | null = null;
   boundsArea?: Rectangle;
 

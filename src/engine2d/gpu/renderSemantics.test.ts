@@ -246,6 +246,22 @@ describe('D17 反向遮罩', () => {
     pc.setMask({ mask: null });
     expect(pc.mask).toBe(pg2);
   });
+
+  it('缺省 _maskOptions 全体共享一份(照 Pixi 挂在原型上),setMask 换新对象、不改共享那份', () => {
+    const a = new Container();
+    const b = new Sprite();
+    expect(a._maskOptions).toBe(b._maskOptions);
+    const shared = a._maskOptions;
+    a.setMask({ inverse: true });
+    expect(a._maskOptions).not.toBe(shared);
+    expect(b._maskOptions.inverse).toBe(false);
+    expect(new Container()._maskOptions.inverse).toBe(false);
+
+    const pa = new PIXI.Container();
+    const pb = new PIXI.Sprite();
+    type WithOpts = { _maskOptions: { inverse: boolean } };
+    expect((pa as unknown as WithOpts)._maskOptions).toBe((pb as unknown as WithOpts)._maskOptions);
+  });
 });
 
 describe('D19 渲染根自己的混合模式', () => {
@@ -357,6 +373,26 @@ describe('D21 几何属性格式与跨度', () => {
     expect(layout.buffers).toHaveLength(1);
     expect(layout.buffers[0].stride).toBe(pg2.attributes.aPosition.stride);
     expect(layout.buffers[0].stride).toBe(24);
+    renderer.destroy();
+  });
+
+  it('每个几何只补一次(照 Pixi getPipeline 的 !geometry._layoutKey 门):同一几何画 N 次,缺格式的多余属性只告警一次', () => {
+    const { renderer } = setup(8);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const program = new GpuProgram({ name: 'fmt3', vertex: { source: FMT_WGSL, entryPoint: 'mainVertex' }, fragment: { source: FMT_WGSL, entryPoint: 'mainFragment' } });
+    const geometry = new Geometry({
+      attributes: {
+        aPosition: { buffer: new Float32Array([0, 0, 4, 0, 0, 4]), format: 'float32x2' },
+        aColor: { buffer: new Float32Array(12), format: 'float32x4' },
+        aExtra: { buffer: new Float32Array(3) },
+      },
+      indexBuffer: new Uint32Array([0, 1, 2]),
+    });
+    const mesh = new Mesh({ geometry, shader: new Shader({ gpuProgram: program, resources: {} }) });
+    const target = RenderTexture.create({ width: 8, height: 8 });
+    for (let i = 0; i < 5; i++) renderer.render({ container: mesh, target });
+    const extraWarns = warnSpy.mock.calls.filter((c) => c.some((a) => typeof a === 'string' && a.includes('Attribute aExtra')));
+    expect(extraWarns).toHaveLength(1);
     renderer.destroy();
   });
 });
