@@ -2,15 +2,18 @@
  * 一次 render() 的规划阶段:把收集到的指令表"执行"成一张虚拟命令表(pass 切换 + 绘制),
  * 期间算好所有 uniform(写进 Arena)、确保纹理 / 缓冲已上传。录制阶段只按虚拟命令调 RHI。
  *
- * 目标切换、全局 uniform 栈、滤镜系统、模板遮罩的逻辑逐段照 Pixi 8.17 移植
- * (RenderTargetSystem.bind、GlobalUniformSystem、FilterSystem、StencilMaskPipe、GpuStencilSystem),
+ * 目标切换、全局 uniform 栈、滤镜系统、遮罩的逻辑逐段照 Pixi 8.17 移植
+ * (RenderTargetSystem.bind / push / pop、GlobalUniformSystem、FilterSystem、StencilMaskPipe、GpuStencilSystem、
+ * AlphaMaskPipe、ColorMaskPipe),
  * 保证滤镜区域、临时纹理尺寸、uniform 数值与 master 相同。
  */
 import type { RhiBuffer, RhiColorFormat, RhiSampler, RhiTexture } from '../../rendering/rhi';
 import { Matrix } from '../math/Matrix';
 import { Rectangle } from '../math/Rectangle';
 import { Bounds } from '../scene/Bounds';
-import type { Container, FilterEffect } from '../scene/Container';
+import { FilterEffect, type AlphaMask, type Container } from '../scene/Container';
+import { Sprite } from '../sprite/Sprite';
+import { MaskFilter } from '../filters/mask/MaskFilter';
 import { Texture } from '../textures/Texture';
 import { TextureSource } from '../textures/TextureSource';
 import { TexturePool } from '../textures/TexturePool';
@@ -205,6 +208,31 @@ interface GlobalUniformData {
   arena: ArenaRef;
 }
 
+/** 照 Pixi AlphaMaskPipe 的 AlphaMaskEffect:一个只装 MaskFilter 的滤镜效果(按层复用) */
+interface AlphaMaskEntry {
+  effect: FilterEffect;
+  filter: MaskFilter;
+  /** 遮罩体先画进临时纹理时用的内部精灵(Pixi 的 `new Sprite(Texture.EMPTY)`) */
+  internalSprite: Sprite;
+  /** 内部精灵的世界变换(只有平移 = 临时纹理左上角) */
+  internalWorld: Matrix;
+  bounds: Bounds;
+}
+
+interface AlphaMaskStage {
+  entry: AlphaMaskEntry;
+  maskedContainer: Container;
+  filterTexture?: Texture;
+}
+
+/**
+ * 颜色写掩码:Pixi 的遮罩值按 WebGL `gl.colorMask(8 & m, 4 & m, 2 & m, 1 & m)` 解释(8 = R … 1 = A,master 走 WebGL);
+ * RHI 用 WebGPU 位序(1 = R … 8 = A),四位倒过来。0 / 15(模板遮罩用的两个值)不变
+ */
+function colorMaskToRhi(m: number): number {
+  return ((m & 8) >> 3) | ((m & 4) >> 1) | ((m & 2) << 1) | ((m & 1) << 3);
+}
+
 class FilterData {
   skip = false;
   inputTexture: Texture | null = null;
@@ -233,6 +261,8 @@ export class FrameBuilder implements FilterSystemLike {
   private readonly rootViewPort = new Rectangle();
   private readonly viewport = new Rectangle();
   private readonly projectionMatrix = new Matrix();
+  /** 照 Pixi RenderTargetSystem 的 _renderTargetStack:只有 renderStart / pushRenderTarget 入栈(滤镜切目标用 bind,不入栈) */
+  private readonly targetStack: Array<RenderSurface | 'canvas'> = [];
   private passStencil = false;
   private passSamples = 1;
   // 全局 uniform
@@ -247,6 +277,9 @@ export class FrameBuilder implements FilterSystemLike {
   private filterStackIndex = 0;
   private activeFilterData: FilterData | null = null;
   private passthrough: Filter | null = null;
+  // alpha 遮罩(AlphaMaskPipe)
+  private readonly activeMaskStage: AlphaMaskStage[] = [];
+  private readonly alphaMaskPool: AlphaMaskEntry[] = [];
   // 本次 render 内去重
   private readonly groupSlices = new Map<UniformGroup, ArenaRef>();
 
@@ -262,6 +295,7 @@ export class FrameBuilder implements FilterSystemLike {
     this.colorMask = 15;
     this.filterStackIndex = 0;
     this.activeFilterData = null;
+    this.activeMaskStage.length = 0;
     this.groupSlices.clear();
     this.passStencil = false;
   }
@@ -269,9 +303,26 @@ export class FrameBuilder implements FilterSystemLike {
   // ───────────────────────── 目标(RenderTargetSystem)
 
   renderStart(target: RenderSurface | 'canvas', clear: boolean, clearColor: [number, number, number, number]): void {
-    this.bind(target, clear, clearColor);
+    this.targetStack.length = 0;
+    this.pushRenderTarget(target, clear, clearColor);
     this.rootViewPort.copyFrom(this.viewport);
     this.rootTarget = this.current;
+  }
+
+  /** 照 Pixi RenderTargetSystem.push:绑定并入栈 */
+  private pushRenderTarget(surface: RenderSurface | 'canvas', clear: boolean, clearColor?: [number, number, number, number]): void {
+    this.bind(surface, clear, clearColor);
+    this.targetStack.push(surface);
+  }
+
+  /**
+   * 照 Pixi RenderTargetSystem.pop:出栈后以 load 重新绑定栈顶。栈里只有 renderStart / push 进来的目标,
+   * 所以在滤镜里弹出时回到的是渲染根而不是滤镜的输入纹理(Pixi 原样)。Pixi 重绑的是 RenderTarget 对象、不带帧,
+   * 根是带子帧的纹理时视口是整张纹理;这里按纹理的帧(只有子帧纹理当根时才有差别)
+   */
+  private popRenderTarget(): void {
+    this.targetStack.pop();
+    this.bind(this.targetStack[this.targetStack.length - 1], false);
   }
 
   /** 绑定目标并开新 pass(Pixi 的 bind:每次都开新 pass) */
@@ -432,6 +483,15 @@ export class FrameBuilder implements FilterSystemLike {
       case 'popFilter':
         this.filterPop();
         return;
+      case 'pushAlphaMaskBegin':
+      case 'pushAlphaMaskEnd':
+      case 'popAlphaMaskEnd':
+        this.alphaMaskExecute(instr);
+        return;
+      case 'colorMask':
+        // 照 Pixi ColorMaskPipe.execute → ColorMaskSystem.setMask
+        this.colorMask = instr.colorMask;
+        return;
       default:
         this.maskExecute(instr);
     }
@@ -563,7 +623,7 @@ export class FrameBuilder implements FilterSystemLike {
         colorFormat: this.current.format,
         depthFormat: this.passStencil ? STENCIL_DEPTH_FORMAT : null,
         stencil: st.mode,
-        colorMask: this.colorMask,
+        colorMask: colorMaskToRhi(this.colorMask),
         sampleCount: this.passSamples,
       },
       bindings: d.bindings,
@@ -653,6 +713,82 @@ export class FrameBuilder implements FilterSystemLike {
       this.colorMask = 15;
     }
     this.maskStack.set(key, maskStackIndex);
+  }
+
+  // ───────────────────────── alpha 遮罩(AlphaMaskPipe)
+
+  private alphaMaskExecute(instr: Extract<Instruction, { t: 'pushAlphaMaskBegin' | 'pushAlphaMaskEnd' | 'popAlphaMaskEnd' }>): void {
+    const renderMask = instr.mask.renderMaskToTexture;
+    if (instr.t === 'pushAlphaMaskBegin') {
+      const entry = this.alphaMaskPool.pop() ?? createAlphaMaskEntry();
+      entry.filter.inverse = instr.inverse;
+      if (renderMask) {
+        const maskContainer = instr.mask.mask;
+        maskContainer.measurable = true;
+        const bounds = this.maskGlobalBounds(maskContainer, entry.bounds);
+        maskContainer.measurable = false;
+        bounds.ceil();
+        const target = this.current;
+        const filterTexture = TexturePool.getOptimalTexture(bounds.width, bounds.height, target.resolution, target.antialias);
+        this.pushRenderTarget(filterTexture, true);
+        this.globalPush({ offset: bounds, worldColor: 0xffffffff });
+        const sprite = entry.internalSprite;
+        sprite.texture = filterTexture;
+        entry.internalWorld.set(1, 0, 0, 1, bounds.minX, bounds.minY);
+        entry.filter.sprite = sprite;
+        entry.filter.spriteWorldTransform = entry.internalWorld;
+        this.activeMaskStage.push({ entry, maskedContainer: instr.container, filterTexture });
+      } else {
+        entry.filter.sprite = instr.mask.mask as Sprite;
+        entry.filter.spriteWorldTransform = null;
+        this.activeMaskStage.push({ entry, maskedContainer: instr.container });
+      }
+    } else if (instr.t === 'pushAlphaMaskEnd') {
+      const maskData = this.activeMaskStage[this.activeMaskStage.length - 1];
+      if (renderMask) {
+        this.popRenderTarget();
+        this.globalPop();
+      }
+      this.filterPush(maskData.maskedContainer, maskData.entry.effect);
+    } else {
+      this.filterPop();
+      const maskData = this.activeMaskStage.pop()!;
+      if (renderMask) TexturePool.returnTexture(maskData.filterTexture!);
+      // 进池前换回内部精灵:不替用户的遮罩精灵续命(Pixi 池里的效果会一直指着它,之后走画进纹理的路径时还会改它的纹理)
+      maskData.entry.filter.sprite = maskData.entry.internalSprite;
+      this.alphaMaskPool.push(maskData.entry);
+    }
+  }
+
+  /**
+   * 照 Pixi `getGlobalBounds(mask, skipUpdateTransform = true)`:各节点用本次渲染的世界变换(相对根的 groupTransform × 根变换),
+   * 只看 visible / measurable(不看 renderable / culled)
+   */
+  private maskGlobalBounds(mask: Container, bounds: Bounds): Bounds {
+    bounds.clear();
+    const rootWorld = this.guStack[0].worldTransformMatrix;
+    globalBoundsRecursive(mask, bounds, rootWorld);
+    if (!bounds.isValid) bounds.set(0, 0, 0, 0);
+    return bounds;
+  }
+
+  /** 照 Pixi FilterSystem.calculateSpriteMatrix(精灵的世界变换 = 本次渲染的 groupTransform × 根变换) */
+  calculateSpriteMatrix(outputMatrix: Matrix, sprite: Sprite, worldTransform?: Matrix): Matrix {
+    const data = this.activeFilterData!;
+    const mappedMatrix = outputMatrix.set(
+      data.inputTexture!.source.width,
+      0,
+      0,
+      data.inputTexture!.source.height,
+      data.bounds.minX,
+      data.bounds.minY,
+    );
+    const world = worldTransform ? worldTransform.clone() : new Matrix().appendFrom(sprite.groupTransform, this.guStack[0].worldTransformMatrix);
+    world.invert();
+    mappedMatrix.prepend(world);
+    mappedMatrix.scale(1 / sprite.texture.orig.width, 1 / sprite.texture.orig.height);
+    mappedMatrix.translate(sprite.anchor.x, sprite.anchor.y);
+    return mappedMatrix;
   }
 
   // ───────────────────────── 滤镜(FilterSystem)
@@ -947,6 +1083,38 @@ export class FrameBuilder implements FilterSystemLike {
     if (!d) d = this.filterStack[this.filterStackIndex] = new FilterData();
     this.filterStackIndex++;
     return d;
+  }
+}
+
+function createAlphaMaskEntry(): AlphaMaskEntry {
+  // 照 Pixi AlphaMaskEffect:MaskFilter({ sprite: new Sprite(Texture.EMPTY), inverse: false, resolution / antialias: 'inherit' })
+  const internalSprite = new Sprite(Texture.EMPTY);
+  const filter = new MaskFilter({ sprite: internalSprite, inverse: false, resolution: 'inherit', antialias: 'inherit' });
+  const effect = new FilterEffect();
+  effect.filters = [filter];
+  return { effect, filter, internalSprite, internalWorld: new Matrix(), bounds: new Bounds() };
+}
+
+/** 照 Pixi `_getGlobalBounds`(skipUpdateTransform = true):世界变换取本次渲染的 groupTransform × 根变换 */
+function globalBoundsRecursive(c: Container, bounds: Bounds, rootWorld: Matrix): void {
+  if (!c._activeSelf || !c.visible || !c.measurable) return;
+  const world = new Matrix().appendFrom(c.groupTransform, rootWorld);
+  const parentBounds = bounds;
+  const preserve = c.effects.length > 0;
+  if (preserve) bounds = new Bounds();
+  if (c.boundsArea) {
+    bounds.addRect(c.boundsArea, world);
+  } else {
+    const own = c.bounds;
+    if (own && !own.isEmpty()) {
+      bounds.matrix = world;
+      bounds.addBounds(own);
+    }
+    for (const child of c.children) globalBoundsRecursive(child, bounds, rootWorld);
+  }
+  if (preserve) {
+    for (const e of c.effects) e.addBounds?.(bounds);
+    parentBounds.addBounds(bounds, Matrix.IDENTITY);
   }
 }
 

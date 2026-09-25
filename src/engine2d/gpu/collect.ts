@@ -5,7 +5,7 @@
  * 2. Collector:深度优先收集可画内容,产出指令表(合批记录、自定义绘制、滤镜 / 遮罩进出)。
  */
 import { Matrix } from '../math/Matrix';
-import { bgr2rgb, multiplyColors, type Container, type FilterEffect, type MaskEffect } from '../scene/Container';
+import { bgr2rgb, multiplyColors, type AlphaMask, type ColorMask, type Container, type FilterEffect, type MaskEffect, type StencilMask } from '../scene/Container';
 import type { BatchableElement, CustomDrawable, RenderCollector, UnbatchedGraphics } from '../core/contracts';
 import type { BlendMode } from '../core/blendModes';
 import { Batcher, type BatchRecord } from './Batcher';
@@ -20,7 +20,13 @@ export type Instruction =
   | { readonly t: 'pushMaskEnd'; inverse: boolean }
   | { readonly t: 'popMaskBegin'; inverse: boolean }
   // 照 Pixi StencilMaskPipe.pop:popMaskEnd 不带 inverse,执行时总恢复 MASK_ACTIVE
-  | { readonly t: 'popMaskEnd' };
+  | { readonly t: 'popMaskEnd' }
+  // 照 Pixi AlphaMaskPipe:遮罩(按需先画进临时纹理)→ 以 MaskFilter 滤镜包住被遮罩内容
+  | { readonly t: 'pushAlphaMaskBegin'; mask: AlphaMask; container: Container; inverse: boolean }
+  | { readonly t: 'pushAlphaMaskEnd'; mask: AlphaMask; container: Container; inverse: boolean }
+  | { readonly t: 'popAlphaMaskEnd'; mask: AlphaMask }
+  // 照 Pixi ColorMaskPipe:颜色写掩码变了才发一条
+  | { readonly t: 'colorMask'; colorMask: number };
 
 /**
  * 最近一次 prepareTree 的渲染器级 roundPixels(0 / 1)。WebGPURenderer 每次 render 都是 prepareTree 紧接 collector.begin,
@@ -146,7 +152,11 @@ export class Collector implements RenderCollector {
   /** 渲染器级 roundPixels(见 RenderCollector.roundPixels) */
   roundPixels = 0;
   private readonly batches: BatchRecord[] = [];
-  private readonly maskRanges = new Map<MaskEffect, [number, number]>();
+  private readonly maskRanges = new Map<StencilMask, [number, number]>();
+  // 颜色遮罩栈(照 Pixi ColorMaskPipe:buildStart 置 [15])
+  private readonly colorStack: number[] = [15];
+  private colorStackIndex = 1;
+  private currentColor = 15;
   private root!: Container;
   private tick = 0;
 
@@ -159,6 +169,9 @@ export class Collector implements RenderCollector {
     this.instructions.length = 0;
     this.roundPixels = roundPixels;
     this.maskRanges.clear();
+    this.colorStack[0] = 15;
+    this.colorStackIndex = 1;
+    this.currentColor = 15;
     this.batcher.begin();
     this.root = root;
     this.tick = tick;
@@ -223,6 +236,66 @@ export class Collector implements RenderCollector {
   }
 
   pushMask(container: Container, effect: MaskEffect): void {
+    if (effect.pipe === 'alphaMask') this.pushAlphaMask(container, effect);
+    else if (effect.pipe === 'colorMask') this.pushColorMask(effect);
+    else this.pushStencilMask(container, effect);
+  }
+
+  popMask(container: Container, effect: MaskEffect): void {
+    if (effect.pipe === 'alphaMask') this.popAlphaMask(effect);
+    else if (effect.pipe === 'colorMask') this.popColorMask();
+    else this.popStencilMask(container, effect);
+  }
+
+  /** 照 Pixi AlphaMaskPipe.push */
+  private pushAlphaMask(container: Container, mask: AlphaMask): void {
+    this.flush();
+    const inverse = !!container._maskOptions.inverse;
+    this.instructions.push({ t: 'pushAlphaMaskBegin', mask, container, inverse });
+    mask.inverse = inverse;
+    const maskContainer = mask.mask;
+    // 遮罩体要本次渲染的变换:画进临时纹理的要画它,Sprite 遮罩要拿它的变换算 MaskFilter 的映射
+    prepareDetached(maskContainer, this.root, this.tick);
+    if (mask.renderMaskToTexture) {
+      maskContainer.includeInBuild = true;
+      this.collect(maskContainer);
+      maskContainer.includeInBuild = false;
+    }
+    this.flush();
+    this.instructions.push({ t: 'pushAlphaMaskEnd', mask, container, inverse });
+  }
+
+  /** 照 Pixi AlphaMaskPipe.pop */
+  private popAlphaMask(mask: AlphaMask): void {
+    this.flush();
+    this.instructions.push({ t: 'popAlphaMaskEnd', mask });
+  }
+
+  /** 照 Pixi ColorMaskPipe.push:与外层按位与,变了才发指令 */
+  private pushColorMask(mask: ColorMask): void {
+    this.flush();
+    const colorStack = this.colorStack;
+    colorStack[this.colorStackIndex] = colorStack[this.colorStackIndex - 1] & mask.mask;
+    const currentColor = colorStack[this.colorStackIndex];
+    if (currentColor !== this.currentColor) {
+      this.currentColor = currentColor;
+      this.instructions.push({ t: 'colorMask', colorMask: currentColor });
+    }
+    this.colorStackIndex++;
+  }
+
+  /** 照 Pixi ColorMaskPipe.pop */
+  private popColorMask(): void {
+    this.flush();
+    this.colorStackIndex--;
+    const currentColor = this.colorStack[this.colorStackIndex - 1];
+    if (currentColor !== this.currentColor) {
+      this.currentColor = currentColor;
+      this.instructions.push({ t: 'colorMask', colorMask: currentColor });
+    }
+  }
+
+  private pushStencilMask(container: Container, effect: StencilMask): void {
     this.flush();
     const inverse = !!container._maskOptions.inverse;
     this.instructions.push({ t: 'pushMaskBegin', inverse });
@@ -238,7 +311,7 @@ export class Collector implements RenderCollector {
     this.maskRanges.set(effect, [start, end]);
   }
 
-  popMask(container: Container, effect: MaskEffect): void {
+  private popStencilMask(container: Container, effect: StencilMask): void {
     this.flush();
     this.instructions.push({ t: 'popMaskBegin', inverse: !!container._maskOptions.inverse });
     const range = this.maskRanges.get(effect);

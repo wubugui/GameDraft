@@ -4,6 +4,8 @@ import { GlProgram, type GlProgramOptions } from '../shader/GlProgram';
 import type { BlendMode } from '../core/blendModes';
 import type { Texture } from '../textures/Texture';
 import type { RenderSurface } from '../gpu/renderTargets';
+import type { Matrix } from '../math/Matrix';
+import type { Sprite } from '../sprite/Sprite';
 
 export type FilterAntialias = 'on' | 'off' | 'inherit';
 
@@ -19,6 +21,11 @@ export interface FilterOptions extends ShaderWithResources {
 /** 滤镜管理器对滤镜暴露的接口(gpu 模块的 FilterSystem 实现) */
 export interface FilterSystemLike {
   applyFilter(filter: Filter, input: Texture, output: RenderSurface, clear: boolean): void;
+  /**
+   * 照 Pixi `FilterSystem.calculateSpriteMatrix`:滤镜输入纹理坐标 → 精灵纹理的归一化坐标(MaskFilter 用)。
+   * `worldTransform` 给了就代替精灵本次渲染的世界变换(见 MaskFilter.spriteWorldTransform)
+   */
+  calculateSpriteMatrix(outputMatrix: Matrix, sprite: Sprite, worldTransform?: Matrix): Matrix;
 }
 
 /**

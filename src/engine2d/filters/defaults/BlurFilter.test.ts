@@ -254,6 +254,7 @@ function runOurs(c: ApplyCase, times: number): Recorder {
   const rec = new Recorder(input, output);
   const fm: FilterSystemLike = {
     applyFilter: (f, i, o, clear) => rec.record(f as unknown as Parameters<Recorder['record']>[0], i, o, clear),
+    calculateSpriteMatrix: (m) => m,
   };
   for (let n = 0; n < times; n++) filter.apply(fm, input as Texture, output, c.clear);
   TexturePool.returnTexture(input);

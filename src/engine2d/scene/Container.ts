@@ -31,7 +31,7 @@ import { callHook, syncComponentLiveness, type Component, type ComponentType } f
 import { PlayerLoop } from './PlayerLoop';
 
 /** 缺省遮罩选项:全体容器共享一份冻结对象(照 Pixi effectsMixin 挂在原型上),setMask 总是换新对象、从不就地改 */
-const DEFAULT_MASK_OPTIONS: Readonly<{ inverse?: boolean; mask?: Container | null }> = Object.freeze({ inverse: false });
+const DEFAULT_MASK_OPTIONS: Readonly<{ inverse?: boolean; mask?: MaskInput | null }> = Object.freeze({ inverse: false });
 
 export const RAD_TO_DEG = 180 / Math.PI;
 export const DEG_TO_RAD = Math.PI / 180;
@@ -79,7 +79,7 @@ export interface ContainerOptions {
   cullable?: boolean;
   cullArea?: Rectangle | null;
   filters?: Filter | Filter[] | null;
-  mask?: Container | null;
+  mask?: MaskInput | null;
   boundsArea?: Rectangle;
   isRenderGroup?: boolean;
   [key: string]: unknown;
@@ -94,8 +94,13 @@ export interface ContainerEffect {
   containsPoint?(point: PointData, hitTestFn: (container: Container, point: Point) => boolean): boolean;
 }
 
-export class MaskEffect implements ContainerEffect {
+/**
+ * 模板遮罩(照 Pixi `StencilMask`):任何不是 Sprite 的 Container(Graphics / Mesh / 普通容器)。
+ * 遮罩体不进正常收集(includeInBuild = false)、不计父节点包围盒,由遮罩管线画进模板缓冲。
+ */
+export class StencilMask implements ContainerEffect {
   readonly kind = 'mask' as const;
+  readonly pipe = 'stencilMask' as const;
   priority = 0;
 
   constructor(public mask: Container) {
@@ -109,25 +114,127 @@ export class MaskEffect implements ContainerEffect {
   }
 
   addBounds(bounds: Bounds): void {
-    const m = new Bounds();
-    this.mask.measurable = true;
-    getGlobalBounds(this.mask, false, m);
-    this.mask.measurable = false;
-    bounds.addBoundsMask(m);
+    addMaskBounds(this.mask, bounds);
   }
 
   addLocalBounds(bounds: Bounds, localRoot: Container): void {
-    const m = new Bounds();
-    this.mask.measurable = true;
-    const rel = matrixRelativeTo(this.mask, localRoot, new Matrix());
-    getLocalBounds(this.mask, m, rel);
-    this.mask.measurable = false;
-    bounds.addBoundsMask(m);
+    addMaskLocalBounds(this.mask, bounds, localRoot);
   }
 
   containsPoint(point: PointData, hitTestFn: (container: Container, point: Point) => boolean): boolean {
     return hitTestFn(this.mask, point as Point);
   }
+
+  static test(mask: unknown): boolean {
+    return mask instanceof Container;
+  }
+}
+
+/**
+ * Alpha 遮罩(照 Pixi `AlphaMask`):Sprite 当遮罩时选它——按遮罩纹理的 alpha(× r 通道)逐像素乘到被遮罩内容上,
+ * 经滤镜管线(MaskFilter)实现,见 FrameBuilder 的 alphaMask 段。
+ * - Sprite 遮罩:精灵本身不画(renderable = false),但仍 includeInBuild(Pixi 原样;它的变换照常更新);
+ * - 其它容器(只有手动 `new AlphaMask({ mask })` 再赋给 mask 才会走到):先把遮罩体画进一张临时纹理再当遮罩用。
+ * `inverse` 在收集时从被遮罩容器的 `_maskOptions.inverse` 同步过来;反向时不收窄包围盒(addLocalBounds 照 Pixi 仍收窄)。
+ */
+export class AlphaMask implements ContainerEffect {
+  readonly kind = 'mask' as const;
+  readonly pipe = 'alphaMask' as const;
+  priority = 0;
+  inverse = false;
+  mask!: Container;
+  renderMaskToTexture = false;
+
+  constructor(options?: { mask?: Container }) {
+    if (options?.mask) this.init(options.mask);
+  }
+
+  init(mask: Container): void {
+    this.mask = mask;
+    this.renderMaskToTexture = !AlphaMask.test(mask);
+    // 照 Pixi:这两项换 / 清遮罩时不还原(reset 只还原 measurable)
+    this.mask.renderable = this.renderMaskToTexture;
+    this.mask.includeInBuild = !this.renderMaskToTexture;
+    this.mask.measurable = false;
+  }
+
+  reset(): void {
+    if (!this.mask) return;
+    this.mask.measurable = true;
+  }
+
+  addBounds(bounds: Bounds): void {
+    if (!this.inverse) addMaskBounds(this.mask, bounds);
+  }
+
+  addLocalBounds(bounds: Bounds, localRoot: Container): void {
+    addMaskLocalBounds(this.mask, bounds, localRoot);
+  }
+
+  containsPoint(point: PointData, hitTestFn: (container: Container, point: Point) => boolean): boolean {
+    return hitTestFn(this.mask, point as Point);
+  }
+
+  /** 照 Pixi `mask instanceof Sprite`(Sprite 类在 sprite 模块加载时登记进来,避免 Container ↔ Sprite 循环依赖) */
+  static test(mask: unknown): boolean {
+    return spriteClass !== null && mask instanceof spriteClass;
+  }
+}
+
+/**
+ * 颜色遮罩(照 Pixi `ColorMask`):数字当遮罩 = 颜色写掩码,与外层的逐层按位与(Pixi WebGL 位序:8 = R、4 = G、2 = B、1 = A)。
+ * 不影响包围盒与命中。
+ */
+export class ColorMask implements ContainerEffect {
+  readonly kind = 'mask' as const;
+  readonly pipe = 'colorMask' as const;
+  priority = 0;
+
+  constructor(public mask: number) {}
+
+  static test(mask: unknown): boolean {
+    return typeof mask === 'number';
+  }
+}
+
+/** 容器上的遮罩效果 */
+export type MaskEffect = StencilMask | AlphaMask | ColorMask;
+/** 可以赋给 `container.mask` 的东西(照 Pixi `Mask`):容器、数字,或直接给一个遮罩效果 */
+export type MaskInput = Container | number | MaskEffect;
+
+let spriteClass: (abstract new (...args: never[]) => Container) | null = null;
+
+/** @internal Sprite 模块加载时调用:登记 Sprite 类给 AlphaMask.test 用 */
+export function _registerSpriteClassForMasks(cls: abstract new (...args: never[]) => Container): void {
+  spriteClass = cls;
+}
+
+/**
+ * 照 Pixi `MaskEffectManager.getMaskEffect`:按 AlphaMask → ColorMask → StencilMask 的顺序(rendering/init 的注册序)
+ * 找第一个 test 通过的类;都不通过就把传入值本身当效果(直接给了一个遮罩效果)。
+ */
+function getMaskEffect(item: MaskInput): MaskEffect {
+  if (AlphaMask.test(item)) return new AlphaMask({ mask: item as Container });
+  if (ColorMask.test(item)) return new ColorMask(item as number);
+  if (StencilMask.test(item)) return new StencilMask(item as Container);
+  return item as MaskEffect;
+}
+
+function addMaskBounds(mask: Container, bounds: Bounds): void {
+  const m = new Bounds();
+  mask.measurable = true;
+  getGlobalBounds(mask, false, m);
+  mask.measurable = false;
+  bounds.addBoundsMask(m);
+}
+
+function addMaskLocalBounds(mask: Container, bounds: Bounds, localRoot: Container): void {
+  const m = new Bounds();
+  mask.measurable = true;
+  const rel = matrixRelativeTo(mask, localRoot, new Matrix());
+  getLocalBounds(mask, m, rel);
+  mask.measurable = false;
+  bounds.addBoundsMask(m);
 }
 
 export class FilterEffect implements ContainerEffect {
@@ -238,7 +345,7 @@ export class Container extends EventEmitter {
   effects: ContainerEffect[] = [];
   _maskEffect: MaskEffect | null = null;
   /** 遮罩选项(照 Pixi `_maskOptions`):挂在容器上而不是遮罩效果上,先设 inverse 再给遮罩、换遮罩都保留 */
-  _maskOptions: Readonly<{ inverse?: boolean; mask?: Container | null }> = DEFAULT_MASK_OPTIONS;
+  _maskOptions: Readonly<{ inverse?: boolean; mask?: MaskInput | null }> = DEFAULT_MASK_OPTIONS;
   _filterEffect: FilterEffect | null = null;
   boundsArea?: Rectangle;
 
@@ -1237,24 +1344,25 @@ export class Container extends EventEmitter {
 
   // ───────────────────────── 效果
 
-  get mask(): Container | null {
+  /** 遮罩体(数字遮罩时是那个数字);照 Pixi 按值选遮罩类型:Sprite → AlphaMask、数字 → ColorMask、其它容器 → StencilMask */
+  get mask(): Container | number | null {
     return this._maskEffect?.mask ?? null;
   }
-  set mask(value: Container | null | undefined) {
+  set mask(value: MaskInput | null | undefined) {
     const effect = this._maskEffect;
     if (effect?.mask === value) return;
     if (effect) {
       this.removeEffect(effect);
-      effect.reset();
+      (effect as { reset?(): void }).reset?.();
       this._maskEffect = null;
     }
     if (value === null || value === undefined) return;
-    this._maskEffect = new MaskEffect(value);
+    this._maskEffect = getMaskEffect(value);
     this.addEffect(this._maskEffect);
   }
 
   /** 照 Pixi `setMask`:选项并进 `_maskOptions`;只有给了(真值)mask 才换遮罩 */
-  setMask(options: { mask?: Container | null; inverse?: boolean }): void {
+  setMask(options: { mask?: MaskInput | null; inverse?: boolean }): void {
     this._maskOptions = { ...this._maskOptions, ...options };
     if (options.mask) this.mask = options.mask;
   }

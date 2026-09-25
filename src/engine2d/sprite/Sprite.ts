@@ -2,7 +2,7 @@ import { ObservablePoint } from '../math/ObservablePoint';
 import type { PointData } from '../math/Point';
 import { Texture, type TextureSourceLike } from '../textures/Texture';
 import { ViewContainer } from '../scene/ViewContainer';
-import type { ContainerOptions, DestroyOptions } from '../scene/Container';
+import { _registerSpriteClassForMasks, type ContainerOptions, type DestroyOptions } from '../scene/Container';
 import type { BatchableElement, RenderCollector } from '../core/contracts';
 
 export interface SpriteOptions extends ContainerOptions {
@@ -184,3 +184,6 @@ export function updateQuadBounds(bounds: QuadBounds, anchor: ObservablePoint, te
     bounds.maxY = bounds.minY + height;
   }
 }
+
+// 照 Pixi AlphaMask.test(`mask instanceof Sprite`):Sprite(及子类)当遮罩走 alpha 遮罩
+_registerSpriteClassForMasks(Sprite);

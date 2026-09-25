@@ -27,7 +27,10 @@ export { TextureMatrix } from './textures/TextureMatrix';
 export { TexturePool, TexturePoolClass } from './textures/TexturePool';
 
 export { Bounds } from './scene/Bounds';
-export { Container, type ContainerOptions, type DestroyOptions, type EventMode, type Cursor, type IHitArea } from './scene/Container';
+export {
+  Container, AlphaMask, ColorMask, StencilMask,
+  type ContainerOptions, type DestroyOptions, type EventMode, type Cursor, type IHitArea, type MaskEffect, type MaskInput,
+} from './scene/Container';
 export { ViewContainer } from './scene/ViewContainer';
 export { Component, type ComponentType } from './scene/Component';
 export { PlayerLoop } from './scene/PlayerLoop';
