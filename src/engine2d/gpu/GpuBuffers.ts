@@ -96,6 +96,14 @@ export class GpuBuffers {
   }
 
   destroy(): void {
+    this.reset();
+  }
+
+  /**
+   * 丢掉全部缓冲、摘掉监听。设备丢失后重建时也走这里(照 Pixi GlBufferSystem.contextChange → destroyAll(true)):
+   * 下次取用时按完整 CPU 数据重建
+   */
+  reset(): void {
     for (const [buffer, e] of [...this.entries]) {
       this.unhook(buffer);
       e.buffer.destroy();

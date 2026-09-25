@@ -141,6 +141,10 @@ export class WebGPURenderer extends RendererBase {
   private readonly stencilTargets = new WeakSet<object>();
   private readonly canvasKey = {};
   private destroyed = false;
+  /** 退订设备恢复通知 */
+  private readonly offRestored: () => void;
+  /** 设备恢复的通知落在一次 render 中途(理论上不会:恢复只在帧外):等最外层这次 render 结束再丢缓存 */
+  private contextChangePending = false;
   antialias: boolean;
   /** 设备是 createRenderer 替它建的:渲染器销毁时一起销毁 */
   ownsDevice = false;
@@ -157,6 +161,31 @@ export class WebGPURenderer extends RendererBase {
     this.gc.addCollector((now, maxUnused) => this.buffers.collect(now, maxUnused));
     this.pipelines = new Pipelines(this.scope);
     this.extract = createExtract(this);
+    this.offRestored = this.rhi.onRestored(() => this.contextChange());
+  }
+
+  /**
+   * 设备丢失后 RHI 在同一画布上重建了设备(照 Pixi 的 runners.contextChange):旧设备上的 GPU 对象已全部作废,
+   * 这里丢掉所有缓存——纹理 / 采样器、缓冲、着色器 / 管线(含预建的)、渲染目标(模板 / MSAA)、每套规划状态的
+   * 合批顶点 / 索引 / uniform 缓冲;下一次 render 按需重建,CPU 源重传。只在 GPU 上的内容(RenderTexture 画过的)没了,
+   * 与 WebGL 上下文丢失后 Pixi 的结果相同(重建成空纹理)。
+   */
+  private contextChange(): void {
+    if (this.destroyed) return;
+    if (this.depth > 0) {
+      this.contextChangePending = true;
+      return;
+    }
+    this.contextChangePending = false;
+    for (const t of [...this.targets.keys()]) this.releaseTargets(t);
+    this.pipelines.reset();
+    this.buffers.reset();
+    this.textures.reset();
+    for (const s of this.states) {
+      s.vertexBuffer = null;
+      s.indexBuffer = null;
+      s.uniformBuffer = null;
+    }
   }
 
   // ───────────────────────── render
@@ -225,7 +254,10 @@ export class WebGPURenderer extends RendererBase {
     } finally {
       this.depth--;
       // 最外层这一次都已提交:到点就回收空闲资源(Pixi GCSystem.postrender)
-      if (this.depth === 0) this.gc.postrender();
+      if (this.depth === 0) {
+        if (this.contextChangePending) this.contextChange();
+        this.gc.postrender();
+      }
     }
   }
 
@@ -487,6 +519,7 @@ export class WebGPURenderer extends RendererBase {
   destroy(options: boolean | { removeView?: boolean } = false): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.offRestored();
     this.events?.destroy();
     for (const t of [...this.targets.keys()]) this.releaseTargets(t);
     this.gc.destroy();

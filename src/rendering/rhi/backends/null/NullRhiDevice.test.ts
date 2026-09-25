@@ -342,3 +342,48 @@ describe('空后端模拟建坏的管线(D7)', () => {
     expect(diags.filter((d) => d.severity === 'error')).toHaveLength(1);
   });
 });
+
+describe('空后端模拟设备丢失与恢复(D6,与真后端同一套可见行为)', () => {
+  it('loseDevice:诊断「丢失」→ 恢复前帧作废 → 旧资源作废、作用域保留 → 诊断「已恢复」→ onRestored → 帧照常', async () => {
+    const dev = new NullRhiDevice();
+    const diags: { severity: string; message: string }[] = [];
+    dev.onDiagnostic((e, severity) => diags.push({ severity, message: e.message }));
+    let restored = 0;
+    dev.onRestored(() => restored++);
+    const scope = dev.createScope('场景');
+    const tex = scope.createTexture({ label: 't', width: 4, height: 4, format: 'rgba8unorm', usage: S });
+    const lost = dev.lost;
+
+    const done = dev.loseDevice('测试');
+    expect(dev.isLost).toBe(true);
+    expect(await lost).toBe('测试');
+    expect(dev.runFrame(() => {})).toBe(false);
+    expect(dev.submit('x', () => {})).toBe(false);
+    await done;
+
+    expect(dev.isLost).toBe(false);
+    expect(restored).toBe(1);
+    expect(tex.destroyed).toBe(true);
+    expect(scope.destroyed).toBe(false);
+    expect(scope.createTexture({ label: 't2', width: 4, height: 4, format: 'rgba8unorm', usage: S }).destroyed).toBe(false);
+    expect(dev.lost).not.toBe(lost);
+    expect(diags.map((d) => [d.severity, /图形设备(丢失|已恢复)/.exec(d.message)?.[0]])).toEqual([['error', '图形设备丢失'], ['warning', '图形设备已恢复']]);
+    expect(dev.runFrame((f) => f.commands.beginRenderPass({ label: 'x', target: f.swapchain }).end())).toBe(true);
+  });
+
+  it('restore: false 停在丢失状态;丢失后、恢复前 destroy 就不再恢复', async () => {
+    const dev = new NullRhiDevice();
+    let restored = 0;
+    dev.onRestored(() => restored++);
+    await dev.loseDevice('停住', { restore: false });
+    expect(dev.isLost).toBe(true);
+    expect(dev.runFrame(() => {})).toBe(false);
+
+    const dev2 = new NullRhiDevice();
+    dev2.onRestored(() => restored++);
+    const p = dev2.loseDevice();
+    dev2.destroy();
+    await p;
+    expect(restored).toBe(0);
+  });
+});

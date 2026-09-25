@@ -183,6 +183,15 @@ export class RhiResourceScope {
     this.parent?.children.delete(this);
   }
 
+  /**
+   * @internal 设备丢失后重建:名下(含子作用域)的全部资源作废——按销毁处理,底层旧句柄随之释放;
+   * 作用域树本身保留,照常可建新资源(所有者仍是原来那些系统 / 场景)
+   */
+  _invalidateResources(): void {
+    for (const child of this.children) child._invalidateResources();
+    for (const r of [...this.resources].reverse()) r.destroy();
+  }
+
   /** @internal 由作用域之外的入口(互通口的外部纹理包装)建的资源,补登记到本作用域 */
   _adopt<T extends RhiResource>(resource: T): T {
     this.assertAlive();

@@ -227,8 +227,9 @@ export interface RhiDevice {
   readonly info: RhiDeviceInfo;
   /** 设备级根作用域;场景 / 系统各自 `createScope` 挂在它下面 */
   readonly rootScope: RhiResourceScope;
+  /** 设备已丢失、还没恢复(期间 runFrame / submit 一律作废、返回 false) */
   readonly isLost: boolean;
-  /** 设备丢失时 resolve(原因文字) */
+  /** 当前这一代设备丢失时 resolve(原因文字);恢复后换成新一代设备的(每次取都是当前的) */
   readonly lost: Promise<string>;
   /** 最近一帧的统计 */
   readonly lastFrameStats: RhiFrameStats;
@@ -268,5 +269,12 @@ export interface RhiDevice {
   submit(label: string, record: (commands: RhiCommandList) => void): boolean;
 
   onDiagnostic(listener: RhiDiagnosticListener): () => void;
+  /**
+   * 设备丢失后(不是自己 destroy 引起的)后端在同一画布上按原参数重建了设备——对应 WebGL 的 webglcontextrestored +
+   * Pixi 的 `runners.contextChange`。此前建的**全部资源已作废**(按已销毁处理,再用当场报 destroyed-resource;
+   * 作用域不动、照常可建新资源),持有 GPU 缓存的一方在这里丢掉缓存,下次用到时从 CPU 数据重建重传;
+   * 只存在 GPU 上的内容(渲染纹理画过的东西)没了,同 WebGL 上下文丢失。回调在帧外调用。返回退订。
+   */
+  onRestored(listener: () => void): () => void;
   destroy(): void;
 }

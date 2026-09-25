@@ -93,38 +93,71 @@ export interface LumaRhiDeviceOptions {
   debug?: boolean;
 }
 
-/** 建 WebGPU 设备。环境没有 WebGPU(或拿不到适配器)时抛 RhiError('unsupported'),不回落到别的图形 API。 */
+/**
+ * 建 WebGPU 设备。环境没有 WebGPU(或拿不到适配器)时抛 RhiError('unsupported'),不回落到别的图形 API。
+ * 设备丢失(GPU 进程崩溃 / 驱动重置 / TDR / 切显卡)后按同一套参数在同一画布上重建(见 LumaRhiDevice 的「丢失与恢复」)。
+ */
 export async function createLumaRhiDevice(options: LumaRhiDeviceOptions): Promise<RhiDevice> {
   const gpu = (globalThis.navigator as Navigator & { gpu?: unknown } | undefined)?.gpu;
   if (!gpu) {
     throw new RhiError('unsupported', '此环境没有 WebGPU(navigator.gpu 不存在;需要 https 或 localhost,且浏览器 / WebView 开启 WebGPU)');
   }
   const sink: { target: LumaRhiDevice | null; early: unknown[] } = { target: null, early: [] };
-  let device: Device;
-  try {
-    device = await luma.createDevice({
-      type: 'webgpu',
-      adapters: [webgpuAdapter],
-      createCanvasContext: {
-        canvas: options.canvas,
-        alphaMode: options.alphaMode ?? 'opaque',
-        useDevicePixels: options.useDevicePixels ?? true,
-        autoResize: options.autoResize ?? true,
-      },
-      debug: options.debug ?? false,
-      debugShaders: options.debug ? 'errors' : 'never',
-      onError: (error: Error) => {
-        if (sink.target) sink.target._reportBackendError(error);
-        else sink.early.push(error);
-      },
-    });
-  } catch (e) {
-    throw new RhiError('unsupported', `WebGPU 设备创建失败:${e instanceof Error ? e.message : String(e)}`);
-  }
-  const rhi = new LumaRhiDevice(device);
+  // 每次都重新要适配器(丢过设备的适配器不能再用);画布上下文参数(格式 / alphaMode / 像素比 / 自动调整)与首次相同
+  const open = async (): Promise<Device> => {
+    try {
+      return await luma.createDevice({
+        type: 'webgpu',
+        adapters: [webgpuAdapter],
+        createCanvasContext: {
+          canvas: options.canvas,
+          alphaMode: options.alphaMode ?? 'opaque',
+          useDevicePixels: options.useDevicePixels ?? true,
+          autoResize: options.autoResize ?? true,
+        },
+        debug: options.debug ?? false,
+        debugShaders: options.debug ? 'errors' : 'never',
+        onError: (error: Error) => {
+          if (sink.target) sink.target._reportBackendError(error);
+          else sink.early.push(error);
+        },
+      });
+    } catch (e) {
+      throw new RhiError('unsupported', `WebGPU 设备创建失败:${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  const device = await open();
+  const rhi = new LumaRhiDevice(device, { recreateDevice: open });
   sink.target = rhi;
   for (const e of sink.early) rhi._reportBackendError(e);
   return rhi;
+}
+
+/** 设备丢失后的恢复参数 */
+export interface LumaRhiDeviceRecovery {
+  /** 按原参数在同一画布上重建 luma 设备(createLumaRhiDevice 给);不给 = 丢失即终局(只报诊断) */
+  recreateDevice?: () => Promise<Device>;
+  /** 第 i 次重建前等多久(毫秒);次数 = 长度,用尽还没建成就报错放弃 */
+  restoreRetryDelaysMs?: readonly number[];
+}
+
+/** 重建设备前的等待:GPU 进程重启 / 驱动重置期间适配器可能暂时要不到,逐次放宽,前后约 15 秒 */
+const DEFAULT_RESTORE_RETRY_DELAYS_MS: readonly number[] = [0, 250, 1000, 2000, 4000, 8000];
+
+function capsOf(luma: Device): RhiCaps {
+  const L = luma.limits;
+  return {
+    float32Filterable: luma.isTextureFormatFilterable('rgba32float'),
+    maxTextureSize: L.maxTextureDimension2D,
+    maxColorAttachments: L.maxColorAttachments,
+    maxComputeWorkgroupSize: [L.maxComputeWorkgroupSizeX, L.maxComputeWorkgroupSizeY, L.maxComputeWorkgroupSizeZ],
+    maxComputeInvocationsPerWorkgroup: L.maxComputeInvocationsPerWorkgroup,
+    swapchainFormat: luma.preferredColorFormat as RhiColorFormat,
+  };
+}
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 // ───────────────────────────── 资源
@@ -1178,15 +1211,32 @@ function emptyStats(frame: number): RhiFrameStats {
   return { frame, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
 }
 
+/**
+ * 丢失与恢复(对照 master 的 Pixi WebGL:webglcontextlost 里 preventDefault 让浏览器恢复上下文,webglcontextrestored 时
+ * runners.contextChange,各系统丢掉旧 GL 对象、下次用时从 CPU 源重建重传)。WebGPU 丢了的设备永远不能再用,
+ * 只能重新要适配器 / 设备,所以这里的「恢复」是:
+ *   丢失(不是自己 destroy 引起的)→ 报诊断 → 拆旧画布上下文 → 按原参数在同一画布上建新设备(失败按间隔重试)
+ *   → 旧设备上的资源全部作废(作用域保留)→ 重建设备持有的画布目标、补回画布尺寸 → 报「已恢复」→ 通知 onRestored。
+ * 同一个 RhiDevice 对象跨代存活:持有它的渲染器 / 诊断订阅都不用换。恢复是异步的,只发生在帧外;
+ * 恢复之前 runFrame / submit 一律作废(同 WebGL 上下文丢失期间画不出东西)。
+ */
 export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   readonly caps: RhiCaps;
   readonly info: RhiDeviceInfo;
   readonly rootScope: RhiResourceScope;
-  readonly lost: Promise<string>;
+  private _luma: Device;
+  private _lost!: Promise<string>;
   private _isLost = false;
   private readonly releases: RhiReleaseQueue;
   private readonly listeners = new Set<RhiDiagnosticListener>();
-  private readonly swapchain: LumaSwapchainTarget;
+  private readonly restoredListeners = new Set<() => void>();
+  /** 正在重建设备(同时只有一轮) */
+  private restoring = false;
+  /** 当前设备的画布上下文已拆(丢失后到新设备接上之前;以及销毁后) */
+  private canvasReleased = false;
+  /** 最近一次 resizeSwapchain 的尺寸:新设备的画布上下文按它补 */
+  private swapchainSize: [number, number] | null = null;
+  private swapchain: LumaSwapchainTarget;
   private readonly swapchainDepth = new Map<RhiDepthFormat, LumaSwapchainTarget>();
   /** 多重采样画布目标:`${采样数}|${深度格式}` → 目标(设备持有,销毁时释放) */
   private readonly swapchainMsaa = new Map<string, LumaMsaaSwapchainTarget>();
@@ -1200,30 +1250,32 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   /** mip 生成器(首次生成时建,管线按格式缓存) */
   private mipmaps: WebGpuMipmapGenerator | null = null;
 
-  constructor(readonly luma: Device) {
-    const L = luma.limits;
-    this.caps = {
-      float32Filterable: luma.isTextureFormatFilterable('rgba32float'),
-      maxTextureSize: L.maxTextureDimension2D,
-      maxColorAttachments: L.maxColorAttachments,
-      maxComputeWorkgroupSize: [L.maxComputeWorkgroupSizeX, L.maxComputeWorkgroupSizeY, L.maxComputeWorkgroupSizeZ],
-      maxComputeInvocationsPerWorkgroup: L.maxComputeInvocationsPerWorkgroup,
-      swapchainFormat: luma.preferredColorFormat as RhiColorFormat,
-    };
+  constructor(luma: Device, private readonly recovery: LumaRhiDeviceRecovery = {}) {
+    this._luma = luma;
+    this.caps = capsOf(luma);
     this.info = { vendor: luma.info.vendor, renderer: luma.info.renderer };
     this.releases = new RhiReleaseQueue((e) => this.report(e, 'error'));
     this.rootScope = new RhiResourceScope('设备', this, null);
     this.swapchain = new LumaSwapchainTarget(this.rootScope, this.releases, luma.getDefaultCanvasContext(), this.caps.swapchainFormat);
-    this.lost = luma.lost.then((info) => {
-      this._isLost = true;
-      const reason = info?.message || info?.reason || '未知原因';
-      if (!this._destroyed) this.report(new RhiError('backend', `图形设备丢失:${reason}`), 'error');
-      return reason;
-    });
+    this.watchLoss(luma);
+  }
+
+  /** 当前这一代的 luma 设备(恢复后换成新的) */
+  get luma(): Device {
+    return this._luma;
   }
 
   get isLost(): boolean {
     return this._isLost;
+  }
+
+  get lost(): Promise<string> {
+    return this._lost;
+  }
+
+  onRestored(listener: () => void): () => void {
+    this.restoredListeners.add(listener);
+    return () => this.restoredListeners.delete(listener);
   }
 
   get lastFrameStats(): RhiFrameStats {
@@ -1486,12 +1538,16 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     const b = asBuffer(buffer, 'readBuffer');
     requireUsage(b.usage, RhiBufferUsage.COPY_SRC, `回读缓冲「${b.label}」`, 'COPY_SRC');
     const len = size ?? b.size - byteOffset;
-    return b.handle.readAsync(byteOffset, len);
+    return this.untilLost(b.handle.readAsync(byteOffset, len), `回读缓冲「${b.label}」`);
   }
 
   async readTexture(texture: RhiTexture): Promise<RhiTextureReadback> {
     const t = asTexture(texture, 'readTexture');
     requireUsage(t.usage, RhiTextureUsage.COPY_SRC, `回读纹理「${t.label}」`, 'COPY_SRC');
+    return this.untilLost(this.readTextureNow(t), `回读纹理「${t.label}」`);
+  }
+
+  private async readTextureNow(t: LumaRhiTexture): Promise<RhiTextureReadback> {
     const layout = t.handle.computeMemoryLayout({});
     const staging = this.luma.createBuffer({
       id: `readback:${t.label}`,
@@ -1516,6 +1572,9 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
 
   resizeSwapchain(pixelWidth: number, pixelHeight: number): void {
     if (this._destroyed || !(pixelWidth > 0 && pixelHeight > 0)) return;
+    this.swapchainSize = [pixelWidth, pixelHeight];
+    // 丢失后旧画布上下文已拆:只记下尺寸,新设备接上时补给它的画布上下文
+    if (this.canvasReleased) return;
     // luma 自己记着「绘制缓冲尺寸」,下次取帧缓冲时按它重配画布上下文、重建深度缓冲;
     // 不告诉它的话,它只在取颜色纹理时发现尺寸不符再补,深度缓冲会停在建设备时的尺寸
     this.luma.getDefaultCanvasContext().setDrawingBufferSize(pixelWidth, pixelHeight);
@@ -1608,20 +1667,132 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     if (this._destroyed) return;
     this._destroyed = true;
     this.rootScope.destroy();
-    for (const t of this.swapchainMsaa.values()) t.releaseTextures();
-    this.swapchainMsaa.clear();
-    for (const c of this.swapchainMsaaColors.values()) c.release();
-    this.swapchainMsaaColors.clear();
+    this.releaseSwapchainTargets();
     this.releases.flush();
-    // 画布上下文要单独拆:luma 的 WebGPUDevice.destroy 不碰它——不拆的话 GPUCanvasContext 仍配置着,
-    // ResizeObserver / IntersectionObserver / devicePixelRatio 监听都还挂着、引用着已销毁的设备
+    this.releaseCanvas();
+    this.listeners.clear();
+    this.restoredListeners.clear();
+    this.luma.destroy();
+  }
+
+  // ── 丢失与恢复
+
+  /** 盯住这一代设备的丢失;已被换下的旧设备迟到的丢失信号不理 */
+  private watchLoss(device: Device): void {
+    this._lost = device.lost.then((info) => {
+      const reason = info?.message || info?.reason || '未知原因';
+      if (device !== this._luma) return reason;
+      this._isLost = true;
+      if (this._destroyed) return reason;
+      this.report(new RhiError('backend', `图形设备丢失:${reason}`), 'error');
+      void this.restore();
+      return reason;
+    });
+  }
+
+  /** 丢失后在同一画布上重建设备(失败按间隔重试);没给 recreateDevice 就停在丢失状态 */
+  private async restore(): Promise<void> {
+    const recreate = this.recovery.recreateDevice;
+    if (!recreate || this.restoring) return;
+    this.restoring = true;
+    try {
+      // 旧画布上下文先拆:同一块画布只有一个 GPUCanvasContext,新设备建的时候会重新 configure 它,晚拆就把新配置 unconfigure 掉了
+      this.releaseCanvas();
+      const delays = this.recovery.restoreRetryDelaysMs ?? DEFAULT_RESTORE_RETRY_DELAYS_MS;
+      let lastError: unknown = null;
+      for (let i = 0; i < delays.length; i++) {
+        if (delays[i] > 0) await new Promise((r) => setTimeout(r, delays[i]));
+        if (this._destroyed) return;
+        let next: Device;
+        try {
+          next = await recreate();
+        } catch (e) {
+          lastError = e;
+          this.report(new RhiError('backend', `图形设备重建失败(第 ${i + 1}/${delays.length} 次):${errorText(e)}`), 'warning');
+          continue;
+        }
+        if (this._destroyed) {
+          // 等新设备期间已销毁:新设备连同它配置的画布上下文一起拆
+          try {
+            next.getDefaultCanvasContext().destroy();
+          } catch {
+            /* 设备都不要了,拆不干净也不再追究 */
+          }
+          next.destroy();
+          return;
+        }
+        this.adopt(next);
+        return;
+      }
+      this.report(new RhiError('backend', `图形设备恢复失败(重建 ${delays.length} 次都没成,需要刷新页面):${errorText(lastError)}`), 'error');
+    } finally {
+      this.restoring = false;
+    }
+  }
+
+  /** 换上新设备:旧资源全部作废,重建设备持有的画布目标,通知持有 GPU 缓存的一方(同 Pixi 的 runners.contextChange) */
+  private adopt(next: Device): void {
+    const old = this._luma;
+    this.rootScope._invalidateResources();
+    this.releaseSwapchainTargets();
+    this.releases.flush();
+    try {
+      old.destroy();
+    } catch (e) {
+      this.report(e, 'warning');
+    }
+    this._luma = next;
+    this.canvasReleased = false;
+    Object.assign(this.caps, capsOf(next));
+    Object.assign(this.info, { vendor: next.info.vendor, renderer: next.info.renderer });
+    this.mipmaps = null;
+    const ctx = next.getDefaultCanvasContext();
+    this.swapchain = new LumaSwapchainTarget(this.rootScope, this.releases, ctx, this.caps.swapchainFormat);
+    if (this.swapchainSize) ctx.setDrawingBufferSize(this.swapchainSize[0], this.swapchainSize[1]);
+    this._isLost = false;
+    this.watchLoss(next);
+    this.report(
+      new RhiError('backend', '图形设备已恢复:同一画布上重建了设备,此前的 GPU 资源已作废、按需重建重传(渲染纹理里画过的内容没了)'),
+      'warning',
+    );
+    for (const l of [...this.restoredListeners]) {
+      try {
+        l();
+      } catch (e) {
+        this.report(e, 'error');
+      }
+    }
+  }
+
+  /**
+   * 拆当前设备的画布上下文(只拆一次)。要单独拆:luma 的 WebGPUDevice.destroy 不碰它——不拆的话 GPUCanvasContext 仍配置着,
+   * ResizeObserver / IntersectionObserver / devicePixelRatio 监听都还挂着、引用着已销毁的设备
+   */
+  private releaseCanvas(): void {
+    if (this.canvasReleased) return;
+    this.canvasReleased = true;
     try {
       this.luma.getDefaultCanvasContext().destroy();
     } catch (e) {
       this.report(e, 'warning');
     }
-    this.listeners.clear();
-    this.luma.destroy();
+  }
+
+  /** 放掉设备持有的画布目标(深度 / 多重采样) */
+  private releaseSwapchainTargets(): void {
+    this.swapchainDepth.clear();
+    for (const t of this.swapchainMsaa.values()) t.releaseTextures();
+    this.swapchainMsaa.clear();
+    for (const c of this.swapchainMsaaColors.values()) c.release();
+    this.swapchainMsaaColors.clear();
+  }
+
+  /** 异步回读与这一代设备的丢失赛跑:设备丢了就 reject,不让调用方永远等着(GPU 进程崩溃时 mapAsync 可能迟迟不回) */
+  private untilLost<T>(work: Promise<T>, what: string): Promise<T> {
+    const lost = this._lost.then((reason): never => {
+      throw new RhiError('backend', `${what}:等待期间图形设备丢失(${reason})`);
+    });
+    return Promise.race([work, lost]);
   }
 
   // ── 内部

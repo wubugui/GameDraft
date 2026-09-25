@@ -461,12 +461,14 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   readonly caps: RhiCaps;
   readonly info: RhiDeviceInfo;
   readonly rootScope: RhiResourceScope;
-  readonly lost: Promise<string>;
-  readonly isLost = false;
   /** 命令 / 释放日志(测试断言用) */
   readonly log: string[] = [];
+  private _lost!: Promise<string>;
+  private resolveLost!: (reason: string) => void;
+  private _isLost = false;
   private readonly releases: RhiReleaseQueue;
   private readonly listeners = new Set<RhiDiagnosticListener>();
+  private readonly restoredListeners = new Set<() => void>();
   private readonly swapchain: NullSwapchain;
   private readonly swapchainDepth = new Map<RhiDepthFormat, NullSwapchain>();
   private readonly swapchainMsaa = new Map<string, NullSwapchain>();
@@ -491,8 +493,50 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
     this.rootScope = new RhiResourceScope('设备', this, null);
     const [w, h] = options.swapchainSize ?? [640, 360];
     this.swapchain = new NullSwapchain(this.rootScope, this.releases, '画布后备缓冲', w, h, [], null, this.log);
-    this.lost = new Promise(() => {});
+    this.newLostPromise();
     this.failPipeline = options.failPipeline ?? (() => false);
+  }
+
+  get isLost(): boolean {
+    return this._isLost;
+  }
+
+  get lost(): Promise<string> {
+    return this._lost;
+  }
+
+  onRestored(listener: () => void): () => void {
+    this.restoredListeners.add(listener);
+    return () => this.restoredListeners.delete(listener);
+  }
+
+  /**
+   * 模拟设备丢失(测试用),可见行为同真后端:立即进入丢失状态(`lost` resolve、报 error 诊断、帧作废);
+   * `restore`(缺省 true)时下一轮宏任务「重建设备」——此前的资源全部作废(作用域保留)、报「已恢复」、通知 onRestored。
+   * 返回的 Promise 在恢复完成(或不恢复时丢失之后)resolve。已销毁 / 已丢失时什么都不做。
+   */
+  async loseDevice(reason = '模拟设备丢失', options: { restore?: boolean } = {}): Promise<void> {
+    if (this.destroyed || this._isLost) return;
+    this._isLost = true;
+    this.resolveLost(reason);
+    this.report(new RhiError('backend', `图形设备丢失:${reason}`), 'error');
+    if (options.restore === false) return;
+    await new Promise((r) => setTimeout(r, 0));
+    if (this.destroyed) return;
+    this.rootScope._invalidateResources();
+    this.swapchainDepth.clear();
+    this.swapchainMsaa.clear();
+    this.releases.flush();
+    this._isLost = false;
+    this.newLostPromise();
+    this.report(new RhiError('backend', '图形设备已恢复:此前的 GPU 资源已作废、按需重建重传(空后端模拟)'), 'warning');
+    for (const l of [...this.restoredListeners]) l();
+  }
+
+  private newLostPromise(): void {
+    this._lost = new Promise((resolve) => {
+      this.resolveLost = resolve;
+    });
   }
 
   get lastFrameStats(): RhiFrameStats {
@@ -657,7 +701,7 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   resizeSwapchain(): void {}
 
   runFrame(record: (frame: RhiFrame) => void): boolean {
-    if (this.destroyed) return false;
+    if (this._isLost || this.destroyed) return false;
     const stats: RhiFrameStats = { frame: this.frameIndex, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
     const commands = new NullCommandList(this, `帧 ${this.frameIndex}`, stats);
     const swapchainWithDepth = (format: RhiDepthFormat): RhiRenderTarget => {
@@ -704,7 +748,7 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   }
 
   submit(label: string, record: (commands: RhiCommandList) => void): boolean {
-    if (this.destroyed) return false;
+    if (this._isLost || this.destroyed) return false;
     const stats: RhiFrameStats = { frame: this.frameIndex, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
     const commands = new NullCommandList(this, label, stats);
     return this.record(commands, () => record(commands), () => {});
@@ -721,6 +765,7 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
     this.rootScope.destroy();
     this.releases.flush();
     this.listeners.clear();
+    this.restoredListeners.clear();
   }
 
   /** @internal draw / dispatch 因管线建坏被跳过;每条管线只报一次(同真后端) */

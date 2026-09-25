@@ -175,6 +175,14 @@ export class Pipelines {
   }
 
   destroy(): void {
+    this.reset();
+  }
+
+  /**
+   * 丢掉全部着色器与管线(含预建的)。设备丢失后重建时也走这里(照 Pixi GlShaderSystem 的 contextChange:程序下次用到时重编);
+   * 顶点布局只是 CPU 侧的推导,保留
+   */
+  reset(): void {
     for (const p of this.pipelines.values()) p.destroy();
     for (const s of this.shaders.values()) s.destroy();
     this.pipelines.clear();

@@ -19,6 +19,7 @@ import {
   type RhiTexture,
   type RhiTextureReadback,
 } from '@src/rendering/rhi';
+import { BufferImageSource, Container, Sprite, Texture, WebGPURenderer } from '@src/engine2d';
 
 export interface CaseContext {
   dev: RhiDevice;
@@ -926,6 +927,96 @@ struct Params { lod: vec4<f32> };
       check(same(at(w - w / 8, h - h / 8), [0, 255, 0, 255]), `右下应为绿,实得 [${at(w - w / 8, h - h / 8)}]`);
       check(same(at(w - w / 8, h / 8), [0, 0, 255, 255]), `右上应为清屏蓝,实得 [${at(w - w / 8, h / 8)}]`);
       return `画布 ${w}×${h}`;
+    },
+  },
+  {
+    // 必须放最后:销毁原生设备。对照 master 的 Pixi WebGL(webglcontextlost → 浏览器恢复 → contextChange 重传),
+    // RHI 在同一画布上重建设备、旧资源作废,engine2d 丢掉 GPU 缓存后照常上屏;反复丢两次
+    name: '设备丢失:原生 GPUDevice.destroy() → 同一画布上重建 → engine2d 照常上屏、离屏回读照常',
+    async run(ctx) {
+      const { dev, scope } = ctx;
+      const canvas = document.getElementById('view') as HTMLCanvasElement;
+      const renderer = new WebGPURenderer({ rhi: dev, canvas, width: canvas.width, height: canvas.height });
+      try {
+        const red = new BufferImageSource({
+          resource: new Uint8Array(4 * 4 * 4).map((_, i) => (i % 4 === 1 || i % 4 === 2 ? 0 : 255)),
+          width: 4, height: 4, format: 'rgba8unorm', label: '红块',
+        });
+        const root = new Container();
+        const sprite = new Sprite(new Texture({ source: red }));
+        sprite.width = canvas.width / 2;
+        sprite.height = canvas.height;
+        root.addChild(sprite);
+        const probe = document.createElement('canvas');
+        probe.width = canvas.width;
+        probe.height = canvas.height;
+        const g2d = probe.getContext('2d', { willReadFrequently: true })!;
+        const same = (a: number[], b: number[]) => a.every((v, i) => Math.abs(v - b[i]) <= 3);
+        /** 画一帧 engine2d,同一任务里抓画布(呈现之前):左半红、右半清屏黑 */
+        const drawAndProbe = (what: string) => {
+          renderer.render(root);
+          g2d.clearRect(0, 0, probe.width, probe.height);
+          g2d.drawImage(canvas, 0, 0);
+          const at = (x: number, y: number) => Array.from(g2d.getImageData(x, y, 1, 1).data);
+          const w = canvas.width;
+          const h = canvas.height;
+          check(same(at(w / 4, h / 2), [255, 0, 0, 255]), `${what}:左半应为红块,实得 [${at(w / 4, h / 2)}]`);
+          check(same(at((w * 3) / 4, h / 2), [0, 0, 0, 255]), `${what}:右半应为清屏黑,实得 [${at((w * 3) / 4, h / 2)}]`);
+        };
+        drawAndProbe('丢失前');
+
+        const lines: string[] = [];
+        for (let round = 1; round <= 2; round++) {
+          const old = scope.createTexture({ label: `旧纹理 ${round}`, width: 2, height: 2, format: 'rgba8unorm', usage: RhiTextureUsage.COPY_SRC | RhiTextureUsage.COPY_DST });
+          const nativeBefore = dev.native.device;
+          const restored = new Promise<void>((resolve) => {
+            const off = dev.onRestored(() => {
+              off();
+              resolve();
+            });
+          });
+          const before = ctx.diagnostics.length;
+          // 回读挂着的时候丢设备:回读必须有个结果(成功或报错),不能永远挂着
+          const pendingRead = dev.readTexture(old).then(() => '完成', (e: unknown) => `报错(${e instanceof Error ? e.message.split('\n')[0] : String(e)})`);
+          nativeBefore.destroy();
+          const reason = await dev.lost;
+          check(dev.isLost, `第 ${round} 次:原生设备销毁后 isLost 应为 true`);
+          check(!dev.runFrame(() => {}), `第 ${round} 次:恢复之前 runFrame 应作废`);
+          const t0 = performance.now();
+          await restored;
+          const readOutcome = await pendingRead;
+          const ms = Math.round(performance.now() - t0);
+          check(!dev.isLost, `第 ${round} 次:恢复后 isLost 应为 false`);
+          check(dev.native.device !== nativeBefore, `第 ${round} 次:应换上新的 GPUDevice`);
+          check(old.destroyed, `第 ${round} 次:旧设备上的纹理应已作废`);
+          const msgs = ctx.diagnostics.slice(before).map((d) => d.message);
+          check(msgs.some((m) => m.includes('图形设备丢失')), `第 ${round} 次:应报「图形设备丢失」,实得 ${msgs.join(' | ')}`);
+          check(msgs.some((m) => m.includes('图形设备已恢复')), `第 ${round} 次:应报「图形设备已恢复」,实得 ${msgs.join(' | ')}`);
+          drawAndProbe(`第 ${round} 次恢复后`);
+          await new Promise((r) => requestAnimationFrame(() => r(null)));
+          const errs = ctx.diagnostics.slice(before).filter((d) => !/图形设备(丢失|已恢复)/.test(d.message));
+          if (errs.length) throw errs[0];
+          lines.push(`第 ${round} 次:${reason} → ${ms}ms 恢复;挂着的回读 ${readOutcome}`);
+        }
+
+        // 恢复后 RHI 离屏照常:同一作用域建新资源、画、回读
+        const { tex, target } = colorTarget(scope, '恢复后离屏', 4, 4);
+        const pipe = scope.createRenderPipeline({ label: '恢复后纯色', shader: scope.createShader(SOLID), colorFormats: ['rgba8unorm'] });
+        const green = scope.createBuffer({ label: '绿', usage: RhiBufferUsage.UNIFORM, data: solidParams([0, 1, 0, 1]) });
+        await pipe.ready;
+        submitOk(ctx, '恢复后离屏', (c) => {
+          const p = c.beginRenderPass({ label: '恢复后离屏', target, colorOps: [{ load: 'clear', clearValue: [0, 0, 0, 1] }] });
+          p.setPipeline(pipe);
+          p.setBindings({ params: green });
+          p.draw(6);
+          p.end();
+        });
+        expectPx(await dev.readTexture(tex), 1, 1, [0, 255, 0, 255], '恢复后离屏回读');
+        check(!dev.isLost, '收尾时设备不应丢失');
+        return lines.join('\n');
+      } finally {
+        renderer.destroy();
+      }
     },
   },
 ];

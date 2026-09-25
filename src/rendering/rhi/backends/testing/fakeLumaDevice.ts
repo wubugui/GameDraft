@@ -9,6 +9,8 @@
  *   setBindings 经 BindGroupFactory 取 bind group 再设给原生 pass,draw 前校验(`bindingsPipeline !== pipeline` 就抛)
  *   后经顶点数组的 bindBeforeRender 设顶点 / 索引缓冲再 draw。
  * - 顶点数组用 luma 真的 WebGPUVertexArray(物理槽位 / 逻辑槽位与真设备同一份推导)。
+ * - 设备丢失:`lose()` 让 `lost` resolve(照 luma WebGPUDevice:原生 GPUDevice.lost → `{ reason: 'destroyed', message }`);
+ *   `destroy()` 同真设备,之后 `lost` 也会 resolve。
  */
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -39,6 +41,8 @@ export interface FakeLuma {
   counts: { bindGroups: number; bindGroupLayouts: number };
   /** 画布上下文桩 */
   canvasContext: { destroyed: boolean };
+  /** 模拟设备丢失(GPU 进程崩溃 / 驱动重置 / 原生 GPUDevice.destroy()) */
+  lose(message?: string): void;
 }
 
 export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
@@ -68,6 +72,11 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
       return Promise.resolve(s.error);
     },
   };
+  let resolveLost!: (info: { reason: 'destroyed'; message: string }) => void;
+  const lost = new Promise<{ reason: 'destroyed'; message: string }>((r) => {
+    resolveLost = r;
+  });
+  const lose = (message = '测试模拟的设备丢失'): void => resolveLost({ reason: 'destroyed', message });
   const makeSampler = (props: unknown) => ({ handle: { sampler: props }, props, destroy() {} });
   const canvasContext = {
     destroyed: false,
@@ -78,7 +87,7 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
       depthStencilAttachment: opts?.depthStencilFormat ? { handle: { view: 'canvas-depth' } } : null,
     }),
     getDrawingBufferSize: () => [16, 16],
-    setDrawingBufferSize() {},
+    setDrawingBufferSize: (w: number, h: number) => log.push(['setDrawingBufferSize', w, h]),
     destroy() {
       canvasContext.destroyed = true;
       log.push(['canvasContext.destroy']);
@@ -156,7 +165,7 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
     statsManager: luma.stats,
     userData: {},
     preferredColorFormat: 'bgra8unorm',
-    lost: new Promise(() => {}),
+    lost,
     isTextureFormatFilterable: () => false,
     isTextureFormatRenderable: () => true,
     getDefaultCanvasContext: () => canvasContext,
@@ -267,7 +276,10 @@ export function createFakeLuma(options: FakeLumaOptions = {}): FakeLuma {
       destroy() {},
     }),
     submit: (cb: unknown) => log.push(['submit', cb]),
-    destroy: () => log.push(['luma.destroy']),
+    destroy: () => {
+      log.push(['luma.destroy']);
+      lose('设备已销毁');
+    },
   };
-  return { device, log, counts, canvasContext };
+  return { device, log, counts, canvasContext, lose };
 }

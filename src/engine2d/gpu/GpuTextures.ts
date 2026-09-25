@@ -148,6 +148,15 @@ export class GpuTextures {
   }
 
   destroy(): void {
+    this.reset();
+  }
+
+  /**
+   * 丢掉全部纹理与采样器、摘掉源上的监听。设备丢失后重建时也走这里(照 Pixi GlTextureSystem.contextChange:
+   * `_managedTextures.removeAll(true)` + 清采样器;旧设备上的纹理此时已作废):下次取用时建新纹理、从 CPU 资源重传,
+   * 没有资源的源(RenderTexture)建成空的
+   */
+  reset(): void {
     for (const [source, e] of [...this.entries]) {
       this.unhook(source);
       e.texture.destroy();
