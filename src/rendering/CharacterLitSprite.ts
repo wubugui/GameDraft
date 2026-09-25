@@ -14,10 +14,15 @@
  *
  * 照明数学(probe/体素/RT/SH/着色核心)与 filter 共用 CHAR_LIGHT_COMMON_GLSL,
  * 同一份字符串,零漂移。深度遮挡仍走 DepthOcclusionFilter(那是 filter 的正当用途)。
+ *
+ * WebGPU 迁移期:同一个网格程序另有 WGSL 版(VERT_WGSL / FRAG_WGSL,逐式对应 GLSL,拼的是
+ * 共享片段的 WGSL 版);GLSL 一个字不动,WebGL(含 anim_preview 自建的 Pixi)仍跑它。
+ * 等价由 tools/render_parity/cases/80_char_lighting.ts(「角色受光 /」)逐像素钉住。
  */
 import {
   type Buffer,
   GlProgram,
+  GpuProgram,
   Mesh,
   MeshGeometry,
   Shader,
@@ -26,12 +31,13 @@ import {
   UniformGroup,
 } from 'pixi.js';
 
-import { CHAR_LIGHT_COMMON_GLSL } from './CharacterShadingFilter';
+import { CHAR_LIGHT_COMMON_GLSL, CHAR_LIGHT_COMMON_WGSL } from './CharacterShadingFilter';
 import type { SceneLightingDef } from '../data/types';
 import { resolveLightColor } from './lighting/kelvin';
 import { MAX_STATIC_LIGHTS, type PackedLights } from './lighting/lightPacking';
 import LIGHTING_CORE from './lighting/lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT from './lighting/worldReconstruct.glsl?raw';
+import { LC_WGSL, WR_CORE_WGSL } from './lighting/wgslChunks';
 
 /** GLSL 切片器：与 SceneLightingPass 同一行代码（两处都从 `//__TAG_BEGIN__` 取到 `_END__`）。 */
 function sliceGlsl(src: string, tag: string): string {
@@ -493,10 +499,383 @@ void main(void) {
 }
 `;
 
+// ───────────────────────────── WGSL(WebGPU 路径;上面的 GLSL 一个字不动,WebGL 仍跑它)
+//
+// 与 VERT / FRAG 逐式对应,差别只在语言(约定见 agent_docs 的 pixi-shader-wgsl-port 配方卡):
+// - 组 0 / 1 是 Pixi 网格约定(globalUniforms / localUniforms,声明了 Pixi 才自动绑);自己的资源全在组 2,
+//   变量名 = resources 的键名;四个 uniform 组的 struct 成员同名同序对应各自的 create*Uniforms。
+// - 纹理的声明顺序与 createLitShader 的 resources 表相对顺序一致(WebGL 按组号 / 绑定号升序分纹理单元)。
+// - 用 texture() 采样的三张(uColorTex / uNrm / uGround)各配一个「纹理名 + Sampler」,值是该纹理自己的 style;
+//   其余全走 textureLoad,不要采样器。换纹理时采样器跟着换(setLitShaderTexture)。
+// - 共享片段(CLC / WR_CORE / LC / 实体灯循环)拼 WGSL 版,每段一个模块只拼一次;CLC 的函数一个绑定都不读,
+//   main 开头按字段名逐个赋值建 ClcProbe / ClcSkyao / ClcVol(ClcRt 只在 RT 那一支里建)。
+// - 只有 uColorTex 在一致控制流里(discard 之前)用 textureSample;discard 之后的 uNrm / uGround 用
+//   textureSampleLevel(.., 0.0) —— 两张都没有 mip,与 GLSL 的 texture() 等价。
+// - gatherRT 的随机旋转吃片元坐标:GLSL 读 gl_FragCoord,这里把入口的位置内建量 .xy 传进去
+//   (离屏目标上两者行序一致;直接画到画布时 y 相反,只影响 RT 诊断档的噪声图样)。
+// - 结构体里不写注释:Pixi 用正则解析 WGSL 的 struct 与 group 声明,注释里的「名: 类型」会被当成成员。
+
+/**
+ * `sceneShade` 组({@link createSceneLitUniforms})的 WGSL 结构:成员**同名同序**对应 JS 声明
+ * (Pixi 按 JS 声明顺序、WGSL 对齐规则排 uniform 缓冲;错位不报错)。粒子受光共用同一个组,拼这一段即可。
+ */
+export const SCENE_SHADE_WGSL = /* wgsl */ `
+struct SceneShade {
+    uWorkSize: vec2<f32>,
+    uWorldToWork: vec2<f32>,
+    uCal: vec4<f32>,
+    uCosT: f32,
+    uSinT: f32,
+    uQMin: vec3<f32>,
+    uQMax: vec3<f32>,
+    uVolN: vec3<f32>,
+    uVolTiles: vec2<f32>,
+    uM: mat3x3<f32>,
+    uWMin: vec3<f32>,
+    uWScale: vec3<f32>,
+    uPN: vec3<f32>,
+    uProbeT: f32,
+    uShK: f32,
+    uBinOb: f32,
+    uAmbSH: array<vec3<f32>, 9>,
+    uLightQ: array<vec4<f32>, 48>,
+    uLightE: array<vec4<f32>, 48>,
+    uLightCount: f32,
+    uGroundRange: vec2<f32>,
+    uSceneWorld: vec2<f32>,
+    uSkyaoN: vec3<f32>,
+    uSkyaoTiles: vec2<f32>,
+    uSkyaoMin: vec3<f32>,
+    uSkyaoScale: vec3<f32>,
+    uSkyaoM: mat3x3<f32>,
+    uSkyaoOn: f32,
+}
+`;
+
+/**
+ * `frameShade` 组({@link createFrameLitUniforms})的 WGSL 结构,同上(同名同序)。
+ * 角色网格与粒子各有一份这个组(粒子是 vfxFrameLit),布局相同。
+ */
+export const FRAME_SHADE_WGSL = /* wgsl */ `
+struct FrameShade {
+    uWCPos: vec2<f32>,
+    uWCScale: f32,
+    uMode: f32,
+    uSpp: f32,
+    uMSteps: f32,
+    uFold: f32,
+    uMissMode: f32,
+    uNEE: f32,
+    uStep: f32,
+    uBeta: f32,
+    uIndirectFactor: f32,
+    uDirectFactor: f32,
+    uTotalFactor: f32,
+    uAmbStrength: f32,
+    uBulge: f32,
+    uFlatten: f32,
+    uShowN: f32,
+    uEOnly: f32,
+    uGiStrength: f32,
+    uFixedNQ: f32,
+    uEChecker: f32,
+    uSunOn: f32,
+    uSunDirQ: vec3<f32>,
+    uSunColor: vec3<f32>,
+    uEChroma: f32,
+    uAOContact: f32,
+    uAOForm: f32,
+    uSkyaoBlend: f32,
+}
+`;
+
+/** 宿主声明:两个 Pixi 网格组 + 组 2 的全部资源(顺序见上面的约定)。 */
+const LIT_DECLS_WGSL = /* wgsl */ `
+struct GlobalUniforms {
+    uProjectionMatrix: mat3x3<f32>,
+    uWorldTransformMatrix: mat3x3<f32>,
+    uWorldColorAlpha: vec4<f32>,
+    uResolution: vec2<f32>,
+}
+
+struct LocalUniforms {
+    uTransformMatrix: mat3x3<f32>,
+    uColor: vec4<f32>,
+    uRound: f32,
+}
+
+struct EntityShade {
+    uHasNrm: f32,
+    uBodyWidthWu: f32,
+    uL2W0: vec3<f32>,
+    uL2W1: vec3<f32>,
+}
+${SCENE_SHADE_WGSL}
+${FRAME_SHADE_WGSL}
+${CHAR_LIGHTS_WGSL}
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+
+@group(2) @binding(0) var<uniform> sceneShade: SceneShade;
+@group(2) @binding(1) var<uniform> frameShade: FrameShade;
+@group(2) @binding(2) var<uniform> charLights: CharLights;
+@group(2) @binding(3) var<uniform> entityShade: EntityShade;
+@group(2) @binding(4) var uColorTex: texture_2d<f32>;
+@group(2) @binding(5) var uColorTexSampler: sampler;
+@group(2) @binding(6) var uNrm: texture_2d<f32>;
+@group(2) @binding(7) var uNrmSampler: sampler;
+@group(2) @binding(8) var uGround: texture_2d<f32>;
+@group(2) @binding(9) var uGroundSampler: sampler;
+@group(2) @binding(10) var uPL1: texture_2d<f32>;
+@group(2) @binding(11) var uPL2: texture_2d<f32>;
+@group(2) @binding(12) var uPBin: texture_2d<f32>;
+@group(2) @binding(13) var uValid: texture_2d<f32>;
+@group(2) @binding(14) var uVolRad: texture_2d<f32>;
+@group(2) @binding(15) var uVolEmit: texture_2d<f32>;
+@group(2) @binding(16) var uSkyaoTex: texture_2d<f32>;
+
+struct VSOutput {
+    @builtin(position) position: vec4<f32>,
+    @location(0) vUV: vec2<f32>,
+    @location(1) vLocal: vec2<f32>,
+    @location(2) vWorld: vec2<f32>,
+    @location(3) vFootWorld: vec2<f32>,
+    @location(4) vMirror: f32,
+    @location(5) vColor: vec4<f32>,
+}
+`;
+
+/** 对应 GLSL VERT(世界坐标只由 CPU 喂的 local→sceneWorld 仿射给出,不从 screen 反推;理由见 VERT 注释)。 */
+const VERT_WGSL = /* wgsl */ `
+@vertex
+fn mainVertex(
+    @location(0) aPosition: vec2<f32>,
+    @location(1) aUV: vec2<f32>,
+    @location(2) aLocal: vec2<f32>,
+) -> VSOutput {
+    let model = globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+    let screen = (model * vec3<f32>(aPosition, 1.0)).xy;
+    var out: VSOutput;
+    out.position = vec4<f32>((globalUniforms.uProjectionMatrix * vec3<f32>(screen, 1.0)).xy, 0.0, 1.0);
+    out.vUV = aUV;
+    out.vLocal = aLocal;
+    let r0 = entityShade.uL2W0;
+    let r1 = entityShade.uL2W1;
+    out.vWorld = vec2<f32>(r0.x * aPosition.x + r0.y * aPosition.y + r0.z,
+                           r1.x * aPosition.x + r1.y * aPosition.y + r1.z);
+    out.vFootWorld = vec2<f32>(r0.z, r1.z);                  // local 原点(锚点=脚底)的世界坐标
+    // 镜像判定:仿射 2x2 行列式,scale.x<0 → det<0
+    let det = r0.x * r1.y - r1.x * r0.y;
+    out.vMirror = 0.0;
+    if (det < 0.0) { out.vMirror = 1.0; }
+    out.vColor = localUniforms.uColor;
+    return out;
+}
+`;
+
+/** 对应 GLSL FRAG,分支与提前返回逐条同序(各段的来历与坑见 FRAG 里的注释,这里不重复)。 */
+const FRAG_WGSL = /* wgsl */ `
+@fragment
+fn mainFragment(
+    @builtin(position) fragPos: vec4<f32>,
+    @location(0) vUV: vec2<f32>,
+    @location(1) vLocal: vec2<f32>,
+    @location(2) vWorld: vec2<f32>,
+    @location(3) vFootWorld: vec2<f32>,
+    @location(4) vMirror: f32,
+    @location(5) vColor: vec4<f32>,
+) -> @location(0) vec4<f32> {
+    let color = textureSample(uColorTex, uColorTexSampler, vUV);
+    if (color.a < 0.03) { discard; }
+
+    // 公共块的参数结构:按字段名逐个赋值(同为 f32 的字段位置构造会静默错位)
+    var pp: ClcProbe;
+    pp.uM = sceneShade.uM;
+    pp.uWMin = sceneShade.uWMin;
+    pp.uWScale = sceneShade.uWScale;
+    pp.uPN = sceneShade.uPN;
+    pp.uProbeT = sceneShade.uProbeT;
+    pp.uShK = sceneShade.uShK;
+    pp.uBinOb = sceneShade.uBinOb;
+    pp.uFold = frameShade.uFold;
+    pp.uAmbSH = sceneShade.uAmbSH;
+    pp.uMode = frameShade.uMode;
+    pp.uAmbStrength = frameShade.uAmbStrength;
+    var sk: ClcSkyao;
+    sk.uSkyaoN = sceneShade.uSkyaoN;
+    sk.uSkyaoTiles = sceneShade.uSkyaoTiles;
+    sk.uSkyaoMin = sceneShade.uSkyaoMin;
+    sk.uSkyaoScale = sceneShade.uSkyaoScale;
+    sk.uSkyaoM = sceneShade.uSkyaoM;
+    sk.uSkyaoOn = sceneShade.uSkyaoOn;
+
+    // ---------- 脚点 q(几何直出 + ground 场采样,零 CPU 驱动) ----------
+    let ppu = sceneShade.uCal.x;
+    let fw = vFootWorld * sceneShade.uWorldToWork;               // 脚点 → work px
+    let qxF = (fw.x - sceneShade.uCal.z) / ppu;
+    let qyF = (sceneShade.uCal.w - fw.y) / ppu;
+    let guv = clamp(vFootWorld / max(sceneShade.uSceneWorld, vec2<f32>(1e-5)), vec2<f32>(0.0), vec2<f32>(1.0));
+    let gs = textureSampleLevel(uGround, uGroundSampler, guv, 0.0);
+    let footD = sceneShade.uGroundRange.x
+      + ((gs.r * 255.0 * 256.0 + gs.g * 255.0) / 65535.0) * (sceneShade.uGroundRange.y - sceneShade.uGroundRange.x);
+
+    // ---------- 像素高度(世界 → 直立 quad) ----------
+    let pw = vWorld * sceneShade.uWorldToWork;
+    let h = max((fw.y - pw.y) / max(sceneShade.uCosT * ppu, 1e-6), 0.0);
+    let qx = (pw.x - sceneShade.uCal.z) / ppu;
+
+    // ---------- 法线:与 color 同一个 vUV 采样,镜像只翻方向分量 ----------
+    var ne = vec4<f32>(0.5, 0.5, 1.0, 0.35);
+    if (entityShade.uHasNrm > 0.5) { ne = textureSampleLevel(uNrm, uNrmSampler, vUV, 0.0); }
+    var n = normalize(vec3<f32>(-(ne.r * 2. - 1.), -(ne.g * 2. - 1.), -max(ne.b, .05)));
+    if (vMirror > 0.5) { n.x = -n.x; }
+    n = normalize(mix(n, vec3<f32>(0., 0., -1.), frameShade.uFlatten));
+
+    let bulgeQ = frameShade.uBulge * entityShade.uBodyWidthWu / max(charLights.uSMWuPerQUnit, 1e-6);
+    let q = vec3<f32>(qx, qyF + h * sceneShade.uCosT, footD - h * sceneShade.uSinT - ne.a * bulgeQ);
+
+    // 法线档是独占区间(uShowN=2 是 skyao 档)
+    if (frameShade.uShowN > 0.5 && frameShade.uShowN < 1.5) {
+        return vec4<f32>((n * .5 + .5) * color.a, color.a) * vColor;
+    }
+
+    // 灯循环直接用 n(世界法线);probe / RT / 太阳查表用 nQ = Rᵀ·n(SH 载荷的方向基是 q)
+    var nQ = normalize(wrWorldToQ(charLights.uSMRow0, charLights.uSMRow1, charLights.uSMRow2, n));
+    // 诊断·定法线:一律用 q 空间常量(1=朝相机 2=世界向上),只改查表,不碰灯循环
+    if (frameShade.uFixedNQ > 0.5) {
+        if (frameShade.uFixedNQ > 1.5) {
+            nQ = normalize(vec3<f32>(0., sceneShade.uCosT, -sceneShade.uSinT));
+        } else {
+            nQ = vec3<f32>(0., 0., -1.);
+        }
+    }
+
+    // ---------- E:RT gather 或 probe 图集(公共块) ----------
+    var E: vec3<f32>;
+    if (frameShade.uMode < 0.5) {
+        var vv: ClcVol;
+        vv.uVolN = sceneShade.uVolN;
+        vv.uVolTiles = sceneShade.uVolTiles;
+        vv.uQMin = sceneShade.uQMin;
+        vv.uQMax = sceneShade.uQMax;
+        var rt: ClcRt;
+        rt.uSpp = frameShade.uSpp;
+        rt.uMSteps = frameShade.uMSteps;
+        rt.uMissMode = frameShade.uMissMode;
+        rt.uNEE = frameShade.uNEE;
+        rt.uStep = frameShade.uStep;
+        rt.uLightCount = sceneShade.uLightCount;
+        rt.uLightQ = sceneShade.uLightQ;
+        rt.uLightE = sceneShade.uLightE;
+        E = gatherRT(q + nQ * 0.02, nQ, fragPos.xy, pp, vv, &rt, uVolRad, uVolEmit);
+    } else {
+        E = probeE(q, nQ, pp, uPL1, uPL2, uPBin, uValid);
+    }
+    let EgiPure = E * frameShade.uGiStrength;   // 历史 GI 诊断尺;正常受光的三项 factor 在末端计算
+    // skyao 乘在 GI 上,与全白 blend
+    E *= mix(1.0, skyaoAt(q, nQ, sk, uSkyaoTex), clamp(frameShade.uSkyaoBlend, 0.0, 1.0));
+    if (frameShade.uShowN > 4.5) { return vec4<f32>(skyaoBand(q, nQ, sk, uSkyaoTex) * color.a, color.a); }
+    if (frameShade.uShowN > 3.5) { return vec4<f32>(skyaoRaw(q, sk, uSkyaoTex) * color.a, color.a); }
+    if (frameShade.uShowN > 2.5) { return vec4<f32>(skyaoBox(q, sk) * color.a, color.a); }
+    if (frameShade.uShowN > 1.5) {
+        // 与场景同一条显示链(3/4/5 取证子档刻意保持裸值)
+        let v = skyaoAt(q, nQ, sk, uSkyaoTex);
+        let vd = clamp(lcDisplayTransform(vec3<f32>(v),
+            charLights.uDispEv, charLights.uDispTonemap, charLights.uDispWhite,
+            charLights.uDispSaturation, charLights.uDispContrast, charLights.uDispLift, charLights.uDispLiftColor),
+            vec3<f32>(0.0), vec3<f32>(1.0));
+        return vec4<f32>(vd * color.a, color.a);
+    }
+    var directE = vec3<f32>(0.0);
+    if (frameShade.uSunOn > 0.5) {
+        // F2 的测试太阳:uSunDirQ 是 q 空间方向,与 nQ 同基
+        directE += frameShade.uSunColor * max(dot(nQ, frameShade.uSunDirQ), 0.0);
+    }
+
+    // ---------- 实体灯:加性叠在 probe 的 GI 底光之上(循环本体在 ENTITY_SCENE_LIGHTS_WGSL) ----------
+    directE += entitySceneLightsE(q, n);
+    // ---- 「GI体·纯E」调试(F2 循环 8/9 档):albedo≡1,输出 E×2^β ----
+    if (frameShade.uEOnly > 0.5) {
+        // 取证子档:2=raw probeE 3=probeGridT/PN 染色 4=valid 角数/8 5=脚点 q 6=vFootWorld/uSceneWorld
+        if (frameShade.uEOnly > 1.5 && frameShade.uEOnly < 2.5) {
+            return vec4<f32>(probeE(q, nQ, pp, uPL1, uPL2, uPBin, uValid) * color.a, color.a) * vColor;
+        }
+        if (frameShade.uEOnly > 2.5 && frameShade.uEOnly < 3.5) {
+            return vec4<f32>((probeGridT(q, pp) / sceneShade.uPN) * color.a, color.a) * vColor;
+        }
+        if (frameShade.uEOnly > 4.5 && frameShade.uEOnly < 5.5) {
+            let qF = vec3<f32>(qxF, qyF, footD);
+            return vec4<f32>(clamp((qF - sceneShade.uQMin) / max(sceneShade.uQMax - sceneShade.uQMin, vec3<f32>(1e-5)),
+                                   vec3<f32>(0.), vec3<f32>(1.)) * color.a, color.a) * vColor;
+        }
+        if (frameShade.uEOnly > 5.5) {
+            return vec4<f32>(vec3<f32>(clamp(vFootWorld / max(sceneShade.uSceneWorld, vec2<f32>(1e-5)),
+                                             vec2<f32>(0.), vec2<f32>(1.)), 0.5) * color.a, color.a) * vColor;
+        }
+        if (frameShade.uEOnly > 3.5) {
+            let tv = probeGridT(q, pp);
+            let b0v = vec3<i32>(tv);
+            let pnv = vec3<i32>(sceneShade.uPN + .5);
+            var cnt = 0.;
+            for (var c = 0; c < 8; c++) {
+                let off = vec3<i32>(c & 1, (c >> 1u) & 1, (c >> 2u) & 1);
+                let pi = min(b0v + off, pnv - 1);
+                let fl = pi.x * (pnv.y * pnv.z) + pi.y * pnv.z + pi.z;
+                cnt += step(.002, textureLoad(uValid, probeTexel(fl, 1, 0, pp), 0).r);
+            }
+            return vec4<f32>(vec3<f32>(cnt / 8.) * color.a, color.a) * vColor;
+        }
+        // 用乘 skyao 之前的 E(与场景 uDebug==8 同式)
+        var pe = EgiPure * frameShade.uBeta;
+        if (frameShade.uEChecker > 0.5) {
+            let cc = vec3<i32>(probeGridT(q, pp));
+            pe *= mix(0.45, 1.0, f32((cc.x + cc.y + cc.z) & 1));
+        }
+        // 与场景同一条显示链
+        let peDisp = clamp(lcDisplayTransform(pe,
+            charLights.uDispEv, charLights.uDispTonemap, charLights.uDispWhite,
+            charLights.uDispSaturation, charLights.uDispContrast, charLights.uDispLift, charLights.uDispLiftColor),
+            vec3<f32>(0.0), vec3<f32>(1.0));
+        return vec4<f32>(peDisp * color.a, color.a) * vColor;
+    }
+    let alb = color.rgb / max(color.a, 1e-4);   // Pixi 预乘 → 直通 albedo
+    // 与背景同一份显示变换(lcDisplayTransform 收尾自带 sRGB)
+    var outRgb = clamp(lcDisplayTransform(
+        shadeEntityLinear(alb, E, directE, frameShade.uIndirectFactor, frameShade.uDirectFactor,
+                          frameShade.uTotalFactor, frameShade.uEChroma),
+        charLights.uDispEv, charLights.uDispTonemap, charLights.uDispWhite,
+        charLights.uDispSaturation, charLights.uDispContrast, charLights.uDispLift, charLights.uDispLiftColor),
+        vec3<f32>(0.0), vec3<f32>(1.0));
+
+    let vy = clamp(vLocal.y, 0.0, 1.0);
+    let contact = frameShade.uAOContact * smoothstep(0.78, 1.0, vy);
+    let form = frameShade.uAOForm * vy;
+    outRgb *= clamp(1.0 - contact - form, 0.0, 1.0);
+
+    return vec4<f32>(outRgb * color.a, color.a) * vColor;
+}
+`;
+
+/** 顶点与片元拼成一个模块(两个入口);共享片段每段只拼一次。 */
+const LIT_WGSL = [
+  LIT_DECLS_WGSL, CHAR_LIGHT_COMMON_WGSL, WR_CORE_WGSL, LC_WGSL, ENTITY_SCENE_LIGHTS_WGSL, VERT_WGSL, FRAG_WGSL,
+].join('\n');
+
 let litProgram: GlProgram | null = null;
 function getLitProgram(): GlProgram {
   if (!litProgram) litProgram = new GlProgram({ vertex: VERT, fragment: FRAG });
   return litProgram;
+}
+
+let litGpuProgram: GpuProgram | null = null;
+function getLitGpuProgram(): GpuProgram {
+  if (!litGpuProgram) {
+    litGpuProgram = GpuProgram.from({
+      vertex: { source: LIT_WGSL, entryPoint: 'mainVertex' },
+      fragment: { source: LIT_WGSL, entryPoint: 'mainFragment' },
+    });
+  }
+  return litGpuProgram;
 }
 
 /** 共享帧组(uWCPos/uWCScale + 全部照明参数):CharacterLightingSystem 每帧更新一次。 */
@@ -736,8 +1115,10 @@ export function createLitShader(
   lightGroup: UniformGroup,
   tex: LitShaderTextures,
 ): Shader {
+  const nrm = tex.nrm ?? Texture.WHITE.source;
   return new Shader({
     glProgram: getLitProgram(),
+    gpuProgram: getLitGpuProgram(),
     resources: {
       sceneShade: sceneGroup,
       frameShade: frameGroup,
@@ -750,8 +1131,13 @@ export function createLitShader(
         uL2W1: { value: new Float32Array([0, 1, 0]), type: 'vec3<f32>' },
       }),
       uColorTex: tex.colorTex,
-      uNrm: tex.nrm ?? Texture.WHITE.source,
+      // WGSL 的采样器(「纹理名 + Sampler」):该纹理自己的 style,与 WebGL 用纹理自带采样状态一致;
+      // WebGL 不认这些键。换纹理走 setLitShaderTexture,采样器跟着换。
+      uColorTexSampler: tex.colorTex.style,
+      uNrm: nrm,
+      uNrmSampler: nrm.style,
       uGround: tex.ground,
+      uGroundSampler: tex.ground.style,
       uPL1: tex.atlasL1,
       uPL2: tex.atlasL2,
       uPBin: tex.atlasBin,
@@ -777,17 +1163,26 @@ export function createLitShader(
  *
  * ⚠ 新增场景纹理槽位 = 同时加进这张表。`uColorTex` 故意不在表内 —— 那是角色自己的
  * 图集,不随场景销毁,退成白图只会把角色刷白。
+ * WGSL 的「纹理名 + Sampler」槽位不必进表:`setLitShaderTexture` 换纹理时顺手换它。
+ * (纹理销毁时它的 style 一起销毁,BindGroup 同样当场作废 —— 采样器漏换与纹理漏换一样致命,
+ * 而且 WebGL 下也一样:有了 WGSL 程序,采样器与纹理同住一个 BindGroup。)
  */
 export const LIT_SHADER_SCENE_TEXTURE_SLOTS = [
   'uPL1', 'uPL2', 'uPBin', 'uValid', 'uVolRad', 'uVolEmit', 'uGround', 'uNrm', 'uSkyaoTex',
 ] as const;
 
-/** 换法线/图集源(图集热替换、体素卷加载时用);同源短路。 */
+/**
+ * 换法线/图集源(图集热替换、体素卷加载时用);同源短路。
+ * shader 声明了「纹理名 + Sampler」(WGSL 采样器)时一并换成新纹理自己的 style —— 粒子受光的
+ * shader 也在同一张注册表里,按「声明了才换」处理,不要求各宿主布局相同。
+ */
 export function setLitShaderTexture(sh: Shader, key: string, src: TextureSource | null): void {
   const res = sh.resources as Record<string, unknown>;
   const next = src ?? Texture.WHITE.source;
   if (res[key] === next) return;
   res[key] = next;
+  const samplerKey = `${key}Sampler`;
+  if (samplerKey in res) res[samplerKey] = next.style;
   if (key === 'uNrm') {
     (res['entityShade'] as UniformGroup).uniforms['uHasNrm'] = src ? 1 : 0;
   }
