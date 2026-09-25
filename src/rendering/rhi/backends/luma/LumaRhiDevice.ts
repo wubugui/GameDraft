@@ -80,6 +80,7 @@ import {
   toLumaTextureFormat,
   toLumaTextureUsage,
 } from './lumaMapping';
+import { WebGpuMipmapGenerator } from './lumaMipmaps';
 
 export interface LumaRhiDeviceOptions {
   canvas: HTMLCanvasElement | OffscreenCanvas;
@@ -916,6 +917,8 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
   private readonly recordings: LumaCommandList[] = [];
   private _lastFrameStats: RhiFrameStats = emptyStats(-1);
   private _destroyed = false;
+  /** mip 生成器(首次生成时建,管线按格式缓存) */
+  private mipmaps: WebGpuMipmapGenerator | null = null;
 
   constructor(readonly luma: Device) {
     const L = luma.limits;
@@ -1191,11 +1194,17 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     requireUsage(t.usage, RhiTextureUsage.SAMPLED, `纹理「${t.label}」生成 mip`, 'SAMPLED');
     requireUsage(t.usage, RhiTextureUsage.RENDER_TARGET, `纹理「${t.label}」生成 mip`, 'RENDER_TARGET');
     if (t.mipLevels <= 1) return;
-    // luma 的 WebGPU 生成器:逐级把上一级线性采样渲染到下一级(用 luma 自己的命令编码器、当场提交,
-    // 与 RHI 的命令表无关;调用发生在规划阶段、帧录制之前,队列顺序 = 上传 → 生成 mip → 本帧)。
-    // 格式不可渲染 / 不可过滤时它抛错:上报诊断,纹理只剩 level 0 可用,不打断这一帧
+    // 照 Pixi GpuMipmapGenerator:逐级把上一级线性采样渲染到下一级,管线按格式缓存、全部级一个编码器一次提交
+    // (与 RHI 的命令表无关;调用发生在规划阶段、帧录制之前,队列顺序 = 上传 → 生成 mip → 本帧)。
+    // 不用 luma 的 generateMipmapsWebGPU:每次现建管线、每级提交一次,上传那一帧会卡(见 lumaMipmaps.ts)。
+    // 格式不可渲染 / 不可过滤时当场抛(WebGPU 自己的校验错误是异步的):上报诊断,纹理只剩 level 0 可用,不打断这一帧
     try {
-      this.luma.generateMipmapsWebGPU(t.handle);
+      const caps = this.luma.getTextureFormatCapabilities(t.handle.format);
+      if (!caps.render || !caps.filter) {
+        throw new Error(`格式 ${t.handle.format} 不可渲染或不可过滤(render=${caps.render}, filter=${caps.filter})`);
+      }
+      this.mipmaps ??= new WebGpuMipmapGenerator((this.luma as Device & { handle: GPUDevice }).handle);
+      this.mipmaps.generate(t.handle.handle as GPUTexture);
     } catch (e) {
       this.report(new RhiError('backend', `纹理「${t.label}」生成 mip 失败:${e instanceof Error ? e.message : String(e)}`), 'error');
     }
