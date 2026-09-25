@@ -24,6 +24,7 @@ import type {
   Shader,
   ShaderLayout,
   Texture,
+  TextureView,
   VertexArray,
 } from '@luma.gl/core';
 import { webgpuAdapter } from '@luma.gl/webgpu';
@@ -291,6 +292,8 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
     readonly depth: LumaRhiTexture | null,
     /** 逐颜色附件的 resolve 目标(多重采样附件才有) */
     readonly resolves: readonly (LumaRhiTexture | null)[] = [],
+    /** 多级 mip 的附件 / resolve 目标用的 level 0 单级视图(本目标建的,随目标拆) */
+    private readonly levelViews: ReadonlyMap<LumaRhiTexture, TextureView> = new Map(),
   ) {
     super('render-target', label, scope, releases);
   }
@@ -302,7 +305,9 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
   /** 第 i 个颜色附件的 resolve 视图 */
   resolveView(i: number): GPUTextureView | undefined {
     const r = this.resolves[i];
-    return r ? (r.handle as Texture & { view: { handle: GPUTextureView } }).view.handle : undefined;
+    if (!r) return undefined;
+    const level0 = this.levelViews.get(r);
+    return level0 ? (level0 as TextureView & { handle: GPUTextureView }).handle : (r.handle as Texture & { view: { handle: GPUTextureView } }).view.handle;
   }
 
   get width(): number {
@@ -330,8 +335,9 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
   }
 
   protected releaseBackend(): void {
-    // 只拆帧缓冲对象,附件纹理归各自的所有者
+    // 只拆帧缓冲对象与本目标建的单级视图,附件纹理归各自的所有者
     this.framebuffer.destroy();
+    for (const v of this.levelViews.values()) v.destroy();
   }
 }
 
@@ -1127,14 +1133,22 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       requireUsage(t.usage, RhiTextureUsage.RENDER_TARGET, `纹理「${t.label}」作 resolve 目标`, 'RENDER_TARGET');
       return t;
     });
+    // WebGPU 的附件视图只能有一级 mip:多级纹理(自动 mip 的源被当目标画)画 / resolve 进 level 0,
+    // 其余级由 generateMipmaps 生成(同 Pixi GpuRenderTargetAdaptor 的 baseMipLevel / mipLevelCount: 1)
+    const levelViews = new Map<LumaRhiTexture, TextureView>();
+    for (const t of [...colors, ...resolves]) {
+      if (t && t.mipLevels > 1 && !levelViews.has(t)) {
+        levelViews.set(t, t.handle.createView({ dimension: '2d', baseMipLevel: 0, mipLevelCount: 1, arrayLayerCount: 1 }));
+      }
+    }
     const framebuffer = this.luma.createFramebuffer({
       id: desc.label,
       width,
       height,
-      colorAttachments: colors.map((c) => c.handle),
+      colorAttachments: colors.map((c) => levelViews.get(c) ?? c.handle),
       depthStencilAttachment: depth?.handle ?? null,
     });
-    return new LumaRhiRenderTarget(scope, this.releases, desc.label, framebuffer, colors, depth, resolves);
+    return new LumaRhiRenderTarget(scope, this.releases, desc.label, framebuffer, colors, depth, resolves, levelViews);
   }
 
   // ── 数据上传 / 回读
@@ -1169,6 +1183,22 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       premultipliedAlpha: opts.premultiplyAlpha ?? false,
       flipY: opts.flipY ?? false,
     });
+  }
+
+  generateMipmaps(texture: RhiTexture): void {
+    const t = asTexture(texture, 'generateMipmaps');
+    this.assertNotInFlight(t, 'generateMipmaps');
+    requireUsage(t.usage, RhiTextureUsage.SAMPLED, `纹理「${t.label}」生成 mip`, 'SAMPLED');
+    requireUsage(t.usage, RhiTextureUsage.RENDER_TARGET, `纹理「${t.label}」生成 mip`, 'RENDER_TARGET');
+    if (t.mipLevels <= 1) return;
+    // luma 的 WebGPU 生成器:逐级把上一级线性采样渲染到下一级(用 luma 自己的命令编码器、当场提交,
+    // 与 RHI 的命令表无关;调用发生在规划阶段、帧录制之前,队列顺序 = 上传 → 生成 mip → 本帧)。
+    // 格式不可渲染 / 不可过滤时它抛错:上报诊断,纹理只剩 level 0 可用,不打断这一帧
+    try {
+      this.luma.generateMipmapsWebGPU(t.handle);
+    } catch (e) {
+      this.report(new RhiError('backend', `纹理「${t.label}」生成 mip 失败:${e instanceof Error ? e.message : String(e)}`), 'error');
+    }
   }
 
   async readBuffer(buffer: RhiBuffer, byteOffset = 0, size?: number): Promise<Uint8Array> {

@@ -12,8 +12,9 @@ import type { Container } from '../scene/Container';
 import type { Texture } from '../textures/Texture';
 import type { RenderTexture } from '../textures/RenderTexture';
 import type { RenderSurface } from './renderTargets';
+import type { GCSystemOptions } from './GCSystem';
 
-export interface RendererOptions {
+export interface RendererOptions extends GCSystemOptions {
   /** 已建好的 RHI 设备(画布就是设备建时给的那张) */
   rhi: RhiDevice;
   canvas: HTMLCanvasElement;

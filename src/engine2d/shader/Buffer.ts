@@ -37,6 +37,8 @@ export class Buffer extends EventEmitter {
   label?: string;
   shrinkToFit: boolean;
   destroyed = false;
+  /** 没人用了由渲染器的空闲回收放掉 GPU 缓冲(同 Pixi 缺省 true;下次用到时按 CPU 数据重建) */
+  autoGarbageCollect = true;
   /** 内容版本 */
   _updateID = 1;
   /** 需要重建 GPU 缓冲的版本(尺寸变化) */
@@ -105,6 +107,11 @@ export class Buffer extends EventEmitter {
   /** 本次要传的字节数 */
   get _uploadSize(): number {
     return Math.min(this._updateSize || this._data.byteLength, this._data.byteLength);
+  }
+
+  /** 释放 GPU 侧缓冲(CPU 数据保留,下次使用时重建重传;照 Pixi `Buffer.unload`) */
+  unload(): void {
+    this.emit('unload', this);
   }
 
   destroy(): void {

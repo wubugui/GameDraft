@@ -6,6 +6,7 @@
  * 与 Pixi 的差别:
  * - Pixi 用 `DOMAdapter.get().createCanvas` 取画布、`ImageSource` 包画布;这里用可替换的
  *   `FillGradient.createCanvas`(node 单测里换成假画布)和 `CanvasSource`(engine2d 的画布源,上传语义相同)。
+ *   源照 Pixi 的 ImageSource 设 `autoGarbageCollect`:游戏 destroy 图形不会销毁渐变,丢掉的渐变纹理靠空闲回收放掉。
  */
 import { Color, type ColorSource } from '../../color/Color';
 import { Matrix } from '../../math/Matrix';
@@ -180,6 +181,7 @@ export class FillGradient {
       source: new CanvasSource({
         resource: canvas as HTMLCanvasElement,
         addressMode: this._wrapMode,
+        autoGarbageCollect: true,
       }),
     });
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -238,6 +240,7 @@ export class FillGradient {
       source: new CanvasSource({
         resource: canvas as HTMLCanvasElement,
         addressMode: this._wrapMode,
+        autoGarbageCollect: true,
       }),
     });
     const m = new Matrix();

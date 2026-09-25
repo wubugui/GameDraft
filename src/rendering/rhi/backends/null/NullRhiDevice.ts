@@ -451,6 +451,15 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
     this.writeTexture(texture);
   }
 
+  generateMipmaps(texture: RhiTexture): void {
+    (texture as NullTexture).assertAlive('generateMipmaps');
+    this.assertNotInFlight(texture, 'generateMipmaps');
+    const need = RhiTextureUsage.SAMPLED | RhiTextureUsage.RENDER_TARGET;
+    if ((texture.usage & need) !== need) throw new RhiError('invalid-usage', `纹理「${texture.label}」生成 mip 需要 SAMPLED + RENDER_TARGET`);
+    if (texture.mipLevels <= 1) return;
+    this.log.push(`generate mips ${texture.label} ${texture.mipLevels}`);
+  }
+
   async readBuffer(buffer: RhiBuffer, byteOffset = 0, size?: number): Promise<Uint8Array> {
     const b = buffer as NullBuffer;
     b.assertAlive('readBuffer');

@@ -166,6 +166,8 @@ export class Geometry extends EventEmitter {
     this.emit('destroy', this);
     this.removeAllListeners();
     if (destroyBuffers) for (const b of this.buffers) b.destroy();
+    // 照 Pixi Geometry.destroy:索引缓冲总归本几何所有,不带 destroyBuffers 也销毁(顶点缓冲可能共享,留给空闲回收)
+    if (this.indexBuffer && !this.indexBuffer.destroyed) this.indexBuffer.destroy();
     this.attributes = {};
     this.buffers = [];
     this.indexBuffer = undefined;

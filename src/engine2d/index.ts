@@ -86,3 +86,4 @@ export { HTMLTextStyle, type HTMLTextStyleOptions } from './text/html/HTMLTextSt
 export { RendererBase, type RendererOptions, type RenderOptions, type GenerateTextureOptions } from './gpu/Renderer';
 export { WebGPURenderer, WebGPURenderer as Renderer, type PipelinePrewarmSpec } from './gpu/WebGPURenderer';
 export type { RenderSurface } from './gpu/renderTargets';
+export { GCSystem, type GCSystemOptions } from './gpu/GCSystem';

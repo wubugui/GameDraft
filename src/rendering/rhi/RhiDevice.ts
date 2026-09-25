@@ -238,6 +238,12 @@ export interface RhiDevice {
   /** 写像素:图像源(可选预乘 / 翻转)或紧排像素数据 */
   writeTexture(texture: RhiTexture, data: ArrayBufferView, region?: { x?: number; y?: number; width?: number; height?: number }): void;
   uploadImage(texture: RhiTexture, image: import('./types').RhiImageSource, opts?: { premultiplyAlpha?: boolean; flipY?: boolean }): void;
+  /**
+   * 由 level 0 逐级生成其余 mip(线性下采样,同 Pixi 的 GpuMipmapGenerator / WebGL generateMipmap)。
+   * 要求 SAMPLED + RENDER_TARGET 用途、可渲染可过滤的颜色格式;单级纹理什么也不做。
+   * 与 writeTexture 一样是帧外的队列操作:录制期内对本批已引用的纹理调用 = 违规。
+   */
+  generateMipmaps(texture: RhiTexture): void;
   /** 回读缓冲(要求 COPY_SRC 用途) */
   readBuffer(buffer: RhiBuffer, byteOffset?: number, size?: number): Promise<Uint8Array>;
   /** 回读纹理(要求 COPY_SRC 用途),行填充已去掉 */

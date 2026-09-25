@@ -31,6 +31,7 @@ import { Filter } from '../filters/Filter';
 import { GpuProgram } from '../shader/GpuProgram';
 import { GpuTextures } from './GpuTextures';
 import { GpuBuffers } from './GpuBuffers';
+import { GCSystem } from './GCSystem';
 import { Pipelines, STENCIL_DEPTH_FORMAT, targetSampleCount } from './Pipelines';
 import { Batcher, adjustedBlendMode } from './Batcher';
 import type { BlendMode } from '../core/blendModes';
@@ -128,6 +129,8 @@ export interface PipelinePrewarmSpec {
 
 export class WebGPURenderer extends RendererBase {
   readonly extract: ExtractSystem;
+  /** 空闲 GPU 资源回收(照 Pixi 的 `renderer.gc`;选项 gcActive / gcMaxUnusedTime / gcFrequency) */
+  readonly gc: GCSystem;
   private readonly scope: RhiResourceScope;
   private readonly textures: GpuTextures;
   private readonly buffers: GpuBuffers;
@@ -146,9 +149,12 @@ export class WebGPURenderer extends RendererBase {
     super(options);
     this.antialias = !!options.antialias;
     this.scope = this.rhi.createScope('engine2d');
-    this.textures = new GpuTextures(this.rhi, this.scope);
+    this.gc = new GCSystem(options);
+    this.textures = new GpuTextures(this.rhi, this.scope, this.gc);
     this.textures.onRelease = (t) => this.releaseTargets(t);
-    this.buffers = new GpuBuffers(this.rhi, this.scope);
+    this.buffers = new GpuBuffers(this.rhi, this.scope, this.gc);
+    this.gc.addCollector((now, maxUnused) => this.textures.collect(now, maxUnused));
+    this.gc.addCollector((now, maxUnused) => this.buffers.collect(now, maxUnused));
     this.pipelines = new Pipelines(this.scope);
     this.extract = createExtract(this);
   }
@@ -177,6 +183,7 @@ export class WebGPURenderer extends RendererBase {
     if (!container.visible || !container.activeSelf) return;
 
     const tick = Container._nextRenderTick();
+    this.gc.prerender();
     prepareTree(container, this, tick);
 
     const state = (this.states[this.depth] ??= new RenderState());
@@ -217,6 +224,8 @@ export class WebGPURenderer extends RendererBase {
       else this.rhi.submit('engine2d render', (commands) => this.record(state, cmds, commands, null));
     } finally {
       this.depth--;
+      // 最外层这一次都已提交:到点就回收空闲资源(Pixi GCSystem.postrender)
+      if (this.depth === 0) this.gc.postrender();
     }
   }
 
@@ -447,7 +456,10 @@ export class WebGPURenderer extends RendererBase {
     return this.rhi.readTexture(this.textures.get(source));
   }
 
-  /** 回读一张纹理源的像素(RGBA、未预乘),供 extract 用 */
+  /**
+   * 回读一张纹理源的像素(RGBA、**预乘**,即 GPU 里存的字节),供 extract 用。
+   * 照 master 的 Pixi WebGL `GlTextureSystem.getPixels`:读回的就是预乘字节,反预乘那一步在 Pixi 里是死代码(`if (false)`)。
+   */
   async readPixels(source: TextureSource, frame?: Rectangle): Promise<{ pixels: Uint8ClampedArray; width: number; height: number }> {
     const tex = this.textures.get(source);
     const rb = await this.rhi.readTexture(tex);
@@ -461,20 +473,10 @@ export class WebGPURenderer extends RendererBase {
       for (let x = 0; x < w; x++) {
         const si = ((y + fy) * rb.width + (x + fx)) * 4;
         const di = (y * w + x) * 4;
-        const a = rb.data[si + 3];
-        let r = rb.data[si + (bgra ? 2 : 0)];
-        const g = rb.data[si + 1];
-        let b = rb.data[si + (bgra ? 0 : 2)];
-        let gg = g;
-        if (a > 0 && a < 255) {
-          r = Math.round((r * 255) / a);
-          gg = Math.round((g * 255) / a);
-          b = Math.round((b * 255) / a);
-        }
-        out[di] = r;
-        out[di + 1] = gg;
-        out[di + 2] = b;
-        out[di + 3] = a;
+        out[di] = rb.data[si + (bgra ? 2 : 0)];
+        out[di + 1] = rb.data[si + 1];
+        out[di + 2] = rb.data[si + (bgra ? 0 : 2)];
+        out[di + 3] = rb.data[si + 3];
       }
     }
     return { pixels: out, width: w, height: h };
@@ -485,6 +487,7 @@ export class WebGPURenderer extends RendererBase {
     this.destroyed = true;
     this.events?.destroy();
     for (const t of [...this.targets.keys()]) this.releaseTargets(t);
+    this.gc.destroy();
     this.pipelines.destroy();
     this.buffers.destroy();
     this.textures.destroy();
@@ -506,6 +509,10 @@ function normalizeClearColor(c: RenderOptions['clearColor']): [number, number, n
   const arr = Color.shared.setValue(c as never).toArray();
   return [arr[0], arr[1], arr[2], arr[3]];
 }
+
+/** Pixi ExtractSystem 的 imageTypes / defaultImageOptions */
+const EXTRACT_IMAGE_TYPES = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' } as const;
+const EXTRACT_DEFAULT_IMAGE_OPTIONS = { format: 'png', quality: 1 } as const;
 
 function createExtract(renderer: WebGPURenderer): ExtractSystem {
   const toTexture = (target: Container | Texture | ExtractOptions): { texture: Texture; frame?: Rectangle; owned: boolean } => {
@@ -540,8 +547,10 @@ function createExtract(renderer: WebGPURenderer): ExtractSystem {
   const base64: ExtractSystem['base64'] = async (target) => {
     const c = await canvas(target);
     const opts = !(target instanceof Container) && !(target instanceof Texture) ? target : undefined;
-    const format = opts?.format ?? 'png';
-    return c.toDataURL(`image/${format}`, opts?.quality);
+    // 照 Pixi ExtractSystem:格式名 → MIME(jpg → image/jpeg),缺省 png、质量 1
+    const format = opts?.format ?? EXTRACT_DEFAULT_IMAGE_OPTIONS.format;
+    const quality = opts?.quality ?? EXTRACT_DEFAULT_IMAGE_OPTIONS.quality;
+    return c.toDataURL(EXTRACT_IMAGE_TYPES[format], quality);
   };
   const image: ExtractSystem['image'] = async (target) => {
     const img = new Image();
