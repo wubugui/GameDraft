@@ -13,6 +13,17 @@ export interface GpuProgramOptions {
   [key: string]: unknown;
 }
 
+/** WGSL 里声明的一个资源绑定 */
+export interface ProgramBinding {
+  group: number;
+  binding: number;
+  name: string;
+  /** var<uniform> */
+  isUniform: boolean;
+  /** 类型文字(结构体名 / texture_2d<f32> / sampler …) */
+  type: string;
+}
+
 export interface ProgramAttribute {
   name: string;
   location: number;
@@ -36,6 +47,7 @@ export class GpuProgram {
   readonly vertexEntry: string;
   readonly fragmentEntry: string;
   private _attributes: ProgramAttribute[] | null = null;
+  private _bindings: ProgramBinding[] | null = null;
 
   constructor(options: GpuProgramOptions) {
     this.vertex = options.vertex;
@@ -52,6 +64,25 @@ export class GpuProgram {
   /** 顶点入口的 `@location(n) 名字: 类型` 参数 */
   get attributes(): ProgramAttribute[] {
     return (this._attributes ??= extractAttributes(this.vertex.source, this.vertexEntry));
+  }
+
+  /** 模块里声明的全部资源绑定(按名字绑定时用来校验 / 诊断) */
+  get bindings(): ProgramBinding[] {
+    return (this._bindings ??= extractBindings(this.source));
+  }
+
+  /** 与 Pixi 同形的 `structsAndGroups.groups`(测试 / 诊断用) */
+  get structsAndGroups(): { groups: ProgramBinding[] } {
+    return { groups: this.bindings };
+  }
+
+  /** 着色器是否声明了 `globalUniforms`(渲染核心据此提供;与 Pixi 字段同名) */
+  get autoAssignGlobalUniforms(): boolean {
+    return this.bindings.some((b) => b.name === 'globalUniforms');
+  }
+
+  get autoAssignLocalUniforms(): boolean {
+    return this.bindings.some((b) => b.name === 'localUniforms');
   }
 
   destroy(): void {}
@@ -87,6 +118,23 @@ function extractAttributes(src: string, entry: string): ProgramAttribute[] {
   const re = /@location\s*\(\s*(\d+)\s*\)\s*(?:@interpolate\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z0-9_<>]+)/g;
   let a: RegExpExecArray | null;
   while ((a = re.exec(params))) out.push({ location: Number(a[1]), name: a[2], type: a[3] });
+  return out;
+}
+
+function extractBindings(src: string): ProgramBinding[] {
+  const clean = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  const out: ProgramBinding[] = [];
+  const re = /@group\s*\(\s*(\d+)\s*\)\s*@binding\s*\(\s*(\d+)\s*\)\s*var\s*(<[^>]*>)?\s*([A-Za-z_]\w*)\s*:\s*([^;]+);/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(clean))) {
+    out.push({
+      group: Number(m[1]),
+      binding: Number(m[2]),
+      name: m[4],
+      isUniform: !!m[3] && /uniform/.test(m[3]),
+      type: m[5].trim(),
+    });
+  }
   return out;
 }
 

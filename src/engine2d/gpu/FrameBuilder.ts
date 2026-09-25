@@ -544,12 +544,7 @@ export class FrameBuilder implements FilterSystemLike {
       const v = res[name] as unknown;
       if (v == null) continue;
       if (v instanceof UniformGroup) {
-        let ref = this.groupSlices.get(v);
-        if (!ref) {
-          ref = { arena: this.writeUbo(v.layout, v.uniforms), size: v.layout.size };
-          this.groupSlices.set(v, ref);
-        }
-        out[name] = ref;
+        out[name] = this.snapshotGroup(v);
       } else if (v instanceof TextureSource) {
         out[name] = this.ctx.textures.get(v);
       } else if (v instanceof Texture) {
@@ -562,6 +557,24 @@ export class FrameBuilder implements FilterSystemLike {
         out[name] = { buffer: this.ctx.buffers.get(v.buffer), offset: v.offset, size: v.size || undefined };
       }
     }
+  }
+
+  /**
+   * UniformGroup 按"绘制当时的值"拍快照(滤镜会在同一次 render 里改了值再画,例如模糊的多个 pass)。
+   * 与这个组上一次的快照逐字节相同就复用那份、退回刚分配的空间。
+   */
+  private snapshotGroup(g: UniformGroup): ArenaRef {
+    const layout = g.layout;
+    const mark = this.arena.size;
+    const offset = this.writeUbo(layout, g.uniforms);
+    const prev = this.groupSlices.get(g);
+    if (prev && this.arena.equal(prev.arena, offset, layout.size)) {
+      this.arena.size = mark;
+      return prev;
+    }
+    const ref = { arena: offset, size: layout.size };
+    this.groupSlices.set(g, ref);
+    return ref;
   }
 
   private writeUbo(layout: ReturnType<typeof createUboLayout>, values: Record<string, unknown>): number {

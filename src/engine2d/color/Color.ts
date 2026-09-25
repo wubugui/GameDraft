@@ -81,11 +81,18 @@ function parseString(raw: string, allowCss = true): [number, number, number, num
 export class Color {
   static readonly shared = new Color();
 
-  private _r = 1;
-  private _g = 1;
-  private _b = 1;
-  private _a = 1;
+  /** 分量存 float32(与 Pixi 相同;依赖分量做运算的地方 —— 颜色矩阵、渐变 —— 才与 master 逐数一致) */
+  private readonly _c = new Float32Array([1, 1, 1, 1]);
   private _value: ColorSource = 0xffffff;
+
+  private get _r(): number { return this._c[0]; }
+  private set _r(v: number) { this._c[0] = v; }
+  private get _g(): number { return this._c[1]; }
+  private set _g(v: number) { this._c[1] = v; }
+  private get _b(): number { return this._c[2]; }
+  private set _b(v: number) { this._c[2] = v; }
+  private get _a(): number { return this._c[3]; }
+  private set _a(v: number) { this._c[3] = v; }
 
   constructor(value: ColorSource = 0xffffff) {
     this.setValue(value);
@@ -100,8 +107,7 @@ export class Color {
 
   setValue(value: ColorSource): this {
     this._value = value;
-    const c = Color.normalize(value);
-    [this._r, this._g, this._b, this._a] = c;
+    this._c.set(Color.normalize(value));
     return this;
   }
 

@@ -25,6 +25,16 @@ export class Arena {
     return offset;
   }
 
+  /** 两段(字节偏移)内容是否相同 */
+  equal(a: number, b: number, bytes: number): boolean {
+    const u = this.u32;
+    const ia = a / 4;
+    const ib = b / 4;
+    const n = Math.ceil(bytes / 4);
+    for (let i = 0; i < n; i++) if (u[ia + i] !== u[ib + i]) return false;
+    return true;
+  }
+
   get bytes(): Uint8Array {
     return new Uint8Array(this.buf, 0, Math.ceil(this.size / 4) * 4);
   }
