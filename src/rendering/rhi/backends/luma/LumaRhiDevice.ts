@@ -882,7 +882,8 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       bufferLayout,
       topology: desc.topology ?? 'triangle-list',
       colorAttachmentFormats: desc.colorFormats.map(toLumaTextureFormat) as never,
-      depthStencilAttachmentFormat: desc.depthFormat ? (toLumaTextureFormat(desc.depthFormat) as never) : undefined,
+      // 深度 / 模板格式只经 parameters.depthFormat 给:luma 见到 depthStencilAttachmentFormat 会先建一个
+      // 不带 stencilFront / stencilBack 的 depthStencil,之后再设模板参数时解引用 undefined 崩掉
       parameters: toLumaPipelineParameters(desc),
     });
     const vertexArray = this.luma.createVertexArray({ shaderLayout: handle.shaderLayout, bufferLayout });

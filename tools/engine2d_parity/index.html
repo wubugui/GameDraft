@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>engine2d 像素对照</title>
+  <style>
+    :root { color-scheme: light dark; --ok: #1a7f37; --bad: #cf222e; }
+    body { font: 14px/1.5 system-ui, sans-serif; margin: 16px; }
+    table { border-collapse: collapse; margin-top: 12px; width: 100%; }
+    td, th { border-bottom: 1px solid #8884; padding: 4px 8px; text-align: left; vertical-align: top; }
+    .pass { color: var(--ok); } .fail, .error { color: var(--bad); }
+    #summary { font-weight: 600; margin-top: 8px; }
+    img { image-rendering: pixelated; width: 128px; height: auto; border: 1px solid #8886; margin-right: 4px; background: #888; }
+    pre { white-space: pre-wrap; margin: 0; max-width: 60ch; }
+  </style>
+</head>
+<body>
+  <h1>engine2d 像素对照:Pixi 8.17 WebGL(= master)vs engine2d(RHI / WebGPU)</h1>
+  <div id="summary">运行中…</div>
+  <table><thead><tr><th>用例</th><th>结果</th><th>参考 / 候选 / 差异</th><th>说明</th></tr></thead><tbody id="rows"></tbody></table>
+  <script type="module" src="/main.ts"></script>
+</body>
+</html>

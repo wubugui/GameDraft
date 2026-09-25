@@ -72,12 +72,21 @@ function findEntry(wgsl: string, stage: 'vertex' | 'fragment'): string | undefin
 }
 
 function extractAttributes(src: string, entry: string): ProgramAttribute[] {
-  const m = new RegExp(`fn\\s+${entry}\\s*\\(([^)]*)\\)`, 's').exec(src);
-  if (!m) return [];
+  const head = new RegExp(`fn\\s+${entry}\\s*\\(`).exec(src);
+  if (!head) return [];
+  // 参数表里有 @location(0) 之类的括号,按括号深度找配对的右括号
+  let depth = 1;
+  let i = head.index + head[0].length;
+  const start = i;
+  for (; i < src.length && depth > 0; i++) {
+    if (src[i] === '(') depth++;
+    else if (src[i] === ')') depth--;
+  }
+  const params = src.slice(start, i - 1);
   const out: ProgramAttribute[] = [];
   const re = /@location\s*\(\s*(\d+)\s*\)\s*(?:@interpolate\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z0-9_<>]+)/g;
   let a: RegExpExecArray | null;
-  while ((a = re.exec(m[1]))) out.push({ location: Number(a[1]), name: a[2], type: a[3] });
+  while ((a = re.exec(params))) out.push({ location: Number(a[1]), name: a[2], type: a[3] });
   return out;
 }
 
