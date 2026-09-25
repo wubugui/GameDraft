@@ -933,6 +933,12 @@
       ]
     },
     {
+      "glob": "src/rendering/legacy/**",
+      "docs": [
+        "rhi"
+      ]
+    },
+    {
       "glob": "src/rendering/lightEnv*",
       "docs": [
         "entity-lighting"
@@ -2134,6 +2140,12 @@
       "glob": "tools/production_workbench/**",
       "docs": [
         "widget-teardown-orphan-window"
+      ]
+    },
+    {
+      "glob": "tools/render_parity/**",
+      "docs": [
+        "rhi"
       ]
     },
     {

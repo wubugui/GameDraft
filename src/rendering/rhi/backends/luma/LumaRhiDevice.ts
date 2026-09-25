@@ -47,6 +47,7 @@ import {
 import type {
   RhiBindingResource,
   RhiBindings,
+  RhiNativeInterop,
   RhiBuffer,
   RhiCaps,
   RhiCommandList,
@@ -151,6 +152,8 @@ class LumaRhiTexture extends RhiResourceBase<'texture'> implements RhiTexture {
     readonly handle: Texture,
     readonly usage: number,
     label: string,
+    /** 包装的外部纹理:luma 看到外部句柄不会销毁它,这里只拆 luma 的包装 */
+    readonly external = false,
   ) {
     super('texture', label, scope, releases);
   }
@@ -734,6 +737,30 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     return this._lastFrameStats;
   }
 
+  get native(): RhiNativeInterop {
+    const luma = this.luma as Device & { adapter?: { handle?: GPUAdapter }; handle: GPUDevice };
+    const adapter = luma.adapter?.handle ?? (luma as unknown as { adapter: GPUAdapter }).adapter;
+    return {
+      adapter,
+      device: luma.handle,
+      gpuTexture: (texture) => asTexture(texture, 'native.gpuTexture').handle.handle as GPUTexture,
+      wrapTexture: (scope, desc) => {
+        const t = desc.texture;
+        const handle = this.luma.createTexture({
+          id: desc.label,
+          handle: t,
+          width: t.width,
+          height: t.height,
+          format: t.format as never,
+          mipLevels: t.mipLevelCount,
+          usage: t.usage,
+          sampler: toLumaSamplerProps({}),
+        });
+        return scope._adopt(new LumaRhiTexture(scope, this.releases, handle, fromGpuTextureUsage(t.usage), desc.label, true));
+      },
+    };
+  }
+
   createScope(label: string, parent: RhiResourceScope = this.rootScope): RhiResourceScope {
     return parent.createChild(label);
   }
@@ -1103,6 +1130,17 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
 // ───────────────────────────── 辅助
 
 const SAMPLER_SUFFIX = 'Sampler';
+
+/** GPUTextureUsage 位 → RHI 纹理用途位(数值取自 WebGPU 规范,避免在非浏览器环境依赖全局常量) */
+function fromGpuTextureUsage(usage: number): number {
+  let out = 0;
+  if (usage & 0x01) out |= RhiTextureUsage.COPY_SRC;
+  if (usage & 0x02) out |= RhiTextureUsage.COPY_DST;
+  if (usage & 0x04) out |= RhiTextureUsage.SAMPLED;
+  if (usage & 0x08) out |= RhiTextureUsage.STORAGE;
+  if (usage & 0x10) out |= RhiTextureUsage.RENDER_TARGET;
+  return out;
+}
 
 function findEntry(wgsl: string, stage: 'vertex' | 'fragment' | 'compute'): string | undefined {
   const m = new RegExp(`@${stage}(?:\\s+@workgroup_size\\([^)]*\\))?\\s+fn\\s+([A-Za-z_][A-Za-z0-9_]*)`).exec(wgsl)

@@ -18,6 +18,7 @@ import type {
   RhiDiagnosticSeverity,
   RhiFrame,
   RhiFrameStats,
+  RhiNativeInterop,
   RhiRenderPassEncoder,
   RhiRenderPipeline,
   RhiRenderTarget,
@@ -326,6 +327,11 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
 
   get lastFrameStats(): RhiFrameStats {
     return this.stats;
+  }
+
+  /** 空后端没有真设备 */
+  get native(): RhiNativeInterop {
+    throw new RhiError('unsupported', '空后端没有底层 GPU 设备,互通口不可用');
   }
 
   /** 延迟释放队列里还压着的句柄数 */

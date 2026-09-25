@@ -13,8 +13,9 @@ authority:
   - src/rendering/rhi/graph/RgTransientPool.ts
   - src/rendering/rhi/backends/luma/LumaRhiDevice.ts
   - src/rendering/rhi/backends/null/NullRhiDevice.ts
+  - src/rendering/legacy/pixiWebGpuPatches.ts
 triggers:
-  paths: ["src/rendering/rhi/**", "tools/rhi_smoke/**"]
+  paths: ["src/rendering/rhi/**", "src/rendering/legacy/**", "tools/rhi_smoke/**", "tools/render_parity/**"]
   topics: [RHI, luma.gl, WebGPU, WGSL, compute shader, render pass, 渲染图, render graph, frame graph, 瞬时资源, 替换 Pixi, 移植渲染]
   tasks: [往 RHI 上迁渲染代码, 写 compute pass, 加 pass, 写 WGSL 着色器]
 verified_by:
@@ -22,6 +23,7 @@ verified_by:
   - src/rendering/rhi/graph/RenderGraph.test.ts
   - src/rendering/rhi/backends/luma/lumaMapping.test.ts
   - tools/rhi_smoke/cases.ts
+  - tools/render_parity/cases/00_harness.ts
 last_governed: 2026-09-25
 ---
 
@@ -54,6 +56,16 @@ last_governed: 2026-09-25
 - **渲染图每帧新建**:pass 只能取自己在 reads / writes 里声明过的资源;结果没人要的 pass 被剔除
   (根 = `sideEffect` 或写导入资源);读了此前没人写过的图内资源 = 编译错误;瞬时资源由 `RgTransientPool`
   跨帧复用、同帧内生命期不重叠者共用一块,闲置 `maxIdleTicks` 次后销毁。
+
+## 迁移期结构(Pixi 跑在 RHI 的设备上)
+
+- RHI 持有 GPUDevice;Pixi 的 WebGPU 渲染器经 `rhi.native`(`RhiNativeInterop`)拿同一个 `{adapter, device}`,
+  纹理经 `native.gpuTexture` / `native.wrapTexture` 两边互通。`native` 只许 Pixi 桥(`src/rendering/legacy/`)用。
+- 建 Pixi WebGPU 渲染器前必须 `installPixiWebGpuPatches()`:原版 Pixi 8.17 把管线颜色目标格式写死 `bgra8unorm`
+  且不进缓存键,画 `rgba16float` / `rgba8unorm` 离屏目标会整批校验失败(画面全黑、只在控制台报错)。
+- 移植着色器的验收:`tools/render_parity`——同一段运行时代码在 Pixi-WebGL(原 GLSL = master 行为)与
+  Pixi-WebGPU(RHI 设备上的 WGSL)各画一遍,回读逐像素比。两侧分在两个 iframe 里跑(Pixi 有模块级单例,
+  同页两个渲染器会互相覆盖批处理着色器的纹理槽数)。
 
 ## 已知坑
 

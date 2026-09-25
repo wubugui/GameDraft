@@ -182,6 +182,23 @@ export interface RhiResourceFactory {
   createRenderTarget(scope: RhiResourceScope, desc: RhiRenderTargetDesc): RhiRenderTarget;
 }
 
+/**
+ * 迁移期互通口:让还没迁走的 Pixi(WebGPU 渲染器)与 RHI 共用同一个 GPUDevice、互相读写纹理。
+ * 只给 Pixi 桥(`src/rendering/legacy/`)用,迁移完成后收回;别处拿它绕过 RHI 就是违规。
+ */
+export interface RhiNativeInterop {
+  readonly adapter: GPUAdapter;
+  readonly device: GPUDevice;
+  /** RHI 纹理的底层 GPUTexture(所有权仍归 RHI,别拿去 destroy) */
+  gpuTexture(texture: RhiTexture): GPUTexture;
+  /**
+   * 包装一个外部创建的 GPUTexture。RHI **不负责销毁**底层纹理:包装被销毁只是解除登记;
+   * 外部先把底层纹理销毁了,包装再用就是 GPU 校验错误——所以包装的作用域要比底层纹理先收。
+   * 用途位按底层纹理的 `usage` 推出。
+   */
+  wrapTexture(scope: RhiResourceScope, desc: { label: string; texture: GPUTexture }): RhiTexture;
+}
+
 export interface RhiDevice {
   readonly caps: RhiCaps;
   readonly info: RhiDeviceInfo;
@@ -192,6 +209,8 @@ export interface RhiDevice {
   readonly lost: Promise<string>;
   /** 最近一帧的统计 */
   readonly lastFrameStats: RhiFrameStats;
+  /** 迁移期互通口,见 `RhiNativeInterop` */
+  readonly native: RhiNativeInterop;
 
   createScope(label: string, parent?: RhiResourceScope): RhiResourceScope;
 

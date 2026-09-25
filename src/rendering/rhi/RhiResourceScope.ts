@@ -183,6 +183,12 @@ export class RhiResourceScope {
     this.parent?.children.delete(this);
   }
 
+  /** @internal 由作用域之外的入口(互通口的外部纹理包装)建的资源,补登记到本作用域 */
+  _adopt<T extends RhiResource>(resource: T): T {
+    this.assertAlive();
+    return this.track(resource);
+  }
+
   /** @internal 资源自行销毁时摘掉登记 */
   _untrack(resource: RhiResource): void {
     this.resources.delete(resource);

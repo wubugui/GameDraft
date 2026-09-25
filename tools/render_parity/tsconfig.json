@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": {
+      "@src/*": ["src/*"],
+      "@/*": ["src/*"]
+    },
+    "types": ["node", "vite/client"],
+    "noEmit": true
+  },
+  "include": ["./*.ts", "./cases/*.ts"]
+}
