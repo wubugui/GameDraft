@@ -56,11 +56,14 @@ last_governed: 2026-09-25
   那一条 pixi-v8-traps 的契约照旧成立;游戏 `Renderer` 的渲染兜错(crash guard)仍然必要——engine2d 的 Ticker
   照 Pixi 移植,render 抛出去同样不再排下一帧。
 
+- **场景层级照 Unity**:节点 = GameObject + Transform(setActive / 组件 / 玩家循环 / Unity 名字的变换 API),
+  见 [scene-hierarchy](scene-hierarchy.md)。这是在 Pixi 语义之上加的,Pixi 对照测试不受影响。
+
 ## 与 Pixi(master)的已知差异
 
 - **半像素水平边差一行**:恰好落在 y+0.5 上的水平边(1 像素网格线、HUD 面板上下边)在画布上比 master 高/低一行——
   WebGL 默认帧缓冲自下而上光栅化、WebGPU 自上而下,平局归属相反。离屏目标两边一致。整局对照里这是唯一的系统性差异。
-- `Container.worldTransform` 每次现算(不走 Pixi 的"上一帧渲染结果");Culler 因此用的是**当帧**变换(Pixi 用上一帧)。
+- `Container.worldTransform` 与当前父链一致(按版本缓存,不走 Pixi 的"上一帧渲染结果");Culler 因此用的是**当帧**变换(Pixi 用上一帧)。
 - 需要背景纹理的混合滤镜(`blendRequired`)没实现(运行时没有用到;用到会直接抛)。
 
 ## 怎么验证

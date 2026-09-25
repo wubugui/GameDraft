@@ -748,6 +748,12 @@
       ]
     },
     {
+      "glob": "src/engine2d/scene/**",
+      "docs": [
+        "scene-hierarchy"
+      ]
+    },
+    {
       "glob": "src/entities/**",
       "docs": [
         "teardown-ordering"
