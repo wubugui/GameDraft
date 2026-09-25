@@ -54,7 +54,8 @@ last_governed: 2026-09-25
 - **管线在第一次用到时才建,建的时候 GPU 进程才把 WGSL 编成后端着色器**(不挡 JS,但用到它的那一帧要等编完)。
   大着色器要提前:`renderer.prewarmPipelines(specs)` 按(程序 × 几何顶点布局 × 混合 × 目标格式)预建进同一份缓存,
   `renderer.pipelinesReady(timeout)` 等全部已建管线编完(揭幕前闸在用,见 vfx-rendering)。
-  预建的键必须与真画时逐项相同:几何取自真实网格类、混合按网格纹理算非预乘变体、格式缺省画布 + 离屏 bgra8unorm。
+  预建的键必须与真画时逐项相同:几何取自真实网格类、混合按网格纹理算非预乘变体、格式缺省画布 + 离屏 bgra8unorm;
+  每个目标都建「不带模板」与「带深度模板、模板停用」两份——目标用过一次模板遮罩就一直带模板(照 Pixi),只建前一份的话第一次对话之后预建全部落空。
 - **设备丢失恢复后照常画**(照 Pixi `runners.contextChange`):WebGPURenderer 订 `rhi.onRestored`,丢掉全部 GPU 缓存
   (纹理 / 采样器、缓冲、着色器 / 管线含预建的、模板 / MSAA 目标、合批顶点 / 索引 / uniform 缓冲),下一次 render 按需重建、
   CPU 源重传;RenderTexture 重建成空的(画过的内容丢了,同 WebGL)。新加持有 RHI 资源的缓存必须一并在 `contextChange` 里清。

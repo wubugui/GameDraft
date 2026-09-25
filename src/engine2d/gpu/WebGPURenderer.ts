@@ -422,6 +422,9 @@ export class WebGPURenderer extends RendererBase {
    * 按(程序 × 几何的顶点布局 × 混合 × 目标格式)提前建好管线,真画时命中同一份缓存。
    * WebGPU 在建管线时才把 WGSL 编成后端着色器,大着色器(受光粒子这类)秒级;不预建就落在它第一次出现的那一帧。
    * 缺省目标格式 = 画布格式 + 离屏缺省格式(滤镜 / RenderTexture 的 bgra8unorm)。建不起来的只告警,不抛。
+   * 每个目标建两份:不带模板的,和带深度模板、模板停用的——目标一旦用过模板遮罩就一直带模板(照 Pixi),
+   * 此后遮罩外的 draw 要的是后一份;只建前一份的话,开局第一次对话(正文挂遮罩)之后画布上的预建全部落空。
+   * 遮罩里 / 同帧弹出遮罩之后(active / inverse)的变体不建:粒子不画在遮罩里,且画在 UI 层之前。
    */
   prewarmPipelines(specs: readonly PipelinePrewarmSpec[]): void {
     if (this.destroyed) return;
@@ -438,10 +441,12 @@ export class WebGPURenderer extends RendererBase {
           const blend = adjustedBlendMode(mode, texture.source);
           const targets = s.colorFormats?.map((format) => ({ format, samples: s.sampleCount ?? 1 })) ?? defaults;
           for (const t of targets) {
-            this.pipelines.get({
-              program: s.program, layout, topology: s.geometry.topology, blend,
-              colorFormat: t.format, depthFormat: null, stencil: 'disabled', colorMask: 15, sampleCount: t.samples,
-            });
+            for (const depthFormat of [null, STENCIL_DEPTH_FORMAT]) {
+              this.pipelines.get({
+                program: s.program, layout, topology: s.geometry.topology, blend,
+                colorFormat: t.format, depthFormat, stencil: 'disabled', colorMask: 15, sampleCount: t.samples,
+              });
+            }
           }
         }
       } catch (e) {
