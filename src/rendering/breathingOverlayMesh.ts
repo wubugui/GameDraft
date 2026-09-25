@@ -2,7 +2,9 @@ import 'pixi.js/mesh';
 import { BufferImageSource, Mesh, MeshGeometry, Shader, Texture } from 'pixi.js';
 import type { BreathingOverlayRig } from '../data/breathingOverlays';
 import BREATHING_SHADE_SRC from './breathingShade.glsl?raw';
+import BREATHING_SHADE_WGSL from './breathingShade.wgsl?raw';
 import { breathingStaticUniforms, sliceBreathingShade } from './breathingUniforms';
+import { OVERLAY_QUAD_WGSL_VERTEX } from './overlayBlendShader';
 
 /**
  * 呼吸图的渲染:一张 Mesh(与 showOverlayImage 的 Sprite 同一套 local 像素空间,顶点变换同 overlayBlendShader)
@@ -34,6 +36,17 @@ out vec4 finalColor;
 ${sliceBreathingShade(BREATHING_SHADE_SRC)}
 void main(void) {
     finalColor = vec4(breathingShade(vUV), 1.0);
+}
+`;
+
+/**
+ * WebGPU 版:顶点同 overlayBlendShader 的四边形(group 0/1 = Pixi 的 globalUniforms / localUniforms),
+ * 着色本体是 `breathingShade.wgsl`(与 .glsl 逐句对应;.glsl 给工作台切片,原样不动)。
+ */
+const WGSL = OVERLAY_QUAD_WGSL_VERTEX + BREATHING_SHADE_WGSL + /* wgsl */ `
+@fragment
+fn mainFragment(@location(0) vUV: vec2<f32>) -> @location(0) vec4<f32> {
+  return vec4<f32>(breathingShade(vUV), 1.0);
 }
 `;
 
@@ -99,7 +112,12 @@ export function createBreathingOverlayMesh(
   const st = breathingStaticUniforms(rig, size, layersPremultiplied);
   const shader = Shader.from({
     gl: { vertex: VERT, fragment: FRAG },
+    gpu: {
+      vertex: { source: WGSL, entryPoint: 'mainVertex' },
+      fragment: { source: WGSL, entryPoint: 'mainFragment' },
+    },
     resources: {
+      // ⚠ 成员顺序 = breathingShade.wgsl 里 BreathingUniforms 的成员顺序(WebGPU 按声明顺序排偏移)
       breathingUniforms: {
         uSize: { value: new Float32Array(st.uSize), type: 'vec2<f32>' },
         uInfl: { value: 0, type: 'f32' },
@@ -115,11 +133,17 @@ export function createBreathingOverlayMesh(
         uPremul: { value: st.uPremul, type: 'f32' },
       },
       uBase: tex.base.source,
+      uBaseSampler: tex.base.source.style,
       uBody: (tex.body ?? empty).source,
+      uBodySampler: (tex.body ?? empty).source.style,
       uSheet: (tex.sheet ?? empty).source,
+      uSheetSampler: (tex.sheet ?? empty).source.style,
       uFlap: (tex.flap ?? empty).source,
+      uFlapSampler: (tex.flap ?? empty).source.style,
       uF1: tex.field1.source,
+      uF1Sampler: tex.field1.source.style,
       uF2: tex.field2.source,
+      uF2Sampler: tex.field2.source.style,
     },
   });
   // Pixi v8 Mesh 管线会读取 mesh.texture(及 source.alphaMode);仅传 shader 时 texture 为 null 会报错

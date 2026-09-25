@@ -46,6 +46,63 @@ void main(void) {
 }
 `;
 
+/**
+ * WebGPU 版(WGSL):与上面的 GLSL 逐句对应。Pixi 网格约定:`globalUniforms` 在 group 0、`localUniforms` 在 group 1
+ * (程序里声明了这两个名字,GpuMeshAdapter 才会自动绑),自有资源从 group 2 起,变量名 = Shader resources 的键名;
+ * 纹理在 WGSL 里要单独的采样器(resources 里的 `<名>Sampler`,WebGL 侧不认识这类资源、直接忽略)。
+ *
+ * 顶点部分与呼吸图 Mesh(breathingOverlayMesh.ts)同一份:两者都是 showPercentImg 那套 local 像素空间的单张四边形。
+ */
+export const OVERLAY_QUAD_WGSL_VERTEX = /* wgsl */ `
+struct GlobalUniforms {
+  uProjectionMatrix: mat3x3<f32>,
+  uWorldTransformMatrix: mat3x3<f32>,
+  uWorldColorAlpha: vec4<f32>,
+  uResolution: vec2<f32>,
+}
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+
+struct LocalUniforms {
+  uTransformMatrix: mat3x3<f32>,
+  uColor: vec4<f32>,
+  uRound: f32,
+}
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+
+struct VSOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) vUV: vec2<f32>,
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) -> VSOutput {
+  let modelMatrix = localUniforms.uTransformMatrix;
+  let modelViewProjectionMatrix = globalUniforms.uProjectionMatrix * globalUniforms.uWorldTransformMatrix * modelMatrix;
+  var o: VSOutput;
+  o.position = vec4<f32>((modelViewProjectionMatrix * vec3<f32>(aPosition, 1.0)).xy, 0.0, 1.0);
+  o.vUV = aUV;
+  return o;
+}
+`;
+
+const WGSL = OVERLAY_QUAD_WGSL_VERTEX + /* wgsl */ `
+struct BlendUniforms {
+  uT: f32,
+}
+@group(2) @binding(0) var<uniform> blendUniforms: BlendUniforms;
+@group(2) @binding(1) var uTextureFrom: texture_2d<f32>;
+@group(2) @binding(2) var uTextureFromSampler: sampler;
+@group(2) @binding(3) var uTextureTo: texture_2d<f32>;
+@group(2) @binding(4) var uTextureToSampler: sampler;
+
+@fragment
+fn mainFragment(@location(0) vUV: vec2<f32>) -> @location(0) vec4<f32> {
+  let a = textureSample(uTextureFrom, uTextureFromSampler, vUV);
+  let b = textureSample(uTextureTo, uTextureToSampler, vUV);
+  return mix(a, b, clamp(blendUniforms.uT, 0.0, 1.0));
+}
+`;
+
 export interface OverlayBlendMeshHandle {
   /** 自定义 Shader 的 Mesh，运行时类型为 Mesh<MeshGeometry, Shader> */
   mesh: Mesh;
@@ -85,12 +142,18 @@ export function createOverlayBlendMesh(
 
   const shader = Shader.from({
     gl: { vertex: VERT, fragment: FRAG },
+    gpu: {
+      vertex: { source: WGSL, entryPoint: 'mainVertex' },
+      fragment: { source: WGSL, entryPoint: 'mainFragment' },
+    },
     resources: {
       blendUniforms: {
         uT: { value: 0, type: 'f32' },
       },
       uTextureFrom: texFrom.source,
+      uTextureFromSampler: texFrom.source.style,
       uTextureTo: texTo.source,
+      uTextureToSampler: texTo.source.style,
     },
   });
 

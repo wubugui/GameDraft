@@ -525,6 +525,143 @@ void main(void) {
 }
 `;
 
+/**
+ * WebGPU 版(WGSL):与上面四段 GLSL 逐句对应。Pixi 网格约定:`globalUniforms` 在 group 0、`localUniforms` 在 group 1
+ * (声明了这两个名字 GpuMeshAdapter 才自动绑),自有资源在 group 2,变量名 = Shader resources 的键名,
+ * 每张纹理配一个 `<名>Sampler`;`swayU` 结构体成员顺序 = resources 里的声明顺序(WebGPU 按声明顺序排偏移)。
+ */
+const WGSL_MESH_UNIFORMS = /* wgsl */ `
+struct GlobalUniforms {
+  uProjectionMatrix: mat3x3<f32>,
+  uWorldTransformMatrix: mat3x3<f32>,
+  uWorldColorAlpha: vec4<f32>,
+  uResolution: vec2<f32>,
+}
+@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;
+
+struct LocalUniforms {
+  uTransformMatrix: mat3x3<f32>,
+  uColor: vec4<f32>,
+  uRound: f32,
+}
+@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;
+`;
+
+/**
+ * 写位移图(同 VERT + FRAG)。
+ * ⚠ 片元里两次 discard 之前先把 uMatte 的 .r 取好:WGSL 的 textureSample 只许在一致控制流里调,
+ *   GLSL 原文在第一次 discard 之后才取;discard 的片元结果本来就不要,提前取与原文逐像素相同。
+ */
+const SWAY_WGSL = WGSL_MESH_UNIFORMS + /* wgsl */ `
+struct SwayU {
+  uPaintSize: vec2<f32>,
+  uSceneSize: vec2<f32>,
+  uUvMapSize: vec2<f32>,
+  uTime: f32,
+  uLeafPx: f32,
+  uLeafHz: f32,
+}
+@group(2) @binding(0) var uMatte: texture_2d<f32>;
+@group(2) @binding(1) var uMatteSampler: sampler;
+@group(2) @binding(2) var uIds: texture_2d<f32>;
+@group(2) @binding(3) var uIdsSampler: sampler;
+@group(2) @binding(4) var<uniform> swayU: SwayU;
+
+struct VSOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) vUV: vec2<f32>,
+  @location(1) vHere: vec2<f32>,
+  @location(2) vInst: f32,
+  @location(3) vLeaf: f32,
+}
+
+@vertex
+fn mainVertex(
+  @location(0) aPosition: vec2<f32>,
+  @location(1) aUV: vec2<f32>,
+  @location(2) aInst: f32,
+  @location(3) aLeaf: f32,
+) -> VSOutput {
+  let model = globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+  let rt = aPosition * (swayU.uUvMapSize / swayU.uSceneSize);
+  let screen = (model * vec3<f32>(rt, 1.0)).xy;
+  var o: VSOutput;
+  o.position = vec4<f32>((globalUniforms.uProjectionMatrix * vec3<f32>(screen, 1.0)).xy, 0.0, 1.0);
+  o.vUV = aUV;
+  o.vHere = aPosition / swayU.uSceneSize;
+  o.vInst = aInst;
+  o.vLeaf = aLeaf;
+  return o;
+}
+
+fn leafFlutter(p: vec2<f32>, t: f32) -> vec2<f32> {
+  let k = 6.2831853 / max(swayU.uLeafPx, 1.0);
+  let wt = 6.2831853 * swayU.uLeafHz * t;
+  let a = sin((p.x * 0.83 + p.y * 0.51) * k + wt);
+  let b = sin((p.y * 0.91 - p.x * 0.47) * k + wt * 1.37 + 1.9);
+  let c = sin((p.x * 0.29 - p.y * 0.37) * k + wt * 0.71 + 4.1);
+  return vec2<f32>(a + 0.6 * c, b - 0.6 * c) * 0.5;
+}
+
+@fragment
+fn mainFragment(
+  @location(0) vUV: vec2<f32>,
+  @location(1) vHere: vec2<f32>,
+  @location(2) vInst: f32,
+  @location(3) vLeaf: f32,
+) -> @location(0) vec4<f32> {
+  var uv = vUV;
+  let leafy = textureSample(uMatte, uMatteSampler, uv).g;
+  uv += leafFlutter(uv * swayU.uPaintSize, swayU.uTime) * (vLeaf * leafy) / swayU.uPaintSize;
+  let idc = textureSample(uIds, uIdsSampler, uv);
+  let a = textureSample(uMatte, uMatteSampler, uv).r;
+  let id = floor(idc.r * 255.0 + 0.5) + 256.0 * floor(idc.g * 255.0 + 0.5);
+  if (abs(id - vInst) > 0.5) { discard; }
+  if (a < 0.004) { discard; }
+  return vec4<f32>((uv - vHere) * a, a, a);
+}
+`;
+
+/**
+ * 不打光的合成面(同 COMP_VERT + COMP_FRAG)。
+ * ⚠ 取原画那一下在分支里:WGSL 分支里不能 textureSample,改 textureSampleLevel(…, 0)——
+ *   原画没有 mip(单级),与 GLSL 的 texture() 等价。
+ */
+const COMP_WGSL = WGSL_MESH_UNIFORMS + /* wgsl */ `
+@group(2) @binding(0) var uPainting: texture_2d<f32>;
+@group(2) @binding(1) var uPaintingSampler: sampler;
+@group(2) @binding(2) var uPlate: texture_2d<f32>;
+@group(2) @binding(3) var uPlateSampler: sampler;
+@group(2) @binding(4) var uUvMap: texture_2d<f32>;
+@group(2) @binding(5) var uUvMapSampler: sampler;
+
+struct VSOutput {
+  @builtin(position) position: vec4<f32>,
+  @location(0) vUv: vec2<f32>,
+}
+
+@vertex
+fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) -> VSOutput {
+  let model = globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;
+  let screen = (model * vec3<f32>(aPosition, 1.0)).xy;
+  var o: VSOutput;
+  o.position = vec4<f32>((globalUniforms.uProjectionMatrix * vec3<f32>(screen, 1.0)).xy, 0.0, 1.0);
+  o.vUv = aUV;
+  return o;
+}
+
+@fragment
+fn mainFragment(@location(0) vUv: vec2<f32>) -> @location(0) vec4<f32> {
+  var col = textureSample(uPlate, uPlateSampler, vUv).rgb;
+  let m = textureSample(uUvMap, uUvMapSampler, vUv);
+  if (m.a > 0.002) {
+    let fg = textureSampleLevel(uPainting, uPaintingSampler, vUv + m.rg / m.a, 0.0).rgb;
+    col = mix(col, fg, clamp(m.a, 0.0, 1.0));
+  }
+  return vec4<f32>(col, 1.0);
+}
+`;
+
 // ---------------------------------------------------------------------------- 运动
 
 interface InstRt {
@@ -914,9 +1051,16 @@ export class SwayBackground {
     this.uvMap = RenderTexture.create({ width: nw, height: nh, format: 'rgba16float', scaleMode: 'linear', antialias: false });
     this.shader = Shader.from({
       gl: { vertex: VERT, fragment: FRAG },
+      gpu: {
+        vertex: { source: SWAY_WGSL, entryPoint: 'mainVertex' },
+        fragment: { source: SWAY_WGSL, entryPoint: 'mainFragment' },
+      },
       resources: {
         uMatte: inp.matteTex.source,
+        uMatteSampler: inp.matteTex.source.style,
         uIds: inp.idsTex.source,
+        uIdsSampler: inp.idsTex.source.style,
+        // ⚠ 成员顺序 = SWAY_WGSL 里 SwayU 的成员顺序
         swayU: {
           uPaintSize: { value: new Float32Array(inp.paintSize), type: 'vec2<f32>' },
           uSceneSize: { value: new Float32Array([W, H]), type: 'vec2<f32>' },
@@ -932,10 +1076,17 @@ export class SwayBackground {
     if (opts.composite !== false) {
       this.compShader = Shader.from({
         gl: { vertex: COMP_VERT, fragment: COMP_FRAG },
+        gpu: {
+          vertex: { source: COMP_WGSL, entryPoint: 'mainVertex' },
+          fragment: { source: COMP_WGSL, entryPoint: 'mainFragment' },
+        },
         resources: {
           uPainting: painting.source,
+          uPaintingSampler: painting.source.style,
           uPlate: inp.plateTex.source,
+          uPlateSampler: inp.plateTex.source.style,
           uUvMap: this.uvMap.source,
+          uUvMapSampler: this.uvMap.source.style,
         },
       });
       this.comp = new Mesh({
