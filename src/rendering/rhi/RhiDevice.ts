@@ -233,6 +233,12 @@ export interface RhiDevice {
   readTexture(texture: RhiTexture): Promise<RhiTextureReadback>;
 
   /**
+   * 画布的像素尺寸变了(画布拥有者已经改好 canvas.width / height):后端据此重配交换链与它的深度缓冲。
+   * 零面积忽略(布局前的画布可能是 0×0,那几帧渲染器本来就不上屏)。
+   */
+  resizeSwapchain(pixelWidth: number, pixelHeight: number): void;
+
+  /**
    * 录一帧并提交。录制过程中抛出的任何异常都在这里截住、上报,这一帧作废,主循环不受影响
    * ——不会出现"渲染抛一次异常整个主循环死掉"。返回是否成功提交。
    */

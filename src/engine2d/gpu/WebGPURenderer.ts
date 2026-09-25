@@ -187,6 +187,9 @@ export class WebGPURenderer extends RendererBase {
       this.upload(state);
       const cmds = builder.commands;
       const usesCanvas = cmds.some((c) => c.t === 'pass' && c.target === 'canvas');
+      // 画布零面积(挂载后、布局前的头几帧,resizeTo 的元素还是 0×0):WebGPU 取不到零尺寸的交换链纹理,
+      // 这一帧本来也看不见,整帧不录(Pixi WebGL 在零面积画布上是静默画空)
+      if (usesCanvas && (this.canvas.width === 0 || this.canvas.height === 0)) return;
       if (usesCanvas) this.rhi.runFrame((frame) => this.record(state, cmds, frame.commands, frame));
       else this.rhi.submit('engine2d render', (commands) => this.record(state, cmds, commands, null));
     } finally {

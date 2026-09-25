@@ -997,6 +997,13 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
 
   // ── 帧
 
+  resizeSwapchain(pixelWidth: number, pixelHeight: number): void {
+    if (this._destroyed || !(pixelWidth > 0 && pixelHeight > 0)) return;
+    // luma 自己记着「绘制缓冲尺寸」,下次取帧缓冲时按它重配画布上下文、重建深度缓冲;
+    // 不告诉它的话,它只在取颜色纹理时发现尺寸不符再补,深度缓冲会停在建设备时的尺寸
+    this.luma.getDefaultCanvasContext().setDrawingBufferSize(pixelWidth, pixelHeight);
+  }
+
   runFrame(record: (frame: RhiFrame) => void): boolean {
     if (this._isLost || this._destroyed) return false;
     const stats = emptyStats(this.frameIndex);

@@ -429,6 +429,8 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
     throw new RhiError('unsupported', `空后端不光栅化,读不了纹理「${texture.label}」`);
   }
 
+  resizeSwapchain(): void {}
+
   runFrame(record: (frame: RhiFrame) => void): boolean {
     const stats: RhiFrameStats = { frame: this.frameIndex, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
     const commands = new NullCommandList(this, `帧 ${this.frameIndex}`, stats);

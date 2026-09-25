@@ -131,6 +131,7 @@ export abstract class RendererBase {
     const ph = Math.round(height * resolution);
     if (this.canvas.width !== pw) this.canvas.width = pw;
     if (this.canvas.height !== ph) this.canvas.height = ph;
+    this.rhi.resizeSwapchain(pw, ph);
     if (this.autoDensity && 'style' in this.canvas) {
       this.canvas.style.width = `${width}px`;
       this.canvas.style.height = `${height}px`;
