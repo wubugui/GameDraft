@@ -428,7 +428,27 @@ export class VfxRenderer {
   /** 雷形缓存：`<instanceId>/<boltId>` → 这一次的雷形（同一实例的几层画同一道雷；按需往上续算） */
   private readonly boltGeoms = new Map<string, { def: VfxBoltDef; geom: BoltGeometry }>();
 
+  /**
+   * 场景前景层的覆盖图（见 foregroundMaskGlsl）：粒子的遮挡在前景面里拿它顶替深度图。
+   * 由组装层经 {@link setForegroundCoverage} 交来 / 收回；没有 = 各视图绑永不销毁的占位、开关 0。
+   */
+  private fgCoverage: TextureSource | null = null;
+
   constructor(private readonly deps: VfxRenderDeps) {}
+
+  /**
+   * 换 / 撤前景层覆盖图：**当场**把所有视图的纹理槽换过去（撤的时候绑回占位）。
+   * 覆盖图 RT 归前景层，它销毁之前一定先以 null 调这里——BindGroup 见到已销毁的资源会自毁（pixi-v8-traps），
+   * 等下一次 render 再换就晚了（中间那一帧照样会画）。
+   */
+  setForegroundCoverage(src: TextureSource | null): void {
+    this.fgCoverage = src;
+    const tex = src ?? Texture.EMPTY.source;
+    for (const v of this.views.values()) {
+      (v.shader.resources as Record<string, unknown>)['uFgCoverage'] = tex;
+      (v.depthGroup.uniforms as Record<string, unknown>)['uHasFgCoverage'] = src ? 1 : 0;
+    }
+  }
 
   /** 视图是按"当时有什么"建的；这几样一变就得重建，否则一路错到换场景。 */
   private viewStale(
@@ -458,7 +478,9 @@ export class VfxRenderer {
       uOffset: { value: 0, type: 'f32' },
       uTolerance: { value: 0.05, type: 'f32' },
       uOcclusionBlend: { value: 0, type: 'f32' },
+      uHasFgCoverage: { value: this.fgCoverage ? 1 : 0, type: 'f32' },
     });
+    const fgTex = this.fgCoverage ?? Texture.EMPTY.source;
     const depth = this.deps.getDepth();
     const depthSrc = depth?.tex.source ?? null;
     const depthTex = depthSrc ?? sheet.texture.source;
@@ -475,7 +497,7 @@ export class VfxRenderer {
       paramGroup = new UniformGroup({ uLightGain: { value: 1, type: 'f32' } });
       shader = new Shader({
         glProgram: getVfxBoltProgram(),
-        resources: { vfxDepth: depthGroup, uDepthMap: depthSrc ?? Texture.WHITE.source },
+        resources: { vfxDepth: depthGroup, uDepthMap: depthSrc ?? Texture.WHITE.source, uFgCoverage: fgTex },
       });
     } else if (wantLit && canLight) {
       const pv = vfxParamValues(ap);
@@ -492,6 +514,7 @@ export class VfxRenderer {
       shader = this.deps.createLitShader(isPlate ? getVfxPlateLitProgram() : getVfxLitProgram(), sheet.texture.source, {
         vfxDepth: depthGroup,
         uDepthMap: depthTex,
+        uFgCoverage: fgTex,
         vfxParams: paramGroup,
       });
       lit = !!shader;
@@ -507,7 +530,7 @@ export class VfxRenderer {
       shader = new Shader({
         glProgram: getVfxUnlitProgram(),
         resources: {
-          uColorTex: sheet.texture.source, vfxDepth: depthGroup, uDepthMap: depthTex,
+          uColorTex: sheet.texture.source, vfxDepth: depthGroup, uDepthMap: depthTex, uFgCoverage: fgTex,
           // 显示变换：与背景 / 角色同一组数（这组里其余的灯 uniform 本程序不声明，Pixi 按名跳过）
           charLights: this.deps.displayUniforms,
           vfxTone: this.toneGroup,
@@ -672,6 +695,7 @@ export class VfxRenderer {
         } else {
           du['uHasDepth'] = 0;
         }
+        du['uHasFgCoverage'] = this.fgCoverage ? 1 : 0;
         v.depthGroup.update();
         for (const m of v.buckets.values()) m.begin();
         for (const m of v.plateBuckets.values()) m.begin();

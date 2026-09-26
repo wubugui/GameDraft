@@ -1,6 +1,7 @@
-import { Filter, GlProgram, Texture } from 'pixi.js';
+import { Filter, GlProgram, Texture, type TextureSource } from 'pixi.js';
 import type { SceneDepthConfig } from '../data/types';
 import { depthLog, depthError } from '../core/depthLog';
+import { FG_OCCLUSION_GLSL } from './foreground/foregroundMaskGlsl';
 
 const T = 'DepthFilter';
 
@@ -58,6 +59,8 @@ uniform float uFootDepthQ;     // 脚点行走面深度（实验室 uFootQ.z）
 uniform float uHasFootDepth;   // 0=本帧没拿到脚深度 → 不遮挡
 uniform float uFootBias;       // 实验室 0.045
 
+// 场景前景层覆盖图（uFgCoverage + uHasFgCoverage；没有前景层时开关 0，逐像素与没有这一段时相同）
+${FG_OCCLUSION_GLSL}
 
 void main(void) {
     vec4 color = texture(uTexture, vTextureCoord);
@@ -94,20 +97,27 @@ void main(void) {
     float syTex = wy * uWorldToPixelY;
     float upright = uDepthPerSy * (syTex - syTexFoot);
     float spriteDepth = uFootDepthQ + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
+    bool occluded;
+    // 场景前景层（三份遮挡实现同一段，见 foregroundMaskGlsl）：前景面按接地深度立起来的直立面比，
+    // 与脚点同源、两块直立面同一个梯度——不加脚点偏置 / 容差 / floor 偏移；外沿（深度图糊的那圈）不判
+    float fgDepth;
+    float fgKind = fgSample(depthUV, fgDepth);
+    occluded = fgKind > 1.5 ? false
+        : fgKind > 0.5 ? fgDepth < uFootDepthQ + upright - 1e-4
+        : sceneDepth + uTolerance < spriteDepth;
 
     // ========== 调试模式 ==========
     if (uDebug > 0.5) {
         // 红=被遮挡 蓝=可见。碰撞通道已删:它靠 floor 拟合直线做逐像素反投影,
         // 那条线已废除;要看碰撞去实验室查看器的顶视图(世界 XZ,无遮挡无歧义)。
-        finalColor = vec4(sceneDepth + uTolerance < spriteDepth
-            ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0), 0.7);
+        finalColor = vec4(occluded ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0), 0.7);
         return;
     }
     // ========== 正常渲染 ==========
 
     // uTexture 采样为 Pixi 预乘 alpha（与 finalColor=color 通路一致）。
     // 仅改 a 会令合成仍按完整 rgb 参与预乘blend → 发亮/发白；须 rgb、a 同步乘系数。
-    if (sceneDepth + uTolerance < spriteDepth) {
+    if (occluded) {
         if (uOcclusionBlendFactor < 1e-5) {
             discard;
         }
@@ -170,8 +180,10 @@ export class DepthOcclusionFilter extends Filter {
                     uFootDepthQ: { value: 0, type: 'f32' },
                     uHasFootDepth: { value: 0, type: 'f32' },
                     uFootBias: { value: 0.045, type: 'f32' },
+                    uHasFgCoverage: { value: 0, type: 'f32' },
                 },
                 uDepthMap: depthTexture.source,
+                uFgCoverage: Texture.EMPTY.source,
             },
         });
 
@@ -276,5 +288,12 @@ export class DepthOcclusionFilter extends Filter {
     setFootBias(v: number): void {
         const u = this._du;
         if (u) u['uFootBias'] = Math.max(0, v);
+    }
+
+    /** 场景前景层覆盖图；null = 没有前景层（绑回永不销毁的占位，见 pixi-v8-traps） */
+    setForegroundCoverage(src: TextureSource | null): void {
+        const u = this._du;
+        (this.resources as Record<string, unknown>)['uFgCoverage'] = src ?? Texture.EMPTY.source;
+        if (u) u['uHasFgCoverage'] = src ? 1 : 0;
     }
 }

@@ -166,6 +166,53 @@
   ],
   "zones": [
     {
+      "id": "Zone_跑马梁_护火",
+      "polygon": [
+        {
+          "x": 0.0,
+          "y": 420.0
+        },
+        {
+          "x": 141.0,
+          "y": 420.0
+        },
+        {
+          "x": 520.0,
+          "y": 1152.0
+        },
+        {
+          "x": 370.0,
+          "y": 1152.0
+        }
+      ],
+      "conditions": [
+        {
+          "narrative": "wrapper_跑马梁_风火引路",
+          "state": "迎风"
+        }
+      ],
+      "onEnter": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_到护火处",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_护火"
+          }
+        }
+      ],
+      "onStay": [
+        {
+          "type": "emitNarrativeSignal",
+          "params": {
+            "signal": "跑马梁_到护火处",
+            "sourceType": "zone",
+            "sourceId": "跑马梁:Zone_跑马梁_护火"
+          }
+        }
+      ]
+    },
+    {
       "id": "Zone_跑马梁_阵风",
       "polygon": [
         {
@@ -192,6 +239,14 @@
       "conditions": [
         {
           "any": [
+            {
+              "narrative": "wrapper_跑马梁_风火引路",
+              "state": "迎风"
+            },
+            {
+              "narrative": "wrapper_跑马梁_风火引路",
+              "state": "护火教学"
+            },
             {
               "narrative": "wrapper_跑马梁_风火引路",
               "state": "护好"
@@ -339,8 +394,8 @@
   },
   "spawnPoints": {
     "spawn_0": {
-      "x": 1300.1,
-      "y": 333.5
+      "x": 1280.0,
+      "y": 375.0
     },
     "spawn_1": {
       "x": 223.5,
@@ -583,5 +638,18 @@
         "eChroma": 0
       }
     }
-  }
+  },
+  "foregroundLayers": [
+    {
+      "id": "fg_崖边歪脖子树",
+      "label": "崖边歪脖子树",
+      "source": {
+        "kind": "swayPlant",
+        "at": [
+          1238,
+          564
+        ]
+      }
+    }
+  ]
 }

@@ -452,7 +452,9 @@ export interface ActionRegistryDeps {
    * 挂点上没有挂件、或预设里没有这个状态 ⇒ false（调用方报警）。
    */
   /** Promise 覆盖新状态进入动作的真实完成时间（顺序动作批要等它）；resolve false = 没挂件 / 没这个状态 */
-  setPropState: (targetId: string, socket: string, state: string, fadeMs: number) => Promise<boolean>;
+  setPropState: (
+    targetId: string, socket: string, state: string, fadeMs: number, onlyIfBurning?: boolean,
+  ) => Promise<boolean>;
   /** 锁挂件：`lit` 锁定不灭 / `unlit` 点不燃 / `none` 解锁；挂点上没有挂件 ⇒ false */
   lockPropState: (targetId: string, socket: string, lock: 'lit' | 'unlit' | 'none') => boolean;
   /** 设挂件等级（`setPropLevel`）：没有等级表 / 超范围 ⇒ false */
@@ -785,6 +787,7 @@ function parseEmoteOffsetParams(
     ...(params.bubbleScale !== undefined && params.bubbleScale !== null && Number.isFinite(sc) && sc > 0
       ? { scale: sc }
       : {}),
+    ...(params.pinOnScreen === true ? { pinOnScreen: true } : {}),
   };
 }
 
@@ -1835,7 +1838,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     d.emoteBubbleManager.show(subject, text, parseBubbleDurationParam(p), off);
     /** 同 showEmote：非阻塞气泡的配音一律留声 */
     startSustainedBubbleVoice(d, p);
-  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale', 'voice']);
+  }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale', 'voice',
+    'pinOnScreen']);
 
   /**
    * `target` 为 NPC id 或 `player`；`state` 为 anim.json 中的状态名（与 `npcAnim` 旧标签语义一致，统一走 Action）。
@@ -1960,7 +1964,8 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
       return;
     }
     const fadeRaw = Number(p.fadeMs);
-    return d.setPropState(target, socket, state, Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0)
+    const fade = Number.isFinite(fadeRaw) && fadeRaw > 0 ? fadeRaw : 0;
+    return d.setPropState(target, socket, state, fade, p.onlyIfBurning === true)
       .then((ok) => {
         if (!ok) {
           console.warn(
@@ -1969,7 +1974,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
           );
         }
       });
-  }, ['target', 'socket', 'state', 'fadeMs']);
+  }, ['target', 'socket', 'state', 'fadeMs', 'onlyIfBurning']);
 
   /**
    * `lockPropState`：`lock` = `lit` 锁定不灭（风吹不灭——火势只回不掉，照样闪、照样被吹歪——玩家按键也熄不了）/
@@ -3523,7 +3528,7 @@ export function registerActionHandlers(executor: ActionExecutor, d: ActionRegist
     await presentBubbleBeat(d, p, subject, text, duration, off);
     dbg(d, 'showSpeechBubbleAndWait', 'showAndWait 结束');
   }, ['target', 'text', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale',
-    'voice', 'autoAdvance']);
+    'voice', 'autoAdvance', 'pinOnScreen']);
 
   /**
    * 显示这份文档：条件不满足出揭示前的图，未揭示且条件满足播揭示动画，已揭示直接出清晰图。

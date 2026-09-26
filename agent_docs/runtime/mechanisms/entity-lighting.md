@@ -171,6 +171,11 @@ planar 阴影 / 深度遮挡)与它们并存,2026-08-30 的「原画 + 加性灯
   编辑器两个画布的接触阴影预览读 `shared/light_env_visual.contact_preview_axes`(同一组系数,对账测试钉着)。
   ⚠ 茶馆两份场景(`contactSize` 0.12)与梦_夜路曲线(0.1~0.55)的 `contactSize` 是在旧的帧宽模型下调的,
   新模型下它们的含义变了(倍率基准从帧宽换成了帧高 + 实际脚宽),数值没动,等制作人看过再定。
+- **场景前景层的蒙版内,深度图换成按接地线立起来的前景面深度**(2026-09-27,[[scene-foreground-layers]]):细长前景(树干、枝条)
+  的深度图永远不准,蒙版里按"立在接地线上的直立面"现算深度、逐像素比(外沿一圈只关掉误挡),被挡照旧画虚影。
+  遮挡判据**有三份实现**——`DepthOcclusionFilter` / `EntityLightingFilter` / `CharacterShadingFilter`(烘焙角色走最后这支)——
+  都拼同一段 `FG_OCCLUSION_GLSL`,覆盖图经 `SceneDepthSystem.setForegroundCoverage` 统一广播、新建滤镜在创建时绑上;
+  没有前景层时开关恒 0、绑占位,逐像素与改动前相同。
 - **色调独立于阴影**:`toneEnabled` 与 `shadowMode` 解耦,`off` 不连带关色调。
 - **`lightEnvCurve` 必须原地写回 `currentLightEnv`**:阴影实例与 shadowField 持引用逐帧读,
   换对象引用会静默失联。

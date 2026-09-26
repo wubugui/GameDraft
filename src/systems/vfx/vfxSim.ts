@@ -34,12 +34,12 @@ import { BURN_WU_PER_CM, type ResolvedBurnable } from '../../data/burnables';
 import type { Vec3 } from '../../utils/sceneSpace';
 import { addWindBlasts, sampleSceneWind, type SceneWindParams, type WindBlast } from '../../utils/sceneWind';
 import {
-  buildConfineField, CONFINE_EXIT_FADE_S, CONFINE_EXIT_WEIGHT, confineHeightWeight, confineWeightAt,
+  buildConfineField, CONFINE_EXIT_FADE_S, CONFINE_EXIT_WEIGHT, CONFINE_FADE_IN_S, confineHeightWeight, confineWeightAt,
   type ConfineField,
 } from './vfxConfine';
 import { curlNoise3 } from './vfxNoise';
 import {
-  createPlateArrays, launchPlate, placePlateOnSurface, resolvePlateParams, PLATE_GRAVITY,
+  createPlateArrays, launchPlate, placePlateOnSurface, resolvePlateParams, PlateContact, PLATE_GRAVITY,
   stepPlates, type PlateArrays, type PlateParams,
 } from './vfxPlate';
 import { VfxRng } from './vfxRandom';
@@ -166,7 +166,12 @@ export interface VfxStepContext {
    * 同一实例里燃着的纸不用放进来（模拟自己算）。
    */
   fires?: readonly VfxFireSegment[];
+  /** 镜头此刻看得见的矩形（场景坐标）；没有（工作台 / 测试）= 不按画面判，见 `VfxParticleLifecycle.view` */
+  view?: VfxViewRect | null;
 }
+
+/** 场景坐标的矩形（镜头看得见的那块） */
+export interface VfxViewRect { minX: number; minY: number; maxX: number; maxY: number }
 
 /** 一组燃着的薄片（给燃烧系统：发火苗粒子、打火光、点可燃物） */
 export interface VfxBurningPlateGroup {
@@ -259,7 +264,17 @@ export interface VfxEmitterRuntime {
   external: { pts: Float32Array; count: number } | null;
   /** 可燃薄片的燃烧态（`plate.flammable` 才有） */
   burn: PlateBurnState | null;
+  /**
+   * 按密度补的地面区域（surface 出生 + surface 补回 + 多边形发射区域、不限定范围才有）：那片地上的纸少于开场铺的
+   * 张数（burst）就从空槽淡入新纸。池子（spawn.max）比 burst 大出来的就是备用——吹散在画面里的纸原地不动，
+   * 那片地照样长回来（制作人 2026-09-26 选 B）。`clock` 距下次清点的秒数，`allowance` 攒下的可补张数
+   */
+  refill: { target: number; clock: number; allowance: number } | null;
 }
+
+/** 按密度补：隔多久清点一次那片地上的纸、每秒最多补几张（淡入） */
+const PATCH_COUNT_EVERY_S = 0.2;
+const PATCH_REFILL_PER_S = 40;
 
 /**
  * 光柱运行态（效果里的 `beams`）。光柱没有粒子池：只有开关、淡入淡出与按锚点解出来的帧；
@@ -462,6 +477,10 @@ export class VfxInstanceSim {
         } : null,
         external: shape?.kind === 'external' ? { pts: new Float32Array(0), count: 0 } : null,
         burn: plateBurnOf(plateDef, cap, options.burnTemplates ?? null),
+        refill: program.spawnPlacement === 'surface' && program.recycle.mode === 'surface' && area.poly && !area.confine
+          && (def.spawn.burst ?? 0) > 0
+          ? { target: Math.min(cap, Math.round((def.spawn.burst ?? 0) * cs)), clock: 0, allowance: 0 }
+          : null,
       };
       rt.lifecycle = new VfxParticleLifecycle({
         space, area, body: rt.p, rng: rt.rng, policy: program.recycle,
@@ -472,6 +491,7 @@ export class VfxInstanceSim {
         launch: (index, at, velocity) => this.launch(rt, index, at, velocity),
         // 燃着的纸被回收器挪走 = 这一格作废（它不会以一张新纸的样子回来）
         consume: rt.burn ? (index) => consumeIfBurning(rt.burn!, index) : undefined,
+        onObject: rt.plate ? (index) => rt.plate!.arr.contact[index] === PlateContact.Shell : undefined,
       });
       this.emitters.push(rt);
       // 群体：起播即把整群摆进巢（roosting）或直接放飞（airborne）
@@ -1003,6 +1023,7 @@ export class VfxInstanceSim {
       }
       this.killBurntAlive(e);
     }
+    if (e.refill) this.refillPatch(e, h);
     if (s.rate) {
       e.rateAcc += s.rate * this.countScale * this.rateScale * h;
       while (e.rateAcc >= e.rateThreshold) {
@@ -1012,6 +1033,37 @@ export class VfxInstanceSim {
         if (this.spawnEmit(e) === -1) { e.rateAcc = 0; break; }
       }
     }
+  }
+
+  /**
+   * 按密度补（见 `VfxEmitterRuntime.refill`）：隔 PATCH_COUNT_EVERY_S 清点一次正下方地面点在那片地里、没在淡出的纸，
+   * 少于目标就从空槽补，每秒最多 PATCH_REFILL_PER_S 张、淡入。清点结果同步给生命周期：够数时吹走的纸收回备用。
+   */
+  private refillPatch(e: VfxEmitterRuntime, h: number): void {
+    const r = e.refill!;
+    r.allowance = Math.min(r.allowance + PATCH_REFILL_PER_S * h, PATCH_REFILL_PER_S * PATCH_COUNT_EVERY_S);
+    r.clock -= h;
+    if (r.clock > 0) return;
+    r.clock = PATCH_COUNT_EVERY_S;
+    const p = e.p, lc = e.lifecycle;
+    const flags = lc.patchFlags ?? (lc.patchFlags = new Uint8Array(p.cap));
+    let on = 0;
+    for (let i = 0; i < p.cap; i++) {
+      flags[i] = 0;
+      if (!p.alive[i] || p.fadeRate[i] > 0) continue;
+      if (lc.onPatch(i, p.x[i], p.y[i], p.z[i])) { flags[i] = 1; on++; }
+    }
+    while (on < r.target && r.allowance >= 1) {
+      const i = this.spawnEmit(e);
+      if (i < 0) break;
+      p.fade[i] = 0;
+      p.fadeRate[i] = -1 / CONFINE_FADE_IN_S;
+      flags[i] = 1;
+      r.allowance--;
+      on++;
+    }
+    lc.patchTarget = r.target;
+    lc.patchCount = on;
   }
 
   /** Emission owns placement; solver initializers only establish physical state. */
@@ -1114,6 +1166,7 @@ export class VfxInstanceSim {
         e.elapsed += VFX_SUBSTEP;
         e.lifecycle.wind = e.program.influences.sceneWind ? ctx.wind ?? null : null;
         e.lifecycle.windTime = ctx.windTime ?? this.time;
+        e.lifecycle.view = ctx.view ?? null;
         this.emitStep(e, VFX_SUBSTEP);
         if (e.flock) this.stepFlock(e, VFX_SUBSTEP, ctx);
         else if (e.plate) this.stepPlate(e, VFX_SUBSTEP, ctx, k / n, (k + 1) / n);

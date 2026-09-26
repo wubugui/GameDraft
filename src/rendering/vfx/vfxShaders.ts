@@ -26,6 +26,7 @@ import { GlProgram } from 'pixi.js';
 
 import { ENTITY_SCENE_LIGHTS_GLSL } from '../CharacterLitSprite';
 import { CHAR_LIGHT_COMMON_GLSL } from '../CharacterShadingFilter';
+import { FG_OCCLUSION_GLSL } from '../foreground/foregroundMaskGlsl';
 import { MAX_STATIC_LIGHTS } from '../lighting/lightPacking';
 import LIGHTING_CORE from '../lighting/lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT from '../lighting/worldReconstruct.glsl?raw';
@@ -85,7 +86,11 @@ ${plate ? '    vNrm = aNrm;\n' : ''}}
 
 const VERT = vertSource(false);
 
-/** 遮挡 / 软边共用段（两套片元都拼它）。返回可见度 0..1，-1 = 完全被挡（调用方 discard）。 */
+/**
+ * 遮挡 / 软边共用段（两套片元都拼它）。返回可见度 0..1，-1 = 完全被挡（调用方 discard）。
+ * 场景前景层（见 foregroundMaskGlsl）：前景面里拿按接地线立起来的深度**顶替深度图**（容差照旧），
+ * 外沿那圈（深度图糊的地方）不判——与角色的三支遮挡滤镜同一份取样。
+ */
 const OCCLUSION_GLSL = /* glsl */ `
 uniform sampler2D uDepthMap;
 uniform vec2  uSceneSize;
@@ -95,15 +100,22 @@ uniform float uScale;
 uniform float uOffset;
 uniform float uTolerance;
 uniform float uOcclusionBlend;
+${FG_OCCLUSION_GLSL}
 
 float vfxVisibility(vec2 world, float qz, float softQ) {
     if (uHasDepth < 0.5) return 1.0;
     vec2 duv = world / uSceneSize;
     if (duv.x < 0.0 || duv.x > 1.0 || duv.y < 0.0 || duv.y > 1.0) return 1.0;
-    vec4 ds = texture(uDepthMap, duv);
-    float raw = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
-    float t = uInvert > 0.5 ? 1.0 - raw : raw;
-    float sceneDepth = t * uScale + uOffset;
+    float fgDepth;
+    float fgKind = fgSample(duv, fgDepth);
+    if (fgKind > 1.5) return 1.0;
+    float sceneDepth = fgDepth;
+    if (fgKind < 0.5) {
+        vec4 ds = texture(uDepthMap, duv);
+        float raw = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
+        float t = uInvert > 0.5 ? 1.0 - raw : raw;
+        sceneDepth = t * uScale + uOffset;
+    }
     if (sceneDepth + uTolerance < qz) return uOcclusionBlend;
     if (softQ > 1e-6) return clamp((sceneDepth + uTolerance - qz) / softQ, 0.0, 1.0);
     return 1.0;

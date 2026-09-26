@@ -14,6 +14,11 @@ export interface PlateArea {
   floorY: number;
   /** 粒子区域的软边界（实例配了 `confine` 才有）：出生 / 补回按权重挑、风按权重衰减、出界淡出回收 */
   confine: ConfineField | null;
+  /**
+   * 多边形面积 / 包围盒面积（圆盘恒 1）。挑落点是在包围盒里撒点再判在不在多边形里，细长斜带只占包围盒
+   * 一成左右——试的次数要按它放大，否则一成的补回落空（跑马梁纸钱 2026-09-26）。
+   */
+  fill: number;
 }
 
 const pointInPoly = pointInPolygon;
@@ -35,7 +40,11 @@ export function resolvePlateArea(
       floorY = Math.min(floorY, space.groundWorldAtScene(sx, sy)[1]);
     }
     if (!Number.isFinite(floorY)) floorY = origin[1];
-    return { poly, disc: null, minX, minY, maxX, maxY, floorY, confine };
+    let twice = 0;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) twice += poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1];
+    const box = (maxX - minX) * (maxY - minY);
+    const fill = box > 0 ? Math.min(1, Math.abs(twice) / 2 / box) : 1;
+    return { poly, disc: null, minX, minY, maxX, maxY, floorY, confine, fill };
   }
   const s = { x: 0, y: 0 };
   space.toScene(origin, s);
@@ -45,6 +54,7 @@ export function resolvePlateArea(
     minX: s.x - radius, minY: s.y - radius, maxX: s.x + radius, maxY: s.y + radius,
     floorY: origin[1],
     confine: null,
+    fill: 1,
   };
 }
 
@@ -58,6 +68,9 @@ const FOOT: Vec3 = [0, 0, 0];
 const FOOT_S = { x: 0, y: 0 };
 /** 限定区域时挑落点多试几次：按权重拒绝采样会多拒掉一大半，挑不到 = 这张纸被回收掉、总数慢慢漏光 */
 const CONFINE_PICK_TRIES = 96;
+/** 按多边形占包围盒的比例放大试的次数：占比下限 / 次数上限（极细的多边形不至于一次挑点试上万次） */
+const MIN_FILL = 0.02;
+const PICK_TRIES_MAX = 2048;
 
 const tmpS = { x: 0, y: 0 };
 
@@ -66,7 +79,8 @@ export function pickAreaSurface(
   space: VfxSpace, area: PlateArea, rng: VfxRng, tries = 24,
 ): { p: Vec3; normal: Vec3; kind: 'ground' | 'object' } | null {
   const cf = area.confine;
-  const n = cf ? Math.max(tries, CONFINE_PICK_TRIES) : tries;
+  const base = cf ? Math.max(tries, CONFINE_PICK_TRIES) : tries;
+  const n = Math.min(PICK_TRIES_MAX, Math.ceil(base / Math.max(MIN_FILL, area.fill)));
   for (let k = 0; k < n; k++) {
     let sx: number, sy: number;
     if (area.poly) {

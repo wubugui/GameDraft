@@ -275,6 +275,8 @@ import { RuntimeSwaySync, swayPreviewDirUrl } from '../dev/runtimeSwaySync';
 import { RuntimeTerrainSync, terrainPreviewDirUrl } from '../dev/runtimeTerrainSync';
 import { SceneWindState, sampleSceneWind } from '../utils/sceneWind';
 import { SwayBackground, findSwayHostSprite, loadBackgroundSwayInput, swayInsertIndex } from '../rendering/backgroundSway';
+import { normalizeForegroundLayerDefs, resolveForegroundLayers } from '../rendering/foreground/foregroundLayerDefs';
+import { SceneForegroundLayers } from '../rendering/foreground/SceneForegroundLayers';
 import { VfxRenderer, vfxGlPrograms, type VfxSortHost } from '../rendering/vfx/VfxRenderer';
 import { VfxConfineOverlay } from '../rendering/vfx/VfxConfineOverlay';
 import { GlProgramWarmup, glWarmupTargetOf } from '../rendering/glProgramWarmup';
@@ -802,6 +804,16 @@ export class Game {
   private terrainSync: RuntimeTerrainSync | null = null;
   /** 当前这份拆层装了哪几个纹理 URL（热重载时按它把上一份丢掉，否则每推一次漏一套显存） */
   private swayTexUrls: string[] = [];
+  /**
+   * 场景前景图层（[[scene-foreground-layers]]）：一张覆盖图（蒙版 + 按接地线立起来的前景面深度），
+   * 交给遮挡的使用方（实体滤镜、粒子）在蒙版里顶替深度图。
+   * 依附于这一份草木拆层（swayPlant 的实例按它解析、蒙版经它的位移图），所以**与 `swayBackground` 同拆同建**：
+   * 每一处销毁 / 换掉 `swayBackground`、拆光照之前都先 `teardownForegroundLayers()`。
+   */
+  private foregroundLayers: SceneForegroundLayers | null = null;
+  /** F2：前景层整体开关 / 覆盖图叠加（调试态，不入档、切场景保留勾选） */
+  private foregroundEnabled = true;
+  private foregroundCoverageView = false;
   private vfxRenderer: VfxRenderer | null = null;
   /** 粒子 shader 预编译：开局后台编、切场景遮罩下交给 Pixi（见 `rendering/glProgramWarmup`） */
   private glProgramWarmup: GlProgramWarmup | null = null;
@@ -1165,6 +1177,10 @@ export class Game {
       getViewAnchor: () => this.camera.screenToWorld(
         this.renderer.app.screen.width * 0.5, this.renderer.app.screen.height * 0.65,
       ),
+      getViewRect: () => {
+        const tl = this.camera.screenToWorld(0, 0);
+        return { minX: tl.x, minY: tl.y, maxX: tl.x + this.camera.getViewWidth(), maxY: tl.y + this.camera.getViewHeight() };
+      },
       // 布置按「场景 × 时段外观」各配一份：与背景 / 光照换装同一个判据（没单列外观的时段 = 基底）
       getAppearancePhase: () => this.sceneManager.appearancePhaseFor(this.dayManager.currentPhase),
       getActiveLights: () => this.activeSceneLightsForVfx(),
@@ -1395,6 +1411,8 @@ export class Game {
         this.characterLighting.groundDepthField,
         this.characterLighting.groundDepthTexture,
       );
+      // 前景层的接地深度取自行走面场：场换了按新的重取（进场时前景层还没建，这一句是空转）
+      this.foregroundLayers?.refreshBase(this.sceneDepthSystem.foregroundDepthModel());
       this.refreshPlayerWorldCollision();
       // 载荷刚落地：听者立刻按**这个场景**的行走面重算。进场时 setAudioApplier 那次强制重算跑在载荷之前，
       // 拿的是上一个场景的场与基（grounded 照样 true），不在这里重来一次就得等玩家走出阈值
@@ -2180,6 +2198,11 @@ export class Game {
     /** P3：start 期间被 destroy（HMR / 秒关页）后不再继续装配，各主要 await 后同样早退 */
     if (this.tearDownComplete) return;
     this.emoteBubbleManager.setEntityAttachLayer(this.renderer.entityLayer);
+    // 实体层就是 worldContainer 的直接子节点（同一坐标），屏幕左上角换成世界点 + 视野宽高 = 看得见的那块
+    this.emoteBubbleManager.setViewRectProvider(() => {
+      const tl = this.camera.screenToWorld(0, 0);
+      return { minX: tl.x, minY: tl.y, maxX: tl.x + this.camera.getViewWidth(), maxY: tl.y + this.camera.getViewHeight() };
+    });
     this.vfxRenderer = new VfxRenderer({
       entityLayer: this.renderer.entityLayer,
       createLitShader: (program, colorTex, extra) => this.characterLighting.createCustomLitShader(program, colorTex, extra),
@@ -3111,8 +3134,8 @@ export class Game {
       attachToSocket: (targetId, socket, images, opts) =>
         this.attachToSocketFromAction(targetId, socket, images, opts),
       detachFromSocket: (targetId, socket) => this.detachFromSocketFromAction(targetId, socket),
-      setPropState: (targetId, socket, state, fadeMs) =>
-        this.heldPropSystem.setStateAwait(targetId, socket, state, fadeMs),
+      setPropState: (targetId, socket, state, fadeMs, onlyIfBurning) =>
+        this.heldPropSystem.setStateAwait(targetId, socket, state, fadeMs, onlyIfBurning),
       playPropVfx: (targetId, socket, effect, point) => this.heldPropSystem.playOneShot(targetId, socket, effect, point),
       lockPropState: (targetId, socket, lock) => this.heldPropSystem.setLock(targetId, socket, lock),
       setPropLevel: (propId, level) => this.heldPropSystem.setPropLevel(propId, level),
@@ -4145,6 +4168,24 @@ export class Game {
         getSwayStats: () => {
           const sb = this.swayBackground;
           return sb ? { ms: sb.updateMs, verts: sb.vertexCount, insts: sb.instanceCount } : null;
+        },
+        getForegroundStats: () => {
+          const fg = this.foregroundLayers;
+          return fg ? {
+            layers: fg.layers.map((l) => l.label), coverageMs: fg.coverageMs,
+            enabled: fg.isEnabled, coverageLive: this.sceneDepthSystem.hasForegroundCoverage,
+          } : null;
+        },
+        getForegroundToggles: () => ({ enabled: this.foregroundEnabled, coverageView: this.foregroundCoverageView }),
+        setForegroundEnabled: (on: boolean) => {
+          this.foregroundEnabled = on;
+          this.foregroundLayers?.setEnabled(on);
+        },
+        setForegroundCoverageView: (on: boolean) => {
+          this.foregroundCoverageView = on;
+          const sd = this.sceneManager.currentSceneData;
+          this.foregroundLayers?.setCoverageView(on, this.renderer.worldContainer,
+            [sd?.worldWidth ?? 1, sd?.worldHeight ?? 1]);
         },
       });
       /** F2「燃烧」页：只看状态、按探针；可燃物模板在燃烧工作台里改。 */
@@ -6486,9 +6527,12 @@ export class Game {
       } catch (e) {
         console.warn('[sway] 打光场景的草木装载失败，草木不动', e);
       }
+      if (!this.swayBackground) this.reportForegroundWithoutSway(sceneId, sceneData);
       return this.sceneLighting.backgroundMesh;
     });
     this.sceneManager.setLightingUnloader(() => {
+      // 前景层最先拆：它的前景片借着点亮背景的纹理与参数组、覆盖图绑在遮挡滤镜上
+      this.teardownForegroundLayers();
       // 换场景 = 同步基线作废（新场景的第一份内容不是"已对齐"）
       this.lightingSync?.resetBaseline();
       // 角色 / 粒子那组实体灯与显示变换退回恒等。上面的装载器只在场景**有** lighting 块时才重写它，
@@ -6510,10 +6554,13 @@ export class Game {
       this.swayPrimary = primary;
       this.swaySync?.resetSeen();
       const root = await this.buildSway(sceneId, sceneData, primary);
+      if (!root) this.reportForegroundWithoutSway(sceneId, sceneData);
       return root;
     });
     // 与光影同一拍：先于背景容器与纹理拆（绑着原画 / 深度 / 摆动图三张按场景走的纹理）
     this.sceneManager.setSwayUnloader(() => {
+      // 前景层先拆（绑着位移图与 id / matte，覆盖图绑在遮挡滤镜上）
+      this.teardownForegroundLayers();
       // ⚠ 先解绑再销毁：打光的背景读着位移图（BindGroup 见死即自毁，pixi-v8-traps）
       if (this.swayLit) this.sceneLighting.detachSway();
       this.swayLit = false;
@@ -6752,7 +6799,8 @@ export class Game {
       this.debugPanelUI?.log(`[sway] ${msg}`);
       return null;
     }
-    // ⚠ 换之前先解绑：打光的背景读着旧的位移图
+    // ⚠ 换之前先解绑：前景层与打光的背景都读着旧的位移图
+    this.teardownForegroundLayers();
     if (this.swayLit) this.sceneLighting.detachSway();
     this.swayBackground?.destroy();
     this.swayBackground = new SwayBackground(primary, inp, { composite: mode === 'composite' });
@@ -6763,6 +6811,7 @@ export class Game {
         normal: inp.litPlate.normal, albedo: inp.litPlate.albedo, depth: inp.litPlate.depth,
       });
       if (!ok) {
+        this.teardownForegroundLayers();
         this.swayBackground.destroy();
         this.swayBackground = null;
         this.swayLit = false;
@@ -6776,7 +6825,63 @@ export class Game {
     this.swayTexUrls = inp.urls.slice();
     // 进场景时按推送的缓存戳装上的也算"游戏换上了"（原地重装那条由 RuntimeSwaySync 自己记）
     if (import.meta.env.DEV && bust && cacheBust === undefined) this.swaySync?.noteApplied(sceneId, Number(bust));
+    // 前景层按这一份拆层解析（草木工作台推来的预览 id 图会换，所以每次装拆层都重建）
+    this.buildForegroundLayers(sceneId, sceneData);
     return this.swayBackground.root;
+  }
+
+  /**
+   * 建本场景的前景图层（[[scene-foreground-layers]]）。要求草木拆层已装上（swayPlant 按它的 id 图解析实例、
+   * 覆盖图网格由它出）与行走面深度场（接地深度从它取）。解析不了的层逐条说出来、跳过；一层都没有就不建。
+   */
+  private buildForegroundLayers(sceneId: string, sceneData: SceneData): void {
+    this.teardownForegroundLayers();
+    const sb = this.swayBackground;
+    if (!sb || !sceneData.foregroundLayers?.length) return;
+    const say = (m: string) => {
+      if (import.meta.env.DEV) console.warn(`[foreground] ${sceneId}: ${m}`);
+      this.debugPanelUI?.log(`[foreground] ${m}`);
+    };
+    const defs = normalizeForegroundLayerDefs(sceneData.foregroundLayers, say);
+    const src = sb.foregroundSource;
+    const layers = resolveForegroundLayers(defs, src, say);
+    if (layers.length === 0) return;
+    const fg = new SceneForegroundLayers({
+      layers,
+      maskHost: sb,
+      paintSize: src.paintSize,
+      sceneSize: src.sceneSize,
+      displacementOf: (id) => sb.instanceDisplacement(id),
+      depthModel: this.sceneDepthSystem.foregroundDepthModel(),
+      // 覆盖图交给 / 收回：实体滤镜与粒子**同一拍**换绑（收回时两边都先绑回占位，前景层才销毁 RT）
+      onCoverage: (tex) => {
+        this.sceneDepthSystem.setForegroundCoverage(tex);
+        this.vfxRenderer?.setForegroundCoverage(tex?.source ?? null);
+      },
+      log: say,
+    });
+    if (fg.layerCount === 0) { fg.destroy(); return; }
+    this.foregroundLayers = fg;
+    if (!this.foregroundEnabled) fg.setEnabled(false);
+    if (this.foregroundCoverageView) {
+      fg.setCoverageView(true, this.renderer.worldContainer, [sceneData.worldWidth, sceneData.worldHeight]);
+    }
+    this.debugPanelUI?.log(`[foreground] ${sceneId}：前景层 ${fg.layers.map((l) => `${l.label}（株 ${l.instId}，接地 ${l.baseLine ? `折线 ${l.baseLine.length} 点` : `(${l.baseX.toFixed(0)}, ${l.baseY.toFixed(0)})`}）`).join('、')}`);
+  }
+
+  /** 拆前景层：先让遮挡的使用方绑回占位（持有者自己在 destroy 里先广播 null），再销毁覆盖图 */
+  private teardownForegroundLayers(): void {
+    this.foregroundLayers?.destroy();
+    this.foregroundLayers = null;
+  }
+
+  /** 场景配了前景层、却没接上草木拆层（没风 / 没拆层 / 版本旧）：swayPlant 解析不了，说一次 */
+  private reportForegroundWithoutSway(sceneId: string, sceneData: SceneData): void {
+    const n = sceneData.foregroundLayers?.length ?? 0;
+    if (!n) return;
+    const msg = `${sceneId} 配了 ${n} 层前景，但本场景没接上草木拆层（没配风 / 没烘 sway / 版本旧）——swayPlant 前景层全部跳过`;
+    if (import.meta.env.DEV) console.warn(`[foreground] ${msg}`);
+    this.debugPanelUI?.log(`[foreground] ${msg}`);
   }
 
   /**
@@ -6830,6 +6935,7 @@ export class Game {
         const ok = await this.characterLighting.replaceGround(`${gdir}/ground_d.png${v}`, range);
         if (ok && this.sceneManager.currentSceneData?.id === sceneId) {
           this.sceneDepthSystem.setGroundDepthField(this.characterLighting.groundDepthField, this.characterLighting.groundDepthTexture);
+          this.foregroundLayers?.refreshBase(this.sceneDepthSystem.foregroundDepthModel());
           this.refreshPlayerWorldCollision();
           this.updateAcousticListener(true);
           this.vfxSystem.onSpaceMaybeChanged();
@@ -6891,7 +6997,8 @@ export class Game {
     if (import.meta.env.DEV && this.swaySync?.previewFor(sceneId)) return false;
     if (this.sceneManager.currentSceneData?.id !== sceneId || this.swayPrimary !== primary || !this.swayBackground) return false;
     const wasLit = this.swayLit;
-    // ⚠ 先解绑再销毁（与装载钩子的拆法同序）
+    // ⚠ 先解绑再销毁（与装载钩子的拆法同序）：前景层 → 点亮的背景 → 拆层
+    this.teardownForegroundLayers();
     if (wasLit) this.sceneLighting.detachSway();
     this.swayLit = false;
     this.swayBackground.destroy();
@@ -6935,6 +7042,7 @@ export class Game {
     if (!host || !hostParent || this.sceneManager.currentSceneData?.id !== sceneId) {
       // 只拆自己刚建的这份（这期间新场景的装载可能已经换上了它自己的）
       if (this.swayBackground?.root === root) {
+        this.teardownForegroundLayers();
         this.swayBackground.destroy();
         this.swayBackground = null;
       }
@@ -10329,7 +10437,8 @@ export class Game {
     for (const entry of this.registeredSystems) {
       if (entry.system) entry.system.destroy();
     }
-    // 摆动 mesh 通常已随场景卸载拆掉；这里兜一次（幂等），必须早于下面的资产收尾
+    // 摆动 mesh 通常已随场景卸载拆掉；这里兜一次（幂等），必须早于下面的资产收尾。前景层依附于它，先拆
+    this.teardownForegroundLayers();
     this.swayBackground?.destroy();
     this.swayBackground = null;
     // 揭幕前闸摘掉；预编译器放行在途等待、删掉后台编译的 GL 对象（早于渲染器销毁）
@@ -10892,7 +11001,11 @@ export class Game {
     this.updateLightEnvFromCurve();
     // 草木位移图：这一帧的网格渲进离屏 uv 图（不打光的合成面与打光的背景都读它）。
     // 必须在主画面渲染之前、与光照缓存同一拍——放进场景树里渲染离屏目标会串台（pixi-v8-traps）。
-    this.swayBackground?.renderUv(this.renderer.app.renderer);
+    if (this.swayBackground?.renderUv(this.renderer.app.renderer)) this.foregroundLayers?.markCoverageDirty();
+    // 前景网格跟着这株此刻的真实最大位移扩 / 缩（按档量化，不变档是一次比较）
+    this.foregroundLayers?.updateDisplacement();
+    // 前景层覆盖图（蒙版 + 前景面深度，遮挡在蒙版里拿它顶替深度图）：读这一帧的位移图，所以紧跟在它后面、主画面之前
+    this.foregroundLayers?.renderCoverage(this.renderer.app.renderer);
     // 水面细波纹的钟（只在落雷的灯亮着、本来就重烘的那几帧起作用）
     this.sceneLighting.setSurfaceTime(this.gameClock.now / 1000);
     // 统一光影：脏才重算场景辐射缓存，稳态是一次布尔判断（零光照计算）。

@@ -50,6 +50,9 @@ import {
 } from 'pixi.js';
 
 import type { SceneData } from '../data/types';
+import type { ForegroundBaseSamples, ForegroundSwaySource } from './foreground/foregroundLayerDefs';
+import { FG_COVERAGE_FRAG, FG_COVERAGE_VERT } from './foreground/foregroundMaskGlsl';
+import { foregroundRectGeometry, setForegroundRect, type ForegroundMask } from './foreground/SceneForegroundLayers';
 import {
   addWindBlasts, resolveSceneWind, windGustBasis, windGustClock, windGustFromBasis, windGustMul, windPhase, windProfile, windVeer,
   SWAY_WAVE_SIZE_DEFAULT, WIND_GUST_BASIS, type SceneWindParams, type WindBlast,
@@ -775,6 +778,11 @@ export class SwayBackground {
   private destroyed = false;
   /** 上一帧 `update` 的耗时（毫秒，指数滑动平均）：F2 面板按它显示这套摆动的实时开销 */
   private ms = 0;
+  /**
+   * 前景层的覆盖图网格（`createForegroundMask`）：绑着位移图与 id / matte，
+   * 本类销毁时**先**销毁它们、最后才销毁位移图（前景层自己拆时会先销毁、从这里摘掉）。
+   */
+  private readonly fgMasks = new Set<SwayForegroundMask>();
 
   constructor(painting: Texture, private readonly inp: BackgroundSwayInput, opts: SwayBackgroundOptions = {}) {
     const [W, H] = inp.sceneSize;
@@ -954,15 +962,98 @@ export class SwayBackground {
    * 把这一帧的网格渲进位移图。放在逐帧 update 之后、主画面渲染之前（与光照缓存同一拍）。
    * 渲染路径上抛一次就是整局卡死（pixi-v8-traps），所以这里兜住：大声报一次，之后不再画（草木静止）。
    */
-  renderUv(renderer: Renderer): void {
-    if (this.destroyed || this.uvBroken || !this.uvDirty) return;
+  renderUv(renderer: Renderer): boolean {
+    if (this.destroyed || this.uvBroken || !this.uvDirty) return false;
     try {
       renderer.render({ container: this.mesh, target: this.uvMap, clear: true, clearColor: [0, 0, 0, 0] });
       this.uvDirty = false;
+      return true;
     } catch (e) {
       this.uvBroken = true;
       console.error('[backgroundSway] 位移图渲染失败，草木停在原位', e);
+      return false;
     }
+  }
+
+  /** 前景层解析 `at` 要的那几样：CPU 版 id 图、两套尺寸、各株、此刻的位移软封顶 */
+  get foregroundSource(): ForegroundSwaySource {
+    return {
+      ids: this.inp.ids,
+      paintSize: this.inp.paintSize,
+      sceneSize: this.inp.sceneSize,
+      instances: this.insts.map((rt) => rt.def),
+      maxDisplacement: this.displacementCap,
+      displacementOf: (id) => this.instanceDisplacement(id),
+    };
+  }
+
+  /**
+   * 这株网格顶点此刻的最大位移（场景 wu）。植物像素都画在它的三角形里、位移是顶点位移的凸组合，
+   * 所以这就是它此刻画出来的任何一个像素的位移上界（前景层按它铺网格范围）。不认识的株 ⇒ 0。
+   * 只扫这一株的顶点（一棵树几百个），给少数几株前景层逐帧用。
+   */
+  instanceDisplacement(id: number): number {
+    const rt = this.byId.get(id);
+    if (!rt) return 0;
+    const P = this.pos, Q = this.p0;
+    let m2 = 0;
+    for (let v = rt.v0; v < rt.v1; v++) {
+      const dx = P[v * 2] - Q[v * 2], dy = P[v * 2 + 1] - Q[v * 2 + 1];
+      const d2 = dx * dx + dy * dy;
+      if (d2 > m2) m2 = d2;
+    }
+    return Math.sqrt(m2);
+  }
+
+  /**
+   * 此刻的位移软封顶（场景 wu，各株同一个）：`0.8 × 补带 × clamp(草木增益, 1, 4)`，逐帧按风参数更新。
+   * 任何一点画出来的位移都不超过它（叶颤另算几个 wu）；前景层按它铺网格范围。
+   */
+  get displacementCap(): number {
+    return this.insts[0]?.cap ?? SWAY_MARGIN_USE * this.margin;
+  }
+
+  /** 当前登记着的覆盖图网格数（调试 / 测试） */
+  get foregroundMaskCount(): number { return this.fgMasks.size; }
+
+  /**
+   * 覆盖图网格（打光 / 不打光都有）：把实例 `instId` 此刻画出来的蒙版（前景面 + 外扩 `dilatePaintPx` 原画像素的外沿）
+   * 连同前景面深度（按 `base` 接地、`uprightPerY` 立起来）写进一张 `target` 尺寸、场景归一化 uv 寻址的 RT。
+   * 由前景层渲进它的覆盖图，通道见 `foregroundMaskGlsl`。
+   */
+  createForegroundMask(
+    rect: readonly [number, number, number, number], instId: number,
+    target: { w: number; h: number }, dilatePaintPx: number,
+    base: ForegroundBaseSamples, uprightPerY: number,
+  ): ForegroundMask | null {
+    if (this.destroyed) return null;
+    const [W, H] = this.inp.sceneSize;
+    const [pw, ph] = this.inp.paintSize;
+    const shader = Shader.from({
+      gl: { vertex: FG_COVERAGE_VERT, fragment: FG_COVERAGE_FRAG },
+      resources: {
+        uUvMap: this.uvMap.source,
+        uIds: this.inp.idsTex.source,
+        uMatte: this.inp.matteTex.source,
+        fgMaskU: {
+          uSceneSize: { value: new Float32Array([W, H]), type: 'vec2<f32>' },
+          uTargetSize: { value: new Float32Array([target.w, target.h]), type: 'vec2<f32>' },
+          uFgInst: { value: instId, type: 'f32' },
+          uDilate: { value: new Float32Array([dilatePaintPx / Math.max(pw, 1), dilatePaintPx / Math.max(ph, 1)]), type: 'vec2<f32>' },
+          // 前景面那一路的取样半径：覆盖图一个纹素的足迹（±1.5 原画像素），细枝不漏
+          uTexelHalf: { value: new Float32Array([1.5 / Math.max(pw, 1), 1.5 / Math.max(ph, 1)]), type: 'vec2<f32>' },
+          uBaseX: { value: new Float32Array([base.x0, base.x1]), type: 'vec2<f32>' },
+          uUpright: { value: uprightPerY, type: 'f32' },
+          uBase: { value: Float32Array.from(base.data), type: 'vec2<f32>', size: base.data.length / 2 },
+        },
+      },
+    });
+    const m = new SwayForegroundMask(
+      new Mesh({ geometry: foregroundRectGeometry(rect, W, H), shader }), shader, this.inp.sceneSize,
+      (x) => this.fgMasks.delete(x),
+    );
+    this.fgMasks.add(m);
+    return m;
   }
 
   /** 顶点数（调试 / 性能读数） */
@@ -1351,8 +1442,10 @@ export class SwayBackground {
     if (this.destroyed) return;
     this.destroyed = true;
     this.root.removeFromParent();
-    // ⚠ 顺序即正确性：先拆读位移图的合成面，最后才销毁位移图（BindGroup 见死即自毁，pixi-v8-traps）。
+    // ⚠ 顺序即正确性：先拆读位移图的合成面与前景片 / 覆盖图网格，最后才销毁位移图（BindGroup 见死即自毁，pixi-v8-traps）。
     //   打光模式下读它的是 LitBackground —— 所有者必须先让它解绑（`SceneLightingSystem.detachSway`）。
+    for (const s of [...this.fgMasks]) s.destroy();
+    this.fgMasks.clear();
     if (this.comp) {
       const cg = this.comp.geometry;
       this.comp.destroy();
@@ -1366,5 +1459,42 @@ export class SwayBackground {
     this.shader.destroy();
     this.uvMap.destroy(true);
     this.root.destroy();
+  }
+}
+
+/** 本类交出去的一块覆盖图网格：纹理全是借的，只销毁自己的网格与 shader */
+class SwayForegroundMask implements ForegroundMask {
+  private dead = false;
+  constructor(
+    readonly mesh: Mesh<MeshGeometry, Shader>,
+    private readonly shader: Shader,
+    private readonly world: readonly [number, number],
+    private readonly onDestroy: (s: SwayForegroundMask) => void,
+  ) {}
+
+  get destroyed(): boolean { return this.dead; }
+
+  setRect(rect: readonly [number, number, number, number]): void {
+    if (this.dead) return;
+    setForegroundRect(this.mesh.geometry, rect, this.world[0], this.world[1]);
+  }
+
+  setBase(base: ForegroundBaseSamples, uprightPerY: number): void {
+    if (this.dead) return;
+    const u = (this.shader.resources as { fgMaskU?: { uniforms: Record<string, unknown> } }).fgMaskU?.uniforms;
+    if (!u) return;
+    (u['uBaseX'] as Float32Array).set([base.x0, base.x1]);
+    (u['uBase'] as Float32Array).set(base.data);
+    u['uUpright'] = uprightPerY;
+  }
+
+  destroy(): void {
+    if (this.dead) return;
+    this.dead = true;
+    this.onDestroy(this);
+    const g = this.mesh.geometry;
+    this.mesh.destroy();
+    g.destroy(true);
+    this.shader.destroy();
   }
 }

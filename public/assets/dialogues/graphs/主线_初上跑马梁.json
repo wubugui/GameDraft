@@ -20,7 +20,8 @@
         {
           "type": "stopVfx",
           "params": {
-            "instanceId": "纸钱_引路过场"
+            "instanceId": "纸钱_引路过场",
+            "soft": true
           }
         },
         {

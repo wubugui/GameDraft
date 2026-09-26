@@ -5,6 +5,7 @@ import { createPlanarVfxSpace } from './vfxSpace';
 import { emitterCapabilities, emitterProgramErrors, newEmitterProgram, resolveEmitterProgram } from './vfxProgram';
 import { VfxMotionAirflow } from './vfxMotionSource';
 import { VfxMotionContact } from './vfxContact';
+import { distanceToPolygonEdge, pointInPolygon } from './vfxConfine';
 import batAsset from '../../../public/assets/data/vfx/bat_cliff.json';
 
 const area: [number, number][] = [[-10,-10],[10,-10],[10,10],[-10,10]];
@@ -60,7 +61,8 @@ describe('VFX module pipeline', () => {
     const doc = effect(); doc.emitters[0].simulation!.recycle = { mode: 'surface' };
     const s = sim(doc); step(s, .1);
     // Bound the ground patch generously so the height, not replacement, proves lift.
-    Object.assign(s.emitters[0].area, { minX: -100000, maxX: 100000, minY: -100000, maxY: 100000 });
+    Object.assign(s.emitters[0].area, { minX: -100000, maxX: 100000, minY: -100000, maxY: 100000,
+      poly: [[-100000,-100000],[100000,-100000],[100000,100000],[-100000,100000]] });
     const airflow = { kind: 'airflow', tag: 'storm', radius: 100000, strength: 1600, direction: [1, .7, 0] } as VfxFieldDef;
     step(s, 2, airflow);
     expect(Math.max(...s.emitters[0].p.y)).toBeGreaterThan(150);
@@ -74,7 +76,106 @@ describe('VFX module pipeline', () => {
     const doc = effect(); doc.emitters[0].simulation!.recycle = { mode: 'surface' };
     const s = sim(doc); step(s, .1); const e = s.emitters[0], p = e.p;
     expect(e.lifecycle.afterMotion(0, p.x[0], 10000, p.z[0])).toBe(false);
-    expect(e.lifecycle.afterMotion(0, 10000, 0, p.z[0])).toBe(true);
+    expect(p.fadeRate[0]).toBe(0);
+    // 吹离了这片地：不当场挪走，先边飞边淡出
+    expect(e.lifecycle.afterMotion(0, 10000, 0, p.z[0])).toBe(false);
+    expect(p.fadeRate[0]).toBeGreaterThan(0);
+  });
+  it('surface paper blown off a thin diagonal patch fades out, comes back on the patch, and never leaks', () => {
+    // 跑马梁那种细长斜带：多边形只占包围盒几个百分点
+    const strip: [number, number][] = [[0,0],[20,-6],[420,-306],[400,-300]];
+    const doc = effect(); doc.emitters[0].spawn.max = 40; doc.emitters[0].spawn.burst = 40;
+    doc.emitters[0].simulation!.recycle = { mode: 'surface' };
+    const s = new VfxInstanceSim('strip', doc, [0,0,0], 7, createPlanarVfxSpace(), 1, { area: strip });
+    step(s, .1);
+    const e = s.emitters[0], p = e.p;
+    expect(e.area.fill).toBeLessThan(0.1);
+    for (let k = 0; k < 400; k++) expect(e.lifecycle.replace(k % 40)).toBe(true);
+    step(s, 2, { kind: 'airflow', tag: 'storm', radius: 100000, strength: 900, direction: [-1, .5, 0] });
+    expect([...p.fadeRate].some((r) => r > 0)).toBe(true);
+    step(s, 20);
+    expect([...p.alive]).toEqual(new Array(40).fill(1));
+    const at = { x: 0, y: 0 };
+    for (let i = 0; i < 40; i++) {
+      e.lifecycle.input.space.toScene([p.x[i], 0, p.z[i]], at);
+      expect(pointInPolygon(strip, at.x, at.y) || distanceToPolygonEdge(strip, at.x, at.y) <= 80).toBe(true);
+      expect(p.fade[i]).toBe(1);
+    }
+  });
+  it('with a camera, paper off the patch is never faded on screen and is collected once off screen', () => {
+    const doc = effect(); doc.emitters[0].simulation!.recycle = { mode: 'surface' };
+    const s = sim(doc); step(s, .1); const e = s.emitters[0], p = e.p;
+    e.lifecycle.view = { minX: -2000, minY: -2000, maxX: 2000, maxY: 2000 };
+    // 离那片地远超 80，但还在画面里：接着飞，不淡、不挪
+    expect(e.lifecycle.afterMotion(0, 500, 0, p.z[0])).toBe(false);
+    expect(p.fadeRate[0]).toBe(0);
+    // 出了画面：当场补回那片地上并淡入
+    expect(e.lifecycle.afterMotion(0, 5000, 0, p.z[0])).toBe(true);
+    expect(Math.abs(p.x[0])).toBeLessThanOrEqual(10);
+    expect(p.fadeRate[0]).toBeLessThan(0);
+  });
+  it('a paper asleep off the patch and off screen is collected without waiting for wind to wake it', () => {
+    const doc = effect(); doc.emitters[0].simulation!.recycle = { mode: 'surface' };
+    const s = sim(doc); step(s, .1); const e = s.emitters[0], p = e.p;
+    expect(e.plate!.arr.sleep[0]).toBe(1);
+    p.x[0] = 3000;
+    const view = { minX: -100, minY: -100, maxX: 100, maxY: 100 };
+    for (let i = 0; i < 60; i++) s.step(1/120, { fields: [], player: null, time: s.time, view });
+    expect(Math.abs(p.x[0])).toBeLessThanOrEqual(10);
+    // 在画面里躺着的不动
+    p.x[1] = 95; // 离那片地 85（> 80），但在画面里
+    for (let i = 0; i < 60; i++) s.step(1/120, { fields: [], player: null, time: s.time, view });
+    expect(p.x[1]).toBe(95);
+  });
+  it('with a camera, an out-of-bounds particle is only removed once off screen (no recycling: one-shot paper)', () => {
+    const s = sim(); step(s, .1); const e = s.emitters[0], p = e.p;
+    e.lifecycle.view = { minX: -2000, minY: -2000, maxX: 2000, maxY: 2000 };
+    expect(e.lifecycle.afterMotion(0, 1500, 50, p.z[0])).toBe(false);
+    expect(p.alive[0]).toBe(1);
+    expect(e.lifecycle.afterMotion(0, 5000, 50, p.z[0])).toBe(true);
+    expect(p.alive[0]).toBe(0);
+    // 没有镜头：照旧出了范围就收
+    e.lifecycle.view = null;
+    expect(e.lifecycle.afterMotion(1, 1500, 50, p.z[1])).toBe(true);
+    expect(p.alive[1]).toBe(0);
+  });
+  it('a ground patch refills to its laid count from spare slots while scattered paper stays where it lies on screen', () => {
+    const doc = effect(); doc.emitters[0].spawn.max = 10; doc.emitters[0].spawn.burst = 5;
+    doc.emitters[0].simulation!.recycle = { mode: 'surface' };
+    const s = sim(doc); const view = { minX: -200, minY: -200, maxX: 200, maxY: 200 };
+    const go = (sec: number) => { for (let i = 0; i < Math.round(sec * 120); i++) s.step(1/120, { fields: [], player: null, time: s.time, view }); };
+    go(.3);
+    const e = s.emitters[0], p = e.p;
+    expect(p.liveCount).toBe(5);
+    for (const i of [0, 1, 2]) p.x[i] = 95 + i;   // 吹到那片地外、还在画面里
+    go(1);
+    expect(p.liveCount).toBe(8);
+    expect([p.x[0], p.x[1], p.x[2]]).toEqual([95, 96, 97]);
+    let onPatch = 0;
+    for (let i = 0; i < p.cap; i++) if (p.alive[i] && Math.abs(p.x[i]) <= 10) { onPatch++; expect(p.fade[i]).toBe(1); }
+    expect(onPatch).toBe(5);
+    // 散落的出了画面：那片地已够数 ⇒ 收回备用，不再往那片地上堆
+    p.x[0] = 5000;
+    go(.5);
+    expect(p.alive[0]).toBe(0);
+    expect(p.liveCount).toBe(7);
+  });
+  it('a failed replacement pick hides the paper and retries instead of killing it', () => {
+    const space = createPlanarVfxSpace();
+    const doc = effect(); doc.emitters[0].simulation!.recycle = { mode: 'surface' };
+    const s = new VfxInstanceSim('void', doc, [0,0,0], 42, space, 1, { area });
+    step(s, .1);
+    const e = s.emitters[0], p = e.p, real = space.surfaceAtScene.bind(space);
+    space.surfaceAtScene = (x, y) => ({ ...real(x, y), kind: 'void' });
+    expect(e.lifecycle.afterMotion(0, p.x[0], -10000, p.z[0])).toBe(true);
+    step(s, .5);
+    expect(p.alive[0]).toBe(1);
+    expect(p.fade[0]).toBe(0);
+    space.surfaceAtScene = real;
+    step(s, 2);
+    expect([...p.alive]).toEqual([1,1,1,1,1]);
+    expect(p.fade[0]).toBe(1);
+    expect(p.y[0]).toBeLessThan(1);
   });
   it('a shell collision cannot project paper through the floor after the ground collision pass', () => {
     const sp = Object.assign(createPlanarVfxSpace(), { hasShell: true,

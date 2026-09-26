@@ -816,7 +816,8 @@
       "glob": "src/rendering/CharacterShadingFilter.ts",
       "docs": [
         "character-lighting",
-        "character-probe-bake"
+        "character-probe-bake",
+        "scene-foreground-layers"
       ]
     },
     {
@@ -830,13 +831,15 @@
     {
       "glob": "src/rendering/DepthOcclusionFilter.ts",
       "docs": [
-        "entity-lighting"
+        "entity-lighting",
+        "scene-foreground-layers"
       ]
     },
     {
       "glob": "src/rendering/EntityLightingFilter.ts",
       "docs": [
-        "entity-lighting"
+        "entity-lighting",
+        "scene-foreground-layers"
       ]
     },
     {
@@ -856,7 +859,8 @@
     {
       "glob": "src/rendering/backgroundSway.ts",
       "docs": [
-        "background-sway"
+        "background-sway",
+        "scene-foreground-layers"
       ]
     },
     {
@@ -896,6 +900,12 @@
       ]
     },
     {
+      "glob": "src/rendering/contactAoSources.ts",
+      "docs": [
+        "entity-lighting"
+      ]
+    },
+    {
       "glob": "src/rendering/entityShadowBinding.ts",
       "docs": [
         "entity-lighting",
@@ -918,6 +928,12 @@
       "glob": "src/rendering/footprintExtent.ts",
       "docs": [
         "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/foreground/**",
+      "docs": [
+        "scene-foreground-layers"
       ]
     },
     {
@@ -946,6 +962,12 @@
       "glob": "src/rendering/lighting/LitBackground.ts",
       "docs": [
         "background-sway"
+      ]
+    },
+    {
+      "glob": "src/rendering/lighting/probeCpuSampler.ts",
+      "docs": [
+        "entity-lighting"
       ]
     },
     {
@@ -983,6 +1005,18 @@
       "glob": "src/rendering/vfx/vfxBeam*",
       "docs": [
         "vfx-beams"
+      ]
+    },
+    {
+      "glob": "src/rendering/vfx/vfxBoltGlsl.ts",
+      "docs": [
+        "strike-threat"
+      ]
+    },
+    {
+      "glob": "src/rendering/vfx/vfxShaders.ts",
+      "docs": [
+        "scene-foreground-layers"
       ]
     },
     {
@@ -1233,6 +1267,12 @@
       "glob": "src/systems/vfx/vfxBeam.ts",
       "docs": [
         "vfx-beams"
+      ]
+    },
+    {
+      "glob": "src/systems/vfx/vfxBolt.ts",
+      "docs": [
+        "strike-threat"
       ]
     },
     {

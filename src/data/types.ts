@@ -815,6 +815,53 @@ export interface SceneData {
    * 纸钱掀起与枝叶一甩是同一拍；两边各自的强度倍率在 `gain` 里分开调。见 [[scene-wind]]。
    */
   wind?: SceneWindDef;
+  /**
+   * 场景前景图层（屏幕空间补深度遮挡补不准的边角：树干、枝条、檐角、栏杆）。**全时段共用**。
+   * 前景层 = 「蒙版 + 接地线」：蒙版里每个像素当成立在接地线上、朝相机的直立面，按与角色直立 quad 同一个深度梯度
+   * 现算深度，**顶替深度图**参与遮挡（逐像素，被挡部分按深度遮挡同一个虚影系数）。见 [[scene-foreground-layers]]。
+   */
+  foregroundLayers?: SceneForegroundLayerDef[];
+}
+
+// ============================================================================
+// 场景前景图层 —— 见 agent_docs [[scene-foreground-layers]]
+// ============================================================================
+
+/**
+ * 蒙版来源（按 `kind` 判别；本期只有 `swayPlant`）。
+ * 第二期要加 `{ kind: 'mask'; image: string; followSway?: boolean }`（手画蒙版）。
+ */
+export type SceneForegroundSourceDef = {
+  /** 拆层（`lighting/<背景基名>/sway.*`）里的一株植物 */
+  kind: 'swayPlant';
+  /**
+   * 落在这株植物上的任意一点（**原画像素坐标**）。⚠ 不存实例 id——每次重烘都会变；
+   * 运行时查 `sway_ids.png` 得实例（与 `sway_overrides.json` 同口径，24 像素内就近吸附）。
+   */
+  at: [number, number];
+};
+
+/**
+ * 接地（场景 wu）：物体从哪里立起来。蒙版里的像素按"立在这里的直立面"算深度。
+ * 缺省 = 来源给的（swayPlant：该株的根，整株一个接地点）。
+ */
+export interface SceneForegroundBaseDef {
+  /** 接地点 x / y（整层一个点；缺省取来源给的，写了哪项覆盖哪项） */
+  x?: number;
+  y?: number;
+  /**
+   * 接地折线（≥ 2 个点，按 x 升序）：跨纵深的长物体（斜着伸进画面深处的栏杆、檐）用——
+   * 蒙版里每个像素取折线在它那一列的接地点（两端外按端点延伸）。写了就不看 `x` / `y`。
+   */
+  line?: [number, number][];
+}
+
+export interface SceneForegroundLayerDef {
+  /** 场景内唯一 */
+  id: string;
+  label?: string;
+  source: SceneForegroundSourceDef;
+  base?: SceneForegroundBaseDef;
 }
 
 // ============================================================================
@@ -2752,6 +2799,12 @@ export type EmoteBubbleOffsetOpts = {
    * emote=神情符号（烛金放大 1.6 倍、近方形小泡）。只影响外观，不影响任何行为。
    */
   variant?: EmoteBubbleVariant;
+  /**
+   * 说话的人在画面外时，气泡贴着屏幕边显示在他那一侧（人进画面就回到头顶）。缺省 false = 气泡只在人头上，
+   * 人出画面话也跟着出画面。只给导演式的一两句开（远处有人喊）——闲聊气泡开了会全挤到屏幕边上。
+   * 人被藏着时照旧不显示，这条只管位置。
+   */
+  pinOnScreen?: boolean;
 };
 
 export type EmoteBubbleVariant = 'speech' | 'chatter' | 'emote';
