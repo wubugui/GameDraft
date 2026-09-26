@@ -1,0 +1,22 @@
+{
+ "ok": true,
+ "begins": [
+  [
+   "A",
+   "depthTex#0(depth24plus)"
+  ],
+  [
+   "B",
+   "depthTex#1(depth24plus-stencil8)"
+  ],
+  [
+   "A2",
+   "depthTex#0(depth24plus)"
+  ]
+ ],
+ "destroyed": [
+  "depthTex#0(depth24plus)"
+ ],
+ "submitted": true,
+ "diags": []
+}

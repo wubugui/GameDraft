@@ -1,0 +1,25 @@
+P canvas clear/-
+P canvas load/load
+D engine2d-batch add ref0 cm0
+P tex clear/-
+D engine2d-batch - ref0 cm15
+P tex clear/-
+D 3 - ref0 cm15
+P tex clear/-
+D 3 - ref0 cm15
+P tex clear/-
+D 3 - ref0 cm15
+P tex clear/-
+D 3 - ref0 cm15
+P tex clear/-
+D 4 - ref0 cm15
+P tex clear/-
+D 4 - ref0 cm15
+P tex clear/-
+D 4 - ref0 cm15
+P tex clear/-
+D 4 - ref0 cm15
+P canvas load/load
+D 5 active ref1 cm15
+D engine2d-batch remove ref1 cm0
+D engine2d-batch active ref0 cm15
