@@ -8,6 +8,8 @@
  *
  * 模拟建坏的管线:`failPipeline` 选项命中的管线 `ready` reject,录制时跳过它的 draw / dispatch(计入 skippedDraws、
  * 告警一次),与真后端确认管线建坏之后的行为相同。
+ * 模拟一直没编完的管线:`pendingPipeline` 选项命中的管线 `ready` 不落定、`isReady` 为假,直到 `settlePendingPipelines()`
+ * (给揭幕闸的限时 / 销毁放行测试用;录制照常,与真后端上「用到它的那一帧等编译」对应)。
  */
 import { scanWGSLInterface } from '@luma.gl/shadertools/wgsl';
 import type {
@@ -58,6 +60,8 @@ export interface NullRhiDeviceOptions {
   swapchainSize?: [number, number];
   /** 模拟建坏的管线:按管线标签判,返回 true 的管线 `ready` reject、draw / dispatch 被跳过 */
   failPipeline?: (label: string) => boolean;
+  /** 模拟一直没编完的管线:按管线标签判,返回 true 的管线 `ready` 不落定,直到 `settlePendingPipelines()` */
+  pendingPipeline?: (label: string) => boolean;
   /** 设备的 2D 纹理尺寸上限(缺省 8192 = WebGPU 规范缺省;真设备按适配器要,桌面常见 16384) */
   maxTextureSize?: number;
 }
@@ -116,13 +120,24 @@ class NullShader extends RhiResourceBase<'shader'> implements RhiShader {
   protected releaseBackend(): void {}
 }
 
-/** 管线就绪状态:正常的立即就绪;模拟建坏的 `ready` reject、`failed` 为真 */
+/**
+ * 管线就绪状态:正常的立即就绪;模拟建坏的 `ready` reject、`failed` 为真;
+ * 模拟没编完的(`settle` 非空)`ready` 挂着,调 settle 才就绪
+ */
 class NullPipelineState {
   readonly ready: Promise<void>;
-  readonly isReady: boolean;
-  constructor(label: string, readonly failed: boolean, onFail: (e: unknown) => void) {
-    this.isReady = !failed;
-    this.ready = failed ? Promise.reject(new RhiError('backend', `管线「${label}」创建 / 校验失败(空后端模拟)`)) : Promise.resolve();
+  isReady: boolean;
+  constructor(label: string, readonly failed: boolean, onFail: (e: unknown) => void, pending: ((settle: () => void) => void) | null = null) {
+    this.isReady = !failed && !pending;
+    if (failed) this.ready = Promise.reject(new RhiError('backend', `管线「${label}」创建 / 校验失败(空后端模拟)`));
+    else if (pending) {
+      this.ready = new Promise<void>((resolve) => {
+        pending(() => {
+          this.isReady = true;
+          resolve();
+        });
+      });
+    } else this.ready = Promise.resolve();
     this.ready.catch(onFail);
   }
 }
@@ -480,6 +495,8 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
   private readonly recordings: NullCommandList[] = [];
   private readonly warnedSkips = new WeakSet<object>();
   private readonly failPipeline: (label: string) => boolean;
+  private readonly pendingPipeline: (label: string) => boolean;
+  private readonly pendingSettles: (() => void)[] = [];
   private frameIndex = 0;
   private destroyed = false;
   private stats: RhiFrameStats = { frame: -1, renderPasses: 0, computePasses: 0, draws: 0, dispatches: 0, skippedDraws: 0 };
@@ -500,6 +517,18 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
     this.swapchain = new NullSwapchain(this.rootScope, this.releases, '画布后备缓冲', w, h, [], null, this.log);
     this.newLostPromise();
     this.failPipeline = options.failPipeline ?? (() => false);
+    this.pendingPipeline = options.pendingPipeline ?? (() => false);
+  }
+
+  /** 让 `pendingPipeline` 挂着的管线全部就绪 */
+  settlePendingPipelines(): void {
+    for (const settle of this.pendingSettles.splice(0)) settle();
+  }
+
+  private pipelineState(label: string): NullPipelineState {
+    const failed = this.failPipeline(label);
+    const pending = !failed && this.pendingPipeline(label) ? (settle: () => void) => this.pendingSettles.push(settle) : null;
+    return new NullPipelineState(label, failed, (e) => this.report(e, 'error'), pending);
   }
 
   get isLost(): boolean {
@@ -617,7 +646,7 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
     // 真后端建管线时 luma 用同一扫描器从 WGSL 推布局,推不出来就建不了
     const layout = scanWGSLInterface(shader.wgsl, { vertexEntryPoint: shader.entryPoints.vertex });
     if (!layout) throw new RhiError('invalid-usage', `管线「${desc.label}」:着色器「${shader.label}」的接口 luma 推不出布局`);
-    const state = new NullPipelineState(desc.label, this.failPipeline(desc.label), (e) => this.report(e, 'error'));
+    const state = this.pipelineState(desc.label);
     return new NullRenderPipeline(
       scope, this.releases, desc.label, [...desc.colorFormats], desc.depthFormat ?? null,
       (desc.vertexBuffers ?? []).map((v) => v.name), desc.sampleCount ?? 1, layout.bindings.map((b) => b.name), state,
@@ -629,7 +658,7 @@ export class NullRhiDevice implements RhiDevice, RhiResourceFactory {
     if (!shader.hasCompute) throw new RhiError('invalid-usage', `计算管线「${desc.label}」:着色器「${shader.label}」没有计算入口`);
     const layout = scanWGSLInterface(shader.wgsl, { scanVertexAttributes: false });
     if (!layout) throw new RhiError('invalid-usage', `计算管线「${desc.label}」:着色器「${shader.label}」的接口 luma 推不出布局`);
-    const state = new NullPipelineState(desc.label, this.failPipeline(desc.label), (e) => this.report(e, 'error'));
+    const state = this.pipelineState(desc.label);
     return new NullComputePipeline(scope, this.releases, desc.label, layout.bindings.map((b) => b.name), state);
   }
 

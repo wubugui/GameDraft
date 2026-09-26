@@ -279,6 +279,7 @@ import { VfxRenderer, vfxPipelineSpecs, type VfxSortHost } from '../rendering/vf
 import { VfxConfineOverlay } from '../rendering/vfx/VfxConfineOverlay';
 import { socketLightWorld, viewDirWorld, worldToScene } from '../utils/sceneSpace';
 import { FireHintMarker } from '../rendering/FireHintMarker';
+import { awaitPipelinesForReveal } from '../rendering/pipelineRevealGate';
 
 /**
  * 揭幕前闸的限时（毫秒）。过了就先揭幕：没编完的管线第一次用到的那一帧等它编完（会卡），
@@ -2213,15 +2214,15 @@ export class Game {
      */
     this.renderer.app.renderer.prewarmPipelines(vfxPipelineSpecs());
     this.sceneManager.setRevealGate(async () => {
-      const [shadersReady] = await Promise.all([
-        this.renderer.app.renderer.pipelinesReady(REVEAL_GATE_SHADER_TIMEOUT_MS),
+      await Promise.all([
+        awaitPipelinesForReveal(
+          this.renderer.app.renderer,
+          REVEAL_GATE_SHADER_TIMEOUT_MS,
+          (m) => { if (import.meta.env.DEV) console.warn(m); this.debugPanelUI?.log(m); },
+          () => this.tearDownComplete,
+        ),
         this.vfxSystem.prepareForReveal(REVEAL_GATE_VFX_TIMEOUT_MS),
       ]);
-      if (!shadersReady && !this.tearDownComplete) {
-        const m = `[管线预建] 揭幕前 ${REVEAL_GATE_SHADER_TIMEOUT_MS} ms 内着色器没编完,照常揭幕(之后第一次用到的那一帧会等编译)`;
-        if (import.meta.env.DEV) console.warn(m);
-        this.debugPanelUI?.log(m);
-      }
       // Static sampling geometry belongs to loading, never to the first visible bolt.
       const space = this.vfxSystem.currentSpace;
       const shell = this.sceneDepthSystem.depthShellField;

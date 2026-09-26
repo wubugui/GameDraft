@@ -87,6 +87,9 @@ export class Pipelines {
   private readonly layouts = new WeakMap<Geometry, Map<number, { version: number; layout: VertexLayout }>>();
   /** 已补过格式 / 跨度的几何(照 Pixi getPipeline 的 `!geometry._layoutKey` 门:每个几何只补一次,之后加属性也不重补) */
   private readonly ensuredGeometries = new WeakSet<Geometry>();
+  /** 正在等的 whenAllReady:销毁时一律以 false 放行(照 master GlProgramWarmup.destroy,R4-7) */
+  private readonly waits = new Set<(ready: boolean) => void>();
+  private destroyed = false;
 
   constructor(private readonly scope: RhiResourceScope) {}
 
@@ -166,17 +169,23 @@ export class Pipelines {
    * 已建的全部管线都就绪(着色器编成后端代码、管线校验完)。超时返回 false,不抛——建坏的管线录制时只跳过它自己的 draw(RHI 计入 skippedDraws、告警一次),帧照常提交。
    * WebGPU 在**建管线**时才把 WGSL 编成后端着色器(Windows 上经 HLSL → FXC / DXC,大着色器秒级),
    * 这一步不挡 JS,但用到它的那一帧要等 GPU 进程编完;揭幕前等它,就把这段等待落在遮罩下。
+   * 等待中销毁(游戏在切场景途中拆掉):立刻放行 false,不拖到限时;销毁之后再等也是立刻 false(照 master 的 GlProgramWarmup)。
    */
   async whenAllReady(timeoutMs: number): Promise<boolean> {
+    if (this.destroyed) return false;
     const all = Promise.allSettled([...this.pipelines.values()].map((p) => p.ready)).then(() => true);
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<boolean>((resolve) => {
+    let release!: (ready: boolean) => void;
+    const cut = new Promise<boolean>((resolve) => {
+      release = resolve;
       timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
     });
+    this.waits.add(release);
     try {
-      return await Promise.race([all, timeout]);
+      return await Promise.race([all, cut]);
     } finally {
       clearTimeout(timer);
+      this.waits.delete(release);
     }
   }
 
@@ -226,6 +235,9 @@ export class Pipelines {
   }
 
   destroy(): void {
+    this.destroyed = true;
+    for (const release of [...this.waits]) release(false);
+    this.waits.clear();
     this.reset();
   }
 

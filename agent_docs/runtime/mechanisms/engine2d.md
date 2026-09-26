@@ -58,7 +58,8 @@ last_governed: 2026-09-25
 - **着色器只有 WGSL**:`GlProgram` 只是为兼容构造签名留的壳,不参与渲染;`renderer.gl` 不存在。
 - **管线在第一次用到时才建,建的时候 GPU 进程才把 WGSL 编成后端着色器**(不挡 JS,但用到它的那一帧要等编完)。
   大着色器要提前:`renderer.prewarmPipelines(specs)` 按(程序 × 几何顶点布局 × 混合 × 目标格式)预建进同一份缓存,
-  `renderer.pipelinesReady(timeout)` 等全部已建管线编完(揭幕前闸在用,见 vfx-rendering)。
+  `renderer.pipelinesReady(timeout)` 等全部已建管线编完(揭幕前闸在用,见 vfx-rendering):超时放行 false、建坏的不挂住,
+  等待中渲染器销毁立刻放行 false(同 master GlProgramWarmup);空后端 `pendingPipeline` 选项可模拟没编完的管线。
   预建的键必须与真画时逐项相同:几何取自真实网格类、混合按网格纹理算非预乘变体、格式缺省画布 + 离屏 bgra8unorm;
   每个目标都建「不带模板」与「带深度模板、模板停用」两份——目标用过一次模板遮罩就一直带模板(照 Pixi),只建前一份的话第一次对话之后预建全部落空。
 - **设备丢失恢复后照常画**(照 Pixi `runners.contextChange`):WebGPURenderer 订 `rhi.onRestored`,丢掉全部 GPU 缓存
@@ -92,9 +93,9 @@ resolve 回目标——32 位浮点 / 整数这类不能 resolve 的格式照常
 Sprite 的合批四边形只在换纹理 / 改锚点 / 动态纹理 update 时重算(非动态 RenderTexture 改尺寸后停在旧尺寸);
 `renderer.render({ container })` 的根自己的 `blendMode` 不生效(按 normal 画,要混合就挂一层父节点);
 带 shader 却没有 `gpuProgram` 的网格告警并跳过绘制;
-纹理的**采样参数第一次用到时定下**(TextureStyle 的采样键照 Pixi WebGPU 的 `_resourceId` 缓存,GPU 采样器也按算键当时的参数建),
-之后改 `scaleMode` / `addressMode` 等字段要调 `style.update()` 才生效。与 master(WebGL)只在「第一次用之前改」时一致:
-master 在源初始化(第一次绑定 / 第一次渲染进 RT、被回收后重建)时按字段现值下发,用过之后改字段不 update 的写法两边会不同,别这么写。
+纹理的**采样参数在一个渲染器 / 一次设备里第一次用到时定下**(TextureStyle 的采样键照 Pixi WebGPU 的 `_resourceId` 缓存,GPU 采样器也按算键当时的参数建),
+之后改 `scaleMode` / `addressMode` 等字段要调 `style.update()` 才生效。换代(新渲染器、设备丢失恢复)后第一次取采样器按字段现值重算键,
+同 master(WebGL)上下文恢复后 GL 纹理重建读现值;同一设备上被 GC 回收后重传仍用原键(master 这里读现值)——用过之后改字段不 update 的写法别写。
 
 ## 怎么验证
 
