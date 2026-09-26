@@ -43,7 +43,15 @@ function setup(fake: FakeLuma = createFakeLuma()) {
       },
     },
   };
+  // luma 配置画布(创建 / 每次 resize)时按 preferredDepthFormat 先建好深度槽
+  const configure = () => WebGPUCanvasContext.prototype._createDepthStencilAttachment.call(lumaCtx, 'depth24plus');
+  configure();
   const ctx = fake.canvasContext as unknown as Record<string, unknown>;
+  Object.defineProperty(ctx, 'depthStencilAttachment', {
+    get: () => lumaCtx.depthStencilAttachment,
+    set: (v) => (lumaCtx.depthStencilAttachment = v),
+    configurable: true,
+  });
   ctx.getCurrentFramebuffer = (opts?: { depthStencilFormat?: string | false }) => {
     if (opts?.depthStencilFormat) WebGPUCanvasContext.prototype._createDepthStencilAttachment.call(lumaCtx, opts.depthStencilFormat);
     return {
@@ -63,7 +71,7 @@ function setup(fake: FakeLuma = createFakeLuma()) {
     t.destroy = () => destroyed.add(p.id);
     return t;
   };
-  return { fake, destroyed, size, created };
+  return { fake, destroyed, size, created, lumaCtx, configure };
 }
 
 function passDepthViews(fake: FakeLuma): [string, string | null][] {
@@ -159,6 +167,29 @@ describe('画布深度附件按格式各一张、由 RHI 持有(R4-1)', () => {
     const s = second!;
     expect(s.created.filter((c) => c.format === 'depth24plus')).toHaveLength(1);
     expect(passDepthViews(s.fake)[0][1]).toBe(s.created.find((c) => c.format === 'depth24plus')!.id);
+  });
+
+  it('luma 画布上下文自己的深度槽用不上:取画布帧缓冲后放掉,resize 重配后再建的也放掉(不多占一张画布深度)', () => {
+    const { fake, destroyed, size, lumaCtx, configure } = setup();
+    const slot0 = (lumaCtx.depthStencilAttachment as unknown as { id: string }).id;
+    const dev = new LumaRhiDevice(fake.device as Device);
+    expect(dev.runFrame((f) => {
+      f.commands.beginRenderPass({ label: 'D', target: f.swapchainWithDepth('depth24plus-stencil8') }).end();
+    })).toBe(true);
+    expect(lumaCtx.depthStencilAttachment).toBeNull();
+    expect(destroyed.has(slot0)).toBe(true);
+
+    // resize:luma 重配画布又建一张 depth24plus;下一帧取帧缓冲后同样放掉
+    size.w = 32;
+    size.h = 24;
+    configure();
+    const slot1 = (lumaCtx.depthStencilAttachment as unknown as { id: string }).id;
+    dev.resizeSwapchain(32, 24);
+    expect(dev.runFrame((f) => {
+      f.commands.beginRenderPass({ label: 'C', target: f.swapchain }).end();
+    })).toBe(true);
+    expect(lumaCtx.depthStencilAttachment).toBeNull();
+    expect(destroyed.has(slot1)).toBe(true);
   });
 
   it('空后端同一序列:每个格式一张独立的深度纹理(两端约定一致)', () => {

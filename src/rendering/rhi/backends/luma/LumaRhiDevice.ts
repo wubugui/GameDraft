@@ -460,6 +460,22 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
 }
 
 /**
+ * 取这一帧的画布帧缓冲(只要颜色附件,不让 luma 动它自己的深度槽),顺手放掉 luma 画布上下文那张深度槽纹理。
+ * luma 每次配置画布(创建时、每次 resize)都按 preferredDepthFormat 建一张画布尺寸的 depth24plus 放进槽里;
+ * RHI 的画布目标深度一律自持、从不用它,留着就是白占一张画布大小的显存(1080p ≈8MB、4K ≈33MB)。
+ * luma 自己把空槽当「要用时再建」,destroy / _configureDevice 也都判空(R4-1 复审)。
+ */
+function takeCanvasColorFramebuffer(context: CanvasContext): Framebuffer {
+  const fb = context.getCurrentFramebuffer({ depthStencilFormat: false as never });
+  const slot = context as CanvasContext & { depthStencilAttachment?: Texture | null };
+  if (slot.depthStencilAttachment) {
+    slot.depthStencilAttachment.destroy();
+    slot.depthStencilAttachment = null;
+  }
+  return fb;
+}
+
+/**
  * 画布后备缓冲。只在 runFrame 录制期内可用,**第一次被当作 pass 目标时**才向画布要这一帧的纹理
  * ——这一帧没画到画布就不取(不空耗一次呈现,加载期只做离屏烘焙的帧也不碰画布)。不归任何作用域销毁。
  *
@@ -491,12 +507,12 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
   }
 
   /**
-   * 这一帧的画布帧缓冲(只要颜色附件:不让 luma 动它自己的深度槽)。luma 的画布帧缓冲对象只有一个,
+   * 这一帧的画布帧缓冲(只要颜色附件,见 takeCanvasColorFramebuffer)。luma 的画布帧缓冲对象只有一个,
    * 附件是取的时候重新挂的,所以不能缓存这个对象。
    */
   private get canvasFramebuffer(): Framebuffer {
     if (!this.armed) throw new RhiError('invalid-usage', '画布后备缓冲只能在 runFrame 的录制期内使用');
-    return this.context.getCurrentFramebuffer({ depthStencilFormat: false as never });
+    return takeCanvasColorFramebuffer(this.context);
   }
 
   /** 本帧开 pass 用的颜色 / 深度附件视图(每帧只向画布取一次帧缓冲) */
@@ -630,7 +646,7 @@ class LumaMsaaSwapchainTarget extends RhiResourceBase<'render-target'> implement
 
   private get canvasFramebuffer(): Framebuffer {
     if (!this.armed) throw new RhiError('invalid-usage', '画布后备缓冲只能在 runFrame 的录制期内使用');
-    return this.context.getCurrentFramebuffer({ depthStencilFormat: false as never });
+    return takeCanvasColorFramebuffer(this.context);
   }
 
   /** 这一帧画布纹理的视图(resolve 目标) */
