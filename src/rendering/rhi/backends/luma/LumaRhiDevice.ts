@@ -462,46 +462,64 @@ class LumaRhiRenderTarget extends RhiResourceBase<'render-target'> implements Rh
 /**
  * 画布后备缓冲。只在 runFrame 录制期内可用,**第一次被当作 pass 目标时**才向画布要这一帧的纹理
  * ——这一帧没画到画布就不取(不空耗一次呈现,加载期只做离屏烘焙的帧也不碰画布)。不归任何作用域销毁。
+ *
+ * 带深度 / 模板时,深度纹理由本目标自己持有(每个格式一个目标、各一张,按画布纹理尺寸懒建、尺寸变了重建,设备销毁 / 恢复时放掉),
+ * 不用 luma 画布上下文的深度槽:那个槽只有一个,换格式就把旧的销毁重建——同一帧里两种格式的画布目标会拆掉前一个 pass 还引用着的深度纹理,
+ * 提交时整帧校验失败(R4-1;RhiFrame.swapchainWithDepth 的约定与 NullRhiDevice 都是每个格式各一张)。
  */
 class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements RhiRenderTarget {
   private armed = false;
   private formats: readonly RhiColorFormat[] | null = null;
   /**
    * 本帧开 pass 用的附件视图(第一次取时从画布帧缓冲拿)。同一帧里画布纹理与深度缓冲不变;luma 的画布帧缓冲对象
-   * 在带 / 不带深度的目标之间共用、取的时候才重挂附件,所以缓存视图、不缓存那个对象
+   * 在各画布目标之间共用、取的时候才重挂附件,所以缓存视图、不缓存那个对象
    */
   private views: { color: GPUTextureView; depth: GPUTextureView | null } | null = null;
+  /** 本目标持有的深度 / 模板纹理(只在带深度时建) */
+  private depthTex: Texture | null = null;
 
   constructor(
     scope: RhiResourceScope,
     releases: RhiReleaseQueue,
+    private readonly luma: Device,
     private readonly context: CanvasContext,
     private readonly format: RhiColorFormat,
-    /** 附带的深度 / 模板格式(由画布上下文持有、随画布尺寸重建) */
+    /** 附带的深度 / 模板格式(本目标持有、随画布尺寸重建) */
     private readonly depth: RhiDepthFormat | null = null,
   ) {
     super('render-target', depth ? `画布后备缓冲+${depth}` : '画布后备缓冲', scope, releases);
   }
 
   /**
-   * 每次取都向画布上下文要(同一帧拿到的是同一张颜色纹理)。luma 的画布帧缓冲对象只有一个,
-   * 带不带深度附件是取的时候重新挂的,所以不能缓存。
+   * 这一帧的画布帧缓冲(只要颜色附件:不让 luma 动它自己的深度槽)。luma 的画布帧缓冲对象只有一个,
+   * 附件是取的时候重新挂的,所以不能缓存这个对象。
    */
-  get framebuffer(): Framebuffer {
+  private get canvasFramebuffer(): Framebuffer {
     if (!this.armed) throw new RhiError('invalid-usage', '画布后备缓冲只能在 runFrame 的录制期内使用');
-    return this.context.getCurrentFramebuffer({ depthStencilFormat: (this.depth ?? false) as never });
+    return this.context.getCurrentFramebuffer({ depthStencilFormat: false as never });
   }
 
   /** 本帧开 pass 用的颜色 / 深度附件视图(每帧只向画布取一次帧缓冲) */
   passViews(): { color: GPUTextureView; depth: GPUTextureView | null } {
     if (!this.views) {
-      const fb = this.framebuffer as Framebuffer & {
-        colorAttachments: Array<{ handle: GPUTextureView }>;
-        depthStencilAttachment: { handle: GPUTextureView } | null;
-      };
-      this.views = { color: fb.colorAttachments[0].handle, depth: fb.depthStencilAttachment?.handle ?? null };
+      const fb = this.canvasFramebuffer as Framebuffer & { colorAttachments: Array<{ handle: GPUTextureView }> };
+      this.views = { color: fb.colorAttachments[0].handle, depth: this.depth ? this.depthView(this.depth, fb.width, fb.height) : null };
     }
     return this.views;
+  }
+
+  /** 按这一帧画布纹理的尺寸取深度视图:没建过或尺寸变了就(重)建 */
+  private depthView(depth: RhiDepthFormat, w: number, h: number): GPUTextureView {
+    let t = this.depthTex;
+    if (!t || t.width !== w || t.height !== h) {
+      // 旧的只可能被已提交的帧引用:WebGPU 的 destroy 等已提交的工作做完才真正释放
+      t?.destroy();
+      t = this.depthTex = this.luma.createTexture({
+        id: `${this.label} 深度`, width: w, height: h, format: toLumaTextureFormat(depth),
+        usage: toLumaTextureUsage(RhiTextureUsage.RENDER_TARGET),
+      } as never);
+    }
+    return (t as Texture & { view: { handle: GPUTextureView } }).view.handle;
   }
 
   get width(): number {
@@ -538,7 +556,15 @@ class LumaSwapchainTarget extends RhiResourceBase<'render-target'> implements Rh
     this.views = null;
   }
 
-  protected releaseBackend(): void {}
+  /** @internal 设备销毁 / 换设备时调:放掉本目标持有的深度纹理 */
+  releaseTextures(): void {
+    this.depthTex?.destroy();
+    this.depthTex = null;
+  }
+
+  protected releaseBackend(): void {
+    this.releaseTextures();
+  }
 }
 
 /**
@@ -864,7 +890,7 @@ class LumaCommandList implements RhiCommandList {
     const swapViews = target instanceof LumaSwapchainTarget ? target.passViews() : null;
     const framebuffer = swapViews
       ? { colorAttachments: [{ handle: swapViews.color }], depthStencilAttachment: swapViews.depth ? { handle: swapViews.depth } : null }
-      : target.framebuffer as Framebuffer & {
+      : (target as LumaRhiRenderTarget | LumaMsaaSwapchainTarget).framebuffer as Framebuffer & {
         colorAttachments: Array<{ handle: GPUTextureView }>;
         depthStencilAttachment: { handle: GPUTextureView } | null;
       };
@@ -957,11 +983,14 @@ class LumaCommandList implements RhiCommandList {
     this.encoder.copyTextureToTexture({ sourceTexture: s.handle, destinationTexture: d.handle, width: w, height: h });
   }
 
+  // 跟拷贝一样只能在 pass 之间调:pass 开着时编码器处于锁定状态,再调编码器方法会让整个命令缓冲作废(WebGPU 规范)
   pushDebugGroup(label: string): void {
+    this.assertNoOpenPass(`pushDebugGroup「${label}」`);
     this.encoder.pushDebugGroup(label);
   }
 
   popDebugGroup(): void {
+    this.assertNoOpenPass('popDebugGroup');
     this.encoder.popDebugGroup();
   }
 
@@ -1329,7 +1358,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     this.info = { vendor: luma.info.vendor, renderer: luma.info.renderer };
     this.releases = new RhiReleaseQueue((e) => this.report(e, 'error'));
     this.rootScope = new RhiResourceScope('设备', this, null);
-    this.swapchain = new LumaSwapchainTarget(this.rootScope, this.releases, luma.getDefaultCanvasContext(), this.caps.swapchainFormat);
+    this.swapchain = new LumaSwapchainTarget(this.rootScope, this.releases, luma, luma.getDefaultCanvasContext(), this.caps.swapchainFormat);
     this.watchLoss(luma);
   }
 
@@ -1653,8 +1682,8 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     this.swapchainSize = [pixelWidth, pixelHeight];
     // 丢失后旧画布上下文已拆:只记下尺寸,新设备接上时补给它的画布上下文
     if (this.canvasReleased) return;
-    // luma 自己记着「绘制缓冲尺寸」,下次取帧缓冲时按它重配画布上下文、重建深度缓冲;
-    // 不告诉它的话,它只在取颜色纹理时发现尺寸不符再补,深度缓冲会停在建设备时的尺寸
+    // luma 自己记着「绘制缓冲尺寸」,下次取帧缓冲时按它重配画布上下文;不告诉它的话,它只在取颜色纹理时发现尺寸不符再补。
+    // 画布深度纹理归各画布目标自己(按取到的画布纹理尺寸重建),不经 luma 的深度槽
     this.luma.getDefaultCanvasContext().setDrawingBufferSize(pixelWidth, pixelHeight);
   }
 
@@ -1672,7 +1701,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
       const swapchainWithDepth = (format: RhiDepthFormat): RhiRenderTarget => {
         let t = this.swapchainDepth.get(format);
         if (!t) {
-          t = new LumaSwapchainTarget(this.rootScope, this.releases, this.luma.getDefaultCanvasContext(), this.caps.swapchainFormat, format);
+          t = new LumaSwapchainTarget(this.rootScope, this.releases, this.luma, this.luma.getDefaultCanvasContext(), this.caps.swapchainFormat, format);
           this.swapchainDepth.set(format, t);
           t._beginFrame();
         }
@@ -1826,7 +1855,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     Object.assign(this.info, { vendor: next.info.vendor, renderer: next.info.renderer });
     this.mipmaps = null;
     const ctx = next.getDefaultCanvasContext();
-    this.swapchain = new LumaSwapchainTarget(this.rootScope, this.releases, ctx, this.caps.swapchainFormat);
+    this.swapchain = new LumaSwapchainTarget(this.rootScope, this.releases, next, ctx, this.caps.swapchainFormat);
     if (this.swapchainSize) ctx.setDrawingBufferSize(this.swapchainSize[0], this.swapchainSize[1]);
     this._isLost = false;
     this.watchLoss(next);
@@ -1859,6 +1888,7 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
 
   /** 放掉设备持有的画布目标(深度 / 多重采样) */
   private releaseSwapchainTargets(): void {
+    for (const t of this.swapchainDepth.values()) t.releaseTextures();
     this.swapchainDepth.clear();
     for (const t of this.swapchainMsaa.values()) t.releaseTextures();
     this.swapchainMsaa.clear();

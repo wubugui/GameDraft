@@ -489,7 +489,9 @@ describe('render pass 直接用原生 pass,不经 luma 的 RenderPass 包装(性
       }
     })).toBe(true);
     const begins = fake.log.filter((c) => c[0] === 'pass.begin').map((c) => [c[1], (c[2] as { view: string }[])[0].view, (c[3] as { view: string } | null)?.view ?? null]);
-    expect(begins).toEqual([['c', 'canvas', null], ['d', 'canvas', 'canvas-depth'], ['c', 'canvas', null], ['d', 'canvas', 'canvas-depth']]);
+    // 深度是画布目标自己持有的那张(见 LumaRhiDevice.canvasDepth.test.ts),不是 luma 画布上下文的深度槽
+    const own = '画布后备缓冲+depth24plus-stencil8 深度';
+    expect(begins).toEqual([['c', 'canvas', null], ['d', 'canvas', own], ['c', 'canvas', null], ['d', 'canvas', own]]);
     expect(fake.counts.canvasFramebuffers).toBe(2);
     // 下一帧重新取
     dev.runFrame((f) => {

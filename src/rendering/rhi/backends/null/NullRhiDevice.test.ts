@@ -216,6 +216,28 @@ const CASES: Case[] = [
     const b = dev.rootScope.createBuffer({ label: 'b', size: 16, usage: RhiBufferUsage.COPY_DST });
     h.submit((c) => c.copyBufferToBuffer(a, 8, b, 0, 16));
   }],
+  ['pass 开着时 pushDebugGroup', 'invalid-usage', (dev, h) => {
+    h.frame((f) => {
+      const pass = f.commands.beginRenderPass({ label: 'x', target: f.swapchain });
+      f.commands.pushDebugGroup('g');
+      pass.end();
+    });
+  }],
+  ['pass 开着时 popDebugGroup', 'invalid-usage', (dev, h) => {
+    h.frame((f) => {
+      f.commands.pushDebugGroup('g');
+      const pass = f.commands.beginRenderPass({ label: 'x', target: f.swapchain });
+      f.commands.popDebugGroup();
+      pass.end();
+    });
+  }],
+  ['pass 之间 push / popDebugGroup', 'ok', (dev, h) => {
+    h.frame((f) => {
+      f.commands.pushDebugGroup('g');
+      f.commands.beginRenderPass({ label: 'x', target: f.swapchain }).end();
+      f.commands.popDebugGroup();
+    });
+  }],
   ['createBuffer 初始数据超过大小', 'invalid-usage', (dev) => {
     dev.rootScope.createBuffer({ label: 'b', size: 4, usage: RhiBufferUsage.VERTEX, data: new Uint8Array(8) });
   }],

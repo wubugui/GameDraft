@@ -414,11 +414,14 @@ class NullCommandList implements RhiCommandList {
     this.device.log.push(`copy texture ${s.label} -> ${d.label}`);
   }
 
+  // 照真后端:pass 开着时不能调(WebGPU 上会让整个命令缓冲作废)
   pushDebugGroup(label: string): void {
+    this.assertClosed(`pushDebugGroup「${label}」`);
     this.device.log.push(`push ${label}`);
   }
 
   popDebugGroup(): void {
+    this.assertClosed('popDebugGroup');
     this.device.log.push('pop');
   }
 
