@@ -14,6 +14,13 @@
  * 帧底 ≠ 脚底：103 套图集里有 29 套存在脚离帧底超过 6% 帧高的帧（跳/抬脚帧，
  * 也有整套都悬着的素材）。直接取帧底那一截，这些帧会整个找不到脚、接触阴影凭空消失。
  * 竖直位置仍用实体的接地点（脚点）——那是物理上的着地处；这里只管横向形状。
+ *
+ * ## 为什么胶囊宽度按角色定、不按当前帧取（`bodyFootprintOf`）
+ *
+ * 胶囊代表的是身体。按当前帧量，走路时两脚分开 / 并拢让量出来的半宽帧帧变（主角走路 8~29、
+ * 跑步 4~37 世界 px，中心左右晃到 35），接触 AO 跟着动画一跳一跳（制作人 2026-09-25 真机）。
+ * 所以宽度与中心只从**站立片段**的帧量（逐帧取中位数），走 / 跑 / 蹲都沿用；当前帧只用来判
+ * 「这一帧底部有没有东西挨地」（`footprintOf` 返回 null 时不画）。
  */
 import type { Texture, TextureSource } from 'pixi.js';
 
@@ -66,6 +73,50 @@ export function scanFootprint(
 /** 按 facing 镜像：显示朝向与图集相反时，左右范围关于帧中线翻过去。 */
 export function mirrorFootprint(fp: FootprintExtent, mirrored: boolean): FootprintExtent {
   return mirrored ? { lo: 1 - fp.hi, hi: 1 - fp.lo } : fp;
+}
+
+/**
+ * 纯函数：一组帧各自的贴地范围 → 身体胶囊用的一份范围。中心、半宽各取中位数（站立片段里偶尔
+ * 挪一下脚的那一帧不带偏整体）。
+ * 挨不着地的帧（null）不参与；任一帧读不到像素（undefined）⇒ undefined；全都挨不着地 ⇒ null。
+ */
+export function medianFootprint(list: readonly (FootprintExtent | null | undefined)[]): FootprintExtent | null | undefined {
+  const centers: number[] = [];
+  const halves: number[] = [];
+  for (const fp of list) {
+    if (fp === undefined) return undefined;
+    if (fp === null) continue;
+    centers.push((fp.lo + fp.hi) * 0.5);
+    halves.push((fp.hi - fp.lo) * 0.5);
+  }
+  if (centers.length === 0) return null;
+  const median = (v: number[]): number => {
+    v.sort((a, b) => a - b);
+    const m = v.length >> 1;
+    return v.length % 2 ? v[m] : (v[m - 1] + v[m]) * 0.5;
+  };
+  const c = median(centers);
+  const h = median(halves);
+  return { lo: c - h, hi: c + h };
+}
+
+/** 按帧组缓存的身体范围；NONE = 这组帧都挨不着地（确定的结果，也缓存）。 */
+const NONE = 'none' as const;
+const bodyCache = new WeakMap<readonly Texture[], FootprintExtent | typeof NONE>();
+
+/**
+ * 身体胶囊的贴地范围：一组参照帧（站立片段，见 `SpriteEntity.getBodyReferenceFrames`）的中位数，
+ * 按帧组缓存。返回 null = 定不下来（帧组为空 / 都挨不着地 / 图集像素还没到），调用方退回按当前帧量。
+ */
+export function bodyFootprintOf(frames: readonly Texture[], band: number, searchFrac: number): FootprintExtent | null {
+  if (frames.length === 0) return null;
+  const hit = bodyCache.get(frames);
+  if (hit !== undefined) return hit === NONE ? null : hit;
+  const fp = medianFootprint(frames.map((t) => footprintOf(t, band, searchFrac)));
+  // undefined = 有帧读不到像素（占位纹理过渡态或资源不可读，footprintOf 已按规矩出声）：不缓存，下回再量
+  if (fp === undefined) return null;
+  bodyCache.set(frames, fp ?? NONE);
+  return fp;
 }
 
 /** 缓存里的「读不了像素」标记（与 null =「这一帧底部没东西」区分开）。 */

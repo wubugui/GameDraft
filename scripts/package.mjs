@@ -53,6 +53,23 @@ function flag(name, fallback = undefined) {
 }
 const TARGET = String(flag('target', 'release'));
 const SKIP_VITE = Boolean(flag('skip-vite', false));
+/**
+ * 档位配置文件。缺省读仓库里的 `tools/build/build_config.json`；
+ * 服务器上的项目台（PMDesk）打包时传一份替身进来——它在工作台上改档位设置，
+ * 但绝不改、也不推它那份只读克隆里的文件。
+ */
+const BUILD_CONFIG_ARG = flag('build-config');
+if (BUILD_CONFIG_ARG === true) {
+  console.error('--build-config 后面要跟一个文件路径');
+  process.exit(2);
+}
+const BUILD_CONFIG_PATH = BUILD_CONFIG_ARG
+  ? resolve(String(BUILD_CONFIG_ARG))
+  : join(ROOT, 'tools', 'build', 'build_config.json');
+if (!existsSync(BUILD_CONFIG_PATH)) {
+  console.error(`找不到构建配置 ${BUILD_CONFIG_PATH}`);
+  process.exit(2);
+}
 const STAGING = String(flag('out', join(ROOT, 'release', TARGET)));
 
 if (!['dev', 'release'].includes(TARGET)) {
@@ -299,7 +316,7 @@ async function stage(manifest) {
  * `script-src 'self' …`，内联脚本要 `'unsafe-inline'` 或 nonce，而外部文件天然合规。
  */
 function bakeBootConfig(gameDir) {
-  const cfgPath = join(ROOT, 'tools', 'build', 'build_config.json');
+  const cfgPath = BUILD_CONFIG_PATH;
   let bootQuery = '';
   try {
     const cfg = JSON.parse(readFileSync(cfgPath, 'utf-8'));

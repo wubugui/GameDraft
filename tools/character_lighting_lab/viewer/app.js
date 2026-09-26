@@ -1150,6 +1150,7 @@ async function loadScene(man){
   setSlider('rb_chlo',man.params.col_h_lo??0.35);
   setSlider('rb_chhi',man.params.col_h_hi??1.3);
   const rbm=$('rb_model'); if(rbm) rbm.value=man.params.depth_model||'base';
+  const rbc=$('rb_calib'); if(rbc){ rbc.value=man.params.calibration||'level'; syncCalibLock(); }
   setSlider('rb_ev',man.params.ev); setSlider('rb_tau',man.params.occluder_tau);
   setSlider('rb_gain',man.params.max_gain_ev??3.32);
   setSlider('rb_relief',man.params.relief??1.8);
@@ -3021,7 +3022,7 @@ const RB_IDS=['rb_pitch','rb_az','rb_ppu','rb_dscale','rb_doff','rb_chlo','rb_ch
 //   ② 折叠块里藏着几项改动(summary 上的静态计数,免得"折起来就忘了")。
 const RB_PARAM_KEY={
   rb_pitch:'pitch_deg', rb_az:'azimuth_deg', rb_ppu:'ppu_ratio', rb_ev:'ev',
-  rb_model:'depth_model', rb_dscale:'depth_scale_adj', rb_doff:'depth_offset_adj',
+  rb_model:'depth_model', rb_calib:'calibration', rb_dscale:'depth_scale_adj', rb_doff:'depth_offset_adj',
   rb_chlo:'col_h_lo', rb_chhi:'col_h_hi', rb_gain:'max_gain_ev', rb_tau:'occluder_tau',
   rb_relief:'relief', rb_objthr:'object_score_min', rb_sem:'semantic_gate',
   hdr_method:'hdr_method', hdr_pa:'hdr_pa',
@@ -3070,6 +3071,16 @@ function refreshDirtyMarks(){
   return changed.length;
 }
 $('rb_model').addEventListener('change',()=>{ if(S.man)refreshDirtyMarks(); });
+/** 「按圈的路 + 竖直崖壁」标定:俯角与起伏增益由拟合自己定,两根滑条置灰(它们送过去也不生效)。 */
+function syncCalibLock(){
+  const structure=$('rb_calib')&&$('rb_calib').value==='structure';
+  for(const id of ['rb_pitch','rb_relief']){
+    const el=$(id); if(!el) continue;
+    el.disabled=structure;
+    const lab=el.closest('label'); if(lab) lab.style.opacity=structure?'0.45':'';
+  }
+}
+$('rb_calib').addEventListener('change',()=>{ syncCalibLock(); if(S.man)refreshDirtyMarks(); });
 function markDirty(d){ $('rebuild').classList.toggle('dirty',d); }
 RB_IDS.forEach(id=>bindSlider(id,null,v=>(''+v).slice(0,5),()=>{ if(S.man)refreshDirtyMarks(); }));
 for(const id of ['rb_sem'])
@@ -3081,7 +3092,7 @@ function rbParams(){
   return {
     pitch_deg:$('rb_pitch').value, azimuth_deg:$('rb_az').value,
     ppu_ratio:$('rb_ppu').value, ev:$('rb_ev').value,
-    depth_model:$('rb_model').value,
+    depth_model:$('rb_model').value, calibration:$('rb_calib').value,
     depth_scale_adj:$('rb_dscale').value, depth_offset_adj:$('rb_doff').value,
     col_h_lo:$('rb_chlo').value, col_h_hi:$('rb_chhi').value,
     max_gain_ev:$('rb_gain').value, occluder_tau:$('rb_tau').value,

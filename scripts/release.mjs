@@ -25,6 +25,7 @@
  *   node scripts/release.mjs --out-dir D:/builds/current
  *   node scripts/release.mjs --out-dir D:/builds/2026-08-28T09-00 --target dev
  *   node scripts/release.mjs --out-dir <非空的陌生目录> --force
+ *   node scripts/release.mjs --out-dir <目录> --build-config <档位配置替身.json>   （缺省读 tools/build/build_config.json）
  */
 
 import { spawnSync } from 'node:child_process';
@@ -71,6 +72,8 @@ const SKIP_VERIFY = Boolean(flag('skip-verify', false));
 const SKIP_SWEEP = Boolean(flag('skip-sweep', false));
 /** 清单与 src/ 都没变时缺省复用上一次的扫描报告（全量扫描要二三十分钟）；显式要求重扫用这个。 */
 const FORCE_SWEEP = Boolean(flag('force-sweep', false));
+/** 档位配置替身（原样转给 package.mjs）；缺省用仓库里的 tools/build/build_config.json。 */
+const BUILD_CONFIG = flag('build-config');
 
 const t0 = Date.now();
 const step = (m) => console.log(`\n\u001b[36m▶ ${m}\u001b[0m`);
@@ -241,7 +244,10 @@ async function main() {
   }[disposition.action]}）`);
 
   step('1/5 抽取内容');
-  if (runNode('package.mjs', ['--target', TARGET]) !== 0) die('打包失败，见上面的输出');
+  const packageArgs = ['--target', TARGET];
+  if (BUILD_CONFIG === true) die('--build-config 后面要跟一个文件路径');
+  if (BUILD_CONFIG) packageArgs.push('--build-config', resolve(String(BUILD_CONFIG)));
+  if (runNode('package.mjs', packageArgs) !== 0) die('打包失败，见上面的输出');
 
   // 扫描排在静态验收**之前**：它写出 .build/sweep-<target>.json，验收门会把这份结果
   // 按清单哈希对账后一并计入——于是 verify-report.json 里同时有静态与动态两半的结论。

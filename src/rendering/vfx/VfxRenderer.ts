@@ -57,7 +57,7 @@ import { VfxPlateBatchMesh, createPlateStrip, type VfxPlateStrip } from './VfxPl
 import { getVfxBeamProgram } from './vfxBeamShaders';
 import { getVfxBoltProgram, getVfxLitProgram, getVfxPlateLitProgram, getVfxUnlitProgram } from './vfxShaders';
 import { VfxBoltBatchMesh } from './VfxBoltBatchMesh';
-import { boltNeedHeight, emitBoltSegments, BOLT_QUAD_SIGMAS, type BoltLook, type BoltView } from './vfxBoltGlsl';
+import { boltLayerOccludedByDepth, boltNeedHeight, emitBoltSegments, BOLT_QUAD_SIGMAS, type BoltLook, type BoltView } from './vfxBoltGlsl';
 import { boltInstanceSeed, createBolt, extendBolt, type BoltGeometry } from '../../systems/vfx/vfxBolt';
 import type { VfxBoltDef } from '../../data/types';
 
@@ -660,7 +660,10 @@ export class VfxRenderer {
         // 深度参数逐帧同步（换场景时纹理由系统重建视图，这里只刷数字）
         const du = v.depthGroup.uniforms as Record<string, unknown>;
         (du['uSceneSize'] as Float32Array).set([size.w, size.h]);
-        if (depth && space.kind === 'field') {
+        // 天上劈下来的雷身不被原画前景挡（落点那几层、水面电弧照旧挡），见 boltLayerOccludedByDepth
+        const boltLayer = e.def.appearance.bolt;
+        const occluded = !boltLayer || boltLayerOccludedByDepth(inst.effect.bolts, boltLayer);
+        if (depth && space.kind === 'field' && occluded) {
           du['uHasDepth'] = 1;
           du['uInvert'] = depth.cfg.depth_mapping.invert ? 1 : 0;
           du['uScale'] = depth.cfg.depth_mapping.scale;

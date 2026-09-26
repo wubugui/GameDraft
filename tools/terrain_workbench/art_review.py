@@ -32,6 +32,10 @@
     python -m tools.terrain_workbench.art_review remove  <场景> --id ID
     python -m tools.terrain_workbench.art_review check   <场景>                  # 连通性 + 标记点落没落在阻挡里 + 多边形实现度
     python -m tools.terrain_workbench.art_review probe   <场景> x,y [x,y ...]    # 这几个画面点挡不挡
+    python -m tools.terrain_workbench.art_review depthsheet <场景> [--out 路径]   # 深度体检 + 对照图（原画 | 深度 | 朝向 | 行走面）
+    python -m tools.terrain_workbench.art_review crowd <场景> --occlusion both   # 第二轮：游戏真实深度遮挡 vs 作者估的遮挡（深度过了体检才用）
+    python -m tools.terrain_workbench.art_review pin-screen <场景>               # 重做深度之前：钉住作者多边形的画面轮廓
+    python -m tools.terrain_workbench.art_review reanchor   <场景>               # 重做深度之后：按画面轮廓落回新几何
 
 产物落 `local/collision_review/<场景>/`（gitignore，不进资源）。坐标一律**场景坐标**（与 NPC / 热点 / 出生点同尺）。
 """
@@ -674,6 +678,160 @@ def cmd_depth(sid: str, width: int) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# 运行时深度（第二轮用：深度已按原画标定、对照图过了之后才作依据）
+# ---------------------------------------------------------------------------
+#: 与 `src/core/SceneDepthSystem.ts` 的 LAB_OCCLUSION_BIAS 同值：精灵深度往相机方向让一点，脚边不自遮
+RUNTIME_FOOT_BIAS = 0.045
+
+
+@dataclass
+class RuntimeDepth:
+    """游戏遮挡用的那张场景深度（`depthConfig.depth_map` 按 `depth_mapping` 解码，q 单位，原生分辨率）。"""
+    d: np.ndarray
+    nw: int
+    nh: int
+    tol: float
+    floor_offset: float
+    dps: float        # 直立 quad 的深度梯度 = tanθ / ppu（每原生像素）
+    theta: float
+
+
+def load_runtime_depth(g: SceneGeom) -> RuntimeDepth | None:
+    cfg = g.scene.get("depthConfig") or {}
+    p = tc.SCENES_RT / g.sid / str(cfg.get("depth_map") or "raw_depth_rg.png")
+    dm = cfg.get("depth_mapping") or {}
+    if not p.exists() or "scale" not in dm:
+        return None
+    a = np.asarray(Image.open(p).convert("RGB"), np.float64)
+    v = (a[..., 0] * 256.0 + a[..., 1]) / 65535.0
+    if dm.get("invert"):
+        v = 1.0 - v
+    d = v * float(dm["scale"]) + float(dm.get("offset", 0.0))
+    theta = math.atan2(-g.R[1, 2], g.R[1, 1])
+    dps = float((cfg.get("shader") or {}).get("depth_per_sy") or math.tan(theta) / g.ppu)
+    return RuntimeDepth(d=d, nw=d.shape[1], nh=d.shape[0], tol=float(cfg.get("depth_tolerance", 0.05)),
+                        floor_offset=float(cfg.get("floor_offset", 0.0)), dps=dps, theta=theta)
+
+
+def ground_depth_at(g: SceneGeom, x: float, y: float) -> float:
+    """脚点的行走面深度（与运行时 sampleGroundField 同一张 ground_d，双线性）。"""
+    gh_w, gw_w = g.dep.shape
+    px = min(max(x / g.ww * gw_w, 0.0), gw_w - 1.001)
+    py = min(max(y / g.wh * gh_w, 0.0), gh_w - 1.001)
+    x0, y0 = int(px), int(py)
+    fx, fy = px - x0, py - y0
+    d = g.dep
+    return float(d[y0, x0] * (1 - fx) * (1 - fy) + d[y0, x0 + 1] * fx * (1 - fy)
+                 + d[y0 + 1, x0] * (1 - fx) * fy + d[y0 + 1, x0 + 1] * fx * fy)
+
+
+def depth_occlusion(g: SceneGeom, rd: RuntimeDepth, foot: tuple[float, float], box: tuple[int, int, int, int],
+                    k: float) -> np.ndarray:
+    """站在 `foot`（场景坐标）的人，画布上 `box`=(ox, oy, w, h) 这块精灵里哪些像素被**游戏的深度遮挡**挡住。
+
+    与 `DepthOcclusionFilter` 同式：精灵每个像素当作立在脚点上的直立板，
+    spriteDepth = 脚点行走面深度 + dps·(syTex − syTexFoot) + floor_offset − bias，场景深度 + 容差 < spriteDepth 即被挡。
+    """
+    ox, oy, w, h = box
+    xs = (ox + np.arange(w) + 0.5) / k
+    ys = (oy + np.arange(h) + 0.5) / k
+    px = np.clip((xs / g.ww * rd.nw).astype(np.int64), 0, rd.nw - 1)
+    py_f = ys / g.wh * rd.nh
+    py = np.clip(py_f.astype(np.int64), 0, rd.nh - 1)
+    scene = rd.d[py[:, None], px[None, :]]
+    foot_sy = foot[1] / g.wh * rd.nh
+    sprite = (ground_depth_at(g, *foot) + rd.dps * (py_f - foot_sy) + rd.floor_offset - RUNTIME_FOOT_BIAS)[:, None]
+    inside = ((xs >= 0) & (xs < g.ww))[None, :] & ((ys >= 0) & (ys < g.wh))[:, None]
+    return (scene + rd.tol < sprite) & inside
+
+
+def up_facing(d: np.ndarray, ppu: float, theta: float, sigma: float = 1.5) -> np.ndarray:
+    """逐像素表面朝上的余弦（1 = 水平地面，0 = 竖直立面）。与烘焙器 `pipeline.up_dot_field` 同式。
+    深度成常数（标定塌成平面）时处处 = sinθ。"""
+    from scipy.ndimage import gaussian_filter
+    ds = gaussian_filter(d, sigma) if sigma > 0 else d
+    dqx = np.gradient(ds, axis=1) * ppu
+    dqy = -np.gradient(ds, axis=0) * ppu
+    return (dqy * math.cos(theta) + math.sin(theta)) / np.sqrt(dqx * dqx + dqy * dqy + 1.0)
+
+
+def cmd_depthsheet(sid: str, width: int, out: str | None = None) -> dict:
+    """深度体检 + 交付对照图：原画 | 运行时深度（红近蓝远）| 朝向（白 = 朝上的地，黑 = 竖直立面）| 行走面高度。
+
+    数值（JSON）：俯角、作者可走区上的路面坡度中位、可走区以外表面偏离竖直的中位、深度是否塌成常数。
+    **塌平的判据**：整张朝向图近乎一个灰（处处 ≈ sinθ）/ 深度几乎没有起伏 —— 这时深度不能当第二轮的依据。
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.cm as cm
+    import cv2
+    g = load_geom(sid)
+    rd = load_runtime_depth(g)
+    if rd is None:
+        raise SystemExit(f"{sid}: 没有运行时深度图（depthConfig.depth_map / depth_mapping）")
+    im, k = _art(g, width)
+    size = im.size
+    # 朝向在 512 宽的工作分辨率上算（与烘焙器同尺度），再放大
+    ww = 512
+    wh = max(8, int(round(ww * rd.nh / rd.nw)))
+    dw = np.asarray(Image.fromarray(rd.d.astype(np.float32), "F").resize((ww, wh), Image.BILINEAR), np.float64)
+    up = up_facing(dw, g.ppu * ww / rd.nw, rd.theta)
+    walk = np.zeros((wh, ww), np.uint8)
+    for r in tc.load_terrain(sid).get("regions") or []:
+        if r.get("kind") != "walk" or _is_generated(r):
+            continue
+        pts = region_screen_pts(g, r)
+        if pts:
+            cv2.fillPoly(walk, [np.round(np.array([[x / g.ww * ww, y / g.wh * wh] for x, y in pts])).astype(np.int32)], 1)
+    walk = walk.astype(bool)
+    from scipy.ndimage import binary_dilation, binary_erosion
+    wall = binary_erosion(~binary_dilation(walk, iterations=3), iterations=2)
+    gw = binary_erosion(walk, iterations=2)
+    stats = {"scene": sid, "pitchDeg": round(math.degrees(rd.theta), 2),
+             "depthStd": round(float(np.std(dw)), 4),
+             "upStd": round(float(np.std(up)), 4)}
+    if gw.any():
+        stats["groundSlopeMedianDeg"] = round(math.degrees(math.acos(float(np.clip(np.median(up[gw]), -1, 1)))), 1)
+    if wall.any():
+        stats["wallOffVerticalMedianDeg"] = round(math.degrees(math.asin(float(np.clip(np.median(np.abs(up[wall])), 0, 1)))), 1)
+    # 塌平：朝向处处 ≈ sinθ（一块正对相机的斜板）或深度几乎没有起伏
+    stats["collapsed"] = bool(stats["upStd"] < 0.05 or stats["depthStd"] < 1e-3)
+
+    def tile(arr_rgb: np.ndarray, label: str) -> Image.Image:
+        t = Image.fromarray(arr_rgb.astype(np.uint8), "RGB").resize(size, Image.BILINEAR)
+        dr = ImageDraw.Draw(t)
+        dr.rectangle([0, 0, size[0], 30], fill=(0, 0, 0))
+        dr.text((8, 3), label, fill=(255, 255, 255), font=_font(20))
+        return t
+
+    lo, hi = np.percentile(dw, 1), np.percentile(dw, 99)
+    dn = np.clip((dw - lo) / max(hi - lo, 1e-9), 0, 1)
+    Yg = None
+    gd = g.dep
+    qy = (g.cy - (np.arange(gd.shape[0])[:, None] + 0.5) / gd.shape[0] * 2 * g.cy) / g.ppu
+    Yg = qy * math.cos(rd.theta) - gd * math.sin(rd.theta)
+    yn = (Yg - np.nanmin(Yg)) / max(float(np.nanmax(Yg) - np.nanmin(Yg)), 1e-9)
+    art = im.convert("RGB").copy()
+    dr = ImageDraw.Draw(art)
+    dr.rectangle([0, 0, size[0], 30], fill=(0, 0, 0))
+    dr.text((8, 3), f"{sid} 原画", fill=(255, 255, 255), font=_font(20))
+    tiles = [art,
+             tile(cm.turbo(1 - dn)[..., :3] * 255, f"运行时深度(红近蓝远) 俯角 {stats['pitchDeg']}°"
+                  + ("  ⚠ 塌平" if stats["collapsed"] else "")),
+             tile(np.repeat((np.clip(up, 0, 1) * 255)[..., None], 3, -1), "朝向(白=朝上的地 黑=竖直立面)"),
+             tile(cm.viridis(yn)[..., :3] * 255, "行走面高度")]
+    sheet = Image.new("RGB", (size[0] * len(tiles), size[1]))
+    for i, t in enumerate(tiles):
+        sheet.paste(t, (i * size[0], 0))
+    dest = Path(out) if out else OUT_ROOT / sid / "depthsheet.png"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(dest)
+    stats["out"] = str(dest)
+    print(json.dumps(stats, ensure_ascii=False))
+    return stats
+
+
+# ---------------------------------------------------------------------------
 # 摆人（复查用）
 # ---------------------------------------------------------------------------
 def _player_frame() -> tuple[Image.Image, float] | None:
@@ -700,15 +858,28 @@ def _player_frame() -> tuple[Image.Image, float] | None:
 
 
 def cmd_crowd(sid: str, variant: str | None, width: int, spacing: float, seed: int,
-              box: tuple[float, float, float, float] | None = None, out: str | None = None) -> Path:
+              box: tuple[float, float, float, float] | None = None, out: str | None = None,
+              occlusion: str = "h") -> Path:
     """在**游戏此刻判为可走**的所有画面点上摆人：按间距撒点（带抖动），每点一个角色，脚点 = 撒的点。
 
     复查看的是「有没有人站在屋顶 / 墙上 / 水里 / 崖外 / 桌子里」，以及「明明是路却一个人都没有」。
     角色按场景透视系数缩放（与运行时同一套 perspective_scale_at）。`box` 给了就只在那一片撒、只出那一片的图
     （大场景整张缩下来人太小，看不清脚踩在哪儿）。
+
+    `occlusion`：人被挡掉哪一截按什么算——
+    - `h`（缺省）：作者估的物体占地 + 高（`object_volumes`），不读深度；
+    - `depth`：**游戏真实的深度遮挡**（`depth_occlusion`，与运行时同式）——深度按原画标定、`depthsheet` 过了才用；
+    - `both`：画真实深度遮挡，同时算作者估的那份，两份差得多的人在脚底画品红圈、坐标列进输出（`disagree`）——
+      这些点要么物体占地 / 高估错了、要么"物体后面的地"不该开 / 该开、要么深度那一块是错的，回画上判是哪一样。
+      另外**脚被深度挡住**的人（脚底一截被遮 = 游戏里他会像站在东西里面 / 后面的坑里）画红圈，列进 `feetHidden`。
     """
     from tools.editor.shared.entity_transform_math import perspective_scale_at
+    if occlusion not in ("h", "depth", "both"):
+        raise SystemExit(f"--occlusion 只认 h / depth / both，收到 {occlusion!r}")
     g = load_geom(sid, variant)
+    rd = load_runtime_depth(g) if occlusion != "h" else None
+    if occlusion != "h" and rd is None:
+        raise SystemExit(f"{sid}: 没有运行时深度图，--occlusion {occlusion} 用不了")
     blocked, grid = load_blocked(sid)
     bx0, by0, bx1, by1 = box or (0.0, 0.0, g.ww, g.wh)
     if box:
@@ -737,6 +908,8 @@ def cmd_crowd(sid: str, variant: str | None, width: int, spacing: float, seed: i
     base = im.convert("RGBA")
     vols = object_volumes(g, k, im.size)
     hidden = 0
+    disagree: list[list[float]] = []
+    feet_hidden: list[list[float]] = []
     # 画的顺序按 y 从远到近，近处的人压住远处的人（与游戏同一种深度排序直觉）
     persp = g.scene.get("perspectiveScale")
     for (x, y) in sorted(walk, key=lambda p: p[1]):
@@ -758,6 +931,19 @@ def cmd_crowd(sid: str, variant: str | None, width: int, spacing: float, seed: i
                     ax1, ay1 = min(ox + wpx, vx1), min(oy + hpx, vy1)
                     if ax1 > ax0 and ay1 > ay0:
                         occ[ay0 - oy:ay1 - oy, ax0 - ox:ax1 - ox] |= sil[ay0 - vy0:ay1 - vy0, ax0 - vx0:ax1 - vx0]
+            if rd is not None:
+                docc = depth_occlusion(g, rd, (x, y), (ox, oy, wpx, hpx), k)
+                body = np.asarray(sprite)[..., 3] > 8
+                n_body = max(1, int(body.sum()))
+                fh = float(((occ if occ is not None else np.zeros_like(body)) & body).sum()) / n_body
+                fd = float((docc & body).sum()) / n_body
+                feet = body.copy()
+                feet[: int(hpx * 0.85)] = False          # 脚底那一截（最下 15%）
+                if feet.any() and float((docc & feet).sum()) / max(1, int(feet.sum())) > 0.5:
+                    feet_hidden.append([round(x, 1), round(y, 1)])
+                if occlusion == "both" and abs(fh - fd) > 0.25:
+                    disagree.append([round(x, 1), round(y, 1), round(fh, 2), round(fd, 2)])
+                occ = docc
             if occ is not None and occ.any():
                 hidden += 1
                 sa = np.asarray(sprite).copy()
@@ -781,6 +967,12 @@ def cmd_crowd(sid: str, variant: str | None, width: int, spacing: float, seed: i
         reach_here = bool(keep[lab[i, j]]) if lab[i, j] > 0 else bool(len(near) and keep[near].any())
         c = (60, 255, 90, 255) if reach_here else (255, 150, 30, 255)
         dr.ellipse((x * k - r, y * k - r, x * k + r, y * k + r), fill=c)
+    for (x, y, *_r) in disagree:                      # 品红圈：作者估的遮挡与游戏深度遮挡对不上
+        r = max(6, int(width / 160))
+        dr.ellipse((x * k - r, y * k - r, x * k + r, y * k + r), outline=(255, 0, 255, 255), width=3)
+    for (x, y) in feet_hidden:                        # 红圈：游戏里脚被挡住
+        r = max(8, int(width / 130))
+        dr.ellipse((x * k - r, y * k - r, x * k + r, y * k + r), outline=(255, 40, 40, 255), width=3)
     _draw_entity_polys(dr, g, k)
     _draw_marks(dr, g, k, im.width, font_px=12 if box else None)
     if box:
@@ -792,12 +984,15 @@ def cmd_crowd(sid: str, variant: str | None, width: int, spacing: float, seed: i
         for y in range(int(math.ceil(by0 / 100.0)) * 100, int(by1) + 1, 100):
             cd.text((2, (y - by0) * k + 2), str(y), fill=(255, 255, 0, 255), font=f, stroke_width=2, stroke_fill=(0, 0, 0))
     tag = f"_{int(bx0)}_{int(by0)}_{int(bx1)}_{int(by1)}" if box else ""
-    dest = Path(out) if out else OUT_ROOT / sid / f"crowd{tag}{('_' + variant) if variant else ''}.png"
+    otag = "" if occlusion == "h" else f"_{occlusion}"
+    dest = Path(out) if out else OUT_ROOT / sid / f"crowd{tag}{('_' + variant) if variant else ''}{otag}.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
     base.convert("RGB").save(dest)
     print(json.dumps({"scene": sid, "variant": variant or "", "out": str(dest), "people": len(walk),
                       "sampled": len(pts), "spacing": round(spacing, 1), "behindObjects": hidden,
-                      "objectsWithHeight": len(vols)}, ensure_ascii=False))
+                      "objectsWithHeight": len(vols), "occlusion": occlusion,
+                      **({"feetHidden": feet_hidden} if rd is not None else {}),
+                      **({"disagree": disagree} if occlusion == "both" else {})}, ensure_ascii=False))
     return dest
 
 
@@ -1208,6 +1403,85 @@ def cmd_brush_clear(sid: str) -> None:
         return
     res = _save_and_export(sid, list(doc.get("regions") or []), clear_brush=True)
     print(json.dumps({"scene": sid, "brush": "已清（旧层留在 terrain/history/）", **res}, ensure_ascii=False))
+
+
+def cmd_pin_screen(sid: str) -> None:
+    """**重做深度之前**跑:把每块作者多边形在画面上的轮廓钉进 `screen.points`（按**当前**几何）。
+
+    作者多边形存的是网格单位（M-world XZ），深度一重做（换标定 / 换俯角），同一个网格点就落到画面别处去了；
+    画面上哪里是路不随深度变，所以画面轮廓才是作者真正圈的东西。命令行圈的块本来就带着这圈；
+    桌面工作台里画的 / 拖过的没有（或对不上），这里按当前几何反投回画面补上。已经对得上的不动。
+    """
+    from tools.terrain_workbench import authoring
+    doc = tc.load_terrain(sid)
+    g = load_geom(sid)
+    regions = list(doc.get("regions") or [])
+    pinned = []
+    for r in regions:
+        if _is_generated(r):
+            continue
+        scr = dict(r.get("screen") or {})
+        if scr.get("points") and scr.get("of") == _fingerprint(r.get("points") or []):
+            continue
+        pts = region_screen_pts(g, r)
+        if not pts:
+            raise SystemExit(f"{r.get('id')}: 反投不回画面（网格点不足 3 个）")
+        scr["points"] = [[round(x, 1), round(y, 1)] for x, y in pts]
+        scr["of"] = _fingerprint(r.get("points") or [])
+        r["screen"] = scr
+        pinned.append(r.get("id"))
+    if pinned:
+        r = authoring.save(sid, _state_with_regions(sid, regions), base_updated=doc.get("updated"))
+        if not r.get("ok"):
+            raise SystemExit("保存失败：" + str(r.get("err")))
+    print(json.dumps({"scene": sid, "pinned": pinned, "regions": len(regions)}, ensure_ascii=False))
+
+
+def cmd_reanchor(sid: str) -> None:
+    """**重做深度之后**跑（重烘 + 导出深度之后）：按画面轮廓把作者多边形重新落到新几何上。
+
+    导出深度时合成器沿用作者层原来的网格声明、作者多边形也还是旧几何下的网格点 —— 深度没变时这正确
+    （重烘不丢作者层），深度重做了就整片错位，而且不报错（碰撞照样合成、照样导出）。这里：
+    网格换成新烘的自动结果那套 → 每块非生成的多边形按 `screen.points` 走**新**的反投影链重新落格 →
+    外围块重算 → 导出 → 网格扩到盖住整张画（`grid --fit`）。
+
+    笔刷层 / 高度修补是网格栅格，没有画面轮廓可依，遇到就停下（先在工作台里改成多边形）。
+    重做深度前没跑 `pin-screen`、有块缺画面轮廓的也停下。
+    """
+    from tools.terrain_workbench import authoring
+    doc = tc.load_terrain(sid)
+    if doc.get("brush"):
+        raise SystemExit(f"{sid}: 有碰撞笔刷层（网格栅格，没有画面轮廓），没法随深度重投 —— 先在地形工作台里改成多边形")
+    if doc.get("height") or doc.get("heightOps"):
+        raise SystemExit(f"{sid}: 有行走面高度修补（网格栅格 / 网格操作），没法随深度重投 —— 先在地形工作台里清掉再重做")
+    auto = doc.get("auto")
+    if not auto:
+        raise SystemExit(f"{sid}: 还没有自动结果（先重烘并导出深度）")
+    missing = [r.get("id") for r in doc.get("regions") or []
+               if not _is_generated(r) and not (r.get("screen") or {}).get("points")]
+    if missing:
+        raise SystemExit(f"{sid}: 这些块没有画面轮廓：{missing} —— 重做深度前要先跑 pin-screen")
+    g = load_geom(sid)
+    regions = []
+    for r in doc.get("regions") or []:
+        if _is_generated(r):
+            continue
+        scr = r.get("screen") or {}
+        pts = [(float(p[0]), float(p[1])) for p in scr["points"]]
+        regions.append(_make_region(g, r["id"], r["kind"], pts, scr.get("note", ""),
+                                    h=scr.get("h"), h0=scr.get("h0"), flat=bool(scr.get("flat"))))
+    new_grid = tc.GridMeta.from_dict(auto).to_dict()
+    st = authoring.layer_state(sid)
+    state = {"doc": st["doc"], "brush": None, "height": None}
+    state["doc"]["grid"] = new_grid
+    state["doc"]["regions"] = regions
+    r = authoring.save(sid, state, base_updated=doc.get("updated"))
+    if not r.get("ok"):
+        raise SystemExit("保存失败：" + str(r.get("err")))
+    res = _save_and_export(sid, regions)
+    print(json.dumps({"scene": sid, "reanchored": [x["id"] for x in regions], "grid": new_grid, **res},
+                     ensure_ascii=False))
+    cmd_grid_fit(sid)
 
 
 def cmd_grid_fit(sid: str) -> None:
@@ -1662,7 +1936,11 @@ def main() -> int:
     p = sub.add_parser("render"); p.add_argument("sid"); p.add_argument("--variant"); p.add_argument("--width", type=int, default=1600)
     p.add_argument("--out", help="输出路径（缺省 local/collision_review/<场景>/overlay.png；复查者用自己的目录，别覆盖修复者的图）")
     p = sub.add_parser("depth"); p.add_argument("sid"); p.add_argument("--width", type=int, default=1200)
+    p = sub.add_parser("depthsheet", help="深度体检 + 交付对照图(原画 | 深度 | 朝向 | 行走面) + 路面坡度 / 立面垂直度 / 是否塌平")
+    p.add_argument("sid"); p.add_argument("--width", type=int, default=800); p.add_argument("--out")
     p = sub.add_parser("crowd"); p.add_argument("sid"); p.add_argument("--variant"); p.add_argument("--width", type=int, default=1600)
+    p.add_argument("--occlusion", choices=("h", "depth", "both"), default="h",
+                   help="人被挡掉哪一截按什么算:h = 作者估的物体高(缺省,不读深度) / depth = 游戏真实深度遮挡 / both = 两份对比")
     p.add_argument("--spacing", type=float, default=0.0); p.add_argument("--seed", type=int, default=0)
     for b in ("x0", "y0", "x1", "y1"):
         p.add_argument(f"--{b}", type=float)
@@ -1682,6 +1960,8 @@ def main() -> int:
     p = sub.add_parser("remove"); p.add_argument("sid"); p.add_argument("--id", required=True)
     p = sub.add_parser("brush"); p.add_argument("sid"); p.add_argument("--clear", action="store_true", required=True)
     p = sub.add_parser("grid"); p.add_argument("sid"); p.add_argument("--fit", action="store_true", required=True)
+    p = sub.add_parser("pin-screen", help="重做深度之前：把作者多边形的画面轮廓钉住（按当前几何）"); p.add_argument("sid")
+    p = sub.add_parser("reanchor", help="重做深度之后：按画面轮廓把作者多边形重新落到新几何上"); p.add_argument("sid")
     p = sub.add_parser("move"); p.add_argument("sid"); p.add_argument("what"); p.add_argument("xy")
     p = sub.add_parser("footprint", help="按画面轮廓圈的阻挡块 → 占地 + h 草稿（不落盘）")
     p.add_argument("sid"); p.add_argument("--id", required=True); p.add_argument("--h", type=float, required=True)
@@ -1696,6 +1976,8 @@ def main() -> int:
         cmd_render(a.sid, a.variant, a.width, Path(a.out) if a.out else None)
     elif a.cmd == "depth":
         cmd_depth(a.sid, a.width)
+    elif a.cmd == "depthsheet":
+        cmd_depthsheet(a.sid, a.width, a.out)
     elif a.cmd == "crowd":
         g = load_geom(a.sid, a.variant)
         box = None
@@ -1704,7 +1986,7 @@ def main() -> int:
         area = (box[2] - box[0]) * (box[3] - box[1]) if box else g.ww * g.wh
         # 缺省密度：每张图约 350 个撒点（可走的才摆人）——再密人身子叠成一片，只剩脚底圆点能看；框一片时同样多撒点铺满那一片
         spacing = a.spacing or max(20.0, math.sqrt(area / 350.0))
-        cmd_crowd(a.sid, a.variant, a.width, spacing, a.seed, box, a.out)
+        cmd_crowd(a.sid, a.variant, a.width, spacing, a.seed, box, a.out, a.occlusion)
     elif a.cmd == "crop":
         cmd_crop(a.sid, (a.x0, a.y0, a.x1, a.y1), a.scale, a.depth, a.overlay, a.variant, a.draft, a.out,
                  grid_lines=not a.no_grid)
@@ -1720,6 +2002,10 @@ def main() -> int:
         cmd_brush_clear(a.sid)
     elif a.cmd == "grid":
         cmd_grid_fit(a.sid)
+    elif a.cmd == "pin-screen":
+        cmd_pin_screen(a.sid)
+    elif a.cmd == "reanchor":
+        cmd_reanchor(a.sid)
     elif a.cmd == "move":
         cmd_move(a.sid, a.what, a.xy)
     elif a.cmd == "footprint":

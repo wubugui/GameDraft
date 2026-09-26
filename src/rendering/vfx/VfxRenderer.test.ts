@@ -15,6 +15,7 @@ import {
   type VfxRenderDeps, type VfxSortAnchor, type VfxSpriteSheet,
 } from './VfxRenderer';
 import { getVfxLitProgram, getVfxPlateLitProgram, getVfxUnlitProgram } from './vfxShaders';
+import { boltLayerOccludedByDepth } from './vfxBoltGlsl';
 import VFX_SRC from './vfxShaders.ts?raw';
 
 describe('sampleCurve', () => {
@@ -305,6 +306,42 @@ describe('VfxRenderer · 受光强度（lightGain）', () => {
       for (const g of Object.values(t.shared)) expect('uLightGain' in g.uniforms).toBe(false);
       t.r.clear();
     }
+  });
+
+  it('天上劈下来的雷身不被原画前景挡；水面电弧与落点粒子照旧挡（制作人 2026-09-25）', () => {
+    const depth = { tex: Texture.WHITE, cfg: { depth_mapping: { invert: false, scale: 2, offset: 0.1 }, depth_tolerance: 0.05 } };
+    const shared = { charLights: new UniformGroup({ uDispEv: { value: 0, type: 'f32' } }) };
+    const deps = {
+      entityLayer: new Container(),
+      createLitShader: () => null,
+      releaseLitShader: () => {},
+      canLight: () => false,
+      displayUniforms: shared.charLights,
+      getToneEnv: () => null,
+      getDepth: () => depth,
+      getSceneSize: () => ({ w: 100, h: 100 }),
+      perspective: () => 1,
+    } as unknown as VfxRenderDeps;
+    const r = new VfxRenderer(deps);
+    const boltLayer = (bolt: string) => ({ bolt, coreWu: 1, coreMinPx: 1, glowWu: 4, glowMinPx: 2, coreGain: 1, glowGain: 1, glowColor: [1, 1, 1] });
+    const ems = [
+      emitter('雷身', {}), emitter('水面电弧', {}), emitter('落点火星', { lit: false }),
+    ];
+    (ems[0].def.appearance as unknown as Record<string, unknown>).bolt = boltLayer('天雷');
+    (ems[1].def.appearance as unknown as Record<string, unknown>).bolt = boltLayer('电弧');
+    const inst = instance(ems) as unknown as { effect: unknown };
+    // 雷形没写 sky / surface 形状 → fillBolt 不画,只看深度开关
+    inst.effect = { bolts: [{ id: '天雷', kind: 'sky' }, { id: '电弧', kind: 'surface' }] };
+    r.render([inst as unknown as VfxInstanceSim], sheetsFor(ems));
+    const views = (r as unknown as { views: Map<string, { depthGroup: UniformGroup }> }).views;
+    const hasDepth = (id: string) => (views.get(`inst/${id}`)!.depthGroup.uniforms as Record<string, number>)['uHasDepth'];
+    expect(hasDepth('雷身')).toBe(0);
+    expect(hasDepth('水面电弧')).toBe(1);
+    expect(hasDepth('落点火星')).toBe(1);
+    expect(boltLayerOccludedByDepth([{ id: 'a', kind: 'sky' }], { bolt: 'a' })).toBe(false);
+    expect(boltLayerOccludedByDepth([{ id: 'a', kind: 'surface' }], { bolt: 'a' })).toBe(true);
+    expect(boltLayerOccludedByDepth(undefined, { bolt: 'a' })).toBe(true);   // 找不到雷形:按普通层照旧挡
+    r.clear();
   });
 
   it('改了跟得上：工作台推来新定义（换发射器）重建视图；同一个发射器原地改也逐帧写进去', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mirrorFootprint, scanFootprint } from './footprintExtent';
+import { medianFootprint, mirrorFootprint, scanFootprint } from './footprintExtent';
 
 /** 造一条 w×h 的 RGBA 像素，给定的 [x0,x1) × [y0,y1) 矩形不透明。 */
 function strip(w: number, h: number, boxes: [number, number, number, number][]): Uint8ClampedArray {
@@ -44,5 +44,34 @@ describe('mirrorFootprint：显示朝向与图集相反时关于帧中线翻', (
   it('不镜像原样', () => {
     const fp = { lo: 0.2, hi: 0.5 };
     expect(mirrorFootprint(fp, false)).toBe(fp);
+  });
+});
+
+describe('medianFootprint：身体胶囊按站立片段定一份，不跟每帧步幅变', () => {
+  it('中心、半宽各取中位数：偶尔挪一下脚的那一帧不带偏', () => {
+    const fp = medianFootprint([
+      { lo: 0.4, hi: 0.6 }, { lo: 0.4, hi: 0.6 }, { lo: 0.1, hi: 0.9 }, { lo: 0.42, hi: 0.62 },
+    ])!;
+    // 中心 0.5 / 0.5 / 0.5 / 0.52 → 0.5；半宽 0.1 / 0.1 / 0.4 / 0.1 → 0.1
+    expect(fp.lo).toBeCloseTo(0.4, 10);
+    expect(fp.hi).toBeCloseTo(0.6, 10);
+  });
+
+  it('偶数帧取中间两个的平均', () => {
+    const fp = medianFootprint([{ lo: 0.4, hi: 0.6 }, { lo: 0.5, hi: 0.9 }])!;
+    expect((fp.lo + fp.hi) / 2).toBeCloseTo(0.6, 10);   // 中心 0.5、0.7
+    expect((fp.hi - fp.lo) / 2).toBeCloseTo(0.15, 10);  // 半宽 0.1、0.2
+  });
+
+  it('挨不着地的帧不参与；全都挨不着地 ⇒ null', () => {
+    const one = medianFootprint([null, { lo: 0.3, hi: 0.5 }, null])!;
+    expect(one.lo).toBeCloseTo(0.3, 10);
+    expect(one.hi).toBeCloseTo(0.5, 10);
+    expect(medianFootprint([null, null])).toBeNull();
+    expect(medianFootprint([])).toBeNull();
+  });
+
+  it('有帧读不到像素 ⇒ undefined（调用方不缓存、退回按当前帧）', () => {
+    expect(medianFootprint([{ lo: 0.3, hi: 0.5 }, undefined])).toBeUndefined();
   });
 });

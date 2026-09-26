@@ -2,7 +2,7 @@ import 'pixi.js/mesh';
 import { BlurFilter, Container, Mesh, MeshGeometry, Shader, Texture, type TextureSource } from 'pixi.js';
 import type { ResolvedLightEnv } from './lightEnv';
 import type { ShadowProjectionField } from './shadowField';
-import { footprintOf, mirrorFootprint } from './footprintExtent';
+import { bodyFootprintOf, footprintOf, mirrorFootprint } from './footprintExtent';
 import {
   CONTACT_AO_DIR_CONE_DEG_DEFAULT, CONTACT_AO_DIR_LENGTH_DEFAULT, CONTACT_AO_DIR_STRENGTH_DEFAULT,
   CONTACT_AO_SPREAD_DEFAULT, coneKFromDeg, resolveContactAo,
@@ -37,7 +37,8 @@ const PENUMBRA_GROW = 0.06;
 /**
  * 接触阴影（胶囊 AO，见 `CONTACT_FRAG` 头注释）的形状量。
  *
- * - `BAND`：从剪影最低的不透明行往上多高（占帧高）算"贴地的那一截"（脚、鞋、衣摆），它的宽度定胶囊半径。
+ * - `BAND`：从剪影最低的不透明行往上多高（占帧高）算"贴地的那一截"（脚、鞋、衣摆），它的宽度定胶囊半径
+ *   （只在站立片段的帧上量、取中位数，按角色固定，见 footprintExtent.bodyFootprintOf）。
  *   12%：迈步姿势里后脚在画面上更高，6% 只包得住前脚（送葬队 13 人里 6 人实测如此）；
  *   多数图集在 10%~12% 之间宽度就不再涨，再往上开始把腿、衣摆算进去。
  * - `SEARCH`：从帧底往上最多找多高去寻那一行；再往上都没东西 = 这一帧不挨地，不画。
@@ -238,14 +239,16 @@ function f32(value: number) {
  * 接触阴影 = **胶囊 AO**(制作人 2026-09-24 要的"带方向性的 AO,像 3D 里的胶囊体 AO")。
  *
  * 角色在 M-world 里近似成一根竖直胶囊:轴在剪影贴地那一截的中心、往镜头反方向退一个半径
- * (剪影最低那行是脚最靠镜头的前沿,身体轴线在它后面);半径 = 贴地那一截半宽 × 大小(作者参数 size);
+ * (剪影最低那行是脚最靠镜头的前沿,身体轴线在它后面);半径 = 贴地那一截半宽 × 大小(作者参数 size),
+ * 半宽与中心在站立片段上量、按角色固定(走 / 跑不跟步幅变);
  * 高 = 帧高换算成的世界高。地面每个片元先用行走面深度场还原成 M-world 坐标(wu,铁律 0),再算两部分:
  *
- * 1. 无方向:竖直圆柱对地面点的**余弦加权遮蔽**(推导,不是拟合)。地面点到轴水平距离 x、圆柱
- *    半径 r、高 h:圆柱在方位上占 2·asin(r/x),每个方位遮住仰角 0..atan(h/x);对
- *    (1/π)∫cos(天顶角)dω 积分得 (asin(r/x)/π)·h²/(h²+x²)。贴着身体表面(x=r)那一圈是
- *    1/2(面前立着一堵墙),这里归一到 1,使「明暗」(作者参数 darkness)就是"脚边最暗处的浓度"。
- *    h 只取身高的「晕开」比例(作者参数 spread,缺省 0.25):这一层画在已经打好光的画面上,分不出环境光和灯光,
+ * 1. 无方向:**胶囊**(与方向部分同一根:底端球心高 r、贴地只挨一点)对地面点的**余弦加权遮蔽**
+ *    (推导,不是拟合;见 capsuleOmni)。贴地那一点正好 1(脚底最黑),往外平滑落下,所以「明暗」
+ *    (作者参数 darkness)就是"脚边最暗处的浓度",不用再归一。
+ *    ⚠ 2026-09-25 之前按**平底实心圆柱**算、贴身体表面归一到 1:柱下一整圈恒 1、柱边上断崖
+ *    (asin 在 x=r 处斜率无穷),真机就是脚下一块没有渐变的黑饼(制作人)。与方向部分的胶囊也对不上。
+ *    顶只到身高的「晕开」比例(作者参数 spread,缺省 0.25):这一层画在已经打好光的画面上,分不出环境光和灯光,
  *    全高的 1/x 长尾会把整片灯光压暗(13 人队伍离线实测);灯光那份由下面的方向部分去挡。
  * 2. 有方向(「方向 AO」开着才有,缺省开):从地面点沿"指向光"的方向发射线,看离胶囊多近(Quilez 胶囊软阴影,
  *    锥形半影,锥角越大越软),再沿影子方向在「拖尾长度」内淡出、乘「方向浓度」。射线上取两直线最近点
@@ -351,6 +354,39 @@ vec3 groundWorldWu(vec2 wp) {
 }
 
 /**
+ * 无方向部分:竖直胶囊(轴在地面点水平距离 x 处,半径 r,底端球心高 r、顶端球心高 top)对地面点的
+ * 余弦加权遮蔽 (1/π)∫cos(天顶角)dω。按方位角切成竖直半平面:每个半平面里胶囊的截面是一个 2D 胶囊
+ * (两个圆 + 中间竖条,半宽 w = sqrt(r² − p²),p = 这个方位离轴的垂距,圆心在 m = x·cos 方位处、高 r 与 top),
+ * 截面是凸的,从地面点看被挡的仰角是一整段 [lo, hi](lo 贴底圆下切线,hi 贴顶圆上切线;竖条跨过头顶时 hi = 90°),
+ * 余弦加权就是 (sin²hi − sin²lo)/2;再对方位角中点求积。x > r 时只有 |方位| < asin(r/x) 挨得着,x ≤ r 时整圈。
+ * 8 片与蒙特卡洛精确积分差 < 0.006(x=0 → 1、x=r → 0.354、x=2r → 0.149);编辑器预览
+ * light_env_visual._omni 同式,对账测试钉着这几个值。
+ */
+const int OMNI_SLICES = 8;
+float capsuleOmni(float x, float r, float top) {
+    float pm = x > r ? asin(r / x) : PI;
+    float dphi = 2.0 * pm / float(OMNI_SLICES);
+    float acc = 0.0;
+    for (int i = 0; i < OMNI_SLICES; i++) {
+        float phi = -pm + (float(i) + 0.5) * dphi;
+        float m = x * cos(phi);
+        float p = x * sin(phi);
+        float w2 = r * r - p * p;
+        if (w2 > 0.0) {
+            float w = sqrt(w2);
+            float lo = max(0.0, atan(r, m) - asin(min(1.0, w / length(vec2(m, r)))));
+            float hi = m - w <= 0.0 ? 0.5 * PI : min(0.5 * PI, atan(top, m) + asin(min(1.0, w / length(vec2(m, top)))));
+            if (hi > lo) {
+                float sh = sin(hi);
+                float sl = sin(lo);
+                acc += 0.5 * (sh * sh - sl * sl);
+            }
+        }
+    }
+    return acc * dphi / PI;
+}
+
+/**
  * 射线 ro + rd·t 上 t 处这一点对胶囊(线段 ca→ca+ba,半径 r)的锥形软遮挡 0..1,含沿射线的淡出。
  * 这一点离胶囊表面 d、离地面点 t:d/t 就是它偏离光锥中心线的角度(k = 0.5/tan 锥角)。
  */
@@ -431,7 +467,7 @@ void main(void) {
 
     float x = length(P.xz - base.xz);
     float he = uHeightWu * uNearField;
-    float omni = (2.0 / PI) * asin(min(1.0, uRadiusWu / max(x, 1e-4))) * he * he / (he * he + x * x);
+    float omni = capsuleOmni(x, uRadiusWu, max(he, uRadiusWu));
 
     // 有方向部分:每一路光各投各的胶囊软影,按它占地面照度的比例加权(权重和 ≤ 1)
     float dirOcc = 0.0;
@@ -609,7 +645,7 @@ export class PlanarEntityShadow implements IEntityShadow {
     this.contactPositions = new Float32Array(8);
     const contactUVs = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
     this.contactGeometry = new MeshGeometry({ positions: this.contactPositions, uvs: contactUVs, indices: quadIdx() });
-    // 接触阴影 = 胶囊 AO(见 CONTACT_FRAG):不读剪影贴图,胶囊半径由 footprintOf 在 CPU 上按帧算好;不做碰撞/遮挡
+    // 接触阴影 = 胶囊 AO(见 CONTACT_FRAG):不读剪影贴图,胶囊半径由 bodyFootprintOf 在 CPU 上按角色(站立片段)算好;不做碰撞/遮挡
     this.contactShader = makeContactShader(this.ctx);
     this.contactMesh = new Mesh({ geometry: this.contactGeometry, shader: this.contactShader, texture: Texture.WHITE }) as Mesh;
     this.contactMesh.visible = false;
@@ -736,8 +772,12 @@ export class PlanarEntityShadow implements IEntityShadow {
     if (!ctx || !p.enabled || p.darkness <= 0 || p.size <= 0) return false;
     const fp = footprintOf(tex, CONTACT_BAND, CONTACT_SEARCH);
     if (fp === null) return false;                       // 这一帧底部没东西挨地
-    // undefined = 读不到像素,footprintOf 已出声;退回整帧宽
-    const ext = mirrorFootprint(fp ?? { lo: 0, hi: 1 }, src.getFacing() < 0);
+    // 胶囊宽度 / 中心按角色定(站立片段的中位数),不跟走 / 跑每帧的步幅变——按当前帧量时一跳一跳
+    // (制作人 2026-09-25 真机)。定不下来(没有参照帧 / 像素还没到)才按当前帧;
+    // 当前帧也是 undefined = 读不到像素,footprintOf 已出声,退回整帧宽
+    const refs = src.getBodyReferenceFrames?.() ?? [];
+    const body = bodyFootprintOf(refs, CONTACT_BAND, CONTACT_SEARCH);
+    const ext = mirrorFootprint(body ?? fp ?? { lo: 0, hi: 1 }, src.getFacing() < 0);
 
     const wpq = ao && ao.wuPerQUnit > 0 ? ao.wuPerQUnit : 1;
     const { ppu, worldToPixelX: w2px, worldToPixelY: w2py } = ctx;

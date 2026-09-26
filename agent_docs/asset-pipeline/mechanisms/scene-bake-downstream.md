@@ -9,12 +9,17 @@ authority:
   - tools/character_lighting_lab/audit_walkable.py
   - tools/character_lighting_lab/audit_depth.py
   - tools/character_lighting_lab/pipeline.py#export_scene_depth
+  - tools/character_lighting_lab/pipeline.py#stage_calibrate_structure
+  - tools/character_lighting_lab/redo_depth.py
   - tools/character_lighting_lab/terrain_compose.py
   - public/resources/runtime/scenes
 triggers:
   paths: ["tools/character_lighting_lab/**", "public/resources/runtime/scenes/**"]
-  topics: [场景烘焙, 碰撞图, 深度图, depthConfig, 出生点, 可走性]
-  tasks: [烘场景深度, 新增场景碰撞, 体检出生点, 下线烘焙字段]
+  topics: [场景烘焙, 碰撞图, 深度图, depthConfig, 出生点, 可走性, 深度标定, 立面约束标定, 深度塌平]
+  tasks: [烘场景深度, 新增场景碰撞, 体检出生点, 下线烘焙字段, 深度塌成平面怎么修]
+verified_by:
+  - tools/character_lighting_lab/tests/test_structure_calibration.py
+  - tools/character_lighting_lab/tests/test_ground_mask.py
 last_governed: 2026-09-23
 ---
 
@@ -49,7 +54,8 @@ last_governed: 2026-09-23
   (`terrain_compose.record_auto`),再由唯一合成器 `terrain_compose.export_terrain` 把自动结果 ⊕ 作者层合成
   `collision.png` + **`collision.json` 旁挂**(网格声明,运行时先读它、没有才退回老的 `depthConfig.collision`)。
   行走面同理:导出时留 `ground_base.png`,`ground_d.png` = 基底 ⊕ 作者高度修补。
-- **重烘 / 手动标定之后作者层原样叠回去**(多边形 / 笔刷 / 高度增量都是世界网格坐标,不随重烘丢);实验室里那套
+- **重烘之后作者层原样叠回去**(多边形 / 笔刷 / 高度增量都是世界网格坐标,不随重烘丢)——**前提是几何没变**;
+  换了标定 / 俯角就会整片错位,要按画面轮廓重投(见下「已知坑」④ 与 [[terrain-workbench]]);实验室里那套
   屏幕空间碰撞笔刷(`collision_edit.png`,`/api/save_edit?kind=collision`)已下线(410),已有的三张经
   `tools/migrate_terrain_authoring.py` 落成世界笔刷层。改碰撞一律去地形工作台,见 [[terrain-workbench]]。
 - 体检:`audit-walkable --reach`(连通性)现在也是 `validate-data` 的 error;`python -m tools.terrain_workbench --check`
@@ -74,7 +80,6 @@ last_governed: 2026-09-23
   推断出来的崖面 / 栈道结构全被抹掉。"行走面与深度图吻合 95%"是两边塌成同一平面的**假吻合**,
   火把变亮只是灯落在了平面上;遮挡 / 影子 / 碰撞都失去真实几何,制作人看碰撞 mask 判为"乱画"。
   **判据:重烘后必须把运行时深度图画出来看**(不是只看吻合率),近乎单色 = 标定塌了。
-  制作人 2026-09-14 决定**亲自在实验室手动标定**这些场景,别再自动调参去"修"。
   深度推断(Depth Anything 原始视差)在这些画上是有结构的,坏的是"地面尽量水平"拟合 s/o 这一步。
   ⚠ **重烘深度会改碰撞,光跑 `audit-walkable`(只查落点是否阻挡)不够,必须查连通**:崖墓前段1 的 `spawn_1`
   (从崖墓前段进来的落点)与崖墓后段的出口 `T_到前段1` 重烘后都被切成孤岛,落点本身却都"可走"。
@@ -89,7 +94,25 @@ last_governed: 2026-09-23
   ⚠ 但 `stage_walk_world` 在这种几何上仍会把碰撞算反(墙可走、院坝封死),崖墓正式的碰撞是**用地面掩膜
   生成的碰撞笔刷层**定的:闭运算(半径 5 px,跨过松树这类小遮挡)后的地面掩膜 = 强制可走,其余 = 强制阻挡。
   开 'all' 之前先确认物体掩膜把屋顶 / 墓龛这类"朝上但不是地"的东西扣干净了。
-  真正的崖壁起伏要在角色照明实验室里手画(深度笔刷),不要再调阈值去拟合。
+  "近乎平视看峭壁 + 窄路"的构图改用 ④ 的 `structure` 标定;局部起伏仍可在实验室深度笔刷里手修,不要再调阈值去拟合。
+  ④ **现行处置(2026-09-25,制作人要求"必须想办法把深度搞对"):`--calibration structure`(立面约束标定)**。
+  塌的根因:只要求地面水平时,深度成常数(s→0)是个几乎免费的解 —— 路和墙一起变成正对相机的斜板
+  (朝上余弦 = sinθ),窄路的画上它的损失不比真解大。'structure' 用地形工作台里**作者圈的可走区**当地面、
+  其余非物体非远景表面当**竖直立面**,俯角与视差映射(K,β)一起拟合:常数解两头都错被排除,俯角也被钉住
+  (视差纵向变化率在地面与立面上之比由 tan²θ 决定)。合成峭壁无噪声精确找回俯角;低频岩面起伏会往小拉 3~4°
+  (`tests/test_structure_calibration.py`)。三张图拟出 崖墓前段 ≈36.8° / 前段1 ≈30.4° / 后段 ≈25.3°(不是 45°:
+  原画是近乎平视看峭壁),路面坡度中位 13~19°、崖壁偏离竖直中位 5~6°。此模式下 `pitch_deg` 由拟合写回、
+  `relief` 恒 1(立面已按竖直拟合,再放大会掰斜)。选它的前提是作者层已经圈好路;作者可走区进几何签名。
+  映射写成 d = −K·r/(1+β·r)(与 level 的 1/(s·r+o) 同族、差一个常数):**别改回 1/(s·r+o)** —— 崖墓后段的最优解
+  在"深度 ∝ 视差"的线性极限(β→0),旧写法要 s、o 同时趋 0 才够得着(拟出 s≈6e-32),深度里带 10¹⁵ 的常数,
+  float32 一存起伏全没,**又塌成一块,而拟合统计、结构体检、碰撞检查全过**。现在标定末尾拿落盘的 float32 深度
+  复算路面坡度 / 立面垂直度,与拟合对不上或越界(路 >35°、墙 >25°)直接抛错。manifest 的 cal 记 K/β,
+  重算深度一律走 `calibrated_depth`。
+  ⚠ **标定一变,作者多边形的网格点就错位了**(见 [[terrain-workbench]] 的"重做深度"):重烘前
+  `art_review pin-screen`、导出深度后 `art_review reanchor`,否则碰撞整片挪位且不报错。时段原画的载荷要
+  `seed_phase_payload(..., force=True)` 用新几何重新起手,之后 `scene_fields` 与 `sway_field` 都要重烘。
+  **这些一条命令走完**:`sh scripts/py.sh -m tools.character_lighting_lab.redo_depth <场景> [--calibration structure|level]`(钉轮廓 → 烘焙导出 → 重投 → 时段载荷 → 几何场 → 草木 → `art_review depthsheet` 体检,塌平即报错);
+  从原画做碰撞 + 深度的完整流程见技能 `scene-depth-collision-from-art`。
 
 - **NPC 落在阻挡格通常是有意的**(室内坐桌、靠柜、装饰位),不要当 bug 去挪。
 - **cutscene 位移不受碰撞约束**:`Player/Npc.cutsceneUpdate` 直接朝目标推进、完全不查碰撞,

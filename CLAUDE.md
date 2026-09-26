@@ -91,6 +91,8 @@ pure-data-iteration、editor-tools-iteration、add-game-action、add-text-ref、
 core-framework-architecture-review、agent-docs-cli、**handbook-mode**(文档模式:往制作人手册写东西,见 §H)、
 **mainline-story-progress**(制作人下令时核对/更新 FindingDogStory 的主线故事进度文档)、
 **kill-gamedraft-residue**(杀游戏运行时 / 编辑器 / 工作台残留进程)、
-**scene-collision-from-art**(看原画修场景碰撞 + 独立子代理摆人复查)。
+**scene-collision-from-art**(看原画修场景碰撞 + 独立子代理摆人复查)、
+**scene-depth-collision-from-art**(从原画做碰撞 + 深度:碰撞第一轮 → 用圈好的路标定深度 → 真实深度遮挡做第二轮)、
+**提交项目**(一键全量提交 + 刷新全部 DVC 指针 + tools.dev push + 复核远端零缺口)。
 
 **壳只留"怎么做",知识("是什么/为什么")一律在 agent_docs**——两边打架时以库为准。

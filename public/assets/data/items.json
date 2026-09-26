@@ -326,7 +326,7 @@
                   "fallbackGroundOnly": true,
                   "sfxVoices": 0,
                   "vfxVoices": 0,
-                  "fallbackMaxSlopeDeg": 30
+                  "fallbackMaxSlopeDeg": 60
                 }
               },
               {

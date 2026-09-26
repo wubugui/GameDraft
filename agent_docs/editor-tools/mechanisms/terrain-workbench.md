@@ -22,6 +22,7 @@ triggers:
 verified_by:
   - tools/character_lighting_lab/tests/test_terrain_compose.py
   - tools/terrain_workbench/tests/test_terrain_workbench.py
+  - tools/terrain_workbench/tests/test_art_review.py
   - tools/terrain_workbench/tests/test_selftest.py
   - tools/editor/tests/test_scene_terrain_overlay.py
   - src/dev/runtimeTerrainSync.test.ts
@@ -57,7 +58,14 @@ agent 批量 / 照原画修碰撞走同一作者层的命令行面 `tools.terrai
 - **运行时**:`SceneDepthSystem.load` 先读 `collision.json` 旁挂,没有才退回 `depthConfig.collision`(老场景);位图尺寸 ≠ 声明 ⇒ **整份拒用并出声**。
   场景 JSON 从此不再含 `collision` 块(`tools/migrate_terrain_authoring.py` 2026-09-14 搬过一次:35 场;实验室的屏幕笔刷层
   `out/<场景>/<bg>/collision_edit.png` 走运行时反投影链落成世界笔刷层,源文件改名 `*.migrated.png`)。
-- **重烘深度之后**:烘焙器只覆盖 `auto` 与 `ground_base`,作者层原样叠回去(`export_terrain` 在导出末尾跑);制作人手动标定同理。
+- **重烘深度之后**:烘焙器只覆盖 `auto` 与 `ground_base`,作者层原样叠回去(`export_terrain` 在导出末尾跑)。
+  这**只在几何没变时成立**(同一套标定重烘)。
+- **🔴 重做深度(换标定 / 换俯角 / 深度重新拟合)时作者层会整片错位,而且不报错**:作者多边形存的是网格点,
+  几何一变同一个网格点就落到画面别处;合成器还沿用旧的网格声明。画面上哪里是路不随深度变,所以按**画面轮廓**重投:
+  重烘前 `python -m tools.terrain_workbench.art_review pin-screen <场景>`(把每块的画面轮廓钉进 `screen.points`,
+  工作台里手画 / 拖过的按当前几何反投补上);导出深度后 `... art_review reanchor <场景>`(网格换成新自动结果那套、
+  每块按轮廓重新落格、外围块重算、导出、`grid --fit`)。笔刷层 / 高度修补是栅格没有轮廓,`reanchor` 遇到就停。
+  2026-09-25 崖墓前段 / 前段1 / 后段改立面约束标定时首用(见 [[scene-bake-downstream]] ④)。
 
 ## 作者面有什么(Unity 式,与另外四台同一套手势)
 

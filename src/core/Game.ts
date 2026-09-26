@@ -7637,6 +7637,7 @@ export class Game {
       getWorldWidth: () => p.sprite.getWorldSize().width,
       getWorldHeight: () => p.sprite.getWorldSize().height,
       getTexture: () => p.sprite.getDisplayTexture(),
+      getBodyReferenceFrames: () => p.sprite.getBodyReferenceFrames(),
       getFacing: () => (p.facingDirection === 'left' ? -1 : 1),
       isVisible: () => p.sprite.container.visible,
     };
@@ -7650,6 +7651,7 @@ export class Game {
       getWorldWidth: () => npc.getWorldSize().width,
       getWorldHeight: () => npc.getWorldSize().height,
       getTexture: () => npc.getDisplayTexture(),
+      getBodyReferenceFrames: () => npc.getBodyReferenceFrames(),
       getFacing: () => npc.getFacing(),
       isVisible: () => npc.container.visible,
     };

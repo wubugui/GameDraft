@@ -476,6 +476,11 @@ export class Npc implements ICutsceneActor, ITrajectoryTarget {
     return this.sprite?.getDisplayTexture() ?? null;
   }
 
+  /** 接触 AO 身体胶囊的参照帧（站立片段，见 SpriteEntity.getBodyReferenceFrames）；无精灵时空 */
+  getBodyReferenceFrames(): readonly Texture[] {
+    return this.sprite?.getBodyReferenceFrames() ?? [];
+  }
+
   /** 投影阴影/光照探针用：**有效**世界尺寸（帧世界尺寸 × 实例 scale × 透视系数——后者已在 sprite 层）。 */
   getWorldSize(): { width: number; height: number } {
     const raw = this.sprite?.getWorldSize() ?? { width: 0, height: 0 };
