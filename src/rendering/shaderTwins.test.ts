@@ -6,7 +6,7 @@
  *   · 顶层常量(GLSL 的 const 与对象式 #define、WGSL 的 const / override)按名字双向一致、值一致;
  *   · 两边同名的 struct 字段名与顺序一致。
  * 改了一边忘了另一边 ⇒ 这里红(工作台预览与游戏不再是同一个着色器)。
- * 登记的例外(每条都已核实等价)见 KNOWN_EQUIVALENT / WGSL_ONLY_HELPERS;守门自己的灵敏度由文末的「变异自检」钉住。
+ * 登记的例外(每条都已核实等价,只放过登记的那几个字面量)见 KNOWN_EQUIVALENT / WGSL_ONLY_HELPERS;守门自己的灵敏度由文末的「变异自检」钉住。
  */
 import { describe, expect, it } from 'vitest';
 import LC_GLSL from './lighting/lightingCore.glsl?raw';
@@ -126,11 +126,13 @@ const PAIRS: Array<[string, string, string]> = [
  * 已核实等价、写法不同的函数(tag:函数名 → 放宽到哪一步):
  *   · 'unordered':GLSL 的三元式 `c ? a : b` 在 WGSL 里写成「默认值 + if 改写」,字面量先后变了、
  *     值 / 符号 / 个数都不变 → 只比多重集(改值、翻符号、增删常量照样红);
- *   · 'skip':连字面量个数都对不上的等价改写,不比字面量(只剩函数集合那一关)。
+ *   · Splice:某一侧在第 at 个字面量处多出一段等价改写带来的字面量(必须恰好是 lits),先剪掉再按顺序比;
+ *     剪的位置或值对不上 ⇒ 照样红(例外只放过登记的那几个字面量,函数里其余常量一个不少地比)。
  */
-const KNOWN_EQUIVALENT = new Map<string, 'unordered' | 'skip'>([
-  // smoothstep 在 WGSL 里展开成 t*t*(3-2t)(与 GLSL 等价,见 shaders-lighting 审查记录)
-  ['LC:lcSpotLight', 'skip'],
+interface Splice { side: 'glsl' | 'wgsl'; at: number; lits: string[] }
+const KNOWN_EQUIVALENT = new Map<string, 'unordered' | Splice>([
+  // smoothstep(cosOuter, cosInner, x) 在 WGSL 里展开成 clamp(…, 0, 1) 与 t*t*(3-2t)(逐位对齐 GLSL,见 shaders-lighting 审查记录)
+  ['LC:lcSpotLight', { side: 'wgsl', at: 1, lits: ['0', '1', '3', '-2'] }],
   // n.x>=0.?1.:-1. → var sx = -1.; if (n.x >= 0.) { sx = 1.; }
   ['CLC:octaEnc', 'unordered'], ['PROBE:octaEnc', 'unordered'],
   // abs(n.y) > 0.95 ? X : Y → var up = Y; if (abs(n.y) > 0.95) { up = X; }
@@ -139,8 +141,9 @@ const KNOWN_EQUIVALENT = new Map<string, 'unordered' | 'skip'>([
   ['burn:burnStage', 'unordered'],
   // contact 三元式 → var contact = 1.0; if (…) { … }
   ['beam:bmEval3d', 'unordered'],
-  // uBeamAlong[0].x / uBeamAlong[0].y 两次下标 ↔ bmAlongKey(0) 取一次(关键帧打包,见 WGSL_ONLY_HELPERS);另有 k 的三元式
-  ['beam:bmAlong', 'skip'],
+  // uBeamAlong[0].x / uBeamAlong[0].y 两次下标 ↔ let k0 = bmAlongKey(0) 取一次(关键帧打包,见 WGSL_ONLY_HELPERS):
+  // GLSL 第二个 [0] 多出来;k 的三元式改 if 后 1.0 仍在原位,不用放宽顺序
+  ['beam:bmAlong', { side: 'glsl', at: 3, lits: ['0'] }],
   // s = x < 0.0 ? -1.0 : 1.0 → var s = 1.0; if (x < 0.0) { s = -1.0; }
   ['bolt:boltErf', 'unordered'],
 ]);
@@ -159,9 +162,13 @@ function twinDiffs(tag: string, g: string, w: string): string[] {
     const wb = W.fns.get(n);
     if (!wb) { diffs.push(`WGSL 缺函数 ${n}`); continue; }
     const mode = KNOWN_EQUIVALENT.get(`${tag}:${n}`);
-    if (mode === 'skip') continue;
     let a = lits(body), b = lits(wb);
     if (mode === 'unordered') { a = [...a].sort(); b = [...b].sort(); }
+    else if (mode) {
+      const side = mode.side === 'glsl' ? a : b;
+      const cut = side.splice(mode.at, mode.lits.length);
+      if (cut.join(',') !== mode.lits.join(',')) diffs.push(`${n}: 登记的例外对不上(${mode.side} 第 ${mode.at} 个起应为 [${mode.lits.join(',')}],实为 [${cut.join(',')}])`);
+    }
     if (a.join(',') !== b.join(',')) diffs.push(`${n}: glsl[${a.join(',')}] wgsl[${b.join(',')}]`);
   }
   for (const n of W.fns.keys()) if (!G.fns.has(n) && !WGSL_ONLY_HELPERS.has(`${tag}:${n}`)) diffs.push(`GLSL 缺函数 ${n}`);
@@ -233,6 +240,15 @@ describe('孪生守门自检(只在内存里改 WGSL 一侧,守门必须红)', (
     expect(mutate('CLC', ['return .946175 * n.x * n.y', 'return .669047 * n.x * n.y'],
       ['return .669047 * n.y * n.z', 'return .946175 * n.y * n.z'])).not.toEqual([]);
     expect(mutate('burn', ['floor(s.r * 255.0 + 0.5) * 256.0', 'floor(s.r * 256.0 + 0.5) * 255.0'])).not.toEqual([]);
+  });
+
+  it('登记例外的函数里其余常量照比(例外只放过登记的那几个字面量)', () => {
+    expect(mutate('beam', ['uBeamAlongCount <= 0) { return 1.0; }', 'uBeamAlongCount <= 0) { return 71.0; }'])).not.toEqual([]);
+    expect(mutate('beam', ['var k = 1.0;', 'var k = 71.0;'])).not.toEqual([]);
+    expect(mutate('beam', ['bmAlongKey(i - 1)', 'bmAlongKey(i - 71)'])).not.toEqual([]);
+    expect(mutate('beam', ['let k0 = bmAlongKey(0)', 'let k0 = bmAlongKey(70)'])).not.toEqual([]);
+    expect(mutate('LC', ['if (cone <= 0.0)', 'if (cone <= 0.1)'])).not.toEqual([]);
+    expect(mutate('LC', ['(3.0 - 2.0 * coneT)', '(3.0 - 2.5 * coneT)'])).not.toEqual([]);
   });
 
   it('LOD 非 0 照比', () => {
