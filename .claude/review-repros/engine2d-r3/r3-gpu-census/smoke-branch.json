@@ -1,0 +1,178 @@
+{
+ "side": "branch",
+ "samples": [
+  {
+   "tag": "boot",
+   "wall": 7,
+   "t": 9289,
+   "scene": "dev_room",
+   "gpuCreated": {
+    "sampler_created": 19,
+    "tex_created": 20,
+    "buf_created": 8,
+    "tex_destroyed": 2,
+    "shader_created": 10,
+    "pipeline_created": 25,
+    "bindGroup_created": 19
+   },
+   "gpu": {
+    "tex_live": 18,
+    "buf_live": 8
+   },
+   "gpuTexMB": 3.17,
+   "gpuBufMB": 0.19,
+   "gl": {},
+   "glTexMB": 0,
+   "gcRuns": 0,
+   "gcRunsAt": [],
+   "heapMB": 67.6,
+   "stageChildren": 5,
+   "e2d": {
+    "textures": 17,
+    "samplers": 1,
+    "buffers": 5,
+    "pipelines": 25,
+    "shaders": 10,
+    "targets": 5,
+    "scopeRes": 66,
+    "scopeChildren": 0,
+    "rootRes": 0,
+    "releasePending": 0,
+    "states": 1,
+    "poolFree": 4,
+    "poolKeyHash": 4
+   },
+   "texLabels": {
+    "nolabel": 5,
+    "WHITE": 1,
+    "EMPTY": 1,
+    "text": 10
+   },
+   "bufLabels": {
+    "attribute-mesh-positions": 1,
+    "attribute-mesh-uvs": 1,
+    "index-mesh-buffer": 1,
+    "attribute": 1,
+    "index": 1
+   }
+  },
+  {
+   "tag": "r1-active",
+   "wall": 25,
+   "t": 28055,
+   "scene": "teahouse",
+   "gpuCreated": {
+    "sampler_created": 77,
+    "tex_created": 79,
+    "buf_created": 12,
+    "tex_destroyed": 3,
+    "shader_created": 11,
+    "pipeline_created": 32,
+    "bindGroup_created": 234,
+    "buf_destroyed": 2
+   },
+   "gpu": {
+    "tex_live": 76,
+    "buf_live": 10
+   },
+   "gpuTexMB": 8.86,
+   "gpuBufMB": 0.25,
+   "gl": {},
+   "glTexMB": 0,
+   "gcRuns": 0,
+   "gcRunsAt": [],
+   "heapMB": 71.6,
+   "stageChildren": 5,
+   "e2d": {
+    "textures": 75,
+    "samplers": 1,
+    "buffers": 7,
+    "pipelines": 32,
+    "shaders": 11,
+    "targets": 11,
+    "scopeRes": 140,
+    "scopeChildren": 0,
+    "rootRes": 0,
+    "releasePending": 0,
+    "states": 1,
+    "poolFree": 10,
+    "poolKeyHash": 10
+   },
+   "texLabels": {
+    "nolabel": 31,
+    "WHITE": 1,
+    "EMPTY": 1,
+    "text": 42
+   },
+   "bufLabels": {
+    "attribute-mesh-positions": 2,
+    "attribute-mesh-uvs": 2,
+    "attribute": 1,
+    "index": 1,
+    "index-mesh-buffer": 1
+   }
+  },
+  {
+   "tag": "r1-idle",
+   "wall": 31,
+   "t": 33984,
+   "scene": "dev_room",
+   "gpuCreated": {
+    "sampler_created": 78,
+    "tex_created": 80,
+    "buf_created": 15,
+    "tex_destroyed": 3,
+    "shader_created": 11,
+    "pipeline_created": 32,
+    "bindGroup_created": 240,
+    "buf_destroyed": 3
+   },
+   "gpu": {
+    "tex_live": 77,
+    "buf_live": 12
+   },
+   "gpuTexMB": 8.86,
+   "gpuBufMB": 0.25,
+   "gl": {},
+   "glTexMB": 0,
+   "gcRuns": 1,
+   "gcRunsAt": [
+    32902
+   ],
+   "heapMB": 70.8,
+   "stageChildren": 5,
+   "e2d": {
+    "textures": 76,
+    "samplers": 1,
+    "buffers": 9,
+    "pipelines": 32,
+    "shaders": 11,
+    "targets": 11,
+    "scopeRes": 143,
+    "scopeChildren": 0,
+    "rootRes": 0,
+    "releasePending": 0,
+    "states": 1,
+    "poolFree": 10,
+    "poolKeyHash": 10
+   },
+   "texLabels": {
+    "nolabel": 31,
+    "WHITE": 1,
+    "EMPTY": 1,
+    "text": 43
+   },
+   "bufLabels": {
+    "attribute-mesh-positions": 3,
+    "attribute-mesh-uvs": 3,
+    "attribute": 1,
+    "index": 1,
+    "index-mesh-buffer": 1
+   }
+  }
+ ],
+ "errors": [
+  "console [unhandled-rejection#1] Decoding audio data failed.",
+  "pageerror Decoding audio data failed."
+ ]
+}

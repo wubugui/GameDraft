@@ -56,7 +56,7 @@ last_governed: 2026-09-23
 - **没有场景绑定的编辑**：页面上没有场景选择、热点列表、布置编辑（initial / playerIgnite / 条件 / 信号都在宿主身上）、布置库。
   `burn_placements.json` 已删，全工具不读不写（`test_bundle.py` 钉着页面里不许出现旧名字）。场景视图**只读**：只能选中与点火，拖不动、改不了任何实体。
 - **页面里不许有第二份模拟 / 摆放 / 站位 / 着色组装**：摆放 `burnGeometry.burnEntityPlacement` → `burnPlacementFrame`、尺寸 `burnables.burnableWorldSize`、
-  着色参数 `burnShadeParams.burnShadeParamsOf`、材质与自发光 `burnShade.glsl` 的 `burnMaterial` / `burnGlowAdd`、火头伸到哪 `burnAim`、站位 `igniteStance`——
+  着色参数 `burnShadeParams.burnShadeParamsOf`、材质与自发光 `burnShade.glsl` 的 `burnMaterial` / `burnGlowAdd`(游戏画的是 WGSL 孪生,工作台编 GLSL;两份一起改,`src/rendering/shaderTwins.test.ts` 逐函数守门)、火头伸到哪 `burnAim`、站位 `igniteStance`——
   全是运行时导出的同一份。`test_bundle.py::test_viewer_does_not_reimplement_the_sim` 钉着名字；包的依赖树里**不许有** `ignitePerformer.ts` / `types.ts`。
 - **预览按真实尺寸**：原画视图的模板实例 = 平面空间（planar）+ `burnEntityPlacement({x:0,y:0}, 真实尺寸)`，同样的事件换一半尺寸烧得更快（自检钉着）。
   没有"假定尺寸 / 布置到热点上才准"这回事。预览风只在页面里（不写资源）。

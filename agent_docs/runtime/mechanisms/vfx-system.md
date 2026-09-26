@@ -103,7 +103,7 @@ last_governed: 2026-09-23
   + 各模拟本帧开头燃着的纸拼成 `ctx.fires`(一帧延迟)。燃烧侧的接口(`external` 出生形状、可燃薄片、`burningPlates`)见 [[burn-system]]。
 - **命名句柄** `handle` 重名 = 替换旧实例、不复用真实 id;旧账本只停自己记下的 id。
 - **现画的雷**(09-24):效果顶层 `bolts[]`(形状参数,`kind: sky | surface`)+ 发射器 `appearance.bolt` 引用它画(一层主干 + 分叉、
-  一层只加亮主干);形状 `vfxBolt.ts`、画法 `vfxBoltGlsl.ts`(页内工作台预览编译同一份)。雷是**世界单位**,细节按屏幕像素挑细分级,
+  一层只加亮主干);形状 `vfxBolt.ts`、画法 `vfxBoltWgsl.ts`(游戏)/ `vfxBoltGlsl.ts`(页内工作台预览)两份孪生,一起改,`src/rendering/shaderTwins.test.ts` 守门。雷是**世界单位**,细节按屏幕像素挑细分级,
   粗细 = 世界宽与屏幕下限合成。见 [[strike-threat]]。
 - **落点表面**:布置库 `scenes[场景].surfaces`(水面 / 湿地,场景级)→ `surfaceKindAt`(盖着这一点的**最后一块**区是水面 = `water`,
   与反光遮罩同一次序)→ 实例建模拟时定 `surfaceKind`,发射器 `onSurface: [ground | water]` 按它开关(落在水上换水花与水面电弧)。

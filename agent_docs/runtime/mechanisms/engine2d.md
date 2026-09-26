@@ -52,7 +52,8 @@ last_governed: 2026-09-25
   两套渲染器的对象不能混挂。
   缺 API 就在 engine2d 里照 Pixi 8.17 补(对照 Pixi 源码的行为,不是凭名字猜),再从 `index.ts` 导出。
 - **与 Pixi 的一致性口径 = 离屏逐位相同**:合批打包公式、顶点格式(24 字节)、每批 16 张纹理、非预乘混合变体、
-  投影 / 视口取整、FilterSystem(纹理池、gfu、padding、嵌套偏移)、模板遮罩、不合批图形、UBO 布局都照 Pixi 做。
+  投影 / 视口取整、FilterSystem(纹理池、gfu、padding、嵌套偏移)、遮罩(照 Pixi 8.17 按遮罩值选类型:Graphics → 模板、
+  Sprite → alpha 遮罩、数字 → 颜色遮罩)、不合批图形、UBO 布局都照 Pixi 做。
   改这些地方必须跑 `tools/engine2d_parity`(对 Pixi WebGL 逐位)。
 - **着色器只有 WGSL**:`GlProgram` 只是为兼容构造签名留的壳,不参与渲染;`renderer.gl` 不存在。
 - **管线在第一次用到时才建,建的时候 GPU 进程才把 WGSL 编成后端着色器**(不挡 JS,但用到它的那一帧要等编完)。
@@ -98,7 +99,7 @@ master 在源初始化(第一次绑定 / 第一次渲染进 RT、被回收后重
 ## 怎么验证
 
 - 单测:`npx vitest run src/engine2d`(大量用例直接拿 Pixi 当参考实现比对,Pixi 只作为测试依赖)。
-- 核心逐位对照(engine2d vs Pixi WebGL,29 个用例):`node tools/engine2d_parity/run.mjs`。
+- 核心逐位对照(engine2d vs Pixi WebGL,36 个用例,含 alpha / 颜色 / 反向遮罩与 roundPixels 平局):`node tools/engine2d_parity/run.mjs`。
 - **与 master 的对照以 `tools/ab_compare` 为准**(制作人 2026-09-25 定:两个分支各自跑起来比,不许把 master 的代码拿进本分支比)。
   它的做法:
   - master 与本分支各检出一棵独立工作树,各自 `npm ci`、各自起未改动的 dev 服;

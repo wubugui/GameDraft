@@ -1898,14 +1898,12 @@ export class LumaRhiDevice implements RhiDevice, RhiResourceFactory {
     this.report(error instanceof RhiError ? error : new RhiError('backend', error instanceof Error ? error.message : String(error)), 'error');
   }
 
-  /** @internal draw 被跳过(luma 判管线未就绪,或管线已确认建坏);每条管线只报一次 */
+  /** @internal 已确认建坏的管线:它的 draw / dispatch 被跳过;每条管线只报一次(未确认之前照常录制) */
   _warnSkippedDraw(p: LumaRhiRenderPipeline | LumaRhiComputePipeline): void {
     if (this.warnedSkips.has(p)) return;
     this.warnedSkips.add(p);
     this.report(
-      p.failed
-        ? new RhiError('backend', `管线「${p.label}」创建失败,用它的 draw / dispatch 一律跳过(只丢这些 draw,帧里其余内容照常提交)`)
-        : new RhiError('backend', `管线「${p.label}」的 draw 被后端跳过(着色器尚未就绪或纹理未就绪);要避免就在首次使用前 await pipeline.ready`),
+      new RhiError('backend', `管线「${p.label}」创建失败,用它的 draw / dispatch 一律跳过(只丢这些 draw,帧里其余内容照常提交)`),
       'warning',
     );
   }

@@ -99,7 +99,8 @@ last_governed: 2026-09-25
 ## 已知坑
 
 - 画布后备缓冲只在 `runFrame` 期内可用,且**第一次当 pass 目标时才向画布取纹理**;没画画布的帧不碰画布。
-- 管线建好后首次使用前 await `pipeline.ready`,否则 luma 可能跳过 draw(计入 `skippedDraws` 并告警一次)。
+- 管线建好后**不必**等 `ready` 就能用:确认失败之前 draw 照常录制;只有确认建坏的管线,它的 draw / dispatch 才被跳过
+  (计入 `skippedDraws`,告警一次)。`pipelinesReady()` / 管线预建的用处是把编译卡顿挪到揭幕遮罩下,不是正确性前提。
 - bind group 由 luma 后端按「着色器声明的每个绑定所指资源的身份(+ 缓冲区段偏移 / 尺寸、纹理当前采样器)」缓存在管线上
   (照 Pixi 8 的 BindGroupSystem),命中时直接设给原生 pass、不经 luma 的 setBindings。
 - render pass 热路径(setPipeline / bind group / 顶点流 / 索引 / draw / viewport / scissor)不经 luma 的 RenderPass,

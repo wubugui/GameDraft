@@ -73,7 +73,8 @@ mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`(
   有场景对照的调试档同样要过这条显示链,纯读数的取证子档才刻意保持裸值。
 - **E 只出明暗,角色保留自己的颜色**:sprite 像素是美术着色后的 color 不是 albedo,带场景色的 E
   去乘 = 二次着色;反向"把角色往场景色拟合"会幂次过冲,已整体拆除,勿重造。
-- **着色核心单一真相源**:只改 `charShadeCore.glsl`,禁止在任一 shader 内联重写。
+- **着色核心单一真相源(一对孪生)**:游戏用 `charShadeCore.wgsl`,`charShadeCore.glsl` 是孪生;两份一起改、禁止在任一 shader 内联重写,
+  `src/rendering/shaderTwins.test.ts` 逐函数守门。
 - **法线与 color 必须用同一个顶点 UV 采样**。从世界坐标反推 UV 一旦逐帧驱动缺席(过场态整段跳过)
   就全身采到边缘列:通体单色 / 镜像换色 / 闪烁。镜像由顶点行列式正负判,不引 uniform。
 - **法线图集格边界与运行时浮点 stride 逐字对齐**(`round(k*w/cols)`,不是整数截断),误差随帧序号

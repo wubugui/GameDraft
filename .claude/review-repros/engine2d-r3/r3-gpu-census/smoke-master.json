@@ -1,0 +1,157 @@
+{
+ "side": "master",
+ "samples": [
+  {
+   "tag": "boot",
+   "wall": 6,
+   "t": 8790,
+   "scene": "dev_room",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 18,
+    "Buffer_live": 9,
+    "Framebuffer_live": 5,
+    "VertexArray_live": 4,
+    "Program_live": 10
+   },
+   "glTexMB": 0.17,
+   "gcRuns": 0,
+   "gcRunsAt": [],
+   "heapMB": 60.2,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 18,
+    "buffers": 9,
+    "geometries": 4,
+    "gfxContexts": 31,
+    "gfxRenderables": 31,
+    "texts": 10,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 6,
+    "glRT": 6,
+    "samplers": 0,
+    "poolFree": null,
+    "poolKeyHash": null,
+    "pixiUrl": false
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 16
+   }
+  },
+  {
+   "tag": "r1-active",
+   "wall": 34,
+   "t": 37335,
+   "scene": "teahouse",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 76,
+    "Buffer_live": 11,
+    "Framebuffer_live": 12,
+    "VertexArray_live": 5,
+    "Program_live": 11
+   },
+   "glTexMB": 5.86,
+   "gcRuns": 1,
+   "gcRunsAt": [
+    33157
+   ],
+   "heapMB": 63.9,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 76,
+    "buffers": 11,
+    "geometries": 5,
+    "gfxContexts": 152,
+    "gfxRenderables": 60,
+    "texts": 31,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 13,
+    "glRT": 13,
+    "samplers": 0,
+    "poolFree": null,
+    "poolKeyHash": null,
+    "pixiUrl": false
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 74
+   }
+  },
+  {
+   "tag": "r1-idle",
+   "wall": 42,
+   "t": 44569,
+   "scene": "dev_room",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 77,
+    "Buffer_live": 13,
+    "Framebuffer_live": 12,
+    "VertexArray_live": 6,
+    "Program_live": 11
+   },
+   "glTexMB": 5.86,
+   "gcRuns": 1,
+   "gcRunsAt": [
+    33157
+   ],
+   "heapMB": 63.4,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 77,
+    "buffers": 13,
+    "geometries": 6,
+    "gfxContexts": 157,
+    "gfxRenderables": 31,
+    "texts": 10,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 13,
+    "glRT": 13,
+    "samplers": 0,
+    "poolFree": null,
+    "poolKeyHash": null,
+    "pixiUrl": false
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 75
+   }
+  }
+ ],
+ "errors": [
+  "console [unhandled-rejection#1] Decoding audio data failed.",
+  "pageerror Decoding audio data failed."
+ ]
+}

@@ -145,6 +145,8 @@ export class WebGPURenderer extends RendererBase {
   private readonly offRestored: () => void;
   /** 设备恢复的通知落在一次 render 中途(理论上不会:恢复只在帧外):等最外层这次 render 结束再丢缓存 */
   private contextChangePending = false;
+  /** 预建过的管线组:设备恢复后照原样重建(同 master GlProgramWarmup.syncContext:新上下文上重新预热) */
+  private readonly prewarmSpecs: PipelinePrewarmSpec[] = [];
   antialias: boolean;
   /** 设备是 createRenderer 替它建的:渲染器销毁时一起销毁 */
   ownsDevice = false;
@@ -186,6 +188,8 @@ export class WebGPURenderer extends RendererBase {
       s.indexBuffer = null;
       s.uniformBuffer = null;
     }
+    // 预建的管线随 pipelines.reset 没了:在新设备上重建,下一次切场景的揭幕闸(pipelinesReady)照常等它们编完
+    this.buildPrewarm(this.prewarmSpecs);
   }
 
   // ───────────────────────── render
@@ -418,6 +422,12 @@ export class WebGPURenderer extends RendererBase {
    */
   prewarmPipelines(specs: readonly PipelinePrewarmSpec[]): void {
     if (this.destroyed) return;
+    this.prewarmSpecs.push(...specs);
+    this.buildPrewarm(specs);
+  }
+
+  private buildPrewarm(specs: readonly PipelinePrewarmSpec[]): void {
+    if (this.destroyed || !specs.length) return;
     const swapchainFormat = this.rhi.caps.swapchainFormat;
     const defaults: Array<{ format: RhiColorFormat; samples: number }> = [
       { format: swapchainFormat, samples: targetSampleCount(this.antialias, swapchainFormat) },
@@ -519,6 +529,7 @@ export class WebGPURenderer extends RendererBase {
     if (this.destroyed) return;
     this.destroyed = true;
     this.offRestored();
+    this.prewarmSpecs.length = 0;
     this.events?.destroy();
     for (const t of [...this.targets.keys()]) this.releaseTargets(t);
     this.gc.destroy();

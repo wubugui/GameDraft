@@ -1,0 +1,617 @@
+{
+ "side": "master",
+ "samples": [
+  {
+   "tag": "boot",
+   "wall": 6,
+   "t": 8113,
+   "scene": "dev_room",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 18,
+    "Buffer_live": 9,
+    "Framebuffer_live": 5,
+    "VertexArray_live": 4,
+    "Program_live": 10
+   },
+   "glTexMB": 0.17,
+   "gcRuns": 0,
+   "gcRunsAt": [],
+   "heapMB": 60.2,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 18,
+    "buffers": 9,
+    "geometries": 4,
+    "gfxContexts": 31,
+    "gfxRenderables": 31,
+    "texts": 10,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 6,
+    "glRT": 6,
+    "samplers": 0,
+    "poolFree": 5,
+    "poolKeyHash": 15,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 16
+   }
+  },
+  {
+   "tag": "r1-active",
+   "wall": 86,
+   "t": 87712,
+   "scene": "城隍庙夜",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 128,
+    "Buffer_live": 17,
+    "Framebuffer_live": 15,
+    "VertexArray_live": 9,
+    "Program_live": 11
+   },
+   "glTexMB": 9.54,
+   "gcRuns": 2,
+   "gcRunsAt": [
+    32051,
+    62052
+   ],
+   "heapMB": 65.4,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 128,
+    "buffers": 17,
+    "geometries": 9,
+    "gfxContexts": 309,
+    "gfxRenderables": 35,
+    "texts": 11,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 16,
+    "glRT": 16,
+    "samplers": 0,
+    "poolFree": 74,
+    "poolKeyHash": 85,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 126
+   }
+  },
+  {
+   "tag": "r1-idle",
+   "wall": 163,
+   "t": 164754,
+   "scene": "dev_room",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 128,
+    "Buffer_live": 19,
+    "Framebuffer_live": 15,
+    "VertexArray_live": 10,
+    "Program_live": 11
+   },
+   "glTexMB": 9.54,
+   "gcRuns": 5,
+   "gcRunsAt": [
+    92115,
+    122167,
+    152220
+   ],
+   "heapMB": 63.9,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 88,
+    "buffers": 7,
+    "geometries": 3,
+    "gfxContexts": 31,
+    "gfxRenderables": 31,
+    "texts": 10,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 16,
+    "glRT": 16,
+    "samplers": 0,
+    "poolFree": 75,
+    "poolKeyHash": 85,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 86
+   }
+  },
+  {
+   "tag": "r2-active",
+   "wall": 248,
+   "t": 249714,
+   "scene": "城隍庙夜",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 165,
+    "Buffer_live": 27,
+    "Framebuffer_live": 17,
+    "VertexArray_live": 15,
+    "Program_live": 11
+   },
+   "glTexMB": 12.82,
+   "gcRuns": 8,
+   "gcRunsAt": [
+    182224,
+    212287,
+    242345
+   ],
+   "heapMB": 66.1,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 120,
+    "buffers": 13,
+    "geometries": 7,
+    "gfxContexts": 229,
+    "gfxRenderables": 35,
+    "texts": 11,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 18,
+    "glRT": 18,
+    "samplers": 0,
+    "poolFree": 76,
+    "poolKeyHash": 87,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 118
+   }
+  },
+  {
+   "tag": "r2-idle",
+   "wall": 325,
+   "t": 326666,
+   "scene": "dev_room",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 165,
+    "Buffer_live": 29,
+    "Framebuffer_live": 17,
+    "VertexArray_live": 16,
+    "Program_live": 11
+   },
+   "glTexMB": 12.82,
+   "gcRuns": 10,
+   "gcRunsAt": [
+    242345,
+    272412,
+    302440
+   ],
+   "heapMB": 65.2,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 95,
+    "buffers": 11,
+    "geometries": 6,
+    "gfxContexts": 61,
+    "gfxRenderables": 31,
+    "texts": 10,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 18,
+    "glRT": 18,
+    "samplers": 0,
+    "poolFree": 77,
+    "poolKeyHash": 87,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 93
+   }
+  },
+  {
+   "tag": "r3-active",
+   "wall": 414,
+   "t": 415789,
+   "scene": "城隍庙夜",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 200,
+    "Buffer_live": 37,
+    "Framebuffer_live": 17,
+    "VertexArray_live": 21,
+    "Program_live": 11
+   },
+   "glTexMB": 14.6,
+   "gcRuns": 13,
+   "gcRunsAt": [
+    332824,
+    362845,
+    392925
+   ],
+   "heapMB": 67,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 120,
+    "buffers": 15,
+    "geometries": 8,
+    "gfxContexts": 261,
+    "gfxRenderables": 35,
+    "texts": 11,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 18,
+    "glRT": 18,
+    "samplers": 0,
+    "poolFree": 76,
+    "poolKeyHash": 87,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 118
+   }
+  },
+  {
+   "tag": "r3-idle",
+   "wall": 492,
+   "t": 493674,
+   "scene": "dev_room",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 200,
+    "Buffer_live": 39,
+    "Framebuffer_live": 17,
+    "VertexArray_live": 22,
+    "Program_live": 11
+   },
+   "glTexMB": 14.6,
+   "gcRuns": 16,
+   "gcRunsAt": [
+    423049,
+    453105,
+    483135
+   ],
+   "heapMB": 65.7,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 90,
+    "buffers": 7,
+    "geometries": 3,
+    "gfxContexts": 31,
+    "gfxRenderables": 31,
+    "texts": 10,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 18,
+    "glRT": 18,
+    "samplers": 0,
+    "poolFree": 77,
+    "poolKeyHash": 87,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 88
+   }
+  },
+  {
+   "tag": "r4-active",
+   "wall": 581,
+   "t": 582936,
+   "scene": "城隍庙夜",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 235,
+    "Buffer_live": 47,
+    "Framebuffer_live": 17,
+    "VertexArray_live": 27,
+    "Program_live": 11
+   },
+   "glTexMB": 16.37,
+   "gcRuns": 19,
+   "gcRunsAt": [
+    513248,
+    543425,
+    573439
+   ],
+   "heapMB": 67.1,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 120,
+    "buffers": 13,
+    "geometries": 7,
+    "gfxContexts": 204,
+    "gfxRenderables": 35,
+    "texts": 11,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 18,
+    "glRT": 18,
+    "samplers": 0,
+    "poolFree": 76,
+    "poolKeyHash": 87,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 118
+   }
+  },
+  {
+   "tag": "r4-idle",
+   "wall": 659,
+   "t": 660007,
+   "scene": "dev_room",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 235,
+    "Buffer_live": 49,
+    "Framebuffer_live": 17,
+    "VertexArray_live": 28,
+    "Program_live": 11
+   },
+   "glTexMB": 16.37,
+   "gcRuns": 21,
+   "gcRunsAt": [
+    573439,
+    603449,
+    633559
+   ],
+   "heapMB": 66.2,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 95,
+    "buffers": 11,
+    "geometries": 6,
+    "gfxContexts": 61,
+    "gfxRenderables": 31,
+    "texts": 10,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 18,
+    "glRT": 18,
+    "samplers": 0,
+    "poolFree": 77,
+    "poolKeyHash": 87,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 93
+   }
+  },
+  {
+   "tag": "r5-active",
+   "wall": 770,
+   "t": 771226,
+   "scene": "城隍庙夜",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 270,
+    "Buffer_live": 57,
+    "Framebuffer_live": 17,
+    "VertexArray_live": 33,
+    "Program_live": 11
+   },
+   "glTexMB": 18.15,
+   "gcRuns": 25,
+   "gcRunsAt": [
+    693669,
+    723779,
+    753834
+   ],
+   "heapMB": 67.5,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 110,
+    "buffers": 13,
+    "geometries": 7,
+    "gfxContexts": 186,
+    "gfxRenderables": 35,
+    "texts": 11,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 18,
+    "glRT": 18,
+    "samplers": 0,
+    "poolFree": 76,
+    "poolKeyHash": 87,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 108
+   }
+  },
+  {
+   "tag": "r5-idle",
+   "wall": 847,
+   "t": 848267,
+   "scene": "dev_room",
+   "gpuCreated": {},
+   "gpu": {
+    "tex_live": 0,
+    "buf_live": 0
+   },
+   "gpuTexMB": 0,
+   "gpuBufMB": 0,
+   "gl": {
+    "Texture_live": 270,
+    "Buffer_live": 59,
+    "Framebuffer_live": 17,
+    "VertexArray_live": 34,
+    "Program_live": 11
+   },
+   "glTexMB": 18.15,
+   "gcRuns": 28,
+   "gcRunsAt": [
+    783837,
+    813862,
+    843967
+   ],
+   "heapMB": 66.6,
+   "stageChildren": 5,
+   "pixi": {
+    "textures": 90,
+    "buffers": 7,
+    "geometries": 3,
+    "gfxContexts": 31,
+    "gfxRenderables": 31,
+    "texts": 10,
+    "htmlTexts": 0,
+    "nine": 0,
+    "tiling": 0,
+    "gcManaged": 0,
+    "rtHash": 18,
+    "glRT": 18,
+    "samplers": 0,
+    "poolFree": 77,
+    "poolKeyHash": 87,
+    "pixiUrl": true
+   },
+   "texLabels": {
+    "EMPTY": 1,
+    "WHITE": 1,
+    "nolabel": 88
+   }
+  }
+ ],
+ "errors": [
+  "console [unhandled-rejection#1] Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "console [unhandled-rejection#2] Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "console [unhandled-rejection#3] Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed.",
+  "pageerror Decoding audio data failed."
+ ]
+}

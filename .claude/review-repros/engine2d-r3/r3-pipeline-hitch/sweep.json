@@ -1,0 +1,2113 @@
+{
+ "steps": [
+  {
+   "name": "scene:bridge_underpass",
+   "err": null
+  },
+  {
+   "name": "scene:dev_room",
+   "err": null
+  },
+  {
+   "name": "scene:dev_teahouse_alive",
+   "err": null
+  },
+  {
+   "name": "scene:mountain_pass",
+   "err": null
+  },
+  {
+   "name": "scene:teahouse",
+   "err": null
+  },
+  {
+   "name": "scene:temple",
+   "err": null
+  },
+  {
+   "name": "scene:temple_exterior",
+   "err": null
+  },
+  {
+   "name": "scene:test_room_a",
+   "err": null
+  },
+  {
+   "name": "scene:test_room_b",
+   "err": null
+  },
+  {
+   "name": "scene:test_scene",
+   "err": null
+  },
+  {
+   "name": "scene:义庄",
+   "err": null
+  },
+  {
+   "name": "scene:城门口",
+   "err": null
+  },
+  {
+   "name": "scene:城隍庙夜",
+   "err": null
+  },
+  {
+   "name": "scene:婆子家院",
+   "err": null
+  },
+  {
+   "name": "scene:崖墓",
+   "err": null
+  },
+  {
+   "name": "scene:崖墓入口",
+   "err": null
+  },
+  {
+   "name": "scene:崖墓前段",
+   "err": null
+  },
+  {
+   "name": "scene:崖墓前段1",
+   "err": null
+  },
+  {
+   "name": "scene:崖墓后段",
+   "err": null
+  },
+  {
+   "name": "scene:崖墓正式",
+   "err": null
+  },
+  {
+   "name": "scene:枯井土地庙",
+   "err": null
+  },
+  {
+   "name": "scene:梦_农家院",
+   "err": null
+  },
+  {
+   "name": "scene:梦_夜路",
+   "err": null
+  },
+  {
+   "name": "scene:梦_醒来土路",
+   "err": null
+  },
+  {
+   "name": "scene:梦_里屋",
+   "err": null
+  },
+  {
+   "name": "scene:梦_饭屋",
+   "err": null
+  },
+  {
+   "name": "scene:河边",
+   "err": null
+  },
+  {
+   "name": "scene:深潭水下",
+   "err": null
+  },
+  {
+   "name": "scene:深潭绝地",
+   "err": null
+  },
+  {
+   "name": "scene:牛头凼",
+   "err": null
+  },
+  {
+   "name": "scene:码头白天",
+   "err": null
+  },
+  {
+   "name": "scene:破屋",
+   "err": null
+  },
+  {
+   "name": "scene:跑马梁",
+   "err": null
+  },
+  {
+   "name": "scene:野道",
+   "err": null
+  },
+  {
+   "name": "scene:阎王岭山口",
+   "err": null
+  },
+  {
+   "name": "scene:雾津街头",
+   "err": null
+  }
+ ],
+ "dump": {
+  "log": [
+   {
+    "kind": "sm",
+    "label": "engine2d-program-3",
+    "t": 3922,
+    "dt": 0.3,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-3 → bgra8unorm normal",
+    "t": 3940,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-3 → bgra8unorm+disabled normal",
+    "t": 3949,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-3 → bgra8unorm add",
+    "t": 3952,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-3 → bgra8unorm+disabled add",
+    "t": 3971,
+    "dt": 0,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-program-6",
+    "t": 3972,
+    "dt": 0.6,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-6 → bgra8unorm normal",
+    "t": 3989,
+    "dt": 0,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-6 → bgra8unorm+disabled normal",
+    "t": 4022,
+    "dt": 0,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-6 → bgra8unorm add",
+    "t": 4038,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-6 → bgra8unorm+disabled add",
+    "t": 4075,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-program-4",
+    "t": 4075,
+    "dt": 1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-4 → bgra8unorm normal",
+    "t": 4109,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-4 → bgra8unorm+disabled normal",
+    "t": 4135,
+    "dt": 0,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-4 → bgra8unorm add",
+    "t": 4149,
+    "dt": 0,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-4 → bgra8unorm+disabled add",
+    "t": 4158,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-program-5",
+    "t": 4158,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-5 → bgra8unorm add",
+    "t": 4159,
+    "dt": 0,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-5 → bgra8unorm+disabled add",
+    "t": 4160,
+    "dt": 0,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-program-7",
+    "t": 4160,
+    "dt": 0.3,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-7 → bgra8unorm add",
+    "t": 4165,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-7 → bgra8unorm+disabled add",
+    "t": 4170,
+    "dt": 0,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-7 → bgra8unorm screen",
+    "t": 4173,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-7 → bgra8unorm+disabled screen",
+    "t": 4177,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-7 → bgra8unorm normal",
+    "t": 4182,
+    "dt": 0.1,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "program-7 → bgra8unorm+disabled normal",
+    "t": 4186,
+    "dt": 0,
+    "frame": 208,
+    "phase": "boot"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-batch",
+    "t": 6038,
+    "dt": 0.1,
+    "frame": 211,
+    "phase": "boot"
+   },
+   {
+    "kind": "rp",
+    "label": "engine2d-batch → bgra8unorm normal",
+    "t": 6039,
+    "dt": 0,
+    "frame": 211,
+    "phase": "boot"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-program-10",
+    "t": 7580,
+    "dt": 0.1,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "kind": "rp",
+    "label": "program-10 → bgra8unorm normal",
+    "t": 7582,
+    "dt": 0,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-program-12",
+    "t": 7582,
+    "dt": 0,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "kind": "rp",
+    "label": "program-12 → bgra8unorm normal",
+    "t": 7583,
+    "dt": 0,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-program-13",
+    "t": 7584,
+    "dt": 0.1,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "kind": "rp",
+    "label": "program-13 → bgra8unorm normal",
+    "t": 7584,
+    "dt": 0,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-program-9",
+    "t": 7585,
+    "dt": 0,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "kind": "rp",
+    "label": "program-9 → bgra8unorm normal",
+    "t": 7586,
+    "dt": 0,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-program-14",
+    "t": 18982,
+    "dt": 0.1,
+    "frame": 253,
+    "phase": "post:test_room_a"
+   },
+   {
+    "kind": "rp",
+    "label": "program-14 → bgra8unorm normal",
+    "t": 18983,
+    "dt": 0,
+    "frame": 253,
+    "phase": "post:test_room_a"
+   },
+   {
+    "kind": "sm",
+    "label": "burn-material-filter",
+    "t": 19517,
+    "dt": 0.1,
+    "frame": 254,
+    "phase": "post:test_room_a"
+   },
+   {
+    "kind": "rp",
+    "label": "burn-material-filter → bgra8unorm normal",
+    "t": 19519,
+    "dt": 0.1,
+    "frame": 254,
+    "phase": "post:test_room_a"
+   },
+   {
+    "kind": "sm",
+    "label": "burn-glow-filter",
+    "t": 19520,
+    "dt": 0,
+    "frame": 254,
+    "phase": "post:test_room_a"
+   },
+   {
+    "kind": "rp",
+    "label": "burn-glow-filter → bgra8unorm normal",
+    "t": 19521,
+    "dt": 0.1,
+    "frame": 254,
+    "phase": "post:test_room_a"
+   },
+   {
+    "kind": "rp",
+    "label": "engine2d-batch → bgra8unorm+add normal",
+    "t": 205280,
+    "dt": 0.1,
+    "frame": 1054,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "kind": "rp",
+    "label": "engine2d-batch → bgra8unorm+active normal",
+    "t": 205282,
+    "dt": 0,
+    "frame": 1054,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "kind": "rp",
+    "label": "engine2d-batch → bgra8unorm+remove normal",
+    "t": 205284,
+    "dt": 0.1,
+    "frame": 1054,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "kind": "rp",
+    "label": "program-13 → bgra8unorm+disabled normal",
+    "t": 205935,
+    "dt": 0.1,
+    "frame": 1055,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "kind": "rp",
+    "label": "engine2d-batch → bgra8unorm+disabled normal",
+    "t": 205937,
+    "dt": 0.1,
+    "frame": 1055,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "kind": "rp",
+    "label": "program-9 → bgra8unorm+disabled normal",
+    "t": 205938,
+    "dt": 0.1,
+    "frame": 1055,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "kind": "sm",
+    "label": "rhi-mipmap",
+    "t": 272279,
+    "dt": 0,
+    "frame": 1189,
+    "phase": "post:牛头凼"
+   },
+   {
+    "kind": "rp",
+    "label": "rhi-mipmap:bgra8unorm",
+    "t": 272279,
+    "dt": 0,
+    "frame": 1189,
+    "phase": "post:牛头凼"
+   },
+   {
+    "kind": "sm",
+    "label": "engine2d-graphics",
+    "t": 281421,
+    "dt": 0.1,
+    "frame": 1196,
+    "phase": "post:牛头凼"
+   },
+   {
+    "kind": "rp",
+    "label": "engine2d-graphics → bgra8unorm+disabled normal",
+    "t": 281423,
+    "dt": 0,
+    "frame": 1196,
+    "phase": "post:牛头凼"
+   },
+   {
+    "kind": "rp",
+    "label": "program-14 → bgra8unorm+disabled normal",
+    "t": 296357,
+    "dt": 0,
+    "frame": 1218,
+    "phase": "post:码头白天"
+   },
+   {
+    "kind": "rp",
+    "label": "program-10 → bgra8unorm+disabled normal",
+    "t": 316780,
+    "dt": 0,
+    "frame": 1283,
+    "phase": "post:野道"
+   }
+  ],
+  "e2d": [
+   {
+    "uid": 0,
+    "program": "engine2d-batch",
+    "layout": "engine2d-batch",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": null,
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 6038,
+    "dt": 1.5,
+    "frame": 211,
+    "phase": "boot"
+   },
+   {
+    "uid": 10,
+    "program": "program-10",
+    "layout": "8:vertex:aPosition/float32x2/0;8:vertex:aUV/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": null,
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 7580,
+    "dt": 1.3,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "uid": 12,
+    "program": "program-12",
+    "layout": "8:vertex:aPosition/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": null,
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 7582,
+    "dt": 0.7,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "uid": 13,
+    "program": "program-13",
+    "layout": "8:vertex:aPosition/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": null,
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 7584,
+    "dt": 0.9,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "uid": 9,
+    "program": "program-9",
+    "layout": "8:vertex:aPosition/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": null,
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 7585,
+    "dt": 1.1,
+    "frame": 212,
+    "phase": "gate:dev_room"
+   },
+   {
+    "uid": 14,
+    "program": "program-14",
+    "layout": "8:vertex:aPosition/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": null,
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 18981,
+    "dt": 1.9,
+    "frame": 253,
+    "phase": "post:test_room_a"
+   },
+   {
+    "uid": 15,
+    "program": "burn-material-filter",
+    "layout": "8:vertex:aPosition/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": null,
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 19517,
+    "dt": 2.5,
+    "frame": 254,
+    "phase": "post:test_room_a"
+   },
+   {
+    "uid": 16,
+    "program": "burn-glow-filter",
+    "layout": "8:vertex:aPosition/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": null,
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 19520,
+    "dt": 1.6,
+    "frame": 254,
+    "phase": "post:test_room_a"
+   },
+   {
+    "uid": 0,
+    "program": "engine2d-batch",
+    "layout": "engine2d-batch",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": "depth24plus-stencil8",
+    "stencil": "add",
+    "mask": 0,
+    "samples": 1,
+    "t": 205278,
+    "dt": 2.1,
+    "frame": 1054,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "uid": 0,
+    "program": "engine2d-batch",
+    "layout": "engine2d-batch",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": "depth24plus-stencil8",
+    "stencil": "active",
+    "mask": 15,
+    "samples": 1,
+    "t": 205281,
+    "dt": 1.5,
+    "frame": 1054,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "uid": 0,
+    "program": "engine2d-batch",
+    "layout": "engine2d-batch",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": "depth24plus-stencil8",
+    "stencil": "remove",
+    "mask": 0,
+    "samples": 1,
+    "t": 205283,
+    "dt": 2.1,
+    "frame": 1054,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "uid": 13,
+    "program": "program-13",
+    "layout": "8:vertex:aPosition/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": "depth24plus-stencil8",
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 205934,
+    "dt": 1.2,
+    "frame": 1055,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "uid": 0,
+    "program": "engine2d-batch",
+    "layout": "engine2d-batch",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": "depth24plus-stencil8",
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 205936,
+    "dt": 1,
+    "frame": 1055,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "uid": 9,
+    "program": "program-9",
+    "layout": "8:vertex:aPosition/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": "depth24plus-stencil8",
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 205937,
+    "dt": 1,
+    "frame": 1055,
+    "phase": "post:梦_农家院"
+   },
+   {
+    "uid": 1,
+    "program": "engine2d-graphics",
+    "layout": "engine2d-batch",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": "depth24plus-stencil8",
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 281421,
+    "dt": 2.1,
+    "frame": 1196,
+    "phase": "post:牛头凼"
+   },
+   {
+    "uid": 14,
+    "program": "program-14",
+    "layout": "8:vertex:aPosition/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": "depth24plus-stencil8",
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 296355,
+    "dt": 1.8,
+    "frame": 1218,
+    "phase": "post:码头白天"
+   },
+   {
+    "uid": 10,
+    "program": "program-10",
+    "layout": "8:vertex:aPosition/float32x2/0;8:vertex:aUV/float32x2/0",
+    "topology": "triangle-list",
+    "blend": "normal",
+    "format": "bgra8unorm",
+    "depth": "depth24plus-stencil8",
+    "stencil": "disabled",
+    "mask": 15,
+    "samples": 1,
+    "t": 316779,
+    "dt": 1.6,
+    "frame": 1283,
+    "phase": "post:野道"
+   }
+  ],
+  "marks": [
+   {
+    "ev": "gate",
+    "id": "dev_room",
+    "t": 6250,
+    "frame": 211
+   },
+   {
+    "ev": "post",
+    "id": "dev_room",
+    "t": 7593.5,
+    "frame": 212
+   },
+   {
+    "ev": "gate",
+    "id": "test_room_a",
+    "t": 18219.30000000447,
+    "frame": 252
+   },
+   {
+    "ev": "post",
+    "id": "test_room_a",
+    "t": 18222.90000000596,
+    "frame": 252
+   },
+   {
+    "ev": "step",
+    "id": "scene:bridge_underpass",
+    "t": 23005,
+    "frame": 266
+   },
+   {
+    "ev": "gate",
+    "id": "bridge_underpass",
+    "t": 24883.60000000149,
+    "frame": 271
+   },
+   {
+    "ev": "post",
+    "id": "bridge_underpass",
+    "t": 24883.80000000447,
+    "frame": 271
+   },
+   {
+    "ev": "step",
+    "id": "scene:dev_room",
+    "t": 28876.10000000149,
+    "frame": 311
+   },
+   {
+    "ev": "gate",
+    "id": "dev_room",
+    "t": 29350.20000000298,
+    "frame": 315
+   },
+   {
+    "ev": "post",
+    "id": "dev_room",
+    "t": 29350.5,
+    "frame": 315
+   },
+   {
+    "ev": "step",
+    "id": "scene:dev_teahouse_alive",
+    "t": 33886.10000000149,
+    "frame": 332
+   },
+   {
+    "ev": "gate",
+    "id": "dev_teahouse_alive",
+    "t": 39883.10000000149,
+    "frame": 352
+   },
+   {
+    "ev": "post",
+    "id": "dev_teahouse_alive",
+    "t": 39883.5,
+    "frame": 352
+   },
+   {
+    "ev": "step",
+    "id": "scene:mountain_pass",
+    "t": 44240.5,
+    "frame": 371
+   },
+   {
+    "ev": "gate",
+    "id": "mountain_pass",
+    "t": 46859.80000000447,
+    "frame": 378
+   },
+   {
+    "ev": "post",
+    "id": "mountain_pass",
+    "t": 46860.10000000149,
+    "frame": 378
+   },
+   {
+    "ev": "step",
+    "id": "scene:teahouse",
+    "t": 50816.20000000298,
+    "frame": 413
+   },
+   {
+    "ev": "gate",
+    "id": "teahouse",
+    "t": 63961.80000000447,
+    "frame": 465
+   },
+   {
+    "ev": "post",
+    "id": "teahouse",
+    "t": 65529,
+    "frame": 467
+   },
+   {
+    "ev": "step",
+    "id": "scene:temple",
+    "t": 69764.20000000298,
+    "frame": 473
+   },
+   {
+    "ev": "gate",
+    "id": "temple",
+    "t": 87869.40000000596,
+    "frame": 482
+   },
+   {
+    "ev": "post",
+    "id": "temple",
+    "t": 87869.90000000596,
+    "frame": 482
+   },
+   {
+    "ev": "step",
+    "id": "scene:temple_exterior",
+    "t": 92159.20000000298,
+    "frame": 523
+   },
+   {
+    "ev": "gate",
+    "id": "temple_exterior",
+    "t": 94185.20000000298,
+    "frame": 532
+   },
+   {
+    "ev": "post",
+    "id": "temple_exterior",
+    "t": 94185.70000000298,
+    "frame": 532
+   },
+   {
+    "ev": "step",
+    "id": "scene:test_room_a",
+    "t": 98235,
+    "frame": 569
+   },
+   {
+    "ev": "gate",
+    "id": "test_room_a",
+    "t": 104785.5,
+    "frame": 595
+   },
+   {
+    "ev": "post",
+    "id": "test_room_a",
+    "t": 104816.70000000298,
+    "frame": 595
+   },
+   {
+    "ev": "step",
+    "id": "scene:test_room_b",
+    "t": 109007.90000000596,
+    "frame": 609
+   },
+   {
+    "ev": "gate",
+    "id": "test_room_b",
+    "t": 111097.10000000149,
+    "frame": 617
+   },
+   {
+    "ev": "post",
+    "id": "test_room_b",
+    "t": 111097.80000000447,
+    "frame": 617
+   },
+   {
+    "ev": "step",
+    "id": "scene:test_scene",
+    "t": 115675.40000000596,
+    "frame": 655
+   },
+   {
+    "ev": "gate",
+    "id": "test_scene",
+    "t": 117592.60000000149,
+    "frame": 664
+   },
+   {
+    "ev": "post",
+    "id": "test_scene",
+    "t": 117592.90000000596,
+    "frame": 664
+   },
+   {
+    "ev": "step",
+    "id": "scene:义庄",
+    "t": 121685.70000000298,
+    "frame": 711
+   },
+   {
+    "ev": "gate",
+    "id": "义庄",
+    "t": 123335.40000000596,
+    "frame": 718
+   },
+   {
+    "ev": "post",
+    "id": "义庄",
+    "t": 123443.70000000298,
+    "frame": 718
+   },
+   {
+    "ev": "step",
+    "id": "scene:城门口",
+    "t": 127752.90000000596,
+    "frame": 734
+   },
+   {
+    "ev": "gate",
+    "id": "城门口",
+    "t": 129665.20000000298,
+    "frame": 741
+   },
+   {
+    "ev": "post",
+    "id": "城门口",
+    "t": 129665.60000000149,
+    "frame": 741
+   },
+   {
+    "ev": "step",
+    "id": "scene:城隍庙夜",
+    "t": 133984.1000000015,
+    "frame": 784
+   },
+   {
+    "ev": "gate",
+    "id": "城隍庙夜",
+    "t": 134767.1000000015,
+    "frame": 787
+   },
+   {
+    "ev": "post",
+    "id": "城隍庙夜",
+    "t": 134767.6000000015,
+    "frame": 787
+   },
+   {
+    "ev": "step",
+    "id": "scene:婆子家院",
+    "t": 138905.30000000447,
+    "frame": 811
+   },
+   {
+    "ev": "gate",
+    "id": "婆子家院",
+    "t": 140884.70000000298,
+    "frame": 820
+   },
+   {
+    "ev": "post",
+    "id": "婆子家院",
+    "t": 140886.80000000447,
+    "frame": 820
+   },
+   {
+    "ev": "step",
+    "id": "scene:崖墓",
+    "t": 144994.6000000015,
+    "frame": 864
+   },
+   {
+    "ev": "gate",
+    "id": "崖墓",
+    "t": 146847.5,
+    "frame": 870
+   },
+   {
+    "ev": "post",
+    "id": "崖墓",
+    "t": 146847.70000000298,
+    "frame": 870
+   },
+   {
+    "ev": "step",
+    "id": "scene:崖墓入口",
+    "t": 150779.6000000015,
+    "frame": 910
+   },
+   {
+    "ev": "gate",
+    "id": "崖墓入口",
+    "t": 152673.6000000015,
+    "frame": 917
+   },
+   {
+    "ev": "post",
+    "id": "崖墓入口",
+    "t": 153150.90000000596,
+    "frame": 917
+   },
+   {
+    "ev": "step",
+    "id": "scene:崖墓前段",
+    "t": 157280.20000000298,
+    "frame": 927
+   },
+   {
+    "ev": "gate",
+    "id": "崖墓前段",
+    "t": 161029.70000000298,
+    "frame": 932
+   },
+   {
+    "ev": "post",
+    "id": "崖墓前段",
+    "t": 161210.6000000015,
+    "frame": 932
+   },
+   {
+    "ev": "step",
+    "id": "scene:崖墓前段1",
+    "t": 165470.1000000015,
+    "frame": 938
+   },
+   {
+    "ev": "gate",
+    "id": "崖墓前段1",
+    "t": 168411.5,
+    "frame": 943
+   },
+   {
+    "ev": "post",
+    "id": "崖墓前段1",
+    "t": 168964.20000000298,
+    "frame": 945
+   },
+   {
+    "ev": "step",
+    "id": "scene:崖墓后段",
+    "t": 172891.40000000596,
+    "frame": 952
+   },
+   {
+    "ev": "gate",
+    "id": "崖墓后段",
+    "t": 176193.20000000298,
+    "frame": 955
+   },
+   {
+    "ev": "post",
+    "id": "崖墓后段",
+    "t": 176458.40000000596,
+    "frame": 956
+   },
+   {
+    "ev": "step",
+    "id": "scene:崖墓正式",
+    "t": 180654.40000000596,
+    "frame": 965
+   },
+   {
+    "ev": "gate",
+    "id": "崖墓正式",
+    "t": 185692.6000000015,
+    "frame": 975
+   },
+   {
+    "ev": "post",
+    "id": "崖墓正式",
+    "t": 185843.80000000447,
+    "frame": 975
+   },
+   {
+    "ev": "step",
+    "id": "scene:枯井土地庙",
+    "t": 190011.80000000447,
+    "frame": 983
+   },
+   {
+    "ev": "gate",
+    "id": "枯井土地庙",
+    "t": 194825.40000000596,
+    "frame": 992
+   },
+   {
+    "ev": "post",
+    "id": "枯井土地庙",
+    "t": 194825.6000000015,
+    "frame": 992
+   },
+   {
+    "ev": "step",
+    "id": "scene:梦_农家院",
+    "t": 199049.1000000015,
+    "frame": 1032
+   },
+   {
+    "ev": "gate",
+    "id": "梦_农家院",
+    "t": 199723.70000000298,
+    "frame": 1036
+   },
+   {
+    "ev": "post",
+    "id": "梦_农家院",
+    "t": 199723.80000000447,
+    "frame": 1036
+   },
+   {
+    "ev": "step",
+    "id": "scene:梦_夜路",
+    "t": 208644.1000000015,
+    "frame": 1060
+   },
+   {
+    "ev": "gate",
+    "id": "梦_夜路",
+    "t": 212210.40000000596,
+    "frame": 1067
+   },
+   {
+    "ev": "post",
+    "id": "梦_夜路",
+    "t": 212210.6000000015,
+    "frame": 1067
+   },
+   {
+    "ev": "step",
+    "id": "scene:梦_醒来土路",
+    "t": 217355.90000000596,
+    "frame": 1079
+   },
+   {
+    "ev": "gate",
+    "id": "梦_醒来土路",
+    "t": 223383.6000000015,
+    "frame": 1088
+   },
+   {
+    "ev": "post",
+    "id": "梦_醒来土路",
+    "t": 223383.80000000447,
+    "frame": 1088
+   },
+   {
+    "ev": "step",
+    "id": "scene:梦_里屋",
+    "t": 227224.1000000015,
+    "frame": 1099
+   },
+   {
+    "ev": "gate",
+    "id": "梦_里屋",
+    "t": 229906.70000000298,
+    "frame": 1103
+   },
+   {
+    "ev": "post",
+    "id": "梦_里屋",
+    "t": 229906.90000000596,
+    "frame": 1103
+   },
+   {
+    "ev": "step",
+    "id": "scene:梦_饭屋",
+    "t": 234883.1000000015,
+    "frame": 1114
+   },
+   {
+    "ev": "gate",
+    "id": "梦_饭屋",
+    "t": 238806.20000000298,
+    "frame": 1122
+   },
+   {
+    "ev": "post",
+    "id": "梦_饭屋",
+    "t": 238806.5,
+    "frame": 1122
+   },
+   {
+    "ev": "step",
+    "id": "scene:河边",
+    "t": 244506.90000000596,
+    "frame": 1135
+   },
+   {
+    "ev": "gate",
+    "id": "河边",
+    "t": 248241.1000000015,
+    "frame": 1141
+   },
+   {
+    "ev": "post",
+    "id": "河边",
+    "t": 248241.5,
+    "frame": 1141
+   },
+   {
+    "ev": "step",
+    "id": "scene:深潭水下",
+    "t": 253591.5,
+    "frame": 1153
+   },
+   {
+    "ev": "gate",
+    "id": "深潭水下",
+    "t": 255592.40000000596,
+    "frame": 1155
+   },
+   {
+    "ev": "post",
+    "id": "深潭水下",
+    "t": 255592.6000000015,
+    "frame": 1155
+   },
+   {
+    "ev": "step",
+    "id": "scene:深潭绝地",
+    "t": 259807.20000000298,
+    "frame": 1165
+   },
+   {
+    "ev": "gate",
+    "id": "深潭绝地",
+    "t": 263393.700000003,
+    "frame": 1172
+   },
+   {
+    "ev": "post",
+    "id": "深潭绝地",
+    "t": 263393.90000000596,
+    "frame": 1172
+   },
+   {
+    "ev": "step",
+    "id": "scene:牛头凼",
+    "t": 268642.80000000447,
+    "frame": 1183
+   },
+   {
+    "ev": "gate",
+    "id": "牛头凼",
+    "t": 270885.5,
+    "frame": 1187
+   },
+   {
+    "ev": "post",
+    "id": "牛头凼",
+    "t": 271034.1000000015,
+    "frame": 1187
+   },
+   {
+    "ev": "step",
+    "id": "scene:码头白天",
+    "t": 287381.1000000015,
+    "frame": 1202
+   },
+   {
+    "ev": "gate",
+    "id": "码头白天",
+    "t": 295258.40000000596,
+    "frame": 1217
+   },
+   {
+    "ev": "post",
+    "id": "码头白天",
+    "t": 295258.6000000015,
+    "frame": 1217
+   },
+   {
+    "ev": "step",
+    "id": "scene:破屋",
+    "t": 300040.200000003,
+    "frame": 1233
+   },
+   {
+    "ev": "gate",
+    "id": "破屋",
+    "t": 302610.40000000596,
+    "frame": 1242
+   },
+   {
+    "ev": "post",
+    "id": "破屋",
+    "t": 302610.6000000015,
+    "frame": 1242
+   },
+   {
+    "ev": "step",
+    "id": "scene:跑马梁",
+    "t": 306968,
+    "frame": 1260
+   },
+   {
+    "ev": "gate",
+    "id": "跑马梁",
+    "t": 309669.40000000596,
+    "frame": 1267
+   },
+   {
+    "ev": "post",
+    "id": "跑马梁",
+    "t": 309910.700000003,
+    "frame": 1267
+   },
+   {
+    "ev": "step",
+    "id": "scene:野道",
+    "t": 314046.90000000596,
+    "frame": 1278
+   },
+   {
+    "ev": "gate",
+    "id": "野道",
+    "t": 316084.5,
+    "frame": 1282
+   },
+   {
+    "ev": "post",
+    "id": "野道",
+    "t": 316084.700000003,
+    "frame": 1282
+   },
+   {
+    "ev": "step",
+    "id": "scene:阎王岭山口",
+    "t": 320352.90000000596,
+    "frame": 1300
+   },
+   {
+    "ev": "gate",
+    "id": "阎王岭山口",
+    "t": 321725.700000003,
+    "frame": 1304
+   },
+   {
+    "ev": "post",
+    "id": "阎王岭山口",
+    "t": 321726,
+    "frame": 1304
+   },
+   {
+    "ev": "step",
+    "id": "scene:雾津街头",
+    "t": 325681.5,
+    "frame": 1322
+   },
+   {
+    "ev": "gate",
+    "id": "雾津街头",
+    "t": 332322.5,
+    "frame": 1342
+   },
+   {
+    "ev": "post",
+    "id": "雾津街头",
+    "t": 332323.200000003,
+    "frame": 1342
+   }
+  ],
+  "frame": 1359,
+  "phase": "post:雾津街头",
+  "src": {
+   "0": {
+    "name": "engine2d-batch",
+    "vs": "mainVertex",
+    "fs": "mainFragment",
+    "head": "\nstruct GlobalUniforms {\n  uProjectionMatrix: mat3x3<f32>,\n  uWorldTransformMatrix: mat3x3<f32>,\n  uWorldColorAlpha: vec4<f32>,\n  uResolution: vec2<f32>,\n  uRoundFlipY: f32,\n}\n@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;\n@group(1) @binding(0) var textureSource1: texture_2d<f32>;\n@group(1) @binding(1) var textureSampler1: sampler;\n@group(1) @binding(2) var textureSource2: texture_2d<f32>;\n@group(1) @binding(3) var textureSampler2: sampler;\n@group(1) @binding(4) var textureSource3: texture_2d<f32>;\n@group(1) @binding(5) var textureSampler3: sampler;\n@group(1) @binding(6) var textureSource4: texture_2d<f32>;\n@group(1) @binding(7) var textureSampler4: sampler;\n@group(1) @binding(8) var textureSource5: texture_2d<f32>;\n@group(1) @binding(9) var textureSampler5: sampler;\n@group(1) @binding(10) var textureSource6: texture_2d<f32>;\n@group(1) @binding(11) var textureSampler6: sampler;\n@group(1) @binding(12) var textureSource7: texture_2d<f32>;\n@group(1) @binding(13) var textureSampler7: sampler;\n@group(1) @binding(14) var textureSource8: texture_2d<f32>;\n@group(1) @binding(15) var textureSampler8: sampler;\n@group(1) @binding(16) var textureSource9: texture_2d<f32>;\n@group(1) @binding(17) var textureSampler9: sampler;\n@group(1) @binding(18) var textureSource10: texture_2d<f32>;\n@group(1) @binding(19) var textureSampler10: sampler;\n@group(1) @binding(20) var textureSource11: texture_2d<f32>;\n@group(1) @binding(21) var textureSampler11: sampler;\n@group(1) @binding(22) var textureSource12: texture_2d<f32>;\n@group(1) @binding(23) var textureSampler12: sampler;\n@group(1) @binding(24) var textureSource13: texture_2d<f32>;\n@group(1) @binding(25) var textureSampler13: sampler;\n@group(1) @binding(26) var textureSource14: texture_2d<f32>;\n@group(1) @binding(27) var textureSampler14: sampler;\n@group(1) @binding(28) var textureSource15: texture_2d<f32>;\n@group(1) @binding(29) var textureSampler15: sampler;\n@group(1) @binding(30) var textureSource16: texture_2d<f32>;\n@group(1) @binding(31) var textureSampler16: sampler;\n\n\nfn roundPixels(position: vec2<f32>, targetSize: vec2<f32>) -> vec2<f32> {\n  return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;\n}\n\nfn roundPixelsTarget(position: vec2<f32>) -> vec2<f32> {\n  var p = position;\n  if (globalUniforms.uRoundFlipY > 0.5) { p.y = -p.y; }\n  p = roundPixels(p, globalUniforms.uResolution);\n  if (globalUniforms.uRoundFlipY > 0.5) { p.y = -p.y; }\n  return p;\n}\n\nstruct VSOutput {\n  @builtin(position) vPosition: vec4<f32>,\n  @location(0) @interpolate(flat) vTextureId: u32,\n  @location(1) vColor: vec4<f32>,\n  @location(2) vUV: vec2<f32>,\n};\n\n@vertex\nfn mainVertex(\n  @location(0) aColor: vec4<f32>,\n  @location(1) aPosition: vec2<f32>,\n  @location(2) aTextureIdAndRound: vec2<u32>,\n  @location(3) aUV: vec2<f32>,\n) -> VSOutput {\n  var worldTransformMatrix = globalUniforms.uWorldTransformMatrix;\n  var modelMatrix = mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);\n  var position = aPosition;\n  var uv = aUV;\n  var vColor = vec4<f32>(1., 1., 1., 1.);\n  vColor *= vec4<f32>(aColor.rgb * aColor.a, aColor.a);\n  let vTextureId = aTextureIdAndRound.y;\n  let vUV = uv;\n  var modelViewProjectionMatrix = globalUniforms.uProjectionMatrix * worldTransformMatrix * modelMatrix;\n  var vPosition = vec4<f32>((modelViewProjectionMatrix * vec3<f32>(position, 1.0)).xy, 0.0, 1.0);\n  vColor *= globalUniforms.uWorldColorAlpha;\n  if (aTextureIdAndRound.x == 1u) {\n    vPosition = vec4<f32>(roundPixelsTarget(vPosition.xy), vPosition.zw);\n  }\n  return VSOutput(vPosition, vTextureId, vColor, vUV);\n}\n\n@fragment\nfn mainFragment(\n  @location(0) @interpolate(flat) vTextureId: u32,\n  @location(1) vColor: vec4<f32>,\n  @location(2) vUV: vec2<f32>,\n) -> @location(0) vec4<f32> {\n  var uvDx = dpdx(vUV);\n  var uvDy = dpdy(vUV);\n  var outColor: vec4<f32>;\n  switch vTextureId {\n  case 0: { outColor = textureSampleGrad(textureSource1, textureSampler1, vUV, uvDx, uvDy); }\n  case 1: { outColor = textu"
+   },
+   "1": {
+    "name": "engine2d-graphics",
+    "vs": "mainVertex",
+    "fs": "mainFragment",
+    "head": "\nstruct GlobalUniforms {\n  uProjectionMatrix: mat3x3<f32>,\n  uWorldTransformMatrix: mat3x3<f32>,\n  uWorldColorAlpha: vec4<f32>,\n  uResolution: vec2<f32>,\n  uRoundFlipY: f32,\n}\n@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;\n@group(1) @binding(0) var textureSource1: texture_2d<f32>;\n@group(1) @binding(1) var textureSampler1: sampler;\n@group(1) @binding(2) var textureSource2: texture_2d<f32>;\n@group(1) @binding(3) var textureSampler2: sampler;\n@group(1) @binding(4) var textureSource3: texture_2d<f32>;\n@group(1) @binding(5) var textureSampler3: sampler;\n@group(1) @binding(6) var textureSource4: texture_2d<f32>;\n@group(1) @binding(7) var textureSampler4: sampler;\n@group(1) @binding(8) var textureSource5: texture_2d<f32>;\n@group(1) @binding(9) var textureSampler5: sampler;\n@group(1) @binding(10) var textureSource6: texture_2d<f32>;\n@group(1) @binding(11) var textureSampler6: sampler;\n@group(1) @binding(12) var textureSource7: texture_2d<f32>;\n@group(1) @binding(13) var textureSampler7: sampler;\n@group(1) @binding(14) var textureSource8: texture_2d<f32>;\n@group(1) @binding(15) var textureSampler8: sampler;\n@group(1) @binding(16) var textureSource9: texture_2d<f32>;\n@group(1) @binding(17) var textureSampler9: sampler;\n@group(1) @binding(18) var textureSource10: texture_2d<f32>;\n@group(1) @binding(19) var textureSampler10: sampler;\n@group(1) @binding(20) var textureSource11: texture_2d<f32>;\n@group(1) @binding(21) var textureSampler11: sampler;\n@group(1) @binding(22) var textureSource12: texture_2d<f32>;\n@group(1) @binding(23) var textureSampler12: sampler;\n@group(1) @binding(24) var textureSource13: texture_2d<f32>;\n@group(1) @binding(25) var textureSampler13: sampler;\n@group(1) @binding(26) var textureSource14: texture_2d<f32>;\n@group(1) @binding(27) var textureSampler14: sampler;\n@group(1) @binding(28) var textureSource15: texture_2d<f32>;\n@group(1) @binding(29) var textureSampler15: sampler;\n@group(1) @binding(30) var textureSource16: texture_2d<f32>;\n@group(1) @binding(31) var textureSampler16: sampler;\n\nstruct LocalUniforms {\n  uTransformMatrix: mat3x3<f32>,\n  uColor: vec4<f32>,\n  uRound: f32,\n}\n@group(2) @binding(0) var<uniform> localUniforms: LocalUniforms;\n\n\nfn roundPixels(position: vec2<f32>, targetSize: vec2<f32>) -> vec2<f32> {\n  return (floor(((position * 0.5 + 0.5) * targetSize) + 0.5) / targetSize) * 2.0 - 1.0;\n}\n\nfn roundPixelsTarget(position: vec2<f32>) -> vec2<f32> {\n  var p = position;\n  if (globalUniforms.uRoundFlipY > 0.5) { p.y = -p.y; }\n  p = roundPixels(p, globalUniforms.uResolution);\n  if (globalUniforms.uRoundFlipY > 0.5) { p.y = -p.y; }\n  return p;\n}\n\nstruct VSOutput {\n  @builtin(position) vPosition: vec4<f32>,\n  @location(0) @interpolate(flat) vTextureId: u32,\n  @location(1) vColor: vec4<f32>,\n  @location(2) vUV: vec2<f32>,\n};\n\n@vertex\nfn mainVertex(\n  @location(0) aColor: vec4<f32>,\n  @location(1) aPosition: vec2<f32>,\n  @location(2) aTextureIdAndRound: vec2<u32>,\n  @location(3) aUV: vec2<f32>,\n) -> VSOutput {\n  var worldTransformMatrix = globalUniforms.uWorldTransformMatrix;\n  var modelMatrix = mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0);\n  var position = aPosition;\n  var uv = aUV;\n  var vColor = vec4<f32>(1., 1., 1., 1.);\n  vColor *= vec4<f32>(aColor.rgb * aColor.a, aColor.a);\n  let vTextureId = aTextureIdAndRound.y;\n  vColor *= localUniforms.uColor;\n  modelMatrix *= localUniforms.uTransformMatrix;\n  let vUV = uv;\n  var modelViewProjectionMatrix = globalUniforms.uProjectionMatrix * worldTransformMatrix * modelMatrix;\n  var vPosition = vec4<f32>((modelViewProjectionMatrix * vec3<f32>(position, 1.0)).xy, 0.0, 1.0);\n  vColor *= globalUniforms.uWorldColorAlpha;\n  if (aTextureIdAndRound.x == 1u) {\n    vPosition = vec4<f32>(roundPixelsTarget(vPosition.xy), vPosition.zw);\n  }\n  if (localUniforms.uRound == 1.0) {\n    vPosition = vec4(roundPixelsTarget(vPosition.xy), vPosition.zw);\n  }\n  return VSOutput(vPosition, vTextureId, vColor, vUV);\n}\n\n@fragment\nfn mainFragment(\n  @location("
+   },
+   "9": {
+    "vs": "mainVertex",
+    "fs": "mainFragment",
+    "head": "\nstruct GlobalFilterUniforms {\n    uInputSize: vec4<f32>,\n    uInputPixel: vec4<f32>,\n    uInputClamp: vec4<f32>,\n    uOutputFrame: vec4<f32>,\n    uGlobalFrame: vec4<f32>,\n    uOutputTexture: vec4<f32>,\n};\n\nstruct LightUniforms {\n    uSceneSize: vec2<f32>,\n    uProjectionScale: f32,\n    uWorldToPixelX: f32,\n    uWorldToPixelY: f32,\n    uWorldContainerPos: vec2<f32>,\n    uEntityFootWorldX: f32,\n    uEntityFootWorldY: f32,\n    uSampleLiftWorld: f32,\n    uDepthEnabled: f32,\n    uInvert: f32,\n    uScale: f32,\n    uOffset: f32,\n    uDepthPerSy: f32,\n    uFloorOffset: f32,\n    uFloorOffsetExtra: f32,\n    uTolerance: f32,\n    uOcclusionBlendFactor: f32,\n    uDebug: f32,\n    uFootDepthQ: f32,\n    uHasFootDepth: f32,\n    uFootBias: f32,\n    uKeyColor: vec3<f32>,\n    uKeyIntensity: f32,\n    uAmbientColor: vec3<f32>,\n    uAmbientIntensity: f32,\n    uToneStrength: f32,\n    uAOContact: f32,\n    uAOForm: f32,\n};\n\n@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;\n@group(0) @binding(1) var uTexture: texture_2d<f32>;\n@group(0) @binding(2) var uSampler: sampler;\n\n@group(1) @binding(0) var<uniform> lightUniforms: LightUniforms;\n@group(1) @binding(1) var uDepthMap: texture_2d<f32>;\n@group(1) @binding(2) var uDepthMapSampler: sampler;\n@group(1) @binding(3) var uProbe: texture_2d<f32>;\n@group(1) @binding(4) var uProbeSampler: sampler;\n\nstruct VSOutput {\n    @builtin(position) position: vec4<f32>,\n    @location(0) vTextureCoord: vec2<f32>,\n    @location(1) vScreenPos: vec2<f32>,\n};\n\nfn filterVertexPosition(aPosition: vec2<f32>) -> vec4<f32> {\n    var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;\n    position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;\n    position.y = position.y * (2.0 * gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;\n    return vec4<f32>(position, 0.0, 1.0);\n}\n\nfn filterTextureCoord(aPosition: vec2<f32>) -> vec2<f32> {\n    return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);\n}\n\n@vertex\nfn mainVertex(@location(0) aPosition: vec2<f32>) -> VSOutput {\n    var out: VSOutput;\n    out.position = filterVertexPosition(aPosition);\n    out.vTextureCoord = filterTextureCoord(aPosition);\n    out.vScreenPos = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;\n    return out;\n}\n\nfn luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }\n\n@fragment\nfn mainFragment(\n    @location(0) vTextureCoord: vec2<f32>,\n    @location(1) vScreenPos: vec2<f32>,\n) -> @location(0) vec4<f32> {\n    let u = lightUniforms;\n    let color = textureSample(uTexture, uSampler, vTextureCoord);\n    if (color.a < 0.004) { discard; }\n\n    let S = max(u.uProjectionScale, 1e-6);\n    let wx = (vScreenPos.x - u.uWorldContainerPos.x) / S;\n    let wy = (vScreenPos.y - u.uWorldContainerPos.y) / S;\n\n    var occluded = false;\n    // 深度遮挡(需深度图 + 行走面脚点深度;缺一不做,绝不退回旧模型)\n    if (u.uDepthEnabled > 0.5 && u.uHasFootDepth > 0.5) {\n        let depthUV = vec2<f32>(wx / u.uSceneSize.x, wy / u.uSceneSize.y);\n        if (depthUV.x >= 0.0 && depthUV.x <= 1.0 && depthUV.y >= 0.0 && depthUV.y <= 1.0) {\n            let depthSample = textureSampleLevel(uDepthMap, uDepthMapSampler, depthUV, 0.0);\n            let rawDepth = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;\n            var d_raw = rawDepth;\n            if (u.uInvert > 0.5) { d_raw = 1.0 - rawDepth; }\n            let sceneDepth = d_raw * u.uScale + u.uOffset;\n            // 精灵深度代理:立在伪世界里的直立 quad(见 GLSL 注释)\n            let syTexFoot = u.uEntityFootWorldY * u.uWorldToPixelY;\n            let syTex = wy * u.uWorldToPixelY;\n            let upright = u.uDepthPerSy * (syTex - syTexFoot);\n            let spriteDepth = u.uFootDepthQ + upright + u.uFloorOffset + u.uFloorOffsetExtra - u.uFootBias;\n            occluded = sceneDepth + u.uTolerance < spriteDepth;\n        }\n    }\n\n    if (u.uDebug > 0.5) {\n        if (occluded) { return vec4<f32>(1.0, 0.0, 0.0, 0.7); }\n        return vec4<f32>(0.0, 0.0, 1.0, 0.7);\n    }\n\n    if (occluded) {\n"
+   },
+   "10": {
+    "vs": "mainVertex",
+    "fs": "mainFragment",
+    "head": "\nstruct GlobalUniforms {\n    uProjectionMatrix: mat3x3<f32>,\n    uWorldTransformMatrix: mat3x3<f32>,\n    uWorldColorAlpha: vec4<f32>,\n    uResolution: vec2<f32>,\n};\n\nstruct LocalUniforms {\n    uTransformMatrix: mat3x3<f32>,\n    uColor: vec4<f32>,\n    uRound: f32,\n};\n\n@group(0) @binding(0) var<uniform> globalUniforms: GlobalUniforms;\n@group(1) @binding(0) var<uniform> localUniforms: LocalUniforms;\n\nstruct VSOutput {\n    @builtin(position) position: vec4<f32>,\n    @location(0) vWorld: vec2<f32>,\n    @location(1) vUV: vec2<f32>,\n};\n\n@vertex\nfn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) -> VSOutput {\n    let mvp = globalUniforms.uProjectionMatrix * globalUniforms.uWorldTransformMatrix * localUniforms.uTransformMatrix;\n    var out: VSOutput;\n    out.position = vec4<f32>((mvp * vec3<f32>(aPosition, 1.0)).xy, 0.0, 1.0);\n    out.vWorld = aPosition;\n    out.vUV = aUV;\n    return out;\n}\n\nstruct ShadowUniforms {\n    uDarkness: f32,\n    uShadowColor: vec3<f32>,\n    uColEnabled: f32,\n    uOccEnabled: f32,\n    uShearX: f32,\n    uShearY: f32,\n    uHalfW: f32,\n    uSpreadTop: f32,\n    uTipFadeStart: f32,\n    uTipAlpha: f32,\n    uPenGrow: f32,\n    uU0: f32,\n    uV0: f32,\n    uU1: f32,\n    uV1: f32,\n    uSceneSize: vec2<f32>,\n    uFootX: f32,\n    uFootY: f32,\n    uW2pX: f32,\n    uW2pY: f32,\n    uInvert: f32,\n    uScale: f32,\n    uOffset: f32,\n    uFloorOffset: f32,\n    uTolerance: f32,\n    uOccBlend: f32,\n    uGroundMin: f32,\n    uGroundMax: f32,\n    uHasGroundTex: f32,\n    uM_ppu: f32,\n    uM_cx: f32,\n    uM_cy: f32,\n    uM_R00: f32,\n    uM_R01: f32,\n    uM_R02: f32,\n    uM_R20: f32,\n    uM_R21: f32,\n    uM_R22: f32,\n    uCol_xMin: f32,\n    uCol_zMin: f32,\n    uCol_cell: f32,\n    uCol_gw: f32,\n    uCol_gh: f32,\n};\n\n@group(2) @binding(0) var<uniform> shadowUniforms: ShadowUniforms;\n@group(2) @binding(1) var uTexture: texture_2d<f32>;\n@group(2) @binding(2) var uTextureSampler: sampler;\n@group(2) @binding(3) var uDepthMap: texture_2d<f32>;\n@group(2) @binding(4) var uDepthMapSampler: sampler;\n@group(2) @binding(5) var uCollisionMap: texture_2d<f32>;\n@group(2) @binding(6) var uCollisionMapSampler: sampler;\n@group(2) @binding(7) var uGroundD: texture_2d<f32>;\n@group(2) @binding(8) var uGroundDSampler: sampler;\n\n// 地面深度:逐像素取行走面场(与 GLSL groundDepthAt 同式)\nfn groundDepthAt(wp: vec2<f32>) -> f32 {\n    let u = shadowUniforms;\n    let uv = vec2<f32>(wp.x / max(u.uSceneSize.x, 1e-3), wp.y / max(u.uSceneSize.y, 1e-3));\n    let g = textureSampleLevel(uGroundD, uGroundDSampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);\n    let t = (g.r * 255.0 * 256.0 + g.g * 255.0) / 65535.0;\n    return u.uGroundMin + t * (u.uGroundMax - u.uGroundMin);\n}\n\nfn isCollisionAt(wp: vec2<f32>) -> bool {\n    let u = shadowUniforms;\n    let sx = wp.x * u.uW2pX;\n    let sy = wp.y * u.uW2pY;\n    let dFloor = groundDepthAt(wp);\n    let px = (sx - u.uM_cx) / u.uM_ppu;\n    let py = (u.uM_cy - sy) / u.uM_ppu;\n    let cwx = u.uM_R00 * px + u.uM_R01 * py + u.uM_R02 * dFloor;\n    let cwz = u.uM_R20 * px + u.uM_R21 * py + u.uM_R22 * dFloor;\n    let gx = (cwx - u.uCol_xMin) / u.uCol_cell;\n    let gz = (cwz - u.uCol_zMin) / u.uCol_cell;\n    if (gx < 0.0 || gx >= u.uCol_gw || gz < 0.0 || gz >= u.uCol_gh) { return false; }\n    return textureSampleLevel(uCollisionMap, uCollisionMapSampler, vec2<f32>(gx / u.uCol_gw, gz / u.uCol_gh), 0.0).r > 0.5;\n}\n\n// 取剪影 alpha,必须 clamp 在当前帧框内(越界采到图集相邻帧 = 条纹复发)\nfn silAt(uv: vec2<f32>) -> f32 {\n    let u = shadowUniforms;\n    let lo = vec2<f32>(min(u.uU0, u.uU1), min(u.uV0, u.uV1));\n    let hi = vec2<f32>(max(u.uU0, u.uU1), max(u.uV0, u.uV1));\n    return textureSampleLevel(uTexture, uTextureSampler, clamp(uv, lo, hi), 0.0).a;\n}\n\nconst RING_K: f32 = 0.7071;\n\n// 变半径半影:内圈 8 抽(权 1)+ 外圈 4 抽(权 .5)+ 中心(权 2),权和 12(与 GLSL silSoft 同序同权)\nfn silSoft(uv: vec2<f32>, r: f32) -> f32 {\n    if (r < 1e-4) { return silAt(uv); }\n    let u = shadowUniforms;\n    let rad = r * vec2<f32>(abs(u.uU1 - u.uU0), abs(u.uV1 - u.uV0));\n    var sum = silAt(uv) *"
+   },
+   "12": {
+    "vs": "mainVertex",
+    "fs": "mainFragment",
+    "head": "\n\nstruct GlobalFilterUniforms {\n  uInputSize:vec4<f32>,\n  uInputPixel:vec4<f32>,\n  uInputClamp:vec4<f32>,\n  uOutputFrame:vec4<f32>,\n  uGlobalFrame:vec4<f32>,\n  uOutputTexture:vec4<f32>,\n};\n\nstruct BlurUniforms {\n  uStrength:f32,\n};\n\n@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;\n@group(0) @binding(1) var uTexture: texture_2d<f32>;\n@group(0) @binding(2) var uSampler : sampler;\n\n@group(1) @binding(0) var<uniform> blurUniforms : BlurUniforms;\n\n\nstruct VSOutput {\n    @builtin(position) position: vec4<f32>,\n    @location(0) offset0: vec2<f32>,\n@location(1) offset1: vec2<f32>,\n@location(2) offset2: vec2<f32>,\n@location(3) offset3: vec2<f32>,\n@location(4) offset4: vec2<f32>,\n  };\n\nfn filterVertexPosition(aPosition:vec2<f32>) -> vec4<f32>\n{\n    var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;\n\n    position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;\n    position.y = position.y * (2.0*gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;\n\n    return vec4(position, 0.0, 1.0);\n}\n\nfn filterTextureCoord( aPosition:vec2<f32> ) -> vec2<f32>\n{\n    return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);\n}\n\nfn globalTextureCoord( aPosition:vec2<f32> ) -> vec2<f32>\n{\n  return  (aPosition.xy / gfu.uGlobalFrame.zw) + (gfu.uGlobalFrame.xy / gfu.uGlobalFrame.zw);\n}\n\nfn getSize() -> vec2<f32>\n{\n  return gfu.uGlobalFrame.zw;\n}\n\n\n@vertex\nfn mainVertex(\n  @location(0) aPosition : vec2<f32>,\n) -> VSOutput {\n\n  let filteredCord = filterTextureCoord(aPosition);\n\n  let pixelStrength = gfu.uInputSize.z * blurUniforms.uStrength;\n\n  return VSOutput(\n   filterVertexPosition(aPosition),\n    filteredCord + vec2(-2 * pixelStrength, 0.0),\nfilteredCord + vec2(-1 * pixelStrength, 0.0),\nfilteredCord + vec2(0 * pixelStrength, 0.0),\nfilteredCord + vec2(1 * pixelStrength, 0.0),\nfilteredCord + vec2(2 * pixelStrength, 0.0),\n  );\n}\n\n@fragment\nfn mainFragment(\n  @builtin(position) position: vec4<f32>,\n  @location(0) offset0: vec2<f32>,\n@location(1) offset1: vec2<f32>,\n@location(2) offset2: vec2<f32>,\n@location(3) offset3: vec2<f32>,\n@location(4) offset4: vec2<f32>,\n) -> @location(0) vec4<f32> {\n\n    var   finalColor = vec4(0.0);\n\n    finalColor += textureSample(uTexture, uSampler, offset0) * 0.153388;\nfinalColor += textureSample(uTexture, uSampler, offset1) * 0.221461;\nfinalColor += textureSample(uTexture, uSampler, offset2) * 0.250301;\nfinalColor += textureSample(uTexture, uSampler, offset3) * 0.221461;\nfinalColor += textureSample(uTexture, uSampler, offset4) * 0.153388;\n\n    return finalColor;\n}\n"
+   },
+   "13": {
+    "vs": "mainVertex",
+    "fs": "mainFragment",
+    "head": "\n\nstruct GlobalFilterUniforms {\n  uInputSize:vec4<f32>,\n  uInputPixel:vec4<f32>,\n  uInputClamp:vec4<f32>,\n  uOutputFrame:vec4<f32>,\n  uGlobalFrame:vec4<f32>,\n  uOutputTexture:vec4<f32>,\n};\n\nstruct BlurUniforms {\n  uStrength:f32,\n};\n\n@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;\n@group(0) @binding(1) var uTexture: texture_2d<f32>;\n@group(0) @binding(2) var uSampler : sampler;\n\n@group(1) @binding(0) var<uniform> blurUniforms : BlurUniforms;\n\n\nstruct VSOutput {\n    @builtin(position) position: vec4<f32>,\n    @location(0) offset0: vec2<f32>,\n@location(1) offset1: vec2<f32>,\n@location(2) offset2: vec2<f32>,\n@location(3) offset3: vec2<f32>,\n@location(4) offset4: vec2<f32>,\n  };\n\nfn filterVertexPosition(aPosition:vec2<f32>) -> vec4<f32>\n{\n    var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;\n\n    position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;\n    position.y = position.y * (2.0*gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;\n\n    return vec4(position, 0.0, 1.0);\n}\n\nfn filterTextureCoord( aPosition:vec2<f32> ) -> vec2<f32>\n{\n    return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);\n}\n\nfn globalTextureCoord( aPosition:vec2<f32> ) -> vec2<f32>\n{\n  return  (aPosition.xy / gfu.uGlobalFrame.zw) + (gfu.uGlobalFrame.xy / gfu.uGlobalFrame.zw);\n}\n\nfn getSize() -> vec2<f32>\n{\n  return gfu.uGlobalFrame.zw;\n}\n\n\n@vertex\nfn mainVertex(\n  @location(0) aPosition : vec2<f32>,\n) -> VSOutput {\n\n  let filteredCord = filterTextureCoord(aPosition);\n\n  let pixelStrength = gfu.uInputSize.w * blurUniforms.uStrength;\n\n  return VSOutput(\n   filterVertexPosition(aPosition),\n    filteredCord + vec2(0.0, -2 * pixelStrength),\nfilteredCord + vec2(0.0, -1 * pixelStrength),\nfilteredCord + vec2(0.0, 0 * pixelStrength),\nfilteredCord + vec2(0.0, 1 * pixelStrength),\nfilteredCord + vec2(0.0, 2 * pixelStrength),\n  );\n}\n\n@fragment\nfn mainFragment(\n  @builtin(position) position: vec4<f32>,\n  @location(0) offset0: vec2<f32>,\n@location(1) offset1: vec2<f32>,\n@location(2) offset2: vec2<f32>,\n@location(3) offset3: vec2<f32>,\n@location(4) offset4: vec2<f32>,\n) -> @location(0) vec4<f32> {\n\n    var   finalColor = vec4(0.0);\n\n    finalColor += textureSample(uTexture, uSampler, offset0) * 0.153388;\nfinalColor += textureSample(uTexture, uSampler, offset1) * 0.221461;\nfinalColor += textureSample(uTexture, uSampler, offset2) * 0.250301;\nfinalColor += textureSample(uTexture, uSampler, offset3) * 0.221461;\nfinalColor += textureSample(uTexture, uSampler, offset4) * 0.153388;\n\n    return finalColor;\n}\n"
+   },
+   "14": {
+    "vs": "mainVertex",
+    "fs": "mainFragment",
+    "head": "struct GlobalFilterUniforms {\n  uInputSize:vec4<f32>,\n  uInputPixel:vec4<f32>,\n  uInputClamp:vec4<f32>,\n  uOutputFrame:vec4<f32>,\n  uGlobalFrame:vec4<f32>,\n  uOutputTexture:vec4<f32>,\n};\n\nstruct ColorMatrixUniforms {\n  uColorMatrix:array<vec4<f32>, 5>,\n  uAlpha:f32,\n};\n\n\n@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;\n@group(0) @binding(1) var uTexture: texture_2d<f32>;\n@group(0) @binding(2) var uSampler : sampler;\n@group(1) @binding(0) var<uniform> colorMatrixUniforms : ColorMatrixUniforms;\n\n\nstruct VSOutput {\n    @builtin(position) position: vec4<f32>,\n    @location(0) uv : vec2<f32>,\n  };\n  \nfn filterVertexPosition(aPosition:vec2<f32>) -> vec4<f32>\n{\n    var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;\n\n    position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;\n    position.y = position.y * (2.0*gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;\n\n    return vec4(position, 0.0, 1.0);\n}\n\nfn filterTextureCoord( aPosition:vec2<f32> ) -> vec2<f32>\n{\n  return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);\n}\n\n@vertex\nfn mainVertex(\n  @location(0) aPosition : vec2<f32>, \n) -> VSOutput {\n  return VSOutput(\n   filterVertexPosition(aPosition),\n   filterTextureCoord(aPosition),\n  );\n}\n\n\n@fragment\nfn mainFragment(\n  @location(0) uv: vec2<f32>,\n) -> @location(0) vec4<f32> {\n\n\n  var c = textureSample(uTexture, uSampler, uv);\n  \n  if (colorMatrixUniforms.uAlpha == 0.0) {\n    return c;\n  }\n\n \n    // Un-premultiply alpha before applying the color matrix. See issue #3539.\n    if (c.a > 0.0) {\n      c.r /= c.a;\n      c.g /= c.a;\n      c.b /= c.a;\n    }\n\n    var cm = colorMatrixUniforms.uColorMatrix;\n\n\n    var result = vec4<f32>(0.);\n\n    result.r = (cm[0][0] * c.r);\n    result.r += (cm[0][1] * c.g);\n    result.r += (cm[0][2] * c.b);\n    result.r += (cm[0][3] * c.a);\n    result.r += cm[1][0];\n\n    result.g = (cm[1][1] * c.r);\n    result.g += (cm[1][2] * c.g);\n    result.g += (cm[1][3] * c.b);\n    result.g += (cm[2][0] * c.a);\n    result.g += cm[2][1];\n\n    result.b = (cm[2][2] * c.r);\n    result.b += (cm[2][3] * c.g);\n    result.b += (cm[3][0] * c.b);\n    result.b += (cm[3][1] * c.a);\n    result.b += cm[3][2];\n\n    result.a = (cm[3][3] * c.r);\n    result.a += (cm[4][0] * c.g);\n    result.a += (cm[4][1] * c.b);\n    result.a += (cm[4][2] * c.a);\n    result.a += cm[4][3];\n\n    var rgb = mix(c.rgb, result.rgb, colorMatrixUniforms.uAlpha);\n\n    rgb.r *= result.a;\n    rgb.g *= result.a;\n    rgb.b *= result.a;\n\n    return vec4(rgb, result.a);\n}"
+   },
+   "15": {
+    "name": "burn-material-filter",
+    "vs": "mainVertex",
+    "fs": "mainFragment",
+    "head": "\nstruct GlobalFilterUniforms {\n  uInputSize: vec4<f32>,\n  uInputPixel: vec4<f32>,\n  uInputClamp: vec4<f32>,\n  uOutputFrame: vec4<f32>,\n  uGlobalFrame: vec4<f32>,\n  uOutputTexture: vec4<f32>,\n};\n@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;\n@group(0) @binding(1) var uTexture: texture_2d<f32>;\n@group(0) @binding(2) var uSampler: sampler;\n\nstruct BurnFilterUniforms {\n  uWorldContainerPos: vec2<f32>,\n  uProjectionScale: f32,\n  uUvAffine: vec4<f32>,\n  uUvOffset: vec2<f32>,\n  uBurnGrid: vec2<f32>,\n  uBurnNow: f32,\n  uBurnStep: f32,\n  uBurnFlame: f32,\n  uBurnEmber: f32,\n  uBurnScorch: f32,\n  uBurnAshFade: f32,\n  uBurnEdgeNoise: f32,\n  uBurnScorchColor: vec3<f32>,\n  uBurnCharColor: vec3<f32>,\n  uBurnAshColor: vec3<f32>,\n  uBurnAshAlpha: f32,\n  uBurnGlow: vec3<f32>,\n  uBurnEmberGlow: vec3<f32>,\n};\n@group(1) @binding(0) var<uniform> burnUniforms: BurnFilterUniforms;\n@group(1) @binding(1) var uBurnField: texture_2d<f32>;\n@group(1) @binding(2) var uBurnFieldSampler: sampler;\n\nstruct VSOutput {\n  @builtin(position) position: vec4<f32>,\n  @location(0) vTextureCoord: vec2<f32>,\n  @location(1) vScreenPos: vec2<f32>,\n};\n\nfn filterVertexPosition(aPosition: vec2<f32>) -> vec4<f32> {\n  var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;\n  position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;\n  position.y = position.y * (2.0 * gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;\n  return vec4<f32>(position, 0.0, 1.0);\n}\n\nfn filterTextureCoord(aPosition: vec2<f32>) -> vec2<f32> {\n  return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);\n}\n\n@vertex\nfn mainVertex(@location(0) aPosition: vec2<f32>) -> VSOutput {\n  return VSOutput(\n    filterVertexPosition(aPosition),\n    filterTextureCoord(aPosition),\n    aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy\n  );\n}\n// 燃烧场着色：burnShade.glsl 的 WGSL 译本（Pixi WebGPU 渲染器跑这份，WebGL 与燃烧工作台仍跑 GLSL）。\n// 数学与 GLSL 版逐句对应——改一边必须同改另一边，再跑像素对照 tools/render_parity/cases/50_burn.ts。\n// 燃烧场纹理编码、阶段划分、双线性只混阶段结果的理由，全见 burnShade.glsl 的注释，这里不重复。\n//\n// 本文件只放函数（WGSL 模块作用域按名引用、不看先后）。拼它的程序必须在同一模块里声明：\n//   var<uniform> burnUniforms —— 成员至少含 uBurnGrid … uBurnEmberGlow（名字同 GLSL 的 uniform），\n//                                 成员顺序按该程序 JS 侧 uniforms 对象的声明顺序（Pixi 按声明顺序排偏移）；\n//   var uBurnField: texture_2d<f32> 与 var uBurnFieldSampler: sampler（燃烧场纹理自带的 NEAREST 采样状态）。\n//\n// 与 GLSL 的差别只有写法：\n//   - out 参数改成 ptr<function, vec3<f32>>；\n//   - 燃烧场一律 textureSampleLevel(…, 0.0)：调用点都在「覆盖度太小就提前 return」之后（非一致控制流），\n//     WGSL 不许在那里用 textureSample；燃烧场是单级纹理，第 0 级就是 GLSL texture() 的结果；\n//   - 三目运算改 if / else（select 两边都求值，smoothstep 两端相等那一边会出 NaN）。\n// ⚠ 注释里不许写「@ + group / binding + 括号」：Pixi 按正则扫整份源码（含注释）找绑定，写了就多出一个假绑定。\n\nconst BURN_NEVER: f32 = 100000.0;\n\nfn burnHash(p0: vec2<f32>) -> f32 {\n    var p = fract(p0 * vec2<f32>(123.34, 456.21));\n    p += dot(p, p + 45.32);\n    return fract(p.x * p.y);\n}\n\nfn burnValueNoise(p: vec2<f32>) -> f32 {\n    let i = floor(p);\n    let f = fract(p);\n    let u = f * f * (3.0 - 2.0 * f);\n    let a = burnHash(i);\n    let b = burnHash(i + vec2<f32>(1.0, 0.0));\n    let c = burnHash(i + vec2<f32>(0.0, 1.0));\n    let d = burnHash(i + vec2<f32>(1.0, 1.0));\n    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);\n}\n\n// 一个格（整数格号）的 (点着时刻, 燃料, 熄灭定格)\nfn burnTexel(cell: vec2<f32>) -> vec3<f32> {\n    let c = clamp(cell, vec2<f32>(0.0), burnUniforms.uBurnGrid - 1.0);\n    let s = textureSampleLevel(uBurnField, uBurnFieldSampler, (c + 0.5) / burnUniforms.uBurnGrid, 0.0);\n    let q = floor(s.r * 255.0 + 0.5) * 256.0 + floor(s.g * 255.0 + 0.5);\n    var t = q * burnUniforms.uBurnStep;\n    if (q >= 65535.0) { t = BURN_NEVER; }\n    return vec3<f32>(t, s.b, s.a);\n}\n\n// 一格此刻的阶段：vec4(焦黑, 烤黄, 成灰, 不透明度倍率)，发光写进 *emit\nfn burnStage(s: vec3<f32>, n: f32, uv: vec2<f32>, emit: ptr<function, vec3<f32>>) -> vec4<f32> {\n    *emit = vec3<f32>(0.0);\n    let tau = burnUniforms.uBurnNow - (s.x + n);\n    let flameDur = max(burnUniforms.uBurnFlame * s.y, 1e-3);\n    var scorch: f32;\n    if (burnUniforms.uBu"
+   },
+   "16": {
+    "name": "burn-glow-filter",
+    "vs": "mainVertex",
+    "fs": "mainFragment",
+    "head": "\nstruct GlobalFilterUniforms {\n  uInputSize: vec4<f32>,\n  uInputPixel: vec4<f32>,\n  uInputClamp: vec4<f32>,\n  uOutputFrame: vec4<f32>,\n  uGlobalFrame: vec4<f32>,\n  uOutputTexture: vec4<f32>,\n};\n@group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;\n@group(0) @binding(1) var uTexture: texture_2d<f32>;\n@group(0) @binding(2) var uSampler: sampler;\n\nstruct BurnFilterUniforms {\n  uWorldContainerPos: vec2<f32>,\n  uProjectionScale: f32,\n  uUvAffine: vec4<f32>,\n  uUvOffset: vec2<f32>,\n  uBurnGrid: vec2<f32>,\n  uBurnNow: f32,\n  uBurnStep: f32,\n  uBurnFlame: f32,\n  uBurnEmber: f32,\n  uBurnScorch: f32,\n  uBurnAshFade: f32,\n  uBurnEdgeNoise: f32,\n  uBurnScorchColor: vec3<f32>,\n  uBurnCharColor: vec3<f32>,\n  uBurnAshColor: vec3<f32>,\n  uBurnAshAlpha: f32,\n  uBurnGlow: vec3<f32>,\n  uBurnEmberGlow: vec3<f32>,\n};\n@group(1) @binding(0) var<uniform> burnUniforms: BurnFilterUniforms;\n@group(1) @binding(1) var uBurnField: texture_2d<f32>;\n@group(1) @binding(2) var uBurnFieldSampler: sampler;\n\nstruct VSOutput {\n  @builtin(position) position: vec4<f32>,\n  @location(0) vTextureCoord: vec2<f32>,\n  @location(1) vScreenPos: vec2<f32>,\n};\n\nfn filterVertexPosition(aPosition: vec2<f32>) -> vec4<f32> {\n  var position = aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy;\n  position.x = position.x * (2.0 / gfu.uOutputTexture.x) - 1.0;\n  position.y = position.y * (2.0 * gfu.uOutputTexture.z / gfu.uOutputTexture.y) - gfu.uOutputTexture.z;\n  return vec4<f32>(position, 0.0, 1.0);\n}\n\nfn filterTextureCoord(aPosition: vec2<f32>) -> vec2<f32> {\n  return aPosition * (gfu.uOutputFrame.zw * gfu.uInputSize.zw);\n}\n\n@vertex\nfn mainVertex(@location(0) aPosition: vec2<f32>) -> VSOutput {\n  return VSOutput(\n    filterVertexPosition(aPosition),\n    filterTextureCoord(aPosition),\n    aPosition * gfu.uOutputFrame.zw + gfu.uOutputFrame.xy\n  );\n}\n// 燃烧场着色：burnShade.glsl 的 WGSL 译本（Pixi WebGPU 渲染器跑这份，WebGL 与燃烧工作台仍跑 GLSL）。\n// 数学与 GLSL 版逐句对应——改一边必须同改另一边，再跑像素对照 tools/render_parity/cases/50_burn.ts。\n// 燃烧场纹理编码、阶段划分、双线性只混阶段结果的理由，全见 burnShade.glsl 的注释，这里不重复。\n//\n// 本文件只放函数（WGSL 模块作用域按名引用、不看先后）。拼它的程序必须在同一模块里声明：\n//   var<uniform> burnUniforms —— 成员至少含 uBurnGrid … uBurnEmberGlow（名字同 GLSL 的 uniform），\n//                                 成员顺序按该程序 JS 侧 uniforms 对象的声明顺序（Pixi 按声明顺序排偏移）；\n//   var uBurnField: texture_2d<f32> 与 var uBurnFieldSampler: sampler（燃烧场纹理自带的 NEAREST 采样状态）。\n//\n// 与 GLSL 的差别只有写法：\n//   - out 参数改成 ptr<function, vec3<f32>>；\n//   - 燃烧场一律 textureSampleLevel(…, 0.0)：调用点都在「覆盖度太小就提前 return」之后（非一致控制流），\n//     WGSL 不许在那里用 textureSample；燃烧场是单级纹理，第 0 级就是 GLSL texture() 的结果；\n//   - 三目运算改 if / else（select 两边都求值，smoothstep 两端相等那一边会出 NaN）。\n// ⚠ 注释里不许写「@ + group / binding + 括号」：Pixi 按正则扫整份源码（含注释）找绑定，写了就多出一个假绑定。\n\nconst BURN_NEVER: f32 = 100000.0;\n\nfn burnHash(p0: vec2<f32>) -> f32 {\n    var p = fract(p0 * vec2<f32>(123.34, 456.21));\n    p += dot(p, p + 45.32);\n    return fract(p.x * p.y);\n}\n\nfn burnValueNoise(p: vec2<f32>) -> f32 {\n    let i = floor(p);\n    let f = fract(p);\n    let u = f * f * (3.0 - 2.0 * f);\n    let a = burnHash(i);\n    let b = burnHash(i + vec2<f32>(1.0, 0.0));\n    let c = burnHash(i + vec2<f32>(0.0, 1.0));\n    let d = burnHash(i + vec2<f32>(1.0, 1.0));\n    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);\n}\n\n// 一个格（整数格号）的 (点着时刻, 燃料, 熄灭定格)\nfn burnTexel(cell: vec2<f32>) -> vec3<f32> {\n    let c = clamp(cell, vec2<f32>(0.0), burnUniforms.uBurnGrid - 1.0);\n    let s = textureSampleLevel(uBurnField, uBurnFieldSampler, (c + 0.5) / burnUniforms.uBurnGrid, 0.0);\n    let q = floor(s.r * 255.0 + 0.5) * 256.0 + floor(s.g * 255.0 + 0.5);\n    var t = q * burnUniforms.uBurnStep;\n    if (q >= 65535.0) { t = BURN_NEVER; }\n    return vec3<f32>(t, s.b, s.a);\n}\n\n// 一格此刻的阶段：vec4(焦黑, 烤黄, 成灰, 不透明度倍率)，发光写进 *emit\nfn burnStage(s: vec3<f32>, n: f32, uv: vec2<f32>, emit: ptr<function, vec3<f32>>) -> vec4<f32> {\n    *emit = vec3<f32>(0.0);\n    let tau = burnUniforms.uBurnNow - (s.x + n);\n    let flameDur = max(burnUniforms.uBurnFlame * s.y, 1e-3);\n    var scorch: f32;\n    if (burnUniforms.uBu"
+   }
+  },
+  "used": {
+   "engine2d-batch → bgra8unorm normal": {
+    "first": 211,
+    "firstT": 6039.4000000059605,
+    "n": 3470,
+    "last": 1359
+   },
+   "program-10 → bgra8unorm normal": {
+    "first": 212,
+    "firstT": 7581.70000000298,
+    "n": 1170,
+    "last": 1279
+   },
+   "program-12 → bgra8unorm normal": {
+    "first": 212,
+    "firstT": 7583.10000000149,
+    "n": 2188,
+    "last": 1279
+   },
+   "program-13 → bgra8unorm normal": {
+    "first": 212,
+    "firstT": 7584.4000000059605,
+    "n": 1984,
+    "last": 1279
+   },
+   "program-9 → bgra8unorm normal": {
+    "first": 212,
+    "firstT": 7586.30000000447,
+    "n": 1468,
+    "last": 1359
+   },
+   "program-14 → bgra8unorm normal": {
+    "first": 253,
+    "firstT": 18983.20000000298,
+    "n": 84,
+    "last": 617
+   },
+   "burn-material-filter → bgra8unorm normal": {
+    "first": 254,
+    "firstT": 19519.70000000298,
+    "n": 28,
+    "last": 610
+   },
+   "burn-glow-filter → bgra8unorm normal": {
+    "first": 254,
+    "firstT": 19521.40000000596,
+    "n": 28,
+    "last": 610
+   },
+   "program-3 → bgra8unorm normal": {
+    "first": 258,
+    "firstT": 20301.40000000596,
+    "n": 176,
+    "last": 984
+   },
+   "program-3 → bgra8unorm add": {
+    "first": 258,
+    "firstT": 20301.80000000447,
+    "n": 61,
+    "last": 735
+   },
+   "program-7 → bgra8unorm screen": {
+    "first": 720,
+    "firstT": 124054.40000000596,
+    "n": 16,
+    "last": 735
+   },
+   "engine2d-batch → bgra8unorm+add normal": {
+    "first": 1054,
+    "firstT": 205280.20000000298,
+    "n": 306,
+    "last": 1359
+   },
+   "engine2d-batch → bgra8unorm+active normal": {
+    "first": 1054,
+    "firstT": 205282.20000000298,
+    "n": 598,
+    "last": 1359
+   },
+   "engine2d-batch → bgra8unorm+remove normal": {
+    "first": 1054,
+    "firstT": 205284.70000000298,
+    "n": 306,
+    "last": 1359
+   },
+   "program-13 → bgra8unorm+disabled normal": {
+    "first": 1055,
+    "firstT": 205935.5,
+    "n": 204,
+    "last": 1279
+   },
+   "engine2d-batch → bgra8unorm+disabled normal": {
+    "first": 1055,
+    "firstT": 205936.70000000298,
+    "n": 398,
+    "last": 1359
+   },
+   "program-9 → bgra8unorm+disabled normal": {
+    "first": 1055,
+    "firstT": 205938.20000000298,
+    "n": 232,
+    "last": 1279
+   },
+   "program-3 → bgra8unorm+disabled normal": {
+    "first": 1188,
+    "firstT": 272235.90000000596,
+    "n": 76,
+    "last": 1279
+   },
+   "rhi-mipmap:bgra8unorm": {
+    "first": 1189,
+    "firstT": 272278.90000000596,
+    "n": 6,
+    "last": 1189
+   },
+   "engine2d-graphics → bgra8unorm+disabled normal": {
+    "first": 1196,
+    "firstT": 281422.80000000447,
+    "n": 7,
+    "last": 1202
+   },
+   "program-14 → bgra8unorm+disabled normal": {
+    "first": 1218,
+    "firstT": 296357.1000000015,
+    "n": 42,
+    "last": 1359
+   },
+   "program-10 → bgra8unorm+disabled normal": {
+    "first": 1283,
+    "firstT": 316780.5,
+    "n": 38,
+    "last": 1323
+   }
+  }
+ },
+ "console": [
+  "[warning] [入口卫兵] 当前 origin 是 http://127.0.0.1:5741，不是规范的 http://127.0.0.1:5173。存档走 dev server 的文件后端，所以同一份检出下不会分家；但如果这是另一个 worktree 的服务，你玩到的会是那一份的进度。",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (玩家动画清单) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/scene_transition.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"scene_transition\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差枪_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/克拉拉_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/guanchai_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_storyteller_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_a_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_b_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_employer_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_ascetic_monk_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_taoist_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差刀_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差刀_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_li_tiangou_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/埃德加_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: npc_ringboy) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差枪_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_1) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/test_room_a/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (背景: /resources/runtime/scenes/test_room_a/background.png) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/background.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://1",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_2) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/test_room_a/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (深度图: test_room_a) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0.1:5741/src/engine2d/assets/load",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/克拉拉_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_3) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/guanchai_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_4) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_5) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_noodle_vendor) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_washerwoman) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_storyteller_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_chess_grandpa) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_a_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_coolie_rice_sack) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_b_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_coolie_rope) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_employer_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_street_runner) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_ascetic_monk_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_ascetic_monk) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_taoist_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_wandering_taoist) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差刀_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_constable_blade) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_li_tiangou_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_foreign_lady) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/埃德加_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_foreign_cargo_hand) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/背景音/人声嘈杂2.wav::loop=1\nDecoding audio data failed.",
+  "[warning] AssetManager: preload failed (环境音: 人声闹市) Decoding audio data failed.",
+  "[error] [load-failure] [bitmap] 加载失败: ./resources/runtime/scenes/test_room_a/collision.png\nThe source image could not be decoded.",
+  "[warning] AssetManager: preload failed (碰撞图: test_room_a) InvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/test_room_a/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差枪_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/克拉拉_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/guanchai_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_storyteller_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_a_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_b_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_employer_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_ascetic_monk_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_taoist_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差刀_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差刀_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_li_tiangou_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/埃德加_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/背景音/人声嘈杂2.wav::loop=1\nDecoding audio data failed.",
+  "[error] [unhandled-rejection#1] Decoding audio data failed.",
+  "[pageerror] Decoding audio data failed.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/test_room_a/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a",
+  "[error] [load-failure] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/sce",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/scene_transition.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"scene_transition\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/bridge_underpass/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/bridge_underpass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (深度图: bridge_underpass) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/bridge_underpass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0.1:5741/src/engine2d/a",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/bridge_underpass/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/bridge_underpass/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (背景: /resources/runtime/scenes/bridge_underpass/background.png) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/bridge_underpass/background.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_0) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/BGS/SWDRSLGDIR_0061_night2.wav::loop=1\nDecoding audio data failed.",
+  "[warning] AssetManager: preload failed (环境音: 夜晚蛐蛐叫) Decoding audio data failed.",
+  "[error] [load-failure] [bitmap] 加载失败: ./resources/runtime/scenes/bridge_underpass/collision.png\nThe source image could not be decoded.",
+  "[warning] AssetManager: preload failed (碰撞图: bridge_underpass) InvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/bridge_underpass/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/bridge_underpass/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/BGS/SWDRSLGDIR_0061_night2.wav::loop=1\nDecoding audio data failed.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/bridge_underpass/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/bridge_underpass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/bridge_underpass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/bridge",
+  "[error] [load-failure] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/bridge_underpass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtim",
+  "[error] [unhandled-rejection#2] Decoding audio data failed.",
+  "[pageerror] Decoding audio data failed.",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/scene_transition.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"scene_transition\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/scene_transition.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"scene_transition\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/dev_teahouse_alive/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_teahouse_alive/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_laugh/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_chatA/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_sage/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_drinker/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_eater/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_steam_1) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_glow_1) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_laugh/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_laugh) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_chatA/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_chatA) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_drinker/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_drinker) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_sage/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_sage) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [bitmap] 加载失败: ./resources/runtime/scenes/dev_teahouse_alive/collision.png\nThe source image could not be decoded.",
+  "[warning] AssetManager: preload failed (碰撞图: dev_teahouse_alive) InvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_eater/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_eater) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/teahouse_roomtone.wav::loop=1\nDecoding audio data failed.",
+  "[warning] AssetManager: preload failed (环境音: teahouse_roomtone) Decoding audio data failed.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/dev_teahouse_alive/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_teahouse_alive/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (深度图: dev_teahouse_alive) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_teahouse_alive/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0.1:5741/src/engine",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/dev_teahouse_alive/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_teahouse_alive/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (背景: /resources/runtime/scenes/dev_teahouse_alive/background.png) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_teahouse_alive/background.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithR",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/背景音/人声嘈杂3.wav::loop=1\nDecoding audio data failed.",
+  "[warning] AssetManager: preload failed (环境音: 中文人声闹市) Decoding audio data failed.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/dev_teahouse_alive/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_teahouse_alive/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_laugh/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_chatA/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_sage/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_drinker/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_eater/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/dev_teahouse_alive/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_teahouse_alive/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_teahouse_alive/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_",
+  "[error] [load-failure] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/dev_teahouse_alive/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runt",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/背景音/人声嘈杂3.wav::loop=1\nDecoding audio data failed.",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/teahouse_roomtone.wav::loop=1\nDecoding audio data failed.",
+  "[error] [unhandled-rejection#3] Decoding audio data failed.",
+  "[pageerror] Decoding audio data failed.",
+  "[pageerror] Decoding audio data failed.",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/scene_transition.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"scene_transition\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_0) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [bitmap] 加载失败: ./resources/runtime/scenes/mountain_pass/collision.png\nThe source image could not be decoded.",
+  "[warning] AssetManager: preload failed (碰撞图: mountain_pass) InvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/mountain_pass/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/mountain_pass/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (背景: /resources/runtime/scenes/mountain_pass/background.png) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/mountain_pass/background.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/mountain_pass/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/mountain_pass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (深度图: mountain_pass) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/mountain_pass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0.1:5741/src/engine2d/assets/",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/BGS/30116_1076_638.mp3::loop=1\nDecoding audio data failed.",
+  "[warning] AssetManager: preload failed (环境音: 野外鸟叫) Decoding audio data failed.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/mountain_pass/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/mountain_pass/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/mountain_pass/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/mountain_pass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/mountain_pass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/mountain_",
+  "[error] [load-failure] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/mountain_pass/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/s",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/BGS/30116_1076_638.mp3::loop=1\nDecoding audio data failed.",
+  "[pageerror] Decoding audio data failed.",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/scene_transition.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"scene_transition\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_storyteller_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_laugh/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_chatA/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_sage/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_drinker/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_eater/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/dog_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_yamen_gatekeeper_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_storyteller_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: storyteller_zhang) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: blind_li) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: npc_掌柜) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: waiter_xiaoer) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/teahouse/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/teahouse/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (背景: /resources/runtime/scenes/teahouse/background.png) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/teahouse/background.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_glow_1) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_laugh/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_laugh) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_chatA/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_chatA) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_sage/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_sage) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/teahouse/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/teahouse/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (深度图: teahouse) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/teahouse/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0.1:5741/src/engine2d/assets/loader/Loa",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_steam_1) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_drinker/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_drinker) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_eater/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: fx_patron_eater) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/dog_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_1) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_yamen_gatekeeper_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_hotspot_0) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/背景音/人声嘈杂3.wav::loop=1\nDecoding audio data failed.",
+  "[warning] AssetManager: preload failed (环境音: 中文人声闹市) Decoding audio data failed.",
+  "[error] [load-failure] [bitmap] 加载失败: ./resources/runtime/scenes/teahouse/collision.png\nThe source image could not be decoded.",
+  "[warning] AssetManager: preload failed (碰撞图: teahouse) InvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/teahouse/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/teahouse/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_storyteller_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_teapot_steam/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_laugh/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_chatA/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_sage/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_drinker/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_patron_eater/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/dog_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_yamen_gatekeeper_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/teahouse/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/teahouse/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/teahouse/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/teahouse/raw_d",
+  "[error] [load-failure] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/teahouse/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/背景音/人声嘈杂3.wav::loop=1\nDecoding audio data failed.",
+  "[pageerror] Decoding audio data failed.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/fx_lantern_glow/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] [vfx] vfx: 贴图加载失败：SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] [vfx] vfx: 发射器「teahouse_lamp_flicker/glow」的贴图装不到",
+  "[warning] [vfx] vfx: 发射器「teahouse_lamp_flicker/glow」的贴图装不到",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/dialogue_start.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"dialogue_start\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/dialogue_end.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"dialogue_end\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/scene_transition.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"scene_transition\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_taoist_anim_v1/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/temple/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (深度图: temple) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0.1:5741/src/engine2d/assets/loader/Loader.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/temple/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (背景: /resources/runtime/scenes/temple/background.png) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple/background.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0.1:5",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_taoist_anim_v1/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_0) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [bitmap] 加载失败: ./resources/runtime/scenes/temple/collision.png\nThe source image could not be decoded.",
+  "[warning] AssetManager: preload failed (碰撞图: temple) InvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/temple/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_taoist_anim_v1/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/temple/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple/raw_depth",
+  "[error] [load-failure] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/t",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/scene_transition.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"scene_transition\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/temple_exterior/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple_exterior/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (深度图: temple_exterior) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple_exterior/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0.1:5741/src/engine2d/ass",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/temple_exterior/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple_exterior/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (背景: /resources/runtime/scenes/temple_exterior/background.png) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple_exterior/background.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/BGS/SWDRSLGDIR_0025_wind01.wav::loop=1\nDecoding audio data failed.",
+  "[warning] AssetManager: preload failed (环境音: 阴风) Decoding audio data failed.",
+  "[error] [load-failure] [bitmap] 加载失败: ./resources/runtime/scenes/temple_exterior/collision.png\nThe source image could not be decoded.",
+  "[warning] AssetManager: preload failed (碰撞图: temple_exterior) InvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/temple_exterior/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple_exterior/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/temple_exterior/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple_exterior/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple_exterior/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple_",
+  "[error] [load-failure] [DepthSystem] ERROR: depth texture FAILED [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/temple_exterior/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\nError: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/BGS/SWDRSLGDIR_0025_wind01.wav::loop=1\nDecoding audio data failed.",
+  "[pageerror] Decoding audio data failed.",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/edited/scene_transition.wav::loop=0\nDecoding audio data failed.",
+  "[warning] AudioManager: transient sfx \"scene_transition\" failed to load Decoding audio data failed.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差枪_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/克拉拉_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/guanchai_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_storyteller_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_a_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_b_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_employer_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_ascetic_monk_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_taoist_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差刀_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差刀_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_li_tiangou_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/埃德加_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/test_room_a/raw_depth_rg.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (深度图: test_room_a) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/raw_depth_rg.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://127.0.0.1:5741/src/engine2d/assets/load",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/test_room_a/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[warning] AssetManager: preload failed (背景: /resources/runtime/scenes/test_room_a/background.png) Error: [Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/background.png.\nInvalidStateError: The source image could not be decoded.\n    at Loader._loadAssetWithRetry (http://1",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: npc_ringboy) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差枪_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_1) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/guanchai_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_4) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_blind_li_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_5) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/克拉拉_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_3) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: new_npc_2) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_teahouse_owner_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_noodle_vendor) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_popo_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_washerwoman) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_storyteller_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_chess_grandpa) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_a_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_coolie_rice_sack) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_employer_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_street_runner) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_ascetic_monk_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_ascetic_monk) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_coolie_b_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_coolie_rope) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/player_taoist_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_wandering_taoist) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差刀_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_constable_blade) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_li_tiangou_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_foreign_lady) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/埃德加_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[warning] AssetManager: preload failed (NPC 动画清单: wujin_foreign_cargo_hand) SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [audio] 加载失败: ./resources/runtime/audio/背景音/人声嘈杂2.wav::loop=1\nDecoding audio data failed.",
+  "[warning] AssetManager: preload failed (环境音: 人声闹市) Decoding audio data failed.",
+  "[error] [load-failure] [bitmap] 加载失败: ./resources/runtime/scenes/test_room_a/collision.png\nThe source image could not be decoded.",
+  "[warning] AssetManager: preload failed (碰撞图: test_room_a) InvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [texture] 加载失败: ./resources/runtime/scenes/test_room_a/background.png\n[Loader.load] Failed to load http://127.0.0.1:5741/resources/runtime/scenes/test_room_a/background.png.\nInvalidStateError: The source image could not be decoded.",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/boy_ring_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/官差枪_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+  "[error] [load-failure] [json] 加载失败: ./resources/runtime/animation/npc_lifu_anim/anim.json\nUnexpected token '<', \"<!DOCTYPE \"... is not valid JSON"
+ ]
+}

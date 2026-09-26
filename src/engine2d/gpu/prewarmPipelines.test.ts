@@ -97,6 +97,25 @@ describe('管线预建', () => {
     renderer.destroy();
   });
 
+  it('设备丢失恢复后按原样重建预建的管线,揭幕闸照常等它们,真画时不再现建(R3,同 master GlProgramWarmup.syncContext)', async () => {
+    const { rhi, renderer, created, program } = setup();
+    renderer.prewarmPipelines([{ program, geometry: makeGeometry(), blendModes: ['add'] }]);
+    const perPrewarm = created.mock.calls.length;
+    expect(perPrewarm).toBeGreaterThan(0);
+    await rhi.loseDevice('测试', { restore: true });
+    // 恢复时就在新设备上重建了同样多的管线
+    expect(created.mock.calls.length).toBe(perPrewarm * 2);
+    expect(await renderer.pipelinesReady(1000)).toBe(true);
+    const before = created.mock.calls.length;
+    const mesh = new Mesh({ geometry: makeGeometry(), shader: new Shader({ gpuProgram: program, resources: {} }) });
+    mesh.blendMode = 'add';
+    const root = new Container();
+    root.addChild(mesh);
+    renderer.render({ container: root, target: RenderTexture.create({ width: 8, height: 8 }) });
+    expect(created.mock.calls.length).toBe(before);
+    renderer.destroy();
+  });
+
   it('坏程序只告警、不抛(开局预建不许打断启动)', () => {
     const { renderer } = setup();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
