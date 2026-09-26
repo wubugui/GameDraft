@@ -198,7 +198,8 @@ export class WebGPURenderer extends RendererBase {
     if (this.destroyed) return;
     const options: RenderOptions = input instanceof Container ? { container: input } : { ...input };
     const container = options.container;
-    const toCanvas = options.target === undefined || options.target === this.canvas;
+    // 照 Pixi 的 options.target ||= view.renderTarget:任何假值(undefined / null)都画到画布
+    const toCanvas = !options.target || options.target === this.canvas;
     let clear = options.clear;
     let clearColor = options.clearColor;
     if (toCanvas) {

@@ -479,7 +479,9 @@ export class Container extends EventEmitter {
         removed.push(child);
         child.parent = null;
       }
-      this.children.splice(beginIndex, range);
+      // 照 Pixi 8.17 的 removeItems(children, begin, end):第三参是「个数」,摘掉 end 个(splice 自会夹到数组尾)。
+      // begin > 0 时比 [begin, end) 多摘,多出的几个离开 children 但 parent 仍是本容器、不发事件——与 Pixi 逐位一致,不修。
+      this.children.splice(beginIndex, end);
       for (let i = 0; i < removed.length; ++i) {
         this.emit('childRemoved', removed[i], this, i);
         removed[i].emit('removed', this);

@@ -415,3 +415,24 @@ describe('D25 没有 WGSL 程序的网格着色器', () => {
     renderer.destroy();
   });
 });
+
+describe('R4-0 假值 target 画到画布', () => {
+  it('target: null 与省略 target 相同(照 AbstractRenderer:options.target ||= view.renderTarget),含 lastObjectRendered / 背景清屏', () => {
+    const rhi = new NullRhiDevice();
+    const canvas = { width: 8, height: 8, style: {} } as unknown as HTMLCanvasElement;
+    const renderer = new WebGPURenderer({ rhi, canvas, width: 8, height: 8, background: 0xff0000, clearBeforeRender: false });
+    const root = new Container();
+    root.addChild(new Sprite(Texture.WHITE));
+    const runFrame = vi.spyOn(rhi, 'runFrame');
+    renderer.render({ container: root, target: null as never });
+    expect(renderer.lastObjectRendered).toBe(root);
+    expect(runFrame).toHaveBeenCalledTimes(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const passes = (internals(renderer).builder.commands as any[]).filter((c) => c.t === 'pass');
+    expect(passes[0].target).toBe('canvas');
+    // 画布上 clear 缺省取 background.clearBeforeRender(这里 false),清屏色取背景色
+    expect(passes[0].load).toBe('load');
+    expect(passes[0].clearColor).toEqual([1, 0, 0, 1]);
+    renderer.destroy();
+  });
+});

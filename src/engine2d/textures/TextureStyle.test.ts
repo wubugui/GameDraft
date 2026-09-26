@@ -1,6 +1,9 @@
 /**
  * TextureStyle 的采样键照 Pixi 8.17 的 `_resourceId`:第一次取时算好缓存,之后改字段不生效,`update()` 才重算
- * (master 的 WebGL 同理:GlTextureSystem 只在源初始化与 style 发 change 时下发采样参数)。
+ * ——这是同一设备(同一渲染器、没丢过设备)内的语义。
+ * 换代时对照 master 的 WebGL(R4-6):WebGL 上下文恢复 / 新渲染器上 GL 纹理重建,GlTextureSystem._initSource →
+ * applyStyleParams 读 style 字段现值;所以设备丢失恢复与新渲染器之后,第一次取采样器按字段现值重算键。
+ * GC 回收后重传不换代,仍用原键(Pixi WebGPU 的 GpuTextureSystem 采样器按 _resourceId 缓存)。
  * 以前每取一次都现拼一个长字符串再查表,合批每个 draw 取 16 次,是渲染主线程最热的一处。
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -64,35 +67,65 @@ describe('TextureStyle 采样键(对照 Pixi TextureStyle._resourceId)', () => {
     expect(filters()).toContain('nearest');
   });
 
-  it('采样器按算键当时的参数建:用过后改字段不 update,采样器表重建(新渲染器 / 设备丢失恢复)时旧键不配新参数', () => {
+  function usedSource() {
     const source = new BufferImageSource({ resource: new Uint8Array(4 * 4 * 4), width: 4, height: 4, format: 'rgba8unorm', label: 'src' });
     const root = new Container();
     root.addChild(new Sprite(new Texture({ source })));
-    const canvas = { width: 16, height: 16, style: {} } as unknown as HTMLCanvasElement;
+    return { source, root };
+  }
+  const canvas = { width: 16, height: 16, style: {} } as unknown as HTMLCanvasElement;
+  const rt = () => RenderTexture.create({ width: 16, height: 16 });
+  type SamplerDesc = { label?: string; magFilter?: string; addressModeU?: string };
+  const samplerDescs = (spy: { mock: { calls: unknown[][] } }): SamplerDesc[] => spy.mock.calls.map((c) => c[1] as SamplerDesc);
 
-    const rhi1 = new NullRhiDevice();
-    const r1 = new WebGPURenderer({ rhi: rhi1, canvas, width: 16, height: 16 });
-    r1.render({ container: root, target: RenderTexture.create({ width: 16, height: 16 }) });
+  it('新渲染器(对照 master 新 GL 上下文):用过后改字段不 update,新渲染器按字段现值建采样器,键随之重算', () => {
+    const { source, root } = usedSource();
+    const r1 = new WebGPURenderer({ rhi: new NullRhiDevice(), canvas, width: 16, height: 16 });
+    r1.render({ container: root, target: rt() });
     const key = source.style._key;
 
-    // 用过之后改字段、不 update:键不变(Pixi 同),采样器表重建后仍按这个键的参数(线性)建,不是字段现值(最近邻)
+    // 同一渲染器里改字段不 update:键不变(Pixi 同)
     source.scaleMode = 'nearest';
     source.addressMode = 'repeat';
     expect(source.style._key).toBe(key);
+
     const rhi2 = new NullRhiDevice();
     const createSampler = vi.spyOn(rhi2, 'createSampler');
     const r2 = new WebGPURenderer({ rhi: rhi2, canvas, width: 16, height: 16 });
-    r2.render({ container: root, target: RenderTexture.create({ width: 16, height: 16 }) });
-    const descs = createSampler.mock.calls.map((c) => c[1] as { label?: string; magFilter?: string; addressModeU?: string });
-    const mine = descs.filter((d) => d.label?.includes(key));
+    r2.render({ container: root, target: rt() });
+    expect(source.style._key).not.toBe(key);
+    const mine = samplerDescs(createSampler).filter((d) => d.label?.includes(source.style._key));
     expect(mine).toHaveLength(1);
-    expect(mine[0].magFilter).toBe('linear');
-    expect(mine[0].addressModeU).toBe('clamp-to-edge');
+    expect(mine[0].magFilter).toBe('nearest');
+    expect(mine[0].addressModeU).toBe('repeat');
+    // 键与参数一致:键里就是现值
+    expect(source.style._keyFields.magFilter).toBe('nearest');
+  });
 
-    // update 之后才换
-    source.style.update();
-    r2.render({ container: root, target: RenderTexture.create({ width: 16, height: 16 }) });
-    const after = createSampler.mock.calls.map((c) => c[1] as { magFilter?: string; addressModeU?: string });
-    expect(after.some((d) => d.magFilter === 'nearest' && d.addressModeU === 'repeat')).toBe(true);
+  it('设备丢失恢复(对照 master contextChange 后 GL 纹理重建):按字段现值建采样器;同一设备上 GC 回收重传仍用原键', async () => {
+    const { source, root } = usedSource();
+    const rhi = new NullRhiDevice({ swapchainSize: [16, 16] });
+    const r = new WebGPURenderer({ rhi, canvas, width: 16, height: 16 });
+    const createSampler = vi.spyOn(rhi, 'createSampler');
+    r.render({ container: root, target: rt() });
+    const key = source.style._key;
+
+    // 同一设备:改字段不 update + GC 回收重传,仍是线性 / 夹边(Pixi WebGPU 语义)
+    source.scaleMode = 'nearest';
+    source.addressMode = 'repeat';
+    source.unload();
+    r.render({ container: root, target: rt() });
+    expect(source.style._key).toBe(key);
+    expect(samplerDescs(createSampler).some((d) => d.magFilter === 'nearest')).toBe(false);
+
+    // 设备丢失恢复:换代,按现值重建
+    await rhi.loseDevice('test');
+    createSampler.mockClear();
+    r.render({ container: root, target: rt() });
+    const mine = samplerDescs(createSampler).filter((d) => d.label?.includes(source.style._key));
+    expect(mine).toHaveLength(1);
+    expect(mine[0].magFilter).toBe('nearest');
+    expect(mine[0].addressModeU).toBe('repeat');
+    r.destroy();
   });
 });

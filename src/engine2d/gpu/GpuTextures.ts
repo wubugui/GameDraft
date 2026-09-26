@@ -68,6 +68,9 @@ function uploadPremultiplied(resource: unknown, alphaMode: string): boolean {
 export class GpuTextures {
   private readonly entries = new Map<TextureSource, Entry>();
   private readonly samplers = new Map<string, RhiSampler>();
+  /** GPU 缓存的代号(全局递增,0 留给「从没见过」):每个实例一代,reset(设备丢失恢复)换一代 */
+  private static nextEpoch = 0;
+  private epoch = ++GpuTextures.nextEpoch;
   /** 某张 RHI 纹理要销毁了(渲染目标缓存据此收掉挂在它上面的目标) */
   onRelease: ((texture: RhiTexture) => void) | null = null;
 
@@ -129,8 +132,15 @@ export class GpuTextures {
     return this.entries.has(source);
   }
 
-  /** 按 style 的采样键共享;参数取算键当时的那一份(`_keyFields`),保证同键必同参数 */
+  /**
+   * 按 style 的采样键共享;参数取算键当时的那一份(`_keyFields`),保证同键必同参数。
+   * 本代(本渲染器 / 本次设备)第一次见这个 style 时先按字段现值重算键(R4-6,见 `TextureStyle._samplerEpoch`)
+   */
   sampler(style: TextureStyle): RhiSampler {
+    if (style._samplerEpoch !== this.epoch) {
+      style._samplerEpoch = this.epoch;
+      style._invalidateKey();
+    }
     const key = style._key;
     let s = this.samplers.get(key);
     if (!s) {
@@ -185,6 +195,8 @@ export class GpuTextures {
     this.entries.clear();
     for (const s of this.samplers.values()) s.destroy();
     this.samplers.clear();
+    // 换代:之后每个 style 第一次取采样器时按字段现值重算键(同 master 上下文恢复后 GL 纹理重建读现值)
+    this.epoch = ++GpuTextures.nextEpoch;
   }
 
   private onSourceGone(source: TextureSource): void {

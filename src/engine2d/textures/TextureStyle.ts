@@ -107,9 +107,17 @@ export class TextureStyle extends EventEmitter {
   }
 
   /**
+   * 最近一次在哪一代 GPU 缓存(`GpuTextures` 的设备代:每个渲染器、每次设备丢失恢复各一代)里按字段现值重算过键。
+   * 换代后第一次取采样器先 `_invalidateKey()`(R4-6,对照 master:WebGL 上下文恢复 / 新渲染器上 GL 纹理重建时
+   * applyStyleParams 读字段现值);同一代里照 Pixi 8.17 WebGPU,改字段要 update() 才生效
+   */
+  _samplerEpoch = 0;
+
+  /**
    * 采样参数的键(GPU 采样器按它共享)。照 Pixi 8.17 的 `_resourceId`:第一次取时算好缓存,之后改字段不生效,
-   * `update()` 才重算。master 的 WebGL 在源初始化(第一次绑定 / 第一次渲染进 RT,以及回收后重建)时按字段现值下发,
-   * 所以只有「第一次用之前改」与 master 一致;用过之后改字段必须 update()(游戏里都是这么做的)
+   * `update()` 才重算。master 的 WebGL 在源初始化(第一次绑定 / 第一次渲染进 RT,以及回收后重建)时按字段现值下发:
+   * 「第一次用之前改」与设备丢失恢复 / 新渲染器之后(见 `_samplerEpoch`)与 master 一致;同一设备上用过之后改字段
+   * 必须 update()(游戏里都是这么做的;GC 回收后重传仍用原键,同 Pixi WebGPU)
    */
   get _key(): string {
     if (this._cachedKey === null) this.captureKey();
@@ -142,9 +150,14 @@ export class TextureStyle extends EventEmitter {
     this._cachedKey = `${f.addressModeU}|${f.addressModeV}|${f.addressModeW}|${f.magFilter}|${f.minFilter}|${f.mipmapFilter}|${f.lodMinClamp}|${f.lodMaxClamp}|${f.compare}|${f.maxAnisotropy}`;
   }
 
-  update(): void {
+  /** 丢掉缓存的键与参数、不发 change:下次取 `_key` 按字段现值重算(GPU 缓存换代时由 GpuTextures 调) */
+  _invalidateKey(): void {
     this._cachedKey = null;
     this._cachedFields = null;
+  }
+
+  update(): void {
+    this._invalidateKey();
     this.emit('change', this);
   }
 
