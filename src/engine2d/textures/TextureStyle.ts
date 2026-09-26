@@ -19,7 +19,7 @@ export interface TextureStyleOptions {
   maxAnisotropy?: number;
 }
 
-/** 采样键所含的全部参数(`TextureStyle._keyFields`) */
+/** 采样键所含的全部参数(`TextureStyle._captureKey`) */
 export interface TextureStyleKeyFields {
   addressModeU: WRAP_MODE;
   addressModeV: WRAP_MODE;
@@ -52,9 +52,11 @@ export class TextureStyle extends EventEmitter {
   compare?: COMPARE_FUNCTION;
   destroyed = false;
   private _maxAnisotropy = 1;
-  /** `_key` 与算键当时的采样参数(update 时清) */
-  private _cachedKey: string | null = null;
-  private _cachedFields: TextureStyleKeyFields | null = null;
+  /**
+   * 参数版本(对照 Pixi `_resourceId` 只在 `update()` 时重算):每次 update 加一。GPU 缓存(`GpuTextures`)各自按
+   * 「版本 → 采样键」记一份,版本没变就沿用自己那份键(R4-6)
+   */
+  _updateId = 0;
 
   constructor(options: TextureStyleOptions = {}) {
     super();
@@ -107,33 +109,13 @@ export class TextureStyle extends EventEmitter {
   }
 
   /**
-   * 最近一次在哪一代 GPU 缓存(`GpuTextures` 的设备代:每个渲染器、每次设备丢失恢复各一代)里按字段现值重算过键。
-   * 换代后第一次取采样器先 `_invalidateKey()`(R4-6,对照 master:WebGL 上下文恢复 / 新渲染器上 GL 纹理重建时
-   * applyStyleParams 读字段现值);同一代里照 Pixi 8.17 WebGPU,改字段要 update() 才生效
+   * 按字段现值算采样键与参数(GPU 采样器按键共享,建采样器一律用同一份参数,保证同键必同参数)。
+   * 什么时候算由 GPU 缓存决定(`GpuTextures.sampler`):照 master 的 WebGL,某个渲染器 / 某次设备第一次用这个 style
+   * 时读现值(GL 纹理初始化 applyStyleParams 读现值,设备丢失恢复 / 新渲染器同理);同一缓存里用过之后照 Pixi 8.17 WebGPU,
+   * 改字段要 update() 才生效(游戏里都是这么做的;GC 回收后重传仍用原键,同 Pixi WebGPU)。
+   * 多个渲染器同时在用时各记各的,互不影响
    */
-  _samplerEpoch = 0;
-
-  /**
-   * 采样参数的键(GPU 采样器按它共享)。照 Pixi 8.17 的 `_resourceId`:第一次取时算好缓存,之后改字段不生效,
-   * `update()` 才重算。master 的 WebGL 在源初始化(第一次绑定 / 第一次渲染进 RT,以及回收后重建)时按字段现值下发:
-   * 「第一次用之前改」与设备丢失恢复 / 新渲染器之后(见 `_samplerEpoch`)与 master 一致;同一设备上用过之后改字段
-   * 必须 update()(游戏里都是这么做的;GC 回收后重传仍用原键,同 Pixi WebGPU)
-   */
-  get _key(): string {
-    if (this._cachedKey === null) this.captureKey();
-    return this._cachedKey!;
-  }
-
-  /**
-   * 算 `_key` 当时的采样参数:建 GPU 采样器一律用它,不读字段现值——否则用过之后改了字段没 update,
-   * 采样器表重建(设备丢失恢复)时旧键会配上新参数,连带同键的其他 style 一起错
-   */
-  get _keyFields(): Readonly<TextureStyleKeyFields> {
-    if (this._cachedFields === null) this.captureKey();
-    return this._cachedFields!;
-  }
-
-  private captureKey(): void {
+  _captureKey(): { key: string; fields: Readonly<TextureStyleKeyFields> } {
     const f: TextureStyleKeyFields = {
       addressModeU: this.addressModeU,
       addressModeV: this.addressModeV,
@@ -146,18 +128,14 @@ export class TextureStyle extends EventEmitter {
       compare: this.compare,
       maxAnisotropy: this._maxAnisotropy,
     };
-    this._cachedFields = f;
-    this._cachedKey = `${f.addressModeU}|${f.addressModeV}|${f.addressModeW}|${f.magFilter}|${f.minFilter}|${f.mipmapFilter}|${f.lodMinClamp}|${f.lodMaxClamp}|${f.compare}|${f.maxAnisotropy}`;
-  }
-
-  /** 丢掉缓存的键与参数、不发 change:下次取 `_key` 按字段现值重算(GPU 缓存换代时由 GpuTextures 调) */
-  _invalidateKey(): void {
-    this._cachedKey = null;
-    this._cachedFields = null;
+    return {
+      key: `${f.addressModeU}|${f.addressModeV}|${f.addressModeW}|${f.magFilter}|${f.minFilter}|${f.mipmapFilter}|${f.lodMinClamp}|${f.lodMaxClamp}|${f.compare}|${f.maxAnisotropy}`,
+      fields: f,
+    };
   }
 
   update(): void {
-    this._invalidateKey();
+    this._updateId++;
     this.emit('change', this);
   }
 

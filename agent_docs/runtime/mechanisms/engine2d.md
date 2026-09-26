@@ -93,9 +93,10 @@ resolve 回目标——32 位浮点 / 整数这类不能 resolve 的格式照常
 Sprite 的合批四边形只在换纹理 / 改锚点 / 动态纹理 update 时重算(非动态 RenderTexture 改尺寸后停在旧尺寸);
 `renderer.render({ container })` 的根自己的 `blendMode` 不生效(按 normal 画,要混合就挂一层父节点);
 带 shader 却没有 `gpuProgram` 的网格告警并跳过绘制;
-纹理的**采样参数在一个渲染器 / 一次设备里第一次用到时定下**(TextureStyle 的采样键照 Pixi WebGPU 的 `_resourceId` 缓存,GPU 采样器也按算键当时的参数建),
-之后改 `scaleMode` / `addressMode` 等字段要调 `style.update()` 才生效。换代(新渲染器、设备丢失恢复)后第一次取采样器按字段现值重算键,
-同 master(WebGL)上下文恢复后 GL 纹理重建读现值;同一设备上被 GC 回收后重传仍用原键(master 这里读现值)——用过之后改字段不 update 的写法别写。
+纹理的**采样参数在一个渲染器 / 一次设备里第一次用到时定下**(照 Pixi WebGPU 的 `_resourceId`:键与参数由各渲染器的 `GpuTextures` 按 style 各记一份,
+GPU 采样器按记下的参数建),之后改 `scaleMode` / `addressMode` 等字段要调 `style.update()`(`_updateId` 加一)才生效。新渲染器、设备丢失恢复
+从空表开始,第一次取采样器按字段现值算键,同 master(WebGL)上下文恢复后 GL 纹理重建读现值;两个渲染器同时在用时互不影响;
+同一设备上被 GC 回收后重传仍用原键(master 这里读现值)——用过之后改字段不 update 的写法别写。
 
 ## 怎么验证
 

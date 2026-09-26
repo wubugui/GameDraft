@@ -14,7 +14,14 @@
  */
 import { RhiTextureUsage, type RhiDevice, type RhiResourceScope, type RhiSampler, type RhiTexture, type RhiColorFormat } from '../../rendering/rhi';
 import type { TextureSource } from '../textures/TextureSource';
-import type { TextureStyle } from '../textures/TextureStyle';
+import type { TextureStyle, TextureStyleKeyFields } from '../textures/TextureStyle';
+
+/** 某个 style 在本缓存里的采样键:算键时的 style 版本、键、参数 */
+interface StyleKey {
+  updateId: number;
+  key: string;
+  fields: Readonly<TextureStyleKeyFields>;
+}
 
 interface Entry {
   texture: RhiTexture;
@@ -68,9 +75,11 @@ function uploadPremultiplied(resource: unknown, alphaMode: string): boolean {
 export class GpuTextures {
   private readonly entries = new Map<TextureSource, Entry>();
   private readonly samplers = new Map<string, RhiSampler>();
-  /** GPU 缓存的代号(全局递增,0 留给「从没见过」):每个实例一代,reset(设备丢失恢复)换一代 */
-  private static nextEpoch = 0;
-  private epoch = ++GpuTextures.nextEpoch;
+  /**
+   * 本缓存(本渲染器 / 本次设备)里每个 style 的采样键与参数:第一次见时按字段现值算,之后 style `update()`(版本变)才重算
+   * (R4-6,见 `TextureStyle._captureKey`)。reset(设备丢失恢复)时整表丢掉;新渲染器是新实例,从空表开始
+   */
+  private styleKeys = new WeakMap<TextureStyle, StyleKey>();
   /** 某张 RHI 纹理要销毁了(渲染目标缓存据此收掉挂在它上面的目标) */
   onRelease: ((texture: RhiTexture) => void) | null = null;
 
@@ -133,18 +142,20 @@ export class GpuTextures {
   }
 
   /**
-   * 按 style 的采样键共享;参数取算键当时的那一份(`_keyFields`),保证同键必同参数。
-   * 本代(本渲染器 / 本次设备)第一次见这个 style 时先按字段现值重算键(R4-6,见 `TextureStyle._samplerEpoch`)
+   * 按 style 的采样键共享;参数取算键当时的那一份,保证同键必同参数。
+   * 本缓存第一次见这个 style、或它 update() 过,才按字段现值重算键(R4-6,见 `styleKeys`)
    */
   sampler(style: TextureStyle): RhiSampler {
-    if (style._samplerEpoch !== this.epoch) {
-      style._samplerEpoch = this.epoch;
-      style._invalidateKey();
+    let sk = this.styleKeys.get(style);
+    if (!sk || sk.updateId !== style._updateId) {
+      const { key, fields } = style._captureKey();
+      sk = { updateId: style._updateId, key, fields };
+      this.styleKeys.set(style, sk);
     }
-    const key = style._key;
+    const key = sk.key;
     let s = this.samplers.get(key);
     if (!s) {
-      const f = style._keyFields;
+      const f = sk.fields;
       s = this.scope.createSampler({
         label: `engine2d-sampler ${key}`,
         addressModeU: f.addressModeU,
@@ -195,8 +206,8 @@ export class GpuTextures {
     this.entries.clear();
     for (const s of this.samplers.values()) s.destroy();
     this.samplers.clear();
-    // 换代:之后每个 style 第一次取采样器时按字段现值重算键(同 master 上下文恢复后 GL 纹理重建读现值)
-    this.epoch = ++GpuTextures.nextEpoch;
+    // 丢掉各 style 记下的键:之后第一次取采样器时按字段现值重算(同 master 上下文恢复后 GL 纹理重建读现值)
+    this.styleKeys = new WeakMap();
   }
 
   private onSourceGone(source: TextureSource): void {
