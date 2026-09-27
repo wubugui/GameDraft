@@ -196,3 +196,40 @@ npx vitest run tools/workbench_rhi                                   # 3D 调试
 sh scripts/py.sh -m pytest tools/workbench_rhi -q                    # 包 / 页面不含 WebGL / serve 路由
 sh scripts/py.sh -m pytest tools/<粒子|地形|声学|轨迹>_workbench/tests/test_selftest.py -v   # Qt 自检 + Chrome 自检 + 冒烟
 ```
+
+## 角色照明实验室 / 光照体实验室(2026-09-28 迁过来)
+
+**角色照明实验室**(`tools/character_lighting_lab`)一页两块 WebGPU 画布、一个包(`/gen/charlab.bundle.js`,一份 luma):
+2D 场景视图 = `workbenchRhi` 的画布宿主 + 游戏本体(`gpu/charLabView.ts` 照游戏组装层拼 `SceneDepthSystem` + `CharacterLightingSystem`
++ `LitSpriteQuad` + 深度遮挡滤镜);3D 检视 = `debug3d`;3D 里的角色 quad 贴图 = 2D 那份游戏着色经 `offscreenReadback` 离屏回读。
+游戏的角色受光要读「游戏格式的烘焙目录」,实验室的工作台不是那个格式:serve 按导出公式**现场变换**成虚拟目录
+(`/api/game_payload/…`),游戏装载器经 `CharacterLightingSystem.load(…, bakeDirOverride)` 读它(游戏不传这个参数时逐位不变)。
+逐像素对照(`tests/parity/`)的参考页由 vite 按游戏模块图直接编译,载荷经代理读实验室同一份字节。
+
+**光照体实验室**(`tools/lightvolume_lab`)的环境 FX 游戏里没有对应效果(按已废除的拟合地面 floor_depth_A/B 算),归接入层:
+`lightvolFx.ts` + `lightvolFx.wgsl`(迁移前页面内联的四段 GLSL 逐句搬来,一份),命名空间 `lightvolFx`。预览 quad 画在
+`workbenchRhi` 的画布宿主上(engine2d 的 Sprite / Graphics / Text)。
+
+```js
+const fx = await rt.lightvolFx.createLightVolFx(canvas);            // 自己一台 RHI 设备;拿不到 WebGPU 抛错(人话原因)
+await fx.setScene({ bg, depth, simSize: [220, h] });                // RGBA 字节(不预乘、第 0 行 = 图顶);建渲染目标、等管线编完
+fx.simStep(sim, calib); fx.stamp(uv, r); fx.paint(uv, r, s, erase); fx.composite(comp, calib);
+fx.readPixels(x, y, w, h);  await fx.readTarget('fog' | 'foot' | 'wet');
+```
+
+- **一个模块一份绑定布局**(RHI 按整个 WGSL 模块推布局,不按入口裁):每个 pass 用不到、且正在被它写的那张图,绑 1×1 占位图
+  (WebGPU 不许同一 pass 里一张图既当附件又被绑来采样)。`lightvolFx.test.ts` 逐 pass 查「目标不在绑定里」。
+- **渲染目标的行序**:vUv 与 GL 同义(y 朝上);渲染目标里 vUv 处写下的 texel 在 WebGPU 是第 (1 − v)·h 行,取样一律经 `rt(uv)`。
+  原画 / 深度图按「第 0 行 = 图顶」上传,取样坐标与 GL 版相同。
+- **每个操作一次独立提交**(笔刷 / 脚印在指针事件里调),统一数据各一块缓冲、录制前写好。
+- 与迁移前的差异:同一组状态并排截图除积雪外逐像素 ±1;积雪法线用屏幕导数,只在深度断崖边上差一两像素宽的一圈(导数在 2×2 块里
+  怎么取两边都交给实现)。`fogAt` 迁移后是异步的(渲染目标回读要等 GPU)。
+
+**改了本目录已有文件的地方**:`tsconfig.json` 的 `include` 加 `../character_lighting_lab/gpu/*.ts`、`../character_lighting_lab/tests/parity/*.ts`
+(类型检查实验室胶水与参考页);本 README 只追加这一节。新增:`lightvolFx.ts` / `lightvolFx.wgsl` / `lightvolFx.test.ts`。
+
+```bash
+npx vitest run tools/workbench_rhi/lightvolFx.test.ts tools/character_lighting_lab   # 无 GPU:统一数据排布 / 命令流 / 实验室胶水 == 游戏组装
+sh scripts/py.sh -m pytest tools/character_lighting_lab/tests -v                     # 含真 GPU 逐像素对照 6 例、Chrome / 桌面壳自检、冒烟
+sh scripts/py.sh -m pytest tools/lightvolume_lab/tests -v                            # 页面无 WebGL、包路由、Chrome 自检(FX 与 CPU 逐像素复算)+ 冒烟
+```

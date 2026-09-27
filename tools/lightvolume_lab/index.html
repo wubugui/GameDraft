@@ -2,6 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
+<link rel="icon" href="data:,">
 <title>LightVolume Lab — 深度图离线辐照度体积烘焙 / 预览</title>
 <style>
   :root { --bg:#15171c; --panel:#1d2026; --panel2:#23272f; --line:#333a45; --txt:#d7dce3; --dim:#8b94a3; --acc:#6db3ff; }
@@ -131,7 +132,7 @@
 
 <div class="wrap">
   <div class="col" style="flex:1; min-width:340px">
-    <h2>环境 FX — 2D 近似(WebGL · 全部可开关)</h2>
+    <h2>环境 FX — 2D 近似(WebGPU · 全部可开关)</h2>
     <div class="muted">共用上面载入的 bg+depth。画布上拖<b style="color:#ffcf4d">黄点=角色</b>:雾会绕开它流动;开「雪地脚印」时拖动会在雪上留脚印。</div>
     <canvas id="fx" width="900" height="500" style="margin-top:8px;cursor:move"></canvas>
     <div id="fxmsg" class="muted" style="margin-top:6px">未载入场景。</div>
@@ -193,6 +194,7 @@ const S = {
 };
 const $ = id => document.getElementById(id);
 const dot = (a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+window.__lvReady=false;   // 画面层(预览 + FX)起好(或确定起不来)才置 true:对照截图 / 自检等它
 // 非节流让步(后台标签 rAF/setTimeout 会被限速;MessageChannel 不会),让烘焙分块不卡 UI 又不依赖前台
 const _mc=new MessageChannel(); let _yq=[]; _mc.port1.onmessage=()=>{ const l=_yq; _yq=[]; for(const r of l) r(); };
 const yieldTick=()=>new Promise(r=>{ _yq.push(r); _mc.port2.postMessage(0); });
@@ -391,20 +393,52 @@ function sampleAO(gx,gy,h){
   return (c00*(1-ty)+c10*ty)*(1-tz)+(c01*(1-ty)+c11*ty)*tz;
 }
 
-// ===================== 预览渲染 =====================
-const view=$('view'), vctx=view.getContext('2d');
+// ===================== 预览渲染(引擎 RHI:游戏同一个 WebGPU 渲染器,engine2d) =====================
+// 包:/gen/lightvol.bundle.js(bundle.py 按需现打)。命名空间:workbenchRhi(画布宿主 + engine2d)/ lightvolFx(环境 FX)。
+// 拿不到 WebGPU 时:载入 / 烘焙 / 导出 / 切片照常,画面区写原因,不回落任何别的 API。
+const view=$('view');
 let bgScale=1, bgImg=null;
+const LV={ rt:null, host:null, err:'', errFx:'', root:null, bgSprite:null, bgTex:null, bgFor:null, items:[], W:0, H:0 };
+async function initGpu(){
+  try{
+    const boot=await (await fetch('/api/boot',{cache:'no-store'})).json();
+    if(boot.bundle&&!boot.bundle.ok) throw new Error('打包失败:'+(boot.bundle.err||'?'));
+    LV.rt=await import('/gen/lightvol.bundle.js');
+  }catch(e){ LV.err=LV.errFx='画面模块没装上:'+(e&&e.message||e)+'(要经 ./dev.sh lightvol 打开)'; return; }
+  try{
+    LV.host=await LV.rt.workbenchRhi.createCanvasHost(view,{background:0x000000});
+    const E=LV.rt.workbenchRhi.engine2d;
+    LV.root=new E.Container(); LV.bgSprite=new E.Sprite(E.Texture.EMPTY); LV.root.addChild(LV.bgSprite);
+  }catch(e){ LV.err=(e&&e.message)||String(e); LV.host=null; }
+  if(bgImg){ fitBg(); render(); }
+}
+window.__lvGpu=initGpu();
+/** CPU 算好的 RGBA(不预乘)→ 纹理 */
+function pixelTexture(w,h,rgba){
+  const E=LV.rt.workbenchRhi.engine2d;
+  const data=rgba instanceof Uint8Array?rgba:new Uint8Array(rgba.buffer,rgba.byteOffset,rgba.byteLength);
+  return new E.Texture({source:new E.BufferImageSource({resource:data,width:w,height:h,format:'rgba8unorm',alphaMode:'no-premultiply-alpha'})});
+}
 function fitBg(){
   if(!bgImg) return;
   const maxW=900; bgScale=Math.min(1,maxW/bgImg.width);
-  view.width=Math.round(bgImg.width*bgScale); view.height=Math.round(bgImg.height*bgScale);
+  LV.W=Math.round(bgImg.width*bgScale); LV.H=Math.round(bgImg.height*bgScale);
+  view.style.width=LV.W+'px'; view.style.height=LV.H+'px';
+  if(LV.host) LV.host.resize(LV.W,LV.H,window.devicePixelRatio||1);
 }
 function render(){
   if(!bgImg){return;}
-  vctx.clearRect(0,0,view.width,view.height);
-  vctx.drawImage(bgImg,0,0,view.width,view.height);
-  if(!S.vol||!S.foot){ return; }
-  drawQuad();
+  if(!LV.host){ $('viewMsg').textContent='预览画面不可用:'+(LV.err||'画面准备中…'); return; }
+  if(LV.bgFor!==bgImg){
+    if(LV.bgTex) LV.bgTex.destroy(true);
+    LV.bgTex=pixelTexture(S.bgW,S.bgH,S.bgData); LV.bgFor=bgImg;
+    LV.bgSprite.texture=LV.bgTex;
+  }
+  LV.bgSprite.width=LV.W; LV.bgSprite.height=LV.H;
+  for(const it of LV.items) it.destroy(true);
+  LV.items=[];
+  if(S.vol&&S.foot) drawQuad();
+  LV.host.render(LV.root);
 }
 const luma=c=>0.2126*c[0]+0.7152*c[1]+0.0722*c[2];
 function whiteBalance(base,amb,tone,out){
@@ -414,6 +448,7 @@ function whiteBalance(base,amb,tone,out){
   return out;
 }
 function drawQuad(){
+  const E=LV.rt.workbenchRhi.engine2d;
   const {gx,gy}=S.foot, c=S.cfg;
   const footSx=gx*c.wtpX*bgScale, footSy=gy*c.wtpY*bgScale;
   const W=+$('qw').value, H=+$('qh').value, HqM=+$('hqm').value, tone=+$('tone').value;
@@ -422,7 +457,7 @@ function drawQuad(){
   for(let side=0;side<2;side++){
     const ox=Math.round(footSx + (side===0? -W-6 : 6));   // 并排:左 flat / 右 shaded
     const oy=Math.round(footSy - H);
-    const img=vctx.createImageData(W,H);
+    const img={data:new Uint8ClampedArray(W*H*4)};   // 与迁移前 createImageData 同:逐像素写、赋值即夹取取整
     const base=[0,0,0],amb=[0,0,0],col=[0,0,0];
     for(let py=0;py<H;py++){
       const v=py/(H-1);                 // 0 头 → 1 脚
@@ -443,12 +478,16 @@ function drawQuad(){
         img.data[di]=Math.min(255,o[0]*255); img.data[di+1]=Math.min(255,o[1]*255); img.data[di+2]=Math.min(255,o[2]*255); img.data[di+3]=255*a;
       }
     }
-    vctx.putImageData(img,ox,oy);
-    vctx.fillStyle='rgba(0,0,0,.55)'; vctx.fillRect(ox,oy-15,W,14);
-    vctx.fillStyle='#cfe'; vctx.font='11px sans-serif'; vctx.fillText(side===0?'flat':(mode==='ao'?'AO':(mode==='raw'?'volume raw':'volume tint')),ox+3,oy-4);
+    const sp=new E.Sprite(pixelTexture(W,H,img.data)); sp.position.set(ox,oy);
+    const box=new E.Graphics().rect(ox,oy-15,W,14).fill({color:0x000000,alpha:0.55});
+    const tx=new E.Text({text:side===0?'flat':(mode==='ao'?'AO':(mode==='raw'?'volume raw':'volume tint')),
+      style:{fontFamily:'sans-serif',fontSize:11,fill:0xccffee}});
+    tx.position.set(ox+3,oy-15);
+    LV.root.addChild(sp,box,tx); LV.items.push(sp,box,tx);
   }
   // 脚点标记
-  vctx.strokeStyle='#ffcf4d'; vctx.beginPath(); vctx.arc(footSx,footSy,4,0,7); vctx.stroke();
+  const mk=new E.Graphics().circle(footSx,footSy,4).stroke({color:0xffcf4d,width:1});
+  LV.root.addChild(mk); LV.items.push(mk);
 }
 function drawSlices(){
   const host=$('slices'); host.innerHTML='';
@@ -625,236 +664,63 @@ window.LVL = {
     const ok=await loadByScene($('base').value, q.get('scene'));
     if(ok && q.get('autobake')) await bake();
   }
+  await window.__lvGpu;
+  window.__ready=true;      // 冒烟 / 自检的起跑线:画面层起好(或确定起不来)+ 查询参数里的场景载完
 })();
 </script>
 <script>
-// ===================== 环境 FX(WebGL2 统一后处理,全部可开关) =====================
+// ===================== 环境 FX(引擎 RHI:接入层 lightvolFx,一份 WGSL;全部可开关) =====================
+// 迁移前这里是页面内联的 WebGL2 + 四段 GLSL(COMP / SIM / STAMP / PAINT);现在画法整个在 tools/workbench_rhi/lightvolFx.ts(+ .wgsl),
+// 页面只管参数、动画时钟、指针。拿不到 WebGPU 时写原因,载入 / 烘焙照常。
 (function(){
 "use strict";
 const $=id=>document.getElementById(id);
-const cv=$('fx'); const gl=cv.getContext('webgl2',{antialias:false,premultipliedAlpha:false});
-if(!gl){ $('fxmsg').textContent='WebGL2 不可用,环境 FX 关闭'; return; }
-
-const VS=`#version 300 es
-out vec2 vUv; void main(){ vec2 p=vec2(float((gl_VertexID<<1)&2),float(gl_VertexID&2)); vUv=p; gl_Position=vec4(p*2.-1.,0.,1.); }`;
-function prog(fs){ const c=(t,s)=>{const sh=gl.createShader(t);gl.shaderSource(sh,s);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(sh));return sh;};
-  const p=gl.createProgram();gl.attachShader(p,c(gl.VERTEX_SHADER,VS));gl.attachShader(p,c(gl.FRAGMENT_SHADER,fs));gl.linkProgram(p);
-  if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));return p; }
-
-const NOISE=`float hash(vec2 p){p=fract(p*vec2(123.34,345.45));p+=dot(p,p+34.345);return fract(p.x*p.y);}
-float vnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);}
-float fbm(vec2 p){float s=0.,a=.5;for(int i=0;i<4;i++){s+=a*vnoise(p);p*=2.;a*=.5;}return s;}`;
-const CAL=`uniform float uW,uH,uWtpX,uWtpY,uPpu,uCx,uCy,uInvert,uScale,uOffset,uFloorA,uFloorB;uniform vec3 uRight,uUp,uVd;
-float dDepth(sampler2D dm,vec2 iuv){vec4 ds=texture(dm,iuv);float raw=(ds.r*255.*256.+ds.g*255.)/65535.;float dr=uInvert>.5?1.-raw:raw;return dr*uScale+uOffset;}`;
-
-let COMP,SIM,STAMP,PAINT;
-try{
-COMP=prog(`#version 300 es
-precision highp float; in vec2 vUv; out vec4 o;
-uniform sampler2D uBg,uDepth,uFog,uFoot; uniform float uTime;
-${CAL}
-uniform float enHFog,enVFog,enGod,enPud,enSnow,enFoot;
-uniform vec3 uFogCol,uSnowCol,uSkyCol,uLightW; uniform vec2 uCharShow; uniform sampler2D uWet;
-uniform float uFogD,uFogH,uGodInt,uPudAmt,uPudRefl,uSnowAmt,uSnowUp,uRipple,uSsrDist,uShadowDist,uDbg,uReflMinH; uniform int uSsrSteps,uShadowSteps;
-${NOISE}
-void main(){
-  vec2 iuv=vec2(vUv.x,1.-vUv.y);
-  vec3 col=texture(uBg,iuv).rgb;
-  float sd=dDepth(uDepth,iuv);
-  float gy=iuv.y*uH, sy=gy*uWtpY, gx=iuv.x*uW, sx=gx*uWtpX;
-  float px=(sx-uCx)/uPpu, py=(uCy-sy)/uPpu;
-  vec3 P=uRight*px+uUp*py+uVd*sd; float height=P.y;
-  float fl=uFloorA*sy+uFloorB; float tol=0.08*abs(uScale)+1e-3;
-  float ground=1.-smoothstep(0.,tol,abs(sd-fl));
-  if(uDbg>1.5){ float hh=height-(uRight*px+uUp*py+uVd*fl).y; // 调试2:本像素相对地面高度场
-    o=vec4(clamp(hh*0.5+0.5,0.,1.), clamp(hh,0.,1.), clamp(-hh,0.,1.),1.); return; }
-  float wet = enPud>.5 ? clamp(texture(uWet,vUv).r*uPudAmt,0.,1.) : 0.;   // 手绘湿度 mask:画哪儿湿哪儿
-  if(wet>0.004){
-    // —— 平面水镜:解析"同列竖直镜像" ——
-    // 本相机 right=世界Z、反射视线 reflect(uVd,worldUp) 的 z=0 → 倒影严格落在同一屏幕列(right.y=0,数学证明精确)。
-    // 沿本列自下而上扫描源像素,重建其相对水面的高度 h;其镜像落点 sy_pred = sy_src + 2*up.y*ppu*h。
-    // 取第一个 h>0 且 sy_pred 覆盖到本水像素的源 = 倒影:天然竖直翻转、无竖纹、近反射体优先(=正确遮挡)。
-    float bgW=uW*uWtpX, bgH=uH*uWtpY;
-    float Yw=(uRight*px+uUp*py+uVd*fl).y;            // 水面世界高度(本列水面)
-    float k=2.0*uUp.y*uPpu;                          // 镜像竖直系数(px / 世界高)
-    float rstep=clamp(uSsrDist,1.,6.);               // 源行步长(px,越小越无缝)
-    float sySrc=sy; vec3 refl=uSkyCol; bool hit=false; float dbgSrc=-1.;
-    for(int s=1;s<=256;s++){ if(s>uSsrSteps) break;
-      sySrc-=rstep; if(sySrc<0.) break;             // 向上扫描(屏幕上方=世界更高)
-      float vSrc=sySrc/bgH;
-      float dS=dDepth(uDepth, vec2(iuv.x, vSrc));
-      float pyS=(uCy-sySrc)/uPpu;
-      float Sy=uUp.y*pyS + uVd.y*dS;                // 源像素世界高度(right.y=0,省略 px 项,精确)
-      float h=Sy-Yw;
-      if(h<=uReflMinH) continue;                    // 高于水面不足阈值=地面/噪声,非反射体,跳过(避免近自反射)
-      float syPred=sySrc + k*h;                     // 该源的镜像落到第几行
-      if(syPred>=sy){                                // 首个覆盖本水像素的反射体=最近反射体
-        float wob=(fbm(vec2(iuv.x*70., vSrc*40.+uTime*0.7))-0.5)*2.*uRipple*0.06; // 水波横向摇曳(平面镜的廉价涟漪近似)
-        refl=texture(uBg, vec2(clamp(iuv.x+wob,0.,1.), vSrc)).rgb; hit=true; dbgSrc=vSrc; break;
-      }
-    }
-    // 没命中反射体 → refl 保持 uSkyCol(水映天),绝不取最后一行垃圾
-    if(uDbg>0.5){ o = hit ? vec4(dbgSrc,1.,0.,1.) : vec4(0.,0.,1.,1.); return; } // 调试:R=源行 vSrc, G=命中, B=未命中
-    float fres=mix(0.5,1.0,pow(1.+uVd.y,3.));        // 掠射更镜面(-uVd.y≈0.59)
-    float reflW=clamp(uPudRefl*fres,0.,1.);
-    vec3 wetCol=mix(col*0.7, refl*1.06, reflW);      // 湿面略压暗 + 倒影
-    col=mix(col, wetCol, wet);
-  }
-  if(enSnow>.5){
-    vec3 n=normalize(cross(dFdx(P),dFdy(P))); float up=abs(n.y);
-    float cover=uSnowAmt*mix(ground*0.5,1.0,smoothstep(uSnowUp,1.0,up));
-    float fp=enFoot>.5?clamp(texture(uFoot,vUv).r,0.,1.):0.;
-    cover*=(1.-fp);
-    col=mix(col,uSnowCol,clamp(cover,0.,1.));
-    col*=1.-0.3*fp*step(0.5,enFoot);
-  }
-  // ---- 雾(高度 + 流体体积,按世界高度 profile 贴地)----
-  float bgW2=uW*uWtpX, bgH2=uH*uWtpY;
-  float floorY=(uRight*px+uUp*py+uVd*fl).y;
-  float prof=exp(-max(height-floorY,0.)*uFogH);          // 离地越高越稀
-  float df=clamp(sd*0.25,0.,4.);
-  float fog=0.;
-  if(enHFog>.5) fog += uFogD*prof;
-  if(enVFog>.5) fog += texture(uFog,vUv).b*1.3*prof;      // 流体密度(.b)带浓淡/打圈
-  fog=clamp(fog*(0.4+0.6*df),0.,1.);
-  // ---- 体积光 = 沿光向 march,逐步累计"被照亮的雾"(连续积分,不是二值遮挡):被几何挡住后段=阴影,停止累计 ----
-  // 连续光束来自累计而非单点 lit/0;步数越多越平滑(无雾则恒 0)
-  float shaft=0.;
-  if(enGod>.5 && fog>0.005){
-    float bias=0.05*abs(uScale)+1e-3; float stp=uShadowDist/float(uShadowSteps);
-    vec3 Q3=uRight*px+uUp*py+uVd*sd;
-    for(int i=1;i<=96;i++){ if(i>uShadowSteps) break;
-      Q3+=uLightW*stp;
-      float u=(dot(Q3,uRight)*uPpu+uCx)/bgW2, v=(uCy-dot(Q3,uUp)*uPpu)/bgH2;
-      if(u<0.||u>1.||v<0.||v>1.) break;                  // 到画外=见天,后段无遮挡,停止累计
-      if(dot(Q3,uVd) > dDepth(uDepth,vec2(u,v))+bias) break;  // 被几何挡=后段是影,停止
-      shaft += exp(-max(Q3.y-floorY,0.)*uFogH);          // 累计沿途(未被挡处)被照亮的雾量
-    }
-    shaft *= 0.05*fog;                                    // 归一 + 受本像素雾量调制(无雾无光)
-  }
-  col=mix(col,uFogCol,fog);
-  col+=uFogCol*shaft*uGodInt;
-  col=mix(col,vec3(1.,.85,.2),0.9*smoothstep(0.014,0.007,distance(vUv,uCharShow)));
-  o=vec4(col,1.);
-}`);
-SIM=prog(`#version 300 es
-precision highp float; in vec2 vUv; out vec4 o;
-uniform sampler2D uPrev,uDepth; uniform float uTime,uDt,uFlow,uDissip,uSrc,uCarveR,uVort; uniform vec2 uCharUv,uCharVel;
-${CAL}
-${NOISE}
-// RG=角色扰动速度场(*0.5+0.5 编码), B=雾密度
-// 双级域扭曲 curl-flow 环境流(打圈)+ fbm 浓淡 + 历史平流(动量/拖尾) + 角色"运动"注入的扰动尾迹
-void main(){
-  vec2 uv=vUv;
-  vec2 iuv=vec2(uv.x,1.-uv.y);
-  float sd=dDepth(uDepth,iuv); float fl=uFloorA*(iuv.y*uH*uWtpY)+uFloorB;
-  float ground=1.-smoothstep(0.,0.1*abs(uScale)+1e-3,abs(sd-fl));
-  // —— 角色扰动速度场:只有"动起来"(uCharVel≠0)才注入气流;静止 → 衰减回稳,不排雾 ——
-  vec2 dist=texture(uPrev,uv).xy*2.-1.;            // 解码上一帧扰动速度
-  dist=texture(uPrev, uv - dist*uDt*8.).xy*2.-1.;  // 沿自身速度自平流(尾迹会移动/扩散)
-  dist*=0.90;                                       // 衰减:角色停下,扰动几帧内消退,雾回到环境流
-  float dc=distance(uv,uCharUv);
-  float ker=exp(-dc*dc/max(uCarveR*uCarveR,1e-4)); // 角色周围高斯影响范围
-  dist += uCharVel*ker;                             // 沿运动方向推开气流(uCharVel=0 时无注入)
-  dist += vec2(-uCharVel.y,uCharVel.x)*ker*(0.5+uVort); // 垂直分量 → 身后卷出涡/打圈
-  // —— 环境雾:curl-flow 浓淡 + 平流;角色扰动叠加进平流位移 ——
-  float t=uTime*0.5*max(uFlow,0.1);
-  vec2 q=uv*3.0;
-  vec2 w1=vec2(fbm(q+vec2(t,1.7)), fbm(q+vec2(8.3,t*0.9)))-0.5;                 // 一级流场
-  vec2 w2=vec2(fbm(q*2.+w1*3.+vec2(0.,t*1.4)), fbm(q*2.+w1*3.+vec2(5.,-t*1.1)))-0.5; // 二级卷曲(打圈)
-  float target=fbm(q + w1*1.6 + w2*1.6*(0.4+uVort));                            // 浓淡 + 卷曲
-  target=smoothstep(0.42,0.9,target)*ground;                                    // 稀疏浓淡,只在地面
-  vec2 flow=w2*0.12*max(uFlow,0.1) + dist*2.0;                                   // 环境流 + 角色扰动流
-  float hist=texture(uPrev, uv - flow*uDt*30.).b * uDissip;                     // 平流历史(动量/拖尾)
-  float dens=max(hist*0.7, target);                                             // 历史保留 + 新生成
-  o=vec4(clamp(dist*0.5+0.5,0.,1.), clamp(dens,0.,1.), 1.);
-}`);
-STAMP=prog(`#version 300 es
-precision highp float; in vec2 vUv; out vec4 o; uniform vec2 uCharUv; uniform float uR;
-void main(){ float d=distance(vUv,uCharUv); o=vec4(exp(-d*d/(uR*uR))*0.7,0.,0.,1.); }`);
-PAINT=prog(`#version 300 es
-precision highp float; in vec2 vUv; out vec4 o; uniform vec2 uC; uniform float uR,uStr;
-void main(){ float d=distance(vUv,uC); o=vec4(uStr*exp(-d*d/(uR*uR)),0.,0.,1.); }`);
-}catch(e){ $('fxmsg').textContent='shader 编译失败: '+e; return; }
-
-function tex(){ const t=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,t);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE); return t; }
-function dataTex(w,h,data){ const t=tex(); gl.bindTexture(gl.TEXTURE_2D,t); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,data); return t; }
-function rt(w,h){ const t=tex(); gl.bindTexture(gl.TEXTURE_2D,t); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
-  const f=gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,t,0); gl.bindFramebuffer(gl.FRAMEBUFFER,null); return {t,f,w,h}; }
-function clearRT(r){ gl.bindFramebuffer(gl.FRAMEBUFFER,r.f); gl.viewport(0,0,r.w,r.h); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT); gl.bindFramebuffer(gl.FRAMEBUFFER,null); }
-
-let bgTex,depthTex,fog=[null,null],cur=0,foot=null,wet=null,SIMW=220,SIMH=140,ready=false;
+const cv=$('fx');
+let fx=null, ready=false, SIMW=220, SIMH=140, initSeq=0;
 let charUv=[0.5,0.18], prevChar=[0.5,0.18], dragging=false, playing=true, time=0, last=0;
 
-function uplCalib(p){ const c=window.LVL.S.cfg, u=n=>gl.getUniformLocation(p,n);
-  gl.uniform1f(u('uW'),c.W); gl.uniform1f(u('uH'),c.H); gl.uniform1f(u('uWtpX'),c.wtpX); gl.uniform1f(u('uWtpY'),c.wtpY);
-  gl.uniform1f(u('uPpu'),c.ppu); gl.uniform1f(u('uCx'),c.cx); gl.uniform1f(u('uCy'),c.cy);
-  gl.uniform1f(u('uInvert'),c.invert); gl.uniform1f(u('uScale'),c.scale); gl.uniform1f(u('uOffset'),c.offset);
-  gl.uniform1f(u('uFloorA'),c.floorA); gl.uniform1f(u('uFloorB'),c.floorB);
-  gl.uniform3fv(u('uRight'),c.right); gl.uniform3fv(u('uUp'),c.up); gl.uniform3fv(u('uVd'),c.vd); }
+const val=id=>parseFloat($(id).value), chk=id=>$(id).checked?1:0;
+function hex(id){ const h=$(id).value; return [parseInt(h.substr(1,2),16)/255,parseInt(h.substr(3,2),16)/255,parseInt(h.substr(5,2),16)/255]; }
+const calib=()=>window.LVL.S.cfg;
 
-function initFromScene(){
+async function initFromScene(){
   const S=window.LVL.S; if(!S.cfg||!S.bgData||!S._depthRGBA){ $('fxmsg').textContent='请先在上面载入场景'; return; }
+  if(!fx) return;                     // 画面层还没起好:起好后会再调一次
+  const seq=++initSeq; ready=false;
   const sc=Math.min(1,900/S.bgW); cv.width=Math.round(S.bgW*sc); cv.height=Math.round(S.bgH*sc);
-  bgTex=dataTex(S.bgW,S.bgH,S.bgData); depthTex=dataTex(S.dW,S.dH,S._depthRGBA);
   SIMH=Math.max(60,Math.round(SIMW*S.bgH/S.bgW));
-  fog=[rt(SIMW,SIMH),rt(SIMW,SIMH)];
-  for(const r of fog){ gl.bindFramebuffer(gl.FRAMEBUFFER,r.f); gl.viewport(0,0,r.w,r.h); gl.clearColor(0.5,0.5,0,1); gl.clear(gl.COLOR_BUFFER_BIT); } // 速度中性=0.5
-  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.clearColor(0,0,0,1);
-  foot=rt(cv.width,cv.height); clearRT(foot);
-  wet=rt(cv.width,cv.height); clearRT(wet);
+  try{
+    await fx.setScene({ bg:{width:S.bgW,height:S.bgH,data:S.bgData}, depth:{width:S.dW,height:S.dH,data:S._depthRGBA}, simSize:[SIMW,SIMH] });
+  }catch(e){ $('fxmsg').textContent='环境 FX 装场景失败:'+(e&&e.message||e); return; }
+  if(seq!==initSeq) return;
   ready=true; $('fxmsg').textContent='就绪。拖动=角色;切「拖动作用」为画积水可手绘水坑湿度。';
 }
 window.__fxOnLoad=initFromScene;
 
-const val=id=>parseFloat($(id).value), chk=id=>$(id).checked?1:0;
-function hex(id){ const h=$(id).value; return [parseInt(h.substr(1,2),16)/255,parseInt(h.substr(3,2),16)/255,parseInt(h.substr(5,2),16)/255]; }
-function bindTex(p,name,t,unit){ gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D,t); gl.uniform1i(gl.getUniformLocation(p,name),unit); }
-
+function compParams(){
+  const az=val('pGodA')*Math.PI/180, el=val('pGodEl')*Math.PI/180, ce=Math.cos(el);
+  return {
+    enHFog:chk('enHFog'), enVFog:chk('enVFog'), enGod:chk('enGod'), enPud:chk('enPud'), enSnow:chk('enSnow'), enFoot:chk('enFoot'),
+    time, dbg:(window.__dbgRefl===true)?1:(+window.__dbgRefl||0),
+    fogCol:hex('pFogC'), fogD:val('pFogD'), fogH:val('pFogH'), snowCol:hex('pSnowC'),
+    skyCol:window.LVL.S.sky||[0.5,0.5,0.5], godInt:val('pGod'),
+    lightW:[ce*Math.cos(az), Math.sin(el), ce*Math.sin(az)], shadowDist:val('pGodD'), shadowSteps:Math.round(val('pGodN')),
+    pudAmt:val('pPud'), pudRefl:val('pPudR'), snowAmt:val('pSnow'), snowUp:val('pSnowU'),
+    ripple:val('pRefl'), ssrDist:val('pSsrD'), reflMinH:(window.__reflMinH!=null?window.__reflMinH:val('pReflH')), ssrSteps:Math.round(val('pSsrN')),
+    charShow:charUv,
+  };
+}
 function simStep(dt){
-  const dst=fog[cur^1], src=fog[cur];
-  gl.bindFramebuffer(gl.FRAMEBUFFER,dst.f); gl.viewport(0,0,dst.w,dst.h);
-  gl.useProgram(SIM); uplCalib(SIM); bindTex(SIM,'uPrev',src.t,0); bindTex(SIM,'uDepth',depthTex,1);
-  const u=n=>gl.getUniformLocation(SIM,n);
-  gl.uniform1f(u('uTime'),time); gl.uniform1f(u('uDt'),Math.min(dt,0.05)); gl.uniform1f(u('uFlow'),val('pFlow'));
-  gl.uniform1f(u('uDissip'),0.985); gl.uniform1f(u('uSrc'),1.4); gl.uniform1f(u('uCarveR'),val('pCarve')); gl.uniform2fv(u('uCharUv'),charUv);
-  gl.uniform1f(u('uVort'),val('pVort'));
   // 角色"运动速度"(本帧位移):静止=0 → 不注入扰动;移动越快注入越强
   const cvx=(charUv[0]-prevChar[0])*7.0, cvy=(charUv[1]-prevChar[1])*7.0;
   prevChar=[charUv[0],charUv[1]];
-  gl.uniform2f(u('uCharVel'),cvx,cvy);
-  gl.drawArrays(gl.TRIANGLES,0,3); cur^=1;
+  fx.simStep({ time, dt:Math.min(dt,0.05), flow:val('pFlow'), dissip:0.985, src:1.4, carveR:val('pCarve'), vort:val('pVort'),
+    charUv, charVel:[cvx,cvy] }, calib());
 }
-function stamp(){
-  gl.bindFramebuffer(gl.FRAMEBUFFER,foot.f); gl.viewport(0,0,foot.w,foot.h);
-  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE,gl.ONE); gl.useProgram(STAMP);
-  gl.uniform2fv(gl.getUniformLocation(STAMP,'uCharUv'),charUv); gl.uniform1f(gl.getUniformLocation(STAMP,'uR'),0.012);
-  gl.drawArrays(gl.TRIANGLES,0,3); gl.disable(gl.BLEND); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-}
-function composite(){
-  gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.viewport(0,0,cv.width,cv.height);
-  gl.useProgram(COMP); uplCalib(COMP);
-  bindTex(COMP,'uBg',bgTex,0); bindTex(COMP,'uDepth',depthTex,1); bindTex(COMP,'uFog',fog[cur].t,2); bindTex(COMP,'uFoot',foot.t,3); bindTex(COMP,'uWet',wet.t,4);
-  const u=n=>gl.getUniformLocation(COMP,n);
-  gl.uniform1f(u('uTime'),time);
-  gl.uniform1f(u('enHFog'),chk('enHFog')); gl.uniform1f(u('enVFog'),chk('enVFog')); gl.uniform1f(u('enGod'),chk('enGod'));
-  gl.uniform1f(u('enPud'),chk('enPud')); gl.uniform1f(u('enSnow'),chk('enSnow')); gl.uniform1f(u('enFoot'),chk('enFoot'));
-  gl.uniform3fv(u('uFogCol'),hex('pFogC')); gl.uniform3fv(u('uSnowCol'),hex('pSnowC'));
-  gl.uniform1f(u('uFogD'),val('pFogD')); gl.uniform1f(u('uFogH'),val('pFogH'));
-  gl.uniform1f(u('uGodInt'),val('pGod'));
-  { const az=val('pGodA')*Math.PI/180, el=val('pGodEl')*Math.PI/180, ce=Math.cos(el);
-    gl.uniform3f(u('uLightW'), ce*Math.cos(az), Math.sin(el), ce*Math.sin(az));
-    gl.uniform1i(u('uShadowSteps'),Math.round(val('pGodN'))); gl.uniform1f(u('uShadowDist'),val('pGodD')); }
-  gl.uniform1f(u('uDbg'), (window.__dbgRefl===true)?1:(+window.__dbgRefl||0));
-  gl.uniform1f(u('uReflMinH'), (window.__reflMinH!=null?window.__reflMinH:val('pReflH')));
-  gl.uniform1f(u('uPudAmt'),val('pPud')); gl.uniform1f(u('uPudRefl'),val('pPudR'));
-  gl.uniform1f(u('uRipple'),val('pRefl')); gl.uniform1f(u('uSsrDist'),val('pSsrD')); gl.uniform1i(u('uSsrSteps'),Math.round(val('pSsrN')));
-  gl.uniform3fv(u('uSkyCol'), window.LVL.S.sky||[0.5,0.5,0.5]);
-  gl.uniform1f(u('uSnowAmt'),val('pSnow')); gl.uniform1f(u('uSnowUp'),val('pSnowU')); gl.uniform2fv(u('uCharShow'),charUv);
-  gl.drawArrays(gl.TRIANGLES,0,3);
-}
+function stamp(){ fx.stamp(charUv, 0.012); }
+function composite(){ return fx.composite(compParams(), calib()); }
+function paintWet(erase){ fx.paint(charUv, val('pBrush'), 0.5, !!erase); }
+
 function frame(t){ requestAnimationFrame(frame); if(!ready) return;
   const dt=last?Math.min(0.05,(t-last)/1000):0.016; last=t; if(playing) time+=dt;
   if(chk('enVFog')&&playing) simStep(dt);
@@ -863,38 +729,63 @@ function frame(t){ requestAnimationFrame(frame); if(!ready) return;
 }
 requestAnimationFrame(frame);
 
-function paintWet(erase){
-  gl.bindFramebuffer(gl.FRAMEBUFFER,wet.f); gl.viewport(0,0,wet.w,wet.h);
-  gl.enable(gl.BLEND); gl.blendEquation(erase?gl.FUNC_REVERSE_SUBTRACT:gl.FUNC_ADD); gl.blendFunc(gl.ONE,gl.ONE);
-  gl.useProgram(PAINT); gl.uniform2fv(gl.getUniformLocation(PAINT,'uC'),charUv);
-  gl.uniform1f(gl.getUniformLocation(PAINT,'uR'),val('pBrush')); gl.uniform1f(gl.getUniformLocation(PAINT,'uStr'),0.5);
-  gl.drawArrays(gl.TRIANGLES,0,3); gl.disable(gl.BLEND); gl.blendEquation(gl.FUNC_ADD); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-}
 function setCur(e){ const r=cv.getBoundingClientRect(); charUv=[(e.clientX-r.left)/r.width, 1-(e.clientY-r.top)/r.height]; }
-function onDrag(){ const m=$('pMode').value; if(m==='paint') paintWet(false); else if(m==='erase') paintWet(true); else if(chk('enFoot')) stamp(); }
+function onDrag(){ if(!ready) return; const m=$('pMode').value; if(m==='paint') paintWet(false); else if(m==='erase') paintWet(true); else if(chk('enFoot')) stamp(); }
 cv.addEventListener('pointerdown',e=>{dragging=true; setCur(e); onDrag();});
 cv.addEventListener('pointermove',e=>{ if(!dragging)return; setCur(e); onDrag(); });
 window.addEventListener('pointerup',()=>dragging=false);
-$('fxClearFoot').onclick=()=>{ if(foot) clearRT(foot); };
-$('fxClearWet').onclick=()=>{ if(wet) clearRT(wet); };
+$('fxClearFoot').onclick=()=>{ if(ready) fx.clearFoot(); };
+$('fxClearWet').onclick=()=>{ if(ready) fx.clearWet(); };
 $('fxPlay').onclick=()=>{ playing=!playing; };
 
-if(window.LVL && window.LVL.ready && window.LVL.ready().loaded) initFromScene();
-window.__FX={ initFromScene, setChar:(x,y)=>{charUv=[x,y];}, stamp, glErr:()=>gl.getError(), get ready(){return ready;},
-  paintAt(x,y,erase){ charUv=[x,y]; paintWet(!!erase); }, clearWet(){ if(wet) clearRT(wet); },
+/** 画布上 (nx, ny)(ny 从下往上,与迁移前 gl.readPixels 同口径)的像素 */
+function readAt(nx,ny){
+  composite();
+  const x=Math.min(cv.width-1,Math.max(0,Math.round(nx*cv.width)));
+  const y=Math.min(cv.height-1,Math.max(0,cv.height-1-Math.round((1-ny)*cv.height)));
+  const p=fx.readPixels(x,y,1,1);
+  return p?[p.data[0],p.data[1],p.data[2],p.data[3]]:[0,0,0,0];
+}
+// 程序化 API(测试 / 高级用;fogAt 迁移后是异步的——渲染目标回读要等 GPU)
+window.__FX={ initFromScene, setChar:(x,y)=>{charUv=[x,y];}, stamp, get ready(){return ready;}, get fx(){return fx;},
+  get time(){return time;}, get playing(){return playing;}, get charUv(){return charUv.slice();}, compParams,
+  gpuErr:()=>fx?fx.lastError:(LV.errFx||''),
+  paintAt(x,y,erase){ charUv=[x,y]; paintWet(!!erase); }, clearWet(){ if(ready) fx.clearWet(); }, clearFoot(){ if(ready) fx.clearFoot(); },
   step(n){ for(let i=0;i<(n||1);i++){ if(playing) time+=0.016; if(chk('enVFog')&&playing) simStep(0.016); } composite(); },
-  readRGB(nx,ny){ composite(); const p=new Uint8Array(4); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-    gl.readPixels(Math.round(nx*cv.width), Math.round((1-ny)*cv.height), 1,1, gl.RGBA, gl.UNSIGNED_BYTE, p); return [p[0],p[1],p[2]]; },
-  fogAt(nx,ny){ const f=fog[cur]; const p=new Uint8Array(4); gl.bindFramebuffer(gl.FRAMEBUFFER,f.f);
-    gl.readPixels(Math.round(nx*f.w), Math.round(ny*f.h), 1,1, gl.RGBA, gl.UNSIGNED_BYTE, p); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-    return { velX:(p[0]/255-0.5)*2, velY:(p[1]/255-0.5)*2, dens:p[2]/255 }; },
+  readRGB(nx,ny){ return readAt(nx,ny).slice(0,3); },
+  raw(nx,ny){ return readAt(nx,ny); },
+  async fogAt(nx,ny){
+    const rb=await fx.readTarget('fog'); if(!rb) return null;
+    const x=Math.min(rb.width-1,Math.max(0,Math.round(nx*rb.width))), y=Math.min(rb.height-1,Math.max(0,rb.height-1-Math.round(ny*rb.height)));
+    const i=(y*rb.width+x)*4, p=rb.data;
+    return { velX:(p[i]/255-0.5)*2, velY:(p[i+1]/255-0.5)*2, dens:p[i+2]/255 };
+  },
   dbg(v){ window.__dbgRefl=(v===true)?1:(+v||0); },
-  raw(nx,ny){ composite(); const p=new Uint8Array(4); gl.bindFramebuffer(gl.FRAMEBUFFER,null);
-    gl.readPixels(Math.round(nx*cv.width), Math.round((1-ny)*cv.height), 1,1, gl.RGBA, gl.UNSIGNED_BYTE, p); return [p[0],p[1],p[2],p[3]]; },
   moveTo(x,y,steps){ // 模拟"移动"角色:每步推进一点,产生运动速度
     steps=steps||8; const sx=charUv[0],sy=charUv[1];
     for(let i=1;i<=steps;i++){ charUv=[sx+(x-sx)*i/steps, sy+(y-sy)*i/steps]; if(chk('enVFog')&&playing){ time+=0.016; simStep(0.016);} } } };
+
+(async function(){
+  await window.__lvGpu;
+  if(LV.rt){
+    try{ fx=await LV.rt.lightvolFx.createLightVolFx(cv); }
+    catch(e){ LV.errFx=(e&&e.message)||String(e); }
+  }
+  if(!fx) $('fxmsg').textContent='环境 FX 不可用:'+(LV.errFx||'?');
+  else if(window.LVL && window.LVL.ready && window.LVL.ready().loaded) await initFromScene();
+  window.__lvReady=true;
 })();
+})();
+/** 冒烟:两块画面都起来了、载了场景的话画面非空、没有设备错误 */
+window.__rhiSmoke=()=>{
+  const f=window.__FX, fx=f&&f.fx;
+  const loaded=!!(window.LVL&&window.LVL.ready().loaded);
+  const viewDrawn=LV.host?LV.host.countDrawnPixels():0, viewTotal=view.width*view.height;
+  let fxDrawn=0, fxTotal=0;
+  if(fx&&f.ready){ const p=fx.readPixels(); if(p){ fxTotal=p.width*p.height; for(let i=0;i<p.data.length;i+=4) if(p.data[i]+p.data[i+1]+p.data[i+2]>6) fxDrawn++; } }
+  const ok=!!LV.host&&!!fx&&loaded&&f.ready&&viewDrawn>viewTotal*0.5&&fxDrawn>fxTotal*0.5&&!LV.host.lastError&&!fx.lastError;
+  return {ok, detail:{loaded, fxReady:!!(f&&f.ready), viewDrawn, viewTotal, fxDrawn, fxTotal, err:LV.err||LV.errFx||(LV.host&&LV.host.lastError)||(fx&&fx.lastError)||''}};
+};
 </script>
 </body>
 </html>
