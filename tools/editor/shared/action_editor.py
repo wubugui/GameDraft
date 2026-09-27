@@ -253,7 +253,12 @@ _ACTION_SCOPED_OMIT_WHEN_ABSENT_AND_DEFAULT: dict[tuple[str, str], object] = {
     # 会给全项目的 setPropState / fadeLight 凭空写上 fadeMs:0。
     # 不能进全局表：fadeMs 是通用词，别处同名参数将来可能是必填。
     ("setPropState", "fadeMs"): 0,
+    # 只在燃着时切：缺省 false＝照切不误；不登记的话「打开→不改→保存」会给全项目 setPropState 写上 onlyIfBurning:false
+    ("setPropState", "onlyIfBurning"): False,
     ("fadeLight", "fadeMs"): 0,
+    # 贴屏幕边缺省 false＝气泡只挂在人头上；不登记的话「打开→不改→保存」会给全项目气泡写上 pinOnScreen:false
+    ("showSpeechBubble", "pinOnScreen"): False,
+    ("showSpeechBubbleAndWait", "pinOnScreen"): False,
     # setFocusedQuest.announce 缺省 false＝不额外给醒目提示；不登记的话
     # 「打开→不改→保存」会给全项目的 setFocusedQuest 凭空写上 announce:false
     ("setFocusedQuest", "announce"): False,
@@ -1545,6 +1550,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("bubbleAnchorY", "bubble_anchor"),
         ("bubbleScale", "bubble_scale"),
         ("voice", "voice_spec"),
+        ("pinOnScreen", "bool"),
     ],
     "playNpcAnimation": [
         ("target", "str"),
@@ -1643,7 +1649,8 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
     "detachFromSocket": [("target", "str"), ("socket", "str")],
     # 挂件状态机（火把：点着 / 护火 / 残炭 / 灭）。运行时按 (target, socket) 找到那次挂载，
     # 再从它的 prop 预设里取状态；fadeMs 只作用于**灯的强度**（贴图是硬切）。
-    "setPropState": [("target", "str"), ("socket", "str"), ("state", "str"), ("fadeMs", "int")],
+    "setPropState": [("target", "str"), ("socket", "str"), ("state", "str"), ("fadeMs", "int"),
+                     ("onlyIfBurning", "bool")],
     # 挂件的锁：lock 必填三选一——lit 锁定不灭（风压不掉火势、玩家 T 熄不灭）/ unlit 点不燃（玩家 T 点不着）/
     # none 解锁。setPropState 永远不受锁影响。
     "lockPropState": [("target", "str"), ("socket", "str"), ("lock", "str")],
@@ -1867,6 +1874,7 @@ _PARAM_SCHEMAS: dict[str, list[tuple[str, str]]] = {
         ("bubbleScale", "bubble_scale"),
         ("voice", "voice_spec"),
         ("autoAdvance", "voice_advance"),
+        ("pinOnScreen", "bool"),
     ],
     # 分组批量：运行时按当前场景解析 group（非跨场景实体引用，勿登记 ENTITY_REF_PARAMS）；
     # 编辑器从 ProjectModel.scene_group_ids_for_scene 选择，validator 同源检查存在性。
@@ -8804,6 +8812,9 @@ class ActionRow(QWidget):
                 ("playVfx", "handle"): ("临时特效名称", "给本次 effect 实例命名，供 stopVfx 选择并收尾；不能同时指定 instanceId。同名重播会替换前一个临时实例。"),
                 ("stopVfx", "instanceId"): ("场景特效实例", "与临时特效名称二选一；停止已在场景布置的实例。"),
                 ("stopVfx", "handle"): ("临时特效名称", "从项目 playVfx 定义中选择；候选即时刷新，已失效的名称仍保留显示。与 instanceId 二选一。"),
+                ("showSpeechBubble", "pinOnScreen"): ("人在画面外也显示（贴屏幕边）", "勾选后说话的人在画面外时，气泡贴着屏幕边显示在他那一侧，人进画面就回到头顶。只给远处有人喊这类要让玩家看见的话用；闲聊别勾，会全挤到屏幕边。人被藏着时照旧不显示。"),
+                ("showSpeechBubbleAndWait", "pinOnScreen"): ("人在画面外也显示（贴屏幕边）", "勾选后说话的人在画面外时，气泡贴着屏幕边显示在他那一侧，人进画面就回到头顶。只给远处有人喊这类要让玩家看见的话用；闲聊别勾，会全挤到屏幕边。人被藏着时照旧不显示。"),
+                ("setPropState", "onlyIfBurning"): ("只在燃着时切", "勾选后：挂件此刻燃着（点着 / 护火 / 残炭）才切到这个状态，没燃着或挂点上没东西就什么都不做。给「风把火吹灭」用——不会把没点过的火把改成「灭了」。"),
                 ("stopVfx", "soft"): ("停止发射后自然消散", "仅在淡出时长为 0 或未指定时生效：勾选后停止发射，已发出的粒子自然消散；未勾选立即收回。"),
                 ("stopVfx", "fadeMs"): ("淡出时长（ms）", "大于 0 时保持原模拟与连续发射，整团特效透明度在指定时长内降到 0 后回收。为 0 或未指定时，按「停止发射后自然消散」选项处理。"),
                 ("playSfx", "loop"): ("循环播放", "开启后持续循环，直到演出归位或显式停止；未勾选只播放一次。"),

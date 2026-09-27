@@ -34,6 +34,8 @@ import {
   CHAR_LIGHTS_WGSL, ENTITY_SCENE_LIGHTS_GLSL, ENTITY_SCENE_LIGHTS_WGSL, FRAME_SHADE_WGSL, SCENE_SHADE_WGSL,
 } from '../CharacterLitSprite';
 import { CHAR_LIGHT_COMMON_GLSL, CHAR_LIGHT_COMMON_WGSL } from '../CharacterShadingFilter';
+import { FG_OCCLUSION_GLSL } from '../foreground/foregroundMaskGlsl';
+import { FG_OCCLUSION_WGSL, fgCoverageBindingsWgsl } from '../foreground/foregroundMaskWgsl';
 import { MAX_STATIC_LIGHTS } from '../lighting/lightPacking';
 import LIGHTING_CORE from '../lighting/lightingCore.glsl?raw';
 import { LC_WGSL, WR_CORE_WGSL } from '../lighting/wgslChunks';
@@ -95,7 +97,11 @@ ${plate ? '    vNrm = aNrm;\n' : ''}}
 
 const VERT = vertSource(false);
 
-/** 遮挡 / 软边共用段（两套片元都拼它）。返回可见度 0..1，-1 = 完全被挡（调用方 discard）。 */
+/**
+ * 遮挡 / 软边共用段（两套片元都拼它）。返回可见度 0..1，-1 = 完全被挡（调用方 discard）。
+ * 场景前景层（见 foregroundMaskGlsl）：前景面里拿按接地线立起来的深度**顶替深度图**（容差照旧），
+ * 外沿那圈（深度图糊的地方）不判——与角色的三支遮挡滤镜同一份取样。
+ */
 const OCCLUSION_GLSL = /* glsl */ `
 uniform sampler2D uDepthMap;
 uniform vec2  uSceneSize;
@@ -105,15 +111,22 @@ uniform float uScale;
 uniform float uOffset;
 uniform float uTolerance;
 uniform float uOcclusionBlend;
+${FG_OCCLUSION_GLSL}
 
 float vfxVisibility(vec2 world, float qz, float softQ) {
     if (uHasDepth < 0.5) return 1.0;
     vec2 duv = world / uSceneSize;
     if (duv.x < 0.0 || duv.x > 1.0 || duv.y < 0.0 || duv.y > 1.0) return 1.0;
-    vec4 ds = texture(uDepthMap, duv);
-    float raw = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
-    float t = uInvert > 0.5 ? 1.0 - raw : raw;
-    float sceneDepth = t * uScale + uOffset;
+    float fgDepth;
+    float fgKind = fgSample(duv, fgDepth);
+    if (fgKind > 1.5) return 1.0;
+    float sceneDepth = fgDepth;
+    if (fgKind < 0.5) {
+        vec4 ds = texture(uDepthMap, duv);
+        float raw = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
+        float t = uInvert > 0.5 ? 1.0 - raw : raw;
+        sceneDepth = t * uScale + uOffset;
+    }
     if (sceneDepth + uTolerance < qz) return uOcclusionBlend;
     if (softQ > 1e-6) return clamp((sceneDepth + uTolerance - qz) / softQ, 0.0, 1.0);
     return 1.0;
@@ -434,7 +447,10 @@ ${plate ? '    o.vNrm = aNrm;\n' : ''}    return o;
 
 /**
  * {@link OCCLUSION_GLSL} 的 WGSL 版:遮挡 / 软边。读模块作用域的 `vfxDepth` / `uDepthMap` / `uDepthMapSampler`
- * (每个拼它的宿主都以这三个名字声明绑定)。结构 = VfxRenderer 里粒子 depthGroup 的声明顺序。
+ * 与前景覆盖图 `uFgCoverage` / `uFgCoverageSampler`(每个拼它的宿主都以这五个名字声明绑定,覆盖图那两条用
+ * {@link fgCoverageBindingsWgsl})。结构 = VfxRenderer 里粒子 depthGroup 的声明顺序(uHasFgCoverage 在最后)。
+ * 场景前景层:与 GLSL 同式——外沿不判(返回 1),前景面拿前景面深度顶替深度图(容差照旧),其余照旧读深度图。
+ * `fgSample` 是 foregroundMaskWgsl 的共用段(与三支实体滤镜同一份),GLSL 里的 uniform 开关在这里作参数传进去。
  */
 const OCCLUSION_WGSL = /* wgsl */ `
 struct VfxDepth {
@@ -445,22 +461,33 @@ struct VfxDepth {
     uOffset: f32,
     uTolerance: f32,
     uOcclusionBlend: f32,
+    uHasFgCoverage: f32,
 }
-
+${FG_OCCLUSION_WGSL}
 fn vfxVisibility(world: vec2<f32>, qz: f32, softQ: f32) -> f32 {
     if (vfxDepth.uHasDepth < 0.5) { return 1.0; }
     let duv = world / vfxDepth.uSceneSize;
     if (duv.x < 0.0 || duv.x > 1.0 || duv.y < 0.0 || duv.y > 1.0) { return 1.0; }
-    let ds = textureSampleLevel(uDepthMap, uDepthMapSampler, duv, 0.0);
-    let raw = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
-    var t = raw;
-    if (vfxDepth.uInvert > 0.5) { t = 1.0 - raw; }
-    let sceneDepth = t * vfxDepth.uScale + vfxDepth.uOffset;
+    var fgDepth: f32;
+    let fgKind = fgSample(duv, vfxDepth.uHasFgCoverage, &fgDepth);
+    if (fgKind > 1.5) { return 1.0; }
+    var sceneDepth = fgDepth;
+    if (fgKind < 0.5) {
+        let ds = textureSampleLevel(uDepthMap, uDepthMapSampler, duv, 0.0);
+        let raw = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
+        var t = raw;
+        if (vfxDepth.uInvert > 0.5) { t = 1.0 - raw; }
+        sceneDepth = t * vfxDepth.uScale + vfxDepth.uOffset;
+    }
     if (sceneDepth + vfxDepth.uTolerance < qz) { return vfxDepth.uOcclusionBlend; }
     if (softQ > 1e-6) { return clamp((sceneDepth + vfxDepth.uTolerance - qz) / softQ, 0.0, 1.0); }
     return 1.0;
 }
 `;
+
+/** 测试钉孪生用:遮挡段的 GLSL / WGSL 两份(vfxVisibility 的字面量顺序、前景层分支两边一致) */
+export const VFX_OCCLUSION_GLSL = OCCLUSION_GLSL;
+export const VFX_OCCLUSION_WGSL = OCCLUSION_WGSL;
 
 /** 显示变换(charLights 组里的 uDisp*,与背景 / 角色同一组数) */
 const DISPLAY_ARGS_WGSL = 'charLights.uDispEv, charLights.uDispTonemap, charLights.uDispWhite, '
@@ -486,11 +513,11 @@ ${CHAR_LIGHTS_WGSL}
 @group(2) @binding(2) var<uniform> vfxDepth: VfxDepth;
 @group(2) @binding(3) var uDepthMap: texture_2d<f32>;
 @group(2) @binding(4) var uDepthMapSampler: sampler;
-@group(2) @binding(5) var<uniform> charLights: CharLights;
-@group(2) @binding(6) var<uniform> vfxTone: VfxTone;
-@group(2) @binding(7) var<uniform> vfxToneOn: VfxToneOn;
-@group(2) @binding(8) var uProbe: texture_2d<f32>;
-@group(2) @binding(9) var uProbeSampler: sampler;
+${fgCoverageBindingsWgsl(2, 5)}@group(2) @binding(7) var<uniform> charLights: CharLights;
+@group(2) @binding(8) var<uniform> vfxTone: VfxTone;
+@group(2) @binding(9) var<uniform> vfxToneOn: VfxToneOn;
+@group(2) @binding(10) var uProbe: texture_2d<f32>;
+@group(2) @binding(11) var uProbeSampler: sampler;
 ${WR_CORE_WGSL}
 ${LC_WGSL}
 
@@ -546,7 +573,9 @@ struct VfxParams {
 
 /**
  * {@link fragLitSource} 的 WGSL 版。绑定号 = `createCustomLitShader` 的 resources 顺序(sceneShade … uSkyaoTex)
- * 接 VfxRenderer 给的 extra(vfxDepth / uDepthMap / vfxParams),两个采样器插在各自纹理后面。
+ * 接 VfxRenderer 给的 extra(vfxDepth / uDepthMap / uFgCoverage / vfxParams),三个采样器插在各自纹理后面。
+ * 片元阶段绑定数(WebGPU 默认上限 16 张取样纹理 / 16 个采样器 / 12 个 uniform 缓冲;luma 按 WGSL 声明建布局、
+ * 可见性全阶段,声明了没读的也算;vfxWgsl.test 钉着):纹理 12 张、采样器 3 个、uniform 缓冲 8 个(含组 0 / 1)。
  * uNrm / uGround / uVolRad / uVolEmit 粒子不读(与 GLSL 一样声明着、不参与计算),但资源键在,所以要有同名绑定。
  */
 function fragLitWgsl(plate: boolean): string {
@@ -580,7 +609,7 @@ ${CHAR_LIGHTS_WGSL}
 @group(2) @binding(15) var<uniform> vfxDepth: VfxDepth;
 @group(2) @binding(16) var uDepthMap: texture_2d<f32>;
 @group(2) @binding(17) var uDepthMapSampler: sampler;
-@group(2) @binding(18) var<uniform> vfxParams: VfxParams;
+${fgCoverageBindingsWgsl(2, 18)}@group(2) @binding(20) var<uniform> vfxParams: VfxParams;
 ${CHAR_LIGHT_COMMON_WGSL}
 ${WR_CORE_WGSL}
 ${LC_WGSL}
@@ -670,7 +699,7 @@ ${OCCLUSION_WGSL}
 @group(2) @binding(0) var<uniform> vfxDepth: VfxDepth;
 @group(2) @binding(1) var uDepthMap: texture_2d<f32>;
 @group(2) @binding(2) var uDepthMapSampler: sampler;
-${BOLT_WGSL_KERNEL}
+${fgCoverageBindingsWgsl(2, 3)}${BOLT_WGSL_KERNEL}
 
 @fragment
 fn mainFragment(i: VfxBoltVOut) -> @location(0) vec4<f32> {

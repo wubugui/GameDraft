@@ -48,6 +48,28 @@ interface ActiveBubble {
      */
     smoothedAnchorY: number;
   };
+  /**
+   * `pinOnScreen`：每帧把气泡推回画面里（人在画面外时贴在他那一侧的屏幕边）。home = 非跟随泡挂载时的位置
+   * （每帧先回到它再推，镜头走回来气泡就回到原处）；bw/bh = 气泡外框（实体层世界单位）。
+   */
+  pin?: { homeX: number; homeY: number; bw: number; bh: number };
+}
+
+/** 世界单位的可见矩形（实体层坐标） */
+export interface EmoteBubbleViewRect { minX: number; minY: number; maxX: number; maxY: number }
+
+/** 贴边气泡离屏幕边留多少（按可见矩形短边的比例） */
+const PIN_MARGIN_FRAC = 0.02;
+
+/** 把左上角在 (x, y)、外框 bw×bh 的气泡推进可见矩形（留边）；在画面里的不动，放不下时靠左上 */
+export function pinBubbleInsideView(
+  x: number, y: number, bw: number, bh: number, v: EmoteBubbleViewRect,
+): { x: number; y: number } {
+  const m = Math.min(v.maxX - v.minX, v.maxY - v.minY) * PIN_MARGIN_FRAC;
+  return {
+    x: Math.max(v.minX + m, Math.min(v.maxX - m - bw, x)),
+    y: Math.max(v.minY + m, Math.min(v.maxY - m - bh, y)),
+  };
 }
 
 /**
@@ -206,6 +228,8 @@ export class EmoteBubbleManager implements IGameSystem {
   private debugPanelLog: ((message: string) => void) | null = null;
   /** 全局气泡缩放（game_config.emoteBubbleScale）；单处 opts.scale 覆盖之 */
   private defaultScale = 1;
+  /** 镜头此刻看得见的世界矩形（`pinOnScreen` 气泡用）；由 Game 注入，没注入 = 贴边不生效 */
+  private viewRect: (() => EmoteBubbleViewRect | null) | null = null;
 
   /**
    * 全局气泡缩放。由 Game 在读到 game_config 后设置；**只影响此后新建的气泡**
@@ -224,6 +248,19 @@ export class EmoteBubbleManager implements IGameSystem {
    */
   setEntityAttachLayer(layer: Container | null): void {
     this.entityAttachLayer = layer;
+  }
+
+  /** 由 Game 注入：镜头可见的世界矩形（与实体层同一坐标）。`pinOnScreen` 气泡按它贴边 */
+  setViewRectProvider(fn: (() => EmoteBubbleViewRect | null) | null): void {
+    this.viewRect = fn;
+  }
+
+  private pinInsideView(bubble: Container, bw: number, bh: number): void {
+    const v = this.viewRect?.();
+    if (!v) return;
+    const at = pinBubbleInsideView(bubble.x, bubble.y, bw, bh, v);
+    bubble.x = at.x;
+    bubble.y = at.y;
   }
 
   /** F2 调试面板「日志」路由（与 ActionRegistry 同源）。 */
@@ -245,7 +282,7 @@ export class EmoteBubbleManager implements IGameSystem {
     opts?: EmoteBubbleOffsetOpts,
   ): {
     bubble: Container; parent: Container; body: Container; kScale: number;
-    bw: number; bh: number; follow?: ActiveBubble['follow'];
+    bw: number; bh: number; follow?: ActiveBubble['follow']; pin?: ActiveBubble['pin'];
   } {
     const displayObj = anchor.getDisplayObject() as Container;
 
@@ -383,6 +420,8 @@ export class EmoteBubbleManager implements IGameSystem {
 
     bubble.x = bx;
     bubble.y = by;
+    const pin = opts?.pinOnScreen === true ? { homeX: bx, homeY: by, bw, bh } : undefined;
+    if (pin) this.pinInsideView(bubble, bw, bh);
     // 挂在一个此刻藏着的人头上：挂载当帧就不画（每帧的显隐跟随见 update）
     bubble.visible = isEmoteAnchorShown(anchor);
     attachParent.addChild(bubble);
@@ -394,7 +433,7 @@ export class EmoteBubbleManager implements IGameSystem {
         `bubble.xy=(${bx.toFixed(1)},${by.toFixed(1)}) bw×bh=${bw.toFixed(0)}×${bh.toFixed(0)} ` +
         `bubble.visible=${bubble.visible} bubble.renderable=${(bubble as { renderable?: boolean }).renderable ?? '?'}`,
     );
-    return { bubble, parent: attachParent, body, kScale: k, bw, bh, follow };
+    return { bubble, parent: attachParent, body, kScale: k, bw, bh, follow, pin };
   }
 
   /** 当前挂着的气泡数（含 sticky）。闲聊调度用它做同屏并发上限。 */
@@ -419,7 +458,7 @@ export class EmoteBubbleManager implements IGameSystem {
     opts?: EmoteBubbleOffsetOpts,
     owner?: string,
   ): void {
-    const { bubble, parent, body, kScale, follow } = this.buildAndMountBubble(anchor, emote, opts);
+    const { bubble, parent, body, kScale, follow, pin } = this.buildAndMountBubble(anchor, emote, opts);
     this.dbg(`show 定时消失 durMs=${durationMs}${owner ? ` owner=${owner}` : ''}`);
     this.activeBubbles.push({
       bubble,
@@ -433,6 +472,7 @@ export class EmoteBubbleManager implements IGameSystem {
       noAutoExpire: false,
       owner,
       follow,
+      pin,
     });
   }
 
@@ -446,7 +486,7 @@ export class EmoteBubbleManager implements IGameSystem {
     opts?: EmoteBubbleOffsetOpts,
     owner?: string,
   ): () => void {
-    const { bubble, parent, body, kScale, follow } = this.buildAndMountBubble(anchor, emote, opts);
+    const { bubble, parent, body, kScale, follow, pin } = this.buildAndMountBubble(anchor, emote, opts);
     this.dbg('showSticky 无自动消失，须与字幕等同生命周期 dismiss');
     const entry: ActiveBubble = {
       bubble,
@@ -460,6 +500,7 @@ export class EmoteBubbleManager implements IGameSystem {
       noAutoExpire: true,
       owner,
       follow,
+      pin,
     };
     this.activeBubbles.push(entry);
     return () => {
@@ -503,6 +544,12 @@ export class EmoteBubbleManager implements IGameSystem {
         f.smoothedAnchorY += (resolveAnchorLocalY(anchor, f.anchorYOverride) - f.smoothedAnchorY) * k;
         entry.bubble.x = displayObj.x - bw / 2 + ox;
         entry.bubble.y = displayObj.y + f.smoothedAnchorY + oy - bh;
+      }
+      // 贴边：先回到它该在的地方（跟随泡刚重摆过；静止泡回挂载位），再推进画面。
+      // 静止泡退场时 y 归退场下沉管，不再推（镜头在这 120ms 里走开也只是跟着走一点）。
+      if (entry.pin && (entry.follow || !entry.dying)) {
+        if (!entry.follow) { entry.bubble.x = entry.pin.homeX; entry.bubble.y = entry.pin.homeY; }
+        this.pinInsideView(entry.bubble, entry.pin.bw, entry.pin.bh);
       }
       // 气泡紧跟着它挂的那个人显隐（2026-09-23：到了夜里人按作息隐掉，话还挂在原地）。
       // 气泡是实体层里的兄弟节点、不是实体的子节点，实体藏了不会连带它——只能每帧照着抄。
@@ -577,5 +624,6 @@ export class EmoteBubbleManager implements IGameSystem {
     // 外部注入引用一并放掉；重 init 时由 Game 重新 set
     this.entityAttachLayer = null;
     this.debugPanelLog = null;
+    this.viewRect = null;
   }
 }

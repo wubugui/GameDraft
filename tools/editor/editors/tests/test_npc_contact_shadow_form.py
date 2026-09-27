@@ -308,11 +308,24 @@ class TestDefaultsParity:
         assert ry1 == pytest.approx(rx1 * 0.5 ** 0.5, rel=1e-6)
 
     def test_预览那一圈与运行时公式同值(self) -> None:
-        """半轴处的无方向浓度应正好落在 1/10(与 CONTACT_FRAG 同式)。"""
+        """半轴处的无方向浓度应正好落在 1/10(与 CONTACT_FRAG 的 capsuleOmni 同式)。"""
         import math
         from tools.editor.shared import light_env_visual as lev
         rx, _ = lev.contact_preview_axes(150.0, 1.0)
         r = 0.5 * lev.CONTACT_PREVIEW_FOOT_FRAC * 150.0
         he = lev.CONTACT_NEAR_FIELD * 150.0 / math.sqrt(0.5)
-        v = (2 / math.pi) * math.asin(min(1.0, r / rx)) * he * he / (he * he + rx * rx)
-        assert v == pytest.approx(0.1, abs=1e-6)
+        assert lev._omni(rx, r, he) == pytest.approx(0.1, abs=1e-6)
+
+    def test_无方向部分是胶囊的余弦加权遮蔽_与精确积分对得上(self) -> None:
+        """钉物理值:胶囊(r=12.52、顶 46.85,主角在崖墓前段的实测尺寸)对地面点的余弦加权遮蔽,
+        对照 40 万条射线蒙特卡洛精确积分(2026-09-25)。贴地那一点 = 1、往外平滑落下,
+        没有平底圆柱那一圈恒 1 + 柱边断崖(真机"脚下一块黑饼")。"""
+        from tools.editor.shared import light_env_visual as lev
+        r, he = 12.52, 46.85
+        truth = {0.0: 1.000, 0.5: 0.716, 1.0: 0.354, 1.5: 0.214, 2.0: 0.149, 3.0: 0.082, 6.0: 0.020}
+        for xr, v in truth.items():
+            assert lev._omni(xr * r, r, he) == pytest.approx(v, abs=0.008), xr
+        # 柱边不再断崖:跨过 x=r 那 10% 半径的落差,不超过紧挨着内侧同宽那一段落差的 1.5 倍
+        # (平底圆柱是 0.30 对 0.01,三十倍)
+        f = lambda xr: lev._omni(xr * r, r, he)  # noqa: E731
+        assert f(0.95) - f(1.05) < 1.5 * (f(0.85) - f(0.95))

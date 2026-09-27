@@ -34,9 +34,30 @@ CONTACT_PREVIEW_FOOT_FRAC = 0.18
 _PREVIEW_COS = _PREVIEW_SIN = math.sqrt(0.5)
 
 
+#: 无方向部分按方位角切几片求积（与运行时 CONTACT_FRAG 的 OMNI_SLICES 同数）
+_OMNI_SLICES = 8
+
+
 def _omni(x: float, r: float, he: float) -> float:
-    """胶囊 AO 无方向部分（与运行时 CONTACT_FRAG 同式，贴身体表面归一到 1）。"""
-    return (2 / math.pi) * math.asin(min(1.0, r / max(x, 1e-6))) * he * he / (he * he + x * x)
+    """胶囊 AO 无方向部分：竖直胶囊（半径 r、底端球心高 r、顶端球心高 he）对地面点的余弦加权遮蔽，
+    与运行时 CONTACT_FRAG 的 `capsuleOmni` 逐行同式（推导见那边注释）。贴地那一点 = 1，往外平滑落下。"""
+    top = max(he, r)
+    pm = math.asin(r / x) if x > r else math.pi
+    dphi = 2 * pm / _OMNI_SLICES
+    acc = 0.0
+    for i in range(_OMNI_SLICES):
+        phi = -pm + (i + 0.5) * dphi
+        m = x * math.cos(phi)
+        p = x * math.sin(phi)
+        w2 = r * r - p * p
+        if w2 <= 0:
+            continue
+        w = math.sqrt(w2)
+        lo = max(0.0, math.atan2(r, m) - math.asin(min(1.0, w / math.hypot(m, r))))
+        hi = math.pi / 2 if m - w <= 0 else min(math.pi / 2, math.atan2(top, m) + math.asin(min(1.0, w / math.hypot(m, top))))
+        if hi > lo:
+            acc += 0.5 * (math.sin(hi) ** 2 - math.sin(lo) ** 2)
+    return acc * dphi / math.pi
 
 
 def contact_preview_axes(ref_height: float, contact_size: float) -> tuple[float, float]:

@@ -288,6 +288,8 @@ export class SpriteEntity {
   private footOffset = 0;
   /** 投影剪影用的「脚底线以下裁掉」帧纹理（按帧纹理缓存；状态的偏移固定，所以键就是帧纹理） */
   private groundTrimmedFrames: Map<Texture, Texture> = new Map();
+  /** 接触 AO 身体胶囊的参照帧（见 getBodyReferenceFrames）；换图集 / 换 stateMap 时作废 */
+  private bodyReferenceFrames: readonly Texture[] | null = null;
   /** 本次播放的有效循环标志：动作层 playback.loop 覆盖优先，否则取状态定义 frameDef.loop。 */
   private effectiveLoop: boolean = false;
   private frameIndex: number = 0;
@@ -465,6 +467,7 @@ export class SpriteEntity {
     this.sprite.texture = Texture.EMPTY;
     for (const t of this.groundTrimmedFrames.values()) t.destroy(false);
     this.groundTrimmedFrames.clear();
+    this.bodyReferenceFrames = null;
     this.footOffset = 0;
     for (const textures of this.frames.values()) {
       for (const t of textures) {
@@ -652,6 +655,7 @@ export class SpriteEntity {
    */
   setLogicalStateMap(map: Record<string, string> | undefined): void {
     this.logicalToClip.clear();
+    this.bodyReferenceFrames = null;   // 站立片段可能换成别的图集片段
     if (!map) return;
     for (const [logical, clip] of Object.entries(map)) {
       if (logical && clip) this.logicalToClip.set(logical, clip);
@@ -1605,12 +1609,36 @@ export class SpriteEntity {
     return this.groundTrimmedFrame(frame);
   }
 
-  private groundTrimmedFrame(frame: Texture): Texture {
+  /**
+   * 接触 AO「身体胶囊」按哪几帧量宽度：站立片段（逻辑 `idle` 经 stateMap 解析）的全部帧，按**该片段
+   * 自己的**脚底偏移裁底——与站着时 getDisplayTexture 逐帧给出的是同一块像素，所以站着的接触 AO 与
+   * 按帧量时逐像素相同。图集里没有站立片段 → 图集的第一个片段（同样按角色固定）。未加载 → 空数组。
+   *
+   * 胶囊代表身体，宽度按角色定一次，走 / 跑沿用：按当前帧量时步幅让它帧帧变，接触 AO 一跳一跳
+   * （制作人 2026-09-25 真机，见 footprintExtent.ts 头注释）。
+   */
+  getBodyReferenceFrames(): readonly Texture[] {
+    if (this.bodyReferenceFrames) return this.bodyReferenceFrames;
+    const states = this.animDef?.states;
+    if (!states) return [];
+    let clip = this.resolveClip('idle');
+    if (!this.frames.get(clip)?.length) {
+      clip = Object.keys(states).find((k) => (this.frames.get(k)?.length ?? 0) > 0) ?? '';
+    }
+    const frames = this.frames.get(clip);
+    if (!frames?.length) return [];
+    const off = footOffsetOfState(states[clip]);
+    this.bodyReferenceFrames = off > 0 ? frames.map((f) => this.groundTrimmedFrame(f, off)) : frames.slice();
+    return this.bodyReferenceFrames;
+  }
+
+  /** `footOffset` = 这一帧所属片段的脚底偏移。帧纹理按片段各建一份，同一帧永远同一个偏移，所以按帧缓存。 */
+  private groundTrimmedFrame(frame: Texture, footOffset: number = this.footOffset): Texture {
     const cached = this.groundTrimmedFrames.get(frame);
     if (cached) return cached;
     const r = frame.frame;
     // 与画面锚点同一个基准：偏移是这一帧自身高度的比例（atlasFrames 不登记帧框时就是格高）
-    const h = r.height * (1 - this.footOffset);
+    const h = r.height * (1 - footOffset);
     if (!(h >= 1)) return frame;
     const trimmed = new Texture({ source: frame.source, frame: new Rectangle(r.x, r.y, r.width, h) });
     this.groundTrimmedFrames.set(frame, trimmed);

@@ -2,8 +2,8 @@
  * HTML 文字(SVG foreignObject 渲染,异步出图)。移植自 PixiJS v8.17(MIT)`scene/text-html/HTMLText.mjs` +
  * `HTMLTextPipe.mjs` + `BatchableHTMLText.mjs`。
  *
- * 与 Pixi 的差别:Pixi 在纹理生成中途又改了文字时会丢掉这次改动(`generatingTexture` 时直接 return,且已清
- * `_didTextUpdate`),要等下一次改动才补上;engine2d 在生成完成后若键已变,标记重生成,最终画面总是最后一次的文字。
+ * 纹理生成中途又改了文字:与 Pixi 相同,这次改动丢掉(`generatingTexture` 时直接 return,且已清 `_didTextUpdate`),
+ * 要等下一次改动才补上(对齐 master,见 `HTMLText.test.ts` 与 Pixi `HTMLTextPipe` 的并排用例)。
  */
 import type { BatchableElement, RenderCollector } from '../../core/contracts';
 import { Texture } from '../../textures/Texture';
@@ -141,8 +141,8 @@ export class HTMLText extends AbstractText<HTMLTextStyle, HTMLTextStyleOptions, 
     gpuText.texture = texture;
     gpuText.generatingTexture = false;
     updateTextBounds({ texture: gpuText.texture, bounds: gpuText.batchable.bounds }, this);
-    // 生成期间文字 / 样式又变了:补一次(Pixi 会丢掉这次改动)
-    if (gpuText.currentKey !== this.styleKey) this._didTextUpdate = true;
+    // 生成期间文字 / 样式又变了:与 Pixi 8.17(master)相同,这次改动丢掉、不补生成——
+    // `_didTextUpdate` 已在开头清掉,要等下一次改动才出新图(制作人 2026-09-27 定:全面对齐 master)。
   }
 
   /** 照 HTMLTextPipe.onTextUnload */

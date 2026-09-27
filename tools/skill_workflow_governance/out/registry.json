@@ -1,6 +1,6 @@
 {
   "root": "E:/GameDev/GameDraft",
-  "generated_at": "2026-09-23T11:33:02",
+  "generated_at": "2026-09-25T09:15:50",
   "artifacts": [
     {
       "id": "agent..mcp",
@@ -94,9 +94,9 @@
       "source": "agent_entry",
       "summary": "<!-- agent-docs-gate:begin (由 agent_docs/_meta/cli.py install 维护,勿手改) -->",
       "agent": "shared",
-      "modified": "2026-09-17T01:13:09",
-      "modified_ts": 1789578789.3484807,
-      "size": 8041,
+      "modified": "2026-09-25T09:13:57",
+      "modified_ts": 1790298837.3376768,
+      "size": 8972,
       "headings": [
         "GameDraft — Claude 工作规则",
         "§A 开工先查公共知识库(agent_docs)",
@@ -178,9 +178,27 @@
           "note": ""
         },
         {
-          "raw": "agent_docs/content/norms.md",
+          "raw": "agent_docs/asset-pipeline/norms.md",
+          "kind": "inline_code",
+          "line": 28,
+          "target": "agent_docs/asset-pipeline/norms.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/asset-pipeline/norms.md",
+          "note": ""
+        },
+        {
+          "raw": "scripts/agent_hooks/no_local_blender.py",
           "kind": "inline_code",
           "line": 29,
+          "target": "scripts/agent_hooks/no_local_blender.py",
+          "status": "ok",
+          "resolved_to": "scripts/agent_hooks/no_local_blender.py",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/content/norms.md",
+          "kind": "inline_code",
+          "line": 35,
           "target": "agent_docs/content/norms.md",
           "status": "ok",
           "resolved_to": "agent_docs/content/norms.md",
@@ -189,7 +207,7 @@
         {
           "raw": "scripts/agent_hooks/flag_discipline.py",
           "kind": "inline_code",
-          "line": 29,
+          "line": 35,
           "target": "scripts/agent_hooks/flag_discipline.py",
           "status": "ok",
           "resolved_to": "scripts/agent_hooks/flag_discipline.py",
@@ -198,7 +216,7 @@
         {
           "raw": "agent_docs/INDEX.md",
           "kind": "inline_code",
-          "line": 33,
+          "line": 39,
           "target": "agent_docs/INDEX.md",
           "status": "ok",
           "resolved_to": "agent_docs/INDEX.md",
@@ -207,7 +225,7 @@
         {
           "raw": "handbook/docs/*.md",
           "kind": "inline_code",
-          "line": 42,
+          "line": 48,
           "target": "handbook/docs/*.md",
           "status": "ok",
           "resolved_to": "handbook/docs/index.md",
@@ -216,7 +234,7 @@
         {
           "raw": "agent_docs/content/norms.md",
           "kind": "inline_code",
-          "line": 55,
+          "line": 61,
           "target": "agent_docs/content/norms.md",
           "status": "ok",
           "resolved_to": "agent_docs/content/norms.md",
@@ -225,7 +243,7 @@
         {
           "raw": "agent_docs/runtime/norms.md",
           "kind": "inline_code",
-          "line": 56,
+          "line": 62,
           "target": "agent_docs/runtime/norms.md",
           "status": "ok",
           "resolved_to": "agent_docs/runtime/norms.md",
@@ -234,7 +252,7 @@
         {
           "raw": "tools/editor",
           "kind": "inline_code",
-          "line": 57,
+          "line": 63,
           "target": "tools/editor",
           "status": "ok",
           "resolved_to": "tools/editor",
@@ -243,7 +261,7 @@
         {
           "raw": "tools/*_editor",
           "kind": "inline_code",
-          "line": 57,
+          "line": 63,
           "target": "tools/*_editor",
           "status": "ok",
           "resolved_to": "tools/audio_editor",
@@ -252,7 +270,7 @@
         {
           "raw": "agent_docs/editor-tools/norms.md",
           "kind": "inline_code",
-          "line": 57,
+          "line": 63,
           "target": "agent_docs/editor-tools/norms.md",
           "status": "ok",
           "resolved_to": "agent_docs/editor-tools/norms.md",
@@ -261,7 +279,7 @@
         {
           "raw": "agent_docs/asset-pipeline/norms.md",
           "kind": "inline_code",
-          "line": 58,
+          "line": 64,
           "target": "agent_docs/asset-pipeline/norms.md",
           "status": "ok",
           "resolved_to": "agent_docs/asset-pipeline/norms.md",
@@ -270,7 +288,7 @@
         {
           "raw": "agent_docs/runtime/mechanisms/scene-lighting.md",
           "kind": "inline_code",
-          "line": 59,
+          "line": 65,
           "target": "agent_docs/runtime/mechanisms/scene-lighting.md",
           "status": "ok",
           "resolved_to": "agent_docs/runtime/mechanisms/scene-lighting.md",
@@ -279,7 +297,7 @@
         {
           "raw": "character-lighting.md",
           "kind": "inline_code",
-          "line": 59,
+          "line": 65,
           "target": "character-lighting.md",
           "status": "ok",
           "resolved_to": "agent_docs/runtime/mechanisms/character-lighting.md",
@@ -288,7 +306,7 @@
         {
           "raw": "entity-lighting.md",
           "kind": "inline_code",
-          "line": 59,
+          "line": 65,
           "target": "entity-lighting.md",
           "status": "ok",
           "resolved_to": "agent_docs/runtime/mechanisms/entity-lighting.md",
@@ -297,7 +315,7 @@
         {
           "raw": "agent_docs/meta/norms.md",
           "kind": "inline_code",
-          "line": 60,
+          "line": 66,
           "target": "agent_docs/meta/norms.md",
           "status": "ok",
           "resolved_to": "agent_docs/meta/norms.md",
@@ -306,7 +324,7 @@
         {
           "raw": "docs/玩法功能需求清单.md",
           "kind": "inline_code",
-          "line": 64,
+          "line": 70,
           "target": "docs/玩法功能需求清单.md",
           "status": "ok",
           "resolved_to": "docs/玩法功能需求清单.md",
@@ -315,7 +333,7 @@
         {
           "raw": "artifact/Reviews/",
           "kind": "inline_code",
-          "line": 65,
+          "line": 71,
           "target": "artifact/Reviews/",
           "status": "ok",
           "resolved_to": "artifact/Reviews",
@@ -324,7 +342,7 @@
         {
           "raw": "tools/skill_workflow_governance/out/",
           "kind": "inline_code",
-          "line": 77,
+          "line": 83,
           "target": "tools/skill_workflow_governance/out/",
           "status": "ok",
           "resolved_to": "tools/skill_workflow_governance/out",
@@ -333,7 +351,7 @@
         {
           "raw": "agent-context-current.md",
           "kind": "inline_code",
-          "line": 77,
+          "line": 83,
           "target": "agent-context-current.md",
           "status": "missing",
           "resolved_to": null,
@@ -342,7 +360,7 @@
         {
           "raw": "registry.json",
           "kind": "inline_code",
-          "line": 78,
+          "line": 84,
           "target": "registry.json",
           "status": "ok",
           "resolved_to": "tools/copy_manager/registry.json",
@@ -351,7 +369,7 @@
         {
           "raw": ".cursor/skills/",
           "kind": "inline_code",
-          "line": 83,
+          "line": 89,
           "target": ".cursor/skills/",
           "status": "ok",
           "resolved_to": ".cursor/skills",
@@ -360,7 +378,7 @@
         {
           "raw": ".claude/skills/",
           "kind": "inline_code",
-          "line": 83,
+          "line": 89,
           "target": ".claude/skills/",
           "status": "ok",
           "resolved_to": ".claude/skills",
@@ -1164,6 +1182,35 @@
       ]
     },
     {
+      "id": "scripts-agent_hooks-no_local_blender",
+      "type": "script",
+      "title": ".local-disabled = 被替身顶掉后改名留在原处的原件,跑它同样算违规",
+      "path": "scripts/agent_hooks/no_local_blender.py",
+      "source": "script",
+      "summary": "\"\"\"本机 Blender 禁用门(制作人 2026-09-24 定):Blender 一律走局域网 Hub,本机不许运行任何 Blender。",
+      "agent": "shared",
+      "modified": "2026-09-24T09:55:09",
+      "modified_ts": 1790214909.2667766,
+      "size": 8937,
+      "headings": [
+        ".local-disabled = 被替身顶掉后改名留在原处的原件,跑它同样算违规",
+        "语句开头可能出现的\"前缀\",之后紧跟的第一个 token 才是被执行的程序",
+        "语句中途的 PowerShell 调用运算符 / 块内调用:foreach (...) { & 'x\\blender.exe' ... }"
+      ],
+      "trigger_hints": [
+        "规则正文只在 agent_docs/asset-pipeline/norms.md 不变量 7;这里只放拦截用的摘要和机械检测。 接线在**用户级** ~/.claude/settings.json 的 PreToolUse(Bash|PowerShell),对本机所有项目生效 (Maz543 / FeiTing / DreamRiteDemo 等也用 Blender)。"
+      ],
+      "commands": [
+        "python no_local_blender.py --selftest"
+      ],
+      "references": [],
+      "tags": [
+        "claude",
+        "script",
+        "workflow"
+      ]
+    },
+    {
       "id": "scripts-agent_hooks-validation_gate",
       "type": "script",
       "title": "validation_gate",
@@ -1593,9 +1640,9 @@
       "source": "script",
       "summary": "/**",
       "agent": "shared",
-      "modified": "2026-09-08T02:50:08",
-      "modified_ts": 1788807008.7733536,
-      "size": 21206,
+      "modified": "2026-09-25T01:36:23",
+      "modified_ts": 1790271383.3493738,
+      "size": 21864,
       "headings": [],
       "trigger_hints": [
         "// 3c. 场景索引：按**已落地**的 assets/scenes 派生（不进抽取清单——它不是开发树里的文件， // 是产物自己的派生物；开发服由 vite 中间件按请求现算同一份）。Dev 菜单 / F2 靠它列全部场景。 const sceneCount = await writeSceneIndex(gameDir); info(`场景索引：${sceneCount} 个场景 → ${SCENE_INDEX_REL}（打包时派生）`);",
@@ -1643,9 +1690,18 @@
           "note": ""
         },
         {
+          "raw": "tools/build/build_config.json",
+          "kind": "inline_code",
+          "line": 57,
+          "target": "tools/build/build_config.json",
+          "status": "ok",
+          "resolved_to": "tools/build/build_config.json",
+          "note": ""
+        },
+        {
           "raw": "src/core/bootParams.ts",
           "kind": "inline_code",
-          "line": 296,
+          "line": 313,
           "target": "src/core/bootParams.ts",
           "status": "ok",
           "resolved_to": "src/core/bootParams.ts",
@@ -1654,7 +1710,7 @@
         {
           "raw": "tools/build/build_config.json",
           "kind": "inline_code",
-          "line": 296,
+          "line": 313,
           "target": "tools/build/build_config.json",
           "status": "ok",
           "resolved_to": "tools/build/build_config.json",
@@ -1663,7 +1719,7 @@
         {
           "raw": "boot.js",
           "kind": "inline_code",
-          "line": 298,
+          "line": 315,
           "target": "boot.js",
           "status": "ok",
           "resolved_to": "release/dev/game/boot.js",
@@ -1672,7 +1728,7 @@
         {
           "raw": "audio_config.json",
           "kind": "inline_code",
-          "line": 339,
+          "line": 356,
           "target": "audio_config.json",
           "status": "ok",
           "resolved_to": "artifact/storm-audio-fix-20260920/before/audio_config.json",
@@ -1681,7 +1737,7 @@
         {
           "raw": "audio/bgm/x.wav",
           "kind": "inline_code",
-          "line": 340,
+          "line": 357,
           "target": "audio/bgm/x.wav",
           "status": "missing",
           "resolved_to": null,
@@ -1690,7 +1746,7 @@
         {
           "raw": "assets/**",
           "kind": "inline_code",
-          "line": 396,
+          "line": 413,
           "target": "assets/**",
           "status": "ok",
           "resolved_to": "assets",
@@ -1699,7 +1755,7 @@
         {
           "raw": "resources/",
           "kind": "inline_code",
-          "line": 397,
+          "line": 414,
           "target": "resources/",
           "status": "ok",
           "resolved_to": "resources",
@@ -1708,7 +1764,7 @@
         {
           "raw": "audio/bgm/x.wav",
           "kind": "inline_code",
-          "line": 437,
+          "line": 454,
           "target": "audio/bgm/x.wav",
           "status": "missing",
           "resolved_to": null,
@@ -1814,9 +1870,9 @@
       "source": "script",
       "summary": "/**",
       "agent": "shared",
-      "modified": "2026-09-08T02:50:08",
-      "modified_ts": 1788807008.7743504,
-      "size": 14099,
+      "modified": "2026-09-25T01:36:42",
+      "modified_ts": 1790271402.355821,
+      "size": 14598,
       "headings": [],
       "trigger_hints": [
         "* 而是\"这一次把结果放哪\"。档位差异（从哪个场景起、带不带调试设施）才在 * `tools/build/build_config.json` 里，那份是存盘的，脱离编辑器也能跑。 * * ## 产出",
@@ -1841,7 +1897,7 @@
         {
           "raw": "src/",
           "kind": "inline_code",
-          "line": 191,
+          "line": 194,
           "target": "src/",
           "status": "ok",
           "resolved_to": "src",
@@ -1850,7 +1906,7 @@
         {
           "raw": "tools/build/scene_sweep.py",
           "kind": "inline_code",
-          "line": 192,
+          "line": 195,
           "target": "tools/build/scene_sweep.py",
           "status": "ok",
           "resolved_to": "tools/build/scene_sweep.py",
@@ -2439,7 +2495,7 @@
           "target": "tools/**.py",
           "status": "ok",
           "resolved_to": "tools/atomic_io.py",
-          "note": "glob matches=1194"
+          "note": "glob matches=1228"
         },
         {
           "raw": "scripts/kill_gamedraft_residue.py",
@@ -2559,6 +2615,184 @@
         "claude",
         "cursor",
         "skill",
+        "workflow"
+      ]
+    },
+    {
+      "id": "claude-skill.scene-depth-collision-from-art",
+      "type": "skill",
+      "title": "从原画做碰撞 + 深度(固定流程)",
+      "path": ".claude/skills/scene-depth-collision-from-art/SKILL.md",
+      "source": "cursor_skill",
+      "summary": "name: scene-depth-collision-from-art description: 从一张场景原画一次做出碰撞 + 深度(连同所有跟着深度走的光照 / 草木 / 夜景载荷)的固定流程——碰撞第一轮只看画 → 用圈好的路标定深度(峭壁 / 街巷这类\"路以外都是竖墙\"的画用立面约束标定)→ 深度体检过了之后用游戏真实深度遮挡做碰撞第二轮 → 独立复查 → 真机验。触发词:给新场景做碰撞和深度、从原画建场景几何、深度塌了 / 深度是平的、深度不对重做、峭壁栈道深度、火把 / 落雷在这张图上不对且查到是深度、重做深度、scene depth and collision。只修碰撞、深度没问题 → 用 scene-collis...",
+      "agent": "cursor",
+      "modified": "2026-09-25T09:13:24",
+      "modified_ts": 1790298804.5685298,
+      "size": 8531,
+      "headings": [
+        "从原画做碰撞 + 深度(固定流程)",
+        "为什么是这个顺序(一句话)",
+        "五条硬规矩",
+        "八步",
+        "0. 前提",
+        "1. 改前留档",
+        "2. 碰撞第一轮(只看画)",
+        "3. 选标定方式",
+        "4. 重做深度",
+        "5. 碰撞第二轮(游戏真实深度遮挡)",
+        "6. 独立复查(必须做)",
+        "7. 真机验",
+        "8. 收尾",
+        "已知坑"
+      ],
+      "trigger_hints": [
+        "description: 从一张场景原画一次做出碰撞 + 深度(连同所有跟着深度走的光照 / 草木 / 夜景载荷)的固定流程——碰撞第一轮只看画 → 用圈好的路标定深度(峭壁 / 街巷这类\"路以外都是竖墙\"的画用立面约束标定)→ 深度体检过了之后用游戏真实深度遮挡做碰撞第二轮 → 独立复查 → 真机验。触发词:给新场景做碰撞和深度、从原画建场景几何、深度塌了 / 深度是平的、深度不对重做、峭壁栈道深度、火把 / 落雷在这张图上不对且查到是深度、重做深度、scene depth and collision。只修碰撞、深度没问题 → 用 scene-collision-from-art。 ---",
+        "> `REDO` = `sh scripts/py.sh -m tools.character_lighting_lab.redo_depth`。产物默认在 `local/collision_review/<场景>/`。",
+        "5. **一个场景同一时间只归一个人写**;交付必带改前 / 改后的 `depthsheet` 图和第二轮摆人图。",
+        "- 场景 JSON 在、主背景在;时段原画(夜等)与主背景**逐像素对齐**(尺寸不同 `REDO` 会在时段那步停下)。 - 从没烘过的场景:先 `REDO <场景> --calibration level`(给碰撞工具一个能反投的几何;它会跳过碰撞相关步骤)。",
+        "- 从没烘过的场景:先 `REDO <场景> --calibration level`(给碰撞工具一个能反投的几何;它会跳过碰撞相关步骤)。"
+      ],
+      "commands": [],
+      "references": [
+        {
+          "raw": "agent_docs/asset-pipeline/mechanisms/scene-bake-downstream.md",
+          "kind": "inline_code",
+          "line": 8,
+          "target": "agent_docs/asset-pipeline/mechanisms/scene-bake-downstream.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/asset-pipeline/mechanisms/scene-bake-downstream.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "kind": "inline_code",
+          "line": 9,
+          "target": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/editor-tools/mechanisms/terrain-workbench.md",
+          "kind": "inline_code",
+          "line": 9,
+          "target": "agent_docs/editor-tools/mechanisms/terrain-workbench.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/mechanisms/terrain-workbench.md",
+          "note": ""
+        },
+        {
+          "raw": "pipeline.py",
+          "kind": "inline_code",
+          "line": 23,
+          "target": "pipeline.py",
+          "status": "ok",
+          "resolved_to": "tools/animation_pipeline/pipeline.py",
+          "note": "suffix matches=2"
+        },
+        {
+          "raw": "agent_docs/runtime/mechanisms/strike-threat.md",
+          "kind": "inline_code",
+          "line": 76,
+          "target": "agent_docs/runtime/mechanisms/strike-threat.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/runtime/mechanisms/strike-threat.md",
+          "note": ""
+        }
+      ],
+      "tags": [
+        "claude",
+        "skill",
+        "workflow"
+      ]
+    },
+    {
+      "id": "claude-skill.提交项目",
+      "type": "skill",
+      "title": "提交项目(全量提交 + DVC 彻底同步 + 推送)",
+      "path": ".claude/skills/提交项目/SKILL.md",
+      "source": "cursor_skill",
+      "summary": "name: 提交项目 description: 一键把 GameDraft 主工作树的全部改动提交并推送——认基线 → 刷新全部 DVC 指针(dvc add)→ git add -A 提交(含 .dvc)→ tools.dev push 把 DVC 对象传上 OSS 并 git push → 复核远端零缺口。触发词：提交项目、提交所有东西、全部提交并推送、提交并同步 dvc、一键提交、commit all and push。与 Cursor 侧 commit-push-gamedraft(选择性提交)不同，本技能是全量。",
+      "agent": "cursor",
+      "modified": "2026-09-25T00:30:52",
+      "modified_ts": 1790267452.3112183,
+      "size": 4882,
+      "headings": [
+        "提交项目(全量提交 + DVC 彻底同步 + 推送)",
+        "1. 认基线",
+        "2. 看清要提交什么",
+        "3. 刷新全部 DVC 指针",
+        "4. 全量提交",
+        "5. 推送(DVC 对象 + git)",
+        "6. 复核(三条都要过)",
+        "7. 汇报(中文，给制作人)"
+      ],
+      "trigger_hints": [
+        "description: 一键把 GameDraft 主工作树的全部改动提交并推送——认基线 → 刷新全部 DVC 指针(dvc add)→ git add -A 提交(含 .dvc)→ tools.dev push 把 DVC 对象传上 OSS 并 git push → 复核远端零缺口。触发词：提交项目、提交所有东西、全部提交并推送、提交并同步 dvc、一键提交、commit all and push。与 Cursor 侧 commit-push-gamedraft(选择性提交)不同，本技能是全量。 ---",
+        "目标清单以代码为准(`tools/dev/sync.py` 的 `COMMIT_DVC_ADD_PATHS`),本机不存在的目录跳过:"
+      ],
+      "commands": [],
+      "references": [
+        {
+          "raw": "agent_docs/meta/recipes/shared-tree-and-worktrees.md",
+          "kind": "inline_code",
+          "line": 12,
+          "target": "agent_docs/meta/recipes/shared-tree-and-worktrees.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/meta/recipes/shared-tree-and-worktrees.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/meta/recipes/dvc-oss-restore.md",
+          "kind": "inline_code",
+          "line": 13,
+          "target": "agent_docs/meta/recipes/dvc-oss-restore.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/meta/recipes/dvc-oss-restore.md",
+          "note": ""
+        },
+        {
+          "raw": ".tools/venv/Scripts/python.exe",
+          "kind": "inline_code",
+          "line": 15,
+          "target": ".tools/venv/Scripts/python.exe",
+          "status": "ok",
+          "resolved_to": ".tools/venv/Scripts/python.exe",
+          "note": ""
+        },
+        {
+          "raw": ".tools/venv/bin/python",
+          "kind": "inline_code",
+          "line": 15,
+          "target": ".tools/venv/bin/python",
+          "status": "missing",
+          "resolved_to": null,
+          "note": ""
+        },
+        {
+          "raw": ".tools/oss.env",
+          "kind": "inline_code",
+          "line": 41,
+          "target": ".tools/oss.env",
+          "status": "ok",
+          "resolved_to": ".tools/oss.env",
+          "note": ""
+        },
+        {
+          "raw": "tools/dev/sync.py",
+          "kind": "inline_code",
+          "line": 45,
+          "target": "tools/dev/sync.py",
+          "status": "ok",
+          "resolved_to": "tools/dev/sync.py",
+          "note": ""
+        }
+      ],
+      "tags": [
+        "claude",
+        "cursor",
+        "skill",
+        "validation",
         "workflow"
       ]
     },
@@ -5039,7 +5273,7 @@
           "target": "tools/**.py",
           "status": "ok",
           "resolved_to": "tools/atomic_io.py",
-          "note": "glob matches=1194"
+          "note": "glob matches=1228"
         },
         {
           "raw": "scripts/kill_gamedraft_residue.py",
@@ -5215,7 +5449,7 @@
           "target": "src/**",
           "status": "ok",
           "resolved_to": "src",
-          "note": "glob matches=30"
+          "note": "glob matches=31"
         },
         {
           "raw": "tools/**",
@@ -5224,7 +5458,7 @@
           "target": "tools/**",
           "status": "ok",
           "resolved_to": "tools",
-          "note": "glob matches=679"
+          "note": "glob matches=686"
         },
         {
           "raw": "E:\\GameDev\\FindingDogStory\\故事设计\\主线故事进度.md",
@@ -5251,7 +5485,7 @@
           "target": "public/assets/**.json",
           "status": "ok",
           "resolved_to": "public/assets/data/acoustic_spaces.json",
-          "note": "glob matches=316"
+          "note": "glob matches=318"
         },
         {
           "raw": "agent_docs/content/methods/narrative-flow-authoring.md",
@@ -5296,7 +5530,7 @@
           "target": "public/assets/data/*.json",
           "status": "ok",
           "resolved_to": "public/assets/data/acoustic_spaces.json",
-          "note": "glob matches=37"
+          "note": "glob matches=38"
         },
         {
           "raw": "public/assets/scenes/*.json",
@@ -5449,7 +5683,7 @@
           "target": "public/assets/data/**",
           "status": "ok",
           "resolved_to": "public/assets/data",
-          "note": "glob matches=11"
+          "note": "glob matches=12"
         },
         {
           "raw": "public/assets/scenes/*.json",
@@ -5494,7 +5728,7 @@
           "target": "public/resources/runtime/**",
           "status": "ok",
           "resolved_to": "public/resources/runtime",
-          "note": "glob matches=440"
+          "note": "glob matches=758"
         },
         {
           "raw": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
@@ -5600,7 +5834,7 @@
           "target": "src/**",
           "status": "ok",
           "resolved_to": "src",
-          "note": "glob matches=30"
+          "note": "glob matches=31"
         },
         {
           "raw": "tools/**",
@@ -5609,7 +5843,7 @@
           "target": "tools/**",
           "status": "ok",
           "resolved_to": "tools",
-          "note": "glob matches=679"
+          "note": "glob matches=686"
         },
         {
           "raw": "E:\\GameDev\\FindingDogStory\\故事设计\\主线故事进度.md",
@@ -5636,7 +5870,7 @@
           "target": "public/assets/**.json",
           "status": "ok",
           "resolved_to": "public/assets/data/acoustic_spaces.json",
-          "note": "glob matches=316"
+          "note": "glob matches=318"
         },
         {
           "raw": "agent_docs/content/methods/narrative-flow-authoring.md",
@@ -5681,7 +5915,7 @@
           "target": "public/assets/data/*.json",
           "status": "ok",
           "resolved_to": "public/assets/data/acoustic_spaces.json",
-          "note": "glob matches=37"
+          "note": "glob matches=38"
         },
         {
           "raw": "public/assets/scenes/*.json",
@@ -5834,7 +6068,7 @@
           "target": "public/assets/data/**",
           "status": "ok",
           "resolved_to": "public/assets/data",
-          "note": "glob matches=11"
+          "note": "glob matches=12"
         },
         {
           "raw": "public/assets/scenes/*.json",
@@ -5879,7 +6113,7 @@
           "target": "public/resources/runtime/**",
           "status": "ok",
           "resolved_to": "public/resources/runtime",
-          "note": "glob matches=440"
+          "note": "glob matches=758"
         },
         {
           "raw": "agent_docs/content/mechanisms/editor-roundtrip-contract.md",
@@ -6034,7 +6268,7 @@
           "target": "public/assets/data/*.json",
           "status": "ok",
           "resolved_to": "public/assets/data/acoustic_spaces.json",
-          "note": "glob matches=37"
+          "note": "glob matches=38"
         },
         {
           "raw": "public/assets/dialogues/graphs/*.json",
@@ -6225,7 +6459,7 @@
           "target": "public/assets/data/*.json",
           "status": "ok",
           "resolved_to": "public/assets/data/acoustic_spaces.json",
-          "note": "glob matches=37"
+          "note": "glob matches=38"
         },
         {
           "raw": "public/assets/dialogues/graphs/*.json",
@@ -6396,6 +6630,270 @@
         "npm run dev"
       ],
       "references": [],
+      "tags": [
+        "cursor",
+        "skill",
+        "workflow"
+      ]
+    },
+    {
+      "id": "claude-skill.scene-collision-from-art",
+      "type": "skill",
+      "title": "修一张图的碰撞(固定流程)",
+      "path": ".cursor/skills/scene-collision-from-art/SKILL.md",
+      "source": "cursor_skill",
+      "summary": "name: scene-collision-from-art description: 修一张 GameDraft 场景图碰撞的固定流程——看原画按 3D 估遮挡(物体只占占地、被挡住的地按连续性判、不依赖深度),七步走完:看现状 → 读图 → 起草 → 落盘 → 自检三件 → 独立子代理摆人复查到无问题 → 收尾出对照图。触发词:修碰撞、碰撞乱画、人站到屋顶上、这里走不过去、看看所有场景的碰撞、给新场景配碰撞、复查碰撞、collision。",
+      "agent": "cursor",
+      "modified": "2026-09-25T09:13:45",
+      "modified_ts": 1790298825.5353553,
+      "size": 11999,
+      "headings": [
+        "修一张图的碰撞(固定流程)",
+        "四条硬规矩",
+        "七步",
+        "1. 看现状",
+        "2. 读图",
+        "3. 起草",
+        "4. 落盘",
+        "5. 自检三件(都过才往下)",
+        "6. 独立复查(必须做)",
+        "7. 收尾",
+        "哪些是固定的,哪些还靠判断",
+        "耗时参考",
+        "复查协议(原样交给复查子代理)",
+        "批量(多场景)"
+      ],
+      "trigger_hints": [
+        "description: 修一张 GameDraft 场景图碰撞的固定流程——看原画按 3D 估遮挡(物体只占占地、被挡住的地按连续性判、不依赖深度),七步走完:看现状 → 读图 → 起草 → 落盘 → 自检三件 → 独立子代理摆人复查到无问题 → 收尾出对照图。触发词:修碰撞、碰撞乱画、人站到屋顶上、这里走不过去、看看所有场景的碰撞、给新场景配碰撞、复查碰撞、collision。 ---",
+        "> **深度也要做 / 深度是塌的**(新场景第一次建几何、峭壁栈道这类深度塌成平面的图)→ 用 `scene-depth-collision-from-art`: > 它先按本技能做碰撞第一轮,再拿圈好的路标定深度,深度体检过了之后用游戏真实深度遮挡做第二轮。本技能只修碰撞、不碰深度。",
+        "> **深度也要做 / 深度是塌的**(新场景第一次建几何、峭壁栈道这类深度塌成平面的图)→ 用 `scene-depth-collision-from-art`: > 它先按本技能做碰撞第一轮,再拿圈好的路标定深度,深度体检过了之后用游戏真实深度遮挡做第二轮。本技能只修碰撞、不碰深度。",
+        "> 本技能只管怎么做。工具一律 `sh scripts/py.sh -m tools.terrain_workbench.art_review <命令> <场景>`(下文写 `AR`), > Windows 下命令前加 `PYTHONIOENCODING=utf-8`。产物默认在 `local/collision_review/<场景>/`, > `render` / `crop` / `crowd` 都能 `--out` 到自己的目录——修的人和复查的人别互相覆盖。",
+        "> Windows 下命令前加 `PYTHONIOENCODING=utf-8`。产物默认在 `local/collision_review/<场景>/`, > `render` / `crop` / `crowd` 都能 `--out` 到自己的目录——修的人和复查的人别互相覆盖。"
+      ],
+      "commands": [],
+      "references": [
+        {
+          "raw": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "kind": "inline_code",
+          "line": 14,
+          "target": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "note": ""
+        },
+        {
+          "raw": "collision_auto.png",
+          "kind": "inline_code",
+          "line": 26,
+          "target": "collision_auto.png",
+          "status": "ok",
+          "resolved_to": "public/resources/runtime/scenes/bridge_underpass/terrain/collision_auto.png",
+          "note": "suffix matches=21"
+        },
+        {
+          "raw": "before.png",
+          "kind": "inline_code",
+          "line": 38,
+          "target": "before.png",
+          "status": "ok",
+          "resolved_to": "artifact/storm-bolt-brightness-20260920/visual/before.png",
+          "note": "suffix matches=21"
+        },
+        {
+          "raw": "before.png",
+          "kind": "inline_code",
+          "line": 88,
+          "target": "before.png",
+          "status": "ok",
+          "resolved_to": "artifact/storm-bolt-brightness-20260920/visual/before.png",
+          "note": "suffix matches=21"
+        },
+        {
+          "raw": "agent_docs/_meta/governance-log.md",
+          "kind": "inline_code",
+          "line": 134,
+          "target": "agent_docs/_meta/governance-log.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/_meta/governance-log.md",
+          "note": ""
+        }
+      ],
+      "tags": [
+        "claude",
+        "skill",
+        "workflow"
+      ]
+    },
+    {
+      "id": "cursor-skill.scene-collision-from-art",
+      "type": "skill",
+      "title": "修一张图的碰撞(固定流程)",
+      "path": ".cursor/skills/scene-collision-from-art/SKILL.md",
+      "source": "cursor_skill",
+      "summary": "name: scene-collision-from-art description: 修一张 GameDraft 场景图碰撞的固定流程——看原画按 3D 估遮挡(物体只占占地、被挡住的地按连续性判、不依赖深度),七步走完:看现状 → 读图 → 起草 → 落盘 → 自检三件 → 独立子代理摆人复查到无问题 → 收尾出对照图。触发词:修碰撞、碰撞乱画、人站到屋顶上、这里走不过去、看看所有场景的碰撞、给新场景配碰撞、复查碰撞、collision。",
+      "agent": "cursor",
+      "modified": "2026-09-25T09:13:45",
+      "modified_ts": 1790298825.5353553,
+      "size": 11999,
+      "headings": [
+        "修一张图的碰撞(固定流程)",
+        "四条硬规矩",
+        "七步",
+        "1. 看现状",
+        "2. 读图",
+        "3. 起草",
+        "4. 落盘",
+        "5. 自检三件(都过才往下)",
+        "6. 独立复查(必须做)",
+        "7. 收尾",
+        "哪些是固定的,哪些还靠判断",
+        "耗时参考",
+        "复查协议(原样交给复查子代理)",
+        "批量(多场景)"
+      ],
+      "trigger_hints": [
+        "description: 修一张 GameDraft 场景图碰撞的固定流程——看原画按 3D 估遮挡(物体只占占地、被挡住的地按连续性判、不依赖深度),七步走完:看现状 → 读图 → 起草 → 落盘 → 自检三件 → 独立子代理摆人复查到无问题 → 收尾出对照图。触发词:修碰撞、碰撞乱画、人站到屋顶上、这里走不过去、看看所有场景的碰撞、给新场景配碰撞、复查碰撞、collision。 ---",
+        "> **深度也要做 / 深度是塌的**(新场景第一次建几何、峭壁栈道这类深度塌成平面的图)→ 用 `scene-depth-collision-from-art`: > 它先按本技能做碰撞第一轮,再拿圈好的路标定深度,深度体检过了之后用游戏真实深度遮挡做第二轮。本技能只修碰撞、不碰深度。",
+        "> **深度也要做 / 深度是塌的**(新场景第一次建几何、峭壁栈道这类深度塌成平面的图)→ 用 `scene-depth-collision-from-art`: > 它先按本技能做碰撞第一轮,再拿圈好的路标定深度,深度体检过了之后用游戏真实深度遮挡做第二轮。本技能只修碰撞、不碰深度。",
+        "> 本技能只管怎么做。工具一律 `sh scripts/py.sh -m tools.terrain_workbench.art_review <命令> <场景>`(下文写 `AR`), > Windows 下命令前加 `PYTHONIOENCODING=utf-8`。产物默认在 `local/collision_review/<场景>/`, > `render` / `crop` / `crowd` 都能 `--out` 到自己的目录——修的人和复查的人别互相覆盖。",
+        "> Windows 下命令前加 `PYTHONIOENCODING=utf-8`。产物默认在 `local/collision_review/<场景>/`, > `render` / `crop` / `crowd` 都能 `--out` 到自己的目录——修的人和复查的人别互相覆盖。"
+      ],
+      "commands": [],
+      "references": [
+        {
+          "raw": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "kind": "inline_code",
+          "line": 14,
+          "target": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "note": ""
+        },
+        {
+          "raw": "collision_auto.png",
+          "kind": "inline_code",
+          "line": 26,
+          "target": "collision_auto.png",
+          "status": "ok",
+          "resolved_to": "public/resources/runtime/scenes/bridge_underpass/terrain/collision_auto.png",
+          "note": "suffix matches=21"
+        },
+        {
+          "raw": "before.png",
+          "kind": "inline_code",
+          "line": 38,
+          "target": "before.png",
+          "status": "ok",
+          "resolved_to": "artifact/storm-bolt-brightness-20260920/visual/before.png",
+          "note": "suffix matches=21"
+        },
+        {
+          "raw": "before.png",
+          "kind": "inline_code",
+          "line": 88,
+          "target": "before.png",
+          "status": "ok",
+          "resolved_to": "artifact/storm-bolt-brightness-20260920/visual/before.png",
+          "note": "suffix matches=21"
+        },
+        {
+          "raw": "agent_docs/_meta/governance-log.md",
+          "kind": "inline_code",
+          "line": 134,
+          "target": "agent_docs/_meta/governance-log.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/_meta/governance-log.md",
+          "note": ""
+        }
+      ],
+      "tags": [
+        "cursor",
+        "skill",
+        "workflow"
+      ]
+    },
+    {
+      "id": "cursor-skill.scene-depth-collision-from-art",
+      "type": "skill",
+      "title": "从原画做碰撞 + 深度(固定流程)",
+      "path": ".cursor/skills/scene-depth-collision-from-art/SKILL.md",
+      "source": "cursor_skill",
+      "summary": "name: scene-depth-collision-from-art description: 从一张场景原画一次做出碰撞 + 深度(连同所有跟着深度走的光照 / 草木 / 夜景载荷)的固定流程——碰撞第一轮只看画 → 用圈好的路标定深度(峭壁 / 街巷这类\"路以外都是竖墙\"的画用立面约束标定)→ 深度体检过了之后用游戏真实深度遮挡做碰撞第二轮 → 独立复查 → 真机验。触发词:给新场景做碰撞和深度、从原画建场景几何、深度塌了 / 深度是平的、深度不对重做、峭壁栈道深度、火把 / 落雷在这张图上不对且查到是深度、重做深度、scene depth and collision。只修碰撞、深度没问题 → 用 scene-collis...",
+      "agent": "cursor",
+      "modified": "2026-09-25T09:13:29",
+      "modified_ts": 1790298809.6437345,
+      "size": 8531,
+      "headings": [
+        "从原画做碰撞 + 深度(固定流程)",
+        "为什么是这个顺序(一句话)",
+        "五条硬规矩",
+        "八步",
+        "0. 前提",
+        "1. 改前留档",
+        "2. 碰撞第一轮(只看画)",
+        "3. 选标定方式",
+        "4. 重做深度",
+        "5. 碰撞第二轮(游戏真实深度遮挡)",
+        "6. 独立复查(必须做)",
+        "7. 真机验",
+        "8. 收尾",
+        "已知坑"
+      ],
+      "trigger_hints": [
+        "description: 从一张场景原画一次做出碰撞 + 深度(连同所有跟着深度走的光照 / 草木 / 夜景载荷)的固定流程——碰撞第一轮只看画 → 用圈好的路标定深度(峭壁 / 街巷这类\"路以外都是竖墙\"的画用立面约束标定)→ 深度体检过了之后用游戏真实深度遮挡做碰撞第二轮 → 独立复查 → 真机验。触发词:给新场景做碰撞和深度、从原画建场景几何、深度塌了 / 深度是平的、深度不对重做、峭壁栈道深度、火把 / 落雷在这张图上不对且查到是深度、重做深度、scene depth and collision。只修碰撞、深度没问题 → 用 scene-collision-from-art。 ---",
+        "> `REDO` = `sh scripts/py.sh -m tools.character_lighting_lab.redo_depth`。产物默认在 `local/collision_review/<场景>/`。",
+        "5. **一个场景同一时间只归一个人写**;交付必带改前 / 改后的 `depthsheet` 图和第二轮摆人图。",
+        "- 场景 JSON 在、主背景在;时段原画(夜等)与主背景**逐像素对齐**(尺寸不同 `REDO` 会在时段那步停下)。 - 从没烘过的场景:先 `REDO <场景> --calibration level`(给碰撞工具一个能反投的几何;它会跳过碰撞相关步骤)。",
+        "- 从没烘过的场景:先 `REDO <场景> --calibration level`(给碰撞工具一个能反投的几何;它会跳过碰撞相关步骤)。"
+      ],
+      "commands": [],
+      "references": [
+        {
+          "raw": "agent_docs/asset-pipeline/mechanisms/scene-bake-downstream.md",
+          "kind": "inline_code",
+          "line": 8,
+          "target": "agent_docs/asset-pipeline/mechanisms/scene-bake-downstream.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/asset-pipeline/mechanisms/scene-bake-downstream.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "kind": "inline_code",
+          "line": 9,
+          "target": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/recipes/collision-from-art.md",
+          "note": ""
+        },
+        {
+          "raw": "agent_docs/editor-tools/mechanisms/terrain-workbench.md",
+          "kind": "inline_code",
+          "line": 9,
+          "target": "agent_docs/editor-tools/mechanisms/terrain-workbench.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/editor-tools/mechanisms/terrain-workbench.md",
+          "note": ""
+        },
+        {
+          "raw": "pipeline.py",
+          "kind": "inline_code",
+          "line": 23,
+          "target": "pipeline.py",
+          "status": "ok",
+          "resolved_to": "tools/animation_pipeline/pipeline.py",
+          "note": "suffix matches=2"
+        },
+        {
+          "raw": "agent_docs/runtime/mechanisms/strike-threat.md",
+          "kind": "inline_code",
+          "line": 76,
+          "target": "agent_docs/runtime/mechanisms/strike-threat.md",
+          "status": "ok",
+          "resolved_to": "agent_docs/runtime/mechanisms/strike-threat.md",
+          "note": ""
+        }
+      ],
       "tags": [
         "cursor",
         "skill",
@@ -7198,7 +7696,7 @@
           "target": "public/resources/runtime/images/**/*.png",
           "status": "ok",
           "resolved_to": "public/resources/runtime/images/backgrounds/back_alley_dock_bg.png",
-          "note": "glob matches=757"
+          "note": "glob matches=754"
         }
       ],
       "tags": [
@@ -7898,7 +8396,7 @@
           "target": "public/assets/**",
           "status": "ok",
           "resolved_to": "public/assets",
-          "note": "glob matches=15"
+          "note": "glob matches=16"
         },
         {
           "raw": ".tools/venv",
@@ -8853,6 +9351,17 @@
       "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
     },
     {
+      "id": "broken-ref.claude-skill.-.15..tools-venv-bin-python",
+      "severity": "warn",
+      "category": "broken-reference",
+      "artifact_id": "claude-skill.提交项目",
+      "path": ".claude/skills/提交项目/SKILL.md",
+      "line": 15,
+      "title": "Reference target is missing",
+      "evidence": "`.tools/venv/bin/python` resolves to no existing file or directory.",
+      "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
+    },
+    {
       "id": "drift.claude-skill.add-text-ref.12.agent_docs-content-mechanisms-text-ref-tag-system.md",
       "severity": "warn",
       "category": "drift-risk",
@@ -8992,7 +9501,7 @@
       "path": ".cursor/skills/animation-production/SKILL.md",
       "line": 14,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/asset-pipeline/mechanisms/sprite-atlas-anim-contract.md` is about 25 days newer than this file.",
+      "evidence": "`agent_docs/asset-pipeline/mechanisms/sprite-atlas-anim-contract.md` is about 36 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9025,7 +9534,7 @@
       "path": ".cursor/skills/animation-production/SKILL.md",
       "line": 60,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/rendering/SpriteEntity.ts` is about 28 days newer than this file.",
+      "evidence": "`src/rendering/SpriteEntity.ts` is about 36 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9058,7 +9567,7 @@
       "path": ".cursor/skills/commit-push-gamedraft/SKILL.md",
       "line": 77,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`resources/editor_projects.dvc` is about 32 days newer than this file.",
+      "evidence": "`resources/editor_projects.dvc` is about 36 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9091,7 +9600,7 @@
       "path": ".cursor/skills/commit-push-gamedraft/SKILL.md",
       "line": 153,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/meta/recipes/dvc-oss-restore.md` is about 20 days newer than this file.",
+      "evidence": "`agent_docs/meta/recipes/dvc-oss-restore.md` is about 35 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9421,7 +9930,7 @@
       "path": ".cursor/skills/pure-data-iteration/SKILL.md",
       "line": 10,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/content/mechanisms/content-expression-channels.md` is about 14 days newer than this file.",
+      "evidence": "`agent_docs/content/mechanisms/content-expression-channels.md` is about 35 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9443,7 +9952,7 @@
       "path": ".cursor/skills/pure-data-iteration/SKILL.md",
       "line": 10,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/content/norms.md` is about 27 days newer than this file.",
+      "evidence": "`agent_docs/content/norms.md` is about 35 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9454,7 +9963,7 @@
       "path": ".cursor/skills/pure-data-iteration/SKILL.md",
       "line": 10,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/content/recipes/content-validation-gate.md` is about 14 days newer than this file.",
+      "evidence": "`agent_docs/content/recipes/content-validation-gate.md` is about 35 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9465,7 +9974,7 @@
       "path": ".cursor/skills/pure-data-iteration/SKILL.md",
       "line": 10,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/content/mechanisms/content-expression-channels.md` is about 14 days newer than this file.",
+      "evidence": "`agent_docs/content/mechanisms/content-expression-channels.md` is about 35 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9487,7 +9996,7 @@
       "path": ".cursor/skills/pure-data-iteration/SKILL.md",
       "line": 10,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/content/norms.md` is about 27 days newer than this file.",
+      "evidence": "`agent_docs/content/norms.md` is about 35 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9498,7 +10007,7 @@
       "path": ".cursor/skills/pure-data-iteration/SKILL.md",
       "line": 10,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/content/recipes/content-validation-gate.md` is about 14 days newer than this file.",
+      "evidence": "`agent_docs/content/recipes/content-validation-gate.md` is about 35 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9652,7 +10161,7 @@
       "path": ".cursor/skills/pure-data-iteration/SKILL.md",
       "line": 75,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/content/recipes/content-validation-gate.md` is about 14 days newer than this file.",
+      "evidence": "`agent_docs/content/recipes/content-validation-gate.md` is about 35 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9674,7 +10183,7 @@
       "path": ".cursor/skills/pure-data-iteration/SKILL.md",
       "line": 75,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/content/recipes/content-validation-gate.md` is about 14 days newer than this file.",
+      "evidence": "`agent_docs/content/recipes/content-validation-gate.md` is about 35 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9707,7 +10216,7 @@
       "path": ".cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md",
       "line": 20,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`.git/config` is about 20 days newer than this file.",
+      "evidence": "`.git/config` is about 37 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9718,7 +10227,7 @@
       "path": "AGENTS.md",
       "line": 3,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`CLAUDE.md` is about 29 days newer than this file.",
+      "evidence": "`CLAUDE.md` is about 37 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9729,7 +10238,7 @@
       "path": "AGENTS.md",
       "line": 8,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/INDEX.md` is about 33 days newer than this file.",
+      "evidence": "`agent_docs/INDEX.md` is about 36 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9755,12 +10264,12 @@
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
-      "id": "broken-ref.agent.claude.77.agent-context-current.md",
+      "id": "broken-ref.agent.claude.83.agent-context-current.md",
       "severity": "warn",
       "category": "broken-reference",
       "artifact_id": "agent.claude",
       "path": "CLAUDE.md",
-      "line": 77,
+      "line": 83,
       "title": "Reference target is missing",
       "evidence": "`agent-context-current.md` resolves to no existing file or directory.",
       "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
@@ -9850,7 +10359,7 @@
       "path": "docs/plan/production-tooling-requirements.md",
       "line": 414,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`resources/editor_projects/editor_data/production_workbench/runtime_debug_snapshot.json` is about 35 days newer than this file.",
+      "evidence": "`resources/editor_projects/editor_data/production_workbench/runtime_debug_snapshot.json` is about 37 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -9898,23 +10407,23 @@
       "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
     },
     {
-      "id": "broken-ref.scripts-package.340.audio-bgm-x.wav",
+      "id": "broken-ref.scripts-package.357.audio-bgm-x.wav",
       "severity": "warn",
       "category": "broken-reference",
       "artifact_id": "scripts-package",
       "path": "scripts/package.mjs",
-      "line": 340,
+      "line": 357,
       "title": "Reference target is missing",
       "evidence": "`audio/bgm/x.wav` resolves to no existing file or directory.",
       "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
     },
     {
-      "id": "broken-ref.scripts-package.437.audio-bgm-x.wav",
+      "id": "broken-ref.scripts-package.454.audio-bgm-x.wav",
       "severity": "warn",
       "category": "broken-reference",
       "artifact_id": "scripts-package",
       "path": "scripts/package.mjs",
-      "line": 437,
+      "line": 454,
       "title": "Reference target is missing",
       "evidence": "`audio/bgm/x.wav` resolves to no existing file or directory.",
       "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
@@ -9975,6 +10484,17 @@
       "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
     },
     {
+      "id": "drift.tools-animation_pipeline-readme.83.tools-video_to_atlas-atlas_core.py",
+      "severity": "warn",
+      "category": "drift-risk",
+      "artifact_id": "tools-animation_pipeline-readme",
+      "path": "tools/animation_pipeline/README.md",
+      "line": 83,
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "evidence": "`tools/video_to_atlas/atlas_core.py` is about 36 days newer than this file.",
+      "suggestion": "Check whether the skill/workflow still describes the current implementation."
+    },
+    {
       "id": "drift.tools-animation_pipeline-readme.84.artifact-igniteanim_20260916-backup-anim.json",
       "severity": "warn",
       "category": "drift-risk",
@@ -9983,6 +10503,17 @@
       "line": 84,
       "title": "Referenced artifact is newer than this rule/workflow",
       "evidence": "`artifact/IgniteAnim_20260916/backup/anim.json` is about 26 days newer than this file.",
+      "suggestion": "Check whether the skill/workflow still describes the current implementation."
+    },
+    {
+      "id": "drift.tools-character_lighting_lab-readme.22.tools-character_lighting_lab-pipeline.py",
+      "severity": "warn",
+      "category": "drift-risk",
+      "artifact_id": "tools-character_lighting_lab-readme",
+      "path": "tools/character_lighting_lab/README.md",
+      "line": 22,
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "evidence": "`tools/character_lighting_lab/pipeline.py` is about 16 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10092,7 +10623,7 @@
       "path": "tools/json_lang/README.md",
       "line": 125,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/core/actionParamManifest.ts` is about 34 days newer than this file.",
+      "evidence": "`src/core/actionParamManifest.ts` is about 36 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10103,7 +10634,7 @@
       "path": "tools/json_lang/README.md",
       "line": 126,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`tools/editor/shared/action_editor.py` is about 33 days newer than this file.",
+      "evidence": "`tools/editor/shared/action_editor.py` is about 36 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10136,7 +10667,7 @@
       "path": "tools/json_lang/README.md",
       "line": 129,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`src/data/types.ts` is about 34 days newer than this file.",
+      "evidence": "`src/data/types.ts` is about 36 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10158,7 +10689,7 @@
       "path": "tools/narrative_debugger/README.md",
       "line": 180,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`vite.config.ts` is about 28 days newer than this file.",
+      "evidence": "`vite.config.ts` is about 36 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10213,7 +10744,7 @@
       "path": "tools/scene_relight/README.md",
       "line": 75,
       "title": "Referenced artifact is newer than this rule/workflow",
-      "evidence": "`agent_docs/runtime/mechanisms/scene-lighting.md` is about 14 days newer than this file.",
+      "evidence": "`agent_docs/runtime/mechanisms/scene-lighting.md` is about 24 days newer than this file.",
       "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
@@ -10248,6 +10779,17 @@
       "title": "Reference target is missing",
       "evidence": "`.tools/venv/bin/python` resolves to no existing file or directory.",
       "suggestion": "Fix the path, remove the stale reference, or create/register the missing artifact."
+    },
+    {
+      "id": "drift.tools-video_to_atlas-readme.34.tools-video_to_atlas-atlas_core.py",
+      "severity": "warn",
+      "category": "drift-risk",
+      "artifact_id": "tools-video_to_atlas-readme",
+      "path": "tools/video_to_atlas/README.md",
+      "line": 34,
+      "title": "Referenced artifact is newer than this rule/workflow",
+      "evidence": "`tools/video_to_atlas/atlas_core.py` is about 36 days newer than this file.",
+      "suggestion": "Check whether the skill/workflow still describes the current implementation."
     },
     {
       "id": "drift.tools-video_to_atlas-readme.82.artifact-albedocliff_20260907-analysis-division_keep_residual.png",
@@ -10336,6 +10878,39 @@
       "title": "Two skills may overlap",
       "evidence": "`.claude/skills/mainline-story-progress/SKILL.md` and `.cursor/skills/mainline-story-progress/SKILL.md` have token overlap score 1.00.",
       "suggestion": "Compare triggers and decide whether they should be split more clearly, merged, or cross-linked."
+    },
+    {
+      "id": "missing-lifecycle.claude-skill.scene-depth-collision-from-art",
+      "severity": "info",
+      "category": "missing-lifecycle",
+      "artifact_id": "claude-skill.scene-depth-collision-from-art",
+      "path": ".claude/skills/scene-depth-collision-from-art/SKILL.md",
+      "line": 1,
+      "title": "Skill has no lifecycle metadata",
+      "evidence": "No status/owner/last-verified style metadata was detected.",
+      "suggestion": "Consider adding status, owner, and last verified fields once the registry format is settled."
+    },
+    {
+      "id": "overlap.claude-skill.scene-depth-collision-from-art.cursor-skill.scene-depth-collision-from-art",
+      "severity": "info",
+      "category": "possible-overlap",
+      "artifact_id": "claude-skill.scene-depth-collision-from-art",
+      "path": ".claude/skills/scene-depth-collision-from-art/SKILL.md",
+      "line": 1,
+      "title": "Two skills may overlap",
+      "evidence": "`.claude/skills/scene-depth-collision-from-art/SKILL.md` and `.cursor/skills/scene-depth-collision-from-art/SKILL.md` have token overlap score 1.00.",
+      "suggestion": "Compare triggers and decide whether they should be split more clearly, merged, or cross-linked."
+    },
+    {
+      "id": "missing-lifecycle.claude-skill.",
+      "severity": "info",
+      "category": "missing-lifecycle",
+      "artifact_id": "claude-skill.提交项目",
+      "path": ".claude/skills/提交项目/SKILL.md",
+      "line": 1,
+      "title": "Skill has no lifecycle metadata",
+      "evidence": "No status/owner/last-verified style metadata was detected.",
+      "suggestion": "Consider adding status, owner, and last verified fields once the registry format is settled."
     },
     {
       "id": "missing-lifecycle.claude-skill.add-game-action",
@@ -10712,6 +11287,50 @@
       "suggestion": "Consider adding status, owner, and last verified fields once the registry format is settled."
     },
     {
+      "id": "missing-lifecycle.claude-skill.scene-collision-from-art",
+      "severity": "info",
+      "category": "missing-lifecycle",
+      "artifact_id": "claude-skill.scene-collision-from-art",
+      "path": ".cursor/skills/scene-collision-from-art/SKILL.md",
+      "line": 1,
+      "title": "Skill has no lifecycle metadata",
+      "evidence": "No status/owner/last-verified style metadata was detected.",
+      "suggestion": "Consider adding status, owner, and last verified fields once the registry format is settled."
+    },
+    {
+      "id": "missing-lifecycle.cursor-skill.scene-collision-from-art",
+      "severity": "info",
+      "category": "missing-lifecycle",
+      "artifact_id": "cursor-skill.scene-collision-from-art",
+      "path": ".cursor/skills/scene-collision-from-art/SKILL.md",
+      "line": 1,
+      "title": "Skill has no lifecycle metadata",
+      "evidence": "No status/owner/last-verified style metadata was detected.",
+      "suggestion": "Consider adding status, owner, and last verified fields once the registry format is settled."
+    },
+    {
+      "id": "overlap.claude-skill.scene-collision-from-art.cursor-skill.scene-collision-from-art",
+      "severity": "info",
+      "category": "possible-overlap",
+      "artifact_id": "claude-skill.scene-collision-from-art",
+      "path": ".cursor/skills/scene-collision-from-art/SKILL.md",
+      "line": 1,
+      "title": "Two skills may overlap",
+      "evidence": "`.cursor/skills/scene-collision-from-art/SKILL.md` and `.cursor/skills/scene-collision-from-art/SKILL.md` have token overlap score 1.00.",
+      "suggestion": "Compare triggers and decide whether they should be split more clearly, merged, or cross-linked."
+    },
+    {
+      "id": "missing-lifecycle.cursor-skill.scene-depth-collision-from-art",
+      "severity": "info",
+      "category": "missing-lifecycle",
+      "artifact_id": "cursor-skill.scene-depth-collision-from-art",
+      "path": ".cursor/skills/scene-depth-collision-from-art/SKILL.md",
+      "line": 1,
+      "title": "Skill has no lifecycle metadata",
+      "evidence": "No status/owner/last-verified style metadata was detected.",
+      "suggestion": "Consider adding status, owner, and last verified fields once the registry format is settled."
+    },
+    {
       "id": "workflow-no-entry.tools-scene_workbench-.runtime-0c244839abe84025ae9beabfe6cca2ae-resources-editor_projects-editor_data-runtime_acoustics_status",
       "severity": "info",
       "category": "weak-workflow-entry",
@@ -10768,27 +11387,27 @@
     }
   ],
   "stats": {
-    "artifact_count": 138,
-    "issue_count": 179,
+    "artifact_count": 144,
+    "issue_count": 190,
     "by_type": {
       "agent_rules": 3,
       "ci_workflow": 1,
       "package_script": 31,
-      "script": 39,
-      "skill": 31,
+      "script": 40,
+      "skill": 36,
       "tool_requirements": 10,
       "workflow_doc": 23
     },
     "by_severity": {
-      "info": 44,
-      "warn": 135
+      "info": 51,
+      "warn": 139
     },
     "by_category": {
-      "broken-reference": 33,
-      "drift-risk": 99,
-      "missing-lifecycle": 26,
+      "broken-reference": 34,
+      "drift-risk": 102,
+      "missing-lifecycle": 31,
       "missing-metadata": 3,
-      "possible-overlap": 13,
+      "possible-overlap": 15,
       "weak-workflow-entry": 5
     }
   },
@@ -10800,8 +11419,8 @@
       "kind": "agent-fix",
       "summary": "缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。",
       "next": "交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。",
-      "issue_count": 33,
-      "artifact_count": 20,
+      "issue_count": 34,
+      "artifact_count": 21,
       "artifact_types": [
         "agent_rules",
         "script",
@@ -10811,6 +11430,7 @@
       "paths": [
         ".claude/skills/kill-gamedraft-residue/SKILL.md",
         ".claude/skills/mainline-story-progress/SKILL.md",
+        ".claude/skills/提交项目/SKILL.md",
         ".cursor/skills/animation-production/SKILL.md",
         ".cursor/skills/commit-push-gamedraft/SKILL.md",
         ".cursor/skills/handbook-mode/SKILL.md",
@@ -10819,15 +11439,15 @@
         ".cursor/skills/production-mode/SKILL.md",
         "CLAUDE.md",
         "docs/plan/production-workbench-acceptance-checklist.md",
-        "scripts/lib/build_helpers.mjs",
-        "scripts/package.mjs"
+        "scripts/lib/build_helpers.mjs"
       ],
-      "hidden_path_count": 8,
+      "hidden_path_count": 9,
       "issue_ids": [
         "broken-ref.claude-skill.kill-gamedraft-residue.33.vite-bin-vite.js",
         "broken-ref.claude-skill.mainline-story-progress.15.-.md",
         "broken-ref.claude-skill.mainline-story-progress.21.findingdogstory-claude.md",
         "broken-ref.claude-skill.mainline-story-progress.253.-.md",
+        "broken-ref.claude-skill.-.15..tools-venv-bin-python",
         "broken-ref.cursor-skill.animation-production.49.tmp-libtv_animation_batch_run_20260702-run_animation_batch.py",
         "broken-ref.cursor-skill.commit-push-gamedraft.35..tools-venv-bin-python",
         "broken-ref.cursor-skill.commit-push-gamedraft.149..tools-venv-...-python",
@@ -10839,13 +11459,13 @@
         "broken-ref.cursor-skill.mainline-story-progress.253.-.md",
         "broken-ref.claude-skill.production-mode.169.-.md",
         "broken-ref.cursor-skill.production-mode.169.-.md",
-        "broken-ref.agent.claude.77.agent-context-current.md",
+        "broken-ref.agent.claude.83.agent-context-current.md",
         "broken-ref.docs-plan-production-workbench-acceptance-checklist.18..tools-venv-bin-python",
         "broken-ref.scripts-lib-build_helpers.238.resources-runtime-audio-x.wav",
         "broken-ref.scripts-lib-build_helpers.239.audio-x.wav",
         "broken-ref.scripts-lib-build_helpers.242.resources-runtime-audio-...wav",
-        "broken-ref.scripts-package.340.audio-bgm-x.wav",
-        "broken-ref.scripts-package.437.audio-bgm-x.wav",
+        "broken-ref.scripts-package.357.audio-bgm-x.wav",
+        "broken-ref.scripts-package.454.audio-bgm-x.wav",
         "broken-ref.tools-acoustic_workbench-readme.72.devstate.json",
         "broken-ref.tools-anim_preview-readme.106.setup.png",
         "broken-ref.tools-anim_preview-readme.125.setup.png",
@@ -10896,6 +11516,15 @@
           "href": "/governance/source?path=.claude/skills/mainline-story-progress/SKILL.md&line=253#L253"
         },
         {
+          "id": "broken-ref.claude-skill.-.15..tools-venv-bin-python",
+          "severity": "warn",
+          "path": ".claude/skills/提交项目/SKILL.md",
+          "line": 15,
+          "title": "Reference target is missing",
+          "evidence": "`.tools/venv/bin/python` resolves to no existing file or directory.",
+          "href": "/governance/source?path=.claude/skills/%E6%8F%90%E4%BA%A4%E9%A1%B9%E7%9B%AE/SKILL.md&line=15#L15"
+        },
+        {
           "id": "broken-ref.cursor-skill.animation-production.49.tmp-libtv_animation_batch_run_20260702-run_animation_batch.py",
           "severity": "warn",
           "path": ".cursor/skills/animation-production/SKILL.md",
@@ -10903,18 +11532,9 @@
           "title": "Reference target is missing",
           "evidence": "`tmp/libtv_animation_batch_run_20260702/run_animation_batch.py` resolves to no existing file or directory.",
           "href": "/governance/source?path=.cursor/skills/animation-production/SKILL.md&line=49#L49"
-        },
-        {
-          "id": "broken-ref.cursor-skill.commit-push-gamedraft.35..tools-venv-bin-python",
-          "severity": "warn",
-          "path": ".cursor/skills/commit-push-gamedraft/SKILL.md",
-          "line": 35,
-          "title": "Reference target is missing",
-          "evidence": "`.tools/venv/bin/python` resolves to no existing file or directory.",
-          "href": "/governance/source?path=.cursor/skills/commit-push-gamedraft/SKILL.md&line=35#L35"
         }
       ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：断链修复包（broken-reference，33 项）。\n目标：缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。\n执行方式：交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .claude/skills/kill-gamedraft-residue/SKILL.md\n- .claude/skills/mainline-story-progress/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/commit-push-gamedraft/SKILL.md\n- .cursor/skills/handbook-mode/SKILL.md\n- .cursor/skills/kill-gamedraft-residue/SKILL.md\n- .cursor/skills/mainline-story-progress/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- CLAUDE.md\n- docs/plan/production-workbench-acceptance-checklist.md\n- scripts/lib/build_helpers.mjs\n- scripts/package.mjs\n- tools/acoustic_workbench/README.md\n- tools/anim_preview/README.md\n- tools/animation_pipeline/README.md\n- tools/character_lighting_lab/README.md\n- tools/chronicle_sim_v2/README.md\n- tools/narrative_xref/README.md\n- tools/scene_relight/README.md\n- tools/video_to_atlas/README.md"
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：断链修复包（broken-reference，34 项）。\n目标：缺失引用集中处理，不要逐条手改。按文件分组检查改名、移动、删除三种情况。\n执行方式：交给 agent 执行：能确定的路径直接修；明显过期的引用删；无法判断的只列成确认清单。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .claude/skills/kill-gamedraft-residue/SKILL.md\n- .claude/skills/mainline-story-progress/SKILL.md\n- .claude/skills/提交项目/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/commit-push-gamedraft/SKILL.md\n- .cursor/skills/handbook-mode/SKILL.md\n- .cursor/skills/kill-gamedraft-residue/SKILL.md\n- .cursor/skills/mainline-story-progress/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- CLAUDE.md\n- docs/plan/production-workbench-acceptance-checklist.md\n- scripts/lib/build_helpers.mjs\n- scripts/package.mjs\n- tools/acoustic_workbench/README.md\n- tools/anim_preview/README.md\n- tools/animation_pipeline/README.md\n- tools/character_lighting_lab/README.md\n- tools/chronicle_sim_v2/README.md\n- tools/narrative_xref/README.md\n- tools/scene_relight/README.md\n- ...还有 1 个文件，详见 dashboard/registry.json"
     },
     {
       "id": "drift-risk",
@@ -10923,8 +11543,8 @@
       "kind": "agent-review",
       "summary": "规则/工作流引用的代码或文档更新过，说明文字可能已经落后。",
       "next": "交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。",
-      "issue_count": 99,
-      "artifact_count": 19,
+      "issue_count": 102,
+      "artifact_count": 20,
       "artifact_types": [
         "agent_rules",
         "skill",
@@ -10944,7 +11564,7 @@
         "artifact/cursor-workflow-guide.md",
         "docs/plan/production-tooling-requirements.md"
       ],
-      "hidden_path_count": 7,
+      "hidden_path_count": 8,
       "issue_ids": [
         "drift.claude-skill.add-text-ref.12.agent_docs-content-mechanisms-text-ref-tag-system.md",
         "drift.cursor-skill.add-text-ref.12.agent_docs-content-mechanisms-text-ref-tag-system.md",
@@ -11024,7 +11644,9 @@
         "drift.docs-plan-production-tooling-requirements.311.public-assets-data-narrative_graphs.json",
         "drift.docs-plan-production-tooling-requirements.414.resources-editor_projects-editor_data-production_workbench-runtime_debug_snapshot.json",
         "drift.tools-animation_pipeline-readme.4.artifact-igniteanim_20260916-backup-anim.json",
+        "drift.tools-animation_pipeline-readme.83.tools-video_to_atlas-atlas_core.py",
         "drift.tools-animation_pipeline-readme.84.artifact-igniteanim_20260916-backup-anim.json",
+        "drift.tools-character_lighting_lab-readme.22.tools-character_lighting_lab-pipeline.py",
         "drift.tools-json_lang-readme.7.artifact-storm-audio-fix-20260920-before-code-src-core-actionparammanifest.ts",
         "drift.tools-json_lang-readme.8.src-systems-graphdialogue-evaluategraphcondition.ts",
         "drift.tools-json_lang-readme.29.tools-json_lang-refs.py",
@@ -11042,6 +11664,7 @@
         "drift.tools-scene_relight-readme.75.agent_docs-runtime-mechanisms-scene-lighting.md",
         "drift.tools-task_orchestration_editor-readme.14.public-assets-data-narrative_graphs.json",
         "drift.tools-task_orchestration_editor-readme.15.public-assets-data-quests.json",
+        "drift.tools-video_to_atlas-readme.34.tools-video_to_atlas-atlas_core.py",
         "drift.tools-video_to_atlas-readme.82.artifact-albedocliff_20260907-analysis-division_keep_residual.png",
         "drift.tools-voice_workbench-readme.27.artifact-storm-audio-fix-20260920-before-audio_config.json",
         "drift.tools-voice_workbench-readme.31.artifact-storm-audio-fix-20260920-before-audio_config.json"
@@ -11102,7 +11725,7 @@
           "href": "/governance/source?path=.cursor/skills/add-text-ref/SKILL.md&line=20#L20"
         }
       ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，99 项）。\n目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。\n执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/commit-push-gamedraft/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/interactive-architecture-html/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- AGENTS.md\n- artifact/cursor-workflow-guide.md\n- docs/plan/production-tooling-requirements.md\n- tools/animation_pipeline/README.md\n- tools/json_lang/README.md\n- tools/narrative_debugger/README.md\n- tools/scene_relight/README.md\n- tools/task_orchestration_editor/README.md\n- tools/video_to_atlas/README.md\n- tools/voice_workbench/README.md"
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：规则漂移复核包（drift-risk，102 项）。\n目标：规则/工作流引用的代码或文档更新过，说明文字可能已经落后。\n执行方式：交给 agent 对比规则和当前实现：过时就改规则，仍然正确就标记已验证。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/commit-push-gamedraft/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/interactive-architecture-html/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- AGENTS.md\n- artifact/cursor-workflow-guide.md\n- docs/plan/production-tooling-requirements.md\n- tools/animation_pipeline/README.md\n- tools/character_lighting_lab/README.md\n- tools/json_lang/README.md\n- tools/narrative_debugger/README.md\n- tools/scene_relight/README.md\n- tools/task_orchestration_editor/README.md\n- tools/video_to_atlas/README.md\n- tools/voice_workbench/README.md"
     },
     {
       "id": "missing-metadata",
@@ -11165,14 +11788,16 @@
       "kind": "batch-edit",
       "summary": "缺少 status / owner / last verified 这类治理字段，可以标准化批量补。",
       "next": "交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。",
-      "issue_count": 26,
-      "artifact_count": 17,
+      "issue_count": 31,
+      "artifact_count": 21,
       "artifact_types": [
         "skill"
       ],
       "paths": [
         ".claude/skills/agent-docs-cli/SKILL.md",
         ".claude/skills/kill-gamedraft-residue/SKILL.md",
+        ".claude/skills/scene-depth-collision-from-art/SKILL.md",
+        ".claude/skills/提交项目/SKILL.md",
         ".cursor/skills/add-game-action/SKILL.md",
         ".cursor/skills/add-text-ref/SKILL.md",
         ".cursor/skills/agent-docs-cli/SKILL.md",
@@ -11180,14 +11805,14 @@
         ".cursor/skills/debug-panel-extension/SKILL.md",
         ".cursor/skills/editor-tools-iteration/SKILL.md",
         ".cursor/skills/feature-iteration/SKILL.md",
-        ".cursor/skills/gameplay-iteration/SKILL.md",
-        ".cursor/skills/handbook-mode/SKILL.md",
-        ".cursor/skills/interactive-architecture-html/SKILL.md"
+        ".cursor/skills/gameplay-iteration/SKILL.md"
       ],
-      "hidden_path_count": 5,
+      "hidden_path_count": 9,
       "issue_ids": [
         "missing-lifecycle.claude-skill.agent-docs-cli",
         "missing-lifecycle.claude-skill.kill-gamedraft-residue",
+        "missing-lifecycle.claude-skill.scene-depth-collision-from-art",
+        "missing-lifecycle.claude-skill.",
         "missing-lifecycle.claude-skill.add-game-action",
         "missing-lifecycle.cursor-skill.add-game-action",
         "missing-lifecycle.claude-skill.add-text-ref",
@@ -11211,7 +11836,10 @@
         "missing-lifecycle.claude-skill.pure-data-iteration",
         "missing-lifecycle.cursor-skill.pure-data-iteration",
         "missing-lifecycle.cursor-skill.push-gamedraft-story-temp-proxy",
-        "missing-lifecycle.cursor-skill.restart-gamedraft"
+        "missing-lifecycle.cursor-skill.restart-gamedraft",
+        "missing-lifecycle.claude-skill.scene-collision-from-art",
+        "missing-lifecycle.cursor-skill.scene-collision-from-art",
+        "missing-lifecycle.cursor-skill.scene-depth-collision-from-art"
       ],
       "sample_issues": [
         {
@@ -11233,6 +11861,24 @@
           "href": "/governance/source?path=.claude/skills/kill-gamedraft-residue/SKILL.md&line=1#L1"
         },
         {
+          "id": "missing-lifecycle.claude-skill.scene-depth-collision-from-art",
+          "severity": "info",
+          "path": ".claude/skills/scene-depth-collision-from-art/SKILL.md",
+          "line": 1,
+          "title": "Skill has no lifecycle metadata",
+          "evidence": "No status/owner/last-verified style metadata was detected.",
+          "href": "/governance/source?path=.claude/skills/scene-depth-collision-from-art/SKILL.md&line=1#L1"
+        },
+        {
+          "id": "missing-lifecycle.claude-skill.",
+          "severity": "info",
+          "path": ".claude/skills/提交项目/SKILL.md",
+          "line": 1,
+          "title": "Skill has no lifecycle metadata",
+          "evidence": "No status/owner/last-verified style metadata was detected.",
+          "href": "/governance/source?path=.claude/skills/%E6%8F%90%E4%BA%A4%E9%A1%B9%E7%9B%AE/SKILL.md&line=1#L1"
+        },
+        {
           "id": "missing-lifecycle.claude-skill.add-game-action",
           "severity": "info",
           "path": ".cursor/skills/add-game-action/SKILL.md",
@@ -11249,27 +11895,9 @@
           "title": "Skill has no lifecycle metadata",
           "evidence": "No status/owner/last-verified style metadata was detected.",
           "href": "/governance/source?path=.cursor/skills/add-game-action/SKILL.md&line=1#L1"
-        },
-        {
-          "id": "missing-lifecycle.claude-skill.add-text-ref",
-          "severity": "info",
-          "path": ".cursor/skills/add-text-ref/SKILL.md",
-          "line": 1,
-          "title": "Skill has no lifecycle metadata",
-          "evidence": "No status/owner/last-verified style metadata was detected.",
-          "href": "/governance/source?path=.cursor/skills/add-text-ref/SKILL.md&line=1#L1"
-        },
-        {
-          "id": "missing-lifecycle.cursor-skill.add-text-ref",
-          "severity": "info",
-          "path": ".cursor/skills/add-text-ref/SKILL.md",
-          "line": 1,
-          "title": "Skill has no lifecycle metadata",
-          "evidence": "No status/owner/last-verified style metadata was detected.",
-          "href": "/governance/source?path=.cursor/skills/add-text-ref/SKILL.md&line=1#L1"
         }
       ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：生命周期元数据补齐包（missing-lifecycle，26 项）。\n目标：缺少 status / owner / last verified 这类治理字段，可以标准化批量补。\n执行方式：交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .claude/skills/agent-docs-cli/SKILL.md\n- .claude/skills/kill-gamedraft-residue/SKILL.md\n- .cursor/skills/add-game-action/SKILL.md\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/agent-docs-cli/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/editor-tools-iteration/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/handbook-mode/SKILL.md\n- .cursor/skills/interactive-architecture-html/SKILL.md\n- .cursor/skills/kill-gamedraft-residue/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- .cursor/skills/restart-gamedraft/SKILL.md"
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：生命周期元数据补齐包（missing-lifecycle，31 项）。\n目标：缺少 status / owner / last verified 这类治理字段，可以标准化批量补。\n执行方式：交给 agent 批量插入统一生命周期块，默认 owner 为 shared，验证日期用本次审计日期。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .claude/skills/agent-docs-cli/SKILL.md\n- .claude/skills/kill-gamedraft-residue/SKILL.md\n- .claude/skills/scene-depth-collision-from-art/SKILL.md\n- .claude/skills/提交项目/SKILL.md\n- .cursor/skills/add-game-action/SKILL.md\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/agent-docs-cli/SKILL.md\n- .cursor/skills/animation-production/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/editor-tools-iteration/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/handbook-mode/SKILL.md\n- .cursor/skills/interactive-architecture-html/SKILL.md\n- .cursor/skills/kill-gamedraft-residue/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/push-gamedraft-story-temp-proxy/SKILL.md\n- .cursor/skills/restart-gamedraft/SKILL.md\n- .cursor/skills/scene-collision-from-art/SKILL.md\n- ...还有 1 个文件，详见 dashboard/registry.json"
     },
     {
       "id": "weak-workflow-entry",
@@ -11354,8 +11982,8 @@
       "kind": "agent-review",
       "summary": "相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。",
       "next": "交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。",
-      "issue_count": 13,
-      "artifact_count": 13,
+      "issue_count": 15,
+      "artifact_count": 15,
       "artifact_types": [
         "skill"
       ],
@@ -11363,6 +11991,7 @@
         ".claude/skills/agent-docs-cli/SKILL.md",
         ".claude/skills/kill-gamedraft-residue/SKILL.md",
         ".claude/skills/mainline-story-progress/SKILL.md",
+        ".claude/skills/scene-depth-collision-from-art/SKILL.md",
         ".cursor/skills/add-game-action/SKILL.md",
         ".cursor/skills/add-text-ref/SKILL.md",
         ".cursor/skills/core-framework-architecture-review/SKILL.md",
@@ -11370,14 +11999,14 @@
         ".cursor/skills/editor-tools-iteration/SKILL.md",
         ".cursor/skills/feature-iteration/SKILL.md",
         ".cursor/skills/gameplay-iteration/SKILL.md",
-        ".cursor/skills/handbook-mode/SKILL.md",
-        ".cursor/skills/production-mode/SKILL.md"
+        ".cursor/skills/handbook-mode/SKILL.md"
       ],
-      "hidden_path_count": 1,
+      "hidden_path_count": 3,
       "issue_ids": [
         "overlap.claude-skill.agent-docs-cli.cursor-skill.agent-docs-cli",
         "overlap.claude-skill.kill-gamedraft-residue.cursor-skill.kill-gamedraft-residue",
         "overlap.claude-skill.mainline-story-progress.cursor-skill.mainline-story-progress",
+        "overlap.claude-skill.scene-depth-collision-from-art.cursor-skill.scene-depth-collision-from-art",
         "overlap.claude-skill.add-game-action.cursor-skill.add-game-action",
         "overlap.claude-skill.add-text-ref.cursor-skill.add-text-ref",
         "overlap.claude-skill.core-framework-architecture-review.cursor-skill.core-framework-architecture-review",
@@ -11387,7 +12016,8 @@
         "overlap.claude-skill.gameplay-iteration.cursor-skill.gameplay-iteration",
         "overlap.claude-skill.handbook-mode.cursor-skill.handbook-mode",
         "overlap.claude-skill.production-mode.cursor-skill.production-mode",
-        "overlap.claude-skill.pure-data-iteration.cursor-skill.pure-data-iteration"
+        "overlap.claude-skill.pure-data-iteration.cursor-skill.pure-data-iteration",
+        "overlap.claude-skill.scene-collision-from-art.cursor-skill.scene-collision-from-art"
       ],
       "sample_issues": [
         {
@@ -11418,6 +12048,15 @@
           "href": "/governance/source?path=.claude/skills/mainline-story-progress/SKILL.md&line=1#L1"
         },
         {
+          "id": "overlap.claude-skill.scene-depth-collision-from-art.cursor-skill.scene-depth-collision-from-art",
+          "severity": "info",
+          "path": ".claude/skills/scene-depth-collision-from-art/SKILL.md",
+          "line": 1,
+          "title": "Two skills may overlap",
+          "evidence": "`.claude/skills/scene-depth-collision-from-art/SKILL.md` and `.cursor/skills/scene-depth-collision-from-art/SKILL.md` have token overlap score 1.00.",
+          "href": "/governance/source?path=.claude/skills/scene-depth-collision-from-art/SKILL.md&line=1#L1"
+        },
+        {
           "id": "overlap.claude-skill.add-game-action.cursor-skill.add-game-action",
           "severity": "info",
           "path": ".cursor/skills/add-game-action/SKILL.md",
@@ -11434,18 +12073,9 @@
           "title": "Two skills may overlap",
           "evidence": "`.cursor/skills/add-text-ref/SKILL.md` and `.cursor/skills/add-text-ref/SKILL.md` have token overlap score 1.00.",
           "href": "/governance/source?path=.cursor/skills/add-text-ref/SKILL.md&line=1#L1"
-        },
-        {
-          "id": "overlap.claude-skill.core-framework-architecture-review.cursor-skill.core-framework-architecture-review",
-          "severity": "info",
-          "path": ".cursor/skills/core-framework-architecture-review/SKILL.md",
-          "line": 1,
-          "title": "Two skills may overlap",
-          "evidence": "`.cursor/skills/core-framework-architecture-review/SKILL.md` and `.cursor/skills/core-framework-architecture-review/SKILL.md` have token overlap score 1.00.",
-          "href": "/governance/source?path=.cursor/skills/core-framework-architecture-review/SKILL.md&line=1#L1"
         }
       ],
-      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：Skill 重叠边界包（possible-overlap，13 项）。\n目标：相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。\n执行方式：交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .claude/skills/agent-docs-cli/SKILL.md\n- .claude/skills/kill-gamedraft-residue/SKILL.md\n- .claude/skills/mainline-story-progress/SKILL.md\n- .cursor/skills/add-game-action/SKILL.md\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/core-framework-architecture-review/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/editor-tools-iteration/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/handbook-mode/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md"
+      "agent_prompt": "请处理 GameDraft Skill/Workflow 治理包：Skill 重叠边界包（possible-overlap，15 项）。\n目标：相似 skill 可能职责重叠，先确认边界，再决定合并、拆分或互链。\n执行方式：交给 agent 比较触发条件，只输出边界建议和候选改法，不直接大改。\n要求：不要逐条问用户；先按文件分组，能自动修的直接修，无法判断的最后汇总成不超过 5 条确认项；完成后运行 `python3 -B tools/skill_workflow_governance/govern.py audit` 验证。\n涉及文件：\n- .claude/skills/agent-docs-cli/SKILL.md\n- .claude/skills/kill-gamedraft-residue/SKILL.md\n- .claude/skills/mainline-story-progress/SKILL.md\n- .claude/skills/scene-depth-collision-from-art/SKILL.md\n- .cursor/skills/add-game-action/SKILL.md\n- .cursor/skills/add-text-ref/SKILL.md\n- .cursor/skills/core-framework-architecture-review/SKILL.md\n- .cursor/skills/debug-panel-extension/SKILL.md\n- .cursor/skills/editor-tools-iteration/SKILL.md\n- .cursor/skills/feature-iteration/SKILL.md\n- .cursor/skills/gameplay-iteration/SKILL.md\n- .cursor/skills/handbook-mode/SKILL.md\n- .cursor/skills/production-mode/SKILL.md\n- .cursor/skills/pure-data-iteration/SKILL.md\n- .cursor/skills/scene-collision-from-art/SKILL.md"
     }
   ]
 }

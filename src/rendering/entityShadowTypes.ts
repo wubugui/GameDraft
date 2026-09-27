@@ -14,6 +14,11 @@ export interface ShadowSource {
   getWorldHeight(): number;
   /** 当前显示帧纹理（形状感知）；无则不画 */
   getTexture(): Texture | null;
+  /**
+   * 接触 AO 身体胶囊按哪几帧量宽度（站立片段，见 `SpriteEntity.getBodyReferenceFrames`）。
+   * 缺 / 空 = 按当前帧量（热区是静态图，只有一帧，两者相同）。
+   */
+  getBodyReferenceFrames?(): readonly Texture[];
   /** 左右朝向（与角色镜像一致） */
   getFacing(): 1 | -1;
   isVisible(): boolean;

@@ -168,6 +168,13 @@ DEFAULTS = dict(
     # 'all' = 另收面积 ≥ ground_min_component_frac 的独立块(多层台地构图,见 _ground_mask_from)
     ground_flood='bottom',
     ground_min_component_frac=0.01,
+    # 视差→深度的标定方式(2026-09-25):
+    # 'level'     = 自动,"地面尽量水平"拟合 (s,o),俯角用 pitch_deg(缺省,绝大多数场景)。
+    # 'structure' = 立面约束:地面取地形工作台里作者圈的可走区(walk 多边形),同时要求其余
+    #               非物体表面是竖直立面,**俯角与 (s,o) 一起拟合**;pitch_deg / relief 不再生效。
+    #               为"近乎平视看一面峭壁 + 一条窄栈道"这类构图而设 —— 'level' 在那上面会塌成
+    #               一张正对相机的平面(见 stage_calibrate_structure 与 agent_docs scene-bake-downstream)。
+    calibration='level',
     object_score_min=0.35, # 实例采信分数门槛(调它不必重跑推理)
     object_groups='',      # 提示词组,逗号分隔;空=默认组(见 object_seg.DEFAULT_GROUPS)
     object_prompts_extra='',  # 本场景额外提示词,逗号分隔
@@ -231,12 +238,17 @@ def geometry_signature(out_dir: Path, h: str, P: dict) -> str:
     # 后加的几何参数:**只在偏离缺省时**进签名。老 manifest 里没有这些键(serve.py 直接拿
     # man['params'] 算签名),照上面那样取会 KeyError;按缺省值补进去又会让全部存量烘焙
     # 一夜之间都被判"过期"。
-    for k in ('ground_flood', 'ground_min_component_frac'):
+    for k in ('ground_flood', 'ground_min_component_frac', 'calibration'):
         if P.get(k, DEFAULTS[k]) != DEFAULTS[k]:
             parts.append(f'{k}={P[k]}')
     for f in ('depth_edit.png', 'collision_edit.png', 'object_edit.png'):
         fp = out_dir / f
         parts.append(f'{f}:{hashlib.sha1(fp.read_bytes()).hexdigest()[:10]}' if fp.exists() else f'{f}:-')
+    if P.get('calibration', DEFAULTS['calibration']) == 'structure':
+        # 立面约束标定的地面**就是**作者圈的可走区:改了它,深度就该跟着变
+        # 工作目录是 out/<场景>/<背景基名>/,老的扁平口径是 out/<场景>/(见 work_dir)
+        sid = out_dir.name if out_dir.parent.resolve() == OUT.resolve() else out_dir.parent.name
+        parts.append(f'author_ground:{author_ground_digest(sid)}')
     return hashlib.sha1('|'.join(parts).encode()).hexdigest()[:16]
 
 
@@ -458,6 +470,256 @@ def refresh_ground_mask(cal: dict, objects: np.ndarray, P: dict) -> None:
     cal['ground_mask'] = gm
     cal['depth_shift'] = cal.get('depth_shift', 0.0) + o
     cal['ground_y_p95'] = float(np.percentile(np.abs(cal['Y'][gm]), 95))
+
+
+# ---------------------------------------------------------------- 立面约束标定
+#: 俯角搜索范围与步长(度)。先按步长扫一遍、每档各自求最优 (s,o),再在最优那档附近三参数联合细化。
+STRUCTURE_PITCH_RANGE = (10.0, 65.0)
+STRUCTURE_PITCH_STEP = 2.5
+#: 比地面最远处(2% 分位)的视差还小这么多的像素 = 远景(天空 / 对岸 / 谷底),不当立面约束。
+#: 视差是 Depth Anything 的归一化输出(0..1,近 = 大)。
+STRUCTURE_FAR_MARGIN = 0.1
+#: 损失里单个像素的封顶:纹理噪声 / 物体识别漏掉的边角不许主导拟合。
+STRUCTURE_CAP_GROUND = 0.6
+STRUCTURE_CAP_WALL = 0.8
+#: 求视差梯度前的高斯平滑(work 像素)。坡度只看梯度,逐像素的纹理毛刺与立面上真实的深度变化率
+#: 同一量级,不平滑会把拟合往小俯角拖(合成峭壁实测:白噪声 0.004 时 25° 拟成 19°)。
+STRUCTURE_GRAD_SIGMA = 1.5
+#: 拟合用的地面 / 立面各自最少多少像素(work 分辨率);少于它说明作者层或物体掩膜不对,直接报错。
+STRUCTURE_MIN_GROUND_PX = 200
+STRUCTURE_MIN_WALL_PX = 500
+
+
+def up_dot_field(d: np.ndarray, qy_step_ppu: float, theta: float) -> np.ndarray:
+    """逐像素表面法线与世界竖直向上的余弦(1 = 水平地面,0 = 竖直立面)。
+
+    与 `_ground_mask_from` 同式。正交俯视相机下:水平地面 d = qy/tanθ + c,竖直立面 d = −qy·tanθ + c,
+    **d 为常数是一张正对相机的斜面**(朝上余弦 = sinθ,俯角 45° 时恰为 0.707)——
+    'level' 标定塌掉时整张图就是这张面。"""
+    dqx = np.gradient(d, axis=1) * qy_step_ppu
+    dqy = -np.gradient(d, axis=0) * qy_step_ppu
+    return ((dqy * math.cos(theta) + math.sin(theta)) / np.sqrt(dqx * dqx + dqy * dqy + 1.0)).astype(np.float32)
+
+
+#: 深度模型 d = −K·r / (1 + β·r)(r = 视差)的 β 上下界(对数)。β → 0 是"深度与视差成线性"的极限。
+STRUCTURE_LOG_BETA_RANGE = (-18.0, 7.0)
+
+
+def structure_depth(raw: np.ndarray, K: float, beta: float) -> np.ndarray:
+    """立面约束标定的视差 → 深度:d = −K·r / (1 + β·r)(差一个常数,标定末尾按地面中位归零时消掉)。
+
+    与 'level' 的 d = 1/(s·r + o) 是**同一族**仿射视差(1/(s·r+o) = K/β − K·r/(1+β·r),K = s/o²,β = s/o),
+    只是把那个与坡度无关的常数 K/β 拿掉了。**为什么要换写法**:线性极限(β → 0)在 1/(s·r+o) 里要靠 s、o
+    一起趋于 0 才够得着 —— 2026-09-25 崖墓后段就拟到 s≈6e-32、o≈1.5e-16,深度里带着 10¹⁵ 量级的常数,
+    存成 float32 时真实起伏被舍入吞掉,整张又塌成一块,而拟合统计(float64 算的)照样好看、体检全过。"""
+    r = raw.astype(np.float64)
+    return (-K * r / (1.0 + beta * r))
+
+
+def calibrated_depth(raw: np.ndarray, cal: dict) -> np.ndarray:
+    """按 manifest 的 cal 把视差换成深度(未归零):structure 标定存 K/β,level 标定存 s/o。"""
+    if 'K' in cal and 'beta' in cal:
+        return structure_depth(raw, float(cal['K']), float(cal['beta']))
+    return 1.0 / (float(cal['s']) * raw.astype(np.float64) + float(cal['o']))
+
+
+def fit_structure_calibration(raw: np.ndarray, ground: np.ndarray, walls: np.ndarray, ppu: float,
+                              pitch_range: tuple[float, float] = STRUCTURE_PITCH_RANGE,
+                              pitch_step: float = STRUCTURE_PITCH_STEP,
+                              grad_sigma: float = STRUCTURE_GRAD_SIGMA) -> dict:
+    """拟合视差 → 深度映射 d = −K·r/(1+β·r)(`structure_depth`)与相机俯角 θ:地面朝上、立面竖直。
+
+    **为什么两个约束缺一不可**:只要求"地面水平"(`stage_calibrate`)时,作者掩膜一旦混进立面,
+    或者路在画面上本来就很窄,最省事的解是把深度的变化压到 0 —— 深度成常数,地面与立面一起变成
+    正对相机的斜面,损失照样很小(2026-09-08 / 09-14 崖墓前段 / 前段1 / 后段就是这样塌的)。
+    再要求立面竖直,这个常数解两头都错,被排除;而俯角同时被钉住 —— 视差沿屏幕纵向的变化率
+    在地面上与在立面上之比由 tan²θ 决定,只有真实俯角能让两边同时成立。
+
+    `ground` / `walls` 是 work 分辨率的布尔掩膜。返回 K、beta、theta 与逐俯角的损失曲线(诊断用,进 manifest)。
+    """
+    from scipy.optimize import minimize
+    rs = gaussian_filter(raw.astype(np.float64), grad_sigma) if grad_sigma > 0 else raw.astype(np.float64)
+    gx = np.gradient(rs, axis=1)
+    gy = np.gradient(rs, axis=0)
+    # 立面像素远多于地面:按固定种子抽到与地面同一量级,两项损失各算各的均值,互不稀释
+    rng = np.random.default_rng(7)
+    wall_idx = np.flatnonzero(walls.ravel())
+    if len(wall_idx) > 40000:
+        wall_idx = np.sort(rng.choice(wall_idx, 40000, replace=False))
+    g_idx = np.flatnonzero(ground.ravel())
+    sel = {k: (rs.ravel()[i], gx.ravel()[i], gy.ravel()[i]) for k, i in (('g', g_idx), ('w', wall_idx))}
+    lb_lo, lb_hi = STRUCTURE_LOG_BETA_RANGE
+
+    def up(k: str, K: float, beta: float, th: float) -> np.ndarray:
+        r, ggx, ggy = sel[k]
+        k_ = -K / (1.0 + beta * r) ** 2              # ∂d/∂r
+        dqx = k_ * ggx * ppu
+        dqy = -k_ * ggy * ppu
+        return (dqy * math.cos(th) + math.sin(th)) / np.sqrt(dqx * dqx + dqy * dqy + 1.0)
+
+    def params(v) -> tuple[float, float]:
+        return math.exp(min(max(v[0], -12.0), 12.0)), math.exp(min(max(v[1], lb_lo), lb_hi))
+
+    def loss(K: float, beta: float, th: float) -> float:
+        lg = np.mean(np.minimum(1.0 - up('g', K, beta, th), STRUCTURE_CAP_GROUND) ** 2)
+        lw = np.mean(np.minimum(np.abs(up('w', K, beta, th)), STRUCTURE_CAP_WALL) ** 2)
+        return float(lg + lw)
+
+    def best_kb(th: float, warm: list | None) -> tuple[float, list]:
+        # 起点:一张粗网格(对数空间) + 上一档俯角的最优解(相邻俯角的最优解连续变化,接力比重新撒点准得多)
+        starts = [[a, b] for a in np.log(np.geomspace(0.1, 100.0, 3)) for b in np.log(np.geomspace(1e-3, 10.0, 3))]
+        if warm is not None:
+            starts.insert(0, warm)
+        best = None
+        for x0 in starts:
+            r = minimize(lambda v: loss(*params(v), th), x0,
+                         method='Nelder-Mead', options=dict(xatol=1e-4, fatol=1e-8, maxiter=400))
+            if best is None or r.fun < best.fun:
+                best = r
+        return float(best.fun), [float(best.x[0]), float(best.x[1])]
+
+    curve = []
+    warm = None
+    for deg in np.arange(pitch_range[0], pitch_range[1] + 1e-6, pitch_step):
+        L, warm = best_kb(math.radians(float(deg)), warm)
+        curve.append((float(deg), L, warm))
+    deg0, _, x0 = min(curve, key=lambda c: c[1])
+    lo_deg, hi_deg = max(pitch_range[0], deg0 - pitch_step), min(pitch_range[1], deg0 + pitch_step)
+    r = minimize(lambda v: loss(*params(v), math.radians(min(max(v[2], lo_deg), hi_deg))),
+                 [x0[0], x0[1], deg0], method='Nelder-Mead',
+                 options=dict(xatol=1e-4, fatol=1e-8, maxiter=1200))
+    deg = float(min(max(r.x[2], lo_deg), hi_deg))
+    K, beta = params(r.x)
+    th = math.radians(deg)
+    return dict(K=K, beta=beta, theta=th, pitch_deg=deg, loss=float(r.fun),
+                ground_up_median=float(np.median(up('g', K, beta, th))),
+                wall_up_abs_median=float(np.median(np.abs(up('w', K, beta, th)))),
+                curve=[dict(pitch_deg=c[0], loss=round(c[1], 6)) for c in curve])
+
+
+def _author_walk_regions(sid: str) -> list[dict]:
+    """地形工作台作者层里人圈的可走多边形(不含自动生成的外围块)。"""
+    from tools.character_lighting_lab import terrain_compose as tc
+    doc = tc.load_terrain(sid)
+    return [r for r in (doc.get('regions') or [])
+            if r.get('kind') == 'walk' and not (r.get('screen') or {}).get('generated')]
+
+
+def author_ground_digest(sid: str) -> str:
+    """作者可走区的指纹(几何签名用):按网格多边形算,人在桌面工作台里拖一下顶点也会变。"""
+    h = hashlib.sha1()
+    for r in sorted(_author_walk_regions(sid), key=lambda r: str(r.get('id'))):
+        h.update(str(r.get('id')).encode('utf-8'))
+        h.update(np.asarray(r.get('points') or [], np.float64).round(6).tobytes())
+    return h.hexdigest()[:10]
+
+
+def author_ground_mask(sid: str, shape: tuple[int, int]) -> np.ndarray:
+    """作者圈的可走区栅格化到 work 分辨率(画面空间)。
+
+    多边形在画面上的轮廓用地形工作台自己的口径取(`art_review.region_screen_pts`):作者圈的那一圈
+    原样用;人在桌面工作台里拖过 / 新画的,按**当前磁盘上的几何**反投回画面。所以重烘前后可走区在
+    画面上是同一块 —— 这正是它能当标定依据的原因(画面上哪里是路,不随深度变)。
+    """
+    import cv2
+    from tools.terrain_workbench import art_review as ar
+    regions = _author_walk_regions(sid)
+    Hh, Ww = shape
+    m = np.zeros(shape, np.uint8)
+    if not regions:
+        return m.astype(bool)
+    g = ar.load_geom(sid)
+    for r in regions:
+        pts = ar.region_screen_pts(g, r)
+        if not pts or len(pts) < 3:
+            print(f'[calib] ⚠ {sid}: 可走区 {r.get("id")} 取不到画面轮廓,不参与标定')
+            continue
+        arr = np.array([[x / g.ww * Ww, y / g.wh * Hh] for x, y in pts], np.float64)
+        cv2.fillPoly(m, [np.round(arr).astype(np.int32)], 1)
+    return m.astype(bool)
+
+
+def stage_calibrate_structure(raw: np.ndarray, P: dict, objects: np.ndarray,
+                              author_ground: np.ndarray) -> dict:
+    """立面约束标定(`calibration='structure'`):返回与 `stage_calibrate` 同形的 cal。
+
+    - 地面 = 作者圈的可走区扣掉物体(石碑、树这类站在路上的东西);
+    - 立面 = 可走区外、非物体、非远景的全部表面;
+    - 俯角与 (s,o) 联合拟合(`fit_structure_calibration`),**不读 pitch_deg**;
+    - 地面掩膜(后面外推行走面用)= 可走区 ∩ 非物体 ∩ 标定后确实朝上(坡度 < 60°,去掉路面上立着的东西)。
+    """
+    Hg, Wg = raw.shape
+    ppu = P['ppu_ratio'] * Wg
+    cx, cy = Wg / 2.0, Hg / 2.0
+    n_author = int(author_ground.sum())
+    if n_author < STRUCTURE_MIN_GROUND_PX:
+        raise RuntimeError(
+            f'立面约束标定需要地形工作台里圈好的可走区(walk 多边形),现在只有 {n_author} 像素。'
+            f'先在地形工作台(或 art_review region)把画上的路 / 地面圈出来再烘')
+    ground_fit = binary_erosion(author_ground & ~objects, iterations=2)
+    if ground_fit.sum() < STRUCTURE_MIN_GROUND_PX:
+        ground_fit = author_ground & ~objects
+    far = raw < float(np.percentile(raw[ground_fit], 2)) - STRUCTURE_FAR_MARGIN
+    walls = binary_erosion(~binary_dilation(author_ground, iterations=3) & ~objects & ~far, iterations=2)
+    if walls.sum() < STRUCTURE_MIN_WALL_PX:
+        raise RuntimeError(f'立面约束标定找不到足够的立面像素({int(walls.sum())} px):'
+                           f'画面几乎全是地面 / 物体,这张图该用缺省的 level 标定')
+    fit = fit_structure_calibration(raw, ground_fit, walls, ppu)
+    theta = fit['theta']
+    sy = np.arange(Hg, dtype=np.float32)[:, None]
+    qy = ((cy - sy) / ppu * np.ones((1, Wg))).astype(np.float32)
+    K, beta = fit['K'], fit['beta']
+    d64 = structure_depth(raw, K, beta)
+    upd = up_dot_field(d64, ppu, theta)
+    mask = author_ground & ~objects & (upd > math.cos(math.radians(60.0)))
+    if mask.sum() < STRUCTURE_MIN_GROUND_PX:
+        mask = author_ground & ~objects
+    mask = binary_closing(mask, np.ones((3, 3)))
+    # 地面中位高度归零(float64 里做完再转 float32:归零之前的深度可以带很大的常数)
+    o = float(np.median(qy[mask] / math.tan(theta) - d64[mask]))
+    d = (d64 + o).astype(np.float32)
+    Y = (qy * math.cos(theta) - d * math.sin(theta)).astype(np.float32)
+    # ---- 自检:用**真正往下传的** float32 深度复算一遍,与拟合对不上就不许往下烘 ----
+    ds = gaussian_filter(d.astype(np.float64), STRUCTURE_GRAD_SIGMA)
+    u32 = up_dot_field(ds, ppu, theta)
+    g_up, w_up = float(np.median(u32[ground_fit])), float(np.median(np.abs(u32[walls])))
+    bad = []
+    if not np.isfinite(d).all():
+        bad.append('深度里有非有限值')
+    if abs(g_up - fit['ground_up_median']) > 0.1 or abs(w_up - fit['wall_up_abs_median']) > 0.1:
+        bad.append(f'落盘深度与拟合不一致(地面朝上 {g_up:.3f} vs {fit["ground_up_median"]:.3f},'
+                   f'立面 |朝上| {w_up:.3f} vs {fit["wall_up_abs_median"]:.3f})')
+    if g_up < math.cos(math.radians(35.0)):
+        bad.append(f'路面中位坡度 {math.degrees(math.acos(min(1.0, g_up))):.0f}° > 35°')
+    if w_up > math.sin(math.radians(25.0)):
+        bad.append(f'立面中位偏离竖直 {math.degrees(math.asin(min(1.0, w_up))):.0f}° > 25°')
+    if bad:
+        raise RuntimeError('立面约束标定自检失败,不往下烘:' + ';'.join(bad)
+                           + f'(俯角 {fit["pitch_deg"]:.1f}° K={K:.4g} β={beta:.4g})')
+    print(f"[calib] structure: 俯角 {fit['pitch_deg']:.2f}° K={K:.5g} β={beta:.4g} "
+          f"地面朝上中位 {math.degrees(math.acos(min(1.0, g_up))):.1f}° 坡 / "
+          f"立面偏离竖直中位 {math.degrees(math.asin(min(1.0, w_up))):.1f}° "
+          f"(地面 {int(ground_fit.sum())} px,立面 {int(walls.sum())} px;落盘深度复算)", flush=True)
+    # s/o 只作与 level 同口径的记录(1/(s·r+o) = K/β − K·r/(1+β·r));重算深度一律走 calibrated_depth(K, β)
+    return dict(s=beta * beta / K, o=beta / K, K=K, beta=beta, theta=theta, ppu=ppu, cx=cx, cy=cy,
+                d=d, Y=Y, ground_mask=mask, qy=qy, depth_shift=o,
+                ground_y_p95=float(np.percentile(np.abs(Y[mask]), 95)),
+                structure=dict(pitch_deg=fit['pitch_deg'], loss=fit['loss'],
+                               ground_up_median=g_up, wall_up_abs_median=w_up,
+                               curve=fit['curve'],
+                               ground_px=int(ground_fit.sum()), wall_px=int(walls.sum())))
+
+
+def calibration_mode(P: dict) -> str:
+    mode = str(P.get('calibration', DEFAULTS['calibration']))
+    if mode not in ('level', 'structure'):
+        raise ValueError(f'calibration 只认 level / structure,收到 {mode!r}')
+    return mode
+
+
+def effective_relief(P: dict) -> float:
+    """起伏增益:立面约束标定下恒为 1 —— 立面已按竖直拟合,再放大会把它掰成朝相机倒的斜面。"""
+    return 1.0 if calibration_mode(P) == 'structure' else float(P['relief'])
 
 
 def check_geometry_sanity(cal: dict, lay: dict, objects: np.ndarray, status=print) -> None:
@@ -1451,7 +1713,12 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
         np.save(out_dir / 'object_mask.npy', objects)
         print(f'[objects] 物体占画面 {objects.mean() * 100:.1f}%,候选地形 {(~objects).mean() * 100:.1f}%')
 
-    cal = stage_calibrate(raw, P, ground_prior=None if objects is None else ~objects)
+    if calibration_mode(P) == 'structure':
+        cal = stage_calibrate_structure(raw, P, objects, author_ground_mask(name, raw.shape))
+        # 俯角是拟合出来的:写回参数,manifest / 几何签名 / 查看器滑条记的都是真正用的那个
+        P['pitch_deg'] = round(cal['structure']['pitch_deg'], 2)
+    else:
+        cal = stage_calibrate(raw, P, ground_prior=None if objects is None else ~objects)
     if not cal['ground_mask'].any():
         # **失败必须响**:找不到地面时网格搜索会退化成"深度 ≈ 常数"(s/o 贴在搜索边界上),
         # 往下烘出来的行走面整个落在可见表面后面,碰撞 / 遮挡 / 灯位全错,而导出照样成功。
@@ -1483,7 +1750,7 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
     rad_bg = lay['c_bg']
     # relief gain: amplify structure depth relative to the pinned ground field
     # (ground itself is unchanged; monocular models compress vertical contrast)
-    k = float(P['relief'])
+    k = effective_relief(P)
     if abs(k - 1.0) > 1e-3:
         cal['d'] = (lay['d_walk'] + (cal['d'] - lay['d_walk']) * k).astype(np.float32)
         lay['d_bg'] = np.maximum(lay['d_walk'] + (lay['d_bg'] - lay['d_walk']) * k,
@@ -1561,7 +1828,10 @@ def build(img_path: Path, name: str, params: dict, background: str | None = None
         name=name, hash=h, params=P, work=dict(w=W_G, h=Hg),
         native=dict(w=src.width, h=src.height),
         cal=dict(s=cal['s'], o=cal['o'], theta=cal['theta'], ppu=cal['ppu'],
-                 cx=cal['cx'], cy=cal['cy'], ground_y_p95=cal['ground_y_p95']),
+                 cx=cal['cx'], cy=cal['cy'], ground_y_p95=cal['ground_y_p95'],
+                 mode=calibration_mode(P),
+                 **({'K': cal['K'], 'beta': cal['beta']} if 'K' in cal else {}),
+                 **({'structure': cal['structure']} if 'structure' in cal else {})),
         vol={k: (float(vol[k]) if isinstance(vol[k], (int, float, np.floating)) else int(vol[k]))
              for k in ('Nx', 'Ny', 'Nz', 'qx_min', 'qx_max', 'qy_min', 'qy_max', 'qz_min', 'qz_max')},
         world=dict(M=wb['M'].tolist(), x0=wb['x0'], x1=wb['x1'], y0=wb['y0'], y1=wb['y1'],
@@ -1806,7 +2076,7 @@ def terrain_preview(name: str, background: str | None = None) -> dict:
     theta, ppu, cx, cy = cal_m['theta'], cal_m['ppu'], cal_m['cx'], cal_m['cy']
 
     raw = resize_f(stage_depth(img_path, src_dir, h, model=str(P['depth_model'])), (W, Hh))
-    d = (1.0 / (cal_m['s'] * raw + cal_m['o'])).astype(np.float32)
+    d = calibrated_depth(raw, cal_m)
     sy = np.arange(Hh, dtype=np.float32)[:, None]
     qy = ((cy - sy) / ppu * np.ones((1, W))).astype(np.float32)
 
@@ -1815,7 +2085,15 @@ def terrain_preview(name: str, background: str | None = None) -> dict:
     objects = object_mask(resize_nn(ids_native, (W, Hh)), meta, P,
                           load_object_edit(src_dir, (Hh, W)))
 
-    gm = ground_mask_for(d, qy, theta, P, prior=~objects)
+    if calibration_mode(P) == 'structure':
+        # 与 stage_calibrate_structure 同一口径:作者可走区 ∩ 非物体 ∩ 确实朝上
+        author = author_ground_mask(name, (Hh, W))
+        gm = author & ~objects & (up_dot_field(d, ppu, theta) > math.cos(math.radians(60.0)))
+        if gm.sum() < STRUCTURE_MIN_GROUND_PX:
+            gm = author & ~objects
+        gm = binary_closing(gm, np.ones((3, 3)))
+    else:
+        gm = ground_mask_for(d, qy, theta, P, prior=~objects)
     if gm.any():                       # 地面中位高度归零(与 stage_calibrate 末尾同式)
         d = (d + float(np.median(qy[gm] / math.tan(theta) - d[gm]))).astype(np.float32)
     Y = (qy * math.cos(theta) - d * math.sin(theta)).astype(np.float32)
@@ -1823,7 +2101,7 @@ def terrain_preview(name: str, background: str | None = None) -> dict:
     d_walk = ((qy * math.cos(theta) - Yg) / math.sin(theta)).astype(np.float32)
 
     # 场景深度按运行时口径:relief 之后(游戏 raw_depth_rg.png 就是这个)
-    k = float(P['relief'])
+    k = effective_relief(P)
     d_front = d_walk + (d - d_walk) * k if abs(k - 1.0) > 1e-3 else d
 
     # ---- 站位体检:与三个滤镜同式 spriteDepth = footD + dps*(sy-syFoot) - bias ----
@@ -2222,7 +2500,7 @@ class PhaseSeedUnavailable(RuntimeError):
     """
 
 
-def seed_phase_payload(name: str, background: str) -> Path | None:
+def seed_phase_payload(name: str, background: str, force: bool = False) -> Path | None:
     """给一张**还没有 probe 载荷**的时段原画建载荷:白天几何 + 这张画的辐射。
 
     ## 为什么不走 `build`
@@ -2236,6 +2514,9 @@ def seed_phase_payload(name: str, background: str) -> Path | None:
     于是后来加的时段原画一张都没烘(2026-09-14:崖墓前段1/后段/正式、码头白天的夜)。
 
     已有载荷 ⇒ 返回 None,一字节不动。前提不满足 ⇒ 抛错说清缺什么。
+
+    `force=True`:**主背景的几何重做过**(重烘 + 导出深度)之后用。已有的时段载荷还压着旧几何
+    (旧 ground_d / 体素 / probe 位置),运行时却读新的深度与碰撞 —— 不重新起手,夜里角色就浮空 / 陷地。
     """
     from tools.character_lighting_lab.scene_geometry import scene_paths
     main_bg = scene_background(name)
@@ -2243,7 +2524,7 @@ def seed_phase_payload(name: str, background: str) -> Path | None:
         raise RuntimeError(f'{name}: {background} 是主背景,它的载荷要走完整的 build + export_runtime')
     scene_dir = ROOT / 'public' / 'resources' / 'runtime' / 'scenes' / name
     dest = scene_dir / 'lighting' / _bake_key(background)
-    if (dest / 'lighting.json').exists():
+    if (dest / 'lighting.json').exists() and not force:
         return None
     src = scene_dir / 'lighting' / _bake_key(main_bg)
     missing = [f for f in PHASE_SEED_FILES if not (src / f).exists()]

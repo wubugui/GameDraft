@@ -50,6 +50,14 @@ export interface DebugVfxDeps {
   setWindOverride?: (o: WindOverrideKeys) => void;
   /** 背景草木摆动的实时开销（没接上 ⇒ null）：与粒子的模拟耗时一起看"整套风"的预算 */
   getSwayStats?: () => { ms: number; verts: number; insts: number } | null;
+  /**
+   * 场景前景图层（[[scene-foreground-layers]]，本场景没有 ⇒ null）：哪几层、覆盖图渲染耗时、
+   * 覆盖图有没有交给遮挡滤镜。两个勾选是调试态，不落盘。
+   */
+  getForegroundStats?: () => { layers: string[]; coverageMs: number; enabled: boolean; coverageLive: boolean } | null;
+  getForegroundToggles?: () => { enabled: boolean; coverageView: boolean };
+  setForegroundEnabled?: (on: boolean) => void;
+  setForegroundCoverageView?: (on: boolean) => void;
 }
 
 type WindOverrideKeys = {
@@ -199,6 +207,43 @@ export function createDebugVfxSection(deps: DebugVfxDeps): DebugVfxSectionHandle
   windBox.appendChild(windReset);
   if (deps.getWind) sec.appendChild(windBox);
 
+  // ---- 场景前景图层：整体开关（关 = 与没配前景层逐像素相同）+ 覆盖图叠加
+  const fgBox = document.createElement('div');
+  fgBox.className = 'debug-dock__hint';
+  const fgLine = document.createElement('div');
+  fgBox.appendChild(fgLine);
+  const fgToggle = (label: string, set: ((on: boolean) => void) | undefined): HTMLInputElement => {
+    const row = document.createElement('label');
+    row.style.display = 'flex';
+    row.style.gap = '6px';
+    row.style.alignItems = 'center';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.addEventListener('change', () => { set?.(box.checked); render(); });
+    const txt = document.createElement('span');
+    txt.textContent = label;
+    row.append(box, txt);
+    fgBox.appendChild(row);
+    return box;
+  };
+  const fgOnBox = fgToggle('前景层（蒙版里按接地线逐像素判遮挡，挡住的画虚影；关 = 只看深度图）', deps.setForegroundEnabled);
+  const fgViewBox = fgToggle('画出前景覆盖图（品红 = 前景面，按接地深度判；红边 = 外沿，只关掉深度图的误挡）', deps.setForegroundCoverageView);
+  if (deps.getForegroundStats) sec.appendChild(fgBox);
+
+  function renderForeground(): void {
+    if (!deps.getForegroundStats) return;
+    const st = deps.getForegroundStats();
+    fgLine.textContent = st
+      ? `前景层 ${st.layers.length} 层（${st.layers.join('、')}）　覆盖图 ${st.coverageMs.toFixed(3)} ms/帧`
+        + `${st.coverageLive ? '' : '　（覆盖图未接上遮挡滤镜）'}`
+      : '前景层：本场景没有';
+    const tg = deps.getForegroundToggles?.();
+    if (tg) {
+      if (document.activeElement !== fgOnBox) fgOnBox.checked = tg.enabled;
+      if (document.activeElement !== fgViewBox) fgViewBox.checked = tg.coverageView;
+    }
+  }
+
   function renderWind(): void {
     const w = deps.getWind?.();
     if (!w) return;
@@ -233,6 +278,7 @@ export function createDebugVfxSection(deps: DebugVfxDeps): DebugVfxSectionHandle
   function render(): void {
     if (disposed) return;
     renderWind();
+    renderForeground();
     const sp = deps.getSpaceInfo();
     if (!sp) {
       spaceLine.textContent = '空间：还没进场景';

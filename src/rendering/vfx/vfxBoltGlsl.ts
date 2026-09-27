@@ -114,6 +114,19 @@ const tmpP = { x: 0, y: 0 };
  * 天上那道雷要现算到多高（真实 wu）：落点往上到可见矩形的上沿，再多一截（相机在抖、在跟人走）。
  * 没有可见矩形（工作台预览 / 算不出）⇒ `fallbackWu`。
  */
+/**
+ * 这一层雷该不该被原画前景（场景深度）挡住。
+ *
+ * **天上劈下来的雷身（`kind: 'sky'`）永远可见**（制作人 2026-09-25）：雷身几万 wu 高、从画面顶上劈下来，
+ * 劈在房后 / 崖后时被前景一刀切断，看起来像雷断在半空。**落点那些照旧被挡**：水面电弧（`kind: 'surface'`）
+ * 与落点的光团 / 火星 / 焦烟 / 碎石都贴着地面，劈在房后就该被房子挡住（它们不是画雷的发射器，本函数管不到，天然照旧）。
+ */
+export function boltLayerOccludedByDepth(bolts: readonly { id: string; kind: 'sky' | 'surface' }[] | undefined,
+                                          layer: { bolt: string }): boolean {
+  const def = bolts?.find((b) => b.id === layer.bolt);
+  return def?.kind !== 'sky';
+}
+
 export function boltNeedHeight(v: BoltView, fallbackWu: number): number {
   if (!v.view) return fallbackWu;
   const up = v.footY - v.view.y0;

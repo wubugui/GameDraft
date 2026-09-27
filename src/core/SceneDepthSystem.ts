@@ -10,8 +10,10 @@ import {
 } from '../rendering/EntityLightingFilter';
 import {
   CharacterShadingFilter,
+  uprightGradientFromM,
   type CharShadingSceneResources,
 } from '../rendering/CharacterShadingFilter';
+import type { ForegroundDepthModel } from '../rendering/foreground/foregroundLayerDefs';
 import type { ResolvedLightEnv } from '../rendering/lightEnv';
 import type { ShadowSceneContext, IEntityShadow } from '../rendering/entityShadowTypes';
 import { depthLog, depthError } from './depthLog';
@@ -81,6 +83,11 @@ export class SceneDepthSystem implements IGameSystem {
     private groundField: GroundDepthField | null = null;
     /** 行走面场的 GPU 版(影子逐像素取地面用);与 groundField 同源,由 Game 一并注入 */
     private groundTex: { tex: TextureSource; min: number; max: number } | null = null;
+    /**
+     * 场景前景层的覆盖图(`SceneForegroundLayers` 持有;蒙版内不做深度遮挡)。本系统只借引用:
+     * 覆盖图 RT 销毁**之前**持有者必须先 `setForegroundCoverage(null)`,把所有滤镜绑回占位(pixi-v8-traps)。
+     */
+    private fgCoverage: TextureSource | null = null;
 
     private R00 = 0; private R01 = 0; private R02 = 0;
     private R10 = 0; private R11 = 0; private R12 = 0;
@@ -283,6 +290,8 @@ export class SceneDepthSystem implements IGameSystem {
     }
 
     unload(): void {
+        // 覆盖图的持有者在场景卸载更早处就拆了(并广播过 null);这里兜底再解绑一次,防有滤镜留着旧引用
+        if (this.fgCoverage) this.setForegroundCoverage(null);
         this.depthTexture = null;
         this.depthShell = null;
         this.collisionData = null;
@@ -496,6 +505,7 @@ export class SceneDepthSystem implements IGameSystem {
             f.setOcclusionBlendFactor(blend.value);
             if (blend.overridden) this.blendOverriddenFilters.add(f);
             f.setFootBias(this._footBias);
+            f.setForegroundCoverage(this.fgCoverage);
             this.filters.push(f);
             depthLog(T, 'filter created, sceneSize (rendered):', this.sceneW, 'x', this.sceneH, 'total:', this.filters.length);
             return f;
@@ -529,6 +539,7 @@ export class SceneDepthSystem implements IGameSystem {
                 if (blend.overridden) this.blendOverriddenFilters.add(f);
             }
             f.setFootBias(this._footBias);
+            f.setForegroundCoverage(this.fgCoverage);
             this.filters.push(f);
             return f;
         } catch (e) {
@@ -561,6 +572,7 @@ export class SceneDepthSystem implements IGameSystem {
                 if (blend.overridden) this.blendOverriddenFilters.add(f);
             }
             f.setFootBias(this._footBias);
+            f.setForegroundCoverage(this.fgCoverage);
             this.filters.push(f);
             return f;
         } catch (e) {
@@ -574,6 +586,31 @@ export class SceneDepthSystem implements IGameSystem {
         const i = this.filters.indexOf(f);
         if (i >= 0) this.filters.splice(i, 1);
         this.blendOverriddenFilters.delete(f);
+    }
+
+    /**
+     * 场景前景层覆盖图(世界归一化 uv,R > 0.5 = 蒙版内 → 不做深度遮挡)。广播给现有的全部滤镜,
+     * 之后新建的滤镜在创建时绑上。null = 没有前景层 / 覆盖图要拆了(先调这个再销毁 RT)。
+     */
+    setForegroundCoverage(tex: { source: TextureSource } | null): void {
+        this.fgCoverage = tex?.source ?? null;
+        for (const f of this.filters) f.setForegroundCoverage?.(this.fgCoverage);
+    }
+
+    get hasForegroundCoverage(): boolean { return this.fgCoverage !== null; }
+
+    /**
+     * 场景前景层的前景面深度模型：与遮挡滤镜里角色直立 quad **同一套**——接地深度取行走面深度场
+     * （与滤镜的脚点深度同一个函数），直立面深度梯度 = `depth_per_sy`（缺字段从 M 现推）× 世界→深度图像素。
+     * 没开深度 / 没有行走面场 ⇒ null（前景面深度算不出来，前景层不建）。
+     */
+    foregroundDepthModel(): ForegroundDepthModel | null {
+        if (!this.enabled || !this.config || !this.groundField) return null;
+        const perSy = this.config.shader?.depth_per_sy ?? uprightGradientFromM(this.config);
+        return {
+            uprightPerY: perSy * this.worldToPixelY,
+            groundAt: (x, y) => this.sampleGroundDepth(x, y),
+        };
     }
 
     setDebugOnFilters(on: boolean): void {

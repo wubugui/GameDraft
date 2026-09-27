@@ -7348,6 +7348,25 @@
         }
       },
       {
+        "kind": "action",
+        "type": "playVfx",
+        "params": {
+          "instanceId": "纸钱_引路过场",
+          "restart": true
+        }
+      },
+      {
+        "kind": "action",
+        "type": "setPropState",
+        "params": {
+          "target": "player",
+          "socket": "right_hand",
+          "state": "out",
+          "fadeMs": 300,
+          "onlyIfBurning": true
+        }
+      },
+      {
         "kind": "present",
         "type": "waitTime",
         "duration": 3800
@@ -7357,14 +7376,6 @@
         "type": "showDialogue",
         "speaker": "{{player}}",
         "text": "火！火遭吹熄了……"
-      },
-      {
-        "kind": "action",
-        "type": "playVfx",
-        "params": {
-          "instanceId": "纸钱_引路过场",
-          "restart": true
-        }
       },
       {
         "kind": "present",

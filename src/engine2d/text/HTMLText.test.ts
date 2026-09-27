@@ -199,30 +199,101 @@ describe('HTMLText 与 pixi 一致', () => {
     }
   }
 
-  it('异步出图后交给收集器;生成中途改字最终落到最后一次', async () => {
+  it('异步出图后交给收集器;生成中途改字与 master 相同被丢掉,下一次改动才出新图', async () => {
     const items: BatchableElement[] = [];
     const collector: RenderCollector = {
       resolution: 2,
       addBatchable: (e) => items.push({ ...e, bounds: { ...e.bounds! } }),
       addCustom() {}, addUnbatched() {}, pushFilter() {}, popFilter() {}, pushMask() {}, popMask() {},
     };
-    const t = new HTMLText({ text: '第一句', anchor: 0.5, style: { fontSize: 18, fill: '#ffffff' } });
+    const style = { fontSize: 18, fill: '#ffffff' };
+    const widthOf = (text: string): number =>
+      Math.ceil(Math.ceil(new PIXI.HTMLText({ text, style }).width) * 2) / 2;
+    const t = new HTMLText({ text: '第一句', anchor: 0.5, style });
     t.collectRenderables(collector);
     expect(items.length).toBe(0); // 纹理还没出来
     t.text = '第一句,第二句';
-    t.collectRenderables(collector); // 生成中:这次改动先挂着
+    t.collectRenderables(collector); // 生成中:这次改动被丢掉(Pixi HTMLTextPipe 同)
     const flush = async (): Promise<void> => {
       for (let i = 0; i < 10; i++) await new Promise((r) => setTimeout(r, 0));
     };
     await flush();
-    t.collectRenderables(collector); // 第一张出来;发现键已变,补生成
+    t.collectRenderables(collector); // 第一张出来:仍是「第一句」,不补生成
     await flush();
     t.collectRenderables(collector);
-    const last = items[items.length - 1];
-    const expected = new PIXI.HTMLText({ text: '第一句,第二句', style: { fontSize: 18, fill: '#ffffff' } });
-    expect(last.texture.frame.width).toBe(Math.ceil(Math.ceil(expected.width) * 2) / 2);
+    let last = items[items.length - 1];
+    expect(last.texture.frame.width).toBe(widthOf('第一句'));
+    // 下一次改动照常出新图
+    t.text = '第一句,第二句,第三句';
+    t.collectRenderables(collector);
+    await flush();
+    t.collectRenderables(collector);
+    last = items[items.length - 1];
+    expect(last.texture.frame.width).toBe(widthOf('第一句,第二句,第三句'));
     // 四边形 = orig 按锚点居中
     expect(last.bounds!.minX).toBeCloseTo(-last.texture.frame.width / 2, 9);
     t.destroy();
+  });
+
+  it('生成中途改字:出图请求序列与 Pixi 8.17 HTMLTextPipe 逐项相同(D23)', async () => {
+    type Req = { resolve: (v: unknown) => void; key: string };
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    // Pixi:真 HTMLTextPipe,renderer.htmlText 换成可控的假件
+    const pixiReqs: Req[] = [];
+    const renderer = {
+      uid: 1, resolution: 1, _roundPixels: 0,
+      runners: { resolutionChange: { add() {} } },
+      gc: { addResourceHash() {}, now: 0 },
+      renderPipes: { batch: { addToBatch() {} } },
+      htmlText: {
+        getTexturePromise(x: { text: string }) {
+          return new Promise((resolve) => pixiReqs.push({ resolve, key: x.text }));
+        },
+        decreaseReferenceCount() {}, returnTexturePromise() {}, getReferenceCount() { return null; },
+      },
+    };
+    const pipe = new PIXI.HTMLTextPipe(renderer as never);
+    const pt = new PIXI.HTMLText({ text: 'a' });
+    // 每帧末尾照 RenderGroupSystem 复位 didViewUpdate(否则 AbstractText.onViewUpdate 不再置 _didTextUpdate)
+    const pixiFrame = () => { pipe.addRenderable(pt as never, {} as never); pt.didViewUpdate = false; };
+    // engine2d:同一串操作,出图换成同样可控的假件
+    const e2Reqs: Req[] = [];
+    const orig = {
+      get: htmlTextSystem.getTexturePromise, dec: htmlTextSystem.decreaseReferenceCount,
+      ret: htmlTextSystem.returnTexturePromise,
+    };
+    htmlTextSystem.getTexturePromise = ((x: HTMLText) =>
+      new Promise((resolve) => e2Reqs.push({ resolve, key: String(x.text) }))) as never;
+    htmlTextSystem.decreaseReferenceCount = (() => {}) as never;
+    htmlTextSystem.returnTexturePromise = (() => {}) as never;
+    try {
+      const et = new HTMLText({ text: 'a' });
+      const collector: RenderCollector = {
+        resolution: 1, addBatchable() {}, addCustom() {}, addUnbatched() {},
+        pushFilter() {}, popFilter() {}, pushMask() {}, popMask() {},
+      };
+      const e2Frame = () => et.collectRenderables(collector);
+      for (const [frame, reqs, obj, tex] of [
+        [pixiFrame, pixiReqs, pt, PIXI.Texture.WHITE],
+        [e2Frame, e2Reqs, et, PIXI.Texture.WHITE],
+      ] as const) {
+        frame();                  // 开始生成 'a'
+        obj.text = 'ab';          // 生成中改字
+        frame();
+        reqs[0].resolve(tex);
+        await flush();
+        for (let i = 0; i < 5; i++) { frame(); await flush(); }
+        obj.text = 'abc';         // 下一次改动
+        frame();
+        await flush();
+      }
+      expect(pixiReqs.map((r) => r.key)).toEqual(['a', 'abc']);
+      expect(e2Reqs.map((r) => r.key)).toEqual(pixiReqs.map((r) => r.key));
+      et.destroy();
+    } finally {
+      htmlTextSystem.getTexturePromise = orig.get;
+      htmlTextSystem.decreaseReferenceCount = orig.dec;
+      htmlTextSystem.returnTexturePromise = orig.ret;
+    }
   });
 });

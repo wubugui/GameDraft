@@ -8,6 +8,11 @@
  * - resources 的每个键都要在 WGSL 里有同名绑定(没有的被塞进第 99 组,WebGPU 下整个 draw 作废);
  * - WGSL 声明的每个自有绑定都要有资源;采样器 = samplerOf(同名纹理);
  * - 光柱结构的成员名 == 打包数值表的键(少一个 = 那一项在 GPU 上恒 0)。
+ * - 场景前景层覆盖图(uFgCoverage + uFgCoverageSampler):四个粒子程序都拼了遮挡段,都要有这两条绑定;
+ *   setForegroundCoverage 当场换绑后纹理 / 采样器仍对得上(采样器 = samplerOf(新覆盖图));
+ * - 片元阶段绑定数不超 WebGPU 缺省上限(luma 按 WGSL 声明建布局、可见性全阶段 ⇒ 声明了没读的也算):
+ *   超了整条管线建不出来、那一批粒子不画;
+ * - 遮挡段 vfxVisibility 的 GLSL / WGSL 孪生:字面量顺序与前景层分支一致(master 的 GLSL 是真值)。
  * 用的是运行时真实的建 shader 路径(VfxRenderer / VfxBeamView / 照明系统的 createCustomLitShader)。
  */
 import {
@@ -21,8 +26,11 @@ import { createSceneLitUniforms } from '../CharacterLitSprite';
 import { samplerOf } from '../legacy/gpuSampler';
 import { createBeamUniformValues } from './vfxBeamGlsl';
 import { BEAM_WGSL_UNIFORMS } from './vfxBeamWgsl';
+import { getVfxBeamGpuProgram } from './vfxBeamShaders';
 import { VfxBeamView } from './VfxBeamView';
 import { VfxRenderer, type VfxRenderDeps, type VfxSpriteSheet } from './VfxRenderer';
+import { VFX_OCCLUSION_GLSL, VFX_OCCLUSION_WGSL, VFX_WGSL_SOURCES } from './vfxShaders';
+import { getShaderLayoutFromWGSL } from '@luma.gl/webgpu';
 
 type StructsAndGroups = {
   groups: Array<{ group: number; binding: number; name: string; isUniform: boolean; type: string }>;
@@ -152,7 +160,25 @@ describe('粒子 WGSL 与 JS 资源对齐', () => {
     } as unknown as VfxEmitterRuntime;
   }
 
-  function views(canLight: boolean, tone: boolean, ems: VfxEmitterRuntime[]): Map<string, { shader: Shader; lit: boolean }> {
+  type ViewMap = Map<string, { shader: Shader; lit: boolean; depthGroup: UniformGroup }>;
+
+  function views(canLight: boolean, tone: boolean, ems: VfxEmitterRuntime[]): ViewMap {
+    return build(canLight, tone, ems).views;
+  }
+
+  /** 实例桩(与上面 views 同一份) */
+  function instanceOf(ems: VfxEmitterRuntime[]): VfxInstanceSim {
+    return {
+      id: 'inst', emitters: ems, time: 0, effect: { bolts: [] }, beams: [],
+      space: {
+        kind: 'field', viewDir: [0, -0.7, 0.7], wuPerQ: 1, groundWorldAtScene: () => [0, 0, 0],
+        toScene: (w: number[], o: { x: number; y: number }) => { o.x = w[0]; o.y = w[2]; },
+        toQ: (w: number[], o: number[]) => { o[0] = w[0]; o[1] = w[1]; o[2] = w[2]; },
+      },
+    } as unknown as VfxInstanceSim;
+  }
+
+  function build(canLight: boolean, tone: boolean, ems: VfxEmitterRuntime[]): { r: VfxRenderer; views: ViewMap; render: (e?: VfxEmitterRuntime[]) => void } {
     const sys = lighting();
     const deps: VfxRenderDeps = {
       entityLayer: new Container(),
@@ -167,16 +193,10 @@ describe('粒子 WGSL 与 JS 资源对齐', () => {
     };
     const r = new VfxRenderer(deps);
     const sheet: VfxSpriteSheet = { texture: Texture.WHITE, frames: [{ u0: 0, v0: 0, u1: 1, v1: 1 }], aspect: 1, frameRate: 0 };
-    const inst = {
-      id: 'inst', emitters: ems, time: 0, effect: { bolts: [] }, beams: [],
-      space: {
-        kind: 'field', viewDir: [0, -0.7, 0.7], wuPerQ: 1, groundWorldAtScene: () => [0, 0, 0],
-        toScene: (w: number[], o: { x: number; y: number }) => { o.x = w[0]; o.y = w[2]; },
-        toQ: (w: number[], o: number[]) => { o[0] = w[0]; o[1] = w[1]; o[2] = w[2]; },
-      },
-    } as unknown as VfxInstanceSim;
-    r.render([inst], new Map(ems.map((e) => [`inst/${e.def.id}`, sheet] as const)));
-    return (r as unknown as { views: Map<string, { shader: Shader; lit: boolean }> }).views;
+    const render = (list: VfxEmitterRuntime[] = ems) =>
+      r.render([instanceOf(list)], new Map(list.map((e) => [`inst/${e.def.id}`, sheet] as const)));
+    render();
+    return { r, views: (r as unknown as { views: ViewMap }).views, render };
   }
 
   it('受光 billboard / 受光薄片(照明系统 createCustomLitShader 建的)', () => {
@@ -187,20 +207,83 @@ describe('粒子 WGSL 与 JS 资源对齐', () => {
     checkShader(p.shader, '受光薄片');
     // 纹理单元顺序 = 移植前 resources 对象里的相对顺序
     expect(textureOrder(b.shader)).toEqual(
-      ['uColorTex', 'uNrm', 'uGround', 'uPL1', 'uPL2', 'uPBin', 'uValid', 'uVolRad', 'uVolEmit', 'uSkyaoTex', 'uDepthMap']);
+      ['uColorTex', 'uNrm', 'uGround', 'uPL1', 'uPL2', 'uPBin', 'uValid', 'uVolRad', 'uVolEmit', 'uSkyaoTex', 'uDepthMap', 'uFgCoverage']);
   });
 
   it('无光 / tone', () => {
     const v = views(false, true, [emitter('t', {}), emitter('u', { lit: false })]);
     for (const k of ['inst/t', 'inst/u']) {
       checkShader(v.get(k)!.shader, k);
-      expect(textureOrder(v.get(k)!.shader)).toEqual(['uColorTex', 'uDepthMap', 'uProbe']);
+      expect(textureOrder(v.get(k)!.shader)).toEqual(['uColorTex', 'uDepthMap', 'uFgCoverage', 'uProbe']);
     }
   });
 
   it('雷', () => {
     const v = views(false, false, [emitter('bolt', { bolt: { bolt: 'x' }, blend: 'add' })]);
     checkShader(v.get('inst/bolt')!.shader, '雷');
+    expect(textureOrder(v.get('inst/bolt')!.shader)).toEqual(['uDepthMap', 'uFgCoverage']);
+  });
+
+  const fgOf = (v: { shader: Shader }) => {
+    const res = v.shader.resources as Record<string, unknown>;
+    return [res.uFgCoverage, res.uFgCoverageSampler];
+  };
+  const hasFg = (v: { depthGroup: UniformGroup }) => (v.depthGroup.uniforms as Record<string, number>).uHasFgCoverage;
+  /** 采样参数与占位不同的覆盖图:采样器必须跟着换成它自己的那一份 */
+  const coverage = () => new TextureSource({ width: 4, height: 4, addressMode: 'repeat', scaleMode: 'nearest' });
+
+  it('前景覆盖图:五种视图都绑着;交来 / 收回当场换绑,纹理与采样器(samplerOf)一起换,开关跟着变', () => {
+    const ems = [emitter('b', {}), emitter('p', {}, true), emitter('u', { lit: false }), emitter('bolt', { bolt: { bolt: 'x' }, blend: 'add' })];
+    const lit = build(true, false, ems);
+    const tone = build(false, true, [emitter('t', {})]);
+    const all = [...lit.views.values(), ...tone.views.values()];
+    expect(all.length).toBe(5);
+    expect(lit.views.get('inst/b')!.lit && lit.views.get('inst/p')!.lit).toBe(true);
+    // 没有前景层:永不销毁的占位 + 它的共享采样器,开关 0
+    for (const v of all) {
+      expect(fgOf(v)).toEqual([Texture.EMPTY.source, samplerOf(Texture.EMPTY.source)]);
+      expect(hasFg(v)).toBe(0);
+    }
+    const cov = coverage();
+    expect(samplerOf(cov)).not.toBe(samplerOf(Texture.EMPTY.source));
+    lit.r.setForegroundCoverage(cov);
+    tone.r.setForegroundCoverage(cov);
+    for (const v of all) {
+      expect(fgOf(v)).toEqual([cov, samplerOf(cov)]);
+      expect(hasFg(v)).toBe(1);
+    }
+    for (const [k, v] of [...lit.views, ...tone.views]) checkShader(v.shader, `换绑后 ${k}`);
+    // 逐帧同步不把开关写回 0、不重建视图
+    const before = [...lit.views.values()].map((v) => v.shader);
+    lit.render();
+    expect([...lit.views.values()].map((v) => v.shader)).toEqual(before);
+    for (const v of lit.views.values()) expect(hasFg(v)).toBe(1);
+    lit.r.setForegroundCoverage(null);
+    tone.r.setForegroundCoverage(null);
+    for (const v of all) {
+      expect(fgOf(v)).toEqual([Texture.EMPTY.source, samplerOf(Texture.EMPTY.source)]);
+      expect(hasFg(v)).toBe(0);
+    }
+    lit.render();
+    for (const v of lit.views.values()) expect(hasFg(v)).toBe(0);
+    lit.r.clear();
+    tone.r.clear();
+  });
+
+  it('交来覆盖图之后才建的视图:建的时候就绑它(受光路经照明系统的 extra 也带上采样器)', () => {
+    const t = build(true, false, [emitter('x', {})]);
+    const cov = coverage();
+    t.r.setForegroundCoverage(cov);
+    const ems = [emitter('b', {}), emitter('p', {}, true), emitter('u', { lit: false }), emitter('bolt', { bolt: { bolt: 'x' }, blend: 'add' })];
+    t.render(ems);
+    expect(t.views.size).toBe(4);
+    expect(t.views.get('inst/b')!.lit).toBe(true);
+    for (const [k, v] of t.views) {
+      expect(fgOf(v), k).toEqual([cov, samplerOf(cov)]);
+      expect(hasFg(v), k).toBe(1);
+      checkShader(v.shader, k);
+    }
+    t.r.clear();
   });
 
   it('光柱:资源 / 布局;结构成员名 == 打包数值表的键', () => {
@@ -212,5 +295,107 @@ describe('粒子 WGSL 与 JS 资源对齐', () => {
     const names = wgslStructMembers(BEAM_WGSL_UNIFORMS, 'VfxBeamUniforms').map(([n]) => n).sort();
     expect(names).toEqual(Object.keys(createBeamUniformValues()).sort());
     bv.destroy();
+  });
+});
+
+/**
+ * WebGPU 缺省上限(不 requiredLimits;LumaRhiDevice 只抬了 maxTextureDimension2D):每个着色阶段 16 张取样纹理、
+ * 16 个采样器、12 个 uniform 缓冲。luma 按 WGSL 声明(getShaderLayoutFromWGSL)建绑定组布局,可见性全阶段——
+ * 声明了没读的纹理(受光片元的 uNrm / uGround / uVolRad / uVolEmit)也算。超了 = createPipelineLayout 校验失败、那一批不画。
+ */
+describe('粒子 WGSL · 片元阶段绑定数不超 WebGPU 缺省上限', () => {
+  /** luma 建管线布局用的就是这份反射(声明了的绑定全算) */
+  const bindingsOf = (src: string) => {
+    const layout = getShaderLayoutFromWGSL(src);
+    expect(layout, 'luma 反射不出 WGSL 布局').toBeTruthy();
+    return layout!.bindings;
+  };
+  const count = (src: string) => {
+    const b = bindingsOf(src);
+    return {
+      textures: b.filter((x) => x.type === 'texture').length,
+      samplers: b.filter((x) => x.type === 'sampler').length,
+      uniforms: b.filter((x) => x.type === 'uniform').length,
+    };
+  };
+  const PROGRAMS: Record<string, string> = { ...VFX_WGSL_SOURCES, beam: getVfxBeamGpuProgram().fragment!.source };
+
+  it('每个程序都在上限内', () => {
+    for (const [k, src] of Object.entries(PROGRAMS)) {
+      const c = count(src);
+      expect(c.textures, `${k} 取样纹理`).toBeLessThanOrEqual(16);
+      expect(c.samplers, `${k} 采样器`).toBeLessThanOrEqual(16);
+      expect(c.uniforms, `${k} uniform 缓冲`).toBeLessThanOrEqual(12);
+    }
+  });
+
+  it('钉住现有用量(加绑定时先看这里还剩多少)', () => {
+    // 受光:uColorTex + 照明 9 张(uNrm / uGround / uPL1 / uPL2 / uPBin / uValid / uVolRad / uVolEmit / uSkyaoTex)+ uDepthMap + uFgCoverage
+    expect(count(VFX_WGSL_SOURCES.lit)).toEqual({ textures: 12, samplers: 3, uniforms: 8 });
+    expect(count(VFX_WGSL_SOURCES.plateLit)).toEqual({ textures: 12, samplers: 3, uniforms: 8 });
+    expect(count(VFX_WGSL_SOURCES.unlit)).toEqual({ textures: 4, samplers: 4, uniforms: 6 });
+    expect(count(VFX_WGSL_SOURCES.bolt)).toEqual({ textures: 2, samplers: 2, uniforms: 3 });
+  });
+
+  it('四个粒子程序都声明了前景覆盖图与它的采样器', () => {
+    for (const [k, src] of Object.entries(VFX_WGSL_SOURCES)) {
+      const names = bindingsOf(src).map((x) => x.name);
+      expect(names, k).toContain('uFgCoverage');
+      expect(names, k).toContain('uFgCoverageSampler');
+    }
+  });
+});
+
+/**
+ * 遮挡段孪生(master 只改了 GLSL,WGSL 是本分支补的):vfxVisibility 两份的数值字面量按源码顺序一致,
+ * 前景层三路(外沿不判 / 前景面顶替深度图 / 其余照旧读深度图)的写法逐句对应。
+ * 字面量归一与 shaderTwins.test 同口径(textureSampleLevel 的 0 号 LOD 不算)。
+ */
+describe('粒子遮挡段 · GLSL / WGSL 孪生', () => {
+  const fnBody = (src: string, name: string): string => {
+    const i = src.search(new RegExp(`\\b${name}\\s*\\(`));
+    expect(i, `找不到函数 ${name}`).toBeGreaterThanOrEqual(0);
+    const open = src.indexOf('{', i);
+    let depth = 0;
+    for (let j = open; j < src.length; j++) {
+      if (src[j] === '{') depth++;
+      else if (src[j] === '}' && --depth === 0) return src.slice(open, j + 1);
+    }
+    throw new Error(`函数 ${name} 花括号不配对`);
+  };
+  const lits = (s: string): string[] => {
+    const t = s.replace(/\/\/.*$/gm, '')
+      .replace(/(textureSampleLevel\([^()]*),\s*0\.0\s*\)/g, '$1)')
+      .replace(/\b(?:vec[234]|texture_\w+|ptr)<[^<>]*>/g, ' ');
+    return [...t.matchAll(/(-\s*)?(?<![\w.])((?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?|\d+(?:[eE][-+]?\d+)?)[fu]?(?![\w.])/g)]
+      .map((m) => (m[1] ? '-' : '') + String(Number(m[2])));
+  };
+
+  it('vfxVisibility 字面量顺序一致', () => {
+    const g = lits(fnBody(VFX_OCCLUSION_GLSL, 'vfxVisibility'));
+    const w = lits(fnBody(VFX_OCCLUSION_WGSL, 'vfxVisibility'));
+    expect(g.length).toBeGreaterThan(10);
+    expect(w).toEqual(g);
+  });
+
+  it('前景层分支:外沿返回 1、前景面拿 fgDepth 顶替、只有不在前景层里才读深度图', () => {
+    const w = fnBody(VFX_OCCLUSION_WGSL, 'vfxVisibility');
+    const g = fnBody(VFX_OCCLUSION_GLSL, 'vfxVisibility');
+    expect(g).toContain('float fgKind = fgSample(duv, fgDepth);');
+    expect(w).toContain('let fgKind = fgSample(duv, vfxDepth.uHasFgCoverage, &fgDepth);');
+    const order = (src: string, marks: string[]) => marks.map((m) => {
+      const i = src.indexOf(m);
+      expect(i, m).toBeGreaterThanOrEqual(0);
+      return i;
+    });
+    const wi = order(w, ['fgSample(', 'if (fgKind > 1.5) { return 1.0; }', 'var sceneDepth = fgDepth;', 'if (fgKind < 0.5) {',
+      'textureSampleLevel(uDepthMap', 'vfxDepth.uTolerance < qz']);
+    expect([...wi].sort((a, b) => a - b)).toEqual(wi);
+    const gi = order(g, ['fgSample(', 'if (fgKind > 1.5) return 1.0;', 'float sceneDepth = fgDepth;', 'if (fgKind < 0.5) {',
+      'texture(uDepthMap', 'uTolerance < qz']);
+    expect([...gi].sort((a, b) => a - b)).toEqual(gi);
+    // 共用段(foregroundMaskWgsl)拼进来了,开关是 VfxDepth 的最后一个成员
+    expect(VFX_OCCLUSION_WGSL).toContain('fn fgSample(');
+    expect(/uOcclusionBlend: f32,\s*uHasFgCoverage: f32,\s*\}/.test(VFX_OCCLUSION_WGSL)).toBe(true);
   });
 });

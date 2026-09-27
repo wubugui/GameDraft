@@ -26,6 +26,9 @@ import {
   CHAR_LIGHT_COMMON_GLSL, CHAR_LIGHT_COMMON_WGSL, PROBE_SAMPLING_GLSL, PROBE_SAMPLING_WGSL, SKYAO_SAMPLING_GLSL, SKYAO_SAMPLING_WGSL,
 } from './CharacterShadingFilter';
 import { ENTITY_SCENE_LIGHTS_GLSL, ENTITY_SCENE_LIGHTS_WGSL } from './CharacterLitSprite';
+import { FG_COVERAGE_FRAG, FG_COVERAGE_VERT, FG_MASK_GLSL, FG_OCCLUSION_GLSL } from './foreground/foregroundMaskGlsl';
+import { FG_MASK_WGSL, FG_OCCLUSION_WGSL } from './foreground/foregroundMaskWgsl';
+import { FG_COVERAGE_WGSL } from './backgroundSway';
 
 /** 取 `//__${tag}_BEGIN__` 与 `//__${tag}_END__` 之间;标记缺失或颠倒直接抛(改名后不许悄悄切出半截源)。 */
 const sl = (src: string, tag: string) => {
@@ -35,6 +38,15 @@ const sl = (src: string, tag: string) => {
   return src.substring(i + b.length, j);
 };
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+/**
+ * GLSL 的整段程序(顶点 / 片元各一个 main)改名成 WGSL 的入口名,两段拼成一份再比;
+ * `void main(void)` 必须恰好出现一次(改了写法不许悄悄漏比)。
+ */
+const renameMain = (src: string, to: string) => {
+  const from = 'void main(void)';
+  if (src.split(from).length !== 2) throw new Error(`GLSL 程序里 ${from} 不是恰好一处(→ ${to})`);
+  return src.replace(from, `void ${to}(void)`);
+};
 
 /** 一份着色器源的顶层声明:函数名 → 整段文本、常量名 → 值表达式、struct 名 → 字段名(按声明顺序)。 */
 interface Decls { fns: Map<string, string>; consts: Map<string, string>; structs: Map<string, string[]> }
@@ -121,6 +133,9 @@ const PAIRS: Array<[string, string, string]> = [
   ['ESL', ENTITY_SCENE_LIGHTS_GLSL, ENTITY_SCENE_LIGHTS_WGSL],
   ['burn', BURN_GLSL, BURN_WGSL], ['breathing', BR_GLSL, BR_WGSL], ['charShade', CS_GLSL, CS_WGSL],
   ['beam', BEAM_GLSL_CORE, BEAM_WGSL_CORE], ['bolt', BOLT_GLSL_KERNEL, BOLT_WGSL_KERNEL],
+  // 场景前景层:使用方共用的取样段、蒙版判定、覆盖图整段程序(顶点 + 片元,WGSL 是 backgroundSway 实际建 shader 的那一份)
+  ['fgOcc', FG_OCCLUSION_GLSL, FG_OCCLUSION_WGSL], ['fgMask', FG_MASK_GLSL, FG_MASK_WGSL],
+  ['fgCoverage', renameMain(FG_COVERAGE_VERT, 'mainVertex') + renameMain(FG_COVERAGE_FRAG, 'mainFragment'), FG_COVERAGE_WGSL],
 ];
 /**
  * 已核实等价、写法不同的函数(tag:函数名 → 放宽到哪一步):
@@ -146,12 +161,18 @@ const KNOWN_EQUIVALENT = new Map<string, 'unordered' | Splice>([
   ['beam:bmAlong', { side: 'glsl', at: 3, lits: ['0'] }],
   // s = x < 0.0 ? -1.0 : 1.0 → var s = 1.0; if (x < 0.0) { s = -1.0; }
   ['bolt:boltErf', 'unordered'],
+  // 覆盖图的两个入口:WGSL 的输入 / 输出要写 @location(n)(GLSL 这边是 in / out 声明,不在函数里);
+  // 顶点 aPosition / aUV 的 0、1,片元 vUv 输入与颜色输出的 0、0。函数体里的常量照常逐个比
+  ['fgCoverage:mainVertex', { side: 'wgsl', at: 0, lits: ['0', '1'] }],
+  ['fgCoverage:mainFragment', { side: 'wgsl', at: 0, lits: ['0', '0'] }],
 ]);
 /**
  * 只在 WGSL 里有的移植辅助函数:tag → 函数名。bmSmoothstep = GLSL 内建 smoothstep 的展开;
- * bmAlongKey = uBeamAlong 打包成 array<vec4, K/2> 之后按下标取 vec2
+ * bmAlongKey = uBeamAlong 打包成 array<vec4, K/2> 之后按下标取 vec2;
+ * fgBaseAt = 覆盖图的接地采样 uBase 打包成 array<vec4, 16> 之后按下标取 vec2(GLSL 直接 uBase[i];
+ * 拆法与字节布局由 foreground/foregroundMaskWgsl.test.ts 钉住)
  */
-const WGSL_ONLY_HELPERS = new Set(['beam:bmSmoothstep', 'beam:bmAlongKey']);
+const WGSL_ONLY_HELPERS = new Set(['beam:bmSmoothstep', 'beam:bmAlongKey', 'fgCoverage:fgBaseAt']);
 
 /** 一对孪生的全部分歧(空 = 一致)。 */
 function twinDiffs(tag: string, g: string, w: string): string[] {
@@ -249,6 +270,19 @@ describe('孪生守门自检(只在内存里改 WGSL 一侧,守门必须红)', (
     expect(mutate('beam', ['let k0 = bmAlongKey(0)', 'let k0 = bmAlongKey(70)'])).not.toEqual([]);
     expect(mutate('LC', ['if (cone <= 0.0)', 'if (cone <= 0.1)'])).not.toEqual([]);
     expect(mutate('LC', ['(3.0 - 2.0 * coneT)', '(3.0 - 2.5 * coneT)'])).not.toEqual([]);
+  });
+
+  it('前景层:入口的 @location 例外只放过登记的编号,入口里其余常量、取样段与蒙版判定照比', () => {
+    expect(mutate('fgCoverage', ['if (rim < 0.004)', 'if (rim < 0.04)'])).not.toEqual([]);
+    expect(mutate('fgCoverage', ['if (body < 0.5)', 'if (body < 0.25)'])).not.toEqual([]);
+    expect(mutate('fgCoverage', ['vec3<f32>(rt, 1.0)', 'vec3<f32>(rt, 0.0)'])).not.toEqual([]);
+    expect(mutate('fgCoverage', ['@location(1) aUV', '@location(2) aUV'])).not.toEqual([]);
+    expect(mutate('fgCoverage', ['1e-3), 0.0, 1.0)', '1e-2), 0.0, 1.0)'])).not.toEqual([]);
+    expect(mutate('fgCoverage', ['min(i32(floor(t)), 30)', 'min(i32(floor(t)), 29)'])).not.toEqual([]);
+    expect(mutate('fgOcc', ['max(s.r, 1e-4)', 'max(s.r, 1e-3)'])).not.toEqual([]);
+    expect(mutate('fgOcc', ['return 2.0;', 'return 1.0;'])).not.toEqual([]);
+    expect(mutate('fgMask', ['256.0 * floor', '255.0 * floor'])).not.toEqual([]);
+    expect(mutate('fgMask', ['if (m.a < 0.02)', 'if (m.a < 0.002)'])).not.toEqual([]);
   });
 
   it('LOD 非 0 照比', () => {

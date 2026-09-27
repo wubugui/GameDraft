@@ -232,6 +232,149 @@ def check_scene_wind(sid: str, scene: dict) -> list["Issue"]:
     return out
 
 
+#: 与运行时 ``foregroundLayerDefs.FG_SWAY_SNAP_PX`` / 烘焙端 ``sway_field.OVERRIDE_SNAP_PX`` 同一个数(原画像素)
+FOREGROUND_SWAY_SNAP_PX = 24
+
+
+def _bake_key(img: object) -> str | None:
+    """背景图名 → 烘焙目录名(与运行时 ``bakeKeyFromBackground`` 同口径:取文件名去扩展名)。"""
+    if not isinstance(img, str) or not img.strip():
+        return None
+    base = img.strip().replace("\\", "/").split("/")[-1]
+    return base[:base.rfind(".")] if base.rfind(".") > 0 else base
+
+
+def _sway_owner_at(ids_png: "Path", x: float, y: float, snap: int = FOREGROUND_SWAY_SNAP_PX) -> int | None:
+    """原画像素点落在拆层哪一株上(0 = 附近 ``snap`` 像素内一株都没有;读不了图 = None)。与 ``sway_field.owner_at`` 同形。"""
+    try:
+        from PIL import Image as _Im
+        with _Im.open(ids_png) as im:
+            rgba = im.convert("RGBA")
+            w, h = rgba.size
+            xi, yi = int(x), int(y)
+            if not (0 <= xi < w and 0 <= yi < h):
+                return 0
+            px = rgba.load()
+            best, bd = 0, None
+            for yy in range(max(0, yi - snap), min(h, yi + snap + 1)):
+                for xx in range(max(0, xi - snap), min(w, xi + snap + 1)):
+                    r, g = px[xx, yy][0], px[xx, yy][1]
+                    oid = r + 256 * g
+                    if not oid:
+                        continue
+                    d = (xx - xi) ** 2 + (yy - yi) ** 2
+                    if bd is None or d < bd:
+                        best, bd = oid, d
+            return best if bd is not None and bd <= snap * snap else 0
+    except Exception:  # noqa: BLE001 — 图读不了就不做这一条离线检查(形状检查照做)
+        return None
+
+
+def check_scene_foreground_layers(sid: str, scene: dict, scene_rt: "Path | None" = None) -> list["Issue"]:
+    """场景前景图层 ``foregroundLayers``(TS 权威 ``SceneForegroundLayerDef``,运行时
+    ``src/rendering/foreground/foregroundLayerDefs.ts``):蒙版 + 接地(``base``:接地点 x / y 或接地折线 line)。
+
+    运行时对坏形状 / 解析不了的层一律**跳过该层**(dev 下出一行告警):树照样被画在人后面,
+    没有任何红字。所以形状错记 error;"拆层没烘 / 点不在任何一株上"这种运行时会静默跳过的记 warning。
+    ``scene_rt`` = ``public/resources/runtime/scenes/<id>``(给了才做拆层存在性与 id 图离线检查)。
+    """
+    out: list[Issue] = []
+    layers = scene.get("foregroundLayers")
+    if layers is None:
+        return out
+    if not isinstance(layers, list):
+        return [Issue("error", "scene", sid, "foregroundLayers 须为数组")]
+    seen: set[str] = set()
+    plants: list[tuple[str, list]] = []
+    for i, L in enumerate(layers):
+        tag = f"foregroundLayers[{i}]"
+        if not isinstance(L, dict):
+            out.append(Issue("error", "scene", sid, f"{tag} 须为对象"))
+            continue
+        lid = L.get("id")
+        if not isinstance(lid, str) or not lid.strip():
+            out.append(Issue("error", "scene", sid, f"{tag} 缺 id"))
+            continue
+        tag = f"前景层「{lid}」"
+        if lid in seen:
+            out.append(Issue("error", "scene", sid, f"{tag} id 重复(场景内唯一;运行时后一个跳过)"))
+        seen.add(lid)
+        src = L.get("source")
+        if not isinstance(src, dict):
+            out.append(Issue("error", "scene", sid, f"{tag} 缺 source"))
+            continue
+        kind = src.get("kind")
+        if kind != "swayPlant":
+            out.append(Issue("error", "scene", sid,
+                             f"{tag} source.kind {kind!r} 不认识(本期只有 swayPlant);运行时跳过这一层"))
+            continue
+        at = src.get("at")
+        if not isinstance(at, list) or len(at) != 2 or not all(_is_num(v) for v in at):
+            out.append(Issue("error", "scene", sid,
+                             f"{tag} source.at 须为两个数 [x, y](原画像素,落在那株植物上);运行时跳过这一层"))
+            continue
+        if "base" in L:
+            b = L.get("base")
+            if not isinstance(b, dict):
+                out.append(Issue("error", "scene", sid, f"{tag} base 须为对象 {{x?, y?, line?}}(接地,场景 wu)"))
+            else:
+                for k in ("x", "y"):
+                    if k in b and not (_is_num(b[k]) and math.isfinite(float(b[k]))):
+                        out.append(Issue("error", "scene", sid, f"{tag} base.{k} {b[k]!r} 须为有限数(场景 wu)"))
+                if "line" in b:
+                    ln = b.get("line")
+                    ok = (isinstance(ln, list) and len(ln) >= 2
+                          and all(isinstance(p, list) and len(p) == 2 and all(_is_num(v) for v in p) for p in ln))
+                    if not ok:
+                        out.append(Issue("error", "scene", sid,
+                                         f"{tag} base.line 须为至少两个 [x, y] 点(场景 wu,接地折线);运行时跳过这一层"))
+                    elif len({float(p[0]) for p in ln}) < 2:
+                        out.append(Issue("error", "scene", sid, f"{tag} base.line 至少要两个 x 不同的点;运行时跳过这一层"))
+        plants.append((str(lid), [float(at[0]), float(at[1])]))
+    if not plants:
+        return out
+    if scene.get("wind") is None:
+        out.append(Issue("warning", "scene", sid,
+                         "配了 swayPlant 前景层但场景没有 wind —— 没风就不装草木拆层,前景层全部跳过(树照样画在人后面)"))
+    if scene_rt is None:
+        return out
+    # 运行时每个时段按**那个时段的背景**找拆层(主背景 + timeVariants 各自的 backgrounds[0])
+    keys: list[tuple[str, str]] = []
+    bgs = scene.get("backgrounds") or []
+    k0 = _bake_key(bgs[0].get("image")) if bgs and isinstance(bgs[0], dict) else None
+    if k0:
+        keys.append(("主背景", k0))
+    for ph, var in (scene.get("timeVariants") or {}).items() if isinstance(scene.get("timeVariants"), dict) else []:
+        vb = (var or {}).get("backgrounds") if isinstance(var, dict) else None
+        if isinstance(vb, list) and vb and isinstance(vb[0], dict):
+            kk = _bake_key(vb[0].get("image"))
+            if kk and all(kk != k for _, k in keys):
+                keys.append((f"时段「{ph}」", kk))
+    for who, key in keys:
+        d = scene_rt / "lighting" / key
+        if not (d / "sway.json").exists():
+            out.append(Issue("warning", "scene", sid,
+                             f"配了 swayPlant 前景层,但{who}没有草木拆层(lighting/{key}/sway.json)——这个时段前景层全部跳过。"
+                             f"跑 `sh scripts/py.sh -m tools.character_lighting_lab.scene_fields --scene {sid}`"))
+            continue
+        ids_png = d / "sway_ids.png"
+        try:
+            meta = json.loads((d / "sway.json").read_text(encoding="utf-8"))
+            if isinstance(meta, dict) and isinstance(meta.get("ids"), str):
+                ids_png = d / meta["ids"]
+        except Exception:  # noqa: BLE001 — sway.json 坏了由别处报;这里只是找 id 图
+            pass
+        if not ids_png.exists():
+            continue
+        for lid, at in plants:
+            owner = _sway_owner_at(ids_png, at[0], at[1])
+            if owner == 0:
+                out.append(Issue("warning", "scene", sid,
+                                 f"前景层「{lid}」的点 ({at[0]:.0f}, {at[1]:.0f}) 在{who}的拆层(lighting/{key})里"
+                                 f"附近 {FOREGROUND_SWAY_SNAP_PX} 像素内没有任何一株植物——运行时跳过这一层(重烘后分割变了?)"))
+    return out
+
+
 def check_acoustic_space_ref(
     sid: str, scene: dict, acoustic_ids: set[str], spaces: dict | None = None,
 ) -> list["Issue"]:
@@ -1116,6 +1259,8 @@ def validate(model: ProjectModel) -> list[Issue]:
 
         issues.extend(check_acoustic_space_ref(sid, sc, _acoustic_ids, _acoustic_spaces))
         issues.extend(check_scene_wind(sid, sc))
+        issues.extend(check_scene_foreground_layers(
+            sid, sc, Path(__file__).resolve().parents[2] / "public" / "resources" / "runtime" / "scenes" / sid))
 
         for zone in sc.get("zones", []) or []:
             zid = str(zone.get("id", "")) or "?"
@@ -12408,6 +12553,8 @@ _CUTSCENE_STAGING_SAVE_ACTIONS = frozenset([
     "persistNpcDisablePatrol", "persistNpcEnablePatrol",
     "persistNpcAt", "persistNpcAnimState", "persistPlayNpcAnimation",
     "setEntityField", "setSceneEntityPosition", "setHotspotDisplayImage",
+    # 手持挂件切状态（风把火把吹灭要落在过场里起风那一拍）：制作人 2026-09-26 拍板放行
+    "setPropState",
 ])
 
 # 与运行时 CutsceneManager.executePresent 的 switch 分支、编辑器 timeline_editor.PRESENT_TYPES 同源；

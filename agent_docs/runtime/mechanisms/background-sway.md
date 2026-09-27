@@ -55,6 +55,13 @@ last_governed: 2026-09-23
 - **与场景风的关系**:共用参数、钟、阵风包络与风向摆动;**湍流是草木自己的两频强迫 × `turbIntensity`**,不是 `sampleSceneWind` 的三维涡矢量
   ——"同一阵风同一拍"成立,"逐点采样同一个风矢量"不成立。
 - 纸钱躺在植被上取的是这一帧**画出来的**位移(按三角形插值),不另算公式。
+- **前景层的覆盖图网格归本类登记**([[scene-foreground-layers]]):`createForegroundMask` 出的网格绑着位移图与 id / matte,
+  `destroy` **先销毁登记着的网格**再销毁位移图。`renderUv` 返回这一帧是否真渲了位移图(前景层据此重渲覆盖图);
+  `instanceDisplacement(id)` = 该株网格顶点此刻的最大位移,是它画出来的任何像素的位移上界
+  (不是软封顶:封顶约束转角 × 株长,透视下实测会超 14%)。
+  engine2d 分支:这张网格的程序 WGSL 版在 `foregroundMaskWgsl.ts` 的 `fgCoverageProgramWgsl`(参数组 `uBase` 必须排第一,
+  见 [[scene-foreground-layers]]);位移图 / id / matte 三张纹理各配 `<名>Sampler`。先销毁网格再销毁位移图的理由不变:
+  绑到已销毁的纹理源在 engine2d 里当帧抛(等价 Pixi 的 BindGroup 自毁)。
 
 - **位移图 / 合成两个程序都有 GLSL 与 WGSL 两份**(`backgroundSway.ts` 里并排),算法改动两份一起改,改完跑
   `node tools/render_parity/run.mjs --case 摆动呼吸淡入`;位移图在两后端间允许半精度 1 ulp 的插值舍入差(见 pixi-shader-wgsl-port)。

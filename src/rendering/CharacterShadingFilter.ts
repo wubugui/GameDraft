@@ -8,6 +8,8 @@ import CLC_WGSL_SRC from './charLightCommon.wgsl?raw';
 import type { SceneDepthConfig } from '../data/types';
 import type { IEntityShadingFilter } from './EntityLightingFilter';
 import { samplerOf } from './legacy/gpuSampler';
+import { FG_OCCLUSION_GLSL } from './foreground/foregroundMaskGlsl';
+import { FG_OCCLUSION_WGSL, fgCoverageBindingsWgsl } from './foreground/foregroundMaskWgsl';
 
 /**
  * 角色物理着色滤镜:character_lighting_lab 查看器 CHAR_FS 的逐像素移植。
@@ -93,6 +95,8 @@ uniform float uOcclusionBlendFactor;
 uniform float uHasFootDepth;   // 0=本帧没拿到脚深度 → 整段遮挡跳过
 uniform float uFootBias;       // 实验室 0.045
 uniform float uDebug;
+// 场景前景层覆盖图（uFgCoverage + uHasFgCoverage；没有前景层时开关 0，逐像素与没有这一段时相同）
+${FG_OCCLUSION_GLSL}
 
 // ---- 角色 quad(逐帧驱动;**filter 专用**——mesh 路径的 UV/翻转/脚点全部来自几何,无此依赖) ----
 uniform vec3  uFootQ;
@@ -541,7 +545,13 @@ void main(void) {
             float syTex = wy * uWorldToPixelY;
             float upright = uDepthPerSy * (syTex - syTexFoot);
             float spriteDepth = uFootQ.z + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
-            occluded = sceneDepth + uTolerance < spriteDepth;
+            // 场景前景层（三份遮挡实现同一段，见 foregroundMaskGlsl）：前景面按接地深度立起来的直立面比，
+            // 与脚点同源、两块直立面同一个梯度——不加脚点偏置 / 容差 / floor 偏移；外沿（深度图糊的那圈）不判
+            float fgDepth;
+            float fgKind = fgSample(depthUV, fgDepth);
+            occluded = fgKind > 1.5 ? false
+                : fgKind > 0.5 ? fgDepth < uFootQ.z + upright - 1e-4
+                : sceneDepth + uTolerance < spriteDepth;
         }
     }
 
@@ -669,7 +679,8 @@ export const CHAR_LIGHT_COMMON_GLSL: string =
 
 let sharedProgram: GlProgram | null = null;
 /** 直立 quad 的深度梯度 tanθ/ppu:从 depthConfig 的 M 现推(R 第二行 = [0, cosθ, −sinθ])。 */
-function uprightGradientFromM(cfg?: SceneDepthConfig | null): number {
+/** 直立 quad 的深度梯度 tanθ/ppu（`depth_per_sy` 缺字段时从 M 现推）；场景前景层的前景面深度用同一个数 */
+export function uprightGradientFromM(cfg?: SceneDepthConfig | null): number {
   const R = cfg?.M?.R, ppu = cfg?.M?.ppu;
   if (!R || !ppu) return 0;
   const cosT = R[1]?.[1] ?? 0, sinT = -(R[1]?.[2] ?? 0);
@@ -778,9 +789,13 @@ export const PROBE_SAMPLING_WGSL: string = sliceClcWgsl(CHAR_LIGHT_COMMON_WGSL, 
 // - 组 0 是 Pixi 滤镜约定(gfu + uTexture + uSampler);自己的资源全在组 1,变量名 = resources 的键名,
 //   纹理声明顺序与构造里的 resources 表相对顺序一致(WebGL 按组号 / 绑定号升序分纹理单元)。
 // - ShadeUniforms 的成员**同名同序**对应构造里 shadeUniforms 的 JS 声明(Pixi 按声明顺序排偏移)。
-// - 用 texture() 采样的两张(uDepthMap / uNrm)各配一个「纹理名 + Sampler」(该纹理自己的 style;
-//   setNormalTexture 换法线图时跟着换);都在分支里采,用 textureSampleLevel(.., 0.0)(单级纹理,等价)。
+// - 用 texture() 采样的三张(uDepthMap / uFgCoverage / uNrm)各配一个「纹理名 + Sampler」(该纹理自己的 style;
+//   setForegroundCoverage / setNormalTexture 换图时跟着换);都在分支里采,用 textureSampleLevel(.., 0.0)(单级纹理,等价)。
+//   前景覆盖图的取样 fgSample 是 foregroundMaskWgsl 的共用段,uHasFgCoverage 作参数传进去。
 //   其余全走 textureLoad(公共块)。uTexture 在 discard 之前的一致控制流里用 textureSample。
+// - 片元阶段绑定数(WebGPU 默认上限 16 张取样纹理 / 16 个采样器 / 12 个 uniform 缓冲;charLightingWgsl.test 钉着):
+//   纹理 11 张(uTexture + uDepthMap / uFgCoverage / uNrm / uPL1 / uPL2 / uPBin / uValid / uSkyaoTex / uVolRad / uVolEmit),
+//   采样器 4 个(uSampler + uDepthMapSampler / uFgCoverageSampler / uNrmSampler),uniform 缓冲 2 个(gfu + shadeUniforms)。
 // - 公共块拼 CHAR_LIGHT_COMMON_WGSL(函数不读绑定),main 开头按字段名逐个赋值建 ClcProbe / ClcSkyao;
 //   ClcVol / ClcRt 只在 RT 那一支里建。gatherRT 的片元坐标 = 入口的位置内建量 .xy。
 // - 结构体里不写注释:Pixi 用正则解析 WGSL 的 struct 与 group 声明。
@@ -813,6 +828,7 @@ struct ShadeUniforms {
     uOcclusionBlendFactor: f32,
     uHasFootDepth: f32,
     uFootBias: f32,
+    uHasFgCoverage: f32,
     uDebug: f32,
     uWorkSize: vec2<f32>,
     uWorldToWork: vec2<f32>,
@@ -882,17 +898,18 @@ struct ShadeUniforms {
 @group(1) @binding(0) var<uniform> shadeUniforms: ShadeUniforms;
 @group(1) @binding(1) var uDepthMap: texture_2d<f32>;
 @group(1) @binding(2) var uDepthMapSampler: sampler;
-@group(1) @binding(3) var uNrm: texture_2d<f32>;
-@group(1) @binding(4) var uNrmSampler: sampler;
-@group(1) @binding(5) var uPL1: texture_2d<f32>;
-@group(1) @binding(6) var uPL2: texture_2d<f32>;
-@group(1) @binding(7) var uPBin: texture_2d<f32>;
-@group(1) @binding(8) var uValid: texture_2d<f32>;
-@group(1) @binding(9) var uSkyaoTex: texture_2d<f32>;
-@group(1) @binding(10) var uVolRad: texture_2d<f32>;
-@group(1) @binding(11) var uVolEmit: texture_2d<f32>;
+${fgCoverageBindingsWgsl(1, 3)}@group(1) @binding(5) var uNrm: texture_2d<f32>;
+@group(1) @binding(6) var uNrmSampler: sampler;
+@group(1) @binding(7) var uPL1: texture_2d<f32>;
+@group(1) @binding(8) var uPL2: texture_2d<f32>;
+@group(1) @binding(9) var uPBin: texture_2d<f32>;
+@group(1) @binding(10) var uValid: texture_2d<f32>;
+@group(1) @binding(11) var uSkyaoTex: texture_2d<f32>;
+@group(1) @binding(12) var uVolRad: texture_2d<f32>;
+@group(1) @binding(13) var uVolEmit: texture_2d<f32>;
 
 ${CHAR_LIGHT_COMMON_WGSL}
+${FG_OCCLUSION_WGSL}
 
 struct VSOutput {
     @builtin(position) position: vec4<f32>,
@@ -970,7 +987,17 @@ fn mainFragment(
             let upright = shadeUniforms.uDepthPerSy * (syTex - syTexFoot);
             let spriteDepth = shadeUniforms.uFootQ.z + upright + shadeUniforms.uFloorOffset
                 + shadeUniforms.uFloorOffsetExtra - shadeUniforms.uFootBias;
-            occluded = sceneDepth + shadeUniforms.uTolerance < spriteDepth;
+            // 场景前景层(三份遮挡实现同一段,见 foregroundMaskGlsl):前景面按接地深度立起来的直立面比,
+            // 不加脚点偏置 / 容差 / floor 偏移;外沿(深度图糊的那圈)不判
+            var fgDepth: f32;
+            let fgKind = fgSample(depthUV, shadeUniforms.uHasFgCoverage, &fgDepth);
+            if (fgKind > 1.5) {
+                occluded = false;
+            } else if (fgKind > 0.5) {
+                occluded = fgDepth < shadeUniforms.uFootQ.z + upright - 1e-4;
+            } else {
+                occluded = sceneDepth + shadeUniforms.uTolerance < spriteDepth;
+            }
         }
     }
 
@@ -1188,6 +1215,7 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
           uOcclusionBlendFactor: { value: 0, type: 'f32' },
           uHasFootDepth: { value: 0, type: 'f32' },
           uFootBias: { value: 0.045, type: 'f32' },
+          uHasFgCoverage: { value: 0, type: 'f32' },
           uDebug: { value: 0, type: 'f32' },
 
           uWorkSize: { value: new Float32Array([scene.workW, scene.workH]), type: 'vec2<f32>' },
@@ -1260,6 +1288,8 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
         uDepthMap: depthSrc,
         // WGSL 的采样器(「纹理名 + Sampler」):该纹理自己的 style,与 WebGL 用纹理自带采样状态一致;WebGL 不认这些键
         uDepthMapSampler: samplerOf(depthSrc),
+        uFgCoverage: Texture.EMPTY.source,
+        uFgCoverageSampler: samplerOf(Texture.EMPTY.source),
         uNrm: nrmSrc,
         uNrmSampler: samplerOf(nrmSrc),
         uPL1: scene.atlasL1,
@@ -1338,6 +1368,15 @@ export class CharacterShadingFilter extends Filter implements IEntityShadingFilt
   setFootBias(v: number): void {
     const u = this._u;
     if (u) u['uFootBias'] = Math.max(0, v);
+  }
+  setForegroundCoverage(src: TextureSource | null): void {
+    const u = this._u;
+    const tex = src ?? Texture.EMPTY.source;
+    const res = this.resources as Record<string, unknown>;
+    res['uFgCoverage'] = tex;
+    // WGSL 的采样器跟着换(「纹理名 + Sampler」= 该纹理自己的 style)
+    res['uFgCoverageSampler'] = samplerOf(tex);
+    if (u) u['uHasFgCoverage'] = src ? 1 : 0;
   }
   setDebug(on: boolean): void {
     const u = this._u;

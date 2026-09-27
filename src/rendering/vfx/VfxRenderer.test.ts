@@ -4,7 +4,7 @@
  * 分桶是玩家唯一能直接看见的排序结果（蝙蝠飞到关二狗身前还是身后），而它没有任何
  * 画面之外的痕迹——排错了只是"层级有点怪"。这里直接测渲染器导出的纯函数，不再写镜像。
  */
-import { Container, DOMAdapter, Shader, Texture, UniformGroup } from '../../engine2d';
+import { Container, DOMAdapter, Shader, Texture, TextureSource, UniformGroup } from '../../engine2d';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { VfxEmitterRuntime, VfxInstanceSim } from '../../systems/vfx/vfxSim';
@@ -15,6 +15,8 @@ import {
   type VfxRenderDeps, type VfxSortAnchor, type VfxSpriteSheet,
 } from './VfxRenderer';
 import { getVfxLitProgram, getVfxPlateLitProgram, getVfxUnlitProgram } from './vfxShaders';
+import { boltLayerOccludedByDepth } from './vfxBoltGlsl';
+import { samplerOf } from '../legacy/gpuSampler';
 import VFX_SRC from './vfxShaders.ts?raw';
 
 describe('sampleCurve', () => {
@@ -305,6 +307,63 @@ describe('VfxRenderer · 受光强度（lightGain）', () => {
       for (const g of Object.values(t.shared)) expect('uLightGain' in g.uniforms).toBe(false);
       t.r.clear();
     }
+  });
+
+  it('天上劈下来的雷身不被原画前景挡；水面电弧与落点粒子照旧挡（制作人 2026-09-25）', () => {
+    const depth = { tex: Texture.WHITE, cfg: { depth_mapping: { invert: false, scale: 2, offset: 0.1 }, depth_tolerance: 0.05 } };
+    const shared = { charLights: new UniformGroup({ uDispEv: { value: 0, type: 'f32' } }) };
+    const deps = {
+      entityLayer: new Container(),
+      createLitShader: () => null,
+      releaseLitShader: () => {},
+      canLight: () => false,
+      displayUniforms: shared.charLights,
+      getToneEnv: () => null,
+      getDepth: () => depth,
+      getSceneSize: () => ({ w: 100, h: 100 }),
+      perspective: () => 1,
+    } as unknown as VfxRenderDeps;
+    const r = new VfxRenderer(deps);
+    const boltLayer = (bolt: string) => ({ bolt, coreWu: 1, coreMinPx: 1, glowWu: 4, glowMinPx: 2, coreGain: 1, glowGain: 1, glowColor: [1, 1, 1] });
+    const ems = [
+      emitter('雷身', {}), emitter('水面电弧', {}), emitter('落点火星', { lit: false }),
+    ];
+    (ems[0].def.appearance as unknown as Record<string, unknown>).bolt = boltLayer('天雷');
+    (ems[1].def.appearance as unknown as Record<string, unknown>).bolt = boltLayer('电弧');
+    const inst = instance(ems) as unknown as { effect: unknown };
+    // 雷形没写 sky / surface 形状 → fillBolt 不画,只看深度开关
+    inst.effect = { bolts: [{ id: '天雷', kind: 'sky' }, { id: '电弧', kind: 'surface' }] };
+    r.render([inst as unknown as VfxInstanceSim], sheetsFor(ems));
+    const views = (r as unknown as { views: Map<string, { depthGroup: UniformGroup }> }).views;
+    const hasDepth = (id: string) => (views.get(`inst/${id}`)!.depthGroup.uniforms as Record<string, number>)['uHasDepth'];
+    expect(hasDepth('雷身')).toBe(0);
+    expect(hasDepth('水面电弧')).toBe(1);
+    expect(hasDepth('落点火星')).toBe(1);
+    expect(boltLayerOccludedByDepth([{ id: 'a', kind: 'sky' }], { bolt: 'a' })).toBe(false);
+    expect(boltLayerOccludedByDepth([{ id: 'a', kind: 'surface' }], { bolt: 'a' })).toBe(true);
+    expect(boltLayerOccludedByDepth(undefined, { bolt: 'a' })).toBe(true);   // 找不到雷形:按普通层照旧挡
+    r.clear();
+  });
+
+  it('前景覆盖图：受光路经照明系统的 extra 带上覆盖图与它的 WGSL 采样器；交来之后新建的视图按当前那张建', () => {
+    const t = rig({ canLight: true });
+    const e1 = emitter('先', {});
+    t.r.render([instance([e1])], sheetsFor([e1]));
+    expect(t.extras[0]['uFgCoverage']).toBe(Texture.EMPTY.source);
+    expect(t.extras[0]['uFgCoverageSampler']).toBe(samplerOf(Texture.EMPTY.source));
+    const cov = new TextureSource({ width: 4, height: 4, addressMode: 'repeat', scaleMode: 'nearest' });
+    t.r.setForegroundCoverage(cov);
+    // 已有视图当场换绑（纹理 + 采样器一起），不等下一次 render
+    const res1 = t.views().get('inst/先')!.shader.resources as Record<string, unknown>;
+    expect([res1['uFgCoverage'], res1['uFgCoverageSampler']]).toEqual([cov, samplerOf(cov)]);
+    const e2 = emitter('后', {});
+    t.r.render([instance([e1, e2])], sheetsFor([e1, e2]));
+    expect(t.extras).toHaveLength(2);
+    expect(t.extras[1]['uFgCoverage']).toBe(cov);
+    expect(t.extras[1]['uFgCoverageSampler']).toBe(samplerOf(cov));
+    const dg = (t.views().get('inst/后') as unknown as { depthGroup: UniformGroup }).depthGroup;
+    expect((dg.uniforms as Record<string, number>)['uHasFgCoverage']).toBe(1);
+    t.r.clear();
   });
 
   it('改了跟得上：工作台推来新定义（换发射器）重建视图；同一个发射器原地改也逐帧写进去', () => {

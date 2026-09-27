@@ -180,7 +180,9 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
   showSpeechBubble: {
     required: ['target', 'text'],
     nonEmpty: ['target', 'text'],
-    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale', 'voice'],
+    // pinOnScreen：说话的人在画面外时气泡贴屏幕边显示（远处有人喊）
+    optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale', 'voice',
+      'pinOnScreen'],
   },
   showEmoteAndWait: {
     required: ['target', 'emote'],
@@ -192,7 +194,7 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
     required: ['target', 'text'],
     nonEmpty: ['target', 'text'],
     optional: ['emote', 'duration', 'anchorOffsetX', 'anchorOffsetY', 'bubbleAnchorY', 'bubbleScale',
-      'voice', 'autoAdvance'],
+      'voice', 'autoAdvance', 'pinOnScreen'],
   },
   playNpcAnimation: {
     required: ['target', 'state'],
@@ -220,11 +222,12 @@ export const ACTION_PARAM_MANIFEST: Readonly<Record<string, ActionParamManifestE
       'state',
     ],
   },
-  // 挂件状态机（火把：点着 / 护火 / 残炭 / 灭）。fadeMs 只作用于灯的强度
+  // 挂件状态机（火把：点着 / 护火 / 残炭 / 灭）。fadeMs 只作用于灯的强度；
+  // onlyIfBurning：只在此刻燃着（点着 / 护火 / 残炭）时切，没燃着 / 没挂件什么都不做（风吹灭火用，不把没点过的火把改成"灭了"）
   setPropState: {
     required: ['target', 'socket', 'state'],
     nonEmpty: ['target', 'socket', 'state'],
-    optional: ['fadeMs'],
+    optional: ['fadeMs', 'onlyIfBurning'],
   },
   // 场景灯的运行时强度倍率（0 = 吹灭）。手持火把不走这条，走 setPropState
   fadeLight: {

@@ -405,6 +405,109 @@ class TestMove(unittest.TestCase):
             self._run({}, "npc:n", "1,1", raw_override='{"npcs": [{"id": "n", "x": 1, "y": 1}]}')
 
 
+class TestReanchor(unittest.TestCase):
+    """深度重做（换标定 / 俯角）之后，作者多边形按画面轮廓落回新几何：画面上还是同一块。"""
+
+    def _new_geom(self, like: ar.SceneGeom) -> ar.SceneGeom:
+        t = math.radians(25)
+        R = np.array([[1, 0, 0], [0, math.cos(t), -math.sin(t)], [0, math.sin(t), math.cos(t)]], np.float64)
+        dep = np.tile(np.linspace(12.0, 6.5, like.dep.shape[0])[:, None], (1, like.dep.shape[1]))
+        return ar.SceneGeom(sid=like.sid + "_new", scene={}, ww=like.ww, wh=like.wh, R=R, ppu=like.ppu,
+                            cx=like.cx, cy=like.cy, dep=dep, bake_dir=Path("/nonexistent/new"), art_path=Path("x"))
+
+    def _run(self, doc: dict, g_new: ar.SceneGeom) -> dict:
+        from unittest import mock
+        from tools.terrain_workbench import authoring
+        saved: dict = {}
+
+        def fake_save(sid, state, base_updated=None, force=False):
+            saved["doc"] = state["doc"]
+            return {"ok": True, "path": "x"}
+
+        def fake_export(sid, regions, clear_brush=False):
+            saved["exported"] = regions
+            return {"saved": "x", "blockedPct": 0.0}
+
+        with mock.patch.object(tc, "load_terrain", return_value=doc), \
+                mock.patch.object(ar, "load_geom", return_value=g_new), \
+                mock.patch.object(authoring, "layer_state", return_value={"doc": dict(doc), "brush": None, "height": None}), \
+                mock.patch.object(authoring, "save", side_effect=fake_save), \
+                mock.patch.object(ar, "_save_and_export", side_effect=fake_export), \
+                mock.patch.object(ar, "cmd_grid_fit"):
+            ar.cmd_reanchor("s")
+        return saved
+
+    def test_screen_outline_survives_geometry_change(self):
+        g_old = _geom()
+        pts = [(300.0, 400.0), (1500.0, 420.0), (1500.0, 600.0), (300.0, 580.0)]
+        reg = ar._make_region(g_old, "路", "walk", pts, "画上的路")
+        blk = ar._make_region(g_old, "桶", "block", [(700.0, 450.0), (800.0, 450.0), (800.0, 520.0), (700.0, 520.0)],
+                              "", h=40.0)
+        g_new = self._new_geom(g_old)
+        new_grid = _grid_for(g_new)
+        doc = {"grid": _grid_for(g_old).to_dict(), "auto": {"file": "a.png", **new_grid.to_dict()},
+               "brush": None, "height": None, "heightOps": [], "regions": [reg, blk], "updated": "t0"}
+        saved = self._run(doc, g_new)
+        self.assertEqual(saved["doc"]["grid"], new_grid.to_dict())      # 网格换成新烘的那套
+        by_id = {r["id"]: r for r in saved["exported"]}
+        # 新网格点按**新**几何反投回画面，仍是作者圈的那一圈
+        back = np.array(ar._Inverse(g_new)(by_id["路"]["points"]))
+        dense = np.array(ar._densify(pts, ar.DENSIFY_STEP))
+        self.assertLess(float(np.hypot(*(back - dense).T).max()), 6.0)
+        # 旧网格点在新几何下已经落到画面别处去了 —— 不重投就是错位
+        stale = np.array(ar._Inverse(g_new)(reg["points"]))
+        self.assertGreater(float(np.hypot(*(stale - dense).T).max()), 50.0)
+        self.assertEqual(by_id["桶"]["screen"]["h"], 40.0)                # 物体高等作者信息原样带过去
+        self.assertEqual(ar.region_screen_pts(g_new, by_id["路"]), pts)
+
+    def test_refuses_raster_layers_and_missing_outline(self):
+        g = _geom()
+        reg = ar._make_region(g, "路", "walk", [(100.0, 100.0), (900.0, 120.0), (800.0, 700.0)], "")
+        base = {"grid": _grid_for(g).to_dict(), "auto": {"file": "a.png", **_grid_for(g).to_dict()},
+                "brush": None, "height": None, "heightOps": [], "regions": [reg], "updated": "t0"}
+        for bad in ({"brush": {"file": "b.png"}}, {"heightOps": [{"op": "raise"}]},
+                    {"regions": [{**reg, "screen": {}}]}):
+            with self.assertRaises(SystemExit):
+                self._run({**base, **bad}, g)
+
+
+class TestRuntimeDepthOcclusion(unittest.TestCase):
+    """第二轮的真实深度遮挡(`crowd --occlusion depth|both`):与运行时 DepthOcclusionFilter 同式。"""
+
+    def _scene(self):
+        g = _geom()
+        nh, nw = 225, 400
+        # 场景深度 = 行走面(地面)本身,中间立一堵朝相机的墙:墙面深度比它脚下的地近
+        qrow = np.linspace(8.0, 3.0, nh)[:, None] * np.ones((1, nw))
+        d = qrow.copy()
+        wall_rows = slice(100, 140)
+        d[wall_rows, 150:250] = qrow[140, 0] - 0.4        # 墙:比墙脚那行地面还近
+        rd = ar.RuntimeDepth(d=d, nw=nw, nh=nh, tol=0.05, floor_offset=0.0,
+                             dps=math.tan(math.radians(45)) / g.ppu, theta=math.radians(45))
+        return g, rd
+
+    def test_person_behind_wall_is_occluded_in_front_is_not(self):
+        g, rd = self._scene()
+        k = 400 / g.ww                                     # 画布 = 深度图同分辨率
+        # 墙后的人:脚点落在墙的画面范围里(墙顶 100 行 ~ 墙脚 140 行之间),脚下的地比墙远 → 下半身被墙挡住
+        foot_behind = (200 / k, 125 / k)
+        occ = ar.depth_occlusion(g, rd, foot_behind, (190, 85, 20, 40), k)
+        self.assertGreater(float(occ[-10:].mean()), 0.8)
+        # 墙前(墙脚以下)的人:不被挡
+        foot_front = (200 / k, 170 / k)
+        occ2 = ar.depth_occlusion(g, rd, foot_front, (190, 130, 20, 40), k)
+        self.assertLess(float(occ2.mean()), 0.05)
+
+    def test_up_facing_flags_collapsed_plane(self):
+        th = math.radians(36.0)
+        up = ar.up_facing(np.full((60, 80), 3.0), 100.0, th, sigma=0)
+        self.assertTrue(np.allclose(up, math.sin(th)))
+        # 水平地面 d = qy/tanθ:朝上 = 1
+        qy = (30 - np.arange(60))[:, None] / 100.0 * np.ones((1, 80))
+        up2 = ar.up_facing(qy / math.tan(th), 100.0, th, sigma=0)
+        self.assertTrue(np.allclose(up2[2:-2], 1.0, atol=1e-6))
+
+
 class TestResolution(unittest.TestCase):
     def test_thin_diagonal_wall_is_thin(self):
         """斜着的一道细墙：外接框很大，真实厚度只有一两格。"""

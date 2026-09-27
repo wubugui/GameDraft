@@ -126,6 +126,27 @@ describe('实体受光三件的 WGSL 与 JS 资源对齐', () => {
     checkShader(DepthOcclusionFilter.createForEntity(dataTex(8, 6, 'nearest'), CFG), '深度遮挡');
   });
 
+  it('深度遮挡 / 实体光照滤镜:前景覆盖图(uFgCoverage + uFgCoverageSampler)交来 / 收回后绑定仍对齐', () => {
+    const filters = [
+      DepthOcclusionFilter.createForEntity(dataTex(8, 6, 'nearest'), CFG),
+      EntityLightingFilter.createForEntity({
+        depthTexture: dataTex(8, 6, 'nearest'), cfg: CFG, probeSource: dataTex(4, 3, 'linear').source, lightEnv: ENV, sampleLiftWorld: 16,
+      }),
+    ];
+    for (const f of filters) {
+      const names = (f.gpuProgram!.structsAndGroups as StructsAndGroups).groups.map((g) => g.name);
+      expect(names).toContain('uFgCoverage');
+      expect(names).toContain('uFgCoverageSampler');
+      const cov = dataTex(16, 9, 'linear');
+      f.setForegroundCoverage(cov.source);
+      checkShader(f, '前景覆盖图交来后');
+      expect((f.resources as Record<string, unknown>).uFgCoverageSampler).toBe(samplerOf(cov.source));
+      f.setForegroundCoverage(null);
+      checkShader(f, '前景覆盖图收回后');
+      expect((f.resources as Record<string, unknown>).uFgCoverage).toBe(Texture.EMPTY.source);
+    }
+  });
+
   it.each([
     ['无深度(anim_preview)', false],
     ['有深度', true],

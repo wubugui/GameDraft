@@ -417,7 +417,10 @@ export function stepPlates(
       if (wake) {
         arr.sleep[i] = 0;
         arr.still[i] = 0;
-      } else continue;
+      } else {
+        env.lifecycle.settled(i, x, y, z);
+        continue;
+      }
     }
 
     // ---- 贴死的：不平动，姿态贴着面，只算形变

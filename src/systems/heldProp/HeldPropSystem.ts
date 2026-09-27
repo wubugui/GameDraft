@@ -772,8 +772,17 @@ export class HeldPropSystem implements IGameSystem {
     return r.ok;
   }
 
-  /** 同 {@link setState}，但返回的 Promise 覆盖进入动作的真实完成时间（顺序动作批要等它）。 */
-  async setStateAwait(targetId: string, socket: string, stateName: string, fadeMs = 0): Promise<boolean> {
+  /**
+   * 同 {@link setState}，但返回的 Promise 覆盖进入动作的真实完成时间（顺序动作批要等它）。
+   * `onlyIfBurning`：此刻没燃着（或挂点上没挂件）就什么都不做、当成功——"风把火吹灭"不该把没点过的火把改成"灭了"。
+   */
+  async setStateAwait(
+    targetId: string, socket: string, stateName: string, fadeMs = 0, onlyIfBurning = false,
+  ): Promise<boolean> {
+    if (onlyIfBurning) {
+      const entry = this.entries.get(this.key(targetId.trim(), socket.trim()));
+      if (!entry || !this.isBurning(entry)) return true;
+    }
     const r = this.transition(targetId, socket, stateName, fadeMs);
     if (r.entered) await r.entered;
     return r.ok;

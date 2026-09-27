@@ -5,6 +5,12 @@ description: 修一张 GameDraft 场景图碰撞的固定流程——看原画�
 
 # 修一张图的碰撞(固定流程)
 
+> **深度也要做 / 深度是塌的**(新场景第一次建几何、峭壁栈道这类深度塌成平面的图)→ 用 `scene-depth-collision-from-art`:
+> 它先按本技能做碰撞第一轮,再拿圈好的路标定深度,深度体检过了之后用游戏真实深度遮挡做第二轮。本技能只修碰撞、不碰深度。
+
+> **深度也要做 / 深度是塌的**(新场景第一次建几何、峭壁栈道这类深度塌成平面的图)→ 用 `scene-depth-collision-from-art`:
+> 它先按本技能做碰撞第一轮,再拿圈好的路标定深度,深度体检过了之后用游戏真实深度遮挡做第二轮。本技能只修碰撞、不碰深度。
+
 > 知识(口径、为什么、已知坑)在 `agent_docs/editor-tools/recipes/collision-from-art.md`——**先读完那张卡再动手**;
 > 本技能只管怎么做。工具一律 `sh scripts/py.sh -m tools.terrain_workbench.art_review <命令> <场景>`(下文写 `AR`),
 > Windows 下命令前加 `PYTHONIOENCODING=utf-8`。产物默认在 `local/collision_review/<场景>/`,

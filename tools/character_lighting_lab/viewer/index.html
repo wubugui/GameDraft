@@ -246,6 +246,7 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
     <details class="fold" id="fold_geo">
       <summary>几何 / 标定 <span class="hint">深度重建与世界尺度</span><span class="cnt"></span></summary>
       <div class="foldbody">
+        <label title="深度怎么定尺:「自动找平」= 把画里像地面的地方尽量摆平(缺省);「按圈的路 + 竖直崖壁」= 地面取地形工作台里圈好的可走区,其余表面当竖直的墙 / 崖壁,俯角一起算出来(近乎平视看峭壁、路很窄的画用这个,自动找平在那上面会塌成一张斜板)。选后者时俯角与起伏增益由它自己定,滑条不生效"><span class="tm bake">○</span><span class="k">标定方式</span><select id="rb_calib"><option value="level" selected>自动找平</option><option value="structure">按圈的路 + 竖直崖壁</option></select></label>
         <label title="相机俯视角,决定世界竖直方向"><span class="tm bake">○</span><span class="k">俯角°</span><input type="range" id="rb_pitch" min="20" max="70" step="1" value="45"><span class="v" id="rb_pitch_v"></span></label>
         <label title="像素/世界单位比例,决定世界尺度(影响角色相对大小)"><span class="tm bake">○</span><span class="k">ppu比例</span><input type="range" id="rb_ppu" min="0.08" max="0.4" step="0.01" value="0.22"><span class="v" id="rb_ppu_v"></span></label>
         <label title="相机方位角:绕竖轴旋转世界(默认 0)"><span class="tm bake">○</span><span class="k">方位角°</span><input type="range" id="rb_az" min="-45" max="45" step="1" value="0"><span class="v" id="rb_az_v"></span></label>

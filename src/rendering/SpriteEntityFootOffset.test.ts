@@ -111,3 +111,44 @@ describe('脚底偏移：挪画不挪接地点', () => {
     expect(footOffsetOfState({ frames: [0], frameRate: 8, loop: true, footOffset: 0.9 })).toBe(FOOT_OFFSET_MAX);
   });
 });
+
+describe('接触 AO 身体胶囊的参照帧：站立片段，按它自己的脚底偏移裁底', () => {
+  it('跑着也给站立片段的帧，裁底用站立的偏移（与站着时 getDisplayTexture 同一块像素）', () => {
+    const { e } = make();
+    const standing = e.getDisplayTexture()!;
+    e.playAnimation('run');
+    const refs = e.getBodyReferenceFrames();
+    expect(refs).toHaveLength(1);
+    expect(refs[0]).toBe(standing);
+    expect(refs[0].frame.height).toBeCloseTo(CELL_H * 0.875, 6);
+    expect(refs[0].frame.x).toBe(0);
+    // 同一个数组（下游按它缓存量出来的宽度）
+    expect(e.getBodyReferenceFrames()).toBe(refs);
+  });
+
+  it('站立片段经 stateMap 解析；换 stateMap 作废重取', () => {
+    const { e } = make();
+    const a = e.getBodyReferenceFrames();
+    e.setLogicalStateMap({ idle: 'run' });
+    const b = e.getBodyReferenceFrames();
+    expect(b).not.toBe(a);
+    expect(b[0].frame.x).toBe(CELL_W);          // run 那一格
+    expect(b[0].frame.height).toBe(CELL_H);     // run 没偏移，原样
+  });
+
+  it('图集没有站立片段 → 图集第一个片段', () => {
+    const e = new SpriteEntity();
+    const def = animDef();
+    def.states = { walk: { frames: [1], frameRate: 8, loop: true }, run: { frames: [0], frameRate: 8, loop: true } };
+    e.loadFromDef(new Texture({ source: new TextureSource({ width: CELL_W * 2, height: CELL_H }) }), def, sockets({ x: 0.5, y: 1 }));
+    e.playAnimation('run');
+    expect(e.getBodyReferenceFrames()[0].frame.x).toBe(CELL_W);   // walk = 第 1 格
+  });
+
+  it('换图集作废（玩家换装）', () => {
+    const { e } = make();
+    const a = e.getBodyReferenceFrames();
+    e.loadFromDef(new Texture({ source: new TextureSource({ width: CELL_W * 2, height: CELL_H }) }), animDef(), sockets({ x: 0.5, y: 1 }));
+    expect(e.getBodyReferenceFrames()).not.toBe(a);
+  });
+});

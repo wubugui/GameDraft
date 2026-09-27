@@ -63,7 +63,7 @@ import {
   getVfxPlateLitProgram, getVfxUnlitGpuProgram, getVfxUnlitProgram,
 } from './vfxShaders';
 import { VfxBoltBatchMesh } from './VfxBoltBatchMesh';
-import { boltNeedHeight, emitBoltSegments, BOLT_QUAD_SIGMAS, type BoltLook, type BoltView } from './vfxBoltGlsl';
+import { boltLayerOccludedByDepth, boltNeedHeight, emitBoltSegments, BOLT_QUAD_SIGMAS, type BoltLook, type BoltView } from './vfxBoltGlsl';
 import { boltInstanceSeed, createBolt, extendBolt, type BoltGeometry } from '../../systems/vfx/vfxBolt';
 import type { VfxBoltDef } from '../../data/types';
 
@@ -144,8 +144,8 @@ export interface VfxRenderDeps {
    */
   sortByScene?: boolean;
   /**
-   * 有照明载荷时给 lit shader；无则 null → 走 tone / unlit。`extra` 里除了本视图的组与深度图，还带着两个 WGSL 采样器
-   * （`uColorTexSampler` / `uDepthMapSampler`，WebGL 不认这些键），照明系统原样并进 resources。
+   * 有照明载荷时给 lit shader；无则 null → 走 tone / unlit。`extra` 里除了本视图的组、深度图与前景覆盖图，还带着三个
+   * WGSL 采样器（`uColorTexSampler` / `uDepthMapSampler` / `uFgCoverageSampler`，WebGL 不认这些键），照明系统原样并进 resources。
    */
   createLitShader: (programs: VfxLitPrograms, colorTex: TextureSource, extra: Record<string, unknown>) => Shader | null;
   releaseLitShader: (sh: Shader) => void;
@@ -459,7 +459,30 @@ export class VfxRenderer {
   /** 雷形缓存：`<instanceId>/<boltId>` → 这一次的雷形（同一实例的几层画同一道雷；按需往上续算） */
   private readonly boltGeoms = new Map<string, { def: VfxBoltDef; geom: BoltGeometry }>();
 
+  /**
+   * 场景前景层的覆盖图（见 foregroundMaskGlsl）：粒子的遮挡在前景面里拿它顶替深度图。
+   * 由组装层经 {@link setForegroundCoverage} 交来 / 收回；没有 = 各视图绑永不销毁的占位、开关 0。
+   */
+  private fgCoverage: TextureSource | null = null;
+
   constructor(private readonly deps: VfxRenderDeps) {}
+
+  /**
+   * 换 / 撤前景层覆盖图：**当场**把所有视图的纹理槽换过去（撤的时候绑回占位）。
+   * 覆盖图 RT 归前景层，它销毁之前一定先以 null 调这里——BindGroup 见到已销毁的资源会自毁（pixi-v8-traps），
+   * 等下一次 render 再换就晚了（中间那一帧照样会画）。
+   */
+  setForegroundCoverage(src: TextureSource | null): void {
+    this.fgCoverage = src;
+    const tex = src ?? Texture.EMPTY.source;
+    for (const v of this.views.values()) {
+      const res = v.shader.resources as Record<string, unknown>;
+      res['uFgCoverage'] = tex;
+      // WGSL 的采样器跟着纹理换（samplerOf：按采样参数共享、不挂在覆盖图 RT 的生命期上）
+      res['uFgCoverageSampler'] = samplerOf(tex);
+      (v.depthGroup.uniforms as Record<string, unknown>)['uHasFgCoverage'] = src ? 1 : 0;
+    }
+  }
 
   /** 视图是按"当时有什么"建的；这几样一变就得重建，否则一路错到换场景。 */
   private viewStale(
@@ -489,7 +512,9 @@ export class VfxRenderer {
       uOffset: { value: 0, type: 'f32' },
       uTolerance: { value: 0.05, type: 'f32' },
       uOcclusionBlend: { value: 0, type: 'f32' },
+      uHasFgCoverage: { value: this.fgCoverage ? 1 : 0, type: 'f32' },
     });
+    const fgTex = this.fgCoverage ?? Texture.EMPTY.source;
     const depth = this.deps.getDepth();
     const depthSrc = depth?.tex.source ?? null;
     const depthTex = depthSrc ?? sheet.texture.source;
@@ -510,7 +535,10 @@ export class VfxRenderer {
       shader = new Shader({
         glProgram: getVfxBoltProgram(),
         gpuProgram: getVfxBoltGpuProgram(),
-        resources: { vfxDepth: depthGroup, uDepthMap: boltDepth, uDepthMapSampler: samplerOf(boltDepth) },
+        resources: {
+          vfxDepth: depthGroup, uDepthMap: boltDepth, uDepthMapSampler: samplerOf(boltDepth),
+          uFgCoverage: fgTex, uFgCoverageSampler: samplerOf(fgTex),
+        },
       });
     } else if (wantLit && canLight) {
       const pv = vfxParamValues(ap);
@@ -530,9 +558,11 @@ export class VfxRenderer {
       shader = this.deps.createLitShader(programs, colorSrc, {
         vfxDepth: depthGroup,
         uDepthMap: depthTex,
+        uFgCoverage: fgTex,
         vfxParams: paramGroup,
         uColorTexSampler: samplerOf(colorSrc),
         uDepthMapSampler: samplerOf(depthTex),
+        uFgCoverageSampler: samplerOf(fgTex),
       });
       lit = !!shader;
     }
@@ -551,6 +581,7 @@ export class VfxRenderer {
         resources: {
           uColorTex: colorSrc, uColorTexSampler: samplerOf(colorSrc),
           vfxDepth: depthGroup, uDepthMap: depthTex, uDepthMapSampler: samplerOf(depthTex),
+          uFgCoverage: fgTex, uFgCoverageSampler: samplerOf(fgTex),
           // 显示变换：与背景 / 角色同一组数（这组里其余的灯 uniform 本程序不声明，Pixi 按名跳过）
           charLights: this.deps.displayUniforms,
           vfxTone: this.toneGroup,
@@ -703,7 +734,10 @@ export class VfxRenderer {
         // 深度参数逐帧同步（换场景时纹理由系统重建视图，这里只刷数字）
         const du = v.depthGroup.uniforms as Record<string, unknown>;
         (du['uSceneSize'] as Float32Array).set([size.w, size.h]);
-        if (depth && space.kind === 'field') {
+        // 天上劈下来的雷身不被原画前景挡（落点那几层、水面电弧照旧挡），见 boltLayerOccludedByDepth
+        const boltLayer = e.def.appearance.bolt;
+        const occluded = !boltLayer || boltLayerOccludedByDepth(inst.effect.bolts, boltLayer);
+        if (depth && space.kind === 'field' && occluded) {
           du['uHasDepth'] = 1;
           du['uInvert'] = depth.cfg.depth_mapping.invert ? 1 : 0;
           du['uScale'] = depth.cfg.depth_mapping.scale;
@@ -712,6 +746,7 @@ export class VfxRenderer {
         } else {
           du['uHasDepth'] = 0;
         }
+        du['uHasFgCoverage'] = this.fgCoverage ? 1 : 0;
         v.depthGroup.update();
         for (const m of v.buckets.values()) m.begin();
         for (const m of v.plateBuckets.values()) m.begin();

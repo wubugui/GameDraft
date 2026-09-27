@@ -60,7 +60,10 @@ function extractRefTree(sha) {
   const tar = path.join(dir, '..', `${sha}.tar`);
   // src 之外只带 public/assets/data:运行时有一处 import 了其中的 JSON(EntityRuntimeFieldSchema)
   git('archive', '--format=tar', '-o', tar, sha, 'src', 'public/assets/data');
-  execFileSync('tar', ['-xf', tar, '-C', dir], { stdio: 'inherit' });
+  // 相对路径 + cwd:Windows 上 PATH 里可能是 Git 自带的 GNU tar,它把 `D:\...` 里的 `D:` 当远端主机名
+  execFileSync('tar', ['-xf', path.basename(tar), '-C', path.relative(path.dirname(tar), dir)], {
+    stdio: 'inherit', cwd: path.dirname(tar),
+  });
   fs.rmSync(tar, { force: true });
   fs.writeFileSync(path.join(dir, '.complete'), `${sha}\n`);
   return dir;

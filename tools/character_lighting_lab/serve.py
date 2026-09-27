@@ -103,7 +103,7 @@ REBUILD_KEYS = {'pitch_deg', 'azimuth_deg', 'ppu_ratio', 'ev', 'max_gain_ev',
                 'probe_height_chars', 'probe_spp',
                 'relief', 'semantic_gate', 'occluder_tau', 'thickness_k',
                 'bg_thickness_q', 'ground_up_dot', 'walk_res',
-                'object_score_min', 'object_groups', 'object_prompts_extra'}
+                'object_score_min', 'object_groups', 'object_prompts_extra', 'calibration'}
 
 # ------------------------------------------------------------- 游戏场景清单
 # 这个工具深度绑定工程:场景身份**只认游戏场景 id**(= public/assets/scenes/<id>.json 的

@@ -1,7 +1,9 @@
-import { Filter, GlProgram, GpuProgram, Texture } from '../engine2d';
+import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from '../engine2d';
 import type { SceneDepthConfig } from '../data/types';
 import { depthLog, depthError } from '../core/depthLog';
 import { samplerOf } from './legacy/gpuSampler';
+import { FG_OCCLUSION_GLSL } from './foreground/foregroundMaskGlsl';
+import { FG_OCCLUSION_WGSL, fgCoverageBindingsWgsl } from './foreground/foregroundMaskWgsl';
 
 const T = 'DepthFilter';
 
@@ -59,6 +61,8 @@ uniform float uFootDepthQ;     // 脚点行走面深度（实验室 uFootQ.z）
 uniform float uHasFootDepth;   // 0=本帧没拿到脚深度 → 不遮挡
 uniform float uFootBias;       // 实验室 0.045
 
+// 场景前景层覆盖图（uFgCoverage + uHasFgCoverage；没有前景层时开关 0，逐像素与没有这一段时相同）
+${FG_OCCLUSION_GLSL}
 
 void main(void) {
     vec4 color = texture(uTexture, vTextureCoord);
@@ -95,20 +99,27 @@ void main(void) {
     float syTex = wy * uWorldToPixelY;
     float upright = uDepthPerSy * (syTex - syTexFoot);
     float spriteDepth = uFootDepthQ + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
+    bool occluded;
+    // 场景前景层（三份遮挡实现同一段，见 foregroundMaskGlsl）：前景面按接地深度立起来的直立面比，
+    // 与脚点同源、两块直立面同一个梯度——不加脚点偏置 / 容差 / floor 偏移；外沿（深度图糊的那圈）不判
+    float fgDepth;
+    float fgKind = fgSample(depthUV, fgDepth);
+    occluded = fgKind > 1.5 ? false
+        : fgKind > 0.5 ? fgDepth < uFootDepthQ + upright - 1e-4
+        : sceneDepth + uTolerance < spriteDepth;
 
     // ========== 调试模式 ==========
     if (uDebug > 0.5) {
         // 红=被遮挡 蓝=可见。碰撞通道已删:它靠 floor 拟合直线做逐像素反投影,
         // 那条线已废除;要看碰撞去实验室查看器的顶视图(世界 XZ,无遮挡无歧义)。
-        finalColor = vec4(sceneDepth + uTolerance < spriteDepth
-            ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0), 0.7);
+        finalColor = vec4(occluded ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0), 0.7);
         return;
     }
     // ========== 正常渲染 ==========
 
     // uTexture 采样为 Pixi 预乘 alpha（与 finalColor=color 通路一致）。
     // 仅改 a 会令合成仍按完整 rgb 参与预乘blend → 发亮/发白；须 rgb、a 同步乘系数。
-    if (sceneDepth + uTolerance < spriteDepth) {
+    if (occluded) {
         if (uOcclusionBlendFactor < 1e-5) {
             discard;
         }
@@ -126,6 +137,8 @@ void main(void) {
  * uniform 结构体成员顺序 = JS 里 depthUniforms 的声明顺序(Pixi 按声明顺序排偏移)。
  * 分支里取样用 textureSampleLevel(.., 0.0)(WGSL 只许在一致控制流里 textureSample;深度图没有 mip,等价)。
  * 结构体里不写注释:Pixi 用正则解析结构体成员与 group 声明。
+ * 前景覆盖图(uFgCoverage + uFgCoverageSampler + uHasFgCoverage)的取样走 foregroundMaskWgsl 的共用 fgSample,
+ * 与 GLSL 那边的 FG_OCCLUSION_GLSL 逐式对应;开关不在模块作用域,作参数传进去。
  */
 const WGSL = /* wgsl */ `
 struct GlobalFilterUniforms {
@@ -155,6 +168,7 @@ struct DepthUniforms {
     uFootDepthQ: f32,
     uHasFootDepth: f32,
     uFootBias: f32,
+    uHasFgCoverage: f32,
 };
 
 @group(0) @binding(0) var<uniform> gfu: GlobalFilterUniforms;
@@ -164,6 +178,8 @@ struct DepthUniforms {
 @group(1) @binding(0) var<uniform> depthUniforms: DepthUniforms;
 @group(1) @binding(1) var uDepthMap: texture_2d<f32>;
 @group(1) @binding(2) var uDepthMapSampler: sampler;
+${fgCoverageBindingsWgsl(1, 3)}
+${FG_OCCLUSION_WGSL}
 
 struct VSOutput {
     @builtin(position) position: vec4<f32>,
@@ -226,14 +242,27 @@ fn mainFragment(
     let syTex = wy * u.uWorldToPixelY;
     let upright = u.uDepthPerSy * (syTex - syTexFoot);
     let spriteDepth = u.uFootDepthQ + upright + u.uFloorOffset + u.uFloorOffsetExtra - u.uFootBias;
+    // 场景前景层(三份遮挡实现同一段,见 foregroundMaskGlsl):前景面按接地深度立起来的直立面比,
+    // 不加脚点偏置 / 容差 / floor 偏移;外沿(深度图糊的那圈)不判
+    var fgDepth: f32;
+    let fgKind = fgSample(depthUV, u.uHasFgCoverage, &fgDepth);
+    var occluded: bool;
+    if (fgKind > 1.5) {
+        occluded = false;
+    } else if (fgKind > 0.5) {
+        occluded = fgDepth < u.uFootDepthQ + upright - 1e-4;
+    } else {
+        occluded = sceneDepth + u.uTolerance < spriteDepth;
+    }
 
+    // 调试:红 = 被遮挡、蓝 = 可见(与正常渲染同一个 occluded)
     if (u.uDebug > 0.5) {
-        if (sceneDepth + u.uTolerance < spriteDepth) { return vec4<f32>(1.0, 0.0, 0.0, 0.7); }
+        if (occluded) { return vec4<f32>(1.0, 0.0, 0.0, 0.7); }
         return vec4<f32>(0.0, 0.0, 1.0, 0.7);
     }
 
     // uTexture 是预乘 alpha:rgb 与 a 同步乘系数
-    if (sceneDepth + u.uTolerance < spriteDepth) {
+    if (occluded) {
         if (u.uOcclusionBlendFactor < 1e-5) { discard; }
         return vec4<f32>(color.rgb * u.uOcclusionBlendFactor, color.a * u.uOcclusionBlendFactor);
     }
@@ -300,10 +329,13 @@ export class DepthOcclusionFilter extends Filter {
                     uFootDepthQ: { value: 0, type: 'f32' },
                     uHasFootDepth: { value: 0, type: 'f32' },
                     uFootBias: { value: 0.045, type: 'f32' },
+                    uHasFgCoverage: { value: 0, type: 'f32' },
                 },
                 uDepthMap: depthTexture.source,
                 // WGSL 的采样器:深度图自己的 style(WebGL 用纹理自带采样状态,不认这个键)
                 uDepthMapSampler: samplerOf(depthTexture.source),
+                uFgCoverage: Texture.EMPTY.source,
+                uFgCoverageSampler: samplerOf(Texture.EMPTY.source),
             },
         });
 
@@ -408,5 +440,16 @@ export class DepthOcclusionFilter extends Filter {
     setFootBias(v: number): void {
         const u = this._du;
         if (u) u['uFootBias'] = Math.max(0, v);
+    }
+
+    /** 场景前景层覆盖图；null = 没有前景层（绑回永不销毁的占位，见 pixi-v8-traps） */
+    setForegroundCoverage(src: TextureSource | null): void {
+        const u = this._du;
+        const tex = src ?? Texture.EMPTY.source;
+        const res = this.resources as Record<string, unknown>;
+        res['uFgCoverage'] = tex;
+        // WGSL 的采样器跟着换(「纹理名 + Sampler」= 该纹理自己的 style)
+        res['uFgCoverageSampler'] = samplerOf(tex);
+        if (u) u['uHasFgCoverage'] = src ? 1 : 0;
     }
 }

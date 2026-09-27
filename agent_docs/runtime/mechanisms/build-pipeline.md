@@ -43,6 +43,12 @@ last_governed: 2026-09-06
 档位差异(从哪个场景起、带不带调试设施)才在 `tools/build/build_config.json` 里,
 那份是存盘的,所以**脱离编辑器也能独立构建**。
 
+**档位配置也可以由调用方指定一份替身**(2026-09-25):`release.mjs` / `package.mjs` 认
+`--build-config <文件>`,不给就是仓库里那份。服务器上的项目台(`E:/GameDev/PMDesk`,部署在
+denghong01)用它:打包在服务器的**只读克隆**里跑,档位设置在项目台工作台上改,打包时写一份替身传进来,
+绝不改、也不推克隆里的文件。服务器打包一律 `--skip-sweep --skip-verify`——制作人定的口径是
+**包忠实反映仓库、不兜底**,坏了就让测包的人测出来。
+
 那个目录会被整体清空重写,所以有两道闸:**路径体检**(盘符根/仓库根/仓库根的上级/
 `public/` `src/` 等源码树一律拒绝)+ **覆盖策略**(有上次的 `.gamedraft-build.json`
 标记才直接覆盖;陌生的非空目录报错退出,要 `--force`)。
@@ -114,6 +120,10 @@ Python/mjs 两份镜像各有契约测试钉死)。桌面壳:`src-tauri/`。
      `--skip-sweep` 显式跳过并在标记里记 `swept:false`)。它对代码怎么拼路径
      一无所知——新加一条运行期拼出来的资源,下一次扫描就会看见。这是本管线里唯一能证明
      "清单没漏"的东西;只覆盖**进场景**这一拍(对话立绘、小游戏贴图等要交互才拉的,仍靠规则)。
+     engine2d 分支(渲染只有 WebGPU,[[engine2d]]):`scene_sweep.py` **不再藏 `navigator.gpu`**、Chromium 开关带
+     `--enable-unsafe-webgpu`——藏了游戏起不来;报告里每场的 `renderer` 应为 `webgpu`,不是的整份别拿去判画面。
+     `--build-config` 只把档位配置路径转给 `package.mjs`,不碰扫描的渲染开关。离屏 QtWebEngine 建 WebGPU 上下文
+     2026-09-06 实测失败,扫描走真窗口。
 - **产物里有一个不在清单里的派生文件:`assets/scene_index.json`**(2026-09-03)。它不是从开发树
   抽取的,是 `package.mjs` 装配完素材之后按**已落地**的 `assets/scenes/*.json` 现算写出的
   (`scripts/lib/scene_index.mjs`,与 vite 开发服中间件共用同一份生成器——开发服按请求现算同名 URL)。

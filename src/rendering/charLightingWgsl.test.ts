@@ -160,5 +160,18 @@ describe('角色受光 WGSL 与 JS 资源对齐', () => {
     f.setNormalTexture(null);
     expect(res['uNrmSampler']).toBe(samplerOf(Texture.WHITE.source));
     checkShader(f, '滤镜(换回白图后)');
+    // 前景覆盖图:交来 / 收回时采样器跟着换,绑定仍对齐
+    const names = (f.gpuProgram!.structsAndGroups as StructsAndGroups).groups.map((g) => g.name);
+    expect(names).toContain('uFgCoverage');
+    expect(names).toContain('uFgCoverageSampler');
+    const cov = src(16, 9, 'rgba16float', 'linear');
+    f.setForegroundCoverage(cov);
+    expect(res['uFgCoverage']).toBe(cov);
+    expect(res['uFgCoverageSampler']).toBe(samplerOf(cov));
+    checkShader(f, '滤镜(前景覆盖图交来后)');
+    f.setForegroundCoverage(null);
+    expect(res['uFgCoverage']).toBe(Texture.EMPTY.source);
+    expect(res['uFgCoverageSampler']).toBe(samplerOf(Texture.EMPTY.source));
+    checkShader(f, '滤镜(前景覆盖图收回后)');
   });
 });

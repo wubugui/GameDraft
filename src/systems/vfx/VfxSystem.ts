@@ -60,6 +60,7 @@ import { VfxMotionAirflow } from './vfxMotionSource';
 import { VfxMotionContact } from './vfxContact';
 import {
   VfxInstanceSim, createFieldRuntime, type VfxBurningPlateGroup, type VfxFieldRuntime, type VfxStepContext,
+  type VfxViewRect,
 } from './vfxSim';
 import type { VfxSpace } from './vfxSpace';
 
@@ -116,6 +117,8 @@ export interface VfxSystemDeps {
   getPlayerContact: () => { x: number; y: number } | null;
   /** 当前视域的发射锚点（场景坐标）；仅供临时天气效果，新生粒子跟随，已发粒子不搬动。 */
   getViewAnchor?: () => { x: number; y: number } | null;
+  /** 镜头此刻看得见的矩形（场景坐标）。地上铺的纸吹离那片地后，只在出了画面才收回补上（玩家眼前不凭空消失） */
+  getViewRect?: () => VfxViewRect | null;
   /**
    * 当前场景此刻用哪套时段外观：`timeVariants` 的键，空串 = 顶层基底；没进场景 null。
    * 布置按它取份（`SceneManager.appearancePhaseFor(当前时段)`）。
@@ -1360,6 +1363,7 @@ export class VfxSystem implements IGameSystem {
     const ctx: VfxStepContext = {
       fields: this.fields, contacts: contact ? [contact] : [], player, time: this.time,
       wind: wind?.params ?? null, windTime: wind?.time ?? 0, blasts: wind?.blasts ?? null, blastTime: wind?.blastTime ?? 0, fires,
+      view: this.deps.getViewRect?.() ?? null,
     };
     const sims: VfxInstanceSim[] = [];
     const instanceAlphas = new Map<string, number>();

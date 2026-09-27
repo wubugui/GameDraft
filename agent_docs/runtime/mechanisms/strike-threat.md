@@ -15,6 +15,7 @@ authority:
   - src/core/Game.ts#boltImpact
   - src/systems/vfx/vfxBolt.ts
   - src/rendering/vfx/vfxBoltGlsl.ts
+  - src/rendering/vfx/vfxBoltWgsl.ts
   - src/systems/HealthThreatSystem.ts#pickTarget
 triggers:
   paths:
@@ -22,6 +23,7 @@ triggers:
     - "src/systems/strikeLight.ts"
     - "src/systems/vfx/vfxBolt.ts"
     - "src/rendering/vfx/vfxBoltGlsl.ts"
+    - "src/rendering/vfx/vfxBoltWgsl.ts"
     - "public/assets/data/vfx/lightning_bolt_*.json"
   topics: [落雷, 雷, 雷符, strikeThreat, 雷光, 连劈, visualStrikes, 装饰雷, 落点采样, 雷声]
   tasks: [调雷法技能, 加一种雷, 改落雷落点, 排查雷声或雷光不对]
@@ -55,8 +57,13 @@ last_governed: 2026-09-24
 - **形状** `vfxBolt.ts`(纯函数):大步 OU 大弯 + 尖角折 → 中点细分到 `detailWu`(大尺度收着折);分叉幂律长度、往下往外、不钻地;
   随机数按**全局大步号**取——分几次续算与一次算完逐点相同、长出同一批分叉(画雷那份按镜头续算、灯那份一次算到灯高,两份必须是同一道雷)。
   实例种子混入落点(`boltInstanceSeed`):雷符写死 `effectSeed: 0` 也每处不同。
+- **遮挡**(制作人 2026-09-25):**天上劈下来的雷身(`bolts[].kind: 'sky'` 的那几层)永远可见,不被原画前景挡**——
+  劈在房后 / 崖后时一刀切断像雷断在半空;**落点那些照旧被挡**:水面 / 地面电弧(`kind: 'surface'`)与光团、火星、焦烟、碎石等
+  落点层都贴地,劈在房后就该被房子挡住。按雷形类别定(`boltLayerOccludedByDepth`),不是逐效果开关,全局一套。
 - **画法** `vfxBoltGlsl.ts`:逐段按 erf 卷积高斯(接缝无缝)、加性;粗细 = √(世界宽 × 透视 × 像素/场景)² + (屏幕下限)²
   (远了芯不细过几个像素——强光晕开)。按段剔除与挑细分级,不按落点剔除。
+  engine2d 分支:游戏画的是 WGSL 孪生 `vfxBoltWgsl.ts`,着色核两份一起改;`vfxBoltGlsl.ts` 里的 JS 部分
+  (折线展开、`boltLayerOccludedByDepth` 等)两边共用,上面「遮挡」按雷形定的开关走的就是它。
 - **雷自带的灯**(`bolts[].light`,`Game.boltLightSpec`):落点一盏点光 + 沿雷身折线一段一条**线光**(`kind: 'line'`,主干 ≤8 段 + 最长 2 根分叉)
   + 天上一记平行光;三种都打反光位,**落在哪都照出物理反光**(没画区域的地方用全局缺省材质 + 细节法线,见 [[scene-lighting]]「镜面反光」)。
   ⚠ **雷的一切不许按场景调**(制作人 09-24:「这些雷电不能是场景特调,都是任意地方随机位置放的」):灯的强度、落点层、
