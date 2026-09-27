@@ -1047,6 +1047,9 @@ export class FrameBuilder implements FilterSystemLike {
       outputTexture[1] = this.current.height;
     }
     outputTexture[2] = -1;
+    // .w:输出到画布时 = 画布像素高(着色器据此把 @builtin(position).y 换成 master 画布上 gl_FragCoord 的自下而上),
+    // 离屏目标为 0。Pixi / engine2d / 游戏滤镜都不读 .w(见 CharacterShadingFilter 的 RT gather 噪声种子)
+    outputTexture[3] = this.current.ref === 'canvas' ? this.current.pixelHeight : 0;
     return this.arenaRef(
       this.writeUbo(FILTER_LAYOUT, {
         uInputSize: inputSize,

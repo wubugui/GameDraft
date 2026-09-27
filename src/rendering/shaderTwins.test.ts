@@ -29,6 +29,8 @@ import { ENTITY_SCENE_LIGHTS_GLSL, ENTITY_SCENE_LIGHTS_WGSL } from './CharacterL
 import { FG_COVERAGE_FRAG, FG_COVERAGE_VERT, FG_MASK_GLSL, FG_OCCLUSION_GLSL } from './foreground/foregroundMaskGlsl';
 import { FG_MASK_WGSL, FG_OCCLUSION_WGSL } from './foreground/foregroundMaskWgsl';
 import { FG_COVERAGE_WGSL } from './backgroundSway';
+import { CONTACT_FRAG, CONTACT_FRAG_WGSL, FRAG as SHADOW_CAST_FRAG, FRAG_WGSL as SHADOW_CAST_FRAG_WGSL } from './EntityShadow';
+import { VFX_OCCLUSION_GLSL, VFX_OCCLUSION_WGSL } from './vfx/vfxShaders';
 
 /** 取 `//__${tag}_BEGIN__` 与 `//__${tag}_END__` 之间;标记缺失或颠倒直接抛(改名后不许悄悄切出半截源)。 */
 const sl = (src: string, tag: string) => {
@@ -136,6 +138,10 @@ const PAIRS: Array<[string, string, string]> = [
   // 场景前景层:使用方共用的取样段、蒙版判定、覆盖图整段程序(顶点 + 片元,WGSL 是 backgroundSway 实际建 shader 的那一份)
   ['fgOcc', FG_OCCLUSION_GLSL, FG_OCCLUSION_WGSL], ['fgMask', FG_MASK_GLSL, FG_MASK_WGSL],
   ['fgCoverage', renameMain(FG_COVERAGE_VERT, 'mainVertex') + renameMain(FG_COVERAGE_FRAG, 'mainFragment'), FG_COVERAGE_WGSL],
+  // 粒子遮挡段(四套粒子程序共用)、实体阴影:投影片元与接触阴影(胶囊 AO)片元
+  ['vfxOcc', VFX_OCCLUSION_GLSL, VFX_OCCLUSION_WGSL],
+  ['shadowCast', renameMain(SHADOW_CAST_FRAG, 'mainFragment'), SHADOW_CAST_FRAG_WGSL],
+  ['contact', renameMain(CONTACT_FRAG, 'mainFragment'), CONTACT_FRAG_WGSL],
 ];
 /**
  * 已核实等价、写法不同的函数(tag:函数名 → 放宽到哪一步):
@@ -165,6 +171,9 @@ const KNOWN_EQUIVALENT = new Map<string, 'unordered' | Splice>([
   // 顶点 aPosition / aUV 的 0、1,片元 vUv 输入与颜色输出的 0、0。函数体里的常量照常逐个比
   ['fgCoverage:mainVertex', { side: 'wgsl', at: 0, lits: ['0', '1'] }],
   ['fgCoverage:mainFragment', { side: 'wgsl', at: 0, lits: ['0', '0'] }],
+  // 实体阴影两个片元入口同理:vWorld 输入与颜色输出的 @location(0)、@location(0)
+  ['shadowCast:mainFragment', { side: 'wgsl', at: 0, lits: ['0', '0'] }],
+  ['contact:mainFragment', { side: 'wgsl', at: 0, lits: ['0', '0'] }],
 ]);
 /**
  * 只在 WGSL 里有的移植辅助函数:tag → 函数名。bmSmoothstep = GLSL 内建 smoothstep 的展开;
@@ -283,6 +292,9 @@ describe('孪生守门自检(只在内存里改 WGSL 一侧,守门必须红)', (
     expect(mutate('fgOcc', ['return 2.0;', 'return 1.0;'])).not.toEqual([]);
     expect(mutate('fgMask', ['256.0 * floor', '255.0 * floor'])).not.toEqual([]);
     expect(mutate('fgMask', ['if (m.a < 0.02)', 'if (m.a < 0.002)'])).not.toEqual([]);
+    expect(mutate('contact', ['OMNI_SLICES: i32 = 8', 'OMNI_SLICES: i32 = 7'])).not.toEqual([]);
+    expect(mutate('contact', ['min(0.5 * PI, atan2(top, m)', 'min(0.4 * PI, atan2(top, m)'])).not.toEqual([]);
+    expect(mutate('vfxOcc', ['if (fgKind > 1.5) { return 1.0; }', 'if (fgKind > 1.5) { return 0.9; }'])).not.toEqual([]);
   });
 
   it('LOD 非 0 照比', () => {

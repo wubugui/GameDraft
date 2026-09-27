@@ -46,6 +46,32 @@ function refFallback(): Plugin {
   };
 }
 
+/**
+ * 两侧都把 RT gather 的逐像素随机旋转钉成 0(`hash12(gl_FragCoord.xy)` / `hash12(fragCoord)` → `0.0`)。
+ * 真显卡上 ANGLE(FXC)与 Dawn(DXC)对同一串浮点式子的收缩 / 精度不同,hash12 的 fract 把末位差放大成完全不同的
+ * 旋转角,「RT gather」几个用例因此永远逐位不等(SwiftShader 下两边同一编译器才相同);钉住之后其余整条
+ * gather(步进、入盒、NEE、miss)仍逐字节比。只改本对照页里加载的源,不动游戏。
+ * 没找到要替换的式子就直接抛(改名后不许悄悄失效);`RENDER_PARITY_PIN_GATHER_ROT=0` 关掉。
+ */
+function pinGatherRotation(): Plugin {
+  const rules: Array<{ file: RegExp; from: string }> = [
+    { file: /[\\/]CharacterShadingFilter\.ts$/, from: 'hash12(gl_FragCoord.xy)' },
+    { file: /[\\/]charLightCommon\.wgsl$/, from: 'hash12(fragCoord)' },
+  ];
+  return {
+    name: 'render-parity-pin-gather-rot',
+    enforce: 'pre',
+    transform(code, id) {
+      const file = id.split('?')[0];
+      const rule = rules.find((r) => r.file.test(file));
+      if (!rule) return null;
+      if (!code.includes(rule.from)) throw new Error(`[render_parity] ${file} 里找不到 ${rule.from}(改名了?同步 vite.config.ts 的 pinGatherRotation)`);
+      return { code: code.split(rule.from).join('0.0'), map: null };
+    },
+  };
+}
+const pinRot = process.env.RENDER_PARITY_PIN_GATHER_ROT !== '0';
+
 export default defineConfig({
   root: here,
   cacheDir: path.join(
@@ -53,7 +79,7 @@ export default defineConfig({
     'render-parity-vite',
     createHash('sha1').update(`${here}|${side}|${refRoot}`).digest('hex').slice(0, 12),
   ),
-  plugins: side === 'ref' ? [refFallback()] : [],
+  plugins: [...(side === 'ref' ? [refFallback()] : []), ...(pinRot ? [pinGatherRotation()] : [])],
   resolve: {
     alias: [
       { find: '@parity-side', replacement: path.join(here, side === 'ref' ? 'side_ref.ts' : 'side_cand.ts') },

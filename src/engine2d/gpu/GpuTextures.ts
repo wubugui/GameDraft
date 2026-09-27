@@ -77,7 +77,8 @@ export class GpuTextures {
   private readonly samplers = new Map<string, RhiSampler>();
   /**
    * 本缓存(本渲染器 / 本次设备)里每个 style 的采样键与参数:第一次见时按字段现值算,之后 style `update()`(版本变)才重算
-   * (R4-6,见 `TextureStyle._captureKey`)。reset(设备丢失恢复)时整表丢掉;新渲染器是新实例,从空表开始
+   * (R4-6,见 `TextureStyle._captureKey`)。reset(设备丢失恢复)时整表丢掉;新渲染器是新实例,从空表开始;
+   * 源 unload / destroy 时丢掉它那一条(R5,同 master WebGL 的 GL 纹理重建读现值)
    */
   private styleKeys = new WeakMap<TextureStyle, StyleKey>();
   /** 某张 RHI 纹理要销毁了(渲染目标缓存据此收掉挂在它上面的目标) */
@@ -210,7 +211,13 @@ export class GpuTextures {
     this.styleKeys = new WeakMap();
   }
 
+  /**
+   * 源卸载('unload',空闲回收 / 资源缓存逐出)或销毁:释放 GPU 纹理,并丢掉它的 style 记下的采样键——
+   * 同 master(WebGL):unload 清掉 GL 纹理,下次绑定走 _initSource → applyStyleParams 读 style 字段现值。
+   * 只在这里丢,不在 drop() 里:resourceId 变 / 改当渲染目标重建时 master 也不重读采样参数。
+   */
   private onSourceGone(source: TextureSource): void {
+    this.styleKeys.delete(source.style);
     this.release(source);
   }
 

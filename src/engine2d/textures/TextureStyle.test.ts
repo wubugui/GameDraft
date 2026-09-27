@@ -4,7 +4,8 @@
  * 新缓存对照 master 的 WebGL(R4-6):WebGL 上下文恢复 / 新渲染器上 GL 纹理重建,GlTextureSystem._initSource →
  * applyStyleParams 读 style 字段现值;所以设备丢失恢复与新渲染器之后,第一次取采样器按字段现值算键。
  * 键记在各 GPU 缓存里,不在 style 上:两个渲染器同时在用时互不影响(各自的设备都没换代)。
- * GC 回收后重传不重算,仍用原键(Pixi WebGPU 的 GpuTextureSystem 采样器按 _resourceId 缓存)。
+ * GC 回收(unload)后重传同样按字段现值重算(R5,对照 master:unload 清掉 GL 纹理,下次绑定 _initSource →
+ * applyStyleParams 读现值;这里拿 Pixi 真的 GlTextureSystem 并排比)。
  * 以前每取一次都现拼一个长字符串再查表,合批每个 draw 取 16 次,是渲染主线程最热的一处。
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -128,19 +129,77 @@ describe('TextureStyle 采样键(对照 Pixi TextureStyle._resourceId)', () => {
     r2.destroy();
   });
 
-  it('设备丢失恢复(对照 master contextChange 后 GL 纹理重建):按字段现值建采样器;同一设备上 GC 回收重传仍用原键', async () => {
+  it('GC 回收重传:与 master(Pixi WebGL GlTextureSystem)相同,按字段现值重建采样器', () => {
+    // master:真 GlTextureSystem + 记录 texParameteri 的假 gl
+    const calls: { fn: string; args: unknown[] }[] = [];
+    const consts = new Map<string, number>();
+    const fns = new Map<string, (...a: unknown[]) => unknown>();
+    const gl = new Proxy({}, {
+      get(_t, p: string | symbol) {
+        if (typeof p !== 'string') return undefined;
+        if (/^[A-Z0-9_]+$/.test(p)) {
+          if (!consts.has(p)) consts.set(p, 100000 + consts.size);
+          return consts.get(p);
+        }
+        if (!fns.has(p)) {
+          fns.set(p, (...args: unknown[]) => {
+            calls.push({ fn: p, args });
+            return p === 'createTexture' || p === 'createSampler' ? {} : null;
+          });
+        }
+        return fns.get(p);
+      },
+    });
+    const constName = (v: unknown) => [...consts].find(([, n]) => n === v)?.[0];
+    const g = globalThis as Record<string, unknown>;
+    g.WebGLRenderingContext ??= class {};
+    g.WebGL2RenderingContext ??= class {};
+    const pixiRenderer = {
+      uid: 7,
+      gc: { now: 0, addResourceHash() {} },
+      context: { extensions: {}, supports: { nonPowOf2wrapping: true, nonPowOf2mipmaps: true }, webGLVersion: 2 },
+    };
+    const sys = new (PIXI as unknown as { GlTextureSystem: new (r: unknown) => {
+      contextChange(gl: unknown): void; bind(t: unknown, i: number): void;
+    } }).GlTextureSystem(pixiRenderer);
+    sys.contextChange(gl);
+    const psrc = new PIXI.BufferImageSource({ resource: new Uint8Array(64), width: 4, height: 4, format: 'rgba8unorm' } as never);
+    const ptex = new PIXI.Texture({ source: psrc });
+    sys.bind(ptex, 0);
+    psrc.scaleMode = 'nearest';
+    psrc.addressMode = 'repeat';
+    psrc.unload();
+    calls.length = 0;
+    sys.bind(ptex, 0);
+    const params = calls.filter((c) => c.fn === 'texParameteri').map((c) => [constName(c.args[1]), c.args[2]]);
+    expect(params).toContainEqual(['TEXTURE_MAG_FILTER', 9728]); // NEAREST
+    expect(params).toContainEqual(['TEXTURE_WRAP_S', 10497]); // REPEAT
+
+    // engine2d:同一串操作,重传后按现值(最近邻 / 重复)建采样器
+    const { source, root } = usedSource();
+    const rhi = new NullRhiDevice({ swapchainSize: [16, 16] });
+    const r = new WebGPURenderer({ rhi, canvas, width: 16, height: 16 });
+    const createSampler = vi.spyOn(rhi, 'createSampler');
+    r.render({ container: root, target: rt() });
+    source.scaleMode = 'nearest';
+    source.addressMode = 'repeat';
+    source.unload();
+    createSampler.mockClear();
+    r.render({ container: root, target: rt() });
+    const after = samplerDescs(createSampler);
+    expect(after.some((d) => d.magFilter === 'nearest' && d.addressModeU === 'repeat')).toBe(true);
+    r.destroy();
+  });
+
+  it('设备丢失恢复(对照 master contextChange 后 GL 纹理重建):按字段现值建采样器', async () => {
     const { source, root } = usedSource();
     const rhi = new NullRhiDevice({ swapchainSize: [16, 16] });
     const r = new WebGPURenderer({ rhi, canvas, width: 16, height: 16 });
     const createSampler = vi.spyOn(rhi, 'createSampler');
     r.render({ container: root, target: rt() });
 
-    // 同一设备:改字段不 update + GC 回收重传,仍是线性 / 夹边(Pixi WebGPU 语义)
     source.scaleMode = 'nearest';
     source.addressMode = 'repeat';
-    source.unload();
-    r.render({ container: root, target: rt() });
-    expect(samplerDescs(createSampler).some((d) => d.magFilter === 'nearest')).toBe(false);
 
     // 设备丢失恢复:换代,按现值重建
     await rhi.loseDevice('test');

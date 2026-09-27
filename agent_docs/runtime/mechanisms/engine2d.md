@@ -96,7 +96,7 @@ Sprite 的合批四边形只在换纹理 / 改锚点 / 动态纹理 update 时�
 纹理的**采样参数在一个渲染器 / 一次设备里第一次用到时定下**(照 Pixi WebGPU 的 `_resourceId`:键与参数由各渲染器的 `GpuTextures` 按 style 各记一份,
 GPU 采样器按记下的参数建),之后改 `scaleMode` / `addressMode` 等字段要调 `style.update()`(`_updateId` 加一)才生效。新渲染器、设备丢失恢复
 从空表开始,第一次取采样器按字段现值算键,同 master(WebGL)上下文恢复后 GL 纹理重建读现值;两个渲染器同时在用时互不影响;
-同一设备上被 GC 回收后重传仍用原键(master 这里读现值)——用过之后改字段不 update 的写法别写。
+源被 GC 回收(unload)后重传同样按字段现值重算(同 master 的 GL 纹理重建)——但用过之后改字段不 update 的写法仍别写。
 
 ## 怎么验证
 

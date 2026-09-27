@@ -112,7 +112,7 @@ export class TextureStyle extends EventEmitter {
    * 按字段现值算采样键与参数(GPU 采样器按键共享,建采样器一律用同一份参数,保证同键必同参数)。
    * 什么时候算由 GPU 缓存决定(`GpuTextures.sampler`):照 master 的 WebGL,某个渲染器 / 某次设备第一次用这个 style
    * 时读现值(GL 纹理初始化 applyStyleParams 读现值,设备丢失恢复 / 新渲染器同理);同一缓存里用过之后照 Pixi 8.17 WebGPU,
-   * 改字段要 update() 才生效(游戏里都是这么做的;GC 回收后重传仍用原键,同 Pixi WebGPU)。
+   * 改字段要 update() 才生效(游戏里都是这么做的);源 unload(GC 回收)/ destroy 后重传按现值重算,同 master WebGL。
    * 多个渲染器同时在用时各记各的,互不影响
    */
   _captureKey(): { key: string; fields: Readonly<TextureStyleKeyFields> } {
