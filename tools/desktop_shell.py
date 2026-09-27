@@ -37,9 +37,36 @@ import threading
 from http.server import ThreadingHTTPServer
 
 
+#: Chromium 拒绝连接的端口(`net/base/port_util.cc` 的 kRestrictedPorts,含近年补进去的 SIP / H.323 等):页面地址落在这些端口上,
+#: 浏览器内核(QtWebEngine / WebView2 / Chrome)直接报 ERR_UNSAFE_PORT、页面装不上。系统分配端口(port 0)会随机撞上
+#: (实测撞过 5060、1719:粒子台 Qt 自检偶发起不来)。
+CHROMIUM_RESTRICTED_PORTS = frozenset({
+    1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 69, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111,
+    113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540, 548,
+    554, 556, 563, 587, 601, 636, 989, 990, 993, 995, 1719, 1720, 1723, 2049, 3659, 4045, 4190, 5060, 5061, 6000, 6566,
+    6665, 6666, 6667, 6668, 6669, 6679, 6697, 10080,
+})
+
+
+class _ShellServer(ThreadingHTTPServer):
+    #: 监听队列:缺省 5,页面一开同时几十个请求(模块脚本 / 贴图 / 接口)时 Windows 上会被拒连(ECONNREFUSED),资源随机装不上
+    request_queue_size = 64
+    daemon_threads = True
+
+
 def start_server(handler_cls, port: int = 0) -> int:
-    """后台 daemon 线程起服务,返回实际端口(port=0 由系统分配)。"""
-    httpd = ThreadingHTTPServer(('127.0.0.1', port), handler_cls)
+    """后台 daemon 线程起服务,返回实际端口(port=0 由系统分配,避开 Chromium 拒绝的端口)。"""
+    if port in CHROMIUM_RESTRICTED_PORTS:
+        raise ValueError(f'端口 {port} 是浏览器内核拒绝连接的端口(ERR_UNSAFE_PORT),页面装不上:换一个')
+    httpd = None
+    for _ in range(64):
+        httpd = _ShellServer(('127.0.0.1', port), handler_cls)
+        if port or int(httpd.server_address[1]) not in CHROMIUM_RESTRICTED_PORTS:
+            break
+        httpd.server_close()        # 系统分到了浏览器不许连的端口:放掉重分
+        httpd = None
+    if httpd is None:
+        raise OSError('系统连着 64 次都分到浏览器不许连的端口')
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return int(httpd.server_address[1])
 
