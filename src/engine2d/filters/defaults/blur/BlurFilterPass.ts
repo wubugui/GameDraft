@@ -3,12 +3,14 @@
  *
  * 单方向高斯模糊。`quality` = pass 数;多 pass 时在输入与一张池里的临时纹理之间来回画,最后一 pass 画到输出。
  *
- * 与 Pixi 的差别(都来自「engine2d 只有 WebGPU」):
+ * 与 Pixi 的差别:
  * - 不建 GlProgram;
- * - Pixi 按 `filterManager.renderer.type` 分 WebGL / WebGPU 两条路,这里固定走 **WebGPU 那条**:
- *   中间 pass 一律 `clear = true`;不切 `_state.blend`(Pixi 的 WebGPU 管线本来就不读它——
- *   清成 0 的目标上做 normal 混合 = 直接写入,与 WebGL 关混合的结果相同);
- *   Pixi 在 WebGPU 下每 pass 用 `uniformBatch.getUboResource` 给 uniform 拍快照,engine2d 由滤镜系统在
+ * - Pixi 按 `filterManager.renderer.type` 分 WebGL / WebGPU 两条路,这里走 **master 实际跑的 WebGL 那条**
+ *   (制作人 2026-09-27:结果与 master 一模一样):中间 pass 不清屏(第一 pass 除外)、关混合直接覆盖写
+ *   (`_state.blend = false` ↔ 这里临时把 blendMode 切成 'none',最后一 pass 前还原)。四边形外那圈临时纹理
+ *   保留池里上一次的内容,模糊核读到的与 master 相同(engine2d 的纹理池照 Pixi 同键同序复用);
+ *   WebGPU 那条(每 pass 都清)在边缘与 master 差出几级(A/B 实测投影阴影下沿);
+ * - Pixi 在 WebGPU 下每 pass 用 `uniformBatch.getUboResource` 给 uniform 拍快照,engine2d 由滤镜系统在
  *   `applyFilter` 时按当时的值打包(同一帧里本滤镜会以不同的 uStrength 连续 apply 多次)。
  */
 import { Filter, type FilterSystemLike } from '../../Filter';
@@ -92,8 +94,10 @@ export class BlurFilterPass extends Filter {
       let flip = input;
       let flop = tempTexture;
 
-      // Pixi:this._state.blend = false;shouldClear = renderer.type === WEBGPU(engine2d 恒为 true)
-      const shouldClear = true;
+      // Pixi WebGL(master):this._state.blend = false;shouldClear = renderer.type === WEBGPU → false
+      const blend = this.blendMode;
+      this.blendMode = 'none';
+      const shouldClear = false;
 
       for (let i = 0; i < this.passes - 1; i++) {
         filterManager.applyFilter(this, flip, flop, i === 0 ? true : shouldClear);
@@ -105,6 +109,7 @@ export class BlurFilterPass extends Filter {
       }
 
       // Pixi:this._state.blend = true
+      this.blendMode = blend;
       filterManager.applyFilter(this, flip, output, clearMode);
       TexturePool.returnTexture(tempTexture);
     }
@@ -121,12 +126,14 @@ export class BlurFilterPass extends Filter {
       let flip = input;
       let flop = tempTexture;
 
-      // Pixi:this._state.blend = false;isWebGPU = renderer.type === WEBGPU(engine2d 恒为 true);
-      // WebGPU 下每 pass 前 groups[1].setResource(uniformBatch.getUboResource(...)) —— engine2d 由滤镜系统拍快照
-      const isWebGPU = true;
+      // Pixi WebGL(master):this._state.blend = false;中间 pass 的 clear = (renderer.type === WEBGPU) → false
+      // (uniform 快照由滤镜系统在 applyFilter 时按当时的值打包,不需要 uniformBatch)
+      const blend = this.blendMode;
+      this.blendMode = 'none';
+      const clearIntermediate = false;
 
       for (let i = 0; i < this.passes - 1; i++) {
-        filterManager.applyFilter(this, flip, flop, isWebGPU);
+        filterManager.applyFilter(this, flip, flop, clearIntermediate);
 
         const temp = flop;
 
@@ -137,6 +144,7 @@ export class BlurFilterPass extends Filter {
       }
 
       // Pixi:this._state.blend = true
+      this.blendMode = blend;
       filterManager.applyFilter(this, flip, output, clearMode);
       TexturePool.returnTexture(tempTexture);
     }
