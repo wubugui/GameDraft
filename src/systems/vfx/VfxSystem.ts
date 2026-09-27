@@ -28,7 +28,6 @@ import type { Texture } from '../../engine2d';
 import type { AssetManager } from '../../core/AssetManager';
 import type { EventBus } from '../../core/EventBus';
 import type {
-  AnimationSetDef,
   ConditionExpr,
   GameContext,
   IGameSystem,
@@ -63,6 +62,7 @@ import {
   type VfxViewRect,
 } from './vfxSim';
 import type { VfxSpace } from './vfxSpace';
+import { BOLT_STUB_SHEET, loadVfxSpriteSheet, vfxSheetKey } from './vfxSpriteSheet';
 
 /** 调试面板的一行 */
 export interface VfxInstanceDebugRow {
@@ -78,15 +78,10 @@ export interface VfxInstanceDebugRow {
   } | null;
 }
 
-/** 玩家动静场：半径 / 满强度对应的速度（wu/s） */
-/**
- * 画雷的发射器（`appearance.bolt`）的占位贴图表：雷身是渲染侧现画的折线，走它自己的网格与程序，
- * **不读这张表的贴图**；给它只是为了让"没贴图的发射器跳过"那道闸放行。
- */
-export const BOLT_STUB_SHEET: VfxSpriteSheet = {
-  texture: null as unknown as Texture, frames: [{ u0: 0, v0: 0, u1: 1, v1: 1 }], aspect: 1, frameRate: 0,
-};
+// 画雷发射器的占位贴图表搬到了 vfxSpriteSheet（粒子工作台与游戏共用同一个装载函数），这里原名转出，老调用方不动
+export { BOLT_STUB_SHEET };
 
+/** 玩家动静场：半径 / 满强度对应的速度（wu/s） */
 const PLAYER_MOTION_RADIUS_WU = 320;
 const PLAYER_MOTION_FULL_SPEED = 420;
 /** 玩家动静场挂在脚点上方这么高（胸口） */
@@ -775,39 +770,14 @@ export class VfxSystem implements IGameSystem {
   }
 
   private loadSheet(ap: VfxAppearanceDef): Promise<VfxSpriteSheet | null> {
-    // 画雷的发射器不贴图（雷身是现画的折线，见 appearance.bolt）：给一张占位的白图，渲染侧按 bolt 走自己的网格
+    // 画雷的发射器不贴图：占位表，不进缓存（与抽出前同一条）
     if (ap.bolt) return Promise.resolve(BOLT_STUB_SHEET);
-    const key = `${ap.animFile ?? ''}|${ap.image ?? ''}|${ap.state ?? ''}|${ap.restState ?? ''}`;
+    const key = vfxSheetKey(ap);
     let p = this.sheetCache.get(key);
     if (p) return p;
-    p = (async (): Promise<VfxSpriteSheet | null> => {
-      const am = this.deps.assetManager;
-      if (ap.animFile) {
-        const def = await am.loadJson<AnimationSetDef>(ap.animFile);
-        if (!def || !def.spritesheet || !def.states) return null;
-        const dir = ap.animFile.substring(0, ap.animFile.lastIndexOf('/') + 1);
-        const sheetUrl = def.spritesheet.startsWith('/') ? def.spritesheet : dir + def.spritesheet;
-        const tex: Texture = await am.loadTexture(sheetUrl);
-        const cols = Math.max(1, def.cols | 0), rows = Math.max(1, def.rows | 0);
-        const stateName = ap.state && def.states[ap.state] ? ap.state : Object.keys(def.states)[0];
-        const st = def.states[stateName];
-        if (!st) return null;
-        const rect = (idx: number) => {
-          const c = idx % cols, r = Math.floor(idx / cols);
-          return { u0: c / cols, v0: r / rows, u1: (c + 1) / cols, v1: (r + 1) / rows };
-        };
-        const frames = (st.frames ?? [0]).map(rect);
-        const cw = tex.width / cols, ch = tex.height / rows;
-        let restFrame: VfxSpriteSheet['restFrame'];
-        if (ap.restState && def.states[ap.restState]?.frames?.length) restFrame = rect(def.states[ap.restState].frames[0]);
-        return { texture: tex, frames, aspect: ch / Math.max(cw, 1e-6), frameRate: st.frameRate ?? 8, restFrame };
-      }
-      if (ap.image) {
-        const tex: Texture = await am.loadTexture(ap.image);
-        return { texture: tex, frames: [{ u0: 0, v0: 0, u1: 1, v1: 1 }], aspect: tex.height / Math.max(tex.width, 1e-6), frameRate: 0 };
-      }
-      return null;
-    })().catch((e) => { this.deps.log(`vfx: 贴图加载失败：${String(e)}`); return null; });
+    // 装法与粒子工作台同一个函数（vfxSpriteSheet.ts）
+    p = loadVfxSpriteSheet(ap, this.deps.assetManager)
+      .catch((e) => { this.deps.log(`vfx: 贴图加载失败：${String(e)}`); return null; });
     this.sheetCache.set(key, p);
     return p;
   }
