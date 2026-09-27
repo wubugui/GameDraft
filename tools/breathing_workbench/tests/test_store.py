@@ -140,3 +140,40 @@ def test_media_file_confined_to_public(proj):
     assert store.media_file(fixtures.MEDIA + "/base.png") is not None
     assert store.media_file("/resources/../../src/data/breathingParams.json") is None
     assert store.media_file("/assets/data/breathing/x.json") is None
+
+
+def _link_dir(link: Path, target: Path) -> bool:
+    """建目录链接:Windows 先试 junction(不要管理员 / 开发者模式),别的平台 symlink。建不出来返回 False。"""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        try:
+            import _winapi
+
+            _winapi.CreateJunction(str(target), str(link))
+            return True
+        except (ImportError, AttributeError, OSError):
+            pass
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return True
+    except (OSError, NotImplementedError):
+        return False
+
+
+def test_media_file_through_linked_runtime_tree(proj, tmp_path_factory):
+    """``public/resources/runtime`` 是指向树外的链接(worktree 的常态):图照常放行,``..`` 爬出 public 照样拒。
+
+    2026-09-27:只按真实路径判时 junction 整个解到树外,真工程的分层图 / 位移场全 404,工作台用真数据一张图都开不了。
+    """
+    runtime = proj / "public" / "resources" / "runtime"
+    outside = tmp_path_factory.mktemp("elsewhere") / "runtime"
+    runtime.rename(outside)
+    if not _link_dir(runtime, outside):
+        pytest.skip("这台机器上建不了目录链接")
+    got = store.media_file(fixtures.MEDIA + "/base.png")
+    assert got is not None and got.is_file() and got.read_bytes() == (outside / "images/breathing" / fixtures.ASSET_ID / "base.png").read_bytes()
+    assert store.media_file(fixtures.MEDIA + "/fields.bin") is not None
+    assert store.check_asset(fixtures.ASSET_ID)[0] == []
+    assert store.media_file("/resources/../../src/data/breathingParams.json") is None
+    assert store.media_file("/resources/runtime/../../../src/data/breathingParams.json") is None
+    assert store.media_file(fixtures.MEDIA + "/nope.png") is None

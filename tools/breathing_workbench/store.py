@@ -267,14 +267,24 @@ def save_asset(doc: Any, base: Any = UNCHECKED) -> tuple[Path, dict, list[str], 
 
 
 def media_file(url: str) -> Path | None:
-    """``/resources/…`` → ``public/resources/…``(只放行落在 public 下、存在的文件)。"""
+    """``/resources/…`` → ``public/resources/…``(只放行落在 public 下、存在的文件)。
+
+    先按**真实路径**判,不在再按**字面路径**(``..`` 词法消掉之后)判——``public/`` 下的子树可以是链接:worktree / 并行检出里
+    ``public/resources/runtime`` 常是指向主检出的 junction,只按真实路径判会把真工程的图全判成 404(与打包清单
+    ``tools/build/asset_manifest._public_rel`` 同一个修法)。字面上爬出 ``public/`` 的一律不放行。
+    """
     if not isinstance(url, str) or not url.startswith("/resources/"):
         return None
-    p = (PROJECT / "public" / url.lstrip("/")).resolve()
+    public = PROJECT / "public"
+    p = (public / url.lstrip("/")).resolve()
     try:
-        p.relative_to((PROJECT / "public").resolve())
+        p.relative_to(public.resolve())
     except ValueError:
-        return None
+        p = Path(os.path.abspath(public / url.lstrip("/")))
+        try:
+            p.relative_to(Path(os.path.abspath(public)))
+        except ValueError:
+            return None
     return p if p.is_file() else None
 
 
