@@ -32,6 +32,56 @@
     const dialogCoversCenter = () => { const t = topElAtCenter(); return !!t && el('dialog').contains(t); };
     ok('S1 busy / dialog overlays are really not displayed at boot', !shown('busy') && !shown('dialog'), { busy: getComputedStyle(el('busy')).display, dialog: getComputedStyle(el('dialog')).display });
     ok('S1 the 3D canvas is what sits under the pointer (nothing covers it)', ['view3d', 'overlay3d'].includes(topAtCenter()), { top: topAtCenter() });
+
+    // ------------------------------------------------------------------ S1g 着色层（接入层 3D 调试件：RHI / WebGPU）
+    // 真 GPU 上：画面非空、标记在页面自己的投影处读回自己的颜色、网格表面后的探针被挡住 / 前面的看得见（tools/workbench_rhi/debug3d.ts selfCheck）；
+    // 反射面体（半透明、测深度不写）真叠在画面上。宿主拿不到 WebGPU（离屏 Qt）记 SKIP；pytest 另在真 GPU 的 Chrome 里跑同一份、不许 SKIP。
+    {
+      try { await v3.whenGpu; } catch (e) { /* 原因在 v3.gpuErr */ }
+      ok('S1g the 3D view holds no WebGL context (drawing goes through the shared kit)', !('gl' in v3) && typeof v3.whenGpu.then === 'function');
+      if (!v3.gpu) log.push(`SKIP S1g 3D shading layer: ${v3.gpuErr || '没有 WebGPU'}`);
+      else {
+        const keep = { ...S.layers }, cam = { ...v3.cam };
+        Object.assign(S.layers, { mesh: true, taps: false });
+        v3.fit(true); v3.draw();
+        const rt = await import('/gen/debug3d.bundle.js');
+        const c3 = el('view3d'), dpr = window.devicePixelRatio || 1, def = S.doc.def;
+        const markers = [];
+        const onL = S.sel.kind === 'listener';
+        markers.push({ pos: [def.listener.x, def.listener.y || 0, def.listener.z], color: onL ? [0.6, 0.85, 1, 1] : [0.42, 0.72, 1, 1], size: onL ? 12 : 9 });
+        markers.push({ pos: v3._ear(def), color: [0.42, 0.72, 1, 1], size: 7 });
+        (def.sources || []).forEach((sp, i) => {
+          const Sf = [sp.x, sp.y || 0, sp.z], hgt = sp.height != null ? sp.height : (def.earHeight != null ? def.earHeight : 141);
+          const on = S.sel.kind === 'source' && S.sel.ids.has(i), active = S.probeFrom === i;
+          markers.push({ pos: Sf, color: on ? [1, 0.75, 0.9, 1] : active ? [1, 0.6, 0.88, 1] : [0.85, 0.45, 0.7, 0.9], size: on ? 12 : active ? 10 : 8 });
+          markers.push({ pos: [Sf[0], Sf[1] + hgt, Sf[2]], color: [1, 0.55, 0.85, 1], size: 6 });
+        });
+        for (const hd of v3._handles()) markers.push({ pos: hd.p, color: hd.kind === 'height' ? [1, 0.7, 0.33, 1] : [1, 1, 1, 1], size: hd.size });
+        if (S.layers.marks && S.marks) for (const m of S.marks) markers.push({ pos: m.world, color: m.kind === 'spawn' ? [1, 1, 1, 0.9] : [0.85, 0.85, 0.85, 0.7], size: m.kind === 'spawn' ? 8 : 6 });
+        const res = rt.debug3d.selfCheck(v3.gpu, { project: (p) => v3.project(p), ray: (x, y) => v3.ray(x, y), cssSize: [c3.width / dpr, c3.height / dpr],
+          mesh: v3.mesh && { vertices: v3.mesh.verts, stride: 5, indices: v3.mesh.idx }, markers });
+        for (const r of res) ok(`S1g ${r.name}`, r.ok, r.detail);
+        // 反射面体：各面上取 3×3 个内点，有 / 没有反射面时这些像素里有变的（半透明体叠上去了；被网格挡住的点不变，不算错）
+        if (def.reflectors.length) {
+          const pts = [];
+          for (const r of def.reflectors) {
+            const q = Geo.quad(r);
+            for (const u of [0.25, 0.5, 0.75]) for (const w of [0.25, 0.5, 0.75]) {
+              const a = [0, 1, 2].map((k) => q[0][k] + (q[1][k] - q[0][k]) * u), b = [0, 1, 2].map((k) => q[3][k] + (q[2][k] - q[3][k]) * u);
+              const c = v3.project([0, 1, 2].map((k) => a[k] + (b[k] - a[k]) * w));
+              if (c && c[0] > 2 && c[1] > 2 && c[0] < c3.width / dpr - 2 && c[1] < c3.height / dpr - 2) pts.push(c);
+            }
+          }
+          const withR = pts.map((c) => v3.gpu.readPixel(c[0], c[1]));
+          const saved = def.reflectors; def.reflectors = []; v3.draw();
+          const withoutR = pts.map((c) => v3.gpu.readPixel(c[0], c[1]));
+          def.reflectors = saved; v3.draw();
+          const changed = withR.filter((p, i) => p.some((v, k) => k < 3 && Math.abs(v - withoutR[i][k]) > 4)).length;
+          ok('S1g reflector bodies (translucent, depth-tested) are drawn over the mesh', changed > 0, { n: pts.length, changed });
+        }
+        Object.assign(S.layers, keep); Object.assign(v3.cam, cam); v3.draw();
+      }
+    }
     // ---------------------------------------------------------------- S1b 坐标：工作台的世界 = 运行时的世界，且画面不镜像
     ok('S1b runtime sceneSpace is in the bundle and the alignment check ran', !!(S.acoustic && S.acoustic.sceneSpace && S.align), { align: S.align });
     ok('S1b scene→world / marks / mesh uv / view dir all agree with the runtime code', !!(S.align && S.align.ok), S.align);

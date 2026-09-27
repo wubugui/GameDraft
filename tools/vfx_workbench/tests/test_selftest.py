@@ -91,6 +91,9 @@ def test_interaction_layer_selftest() -> None:
         assert after == before, f"自检改动了工程效果资产（或临时资产没删干净）：{set(after) ^ set(before) or '内容变了'}"
         assert r.returncode == 0, "selftest 有 FAIL/EXC 或超时（看上面的报告）"
         assert "passed, 0 failed" in r.stdout
+        if script.endswith("/selftest.js"):
+            # 3D 视图走接入层的 3D 调试件：离屏 Qt 拿不到 WebGPU 时着色那几条记 SKIP（带原因），真跑在 Chrome 那条里
+            assert "PASS S1g the 3D view holds no WebGL context" in r.stdout and "S1g" in r.stdout
 
 
 def _sandbox_server(tmp: Path):
@@ -98,6 +101,13 @@ def _sandbox_server(tmp: Path):
     沙箱目录给 pytest 的 tmp_path：服务子进程在 Windows 上是被硬结束的，它自己的收尾不跑。"""
     return browser.serving([sys.executable, "-m", "tools.vfx_workbench", "--serve", "--port", "{port}",
                             "--selftest-sandbox", str(tmp / "sandbox")])
+
+
+#: 冒烟判据：3D 视图拿到 WebGPU、场景网格装上、画面非空、这帧没有设备诊断错误
+_SMOKE_CHECK = ("(() => { if (typeof v3 === 'undefined' || !v3) return { ok: false, detail: 'no v3' };"
+                " if (!v3.gpu) return { ok: false, detail: v3.gpuErr || 'gpu pending' }; v3.draw();"
+                " const n = v3.gpu.countDrawnPixels(); return { ok: !!v3.mesh && n > 20000 && !v3.gpu.lastError,"
+                " detail: { drawn: n, draws: v3.gpu.stats.draws, err: v3.gpu.lastError } }; })()")
 
 
 @pytest.mark.skipif(not (_SCENE_OK and _VFX.is_dir()), reason="缺工程真数据（烘过深度的场景 / 效果库）")
@@ -120,6 +130,9 @@ def test_selftest_in_chrome_with_real_webgpu(script: str, tmp_path: Path) -> Non
     assert "WebGPU 适配器：没有" not in r.stdout, "这台机器的 Chrome 拿不到 WebGPU"
     assert r.returncode == 0, "Chrome 里的自检有 FAIL / EXC / SKIP 或控制台 error（看上面的报告）"
     assert " 0 failed, 0 skipped" in r.stdout
+    if script.endswith("/selftest.js"):
+        # 3D 视图的着色层(接入层 3D 调试件):画面非空 / 标记颜色落在页面投影处 / 网格前后探针的深度遮挡都要真跑真过
+        assert "PASS S1g frame is not empty" in r.stdout and "PASS S1g a marker reads back" in r.stdout and "PASS S1g depth:" in r.stdout
 
 
 @pytest.mark.skipif(not (_SCENE_OK and _VFX.is_dir()), reason="缺工程真数据（烘过深度的场景 / 效果库）")
@@ -130,6 +143,20 @@ def test_page_smoke_in_chrome(tmp_path: Path) -> None:
     with _sandbox_server(tmp_path) as base:
         r = browser.run_page(base + "/", smoke=True, shot=shot,
                              extra=["--check", "(setView(2), window.__rhiSmoke2d())"])
+    sys.stdout.write(r.stdout[-4000:])
+    if r.returncode == browser.EXIT_NO_BROWSER:
+        pytest.skip("起不来 Chrome")
+    assert r.returncode == 0, "冒烟没过（看上面）"
+    assert '"ok":true' in r.stdout and "控制台无 error" in r.stdout and shot.is_file()
+
+
+@pytest.mark.skipif(not (_SCENE_OK and _VFX.is_dir()), reason="缺工程真数据（烘过深度的场景 / 效果库）")
+@pytest.mark.skipif(bool(browser.unavailable()), reason=browser.unavailable() or "ok")
+def test_view3d_smoke_in_chrome(tmp_path: Path) -> None:
+    """冒烟：Chrome 打开粒子工作台，3D 视图拿到 WebGPU、画面非空、控制台无 error；截图留在 tmp。"""
+    shot = tmp_path / "vfx_view3d_smoke.png"
+    with _sandbox_server(tmp_path) as base:
+        r = browser.run_page(base + "/", smoke=True, shot=shot, extra=["--check", _SMOKE_CHECK])
     sys.stdout.write(r.stdout[-4000:])
     if r.returncode == browser.EXIT_NO_BROWSER:
         pytest.skip("起不来 Chrome")

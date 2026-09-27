@@ -7,6 +7,7 @@
   GET  /gen/vfx.bundle.js                 运行时 vfxSim + vfxSpace + sceneSpace + 两个场 + 场景风 + 透视 + 游戏同一份粒子渲染
                                           （工作台 RHI 接入层 + VfxRenderer，WGSL）打成的 ESM（按需打包，见 bundle.py）
   GET  /resources/runtime/{images|animation|scenes}/…   运行时贴图 / 动画包 / 场景深度图（与游戏同一个 URL；只放行图与 JSON）
+  GET  /gen/debug3d.bundle.js             3D 视图的着色：接入层的 3D 调试件（tools/workbench_rhi/debug3d_bundle.py）
   GET  /api/boot                          启动参数（--open 的效果 id，只发一次；游戏地址；打包状态；布置库路径）
   GET  /api/scenes                        工程场景清单（深度 / 时段背景 / 行走面场状态 / 时段外观 phases / dayNight）
   GET  /api/scene?id=&phase=[&bg=]        场景描述：标定、尺寸、NPC、出生点 / NPC 脚下的世界点、风、透视、
@@ -75,6 +76,7 @@ from tools.trajectory_workbench.geometry import SCENES_RT, list_scenes, scene_pa
 from tools.trajectory_workbench.serve import get_geometry, scaled_background         # noqa: E402
 from tools.vfx_workbench import assets, bundle, lightning, placements                # noqa: E402
 from tools.vfx_workbench.game_link import VfxLink                                    # noqa: E402
+from tools.workbench_rhi import debug3d_bundle                                       # noqa: E402
 
 PORT = 5341
 #: ``--open <id>``：桌面壳启动时带进来的效果 id，前端 ``/api/boot`` 取一次即清。
@@ -382,6 +384,16 @@ class H(SimpleHTTPRequestHandler):
                 if not p or not p.exists():
                     return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
                 return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+            if u.path == debug3d_bundle.ROUTE:
+                # 3D 视图的着色：接入层的 3D 调试件（RHI / WebGPU，着色器只有 debug3d.wgsl 一份）
+                p, err = debug3d_bundle.ensure(bundle.GEN_DIR)
+                if not p or not p.exists():
+                    return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
+                return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+            if u.path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return None
             if u.path == "/api/boot":
                 open_id = BOOT_OPEN.pop() if BOOT_OPEN else ""
                 p, err = bundle.ensure_bundle()

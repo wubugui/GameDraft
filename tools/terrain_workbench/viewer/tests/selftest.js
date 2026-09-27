@@ -38,11 +38,42 @@
   try {
     // ------------------------------------------------------------------ S1 启动
     for (let i = 0; i < 160 && !window.__ready; i++) await wait(250);
-    ok('S1 boot: ready / scene / cal / grid / composed / WebGL2 / clean', !!window.__ready && !!S.scene && !!S.cal && !!S.grid && !!S.composed && v3.ok && !S.dirty,
+    ok('S1 boot: ready / scene / cal / grid / composed / 3D view / clean', !!window.__ready && !!S.scene && !!S.cal && !!S.grid && !!S.composed && v3.ok && !S.dirty,
       { scene: S.scene && S.scene.id, grid: S.grid && [S.grid.w, S.grid.h], v3: v3.ok });
     const shown = (id) => getComputedStyle(el(id)).display !== 'none';
     ok('S1 busy / dialog overlays are not displayed at boot', !shown('busy') && !shown('dialog'));
     ok('S1 the 3D canvas sits under the pointer', (() => { const r = cv().getBoundingClientRect(); const t = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return t && ['view3d', 'overlay3d'].includes(t.id); })());
+
+    // ------------------------------------------------------------------ S1g 着色层（接入层 3D 调试件：RHI / WebGPU）
+    // 真 GPU 上：画面非空、标记在页面自己的投影处读回自己的颜色、网格表面后的探针被挡住 / 前面的看得见（tools/workbench_rhi/debug3d.ts selfCheck）。
+    // 宿主拿不到 WebGPU（离屏 Qt）记 SKIP；pytest 另在真 GPU 的 Chrome 里跑同一份、不许 SKIP。
+    {
+      try { await v3.whenGpu; } catch (e) { /* 原因在 v3.gpuErr */ }
+      ok('S1g the 3D view holds no WebGL context (drawing goes through the shared kit)', !('gl' in v3) && typeof v3.whenGpu.then === 'function');
+      if (!v3.gpu) log.push(`SKIP S1g 3D shading layer: ${v3.gpuErr || '没有 WebGPU'}`);
+      else {
+        if (S.view !== 3) setView(3);
+        const keep = { ...S.layers }, cam = { ...v3.cam };
+        S.layers.mesh = true;
+        v3.fit(true); v3.draw();
+        const rt = await import('/gen/debug3d.bundle.js');
+        const c3 = el('view3d'), dpr = window.devicePixelRatio || 1;
+        const markers = [];
+        for (const o of host.objects()) markers.push({ pos: o.pos, color: o.color, size: o.size });
+        if (S.layers.marks) for (const m of (S.marks || [])) markers.push({ pos: m.world, color: MARK_COLOR[m.kind] || [0.7, 0.7, 0.8, 0.9], size: m.kind === 'spawn' ? 9 : 7 });
+        const res = rt.debug3d.selfCheck(v3.gpu, { project: (p) => v3.project(p), ray: (x, y) => v3.ray(x, y), cssSize: [c3.width / dpr, c3.height / dpr],
+          mesh: v3.mesh && { vertices: v3.mesh.verts, stride: 5, indices: v3.mesh.idx }, markers });
+        for (const r of res) ok(`S1g ${r.name}`, r.ok, r.detail);
+        // 碰撞格（顶点色、alpha≈0 丢掉）真的叠在画面上：开 / 关碰撞格层，画面像素数不同
+        S.layers.cells = true; v3.draw(); const nOn = v3.gpu.countDrawnPixels();
+        S.layers.cells = false; v3.draw(); const nOff = v3.gpu.countDrawnPixels();
+        const bufOn = (() => { S.layers.cells = true; v3.draw(); return v3.gpu.readPixels(); })();
+        const bufOff = (() => { S.layers.cells = false; v3.draw(); return v3.gpu.readPixels(); })();
+        let diff = 0; for (let i = 0; i < bufOn.data.length; i += 4) if (bufOn.data[i] !== bufOff.data[i] || bufOn.data[i + 1] !== bufOff.data[i + 1]) diff++;
+        ok('S1g collision cells (vertex colours) are blended over the mesh', !!S.colors && diff > 1000, { diff, nOn, nOff });
+        Object.assign(S.layers, keep); Object.assign(v3.cam, cam); v3.draw();
+      }
+    }
 
     // ------------------------------------------------------------------ S2 页面合成 == 服务端合成（逐格）
     {

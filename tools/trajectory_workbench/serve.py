@@ -4,6 +4,7 @@
   GET  /                                  viewer
   GET  /gen/runtime.bundle.js             运行时 sceneSpace + trajectoryProjection 打成的 ESM
                                           （页面拿它跟自己的 SceneCal 对一次坐标，见 bundle.py）
+  GET  /gen/debug3d.bundle.js             3D 视图的着色：接入层的 3D 调试件（tools/workbench_rhi/debug3d_bundle.py）
   GET  /api/boot                          启动参数（--open 的资产 id，只发一次）
   GET  /api/scenes                        工程场景清单（深度 / 时段背景 / 行走面场状态）
   GET  /api/scene?id=&bg=                 场景描述：标定、尺寸、NPC 清单、时段背景
@@ -41,6 +42,7 @@ if str(ROOT) not in sys.path:
 
 from tools.trajectory_workbench import assets                                   # noqa: E402
 from tools.trajectory_workbench import bundle                                   # noqa: E402
+from tools.workbench_rhi import debug3d_bundle                                  # noqa: E402
 from tools.trajectory_workbench.baking import bake_asset, binding_of, clean_cues   # noqa: E402
 from tools.trajectory_workbench.geometry import (                                # noqa: E402
     SCENES_RT,
@@ -293,6 +295,16 @@ class H(SimpleHTTPRequestHandler):
                 if not p or not p.exists():
                     return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
                 return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+            if u.path == debug3d_bundle.ROUTE:
+                # 3D 视图的着色：接入层的 3D 调试件（RHI / WebGPU，着色器只有 debug3d.wgsl 一份）
+                p, err = debug3d_bundle.ensure(bundle.GEN_DIR)
+                if not p or not p.exists():
+                    return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
+                return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+            if u.path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return None
             if u.path == "/api/boot":
                 open_id = BOOT_OPEN.pop() if BOOT_OPEN else ""
                 p, err = bundle.ensure_bundle()

@@ -1,5 +1,7 @@
 'use strict';
-/* 声学工作台 · 3D 视图（裸 WebGL2，不引第三方库）。
+/* 声学工作台 · 3D 视图。着色走工作台 RHI 接入层的 3D 调试件（`/gen/debug3d.bundle.js`：游戏同一套 RHI，只有 WebGPU；
+ * 着色器只有接入层的 `tools/workbench_rhi/debug3d.wgsl` 一份，这里不写任何 GLSL / WGSL、不碰图形 API）。
+ * 相机、拾取、gizmo、2D 叠加层是本文件的纯 JS，不依赖 GPU：拿不到 WebGPU（Qt 离屏宿主 / 驱动不行）时它们照常，着色层显示原因。
  *
  * 画什么：深度还原出的场景三角网（贴背景）、地面网格、反射面（竖直墙 = 半透明四边形，水平面 = 平躺矩形）、
  * 听者 / 声源、抽头路径（耳朵 → 反射点）、游戏里真实听者的位置、出生点与 NPC 标记、把手与文字叠加。
@@ -34,6 +36,8 @@ const GZ = {
   snapMove: 10, snapRot: 15, snapScale: 0.1,
   col: { x: '#ff5b5b', y: '#7ed492', z: '#5aa9ff', c: '#e6e8ec', hot: '#ffe44d' },
 };
+/** 接入层 3D 调试件的包（serve 按需打，`tools/workbench_rhi/debug3d_bundle.py`） */
+const DEBUG3D_URL = '/gen/debug3d.bundle.js';
 const FLY_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight']);
 // 合成事件可能只带 key 不带 code（自检 / 旧浏览器）：按 key 补一个 code
 const KEY2CODE = { w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', q: 'KeyQ', e: 'KeyE', shift: 'ShiftLeft', ' ': 'Space' };
@@ -41,62 +45,53 @@ const PITCH_MAX = Math.PI / 2 - 0.02;
 function keyCode(e) { if (e.code) return e.code; const k = (e.key || '').toLowerCase(); return KEY2CODE[k] || ''; }
 function isTyping(e) { const t = e.target; return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || !!t.isContentEditable); }
 
+/** 着色层还没好 / 拿不到 WebGPU：在叠加层正中说一句（相机、拾取、标注照常） */
+function drawGpuNote3(g, v, W, H) {
+  if (v.gpu) return;
+  const t = v.gpuErr ? `3D 着色不可用：${v.gpuErr}（相机 / 拾取 / 标注照常）` : '3D 着色准备中…';
+  g.save(); g.font = '12px "Segoe UI", "Microsoft YaHei", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const w = g.measureText(t).width + 20;
+  g.fillStyle = 'rgba(12,14,18,.82)'; g.fillRect(W / 2 - w / 2, H / 2 - 13, w, 26);
+  g.fillStyle = v.gpuErr ? 'rgba(255,190,120,.95)' : 'rgba(255,255,255,.55)'; g.fillText(t, W / 2, H / 2);
+  g.restore();
+}
+
 class View3D {
   constructor(canvas, overlay, host) {
     this.c = canvas; this.overlay = overlay; this.host = host;
-    const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
-    this.gl = gl; this.ok = !!gl;
-    if (!gl) return;
+    // 视图逻辑（相机 / 拾取 / gizmo / 叠加层）不依赖 GPU，恒可用；着色层见 `gpu`
+    this.ok = true;
     // 目标点 + 距离 + 朝向：机位 = 目标 − forward·dist。画的内容在 +Z（进画）一侧，初始机位落在 −Z（画家站的地方）往画里看
     this.cam = { yaw: 0.35, pitch: 0.35, dist: 2500, tx: 0, ty: 0, tz: 0, fov: 55, ortho: false, orthoH: 1000, speed: 1 };
     this.mesh = null; this.tex = null; this.gridLines = null;
     this.drag = null; this.box = null; this.hover = null; this.readout = null;
     this.fly = null; this.keys = new Set(); this.spaceDown = false;
     this._timer = 0; this._lastT = 0;
-    this.progMesh = this._prog(MESH_VS, MESH_FS);
-    this.progLine = this._prog(LINE_VS, LINE_FS);
-    this.lineBuf = gl.createBuffer();
+    // 着色层：3D 调试件异步建（WebGPU 设备）；建好之前 / 拿不到时 gpu = null、gpuErr 说原因（叠加层上显示）
+    this.gpu = null; this.gpuErr = ''; this._gm = null; this._gt = null;
+    this._d = null; this._dt = true; this._dw = true;
+    this.whenGpu = import(DEBUG3D_URL)
+      .then((rt) => rt.debug3d.createView(canvas, { background: [0.075, 0.085, 0.105] }))
+      .then((g) => { this.gpu = g; this.draw(); }, (e) => { this.gpuErr = String((e && e.message) || e); this.draw(); });
     this._bind();
-  }
-  _sh(type, src) {
-    const gl = this.gl, s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
-    return s;
-  }
-  _prog(vs, fs) {
-    const gl = this.gl, p = gl.createProgram();
-    gl.attachShader(p, this._sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, this._sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-    return p;
   }
   // ------------------------------------------------------------- 数据
   setMesh(buf) {
-    const gl = this.gl;
+    if (this._gm) { this._gm.destroy(); this._gm = null; }
     if (!buf) { this.mesh = null; this.gridLines = null; return; }
     const dv = new DataView(buf);
     const nv = dv.getUint32(0, true), ni = dv.getUint32(4, true);
     const verts = new Float32Array(buf, 8, nv * 5);
     const idx = new Uint32Array(buf, 8 + nv * 20, ni);
-    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-    const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 20, 0);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 12);
-    const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
-    gl.bindVertexArray(null);
     const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
     for (let i = 0; i < nv; i++) for (let k = 0; k < 3; k++) { const v = verts[i * 5 + k]; if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; }
     // verts 留一份 CPU 引用：对齐自证要拿顶点世界坐标经运行时 worldToScene 投回画面、对它的 uv
-    this.mesh = { vao, count: ni, mn, mx, verts, nv };
+    this.mesh = { count: ni, mn, mx, verts, idx, nv };
     this.gridLines = null;
   }
   setTexture(img) {
-    const gl = this.gl;
-    if (!img) { this.tex = null; return; }
-    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this.tex = t;
+    if (this._gt) { this._gt.destroy(); this._gt = null; }
+    this.tex = img || null;
   }
   /** 世界包围盒：场景网格 ∪ 反射面 ∪ 听者 ∪ 声源 */
   worldBounds() {
@@ -218,22 +213,23 @@ class View3D {
   _floorY() { const cal = this.host.cal; const def = this.host.doc && this.host.doc.def; if (def) return def.listener.y || 0; if (cal && this.mesh) return this.mesh.mn[1]; return 0; }
   groundY(x, z) { const cal = this.host.cal; return cal && cal.hf ? cal.groundHeight(x, z) : this._floorY(); }
   // ------------------------------------------------------------- 绘制
+  /** 重画：着色层（有 WebGPU 时）+ 2D 叠加层（恒画）。矩阵与拾取 / 叠加层同一个 `_mvp()` */
   draw() {
-    const gl = this.gl; if (!gl) return;
-    const host = this.host, cal = host.cal, def = host.doc && host.doc.def;
-    gl.viewport(0, 0, this.c.width, this.c.height);
-    gl.clearColor(0.075, 0.085, 0.105, 1); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     const { mvp } = this._mvp();
+    if (this.gpu) this.gpu.render(mvp, (d) => this._scene3(d, mvp), { pixelRatio: window.devicePixelRatio || 1 });
+    this._overlay();
+  }
+  /** 场景网格 / 背景的 GPU 句柄（按需建；换网格 / 贴图时旧的销毁） */
+  _gpuMesh() { if (!this._gm && this.mesh) this._gm = this.gpu.createMesh({ vertices: this.mesh.verts, indices: this.mesh.idx, label: '场景网格' }); return this._gm; }
+  _gpuTex() { if (!this._gt && this.tex) this._gt = this.gpu.createTexture(this.tex, '场景背景'); return this._gt; }
+  /** 一帧的画法（按 WebGL 版的状态顺序：`_dt` = 深度测试开关，`_dw` = 写深度） */
+  _scene3(d, mvp) {
+    this._d = d; this._dt = true; this._dw = true;
+    const host = this.host, cal = host.cal, def = host.doc && host.doc.def;
     if (this.mesh && this.tex && host.layers.mesh) {
-      gl.useProgram(this.progMesh);
-      gl.uniformMatrix4fv(gl.getUniformLocation(this.progMesh, 'uMVP'), false, mvp);
-      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.tex);
-      gl.uniform1i(gl.getUniformLocation(this.progMesh, 'uTex'), 0);
-      gl.uniform1f(gl.getUniformLocation(this.progMesh, 'uDim'), host.layers.dimMesh ? 0.55 : 1.0);
-      gl.bindVertexArray(this.mesh.vao); gl.drawElements(gl.TRIANGLES, this.mesh.count, gl.UNSIGNED_INT, 0); gl.bindVertexArray(null);
+      const k = host.layers.dimMesh ? 0.55 : 1.0;
+      d.mesh(this._gpuMesh(), { texture: this._gpuTex(), tint: [k, k, k, 1] });
     }
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     if (host.layers.grid && cal && cal.hf) this._groundGrid(mvp);
     if (def) {
       const L = this._ear(def);
@@ -247,11 +243,11 @@ class View3D {
         const col = on ? [0.42, 0.72, 1, 0.42] : horiz ? [0.35, 0.85, 0.9, 0.28] : [shade, shade * 0.82, shade * 0.45, hov ? 0.42 : 0.3];
         this._quad(mvp, q, col);
         const edge = on ? [0.6, 0.85, 1, 1] : horiz ? [0.4, 0.9, 0.95, 0.9] : [1, 0.85, 0.5, 0.8];
-        this._lines(mvp, [...q[0], ...q[1], ...q[1], ...q[2], ...q[2], ...q[3], ...q[3], ...q[0]], edge, gl.LINES, 1);
+        this._lines(mvp, [...q[0], ...q[1], ...q[1], ...q[2], ...q[2], ...q[3], ...q[3], ...q[0]], edge, 'lines', 1);
         if (!horiz && cal && cal.hf) {
           // 底边到地面的落脚线：看得出墙是不是悬空 / 埋地
           const ga = this.groundY(r.a[0], r.a[1]), gb = this.groundY(r.b[0], r.b[1]);
-          this._lines(mvp, [r.a[0], r.y || 0, r.a[1], r.a[0], ga, r.a[1], r.b[0], r.y || 0, r.b[1], r.b[0], gb, r.b[1]], [1, 1, 1, 0.25], gl.LINES, 1);
+          this._lines(mvp, [r.a[0], r.y || 0, r.a[1], r.a[0], ga, r.a[1], r.b[0], r.y || 0, r.b[1], r.b[0], gb, r.b[1]], [1, 1, 1, 0.25], 'lines', 1);
         }
       });
       // 抽头路径：耳朵 → 反射点（一阶橙、二阶紫、被挡红）
@@ -262,15 +258,15 @@ class View3D {
           const seg = [L[0], L[1], L[2], t.hit[0], t.hit[1], t.hit[2]];
           if (t.occluded) arrO.push(...seg); else if (t.order === 1) arr1.push(...seg); else arr2.push(...seg);
         }
-        if (arr2.length) this._lines(mvp, arr2, [0.78, 0.57, 0.92, 0.35], gl.LINES, 1);
-        if (arrO.length) this._lines(mvp, arrO, [1, 0.42, 0.42, 0.55], gl.LINES, 1);
-        if (arr1.length) this._lines(mvp, arr1, [1, 0.7, 0.33, 0.85], gl.LINES, 1);
+        if (arr2.length) this._lines(mvp, arr2, [0.78, 0.57, 0.92, 0.35], 'lines', 1);
+        if (arrO.length) this._lines(mvp, arrO, [1, 0.42, 0.42, 0.55], 'lines', 1);
+        if (arr1.length) this._lines(mvp, arr1, [1, 0.7, 0.33, 0.85], 'lines', 1);
         for (const t of host.taps) if (t.hit && t.order === 1) this._marker(mvp, t.hit, t.occluded ? [1, 0.42, 0.42, 0.9] : [1, 0.7, 0.33, 0.95], 6);
       }
       // 听者：脚点 + 耳朵 + 竖线
       const Lf = [def.listener.x, def.listener.y || 0, def.listener.z];
       const onL = host.sel.kind === 'listener';
-      this._lines(mvp, [...Lf, ...L], [0.42, 0.72, 1, 0.9], gl.LINES, 1);
+      this._lines(mvp, [...Lf, ...L], [0.42, 0.72, 1, 0.9], 'lines', 1);
       this._marker(mvp, Lf, onL ? [0.6, 0.85, 1, 1] : [0.42, 0.72, 1, 1], onL ? 12 : 9);
       this._marker(mvp, L, [0.42, 0.72, 1, 1], 7);
       // 有位置的声源：脚点 + 发声点 + 竖线；试听正从哪个发出就画它的直达线（发声点 → 耳）与它到各反射点的那半段
@@ -281,15 +277,15 @@ class View3D {
         const Se = [Sf[0], Sf[1] + hgt, Sf[2]];
         const on = host.sel.kind === 'source' && host.sel.ids.has(i);
         const active = host.probeFrom === i;
-        this._lines(mvp, [...Sf, ...Se], [1, 0.55, 0.85, 0.9], gl.LINES, 1);
+        this._lines(mvp, [...Sf, ...Se], [1, 0.55, 0.85, 0.9], 'lines', 1);
         this._marker(mvp, Sf, on ? [1, 0.75, 0.9, 1] : active ? [1, 0.6, 0.88, 1] : [0.85, 0.45, 0.7, 0.9], on ? 12 : active ? 10 : 8);
         this._marker(mvp, Se, [1, 0.55, 0.85, 1], 6);
       });
       if (ps && host.layers.taps) {
-        this._lines(mvp, [ps.x, ps.y, ps.z, ...L], [0.4, 0.9, 0.95, 0.9], gl.LINES, 1);
+        this._lines(mvp, [ps.x, ps.y, ps.z, ...L], [0.4, 0.9, 0.95, 0.9], 'lines', 1);
         const arrS = [];
         for (const t of host.taps) if (t.hit && t.order === 1) arrS.push(ps.x, ps.y, ps.z, t.hit[0], t.hit[1], t.hit[2]);
-        if (arrS.length) this._lines(mvp, arrS, [1, 0.7, 0.33, 0.5], gl.LINES, 1);
+        if (arrS.length) this._lines(mvp, arrS, [1, 0.7, 0.33, 0.5], 'lines', 1);
       }
       // 把手（端点 A/B、▲ 面高）
       this._drawHandles(mvp);
@@ -299,20 +295,19 @@ class View3D {
     if (gL && host.layers.gameListener) {
       const p = gL.world, e = gL.ear || [p[0], p[1] + 141, p[2]];
       this._marker(mvp, p, [0.5, 0.9, 0.55, 1], 13);
-      this._lines(mvp, [...p, ...e], [0.5, 0.9, 0.55, 0.8], gl.LINES, 1);
+      this._lines(mvp, [...p, ...e], [0.5, 0.9, 0.55, 0.8], 'lines', 1);
       this._marker(mvp, e, [0.5, 0.9, 0.55, 1], 8);
       // 场景配了透视线时，参与计算的听者(实心)已按 f 重整过，与这张 3D 展开(正交)不重合。
       // 淡点画的是他在**画面上**站的地方，连线的长度就是"透视把听者推了多远"——
       // 不画的话作者只会看见听者莫名飘走，还以为是自己摆错了。
       if (gL.worldOrtho) {
         this._marker(mvp, gL.worldOrtho, [0.5, 0.9, 0.55, 0.35], 9);
-        this._lines(mvp, [...gL.worldOrtho, ...p], [0.5, 0.9, 0.55, 0.3], gl.LINES, 1);
+        this._lines(mvp, [...gL.worldOrtho, ...p], [0.5, 0.9, 0.55, 0.3], 'lines', 1);
       }
     }
     // 出生点 / NPC
     if (host.layers.marks && host.marks) for (const m of host.marks) this._marker(mvp, m.world, m.kind === 'spawn' ? [1, 1, 1, 0.9] : [0.85, 0.85, 0.85, 0.7], m.kind === 'spawn' ? 8 : 6);
-    gl.disable(gl.BLEND);
-    this._overlay();
+    this._d = null;
   }
   /** 画路径用的耳点：游戏在这个场景时用它活的耳点（抽头就是按它算的），否则作者态听者 + 耳高 */
   _ear(def) {
@@ -344,26 +339,23 @@ class View3D {
       for (let z = Math.ceil(b[2] / step) * step; z <= b[3]; z += step) for (let x = b[0]; x < b[1]; x += step / 4) { const x2 = Math.min(b[1], x + step / 4); arr.push(x, cal.groundHeight(x, z) + 0.5, z, x2, cal.groundHeight(x2, z) + 0.5, z); }
       this.gridLines = new Float32Array(arr);
     }
-    this._lines(mvp, this.gridLines, [1, 1, 1, 0.1], this.gl.LINES, 1);
+    this._lines(mvp, this.gridLines, [1, 1, 1, 0.1], 'lines', 1);
   }
+  /** mode：'lines'（每两点一段）/ 'points'（width = 点径 CSS 像素）/ 'tris'（纯色三角形）；深度按当前 `_dt` / `_dw` */
   _lines(mvp, arr, color, mode, width) {
-    const gl = this.gl;
-    gl.useProgram(this.progLine);
-    gl.uniformMatrix4fv(gl.getUniformLocation(this.progLine, 'uMVP'), false, mvp);
-    gl.uniform4fv(gl.getUniformLocation(this.progLine, 'uColor'), color);
-    gl.uniform1f(gl.getUniformLocation(this.progLine, 'uPointSize'), (width || 1) * (window.devicePixelRatio || 1));
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuf); gl.bufferData(gl.ARRAY_BUFFER, arr instanceof Float32Array ? arr : new Float32Array(arr), gl.DYNAMIC_DRAW);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-    gl.disableVertexAttribArray(1);
-    gl.drawArrays(mode, 0, arr.length / 3);
+    const d = this._d; if (!d) return;
+    const depth = !this._dt ? 'off' : this._dw ? 'test-write' : 'test';
+    if (mode === 'points') d.points(arr, { color, size: width || 1, depth });
+    else if (mode === 'tris') d.triangles(arr, { color, depth });
+    else d.lines(arr, { color, width: width || 1, strip: mode === 'strip', depth });
   }
+  /** 反射面的半透明体：测深度、不写（WebGL 版的 depthMask(false)） */
   _quad(mvp, q, color) {
-    const gl = this.gl;
-    gl.depthMask(false);
-    this._lines(mvp, [...q[0], ...q[1], ...q[2], ...q[0], ...q[2], ...q[3]], color, gl.TRIANGLES, 1);
-    gl.depthMask(true);
+    this._dw = false;
+    this._lines(mvp, [...q[0], ...q[1], ...q[2], ...q[0], ...q[2], ...q[3]], color, 'tris', 1);
+    this._dw = true;
   }
-  _marker(mvp, p, color, size) { this.gl.disable(this.gl.DEPTH_TEST); this._lines(mvp, [p[0], p[1], p[2]], color, this.gl.POINTS, size); this.gl.enable(this.gl.DEPTH_TEST); }
+  _marker(mvp, p, color, size) { this._dt = false; this._lines(mvp, [p[0], p[1], p[2]], color, 'points', size); this._dt = true; }
   /** 2D 叠加：文字标签、把手符号、变换 gizmo、框选、读数、坐标架、两行提示（在 canvas 2D 上画，与 3D 同尺寸） */
   _overlay() {
     const ov = this.overlay; if (!ov) return;
@@ -371,6 +363,7 @@ class View3D {
     g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, ov.clientWidth, ov.clientHeight);
     const host = this.host, def = host.doc && host.doc.def, H = ov.clientHeight;
     g.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
+    drawGpuNote3(g, this, ov.clientWidth, H);
     if (def) {
       const k = host.metersPerWu();
       const L = this._ear(def);
@@ -964,18 +957,5 @@ class View3D {
     else if (host.sel.kind === 'listener' || host.sel.kind === 'source') host.op('微移', () => { const p = host.pointOf(host.sel.kind, [...host.sel.ids][0]); if (p) { p.x += dx; p.z += dz; if (host.cal && host.cal.hf) p.y = round3(host.cal.groundHeight(p.x, p.z)); } });
   }
 }
-
-// ---------------------------------------------------------------- shaders
-const MESH_VS = `#version 300 es
-layout(location=0) in vec3 aPos; layout(location=1) in vec2 aUV; uniform mat4 uMVP; out vec2 vUV;
-void main(){ vUV = aUV; gl_Position = uMVP * vec4(aPos, 1.0); }`;
-const MESH_FS = `#version 300 es
-precision mediump float; in vec2 vUV; uniform sampler2D uTex; uniform float uDim; out vec4 o;
-void main(){ o = vec4(texture(uTex, vUV).rgb * uDim, 1.0); }`;
-const LINE_VS = `#version 300 es
-layout(location=0) in vec3 aPos; uniform mat4 uMVP; uniform float uPointSize;
-void main(){ gl_Position = uMVP * vec4(aPos, 1.0); gl_PointSize = uPointSize; }`;
-const LINE_FS = `#version 300 es
-precision mediump float; uniform vec4 uColor; out vec4 o; void main(){ o = uColor; }`;
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { View3D };

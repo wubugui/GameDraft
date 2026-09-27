@@ -1,5 +1,7 @@
 'use strict';
-/* 地形工作台 · 3D 视图（裸 WebGL2，不引第三方库）。
+/* 地形工作台 · 3D 视图。着色走工作台 RHI 接入层的 3D 调试件（`/gen/debug3d.bundle.js`：游戏同一套 RHI，只有 WebGPU；
+ * 着色器只有接入层的 `tools/workbench_rhi/debug3d.wgsl` 一份，这里不写任何 GLSL / WGSL、不碰图形 API）。
+ * 相机、拾取、gizmo、2D 叠加层是本文件的纯 JS，不依赖 GPU：拿不到 WebGPU（Qt 离屏宿主 / 驱动不行）时它们照常，着色层显示原因。
  *
  * 画什么：深度还原出的场景三角网（贴背景）、**碰撞格**（贴在行走面上的彩色小方片：阻挡红 / 作者改成可走的绿 /
  * 走不到的黄）、多边形区域与高度操作的贴地折线、笔刷光标圈、出生点 / 出口 / 跨点 / NPC 标记。
@@ -17,6 +19,8 @@
  *        P 多边形 · B 矩形 · K 笔刷（按住拖）· H 高度 · I 检视 · 空格/中键 平移
  * 飞行步进用 setInterval(16ms)：rAF 在隐藏页 / 无头壳里不跑。 */
 
+/** 接入层 3D 调试件的包（serve 按需打，`tools/workbench_rhi/debug3d_bundle.py`） */
+const DEBUG3D_URL = '/gen/debug3d.bundle.js';
 const FLY_KEYS = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'ShiftLeft', 'ShiftRight']);
 const KEY2CODE = { w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', q: 'KeyQ', e: 'KeyE', shift: 'ShiftLeft', ' ': 'Space' };
 const PITCH_MAX = Math.PI / 2 - 0.02;
@@ -41,24 +45,36 @@ function pickObjectAt(objs, project, mx, my, selKey) {
 const TOOL_CURSOR = { select: 'default', polyWalk: 'crosshair', polyBlock: 'crosshair', rectWalk: 'crosshair', rectBlock: 'crosshair',
   brush: 'none', height: 'none', inspect: 'help', pan: 'grab' };
 
+/** 着色层还没好 / 拿不到 WebGPU：在叠加层正中说一句（相机、拾取、标注照常） */
+function drawGpuNote3(g, v, W, H) {
+  if (v.gpu) return;
+  const t = v.gpuErr ? `3D 着色不可用：${v.gpuErr}（相机 / 拾取 / 标注照常）` : '3D 着色准备中…';
+  g.save(); g.font = '12px "Segoe UI", "Microsoft YaHei", sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  const w = g.measureText(t).width + 20;
+  g.fillStyle = 'rgba(12,14,18,.82)'; g.fillRect(W / 2 - w / 2, H / 2 - 13, w, 26);
+  g.fillStyle = v.gpuErr ? 'rgba(255,190,120,.95)' : 'rgba(255,255,255,.55)'; g.fillText(t, W / 2, H / 2);
+  g.restore();
+}
+
 class View3D {
   constructor(canvas, overlay, host) {
     this.c = canvas; this.overlay = overlay; this.host = host;
-    const gl = canvas.getContext('webgl2', { antialias: true, alpha: false });
-    this.gl = gl; this.ok = !!gl;
-    if (!gl) return;
+    // 视图逻辑（相机 / 拾取 / gizmo / 叠加层）不依赖 GPU，恒可用；着色层见 `gpu`
+    this.ok = true;
     this.cam = { yaw: 0.35, pitch: 0.35, dist: 2500, tx: 0, ty: 0, tz: 0, fov: 55, ortho: false, orthoH: 1000, speed: 1 };
     this.mesh = null; this.tex = null; this.gridLines = null;
-    this.cells = null;                                   // {vao, posBuf, colBuf, count, colorsRev}
+    this.cells = null;                                   // {positions, count, colorsRev, g}
     this.drag = null; this.hover = null; this.readout = null;
     this.fly = null; this.keys = new Set(); this.spaceDown = false;
     this.heldAfterFly = new Set();
     this._timer = 0; this._lastT = 0;
     this.cursorWorld = null;
-    this.progMesh = this._prog(MESH_VS3, MESH_FS3);
-    this.progLine = this._prog(LINE_VS3, LINE_FS3);
-    this.progCell = this._prog(CELL_VS3, CELL_FS3);
-    this.lineBuf = gl.createBuffer();
+    // 着色层：3D 调试件异步建（WebGPU 设备）；建好之前 / 拿不到时 gpu = null、gpuErr 说原因（叠加层上显示）
+    this.gpu = null; this.gpuErr = ''; this._gm = null; this._gt = null;
+    this._d = null; this._dt = true; this._dw = true;
+    this.whenGpu = import(DEBUG3D_URL)
+      .then((rt) => rt.debug3d.createView(canvas, { background: [0.075, 0.085, 0.105] }))
+      .then((g) => { this.gpu = g; this.draw(); }, (e) => { this.gpuErr = String((e && e.message) || e); this.draw(); });
     this._bind();
   }
   resize() {
@@ -67,66 +83,37 @@ class View3D {
     if (this.overlay) { this.overlay.width = this.c.width; this.overlay.height = this.c.height; }
     this.draw();
   }
-  _sh(type, src) {
-    const gl = this.gl, s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
-    return s;
-  }
-  _prog(vs, fs) {
-    const gl = this.gl, p = gl.createProgram();
-    gl.attachShader(p, this._sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, this._sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
-    return p;
-  }
   // ------------------------------------------------------------- 数据
   setMesh(buf) {
-    const gl = this.gl;
+    if (this._gm) { this._gm.destroy(); this._gm = null; }
     if (!buf) { this.mesh = null; this.gridLines = null; return; }
     const dv = new DataView(buf);
     const nv = dv.getUint32(0, true), ni = dv.getUint32(4, true);
     const verts = new Float32Array(buf, 8, nv * 5);
     const idx = new Uint32Array(buf, 8 + nv * 20, ni);
-    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-    const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb); gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 20, 0);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 20, 12);
-    const ib = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
-    gl.bindVertexArray(null);
     const mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9];
     for (let i = 0; i < nv; i++) for (let k = 0; k < 3; k++) { const v = verts[i * 5 + k]; if (v < mn[k]) mn[k] = v; if (v > mx[k]) mx[k] = v; }
-    this.mesh = { vao, count: ni, mn, mx, verts, nv };
+    this.mesh = { count: ni, mn, mx, verts, idx, nv };
     this.gridLines = null;
   }
   setTexture(img) {
-    const gl = this.gl;
     this.texSrc = img ? img.src : '';
-    if (!img) { this.tex = null; return; }
-    const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this.tex = t;
+    if (this._gt) { this._gt.destroy(); this._gt = null; }
+    this.tex = img || null;
   }
   /** 碰撞格的几何（位置一场一份；颜色随合成结果换） */
   setCells(positions) {
-    const gl = this.gl;
+    if (this.cells && this.cells.g) this.cells.g.destroy();
     if (!positions) { this.cells = null; return; }
-    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
-    const posBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, posBuf); gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-    const colBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions.length / 3 * 4), gl.DYNAMIC_DRAW);
-    gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 4, gl.FLOAT, false, 0, 0);
-    gl.bindVertexArray(null);
-    this.cells = { vao, posBuf, colBuf, count: positions.length / 3, colorsRev: -1 };
+    this.cells = { positions, count: positions.length / 3, colorsRev: -1, g: null };
   }
+  /** 碰撞格的 GPU 句柄（按需建）+ 颜色跟上合成结果（rev 变了才重传） */
   _syncCellColors() {
-    const c = this.cells; if (!c) return;
+    const c = this.cells; if (!c) return null;
+    if (!c.g) { c.g = this.gpu.createMesh({ positions: c.positions, label: '碰撞格' }); c.colorsRev = -1; }
     const cc = this.host.cellColors();
-    if (!cc || cc.rev === c.colorsRev) return;
-    const gl = this.gl;
-    gl.bindBuffer(gl.ARRAY_BUFFER, c.colBuf); gl.bufferData(gl.ARRAY_BUFFER, cc.colors, gl.DYNAMIC_DRAW);
-    c.colorsRev = cc.rev;
+    if (cc && cc.rev !== c.colorsRev) { c.g.setColors(cc.colors); c.colorsRev = cc.rev; }
+    return c.g;
   }
   // ------------------------------------------------------------- 相机
   _forward(c = this.cam) { return [Math.cos(c.pitch) * Math.sin(c.yaw), -Math.sin(c.pitch), Math.cos(c.pitch) * Math.cos(c.yaw)]; }
@@ -240,37 +227,33 @@ class View3D {
     host.dragTick(() => host.applyGizmo(d.key, d.base, res));
   }
   // ------------------------------------------------------------- 绘制
+  /** 重画：着色层（有 WebGPU 时）+ 2D 叠加层（恒画）。矩阵与拾取 / 叠加层同一个 `_mvp()` */
   draw() {
-    const gl = this.gl; if (!gl) return;
-    const host = this.host, cal = host.cal;
-    gl.viewport(0, 0, this.c.width, this.c.height);
-    gl.clearColor(0.075, 0.085, 0.105, 1); gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     const { mvp } = this._mvp();
+    if (this.gpu) this.gpu.render(mvp, (d) => this._scene3(d, mvp), { pixelRatio: window.devicePixelRatio || 1 });
+    this._overlay();
+  }
+  /** 场景网格 / 背景的 GPU 句柄（按需建；换网格 / 贴图时旧的销毁） */
+  _gpuMesh() { if (!this._gm && this.mesh) this._gm = this.gpu.createMesh({ vertices: this.mesh.verts, indices: this.mesh.idx, label: '场景网格' }); return this._gm; }
+  _gpuTex() { if (!this._gt && this.tex) this._gt = this.gpu.createTexture(this.tex, '场景背景'); return this._gt; }
+  /** 一帧的画法（按 WebGL 版的状态顺序：`_dt` = 深度测试开关，`_dw` = 写深度） */
+  _scene3(d, mvp) {
+    this._d = d; this._dt = true; this._dw = true;
+    const host = this.host, cal = host.cal;
     if (this.mesh && this.tex && host.layers.mesh) {
-      gl.useProgram(this.progMesh);
-      gl.uniformMatrix4fv(gl.getUniformLocation(this.progMesh, 'uMVP'), false, mvp);
-      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.tex);
-      gl.uniform1i(gl.getUniformLocation(this.progMesh, 'uTex'), 0);
-      gl.uniform1f(gl.getUniformLocation(this.progMesh, 'uDim'), host.layers.dimMesh ? 0.45 : 1.0);
-      gl.bindVertexArray(this.mesh.vao); gl.drawElements(gl.TRIANGLES, this.mesh.count, gl.UNSIGNED_INT, 0); gl.bindVertexArray(null);
+      const k = host.layers.dimMesh ? 0.45 : 1.0;
+      d.mesh(this._gpuMesh(), { texture: this._gpuTex(), tint: [k, k, k, 1] });
     }
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    // 碰撞格：贴在行走面上、略抬高；不做深度写入（半透明叠色）
+    // 碰撞格：贴在行走面上、略抬高；不做深度写入（半透明叠色，alpha≈0 的格子丢掉）
     if (this.cells && host.layers.cells) {
-      this._syncCellColors();
-      gl.depthMask(false);
-      gl.useProgram(this.progCell);
-      gl.uniformMatrix4fv(gl.getUniformLocation(this.progCell, 'uMVP'), false, mvp);
-      gl.bindVertexArray(this.cells.vao); gl.drawArrays(gl.TRIANGLES, 0, this.cells.count); gl.bindVertexArray(null);
-      gl.depthMask(true);
+      d.mesh(this._syncCellColors(), { depth: 'test', blend: true, alphaCutoff: 0.001 });
       const ol = host.cellOutline();
-      if (ol && host.layers.cellLines) { gl.disable(gl.DEPTH_TEST); this._lines(mvp, ol, [1, 1, 1, 0.07], gl.LINES, 1); gl.enable(gl.DEPTH_TEST); }
+      if (ol && host.layers.cellLines) { this._dt = false; this._lines(mvp, ol, [1, 1, 1, 0.07], 'lines', 1); this._dt = true; }
     }
     if (host.layers.grid && cal && cal.hf) this._groundGrid(mvp);
     // 区域 / 高度操作 / 草稿：贴地折线，不做深度测试（被地形挡住也得看得见）
-    gl.disable(gl.DEPTH_TEST);
-    for (const l of host.regionLines3()) if (l.pts.length) this._lines(mvp, l.pts, l.color, gl.LINES, l.width || 1);
+    this._dt = false;
+    for (const l of host.regionLines3()) if (l.pts.length) this._lines(mvp, l.pts, l.color, 'lines', l.width || 1);
     const bc = host.brushCursor();
     if (bc && this.cursorWorld && host.tool !== 'select') this._ring(mvp, bc.center, bc.radius, bc.color);
     for (const o of host.objects()) this._marker(mvp, o.pos, o.color, o.size);
@@ -278,8 +261,8 @@ class View3D {
       this._marker(mvp, m.world, MARK_COLOR[m.kind] || [0.7, 0.7, 0.8, 0.9], m.kind === 'spawn' ? 9 : 7);
       if (m.range) this._ring(mvp, m.world, m.range, MARK_COLOR[m.kind] || [0.7, 0.7, 0.8, 0.5]);
     }
-    gl.enable(gl.DEPTH_TEST);
-    this._overlay();
+    this._dt = true;
+    this._d = null;
   }
   _groundGrid(mvp) {
     const cal = this.host.cal, hf = cal.hf;
@@ -290,7 +273,7 @@ class View3D {
       for (let z = Math.ceil(b[2] / step) * step; z <= b[3]; z += step) for (let x = b[0]; x < b[1]; x += step / 4) { const x2 = Math.min(b[1], x + step / 4); arr.push(x, cal.groundHeight(x, z) + 0.5, z, x2, cal.groundHeight(x2, z) + 0.5, z); }
       this.gridLines = new Float32Array(arr);
     }
-    this._lines(mvp, this.gridLines, [1, 1, 1, 0.09], this.gl.LINES, 1);
+    this._lines(mvp, this.gridLines, [1, 1, 1, 0.09], 'lines', 1);
   }
   /** 贴地圆环（笔刷光标 / 出口范围） */
   _ring(mvp, c, r, color) {
@@ -301,21 +284,16 @@ class View3D {
       const x0 = c[0] + Math.cos(t0) * r, z0 = c[2] + Math.sin(t0) * r, x1 = c[0] + Math.cos(t1) * r, z1 = c[2] + Math.sin(t1) * r;
       arr.push(x0, this.groundY(x0, z0) + 1.5, z0, x1, this.groundY(x1, z1) + 1.5, z1);
     }
-    this._lines(mvp, new Float32Array(arr), color, this.gl.LINES, 1.5);
+    this._lines(mvp, new Float32Array(arr), color, 'lines', 1.5);
   }
+  /** mode：'lines'（每两点一段；width > 1 = 四边形宽线）/ 'points'（width = 点径 CSS 像素）；深度按当前 `_dt` / `_dw` */
   _lines(mvp, arr, color, mode, width) {
-    const gl = this.gl;
-    gl.useProgram(this.progLine);
-    gl.uniformMatrix4fv(gl.getUniformLocation(this.progLine, 'uMVP'), false, mvp);
-    gl.uniform4fv(gl.getUniformLocation(this.progLine, 'uColor'), color);
-    gl.uniform1f(gl.getUniformLocation(this.progLine, 'uPointSize'), (width || 1) * (window.devicePixelRatio || 1));
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.lineBuf);
-    gl.bufferData(gl.ARRAY_BUFFER, arr instanceof Float32Array ? arr : new Float32Array(arr), gl.DYNAMIC_DRAW);
-    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 0, 0);
-    gl.disableVertexAttribArray(1);
-    gl.drawArrays(mode, 0, arr.length / 3);
+    const d = this._d; if (!d) return;
+    const depth = !this._dt ? 'off' : this._dw ? 'test-write' : 'test';
+    if (mode === 'points') d.points(arr, { color, size: width || 1, depth });
+    else d.lines(arr, { color, width: width || 1, strip: mode === 'strip', depth });
   }
-  _marker(mvp, p, color, size) { this._lines(mvp, [p[0], p[1], p[2]], color, this.gl.POINTS, size); }
+  _marker(mvp, p, color, size) { this._lines(mvp, [p[0], p[1], p[2]], color, 'points', size); }
   // ------------------------------------------------------------- 右上角坐标架
   _sceneGizmoLayout() {
     const ov = this.overlay; const W = ov ? ov.clientWidth : this.c.clientWidth;
@@ -364,6 +342,7 @@ class View3D {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, ov.clientWidth, ov.clientHeight);
     g.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif'; g.textBaseline = 'alphabetic';
+    drawGpuNote3(g, this, ov.clientWidth, ov.clientHeight);
     const host = this.host;
     if (host.layers.marks) for (const m of (host.marks || [])) {
       const c = this.project(m.world); if (!c) continue;
@@ -609,23 +588,5 @@ class View3D {
 
 const MARK_COLOR = { spawn: [0.5, 0.92, 0.55, 1], exit: [0.4, 0.85, 1, 1], align: [1, 0.85, 0.35, 1], landing: [1, 0.55, 0.25, 1], npc: [0.75, 0.75, 0.85, 0.9] };
 const MARK_LABEL = { spawn: '出生 ', exit: '出口 ', align: '站位 ', landing: '落点 ', npc: '' };
-
-// ---------------------------------------------------------------- shaders
-const MESH_VS3 = `#version 300 es
-layout(location=0) in vec3 aPos; layout(location=1) in vec2 aUV; uniform mat4 uMVP; out vec2 vUV;
-void main(){ vUV = aUV; gl_Position = uMVP * vec4(aPos, 1.0); }`;
-const MESH_FS3 = `#version 300 es
-precision mediump float; in vec2 vUV; uniform sampler2D uTex; uniform float uDim; out vec4 o;
-void main(){ o = vec4(texture(uTex, vUV).rgb * uDim, 1.0); }`;
-const LINE_VS3 = `#version 300 es
-layout(location=0) in vec3 aPos; uniform mat4 uMVP; uniform float uPointSize;
-void main(){ gl_Position = uMVP * vec4(aPos, 1.0); gl_PointSize = uPointSize; }`;
-const LINE_FS3 = `#version 300 es
-precision mediump float; uniform vec4 uColor; out vec4 o; void main(){ o = uColor; }`;
-const CELL_VS3 = `#version 300 es
-layout(location=0) in vec3 aPos; layout(location=1) in vec4 aCol; uniform mat4 uMVP; out vec4 vCol;
-void main(){ vCol = aCol; gl_Position = uMVP * vec4(aPos, 1.0); }`;
-const CELL_FS3 = `#version 300 es
-precision mediump float; in vec4 vCol; out vec4 o; void main(){ if (vCol.a <= 0.001) discard; o = vCol; }`;
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { View3D, pickObjectAt };

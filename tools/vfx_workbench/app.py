@@ -61,6 +61,10 @@ def selftest_sandbox(where: Path | None = None) -> Iterator[Path]:
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+# 3D 视图那条迁移线起的名字（--serve --selftest-env）：同一个沙箱
+selftest_isolation = selftest_sandbox
+
+
 def main(port: int | None = None, smoke: bool = False, open_id: str = "", selftest: str = "",
          game_url: str = "") -> int:
     if selftest or smoke:

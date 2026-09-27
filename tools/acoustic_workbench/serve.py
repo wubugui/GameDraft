@@ -3,6 +3,7 @@
 
   GET  /                                  viewer
   GET  /gen/acoustic.bundle.js            运行时 acousticSpace.ts 打成的 ESM（抽头 / IR 与游戏同一份实现）
+  GET  /gen/debug3d.bundle.js             3D 视图的着色：接入层的 3D 调试件（tools/workbench_rhi/debug3d_bundle.py）
   GET  /api/boot                          启动参数（--open 的空间 id，只发一次；游戏地址；打包状态）
   GET  /api/scenes                        工程场景清单（深度 / 背景 / 绑定的空间）
   GET  /api/scene?id=&bg=                 场景描述：标定、尺寸、NPC、出生点脚下的世界点、声学绑定
@@ -42,6 +43,7 @@ from tools.acoustic_workbench import bundle, spaces                             
 from tools.acoustic_workbench.game_link import GameLink, enqueue_switch_scene       # noqa: E402
 from tools.trajectory_workbench.geometry import SCENES_RT, list_scenes, scene_paths  # noqa: E402
 from tools.trajectory_workbench.serve import get_geometry, scaled_background       # noqa: E402
+from tools.workbench_rhi import debug3d_bundle                                     # noqa: E402
 
 PORT = 5331
 #: ``--open <id>``：桌面壳启动时带进来的空间 id，前端 ``/api/boot`` 取一次即清。
@@ -154,6 +156,16 @@ class H(SimpleHTTPRequestHandler):
                 if not p or not p.exists():
                     return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
                 return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+            if u.path == debug3d_bundle.ROUTE:
+                # 3D 视图的着色：接入层的 3D 调试件（RHI / WebGPU，着色器只有 debug3d.wgsl 一份）
+                p, err = debug3d_bundle.ensure(bundle.GEN_DIR)
+                if not p or not p.exists():
+                    return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
+                return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+            if u.path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return None
             if u.path == "/api/boot":
                 open_id = BOOT_OPEN.pop() if BOOT_OPEN else ""
                 p, err = bundle.ensure_bundle()

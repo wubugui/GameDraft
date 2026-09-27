@@ -3,6 +3,7 @@
 
   GET  /                                   viewer
   GET  /vendor/<name>.js                   轨迹工作台 viewer 下的共用件原样转发（common / gizmo / history / dropdown；不 fork）
+  GET  /gen/debug3d.bundle.js              3D 视图的着色：接入层的 3D 调试件（tools/workbench_rhi/debug3d_bundle.py，产物在 viewer/_gen/）
   GET  /api/boot                           启动参数（--open 的场景 id，取一次即清；之后 = 最近装上的场景）
   GET  /api/scenes                         场景清单 + 地形状态（深度 / 网格 / 自动结果 / 作者层 / 待导出 / 有草稿）
   GET  /api/scene?id=[&bg=]                场景描述：标定、尺寸、标记点（出生点 / 出口 / 跨点 / NPC）、网格、时段目录
@@ -43,6 +44,10 @@ from tools.acoustic_workbench import game_link                                  
 from tools.terrain_workbench import authoring                                    # noqa: E402
 from tools.trajectory_workbench.geometry import SCENES_RT, scene_paths          # noqa: E402
 from tools.trajectory_workbench.serve import get_geometry, scaled_background     # noqa: E402
+from tools.workbench_rhi import debug3d_bundle                                   # noqa: E402
+
+#: 按需打的包（3D 调试件）落这里（已 gitignore）
+GEN_DIR = TOOL / "viewer" / "_gen"
 
 PORT = 5361
 BOOT_OPEN: list[str] = []
@@ -121,6 +126,16 @@ class H(SimpleHTTPRequestHandler):
                 if not p.is_file():
                     return self._json({"ok": False, "err": f"共用件不存在: {rel}"}, 404)
                 return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+            if u.path == debug3d_bundle.ROUTE:
+                # 3D 视图的着色：接入层的 3D 调试件（RHI / WebGPU，着色器只有 debug3d.wgsl 一份）
+                p, err = debug3d_bundle.ensure(GEN_DIR)
+                if not p or not p.exists():
+                    return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
+                return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+            if u.path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return None
             if u.path == "/api/boot":
                 sid = BOOT_OPEN.pop() if BOOT_OPEN else (LAST_OPEN[0] if LAST_OPEN else "")
                 return self._json({"ok": True, "open": sid, "game": game_link.discover_game_url(ROOT)})

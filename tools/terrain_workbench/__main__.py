@@ -40,6 +40,9 @@ def main() -> int:
     ap.add_argument("--smoke", action="store_true", help="桌面壳无头自检：load 完即退")
     ap.add_argument("--selftest", nargs="?", const="tools/terrain_workbench/viewer/tests/selftest.js", default="",
                     help="交互层端到端回归：无头桌面壳里跑真页面 + 场景脚本，有 FAIL 退出码 1")
+    ap.add_argument("--selftest-env", default="", metavar="DIR",
+                    help="配 --serve：与 --selftest 同样的隔离（作者层 / 预览 / 草稿指到 DIR、游戏地址指死端口），"
+                         "给真 GPU 的 Chrome 跑同一份自检（tools/workbench_rhi/browser.py）")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--check", nargs="*", default=None, help="不给 id = 全部有深度的场景")
     ap.add_argument("--export", default="", help="导出到游戏（写资源）")
@@ -99,6 +102,17 @@ def main() -> int:
             os.environ["GAMEDRAFT_GAME_URL"] = args.game_url
         if args.open:
             serve.BOOT_OPEN.append(args.open)
+        if args.selftest_env:
+            # 与 --selftest 同样的隔离（作者层 / 预览 / 草稿指到 DIR、游戏地址指死端口），给真 GPU 的 Chrome 跑同一份自检
+            from tools.terrain_workbench import authoring
+            from tools.terrain_workbench.app import SELFTEST_SCENE, isolate_for_selftest
+            isolate_for_selftest(args.open or SELFTEST_SCENE, Path(args.selftest_env))
+            os.environ["GAMEDRAFT_GAME_URL"] = "http://127.0.0.1:9"
+            authoring._PROBE_PORTS = ()
+            if not args.open:
+                serve.BOOT_OPEN.append(SELFTEST_SCENE)
+        # 监听队列缺省 5：Chrome 装页时并发开一串连接，Windows 上排不下的直接 ERR_CONNECTION_REFUSED（整页缺脚本）
+        ThreadingHTTPServer.request_queue_size = 64
         try:
             httpd = ThreadingHTTPServer(("127.0.0.1", port), serve.H)
         except OSError:

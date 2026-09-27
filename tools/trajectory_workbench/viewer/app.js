@@ -386,7 +386,9 @@ async function boot() {
   });
   v2 = new View2D(el('view2d'), host);
   try { v3 = new View3D(el('view3d'), host); v3.overlay = el('overlay3d'); } catch (e) { console.warn('3D 视图不可用', e); v3 = { ok: false, draw() {}, resize() {}, fit() {}, fitCurve() {}, setMesh() {}, setTexture() {}, setGhostTexture() {} }; }
-  if (!v3.ok) el('tab3d').title = '这台机器拿不到 WebGL2，3D 视图不可用';
+  if (!v3.ok) el('tab3d').title = '3D 视图不可用';
+  // 着色层拿不到 WebGPU 时 3D 视图照常能点能改（叠加层正中写着原因），3D 按钮的提示也说一句
+  else v3.whenGpu.then(() => { if (v3.gpuErr) el('tab3d').title = `3D 着色不可用：${v3.gpuErr}（标注 / 编辑照常）`; });
   wireUI();
   window.addEventListener('resize', () => { v2.resize(); v3.resize(); });
   v2.resize(); v3.resize();

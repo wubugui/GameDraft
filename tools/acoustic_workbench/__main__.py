@@ -63,6 +63,8 @@ def main() -> int:
             serve.LINK.set_base(args.game_url)
         if args.open:
             serve.BOOT_OPEN.append(args.open)
+        # 监听队列缺省 5：Chrome 装页时并发开一串连接，Windows 上排不下的直接 ERR_CONNECTION_REFUSED（整页缺脚本）
+        ThreadingHTTPServer.request_queue_size = 64
         try:
             httpd = ThreadingHTTPServer(("127.0.0.1", port), serve.H)
         except OSError:

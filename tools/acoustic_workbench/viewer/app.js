@@ -964,7 +964,7 @@ function onKey(e) {
 // ---------------------------------------------------------------- 启动
 async function boot() {
   v3 = new View3D(el('view3d'), el('overlay3d'), host);
-  if (!v3.ok) { el('sceneNote').textContent = '这台机器拿不到 WebGL2，3D 视图不可用'; }
+  if (!v3.ok) { el('sceneNote').textContent = '3D 视图不可用'; }
   history = new History({ get: () => S.doc, set: (d) => { S.doc = d; afterEdit(false); void syncSceneWithDoc(); }, onChange: updateUndoButtons });
   new ResizeObserver(() => v3.resize()).observe(el('center'));
   v3.resize();

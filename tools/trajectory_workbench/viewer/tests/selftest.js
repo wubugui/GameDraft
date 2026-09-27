@@ -46,6 +46,62 @@
     for (let i = 0; i < 40 && !(S.doc && S.bake); i++) await wait(250);
     ok('S1 boot: coin open, clean, gate down', S.doc && S.doc.id === 'coin_drop_demo' && !S.dirty && el('busy').hidden && !el('app').inert, { id: S.doc && S.doc.id, v3: !!(v3 && v3.ok) });
     coinJson = JSON.stringify(S.doc);
+    // ---------------------------------------------------------------- S1g 着色层（接入层 3D 调试件：RHI / WebGPU）
+    // 真 GPU 上：画面非空、活动段的标记在页面自己的投影处读回自己的颜色、网格表面后的探针被挡住 / 前面的看得见
+    // （tools/workbench_rhi/debug3d.ts selfCheck）；幽灵卡片（贴图公告板）真画出来。宿主拿不到 WebGPU（离屏 Qt）记 SKIP；
+    // pytest 另在真 GPU 的 Chrome 里跑同一份、不许 SKIP。只看不改：视图 / 图层 / 相机收尾还原，doc 不动。
+    {
+      try { await v3.whenGpu; } catch (e) { /* 原因在 v3.gpuErr */ }
+      ok('S1g the 3D view holds no WebGL context (drawing goes through the shared kit)', !('gl' in v3) && typeof v3.whenGpu.then === 'function');
+      if (!v3.gpu) log.push(`SKIP S1g 3D shading layer: ${v3.gpuErr || '没有 WebGPU'}`);
+      else {
+        const view0 = S.view, keep = { ...S.layers }, cam = { ...v3.cam }, before = JSON.stringify(S.doc);
+        if (S.view !== '3d') setView('3d');
+        await wait(50);
+        S.layers.ghost = false;
+        v3.fitCurve(); v3.draw();
+        const rt = await import('/gen/debug3d.bundle.js');
+        const c3 = el('view3d'), dpr = window.devicePixelRatio || 1;
+        const markers = [], seg = host.activeSeg();
+        if (seg && seg.kind === 'manual') host.effPoints(seg).forEach((p, i) => markers.push({ pos: p.pos, color: S.sel.points.has(i) ? [0.42, 0.7, 1, 1] : (i === 0 && host.pinned(seg) ? [0.6, 0.6, 0.6, 1] : [1, 1, 1, 1]), size: S.sel.points.has(i) ? 11 : 8 }));
+        else if (seg && seg.kind === 'physics') {
+          const pi = host.physicsInfo(seg);
+          if (pi) {
+            markers.push({ pos: pi.startW, color: host.pinned(seg) ? [0.6, 0.6, 0.6, 1] : [1, 1, 1, 1], size: 9 }, { pos: pi.tipW, color: [1, 0.7, 0.33, 1], size: 10 });
+            if (!pi.grounded) markers.push({ pos: pi.landingW, color: [0.5, 0.83, 0.57, 1], size: 12 });
+            if (pi.apexW) markers.push({ pos: pi.apexW, color: [0.78, 0.57, 0.92, 1], size: 10 });
+          }
+        }
+        const res = rt.debug3d.selfCheck(v3.gpu, { project: (p) => v3.project(p), ray: (x, y) => v3.ray(x, y), cssSize: [c3.width / dpr, c3.height / dpr],
+          mesh: v3.mesh && { vertices: v3.mesh.verts, stride: 5, indices: v3.mesh.idx }, markers });
+        for (const r of res) ok(`S1g ${r.name}`, r.ok, r.detail);
+        // 幽灵卡片 = 贴图公告板：拉近到它；开 / 关幽灵层，它在页面投影出的四边形包围盒里有一片像素变了，框外一个不变
+        S.layers.ghost = true;
+        if (v3._ghostQuad()) {
+          const p = sampleWorld(S.bake.preview.world, S.tMs);
+          Object.assign(v3.cam, { tx: p[0], ty: p[1], tz: p[2] }); v3._setDist(80); v3.draw();
+          const q = v3._ghostQuad();
+          const xs = q.map((c) => c[0]), ys = q.map((c) => c[1]);
+          const x0 = Math.floor(Math.min(...xs) * dpr), y0 = Math.floor(Math.min(...ys) * dpr);
+          const bw = Math.ceil(Math.max(...xs) * dpr) - x0, bh = Math.ceil(Math.max(...ys) * dpr) - y0;
+          const pad = 16, rx = Math.max(0, x0 - pad), ry = Math.max(0, y0 - pad);
+          const on = v3.gpu.readPixels(rx, ry, bw + 2 * pad, bh + 2 * pad); S.layers.ghost = false; v3.draw();
+          const off = v3.gpu.readPixels(rx, ry, bw + 2 * pad, bh + 2 * pad); S.layers.ghost = true; v3.draw();
+          let inside = 0, outside = 0;
+          for (let y = 0; y < on.height; y++) for (let x = 0; x < on.width; x++) {
+            const i = (y * on.width + x) * 4;
+            if (Math.abs(on.data[i] - off.data[i]) + Math.abs(on.data[i + 1] - off.data[i + 1]) + Math.abs(on.data[i + 2] - off.data[i + 2]) <= 12) continue;
+            const X = rx + x, Y = ry + y;
+            // 幽灵脚下的竖线 / 标记也跟着幽灵层走：只数包围盒里的，框外（竖线在框下方）不算错
+            if (X >= x0 - 1 && X <= x0 + bw + 1 && Y >= y0 - 1 && Y <= y0 + bh + 1) inside++; else outside++;
+          }
+          ok('S1g the ghost card (textured billboard) is drawn where the page projects it', bw > 20 && inside > bw * bh * 0.1, { box: [x0, y0, bw, bh], inside, outside });
+        } else ok('S1g the ghost card (textured billboard) is drawn where the page projects it', false, { why: '没有幽灵（烘焙没出来？）' });
+        Object.assign(S.layers, keep); Object.assign(v3.cam, cam);
+        if (view0 !== S.view) setView(view0); else v3.draw();
+        ok('S1g checking the 3D view never touches the doc', JSON.stringify(S.doc) === before && !S.dirty);
+      }
+    }
     // ---------------------------------------------------------------- S2 渲染只读
     { const before = JSON.stringify(S.doc);
       for (let i = 0; i < segs().length; i++) { host.selectSegmentScope(i); renderInspector(); host.selectSegment(i); if (segs()[i].kind === 'manual') host.selectPoint(1, false); renderInspector(); await wait(30); }
@@ -304,7 +360,9 @@
       t2b.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: mx, clientY: my, button: 0 }));
       window.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: mx, clientY: my - 20 })); window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: mx, clientY: my - 20 }));
       const ks1 = seg0().timing.keys;
-      ok('S6 dragging the middle key moves only it', ks1.length === 3 && Math.abs(ks1[1].atMs - mid.atMs) < 1 && ks1[1].progress > mid.progress + 0.05 && ks1[2].atMs === dur && ks1[2].progress === 1 && history.peekUndo() === '拖时间键', ks1);
+      // 横向允许差一个画布像素折成的时间（再加存盘的两位小数取整）：合成事件的 clientX 是小数，Chrome 截成整数像素（Qt 离屏壳不截），差不到 1 px
+      const pxMs = dur / (W - 2 * pad);
+      ok('S6 dragging the middle key moves only it', ks1.length === 3 && Math.abs(ks1[1].atMs - mid.atMs) < pxMs + 0.02 && ks1[1].progress > mid.progress + 0.05 && ks1[2].atMs === dur && ks1[2].progress === 1 && history.peekUndo() === '拖时间键', ks1);
       key('z', { ctrlKey: true }); key('z', { ctrlKey: true });
       delete seg0().timing; renderInspector(); await wait(120); let threw = false; const onerr = () => { threw = true; }; window.addEventListener('error', onerr);
       const t3 = el('timing'); const r3 = t3.getBoundingClientRect(); t3.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, clientX: r3.left + W / 2, clientY: r3.top + H / 2 })); await wait(80); window.removeEventListener('error', onerr);

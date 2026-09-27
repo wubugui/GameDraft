@@ -1100,7 +1100,7 @@ async function boot() {
   bindUI();
   setTool('select');
   setView(v3 && v3.ok ? 3 : 2);
-  if (!(v3 && v3.ok)) status('这台机器拿不到 WebGL2：只有 2D 原画视图', 'warn');
+  if (!(v3 && v3.ok)) status('3D 视图不可用：只有 2D 原画视图', 'warn');
   let boot0 = {};
   try { boot0 = await API.json('/api/boot'); } catch (e) { /* 服务刚起 */ }
   try { S.scenes = (await API.json('/api/scenes')).scenes || []; } catch (e) { S.scenes = []; status(`场景清单读不出来：${e.message || e}`, 'err'); }

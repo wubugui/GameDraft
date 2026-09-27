@@ -38,7 +38,7 @@
   try {
     // ------------------------------------------------------------------ S1 启动
     for (let i = 0; i < 120 && !window.__ready; i++) await wait(250);
-    ok('S1 boot: ready / doc / scene / cal / runtime bundle / WebGL2, clean',
+    ok('S1 boot: ready / doc / scene / cal / runtime bundle / 3D view, clean',
       !!window.__ready && !!S.doc && !!S.scene && !!S.cal && !!S.rt && v3.ok && !S.dirty,
       { doc: S.doc && S.doc.id, scene: S.scene && S.scene.id, rtErr: S.rtErr });
     ok('S1 local preview really runs the runtime sim (VfxInstanceSim from the bundle)',
@@ -55,6 +55,31 @@
       const refs = libRefs(S.doc.id);
       ok('S1 boot opens the effect where it is placed (scene × appearance of one of its placements)',
         !refs.length || refs.some((r) => r.sceneId === S.scene.id && r.phase === S.phase), { scene: S.scene.id, phase: S.phase, refs: refs.slice(0, 3) });
+    }
+
+    // ------------------------------------------------------------------ S1g 着色层（接入层 3D 调试件：RHI / WebGPU）
+    // 真 GPU 上：画面非空、标记在页面自己的投影处读回自己的颜色、网格表面后的探针被挡住 / 前面的看得见（tools/workbench_rhi/debug3d.ts selfCheck）。
+    // 宿主拿不到 WebGPU（离屏 Qt）记 SKIP；pytest 另在真 GPU 的 Chrome 里跑同一份、不许 SKIP。
+    {
+      try { await v3.whenGpu; } catch (e) { /* 原因在 v3.gpuErr */ }
+      ok('S1g the 3D view holds no WebGL context (drawing goes through the shared kit)', !('gl' in v3) && typeof v3.whenGpu.then === 'function');
+      if (!v3.gpu) log.push(`SKIP S1g 3D shading layer: ${v3.gpuErr || '没有 WebGPU'}`);
+      else {
+        if (S.view !== 3) setView(3);
+        const keep = { ...S.layers }, cam = { ...v3.cam };
+        Object.assign(S.layers, { mesh: true, particles: false, rings: false, beams: false });
+        v3.fit(true); v3.draw();
+        const rt = await import('/gen/debug3d.bundle.js');
+        const c3 = el('view3d'), dpr = window.devicePixelRatio || 1;
+        const markers = [];
+        for (const m of host.previewMarks()) markers.push({ pos: m.pos, color: m.color, size: m.size });
+        for (const o of host.objects()) markers.push({ pos: o.pos, color: o.color, size: o.size });
+        if (S.layers.marks) for (const m of (S.marks || [])) markers.push({ pos: m.world, color: m.kind === 'spawn' ? [0.5, 0.9, 0.55, 1] : [0.7, 0.7, 0.8, 0.9], size: 7 });
+        const res = rt.debug3d.selfCheck(v3.gpu, { project: (p) => v3.project(p), ray: (x, y) => v3.ray(x, y), cssSize: [c3.width / dpr, c3.height / dpr],
+          mesh: v3.mesh && { vertices: v3.mesh.verts, stride: 5, indices: v3.mesh.idx }, markers });
+        for (const r of res) ok(`S1g ${r.name}`, r.ok, r.detail);
+        Object.assign(S.layers, keep); Object.assign(v3.cam, cam); v3.draw();
+      }
     }
 
     // ------------------------------------------------------------------ S2 坐标对齐（不许绕过）

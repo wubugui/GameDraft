@@ -44,6 +44,9 @@ def main() -> int:
     ap.add_argument("--smoke", action="store_true", help="桌面壳无头自检：load 完即退")
     ap.add_argument("--selftest", nargs="?", const="tools/vfx_workbench/viewer/tests/selftest.js", default="",
                     help="交互层端到端回归：无头桌面壳里跑真页面 + 场景脚本，有 FAIL 退出码 1")
+    ap.add_argument("--selftest-env", default="", metavar="DIR",
+                    help="配 --serve：与 --selftest 同样的隔离（布置库 / 雷电样式库指到 DIR、游戏地址指死端口），"
+                         "给真 GPU 的 Chrome 跑同一份自检（tools/workbench_rhi/browser.py）")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--check", nargs="*", default=None, help="归一化校验（不写盘）；不给 id = 全部")
     ap.add_argument("--bundle", action="store_true", help="重打运行时模拟核心的 ESM 包")
@@ -91,6 +94,7 @@ def main() -> int:
         return 0 if p and not err else 1
 
     if args.serve:
+        import contextlib
         from http.server import ThreadingHTTPServer
         from tools.vfx_workbench import serve
         port = args.port or serve.PORT
@@ -98,10 +102,13 @@ def main() -> int:
             serve.LINK.set_base(args.game_url)
         if args.open:
             serve.BOOT_OPEN.append(args.open)
-        from contextlib import nullcontext
         from tools.vfx_workbench.app import selftest_sandbox
-        sandbox = args.selftest_sandbox is not None
-        with (selftest_sandbox(Path(args.selftest_sandbox) if args.selftest_sandbox else None) if sandbox else nullcontext()):
+        # --selftest-env <目录> 与 --selftest-sandbox [目录] 同一个沙箱（两条迁移线各起的名字，两个都认）
+        sandbox_dir = args.selftest_sandbox if args.selftest_sandbox is not None else (args.selftest_env or None)
+        sandbox = sandbox_dir is not None
+        with (selftest_sandbox(Path(sandbox_dir) if sandbox_dir else None) if sandbox else contextlib.nullcontext()):
+            # 监听队列缺省 5：Chrome 装页时并发开一串连接，Windows 上排不下的直接 ERR_CONNECTION_REFUSED（整页缺脚本）
+            ThreadingHTTPServer.request_queue_size = 64
             try:
                 httpd = ThreadingHTTPServer(("127.0.0.1", port), serve.H)
             except OSError:
