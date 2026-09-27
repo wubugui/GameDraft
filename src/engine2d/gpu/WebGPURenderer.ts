@@ -412,7 +412,8 @@ export class WebGPURenderer extends RendererBase {
       width: w,
       height: h,
       format,
-      usage: RhiTextureUsage.RENDER_TARGET | RhiTextureUsage.SAMPLED,
+      // COPY_SRC:`readCanvasPixels` 从这里回读画布内容(GPU → 缓冲,不经浏览器上屏 / 合成)
+      usage: RhiTextureUsage.RENDER_TARGET | RhiTextureUsage.SAMPLED | RhiTextureUsage.COPY_SRC,
     });
     return this.canvasFlip;
   }
@@ -603,6 +604,34 @@ export class WebGPURenderer extends RendererBase {
         out[di + 1] = rb.data[si + 1];
         out[di + 2] = rb.data[si + (bgra ? 0 : 2)];
         out[di + 3] = rb.data[si + 3];
+      }
+    }
+    return { pixels: out, width: w, height: h };
+  }
+
+  /**
+   * 回读画布上最近一次 `render` 画出的内容(设备像素,**自上而下** RGBA8,预乘——就是交换链里存的字节):
+   * 读的是画布中间纹理(帧末 `presentCanvasFlip` 逐像素翻正写进交换链的那一张),经 RHI 纹理回读
+   * (GPU → 缓冲 → 映射),**不经浏览器的上屏 / 合成**——宿主把窗口挪到屏幕外、页面不可见、画布还没合成,读到的都是这一帧。
+   * 拷贝命令在调用当下就提交:之后再 render 不影响这次读到的内容。画布还没画过(没有中间纹理)返回 null。
+   *
+   * 引擎扩展(Pixi 没有对应 API:Pixi WebGL 读画布走 `gl.readPixels` 读默认帧缓冲,同步且依赖 preserveDrawingBuffer)。
+   */
+  async readCanvasPixels(): Promise<{ pixels: Uint8ClampedArray; width: number; height: number } | null> {
+    const tex = this.canvasFlip;
+    if (this.destroyed || !tex) return null;
+    const rb = await this.rhi.readTexture(tex);
+    const { width: w, height: h } = rb;
+    const out = new Uint8ClampedArray(w * h * 4);
+    const bgra = rb.format === 'bgra8unorm';
+    for (let y = 0; y < h; y++) {
+      const src = (h - 1 - y) * w * 4;
+      const dst = y * w * 4;
+      for (let x = 0; x < w * 4; x += 4) {
+        out[dst + x] = rb.data[src + x + (bgra ? 2 : 0)];
+        out[dst + x + 1] = rb.data[src + x + 1];
+        out[dst + x + 2] = rb.data[src + x + (bgra ? 0 : 2)];
+        out[dst + x + 3] = rb.data[src + x + 3];
       }
     }
     return { pixels: out, width: w, height: h };

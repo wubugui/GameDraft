@@ -974,6 +974,14 @@ export class FrameBuilder implements FilterSystemLike {
     return back;
   }
 
+  /** FilterSystemLike(引擎扩展):见 `FilterSystemLike.filterPassOrigin`——最后一道 = 外层滤镜目标的偏移,中间几道 = 本滤镜的 bounds 左上 */
+  filterPassOrigin(output: RenderSurface | 'canvas'): { x: number; y: number } {
+    const data = this.activeFilterData;
+    if (!data) return { x: 0, y: 0 };
+    if (data.outputRenderSurface === output) return this.findPreviousFilterOffset();
+    return { x: data.bounds.minX, y: data.bounds.minY };
+  }
+
   /** FilterSystemLike:滤镜的 apply 回调这里 */
   applyFilter(filter: Filter, input: Texture, output: RenderSurface | 'canvas', clear: boolean): void {
     const filterData = this.activeFilterData!;

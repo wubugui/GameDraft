@@ -26,6 +26,12 @@ export interface FilterSystemLike {
    * `worldTransform` 给了就代替精灵本次渲染的世界变换(见 MaskFilter.spriteWorldTransform)
    */
   calculateSpriteMatrix(outputMatrix: Matrix, sprite: Sprite, worldTransform?: Matrix): Matrix;
+  /**
+   * 引擎扩展(Pixi 没有):这一道 pass 里滤镜顶点的「位置」`aPosition * uOutputFrame.zw + uOutputFrame.xy` 加上它 =
+   * 渲染根目标上的坐标(CSS 像素)。照 Pixi,`uOutputFrame.xy` 只在画回外层目标的最后一道带 bounds 偏移,链中间
+   * 画进池纹理的几道是 0——按屏幕位置取东西的滤镜(燃烧的场景 uv 等)排在链中间时拿它补回来。只在 `apply` 回调里有效。
+   */
+  filterPassOrigin(output: RenderSurface | 'canvas'): { x: number; y: number };
 }
 
 /**
