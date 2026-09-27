@@ -263,7 +263,7 @@ import { resolveText, type ResolveContext } from './resolveText';
 import { VfxSystem } from '../systems/vfx/VfxSystem';
 import { CanvasStageSystem } from '../systems/canvas/CanvasStageSystem';
 import { BurnSystem, type BurnEntityHost, type BurnHeldHost } from '../systems/burn/BurnSystem';
-import { burnEntityPlacement, burnFrameFromCorners, burnPlacementFrame } from '../systems/burn/burnGeometry';
+import { burnFrameFromCorners, burnHotspotFrame } from '../systems/burn/burnGeometry';
 import { burnableWorldSize, type ResolvedBurnable } from '../data/burnables';
 import { IgnitePerformer } from '../systems/burn/ignitePerformer';
 import { BurnRenderer } from '../rendering/burn/BurnRenderer';
@@ -5849,7 +5849,7 @@ export class Game {
         host = {
           id: h.def.id, kind: 'hotspot',
           get burnable() { return h.def.burnable; },
-          frame: (size) => burnPlacementFrame(burnEntityPlacement(h.def, size, { depthScale: h.depthScaleFactor, flipX: h.getFacing() < 0 })),
+          frame: (size) => burnHotspotFrame(h, size),
           get active() { return h.active; },
           render: { kind: 'filters', host: h },
           container: h.container,

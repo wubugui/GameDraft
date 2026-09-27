@@ -110,6 +110,21 @@ export function burnEntityPlacement(
   };
 }
 
+/**
+ * 热点宿主此刻的实例帧：热点 def + 它此刻的透视系数 + 展示图朝向（朝左镜像）。
+ * 游戏组装层（`Game.burnEntityHosts` 的 `frame`）与燃烧工作台画热点实例时是同一个函数——燃烧 uv 仿射就从它来。
+ */
+export function burnHotspotFrame(
+  h: {
+    readonly def: { x: number; y: number; scale?: number; rotation?: number; anchor?: { x?: number; y?: number } | null };
+    readonly depthScaleFactor: number;
+    getFacing(): number;
+  },
+  size: { width: number; height: number },
+): BurnFrame {
+  return burnPlacementFrame(burnEntityPlacement(h.def, size, { depthScale: h.depthScaleFactor, flipX: h.getFacing() < 0 }));
+}
+
 /** 由图上三个角的场景位置（左上 (0,0)、右上 (1,0)、左下 (0,1)）建摆放（挂件：组装层按挂件变换量出来） */
 export function burnFrameFromCorners(
   topLeft: { x: number; y: number }, topRight: { x: number; y: number }, bottomLeft: { x: number; y: number },
