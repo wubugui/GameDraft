@@ -59,6 +59,7 @@ function scenarioBlock(sc, opts) {
   return `<details class="sc" data-bad="${sc.diverged || sc.inconclusive ? 1 : 0}" data-kind="${esc(sc.kind)}" data-name="${esc(sc.id)}" ${sc.diverged ? 'open' : ''}>
 <summary><span class="kind">${esc(sc.kind)}</span> <b>${esc(sc.name)}</b> ${sc.flags.map((f) => `<span class="tag">${esc(f)}</span>`).join(' ')}${sc.inconclusive ? ` <span class="tag">${esc(sc.inconclusive)}</span>` : sc.diverged ? '' : ' <span class="ok">一致</span>'} <small class="muted">分 ${sc.score}</small></summary>
 <div class="meta">
+${sc.note ? `<div class="muted">${esc(sc.note)}</div>` : ''}
 <div>启动 A:${boot(sc.boot.A)} · B:${boot(sc.boot.B)}</div>
 ${sc.fatal.A.some(Boolean) || sc.fatal.B.some(Boolean) ? `<div class="warn">中断 A:${esc(sc.fatal.A.join(' / '))} · B:${esc(sc.fatal.B.join(' / '))}</div>` : ''}
 ${sc.unsupported.A.length || sc.unsupported.B.length ? `<div class="warn">unsupported A:${esc(sc.unsupported.A.join(';') || '无')} · B:${esc(sc.unsupported.B.join(';') || '无')}</div>` : ''}

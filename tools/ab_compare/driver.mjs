@@ -2,7 +2,8 @@
  * 从外面驱动一局真游戏:起浏览器、装确定性控制、冷启动、锁步推进、检查点取证。
  *
  * 只碰 master 上就有的入口:`window.__game`(DEV 实例;私有方法 applyRuntimeCommand 在 JS 里照样可调)与
- * `window.__gameDevAPI`(isReady / stepFixedTicks / startMinigame / playCutscene / completeDialogueText …)。
+ * `window.__gameDevAPI`(isReady / stepFixedTicks / startMinigame / playCutscene / completeDialogueText …),
+ * 外加外部输入(Playwright 真键盘 / 真鼠标:key / keyDown / keyUp / click / wheel 步骤)。
  * 不注入任何游戏代码;页面里多出来的只有:
  *   - 浏览器环境控制(两边一样):Playwright 假时钟、Math.random 换成定种子的 mulberry32(另挂 __abReseed 供同步点重播种);
  *   - 驱动自己的记账(window.__abOps:发出去的命令 / API 调用各自兑现没有)。
@@ -650,6 +651,38 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
       } else if ('viewport' in step) {
         await page.setViewportSize(step.viewport);
         res.steps.push({ id: `s${i}`, desc: `viewport ${step.viewport.width}x${step.viewport.height}`, atTick: ticks, immediate: 'done' });
+      } else if ('key' in step || 'keyDown' in step || 'keyUp' in step || 'click' in step || 'wheel' in step) {
+        // 外部输入:Playwright 真键盘 / 真鼠标(CDP Input.dispatch*),与玩家操作同一条路径,不碰游戏代码。
+        // 只有快捷键才开得了的面板(背包 I、任务 Tab、书架 B …)靠它;两边同一时刻同一输入。
+        let desc;
+        let state = 'done';
+        let result = null;
+        try {
+          if ('key' in step) {
+            desc = `key ${step.key}`;
+            await page.keyboard.press(step.key);
+          } else if ('keyDown' in step) {
+            desc = `keyDown ${step.keyDown}`;
+            await page.keyboard.down(step.keyDown);
+          } else if ('keyUp' in step) {
+            desc = `keyUp ${step.keyUp}`;
+            await page.keyboard.up(step.keyUp);
+          } else if ('click' in step) {
+            desc = `click ${step.click.x},${step.click.y}`;
+            await page.mouse.click(step.click.x, step.click.y);
+          } else {
+            const w = step.wheel;
+            desc = `wheel ${w.x},${w.y} Δ${w.dx ?? 0},${w.dy ?? 0}`;
+            await page.mouse.move(w.x, w.y);
+            await page.mouse.wheel(w.dx ?? 0, w.dy ?? 0);
+          }
+        } catch (e) {
+          state = 'error';
+          result = msgOf(e);
+          watch.push('pageerror', `[外部输入失败] ${desc}:${result}`);
+        }
+        res.steps.push({ id: `s${i}`, desc, atTick: ticks, immediate: state, ...(result ? { result } : {}) });
+        await watch.quiesce();
       } else if ('settle' in step) {
         await sleep(step.settle);
         await watch.quiesce();

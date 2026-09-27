@@ -15,14 +15,20 @@
  *   { api: 'name', args }     → window.__gameDevAPI[name](...args)
  *   { viewport: {width,height} } → 改视口(触发游戏自己的 resize 路径)
  *   { settle: ms }            → 墙钟等待(逻辑与假时钟都停着,只让在途 I/O 落地)
+ *   外部输入(Playwright 真键盘 / 真鼠标,与玩家操作同一条路径;只有快捷键才开得了的面板靠它):
+ *   { key: 'KeyI' }           → page.keyboard.press(键名同 Playwright:KeyA…KeyZ / Tab / Escape / Enter / ArrowRight …)
+ *   { keyDown: 'KeyQ' } / { keyUp: 'KeyQ' } → 按住 / 松开(按住期间照常 advance)
+ *   { click: {x, y} }         → page.mouse.click(视口 CSS 像素)
+ *   { wheel: {x, y, dx?, dy} } → 鼠标移到 (x, y) 再 page.mouse.wheel(dx, dy)
  *   cmd / api 都是「发出去不等」:它们可能要等假时钟 / 固定帧才会兑现,结果在后续检查点里如实记(done/pending/failed/unsupported)。
  *
- * 想调节拍 / 检查点,改下面 TEMPLATES 就行;选哪些对象由 run.mjs 的命令行过滤。
+ * 想调节拍 / 检查点,改下面 TEMPLATES 就行(feature 种类的条目表在 features.mjs);选哪些对象由 run.mjs 的命令行过滤。
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { buildFeatureItems, matchFeature } from './features.mjs';
 
-export const KINDS = ['scene', 'npc', 'minigame', 'cutscene', 'warp', 'resize', 'dpr'];
+export const KINDS = ['scene', 'npc', 'minigame', 'cutscene', 'warp', 'resize', 'dpr', 'feature'];
 
 /** 小游戏种类 → 数据来源(相对 public/assets/data) */
 const MINIGAME_SOURCES = {
@@ -168,6 +174,7 @@ const safeName = (s) => String(s).replace(/[\\/:*?"<>|\s]+/g, '_');
  * @param {string[]|null} o.cutscenes   null = 全部
  * @param {string[]|null} o.warps       null = 全部
  * @param {string[]|null} o.resizeScenes / o.dprScenes  null = 选中场景的前两个
+ * @param {string[]|null} o.features   feature 过滤(null = 全部;类别名 / 完整 id / 条目名 / 条目名前缀,见 features.mjs matchFeature)
  * @param {{width:number,height:number}} o.viewport
  */
 export function buildScenarios(o) {
@@ -217,7 +224,21 @@ export function buildScenarios(o) {
   if (o.kinds.has('dpr')) {
     for (const s of o.dprScenes ?? scenes.slice(0, 2)) add('dpr', `${s}@2x`, { scene: s, dpr: 2, visualCapture: false }, TEMPLATES.dpr());
   }
-  return { scenarios: out, unknownScenes: unknown, catalog: { scenes: allScenes.length, minigames: cat.minigames.length, cutscenes: cat.cutscenes.length, warps: cat.warps.length } };
+  let features = 0;
+  if (o.kinds.has('feature')) {
+    // --scenes 给了才按启动场景筛(没给 = 全部 feature 条目);--features 再按类别 / 名字筛
+    for (const f of buildFeatureItems({ treeDirs: o.treeDirs, viewport: o.viewport })) {
+      features++;
+      if (o.scenes && !o.scenes.includes(f.boot.scene)) continue;
+      if (!matchFeature(f, o.features)) continue;
+      out.push({ id: `feature__${safeName(f.name)}`, kind: 'feature', name: f.name, category: f.category, note: f.note, boot: f.boot, steps: f.steps });
+    }
+  }
+  return {
+    scenarios: out,
+    unknownScenes: unknown,
+    catalog: { scenes: allScenes.length, minigames: cat.minigames.length, cutscenes: cat.cutscenes.length, warps: cat.warps.length, features },
+  };
 }
 
 /** 启动 URL 的查询串(master 的 src/main.ts 认这些参数) */

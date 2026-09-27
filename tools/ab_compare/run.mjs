@@ -19,10 +19,22 @@
  *     --minigames water:dev_pond --cutscenes prologue_day_end
  *   (无头 Chromium 上屏会丢 WebGPU 设备,所以一律有头 + xvfb-run;npm 源被墙时加 --npm-registry https://registry.npmjs.org/)
  *
+ * 只看场景表(不建树、不起 dev 服、不开浏览器,纯读文件):
+ *   node tools/ab_compare/run.mjs --list                             # 全部种类
+ *   node tools/ab_compare/run.mjs --list --only feature              # 只看 feature 条目(按类别计数)
+ *   node tools/ab_compare/run.mjs --list --only feature --features burn,fg --verbose   # 连每一步都打出来
+ *   A 侧数据读 master 只读检出(缺省 .tools/master-ro,--list-a-dir 改),B 侧读当前检出(缺省仓库根,--list-b-dir 改);
+ *   打完表再拿 A 那棵核对每条引用的场景 / 运行时命令 / __gameDevAPI / 动作类型与必填参数 / 数据 id / 按键都在 master 上存在,
+ *   有错退出码 1(见 validate.mjs)。
+ *
  * 选项:
  *   --a <ref> / --b <ref>          两侧提交(B 取提交;主工作区未提交的改动不在 B 里,会大声提示)
- *   --only <种类,…>                scene,npc,minigame,cutscene,warp,resize,dpr(缺省全部)
- *   --scenes <id,…>                场景过滤(作用于 scene / npc / resize / dpr)
+ *   --only <种类,…>                scene,npc,minigame,cutscene,warp,resize,dpr,feature(缺省全部)
+ *                                  feature = 每条冷启动一个合适的场景、触发一项游戏功能(时段换装、燃烧、落雷、粒子、
+ *                                  火把、画面演出、实体、面板、前景层、走路 / 姿态),触发后与播放中逐帧打点,见 features.mjs
+ *   --features <项,…>              feature 过滤:类别名(time,burn,strike,vfx,prop,fx,ent,ui,fg,player)、完整 id
+ *                                  (feature__burn__test_room_a.burn_demo_paper)、条目名或条目名前缀(time__崖墓)
+ *   --scenes <id,…>                场景过滤(作用于 scene / npc / resize / dpr;给了也按启动场景筛 feature)
  *   --npcs-per-scene <n>           每个场景取前 n 个有对话图的 NPC(缺省 2)
  *   --minigames first|all|<kind:id,…>   缺省 first(每种第一个);种类 water/sugarWheel/paperCraft/objectExamine/pressureHold
  *   --cutscenes <id,…> / --warps <id,…>  缺省全部
@@ -48,6 +60,7 @@
  *   --embed-images  --keep-raw     报告内嵌缩略图 / 保留每轮原始截图与运行记录
  *   --recompare                    不重跑:拿 --out 目录里 --keep-raw 留下的原始截图,按当前判定参数重比、重出报告
  *   --perf --perf-scenes <id,…> --perf-seconds 4   真实时间性能 + JS 堆对照(--perf-only:只跑这一项)
+ *   --list [--verbose]             只打场景表 + 对 master 核对引用(不启动任何东西);--list-a-dir / --list-b-dir 指数据来源
  *
  * 退出码:0 = B 在噪声底内与 A 一致且无新增报错;1 = 有超噪声的分歧 / B 新增报错 / 有场景无法对照(A 没起来)/
  *        独立性复核不过;2 = 工具自身失败。
@@ -57,8 +70,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compareScenario } from './compare.mjs';
 import { launchBrowser, loadPlaywright, runPerf, runScenario, warmUp } from './driver.mjs';
+import { FEATURE_CATEGORIES } from './features.mjs';
 import { renderReport } from './report.mjs';
 import { KINDS, buildScenarios } from './scenarios.mjs';
+import { loadMasterRefs, validateScenarios } from './validate.mjs';
 import {
   checkViteDeps, ensureDeps, ensureWorktree, killTree, linkAssets, mainTreeDirt, makeGit, pickPort, resolveCommit,
   startVite, trackedChanges, untrackedFiles, wipeIsolatedSaves,
@@ -198,6 +213,7 @@ async function main() {
     warps: list('warps'),
     resizeScenes: list('resize-scenes'),
     dprScenes: list('dpr-scenes'),
+    features: list('features'),
     viewport: opts.viewport,
   });
   if (built.unknownScenes.length) log(`⚠ 两棵树里都没有这些场景:${built.unknownScenes.join(', ')}`);
@@ -446,10 +462,115 @@ function recompareMain() {
   return summary;
 }
 
-(has('recompare') ? Promise.resolve().then(recompareMain) : main()).then(
-  (summary) => process.exit(summary.verdict.diverged.length || summary.verdict.inconclusive?.length || summary.verdict.isolationProblems ? 1 : 0),
-  (e) => {
+/**
+ * --list:只打场景表并对 master 核对引用。纯读文件——不建 worktree、不 npm ci、不起 dev 服、不开浏览器、不碰 --out。
+ * A 侧数据 = master 只读检出(缺省 .tools/master-ro),B 侧 = 当前检出(缺省仓库根,含工作区未提交的改动)。
+ * @returns 退出码:0 = 核对无错;1 = 有错;2 = 数据目录不对
+ */
+function listMain() {
+  const aDir = path.resolve(arg('list-a-dir', path.join(repoRoot, '.tools', 'master-ro')));
+  const bDir = path.resolve(arg('list-b-dir', repoRoot));
+  for (const [label, d] of [['A', aDir], ['B', bDir]]) {
+    if (!fs.existsSync(path.join(d, 'public', 'assets', 'scenes'))) {
+      console.error(`--list:${label} 侧数据目录 ${d} 里没有 public/assets/scenes(用 --list-${label.toLowerCase()}-dir 指一棵检出)`);
+      return 2;
+    }
+  }
+  // 只读地报一下两棵检出各是哪个提交,和 --a / --b 对不对得上(对不上照样列,只是提示)
+  const headOf = (d) => {
+    try {
+      return makeGit(d)('rev-parse', 'HEAD');
+    } catch {
+      return null;
+    }
+  };
+  const aWant = resolveCommit(git, arg('a', '') || 'origin/master') ?? resolveCommit(git, 'master');
+  const bWant = resolveCommit(git, arg('b', 'HEAD'));
+  const aHead = headOf(aDir);
+  const bHead = headOf(bDir);
+  log(`A 数据:${path.relative(repoRoot, aDir) || '.'} @ ${aHead?.slice(0, 10) ?? '?'}${aWant && aHead && aWant !== aHead ? `(⚠ 不是 A 提交 ${aWant.slice(0, 10)})` : ''}`);
+  log(`B 数据:${path.relative(repoRoot, bDir) || '.'} @ ${bHead?.slice(0, 10) ?? '?'}${bWant && bHead && bWant !== bHead ? `(⚠ 不是 B 提交 ${bWant.slice(0, 10)})` : ''}${path.resolve(bDir) === path.resolve(repoRoot) ? '(工作区,含未提交改动)' : ''}`);
+
+  const kinds = new Set(list('only') ?? KINDS);
+  for (const k of kinds) {
+    if (!KINDS.includes(k)) {
+      console.error(`--only 里有未知种类 ${k}(可选:${KINDS.join(',')})`);
+      return 2;
+    }
+  }
+  const built = buildScenarios({
+    treeDirs: [aDir, bDir],
+    kinds,
+    scenes: list('scenes'),
+    npcsPerScene: Number(arg('npcs-per-scene', '2')),
+    minigames: arg('minigames', 'first'),
+    cutscenes: list('cutscenes'),
+    warps: list('warps'),
+    resizeScenes: list('resize-scenes'),
+    dprScenes: list('dpr-scenes'),
+    features: list('features'),
+    viewport: opts.viewport,
+  });
+  if (built.unknownScenes.length) log(`⚠ 两棵树里都没有这些场景:${built.unknownScenes.join(', ')}`);
+  const sc = built.scenarios;
+  const verbose = has('verbose');
+  const stepDesc = (s) => {
+    if ('cmd' in s) {
+      if (s.cmd.type === 'debugExecuteAction') return `action ${s.cmd.action?.type} ${JSON.stringify(s.cmd.action?.params ?? {})}`;
+      const { type, ...rest } = s.cmd;
+      return `cmd ${type}${Object.keys(rest).length ? ` ${JSON.stringify(rest)}` : ''}`;
+    }
+    if ('api' in s) return `api ${s.api}(${(s.args ?? []).map((a) => JSON.stringify(a)).join(', ')})`;
+    if ('advance' in s) return `advance ${s.advance}`;
+    if ('checkpoint' in s) return `checkpoint ${s.checkpoint}`;
+    return JSON.stringify(s);
+  };
+  log(`\n场景表 ${sc.length} 条(视口 ${opts.viewport.width}×${opts.viewport.height}):`);
+  for (const [i, s] of sc.entries()) {
+    const cps = s.steps.filter((x) => 'checkpoint' in x).length;
+    const frames = s.steps.reduce((m, x) => m + (x.advance ?? 0), 0);
+    const inputs = s.steps.filter((x) => 'cmd' in x || 'api' in x || 'key' in x || 'keyDown' in x || 'keyUp' in x || 'click' in x || 'wheel' in x).length;
+    log(`${String(i + 1).padStart(4)}  ${s.kind.padEnd(8)} ${s.id}  [${s.boot.warp ? `warp ${s.boot.warp} → ` : ''}${s.boot.scene}${s.boot.dpr ? ` @${s.boot.dpr}x` : ''}]`
+      + `  输入 ${inputs} · 检查点 ${cps} · ${frames} 帧${s.note ? `  — ${s.note}` : ''}`);
+    if (verbose) for (const x of s.steps) log(`          ${stepDesc(x)}`);
+  }
+  log(`\n按种类:${[...kinds].map((k) => `${k} ${sc.filter((s) => s.kind === k).length}`).join(' · ')}`);
+  if (kinds.has('feature')) {
+    const f = sc.filter((s) => s.kind === 'feature');
+    log(`feature 按类别(共 ${f.length} / 未过滤 ${built.catalog.features}):`);
+    for (const [cat, label] of Object.entries(FEATURE_CATEGORIES)) log(`  ${cat.padEnd(7)} ${String(f.filter((s) => s.category === cat).length).padStart(3)}  ${label}`);
+  }
+
+  // ---- 对 master 核对
+  const assetsDir = path.resolve(arg('assets', path.join(repoRoot, 'public', 'resources', 'runtime')));
+  const refs = loadMasterRefs(aDir, assetsDir);
+  const v = validateScenarios(sc, refs, opts.viewport);
+  log(`\n对 master(${path.relative(repoRoot, aDir) || '.'})核对:动作注册 ${refs.actions.size} 种 · 运行时命令 ${refs.commands.size} 种 · __gameDevAPI ${refs.devApi.size} 个`
+    + ` · 素材目录 ${refs.assetsDir ? '在(图片 / 动画状态一并核对)' : '不在(跳过图片 / 动画状态)'}`);
+  log(`  用到的动作 ${v.used.actions.size} 种:${[...v.used.actions].sort().join(' ')}`);
+  log(`  用到的运行时命令 ${v.used.commands.size} 种:${[...v.used.commands].sort().join(' ')}`);
+  log(`  用到的 __gameDevAPI ${v.used.apis.size} 个:${[...v.used.apis].sort().join(' ')}${v.used.keys.size ? ` · 按键:${[...v.used.keys].join(' ')}` : ''}`);
+  for (const n of v.notes) log(`  注:${n}`);
+  for (const w of v.warnings) log(`  ⚠ ${w}`);
+  for (const e of v.errors) log(`  ✗ ${e}`);
+  log(v.errors.length ? `\n✗ ${v.errors.length} 处引用在 master 上不成立(告警 ${v.warnings.length})` : `\n✓ 全部引用在 master 上都成立(告警 ${v.warnings.length})`);
+  return v.errors.length ? 1 : 0;
+}
+
+if (has('list')) {
+  // 不 process.exit:让管道里的输出自然写完(Windows 上管道是异步写)
+  try {
+    process.exitCode = listMain();
+  } catch (e) {
     console.error(`\n工具失败:${e?.stack ?? e}`);
-    process.exit(2);
-  },
-);
+    process.exitCode = 2;
+  }
+} else {
+  (has('recompare') ? Promise.resolve().then(recompareMain) : main()).then(
+    (summary) => process.exit(summary.verdict.diverged.length || summary.verdict.inconclusive?.length || summary.verdict.isolationProblems ? 1 : 0),
+    (e) => {
+      console.error(`\n工具失败:${e?.stack ?? e}`);
+      process.exit(2);
+    },
+  );
+}

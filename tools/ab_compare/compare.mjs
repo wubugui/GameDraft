@@ -247,6 +247,7 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
     id: scenario.id,
     kind: scenario.kind,
     name: scenario.name,
+    note: scenario.note ?? null,
     boot: {
       A: runs.A.map((r) => r && { ok: r.boot?.ok ?? false, ms: r.boot?.bootMs ?? null, froze: r.boot?.froze ?? null, reason: r.boot?.reason ?? null }),
       B: runs.B.map((r) => r && { ok: r.boot?.ok ?? false, ms: r.boot?.bootMs ?? null, froze: r.boot?.froze ?? null, reason: r.boot?.reason ?? null }),
