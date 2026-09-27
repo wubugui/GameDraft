@@ -12,14 +12,17 @@
  * - 未激活(setActive(false))的节点照样判,结果同 Pixi 里 visible=false 的节点:getGlobalBounds 对它给空盒,
  *   归一成 (0,0,0,0) 后与 view 比(可剔除的据此定 culled,不可剔除的 culled = false),也照样往下走子节点。
  *
- * 与 Pixi 的差别只在变换的"新鲜度":Pixi 在 `skipUpdateTransform = true`(缺省)时读的是**上一次渲染**
- * 留下的 worldTransform(本帧逻辑里挪过的节点要晚一帧才反映);engine2d 的 Container 的 worldTransform /
- * getBounds 任何时候都按当前父链现算,所以两个取值都得到**本帧**的结果。
+ * **世界变换的新鲜度同 Pixi**:`skipUpdateTransform = true`(缺省,游戏 `updateFrustumCulling` 就这么用)读的是
+ * **上一次渲染**时的世界变换(Pixi 的 `worldTransform` 只在渲染时更新;engine2d 用 `groupTransform` ⊗ 根上次的变换还原,
+ * 见 `renderedWorldTransform`)——本帧逻辑里挪过的节点晚一帧反映,**这一帧才加进来、还没渲染过的节点**按本地坐标当世界坐标判。
+ * `skipUpdateTransform = false` 按当前父链现算(同 Pixi 的 updateTransformBackwards)。
+ * 2026-09-28 以前 engine2d 两种取值都读当帧变换,与 master 的可见差异:落雷那一帧新建的满载粒子网格(impact_core / impact_hot,
+ * max = 1,没有落在原点的空槽把包围盒撑到画面里)master 第一帧被剔掉、分支画出来(A/B 对照 strike+120 那一帧的落点白光)。
  */
 import { Matrix } from '../math/Matrix';
 import { Rectangle } from '../math/Rectangle';
 import { Bounds } from '../scene/Bounds';
-import { getGlobalBounds, type Container } from '../scene/Container';
+import { getGlobalBounds, getRenderedGlobalBounds, renderedWorldTransform, type Container } from '../scene/Container';
 
 /** 有 x / y / width / height 的矩形(同 Pixi `RectangleLike`) */
 export type RectangleLike = {
@@ -41,7 +44,7 @@ export class Culler {
    * 按 view 剔除 container 子树。
    * @param container 要剔除的容器(自身也参与判定)
    * @param view 可见区域(与世界变换同一坐标系,一般是 renderer.screen 或其外扩)
-   * @param skipUpdateTransform 同 Pixi 的参数;engine2d 两种取值都读当前变换(见文件头)
+   * @param skipUpdateTransform 同 Pixi:true = 读上一次渲染时的世界变换,false = 按当前父链现算(见文件头)
    */
   cull(container: Container, view: RectangleLike, skipUpdateTransform = true): void {
     this._cullRecursive(container, view, skipUpdateTransform);
@@ -55,11 +58,13 @@ export class Culler {
         tempRectangle.width = view.width;
         tempRectangle.height = view.height;
         const transform = skipUpdateTransform
-          ? container.worldTransform
+          ? renderedWorldTransform(container, tempMatrix)
           : container.getGlobalTransform(tempMatrix, skipUpdateTransform);
         container.culled = !tempRectangle.intersects(container.cullArea, transform);
       } else {
-        const bounds = getGlobalBounds(container, skipUpdateTransform, tempBounds);
+        const bounds = skipUpdateTransform
+          ? getRenderedGlobalBounds(container, tempBounds)
+          : getGlobalBounds(container, skipUpdateTransform, tempBounds);
         container.culled = bounds.x >= view.x + view.width
           || bounds.y >= view.y + view.height
           || bounds.x + bounds.width <= view.x

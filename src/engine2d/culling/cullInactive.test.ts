@@ -45,7 +45,8 @@ function run(view: View, startX: number, cullable: boolean): { mine: boolean[]; 
   const mineChild: boolean[] = [];
   const pixiChild: boolean[] = [];
   const step = (): void => {
-    Culler.shared.cull(layer, view);
+    // 两边都现算(false):这里只比未激活节点的判法;缺省参数读"上次渲染时的变换"那一半见 cullerRenderedTransform.test.ts
+    Culler.shared.cull(layer, view, false);
     PIXI.Culler.shared.cull(pl, view, false);
     mine.push(npc.culled);
     pixi.push(pn.culled);

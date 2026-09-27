@@ -335,6 +335,11 @@ export class Container extends EventEmitter {
   globalDisplayStatus = 7;
   /** 最近一次被渲染的 tick(Culler / 纹理回收之类可据此判断) */
   _renderTick = -1;
+  /**
+   * @internal 本节点最近一次**作为渲染根**时的本地变换(= Pixi 根渲染组的 worldTransform);没当过根 = null。
+   * `groupTransform` 相对根算,两者一拼就是"上次渲染时的世界变换",Culler 缺省读它(见 {@link renderedWorldTransform})。
+   */
+  _renderedRootTransform: Matrix | null = null;
 
   // 排序
   private _zIndex = 0;
@@ -1600,6 +1605,54 @@ export function getGlobalBounds(target: Container, skipUpdateTransform: boolean,
   _getGlobalBounds(target, bounds, parentTransform);
   if (!bounds.isValid) bounds.set(0, 0, 0, 0);
   return bounds;
+}
+
+/**
+ * 节点**上一次渲染时**的世界变换 = Pixi 里 `worldTransform` 的实际含义(`relativeGroupTransform` ⊗ 根渲染组的
+ * worldTransform,两者都只在渲染时更新):`groupTransform`(上次 prepareTree 相对渲染根算的)⊗ 根上次作为渲染根时的
+ * 本地变换。本帧逻辑里挪过的节点这里还是旧位置;**还没被渲染过的节点** `groupTransform` 是初值单位阵,
+ * 等于按本地坐标当世界坐标(与 Pixi 新加的子节点在第一次渲染前的 worldTransform 相同)。
+ * 只给 Culler 的缺省参数用;`worldTransform` 本身仍是当帧现算的。
+ */
+export function renderedWorldTransform(target: Container, out: Matrix): Matrix {
+  let top = target;
+  while (top.parent) top = top.parent;
+  const rootWorld = top._renderedRootTransform ?? Matrix.IDENTITY;
+  return top === target ? out.copyFrom(rootWorld) : out.appendFrom(target.groupTransform, rootWorld);
+}
+
+/**
+ * Pixi `getGlobalBounds(target, skipUpdateTransform = true)`:每个节点都用**上次渲染时**的世界变换
+ * ({@link renderedWorldTransform};Pixi 读各自的 `worldTransform`,父变换参数不参与),其余逐行同 {@link getGlobalBounds}。
+ */
+export function getRenderedGlobalBounds(target: Container, bounds: Bounds): Bounds {
+  bounds.clear();
+  let top = target;
+  while (top.parent) top = top.parent;
+  _getRenderedGlobalBounds(target, bounds, top._renderedRootTransform ?? Matrix.IDENTITY, top);
+  if (!bounds.isValid) bounds.set(0, 0, 0, 0);
+  return bounds;
+}
+
+function _getRenderedGlobalBounds(target: Container, bounds: Bounds, rootWorld: Matrix, top: Container): void {
+  if (!target._activeSelf || !target.visible || !target.measurable) return;
+  const world = target === top ? rootWorld.clone() : new Matrix().appendFrom(target.groupTransform, rootWorld);
+  const parentBounds = bounds;
+  const preserve = target.effects.length > 0;
+  if (preserve) bounds = new Bounds();
+  if (target.boundsArea) bounds.addRect(target.boundsArea, world);
+  else {
+    const own = target.bounds;
+    if (own && !own.isEmpty()) {
+      bounds.matrix = world;
+      bounds.addBounds(own);
+    }
+    for (const child of target.children) _getRenderedGlobalBounds(child, bounds, rootWorld, top);
+  }
+  if (preserve) {
+    for (const e of target.effects) e.addBounds?.(bounds);
+    parentBounds.addBounds(bounds, Matrix.IDENTITY);
+  }
 }
 
 function _getGlobalBounds(target: Container, bounds: Bounds, parentTransform: Matrix): void {

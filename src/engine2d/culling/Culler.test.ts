@@ -2,9 +2,9 @@
  * Culler 与 PixiJS 8.17 对照:同一棵场景树(随机生成、同一种子)分别在 pixi.js 与 engine2d 里搭出来,
  * 连续对几个视口做剔除,逐节点比较 culled。
  *
- * Pixi 缺省 `skipUpdateTransform = true` 读的是上一次渲染留下的 worldTransform:对照时先用
- * `updateRenderGroupTransforms` 把 Pixi 的变换算到最新(等价于"刚渲染过一帧"),再跑缺省参数;
- * 另外也对照 `skipUpdateTransform = false`(现算)。engine2d 两种取值都读当前变换。
+ * Pixi 缺省 `skipUpdateTransform = true` 读的是上一次渲染留下的 worldTransform:对照时两边都先"渲染一帧"
+ * (Pixi `updateRenderGroupTransforms`、engine2d `prepareTree`),再跑缺省参数;另外也对照 `skipUpdateTransform = false`(现算)。
+ * 渲染之后再挪 / 新加 / 藏起节点时缺省参数的结果见 cullerRenderedTransform.test.ts。
  */
 import { describe, expect, it } from 'vitest';
 import * as PIXI from 'pixi.js';
@@ -14,6 +14,11 @@ import { Sprite } from '../sprite/Sprite';
 import { Texture } from '../textures/Texture';
 import { TextureSource } from '../textures/TextureSource';
 import { Rectangle } from '../math/Rectangle';
+import { prepareTree } from '../gpu/collect';
+
+let renderTick = 0;
+/** engine2d 的"渲染一帧"(变换那一半) */
+const prepared = (root: Container): void => prepareTree(root, null, ++renderTick);
 
 interface NodeDesc {
   x: number;
@@ -190,6 +195,7 @@ describe('Culler(对照 pixi.js 8.17)', () => {
       // 与 Pixi 的 AbstractRenderer.render 相同:先更新根的本地变换,再算整个渲染组
       (pixiStage as unknown as PIXI.Container).updateLocalTransform();
       PIXI.updateRenderGroupTransforms(group, true);
+      prepared(e2dStage as unknown as Container);
       for (const view of VIEWS) {
         PIXI.Culler.shared.cull(pixiStage as unknown as PIXI.Container, view);
         Culler.shared.cull(e2dStage as unknown as Container, view);
@@ -210,6 +216,7 @@ describe('Culler(对照 pixi.js 8.17)', () => {
     for (const c of layer.children) c.cullable = c !== player;
     const screen = new Rectangle(0, 0, 800, 600);
     const view = screen.clone().pad(screen.width * 0.25, screen.height * 0.25);
+    prepared(layer);
     Culler.shared.cull(layer, view);
     expect(layer.culled).toBe(false);
     expect(inside.culled).toBe(false);
@@ -229,11 +236,13 @@ describe('Culler(对照 pixi.js 8.17)', () => {
     child.cullable = true;
     child.position.set(1000, 0);
     parent.addChild(child);
+    prepared(parent);
     Culler.shared.cull(parent, { x: 0, y: 0, width: 100, height: 100 });
     expect(parent.culled).toBe(false);
     expect(child.culled).toBe(true);
     parent.x = 5000;
     child.x = 0;
+    prepared(parent);
     Culler.shared.cull(parent, { x: 0, y: 0, width: 100, height: 100 });
     expect(parent.culled).toBe(true);
     expect(child.culled).toBe(true); // 没被重新判定
