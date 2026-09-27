@@ -578,7 +578,14 @@ async function main() {
     return;
   }
 
-  server?.close();
+  // 先把服务连同 keep-alive 连接真关掉，再让进程**自然退出**（只设 exitCode，不 process.exit）。
+  // 刚 fetch 完就 process.exit，Windows 上的 Node 24 会在 libuv 里断言崩掉
+  // （`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c`，退出码 127）：
+  // 报告写的是「通过」，release.mjs 看到的却是非零，整条发布线在这台机器上永远出不了包。
+  if (server) {
+    server.closeAllConnections?.();
+    await new Promise((r) => server.close(() => r()));
+  }
   writeFileSync(join(STAGING, 'verify-report.json'), `${JSON.stringify(report, null, 2)}\n`, 'utf-8');
   step(report.verdict === 'PASS' ? '通过' : '不通过');
   if (problems.length) {
@@ -589,7 +596,7 @@ async function main() {
     + `  node scripts/verify_build.mjs --target ${TARGET} --serve\n`
     + '  然后用浏览器/headless agent 打开它，走一段流程，Ctrl-C 看 404 记录。\n',
   );
-  process.exit(report.verdict === 'PASS' ? 0 : 1);
+  process.exitCode = report.verdict === 'PASS' ? 0 : 1;
 }
 
 main().catch((e) => {

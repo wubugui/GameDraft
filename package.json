@@ -20,7 +20,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "npm run build && tauri build",
-    "test:tauri": "cargo test --release --manifest-path src-tauri/Cargo.toml",
+    "test:tauri": "node scripts/tauri_test.mjs",
     "typecheck:narrative-editor": "tsc --noEmit -p tools/narrative_editor_web",
     "typecheck:anim-preview": "tsc --noEmit -p tools/anim_preview",
     "test:anim-preview": "node --test tools/anim_preview/*.test.mjs && vitest run tools/anim_preview/assemblyMath.test.ts",

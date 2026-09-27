@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { join, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   BUILD_MARKER,
+  TAURI_NO_BUNDLE_RESOURCES_PATCH,
   bakeFreshness,
+  cargoTargetDir,
   checkOutputPath,
   checkStagingDir,
   classify404,
@@ -11,7 +15,9 @@ import {
   classifyLeak,
   decodeUrlPath,
   manifestEntryLanded,
+  parsePort,
   safeStaticPath,
+  shellExeName,
   swapWavRef,
 } from './build_helpers.mjs';
 
@@ -298,5 +304,93 @@ describe('wav → ogg 引用改写', () => {
     expect(swapWavRef('audio/bgm/theme.ogg', renamed)).toBe('audio/bgm/theme.ogg');
     expect(swapWavRef(42, renamed)).toBe(42);
     expect(swapWavRef(null, renamed)).toBe(null);
+  });
+});
+
+/** RFC 7386 JSON merge-patch（tauri-build / tauri CLI 合并 TAURI_CONFIG、--config 用的就是这个语义） */
+function mergePatch(target, patch) {
+  if (patch === null || typeof patch !== 'object' || Array.isArray(patch)) return patch;
+  const out = target && typeof target === 'object' && !Array.isArray(target) ? { ...target } : {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete out[k];
+    else out[k] = mergePatch(out[k], v);
+  }
+  return out;
+}
+
+describe('Rust 壳的编译：绿色版与单测不依赖打包内容', () => {
+  const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const conf = JSON.parse(readFileSync(join(REPO, 'src-tauri', 'tauri.conf.json'), 'utf-8'));
+
+  it('tauri.conf.json 里依赖打包内容的只有 bundle.resources（NSIS 用），且都在 release/ 下', () => {
+    const res = conf.bundle?.resources;
+    expect(res && typeof res === 'object').toBe(true);
+    const sources = Array.isArray(res) ? res : Object.keys(res);
+    expect(sources.length).toBeGreaterThan(0);
+    for (const src of sources) expect(src.replace(/\\/g, '/')).toMatch(/^\.\.\/release\//);
+  });
+
+  it('补丁合并之后没有 bundle.resources，其余配置原样（withGlobalTauri 还在）', () => {
+    const merged = mergePatch(conf, JSON.parse(TAURI_NO_BUNDLE_RESOURCES_PATCH));
+    expect('resources' in merged.bundle).toBe(false);
+    expect(merged.app.withGlobalTauri).toBe(true);
+    expect(merged.bundle.targets).toEqual(conf.bundle.targets);
+    expect(merged.identifier).toBe(conf.identifier);
+  });
+
+  it('release.mjs 编绿色版、tauri_test.mjs 跑单测都带这个补丁', () => {
+    const release = readFileSync(join(REPO, 'scripts', 'release.mjs'), 'utf-8');
+    expect(release).toMatch(/'--no-bundle',\s*'--config',\s*TAURI_NO_BUNDLE_RESOURCES_PATCH/);
+    const testRunner = readFileSync(join(REPO, 'scripts', 'tauri_test.mjs'), 'utf-8');
+    expect(testRunner).toMatch(/TAURI_CONFIG:\s*TAURI_NO_BUNDLE_RESOURCES_PATCH/);
+    const pkg = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf-8'));
+    expect(pkg.scripts['test:tauri']).toBe('node scripts/tauri_test.mjs');
+  });
+});
+
+describe('cargo target 目录（exe 从哪取）', () => {
+  const TAURI = resolve('E:/proj/src-tauri');
+
+  it('没设 CARGO_TARGET_DIR：src-tauri/target', () => {
+    expect(cargoTargetDir(TAURI, {})).toBe(join(TAURI, 'target'));
+    expect(cargoTargetDir(TAURI, { CARGO_TARGET_DIR: '  ' })).toBe(join(TAURI, 'target'));
+  });
+
+  it('设了绝对路径：原样用 —— 以前写死 src-tauri/target，一设就"编译成功但找不到 exe"', () => {
+    expect(cargoTargetDir(TAURI, { CARGO_TARGET_DIR: 'F:/out/cargo-target' })).toBe(resolve('F:/out/cargo-target'));
+  });
+
+  it('设了相对路径：相对 cargo 的工作目录（tauri CLI 在 src-tauri/ 里调 cargo）', () => {
+    expect(cargoTargetDir(TAURI, { CARGO_TARGET_DIR: '../.cargo-out' })).toBe(resolve('E:/proj/.cargo-out'));
+  });
+
+  it('exe 名按平台', () => {
+    expect(shellExeName('win32')).toBe('gamedraft.exe');
+    expect(shellExeName('darwin')).toBe('gamedraft');
+    expect(shellExeName('linux')).toBe('gamedraft');
+  });
+});
+
+describe('端口参数', () => {
+  it('只认 1–65535 的整数', () => {
+    expect(parsePort('5401')).toBe(5401);
+    expect(parsePort(5299)).toBe(5299);
+    expect(parsePort(' 80 ')).toBe(80);
+    for (const bad of ['', '0', '65536', '54a', '-1', '5.5', true, null, undefined]) expect(parsePort(bad)).toBe(null);
+  });
+});
+
+describe('验收门的退出方式（Windows 上的 Node 24）', () => {
+  const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const src = readFileSync(join(REPO, 'scripts', 'verify_build.mjs'), 'utf-8');
+
+  it('正常收尾先关服务再自然退出，不在刚 fetch 完的地方 process.exit', () => {
+    // 刚 fetch 完就 process.exit，libuv 断言崩掉（src\win\async.c UV_HANDLE_CLOSING，退出码 127）：
+    // 报告写「通过」、release.mjs 却看到非零，整条发布线出不了包（2026-09-27 本机实测 3/3 复现）。
+    const tail = src.slice(src.lastIndexOf('if (SERVE) {'));
+    const normalPath = tail.slice(tail.indexOf('\n  }\n'));
+    expect(normalPath).toMatch(/server\.closeAllConnections/);
+    expect(normalPath).toMatch(/process\.exitCode\s*=/);
+    expect(normalPath.slice(0, normalPath.indexOf('main().catch'))).not.toMatch(/process\.exit\(/);
   });
 });

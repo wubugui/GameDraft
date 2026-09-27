@@ -26,6 +26,9 @@
  *   node scripts/release.mjs --out-dir D:/builds/2026-08-28T09-00 --target dev
  *   node scripts/release.mjs --out-dir <非空的陌生目录> --force
  *   node scripts/release.mjs --out-dir <目录> --build-config <档位配置替身.json>   （缺省读 tools/build/build_config.json）
+ *   node scripts/release.mjs --out-dir <目录> --verify-port 5401   （验收门起静态服务的端口，缺省 5299）
+ *
+ * exe 从 cargo 的 target 目录取：认 `CARGO_TARGET_DIR`（没设就是 `src-tauri/target`）。
  */
 
 import { spawnSync } from 'node:child_process';
@@ -39,7 +42,8 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BUILD_MARKER, checkOutputPath, outputDirDisposition,
+  BUILD_MARKER, TAURI_NO_BUNDLE_RESOURCES_PATCH, cargoTargetDir, checkOutputPath,
+  outputDirDisposition, parsePort, shellExeName,
 } from './lib/build_helpers.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -74,6 +78,11 @@ const SKIP_SWEEP = Boolean(flag('skip-sweep', false));
 const FORCE_SWEEP = Boolean(flag('force-sweep', false));
 /** 档位配置替身（原样转给 package.mjs）；缺省用仓库里的 tools/build/build_config.json。 */
 const BUILD_CONFIG = flag('build-config');
+/**
+ * 验收门（verify_build.mjs）起静态服务的端口。缺省 5299；同一台机器上有别的服务占着那一段时换一个
+ * ——以前写死，撞上就只能改脚本。
+ */
+const VERIFY_PORT_RAW = flag('verify-port', '5299');
 
 const t0 = Date.now();
 const step = (m) => console.log(`\n\u001b[36m▶ ${m}\u001b[0m`);
@@ -87,6 +96,8 @@ function die(msg, code = 2) {
 }
 
 if (!['dev', 'release'].includes(TARGET)) die(`未知 target: ${TARGET}（可用：dev / release）`);
+const VERIFY_PORT = parsePort(VERIFY_PORT_RAW === true ? '' : VERIFY_PORT_RAW);
+if (VERIFY_PORT === null) die(`--verify-port 要跟一个 1–65535 的端口号，收到：${VERIFY_PORT_RAW}`);
 if (!OUT_DIR || OUT_DIR === true) {
   die('必须给 --out-dir <目录>：这一次的结果放哪。\n'
     + '  它不写进配置文件——编辑器每次传同一个（覆盖），自动化每次传新的（留档）。');
@@ -271,26 +282,31 @@ async function main() {
   step('3/5 验收产物');
   if (SKIP_VERIFY) {
     warn('--skip-verify：跳过验收。发布前请自行确认。');
-  } else if (runNode('verify_build.mjs', ['--target', TARGET, '--port', '5299']) !== 0) {
+  } else if (runNode('verify_build.mjs', ['--target', TARGET, '--port', String(VERIFY_PORT)]) !== 0) {
     die('验收不通过，不出包。\n'
       + '  确认那些问题可以接受的话，加 --skip-verify 再跑一次。');
   }
 
   step('4/5 编译 exe');
   // --no-bundle：只要绿色版，不打 NSIS。省掉 makensis 压 566 MB 的四五分钟。
+  // --config 去掉 bundle.resources：那是给 NSIS 装的，绿色版不用；留着的话 tauri-build 每次编译都把
+  // 整份游戏内容抄进 cargo target 目录（见 build_helpers 的 TAURI_NO_BUNDLE_RESOURCES_PATCH）。
   const tauriCli = join(ROOT, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
   if (!existsSync(tauriCli)) die('找不到 @tauri-apps/cli，先 npm install');
-  if (run(process.execPath, [tauriCli, 'build', '--no-bundle']) !== 0) {
+  if (run(process.execPath, [tauriCli, 'build', '--no-bundle', '--config', TAURI_NO_BUNDLE_RESOURCES_PATCH]) !== 0) {
     die('exe 编译失败，见上面的输出（需要 Rust 工具链：winget install Rustlang.Rustup）');
   }
-  const exeSrc = join(ROOT, 'src-tauri', 'target', 'release', 'gamedraft.exe');
-  if (!existsSync(exeSrc)) die(`编译报成功但找不到 ${relative(ROOT, exeSrc)}`);
+  const exeName = shellExeName();
+  const exeSrc = join(cargoTargetDir(join(ROOT, 'src-tauri')), 'release', exeName);
+  if (!existsSync(exeSrc)) {
+    die(`编译报成功但找不到 ${exeSrc}（CARGO_TARGET_DIR=${process.env.CARGO_TARGET_DIR ?? '未设'}）`);
+  }
 
   step('5/5 装配到输出目录');
   if (disposition.action === 'overwrite') clearBuildOutputs(outAbs);
   mkdirSync(outAbs, { recursive: true });
 
-  copyFileSync(exeSrc, join(outAbs, 'gamedraft.exe'));
+  copyFileSync(exeSrc, join(outAbs, exeName));
   const gameSrc = join(ROOT, 'release', TARGET, 'game');
   if (!existsSync(gameSrc)) die(`找不到打包内容 ${relative(ROOT, gameSrc)}`);
   copyTree(gameSrc, join(outAbs, 'game'));
@@ -328,10 +344,10 @@ async function main() {
 
   step('完成');
   info(`${outAbs}`);
-  info(`  gamedraft.exe   ${mb(statSync(join(outAbs, 'gamedraft.exe')).size)}`);
+  info(`  ${exeName.padEnd(15)} ${mb(statSync(join(outAbs, exeName)).size)}`);
   info(`  game/           ${files.length - 2} 个文件`);
   info(`总计 ${mb(totalBytes)}，耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  console.log(`\n双击 ${join(outAbs, 'gamedraft.exe')} 即可运行（存档落在同目录的 gamedata/）。`);
+  console.log(`\n双击 ${join(outAbs, exeName)} 即可运行（存档落在同目录的 gamedata/）。`);
 }
 
 main().catch((e) => {

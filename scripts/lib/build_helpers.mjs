@@ -250,6 +250,53 @@ export function swapWavRef(s, renamedRels) {
   return hit ? `${s.slice(0, -4)}.ogg` : s;
 }
 
+// ------------------------------------------------------ Rust 壳（src-tauri）的编译
+
+/**
+ * 给 `tauri build --no-bundle` / `cargo test` 用的配置补丁（JSON merge-patch）：去掉 `bundle.resources`。
+ *
+ * `tauri.conf.json` 的 `bundle.resources` 指向打包内容 `../release/release/game`，那是 **NSIS 安装包**
+ * 要装进去的东西。但 tauri-build 的 build.rs 在**每一次** cargo 编译里都会处理它：
+ *
+ * - 目录不存在就直接编译失败（`resource path ..\release\release\game doesn't exist`）——于是干净检出上
+ *   `npm run test:tauri` 必须先打一遍包才跑得动，只在打过包的那台机器上是绿的；
+ * - 目录在就把整份游戏内容（几百 MB）抄一份到 cargo target 目录旁，每次编译都抄一遍，
+ *   还 `rerun-if-changed` 上千个文件。绿色版（release.mjs）根本不用这份——它自己把
+ *   `release/<档>/game` 拷到输出目录。
+ *
+ * 所以只有 `npm run tauri:build`（真打 NSIS）保留它；绿色版编译与单测一律带这个补丁。
+ */
+export const TAURI_NO_BUNDLE_RESOURCES_PATCH = '{"bundle":{"resources":null}}';
+
+/**
+ * cargo 把产物放在哪个 target 目录。
+ *
+ * 认 `CARGO_TARGET_DIR`（本机常把它指到别的盘）；相对路径按 cargo 的口径相对**它的工作目录**
+ * 解析——tauri CLI 在 `src-tauri/` 里调 cargo。没设就是 `src-tauri/target`。
+ * 以前 release.mjs 写死 `src-tauri/target/release/gamedraft.exe`：一设 `CARGO_TARGET_DIR`，
+ * 编译成功、紧接着报"编译报成功但找不到 exe"。
+ */
+export function cargoTargetDir(tauriDir, env = process.env) {
+  const raw = typeof env?.CARGO_TARGET_DIR === 'string' ? env.CARGO_TARGET_DIR.trim() : '';
+  return raw ? resolve(tauriDir, raw) : join(tauriDir, 'target');
+}
+
+/** 壳的可执行文件名（`Cargo.toml` 的 `[[bin]] name = "gamedraft"`）。 */
+export function shellExeName(platform = process.platform) {
+  return platform === 'win32' ? 'gamedraft.exe' : 'gamedraft';
+}
+
+/**
+ * 端口参数：只认 1–65535 的整数，别的返回 null（调用方报错，不猜）。
+ */
+export function parsePort(raw) {
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
+  const s = String(raw).trim();
+  if (!/^\d+$/.test(s)) return null;
+  const n = Number(s);
+  return n >= 1 && n <= 65535 ? n : null;
+}
+
 // ------------------------------------------------------ 光照烘焙载荷文件表
 
 /**
