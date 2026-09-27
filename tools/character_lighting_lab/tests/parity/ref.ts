@@ -171,14 +171,14 @@ async function renderRef(input: RefInput): Promise<{ w: number; h: number; pixel
       depth.updatePerFrame(world.x, world.y, f.camera.scale);
       depth.updateEntityDepthOcclusion(filter, f.foot.x, f.foot.y, 0);
     }
-    // 画 + 回读在同一个任务里(WebGPU 画布呈现之后读不回来)
+    // 画完即发起 RHI 纹理回读(拷贝在调用当下提交;与实验室页的 CanvasHost.readPixels 同一条:渲染器的 readCanvasPixels)。
+    // 画布按不透明合成:页面上看到的 alpha 恒 1(同 CanvasHost)
     renderer.render(stage);
-    const rc = document.createElement('canvas');
-    rc.width = canvas.width;
-    rc.height = canvas.height;
-    const ctx = rc.getContext('2d', { willReadFrequently: true })!;
-    ctx.drawImage(canvas, 0, 0);
-    const data = ctx.getImageData(0, 0, rc.width, rc.height).data;
+    const got = await renderer.readCanvasPixels();
+    if (!got) throw new Error('参考页:画布回读失败');
+    const data = got.pixels;
+    for (let i = 3; i < data.length; i += 4) data[i] = 255;
+    const rc = { width: got.width, height: got.height };
     player.filters = [];
     quad.destroy();
     cl.releaseEntityLitShader(shader);

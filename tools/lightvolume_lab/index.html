@@ -776,11 +776,12 @@ window.__FX={ initFromScene, setChar:(x,y)=>{charUv=[x,y];}, stamp, get ready(){
   window.__lvReady=true;
 })();
 })();
-/** 冒烟:两块画面都起来了、载了场景的话画面非空、没有设备错误 */
-window.__rhiSmoke=()=>{
+/** 冒烟:两块画面都起来了、载了场景的话画面非空、没有设备错误(预览画布的回读是异步的) */
+window.__rhiSmoke=async()=>{
   const f=window.__FX, fx=f&&f.fx;
   const loaded=!!(window.LVL&&window.LVL.ready().loaded);
-  const viewDrawn=LV.host?LV.host.countDrawnPixels():0, viewTotal=view.width*view.height;
+  if(LV.host&&bgImg) render();   // 回读读的是最近一次 render:先在这个任务里画一帧
+  const viewDrawn=LV.host?await LV.host.countDrawnPixels():0, viewTotal=view.width*view.height;
   let fxDrawn=0, fxTotal=0;
   if(fx&&f.ready){ const p=fx.readPixels(); if(p){ fxTotal=p.width*p.height; for(let i=0;i<p.data.length;i+=4) if(p.data[i]+p.data[i+1]+p.data[i+2]>6) fxDrawn++; } }
   const ok=!!LV.host&&!!fx&&loaded&&f.ready&&viewDrawn>viewTotal*0.5&&fxDrawn>fxTotal*0.5&&!LV.host.lastError&&!fx.lastError;

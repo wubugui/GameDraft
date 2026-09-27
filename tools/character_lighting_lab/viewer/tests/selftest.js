@@ -19,13 +19,14 @@
   const settle = async () => { await wait(350); await until(() => !V.payloadPending && V.stage && V.stage.loaded, 30000); };
   const same = (a, b) => a.every((v, i) => v === b[i]);
   const hash = (u8, stride = 7) => { let h = 0x811c9dc5 >>> 0; for (let i = 0; i < u8.length; i += stride) { h ^= u8[i]; h = Math.imul(h, 0x01000193) >>> 0; } return h; };
-  /** 角色 quad 在画布上的那一块(设备像素):亮度均值 + 逐字节哈希(同一帧重读必须逐字节相同) */
-  const readChar = () => {
+  /** 角色 quad 在画布上的那一块(设备像素):亮度均值 + 逐字节哈希(同一帧重读必须逐字节相同)。
+   *  画布回读是异步的 RHI 纹理回读:在这个任务里先画一帧再发起回读(拷贝在调用当下提交,之后主循环再画不影响读到的) */
+  const readChar = async () => {
     draw2D();
     const f = footScene(), c = camera2D(), d = V.host.renderer.resolution;
     const w = f.hPx * S.charAspect * c.scale, h = f.hPx * c.scale;
     const x0 = Math.floor((f.x * c.scale + c.x - w / 2) * d), y0 = Math.floor((f.y * c.scale + c.y - h) * d);
-    const px = V.host.readPixels(Math.max(0, x0), Math.max(0, y0), Math.ceil(w * d), Math.ceil(h * d));
+    const px = await V.host.readPixels(Math.max(0, x0), Math.max(0, y0), Math.ceil(w * d), Math.ceil(h * d));
     let sum = 0;
     for (let i = 0; i < px.data.length; i += 4) sum += px.data[i] + px.data[i + 1] + px.data[i + 2];
     return { mean: +(sum / (px.data.length / 4) / 3).toFixed(2), hash: hash(px.data, 1) };
@@ -47,9 +48,9 @@
 
     // ------------------------------------------------------------------ S2 2D 画面 = 游戏渲染器 + 游戏受光载荷(虚拟目录)
     await okGpu('S2 the 2D view is the game WebGPU renderer; the character payload is the game loader on the virtual bake dir',
-      () => {
+      async () => {
         draw2D();
-        const drawn = V.host.countDrawnPixels(), total = canvas2d.width * canvas2d.height;
+        const drawn = await V.host.countDrawnPixels(), total = canvas2d.width * canvas2d.height;
         const base = V.stage.lighting.loadedBakeBase || '';
         return { ok: V.host.renderer.name === 'webgpu' && V.stage.loaded && drawn > total * 0.5 && !V.host.lastError
           && base.startsWith('/api/game_payload/') && base === payloadBase(S.man.name), drawn, total, base, err: V.host.lastError };
@@ -61,9 +62,9 @@
         const cv = V.stage['char'];
         const r = V.stage.lighting['resources'];
         const bound = !!cv && cv.shader.resources.uValid === r.valid && cv.shader.resources.uPL1 === r.atlasL1;
-        const withChar = readChar();
-        charReady = false; const without = readChar(); charReady = true;
-        const again = readChar();
+        const withChar = await readChar();
+        charReady = false; const without = await readChar(); charReady = true;
+        const again = await readChar();
         return { ok: bound && withChar.hash !== without.hash && withChar.hash === again.hash, bound, withChar, without };
       });
     // ------------------------------------------------------------------ S4 四档切换(游戏 applyCharMode 同一条)
@@ -72,7 +73,7 @@
         const got = {};
         for (const m of [2, 3, 0, 1]) {
           setMode(m); await V.stage.requestMode(m); await until(() => V.stage.mode === m, 20000);
-          got[m] = readChar();
+          got[m] = await readChar();
         }
         const r = V.stage.lighting['resources'];
         const lit = Object.values(got).every((p) => p.mean > 2);
@@ -93,12 +94,12 @@
     // ------------------------------------------------------------------ S6 amb / nee 改了 → 虚拟载荷换一份合成,游戏装载器重装
     await okGpu('S6 changing amb / NEE recomposes the virtual payload (export formula) and the game loader reloads it',
       async () => {
-        const before = readChar(), amb0 = S.amb;
+        const before = await readChar(), amb0 = S.amb;
         setSlider('amb', 0.3); await settle(); await until(() => V.stage['char'], 3000);
         const base = V.stage.lighting.loadedBakeBase;
-        const after = readChar();
+        const after = await readChar();
         setSlider('amb', amb0); await settle();
-        const back = readChar();
+        const back = await readChar();
         return { ok: /a0\.300$/.test(base) && after.mean < before.mean && before.hash === back.hash
           && V.stage.lighting.loadedBakeBase === payloadBase(S.man.name), base, before, after, back };
       });

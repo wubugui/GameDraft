@@ -280,7 +280,7 @@
       const qw = +$('qw').value, qh = +$('qh').value, hqm = +$('hqm').value, tone = +$('tone').value;
       const fsx = S.foot.gx * c.wtpX * bgScale, fsy = S.foot.gy * c.wtpY * bgScale;
       const flatX = Math.round(fsx - qw - 6) + qw / 2, tintX = Math.round(fsx + 6) + qw / 2, py = Math.round(fsy - qh) + Math.floor(qh / 2);
-      const flat = LV.host.readPixel(flatX, py), tint = LV.host.readPixel(tintX, py);
+      const flat = await LV.host.readPixel(flatX, py), tint = await LV.host.readPixel(tintX, py);   // 预览画布回读是异步的(按需画,没有主循环)
       const v = (py - Math.round(fsy - qh)) / (qh - 1), hq = (1 - v) * hqm, amb = LVL.sampleVolume(S.foot.gx, S.foot.gy, hq);
       const l = Math.max(0.2126 * amb[0] + 0.7152 * amb[1] + 0.0722 * amb[2], 0.04);
       const want = [0, 1, 2].map((k) => Math.round(Math.min(255, 0.62 * (1 - tone + clamp(amb[k] / l, 0.5, 1.7) * tone) * 255)));

@@ -2714,12 +2714,13 @@ $('scene').addEventListener('change',async e=>{
   draw();
   window.__ready=true;
 })();
-/** 冒烟(真 Chrome):拿到 WebGPU、载荷装上、2D 画面非空且角色确实画出来了、没有设备诊断错误 */
-window.__rhiSmoke=()=>{
+/** 冒烟(真 Chrome):拿到 WebGPU、载荷装上、2D 画面非空且角色确实画出来了、没有设备诊断错误(画布回读是异步的) */
+window.__rhiSmoke=async()=>{
   if(!V.ready) return {ok:false, detail:'还在初始化'};
   if(!V.host||!V.stage) return {ok:false, detail:V.err||'没有 2D 渲染器'};
   if(!S.man) return {ok:false, detail:'没有已载入的场景'};
-  const drawn=V.host.countDrawnPixels();
+  draw2D();                      // 回读读的是最近一次 render:先在这个任务里画一帧(拷贝在调用当下提交)
+  const drawn=await V.host.countDrawnPixels();
   const total=canvas2d.width*canvas2d.height;
   const detail={scene:S.man.name, loaded:V.stage.loaded, mode:V.stage.mode, drawn, total,
     err:V.host.lastError||'', problem:V.stage.lastProblem||'', g3:!!V.g3, err3:V.err3||''};

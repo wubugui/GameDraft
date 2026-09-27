@@ -68,7 +68,7 @@ async function waitHttp(url, ms = 60000) {
   throw new Error(`${url} ${ms / 1000} 秒内没起来`);
 }
 
-/** 实验室页里:把视图摆到用例那一帧,画,同任务回读 GPU 画布,并把这一帧交给 GPU 的输入原样导出 */
+/** 实验室页里:把视图摆到用例那一帧,画,异步回读 GPU 画布(RHI 纹理回读,拷贝在画完的同一个任务里提交),并把这一帧交给 GPU 的输入原样导出 */
 async function driveLab(c) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const until = async (fn, ms = 90000) => {
@@ -99,8 +99,8 @@ async function driveLab(c) {
   S.v2 = c.zoom ? { zoom: c.zoom, ox: Math.max(0, f0.x - S.work.w / c.zoom / 2), oy: Math.max(0, f0.y - f0.hPx * 0.6 - S.work.h / c.zoom / 2) } : { zoom: 1, ox: 0, oy: 0 };
   clamp2D();
   draw2D();
-  const px = V.host.readPixels();
   const frame = labFrame();
+  const px = await V.host.readPixels();          // 异步 RHI 回读:拷贝在调用当下提交,读到的就是上面 draw2D 这一帧
   const g = sceneInfo(S.man.name);
   const bgIn = V.bgView && !(S.bgview === 0 && Math.abs(S.pgain - 1) < 1e-9)
     ? { w: V.bgView.source.pixelWidth, h: V.bgView.source.pixelHeight, pixels: b64(new Uint8Array(V.bgView.source.resource.buffer, V.bgView.source.resource.byteOffset, V.bgView.source.resource.byteLength)), nearest: V.bgView.source.scaleMode === 'nearest' }
