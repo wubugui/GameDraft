@@ -2,6 +2,7 @@ import { Container, Graphics, Text, HTMLText, Sprite, Texture, Rectangle, type M
 import type { Renderer } from './Renderer';
 import type { Camera } from './Camera';
 import { createOverlayBlendMesh } from './overlayBlendShader';
+import { percentLayerRect } from './overlayPercentLayout';
 import type { CanvasItemKind } from './CanvasStage';
 import type { AssetManager } from '../core/AssetManager';
 import type {
@@ -1199,14 +1200,8 @@ export class CutsceneRenderer {
     const build = await prepare();
     if (this.layerOpStale(kind, ep, id, seq)) return false;
     this.hideLayer(kind, id);
-    const sw = this.screenWidth;
-    const sh = this.screenHeight;
-    const xp = Math.max(0, Math.min(100, xPercent));
-    const yp = Math.max(0, Math.min(100, yPercent));
-    const wPct = Math.max(0.01, Math.min(100, widthPercent));
-    const dispW = sw * (wPct / 100);
-    const dispH = dispW * (Math.max(1, texH) / Math.max(1, texW));
-    const { node, disposeGpu } = build(sw * (xp / 100), sh * (yp / 100), dispW, dispH);
+    const r = percentLayerRect(this.screenWidth, this.screenHeight, texW, texH, xPercent, yPercent, widthPercent);
+    const { node, disposeGpu } = build(r.cx, r.cy, r.dispW, r.dispH);
     node.label = id;
     this.attachToCanvas(kind, id, node, order);
     this.layerMap(kind).set(id, { sprite: node, imagePath: `breathing:${id}`, disposeGpu });
