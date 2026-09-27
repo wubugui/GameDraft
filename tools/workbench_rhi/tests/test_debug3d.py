@@ -52,4 +52,12 @@ def test_view3d_pages_have_no_webgl_or_glsl() -> None:
 def test_every_view3d_workbench_serves_the_bundle() -> None:
     for w in _WORKBENCHES:
         src = (_ROOT / "tools" / f"{w}_workbench" / "serve.py").read_text(encoding="utf-8")
-        assert "debug3d_bundle.ROUTE" in src and "debug3d_bundle.ensure(" in src, f"{w} 的 serve.py 没有 3D 调试件的路由"
+        assert "debug3d_bundle.ROUTE" in src, f"{w} 的 serve.py 没有 3D 调试件的路由"
+        if w == "vfx":
+            # 粒子台一页里还有原画视图的渲染器：3D 调试件打在 vfx.bundle.js 里、路由转出同一个模块实例
+            # （一页只许一份 luma / RHI——分两个包时第二份初始化 luma 报 already initialized，控制台 error）
+            from tools.vfx_workbench import bundle as vfx_bundle
+            assert _ROOT / "tools" / "workbench_rhi" / "debug3d.ts" in vfx_bundle.ENTRY_MODULES
+            assert "from '/gen/vfx.bundle.js'" in src and "debug3d_bundle.ensure(" not in src
+        else:
+            assert "debug3d_bundle.ensure(" in src, f"{w} 的 serve.py 没有按需打 3D 调试件的包"

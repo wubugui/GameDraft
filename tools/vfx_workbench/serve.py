@@ -7,7 +7,7 @@
   GET  /gen/vfx.bundle.js                 运行时 vfxSim + vfxSpace + sceneSpace + 两个场 + 场景风 + 透视 + 游戏同一份粒子渲染
                                           （工作台 RHI 接入层 + VfxRenderer，WGSL）打成的 ESM（按需打包，见 bundle.py）
   GET  /resources/runtime/{images|animation|scenes}/…   运行时贴图 / 动画包 / 场景深度图（与游戏同一个 URL；只放行图与 JSON）
-  GET  /gen/debug3d.bundle.js             3D 视图的着色：接入层的 3D 调试件（tools/workbench_rhi/debug3d_bundle.py）
+  GET  /gen/debug3d.bundle.js             3D 视图的着色：接入层的 3D 调试件（打在 vfx.bundle.js 里，这里转出——一页只许一份 luma / RHI）
   GET  /api/boot                          启动参数（--open 的效果 id，只发一次；游戏地址；打包状态；布置库路径）
   GET  /api/scenes                        工程场景清单（深度 / 时段背景 / 行走面场状态 / 时段外观 phases / dayNight）
   GET  /api/scene?id=&phase=[&bg=]        场景描述：标定、尺寸、NPC、出生点 / NPC 脚下的世界点、风、透视、
@@ -385,11 +385,9 @@ class H(SimpleHTTPRequestHandler):
                     return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
                 return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
             if u.path == debug3d_bundle.ROUTE:
-                # 3D 视图的着色：接入层的 3D 调试件（RHI / WebGPU，着色器只有 debug3d.wgsl 一份）
-                p, err = debug3d_bundle.ensure(bundle.GEN_DIR)
-                if not p or not p.exists():
-                    return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
-                return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
+                # 3D 视图的着色：接入层的 3D 调试件（RHI / WebGPU，着色器只有 debug3d.wgsl 一份）。它与原画视图的渲染器同打在
+                # vfx.bundle.js 里（一页只许有一份 luma / RHI，见 bundle.ENTRY_MODULES），这里转出同一个模块实例
+                return self._bytes(b"export { debug3d } from '/gen/vfx.bundle.js';\n", "text/javascript; charset=utf-8")
             if u.path == "/favicon.ico":
                 self.send_response(204)
                 self.end_headers()

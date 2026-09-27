@@ -74,6 +74,9 @@ ENTRY_MODULES = [
     # 画布宿主（游戏同一个 WebGPU 渲染器）+ 原画视图 / 雷预览的画面（游戏的 VfxRenderer 拼）
     ROOT / "tools" / "workbench_rhi" / "workbenchRhi.ts",
     TOOL / "gpu" / "vfxView.ts",
+    # 3D 视图的 3D 调试件也打在这一个包里：一页只许有一份 luma / RHI（分成 vfx / debug3d 两个包各带一份的话，
+    # 第二份初始化时 luma 报「This version of luma.gl has already been initialized」）；/gen/debug3d.bundle.js 转出它
+    ROOT / "tools" / "workbench_rhi" / "debug3d.ts",
 ]
 GEN_DIR = TOOL / "viewer" / "_gen"
 OUT = GEN_DIR / "vfx.bundle.js"
