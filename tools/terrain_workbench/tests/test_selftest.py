@@ -3,7 +3,7 @@
 
 覆盖：启动、**页面合成 == 服务端合成**（逐格）、手性、Unity 式相机手势、笔刷 / 多边形 / 矩形 / 高度 / 检视工具、
 gizmo 与顶点、撤销 / 重做、保存往返（隔离到临时树）、推给游戏（游戏指到死端口：合成成功、通知失败不算失败）、
-历史、草稿、连通性判据、顶视 / 原画视图一致。约 15 秒。需要 PySide6 + QtWebEngine + 工程真数据（bridge_underpass）。
+历史、草稿、连通性判据、顶视 / 原画视图一致。约 15 秒。需要 PySide6 QtWebView（WebView2 / WKWebView：桌面壳走 run_desktop(webgpu=True)）+ 工程真数据（bridge_underpass）。
 真作者层 / 资源 **逐字节不动**（app.py 把合成器的场景根、预览、草稿全指到临时树）。
 """
 from __future__ import annotations
@@ -17,18 +17,14 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[3]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from tools.workbench_rhi import browser  # noqa: E402
 _SCENE = "bridge_underpass"
 _RT = _ROOT / "public" / "resources" / "runtime" / "scenes" / _SCENE
 _SCENE_OK = (_ROOT / "public" / "assets" / "scenes" / f"{_SCENE}.json").is_file() and (_RT / "raw_depth_rg.png").is_file() \
     and (_RT / "terrain" / "terrain.json").is_file()
 
-
-def _has_webengine() -> bool:
-    try:
-        import PySide6.QtWebEngineWidgets  # noqa: F401
-        return True
-    except Exception:  # noqa: BLE001
-        return False
 
 
 def _fingerprint() -> dict:
@@ -41,7 +37,7 @@ def _fingerprint() -> dict:
 
 
 @pytest.mark.skipif(not _SCENE_OK, reason="缺工程真数据（bridge_underpass 的深度 / 作者层）")
-@pytest.mark.skipif(not _has_webengine(), reason="没有 PySide6 QtWebEngine")
+@pytest.mark.skipif(bool(browser.qt_host_unavailable()), reason=browser.qt_host_unavailable() or "ok")
 def test_interaction_layer_selftest() -> None:
     before = _fingerprint()
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", PYTHONUTF8="1", QT_QPA_PLATFORM="offscreen")
@@ -53,17 +49,15 @@ def test_interaction_layer_selftest() -> None:
     assert after == before, f"自检改动了工程真数据：{set(after) ^ set(before) or '内容变了'}"
     assert r.returncode == 0, "selftest 有 FAIL/EXC 或超时（看上面的报告）"
     assert "passed, 0 failed" in r.stdout
-    # 3D 视图走接入层的 3D 调试件：离屏 Qt 拿不到 WebGPU 时着色那几条记 SKIP（带原因），真跑在 Chrome 那条里
+    # 3D 视图走接入层的 3D 调试件（WebGPU）：Qt 宿主是 WebView2（run_desktop(webgpu=True)），着色那几条也真跑、不许 SKIP
     assert "PASS S1g the 3D view holds no WebGL context" in r.stdout
+    assert not browser.skip_lines(r.stdout), f"Qt（WebGPU）宿主里不许有 SKIP：{browser.skip_lines(r.stdout)}"
 
 
 # ---------------------------------------------------------------------------------------------------------------------
-# 真 GPU 的 Chrome（3D 视图的着色层 = 接入层的 3D 调试件，RHI / WebGPU）：离屏 Qt 拿不到 WebGPU，那边 S1g 记 SKIP；
-# 这里同一份自检不许有 SKIP，另有一条冒烟（画面非空、控制台无 error、存截图）。没有 node / playwright-core / Chrome 就 skip。
+# 真 GPU 的 Chrome（3D 视图的着色层 = 接入层的 3D 调试件，RHI / WebGPU）：与 Qt（WebView2）宿主同一份自检，
+# 两边都不许有 SKIP，另有一条冒烟（画面非空、控制台无 error、存截图）。没有 node / playwright-core / Chrome 就 skip。
 
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-from tools.workbench_rhi import browser  # noqa: E402
 
 _SELFTEST_JS = _ROOT / "tools" / "terrain_workbench" / "viewer" / "tests" / "selftest.js"
 _SMOKE_CHECK = ("(() => { if (typeof v3 === 'undefined' || !v3) return { ok: false, detail: 'no v3' };"

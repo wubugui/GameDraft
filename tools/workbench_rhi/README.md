@@ -65,8 +65,12 @@
 - QtWebEngine 没编 Dawn，永远拿不到 WebGPU（见 `tools/qt_webgpu.py` 模块头）；工作台的 Qt 宿主一律 `run_desktop(webgpu=True)` 走 WebView2
   （Edge 135，本机 dpr 1.24）。自检 / 冒烟在离屏平台下由壳改开**挪到屏幕外、尺寸固定的无边框真窗口**（带边框的窗口会被系统夹到屏幕大小：
   1280×720 的机器上页面 CSS 视口只剩 1036×566，依赖视口大小的自检条目假红）。
-- 读像素别用 `drawImage(WebGPU 画布)`：Chrome 里呈现之后读到全 0，WebView2（窗口在屏幕外）里读到**旧的合成帧**甚至全 0（2026-09-28 实测）。
-  接入层的回读走 RHI 纹理回读，两个宿主一致。无头 Chrome 在真显卡上 WebGPU 可用（RTX 4070 SUPER），测试用它。
+- 读像素别跨任务 `drawImage(WebGPU 画布)`：只在「画」的同一个任务里读得准，跨了任务读到什么不可靠（实测时而全 0，Chrome 与 WebView2 都有，2026-09-28）。
+  `CanvasHost` 的回读走 RHI 纹理回读（异步、不依赖这条时序）；3D 调试件（`debug3d.ts`）的 `readPixels` 仍是同任务重画 + `drawImage`，
+  六台工作台的自检在 Chrome 与 WebView2 里都实测通过，要统一时照 `renderer.readCanvasPixels` 改（画进同尺寸同格式的离屏目标再 `readTexture`）。
+  无头 Chrome 在真显卡上 WebGPU 可用（RTX 4070 SUPER），测试用它。
+- 桌面壳的本地服务（`desktop_shell.start_server`）：系统分配端口避开 Chromium 拒绝连接的端口（`CHROMIUM_RESTRICTED_PORTS`，
+  撞上 5060 / 1719 这类页面直接 ERR_UNSAFE_PORT 装不上），监听队列 64。
 
 ## 运行
 

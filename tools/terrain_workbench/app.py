@@ -59,8 +59,8 @@ def isolate_for_selftest(sid: str, tmp: Path) -> None:
 def main(port: int | None = None, smoke: bool = False, open_id: str = "", selftest: str = "",
          game_url: str = "") -> int:
     if selftest or smoke:
-        os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
-                              "--use-gl=angle --use-angle=swiftshader-webgl --enable-unsafe-swiftshader")
+        # 3D 视图是接入层的 3D 调试件（WebGPU）：窗口走 WebView2（`run_desktop(webgpu=True)`，QtWebEngine 没编 Dawn）；
+        # 离屏平台下壳自己改开屏幕外、尺寸固定的无边框真窗口（WebView2 在离屏 QPA 下会段错误）
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from tools.desktop_shell import run_desktop
     from tools.terrain_workbench import authoring, serve
@@ -83,7 +83,7 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
             if not open_id:
                 serve.BOOT_OPEN.append(SELFTEST_SCENE)
             return run_desktop(handler_cls=serve.H, title=TITLE + "（自检）", app_id=APP_ID + "-selftest", port=port,
-                               selftest=str(path))
+                               selftest=str(path), webgpu=True)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
@@ -95,7 +95,7 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
 
     payload = f"open:{open_id}".encode("utf-8") if open_id else b"raise"
     return run_desktop(handler_cls=serve.H, title=TITLE, app_id=APP_ID, port=port, smoke=smoke,
-                       on_activate=_on_activate, activate_payload=payload)
+                       on_activate=_on_activate, activate_payload=payload, webgpu=True)
 
 
 if __name__ == "__main__":

@@ -23,11 +23,8 @@ TITLE = "轨迹工作台 · 实体轨迹动画"
 
 def main(port: int | None = None, smoke: bool = False, open_id: str = "", selftest: str = "") -> int:
     if selftest:
-        # offscreen 下 QtWebEngine 默认拿不到 WebGL2（3D 视图整块被跳过）。ANGLE + 只给 WebGL 用的
-        # SwiftShader 就能起来（实测 PySide6 6.11 / Chromium 140），没显卡的 CI 机也一样。
-        # 必须在任何 Qt 模块 import 之前设；用户显式设了就不动。
-        os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
-                              "--use-gl=angle --use-angle=swiftshader-webgl --enable-unsafe-swiftshader")
+        # 3D 视图是接入层的 3D 调试件（WebGPU）：窗口走 WebView2（`run_desktop(webgpu=True)`，QtWebEngine 没编 Dawn）；
+        # 离屏平台下壳自己改开屏幕外、尺寸固定的无边框真窗口（WebView2 在离屏 QPA 下会段错误）
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     # 并进禁缓存开关(顺序:先 setdefault 上面那份,再并,否则上面的会被吃掉)。
     # run_desktop 里还会再调一次,幂等。
@@ -43,7 +40,7 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
         if not path.is_absolute():
             path = ROOT / path
         return run_desktop(handler_cls=serve.H, title=TITLE + "（自检）", app_id=APP_ID + "-selftest", port=port,
-                           selftest=str(path))
+                           selftest=str(path), webgpu=True)
 
     def _on_activate(data: bytes, view) -> None:
         if data.startswith(b"open:"):
@@ -53,7 +50,7 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
 
     payload = f"open:{open_id}".encode("utf-8") if open_id else b"raise"
     return run_desktop(handler_cls=serve.H, title=TITLE, app_id=APP_ID, port=port, smoke=smoke,
-                       on_activate=_on_activate, activate_payload=payload)
+                       on_activate=_on_activate, activate_payload=payload, webgpu=True)
 
 
 if __name__ == "__main__":

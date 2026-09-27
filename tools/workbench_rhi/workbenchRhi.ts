@@ -8,8 +8,8 @@
  *   没有 WebGPU 就抛 `WorkbenchRhiError`（带人话原因），**不回落**任何别的 API；
  * - 贴图一律走 engine2d 的 `Assets.load`（与游戏 `AssetManager.loadTexture` 同一条解码 / 上传路径，字节才对得上）；
  * - 回读走 RHI 纹理回读（`renderer.readCanvasPixels`：画布中间纹理 → 缓冲 → 映射，**异步**），不经浏览器上屏 / 合成：
- *   以前用 `drawImage(WebGPU 画布)` 取字节——Chrome 里呈现之后读到全 0（只能同任务重画再读），WebView2（Edge 135，
- *   窗口在屏幕外）里更是读到**旧的合成帧**（2026-09-28 实测：烧没了读回来还是纸色），两个宿主都不稳；
+ *   以前用 `drawImage(WebGPU 画布)` 取字节——只在「画」的同一个任务里读得准，跨了任务读到什么不可靠（实测时而全 0，Chrome 与 WebView2 都有，
+ *   2026-09-28 实测），只能每次同任务重画一遍；RHI 回读不依赖这条时序，拷贝在调用当下提交、之后再画不影响；
  * - 设备诊断（设备丢失 / 管线建坏）汇总到 `lastError`，页面自己决定怎么提示。
  *
  * 用法见 `tools/workbench_rhi/README.md`。

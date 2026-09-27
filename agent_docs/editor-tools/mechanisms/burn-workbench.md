@@ -98,7 +98,7 @@ last_governed: 2026-09-23
 - 挂件贴图尺寸取当前状态第一张图（多帧不同尺寸时站位有偏差）。
 - 改名要求先保存（弹「保存并继续」），做完清空撤销栈。「联动」默认勾着。
 - Browser pane 隐藏时页面布局是 0 尺寸：在那里跑 `selftest.js` 读像素的几条会假红；以 pytest 为准（桌面壳一遍 + 真 GPU 的 Chrome 一遍，后者不许 SKIP）。
-- 着色层是游戏同一个 WebGPU 渲染器：Qt 宿主走 `run_desktop(webgpu=True)`（WebView2；QtWebEngine 没编 Dawn）；宿主拿不到 WebGPU 时着色预览明确显示原因、不回落。读像素一律 `await host.readPixel(...)`（RHI 纹理回读画布中间纹理）——`drawImage(WebGPU 画布)` 在 Chrome 里呈现后是全 0、在 WebView2（屏幕外窗口）里是旧的合成帧。
+- 着色层是游戏同一个 WebGPU 渲染器：Qt 宿主走 `run_desktop(webgpu=True)`（WebView2；QtWebEngine 没编 Dawn）；宿主拿不到 WebGPU 时着色预览明确显示原因、不回落。读像素一律 `await host.readPixel(...)`（RHI 纹理回读画布中间纹理）——`drawImage(WebGPU 画布)` 跨了「画」的那个任务就不可靠（实测时而全 0）。
 - ⚠ 燃烧材质滤镜排在链中间（后面总跟着自发光）：照 Pixi，中间几道 pass 的 `uOutputFrame.xy` 是 0，滤镜顶点位置是相对 bounds 的——材质那一道要加 `filterPassOrigin`（引擎扩展）才是屏幕位置。2026-09-28 以前没加：材质的燃烧 uv 偏了「展示图 bounds 左上 ÷ 投影缩放」，焦黑 / 成灰 / 烧没画错地方或整个没有（master 同样如此）；自检 S7「相机挪开照样烧没」钉着。同链里的深度遮挡 / 受光滤镜在挂着燃烧时也排在中间，同样的问题还没修。
 
 ## 怎么验证

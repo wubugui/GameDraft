@@ -10,7 +10,7 @@ Ctrl 吸附整数倍 / 纯点一下不入历史 / 2D 原画里同一份）、新
 双击插点 / Delete / 右键删点、撤销覆盖布置、预览 sim 收到 area + confine、publish 只带修改范围与切时段请求、存一半不清脏。
 另跑 scoped-save-selftest.js，验证只编辑跑马梁时保存、预览、撤销均不提交未编辑的茶馆。
 
-需要 PySide6 + QtWebEngine + 工程真数据（至少一个烘过深度的场景）；缺一个就 skip。约 10 秒。
+需要 PySide6 QtWebView（WebView2 / WKWebView：桌面壳走 run_desktop(webgpu=True)）+ 工程真数据（至少一个烘过深度的场景）；缺一个就 skip。约 10 秒。
 
 原画视图与雷的现画预览是游戏同一个 WebGPU 渲染器（工作台 RHI 接入层 + 游戏的 `VfxRenderer`）：桌面壳走
 `run_desktop(webgpu=True)`（WebView2 / WKWebView；离屏平台下是挪到屏幕外、尺寸固定的无边框真窗口），那几条在壳里也真跑、

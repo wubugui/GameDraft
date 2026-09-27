@@ -26,6 +26,8 @@
   const key = (k, opts, target) => { const e = new KeyboardEvent('keydown', Object.assign({ key: k, bubbles: true, cancelable: true }, opts || {})); (target || window).dispatchEvent(e); return e; };
   const segs = () => S.doc.source.segments;
   const TC = (sx, sy) => { const c = v2.toCanvas(sx, sy); return [R(c[0]), R(c[1])]; };
+  /** 画布坐标 (cx, cy) 的鼠标事件真正落在场景哪一点（与 ev 同样取整 clientX / clientY、再减画布的小数 left / top） */
+  const clicked = (cx, cy) => { const r = c2().getBoundingClientRect(); return v2.toScene(Math.round(r.left + cx) - r.left, Math.round(r.top + cy) - r.top); };
   const focusAnchor = () => { const o = Edit.originScreen(host); const an = { x: o[0], y: o[1] }; v2.zoom = 1; v2.ox = c2().clientWidth / 2 - an.x; v2.oy = c2().clientHeight / 2 - an.y; v2.draw(); return an; };   // 曲线起点（曲线没有锚点了）
   const tmpIds = [];
   const mkScreen = async (id) => {
@@ -285,9 +287,11 @@
       { host.clearSelection(); const pts0 = host.effPoints(segs()[0]).map((p) => [p.sx, p.sy]);
         const st0 = Edit.curveStartScreen(host).slice();
         const want = [st0[0] - 70, st0[1] + 50];
-        setTool('origin'); const tc = TC(want[0], want[1]); click(tc[0], tc[1]);
+        setTool('origin'); const tc = TC(want[0], want[1]); const hit = clicked(tc[0], tc[1]); click(tc[0], tc[1]);
         const gO = v2._gizmo(); const o1 = Edit.originScreen(host).slice();
-        ok('S4 origin tool puts the curve origin where clicked, selects it, curve untouched', Math.abs(o1[0] - want[0]) < 0.6 && Math.abs(o1[1] - want[1]) < 0.6 && S.sel.handle === 'origin' && !!gO && gO.label === '曲线原点' && S.tool === 'select' && host.effPoints(segs()[0]).every((p, k) => Math.abs(p.sx - pts0[k][0]) < 1e-6), { origin: o1, want, handle: S.sel.handle, label: gO && gO.label });
+        // 「点在哪」按真正派发出去的鼠标位置算（clientX 取整、画布 left/top 在高分屏下是小数：离 want 最多差 1 CSS 像素 ÷ zoom）
+        ok('S4 origin tool puts the curve origin where clicked, selects it, curve untouched', Math.abs(o1[0] - hit[0]) < 0.6 && Math.abs(o1[1] - hit[1]) < 0.6
+          && Math.abs(o1[0] - want[0]) < 1.2 / v2.zoom && Math.abs(o1[1] - want[1]) < 1.2 / v2.zoom && S.sel.handle === 'origin' && !!gO && gO.label === '曲线原点' && S.tool === 'select' && host.effPoints(segs()[0]).every((p, k) => Math.abs(p.sx - pts0[k][0]) < 1e-6), { origin: o1, want, hit, zoom: v2.zoom, handle: S.sel.handle, label: gO && gO.label });
         const oc = TC(o1[0], o1[1]); drag(oc[0], oc[1], oc[0] + 30, oc[1] - 10);
         const o2 = Edit.originScreen(host).slice();
         ok('S4 dragging the origin moves only the origin (the curve does not move)', Math.abs(o2[0] - o1[0] - 30) < 0.6 && Math.abs(o2[1] - o1[1] + 10) < 0.6 && host.effPoints(segs()[0]).every((p, k) => Math.abs(p.sx - pts0[k][0]) < 1e-6 && Math.abs(p.sy - pts0[k][1]) < 1e-6) && history.peekUndo() === '移动曲线原点', { o1, o2, undo: history.peekUndo() });
@@ -341,8 +345,11 @@
       { const gy0 = segs()[1].groundY; const gl = TC(0, gy0)[1]; drag(27, gl, 27, gl + 4);
         ok('S5 lifted: ground-line nudge moves the line by the nudge, no jump to the old start', Math.abs(segs()[1].groundY - gy0 - 4) < 0.6 && !el('status').textContent.includes('不能高于'), { gy: segs()[1].groundY, gy0 });
         key('z', { ctrlKey: true });
-        const pi4 = host.physicsInfo(segs()[1]); const L4 = TC(pi4.landing[0], pi4.landing[1]); drag(L4[0], L4[1], L4[0] - 30, L4[1] + 3);
-        ok('S5 lifted: landing drag moves the line only by the mouse, landing follows', Math.abs(segs()[1].groundY - gy0 - 3) < 0.6 && Math.abs(host.physicsInfo(segs()[1]).landing[0] - (pi4.landing[0] - 30)) < 1.5, { gy: segs()[1].groundY, gy0, landing: host.physicsInfo(segs()[1]).landing.map(R) });
+        const pi4 = host.physicsInfo(segs()[1]); const L4 = TC(pi4.landing[0], pi4.landing[1]); const up = clicked(L4[0] - 30, L4[1] + 3); drag(L4[0], L4[1], L4[0] - 30, L4[1] + 3);
+        // 落点跟着鼠标：地面线 = 鼠标松开处的场景 y（按真正派发的鼠标位置算——clientY 取整、画布 top 在高分屏下是小数，
+        // 离「落点 + 3」最多差 1 CSS 像素 ÷ zoom），只动这么多、不跳回旧起点
+        ok('S5 lifted: landing drag moves the line only by the mouse, landing follows', Math.abs(segs()[1].groundY - up[1]) < 0.6 && Math.abs(segs()[1].groundY - gy0 - 3 / v2.zoom) < 1.2 / v2.zoom
+          && Math.abs(host.physicsInfo(segs()[1]).landing[0] - up[0]) < 1.5, { gy: segs()[1].groundY, gy0, up, zoom: v2.zoom, landing: host.physicsInfo(segs()[1]).landing.map(R) });
         key('z', { ctrlKey: true }); }
       key('z', { ctrlKey: true }); }
     // ---------------------------------------------------------------- S6 时间曲线
