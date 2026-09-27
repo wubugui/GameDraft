@@ -1,19 +1,23 @@
 /**
- * 光柱着色核心 {@link BEAM_GLSL_CORE}（`vfxBeamGlsl.ts`）的 **WGSL 孪生**（WebGPU 迁移期并存）。
+ * 光柱着色的**唯一一份核心**（游戏的 `vfxBeamShaders.ts` 拼成程序；粒子工作台经游戏同一个 `VfxRenderer` 画）。
+ * 把运行态打成 uniform 数值的打包函数在 `vfxBeamGlsl.ts`（历史文件名）。
  *
- * `vfxBeamGlsl.ts` 被粒子工作台原样打包、在它自己的 WebGL2 里编译（核心 + uniform 声明 + 打包函数），
- * 那份文件的内容与导出一个字不动；WGSL 版放这里，同样是纯模块（只引常量，无 Pixi / 无 DOM / 无 `?raw`），
- * Node 里能直接 import。数学逐式照抄（运算顺序不改，常数不合并）：等价由 `tools/render_parity` 的
- * 「粒子 / 光柱」用例逐像素钉住，改一边必须同步改另一边。
+ * 纯模块（只引常量，无 Pixi / 无 DOM / 无 `?raw`），Node 里能直接 import。数学逐式照抄 master 的 GLSL 版
+ * （运算顺序不改，常数不合并）：等价由 `tools/render_parity` 的「粒子 / 光柱」用例逐像素钉住。
+ * 模型（视线与棱台半空间求交、中点取样、各项乘子）见 `systems/vfx/vfxBeam.ts` 头注释；一切在 M-world（铁律 0）。
+ *
+ * 核心输出 `bmEval(scene) -> vec4`：rgb = 线性颜色（不含亮度），a = 亮度（≥ 0）；`a < 0` = 这一像素不在光柱里。
+ * 显示变换与混合由宿主做：**显示颜色 × 亮度**（与粒子"显示颜色 × alpha"同一个约定，光柱里的尘埃也是这样亮的；
+ * 线性亮度过 sRGB 编码会把暗部放大，边缘软度看上去是硬边）。
  *
  * ## 宿主怎么拼
  *
- * GLSL 核心直接读散装的 `uBeam*` uniform；WGSL 的 uniform 必须活在结构里，所以：
+ * uniform 活在结构里：
  *
  * - 宿主拼 {@link BEAM_WGSL_UNIFORMS}（结构 `VfxBeamUniforms`），并声明一个**名叫 vfxBeam** 的 uniform 绑定
  *   （名字 = Pixi resources 的键名，`VfxBeamView` 的光柱组就叫这个；组号 / 绑定号宿主自定）；
  *   核心直接读模块作用域的 `vfxBeam`（WGSL 模块级声明不讲先后）。
- * - 宿主提供与 GLSL 同名的三样：`bmSceneDepth(scene) -> f32`（原画深度 q.z、已加容差；无深度返回 1e20）、
+ * - 宿主提供三样：`bmSceneDepth(scene) -> f32`（原画深度 q.z、已加容差；无深度返回 1e20）、
  *   `bmToLinear(srgb) -> vec3`、图案遮罩纹理 `uBeamCookie` 与它的采样器 `uBeamCookieSampler`（两个绑定）。
  *
  * ## 结构布局（静默错位点）
@@ -22,10 +26,10 @@
  * 唯一的例外是 `uBeamAlong`（JS 里是 `vec2<f32>` × {@link VFX_BEAM_MAX_CURVE_KEYS}）：uniform 地址空间的数组
  * 步长必须是 16 的倍数，`array<vec2<f32>, N>`（步长 8）编不过，所以这里声明成同一块内存的
  * `array<vec4<f32>, N/2>`，第 i 个关键帧 = 第 i/2 个元素的 xy（偶）/ zw（奇）。前提是它在缓冲里的偏移是 16 的倍数：
- * `VfxBeamView` 把它紧跟在 `uBeamPlanes` 后面声明（GL 侧按名字逐个传 uniform，声明顺序不影响画面）。
+ * `VfxBeamView` 把它紧跟在 `uBeamPlanes` 后面声明。
  * `vfxWgsl.test.ts` 按两边的布局规则逐项核对偏移。
  *
- * 与 GLSL 的形式差异（数值不变）：三目式写成 if / else（不用 select，两边都求值）；形参不可写，改写形参处用局部量；
+ * 与 master 的 GLSL 版的形式差异（数值不变）：三目式写成 if / else（不用 select，两边都求值）；形参不可写，改写形参处用局部量；
  * 常量 `BM_PI` 声明成 f32（与 GLSL `const float` 一样在 32 位里折叠）；smoothstep 写成规范展开式 `bmSmoothstep`
  * （内建与 GLSL 差几个 ulp）；图案遮罩在分支里采样，用
  * `textureSampleLevel(…, 0.0)`（遮罩贴图没有 mip，与 GLSL `texture()` 等价）。
@@ -192,7 +196,7 @@ fn bmShade(t01: f32, u: f32, v: f32, noisePos: vec3<f32>, weight: f32) -> vec4<f
         let cv = textureSampleLevel(uBeamCookie, uBeamCookieSampler, fract(c), 0.0).r;
         amount *= mix(1.0, cv, vfxBeam.uBeamCookieStrength);
     }
-    // 颜色（线性）与亮度分开交给宿主：亮度乘在显示空间（理由见 GLSL 版）
+    // 颜色（线性）与亮度分开交给宿主：亮度乘在显示空间（理由见文件头）
     let col = bmToLinear(mix(vfxBeam.uBeamColor0, vfxBeam.uBeamColor1, clamp(t01, 0.0, 1.0)));
     return vec4<f32>(col, amount);
 }

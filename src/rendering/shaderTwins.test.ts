@@ -1,6 +1,8 @@
 /**
- * GLSL / WGSL 孪生守门:游戏只画 WGSL,而燃烧 / 呼吸 / 光柱 / 雷电等工作台仍在自己的 WebGL 页里编 GLSL,
- * 两份要一起改。这里逐对比较:
+ * GLSL / WGSL 孪生守门:游戏只画 WGSL。燃烧 / 呼吸 / 光柱 / 雷 / 粒子 / 实体阴影 / 前景层覆盖图的 GLSL 孪生已删
+ * (工作台都迁到了游戏同一个 WebGPU 渲染器,2026-09-28);还剩的只有角色照明那一条线——charShadeCore(角色照明实验室
+ * 直接读它)、lightingCore / worldReconstruct、角色照明公共块、实体灯循环,以及角色照明滤镜拼的前景层取样段 fgSample——
+ * 随角色照明那边迁完一起删,在那之前两份要一起改。这里逐对比较:
  *   · 函数集合双向一致;
  *   · 每个函数体里的数值字面量**按源码顺序**一致(整数 / 浮点 / 十六进制都算,带负号;写法归一见 lits);
  *   · 顶层常量(GLSL 的 const 与对象式 #define、WGSL 的 const / override)按名字双向一致、值一致;
@@ -11,26 +13,15 @@
 import { describe, expect, it } from 'vitest';
 import LC_GLSL from './lighting/lightingCore.glsl?raw';
 import WR_GLSL from './lighting/worldReconstruct.glsl?raw';
-import BURN_GLSL from './burn/burnShade.glsl?raw';
-import BURN_WGSL from './burn/burnShade.wgsl?raw';
-import BR_GLSL from './breathingShade.glsl?raw';
-import BR_WGSL from './breathingShade.wgsl?raw';
 import CS_GLSL from './charShadeCore.glsl?raw';
 import CS_WGSL from './charShadeCore.wgsl?raw';
-import { BEAM_GLSL_CORE } from './vfx/vfxBeamGlsl';
-import { BEAM_WGSL_CORE } from './vfx/vfxBeamWgsl';
-import { BOLT_GLSL_KERNEL } from './vfx/vfxBoltGlsl';
-import { BOLT_WGSL_KERNEL } from './vfx/vfxBoltWgsl';
 import { LC_WGSL, WR_CORE_WGSL, WR_TEX_WGSL, WR_SPRITE_WGSL } from './lighting/wgslChunks';
 import {
   CHAR_LIGHT_COMMON_GLSL, CHAR_LIGHT_COMMON_WGSL, PROBE_SAMPLING_GLSL, PROBE_SAMPLING_WGSL, SKYAO_SAMPLING_GLSL, SKYAO_SAMPLING_WGSL,
 } from './CharacterShadingFilter';
 import { ENTITY_SCENE_LIGHTS_GLSL, ENTITY_SCENE_LIGHTS_WGSL } from './CharacterLitSprite';
-import { FG_COVERAGE_FRAG, FG_COVERAGE_VERT, FG_MASK_GLSL, FG_OCCLUSION_GLSL } from './foreground/foregroundMaskGlsl';
-import { FG_MASK_WGSL, FG_OCCLUSION_WGSL } from './foreground/foregroundMaskWgsl';
-import { FG_COVERAGE_WGSL } from './backgroundSway';
-import { CONTACT_FRAG, CONTACT_FRAG_WGSL, FRAG as SHADOW_CAST_FRAG, FRAG_WGSL as SHADOW_CAST_FRAG_WGSL } from './EntityShadow';
-import { VFX_OCCLUSION_GLSL, VFX_OCCLUSION_WGSL } from './vfx/vfxShaders';
+import { FG_OCCLUSION_GLSL } from './foreground/foregroundMaskGlsl';
+import { FG_OCCLUSION_WGSL } from './foreground/foregroundMaskWgsl';
 
 /** 取 `//__${tag}_BEGIN__` 与 `//__${tag}_END__` 之间;标记缺失或颠倒直接抛(改名后不许悄悄切出半截源)。 */
 const sl = (src: string, tag: string) => {
@@ -40,16 +31,6 @@ const sl = (src: string, tag: string) => {
   return src.substring(i + b.length, j);
 };
 const strip = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
-/**
- * GLSL 的整段程序(顶点 / 片元各一个 main)改名成 WGSL 的入口名,两段拼成一份再比;
- * `void main(void)` 必须恰好出现一次(改了写法不许悄悄漏比)。
- */
-const renameMain = (src: string, to: string) => {
-  const from = 'void main(void)';
-  if (src.split(from).length !== 2) throw new Error(`GLSL 程序里 ${from} 不是恰好一处(→ ${to})`);
-  return src.replace(from, `void ${to}(void)`);
-};
-
 /** 一份着色器源的顶层声明:函数名 → 整段文本、常量名 → 值表达式、struct 名 → 字段名(按声明顺序)。 */
 interface Decls { fns: Map<string, string>; consts: Map<string, string>; structs: Map<string, string[]> }
 
@@ -132,16 +113,9 @@ const PAIRS: Array<[string, string, string]> = [
   ['WR_CORE', sl(WR_GLSL, 'WR_CORE'), WR_CORE_WGSL], ['WR_TEX', sl(WR_GLSL, 'WR_TEX'), WR_TEX_WGSL], ['WR_SPRITE', sl(WR_GLSL, 'WR_SPRITE'), WR_SPRITE_WGSL],
   ['LC', sl(LC_GLSL, 'LIGHTING_CORE'), LC_WGSL], ['CLC', CHAR_LIGHT_COMMON_GLSL, CHAR_LIGHT_COMMON_WGSL],
   ['PROBE', PROBE_SAMPLING_GLSL, PROBE_SAMPLING_WGSL], ['SKYAO', SKYAO_SAMPLING_GLSL, SKYAO_SAMPLING_WGSL],
-  ['ESL', ENTITY_SCENE_LIGHTS_GLSL, ENTITY_SCENE_LIGHTS_WGSL],
-  ['burn', BURN_GLSL, BURN_WGSL], ['breathing', BR_GLSL, BR_WGSL], ['charShade', CS_GLSL, CS_WGSL],
-  ['beam', BEAM_GLSL_CORE, BEAM_WGSL_CORE], ['bolt', BOLT_GLSL_KERNEL, BOLT_WGSL_KERNEL],
-  // 场景前景层:使用方共用的取样段、蒙版判定、覆盖图整段程序(顶点 + 片元,WGSL 是 backgroundSway 实际建 shader 的那一份)
-  ['fgOcc', FG_OCCLUSION_GLSL, FG_OCCLUSION_WGSL], ['fgMask', FG_MASK_GLSL, FG_MASK_WGSL],
-  ['fgCoverage', renameMain(FG_COVERAGE_VERT, 'mainVertex') + renameMain(FG_COVERAGE_FRAG, 'mainFragment'), FG_COVERAGE_WGSL],
-  // 粒子遮挡段(四套粒子程序共用)、实体阴影:投影片元与接触阴影(胶囊 AO)片元
-  ['vfxOcc', VFX_OCCLUSION_GLSL, VFX_OCCLUSION_WGSL],
-  ['shadowCast', renameMain(SHADOW_CAST_FRAG, 'mainFragment'), SHADOW_CAST_FRAG_WGSL],
-  ['contact', renameMain(CONTACT_FRAG, 'mainFragment'), CONTACT_FRAG_WGSL],
+  ['ESL', ENTITY_SCENE_LIGHTS_GLSL, ENTITY_SCENE_LIGHTS_WGSL], ['charShade', CS_GLSL, CS_WGSL],
+  // 场景前景层:使用方共用的取样段(GLSL 版只剩角色照明滤镜在拼)
+  ['fgOcc', FG_OCCLUSION_GLSL, FG_OCCLUSION_WGSL],
 ];
 /**
  * 已核实等价、写法不同的函数(tag:函数名 → 放宽到哪一步):
@@ -158,30 +132,9 @@ const KNOWN_EQUIVALENT = new Map<string, 'unordered' | Splice>([
   ['CLC:octaEnc', 'unordered'], ['PROBE:octaEnc', 'unordered'],
   // abs(n.y) > 0.95 ? X : Y → var up = Y; if (abs(n.y) > 0.95) { up = X; }
   ['ESL:litAreaAxes', 'unordered'],
-  // scorch / ash 两处三元式 → if 改写
-  ['burn:burnStage', 'unordered'],
-  // contact 三元式 → var contact = 1.0; if (…) { … }
-  ['beam:bmEval3d', 'unordered'],
-  // uBeamAlong[0].x / uBeamAlong[0].y 两次下标 ↔ let k0 = bmAlongKey(0) 取一次(关键帧打包,见 WGSL_ONLY_HELPERS):
-  // GLSL 第二个 [0] 多出来;k 的三元式改 if 后 1.0 仍在原位,不用放宽顺序
-  ['beam:bmAlong', { side: 'glsl', at: 3, lits: ['0'] }],
-  // s = x < 0.0 ? -1.0 : 1.0 → var s = 1.0; if (x < 0.0) { s = -1.0; }
-  ['bolt:boltErf', 'unordered'],
-  // 覆盖图的两个入口:WGSL 的输入 / 输出要写 @location(n)(GLSL 这边是 in / out 声明,不在函数里);
-  // 顶点 aPosition / aUV 的 0、1,片元 vUv 输入与颜色输出的 0、0。函数体里的常量照常逐个比
-  ['fgCoverage:mainVertex', { side: 'wgsl', at: 0, lits: ['0', '1'] }],
-  ['fgCoverage:mainFragment', { side: 'wgsl', at: 0, lits: ['0', '0'] }],
-  // 实体阴影两个片元入口同理:vWorld 输入与颜色输出的 @location(0)、@location(0)
-  ['shadowCast:mainFragment', { side: 'wgsl', at: 0, lits: ['0', '0'] }],
-  ['contact:mainFragment', { side: 'wgsl', at: 0, lits: ['0', '0'] }],
 ]);
-/**
- * 只在 WGSL 里有的移植辅助函数:tag → 函数名。bmSmoothstep = GLSL 内建 smoothstep 的展开;
- * bmAlongKey = uBeamAlong 打包成 array<vec4, K/2> 之后按下标取 vec2;
- * fgBaseAt = 覆盖图的接地采样 uBase 打包成 array<vec4, 16> 之后按下标取 vec2(GLSL 直接 uBase[i];
- * 拆法与字节布局由 foreground/foregroundMaskWgsl.test.ts 钉住)
- */
-const WGSL_ONLY_HELPERS = new Set(['beam:bmSmoothstep', 'beam:bmAlongKey', 'beam:bmTwoProdErr', 'beam:bmFmaEmu', 'fgCoverage:fgBaseAt']);
+/** 只在 WGSL 里有的移植辅助函数(tag:函数名);现存的几对里没有,留着口子 */
+const WGSL_ONLY_HELPERS = new Set<string>();
 
 /** 一对孪生的全部分歧(空 = 一致)。 */
 function twinDiffs(tag: string, g: string, w: string): string[] {
@@ -247,7 +200,6 @@ describe('孪生守门自检(只在内存里改 WGSL 一侧,守门必须红)', (
 
   it('整数常量:循环上界 / 迭代次数 / 光源类型码 / 契约版本', () => {
     expect(mutate('LC', ['i <= 128', 'i <= 64'])).not.toEqual([]);
-    expect(mutate('breathing', ['i < 12;', 'i < 4;'])).not.toEqual([]);
     expect(mutate('LC', ['LC_SPOT: i32 = 1', 'LC_SPOT: i32 = 2'], ['LC_AREA: i32 = 2', 'LC_AREA: i32 = 1'])).not.toEqual([]);
     expect(mutate('WR_CORE', ['WR_CONTRACT: i32 = 2', 'WR_CONTRACT: i32 = 3'])).not.toEqual([]);
     expect(mutate('CLC', ['k == 18', 'k == 17'])).not.toEqual([]);
@@ -256,45 +208,29 @@ describe('孪生守门自检(只在内存里改 WGSL 一侧,守门必须红)', (
   it('顶层常量(第一个函数之前的声明)', () => {
     expect(mutate('LC', ['3.14159265358979323846', '3.0'])).not.toEqual([]);
     expect(mutate('LC', ['0.2126, 0.7152, 0.0722', '0.299, 0.587, 0.114'])).not.toEqual([]);
-    expect(mutate('burn', ['BURN_NEVER: f32 = 100000.0', 'BURN_NEVER: f32 = 10000.0'])).not.toEqual([]);
     expect(mutate('LC', ['const LC_LINE: i32 = 4;', ''])).not.toEqual([]);
   });
 
   it('符号(含放宽成多重集的函数)', () => {
     expect(mutate('LC', ['(0.5 / LC_PI)', '(-0.5 / LC_PI)'])).not.toEqual([]);
-    expect(mutate('bolt', ['s = -1.0', 's = 1.0'])).not.toEqual([]);
+    expect(mutate('CLC', ['var sx = -1.;', 'var sx = 1.;'])).not.toEqual([]);
     expect(mutate('WR_TEX', ['> 0.5', '> -0.5'])).not.toEqual([]);
   });
 
   it('同一函数里两个常量互换位置', () => {
     expect(mutate('CLC', ['return .946175 * n.x * n.y', 'return .669047 * n.x * n.y'],
       ['return .669047 * n.y * n.z', 'return .946175 * n.y * n.z'])).not.toEqual([]);
-    expect(mutate('burn', ['floor(s.r * 255.0 + 0.5) * 256.0', 'floor(s.r * 256.0 + 0.5) * 255.0'])).not.toEqual([]);
   });
 
   it('登记例外的函数里其余常量照比(例外只放过登记的那几个字面量)', () => {
-    expect(mutate('beam', ['uBeamAlongCount <= 0) { return 1.0; }', 'uBeamAlongCount <= 0) { return 71.0; }'])).not.toEqual([]);
-    expect(mutate('beam', ['var k = 1.0;', 'var k = 71.0;'])).not.toEqual([]);
-    expect(mutate('beam', ['bmAlongKey(i - 1)', 'bmAlongKey(i - 71)'])).not.toEqual([]);
-    expect(mutate('beam', ['let k0 = bmAlongKey(0)', 'let k0 = bmAlongKey(70)'])).not.toEqual([]);
+    expect(mutate('ESL', ['if (abs(n.y) > 0.95)', 'if (abs(n.y) > 0.9)'])).not.toEqual([]);
     expect(mutate('LC', ['if (cone <= 0.0)', 'if (cone <= 0.1)'])).not.toEqual([]);
     expect(mutate('LC', ['(3.0 - 2.0 * coneT)', '(3.0 - 2.5 * coneT)'])).not.toEqual([]);
   });
 
-  it('前景层:入口的 @location 例外只放过登记的编号,入口里其余常量、取样段与蒙版判定照比', () => {
-    expect(mutate('fgCoverage', ['if (rim < 0.004)', 'if (rim < 0.04)'])).not.toEqual([]);
-    expect(mutate('fgCoverage', ['if (body < 0.5)', 'if (body < 0.25)'])).not.toEqual([]);
-    expect(mutate('fgCoverage', ['vec3<f32>(rt, 1.0)', 'vec3<f32>(rt, 0.0)'])).not.toEqual([]);
-    expect(mutate('fgCoverage', ['@location(1) aUV', '@location(2) aUV'])).not.toEqual([]);
-    expect(mutate('fgCoverage', ['1e-3), 0.0, 1.0)', '1e-2), 0.0, 1.0)'])).not.toEqual([]);
-    expect(mutate('fgCoverage', ['min(i32(floor(t)), 30)', 'min(i32(floor(t)), 29)'])).not.toEqual([]);
+  it('前景层取样段', () => {
     expect(mutate('fgOcc', ['max(s.r, 1e-4)', 'max(s.r, 1e-3)'])).not.toEqual([]);
     expect(mutate('fgOcc', ['return 2.0;', 'return 1.0;'])).not.toEqual([]);
-    expect(mutate('fgMask', ['256.0 * floor', '255.0 * floor'])).not.toEqual([]);
-    expect(mutate('fgMask', ['if (m.a < 0.02)', 'if (m.a < 0.002)'])).not.toEqual([]);
-    expect(mutate('contact', ['OMNI_SLICES: i32 = 8', 'OMNI_SLICES: i32 = 7'])).not.toEqual([]);
-    expect(mutate('contact', ['min(0.5 * PI, atan2(top, m)', 'min(0.4 * PI, atan2(top, m)'])).not.toEqual([]);
-    expect(mutate('vfxOcc', ['if (fgKind > 1.5) { return 1.0; }', 'if (fgKind > 1.5) { return 0.9; }'])).not.toEqual([]);
   });
 
   it('LOD 非 0 照比', () => {

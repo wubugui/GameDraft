@@ -1,144 +1,23 @@
-import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from '../engine2d';
+import { Filter, GpuProgram, Texture, type TextureSource } from '../engine2d';
 import type { SceneDepthConfig } from '../data/types';
 import { depthLog, depthError } from '../core/depthLog';
 import { samplerOf } from './legacy/gpuSampler';
-import { FG_OCCLUSION_GLSL } from './foreground/foregroundMaskGlsl';
 import { FG_OCCLUSION_WGSL, fgCoverageBindingsWgsl } from './foreground/foregroundMaskWgsl';
 
 const T = 'DepthFilter';
 
-const VERT = /* glsl */ `
-in vec2 aPosition;
-out vec2 vTextureCoord;
-out vec2 vScreenPos;
-
-uniform vec4 uInputSize;
-uniform vec4 uOutputFrame;
-uniform vec4 uOutputTexture;
-
-vec4 filterVertexPosition(void) {
-    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
-    position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
-    return vec4(position, 0.0, 1.0);
-}
-
-vec2 filterTextureCoord(void) {
-    return aPosition * (uOutputFrame.zw * uInputSize.zw);
-}
-
-void main(void) {
-    gl_Position = filterVertexPosition();
-    vTextureCoord = filterTextureCoord();
-    vScreenPos = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-}
-`;
-
-const FRAG = /* glsl */ `
-in vec2 vTextureCoord;
-in vec2 vScreenPos;
-out vec4 finalColor;
-
-uniform sampler2D uTexture;
-uniform sampler2D uDepthMap;
-
-uniform vec2  uSceneSize;      // 场景世界宽高（worldWidth / worldHeight）
-uniform float uProjectionScale; // Camera 投影 S，世界单位→屏幕像素
-uniform float uWorldToPixelY;   // 世界Y → 背景纹理像素（与 isCollision 一致）
-uniform float uInvert;
-uniform float uScale;
-uniform float uOffset;
-uniform float uDepthPerSy;
-uniform float uFloorOffset;
-uniform float uFloorOffsetExtra;
-uniform float uTolerance;
-uniform vec2  uWorldContainerPos;
-uniform float uEntityFootWorldY; // 精灵脚部世界坐标 Y
-uniform float uDebug;          // 调试模式：1=输出调试颜色
-/** F2：遮挡像素 alpha 乘数 [0,1]。0=discard；1=完全不裁 alpha（调试用） */
-uniform float uOcclusionBlendFactor;
-uniform float uFootDepthQ;     // 脚点行走面深度（实验室 uFootQ.z）
-uniform float uHasFootDepth;   // 0=本帧没拿到脚深度 → 不遮挡
-uniform float uFootBias;       // 实验室 0.045
-
-// 场景前景层覆盖图（uFgCoverage + uHasFgCoverage；没有前景层时开关 0，逐像素与没有这一段时相同）
-${FG_OCCLUSION_GLSL}
-
-void main(void) {
-    vec4 color = texture(uTexture, vTextureCoord);
-    if (color.a < 0.004) { discard; }
-
-    // 世界容器内位移（屏幕像素）≈ 世界坐标 × S
-    float S = max(uProjectionScale, 1e-6);
-    float sx = vScreenPos.x - uWorldContainerPos.x;
-    float sy = vScreenPos.y - uWorldContainerPos.y;
-
-    float wx = sx / S;
-    float wy = sy / S;
-
-    // 深度图与背景按世界归一化 UV 对齐
-    vec2 depthUV = vec2(wx / uSceneSize.x, wy / uSceneSize.y);
-
-    if (uHasFootDepth < 0.5 ||
-        depthUV.x < 0.0 || depthUV.x > 1.0 || depthUV.y < 0.0 || depthUV.y > 1.0) {
-        finalColor = color;        // 无行走面场 / 出界 → 不遮挡
-        return;
-    }
-
-    vec4 depthSample = texture(uDepthMap, depthUV);
-    float rawDepth = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
-
-    float d_raw = uInvert > 0.5 ? 1.0 - rawDepth : rawDepth;
-    float sceneDepth = d_raw * uScale + uOffset;
-
-    // 精灵深度代理：**立在伪世界里的直立 quad**（uDepthPerSy = tanθ/ppu 就是它的深度梯度，
-    // 往上越靠近相机）。
-    // 脚点深度只认行走面场实测值——floor 拟合直线已废除（多层街巷可偏出 200+ 行地面），
-    // 没有场就整段不遮挡（见 uHasFootDepth），绝不退回旧模型悄悄顶上。
-    float syTexFoot = uEntityFootWorldY * uWorldToPixelY;
-    float syTex = wy * uWorldToPixelY;
-    float upright = uDepthPerSy * (syTex - syTexFoot);
-    float spriteDepth = uFootDepthQ + upright + uFloorOffset + uFloorOffsetExtra - uFootBias;
-    bool occluded;
-    // 场景前景层（三份遮挡实现同一段，见 foregroundMaskGlsl）：前景面按接地深度立起来的直立面比，
-    // 与脚点同源、两块直立面同一个梯度——不加脚点偏置 / 容差 / floor 偏移；外沿（深度图糊的那圈）不判
-    float fgDepth;
-    float fgKind = fgSample(depthUV, fgDepth);
-    occluded = fgKind > 1.5 ? false
-        : fgKind > 0.5 ? fgDepth < uFootDepthQ + upright - 1e-4
-        : sceneDepth + uTolerance < spriteDepth;
-
-    // ========== 调试模式 ==========
-    if (uDebug > 0.5) {
-        // 红=被遮挡 蓝=可见。碰撞通道已删:它靠 floor 拟合直线做逐像素反投影,
-        // 那条线已废除;要看碰撞去实验室查看器的顶视图(世界 XZ,无遮挡无歧义)。
-        finalColor = vec4(occluded ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, 1.0), 0.7);
-        return;
-    }
-    // ========== 正常渲染 ==========
-
-    // uTexture 采样为 Pixi 预乘 alpha（与 finalColor=color 通路一致）。
-    // 仅改 a 会令合成仍按完整 rgb 参与预乘blend → 发亮/发白；须 rgb、a 同步乘系数。
-    if (occluded) {
-        if (uOcclusionBlendFactor < 1e-5) {
-            discard;
-        }
-        finalColor = vec4(color.rgb * uOcclusionBlendFactor, color.a * uOcclusionBlendFactor);
-        return;
-    }
-
-    finalColor = color;
-}
-`;
-
 /**
- * WGSL 版(WebGPU 路径),与上面 VERT / FRAG 逐式对应;GLSL 一个字不动,WebGL 仍跑它。
+ * 深度遮挡滤镜:片元的世界坐标 = 屏幕位置 − 世界容器位置 ÷ 投影缩放 S(uSceneSize = 场景世界宽高,
+ * uWorldToPixelY = 世界 Y → 背景纹理像素,与 isCollision 一致);深度图与背景按世界归一化 UV 对齐。
+ * 被挡的像素 rgb 与 a 同乘 uOcclusionBlendFactor(0 = discard);uTexture 是预乘 alpha,只改 a 会让合成仍按
+ * 完整 rgb 参与预乘混合 → 发亮 / 发白。调试(uDebug):红 = 被遮挡、蓝 = 可见;碰撞通道已删(它靠 floor 拟合直线
+ * 逐像素反投影,那条线已废除;要看碰撞去实验室查看器的顶视图)。
  * 组 0 是 Pixi 滤镜约定(gfu + uTexture + uSampler);自己的资源在组 1,变量名 = resources 的键名,
  * uniform 结构体成员顺序 = JS 里 depthUniforms 的声明顺序(Pixi 按声明顺序排偏移)。
  * 分支里取样用 textureSampleLevel(.., 0.0)(WGSL 只许在一致控制流里 textureSample;深度图没有 mip,等价)。
  * 结构体里不写注释:Pixi 用正则解析结构体成员与 group 声明。
- * 前景覆盖图(uFgCoverage + uFgCoverageSampler + uHasFgCoverage)的取样走 foregroundMaskWgsl 的共用 fgSample,
- * 与 GLSL 那边的 FG_OCCLUSION_GLSL 逐式对应;开关不在模块作用域,作参数传进去。
+ * 前景覆盖图(uFgCoverage + uFgCoverageSampler + uHasFgCoverage;没有前景层时开关 0,逐像素与没有这一段时相同)
+ * 的取样走 foregroundMaskWgsl 的共用 fgSample;开关不在模块作用域,作参数传进去。
  */
 const WGSL = /* wgsl */ `
 struct GlobalFilterUniforms {
@@ -237,7 +116,9 @@ fn mainFragment(
     if (u.uInvert > 0.5) { d_raw = 1.0 - rawDepth; }
     let sceneDepth = d_raw * u.uScale + u.uOffset;
 
-    // 精灵深度代理:立在伪世界里的直立 quad(见 GLSL 注释),脚点深度只认行走面场实测值
+    // 精灵深度代理:立在伪世界里的直立 quad(uDepthPerSy = tanθ/ppu 就是它的深度梯度,往上越靠近相机)。
+    // 脚点深度只认行走面场实测值——floor 拟合直线已废除(多层街巷可偏出 200+ 行地面),
+    // 没有场就整段不遮挡(见 uHasFootDepth),绝不退回旧模型悄悄顶上
     let syTexFoot = u.uEntityFootWorldY * u.uWorldToPixelY;
     let syTex = wy * u.uWorldToPixelY;
     let upright = u.uDepthPerSy * (syTex - syTexFoot);
@@ -271,7 +152,6 @@ fn mainFragment(
 }
 `;
 
-let sharedProgram: GlProgram | null = null;
 let sharedGpuProgram: GpuProgram | null = null;
 
 function getSharedGpuProgram(): GpuProgram {
@@ -284,19 +164,6 @@ function getSharedGpuProgram(): GpuProgram {
     return sharedGpuProgram;
 }
 
-function getSharedProgram(): GlProgram {
-    if (!sharedProgram) {
-        try {
-            sharedProgram = new GlProgram({ vertex: VERT, fragment: FRAG });
-            depthLog(T, 'GlProgram created OK');
-        } catch (e) {
-            depthError(T, 'GlProgram creation FAILED', e);
-            throw e;
-        }
-    }
-    return sharedProgram;
-}
-
 export class DepthOcclusionFilter extends Filter {
     readonly _isDepthOcclusion = true;
 
@@ -305,10 +172,7 @@ export class DepthOcclusionFilter extends Filter {
         depthLog(T, 'cfg.depth_mapping:', cfg.depth_mapping);
         depthLog(T, 'cfg.shader:', cfg.shader);
 
-        const program = getSharedProgram();
-
         super({
-            glProgram: program,
             gpuProgram: getSharedGpuProgram(),
             resources: {
                 depthUniforms: {
@@ -332,7 +196,7 @@ export class DepthOcclusionFilter extends Filter {
                     uHasFgCoverage: { value: 0, type: 'f32' },
                 },
                 uDepthMap: depthTexture.source,
-                // WGSL 的采样器:深度图自己的 style(WebGL 用纹理自带采样状态,不认这个键)
+                // WGSL 的采样器:深度图自己的 style
                 uDepthMapSampler: samplerOf(depthTexture.source),
                 uFgCoverage: Texture.EMPTY.source,
                 uFgCoverageSampler: samplerOf(Texture.EMPTY.source),

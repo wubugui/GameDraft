@@ -4,8 +4,8 @@
  * 分桶是玩家唯一能直接看见的排序结果（蝙蝠飞到关二狗身前还是身后），而它没有任何
  * 画面之外的痕迹——排错了只是"层级有点怪"。这里直接测渲染器导出的纯函数，不再写镜像。
  */
-import { Container, DOMAdapter, Shader, Texture, TextureSource, UniformGroup } from '../../engine2d';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Container, Shader, Texture, TextureSource, UniformGroup } from '../../engine2d';
+import { describe, expect, it } from 'vitest';
 
 import type { VfxEmitterRuntime, VfxInstanceSim } from '../../systems/vfx/vfxSim';
 import { BOLT_STUB_SHEET } from '../../systems/vfx/VfxSystem';
@@ -15,7 +15,7 @@ import {
   sampleColorCurve, sampleCurve, vfxLightGain, vfxParamValues,
   type VfxRenderDeps, type VfxSortAnchor, type VfxSpriteSheet,
 } from './VfxRenderer';
-import { getVfxLitProgram, getVfxPlateLitProgram, getVfxUnlitProgram } from './vfxShaders';
+import { VFX_WGSL_SOURCES } from './vfxShaders';
 import { boltLayerOccludedByDepth } from './vfxBoltGlsl';
 import { samplerOf } from '../legacy/gpuSampler';
 import VFX_SRC from './vfxShaders.ts?raw';
@@ -194,11 +194,6 @@ describe('VfxRenderer · 受光外观参数（vfxParams）', () => {
  * 而且不报任何错。下面用假的照明依赖真跑 `render`，直接看每个视图 shader 上绑的是哪一组、值是多少。
  */
 describe('VfxRenderer · 受光强度（lightGain）', () => {
-  // node 里没有 document：GlProgram 构造时探一次片元精度要建画布。换个不建 GL 上下文的适配器（探不到就按 mediump）
-  const adapter0 = DOMAdapter.get();
-  beforeAll(() => { DOMAdapter.set({ ...adapter0, createCanvas: () => ({ getContext: () => null }) as never }); });
-  afterAll(() => { DOMAdapter.set(adapter0); });
-
   it('缺省 1；作者值原样；夹到 0..10；NaN 当缺省；lit:false 恒 1', () => {
     expect(vfxLightGain({})).toBe(1);
     expect(vfxLightGain({ lightGain: 2.5 })).toBe(2.5);
@@ -233,10 +228,10 @@ describe('VfxRenderer · 受光强度（lightGain）', () => {
     const extras: Record<string, unknown>[] = [];
     const deps: VfxRenderDeps = {
       entityLayer: new Container(),
-      createLitShader: (programs, colorTex, extra) => {
+      createLitShader: (program, colorTex, extra) => {
         if (!opts.canLight) return null;
         extras.push(extra);
-        return new Shader({ glProgram: programs.gl, gpuProgram: programs.gpu, resources: { ...shared, uColorTex: colorTex, ...extra } });
+        return new Shader({ gpuProgram: program, resources: { ...shared, uColorTex: colorTex, ...extra } });
       },
       releaseLitShader: (sh) => sh.destroy(),
       canLight: () => opts.canLight,
@@ -422,22 +417,23 @@ describe('VfxRenderer · 受光强度（lightGain）', () => {
  */
 describe('vfxShaders · 受光强度的位置', () => {
   it('lit：E 收齐（probe + 实体灯）之后、着色之前乘；自发光混合那行不带它', () => {
-    const iLights = VFX_SRC.indexOf('vec3 directE = entitySceneLightsE(q, n);');
-    const iShade = VFX_SRC.indexOf('vec3 litLin = shadeEntityLinear(');
+    const iLights = VFX_SRC.indexOf('let directE = entitySceneLightsE(q, n);');
+    const iShade = VFX_SRC.indexOf('var litLin = shadeEntityLinear(');
     expect(iLights).toBeGreaterThan(0);
     expect(iShade).toBeGreaterThan(iLights);
-    expect(VFX_SRC).toContain('uVfxIndirectFactor, uVfxDirectFactor, uVfxTotalFactor * uLightGain');
+    expect(VFX_SRC).toContain('vfxParams.uVfxTotalFactor * vfxParams.uLightGain');
     const emissiveLine = VFX_SRC.split('\n').find((l) => l.includes('mix(litLin, srgb2lin(alb)'))!;
     expect(emissiveLine).toBeTruthy();
     expect(emissiveLine).not.toContain('uLightGain');
   });
   it('tone：乘在色调融入的光照因子上、同一个钳位', () => {
-    expect(VFX_SRC).toContain('rgb = min(rgb * mix(vec3(1.0), wb, tone) * uLightGain, vec3(1.0));');
-    expect(VFX_SRC).toContain('} else if (uLightGain != 1.0) {');
+    expect(VFX_SRC).toContain('rgb = min(rgb * mix(vec3<f32>(1.0), wb, tone) * vfxToneOn.uLightGain, vec3<f32>(1.0));');
+    expect(VFX_SRC).toContain('} else if (vfxToneOn.uLightGain != 1.0) {');
   });
-  it('两个程序都声明了 uLightGain（没声明 = Pixi 按名跳过、静默不生效）', () => {
-    expect(getVfxLitProgram().fragment).toContain('uniform float uLightGain;');
-    expect(getVfxPlateLitProgram().fragment).toContain('uniform float uLightGain;');
-    expect(getVfxUnlitProgram().fragment).toContain('uniform float uLightGain;');
+  it('三个程序的逐视图参数结构里都有 uLightGain（没声明 = 那一项上不了 GPU、静默不生效）', () => {
+    const member = (src: string, struct: string) => new RegExp(`struct ${struct} \\{[^}]*\\buLightGain: f32,`).test(src);
+    expect(member(VFX_WGSL_SOURCES.lit, 'VfxParams')).toBe(true);
+    expect(member(VFX_WGSL_SOURCES.plateLit, 'VfxParams')).toBe(true);
+    expect(member(VFX_WGSL_SOURCES.unlit, 'VfxToneOn')).toBe(true);
   });
 });

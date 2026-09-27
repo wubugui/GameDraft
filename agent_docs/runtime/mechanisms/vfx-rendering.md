@@ -51,7 +51,7 @@ last_governed: 2026-09-23
 - **着色三条路,逐帧校验、条件变了就重建视图**(`viewStale`):**lit**(有照明载荷)/ **tone**(要受光但本场景 / 时段没载荷,
   走 NPC 同一套色调融入)/ **unlit**(`lit:false`)。三条都过与背景同一组显示变换(少了就是"背景很亮、粒子漆黑")。
   载荷晚到、开关、贴图、发射器换了都要重建——只在建视图时问一次会一路错到换场景。
-- **受光必须吃场景那一次 `packLights`,灯循环原样拼接角色的 `ENTITY_SCENE_LIGHTS_GLSL`**,不许粒子侧另写
+- **受光必须吃场景那一次 `packLights`,灯循环原样拼接角色的 `ENTITY_SCENE_LIGHTS_WGSL`**(master 是同一段的 GLSL 版),不许粒子侧另写
   (`worldSpaceShading.test.ts` 钉着 `vfxShaders.ts` 里不许出现 `lc*Light`)。probe 查表传 nQ、灯循环用世界法线(同角色口径)。
 - **受光倍率**:lit 路 `E = (probe 间接项 · 间接factor + 实体灯直接项 · 直接factor) · 总factor · lightGain`。三项 factor 与 `eChroma`
   来自当前场景 / 时段的 `lighting.lightFactors.particles`(不是逐效果数据,也不跟角色运行时曝光覆盖);天气 / 演出压暗 `envDim`
@@ -71,13 +71,14 @@ last_governed: 2026-09-23
 
 ## 已知坑(都不报错)
 
-- 粒子 / 薄片 / 雷 / 光柱的着色器都有 GLSL 与 WGSL 两份:WGSL 在 `vfxShaders.ts` / `vfxBeamShaders.ts` 并排,雷与光柱的核函数
-  另有 `vfxBoltWgsl.ts` / `vfxBeamWgsl.ts`(与 `vfxBoltGlsl.ts` / `vfxBeamGlsl.ts` 对应;粒子工作台 2026-09-27 起改用游戏的 `VfxRenderer` / WGSL,不再拿 GLSL 核)。
-  算法改动两份一起改,改完跑 `node tools/render_parity/run.mjs --case 粒子`(见 pixi-shader-wgsl-port)。
+- 粒子 / 薄片 / 雷 / 光柱的着色器只有 WGSL(2026-09-28 删了 GLSL 孪生与 GL 程序):`vfxShaders.ts` / `vfxBeamShaders.ts`,雷与光柱的核函数
+  在 `vfxBoltWgsl.ts` / `vfxBeamWgsl.ts`;`vfxBoltGlsl.ts` / `vfxBeamGlsl.ts` 是历史文件名,只剩 CPU 的逐段发射 / uniform 打包
+  (粒子工作台打包它们)。受光程序经 `createCustomLitShader(program: GpuProgram, …)` 建。算法改动改 WGSL,改完跑
+  `node tools/render_parity/run.mjs --case 粒子`(参考侧是 master 的 GLSL,见 pixi-shader-wgsl-port)。
 
 | 坑 | 症状 |
 |---|---|
-| 粒子 GLSL 只拼 `LC` 不拼 `WR_CORE` | 编译失败,Pixi 只报 "Could not initialize shader",整批不画 |
+| 粒子着色只拼 `LC` 不拼 `WR_CORE`(`LC_WGSL` / `WR_CORE_WGSL` 同理) | 编译失败,那一批粒子的管线建不起来、整批不画 |
 | 薄片受光 program 声明 `aNrm`,配了 billboard 网格 | 绑定抛异常 = 整局卡死;两种网格各配各的 program |
 | 浅色材质受光整体偏暗(跑马梁白纸画成深灰) | 09-12 量过:受光亮度只有无光的 4.9%,而原画 / albedo = 1.00——probe 绝对量级与原画对不上,归角色照明那条线;浅色纸钱暂走 `lit:false` + 按原画标定的 tint |
 | 纯漫反射画水 / 尘 | 水滴 23 vs 背景 68、尘埃均值 3.3/255:像素 A/B 全是"画了",肉眼全是"没有"——判据同时看变化像素数**和**截图 |

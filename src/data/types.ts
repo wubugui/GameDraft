@@ -163,7 +163,7 @@ export interface SceneShadowParams {
   softness?: number;
   /** 阴影长度相对角色高度的倍率，缺省由仰角推导 */
   length?: number;
-  /** 脚底接触阴影（胶囊 AO）峰值浓度 0..1，脚边最暗处的浓度；0=关闭。方向手动（绑灯/虚拟灯，否则本块 key 方向），见 EntityShadow CONTACT_FRAG */
+  /** 脚底接触阴影（胶囊 AO）峰值浓度 0..1，脚边最暗处的浓度；0=关闭。方向手动（绑灯/虚拟灯，否则本块 key 方向），见 EntityShadow CONTACT_FRAG_WGSL */
   contact?: number;
   /**
    * 接触阴影（胶囊 AO）大小倍率，默认 1：胶囊半径 = 剪影贴地那一截半宽 × 它（见 EntityShadow CONTACT_*）。

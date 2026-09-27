@@ -2,7 +2,7 @@
  * 光柱（体积光）的纯函数与模拟生命周期：
  * - 形状闸门（与 Python `vfx_beam.py` 同判据，那边的 parity 测试读本文件同一批用例的 JSON 金标）；
  * - 3D 棱台：片元求交用的半空间 ⇔ 局部坐标判"在不在里面"逐点一致（矩形 / 正多边形 × 张角 × 转角）；
- * - 视线取样段：按半空间闭式求出的 [qa, qb] 与沿视线逐点暴力判定一致（GLSL `bmEval3d` 同一算法）；
+ * - 视线取样段：按半空间闭式求出的 [qa, qb] 与沿视线逐点暴力判定一致（着色器 `bmEval3d` 同一算法）；
  * - 体积采样（尘埃出生）点都在里面；2D 光带同理；
  * - 亮度起伏确定性 / 取值范围；画面 ↔ 世界仿射可逆；
  * - 模拟：淡入淡出、stop 后淡完才算放完、光柱体积出生、锚点挪了帧跟着走、坏引用构造即抛；
@@ -133,7 +133,7 @@ describe('3D 棱台几何', () => {
     expect(Math.hypot(...v.right)).toBeCloseTo(1, 6);
   });
 
-  it('视线取样段：半空间闭式求交 == 沿视线逐点暴力判定（GLSL bmEval3d 同一算法）', () => {
+  it('视线取样段：半空间闭式求交 == 沿视线逐点暴力判定（着色器 bmEval3d 同一算法）', () => {
     const space = createPlanarVfxSpace();
     const aff = sceneQAffine(space)!;
     for (const [, def] of cases) {

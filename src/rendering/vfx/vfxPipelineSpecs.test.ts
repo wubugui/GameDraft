@@ -2,26 +2,19 @@
  * 粒子 shader 的两条"卡帧"闸（2026-09-16 实测：进茶馆第一帧 11 s、第一次点火把同样卡）。
  *
  * 1. 受光粒子不许把角色那条 uMode 0 的 gatherRT（192×256 嵌套循环里采 3D 纹理）拼进主函数：
- *    对粒子不可达（粒子那组 uMode 钉在 1..3），却把后端编译从约 3 s 拖到 11 s。GLSL(master 对照 / 编辑器)与
- *    WGSL(运行时)两份都查。
+ *    对粒子不可达（粒子那组 uMode 钉在 1..3），却把后端编译从约 3 s 拖到 11 s。
  * 2. 粒子目录里的每个 GPU 程序都必须在 `vfxPipelineSpecs()` 清单里：漏了的不会被开局预建管线，
  *    第一次出现时在可见画面上等编译。
  */
-import { DOMAdapter, type GpuProgram } from '../../engine2d';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { type GpuProgram } from '../../engine2d';
+import { describe, expect, it } from 'vitest';
 
 import CHAR_LIGHTING_SRC from '../../core/CharacterLightingSystem.ts?raw';
 import { vfxPipelineSpecs } from './VfxRenderer';
 import RENDERER_SRC from './VfxRenderer.ts?raw';
-import { getVfxLitGpuProgram, getVfxLitProgram, getVfxPlateLitGpuProgram, getVfxPlateLitProgram } from './vfxShaders';
+import { getVfxLitGpuProgram, getVfxPlateLitGpuProgram } from './vfxShaders';
 
 const VFX_SOURCES = import.meta.glob('./*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
-
-function mainBody(src: string): string {
-  const i = src.indexOf('void main(void)');
-  expect(i, '找不到 main').toBeGreaterThan(0);
-  return src.slice(i);
-}
 
 /** WGSL 里某个函数的函数体(按花括号配对) */
 function wgslFnBody(src: string, name: string): string {
@@ -38,23 +31,11 @@ function wgslFnBody(src: string, name: string): string {
 }
 
 describe('粒子 shader 不卡帧', () => {
-  // node 里没有 document：GlProgram 构造时探片元精度要建画布，换个不建 GL 上下文的适配器
-  const adapter0 = DOMAdapter.get();
-  beforeAll(() => { DOMAdapter.set({ ...adapter0, createCanvas: () => ({ getContext: () => null }) as never }); });
-  afterAll(() => { DOMAdapter.set(adapter0); });
-
-  it('受光粒子 / 受光薄片的主函数只走 probe 底光，不调 gatherRT(GLSL)', () => {
-    for (const p of [getVfxLitProgram(), getVfxPlateLitProgram()]) {
-      const body = mainBody(p.fragment!);
-      expect(body).not.toMatch(/gatherRT\s*\(/);
-      expect(body).toContain('probeE(q, nQ)');
-    }
-  });
-
-  it('受光粒子 / 受光薄片的片元入口不调 gatherRT(WGSL,运行时实际跑的)', () => {
+  it('受光粒子 / 受光薄片的片元入口只走 probe 底光，不调 gatherRT', () => {
     for (const p of [getVfxLitGpuProgram(), getVfxPlateLitGpuProgram()]) {
       const body = wgslFnBody(p.source, p.fragmentEntry);
       expect(body).not.toMatch(/gatherRT\s*\(/);
+      expect(body).toContain('probeE(q, nQ, pp,');
     }
   });
 

@@ -120,9 +120,10 @@ planar 阴影 / 深度遮挡)与它们并存,2026-08-30 的「原画 + 加性灯
   光近头顶时半影其实由胶囊顶给。片子覆盖范围按半影宽 0.5·t/k 扩(锥角调大时不在边上切直边)。
   行走面深度场在接触片里**手写双线性**取(与 CPU `sampleGroundField` 同口径):RG16 打包值不能交给硬件插值,
   纹理只能 nearest,直接取的话地面点按约 10 屏幕 px 一级阶梯还原,脚下画出方块硬边(2026-09-24 真机)。
-  ⚠ EntityShadow 的几段 shader **没有 `#version 300 es`**,Pixi 按 WebGL1 兼容头编译:texelFetch / textureSize /
-  ivec 的 clamp / 位运算 / 数组构造式一律不能用——用了整段编译失败、接触 AO 一点不画,TS 与单测照样全绿
-  (同日真机踩过)。纹理尺寸走 uniform、在纹素中心用 texture() 取。`EntityShadow.glslCompat.test.ts` 锁着。
+  ⚠ master 的 GLSL 版 EntityShadow 几段 shader **没有 `#version 300 es`**,Pixi 按 WebGL1 兼容头编译:texelFetch / textureSize /
+  ivec 的 clamp / 位运算 / 数组构造式一律不能用——用了整段编译失败、接触 AO 一点不画,TS 与单测照样全绿(同日真机踩过)。
+  本分支只剩 WGSL(2026-09-28 GLSL 孪生与守它的 `EntityShadow.glslCompat.test.ts` 一起删了),没有这条限制;纹理尺寸仍走
+  uniform、在纹素中心取,是为了与 master 逐像素一致。capsuleOmni 的物理钉值在 `EntityShadowContactAo.test.ts`。
   **只画在地面上**:片元看到的若不是地面(场景深度比行走面深度近,墙/桶/屋顶挡着)就淡掉——从容差开始、
   再近 `CONTACT_GROUND_FEATHER` 才完全不画(一刀切在深度图比原画宽的灯杆旁挖一圈硬边,真机实测锣手脚边被挖),
   判据与 cast 前景遮挡同一个、同一份容差(`setDepthParams` 一并广播)。不判的话身后木桶、墙面、前景瓦面都被压暗。
@@ -185,8 +186,8 @@ planar 阴影 / 深度遮挡)与它们并存,2026-08-30 的「原画 + 加性灯
 
 ## 已知坑
 
-- 影子(cast / 接触 AO)、深度遮挡滤镜、实体光照滤镜都有 GLSL 与 WGSL 两份(同文件并排),算法改动两份一起改,
-  改完跑 `node tools/render_parity/run.mjs --case 实体`。「EntityShadow 不能用 texelFetch / textureSize」只约束 GLSL(ES1 翻译),WGSL 侧没有这个限制。
+- 影子(cast / 接触 AO)、深度遮挡滤镜、实体光照滤镜本分支只有 WGSL(2026-09-28 删了 GLSL 孪生;角色照明滤镜的 GLSL 程序
+  随角色照明那边一起删),算法改动改 WGSL,改完跑 `node tools/render_parity/run.mjs --case 实体`(参考侧是 master 的 GLSL)。
 
 - F2 滑块必须 `noRefresh` + 就地 sync,否则点按钮 / 切模式滑块复位;F2 只改
   `currentLightEnv`,不进存档。

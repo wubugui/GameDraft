@@ -36,7 +36,7 @@
  */
 import { resolveLightFactors, type LightFactors } from '../../data/lightFactors';
 import {
-  type BlendMode, Container, type GlProgram, type GpuProgram, type PipelinePrewarmSpec, Shader, Texture, type TextureSource, UniformGroup,
+  type BlendMode, Container, type GpuProgram, type PipelinePrewarmSpec, Shader, Texture, type TextureSource, UniformGroup,
 } from '../../engine2d';
 
 import type { SceneDepthConfig } from '../../data/types';
@@ -59,8 +59,7 @@ import { VfxBeamView, createVfxBeamGeometry } from './VfxBeamView';
 import { VfxPlateBatchMesh, createPlateStrip, type VfxPlateStrip } from './VfxPlateBatchMesh';
 import { getVfxBeamGpuProgram } from './vfxBeamShaders';
 import {
-  getVfxBoltGpuProgram, getVfxBoltProgram, getVfxLitGpuProgram, getVfxLitProgram, getVfxPlateLitGpuProgram,
-  getVfxPlateLitProgram, getVfxUnlitGpuProgram, getVfxUnlitProgram,
+  getVfxBoltGpuProgram, getVfxLitGpuProgram, getVfxPlateLitGpuProgram, getVfxUnlitGpuProgram,
 } from './vfxShaders';
 import { VfxBoltBatchMesh } from './VfxBoltBatchMesh';
 import { boltLayerOccludedByDepth, boltNeedHeight, emitBoltSegments, BOLT_QUAD_SIGMAS, type BoltLook, type BoltView } from './vfxBoltGlsl';
@@ -89,15 +88,6 @@ export function vfxPipelineSpecs(): PipelinePrewarmSpec[] {
     { program: getVfxBoltGpuProgram(), geometry: bolt, blendModes: ['add'] },
     { program: getVfxBeamGpuProgram(), geometry: createVfxBeamGeometry(), blendModes: ['add', 'screen', 'normal'] },
   ];
-}
-
-/**
- * 受光程序（WebGPU 迁移期两份并存）：WebGL 跑 `gl`（GLSL，与迁移前同一个对象），WebGPU 跑 `gpu`（同一套资源布局的
- * WGSL）。照明系统的 `createCustomLitShader` 两个一起收，建出的 Shader 两个后端都能画。
- */
-export interface VfxLitPrograms {
-  gl: GlProgram;
-  gpu: GpuProgram;
 }
 
 /** 一个发射器的贴图：图集 + 帧 uv 表 + 长宽比 */
@@ -144,10 +134,11 @@ export interface VfxRenderDeps {
    */
   sortByScene?: boolean;
   /**
-   * 有照明载荷时给 lit shader；无则 null → 走 tone / unlit。`extra` 里除了本视图的组、深度图与前景覆盖图，还带着三个
-   * WGSL 采样器（`uColorTexSampler` / `uDepthMapSampler` / `uFgCoverageSampler`，WebGL 不认这些键），照明系统原样并进 resources。
+   * 有照明载荷时给 lit shader；无则 null → 走 tone / unlit。`program` 是受光程序（普通 / 薄片），照明系统的
+   * `createCustomLitShader` 按它建 Shader。`extra` 里除了本视图的组、深度图与前景覆盖图，还带着三个
+   * WGSL 采样器（`uColorTexSampler` / `uDepthMapSampler` / `uFgCoverageSampler`），照明系统原样并进 resources。
    */
-  createLitShader: (programs: VfxLitPrograms, colorTex: TextureSource, extra: Record<string, unknown>) => Shader | null;
+  createLitShader: (program: GpuProgram, colorTex: TextureSource, extra: Record<string, unknown>) => Shader | null;
   releaseLitShader: (sh: Shader) => void;
   /**
    * 此刻建不建得出 lit shader（与 `createLitShader` 同一条判据）。视图建好后照明载荷才到、
@@ -519,7 +510,7 @@ export class VfxRenderer {
     const depthSrc = depth?.tex.source ?? null;
     const depthTex = depthSrc ?? sheet.texture.source;
     const isBolt = !!ap.bolt;
-    // 雷是光源：不吃灯、不走色调融入（见 vfxShaders 的 FRAG_BOLT）
+    // 雷是光源：不吃灯、不走色调融入（见 vfxShaders 的 BOLT_WGSL）
     const wantLit = ap.lit !== false && !isBolt;
     const isPlate = !!e.plate;
     const lightGain = vfxLightGain(ap);
@@ -527,13 +518,12 @@ export class VfxRenderer {
     let lit = false;
     let toneSrc: TextureSource | null = null;
     let paramGroup: UniformGroup | null = null;
-    // WGSL 的采样器（「纹理名 + Sampler」= 与该纹理采样参数相同的共享采样器，见 legacy/gpuSampler；WebGL 不认这些键）
+    // WGSL 的采样器（「纹理名 + Sampler」= 与该纹理采样参数相同的共享采样器，见 legacy/gpuSampler）
     // 贴图只在非雷的两条路上读：雷拿的是 VfxSystem 的 BOLT_STUB_SHEET（texture 为 null，与 master 同样不读）
     if (isBolt) {
       paramGroup = new UniformGroup({ uLightGain: { value: 1, type: 'f32' } });
       const boltDepth = depthSrc ?? Texture.WHITE.source;
       shader = new Shader({
-        glProgram: getVfxBoltProgram(),
         gpuProgram: getVfxBoltGpuProgram(),
         resources: {
           vfxDepth: depthGroup, uDepthMap: boltDepth, uDepthMapSampler: samplerOf(boltDepth),
@@ -552,11 +542,9 @@ export class VfxRenderer {
         uVfxTotalFactor: { value: 1, type: 'f32' },
       });
       // 薄片的受光程序声明了 aNrm，只能配薄片网格（见 VfxPlateBatchMesh 头注释）
-      const programs: VfxLitPrograms = isPlate
-        ? { gl: getVfxPlateLitProgram(), gpu: getVfxPlateLitGpuProgram() }
-        : { gl: getVfxLitProgram(), gpu: getVfxLitGpuProgram() };
+      const program = isPlate ? getVfxPlateLitGpuProgram() : getVfxLitGpuProgram();
       const colorSrc = sheet.texture.source;
-      shader = this.deps.createLitShader(programs, colorSrc, {
+      shader = this.deps.createLitShader(program, colorSrc, {
         vfxDepth: depthGroup,
         uDepthMap: depthTex,
         uFgCoverage: fgTex,
@@ -578,7 +566,6 @@ export class VfxRenderer {
       const probeSrc = toneSrc ?? Texture.WHITE.source;
       const colorSrc = sheet.texture.source;
       shader = new Shader({
-        glProgram: getVfxUnlitProgram(),
         gpuProgram: getVfxUnlitGpuProgram(),
         resources: {
           uColorTex: colorSrc, uColorTexSampler: samplerOf(colorSrc),

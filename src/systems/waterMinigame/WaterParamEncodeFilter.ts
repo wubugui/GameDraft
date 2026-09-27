@@ -1,47 +1,8 @@
-import { Filter, GlProgram, GpuProgram } from '../../engine2d';
-
-const VERT = /* glsl */ `
-in vec2 aPosition;
-out vec2 vTextureCoord;
-
-uniform vec4 uInputSize;
-uniform vec4 uOutputFrame;
-uniform vec4 uOutputTexture;
-
-vec4 filterVertexPosition(void) {
-    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
-    position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
-    return vec4(position, 0.0, 1.0);
-}
-
-vec2 filterTextureCoord(void) {
-    return aPosition * (uOutputFrame.zw * uInputSize.zw);
-}
-
-void main(void) {
-    gl_Position = filterVertexPosition();
-    vTextureCoord = filterTextureCoord();
-}
-`;
-
-const FRAG = /* glsl */ `
-in vec2 vTextureCoord;
-out vec4 finalColor;
-
-uniform sampler2D uTexture;
-uniform float uDepth;
-uniform float uGlow;
-
-void main(void) {
-    vec4 t = texture(uTexture, vTextureCoord);
-    if (t.a < 0.004) discard;
-    finalColor = vec4(uDepth, uGlow, 1.0, t.a);
-}
-`;
+import { Filter, GpuProgram } from '../../engine2d';
 
 /**
- * WebGPU 版(与上面 GLSL 逐行对应):`@group(0)` 是 Pixi 滤镜固定的 gfu / uTexture / uSampler,
+ * 把实体覆盖处编码成水面参数图:rgba = (uDepth, uGlow, 1 = 有实体, 覆盖度)。
+ * `@group(0)` 是 Pixi 滤镜固定的 gfu / uTexture / uSampler,
  * 本滤镜的 uniform 组放 `@group(1)`,变量名 = resources 键名 `paramUniforms`,成员顺序 = 声明顺序。
  */
 const WGSL = /* wgsl */ `
@@ -94,13 +55,7 @@ fn mainFragment(@location(0) vTextureCoord: vec2<f32>) -> @location(0) vec4<f32>
 }
 `;
 
-let sharedProgram: GlProgram | null = null;
 let sharedGpuProgram: GpuProgram | null = null;
-
-function program(): GlProgram {
-  if (!sharedProgram) sharedProgram = new GlProgram({ vertex: VERT, fragment: FRAG });
-  return sharedProgram;
-}
 
 function gpuProgram(): GpuProgram {
   if (!sharedGpuProgram) {
@@ -116,7 +71,6 @@ function gpuProgram(): GpuProgram {
 export class WaterParamEncodeFilter extends Filter {
   constructor() {
     super({
-      glProgram: program(),
       gpuProgram: gpuProgram(),
       resources: {
         paramUniforms: {

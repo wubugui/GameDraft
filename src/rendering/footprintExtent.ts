@@ -1,5 +1,5 @@
 /**
- * 剪影「贴地那一截」的左右范围 —— 接触阴影的横向形状（见 EntityShadow 的 CONTACT_FRAG）。
+ * 剪影「贴地那一截」的左右范围 —— 接触阴影的横向形状（见 EntityShadow 的 CONTACT_FRAG_WGSL）。
  *
  * ## 为什么在 CPU 上、按帧缓存
  *

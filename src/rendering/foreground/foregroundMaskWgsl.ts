@@ -1,12 +1,14 @@
 /**
- * 场景前景图层的 WGSL 片段:{@link ./foregroundMaskGlsl} 的逐式孪生(游戏只画 WGSL;GLSL 那份留给工作台,
- * 两份要一起改,`shaderTwins.test.ts` 钉着函数集合、字面量顺序与结构体字段)。通道、语义见 GLSL 那份的头注释。
+ * 场景前景图层的着色片段(游戏只画 WGSL):覆盖图程序(蒙版判定 + 覆盖图顶点 / 片元)与遮挡使用方共用的取样段。
+ * 覆盖图的通道、语义见 `foregroundMaskGlsl.ts` 的头注释;取样段 `fgSample` 在那里还有一份 GLSL 版(只剩角色逐像素
+ * 照明滤镜的 GLSL 程序在拼),两份由 `shaderTwins.test.ts` 钉着函数集合与字面量顺序。数值与 master 的 GLSL 版逐像素一致
+ * 由 tools/render_parity 的前景层用例钉住。
  *
- * 与 GLSL 的写法差异(都不改数值):
- * - WGSL 没有 out 参数:`fgSample` 的深度走 `ptr<function, f32>`;GLSL 的 uniform `uHasFgCoverage` 在宿主各自的
+ * 写法上的约束(都不改数值):
+ * - WGSL 没有 out 参数:`fgSample` 的深度走 `ptr<function, f32>`;开关 `uHasFgCoverage` 在宿主各自的
  *   参数结构体里,这里作为参数传进来(`fgSample(uv, 宿主.uHasFgCoverage, &d)`)。
  * - 分支里取样一律 `textureSampleLevel(.., 0.0)`(WGSL 只许在一致控制流里 textureSample;覆盖图 / 位移图 / id /
- *   matte 都没有 mip,与 GLSL 的隐式 LOD 等价)。
+ *   matte 都没有 mip)。
  * - 覆盖图片元的接地采样 `uBase` 是 vec2 数组:WGSL 的 uniform 数组要 16 字节跨度,声明成 vec4 数组再按奇偶拆
  *   (JS 端 UniformGroup 按 8 字节跨度紧排,与这里的 vec4 逐字节相同);它必须排在参数组**第一个**,
  *   否则 JS 端按 8 对齐、WGSL 端按 16 对齐,偏移对不上。
@@ -57,7 +59,10 @@ struct FgMaskU {
 }
 `;
 
-/** {@link ./foregroundMaskGlsl.FG_MASK_GLSL} 的 WGSL 版:读模块作用域的 uUvMap / uIds / uMatte 与 fgMaskU.uFgInst */
+/**
+ * 蒙版判定:读模块作用域的 uUvMap / uIds(最近邻)/ uMatte 与 fgMaskU.uFgInst(实例 id)。
+ * 位移图覆盖度太小时 rg / a 数值上不稳;那里的植物本来也只剩一丝,前景层不要它(m.a < 0.02 直接 0)。
+ */
 export const FG_MASK_WGSL = /* wgsl */ `
 fn fgMaskAt(uv: vec2<f32>) -> f32 {
     let m = textureSampleLevel(uUvMap, uUvMapSampler, uv, 0.0);
@@ -73,6 +78,14 @@ fn fgMaskAt(uv: vec2<f32>) -> f32 {
 /**
  * 覆盖图程序(顶点 + 片元)。`meshUniforms` = 宿主的网格约定(组 0 globalUniforms、组 1 localUniforms,
  * 见 backgroundSway 的 WGSL_MESH_UNIFORMS);自己的资源在组 2。
+ *
+ * - 顶点:网格顶点是场景坐标,按目标 RT 尺寸缩放(与位移图同一个做法,不靠容器变换);uv 取网格自带的那一份
+ *   (= 场景归一化);aUV 必须声明(几何体的每个属性都要在顶点输入里有)。
+ * - 片元:B(前景面)= 本点 + 四个 ±半纹素的对角点取最大——覆盖图一个纹素 4 原画像素宽,只取纹素中心的话两三像素宽的
+ *   细枝会整根漏掉,细长前景正是这套东西要补的;R(外沿)= B 与四个 ±uDilate 对角点取最大(覆盖 ±膨胀量的方框)。
+ *   提前结束:使用方只判"过不过半",深度按 G / R 解、与 R 的确切值无关——已经过半就不再多取点
+ *   (2026-09-27 实测:固定取满 9 点,跑马梁那棵树覆盖图 GPU 0.29 ms)。
+ * - 前景面深度 fgSurfaceDepth:按 x 在接地采样里线性插值出 (接地 y, 接地深度),再立成直立面。
  */
 export function fgCoverageProgramWgsl(meshUniforms: string): string {
   return meshUniforms + FG_MASK_U_WGSL + /* wgsl */ `

@@ -69,7 +69,7 @@ export function setForegroundRect(
 /**
  * 覆盖图分辨率 = 原画的几分之一。覆盖图每帧随摆动重渲，GPU 开销大头是**清整张图**
  * （2026-09-26 跑马梁实测：1/2 分辨率 1024×576 光清屏 0.12 ms、绘制 0.14 ms），1/4 两样都降到四分之一。
- * 细枝靠前景面那一路按纹素足迹取样兜住（见 `FG_COVERAGE_FRAG`），不靠分辨率。
+ * 细枝靠前景面那一路按纹素足迹取样兜住（见 foregroundMaskWgsl 的 `fgCoverageProgramWgsl`），不靠分辨率。
  */
 export const FG_COVERAGE_DOWNSCALE = 4;
 

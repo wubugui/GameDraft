@@ -35,7 +35,7 @@ const TIP_ALPHA = 0.42;
 const PENUMBRA_GROW = 0.06;
 
 /**
- * 接触阴影（胶囊 AO，见 `CONTACT_FRAG` 头注释）的形状量。
+ * 接触阴影（胶囊 AO，见 `CONTACT_FRAG_WGSL` 头注释）的形状量。
  *
  * - `BAND`：从剪影最低的不透明行往上多高（占帧高）算"贴地的那一截"（脚、鞋、衣摆），它的宽度定胶囊半径
  *   （只在站立片段的帧上量、取中位数，按角色固定，见 footprintExtent.bodyFootprintOf）。
@@ -56,193 +56,18 @@ export const CONTACT_SEARCH = 0.35;
  */
 export const CONTACT_GROUND_FEATHER = 0.2;
 
-// 纯平面投影:cast 单 quad,FRAG 做碰撞方向阻挡 + 前景深度 blend;contact 单 quad 走自己的 CONTACT_FRAG,只压暗。
-const VERT = /* glsl */ `
-in vec2 aPosition;
-in vec2 aUV;
-uniform mat3 uProjectionMatrix;
-uniform mat3 uWorldTransformMatrix;
-uniform mat3 uTransformMatrix;
-out vec2 vUV;
-out vec2 vWorld;
-void main(void) {
-    mat3 mvp = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix;
-    gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
-    vUV = aUV;
-    vWorld = aPosition; // 平面投影:顶点即地面落点
-}
-`;
-
-/** cast 剪影片元(GLSL);与 FRAG_WGSL 一起导出给孪生守门 EntityShadowContactTwin.test.ts */
-export const FRAG = /* glsl */ `
-in vec2 vWorld;
-out vec4 finalColor;
-
-uniform sampler2D uTexture;
-uniform sampler2D uDepthMap;
-uniform sampler2D uCollisionMap;
-
-uniform float uDarkness;
-uniform vec3  uShadowColor;   // 全局阴影颜色(默认纯黑)
-uniform float uColEnabled;
-uniform float uOccEnabled;
-// cast 剪影 UV:片元内从世界坐标反解平行四边形参数。
-// 曾走 aUV 顶点缓冲逐帧 update,GPU 端不生效(剪影被整张图集横扫成条纹,
-// 2026-07-22 白底渲染实证)。
-// 全用标量:vec 型 uniform 在 Mesh 路径的就地突变曾出现不同步(标量实证可靠)
-uniform float uShearX;     // 影子头端偏移(世界px)
-uniform float uShearY;
-uniform float uHalfW;      // 底边半宽
-uniform float uSpreadTop;  // 头端半宽 ÷ 底边半宽:1=平行四边形, >1=梯形(点光散开)
-uniform float uTipFadeStart; // 末端渐隐起点(t)
-uniform float uTipAlpha;     // t=1 处的浓度系数
-uniform float uPenGrow;      // 头端半影半径(占剪影帧尺寸比例);脚端恒 0
-uniform float uU0;         // 剪影帧 uv:u0/v0=脚(底), u1/v1=头(顶)
-uniform float uV0;
-uniform float uU1;
-uniform float uV1;
-uniform vec2  uSceneSize;
-uniform float uFootX;
-uniform float uFootY;
-uniform float uW2pX;
-uniform float uW2pY;
-uniform float uInvert;
-uniform float uScale;
-uniform float uOffset;
-uniform float uFloorOffset;
-uniform float uTolerance;
-uniform float uOccBlend;
-uniform sampler2D uGroundD;    // 行走面深度场（RG16，与角色遮挡同一份）
-uniform float uGroundMin;      // 解码：d = min + (r*256+g)/65535 * (max-min)
-uniform float uGroundMax;
-uniform float uHasGroundTex;   // 0=无场 → 影子不做地面遮挡/碰撞裁切
-uniform float uM_ppu;
-uniform float uM_cx;
-uniform float uM_cy;
-uniform float uM_R00; uniform float uM_R01; uniform float uM_R02;
-uniform float uM_R20; uniform float uM_R21; uniform float uM_R22;
-uniform float uCol_xMin;
-uniform float uCol_zMin;
-uniform float uCol_cell;
-uniform float uCol_gw;
-uniform float uCol_gh;
-
-/** 地面深度：逐像素取行走面场。影子落在地上，其深度必须与角色脚点同源——线性 floor
- *  模型会产生系统性标定偏移（2026-06-17 在 deferred 上踩过一次，2026-07-23 又在
- *  planar 与碰撞反投影上各踩一次），那条拟合直线已彻底废除。 */
-float groundDepthAt(vec2 wp) {
-    vec2 uv = vec2(wp.x / max(uSceneSize.x, 1e-3), wp.y / max(uSceneSize.y, 1e-3));
-    vec4 g = texture(uGroundD, clamp(uv, 0.0, 1.0));
-    float t = (g.r * 255.0 * 256.0 + g.g * 255.0) / 65535.0;
-    return uGroundMin + t * (uGroundMax - uGroundMin);
-}
-
-bool isCollisionAt(vec2 wp) {
-    float sx = wp.x * uW2pX;
-    float sy = wp.y * uW2pY;
-    float dFloor = groundDepthAt(wp);
-    float px = (sx - uM_cx) / uM_ppu;
-    float py = (uM_cy - sy) / uM_ppu;
-    float cwx = uM_R00 * px + uM_R01 * py + uM_R02 * dFloor;
-    float cwz = uM_R20 * px + uM_R21 * py + uM_R22 * dFloor;
-    float gx = (cwx - uCol_xMin) / uCol_cell;
-    float gz = (cwz - uCol_zMin) / uCol_cell;
-    if (gx < 0.0 || gx >= uCol_gw || gz < 0.0 || gz >= uCol_gh) return false;
-    return texture(uCollisionMap, vec2(gx / uCol_gw, gz / uCol_gh)).r > 0.5;
-}
-
-/** 取剪影 alpha。**必须 clamp 在当前帧框内**:越界会采到图集里相邻的帧——那正是
- *  2026-07-22「剪影被整张图集横扫成条纹」的复发路径。 */
-float silAt(vec2 uv) {
-    vec2 lo = vec2(min(uU0, uU1), min(uV0, uV1));
-    vec2 hi = vec2(max(uU0, uU1), max(uV0, uV1));
-    return texture(uTexture, clamp(uv, lo, hi)).a;
-}
-
-/** 45° 环上的对角分量。 */
-const float RING_K = 0.7071;
-
-/** 变半径半影:内圈 8 抽(权 1)+ 外圈 4 抽(权 .5)+ 中心(权 2),权和 12。
- *  半径给的是**帧内比例**,按帧跨度换成 uv,于是拉长方向糊得多、横向糊得少
- *  ——正是长影子该有的样子。r=0 直接短路。
- *
- *  ⚠ 抽样点必须手写展开、不能用常量数组:本工程的 Pixi 上下文是 WebGL1,
- *    源码里的 in / out / texture() 是 Pixi 反向转译过去的,数组构造式没有转译,
- *    写了会在 GLSL ES 1.00 下编译失败 → 整个影子 shader 起不来(2026-08-22 真机实证)。
- *  ⚠ 本段在 TS 模板字符串里,注释中一律不许出现反引号——会当场截断 GLSL 源。 */
-float silSoft(vec2 uv, float r) {
-    if (r < 1e-4) return silAt(uv);
-    vec2 rad = r * vec2(abs(uU1 - uU0), abs(uV1 - uV0));
-    float sum = silAt(uv) * 2.0
-        + silAt(uv + vec2( rad.x, 0.0))
-        + silAt(uv + vec2(-rad.x, 0.0))
-        + silAt(uv + vec2( 0.0,  rad.y))
-        + silAt(uv + vec2( 0.0, -rad.y))
-        + silAt(uv + vec2( RING_K * rad.x,  RING_K * rad.y))
-        + silAt(uv + vec2(-RING_K * rad.x,  RING_K * rad.y))
-        + silAt(uv + vec2( RING_K * rad.x, -RING_K * rad.y))
-        + silAt(uv + vec2(-RING_K * rad.x, -RING_K * rad.y));
-    sum += 0.5 * (
-          silAt(uv + vec2( 2.0 * rad.x, 0.0))
-        + silAt(uv + vec2(-2.0 * rad.x, 0.0))
-        + silAt(uv + vec2( 0.0,  2.0 * rad.y))
-        + silAt(uv + vec2( 0.0, -2.0 * rad.y)));
-    return sum / 12.0;
-}
-
-void main(void) {
-    // 梯形反解:vWorld = foot + t·off + (s-0.5)·2·hw(t)·x̂,hw(t)=uHalfW·mix(1,uSpreadTop,t)。
-    // 底边沿世界 x̂、头端只在 x̂ 上放大,所以 t 的解与 uSpreadTop 无关(仍是 y 的一次式)。
-    float offY = abs(uShearY) < 1e-3 ? (uShearY < 0.0 ? -1e-3 : 1e-3) : uShearY;
-    float t = (vWorld.y - uFootY) / offY;
-    float halfAt = uHalfW * mix(1.0, uSpreadTop, clamp(t, 0.0, 1.0));
-    float s = ((vWorld.x - uFootX) - uShearX * t) / max(halfAt * 2.0, 1e-3) + 0.5;
-    if (t < 0.0 || t > 1.0 || s < 0.0 || s > 1.0) { discard; }
-    vec2 uv = vec2(mix(uU0, uU1, s), mix(uV0, uV1, t));
-    float sil = silSoft(uv, uPenGrow * t);
-    if (sil < 0.01) { discard; }
-    // 末端渐隐:远端本影本来就该弱下去,不渐隐就会看见清晰的头肩边(纸片感的第一来源)
-    float a = sil * uDarkness * mix(1.0, uTipAlpha, smoothstep(uTipFadeStart, 1.0, t));
-
-    // 碰撞方向阻挡:从脚底沿投射方向 march,撞到碰撞格则其后整段裁掉
-    if (uColEnabled > 0.5 && uHasGroundTex > 0.5) {
-        vec2 foot = vec2(uFootX, uFootY);
-        vec2 d = vWorld - foot;
-        bool blocked = false;
-        for (int i = 1; i <= 24; i++) {
-            if (isCollisionAt(foot + d * (float(i) / 24.0))) { blocked = true; break; }
-        }
-        if (blocked) { discard; }
-    }
-
-    // 前景遮挡 blend:落点在前景几何之后 → 像角色一样按 occlusionBlendFactor 混合
-    if (uOccEnabled > 0.5 && uHasGroundTex > 0.5) {
-        vec2 dUV = vec2(vWorld.x / uSceneSize.x, vWorld.y / uSceneSize.y);
-        if (dUV.x >= 0.0 && dUV.x <= 1.0 && dUV.y >= 0.0 && dUV.y <= 1.0) {
-            vec4 ds = texture(uDepthMap, dUV);
-            float rawD = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
-            float dRaw = uInvert > 0.5 ? 1.0 - rawD : rawD;
-            float sceneDepth = dRaw * uScale + uOffset;
-            float shadowDepth = groundDepthAt(vWorld) + uFloorOffset;
-            if (sceneDepth + uTolerance < shadowDepth) { a *= uOccBlend; }
-        }
-    }
-
-    finalColor = vec4(uShadowColor, a);
-}
-`;
-
-// ───────────────────────────── WGSL(WebGPU 路径;上面的 GLSL 一个字不动,WebGL 仍跑它)
+// ───────────────────────────── 着色器(WGSL)
 //
-// 与 GLSL 逐式对应,差别只在语言:
+// 纯平面投影:cast 单 quad,片元做碰撞方向阻挡 + 前景深度 blend;contact 单 quad 走自己的 CONTACT_FRAG_WGSL,只压暗。
+// 数值与 master 的 GLSL 版逐像素一致由 tools/render_parity 的「实体 /」用例钉住。约定:
 // - 组 0 / 1 是 Pixi 网格约定(globalUniforms / localUniforms,声明了 Pixi 才自动绑);自己的资源在组 2,
 //   变量名 = resources 的键名;uniform 结构体成员顺序 = JS 里 shadowUniforms 的声明顺序(Pixi 按声明顺序排偏移)。
-// - WGSL 纹理要单独的采样器:resources 里「纹理名 + Sampler」给该纹理自己的 style(与 WebGL 用纹理自带采样状态一致)。
+// - WGSL 纹理要单独的采样器:resources 里「纹理名 + Sampler」给该纹理自己的 style。
 // - 分支 / 循环里取样一律 textureSampleLevel(.., 0.0):WGSL 的 textureSample 只许在一致控制流里调;
-//   这几张纹理都没有 mip,与 GLSL 的 texture() 等价。
+//   这几张纹理都没有 mip。
 // - 结构体里不写注释:Pixi 用正则解析 WGSL 的结构体与 group 声明,注释里的冒号 / 花括号会被当成成员。
 
-/** 网格顶点(cast 与 contact 共用):与 GLSL VERT 同式,vWorld = 顶点即地面落点。 */
+/** 网格顶点(cast 与 contact 共用):vWorld = 顶点即地面落点(平面投影)。 */
 const VERT_WGSL = /* wgsl */ `
 struct GlobalUniforms {
     uProjectionMatrix: mat3x3<f32>,
@@ -277,7 +102,25 @@ fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) ->
 }
 `;
 
-/** cast 剪影片元(对应 GLSL FRAG)。 */
+/**
+ * cast 剪影片元。
+ *
+ * - 剪影 UV 在片元内从世界坐标反解平行四边形 / 梯形参数:vWorld = foot + t·off + (s − 0.5)·2·hw(t)·x̂,
+ *   hw(t) = uHalfW·mix(1, uSpreadTop, t)。底边沿世界 x̂、头端只在 x̂ 上放大,所以 t 的解与 uSpreadTop 无关(仍是 y 的一次式)。
+ *   曾走 aUV 顶点缓冲逐帧 update,GPU 端不生效(剪影被整张图集横扫成条纹,2026-07-22 白底渲染实证)。
+ * - 参数全用标量:vec 型 uniform 在 Mesh 路径的就地突变曾出现不同步(标量实证可靠)。uShearX / uShearY = 影子头端偏移
+ *   (世界 px);uHalfW = 底边半宽;uSpreadTop = 头端半宽 ÷ 底边半宽(1 = 平行四边形,> 1 = 梯形,点光散开);
+ *   uTipFadeStart / uTipAlpha = 末端渐隐起点(t)/ t = 1 处的浓度系数;uPenGrow = 头端半影半径(占剪影帧尺寸比例,脚端恒 0);
+ *   uU0 / uV0 = 帧的脚(底)、uU1 / uV1 = 头(顶);uShadowColor = 全局阴影颜色(缺省纯黑)。
+ * - 地面深度逐像素取行走面场(uGroundD,RG16,d = min + (r·256 + g)/65535·(max − min),与角色遮挡同一份):影子落在地上,
+ *   其深度必须与角色脚点同源——线性 floor 模型会产生系统性标定偏移(2026-06-17 在 deferred 上踩过一次,2026-07-23 又在
+ *   planar 与碰撞反投影上各踩一次),那条拟合直线已彻底废除。uHasGroundTex = 0(无场)⇒ 不做地面遮挡 / 碰撞裁切。
+ * - 取剪影 alpha **必须 clamp 在当前帧框内**:越界会采到图集里相邻的帧(2026-07-22「整张图集横扫成条纹」的复发路径)。
+ * - 变半径半影:半径给的是**帧内比例**,按帧跨度换成 uv,于是拉长方向糊得多、横向糊得少——正是长影子该有的样子;r = 0 直接短路。
+ * - 末端渐隐:远端本影本来就该弱下去,不渐隐就会看见清晰的头肩边(纸片感的第一来源)。
+ * - 碰撞方向阻挡:从脚底沿投射方向 march,撞到碰撞格则其后整段裁掉;前景遮挡:落点在前景几何之后 ⇒ 像角色一样按
+ *   occlusionBlendFactor(uOccBlend)混合。
+ */
 export const FRAG_WGSL = /* wgsl */ `
 struct ShadowUniforms {
     uDarkness: f32,
@@ -335,7 +178,7 @@ struct ShadowUniforms {
 @group(2) @binding(7) var uGroundD: texture_2d<f32>;
 @group(2) @binding(8) var uGroundDSampler: sampler;
 
-// 地面深度:逐像素取行走面场(与 GLSL groundDepthAt 同式)
+// 地面深度:逐像素取行走面场(与角色脚点同源,见 FRAG_WGSL 头注释)
 fn groundDepthAt(wp: vec2<f32>) -> f32 {
     let u = shadowUniforms;
     let uv = vec2<f32>(wp.x / max(u.uSceneSize.x, 1e-3), wp.y / max(u.uSceneSize.y, 1e-3));
@@ -369,7 +212,7 @@ fn silAt(uv: vec2<f32>) -> f32 {
 
 const RING_K: f32 = 0.7071;
 
-// 变半径半影:内圈 8 抽(权 1)+ 外圈 4 抽(权 .5)+ 中心(权 2),权和 12(与 GLSL silSoft 同序同权)
+// 变半径半影:内圈 8 抽(权 1)+ 外圈 4 抽(权 .5)+ 中心(权 2),权和 12(与 master 的 GLSL 版同序同权)
 fn silSoft(uv: vec2<f32>, r: f32) -> f32 {
     if (r < 1e-4) { return silAt(uv); }
     let u = shadowUniforms;
@@ -394,7 +237,7 @@ fn silSoft(uv: vec2<f32>, r: f32) -> f32 {
 @fragment
 fn mainFragment(@location(0) vWorld: vec2<f32>) -> @location(0) vec4<f32> {
     let u = shadowUniforms;
-    // 梯形反解(见 GLSL 注释):t 是 y 的一次式,与 uSpreadTop 无关
+    // 梯形反解(见 FRAG_WGSL 头注释):t 是 y 的一次式,与 uSpreadTop 无关
     var offY = u.uShearY;
     if (abs(u.uShearY) < 1e-3) {
         if (u.uShearY < 0.0) { offY = -1e-3; } else { offY = 1e-3; }
@@ -466,240 +309,20 @@ function f32(value: number) {
  *
  * 作者面与缺省见 contactAo.ts(制作人 2026-09-24:勾接触 AO 默认简单 AO,勾方向 AO 才启用方向部分,参数都可调)。
  *
- * ⚠ 本段注释在 TS 模板字符串之外;GLSL 源里不许出现反引号,不用数组构造式(WebGL1 转译)。
- */
-export const CONTACT_FRAG = /* glsl */ `
-in vec2 vWorld;
-out vec4 finalColor;
-
-uniform float uDarkness;       // 明暗(作者参数,缺省跟随场景 shadow.contact)
-uniform vec3  uShadowColor;
-uniform float uFootX;          // 脚点(场景 px)
-uniform float uFootY;
-uniform float uAxisOffX;       // 贴地那一截中心相对脚点的横向偏移(场景 px)
-uniform float uRadiusWu;       // 胶囊半径(wu)
-uniform float uHeightWu;       // 胶囊高(wu)
-uniform float uNearField;      // 无方向部分的遮挡高度占身高的比例
-uniform float uConeK;          // 有方向部分的锥形软度
-uniform float uDirReach;       // 有方向部分沿影子方向的淡出长度(占身高)
-uniform float uDirWeight;      // 有方向部分的权重
-// 有方向部分的几路光(contactAoSources.ts,最多 4 路;全用标量,见 cast 那段注释)。
-// P=1:X/Y/Z 是灯位(M-world wu),逐像素朝它;P=0:X/Y/Z 是指向光的单位向量。W = 这一路占地面照度的比例,0 = 不算。
-uniform float uS0X; uniform float uS0Y; uniform float uS0Z; uniform float uS0W; uniform float uS0P;
-uniform float uS1X; uniform float uS1Y; uniform float uS1Z; uniform float uS1W; uniform float uS1P;
-uniform float uS2X; uniform float uS2Y; uniform float uS2Z; uniform float uS2W; uniform float uS2P;
-uniform float uS3X; uniform float uS3Y; uniform float uS3Z; uniform float uS3W; uniform float uS3P;
-uniform sampler2D uDepthMap;   // 场景深度(与 cast 的前景遮挡同一份)
-uniform float uInvert;
-uniform float uScale;
-uniform float uOffset;
-uniform float uFloorOffset;
-uniform float uTolerance;
-uniform float uHasDepth;       // 有场景深度 + 行走面场才做"这像素看到的是不是地面"的判断
-uniform float uGroundFeather;  // 上面那个判断的渐变宽度(深度 q 单位)
-uniform float uWuPerQ;         // 1 个 q 单位 = 多少 wu
-uniform sampler2D uGroundD;    // 行走面深度场(与 cast / 角色遮挡同一份)
-uniform float uGroundMin;
-uniform float uGroundMax;
-uniform float uGroundW;        // 行走面深度场纹理尺寸(纹素),手写双线性用
-uniform float uGroundH;
-uniform float uHasGroundTex;
-uniform vec2  uSceneSize;
-uniform float uW2pX;
-uniform float uW2pY;
-uniform float uM_ppu;
-uniform float uM_cx;
-uniform float uM_cy;
-uniform float uM_R00; uniform float uM_R01; uniform float uM_R02;
-uniform float uM_R10; uniform float uM_R11; uniform float uM_R12;
-uniform float uM_R20; uniform float uM_R21; uniform float uM_R22;
-
-const float PI = 3.14159265;
-
-/** 行走面深度场第 (i, j) 个纹素(RG16 打包,解码到 0..1)。nearest 纹理在纹素中心取 = 取到这个纹素本身。 */
-float groundTexel(float i, float j) {
-    vec2 sz = vec2(max(uGroundW, 1.0), max(uGroundH, 1.0));
-    vec4 g = texture(uGroundD, (clamp(vec2(i, j), vec2(0.0), sz - 1.0) + 0.5) / sz);
-    return (g.r * 255.0 * 256.0 + g.g * 255.0) / 65535.0;
-}
-
-/**
- * 行走面深度场在场景 px 处的深度(q.z)。**手写双线性**,与 CPU 的 sampleGroundField 同口径
- * (纹素 i 在 work px = i 处)。打包值不能交给硬件插值(高低字节分开插 = 错值),纹理只能 nearest;
- * 直接 nearest 取,地面点按约 10 屏幕 px 一级阶梯还原,胶囊 AO 在脚下画出方块硬边(2026-09-24 真机)。
- * ⚠ 本 shader 按 WebGL1 兼容编译(源里没有 ES3 版本声明):texelFetch / textureSize / ivec 的 clamp 都不能用,
- *   用了就整段编译失败、接触 AO 一点都不画、且不报 TS 错(2026-09-24 真机踩过)。纹理尺寸走 uniform。
- *   连注释里也别写那句版本声明的原文:Pixi 在整段源码里找那串字(注释也算)决定按哪个版本编。
- */
-float groundDepthAt(vec2 wp) {
-    vec2 uv = clamp(vec2(wp.x / max(uSceneSize.x, 1e-3), wp.y / max(uSceneSize.y, 1e-3)), 0.0, 1.0);
-    vec2 sz = vec2(max(uGroundW, 1.0), max(uGroundH, 1.0));
-    vec2 t = clamp(uv * sz, vec2(0.0), sz - 1.001);
-    vec2 i0 = floor(t);
-    vec2 f = t - i0;
-    float a = mix(groundTexel(i0.x, i0.y), groundTexel(i0.x + 1.0, i0.y), f.x);
-    float b = mix(groundTexel(i0.x, i0.y + 1.0), groundTexel(i0.x + 1.0, i0.y + 1.0), f.x);
-    return uGroundMin + mix(a, b, f.y) * (uGroundMax - uGroundMin);
-}
-
-/** 场景 px → 该处地面的 M-world 坐标(wu)。有行走面深度场取它;没有就按世界 y=0 的平地解深度。 */
-vec3 groundWorldWu(vec2 wp) {
-    float px = (wp.x * uW2pX - uM_cx) / uM_ppu;
-    float py = (uM_cy - wp.y * uW2pY) / uM_ppu;
-    float d;
-    if (uHasGroundTex > 0.5) {
-        d = groundDepthAt(wp);
-    } else {
-        float r12 = abs(uM_R12) > 1e-6 ? uM_R12 : 1e-6;
-        d = -(uM_R10 * px + uM_R11 * py) / r12;
-    }
-    vec3 w = vec3(uM_R00 * px + uM_R01 * py + uM_R02 * d,
-                  uM_R10 * px + uM_R11 * py + uM_R12 * d,
-                  uM_R20 * px + uM_R21 * py + uM_R22 * d);
-    return w * uWuPerQ;
-}
-
-/**
- * 无方向部分:竖直胶囊(轴在地面点水平距离 x 处,半径 r,底端球心高 r、顶端球心高 top)对地面点的
- * 余弦加权遮蔽 (1/π)∫cos(天顶角)dω。按方位角切成竖直半平面:每个半平面里胶囊的截面是一个 2D 胶囊
- * (两个圆 + 中间竖条,半宽 w = sqrt(r² − p²),p = 这个方位离轴的垂距,圆心在 m = x·cos 方位处、高 r 与 top),
- * 截面是凸的,从地面点看被挡的仰角是一整段 [lo, hi](lo 贴底圆下切线,hi 贴顶圆上切线;竖条跨过头顶时 hi = 90°),
- * 余弦加权就是 (sin²hi − sin²lo)/2;再对方位角中点求积。x > r 时只有 |方位| < asin(r/x) 挨得着,x ≤ r 时整圈。
- * 8 片与蒙特卡洛精确积分差 < 0.006(x=0 → 1、x=r → 0.354、x=2r → 0.149);编辑器预览
- * light_env_visual._omni 同式,对账测试钉着这几个值。
- */
-const int OMNI_SLICES = 8;
-float capsuleOmni(float x, float r, float top) {
-    float pm = x > r ? asin(r / x) : PI;
-    float dphi = 2.0 * pm / float(OMNI_SLICES);
-    float acc = 0.0;
-    for (int i = 0; i < OMNI_SLICES; i++) {
-        float phi = -pm + (float(i) + 0.5) * dphi;
-        float m = x * cos(phi);
-        float p = x * sin(phi);
-        float w2 = r * r - p * p;
-        if (w2 > 0.0) {
-            float w = sqrt(w2);
-            float lo = max(0.0, atan(r, m) - asin(min(1.0, w / length(vec2(m, r)))));
-            float hi = m - w <= 0.0 ? 0.5 * PI : min(0.5 * PI, atan(top, m) + asin(min(1.0, w / length(vec2(m, top)))));
-            if (hi > lo) {
-                float sh = sin(hi);
-                float sl = sin(lo);
-                acc += 0.5 * (sh * sh - sl * sl);
-            }
-        }
-    }
-    return acc * dphi / PI;
-}
-
-/**
- * 射线 ro + rd·t 上 t 处这一点对胶囊(线段 ca→ca+ba,半径 r)的锥形软遮挡 0..1,含沿射线的淡出。
- * 这一点离胶囊表面 d、离地面点 t:d/t 就是它偏离光锥中心线的角度(k = 0.5/tan 锥角)。
- */
-float capsuleOccAt(vec3 ro, vec3 rd, vec3 ca, vec3 ba, float baba, float r, float k, float reach, float t) {
-    t = max(t, 1e-4);
-    vec3 q = ro + rd * t;
-    float h = clamp(dot(q - ca, ba) / baba, 0.0, 1.0);
-    float d = length(q - ca - ba * h) - r;
-    float s = clamp(k * d / t + 0.5, 0.0, 1.0);
-    float f = t / reach;
-    return (1.0 - s * s * (3.0 - 2.0 * s)) * exp(-f * f);
-}
-
-/**
- * 胶囊锥形软阴影(方向部分)= 射线上几个样本点的遮挡取最大(每个都是真实的一点,只会逼近真值、不会多算)。
- * 1. 射线与胶囊轴两直线的最近点:影子主体由它给,轴上最近点落在线段内时与原 Quilez 胶囊软阴影同值。
- *    光与轴近乎平行时这一解病态,跳过。
- * 2. 射线正对胶囊底、腰、顶的三点:光近乎头顶时,锥形半影其实由胶囊顶给(遮挡角 ≈ 离轴距离 / 身高);
- *    只算第 1 点时只有恰好在顶部高度掠过的一条窄带拿得到半影,脚下画出一条横线
- *    (2026-09-24 真机:仰角 84°~89° 时一条宽几 px、长约一个身高的暗线)。
- */
-float capsuleDirOcc(vec3 ro, vec3 rd, vec3 ca, vec3 cb, float r, float k, float reach) {
-    vec3 ba = cb - ca;
-    float baba = max(dot(ba, ba), 1e-6);
-    float dba = dot(rd, ba);
-    float den = baba - dba * dba;
-    float occ = 0.0;
-    if (den > 1e-4 * baba) {
-        vec3 oa = ro - ca;
-        float t0 = (-dot(oa, rd) * baba + dba * dot(oa, ba)) / den;
-        occ = capsuleOccAt(ro, rd, ca, ba, baba, r, k, reach, t0);
-    }
-    occ = max(occ, capsuleOccAt(ro, rd, ca, ba, baba, r, k, reach, dot(ca - ro, rd)));
-    occ = max(occ, capsuleOccAt(ro, rd, ca, ba, baba, r, k, reach, dot(ca + 0.5 * ba - ro, rd)));
-    occ = max(occ, capsuleOccAt(ro, rd, ca, ba, baba, r, k, reach, dot(cb - ro, rd)));
-    return occ;
-}
-
-const float MIN_EL = ${((CONTACT_AO_MIN_ELEVATION_DEG * Math.PI) / 180).toFixed(6)};
-
-/** 指向光的向量 → 单位向量,仰角只钳下限(与 contactAoSources.clampAoElevation 同式,正上方原样)。 */
-vec3 aoLightDir(vec3 v) {
-    float hn = length(v.xz);
-    if (hn < 1e-6) return vec3(0.0, 1.0, 0.0);
-    float el = max(MIN_EL, atan(v.y, hn));
-    return vec3(v.x / hn * cos(el), sin(el), v.z / hn * cos(el));
-}
-
-/** 一路光对地面点 P 的方向遮挡:灯位型逐像素朝灯(站在灯下走过去影子逐像素跟着转),方向型用定向。 */
-float sourceOcc(vec3 P, float sx, float sy, float sz, float isPoint, vec3 ca, vec3 cb, float reach) {
-    vec3 v = isPoint > 0.5 ? vec3(sx, sy, sz) - P : vec3(sx, sy, sz);
-    return capsuleDirOcc(P, aoLightDir(v), ca, cb, uRadiusWu, uConeK, reach);
-}
-
-void main(void) {
-    // 这个像素看到的不是地面(墙、桶、屋顶挡在该处地面点前面)⇒ 地上的 AO 被挡住,淡掉。
-    // 判据与 cast 的前景遮挡同一个(场景深度 vs 行走面深度,留容差,见 entity-lighting「深度自比较」);
-    // 从容差开始、再近 uGroundFeather 才完全不画——一刀切在深度图画宽了的细遮挡物(灯杆)旁挖一圈硬边。
-    // 2026-09-24 实测:不判的话队伍身后的木桶、墙面、前景瓦面都被压暗。
-    float onGround = 1.0;
-    if (uHasDepth > 0.5) {
-        vec2 dUV = vec2(vWorld.x / max(uSceneSize.x, 1e-3), vWorld.y / max(uSceneSize.y, 1e-3));
-        if (dUV.x >= 0.0 && dUV.x <= 1.0 && dUV.y >= 0.0 && dUV.y <= 1.0) {
-            vec4 ds = texture(uDepthMap, dUV);
-            float rawD = (ds.r * 255.0 * 256.0 + ds.g * 255.0) / 65535.0;
-            float dRaw = uInvert > 0.5 ? 1.0 - rawD : rawD;
-            float sceneDepth = dRaw * uScale + uOffset;
-            float nearer = groundDepthAt(vWorld) + uFloorOffset - sceneDepth;   // >0:场景比地面近
-            onGround = 1.0 - smoothstep(uTolerance, uTolerance + max(uGroundFeather, 1e-4), nearer);
-            if (onGround < 0.003) { discard; }
-        }
-    }
-
-    vec3 P = groundWorldWu(vWorld);
-    vec3 F = groundWorldWu(vec2(uFootX + uAxisOffX, uFootY));
-    vec3 away = normalize(vec3(uM_R01, 0.0, uM_R21));   // 地面上"远离镜头"的水平方向
-    vec3 base = F + away * uRadiusWu;
-
-    float x = length(P.xz - base.xz);
-    float he = uHeightWu * uNearField;
-    float omni = capsuleOmni(x, uRadiusWu, max(he, uRadiusWu));
-
-    // 有方向部分:每一路光各投各的胶囊软影,按它占地面照度的比例加权(权重和 ≤ 1)
-    float dirOcc = 0.0;
-    if (uS0W + uS1W + uS2W + uS3W > 0.0) {
-        vec3 ca = base + vec3(0.0, uRadiusWu, 0.0);
-        vec3 cb = base + vec3(0.0, max(uHeightWu - uRadiusWu, uRadiusWu * 1.01), 0.0);
-        float reach = max(uHeightWu * uDirReach, 1e-3);
-        if (uS0W > 0.0) dirOcc += uS0W * sourceOcc(P, uS0X, uS0Y, uS0Z, uS0P, ca, cb, reach);
-        if (uS1W > 0.0) dirOcc += uS1W * sourceOcc(P, uS1X, uS1Y, uS1Z, uS1P, ca, cb, reach);
-        if (uS2W > 0.0) dirOcc += uS2W * sourceOcc(P, uS2X, uS2Y, uS2Z, uS2P, ca, cb, reach);
-        if (uS3W > 0.0) dirOcc += uS3W * sourceOcc(P, uS3X, uS3Y, uS3Z, uS3P, ca, cb, reach);
-        dirOcc *= uDirWeight;
-    }
-
-    float alpha = onGround * uDarkness * (1.0 - (1.0 - omni) * (1.0 - dirOcc));
-    if (alpha < 0.003) { discard; }
-    finalColor = vec4(uShadowColor, alpha);
-}
-`;
-
-/**
- * 接触阴影(胶囊 AO)片元的 WGSL 版,与 CONTACT_FRAG 逐式对应(推导与取舍见它的头注释)。
- * GLSL 那边受 WebGL1 兼容头所限不能用 texelFetch,这里为了与它逐像素一致,行走面纹素仍按
- * 「纹素中心 + 纹理自带采样器」取(nearest 纹理在中心取 = 取到这个纹素本身),尺寸仍走 uniform。
- * 两份都导出给孪生守门(EntityShadowContactTwin.test.ts):逐函数比数值字面量,并把 capsuleOmni
- * 两边各转成 JS 求值、对蒙特卡洛精确积分的钉值。
+ * uniform:uDarkness = 明暗(作者参数,缺省跟随场景 shadow.contact);uFootX / uFootY = 脚点(场景 px);
+ * uAxisOffX = 贴地那一截中心相对脚点的横向偏移(场景 px);uRadiusWu / uHeightWu = 胶囊半径 / 高(wu);
+ * uNearField = 无方向部分的遮挡高度占身高的比例;uConeK = 有方向部分的锥形软度;uDirReach = 有方向部分沿影子方向的
+ * 淡出长度(占身高);uDirWeight = 有方向部分的权重。几路光 uSkX / uSkY / uSkZ / uSkW / uSkP(k = 0..3,
+ * contactAoSources.ts,全用标量,见 cast 那段):P = 1 时 X/Y/Z 是灯位(M-world wu),逐像素朝它;P = 0 时 X/Y/Z 是
+ * 指向光的单位向量;W = 这一路占地面照度的比例,0 = 不算。uHasDepth = 有场景深度 + 行走面场才做"这像素看到的是不是
+ * 地面"的判断,uGroundFeather = 那个判断的渐变宽度(深度 q 单位);uWuPerQ = 1 个 q 单位 = 多少 wu;
+ * uGroundW / uGroundH = 行走面深度场纹理尺寸(纹素,手写双线性用)。
+ *
+ * 行走面纹素按「纹素中心 + 纹理自带采样器」取(nearest 纹理在中心取 = 取到这个纹素本身),尺寸走 uniform——与 master 的
+ * GLSL 版逐像素一致(那边受 WebGL1 兼容头所限不能用 texelFetch)。capsuleOmni 由 EntityShadowContactAo.test.ts 转成 JS 求值、
+ * 对蒙特卡洛精确积分的钉值。
+ *
+ * ⚠ 模板字符串里不许出现反引号。
  */
 export const CONTACT_FRAG_WGSL = /* wgsl */ `
 struct ContactUniforms {
@@ -780,7 +403,9 @@ fn groundTexel(i: f32, j: f32) -> f32 {
     return (g.r * 255.0 * 256.0 + g.g * 255.0) / 65535.0;
 }
 
-// 行走面深度场在场景 px 处的深度(q.z),手写双线性(与 CPU sampleGroundField 同口径)
+// 行走面深度场在场景 px 处的深度(q.z),手写双线性(与 CPU sampleGroundField 同口径:纹素 i 在 work px = i 处)。
+// 打包值不能交给硬件插值(高低字节分开插 = 错值),纹理只能 nearest;直接 nearest 取,地面点按约 10 屏幕 px
+// 一级阶梯还原,胶囊 AO 在脚下画出方块硬边(2026-09-24 真机)
 fn groundDepthAt(wp: vec2<f32>) -> f32 {
     let u = shadowUniforms;
     let uv = clamp(vec2<f32>(wp.x / max(u.uSceneSize.x, 1e-3), wp.y / max(u.uSceneSize.y, 1e-3)), vec2<f32>(0.0), vec2<f32>(1.0));
@@ -812,9 +437,15 @@ fn groundWorldWu(wp: vec2<f32>) -> vec3<f32> {
     return w * u.uWuPerQ;
 }
 
-// 无方向部分:竖直胶囊(半径 r、底端球心高 r、顶端球心高 top)对地面点的余弦加权遮蔽,按方位角切片求积
-// (推导与蒙特卡洛对账值见 GLSL 版 capsuleOmni 的注释)。GLSL 的两处三元式在这里写成 if / else:
-// WGSL 的 select 两边都求值,x 不大于 r 时 asin(r / x) 在定义域外;分支写法与 GLSL 的短路逐式相同,字面量先后也不变
+// 无方向部分:竖直胶囊(轴在地面点水平距离 x 处,半径 r,底端球心高 r、顶端球心高 top)对地面点的
+// 余弦加权遮蔽 (1/π)∫cos(天顶角)dω。按方位角切成竖直半平面:每个半平面里胶囊的截面是一个 2D 胶囊
+// (两个圆 + 中间竖条,半宽 w = sqrt(r² − p²),p = 这个方位离轴的垂距,圆心在 m = x·cos 方位处、高 r 与 top),
+// 截面是凸的,从地面点看被挡的仰角是一整段 [lo, hi](lo 贴底圆下切线,hi 贴顶圆上切线;竖条跨过头顶时 hi = 90°),
+// 余弦加权就是 (sin²hi − sin²lo)/2;再对方位角中点求积。x > r 时只有 |方位| < asin(r/x) 挨得着,x ≤ r 时整圈。
+// 8 片与蒙特卡洛精确积分差 < 0.006(x=0 → 1、x=r → 0.354、x=2r → 0.149);编辑器预览
+// light_env_visual._omni 同式,对账测试钉着这几个值。
+// 两处分支写成 if / else 而不是 select:select 两边都求值,x 不大于 r 时 asin(r / x) 在定义域外
+// (与 master 的 GLSL 版三元式短路逐式相同,字面量先后也不变)
 const OMNI_SLICES: i32 = 8;
 fn capsuleOmni(x: f32, r: f32, top: f32) -> f32 {
     var pm: f32;
@@ -841,7 +472,8 @@ fn capsuleOmni(x: f32, r: f32, top: f32) -> f32 {
     return acc * dphi / PI;
 }
 
-// 射线 ro + rd * t 上 t 处这一点对胶囊的锥形软遮挡 0..1,含沿射线的淡出
+// 射线 ro + rd * t 上 t 处这一点对胶囊(线段 ca 到 ca + ba,半径 r)的锥形软遮挡 0..1,含沿射线的淡出。
+// 这一点离胶囊表面 d、离地面点 t:d / t 就是它偏离光锥中心线的角度(k = 0.5 / tan 锥角)
 fn capsuleOccAt(ro: vec3<f32>, rd: vec3<f32>, ca: vec3<f32>, ba: vec3<f32>, baba: f32, r: f32, k: f32, reach: f32, t0: f32) -> f32 {
     let t = max(t0, 1e-4);
     let q = ro + rd * t;
@@ -852,7 +484,12 @@ fn capsuleOccAt(ro: vec3<f32>, rd: vec3<f32>, ca: vec3<f32>, ba: vec3<f32>, baba
     return (1.0 - s * s * (3.0 - 2.0 * s)) * exp(-f * f);
 }
 
-// 胶囊锥形软阴影(方向部分)= 两直线最近点 + 正对胶囊底 / 腰 / 顶三点,遮挡取最大
+// 胶囊锥形软阴影(方向部分)= 射线上几个样本点的遮挡取最大(每个都是真实的一点,只会逼近真值、不会多算):
+// 1. 射线与胶囊轴两直线的最近点:影子主体由它给,轴上最近点落在线段内时与原 Quilez 胶囊软阴影同值;
+//    光与轴近乎平行时这一解病态,跳过。
+// 2. 射线正对胶囊底、腰、顶的三点:光近乎头顶时,锥形半影其实由胶囊顶给(遮挡角约为 离轴距离 / 身高);
+//    只算第 1 点时只有恰好在顶部高度掠过的一条窄带拿得到半影,脚下画出一条横线
+//    (2026-09-24 真机:仰角 84° 到 89° 时一条宽几 px、长约一个身高的暗线)
 fn capsuleDirOcc(ro: vec3<f32>, rd: vec3<f32>, ca: vec3<f32>, cb: vec3<f32>, r: f32, k: f32, reach: f32) -> f32 {
     let ba = cb - ca;
     let baba = max(dot(ba, ba), 1e-6);
@@ -880,7 +517,7 @@ fn aoLightDir(v: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(v.x / hn * cos(el), sin(el), v.z / hn * cos(el));
 }
 
-// 一路光对地面点 P 的方向遮挡:灯位型逐像素朝灯,方向型用定向
+// 一路光对地面点 P 的方向遮挡:灯位型逐像素朝灯(站在灯下走过去影子逐像素跟着转),方向型用定向
 fn sourceOcc(P: vec3<f32>, sx: f32, sy: f32, sz: f32, isPoint: f32, ca: vec3<f32>, cb: vec3<f32>, reach: f32) -> f32 {
     let u = shadowUniforms;
     var v = vec3<f32>(sx, sy, sz);
@@ -891,7 +528,10 @@ fn sourceOcc(P: vec3<f32>, sx: f32, sy: f32, sz: f32, isPoint: f32, ca: vec3<f32
 @fragment
 fn mainFragment(@location(0) vWorld: vec2<f32>) -> @location(0) vec4<f32> {
     let u = shadowUniforms;
-    // 这个像素看到的不是地面(墙、桶、屋顶挡在该处地面点前面)就淡掉(判据见 GLSL 版注释)
+    // 这个像素看到的不是地面(墙、桶、屋顶挡在该处地面点前面)就说明地上的 AO 被挡住,淡掉。
+    // 判据与 cast 的前景遮挡同一个(场景深度 vs 行走面深度,留容差,见 entity-lighting「深度自比较」);
+    // 从容差开始、再近 uGroundFeather 才完全不画——一刀切在深度图画宽了的细遮挡物(灯杆)旁挖一圈硬边。
+    // 2026-09-24 实测:不判的话队伍身后的木桶、墙面、前景瓦面都被压暗
     var onGround = 1.0;
     if (u.uHasDepth > 0.5) {
         let dUV = vec2<f32>(vWorld.x / max(u.uSceneSize.x, 1e-3), vWorld.y / max(u.uSceneSize.y, 1e-3));
@@ -935,7 +575,7 @@ fn mainFragment(@location(0) vWorld: vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
-/** 方向 AO 几路光的 uniform 名（uS0X … uS3P），与 CONTACT_FRAG 同序。 */
+/** 方向 AO 几路光的 uniform 名（uS0X … uS3P），与 CONTACT_FRAG_WGSL 的 ContactUniforms 同序。 */
 const SOURCE_KEYS = Array.from({ length: MAX_CONTACT_AO_SOURCES }, (_, i) =>
   (['X', 'Y', 'Z', 'W', 'P'] as const).map((c) => `uS${i}${c}`));
 
@@ -958,7 +598,6 @@ function makeContactShader(ctx: ShadowSceneContext | null): Shader {
   const groundSrc = ctx?.groundTexture ?? Texture.WHITE.source;
   const depthSrc = ctx?.depthTexture?.source ?? Texture.WHITE.source;
   return Shader.from({
-    gl: { vertex: VERT, fragment: CONTACT_FRAG },
     gpu: gpuProgramOf(CONTACT_FRAG_WGSL),
     resources: {
       // 组名与 cast 相同:setU / setShadowColor 按这个名字找
@@ -1000,7 +639,7 @@ function makeContactShader(ctx: ShadowSceneContext | null): Shader {
         uM_R20: f32(ctx?.r20 ?? 0), uM_R21: f32(ctx?.r21 ?? 0), uM_R22: f32(ctx?.r22 ?? 1),
       },
       uGroundD: groundSrc,
-      // WGSL 的采样器(「纹理名 + Sampler」):用纹理自己的 style,与 WebGL 用纹理自带采样状态一致;WebGL 不认这些键
+      // WGSL 的采样器(「纹理名 + Sampler」):用纹理自己的 style
       uGroundDSampler: samplerOf(groundSrc),
       uDepthMap: depthSrc,
       uDepthMapSampler: samplerOf(depthSrc),
@@ -1015,7 +654,6 @@ function makePlanarShader(ctx: ShadowSceneContext | null, texSource: TextureSour
   const colSrc = ctx?.collisionTexture?.source ?? Texture.WHITE.source;
   const groundSrc = ctx?.groundTexture ?? Texture.WHITE.source;
   return Shader.from({
-    gl: { vertex: VERT, fragment: FRAG },
     gpu: gpuProgramOf(FRAG_WGSL),
     resources: {
       shadowUniforms: {
@@ -1115,7 +753,7 @@ export class PlanarEntityShadow implements IEntityShadow {
     this.contactPositions = new Float32Array(8);
     const contactUVs = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
     this.contactGeometry = new MeshGeometry({ positions: this.contactPositions, uvs: contactUVs, indices: quadIdx() });
-    // 接触阴影 = 胶囊 AO(见 CONTACT_FRAG):不读剪影贴图,胶囊半径由 bodyFootprintOf 在 CPU 上按角色(站立片段)算好;不做碰撞/遮挡
+    // 接触阴影 = 胶囊 AO(见 CONTACT_FRAG_WGSL):不读剪影贴图,胶囊半径由 bodyFootprintOf 在 CPU 上按角色(站立片段)算好;不做碰撞/遮挡
     this.contactShader = makeContactShader(this.ctx);
     this.contactMesh = new Mesh({ geometry: this.contactGeometry, shader: this.contactShader, texture: Texture.WHITE }) as Mesh;
     this.contactMesh.visible = false;
@@ -1146,7 +784,7 @@ export class PlanarEntityShadow implements IEntityShadow {
     const source = tex.source;
     if (source !== this.boundSource) {
       (this.castShader.resources as Record<string, unknown>)['uTexture'] = source;
-      // WebGPU 的采样器是独立资源,跟着换成这张图集自己的 style(WebGL 忽略这个键)
+      // WebGPU 的采样器是独立资源,跟着换成这张图集自己的 style
       (this.castShader.resources as Record<string, unknown>)['uTextureSampler'] = samplerOf(source);
       this.castMesh.texture = tex;
       this.boundSource = source;
@@ -1223,7 +861,7 @@ export class PlanarEntityShadow implements IEntityShadow {
   }
 
   /**
-   * 胶囊 AO 这一帧的几何与 uniform(见 CONTACT_FRAG)。返回 contactMesh 该不该可见。
+   * 胶囊 AO 这一帧的几何与 uniform(见 CONTACT_FRAG_WGSL)。返回 contactMesh 该不该可见。
    *
    * 尺度全部换到 M-world wu(铁律 0):贴地那一截半宽 → 胶囊半径,帧高 → 胶囊高。
    * quad 只是个覆盖范围:无方向部分到 2×近场高 + 半径就不到 1%;有方向部分沿影子方向再伸出去。

@@ -526,7 +526,7 @@ function smoothstep(e0: number, e1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/** 边缘遮罩：离边 `edge`（0..1）过软度 smoothstep。GLSL 同式（`bmEdgeMask`）。 */
+/** 边缘遮罩：离边 `edge`（0..1）过软度 smoothstep。着色器同式（`vfxBeamWgsl.ts` 的 `bmEdgeMask`）。 */
 export function beamEdgeMask(edge: number, softness: number): number {
   if (edge < 0) return 0;
   return softness > 1e-4 ? smoothstep(0, softness, edge) : 1;
@@ -557,7 +557,7 @@ export function beamPulseFactor(p: VfxBeamPulseDef | undefined, time: number, se
   return 1 - a * n;
 }
 
-/** 沿长度的颜色（sRGB，起止线性插值）；GLSL 同式。 */
+/** 沿长度的颜色（sRGB，起止线性插值）；着色器同式。 */
 export function beamColorAt(look: VfxBeamLook, t01: number, out: [number, number, number]): [number, number, number] {
   const k = Math.max(0, Math.min(1, t01));
   for (let c = 0; c < 3; c++) out[c] = look.color[c] + (look.colorEnd[c] - look.color[c]) * k;

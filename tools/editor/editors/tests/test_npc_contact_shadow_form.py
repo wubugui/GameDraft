@@ -308,7 +308,7 @@ class TestDefaultsParity:
         assert ry1 == pytest.approx(rx1 * 0.5 ** 0.5, rel=1e-6)
 
     def test_预览那一圈与运行时公式同值(self) -> None:
-        """半轴处的无方向浓度应正好落在 1/10(与 CONTACT_FRAG 的 capsuleOmni 同式)。"""
+        """半轴处的无方向浓度应正好落在 1/10(与运行时 CONTACT_FRAG_WGSL 的 capsuleOmni 同式)。"""
         import math
         from tools.editor.shared import light_env_visual as lev
         rx, _ = lev.contact_preview_axes(150.0, 1.0)

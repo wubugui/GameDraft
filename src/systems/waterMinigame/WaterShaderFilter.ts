@@ -1,94 +1,9 @@
-import { Filter, GlProgram, GpuProgram, Texture } from '../../engine2d';
+import { Filter, GpuProgram, Texture } from '../../engine2d';
 import { samplerOf } from '../../rendering/legacy/gpuSampler';
 
-const VERT = /* glsl */ `
-in vec2 aPosition;
-out vec2 vTextureCoord;
-
-uniform vec4 uInputSize;
-uniform vec4 uOutputFrame;
-uniform vec4 uOutputTexture;
-
-vec4 filterVertexPosition(void) {
-    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
-    position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
-    return vec4(position, 0.0, 1.0);
-}
-
-vec2 filterTextureCoord(void) {
-    return aPosition * (uOutputFrame.zw * uInputSize.zw);
-}
-
-void main(void) {
-    gl_Position = filterVertexPosition();
-    vTextureCoord = filterTextureCoord();
-}
-`;
-
-const FRAG = /* glsl */ `
-in vec2 vTextureCoord;
-out vec4 finalColor;
-
-uniform sampler2D uTexture;
-uniform sampler2D uNormalMap;
-uniform sampler2D uParams;
-
-uniform float uTime;
-uniform float uMurk;
-uniform float uDarkness;
-uniform float uRain;
-uniform vec3 uSigma;
-uniform float uMinAlpha;
-uniform float uUseNormalMap;
-/** 水域水底光学系数（>=0）：背景与物体像素路径均为 coefficient ×（垂直项或 RT.R），不设人为上限 */
-uniform float uWaterBottomDepth;
-
-void main(void) {
-    vec2 uv = vTextureCoord;
-
-    vec2 ripple = vec2(
-        sin(uv.x * 48.0 + uTime * 1.7) * cos(uv.y * 31.0 - uTime * 1.1),
-        cos(uv.y * 44.0 + uTime * 1.4) * sin(uv.x * 29.0 + uTime * 0.9)
-    ) * 0.012 * (0.35 + uMurk);
-
-    if (uUseNormalMap > 0.5) {
-        vec3 n = texture(uNormalMap, uv * 2.5 + uTime * 0.03).rgb * 2.0 - 1.0;
-        ripple += n.xy * 0.018;
-    }
-
-    vec2 suv = clamp(uv + ripple, vec2(0.001), vec2(0.999));
-    vec4 col = texture(uTexture, suv);
-
-    vec4 pm = texture(uParams, suv);
-    float pMask = step(0.5, pm.b) * pm.a;
-    float bgOpticalPath = max(uWaterBottomDepth * suv.y, 0.0001);
-    float entityRelDepth = max(pm.r, 0.0);
-    float entityOpticalPath = max(uWaterBottomDepth * entityRelDepth, 0.0001);
-    float depthGrad = mix(bgOpticalPath, entityOpticalPath, pMask);
-
-    vec3 absorb = exp(-uSigma * depthGrad * (1.2 + uMurk * 2.5));
-    col.rgb *= absorb;
-
-    col.rgb *= clamp(1.0 - uDarkness, 0.15, 1.0);
-
-    float fog = uMurk * 0.35 + uRain * 0.08;
-    col.rgb = mix(col.rgb, vec3(0.55, 0.62, 0.72), clamp(fog, 0.0, 0.85));
-
-    float glowAmt = pMask * pm.g;
-    col.rgb += vec3(0.82, 0.90, 1.0) * glowAmt * 0.48;
-
-    float rainTint = uRain * 0.22;
-    col.rgb = mix(col.rgb, vec3(0.72, 0.78, 0.88), rainTint);
-
-    col.a = max(col.a, uMinAlpha);
-
-    finalColor = col;
-}
-`;
-
 /**
- * WebGPU 版(与上面 GLSL 逐行对应)。约定:
+ * 水面滤镜:波纹扰动取样 + 按光程吸收(uSigma)+ 暗度 / 浑浊雾 / 雨色 + 实体发光。uWaterBottomDepth = 水域水底光学系数(≥ 0):
+ * 背景与物体像素路径均为 系数 ×(垂直项或参数图的 R),不设人为上限。约定:
  * - `@group(0)` 是 Pixi 滤镜固定的 gfu / uTexture / uSampler;本滤镜自己的放 `@group(1)`,
  *   **变量名 = resources 的键名**(Pixi 按名字对槽位);
  * - `WaterUniforms` 成员顺序 = 下面 `waterUniforms` 的声明顺序(vec3 按 16 对齐,后面的 f32 紧贴其尾);
@@ -189,13 +104,7 @@ fn mainFragment(@location(0) vTextureCoord: vec2<f32>) -> @location(0) vec4<f32>
 }
 `;
 
-let sharedProgram: GlProgram | null = null;
 let sharedGpuProgram: GpuProgram | null = null;
-
-function program(): GlProgram {
-  if (!sharedProgram) sharedProgram = new GlProgram({ vertex: VERT, fragment: FRAG });
-  return sharedProgram;
-}
 
 function gpuProgram(): GpuProgram {
   if (!sharedGpuProgram) {
@@ -212,7 +121,6 @@ export class WaterShaderFilter extends Filter {
   constructor() {
     const ph = Texture.WHITE;
     super({
-      glProgram: program(),
       gpuProgram: gpuProgram(),
       resources: {
         waterUniforms: {

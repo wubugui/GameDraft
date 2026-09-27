@@ -12,44 +12,10 @@ import { samplerOf } from './legacy/gpuSampler';
  *   - meshPipe.localUniformsBindGroup -> slot 101（uTransformMatrix / uColor / uRound）
  * 这样自定义 shader 下的 Mesh 与同父容器下的 Sprite 共享一套投影与世界变换，避免两条路径在窗口 resize、
  * 渲染到 RenderTexture、父容器变换等场景下出现错位（与 showOverlayImage 的 Sprite 对齐）。
- */
-const VERT = /* glsl */ `
-in vec2 aPosition;
-in vec2 aUV;
-
-uniform mat3 uProjectionMatrix;
-uniform mat3 uWorldTransformMatrix;
-uniform mat3 uTransformMatrix;
-
-out vec2 vUV;
-
-void main(void) {
-    mat3 modelMatrix = uTransformMatrix;
-    mat3 modelViewProjectionMatrix = uProjectionMatrix * uWorldTransformMatrix * modelMatrix;
-    gl_Position = vec4((modelViewProjectionMatrix * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
-    vUV = aUV;
-}
-`;
-
-const FRAG = /* glsl */ `
-in vec2 vUV;
-out vec4 finalColor;
-
-uniform sampler2D uTextureFrom;
-uniform sampler2D uTextureTo;
-uniform float uT;
-
-void main(void) {
-    vec4 a = texture(uTextureFrom, vUV);
-    vec4 b = texture(uTextureTo, vUV);
-    finalColor = mix(a, b, clamp(uT, 0.0, 1.0));
-}
-`;
-
-/**
- * WebGPU 版(WGSL):与上面的 GLSL 逐句对应。Pixi 网格约定:`globalUniforms` 在 group 0、`localUniforms` 在 group 1
+ *
+ * Pixi 网格约定:`globalUniforms` 在 group 0、`localUniforms` 在 group 1
  * (程序里声明了这两个名字,GpuMeshAdapter 才会自动绑),自有资源从 group 2 起,变量名 = Shader resources 的键名;
- * 纹理在 WGSL 里要单独的采样器(resources 里的 `<名>Sampler`,WebGL 侧不认识这类资源、直接忽略)。
+ * 纹理在 WGSL 里要单独的采样器(resources 里的 `<名>Sampler`)。
  *
  * 顶点部分与呼吸图 Mesh(breathingOverlayMesh.ts)同一份:两者都是 showPercentImg 那套 local 像素空间的单张四边形。
  */
@@ -109,7 +75,7 @@ export interface OverlayBlendMeshHandle {
   setT: (t: number) => void;
   /**
    * 释放自建 geometry/shader：Pixi 8 的 Mesh.destroy 只解引用不销毁两者，须在销毁 mesh 后显式调用。
-   * shader.destroy 默认不销毁 GlProgram（走 Shader.from 的共享程序缓存），可安全重复创建同款 mesh。
+   * shader.destroy 默认不销毁程序（走 Shader.from 的共享程序缓存），可安全重复创建同款 mesh。
    */
   disposeGpu: () => void;
 }
@@ -141,7 +107,6 @@ export function createOverlayBlendMesh(
   const geometry = new MeshGeometry({ positions, uvs, indices });
 
   const shader = Shader.from({
-    gl: { vertex: VERT, fragment: FRAG },
     gpu: {
       vertex: { source: WGSL, entryPoint: 'mainVertex' },
       fragment: { source: WGSL, entryPoint: 'mainFragment' },

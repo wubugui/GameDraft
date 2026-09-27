@@ -9,110 +9,24 @@
  * - **自发光在受光之后**：火线自己发光，不吃漫反射着色；乘着上一步输出的覆盖度加，
  *   被前景挡住（深度遮挡丢掉的片元）的火线也就一起挡住。
  *
- * 着色数学只在 `burnShade.glsl`（燃烧工作台拼的是同一份）；WebGPU 渲染器跑它的逐句译本 `burnShade.wgsl`
- * （两份同改，像素对照 `tools/render_parity/cases/50_burn.ts`）。片元的场景坐标由屏幕位置 − 世界容器位置
- * ÷ 投影缩放得到（与角色着色滤镜同一条），再乘"场景 → 图 uv"仿射——热点的镜像 / 缩放 / 旋转都在仿射里。
+ * 着色数学只在 `burnShade.wgsl`（燃烧工作台经游戏同一个渲染器用的也是这份；像素对照 `tools/render_parity/cases/50_burn.ts`）。
+ * 片元的场景坐标由屏幕位置 − 世界容器位置 ÷ 投影缩放得到（与角色着色滤镜同一条），再乘"场景 → 图 uv"仿射——
+ * 热点的镜像 / 缩放 / 旋转都在仿射里。
  *
  * 资源有主：燃烧场纹理归 `BurnFieldTexture`（BurnSystem 的渲染侧持有）；滤镜只引用。卸载顺序 = 先从链上摘滤镜、
  * 再销毁滤镜、最后销毁纹理（pixi-v8-traps：BindGroup 见死即自毁）。
  */
-import { BufferImageSource, Filter, GlProgram, GpuProgram, Texture } from '../../engine2d';
-import BURN_SHADE_SRC from './burnShade.glsl?raw';
+import { BufferImageSource, Filter, GpuProgram, Texture } from '../../engine2d';
 import BURN_SHADE_WGSL_SRC from './burnShade.wgsl?raw';
 import type { BurnShadeParams } from './burnShadeParams';
 import { samplerOf } from '../legacy/gpuSampler';
 
 export type { BurnShadeParams } from './burnShadeParams';
 
-function sliceGlsl(src: string, tag: string): string {
-  const b = `//__${tag}_BEGIN__`;
-  const e = `//__${tag}_END__`;
-  const i = src.indexOf(b);
-  const j = src.indexOf(e);
-  if (i < 0 || j < 0) throw new Error(`[BurnFilters] GLSL 缺切片标记 ${tag}`);
-  return src.substring(i + b.length, j);
-}
-
-export const BURN_SHADE_GLSL = sliceGlsl(BURN_SHADE_SRC, 'BURN_SHADE');
-/** `burnShade.glsl` 的 WGSL 译本（整份都是函数；拼它的程序要声明 `burnUniforms` / `uBurnField` / `uBurnFieldSampler`） */
+/** 燃烧场着色（整份都是函数；拼它的程序要声明 `burnUniforms` / `uBurnField` / `uBurnFieldSampler`） */
 export const BURN_SHADE_WGSL: string = BURN_SHADE_WGSL_SRC;
 
-const VERT = /* glsl */ `#version 300 es
-in vec2 aPosition;
-out vec2 vTextureCoord;
-out vec2 vScreenPos;
-
-uniform vec4 uInputSize;
-uniform vec4 uOutputFrame;
-uniform vec4 uOutputTexture;
-
-vec4 filterVertexPosition(void) {
-    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
-    position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
-    return vec4(position, 0.0, 1.0);
-}
-
-vec2 filterTextureCoord(void) {
-    return aPosition * (uOutputFrame.zw * uInputSize.zw);
-}
-
-void main(void) {
-    gl_Position = filterVertexPosition();
-    vTextureCoord = filterTextureCoord();
-    vScreenPos = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-}
-`;
-
-const COMMON = /* glsl */ `
-uniform sampler2D uTexture;
-uniform vec2  uWorldContainerPos;
-uniform float uProjectionScale;
-uniform vec4  uUvAffine;
-uniform vec2  uUvOffset;
-${BURN_SHADE_GLSL}
-vec2 burnUvOfFragment() {
-    float S = max(uProjectionScale, 1e-6);
-    vec2 w = (vScreenPos - uWorldContainerPos) / S;
-    return vec2(uUvAffine.x * w.x + uUvAffine.y * w.y + uUvOffset.x,
-                uUvAffine.z * w.x + uUvAffine.w * w.y + uUvOffset.y);
-}
-`;
-
-const FRAG_MATERIAL = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vTextureCoord;
-in vec2 vScreenPos;
-out vec4 finalColor;
-${COMMON}
-void main(void) {
-    vec4 c = texture(uTexture, vTextureCoord);
-    if (c.a < 1e-4) { finalColor = c; return; }
-    vec3 emit;
-    vec4 b = burnSample(burnUvOfFragment(), emit);
-    vec4 m = burnMaterial(c.rgb / c.a, c.a, b);
-    finalColor = vec4(m.rgb * m.a, m.a);
-}
-`;
-
-const FRAG_GLOW = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vTextureCoord;
-in vec2 vScreenPos;
-out vec4 finalColor;
-${COMMON}
-void main(void) {
-    vec4 c = texture(uTexture, vTextureCoord);
-    if (c.a < 1e-4) { finalColor = c; return; }
-    vec3 emit;
-    burnSample(burnUvOfFragment(), emit);
-    // 加在覆盖度上（输入已是显示域的预乘色）
-    vec3 add = burnGlowAdd(emit);
-    finalColor = vec4(min(c.rgb + add * c.a, vec3(c.a * 4.0)), c.a);
-}
-`;
-
-// ───────────── WGSL（Pixi WebGPU 渲染器）：与上面的 GLSL 逐句对应
+// ───────────── WGSL
 // 滤镜约定：第 0 组 = Pixi 的 gfu / uTexture / uSampler；本滤镜的资源在第 1 组，变量名 = resources 的键名。
 // BurnFilterUniforms 的成员顺序必须与 uniformsFor() 的声明顺序一致（Pixi 按声明顺序、WGSL 对齐规则排偏移）。
 const WGSL_HEAD = /* wgsl */ `
@@ -211,32 +125,24 @@ fn mainFragment(@location(0) vTextureCoord: vec2<f32>, @location(1) vScreenPos: 
 }
 `;
 
-interface BurnPrograms {
-  gl: GlProgram;
-  gpu: GpuProgram;
+let materialProgram: GpuProgram | null = null;
+let glowProgram: GpuProgram | null = null;
+
+function programOf(wgsl: string, name: string): GpuProgram {
+  return GpuProgram.from({
+    name,
+    vertex: { source: wgsl, entryPoint: 'mainVertex' },
+    fragment: { source: wgsl, entryPoint: 'mainFragment' },
+  });
 }
 
-let materialProgram: BurnPrograms | null = null;
-let glowProgram: BurnPrograms | null = null;
-
-function programsOf(fragment: string, wgsl: string, name: string): BurnPrograms {
-  return {
-    gl: new GlProgram({ vertex: VERT, fragment }),
-    gpu: GpuProgram.from({
-      name,
-      vertex: { source: wgsl, entryPoint: 'mainVertex' },
-      fragment: { source: wgsl, entryPoint: 'mainFragment' },
-    }),
-  };
-}
-
-function getMaterialProgram(): BurnPrograms {
-  if (!materialProgram) materialProgram = programsOf(FRAG_MATERIAL, WGSL_MATERIAL, 'burn-material-filter');
+function getMaterialProgram(): GpuProgram {
+  if (!materialProgram) materialProgram = programOf(WGSL_MATERIAL, 'burn-material-filter');
   return materialProgram;
 }
 
-function getGlowProgram(): BurnPrograms {
-  if (!glowProgram) glowProgram = programsOf(FRAG_GLOW, WGSL_GLOW, 'burn-glow-filter');
+function getGlowProgram(): GpuProgram {
+  if (!glowProgram) glowProgram = programOf(WGSL_GLOW, 'burn-glow-filter');
   return glowProgram;
 }
 
@@ -295,14 +201,13 @@ function uniformsFor(field: BurnFieldTexture): Record<string, { value: unknown; 
 }
 
 abstract class BurnFilterBase extends Filter {
-  protected constructor(program: BurnPrograms, field: BurnFieldTexture) {
+  protected constructor(program: GpuProgram, field: BurnFieldTexture) {
     super({
-      glProgram: program.gl,
-      gpuProgram: program.gpu,
+      gpuProgram: program,
       resources: {
         burnUniforms: uniformsFor(field),
         uBurnField: field.source,
-        // 只有 WGSL 用（WebGPU 的纹理与采样器分开绑）；GLSL 侧 Pixi 忽略这个名字
+        // WebGPU 的纹理与采样器分开绑
         uBurnFieldSampler: samplerOf(field.source),
       },
     });

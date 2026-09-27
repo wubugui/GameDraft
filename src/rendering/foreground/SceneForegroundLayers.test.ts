@@ -184,23 +184,17 @@ describe('SceneForegroundLayers · 覆盖图生命周期与拆除', () => {
 
 describe('覆盖图着色：通道与前景面深度', () => {
   it('B = 前景面（按纹素足迹取样，细枝不漏）、R = A = 外沿、G = R × 前景面深度（预乘）', () => {
-    expect(MASK_SRC).toContain('fragColor = vec4(rim, rim * fgSurfaceDepth(vUv * uSceneSize), body, rim);');
-    expect(MASK_SRC).toContain('return b.y + uUpright * (p.y - b.x);');            // 与 foregroundSurfaceDepth 同一个式子
-    expect(MASK_SRC).toContain('body = max(body, fgMaskAt(vUv + h));');
-  });
-
-  it('使用方取样：外沿不判、前景面按 G / R 解出深度', () => {
-    expect(MASK_SRC).toContain('outDepth = s.g / max(s.r, 1e-4);');
-    expect(MASK_SRC).toContain('if (s.r <= 0.5) { return 0.0; }');
-  });
-
-  // 游戏只跑 WGSL：同几句在 WGSL 孪生里也要在（逐函数字面量另由 shaderTwins.test.ts 钉）
-  it('WGSL 孪生：通道、前景面深度、纹素足迹、使用方取样与 GLSL 同式', () => {
     expect(MASK_WGSL_SRC).toContain('return vec4<f32>(rim, rim * fgSurfaceDepth(vUv * fgMaskU.uSceneSize), body, rim);');
-    expect(MASK_WGSL_SRC).toContain('return b.y + fgMaskU.uUpright * (p.y - b.x);');
+    expect(MASK_WGSL_SRC).toContain('return b.y + fgMaskU.uUpright * (p.y - b.x);');   // 与 foregroundSurfaceDepth 同一个式子
     expect(MASK_WGSL_SRC).toContain('body = max(body, fgMaskAt(vUv + h));');
+  });
+
+  // 取样段还剩一份 GLSL 版（角色逐像素照明滤镜的 GLSL 程序在拼），两份都查（逐函数字面量另由 shaderTwins.test.ts 钉）
+  it('使用方取样：外沿不判、前景面按 G / R 解出深度', () => {
     expect(MASK_WGSL_SRC).toContain('*outDepth = s.g / max(s.r, 1e-4);');
     expect(MASK_WGSL_SRC).toContain('if (s.r <= 0.5) { return 0.0; }');
+    expect(MASK_SRC).toContain('outDepth = s.g / max(s.r, 1e-4);');
+    expect(MASK_SRC).toContain('if (s.r <= 0.5) { return 0.0; }');
   });
 });
 
@@ -235,37 +229,32 @@ describe('遮挡使用方 · 覆盖图', () => {
   beforeAll(() => { DOMAdapter.set({ ...adapter0, createCanvas: () => ({ getContext: () => null }) as never }); });
   afterAll(() => { DOMAdapter.set(adapter0); });
 
-  it('三支滤镜与粒子拼的是同一段取样；滤镜在前景面里比「前景面深度 < 脚点深度 + 直立面」，外沿不判，其余照旧', () => {
-    for (const src of [DEPTH_SRC, LIGHT_SRC, CHAR_SRC, VFX_SRC]) {
-      expect(src).toContain('${FG_OCCLUSION_GLSL}');
-      expect(src).toContain('fgSample(');
-    }
-    for (const [src, foot] of [[DEPTH_SRC, 'uFootDepthQ'], [LIGHT_SRC, 'uFootDepthQ'], [CHAR_SRC, 'uFootQ.z']] as const) {
-      expect(src).toContain('float fgKind = fgSample(depthUV, fgDepth);');
-      expect(src).toContain('occluded = fgKind > 1.5 ? false');
-      expect(src).toContain(`: fgKind > 0.5 ? fgDepth < ${foot} + upright - 1e-4`);
-      expect(src).toContain(': sceneDepth + uTolerance < spriteDepth;');
-      expect(src).toContain('uFgCoverage: Texture.EMPTY.source');
-    }
-    // 粒子：前景面里拿前景面深度顶替深度图（容差照旧），外沿不判
-    expect(VFX_SRC).toContain('if (fgKind > 1.5) return 1.0;');
-    expect(VFX_SRC).toContain('float sceneDepth = fgDepth;');
+  // 角色逐像素照明滤镜的 GLSL 程序还在（随角色照明那边一起删）：它那份判据照旧查
+  it('角色照明滤镜（GLSL 版）拼的是同一段取样；前景面里比「前景面深度 < 脚点深度 + 直立面」，外沿不判，其余照旧', () => {
+    expect(CHAR_SRC).toContain('${FG_OCCLUSION_GLSL}');
+    expect(CHAR_SRC).toContain('float fgKind = fgSample(depthUV, fgDepth);');
+    expect(CHAR_SRC).toContain('occluded = fgKind > 1.5 ? false');
+    expect(CHAR_SRC).toContain(': fgKind > 0.5 ? fgDepth < uFootQ.z + upright - 1e-4');
+    expect(CHAR_SRC).toContain(': sceneDepth + uTolerance < spriteDepth;');
+    // 另两支滤镜与粒子只剩 WGSL
+    for (const src of [DEPTH_SRC, LIGHT_SRC, VFX_SRC]) expect(src).not.toContain('FG_OCCLUSION_GLSL');
   });
 
-  // 游戏只跑 WGSL：四处使用方的 WGSL 也拼同一段 fgSample（foregroundMaskWgsl），三支滤镜的判据与 GLSL 同式
-  it('WGSL：三支滤镜与粒子拼同一段 FG_OCCLUSION_WGSL，判据与 GLSL 同式（外沿不判 / 前景面比直立面 / 其余照旧）', () => {
-    const count = (src: string, re: RegExp) => [...src.matchAll(re)].length;
+  // 游戏只跑 WGSL：四处使用方拼同一段 fgSample（foregroundMaskWgsl）
+  it('WGSL：三支滤镜与粒子拼同一段 FG_OCCLUSION_WGSL，判据一致（外沿不判 / 前景面比直立面 / 其余照旧）', () => {
     for (const src of [DEPTH_SRC, LIGHT_SRC, CHAR_SRC, VFX_SRC]) {
       expect(src).toContain('${FG_OCCLUSION_WGSL}');
       expect(src).toMatch(/fgSample\([^;]*,\s*&fgDepth\)/);
+      expect(src).toMatch(/if \(fgKind > 1\.5\) \{/);
     }
     for (const [src, foot] of [[DEPTH_SRC, 'uFootDepthQ'], [LIGHT_SRC, 'uFootDepthQ'], [CHAR_SRC, 'uFootQ\\.z']] as const) {
-      // GLSL 一处 + WGSL 一处
-      expect(count(src, /fgKind > 1\.5/g)).toBeGreaterThanOrEqual(2);
-      expect(count(src, new RegExp(`fgDepth < (?:\\w+\\.)?${foot} \\+ upright - 1e-4`, 'g'))).toBeGreaterThanOrEqual(2);
+      expect(src).toMatch(new RegExp(`fgDepth < \\w+\\.${foot} \\+ upright - 1e-4`));
+      expect(src).toContain('uFgCoverage: Texture.EMPTY.source');
       expect(src).toContain('uFgCoverageSampler: samplerOf(Texture.EMPTY.source)');
     }
-    expect(count(VFX_SRC, /fgKind > 1\.5/g)).toBeGreaterThanOrEqual(2);
+    // 粒子：前景面里拿前景面深度顶替深度图（容差照旧），外沿不判
+    expect(VFX_SRC).toContain('if (fgKind > 1.5) { return 1.0; }');
+    expect(VFX_SRC).toContain('var sceneDepth = fgDepth;');
   });
 
   it('没有前景层时开关恒 0、绑永不销毁的占位（逐像素与改动前相同）；交来 / 收回即换绑（采样器跟着换）', () => {

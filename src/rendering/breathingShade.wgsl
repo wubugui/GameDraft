@@ -1,6 +1,14 @@
-// 呼吸图着色的 WGSL 版:与 breathingShade.glsl 逐句对应,只给游戏的 WebGPU 渲染器用。
-// breathingShade.glsl 是唯一真源(呼吸工作台按 BEGIN/END 标记原样切它,一个字不许动);
-// 改算法两份一起改,改完跑 tools/render_parity(摆动呼吸淡入 / 呼吸图)对照。口径见 agent_docs [[breathing-overlay]]。
+// 呼吸图着色:唯一一份(游戏的呼吸图 Mesh 与呼吸工作台经游戏同一个渲染器拼的都是这份,别在别处另写)。
+// 口径见 agent_docs [[breathing-overlay]];改了跑 tools/render_parity(摆动呼吸淡入 / 呼吸图,参考侧是 master 的 GLSL 版)对照。
+//
+// 一张静帧拆成的几层,每帧按表演模拟的输出重新合出来:
+//   底图 uBase  永远不动(脸、头发、门板、灯)
+//   胸口 uBody  沿胸口位移场 uF2(r = 朝上权重, g = 朝头权重)挪 (uCranPx, uVentPx)
+//   纸   uSheet 悬空段沿纸面位移场 uF1(xy = 单位位移方向, z = 权重)挪 uInfl px;贴着脸的部分权重 0,逐像素不动;
+//              飞起迎着灯亮一点、贴下暗一点(uShade)
+//   垂帘 uFlap  跟着下巴那点 uRoot 平移(uRootDisp × uInfl),再绕它外翻 uFlapAng(离挂点越远翻得越多,弦长不变)
+// 两处都是反查源点(不动点迭代):位移场坡度 × 位移 必须 < 约 0.6,否则不收敛、画面扯坏(上限由每张图的 rig.limits 管)。
+// uPremul = 1 表示几层贴图的 rgb 已经 ×alpha(游戏走 AssetManager 默认装载就是);不预乘的上传 = 0。
 //
 // Pixi 网格约定:group 0 / 1 是 globalUniforms / localUniforms(拼在 breathingOverlayMesh.ts 里),
 // 本文件的资源在 group 2,变量名 = Shader resources 的键名;每张纹理配一个 <名>Sampler。

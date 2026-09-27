@@ -393,6 +393,12 @@
       ]
     },
     {
+      "glob": "scripts/tauri_test.mjs",
+      "docs": [
+        "build-pipeline"
+      ]
+    },
+    {
       "glob": "scripts/verify_build.mjs",
       "docs": [
         "build-pipeline"
@@ -882,7 +888,7 @@
       ]
     },
     {
-      "glob": "src/rendering/breathingShade.glsl",
+      "glob": "src/rendering/breathingShade.wgsl",
       "docs": [
         "breathing-overlay"
       ]
@@ -980,6 +986,12 @@
       "glob": "src/rendering/lighting/probeCpuSampler.ts",
       "docs": [
         "entity-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/overlayPercentLayout.ts",
+      "docs": [
+        "breathing-overlay"
       ]
     },
     {

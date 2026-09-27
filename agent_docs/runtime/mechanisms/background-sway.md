@@ -63,8 +63,9 @@ last_governed: 2026-09-23
   见 [[scene-foreground-layers]]);位移图 / id / matte 三张纹理各配 `<名>Sampler`。先销毁网格再销毁位移图的理由不变:
   绑到已销毁的纹理源在 engine2d 里当帧抛(等价 Pixi 的 BindGroup 自毁)。
 
-- **位移图 / 合成两个程序都有 GLSL 与 WGSL 两份**(`backgroundSway.ts` 里并排),算法改动两份一起改,改完跑
-  `node tools/render_parity/run.mjs --case 摆动呼吸淡入`;位移图在两后端间允许半精度 1 ulp 的插值舍入差(见 pixi-shader-wgsl-port)。
+- **位移图 / 合成 / 前景覆盖图三个程序本分支只有 WGSL**(`backgroundSway.ts`;GLSL 孪生 2026-09-28 已删),算法改动改 WGSL,改完跑
+  `node tools/render_parity/run.mjs --case 摆动呼吸淡入`(参考侧是 master 的 GLSL);位移图在两后端间允许半精度 1 ulp 的插值舍入差
+  (见 pixi-shader-wgsl-port)。
 
 ## 已知坑
 

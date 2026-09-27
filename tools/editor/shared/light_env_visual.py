@@ -34,13 +34,13 @@ CONTACT_PREVIEW_FOOT_FRAC = 0.18
 _PREVIEW_COS = _PREVIEW_SIN = math.sqrt(0.5)
 
 
-#: 无方向部分按方位角切几片求积（与运行时 CONTACT_FRAG 的 OMNI_SLICES 同数）
+#: 无方向部分按方位角切几片求积（与运行时 CONTACT_FRAG_WGSL 的 OMNI_SLICES 同数）
 _OMNI_SLICES = 8
 
 
 def _omni(x: float, r: float, he: float) -> float:
     """胶囊 AO 无方向部分：竖直胶囊（半径 r、底端球心高 r、顶端球心高 he）对地面点的余弦加权遮蔽，
-    与运行时 CONTACT_FRAG 的 `capsuleOmni` 逐行同式（推导见那边注释）。贴地那一点 = 1，往外平滑落下。"""
+    与运行时 CONTACT_FRAG_WGSL 的 `capsuleOmni` 逐行同式（推导见那边注释）。贴地那一点 = 1，往外平滑落下。"""
     top = max(he, r)
     pm = math.asin(r / x) if x > r else math.pi
     dphi = 2 * pm / _OMNI_SLICES

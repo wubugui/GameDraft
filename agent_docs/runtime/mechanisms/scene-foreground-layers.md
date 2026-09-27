@@ -59,13 +59,14 @@ last_governed: 2026-09-27
 
 ## engine2d / WebGPU 分支的差异(契约同上,只是落在 WGSL)
 
-游戏只跑 WGSL([[engine2d]]、[[pixi-shader-wgsl-port]]);上文每个 GLSL 名字都有 WGSL 孪生,两份一起改。
+游戏只跑 WGSL([[engine2d]]、[[pixi-shader-wgsl-port]]);上文的 GLSL 名字在本分支只剩取样段 `FG_OCCLUSION_GLSL`
+(角色照明滤镜的 GLSL 程序还在拼,随角色照明那边一起删),其余(蒙版判定、覆盖图程序、另两支滤镜与粒子的 GLSL)2026-09-28 已删。
 - 取样:`foregroundMaskWgsl.ts` 的 `FG_OCCLUSION_WGSL`——`fgSample(uv, hasCoverage, &depth)`(WGSL 没有 out 参数,深度走指针;
   开关 `uHasFgCoverage` 留在宿主参数结构体里、当参数传入)。宿主在模块作用域声明 `uFgCoverage` / `uFgCoverageSampler`
   (`fgCoverageBindingsWgsl(组, 起始绑定号)`;滤镜自有资源在 group 1,网格在 group 2)。
 - 覆盖图程序 `fgCoverageProgramWgsl`(`backgroundSway.ts` 拼成 `FG_COVERAGE_WGSL`):参数组 `FgMaskU` 里 `uBase` **必须排第一个**——
   JS 端 vec2 数组按 8 字节紧排、WGSL 声明成 vec4 数组再拆,起点两边都得 16 对齐,挪到后面偏移就错开(不报错,接地深度静默错;
-  `foregroundMaskWgsl.test.ts` 钉字节布局)。GLSL / WGSL 孪生由 `src/rendering/shaderTwins.test.ts` 逐项比。
+  `foregroundMaskWgsl.test.ts` 钉字节布局)。取样段的 GLSL / WGSL 孪生由 `src/rendering/shaderTwins.test.ts` 逐项比。
 - **每张纹理配一个 `<名>Sampler`**:资源表里 `uFgCoverage` 旁必须有 `uFgCoverageSampler = samplerOf(源)`;
   运行时换绑(`setForegroundCoverage`,含拆除时广播 null 绑回占位)**两个键一起换**,只换纹理 = 采样器停在旧参数。
 - "先广播 null 再销毁 RT"照旧是硬契约:engine2d 绑到已销毁的纹理源当帧抛(`GpuTextures.get`,等价 Pixi 的 BindGroup 自毁)。

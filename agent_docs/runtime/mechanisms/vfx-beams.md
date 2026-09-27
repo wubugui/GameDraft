@@ -46,7 +46,8 @@ last_governed: 2026-09-23
   (从空间的 `toScene`/`toQ` 探出来,field / planar 同一套),没有它 3D 光柱不画。
 - **画法**:一道光柱一张网格(视锥角点投影的凸包);片元把画面点换回世界视线,与 N+2 个半空间求**一次弦**(不步进),远端截在
   原画深度 + 容差,在弦**中点采样一次**:边缘遮罩 × 沿长度曲线 × 世界空间噪声 × 图案遮罩 × 起伏 × 淡入淡出。
-  **GLSL / WGSL 两份孪生**:游戏画 `vfxBeamWgsl.ts`,工作台原画视图编 `vfxBeamGlsl.ts`;两份一起改,`src/rendering/shaderTwins.test.ts` 逐函数守门。
+  着色核心只有 `vfxBeamWgsl.ts` 一份(游戏与粒子工作台同一个 `VfxRenderer`;GLSL 孪生 2026-09-28 已删);uniform 打包 `packBeamUniforms`
+  在 `vfxBeamGlsl.ts`(历史文件名),结构成员 ⇔ 打包键 ⇔ `VfxBeamView` 组的键由 `vfxBeamGlsl.test.ts` 钉住。
 - 🔴 **亮度乘在显示空间,不乘在线性空间**:宿主先过显示变换再乘份量(与粒子 alpha 同口径);先乘再编码边缘是一刀硬边。
 - **不照亮角色、不进光照缓存**(任何灯变化都整张重烘 RGBA16F,光柱每帧在动)。混合 add / screen / normal(预乘)。
 - **前后关系**:整道光柱按落点当一个实体排(3D 取终点正下方地面点、2D 取锚点脚点);`sort: background / foreground` 钉到最后 / 最前。
@@ -58,9 +59,9 @@ last_governed: 2026-09-23
 
 ## 已知坑
 
-- 粒子 / 薄片 / 雷 / 光柱的着色器都有 GLSL 与 WGSL 两份:WGSL 在 `vfxShaders.ts` / `vfxBeamShaders.ts` 并排,雷与光柱的核函数
-  另有 `vfxBoltWgsl.ts` / `vfxBeamWgsl.ts`(与 `vfxBoltGlsl.ts` / `vfxBeamGlsl.ts` 对应;粒子工作台 2026-09-27 起改用游戏的 `VfxRenderer` / WGSL,不再拿 GLSL 核)。
-  算法改动两份一起改,改完跑 `node tools/render_parity/run.mjs --case 粒子`(见 pixi-shader-wgsl-port)。
+- 粒子 / 薄片 / 雷 / 光柱的着色器只有 WGSL(2026-09-28 删了 GLSL 孪生):`vfxShaders.ts` / `vfxBeamShaders.ts`,雷与光柱的核函数
+  在 `vfxBoltWgsl.ts` / `vfxBeamWgsl.ts`;`vfxBoltGlsl.ts` / `vfxBeamGlsl.ts` 是历史文件名,只剩 CPU 部分。算法改动改 WGSL,
+  改完跑 `node tools/render_parity/run.mjs --case 粒子`(参考侧是 master 的 GLSL,见 pixi-shader-wgsl-port)。
 
 | 坑 | 症状 / 对策 |
 |---|---|

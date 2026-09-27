@@ -1,7 +1,7 @@
 /**
- * 雷的画法（纯模块，无 Pixi / 无 `?raw`，工作台 bundle 同一份）：
+ * 雷的画法（纯模块，无 Pixi / 无 `?raw`，工作台 bundle 同一份；文件名是历史名，这里曾放着片元核的 GLSL 版）：
  *
- * - `BOLT_GLSL_KERNEL`：一小段折线**与圆形高斯光斑卷积**的解析式（逐段积分，erf），片元里算；
+ * - 片元核在 `vfxBoltWgsl.ts` 的 `BOLT_WGSL_KERNEL`：一小段折线**与圆形高斯光斑卷积**的解析式（逐段积分，erf）；
  * - `emitBoltSegments`：把 `vfxBolt.ts` 算出的折线按这一帧的镜头挑细分级、定粗细、剔掉看不见的，
  *   逐段交给宿主（游戏的网格 / 工作台的预览）去画。
  *
@@ -19,33 +19,6 @@
  * 和近景图的雷芯在屏幕上都是 8–15 像素，换算成世界宽却差 4 倍，就是这个道理。
  */
 import type { BoltGeometry } from '../../systems/vfx/vfxBolt';
-
-/**
- * 片元核：`boltSeg(p, a, b, sigma)` = 从 a 到 b 的一段均匀发光线与 σ 的圆形高斯卷积，
- * 无穷长直线的峰值归一为 1。erf 用 Abramowitz–Stegun 7.1.26（误差 1.5e-7）。
- * ⚠ GLSL ES 1.00 / 3.00 都能编；不许出现反引号。
- */
-export const BOLT_GLSL_KERNEL = /* glsl */ `
-float boltErf(float x) {
-    float s = x < 0.0 ? -1.0 : 1.0;
-    float ax = abs(x);
-    float t = 1.0 / (1.0 + 0.3275911 * ax);
-    float y = 1.0 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * exp(-ax * ax);
-    return s * y;
-}
-float boltSeg(vec2 p, vec2 a, vec2 b, float sigma) {
-    vec2 d = b - a;
-    float len = length(d);
-    // 零长的段没有线可积（折线里重复的点），贡献 0
-    if (sigma <= 0.0 || len < 1e-5) return 0.0;
-    vec2 q = p - a;
-    vec2 t = d / len;
-    float along = dot(q, t);
-    float perp = q.x * t.y - q.y * t.x;
-    float k = 0.70710678 / sigma;
-    return exp(-0.5 * perp * perp / (sigma * sigma)) * 0.5 * (boltErf((len - along) * k) + boltErf(along * k));
-}
-`;
 
 /** 这一帧画这道雷要知道的镜头量 */
 export interface BoltView {

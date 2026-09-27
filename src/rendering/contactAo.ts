@@ -4,7 +4,7 @@
  * 制作人 2026-09-24 定的作者面：勾「接触 AO」就有；**方向 AO 缺省也开**（「所有 npc 默认都开方向 ao，包括主角」，
  * 同日改口，此前缺省是只有简单 AO）；取消勾选方向 AO 就只剩简单 AO（无方向的近场遮蔽）；参数都能调。
  * 明暗 / 大小不写就跟随场景光环境（`shadow.contact` / `contactSize`，光照曲线里也能按位置变）；
- * 其余参数不写就用下面的缺省。几何与着色见 EntityShadow 的 `CONTACT_FRAG`。
+ * 其余参数不写就用下面的缺省。几何与着色见 EntityShadow 的 `CONTACT_FRAG_WGSL`。
  *
  * ⚠ 缺省值的编辑器镜像在 `tools/editor/shared/contact_ao.py`，对账测试逐字比对这几个常量
  *   （test_npc_contact_shadow_form.py）。改这里要一起改那边。

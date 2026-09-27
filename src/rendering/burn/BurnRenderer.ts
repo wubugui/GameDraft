@@ -7,7 +7,7 @@
  *   "模板图 × 燃烧材质"画进一张颜色图、"燃烧自发光"画进一张自发光图，宿主拿颜色图顶替它的颜色纹理（照常受光）、
  *   自发光图叠加在上面（不受光，被同一个容器的深度遮挡一起挡住）。
  *
- * 着色数学只在 `burnShade.glsl`（两种接法与燃烧工作台拼的是同一份）；WebGPU 渲染器跑它的逐句译本 `burnShade.wgsl`。
+ * 着色数学只在 `burnShade.wgsl`（两种接法与燃烧工作台拼的是同一份）。
  *
  * 资源有主：纹理 / 滤镜 / 渲染纹理都归本类；宿主只持有引用。拆的顺序（pixi-v8-traps / teardown-ordering）：
  * **先从宿主上摘 → 再销毁滤镜 / mesh → 最后销毁纹理**。本类不 import 实体层（渲染层不许往上依赖），只认最小接口。
@@ -22,7 +22,6 @@ import {
   type Texture,
 } from '../../engine2d';
 import {
-  BURN_SHADE_GLSL,
   BURN_SHADE_WGSL,
   BurnFieldTexture,
   BurnGlowFilter,
@@ -88,60 +87,7 @@ interface TextureEntry {
 
 type Entry = FilterEntry | TextureEntry;
 
-const IMG_VERT = /* glsl */ `#version 300 es
-in vec2 aPosition;
-in vec2 aUV;
-uniform mat3 uProjectionMatrix;
-uniform mat3 uWorldTransformMatrix;
-uniform mat3 uTransformMatrix;
-out vec2 vUv;
-void main(void) {
-    mat3 mvp = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix;
-    gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
-    vUv = aUV;
-}
-`;
-
-const IMG_COMMON = /* glsl */ `
-uniform sampler2D uBaseTex;
-uniform vec4 uBaseFrame;
-${BURN_SHADE_GLSL}
-vec4 burnBaseSample(vec2 uv) {
-    return texture(uBaseTex, mix(uBaseFrame.xy, uBaseFrame.zw, uv));
-}
-`;
-
-const IMG_FRAG_MATERIAL = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vUv;
-out vec4 fragColor;
-${IMG_COMMON}
-void main(void) {
-    vec4 c = burnBaseSample(vUv);
-    if (c.a < 1e-4) { fragColor = vec4(0.0); return; }
-    vec3 emit;
-    vec4 b = burnSample(vUv, emit);
-    vec4 m = burnMaterial(c.rgb / c.a, c.a, b);
-    fragColor = vec4(m.rgb * m.a, m.a);
-}
-`;
-
-const IMG_FRAG_GLOW = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vUv;
-out vec4 fragColor;
-${IMG_COMMON}
-void main(void) {
-    vec4 c = burnBaseSample(vUv);
-    if (c.a < 1e-4) { fragColor = vec4(0.0); return; }
-    vec3 emit;
-    vec4 b = burnSample(vUv, emit);
-    // 叠加用：颜色 = 发光 × 烧过之后的覆盖度；alpha 0（加法混合不改底下的覆盖度）
-    fragColor = vec4(burnGlowAdd(emit) * c.a * b.w, 0.0);
-}
-`;
-
-// ───────────── WGSL（Pixi WebGPU 渲染器）：与上面的 GLSL 逐句对应
+// ───────────── WGSL
 // 网格约定：第 0 组 globalUniforms、第 1 组 localUniforms（Pixi 自动绑），本程序的资源在第 2 组，变量名 = resources 的键名。
 // BurnImageUniforms 的成员顺序必须与 imageUniforms() 的声明顺序一致（Pixi 按声明顺序、WGSL 对齐规则排偏移）。
 const IMG_WGSL_HEAD = /* wgsl */ `
@@ -414,12 +360,11 @@ export class BurnRenderer {
       base.frame.x / src.width, base.frame.y / src.height,
       (base.frame.x + base.frame.width) / src.width, (base.frame.y + base.frame.height) / src.height,
     ]);
-    const mk = (fragment: string, wgsl: string): Shader => {
-      // 键名 = WGSL 变量名（burnShade.wgsl 按 burnUniforms 取 uniform）；GLSL 侧按 uniform 名逐个对，与键名无关
+    const mk = (wgsl: string): Shader => {
+      // 键名 = WGSL 变量名（burnShade.wgsl 按 burnUniforms 取 uniform）
       const burnUniforms = imageUniforms(e.field);
       (burnUniforms.uBaseFrame.value as Float32Array).set(frame);
       return Shader.from({
-        gl: { vertex: IMG_VERT, fragment },
         gpu: {
           vertex: { source: wgsl, entryPoint: 'mainVertex' },
           fragment: { source: wgsl, entryPoint: 'mainFragment' },
@@ -427,15 +372,15 @@ export class BurnRenderer {
         resources: {
           burnUniforms,
           uBaseTex: src,
-          // 两个 *Sampler 只有 WGSL 用（WebGPU 纹理与采样器分开绑）；GLSL 侧 Pixi 忽略这两个名字
+          // WebGPU 纹理与采样器分开绑
           uBaseTexSampler: samplerOf(src),
           uBurnField: e.field.source,
           uBurnFieldSampler: samplerOf(e.field.source),
         },
       });
     };
-    e.materialShader = mk(IMG_FRAG_MATERIAL, IMG_WGSL_MATERIAL);
-    e.glowShader = mk(IMG_FRAG_GLOW, IMG_WGSL_GLOW);
+    e.materialShader = mk(IMG_WGSL_MATERIAL);
+    e.glowShader = mk(IMG_WGSL_GLOW);
     e.materialMesh = new Mesh({ geometry: e.geometry, shader: e.materialShader });
     e.glowMesh = new Mesh({ geometry: e.geometry, shader: e.glowShader });
   }

@@ -1,13 +1,11 @@
 /**
- * 雷片元核 {@link BOLT_GLSL_KERNEL}（`vfxBoltGlsl.ts`）的 **WGSL 孪生**（WebGPU 迁移期并存）。
+ * 雷的片元核（唯一一份）：`boltSeg(p, a, b, sigma)` = 从 a 到 b 的一段均匀发光线与 σ 的圆形高斯卷积，
+ * 无穷长直线的峰值归一为 1。erf 用 Abramowitz–Stegun 7.1.26（误差 1.5e-7）。为什么是卷积、段与段为什么直接相加，
+ * 见 `vfxBoltGlsl.ts`（历史文件名：逐段发射 `emitBoltSegments` 住那里）头注释。
  *
- * `vfxBoltGlsl.ts` 被粒子工作台原样打包、在它自己的 WebGL2 里编译，那份文件的内容与导出一个字不动；
- * WGSL 版放这里，同样是纯模块（无 Pixi / 无 DOM / 无 `?raw`），Node 里能直接 import。
- * 数学逐式照抄（运算顺序不改，常数不合并）：两边等价由 `tools/render_parity` 的「粒子 / 雷」用例逐像素钉住，
- * 改一边必须同步改另一边。
- *
- * 与 GLSL 的形式差异（数值不变）：三目式写成 if / else（不用 select，两边都求值）。
- * 本段不读任何绑定。
+ * 纯模块（无 Pixi / 无 DOM / 无 `?raw`），Node 里能直接 import。数学逐式照抄 master 的 GLSL 版（运算顺序不改，常数不合并）：
+ * 等价由 `tools/render_parity` 的「粒子 / 雷」用例逐像素钉住。与 GLSL 版的形式差异（数值不变）：三目式写成 if / else
+ * （不用 select，两边都求值）。本段不读任何绑定。
  */
 
 export const BOLT_WGSL_KERNEL = /* wgsl */ `

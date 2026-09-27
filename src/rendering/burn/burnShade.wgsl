@@ -1,17 +1,31 @@
-// 燃烧场着色：burnShade.glsl 的 WGSL 译本（Pixi WebGPU 渲染器跑这份，WebGL 与燃烧工作台仍跑 GLSL）。
-// 数学与 GLSL 版逐句对应——改一边必须同改另一边，再跑像素对照 tools/render_parity/cases/50_burn.ts。
-// 燃烧场纹理编码、阶段划分、双线性只混阶段结果的理由，全见 burnShade.glsl 的注释，这里不重复。
+// 燃烧场着色：唯一一份（游戏的两道燃烧滤镜、纹理宿主的两个 mesh 程序与燃烧工作台拼的都是这份，别在别处另写）。
+// 口径见 agent_docs [[burn-system]]；改了跑像素对照 tools/render_parity/cases/50_burn.ts（参考侧是 master 的 GLSL 版）。
+//
+// 燃烧场纹理（RGBA8，网格尺寸 uBurnGrid，NEAREST 采样，这里手写双线性）：
+//   RG = 点着时刻（16 位定点，单位 uBurnStep 秒；65535 = 不会点着）
+//   B  = 燃料 0..1
+//   A  = 熄灭定格（1 = 这一格被熄灭时正在烧，定格成焦黑）
+// 此刻 uBurnNow：面燃烧 = 燃烧钟 − 纹理时间原点；消耗燃烧 = 累计烧了多少秒。
+//
+// 每处的阶段（τ = 此刻 − 点着时刻 − 毛边噪声）：
+//   τ ∈ [−烤黄提前量, 0)          烤黄
+//   τ ∈ [0, 明火 × 燃料)          焦黑 + 火线发光
+//   τ ∈ [明火 × 燃料, + 余烬)     焦黑 + 暗红余烬
+//   τ ≥ 明火 × 燃料 + 余烬         成灰（颜色 → 灰、不透明度 → 灰的不透明度，ashFade 秒过渡）
+//
+// 双线性混的是四个格各自的**阶段结果**，不是点着时刻：时刻里有 65535 = 不会点着，一混边上就永远烧不到
+// （轮廓与镂空边缘留半格原样）；而且只混有燃料的格（权重按有燃料归一），轮廓外那半格不拖淡结果。
 //
 // 本文件只放函数（WGSL 模块作用域按名引用、不看先后）。拼它的程序必须在同一模块里声明：
-//   var<uniform> burnUniforms —— 成员至少含 uBurnGrid … uBurnEmberGlow（名字同 GLSL 的 uniform），
+//   var<uniform> burnUniforms —— 成员至少含 uBurnGrid … uBurnEmberGlow，
 //                                 成员顺序按该程序 JS 侧 uniforms 对象的声明顺序（Pixi 按声明顺序排偏移）；
 //   var uBurnField: texture_2d<f32> 与 var uBurnFieldSampler: sampler（燃烧场纹理自带的 NEAREST 采样状态）。
 //
-// 与 GLSL 的差别只有写法：
-//   - out 参数改成 ptr<function, vec3<f32>>；
+// 写法上的约束：
+//   - 出参用 ptr<function, vec3<f32>>；
 //   - 燃烧场一律 textureSampleLevel(…, 0.0)：调用点都在「覆盖度太小就提前 return」之后（非一致控制流），
-//     WGSL 不许在那里用 textureSample；燃烧场是单级纹理，第 0 级就是 GLSL texture() 的结果；
-//   - 三目运算改 if / else（select 两边都求值，smoothstep 两端相等那一边会出 NaN）。
+//     WGSL 不许在那里用 textureSample；燃烧场是单级纹理，第 0 级就是全部；
+//   - 三目运算写 if / else（select 两边都求值，smoothstep 两端相等那一边会出 NaN）。
 // ⚠ 注释里不许写「@ + group / binding + 括号」：Pixi 按正则扫整份源码（含注释）找绑定，写了就多出一个假绑定。
 
 const BURN_NEVER: f32 = 100000.0;
@@ -108,7 +122,7 @@ fn burnSample(uv: vec2<f32>, emit: ptr<function, vec3<f32>>) -> vec4<f32> {
     return r / W;
 }
 
-// 材质：直通色 rgb + 覆盖度 a、burnSample 的结果 b → vec4(直通色, 覆盖度)
+// 材质：直通色 rgb + 覆盖度 a、burnSample 的结果 b → vec4(直通色, 覆盖度)。烤黄乘焦糖色（纹理还在）、焦黑换炭色留一点明暗、成灰
 fn burnMaterial(rgb0: vec3<f32>, a: f32, b: vec4<f32>) -> vec4<f32> {
     var rgb = mix(rgb0, rgb0 * burnUniforms.uBurnScorchColor, b.y * (1.0 - b.x));
     let lum = dot(rgb, vec3<f32>(0.299, 0.587, 0.114));

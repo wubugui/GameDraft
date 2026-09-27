@@ -1,6 +1,6 @@
 /**
  * 一根光柱在画面上的那一张网格：包络多边形（3D = 两圈截面顶点投到画面的凸包；2D = 梯形四角）扇形三角化，
- * 片元里跑 `vfxBeamGlsl.ts` 的核心。一根光柱一个 draw call。
+ * 片元里跑 `vfxBeamWgsl.ts` 的核心（`vfxBeamShaders.ts` 拼程序）。一根光柱一个 draw call。
  *
  * 排序：`sort: depth` 时网格的 `entitySortFootY` = 光柱落点的画面 y（与实体脚点同一把尺，整根参与实体排序）；
  * `background` / `foreground` 打 `entitySortBand`（与热点展示图 / 气泡同一个档位字段）。
@@ -14,7 +14,7 @@ import { VFX_BEAM_MAX_CURVE_KEYS, VFX_BEAM_MAX_HULL, VFX_BEAM_MAX_PLANES } from 
 import type { VfxBeamRuntime } from '../../systems/vfx/vfxSim';
 import { samplerOf } from '../legacy/gpuSampler';
 import { createBeamUniformValues, type VfxBeamUniformValues } from './vfxBeamGlsl';
-import { getVfxBeamGpuProgram, getVfxBeamProgram } from './vfxBeamShaders';
+import { getVfxBeamGpuProgram } from './vfxBeamShaders';
 
 type SortableMesh = Mesh<Geometry, Shader> & { entitySortFootY?: number; entitySortBand?: 'back' | 'front' };
 
@@ -48,7 +48,7 @@ export class VfxBeamView {
     const v = this.values;
     // ⚠ 声明顺序 = WebGPU 缓冲布局（Pixi 按声明顺序、WGSL 对齐规则排偏移），与 vfxBeamWgsl.ts 的结构逐项对应。
     // uBeamAlong 紧跟 uBeamPlanes：WGSL 里它是同一块内存的 array<vec4<f32>, N/2>（uniform 数组步长须 16 的倍数），
-    // 偏移必须落在 16 的倍数上。WebGL 侧按名字逐个传 uniform，声明顺序不影响画面。
+    // 偏移必须落在 16 的倍数上。
     this.beamGroup = new UniformGroup({
       uBeamMode: { value: 0, type: 'f32' },
       uBeamS2W0: { value: v.uBeamS2W0, type: 'vec4<f32>' },
@@ -96,9 +96,8 @@ export class VfxBeamView {
     const depthTex = depthSrc ?? Texture.WHITE.source;
     const cookieTex = cookieSrc ?? Texture.WHITE.source;
     this.shader = new Shader({
-      glProgram: getVfxBeamProgram(),
-      // WebGPU 路径的 WGSL 孪生：资源键与下面逐个同名；「纹理名 + Sampler」是 WGSL 的采样器（samplerOf：按参数共享、
-      // 不挂在纹理生命期上，见 legacy/gpuSampler；WebGL 不认这些键）
+      // 资源键与 WGSL 绑定逐个同名；「纹理名 + Sampler」是 WGSL 的采样器（samplerOf：按参数共享、
+      // 不挂在纹理生命期上，见 legacy/gpuSampler）
       gpuProgram: getVfxBeamGpuProgram(),
       resources: {
         vfxBeam: this.beamGroup,

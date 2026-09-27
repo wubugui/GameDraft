@@ -3,7 +3,7 @@ id: breathing-overlay
 title: 呼吸图(一张静帧实时在呼吸的叠图 · 离线拆层 + 位移场 · 表演模拟 · 叠图同一套句柄 · 参数实时可改)
 domain: runtime
 type: mechanism
-summary: 盖脸纸那类「一张静帧实时在呼吸」的叠图:资产 = 离线拆好的几层(底图 / 胸口 / 贴脸的纸 / 垂帘)+ 两张 RGBA16F 位移场 + 骨架常数 + 表演参数预设(assets/data/breathing/<id>.json,呼吸工作台唯一写者);运行时一张自建 Mesh + breathingShade.glsl 每帧反查源点重合几层,挂在叠图同一张 images 表、同一套 id 句柄(hideOverlayImage / 过场 cleanup 都收得掉);BreathingPerformance 是唯一的表演模拟(胸口升余弦、纸按吸/呼窗口贴/飞 + 二阶弹簧、纸比胸口晚走延迟缓冲、渐弱 / 假停 / 猛吸冲量解回弹),走游戏时钟吃暂停闸;三个动作 showBreathingOverlay / breathingPerform(wait = 等渐弱走完 / 猛吸结束)/ setBreathingParams(可渐变);参数表唯一真相源 src/data/breathingParams.json(运行时、工作台、主编辑器共用)
+summary: 盖脸纸那类「一张静帧实时在呼吸」的叠图:资产 = 离线拆好的几层(底图 / 胸口 / 贴脸的纸 / 垂帘)+ 两张 RGBA16F 位移场 + 骨架常数 + 表演参数预设(assets/data/breathing/<id>.json,呼吸工作台唯一写者);运行时一张自建 Mesh + breathingShade.wgsl 每帧反查源点重合几层,挂在叠图同一张 images 表、同一套 id 句柄(hideOverlayImage / 过场 cleanup 都收得掉);BreathingPerformance 是唯一的表演模拟(胸口升余弦、纸按吸/呼窗口贴/飞 + 二阶弹簧、纸比胸口晚走延迟缓冲、渐弱 / 假停 / 猛吸冲量解回弹),走游戏时钟吃暂停闸;三个动作 showBreathingOverlay / breathingPerform(wait = 等渐弱走完 / 猛吸结束)/ setBreathingParams(可渐变);参数表唯一真相源 src/data/breathingParams.json(运行时、工作台、主编辑器共用)
 status: active
 authority:
   - src/systems/breathing/BreathingPerformance.ts
@@ -12,7 +12,6 @@ authority:
   - src/systems/breathing/BreathingOverlaySystem.ts
   - src/data/breathingOverlays.ts
   - src/rendering/breathingShade.wgsl
-  - src/rendering/breathingShade.glsl
   - src/rendering/overlayPercentLayout.ts
   - src/rendering/breathingUniforms.ts
   - src/rendering/breathingOverlayMesh.ts
@@ -22,7 +21,7 @@ authority:
   - src/dev/runtimeBreathingSync.ts
   - src/dev/runtimeBreathingApiPlugin.ts
 triggers:
-  paths: ["src/systems/breathing/**", "src/data/breathingParams.json", "src/data/breathingOverlays.ts", "src/rendering/breathingShade.glsl", "src/rendering/breathingShade.wgsl", "src/rendering/overlayPercentLayout.ts", "src/rendering/breathingUniforms.ts", "src/rendering/breathingOverlayMesh.ts", "src/audio/breathSynth.ts", "src/dev/runtimeBreathingSync.ts", "src/dev/runtimeBreathingApiPlugin.ts", "public/assets/data/breathing/**", "public/resources/runtime/images/breathing/**"]
+  paths: ["src/systems/breathing/**", "src/data/breathingParams.json", "src/data/breathingOverlays.ts", "src/rendering/breathingShade.wgsl", "src/rendering/overlayPercentLayout.ts", "src/rendering/breathingUniforms.ts", "src/rendering/breathingOverlayMesh.ts", "src/audio/breathSynth.ts", "src/dev/runtimeBreathingSync.ts", "src/dev/runtimeBreathingApiPlugin.ts", "public/assets/data/breathing/**", "public/resources/runtime/images/breathing/**"]
   topics: [呼吸图, 盖脸纸, 纸随呼吸, 胸口起伏, 纸比胸口晚, 渐弱, 假停, 猛吸, 位移场, 反查源点, 呼吸声, showBreathingOverlay, breathingPerform, setBreathingParams]
   tasks: [做呼吸图, 调盖脸纸, 改呼吸节奏, 剧情里改呼吸参数, 接新的呼吸图]
 verified_by:
@@ -96,9 +95,8 @@ breathe / fadeOut / gasp / stopNow。撤销覆盖时丢 JSON 缓存,下次显示
   以前工作台自己不预乘上传(`uPremul = 0`),半透明边会渗出透明像素里的颜色,和游戏不一样。
 - 参数表只在 `src/data/breathingParams.json` 维护;名称(label)是给制作人的「参数文本」用的键,**不许重名**(单测守着)。
 
-- **着色本体有两份,算法改动两份一起改**:`breathingShade.glsl`(WebGL,只剩 master 对照与 `shaderTwins.test.ts` 在用;
-  呼吸工作台 2026-09-27 起不再切片它,画面走游戏的呼吸图 Mesh + WGSL)与 `breathingShade.wgsl`(WebGPU,逐句对应)。改完跑 `node tools/render_parity/run.mjs --case 摆动呼吸淡入` 证明两边一致
-  (见 pixi-shader-wgsl-port)。
+- **着色本体只有一份** `breathingShade.wgsl`(游戏与呼吸工作台同一个呼吸图 Mesh;GLSL 孪生 2026-09-28 已删)。改完跑
+  `node tools/render_parity/run.mjs --case 摆动呼吸淡入` 证明与 master(GLSL 版)一致(见 pixi-shader-wgsl-port)。
 
 ## 已知坑
 

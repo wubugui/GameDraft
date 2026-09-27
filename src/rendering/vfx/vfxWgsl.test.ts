@@ -12,7 +12,7 @@
  *   setForegroundCoverage 当场换绑后纹理 / 采样器仍对得上(采样器 = samplerOf(新覆盖图));
  * - 片元阶段绑定数不超 WebGPU 缺省上限(luma 按 WGSL 声明建布局、可见性全阶段 ⇒ 声明了没读的也算):
  *   超了整条管线建不出来、那一批粒子不画;
- * - 遮挡段 vfxVisibility 的 GLSL / WGSL 孪生:字面量顺序与前景层分支一致(master 的 GLSL 是真值)。
+ * - 遮挡段 vfxVisibility 的前景层分支顺序(外沿不判 / 前景面顶替深度图 / 其余照旧读深度图)。
  * 用的是运行时真实的建 shader 路径(VfxRenderer / VfxBeamView / 照明系统的 createCustomLitShader)。
  */
 import {
@@ -29,7 +29,7 @@ import { BEAM_WGSL_UNIFORMS } from './vfxBeamWgsl';
 import { getVfxBeamGpuProgram } from './vfxBeamShaders';
 import { VfxBeamView } from './VfxBeamView';
 import { VfxRenderer, type VfxRenderDeps, type VfxSpriteSheet } from './VfxRenderer';
-import { VFX_OCCLUSION_GLSL, VFX_OCCLUSION_WGSL, VFX_WGSL_SOURCES } from './vfxShaders';
+import { VFX_OCCLUSION_WGSL, VFX_WGSL_SOURCES } from './vfxShaders';
 import { getShaderLayoutFromWGSL } from '@luma.gl/webgpu';
 
 type StructsAndGroups = {
@@ -347,11 +347,10 @@ describe('粒子 WGSL · 片元阶段绑定数不超 WebGPU 缺省上限', () =>
 });
 
 /**
- * 遮挡段孪生(master 只改了 GLSL,WGSL 是本分支补的):vfxVisibility 两份的数值字面量按源码顺序一致,
- * 前景层三路(外沿不判 / 前景面顶替深度图 / 其余照旧读深度图)的写法逐句对应。
- * 字面量归一与 shaderTwins.test 同口径(textureSampleLevel 的 0 号 LOD 不算)。
+ * 遮挡段 vfxVisibility 的前景层三路(外沿不判 / 前景面顶替深度图 / 其余照旧读深度图)按这个顺序判;
+ * 数值与 master 的 GLSL 版逐像素一致由 tools/render_parity 的「粒子 /」用例钉住。
  */
-describe('粒子遮挡段 · GLSL / WGSL 孪生', () => {
+describe('粒子遮挡段 · 前景层分支', () => {
   const fnBody = (src: string, name: string): string => {
     const i = src.search(new RegExp(`\\b${name}\\s*\\(`));
     expect(i, `找不到函数 ${name}`).toBeGreaterThanOrEqual(0);
@@ -363,25 +362,9 @@ describe('粒子遮挡段 · GLSL / WGSL 孪生', () => {
     }
     throw new Error(`函数 ${name} 花括号不配对`);
   };
-  const lits = (s: string): string[] => {
-    const t = s.replace(/\/\/.*$/gm, '')
-      .replace(/(textureSampleLevel\([^()]*),\s*0\.0\s*\)/g, '$1)')
-      .replace(/\b(?:vec[234]|texture_\w+|ptr)<[^<>]*>/g, ' ');
-    return [...t.matchAll(/(-\s*)?(?<![\w.])((?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?|\d+(?:[eE][-+]?\d+)?)[fu]?(?![\w.])/g)]
-      .map((m) => (m[1] ? '-' : '') + String(Number(m[2])));
-  };
-
-  it('vfxVisibility 字面量顺序一致', () => {
-    const g = lits(fnBody(VFX_OCCLUSION_GLSL, 'vfxVisibility'));
-    const w = lits(fnBody(VFX_OCCLUSION_WGSL, 'vfxVisibility'));
-    expect(g.length).toBeGreaterThan(10);
-    expect(w).toEqual(g);
-  });
 
   it('前景层分支:外沿返回 1、前景面拿 fgDepth 顶替、只有不在前景层里才读深度图', () => {
     const w = fnBody(VFX_OCCLUSION_WGSL, 'vfxVisibility');
-    const g = fnBody(VFX_OCCLUSION_GLSL, 'vfxVisibility');
-    expect(g).toContain('float fgKind = fgSample(duv, fgDepth);');
     expect(w).toContain('let fgKind = fgSample(duv, vfxDepth.uHasFgCoverage, &fgDepth);');
     const order = (src: string, marks: string[]) => marks.map((m) => {
       const i = src.indexOf(m);
@@ -391,9 +374,6 @@ describe('粒子遮挡段 · GLSL / WGSL 孪生', () => {
     const wi = order(w, ['fgSample(', 'if (fgKind > 1.5) { return 1.0; }', 'var sceneDepth = fgDepth;', 'if (fgKind < 0.5) {',
       'textureSampleLevel(uDepthMap', 'vfxDepth.uTolerance < qz']);
     expect([...wi].sort((a, b) => a - b)).toEqual(wi);
-    const gi = order(g, ['fgSample(', 'if (fgKind > 1.5) return 1.0;', 'float sceneDepth = fgDepth;', 'if (fgKind < 0.5) {',
-      'texture(uDepthMap', 'uTolerance < qz']);
-    expect([...gi].sort((a, b) => a - b)).toEqual(gi);
     // 共用段(foregroundMaskWgsl)拼进来了,开关是 VfxDepth 的最后一个成员
     expect(VFX_OCCLUSION_WGSL).toContain('fn fgSample(');
     expect(/uOcclusionBlend: f32,\s*uHasFgCoverage: f32,\s*\}/.test(VFX_OCCLUSION_WGSL)).toBe(true);

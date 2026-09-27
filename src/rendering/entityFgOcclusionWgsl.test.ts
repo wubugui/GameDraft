@@ -3,7 +3,8 @@
  * WGSL 守门(不需要 GPU)。master 在 GLSL 里加了 uHasFgCoverage + uFgCoverage + fgSample,判据改成
  *   occluded = fgKind > 1.5 ? false : fgKind > 0.5 ? fgDepth < 脚点深度 + upright - 1e-4 : sceneDepth + uTolerance < spriteDepth
  * 游戏只跑 WGSL,这里钉住 WGSL 那份:
- * - 判据的三支与 GLSL 逐式相同(去掉 uniform 结构体前缀后逐字比),DepthOcclusion 的调试色用同一个 occluded;
+ * - 判据的三支与 master 的 GLSL 逐式相同(去掉 uniform 结构体前缀后逐字比),DepthOcclusion 的调试色用同一个 occluded;
+ *   深度遮挡 / 实体光照两支只剩 WGSL(没有 GL 程序),角色着色那支的 GLSL 程序还在、判据照比;
  * - 共用取样段 fgSample 拼进来恰好一次、开关从各自的参数结构体传进去;
  * - uFgCoverage / uFgCoverageSampler 是组 1 的绑定,初值 = 永不销毁的占位 + 它的共享采样器;
  * - setForegroundCoverage 交来 / 收回:纹理、采样器(samplerOf)、开关三样一起换;
@@ -83,7 +84,6 @@ const CASES: Case[] = [
 
 const bindingsOf = (f: Filter): Binding[] => f.gpuProgram!.structsAndGroups.groups as Binding[];
 const wgslOf = (f: Filter): string => f.gpuProgram!.source;
-const glslOf = (f: Filter): string => f.glProgram!.fragment;
 const res = (f: Filter): Record<string, unknown> => f.resources as Record<string, unknown>;
 const fgOn = (f: Filter, group: string): unknown => (res(f)[group] as UniformGroup).uniforms['uHasFgCoverage'];
 /** 去注释、压空白 */
@@ -142,19 +142,25 @@ describe('三支实体遮挡滤镜 · 前景覆盖图(WGSL)', () => {
     expect(fgOn(f, c.group)).toBe(0);
   });
 
-  it.each(CASES)('$label:WGSL 的遮挡判据三支与 GLSL 逐式相同,fgSample 拼进来恰好一次、开关作参数', (c) => {
+  it.each(CASES)('$label:WGSL 的遮挡判据三支(与 master 的 GLSL 逐式相同),fgSample 拼进来恰好一次、开关作参数', (c) => {
     const f = c.make();
     const w = norm(wgslOf(f));
-    const g = norm(glslOf(f));
     expect(w.match(/\bfn fgSample\(/g)?.length).toBe(1);
     expect(w).toContain(`var fgDepth: f32; let fgKind = fgSample(depthUV, ${c.prefix}.uHasFgCoverage, &fgDepth);`);
-    const gm = /float fgKind = fgSample\(depthUV, fgDepth\); occluded = fgKind > 1\.5 \? (.+?) : fgKind > 0\.5 \? (.+?) : (.+?);/.exec(g);
     const wm = /if \(fgKind > 1\.5\) \{ occluded = (.+?); \} else if \(fgKind > 0\.5\) \{ occluded = (.+?); \} else \{ occluded = (.+?); \}/.exec(w);
-    expect(gm, 'GLSL 判据').toBeTruthy();
     expect(wm, 'WGSL 判据').toBeTruthy();
     const strip = (s: string) => s.replace(new RegExp(`\\b${c.prefix}\\.`, 'g'), '');
-    expect(wm!.slice(1).map(strip)).toEqual(gm!.slice(1));
-    expect(gm!.slice(1)).toEqual(['false', `fgDepth < ${c.foot} + upright - 1e-4`, 'sceneDepth + uTolerance < spriteDepth']);
+    const expected = ['false', `fgDepth < ${c.foot} + upright - 1e-4`, 'sceneDepth + uTolerance < spriteDepth'];
+    expect(wm!.slice(1).map(strip)).toEqual(expected);
+    // 角色着色滤镜的 GLSL 程序还在(随角色照明那边一起删):它那份判据照比;另两支只剩 WGSL
+    if (c.label === '角色着色') {
+      const gm = /float fgKind = fgSample\(depthUV, fgDepth\); occluded = fgKind > 1\.5 \? (.+?) : fgKind > 0\.5 \? (.+?) : (.+?);/
+        .exec(norm(f.glProgram!.fragment));
+      expect(gm, 'GLSL 判据').toBeTruthy();
+      expect(gm!.slice(1)).toEqual(expected);
+    } else {
+      expect(f.glProgram).toBeNull();
+    }
     // 深度图判据只剩判据里那一处(调试 / 正常渲染都读 occluded,不许再各算一遍)
     expect(w.match(/sceneDepth \+ \w+\.uTolerance < spriteDepth/g)?.length).toBe(1);
     // 取样在调试分支之前(调试色与正常渲染同一个 occluded)
@@ -162,7 +168,7 @@ describe('三支实体遮挡滤镜 · 前景覆盖图(WGSL)', () => {
     expect(w).toContain(`if (${c.prefix}.uDebug > 0.5) { if (occluded) { return vec4<f32>(1.0, 0.0, 0.0, 0.7); }`);
   });
 
-  it('共用取样段与 GLSL 逐式对应:开关 < 0.5 → 0;覆盖 R <= 0.5 → 0;B > 0.5 → 1、深度 = G / max(R, 1e-4);其余 → 2', () => {
+  it('共用取样段与 master 的 GLSL 逐式对应:开关 < 0.5 → 0;覆盖 R <= 0.5 → 0;B > 0.5 → 1、深度 = G / max(R, 1e-4);其余 → 2', () => {
     const w = norm(wgslOf(CASES[0].make()));
     expect(w).toContain('fn fgSample(uv: vec2<f32>, hasCoverage: f32, outDepth: ptr<function, f32>) -> f32 { *outDepth = 0.0; '
       + 'if (hasCoverage < 0.5) { return 0.0; } let s = textureSampleLevel(uFgCoverage, uFgCoverageSampler, uv, 0.0); '

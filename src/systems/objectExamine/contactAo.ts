@@ -3,7 +3,6 @@ import {
   BlurFilter,
   Container,
   Filter,
-  GlProgram,
   GpuProgram,
   Matrix,
   RenderTexture,
@@ -72,27 +71,6 @@ const CRITTER_OPACITY = 1.5;
 const CAST_PAD_RATIO = 0.18;
 const CAST_PAD_MIN_CM = 4;
 
-const GL_VERTEX = /* glsl */ `
-in vec2 aPosition;
-out highp vec2 vTextureCoord;
-uniform highp vec4 uInputSize;
-uniform vec4 uOutputFrame;
-uniform vec4 uOutputTexture;
-vec4 filterVertexPosition(void) {
-    vec2 p = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-    p.x = p.x * (2.0 / uOutputTexture.x) - 1.0;
-    p.y = p.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
-    return vec4(p, 0.0, 1.0);
-}
-vec2 filterTextureCoord(void) {
-    return aPosition * (uOutputFrame.zw * uInputSize.zw);
-}
-void main(void) {
-    gl_Position = filterVertexPosition();
-    vTextureCoord = filterTextureCoord();
-}
-`;
-
 const WGSL_HEAD = /* wgsl */ `
 struct GlobalFilterUniforms {
   uInputSize: vec4<f32>,
@@ -128,46 +106,9 @@ fn mainVertex(@location(0) aPosition: vec2<f32>) -> VSOutput {
 // Pixi FilterSystem 里 uOutputFrame.xy = bounds（逻辑全局坐标），
 // uOutputFrame.zw = input.frame 宽高（同样是逻辑像素，不是 device pixel）。
 // 勿再除 resolution，Retina 上会把 gpos 缩到错误位置。
-const GL_COMPOSITE = /* glsl */ `
-in highp vec2 vTextureCoord;
-out vec4 finalColor;
-uniform highp vec4 uInputSize;
-uniform highp vec4 uOutputFrame;
-uniform sampler2D uTexture;
-uniform sampler2D uBodyRaw;
-uniform sampler2D uBodyBlur;
-uniform sampler2D uCritRaw;
-uniform sampler2D uCritBlur;
-uniform vec4 uMaskX;
-uniform vec4 uMaskY;
-uniform float uBodyStrength;
-uniform float uCritStrength;
-void main(void) {
-    vec4 base = texture(uTexture, vTextureCoord);
-    vec2 aPos = vTextureCoord / (uOutputFrame.zw * uInputSize.zw);
-    vec2 gpos = uOutputFrame.xy + aPos * uOutputFrame.zw;
-    vec2 muv = vec2(
-        dot(uMaskX.xyz, vec3(gpos, 1.0)),
-        dot(uMaskY.xyz, vec3(gpos, 1.0))
-    );
-    float inArea = step(0.0, muv.x) * step(muv.x, 1.0)
-                 * step(0.0, muv.y) * step(muv.y, 1.0);
-    float bodyRaw = texture(uBodyRaw, muv).a * inArea;
-    float bodyBlur = texture(uBodyBlur, muv).a * inArea;
-    float critRaw = texture(uCritRaw, muv).a * inArea;
-    float critBlur = texture(uCritBlur, muv).a * inArea;
-    // 指数映射保持整段连续，避免高强度把高斯峰削成硬边黑带。
-    float shBody = (1.0 - exp(-max(bodyBlur, 0.0) * uBodyStrength)) * (1.0 - bodyRaw);
-    float shCrit = (1.0 - exp(-max(critBlur, 0.0) * uCritStrength)) * (1.0 - critRaw);
-    // 不透明区：只有爬虫影直接乘暗（物件不吃自己的影）。
-    vec3 rgb = base.rgb * (1.0 - shCrit);
-    // 透明区：两通道都写黑 alpha，premultiplied 合成即 dst.rgb *= (1 - ao)。
-    float aoA = max(shBody, shCrit) * (1.0 - base.a);
-    finalColor = vec4(rgb, base.a + aoA);
-}
-`;
-
-// WebGPU 版合成。Pixi 按**变量名 = resources 键名**给 WGSL 槽位配资源:uniform 组的变量必须叫
+// 遮蔽用指数映射 1 − exp(−模糊 × 强度)：整段连续，避免高强度把高斯峰削成硬边黑带。
+// 不透明区只有爬虫影直接乘暗（物件不吃自己的影）；透明区两通道都写黑 alpha，premultiplied 合成即 dst.rgb *= (1 − ao)。
+// Pixi 按**变量名 = resources 键名**给 WGSL 槽位配资源:uniform 组的变量必须叫
 // compositeUniforms(与下面 resources 的键同名),叫别的名字那组 uniform 会被 Pixi 甩进无人认领的
 // 第 99 组、@group(1) @binding(0) 空着,WebGPU 上建 bind group 直接失败。
 const WGSL_COMPOSITE = WGSL_HEAD + /* wgsl */ `
@@ -222,11 +163,6 @@ class ContactCompositePass extends Filter {
       uCritStrength: { value: 0, type: 'f32' },
     });
     super({
-      glProgram: GlProgram.from({
-        name: 'object-examine-contact-composite',
-        vertex: GL_VERTEX,
-        fragment: GL_COMPOSITE,
-      }),
       gpuProgram: GpuProgram.from({
         name: 'object-examine-contact-composite',
         vertex: { source: WGSL_COMPOSITE, entryPoint: 'mainVertex' },

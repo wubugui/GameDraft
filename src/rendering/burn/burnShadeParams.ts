@@ -1,5 +1,5 @@
 /**
- * 燃烧着色参数（`burnShade.glsl` 的 uniform 值）从可燃物资产怎么来。纯函数、零 Pixi：
+ * 燃烧着色参数（`burnShade.wgsl` 的 uniform 值）从可燃物资产怎么来。纯函数、零 Pixi：
  * 游戏（`BurnSystem` → 两道燃烧滤镜）与燃烧工作台的预览调的是同一个，别在别处另拼。
  */
 import type { ResolvedBurnable } from '../../data/burnables';

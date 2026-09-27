@@ -48,6 +48,37 @@ function refFallback(): Plugin {
 }
 
 /**
+ * 候选侧补件(与 refFallback 对称):本分支删掉的 GLSL 孪生,用例里还可能为参考侧 import 着(GLSL 宿主拼真实 GLSL
+ * 片段,如 `@src/.../xxx.glsl?raw`)。参考侧跑 Pixi WebGL、执行它;候选侧只 import、从不执行(engine2d 只跑 WGSL),
+ * 所以候选侧缺的 **`.glsl` 文件**从参考树(master)补上,终端报一次清单——本分支有的一律用本分支的,补件只填空缺。
+ * 只补 `.glsl`:TS 模块缺了是真错(候选侧测的必须是本分支的代码),照常报错。本分支从 TS 模块里删掉的 GLSL **导出**
+ * 不经这里:用例按命名空间取(`import * as M`,候选侧取到 undefined、只在参考侧用),与参考侧取本分支才有的 WGSL
+ * 导出同一个写法。只处理用例经 `@src/` 的 import;本分支 src 里自己的相对 import 缺文件是本分支的错。
+ */
+function candFallback(): Plugin {
+  const refSrc = path.join(refRoot, 'src');
+  const reported = new Set<string>();
+  return {
+    name: 'render-parity-cand-fallback',
+    enforce: 'pre',
+    async resolveId(source, importer, options) {
+      const [file, query] = source.split('?');
+      if (!file.endsWith('.glsl')) return null;
+      if (!file.startsWith(srcRoot + path.sep) && !file.startsWith(`${srcRoot}/`)) return null;
+      if (fs.existsSync(file)) return null;
+      const rel = path.relative(srcRoot, file);
+      if (!fs.existsSync(path.join(refSrc, rel))) return null;
+      if (!reported.has(rel)) {
+        reported.add(rel);
+        console.warn(`[render_parity] 本分支没有 src/${rel.replace(/\\/g, '/')},用参考树(master)的补上(候选侧只 import、不执行 GLSL)`);
+      }
+      const target = path.join(refSrc, rel) + (query !== undefined ? `?${query}` : '');
+      return this.resolve(target, importer, { ...options, skipSelf: true });
+    },
+  };
+}
+
+/**
  * 两侧都把 RT gather 的逐像素随机旋转钉成 0(`hash12(gl_FragCoord.xy)` / `hash12(fragCoord)` → `0.0`)。
  * 真显卡上 ANGLE(FXC)与 Dawn(DXC)对同一串浮点式子的收缩 / 精度不同,hash12 的 fract 把末位差放大成完全不同的
  * 旋转角,「RT gather」几个用例因此永远逐位不等(SwiftShader 下两边同一编译器才相同);钉住之后其余整条
@@ -109,7 +140,7 @@ export default defineConfig({
     createHash('sha1').update(`${here}|${side}|${refRoot}`).digest('hex').slice(0, 12),
   ),
   plugins: [
-    ...(side === 'ref' ? [refFallback()] : []),
+    ...(side === 'ref' ? [refFallback()] : refRoot ? [candFallback()] : []),
     ...(pinRot ? [pinGatherRotation()] : []),
     ...(mutantId ? [applyMutant(mutantId)] : []),
   ],

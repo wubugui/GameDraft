@@ -1,164 +1,19 @@
-import { Filter, GlProgram, GpuProgram, Texture, type TextureSource } from '../engine2d';
+import { Filter, GpuProgram, Texture, type TextureSource } from '../engine2d';
 import type { SceneDepthConfig } from '../data/types';
 import { samplerOf } from './legacy/gpuSampler';
 
-const VERT = /* glsl */ `
-in vec2 aPosition;
-out vec2 vTextureCoord;
-out vec2 vScreenPos;
-
-uniform vec4 uInputSize;
-uniform vec4 uOutputFrame;
-uniform vec4 uOutputTexture;
-
-vec4 filterVertexPosition(void) {
-    vec2 position = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-    position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
-    position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
-    return vec4(position, 0.0, 1.0);
-}
-
-vec2 filterTextureCoord(void) {
-    return aPosition * (uOutputFrame.zw * uInputSize.zw);
-}
-
-void main(void) {
-    gl_Position = filterVertexPosition();
-    vTextureCoord = filterTextureCoord();
-    vScreenPos = aPosition * uOutputFrame.zw + uOutputFrame.xy;
-}
-`;
-
-const FRAG = /* glsl */ `
-in vec2 vTextureCoord;
-in vec2 vScreenPos;
-out vec4 finalColor;
-
-uniform sampler2D uTexture;
-uniform sampler2D uDepthMap;
-uniform sampler2D uCollisionMap;
-
-uniform float uMode;                // 0=off, 1=depth, 2=collision, 3=uv
-uniform vec2  uTexSize;             // 背景纹理原始像素尺寸
-uniform vec2  uWorldContainerPos;   // worldContainer 屏幕偏移
-uniform vec2  uSceneSize;           // 场景在屏幕空间的像素尺寸
-
-// 深度图参数
-uniform float uInvert;
-uniform float uScale;
-uniform float uOffset;
-
-// M矩阵参数（纹理像素空间）
-uniform float uM_ppu;
-uniform float uM_cx;
-uniform float uM_cy;
-uniform float uM_R00; uniform float uM_R01; uniform float uM_R02;
-uniform float uM_R20; uniform float uM_R21; uniform float uM_R22;
-uniform sampler2D uGroundD;    // 行走面深度场(RG16,与遮挡/影子同一份)
-uniform float uGroundMin;
-uniform float uGroundMax;
-uniform float uHasGroundTex;   // 0=无场 → 碰撞可视化整片置灰(不拿死掉的 floor 线糊弄)
-
-// 碰撞网格
-uniform float uCol_xMin;
-uniform float uCol_zMin;
-uniform float uCol_cellSize;
-uniform float uCol_gridW;
-uniform float uCol_gridH;
-
-// 仅深度调试用：线性深度空间归一化区间（由 depth_mapping 推导）
-uniform float uDbgDepthLo;
-uniform float uDbgDepthHi;
-
-float asinh_fast(float x) {
-    return log(x + sqrt(x * x + 1.0));
-}
-
-/** 近似 Viridis：保序，突出全局深浅 */
-vec3 depth_debug_colormap(float t) {
-    t = clamp(t, 0.0, 1.0);
-    vec3 c0 = vec3(0.05, 0.02, 0.38);
-    vec3 c1 = vec3(0.02, 0.40, 0.72);
-    vec3 c2 = vec3(0.18, 0.75, 0.55);
-    vec3 c3 = vec3(0.85, 0.75, 0.20);
-    vec3 c4 = vec3(0.92, 0.35, 0.12);
-    float p = t * 4.0;
-    if (p < 1.0) return mix(c0, c1, smoothstep(0.0, 1.0, p));
-    if (p < 2.0) return mix(c1, c2, smoothstep(0.0, 1.0, p - 1.0));
-    if (p < 3.0) return mix(c2, c3, smoothstep(0.0, 1.0, p - 2.0));
-    return mix(c3, c4, smoothstep(0.0, 1.0, p - 3.0));
-}
-
-void main(void) {
-    if (uMode < 0.5) {
-        finalColor = texture(uTexture, vTextureCoord);
-        return;
-    }
-
-    // 从屏幕位置算出背景 UV (与 DepthOcclusionFilter 同理)
-    float sx = vScreenPos.x - uWorldContainerPos.x;
-    float sy = vScreenPos.y - uWorldContainerPos.y;
-    vec2 uv = vec2(sx / uSceneSize.x, sy / uSceneSize.y);
-
-    if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
-        finalColor = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
-    }
-
-    if (uMode < 1.5) {
-        // --- 深度调试可视化：单调 asinh + 全局线性区间归一化 + colormap（不改采样与深度逻辑） ---
-        vec4 depthSample = texture(uDepthMap, uv);
-        float rawDepth = (depthSample.r * 255.0 * 256.0 + depthSample.g * 255.0) / 65535.0;
-        float d = uInvert > 0.5 ? 1.0 - rawDepth : rawDepth;
-        float depth = d * uScale + uOffset;
-        float z = asinh_fast(depth);
-        float z0 = asinh_fast(uDbgDepthLo);
-        float z1 = asinh_fast(uDbgDepthHi);
-        float t = clamp((z - z0) / max(z1 - z0, 1e-6), 0.0, 1.0);
-        finalColor = vec4(depth_debug_colormap(t), 1.0);
-
-    } else if (uMode < 2.5) {
-        // --- 碰撞可视化 ---
-        float texX = uv.x * uTexSize.x;
-        float texY = uv.y * uTexSize.y;
-
-        if (uHasGroundTex < 0.5) { finalColor = vec4(0.25, 0.25, 0.28, 1.0); return; }
-        vec4 gsm = texture(uGroundD, uv);
-        float dFloor = uGroundMin
-            + ((gsm.r * 255.0 * 256.0 + gsm.g * 255.0) / 65535.0) * (uGroundMax - uGroundMin);
-        float px = (texX - uM_cx) / uM_ppu;
-        float py = (uM_cy - texY) / uM_ppu;
-
-        float wx = uM_R00 * px + uM_R01 * py + uM_R02 * dFloor;
-        float wz = uM_R20 * px + uM_R21 * py + uM_R22 * dFloor;
-
-        float gx = (wx - uCol_xMin) / uCol_cellSize;
-        float gz = (wz - uCol_zMin) / uCol_cellSize;
-
-        float isCollision = 0.0;
-        if (gx >= 0.0 && gx < uCol_gridW && gz >= 0.0 && gz < uCol_gridH) {
-            vec2 colUV = vec2(gx / uCol_gridW, gz / uCol_gridH);
-            vec4 colSample = texture(uCollisionMap, colUV);
-            isCollision = colSample.r > 0.5 ? 1.0 : 0.0;
-        }
-
-        finalColor = vec4(0.0, isCollision, 0.0, 1.0);
-
-    } else {
-        // --- UV 可视化 ---
-        finalColor = vec4(uv.x, uv.y, 0.0, 1.0);
-    }
-}
-`;
-
 /**
- * WebGPU 版(与上面 GLSL 逐段对应,四个视图全在)。约定与坑:
+ * 背景调试滤镜:uMode 0 = 关(透传)、1 = 深度、2 = 碰撞、3 = uv。uTexSize = 背景纹理原始像素尺寸,
+ * uWorldContainerPos = worldContainer 屏幕偏移,uSceneSize = 场景在屏幕空间的像素尺寸;M 矩阵参数在纹理像素空间;
+ * 碰撞视图用行走面深度场(uGroundD,与遮挡 / 影子同一份)反投影,uHasGroundTex = 0(无场)⇒ 整片置灰
+ * (不拿死掉的 floor 线糊弄);uDbgDepthLo / uDbgDepthHi = 深度视图的线性深度归一化区间(由 depth_mapping 推导)。
+ * 约定与坑:
  * - `@group(0)` 是 Pixi 滤镜固定的 gfu / uTexture / uSampler;本滤镜的放 `@group(1)`,
  *   **变量名 = resources 键名**(`bgDebug` 与各纹理),每张纹理配一个 `<名>Sampler`;
  * - `BgDebugUniforms` 成员顺序 = 构造里 `bgDebug` 的声明顺序(Pixi 按声明顺序、WGSL 对齐算偏移);
  * - 深度 / 行走面 / 碰撞三张图的采样都在「uv 越界提前返回」之后 —— 那是非一致控制流,
  *   WGSL 的 textureSample 在那里编不过,改用 `textureSampleLevel(.., 0)`:这几张图都是单级(无 mip),
- *   与 GLSL `texture()` 等价。透传视图那次采样只受 uniform 条件控制,照用 textureSample。
+ *   与隐式 LOD 等价。透传视图那次采样只受 uniform 条件控制,照用 textureSample。
  */
 const WGSL = /* wgsl */ `
 struct GlobalFilterUniforms {
@@ -316,15 +171,7 @@ fn mainFragment(
 }
 `;
 
-let sharedProgram: GlProgram | null = null;
 let sharedGpuProgram: GpuProgram | null = null;
-
-function getProgram(): GlProgram {
-    if (!sharedProgram) {
-        sharedProgram = new GlProgram({ vertex: VERT, fragment: FRAG });
-    }
-    return sharedProgram;
-}
 
 function getGpuProgram(): GpuProgram {
     if (!sharedGpuProgram) {
@@ -341,7 +188,6 @@ export class BackgroundDebugFilter extends Filter {
     constructor() {
         const placeholder = Texture.WHITE;
         super({
-            glProgram: getProgram(),
             gpuProgram: getGpuProgram(),
             resources: {
                 bgDebug: {

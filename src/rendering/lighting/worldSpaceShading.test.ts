@@ -139,8 +139,9 @@ describe('铁律 0 · 光照一律在世界空间、单位 wu', () => {
     // "粒子与角色吃同一套灯"只是两处写得像。抽成共享段之后，这里钉住别再抄回去。
     expect(CHAR_SRC).toContain('export const ENTITY_SCENE_LIGHTS_GLSL');
     expect(CHAR_SRC).toContain('directE += entitySceneLightsE(q, n);');
-    expect(VFX_SRC).toContain('${ENTITY_SCENE_LIGHTS_GLSL}');
-    expect(VFX_SRC).toContain('vec3 directE = entitySceneLightsE(q, n);');
+    // 粒子只剩 WGSL(游戏只画 WGSL,GLSL 版已删):拼的是同一段的 WGSL 版
+    expect(VFX_SRC).toContain('${ENTITY_SCENE_LIGHTS_WGSL}');
+    expect(VFX_SRC).toContain('let directE = entitySceneLightsE(q, n);');
     expect(
       /(lcPointLight|lcSpotLight|lcAreaLight|lcDirectionalLight)\s*\(/.test(VFX_SRC),
       'vfxShaders.ts 里又出现了 lc*Light 调用 —— 灯循环只许在 ENTITY_SCENE_LIGHTS_GLSL 里有一份',

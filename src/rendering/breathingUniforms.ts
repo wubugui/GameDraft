@@ -3,20 +3,8 @@ import type { BreathingFrame, BreathingLimits } from '../systems/breathing/Breat
 
 /**
  * 呼吸图:表演帧 → 着色器 uniform 的换算(纯函数、不碰 Pixi;游戏的呼吸图 Mesh 与呼吸工作台的预览共用,保证两边一样)。
- * 着色器本体在 `breathingShade.glsl`(两边拼的也是同一份,按 BEGIN/END 标记切片)。
+ * 着色器本体在 `breathingShade.wgsl`(两边用的也是同一份)。
  */
-
-export const BREATHING_SHADE_TAG = 'BREATHING_SHADE';
-
-/** 从 breathingShade.glsl 原文切出 BEGIN/END 之间那段 */
-export function sliceBreathingShade(src: string): string {
-  const b = `//__${BREATHING_SHADE_TAG}_BEGIN__`;
-  const e = `//__${BREATHING_SHADE_TAG}_END__`;
-  const i = src.indexOf(b);
-  const j = src.indexOf(e);
-  if (i < 0 || j < 0) throw new Error(`breathingShade.glsl 缺切片标记 ${BREATHING_SHADE_TAG}`);
-  return src.substring(i + b.length, j);
-}
 
 export interface BreathingUniformInput {
   frame: BreathingFrame;

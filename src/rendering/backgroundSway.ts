@@ -43,7 +43,7 @@
  *
  * 两种背景都接了：没点亮的背景由本类自己的合成面出颜色（`composite`）；点亮的背景只产位移图，
  * 由 `LitBackground` 去读（`SceneLightingSystem.attachSway`，露出处另算一份扣掉植物的光照缓存）。
- * ⚠ GLSL 实际编译在 ES 1.00：不用数组；模板字符串里不许出现反引号（pixi-v8-traps）。
+ * ⚠ 着色器模板字符串里不许出现反引号。
  */
 import {
   Buffer, BufferUsage, Container, Geometry, Mesh, MeshGeometry, RenderTexture, Shader, type Renderer, type Texture,
@@ -51,7 +51,6 @@ import {
 
 import type { SceneData } from '../data/types';
 import { FG_BASE_SAMPLES, type ForegroundBaseSamples, type ForegroundSwaySource } from './foreground/foregroundLayerDefs';
-import { FG_COVERAGE_FRAG, FG_COVERAGE_VERT } from './foreground/foregroundMaskGlsl';
 import { fgCoverageProgramWgsl } from './foreground/foregroundMaskWgsl';
 import { foregroundRectGeometry, setForegroundRect, type ForegroundMask } from './foreground/SceneForegroundLayers';
 import {
@@ -425,113 +424,8 @@ export async function loadBackgroundSwayInput(
 
 // ---------------------------------------------------------------------------- 着色
 
-const VERT = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 aPosition;
-in vec2 aUV;
-in float aInst;
-in float aLeaf;
-uniform mat3 uProjectionMatrix;
-uniform mat3 uWorldTransformMatrix;
-uniform mat3 uTransformMatrix;
-uniform vec2 uSceneSize;
-uniform vec2 uUvMapSize;
-out vec2 vUV;
-out vec2 vHere;
-out float vInst;
-out float vLeaf;
-void main(void) {
-    mat3 model = uWorldTransformMatrix * uTransformMatrix;
-    // 网格顶点是场景坐标；位移图按原画像素尺寸开，缩放在这里做（不靠容器变换）
-    vec2 rt = aPosition * (uUvMapSize / uSceneSize);
-    vec2 screen = (model * vec3(rt, 1.0)).xy;
-    gl_Position = vec4((uProjectionMatrix * vec3(screen, 1.0)).xy, 0.0, 1.0);
-    vUV = aUV;
-    vHere = aPosition / uSceneSize;
-    vInst = aInst;
-    vLeaf = aLeaf;
-}
-`;
-
 /**
- * 写位移图：RG = (源 uv − 本像素 uv) × 覆盖度，B = A = 覆盖度，按预乘混合叠（远的先画）。
- * 读的一方 `源 uv = 本像素 uv + RG / A`。存差值而不是绝对 uv：位移只有几十像素，半浮点在这个量级
- * 精度够（绝对 uv 到 2048 宽时半浮点只剩整像素级）；覆盖度为 0 的地方天然就是"不动"。
- */
-const FRAG = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vUV;
-in vec2 vHere;
-in float vInst;
-in float vLeaf;
-out vec4 fragColor;
-uniform sampler2D uMatte;       // R = 植被 alpha, G = 叶度, B = 自由度
-uniform sampler2D uIds;         // R/G = 实例 id 低/高字节（最近邻）
-uniform vec2  uPaintSize;
-uniform float uTime;
-uniform float uLeafPx;          // 叶片细抖波长（原画像素，= wind.leaf.size 换算）
-uniform float uLeafHz;          // 叶片细抖频率
-
-vec2 leafFlutter(vec2 p, float t) {
-    float k = 6.2831853 / max(uLeafPx, 1.0);
-    float wt = 6.2831853 * uLeafHz * t;
-    float a = sin((p.x * 0.83 + p.y * 0.51) * k + wt);
-    float b = sin((p.y * 0.91 - p.x * 0.47) * k + wt * 1.37 + 1.9);
-    float c = sin((p.x * 0.29 - p.y * 0.37) * k + wt * 0.71 + 4.1);
-    return vec2(a + 0.6 * c, b - 0.6 * c) * 0.5;
-}
-
-void main(void) {
-    vec2 uv = vUV;
-    // 叶片颤动：只在叶像素上（木质的叶度 ≈ 0，不颤）
-    float leafy = texture(uMatte, uv).g;
-    uv += leafFlutter(uv * uPaintSize, uTime) * (vLeaf * leafy) / uPaintSize;
-    vec4 idc = texture(uIds, uv);
-    float id = floor(idc.r * 255.0 + 0.5) + 256.0 * floor(idc.g * 255.0 + 0.5);
-    if (abs(id - vInst) > 0.5) { discard; }
-    float a = texture(uMatte, uv).r;
-    if (a < 0.004) { discard; }
-    fragColor = vec4((uv - vHere) * a, a, a);
-}
-`;
-
-const COMP_VERT = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 aPosition;
-in vec2 aUV;
-uniform mat3 uProjectionMatrix;
-uniform mat3 uWorldTransformMatrix;
-uniform mat3 uTransformMatrix;
-out vec2 vUv;
-void main(void) {
-    mat3 model = uWorldTransformMatrix * uTransformMatrix;
-    vec2 screen = (model * vec3(aPosition, 1.0)).xy;
-    gl_Position = vec4((uProjectionMatrix * vec3(screen, 1.0)).xy, 0.0, 1.0);
-    vUv = aUV;
-}
-`;
-
-/** 不打光的背景：先读位移图，再按源 uv 取原画，露出来的地方是补过背景的底板 */
-const COMP_FRAG = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vUv;
-out vec4 fragColor;
-uniform sampler2D uPainting;
-uniform sampler2D uPlate;
-uniform sampler2D uUvMap;
-void main(void) {
-    vec3 col = texture(uPlate, vUv).rgb;
-    vec4 m = texture(uUvMap, vUv);
-    if (m.a > 0.002) {
-        vec3 fg = texture(uPainting, vUv + m.rg / m.a).rgb;
-        col = mix(col, fg, clamp(m.a, 0.0, 1.0));
-    }
-    fragColor = vec4(col, 1.0);
-}
-`;
-
-/**
- * WebGPU 版(WGSL):与上面四段 GLSL 逐句对应。Pixi 网格约定:`globalUniforms` 在 group 0、`localUniforms` 在 group 1
+ * Pixi 网格约定:`globalUniforms` 在 group 0、`localUniforms` 在 group 1
  * (声明了这两个名字 GpuMeshAdapter 才自动绑),自有资源在 group 2,变量名 = Shader resources 的键名,
  * 每张纹理配一个 `<名>Sampler`;`swayU` 结构体成员顺序 = resources 里的声明顺序(WebGPU 按声明顺序排偏移)。
  */
@@ -553,9 +447,16 @@ struct LocalUniforms {
 `;
 
 /**
- * 写位移图(同 VERT + FRAG)。
+ * 写位移图:RG = (源 uv − 本像素 uv) × 覆盖度,B = A = 覆盖度,按预乘混合叠(远的先画)。
+ * 读的一方 `源 uv = 本像素 uv + RG / A`。存差值而不是绝对 uv:位移只有几十像素,半浮点在这个量级
+ * 精度够(绝对 uv 到 2048 宽时半浮点只剩整像素级);覆盖度为 0 的地方天然就是"不动"。
+ *
+ * - 顶点:网格顶点是场景坐标;位移图按原画像素尺寸开,缩放在顶点里做(不靠容器变换)。
+ * - uMatte:R = 植被 alpha,G = 叶度,B = 自由度;uIds:R/G = 实例 id 低 / 高字节(最近邻);
+ *   uLeafPx / uLeafHz = 叶片细抖的波长(原画像素,= wind.leaf.size 换算)/ 频率。
+ * - 叶片颤动只在叶像素上(木质的叶度 ≈ 0,不颤)。
  * ⚠ 片元里两次 discard 之前先把 uMatte 的 .r 取好:WGSL 的 textureSample 只许在一致控制流里调,
- *   GLSL 原文在第一次 discard 之后才取;discard 的片元结果本来就不要,提前取与原文逐像素相同。
+ *   master 的 GLSL 版在第一次 discard 之后才取;discard 的片元结果本来就不要,提前取与它逐像素相同。
  */
 const SWAY_WGSL = WGSL_MESH_UNIFORMS + /* wgsl */ `
 struct SwayU {
@@ -628,9 +529,9 @@ fn mainFragment(
 `;
 
 /**
- * 不打光的合成面(同 COMP_VERT + COMP_FRAG)。
+ * 不打光的背景的合成面:先读位移图,再按源 uv 取原画,露出来的地方是补过背景的底板。
  * ⚠ 取原画那一下在分支里:WGSL 分支里不能 textureSample,改 textureSampleLevel(…, 0)——
- *   原画没有 mip(单级),与 GLSL 的 texture() 等价。
+ *   原画没有 mip(单级),与隐式 LOD 等价。
  */
 const COMP_WGSL = WGSL_MESH_UNIFORMS + /* wgsl */ `
 @group(2) @binding(0) var uPainting: texture_2d<f32>;
@@ -668,7 +569,7 @@ fn mainFragment(@location(0) vUv: vec2<f32>) -> @location(0) vec4<f32> {
 `;
 
 /**
- * 前景层覆盖图网格(同 FG_COVERAGE_VERT + FG_COVERAGE_FRAG,见 `foreground/foregroundMaskWgsl`)。
+ * 前景层覆盖图网格(程序见 `foreground/foregroundMaskWgsl` 的 fgCoverageProgramWgsl)。
  * 参数组 fgMaskU 的成员顺序 = `createForegroundMask` 里的声明顺序(uBase 第一个)。模块级常量:GpuProgram 按源串缓存。
  */
 export const FG_COVERAGE_WGSL = fgCoverageProgramWgsl(WGSL_MESH_UNIFORMS);
@@ -1066,7 +967,6 @@ export class SwayBackground {
     // ★ 半浮点：RG 存的是**差值**（几十像素量级，精度足够），可以线性过滤（预乘量插值是对的）
     this.uvMap = RenderTexture.create({ width: nw, height: nh, format: 'rgba16float', scaleMode: 'linear', antialias: false });
     this.shader = Shader.from({
-      gl: { vertex: VERT, fragment: FRAG },
       gpu: {
         vertex: { source: SWAY_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: SWAY_WGSL, entryPoint: 'mainFragment' },
@@ -1091,7 +991,6 @@ export class SwayBackground {
     this.mesh = new Mesh({ geometry, shader: this.shader });
     if (opts.composite !== false) {
       this.compShader = Shader.from({
-        gl: { vertex: COMP_VERT, fragment: COMP_FRAG },
         gpu: {
           vertex: { source: COMP_WGSL, entryPoint: 'mainVertex' },
           fragment: { source: COMP_WGSL, entryPoint: 'mainFragment' },
@@ -1189,7 +1088,6 @@ export class SwayBackground {
     const [W, H] = this.inp.sceneSize;
     const [pw, ph] = this.inp.paintSize;
     const shader = Shader.from({
-      gl: { vertex: FG_COVERAGE_VERT, fragment: FG_COVERAGE_FRAG },
       gpu: {
         vertex: { source: FG_COVERAGE_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: FG_COVERAGE_WGSL, entryPoint: 'mainFragment' },

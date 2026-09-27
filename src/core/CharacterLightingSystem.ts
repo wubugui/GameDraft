@@ -1,5 +1,5 @@
 import { lightFactor, lightChroma, legacyLightFactors, resolveLightResponse, type EntityLightResponse } from '../data/lightFactors';
-import { BufferImageSource, GlProgram, type GpuProgram, Shader, Texture, type TextureSource, UniformGroup } from '../engine2d';
+import { BufferImageSource, type GpuProgram, Shader, Texture, type TextureSource, UniformGroup } from '../engine2d';
 import type { IGameSystem, GameContext, SceneLightingDef } from '../data/types';
 import { sceneBakeDirUrl, sceneRuntimeAssetUrl } from './projectPaths';
 import { depthLog, depthError } from './depthLog';
@@ -1355,21 +1355,18 @@ export class CharacterLightingSystem implements IGameSystem {
    * **不许**再绑第二份按场景销毁的纹理而不自己回收——粒子系统在 `scene:beforeUnload` 先销毁自己的
    * shader（`releaseEntityLitShader`），顺序上早于纹理销毁。
    *
-   * `program` 可以只给 GL 程序（WebGL 专用，行为与迁移前相同），也可以给 `{ gl, gpu }` 一对（WebGPU 迁移期）：
-   * `gpu` 是同一套资源布局的 WGSL 程序——它必须以下面每个资源键同名声明绑定（含调用方在 `extra` 里给的键与
+   * `program` 是 WGSL 程序：它必须以下面每个资源键同名声明绑定（含调用方在 `extra` 里给的键与
    * WGSL 采样器），Shader 的资源分组按它的声明走。
    */
   createCustomLitShader(
-    program: GlProgram | { gl: GlProgram; gpu: GpuProgram },
+    program: GpuProgram,
     colorTex: TextureSource,
     extra: Record<string, unknown>,
   ): Shader | null {
     const r = this.resources;
     if (!r || !this.sceneLit || !this.groundTex || !this.canCreateCustomLitShader) return null;
-    const glOnly = program instanceof GlProgram;
     const sh = new Shader({
-      glProgram: glOnly ? program : program.gl,
-      gpuProgram: glOnly ? undefined : program.gpu,
+      gpuProgram: program,
       resources: {
         sceneShade: this.sceneLit,
         frameShade: this.vfxFrameLit,

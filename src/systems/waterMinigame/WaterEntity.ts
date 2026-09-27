@@ -276,7 +276,7 @@ export class WaterEntity {
     this.sprite.removeAllListeners();
     if (this.paramsSprite) this.paramsSprite.filters = [];
     if (this.paramEncode) {
-      // Filter.destroy 默认不销毁共享 GlProgram，可安全释放
+      // Filter.destroy 默认不销毁共享程序，可安全释放
       this.paramEncode.destroy();
       this.paramEncode = undefined;
     }

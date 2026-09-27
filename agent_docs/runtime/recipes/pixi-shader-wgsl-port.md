@@ -18,9 +18,11 @@ last_governed: 2026-09-25
 
 ## 目标与完成判据
 
-2026-09-25 起运行时整体跑在 [engine2d](../mechanisms/engine2d.md) 上,**只执行 WGSL**;GLSL 一个字不动地保留——
-master 对照的参考侧跑它、编辑器(anim_preview)自建的 Pixi WebGL 跑它、多个工具直接切片编译它(见文末禁改清单)。
-改一个着色器 = WGSL 与 GLSL 两份同步改(GLSL 只在还有消费者时);新着色器只给运行时用的,只写 WGSL。一个着色器算移植完成 =
+2026-09-25 起运行时整体跑在 [engine2d](../mechanisms/engine2d.md) 上,**只执行 WGSL**;工作台 / anim_preview 也都跑游戏同一个
+WebGPU 渲染器。2026-09-28 起本分支**只有 WGSL**:燃烧 / 呼吸 / 光柱 / 雷 / 粒子 / 实体阴影 / 前景层 / 各滤镜的 GLSL 孪生与
+`glProgram` 全删了(master 的 GLSL 是像素对照的参考侧,不在本分支);只剩角色照明那一条线(charShadeCore / lightingCore /
+worldReconstruct / 角色照明公共块 / 实体灯循环 / 角色照明滤镜拼的 fgSample,以及 src/rendering/lighting 下的 GLSL 程序)
+等角色照明实验室迁完一起删,在那之前与 WGSL 两份同步改(`shaderTwins.test.ts` 守门)。新着色器只写 WGSL。一个着色器算移植完成 =
 `tools/render_parity/cases/<模块>.ts` 里有覆盖它全部分支 / 开关的用例,且 `node tools/render_parity/run.mjs --case <前缀>` 全绿,
 **并且**证明 WebGL 一侧的输出与移植前逐字节相同(对移植前后的源码各跑一遍对照,哈希 GL 侧结果)——
 GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意义。
@@ -29,12 +31,15 @@ GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意
 候选 = 工作区 src + engine2d 跑 WGSL(用例里的 `pixi.js` 也别名到 engine2d)。同一个 `build(env)` 各调一次,
 输入(`env.dataTexture` 固定种子)逐字节相同。用例要 import 本分支才有的导出(WGSL 常量)时**按命名空间取**
 (`import * as M` 再解构),具名 import 会让 master 那侧模块链接失败;master 里缺的整个模块由参考侧补件从本分支补。
+反过来,本分支删掉的 **`.glsl` 文件**用例还为参考侧 import 着时,候选侧补件从 master 的树补(候选侧只 import、不执行);
+本分支从 TS 模块里删掉的 GLSL 导出同样按命名空间取(候选侧取到 undefined,只在参考侧用)。
 master 已知会抛错、本分支已修的用例标 `refKnownError`。
 
 ## 写法
 
-- `Shader.from({ gl: {...}, gpu: { vertex: { source, entryPoint }, fragment: { source, entryPoint } }, resources })`;
-  `Filter` 同理(`Filter.from` 或 `new Filter({ glProgram, gpuProgram, resources })`)。宿主类对外接口不变。
+- `Shader.from({ gpu: { vertex: { source, entryPoint }, fragment: { source, entryPoint } }, resources })`;
+  `Filter` 同理(`Filter.from` 或 `new Filter({ gpuProgram, resources })`)。不再传 `gl` / `glProgram`(engine2d 留着这两个形参
+  只为兼容 Pixi 的构造签名,不编译、不执行)。宿主类对外接口不变。
 - 网格 WGSL 的 Pixi 约定:`@group(0) @binding(0) var<uniform> globalUniforms`(`uProjectionMatrix`、`uWorldTransformMatrix`、
   `uWorldColorAlpha`、`uResolution`)、`@group(1) @binding(0) var<uniform> localUniforms`(`uTransformMatrix`、`uColor`、`uRound`),
   程序里声明了它们渲染器才自动绑(engine2d 按变量名绑定,组号只是声明习惯)。自定义资源放 `@group(2)` 起,**变量名 = resources 的键名**。
@@ -127,11 +132,10 @@ master 已知会抛错、本分支已修的用例标 `refKnownError`。
 
 ## 禁改清单(工具直接读这些,改了工具或工具测试会坏)
 
-- GLSL 源文件与切片标记原样保留:`src/rendering/burn/burnShade.glsl`(`//__BURN_SHADE_BEGIN__/END__`,且 `BurnFilters.ts` 里要出现
-  `sliceGlsl(BURN_SHADE_SRC, 'BURN_SHADE')`)、`src/rendering/breathingShade.glsl`、`src/rendering/charShadeCore.glsl`、
-  `src/rendering/vfx/vfxBeamGlsl.ts`、`src/rendering/vfx/vfxBoltGlsl.ts` 的导出名与内容。
-- `anim_preview` 直接用 `SpriteEntity` / `EntityLightingFilter.createForEntity` 与其 setter / `PlanarEntityShadow`:对外 API 不变,
-  且它自建的 Pixi 是 WebGL,GLSL 必须继续能用(它的 `pixi.js` import 要换成 engine2d 才能和迁移后的运行时类型对上,归制作人定)。
+- `src/rendering/charShadeCore.glsl` 原样保留(角色照明实验室直接读这个文件);`vfxBeamGlsl.ts` / `vfxBoltGlsl.ts` 的文件名与
+  CPU 导出(`packBeamUniforms`、`emitBoltSegments` 等,粒子工作台打包)不动——里面的 GLSL 已删,文件名是历史名。
+- `anim_preview` 直接用 `SpriteEntity` / `EntityLightingFilter.createForEntity` 与其 setter / `PlanarEntityShadow`:对外 API 不变
+  (它跑 engine2d / WebGPU,不再有 GLSL)。
 - 工具测试按正则读的常量:`contactAo.ts` 的常量、`lightEnv.ts` 的 `contact: X, contactSize: Y,`、`backgroundSway.ts` 的
   `const GRID_CELL = 24;`、`lightPacking.ts` 的 `export const DEFAULT_*_WU = v;`、`SceneLightingSystem.ts` 的 `defaultSceneLighting`、
   `Renderer.ts` 的 `entitySortZ`。`vfxBeam.ts` / `vfxSpace.ts` / `vfxProgram.ts` 要能在 Node 里跑(不许引 DOM / Pixi)。
