@@ -4,7 +4,8 @@
  * - 各种构造 / setter 序列后的 strength / quality / passes / padding / uStrength 等状态相同;
  * - 用假 filterManager 记录 apply 的调用序列(哪个 pass、输入 / 输出、clear、当时的 uStrength、blendMode)
  *   与临时纹理(池里借的尺寸 / 分辨率 / 帧,借还是否复用)与 Pixi 喂同样假对象的结果相同。
- *   Pixi 侧的假渲染器取 WebGPU 类型(engine2d 只有 WebGPU,走的是 Pixi 的 WebGPU 分支)。
+ *   Pixi 侧的假渲染器取 WebGL 类型:master 跑的是 Pixi 的 WebGL 分支(中间 pass 不清屏、_state.blend = false),
+ *   engine2d 照它走(关混合记成 blendMode 'none',见 BlurFilterPass 头注释)。
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
@@ -229,14 +230,15 @@ class Recorder {
     return l;
   }
 
-  record(filter: { horizontal: boolean; blendMode: string; resources: Record<string, { uniforms: { uStrength: number } }> }, input: unknown, output: unknown, clear: boolean): void {
+  record(filter: { horizontal: boolean; blendMode: string; _state?: { blend: boolean }; resources: Record<string, { uniforms: { uStrength: number } }> }, input: unknown, output: unknown, clear: boolean): void {
     this.calls.push({
       pass: filter.horizontal ? 'x' : 'y',
       input: this.label(input),
       output: this.label(output),
       clear,
       uStrength: filter.resources.blurUniforms.uniforms.uStrength,
-      blendMode: filter.blendMode,
+      // Pixi WebGL 关混合 = _state.blend false(blendMode 字段不动);engine2d 关混合 = blendMode 'none'
+      blendMode: filter._state && filter._state.blend === false ? 'none' : filter.blendMode,
     });
   }
 }
@@ -267,7 +269,7 @@ function runPixi(c: ApplyCase, times: number): Recorder {
   const output = { label: 'output' } as unknown as PixiTexture;
   const rec = new Recorder(input, output);
   const fm = {
-    renderer: { type: PixiRendererType.WEBGPU, renderPipes: {} },
+    renderer: { type: PixiRendererType.WEBGL, renderPipes: {} },
     applyFilter: (f: unknown, i: unknown, o: unknown, clear: boolean) => rec.record(f as Parameters<Recorder['record']>[0], i, o, clear),
   } as unknown as PixiFilterSystem;
   for (let n = 0; n < times; n++) filter.apply(fm, input, output, c.clear);
