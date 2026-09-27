@@ -181,7 +181,7 @@ const KNOWN_EQUIVALENT = new Map<string, 'unordered' | Splice>([
  * fgBaseAt = 覆盖图的接地采样 uBase 打包成 array<vec4, 16> 之后按下标取 vec2(GLSL 直接 uBase[i];
  * 拆法与字节布局由 foreground/foregroundMaskWgsl.test.ts 钉住)
  */
-const WGSL_ONLY_HELPERS = new Set(['beam:bmSmoothstep', 'beam:bmAlongKey', 'fgCoverage:fgBaseAt']);
+const WGSL_ONLY_HELPERS = new Set(['beam:bmSmoothstep', 'beam:bmAlongKey', 'beam:bmTwoProdErr', 'beam:bmFmaEmu', 'fgCoverage:fgBaseAt']);
 
 /** 一对孪生的全部分歧(空 = 一致)。 */
 function twinDiffs(tag: string, g: string, w: string): string[] {

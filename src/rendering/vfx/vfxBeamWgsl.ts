@@ -80,12 +80,40 @@ struct VfxBeamUniforms {
 }
 `;
 
-/** 核心（读模块作用域的 `vfxBeam` 绑定；宿主函数见文件头） */
+/**
+ * 核心（读模块作用域的 `vfxBeam` 绑定；宿主函数见文件头）。
+ *
+ * bmHash 第一步 `p * 0.3183099 + c` 用 bmFmaEmu 按**融合乘加**精确算(Dekker 拆分的无误差变换,编译器不许重排):
+ * master 的 GLSL 经 ANGLE → FXC 编成 mad,Intel Iris Xe 上是融合乘加;WebGPU 这条路先乘后加两次舍入。
+ * 这个哈希对末位极敏感(后面 ×17 再三次相乘取 fract),两边只有 35.8% 格点同值,义庄光柱亮度差到 6 级;
+ * 按融合乘加算之后 98.6% 同值、整局最多差 1 级(2026-09-27 实测)。代价是每个光柱像素多十几次乘加。
+ */
 export const BEAM_WGSL_CORE = /* wgsl */ `
 const BM_PI: f32 = 3.14159265358979;
 
+fn bmTwoProdErr(a: f32, b: f32, p: f32) -> f32 {
+    let ca = 4097.0 * a;
+    let ah = ca - (ca - a);
+    let al = a - ah;
+    let cb = 4097.0 * b;
+    let bh = cb - (cb - b);
+    let bl = b - bh;
+    return ((ah * bh - p) + ah * bl + al * bh) + al * bl;
+}
+
+fn bmFmaEmu(a: f32, b: f32, c: f32) -> f32 {
+    let p = a * b;
+    let e = bmTwoProdErr(a, b, p);
+    let s = p + c;
+    let bv = s - p;
+    let es = (p - (s - bv)) + (c - bv);
+    return s + (es + e);
+}
+
 fn bmHash(pIn: vec3<f32>) -> f32 {
-    var p = fract(pIn * 0.3183099 + vec3<f32>(0.71, 0.113, 0.419));
+    let k = 0.3183099;
+    let o = vec3<f32>(0.71, 0.113, 0.419);
+    var p = fract(vec3<f32>(bmFmaEmu(pIn.x, k, o.x), bmFmaEmu(pIn.y, k, o.y), bmFmaEmu(pIn.z, k, o.z)));
     p *= 17.0;
     return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
 }
