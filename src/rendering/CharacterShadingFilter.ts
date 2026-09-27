@@ -1063,10 +1063,7 @@ fn mainFragment(
         rt.uLightCount = shadeUniforms.uLightCount;
         rt.uLightQ = shadeUniforms.uLightQ;
         rt.uLightE = shadeUniforms.uLightE;
-        // 噪声种子照 master 的 gl_FragCoord:输出到画布时 GL 自下而上(uOutputTexture.w = 画布像素高),离屏为 0 不翻
-        var fc = fragPos.xy;
-        if (gfu.uOutputTexture.w > 0.0) { fc.y = gfu.uOutputTexture.w - fc.y; }
-        E = gatherRT(q + n * 0.02, n, fc, pp, vv, &rt, uVolRad, uVolEmit);
+        E = gatherRT(q + n * 0.02, n, fragPos.xy, pp, vv, &rt, uVolRad, uVolEmit);
     } else {
         E = probeE(q, n, pp, uPL1, uPL2, uPBin, uValid);
     }

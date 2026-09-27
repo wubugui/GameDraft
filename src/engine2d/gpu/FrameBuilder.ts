@@ -194,7 +194,8 @@ const GLOBAL_LAYOUT = createUboLayout([
   { name: 'uWorldTransformMatrix', type: 'mat3x3<f32>', size: 1 },
   { name: 'uWorldColorAlpha', type: 'vec4<f32>', size: 1 },
   { name: 'uResolution', type: 'vec2<f32>', size: 1 },
-  // 引擎自加的尾字段(Pixi 没有):离屏目标 1 / 画布 0,内置合批 / 图形 / 网格着色器的 roundPixels 按它翻 y 断平
+  // 引擎自加的尾字段(Pixi 没有):1 = 取整前翻 y(本侧投影与 master 该目标的投影上下相反时)。离屏目标 master 用翻转投影、
+  // 本侧不翻;画布 master 不翻、本侧翻(见 bind)——两类目标现在都是 1。内置合批 / 图形 / 网格着色器按它断平
   // (见 batchShader 的 ROUND_PIXELS_WGSL)。放在末尾,只声明前四个字段的游戏 WGSL 布局不受影响。
   { name: 'uRoundFlipY', type: 'f32', size: 1 },
 ]);
@@ -467,7 +468,9 @@ export class FrameBuilder implements FilterSystemLike {
       viewport.width = t.pixelWidth;
       viewport.height = t.pixelHeight;
     }
-    calculateProjection(this.projectionMatrix, 0, 0, viewport.width / t.resolution, viewport.height / t.resolution, false);
+    // 画布照 master(WebGL 默认帧缓冲自下而上):内容上下颠倒画进画布中间纹理(WebGPURenderer 的 canvasFlip),
+    // 帧末逐像素翻转拷上屏。这样光栅化的平局归属、gl_FragCoord 的朝向都与 master 画布一致;离屏目标照旧不翻
+    calculateProjection(this.projectionMatrix, 0, 0, viewport.width / t.resolution, viewport.height / t.resolution, t.ref === 'canvas');
     this.startPass(clear, clearColor ?? [0, 0, 0, 0], clear);
   }
 
@@ -565,7 +568,7 @@ export class FrameBuilder implements FilterSystemLike {
       uWorldTransformMatrix: wt,
       uWorldColorAlpha: color,
       uResolution: data.resolution,
-      uRoundFlipY: this.current.ref === 'canvas' ? 0 : 1,
+      uRoundFlipY: 1,
     });
     this.guStack.push(data);
     this.currentGU = data;
@@ -1046,10 +1049,8 @@ export class FrameBuilder implements FilterSystemLike {
       outputTexture[0] = this.current.width;
       outputTexture[1] = this.current.height;
     }
-    outputTexture[2] = -1;
-    // .w:输出到画布时 = 画布像素高(着色器据此把 @builtin(position).y 换成 master 画布上 gl_FragCoord 的自下而上),
-    // 离屏目标为 0。Pixi / engine2d / 游戏滤镜都不读 .w(见 CharacterShadingFilter 的 RT gather 噪声种子)
-    outputTexture[3] = this.current.ref === 'canvas' ? this.current.pixelHeight : 0;
+    // 滤镜顶点按 .z 翻 y:画布中间纹理是上下颠倒画的(见 bind)为 1,离屏目标 -1
+    outputTexture[2] = this.current.ref === 'canvas' ? 1 : -1;
     return this.arenaRef(
       this.writeUbo(FILTER_LAYOUT, {
         uInputSize: inputSize,

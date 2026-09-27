@@ -10,7 +10,8 @@ export const MAX_BATCH_TEXTURES = 16;
  * 用翻转投影(calculateProjection(..., !isRoot)),取整量的是「从内容顶边往下」的 y,平局 k + 0.5 落到 k + 1;
  * 这里 WebGPU 的离屏目标投影不翻(纹理存储本就自上而下),直接取整会反向断平,整行差一像素(R2-6)。
  * 所以离屏目标(globalUniforms.uRoundFlipY = 1)先把 clip y 取反、取整、再取反回来 —— 取反是精确运算,
- * 与 master 逐位一致;画布(根目标)两边都不翻,uRoundFlipY = 0 原样取整。x 不受影响。
+ * 与 master 逐位一致。画布:master 不翻,本侧照 WebGL 默认帧缓冲把内容上下颠倒画进画布中间纹理(FrameBuilder.bind),
+ * 投影与 master 相反,同样 uRoundFlipY = 1。x 不受影响。
  */
 const ROUND_PIXELS_WGSL = /* wgsl */ `
 fn roundPixels(position: vec2<f32>, targetSize: vec2<f32>) -> vec2<f32> {

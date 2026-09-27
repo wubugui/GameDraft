@@ -597,7 +597,6 @@ struct GlobalUniforms {
     uWorldTransformMatrix: mat3x3<f32>,
     uWorldColorAlpha: vec4<f32>,
     uResolution: vec2<f32>,
-    uRoundFlipY: f32,
 }
 
 struct LocalUniforms {
@@ -769,10 +768,7 @@ fn mainFragment(
         rt.uLightCount = sceneShade.uLightCount;
         rt.uLightQ = sceneShade.uLightQ;
         rt.uLightE = sceneShade.uLightE;
-        // 噪声种子照 master 的 gl_FragCoord:画布(uRoundFlipY = 0)上 GL 自下而上,离屏目标与本侧同向
-        var fc = fragPos.xy;
-        if (globalUniforms.uRoundFlipY < 0.5) { fc.y = globalUniforms.uResolution.y - fc.y; }
-        E = gatherRT(q + nQ * 0.02, nQ, fc, pp, vv, &rt, uVolRad, uVolEmit);
+        E = gatherRT(q + nQ * 0.02, nQ, fragPos.xy, pp, vv, &rt, uVolRad, uVolEmit);
     } else {
         E = probeE(q, nQ, pp, uPL1, uPL2, uPBin, uValid);
     }

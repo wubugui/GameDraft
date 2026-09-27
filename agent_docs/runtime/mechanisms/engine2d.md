@@ -75,8 +75,10 @@ last_governed: 2026-09-25
 
 ## 与 Pixi(master)的已知差异
 
-- **半像素水平边差一行**:恰好落在 y+0.5 上的水平边(1 像素网格线、HUD 面板上下边)在画布上比 master 高/低一行——
-  WebGL 默认帧缓冲自下而上光栅化、WebGPU 自上而下,平局归属相反。离屏目标两边一致。整局对照里这是唯一的系统性差异。
+- ~~半像素水平边差一行~~(2026-09-27 已对齐):画布这一帧照 master 的 WebGL 默认帧缓冲自下而上,把内容上下颠倒画进
+  同尺寸同格式的**画布中间纹理**(`FrameBuilder.bind` 画布用翻转投影、滤镜 `uOutputTexture.z = 1`、`uRoundFlipY = 1`),
+  帧末 `WebGPURenderer.presentCanvasFlip` 用 textureLoad 逐像素翻回正向写进交换链。光栅化平局归属、gl_FragCoord 朝向
+  (`@builtin(position)`)都与 master 画布一致;画布的模板 / MSAA 走与离屏目标同一条路(resolve 回中间纹理)。离屏目标不变。
 - `Container.worldTransform` 与当前父链一致(按版本缓存,不走 Pixi 的"上一帧渲染结果");Culler 因此用的是**当帧**变换(Pixi 用上一帧)。
 - 需要背景纹理的混合滤镜(`blendRequired`)没实现(运行时没有用到;用到会直接抛)。
 - **`renderer.extract.*` 全是异步**(返回 Promise;WebGPU 回读)。Pixi 的 `extract.canvas / pixels` 是同步的,
@@ -89,7 +91,7 @@ resolve 回目标——32 位浮点 / 整数这类不能 resolve 的格式照常
 合批节点(Sprite / 合批 Mesh / NineSlice / Text / HTMLText)的 `roundPixels` 在**第一次被渲染时锁定**
 (`渲染器 roundPixels | 节点 roundPixels`),之后再改不生效,`unload()` / destroy 后才重取——运行中切换取整要先 `unload()`;
 `roundPixels` 在离屏目标(RenderTexture / 滤镜纹理)里的平局方向照 master 的 WebGL 翻转投影:离屏投影本身不翻,
-全局 uniform 尾字段 `uRoundFlipY`(离屏 1 / 画布 0)让内置合批 / 图形 / 网格着色器翻 y 再取整(`batchShader` 的 `roundPixelsTarget`);
+全局 uniform 尾字段 `uRoundFlipY`(离屏与画布中间纹理都是 1,两类目标的投影都与 master 相反)让内置合批 / 图形 / 网格着色器翻 y 再取整(`batchShader` 的 `roundPixelsTarget`);
 Sprite 的合批四边形只在换纹理 / 改锚点 / 动态纹理 update 时重算(非动态 RenderTexture 改尺寸后停在旧尺寸);
 `renderer.render({ container })` 的根自己的 `blendMode` 不生效(按 normal 画,要混合就挂一层父节点);
 带 shader 却没有 `gpuProgram` 的网格告警并跳过绘制;

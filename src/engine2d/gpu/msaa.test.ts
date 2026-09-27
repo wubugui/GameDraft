@@ -62,15 +62,21 @@ describe('抗锯齿(MSAA)', () => {
     renderer.destroy();
   });
 
-  it('画布:渲染器 antialias ⇒ 多重采样画布目标,resolve 到这一帧的画布', () => {
+  it('画布:渲染器 antialias ⇒ 多重采样画进画布中间纹理并 resolve 回它,帧末翻转上屏(单采样)', () => {
     const { renderer, passes } = setup(true, 8);
     renderer.render({ container: scene() });
-    expect(last(passes())).toMatch(/-> 画布后备缓冲 MSAA×4 \[clear\] resolve→画布$/);
+    expect(passes()).toEqual([
+      'begin render engine2d pass 0 -> engine2d 画布中间纹理 目标 MSAA×4 [clear] resolve→engine2d 画布中间纹理',
+      'begin render engine2d 画布翻转上屏 -> 画布后备缓冲 [clear]',
+    ]);
     renderer.destroy();
 
     const plain = setup(false, 8);
     plain.renderer.render({ container: scene() });
-    expect(last(plain.passes())).toMatch(/-> 画布后备缓冲 \[clear\]$/);
+    expect(plain.passes()).toEqual([
+      'begin render engine2d pass 0 -> engine2d 画布中间纹理 目标 [clear]',
+      'begin render engine2d 画布翻转上屏 -> 画布后备缓冲 [clear]',
+    ]);
     plain.renderer.destroy();
   });
 

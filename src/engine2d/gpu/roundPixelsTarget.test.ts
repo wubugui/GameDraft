@@ -78,7 +78,8 @@ function rows(c: Captured): { branch: [number, number]; master: [number, number]
     const wy = f(f(c.W.d * vy) + c.W.ty);
     const cyB = roundPixTarget(f(f(c.P.d * wy) + c.P.ty), c.T, c.flip);
     const cyM = roundPix(f(f(f(pm.d) * wy) + f(pm.ty)), c.T);
-    b.push((1 - cyB) * 0.5 * c.vh); // WebGPU:clip +1 = 第 0 行(内容顶)
+    // 离屏:WebGPU clip +1 = 第 0 行(内容顶);画布:内容上下颠倒画进中间纹理(clip +1 = 内容底),帧末翻回
+    b.push(c.canvas ? (cyB + 1) * 0.5 * c.vh : (1 - cyB) * 0.5 * c.vh);
     m.push(c.canvas ? (1 - cyM) * 0.5 * c.vh : (cyM + 1) * 0.5 * c.vh); // GL 翻转离屏:clip -1 = 第 0 行
   }
   return { branch: [Math.min(...b), Math.max(...b)], master: [Math.min(...m), Math.max(...m)] };
@@ -108,7 +109,7 @@ describe('R2-6 离屏目标 roundPixels 平局方向', () => {
     }
   });
 
-  it('非平局与画布不受影响', () => {
+  it('非平局不受影响;画布平局与 master 同行', () => {
     for (const [y, h] of [
       [300.25, 63],
       [300, 64],
@@ -116,9 +117,10 @@ describe('R2-6 离屏目标 roundPixels 平局方向', () => {
       const r = rows(capture(y, h, true));
       expect(r.branch).toEqual(r.master);
     }
+    // 画布的平局(y = 300.5):本侧投影与 master 画布相反,同样翻 y 再取整,落在 master 同一行
     const c = capture(300.5, 63, false);
     expect(c.canvas).toBe(true);
-    expect(c.flip).toBe(0);
+    expect(c.flip).toBe(1);
     const r = rows(c);
     expect(r.branch).toEqual(r.master);
   });

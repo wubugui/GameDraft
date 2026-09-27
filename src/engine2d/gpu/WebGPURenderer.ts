@@ -14,6 +14,7 @@ import {
   type RhiCommandList,
   type RhiFrame,
   type RhiRenderPassEncoder,
+  type RhiRenderPipeline,
   type RhiRenderTarget,
   type RhiResourceScope,
   type RhiTexture,
@@ -32,7 +33,7 @@ import { GpuProgram } from '../shader/GpuProgram';
 import { GpuTextures } from './GpuTextures';
 import { GpuBuffers } from './GpuBuffers';
 import { GCSystem } from './GCSystem';
-import { Pipelines, STENCIL_DEPTH_FORMAT, targetSampleCount } from './Pipelines';
+import { Pipelines, STENCIL_DEPTH_FORMAT, targetSampleCount, type VertexLayout } from './Pipelines';
 import { Batcher, adjustedBlendMode } from './Batcher';
 import type { BlendMode } from '../core/blendModes';
 import type { Geometry } from '../shader/Geometry';
@@ -74,6 +75,35 @@ fn mainFragment(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
   return textureSample(uTexture, uSampler, uv);
 }
 `;
+
+/**
+ * 画布中间纹理 → 交换链:逐像素上下翻转拷贝(textureLoad,不采样、不混合,字节原样)。
+ * 画布这一帧先照 master 的 WebGL 默认帧缓冲(自下而上)把内容上下颠倒画进同尺寸同格式的中间纹理
+ * (FrameBuilder.bind 的画布投影),光栅化平局归属(恰好压在半像素上的水平边)与 gl_FragCoord 朝向都与 master 画布一致;
+ * 帧末这一趟翻回正向上屏。
+ */
+const CANVAS_FLIP_WGSL = /* wgsl */ `
+@group(0) @binding(0) var uCanvasFlip: texture_2d<f32>;
+@vertex
+fn mainVertex(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+  let x = f32((i << 1u) & 2u);
+  let y = f32(i & 2u);
+  return vec4<f32>(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+}
+@fragment
+fn mainFragment(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+  let h = i32(textureDimensions(uCanvasFlip).y);
+  return textureLoad(uCanvasFlip, vec2<i32>(i32(p.x), h - 1 - i32(p.y)), 0);
+}
+`;
+
+const canvasFlipProgram = new GpuProgram({
+  name: 'engine2d-canvas-flip',
+  vertex: { source: CANVAS_FLIP_WGSL, entryPoint: 'mainVertex' },
+  fragment: { source: CANVAS_FLIP_WGSL, entryPoint: 'mainFragment' },
+});
+
+const CANVAS_FLIP_LAYOUT: VertexLayout = { key: 'engine2d-canvas-flip', buffers: [], sources: [] };
 
 function makePassthrough(): Filter {
   return new Filter({
@@ -140,6 +170,8 @@ export class WebGPURenderer extends RendererBase {
   private readonly targets = new Map<RhiTexture, TargetEntry>();
   private readonly stencilTargets = new WeakSet<object>();
   private readonly canvasKey = {};
+  /** 画布中间纹理(见 CANVAS_FLIP_WGSL):画布尺寸 / 格式变了就重建 */
+  private canvasFlip: RhiTexture | null = null;
   private destroyed = false;
   /** 退订设备恢复通知 */
   private readonly offRestored: () => void;
@@ -180,6 +212,8 @@ export class WebGPURenderer extends RendererBase {
     }
     this.contextChangePending = false;
     for (const t of [...this.targets.keys()]) this.releaseTargets(t);
+    this.canvasFlip?.destroy();
+    this.canvasFlip = null;
     this.pipelines.reset();
     this.buffers.reset();
     this.textures.reset();
@@ -335,15 +369,63 @@ export class WebGPURenderer extends RendererBase {
       }
     }
     pass?.end();
+    if (frame && this.canvasFlip && cmds.some((c) => c.t === 'pass' && c.target === 'canvas')) {
+      this.presentCanvasFlip(commands, frame, this.canvasFlip);
+    }
+  }
+
+  /** 帧末:画布中间纹理翻回正向写进交换链(整屏覆盖写) */
+  private presentCanvasFlip(commands: RhiCommandList, frame: RhiFrame, src: RhiTexture): void {
+    const pass = commands.beginRenderPass({
+      label: 'engine2d 画布翻转上屏',
+      target: frame.swapchain,
+      colorOps: [{ load: 'clear', clearValue: [0, 0, 0, 0] }],
+    });
+    pass.setViewport(0, 0, src.width, src.height);
+    pass.setPipeline(this.canvasFlipPipeline());
+    pass.setBindings({ uCanvasFlip: src } as RhiBindings);
+    pass.setIndexBuffer(null);
+    pass.draw(3, 1, 0);
+    pass.end();
+  }
+
+  private canvasFlipPipeline(): RhiRenderPipeline {
+    return this.pipelines.get({
+      program: canvasFlipProgram, layout: CANVAS_FLIP_LAYOUT, topology: 'triangle-list', blend: 'none',
+      colorFormat: this.rhi.caps.swapchainFormat, depthFormat: null, stencil: 'disabled', colorMask: 15, sampleCount: 1,
+    });
+  }
+
+  /** 画布中间纹理:与画布同尺寸、同交换链格式;尺寸 / 格式变了就重建(旧的连同挂在上面的模板 / MSAA 目标一起放) */
+  private canvasFlipTexture(): RhiTexture {
+    const w = Math.max(1, this.canvas.width);
+    const h = Math.max(1, this.canvas.height);
+    const format = this.rhi.caps.swapchainFormat;
+    const cur = this.canvasFlip;
+    if (cur && cur.width === w && cur.height === h && cur.format === format) return cur;
+    if (cur) {
+      this.releaseTargets(cur);
+      cur.destroy();
+    }
+    this.canvasFlip = this.scope.createTexture({
+      label: 'engine2d 画布中间纹理',
+      width: w,
+      height: h,
+      format,
+      usage: RhiTextureUsage.RENDER_TARGET | RhiTextureUsage.SAMPLED,
+    });
+    return this.canvasFlip;
   }
 
   private passTarget(cmd: PassCmd, frame: RhiFrame | null): RhiRenderTarget {
+    let color: RhiTexture;
     if (cmd.target === 'canvas') {
       if (!frame) throw new Error('[engine2d] 画到画布必须在帧内');
-      if (cmd.samples > 1) return frame.swapchainMultisampled(cmd.samples, cmd.stencil ? STENCIL_DEPTH_FORMAT : null);
-      return cmd.stencil ? frame.swapchainWithDepth(STENCIL_DEPTH_FORMAT) : frame.swapchain;
+      // 画布的 pass 画进中间纹理(上下颠倒,见 FrameBuilder.bind),模板 / MSAA 走与离屏目标同一条路;帧末翻转上屏
+      color = this.canvasFlipTexture();
+    } else {
+      color = cmd.color!;
     }
-    const color = cmd.color!;
     let e = this.targets.get(color);
     if (!e) this.targets.set(color, (e = {}));
     if (cmd.samples > 1) return this.msaaTarget(color, e, cmd.samples, cmd.stencil);

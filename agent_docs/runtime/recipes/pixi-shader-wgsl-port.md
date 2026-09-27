@@ -38,7 +38,7 @@ master 已知会抛错、本分支已修的用例标 `refKnownError`。
 - 网格 WGSL 的 Pixi 约定:`@group(0) @binding(0) var<uniform> globalUniforms`(`uProjectionMatrix`、`uWorldTransformMatrix`、
   `uWorldColorAlpha`、`uResolution`)、`@group(1) @binding(0) var<uniform> localUniforms`(`uTransformMatrix`、`uColor`、`uRound`),
   程序里声明了它们渲染器才自动绑(engine2d 按变量名绑定,组号只是声明习惯)。自定义资源放 `@group(2)` 起,**变量名 = resources 的键名**。
-  参考 `src/engine2d/gpu/batchShader.ts`。GlobalUniforms 末尾还有引擎自加的 `uRoundFlipY: f32`(离屏目标 1 / 画布 0),
+  参考 `src/engine2d/gpu/batchShader.ts`。GlobalUniforms 末尾还有引擎自加的 `uRoundFlipY: f32`(现在恒为 1:离屏目标与画布中间纹理的投影都与 master 相反;画布内容上下颠倒画、帧末翻转上屏,自定义着色器读 `@builtin(position)` 在画布上即得 master 的 gl_FragCoord),
   只声明前四个字段也合法;自己在顶点里做 roundPixels 的要照 `roundPixelsTarget` 用它翻 y 取整,否则离屏目标里平局与 master 反向。
 - 滤镜 WGSL 约定:`@group(0)` 固定 `gfu`(GlobalFilterUniforms)、`uTexture`、`uSampler`;滤镜自己的 uniform 组放 `@group(1)` 起。
   参考 `src/engine2d/filters/defaults/`。
