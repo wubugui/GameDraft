@@ -528,7 +528,7 @@ export class VfxRenderer {
     let toneSrc: TextureSource | null = null;
     let paramGroup: UniformGroup | null = null;
     // WGSL 的采样器（「纹理名 + Sampler」= 与该纹理采样参数相同的共享采样器，见 legacy/gpuSampler；WebGL 不认这些键）
-    const colorSrc = sheet.texture.source;
+    // 贴图只在非雷的两条路上读：雷拿的是 VfxSystem 的 BOLT_STUB_SHEET（texture 为 null，与 master 同样不读）
     if (isBolt) {
       paramGroup = new UniformGroup({ uLightGain: { value: 1, type: 'f32' } });
       const boltDepth = depthSrc ?? Texture.WHITE.source;
@@ -555,6 +555,7 @@ export class VfxRenderer {
       const programs: VfxLitPrograms = isPlate
         ? { gl: getVfxPlateLitProgram(), gpu: getVfxPlateLitGpuProgram() }
         : { gl: getVfxLitProgram(), gpu: getVfxLitGpuProgram() };
+      const colorSrc = sheet.texture.source;
       shader = this.deps.createLitShader(programs, colorSrc, {
         vfxDepth: depthGroup,
         uDepthMap: depthTex,
@@ -575,6 +576,7 @@ export class VfxRenderer {
         uLightGain: { value: lightGain, type: 'f32' },
       });
       const probeSrc = toneSrc ?? Texture.WHITE.source;
+      const colorSrc = sheet.texture.source;
       shader = new Shader({
         glProgram: getVfxUnlitProgram(),
         gpuProgram: getVfxUnlitGpuProgram(),

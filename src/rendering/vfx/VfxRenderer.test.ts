@@ -8,6 +8,7 @@ import { Container, DOMAdapter, Shader, Texture, TextureSource, UniformGroup } f
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { VfxEmitterRuntime, VfxInstanceSim } from '../../systems/vfx/vfxSim';
+import { BOLT_STUB_SHEET } from '../../systems/vfx/VfxSystem';
 import {
   MAX_BUCKETS, VFX_LIGHT_GAIN_MAX, VfxRenderer, bucketOfDepth, bucketSortFootY, buildSortThresholds, clampBucketToHost,
   horizontalViewAxis, hostBucketRange,
@@ -342,6 +343,33 @@ describe('VfxRenderer · 受光强度（lightGain）', () => {
     expect(boltLayerOccludedByDepth([{ id: 'a', kind: 'sky' }], { bolt: 'a' })).toBe(false);
     expect(boltLayerOccludedByDepth([{ id: 'a', kind: 'surface' }], { bolt: 'a' })).toBe(true);
     expect(boltLayerOccludedByDepth(undefined, { bolt: 'a' })).toBe(true);   // 找不到雷形:按普通层照旧挡
+    r.clear();
+  });
+
+  it('雷拿 VfxSystem 的占位贴图表（texture 为 null）建视图，不读贴图——雾津街头用雷符落雷时抛过 TypeError、整局卡死', () => {
+    const depth = { tex: Texture.WHITE, cfg: { depth_mapping: { invert: false, scale: 2, offset: 0.1 }, depth_tolerance: 0.05 } };
+    const shared = { charLights: new UniformGroup({ uDispEv: { value: 0, type: 'f32' } }) };
+    const deps = {
+      entityLayer: new Container(),
+      createLitShader: () => null,
+      releaseLitShader: () => {},
+      canLight: () => true,
+      displayUniforms: shared.charLights,
+      getToneEnv: () => null,
+      getDepth: () => depth,
+      getSceneSize: () => ({ w: 100, h: 100 }),
+      perspective: () => 1,
+    } as unknown as VfxRenderDeps;
+    const r = new VfxRenderer(deps);
+    const bolt = emitter('雷身', {});
+    (bolt.def.appearance as unknown as Record<string, unknown>).bolt = {
+      bolt: '天雷', coreWu: 1, coreMinPx: 1, glowWu: 4, glowMinPx: 2, coreGain: 1, glowGain: 1, glowColor: [1, 1, 1],
+    };
+    const inst = instance([bolt]) as unknown as { effect: unknown };
+    inst.effect = { bolts: [{ id: '天雷', kind: 'sky' }] };
+    const sheets = new Map([['inst/雷身', BOLT_STUB_SHEET] as const]);
+    expect(() => r.render([inst as unknown as VfxInstanceSim], sheets)).not.toThrow();
+    expect((r as unknown as { views: Map<string, unknown> }).views.has('inst/雷身')).toBe(true);
     r.clear();
   });
 

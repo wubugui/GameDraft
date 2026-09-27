@@ -83,7 +83,7 @@ export interface VfxInstanceDebugRow {
  * 画雷的发射器（`appearance.bolt`）的占位贴图表：雷身是渲染侧现画的折线，走它自己的网格与程序，
  * **不读这张表的贴图**；给它只是为了让"没贴图的发射器跳过"那道闸放行。
  */
-const BOLT_STUB_SHEET: VfxSpriteSheet = {
+export const BOLT_STUB_SHEET: VfxSpriteSheet = {
   texture: null as unknown as Texture, frames: [{ u0: 0, v0: 0, u1: 1, v1: 1 }], aspect: 1, frameRate: 0,
 };
 
