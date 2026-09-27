@@ -56,7 +56,8 @@ denghong01)用它:打包在服务器的**只读克隆**里跑,档位设置在项
 
 **制作人实际跑的包不在仓库里**:打包工作台的 `builds_root`(`tools/build_workbench`)下按时间戳一次一目录,
 他跑的永远是最新那份;仓库内 `release/` 与 `src-tauri/target/` 只是中转(后者还会混两代残留),
-NSIS 安装包没人装过。排查"包里坏了"先确认是哪一份,新鲜度看该目录的 `.gamedraft-build.json`。
+NSIS 安装包只在 2026-09-27 装过一次做验收(1159.6 MB,静默装到临时目录、真机跑通、卸载;装卸细节与卸载后
+留下什么见 `src-tauri/README.md`「NSIS 安装包实测」)。排查"包里坏了"先确认是哪一份,新鲜度看该目录的 `.gamedraft-build.json`。
 
 `release.mjs` 走 `tauri build --no-bundle`:只要绿色版的话,makensis 压 566 MB
 要多花四五分钟,对定期自动构建是纯浪费。同时带 `--config {"bundle":{"resources":null}}`:
@@ -73,8 +74,8 @@ dev 档 1359 MB。省下来的两个大头:未引用/authoring-only 的素材,�
 
 清单:`tools/build/asset_manifest.py` + `manifest_rules.json`(规则里每条都注明了 src 出处)。
 装配:`scripts/package.mjs`。验收:`scripts/verify_build.mjs`。全场景抓取扫描:
-`scripts/scene_sweep.mjs`(编排:起隔离 dev 服)→ `tools/build/scene_sweep.py`(QtWebEngine 驱动
-+ 请求拦截 + 清单核对)。光照载荷文件名表:`src/core/lightingPayloadFiles.ts`(运行时真相源;
+`scripts/scene_sweep.mjs`(编排:起隔离 dev 服)→ `tools/build/scene_sweep.py`(WebView2 宿主 `tools/qt_webgpu.py` 驱动
++ 记录代理 + 清单核对)。光照载荷文件名表:`src/core/lightingPayloadFiles.ts`(运行时真相源;
 Python/mjs 两份镜像各有契约测试钉死)。桌面壳:`src-tauri/`。
 
 ## 硬契约
@@ -118,9 +119,9 @@ Python/mjs 两份镜像各有契约测试钉死)。桌面壳:`src-tauri/`。
      开发树本来就没有 = note(烘焙缺件,两边同样降级);发行档里出现 `vol_*` 也 fail。
   2. **全场景抓取扫描**(`scene_sweep`):起一个 `GAMEDRAFT_SWEEP_ISOLATED=1` 的 dev 服
      (命令队列恒空、快照不落盘、存档落 `local/gamedata_sweep/`——不碰人手里那份),
-     QtWebEngine 逐个以 `?mode=dev&devScene=<id>` 进每个场景、对开了日夜且配了 `timeVariants`
-     的场景再在页内 `advanceTimeTo` 切到每个时段,`QWebEngineUrlRequestInterceptor` 拦下
-     **全部**请求,归一化后问清单:清单没有、开发树有 = **漏抽**(FAIL);开发树也没有 =
+     WebView2 宿主(2026-09-27 前是 QtWebEngine)逐个以 `?mode=dev&devScene=<id>` 进每个场景、对开了日夜且配了 `timeVariants`
+     的场景再在页内 `advanceTimeTo` 切到每个时段,页面走一层本地记录代理、代理记下
+     **全部**请求(WebView 没有请求拦截接口;以前是 `QWebEngineUrlRequestInterceptor`),归一化后问清单:清单没有、开发树有 = **漏抽**(FAIL);开发树也没有 =
      数据缺件(只记);`sockets.json` / `*.normal.png` 的探测 = 按设计 404。
      报告 `.build/sweep-<档>.json` 记清单哈希 + `src/` 指纹;`verify_build.mjs` 只认对着**当前清单**
      跑出的报告。`release.mjs` 默认跑;清单与 `src/` 都没变、上一次全量 PASS 时**复用**上一次报告
@@ -133,8 +134,9 @@ Python/mjs 两份镜像各有契约测试钉死)。桌面壳:`src-tauri/`。
      `--enable-unsafe-webgpu`——藏了游戏起不来;报告里每场的 `renderer` 应为 `webgpu`,不是的整份别拿去判画面。
      `--build-config` 只把档位配置路径转给 `package.mjs`,不碰扫描的渲染开关。离屏 QtWebEngine 建 WebGPU 上下文
      2026-09-06 实测失败,扫描走真窗口。⚠ 2026-09-27 真窗口也拿不到适配器(`RhiError: [RHI:unsupported] WebGPU
-     设备创建失败:Failed to request WebGPU adapter`,每场都 `#game-fatal-error`),扫描宿主改造前出发行包只能
-     `--skip-sweep`;exe(WebView2)本身 WebGPU 正常,见下面「桌面壳」。
+     设备创建失败:Failed to request WebGPU adapter`,每场都 `#game-fatal-error`)——QtWebEngine 没编 Dawn。
+     同日扫描宿主改走 WebView2(`tools/qt_webgpu.py`)后全量 36 场 PASS(32245 次请求、零漏抽、适配器
+     nvidia/lovelace,450 s);`release.mjs --sweep-port <n> --sweep-offscreen` 指定隔离 dev 服端口、扫描窗口挪到屏幕外。
 - **产物里有一个不在清单里的派生文件:`assets/scene_index.json`**(2026-09-03)。它不是从开发树
   抽取的,是 `package.mjs` 装配完素材之后按**已落地**的 `assets/scenes/*.json` 现算写出的
   (`scripts/lib/scene_index.mjs`,与 vite 开发服中间件共用同一份生成器——开发服按请求现算同名 URL)。
@@ -331,6 +333,6 @@ Windows 上跑通了一整轮 `tauri build`,几条原本只能靠文档推断的
 改了展开器/规则/文件名表还要跑 `sh scripts/py.sh -m pytest tools/build/tests -p no:cacheprovider`
 与 `npx vitest run src/core/lightingPayloadFiles.test.ts scripts/lib/build_helpers.test.mjs`
 (两条契约测试)。只扫几个场景:`node scripts/scene_sweep.mjs --scenes 城门口`(扫描开的是
-**真窗口**,跑完自动关;离屏 QPA 下 GPU 上下文会丢、rAF 停摆、切场永远收不了尾,`--offscreen` 只作实验)。
+**真窗口**,跑完自动关;`--offscreen` = 真窗口挪到屏幕外、照常渲染,不挡人——不是离屏 QPA,WebView2 在离屏 QPA 下会段错误)。
 交互才拉的资源(对话立绘、小游戏贴图)扫描覆盖不到,仍走
 `node scripts/verify_build.mjs --target dev --serve` 真玩一段后取 `/__verify/404`。

@@ -112,6 +112,22 @@ npm run test:tauri        # Rust 单测（18 条：路径穿越、原子写入�
 测试名是中文；Windows 控制台默认 GBK 会显示成乱码（结果本身不受影响）。
 要看清跑 `chcp 65001` 之后再跑，或者用支持 UTF-8 的终端。
 
+### NSIS 安装包实测（2026-09-27）
+
+- `release.mjs` 出完绿色版之后 `release/release/game` 就在，直接 `tauri build`（不带 `--no-bundle`）即可出
+  安装包，不必再跑一遍 `npm run tauri:build` 前半段的抽取 + 扫描。首次会从 GitHub 下 NSIS 3.11 与
+  `nsis_tauri_utils.dll`（tauri CLI 校验哈希）到 `%LOCALAPPDATA%/tauri/NSIS`。
+- 产物 `GameDraft_0.1.0_x64-setup.exe` **1159.6 MB**（1,215,941,831 字节，`/SOLID lzma`），整步 23 分钟，
+  其中 makensis 约 20 分钟。安装后 2.02 GB / 1925 个文件。⚠ NSIS 有 2 GB 量级的数据上限，现在未压缩内容
+  1.88 GiB，离上限只剩一百来 MB。
+- 静默安装 / 卸载：`GameDraft_0.1.0_x64-setup.exe /S /D=<目录>`（`/D=` 必须放最后、不加引号；`/NS` 不建快捷方式），
+  `<目录>/uninstall.exe /S`（它会把自己拷到临时目录再跑，调用方要等卸载项注册表键消失才算完）。
+  静默安装会建开始菜单与**桌面**快捷方式；卸载会杀掉在跑的 `gamedraft.exe`。
+- 卸载后**留下**的东西：exe 旁 `gamedata/`（玩家存档，卸载器只删它装的文件，所以安装目录也不会被删）；
+  `HKCU\Software\gamedraft\GameDraft`（记上次安装位置，静默卸载不勾「删除应用数据」时不删）；
+  `%LOCALAPPDATA%/com.gamedraft.game`（WebView2 用户数据，同上）。注册表厂商键 `gamedraft` 取自 identifier
+  的第二段，大小写不敏感，与编辑器 QSettings 的根 `HKCU\Software\GameDraft` 是同一个键（互不覆盖，只是挤在一起）。
+
 ## WebGPU（engine2d 只有 WebGPU，没有 WebGL 回落）
 
 WebView2 缺省就开着 WebGPU，壳里**不需要**任何额外开关：`http://gamedraft.localhost/` 属于
