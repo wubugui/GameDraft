@@ -3,8 +3,8 @@
 
   GET  /                                  viewer
   GET  /vendor/dropdown.js                页内下拉（轨迹台那份原样，不 fork；不走系统原生弹窗）
-  GET  /gen/burn.bundle.js                运行时燃烧纯函数 + 世界空间 + 站位打成的 ESM（``bundle.py``）
-  GET  /gen/burnShade.glsl                ``src/rendering/burn/burnShade.glsl`` 原文（页面按标记切片，与游戏滤镜同一份）
+  GET  /gen/burn.bundle.js                运行时燃烧纯函数 + 世界空间 + 站位 + 游戏同一份渲染（engine2d / RHI / 燃烧滤镜 WGSL）
+                                          打成的 ESM（``bundle.py`` → 共用的工作台 RHI 接入层 ``tools/workbench_rhi``；源比产物新就现打）
   GET  /resources/… /assets/…             工程 public 下的图片 / JSON（原画、场景视图里各模板的图；只放行图与 JSON）
   GET  /api/boot                          启动参数（--open 的模板 id 只发一次；游戏地址；打包状态；工程根自证）
   GET  /api/burnables                     模板清单
@@ -146,6 +146,8 @@ class H(SimpleHTTPRequestHandler):
             if path == "/":
                 self.path = "/viewer/index.html"
                 return super().do_GET()
+            if path == "/favicon.ico":
+                return self._bytes(b"", "image/x-icon", 204)
             if path.startswith("/viewer/"):
                 if "/_gen/" in path:
                     return self._json({"ok": False, "err": "生成物走 /gen/"}, 404)
@@ -160,8 +162,6 @@ class H(SimpleHTTPRequestHandler):
                 if not p or not p.exists():
                     return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
                 return self._bytes(p.read_bytes(), _JS_MIME)
-            if path == "/gen/burnShade.glsl":
-                return self._bytes(bundle.shade_glsl().encode("utf-8"), "text/plain; charset=utf-8")
             if path.startswith(("/resources/", "/assets/")):
                 hit = scenes.public_file(path)
                 if hit is None:

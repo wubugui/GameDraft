@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""本地预览的裁判：`/gen/burn.bundle.js` 必须真的是**运行时那几个模块本体**打出来的（不是 JS 里照着写的第二份）。
+"""本地预览的裁判：`/gen/burn.bundle.js` 必须真的是**运行时那几个模块本体**打出来的（不是 JS 里照着写的第二份），
+画面必须是**游戏同一份渲染**（engine2d / RHI + 燃烧滤镜的 WGSL），页面里没有任何自己的着色器。
 
 打包在子进程里做（pytest 进程装着仓库写守卫，不能自己写 `viewer/_gen/`）；本进程只读产物。
 没有 node（PATH 与 .tools/node 都没有）就 skip——那台机器上工作台照样能改能存，只是没有本地预览。
@@ -19,6 +20,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from tools.burn_workbench import bundle  # noqa: E402
+from tools.workbench_rhi import build as wbrhi  # noqa: E402
 
 _HAS_NODE = bundle.node_exe() is not None
 
@@ -37,18 +39,27 @@ def built() -> Path:
 def test_bundle_exports_the_runtime_modules(built: Path) -> None:
     src = built.read_text(encoding="utf-8")
     for name in ("BurnSceneSim", "buildBurnGrid", "encodeTexture", "burnUvToScene", "burnSceneToUv", "buildBurnWorldGrid",
-                 "burnEntityPlacement", "burnPlacementFrame", "burnFrameExtent",
+                 "burnEntityPlacement", "burnPlacementFrame", "burnFrameExtent", "burnHotspotFrame",
                  "burnIgniteAim", "burnFuelCenterUv", "igniteStancesFor", "igniteContactOf", "igniteTipOffset", "solveIgniteStance",
                  "resolveBurnable", "burnableWorldSize", "BURN_DEFAULTS", "BURN_WU_PER_M", "resolveSockets", "attachmentPointLocal",
                  "parsePropPresets", "resolvePropAttach",
                  "normalizeAnimationSetDef", "createFieldVfxSpace", "createPlanarVfxSpace", "groundWorldAt", "viewDirWorld",
                  "buildDepthShellField", "resolveSceneWind", "sampleSceneWind", "createPerspectiveScaleResolver", "perspectiveScaleAt",
-                 "entityScaleOf", "kelvinToLinearRgb", "loadBurnImageData"):
+                 "entityScaleOf", "kelvinToLinearRgb", "loadBurnImageData",
+                 # 画面 = 游戏同一份渲染：渲染器 / 热点实体 / 燃烧渲染与两道滤镜
+                 "createCanvasHost", "createRenderer", "WebGPURenderer", "BurnStage", "BurnRenderer", "BurnMaterialFilter",
+                 "BurnGlowFilter", "BurnFieldTexture", "Hotspot"):
         assert re.search(rf"\b{name}\b", src), f"包里没有 {name}：本地预览就不是运行时那一份了"
     for ns in ("burnSim", "burnGeometry", "burnAim", "igniteStance", "burnables", "animationSockets", "propPresets",
                "resolveAnimationSet", "sceneSpace", "vfxSpace", "depthShellField", "sceneWind", "perspectiveScale",
-               "entityTransform", "kelvin", "burnImageData"):
+               "entityTransform", "kelvin", "burnImageData", "workbenchRhi", "burnView"):
         assert f"{ns}_exports as {ns}" in src, f"包里没导出 {ns}"
+    # 燃烧着色的 WGSL 原文就在包里（`burnShade.wgsl?raw` 经 vite 打进来，与游戏同一份字节）
+    wgsl = (_ROOT / "src" / "rendering" / "burn" / "burnShade.wgsl").read_text(encoding="utf-8")
+    fns = re.findall(r"^fn (\w+)\(", wgsl, re.M)
+    assert {"burnSample", "burnMaterial", "burnGlowAdd"} <= set(fns), fns
+    for fn in fns:
+        assert f"fn {fn}(" in src, f"包里没有 burnShade.wgsl 的 {fn}"
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="没有 node")
@@ -56,15 +67,24 @@ def test_bundle_is_cached_by_source_stamp(built: Path) -> None:
     """没改源就一个字节都不写（本进程的仓库写守卫正好是硬判据：它要是重打就会被守卫拦下）。
     ⚠ 别的会话正在改被打包的 TS 时，两次调用之间源变了会重打——那种情况 skip，不算失败。"""
     before = built.stat().st_mtime_ns
-    stamp_before = bundle._stamp(bundle.sources(), bundle._entry_ts())
     try:
         p, err = bundle.ensure_bundle()
     except PermissionError:
-        if bundle._stamp(bundle.sources(), bundle._entry_ts()) != stamp_before:
+        if wbrhi.stale_reason(bundle.ENTRY, bundle.OUT):
             pytest.skip("被打包的运行时源在测试期间变了（别的会话在改）")
         raise
     assert p == built and not err
     assert p.stat().st_mtime_ns == before
+    assert wbrhi.stale_reason(bundle.ENTRY, bundle.OUT) == ""
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="没有 node")
+def test_stamp_lists_what_the_bundler_actually_read(built: Path) -> None:
+    """判新旧的清单是打包器自己报的：WGSL（`?raw`）、游戏渲染模块、工作台胶水、依赖包都在里面。"""
+    names = {p.name for p in wbrhi.inputs_of(bundle.OUT)}
+    assert {"burnShade.wgsl", "BurnFilters.ts", "BurnRenderer.ts", "Hotspot.ts", "WebGPURenderer.ts", "LumaRhiDevice.ts",
+            "workbenchRhi.ts", "burnView.ts", "burnSim.ts", "package-lock.json"} <= names, sorted(names)
+    assert any("node_modules" in str(p) and "luma.gl" in str(p) for p in wbrhi.inputs_of(bundle.OUT))
 
 
 def test_sources_cover_the_whole_import_tree() -> None:
@@ -75,20 +95,25 @@ def test_sources_cover_the_whole_import_tree() -> None:
     assert {"burnSim.ts", "burnGeometry.ts", "burnAim.ts", "igniteStance.ts", "burnShadeParams.ts", "burnables.ts",
             "animationSockets.ts", "propPresets.ts", "resolveAnimationSet.ts", "sceneSpace.ts", "vfxSpace.ts",
             "depthShellField.ts", "groundHeightfield.ts", "groundDepthField.ts", "worldReconstruct.ts", "sceneWind.ts",
-            "perspectiveScale.ts", "entityTransform.ts", "kelvin.ts", "burnImageData.ts", "assetPath.ts"} <= names, names
-    # 站位求解器住在 igniteStance.ts：包不牵点火表演 / 游戏状态机（types.ts 一改包就重打）
-    assert "ignitePerformer.ts" not in names and "types.ts" not in names, names
+            "perspectiveScale.ts", "entityTransform.ts", "kelvin.ts", "burnImageData.ts", "assetPath.ts",
+            "BurnRenderer.ts", "BurnFilters.ts", "burnShade.wgsl", "Hotspot.ts", "workbenchRhi.ts", "burnView.ts"} <= names, names
+    # 站位求解器住在 igniteStance.ts：包不牵点火表演 / 游戏状态机（`src/data/types.ts` 一改包就重打）
+    rel = {s.resolve().relative_to(_ROOT.resolve()).as_posix() for s in srcs if s.resolve().is_relative_to(_ROOT.resolve())}
+    assert "src/systems/burn/ignitePerformer.ts" not in rel and "src/data/types.ts" not in rel, sorted(rel)
+    assert "src/core/Game.ts" not in rel, "包不许牵游戏组装层"
 
 
-def test_shade_glsl_is_the_runtime_single_source() -> None:
-    txt = bundle.shade_glsl()
-    assert bundle.SHADE_GLSL == _ROOT / "src" / "rendering" / "burn" / "burnShade.glsl"
-    assert "//__BURN_SHADE_BEGIN__" in txt and "//__BURN_SHADE_END__" in txt and "vec4 burnSample(" in txt
-    # 游戏滤镜切的是同一对标记
-    filters = (_ROOT / "src" / "rendering" / "burn" / "BurnFilters.ts").read_text(encoding="utf-8")
-    assert "sliceGlsl(BURN_SHADE_SRC, 'BURN_SHADE')" in filters
-    page = (bundle.TOOL / "viewer" / "preview.js").read_text(encoding="utf-8")
-    assert "'//__BURN_SHADE_BEGIN__'" in page and "'//__BURN_SHADE_END__'" in page
+def test_viewer_has_no_shader_of_its_own() -> None:
+    """页面里没有第二份着色器：不拿 GLSL、不开 WebGL、不写 WGSL；服务端也不再给 GLSL 孪生。"""
+    viewer = bundle.TOOL / "viewer"
+    text = "\n".join(p.read_text(encoding="utf-8") for p in viewer.glob("*.js"))
+    for forbidden in ("#version", "getContext('webgl", 'getContext("webgl', "gl_FragCoord", "gl_Position", "sampler2D",
+                      "texelFetch(", "texture2D(", "burnShade.glsl", "__BURN_SHADE_BEGIN__", "@fragment", "@vertex", "textureSample(",
+                      "createShader", "compileShader", "readPixels("):
+        assert forbidden not in text, forbidden
+    assert not hasattr(bundle, "shade_glsl") and not hasattr(bundle, "SHADE_GLSL")
+    serve_src = (bundle.TOOL / "serve.py").read_text(encoding="utf-8")
+    assert ".glsl" not in serve_src
 
 
 def test_viewer_does_not_reimplement_the_sim() -> None:
@@ -99,7 +124,8 @@ def test_viewer_does_not_reimplement_the_sim() -> None:
                       "function burnEntityPlacement", "function burnPlacementFrame", "function burnFrameExtent",
                       "function buildBurnWorldGrid", "function burnableWorldSize", "function resolveBurnable",
                       "function solveIgniteStance", "function igniteStancesFor", "function socketPoseToLocal",
-                      "function sampleSceneWind", "function burnShadeParamsOf", "float burnHash",
+                      "function sampleSceneWind", "function burnShadeParamsOf", "float burnHash", "fn burnHash",
+                      "function burnMaterial", "function burnGlowAdd", "function burnSceneToUvAffine",
                       "kelvinToLinearRgb(", "uBurnCharColor * (0.6",
                       # 旧模型（场景 → 热点 → 布置）的残留：页面里一个都不许有
                       "burnHotspotFrameOf", "burn_placements", "/api/library", "scenePlacements"):
@@ -107,7 +133,8 @@ def test_viewer_does_not_reimplement_the_sim() -> None:
     for used in ("rt.burnSim.buildBurnGrid", "rt.burnGeometry.buildBurnWorldGrid", "rt.igniteStance.igniteStancesFor",
                  "rt.burnables.resolveBurnable", "rt.burnables.burnableWorldSize", "S.rt.burnSim.BurnSceneSim", "loadBurnImageData",
                  "g.burnEntityPlacement(", "g.burnPlacementFrame(", "burnGeometry.burnFrameExtent(",
-                 "burnShadeParams.burnShadeParamsOf", "burnMaterial(", "burnGlowAdd("):
+                 "burnShadeParams.burnShadeParamsOf", "rt.workbenchRhi.createCanvasHost(", "rt.burnView.BurnStage(",
+                 "S.rt.workbenchRhi.loadTexture(", "S.rt.burnView.artHotspotDef(", "sim.encodeTexture(key, dst)"):
         assert used in text, used
 
 

@@ -66,14 +66,16 @@ def _json(base: str, path: str, body=None):
 def test_static_and_no_store(srv):
     base, _ = srv
     for path in ("/", "/viewer/app.js", "/viewer/core.js", "/viewer/preview.js", "/viewer/render.js", "/viewer/views.js",
-                 "/viewer/inspector.js", "/vendor/dropdown.js", "/gen/burnShade.glsl"):
+                 "/viewer/inspector.js", "/vendor/dropdown.js"):
         code, headers, body = _get(base, path)
         assert code == 200, path
         assert "no-store" in (headers.get("Cache-Control") or ""), path
         if path.endswith(".js"):
             assert headers["Content-Type"].startswith("text/javascript"), (path, headers["Content-Type"])
-    _c, _h, glsl = _get(base, "/gen/burnShade.glsl")
-    assert b"//__BURN_SHADE_BEGIN__" in glsl and b"burnSample" in glsl
+    code, _h, _b = _get(base, "/gen/burnShade.glsl")
+    assert code == 404, "工具不再拿 GLSL 孪生：画面走游戏同一份 WGSL（包里的燃烧滤镜）"
+    code, _h, body = _get(base, "/favicon.ico")
+    assert code == 204 and body == b"", "图标请求不许在控制台留 404"
     code, _h, _b = _get(base, "/vendor/common.js")
     assert code == 404, "共用件只放白名单"
     _c, _h, html = _get(base, "/")

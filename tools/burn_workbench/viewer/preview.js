@@ -29,6 +29,7 @@ const P = {
   lastFrameMs: 0,
 };
 
+/** 运行时包：燃烧纯函数 + 游戏同一份渲染（engine2d / RHI / 燃烧滤镜，见 bundle.py）——着色没有页面自己的一份 */
 async function loadRuntime() {
   try {
     S.rt = await import('/gen/burn.bundle.js');
@@ -37,21 +38,6 @@ async function loadRuntime() {
   } catch (e) {
     S.rt = null; S.rtErr = String((e && e.message) || e);
   }
-  try {
-    const r = await fetch('/gen/burnShade.glsl', { cache: 'no-store' });
-    S.glsl = sliceGlsl(await r.text());
-    S.glslErr = '';
-  } catch (e) {
-    S.glsl = ''; S.glslErr = String((e && e.message) || e);
-  }
-}
-
-/** 与 `BurnFilters.sliceGlsl` 同一对标记 */
-function sliceGlsl(src) {
-  const b = '//__BURN_SHADE_BEGIN__', e = '//__BURN_SHADE_END__';
-  const i = src.indexOf(b), j = src.indexOf(e);
-  if (i < 0 || j < 0) throw new Error('burnShade.glsl 缺切片标记');
-  return src.substring(i + b.length, j);
 }
 
 // ---------------------------------------------------------------------------

@@ -38,14 +38,24 @@
   const CANDLE = '/resources/runtime/images/zz_burn/candle.png';
   const TK = TEMPLATE_KEY;
   const near = (a, b, eps) => Math.abs(a - b) < (eps || 1e-6);
+  // GPU 着色层（游戏同一个 WebGPU 渲染器）的检查：宿主根本拿不到 WebGPU（如 offscreen 的 QtWebEngine）时记 SKIP 并写明原因——
+  // 不是放行：真 GPU 的 Chrome 跑同一份脚本时（`chrome_page.mjs --selftest … --no-skip`）一条 SKIP 都不许有
+  const noGpu = () => !V.gpu || !V.gpu.ok;
+  const okGpu = (name, cond, extra) => {
+    if (noGpu()) log.push(`SKIP ${name} ${JSON.stringify({ why: (V.gpu && V.gpu.err) || 'no GPU layer' })}`);
+    else ok(name, typeof cond === 'function' ? cond() : cond, extra);
+  };
 
   try {
     // ------------------------------------------------------------------ S1 启动：只有模板，没有场景
     await until(() => window.__ready, 30000);
     await idle();
-    ok('S1 boot: ready, a template open in the art view, runtime bundle + GLSL + WebGL2 shader up, clean',
-      !!window.__ready && S.docId === 'paper_pile' && S.view === 'art' && !S.sv && !!S.rt && !!S.glsl && V.gl.ok && !!V.gl.prog && !S.dirty,
-      { doc: S.docId, view: S.view, rtErr: S.rtErr, glErr: V.gl && V.gl.err, dirty: S.dirtyIds });
+    ok('S1 boot: ready, a template open in the art view, runtime bundle (sim + game renderer) loaded, clean',
+      !!window.__ready && S.docId === 'paper_pile' && S.view === 'art' && !S.sv && !!S.rt && !!S.rt.workbenchRhi && !!S.rt.burnView && !S.dirty,
+      { doc: S.docId, view: S.view, rtErr: S.rtErr, dirty: S.dirtyIds });
+    okGpu('S1 the GPU layer is the game WebGPU renderer (engine2d / RHI), no GLSL anywhere on the page',
+      () => V.gpu.host.renderer.name === 'webgpu' && !V.gpu.err && !('glsl' in S) && typeof BurnGL === 'undefined',
+      { err: V.gpu && V.gpu.err });
     const boot = await API.json('/api/boot');
     ok('S1 selftest process reads/writes a temp project (never the real library)', boot.real === false && /burnwb_selftest_/.test(boot.data), { data: boot.data, real: boot.real });
     ok('S1 page-level dropdown is installed (no native popups)', !!window.Dropdown);
@@ -228,7 +238,7 @@
     restartPreview();
     draw();
     const cp = toScreen(size[0] * 0.5, size[1] * 0.5);
-    const fresh = V.gl.readPixel(cp[0], cp[1]);
+    const fresh = V.gpu.readPixel(cp[0], cp[1]);
     previewIgnite(false);
     for (let i = 0; i < 60; i++) stepPreview(1 / 20);
     ok('S7 ignite at the ignition point: burning at t=3', P.art.sim.state(TK) === 'burning', { t: P.t, st: P.art.sim.state(TK) });
@@ -242,13 +252,13 @@
     ok('S7 scrubbing = deterministic replay from 0: texture bytes identical to the live run', live.length === replayed.length && live.every((x, i) => x === replayed[i]));
     ok('S7 burnt out at t=20 (paper ashAlpha 0)', P.art.sim.state(TK) === 'burnt', { st: P.art.sim.state(TK) });
     draw();
-    const burnt = V.gl.readPixel(cp[0], cp[1]);
-    ok('S7 the SAME burnShade.glsl draws it: fresh = paper colour, burnt out = background shows through',
+    const burnt = V.gpu.readPixel(cp[0], cp[1]);
+    okGpu('S7 the game burn filters (burnShade.wgsl via BurnRenderer) draw it: fresh = paper colour, burnt out = background shows through',
       Math.abs(fresh[0] - 230) < 12 && Math.abs(fresh[2] - 150) < 12 && burnt[0] < 40 && burnt[2] < 40, { fresh, burnt });
     seek(1.0);
     draw();
-    const hot = V.gl.readPixel(...toScreen(size[0] * 0.5, size[1] * 0.9));
-    ok('S7 at t=1 the fire line glows (emission added)', hot[0] > 240 && hot[2] < fresh[2] - 40,
+    const hot = V.gpu.readPixel(...toScreen(size[0] * 0.5, size[1] * 0.9));
+    okGpu('S7 at t=1 the fire line glows (emission added)', hot[0] > 240 && hot[2] < fresh[2] - 40,
       { hot, fresh, st: P.art.sim.state(TK), cam: V.cam.art, view: [V.w, V.h] });
     const sl = el('tslider');
     sl.value = '4'; sl.dispatchEvent(new Event('input')); sl.dispatchEvent(new Event('change'));
@@ -267,8 +277,8 @@
     restartPreview();
     draw();
     const csz = artSize();
-    const top = V.gl.readPixel(...toScreen(csz[0] * 0.5, csz[1] * 0.1));
-    ok('S7 an unburnt consume template is drawn as its plain image (no fire-line glow at t=0)', Math.abs(top[0] - 200) < 14 && top[1] < 60 && top[2] < 60, { top });
+    const top = V.gpu.readPixel(...toScreen(csz[0] * 0.5, csz[1] * 0.1));
+    okGpu('S7 an unburnt consume template is drawn as its plain image (no fire-line glow at t=0)', Math.abs(top[0] - 200) < 14 && top[1] < 60 && top[2] < 60, { top });
     previewIgnite(true);
     for (let i = 0; i < 40; i++) stepPreview(0.25);
     const cr = itemReadout(P.art.sim, P.art);
@@ -306,6 +316,15 @@
     restartPreview();
     stepPreview(0.5);
     ok('S8 an instance with initial: burning is lit at 0 s (first ignition point / whole)', P.sc.sim.state('hs_candle') === 'burning' && sceneEventsOf(I.hs_candle)[0].t === 0 && P.sc.sim.state('hs_paper') === 'unburnt');
+    draw();
+    okGpu('S8 the scene view is drawn by the game objects: hotspots = Hotspot, NPC = framed, burn shading only on the burning one',
+      () => V.gpu.stage.keys().sort().join() === 's:hs_candle,s:hs_paper,s:hs_paper2,s:npc_paper' && V.gpu.burning('s:hs_candle')
+        && !V.gpu.burning('s:hs_paper') && !V.gpu.burning('s:npc_paper'),
+      { keys: V.gpu.ok && V.gpu.stage.keys(), candle: V.gpu.ok && V.gpu.burning('s:hs_candle') });
+    const fDiff = (a, b) => Math.max(...['ox', 'oy', 'ux', 'uy', 'vx', 'vy'].map((k) => Math.abs(a[k] - b[k])));
+    okGpu('S8 the game Hotspot the view draws sits exactly where the sim placed it (burnHotspotFrame == entity placement, incl. perspective + mirror)',
+      () => ['hs_paper', 'hs_paper2', 'hs_candle'].every((k) => fDiff(V.gpu.stage.frameOf(`s:${k}`), I[k].frame) < 1e-9),
+      V.gpu.ok ? ['hs_paper', 'hs_paper2', 'hs_candle'].map((k) => fDiff(V.gpu.stage.frameOf(`s:${k}`) || {}, I[k].frame)) : null);
     // 只读：拖不动
     draw();
     const histS8 = HIST.undo.length;

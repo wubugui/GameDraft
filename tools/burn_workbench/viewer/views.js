@@ -1,5 +1,5 @@
 'use strict';
-/* 燃烧工作台 · 中间两个视图（WebGL2 着色层 `#gl` + 2D 标注层 `#ov`）。
+/* 燃烧工作台 · 中间两个视图（GPU 着色层 `#gl`：游戏同一个 WebGPU 渲染器，见 render.js + 2D 标注层 `#ov`）。
  *
  * - **原画视图**（主视图）：模板自己的图（燃烧着色同一份，按真实尺寸跑的那份模拟）+ 燃料格（不可燃的格压暗）+ 网格 +
  *   涂层叠加 + 着火点（增删拖）+ 握点（拖；没写 = 底边中点，画成虚点）+ 尺寸标注 + 消耗燃烧的方向箭头 / 火苗列 + 粒子源 + 火光。
@@ -11,7 +11,7 @@
  *   撤销 / 重做换了文档里的 data URL ⇒ 缓冲按新串重解码。 */
 
 const V = {
-  gl: null, ov: null, ctx: null, dpr: 1, w: 1, h: 1,
+  gpu: null, ov: null, ctx: null, dpr: 1, w: 1, h: 1,
   cam: { art: { k: 1, ox: 0, oy: 0, fitKey: '' }, scene: { k: 1, ox: 0, oy: 0, fitKey: '' } },
   queued: false,
   imgs: new Map(),
@@ -39,8 +39,11 @@ function imageOf(url) {
   if (!r) {
     r = { img: null, err: '' };
     V.imgs.set(url, r);
-    API.image(url).then((img) => { r.img = img; requestDraw(); if (typeof onImageLoaded === 'function') onImageLoaded(url); },
-      (e) => { r.err = String((e && e.message) || e); requestDraw(); });
+    // 图到了、GPU 纹理（与游戏同一条装载）也到了才算到：之后画的每一帧都有贴图
+    API.image(url).then(async (img) => {
+      if (V.gpu) await V.gpu.textureReady(url);
+      r.img = img; requestDraw(); if (typeof onImageLoaded === 'function') onImageLoaded(url);
+    }, (e) => { r.err = String((e && e.message) || e); requestDraw(); });
   }
   return r.img;
 }
@@ -236,7 +239,7 @@ function draw() {
   const cw = center.clientWidth, ch = center.clientHeight;
   V.dpr = window.devicePixelRatio || 1;
   V.w = cw; V.h = ch;
-  if (V.gl) V.gl.resize(cw, ch, V.dpr);
+  if (V.gpu) V.gpu.resize(cw, ch, V.dpr);
   const ov = V.ov;
   const W = Math.max(1, Math.round(cw * V.dpr)), Hh = Math.max(1, Math.round(ch * V.dpr));
   if (ov.width !== W || ov.height !== Hh) { ov.width = W; ov.height = Hh; }
@@ -245,18 +248,41 @@ function draw() {
   ctx.setTransform(V.dpr, 0, 0, V.dpr, 0, 0);
   ctx.clearRect(0, 0, cw, ch);
   ctx.font = '12px "Segoe UI", "Microsoft YaHei", sans-serif';
-  const glOk = V.gl && V.gl.begin();
-  if (S.view === 'scene') drawScene(glOk, ctx); else drawArt(glOk, ctx);
+  const c = cam();
+  const gpuOk = !!V.gpu && V.gpu.begin(c.k, c.ox, c.oy);
+  if (S.view === 'scene') drawScene(gpuOk, ctx); else drawArt(gpuOk, ctx);
+  if (gpuOk) V.gpu.end();
   renderViewInfo();
   if (typeof renderSimBar === 'function') renderSimBar();
 }
 
-/** 燃烧着色：与游戏同一条——只在"烧过"（状态 ≠ 没点）时挂（`BurnRenderer`）；没点的消耗燃烧照挂的话顶上那一格会按 0 秒火线发光 */
-function burnFor(name, sim, it) {
-  if (!V.gl || !V.gl.prog || !sim || !it || !it.grid || !sim.has(it.key)) return null;
+/**
+ * 燃烧着色的输入：与游戏同一条——只在"烧过"（状态 ≠ 没点）时挂（`BurnRenderer`）；没点的消耗燃烧照挂的话顶上那一格会按 0 秒火线发光。
+ * 燃烧场字节由模拟 `encodeTexture` 直接写进游戏的燃烧场纹理（代号见 `texGen`：没变就不重编码）。
+ */
+function burnFor(sim, it) {
+  if (!V.gpu || !V.gpu.ok || !sim || !it || !it.grid || !sim.has(it.key)) return null;
   if (sim.state(it.key) === 'unburnt') return null;
-  const field = V.gl.fieldOf(name, sim, it.key, it.grid.nx, it.grid.ny);
-  return { field, params: shadeParamsOf(it.b, it.grid, sim.shaderClock(it.key)) };
+  const key = it.key;
+  return {
+    gridW: it.grid.nx, gridH: it.grid.ny, source: sim, gen: texGen(sim, key),
+    encode: (dst) => sim.encodeTexture(key, dst),
+    params: shadeParamsOf(it.b, it.grid, sim.shaderClock(key)),
+  };
+}
+
+/** 场景实体上的热点实例交给游戏 `Hotspot` 摆：def 的摆放字段原样 + 展示图 = 模板图与真实尺寸（`SceneManager.burnableDisplayOf` 同口径） */
+function sceneHotspotDef(it) {
+  const e = it.ent;
+  const size = S.rt.burnables.burnableWorldSize(it.b);
+  const def = { id: String(e.id || it.key), x: Number(e.x) || 0, y: Number(e.y) || 0,
+    displayImage: { image: it.b.image, worldWidth: size.width, worldHeight: size.height } };
+  if (e.scale != null) def.scale = e.scale;
+  if (e.rotation != null) def.rotation = e.rotation;
+  if (e.anchor != null) def.anchor = e.anchor;
+  if (e.perspectiveScaleEnabled != null) def.perspectiveScaleEnabled = e.perspectiveScaleEnabled;
+  if (e.displayFacing === 'left' || e.displayFacing === 'right') def.displayImage.facing = e.displayFacing;
+  return def;
 }
 
 function frameCorners(f) {
@@ -264,24 +290,22 @@ function frameCorners(f) {
   return [g.burnUvToScene(f, 0, 0), g.burnUvToScene(f, 1, 0), g.burnUvToScene(f, 1, 1), g.burnUvToScene(f, 0, 1)].map((p) => [p.x, p.y]);
 }
 
-function drawScene(glOk, ctx) {
+function drawScene(gpuOk, ctx) {
   const sv = S.sv;
   const sc = sv && sv.scene;
   if (!sc) { ctx.fillStyle = '#9aa1ad'; ctx.fillText('场景装载中…', 20, 60); return; }
-  const keepFields = new Set();
-  if (glOk && sv.bgImg) V.gl.quad([[0, 0], [sc.worldWidth, 0], [sc.worldWidth, sc.worldHeight], [0, sc.worldHeight]].map((p) => toScreen(p[0], p[1])), sv.bgImg, null, 1);
+  if (gpuOk) V.gpu.background(sv.bgImg ? sv.bgUrl : '', sc.worldWidth, sc.worldHeight);
   const items = P.sc.items.slice().sort((a, b) => a.placement.footY - b.placement.footY);
   V.sceneHits = [];
   for (const it of items) {
     const corners = frameCorners(it.frame);
     V.sceneHits.push({ it, corners });
-    const img = imageOf(it.b.image);
-    if (!glOk || !img) continue;
-    const burn = burnFor(`s:${it.key}`, P.sc.sim, it);
-    if (burn) keepFields.add(`s:${it.key}`);
-    V.gl.quad(corners.map((p) => toScreen(p[0], p[1])), img, burn, 1);
+    if (!gpuOk || !imageOf(it.b.image)) continue;
+    const burn = burnFor(P.sc.sim, it);
+    // 热点 = 游戏的 Hotspot 本体摆；NPC 在游戏里走角色受光网格，这里按实例帧平贴（工作台没有受光）
+    if (it.ent.kind === 'npc') V.gpu.framed(`s:${it.key}`, it.frame, it.b.image, burn);
+    else V.gpu.hotspot(`s:${it.key}`, sceneHotspotDef(it), it.b.image, burn, P.sc.persp);
   }
-  if (V.gl && V.gl.ok) V.gl.dropFields(new Set([...keepFields, ...[...V.gl.fields.keys()].filter((k) => k.startsWith('a:'))]));
   const g = S.rt && S.rt.burnGeometry;
   ctx.lineWidth = 1;
   for (const { it, corners } of V.sceneHits) {
@@ -427,7 +451,7 @@ function drawDimension(ctx, a, b, text, side) {
   else { ctx.save(); ctx.translate(a[0] - 6, (a[1] + b[1]) / 2 + w / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(text, 0, 0); ctx.restore(); }
 }
 
-function drawArt(glOk, ctx) {
+function drawArt(gpuOk, ctx) {
   const doc = S.docs[S.docId];
   if (!doc) { ctx.fillStyle = '#9aa1ad'; ctx.fillText('没有打开模板（左栏选一份或新建）', 20, 60); return; }
   const size = artSize();
@@ -440,11 +464,8 @@ function drawArt(glOk, ctx) {
   }
   const [W, Hh] = size;
   const it = P.art && P.art.id === S.docId && P.art.grid ? P.art : null;
-  const rect = [[0, 0], [W, 0], [W, Hh], [0, Hh]].map((p) => toScreen(p[0], p[1]));
-  if (glOk) {
-    const burn = it ? burnFor(`a:${it.key}`, it.sim, it) : null;
-    V.gl.quad(rect, img, burn, 1);
-  }
+  // 原画视图的坐标 = 图像素：实例 = 脚点 (W/2, H)、展示 W × H 的热点（`burnView.artHotspotDef`）
+  if (gpuOk) V.gpu.hotspot(`a:${TEMPLATE_KEY}`, S.rt.burnView.artHotspotDef(doc.image, W, Hh), doc.image, it ? burnFor(it.sim, it) : null, null);
   const [x0, y0] = toScreen(0, 0), [x1, y1] = toScreen(W, Hh);
   // 不可燃格 / 网格
   if (it) {
@@ -547,8 +568,7 @@ function renderViewInfo() {
   const box = el('viewInfo');
   const lines = [];
   if (S.rtErr) lines.push(['err', `⚠ 运行时包装不上：${S.rtErr}（本地预览 / 站位不可用）`]);
-  if (S.glslErr) lines.push(['err', `⚠ burnShade.glsl：${S.glslErr}`]);
-  if (V.gl && V.gl.err) lines.push(['err', `⚠ ${V.gl.err}`]);
+  if (V.gpu && V.gpu.err) lines.push(['err', `⚠ ${V.gpu.err}`]);
   if (P.buildErr) lines.push(['err', `⚠ 预览建不起来：${P.buildErr}`]);
   if (S.view === 'scene' && S.sv && S.sv.scene) {
     const sc = S.sv.scene;
@@ -761,12 +781,11 @@ function onWheel(e) {
   requestDraw();
 }
 
-function initViews() {
+/** 标注层与手势同步装好；GPU 着色层要等 WebGPU 设备（拿不到就只留原因，编辑照常） */
+async function initViews() {
   V.ov = el('ov');
   V.ctx = V.ov.getContext('2d');
-  V.gl = new BurnGL(el('gl'));
-  if (V.gl.ok && S.glsl) V.gl.compile(S.glsl);
-  else if (V.gl.ok) V.gl.err = `没有 burnShade.glsl：${S.glslErr || '?'}`;
+  V.gpu = new BurnGpu(el('gl'));
   V.ov.addEventListener('mousedown', onMouseDown);
   window.addEventListener('mousemove', onMouseMove);
   window.addEventListener('mouseup', onMouseUp);
@@ -794,4 +813,6 @@ function initViews() {
   if (typeof ResizeObserver === 'function') new ResizeObserver(() => requestDraw()).observe(el('center'));
   window.addEventListener('resize', () => requestDraw());
   renderViewBar();
+  await V.gpu.init(S.rt);
+  requestDraw();
 }

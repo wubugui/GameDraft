@@ -79,7 +79,7 @@ function status(msg, kind) {
 // 状态
 // ---------------------------------------------------------------------------
 const S = {
-  rt: null, rtErr: '', glsl: '', glslErr: '',
+  rt: null, rtErr: '',
   boot: {},
   assets: [],
   /** 工作态模板 id → 文档；`clean` = 盘上那份的 canonJson；`base` = 盘上那份（保存时给服务端比"被别处改过没有"） */

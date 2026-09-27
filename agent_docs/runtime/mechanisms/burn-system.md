@@ -58,7 +58,7 @@ last_governed: 2026-09-23
 
 数据形状与缺省 `burnables.ts`(**字段语义以注释为准**;Python 闸门 `tools/editor/shared/burnables.py` 同口径)→ 纯模拟 `burnSim.ts`
 (零 Pixi、不读挂钟)→ 几何 `burnGeometry.ts`(实例图 = 一个仿射 + 9×9 世界映射网格)→ 系统 `BurnSystem.ts`(记录 / 对账 / 挪位 /
-手上挂件 / 离场照推 / 存读档 / 表现 / 条件叶 / 动作)→ 点火 `burnAim` / `ignitePerformer` / `igniteStance` → 表现 `burnShade.wgsl`(工作台用的 `burnShade.glsl` 是孪生,两份一起改,`src/rendering/shaderTwins.test.ts` 守门)
+手上挂件 / 离场照推 / 存读档 / 表现 / 条件叶 / 动作)→ 点火 `burnAim` / `ignitePerformer` / `igniteStance` → 表现 `burnShade.wgsl`(燃烧工作台经 `tools/workbench_rhi` 用同一份;`burnShade.glsl` 已无渲染消费者,只剩 GlProgram 壳与 `shaderTwins.test.ts` 在读,待删)
 (唯一 GLSL 源)/ `BurnRenderer` / `burnLights`。组装层接线在 `Game.ts`(实体 / 挂件宿主、`attachSocketView`)。
 
 ## 硬契约(违反即 bug)

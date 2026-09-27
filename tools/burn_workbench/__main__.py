@@ -7,6 +7,8 @@
   sh scripts/py.sh -m tools.burn_workbench --smoke                 # 桌面壳无头自检：load 完即退
   sh scripts/py.sh -m tools.burn_workbench --selftest [js]         # 交互层端到端回归（临时样例工程 + viewer/tests/selftest.js）
   sh scripts/py.sh -m tools.burn_workbench --serve [--port 5351]   # 只起 HTTP 服务（自动化用）
+  sh scripts/py.sh -m tools.burn_workbench --serve --fixture [dir] # 同上，但读写全指到样例工程（浏览器自检 / 像素对照用）：
+                                                                   # 不给 dir = 临时目录、退出即删；给 dir = 建在那里、归调用方删
   sh scripts/py.sh -m tools.burn_workbench --list                  # 模板清单（尺寸 / 图 / 几处在用）
   sh scripts/py.sh -m tools.burn_workbench --check                 # 不写盘：模板形状 / 图在不在 / 粒子效果在不在 / 引用处的模板在不在（✗ = 退出码 1）
   sh scripts/py.sh -m tools.burn_workbench --bundle                # 只重打运行时模块包
@@ -92,6 +94,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(prog="burn_workbench")
     ap.add_argument("--open", default="", help="启动后直接打开这份模板")
     ap.add_argument("--serve", action="store_true", help="只起 HTTP 服务，不开桌面窗口")
+    ap.add_argument("--fixture", nargs="?", const="-", default="",
+                    help="配 --serve：读写全指到样例工程（与 --selftest 同一份），游戏地址钉 127.0.0.1:9；给目录 = 建在那里（调用方删）")
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--game-url", default="", help="游戏 dev server 地址（缺省读 devstate.json，再退 127.0.0.1:5173）")
     ap.add_argument("--smoke", action="store_true", help="桌面壳无头自检：load 完即退")
@@ -128,23 +132,47 @@ def main() -> int:
 
     if args.serve:
         from http.server import ThreadingHTTPServer
-        from tools.burn_workbench import serve
+        from tools.burn_workbench import serve, store
         port = args.port or serve.PORT
+        tmp = None
+        if args.fixture:
+            import tempfile
+            from tools.burn_workbench import fixtures
+            if args.fixture == "-":
+                tmp = Path(tempfile.mkdtemp(prefix="burnwb_selftest_"))
+                proj = tmp
+            else:
+                proj = Path(args.fixture).resolve()
+                proj.mkdir(parents=True, exist_ok=True)
+            fixtures.build_project(proj)
+            store.PROJECT = proj
+            store.DATA = proj
+            serve.LINK.set_base("http://127.0.0.1:9")
+            if not args.open:
+                serve.BOOT_OPEN.append("paper_pile")
         if args.game_url:
             serve.LINK.set_base(args.game_url)
         if args.open:
             serve.BOOT_OPEN.append(args.open)
         try:
-            httpd = ThreadingHTTPServer(("127.0.0.1", port), serve.H)
-        except OSError:
-            print(f"端口 {port} 已被占用（大概已经在跑）")
-            return 2
-        print(f"燃烧工作台裸服务（自动化用）: http://127.0.0.1:{port}/  游戏={serve.LINK.base}", flush=True)
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            pass
-        return 0
+            try:
+                httpd = ThreadingHTTPServer(("127.0.0.1", port), serve.H)
+            except OSError:
+                print(f"端口 {port} 已被占用（大概已经在跑）")
+                return 2
+            print(f"燃烧工作台裸服务（自动化用）: http://127.0.0.1:{port}/  游戏={serve.LINK.base}"
+                  + (f"  样例工程={store.PROJECT}" if args.fixture else ""), flush=True)
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                pass
+            return 0
+        finally:
+            if tmp is not None:
+                import shutil
+                store.PROJECT = store.ROOT
+                store.DATA = store.ROOT
+                shutil.rmtree(tmp, ignore_errors=True)
 
     from tools.burn_workbench.app import main as app_main
     t0 = time.time()

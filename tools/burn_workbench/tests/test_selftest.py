@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
-"""交互层端到端回归门：无头桌面壳（offscreen + ANGLE/SwiftShader WebGL2）里跑真页面 + `viewer/tests/selftest.js`。
+"""交互层端到端回归门：同一份 `viewer/tests/selftest.js` 在两个宿主里跑真页面——
+
+* **桌面壳**（offscreen QtWebEngine，即工作台的真宿主）：交互层全部断言；这个宿主拿不到 WebGPU 时（offscreen 的
+  QtWebEngine 6.11 目前如此，统一的 WebGPU 参数由 `tools/qt_webgpu.py` 另接），着色层那几条记 SKIP 并写明原因；
+* **真 GPU 的 Chrome**（`tools/workbench_rhi/chrome_page.mjs`）：同一份脚本，`--no-skip`——着色层每一条都必须真跑、真过；
+  另有一条冒烟：拿到 WebGPU、画面非空、控制台无 error。没有 node / playwright-core / Chrome 就 skip。
 
 覆盖：启动只有模板没有场景、「用在哪」列出全部宿主、模板预览是运行时本体且按真实尺寸摆（同样的事件半尺寸烧得更快）、
 检视器数值保值（整数 / 越界 / 清空删键 / 必填）、真实尺寸锁比例 / 解锁 / 偏离提示 / 必填、着火点与握点增删拖（撤销重做）、
 燃料涂层笔刷（写 data URL、网格跟着变、撤销重做重解码）、预览推进 / 时间轴确定性重放 / 熄灭 / 复原 / 消耗燃烧 / 预览风吹熄、
-同一份 burnShade.glsl 真画出焦黑烧没自发光（读像素；没点的不挂着色）、只读场景视图（一个模拟里各用各的模板、透视与朝向口径、
+游戏同一份燃烧滤镜（burnShade.wgsl，经 BurnRenderer）真画出焦黑烧没自发光（读像素；没点的不挂着色）、场景视图的热点是游戏 Hotspot 本体、只读场景视图（一个模拟里各用各的模板、透视与朝向口径、
 initial 在烧、拖不动、当前模板用工作态、跨实例蔓延）、左右站位残差≈0 与朝向、接触帧没标 / 片段不存在 / 状态点不了的显式提示、
 本地能不能站 + 游戏判定覆盖本地、保存（值、浮点表示、没改不写、保存锁、别处改过拒写）、新建（尺寸必填、选图给初始尺寸）/ 复制 / 换图 /
 改名（先确认、跟着改所有引用）/ 删除（有引用拒绝）、非法与重名 id、联动协议 v2（载荷形状、从游戏回传的实例里选用这份模板的）、视图手势。
@@ -20,6 +25,11 @@ import sys
 from pathlib import Path
 
 import pytest
+
+if str(Path(__file__).resolve().parents[3]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+from tools.workbench_rhi import browser  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parents[3]
 _BURN = _ROOT / "public" / "assets" / "data" / "burnables"
@@ -66,3 +76,42 @@ def test_interaction_layer_selftest() -> None:
     assert r.returncode == 0, "selftest 有 FAIL/EXC 或超时（看上面的报告）"
     assert "passed, 0 failed" in r.stdout
     assert "[selftest]" in r.stdout and "PASS S1" in r.stdout and "PASS S14" in r.stdout
+
+
+_SELFTEST_JS = _ROOT / "tools" / "burn_workbench" / "viewer" / "tests" / "selftest.js"
+
+
+def _fixture_server(tmp_path: Path):
+    # 目录名带 burnwb_selftest_：自检脚本凭它（与 /api/boot 的 real === false）自证读写不在真库
+    proj = tmp_path / "burnwb_selftest_chrome"
+    return browser.serving([sys.executable, "-m", "tools.burn_workbench", "--serve", "--port", "{port}", "--fixture", str(proj)])
+
+
+@pytest.mark.skipif(bool(browser.unavailable()), reason=browser.unavailable() or "ok")
+def test_selftest_in_chrome_with_real_webgpu(tmp_path: Path) -> None:
+    """同一份自检在真 GPU 的 Chrome 里：着色层（游戏的 WebGPU 渲染器 + 燃烧滤镜）每一条都真跑，一条 SKIP 都不许有。"""
+    before = _fingerprint()
+    with _fixture_server(tmp_path) as base:
+        r = browser.run_page(base + "/", selftest=_SELFTEST_JS, no_skip=True)
+    sys.stdout.write(r.stdout[-6000:])
+    sys.stderr.write(r.stderr[-2000:])
+    if r.returncode == browser.EXIT_NO_BROWSER:
+        pytest.skip("起不来 Chrome")
+    assert _fingerprint() == before, "自检改动了真工程的模板目录"
+    assert not _real_files_mentioning_selftest_id(), "自检的改名写进了真工程"
+    assert "WebGPU 适配器：没有" not in r.stdout, "这台机器的 Chrome 拿不到 WebGPU"
+    assert r.returncode == 0, "Chrome 里的自检有 FAIL / EXC / SKIP 或控制台 error（看上面的报告）"
+    assert " 0 failed, 0 skipped" in r.stdout and "PASS S1 the GPU layer" in r.stdout and "PASS S7 the game burn filters" in r.stdout
+
+
+@pytest.mark.skipif(bool(browser.unavailable()), reason=browser.unavailable() or "ok")
+def test_page_smoke_in_chrome(tmp_path: Path) -> None:
+    """冒烟：Chrome 打开燃烧工作台，拿到 WebGPU、画面非空（与清屏色不同的像素够多）、控制台无 error。"""
+    shot = tmp_path / "burn_workbench_smoke.png"
+    with _fixture_server(tmp_path) as base:
+        r = browser.run_page(base + "/", smoke=True, shot=shot)
+    sys.stdout.write(r.stdout[-4000:])
+    if r.returncode == browser.EXIT_NO_BROWSER:
+        pytest.skip("起不来 Chrome")
+    assert r.returncode == 0, "冒烟没过（看上面）"
+    assert '"ok":true' in r.stdout and "控制台无 error" in r.stdout and shot.is_file()

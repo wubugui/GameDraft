@@ -1,232 +1,137 @@
 'use strict';
-/* 燃烧工作台 · WebGL2 着色：场景视图背景、模板的图（原画视图 / 场景视图里每个实例）的烤黄 / 焦黑 / 成灰 / 烧没 / 自发光。
+/* 燃烧工作台 · GPU 着色层（`#gl` 画布）：场景视图背景、模板的图（原画视图 / 场景视图里每个实例）的烤黄 / 焦黑 / 成灰 / 烧没 / 自发光。
  *
- * 着色数学只在 `src/rendering/burn/burnShade.glsl`（`/gen/burnShade.glsl` 原文，按标记切片后原样拼进来，不另写）。
- * 燃烧场纹理 = 模拟 `encodeTexture` 的产物，与游戏同格式：RGBA8、网格尺寸、NEAREST（GLSL 里手写双线性）。
- * 燃烧 uv 就是模板图的纹理 uv（实例朝左时 `burnPlacementFrame` 的 u 轴反向，四个角照 uv 画，两边一致）。
+ * **这里没有着色器**：画布上是游戏同一个 WebGPU 渲染器（engine2d / RHI，经工作台 RHI 接入层 `S.rt.workbenchRhi`），
+ * 画面由包里的 `S.rt.burnView.BurnStage` 用游戏自己的对象拼——实例 = `Hotspot` 展示图，燃烧着色 = `BurnRenderer` 挂的
+ * 两道燃烧滤镜（`burnShade.wgsl`），贴图 = 与游戏同一条 `Assets.load`。页面只把"画什么"（相机、实例、燃烧场、参数）交过去。
+ * 燃烧场纹理 = 模拟 `encodeTexture` 的产物（与游戏同格式：RGBA8、网格尺寸、NEAREST），燃烧 uv 就是模板图的纹理 uv。
  *
- * ⚠ 材质 / 发光的**组合**那几行照抄 `BurnFilters.ts` 的 FRAG_MATERIAL / FRAG_GLOW（这里没有受光那一步：材质之后直接加发光）。
- *   游戏的输入是预乘色、这里是直通 alpha，式子按直通 alpha 等价改写。 */
+ * 没有 WebGPU（宿主拿不到适配器）就明确说画不了，**不回落**任何别的 API；编辑、保存、模拟、站位照常。 */
 
-const GL_VERT = `#version 300 es
-in vec2 aPos;
-in vec2 aUv;
-uniform vec2 uScreen;
-out vec2 vUv;
-void main() {
-  vec2 c = aPos / uScreen * 2.0 - 1.0;
-  gl_Position = vec4(c.x, -c.y, 0.0, 1.0);
-  vUv = aUv;
-}
-`;
-
-function glFrag(shade) {
-  return `#version 300 es
-precision highp float;
-in vec2 vUv;
-out vec4 finalColor;
-uniform sampler2D uTexture;
-uniform int uBurnOn;
-uniform float uOpacity;
-${shade}
-void main() {
-  vec4 c = texture(uTexture, vUv);
-  if (c.a < 1e-4) { finalColor = vec4(0.0); return; }
-  vec3 rgb = c.rgb;
-  float a = c.a;
-  if (uBurnOn == 1) {
-    vec3 emit;
-    vec4 b = burnSample(vUv, emit);
-    // 与游戏两道滤镜同一组函数（burnShade.glsl）：材质 → （这里没有受光）→ 自发光
-    vec4 m = burnMaterial(rgb, a, b);
-    rgb = m.rgb;
-    a = m.a;
-    rgb = min(rgb + burnGlowAdd(emit), vec3(4.0));
-  }
-  a *= uOpacity;
-  finalColor = vec4(rgb * a, a);
-}
-`;
-}
-
-class BurnGL {
+class BurnGpu {
   constructor(canvas) {
     this.canvas = canvas;
-    this.gl = canvas.getContext('webgl2', { alpha: false, premultipliedAlpha: true, antialias: true, preserveDrawingBuffer: true });
-    this.ok = !!this.gl;
-    this.err = this.ok ? '' : '没有 WebGL2：着色预览画不了';
-    this.prog = null;
-    this.imgTex = new Map();
-    this.fields = new Map();
-    this.dpr = 1;
-    this.w = 1; this.h = 1;
+    this.ok = false;
+    this.err = '';
+    this.host = null;
+    this.stage = null;
+    /** url → { tex, err, pending }（`workbenchRhi.loadTexture`：与游戏 AssetManager 同一条装载） */
+    this.textures = new Map();
+    this.pendingTextures = 0;
+    this.items = [];
+    this.bg = null;
   }
 
-  compile(shade) {
-    const gl = this.gl;
-    if (!gl) return false;
-    const sh = (type, src) => {
-      const s = gl.createShader(type);
-      gl.shaderSource(s, src);
-      gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || '着色器编译失败');
-      return s;
-    };
+  /** 建渲染器（异步：要 WebGPU 适配器与设备）。失败把人话原因写进 `err` */
+  async init(rt) {
+    if (!rt || !rt.workbenchRhi || !rt.burnView) { this.err = '运行时包没装上：着色预览画不了'; return false; }
     try {
-      const p = gl.createProgram();
-      gl.attachShader(p, sh(gl.VERTEX_SHADER, GL_VERT));
-      gl.attachShader(p, sh(gl.FRAGMENT_SHADER, glFrag(shade)));
-      gl.linkProgram(p);
-      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) || '着色器链接失败');
-      this.prog = p;
-      this.loc = {};
-      for (const n of ['uScreen', 'uTexture', 'uBurnOn', 'uOpacity', 'uBurnField', 'uBurnGrid', 'uBurnNow', 'uBurnStep', 'uBurnFlame', 'uBurnEmber',
-        'uBurnScorch', 'uBurnAshFade', 'uBurnEdgeNoise', 'uBurnScorchColor', 'uBurnCharColor', 'uBurnAshColor', 'uBurnAshAlpha', 'uBurnGlow', 'uBurnEmberGlow']) {
-        this.loc[n] = gl.getUniformLocation(p, n);
-      }
-      this.aPos = gl.getAttribLocation(p, 'aPos');
-      this.aUv = gl.getAttribLocation(p, 'aUv');
-      this.buf = gl.createBuffer();
-      this.vao = gl.createVertexArray();
-      gl.bindVertexArray(this.vao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
-      gl.enableVertexAttribArray(this.aPos);
-      gl.vertexAttribPointer(this.aPos, 2, gl.FLOAT, false, 16, 0);
-      gl.enableVertexAttribArray(this.aUv);
-      gl.vertexAttribPointer(this.aUv, 2, gl.FLOAT, false, 16, 8);
+      this.host = await rt.workbenchRhi.createCanvasHost(this.canvas, { background: 0x111113 });
+      this.stage = new rt.burnView.BurnStage();
+      this.ok = true;
       this.err = '';
-      return true;
     } catch (e) {
-      this.prog = null;
-      this.err = `燃烧着色器编译不过：${(e && e.message) || e}`;
-      return false;
+      this.ok = false;
+      this.err = `着色预览画不了：${(e && e.message) || e}`;
     }
+    return this.ok;
   }
 
   resize(cssW, cssH, dpr) {
-    this.dpr = dpr;
-    this.w = Math.max(1, cssW); this.h = Math.max(1, cssH);
-    const W = Math.max(1, Math.round(cssW * dpr)), Hh = Math.max(1, Math.round(cssH * dpr));
-    if (this.canvas.width !== W || this.canvas.height !== Hh) { this.canvas.width = W; this.canvas.height = Hh; }
+    if (this.ok) this.host.resize(cssW, cssH, dpr);
   }
 
-  begin() {
-    const gl = this.gl;
-    if (!gl) return false;
-    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    gl.clearColor(0.067, 0.067, 0.075, 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
-    if (!this.prog) return false;
-    gl.useProgram(this.prog);
-    gl.bindVertexArray(this.vao);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-    gl.uniform2f(this.loc.uScreen, this.w, this.h);
-    gl.uniform1i(this.loc.uTexture, 0);
-    gl.uniform1i(this.loc.uBurnField, 1);
+  /** 一帧开始：相机 + 清掉上一帧的实例清单 */
+  begin(k, ox, oy) {
+    if (!this.ok) return false;
+    this.stage.setCamera(k, ox, oy);
+    this.items = [];
+    this.bg = null;
     return true;
   }
 
-  /** 图片纹理（直通 alpha、线性过滤）：同一个 Image 对象只传一次 */
-  texOf(img) {
-    const gl = this.gl;
-    let t = this.imgTex.get(img);
-    if (t) return t;
-    t = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, t);
-    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this.imgTex.set(img, t);
-    return t;
+  /** 纹理：还没装到 = null（装到后自己请求重画） */
+  texture(url) {
+    const r = this.textureEntry(url);
+    return r ? r.tex : null;
   }
-  dropImages(keep) {
-    for (const [img, t] of [...this.imgTex]) if (!keep.has(img)) { this.gl.deleteTexture(t); this.imgTex.delete(img); }
+  /** 纹理装好（或装失败）时落定；没有 GPU = 立刻落定 */
+  textureReady(url) {
+    const r = this.textureEntry(url);
+    return r ? r.promise : Promise.resolve();
+  }
+  textureEntry(url) {
+    if (!this.ok || !url) return null;
+    let r = this.textures.get(url);
+    if (!r) {
+      r = { tex: null, err: '', pending: true, promise: null };
+      this.textures.set(url, r);
+      this.pendingTextures++;
+      r.promise = S.rt.workbenchRhi.loadTexture(url).then((t) => { r.tex = t; }, (e) => { r.err = String((e && e.message) || e); })
+        .finally(() => { r.pending = false; this.pendingTextures--; requestDraw(); });
+    }
+    return r;
+  }
+  textureError(url) {
+    const r = url && this.textures.get(url);
+    return r ? r.err : '';
+  }
+  /** 放掉不再用的纹理（场景背景每次开都是新地址）。先让舞台不再引用它（绑定已销毁的纹理 = 那一帧抛错），再卸载 */
+  dropTexture(url) {
+    const r = this.textures.get(url);
+    if (!r) return;
+    this.textures.delete(url);
+    if (this.bg && this.bg.tex === r.tex) this.bg = null;
+    if (this.ok) this.stage.forgetTexture(r.tex);
+    if (r.tex) void S.rt.workbenchRhi.unloadTexture(url);
   }
 
-  /** 燃烧场纹理（RGBA8、NEAREST，与游戏 `BurnFieldTexture` 同格式）。`sim` 换了 / 尺寸变了 / 脏了才重编码上传 */
-  fieldOf(name, sim, key, nx, ny) {
-    const gl = this.gl;
-    let f = this.fields.get(name);
-    if (!f || f.nx !== nx || f.ny !== ny) {
-      if (f) gl.deleteTexture(f.tex);
-      f = { tex: gl.createTexture(), nx, ny, data: new Uint8Array(Math.max(1, nx * ny) * 4), sim: null };
-      gl.bindTexture(gl.TEXTURE_2D, f.tex);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      this.fields.set(name, f);
-    }
-    const gen = texGen(sim, key);
-    if (f.gen !== gen || f.sim !== sim) {
-      f.gen = gen;
-      sim.encodeTexture(key, f.data);
-      gl.bindTexture(gl.TEXTURE_2D, f.tex);
-      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, nx, ny, 0, gl.RGBA, gl.UNSIGNED_BYTE, f.data);
-      f.sim = sim;
-    }
-    return f;
-  }
-  dropFields(keep) {
-    for (const [n, f] of [...this.fields]) if (!keep.has(n)) { this.gl.deleteTexture(f.tex); this.fields.delete(n); }
+  /** 这一帧的背景（没调 = 这一帧没有背景） */
+  background(url, w, h) {
+    const tex = url ? this.texture(url) : null;
+    this.bg = tex ? { tex, w, h, url } : null;
   }
 
-  /** 一个四边形：`corners` = 屏幕 CSS px 的 [左上, 右上, 右下, 左下]，对应 uv (0,0) (1,0) (1,1) (0,1) */
-  quad(corners, img, burn, opacity) {
-    const gl = this.gl;
-    if (!this.prog || !img) return;
-    const [a, b, c, d] = corners;
-    const v = new Float32Array([
-      a[0], a[1], 0, 0, b[0], b[1], 1, 0, c[0], c[1], 1, 1,
-      a[0], a[1], 0, 0, c[0], c[1], 1, 1, d[0], d[1], 0, 1,
-    ]);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
-    gl.bufferData(gl.ARRAY_BUFFER, v, gl.DYNAMIC_DRAW);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.texOf(img));
-    gl.uniform1f(this.loc.uOpacity, opacity == null ? 1 : opacity);
-    if (burn) {
-      const L = this.loc, p = burn.params;
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, burn.field.tex);
-      gl.uniform1i(L.uBurnOn, 1);
-      gl.uniform2f(L.uBurnGrid, p.gridW, p.gridH);
-      gl.uniform1f(L.uBurnNow, p.now);
-      gl.uniform1f(L.uBurnStep, p.timeStep);
-      gl.uniform1f(L.uBurnFlame, p.flameSeconds);
-      gl.uniform1f(L.uBurnEmber, p.emberSeconds);
-      gl.uniform1f(L.uBurnScorch, p.scorchSeconds);
-      gl.uniform1f(L.uBurnAshFade, p.ashFadeSeconds);
-      gl.uniform1f(L.uBurnEdgeNoise, p.edgeNoise);
-      gl.uniform3fv(L.uBurnScorchColor, p.scorchColor);
-      gl.uniform3fv(L.uBurnCharColor, p.charColor);
-      gl.uniform3fv(L.uBurnAshColor, p.ashColor);
-      gl.uniform1f(L.uBurnAshAlpha, p.ashAlpha);
-      gl.uniform3fv(L.uBurnGlow, p.glow);
-      gl.uniform3fv(L.uBurnEmberGlow, p.emberGlow);
-    } else {
-      gl.uniform1i(this.loc.uBurnOn, 0);
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, null);
-    }
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  /** 热点实例（原画视图的那张图 / 场景视图里的热点）：`def` = 热点摆放字段 + 展示图（模板图与世界尺寸） */
+  hotspot(key, def, url, burn, perspective) {
+    const tex = this.texture(url);
+    if (!tex) return false;
+    this.items.push({ key, kind: 'hotspot', def, texture: tex, perspective: perspective || null, burn, url });
+    return true;
   }
 
-  /** 读一个屏幕 CSS 点的像素（自检用：焦黑 / 烧没真的画上了） */
+  /** 按实例帧平贴的实例（场景视图里的 NPC） */
+  framed(key, frame, url, burn) {
+    const tex = this.texture(url);
+    if (!tex) return false;
+    this.items.push({ key, kind: 'frame', frame, texture: tex, burn, url });
+    return true;
+  }
+
+  end() {
+    if (!this.ok) return;
+    try {
+      this.stage.setBackground(this.bg ? this.bg.tex : null, this.bg ? this.bg.w : 0, this.bg ? this.bg.h : 0);
+      this.stage.sync(this.items, performance.now());
+      this.host.render(this.stage.root);
+      this.err = this.host.lastError ? `GPU：${this.host.lastError}` : '';
+    } catch (e) {
+      this.err = `着色预览这一帧画坏了：${(e && e.message) || e}`;
+    }
+  }
+
+  /** 只留下 key 满足条件的实例（切视图 / 关场景时放掉另一个视图的燃烧着色资源） */
+  retain(keep) {
+    if (this.ok) this.stage.retain(keep);
+  }
+
+  /** 这个实例此刻挂着燃烧着色吗（自检用） */
+  burning(key) {
+    return this.ok && this.stage.burning(key);
+  }
+
+  /** 读一个屏幕 CSS 点的像素 `[r, g, b, a]`（同一个任务里重画一遍再读——WebGPU 画布呈现之后读不回来） */
   readPixel(cx, cy) {
-    const gl = this.gl;
-    const x = Math.round(cx * this.dpr), y = this.canvas.height - 1 - Math.round(cy * this.dpr);
-    const px = new Uint8Array(4);
-    gl.readPixels(clamp(x, 0, this.canvas.width - 1), clamp(y, 0, this.canvas.height - 1), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    return [...px];
+    return this.ok ? this.host.readPixel(cx, cy) : [0, 0, 0, 0];
   }
 }

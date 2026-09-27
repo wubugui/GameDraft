@@ -80,17 +80,20 @@ async function openSceneView(sid, entityId) {
   setBusy(true, `装载场景「${sid}」…`);
   try {
     const sc = (await API.json(`/api/scene?id=${encodeURIComponent(sid)}`)).scene;
+    const bgUrl = sc.hasBackground ? `/api/scene_bg?id=${encodeURIComponent(sid)}&w=1600&t=${Date.now()}` : '';
     const [img, ground, shell] = await Promise.all([
-      sc.hasBackground ? API.image(`/api/scene_bg?id=${encodeURIComponent(sid)}&w=1600&t=${Date.now()}`).catch(() => null) : null,
+      // 背景：标注层要它的尺寸，GPU 层要同一个地址的纹理（先装好，第一帧就有底图）
+      bgUrl ? API.image(bgUrl).then(async (im) => { if (V.gpu) await V.gpu.textureReady(bgUrl); return im; }).catch(() => null) : null,
       sc.cal ? API.bin(`/api/scene_ground?id=${encodeURIComponent(sid)}`).catch(() => null) : null,
       sc.cal ? API.bin(`/api/scene_shell?id=${encodeURIComponent(sid)}`).catch(() => null) : null,
     ]);
-    if (op !== S.sceneOp) return false;
+    if (op !== S.sceneOp) { if (bgUrl && V.gpu) V.gpu.dropTexture(bgUrl); return false; }
     await Promise.all([...new Set(sc.entities.map((e) => e.template))].map((t) => ensureDoc(t)));
-    if (op !== S.sceneOp) return false;
+    if (op !== S.sceneOp) { if (bgUrl && V.gpu) V.gpu.dropTexture(bgUrl); return false; }
     const same = !!(S.sv && S.sv.scene && S.sv.scene.id === sid);
     const keep = same ? S.sv.entityId : '';
-    S.sv = { sceneId: sid, scene: sc, bgImg: img, entityId: entityId !== undefined ? entityId : keep };
+    if (S.sv && S.sv.bgUrl && V.gpu) V.gpu.dropTexture(S.sv.bgUrl);
+    S.sv = { sceneId: sid, scene: sc, bgImg: img, bgUrl, entityId: entityId !== undefined ? entityId : keep };
     buildSceneSpace(sc, ground, sc.cal ? shell : null);
     if (!same) { P.scEvents = {}; V.cam.scene.fitKey = ''; S.stances = null; S.walk = null; }
     P.sc.sig = '';
@@ -110,11 +113,12 @@ async function openSceneView(sid, entityId) {
 }
 function closeSceneView() {
   S.sceneOp++;
+  if (S.sv && S.sv.bgUrl && V.gpu) V.gpu.dropTexture(S.sv.bgUrl);
   S.sv = null;
   S.stances = null; S.walk = null;
   P.scEvents = {};
   Object.assign(P.sc, { sceneId: '', space: null, spaceKind: 'none', persp: null, wind: null, geo: null, items: [], sim: null, problems: [], sig: '' });
-  if (V.gl && V.gl.ok) V.gl.dropFields(new Set([...V.gl.fields.keys()].filter((k) => k.startsWith('a:'))));
+  if (V.gpu) V.gpu.retain((k) => k.startsWith('a:'));
   setView('art');
   renderAll();
 }
@@ -837,7 +841,7 @@ function bindUI() {
 async function boot() {
   bindUI();
   await loadRuntime();
-  initViews();
+  await initViews();
   let boot0 = {};
   try { boot0 = await API.json('/api/boot'); } catch (e) { /* 服务刚起 */ }
   S.boot = boot0;
@@ -889,6 +893,15 @@ window.addEventListener('beforeunload', (e) => {
 window.__openBurnable = (id) => {
   if (S.busy || HIST.drag) { status('正在装载 / 手势没松开，稍后再试', 'warn'); return; }
   void openTemplate(id);
+};
+
+/** 浏览器冒烟（`tools/workbench_rhi/chrome_page.mjs --smoke`）：拿到 WebGPU、这一帧画出了东西、GPU 没报错 */
+window.__rhiSmoke = () => {
+  if (!V.gpu || !V.gpu.ok) return { ok: false, detail: (V.gpu && V.gpu.err) || '没有 GPU 着色层' };
+  draw();
+  const drawn = V.gpu.host.countDrawnPixels();
+  const size = [V.gpu.canvas.width, V.gpu.canvas.height];
+  return { ok: drawn > 64 && !V.gpu.err && !S.rtErr, detail: { drawn, size, gpuErr: V.gpu.err, rtErr: S.rtErr, view: S.view, doc: S.docId } };
 };
 
 window.addEventListener('DOMContentLoaded', () => { void boot(); });
