@@ -391,6 +391,11 @@ def run_desktop(handler_cls, title: str, app_id: str,
     view.load(QUrl(f'http://127.0.0.1:{actual_port}{path}'))
     if offscreen_window:
         from tools.qt_webgpu import place_offscreen
+        # 无边框(Windows 上是 WS_POPUP):带边框的顶层窗口会被系统夹到屏幕尺寸以内(1280×720 的机器上 1560×980 的
+        # 自检窗口只剩 1284×701、页面 CSS 视口 1036×566,布局挤扁、依赖视口大小的自检条目假红),无边框窗口照要求的尺寸建——
+        # 自检的视口与这台机器的屏幕多大无关(2026-09-28 实测)。只对挪到屏幕外的自检 / 冒烟窗口,正常窗口不动。
+        win.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
+        win.resize(*size)
         place_offscreen(win)
     win.show()
     code = app.exec()

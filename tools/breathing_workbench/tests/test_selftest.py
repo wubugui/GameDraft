@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """交互层端到端回归门:同一份 `viewer/tests/selftest.js` 在两个宿主里跑真页面——
 
-* **桌面壳**(offscreen QtWebEngine,即工作台的真宿主):交互层全部断言;这个宿主拿不到 WebGPU 时(offscreen 的
-  QtWebEngine 6.11 目前如此,统一的 WebGPU 参数由 `tools/qt_webgpu.py` 另接),画面那几条(S1 渲染器、S10 / S11 读像素、S17 出片)
-  记 SKIP 并写明原因;
+* **桌面壳**(工作台的真宿主:`run_desktop(webgpu=True)` → WebView2 / WKWebView,离屏平台下是挪到屏幕外、尺寸固定的
+  无边框真窗口):全部断言,画面那几条(S1 渲染器、S10 / S11 读像素、S17 出片)也真跑,**一条 SKIP 都不许有**;
 * **真 GPU 的 Chrome**(`tools/workbench_rhi/chrome_page.mjs`):同一份脚本,`--no-skip`——画面每一条都必须真跑、真过;
   另有一条冒烟:拿到 WebGPU、画面非空、控制台无 error。没有 node / playwright-core / Chrome 就 skip。
 
@@ -34,13 +33,6 @@ _DIR = _ROOT / "public" / "assets" / "data" / "breathing"
 _RENDERS = _ROOT / "local" / "breathing_renders"
 
 
-def _has_webengine() -> bool:
-    try:
-        import PySide6.QtWebEngineWidgets  # noqa: F401
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
 
 def _fingerprint() -> dict:
     return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(_DIR.glob("*.json"))} if _DIR.is_dir() else {}
@@ -50,7 +42,7 @@ def _renders() -> set:
     return {p.name for p in _RENDERS.iterdir()} if _RENDERS.is_dir() else set()
 
 
-@pytest.mark.skipif(not _has_webengine(), reason="没有 PySide6 QtWebEngine")
+@pytest.mark.skipif(bool(browser.qt_host_unavailable()), reason=browser.qt_host_unavailable() or "ok")
 def test_interaction_layer_selftest() -> None:
     before, renders_before = _fingerprint(), _renders()
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", PYTHONUTF8="1", QT_QPA_PLATFORM="offscreen")
@@ -63,9 +55,10 @@ def test_interaction_layer_selftest() -> None:
     assert r.returncode == 0, "selftest 有 FAIL/EXC 或超时(看上面的报告)"
     assert "passed, 0 failed" in r.stdout
     assert "PASS S1" in r.stdout and "PASS S16" in r.stdout
-    # 画面那几条:这个宿主拿得到 WebGPU 就必须 PASS,拿不到就必须是写明原因的 SKIP(不许悄悄没了)
+    # 画面那几条:WebGPU 宿主里必须真跑、真过(不许 SKIP、不许悄悄没了)
+    assert not browser.skip_lines(r.stdout), f"Qt(WebGPU)宿主里不许有 SKIP:{browser.skip_lines(r.stdout)}"
     for key in ("S10 游戏的呼吸图着色", "S11 按住看原图", "S17 出一口循环", "S17 同参数出两次片"):
-        assert f"PASS {key}" in r.stdout or f"SKIP {key}" in r.stdout, key
+        assert f"PASS {key}" in r.stdout, key
 
 
 _SELFTEST_JS = _ROOT / "tools" / "breathing_workbench" / "viewer" / "tests" / "selftest.js"

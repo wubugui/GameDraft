@@ -25,9 +25,8 @@ TITLE = "燃烧工作台 · 可燃物模板"
 
 def main(port: int | None = None, smoke: bool = False, open_id: str = "", selftest: str = "", game_url: str = "") -> int:
     if selftest or smoke:
-        # offscreen 下 QtWebEngine 默认拿不到 WebGL2；ANGLE + SwiftShader 就能起来（与粒子 / 轨迹台同款）
-        os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
-                              "--use-gl=angle --use-angle=swiftshader-webgl --enable-unsafe-swiftshader")
+        # 着色层是游戏的 WebGPU 渲染器：窗口走 WebView2（`run_desktop(webgpu=True)`，QtWebEngine 没编 Dawn）；
+        # 离屏平台下壳自己改开屏幕外的真窗口（WebView2 在离屏 QPA 下会段错误）
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from tools.burn_workbench import serve, store
     from tools.desktop_shell import run_desktop
@@ -53,7 +52,7 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
             if not open_id:
                 serve.BOOT_OPEN.append("paper_pile")
             return run_desktop(handler_cls=serve.H, title=TITLE + "（自检）", app_id=APP_ID + "-selftest", port=port,
-                               selftest=str(path))
+                               selftest=str(path), webgpu=True)
         finally:
             store.PROJECT = store.ROOT
             store.DATA = store.ROOT
@@ -67,7 +66,7 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
 
     payload = f"open:{open_id}".encode("utf-8") if open_id else b"raise"
     return run_desktop(handler_cls=serve.H, title=TITLE, app_id=APP_ID, port=port, smoke=smoke,
-                       on_activate=_on_activate, activate_payload=payload)
+                       on_activate=_on_activate, activate_payload=payload, webgpu=True)
 
 
 if __name__ == "__main__":

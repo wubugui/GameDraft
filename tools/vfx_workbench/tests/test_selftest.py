@@ -12,8 +12,9 @@ Ctrl 吸附整数倍 / 纯点一下不入历史 / 2D 原画里同一份）、新
 
 需要 PySide6 + QtWebEngine + 工程真数据（至少一个烘过深度的场景）；缺一个就 skip。约 10 秒。
 
-原画视图与雷的现画预览是游戏同一个 WebGPU 渲染器（工作台 RHI 接入层 + 游戏的 `VfxRenderer`）：offscreen 的 QtWebEngine
-拿不到 WebGPU 适配器，那几条在桌面壳里记 SKIP（写明原因）；**同一份脚本**再在真 GPU 的 Chrome 里跑一遍
+原画视图与雷的现画预览是游戏同一个 WebGPU 渲染器（工作台 RHI 接入层 + 游戏的 `VfxRenderer`）：桌面壳走
+`run_desktop(webgpu=True)`（WebView2 / WKWebView；离屏平台下是挪到屏幕外、尺寸固定的无边框真窗口），那几条在壳里也真跑、
+**一条 SKIP 都不许有**；**同一份脚本**再在真 GPU 的 Chrome 里跑一遍
 （`tools/workbench_rhi/chrome_page.mjs --selftest … --no-skip`，服务开 `--serve --selftest-sandbox`），一条 SKIP 都不许有。
 """
 from __future__ import annotations
@@ -36,13 +37,6 @@ _SCENE = "bridge_underpass"
 _SCENE_OK = (_ROOT / "public" / "assets" / "scenes" / f"{_SCENE}.json").is_file() and \
     (_ROOT / "public" / "resources" / "runtime" / "scenes" / _SCENE / "raw_depth_rg.png").is_file()
 
-
-def _has_webengine() -> bool:
-    try:
-        import PySide6.QtWebEngineWidgets  # noqa: F401
-        return True
-    except Exception:  # noqa: BLE001
-        return False
 
 
 _LIB = _ROOT / "public" / "assets" / "data" / "vfx_placements.json"
@@ -76,7 +70,7 @@ _SCRIPTS = (
 
 
 @pytest.mark.skipif(not (_SCENE_OK and _VFX.is_dir()), reason="缺工程真数据（烘过深度的场景 / 效果库）")
-@pytest.mark.skipif(not _has_webengine(), reason="没有 PySide6 QtWebEngine")
+@pytest.mark.skipif(bool(browser.qt_host_unavailable()), reason=browser.qt_host_unavailable() or "ok")
 def test_interaction_layer_selftest() -> None:
     # 真实页面用例串行，避免临时效果的指纹检查互相干扰。
     for script in _SCRIPTS:
@@ -92,8 +86,9 @@ def test_interaction_layer_selftest() -> None:
         assert r.returncode == 0, "selftest 有 FAIL/EXC 或超时（看上面的报告）"
         assert "passed, 0 failed" in r.stdout
         if script.endswith("/selftest.js"):
-            # 3D 视图走接入层的 3D 调试件：离屏 Qt 拿不到 WebGPU 时着色那几条记 SKIP（带原因），真跑在 Chrome 那条里
-            assert "PASS S1g the 3D view holds no WebGL context" in r.stdout and "S1g" in r.stdout
+            # 3D 视图走接入层的 3D 调试件（WebGPU）：Qt 宿主是 WebView2，着色那几条也真跑
+            assert "PASS S1g the 3D view holds no WebGL context" in r.stdout
+        assert not browser.skip_lines(r.stdout), f"{script}：Qt（WebGPU）宿主里不许有 SKIP：{browser.skip_lines(r.stdout)}"
 
 
 def _sandbox_server(tmp: Path):

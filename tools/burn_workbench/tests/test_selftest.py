@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """交互层端到端回归门：同一份 `viewer/tests/selftest.js` 在两个宿主里跑真页面——
 
-* **桌面壳**（offscreen QtWebEngine，即工作台的真宿主）：交互层全部断言；这个宿主拿不到 WebGPU 时（offscreen 的
-  QtWebEngine 6.11 目前如此，统一的 WebGPU 参数由 `tools/qt_webgpu.py` 另接），着色层那几条记 SKIP 并写明原因；
+* **桌面壳**（工作台的真宿主：`run_desktop(webgpu=True)` → WebView2 / WKWebView，离屏平台下是挪到屏幕外、尺寸固定的
+  无边框真窗口）：全部断言，**一条 SKIP 都不许有**（着色层是游戏的 WebGPU 渲染器，这个宿主拿得到）；
 * **真 GPU 的 Chrome**（`tools/workbench_rhi/chrome_page.mjs`）：同一份脚本，`--no-skip`——着色层每一条都必须真跑、真过；
   另有一条冒烟：拿到 WebGPU、画面非空、控制台无 error。没有 node / playwright-core / Chrome 就 skip。
 
@@ -37,13 +37,6 @@ _ASSETS = _ROOT / "public" / "assets"
 _SELFTEST_RENAME_ID = b"zz_paper_renamed"
 
 
-def _has_webengine() -> bool:
-    try:
-        import PySide6.QtWebEngineWidgets  # noqa: F401
-        return True
-    except Exception:  # noqa: BLE001
-        return False
-
 
 def _fingerprint() -> dict:
     return {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(_BURN.glob("*.json"))} if _BURN.is_dir() else {}
@@ -60,7 +53,7 @@ def _real_files_mentioning_selftest_id() -> list[str]:
     return out
 
 
-@pytest.mark.skipif(not _has_webengine(), reason="没有 PySide6 QtWebEngine")
+@pytest.mark.skipif(bool(browser.qt_host_unavailable()), reason=browser.qt_host_unavailable() or "ok")
 def test_interaction_layer_selftest() -> None:
     before = _fingerprint()
     assert not _real_files_mentioning_selftest_id(), "真工程里本来就有自检改名用的 id：换一个"
@@ -76,6 +69,8 @@ def test_interaction_layer_selftest() -> None:
     assert r.returncode == 0, "selftest 有 FAIL/EXC 或超时（看上面的报告）"
     assert "passed, 0 failed" in r.stdout
     assert "[selftest]" in r.stdout and "PASS S1" in r.stdout and "PASS S14" in r.stdout
+    assert not browser.skip_lines(r.stdout), f"Qt（WebGPU）宿主里不许有 SKIP：{browser.skip_lines(r.stdout)}"
+    assert "PASS S7 burnt out stays burnt out wherever the camera puts the sprite" in r.stdout
 
 
 _SELFTEST_JS = _ROOT / "tools" / "burn_workbench" / "viewer" / "tests" / "selftest.js"

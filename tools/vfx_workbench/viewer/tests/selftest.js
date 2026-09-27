@@ -283,7 +283,9 @@
       edit('自检加恐惧标签', () => { em0().behavior.attitude.fear['item:bug'] = 1; });
       el('fieldKind').value = 'fear';
       el('fieldTag').value = 'item:bug';
-      el('fieldRadius').value = '400';
+      // 半径给到盖住整个巢：探针落在巢那一列像素的射线打到的面上，离巢多远随视口 / 相机而变（1258×790 视口实测 ~440 wu），
+      // 400 时只有大窗口（1600×1000）里够得着——这条验的是"刺激工具发出去的场吓得动群体"，不验点得有多准
+      el('fieldRadius').value = '1200';
       el('fieldStrength').value = '2';
       el('fieldDuration').value = '0.8';
       setTool('field');

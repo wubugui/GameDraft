@@ -68,10 +68,8 @@ selftest_isolation = selftest_sandbox
 def main(port: int | None = None, smoke: bool = False, open_id: str = "", selftest: str = "",
          game_url: str = "") -> int:
     if selftest or smoke:
-        # offscreen 下 QtWebEngine 默认拿不到 WebGL2（3D 视图要它）；ANGLE + SwiftShader 就能起来（两台工作台同款）。
-        # 原画视图 / 雷预览走 WebGPU：offscreen 的 QtWebEngine 拿不到适配器，自检里那几条记 SKIP（真 GPU 的 Chrome 另跑一遍）
-        os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
-                              "--use-gl=angle --use-angle=swiftshader-webgl --enable-unsafe-swiftshader")
+        # 原画视图 / 雷预览是游戏的 WebGPU 渲染器：窗口走 WebView2（`run_desktop(webgpu=True)`，QtWebEngine 没编 Dawn；
+        # 3D 视图也是接入层的 3D 调试件）；离屏平台下壳自己改开屏幕外的真窗口（WebView2 在离屏 QPA 下会段错误）
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from tools.desktop_shell import run_desktop
     from tools.vfx_workbench import serve
@@ -87,7 +85,7 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
         # 自检绝不写真实的布置库 / 样式库、绝不碰真在跑的游戏（见 selftest_sandbox）
         with selftest_sandbox():
             return run_desktop(handler_cls=serve.H, title=TITLE + "（自检）", app_id=APP_ID + "-selftest", port=port,
-                               selftest=str(path))
+                               selftest=str(path), webgpu=True)
 
     def _on_activate(data: bytes, view) -> None:
         if data.startswith(b"open:"):
@@ -97,7 +95,7 @@ def main(port: int | None = None, smoke: bool = False, open_id: str = "", selfte
 
     payload = f"open:{open_id}".encode("utf-8") if open_id else b"raise"
     return run_desktop(handler_cls=serve.H, title=TITLE, app_id=APP_ID, port=port, smoke=smoke,
-                       on_activate=_on_activate, activate_payload=payload)
+                       on_activate=_on_activate, activate_payload=payload, webgpu=True)
 
 
 if __name__ == "__main__":
