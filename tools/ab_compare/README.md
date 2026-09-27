@@ -61,7 +61,42 @@ xvfb-run -a node tools/ab_compare/run.mjs --browser /opt/pw-browsers/chromium-11
      setTimeout 轮询),装载期一帧真实时间的逻辑都不跑。缺省的 `ready` 模式下,装载期逻辑按墙钟跑到就绪为止,
      **两边装载快慢不同**(实测 master 的 teahouse 冷启动约 11 s、分支约 6 s)就可能留下不同的状态,且 A/A 量不出来——
      实测叙事跳转「听书」在 `ready` 下 `retry.checkpoint` 一边是 `session_start` 一边是 `null`,换 `boot` 后两边都是 `null`。
-     看到「状态分歧」先用 `--freeze boot` 复核。
+     看到「状态分歧」先用 `--freeze boot` 复核。`boot` 的短处:装载本身要逻辑 tick 才走得完的(牛头凼的 onEnter 动作序列、
+     叙事跳转 `?narrativeWarp=` 的一长串推进)会永远停在 `switching:true, gameState:ActionSequence`。
+   - `--freeze pump`(泵式装载,各种类都能用):逻辑同 `boot` 一挂出 `__game` 就冻,**假时钟也从纪元起就停着**
+     (只给上下文记一条 `clock.pauseAt(纪元)`、不 `install`——两条日志之间的墙钟间隔会被页内回放成 ticks,`performance.now()`
+     的起点就随机器快慢漂了;这样 `Date.now()` = 纪元、`performance.now()` = 0)。**还要再补一段 init script 当场停钟**:
+     Playwright 的 `inject()` 装完假时钟先 `resume()`(随墙钟走),`pauseAt` 日志要等页面第一次碰时钟 API 才回放,回放又不撤
+     resume 时排下的墙钟定时器(最长 100 ms)——模块还在网络上、页面前 100 ms 没碰时钟时,`performance.now()` 被推走约 100 ms 才停,
+     之后那个定时器还会在墙钟里再跑一次到期定时器。实测整条装载时间线偶发整体晚 100 ms(6 帧)、或两步之间假时刻被推走 3 ms。
+     排在时钟脚本之后调一次页内 `controller.pauseAt(纪元)`:立刻回放、`_innerPause` 撤掉那个定时器。泵每次读状态都核对假时钟
+     是否停在上一步走到的刻度,动了就记 `clockLeaks` 并大声报。之后由 node 逐帧推:
+     `循环 { 等真异步落地 → 同步 evaluate 读状态 → 启动失败 / 就绪(判据同上)就停 → 游戏还没挂出来 / 还没冻住就只等不推 →
+     假时钟前进一步 }`。一步 = 走到 min(下一个**非 rAF** 定时器, 本帧末):定时器落在本帧之内就只走到它、不跑逻辑 tick
+     (「await setTimeout(0)」这类让一下主线程的写法真机上只花零点几毫秒,整帧量化会放大成整整一帧——实测 master 揭幕闸里
+     GlProgramWarmup 逐个交接之间的 `wait(0)` 让茶馆装载比分支多出 1 帧);否则走到帧末(帧末 = round(n·1000/60) ms,
+     途中的 rAF 照常触发)+ 有 stepFixedTicks 了就恰好一个逻辑 tick。定时器表只读 Playwright 注入的假时钟内部
+     (`__pwClock.controller._timers`),读不到就退回整帧推进。
+     页内定时器 / rAF(加载遮罩淡入淡出、揭幕闸的 `setTimeout` 轮询与粒子预热分片、Howler 的 load 事件、luma 管线链接的 4 ms 轮询 …)
+     只在「前进一步」里兑现,真异步只在步与步之间落地,于是**装载帧数只取决于游戏装载里等了多少个定时器 / rAF,与机器快慢无关**。
+     「等真异步落地」= 网络静下来(vite 模块、动态 import、fetch 都是请求 → quiesce)且下面这些在途计数都为 0
+     (同步读现成字段,不调游戏逻辑):渲染器还在 init;AssetManager 各桶在途装载(不含 audio 桶——Howler 的 load 事件走
+     `setTimeout(0)`,要等假时钟);Howler 里 `_state === 'loading'` 的声音(XHR + decodeAudioData);master 的 GlProgramWarmup
+     后台并行编译中、`COMPLETION_STATUS_KHR` 仍为 false 的程序(只读查询);分支的渲染管线原生校验 pending(luma `linkStatus`)、
+     着色器编译信息未回(luma `compilationStatus`)、以及 luma 已链接但 RHI 就绪链(第二次 getCompilationInfo、原生错误作用域出栈)
+     还没落定的管线——即 engine2d `pipelinesReady` 等的那些真异步。最后这一类实测要几十到几百毫秒墙钟才回来,静止窗兜不住;
+     不单独等它的话,下一帧的 `queue.submit` 顺手把它冲回来,分支的揭幕闸就比 master(GL 同步编译)晚整整一帧
+     (牛头凼实测 A 98 帧 / B 99 帧,onEnter 的三把火晚一拍,像素差 0.014%)。`document.fonts` 在装;DOM 里没解码完的 `<img>`。再要求进度指纹(上面各计数、各桶条目 / 统计、管线就绪数、场景 / 切换 / 状态机、事件总线序号、DOM 节点数、画面盒尺寸、
+     网络活动序号、报错条数)连续 `--pump-settle`(缺省 40)ms 墙钟不变——兜住没点名的短尾巴(ResizeObserver 回调、第二次
+     getCompilationInfo、错误作用域出栈 …)。某项在途超过 `--pump-stall`(缺省 5000)ms 既不落地、指纹也不动 ⇒ 判它其实在等假时钟,
+     记一条 stall 照推(该项当时的计数记成底数,之后只挡超出的部分)。
+     就绪后**不**墙钟沉淀、**不** `pauseAt` 跳秒(那会一次性触发途中所有定时器),直接同步点(再冻一次 + 重播种);两边装载帧数相同 ⇔
+     同步点的绝对假时刻相同。运行记录 `boot.pump` 里记装载帧数 / 逻辑 tick 数 / 帧内定时器步数 / 首个 tick 的帧号 / stall /
+     clockLeaks / 阶段表(帧号 → 场景、切换、状态机、切场遮幕、装载步骤文案、没就绪的管线)/ timerLog(每个帧内定时器步:类型 + 延时 @ 建立时刻)/
+     idleLog(每次等待里见过的在途项、新发的请求);`AB_PUMP_TRACE=1` 再记每次等待里指纹哪几段在第几毫秒变了(`boot.pump.trace`)。
+     两边对不上时照这些找是哪一段多了帧。每个场景跑完打一行各轮帧数,**不同就大声报**:
+     每侧两轮各自一致而 A≠B → 「装载帧数 A≠B」(判失败:两边装载等的定时器 / rAF 个数不同);同一侧两轮就不同 →
+     「装载帧数抖动(泵不确定)」(只提示:泵没兜住某个真异步,这个场景的对照不可信)。代价是慢(每帧至少一个静止窗)。
 7. **检查点取证**:两张截图——**整页**(画布 + DOM 覆盖层,判定依据)与**画布层**(把不含画布的 DOM 元素临时
    `visibility:hidden` 再截,截完原样还回;不改布局、不触发 ResizeObserver,游戏无感)——分得清差异出在渲染器还是
    DOM(比如 dev 报错浮层);自上个检查点以来的 console error / warning / pageerror /
@@ -144,9 +179,11 @@ master 那棵核对每条引用——场景、运行时命令、`__gameDevAPI`�
 
 - **不是逐位确定**:装载期是真实时间(异步加载完成的先后、就绪到冻结之间的那一两帧),Web Worker 里的
   `Math.random`、`crypto.getRandomValues`、GPU 驱动的非确定性都不受控;所以才要 A/A 噪声底。噪声底只来自
-  两轮,偶发的大抖动可能漏进 / 漏出判定——看报告里的 A/A、B/B 热图。
+  两轮,偶发的大抖动可能漏进 / 漏出判定——看报告里的 A/A、B/B 热图。`--freeze pump` 把装载期也拉进假时钟,
+  剩下的不确定只有:一帧之内(假时钟逐个触发定时器、之间回到真事件循环)恰好落地的真异步,以及 pumpIdle 没点名、
+  又长过静止窗的真异步——两者都会表现为「装载帧数抖动」,不会悄悄混进像素差。
 - 装载期 Playwright 假时钟虽是「随墙钟流动」,实测走得比墙钟慢好几倍(页面定时器多时尤甚),所以装载比平常慢;
-  只影响装载耗时,不影响之后的确定性。就绪等待的超时因此由 node 侧按墙钟掌握(`--boot-timeout`)。
+  只影响装载耗时,不影响之后的确定性。就绪等待的超时因此由 node 侧按墙钟掌握(`--boot-timeout`;pump 下管整个泵式装载)。
 - 锁步推进里「假时钟前进」与「逻辑 tick」是先后两段,不是游戏真实运行时的逐帧交错;两边一致,但不等于真机节奏。
 - master 的 Pixi 走 WebGL、分支的 engine2d 走 WebGPU:恰好落在半像素上的水平边(1 像素线、面板上下沿)会有
   一行系统性差异(默认帧缓冲光栅化方向相反),属已知项;报告里按「±1 行位移可解释」单独标出。

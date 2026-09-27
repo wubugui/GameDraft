@@ -9,6 +9,7 @@
  *   node tools/ab_compare/run.mjs --scenes dev_room,河边            # 只跑这几个场景(及其 NPC / 缩放 / DPR)
  *   node tools/ab_compare/run.mjs --only scene,npc --npcs-per-scene 1
  *   node tools/ab_compare/run.mjs --a origin/master --b HEAD --perf
+ *   node tools/ab_compare/run.mjs --only scene --scenes 牛头凼,teahouse --warm --freeze pump   # 泵式装载:装载期也逐帧确定
  *   (浏览器缺省 channel chrome,起不来退到 msedge;有头)
  *   playwright-core 仓库不装:装在任意目录后指过去,PowerShell `$env:PLAYWRIGHT_CORE="D:\x\node_modules\playwright-core"`,
  *   cmd `set PLAYWRIGHT_CORE=D:\x\node_modules\playwright-core`
@@ -49,9 +50,17 @@
  *   --viewport 1280x720 --dpr 1    视口与 deviceScaleFactor
  *   --chunk <n>                    锁步粒度:每次假时钟前进 n 帧再 stepFixedTicks(n)(缺省 1)
  *   --settle <ms>                  就绪后墙钟沉淀(缺省 2500)
- *   --freeze ready|settled|boot    冻结逻辑的时机:就绪同一任务里(缺省)| 沉淀之后(按原始顺序)|
- *                                  一挂出 __game 就冻(装载期不跑任何真实时间的逻辑帧;消掉「装载快慢不同 → 状态不同」)
- *   --boot-timeout <ms>            冷启动就绪上限(缺省 180000)
+ *   --freeze ready|settled|boot|pump   冻结逻辑的时机:就绪同一任务里(缺省)| 沉淀之后(按原始顺序)|
+ *                                  boot = 一挂出 __game 就冻(装载期不跑任何真实时间的逻辑帧;消掉「装载快慢不同 → 状态不同」;
+ *                                         但装载本身要逻辑 tick 才走得完的——onEnter 动作序列、叙事跳转——会卡在 ActionSequence)|
+ *                                  pump = 泵式装载:同 boot 一挂出就冻,且假时钟从纪元起就停着;由 node 逐步推:等真异步落地
+ *                                         (网络 / 解码 / 着色器与管线编译 / 音频解码 / 字体)→ 读状态 → 没就绪就假时钟前进一步
+ *                                         (下一个非 rAF 定时器落在本帧内就只走到它;否则走到帧末 + 一个逻辑 tick)。
+ *                                         装载帧数与机器快慢无关、两边应相同(记在运行记录,不同会大声报);
+ *                                         就绪后不沉淀、不 pauseAt,直接同步点。各种类都能用(最慢,但最确定)
+ *   --pump-settle <ms>             pump:每步推进前进度指纹须静止的墙钟毫秒(兜住没点名的短真异步,缺省 40)
+ *   --pump-stall <ms>              pump:某项在途真异步超过这么久既不落地、指纹也不动 ⇒ 判它在等假时钟,记 stall 后照推(缺省 5000)
+ *   --boot-timeout <ms>            冷启动就绪上限(缺省 180000;pump 下是整个泵式装载的墙钟上限)
  *   --step-timeout <ms>            单次推进上限(缺省 180000)
  *   --epoch <ISO>  --pause-offset <ms>  --seed <int>   确定性参数(两边相同)
  *   --threshold 16 --noise-factor 2 --margin 0.1       像素判定
@@ -118,7 +127,7 @@ const opts = {
   repeats: Math.max(1, Math.min(2, Number(arg('repeats', '2')))),
   chunk: Math.max(1, Math.min(200, Number(arg('chunk', '1')))),
   settle: Number(arg('settle', '2500')),
-  freezeAt: ['settled', 'boot'].includes(arg('freeze', 'ready')) ? arg('freeze', 'ready') : 'ready',
+  freezeAt: ['settled', 'boot', 'pump'].includes(arg('freeze', 'ready')) ? arg('freeze', 'ready') : 'ready',
   bootTimeout: Number(arg('boot-timeout', '180000')),
   stepTimeout: Number(arg('step-timeout', '180000')),
   epoch: Date.parse(arg('epoch', '2026-01-01T09:00:00+08:00')),
@@ -136,6 +145,11 @@ const opts = {
   perfSeconds: Number(arg('perf-seconds', '4')),
   perfSettle: 2000,
 };
+if (opts.freezeAt === 'pump') {
+  // 只在 pump 下进 opts(别的模式的 summary.json 逐字不变)
+  opts.pumpSettle = Math.max(0, Number(arg('pump-settle', '40')));
+  opts.pumpStall = Math.max(100, Number(arg('pump-stall', '5000')));
+}
 if (!Number.isFinite(opts.epoch)) {
   console.error('--epoch 解析不了');
   process.exit(2);
@@ -322,6 +336,7 @@ async function main() {
       log(`[${si + 1}/${scenarios.length}] ${row.inconclusive ? '?' : row.diverged ? '✗' : '✓'} ${sc.id}  整页 A/B ${worst('px').toFixed(3)}% 噪声 ${noise('px').toFixed(3)}%`
         + ` · 画布 A/B ${worst('pxCanvas').toFixed(3)}% 噪声 ${noise('pxCanvas').toFixed(3)}%`
         + `${row.flags.length ? `  ${row.flags.join(' · ')}` : ''}${row.inconclusive ? `  ${row.inconclusive}` : ''}  (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
+      if (row.pumpBoot) logPumpBoot(row);
       writeOutputs();
     }
     if (shared) for (const b of Object.values(shared)) await b.close().catch(() => {});
@@ -400,13 +415,39 @@ async function main() {
       if (dirt.tracked.length) log(`⚠ 主工作区未提交改动 ${dirt.tracked.length} 处不在 B 里。`);
       log(`\n${summary.verdict.diverged.length} / ${results.length} 个场景 B 相对 A 超出噪声底或有新报错${summary.verdict.diverged.length ? `:${summary.verdict.diverged.join(', ')}` : ''}`);
       if (summary.verdict.inconclusive.length) log(`⚠ ${summary.verdict.inconclusive.length} 个场景无法对照(A 没起来):${summary.verdict.inconclusive.join(', ')}`);
-      if (opts.freezeAt !== 'boot' && results.some((r) => r.flags.includes('状态分歧'))) {
+      if (opts.freezeAt !== 'boot' && opts.freezeAt !== 'pump' && results.some((r) => r.flags.includes('状态分歧'))) {
         log(`⚠ 有「状态分歧」而冻结时机是 ${opts.freezeAt}:装载快慢不同也会留下不同状态,先用 --freeze boot 复核`);
+      }
+      if (opts.freezeAt === 'pump') {
+        const odd = results.filter((r) => r.pumpBoot && !r.pumpBoot.same);
+        if (odd.length) {
+          log(`\n${'!'.repeat(78)}\n!! 泵式装载:${odd.length} 个场景各轮装载帧数不同 —— 这些场景同步点的假时刻两边不同,像素 / 状态差可能只是装载时差:`);
+          for (const r of odd) log(`!!   ${r.id}:A ${r.pumpBoot.A.join(' / ')} · B ${r.pumpBoot.B.join(' / ')}(帧/逻辑 tick)${r.pumpBoot.aaSame && r.pumpBoot.bbSame ? ' —— 每侧自己一致,A≠B' : ' —— 同一侧两轮就不同:泵没兜住某个真异步'}`);
+          log('!'.repeat(78));
+        } else if (results.some((r) => r.pumpBoot)) {
+          log('泵式装载:每个场景各轮装载帧数都相同(同步点假时刻两边一致)');
+        }
       }
       log(`报告:${path.join(outDir, 'report.html')}`);
     }
     return summary;
   }
+}
+
+/** --freeze pump:每个场景打一行各轮装载帧数 / 逻辑 tick(不同就大声报,附 stall) */
+function logPumpBoot(row) {
+  const pb = row.pumpBoot;
+  const stalls = ['A', 'B'].flatMap((k) => row.boot[k].map((b, i) => (b?.pump?.stalls?.length ? `${k}${i + 1}:${b.pump.stalls.map((x) => `帧${x.frame} ${Object.keys(x.pending).join('+')}`).join(',')}` : null))).filter(Boolean);
+  const sub = (k) => row.boot[k].map((b) => b?.pump?.timerSteps ?? '—').join('/');
+  const leaks = ['A', 'B'].flatMap((k) => row.boot[k].map((b, i) => (b?.pump?.clockLeaks?.length ? `${k}${i + 1}:${b.pump.clockLeaks.slice(0, 3).map((x) => `帧${x.frame} 期望 ${x.expected} 实为 ${x.got}${x.realTime ? '(在随墙钟走)' : ''}`).join(',')}` : null))).filter(Boolean);
+  if (leaks.length) log(`  ⚠⚠⚠ 泵式装载期间假时钟自己动了(墙钟漏进来了,这些轮的装载帧数不可信):${leaks.join(' · ')}`);
+  const line = `  装载泵(帧/逻辑 tick):A ${pb.A.map((x) => x ?? '✗').join(' / ')} · B ${pb.B.map((x) => x ?? '✗').join(' / ')}`
+    + `(帧内定时器步 A ${sub('A')} · B ${sub('B')})${stalls.length ? `  stall ${stalls.join(' · ')}` : ''}`;
+  if (pb.same) {
+    log(line);
+    return;
+  }
+  log(`  ${'⚠'.repeat(3)} 装载帧数不同!${pb.aaSame && pb.bbSame ? '每侧两轮各自一致、A≠B(两边装载等的定时器 / rAF 个数不同)' : '同一侧两轮就不同(泵没兜住某个真异步,结果不可信)'}\n${line}`);
 }
 
 function unsupportedOf(results) {

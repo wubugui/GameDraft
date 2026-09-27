@@ -42,9 +42,29 @@ export function diffPaths(fa, fb, eps = 1e-3) {
 export const INFO_FLAG = '偶发新报错';
 export const INFO_BOOT_FLAKY = '启动不稳定(部分轮没就绪)';
 export const ROW_SHIFT_NOTE = '≥95% 可由 ±1 行位移解释';
+/** --freeze pump:同一侧两轮的装载帧数就不一样 = 泵没兜住某个真异步(工具的确定性问题,不是 B 的回归;只提示、大声报) */
+export const INFO_PUMP_JITTER = '装载帧数抖动(泵不确定)';
+/** --freeze pump:每侧两轮各自一致、但 A、B 装载帧数不同 = 两边装载等的定时器 / rAF 个数不同(真差异,判失败) */
+export const PUMP_AB_FLAG = '装载帧数 A≠B';
 
 /** 这个标记算不算失败:偶发新报错永远不算;「≥95% 可由行位移解释」的像素差在 --ignore-row-shift 下不算 */
-export const isFailFlag = (f, opts) => f !== INFO_FLAG && f !== INFO_BOOT_FLAKY && !(opts?.ignoreRowShift && f.includes(ROW_SHIFT_NOTE));
+export const isFailFlag = (f, opts) => f !== INFO_FLAG && f !== INFO_BOOT_FLAKY && f !== INFO_PUMP_JITTER && !(opts?.ignoreRowShift && f.includes(ROW_SHIFT_NOTE));
+
+/**
+ * --freeze pump 的装载帧数对比(各轮 frames/ticks)。没有泵记录(别的冻结模式)⇒ null。
+ * @returns {{A: (string|null)[], B: (string|null)[], same: boolean, aaSame: boolean, bbSame: boolean} | null}  各轮 "帧/tick"(没起来的轮 null)
+ */
+export function pumpBootCounts(runs) {
+  const key = (r) => (r?.boot?.pump && r.boot.ok ? `${r.boot.pump.frames}/${r.boot.pump.ticks}` : null);
+  const A = runs.A.map(key);
+  const B = runs.B.map(key);
+  if (![...A, ...B].some(Boolean)) return null;
+  const uniq = (xs) => new Set(xs.filter(Boolean));
+  const aaSame = uniq(A).size <= 1;
+  const bbSame = uniq(B).size <= 1;
+  const all = uniq([...A, ...B]);
+  return { A, B, same: all.size <= 1, aaSame, bbSame };
+}
 
 const isErr = (it) => !it.asset && (it.type === 'error' || it.type === 'pageerror' || it.type === 'requestfailed' || it.type === 'http');
 const isWarn = (it) => !it.asset && it.type === 'warning';
@@ -239,19 +259,33 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
   // 起来之后才中断的(卡死 / 整页重载 / 截图失败…);没起来的已经记在上面
   const ranThenDied = (side, boot) => fatal[side].some((f, i) => f && boot[i]);
   if (ranThenDied('B', bootB) && !ranThenDied('A', bootA)) flags.add('B 运行中断');
+  const pumpCounts = pumpBootCounts(runs);
+  if (pumpCounts && !inconclusive && !pumpCounts.same) flags.add(pumpCounts.aaSame && pumpCounts.bbSame ? PUMP_AB_FLAG : INFO_PUMP_JITTER);
   const unsupported = { A: [...new Set(runs.A.flatMap((r) => r?.unsupported ?? []))], B: [...new Set(runs.B.flatMap((r) => r?.unsupported ?? []))] };
   const diverged = [...flags].some((f) => isFailFlag(f, opts));
   const score = Math.max(0, ...checkpoints.map((c) => c.score)) + (flags.has('B 起不来') ? 200 : 0) + (inconclusive ? 150 : 0)
     + (newErrorsStable.length ? 50 : 0);
+  // 泵式装载的记录只在 pump 下才有:别的模式的行逐字不变
+  const bootRow = (r) => r && {
+    ok: r.boot?.ok ?? false, ms: r.boot?.bootMs ?? null, froze: r.boot?.froze ?? null, reason: r.boot?.reason ?? null,
+    ...(r.boot?.pump ? {
+      pump: {
+        frames: r.boot.pump.frames, ticks: r.boot.pump.ticks, timerSteps: r.boot.pump.timerSteps ?? null, fakeMs: r.boot.pump.fakeMs, syncNow: r.boot.pump.syncNow ?? null,
+        firstStepFrame: r.boot.pump.firstStepFrame, stalls: r.boot.pump.stalls, reloads: r.boot.pump.reloads, idleMs: r.boot.pump.idleMs,
+        phases: r.boot.pump.phases, timerLog: r.boot.pump.timerLog ?? null, clockLeaks: r.boot.pump.clockLeaks ?? [],
+      },
+    } : {}),
+  };
   return {
     id: scenario.id,
     kind: scenario.kind,
     name: scenario.name,
     note: scenario.note ?? null,
     boot: {
-      A: runs.A.map((r) => r && { ok: r.boot?.ok ?? false, ms: r.boot?.bootMs ?? null, froze: r.boot?.froze ?? null, reason: r.boot?.reason ?? null }),
-      B: runs.B.map((r) => r && { ok: r.boot?.ok ?? false, ms: r.boot?.bootMs ?? null, froze: r.boot?.froze ?? null, reason: r.boot?.reason ?? null }),
+      A: runs.A.map(bootRow),
+      B: runs.B.map(bootRow),
     },
+    ...(pumpCounts ? { pumpBoot: pumpCounts } : {}),
     fatal,
     unsupported,
     steps: { A: A1?.steps ?? [], B: B1?.steps ?? [] },

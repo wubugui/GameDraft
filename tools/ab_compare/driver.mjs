@@ -19,6 +19,11 @@
  *      + __gameDevAPI.stepFixedTicks(k, 1000/60)(逻辑 tick 并显式出一帧)。两者都停着时,墙钟流逝不改变游戏状态,
  *      只让网络 / 解码这类真异步落地;每次推进后若有网络活动就等它静下来(quiesce)再继续。
  *
+ * --freeze pump(泵式装载)把 1–3 换成完全由 node 掌控的装载:假时钟从纪元起就**停着**(只记一条 pauseAt(纪元),
+ * 再用 pumpClockSettleScript 在文档一开始就把它真正停住,performance.now() 从 0 起),逻辑同 boot 一挂出 __game 就冻;之后循环 { 等真异步落地(见 pumpIdle)→ 同步读状态 →
+ * 就绪就停 → 假时钟前进一步:下一个非 rAF 定时器落在本帧内就只走到它,否则走到帧末 + 有 stepFixedTicks 了就恰好一个逻辑 tick }。装载期一帧都不按墙钟走,帧数只取决于
+ * 游戏在装载里等了多少个定时器 / rAF;两边帧数相同 ⇔ 就绪时假时钟的绝对时刻相同(不再 pauseAt 跳秒)。见 pumpBoot。
+ *
  * 同源:两边页面都开在 http://127.0.0.1:<origin-port>/,各侧浏览器用 `--host-resolver-rules=MAP …` 把这个地址改道到
  * 本侧 dev 服的真端口(见 run.mjs)。否则报错文案、dev 报错浮层里的 URL 端口两边不同,本身就成了像素 / 报错差异。
  * 除这一条改道规则外,两边浏览器参数完全相同。
@@ -119,6 +124,24 @@ export const EARLY_FREEZE_SCRIPT = `(() => {
   nativeSetTimeout(tryFreeze, 1);
 })();`;
 
+/**
+ * --freeze pump 用,必须排在 Playwright 假时钟的两段 init script(时钟源 + `log('pauseAt')`)**之后**:当场把假时钟真正停住。
+ *
+ * Playwright 的 `inject()` 装完假时钟会先 `controller.resume()`(随墙钟走),`pauseAt` 那条日志要等页面第一次碰时钟 API
+ * (Date.now / performance.now / setTimeout …)才回放;回放只把 `_realTime` 置空,**不**撤掉 resume 时排下的那个墙钟定时器
+ * (最长 100 ms)。于是:页面前 100 ms 没碰时钟(模块还在网络上)→ 那个定时器先到,`performance.now()` 被墙钟推走约 100 ms
+ * 才停;就算停住了,它之后还会在墙钟里触发一次「跑到期定时器」。两件都随机器快慢变——实测整条装载时间线偶发整体晚 100 ms
+ * (6 帧),或帧与帧之间假时刻被推走 3 ms。
+ * 这里在文档一开始就调页内 `controller.pauseAt(纪元)`:回放日志(停在纪元、ticks = 0),`_innerPause` 顺手撤掉那个墙钟定时器。
+ * 只碰 Playwright 注入的假时钟,不碰游戏代码。
+ */
+export const pumpClockSettleScript = (epoch) => `(() => {
+  const c = globalThis.__pwClock && globalThis.__pwClock.controller;
+  if (c && typeof c.pauseAt === 'function') {
+    try { Promise.resolve(c.pauseAt(${Number(epoch)})).catch(() => {}); } catch (e) { /* 时钟没装上:泵会在读状态时报 */ }
+  }
+})();`;
+
 // ---------------------------------------------------------------- 报错归类
 
 const ASSET_URL_RE = /\/resources\/|\.(png|jpe?g|webp|gif|avif|ktx2|basis|ogg|mp3|wav|m4a|aac|flac|webm|mp4|glb|bin|atlas|ttf|otf|woff2?)(\?|#|$)/i;
@@ -148,6 +171,9 @@ class PageWatch {
     this.quietSeq = -1;
     this.fsViolations = new Set();
     this.treeDir = path.resolve(treeDir);
+    /** 发出过的请求总数与最近 20 个 URL(--freeze pump 的装载诊断用) */
+    this.reqCount = 0;
+    this.lastUrls = [];
     page.on('console', (m) => {
       const t = m.type();
       if (t !== 'error' && t !== 'warning') return;
@@ -161,6 +187,9 @@ class PageWatch {
       this.inflight.set(r, Date.now());
       this.touch();
       this.checkFs(r.url());
+      this.reqCount++;
+      this.lastUrls.push(r.url());
+      if (this.lastUrls.length > 20) this.lastUrls.shift();
     });
     page.on('requestfinished', (r) => {
       this.inflight.delete(r);
@@ -390,6 +419,192 @@ const DISPATCH_FN = ({ id, kind, name, args, cmd }) => {
 const OPS_FN = () => JSON.parse(JSON.stringify(window.__abOps ?? {}));
 
 /**
+ * --freeze pump 用的状态读取:**同步**函数(假时钟停着,页内不能起任何定时器),只读现成字段、不调游戏逻辑。
+ *
+ * 返回就绪判据要的那几项(同 READY_FN)+ 两样东西:
+ *   pending —— 此刻还在途、而且**不靠假时钟也会自己落地**的真异步(等它们是确定的,不会等死):
+ *     renderer  渲染器还在 init(WebGPU 设备 / 动态 import);
+ *     assets    AssetManager 各桶在途装载(fetch + 解码;不含 audio 桶:Howler 的 load 事件走 setTimeout(0),要等假时钟);
+ *     howls     Howler 里还在 'loading' 的声音(XHR + decodeAudioData);
+ *     gl        (master)GlProgramWarmup 后台并行编译中、COMPLETION_STATUS_KHR 还是 false 的程序(只读查询);
+ *     pipelines (分支)渲染管线原生校验还 pending(luma linkStatus === 'pending');
+ *     plSettling(分支)luma 已链接、但 RHI 的就绪链(第二次 getCompilationInfo、原生错误作用域出栈)还没落定的管线
+ *               ——即 engine2d pipelinesReady 等的东西。实测这类回调要几十到几百毫秒墙钟才回来,短于 --pump-settle 的静止窗
+ *               兜不住:不等它就推一帧的话,那一帧的 queue.submit 顺手把它冲回来,分支的揭幕闸就比 master(GL 同步编译)
+ *               晚整整一帧(牛头凼:A 98 帧、B 99 帧,onEnter 的三把火晚一拍,像素差 0.014%);
+ *     shaders   (分支)着色器模块编译信息还没回来(luma compilationStatus === 'pending');
+ *     fonts     document.fonts 还在装;images  DOM 里还没解码完的 <img>。
+ *   fp —— 进度指纹:上面这些的计数、各桶条目数 / 统计、管线就绪数、场景 / 切换 / 状态机、事件总线序号、假时钟的定时器数、
+ *     DOM 节点数、画面盒尺寸……假时钟停着时它只会因真异步落地而变(真异步的后续排了新定时器也算);node 侧要它静止一段墙钟
+ *     (--pump-settle)才推进下一步,兜住上面没点名的短尾巴(ResizeObserver 回调、第二次 getCompilationInfo、错误作用域出栈 …)。
+ *   clock / curtain / loadStep / plWait —— 诊断用(阶段表、clockLeaks)。
+ */
+const PUMP_STATE_FN = () => {
+  const t = (f, d = null) => {
+    try {
+      const v = f();
+      return v === undefined ? d : v;
+    } catch {
+      return d;
+    }
+  };
+  const g = window.__game;
+  const api = window.__gameDevAPI;
+  const sm = t(() => g?.sceneManager);
+  const s = {
+    hasGame: !!g,
+    frozen: t(() => g?.fixedTickMode === true, false),
+    hasStep: typeof api?.stepFixedTicks === 'function',
+    apiReady: t(() => !!(api && typeof api.isReady === 'function' && api.isReady()), false),
+    runtimeReady: typeof g?.runtimeReady === 'boolean' ? g.runtimeReady : null,
+    switching: sm ? t(() => !!sm.switching, null) : null,
+    sceneId: t(() => sm?.currentSceneData?.id ?? null),
+    cutscene: t(() => !!g?.cutsceneManager?.isPlaying, false),
+    dialogue: t(() => !!g?.graphDialogueManager?.isActive, false),
+    gameState: t(() => g?.stateController?.currentState ?? null),
+    fatal: t(() => document.getElementById('game-fatal-error')?.textContent?.slice(0, 300) ?? null),
+    // 诊断(阶段表用):切场遮幕在不在、切场进度条上的装载步骤文案(DEV 才有)
+    curtain: t(() => (sm.transitionOverlay ? (sm.animRafId ? 'fading' : 'on') : 'off'), null),
+    loadStep: t(() => sm.transitionDebugLabel?.text?.split('\n')[0]?.slice(0, 40) ?? null),
+  };
+  const p = { renderer: 0, assets: 0, howls: 0, gl: 0, pipelines: 0, plSettling: 0, shaders: 0, fonts: 0, images: 0 };
+  const fp = [];
+  if (g) {
+    p.renderer = t(() => (!g.tearDownComplete && g.renderer && typeof g.renderer.isInitialized === 'function' && !g.renderer.isInitialized() ? 1 : 0), 0);
+    const buckets = t(() => g.assetManager?.buckets);
+    if (buckets && typeof buckets === 'object') {
+      for (const k of Object.keys(buckets).sort()) {
+        const b = buckets[k];
+        const inflight = t(() => b.inflight.size, 0);
+        if (k !== 'audio') p.assets += inflight;
+        fp.push(`${k}:${t(() => b.entries.size)}/${inflight}/${t(() => b.errors.size)}/${t(() => b.stats.loads)}/${t(() => b.stats.errors)}`);
+      }
+    }
+    const w = t(() => g.glProgramWarmup);
+    if (w && w.entries instanceof Map) {
+      const st = {};
+      for (const e of w.entries.values()) {
+        st[e.state] = (st[e.state] ?? 0) + 1;
+        if (e.state === 'compiling' && e.raw && w.gl && w.ext) {
+          if (!t(() => w.gl.getProgramParameter(e.raw.prog, w.ext.COMPLETION_STATUS_KHR) === true, true)) p.gl++;
+        }
+      }
+      fp.push(`gl:${JSON.stringify(st)}`);
+    }
+    const pl = t(() => g.renderer.app.renderer.pipelines);
+    if (pl && pl.pipelines instanceof Map) {
+      let ready = 0;
+      let failed = 0;
+      let nw = 0;
+      for (const x of pl.pipelines.values()) {
+        if (t(() => x.isReady, false)) ready++;
+        else if (t(() => x.failed, false)) failed++;
+        else {
+          const ls = t(() => x.handle.linkStatus, '?');
+          if (ls === 'pending') p.pipelines++;
+          else p.plSettling++;
+          // 诊断:还没就绪的管线各卡在哪(luma linkStatus)
+          s.plWait = s.plWait ?? {};
+          s.plWait[ls] = (s.plWait[ls] ?? 0) + 1;
+          if (++nw <= 4) s.plWait[`#${String(t(() => x.label, '?')).slice(0, 50)}`] = ls;
+        }
+      }
+      let shaders = 0;
+      if (pl.shaders instanceof Map) {
+        for (const sh of pl.shaders.values()) {
+          shaders++;
+          if (t(() => sh.module.compilationStatus) === 'pending') p.shaders++;
+        }
+      }
+      fp.push(`pl:${pl.pipelines.size}/${ready}/${failed}/${shaders}`);
+    }
+    fp.push(`g:${s.switching}/${s.sceneId}/${t(() => sm.currentSceneId)}/${s.gameState}/${s.runtimeReady}/${s.hasStep}/${s.cutscene}/${s.dialogue}`
+      + `/${t(() => !!g.mainTick)}/${t(() => g.eventBus.debugTraceSeq)}/${t(() => g.vfxSystem.pendingLoads.size)}/${t(() => !!g.vfxSystem.rebuilding)}`
+      + `/${t(() => g.vfxSystem.instances.size)}/${s.frozen}`);
+  }
+  const H = window.Howler;
+  if (H && Array.isArray(H._howls)) {
+    const st = {};
+    for (const h of H._howls) {
+      const k = t(() => h._state, '?');
+      st[k] = (st[k] ?? 0) + 1;
+      if (k === 'loading') p.howls++;
+    }
+    fp.push(`howl:${JSON.stringify(st)}/${t(() => H.ctx.state)}`);
+  }
+  const fonts = t(() => document.fonts.status);
+  if (fonts === 'loading') p.fonts = 1;
+  fp.push(`fonts:${fonts}/${t(() => document.fonts.size)}`);
+  for (const img of document.images) {
+    if (img.getAttribute('src') && img.loading !== 'lazy' && !img.complete) p.images++;
+  }
+  // 假时钟自身(诊断):当前 ticks、是否在随墙钟走(_realTime)、定时器数。停着的钟在帧与帧之间绝不该动
+  const clk = globalThis.__pwClock?.controller;
+  s.clock = clk ? { t: t(() => clk._now.ticks), rt: !!clk._realTime, n: t(() => clk._timers.size) } : null;
+  fp.push(`clk:${s.clock?.t}/${s.clock?.rt}/${s.clock?.n}`);
+  const mount = document.getElementById('game-mount');
+  fp.push(`dom:${document.getElementsByTagName('*').length}/${document.readyState}/${mount?.style.width}x${mount?.style.height}`);
+  s.pending = p;
+  s.fp = fp.join('|');
+  return s;
+};
+
+/**
+ * --freeze pump 的一步:假时钟前进到 min(下一个**非 rAF** 定时器, 本帧末 frameEnd)。
+ *   - 下一个 setTimeout / setInterval / requestIdleCallback 落在本帧之内 ⇒ 只走到它(途中的 rAF 照常触发),**不**跑逻辑 tick,
+ *     回 node 再等一次真异步落地——游戏里「await setTimeout(0)」这类让一下主线程的写法在真机上只花零点几毫秒,
+ *     整帧量化会把它放大成整整一帧(实测 master 揭幕闸里 GlProgramWarmup 逐个交接之间的 wait(0) 让茶馆装载多出 1 帧);
+ *   - 否则走到帧末(触发途中的定时器与 rAF),再(已挂出 __gameDevAPI.stepFixedTicks 时)恰好一个固定逻辑 tick。与 ADVANCE_FN 同一顺序。
+ * 定时器表只读 Playwright 注入的假时钟(__pwClock.controller 的 _now / _timers,浏览器环境控制,不是游戏代码);
+ * 读不到(Playwright 改了内部)⇒ 退回整帧推进(ms)。
+ */
+const PUMP_STEP_FN = async ({ frameEnd, ms, dt }) => {
+  const errs = [];
+  const m = (e) => String(e?.message ?? e).split('\n')[0].slice(0, 300);
+  const c = globalThis.__pwClock?.controller;
+  if (typeof c?.runFor !== 'function') throw new Error('页内没有 Playwright 假时钟(__pwClock),泵不动');
+  const now = c._now?.ticks;
+  let run = ms;
+  let frame = true;
+  let timerAt = null;
+  let timer = null;
+  if (typeof now === 'number' && c._timers instanceof Map) {
+    let at = Infinity;
+    for (const x of c._timers.values()) {
+      if (x.type !== 'AnimationFrame' && x.callAt < at) {
+        at = x.callAt;
+        timer = x;
+      }
+    }
+    if (at < frameEnd) {
+      frame = false;
+      timerAt = at;
+      run = Math.max(0, at - now);
+    } else {
+      run = Math.max(0, frameEnd - now);
+    }
+  }
+  try {
+    await c.runFor(run);
+  } catch (e) {
+    errs.push(`[假时钟回调抛错] ${m(e)}`);
+  }
+  const api = window.__gameDevAPI;
+  let stepped = false;
+  if (frame && api && typeof api.stepFixedTicks === 'function') {
+    stepped = true;
+    try {
+      await api.stepFixedTicks(1, dt);
+    } catch (e) {
+      errs.push(`[stepFixedTicks 抛错] ${m(e)}`);
+    }
+  }
+  // 定时器步的来历(诊断用):类型、延时、建它时的假时刻
+  const info = timer && !frame ? `${timer.type[0]}${timer.delay}@${timer.createdAt}` : null;
+  return { errs, stepped, frame, timerAt, before: now, after: c._now?.ticks, info, now: performance.now(), internals: typeof now === 'number' };
+};
+
+/**
  * 「只看画布」那一层截图用:把不含画布的 DOM 元素逐个设 visibility:hidden(不改布局 → 不触发 ResizeObserver,
  * 游戏逻辑无感),截完原样还回去。整页图 = 画布 + DOM 覆盖层;画布层图 = 只有渲染器画的东西。
  */
@@ -533,6 +748,182 @@ async function waitReady(page, expectScene, timeoutMs, freeze) {
   return { ok: false, reason: `就绪等待超时(${timeoutMs} ms)${state ? `,卡在 ${JSON.stringify(state)}` : ''}${last && !/超时/.test(String(last)) ? `;${msgOf(last)}` : ''}`, state };
 }
 
+// ---------------------------------------------------------------- --freeze pump:泵式装载
+
+/** 就绪判据,与 READY_FN 里的 ready() 逐字同义(那边是页内 async 轮询,这边是 node 拿同步读到的状态判) */
+const pumpReady = (s, expectScene) => s.apiReady && s.sceneId === expectScene
+  && ((s.switching === false && s.runtimeReady !== false) || (s.switching === true && (s.cutscene || s.dialogue)));
+
+const pendingKeys = (p) => Object.keys(p ?? {}).filter((k) => p[k] > 0);
+const isContextLoss = (e) => /Execution context was destroyed|navigat|Cannot find context|Target closed|frame was detached/i.test(String(e));
+
+/**
+ * 等「这一刻能自己落地的真异步都落地了」:网络静下来(quiesce)、PUMP_STATE_FN 的 pending 全为 0(或已判卡死)、
+ * 且进度指纹 + 网络活动序号 + 报错条数连续 --pump-settle 毫秒墙钟没变。返回最后一次读到的状态。
+ *
+ * pending 某项超过 --pump-stall 毫秒墙钟既不落地、指纹也不动 ⇒ 判它其实在等假时钟(或永远不来),记一条 stall,
+ * 把这一项当时的计数记成「卡住的底数」:本次装载之后只有**超过**底数的部分才继续挡(免得每帧都干等一个卡住的东西)。
+ */
+async function pumpIdle(page, watch, opts, rec) {
+  const t0 = Date.now();
+  let key = null;
+  let changedAt = t0;
+  let changes = -1;
+  const seen = {};
+  const req0 = rec.reqSeen ?? watch.reqCount; // 从上一次等待结束算起:推进那一步里发出的请求也算进来
+  // AB_PUMP_TRACE=1:逐次记下这次等待里指纹哪几段、在第几毫秒变了(找「没点名、又长过静止窗」的真异步用)
+  const trace = process.env.AB_PUMP_TRACE === '1' ? [] : null;
+  let prevFp = rec.lastFp ?? null;
+  const done = (s) => {
+    if (trace && rec.trace.length < 2000) rec.trace.push({ f: rec.frames, st: rec.timerSteps, ms: Date.now() - t0, ev: trace });
+    rec.lastFp = s.fp;
+    const now = Date.now();
+    rec.idleMs += now - t0;
+    // 诊断:这一次等待里见过的在途项、新发的请求、指纹变了几次(只记有事发生的,两边帧数对不上时照它找)
+    const net = watch.reqCount - req0;
+    rec.reqSeen = watch.reqCount;
+    if ((Object.keys(seen).length || net || changes > 0) && rec.idleLog.length < 400) {
+      const urls = net ? watch.lastUrls.slice(-Math.min(net, 4)).map((u) => decodeURIComponent(u.replace(/^https?:\/\/[^/]+/, '').split('?')[0]).slice(-60)) : [];
+      rec.idleLog.push(`${rec.frames}.${rec.timerSteps}: ${now - t0}ms${Object.keys(seen).length ? ` pend ${JSON.stringify(seen)}` : ''}${net ? ` net+${net} ${urls.join(' ')}` : ''}${changes > 0 ? ` fp×${changes}` : ''}`);
+    }
+    return s;
+  };
+  for (;;) {
+    await watch.quiesce();
+    const s = await evalT(page, PUMP_STATE_FN, null, 15000, '泵:读状态');
+    const now = Date.now();
+    const k = `${s.fp}#${watch.seq}#${watch.items.length}`;
+    if (k !== key) {
+      key = k;
+      changedAt = now;
+      changes++;
+      if (trace && trace.length < 40) {
+        const a = (prevFp ?? '').split('|');
+        const b = s.fp.split('|');
+        const segs = b.filter((x, i) => x !== a[i]).map((x) => x.slice(0, 90));
+        trace.push(`+${now - t0} ${segs.join(' ; ')}${watch.activeCount(8000) ? ` net${watch.activeCount(8000)}` : ''}`);
+      }
+      prevFp = s.fp;
+    }
+    for (const x of pendingKeys(s.pending)) seen[x] = Math.max(seen[x] ?? 0, s.pending[x]);
+    const blocking = pendingKeys(s.pending).filter((x) => s.pending[x] > (rec.stuck[x] ?? 0));
+    const still = now - changedAt;
+    if (!blocking.length && watch.activeCount(8000) === 0 && still >= opts.pumpSettle) return done(s);
+    if (blocking.length && still >= opts.pumpStall) {
+      rec.stalls.push({ frame: rec.frames, tick: rec.ticks, pending: Object.fromEntries(blocking.map((x) => [x, s.pending[x]])), waitedMs: now - t0 });
+      for (const x of blocking) rec.stuck[x] = s.pending[x];
+      return done(s);
+    }
+    await sleep(blocking.length ? 4 : Math.max(2, Math.min(8, opts.pumpSettle / 4)));
+  }
+}
+
+/**
+ * --freeze pump 的装载:假时钟从纪元起停着(runScenario 只记了一条 pauseAt(纪元)),逻辑一挂出 __game 就冻(EARLY_FREEZE_SCRIPT)。
+ * 循环 {
+ *   pumpIdle:等能自己落地的真异步落地(模块 / 动态 import / fetch 是网络 → quiesce;解码 / 着色器 / 管线 / 设备 → pending;
+ *            ResizeObserver 之类的短尾巴 → 指纹静止窗);
+ *   同步读状态;启动失败 → 退;就绪(同 READY_FN)→ 退;
+ *   游戏还没挂出来 / 还没冻住 → 不动假时钟,接着等(这一段只有网络与模块求值,不等任何定时器);
+ *   否则假时钟前进一步(PUMP_STEP_FN):下一个非 rAF 定时器落在本帧内就只走到它(不计帧、不跑 tick),
+ *   否则走到帧末(round 累计 1000/60)、有 stepFixedTicks 了就再恰好一个逻辑 tick。
+ * }
+ * 页内定时器 / rAF 只在「前进一帧」里兑现,真异步只在帧与帧之间落地,所以装载帧数只取决于游戏装载里等了多少个定时器 / rAF,
+ * 与机器快慢无关(pumpIdle 的判据没兜住的真异步除外——stall 记录与两侧帧数对比会把它暴露出来)。
+ * 装载中整页重载(vite 依赖重新预构建)时新文档从纪元重来,计数清零、记一次 reloads。
+ */
+async function pumpBoot(page, watch, expectScene, opts) {
+  const rec = { frames: 0, ticks: 0, timerSteps: 0, fakeMs: 0, firstStepFrame: null, stalls: [], stuck: {}, idleMs: 0, reloads: 0, phases: [], timerLog: [], idleLog: [], trace: [], clockLeaks: [] };
+  // 新文档(整页重载)只认 domcontentloaded:同文档的 history 导航不触发它
+  let docs = 0;
+  const onDoc = () => {
+    docs++;
+  };
+  page.on('domcontentloaded', onDoc);
+  try {
+    return await pumpLoop(page, watch, expectScene, opts, rec, () => docs);
+  } finally {
+    page.off('domcontentloaded', onDoc);
+  }
+}
+
+async function pumpLoop(page, watch, expectScene, opts, rec, docCount) {
+  const deadline = Date.now() + opts.bootTimeout;
+  let last = null;
+  let phase = null;
+  let seenDocs = docCount();
+  const resetForNewDoc = async () => {
+    Object.assign(rec, { frames: 0, ticks: 0, timerSteps: 0, fakeMs: 0, firstStepFrame: null, stuck: {}, reloads: rec.reloads + 1, timerLog: [], idleLog: [], expectT: 0 });
+    rec.phases.push({ frame: 0, tick: 0, reload: true });
+    phase = null;
+    seenDocs = docCount();
+    await sleep(500);
+  };
+  for (;;) {
+    if (Date.now() > deadline) {
+      return { ok: false, reason: `就绪等待超时(${opts.bootTimeout} ms,泵到第 ${rec.frames} 帧 / ${rec.ticks} tick)${last ? `,卡在 ${JSON.stringify({ sceneId: last.sceneId, switching: last.switching, runtimeReady: last.runtimeReady, gameState: last.gameState, cutscene: last.cutscene, dialogue: last.dialogue, hasGame: last.hasGame, frozen: last.frozen, pending: last.pending })}` : ''}`, state: last, pump: rec };
+    }
+    let s;
+    try {
+      s = await pumpIdle(page, watch, opts, rec);
+    } catch (e) {
+      if (!isContextLoss(e)) throw e;
+      await resetForNewDoc();
+      continue;
+    }
+    if (docCount() !== seenDocs) {
+      await resetForNewDoc();
+      continue;
+    }
+    last = s;
+    // 停着的假时钟在两步之间绝不该动;动了(或在随墙钟走)= 有墙钟相关的东西漏进来了,大声记(run.mjs 会打出来)
+    if (s.clock && (s.clock.rt || (typeof s.clock.t === 'number' && s.clock.t !== (rec.expectT ?? 0)))) {
+      if (rec.clockLeaks.length < 50) rec.clockLeaks.push({ frame: rec.frames, timerSteps: rec.timerSteps, expected: rec.expectT ?? 0, got: s.clock.t, realTime: s.clock.rt });
+    }
+    if (s.clock && typeof s.clock.t === 'number') rec.expectT = s.clock.t;
+    // 阶段变化记一笔(帧号 / tick 号 → 场景、切换、状态机…),两边装载帧数对不上时照它找是哪一段多 / 少了帧
+    const ph = `${s.hasGame}|${s.frozen}|${s.hasStep}|${s.sceneId}|${s.switching}|${s.runtimeReady}|${s.gameState}|${s.cutscene}|${s.dialogue}|${s.curtain}|${s.loadStep}|${JSON.stringify(s.plWait ?? null)}`;
+    if (ph !== phase) {
+      phase = ph;
+      if (rec.phases.length < 200) {
+        rec.phases.push({ frame: rec.frames, tick: rec.ticks, timerSteps: rec.timerSteps, sceneId: s.sceneId, switching: s.switching, runtimeReady: s.runtimeReady, gameState: s.gameState, cutscene: s.cutscene, dialogue: s.dialogue, hasStep: s.hasStep, frozen: s.frozen, curtain: s.curtain, loadStep: s.loadStep, plWait: s.plWait ?? null });
+      }
+    }
+    if (s.fatal) return { ok: false, reason: `启动失败:${s.fatal}`, state: s, pump: rec };
+    if (pumpReady(s, expectScene)) {
+      return { ok: true, state: s, froze: 'pump', heldByPerformance: s.switching === true, pump: rec };
+    }
+    if (!s.hasGame || !s.frozen) {
+      await sleep(4);
+      continue;
+    }
+    const frameEnd = Math.round((rec.frames + 1) * FRAME_MS);
+    const ms = frameEnd - Math.round(rec.frames * FRAME_MS);
+    let r;
+    try {
+      r = await evalT(page, PUMP_STEP_FN, { frameEnd, ms, dt: FRAME_MS }, opts.stepTimeout, '泵一步');
+    } catch (e) {
+      if (!isContextLoss(e)) throw e;
+      continue; // 下一轮 pumpIdle 撞上新文档,在那里清零
+    }
+    if (!r.internals) rec.wholeFrameFallback = true;
+    if (typeof r.after === 'number') rec.expectT = r.after;
+    if (r.frame) {
+      rec.frames++;
+      rec.fakeMs = frameEnd;
+    } else {
+      rec.timerSteps++;
+      // 帧内定时器步:帧号 · 走之前 → 走到的假时刻 · 定时器(类型首字母 + 延时 @ 建立时刻)。两边帧数对不上时照它找是哪个定时器跨了帧
+      if (rec.timerLog.length < 400) rec.timerLog.push(`${rec.frames}:${r.before}→${r.timerAt} ${r.info}`);
+    }
+    if (r.stepped) {
+      rec.ticks++;
+      rec.firstStepFrame ??= rec.frames;
+    }
+    for (const e of r.errs) watch.push('pageerror', e);
+  }
+}
+
 const cpFileName = (i, name) => `${String(i).padStart(2, '0')}_${String(name).replace(/[\\/:*?"<>|\s]+/g, '_')}.png`;
 
 /**
@@ -554,39 +945,67 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
   try {
     ctx = await browser.newContext({ viewport, deviceScaleFactor: dpr, locale: 'zh-CN', timezoneId: 'Asia/Shanghai' });
     await ctx.addInitScript(seedInitScript(opts.seed));
-    if (opts.freezeAt === 'boot') await ctx.addInitScript(EARLY_FREEZE_SCRIPT);
-    await ctx.clock.install({ time: opts.epoch });
+    const pump = opts.freezeAt === 'pump';
+    if (opts.freezeAt === 'boot' || pump) await ctx.addInitScript(EARLY_FREEZE_SCRIPT);
+    // pump:只记一条 pauseAt(纪元)、不 install —— 页内回放时钟日志时直接停在纪元,performance.now() 从 0 起。
+    // (install 再 pauseAt 的话,两条日志之间的墙钟间隔会被回放成 ticks,performance.now() 的起点就随机器快慢漂了。)
+    if (pump) {
+      await ctx.clock.pauseAt(opts.epoch);
+      await ctx.addInitScript(pumpClockSettleScript(opts.epoch)); // 排在时钟两段脚本之后:当场停住并撤掉墙钟定时器
+    } else {
+      await ctx.clock.install({ time: opts.epoch });
+    }
     const page = await ctx.newPage();
     watch = new PageWatch(page, side.dir);
     const expectScene = scenario.boot.scene;
     const url = `${side.url}${bootQuery(scenario.boot)}`;
     const tBoot = Date.now();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
-    const freezeAtReady = opts.freezeAt !== 'settled';
-    const ready = await waitReady(page, expectScene, opts.bootTimeout, freezeAtReady);
-    res.boot = { ...ready, url: url.replace(side.url, '/'), bootMs: Date.now() - tBoot };
-    if (!ready.ok) {
-      res.fatal = `启动未就绪:${ready.reason}`;
-      res.tailItems = watch.drain();
-      return res;
-    }
-    // 就绪之后再来一次 domcontentloaded = 整页重载了(同文档的 history 导航不触发它)
-    page.on('domcontentloaded', () => {
-      res.reloaded = true;
-    });
-    await sleep(opts.settle);
-    await watch.quiesce();
-    if (!freezeAtReady) {
-      const r = await evalT(page, READY_FN, { expectScene, freeze: true }, 20000, '冻结');
-      res.boot.froze = r.froze;
-    }
-    try {
-      await page.clock.pauseAt(opts.epoch + opts.pauseOffset);
-    } catch (e) {
-      res.fatal = `clock.pauseAt 失败(装载超过 --pause-offset?):${msgOf(e)}`;
-      return res;
+    if (pump) {
+      const ready = await pumpBoot(page, watch, expectScene, opts);
+      res.boot = { ...ready, url: url.replace(side.url, '/'), bootMs: Date.now() - tBoot };
+      if (!ready.ok) {
+        res.fatal = `启动未就绪:${ready.reason}`;
+        res.tailItems = watch.drain();
+        return res;
+      }
+      page.on('domcontentloaded', () => {
+        res.reloaded = true;
+      });
+      // 假时钟本来就停着:不墙钟沉淀、不 pauseAt 跳秒(那会一次性触发途中的定时器);就绪时的绝对假时刻 = 纪元 + 装载帧数的毫秒数
+      await watch.quiesce();
+    } else {
+      const freezeAtReady = opts.freezeAt !== 'settled';
+      const ready = await waitReady(page, expectScene, opts.bootTimeout, freezeAtReady);
+      res.boot = { ...ready, url: url.replace(side.url, '/'), bootMs: Date.now() - tBoot };
+      if (!ready.ok) {
+        res.fatal = `启动未就绪:${ready.reason}`;
+        res.tailItems = watch.drain();
+        return res;
+      }
+      // 就绪之后再来一次 domcontentloaded = 整页重载了(同文档的 history 导航不触发它)
+      page.on('domcontentloaded', () => {
+        res.reloaded = true;
+      });
+      await sleep(opts.settle);
+      await watch.quiesce();
+      if (!freezeAtReady) {
+        const r = await evalT(page, READY_FN, { expectScene, freeze: true }, 20000, '冻结');
+        res.boot.froze = r.froze;
+      }
+      try {
+        await page.clock.pauseAt(opts.epoch + opts.pauseOffset);
+      } catch (e) {
+        res.fatal = `clock.pauseAt 失败(装载超过 --pause-offset?):${msgOf(e)}`;
+        return res;
+      }
     }
     res.sync = await evalT(page, SYNC_FN, { seed: opts.seed }, 30000, '同步点');
+    if (pump) {
+      // 同步点的假时刻:两边装载帧数相同 ⇔ 相同(run.mjs / compare.mjs 对帧数不同大声报)
+      res.boot.pump.syncNow = res.sync.now;
+      res.boot.pump.syncDate = res.sync.date;
+    }
     if (!res.sync.hasStep) res.unsupported.push('__gameDevAPI.stepFixedTicks');
     if (res.sync.fixed === 'unsupported') res.unsupported.push('__game.applyRuntimeCommand(debugSetFixedTickMode)');
     await watch.quiesce();
