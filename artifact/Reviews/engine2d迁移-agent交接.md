@@ -1,14 +1,63 @@
-# engine2d / RHI 迁移 · 本机 agent 交接(2026-09-26)
+# engine2d / RHI 迁移 · 本机 agent 交接(2026-09-27 更新)
 
-> 给接手的本机 agent 读。云端会话到此为止,余下工作由你在制作人机器上做:这台机器有 DVC 素材、真显卡、Windows。
-> 背景和逐轮审查细节见 `artifact/Reviews/engine2d迁移审查-2026-09-25.md`。本文只写你需要知道的和要做的事。
+> 给接手的 agent 读。**先读第 0 节(最新进度)和第 0.5 节(下一步)**,第 1 节起是原有规矩与背景,仍然有效。
+> 逐轮审查细节见 `artifact/Reviews/engine2d迁移审查-2026-09-25.md`。
 
-## 0. 一句话现状
+## 0. 最新进度(2026-09-27,制作人本机 Windows / Intel Iris Xe / 10 GB 内存,机器到期前停在这里)
 
-分支 `claude/festive-cray-g72t2o`(已推送,HEAD `1435546`)把游戏运行时和两个编辑器(anim_preview、parallax_editor)
-从 Pixi 8.17(WebGL)整体换成了 `src/engine2d`(Pixi 同名 API)→ `src/rendering/rhi`(luma.gl,**只有 WebGPU**)。
-代码迁移已完成。四轮审查共确认 45 项,已修 44 项,每项都有回归测试,只剩 D23 等制作人决定。
-**没做的都是验证**:宿主上跑不跑得起 WebGPU、带素材的完整 A/B、真显卡性能、第 5 轮审查。做完并通过,目标才算完成。
+分支 `claude/festive-cray-g72t2o` 已推送。制作人本轮要求:**合并 master,之后游戏跑出来的结果必须与 master 一模一样**
+(画面、逻辑、玩法、UI 全部),只动这个 worktree,不碰主工作区。
+
+**已完成**
+- **合并 master**(`df4ac78`,含 origin/master `86571649` / `0faee8d`):master 新效果全部补了 WGSL——场景前景层覆盖图
+  (`foregroundMaskWgsl.ts`)、三支实体遮挡滤镜与四套粒子程序的前景取样、接触阴影胶囊 AO、雷身不被前景挡等;孪生守门已登记。
+- **第 5 轮静态审查**(6 片,工作流 `.claude/workflows/engine2d-migration-review-serial.js`:分片串行、核实串行、显式 model,适合 10 GB 机器)确认 5 条低级别,已处理:
+  GC 重传读采样现值对齐 master(`d565a88`);RT gather 噪声种子;render_parity 钉 RT gather 旋转;
+  多 pass 模糊对齐见下;LitBackground 雾用 q 空间量(**master 同样如此,未改,等制作人定**)。
+- **D23 对齐 master**(HTMLText 生成中途改字丢掉,同 Pixi)。
+- **带素材的整局 A/B:36 个场景全部与 master 逐像素一致**(阈值 1、噪声 0)。途中查出并修掉的真差异:
+  1. 画布半像素水平边差一行(对白框 / UI 边框 / 调试网格):画布改为照 WebGL 自下而上画进中间纹理、帧末翻转上屏(`b470a3b`);
+  2. 多 pass 模糊中间 pass 改走 Pixi 的 **WebGL** 分支(不清屏、关混合覆盖写),投影阴影下沿对齐(`263c34c`、`a8064b5`);
+  3. 光柱噪声哈希第一步按融合乘加精确算(master 的 FXC mad),义庄光柱 6 级 → 0(`0144ec2`)。
+  另查实:茶馆 / 崖墓几场 / 跑马梁此前的大差异来自 **master 冷缓存下 WebGL 首绘卡 9–13 s、粒子预热 8 s 限时被墙钟耗光**,
+  不是本分支问题——对照工具已加 `--warm`(热缓存预热)解决。
+- **对照工具 `tools/ab_compare` 大幅扩充**:`feature`(71 项游戏功能:时段外观 / 燃烧 / 落雷 / 特效 / 呼吸 / 镜头 / 闪屏黑场 /
+  实体 / UI 面板 / 商店 / 前景层 / 走动)、`mainline`(主线 18 拍按故事顺序逐拍推进 + 整链,拍末打开背包 / 任务 / 规矩 / 书架 /
+  地图 / 日志 / 菜单)、`--list`(不起任何东西,对 master 逐项校验引用)、`--warm`、`--freeze pump`(锁步装载:
+  游戏一出现就冻逻辑并停假时钟,装载期由驱动方逐帧推;牛头凼 / 跳转点这类装载期要跑逻辑的也能确定性启动)。
+  `--freeze pump` 验收:牛头凼、茶馆 A/A、B/B 噪声 0,A/B 0.000%(`fec6a3a`)。
+- 真机检查:rhi_smoke 全过;engine2d_parity 36/36;tsc 零错;vitest 307 文件 4267 用例全过;
+  编辑器 pytest 除 1 条外全过(那条 master 同样失败,见下);validate-data 与 master 同一批 42 个数据错误(都是 master 已有的内容问题)。
+
+## 0.5 下一步(按顺序,一次只跑一项——10 GB 内存同时跑多个会卡死整机,已发生过一次)
+
+统一参数:`export PLAYWRIGHT_CORE=<playwright-core 包目录>`(仓库不装,`npm i --prefix <任意目录> playwright-core`),
+`node tools/ab_compare/run.mjs --warm --freeze pump --threshold 1 --keep-raw ...`。
+大批量可以加 `--repeats 1`(每侧一局,省一半时间);`--freeze pump` 已证明两侧各自噪声为 0。
+
+1. **主线 18 拍**:`--only mainline`(或 `--beats 听书,...` 分批)。本轮只试跑过「听书」(旧的 ready 冻结下,游戏状态与
+   拍末 7 个 UI 面板全部一致,过场中段的雾粒子差异是装载快慢造成的——改用 pump 后应归零,**未复跑**)。
+2. `--only cutscene`(32 段)、`--only minigame --minigames all`、`--only npc`、`--only feature`(71 项)、`--only warp`、
+   `--only resize,dpr`。
+3. 每个超出噪声的差异:先看 `raw/<项>/{A1,B1}/*__canvas.png` 与 run.json 的 probe;状态一致而画面不同 → 渲染差异,追到代码修,
+   补「修前失败、修后通过」的回归测试;两局都要在热缓存 + pump 下复跑确认。
+4. 之后:T1 宿主(第 3 节;Tauri 打包版本机没有 Rust 工具链,没测)、T5 真显卡性能(`--perf`)、收尾全量门。
+
+**等制作人定的事**
+- LitBackground 雾用 q 空间高度 / 距离(违反铁律 0),**master 同样如此**,对齐 master 就没改;要修是单独一件事。
+- master 自身的问题(不是本分支引起,未改):`tools/editor/tests/test_held_prop_editor_surfaces.py` 的过场白名单用例
+  (master 把 setPropState 加进白名单没同步用例);义庄出口指向的出生点 `from_yizhuang` 在雾津街头不存在;
+  validate-data 的 42 个数据错误(test_room_a 连通性、eco_眼力 / eco_风评 未登记等)。
+- 光柱融合乘加的修法依赖「GPU 的 mad 是融合的」(Iris Xe / 多数现代卡是);在不融合的卡上 master 自己会变,本分支按融合算。
+
+**环境坑**
+- worktree 没有自己的 DVC 缓存:`.dvc/config.local` 把缓存指到主工作区 `D:/GameDraftNew/GameDraft/.dvc/cache`;
+  拉对象用 `python scripts/sync-dvc-cache.py --root <主仓> pull <worktree 里 .dvc 的绝对路径…>`(注意 `--root` 要放在 pull 前)。
+- worktree 的 Python venv 用主仓 `.tools/Python311` 建;装依赖要 `PYTHONUTF8=1`(requirements 有中文注释);编辑器测试还缺
+  `numba==0.67.0 llvmlite==0.49.0 networkx`,要另装。pytest 收尾会被 conftest 看门狗强退,看结果用 `-v` 找 FAILED 行。
+- 子代理默认模型在这台机器上配错(minimax),工作流 / Agent 一律显式 `model: 'opus'`。
+- `tmp/review/` 下的审查复现会被主 vitest 扫进去,审查完要删。
+- 对照的 A / B 树在 `.tools/ab/`,B 树按提交建;主工作区未提交的改动不在 B 里。
 
 ## 1. 制作人定的规矩(违反 = 返工)
 
