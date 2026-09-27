@@ -1023,7 +1023,7 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
     // 只等网络静下来的话,运行中才装的东西(过场插图、切场景的原画、HTMLText 生成)可能早一帧或晚一帧落地,
     // 以它为起点的推拉镜 / 淡入就差一帧——实测说书过场 B1 / B2 同一检查点整幅原画错位(同侧噪声 15%)。
     const runRec = pump && opts.pumpRun !== false
-      ? { frames: 0, ticks: 0, timerSteps: 0, stalls: [], stuck: {}, idleMs: 0, idleLog: [], trace: [], lastFp: null }
+      ? { frames: 0, ticks: 0, timerSteps: 0, stalls: [], stuck: {}, idleMs: 0, idleLog: [], trace: [], lastFp: null, timerLog: [], clockLeaks: [] }
       : null;
     if (runRec) res.runPump = runRec;
     const runIdle = async () => {
@@ -1032,9 +1032,44 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
       runRec.ticks = ticks;
       await pumpIdle(page, watch, opts, runRec);
     };
+    // pump 的运行期一帧:同装载期逐个帧内定时器推进(PUMP_STEP_FN),每步之间让真异步落地。整帧 runFor 的话帧内定时器连着触发,
+    // 中间不给真异步落地的机会——分支切场景时新管线落定(plSettling)是真异步,揭幕闸的轮询定时器在那一帧里看不到它,
+    // 揭幕就晚一帧(实测向导一拍切进阎王岭山口后 B 的 NPC 动画相位一直差一个 tick);master 的 GL 同步编译没有这一步。
+    // 帧内步用 0 静止窗:没有在途项就直接走,有(plSettling / 解码 …)照常等它落定。
+    const idleOpts = { ...opts, pumpSettle: 0 };
+    const pumpFrame = async () => {
+      const frameEnd = res.sync.now + Math.round((ticks + 1) * FRAME_MS);
+      const ms = Math.round((ticks + 1) * FRAME_MS) - Math.round(ticks * FRAME_MS);
+      for (let guard = 0; guard < 500; guard++) {
+        const r = await evalT(page, PUMP_STEP_FN, { frameEnd, ms, dt: FRAME_MS }, opts.stepTimeout, '推进 1 帧(泵)');
+        for (const e of r.errs) watch.push('pageerror', e);
+        if (r.frame) {
+          if (typeof r.after === 'number' && r.after !== frameEnd && runRec.clockLeaks.length < 50) {
+            runRec.clockLeaks.push({ tick: ticks, expected: frameEnd, got: r.after });
+          }
+          return r;
+        }
+        runRec.timerSteps++;
+        if (runRec.timerLog.length < 400) runRec.timerLog.push(`${ticks}:${r.before}→${r.timerAt} ${r.info}`);
+        runRec.frames = ticks;
+        await pumpIdle(page, watch, idleOpts, runRec);
+      }
+      throw new Error(`运行期第 ${ticks} 帧里帧内定时器步超过 500 次(定时器风暴?)`);
+    };
     const advance = async (n) => {
       for (let done = 0; done < n;) {
         await runIdle();
+        if (runRec && opts.chunk === 1 && res.sync.pageClock && typeof res.sync.now === 'number') {
+          const r = await pumpFrame();
+          ticks += 1;
+          done += 1;
+          if (!r.stepped) {
+            if (!res.unsupported.includes('__gameDevAPI.stepFixedTicks')) res.unsupported.push('__gameDevAPI.stepFixedTicks');
+            break;
+          }
+          await watch.quiesce();
+          continue;
+        }
         const k = Math.min(opts.chunk, n - done);
         const ms = Math.round((ticks + k) * FRAME_MS) - Math.round(ticks * FRAME_MS);
         if (!res.sync.pageClock && ms > 0) await page.clock.runFor(ms);
