@@ -59,6 +59,7 @@
  *                                         装载帧数与机器快慢无关、两边应相同(记在运行记录,不同会大声报);
  *                                         就绪后不沉淀、不 pauseAt,直接同步点。各种类都能用(最慢,但最确定)
  *   --pump-settle <ms>             pump:每步推进前进度指纹须静止的墙钟毫秒(兜住没点名的短真异步,缺省 40)
+ *   --no-pump-run                  pump:装载之后的推进不等真异步落地(缺省每帧前后都等,同装载期;省时间但运行中才装的东西可能早晚一帧)
  *   --pump-stall <ms>              pump:某项在途真异步超过这么久既不落地、指纹也不动 ⇒ 判它在等假时钟,记 stall 后照推(缺省 5000)
  *   --boot-timeout <ms>            冷启动就绪上限(缺省 180000;pump 下是整个泵式装载的墙钟上限)
  *   --step-timeout <ms>            单次推进上限(缺省 180000)
@@ -151,6 +152,7 @@ if (opts.freezeAt === 'pump') {
   // 只在 pump 下进 opts(别的模式的 summary.json 逐字不变)
   opts.pumpSettle = Math.max(0, Number(arg('pump-settle', '40')));
   opts.pumpStall = Math.max(100, Number(arg('pump-stall', '5000')));
+  opts.pumpRun = !has('no-pump-run');
 }
 if (!Number.isFinite(opts.epoch)) {
   console.error('--epoch 解析不了');

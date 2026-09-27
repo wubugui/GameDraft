@@ -853,7 +853,7 @@ async function pumpLoop(page, watch, expectScene, opts, rec, docCount) {
   let phase = null;
   let seenDocs = docCount();
   const resetForNewDoc = async () => {
-    Object.assign(rec, { frames: 0, ticks: 0, timerSteps: 0, fakeMs: 0, firstStepFrame: null, stuck: {}, reloads: rec.reloads + 1, timerLog: [], idleLog: [], expectT: 0 });
+    Object.assign(rec, { frames: 0, ticks: 0, timerSteps: 0, fakeMs: 0, firstStepFrame: null, stuck: {}, reloads: rec.reloads + 1, timerLog: [], idleLog: [], expectT: 0, readyFrame: undefined });
     rec.phases.push({ frame: 0, tick: 0, reload: true });
     phase = null;
     seenDocs = docCount();
@@ -891,7 +891,14 @@ async function pumpLoop(page, watch, expectScene, opts, rec, docCount) {
     }
     if (s.fatal) return { ok: false, reason: `启动失败:${s.fatal}`, state: s, pump: rec };
     if (pumpReady(s, expectScene)) {
-      return { ok: true, state: s, froze: 'pump', heldByPerformance: s.switching === true, pump: rec };
+      // 就绪可能落在帧内定时器步之后(帧中间):master 揭幕闸里 GlProgramWarmup 逐个交接之间的 wait(0) 每跳把假时钟推 1 ms,
+      // 就地同步的话两边同步点差几毫秒(实测 A 3 ms / B 0 ms),之后按 rAF 16 ms 一拍读 performance.now() 的补间
+      // (过场淡入淡出、标题)每隔一二十帧错一拍,叙事留痕的时间戳也差几毫秒。所以就绪后再推到下一个整帧边界
+      // (带那一帧的逻辑 tick),两边都这样:同步点 = 纪元 + (就绪那一帧 + 1) 帧,绝对假时刻严格相同。
+      rec.readyFrame ??= rec.frames;
+      if (rec.frames > rec.readyFrame) {
+        return { ok: true, state: s, froze: 'pump', heldByPerformance: s.switching === true, pump: rec };
+      }
     }
     if (!s.hasGame || !s.frozen) {
       await sleep(4);
@@ -1012,8 +1019,22 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
 
     let ticks = 0;
     let cpIndex = 0;
+    // pump:装载之后的推进也等真异步落地(同 pumpIdle:装载桶 / 解码 / 管线 / 字体 / 指纹静止)再走下一帧。
+    // 只等网络静下来的话,运行中才装的东西(过场插图、切场景的原画、HTMLText 生成)可能早一帧或晚一帧落地,
+    // 以它为起点的推拉镜 / 淡入就差一帧——实测说书过场 B1 / B2 同一检查点整幅原画错位(同侧噪声 15%)。
+    const runRec = pump && opts.pumpRun !== false
+      ? { frames: 0, ticks: 0, timerSteps: 0, stalls: [], stuck: {}, idleMs: 0, idleLog: [], trace: [], lastFp: null }
+      : null;
+    if (runRec) res.runPump = runRec;
+    const runIdle = async () => {
+      if (!runRec) return;
+      runRec.frames = ticks;
+      runRec.ticks = ticks;
+      await pumpIdle(page, watch, opts, runRec);
+    };
     const advance = async (n) => {
       for (let done = 0; done < n;) {
+        await runIdle();
         const k = Math.min(opts.chunk, n - done);
         const ms = Math.round((ticks + k) * FRAME_MS) - Math.round(ticks * FRAME_MS);
         if (!res.sync.pageClock && ms > 0) await page.clock.runFor(ms);
@@ -1027,6 +1048,7 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
         }
         await watch.quiesce();
       }
+      await runIdle();
     };
     for (let i = 0; i < scenario.steps.length; i++) {
       const step = scenario.steps[i];
