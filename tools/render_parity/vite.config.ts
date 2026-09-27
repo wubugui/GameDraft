@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import MUTANTS from './mutants.json';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
@@ -72,6 +73,34 @@ function pinGatherRotation(): Plugin {
 }
 const pinRot = process.env.RENDER_PARITY_PIN_GATHER_ROT !== '0';
 
+/**
+ * 变异自检(`run.mjs --mutants`):只在候选侧、只在内存里把某个运行时源(WGSL / 宿主 TS)改坏一处(mutants.json 的
+ * 一条),看它点名的用例是否当场变红 —— 证明容差没有宽到放过真错。找不到要改的式子就直接抛(源码改了,变异要跟着改);
+ * 文件根本没被加载时不抛,但那样用例全绿,run.mjs 会报「漏网」。
+ */
+interface Mutant { id: string; file: string; edits: { from: string; to: string; all?: boolean }[] }
+function applyMutant(id: string): Plugin {
+  const m = (MUTANTS as Mutant[]).find((x) => x.id === id);
+  if (!m) throw new Error(`[render_parity] mutants.json 里没有变异 ${id}`);
+  const file = new RegExp(m.file);
+  return {
+    name: 'render-parity-mutant',
+    enforce: 'pre',
+    transform(code, moduleId) {
+      const f = moduleId.split('?')[0];
+      if (!file.test(f)) return null;
+      let out = code;
+      for (const e of m.edits) {
+        if (!out.includes(e.from)) throw new Error(`[render_parity] 变异 ${id}:${f} 里找不到 ${e.from}`);
+        out = e.all ? out.split(e.from).join(e.to) : out.replace(e.from, () => e.to);
+      }
+      return { code: out, map: null };
+    },
+  };
+}
+const mutantId = side === 'cand' ? process.env.RENDER_PARITY_MUTATE ?? '' : '';
+const portBase = Number(process.env.RENDER_PARITY_PORT) || 0;
+
 export default defineConfig({
   root: here,
   cacheDir: path.join(
@@ -79,7 +108,11 @@ export default defineConfig({
     'render-parity-vite',
     createHash('sha1').update(`${here}|${side}|${refRoot}`).digest('hex').slice(0, 12),
   ),
-  plugins: [...(side === 'ref' ? [refFallback()] : []), ...(pinRot ? [pinGatherRotation()] : [])],
+  plugins: [
+    ...(side === 'ref' ? [refFallback()] : []),
+    ...(pinRot ? [pinGatherRotation()] : []),
+    ...(mutantId ? [applyMutant(mutantId)] : []),
+  ],
   resolve: {
     alias: [
       { find: '@parity-side', replacement: path.join(here, side === 'ref' ? 'side_ref.ts' : 'side_cand.ts') },
@@ -90,7 +123,8 @@ export default defineConfig({
   },
   server: {
     host: '127.0.0.1',
-    port: side === 'ref' ? 5192 : 5198,
+    // RENDER_PARITY_PORT(run.mjs --port):参考侧用它、候选侧用它 +1;不给就用老端口
+    port: portBase ? portBase + (side === 'ref' ? 0 : 1) : side === 'ref' ? 5192 : 5198,
     strictPort: false,
     // node_modules 可能是指向别处的软链(worktree),放开同源文件访问限制;这是本地测试页
     fs: { strict: false, allow: [repoRoot] },

@@ -20,7 +20,7 @@
  * WGSL 宿主怎么声明片段要的东西(值结构、charLights 绑定、纹理形参)照各 .wgsl 文件头,本文件就是示例。
  */
 import { Container, Mesh, MeshGeometry, RenderTexture, Shader, type Texture, UniformGroup } from 'pixi.js';
-import type { ParityCase, ParityEnv } from '../harness';
+import { mulberry32, type ParityCase, type ParityEnv } from '../harness';
 import LIGHTING_CORE_GLSL from '@src/rendering/lighting/lightingCore.glsl?raw';
 import WORLD_RECONSTRUCT_GLSL from '@src/rendering/lighting/worldReconstruct.glsl?raw';
 import {
@@ -248,20 +248,38 @@ function assertNonVacuous(name: string, data: Float32Array, p: KernelProgram, wi
   }
 }
 
+/**
+ * 用例容差:缺省处处 `abs`(见 TOL);`tiles` 给个别 tile 另定(逐通道绝对值 / 按 f32 ulp),只给有依据的地方,
+ * 依据写在用的地方(见 TOL 下面几个常量)。
+ */
+interface KernelTol {
+  abs: number;
+  tiles?: Record<number, { abs?: number | readonly [number, number, number, number]; ulps?: number }>;
+}
+
 function kernelCase(
   name: string,
   p: KernelProgram,
-  tolerance: number,
+  tol: number | KernelTol,
   setup: (env: ParityEnv) => KernelRun,
 ): ParityCase {
   const width = p.tiles * p.tw;
   const height = p.th;
+  const t: KernelTol = typeof tol === 'number' ? { abs: tol } : tol;
   return {
     name,
     width,
     height,
     target: 'rgba32float',
-    tolerance,
+    tolerance: t.abs,
+    toleranceAt: t.tiles
+      ? (x, _y, ch) => {
+          const tt = t.tiles![Math.floor(x / p.tw)];
+          if (!tt) return undefined;
+          const abs = tt.abs === undefined ? t.abs : typeof tt.abs === 'number' ? tt.abs : tt.abs[ch];
+          return { abs, ulps: tt.ulps };
+        }
+      : undefined,
     build: produceOnly,
     async produce(env) {
       const run = setup(env);
@@ -505,6 +523,13 @@ const LC_BASE: LcCfg = {
 
 // ═════════════════════════════ B. worldReconstruct(三段)
 
+/**
+ * tile 13(行走面最近邻)的世界坐标输入是 `b·ext·1.2 − ext·0.1037`,不是整齐的 0.1:0.1 时有输入(b = 47/64 等半精度值)
+ * 让 uv·32 / uv·20 **恰好**等于整数(937.5 / 1200 = 0.78125 = 25/32),两侧各差 1 ulp(参考侧宿主式被 FXC 合并成乘加
+ * 得 937.50006;候选侧 Dawn 的除法低 1 ulp 得 0x3f47ffff)就一边取第 25 个纹素、一边取第 24 个(RTX 4070 SUPER 实测
+ * [209,5] / [222,8] 两处)。这是平局,不是翻译差。0.1037 下两个 WR 用例全部取样点离纹素边界(含硬件 1/256 定点
+ * 取整可能的边界)≥ 1.9e-3 纹素(双精度逐点算过),比两侧 ~1e-6 的差大三个量级。
+ */
 const WR_PROGRAM: KernelProgram = {
   tiles: 15, tw: 16, th: 16, k: 4,
   textures: [{ name: 'uDepth', sampled: true }, { name: 'uGround', sampled: true }, { name: 'uColl', sampled: true }],
@@ -551,7 +576,7 @@ const WR_PROGRAM: KernelProgram = {
     } else if (tile == 12) {
         o = vec4(wrDecodeSpriteNormal(d, true, a.z * 0.5), wrDecodeSpriteNormal(d, false, 0.0).y);
     } else if (tile == 13) {
-        vec2 wxy = b.xy * uExt * 1.2 - uExt * 0.1;
+        vec2 wxy = b.xy * uExt * 1.2 - uExt * 0.1037;
         o.x = wrSampleSceneDepth(uDepth, a.xy, uDM.x, uDM.y, uDM.z);
         o.y = wrSampleGroundAtUv(uGround, a.xy, uGR);
         o.z = wrSampleGroundWorld(uGround, wxy, uExt, uGR, WR_EPS_SCENE);
@@ -605,7 +630,7 @@ const WR_PROGRAM: KernelProgram = {
     } else if (tile == 12) {
         o = vec4<f32>(wrDecodeSpriteNormal(d, true, a.z * 0.5), wrDecodeSpriteNormal(d, false, 0.0).y);
     } else if (tile == 13) {
-        let wxy = b.xy * tc.uExt * 1.2 - tc.uExt * 0.1;
+        let wxy = b.xy * tc.uExt * 1.2 - tc.uExt * 0.1037;
         o.x = wrSampleSceneDepth(uDepth, uDepthSampler, a.xy, tc.uDM.x, tc.uDM.y, tc.uDM.z);
         o.y = wrSampleGroundAtUv(uGround, uGroundSampler, a.xy, tc.uGR);
         o.z = wrSampleGroundWorld(uGround, uGroundSampler, wxy, tc.uExt, tc.uGR, WR_EPS_SCENE);
@@ -711,6 +736,18 @@ function clcSpec(cfg: ClcCfg, env: ParityEnv): USpec {
   };
 }
 
+/**
+ * 两处输入是按「两家编译器都精确」挑的(RTX 4070 SUPER 取证,见 TOL 的注释):
+ *   - tile 3 的 hash12 输入 `c.zw * 512.0`(原来 ×500):FXC 把 `(c·500)·.1031` 折成 `c·51.55`,舍入与两次相乘不同,
+ *     hash 的 fract 把末位差放大成 O(1)(8 条用例各 ~170 像素整块不一致,两侧各自逐位吻合 CPU 模型)。乘 2 的幂是精确的,
+ *     折不折叠都得同一个数 ⇒ 输入逐位相同 ⇒ 输出逐位相同。gatherRT 里的 hash12(gl_FragCoord) 另由 vite.config 钉住。
+ *   - tile 7 的 boxEnter:起点 `(c·2 − 0.5)·hi`(原来 `(c·1.6 − 0.3)·hi`)—— c·2 与减 0.5 都精确,FXC 合并成乘加
+ *     与否结果相同;方向取 {−1, −½, 0, ½, 1}² × {±¼, ±¾} 的格点再归一(原来连续随机 + 1e-3 偏置)—— 分量要么恰为 0
+ *     (走 boxEnter 的 1e-6 退化除数,d.w > 0.7 那一支再把 y 分量清零),要么 ≥ 0.156,不再出现 1e-4 级的小分量。
+ *     原写法下 d.w > 0.7 的像素值到 1e5~1e6(1 ulp = 0.06~0.125 > 1e-4),起点差 1 ulp 被 `hi − p0` 相消放大到 19 ulp;
+ *     连续方向的小分量让 t = 距离 / 分量 到 1e4 以上,rsqrt 的个位 ulp 差再被 `出口 − 入口` 相消放大(实测 6.0)。
+ *     改后退化值分子精确、除数同为 1e-6,实测两侧逐位相同;整块最大差 ≤ 9e-6,容差不动。
+ */
 const CLC_PROGRAM: KernelProgram = {
   tiles: 11, tw: 16, th: 16, k: 4,
   textures: ['uPL1', 'uPL2', 'uPBin', 'uValid', 'uVolRad', 'uVolEmit', 'uSkyaoTex'].map((name) => ({ name, sampled: false })),
@@ -730,7 +767,7 @@ const CLC_PROGRAM: KernelProgram = {
     } else if (tile == 3) {
         int ob = int(uBinOb + 0.5);
         ivec2 oc = ivec2(floor(c.xy * float(ob + 4))) - 2;
-        o = vec4(octaEnc(n), float(octaIdx(oc, ob)), hash12(c.zw * 500.0));
+        o = vec4(octaEnc(n), float(octaIdx(oc, ob)), hash12(c.zw * 512.0));
     } else if (tile == 4) {
         o = vec4(skyaoAt(q, n), skyaoBox(q).xy, skyaoRaw(q).x);
     } else if (tile == 5) {
@@ -739,8 +776,8 @@ const CLC_PROGRAM: KernelProgram = {
         o = sampleVol3(uVolRad, clamp(c.xyz * 1.2 - 0.1, 0.0, 1.0));
     } else if (tile == 7) {
         vec3 hi = uVolN - 1.0;
-        vec3 p0 = (c.xyz * 1.6 - 0.3) * hi;
-        vec3 dn = normalize(d.xyz * 2.0 - 1.0 + vec3(0.0, 0.0, 1e-3));
+        vec3 p0 = (c.xyz * 2.0 - 0.5) * hi;
+        vec3 dn = normalize(vec3(floor(d.xy * 5.0) * 0.5 - 1.0, floor(d.z * 4.0) * 0.5 - 0.75));
         dn = d.w > 0.7 ? normalize(vec3(dn.x, 0.0, dn.z)) : dn;
         o = vec4(boxEnter(p0, dn, hi), ambRad(n).xy);
     } else if (tile == 8) {
@@ -778,7 +815,7 @@ const CLC_PROGRAM: KernelProgram = {
     } else if (tile == 3) {
         let ob = i32(tc.uBinOb + 0.5);
         let oc = vec2<i32>(floor(c.xy * f32(ob + 4))) - 2;
-        o = vec4<f32>(octaEnc(n), f32(octaIdx(oc, ob)), hash12(c.zw * 500.0));
+        o = vec4<f32>(octaEnc(n), f32(octaIdx(oc, ob)), hash12(c.zw * 512.0));
     } else if (tile == 4) {
         o = vec4<f32>(skyaoAt(q, n, sk, uSkyaoTex), skyaoBox(q, sk).xy, skyaoRaw(q, sk, uSkyaoTex).x);
     } else if (tile == 5) {
@@ -787,8 +824,8 @@ const CLC_PROGRAM: KernelProgram = {
         o = sampleVol3(uVolRad, clamp(c.xyz * 1.2 - 0.1, vec3<f32>(0.0), vec3<f32>(1.0)), vv);
     } else if (tile == 7) {
         let hi = tc.uVolN - 1.0;
-        let p0 = (c.xyz * 1.6 - 0.3) * hi;
-        var dn = normalize(d.xyz * 2.0 - 1.0 + vec3<f32>(0.0, 0.0, 1e-3));
+        let p0 = (c.xyz * 2.0 - 0.5) * hi;
+        var dn = normalize(vec3<f32>(floor(d.xy * 5.0) * 0.5 - 1.0, floor(d.z * 4.0) * 0.5 - 0.75));
         if (d.w > 0.7) { dn = normalize(vec3<f32>(dn.x, 0.0, dn.z)); }
         o = vec4<f32>(boxEnter(p0, dn, hi), ambRad(n, pp).xy);
     } else if (tile == 8) {
@@ -974,8 +1011,9 @@ const MIXED_LIGHTS: LightRow[] = [
   { a: [0, 0.5, 0, 0], b: [1, 1, 1, 1000], c: [50, 0.1, 0, 0], d: [0, 0, 0, 0] },
 ];
 
-function randomLights(env: ParityEnv, count: number): LightRow[] {
-  const rng = env.rng(61);
+/** 种子固定(= env.rng(61),两侧同一串);在模块里就能算出来,容差要按它算 */
+function randomLights(count: number): LightRow[] {
+  const rng = mulberry32(61);
   const out: LightRow[] = [];
   for (let i = 0; i < count; i++) {
     const kind = Math.floor(rng() * 5);
@@ -1011,27 +1049,76 @@ function eslRun(lights: LightRow[], count: number, wuPerQUnit: number): (env: Pa
 // ═════════════════════════════ 用例
 
 /**
- * 容差:输出是 rgba32float,两侧最终都进同一个 SwiftShader,翻译等价时预期逐位相同或只差个位 ulp。
- * 实测(无头 SwiftShader,2026-09-25):WR / CLC(含 gatherRT)/ PROBE+SKYAO 两段 / 0 盏与 24 盏实体灯
- * **逐位相同**;LC 最大差 3.7e-9、LC+WR 整份 3.0e-8、混合实体灯 2.4e-7(值域 ~17,即个位 ulp)。
- * 变异自检(面光绕向 / probe 法线偏置 / 双面位各改一处 WGSL)全部当场变红,最大差 5e-3 ~ 6。
- * 以后出现非零差先查翻译,不许放宽。
+ * 容差:输出是 rgba32float,翻译等价时预期逐位相同或只差个位 ulp。
+ * 实测(无头 SwiftShader,2026-09-25,两侧最终进同一个编译器):WR / CLC(含 gatherRT)/ PROBE+SKYAO 两段 /
+ * 0 盏与 24 盏实体灯**逐位相同**;LC 最大差 3.7e-9、LC+WR 整份 3.0e-8、混合实体灯 2.4e-7(值域 ~17,即个位 ulp)。
+ *
+ * 真显卡上两侧是**两家编译器**(参考 ANGLE → D3D11 / FXC,候选 Dawn → D3D12),同一串浮点式子本来就不逐位相同
+ * (2026-09-27 RTX 4070 SUPER 逐条取证:原始数组 + CPU 精确模型 + Dawn 改走 D3D11 交叉验证,19 条不一致**没有一条是
+ * 翻译不等价**)。FXC 不开 IEEE 严格:把 a*b+c 合并成乘加、折叠常量(`*500*.1031` → `*51.55`)、acos / asin / atan
+ * 展开成多项式;Dawn 不合并,除法比精确值差 1 ulp(规范许 2.5 ulp)。于是本文件做了下面几处,**每一处都只动到
+ * 取证点名的那一块**,其余照旧 1e-4:
+ *   - LC tile 1(面光)、实体灯循环 tile 0:容差 = 1e-4 + FXC acos 误差界(ACOS_FXC_ERR,推导见那里);
+ *   - WR tile 3 / 4(q ↔ 像素,值到 ~2000):另许 1 个 f32 ulp(2000 处 1 ulp = 2.4e-4 > 1e-4;FXC 是
+ *     fma(q, ppu, cx)、Dawn 是 cx + round(q·ppu),768 个值两侧全部逐位吻合这个模型);
+ *   - WR tile 13(行走面最近邻):输入偏移 0.1 → 0.1037,采样点不再恰好压在纹素边界上(见 WR_PROGRAM 上方);
+ *   - CLC tile 3(hash12)输入 ×500 → ×512、tile 7(boxEnter)起点与方向改成两侧都精确 / 良态的写法
+ *     (见 CLC_PROGRAM 上方),容差不动。
+ * 变异自检(`node tools/render_parity/run.mjs --mutants`,清单 mutants.json):面光绕向 / probe 法线偏置 / 双面位 /
+ * 面光 π 写错 0.3% / WR 像素换算差 1e-3 / boxEnter 退化除数差 1e-5 / hash12 常数差 1e-4 各改一处 WGSL,全部当场变红。
+ * 以后出现非零差先查翻译(Dawn 改走 D3D11:`--browser-arg=--use-webgpu-adapter=d3d11`,两侧同是 FXC,
+ * 编译器差就消失),不许放宽。
  */
 const TOL = 1e-4;
 
+/**
+ * FXC 的 acos(d3dcompiler 反汇编所见,A&S 4.4.45 / Cg 参考实现):sqrt(1−|x|)·(1.5707288 − 0.2121144|x| +
+ * 0.0742610x² − 0.0187293|x|³),x<0 取 π − 它。双精度扫 [−1, 1] 的最大绝对误差 6.755e-5 rad(在 x = 0);
+ * Dawn-D3D12 走驱动的精确 acos。lcRectIrradiance = Σ 四条边 acos(·)·(单位向量·N) / 2π ⇒
+ * |ΔE| ≤ 4·ε / 2π = 2ε/π ≈ 4.30e-5 每单位「强度 × 颜色」(abs / max(·,0) 不放大差)。
+ * 取证:候选侧 WGSL 的 acos 临时换成这条多项式后,LC 4 条 / 实体灯 24 盏最大差 ≤ 2.9e-6,全过;Dawn 走 D3D11 也全过。
+ */
+const ACOS_FXC_ERR = 6.76e-5;
+const AREA_E_ERR = (2 * ACOS_FXC_ERR) / Math.PI;
+
+/** LC tile 1 四个通道 = e1.x(uLI·uLC.x)/ e2.y(uLI·uLC.y)/ 裸 ri / e3.z(uLI·uLC.z);uLI / uLC 见 lcRun */
+const LC_TOL: KernelTol = {
+  abs: TOL,
+  tiles: { 1: { abs: [TOL + 20 * 1 * AREA_E_ERR, TOL + 20 * 0.8 * AREA_E_ERR, TOL + AREA_E_ERR, TOL + 20 * 0.55 * AREA_E_ERR] } },
+};
+
+/**
+ * WR tile 3 / 4 输出 wrQxToPx / wrQToPixel = cx ± q·ppu(cx 1024 / cy 571.5,|q·ppu| ≤ 901),值到 ~2000。
+ * 乘加合并与否之差:精确和相差 ≤ ½ ulp(q·ppu) ≤ 3.1e-5,两侧再各舍入一次 ⇒ 结果最多差 1 ulp;值 ≥ 1024 处 1 ulp
+ * (1.2e-4 / 2.4e-4)大于 1e-4,所以这两块另许 1 个 f32 ulp —— 就是理论上界,实测正好打到(差÷容差 = 1.00)。
+ */
+const WR_TOL: KernelTol = { abs: TOL, tiles: { 3: { ulps: 1 }, 4: { ulps: 1 } } };
+
+/** 实体灯循环 tile 0 = Σ 灯的照度:每盏面光(kind 2,强度 > 0,在 count 内)按 AREA_E_ERR × 强度 × 颜色加容差 */
+function eslTol(lights: LightRow[], count: number): KernelTol {
+  const extra = [0, 0, 0];
+  lights.slice(0, count).forEach((l) => {
+    if (Math.round(l.a[3]) !== 2 || l.b[3] <= 0) return;
+    for (let c = 0; c < 3; c++) extra[c] += l.b[3] * l.b[c] * AREA_E_ERR;
+  });
+  return { abs: TOL, tiles: { 0: { abs: [TOL + extra[0], TOL + extra[1], TOL + extra[2], TOL] } } };
+}
+
+const RANDOM_LIGHTS = randomLights(MAX_STATIC_LIGHTS);
+
 export const cases: ParityCase[] = [
-  kernelCase('光照片段 / LC 全部函数 · 显示变换恒等 · 深度 nearest', LC_PROGRAM, TOL, lcRun(LC_BASE)),
-  kernelCase('光照片段 / LC 全部函数 · reinhard + 饱和/对比/暗部提升 · 反深度 · 深度 linear', LC_PROGRAM, TOL,
+  kernelCase('光照片段 / LC 全部函数 · 显示变换恒等 · 深度 nearest', LC_PROGRAM, LC_TOL, lcRun(LC_BASE)),
+  kernelCase('光照片段 / LC 全部函数 · reinhard + 饱和/对比/暗部提升 · 反深度 · 深度 linear', LC_PROGRAM, LC_TOL,
     lcRun({ ...LC_BASE, tone: 1, ev: -0.7, wb: [1.08, 1, 0.9], sat: 0.6, con: 1.3, lift: 0.5, liftC: [0.9, 1, 1.2], depthInvert: 1, steps: 40, scaleMode: 'linear' })),
-  kernelCase('光照片段 / LC 全部函数 · filmic + 曝光 · march 128 步封顶', LC_PROGRAM, TOL,
+  kernelCase('光照片段 / LC 全部函数 · filmic + 曝光 · march 128 步封顶', LC_PROGRAM, LC_TOL,
     lcRun({ ...LC_BASE, tone: 2, ev: 1.5, wb: [0.95, 1, 1.1], sat: 1.25, con: 0.8, lift: 0.15, liftC: [1, 0.9, 0.8], steps: 128 })),
 
-  kernelCase('光照片段 / LC + WR 整份文件拼接', LC_FULL_PROGRAM, TOL,
+  kernelCase('光照片段 / LC + WR 整份文件拼接', LC_FULL_PROGRAM, LC_TOL,
     lcRun({ ...LC_BASE, tone: 2, sat: 0.9, con: 1.1, lift: 0.3 })),
 
-  kernelCase('光照片段 / WR 三段全部函数 · nearest 纹理', WR_PROGRAM, TOL,
+  kernelCase('光照片段 / WR 三段全部函数 · nearest 纹理', WR_PROGRAM, WR_TOL,
     wrRun({ scaleMode: 'nearest', ext: [1200, 800], eps: 1e-3, invert: 0 })),
-  kernelCase('光照片段 / WR 三段全部函数 · linear 纹理 · 反深度 · 退化场景尺寸', WR_PROGRAM, TOL,
+  kernelCase('光照片段 / WR 三段全部函数 · linear 纹理 · 反深度 · 退化场景尺寸', WR_PROGRAM, WR_TOL,
     wrRun({ scaleMode: 'linear', ext: [1200, 1e-7], eps: 1e-5, invert: 1 })),
 
   kernelCase('光照片段 / CLC L2(9 系数) · 折叠 · skyao 开', CLC_PROGRAM, TOL, clcRun(CLC_BASE)),
@@ -1050,9 +1137,9 @@ export const cases: ParityCase[] = [
   kernelCase('光照片段 / PROBE + SKYAO 两段单独拼 · L1', PROBE_SKYAO_PROGRAM, TOL, clcRun({ ...CLC_BASE, mode: 1 })),
   kernelCase('光照片段 / PROBE + SKYAO 两段单独拼 · 八面体 16×16', PROBE_SKYAO_PROGRAM, TOL, clcRun({ ...CLC_BASE, mode: 3, binOb: 16 })),
 
-  kernelCase('光照片段 / 实体灯循环 · 各种灯混合(含强度 0 / count 截断)', ESL_PROGRAM, TOL,
+  kernelCase('光照片段 / 实体灯循环 · 各种灯混合(含强度 0 / count 截断)', ESL_PROGRAM, eslTol(MIXED_LIGHTS, 9),
     eslRun(MIXED_LIGHTS, 9, 2.5)),
   kernelCase('光照片段 / 实体灯循环 · 0 盏(早退)', ESL_PROGRAM, TOL, eslRun(MIXED_LIGHTS, 0, 2.5)),
-  kernelCase('光照片段 / 实体灯循环 · 24 盏满载随机', ESL_PROGRAM, TOL,
-    (env) => eslRun(randomLights(env, MAX_STATIC_LIGHTS), MAX_STATIC_LIGHTS, 1.7)(env)),
+  kernelCase('光照片段 / 实体灯循环 · 24 盏满载随机', ESL_PROGRAM, eslTol(RANDOM_LIGHTS, MAX_STATIC_LIGHTS),
+    eslRun(RANDOM_LIGHTS, MAX_STATIC_LIGHTS, 1.7)),
 ];

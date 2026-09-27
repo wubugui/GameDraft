@@ -53,6 +53,23 @@ export interface ParityCase {
   target?: ParityTarget;
   /** 单通道允许的最大绝对误差(8 位目标按 0..1 归一后的值) */
   tolerance: number;
+  /**
+   * 另按 ulp 计的容差:一个分量允许 max(绝对容差, ulps × ulp(max(|参考|, |候选|))),ulp 按目标格式取
+   * (rgba32float = f32,rgba16float = 半精度;8 位目标不用)。只给「值大到绝对容差连 1 个 ulp 都容不下」的输出用
+   * (f32 ≥ 1024 时 1e-4 < 1 ulp;半精度 ≥ 2 时 1e-3 < 1 ulp),依据写在用例旁。
+   */
+  ulps?: number;
+  /**
+   * 逐分量容差(覆盖 tolerance / ulps):只给确有依据的局部(某一块 tile、某个通道),依据写在用例旁。
+   * 返回 undefined 就用整条用例的 tolerance / ulps。
+   */
+  toleranceAt?(x: number, y: number, channel: number): { abs: number; ulps?: number } | undefined;
+  /**
+   * 阈值平局豁免:discard / step 阈值上,两侧浮点末位差让一侧画、一侧不画的像素。只豁免「一侧 ≈ empty(被丢弃)、
+   * 另一侧 ≈ drawn(压着阈值画出来的颜色)」的像素(四个分量各在 tolerance 内),最多 max 个,超了照常算不一致;
+   * 报告里单列。依据写在用例旁。
+   */
+  thresholdTie?: { empty: readonly number[]; drawn: readonly number[]; max: number };
   /** 超出容差的像素最多几个(缺省 0) */
   maxBadPixels?: number;
   /**
@@ -80,6 +97,10 @@ export interface ParityResult {
   meanDiff: number;
   badPixels: number;
   bbox: [number, number, number, number] | null;
+  /** 「差 / 该分量容差」的最大值(出错的用例没有) */
+  worstRatio?: number;
+  /** 被阈值平局豁免的像素数 */
+  tiePixels?: number;
   detail: string;
   images?: { ref: string; cand: string; diff: string };
   ms: number;
@@ -228,33 +249,77 @@ export async function renderSide(sr: SideRenderer, c: ParityCase): Promise<SideO
 
 // ───────────────────────────── 比较
 
-export function compare(ref: Float32Array, cand: Float32Array, width: number, height: number, tolerance: number) {
+const ulpScratch = new Float32Array(1);
+const ulpBits = new Uint32Array(ulpScratch.buffer);
+
+/** v(已是 f32 / 半精度可表示的值)所在量级的 1 个 ulp;8 位目标返回 0(不按 ulp 放) */
+export function ulpOf(v: number, target: ParityTarget): number {
+  ulpScratch[0] = Math.abs(v);
+  const e = ((ulpBits[0] >>> 23) & 0xff) - 127;
+  if (target === 'rgba16float') return 2 ** (Math.max(e, -14) - 10);
+  if (target === 'rgba32float') return 2 ** (Math.max(e, -126) - 23);
+  return 0;
+}
+
+export interface CompareOptions {
+  tolerance: number;
+  target?: ParityTarget;
+  ulps?: number;
+  toleranceAt?: ParityCase['toleranceAt'];
+  thresholdTie?: ParityCase['thresholdTie'];
+}
+
+export function compare(ref: Float32Array, cand: Float32Array, width: number, height: number, o: CompareOptions) {
+  const target = o.target ?? 'rgba8unorm';
+  const near = (d: Float32Array, i: number, want: readonly number[]) =>
+    want.every((w, c) => Math.abs(d[i + c] - w) <= o.tolerance);
   let maxDiff = 0;
+  let worstRatio = 0;
   let sum = 0;
   let bad = 0;
+  let ties = 0;
   let x0 = width, y0 = height, x1 = -1, y1 = -1;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const i = (y * width + x) * 4;
       let px = 0;
+      let pxRatio = 0;
+      let over = false;
       for (let c = 0; c < 4; c++) {
         const a = ref[i + c];
         const b = cand[i + c];
         const d = Number.isNaN(a) || Number.isNaN(b) ? (Number.isNaN(a) && Number.isNaN(b) ? 0 : Infinity) : Math.abs(a - b);
         px = Math.max(px, d);
         sum += Number.isFinite(d) ? d : 1;
+        const t = o.toleranceAt?.(x, y, c) ?? { abs: o.tolerance, ulps: o.ulps };
+        const ulps = t.ulps ?? 0;
+        const allowed = ulps > 0 && Number.isFinite(d) ? Math.max(t.abs, ulps * ulpOf(Math.max(Math.abs(a), Math.abs(b)), target)) : t.abs;
+        if (d > allowed) over = true;
+        pxRatio = Math.max(pxRatio, allowed > 0 ? d / allowed : d > 0 ? Infinity : 0);
+      }
+      if (over && o.thresholdTie && ties < o.thresholdTie.max) {
+        const { empty, drawn } = o.thresholdTie;
+        if ((near(ref, i, empty) && near(cand, i, drawn)) || (near(ref, i, drawn) && near(cand, i, empty))) {
+          ties++;
+          continue;
+        }
       }
       maxDiff = Math.max(maxDiff, px);
-      if (px > tolerance) {
+      worstRatio = Math.max(worstRatio, pxRatio);
+      if (over) {
         bad++;
         x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
       }
     }
   }
   return {
+    /** 最大差与下面的比值都不算被阈值平局豁免的像素 */
     maxDiff,
+    /** 所有分量里「差 / 该分量容差」的最大值(≤ 1 = 处处在容差内;给看离容差还有多远) */
+    worstRatio,
     meanDiff: sum / (width * height * 4),
     badPixels: bad,
+    tiePixels: ties,
     bbox: bad ? ([x0, y0, x1, y1] as [number, number, number, number]) : null,
   };
 }
@@ -299,17 +364,24 @@ export function judge(c: ParityCase, ref: SideOutput, cand: SideOutput, ms: numb
   if (ref.data.length !== cand.data.length) {
     return { ...base, status: 'error', detail: `两侧结果长度不同:${ref.data.length} ≠ ${cand.data.length}` };
   }
-  const s = compare(ref.data, cand.data, c.width, c.height, c.tolerance);
+  const s = compare(ref.data, cand.data, c.width, c.height, c);
   const pass = s.badPixels <= (c.maxBadPixels ?? 0);
   const float = (c.target ?? 'rgba8unorm') !== 'rgba8unorm';
   const show = (v: number, ch: number) => (ch === 3 && float ? 1 : v);
+  const tolText = `${c.tolerance}${c.ulps ? ` 或 ${c.ulps} ulp` : ''}${c.toleranceAt ? ',局部另给' : ''}`;
   return {
     ...base,
-    ...s,
+    maxDiff: s.maxDiff,
+    meanDiff: s.meanDiff,
+    badPixels: s.badPixels,
+    bbox: s.bbox,
+    worstRatio: s.worstRatio,
+    tiePixels: s.tiePixels,
     status: pass ? 'pass' : 'fail',
     detail: [
-      `最大差 ${s.maxDiff.toPrecision(3)} / 平均差 ${s.meanDiff.toPrecision(3)} / 超容差(${c.tolerance})像素 ${s.badPixels}` +
-        (s.bbox ? ` 范围 [${s.bbox.join(',')}]` : ''),
+      `最大差 ${s.maxDiff.toPrecision(3)} / 平均差 ${s.meanDiff.toPrecision(3)} / 差÷容差最大 ${s.worstRatio.toPrecision(3)} / ` +
+        `超容差(${tolText})像素 ${s.badPixels}` + (s.bbox ? ` 范围 [${s.bbox.join(',')}]` : '') +
+        (s.tiePixels ? ` / 阈值平局豁免 ${s.tiePixels} 像素` : ''),
       ...cand.warnings.slice(0, 6).map((w) => `候选告警:${w}`),
     ].join('\n'),
     images: withImages

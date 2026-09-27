@@ -113,6 +113,10 @@ GPU 采样器按记下的参数建),之后改 `scaleMode` / `addressMode` 等字
 - 着色器单元级辅助(**不是**干净的 master 对照):`node tools/render_parity/run.mjs`(176 个用例)。
   它把 master 的 src 放进**本分支**的对照框架里跑,master 缺的模块还从本分支补。
   只能用来快速看着色器移植,不能当 master 行为对照的证据。
+  容差口径:无头 SwiftShader 上两侧同一个编译器,大多逐位相同;真显卡上两侧是 FXC(ANGLE-D3D11)对 Dawn-D3D12,
+  浮点差是编译器的(乘加合并 / 常量折叠 / acos 多项式 / 除法 1 ulp),用例按取证结果改了输入、个别 tile 按 ulp 或
+  误差界给容差,依据都写在用例旁(见 pixi-shader-wgsl-port)。`--mutants` 跑变异自检(`mutants.json`,改一处运行时源必须变红)。
+  2026-09-27 RTX 4070 SUPER 上 Edge / Chrome、有头 / 无头、Dawn 走 D3D11 都 176/176,变异 14/14。
 - `tools/render_parity/game_sweep.mjs` 已被 ab_compare 取代:它共用本分支的 node_modules,又按真实时间跑,两边动画不同步、噪声大。
   Linux 无显示环境跑浏览器类工具一律 `xvfb-run` + 有头 + `--swiftshader`(无头 Chromium 的 WebGPU 上屏会丢设备)。
   这些工具都要 playwright-core(用 `PLAYWRIGHT_CORE` 指过去),见各文件头。

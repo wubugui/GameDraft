@@ -1,0 +1,103 @@
+[
+  {
+    "id": "lc-area-winding",
+    "desc": "面光四角绕向反了(lcAreaLight 里 v1 / v3 对调)",
+    "file": "[\\\\/]lightingCore\\.wgsl$",
+    "edits": [
+      { "from": "center - halfU + halfV,", "to": "center + halfU - halfV," },
+      { "from": "center + halfU - halfV);", "to": "center - halfU + halfV);" }
+    ],
+    "cases": "光照片段 / LC|光照片段 / 实体灯循环"
+  },
+  {
+    "id": "lc-area-pi",
+    "desc": "面光辐照度的 1/2π 里 π 写成 3.13(差 0.37%;看 acos 放宽后的面光容差还抓不抓得住小错)",
+    "file": "[\\\\/]lightingCore\\.wgsl$",
+    "edits": [{ "from": "return sum * (0.5 / LC_PI);", "to": "return sum * (0.5 / 3.13);" }],
+    "cases": "光照片段 / LC|光照片段 / 实体灯循环"
+  },
+  {
+    "id": "clc-probe-bias",
+    "desc": "probe 查询点的法线偏置反号(q + n·0.525·cellMin → q − …)",
+    "file": "[\\\\/]charLightCommon\\.wgsl$",
+    "edits": [{ "from": "q + n * (0.525 * cellMin)", "to": "q - n * (0.525 * cellMin)", "all": true }],
+    "cases": "光照片段 / CLC|光照片段 / PROBE"
+  },
+  {
+    "id": "esl-two-sided",
+    "desc": "实体灯循环的双面位读错位(flags & 2 → flags & 1)",
+    "file": "[\\\\/]CharacterLitSprite\\.ts$",
+    "edits": [{ "from": "(flags & 2) != 0, 1.0);", "to": "(flags & 1) != 0, 1.0);", "all": true }],
+    "cases": "光照片段 / 实体灯循环"
+  },
+  {
+    "id": "wr-ppu",
+    "desc": "q → 像素的 ppu 偏 1e-3(相对 2e-6,~2000 处约 4~8 个 f32 ulp;看 WR 的 1 ulp 放宽还抓不抓得住)",
+    "file": "[\\\\/]worldReconstruct\\.wgsl$",
+    "edits": [{ "from": "return cx + qx * ppu;", "to": "return cx + qx * (ppu + 1e-3);" }],
+    "cases": "光照片段 / WR|光照片段 / LC + WR"
+  },
+  {
+    "id": "clc-box-eps",
+    "desc": "boxEnter 的退化除数 1e-6 → 1.00001e-6(相对 1e-5,只影响走退化分支的那些 1e5~1e6 量级的值)",
+    "file": "[\\\\/]charLightCommon\\.wgsl$",
+    "edits": [{ "from": "vec3<f32>(1e-6), abs(dn)", "to": "vec3<f32>(1.00001e-6), abs(dn)" }],
+    "cases": "光照片段 / CLC L2"
+  },
+  {
+    "id": "clc-hash",
+    "desc": "hash12 的常数 .1031 → .1032(看 ×512 输入下 hash 那块真的在逐位比)",
+    "file": "[\\\\/]charLightCommon\\.wgsl$",
+    "edits": [{ "from": "p.xyx) * .1031)", "to": "p.xyx) * .1032)" }],
+    "cases": "光照片段 / CLC L2"
+  },
+  {
+    "id": "bake-lamp-scale",
+    "desc": "烘焙漫反射 albedo × 灯照度多乘 1.002(0.2%,亮处约 2 个半精度 ulp;看烘焙的 1 个半精度 ulp 放宽还抓不抓得住)",
+    "file": "[\\\\/]SceneLightingPass\\.ts$",
+    "edits": [{ "from": "let surf = painting + albedo * lampE + specE * surfK;", "to": "let surf = painting + albedo * lampE * 1.002 + specE * surfK;" }],
+    "cases": "场景光照 / 烘焙"
+  },
+  {
+    "id": "scene-two-sided",
+    "desc": "场景光照灯循环的双面面光位读错位(flags & 2 → flags & 1)",
+    "file": "[\\\\/]SceneLightingPass\\.ts$",
+    "edits": [{ "from": "(flags & 2) != 0, vis);", "to": "(flags & 1) != 0, vis);", "all": true }],
+    "cases": "场景光照 / 烘焙 · 五种灯"
+  },
+  {
+    "id": "scene-fp-drop-y",
+    "desc": "细节法线的像素足迹 fp 丢掉 y 导数(遮罩改 1/4 分辨率后表面遮罩用例还抓不抓得住)",
+    "file": "[\\\\/]SceneLightingPass\\.ts$",
+    "edits": [{ "from": "let fpAll = max(max(length(dpdx(P)), length(dpdy(P))), 1e-3);", "to": "let fpAll = max(length(dpdx(P)), 1e-3);" }],
+    "cases": "场景光照 / 烘焙 · 反光位"
+  },
+  {
+    "id": "scene-fp-scale",
+    "desc": "像素足迹 fp 整体放大 10%(淡出区间错位)",
+    "file": "[\\\\/]SceneLightingPass\\.ts$",
+    "edits": [{ "from": "let fpAll = max(max(length(dpdx(P)), length(dpdy(P))), 1e-3);", "to": "let fpAll = max(max(length(dpdx(P)), length(dpdy(P))), 1e-3) * 1.1;" }],
+    "cases": "场景光照 / 烘焙 · 反光位"
+  },
+  {
+    "id": "scene-detail-axis",
+    "desc": "细节法线取样平面换轴(地面取 P.xz → P.zx)",
+    "file": "[\\\\/]SceneLightingPass\\.ts$",
+    "edits": [{ "from": "{ uv = P.xz; ax = 1; }", "to": "{ uv = P.zx; ax = 1; }", "all": true }],
+    "cases": "场景光照 / 烘焙 · 反光位"
+  },
+  {
+    "id": "scene-ripple-time",
+    "desc": "雨点涟漪相位不吃时钟(fract(t·RAIN_RATE + h3) → fract(h3))",
+    "file": "[\\\\/]SceneLightingPass\\.ts$",
+    "edits": [{ "from": "let ph = fract(t * RAIN_RATE + h3);", "to": "let ph = fract(h3);" }],
+    "cases": "场景光照 / 烘焙 · 反光位"
+  },
+  {
+    "id": "contact-discard",
+    "desc": "接触 AO 的 discard 阈值 0.003 → 0.0031(看阈值平局豁免只放过真平局、不放过阈值写错)",
+    "file": "[\\\\/]EntityShadow\\.ts$",
+    "edits": [{ "from": "if (alpha < 0.003) { discard; }", "to": "if (alpha < 0.0031) { discard; }", "all": true }],
+    "cases": "实体 / contact 接触 AO:简单"
+  }
+]

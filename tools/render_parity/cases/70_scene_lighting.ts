@@ -19,6 +19,9 @@
  * 像素足迹 fp 换常数 / 丢掉 y 导数、光晕强度不除回 wuPerQUnit²、双面面光位失效、GI 棋盘奇偶、
  * 位移图不除覆盖度、雾的相机侧高度符号、雨点涟漪相位不吃时钟(这一条最早没抓到:k 太大时涟漪整个淡没,
  * 见水面用例上方的注释)。GL 侧:移植前后两份源码各跑一遍全套对照,WebGL 输出逐字节相同(哈希比对)。
+ * 其中跟烘焙容差 / 表面遮罩相关的几条已写进 mutants.json(`run.mjs --mutants` 当场复跑):fp 丢 y 导数 / 放大 10%、
+ * 细节法线换轴、雨纹相位不吃时钟、双面面光位,外加「漫反射多乘 1.002」证明 1 个半精度 ulp 的放宽抓得住 0.2% 的错
+ * (2026-09-27 RTX 4070 SUPER 全部变红)。
  */
 import { RenderTexture, type Container, type Texture } from 'pixi.js';
 import type { ParityCase, ParityEnv, ParityTarget } from '../harness';
@@ -41,10 +44,15 @@ const P = '场景光照 / ';
  * 在过渡区不是同一串指令;把它换成两份规范共同的定义式 t·t·(3−2t) 后全部用例 f32 逐位相同。偶尔有一个
  * 分量正好压在半浮点舍入边界上,就翻成 1 ulp。本 pass 自己的 smoothstep(细节法线)已按定义式手写
  * (内建那个曾让镜面差到 50 ulp:GGX 近峰值 dd = nh²(a2−1)+1 相消放大);灯锥在共享片段里,不归本文件改。
- * ⚠ 于是 1e-3 只容得下值 < 2 处的 1 ulp 翻转。改了用例数据后若在更亮处出现 1 ulp,照上面的办法到 f32
- * 里确认是不是只有灯锥那几 ulp,再说;不要为它放宽容差。
+ * 1e-3 只容得下值 < 2 处的 1 个半精度 ulp(2^-10 ≈ 9.8e-4);值 ≥ 2 处 1 ulp = 2^-9 ≈ 2e-3 已经比它大,所以烘焙用例另许
+ * **1 个半精度 ulp**(BAKE_ULPS,judge 按目标格式取 ulp)—— 口径与值 < 2 处一样,都是「半精度写回时最多翻一格」。
+ * 真显卡(2026-09-27,RTX 4070 SUPER,参考 ANGLE-D3D11 / FXC、候选 Dawn-D3D12)实测正是这一格:「五种灯」3 个分量、
+ * 「水面缺省粗糙度」1 个分量,f32 下两侧只差 4.6e-6 / 3.8e-5(面光 acos 在 FXC 上是多项式、GGX 尖瓣把末位差放大),
+ * 恰好跨过 2.46875 / 2.34375 这两个半精度格点,写回时各落一边。**不是 1 格就不是这个原因**:照上面的办法把 RT
+ * 临时换成 rgba32float 逐项比,先查翻译,不要为它再放宽。
  */
 const TOL_BAKE = 1e-3;
+const BAKE_ULPS = 1;
 /**
  * 显示(rgba8unorm,按 0..1 归一):最多 1 个 LSB(整链用例里的灯锥底噪理论上能翻一个 8 位舍入)。
  * 实测 5 个显示 / 整链用例两侧**逐位相同**。
@@ -375,6 +383,7 @@ function bakeCase(name: string, s: BakeSetup, tolerance = TOL_BAKE): ParityCase 
     height: s.scene.h * s.steps.length,
     target: 'rgba16float',
     tolerance,
+    ulps: BAKE_ULPS,
     build: produceOnly,
     produce: (env) => runBake(env, s),
   };
@@ -382,10 +391,23 @@ function bakeCase(name: string, s: BakeSetup, tolerance = TOL_BAKE): ParityCase 
 
 const SCENE_A: SceneSetup = { w: 72, h: 48, seed: 701, ppu: 32, depthMapping: [0, 2, -1], tiltDeg: 40, wuPerQUnit: 100 };
 
-/** 表面材质遮罩(布置库 surfaces 画出来的那张;半分辨率):r 反光 g 粗糙度 b 水面 */
+/**
+ * 表面材质遮罩(布置库 surfaces 画出来的那张):r 反光 g 粗糙度 b 水面,线性过滤。
+ *
+ * ⚠ 对照用 **1/4 分辨率**(运行时是 1/2),为的是躲开 master 在 ANGLE-D3D11 上的一处已知分歧:
+ * master 的 GLSL 在 `if (surfK > 0.0)` 分支**里面**取 dFdx / dFdy(P)(细节法线的像素足迹 fp)。2×2 像素组在这个
+ * 分支上分叉时(一个像素 surfK > 0、邻居 surfK = 0)导数是未定义行为:FXC 取到 0,fp 落到下限 1e-3;本分支的 WGSL
+ * 把导数提到分支前(dpdx 只许在一致控制流里),D3D12 上是对的(2026-09-27 RTX 4070 SUPER:只有 x = 52 那一列、
+ * 镜面差 1~4%,fp 0.391 / 0.487 对 master 的 1e-3;在 GLSL 里把导数挪到分支外也没用,FXC 又挪回去)。
+ * 半分辨率 + 线性过滤时,surfK 的 0 / 非 0 交界**必定**落在某个 2×2 像素组中间(不反光块在右 / 下:第一个 0 像素是
+ * 2D + 1;在左 / 上:最后一个 0 像素是 2D − 2;D = 交界处的遮罩纹素号),无论把不反光块挪到哪;1/4 分辨率时分别是
+ * 4D + 2 / 4D − 3,交界落在两个像素组之间,像素组不分叉,两侧都不碰这条未定义行为。遮罩里仍有线性过滤出来的分数值(0.125 / 0.375 …),分支内外、水面过渡照样都覆盖到。
+ * 这是 master 的毛病(游戏里只在带反光位的灯下、反光遮罩边缘一条 1 像素的高光接缝),不改游戏着色器。
+ */
 function surfaceMask(ctx: BakeCtx, roughWater: number): Texture {
   const [w, h] = ctx.scene.geo.depthSize;
-  const mw = Math.max(8, Math.round(w / 2)), mh = Math.max(8, Math.round(h / 2));
+  if (w % 4 || h % 4) throw new Error(`遮罩按 1/4 分辨率对齐 2×2 像素组,场景尺寸要是 4 的倍数(现在 ${w}×${h})`);
+  const mw = w / 4, mh = h / 4;
   return ctx.own(ctx.env.dataTexture({
     width: mw, height: mh, seed: 777, scaleMode: 'linear',
     fill: (x, y, c) => {

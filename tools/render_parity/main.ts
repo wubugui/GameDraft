@@ -4,7 +4,7 @@
  * - 主页面(候选服务上):开两个 iframe —— `?side=gl` 指向**参考服务**(`?ref=<参考服务地址>`,master 的 src + Pixi WebGL),
  *   `?side=gpu` 指向本服务(本分支的 src + engine2d WebGPU);各自只建一个渲染器把全部用例画完回读,
  *   结果 postMessage 回主页面逐像素比较。
- * - `?case=关键字` 只跑名字含关键字的用例;`?images=0` 不出缩略图。
+ * - `?case=关键字` 只跑名字含关键字的用例(`a|b` = 含任一);`?images=0` 不出缩略图。
  * 结果挂在 `window.__parity`(run.mjs 读它)。
  */
 import { createSideRenderer } from '@parity-side';
@@ -34,7 +34,9 @@ async function loadCases(): Promise<{ cases: ParityCase[]; loadErrors: string[] 
       loadErrors.push(`${k}:${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  return { cases: cases.filter((x) => !only || x.name.includes(only)), loadErrors };
+  // `?case=a|b`:名字含任一关键字
+  const keys = only ? only.split('|').filter(Boolean) : [];
+  return { cases: cases.filter((x) => !keys.length || keys.some((k) => x.name.includes(k))), loadErrors };
 }
 
 type SideMessage =

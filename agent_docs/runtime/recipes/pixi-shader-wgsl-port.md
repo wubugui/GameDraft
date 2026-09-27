@@ -96,6 +96,20 @@ master 已知会抛错、本分支已修的用例标 `refKnownError`。
 - `bool` / 整型 uniform:Pixi 的 uniform 类型串只有 f32/i32/u32 系列;GLSL 里 `if (uFlag > 0.5)` 这类照搬。
 - 浮点目标(`rgba16float`)对照时容差按值域给(1e-3 相对量级),8 位目标 `2/255` 起;**不许为了过对照调大容差掩盖真差异**,
   差异集中在某片区域时先查翻译。
+- **真显卡上两侧是两家编译器**(参考 ANGLE → D3D11 / FXC,候选 Dawn → D3D12;无头 SwiftShader 上两侧才是同一个),
+  同一串浮点式子本来就不逐位相同(2026-09-27 RTX 4070 SUPER 逐条取证,19 条不一致没有一条是翻译不等价):FXC 不开 IEEE 严格,
+  把 `a*b+c` 合并成乘加、折叠常量(`*500*.1031` → `*51.55`)、`acos/asin/atan` 展开成多项式(acos 最大误差 6.8e-5 rad);
+  Dawn 不合并、除法比精确值差 1 ulp。**先判是不是编译器差**:`--browser-arg=--use-webgpu-adapter=d3d11` 让 Dawn 也走 FXC
+  再跑,差消失就是编译器差(乘加合并那类 Dawn 在 FXC 上照样开 IEEE 严格,不会消失,要靠 CPU 模型逐位吻合来认)。认定之后
+  按下面的顺序处理,每一处都在用例旁写依据、并补一条变异自检:
+  - 先改输入让两家都精确:乘 2 的幂代替任意常数(折叠与否同值)、`c*2-0.5` 这类精确式子代替 `c*1.6-0.3`、方向取格点避开
+    1e-4 级小分量、采样点离纹素边界留量(最近邻恰好压在边界上两侧 1 ulp 就各取一格)、阈值 / 遮罩跳变别让 2×2 像素组分叉;
+  - 值大到绝对容差放不下 1 个 ulp 的输出(f32 ≥ 1024、半精度 ≥ 2):用例给 `ulps`(按目标格式算 ulp),数量取理论上界;
+  - 有已知误差界的内建(FXC 的 acos 多项式):`toleranceAt` 只给那一块 tile / 那几个通道,容差 = 误差界推出来的式子;
+  - discard 阈值上的平局(一侧画一侧不画):`thresholdTie` 只豁免「一侧 = 空、一侧 = 压着阈值画出来的颜色」的像素,限个数。
+- **master 的 GLSL 在非一致分支里取 `dFdx/dFdy` 是未定义行为**:2×2 像素组在分支上分叉时 FXC 取到 0(场景光照 surfK > 0
+  那一支,反光遮罩边缘一列),WGSL 把导数提到分支前反而对。对照用例让遮罩跳变落在偶数列(见 70_scene_lighting 的 surfaceMask),
+  不改游戏着色器;Dawn 改走 D3D11 时本分支也会被 FXC 挪回分支里(FXC 发现结果只在分支里用)。
 - **混合表以 Pixi WebGL(= master)为准**:原版 Pixi WebGPU 的 `add` alpha、`none` 的 alpha、`erase` 的颜色因子与 WebGL 不同;
   engine2d 的混合表照 WebGL 那一份(tools/engine2d_parity 逐位核过)。
 - WebGL 侧 Pixi 从不改 `UNPACK_ALIGNMENT`(缺省 4):单 / 双通道缓冲纹理行宽不是 4 字节倍数时 **WebGL 读偏、WebGPU 读对**。
@@ -129,4 +143,8 @@ master 已知会抛错、本分支已修的用例标 `refKnownError`。
 PLAYWRIGHT_CORE=<playwright-core 包目录> RENDER_PARITY_BROWSER=<chrome 可执行文件> node tools/render_parity/run.mjs --case <前缀>
 ```
 `--base <提交>` 换基准(缺省 origin/master);`--serve` 只起两个服务、打印对照页地址,浏览器里看参考 / 候选 / 差异缩略图。
+`--channel chrome|msedge` 选已装浏览器,`--port N` 换端口(参考 N、候选 N+1),`--browser-arg=<参数>` 追加启动参数,
+`--json <文件>` 另存结果。**变异自检** `--mutants`:按 `tools/render_parity/mutants.json` 逐条只在候选侧内存里把运行时源改坏一处,
+要求它点名的用例当场变红(漏网一条就退出码非零);改了容差 / 用例输入之后必跑,新加放宽要在清单里补一条对应的变异。
+2026-09-27 RTX 4070 SUPER:Edge 有头 / 无头、Chrome 有头、Dawn 改走 D3D11 都是 176/176,变异 14/14 抓住。
 整局截图对照见 `tools/render_parity/game_sweep.mjs`(engine2d 卡)。

@@ -380,13 +380,32 @@ function contactParams(def: Parameters<typeof resolveContactAo>[0], sources: (fo
   };
 }
 
+/**
+ * 彩色接触 AO 的 discard 平局:CONTACT_FRAG 在 alpha < 0.003 时 discard,否则输出**未预乘**的 (阴影色, alpha),
+ * 按预乘混合叠上去 ⇒ 压着阈值画出来的像素 = 阴影色 + 底色 × (1 − 0.003),与被丢弃的像素(= 底色)差一整个阴影色。
+ * alpha 由 capsuleOmni 里的 asin / atan / sin / cos 定,FXC(参考)与 Dawn-D3D12(候选)在这里稳定差 ~2e-6
+ * (FXC 把反三角展开成多项式);阈值等高线上的像素只要 alpha 落在 0.003 ± 2e-6 里就一侧画一侧不画。
+ * 2026-09-27 RTX 4070 SUPER 实测正好 1 个:[118,28] 参考 0.0029990(丢)/ 候选 0.0030010(画),差 0.298;
+ * 两侧顶点 f32 逐位相同、Dawn 改走 D3D11 后逐位相同。平局带有多宽:变异 contact-discard(阈值 0.003 → 0.0031)
+ * 多丢 14 个彩色像素 ⇒ ±2e-6 的带里期望 ~0.6 个,改参数只是换个位置重掷。所以只豁免「一侧 = 底色、另一侧 =
+ * 阴影色 + 底色 × 0.997」的像素,最多 3 个;别的差照常算(黑色阴影的平局差 < 1 LSB,本来就在容差里)。
+ * 那条变异(阈值写错 3%)照样变红:14 个里豁免 3 个,余下 11 个超容差。
+ */
+const TIE_SHADOW_COLOR: [number, number, number] = [0.2, 0.1, 0.3];
+const CONTACT_DISCARD_TIE: ParityCase['thresholdTie'] = {
+  empty: GREY,
+  drawn: [...TIE_SHADOW_COLOR.map((c, i) => c + GREY[i] * (1 - 0.003)), 1],
+  max: 3,
+};
+
 const contactCases: ParityCase[] = [
   {
     name: '实体 / contact 接触 AO:简单 AO(无方向)',
     width: SCENE_W, height: SCENE_H, tolerance: TOL8, clearColor: GREY,
+    thresholdTie: CONTACT_DISCARD_TIE,
     build: (env) => shadowScene(env, sceneContext(env, { occluders: OCCLUDERS }), [
       { fx: 72, fy: 84, env: { az: 125, darkness: 0, contact: 0.75 }, contactAo: contactParams({ directional: false }, () => []) },
-      { fx: 36, fy: 100, facing: -1, env: { az: 125, darkness: 0, contact: 0.9, contactSize: 1.6 }, color: [0.2, 0.1, 0.3],
+      { fx: 36, fy: 100, facing: -1, env: { az: 125, darkness: 0, contact: 0.9, contactSize: 1.6 }, color: TIE_SHADOW_COLOR,
         contactAo: contactParams({ directional: false, spread: 0.6 }, () => []) },
     ]),
   },
