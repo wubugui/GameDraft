@@ -46,9 +46,16 @@ export const ROW_SHIFT_NOTE = '≥95% 可由 ±1 行位移解释';
 export const INFO_PUMP_JITTER = '装载帧数抖动(泵不确定)';
 /** --freeze pump:每侧两轮各自一致、但 A、B 装载帧数不同 = 两边装载等的定时器 / rAF 个数不同(真差异,判失败) */
 export const PUMP_AB_FLAG = '装载帧数 A≠B';
+/**
+ * 两边都是墙钟毫秒时间戳(Date.now,≥1e12)且差不到一帧的状态路径:只提示、不判状态分歧。
+ * 来源是装载期事件的亚帧时刻——master 揭幕闸的着色器预热 wait(0) 接力每跳推假时钟 1 ms,叙事跳转在装载期推的迁移
+ * 留痕(narrativeState.recentTrace[*].at)A 晚 3 ms;同步点对齐之后的时间轴两边严格相同,这类差只在装载期留下的时间戳上。
+ */
+export const INFO_SUBFRAME_TS = '亚帧时间戳差(装载期,不计)';
+const SUBFRAME_MS = 1000 / 60;
 
 /** 这个标记算不算失败:偶发新报错永远不算;「≥95% 可由行位移解释」的像素差在 --ignore-row-shift 下不算 */
-export const isFailFlag = (f, opts) => f !== INFO_FLAG && f !== INFO_BOOT_FLAKY && f !== INFO_PUMP_JITTER && !(opts?.ignoreRowShift && f.includes(ROW_SHIFT_NOTE));
+export const isFailFlag = (f, opts) => f !== INFO_FLAG && f !== INFO_BOOT_FLAKY && f !== INFO_PUMP_JITTER && f !== INFO_SUBFRAME_TS && !(opts?.ignoreRowShift && f.includes(ROW_SHIFT_NOTE));
 
 /**
  * --freeze pump 的装载帧数对比(各轮 frames/ticks)。没有泵记录(别的冻结模式)⇒ null。
@@ -204,7 +211,14 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
     const sAB2 = twoRounds ? diffPaths(f.A2, f.B2) : null;
     const noisy = new Set([...sAA, ...sBB]);
     const noisyList = [...noisy].sort().slice(0, 30);
-    const stateDiv = [...sAB1].filter((p) => (!sAB2 || sAB2.has(p)) && !noisy.has(p)).sort();
+    const subframeTs = (p) => [[f.A1, f.B1], [f.A2, f.B2]].every(([a, b]) => {
+      if (!a || !b) return true;
+      const x = Number(a.get(p)), y = Number(b.get(p));
+      return x >= 1e12 && y >= 1e12 && Math.abs(x - y) < SUBFRAME_MS;
+    });
+    const stateAll = [...sAB1].filter((p) => (!sAB2 || sAB2.has(p)) && !noisy.has(p)).sort();
+    const stateTs = stateAll.filter(subframeTs);
+    const stateDiv = stateAll.filter((p) => !stateTs.includes(p));
     const stateDiffs = stateDiv.slice(0, 60).map((p) => ({ path: p, A: showVal(f.A1?.get(p)), B: showVal(f.B1?.get(p)) }));
 
     // 本检查点新出现的报错(相对整个场景里 A 的报错集合)
@@ -220,6 +234,7 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
     if (pixelDiverged) flags.push(`整页像素超噪声${pxCanvas.diverged ? rs(px) : '(画布层在噪声内 → 差在 DOM 覆盖层)'}`);
     if (pxCanvas.diverged) flags.push(`画布层像素超噪声${rs(pxCanvas)}`);
     if (stateDiv.length) flags.push('状态分歧');
+    if (stateTs.length) flags.push(INFO_SUBFRAME_TS);
     if (cpNewStable.length) flags.push('新增报错');
     else if (cpNew.length) flags.push(INFO_FLAG);
     if (px.sameSize === false) flags.push('尺寸不同');
@@ -230,7 +245,7 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
       tick: c.A1?.tick ?? c.B1?.tick ?? null,
       px,
       pxCanvas,
-      state: { divergent: stateDiv.length, noisyPaths: noisy.size, noisyList, diffs: stateDiffs },
+      state: { divergent: stateDiv.length, noisyPaths: noisy.size, noisyList, diffs: stateDiffs, subframeTs: stateTs.length, subframeTsList: stateTs.slice(0, 10) },
       summary: {
         A: c.A1 ? { scene: c.A1.probe?.sceneId, player: c.A1.probe?.player, dialogue: c.A1.probe?.playerDialogue?.text ?? null } : null,
         B: c.B1 ? { scene: c.B1.probe?.sceneId, player: c.B1.probe?.player, dialogue: c.B1.probe?.playerDialogue?.text ?? null } : null,
