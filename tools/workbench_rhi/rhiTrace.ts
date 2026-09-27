@@ -85,7 +85,8 @@ export function traceRhi(device: RhiDevice): RhiTraceRecorder {
   const origWriteTexture = dev.writeTexture as (t: object, data: ArrayBufferView, region?: Obj) => void;
   dev.writeTexture = (t: object, data: ArrayBufferView, region?: Obj) => {
     origWriteTexture.call(device, t, data, region);
-    content.set(t, `w:${fnv1a(bytesOf(data))}${region ? `@${JSON.stringify(region)}` : ''}`);
+    // 空后端的 uploadImage 内部以无数据调 writeTexture：内容由下面 uploadImage 的包装记
+    if (data) content.set(t, `w:${fnv1a(bytesOf(data))}${region ? `@${JSON.stringify(region)}` : ''}`);
   };
   const origUploadImage = dev.uploadImage as (t: object, image: unknown, opts?: Obj) => void;
   dev.uploadImage = (t: object, image: unknown, opts?: Obj) => {

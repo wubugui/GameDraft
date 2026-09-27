@@ -110,3 +110,74 @@ node tools/vfx_workbench/tests/parity/run.mjs --python <py> --out <目录>      
   样板见 `tools/breathing_workbench/tests/parity/run.mjs` 的出片例。
 - 测试：`offscreenReadback.test.ts`（vitest，空后端：画进的是成品尺寸的纹理不是画布、拷贝当场发出、行序原样、BGRA→RGBA、报错）；
   真 GPU 的像素 / 行序由接它的工作台自检覆盖（呼吸工作台 selftest S10「回读自上而下」、S17 出片）。
+
+## 3D 调试件（`debug3d.ts` + `debug3d.wgsl`，2026-09-27）
+
+工具里**游戏没有对应效果**的 3D 调试视图（粒子 / 地形 / 声学 / 轨迹四台的 `viewer/view3d.js`：场景深度网格贴背景、
+网格线、线框、标记、碰撞格、反射面、幽灵卡片）共用的一套画法。**着色器只有 `debug3d.wgsl` 一份、归接入层所有**，
+页面不写任何 GLSL / WGSL、不碰图形 API；走游戏同一套 RHI（只有 WebGPU，不回落）。
+
+| 文件 | 干什么 |
+|---|---|
+| `debug3d.ts` | 页面侧（命名空间 `debug3d`）：`createView` / `Debug3DView`、纯函数（矩阵约定换算、投影、折线、射线打网格）、页内自检 `selfCheck` |
+| `debug3d.wgsl` | 唯一的着色器：纯色 / 贴图×颜色 / 顶点色 / 点（屏幕方片）/ 宽线（屏幕四边形）五组入口，共用一组绑定 |
+| `debug3dGlobals.ts` | 3D 调试件不许改宿主页面的全局：luma 依赖的 probe.gl 求值时无条件写 `globalThis.probe`（声学台的「试听」就叫 `probe`），这里先记后还 |
+| `debug3d_bundle.py` | Python：把 `debug3d.ts` 打成 `<工作台>/viewer/_gen/debug3d.bundle.js`（`build.ensure`，按需、不进 git）；`ROUTE = '/gen/debug3d.bundle.js'` |
+| `debug3d.test.ts` / `debug3dGlobals.test.ts` | vitest（空后端）：矩阵 / 投影 / 射线纯函数、命令流（pass / 管线状态 / 统一数据 / draw 参数 / 确定且灵敏）、只有一份 WGSL、设备恢复重建、不盖页面全局 |
+| `tests/test_debug3d.py` | pytest：包打得出来且带着色器、四个 view3d 里没有 WebGL / GLSL、四个 serve 都有路由 |
+
+### API（页面是原生 JS）
+
+```js
+const rt = await import('/gen/debug3d.bundle.js');                       // serve：if (u.path == debug3d_bundle.ROUTE) debug3d_bundle.ensure(GEN_DIR)
+const g = await rt.debug3d.createView(canvas, { background: [r, g, b] }); // 自己的 WebGPU 设备（画布不透明）；拿不到抛 Debug3DError（带人话原因）
+// 常驻资源（CPU 源留着：设备丢失恢复后下一帧自动重建重传）
+const mesh  = g.createMesh({ vertices, indices });           // 贴图网格：xyz+uv 交错 5 float（服务端 /api/scene_mesh 原样）
+const cells = g.createMesh({ positions });  cells.setColors(rgbaPerVertex);   // 顶点色网格（颜色随时换，下一帧上传）
+const tex   = g.createTexture(img);                          // 不预乘、不翻转（与 WebGL texImage2D 缺省相同；uv (0,0) = 图左上）
+// 每次重画：viewProj = 页面自己的相机矩阵（列主序，缺省 GL 裁剪约定 z∈[-1,1]；拾取 / 叠加层用的同一个）
+g.render(mvp, (d) => {
+  d.mesh(mesh, { texture: tex, tint: [k, k, k, 1] });        // 缺省深度测试 + 写、不混合
+  d.mesh(cells, { depth: 'test', blend: true, alphaCutoff: 0.001 });
+  d.lines(xyz, { color: [1, 1, 1, 0.09] });                  // 每两点一段；strip: true = 折线；width > 1 = 屏幕空间四边形
+  d.points(xyz, { color, size: 9, depth: 'off' });           // 边长 size CSS 像素的屏幕方片（GL 点精灵的语义）
+  d.triangles(xyz, { color, depth: 'test' });                // 纯色三角形
+  d.quad(corners4, { texture, color: [1, 1, 1, alpha], depth: 'off' });   // 公告板（没贴图 = color 填充）
+}, { pixelRatio: devicePixelRatio });
+g.readPixel(cssX, cssY); g.readPixels(); g.countDrawnPixels();           // 同任务重画再回读（测试 / 自检）
+rt.debug3d.selfCheck(g, { project, ray, cssSize, mesh, markers });       // 真 GPU 像素断言（见下）
+```
+
+- `depth`：`'test-write'`（缺省；≤ 测试 + 写深度 = WebGL 缺省）/ `'test'`（测不写 = `depthMask(false)`）/ `'off'`（不测不写 = 关 `DEPTH_TEST`）。
+  除贴图网格外一律源 alpha 混合；清屏深度 1；4× MSAA（= WebGL `antialias:true`，`antialias:false` 关）。
+- **相机归页面**：四台的拾取、gizmo、2D 叠加层都用页面自己的矩阵（`common.js` / `mathx.js` 的左手 lookAt + GL 约定 perspective / ortho），
+  这里原样吃同一个矩阵，只在 CPU 上把 z 换成 WebGPU 的 [0, 1]（`glToWebGpuClip`，x / y / w 逐位不变）——画出来的与点出来的是同一个投影。
+  正交（near 取负、机位背后也画）与透视只是矩阵不同。
+- **帧内一次写完**：每帧先把全部动态顶点（三条流：xyz / 线段对 / 公告板）与每次 draw 的统一数据（256 字节一格：矩阵 + 颜色 + 点径线宽 + 目标尺寸）
+  写进缓冲，再录一个 pass（RHI 不许录制期写本批已引用的缓冲）；缓冲不够就翻倍重建。
+- **测试钩子** `g.debugDraw = (d) => …`：在页面画法之后再录一段（自检插探针点用），平时 null。
+- 页面在拿不到 WebGPU 时（离屏 Qt / 驱动不行）：视图逻辑（相机、拾取、gizmo、叠加层、编辑）照常，叠加层正中写原因（四台 view3d 的 `drawGpuNote3`）。
+
+### 页内自检（`selfCheck`，四台 selftest.js 的 S1g 共用）
+
+页面先 `draw()` 一帧，再给：页面自己的 `project` / `ray`、画布 CSS 尺寸、场景网格的 CPU 源、页面按画的先后列出的标记。断言：
+1. 画面非空（与清屏色不同的像素 ≥ 5%）、这帧没有设备诊断错误、draw 数 > 0；
+2. **标记颜色**：从后往前取一个实心、在画内、不被后画的标记盖住的标记，在页面投影出的位置读回来就是它的颜色（±3）——投影 == 画法；
+3. **深度遮挡**：画面中部螺旋取点，用页面的拾取射线 `raycastMesh` 打到网格真实表面，表面后 δ 处插品红探针（测深度）→ **每一处**像素都与不插时逐字节相同；
+   表面前 δ 处 → 至少一处看得见（页面别的写深度的细线恰好横在那个像素上时前探针被挡不算错）；且探针投影与射线像素差 < 0.75 px。
+
+离屏 Qt 拿不到 WebGPU 时 S1g 记 `SKIP`（带原因）；各台 pytest 另在真 GPU 的 Chrome 里跑同一份 selftest.js（`--no-skip`），外加一条冒烟（画面非空、控制台无 error、截图）。
+粒子 / 地形两台的 Chrome 自检要与桌面壳同样的隔离：`--serve --selftest-env <目录>`（布置库 / 雷电样式库 / 作者层 / 预览 / 草稿指到该目录、游戏地址指死端口）。
+
+### 与迁移前 WebGL2 版的差异（参考图并排见迁移报告）
+
+- 线宽：WebGL 在 Chrome 上 `lineWidth` 恒为 1，旧代码里写的 `width 2`（轨迹台选中段 / 抛体初速线、地形台选中区域）、`1.5`（地形笔刷圈）从没生效；
+  现在按写的宽度画（屏幕空间四边形）。宽度 1 的线仍是原生 1 设备像素线。
+- 线段光栅化（MSAA 下的覆盖）与 WebGL（ANGLE / D3D11）略有不同：细线与半透明网格线边缘有 ±1 像素的差；网格贴图、标记位置 / 颜色一致。
+- 轨迹台旧画布是带 alpha 的（`getContext('webgl2', {antialias:true})` 缺省 alpha:true），半透明线在画布上留下 alpha < 1 的像素让页面底色透出一点；现在画布不透明。
+
+```bash
+npx vitest run tools/workbench_rhi                                   # 3D 调试件无 GPU 单测
+sh scripts/py.sh -m pytest tools/workbench_rhi -q                    # 包 / 页面不含 WebGL / serve 路由
+sh scripts/py.sh -m pytest tools/<粒子|地形|声学|轨迹>_workbench/tests/test_selftest.py -v   # Qt 自检 + Chrome 自检 + 冒烟
+```
