@@ -167,7 +167,12 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
       const ab2 = twoRounds ? pair('A2', 'B2') : null;
       const aa = twoRounds ? pair('A1', 'A2') : null;
       const bb = twoRounds ? pair('B1', 'B2') : null;
-      const abPct = ab1 && ab2 ? Math.min(ab1.badPct, ab2.badPct) : ab1 ? ab1.badPct : null;
+      // 交叉配对(A1↔B2、A2↔B1)也算:两边都会随机落进同一组变体时(同一份代码自己两局就不同,例如枯井一拍 A1 = B2、A2 = B1),
+      // 只看同轮配对会把「落进了不同变体」误判成 A/B 差;任一配对逐像素相同,就说明 B 画得出与 A 相同的这一帧
+      const abx1 = twoRounds ? pair('A1', 'B2') : null;
+      const abx2 = twoRounds ? pair('A2', 'B1') : null;
+      const abAll = [ab1, ab2, abx1, abx2].filter(Boolean).map((d) => d.badPct);
+      const abPct = abAll.length ? Math.min(...abAll) : null;
       const noisePct = Math.max(aa?.badPct ?? 0, bb?.badPct ?? 0);
       const floorPct = noisePct * opts.noiseFactor + opts.margin;
       // 出图:A1|B1|热图(有任何像素差时);A/A、B/B 有差时各出一张,方便看噪声长什么样
@@ -192,7 +197,7 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
       if (aa && aa.changedPct > 0) writeTrip('A1', 'A2', aa, 'A1-A2');
       if (bb && bb.changedPct > 0) writeTrip('B1', 'B2', bb, 'B1-B2');
       return {
-        ab: abPct === null ? null : +abPct.toFixed(4), ab1: pxStat(ab1), ab2: pxStat(ab2), aa: pxStat(aa), bb: pxStat(bb),
+        ab: abPct === null ? null : +abPct.toFixed(4), ab1: pxStat(ab1), ab2: pxStat(ab2), abx1: pxStat(abx1), abx2: pxStat(abx2), aa: pxStat(aa), bb: pxStat(bb),
         noisePct: +noisePct.toFixed(4), floorPct: +floorPct.toFixed(4), diverged: abPct !== null && abPct > floorPct, sameSize: ab1 ? ab1.sameSize : null,
         rowShiftOnly: rowShiftOnly(ab1, ab2),
       };
