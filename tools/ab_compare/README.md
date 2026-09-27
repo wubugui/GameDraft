@@ -105,6 +105,37 @@ NPC:交互 → 补完打字机 → 推进 → 选第 0 项)、minigame(`startMin
 = Playwright 真键盘 / 真鼠标(面板快捷键只能这样按),不注入游戏代码。跑马梁的走位类条目先用 `debugSetNarrativeState`
 把 wrapper 置到终态「下梁」,免得人一靠近树就进风口过场。
 
+**mainline**(`mainline.mjs`):按主线顺序把游戏**玩一遍**。`dev_narrative_warps.json` 的每个跳转点一条(`找吃的` 太长拆成
+`找吃的` + `找吃的~赌坊` 两条),`?narrativeWarp=` 冷启动后按叙事状态机把这一拍推完,结尾开一圈面板(I / Tab / R / B / M / L / Esc);
+另有 `mainline__chain`:从「听书」起同一次启动按序接完全部拍。`--beats <拍,…>` 过滤(拍名、条目名前缀、`chain`)。
+
+- 节拍从数据推:对白图逐节点走(line 的拍数、choice 的 promptLine、runActions 里的过场 / 长按 / 水下小游戏 / 切场 / 说明卡 /
+  发物 / 发信号 → 信号落到的状态 onEnter 再演什么),过场按步骤表估帧数与点击数,长按按 fillSeconds 与 interrupt 停点,
+  水下小游戏按实例 bounds 算要点的箱子在屏幕上的位置,区按多边形取内点把人放进去(onEnter 照常触发)。
+- 推进:每轮 `completeCutsceneText` + `completeDialogueText` + `playerAdvance`(图对话 / 脚本台词)+ `playerTap`(过场台词 /
+  点击继续)+ 一个真键:`Digit<n>`(下一组选项要选的那项:DialogueUI / ActionChoiceUI 都认数字直选;预测差一两句也照样选对)
+  或 `ShiftLeft`(不选任何项的「任意键」:关说明卡 / 检视框)。选项缺省第 0 项;喊名要喊对的从图里找发 `*_right` 的那项。
+  长按全程不松 Space(每轮再发一次 repeat keydown:长按条认、对白不认),interrupt 带出来的台词靠 playerAdvance 推。
+- 跳转点做不到的地方(条目 note 里点名):夜巡 / 出南门 / 六图版先重放赌坊对白里的 `advanceTimeTo 夜`;出南门重放打更人给的
+  东西 + 0 价洋火、`setActiveIgniter`、纤藤的 use 动作;望山弹的地图节点坐标推不出 → `debugSwitchScene 跑马梁` 代替点地图;
+  「义庄镇尸」「终幕」两个跳转点最后一跳自带要点击的演出、在 dev_room 里等 → 就绪永远等不到,改从「招募」冷启动再按原 recipe
+  逐跳补(义庄从管事对白 + 进门区正常进)。
+- 跳转点在 master 上**不一定落得到 recipe**:dev 模式不吃 `startupFlags`,主图 `flow_xungou_main` 冷启动停在 `state_1`,
+  从那里到 `s02_beishi` 起那一串没有迁移,非 scenario 图 `planRemoteAdvance` 又不给一发直达(只报「铺垫未完全到位」照样进场)——
+  「梦待死之礼」起每个跳转点的主图都停在 `state_1`,按主图门控的区(河边递纸、码头水边、义庄进门 …)一个都不触发。
+  脚本按 master 的口径推演实际落地,落不到的非 scenario 图进场后 `debugSetNarrativeState` 从目标那一串的根逐跳补上
+  (`state_2`…`state_9` 不经过:途中会触发赌坊 / 癞子的 reactive 迁移、路遇私铸钱的区,所以按 `state_2 到过` 门控的东西仍与真玩不同,两边一致)。
+- 世界模型(排节拍时推演):走位从上一次知道的位置算(出生点 / 摆人点 / 上段终点 / NPC 坐标,×1.15 余量);呼吸图 `fadeOut` + `wait`
+  按资产参数算(梦里盖脸纸约 42 s);叙事按脚本置态 + 对白信号 + `state:图:状态` 连锁 + 叙事条件判得出真的 reactive 迁移 + 脚本发的物品推;
+  每次把人放进区都拿它核区的条件,判得出不成立 `--list` 报错(zoneGate)。区里摆人避开峰值 ≥ 5 HP/s 的 `healthThreat` 圈
+  (跑马梁喊声区顶点平均离路边身影 54 px,近身 1000 HP/s),尽量不贴别的区。
+- 长管线:拍间只往前补叙事状态(`debugSetNarrativeState`,按图拓扑判前后,够不着从目标那一串的根逐跳,比如 state_9 → s02_beishi),
+  场景能走过去就走热区 / NPC,否则 dev 切;超过 600 帧的过场 Esc 二次确认跳过;只留拍界检查点。
+- 已知数据缺陷(不是渲染差异):义庄 `T_出义庄` 点名的出生点 `from_yizhuang` 雾津街头里没有,master 静默退回缺省出生点;`--list` 记告警。
+- 中途切场景后插一个 `{inScene}` 标记(driver 不执行),`--list` 的对账据此按新场景核对 NPC / 热区 / 坐标;条目另带 refs
+  (过场 / 对白图与节点 / 叙事状态 / 信号 / 区 / 热区点名的出生点 / 长按 / 小游戏 / 物品 / 商店 / 说明卡)逐条对 master;
+  另有推演出来的 zoneGate(区的条件在推演状态下不成立 → 错)与 unsafePlacement(区里避不开要命威胁 → 告警)。
+
 `--list` 只打场景表(不建树、不起 dev 服、不开浏览器):A 侧数据读 `.tools/master-ro`、B 侧读当前检出,打完表再拿
 master 那棵核对每条引用——场景、运行时命令、`__gameDevAPI`、动作类型与 manifest 必填参数、各类数据 id、动画状态 /
 图片路径(有素材目录时)、按键、坐标范围、检查点名唯一(`validate.mjs`),有错退出码 1。改了 `features.mjs` 先跑它。

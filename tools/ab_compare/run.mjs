@@ -23,18 +23,24 @@
  *   node tools/ab_compare/run.mjs --list                             # 全部种类
  *   node tools/ab_compare/run.mjs --list --only feature              # 只看 feature 条目(按类别计数)
  *   node tools/ab_compare/run.mjs --list --only feature --features burn,fg --verbose   # 连每一步都打出来
+ *   node tools/ab_compare/run.mjs --list --only mainline              # 主线逐拍 + 长管线(按拍计数、帧预算)
+ *   node tools/ab_compare/run.mjs --only mainline --beats 听书,婆子家 --freeze boot   # 只跑这几拍
  *   A 侧数据读 master 只读检出(缺省 .tools/master-ro,--list-a-dir 改),B 侧读当前检出(缺省仓库根,--list-b-dir 改);
  *   打完表再拿 A 那棵核对每条引用的场景 / 运行时命令 / __gameDevAPI / 动作类型与必填参数 / 数据 id / 按键都在 master 上存在,
  *   有错退出码 1(见 validate.mjs)。
  *
  * 选项:
  *   --a <ref> / --b <ref>          两侧提交(B 取提交;主工作区未提交的改动不在 B 里,会大声提示)
- *   --only <种类,…>                scene,npc,minigame,cutscene,warp,resize,dpr,feature(缺省全部)
+ *   --only <种类,…>                scene,npc,minigame,cutscene,warp,resize,dpr,feature,mainline(缺省全部)
  *                                  feature = 每条冷启动一个合适的场景、触发一项游戏功能(时段换装、燃烧、落雷、粒子、
  *                                  火把、画面演出、实体、面板、前景层、走路 / 姿态),触发后与播放中逐帧打点,见 features.mjs
+ *                                  mainline = 按主线顺序逐拍玩(dev_narrative_warps.json 的跳转点冷启动 → 按叙事状态机推这一拍的
+ *                                  对白 / 选项 / 过场 / 长按 / 小游戏 / 切场 → 结尾开一圈面板),外加一条同一次启动接完全部拍的
+ *                                  mainline__chain,见 mainline.mjs
  *   --features <项,…>              feature 过滤:类别名(time,burn,strike,vfx,prop,fx,ent,ui,fg,player)、完整 id
  *                                  (feature__burn__test_room_a.burn_demo_paper)、条目名或条目名前缀(time__崖墓)
- *   --scenes <id,…>                场景过滤(作用于 scene / npc / resize / dpr;给了也按启动场景筛 feature)
+ *   --beats <拍,…>                 mainline 过滤:拍名(听书 / 找吃的 …;找吃的 同时命中 找吃的~赌坊)、完整 id(mainline__婆子家)、chain
+ *   --scenes <id,…>                场景过滤(作用于 scene / npc / resize / dpr;给了也按启动场景筛 feature / mainline)
  *   --npcs-per-scene <n>           每个场景取前 n 个有对话图的 NPC(缺省 2)
  *   --minigames first|all|<kind:id,…>   缺省 first(每种第一个);种类 water/sugarWheel/paperCraft/objectExamine/pressureHold
  *   --cutscenes <id,…> / --warps <id,…>  缺省全部
@@ -52,6 +58,8 @@
  *   --ignore-row-shift             超噪声的像素差若 ≥95% 可由 ±1 行位移解释(WebGL/WebGPU 半像素水平边),不判失败(照样列出)
  *   --assets <dir>                 素材目录(缺省 <主工作区>/public/resources/runtime)
  *   --browser <exe> | --channel chrome|msedge   --headless   --swiftshader   --reuse-browser
+ *   --warm                         每场景两侧各先跑一次不计入的预热(隐含 --reuse-browser):着色器缓存热起来再计;
+ *                                  冷缓存下 master 装载期首绘卡 9–13 s、粒子预热超时,会造出假差异
  *   --npm-registry <url>           npm ci 改走这个源(--replace-registry-host=always)
  *   --no-install                   不跑 npm ci(依赖缺了直接报错)
  *   --port <n>                     dev 服起始端口(缺省 5211)
@@ -214,6 +222,7 @@ async function main() {
     resizeScenes: list('resize-scenes'),
     dprScenes: list('dpr-scenes'),
     features: list('features'),
+    beats: list('beats'),
     viewport: opts.viewport,
   });
   if (built.unknownScenes.length) log(`⚠ 两棵树里都没有这些场景:${built.unknownScenes.join(', ')}`);
@@ -271,7 +280,12 @@ async function main() {
 
     // ---- 逐场景:A1 B1 A2 B2
     // 复用浏览器也按侧分开,各带本侧的解析改道规则(不带就会真去连本机 5173)
-    const shared = has('reuse-browser')
+    // --warm(隐含 --reuse-browser):每个场景先各跑一次不计入的预热,让本侧浏览器 GPU 进程里的着色器缓存热起来。
+    // 冷缓存下 master 的 WebGL(ANGLE / FXC)在装载期首次绘制会卡主线程 9–13 s,装载期假时钟随墙钟流动,
+    // 把粒子预热的 8 s 限时耗光——揭幕时粒子没预热完、之后一直晚一截(2026-09-27 两局逐量导出实测);
+    // 这是冷启动编译的偶然差,不是渲染差。热缓存下两边揭幕时状态一致。
+    const warm = has('warm');
+    const shared = has('reuse-browser') || warm
       ? { A: await launchBrowser(chromium, opts, A.browserArgs), B: await launchBrowser(chromium, opts, B.browserArgs) }
       : null;
     const order = [];
@@ -279,6 +293,14 @@ async function main() {
     for (const [si, sc] of scenarios.entries()) {
       const t0 = Date.now();
       const runs = { A: [], B: [] };
+      if (warm) {
+        for (const side of [A, B]) {
+          wipeIsolatedSaves(side.dir);
+          const warmDir = path.join(rawRoot, sc.id, `${side.label}0-warm`);
+          await runScenario({ chromium, opts, side, scenario: sc, rawDir: warmDir, sharedBrowser: shared[side.label] });
+          fs.rmSync(warmDir, { recursive: true, force: true });
+        }
+      }
       for (const [side, r] of order) {
         wipeIsolatedSaves(side.dir);
         const rawDir = path.join(rawRoot, sc.id, `${side.label}${r}`);
@@ -509,6 +531,7 @@ function listMain() {
     resizeScenes: list('resize-scenes'),
     dprScenes: list('dpr-scenes'),
     features: list('features'),
+    beats: list('beats'),
     viewport: opts.viewport,
   });
   if (built.unknownScenes.length) log(`⚠ 两棵树里都没有这些场景:${built.unknownScenes.join(', ')}`);
@@ -523,6 +546,7 @@ function listMain() {
     if ('api' in s) return `api ${s.api}(${(s.args ?? []).map((a) => JSON.stringify(a)).join(', ')})`;
     if ('advance' in s) return `advance ${s.advance}`;
     if ('checkpoint' in s) return `checkpoint ${s.checkpoint}`;
+    if ('inScene' in s) return `(场景 → ${s.inScene})`;
     return JSON.stringify(s);
   };
   log(`\n场景表 ${sc.length} 条(视口 ${opts.viewport.width}×${opts.viewport.height}):`);
@@ -539,6 +563,17 @@ function listMain() {
     const f = sc.filter((s) => s.kind === 'feature');
     log(`feature 按类别(共 ${f.length} / 未过滤 ${built.catalog.features}):`);
     for (const [cat, label] of Object.entries(FEATURE_CATEGORIES)) log(`  ${cat.padEnd(7)} ${String(f.filter((s) => s.category === cat).length).padStart(3)}  ${label}`);
+  }
+  if (kinds.has('mainline')) {
+    const m = sc.filter((s) => s.kind === 'mainline');
+    const framesOf = (s) => s.steps.reduce((acc, x) => acc + (x.advance ?? 0), 0);
+    log(`mainline 按拍(共 ${m.length} / 未过滤 ${built.catalog.mainline}):拍 · 输入 · 检查点 · 帧(≈游戏秒)`);
+    for (const s of m) {
+      const inputs = s.steps.filter((x) => 'cmd' in x || 'api' in x || 'key' in x || 'keyDown' in x || 'keyUp' in x || 'click' in x || 'wheel' in x).length;
+      const cps = s.steps.filter((x) => 'checkpoint' in x).length;
+      const fr = framesOf(s);
+      log(`  ${s.name.padEnd(12)} 输入 ${String(inputs).padStart(4)} · 检查点 ${String(cps).padStart(3)} · ${String(fr).padStart(6)} 帧(${(fr / 60).toFixed(0)} s)${s.boot.warp !== s.name && s.name !== 'chain' ? `  [冷启动用跳转点「${s.boot.warp}」]` : ''}`);
+    }
   }
 
   // ---- 对 master 核对

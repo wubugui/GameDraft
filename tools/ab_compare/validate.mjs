@@ -9,7 +9,10 @@
  *     说明卡 / 物品 / 任务 / 规矩 / 档案条目 / 叙事图状态 / 时段 / 实体(NPC / 热区 / player)/ 场景灯 /
  *     动画状态与图片路径(有素材目录时)/ 坐标是否在场景范围内;
  *   - 外部输入:按键是不是 master 认的键(面板快捷键 / 身体动词 / 挂件键 / 通用键)、点击点在不在视口里;
- *   - 同一条里检查点名唯一(compare 按名对齐 A/B)。
+ *   - 同一条里检查点名唯一(compare 按名对齐 A/B);
+ *   - mainline:中途切场景的 `{inScene}` 标记之后按新场景核对;条目自带的 refs(场景 / 跳转点 / 过场 / 对白图与节点 / 叙事图状态 /
+ *     信号 / 区 / 热区 / NPC / 出生点 / 长按条 / 水下小游戏 / 物品 / 商店 / 说明卡)逐条对 master;另有脚本推演出来的两类:
+ *     zoneGate(把人放进去时区的条件在推演的叙事状态下不成立 → 错)、unsafePlacement(区里避不开要命威胁 → 告警)。
  * 错误 = 这一步在 master 上注定落空(场景表写错了);告警 = 值得看一眼但不一定错。
  */
 import fs from 'node:fs';
@@ -89,6 +92,19 @@ export function loadMasterRefs(masterDir, assetsDir = null) {
     const arr = Array.isArray(j) ? j : Array.isArray(j?.entries) ? j.entries : Array.isArray(j?.books) ? j.books : [];
     archive[book] = new Set(arr.map((e) => e?.id).filter(Boolean));
   }
+  const ng = data('narrative_graphs.json');
+  const signals = new Set(arrOf(ng?.signals).map((x) => (typeof x === 'string' ? x : x?.id)).filter(Boolean));
+  walkObjects(ng, (o) => {
+    if (Array.isArray(o.transitions)) for (const t of o.transitions) if (typeof t?.signal === 'string') signals.add(t.signal);
+  });
+  const dialogueDir = path.join(masterDir, 'public', 'assets', 'dialogues', 'graphs');
+  const dialogueIds = new Set(listIds(dialogueDir));
+  const dialogueCache = new Map();
+  const dialogue = (id) => {
+    if (!dialogueCache.has(id)) dialogueCache.set(id, dialogueIds.has(id) ? readJson(path.join(dialogueDir, `${id}.json`)) : null);
+    return dialogueCache.get(id);
+  };
+  const holdsJson = data('pressure_holds.json');
   const rulesJson = data('rules.json');
   const questsJson = data('quests.json');
   return {
@@ -98,6 +114,7 @@ export function loadMasterRefs(masterDir, assetsDir = null) {
     actions, manifest, editorTypes, commands, devApi, panelKeys, verbKeys, propKeys, breathingActs, breathingParamKeys,
     sceneIds, scene,
     warps: new Set((data('dev_narrative_warps.json')?.warps ?? []).map((w) => w?.id).filter(Boolean)),
+    warpScenes: new Map((data('dev_narrative_warps.json')?.warps ?? []).filter((w) => w?.id).map((w) => [w.id, w.scene])),
     vfx: new Set(listIds(path.join(masterDir, 'public', 'assets', 'data', 'vfx'))),
     burnTemplates: new Set(listIds(path.join(masterDir, 'public', 'assets', 'data', 'burnables'))),
     breathing: new Set(listIds(path.join(masterDir, 'public', 'assets', 'data', 'breathing'))),
@@ -113,8 +130,17 @@ export function loadMasterRefs(masterDir, assetsDir = null) {
     archive,
     narrative,
     phases: new Set((data('game_config.json')?.dayNight?.phases ?? []).map((p) => p?.id).filter(Boolean)),
+    signals,
+    dialogueIds,
+    dialogue,
+    cutscenes: new Set(arrOf(data('cutscenes/index.json')).map((c) => c?.id).filter(Boolean)),
+    holds: new Set(arrOf(Array.isArray(holdsJson) ? holdsJson : holdsJson?.holds).map((h) => h?.id).filter(Boolean)),
+    water: new Set(arrOf(data('water_minigames/index.json')).map((w) => w?.id).filter(Boolean)),
+    itemDefs: new Map(arrOf(data('items.json')).filter((i) => i?.id).map((i) => [i.id, i])),
   };
 }
+
+const arrOf = (v) => (Array.isArray(v) ? v : []);
 
 function walkObjects(node, cb) {
   if (Array.isArray(node)) {
@@ -127,7 +153,11 @@ function walkObjects(node, cb) {
 }
 
 /** 通用键(Playwright 键名)——面板 / 动词 / 挂件键之外,菜单与说明卡用得到的 */
-const GENERIC_KEYS = new Set(['Escape', 'Enter', 'Space', 'Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'ShiftLeft', 'Shift']);
+const GENERIC_KEYS = new Set([
+  'Escape', 'Enter', 'Space', 'Tab', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'ShiftLeft', 'Shift',
+  // 选项直选:master 的 DialogueUI / ActionChoiceUI / EncounterUI 都认 Digit1…9
+  'Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9',
+]);
 
 /**
  * @param {object[]} scenarios  buildScenarios(...).scenarios
@@ -146,16 +176,28 @@ export function validateScenarios(scenarios, R, viewport) {
     const E = (m) => errors.push(`${sc.id}: ${m}`);
     const W = (m) => warnings.push(`${sc.id}: ${m}`);
     let at = ''; // 当前步骤前缀(实体 / 坐标 / 图片这几个共用检查的报错带上它)
-    const sid = sc.boot?.scene;
-    const S = R.scene(sid);
+    let sid = sc.boot?.scene;
     if (!R.sceneIds.has(sid)) E(`启动场景「${sid}」在 master 上不存在`);
     if (sc.boot?.warp && !R.warps.has(sc.boot.warp)) E(`叙事跳转「${sc.boot.warp}」在 master 的 dev_narrative_warps.json 里没有`);
+    if (sc.boot?.warp && R.warpScenes.get(sc.boot.warp) && R.warpScenes.get(sc.boot.warp) !== sid) E(`叙事跳转「${sc.boot.warp}」进的是「${R.warpScenes.get(sc.boot.warp)}」,启动场景却写「${sid}」(就绪永远等不到)`);
 
-    const npcs = new Map((Array.isArray(S?.npcs) ? S.npcs : []).filter((n) => n && typeof n.id === 'string').map((n) => [n.id, n]));
-    const hotspots = new Map((Array.isArray(S?.hotspots) ? S.hotspots : []).filter((h) => h && typeof h.id === 'string').map((h) => [h.id, h]));
-    const lights = new Set((S?.lighting?.lights ?? []).map((l) => l?.id).filter(Boolean));
-    const worldW = Number(S?.worldWidth);
-    const worldH = Number(S?.worldHeight);
+    // 当前场景(mainline 中途切场景:{inScene} 标记之后按新场景核对 NPC / 热区 / 灯 / 坐标范围)
+    let S = null;
+    let npcs = new Map();
+    let hotspots = new Map();
+    let lights = new Set();
+    let worldW = NaN;
+    let worldH = NaN;
+    const useScene = (id) => {
+      sid = id;
+      S = R.scene(id);
+      npcs = new Map((Array.isArray(S?.npcs) ? S.npcs : []).filter((n) => n && typeof n.id === 'string').map((n) => [n.id, n]));
+      hotspots = new Map((Array.isArray(S?.hotspots) ? S.hotspots : []).filter((h) => h && typeof h.id === 'string').map((h) => [h.id, h]));
+      lights = new Set((S?.lighting?.lights ?? []).map((l) => l?.id).filter(Boolean));
+      worldW = Number(S?.worldWidth);
+      worldH = Number(S?.worldHeight);
+    };
+    useScene(sid);
     const inWorld = (x, y, what) => {
       if (!Number.isFinite(x) || !Number.isFinite(y)) {
         E(`${at}${what} 坐标不是有限数 (${x}, ${y})`);
@@ -290,6 +332,10 @@ export function validateScenarios(scenarios, R, viewport) {
         case 'giveItem': case 'removeItem':
           if (!R.items.has(p.id)) E(`${where}物品「${p.id}」不存在`);
           break;
+        case 'setActiveIgniter':
+          if (!R.items.has(p.item)) E(`${where}火种物品「${p.item}」不存在`);
+          else if (!R.itemDefs.get(p.item)?.igniter) E(`${where}物品「${p.item}」不是火种(items.json 里没写 igniter)`);
+          break;
         case 'updateQuest':
           if (!R.quests.has(p.id)) E(`${where}任务「${p.id}」不存在`);
           break;
@@ -356,6 +402,9 @@ export function validateScenarios(scenarios, R, viewport) {
       if ('checkpoint' in step) {
         if (names.has(step.checkpoint)) E(`检查点名「${step.checkpoint}」重复(第 ${names.get(step.checkpoint)} 与第 ${i} 步)`);
         names.set(step.checkpoint, i);
+      } else if ('inScene' in step) {
+        if (!R.sceneIds.has(step.inScene)) E(`${where}场景「${step.inScene}」在 master 上不存在`);
+        useScene(step.inScene);
       } else if ('cmd' in step) {
         const c = step.cmd;
         used.commands.add(c.type);
@@ -383,6 +432,19 @@ export function validateScenarios(scenarios, R, viewport) {
           case 'debugInteractNpc':
             if (!npcs.has(c.npcId)) E(`${where}NPC「${c.npcId}」不在场景「${sid}」里`);
             break;
+          case 'debugTriggerHotspot':
+            if (!hotspots.has(c.hotspotId)) E(`${where}热区「${c.hotspotId}」不在场景「${sid}」里`);
+            break;
+          case 'debugSwitchScene':
+            if (!R.sceneIds.has(c.sceneId)) E(`${where}debugSwitchScene 场景「${c.sceneId}」不存在`);
+            else if (c.spawnPoint && !(c.spawnPoint in (R.scene(c.sceneId)?.spawnPoints ?? {}))) E(`${where}场景「${c.sceneId}」没有出生点「${c.spawnPoint}」`);
+            break;
+          case 'emitNarrativeSignal':
+            if (!R.signals.has(c.signal)) E(`${where}信号「${c.signal}」master 的叙事图里没有(signals 表与迁移都没登记)`);
+            break;
+          case 'debugStartDialogueGraph':
+            if (!R.dialogueIds.has(c.graphId)) E(`${where}对白图「${c.graphId}」不存在`);
+            break;
           default:
             break;
         }
@@ -401,6 +463,73 @@ export function validateScenarios(scenarios, R, viewport) {
         E(`${where}认不出的步骤 ${JSON.stringify(step).slice(0, 120)}`);
       }
     }
+    at = '';
+    if (Array.isArray(sc.refs)) checkRefs(sc.refs, R, E, W);
   }
   return { errors, warnings: [...new Set(warnings)], notes: [...new Set(notes)], used };
+}
+
+/**
+ * mainline 条目自带的引用清单:脚本从数据里推节拍时用到的每一样东西(不一定都落成一步命令——过场是对白里的
+ * startCutscene 起的、长按是对白里起的、区只用来算坐标……),一律对 master 核对存在。
+ * @param {{kind:string, id:string, scene?:string, state?:string, node?:string, index?:number, next?:string, type?:string}[]} refs
+ */
+function checkRefs(refs, R, E, W) {
+  const seen = new Set();
+  for (const r of refs) {
+    const k = JSON.stringify(r);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const inScene = (list, what) => {
+      const S = R.scene(r.scene);
+      if (!S) {
+        E(`引用:${what}「${r.id}」所在场景「${r.scene}」不存在`);
+        return;
+      }
+      if (!arrOf(S[list]).some((x) => x?.id === r.id)) E(`引用:${what}「${r.id}」不在场景「${r.scene}」里`);
+    };
+    switch (r.kind) {
+      case 'scene': if (!R.sceneIds.has(r.id)) E(`引用:场景「${r.id}」不存在`); break;
+      case 'warp': if (!R.warps.has(r.id)) E(`引用:叙事跳转「${r.id}」不存在`); break;
+      case 'cutscene': if (!R.cutscenes.has(r.id)) E(`引用:过场「${r.id}」不在 cutscenes/index.json`); break;
+      case 'dialogue': if (!R.dialogueIds.has(r.id)) E(`引用:对白图「${r.id}」不存在`); break;
+      case 'dialogueNode': {
+        const g = R.dialogue(r.id);
+        if (!g) {
+          E(`引用:对白图「${r.id}」不存在`);
+          break;
+        }
+        const n = g.nodes?.[r.node];
+        if (!n) E(`引用:对白图「${r.id}」没有节点「${r.node}」`);
+        else if (r.type === 'choice' && (n.type !== 'choice' || !(r.index < arrOf(n.options).length))) E(`引用:对白图「${r.id}」节点「${r.node}」不是有第 ${r.index} 项的选项节点`);
+        if (r.next && !g.nodes?.[r.next]) E(`引用:对白图「${r.id}」没有分支目标节点「${r.next}」`);
+        break;
+      }
+      case 'narrative': {
+        const st = R.narrative.get(r.id);
+        if (!st) E(`引用:叙事图「${r.id}」不存在`);
+        else if (r.state && !st.has(r.state)) E(`引用:叙事图「${r.id}」没有状态「${r.state}」`);
+        break;
+      }
+      case 'signal': if (!R.signals.has(r.id)) E(`引用:信号「${r.id}」master 的叙事图里没有`); break;
+      case 'zone': inScene('zones', '区'); break;
+      case 'hotspot': inScene('hotspots', '热区'); break;
+      case 'npc': inScene('npcs', 'NPC'); break;
+      case 'spawn':
+        if (!(r.id in (R.scene(r.scene)?.spawnPoints ?? {}))) {
+          W(`引用:场景「${r.scene}」没有出生点「${r.id}」${r.via ? `(${r.via} 点名的)` : ''}(游戏会静默退回缺省出生点;master 数据缺陷,两边同一份数据,不算渲染差异)`);
+        }
+        break;
+      // 区的条件在脚本推演的叙事状态下不成立:master 上把人放进去也不会触发,这一步之后排的节拍全落空
+      case 'zoneGate': E(`引用:区「${r.id}」(场景「${r.scene}」)的条件在脚本推演的叙事状态下不成立 —— ${r.why || '(见条件)'}`); break;
+      // 区里找不到避开要命威胁的摆人点(人放进去会被打死 → 死亡卡 / 重来,后面的节拍错位)
+      case 'unsafePlacement': W(`引用:区「${r.id}」(场景「${r.scene}」)里找不到避开威胁「${r.threat}」的摆人点,只能放在 (${r.x}, ${r.y})`); break;
+      case 'pressureHold': if (!R.holds.has(r.id)) E(`引用:长按条「${r.id}」不在 pressure_holds.json`); break;
+      case 'waterMinigame': if (!R.water.has(r.id)) E(`引用:水下小游戏「${r.id}」不在 water_minigames/index.json`); break;
+      case 'item': if (!R.items.has(r.id)) E(`引用:物品「${r.id}」不存在`); break;
+      case 'shop': if (!R.shops.has(r.id)) E(`引用:商店「${r.id}」不存在`); break;
+      case 'systemNote': if (!R.systemNotes.has(r.id)) E(`引用:说明卡「${r.id}」不存在`); break;
+      default: W(`引用:不认识的引用种类 ${r.kind}`);
+    }
+  }
 }

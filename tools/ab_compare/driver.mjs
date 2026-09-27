@@ -686,6 +686,8 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
       } else if ('settle' in step) {
         await sleep(step.settle);
         await watch.quiesce();
+      } else if ('inScene' in step) {
+        // 场景表对账标记(validate.mjs 用它切换「当前场景」核对 NPC / 热区 / 坐标),运行时什么都不做
       }
     }
     res.ticks = ticks;
