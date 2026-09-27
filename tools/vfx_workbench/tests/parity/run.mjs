@@ -169,9 +169,15 @@ async function main() {
       const py = flag('python', process.env.PYTHON || '');
       if (!py) throw new Error('要么 --wb <工作台服务地址>，要么 --python <解释器>（自己起 --serve --selftest-sandbox）');
       const port = await freePort();
-      const child = spawn(py, ['-m', 'tools.vfx_workbench', '--serve', '--port', String(port), '--selftest-sandbox'],
+      // 沙箱目录归这里清理（服务子进程是被硬结束的，它自己的收尾不跑）
+      const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'vfxwb_parity_'));
+      const child = spawn(py, ['-m', 'tools.vfx_workbench', '--serve', '--port', String(port), '--selftest-sandbox', sandbox],
         { cwd: repoRoot, env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' }, stdio: 'ignore' });
-      cleanups.push(() => { child.kill(); });
+      cleanups.push(async () => {
+        child.kill();
+        await new Promise((r) => setTimeout(r, 300));
+        fs.rmSync(sandbox, { recursive: true, force: true });
+      });
       wb = `http://127.0.0.1:${port}`;
     }
     await waitHttp(`${wb}/api/boot`);

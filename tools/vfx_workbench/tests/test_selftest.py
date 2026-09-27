@@ -93,18 +93,20 @@ def test_interaction_layer_selftest() -> None:
         assert "passed, 0 failed" in r.stdout
 
 
-def _sandbox_server():
-    """工作台裸服务 + 自检沙箱（布置库 / 样式库是临时拷贝、游戏地址钉死端口）；效果目录是真的，自检只建 / 删 zz_selftest_*。"""
-    return browser.serving([sys.executable, "-m", "tools.vfx_workbench", "--serve", "--port", "{port}", "--selftest-sandbox"])
+def _sandbox_server(tmp: Path):
+    """工作台裸服务 + 自检沙箱（布置库 / 样式库拷到 pytest 的临时目录、游戏地址钉死端口）；效果目录是真的，自检只建 / 删 zz_selftest_*。
+    沙箱目录给 pytest 的 tmp_path：服务子进程在 Windows 上是被硬结束的，它自己的收尾不跑。"""
+    return browser.serving([sys.executable, "-m", "tools.vfx_workbench", "--serve", "--port", "{port}",
+                            "--selftest-sandbox", str(tmp / "sandbox")])
 
 
 @pytest.mark.skipif(not (_SCENE_OK and _VFX.is_dir()), reason="缺工程真数据（烘过深度的场景 / 效果库）")
 @pytest.mark.skipif(bool(browser.unavailable()), reason=browser.unavailable() or "ok")
 @pytest.mark.parametrize("script", _SCRIPTS, ids=[Path(s).stem for s in _SCRIPTS])
-def test_selftest_in_chrome_with_real_webgpu(script: str) -> None:
+def test_selftest_in_chrome_with_real_webgpu(script: str, tmp_path: Path) -> None:
     """同一份自检在真 GPU 的 Chrome 里：原画视图 / 雷预览（游戏的 WebGPU 渲染器 + VfxRenderer）每一条都真跑，一条 SKIP 都不许有。"""
     before = _fingerprint()
-    with _sandbox_server() as base:
+    with _sandbox_server(tmp_path) as base:
         # 自检故意发的坏请求（护栏：/api/validate 拒收非法效果、外部改过拒存）服务端回 500，浏览器记一条
         # 「Failed to load resource … 500」——断言由自检自己做；未捕获异常 / 别的控制台 error 照样算失败
         r = browser.run_page(base + "/", selftest=_ROOT / script, no_skip=True,
@@ -125,7 +127,7 @@ def test_selftest_in_chrome_with_real_webgpu(script: str) -> None:
 def test_page_smoke_in_chrome(tmp_path: Path) -> None:
     """冒烟：Chrome 打开粒子工作台、切到原画视图：拿到 WebGPU、GPU 画面非空（背景 + 粒子）、控制台无 error。"""
     shot = tmp_path / "vfx_workbench_smoke.png"
-    with _sandbox_server() as base:
+    with _sandbox_server(tmp_path) as base:
         r = browser.run_page(base + "/", smoke=True, shot=shot,
                              extra=["--check", "(setView(2), window.__rhiSmoke2d())"])
     sys.stdout.write(r.stdout[-4000:])

@@ -23,13 +23,15 @@ TITLE = "粒子工作台 · 世界空间粒子 / 群体"
 
 
 @contextmanager
-def selftest_sandbox() -> Iterator[Path]:
-    """自检 / 真 GPU 对照的读写沙箱（桌面壳自检与 ``--serve --selftest-sandbox`` 共用）：
+def selftest_sandbox(where: Path | None = None) -> Iterator[Path]:
+    """自检 / 真 GPU 对照的读写沙箱（桌面壳自检与 ``--serve --selftest-sandbox [目录]`` 共用）：
 
     * 游戏地址钉在死端口 ``127.0.0.1:9``（自检会往槽里发临时效果、发刺激，正在预览的人会看到它）；
-    * 布置库拷一份到临时目录，整个进程的布置读写都指过去（页面经 ``/api/boot`` 的 ``placements.real`` 自证）；
+    * 布置库拷一份到沙箱目录，整个进程的布置读写都指过去（页面经 ``/api/boot`` 的 ``placements.real`` 自证）；
     * 雷电样式库同理（真效果据此仍判「最新」；自检里套用样式只会写临时库和 ``zz_selftest_*`` 效果）。
-    退出时指回真库、删掉临时目录。效果资产目录照旧是真的：自检只建 / 删 ``zz_selftest_*``，pytest 那侧比真库的字节。
+    ``where`` 不给 = 新建临时目录、退出时删掉；给了 = 用调用方的目录（归调用方清理：服务子进程在 Windows 上是被硬结束的，
+    ``finally`` 不跑，临时目录只能交给调用方的临时目录收）。退出时指回真库。效果资产目录照旧是真的：自检只建 / 删
+    ``zz_selftest_*``，pytest 那侧比真库的字节。
     """
     import shutil
     import tempfile
@@ -37,7 +39,9 @@ def selftest_sandbox() -> Iterator[Path]:
     from tools.vfx_workbench import lightning, placements, serve
 
     serve.LINK.set_base("http://127.0.0.1:9")
-    tmp = Path(tempfile.mkdtemp(prefix="vfxwb_selftest_"))
+    owned = where is None
+    tmp = Path(tempfile.mkdtemp(prefix="vfxwb_selftest_")) if owned else Path(where)
+    tmp.mkdir(parents=True, exist_ok=True)
     saved_ls = lightning.LIB_PATH
     try:
         real = vp.library_path(ROOT)
@@ -53,7 +57,8 @@ def selftest_sandbox() -> Iterator[Path]:
     finally:
         placements.LIB_ROOT = ROOT
         lightning.LIB_PATH = saved_ls
-        shutil.rmtree(tmp, ignore_errors=True)
+        if owned:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main(port: int | None = None, smoke: bool = False, open_id: str = "", selftest: str = "",
