@@ -92,3 +92,21 @@ node tools/workbench_rhi/chrome_page.mjs --url http://127.0.0.1:<端口>/ --smok
 npx vitest run tools/vfx_workbench/gpu                                        # 无 GPU 对照（三组效果 + 雷预览）
 node tools/vfx_workbench/tests/parity/run.mjs --python <py> --out <目录>        # 真 GPU 逐像素（纸钱 / 雷符的云与雨 / 光柱尘埃 / 落雷 / 高分屏）
 ```
+
+## 离屏渲染纹理 + 异步回读（`offscreenReadback.ts`，2026-09-27 呼吸工作台出片加）
+
+出片 / 自检要按**成品尺寸**画、逐帧读、读的时候别卡住下一帧；画布回读（`CanvasHost.readPixels`）做不到（尺寸跟画布走、同任务重画 + 同步 `drawImage`）。
+
+- `createOffscreenTarget(host | renderer, w, h, { clearColor? })` → `OffscreenTarget`：同一个渲染器 / 同一台设备上的一张
+  engine2d `RenderTexture`（分辨率 1，像素 = 逻辑像素）。打进包的命名空间 `offscreenReadback`（在工作台 `bundle.py` 的入口里列它）。
+- `render(root)` 画进去（与画到画布同一条渲染路径，只是目标不同；不碰 `CanvasHost` 的"上一次画的根"，预览照常）；
+  `read()` / `capture(root)` 异步回读，给 `Pixels`（**自上而下** RGBA8，纹理里存的字节 = 预乘；不透明画面就是颜色）。
+- **拷贝在调用那一刻就排进 GPU 队列**（`rhi.readTexture` 的 `copyTextureToBuffer` 当场提交）：之后再往同一张纹理画不影响已发出的读，
+  所以可以"画 i → 发读 i → 画 i+1 → 发读 i+1…"同时挂几帧（呼吸工作台挂 4 帧）。没画过就读 / 销毁后再用都明确报错。
+- 行序：WebGPU 纹理第 0 行就是画面最上面，原样给出，**不翻**（以前 WebGL `readPixels` 自下而上、要服务端翻；接这个的服务端别再翻）。
+- ⚠ 与画布的差：引擎的**画布** pass 为了与 master（WebGL 自下而上）逐位一致，是上下颠倒光栅化进中间纹理再翻上屏的（`FrameBuilder` 的 `flipY`），
+  离屏渲染纹理不翻。同一场景两者在少数像素上差 1（插值末位舍入；呼吸图 1664×928 实测 ≤ 0.01% 像素、最大差 1）。
+  所以"离屏读的 == 游戏"要对**引擎自己的离屏读法**（`renderer.extract.pixels` / `generateTexture`）逐字节，与画布的差单独报容差——
+  样板见 `tools/breathing_workbench/tests/parity/run.mjs` 的出片例。
+- 测试：`offscreenReadback.test.ts`（vitest，空后端：画进的是成品尺寸的纹理不是画布、拷贝当场发出、行序原样、BGRA→RGBA、报错）；
+  真 GPU 的像素 / 行序由接它的工作台自检覆盖（呼吸工作台 selftest S10「回读自上而下」、S17 出片）。
