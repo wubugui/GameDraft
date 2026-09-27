@@ -12,11 +12,12 @@ authority:
   - tools/build/build_config.json
   - scripts/package.mjs
   - scripts/verify_build.mjs
+  - scripts/tauri_test.mjs
   - scripts/scene_sweep.mjs
   - tools/build/scene_sweep.py
   - src/core/lightingPayloadFiles.ts
 triggers:
-  paths: ["tools/build/**", "scripts/release.mjs", "scripts/package.mjs", "scripts/verify_build.mjs", "scripts/scene_sweep.mjs", "scripts/lib/**", "src-tauri/**", "vite.config.ts", "src/core/lightingPayloadFiles.ts"]
+  paths: ["tools/build/**", "scripts/release.mjs", "scripts/package.mjs", "scripts/verify_build.mjs", "scripts/tauri_test.mjs", "scripts/scene_sweep.mjs", "scripts/lib/**", "src-tauri/**", "vite.config.ts", "src/core/lightingPayloadFiles.ts"]
   topics: [打包, 构建, 发行, build, package, release, 抽取清单, manifest, Tauri, exe, ffmpeg, ogg, 输出目录, 自动化构建, 漏抽, 全场景扫描, sweep, atlas_bin]
   tasks: [出发行版, 改打包, 加素材类别, 接自动化构建, 排查包里失效]
 last_governed: 2026-09-06
@@ -58,11 +59,15 @@ denghong01)用它:打包在服务器的**只读克隆**里跑,档位设置在项
 NSIS 安装包没人装过。排查"包里坏了"先确认是哪一份,新鲜度看该目录的 `.gamedraft-build.json`。
 
 `release.mjs` 走 `tauri build --no-bundle`:只要绿色版的话,makensis 压 566 MB
-要多花四五分钟,对定期自动构建是纯浪费。
+要多花四五分钟,对定期自动构建是纯浪费。同时带 `--config {"bundle":{"resources":null}}`:
+`bundle.resources` 只给 NSIS 用,留着的话 tauri-build 每次编译把整份内容抄进 cargo target 目录
+(`npm run test:tauri` 同理走 `TAURI_CONFIG`,否则干净检出上直接编译失败,见 `src-tauri/README.md`)。
+exe 按 `CARGO_TARGET_DIR` 找(没设才是 `src-tauri/target`);验收门端口 `--verify-port`(缺省 5299)。
 
 实测体积(2026-08-28):开发树 `public/` 2903 MB → **发行档 566 MB**(1436 个文件,38.5 秒)、
 dev 档 1359 MB。省下来的两个大头:未引用/authoring-only 的素材,以及音频转 ogg
-(212 MB → 19.4 MB)。
+(212 MB → 19.4 MB)。2026-09-27(engine2d 分支):发行档 **1923.5 MB / 1922 个文件**(素材 1917 个,
+248 个音频 240.9 → 22.0 MB),exe 2.9 MB,`release.mjs` 全程 294 s(抽取 57 s + Rust 编译 2 分 45 秒)。
 
 ## 权威源(读代码从哪进)
 
@@ -87,6 +92,10 @@ Python/mjs 两份镜像各有契约测试钉死)。桌面壳:`src-tauri/`。
   3. 传递闭包(`anim.json`→`spritesheet`;`<img>.png`→`<img>.normal.png`;`anim.json`→同目录 `sockets.json`;
      `lighting/<背景基名>/lighting.json`→同目录**它的 `shading.mode` 要读的那张 probe 图集** + 核心/几何/可选旁挂);
   4. `manifest_rules.json` 的显式规则——**代码写死路径或运行期拼出来的**那些,静态扫描永远抓不到。
+  **`public/` 下的子树可以是链接**(worktree / 并行检出里 `public/resources/runtime` 常是指向主检出的
+  junction):`asset_manifest._public_rel` 先按真实路径、再按字面路径判"在不在 public 下"。2026-09-27 之前只按
+  真实路径,链接子树整个被解到树外——发行清单只剩 366 个文本文件、一张图都没有,素材审计还报 0 issue,
+  只有验收门的光照载荷平价拦住了它(`LinkedRuntimeTreeTests` 钉住)。
   另有 id 约定扫描(`bundleId` → `animation/<id>/anim.json`)与**注册表闭包**(2026-09-06:
   `overlay_images.json` / `prop_presets.json` 里登记的每张图,登记即引用——素材审计只在某条
   动作真用了那个短 id 时才解析它,登记但暂未引用的 14 张原本进不了包,dev 服能显示、包里静默缺)。
@@ -123,7 +132,9 @@ Python/mjs 两份镜像各有契约测试钉死)。桌面壳:`src-tauri/`。
      engine2d 分支(渲染只有 WebGPU,[[engine2d]]):`scene_sweep.py` **不再藏 `navigator.gpu`**、Chromium 开关带
      `--enable-unsafe-webgpu`——藏了游戏起不来;报告里每场的 `renderer` 应为 `webgpu`,不是的整份别拿去判画面。
      `--build-config` 只把档位配置路径转给 `package.mjs`,不碰扫描的渲染开关。离屏 QtWebEngine 建 WebGPU 上下文
-     2026-09-06 实测失败,扫描走真窗口。
+     2026-09-06 实测失败,扫描走真窗口。⚠ 2026-09-27 真窗口也拿不到适配器(`RhiError: [RHI:unsupported] WebGPU
+     设备创建失败:Failed to request WebGPU adapter`,每场都 `#game-fatal-error`),扫描宿主改造前出发行包只能
+     `--skip-sweep`;exe(WebView2)本身 WebGPU 正常,见下面「桌面壳」。
 - **产物里有一个不在清单里的派生文件:`assets/scene_index.json`**(2026-09-03)。它不是从开发树
   抽取的,是 `package.mjs` 装配完素材之后按**已落地**的 `assets/scenes/*.json` 现算写出的
   (`scripts/lib/scene_index.mjs`,与 vite 开发服中间件共用同一份生成器——开发服按请求现算同名 URL)。
@@ -183,6 +194,10 @@ Python/mjs 两份镜像各有契约测试钉死)。桌面壳:`src-tauri/`。
   不可写才退 AppData";装进 Program Files 之后,普通启动落 AppData、某次「以管理员运行」
   落 Program Files,**同一台机器两份互不相通的存档按启动方式左右横跳**——正好是这轮
   改动要消灭的那个 bug 的形态。装到用户目录下,exe 旁恒可写,便携语义才稳定。
+- **WebGPU 在 WebView2 里缺省就开**(engine2d 只有 WebGPU):`http://gamedraft.localhost/` 是安全上下文,
+  壳里不用加任何 WebGPU 开关。2026-09-27 真机(WebView2 135.0.3179.85)适配器 nvidia/lovelace,标题 → 新游戏 →
+  开场过场 → 切场到雾津街头 → 背包/任务面板 → 存档(`gamedata_write` → exe 旁 `gamedata/saves/slot0.json`)
+  → 重开读档全程零 RHI 报错。驱动方法(远程调试口 + playwright `connectOverCDP`)见 `src-tauri/README.md`。
 - **`fs::rename` 之前不要先 `remove_file`**。Rust std 在 Windows 上走
   `MoveFileEx + MOVEFILE_REPLACE_EXISTING`,本来就覆盖已存在文件;先删一次反而造出了
   "旧档已删、新档还叫 `.json.tmp`"的丢档窗口(而 `read_all` 只认 `.json`)。
@@ -303,6 +318,9 @@ Windows 上跑通了一整轮 `tauri build`,几条原本只能靠文档推断的
   此前没排除 `release/**`,编辑器 F5 开着就打不了包(现已排除,连同 `dist/ .build/ local/ src-tauri/target/`;
   旧的 dev 服要重启才生效);② 有人 `cd release/release/game` 起了静态服务器(cwd 锁目录)。
   找占用者:psutil 按 `cwd()` 扫一遍最快,`open_files()` 全进程扫要几分钟。`package.mjs` 现在会把这句话报出来。
+- **验收门"通过"了、`release.mjs` 却报"验收不通过"**(2026-09-27,Windows + Node 24.13):`verify_build.mjs`
+  刚 fetch 完就 `process.exit`,libuv 断言崩掉(`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+  file src\win\async.c`,退出码 127),3/3 复现。现在先 `closeAllConnections` + 关服务再只设 `exitCode` 自然退出。
 - **刚装完 ffmpeg 找不到 ffmpeg**:winget 改了 PATH 但**已经在跑的 shell 拿不到新值**。
   `package.mjs` 的 `which()` 因此在 PATH 之外还会翻几个已知安装位置,省掉一次重启 shell。
 
