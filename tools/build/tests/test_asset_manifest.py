@@ -304,6 +304,53 @@ class ManifestBaseTests(unittest.TestCase):
         self.assertGreater(rep.audit_issue_count, 0)
 
 
+def _link_dir(link: Path, target: Path) -> bool:
+    """建目录链接：Windows 先试 junction（不要管理员 / 开发者模式），别的平台 symlink。建不出来返回 False。"""
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        try:
+            import _winapi
+
+            _winapi.CreateJunction(str(target), str(link))
+            return True
+        except (ImportError, AttributeError, OSError):
+            pass
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return True
+    except (OSError, NotImplementedError):
+        return False
+
+
+class LinkedRuntimeTreeTests(ManifestBaseTests):
+    """``public/resources/runtime`` 是指向树外的链接（worktree / 并行检出的常态）。
+
+    2026-09-27：清单按真实路径判"在不在 public 下"，链接子树整个被解到树外，发行清单只剩文本配置、
+    一张图都没有，而素材审计报 0 issue。引用闭包、传递闭包、未抽取统计都得穿过链接照常工作。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        runtime = self.root / "public" / "resources" / "runtime"
+        outside = self.root / "elsewhere" / "runtime"
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        runtime.rename(outside)
+        if not _link_dir(runtime, outside):
+            self.skipTest("这台机器上建不了目录链接")
+        self.assertTrue((runtime / "scenes" / "s1" / "background.png").is_file())
+
+    def test_链接后面的素材照常进清单(self) -> None:
+        rep = self.run_manifest()
+        self.assertIn("resources/runtime/scenes/s1/background.png", rep.files)
+        self.assertIn("resources/runtime/animation/pkg_a/anim.json", rep.files)
+        self.assertIn("resources/runtime/animation/pkg_a/atlas.png", rep.files)
+        self.assertEqual(rep.audit_issue_count, 0)
+
+    def test_树外的真实路径不会混进清单(self) -> None:
+        rep = self.run_manifest()
+        self.assertFalse([f for f in rep.files if "elsewhere" in f or ".." in f], rep.files)
+
+
 class RealRulesTests(unittest.TestCase):
     """真实规则文件本身的形状（写坏了会让整条管线跑不起来）。"""
 

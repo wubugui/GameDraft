@@ -52,6 +52,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -143,10 +144,22 @@ def _load_rules(path: Path = RULES_PATH) -> dict:
 
 
 def _public_rel(project_root: Path, p: Path) -> str | None:
-    """磁盘路径 → 相对 ``public/`` 的 POSIX 路径；不在 public 下返回 None。"""
+    """磁盘路径 → 相对 ``public/`` 的 POSIX 路径；不在 public 下返回 None。
+
+    先按**真实路径**比（大小写以磁盘为准）；不在的话再按**字面路径**比。``public/`` 下的子树可以是
+    链接——worktree / 并行检出里 ``public/resources/runtime`` 常是指向主检出的 junction 或 symlink，
+    只按真实路径比会把它整个解到树外：2026-09-27 实测清单只剩 366 个文件、71 MB，一张图都没有，
+    素材审计还报 0 issue（引用都解析到了，只是在这里被丢掉）。dev 服与 ``package.mjs`` 都是穿过链接
+    按字面路径读的，清单跟它们同口径。
+    """
+    public = project_root / "public"
     try:
-        rel = p.resolve().relative_to((project_root / "public").resolve())
+        return p.resolve().relative_to(public.resolve()).as_posix()
     except (OSError, ValueError):
+        pass
+    try:
+        rel = Path(os.path.abspath(p)).relative_to(Path(os.path.abspath(public)))
+    except ValueError:
         return None
     return rel.as_posix()
 
