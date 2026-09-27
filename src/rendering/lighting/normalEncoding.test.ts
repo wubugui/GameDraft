@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import BAKE_PY from '../../../tools/character_lighting_lab/scene_fields.py?raw';
-import CHAR_SHADER from './UnifiedCharacterShader.ts?raw';
 import SCENE_PASS from './SceneLightingPass.ts?raw';
 
 /**
@@ -13,7 +12,7 @@ import SCENE_PASS from './SceneLightingPass.ts?raw';
  * 从 2026-08-20 起，场景 pass 里一直写着
  *
  * ```glsl
- * vec3 n = texture(uNormal, vUv).rgb * 2.0 - 1.0;   // ← *2−1 施加到了三个通道
+ * vec3 n = texture(uNormal, vUv).rgb * 2.0 - 1.0;   // ← *2−1 施加到了三个通道(当时的 GLSL)
  * n.z = -abs(n.z);
  * ```
  *
@@ -75,9 +74,13 @@ describe('机械契约：三处代码不许分家', () => {
     expect(SCENE_PASS).not.toContain('texture(uNormal, vUv).rgb * 2.0 - 1.0');
   });
 
-  it('角色两条路径的解码与场景一致', async () => {
+  it('角色两条路径(滤镜 / sprite 网格)的解码与场景一致', async () => {
+    const FILTER = (await import('../CharacterShadingFilter.ts?raw')).default;
     const LIT = (await import('../CharacterLitSprite.ts?raw')).default;
-    expect(CHAR_SHADER).toContain('-max(ne.b, .05)');
-    expect(LIT).toContain('-max(ne.b,.05)');
+    for (const src of [FILTER, LIT]) {
+      expect(src).toContain('-max(ne.b, .05)');
+      // 防回退:b 通道不许过 *2−1
+      expect(src).not.toMatch(/ne\.b\s*\*\s*2\.?0?\s*-\s*1/);
+    }
   });
 });

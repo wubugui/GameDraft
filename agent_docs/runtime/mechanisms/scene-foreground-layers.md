@@ -8,7 +8,6 @@ status: active
 authority:
   - src/rendering/foreground/SceneForegroundLayers.ts
   - src/rendering/foreground/foregroundLayerDefs.ts
-  - src/rendering/foreground/foregroundMaskGlsl.ts#FG_OCCLUSION_GLSL
   - src/rendering/foreground/foregroundMaskWgsl.ts#FG_OCCLUSION_WGSL
   - src/rendering/backgroundSway.ts#createForegroundMask
   - src/core/SceneDepthSystem.ts#foregroundDepthModel
@@ -45,9 +44,9 @@ last_governed: 2026-09-27
   多个人时排不出自洽次序。前景层现在不往实体层挂任何东西、不重画任何背景像素。
 - **被挡 = 虚影**:实体走 `occlusionBlendFactor`(缺省 0.28),粒子走它自己的 `uOcclusionBlend`(整片藏)。制作人刻意接受虚影,
   别为了"挡实"再加一层重画。
-- **覆盖图通道**(`foregroundMaskGlsl` 头注释):B = 前景面(纹素足迹取样,细枝不漏)、R = A = 外沿(再外扩 4 px,
+- **覆盖图通道**(`foregroundMaskWgsl` 头注释):B = 前景面(纹素足迹取样,细枝不漏)、R = A = 外沿(再外扩 4 px,
   只关掉深度图的误挡、不判前景面——否则轮廓外一圈把人画成虚影)、G = R × 前景面深度(预乘,线性过滤后 G/R 仍对)。
-  `rgba16float`、1/4 原画、多层远→近叠。取样只有一份 `FG_OCCLUSION_GLSL.fgSample`,三支滤镜与粒子都拼它。
+  `rgba16float`、1/4 原画、多层远→近叠。取样只有一份 `FG_OCCLUSION_WGSL` 的 `fgSample`,三支滤镜与粒子都拼它。
 - **蒙版按源像素查**(经位移图),与摆动的树一帧不差;网格范围按这株网格顶点**此刻真实最大位移**(8 wu 一档)铺,
   不按增益上限(白费 GPU)、不按软封顶(透视下实测超 14%,树梢摆出网格)。
 - **接地**:`base` 缺省 = 该株的根(整株一个接地点,深度不随 x 变);`base.x / base.y` 覆盖;`base.line` = 接地折线
@@ -59,14 +58,14 @@ last_governed: 2026-09-27
 
 ## engine2d / WebGPU 分支的差异(契约同上,只是落在 WGSL)
 
-游戏只跑 WGSL([[engine2d]]、[[pixi-shader-wgsl-port]]);上文的 GLSL 名字在本分支只剩取样段 `FG_OCCLUSION_GLSL`
-(角色照明滤镜的 GLSL 程序还在拼,随角色照明那边一起删),其余(蒙版判定、覆盖图程序、另两支滤镜与粒子的 GLSL)2026-09-28 已删。
+游戏只跑 WGSL([[engine2d]]、[[pixi-shader-wgsl-port]]);前景层的 GLSL(取样段、蒙版判定、覆盖图程序、三支滤镜与粒子的 GL 程序)
+2026-09-28 已全部删掉,与 master 那份 GLSL 的逐像素口径由 render_parity 的前景层用例钉住。
 - 取样:`foregroundMaskWgsl.ts` 的 `FG_OCCLUSION_WGSL`——`fgSample(uv, hasCoverage, &depth)`(WGSL 没有 out 参数,深度走指针;
   开关 `uHasFgCoverage` 留在宿主参数结构体里、当参数传入)。宿主在模块作用域声明 `uFgCoverage` / `uFgCoverageSampler`
   (`fgCoverageBindingsWgsl(组, 起始绑定号)`;滤镜自有资源在 group 1,网格在 group 2)。
 - 覆盖图程序 `fgCoverageProgramWgsl`(`backgroundSway.ts` 拼成 `FG_COVERAGE_WGSL`):参数组 `FgMaskU` 里 `uBase` **必须排第一个**——
   JS 端 vec2 数组按 8 字节紧排、WGSL 声明成 vec4 数组再拆,起点两边都得 16 对齐,挪到后面偏移就错开(不报错,接地深度静默错;
-  `foregroundMaskWgsl.test.ts` 钉字节布局)。取样段的 GLSL / WGSL 孪生由 `src/rendering/shaderTwins.test.ts` 逐项比。
+  `foregroundMaskWgsl.test.ts` 钉字节布局)。取样段的判据由 `entityFgOcclusionWgsl.test.ts` / `SceneForegroundLayers.test.ts` 钉。
 - **每张纹理配一个 `<名>Sampler`**:资源表里 `uFgCoverage` 旁必须有 `uFgCoverageSampler = samplerOf(源)`;
   运行时换绑(`setForegroundCoverage`,含拆除时广播 null 绑回占位)**两个键一起换**,只换纹理 = 采样器停在旧参数。
 - "先广播 null 再销毁 RT"照旧是硬契约:engine2d 绑到已销毁的纹理源当帧抛(`GpuTextures.get`,等价 Pixi 的 BindGroup 自毁)。

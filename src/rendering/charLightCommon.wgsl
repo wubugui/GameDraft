@@ -1,22 +1,24 @@
 // ============================================================================
-// 角色照明公共块（CHAR_LIGHT_COMMON）—— WGSL 版（WebGPU 迁移期与 GLSL 版并存）
+// 角色照明公共块（CHAR_LIGHT_COMMON）—— 唯一一份
 //
-// GLSL 版住在 CharacterShadingFilter.ts 的 FRAG 里（__CLC_*__ 标记之间），仍是 WebGL 路径的
-// 唯一真相源；本文件是它的逐函数移植，数学一个字不改（probe 查表吃 q 空间法线 nQ、
-// skyao 走 det=+1 的 uSkyaoM、两个 M 不许混 —— 全部照 GLSL 版与坐标卡）。等价由
-// tools/render_parity 的「光照片段 /」用例逐像素钉住，改一边必须同步改另一边。
+// 角色逐像素照明的公共数学：probe 查表（shY / ambIrr / octaEnc / probeE …）、skyao 天穹遮蔽、
+// 体素卷三线性、RT gather（uMode 0 诊断档）与注入的着色核心 charShadeCore.wgsl。角色两条宿主
+// （CharacterShadingFilter 的滤镜、CharacterLitSprite 的 sprite 网格）、粒子受光与场景光照 pass 的
+// 调试视图拼的都是这一份——同一份数学只写一遍（与实验室 LIGHT_FNS 同一纪律）。
+// 数学约定：probe 查表吃 q 空间法线 nQ；skyao 走 det=+1 的 uSkyaoM；两个 M 不许混（坐标卡）。
+// 与 master（GLSL 版，住在 CharacterShadingFilter.ts 的 FRAG 里）逐像素一致由 tools/render_parity 的
+// 「光照片段 /」「角色受光 /」用例钉住，改了必须重跑对照。
 //
-// 【三份导出（CharacterShadingFilter.ts）】与 GLSL 一一对应：
+// 【三份导出（CharacterShadingFilter.ts）】
 //   · CHAR_LIGHT_COMMON_WGSL = 本文件 __CLC_*__ 之间，再把 __CHAR_SHADE_CORE_WGSL__ 那一行换成
-//     charShadeCore.wgsl（GLSL 那边同一位置注入 charShadeCore.glsl）。
+//     charShadeCore.wgsl。
 //   · PROBE_SAMPLING_WGSL / SKYAO_SAMPLING_WGSL = 其中的两段切片（场景光照 pass 的 GI 体 /
 //     skyao 体调试视图单独拼这两段，与角色吃同一份采样数学）。
 //   同一模块里每段只许拼一次（WGSL 没有预处理器，重复定义编译失败）：拼了整个 CLC 就不要再拼
 //   PROBE / SKYAO。
 //
-// 【为什么不照 GLSL 读 uniform】GLSL 版在块里自己声明 uniform（uM、uPN、uSkyao* …），宿主只声明
-//   sampler。WGSL 的 uniform 必须活在宿主的 uniform 结构里，而同一批量在各宿主里分在不同的组：
-//   角色网格是 sceneShade + frameShade，粒子是 sceneShade + 自己的 frameShade，场景光照 pass
+// 【为什么块里不读 uniform】WGSL 的 uniform 必须活在宿主的 uniform 结构里，而同一批量在各宿主里
+//   分在不同的组：角色网格是 sceneShade + frameShade，粒子是 sceneShade + 自己的 frameShade，场景光照 pass
 //   全在 sceneLight 一组里。块里写死任何组名 / 绑定都会把这些分叉焊死。所以：
 //
 //   ① 块里的函数**一个绑定都不读**：uniform 量打成下面几个值结构当形参传，纹理也当形参传
@@ -31,23 +33,22 @@
 //        pp.uMode = frameShade.uMode;  pp.uAmbStrength = frameShade.uAmbStrength;
 //        let E = probeE(q, nQ, pp, uPL1, uPL2, uPBin, uValid);
 //
-//      结构的字段名 = GLSL 的 uniform 名，字段顺序 = GLSL 的声明顺序；某宿主的 JS uniform 组若
-//      恰好按同名同序只装这些量，也可以直接把组绑成这个结构类型（绑定变量名 = resources 键名）。
+//      结构的字段名 = 宿主 JS uniform 组里的同名成员；某宿主的 JS uniform 组若恰好按同名同序只装
+//      这些量，也可以直接把组绑成这个结构类型（绑定变量名 = resources 键名）。
 //   ③ ClcRt 带两个 48 元 vec4 数组，gatherRT 按 ptr<function, ClcRt> 收（按值传会整份拷贝；
 //      宿主只在 uMode == 0 那一支里 var 一份）。
-//   ④ gatherRT 的随机旋转取片元坐标：GLSL 读 gl_FragCoord，WGSL 由调用方把入口的
-//      位置内建量 .xy 传进来（离屏目标上两者行序一致，对照用例钉着）。
-//   ⑤ GLSL 块里声明、但只有宿主 main 读的 uniform（uWorkSize / uWorldToWork / uCal / uCosT /
-//      uSinT / uBeta / uGiStrength / 三个 factor / uFixedNQ / uEChecker / uBulge / uFlatten /
-//      uShowN / uEOnly / uSun* / uEChroma / uAO* / uSkyaoBlend），WGSL 块不管，宿主在自己的
-//      uniform 结构里声明、main 里直接读。
+//   ④ gatherRT 的随机旋转取片元坐标：由调用方把入口的位置内建量 .xy 传进来（离屏目标上与 master 的
+//      gl_FragCoord 行序一致，对照用例钉着）。
+//   ⑤ 只有宿主 main 读的量（uWorkSize / uWorldToWork / uCal / uCosT / uSinT / uBeta / uGiStrength /
+//      三个 factor / uFixedNQ / uEChecker / uBulge / uFlatten / uShowN / uEOnly / uSun* / uEChroma /
+//      uAO* / uSkyaoBlend）块里不管，宿主在自己的 uniform 结构里声明、main 里直接读。
 //
-// 【与 GLSL 的形式差异（数值不变）】
+// 【写法约束（与 master 的 GLSL 版数值不变）】
 //   · mod(x, y) 写成 x − y·floor(x/y)（GLSL 定义式；WGSL 的 % 向零截断，负数不同）。
-//   · texelFetch → textureLoad；GLSL 三元式一律写成 if/else（不用 select：select 两边都求值）；
-//     GLSL 按布尔向量逐分量挑的 mix(a, b, bvec) 才写 select(a, b, bvec)（boxEnter，本来就两边都算）。
-//   · 形参不可写：GLSL 改写形参的地方改成局部量；GLSL 局部变量名 of 在 WGSL 是保留字，改叫 ofr。
-//   · 字面量与字面量的算术写成 f32 后缀，常量折叠与 GLSL 一样在 32 位里做。
+//   · 三元式一律写成 if/else（不用 select：select 两边都求值）；按布尔向量逐分量挑才写
+//     select(a, b, bvec)（boxEnter，本来就两边都算）。
+//   · 形参不可写：改写形参的地方用局部量；of 在 WGSL 是保留字，改叫 ofr。
+//   · 字面量与字面量的算术写成 f32 后缀，常量折叠在 32 位里做。
 //
 // ⚠ Pixi 按正则从整段 WGSL 源里抽绑定声明与 struct：本文件注释里不许出现
 //   「at 号 + group / binding + 括号」字样；struct 体内不许写注释（注释里的「名: 类型」会被当成成员）。
@@ -60,10 +61,13 @@ fn lin2srgb(cIn: vec3<f32>) -> vec3<f32> { let c = max(cIn, vec3<f32>(0.)); retu
 //__PROBE_SAMPLING_BEGIN__
 // probe 采样自足块（shY / ambIrr / octaEnc / probeE …）。场景光照 pass 的「GI体」调试视图拼接
 // 同一份（PROBE_SAMPLING_WGSL），与角色吃同一套采样数学 —— 改这里 = 两边同时改。
-// ClcProbe 字段 = GLSL 的同名 uniform（含义见 GLSL 版声明处注释）：
-//   uM = lighting.json world.M（det=−1，只给 probe 查表）；uWMin / uWScale / uPN = probe 网格；
-//   uProbeT = 图集每行多少颗；uShK = l2 槽每颗系数数（9 / 25）；uBinOb = 八面体边长（8 / 16）；
-//   uFold = A7 摄像机侧折叠；uAmbSH / uAmbStrength = miss 环境光；uMode = 0 RT / 1 L1 / 2 L2 / 3 BIN。
+// probe 纹理（uPL1 / uPL2 / uPBin / uValid）由各宿主自己声明、当形参传进来。ClcProbe 字段：
+//   uM = q → 世界（lighting.json world.M，det=−1，只给 probe 查表）；uWMin / uWScale / uPN = probe 网格
+//   （uPN 是网格维度，float）；uProbeT = 图集平铺每行多少颗（P > 8192 行时 GPU 纹理高度爆上限）；
+//   uShK = l2 图集每颗的球谐系数数 9（L2）/ 25（L4），来自 lighting.json probes.sh_k；
+//   uBinOb = 八面体边长 8（64 方向）/ 16（256 方向），来自 probes.bin_ob；
+//   uFold = A7 摄像机侧折叠（RT 逐射线折；probe 折查询法线，见 probeQueryN）；
+//   uAmbSH / uAmbStrength = miss 环境光的球谐与强度（J̄ 系数）；uMode = 0 RT / 1 L1 / 2 L2 / 3 BIN。
 struct ClcProbe {
     uM: mat3x3<f32>,
     uWMin: vec3<f32>,
@@ -78,7 +82,9 @@ struct ClcProbe {
     uAmbStrength: f32,
 }
 
-// 实球谐基 l<=4（k=0..24），与 estimators.sh_basis 逐行同值同序（改一处必须改两处）。
+// 实球谐基 l<=4（k=0..24），与 estimators.sh_basis 逐行同值同序（改一处必须改两处；
+// python 侧有 Gram 矩阵测试钉常数）。L4 的由来：贴壳 probe 99% 能量在下半球，
+// 朝上真值只占 0.6~1.8%，L2 在这个谷底只给 0.30（0~0.80），L4 0.79，L6 0.92。
 fn shY(k: i32, n: vec3<f32>) -> f32 {
     if (k == 0) { return .282095; }
     if (k == 1) { return .488603 * n.y; }  if (k == 2) { return .488603 * n.z; }  if (k == 3) { return .488603 * n.x; }
@@ -111,7 +117,10 @@ fn ambIrr(n: vec3<f32>, P: ClcProbe) -> vec3<f32> {
     for (var k = 0; k < 9; k++) { E += P.uAmbSH[k] * A[k] * shY(k, n); }
     return max(E, vec3<f32>(0.)) * P.uAmbStrength;
 }
-// 八面体图的接缝环绕（先 x 后 y，角落落到对角；与 estimators.octa_wrap 同一套规则）。
+// 八面体图的接缝环绕：越过边的 texel = 该边内侧沿边镜像的 texel（先 x 后 y，角落落到对角）。
+// ⚠ 缺这一步就会把边界抽头 clamp 到内部、取到球面上无关的方向：地板法线在 q 空间
+// 正好压在接缝上（n.x≈0、n.z<0），0.3° 抖动就让取值跳 1.77x（破屋平地板硬边斑驳，
+// 2026-09-02）。与 estimators.octa_wrap 同一套规则，改一处必须改两处。
 fn octaIdx(cIn: vec2<i32>, ob: i32) -> i32 {
     var c = cIn;
     if (c.x < 0) { c.x = 0; c.y = ob - 1 - c.y; } else if (c.x > ob - 1) { c.x = ob - 1; c.y = ob - 1 - c.y; }
@@ -130,18 +139,27 @@ fn octaEnc(nIn: vec3<f32>) -> vec2<f32> {
     }
     return p * .5 + .5;
 }
-// q → probe 网格连续坐标（调试视图的棋盘格与采样共用这一份映射）。
+// q → probe 网格连续坐标。单独立名是为了调试视图（SceneLightingPass uDebug==9 的
+// 棋盘格）能用**与采样一模一样**的映射画出 cell 结构 —— 复制一份迟早漂。
 fn probeGridT(q: vec3<f32>, P: ClcProbe) -> vec3<f32> {
     let Xw = P.uM * q;                              // → 世界，插值轴为世界轴
     return clamp((Xw - P.uWMin) * P.uWScale, vec3<f32>(0.), P.uPN - 1.001);
 }
-// flat probe 索引 → 平铺图集 texel（每行 uProbeT 颗、每颗 ncol 个 texel；valid 图 ncol=1）。
+// flat probe 索引 → 平铺图集 texel。图集每行放 uProbeT 颗 probe（每颗 ncol 个 texel）；
+// 老布局「x=系数，y=probe」在 P=11.9 万颗时高度直接超 GPU 上限（16384），采样静默全黑
+// （2026-09-01 撞上：盘上 E 正常、实机角色漆黑，无任何报错）。valid 图同一套（ncol=1）。
 fn probeTexel(flat_: i32, ncol: i32, k: i32, P: ClcProbe) -> vec2<i32> {
     let T = i32(P.uProbeT + .5);
     let r = flat_ / T;
     return vec2<i32>((flat_ - r * T) * ncol + k, r);
 }
-// A7（摄像机侧折叠）的 probe 版：E(n) ≈ E(折叠 n)（理由见 GLSL 版）。
+// 单颗 probe 的 E 重建（按 flat 索引）。probeE 的 8 角与最近邻视图共用这一份 ——
+// v3 固化：probe 图集只存最终 E 的球谐（L1=4列 / L2=9列 / BIN=64方向），按法线重建即得该方向 E。
+// nee / miss_mode / amb 已在导出时 compose 进 E，运行时不再读分账、不再组合（那些只 RT 用）。
+// A7（摄像机侧折叠）的 probe 版。烘焙逃逸是黑：朝相机的射线立刻出画拿 0，
+// E(朝相机) 被系统性饿死（实测雾津街头同一点 E(-z)=0.21 vs E(+z)=2.72，差 13x）——
+// 而角色法线恰恰全朝相机、场景面全朝上 / 纵深 ⇒ 同一份 probe，场景亮角色黑。
+// 假设与 RT 侧 A7 同一条：镜头背后的世界统计上镜像可见场景 ⇒ E(n) ≈ E(折叠 n)。
 fn probeQueryN(nIn: vec3<f32>, P: ClcProbe) -> vec3<f32> {
     var n = nIn;
     if (P.uFold > .5 && n.z < 0.) { n.z = -n.z; }
@@ -153,7 +171,10 @@ fn probeEvalFlat(flat_: i32, nIn: vec3<f32>, P: ClcProbe,
     let mode = i32(P.uMode + .5);
     var E = vec3<f32>(0.);
     if (mode == 1) {
-        // L1 = Geomerics/Enlighten 非线性重建（与 estimators.probe_eval_l1_geomerics 逐行同一公式）
+        // L1 = Geomerics/Enlighten 非线性重建（Hazel；制作人 2026-09-02 定为正式档）：
+        // 逐通道 R0=c0·Y00（E 的 DC），R1=½·Y1·(c_x,c_y,c_z)，q=½(1+R̂1·n)，r=|R1|/R0，
+        // p=1+2r，a=(1-r)/(1+r)，E=R0·(a+(1-a)(p+1)q^p)。永不为负，无截负翻色。
+        // ⚠ 与 estimators.probe_eval_l1_geomerics 逐行同一公式，改一处必须改两处。
         let c0 = textureLoad(uPL1, probeTexel(flat_, 4, 0, P), 0).rgb;
         let c1 = textureLoad(uPL1, probeTexel(flat_, 4, 1, P), 0).rgb;   // y
         let c2 = textureLoad(uPL1, probeTexel(flat_, 4, 2, P), 0).rgb;   // z
@@ -189,7 +210,9 @@ fn probeEvalFlat(flat_: i32, nIn: vec3<f32>, P: ClcProbe,
     }
     return max(E, vec3<f32>(0.));
 }
-// 查询点沿法线偏 0.525 × 最小格距（DDGI self-shadow bias 的 N 项；与 const.PROBE_QUERY_NORMAL_BIAS 同值）。
+// 查询点沿法线偏 0.525 × 最小格距（DDGI self-shadow bias 的 N 项，B=0.7）：
+// 薄面两侧 probe 混投的漏光实测降 25~80%，亮度中位 / p95 同步小降。q↔世界 M 正交，
+// 格距按 1/uWScale 现算即是 q 单位。⚠ 0.525 与 const.PROBE_QUERY_NORMAL_BIAS 同值。
 fn probeE(q: vec3<f32>, n: vec3<f32>, P: ClcProbe,
           uPL1: texture_2d<f32>, uPL2: texture_2d<f32>, uPBin: texture_2d<f32>, uValid: texture_2d<f32>) -> vec3<f32> {
     let cellMin = min(min(1. / P.uWScale.x, 1. / P.uWScale.y), 1. / P.uWScale.z);
@@ -212,7 +235,10 @@ fn probeE(q: vec3<f32>, n: vec3<f32>, P: ClcProbe,
     if (wsum < 1e-4) { return ambIrr(n, P); }
     return Esum / wsum;
 }
-// 最近邻原始值（场景调试视图「无插值」档）；invalid 格刻意亮品红。
+// 最近邻原始值（场景调试视图「无插值」档）：每个像素显示离它最近那颗 probe 的原始 E。
+// 把数据画在**采样它的表面上**，固定视角也能逐颗检查（把点阵投到屏幕会自遮挡，没法看）；
+// 与三线性档来回切 = 插值前后对照。网格映射 / SH 与 probeE 逐字同一套，唯一区别是 round。
+// invalid 的格子**刻意亮品红**：这是查数据的视图，坏格必须扎眼，不许悄悄回落环境光。
 fn probeENearest(q: vec3<f32>, n: vec3<f32>, P: ClcProbe,
                  uPL1: texture_2d<f32>, uPL2: texture_2d<f32>, uPBin: texture_2d<f32>, uValid: texture_2d<f32>) -> vec3<f32> {
     let t = probeGridT(q, P);
@@ -225,7 +251,8 @@ fn probeENearest(q: vec3<f32>, n: vec3<f32>, P: ClcProbe,
 //__PROBE_SAMPLING_END__
 
 // ---- 体素卷：平铺 2D 图集上的手写三线性（≡ GL LINEAR + CLAMP_TO_EDGE 3D）----
-// ClcVol 字段 = GLSL 的同名 uniform：uVolN = 体素维度（float），uVolTiles = Z 切片平铺列数/行数，
+// 体素卷是 3D 数据平铺成 Z 切片的 2D 图集（sampler3D 在这条管线里没有），手写三线性与 3D LINEAR 数学等价。
+// ClcVol 字段：uVolN = 体素维度（float），uVolTiles = Z 切片平铺列数 / 行数，
 // uQMin / uQMax = 体素盒的 q 范围（gatherRT 用）。
 struct ClcVol {
     uVolN: vec3<f32>,
@@ -234,7 +261,7 @@ struct ClcVol {
     uQMax: vec3<f32>,
 }
 fn volTap(t: texture_2d<f32>, xi: f32, yi: f32, zi: f32, V: ClcVol) -> vec4<f32> {
-    let tx = zi - V.uVolTiles.x * floor(zi / V.uVolTiles.x);   // GLSL mod(zi, uVolTiles.x)
+    let tx = zi - V.uVolTiles.x * floor(zi / V.uVolTiles.x);   // mod(zi, uVolTiles.x)，向下取整
     let ty = floor(zi / V.uVolTiles.x);
     return textureLoad(t, vec2<i32>(i32(tx * V.uVolN.x + xi), i32(ty * V.uVolN.y + yi)), 0);
 }
@@ -258,10 +285,20 @@ fn sampleVol3(t: texture_2d<f32>, c01: vec3<f32>, V: ClcVol) -> vec4<f32> {
 }
 
 // ================================ skyao probe：天穹遮蔽，乘在 GI 上 =========
-// ⚠⚠ 坐标系不是 uM：矩是用 depthConfig.M.R（det=+1）烘的，所以单独走 uSkyaoM（两个 M 不许混）。
-// ⚠ 必须除 cap0，与场景侧 skyvis.png 的口径相反（理由见 GLSL 版）。
+// 载荷 lighting/<背景基名>/skyao_probe.bin：遮蔽矩，按 Z 切片横向平铺的
+// rgba16f 图集，RGBA = (a0, a1x, a1y, a1z)。烘焙侧见 scene_fields.bake_skyao_probe。
+//
+// ⚠⚠ **坐标系不是 uM**。矩是用场景 depthConfig.M.R（**det=+1**）烘的，而 uM
+//    是 lighting.json.world.M（**det=-1** 实验室查表那套）。混用一律不报错，
+//    只是 a1·N 的方向整个镜像 —— 所以这里单独走 uSkyaoM（CLAUDE.md 铁律：两个 M 不许混）。
+//
+// ⚠ **必须除 cap0**，与场景侧 skyvis.png 的口径**相反**：
+//    · 场景侧 sDay = (1-hemi) + hemi*skyvis 那边没有独立的朝向项，所以
+//      skyvis.png 存的是不除 cap0 的 T(N)（开阔竖直墙 = 0.5）；
+//    · 角色这边 probe 的球谐**已经带了方向性**，再乘一次朝向就是同一件事扣两遍。
+//      所以要的是纯遮蔽系数 V ∈ [0,1]、**开阔处恒为 1（与朝向无关）**。
 //__SKYAO_SAMPLING_BEGIN__
-// ClcSkyao 字段 = GLSL 的同名 uniform：uSkyaoN = 网格维度；uSkyaoTiles = Z 切片平铺；
+// skyao 图集 uSkyaoTex 由宿主声明、当形参传。ClcSkyao 字段：uSkyaoN = 网格维度；uSkyaoTiles = Z 切片平铺；
 // uSkyaoMin / uSkyaoScale = 世界 AABB 下角与 1/尺寸（det=+1 世界系）；uSkyaoM = q → 世界（det=+1）；
 // uSkyaoOn = 0 没有载荷、恒不遮蔽。uSkyaoBlend 只有宿主 main 读，不在这里。
 struct ClcSkyao {
@@ -273,19 +310,21 @@ struct ClcSkyao {
     uSkyaoOn: f32,
 }
 fn skyaoTap(xi: f32, yi: f32, zi: f32, S: ClcSkyao, uSkyaoTex: texture_2d<f32>) -> vec4<f32> {
-    let tx = zi - S.uSkyaoTiles.x * floor(zi / S.uSkyaoTiles.x);   // GLSL mod(zi, uSkyaoTiles.x)
+    let tx = zi - S.uSkyaoTiles.x * floor(zi / S.uSkyaoTiles.x);   // mod(zi, uSkyaoTiles.x)，向下取整
     let ty = floor(zi / S.uSkyaoTiles.x);
     return textureLoad(uSkyaoTex, vec2<i32>(i32(tx * S.uSkyaoN.x + xi),
                                             i32(ty * S.uSkyaoN.y + yi)), 0);
 }
 fn sampleSkyao(c01: vec3<f32>, S: ClcSkyao, uSkyaoTex: texture_2d<f32>) -> vec4<f32> {
-    // ⚠ 节点口径：烘焙格点是 linspace(x0,x1,n)（端点在盒边界），不是体素卷的格心口径。
+    // ⚠ 节点口径：烘焙格点是 linspace(x0,x1,n)（端点在盒边界，n-1 段），与 probeE / verify 同。
+    //   这里曾抄了体素卷 sampleVol3 的格心口径（c01*N-0.5）—— 那是给格心体素用的，
+    //   套在节点数据上 = 系统性偏移 (u-0.5) 格：盒中心为零、边缘半格（2026-09-01 制作人抓出）。
     let vp = c01 * (S.uSkyaoN - 1.0);
     let v0 = floor(vp);
     let f = clamp(vp - v0, vec3<f32>(0.0), vec3<f32>(1.0));
     let lo = clamp(v0, vec3<f32>(0.), S.uSkyaoN - 1.0);
     let hi = clamp(v0 + 1.0, vec3<f32>(0.), S.uSkyaoN - 1.0);
-    // 平铺图集手写三线性：硬件过滤会跨 Z 切片串色
+    // 平铺图集手写三线性：硬件过滤会跨 Z 切片串色（与体素卷同一个坑）
     let c000 = skyaoTap(lo.x, lo.y, lo.z, S, uSkyaoTex); let c100 = skyaoTap(hi.x, lo.y, lo.z, S, uSkyaoTex);
     let c010 = skyaoTap(lo.x, hi.y, lo.z, S, uSkyaoTex); let c110 = skyaoTap(hi.x, hi.y, lo.z, S, uSkyaoTex);
     let c001 = skyaoTap(lo.x, lo.y, hi.z, S, uSkyaoTex); let c101 = skyaoTap(hi.x, lo.y, hi.z, S, uSkyaoTex);
@@ -310,7 +349,8 @@ fn skyaoBox(q: vec3<f32>, S: ClcSkyao) -> vec3<f32> {
     if (S.uSkyaoOn < 0.5) { return vec3<f32>(1.0, 0.0, 1.0); }           // 品红 = 根本没载荷
     return clamp((S.uSkyaoM * q - S.uSkyaoMin) * S.uSkyaoScale, vec3<f32>(0.0), vec3<f32>(1.0));
 }
-/** 临时诊断（uShowN==5）：把 V 编成色带。红<0.15 橙<0.35 黄<0.55 绿<0.75 蓝>=0.75 */
+/** 临时诊断（uShowN==5）：把 V 编成**色带** —— 色相扛得住后处理 / 色调映射，灰度扛不住。
+    红<0.15 橙<0.35 黄<0.55 绿<0.75 蓝>=0.75 */
 fn skyaoBand(q: vec3<f32>, n: vec3<f32>, S: ClcSkyao, uSkyaoTex: texture_2d<f32>) -> vec3<f32> {
     if (S.uSkyaoOn < 0.5) { return vec3<f32>(1.0, 0.0, 1.0); }
     let v = skyaoAt(q, n, S, uSkyaoTex);
@@ -340,7 +380,8 @@ fn hash12(p: vec2<f32>) -> f32 {
 }
 
 // 射线-体素盒求交：把起点推进到盒入口（与实验室 pipeline._ray_box_enter 同式）。
-// 返回 x = 进盒距离，y < 0 = 这条射线进不去。
+// 伪世界只覆盖背景画那一块 q 盒，角色带常常高过画面上沿；起点在盒外就一步出界的写法会让
+// 上半身全 miss。返回 x = 进盒距离，y < 0 = 这条射线进不去。cache 侧同一个坑在烘焙里已修。
 fn boxEnter(p0: vec3<f32>, dn: vec3<f32>, hi: vec3<f32>) -> vec2<f32> {
     let d = select(dn, vec3<f32>(1e-6), abs(dn) < vec3<f32>(1e-6));
     let t0 = (vec3<f32>(0.) - p0) / d;
@@ -351,7 +392,7 @@ fn boxEnter(p0: vec3<f32>, dn: vec3<f32>, hi: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(tn, min(min(hi3.x, hi3.y), hi3.z) - tn);
 }
 
-// ClcRt 字段 = GLSL 的同名 uniform：uSpp / uMSteps = 每像素射线数 / 每射线步数；uMissMode（0 = miss 记
+// ClcRt 字段：uSpp / uMSteps = 每像素射线数 / 每射线步数；uMissMode（0 = miss 记
 // J̄×强度，1 = 不计入再归一）；uNEE（1 = 灯走下面的确定性直射）；uStep = 步长（体素单位）；
 // uLightCount / uLightQ / uLightE = 烘焙期反解的光源 surfel（q 位置 + 面积 / 发光辐射）。
 struct ClcRt {
@@ -364,7 +405,7 @@ struct ClcRt {
     uLightQ: array<vec4<f32>, 48>,
     uLightE: array<vec4<f32>, 48>,
 }
-// RT gather（uMode == 0 的诊断档）。fragCoord = 入口的位置内建量 .xy（GLSL 读 gl_FragCoord.xy）。
+// RT gather（uMode == 0 的诊断档）。fragCoord = 入口的位置内建量 .xy（逐像素随机旋转的种子）。
 fn gatherRT(q0: vec3<f32>, n: vec3<f32>, fragCoord: vec2<f32>, P: ClcProbe, V: ClcVol, R: ptr<function, ClcRt>,
             uVolRad: texture_2d<f32>, uVolEmit: texture_2d<f32>) -> vec3<f32> {
     let spp = i32((*R).uSpp + .5);
@@ -412,7 +453,7 @@ fn gatherRT(q0: vec3<f32>, n: vec3<f32>, fragCoord: vec2<f32>, P: ClcProbe, V: C
             }
         }
         if (hit) { acc += Li; nHit += 1.; }
-        else if ((*R).uMissMode < .5) { acc += ambRad(dir, P); }   // J̄ × 强度（0 = miss 记黑）
+        else if ((*R).uMissMode < .5) { acc += ambRad(dir, P); }   // J̄ × 强度（0 = miss 记黑）；uMissMode == 1：miss 不计入，下面 renormalize
     }
     var E: vec3<f32>;
     if ((*R).uMissMode > .5) { E = acc * (3.14159265 / max(nHit, 1.)); } else { E = acc * (3.14159265 / f32(spp)); }

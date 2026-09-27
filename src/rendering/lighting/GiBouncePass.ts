@@ -39,77 +39,28 @@ import { samplerOf } from '../legacy/gpuSampler';
 /** 与 `bake.py#GI_DIRS` 同值。改一边必须改另一边（载荷版本要 +1）。 */
 export const GI_MAX_DIRS = 16;
 
-const VERT = /* glsl */ `#version 300 es
-in vec2 aPosition;
-in vec2 aUV;
-uniform mat3 uProjectionMatrix;
-uniform mat3 uWorldTransformMatrix;
-uniform mat3 uTransformMatrix;
-out vec2 vUv;
-void main(void) {
-    mat3 mvp = uProjectionMatrix * uWorldTransformMatrix * uTransformMatrix;
-    gl_Position = vec4((mvp * vec3(aPosition, 1.0)).xy, 0.0, 1.0);
-    vUv = aUV;
-}
-`;
-
-const FRAG = /* glsl */ `#version 300 es
-precision highp float;
-precision highp int;
-
-in vec2 vUv;
-out vec4 fragColor;
-
-uniform sampler2D uRadiance;   // 场景重打光结果（RGBA16F；alpha = 自发光占比 0..1）
-uniform sampler2D uHitmap;     // gi_hitmap（RGBA8：u, v, 命中标志, 255）
-uniform vec2  uOutSize;        // 本 RT 尺寸 = (nx*nz, ny)
-uniform int   uNdir;
-uniform float uGain;
 /**
- * 灯体排除阈值，判的是**自发光占该像素的比例**（辐射场 alpha，0..1）。
+ * 着色器(WGSL;与 master 的 GLSL 版逐像素一致由 render_parity「阴影与GI / GI 反弹」钉住)。
  *
- * ⚠ 判比例不判绝对亮度。绝对阈值会随灯的强度漂：灯调亮一档，被判成"灯体"的
- * 区域跟着变大，把本该采到的反弹光一起挡掉——症状是「GI 不跟着灯变」
- * （2026-08-21 实测：灯 ×10 反弹只涨 2.7%）。比例是尺度无关的。
- */
-uniform float uEmitReject;
-
-void main(void) {
-    ivec2 g = ivec2(gl_FragCoord.xy);      // 列 = x + z*nx，行 = y
-    int ny = int(uOutSize.y);
-    vec3 acc = vec3(0.0);
-    float wsum = 0.0;
-    for (int d = 0; d < ${GI_MAX_DIRS}; d++) {
-        if (d >= uNdir) break;
-        // 命中图按方向沿高度叠：行 = dir*ny + y
-        vec4 hm = texelFetch(uHitmap, ivec2(g.x, d * ny + g.y), 0);
-        // miss ⇒ 那个方向看出去是天空。天光已由 skyvis 单独记账，这里**不能**再加，
-        // 但**要算进分母**——否则开阔地会因为"没撞到东西"而反弹值虚高。
-        wsum += 1.0;
-        if (hm.b < 0.5) continue;
-        vec4 r = texture(uRadiance, vec2(hm.r, hm.g));
-        if (r.a > uEmitReject) continue;    // 这块主要是灯本体：那是直接光，跳过
-        acc += r.rgb;
-    }
-    fragColor = vec4(acc / max(wsum, 1.0) * uGain, 1.0);
-}
-`;
-
-/**
- * WebGPU 版(WGSL),与上面的 GLSL 逐句对应;GLSL 原样保留(WebGL 仍走它)。
+ * 资源:uRadiance = 场景重打光结果(RGBA16F;alpha = 自发光占比 0..1);uHitmap = gi_hitmap
+ * (RGBA8:u, v, 命中标志, 255);giBounce.uOutSize = 本 RT 尺寸 = (nx*nz, ny)(列 = x + z*nx,行 = y)。
+ * giBounce.uEmitReject = 灯体排除阈值,判的是**自发光占该像素的比例**(辐射场 alpha,0..1)。
+ * ⚠ 判比例不判绝对亮度。绝对阈值会随灯的强度漂:灯调亮一档,被判成"灯体"的
+ * 区域跟着变大,把本该采到的反弹光一起挡掉——症状是「GI 不跟着灯变」
+ * (2026-08-21 实测:灯 ×10 反弹只涨 2.7%)。比例是尺度无关的。
  *
  * 绑定按 Pixi 网格约定:第 0 组 `globalUniforms`、第 1 组 `localUniforms` 由 Pixi 自动挂;
  * 本 pass 的资源放第 2 组,**变量名 = resources 的键名**,`giBounce` 结构体成员顺序 = JS 声明顺序。
  *
  * ## 格子寻址的行序(已用像素对照验过,别凭印象翻)
  *
- * GLSL 用 `ivec2(gl_FragCoord.xy)` 直接当格子下标。离屏 RT 上它与 WGSL 的 `@builtin(position)`
+ * 片元位置内建量直接取整当格子下标。master 的 GLSL 版用 `ivec2(gl_FragCoord.xy)`,离屏 RT 上两者
  * **指的是同一存储行**:Pixi WebGL 画 RT 时翻了投影,`gl_FragCoord.y = 0.5` 落在存储第 0 行;
- * WebGPU 的 position.y = 0.5 也是存储第 0 行。命中图 `texelFetch` / `textureLoad` 也都按存储行寻址,
+ * WebGPU 的 position.y = 0.5 也是存储第 0 行。命中图 `textureLoad` 也按存储行寻址,
  * 所以这里**原样取整、不翻 y**(`阴影与GI / GI 反弹` 用例用上下不对称的命中图锁住)。
  *
- * 循环里对辐射场的采样在非一致控制流里,改 `textureSampleLevel(…, 0)`:辐射场只有一级 mip,
- * 与 GLSL `texture()` 等价。命中图只 `textureLoad`,不需要采样器。
+ * 循环里对辐射场的采样在非一致控制流里,用 `textureSampleLevel(…, 0)`:辐射场只有一级 mip。
+ * 命中图只 `textureLoad`,不需要采样器。
  * ⚠ 结构体体内不写注释:Pixi 用正则抽结构体成员,注释里的冒号会被当成成员。
  */
 const WGSL = /* wgsl */ `
@@ -160,11 +111,14 @@ fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
     var wsum = 0.0;
     for (var d = 0; d < ${GI_MAX_DIRS}; d++) {
         if (d >= giBounce.uNdir) { break; }
+        // 命中图按方向沿高度叠:行 = dir*ny + y
         let hm = textureLoad(uHitmap, vec2<i32>(g.x, d * ny + g.y), 0);
+        // miss ⇒ 那个方向看出去是天空。天光已由 skyvis 单独记账,这里**不能**再加,
+        // 但**要算进分母**——否则开阔地会因为"没撞到东西"而反弹值虚高。
         wsum += 1.0;
         if (hm.b < 0.5) { continue; }
         let r = textureSampleLevel(uRadiance, uRadianceSampler, vec2<f32>(hm.r, hm.g), 0.0);
-        if (r.a > giBounce.uEmitReject) { continue; }
+        if (r.a > giBounce.uEmitReject) { continue; }   // 这块主要是灯本体:那是直接光,跳过
         acc += r.rgb;
     }
     return vec4<f32>(acc / max(wsum, 1.0) * giBounce.uGain, 1.0);
@@ -221,14 +175,13 @@ export class GiBouncePass {
       indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
     });
     this.shader = Shader.from({
-      gl: { vertex: VERT, fragment: FRAG },
       gpu: {
         vertex: { source: WGSL, entryPoint: 'mainVertex' },
         fragment: { source: WGSL, entryPoint: 'mainFragment' },
       },
       resources: {
         uRadiance: this.radiance,
-        // WGSL 要单独的采样器(WebGL 侧没有这个名字,Pixi 忽略)
+        // WGSL 要单独的采样器
         uRadianceSampler: samplerOf(this.radiance),
         uHitmap: this.geo.hitmap,
         giBounce: {

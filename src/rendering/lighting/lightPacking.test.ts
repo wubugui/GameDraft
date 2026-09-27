@@ -377,17 +377,18 @@ describe('D.w 位标志', () => {
     expect(LIGHT_FLAG_TWO_SIDED).toBe(2);
   });
 
-  it('两个 shader 都按位取，不再拿 D.w 当布尔', async () => {
+  it('场景 pass 与实体灯循环都按位取，不再拿 D.w 当布尔', async () => {
     const SCENE = (await import('./SceneLightingPass.ts?raw')).default;
-    const CHAR = (await import('./UnifiedCharacterShader.ts?raw')).default;
-    for (const src of [SCENE, CHAR]) {
-      expect(src).toContain('int flags = int(D.w + 0.5);');
-      expect(src).toContain('(flags & 1) != 0');
+    const LIT = (await import('../CharacterLitSprite.ts?raw')).default;
+    for (const src of [SCENE, LIT]) {
+      expect(src).toContain('let flags = i32(D.w + 0.5);');
       expect(src).toContain('(flags & 2) != 0');
       // 防回退：旧的布尔读法与硬传 false
       expect(src).not.toContain('D.w > 0.5');
-      expect(src).not.toContain('C.x, false, vis');
+      expect(src).not.toMatch(/C\.x, false, (vis|1\.0)/);
     }
+    // 投影位只有场景 pass 读(实体不吃灯的阴影)
+    expect(SCENE).toContain('(flags & 1) != 0');
   });
 });
 

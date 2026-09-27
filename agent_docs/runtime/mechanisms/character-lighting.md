@@ -3,21 +3,22 @@ id: character-lighting
 title: 角色逐像素照明(probe 底光 + 加性实体灯)
 domain: runtime
 type: mechanism
-summary: 只有一条活路径——probe 烘死的 GI 底光 + 与场景同一次打包的加性实体灯 + 与背景同一组显示变换;统一角色路径被 Game 里的常量开关整条关死(留码不删);着色核心单一 GLSL 源,法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐;probe 烘焙与方向基见 character-probe-bake
+summary: 只有一条活路径——probe 烘死的 GI 底光 + 与场景同一次打包的加性实体灯 + 与背景同一组显示变换;统一角色路径被 Game 里的常量开关整条关死(留码不删);着色核心单一 WGSL 源,法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐;probe 烘焙与方向基见 character-probe-bake
 status: active
 authority:
   - src/core/Game.ts#UNIFIED_CHAR_PATH_ENABLED
   - src/core/CharacterLightingSystem.ts
   - src/data/lightFactors.ts
   - src/rendering/CharacterLitSprite.ts
-  - src/rendering/charShadeCore.glsl
+  - src/rendering/charShadeCore.wgsl
+  - src/rendering/charLightCommon.wgsl
   - src/rendering/CharacterShadingFilter.ts
   - src/rendering/spriteNormalAtlas.ts
-  - src/rendering/lighting/lightingCore.glsl
+  - src/rendering/lighting/lightingCore.wgsl
   - src/core/lightingPayloadFiles.ts
   - tools/animation_pipeline/bake_normal_atlas.py
 triggers:
-  paths: ["src/rendering/lighting/**", "src/core/UnifiedCharacterLighting.ts", "src/rendering/charShadeCore.glsl", "src/rendering/CharacterLitSprite.ts", "src/rendering/CharacterShadingFilter.ts", "src/rendering/spriteNormalAtlas.ts", "src/core/CharacterLightingSystem.ts", "src/data/lightFactors.ts", "tools/animation_pipeline/bake_normal_atlas.py"]
+  paths: ["src/rendering/lighting/**", "src/core/UnifiedCharacterLighting.ts", "src/rendering/charShadeCore.wgsl", "src/rendering/charLightCommon.wgsl", "src/rendering/CharacterLitSprite.ts", "src/rendering/CharacterShadingFilter.ts", "src/rendering/spriteNormalAtlas.ts", "src/core/CharacterLightingSystem.ts", "src/data/lightFactors.ts", "tools/animation_pipeline/bake_normal_atlas.py"]
   topics: [角色照明, probe, 法线图集, 伪世界照明, CHAR_FS, 体素卷, 融入场景, 加性灯, 受光倍率, lightFactors, eChroma, 天穹可见性, radianceScale]
 verified_by:
   - src/rendering/lighting/worldSpaceShading.test.ts
@@ -40,10 +41,11 @@ E = probe 图集查表(以 q 为方向基的烘焙载荷, GI 底光) + 场景实
 
 ## 权威源(读代码从哪进)
 
-着色核心 `charShadeCore.glsl#shadeEntityLinear`(`shadeCharacterLinear` 留给旧参数实验室,同一份源);
-mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`(probe 查表 GLSL 住这里);
+着色核心 `charShadeCore.wgsl#shadeEntityLinear`(`shadeCharacterLinear` 是旧参数口径,同一份源);
+probe 查表 / skyao / gather 公共块 `charLightCommon.wgsl`(注入着色核心,由 `CharacterShadingFilter.ts` 切片导出);
+mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`;
 载荷 / probe / 体素卷生命周期与受光倍率 `CharacterLightingSystem.ts`、`src/data/lightFactors.ts`;
-运行时读哪些文件 `lightingPayloadFiles.ts`;灯的闭式解 `lighting/lightingCore.glsl`;
+运行时读哪些文件 `lightingPayloadFiles.ts`;灯的闭式解 `lighting/lightingCore.wgsl`;
 法线图集离线端 `bake_normal_atlas.py`。路径分流点 `Game.litShaderProvider`。
 
 ## 硬契约(违反即 bug 的机制约束)
@@ -57,7 +59,7 @@ mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`(
 - **运行时压暗(envDim)乘在总倍率上**,不碰间接/直接配比与色度;必须与背景那份同值,由 `Game`
   一个入口同时推(见 [scene-lighting](scene-lighting.md) 的压暗一条)。
 - **灯必须来自场景那次打包的结果**,同一份 `PackedLights` + 同一个 `wuPerQUnit`;角色侧再打一遍
-  = 第二个真相源,不报错。实体灯循环 `ENTITY_SCENE_LIGHTS_GLSL` 是角色 mesh 与粒子受光**共用的同一段**
+  = 第二个真相源,不报错。实体灯循环 `ENTITY_SCENE_LIGHTS_WGSL` 是角色 mesh 与粒子受光**共用的同一段**
   (测试钉着粒子侧不许再写 `lc*Light`)。
 - **光照在世界空间算,查表按载荷的基**(铁律 0 及其边界,见 [coordinate-spaces](coordinate-spaces.md)):
   灯循环直接用法线图的 `n`——角色图集法线**本来就是世界向量**(直立 quad,中性法线 = 世界水平),
@@ -73,8 +75,9 @@ mesh 路径 `CharacterLitSprite.ts`、filter 路径 `CharacterShadingFilter.ts`(
   有场景对照的调试档同样要过这条显示链,纯读数的取证子档才刻意保持裸值。
 - **E 只出明暗,角色保留自己的颜色**:sprite 像素是美术着色后的 color 不是 albedo,带场景色的 E
   去乘 = 二次着色;反向"把角色往场景色拟合"会幂次过冲,已整体拆除,勿重造。
-- **着色核心单一真相源(一对孪生)**:游戏用 `charShadeCore.wgsl`,`charShadeCore.glsl` 是孪生;两份一起改、禁止在任一 shader 内联重写,
-  `src/rendering/shaderTwins.test.ts` 逐函数守门。
+- **着色核心单一真相源**:`charShadeCore.wgsl`(注入 `charLightCommon.wgsl`)是唯一一份,禁止在任一 shader 内联重写。
+  GLSL 版 2026-09-28 随角色照明实验室迁完一起删了(没有孪生要同步);与 master 那份 GLSL 的逐像素口径由
+  render_parity「光照片段 /」钉住,公式镜像由 `characterLightAxioms.test.ts` 锚在 `.wgsl` 源上,调用闭合由 `wgslSymbols.test.ts` 守。
 - **法线与 color 必须用同一个顶点 UV 采样**。从世界坐标反推 UV 一旦逐帧驱动缺席(过场态整段跳过)
   就全身采到边缘列:通体单色 / 镜像换色 / 闪烁。镜像由顶点行列式正负判,不引 uniform。
 - **法线图集格边界与运行时浮点 stride 逐字对齐**(`round(k*w/cols)`,不是整数截断),误差随帧序号

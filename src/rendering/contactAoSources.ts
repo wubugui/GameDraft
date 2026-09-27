@@ -91,7 +91,7 @@ function smoothstep(e0: number, e1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-/** lcRectIrradiance（带符号），N 为着色法线。与 lightingCore.glsl 同式。 */
+/** lcRectIrradiance（带符号），N 为着色法线。与 lightingCore.wgsl 同式。 */
 function rectIrradiance(P: Vec3, N: Vec3, vs: Vec3[]): number {
   const p = vs.map((v) => {
     const x = v[0] - P[0], y = v[1] - P[1], z = v[2] - P[2];
@@ -118,7 +118,7 @@ function norm(v: Vec3): Vec3 {
 
 /**
  * 每盏实体灯给脚下地面（法线朝上）的照度亮度 + 它的来向。与角色 / 场景吃的是**同一次**
- * `packLights`，逐 kind 与 `ENTITY_SCENE_LIGHTS_GLSL` / lightingCore.glsl 同式（实体不吃灯的阴影，vis = 1）。
+ * `packLights`，逐 kind 与 `ENTITY_SCENE_LIGHTS_WGSL` / lightingCore.wgsl 同式（实体不吃灯的阴影，vis = 1）。
  * `P` = 脚点，M-world wu。
  */
 export function lightGroundSources(packed: PackedLights, P: Vec3): { e: number; src: Omit<ContactAoSource, 'weight'> }[] {

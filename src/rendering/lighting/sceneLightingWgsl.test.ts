@@ -85,15 +85,6 @@ function checkSamplersFollowTextures(shader: Shader, label: string): void {
   expect(n).toBeGreaterThan(0);
 }
 
-/** 所有 GLSL 采样器都有同名 WGSL 纹理绑定(两边吃同一份 resources) */
-function checkGlslSamplersInWgsl(shader: Shader, label: string): void {
-  const gl = shader.glProgram!.fragment ?? '';
-  const names = [...gl.matchAll(/uniform\s+sampler2D\s+(\w+)\s*;/g)].map((m) => m[1]);
-  expect(names.length).toBeGreaterThan(0);
-  const wgsl = new Set((shader.gpuProgram!.structsAndGroups as StructsAndGroups).groups.map((g) => g.name));
-  for (const n of names) expect(wgsl.has(n), `${label}: GLSL 采样器 ${n} 在 WGSL 里没有同名绑定`).toBe(true);
-}
-
 describe('场景光照两级:WGSL 与 JS 资源对齐', () => {
   // GlProgram 构造时要探一次片元精度(建一张测试画布);node 里没有 document,给一张拿不到上下文的假画布
   const adapter0 = DOMAdapter.get();
@@ -130,7 +121,6 @@ describe('场景光照两级:WGSL 与 JS 资源对齐', () => {
     });
     const shader = (pass as unknown as { shader: Shader }).shader;
     checkShader(shader, js, '烘焙');
-    checkGlslSamplersInWgsl(shader, '烘焙');
     checkSamplersFollowTextures(shader, '烘焙 · 初始');
     pass.setSurfaceMask(texNearest());
     checkSamplersFollowTextures(shader, '烘焙 · 换上遮罩');
@@ -145,7 +135,6 @@ describe('场景光照两级:WGSL 与 JS 资源对齐', () => {
     const js = captureResources(() => { bg = new LitBackground(tex(), g, [0, 1, 0], 4, 4); });
     const shader = (bg as unknown as { shader: Shader }).shader;
     checkShader(shader, js, '显示');
-    checkGlslSamplersInWgsl(shader, '显示');
     checkSamplersFollowTextures(shader, '显示 · 初始');
     bg.setSway({ uvMap: texNearest(), radiancePlate: texNearest(), depthPlate: texNearest() });
     checkSamplersFollowTextures(shader, '显示 · 接上草木');

@@ -664,7 +664,7 @@ const PB={ irrW:160, irrH:80, rayW:128, rayH:64,
            trace:null, traceKey:'', arrays:null, arraysKey:'', any:new Map(),
            Ec:null, EcKey:'', EcEV:[0,0] };
 
-// —— 与 GLSL 同式的小工具(面板和着色器必须读同一份数字,不许各写一套) ——
+// —— 与着色器(charLightCommon.wgsl)同式的小工具(面板和着色器必须读同一份数字,不许各写一套) ——
 function shYJ(k,n){
   const x=n[0], y=n[1], z=n[2];
   if(k===0) return .282095;
@@ -690,7 +690,7 @@ function shYJ(k,n){
   if(k===23) return 1.770131*x*z*(x2-3*y2);
   return .625836*(x2*x2-6*x2*y2+y2*y2);
 }
-/** 八面体接缝环绕(与 GLSL octaIdx / python octa_wrap 同规则)。 */
+/** 八面体接缝环绕(与着色器 octaIdx / python octa_wrap 同规则)。 */
 function octaIdxJ(x,y,ob){
   if(x<0){ x=0; y=ob-1-y; } else if(x>ob-1){ x=ob-1; y=ob-1-y; }
   if(y<0){ y=0; x=ob-1-x; } else if(y>ob-1){ y=ob-1; x=ob-1-x; }
@@ -853,7 +853,7 @@ function autoProbeGain(){
   setSlider('pb_gain', ev);        // ⑥面板的展开图给同一个起点(之后各调各的)
 }
 
-/** 射线-体素盒求交,与 pipeline._ray_box_enter / GLSL boxEnter 同式。 */
+/** 射线-体素盒求交,与 pipeline._ray_box_enter / 着色器 boxEnter 同式。 */
 function boxEnterJ(p0, di, N){
   let tn=0, tf=1e30;
   for(let a=0;a<3;a++){

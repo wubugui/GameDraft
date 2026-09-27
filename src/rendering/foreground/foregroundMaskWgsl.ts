@@ -1,8 +1,21 @@
 /**
- * 场景前景图层的着色片段(游戏只画 WGSL):覆盖图程序(蒙版判定 + 覆盖图顶点 / 片元)与遮挡使用方共用的取样段。
- * 覆盖图的通道、语义见 `foregroundMaskGlsl.ts` 的头注释;取样段 `fgSample` 在那里还有一份 GLSL 版(只剩角色逐像素
- * 照明滤镜的 GLSL 程序在拼),两份由 `shaderTwins.test.ts` 钉着函数集合与字面量顺序。数值与 master 的 GLSL 版逐像素一致
- * 由 tools/render_parity 的前景层用例钉住。
+ * 场景前景图层的着色片段(见 [[scene-foreground-layers]]):覆盖图程序(蒙版判定 + 覆盖图顶点 / 片元)与遮挡使用方
+ * 共用的取样段。数值与 master 的 GLSL 版(foregroundMaskGlsl.ts)逐像素一致由 tools/render_parity 的前景层用例钉住。
+ *
+ * ## 覆盖图(每帧随摆动渲一次,`rgba16float`,1/4 原画、场景归一化 uv)
+ *
+ * - **B = 前景面覆盖**:这一点是不是前景物体自己的像素(蒙版,取样兜住一个纹素,细枝漏不掉);
+ * - **R = A = 外沿覆盖**:B 再外扩 {@link FG_COVERAGE_DILATE_PX} 原画像素——深度图里糊开的树冠常比蒙版宽几像素,
+ *   外沿里只关掉深度图的误挡、不判前景面(否则树的轮廓外一圈会把人画成虚影);
+ * - **G = R × 前景面深度**(预乘:线性过滤后 G / R 仍是被覆盖纹素的深度,不被没覆盖的邻居拉向 0)。
+ *   前景面深度 = 这一列接地点的行走面深度 + 深度梯度 × (像素 y − 接地 y):蒙版里每个像素都当成立在接地线上、
+ *   朝相机的直立面,与角色直立 quad **同一个**式子——两块直立面放在一起比才谈得上谁挡谁。
+ * 多层按远→近画、预乘"over"叠:近的盖远的,外沿取并集。
+ *
+ * ## 消费方(遮挡滤镜三支 + 粒子)共用同一段 `fgSample`
+ *
+ * 蒙版按**源像素**查:位移图(`SwayBackground.uvMap`)告诉这个屏幕像素此刻显示原画哪个像素,id / matte 在那个
+ * 源像素上取——所以前景面与摆动的树一帧不差地一起动,树摆开露出来的底板不算前景面。
  *
  * 写法上的约束(都不改数值):
  * - WGSL 没有 out 参数:`fgSample` 的深度走 `ptr<function, f32>`;开关 `uHasFgCoverage` 在宿主各自的
@@ -16,11 +29,16 @@
  */
 import { FG_BASE_SAMPLES } from './foregroundLayerDefs';
 
+/** 覆盖图外沿膨胀(原画像素):深度图里糊开的树冠常比蒙版宽几像素;不小于覆盖图一个纹素 */
+export const FG_COVERAGE_DILATE_PX = 4;
+
 /**
  * 遮挡消费方共用的取样(深度遮挡滤镜三支、粒子)。宿主在模块作用域声明 `uFgCoverage: texture_2d<f32>` 与
  * `uFgCoverageSampler: sampler`,参数结构体里带 `uHasFgCoverage: f32`。
  *
- * 返回 0 = 不在前景层里(照旧用深度图);1 = 前景面(深度写进 outDepth,拿它顶替深度图比);2 = 外沿(不判遮挡)。
+ * 没有前景层时绑永不销毁的占位、开关 0——逐像素与没有这一段时相同。
+ * 返回 0 = 不在前景层里(照旧用深度图);1 = 前景面(深度写进 outDepth,拿它**顶替深度图**比);
+ * 2 = 外沿(深度图在这里是糊的,不判遮挡)。
  */
 export const FG_OCCLUSION_WGSL = /* wgsl */ `
 fn fgSample(uv: vec2<f32>, hasCoverage: f32, outDepth: ptr<function, f32>) -> f32 {

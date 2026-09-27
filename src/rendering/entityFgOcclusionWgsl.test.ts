@@ -4,7 +4,7 @@
  *   occluded = fgKind > 1.5 ? false : fgKind > 0.5 ? fgDepth < 脚点深度 + upright - 1e-4 : sceneDepth + uTolerance < spriteDepth
  * 游戏只跑 WGSL,这里钉住 WGSL 那份:
  * - 判据的三支与 master 的 GLSL 逐式相同(去掉 uniform 结构体前缀后逐字比),DepthOcclusion 的调试色用同一个 occluded;
- *   深度遮挡 / 实体光照两支只剩 WGSL(没有 GL 程序),角色着色那支的 GLSL 程序还在、判据照比;
+ *   三支都只剩 WGSL(没有 GL 程序);
  * - 共用取样段 fgSample 拼进来恰好一次、开关从各自的参数结构体传进去;
  * - uFgCoverage / uFgCoverageSampler 是组 1 的绑定,初值 = 永不销毁的占位 + 它的共享采样器;
  * - setForegroundCoverage 交来 / 收回:纹理、采样器(samplerOf)、开关三样一起换;
@@ -152,15 +152,8 @@ describe('三支实体遮挡滤镜 · 前景覆盖图(WGSL)', () => {
     const strip = (s: string) => s.replace(new RegExp(`\\b${c.prefix}\\.`, 'g'), '');
     const expected = ['false', `fgDepth < ${c.foot} + upright - 1e-4`, 'sceneDepth + uTolerance < spriteDepth'];
     expect(wm!.slice(1).map(strip)).toEqual(expected);
-    // 角色着色滤镜的 GLSL 程序还在(随角色照明那边一起删):它那份判据照比;另两支只剩 WGSL
-    if (c.label === '角色着色') {
-      const gm = /float fgKind = fgSample\(depthUV, fgDepth\); occluded = fgKind > 1\.5 \? (.+?) : fgKind > 0\.5 \? (.+?) : (.+?);/
-        .exec(norm(f.glProgram!.fragment));
-      expect(gm, 'GLSL 判据').toBeTruthy();
-      expect(gm!.slice(1)).toEqual(expected);
-    } else {
-      expect(f.glProgram).toBeNull();
-    }
+    // 三支都只剩 WGSL(GLSL 版已删)
+    expect(f.glProgram).toBeNull();
     // 深度图判据只剩判据里那一处(调试 / 正常渲染都读 occluded,不许再各算一遍)
     expect(w.match(/sceneDepth \+ \w+\.uTolerance < spriteDepth/g)?.length).toBe(1);
     // 取样在调试分支之前(调试色与正常渲染同一个 occluded)

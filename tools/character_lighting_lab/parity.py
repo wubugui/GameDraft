@@ -107,7 +107,7 @@ def probe_reconstruct(layout, coeff: np.ndarray, valid: np.ndarray,
     """按**运行时着色器 `probeE` 的口径**从 probe 网格重建 E。
 
     三线性权重、flat 索引、valid 门、`wsum` 归一 —— 逐条对着
-    `CharacterShadingFilter.probeE` 抄。自己另写一套等于在验证两份代码碰巧
+    `charLightCommon.wgsl` 的 `probeE` 抄。自己另写一套等于在验证两份代码碰巧
     写得一样,不是在验证 probe 对不对。
     """
     nx, ny, nz = layout.grid

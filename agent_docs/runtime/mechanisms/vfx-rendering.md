@@ -43,7 +43,7 @@ last_governed: 2026-09-23
   否则起火点离身体那几 wu 抵不过湍流,一团火被人身劈成前后两半。
 - **遮挡拿粒子自己的纵深比原画深度**(同一条 `depth_mapping` 解码、同一个 `depth_tolerance`),不是角色那套脚深度代理。
   场景前景层的蒙版里(2026-09-27,[[scene-foreground-layers]]),"原画深度"换成按接地线立起来的前景面深度(外沿一圈不判),
-  取样与实体滤镜是同一段 `FG_OCCLUSION_GLSL`;覆盖图由 `VfxRenderer.setForegroundCoverage` **当场**换绑到所有视图
+  取样与实体滤镜是同一段 `FG_OCCLUSION_WGSL`;覆盖图由 `VfxRenderer.setForegroundCoverage` **当场**换绑到所有视图
   (拆前景层时先以 null 调它再销毁 RT,等下一次 render 再换就晚了)。
   engine2d 分支:粒子 WGSL 拼 `FG_OCCLUSION_WGSL`(`foregroundMaskWgsl.ts`,绑定在网格资源组 group 2);换绑时每个视图的
   `uFgCoverage` 与 `uFgCoverageSampler = samplerOf(源)` 两键同换。"晚了"在这里同样成立——绑到已销毁的纹理源当帧抛

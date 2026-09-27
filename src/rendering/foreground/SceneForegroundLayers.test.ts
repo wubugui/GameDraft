@@ -15,7 +15,6 @@ import type { ForegroundBaseSamples, ForegroundDepthModel, ResolvedForegroundLay
 import {
   FG_COVERAGE_DILATE_PX, FG_COVERAGE_DOWNSCALE, SceneForegroundLayers, type ForegroundMask, type ForegroundMaskHost,
 } from './SceneForegroundLayers';
-import MASK_SRC from './foregroundMaskGlsl.ts?raw';
 import MASK_WGSL_SRC from './foregroundMaskWgsl.ts?raw';
 import DEPTH_SRC from '../DepthOcclusionFilter.ts?raw';
 import LIGHT_SRC from '../EntityLightingFilter.ts?raw';
@@ -189,12 +188,9 @@ describe('覆盖图着色：通道与前景面深度', () => {
     expect(MASK_WGSL_SRC).toContain('body = max(body, fgMaskAt(vUv + h));');
   });
 
-  // 取样段还剩一份 GLSL 版（角色逐像素照明滤镜的 GLSL 程序在拼），两份都查（逐函数字面量另由 shaderTwins.test.ts 钉）
   it('使用方取样：外沿不判、前景面按 G / R 解出深度', () => {
     expect(MASK_WGSL_SRC).toContain('*outDepth = s.g / max(s.r, 1e-4);');
     expect(MASK_WGSL_SRC).toContain('if (s.r <= 0.5) { return 0.0; }');
-    expect(MASK_SRC).toContain('outDepth = s.g / max(s.r, 1e-4);');
-    expect(MASK_SRC).toContain('if (s.r <= 0.5) { return 0.0; }');
   });
 });
 
@@ -229,23 +225,13 @@ describe('遮挡使用方 · 覆盖图', () => {
   beforeAll(() => { DOMAdapter.set({ ...adapter0, createCanvas: () => ({ getContext: () => null }) as never }); });
   afterAll(() => { DOMAdapter.set(adapter0); });
 
-  // 角色逐像素照明滤镜的 GLSL 程序还在（随角色照明那边一起删）：它那份判据照旧查
-  it('角色照明滤镜（GLSL 版）拼的是同一段取样；前景面里比「前景面深度 < 脚点深度 + 直立面」，外沿不判，其余照旧', () => {
-    expect(CHAR_SRC).toContain('${FG_OCCLUSION_GLSL}');
-    expect(CHAR_SRC).toContain('float fgKind = fgSample(depthUV, fgDepth);');
-    expect(CHAR_SRC).toContain('occluded = fgKind > 1.5 ? false');
-    expect(CHAR_SRC).toContain(': fgKind > 0.5 ? fgDepth < uFootQ.z + upright - 1e-4');
-    expect(CHAR_SRC).toContain(': sceneDepth + uTolerance < spriteDepth;');
-    // 另两支滤镜与粒子只剩 WGSL
-    for (const src of [DEPTH_SRC, LIGHT_SRC, VFX_SRC]) expect(src).not.toContain('FG_OCCLUSION_GLSL');
-  });
-
-  // 游戏只跑 WGSL：四处使用方拼同一段 fgSample（foregroundMaskWgsl）
+  // 游戏只跑 WGSL：四处使用方拼同一段 fgSample（foregroundMaskWgsl；GLSL 版已删）
   it('WGSL：三支滤镜与粒子拼同一段 FG_OCCLUSION_WGSL，判据一致（外沿不判 / 前景面比直立面 / 其余照旧）', () => {
     for (const src of [DEPTH_SRC, LIGHT_SRC, CHAR_SRC, VFX_SRC]) {
       expect(src).toContain('${FG_OCCLUSION_WGSL}');
       expect(src).toMatch(/fgSample\([^;]*,\s*&fgDepth\)/);
       expect(src).toMatch(/if \(fgKind > 1\.5\) \{/);
+      expect(src).not.toContain('FG_OCCLUSION_GLSL');
     }
     for (const [src, foot] of [[DEPTH_SRC, 'uFootDepthQ'], [LIGHT_SRC, 'uFootDepthQ'], [CHAR_SRC, 'uFootQ\\.z']] as const) {
       expect(src).toMatch(new RegExp(`fgDepth < \\w+\\.${foot} \\+ upright - 1e-4`));

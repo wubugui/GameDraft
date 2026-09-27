@@ -11,7 +11,7 @@ authority:
   - src/authoring/lightSpace.ts#groundHitAlong
   - src/authoring/AuthoringMode.ts#moveShapeDrag
   - src/rendering/lighting/lightPacking.ts#packLights
-  - src/rendering/lighting/lightingCore.glsl#lcAreaLight
+  - src/rendering/lighting/lightingCore.wgsl#lcAreaLight
 triggers:
   paths: ["src/authoring/*", "src/ui/debugLightingSection.ts", "tools/editor/editors/scene_lights.py"]
   topics: [摆灯, gizmo, 聚光, 面光, 光锥, 锥角, 朝向, orientation, 手柄, 运行时编辑, 跟随灯, follow]

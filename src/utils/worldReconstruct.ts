@@ -1,16 +1,16 @@
 /**
  * 「世界重建数学」唯一真相源 —— **CPU 侧镜像**。
  *
- * GLSL 本体在 `src/rendering/lighting/worldReconstruct.glsl`；本文件是它的逐函数严格镜像，
+ * 着色器本体在 `src/rendering/lighting/worldReconstruct.wgsl`；本文件是它的逐函数严格镜像，
  * 供 `SceneDepthSystem.isCollision` / `CharacterLightingSystem` / `groundDepthField` 使用。
  *
  * **为什么在 utils 而不是 rendering**：这套数学被核心层（碰撞、脚点）与渲染层（着色、影子）
  * 同时消费。按分层规则（UI→系统→渲染→核心→数据）它必须落在最低消费者之下，
  * 与同样被两层共用的 `groundDepthField.ts` 同处一层。
  *
- * >>> 改 GLSL = 必须同步改本文件，并 bump `WR_CONTRACT`。<<<
- * 这条不是靠自觉：`worldReconstruct.test.ts` 会**直接从 GLSL 文本里解析出
- * `#define WR_CONTRACT`** 与本文件的常量比对，改一边不改另一边当场红。
+ * >>> 改着色器 = 必须同步改本文件，并 bump `WR_CONTRACT`。<<<
+ * 这条不是靠自觉：`worldReconstruct.test.ts` 会**直接从 WGSL 文本里解析出
+ * `const WR_CONTRACT`** 与本文件的常量比对，改一边不改另一边当场红。
  *
  * ---------------------------------------------------------------------------
  * 设计约束（来自 P0 对抗验证暴露出的四个真坑，逐条对应）：
@@ -20,7 +20,7 @@
  *    所以本文件的函数**只收标量**，需要多分量时用 `out` 参数或返回预分配对象。
  *
  * 2. **字节域入口**。CPU 侧拿到的是 `getImageData().data` 的 0..255 原始字节，
- *    而 GLSL 的 `wrDecodeRG16Unit` 收的是归一化 texel（体内乘 255）。
+ *    而着色器的 `wrDecodeRG16Unit` 收的是归一化 texel（体内乘 255）。
  *    直接把字节塞进去会整体 ×255、且**不报错**——脚深度、遮挡、影子一起静默错位。
  *    故本文件提供 `wrDecodeRG16UnitBytes(r, g)`，签名就杜绝这个误用。
  *
@@ -30,11 +30,11 @@
  *    但 P0 的口径是"逐像素截图一致"，为稳妥起见**保留先除后乘的同体异名版**。
  *
  * 4. **逆变换**。probe 可视化与 NEE 光源需要 world→q、q→px 的反向换算，
- *    GLSL 侧全是单向的。这里补齐，避免站点继续内联手写（那正是漂移的源头）。
+ *    当时着色器侧（GLSL）全是单向的。这里补齐，避免站点继续内联手写（那正是漂移的源头）。
  * ---------------------------------------------------------------------------
  */
 
-/** 与 GLSL 的 `#define WR_CONTRACT` 同值。语义变更必须 bump。 */
+/** 与 worldReconstruct.wgsl 的 `const WR_CONTRACT` 同值。语义变更必须 bump。 */
 export const WR_CONTRACT = 2;
 
 /** 各站点原文里的下限守卫，原样保留（数值不许改，改了就是行为变化）。 */
@@ -84,7 +84,7 @@ export function wrQy(syPx: number, ppu: number, cy: number): number {
   return (cy - syPx) / ppu;
 }
 
-// ---- 逆变换（GLSL 侧没有；补齐以免站点继续内联手写）----
+// ---- 逆变换（着色器侧后来也补了 wrQxToPx / wrQyToPx；这里补齐以免站点继续内联手写）----
 
 /** q.x → 像素 x。`wrQx` 的逆。 */
 export function wrQxToPx(qx: number, ppu: number, cx: number): number {
@@ -113,7 +113,7 @@ export function wrQToWorldRow(
  * 上者的逆：M-world → q。R 正交（`|RᵀR−I| ≤ 1.11e-16`，28/28 场景实测）
  * ⇒ 转置即逆，即把行主 R **按列**取。
  *
- * GLSL 侧没有这个方向（shader 只从 q 往外走）；补在这里是为了让 CPU 侧需要反投影的
+ * 收编时着色器侧没有这个方向（后来补了 wrWorldToQ）；补在这里是为了让 CPU 侧需要反投影的
  * 站点（画灯的 gizmo、把世界点摆回屏幕）别各自手写一遍转置——手写转置写反了不报错，
  * 只是整体差一个旋转，画面上表现为「gizmo 与灯的光斑差一点」。
  *
@@ -178,7 +178,7 @@ export function wrDecodeRG16UnitBytes(r: number, g: number): number {
   return (r * 256 + g) / 65535;
 }
 
-/** 归一化域入口（0..1），与 GLSL 的 `wrDecodeRG16Unit` 逐字对应。 */
+/** 归一化域入口（0..1），与着色器的 `wrDecodeRG16Unit` 逐字对应。 */
 export function wrDecodeRG16Unit(r: number, g: number): number {
   return (r * 255 * 256 + g * 255) / 65535;
 }

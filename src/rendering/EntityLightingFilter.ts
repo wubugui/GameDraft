@@ -30,7 +30,7 @@ export interface IEntityShadingFilter extends Filter {
   /** 脚点遮挡偏置（实验室常数 0.045） */
   setFootBias(v: number): void;
   /**
-   * 场景前景层覆盖图（见 `foregroundMaskGlsl`）：前景面里用按接地线立起来的深度**顶替深度图**判遮挡，
+   * 场景前景层覆盖图（见 `foregroundMaskWgsl`）：前景面里用按接地线立起来的深度**顶替深度图**判遮挡，
    * 外沿一圈不判。null = 本场景没有前景层 / 覆盖图已拆：绑回永不销毁的占位——覆盖图 RT 销毁**之前**
    * 必须先广播 null（pixi-v8-traps）。遮挡判据有三份实现（DepthOcclusion / EntityLighting / CharacterShading），三份都接。
    */
@@ -167,7 +167,7 @@ fn mainFragment(
             let syTex = wy * u.uWorldToPixelY;
             let upright = u.uDepthPerSy * (syTex - syTexFoot);
             let spriteDepth = u.uFootDepthQ + upright + u.uFloorOffset + u.uFloorOffsetExtra - u.uFootBias;
-            // 场景前景层(三份遮挡实现同一段,见 foregroundMaskGlsl):前景面按接地深度立起来的直立面比,
+            // 场景前景层(三份遮挡实现同一段,见 foregroundMaskWgsl):前景面按接地深度立起来的直立面比,
             // 不加脚点偏置 / 容差 / floor 偏移;外沿(深度图糊的那圈)不判
             var fgDepth: f32;
             let fgKind = fgSample(depthUV, u.uHasFgCoverage, &fgDepth);

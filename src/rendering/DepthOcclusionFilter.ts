@@ -123,7 +123,7 @@ fn mainFragment(
     let syTex = wy * u.uWorldToPixelY;
     let upright = u.uDepthPerSy * (syTex - syTexFoot);
     let spriteDepth = u.uFootDepthQ + upright + u.uFloorOffset + u.uFloorOffsetExtra - u.uFootBias;
-    // 场景前景层(三份遮挡实现同一段,见 foregroundMaskGlsl):前景面按接地深度立起来的直立面比,
+    // 场景前景层(三份遮挡实现同一段,见 foregroundMaskWgsl):前景面按接地深度立起来的直立面比,
     // 不加脚点偏置 / 容差 / floor 偏移;外沿(深度图糊的那圈)不判
     var fgDepth: f32;
     let fgKind = fgSample(depthUV, u.uHasFgCoverage, &fgDepth);

@@ -84,12 +84,14 @@ function candFallback(): Plugin {
  * 旋转角,「RT gather」几个用例因此永远逐位不等(SwiftShader 下两边同一编译器才相同);钉住之后其余整条
  * gather(步进、入盒、NEE、miss)仍逐字节比。只改本对照页里加载的源,不动游戏。
  * 没找到要替换的式子就直接抛(改名后不许悄悄失效);`RENDER_PARITY_PIN_GATHER_ROT=0` 关掉。
+ * GLSL 那条只挂参考侧:本分支的 CharacterShadingFilter.ts 已没有 GLSL(gather 在 charLightCommon.wgsl 里)。
+ * WGSL 那条两侧都挂(参考侧经 refFallback 补进来、只 import 不执行,替换无害)。
  */
 function pinGatherRotation(): Plugin {
-  const rules: Array<{ file: RegExp; from: string }> = [
-    { file: /[\\/]CharacterShadingFilter\.ts$/, from: 'hash12(gl_FragCoord.xy)' },
+  const rules: Array<{ file: RegExp; from: string; refOnly?: boolean }> = [
+    { file: /[\\/]CharacterShadingFilter\.ts$/, from: 'hash12(gl_FragCoord.xy)', refOnly: true },
     { file: /[\\/]charLightCommon\.wgsl$/, from: 'hash12(fragCoord)' },
-  ];
+  ].filter((r) => side === 'ref' || !r.refOnly);
   return {
     name: 'render-parity-pin-gather-rot',
     enforce: 'pre',

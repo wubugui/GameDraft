@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-// 直接读 GLSL 本体：契约版本、切片标记、eps 常量都从它解析出来比对，
-// 让"改 GLSL 忘了改 TS"变成机械可捕获的失败，而不是靠自觉。
-import GLSL from '../rendering/lighting/worldReconstruct.glsl?raw';
+// 直接读着色器本体（WGSL）：契约版本、切片标记、eps 常量都从它解析出来比对，
+// 让"改着色器忘了改 TS"变成机械可捕获的失败，而不是靠自觉。
+import WGSL from '../rendering/lighting/worldReconstruct.wgsl?raw';
 import {
   WR_CONTRACT,
   WR_EPS_PROJ,
@@ -35,33 +35,32 @@ import {
  */
 
 describe('契约版本', () => {
-  it('**直接从 GLSL 文本解析**，改一边不改另一边当场红', () => {
-    const m = /#define\s+WR_CONTRACT\s+(\d+)/.exec(GLSL);
-    expect(m, 'GLSL 里找不到 #define WR_CONTRACT').not.toBeNull();
+  it('**直接从着色器文本解析**，改一边不改另一边当场红', () => {
+    const m = /const\s+WR_CONTRACT\s*:\s*i32\s*=\s*(\d+)\s*;/.exec(WGSL);
+    expect(m, 'WGSL 里找不到 const WR_CONTRACT').not.toBeNull();
     expect(Number(m![1])).toBe(WR_CONTRACT);
   });
 
-  it('GLSL 的三个切片标记齐全（拼接器靠它们切）', () => {
+  it('三个切片标记齐全（拼接器靠它们切）', () => {
     for (const tag of ['WR_CORE', 'WR_TEX', 'WR_SPRITE']) {
-      expect(GLSL, `缺 ${tag} 起始标记`).toContain(`//__${tag}_BEGIN__`);
-      expect(GLSL, `缺 ${tag} 结束标记`).toContain(`//__${tag}_END__`);
+      expect(WGSL, `缺 ${tag} 起始标记`).toContain(`//__${tag}_BEGIN__`);
+      expect(WGSL, `缺 ${tag} 结束标记`).toContain(`//__${tag}_END__`);
     }
   });
 
-  it('GLSL 不含 #version / precision / uniform 声明（它永远是被塞进别人 shader 中段的一段）', () => {
-    const body = GLSL.slice(GLSL.indexOf('//__WR_CORE_BEGIN__'));
-    expect(body).not.toMatch(/^\s*#version/m);
-    expect(body).not.toMatch(/^\s*precision\s+\w+p\s+float\s*;/m);
-    expect(body).not.toMatch(/^\s*uniform\s/m);
+  it('不声明任何绑定 / 入口（它永远是被塞进别人 shader 中段的一段，全部输入走形参）', () => {
+    const body = WGSL.slice(WGSL.indexOf('//__WR_CORE_BEGIN__')).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    expect(body).not.toMatch(/\bvar\s*</);
+    expect(body).not.toMatch(/@(group|binding|vertex|fragment)\b/);
   });
 
-  it('GLSL 里的 eps 常量与 TS 侧同值（数值改了就是行为变化）', () => {
+  it('eps 常量与 TS 侧同值（数值改了就是行为变化）', () => {
     for (const [name, value] of [
       ['WR_EPS_PROJ', WR_EPS_PROJ], ['WR_EPS_SCENE', WR_EPS_SCENE],
     ] as const) {
-      const re = new RegExp(`const\\s+float\\s+${name}\\s*=\\s*([0-9.eE+-]+)\\s*;`);
-      const m = re.exec(GLSL);
-      expect(m, `GLSL 里找不到 ${name}`).not.toBeNull();
+      const re = new RegExp(`const\\s+${name}\\s*:\\s*f32\\s*=\\s*([0-9.eE+-]+)\\s*;`);
+      const m = re.exec(WGSL);
+      expect(m, `WGSL 里找不到 ${name}`).not.toBeNull();
       expect(Number(m![1])).toBe(value);
     }
   });

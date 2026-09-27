@@ -20,7 +20,7 @@
 
 ## 当前形式的硬约束(重要)
 
-运行时着色器 `CharacterShadingFilter.probeE` 做的是**规则网格上的三线性**:
+运行时着色器 `charLightCommon.wgsl` 的 `probeE` 做的是**规则网格上的三线性**:
 `(Xw - uWMin) * uWScale` -> `ivec3` -> 8 角加权,flat 索引
 `ix*(ny*nz) + iy*nz + iz`。载荷里只有 `probes:{nx,ny,nz}` 与世界 AABB。
 

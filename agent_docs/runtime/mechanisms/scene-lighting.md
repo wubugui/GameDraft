@@ -8,7 +8,7 @@ status: active
 authority:
   - src/rendering/lighting/SceneLightingPass.ts
   - src/rendering/lighting/LitBackground.ts
-  - src/rendering/lighting/lightingCore.glsl
+  - src/rendering/lighting/lightingCore.wgsl
   - src/core/SceneLightingSystem.ts
   - src/rendering/lighting/surfaceMask.ts
   - src/utils/sceneAppearance.ts
@@ -59,7 +59,7 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 
 - `SceneLightingPass.ts` —— 合成式与灯循环,**头注释是模型的第一真相源**。
 - `LitBackground.ts` —— 逐帧那一级(采样缓存 → 雾 → 显示变换)。
-- `lightingCore.glsl` —— 各类灯的闭式解,场景与角色共用的唯一实现。
+- `lightingCore.wgsl` —— 各类灯的闭式解,场景与角色共用的唯一实现(经 `wgslChunks.ts` 切片拼进各宿主)。
 - `SceneLightingSystem.ts` —— 载荷装载、脏时重算、`wuPerQUnit`、运行时灯与压暗(`effectiveLights` / `setEnvDim`)。
 - `sceneAppearance.ts` —— 「此刻该显示哪张原画、配哪份参数」的纯解析。
 - 离线端 `tools/character_lighting_lab/scene_fields.py` → `lighting/<背景基名>/`
@@ -166,7 +166,7 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 ## 线光与镜面反光(2026-09-24,落雷对齐参考图)
 
 - **线光** `kind: 'line'`(`LightDef.to` = 终点,M-world):落雷沿雷身摆的那几段。`lcLineLight` 是沿线的 Lambert 解析积分,
-  场景 / 角色 / 粒子三条灯循环都有这个分支(粒子经 `ENTITY_SCENE_LIGHTS_GLSL`)。打包:A = 起点,D.xyz = 终点 − 起点,
+  场景 / 角色 / 粒子三条灯循环都有这个分支(粒子经 `ENTITY_SCENE_LIGHTS_WGSL`)。打包:A = 起点,D.xyz = 终点 − 起点,
   强度与点光同一套 q 相对折法(× wuPerQUnit²)。
 - **反光位** `LightDef.reflect`(flags bit2)只有落雷的运行时灯打;作者灯一律不进镜面项。
 - **镜面项只在场景 pass 里,任何地方都有**:`surf = painting + albedo × lampE + specE × 反光强度`。
@@ -193,10 +193,11 @@ albedo.png = clamp(linear(主背景原画) / ((1-day_hemi) + day_hemi × skyvis)
 
 ## 已知坑
 
-- 烘焙 pass(`SceneLightingPass`)与显示级(`LitBackground`)都有 GLSL 与 WGSL 两份(同文件并排),改合成式 / 灯循环 /
-  镜面 / 细节法线 / 雾要两份一起改,改完跑 `node tools/render_parity/run.mjs --case 场景光照`(`sceneLightingWgsl.test.ts`
+- 烘焙 pass(`SceneLightingPass`)与显示级(`LitBackground`)只有 WGSL(GLSL 版 2026-09-28 已删),改合成式 / 灯循环 /
+  镜面 / 细节法线 / 雾改 WGSL,改完跑 `node tools/render_parity/run.mjs --case 场景光照`(`sceneLightingWgsl.test.ts`
   在 Node 里钉资源键、uniform 布局、采样器一律 samplerOf 且换纹理时跟着换)。WGSL 侧细节法线的 smoothstep 是手写定义式,别换回内建
-  (内建与 GLSL 差个位 ulp,被 GGX 近峰值放大到几十 ulp,见文件内注释)。
+  (内建与 master 的 GLSL 差个位 ulp,被 GGX 近峰值放大到几十 ulp,见文件内注释)。
+  调用闭合(调了没定义的函数 = 管线建不起来、整场景一帧不画)由 `wgslSymbols.test.ts` 守。
 - **换表面材质区的遮罩:先换绑、再销毁旧的**(Pixi 坑②同一个):旧遮罩还绑在两份 shader 的 BindGroup 上时 `destroy(true)`,
   BindGroup 永久烧毁,之后每帧 `setTime` 都抛、整条光照停摆。只在**运行时改区**时触发(工作台联动一改表面区就中),
   进场景那一次不中——09-24 抓图时才撞到。

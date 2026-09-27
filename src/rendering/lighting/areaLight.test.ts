@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import CORE from './lightingCore.glsl?raw';
+import CORE_SRC from './lightingCore.wgsl?raw';
+
+/** 只看代码(注释里的绕向示例不算) */
+const CORE = CORE_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
 
 /**
  * 面光的**朝向语义** —— Lambert 多边形辐照度的符号契约。
@@ -43,7 +46,7 @@ const norm = (a: V3): V3 => {
 /**
  * `areaAxes` 的镜像:由法线 + 半宽半高 + **绕法线的自转**推出两条半轴。
  *
- * ⚠ 这份镜像与 GLSL 必须逐字同构。前两步造的只是**参考基**(从法线算出来的),
+ * ⚠ 这份镜像与着色器(SceneLightingPass 的 areaAxes / CharacterLitSprite 的 litAreaAxes)必须逐字同构。前两步造的只是**参考基**(从法线算出来的),
  *   第三步的平面内旋转才是作者能表达"哪边是宽"的地方 —— 少了它,
  *   一扇斜着的窗根本摆不出来。
  */
@@ -129,7 +132,7 @@ describe('双面光两侧都亮', () => {
   });
 });
 
-describe('机械契约：GLSL 与这份镜像不许分家', () => {
+describe('机械契约：着色器(lightingCore.wgsl)与这份镜像不许分家', () => {
   it('顶点绕向是「从正面看逆时针」', () => {
     // 只看四个顶点表达式的**顺序**，不锁缩进/换行（文件是 CRLF，锁死会假红）
     const order = [...CORE.matchAll(/center ([+-]) halfU ([+-]) halfV/g)]
@@ -144,6 +147,6 @@ describe('机械契约：GLSL 与这份镜像不许分家', () => {
   it('lcRectIrradiance 返回带符号值，钳位在 lcAreaLight 里', () => {
     expect(CORE).toContain('return sum * (0.5 / LC_PI);');
     expect(CORE).not.toContain('return max(sum * (0.5 / LC_PI), 0.0);');
-    expect(CORE).toContain('E = twoSided ? abs(E) : max(E, 0.0);');
+    expect(CORE).toContain('if (twoSided) { E = abs(E); } else { E = max(E, 0.0); }');
   });
 });

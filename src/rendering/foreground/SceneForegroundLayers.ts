@@ -3,7 +3,7 @@
  *
  * 前景层**不重画任何像素**：背景里的树本来就画着，要做的只是让"站在树后的东西"在树的像素上变成虚影——
  * 那是遮挡判据的事。本类把所有层的蒙版（经位移图、跟着摆）连同**前景面深度**渲进一张覆盖图
- * （`foregroundMaskGlsl` 头注释说通道），交给遮挡的消费方（三支实体滤镜、粒子）：蒙版里用前景面深度
+ * （`foregroundMaskWgsl` 头注释说通道），交给遮挡的消费方（三支实体滤镜、粒子）：蒙版里用前景面深度
  * **顶替深度图**，逐像素比——站位不同、压着的部位不同，答案就不同；被挡部分与深度遮挡同一个虚影系数。
  *
  * **所有权**：覆盖图网格由 `SwayBackground` 创建并登记（它销毁时一并销毁，兜底）；本类持有覆盖图 RT。
@@ -17,7 +17,7 @@ import {
   foregroundBaseSamples, foregroundRect, quantizeForegroundDisplacement,
   type ForegroundBaseSamples, type ForegroundDepthModel, type ResolvedForegroundLayer,
 } from './foregroundLayerDefs';
-import { FG_COVERAGE_DILATE_PX } from './foregroundMaskGlsl';
+import { FG_COVERAGE_DILATE_PX } from './foregroundMaskWgsl';
 
 export { FG_COVERAGE_DILATE_PX };
 

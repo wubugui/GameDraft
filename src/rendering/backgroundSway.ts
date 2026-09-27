@@ -1077,7 +1077,7 @@ export class SwayBackground {
   /**
    * 覆盖图网格（打光 / 不打光都有）：把实例 `instId` 此刻画出来的蒙版（前景面 + 外扩 `dilatePaintPx` 原画像素的外沿）
    * 连同前景面深度（按 `base` 接地、`uprightPerY` 立起来）写进一张 `target` 尺寸、场景归一化 uv 寻址的 RT。
-   * 由前景层渲进它的覆盖图，通道见 `foregroundMaskGlsl`。
+   * 由前景层渲进它的覆盖图，通道见 `foregroundMaskWgsl`。
    */
   createForegroundMask(
     rect: readonly [number, number, number, number], instId: number,

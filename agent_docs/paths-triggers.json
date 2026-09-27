@@ -906,7 +906,13 @@
       ]
     },
     {
-      "glob": "src/rendering/charShadeCore.glsl",
+      "glob": "src/rendering/charLightCommon.wgsl",
+      "docs": [
+        "character-lighting"
+      ]
+    },
+    {
+      "glob": "src/rendering/charShadeCore.wgsl",
       "docs": [
         "character-lighting"
       ]

@@ -18,7 +18,7 @@
 ## ⚠ 两个必须钉死的量纲约定(错一个,parity 会「稳定差 pi 倍」或被增益吸收掉)
 
 **1. probe 图集存的 E 不除 pi。**
-运行时 `CharacterShadingFilter.probeEvalFlat` 做 `E = sum_k coeff_k * Y_k(n)`,
+运行时 `charLightCommon.wgsl` 的 `probeEvalFlat` 做 `E = sum_k coeff_k * Y_k(n)`,
 而系数在烘焙期已卷过 `A_l = (pi, 2pi/3, pi/4)`(Ramamoorthi-Hanrahan)。
 所以它收敛到的量是
 
@@ -64,7 +64,7 @@ UP = np.array([0.0, 1.0, 0.0], np.float32)
 
 #: 卷积系数 A_l(Ramamoorthi & Hanrahan),l = 0..4:π, 2π/3, π/4, 0, -π/24。
 #: 奇数 l>=3 为 0(余弦叶的奇偶性),A_4 = -π/24 ≈ -0.1309。
-#: ⚠ 与 `CharacterShadingFilter` 的 `float A[9]`(ambIrr 只用到 l<=2)逐值对应,改一处必须改两处。
+#: ⚠ 与 `charLightCommon.wgsl` 的 `ambIrr` 里的 `var A = array<f32, 9>(...)`(只用到 l<=2)逐值对应,改一处必须改两处。
 A_L = np.array([math.pi, 2.0 * math.pi / 3.0, math.pi / 4.0, 0.0, -math.pi / 24.0], np.float32)
 _L_OF_K = np.array([0, 1, 1, 1, 2, 2, 2, 2, 2])
 AK = A_L[_L_OF_K]                                    # (9,) —— L2 的老名字,别处还在用
@@ -93,7 +93,7 @@ def sh_basis(dirs: np.ndarray, lmax: int = 2) -> np.ndarray:
     "Table of spherical harmonics" 实数形式,m 从 -l 到 l),常数与
     `test_球谐基正交归一` 用 4096 方向的 Gram 矩阵钉死。
 
-    ⚠ 系数与顺序必须与着色器的 `shY(int k, vec3 n)` 逐行一致 ——
+    ⚠ 系数与顺序必须与着色器(charLightCommon.wgsl)的 `shY(k: i32, n: vec3<f32>)` 逐行一致 ——
     错一个顺序 = 光的方向整体拧了,画面上「有点怪」而不报任何错。
     """
     x, y, z = dirs[:, 0], dirs[:, 1], dirs[:, 2]

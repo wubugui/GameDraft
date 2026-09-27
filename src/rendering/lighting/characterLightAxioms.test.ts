@@ -6,18 +6,18 @@
  *
  * 这两条保证不了，别的一切光照数据都没有意义。所以这里**跑真实产品链**——
  * `LightDef → packLights → applyCharLights → charLights 常驻组`，然后**从组里读回**
- * uniform、按 `lightingCore.glsl` 逐式相同的数学算角色收到的照度。取"组里读回的值"
+ * uniform、按 `lightingCore.wgsl` 逐式相同的数学算角色收到的照度。取"组里读回的值"
  * 而不是"打包结果"是刻意的：2026-08-31 的 P0 恰恰断在打包之后——`setShadowBasis`
  * 的重放用缺省参数把 `wuPerQUnit`（880）踩成 1，打包数据全对、组里尺度是错的，
  * 角色对每盏带距离的灯都差 880 倍距离。修复前，本文件的公理②在"作者面的距离尺度"
  * 上直接崩（灯从一臂挪到十步远，照度几乎不变——因为真实距离被 880 倍常数支配）。
  *
- * 数学镜像锚定在真实 GLSL 源上（文末锚定测试）：公式漂了这里跟着红。
+ * 数学镜像锚定在真实着色器源上（文末锚定测试）：公式漂了这里跟着红。
  */
 import { describe, expect, it } from 'vitest';
 
-import CORE_GLSL from './lightingCore.glsl?raw';
-import SHADE_CORE from '../charShadeCore.glsl?raw';
+import CORE_SRC from './lightingCore.wgsl?raw';
+import SHADE_CORE from '../charShadeCore.wgsl?raw';
 import { CharacterLightingSystem } from '../../core/CharacterLightingSystem';
 import { MAX_STATIC_LIGHTS, packLights } from './lightPacking';
 import type { SceneLightingDef } from '../../data/types';
@@ -146,7 +146,7 @@ function shadedOut(E: number): number {
   return 0.0381 * (E / Math.PI) * Math.pow(2, 4.2);
 }
 
-describe('镜像锚定②：charShadeCore.glsl 的着色公式没漂', () => {
+describe('镜像锚定②：charShadeCore.wgsl 的着色公式没漂', () => {
   // shadedOut 镜像的是 charShadeCore 的乘链。该文件头自己写着"任何角色着色迭代
   // 只改此文件"——**预期会被改**,所以镜像必须有闸(2026-08-31 审计:原来只锚了
   // lightingCore,这半边完全无锚,改了 charShadeCore 过曝阈值会静默失真)。
@@ -228,10 +228,10 @@ describe('公理②：角色离灯越近越亮', () => {
 });
 
 describe('数学镜像锚定（公式漂了这里先红，别让镜像装死）', () => {
-  it('lcFalloff / lcPointLight 的关键式样仍在 GLSL 源里', () => {
-    expect(CORE_GLSL).toContain('cut / (r2 + softening)');
-    expect(CORE_GLSL).toContain('exp(-r2 / max(range * range, 1e-6))');
-    expect(CORE_GLSL).toContain('intensity * ndl * lcFalloff(r2, range, softening) * vis');
+  it('lcFalloff / lcPointLight 的关键式样仍在着色器源里', () => {
+    expect(CORE_SRC).toContain('cut / (r2 + softening)');
+    expect(CORE_SRC).toContain('exp(-r2 / max(range * range, 1e-6))');
+    expect(CORE_SRC).toContain('intensity * ndl * lcFalloff(r2, range, softening) * vis');
   });
 
   it('评估链真的有光（防公理测试因摆错灯而空转全绿）', () => {

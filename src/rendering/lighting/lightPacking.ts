@@ -7,7 +7,7 @@ import { resolveLightColor } from './kelvin';
  */
 export const MAX_STATIC_LIGHTS = 24;
 
-/** shader 里 `kind` 的编码。与 `lightingCore.glsl` 的 `LC_*` 常量同值。 */
+/** shader 里 `kind` 的编码。与 `lightingCore.wgsl` 的 `LC_*` 常量同值。 */
 export const LIGHT_KIND_CODE = { point: 0, spot: 1, area: 2, directional: 3, line: 4 } as const;
 
 /**
@@ -74,7 +74,7 @@ export function pointIntensityWu(intensityQ: number, wuPerQUnit: number): number
  * 世界 wu → 伪世界 q：**朝向过 Rᵀ、尺度除 wuPerQUnit，两样都要**。
  *
  * 给铁律 0 允许留在 q 的那几类量用（深度域：线扫前缀的灯位要与 march 的 q 深度直接比较）。
- * 与 GLSL 的 wrWorldToQ 同式（M 正交，转置即逆），再除一次尺度；与 shader 的
+ * 与着色器（worldReconstruct.wgsl）的 wrWorldToQ 同式（M 正交，转置即逆），再除一次尺度；与 shader 的
  * `P = R·q × wuPerQUnit` 互逆。
  *
  * 2026-08-30 ~ 09-10 `SceneLightingPass` 自己拼的那份只转了朝向没除尺度（wu 当 q 用）：

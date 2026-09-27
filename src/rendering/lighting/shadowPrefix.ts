@@ -40,7 +40,7 @@ import { samplerOf } from '../legacy/gpuSampler';
  *
  * ## GPU 上怎么做前缀
  *
- * WebGL2 没有 compute，用 **Hillis–Steele 扫描**：
+ * 不用 compute（当初的 WebGL2 没有；现在这条管线照旧走片元 pass），用 **Hillis–Steele 扫描**：
  * `M_j(P) = min( M_{j−1}(P), M_{j−1}(P 沿径向朝灯挪 2^{j−1} 像素) )`，
  * ⌈log2(对角线)⌉ 趟之后 M 就是整条线的前缀最小。
  *
@@ -76,117 +76,15 @@ export function scanPassCount(w: number, h: number): number {
  */
 export const PREFIX_SENTINEL = 65504;
 
-const VERT = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 aPosition;
-in vec2 aUV;
-uniform mat3 uProjectionMatrix;
-uniform mat3 uWorldTransformMatrix;
-uniform mat3 uTransformMatrix;
-out vec2 vUv;
-void main(void) {
-    mat3 model = uWorldTransformMatrix * uTransformMatrix;
-    vec2 screen = (model * vec3(aPosition, 1.0)).xy;
-    gl_Position = vec4((uProjectionMatrix * vec3(screen, 1.0)).xy, 0.0, 1.0);
-    vUv = aUV;
-}
-`;
-
 /**
- * 初始化：算出每个像素的 g ＝ [ (d − z_灯) + bias ] / k。
- * k ＝ 该像素到灯的**图像距离**（像素）。k 很小的地方（灯本体附近）直接给哨兵值，
- * 免得除零把整条线毒死。
- */
-const INIT_FRAG = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vUv;
-out vec4 fragColor;
-
-uniform sampler2D uDepth;
-uniform vec2  uTexSize;
-uniform vec3  uDepthMap;     // invert, scale, offset
-// 四盏灯在**图像**上的位置 xy;w = 有效标志(0 = 这个通道没灯)
-uniform vec4  uLightPx[4];
-uniform vec4  uLightZ;       // 四盏灯各自在 q 里的深度
-uniform float uBias;
-uniform float uNearPx;       // 小于这个图像距离就不参与前缀(k→0 时 g 发散)
-uniform float uSentinel;
-
-float prefixDecodeDepth(vec4 t) {
-    float raw = t.r * 255.0 * 256.0 + t.g * 255.0;
-    float u = raw / 65535.0;
-    if (uDepthMap.x > 0.5) u = 1.0 - u;
-    return u * uDepthMap.y + uDepthMap.z;
-}
-
-void main(void) {
-    vec2 px = vUv * uTexSize;
-    float d = prefixDecodeDepth(texture(uDepth, vUv));
-    vec4 g = vec4(uSentinel);
-    for (int i = 0; i < 4; i++) {
-        if (uLightPx[i].w < 0.5) continue;
-        float k = length(px - uLightPx[i].xy);
-        if (k < uNearPx) continue;
-        float v = ((d - uLightZ[i]) + uBias) / k;
-        if (i == 0) g.x = v;
-        else if (i == 1) g.y = v;
-        else if (i == 2) g.z = v;
-        else g.w = v;
-    }
-    fragColor = g;
-}
-`;
-
-/**
- * 扫描一趟：与"沿径向朝灯挪 uOffset 像素"处取逐通道最小。
- *
- * 每个通道的灯不同 ⇒ 偏移方向也不同 ⇒ 一趟 4 次采样。这正是打包 4 盏一起扫
- * 仍然划算的原因：趟数减到 1/4，总采样数不变，但 draw call 少了 4 倍。
- *
- * `uOffset = 0` 时退化成纯拷贝（奇数趟收尾把结果搬回 slab 用）。
- */
-const SCAN_FRAG = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 vUv;
-out vec4 fragColor;
-
-uniform sampler2D uPrev;
-uniform vec2  uTexSize;
-uniform vec4  uLightPx[4];
-uniform float uOffset;
-
-void main(void) {
-    vec4 cur = texture(uPrev, vUv);
-    if (uOffset <= 0.0) { fragColor = cur; return; }
-    vec2 px = vUv * uTexSize;
-    for (int i = 0; i < 4; i++) {
-        if (uLightPx[i].w < 0.5) continue;
-        vec2 toLight = uLightPx[i].xy - px;
-        float k = length(toLight);
-        if (k < 1e-4) continue;
-        // 朝灯挪，但不许越过灯 —— 越过就跑到径向线的另一侧去了，那不是"前缀"
-        float adv = min(uOffset, k);
-        vec2 sUv = (px + toLight / k * adv) / uTexSize;
-        if (sUv.x < 0.0 || sUv.x > 1.0 || sUv.y < 0.0 || sUv.y > 1.0) continue;
-        vec4 s = texture(uPrev, sUv);
-        if (i == 0) cur.x = min(cur.x, s.x);
-        else if (i == 1) cur.y = min(cur.y, s.y);
-        else if (i == 2) cur.z = min(cur.z, s.z);
-        else cur.w = min(cur.w, s.w);
-    }
-    fragColor = cur;
-}
-`;
-
-/**
- * WebGPU 版(WGSL)。与上面两段 GLSL 逐句对应,GLSL 原样保留(WebGL 仍走它)。
+ * 着色器(WGSL;与 master 的 GLSL 版逐像素一致由 render_parity「阴影与GI /」钉住)。
  *
  * 绑定按 Pixi 网格约定:第 0 组 `globalUniforms`、第 1 组 `localUniforms` 由 Pixi 自动挂;
  * 本 pass 自己的纹理 / 采样器 / uniform 组放第 2 组,**变量名 = resources 的键名**,
  * uniform 结构体成员顺序 = JS 里 uniforms 的声明顺序(Pixi 按声明顺序、WGSL 对齐算偏移)。
  *
- * 片元坐标:两边都只用插值出来的 `vUv`,离屏目标上 uv(0,0) 在两个后端都落在存储第 0 行
- * (Pixi WebGL 画 RT 时翻了投影),所以不需要任何翻转——像素对照 `阴影与GI /` 用例验过。
+ * 片元坐标:只用插值出来的 `vUv`,离屏目标上 uv(0,0) 在两个后端都落在存储第 0 行
+ * (master 的 Pixi WebGL 画 RT 时翻了投影),所以不需要任何翻转——像素对照 `阴影与GI /` 用例验过。
  * ⚠ 结构体体内不写注释:Pixi 用正则抽结构体成员,注释里的冒号会被当成成员。
  */
 const WGSL_VERT = /* wgsl */ `
@@ -220,7 +118,12 @@ fn mainVertex(@location(0) aPosition: vec2<f32>, @location(1) aUV: vec2<f32>) ->
 }
 `;
 
-/** 初始化 pass 的 WGSL,对应 `INIT_FRAG`。 */
+/**
+ * 初始化：算出每个像素的 g ＝ [ (d − z_灯) + bias ] / k。
+ * k ＝ 该像素到灯的**图像距离**（像素）。k 很小的地方（灯本体附近，< uNearPx）直接给哨兵值，
+ * 免得除零把整条线毒死。prefixInit:uDepthMap = (invert, scale, offset);uLightPx = 四盏灯在**图像**上的
+ * 位置 xy,w = 有效标志(0 = 这个通道没灯);uLightZ = 四盏灯各自在 q 里的深度。
+ */
 const INIT_WGSL = /* wgsl */ `${WGSL_VERT}
 struct PrefixInit {
     uTexSize: vec2<f32>,
@@ -265,9 +168,13 @@ fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
 `;
 
 /**
- * 扫描 pass 的 WGSL,对应 `SCAN_FRAG`。
- * 循环里的采样在非一致控制流里(WGSL 不许 `textureSample`),改 `textureSampleLevel(…, 0)`:
- * slab 只有一级 mip,与 GLSL `texture()` 等价。
+ * 扫描一趟：与"沿径向朝灯挪 uOffset 像素"处取逐通道最小。
+ *
+ * 每个通道的灯不同 ⇒ 偏移方向也不同 ⇒ 一趟 4 次采样。这正是打包 4 盏一起扫
+ * 仍然划算的原因：趟数减到 1/4，总采样数不变，但 draw call 少了 4 倍。
+ *
+ * `uOffset = 0` 时退化成纯拷贝（奇数趟收尾把结果搬回 slab 用）。
+ * 循环里的采样在非一致控制流里(WGSL 不许 `textureSample`),用 `textureSampleLevel(…, 0)`:slab 只有一级 mip。
  */
 const SCAN_WGSL = /* wgsl */ `${WGSL_VERT}
 struct PrefixScan {
@@ -292,6 +199,7 @@ fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
         let toLight = lp.xy - px;
         let k = length(toLight);
         if (k < 1e-4) { continue; }
+        // 朝灯挪,但不许越过灯 —— 越过就跑到径向线的另一侧去了,那不是"前缀"
         let adv = min(prefixScan.uOffset, k);
         let sUv = (px + toLight / k * adv) / prefixScan.uTexSize;
         if (sUv.x < 0.0 || sUv.x > 1.0 || sUv.y < 0.0 || sUv.y > 1.0) { continue; }
@@ -357,14 +265,13 @@ export class ShadowPrefixPass {
       indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
     });
     this.initShader = Shader.from({
-      gl: { vertex: VERT, fragment: INIT_FRAG },
       gpu: {
         vertex: { source: INIT_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: INIT_WGSL, entryPoint: 'mainFragment' },
       },
       resources: {
         uDepth: this.geo.depth.source,
-        // WGSL 要单独的采样器(WebGL 侧没有这个名字,Pixi 忽略)
+        // WGSL 要单独的采样器
         uDepthSampler: samplerOf(this.geo.depth.source),
         prefixInit: {
           uTexSize: { value: new Float32Array([w, h]), type: 'vec2<f32>' },
@@ -378,7 +285,6 @@ export class ShadowPrefixPass {
       },
     });
     this.scanShader = Shader.from({
-      gl: { vertex: VERT, fragment: SCAN_FRAG },
       gpu: {
         vertex: { source: SCAN_WGSL, entryPoint: 'mainVertex' },
         fragment: { source: SCAN_WGSL, entryPoint: 'mainFragment' },

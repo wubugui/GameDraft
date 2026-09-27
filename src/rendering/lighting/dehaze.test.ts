@@ -15,7 +15,7 @@ import SCENE_PASS from './SceneLightingPass.ts?raw';
  * 免得有人"顺手"把下限改回硬钳 —— 那种回退**不会报错**，只会让噪点悄悄回来。
  */
 
-/** GLSL 里那一行的 JS 镜像。改一边必须改另一边（见文末机械契约）。 */
+/** 着色器里那一行的 JS 镜像。改一边必须改另一边（见文末机械契约）。 */
 function dehaze(
   painting: readonly [number, number, number],
   hazeAmt: readonly [number, number, number],
@@ -89,11 +89,11 @@ describe('色度守恒：下限起作用时按比例缩，不是逐通道乱砍'
   });
 });
 
-describe('机械契约：GLSL 与这份镜像不许分家', () => {
+describe('机械契约：着色器与这份镜像不许分家', () => {
   it('shader 里是下限法，不是硬钳', () => {
     expect(SCENE_PASS).toContain(
       'painting = (painting - min(hazeAmt, painting * (1.0 - HAZE_KEEP))) / max(T, 0.15);');
-    expect(SCENE_PASS).toContain('#define HAZE_KEEP 0.1');
+    expect(SCENE_PASS).toContain('const HAZE_KEEP: f32 = 0.1;');
   });
 
   it('旧的硬钳写法必须已经不在（防回退）', () => {
@@ -108,7 +108,7 @@ describe('机械契约：GLSL 与这份镜像不许分家', () => {
     //
     // 守卫条件保留在 false && 后面（代码不删，将来做"运行时加雾"是加法、另起一段），
     // 所以这里锁的是**它确实进不去**，而不是它不存在。
-    const i = SCENE_PASS.indexOf('if (false && uHaze.y > 0.0) {');
+    const i = SCENE_PASS.indexOf('if (false && sceneLight.uHaze.y > 0.0) {');
     expect(i).toBeGreaterThan(0);
     // 且原来那句下限法仍在（没被顺手删掉，回退时不必重写）
     const j = SCENE_PASS.indexOf('HAZE_KEEP', i);

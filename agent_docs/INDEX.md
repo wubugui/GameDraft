@@ -20,7 +20,7 @@
 - [打包管线(只读抽取 · dev/发行双档 · 产物验收门)](runtime/mechanisms/build-pipeline.md) — 打包只从开发树只读抽取,绝不改动开发数据;裁剪一律写成"不抽取";清单=JSON引用闭包+传递闭包+id约定+显式规则(光照载荷按载荷自己的 shading.mode 展开,文件名表与运行时共用一份);输出目录是每次传的参数、不进配置;静态清单证明不了完备——release.mjs 默认无头真跑每个场景反向核对清单(scene_sweep),verify 再做开发树→产物的光照载荷平价
 - [燃烧系统(可燃物模板 · 宿主实例化 · 确定性燃烧模拟 · 点火表演 · 离场照推与存档)](runtime/mechanisms/burn-system.md) — 可燃物是模板(图 / 真实尺寸 / 握点 / 燃料 / 着火点 / 烧法 / 粒子 / 火光,和场景无关),热点 / NPC / 演出生成物 / 挂件预设身上写 burnable 引用它 = 实例化一次、渲染由实例接管,粒子薄片 plate.burnable 绑它;场景实例进每场景一份事件驱动的确定性模拟(活跑 / 重放 / 离场照推逐位相同,挪位 / 出现 / 收掉也是外部事件),推不出来 ⇒ 整场切烧完;手上的挂件单独一份模拟存快照;燃烧读的是作者那份场景风(不含阵风);玩家点火 = 走到闭式解出的站位、接触帧火头对准着火点
 - [画布(场景之外那张屏幕空间的面)](runtime/mechanisms/canvas-stage.md) — 叠图/文档揭示/实体/特效四类 item 共用一张有序表与一个 order 顺序空间;kind 前缀就是"句柄永不互访"那条解耦的落地形式;画布实体与特效一律不吃场景光照,特效自带第二套 VfxSystem 并逐实例一个宿主
-- [角色逐像素照明(probe 底光 + 加性实体灯)](runtime/mechanisms/character-lighting.md) — 只有一条活路径——probe 烘死的 GI 底光 + 与场景同一次打包的加性实体灯 + 与背景同一组显示变换;统一角色路径被 Game 里的常量开关整条关死(留码不删);着色核心单一 GLSL 源,法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐;probe 烘焙与方向基见 character-probe-bake
+- [角色逐像素照明(probe 底光 + 加性实体灯)](runtime/mechanisms/character-lighting.md) — 只有一条活路径——probe 烘死的 GI 底光 + 与场景同一次打包的加性实体灯 + 与背景同一组显示变换;统一角色路径被 Game 里的常量开关整条关死(留码不删);着色核心单一 WGSL 源,法线必须与 color 同 UV 采样、格边界与运行时 stride 对齐;probe 烘焙与方向基见 character-probe-bake
 - [角色 probe 底光的烘焙参数与方向基选型](runtime/mechanisms/character-probe-bake.md) — 角色 GI 底光 probe 的烘焙端与运行时查表端必须同一套规则:正式基八面体(接缝环绕三处同规则)、SH 逐通道去环、逃逸缺省地板色、收敛只许走采样不许走抹、查询沿法线偏同一常量、A7 只折一头;改任一参数前先读这里的已否路线
 - [角色注册表(characterId 合并)](runtime/mechanisms/character-registry.md) — 角色身份(name/animFile/portraitSlug)一处定义,NpcDef.characterId 引用,实例化时合并且 own 字段赢过注册表
 - [加条件叶的登记面](runtime/mechanisms/condition-leaf-registration-surfaces.md) — 新条件叶要同步运行时求值 / 叙事校验放行口径 / 条件树编辑器 / 分支守卫 / 校验器 / json_lang / 叙事关联人话 / 引用改名跟随;漏哪一面都不报错,只是该叶在那一面恒假、配不出或改名后悬垂
@@ -88,7 +88,7 @@
 
 ### 配方
 - [无头画面/逻辑全自动验证](runtime/recipes/headless-visual-verification.md) — 隐藏页 rAF 完全暂停——dev模式+命令通道+rAF pump/forceFrame 出帧截图;含 MessageChannel 让步与合成钟追平配方
-- [把 Pixi 自定义着色器补上 WGSL(迁移到 WebGPU 的逐个移植配方)](runtime/recipes/pixi-shader-wgsl-port.md) — 运行时自定义着色器的 WGSL 写法与验收(运行时只跑 WGSL,经 engine2d);GLSL 原样保留给 master 对照与编辑器;用 tools/render_parity(master 的 Pixi WebGL 对本分支 engine2d)证明逐像素一致;列出 WGSL 与 GLSL 语义不同、翻译时静默出错的点和工具依赖的禁改清单
+- [把 Pixi 自定义着色器补上 WGSL(迁移到 WebGPU 的逐个移植配方)](runtime/recipes/pixi-shader-wgsl-port.md) — 运行时自定义着色器的 WGSL 写法与验收(运行时只跑 WGSL,经 engine2d);本分支已无 GLSL(master 的 GLSL 是像素对照的参考侧);用 tools/render_parity(master 的 Pixi WebGL 对本分支 engine2d)证明逐像素一致;列出 WGSL 与 GLSL 语义不同、翻译时静默出错的点和工具依赖的禁改清单
 - [运行时命令通道(脚本化驱动游戏)](runtime/recipes/runtime-command-channel.md) — HTTP 命令队列驱动 DEV 游戏+读快照断言;测试/操作游戏一律走它,不用 computer-use/点像素
 
 ### 决策记录

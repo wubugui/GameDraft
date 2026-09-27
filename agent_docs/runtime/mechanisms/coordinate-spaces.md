@@ -6,7 +6,7 @@ type: mechanism
 summary: 全项目六个坐标空间的单位/原点/住户/权威源与逐条可验判据;两个 M(det ±1)、两套像素栅格(比例非恒定 4)、着色在 M-world 而 march 在 q——混用一律不报错只是效果不对
 status: active
 authority:
-  - src/rendering/lighting/worldReconstruct.glsl
+  - src/rendering/lighting/worldReconstruct.wgsl
   - src/utils/worldReconstruct.ts#WR_CONTRACT
   - src/systems/SceneManager.ts
   - tools/character_lighting_lab/scene_geometry.py
@@ -199,8 +199,8 @@ q ↔ M-world 之间就是一个**纯旋转 R**,这一点全项目逐场景验�
    而裸 q 的 Y 是**屏幕上**不是世界上。
 5. **禁止任何纯屏幕空间光照**(制作人红线)。march 每步都把 q 反投影回像素取
    该处真实表面深度,深度分离逐步做——与"屏幕空间模糊/衰减"不是一回事。
-6. **改 GLSL 必须同步改 CPU 镜像并 bump `WR_CONTRACT`**;
-   `worldReconstruct.test.ts` 直接从 GLSL 文本解析该常量比对,改一边就红。
+6. **改着色器(`worldReconstruct.wgsl`)必须同步改 CPU 镜像并 bump `WR_CONTRACT`**;
+   `wgslSymbols.test.ts` 直接从 WGSL 文本解析该常量与 `worldReconstruct.ts` 比对,改一边就红。
 
 ## 怎么验(每条都有现成判据)
 
@@ -226,7 +226,7 @@ q ↔ M-world 之间就是一个**纯旋转 R**,这一点全项目逐场景验�
 | 「native/work 反正是 4 倍」 | 只有 19/28 个场景成立 |
 | `intensity` 换空间没换量纲 | 照度 = I/r²,r 换单位则照度差 `k²`(雾津街头 774400 倍),影子浓度整片归零 |
 | 法线在 q 里烘、着色在 M-world | N·L 整体偏一个 R,光的方向不对 |
-| 字节域 vs 归一化 texel | CPU 拿 0..255 直接喂 GLSL 口径的解码 = 整体 ×255 |
+| 字节域 vs 归一化 texel | CPU 拿 0..255 直接喂着色器口径的解码 = 整体 ×255 |
 
 ## 相关
 

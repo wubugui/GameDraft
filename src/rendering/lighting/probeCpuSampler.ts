@@ -1,5 +1,5 @@
 /**
- * 角色间接光 E(n) 的 **CPU 版**：与 `CharacterShadingFilter` 的 `probeE` / `skyaoAt` 逐行同式
+ * 角色间接光 E(n) 的 **CPU 版**：与着色器 `charLightCommon.wgsl` 的 `probeE` / `skyaoAt` 逐行同式
  * （查询沿法线偏置、三线性 + 有效性权重、A7 折叠、八面体接缝环绕、L1 Geomerics / 线性 SH、
  * 无有效 probe 时回落 ambIrr、skyao 除 cap0 再与全白 blend）。
  *
@@ -7,7 +7,7 @@
  * 和间接光强度要一致」）。probe 本身缺朝相机侧的信息（A7 折叠补的），间接光吃的是这份，
  * 影子也吃这份 —— 缺得一致，就不会出现"人被照的方向与影子倒的方向对不上"。
  *
- * ⚠ 改 GLSL 那边任何一步都要改这里（`probeCpuSampler.test.ts` 用手搭载荷钉了逐步口径）。
+ * ⚠ 改着色器（charLightCommon.wgsl）那边任何一步都要改这里（`probeCpuSampler.test.ts` 用手搭载荷钉了逐步口径）。
  * 输出只取亮度（与 shader 的 luma 同系数）：AO 只要"多少光、从哪来"，不要颜色。
  */
 
@@ -16,7 +16,7 @@ export interface ProbeCpuData {
   /** 当前 mode 的固化图集，(P, nCol, 4) f16 */
   atlas: Uint16Array;
   nCol: number;
-  /** 每颗 probe 的有效性（>0 = 有效，≡ GLSL step(.002, valid.r)） */
+  /** 每颗 probe 的有效性（>0 = 有效，≡ 着色器 step(.002, valid.r)） */
   valid: Uint8Array;
   pn: readonly [number, number, number];
   wMin: readonly [number, number, number];
@@ -61,7 +61,7 @@ const F16 = (() => {
 
 const clamp = (x: number, a: number, b: number): number => Math.max(a, Math.min(b, x));
 
-/** 实球谐基 l ≤ 4，与 GLSL shY 逐行同值同序。 */
+/** 实球谐基 l ≤ 4，与着色器 shY 逐行同值同序。 */
 function shY(k: number, x: number, y: number, z: number): number {
   switch (k) {
     case 0: return 0.282095;
@@ -98,7 +98,7 @@ function shY(k: number, x: number, y: number, z: number): number {
 
 const AMB_A = [3.141593, 2.094395, 2.094395, 2.094395, 0.785398, 0.785398, 0.785398, 0.785398, 0.785398];
 
-/** GLSL ambIrr 的亮度。 */
+/** 着色器 ambIrr 的亮度。 */
 function ambIrrY(d: ProbeCpuData, x: number, y: number, z: number): number {
   let r = 0, g = 0, b = 0;
   for (let k = 0; k < 9; k++) {
@@ -108,7 +108,7 @@ function ambIrrY(d: ProbeCpuData, x: number, y: number, z: number): number {
   return (LUMA[0] * Math.max(r, 0) + LUMA[1] * Math.max(g, 0) + LUMA[2] * Math.max(b, 0)) * d.ambStrength;
 }
 
-/** GLSL octaIdx：八面体接缝环绕。 */
+/** 着色器 octaIdx：八面体接缝环绕。 */
 function octaIdx(cx: number, cy: number, ob: number): number {
   if (cx < 0) { cx = 0; cy = ob - 1 - cy; } else if (cx > ob - 1) { cx = ob - 1; cy = ob - 1 - cy; }
   if (cy < 0) { cy = 0; cx = ob - 1 - cx; } else if (cy > ob - 1) { cy = ob - 1; cx = ob - 1 - cx; }
@@ -117,7 +117,7 @@ function octaIdx(cx: number, cy: number, ob: number): number {
 
 const rgbTmp = [0, 0, 0];
 
-/** GLSL probeEvalFlat（含 probeQueryN 折叠）→ rgbTmp。n 为 q 基。 */
+/** 着色器 probeEvalFlat（含 probeQueryN 折叠）→ rgbTmp。n 为 q 基。 */
 function evalFlat(d: ProbeCpuData, flat: number, nx: number, ny: number, nz: number): void {
   if (d.fold && nz < 0) nz = -nz;
   const l = Math.hypot(nx, ny, nz) || 1;
@@ -148,7 +148,7 @@ function evalFlat(d: ProbeCpuData, flat: number, nx: number, ny: number, nz: num
     rgbTmp[0] = Math.max(r, 0); rgbTmp[1] = Math.max(g, 0); rgbTmp[2] = Math.max(b, 0);
     return;
   }
-  // 八面体（GLSL octaEnc + 双线性 + 接缝环绕）
+  // 八面体（着色器 octaEnc + 双线性 + 接缝环绕）
   const ob = d.binOb;
   const s = Math.abs(nx) + Math.abs(ny) + Math.abs(nz);
   const ex = nx / s, ey = ny / s, ez = nz / s;
@@ -169,7 +169,7 @@ function evalFlat(d: ProbeCpuData, flat: number, nx: number, ny: number, nz: num
   }
 }
 
-/** GLSL probeE 的亮度。q、n 都是 q 基（n 不必归一）。 */
+/** 着色器 probeE 的亮度。q、n 都是 q 基（n 不必归一）。 */
 export function probeEY(d: ProbeCpuData, q: readonly number[], nx: number, ny: number, nz: number): number {
   const l = Math.hypot(nx, ny, nz) || 1;
   const bias = 0.525 * Math.min(1 / d.wScale[0], 1 / d.wScale[1], 1 / d.wScale[2]);
@@ -200,7 +200,7 @@ export function probeEY(d: ProbeCpuData, q: readonly number[], nx: number, ny: n
   return sum / wsum;
 }
 
-/** GLSL skyaoAt：天穹遮蔽 V ∈ [0,1]，无载荷恒 1。q、n 为 q 基。 */
+/** 着色器 skyaoAt：天穹遮蔽 V ∈ [0,1]，无载荷恒 1。q、n 为 q 基。 */
 export function skyaoV(d: ProbeCpuData, q: readonly number[], nx: number, ny: number, nz: number): number {
   const S = d.skyao;
   if (!S) return 1;

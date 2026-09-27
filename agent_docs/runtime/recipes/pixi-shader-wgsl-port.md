@@ -3,7 +3,7 @@ id: pixi-shader-wgsl-port
 title: 把 Pixi 自定义着色器补上 WGSL(迁移到 WebGPU 的逐个移植配方)
 domain: runtime
 type: recipe
-summary: 运行时自定义着色器的 WGSL 写法与验收(运行时只跑 WGSL,经 engine2d);GLSL 原样保留给 master 对照与编辑器;用 tools/render_parity(master 的 Pixi WebGL 对本分支 engine2d)证明逐像素一致;列出 WGSL 与 GLSL 语义不同、翻译时静默出错的点和工具依赖的禁改清单
+summary: 运行时自定义着色器的 WGSL 写法与验收(运行时只跑 WGSL,经 engine2d);本分支已无 GLSL(master 的 GLSL 是像素对照的参考侧);用 tools/render_parity(master 的 Pixi WebGL 对本分支 engine2d)证明逐像素一致;列出 WGSL 与 GLSL 语义不同、翻译时静默出错的点和工具依赖的禁改清单
 status: active
 authority:
   - tools/render_parity/harness.ts
@@ -19,10 +19,10 @@ last_governed: 2026-09-25
 ## 目标与完成判据
 
 2026-09-25 起运行时整体跑在 [engine2d](../mechanisms/engine2d.md) 上,**只执行 WGSL**;工作台 / anim_preview 也都跑游戏同一个
-WebGPU 渲染器。2026-09-28 起本分支**只有 WGSL**:燃烧 / 呼吸 / 光柱 / 雷 / 粒子 / 实体阴影 / 前景层 / 各滤镜的 GLSL 孪生与
-`glProgram` 全删了(master 的 GLSL 是像素对照的参考侧,不在本分支);只剩角色照明那一条线(charShadeCore / lightingCore /
-worldReconstruct / 角色照明公共块 / 实体灯循环 / 角色照明滤镜拼的 fgSample,以及 src/rendering/lighting 下的 GLSL 程序)
-等角色照明实验室迁完一起删,在那之前与 WGSL 两份同步改(`shaderTwins.test.ts` 守门)。新着色器只写 WGSL。一个着色器算移植完成 =
+WebGPU 渲染器。2026-09-28 起本分支**只有 WGSL**:全部 GLSL 孪生与 `glProgram` 都删了(最后一批是角色照明那一线:
+charShadeCore / lightingCore / worldReconstruct / 角色照明公共块 / 实体灯循环 / 前景取样段 / src/rendering/lighting 下的 GL 程序;
+停用的 UnifiedCharacterShader 从来只有 GLSL,正文一并删、TS 留码)。master 的 GLSL 是像素对照的参考侧,不在本分支,
+没有孪生要同步。新着色器只写 WGSL。一个着色器算移植完成 =
 `tools/render_parity/cases/<模块>.ts` 里有覆盖它全部分支 / 开关的用例,且 `node tools/render_parity/run.mjs --case <前缀>` 全绿,
 **并且**证明 WebGL 一侧的输出与移植前逐字节相同(对移植前后的源码各跑一遍对照,哈希 GL 侧结果)——
 GL 侧就是对照的「master」参考,它自己漂了,对照一致也没有意义。
@@ -68,7 +68,8 @@ master 已知会抛错、本分支已修的用例标 `refKnownError`。
 - **光栅化填充规则两后端相反**:水平三角形边若恰好落在像素中心(1/32 像素内),WebGL 与 WebGPU 一个画这一行、一个不画(整行差)。
   离屏目标上 Pixi-WebGL 翻了投影所以常常一致,画布上则系统性相反(整局对照里 1 像素网格线、HUD 面板上下边差一行)。
   这是光栅化差异不是着色器差异:用例几何避开这种边;整画面对比 master 时出现的整行差按这个归因。
-- WGSL 模板字符串标 `/* wgsl */`,别标 `/* glsl */`(`glslSymbols.test.ts` 会把所有 `/* glsl */` 当 GLSL 检查)。
+- WGSL 模板字符串一律标 `/* wgsl */`:`wgslSymbols.test.ts`(调了没定义的函数)与 `shaderTemplateLint.test.ts`(注释里的反引号
+  截断模板串)按这个标记抽模板检查,不标就不在守门范围内。
 - 共享 WGSL 函数文件可以直接引用一个模块作用域的 uniform 变量,只要每个包含它的程序都用同一个变量名声明它
   (WGSL 模块作用域不讲声明先后)。
 - **共享光照片段的 WGSL 版已就位**(各文件顶部写了用法约定):`src/rendering/lighting/wgslChunks.ts` 导出
@@ -132,7 +133,7 @@ master 已知会抛错、本分支已修的用例标 `refKnownError`。
 
 ## 禁改清单(工具直接读这些,改了工具或工具测试会坏)
 
-- `src/rendering/charShadeCore.glsl` 原样保留(角色照明实验室直接读这个文件);`vfxBeamGlsl.ts` / `vfxBoltGlsl.ts` 的文件名与
+- `vfxBeamGlsl.ts` / `vfxBoltGlsl.ts` 的文件名与
   CPU 导出(`packBeamUniforms`、`emitBoltSegments` 等,粒子工作台打包)不动——里面的 GLSL 已删,文件名是历史名。
 - `anim_preview` 直接用 `SpriteEntity` / `EntityLightingFilter.createForEntity` 与其 setter / `PlanarEntityShadow`:对外 API 不变
   (它跑 engine2d / WebGPU,不再有 GLSL)。

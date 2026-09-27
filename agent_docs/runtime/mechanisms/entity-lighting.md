@@ -175,7 +175,7 @@ planar 阴影 / 深度遮挡)与它们并存,2026-08-30 的「原画 + 加性灯
 - **场景前景层的蒙版内,深度图换成按接地线立起来的前景面深度**(2026-09-27,[[scene-foreground-layers]]):细长前景(树干、枝条)
   的深度图永远不准,蒙版里按"立在接地线上的直立面"现算深度、逐像素比(外沿一圈只关掉误挡),被挡照旧画虚影。
   遮挡判据**有三份实现**——`DepthOcclusionFilter` / `EntityLightingFilter` / `CharacterShadingFilter`(烘焙角色走最后这支)——
-  都拼同一段 `FG_OCCLUSION_GLSL`,覆盖图经 `SceneDepthSystem.setForegroundCoverage` 统一广播、新建滤镜在创建时绑上;
+  都拼同一段 `FG_OCCLUSION_WGSL`,覆盖图经 `SceneDepthSystem.setForegroundCoverage` 统一广播、新建滤镜在创建时绑上;
   没有前景层时开关恒 0、绑占位,逐像素与改动前相同。
   (engine2d 分支:游戏跑的是三支的 WGSL,拼 `foregroundMaskWgsl.ts` 的 `FG_OCCLUSION_WGSL`;滤镜资源表 `uFgCoverage` 旁
   必须有 `uFgCoverageSampler = samplerOf(源)`,广播换绑两键同换;三支都在 WebGPU 每阶段 16 纹理 / 16 采样器上限内数绑定。
@@ -186,8 +186,8 @@ planar 阴影 / 深度遮挡)与它们并存,2026-08-30 的「原画 + 加性灯
 
 ## 已知坑
 
-- 影子(cast / 接触 AO)、深度遮挡滤镜、实体光照滤镜本分支只有 WGSL(2026-09-28 删了 GLSL 孪生;角色照明滤镜的 GLSL 程序
-  随角色照明那边一起删),算法改动改 WGSL,改完跑 `node tools/render_parity/run.mjs --case 实体`(参考侧是 master 的 GLSL)。
+- 影子(cast / 接触 AO)、深度遮挡滤镜、实体光照滤镜、角色照明滤镜本分支只有 WGSL(2026-09-28 删了全部 GLSL 孪生与 GL 程序),
+  算法改动改 WGSL,改完跑 `node tools/render_parity/run.mjs --case 实体`(参考侧是 master 的 GLSL)。
 
 - F2 滑块必须 `noRefresh` + 就地 sync,否则点按钮 / 切模式滑块复位;F2 只改
   `currentLightEnv`,不进存档。

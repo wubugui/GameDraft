@@ -2,9 +2,7 @@ import { Mesh, MeshGeometry, Shader, Texture, type Renderer } from '../../engine
 
 import type { SceneLightingDef } from '../../data/types';
 import { resolveLightColor } from './kelvin';
-import LIGHTING_CORE from './lightingCore.glsl?raw';
 import type { SceneLightingGeometry } from './SceneLightingPass';
-import WORLD_RECONSTRUCT from './worldReconstruct.glsl?raw';
 import { LC_WGSL, WR_CORE_WGSL } from './wgslChunks';
 import { samplerOf } from '../legacy/gpuSampler';
 
@@ -20,129 +18,30 @@ import { samplerOf } from '../legacy/gpuSampler';
  * 2. worldContainer 那层只有颜色**没有深度**，雾算不了；
  * 3. 正面撞 Pixi 坑①②③（多 RT 清屏串台 / 纹理销毁顺序烧毁滤镜 / 调试滤镜拖垮整场景照明）。
  *
- * 改成背景与角色**各自在自己的 shader 里调同一份 `lightingCore.glsl`**，吃同一组参数、
+ * 改成背景与角色**各自在自己的 shader 里调同一份 `lightingCore.wgsl`**，吃同一组参数、
  * 各用自己的深度。一致性由共用代码保证——比全屏 pass 更强：全屏 pass 只能保证"作用在
  * 同一张图上"，保证不了角色着色阶段的口径一致。
  *
- * ⚠ 本类只负责背景。角色侧在 P3 接同一份 GLSL 与同一组 uniform。
+ * ⚠ 本类只负责背景。角色侧接同一份光照核心与同一组显示变换参数。
  */
 
-function slice(src: string, tag: string): string {
-  const b = `//__${tag}_BEGIN__`;
-  const e = `//__${tag}_END__`;
-  const i = src.indexOf(b);
-  const j = src.indexOf(e);
-  if (i < 0 || j < 0) throw new Error(`[LitBackground] GLSL 缺切片标记 ${tag}`);
-  return src.substring(i + b.length, j);
-}
-
-const WR_CORE = slice(WORLD_RECONSTRUCT, 'WR_CORE');
-const LC = slice(LIGHTING_CORE, 'LIGHTING_CORE');
-
-const VERT = /* glsl */ `#version 300 es
-precision highp float;
-in vec2 aPosition;
-in vec2 aUV;
-uniform mat3 uProjectionMatrix;
-uniform mat3 uWorldTransformMatrix;
-uniform mat3 uTransformMatrix;
-out vec2 vUv;
-void main(void) {
-    mat3 model = uWorldTransformMatrix * uTransformMatrix;
-    vec2 screen = (model * vec3(aPosition, 1.0)).xy;
-    gl_Position = vec4((uProjectionMatrix * vec3(screen, 1.0)).xy, 0.0, 1.0);
-    vUv = aUV;
-}
-`;
-
-const FRAG = /* glsl */ `#version 300 es
-precision highp float;
-
-in vec2 vUv;
-out vec4 fragColor;
-
-uniform sampler2D uRadiance;     // 缓存好的线性 HDR 辐射场
-uniform sampler2D uDepth;        // 深度图（雾要用视距与高度）
-// 草木摆动（没接时 uSwayOn = 0，三张图绑的是占位）：先用本像素 uv 读位移图，
-// 植物像素去源 uv 取光照缓存与深度；露出来的地方取"扣掉植物"那份光照缓存与深度
-uniform sampler2D uUvMap;        // RG = (源 uv − 本像素 uv) × 覆盖度，A = 覆盖度
-uniform sampler2D uRadiancePlate;
-uniform sampler2D uDepthPlate;
-uniform int   uSwayOn;
-
-uniform vec3  uCal;              // ppu, cx, cy
-uniform vec3  uDepthMap;         // invert, scale, offset
-uniform vec2  uDepthTexSize;
-uniform vec3  uMRow1;            // M.R 第 1 行（取世界 Y）
-
-// 雾（σ 定义，见 lcOpticalDepth）
-uniform float uFogSigma;
-uniform float uFogScaleH;        // 世界单位
-uniform float uFogBaseY;         // 世界单位
-uniform vec3  uFogColor;
-
-// 显示变换
-uniform float uEv;
-uniform int   uTonemap;
-uniform vec3  uWhiteBalance;
-uniform float uContrast;
-uniform float uSaturation;
-uniform float uLift;
-uniform vec3  uLiftColor;
-
-${WR_CORE}
-${LC}
-
-void main(void) {
-    vec2 src = vUv;
-    float cover = 1.0;
-    if (uSwayOn > 0) {
-        vec4 m = texture(uUvMap, vUv);
-        cover = clamp(m.a, 0.0, 1.0);
-        if (m.a > 0.002) { src = vUv + m.rg / m.a; }
-    }
-    vec3 lin = texture(uRadiance, src).rgb;
-    if (uSwayOn > 0 && cover < 0.999) {
-        lin = mix(texture(uRadiancePlate, vUv).rgb, lin, cover);
-    }
-
-    if (uFogSigma > 0.0) {
-        // 该像素的伪世界位置 → 世界 Y 与视距（正交相机 ⇒ 视线方向恒定，积分有闭式解）
-        vec2 px = vUv * uDepthTexSize;
-        float d = wrDecodeSceneDepth(texture(uDepth, src), uDepthMap.x, uDepthMap.y, uDepthMap.z);
-        if (uSwayOn > 0 && cover < 0.999) {
-            float dPlate = wrDecodeSceneDepth(texture(uDepthPlate, vUv), uDepthMap.x, uDepthMap.y, uDepthMap.z);
-            d = mix(dPlate, d, cover);
-        }
-        vec3 q = wrPixelToQ(px, uCal.x, uCal.y, uCal.z, d);
-        float worldY = wrQToWorldRow(uMRow1, q);
-        // 视距用深度直接代理（正交相机下深度即沿视轴的行程）
-        float dist = max(d - uDepthMap.z, 0.0);
-        // 相机侧的高度：沿视线回退到相机平面，取那一端的 Y。
-        // 正交下视线方向恒定，用同一行 M 对 (0,0,-dist) 求增量即可。
-        float yCam = worldY - uMRow1.z * dist;
-        float od = lcOpticalDepth(dist, yCam, worldY, uFogSigma, uFogScaleH, uFogBaseY);
-        lin = lcApplyFog(lin, od, uFogColor);
-    }
-
-    fragColor = vec4(lcDisplayTransform(lin, uEv, uTonemap, uWhiteBalance,
-                                        uSaturation, uContrast, uLift, uLiftColor), 1.0);
-}
-`;
-
 // ============================================================================
-// WebGPU 版(WGSL)。与上面 VERT / FRAG 逐句对应,GLSL 原样保留(WebGL 仍走它);等价由
-// tools/render_parity 的「场景光照 /」用例钉住,改一边必须同步改另一边并重跑对照。
+// 着色器(WGSL)。与 master 的 GLSL 版逐像素一致由 tools/render_parity 的「场景光照 /」用例钉住。
 //
 // 拼接:WR_CORE / LIGHTING_CORE 的 WGSL 切片(wgslChunks)各拼一次,片段一个绑定都不读。
 // 绑定按 Pixi 网格约定:第 0 / 1 组由 Pixi 挂,本类的纹理 / 采样器 / uniform 组在第 2 组,
-// 变量名 = resources 键名,纹理声明顺序 = resources 里的相对顺序(WebGL 纹理单元不挪);
-// 每张纹理紧跟一个 *Sampler = samplerOf(source)(WebGL 侧不认识这些键,Pixi 忽略),setSway 换图时一并换。
+// 变量名 = resources 键名,纹理声明顺序 = resources 里的相对顺序;
+// 每张纹理紧跟一个 *Sampler = samplerOf(source),setSway 换图时一并换。
 // litBg 结构体成员顺序 = JS 里 uniforms 的声明顺序。
 //
-// 与 GLSL 的形式差异(数值不变):露出处那两次采样在「cover < 0.999」这个逐像素分支里,
-// WGSL 的 textureSample 只许在一致控制流里调,改 textureSampleLevel(…, 0)(光照缓存与深度图都是
-// 单级纹理,与 GLSL texture() 等价);其余采样照 GLSL 用 textureSample。
+// 资源:uRadiance = 缓存好的线性 HDR 辐射场;uDepth = 深度图(雾要用视距与高度)。草木摆动(没接时
+// uSwayOn = 0,三张图绑的是占位):先用本像素 uv 读位移图 uUvMap(RG = (源 uv − 本像素 uv) × 覆盖度,
+// A = 覆盖度),植物像素去源 uv 取光照缓存与深度;露出来的地方取"扣掉植物"那份光照缓存与深度
+// (uRadiancePlate / uDepthPlate)。litBg:uCal = (ppu, cx, cy);uDepthMap = (invert, scale, offset);
+// uMRow1 = M.R 第 1 行(取世界 Y);雾按 σ 定义(见 lcOpticalDepth),uFogScaleH / uFogBaseY 是世界单位。
+//
+// 写法:露出处那两次采样在「cover < 0.999」这个逐像素分支里,WGSL 的 textureSample 只许在一致控制流里调,
+// 用 textureSampleLevel(…, 0)(光照缓存与深度图都是单级纹理);其余采样用 textureSample。
 // ⚠ struct 体内不写注释(Pixi 用正则抽成员)。
 // ============================================================================
 
@@ -229,7 +128,7 @@ fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
     }
 
     if (litBg.uFogSigma > 0.0) {
-        // 伪世界位置 → 世界 Y 与视距(正交相机 ⇒ 视线方向恒定,积分有闭式解;推导见 GLSL)
+        // 该像素的伪世界位置 → 世界 Y 与视距(正交相机 ⇒ 视线方向恒定,积分有闭式解,见 lcOpticalDepth)
         let px = vUv * litBg.uDepthTexSize;
         var d = wrDecodeSceneDepth(textureSample(uDepth, uDepthSampler, src),
                                    litBg.uDepthMap.x, litBg.uDepthMap.y, litBg.uDepthMap.z);
@@ -240,7 +139,10 @@ fn mainFragment(input: VSOutput) -> @location(0) vec4<f32> {
         }
         let q = wrPixelToQ(px, litBg.uCal.x, litBg.uCal.y, litBg.uCal.z, d);
         let worldY = wrQToWorldRow(litBg.uMRow1, q);
+        // 视距用深度直接代理(正交相机下深度即沿视轴的行程)
         let dist = max(d - litBg.uDepthMap.z, 0.0);
+        // 相机侧的高度:沿视线回退到相机平面,取那一端的 Y。
+        // 正交下视线方向恒定,用同一行 M 对 (0,0,-dist) 求增量即可。
         let yCam = worldY - litBg.uMRow1.z * dist;
         let od = lcOpticalDepth(dist, yCam, worldY, litBg.uFogSigma, litBg.uFogScaleH, litBg.uFogBaseY);
         lin = lcApplyFog(lin, od, litBg.uFogColor);
@@ -275,12 +177,11 @@ export class LitBackground {
       indices: new Uint32Array([0, 1, 2, 0, 2, 3]),
     });
     this.shader = Shader.from({
-      gl: { vertex: VERT, fragment: FRAG },
       gpu: {
         vertex: { source: WGSL, entryPoint: 'mainVertex' },
         fragment: { source: WGSL, entryPoint: 'mainFragment' },
       },
-      // *Sampler:WGSL 的纹理要单独的采样器(WebGL 侧没有这些名字,Pixi 忽略)。一律 samplerOf(source)
+      // *Sampler:WGSL 的纹理要单独的采样器。一律 samplerOf(source)
       // (按参数共享、永不销毁,不挂在纹理的生命期上);setSway 换图时跟着换成 samplerOf(新图)
       resources: {
         uRadiance: radiance.source,

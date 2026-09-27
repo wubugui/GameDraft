@@ -451,7 +451,7 @@ export class VfxRenderer {
   private readonly boltGeoms = new Map<string, { def: VfxBoltDef; geom: BoltGeometry }>();
 
   /**
-   * 场景前景层的覆盖图（见 foregroundMaskGlsl）：粒子的遮挡在前景面里拿它顶替深度图。
+   * 场景前景层的覆盖图（见 foregroundMaskWgsl）：粒子的遮挡在前景面里拿它顶替深度图。
    * 由组装层经 {@link setForegroundCoverage} 交来 / 收回；没有 = 各视图绑永不销毁的占位、开关 0。
    */
   private fgCoverage: TextureSource | null = null;
