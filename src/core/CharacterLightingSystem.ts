@@ -810,6 +810,12 @@ export class CharacterLightingSystem implements IGameSystem {
      * 几何就没换。光照项一概不借（见 `loadGeometryOnly`）。
      */
     geometryFallbackImage?: string,
+    /**
+     * 工具用：烘焙目录 URL 直接给定（不按场景 id + 背景图名推导，也不回落扁平布局 / 几何借用）。
+     * 角色照明实验室拿它把「本机工作台按游戏载荷格式现场变换出来的那一份」（serve 的 `/api/game_payload/…`，
+     * 不落盘）喂给游戏同一个装载器。游戏从不传它——不传时与原来逐位相同。
+     */
+    bakeDirOverride?: string,
   ): Promise<void> {
     const myEpoch = ++this.epoch;
     this._hasVolumes = false;
@@ -837,13 +843,13 @@ export class CharacterLightingSystem implements IGameSystem {
     this.sceneWorldW = worldW; this.sceneWorldH = worldH;
     // 按背景图名索引；找不到就回落到旧的扁平布局（迁移期两条都认，缺省不影响运行）；
     // 再找不到、且调用方给了几何借用图，就只借那份的几何项。
-    const perBg = sceneBakeDirUrl(sceneId, backgroundImage);
+    const perBg = bakeDirOverride ?? sceneBakeDirUrl(sceneId, backgroundImage);
     const legacy = sceneRuntimeAssetUrl(sceneId, 'lighting');
-    const geoDir = geometryFallbackImage && geometryFallbackImage !== backgroundImage
+    const geoDir = !bakeDirOverride && geometryFallbackImage && geometryFallbackImage !== backgroundImage
       ? sceneBakeDirUrl(sceneId, geometryFallbackImage) : null;
     let base = perBg;
     let found = await this.fetchPayloadMeta(perBg, sceneId);
-    if (!found) {
+    if (!found && !bakeDirOverride) {
       found = await this.fetchPayloadMeta(legacy, sceneId);
       if (found) { base = legacy; depthLog(T, sceneId, `: 用旧的扁平烘焙布局(${legacy});迁移后可摘`); }
     }

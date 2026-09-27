@@ -261,9 +261,10 @@ def test_查询法线偏移常量与着色器同值():
     import re
     from pathlib import Path
     from tools.character_lighting_lab.const import PROBE_QUERY_NORMAL_BIAS
+    # 游戏真在跑的那一份(WGSL);实验室画面也是它
     src = (Path(__file__).resolve().parents[3] / 'src' / 'rendering'
-           / 'CharacterShadingFilter.ts').read_text(encoding='utf-8')
-    m = re.search(r'probeGridT\(q \+ n \* \(([0-9.]+) \* cellMin\)\)', src)
+           / 'charLightCommon.wgsl').read_text(encoding='utf-8')
+    m = re.search(r'probeGridT\(q \+ n \* \(([0-9.]+) \* cellMin\), P\)', src)
     assert m, 'probeE 里找不到法线偏移字面量'
     assert abs(float(m.group(1)) - PROBE_QUERY_NORMAL_BIAS) < 1e-9
 
@@ -856,16 +857,16 @@ def test_八面体接缝环绕规则():
         assert (int(gx[0]), int(gy[0])) == want, ((x, y), (int(gx[0]), int(gy[0])), want)
 
 
-def test_八面体接缝_python与GLSL同规则():
-    import re
+def test_八面体接缝_python与着色器同规则():
+    # 查游戏真在跑的那一份(WGSL,角色 lit 网格 / 场景灯共用的 charLightCommon.wgsl);实验室画面也是它(不再有实验室自己的 GLSL)
     from pathlib import Path
     src = (Path(__file__).resolve().parents[3] / 'src' / 'rendering'
-           / 'CharacterShadingFilter.ts').read_text(encoding='utf-8')
-    i = src.find('int octaIdx(ivec2 c, int ob){')
+           / 'charLightCommon.wgsl').read_text(encoding='utf-8')
+    i = src.find('fn octaIdx(cIn: vec2<i32>, ob: i32) -> i32 {')
     assert i > 0, '着色器里找不到 octaIdx'
     body = src[i:i + 400]
-    for frag in ('c.x=0; c.y=ob-1-c.y;', 'c.x=ob-1; c.y=ob-1-c.y;',
-                 'c.y=0; c.x=ob-1-c.x;', 'c.y=ob-1; c.x=ob-1-c.x;'):
+    for frag in ('c.x = 0; c.y = ob - 1 - c.y;', 'c.x = ob - 1; c.y = ob - 1 - c.y;',
+                 'c.y = 0; c.x = ob - 1 - c.x;', 'c.y = ob - 1; c.x = ob - 1 - c.x;'):
         assert frag in body, frag
 
 

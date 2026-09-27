@@ -39,7 +39,11 @@ body{margin:0;background:var(--s0);color:var(--fg);
 /* ---------------------------------------------------------------- 舞台 */
 #stage{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--s0)}
 #stage_main{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative}
-canvas#gl{max-width:100%;max-height:100%}
+/* 画面区:两块 WebGPU 画布(2D = 游戏同一个渲染器、3D = 3D 调试件)+ 最上面一块 2D 标注画布(收事件、拿键盘焦点)。
+   尺寸由 app.js 定:逻辑宽 = 原生宽/2、高按 work 比例,放不下就等比缩;三块画布铺满它。 */
+#viewwrap{position:relative;flex:none}
+#viewwrap>canvas{position:absolute;left:0;top:0;width:100%;height:100%;display:block}
+#viewwrap>#gl3d{display:none}
 /* A-3:画布是 WASD/方向键/Tab 的唯一接收方,焦点必须可见(原为 outline:none) */
 canvas#gl:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
 #hud{position:absolute;left:10px;top:8px;font:var(--fs-val) ui-monospace,monospace;color:#fff;
@@ -191,7 +195,7 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
 </head>
 <body>
 <div id="stage">
-  <div id="stage_main"><canvas id="gl" tabindex="0"></canvas>
+  <div id="stage_main"><div id="viewwrap"><canvas id="gpu2d"></canvas><canvas id="gl3d"></canvas><canvas id="gl" tabindex="0"></canvas></div>
     <canvas id="topview" style="display:none;position:absolute;inset:0;margin:auto;
       background:var(--s-canvas);image-rendering:pixelated;cursor:crosshair"></canvas>
     <div id="topview_hint" style="display:none;position:absolute;left:10px;top:10px;
@@ -361,7 +365,7 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
         <label title="RT 每像素光线数,只影响 RT 模式"><span class="tm now">●</span><span class="k">RT spp</span><input type="range" id="spp" min="8" max="192" step="8" value="64"><span class="v" id="spp_v"></span></label>
         <label title="RT 步进长度(体素),只影响 RT"><span class="tm now">●</span><span class="k">步长(体素)</span><input type="range" id="step" min="0.5" max="2.0" step="0.1" value="0.9"><span class="v" id="step_v"></span></label>
         <label title="RT 最大步数,只影响 RT"><span class="tm now">●</span><span class="k">最大步数</span><input type="range" id="msteps" min="32" max="256" step="16" value="160"><span class="v" id="msteps_v"></span></label>
-        <label title="RT 运行时:朝相机的光线镜像后继续追(A7 折叠)。cache 模式由『烘焙折叠』决定"><span class="tm now">●</span><span class="k">RT折叠</span><input type="checkbox" id="fold" checked style="flex:none"><span class="v">A7</span></label>
+        <label title="A7 折叠(与游戏同一个开关):RT 朝相机的光线镜像后继续追;probe 档把朝相机的查表法线折进观测半空间(游戏 probeQueryN)。随导出写进场景配置"><span class="tm now">●</span><span class="k">折叠(A7)</span><input type="checkbox" id="fold" checked style="flex:none"><span class="v">A7</span></label>
       </div>
     </details>
   </div>
@@ -397,7 +401,8 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
       <option value="3">标定深度</option>
     </select></label>
     <div class="chk">
-      <label title="角色被场景遮挡剔除(关=角色永远画在最上层)"><input type="checkbox" id="dbg_occl" checked>遮挡</label>
+      <label title="角色被场景遮挡(游戏同一个深度遮挡滤镜:被挡处留 28% 残影;关=角色永远画在最上层)"><input type="checkbox" id="dbg_occl" checked>遮挡</label>
+      <label title="天穹遮蔽(skyao,乘在 GI 底光上;用的是已导出几何场那份,载荷里没有时拨了也没效果)"><input type="checkbox" id="skyao" checked>天穹遮蔽</label>
       <label title="地形/物体判定叠加:绿=地形(角色能站) 红=物体(会被扣掉);亮色描边=人工覆写过"><input type="checkbox" id="dbg_terrain">地形判定</label>
     </div>
 
@@ -485,8 +490,6 @@ label.touched span.k{box-shadow:inset 2px 0 0 var(--acc);padding-left:5px}
       ①②是 cache 里存的 E(n)(已含余弦卷积);③④是<b>现场重追</b>同一颗 probe 的射线(与烘焙同 step/fold),用来对账 cache 和几何。</div>
   </div>
 </div>
-<!-- 角色着色核心 GLSL 唯一真相源(与运行时共用);必须在 app.js 之前同步载入 -->
-<script src="/api/char_shade_core.js"></script>
 <script src="/viewer/app.js"></script>
 </body>
 </html>

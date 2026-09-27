@@ -8,11 +8,21 @@ Static viewer + a tiny ASYNC bake job queue so ALL baking lives in the app:
   GET  /api/job?id=N                -> {status, log, queue}
   GET  /api/terrain?scene=X         -> {stats} 秒级地形预览+站位体检(不重烘)
 Jobs run serially in a worker thread; logs stream into the job record.
+
+查看器画面(2026-09-28 迁到 RHI,页面里不再有 WebGL / GLSL):
+  GET  /gen/charlab.bundle.js       -> 游戏的角色受光 / 深度遮挡 + 3D 调试件 + 工具视图打成的包(bundle.py,按需现打)
+  GET  /api/boot                    -> {bundle:{ok,err}} 打包状态
+  GET  /api/game_payload/<场景>/<合成参数>/<文件>
+                                    -> 本机工作台按**游戏载荷格式**现场变换出来的虚拟烘焙目录(不落盘,见 game_payload.py);
+                                       页面把它交给游戏的 CharacterLightingSystem.load(…, bakeDirOverride)
+  GET  /resources/runtime/scenes/<场景>/<文件>
+                                    -> 游戏运行时场景目录的只读转发(游戏装载器的背景哈希门要读游戏那张背景图)
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -20,13 +30,37 @@ import sys
 import threading
 import time
 from http.server import SimpleHTTPRequestHandler
-from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse, parse_qs, unquote
 
 TOOL = Path(__file__).resolve().parent
 ROOT = TOOL.parents[1]
 SCENES_JSON = ROOT / 'public' / 'assets' / 'scenes'
 SCENES_RT = ROOT / 'public' / 'resources' / 'runtime' / 'scenes'
+_JS_MIME = 'text/javascript; charset=utf-8'
+#: 运行时场景目录转发的文件类型(只读、只放这几类)
+_RT_EXT = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+           '.json': 'application/json; charset=utf-8', '.bin': 'application/octet-stream'}
+
+
+def runtime_scene_file(url_path: str) -> Path | None:
+    """`/resources/runtime/scenes/<场景>/<相对路径>` → 盘上文件;不在场景目录下 / 类型不放行 / 不存在 → None。
+
+    ⚠ 按**字面路径**判包含(不 resolve):worktree / 并行检出里 `public/resources/runtime` 常是指向主检出的
+    junction,按真实路径判会把整个目录判到树外、一张图都放不出来(燃烧工作台 2026-09-27 踩过,
+    打包侧同一修法见 tools/build/asset_manifest.py 的 `_public_rel`)。安全靠字面:不许 `..`、不许绝对段。"""
+    prefix = '/resources/runtime/scenes/'
+    if not url_path.startswith(prefix):
+        return None
+    rel = PurePosixPath(url_path[len(prefix):])
+    if not rel.parts or any(p in ('', '.', '..') or ':' in p or '\\' in p for p in rel.parts) or len(rel.parts) < 2:
+        return None
+    if rel.suffix.lower() not in _RT_EXT:
+        return None
+    p = SCENES_RT.joinpath(*rel.parts)
+    if not os.path.abspath(p).startswith(os.path.abspath(SCENES_RT) + os.sep):
+        return None
+    return p if p.is_file() else None
 
 def _exported_lighting_json(sid: str):
     """该场景**当前背景**对应的已导出载荷路径(2026-08-30 起按图名分目录);
@@ -346,24 +380,71 @@ class H(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _bytes(self, data: bytes, ctype: str, code: int = 200):
+        self.send_response(code)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def guess_type(self, path):  # noqa: D401 — Windows 注册表常把 .js 映射成 text/plain
+        if str(path).endswith('.js'):
+            return _JS_MIME
+        return super().guess_type(path)
+
+    def handle(self):
+        try:
+            super().handle()
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass
+
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
         if u.path == '/':
             self.path = '/viewer/index.html'
             return super().do_GET()
-        if u.path == '/api/char_shade_core.js':
-            # 角色着色核心 GLSL 的唯一真相源(与运行时 CharacterShadingFilter 共用同一份磁盘文件)。
-            # 包成 window.CHAR_SHADE_CORE 供 viewer 的 shader 拼接,消灭 shader 镜像漂移。
-            glsl = (ROOT / 'src' / 'rendering' / 'charShadeCore.glsl').read_text(encoding='utf-8')
-            body = ('window.CHAR_SHADE_CORE=' + json.dumps(glsl) + ';').encode('utf-8')
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/javascript; charset=utf-8')
-            self.send_header('Cache-Control', 'no-store')  # 改 glsl 后硬刷即生效,不被缓存住
-            self.send_header('Content-Length', str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
+        if u.path == '/favicon.ico':
+            return self._bytes(b'', 'image/x-icon', 204)
+        if u.path.startswith('/viewer/_gen/'):
+            return self._json({'ok': False, 'err': '生成物走 /gen/'}, 404)
+        if u.path == '/gen/charlab.bundle.js':
+            from tools.character_lighting_lab import bundle
+            p, err = bundle.ensure_bundle()
+            if not p or not p.exists():
+                return self._json({'ok': False, 'err': err or '没有打包产物'}, 404)
+            return self._bytes(p.read_bytes(), _JS_MIME)
+        if u.path == '/api/boot':
+            try:
+                from tools.character_lighting_lab import bundle
+                p, err = bundle.ensure_bundle()
+            except Exception as e:                     # noqa: BLE001 — 打包失败不许拖垮启动
+                p, err = None, f'{type(e).__name__}: {e}'
+            return self._json({'ok': True, 'bundle': {'ok': bool(p and not err), 'err': err}})
+        if u.path.startswith('/api/game_payload/'):
+            # /api/game_payload/<场景>/<合成参数>/<文件>:工作台按游戏载荷格式现场变换(不落盘)
+            parts = [unquote(s) for s in u.path[len('/api/game_payload/'):].split('/')]
+            if len(parts) != 3 or not all(parts):
+                return self._json({'ok': False, 'err': '路径应为 /api/game_payload/<场景>/<合成参数>/<文件>'}, 404)
+            sid, compose, name = parts
+            if sid in ('.', '..') or any(ch in sid for ch in '/\\:'):
+                return self._json({'ok': False, 'err': 'bad scene'}, 404)
+            try:
+                from tools.character_lighting_lab import game_payload
+                base = u.path[:u.path.rfind('/')]
+                hit = game_payload.payload_file(sid, compose, name, base)
+            except ValueError as e:
+                return self._json({'ok': False, 'err': str(e)}, 400)
+            except Exception as e:                     # noqa: BLE001 — 坏工作台不拖垮服务
+                return self._json({'ok': False, 'err': f'{type(e).__name__}: {e}'}, 500)
+            if hit is None:
+                return self._json({'ok': False, 'err': f'没有 {sid}/{name}'}, 404)
+            return self._bytes(hit[0], hit[1])
+        if u.path.startswith('/resources/runtime/scenes/'):
+            f = runtime_scene_file(unquote(u.path))
+            if f is None:
+                return self._json({'ok': False, 'err': f'不存在或不放行:{unquote(u.path)}'}, 404)
+            return self._bytes(f.read_bytes(), _RT_EXT[f.suffix.lower()])
         if u.path == '/api/scenes':
             scenes = []
             for sid, wd in _baked_scenes():

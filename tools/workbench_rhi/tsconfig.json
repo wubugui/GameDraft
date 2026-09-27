@@ -6,5 +6,5 @@
     "types": ["vitest/globals", "vite/client", "node"],
     "noEmit": true
   },
-  "include": ["./*.ts", "../burn_workbench/gpu/*.ts", "../burn_workbench/tests/parity/*.ts", "../vfx_workbench/gpu/*.ts", "../vfx_workbench/tests/parity/*.ts", "../breathing_workbench/gpu/*.ts", "../breathing_workbench/tests/parity/*.ts", "../../src/**/*.d.ts"]
+  "include": ["./*.ts", "../burn_workbench/gpu/*.ts", "../burn_workbench/tests/parity/*.ts", "../vfx_workbench/gpu/*.ts", "../vfx_workbench/tests/parity/*.ts", "../breathing_workbench/gpu/*.ts", "../breathing_workbench/tests/parity/*.ts", "../character_lighting_lab/gpu/*.ts", "../character_lighting_lab/tests/parity/*.ts", "../../src/**/*.d.ts"]
 }

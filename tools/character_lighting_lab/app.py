@@ -10,11 +10,12 @@
 两处 `Popen` 已统一走 `tools.child_jobs.spawn`(Windows Job Object,
 父进程无论怎么死内核都杀光整棵树)。
 
-⚠ **`--smoke` 必须在有 GPU 的真窗口下跑**,不能加 `QT_QPA_PLATFORM=offscreen`。
-本页面要建 16 个 WebGL2 程序,offscreen 的软件 GL 撑不起来
-(`Failed to make current since context is marked as lost`),`loadFinished` 永远不来、
-自检超时——那不是回归。重打光工作台的页面是纯 2D canvas,所以它 offscreen 也能过,
-两者不可类比。
+画面走引擎 RHI(只有 WebGPU:2D = 游戏的渲染器 + 角色受光 / 深度遮挡,3D = 工作台 3D 调试件),
+所以壳开 `webgpu=True`(网页视图换成 `tools.qt_webgpu.WebGpuView`;离屏平台下 smoke / selftest
+改开屏幕外的真窗口)。这个窗口拿不到 WebGPU 时画面区写原因,烘焙 / 导出 / 编辑照常。
+
+`--selftest <js>`:把页内自检(`viewer/tests/selftest.js`)注入真页面跑完即退(有 FAIL / EXC 退出码 1)。
+自检只动视图参数,不点烘焙 / 导出 / 存盘,读的是真工程已烘的场景。
 """
 from __future__ import annotations
 
@@ -25,13 +26,23 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+SELFTEST_JS = Path(__file__).resolve().parent / 'viewer' / 'tests' / 'selftest.js'
 
-def main(port: int | None = None, smoke: bool = False) -> int:
+
+def main(port: int | None = None, smoke: bool = False, selftest: str = '') -> int:
     from tools.character_lighting_lab.serve import H
     from tools.desktop_shell import run_desktop
+    if selftest:
+        path = Path(selftest)
+        if not path.is_absolute():
+            path = ROOT / path
+        return run_desktop(handler_cls=H, title='角色照明实验室 · 光照烘焙(自检)',
+                           app_id='gamedraft-char-lighting-lab-selftest', port=port,
+                           selftest=str(path), webgpu=True)
     return run_desktop(handler_cls=H, title='角色照明实验室 · 光照烘焙',
-                       app_id='gamedraft-char-lighting-lab', port=port, smoke=smoke)
+                       app_id='gamedraft-char-lighting-lab', port=port, smoke=smoke, webgpu=True)
 
 
 if __name__ == '__main__':
-    sys.exit(main(smoke='--smoke' in sys.argv))
+    sys.exit(main(smoke='--smoke' in sys.argv,
+                  selftest=str(SELFTEST_JS) if '--selftest' in sys.argv else ''))

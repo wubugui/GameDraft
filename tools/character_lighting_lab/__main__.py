@@ -6,6 +6,7 @@
   ./dev.sh char-lighting -- --serve            # 只起 HTTP 服务,不开窗口(调页面/开 devtools 用)
   ./dev.sh char-lighting -- --serve --port 5311 --no-open
   ./dev.sh char-lighting -- --smoke            # 无头自检:窗口 load 完即退
+  ./dev.sh char-lighting -- --selftest         # 页内自检(viewer/tests/selftest.js),跑完即退
   ./dev.sh char-lighting -- --build <图.png> --name 场景名 [--pitch_deg 45 ...]
                                                # 只跑离线管线,不起服
   ./dev.sh char-lighting -- --fields <场景id>  # 只烘几何场(法线/天穹可见性/3D网格/GI命中图)
@@ -34,6 +35,8 @@ def main() -> int:
     ap.add_argument('--serve', action='store_true',
                     help='只起 HTTP 服务不开窗口(在真浏览器里调页面时用)')
     ap.add_argument('--smoke', action='store_true', help='无头自检:窗口 load 完即退')
+    ap.add_argument('--selftest', nargs='?', const='tools/character_lighting_lab/viewer/tests/selftest.js', default='',
+                    help='页内自检:把脚本(缺省 viewer/tests/selftest.js)注入真页面跑完即退')
     ap.add_argument('--port', type=int, default=PORT, help='仅 --serve 模式下生效')
     ap.add_argument('--no-open', action='store_true', help='仅 --serve 模式下生效')
     ap.add_argument('--build', type=str, default=None,
@@ -80,7 +83,7 @@ def main() -> int:
         return 0
 
     from tools.character_lighting_lab.app import main as app_main
-    return app_main(smoke=args.smoke)
+    return app_main(smoke=args.smoke, selftest=args.selftest)
 
 
 if __name__ == '__main__':

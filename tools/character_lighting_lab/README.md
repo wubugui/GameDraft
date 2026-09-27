@@ -67,6 +67,22 @@ CLI 仅作脚本化备用:`./dev.sh char-lighting -- --build <图.png> --name �
 查看器:方向键/WASD 移动角色;Tab 循环 / 1‑4 直选照明模式;右侧全部参数实时;
 「重建参数」区改俯角/ppu/EV/凸出阈值后点重建(调用 /api/rebuild,秒级)。
 
+## 查看器画面迁到引擎 RHI(2026-09-28)
+
+页面里**不再有 WebGL / GLSL**(下文 07~08 月各节里「GLSL 里算」「CHAR_FS」「16 个 WebGL2 程序」都是迁移前的实现)。
+只有 WebGPU;拿不到时画面区写原因,烘焙 / 导出 / 编辑 / 顶视 / ⑥面板照常。壳开 `webgpu=True`(WebView2 宿主)。
+
+- **2D 场景视图 = 游戏本体**:`gpu/charLabView.ts` 照游戏组装层拼 `SceneDepthSystem` → `CharacterLightingSystem.load(…, 烘焙目录)`
+  → `LitSpriteQuad(createEntityLitShader)` + 深度遮挡滤镜(被挡处留 28% 残影,游戏缺省)。载荷不是 `runtime/` 那份,而是
+  serve 按导出公式把本机工作台**现场变换**成游戏格式的虚拟目录 `/api/game_payload/<场景>/n<nee>-a<amb>/…`
+  (`game_payload.py`,与真导出逐字节相同由 pytest 守);改 nee / amb 就换一份合成重装。预览亮度 = 场景显示 EV。
+- **纯工具视图**:背景各视图 / 缩略图 / 3D 几何在 CPU 上算(`gpu/labImages.ts`),3D 检视走接入层 3D 调试件
+  (`tools/workbench_rhi/debug3d.ts`),全景是 CPU 经纬图贴在视点球上(先粗后细),3D 角色 quad 的贴图是 2D 那份游戏着色离屏画出来的。
+  2D 标注(可走点 / probe 点 / 射线 / 光源 / 多边形 / 笔刷圈)画在叠在上面的 2D 画布。
+- **回归**:`tests/test_parity.py`(真 GPU:实验室 vs 照游戏现拼的参考页逐字节,6 例)、`gpu/charLabView.test.ts`(无 GPU 命令流对照)、
+  `tests/test_game_payload.py`(虚拟载荷 == 真导出)、`tests/test_selftest.py`(`viewer/tests/selftest.js` 在 Chrome `--no-skip` 与桌面壳里跑 + 冒烟)。
+  手动:`./dev.sh char-lighting -- --selftest`。
+
 ## 几何场烘焙(2026-08-31 从 tools/scene_relight 收束进来)
 
 **光照烘焙从此只有这一个工具、一个产物目录。** 此前场景受光要的法线与天穹可见性
