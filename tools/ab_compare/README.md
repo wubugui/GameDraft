@@ -27,7 +27,8 @@ xvfb-run -a node tools/ab_compare/run.mjs --browser /opt/pw-browsers/chromium-11
 ## 方法
 
 1. **两棵独立树**:`git worktree add --detach .tools/ab/<A|B>-<sha10> <sha>`。B 取**提交**——主工作区
-   未提交的改动不在 B 里(会大声提示)。
+   未提交的改动不在 B 里(会大声提示)。并行跑几路对照时每路用自己的 `--trees-dir`(如 `.tools/ab-p1`)、
+   自己的 `--port` 段和 `--out`:同一棵树上起两个 vite 会互相判对方的依赖预构建过期。
 2. **各自的依赖**:每棵树用**自己的** `package-lock.json` 跑 `npm ci`(锁文件 sha256 记在
    `node_modules/.ab-lock.sha256`,没变就不重装)。绝不与另一棵树或主工作区共用 / 链接 node_modules。
 3. **各自的 dev 服**:`node <树>/node_modules/vite/bin/vite.js --strictPort`,cwd = 该树,吃该树自己

@@ -64,12 +64,12 @@ function unlinkOnly(p) {
 const ASSET_REL = path.join('public', 'resources', 'runtime');
 
 /**
- * 保证 `.tools/ab/<label>-<sha10>` 是该提交的 detached worktree。
+ * 保证 `<parent>/<label>-<sha10>` 是该提交的 detached worktree(parent 缺省 `.tools/ab`)。
  * 同一 label 下其它提交的旧树撤掉(先摘素材链接再撤,git 撤树时不许有机会顺着链接删素材)。
+ * 并行跑多个对照时每个进程给自己的 parent(`--trees-dir`):同一棵树上起两个 vite 会互相判对方的预构建过期。
  * @returns {{dir:string, reused:boolean, resetDirty:string[]}}
  */
-export function ensureWorktree(git, repoRoot, label, sha, log) {
-  const parent = path.join(repoRoot, '.tools', 'ab');
+export function ensureWorktree(git, repoRoot, label, sha, log, parent = path.join(repoRoot, '.tools', 'ab')) {
   const name = `${label}-${sha.slice(0, 10)}`;
   const dir = path.join(parent, name);
   fs.mkdirSync(parent, { recursive: true });

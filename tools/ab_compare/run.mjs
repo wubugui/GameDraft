@@ -71,6 +71,8 @@
  *                                  冷缓存下 master 装载期首绘卡 9–13 s、粒子预热超时,会造出假差异
  *   --npm-registry <url>           npm ci 改走这个源(--replace-registry-host=always)
  *   --no-install                   不跑 npm ci(依赖缺了直接报错)
+ *   --trees-dir <dir>              A / B 两棵树的父目录(缺省 .tools/ab;相对仓库根)。并行跑多个对照时每个进程各用一个
+ *                                  (配各自的 --port 段与 --out):同一棵树上起两个 vite 会互相判对方的预构建过期
  *   --port <n>                     dev 服起始端口(缺省 5211)
  *   --origin-port <n>              页面看到的源端口(缺省 5173 = 规范 dev 源;两边相同,浏览器解析规则改道到各自真端口,不实际连它)
  *   --out <dir>                    输出目录(缺省 .tools/ab_out/latest;只清自己建的目录)
@@ -157,6 +159,7 @@ if (!Number.isFinite(opts.epoch)) {
 
 const git = makeGit(repoRoot);
 const outDir = path.resolve(arg('out', path.join(repoRoot, '.tools', 'ab_out', 'latest')));
+const treesDir = path.resolve(repoRoot, arg('trees-dir', path.join('.tools', 'ab')));
 
 /** 输出目录只清自己建的(有 .ab_out 标记)或空目录,别的一律拒绝,免得 --out 指错把别人的东西删了 */
 function prepareOut(dir) {
@@ -205,7 +208,7 @@ async function main() {
   const assetsSrc = path.resolve(arg('assets', path.join(repoRoot, 'public', 'resources', 'runtime')));
   const assets = { src: assetsSrc, linked: false };
   for (const side of [A, B]) {
-    const t = ensureWorktree(git, repoRoot, side.label, side.sha, log);
+    const t = ensureWorktree(git, repoRoot, side.label, side.sha, log, treesDir);
     side.dir = t.dir;
     side.reused = t.reused;
     side.resetDirty = t.resetDirty;
