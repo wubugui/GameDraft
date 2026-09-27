@@ -9,19 +9,29 @@
   ⇒ 重打。清单是打包器自己报的，不靠正则猜 import（``?raw`` 的 WGSL、``@src`` 别名都算得上）。
 * **产物不进 git**：放在调用方给的目录（约定各工作台 ``viewer/_gen/``，已 gitignore）；第一次打开工作台时现打。
 * **打不出来不致命**：没有 node / vite 报错时返回 ``(旧包或 None, 原因)``——页面照样能改能存，着色预览显示原因。
-* **进程内串行**：同一产物同时只打一次（serve 的多个请求线程并发时不会两个 node 抢着写）。
+* **并发安全（跨进程）**：同一产物同时只打一次——进程内线程锁 + 跨进程文件锁（系统临时目录里按产物路径一把，进程死了
+  锁自动释放）；拿到锁之后**再核一次戳**：别的进程刚打完就直接用它的（``force`` 也一样：等锁期间别人打过一版就不再打）。
+  pytest ``-n auto`` 的几个 worker、serve 的请求线程、``--bundle`` 同时撞上过期的产物时只有一个真打（2026-09-28 修：
+  以前只有线程锁，几个进程各打一遍、互相覆盖产物，``test_bundle_is_cached_by_source_stamp`` 偶发红）。
+  生成式入口文件经 ``ensure_entry`` 在同一把锁里写（原子改名），不会被别的进程读到写了一半的。
+  最新的时候不拿锁、不写任何东西（pytest 进程装着仓库写守卫，这条路径一个字节都不许写）。
 * 纯本地、跨平台：只调 ``node``（PATH 或 ``.tools/node``）与仓库根 ``node_modules``，不联网、不碰平台特定路径。
 """
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
+import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
@@ -90,37 +100,137 @@ def inputs_of(out: Path) -> list[Path]:
         return []
 
 
+def _key(out: Path) -> str:
+    return os.path.normcase(os.path.abspath(str(out)))
+
+
 def _lock_for(out: Path) -> threading.Lock:
-    key = os.path.normcase(os.path.abspath(str(out)))
     with _LOCKS_GUARD:
-        return _LOCKS.setdefault(key, threading.Lock())
+        return _LOCKS.setdefault(_key(out), threading.Lock())
+
+
+def lock_path(out: Path) -> Path:
+    """跨进程锁文件：系统临时目录里按产物路径一把（不写进仓库——pytest 的仓库写守卫下也拿得到锁）。"""
+    digest = hashlib.sha1(_key(out).encode("utf-8")).hexdigest()[:20]
+    return Path(tempfile.gettempdir()) / "gamedraft-workbench-rhi-locks" / f"{digest}.lock"
+
+
+def _try_lock(fd: int) -> bool:
+    if os.name == "nt":
+        import msvcrt
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+    import fcntl
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _unlock(fd: int) -> None:
+    try:
+        if os.name == "nt":
+            import msvcrt
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
+@contextmanager
+def _build_lock(out: Path, timeout: float) -> Iterator[None]:
+    """同一产物的打包临界区：进程内线程锁 + 跨进程文件锁（操作系统的字节锁 / flock，进程死了自动释放，不留死锁）。"""
+    with _lock_for(out):
+        path = lock_path(out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o666)
+        try:
+            deadline = time.monotonic() + timeout
+            while not _try_lock(fd):
+                if time.monotonic() > deadline:
+                    raise TimeoutError(f"等打包锁超时（{timeout:.0f} 秒）：{path}")
+                time.sleep(0.05)
+            try:
+                yield
+            finally:
+                _unlock(fd)
+        finally:
+            os.close(fd)
+
+
+def _stamp_sig(out: Path) -> tuple[int, int] | None:
+    try:
+        st = stamp_path(out).stat()
+        return (st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
 
 
 def ensure(entry: Path, out: Path, *, force: bool = False, timeout: float = 300.0) -> tuple[Path | None, str]:
-    """返回 (产物路径, 错误说明)。最新就直接返回；打不出来时有旧包就返回旧包 + 原因，没有返回 None + 原因。"""
-    entry, out = Path(entry), Path(out)
-    with _lock_for(out):
-        if not force and not stale_reason(entry, out):
-            return out, ""
-        old = out if out.is_file() else None
-        if not entry.is_file():
-            return old, f"打包入口不存在：{entry}"
-        node = node_exe()
-        if not node:
-            return old, "找不到 node（PATH 与 .tools/node 都没有），无法打工作台渲染包"
-        if not (ROOT / "node_modules" / "vite").is_dir():
-            return old, "仓库根没有 node_modules/vite（先在仓库根 npm ci）"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            proc = subprocess.run([node, str(BUILDER), str(entry), str(out)], cwd=str(ROOT), capture_output=True, text=True,
-                                  encoding="utf-8", errors="replace", timeout=timeout,
-                                  env={**os.environ, "NODE_NO_WARNINGS": "1"})
-        except (OSError, subprocess.TimeoutExpired) as e:
-            return old, f"vite 打包失败：{e}"
-        if proc.returncode != 0 or not out.is_file():
-            tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-8:]
-            return (out if out.is_file() else None), "vite 打包失败：\n" + "\n".join(tail)
+    """返回 (产物路径, 错误说明)。最新就直接返回（不拿锁、不写）；过期 / ``force`` 才进临界区，进去之后再核一次：
+    等锁期间别的进程打好了最新的就直接用（``force`` 也算——要的是"一版刚打的"，不是"我自己再打一遍"）。
+    打不出来时有旧包就返回旧包 + 原因，没有返回 None + 原因。"""
+    return _ensure(Path(entry), Path(out), None, force, timeout)
+
+
+def ensure_entry(entry: Path, entry_text: str, out: Path, *, force: bool = False,
+                 timeout: float = 300.0) -> tuple[Path | None, str]:
+    """生成式入口：入口文件内容应为 ``entry_text``。内容一样且产物最新 ⇒ 什么都不写；否则在打包锁里原子写入口
+    （内容变了产物自然过期）、再按 ``ensure`` 的规矩打。"""
+    return _ensure(Path(entry), Path(out), entry_text, force, timeout)
+
+
+def _entry_matches(entry: Path, text: str) -> bool:
+    try:
+        return entry.read_text(encoding="utf-8") == text
+    except OSError:
+        return False
+
+
+def _ensure(entry: Path, out: Path, entry_text: str | None, force: bool, timeout: float) -> tuple[Path | None, str]:
+    if not force and (entry_text is None or _entry_matches(entry, entry_text)) and not stale_reason(entry, out):
         return out, ""
+    before = _stamp_sig(out)
+    try:
+        with _build_lock(out, timeout):
+            if entry_text is not None and not _entry_matches(entry, entry_text):
+                _write_atomic(entry, entry_text)
+            if not stale_reason(entry, out) and (not force or _stamp_sig(out) != before):
+                return out, ""
+            return _build_locked(entry, out, timeout)
+    except TimeoutError as e:
+        return (out if out.is_file() else None), str(e)
+
+
+def _build_locked(entry: Path, out: Path, timeout: float) -> tuple[Path | None, str]:
+    """真打一次（调用方已持有打包锁）。"""
+    old = out if out.is_file() else None
+    if not entry.is_file():
+        return old, f"打包入口不存在：{entry}"
+    node = node_exe()
+    if not node:
+        return old, "找不到 node（PATH 与 .tools/node 都没有），无法打工作台渲染包"
+    if not (ROOT / "node_modules" / "vite").is_dir():
+        return old, "仓库根没有 node_modules/vite（先在仓库根 npm ci）"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        proc = subprocess.run([node, str(BUILDER), str(entry), str(out)], cwd=str(ROOT), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=timeout,
+                              env={**os.environ, "NODE_NO_WARNINGS": "1"})
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return old, f"vite 打包失败：{e}"
+    if proc.returncode != 0 or not out.is_file():
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-8:]
+        return (out if out.is_file() else None), "vite 打包失败：\n" + "\n".join(tail)
+    return out, ""
 
 
 # ----------------------------------------------------------------------------- 入口文件（生成式）
@@ -147,15 +257,29 @@ def entry_source(modules: list[Path], at: Path, header: str = "") -> str:
 
 
 def write_if_changed(path: Path, text: str) -> bool:
-    """内容一样就不写（没改源时一个字节都不落盘，mtime 不动、打包戳照旧有效）。"""
+    """内容一样就不写（没改源时一个字节都不落盘，mtime 不动、打包戳照旧有效）；要写就原子写（临时文件 + 改名）。"""
     try:
         if path.read_text(encoding="utf-8") == text:
             return False
     except OSError:
         pass
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8", newline="\n")
+    _write_atomic(path, text)
     return True
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
+    for i in range(40):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:  # Windows：别的进程正开着它读——短暂重试
+            if i == 39:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.05)
 
 
 # ----------------------------------------------------------------------------- 源依赖树（打之前的近似，给测试 / 报告用）

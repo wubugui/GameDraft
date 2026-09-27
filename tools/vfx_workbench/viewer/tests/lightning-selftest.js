@@ -42,7 +42,7 @@
     else {
       // 从劈下那一刻重播、当场画一帧（无头壳里 rAF 不一定跑，直接调 draw），同一个任务里回读
       pv.replay(false); pv.t0 = performance.now() - 30; pv.draw();
-      const px = pv.readPixels();
+      const px = await pv.readPixels();
       const split = Math.round(px.width * 0.42);
       let lit = 0, litL = 0, litR = 0;
       for (let y = 0; y < px.height; y++) for (let x = 0; x < px.width; x++) {

@@ -161,11 +161,11 @@ class Gpu2D {
     }
   }
 
-  /** 读一个 CSS 点的像素 `[r, g, b, a]`（同一个任务里重画一遍再读——WebGPU 画布呈现之后读不回来） */
-  readPixel(cx, cy) { return this.ok ? this.host.readPixel(cx, cy) : [0, 0, 0, 0]; }
-  /** 读一块 CSS 矩形（设备像素，RGBA8）；没画过 = null */
+  /** 读一个 CSS 点的像素 `[r, g, b, a]`（异步：RHI 纹理回读最近一次画出的画面，不经上屏 / 合成） */
+  readPixel(cx, cy) { return this.ok ? this.host.readPixel(cx, cy) : Promise.resolve([0, 0, 0, 0]); }
+  /** 读一块 CSS 矩形（设备像素，RGBA8；异步）；没画过 = null */
   readRect(cx, cy, cw, ch) {
-    if (!this.ok) return null;
+    if (!this.ok) return Promise.resolve(null);
     const r = this.host.renderer.resolution;
     return this.host.readPixels(Math.round(cx * r), Math.round(cy * r), Math.max(1, Math.round(cw * r)), Math.max(1, Math.round(ch * r)));
   }
@@ -440,11 +440,11 @@ class View2D {
     if (sh.draft) poly(sh.draft.poly, host.roleCss(sh.draft.role, 0.85), [6, 4], 1.5);
   }
   /** 冒烟（`window.__rhiSmoke2d`）：拿到 WebGPU、画面非空、没报错 */
-  smoke() {
+  async smoke() {
     if (!this.gpu.ok) return { ok: false, detail: this.gpu.err || '原画视图的着色还没建' };
     if (this.c.hidden || !this.c.clientWidth) return { ok: false, detail: '原画视图没显示（先 setView(2)）' };
     this.draw();
-    const drawn = this.gpu.host.countDrawnPixels();
+    const drawn = await this.gpu.host.countDrawnPixels();
     const st = this.gpu.stage.stats();
     return { ok: drawn > 64 && !this.gpu.err && !!this.gpu.last && !!this.gpu.last.bgUrl,
       detail: { drawn, size: [this.c.width, this.c.height], err: this.gpu.err, bg: this.gpu.last && this.gpu.last.bgUrl, meshes: st.meshes, drawCalls: st.drawCalls } };

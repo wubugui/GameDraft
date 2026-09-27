@@ -17,6 +17,10 @@
   的尺寸 + 修改时刻，任何一个变了 / 没了、入口换了、打包器改了 ⇒ 重打（约 2–3 秒）；都没变 ⇒ 一个字节不写。
   产物放各工作台自己的 `viewer/_gen/`（已 gitignore）。不用 vite dev 中间件：Python serve 不起 node 常驻进程，
   打包失败也不拖垮服务。
+- **并发安全（跨进程）**：同一产物同时只打一次——线程锁 + 系统临时目录里按产物路径一把的文件锁（`lock_path`；操作系统的字节锁 / flock，
+  进程死了自动释放）；拿到锁后**再核一次戳**，等锁期间别人打好了就用它的（`force` 也合并）。生成式入口经 `ensure_entry` 在同一把锁里原子写。
+  最新时不拿锁、不写任何东西。（2026-09-28：以前只有线程锁，pytest `-n auto` 的几个 worker 同时撞上过期产物各打一遍、互相覆盖，
+  `test_bundle_is_cached_by_source_stamp` 偶发红；回归 `tests/test_build.py::test_concurrent_processes_build_once`，修前 4 个进程打 4 遍。）
 - **不回落**：宿主拿不到 WebGPU 就明确说画不了（`WorkbenchRhiError` 带人话原因），不换 WebGL / 2D。
 - **跨平台**：只调 `node`（PATH 或 `.tools/node`）+ 仓库根 `node_modules`，路径一律 `pathlib` / `path`；不联网（离线机器照样能打）。
 
@@ -24,17 +28,18 @@
 
 | 文件 | 干什么 |
 |---|---|
-| `build.py` | Python：`ensure(entry, out)` 按需打包；`stale_reason` / `inputs_of` 看新旧与源清单；`entry_source` 生成 `export * as <名> from …` 入口；`import_tree` 打之前的近似依赖树 |
+| `build.py` | Python：`ensure_entry(entry, text, out)` / `ensure(entry, out)` 按需打包（跨进程只打一次）；`stale_reason` / `inputs_of` 看新旧与源清单；`entry_source` 生成 `export * as <名> from …` 入口；`import_tree` 打之前的近似依赖树 |
 | `build.mjs` | node：vite 库模式打包 → 临时目录 → 原子换上；写打包戳 |
-| `workbenchRhi.ts` | 页面侧（打进各工作台的包，命名空间 `workbenchRhi`）：`createCanvasHost(canvas, opts)` 在画布上建游戏同一个 WebGPU 渲染器（与 `Renderer.init` 同参：不抗锯齿、分辨率 = 设备像素比）；`loadTexture(url)` = 游戏 `AssetManager.loadTexture` 同一条（engine2d `Assets.load`）；`host.readPixels()` / `readPixel()` **同任务重画再回读**（WebGPU 画布呈现后读不回来，Chrome 实测全 0）；`probeWebGpu()`；也导出整个 `engine2d` 命名空间 |
+| `workbenchRhi.ts` | 页面侧（打进各工作台的包，命名空间 `workbenchRhi`）：`createCanvasHost(canvas, opts)` 在画布上建游戏同一个 WebGPU 渲染器（与 `Renderer.init` 同参：不抗锯齿、分辨率 = 设备像素比）；`loadTexture(url)` = 游戏 `AssetManager.loadTexture` 同一条（engine2d `Assets.load`）；`host.readPixels()` / `readPixel()` / `countDrawnPixels()` **异步**：RHI 纹理回读最近一次 `render` 画出的画面（`renderer.readCanvasPixels`：读画布中间纹理，不经浏览器上屏 / 合成；拷贝在调用当下提交，之后再画不影响）；`probeWebGpu()`；也导出整个 `engine2d` 命名空间 |
 | `rhiTrace.ts` | 测试：在空后端（`NullRhiDevice`）上把决定像素的全部 GPU 输入记成规范化文字（pass / 视口 / 管线与 WGSL 摘要 / uniform 字节 / 纹理内容 / 顶点索引 / draw）——"工作台画法 == 游戏画法"的无 GPU 对照（vitest） |
 | `chrome_page.mjs` | 测试：真 Chrome（真显卡 WebGPU，缺省无头）跑工作台页面：`--smoke`（页面的 `window.__rhiSmoke()` 报 ok、控制台无 error、可截图）/ `--selftest <js>`（与桌面壳同一约定，`--no-skip` 不许有 SKIP） |
-| `browser.py` | 测试：pytest 侧起服务子进程 + 调 `chrome_page.mjs`；没有 node / playwright-core / Chrome 时给 skip 原因 |
+| `browser.py` | 测试：pytest 侧起服务子进程 + 调 `chrome_page.mjs`；没有 node / playwright-core / Chrome 时给 skip 原因；`qt_host_unavailable()` / `skip_lines()` 给 Qt（WebGPU）宿主的自检用 |
 
 ## 别的工作台怎么接（照燃烧工作台）
 
 1. **入口**：在工作台的 `bundle.py` 里列模块（游戏的渲染模块 + `tools/workbench_rhi/workbenchRhi.ts` + 工作台自己的 TS 胶水），
-   `entry_source()` 生成 `viewer/_gen/entry.ts`，`write_if_changed()` 写，`ensure(ENTRY, OUT)` 打。命名空间 = 文件名。
+   `entry_source()` 生成入口文本，`ensure_entry(ENTRY, 文本, OUT, force=…)` 在打包锁里写入口并打（别在锁外自己写入口）。命名空间 = 文件名。
+   Qt 宿主：`run_desktop(..., webgpu=True)`（正常窗口与自检两处都给；QtWebEngine 没编 Dawn，WebGPU 页面只能走 WebView2 / WKWebView）。
 2. **胶水写 TS、放工作台自己目录**（如 `tools/burn_workbench/gpu/burnView.ts`）：只用游戏的对象拼画面（实体、滤镜、网格、
    `BurnRenderer` 之类），**不写任何 WGSL / GLSL、不抄着色式子**；拼法照游戏组装层（谁持有资源、拆卸顺序、相机 uniform 怎么推）。
    加进 `tools/workbench_rhi/tsconfig.json` 的 include，`npx tsc --noEmit -p tools/workbench_rhi` 过类型。
@@ -49,16 +54,19 @@
      `expect(workbenchTrace).toEqual(gameTrace)`；再加一条"记录器够灵敏"（相机 / 参数差一点串就不同）。样板 `tools/burn_workbench/gpu/burnView.test.ts`。
    - **真 GPU 逐像素**：工作台真页面 vs vite 按游戏模块图编译的参考页（照游戏组装层写，不经接入层、不经胶水），同一组输入各画一张、
      同任务回读、逐字节比。样板 `tools/burn_workbench/tests/parity/`（`run.mjs` + `ref.ts` + `vite.config.ts`，pytest 壳 `test_parity.py`）。
-   - **页内自检 + 冒烟**：selftest 里读像素的条目改成 GPU 版（`host.readPixel` 同任务重画再读，同步可用）；宿主拿不到 WebGPU 时这几条记
-     `SKIP`（带原因），pytest 再用 `browser.run_page(..., selftest=..., no_skip=True)` 在真 GPU 的 Chrome 里跑同一份脚本、不许有 SKIP。
+   - **页内自检 + 冒烟**：selftest 里读像素的条目改成 GPU 版（`await host.readPixel(...)`，画完同一个任务里发读）；宿主拿不到 WebGPU 时这几条记
+     `SKIP`（带原因）——但 Qt 宿主（WebView2）与真 GPU 的 Chrome（`browser.run_page(..., no_skip=True)`）两边都拿得到，pytest 两边都断言零 SKIP。
+     冒烟钩子 `window.__rhiSmoke` 可以是 async（`chrome_page.mjs` 会等它）。
 
 ## 宿主拿不到 WebGPU 时（Qt 离屏 / 显卡驱动不行 / 远程桌面）
 
 - 页面：着色层显示原因（「这个窗口拿不到 WebGPU 适配器……」），画布留底色；编辑、保存、模拟、站位、2D 标注照常。
 - 打包失败（没 node / vite 报错）：有旧包用旧包并提示；没有就没有着色预览，其余照常。
-- 2026-09-27 实测：offscreen 的 QtWebEngine 6.11（PySide6）`navigator.gpu` 存在但**拿不到适配器**（ANGLE/SwiftShader 参数下也一样）；
-  真窗口的 Qt 宿主需要的 Chromium 参数由 `tools/qt_webgpu.py` 统一接（另一条线），接好之后自检里的 SKIP 会自动变回真跑。
-  无头 Chrome 在真显卡上 WebGPU 可用（RTX 4070 SUPER），测试用它。
+- QtWebEngine 没编 Dawn，永远拿不到 WebGPU（见 `tools/qt_webgpu.py` 模块头）；工作台的 Qt 宿主一律 `run_desktop(webgpu=True)` 走 WebView2
+  （Edge 135，本机 dpr 1.24）。自检 / 冒烟在离屏平台下由壳改开**挪到屏幕外、尺寸固定的无边框真窗口**（带边框的窗口会被系统夹到屏幕大小：
+  1280×720 的机器上页面 CSS 视口只剩 1036×566，依赖视口大小的自检条目假红）。
+- 读像素别用 `drawImage(WebGPU 画布)`：Chrome 里呈现之后读到全 0，WebView2（窗口在屏幕外）里读到**旧的合成帧**甚至全 0（2026-09-28 实测）。
+  接入层的回读走 RHI 纹理回读，两个宿主一致。无头 Chrome 在真显卡上 WebGPU 可用（RTX 4070 SUPER），测试用它。
 
 ## 运行
 
@@ -95,7 +103,7 @@ node tools/vfx_workbench/tests/parity/run.mjs --python <py> --out <目录>      
 
 ## 离屏渲染纹理 + 异步回读（`offscreenReadback.ts`，2026-09-27 呼吸工作台出片加）
 
-出片 / 自检要按**成品尺寸**画、逐帧读、读的时候别卡住下一帧；画布回读（`CanvasHost.readPixels`）做不到（尺寸跟画布走、同任务重画 + 同步 `drawImage`）。
+出片 / 自检要按**成品尺寸**画、逐帧读、读的时候别卡住下一帧；画布回读（`CanvasHost.readPixels`，异步读画布中间纹理）尺寸跟画布走、做不到成品尺寸。
 
 - `createOffscreenTarget(host | renderer, w, h, { clearColor? })` → `OffscreenTarget`：同一个渲染器 / 同一台设备上的一张
   engine2d `RenderTexture`（分辨率 1，像素 = 逻辑像素）。打进包的命名空间 `offscreenReadback`（在工作台 `bundle.py` 的入口里列它）。

@@ -10,14 +10,18 @@
   const log = [], wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const ok = (name, cond, extra) => log.push((cond ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' ' + JSON.stringify(extra) : ''));
   const until = async (fn, ms) => { const t0 = Date.now(); while (Date.now() - t0 < (ms || 10000)) { try { if (fn()) return true; } catch (e) { /* 还没好 */ } await wait(40); } return false; };
-  const okGpu = (name, cond, extra) => {
+  const okGpu = async (name, cond, extra) => {
     if (!v2.gpu.ok) log.push(`SKIP ${name} ${JSON.stringify({ why: v2.gpu.err || 'no GPU layer' })}`);
-    else { let v = false; try { v = typeof cond === 'function' ? cond() : cond; } catch (e) { log.push(`EXC ${name} ${e && e.stack || e}`); return; } ok(name, v, typeof extra === 'function' ? extra() : extra); }
+    else {
+      let v = false;
+      try { v = typeof cond === 'function' ? await cond() : cond; } catch (e) { log.push(`EXC ${name} ${e && e.stack || e}`); return; }
+      ok(name, v, typeof extra === 'function' ? await extra() : extra);
+    }
   };
   const settle = async () => { await until(() => !v2.gpu.ok || v2.gpu.settled, 20000); draw(); };
-  /** GPU 画面里一块 CSS 矩形与清屏色差得出来的像素数 / 亮度和（同一个任务里重画再读） */
-  const region = (x, y, w, h) => {
-    const px = v2.gpu.readRect(x, y, w, h);
+  /** GPU 画面里一块 CSS 矩形与清屏色差得出来的像素数 / 亮度和（RHI 纹理回读最近一次画出的画面） */
+  const region = async (x, y, w, h) => {
+    const px = await v2.gpu.readRect(x, y, w, h);
     let n = 0, lum = 0;
     for (let i = 0; i < px.data.length; i += 4) {
       const r = px.data[i], g = px.data[i + 1], b = px.data[i + 2];
@@ -35,7 +39,7 @@
     ok('G1 the page has no shader of its own: no beam / bolt WebGL layers, no GLSL namespaces in the runtime bundle',
       typeof BeamPreview === 'undefined' && !('vfxBeamGlsl' in S.rt) && !('vfxBoltGlsl' in S.rt) && !!S.rt.vfxView && !!S.rt.workbenchRhi,
       { ns: Object.keys(S.rt || {}) });
-    okGpu('G1 the 2D view is the game WebGPU renderer (engine2d / RHI via the workbench RHI layer)',
+    await okGpu('G1 the 2D view is the game WebGPU renderer (engine2d / RHI via the workbench RHI layer)',
       () => v2.gpu.host.renderer.name === 'webgpu' && !v2.gpu.err && el('view2d').getContext('2d') === null && el('view2d').getContext('webgl2') === null,
       { err: v2.gpu.err });
     if (!v2.gpu.ok) ok('G1 without WebGPU the 2D view says why (and editing still works)', !!v2.gpu.err && /WebGPU|适配器|着色/.test(v2.gpu.err), { err: v2.gpu.err });
@@ -61,36 +65,36 @@
     await settle();
     const W = v2.c.clientWidth, H = v2.c.clientHeight;
     const box = [W * 0.2, H * 0.2, W * 0.6, H * 0.6];
-    okGpu('G3 the scene depth map (same URL as SceneDepthSystem) and the background are on the GPU, the paper sheet is loaded',
+    await okGpu('G3 the scene depth map (same URL as SceneDepthSystem) and the background are on the GPU, the paper sheet is loaded',
       () => !!v2.gpu.last && /\/resources\/runtime\/scenes\/.+\/raw_depth_rg\.png$/.test(decodeURIComponent(v2.gpu.last.depthUrl)) && !!v2.gpu.last.bgUrl && v2.gpu.last.sheets === 1,
       () => v2.gpu.last && { depth: v2.gpu.last.depthUrl, bg: v2.gpu.last.bgUrl, sheets: v2.gpu.last.sheets, errs: v2.gpu.sheetErrors });
     let withP = null, noP = null, st = null;
     if (v2.gpu.ok) {
       st = v2.gpu.stage.stats();
-      withP = region(...box);
-      S.layers.particles = false; draw(); noP = region(...box);
+      withP = await region(...box);
+      S.layers.particles = false; draw(); noP = await region(...box);
       S.layers.particles = true; draw();
     }
-    okGpu('G3 paper money is drawn by the game renderer (plate meshes in the entity layer; the particles layer toggles real pixels)',
+    await okGpu('G3 paper money is drawn by the game renderer (plate meshes in the entity layer; the particles layer toggles real pixels)',
       () => S.sim.liveCount > 50 && st.meshes >= 1 && st.drawCalls >= 1 && Math.abs(withP.lum - noP.lum) > 2000,
       () => ({ live: S.sim && S.sim.liveCount, st, withP, noP }));
 
     // ---- G4 图层「场景压暗」= 背景半透明压在清屏色上（GPU 画面里真暗下去）；「场景」去勾 = 背景整个不画
     if (v2.gpu.ok) {
       S.layers.particles = false; draw();
-      const bright = region(...box);
-      S.layers.dimMesh = true; draw(); const dim = region(...box);
-      S.layers.dimMesh = false; S.layers.mesh = false; draw(); const none = region(...box);
+      const bright = await region(...box);
+      S.layers.dimMesh = true; draw(); const dim = await region(...box);
+      S.layers.dimMesh = false; S.layers.mesh = false; draw(); const none = await region(...box);
       S.layers.mesh = true; S.layers.particles = true; draw();
-      okGpu('G4 the 场景压暗 / 场景 layers act on the GPU background (dimmed art is darker, hidden art leaves the clear colour)',
+      await okGpu('G4 the 场景压暗 / 场景 layers act on the GPU background (dimmed art is darker, hidden art leaves the clear colour)',
         () => dim.lum < bright.lum * 0.8 && dim.lum > none.lum && none.n < 50, { bright: bright.lum, dim: dim.lum, none });
-    } else okGpu('G4 the 场景压暗 / 场景 layers act on the GPU background', false);
+    } else await okGpu('G4 the 场景压暗 / 场景 layers act on the GPU background', false);
 
     // ---- G5 换时段外观 / 场景：旧背景纹理放掉（不越攒越多）
     const bg0 = v2.gpu.bgUrl;
     const other = S.scenes.find((sc) => sc.depth && sc.id !== S.scene.id);
     if (other) { await loadScene(other.id, ''); await until(() => !S.busy, 20000); setView(2); await settle(); }
-    okGpu('G5 switching scenes swaps the background texture and drops the old one',
+    await okGpu('G5 switching scenes swaps the background texture and drops the old one',
       () => !!other && v2.gpu.bgUrl !== bg0 && !v2.gpu.textures.has(bg0) && [...v2.gpu.textures.keys()].filter((u) => u.startsWith('/api/scene_bg')).length === 1,
       () => ({ other: other && other.id, bg0, now: v2.gpu.bgUrl, keys: [...v2.gpu.textures.keys()] }));
 
@@ -102,12 +106,13 @@
     v2.fit();
     await settle();
     let bolt = null, boltSt = null;
-    if (v2.gpu.ok) { boltSt = v2.gpu.stage.stats(); bolt = region(0, 0, W, H); }
-    okGpu('G6 a lightning strike renders in the 2D view with the game bolt pipeline (several meshes, bright core pixels, no frame error)',
+    if (v2.gpu.ok) { boltSt = v2.gpu.stage.stats(); bolt = await region(0, 0, W, H); }
+    await okGpu('G6 a lightning strike renders in the 2D view with the game bolt pipeline (several meshes, bright core pixels, no frame error)',
       () => !v2.gpu.err && boltSt.meshes >= 3 && bolt.n > 1000, () => ({ err: v2.gpu.err, st: boltSt, bolt }));
 
     // ---- G7 冒烟钩子
-    okGpu('G7 window.__rhiSmoke2d reports a live, non-empty GPU view', () => window.__rhiSmoke2d().ok === true, () => window.__rhiSmoke2d());
+    const smoke2d = v2.gpu.ok ? await window.__rhiSmoke2d() : null;
+    await okGpu('G7 window.__rhiSmoke2d reports a live, non-empty GPU view', () => smoke2d.ok === true, () => smoke2d);
   } catch (error) { log.push('EXC ' + (error.stack || error)); }
   finally {
     S.link.on = false;

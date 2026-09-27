@@ -896,10 +896,10 @@ window.__openBurnable = (id) => {
 };
 
 /** 浏览器冒烟（`tools/workbench_rhi/chrome_page.mjs --smoke`）：拿到 WebGPU、这一帧画出了东西、GPU 没报错 */
-window.__rhiSmoke = () => {
+window.__rhiSmoke = async () => {
   if (!V.gpu || !V.gpu.ok) return { ok: false, detail: (V.gpu && V.gpu.err) || '没有 GPU 着色层' };
   draw();
-  const drawn = V.gpu.host.countDrawnPixels();
+  const drawn = await V.gpu.host.countDrawnPixels();
   const size = [V.gpu.canvas.width, V.gpu.canvas.height];
   return { ok: drawn > 64 && !V.gpu.err && !S.rtErr, detail: { drawn, size, gpuErr: V.gpu.err, rtErr: S.rtErr, view: S.view, doc: S.docId } };
 };

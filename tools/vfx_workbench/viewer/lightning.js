@@ -374,8 +374,8 @@ class BoltPreview {
     this.host.render(st.root);
     if (this.host.lastError && !this.err) this.err = `GPU：${this.host.lastError}`;
   }
-  /** 回读画布（同一个任务里重画再读；自检用）；没有 GPU = null */
-  readPixels() { return this.host ? this.host.readPixels() : null; }
+  /** 回读画布（异步：RHI 纹理回读最近一次画出的画面；自检用）；没有 GPU = null */
+  readPixels() { return this.host ? this.host.readPixels() : Promise.resolve(null); }
 }
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { LightningPanel, BoltPreview };

@@ -30,8 +30,8 @@
     await wait(40);
   };
   /** 原画视图（游戏的 WebGPU 渲染器）在某画面点附近的亮度和（光柱开 / 关对比用；同一个任务里重画再读） */
-  const lumAt = (sx, sy) => {
-    const px = v2.gpu.readRect(sx * v2.zoom + v2.ox - 3, sy * v2.zoom + v2.oy - 3, 7, 7);
+  const lumAt = async (sx, sy) => {
+    const px = await v2.gpu.readRect(sx * v2.zoom + v2.ox - 3, sy * v2.zoom + v2.oy - 3, 7, 7);
     if (!px) return 0;
     let s = 0; for (let i = 0; i < px.data.length; i += 4) s += px.data[i] + px.data[i + 1] + px.data[i + 2];
     return s;
@@ -69,9 +69,9 @@
     const mid = [f.origin[0] + f.axis[0] * f.length * 0.5, f.origin[1] + f.axis[1] * f.length * 0.5, f.origin[2] + f.axis[2] * f.length * 0.5];
     const ms = S.cal.worldToScene(mid[0], mid[1], mid[2]);
     await settle();
-    S.layers.beams = false; v2.draw(); const off = v2.gpu.ok ? lumAt(ms[0], ms[1]) : 0;
+    S.layers.beams = false; v2.draw(); const off = v2.gpu.ok ? await lumAt(ms[0], ms[1]) : 0;
     const hidden = v2.gpu.ok ? v2.gpu.stage.stats() : null;
-    S.layers.beams = true; v2.draw(); const on = v2.gpu.ok ? lumAt(ms[0], ms[1]) : 0;
+    S.layers.beams = true; v2.draw(); const on = v2.gpu.ok ? await lumAt(ms[0], ms[1]) : 0;
     const shown = v2.gpu.ok ? v2.gpu.stage.stats() : null;
     ok('B2 the page has no shader of its own (no WebGL beam preview layer, no GLSL namespace in the bundle)',
       typeof BeamPreview === 'undefined' && !('vfxBeamGlsl' in S.rt) && !('vfxBoltGlsl' in S.rt));
@@ -147,8 +147,8 @@
       setView(2); await wait(40); await settle();
       const b2 = S.sim && S.sim.beamFrame(S.sim.beams[0]);
       const c2 = b2 && b2.frame2d ? [(b2.frame2d.corners[0] + b2.frame2d.corners[4]) / 2, (b2.frame2d.corners[1] + b2.frame2d.corners[5]) / 2] : null;
-      S.layers.beams = false; v2.draw(); const off2 = c2 && v2.gpu.ok ? lumAt(c2[0], c2[1]) : 0;
-      S.layers.beams = true; v2.draw(); const on2 = c2 && v2.gpu.ok ? lumAt(c2[0], c2[1]) : 0;
+      S.layers.beams = false; v2.draw(); const off2 = c2 && v2.gpu.ok ? await lumAt(c2[0], c2[1]) : 0;
+      S.layers.beams = true; v2.draw(); const on2 = c2 && v2.gpu.ok ? await lumAt(c2[0], c2[1]) : 0;
       ok('B8 a scene without depth loads with the planar calibration: local sim runs with the 2D band',
         !!S.cal && S.cal.planar === true && !!S.space && S.space.kind === 'planar' && !!b2 && !!b2.frame2d,
         { scene: flat.id, err: S.simErr, planar: !!(S.cal && S.cal.planar), space: S.space && S.space.kind, frame: !!(b2 && b2.frame2d) });

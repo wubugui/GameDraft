@@ -44,6 +44,22 @@ def unavailable() -> str:
     return ""
 
 
+def qt_host_unavailable() -> str:
+    """工作台的 Qt 宿主（``desktop_shell.run_desktop(webgpu=True)`` → ``tools.qt_webgpu.WebGpuView``：Windows 上 WebView2、
+    macOS 上 WKWebView）在这台机器上起不来的原因；起得来返回 ''。QtWebEngine 没编 Dawn，不算。"""
+    try:
+        import PySide6.QtWebView  # noqa: F401
+        import PySide6.QtWidgets  # noqa: F401
+    except Exception as e:  # noqa: BLE001
+        return f"没有 PySide6 QtWebView（WebGPU 宿主）：{e}"
+    return ""
+
+
+def skip_lines(report: str) -> list[str]:
+    """自检报告里的 SKIP 行（WebGPU 宿主里一条都不许有）。"""
+    return [ln for ln in report.splitlines() if ln.startswith("SKIP")]
+
+
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))

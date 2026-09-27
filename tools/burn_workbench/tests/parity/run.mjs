@@ -93,7 +93,8 @@ async function driveWorkbench(c) {
   draw();
   await until(() => V.gpu.pendingTextures === 0);
   draw();
-  const px = V.gpu.host.readPixels();
+  // 回读的拷贝在调用当下就发出；这一帧的其余输入也要在同一个任务里取完（await 期间页面的 rAF 可能改画布尺寸 / 状态）
+  const pxPending = V.gpu.host.readPixels();
   const cam = V.cam[view];
   const items = V.gpu.items.map((it) => {
     let screen = null;
@@ -109,8 +110,7 @@ async function driveWorkbench(c) {
     }
     return { key: it.key, kind: it.kind, url: it.url, def: it.def || null, screen, burn };
   });
-  return {
-    w: px.width, h: px.height, pixels: b64(px.data),
+  const out = {
     input: {
       css: [V.gpu.host.renderer.screen.width, V.gpu.host.renderer.screen.height], dpr: V.gpu.host.renderer.resolution,
       cam: { k: cam.k, ox: cam.ox, oy: cam.oy },
@@ -120,6 +120,8 @@ async function driveWorkbench(c) {
     },
     burning: items.filter((i) => i.burn).map((i) => i.key),
   };
+  const px = await pxPending;
+  return { w: px.width, h: px.height, pixels: b64(px.data), ...out };
 }
 
 function writePng(file, w, h, rgba) {

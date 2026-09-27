@@ -98,6 +98,7 @@ async function driveWorkbench(c) {
   let px;
   let css;
   let dpr;
+  let uniforms = null;
   try {
     if (c.kind === 'output') {
       const tgt = S.rt.offscreenReadback.createOffscreenTarget(S.host, S.def.size[0], S.def.size[1]);
@@ -105,18 +106,21 @@ async function driveWorkbench(c) {
       css = [S.def.size[0], S.def.size[1]];
       dpr = 1;
     } else {
-      if (c.css) S.host.resize(c.css[0], c.css[1], c.dpr);   // 与下面的画 + 回读同一个任务：页面的 rAF 插不进来
+      if (c.css) S.host.resize(c.css[0], c.css[1], c.dpr);   // 与下面的画 + 发读同一个任务：页面的 rAF 插不进来
       A.draw();
-      px = S.host.readPixels();
+      // 回读的拷贝在调用当下就发出；尺寸 / uniform 也在同一个任务里取（await 期间页面的 rAF 会按自己的布局把画布改回去）
+      const pending = S.host.readPixels();
       css = [S.host.renderer.screen.width, S.host.renderer.screen.height];
       dpr = S.host.renderer.resolution;
+      uniforms = S.stage.currentUniforms();
+      px = await pending;
     }
   } finally {
     S.compare = false;
     S.perf = saved;
   }
   return {
-    w: px.width, h: px.height, pixels: b64(px.data), css, dpr, uniforms: S.stage.currentUniforms(),
+    w: px.width, h: px.height, pixels: b64(px.data), css, dpr, uniforms: uniforms ?? S.stage.currentUniforms(),
     input: c.compare ? null : input, phase: input.frame.phase, paperMm: input.frame.paperMm, chest: input.frame.chest,
   };
 }

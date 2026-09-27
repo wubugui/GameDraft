@@ -122,3 +122,67 @@ def test_no_node_is_a_soft_failure(tmp_path: Path, monkeypatch) -> None:
     p, err = wbrhi.ensure(entry, tmp_path / "t.bundle.js")
     assert p is None and "找不到 node" in err
     assert os.path.exists(entry)
+
+
+# ----------------------------------------------------------------------------- 并发：几个进程同时发现产物过期
+#: 子进程：等"开跑"文件出现（几个进程同一刻撞上过期的产物），调 ensure，数自己真跑了几次打包器
+_RACER = r"""
+import json, os, sys, time
+sys.path.insert(0, sys.argv[1])
+from tools.workbench_rhi import build as b
+runs = []
+_orig = b.subprocess.run
+def _run(args, *a, **k):
+    if any(str(x) == str(b.BUILDER) for x in args):
+        runs.append(1)
+    return _orig(args, *a, **k)
+b.subprocess.run = _run
+entry, out, go, mode = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
+t0 = time.time()
+while not os.path.exists(go):
+    if time.time() - t0 > 60:
+        sys.exit(9)
+    time.sleep(0.005)
+if mode == "entry":
+    p, err = b.ensure_entry(entry, "export const who = 'raced-entry';\n", out)
+else:
+    p, err = b.ensure(entry, out, force=(mode == "force"))
+print(json.dumps({"ok": bool(p) and not err, "err": err, "runs": len(runs), "stale": b.stale_reason(entry, out)}))
+"""
+
+
+def _race(tmp_path: Path, mode: str, n: int = 4) -> list[dict]:
+    import subprocess
+    entry = tmp_path / "entry.ts"
+    if mode != "entry":
+        kelvin = (_ROOT / "src" / "rendering" / "lighting" / "kelvin.ts").as_posix()
+        entry.write_text(f"export * as kelvin from '{kelvin}';\nexport const who = 'raced';\n", encoding="utf-8")
+    out = tmp_path / "gen" / "race.bundle.js"
+    go = tmp_path / "go"
+    script = tmp_path / "racer.py"
+    script.write_text(_RACER, encoding="utf-8")
+    env = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+    procs = [subprocess.Popen([sys.executable, str(script), str(_ROOT), str(entry), str(out), str(go), mode],
+                              cwd=str(_ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", env=env)
+             for _ in range(n)]
+    time.sleep(1.5)  # 都起来、都在等
+    go.write_text("go", encoding="utf-8")
+    res = []
+    for p in procs:
+        o, e = p.communicate(timeout=300)
+        assert p.returncode == 0, e[-2000:]
+        res.append(json.loads(o.strip().splitlines()[-1]))
+    return res
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="没有 node / 仓库根没有 node_modules/vite")
+@pytest.mark.parametrize("mode", ["stale", "force", "entry"])
+def test_concurrent_processes_build_once(tmp_path: Path, mode: str) -> None:
+    """几个进程（pytest -n auto 的 worker、serve 的请求、--bundle）同一刻撞上过期的产物：只许一个真打，其余等它打完、
+    重新核一次戳就用它的；都拿到最新的包。修之前（只有进程内的线程锁）每个进程各打一遍、互相覆盖产物（2026-09-28 在
+    pytest 并行里撞上过：test_bundle_is_cached_by_source_stamp 偶发红）。"force" = 几个 --bundle 同时要求重打，合并成一次；
+    "entry" = 生成入口文件也在锁里写（以前在锁外读 / 写，并发时会读到写了一半的入口）。"""
+    res = _race(tmp_path, mode)
+    assert all(r["ok"] for r in res), res
+    assert sum(r["runs"] for r in res) == 1, res
+    assert all(r["stale"] == "" for r in res), res

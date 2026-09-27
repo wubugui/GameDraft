@@ -66,7 +66,8 @@
     okGpu('S11 按住看原图 = 静止帧', () => !!cmp && d2 <= 1, { d2 });
     // 画布预览也是同一个舞台:画完画布回读非空(与清屏色不同)
     if (!noGpu()) A.draw();
-    okGpu('S11 画布预览画出来了(画布回读非空)', () => S.host.countDrawnPixels() > 1000, { drawn: noGpu() ? 0 : S.host.countDrawnPixels() });
+    const drawnPx = noGpu() ? 0 : await S.host.countDrawnPixels();
+    okGpu('S11 画布预览画出来了(画布回读非空)', () => drawnPx > 1000, { drawn: drawnPx });
     if (tgt) tgt.destroy();
     // 剧情时间轴(对话图里那一段原样演):逐帧推,渐弱等停住走完、猛吸、收掉
     ok('S12 用在哪:列出样例对话图', S.stories.length === 1 && S.stories[0].graph === 'sample_graph');

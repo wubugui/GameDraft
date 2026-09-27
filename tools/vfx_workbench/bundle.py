@@ -103,16 +103,8 @@ def ensure_bundle(force: bool = False) -> tuple[Path | None, str]:
     for p in ENTRY_MODULES:
         if not p.exists():
             return None, f"运行时模块不存在: {p}"
-    entry = _entry_ts()
-    try:
-        if ENTRY.read_text(encoding="utf-8") != entry:
-            force = True
-    except OSError:
-        force = True
-    if not force and not wbrhi.stale_reason(ENTRY, OUT):
-        return OUT, ""
-    wbrhi.write_if_changed(ENTRY, entry)
-    return wbrhi.ensure(ENTRY, OUT, force=force)
+    # 入口在打包锁里写、写完再核戳（几个进程同时撞上过期时只打一次，见 tools/workbench_rhi/build.py）
+    return wbrhi.ensure_entry(ENTRY, _entry_ts(), OUT, force=force)
 
 
 if __name__ == "__main__":

@@ -7,8 +7,9 @@
  * - 在页面给的 `<canvas>` 上建渲染器（`createRenderer`，与游戏 `Renderer.init` 同参：不抗锯齿、分辨率 = 设备像素比）；
  *   没有 WebGPU 就抛 `WorkbenchRhiError`（带人话原因），**不回落**任何别的 API；
  * - 贴图一律走 engine2d 的 `Assets.load`（与游戏 `AssetManager.loadTexture` 同一条解码 / 上传路径，字节才对得上）；
- * - 回读：WebGPU 画布呈现后内容就读不回来了（Chrome 实测读到全 0），所以 `readPixels` 在**同一个任务里**
- *   先把上一次画的根重画一遍、再 `drawImage` 进 2D 画布取字节——读到的就是画布此刻显示的那一帧；
+ * - 回读走 RHI 纹理回读（`renderer.readCanvasPixels`：画布中间纹理 → 缓冲 → 映射，**异步**），不经浏览器上屏 / 合成：
+ *   以前用 `drawImage(WebGPU 画布)` 取字节——Chrome 里呈现之后读到全 0（只能同任务重画再读），WebView2（Edge 135，
+ *   窗口在屏幕外）里更是读到**旧的合成帧**（2026-09-28 实测：烧没了读回来还是纸色），两个宿主都不稳；
  * - 设备诊断（设备丢失 / 管线建坏）汇总到 `lastError`，页面自己决定怎么提示。
  *
  * 用法见 `tools/workbench_rhi/README.md`。
@@ -57,16 +58,15 @@ export interface CanvasHostOptions {
 export interface Pixels {
   width: number;
   height: number;
-  /** RGBA8，自上而下 */
+  /** RGBA8，自上而下（画布不透明：alpha 恒 255，与页面上看到的一致） */
   data: Uint8ClampedArray;
 }
 
 export class CanvasHost {
   /** 最近一次设备诊断（设备丢失 / 管线建坏 / 恢复失败）；没有 = '' */
   lastError = '';
-  private lastRoot: Container | null = null;
+  private drawn = false;
   private readonly offDiag: () => void;
-  private readCanvas: HTMLCanvasElement | null = null;
   private destroyed = false;
 
   private constructor(readonly renderer: WebGPURenderer, readonly canvas: HTMLCanvasElement) {
@@ -105,34 +105,43 @@ export class CanvasHost {
 
   render(root: Container): void {
     if (this.destroyed) return;
-    this.lastRoot = root;
     this.renderer.render(root);
+    this.drawn = true;
   }
 
   /**
-   * 回读画布（设备像素，自上而下 RGBA8）：同一个任务里先把上一次 `render` 的根重画一遍再取，
-   * 取到的就是画布显示的那一帧。没画过 = null。
+   * 回读最近一次 `render` 画出的画面（设备像素，自上而下 RGBA8；`x, y, width, height` 是设备像素的裁剪框）。
+   * RHI 纹理回读：拷贝命令在调用当下提交（之后再画不影响这次读到的），像素异步回来；不经上屏 / 合成，
+   * 窗口在屏幕外、页面不可见都照样读得到。没画过 / 设备没了 = null。
    */
-  readPixels(x = 0, y = 0, width?: number, height?: number): Pixels | null {
-    if (this.destroyed || !this.lastRoot) return null;
-    this.renderer.render(this.lastRoot);
-    const W = this.canvas.width;
-    const H = this.canvas.height;
-    const w = Math.max(1, Math.min(width ?? W, W - x));
-    const h = Math.max(1, Math.min(height ?? H, H - y));
-    const rc = (this.readCanvas ??= document.createElement('canvas'));
-    if (rc.width !== W) rc.width = W;
-    if (rc.height !== H) rc.height = H;
-    const ctx = rc.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return null;
-    ctx.clearRect(0, 0, W, H);
-    ctx.drawImage(this.canvas, 0, 0);
-    return { width: w, height: h, data: ctx.getImageData(x, y, w, h).data };
+  async readPixels(x = 0, y = 0, width?: number, height?: number): Promise<Pixels | null> {
+    if (this.destroyed || !this.drawn) return null;
+    let got: Awaited<ReturnType<WebGPURenderer['readCanvasPixels']>>;
+    try {
+      got = await this.renderer.readCanvasPixels();
+    } catch (e) {
+      this.lastError = `回读画布失败：${(e as Error)?.message ?? e}`;
+      return null;
+    }
+    if (!got) return null;
+    const W = got.width;
+    const H = got.height;
+    const x0 = Math.max(0, Math.min(W - 1, Math.floor(x)));
+    const y0 = Math.max(0, Math.min(H - 1, Math.floor(y)));
+    const w = Math.max(1, Math.min(width ?? W, W - x0));
+    const h = Math.max(1, Math.min(height ?? H, H - y0));
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let row = 0; row < h; row++) {
+      data.set(got.pixels.subarray(((y0 + row) * W + x0) * 4, ((y0 + row) * W + x0 + w) * 4), row * w * 4);
+    }
+    // 画布按不透明合成（createRenderer 缺省 alphaMode opaque）：页面上看到的 alpha 恒 1
+    for (let i = 3; i < data.length; i += 4) data[i] = 255;
+    return { width: w, height: h, data };
   }
 
   /** 画面里与清屏色差得出来的像素数（冒烟用：画面非空）；没画过 = 0 */
-  countDrawnPixels(tolerance = 6): number {
-    const px = this.readPixels();
+  async countDrawnPixels(tolerance = 6): Promise<number> {
+    const px = await this.readPixels();
     if (!px) return 0;
     const [r, g, b] = this.renderer.background.colorRgba.map((v) => Math.round(v * 255));
     let n = 0;
@@ -142,12 +151,12 @@ export class CanvasHost {
     return n;
   }
 
-  /** 读一个 CSS 点的像素 `[r, g, b, a]`（按当前分辨率换到设备像素） */
-  readPixel(cssX: number, cssY: number): number[] {
+  /** 读一个 CSS 点的像素 `[r, g, b, a]`（按当前分辨率换到设备像素；异步，见 `readPixels`） */
+  async readPixel(cssX: number, cssY: number): Promise<number[]> {
     const r = this.renderer.resolution;
     const x = Math.min(this.canvas.width - 1, Math.max(0, Math.round(cssX * r)));
     const y = Math.min(this.canvas.height - 1, Math.max(0, Math.round(cssY * r)));
-    const px = this.readPixels(x, y, 1, 1);
+    const px = await this.readPixels(x, y, 1, 1);
     return px ? [...px.data] : [0, 0, 0, 0];
   }
 
@@ -155,7 +164,6 @@ export class CanvasHost {
     if (this.destroyed) return;
     this.destroyed = true;
     this.offDiag();
-    this.lastRoot = null;
     this.renderer.destroy();
   }
 }

@@ -536,10 +536,10 @@ function bindButtons() {
 window.__bwApi = { startStory, stopStory, tick, renderLoop, renderStory, setParam, save, publish, openAsset, applyText, paramText, isDirty, draw, capture };
 
 /** 浏览器冒烟(`tools/workbench_rhi/chrome_page.mjs --smoke`):拿到 WebGPU、这一帧画出了东西、GPU 没报错 */
-window.__rhiSmoke = () => {
+window.__rhiSmoke = async () => {
   if (!S.gpu.ok) return { ok: false, detail: S.gpu.err || '没有 GPU 画面' };
   draw();
-  const drawn = S.host.countDrawnPixels();
+  const drawn = await S.host.countDrawnPixels();
   const size = [$('gl').width, $('gl').height];
   return { ok: drawn > 64 && !S.gpu.err && S.stage.ready, detail: { drawn, size, gpuErr: S.gpu.err, id: S.id } };
 };

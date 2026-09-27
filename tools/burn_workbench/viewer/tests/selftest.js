@@ -238,7 +238,7 @@
     restartPreview();
     draw();
     const cp = toScreen(size[0] * 0.5, size[1] * 0.5);
-    const fresh = V.gpu.readPixel(cp[0], cp[1]);
+    const fresh = await V.gpu.readPixel(cp[0], cp[1]);
     previewIgnite(false);
     for (let i = 0; i < 60; i++) stepPreview(1 / 20);
     ok('S7 ignite at the ignition point: burning at t=3', P.art.sim.state(TK) === 'burning', { t: P.t, st: P.art.sim.state(TK) });
@@ -252,12 +252,24 @@
     ok('S7 scrubbing = deterministic replay from 0: texture bytes identical to the live run', live.length === replayed.length && live.every((x, i) => x === replayed[i]));
     ok('S7 burnt out at t=20 (paper ashAlpha 0)', P.art.sim.state(TK) === 'burnt', { st: P.art.sim.state(TK) });
     draw();
-    const burnt = V.gpu.readPixel(cp[0], cp[1]);
+    const burnt = await V.gpu.readPixel(cp[0], cp[1]);
     okGpu('S7 the game burn filters (burnShade.wgsl via BurnRenderer) draw it: fresh = paper colour, burnt out = background shows through',
       Math.abs(fresh[0] - 230) < 12 && Math.abs(fresh[2] - 150) < 12 && burnt[0] < 40 && burnt[2] < 40, { fresh, burnt });
+    // 相机挪开（展示图 bounds 左上远离屏幕原点）照样烧没：材质滤镜排在自发光前面（链中间那一道），燃烧 uv 靠
+    // 本道 pass 的原点（filterPassOrigin）补回屏幕位置——以前材质那一道拿「顶点位置」当屏幕位置，这种相机下整块画不出焦黑 / 烧没
+    {
+      const c = V.cam.art, saved = { k: c.k, ox: c.ox, oy: c.oy };
+      c.ox += 260; c.oy += 170;
+      draw();
+      const moved = await V.gpu.readPixel(...toScreen(size[0] * 0.5, size[1] * 0.5));
+      c.ox = saved.ox; c.oy = saved.oy;
+      draw();
+      okGpu('S7 burnt out stays burnt out wherever the camera puts the sprite (the material filter mid-chain maps its pass back to screen space)',
+        moved[0] < 40 && moved[2] < 40, { moved, cam: { k: c.k, ox: c.ox + 260, oy: c.oy + 170 } });
+    }
     seek(1.0);
     draw();
-    const hot = V.gpu.readPixel(...toScreen(size[0] * 0.5, size[1] * 0.9));
+    const hot = await V.gpu.readPixel(...toScreen(size[0] * 0.5, size[1] * 0.9));
     okGpu('S7 at t=1 the fire line glows (emission added)', hot[0] > 240 && hot[2] < fresh[2] - 40,
       { hot, fresh, st: P.art.sim.state(TK), cam: V.cam.art, view: [V.w, V.h] });
     const sl = el('tslider');
@@ -277,7 +289,7 @@
     restartPreview();
     draw();
     const csz = artSize();
-    const top = V.gpu.readPixel(...toScreen(csz[0] * 0.5, csz[1] * 0.1));
+    const top = await V.gpu.readPixel(...toScreen(csz[0] * 0.5, csz[1] * 0.1));
     okGpu('S7 an unburnt consume template is drawn as its plain image (no fire-line glow at t=0)', Math.abs(top[0] - 200) < 14 && top[1] < 60 && top[2] < 60, { top });
     previewIgnite(true);
     for (let i = 0; i < 40; i++) stepPreview(0.25);

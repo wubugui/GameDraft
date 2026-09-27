@@ -108,7 +108,8 @@ async function driveWorkbench(c) {
   v2.gpu.stage.clear();
   draw();
   if (v2.gpu.err) throw new Error(`工作台这一帧画坏了：${v2.gpu.err}`);
-  const px = v2.gpu.host.readPixels();
+  // 回读的拷贝在调用当下就发出；这一帧的其余输入也要在同一个任务里取完（await 期间页面的 rAF 可能改画布尺寸 / 状态）
+  const pxPending = v2.gpu.host.readPixels();
   const r = v2.gpu.host.renderer;
   const cal = S.cal;
   let space;
@@ -128,8 +129,7 @@ async function driveWorkbench(c) {
     burnDocs = {};
     for (const row of S.burn.rows) if (o.burnTemplates.has(row.id)) burnDocs[row.id] = row.doc;
   }
-  return {
-    w: px.width, h: px.height, pixels: b64(px.data),
+  const out = {
     digest: digestOf(S.sim),
     input: {
       css: [r.screen.width, r.screen.height], dpr: r.resolution,
@@ -146,6 +146,8 @@ async function driveWorkbench(c) {
     },
     stats: v2.gpu.stage.stats(),
   };
+  const px = await pxPending;
+  return { w: px.width, h: px.height, pixels: b64(px.data), ...out };
 }
 
 function writePng(file, w, h, rgba) {

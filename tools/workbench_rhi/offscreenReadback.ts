@@ -1,7 +1,7 @@
 /**
  * 工作台 RHI 接入层 · 离屏渲染纹理 + 异步回读（打进工作台的包，命名空间 `offscreenReadback`）。
  *
- * 画布回读（`CanvasHost.readPixels`）只能同任务重画再 `drawImage`，尺寸跟着画布走、每次都要同步等 GPU；
+ * 画布回读（`CanvasHost.readPixels`，异步读画布中间纹理）尺寸跟着画布走；
  * 出片要的是**按成品尺寸**逐帧画、逐帧读、读的时候别卡住下一帧——这里给的就是这个：
  *
  * - `createOffscreenTarget(host | renderer, w, h)`：在**同一个渲染器 / 同一台设备**上建一张离屏渲染纹理

@@ -68,7 +68,7 @@ const consoleErrors = [];
 const allowRe = allow ? new RegExp(allow) : null;
 let exitCode = 0;
 try {
-  const page = await browser.newPage({ viewport: { width: Number(flag('width', '1600')), height: Number(flag('height', '1000')) } });
+  const page = await browser.newPage({ viewport: { width: Number(flag('width', '1600')), height: Number(flag('height', '1000')) }, deviceScaleFactor: Number(flag('dpr', '1')) });
   const resourceRe = /^Failed to load resource: the server responded with a status of 4\d\d/;
   page.on('console', (m) => {
     const text = m.text();

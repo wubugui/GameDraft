@@ -130,8 +130,8 @@ class BurnGpu {
     return this.ok && this.stage.burning(key);
   }
 
-  /** 读一个屏幕 CSS 点的像素 `[r, g, b, a]`（同一个任务里重画一遍再读——WebGPU 画布呈现之后读不回来） */
+  /** 读一个屏幕 CSS 点的像素 `[r, g, b, a]`（异步：RHI 纹理回读最近一次画出的画面，不经上屏 / 合成） */
   readPixel(cx, cy) {
-    return this.ok ? this.host.readPixel(cx, cy) : [0, 0, 0, 0];
+    return this.ok ? this.host.readPixel(cx, cy) : Promise.resolve([0, 0, 0, 0]);
   }
 }
