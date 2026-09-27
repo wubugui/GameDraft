@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "paths": { "@/*": ["src/*"], "@src/*": ["src/*"] },
+    "types": ["vitest/globals", "vite/client", "node"],
+    "noEmit": true
+  },
+  "include": ["./*.ts", "../burn_workbench/gpu/*.ts", "../burn_workbench/tests/parity/*.ts", "../../src/**/*.d.ts"]
+}

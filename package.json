@@ -23,6 +23,7 @@
     "test:tauri": "node scripts/tauri_test.mjs",
     "typecheck:narrative-editor": "tsc --noEmit -p tools/narrative_editor_web",
     "typecheck:anim-preview": "tsc --noEmit -p tools/anim_preview",
+    "typecheck:workbench-rhi": "tsc --noEmit -p tools/workbench_rhi",
     "test:anim-preview": "node --test tools/anim_preview/*.test.mjs && vitest run tools/anim_preview/assemblyMath.test.ts",
     "build:narrative-editor": "npm run typecheck:narrative-editor && vite build --config tools/narrative_editor_web/vite.config.ts",
     "build:anim-preview-remote": "vite build --config tools/anim_preview/vite.remote.config.ts",
