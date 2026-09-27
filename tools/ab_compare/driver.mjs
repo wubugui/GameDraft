@@ -55,13 +55,26 @@ export function loadPlaywright(repoRoot) {
   process.exit(2);
 }
 
-/** 两边完全相同的浏览器启动参数(extra 里只放本侧的解析改道规则,以及性能轮的 --expose-gc) */
+/**
+ * 两边完全相同的浏览器启动参数(extra 里只放本侧的解析改道规则,以及性能轮的 --expose-gc)。
+ *
+ * --force-device-scale-factor=1:宿主显示器的缩放系数钉死成 1,不随显示配置变。不钉时 Chrome 按显示器算出来的宿主缩放
+ * 并不恰好是 1(本机 1280×720 / 96 DPI 虚拟屏上是 1.0000000148),Playwright 的视口模拟(setDeviceMetricsOverride,DPR 1)
+ * 叠在它上面,页面看到的度量「差一点点」:devicePixelRatio = 1.0000000148、innerWidth = 1281、visualViewport = 1280.645×720.161、
+ * 画面盒落在 x = 160.32;度量恰好是整数的视口(800×450)截图也与宿主缩放恰为 1 时不同(光栅 / 合成按宿主缩放走)。
+ * 这个值还跟着宿主显示配置走——系统日志里每次 SetDisplayConfig(Display 事件 4107,本机一天二十多次,不知哪个程序调的)
+ * 都让**所有正在跑的浏览器同时**换一组:1024×768 画布缩到 960×720 时合成器的采样位置差零点几像素(整幅画面亚像素错位,
+ * 变化像素 40–60%)、dev 报错浮层的宋体点阵字步进 13 px ↔ 12 px(整行排版变)。2026-09-27 22:44:37 与 22:48:36 两次调用
+ * 恰是枯井 / 背尸 / 水下小游戏 / 说书过场四条「同侧大噪声」同时翻变体的时刻。钉死之后度量精确(DPR 1、1280×720、画面盒 160,0),
+ * 改窗口大小 / 最大化 / 最小化截图逐字节不变;DPR = 2 的场景照常由上下文的 deviceScaleFactor 模拟。
+ */
 export function browserArgs(opts, extra = []) {
   const { width, height } = opts.viewport;
   return [
     '--enable-unsafe-webgpu',
     '--autoplay-policy=no-user-gesture-required',
     '--force-color-profile=srgb',
+    '--force-device-scale-factor=1',
     '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding',
     '--disable-backgrounding-occluded-windows',
@@ -339,7 +352,40 @@ const SYNC_FN = async ({ seed }) => {
     now: performance.now(),
     date: Date.now(),
     hasStep: typeof window.__gameDevAPI?.stepFixedTicks === 'function',
+    // 假时钟内部刻度(pump 的运行期逐帧推进按它算每帧的绝对帧末;读不到 ⇒ 退回整帧推进)
+    clockTicks: (() => {
+      const v = globalThis.__pwClock?.controller?._now?.ticks;
+      return typeof v === 'number' ? v : null;
+    })(),
   };
+};
+
+/**
+ * 页面实际看到的视口度量(环境守卫用,只读)。设定是 DPR = 上下文 deviceScaleFactor、innerWidth/Height = 视口、
+ * visualViewport = 视口且 scale 1;宿主显示缩放漏进来时这几项会差一点点(见 browserArgs 的 --force-device-scale-factor)。
+ */
+const ENV_FN = () => ({
+  dpr: window.devicePixelRatio,
+  w: window.innerWidth,
+  h: window.innerHeight,
+  vw: window.visualViewport ? window.visualViewport.width : null,
+  vh: window.visualViewport ? window.visualViewport.height : null,
+  vs: window.visualViewport ? window.visualViewport.scale : null,
+});
+const envOk = (e, want) => !!e && e.dpr === want.dpr && e.w === want.w && e.h === want.h
+  && (e.vw === null || (e.vw === want.w && e.vh === want.h && e.vs === 1));
+const envStr = (e) => (e ? `DPR ${e.dpr} · ${e.w}×${e.h} · 可视视口 ${e.vw}×${e.vh}@${e.vs}` : '(读不到)');
+
+/** --freeze pump 运行期:一帧的逻辑 tick 单独一步(假时钟已由 PUMP_STEP_FN 走到帧末,两步之间 node 等真异步落地) */
+const TICK_FN = async ({ dt }) => {
+  const api = window.__gameDevAPI;
+  if (!api || typeof api.stepFixedTicks !== 'function') return { errs: [], unsupported: true };
+  try {
+    await api.stepFixedTicks(1, dt);
+    return { errs: [] };
+  } catch (e) {
+    return { errs: [`[stepFixedTicks 抛错] ${String(e?.message ?? e).split('\n')[0].slice(0, 300)}`] };
+  }
 };
 
 const ADVANCE_FN = async ({ ms, k, dt, pageClock }) => {
@@ -521,6 +567,9 @@ const PUMP_STATE_FN = () => {
     fp.push(`g:${s.switching}/${s.sceneId}/${t(() => sm.currentSceneId)}/${s.gameState}/${s.runtimeReady}/${s.hasStep}/${s.cutscene}/${s.dialogue}`
       + `/${t(() => !!g.mainTick)}/${t(() => g.eventBus.debugTraceSeq)}/${t(() => g.vfxSystem.pendingLoads.size)}/${t(() => !!g.vfxSystem.rebuilding)}`
       + `/${t(() => g.vfxSystem.instances.size)}/${s.frozen}`);
+    // 切场装载的进度:进度条文案(DEV 才有)+ 已实例化的 NPC / 热区数。装载里逐个实例化实体时每步都会变,
+    // 有它在,「装到一半、下一步在等一个没点名的真异步」时静止窗不会误判成已静止(实测雾津街头 39 个 NPC 逐个实例化)
+    fp.push(`ld:${s.loadStep}/${t(() => sm.currentNpcs.length)}/${t(() => sm.currentHotspots.length)}`);
   }
   const H = window.Howler;
   if (H && Array.isArray(H._howls)) {
@@ -555,10 +604,11 @@ const PUMP_STATE_FN = () => {
  *     回 node 再等一次真异步落地——游戏里「await setTimeout(0)」这类让一下主线程的写法在真机上只花零点几毫秒,
  *     整帧量化会把它放大成整整一帧(实测 master 揭幕闸里 GlProgramWarmup 逐个交接之间的 wait(0) 让茶馆装载多出 1 帧);
  *   - 否则走到帧末(触发途中的定时器与 rAF),再(已挂出 __gameDevAPI.stepFixedTicks 时)恰好一个固定逻辑 tick。与 ADVANCE_FN 同一顺序。
+ *     tick: false(运行期)只走假时钟、不跑 tick:逻辑 tick 由 node 等过一次真异步落地之后另发 TICK_FN(见 runScenario 的 advancePumped)。
  * 定时器表只读 Playwright 注入的假时钟(__pwClock.controller 的 _now / _timers,浏览器环境控制,不是游戏代码);
  * 读不到(Playwright 改了内部)⇒ 退回整帧推进(ms)。
  */
-const PUMP_STEP_FN = async ({ frameEnd, ms, dt }) => {
+const PUMP_STEP_FN = async ({ frameEnd, ms, dt, tick = true }) => {
   const errs = [];
   const m = (e) => String(e?.message ?? e).split('\n')[0].slice(0, 300);
   const c = globalThis.__pwClock?.controller;
@@ -591,7 +641,7 @@ const PUMP_STEP_FN = async ({ frameEnd, ms, dt }) => {
   }
   const api = window.__gameDevAPI;
   let stepped = false;
-  if (frame && api && typeof api.stepFixedTicks === 'function') {
+  if (frame && tick && api && typeof api.stepFixedTicks === 'function') {
     stepped = true;
     try {
       await api.stepFixedTicks(1, dt);
@@ -1017,59 +1067,79 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
     if (res.sync.fixed === 'unsupported') res.unsupported.push('__game.applyRuntimeCommand(debugSetFixedTickMode)');
     await watch.quiesce();
 
+    // 环境守卫:页面实际看到的 DPR / 视口必须恰好是设定值。宿主显示缩放漏进来时(见 browserArgs 的 --force-device-scale-factor)
+    // 这几项差一点点,整幅截图随之亚像素错位、点阵字排版变——记下来、run.mjs 大声报、compare.mjs 标「页面度量偏离设定」。
+    const wantEnv = { dpr, w: viewport.width, h: viewport.height };
+    res.envDrift = [];
+    const checkEnv = async (where) => {
+      const e = await evalT(page, ENV_FN, null, 10000, '读视口度量').catch(() => null);
+      if (!envOk(e, wantEnv) && res.envDrift.length < 20) res.envDrift.push({ where, want: `DPR ${wantEnv.dpr} · ${wantEnv.w}×${wantEnv.h}`, got: envStr(e) });
+      return e;
+    };
+    res.env = envStr(await checkEnv('同步点'));
+
     let ticks = 0;
     let cpIndex = 0;
     // pump:装载之后的推进也等真异步落地(同 pumpIdle:装载桶 / 解码 / 管线 / 字体 / 指纹静止)再走下一帧。
     // 只等网络静下来的话,运行中才装的东西(过场插图、切场景的原画、HTMLText 生成)可能早一帧或晚一帧落地,
     // 以它为起点的推拉镜 / 淡入就差一帧——实测说书过场 B1 / B2 同一检查点整幅原画错位(同侧噪声 15%)。
     const runRec = pump && opts.pumpRun !== false
-      ? { frames: 0, ticks: 0, timerSteps: 0, stalls: [], stuck: {}, idleMs: 0, idleLog: [], trace: [], lastFp: null, timerLog: [], clockLeaks: [] }
+      ? { frames: 0, ticks: 0, timerSteps: 0, stalls: [], stuck: {}, idleMs: 0, idleLog: [], trace: [], lastFp: null, timerLog: [], clockLeaks: [], expectT: res.sync.clockTicks }
       : null;
     if (runRec) res.runPump = runRec;
-    const runIdle = async () => {
+    // preTick:一帧里假时钟已走到帧末、逻辑 tick 还没跑的那次等待(idleLog / stall 里帧号记成 n + 0.5)
+    const runIdle = async (preTick = false) => {
       if (!runRec) return;
-      runRec.frames = ticks;
+      runRec.frames = preTick ? ticks + 0.5 : ticks;
       runRec.ticks = ticks;
-      await pumpIdle(page, watch, opts, runRec);
-    };
-    // pump 的运行期一帧:同装载期逐个帧内定时器推进(PUMP_STEP_FN),每步之间让真异步落地。整帧 runFor 的话帧内定时器连着触发,
-    // 中间不给真异步落地的机会——分支切场景时新管线落定(plSettling)是真异步,揭幕闸的轮询定时器在那一帧里看不到它,
-    // 揭幕就晚一帧(实测向导一拍切进阎王岭山口后 B 的 NPC 动画相位一直差一个 tick);master 的 GL 同步编译没有这一步。
-    // 帧内步用 0 静止窗:没有在途项就直接走,有(plSettling / 解码 …)照常等它落定。
-    const idleOpts = { ...opts, pumpSettle: 0 };
-    const pumpFrame = async () => {
-      const frameEnd = res.sync.now + Math.round((ticks + 1) * FRAME_MS);
-      const ms = Math.round((ticks + 1) * FRAME_MS) - Math.round(ticks * FRAME_MS);
-      for (let guard = 0; guard < 500; guard++) {
-        const r = await evalT(page, PUMP_STEP_FN, { frameEnd, ms, dt: FRAME_MS }, opts.stepTimeout, '推进 1 帧(泵)');
-        for (const e of r.errs) watch.push('pageerror', e);
-        if (r.frame) {
-          if (typeof r.after === 'number' && r.after !== frameEnd && runRec.clockLeaks.length < 50) {
-            runRec.clockLeaks.push({ tick: ticks, expected: frameEnd, got: r.after });
-          }
-          return r;
-        }
-        runRec.timerSteps++;
-        if (runRec.timerLog.length < 400) runRec.timerLog.push(`${ticks}:${r.before}→${r.timerAt} ${r.info}`);
-        runRec.frames = ticks;
-        await pumpIdle(page, watch, idleOpts, runRec);
+      const s = await pumpIdle(page, watch, opts, runRec);
+      // 停着的假时钟在两步之间绝不该动(同装载泵的 clockLeaks)
+      if (s?.clock && typeof runRec.expectT === 'number' && (s.clock.rt || s.clock.t !== runRec.expectT) && runRec.clockLeaks.length < 50) {
+        runRec.clockLeaks.push({ frame: runRec.frames, expected: runRec.expectT, got: s.clock.t, realTime: s.clock.rt });
       }
-      throw new Error(`运行期第 ${ticks} 帧里帧内定时器步超过 500 次(定时器风暴?)`);
+      if (typeof s?.clock?.t === 'number') runRec.expectT = s.clock.t;
+    };
+    /**
+     * pump 的运行期逐帧推进(与装载泵同一套步法,外加「逻辑 tick 单独一步」):
+     *   循环 { 等真异步落地 → 假时钟前进到 min(下一个非 rAF 定时器, 帧末) } 直到帧末 → 再等一次真异步落地 → 逻辑 tick。
+     * 以前一帧是一次 evaluate 里「runFor(整帧) 紧接 stepFixedTicks」:假时钟里的定时器 / rAF 兑现时引出的真异步(切场装载
+     * 卡在 audio 桶 → Howler 的 setTimeout(0) 一兑现,预载收尾、接着逐个实例化 NPC,每个都要 fetch 对白图)与紧跟着的逻辑 tick
+     * 抢跑:谁先谁后看机器快慢。实测雾津街头头一个 NPC(街头拉客女)有时赶在那一帧的 tick 之前入列、有时之后,动画
+     * frameTimer 同一份代码两局差 1/60 s(约四局一次)。现在定时器 / rAF 引出的真异步都在 tick 之前落地,tick 永远看到同一个世界。
+     * 每帧帧末的绝对假时刻 = 同步点刻度 + round(第几帧 × 1000/60),与旧的逐帧累加逐毫秒相同。
+     */
+    const advancePumped = async (n) => {
+      for (let i = 0; i < n; i++) {
+        const frameEnd = res.sync.clockTicks + Math.round((ticks + 1) * FRAME_MS);
+        const ms = Math.round((ticks + 1) * FRAME_MS) - Math.round(ticks * FRAME_MS);
+        for (;;) {
+          await runIdle();
+          const r = await evalT(page, PUMP_STEP_FN, { frameEnd, ms, dt: FRAME_MS, tick: false }, opts.stepTimeout, '推进(假时钟)');
+          for (const e of r.errs) watch.push('pageerror', e);
+          if (typeof r.after === 'number') runRec.expectT = r.after;
+          if (r.frame) break;
+          runRec.timerSteps++;
+          if (runRec.timerLog.length < 400) runRec.timerLog.push(`${ticks}:${r.before}→${r.timerAt} ${r.info}`);
+        }
+        await runIdle(true);
+        const t = await evalT(page, TICK_FN, { dt: FRAME_MS }, opts.stepTimeout, '逻辑 tick');
+        for (const e of t.errs) watch.push('pageerror', e);
+        ticks += 1;
+        if (t.unsupported) {
+          if (!res.unsupported.includes('__gameDevAPI.stepFixedTicks')) res.unsupported.push('__gameDevAPI.stepFixedTicks');
+          break;
+        }
+        await watch.quiesce();
+      }
+      await runIdle();
     };
     const advance = async (n) => {
+      if (runRec && res.sync.pageClock && typeof res.sync.clockTicks === 'number') {
+        await advancePumped(n);
+        return;
+      }
       for (let done = 0; done < n;) {
         await runIdle();
-        if (runRec && opts.chunk === 1 && res.sync.pageClock && typeof res.sync.now === 'number') {
-          const r = await pumpFrame();
-          ticks += 1;
-          done += 1;
-          if (!r.stepped) {
-            if (!res.unsupported.includes('__gameDevAPI.stepFixedTicks')) res.unsupported.push('__gameDevAPI.stepFixedTicks');
-            break;
-          }
-          await watch.quiesce();
-          continue;
-        }
         const k = Math.min(opts.chunk, n - done);
         const ms = Math.round((ticks + k) * FRAME_MS) - Math.round(ticks * FRAME_MS);
         if (!res.sync.pageClock && ms > 0) await page.clock.runFor(ms);
@@ -1116,6 +1186,7 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
         }
         const probe = await evalT(page, PROBE_FN, null, 30000, '状态探针').catch((e) => ({ __error: msgOf(e) }));
         const ops = await evalT(page, OPS_FN, null, 10000, '读命令状态').catch(() => ({}));
+        await checkEnv(step.checkpoint);
         res.checkpoints.push({ name: step.checkpoint, tick: ticks, file: wrote, canvasFile: wroteCanvas, probe, ops, items: watch.drain() });
       } else if ('cmd' in step || 'api' in step) {
         const id = `s${i}`;
@@ -1126,6 +1197,8 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
         await watch.quiesce();
       } else if ('viewport' in step) {
         await page.setViewportSize(step.viewport);
+        wantEnv.w = step.viewport.width;
+        wantEnv.h = step.viewport.height;
         res.steps.push({ id: `s${i}`, desc: `viewport ${step.viewport.width}x${step.viewport.height}`, atTick: ticks, immediate: 'done' });
       } else if ('key' in step || 'keyDown' in step || 'keyUp' in step || 'click' in step || 'wheel' in step) {
         // 外部输入:Playwright 真键盘 / 真鼠标(CDP Input.dispatch*),与玩家操作同一条路径,不碰游戏代码。

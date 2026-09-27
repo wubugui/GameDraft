@@ -48,7 +48,7 @@
  *   --resize-scenes / --dpr-scenes <id,…> 缺省选中场景的前两个
  *   --repeats <1|2>                每侧跑几轮(缺省 2:A1 B1 A2 B2,量噪声底;1 = 不量)
  *   --viewport 1280x720 --dpr 1    视口与 deviceScaleFactor
- *   --chunk <n>                    锁步粒度:每次假时钟前进 n 帧再 stepFixedTicks(n)(缺省 1)
+ *   --chunk <n>                    锁步粒度:每次假时钟前进 n 帧再 stepFixedTicks(n)(缺省 1;--freeze pump 的运行期逐帧推进,不看它)
  *   --settle <ms>                  就绪后墙钟沉淀(缺省 2500)
  *   --freeze ready|settled|boot|pump   冻结逻辑的时机:就绪同一任务里(缺省)| 沉淀之后(按原始顺序)|
  *                                  boot = 一挂出 __game 就冻(装载期不跑任何真实时间的逻辑帧;消掉「装载快慢不同 → 状态不同」;
@@ -59,7 +59,8 @@
  *                                         装载帧数与机器快慢无关、两边应相同(记在运行记录,不同会大声报);
  *                                         就绪后不沉淀、不 pauseAt,直接同步点。各种类都能用(最慢,但最确定)
  *   --pump-settle <ms>             pump:每步推进前进度指纹须静止的墙钟毫秒(兜住没点名的短真异步,缺省 40)
- *   --no-pump-run                  pump:装载之后的推进不等真异步落地(缺省每帧前后都等,同装载期;省时间但运行中才装的东西可能早晚一帧)
+ *   --no-pump-run                  pump:装载之后的推进不等真异步落地(缺省逐帧:定时器步之间、逻辑 tick 之前都等,同装载期;
+ *                                  关掉就退回整帧推进,省时间但运行中才装的东西可能早晚一帧、切场实例化与 tick 抢跑)
  *   --pump-stall <ms>              pump:某项在途真异步超过这么久既不落地、指纹也不动 ⇒ 判它在等假时钟,记 stall 后照推(缺省 5000)
  *   --boot-timeout <ms>            冷启动就绪上限(缺省 180000;pump 下是整个泵式装载的墙钟上限)
  *   --step-timeout <ms>            单次推进上限(缺省 180000)
@@ -342,6 +343,12 @@ async function main() {
         + ` · 画布 A/B ${worst('pxCanvas').toFixed(3)}% 噪声 ${noise('pxCanvas').toFixed(3)}%`
         + `${row.flags.length ? `  ${row.flags.join(' · ')}` : ''}${row.inconclusive ? `  ${row.inconclusive}` : ''}  (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
       if (row.pumpBoot) logPumpBoot(row);
+      if (row.envDrift) {
+        const d = ['A', 'B'].flatMap((k) => row.envDrift[k].map((x, i) => (x.length ? `${k}${i + 1} ${x[0].where}:要 ${x[0].want},实为 ${x[0].got}` : null))).filter(Boolean);
+        log(`  ⚠⚠⚠ 页面度量偏离设定(宿主显示缩放漏进来了,这些轮像素不可信):${d.join(' · ')}`);
+      }
+      const runLeaks = ['A', 'B'].flatMap((k) => runs[k].map((r, i) => (r?.runPump?.clockLeaks?.length ? `${k}${i + 1}:${r.runPump.clockLeaks.slice(0, 3).map((x) => `帧${x.frame} 期望 ${x.expected} 实为 ${x.got}${x.realTime ? '(在随墙钟走)' : ''}`).join(',')}` : null))).filter(Boolean);
+      if (runLeaks.length) log(`  ⚠⚠⚠ 运行期假时钟自己动了(墙钟漏进来了):${runLeaks.join(' · ')}`);
       writeOutputs();
     }
     if (shared) for (const b of Object.values(shared)) await b.close().catch(() => {});

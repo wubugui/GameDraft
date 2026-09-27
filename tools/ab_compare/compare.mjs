@@ -53,9 +53,14 @@ export const PUMP_AB_FLAG = '装载帧数 A≠B';
  */
 export const INFO_SUBFRAME_TS = '亚帧时间戳差(装载期,不计)';
 const SUBFRAME_MS = 1000 / 60;
+/**
+ * 某一轮页面实际看到的 DPR / 视口不是设定值(driver.mjs 的环境守卫记在 run.envDrift):宿主显示缩放漏进来了,
+ * 这一轮整幅截图亚像素错位、点阵字排版变,像素比较不可信。只提示(是环境问题,不是 B 的回归),run.mjs 大声报。
+ */
+export const INFO_ENV_DRIFT = '页面度量偏离设定(环境漂移,像素不可信)';
 
 /** 这个标记算不算失败:偶发新报错永远不算;「≥95% 可由行位移解释」的像素差在 --ignore-row-shift 下不算 */
-export const isFailFlag = (f, opts) => f !== INFO_FLAG && f !== INFO_BOOT_FLAKY && f !== INFO_PUMP_JITTER && f !== INFO_SUBFRAME_TS && !(opts?.ignoreRowShift && f.includes(ROW_SHIFT_NOTE));
+export const isFailFlag = (f, opts) => f !== INFO_FLAG && f !== INFO_BOOT_FLAKY && f !== INFO_PUMP_JITTER && f !== INFO_SUBFRAME_TS && f !== INFO_ENV_DRIFT && !(opts?.ignoreRowShift && f.includes(ROW_SHIFT_NOTE));
 
 /**
  * --freeze pump 的装载帧数对比(各轮 frames/ticks)。没有泵记录(别的冻结模式)⇒ null。
@@ -281,6 +286,8 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
   if (ranThenDied('B', bootB) && !ranThenDied('A', bootA)) flags.add('B 运行中断');
   const pumpCounts = pumpBootCounts(runs);
   if (pumpCounts && !inconclusive && !pumpCounts.same) flags.add(pumpCounts.aaSame && pumpCounts.bbSame ? PUMP_AB_FLAG : INFO_PUMP_JITTER);
+  const envDrift = { A: runs.A.map((r) => r?.envDrift ?? []), B: runs.B.map((r) => r?.envDrift ?? []) };
+  if ([...envDrift.A, ...envDrift.B].some((d) => d.length)) flags.add(INFO_ENV_DRIFT);
   const unsupported = { A: [...new Set(runs.A.flatMap((r) => r?.unsupported ?? []))], B: [...new Set(runs.B.flatMap((r) => r?.unsupported ?? []))] };
   const diverged = [...flags].some((f) => isFailFlag(f, opts));
   const score = Math.max(0, ...checkpoints.map((c) => c.score)) + (flags.has('B 起不来') ? 200 : 0) + (inconclusive ? 150 : 0)
@@ -306,6 +313,7 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
       B: runs.B.map(bootRow),
     },
     ...(pumpCounts ? { pumpBoot: pumpCounts } : {}),
+    ...([...envDrift.A, ...envDrift.B].some((d) => d.length) ? { envDrift } : {}),
     fatal,
     unsupported,
     steps: { A: A1?.steps ?? [], B: B1?.steps ?? [] },
