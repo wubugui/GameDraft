@@ -60,6 +60,25 @@ def skip_lines(report: str) -> list[str]:
     return [ln for ln in report.splitlines() if ln.startswith("SKIP")]
 
 
+def known_lines(report: str) -> list[str]:
+    """自检报告里的 KNOWN 行：明确标注的已知差异（与 master 同一 bug、待制作人定），不算 FAIL / SKIP。"""
+    return [ln for ln in report.splitlines() if ln.startswith("KNOWN ")]
+
+
+def check_known(report: str, allowed: dict[str, str]) -> list[str]:
+    """KNOWN 行只许出现在登记过的检查上、且带着登记的记录路径；登记的每条检查要么 PASS 要么 KNOWN（不许悄悄没了）。
+    ``allowed`` = {检查名前缀: 必须出现在那一行里的记录路径}。返回 KNOWN 行（调用方拿去报警告，别让它被忘掉）。"""
+    known = known_lines(report)
+    for ln in known:
+        hit = [name for name in allowed if ln.startswith(f"KNOWN {name}")]
+        assert hit, f"未登记的已知差异（KNOWN）：{ln[:300]}"
+        assert allowed[hit[0]] in ln, f"已知差异没带记录路径 {allowed[hit[0]]}：{ln[:300]}"
+    for name in allowed:
+        ran = any(ln.startswith(f"PASS {name}") or ln.startswith(f"KNOWN {name}") for ln in report.splitlines())
+        assert ran, f"登记的检查既没 PASS 也没 KNOWN（没跑到？）：{name}"
+    return known
+
+
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))

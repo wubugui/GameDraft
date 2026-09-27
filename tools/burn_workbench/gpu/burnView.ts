@@ -65,7 +65,15 @@ export interface BurnFrameInput {
 
 export type BurnInstanceInput = BurnHotspotInput | BurnFrameInput;
 
-interface HotspotView {
+/** BurnRenderer 的滤镜宿主（热点 = 转给游戏的 Hotspot；平贴 = 精灵的滤镜链）。记下挂上来的两道滤镜，给自检的「只挂材质」用 */
+interface FilterHostView {
+  host: { setBurnFilters(material: Filter | null, glow: Filter | null): void };
+  filters: [Filter | null, Filter | null];
+  materialOnly: boolean;
+  apply(material: Filter | null, glow: Filter | null): void;
+}
+
+interface HotspotView extends FilterHostView {
   kind: 'hotspot';
   sig: string;
   size: { width: number; height: number };
@@ -75,13 +83,22 @@ interface HotspotView {
   node: Container;
 }
 
-interface FrameView {
+interface FrameView extends FilterHostView {
   kind: 'frame';
   frame: BurnFrame;
   texture: Texture;
   sprite: Sprite;
   node: Container;
-  host: { setBurnFilters(material: Filter | null, glow: Filter | null): void };
+}
+
+/** 宿主转发：BurnRenderer 挂 / 摘滤镜时先记下，「只挂材质」时自发光那一道不交给实体 */
+function filterHost(view: FilterHostView): FilterHostView['host'] {
+  return {
+    setBurnFilters(material: Filter | null, glow: Filter | null): void {
+      view.filters = [material, glow];
+      view.apply(material, view.materialOnly ? null : glow);
+    },
+  };
 }
 
 type View = HotspotView | FrameView;
@@ -176,6 +193,19 @@ export class BurnStage {
     return v ? frameOfView(v) : null;
   }
 
+  /**
+   * 自检用：这个实例只挂燃烧材质那一道（自发光先不挂），材质就成了滤镜链的最后一道。`false` = 恢复两道。
+   * 用处：材质在链中间时屏幕位置按相对 bounds 的坐标算（master 同一 bug，见 agent_docs/_meta/inbox/2026-09-28-filters-mid-chain-screen-pos.md），
+   * 最后一道拿得到真屏幕坐标——两种挂法读到的像素一对比，就知道一处不对是不是这个已知 bug。返回这个实例此刻有没有挂燃烧着色。
+   */
+  setMaterialOnly(key: string, on: boolean): boolean {
+    const v = this.views.get(key);
+    if (!v) return false;
+    v.materialOnly = on;
+    v.apply(v.filters[0], on ? null : v.filters[1]);
+    return !!v.filters[0];
+  }
+
   /** 这个实例现在挂着燃烧着色吗（自检用） */
   burning(key: string): boolean {
     return this.burn.has(key);
@@ -206,7 +236,11 @@ export class BurnStage {
       hotspot.setPerspectiveScale(persp);
       hotspot.setDisplayTexture(inst.texture, inst.def.displayImage.worldWidth, inst.def.displayImage.worldHeight);
       const size = { width: inst.def.displayImage.worldWidth, height: inst.def.displayImage.worldHeight };
-      const view: HotspotView = { kind: 'hotspot', sig, size, texture: inst.texture, perspective: persp, hotspot, node: hotspot.container };
+      const view = {
+        kind: 'hotspot', sig, size, texture: inst.texture, perspective: persp, hotspot, node: hotspot.container,
+        filters: [null, null], materialOnly: false, apply: (m: Filter | null, g: Filter | null) => hotspot.setBurnFilters(m, g),
+      } as unknown as HotspotView;
+      view.host = filterHost(view);
       this.views.set(inst.key, view);
       return view;
     }
@@ -219,15 +253,16 @@ export class BurnStage {
     const sprite = new Sprite(inst.texture);
     sprite.label = `burn-frame:${inst.key}`;
     placeOnFrame(sprite, inst.frame);
-    const host = {
-      setBurnFilters(material: Filter | null, glow: Filter | null): void {
+    const view = {
+      kind: 'frame', frame: inst.frame, texture: inst.texture, sprite, node: sprite, filters: [null, null], materialOnly: false,
+      apply: (material: Filter | null, glow: Filter | null) => {
         const chain: Filter[] = [];
         if (material) chain.push(material);
         if (glow) chain.push(glow);
         sprite.filters = chain;
       },
-    };
-    const view: FrameView = { kind: 'frame', frame: inst.frame, texture: inst.texture, sprite, node: sprite, host };
+    } as unknown as FrameView;
+    view.host = filterHost(view);
     this.views.set(inst.key, view);
     return view;
   }
@@ -239,7 +274,7 @@ export class BurnStage {
       this.marks.delete(inst.key);
       return;
     }
-    const host = view.kind === 'hotspot' ? view.hotspot : view.host;
+    const host = view.host;
     // 同一宿主同尺寸 = 什么都不做；换了宿主 / 网格尺寸 = BurnRenderer 自己先拆再挂（换了新纹理，字节数组身份跟着变）
     this.burn.attach(inst.key, { kind: 'filters', host }, b.gridW, b.gridH);
     const data = this.burn.fieldData(inst.key);

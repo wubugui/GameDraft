@@ -112,8 +112,10 @@ try {
     const lines = out.split(/\r?\n/).filter((l) => l.trim());
     const bad = lines.filter((l) => l.startsWith('FAIL') || l.startsWith('EXC'));
     const skipped = lines.filter((l) => l.startsWith('SKIP'));
+    const known = lines.filter((l) => l.startsWith('KNOWN '));
     const passed = lines.filter((l) => l.startsWith('PASS')).length;
-    console.log(`[selftest] ${passed} passed, ${bad.length} failed, ${skipped.length} skipped`);
+    // KNOWN = 明确标注的已知差异（与 master 同一 bug、待定），不算失败；调用方（pytest）核对它只出现在登记过的检查上
+    console.log(`[selftest] ${passed} passed, ${bad.length} failed, ${skipped.length} skipped, ${known.length} known`);
     if (bad.length || (noSkip && skipped.length)) exitCode = 1;
     if (shot) await page.screenshot({ path: shot });
   }

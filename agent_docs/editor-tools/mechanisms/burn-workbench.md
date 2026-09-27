@@ -99,9 +99,9 @@ last_governed: 2026-09-23
 - 改名要求先保存（弹「保存并继续」），做完清空撤销栈。「联动」默认勾着。
 - Browser pane 隐藏时页面布局是 0 尺寸：在那里跑 `selftest.js` 读像素的几条会假红；以 pytest 为准（桌面壳一遍 + 真 GPU 的 Chrome 一遍，后者不许 SKIP）。
 - 着色层是游戏同一个 WebGPU 渲染器：Qt 宿主走 `run_desktop(webgpu=True)`（WebView2；QtWebEngine 没编 Dawn）；宿主拿不到 WebGPU 时着色预览明确显示原因、不回落。读像素一律 `await host.readPixel(...)`（RHI 纹理回读画布中间纹理）——`drawImage(WebGPU 画布)` 跨了「画」的那个任务就不可靠（实测时而全 0）。
-- ⚠ 燃烧材质滤镜排在链中间（后面总跟着自发光）：照 Pixi，中间几道 pass 的 `uOutputFrame.xy` 是 0，滤镜顶点位置是相对 bounds 的——材质那一道要加 `filterPassOrigin`（引擎扩展）才是屏幕位置。2026-09-28 以前没加：材质的燃烧 uv 偏了「展示图 bounds 左上 ÷ 投影缩放」，焦黑 / 成灰 / 烧没画错地方或整个没有（master 同样如此）；自检 S7「相机挪开照样烧没」钉着。同链里的深度遮挡 / 受光滤镜在挂着燃烧时也排在中间，同样的问题还没修。
+- ⚠ **已知差异（master 同一 bug，本分支不改，待制作人定）**：燃烧材质滤镜排在链中间（后面总跟着自发光），照 Pixi 中间几道 pass 的 `uOutputFrame.xy` 是 0、滤镜顶点位置是相对 bounds 的，材质的燃烧 uv 偏了「展示图 bounds 左上 ÷ 投影缩放」：焦黑 / 成灰 / 烧没随相机走位，偏多了整块没了（WebView2 宿主 dpr 1.24 的布局下就是）。工作台画的就是游戏画的，同样偏。自检 S7 里受它影响的三条碰上时「只挂材质那一道」重读证实原因、记 `KNOWN`（不是 FAIL / SKIP），pytest 核对只出现在登记的几条上并报警告（`tests/test_selftest.py` 的 `_KNOWN_S7`）。修复在本地分支 `wt/burnfix`（引擎钩子 `filterPassOrigin`），见 `agent_docs/_meta/inbox/2026-09-28-filters-mid-chain-screen-pos.md`。
 
 ## 怎么验证
 
-`sh scripts/py.sh -m pytest tools/burn_workbench -p no:cacheprovider -q`（页内自检 138 条：桌面壳（WebView2，屏幕外固定尺寸的无边框窗口）里跑一遍、零 SKIP；设了 `PLAYWRIGHT_CORE` 时再在真 GPU 的 Chrome 里跑同一份、零 SKIP，外加冒烟与 `tests/test_parity.py` 逐像素对照 5 例）。无 GPU 的画法对照：`npx vitest run tools/burn_workbench/gpu`（空后端上逐条 GPU 命令与字节 == 照游戏组装层现拼）。
+`sh scripts/py.sh -m pytest tools/burn_workbench -p no:cacheprovider -q`（页内自检 138 条：桌面壳（WebView2，屏幕外固定尺寸的无边框窗口）里跑一遍、零 FAIL 零 SKIP，S7 至多 3 条 KNOWN（上面那个已知差异）；设了 `PLAYWRIGHT_CORE` 时再在真 GPU 的 Chrome 里跑同一份、同样，外加冒烟与 `tests/test_parity.py` 逐像素对照 5 例）。无 GPU 的画法对照：`npx vitest run tools/burn_workbench/gpu`（空后端上逐条 GPU 命令与字节 == 照游戏组装层现拼）。
 真数据：`sh scripts/py.sh -m tools.burn_workbench --check` 返回 0（模板形状 / 图在不在 / 粒子效果在不在 / 引用处的模板在不在 / 粒子薄片不许绑消耗燃烧）。

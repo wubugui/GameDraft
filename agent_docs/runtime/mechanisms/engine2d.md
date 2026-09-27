@@ -81,6 +81,7 @@ last_governed: 2026-09-25
   (`@builtin(position)`)都与 master 画布一致;画布的模板 / MSAA 走与离屏目标同一条路(resolve 回中间纹理)。离屏目标不变。
 - `Container.worldTransform` 与当前父链一致(按版本缓存,不走 Pixi 的"上一帧渲染结果");Culler 因此用的是**当帧**变换(Pixi 用上一帧)。
 - 需要背景纹理的混合滤镜(`blendRequired`)没实现(运行时没有用到;用到会直接抛)。
+- 引擎扩展(Pixi 没有,2026-09-28 加,游戏滤镜都还没用):`FilterSystemLike.filterPassOrigin(output)`——滤镜顶点位置 + 它 = 渲染根上的坐标(照 Pixi,`uOutputFrame.xy` 只在链的最后一道带 bounds 偏移,中间几道是 0;燃烧材质 / 深度遮挡 / 受光滤镜排在链中间时屏幕坐标因此是错的,master 同样如此、本分支不改,见 `agent_docs/_meta/inbox/2026-09-28-filters-mid-chain-screen-pos.md`);`renderer.readCanvasPixels()`——异步回读画布中间纹理(最近一次画到画布的内容,自上而下 RGBA,不经浏览器上屏 / 合成;工作台自检读像素用)。
 - **`renderer.extract.*` 全是异步**(返回 Promise;WebGPU 回读)。Pixi 的 `extract.canvas / pixels` 是同步的,
   照搬的调用点要补 `await`。调用当下就同步把目标画进离屏纹理,之后只等像素回来。
 

@@ -57,6 +57,9 @@
    - **页内自检 + 冒烟**：selftest 里读像素的条目改成 GPU 版（`await host.readPixel(...)`，画完同一个任务里发读）；宿主拿不到 WebGPU 时这几条记
      `SKIP`（带原因）——但 Qt 宿主（WebView2）与真 GPU 的 Chrome（`browser.run_page(..., no_skip=True)`）两边都拿得到，pytest 两边都断言零 SKIP。
      冒烟钩子 `window.__rhiSmoke` 可以是 async（`chrome_page.mjs` 会等它）。
+   - **与 master 同一 bug 的差异**（本分支必须与 master 一致，不改）：自检里记 `KNOWN <检查名> {…, see: <inbox 记录>}`，不记 FAIL / SKIP——
+     但要当场**证实**是那个 bug（燃烧台：同一帧只挂材质那一道重读就对），证实不了照常 FAIL；pytest 用 `browser.check_known(报告, {检查名: 记录路径})`
+     核对 KNOWN 只出现在登记的检查上、每条登记的检查要么 PASS 要么 KNOWN，并 `warnings.warn` 出来（警告汇总里看得见）。bug 修好后那几条自然 PASS，删掉登记表。
 
 ## 宿主拿不到 WebGPU 时（Qt 离屏 / 显卡驱动不行 / 远程桌面）
 
