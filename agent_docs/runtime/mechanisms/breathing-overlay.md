@@ -11,7 +11,9 @@ authority:
   - src/data/breathingParams.json
   - src/systems/breathing/BreathingOverlaySystem.ts
   - src/data/breathingOverlays.ts
+  - src/rendering/breathingShade.wgsl
   - src/rendering/breathingShade.glsl
+  - src/rendering/overlayPercentLayout.ts
   - src/rendering/breathingUniforms.ts
   - src/rendering/breathingOverlayMesh.ts
   - src/audio/breathSynth.ts
@@ -20,7 +22,7 @@ authority:
   - src/dev/runtimeBreathingSync.ts
   - src/dev/runtimeBreathingApiPlugin.ts
 triggers:
-  paths: ["src/systems/breathing/**", "src/data/breathingParams.json", "src/data/breathingOverlays.ts", "src/rendering/breathingShade.glsl", "src/rendering/breathingUniforms.ts", "src/rendering/breathingOverlayMesh.ts", "src/audio/breathSynth.ts", "src/dev/runtimeBreathingSync.ts", "src/dev/runtimeBreathingApiPlugin.ts", "public/assets/data/breathing/**", "public/resources/runtime/images/breathing/**"]
+  paths: ["src/systems/breathing/**", "src/data/breathingParams.json", "src/data/breathingOverlays.ts", "src/rendering/breathingShade.glsl", "src/rendering/breathingShade.wgsl", "src/rendering/overlayPercentLayout.ts", "src/rendering/breathingUniforms.ts", "src/rendering/breathingOverlayMesh.ts", "src/audio/breathSynth.ts", "src/dev/runtimeBreathingSync.ts", "src/dev/runtimeBreathingApiPlugin.ts", "public/assets/data/breathing/**", "public/resources/runtime/images/breathing/**"]
   topics: [呼吸图, 盖脸纸, 纸随呼吸, 胸口起伏, 纸比胸口晚, 渐弱, 假停, 猛吸, 位移场, 反查源点, 呼吸声, showBreathingOverlay, breathingPerform, setBreathingParams]
   tasks: [做呼吸图, 调盖脸纸, 改呼吸节奏, 剧情里改呼吸参数, 接新的呼吸图]
 verified_by:
@@ -60,7 +62,7 @@ last_governed: 2026-09-24
 - **参数**:`setParams(patch, rampSec)` 从当前生效值平滑过渡;未知键 / 非数值拒收并返回键名;越界按参数表夹紧。
 - **渲染**:`CutsceneRenderer.showBreathingLayer` 按 showPercentImg 同一套百分比布局挂自建 Mesh,登进 **images 表**
   (与叠图同一套 id 句柄)——`hideOverlayImage`、同 id 换层、过场 cleanup 都收得掉;收掉时回调让实例退役(声音停、
-  等它的剧情步骤兑现放行)。着色器是 `breathingShade.glsl`(按 BEGIN/END 切片,工作台同一份);每帧 uniform 由
+  等它的剧情步骤兑现放行)。运行时着色是 `breathingShade.wgsl`(`createBreathingOverlayMesh`;呼吸工作台拼的是同一个 Mesh、同一个摆法 `percentLayerRect`);每帧 uniform 由
   `breathingUniforms()` 算(工作台同一份)。
 - **时间**:`Game.tick` 里 `if (!worldPaused) breathingOverlaySystem.update(dt)`——走游戏时钟、吃暂停闸;
   `breathingPerform` 的 `wait` 也按游戏时钟兑现。
@@ -89,12 +91,13 @@ breathe / fadeOut / gasp / stopNow。撤销覆盖时丢 JSON 缓存,下次显示
 - **脸必须逐像素不动**:位移只作用在 body / sheet / flap 三层,sheet 的贴脸部分权重 0;静止帧 = 原图。
 - **位移场坡度 × 位移 < 约 0.6**:反查源点是不动点迭代(12 次),超了不收敛、画面扯坏;上限写在各图的 `rig.limits`,
   模拟与 uniform 换算都按它夹紧。
-- 游戏装载的层贴图 rgb 已被浏览器在解码期 ×alpha(见 pixi-v8-traps),着色器 `uPremul = 1` 先除回去;
-  工作台自己上传不预乘 `uPremul = 0`。两边别混。
+- 游戏装载的层贴图 rgb 已被浏览器在解码期 ×alpha(见 pixi-v8-traps),着色器 `uPremul = 1` 先除回去。
+  呼吸工作台(2026-09-27 迁 RHI 起)走同一条装载、同一个 `createBreathingOverlayMesh`,也是 `uPremul = 1`;
+  以前工作台自己不预乘上传(`uPremul = 0`),半透明边会渗出透明像素里的颜色,和游戏不一样。
 - 参数表只在 `src/data/breathingParams.json` 维护;名称(label)是给制作人的「参数文本」用的键,**不许重名**(单测守着)。
 
-- **着色本体有两份,算法改动两份一起改**:`breathingShade.glsl`(WebGL,工作台也切片用它,原样保留)与
-  `breathingShade.wgsl`(WebGPU,逐句对应)。改完跑 `node tools/render_parity/run.mjs --case 摆动呼吸淡入` 证明两边一致
+- **着色本体有两份,算法改动两份一起改**:`breathingShade.glsl`(WebGL,只剩 master 对照与 `shaderTwins.test.ts` 在用;
+  呼吸工作台 2026-09-27 起不再切片它,画面走游戏的呼吸图 Mesh + WGSL)与 `breathingShade.wgsl`(WebGPU,逐句对应)。改完跑 `node tools/render_parity/run.mjs --case 摆动呼吸淡入` 证明两边一致
   (见 pixi-shader-wgsl-port)。
 
 ## 已知坑

@@ -1,6 +1,9 @@
-/* 呼吸工作台 · 交互层端到端回归(在真页面里跑;由 `sh scripts/py.sh -m tools.breathing_workbench --selftest` 注入)。
+/* 呼吸工作台 · 交互层端到端回归(在真页面里跑;由 `sh scripts/py.sh -m tools.breathing_workbench --selftest` 注入,
+ * 真 GPU 的 Chrome 里由 `tools/workbench_rhi/chrome_page.mjs --selftest … --no-skip` 注入同一份)。
  *
  * 每条 `ok()` 一行 PASS / FAIL;异常记 EXC;跑完报告写进 window.__selftestResult(桌面壳打印、有 FAIL 退出码 1)。
+ * 画面那几条(游戏同一个 WebGPU 渲染器 + 呼吸图 Mesh,读像素走接入层的离屏回读):宿主拿不到 WebGPU(offscreen 的 QtWebEngine)
+ * 时记 SKIP 并写明原因——不是放行:Chrome 里跑同一份脚本时一条 SKIP 都不许有。
  * 约定:整个进程的读写都指在临时样例工程(`/api/boot` 的 `real === false` 自证),真库一个字节不碰;
  * 游戏地址钉在 127.0.0.1:9(联动只验"软失败");页面是 module,状态从 window.__bw、函数从 window.__bwApi 取。 */
 (async () => {
@@ -9,11 +12,18 @@
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const until = async (fn, ms) => { const t0 = Date.now(); while (Date.now() - t0 < (ms || 8000)) { try { if (fn()) return true; } catch (e) { /* 还没好 */ } await wait(50); } return false; };
   const api = async (p, b) => (await fetch(p, b === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) })).json();
+  const noGpu = () => !window.__bw || !window.__bw.gpu || !window.__bw.gpu.ok;
+  const skip = (name) => log.push(`SKIP ${name} ${JSON.stringify({ why: (window.__bw && window.__bw.gpu && window.__bw.gpu.err) || 'no GPU layer' })}`);
+  const okGpu = (name, cond, extra) => { if (noGpu()) skip(name); else ok(name, typeof cond === 'function' ? cond() : cond, extra); };
   try {
     await until(() => window.__bw && window.__bw.ready, 20000);
     const S = window.__bw, A = window.__bwApi;
     const boot = await api('/api/boot');
-    ok('S1 自检工程(不是真库)', boot.real === false, boot.project);
+    ok('S1 自检工程(不是真库)', boot.real === false && /breathwb_selftest_/.test(boot.project), boot.project);
+    ok('S1 页面里没有 GLSL / WebGL:包里是游戏的渲染模块', !!S.rt.workbenchRhi && !!S.rt.offscreenReadback && !!S.rt.breathingView
+      && !('shade' in S) && !('gl' in S) && !document.querySelector('script[src*="glsl"]'));
+    okGpu('S1 画面是游戏同一个 WebGPU 渲染器(engine2d / RHI)+ 呼吸图 Mesh', () => S.host.renderer.name === 'webgpu' && S.stage.ready && !S.gpu.err,
+      { err: S.gpu && S.gpu.err });
     ok('S2 打开样例呼吸图并加载分层与位移场', S.ready && S.id === 'sample_breath' && !!S.def, { id: S.id, err: window.__bootError });
     // 参数面板:参数表里每个参数都有滑条,值 = 盘上的值(没写的取缺省)
     const defs = [...S.rt.breathingParams.BREATHING_PARAM_DEFS.values()];
@@ -31,21 +41,33 @@
     ok('S8 参数文本列出改过的', txt.includes('【改过的】纸比胸口晚 = 0.5 s'), txt.split('\n')[1]);
     const r = A.applyText('纸比胸口晚 = 0.25 s;吸气时长 = 3 s;不存在的参数 = 1');
     ok('S9 套用参数文本(认不出的报出来)', r.applied === 2 && r.unknown.includes('不存在的参数') && S.perf.p('lag') === 0.25 && S.perf.p('ti') === 3, r);
-    // 同一份着色器真画出来了:纸位移 ≠ 0 的那一刻与原图不同、按住看原图时等于静止帧
+    // 游戏同一份渲染(呼吸图 Mesh + breathingShade.wgsl)真画出来了:纸位移 ≠ 0 的那一刻与原图不同、按住看原图时等于静止帧。
+    // 读像素走接入层的离屏目标 + 异步回读(成品尺寸,自上而下),与出片同一条路
     S.paused = true;
-    A.draw(S.def.size[0], S.def.size[1]);
-    const gl = S.gl, W = S.def.size[0], H = S.def.size[1];
-    const px = () => { const b = new Uint8Array(W * H * 4); gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, b); return b; };
+    const W = S.def.size[0], H = S.def.size[1];
+    const tgt = noGpu() ? null : S.rt.offscreenReadback.createOffscreenTarget(S.host, W, H);
+    const px = async () => (tgt ? (await A.capture(tgt)).data : null);
     S.perf.stopNow(); for (let i = 0; i < 90; i++) A.tick(1 / 30);
-    A.draw(W, H); const rest = px();
+    const rest = await px();
     S.perf.restart(); S.perf.setParams({ lag: 0 });
-    let moved = null;
-    for (let i = 0; i < 30 * 12; i++) { A.tick(1 / 30); if (Math.abs(S.perf.frame().paperMm) > 3) { A.draw(W, H); moved = px(); break; } }
-    let diff = 0; if (moved) for (let i = 0; i < rest.length; i += 4) diff += Math.abs(rest[i] - moved[i]);
-    ok('S10 着色器按表演把纸挪动了(读像素)', !!moved && diff > 1000, { diff });
-    S.compare = true; A.draw(W, H); const cmp = px(); S.compare = false;
-    let d2 = 0; for (let i = 0; i < rest.length; i += 4) d2 = Math.max(d2, Math.abs(rest[i] - cmp[i]));
-    ok('S11 按住看原图 = 静止帧', d2 <= 1, { d2 });
+    let moved = null, sawMove = false;
+    for (let i = 0; i < 30 * 12; i++) { A.tick(1 / 30); if (Math.abs(S.perf.frame().paperMm) > 3) { sawMove = true; moved = await px(); break; } }
+    let diff = 0; if (moved && rest) for (let i = 0; i < rest.length; i += 4) diff += Math.abs(rest[i] - moved[i]);
+    ok('S10 表演把纸抬起来了(纸位移 > 3 mm)', sawMove);
+    okGpu('S10 游戏的呼吸图着色按表演把纸挪动了(离屏异步回读)', () => !!moved && moved.length === W * H * 4 && diff > 1000, { diff });
+    // 行序:回读自上而下——样例的纸在左上(40..140, 40..90)、胸口在右下,底图是暗褐
+    const at = (b, x, y) => (b ? [...b.subarray((y * W + x) * 4, (y * W + x) * 4 + 4)] : null);
+    okGpu('S10 回读自上而下(第 0 行 = 画面最上面):左上是纸、左下是底图', () => {
+      const top = at(rest, 60, 50), bottom = at(rest, 60, 170);
+      return Math.abs(top[0] - 220) <= 2 && Math.abs(top[2] - 184) <= 2 && Math.abs(bottom[0] - 40) <= 2 && Math.abs(bottom[2] - 28) <= 2 && top[3] === 255;
+    }, { top: at(rest, 60, 50), bottom: at(rest, 60, 170) });
+    S.compare = true; const cmp = await px(); S.compare = false;
+    let d2 = 0; if (cmp && rest) for (let i = 0; i < rest.length; i += 4) d2 = Math.max(d2, Math.abs(rest[i] - cmp[i]));
+    okGpu('S11 按住看原图 = 静止帧', () => !!cmp && d2 <= 1, { d2 });
+    // 画布预览也是同一个舞台:画完画布回读非空(与清屏色不同)
+    if (!noGpu()) A.draw();
+    okGpu('S11 画布预览画出来了(画布回读非空)', () => S.host.countDrawnPixels() > 1000, { drawn: noGpu() ? 0 : S.host.countDrawnPixels() });
+    if (tgt) tgt.destroy();
     // 剧情时间轴(对话图里那一段原样演):逐帧推,渐弱等停住走完、猛吸、收掉
     ok('S12 用在哪:列出样例对话图', S.stories.length === 1 && S.stories[0].graph === 'sample_graph');
     A.startStory(S.stories[0], { breaths: 0, readSec: 0.5 });
@@ -70,9 +92,22 @@
     const pub = await A.publish('show');
     const st = await api('/api/link/status');
     ok('S16 推给游戏在游戏没开时软失败', st.connected === false, st.err);
-    // 出片:一口循环
-    const fin = await A.renderLoop();
-    ok('S17 出一口循环 GIF', fin && fin.frames > 50 && fin.files.some((f) => f.endsWith('.gif')), fin && fin.files);
+    // 出片:一口循环(离屏渲染纹理逐帧画、异步读回、送服务端拼)
+    if (noGpu()) { skip('S17 出一口循环 GIF'); skip('S17 同参数出两次片'); }
+    else {
+      const fin = await A.renderLoop();
+      ok('S17 出一口循环 GIF', fin && fin.frames > 50 && fin.files.some((f) => f.endsWith('.gif')), fin && fin.files);
+      // 出片的起点是确定的:等服务端 begin 的那几帧里预览不许推这条表演(以前会,起点随请求快慢漂)
+      const m1 = S.renderMeta;
+      S.paused = false;
+      const fin2 = await A.renderLoop();
+      const m2 = S.renderMeta;
+      S.paused = true;
+      const per = S.perf.p('ti') + S.perf.p('te') + S.perf.p('tp');
+      ok('S17 同参数出两次片:逐帧表演相同、起点 = 4 口之后', fin2 && m1 && m2 && m1 !== m2 && JSON.stringify(m1) === JSON.stringify(m2)
+        && Math.abs(m1[0].t - 4 * per) < 1e-3 && m1.length === fin.frames,
+        { n: m1 && m1.length, t0: m1 && m1[0].t, t0b: m2 && m2[0].t, per });
+    }
   } catch (e) {
     log.push('EXC ' + (e && e.stack || e));
   }

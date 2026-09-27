@@ -64,7 +64,7 @@ def _json(base: str, path: str, body=None):
 
 def test_static_and_no_store(srv):
     base, _ = srv
-    for path in ("/", "/viewer/app.js", "/vendor/dropdown.js", "/gen/breathingShade.glsl"):
+    for path in ("/", "/viewer/app.js", "/vendor/dropdown.js"):
         code, headers, body = _get(base, path)
         assert code == 200, path
         assert "no-store" in headers.get("Cache-Control", "")
@@ -73,6 +73,9 @@ def test_static_and_no_store(srv):
     assert headers.get("Content-Type", "").startswith("text/javascript")
     assert _get(base, "/viewer/_gen/breathing.bundle.js")[0] == 404
     assert _get(base, "/vendor/evil.js")[0] == 404
+    # GLSL 孪生不再给(画面走游戏同一份 WGSL);favicon 回 204(控制台不留 404)
+    assert _get(base, "/gen/breathingShade.glsl")[0] == 404
+    assert _get(base, "/favicon.ico")[0] == 204
 
 
 def test_media_proxy(srv):
@@ -202,7 +205,8 @@ def test_render_loop_pipeline(srv):
     assert code == 200
     token = j["token"]
     for i in range(6):
-        raw = bytes([i * 40 % 256, 20, 30, 255]) * (w * h)
+        # 第 0 行(画面最上面)偏红、其余偏蓝:接入层离屏回读是自上而下,服务端原样存、不翻
+        raw = bytes([250, 10, 10, 255]) * w + bytes([i * 40 % 256, 20, 200, 255]) * (w * (h - 1))
         req = urllib.request.Request(f"{base}/api/render/frame?token={token}&i={i}", data=raw, method="POST")
         with urllib.request.urlopen(req, timeout=20) as r:
             assert json.loads(r.read())["ok"]
@@ -212,6 +216,9 @@ def test_render_loop_pipeline(srv):
     out = Path(fin["dir"])
     assert out.is_relative_to(tmp) and (out / "参数.txt").read_text(encoding="utf-8") == "参数"
     assert any(f.endswith(".gif") for f in fin["files"]) and all(Path(f).exists() for f in fin["files"])
+    from PIL import Image
+    first = Image.open(out / "frames" / "00000.png").convert("RGB")
+    assert first.getpixel((3, 0)) == (250, 10, 10) and first.getpixel((3, h - 1)) == (0, 20, 200), "帧被翻过了(应自上而下原样存)"
     bad = urllib.request.Request(f"{base}/api/render/frame?token={token}&i=0", data=b"1234", method="POST")
     with pytest.raises(urllib.error.HTTPError):
         urllib.request.urlopen(bad, timeout=20)

@@ -3,8 +3,8 @@
 
   GET  /                                  viewer
   GET  /vendor/dropdown.js                页内下拉(轨迹台那份原样,不 fork;不走系统原生弹窗)
-  GET  /gen/breathing.bundle.js           运行时呼吸图纯逻辑打成的 ESM(``bundle.py``)
-  GET  /gen/breathingShade.glsl           ``src/rendering/breathingShade.glsl`` 原文(页面按同一对标记切片)
+  GET  /gen/breathing.bundle.js           运行时呼吸图纯逻辑 + 游戏同一份渲染(engine2d / RHI / 呼吸图 Mesh + breathingShade.wgsl)打成的 ESM(``bundle.py``)
+  GET  /favicon.ico                       204(控制台不留 404)
   GET  /resources/…                       呼吸图的分层图与位移场(只放行 png / jpg / bin)
   GET  /api/boot                          启动参数(--open 的 id 只发一次;游戏地址;打包状态;工程根自证;开场场景)
   GET  /api/breathing                     呼吸图清单
@@ -15,7 +15,7 @@
   GET  /api/link/status                   游戏回传的状态页
   POST /api/link/launch {sceneId}         一键拉起游戏进那个场景
   POST /api/render/begin {kind, id, fps, width, height, paramsText}   出片开始
-  POST /api/render/frame?token=&i=        一帧原始 RGBA(readPixels 自下而上)
+  POST /api/render/frame?token=&i=        一帧原始 RGBA(离屏渲染纹理异步回读,自上而下)
   POST /api/render/finish {token, meta}   拼成品(循环 GIF + 接触表 / 剧情 MP4)
   POST /api/render/reveal {path}          在资源管理器里打开出片目录
 """
@@ -150,6 +150,10 @@ class H(SimpleHTTPRequestHandler):
             if path == "/":
                 self.path = "/viewer/index.html"
                 return super().do_GET()
+            if path == "/favicon.ico":
+                self.send_response(204)
+                self.end_headers()
+                return None
             if path.startswith("/viewer/"):
                 if "/_gen/" in path:
                     return self._json({"ok": False, "err": "生成物走 /gen/"}, 404)
@@ -164,8 +168,6 @@ class H(SimpleHTTPRequestHandler):
                 if not p or not p.exists():
                     return self._json({"ok": False, "err": err or "没有打包产物"}, 404)
                 return self._bytes(p.read_bytes(), _JS_MIME)
-            if path == "/gen/breathingShade.glsl":
-                return self._bytes(bundle.shade_glsl().encode("utf-8"), "text/plain; charset=utf-8")
             if path.startswith("/resources/"):
                 f = store.media_file(path)
                 mime = _MEDIA_MIME.get(f.suffix.lower()) if f is not None else None

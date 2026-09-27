@@ -1,8 +1,11 @@
 /* 呼吸工作台页面。
  *
- * 模拟 / 参数表 / 资产解析 / uniform 换算 / 呼吸声全部来自 `/gen/breathing.bundle.js`(运行时 TS 原样打包),
- * 着色器来自 `/gen/breathingShade.glsl`(游戏的呼吸图 Mesh 同一份,按同一对标记切片)——页面里没有第二份模拟。
- * 这里只管:界面、WebGL 上屏、剧情时间轴的播放、出片时逐帧读回、与服务端 / 游戏的往来。 */
+ * 模拟 / 参数表 / 资产解析 / uniform 换算 / 呼吸声全部来自 `/gen/breathing.bundle.js`(运行时 TS 原样打包)——页面里没有第二份模拟。
+ * **这里也没有着色器**:画布上是游戏同一个 WebGPU 渲染器(engine2d / RHI,经工作台 RHI 接入层 `S.rt.workbenchRhi`),
+ * 画面由包里的 `S.rt.breathingView.BreathingStage` 用游戏自己的呼吸图 Mesh(`breathingShade.wgsl`)拼;贴图与游戏同一条 `Assets.load`。
+ * 出片 = 同一个舞台画进成品尺寸的离屏渲染纹理、异步回读(`S.rt.offscreenReadback`,自上而下)。
+ * 宿主拿不到 WebGPU 就明确说画不了,**不回落**任何别的 API;调参、剧情、保存、推给游戏照常。
+ * 这里只管:界面、剧情时间轴的播放、出片的逐帧推进、与服务端 / 游戏的往来。 */
 'use strict';
 
 const $ = (id) => document.getElementById(id);
@@ -17,19 +20,17 @@ async function api(path, body) {
 const clone = (v) => JSON.parse(JSON.stringify(v));
 
 const S = {
-  rt: null, shade: '', boot: null, list: [], id: '', disk: null, doc: null, def: null, check: null, stories: [],
-  perf: null, gl: null, prog: null, loc: {}, tex: [], ready: false,
+  rt: null, boot: null, list: [], id: '', disk: null, doc: null, def: null, check: null, stories: [],
+  perf: null, host: null, stage: null, gpu: { ok: false, err: '' }, texUrls: [], ready: false,
   speed: 1, paused: false, compare: false, muted: false, hist: [], last: 0,
   run: null, rendering: false, audio: null, synth: null,
-  livePush: false, pushTimer: null, link: null, renderDir: '',
+  livePush: false, pushTimer: null, link: null, renderDir: '', renderMeta: null,
 };
 window.__bw = S;   // 自检脚本读状态用
 
 // ---------------------------------------------------------------- 运行时包
 async function loadRuntime() {
   S.rt = await import('/gen/breathing.bundle.js');
-  const r = await fetch('/gen/breathingShade.glsl', { cache: 'no-store' });
-  S.shade = S.rt.breathingUniforms.sliceBreathingShade(await r.text());
 }
 const groups = () => S.rt.breathingParams.BREATHING_PARAM_GROUPS;
 const defs = () => S.rt.breathingParams.BREATHING_PARAM_DEFS;
@@ -48,88 +49,65 @@ function newPerf() {
   return p;
 }
 
-// ---------------------------------------------------------------- WebGL
-const VS = `#version 300 es
-in vec2 aPos; out vec2 vUV;
-void main(){ vUV = vec2(aPos.x * 0.5 + 0.5, 0.5 - aPos.y * 0.5); gl_Position = vec4(aPos, 0.0, 1.0); }`;
-function initGl() {
-  const canvas = $('gl');
-  const gl = canvas.getContext('webgl2', { antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: true });
-  if (!gl) throw new Error('这个浏览器不支持 WebGL2');
-  const FS = `#version 300 es
-precision highp float;
-in vec2 vUV; out vec4 fragColor;
-${S.shade}
-void main(){ fragColor = vec4(breathingShade(vUV), 1.0); }`;
-  const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
-  const prog = gl.createProgram();
-  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS)); gl.linkProgram(prog);
-  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
-  gl.useProgram(prog);
-  const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-  const loc = gl.getAttribLocation(prog, 'aPos'); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-  for (const n of ['uBase', 'uBody', 'uSheet', 'uFlap', 'uF1', 'uF2', 'uSize', 'uInfl', 'uFlapAng', 'uShade', 'uVentPx', 'uCranPx', 'uL', 'uRoot', 'uRootDisp', 'uN0', 'uLamp', 'uPremul']) S.loc[n] = gl.getUniformLocation(prog, n);
-  S.gl = gl; S.prog = prog;
+// ---------------------------------------------------------------- GPU(游戏同一个 WebGPU 渲染器 + 呼吸图 Mesh)
+async function initGpu() {
+  try {
+    S.host = await S.rt.workbenchRhi.createCanvasHost($('gl'), { background: 0x000000 });
+    S.stage = new S.rt.breathingView.BreathingStage();
+    S.gpu = { ok: true, err: '' };
+  } catch (e) {
+    S.gpu = { ok: false, err: `画面预览画不了:${(e && e.message) || e}(调参、剧情、保存、推给游戏照常)` };
+  }
 }
-function texParams(gl) {
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-}
-function loadImg(src) { return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('读不到 ' + src)); i.src = src; }); }
-function uploadImage(unit, img) {
-  const gl = S.gl, t = gl.createTexture();
-  gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false); gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-  gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-  if (img) gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-  else gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
-  texParams(gl); S.tex.push(t);
-}
-function uploadHalf(unit, u16, w, h) {
-  const gl = S.gl, t = gl.createTexture();
-  gl.activeTexture(gl.TEXTURE0 + unit); gl.bindTexture(gl.TEXTURE_2D, t);
-  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0, gl.RGBA, gl.HALF_FLOAT, u16);
-  texParams(gl); S.tex.push(t);
-}
+function loadImg(url) { return S.rt.workbenchRhi.loadTexture(url).catch((e) => { throw new Error(`读不到 ${url}:${(e && e.message) || e}`); }); }
 async function loadLayers() {
-  const gl = S.gl, def = S.def, L = def.layers;
-  for (const t of S.tex) gl.deleteTexture(t);
-  S.tex = [];
+  const def = S.def, L = def.layers;
+  const urls = [L.base, L.body, L.sheet, L.flap].filter(Boolean);
   const [base, body, sheet, flap, bin] = await Promise.all([
     loadImg(L.base), L.body ? loadImg(L.body) : null, L.sheet ? loadImg(L.sheet) : null, L.flap ? loadImg(L.flap) : null,
     fetch(def.fields.file, { cache: 'no-store' }).then((r) => { if (!r.ok) throw new Error('读不到位移场 ' + def.fields.file); return r.arrayBuffer(); }),
   ]);
-  const per = def.fields.width * def.fields.height * 4;
-  if (bin.byteLength !== per * 4) throw new Error(`位移场大小不对:${bin.byteLength} 字节,应为 ${per * 4}`);
-  uploadImage(0, base); uploadImage(1, body); uploadImage(2, sheet); uploadImage(3, flap);
-  uploadHalf(4, new Uint16Array(bin, 0, per), def.fields.width, def.fields.height);
-  uploadHalf(5, new Uint16Array(bin, per * 2, per), def.fields.width, def.fields.height);
-  gl.useProgram(S.prog);
-  ['uBase', 'uBody', 'uSheet', 'uFlap', 'uF1', 'uF2'].forEach((n, i) => gl.uniform1i(S.loc[n], i));
-  const st = S.rt.breathingUniforms.breathingStaticUniforms(def.rig, def.size, false);
-  gl.uniform2f(S.loc.uSize, st.uSize[0], st.uSize[1]); gl.uniform1f(S.loc.uL, st.uL);
-  gl.uniform2f(S.loc.uRoot, st.uRoot[0], st.uRoot[1]); gl.uniform2f(S.loc.uRootDisp, st.uRootDisp[0], st.uRootDisp[1]);
-  gl.uniform2f(S.loc.uN0, st.uN0[0], st.uN0[1]); gl.uniform2f(S.loc.uLamp, st.uLamp[0], st.uLamp[1]); gl.uniform1f(S.loc.uPremul, st.uPremul);
-  $('stage').style.setProperty('--aspect', String(def.size[0] / def.size[1]));
+  // 先让舞台换上新图(旧的 mesh / 位移场随之拆掉),再放掉新图里不再用的旧贴图(绑定已销毁的纹理 = 那一帧抛错)
+  S.stage.setAsset({ size: def.size, rig: def.rig, fields: def.fields, fieldBytes: bin, base, body, sheet, flap });
+  for (const u of S.texUrls) if (!urls.includes(u)) void S.rt.workbenchRhi.unloadTexture(u);
+  S.texUrls = urls;
 }
-function currentUniforms() {
+function stageInput() {
   const p = S.perf;
-  if (S.compare) return { uInfl: 0, uFlapAng: 0, uShade: 0, uVentPx: 0, uCranPx: 0 };
-  return S.rt.breathingUniforms.breathingUniforms({ frame: p.frame(), vent: p.p('vent'), cran: p.p('cran'), inflate: p.p('inflate'), sink: p.p('sink') }, S.def.rig);
+  return { frame: p.frame(), vent: p.p('vent'), cran: p.p('cran'), inflate: p.p('inflate'), sink: p.p('sink') };
 }
-function draw(w, h) {
-  const gl = S.gl, u = currentUniforms();
-  gl.viewport(0, 0, w, h);
-  for (const [k, v] of Object.entries(u)) gl.uniform1f(S.loc[k], v);
-  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+/** 这一帧的每帧 uniform 推给舞台(按住看原图 = 静止帧) */
+function syncStage() {
+  if (S.compare) S.stage.apply(S.rt.breathingView.REST_UNIFORMS);
+  else S.stage.applyFrame(stageInput());
+}
+/** 画到画布(预览):屏 = 画布的 CSS 尺寸 */
+function draw() {
+  if (!S.gpu.ok || !S.def) return;
+  const scr = S.host.renderer.screen;
+  S.stage.layout(scr.width, scr.height);
+  syncStage();
+  try {
+    S.host.render(S.stage.root);
+    if (S.host.lastError) S.gpu.err = `GPU:${S.host.lastError}`;
+  } catch (e) {
+    S.gpu.err = `这一帧画坏了:${(e && e.message) || e}`;
+  }
+}
+/** 画进离屏目标(出片 / 自检):屏 = 目标像素;返回异步回读(自上而下 RGBA8) */
+function capture(target) {
+  S.stage.layout(target.width, target.height);
+  syncStage();
+  return target.capture(S.stage.root);
 }
 function resizeCanvas() {
   const c = $('gl'), r = c.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.max(2, Math.min(S.def ? S.def.size[0] : 4096, Math.round(r.width * dpr)));
-  const h = Math.max(2, Math.round(w * (S.def ? S.def.size[1] / S.def.size[0] : 0.56)));
-  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  if (S.gpu.ok && r.width > 1 && r.height > 1) {
+    // 画布像素不超过图本身的宽(与以前同一个上限)
+    const res = Math.max(0.25, Math.min(dpr, S.def ? S.def.size[0] / r.width : dpr));
+    const scr = S.host.renderer.screen;
+    if (Math.abs(scr.width - r.width) > 0.01 || Math.abs(scr.height - r.height) > 0.01 || S.host.renderer.resolution !== res) S.host.resize(r.width, r.height, res);
+  }
   const tr = $('trace'), tb = tr.getBoundingClientRect();
   const tw = Math.max(2, Math.round(tb.width * dpr)), th = Math.max(2, Math.round(tb.height * dpr));
   if (tr.width !== tw || tr.height !== th) { tr.width = tw; tr.height = th; }
@@ -157,7 +135,7 @@ function frameLoop(ts) {
   if (S.ready && !S.rendering) {
     if (!S.paused) tick(real * S.speed);
     resizeCanvas();
-    draw($('gl').width, $('gl').height);
+    draw();
     const f = S.perf.frame();
     if (S.synth) S.synth.update(S.paused ? 0 : f.flow, S.paused || S.muted ? 0 : S.perf.p('volume'));
     const mm = f.paperMm;
@@ -369,12 +347,17 @@ async function openAsset(id) {
   if (def.error) { S.ready = false; $('stageMsg').textContent = def.error; $('stageMsg').hidden = false; return; }
   S.def = def;
   S.ready = false;
-  $('stageMsg').textContent = '加载分层图与位移场…'; $('stageMsg').hidden = false;
-  try { await loadLayers(); } catch (e) { $('stageMsg').textContent = String(e.message || e); return; }
+  $('stage').style.setProperty('--aspect', String(def.size[0] / def.size[1]));
+  if (S.gpu.ok) {
+    $('stageMsg').textContent = '加载分层图与位移场…'; $('stageMsg').hidden = false;
+    try { await loadLayers(); } catch (e) { $('stageMsg').textContent = String(e.message || e); return; }
+  }
   S.run = null; $('dlg').hidden = true; $('stage').classList.remove('story'); setVisible(true);
   S.perf = newPerf(); S.hist = [];
   syncParamsUI(true);
-  $('stageMsg').hidden = true;
+  // 没有 WebGPU:画面那块写明原因(不回落),其余照常
+  $('stageMsg').textContent = S.gpu.ok ? '' : S.gpu.err;
+  $('stageMsg').hidden = S.gpu.ok;
   S.ready = true;
 }
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -434,22 +417,27 @@ async function pollLink() {
   setTimeout(pollLink, 1000);
 }
 
-// ---------------------------------------------------------------- 出片(同一份模拟与着色逐帧渲染、读回、送给服务端拼)
+// ---------------------------------------------------------------- 出片(同一份模拟与游戏同一份渲染逐帧画进离屏纹理、异步读回、送给服务端拼)
 async function renderFrames(kind, fps, stepFn, metaFn, doneFn) {
-  const def = S.def, w = def.size[0], h = def.size[1], c = $('gl');
-  const begin = await api('/api/render/begin', { kind, id: S.id, fps, width: w, height: h, paramsText: paramText() });
-  const inflight = new Set();
-  const meta = [];
+  if (!S.gpu.ok) throw new Error(S.gpu.err || '没有 GPU 画面,出不了片');
+  const def = S.def, w = def.size[0], h = def.size[1];
+  // 先停住预览推进,再等服务端:以前 S.rendering 在 begin 回来之后才置上,等的那几帧里 rAF 照常按真实时间推这条表演,
+  // 成片的起点随请求快慢漂(实测一次漂了 0.067 s),同参数两次出片对不上
   S.rendering = true;
+  const inflight = new Set();
+  let target = null;
   try {
+    const begin = await api('/api/render/begin', { kind, id: S.id, fps, width: w, height: h, paramsText: paramText() });
+    // 成品尺寸的离屏渲染纹理:画第 i 帧 → 发读 i(拷贝当场排进 GPU 队列)→ 推进 → 画第 i+1 帧…;同时最多挂 4 帧在读 / 在传
+    target = S.rt.offscreenReadback.createOffscreenTarget(S.host, w, h);
+    const meta = [];
     for (let i = 0; i < 40000; i++) {
       if (doneFn(i)) break;
       meta.push(metaFn(i));
-      c.width = w; c.height = h;
-      draw(w, h);
-      const px = new Uint8Array(w * h * 4);
-      S.gl.readPixels(0, 0, w, h, S.gl.RGBA, S.gl.UNSIGNED_BYTE, px);
-      const p = fetch(`/api/render/frame?token=${begin.token}&i=${i}`, { method: 'POST', body: px }).then((r) => r.json()).then((j) => { if (!j.ok) throw new Error(j.err); });
+      const idx = i;
+      const p = capture(target)
+        .then((px) => fetch(`/api/render/frame?token=${begin.token}&i=${idx}`, { method: 'POST', body: px.data }))
+        .then((r) => r.json()).then((j) => { if (!j.ok) throw new Error(j.err); });
       inflight.add(p); p.finally(() => inflight.delete(p)).catch(() => {});
       if (inflight.size >= 4) await Promise.race(inflight);
       if (i % 30 === 0) $('renderNote').textContent = `出片中… 第 ${i} 帧`;
@@ -459,10 +447,13 @@ async function renderFrames(kind, fps, stepFn, metaFn, doneFn) {
     $('renderNote').textContent = '拼成品中…';
     const fin = await api('/api/render/finish', { token: begin.token, meta: { fps, params: paramText(), frames: meta } });
     S.renderDir = fin.dir;
+    S.renderMeta = meta;
     $('renderNote').textContent = `出好了(${fin.frames} 帧):${fin.files.join('、')}`;
     $('bReveal').hidden = false;
     return fin;
   } finally {
+    await Promise.allSettled([...inflight]);
+    if (target) target.destroy();
     S.rendering = false;
   }
 }
@@ -542,7 +533,16 @@ function bindButtons() {
 }
 
 // 自检脚本用的入口(页面是 module,函数不挂 window)
-window.__bwApi = { startStory, stopStory, tick, renderLoop, renderStory, setParam, save, publish, openAsset, applyText, paramText, isDirty, draw };
+window.__bwApi = { startStory, stopStory, tick, renderLoop, renderStory, setParam, save, publish, openAsset, applyText, paramText, isDirty, draw, capture };
+
+/** 浏览器冒烟(`tools/workbench_rhi/chrome_page.mjs --smoke`):拿到 WebGPU、这一帧画出了东西、GPU 没报错 */
+window.__rhiSmoke = () => {
+  if (!S.gpu.ok) return { ok: false, detail: S.gpu.err || '没有 GPU 画面' };
+  draw();
+  const drawn = S.host.countDrawnPixels();
+  const size = [$('gl').width, $('gl').height];
+  return { ok: drawn > 64 && !S.gpu.err && S.stage.ready, detail: { drawn, size, gpuErr: S.gpu.err, id: S.id } };
+};
 
 // ---------------------------------------------------------------- 启动
 (async () => {
@@ -550,7 +550,7 @@ window.__bwApi = { startStory, stopStory, tick, renderLoop, renderStory, setPara
     S.boot = await api('/api/boot');
     if (!S.boot.bundle.ok) throw new Error('运行时模块打包失败:' + S.boot.bundle.err);
     await loadRuntime();
-    initGl();
+    await initGpu();
     buildParams();
     bindButtons();
     const L = await api('/api/breathing');
@@ -561,6 +561,7 @@ window.__bwApi = { startStory, stopStory, tick, renderLoop, renderStory, setPara
     else $('stageMsg').textContent = '还没有呼吸图(由离线拆层工具烘出来)';
     requestAnimationFrame(frameLoop);
     pollLink();
+    window.__ready = true;
   } catch (e) {
     $('stageMsg').textContent = String(e.message || e);
     $('stageMsg').hidden = false;

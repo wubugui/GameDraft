@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""出片:页面用**同一份运行时模拟与着色**逐帧渲染、读回像素、一帧帧 POST 过来,这里存帧、最后拼成成品。
+"""出片:页面用**同一份运行时模拟与游戏同一份渲染**(呼吸图 Mesh + breathingShade.wgsl)逐帧画进成品尺寸的离屏渲染纹理、
+异步读回像素(工作台 RHI 接入层 ``offscreenReadback``)、一帧帧 POST 过来,这里存帧、最后拼成成品。
 
   begin  {kind: loop|story, id, fps, width, height}   → token + 输出目录
-  frame  原始 RGBA(readPixels 自下而上)               → 翻正存 JPEG(剧情)/ PNG(循环)
+  frame  原始 RGBA(自上而下,WebGPU 纹理的行序)       → 原样存 JPEG(剧情)/ PNG(循环);不翻
   finish {token, meta}                                  → 循环:半尺寸 GIF + 逐帧标注接触表;剧情:MP4(旁白字幕 / 黑场按 meta 合成)
 
 成品落 ``local/breathing_renders/<id>_<kind>_<时间>/``(``local/`` 不进版本),同目录留 ``参数.txt`` 与 ``meta.json``。
@@ -70,7 +71,7 @@ def frame(token: str, index: int, raw: bytes) -> None:
     w, h = job["w"], job["h"]
     if len(raw) != w * h * 4:
         raise ValueError(f"帧大小不对:{len(raw)} 字节,应为 {w}×{h}×4")
-    a = np.frombuffer(raw, np.uint8).reshape(h, w, 4)[::-1, :, :3]
+    a = np.frombuffer(raw, np.uint8).reshape(h, w, 4)[:, :, :3]
     im = Image.fromarray(np.ascontiguousarray(a))
     ext = "png" if job["kind"] == "loop" else "jpg"
     path = job["dir"] / "frames" / f"{index:05d}.{ext}"
