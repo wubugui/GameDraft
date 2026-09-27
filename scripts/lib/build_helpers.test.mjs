@@ -394,3 +394,22 @@ describe('验收门的退出方式（Windows 上的 Node 24）', () => {
     expect(normalPath.slice(0, normalPath.indexOf('main().catch'))).not.toMatch(/process\.exit\(/);
   });
 });
+
+describe('全场景扫描的端口与窗口参数接线', () => {
+  const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const release = readFileSync(join(REPO, 'scripts', 'release.mjs'), 'utf-8');
+  const sweep = readFileSync(join(REPO, 'scripts', 'scene_sweep.mjs'), 'utf-8');
+
+  it('release.mjs 把 --sweep-port / --sweep-offscreen 原样转给 scene_sweep.mjs', () => {
+    expect(release).toMatch(/flag\('sweep-port'\)/);
+    expect(release).toMatch(/sweepArgs\.push\('--port', String\(SWEEP_PORT\)\)/);
+    expect(release).toMatch(/sweepArgs\.push\('--offscreen'\)/);
+    expect(release).toMatch(/runNode\('scene_sweep\.mjs', sweepArgs\)/);
+  });
+
+  it('scene_sweep.mjs 给了 --port 就只试那一个，端口按 parsePort 校验', () => {
+    expect(sweep).toMatch(/const PORT_FLAG = flag\('port'\)/);
+    expect(sweep).toMatch(/PORT_FLAG === undefined \? DEFAULT_PORTS : \[parsePort\(/);
+    expect(sweep).toMatch(/for \(const port of PORTS\)/);
+  });
+});

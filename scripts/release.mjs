@@ -27,6 +27,8 @@
  *   node scripts/release.mjs --out-dir <非空的陌生目录> --force
  *   node scripts/release.mjs --out-dir <目录> --build-config <档位配置替身.json>   （缺省读 tools/build/build_config.json）
  *   node scripts/release.mjs --out-dir <目录> --verify-port 5401   （验收门起静态服务的端口，缺省 5299）
+ *   node scripts/release.mjs --out-dir <目录> --sweep-port 5403 --sweep-offscreen
+ *        （全场景扫描的隔离 dev 服端口，缺省 5197→5194 挨个试；扫描窗口挪到屏幕外，不挡人）
  *
  * exe 从 cargo 的 target 目录取：认 `CARGO_TARGET_DIR`（没设就是 `src-tauri/target`）。
  */
@@ -83,6 +85,10 @@ const BUILD_CONFIG = flag('build-config');
  * ——以前写死，撞上就只能改脚本。
  */
 const VERIFY_PORT_RAW = flag('verify-port', '5299');
+/** 全场景扫描的隔离 dev 服端口（原样转给 scene_sweep.mjs 的 --port）；不给就是它自己的缺省候选。 */
+const SWEEP_PORT_RAW = flag('sweep-port');
+/** 扫描窗口挪到屏幕外（scene_sweep.mjs --offscreen：真窗口照常渲染，只是不挡人）。 */
+const SWEEP_OFFSCREEN = Boolean(flag('sweep-offscreen', false));
 
 const t0 = Date.now();
 const step = (m) => console.log(`\n\u001b[36m▶ ${m}\u001b[0m`);
@@ -98,6 +104,8 @@ function die(msg, code = 2) {
 if (!['dev', 'release'].includes(TARGET)) die(`未知 target: ${TARGET}（可用：dev / release）`);
 const VERIFY_PORT = parsePort(VERIFY_PORT_RAW === true ? '' : VERIFY_PORT_RAW);
 if (VERIFY_PORT === null) die(`--verify-port 要跟一个 1–65535 的端口号，收到：${VERIFY_PORT_RAW}`);
+const SWEEP_PORT = SWEEP_PORT_RAW === undefined ? undefined : parsePort(SWEEP_PORT_RAW === true ? '' : SWEEP_PORT_RAW);
+if (SWEEP_PORT === null) die(`--sweep-port 要跟一个 1–65535 的端口号，收到：${SWEEP_PORT_RAW}`);
 if (!OUT_DIR || OUT_DIR === true) {
   die('必须给 --out-dir <目录>：这一次的结果放哪。\n'
     + '  它不写进配置文件——编辑器每次传同一个（覆盖），自动化每次传新的（留档）。');
@@ -271,7 +279,10 @@ async function main() {
       info(`复用 ${reuse.sweptAt} 的扫描报告：清单与 src/ 都没变，${reuse.summary?.scenes ?? '?'} 个场景零漏抽（要重扫加 --force-sweep）`);
     } else {
       info(`重扫（${reuse.why}）`);
-      if (runNode('scene_sweep.mjs', ['--target', TARGET]) !== 0) {
+      const sweepArgs = ['--target', TARGET];
+      if (SWEEP_PORT !== undefined) sweepArgs.push('--port', String(SWEEP_PORT));
+      if (SWEEP_OFFSCREEN) sweepArgs.push('--offscreen');
+      if (runNode('scene_sweep.mjs', sweepArgs) !== 0) {
         die('全场景扫描不通过，不出包：运行时真会请求的文件不在抽取清单里，见上面的输出。\n'
           + '  补 tools/build/manifest_rules.json 或 asset_manifest.py 的展开器；'
           + '确认可以接受的话加 --skip-sweep 再跑一次。');

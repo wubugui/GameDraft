@@ -14,6 +14,7 @@
  *   node scripts/scene_sweep.mjs --target release         # 缺省
  *   node scripts/scene_sweep.mjs --target dev --scenes 雾津街头,城门口
  *   node scripts/scene_sweep.mjs --url http://127.0.0.1:5173   # 对着在跑的 dev 服（不隔离！）
+ *   node scripts/scene_sweep.mjs --port 5403                   # 隔离 dev 服只用这个端口（缺省 5197→5194 挨个试）
  *
  * 扫描会开一个真的浏览器窗口（`tools/qt_webgpu.WebGpuView`，Windows 上是 WebView2——游戏只有 WebGPU，
  * QtWebEngine 没编 Dawn、拿不到适配器），跑完自动关。`--offscreen` = 真窗口挪到屏幕外（不挡人、照常渲染），
@@ -27,6 +28,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { parsePort } from './lib/build_helpers.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -45,10 +48,20 @@ const LIMIT = flag('limit');
 const OFFSCREEN = Boolean(flag('offscreen', false));
 const GEN_MANIFEST = Boolean(flag('gen-manifest', false));
 /** 端口候选：编辑器占 5173、验收门占 5199/5299、agent 起的在 5174–5188，这里避开 */
-const PORTS = [5197, 5196, 5195, 5194];
+const DEFAULT_PORTS = [5197, 5196, 5195, 5194];
+/**
+ * `--port`：隔离 dev 服只用这一个端口。同一台机器上并行跑着多路 dev 服 / 对照工具时，
+ * 缺省那几个端口谁先抢到算谁的；给一个自己名下的端口才不互相踩。
+ */
+const PORT_FLAG = flag('port');
+const PORTS = PORT_FLAG === undefined ? DEFAULT_PORTS : [parsePort(PORT_FLAG === true ? '' : PORT_FLAG)];
 
 if (!['dev', 'release'].includes(TARGET)) {
   console.error(`未知 target: ${TARGET}（可用：dev / release）`);
+  process.exit(2);
+}
+if (PORTS[0] === null) {
+  console.error(`--port 要跟一个 1–65535 的端口号，收到：${PORT_FLAG}`);
   process.exit(2);
 }
 
