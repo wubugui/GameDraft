@@ -1,6 +1,6 @@
 """气味 Profile 编辑器（方案 E）。
 
-主从列表(profiles) + 详情表单(色/飘法/特殊渲染块) + QtWebEngine 实时预览。
+主从列表(profiles) + 详情表单(色/飘法/特殊渲染块) + WebGPU 网页视图(tools/qt_webgpu.WebGpuView)实时预览。
 预览跑的是和游戏 HUD **同一个** SmellIndicatorRenderer（β 严格一致），经
 http://127.0.0.1:5173/smell_preview.html 的 window.__setProfiles / __setScent 注入。
 
@@ -25,12 +25,7 @@ from ..shared import confirm
 from ..shared.form_layout import compact_form
 from ..shared.hex_color_pick_row import HexColorPickRow
 
-try:
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-    from ..web_engine_page import QuietWebEnginePage
-except ImportError:  # pragma: no cover
-    QWebEngineView = None  # type: ignore[assignment,misc]
-    QuietWebEnginePage = None  # type: ignore[assignment,misc]
+from tools.qt_webgpu import WebGpuView, webgpu_view_available
 
 PREVIEW_URL = "http://127.0.0.1:5173/smell_preview.html"
 NUMERIC = [
@@ -181,11 +176,11 @@ class SmellProfileEditor(QWidget):
         prev_lbl = QLabel("实时预览（β·与游戏同一渲染器）")
         prev_lbl.setToolTip("预览需游戏 dev server 在跑（F5 启动，5173 端口）")
         pv.addWidget(prev_lbl)
-        if QWebEngineView is not None:
+        # 预览页用引擎的 Application(engine2d → RHI,只有 WebGPU);QtWebEngine 拿不到 WebGPU,
+        # 走 tools/qt_webgpu.WebGpuView(Windows 上是 WebView2)。
+        if webgpu_view_available():
             try:
-                view = QWebEngineView(self)
-                if QuietWebEnginePage is not None:
-                    view.setPage(QuietWebEnginePage(view))
+                view = WebGpuView(self)
                 view.setMinimumSize(270, 230)
                 view.load(QUrl(PREVIEW_URL))
                 view.loadFinished.connect(lambda _ok: self._push_preview())
@@ -193,9 +188,9 @@ class SmellProfileEditor(QWidget):
                 pv.addWidget(view)
             except Exception:  # pragma: no cover
                 self._view = None
-                pv.addWidget(QLabel("（QtWebEngine 初始化失败，预览不可用）"))
+                pv.addWidget(QLabel("（WebGPU 网页视图初始化失败，预览不可用）"))
         else:
-            pv.addWidget(QLabel("（QtWebEngine 不可用，预览不可用；游戏内为准）"))
+            pv.addWidget(QLabel("（这个环境建不了 WebGPU 网页视图，预览不可用；游戏内为准）"))
         pv.addWidget(QLabel("预览强度 intensity"))
         self._intensity = QSlider(Qt.Orientation.Horizontal)
         self._intensity.setRange(0, 100)
@@ -407,19 +402,19 @@ class SmellProfileEditor(QWidget):
                 f"window.__setProfiles && window.__setProfiles({payload});"
                 f"window.__setScent && window.__setScent({sid}, {int(self._intensity.value())});"
             )
-            self._view.page().runJavaScript(js)
+            self._view.run_js(js)
         except Exception:  # pragma: no cover
             pass
 
     def _preview_sniff(self) -> None:
         if self._view is not None:
-            self._view.page().runJavaScript("window.__sniff && window.__sniff();")
+            self._view.run_js("window.__sniff && window.__sniff();")
 
     def _reload_preview(self) -> None:
         """重载预览页（5173 未起/起晚导致白屏时的重试入口，P3）。
         loadFinished 已绑定 _push_preview，重载成功后自动重推当前 profile。"""
         if self._view is None:
             QMessageBox.information(
-                self, "重载预览", "QtWebEngine 不可用，预览无法重载（以游戏内为准）。")
+                self, "重载预览", "WebGPU 网页视图不可用，预览无法重载（以游戏内为准）。")
             return
         self._view.load(QUrl(PREVIEW_URL))

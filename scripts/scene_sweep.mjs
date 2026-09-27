@@ -2,7 +2,7 @@
 /**
  * 全场景抓取扫描的编排器：起一个**隔离的** dev 服 → 无头把每个场景真跑一遍 → 停掉。
  *
- * 干活的是 `tools/build/scene_sweep.py`（QtWebEngine 驱动 + 请求拦截 + 清单核对），
+ * 干活的是 `tools/build/scene_sweep.py`（WebView2 真窗口驱动 + 记录代理记请求 + 清单核对），
  * 这里只管三件事：
  *
  * 1. 清单在不在（`.build/manifest-<target>.json`）——没有就现生成一份；
@@ -15,8 +15,9 @@
  *   node scripts/scene_sweep.mjs --target dev --scenes 雾津街头,城门口
  *   node scripts/scene_sweep.mjs --url http://127.0.0.1:5173   # 对着在跑的 dev 服（不隔离！）
  *
- * 扫描会开一个真的浏览器窗口（QtWebEngine），跑完自动关。不是离屏：本机实测离屏下 GPU
- * 上下文会丢、rAF 停摆，切场永远收不了尾（`--offscreen` 只留作实验）。
+ * 扫描会开一个真的浏览器窗口（`tools/qt_webgpu.WebGpuView`，Windows 上是 WebView2——游戏只有 WebGPU，
+ * QtWebEngine 没编 Dawn、拿不到适配器），跑完自动关。`--offscreen` = 真窗口挪到屏幕外（不挡人、照常渲染），
+ * 不是离屏 QPA（WebView2 在离屏平台下会段错误）。
  *
  * ⚠ `--url` 指向别人的 dev 服时**不隔离**：那份游戏的轮询器会消费共享命令队列。
  *   自己调试可以，管线里别这么用。
@@ -175,7 +176,7 @@ async function main() {
   }
 
   const pyArgs = [
-    // -X faulthandler：QtWebEngine 是原生代码，崩了（0xC0000005）Python 自己什么都不说；
+    // -X faulthandler：WebView2 / Qt 是原生代码，崩了（0xC0000005）Python 自己什么都不说；
     // -u：不缓冲，崩的时候前面的进度别跟着一起蒸发
     '-X', 'faulthandler', '-u',
     '-m', 'tools.build.scene_sweep',

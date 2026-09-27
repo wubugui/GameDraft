@@ -32,6 +32,15 @@ describe('decideTouchUi：触屏 HUD 还是桌面 HUD', () => {
     expect(decideTouchUi({ ...qt, userAgent: base.userAgent })).toBe(true);
   });
 
+  it('WebView2 桌面工具宿主（tools/qt_webgpu.WebGpuView 在 UA 末尾追加 GameDraftQtHost/）一律桌面', () => {
+    const edge = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0';
+    // 2026-09-27 本机实测的 WebView2 信号：短边 581、有精确指针、maxTouchPoints=10 → 原判据走兜底支出触屏
+    const host = { ...base, shortSide: 581, anyPointerFine: true, pointerCoarse: false, hasTouch: true, userAgent: edge };
+    expect(decideTouchUi(host)).toBe(true);
+    expect(decideTouchUi({ ...host, userAgent: `${edge} GameDraftQtHost/1` })).toBe(false);
+    expect(decideTouchUi({ ...host, pointerCoarse: true, anyPointerFine: false, userAgent: `${edge} GameDraftQtHost/1` })).toBe(false);
+  });
+
   it('coarse 漏报的真手机：有触摸 + UA 说是手机 → 触屏', () => {
     expect(decideTouchUi({ ...base, shortSide: 412, anyPointerFine: false, hasTouch: true,
       userAgent: 'Mozilla/5.0 (Linux; Android 14) Mobile Chrome/140' })).toBe(true);

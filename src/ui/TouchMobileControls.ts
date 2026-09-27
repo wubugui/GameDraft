@@ -51,9 +51,12 @@ export interface TouchUiSignals {
  * （桌面右下角入口条 vs 顶部文字条 + 虚拟摇杆 + 动作网格），离根因极远，所以判据集中在这里、
  * 段落顺序不可调换：
  *
- * 0. **QtWebEngine 一律桌面**：它只承载编辑器内嵌预览与打包验收扫描（都是桌面工具），而
- *    Qt 6.11 在带触摸数字化仪的 PC 上把主指针报成 coarse、`any-pointer: fine` 报 false，
- *    连第 1 条都够不着（2026-09-06 实测：预览窗任何尺寸都出触屏方向键，与 exe 不一致）。
+ * 0. **Qt 桌面工具宿主一律桌面**：编辑器内嵌预览、工作台、打包验收扫描都是桌面工具。QtWebEngine
+ *    时代认 UA 里的 `QtWebEngine`（Qt 6.11 在带触摸数字化仪的 PC 上把主指针报成 coarse、
+ *    `any-pointer: fine` 报 false，连第 1 条都够不着——2026-09-06 实测预览窗任何尺寸都出触屏方向键）；
+ *    渲染只剩 WebGPU 后宿主换成 WebView2（`tools/qt_webgpu.py`，QtWebEngine 没有 WebGPU），它的 UA
+ *    与 Edge 相同，由宿主在末尾追加 `GameDraftQtHost/`，这里一并认（2026-09-27 实测：WebView2 宿主在
+ *    屏幕短边 581 CSS px、maxTouchPoints=10 的本机上走兜底支出了整套触屏 HUD）。
  * 1. **硬否决**：桌面尺寸的屏幕 + 系统里存在精确指针 → 桌面。挡内嵌 Chromium 把主指针报成 coarse。
  * 2. `(pointer: coarse)` 快车道，**原样保留、不加任何附加条件**——真手机与 DevTools 设备模拟走这条。
  *    曾改用 `(hover: none)` + 排除 `fine`（`562335a` 之后），在大量手机浏览器上得到 false
@@ -67,7 +70,7 @@ export interface TouchUiSignals {
  * 纯函数，`TouchMobileControls.test.ts` 钉死各分支。
  */
 export function decideTouchUi(s: TouchUiSignals): boolean {
-  if (/QtWebEngine/i.test(s.userAgent)) return false;
+  if (/QtWebEngine|GameDraftQtHost\//i.test(s.userAgent)) return false;
 
   // 【硬否决，优先于下面所有判据】设备屏幕明显是桌面尺寸 + 系统里存在精确指针（鼠标/触控板）
   // → 一律桌面 UI。放在 coarse 之前是有意的：内嵌 Chromium（Electron 壳、触屏一体机）

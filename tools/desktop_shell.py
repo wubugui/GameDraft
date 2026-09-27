@@ -25,9 +25,13 @@
     return run_desktop(handler_cls=H, title='角色照明实验室', app_id='char-lighting-lab')
 
 `--smoke` 供无头自检:offscreen 下起真 WebEngine,load 完成即退。
+
+页面要跑 WebGPU(引擎 RHI / 游戏渲染)就传 ``webgpu=True``:改用 ``tools.qt_webgpu.WebGpuView``
+(Windows 上是 WebView2)。QtWebEngine 没编 Dawn,**永远拿不到 WebGPU 适配器**,开关救不回来(证据见该模块头)。
 """
 from __future__ import annotations
 
+import os
 import sys
 import threading
 from http.server import ThreadingHTTPServer
@@ -120,7 +124,7 @@ def run_desktop(handler_cls, title: str, app_id: str,
                 size: tuple[int, int] = (1560, 980),
                 on_activate=None, activate_payload: bytes = b'raise',
                 initial_path: str = '/', selftest: str | None = None,
-                selftest_timeout_s: float = 600.0) -> int:
+                selftest_timeout_s: float = 600.0, webgpu: bool = False) -> int:
     """开窗口跑一个本地网页工具。返回进程退出码。
 
     ``activate_payload``：本进程抢不到单实例闸时送给已有实例的字节串（缺省 ``raise`` = 只叫前台）；
@@ -131,12 +135,26 @@ def run_desktop(handler_cls, title: str, app_id: str,
     ``window.__selftestResult``，每行 ``PASS ...`` / ``FAIL ...`` / ``EXC ...``），跑完原样打印，
     有 FAIL/EXC 退出码 1，超时 3。这是交互层的端到端回归门：改了手势 / 异步 / 保存这一层，
     先跑它，别拿审查员当回归测试。selftest 与 smoke 一样无头（offscreen）、不参与单实例。
+
+    ``webgpu``：页面要跑 WebGPU（引擎 RHI / 游戏渲染）时给 True，网页视图换成 ``tools.qt_webgpu.WebGpuView``
+    （Windows 上是 WebView2；QtWebEngine 拿不到 WebGPU）。差别：smoke / selftest 在离屏平台下改开**屏幕外的
+    真窗口**（WebView2 在离屏 QPA 下会段错误）；JS 弹窗吞不掉（自检路径上别 alert）；焦点在网页里时壳的
+    F5 / Ctrl+R 快捷键收不到（WebView2 自己的 F5 会直接重载、不经未保存守卫——页面自己挂 beforeunload）；
+    ``on_activate(data, view)`` 收到的 view 是 WebGpuView，``view.page().runJavaScript(...)`` 照旧能用。
     """
     smoke = smoke or bool(selftest)
     # 禁缓存的 Chromium 开关必须排在 WebEngine import 之前(见 tools/webengine_cache_policy.py);
     # 本壳原本就是 OTR + NoCache,这一句补上 profile 之外的那几层(code cache / shader cache)。
     from tools.webengine_cache_policy import apply_no_cache, disable_all_caches
     disable_all_caches()
+    offscreen_window = False
+    if webgpu:
+        from tools.qt_webgpu import apply_webgpu_chromium_flags
+        apply_webgpu_chromium_flags()
+        # WebView2 要真窗口:离屏平台(自检 / CI 的缺省)改成挪到屏幕外的真窗口,照常渲染、rAF 照常走
+        if os.environ.get('QT_QPA_PLATFORM', '').split(':', 1)[0] == 'offscreen':
+            os.environ.pop('QT_QPA_PLATFORM')
+            offscreen_window = True
 
     from PySide6.QtCore import Qt, QTimer, QUrl
     from PySide6.QtGui import QKeySequence, QShortcut
@@ -184,32 +202,38 @@ def run_desktop(handler_cls, title: str, app_id: str,
 
     win = _ShellWindow()
     win.setWindowTitle(title)
-    view = QWebEngineView(win)
-    # ① off-the-record:不给 storageName → 纯内存 profile,零磁盘缓存
-    profile = QWebEngineProfile(view)
-    # ② 显式双保险(全仓统一口径,含 setCachePath('') )
-    apply_no_cache(profile)
-    profile.setPersistentCookiesPolicy(
-        QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
-    if smoke:
-        # ⚠ 无头自检里 JS 对话框没人点:alert() 在 QtWebEngine 是模态的,会把整个
-        #   load 吊死到超时(实测:offscreen 下 WebGL2 拿不到 → app.js 开头
-        #   alert('need WebGL2') → loadFinished 永不触发)。smoke 一律吞掉并打印。
-        class _SmokePage(QWebEnginePage):
-            def javaScriptAlert(self, url, msg):
-                print(f'[smoke] js-alert: {msg}', flush=True)
-
-            def javaScriptConfirm(self, url, msg):
-                print(f'[smoke] js-confirm(auto-false): {msg}', flush=True)
-                return False
-
-            def javaScriptPrompt(self, url, msg, default):
-                print(f'[smoke] js-prompt(auto-cancel): {msg}', flush=True)
-                return False, ''
-        page = _SmokePage(profile, view)
+    if webgpu:
+        # 缓存口径由 WebGpuView 负责:每进程一个新的 WebView2 用户数据目录 + 禁缓存开关
+        from tools.qt_webgpu import WebGpuView
+        view = WebGpuView(win)
+        page = view.page()
     else:
-        page = QWebEnginePage(profile, view)
-    view.setPage(page)
+        view = QWebEngineView(win)
+        # ① off-the-record:不给 storageName → 纯内存 profile,零磁盘缓存
+        profile = QWebEngineProfile(view)
+        # ② 显式双保险(全仓统一口径,含 setCachePath('') )
+        apply_no_cache(profile)
+        profile.setPersistentCookiesPolicy(
+            QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
+        if smoke:
+            # ⚠ 无头自检里 JS 对话框没人点:alert() 在 QtWebEngine 是模态的,会把整个
+            #   load 吊死到超时(实测:offscreen 下 WebGL2 拿不到 → app.js 开头
+            #   alert('need WebGL2') → loadFinished 永不触发)。smoke 一律吞掉并打印。
+            class _SmokePage(QWebEnginePage):
+                def javaScriptAlert(self, url, msg):
+                    print(f'[smoke] js-alert: {msg}', flush=True)
+
+                def javaScriptConfirm(self, url, msg):
+                    print(f'[smoke] js-confirm(auto-false): {msg}', flush=True)
+                    return False
+
+                def javaScriptPrompt(self, url, msg, default):
+                    print(f'[smoke] js-prompt(auto-cancel): {msg}', flush=True)
+                    return False, ''
+            page = _SmokePage(profile, view)
+        else:
+            page = QWebEnginePage(profile, view)
+        view.setPage(page)
     # 页面的 document.title 同步到窗口标题栏:工作台用它标「● 有未保存的改动」与当前资产 / 场景,
     # QWebEngineView 不会自己去改父窗口的标题(原来只在页内生效,标题栏上永远看不到)
     view.titleChanged.connect(lambda t: win.setWindowTitle(t if t and t.strip() else title))
@@ -304,7 +328,8 @@ def run_desktop(handler_cls, title: str, app_id: str,
     for seq in ('F5', 'Ctrl+R', 'Ctrl+Shift+R'):
         QShortcut(QKeySequence(seq), win, activated=lambda: _guard_unsaved('刷新', view.reload))
     # 页面缩放复位:Ctrl+滚轮 / Ctrl+加减 放大了整页之后,原来只能关窗重开(浏览器那套 Ctrl+0 在壳里不存在)
-    QShortcut(QKeySequence('Ctrl+0'), win, activated=lambda: view.setZoomFactor(1.0))
+    if hasattr(view, 'setZoomFactor'):
+        QShortcut(QKeySequence('Ctrl+0'), win, activated=lambda: view.setZoomFactor(1.0))
 
     def _raise_window(data: bytes = b'raise') -> None:
         win.setWindowState(
@@ -364,5 +389,13 @@ def run_desktop(handler_cls, title: str, app_id: str,
 
     path = initial_path if initial_path.startswith('/') else '/' + initial_path
     view.load(QUrl(f'http://127.0.0.1:{actual_port}{path}'))
+    if offscreen_window:
+        from tools.qt_webgpu import place_offscreen
+        place_offscreen(win)
     win.show()
-    return app.exec()
+    code = app.exec()
+    if webgpu:
+        # 同步拆掉 WebView2 再退出:留到解释器退出再拆会 access violation(见 release_webgpu_view)
+        from tools.qt_webgpu import release_webgpu_view
+        release_webgpu_view(view)
+    return code

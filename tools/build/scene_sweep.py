@@ -22,17 +22,17 @@
         python -m tools.build.scene_sweep --url http://127.0.0.1:5173 \\
             --manifest .build/manifest-release.json --out .build/sweep-release.json
 
-驱动方式：PySide6 QtWebEngine（编辑器内嵌预览用的同一套 Chromium），**开一个真窗口**；
-``QWebEngineUrlRequestInterceptor`` 拦下页面发出的**全部**请求（fetch / <img> / 音频 /
-HEAD 探测一个不漏）。每个场景用 ``?mode=dev&devScene=<id>`` 整页重载进入（dev 直达路由，
+驱动方式：``tools/qt_webgpu.WebGpuView``（Windows 上是 WebView2——游戏渲染只有 WebGPU，QtWebEngine
+没编 Dawn、拿不到 WebGPU 适配器，见该模块头），**开一个真窗口**。请求由本工具自己起的**记录代理**
+（``RecordingProxy``，127.0.0.1 临时端口，原样转发给 ``--url`` 那个 dev 服）逐条记下——fetch / <img> /
+音频 / HEAD 探测一个不漏，与浏览器内核无关；代理顺手把 ``CONSOLE_CAPTURE_JS`` 塞进 HTML 的 ``<head>``
+最前面，页面从第一行起的报错都进报告。每个场景用 ``?mode=dev&devScene=<id>`` 整页重载进入（dev 直达路由，
 不依赖命令通道），等场景就绪 + 切场收尾 + 网络静默；有时段外观变体的场景再在页内执行
 ``advanceTimeTo`` 切到每个变体，让夜的背景与烘焙载荷也被请求到。
 
-⚠ 为什么不离屏（``--offscreen`` 只留作实验）：实测 2026-09-06（QtWebEngine 6.11 / Chromium 140 /
-Windows）离屏 QPA 下 GPU 进程上下文会间歇丢失（"Context lost during MakeCurrent"），Pixi 的
-WebGL 探测随之失败退到 Canvas2D；而且隐藏页 rAF 停摆，切场收尾（按 rAF 计时的淡入淡出）
-永远不结束，``switching`` 一直为 true，时段换装也就永远不消费。真窗口下两者都正常
-（headless-visual-verification 配方里"隐藏页 rAF 完全暂停"那条坑的又一个形态）。
+⚠ 窗口必须是真窗口：``QT_QPA_PLATFORM=offscreen`` 下 WebView2 一建就段错误，最小化的窗口 rAF 停摆
+（切场收尾按 rAF 计时，``switching`` 永远落不下来，时段换装也就永远不消费）。``--offscreen`` =
+真窗口**挪到屏幕外**跑（不挡人，WebView2 照常渲染、rAF 照常走——2026-09-27 实测），不是离屏 QPA。
 
 判定
 ====
@@ -53,7 +53,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import sys
 import time
@@ -245,6 +244,147 @@ def _phase_js(phase: str) -> str:
     )
 
 
+class RecordingProxy:
+    """记录代理：把浏览器的每个请求原样转发给 ``upstream``，并记下 ``(时刻, URL, 方法)``。
+
+    为什么不在浏览器里拦：游戏页现在跑在 WebView2 里（QtWebEngine 没有 WebGPU），Qt 的 WebView 没有请求拦截
+    接口；在代理上记与浏览器内核无关，HEAD 探测 / 404 / 音频 Range 请求一条不漏。
+
+    - 普通请求：转发方法、路径、头与请求体，回传状态、头与响应体（逐跳头去掉，长度重新算）；
+    - 未压缩的 HTML 响应：``<head>`` 最前面塞 ``inject_head``（console 捕获脚本），页面从第一行起的报错都抓得到；
+    - ``Upgrade`` 请求（vite 的 HMR websocket）：原样打通成 TCP 隧道，行为与直连一致。
+    """
+
+    #: 回给浏览器时不转发的响应头（逐跳头；长度由本代理重算）
+    HOP_RESPONSE = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
+                              "trailers", "transfer-encoding", "upgrade", "content-length"})
+    #: 发给上游时不转发的请求头
+    HOP_REQUEST = frozenset({"connection", "keep-alive", "proxy-authorization", "te", "trailers",
+                             "transfer-encoding", "upgrade", "host"})
+
+    def __init__(self, upstream: str, *, inject_head: str = "", on_request=None) -> None:
+        import http.client
+        import socket
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        parts = urlsplit(upstream)
+        self.upstream_host = parts.hostname or "127.0.0.1"
+        self.upstream_port = parts.port or 80
+        self.entries: list[tuple[float, str, str]] = []
+        self._lock = threading.Lock()
+        proxy = self
+        inject = f"<script>{inject_head}</script>".encode("utf-8") if inject_head else b""
+        upstream_hostport = f"{self.upstream_host}:{self.upstream_port}"
+
+        def pipe(src, dst) -> None:
+            try:
+                while True:
+                    data = src.recv(65536)
+                    if not data:
+                        break
+                    dst.sendall(data)
+            except OSError:
+                pass
+            finally:
+                for sock in (src, dst):
+                    try:
+                        sock.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *_args) -> None:
+                pass
+
+            def _record(self) -> None:
+                url = f"http://{self.headers.get('Host', '127.0.0.1')}{self.path}"
+                with proxy._lock:
+                    proxy.entries.append((time.monotonic(), url, self.command))
+                if on_request is not None:
+                    on_request(url, self.command)
+
+            def _tunnel(self) -> None:
+                upstream = socket.create_connection((proxy.upstream_host, proxy.upstream_port), timeout=10)
+                upstream.settimeout(None)
+                head = [f"{self.command} {self.path} {self.request_version}\r\n"]
+                for k, v in self.headers.items():
+                    head.append(f"{k}: {upstream_hostport if k.lower() == 'host' else v}\r\n")
+                upstream.sendall(("".join(head) + "\r\n").encode("latin-1"))
+                self.connection.settimeout(None)
+                back = threading.Thread(target=pipe, args=(upstream, self.connection), daemon=True)
+                back.start()
+                pipe(self.connection, upstream)
+                back.join(timeout=5)
+                upstream.close()
+                self.close_connection = True
+
+            def _forward(self) -> None:
+                self._record()
+                if self.headers.get("Upgrade"):
+                    self._tunnel()
+                    return
+                length = int(self.headers.get("Content-Length") or 0)
+                body = self.rfile.read(length) if length > 0 else None
+                headers = {k: v for k, v in self.headers.items() if k.lower() not in RecordingProxy.HOP_REQUEST}
+                headers["Host"] = upstream_hostport
+                conn = http.client.HTTPConnection(proxy.upstream_host, proxy.upstream_port, timeout=120)
+                try:
+                    conn.request(self.command, self.path, body=body, headers=headers)
+                    resp = conn.getresponse()
+                    data = resp.read() if self.command != "HEAD" else b""
+                    ctype = (resp.getheader("Content-Type") or "").lower()
+                    if inject and "text/html" in ctype and not resp.getheader("Content-Encoding"):
+                        data = inject_into_head(data, inject)
+                    self.send_response(resp.status, resp.reason)
+                    for k, v in resp.getheaders():
+                        if k.lower() not in RecordingProxy.HOP_RESPONSE:
+                            self.send_header(k, v)
+                    length_out = (resp.getheader("Content-Length") or "0") if self.command == "HEAD" else str(len(data))
+                    self.send_header("Content-Length", length_out)
+                    self.end_headers()
+                    if data:
+                        self.wfile.write(data)
+                except (OSError, http.client.HTTPException) as e:
+                    try:
+                        msg = f"recording proxy: upstream failed ({e})".encode("utf-8")
+                        self.send_response(502)
+                        self.send_header("Content-Type", "text/plain; charset=utf-8")
+                        self.send_header("Content-Length", str(len(msg)))
+                        self.end_headers()
+                        self.wfile.write(msg)
+                    except OSError:
+                        self.close_connection = True
+                finally:
+                    conn.close()
+
+            do_GET = do_HEAD = do_POST = do_PUT = do_DELETE = do_PATCH = do_OPTIONS = _forward
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server.daemon_threads = True
+        self.port = int(self._server.server_address[1])
+        self.url = f"http://127.0.0.1:{self.port}"
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    def snapshot(self) -> list[tuple[float, str, str]]:
+        with self._lock:
+            return list(self.entries)
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+def inject_into_head(html: bytes, snippet: bytes) -> bytes:
+    """把 ``snippet`` 塞到 ``<head>`` 开标签后面（没有 head 就放最前面）。"""
+    m = re.search(rb"<head[^>]*>", html, re.IGNORECASE)
+    if m is None:
+        return snippet + html
+    return html[: m.end()] + snippet + html[m.end():]
+
+
 def run_sweep(
     *,
     base_url: str,
@@ -257,84 +397,49 @@ def run_sweep(
     idle_seconds: float = 2.0,
     settle_seconds: float = 0.8,
     log=print,
+    meta: dict | None = None,
 ) -> list[dict]:
-    """逐场景驱动并归类请求。返回逐场景结果列表（报告的 ``scenes`` 字段）。"""
-    # 缺省真窗口（见模块头：离屏下 GPU 上下文会丢、rAF 停摆）；--offscreen 只作实验用
-    if offscreen:
-        os.environ["QT_QPA_PLATFORM"] = "offscreen"
-    os.environ.setdefault(
-        "QTWEBENGINE_CHROMIUM_FLAGS",
-        # 渲染只有 WebGPU（engine2d → RHI，2026-09-25 起不再有 Pixi / WebGL）：放开 WebGPU；
-        # 没有 GPU 的环境退到 SwiftShader；自动播放不等手势（音频请求也要看见）
-        "--ignore-gpu-blocklist --enable-unsafe-webgpu --enable-unsafe-swiftshader --autoplay-policy=no-user-gesture-required",
+    """逐场景驱动并归类请求。返回逐场景结果列表（报告的 ``scenes`` 字段）。
+
+    ``meta``（可选的 dict）会被填上 ``webgpu``：第一次进场后页内 ``navigator.gpu.requestAdapter()`` 的探测结果。
+    ``offscreen``：真窗口挪到屏幕外（不是离屏 QPA——WebView2 在离屏平台下会段错误）。
+    """
+    from tools.qt_webgpu import (
+        CONSOLE_CAPTURE_JS, WebGpuView, apply_webgpu_chromium_flags, describe_probe, is_hardware_adapter,
+        place_offscreen, probe_webgpu, release_webgpu_view, webgpu_view_available,
     )
-    # 禁缓存的开关要**并进**上面这份、且排在 WebEngine import 之前（顺序反了会把上面的开关吃掉）
+    # 两份开关都只在浏览器内核初始化时读一次：禁缓存 + WebGPU / 游戏宿主（免手势音频、不后台降级）
     disable_all_caches()
-    from PySide6.QtCore import QEventLoop, Qt, QTimer, QUrl
-    from PySide6.QtWebEngineCore import (
-        QWebEnginePage, QWebEngineProfile, QWebEngineScript, QWebEngineSettings,
-        QWebEngineUrlRequestInterceptor,
-    )
-    from PySide6.QtWebEngineWidgets import QWebEngineView
+    apply_webgpu_chromium_flags()
+    from PySide6.QtCore import QEventLoop, QTimer
     from PySide6.QtWidgets import QApplication
 
-    class Recorder(QWebEngineUrlRequestInterceptor):
-        """拦下每一个请求。只记录，不改写、不拦截。"""
-
-        def __init__(self) -> None:
-            super().__init__()
-            self.entries: list[tuple[float, str, str]] = []
-            self.last = time.monotonic()
-
-        def interceptRequest(self, info) -> None:  # noqa: N802 (Qt 命名)
-            now = time.monotonic()
-            url = info.requestUrl().toString()
-            self.entries.append((now, url, bytes(info.requestMethod()).decode("ascii", "replace")))
-            # "网络静默"只看**游戏内容**请求：dev 游戏每 600ms 轮询一次 /__gamedraft-api/runtime-command，
-            # 连它一起算的话静默永远等不到，每个场景都干等到上限（实测一场 5 分钟，全量要 3 小时）
-            if normalize_request_url(url) is not None:
-                self.last = now
-
-    class Page(QWebEnginePage):
-        """把页面 console 收进来：加载失败 / 运行时报错都要进报告。"""
-
-        def __init__(self, profile, sink: list) -> None:
-            super().__init__(profile)
-            self._sink = sink
-
-        def javaScriptConsoleMessage(self, level, message, line_number, source_id) -> None:  # noqa: N802
-            lvl = getattr(level, "value", level)
-            self._sink.append((int(lvl), str(message), int(line_number), str(source_id)))
-
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QApplication.instance() or QApplication([sys.argv[0]])
+    if not webgpu_view_available():
+        raise RuntimeError("建不了 WebGpuView（需要真窗口平台 + PySide6.QtWebView；离屏 QPA 下 WebView2 会段错误）")
 
-    recorder = Recorder()
-    console: list[tuple[int, str, int, str]] = []
-    profile = QWebEngineProfile()                      # 无参构造 = off-the-record，不落磁盘
-    profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)   # 每个请求都要被看见
-    profile.setUrlRequestInterceptor(recorder)
-    # 以前这里把 navigator.gpu 藏起来逼 Pixi 走 WebGL（离屏下 Pixi 先试 WebGPU 会把 GPU 进程拖垮）。
-    # 渲染已经换成只有 WebGPU 的 engine2d：再藏 navigator.gpu 游戏就起不来，所以不再藏。
-    # ⚠ 2026-09-06 实测离屏（--offscreen）QtWebEngine 6.11 建 WebGPU 上下文失败；缺省真窗口下是否可用
-    # 要在制作人机器上验（见 artifact/Reviews/engine2d迁移审查-2026-09-25.md 的「宿主」一节）。
-    page = Page(profile, console)
-    page.settings().setAttribute(QWebEngineSettings.WebAttribute.WebGLEnabled, True)
-    page.settings().setAttribute(QWebEngineSettings.WebAttribute.Accelerated2dCanvasEnabled, True)
-    page.settings().setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
-    view = QWebEngineView()
-    view.setPage(page)
+    idle = {"last": time.monotonic()}
+
+    def on_request(url: str, _method: str) -> None:
+        # "网络静默"只看**游戏内容**请求：dev 游戏每 600ms 轮询一次 /__gamedraft-api/runtime-command，
+        # 连它一起算的话静默永远等不到，每个场景都干等到上限（实测一场 5 分钟，全量要 3 小时）
+        if normalize_request_url(url) is not None:
+            idle["last"] = time.monotonic()
+
+    proxy = RecordingProxy(base_url, inject_head=CONSOLE_CAPTURE_JS, on_request=on_request)
+    console: list[tuple[str, str]] = []
+    view = WebGpuView(forward_console=False)
+    view.consoleMessage.connect(lambda level, message, _src, _line: console.append((level, message)))
     view.setWindowTitle("GameDraft 全场景抓取扫描（打包验收，跑完自动关）")
     # 窗口按 game_config.windowSize 开（编辑器预览窗与 exe 同一口径）：扫描截图/请求都在标准比例下发生
     view.resize(*window_size)
+    if offscreen:
+        place_offscreen(view)
     view.show()
 
     # 只记**失败**：loadFinished(true) 是正常完成，append 进去会把成功当失败（踩过）
     load_failed: list[str] = []
-    page.loadFinished.connect(lambda ok: None if ok else load_failed.append("loadFinished=false"))
-    page.renderProcessTerminated.connect(
-        lambda status, code: load_failed.append(f"渲染进程退出（{status}，code {code}）"),
-    )
+    view.loadFinished.connect(lambda ok: None if ok else load_failed.append("loadFinished=false"))
 
     def pump(seconds: float) -> None:
         loop = QEventLoop()
@@ -349,10 +454,7 @@ def run_sweep(
             box["v"] = value
             loop.quit()
 
-        try:
-            page.runJavaScript(js, 0, done)
-        except TypeError:
-            page.runJavaScript(js, done)
+        view.run_js(js, done)
         QTimer.singleShot(int(timeout * 1000), loop.quit)
         loop.exec()
         return box.get("v")
@@ -369,120 +471,131 @@ def run_sweep(
     def wait_idle(max_seconds: float = 60.0) -> None:
         t0 = time.monotonic()
         while time.monotonic() - t0 < max_seconds:
-            if time.monotonic() - recorder.last >= idle_seconds:
+            if time.monotonic() - idle["last"] >= idle_seconds:
                 return
             pump(0.1)
 
     results: list[dict] = []
-    for i, spec in enumerate(scenes, 1):
-        start_idx = len(recorder.entries)
-        console_idx = len(console)
-        load_failed.clear()
-        url = f"{base_url.rstrip('/')}/?mode=dev&devScene={quote(spec.id)}"
-        log(f"[{i}/{len(scenes)}] {spec.id}" + (f"（时段变体：{', '.join(spec.phases)}）" if spec.phases else ""))
-        page.load(QUrl(url))
-        recorder.last = time.monotonic()
-        t0 = time.monotonic()
-        error: str | None = None
-        seen_phases: list[dict] = []
-        while True:
-            pump(0.25)
-            st = state()
-            if st.get("fatal"):
-                error = "页面出现 #game-fatal-error（游戏启动失败）"
-                break
-            if st.get("blocked"):
-                error = "页面出现 #game-entry-blocked（入口卫兵拦截）"
-                break
-            if load_failed:
-                error = f"页面加载失败（{load_failed[0]}）"
-                break
-            # 进到目标场景**且切场收尾完成**：devScene 路由是 dev_room → switchScene(目标)，
-            # 尾部有按 rAF 计时的淡入；`switching` 没落下之前时段换装不会消费（drainPendingPhaseSwap）
-            if (st.get("stage") == "game" and st.get("scene") in (spec.id, spec.json_id)
-                    and not st.get("switching")):
-                break
-            if time.monotonic() - t0 > scene_timeout:
-                error = f"{scene_timeout:.0f}s 内没进到场景（最后状态 {st}）"
-                break
-        renderer = st.get("renderer") if error is None else None
-        if error is None:
-            wait_idle()
-            pump(settle_seconds)
-            wait_idle()
-            for phase in spec.phases:
-                before = state().get("background")
-                sent = eval_js(_phase_js(phase))
-                # 换装不在 phaseChanged 那一拍：tick 在探索态、无切场在途时才消费，之后
-                # unloadScene + loadScene（phaseSwapInFlight）。等它整个走完；变体没换背景的
-                # （只换灯/环境音）pending 消费掉即算完成。
-                t1 = time.monotonic()
-                swapped = False
-                while time.monotonic() - t1 < 45.0:
-                    pump(0.25)
-                    st2 = state()
-                    if st2.get("background") != before and not st2.get("phaseInFlight") and not st2.get("switching"):
-                        swapped = True
-                        break
-                    if (not st2.get("phasePending") and not st2.get("phaseInFlight") and not st2.get("switching")
-                            and time.monotonic() - t1 > 3.0 and st2.get("background") == before):
-                        break   # 消费了但外观没变（同一张图的时段）
+    probed = False
+    try:
+        for i, spec in enumerate(scenes, 1):
+            start_idx = len(proxy.snapshot())
+            console_idx = len(console)
+            load_failed.clear()
+            url = f"{proxy.url}/?mode=dev&devScene={quote(spec.id)}"
+            log(f"[{i}/{len(scenes)}] {spec.id}" + (f"（时段变体：{', '.join(spec.phases)}）" if spec.phases else ""))
+            view.load(url)
+            idle["last"] = time.monotonic()
+            t0 = time.monotonic()
+            error: str | None = None
+            seen_phases: list[dict] = []
+            while True:
+                pump(0.25)
+                st = state()
+                if st.get("fatal"):
+                    error = "页面出现 #game-fatal-error（游戏启动失败）"
+                    break
+                if st.get("blocked"):
+                    error = "页面出现 #game-entry-blocked（入口卫兵拦截）"
+                    break
+                if load_failed:
+                    error = f"页面加载失败（{load_failed[0]}）"
+                    break
+                # 进到目标场景**且切场收尾完成**：devScene 路由是 dev_room → switchScene(目标)，
+                # 尾部有按 rAF 计时的淡入；`switching` 没落下之前时段换装不会消费（drainPendingPhaseSwap）
+                if (st.get("stage") == "game" and st.get("scene") in (spec.id, spec.json_id)
+                        and not st.get("switching")):
+                    break
+                if time.monotonic() - t0 > scene_timeout:
+                    error = f"{scene_timeout:.0f}s 内没进到场景（最后状态 {st}）"
+                    break
+            renderer = st.get("renderer") if error is None else None
+            if error is None and not probed:
+                probed = True
+                probe = probe_webgpu(view, timeout_s=15.0, with_device=False)
+                if meta is not None:
+                    meta["webgpu"] = probe
+                log(f"    {describe_probe(probe)}")
+                if not is_hardware_adapter(probe):
+                    log("    ⚠ 不是硬件 WebGPU 适配器：资源请求仍完整，但别拿这份去判画面。")
+            if error is None:
                 wait_idle()
                 pump(settle_seconds)
                 wait_idle()
-                seen_phases.append({
-                    "phase": phase, "sent": sent, "swapped": swapped,
-                    "backgroundBefore": before, "backgroundAfter": state().get("background"),
-                })
-        entries = recorder.entries[start_idx:]
-        gaps: set[str] = set()
-        missing: set[str] = set()
-        optional = 0
-        in_manifest = 0
-        seen_rel: set[str] = set()
-        for _, raw_url, _method in entries:
-            rel = normalize_request_url(raw_url)
-            if rel is None or rel in seen_rel:
-                continue
-            seen_rel.add(rel)
-            kind = classify_request(rel, manifest_files, public_root)
-            if kind == "gap":
-                gaps.add(rel)
-            elif kind == "missing_in_dev":
-                missing.add(rel)
-            elif kind == "optional_probe":
-                optional += 1
-            elif kind == "in_manifest":
-                in_manifest += 1
-        errs = [m for (lvl, m, _l, _s) in console[console_idx:] if lvl >= 2]
-        results.append({
-            "id": spec.id,
-            "error": error,
-            "renderer": renderer,
-            "requests": len(entries),
-            "uniqueGameFiles": len(seen_rel),
-            "inManifest": in_manifest,
-            "optionalProbes": optional,
-            "gaps": sorted(gaps),
-            "missingInDev": sorted(missing),
-            # 运行时在这个场景**实际请求**的全部游戏文件——这份记录本身就是"运行时要什么"的证据，
-            # 排查"包里某样东西没出现"时先来这里看它到底有没有被请求过
-            "files": sorted(seen_rel),
-            "phases": seen_phases,
-            "consoleErrors": errs[:20],
-            "consoleErrorCount": len(errs),
-        })
-        tag = "✖" if (error or gaps) else "✓"
-        swaps = "".join(f"，{p['phase']}{'✓' if p['swapped'] else '(外观未变)'}" for p in seen_phases)
-        log(f"    {tag} 请求 {len(entries)}，游戏文件 {len(seen_rel)}，漏抽 {len(gaps)}，开发树也没有 {len(missing)}"
-            + (f"，渲染器 {renderer}" if renderer else "") + swaps
-            + (f"，{error}" if error else ""))
-        for rel in sorted(gaps):
-            log(f"      漏抽：{rel}")
-
-    view.close()
-    del page
-    app.processEvents()
+                for phase in spec.phases:
+                    before = state().get("background")
+                    sent = eval_js(_phase_js(phase))
+                    # 换装不在 phaseChanged 那一拍：tick 在探索态、无切场在途时才消费，之后
+                    # unloadScene + loadScene（phaseSwapInFlight）。等它整个走完；变体没换背景的
+                    # （只换灯/环境音）pending 消费掉即算完成。
+                    t1 = time.monotonic()
+                    swapped = False
+                    while time.monotonic() - t1 < 45.0:
+                        pump(0.25)
+                        st2 = state()
+                        if st2.get("background") != before and not st2.get("phaseInFlight") and not st2.get("switching"):
+                            swapped = True
+                            break
+                        if (not st2.get("phasePending") and not st2.get("phaseInFlight") and not st2.get("switching")
+                                and time.monotonic() - t1 > 3.0 and st2.get("background") == before):
+                            break   # 消费了但外观没变（同一张图的时段）
+                    wait_idle()
+                    pump(settle_seconds)
+                    wait_idle()
+                    seen_phases.append({
+                        "phase": phase, "sent": sent, "swapped": swapped,
+                        "backgroundBefore": before, "backgroundAfter": state().get("background"),
+                    })
+            entries = proxy.snapshot()[start_idx:]
+            gaps: set[str] = set()
+            missing: set[str] = set()
+            optional = 0
+            in_manifest = 0
+            seen_rel: set[str] = set()
+            for _, raw_url, _method in entries:
+                rel = normalize_request_url(raw_url)
+                if rel is None or rel in seen_rel:
+                    continue
+                seen_rel.add(rel)
+                kind = classify_request(rel, manifest_files, public_root)
+                if kind == "gap":
+                    gaps.add(rel)
+                elif kind == "missing_in_dev":
+                    missing.add(rel)
+                elif kind == "optional_probe":
+                    optional += 1
+                elif kind == "in_manifest":
+                    in_manifest += 1
+            errs = [m for (lvl, m) in console[console_idx:] if lvl == "error"]
+            results.append({
+                "id": spec.id,
+                "error": error,
+                "renderer": renderer,
+                "requests": len(entries),
+                "uniqueGameFiles": len(seen_rel),
+                "inManifest": in_manifest,
+                "optionalProbes": optional,
+                "gaps": sorted(gaps),
+                "missingInDev": sorted(missing),
+                # 运行时在这个场景**实际请求**的全部游戏文件——这份记录本身就是"运行时要什么"的证据，
+                # 排查"包里某样东西没出现"时先来这里看它到底有没有被请求过
+                "files": sorted(seen_rel),
+                "phases": seen_phases,
+                "consoleErrors": errs[:20],
+                "consoleErrorCount": len(errs),
+            })
+            tag = "✖" if (error or gaps) else "✓"
+            swaps = "".join(f"，{p['phase']}{'✓' if p['swapped'] else '(外观未变)'}" for p in seen_phases)
+            log(f"    {tag} 请求 {len(entries)}，游戏文件 {len(seen_rel)}，漏抽 {len(gaps)}，开发树也没有 {len(missing)}"
+                + (f"，渲染器 {renderer}" if renderer else "") + swaps
+                + (f"，{error}" if error else ""))
+            for rel in sorted(gaps):
+                log(f"      漏抽：{rel}")
+    finally:
+        view.close()
+        release_webgpu_view(view)
+        proxy.close()
+        app.processEvents()
     return results
 
 
@@ -520,7 +633,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--scenes", default="", help="只扫这些场景（逗号分隔的文件名 id）；缺省全部")
     ap.add_argument("--limit", type=int, default=0, help="只扫前 N 个（调试用）")
     ap.add_argument("--offscreen", action="store_true",
-                    help="离屏跑（实验用：本机实测 GPU 上下文会丢、rAF 停摆，结果不可信）")
+                    help="真窗口挪到屏幕外跑（不挡人；不是离屏 QPA——WebView2 在离屏平台下会段错误）")
     ap.add_argument("--scene-timeout", type=float, default=150.0, help="单个场景进不去判失败的秒数")
     ap.add_argument("--idle", type=float, default=2.0, help="多少秒没有新请求算静默")
     args = ap.parse_args(argv)
@@ -557,6 +670,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"全场景抓取扫描：{len(scenes)} 个场景 ← {args.url}")
     print(f"  清单：{manifest_path}（{len(manifest_files)} 个文件，target={manifest_meta.get('target')}）")
     started = time.time()
+    meta: dict = {}
     results = run_sweep(
         base_url=args.url,
         scenes=scenes,
@@ -566,6 +680,7 @@ def main(argv: list[str] | None = None) -> int:
         window_size=window_size_from_game_config(public_root),
         scene_timeout=args.scene_timeout,
         idle_seconds=args.idle,
+        meta=meta,
     )
     summary = summarize(results)
     report = {
@@ -578,6 +693,8 @@ def main(argv: list[str] | None = None) -> int:
         "sweptAt": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "durationSeconds": round(time.time() - started, 1),
         "partial": bool(args.scenes or args.limit),
+        # 宿主页里 navigator.gpu.requestAdapter() 的结果（tools/qt_webgpu.probe_webgpu）：判"这份扫描是不是在真 GPU 上跑的"
+        "webgpu": meta.get("webgpu"),
         **summary,
         "scenes": results,
     }

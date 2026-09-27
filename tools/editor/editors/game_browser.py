@@ -1,4 +1,4 @@
-"""Embedded WebEngine panel for running the Vite dev game inside the editor."""
+"""Embedded game view for running the Vite dev game inside the editor (WebGPU → `tools.qt_webgpu.WebGpuView`)."""
 from __future__ import annotations
 
 import html
@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QStyle, QSizePolicy,
 )
 
-from tools.webengine_cache_policy import apply_no_cache
+from tools.qt_webgpu import WebGpuView, webgpu_view_available
 
 from .. import theme
 
@@ -50,19 +50,7 @@ def _safe_placeholder(message: str) -> str:
     )
 
 
-try:
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
-
-    from ..web_engine_page import QuietWebEnginePage
-except ImportError:  # pragma: no cover
-    QWebEngineView = None  # type: ignore[assignment,misc]
-    QWebEnginePage = None  # type: ignore[assignment,misc]
-    QWebEngineProfile = None  # type: ignore[assignment,misc]
-    QuietWebEnginePage = None  # type: ignore[assignment,misc]
-
-
-_GAME_WEB_PROFILE = None
+_LEGACY_PURGED = False
 
 
 def _default_app_data_dir() -> Path:
@@ -99,35 +87,28 @@ def _purge_legacy_profile_dir() -> None:
               file=sys.stderr, flush=True)
 
 
-def _game_webengine_profile():
-    """游戏预览的 profile:**off-the-record + NoCache,一个字节都不落盘。**
+def _make_game_view(parent):
+    """游戏预览的网页视图。
 
-    制作人 2026-09-08 定死"任何 desktop 窗口都不许留缓存"(缘由与全仓口径见
-    `tools/webengine_cache_policy.py`)。这里连 `setPersistentStoragePath` 一起去掉,
-    走无名构造 = off-the-record:HTTP 缓存、V8 code cache、GPUCache、localStorage 统统不落地。
-    预览不丢任何东西——存档与设置早就走 dev server 的文件后端
-    (`src/core/storage/persistentStore.ts` 优先选 HttpFileStore),localStorage 只是它的兜底。
+    游戏渲染只有 WebGPU,而 QtWebEngine 没编 Dawn、永远拿不到 WebGPU 适配器(见 `tools/qt_webgpu.py`),
+    所以这里用 `WebGpuView`(Windows 上是 WebView2)。缓存口径由它负责:每进程一个新的 WebView2
+    用户数据目录 + 禁缓存开关——制作人 2026-09-08 定死"任何 desktop 窗口都不许留缓存"
+    (缘由见 `tools/webengine_cache_policy.py`)。离屏平台 / 没装 QtWebView 时返回 None。
     """
-    global _GAME_WEB_PROFILE
-    if QWebEngineProfile is None:
+    global _LEGACY_PURGED
+    if not webgpu_view_available():
         return None
-    if _GAME_WEB_PROFILE is not None:
-        return _GAME_WEB_PROFILE
-
-    _purge_legacy_profile_dir()
-    profile = QWebEngineProfile()          # 无名 = off-the-record,不落磁盘
-    apply_no_cache(profile)
-    _GAME_WEB_PROFILE = profile
-    return profile
+    if not _LEGACY_PURGED:
+        _LEGACY_PURGED = True
+        _purge_legacy_profile_dir()
+    return WebGpuView(parent)
 
 
-def _make_game_page(parent):
-    if QuietWebEnginePage is None:
-        return None
-    profile = _game_webengine_profile()
-    if profile is not None:
-        return QuietWebEnginePage(profile, parent)
-    return QuietWebEnginePage(parent)
+def _unavailable_reason() -> str:
+    return (
+        "这个环境建不了能跑 WebGPU 的网页视图(需要真窗口平台 + PySide6.QtWebView;"
+        "QtWebEngine 没有 WebGPU,跑不了游戏)。用 External browser 在 Chrome / Edge 里开。"
+    )
 
 
 #: 页面自证"`src/main.ts` 真的跑过"的探针。`__GAMEDRAFT_BUILD__` 是 main.ts 顶层
@@ -207,11 +188,7 @@ class _GameBootWatchdog(QObject):
         if self._ticks > self._MAX_TICKS:
             self.disarm()
             return
-        page = self._view.page()
-        if page is None:
-            self.disarm()
-            return
-        page.runJavaScript(_BOOT_PROBE_JS, self._on_probe)
+        self._view.run_js(_BOOT_PROBE_JS, self._on_probe)
 
     def _on_probe(self, verdict: object) -> None:
         if self._done:
@@ -233,48 +210,24 @@ class _GameBootWatchdog(QObject):
             self.disarm()
 
     def _recover(self) -> None:
-        """清一遍缓存(现在本就是空的)再绕过缓存重载一次。
+        """重载一次。
 
-        profile 已经是 off-the-record + `NoCache`,这一手是**兜底**:万一哪天有人给某个壳
-        重新接上缓存,这条路径仍然能自愈,不必再查一遍 2026-09-08 那场。
-
-        ⚠ **两件事的先后不能颠倒**:`clearHttpCache()` 是异步的,清理**在飞的时候发起重载
-        会把这次加载整个吊死**(2026-09-08 实测:`loadStarted` 之后 `loadFinished` 再也不来,
-        页面永远停在旧文档上)。等 `clearHttpCacheCompleted` 再重载则实测能救回来。
-        老 Qt 上没有这个信号,就退化成只绕缓存重载。
+        以前这里先清 HTTP 缓存、等 `clearHttpCacheCompleted` 再绕缓存重载(清理在飞时重载会把加载吊死)。
+        预览换成 WebView2(`tools/qt_webgpu.WebGpuView`)之后没有可清的缓存:每个进程一份新的用户数据目录 +
+        `--disable-http-cache`,坏字节无处可存——剩下能让模块图断掉的只有改坏的 import / dev server 半路挂掉,
+        重载一次就是全部补救。
         """
         self._recovered = True
         self._ticks = 0
         self._log(
             "首屏没起来(main.ts 未执行、页面停在空壳上)——重载一次试试。",
         )
-        profile = _game_webengine_profile()
-        signal = getattr(profile, "clearHttpCacheCompleted", None) if profile else None
-        if signal is None:
-            self._reload_bypassing_cache()
-            return
-
-        def on_cleared() -> None:
-            try:
-                signal.disconnect(on_cleared)
-            except (RuntimeError, TypeError):  # pragma: no cover - 已断开/已析构
-                pass
-            self._reload_bypassing_cache()
-
-        signal.connect(on_cleared)
-        profile.clearHttpCache()
-
-    def _reload_bypassing_cache(self) -> None:
-        if self._done or self._view is None:
-            return
-        page = self._view.page()
-        if page is None or QWebEnginePage is None:
-            return
-        page.triggerAction(QWebEnginePage.WebAction.ReloadAndBypassCache)
+        if self._view is not None:
+            self._view.reload()
 
 
 class GameBrowserTab(QWidget):
-    """Toolbar + embedded Chromium view (or fallback if WebEngine missing)."""
+    """Toolbar + embedded game view (`WebGpuView`; fallback label if it can't be built here)."""
 
     run_requested = Signal()
     run_dev_requested = Signal()
@@ -282,7 +235,8 @@ class GameBrowserTab(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._has_webengine = QWebEngineView is not None
+        self._view = _make_game_view(self)
+        self._has_webengine = self._view is not None
         self._placeholder_message: str | None = None
 
         root = QVBoxLayout(self)
@@ -333,10 +287,7 @@ class GameBrowserTab(QWidget):
         bar.addWidget(self._url_line, stretch=1)
         root.addLayout(bar)
 
-        if self._has_webengine:
-            self._view = QWebEngineView(self)
-            if QuietWebEnginePage is not None:
-                self._view.setPage(_make_game_page(self._view))
+        if self._view is not None:
             self._view.setMinimumSize(0, 0)
             self._view.setSizePolicy(
                 QSizePolicy.Policy.Ignored,
@@ -348,12 +299,8 @@ class GameBrowserTab(QWidget):
                 "Press Run (F5) to start the dev server and load the game here.",
             )
         else:
-            self._view = None
             self._boot_watchdog = None
-            tip = QLabel(
-                "PySide6 Qt WebEngine is not available. "
-                "Install the full PySide6 extras or use Run with an external browser.",
-            )
+            tip = QLabel(_unavailable_reason())
             tip.setWordWrap(True)
             tip.setAlignment(Qt.AlignmentFlag.AlignTop)
             root.addWidget(tip, stretch=1)
@@ -383,7 +330,7 @@ class GameBrowserTab(QWidget):
         if self._boot_watchdog is not None:
             self._boot_watchdog.disarm()
         self._placeholder_message = message
-        self._view.setHtml(_safe_placeholder(message))
+        self._view.set_html(_safe_placeholder(message))
 
     def on_editor_theme_changed(self, _theme_id: str) -> None:
         if self._placeholder_message is not None:
@@ -400,7 +347,7 @@ class GameBrowserTab(QWidget):
         """
         if not self._view:
             return False
-        self._view.page().runJavaScript(code, callback)
+        self._view.run_js(code, callback)
         return True
 
     # ---- internals --------------------------------------------------------
@@ -434,10 +381,8 @@ class GamePlayWindow(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
 
-        if QWebEngineView is not None:
-            self._view = QWebEngineView(self)
-            if QuietWebEnginePage is not None:
-                self._view.setPage(_make_game_page(self._view))
+        self._view = _make_game_view(self)
+        if self._view is not None:
             self._view.setMinimumSize(0, 0)
             self._view.setSizePolicy(
                 QSizePolicy.Policy.Ignored,
@@ -446,7 +391,6 @@ class GamePlayWindow(QWidget):
             lay.addWidget(self._view)
             self._boot_watchdog = _GameBootWatchdog(self._view, "window", self)
         else:
-            self._view = None
             self._boot_watchdog = None
 
     def load_url(self, url: str) -> None:
@@ -454,6 +398,12 @@ class GamePlayWindow(QWidget):
             if self._boot_watchdog is not None:
                 self._boot_watchdog.arm()
             self._view.load(QUrl(url))
+
+    def showEvent(self, event) -> None:  # noqa: N802 — Qt 覆写
+        super().showEvent(event)
+        # 游戏页是原生子窗口(WebView2):窗口出来就把键盘焦点交给它,不然要先点一下画面才能操作
+        if self._view is not None:
+            QTimer.singleShot(0, self._view, self._view.focus_page)
 
     def reload(self) -> None:
         if self._view:
@@ -466,7 +416,7 @@ class GamePlayWindow(QWidget):
 
     def run_js(self, code: str) -> None:
         if self._view:
-            self._view.page().runJavaScript(code)
+            self._view.run_js(code)
 
     def run_js_async(self, code: str, callback) -> bool:
         """非阻塞取值：结果经 callback 回传。返回是否真的发出去了。
@@ -476,7 +426,7 @@ class GamePlayWindow(QWidget):
         """
         if not self._view:
             return False
-        self._view.page().runJavaScript(code, callback)
+        self._view.run_js(code, callback)
         return True
 
     def run_js_result(self, code: str, timeout_ms: int = 1500) -> object | None:
@@ -493,13 +443,16 @@ class GamePlayWindow(QWidget):
             result["value"] = value
             loop.quit()
 
-        self._view.page().runJavaScript(code, finish)
-        QTimer.singleShot(timeout_ms, loop, finish)
-        loop.exec()
+        self._view.run_js(code, finish)
+        # WebView2 在导航途中会**同步**回调(报错串);那时 finish 已经跑过、loop.quit() 落空,
+        # 再 exec 就永远等不到退出(超时回调见 done 已置位直接返回)——实测吊死过
+        if not done["value"]:
+            QTimer.singleShot(timeout_ms, loop, finish)
+            loop.exec()
         return result["value"]
 
     def closeEvent(self, event) -> None:
-        # 关窗流程里视图随时会被销毁,看门狗的下一拍不能再去碰 page()。
+        # 关窗流程里视图随时会被销毁,看门狗的下一拍不能再去碰视图。
         if self._boot_watchdog is not None:
             self._boot_watchdog.disarm()
         # WebEngine 关窗口默认不触发 pagehide/beforeunload，必须先停 Howler 再关视图
@@ -526,5 +479,5 @@ class GamePlayWindow(QWidget):
         js = """(function(){try{if(window.__gameDestroy)window.__gameDestroy();}catch(e){}
 try{if(window.Howler){if(typeof Howler.stop==='function')Howler.stop();
 if(typeof Howler.unload==='function')Howler.unload();}}catch(e){}})();0;"""
-        self._view.page().runJavaScript(js, arm_and_close)
+        self._view.run_js(js, arm_and_close)
         QTimer.singleShot(400, self, arm_and_close)

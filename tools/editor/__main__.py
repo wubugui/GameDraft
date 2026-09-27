@@ -7,6 +7,7 @@ import sys
 import traceback
 from pathlib import Path
 
+from tools.qt_webgpu import apply_webgpu_chromium_flags
 from tools.webengine_cache_policy import (
     apply_no_cache_to_default_profile, disable_all_caches,
 )
@@ -14,6 +15,8 @@ from tools.webengine_cache_policy import (
 # 桌面窗口一律禁缓存(制作人 2026-09-08 定死,缘由见该模块)。Chromium 的开关只在
 # WebEngine 初始化时读一次,所以必须排在下面的 WebEngine import / QApplication 之前。
 disable_all_caches()
+# 游戏预览 / 气味预览跑的是 WebGPU 游戏渲染:走 WebView2(tools/qt_webgpu.py),它的开关同样只读一次。
+apply_webgpu_chromium_flags()
 
 try:
     import PySide6.QtWebEngineWidgets  # noqa: F401 — WebEngine before QApplication

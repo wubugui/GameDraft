@@ -132,6 +132,12 @@ class Backend:
 
 def handler_for(backend: Backend):
     class Handler(SimpleHTTPRequestHandler):
+        # 静态文件的类型不能交给 mimetypes:它在 Windows 上读注册表,有的机器把 .js 登记成 text/plain,
+        # 模块脚本就被 nosniff + 严格 MIME 检查整个拒掉,界面一片空白(2026-09-27 本机实测)
+        extensions_map = {**SimpleHTTPRequestHandler.extensions_map, '.js': 'text/javascript',
+                          '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
+                          '.wasm': 'application/wasm', '.svg': 'image/svg+xml', '.html': 'text/html'}
+
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(TOOL / 'dist'), **kwargs)
 

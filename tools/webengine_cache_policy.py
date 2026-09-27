@@ -32,6 +32,8 @@ _NO_CACHE_FLAGS = (
     "--disk-cache-size=1",
     "--media-cache-size=1",
 )
+#: 同一份开关的公开名:WebView2 宿主(`tools/qt_webgpu.py`,游戏 / WebGPU 页面)也吃这一份。
+NO_CACHE_CHROMIUM_FLAGS = _NO_CACHE_FLAGS
 
 _ENV_KEY = "QTWEBENGINE_CHROMIUM_FLAGS"
 

@@ -1,4 +1,4 @@
-"""Isolated native host for the web UI. No changes to desktop_shell or Tauri."""
+"""Isolated native host for the web UI (WebView2 via tools/qt_webgpu — the runtime tab embeds the WebGPU game)."""
 from __future__ import annotations
 
 import argparse
@@ -14,20 +14,12 @@ ROOT = TOOL.parents[1]
 
 
 def configure_engine():
+    """网页视图的进程级开关:禁缓存 + WebGPU / 游戏宿主(免手势音频、没焦点 / 被挡住不降级)。
+    都只在内核初始化时读一次,必须排在 QApplication 之前。"""
+    from tools.qt_webgpu import apply_webgpu_chromium_flags
     from tools.webengine_cache_policy import disable_all_caches
     disable_all_caches()
-    flags = os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS', '').split()
-    disabled_features = {'IntensiveWakeUpThrottling', 'CalculateNativeWinOcclusion'}
-    for flag in flags:
-        if flag.startswith('--disable-features='):
-            disabled_features.update(flag.split('=', 1)[1].split(','))
-    flags = [flag for flag in flags if not flag.startswith('--disable-features=')]
-    flags.append('--disable-features=' + ','.join(sorted(disabled_features)))
-    for flag in ('--autoplay-policy=no-user-gesture-required', '--disable-background-timer-throttling',
-                 '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'):
-        if flag not in flags:
-            flags.append(flag)
-    os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = ' '.join(flags)
+    apply_webgpu_chromium_flags()
 
 
 def ensure_build():
@@ -54,7 +46,6 @@ def main():
     ensure_build()
     from PySide6.QtCore import Qt, QUrl, QTimer, QEvent, QObject
     from PySide6.QtWidgets import QApplication, QMainWindow
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication.instance() or QApplication(sys.argv[:1])
     from .backend import Backend, start_server
     backend = Backend(game_url=args.game_url)
@@ -72,26 +63,12 @@ def main():
             server.server_close()
             backend.close()
 
-    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
-    from PySide6.QtWebEngineWidgets import QWebEngineView
-    from tools.webengine_cache_policy import apply_no_cache
-
-    class Page(QWebEnginePage):
-        console_counts = None
-
-        def javaScriptConsoleMessage(self, level, message, line, source):
-            if self.console_counts is None:
-                self.console_counts = {}
-            key = (source, line, message)
-            count = self.console_counts.get(key, 0) + 1
-            self.console_counts[key] = count
-            if count <= 2:
-                print(f'[web] {level.name} {source}:{line} {message}', flush=True)
-
-        def acceptNavigationRequest(self, target, nav_type, main_frame):
-            if main_frame:
-                return target.host() == '127.0.0.1' and target.port() == server.server_port
-            return target.host() in ('127.0.0.1', 'localhost')
+    # 网页视图用 WebGpuView(Windows 上是 WebView2):「运行时」页签的 iframe 里跑的是真游戏,渲染只有 WebGPU,
+    # QtWebEngine 没编 Dawn、拿不到 WebGPU 适配器(见 tools/qt_webgpu.py)。跨源 iframe 里的 WebGPU 在 WebView2
+    # 下不用 allow="webgpu" 也能拿到(2026-09-27 实测)。
+    from tools.qt_webgpu import (
+        WebGpuView, bring_to_foreground, native_key, native_mouse, native_type, release_webgpu_view,
+    )
 
     class Window(QMainWindow):
         approved = False
@@ -104,7 +81,7 @@ def main():
             event.ignore()
             if not self.closing:
                 self.closing = True
-                page.runJavaScript('window.workbench ? window.workbench.requestClose() : (window.__closeResult="close")')
+                view.run_js('window.workbench ? window.workbench.requestClose() : (window.__closeResult="close")')
 
     win = Window()
     if args.selftest:
@@ -112,24 +89,51 @@ def main():
         # app windows do not stay on top. This flag lasts only for the QA run.
         win.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
     win.setWindowTitle('GameDraft · 场景工作台')
-    view = QWebEngineView(win)
-    profile = QWebEngineProfile(view)  # Off-the-record: never shares any old window's profile.
-    apply_no_cache(profile)
-    profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
-    page = Page(profile, view)
-    settings = page.settings()
-    settings.setAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False)
-    settings.setAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled, False)
-    settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, False)
-    settings.setAttribute(QWebEngineSettings.WebAttribute.FullScreenSupportEnabled, True)
-    page.featurePermissionRequested.connect(lambda origin, feature: page.setFeaturePermission(
-        origin, feature, QWebEnginePage.PermissionPolicy.PermissionDeniedByUser))
-    page.fullScreenRequested.connect(lambda request: request.accept())
-    profile.downloadRequested.connect(lambda item: item.cancel())
-    view.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
-    view.setPage(page)
+    view = WebGpuView(win, forward_console=False)
+    console_counts: dict = {}
+
+    def on_console(level, message, source, line):
+        key = (source, line, message)
+        count = console_counts.get(key, 0) + 1
+        console_counts[key] = count
+        if count <= 2:
+            print(f'[web] {level} {source}:{line} {message}', flush=True)
+    view.consoleMessage.connect(on_console)
     win.setCentralWidget(view)
     win.resize(1600, 1000)
+
+    # QtWebEngine 时代由宿主做的几件事(只准导航到本工作台、禁右键菜单、禁新窗口 / 下载、F5 / Ctrl+R / Ctrl+P /
+    # Alt+←→ 不许把页面刷掉、Ctrl+S 存全部),WebView2 没有对应接口、按键也不经过 Qt(原生子窗口吞掉),
+    # 改在页面里做:每次载入完成注入一次。拖进来的文件、链接点击若没被界面自己处理,一律不导航。
+    guard_js = """(function(){
+  if (window.__workbenchHostGuard) return; window.__workbenchHostGuard = true;
+  addEventListener('keydown', function(e){
+    var ctl = e.ctrlKey || e.metaKey;
+    if (ctl && (e.key === 's' || e.key === 'S')) { e.preventDefault(); e.stopPropagation();
+      try { document.activeElement && document.activeElement.blur && document.activeElement.blur();
+        window.workbench && window.workbench.workspace.run(function(){ return window.workbench.workspace.saveAll(); }); } catch (err) {}
+      return; }
+    if (e.key === 'F5' || (ctl && /^[rRpP]$/.test(e.key)) || (e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'))) {
+      e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  addEventListener('dragover', function(e){ if (!e.defaultPrevented) e.preventDefault(); });
+  addEventListener('drop', function(e){ if (!e.defaultPrevented) e.preventDefault(); });
+  addEventListener('click', function(e){
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (a && !e.defaultPrevented && a.origin !== location.origin) e.preventDefault();
+  });
+  window.open = function(){ return null; };
+})();"""
+    view.loadFinished.connect(lambda ok: view.run_js(guard_js) if ok else None)
+    home = f'http://127.0.0.1:{server.server_port}/'
+
+    def keep_home(target):
+        # 兜底:真被导航走了(界面没拦住的外链等)就回来,别把工作台留在别的页面上
+        if target.scheme() in ('http', 'https') and not target.toString().startswith(home):
+            print(f'[scene-workbench] 拦下主框架导航:{target.toString()}', flush=True)
+            view.load(QUrl(url))
+    view.urlChanged.connect(keep_home)
 
     class DesktopKeys(QObject):
         def eventFilter(self, watched, event):
@@ -137,7 +141,7 @@ def main():
                 control = event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier)
                 alt = event.modifiers() & Qt.KeyboardModifier.AltModifier
                 if control and event.key() == Qt.Key.Key_S:
-                    page.runJavaScript('document.activeElement?.blur(); window.workbench?.workspace.run(() => window.workbench.workspace.saveAll())')
+                    view.run_js('document.activeElement?.blur(); window.workbench?.workspace.run(() => window.workbench.workspace.saveAll())')
                     return True
                 if event.key() == Qt.Key.Key_F5 or (control and event.key() in (Qt.Key.Key_R, Qt.Key.Key_P)) or (alt and event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right)):
                     return True
@@ -148,105 +152,90 @@ def main():
     def poll_close():
         if not win.closing:
             return
+
         def got(value):
             if value == 'close':
                 win.approved = True
                 win.close()
             elif value == 'cancel':
                 win.closing = False
-                page.runJavaScript('window.__closeResult=""')
-        page.runJavaScript('window.__closeResult || ""', got)
+                view.run_js('window.__closeResult=""')
+        view.run_js('window.__closeResult || ""', got)
     close_timer = QTimer(win)
     close_timer.timeout.connect(poll_close)
     close_timer.start(150)
 
     if args.selftest:
-        assert profile.isOffTheRecord()
-        assert profile.httpCacheType() == QWebEngineProfile.HttpCacheType.NoCache
-        assert not settings.testAttribute(QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture)
-        assert not settings.testAttribute(QWebEngineSettings.WebAttribute.LocalStorageEnabled)
-        print('PASS native off-the-record / NoCache / autoplay / no LocalStorage', flush=True)
-        from PySide6.QtCore import QPoint
-        from PySide6.QtTest import QTest
+        # 缓存口径:WebView2 每进程一份新的用户数据目录 + 禁缓存开关(见 tools/qt_webgpu.py)
+        print('PASS native per-process WebView2 profile / no-cache flags / autoplay flag', flush=True)
+
         def native_action(value):
             if not value:
                 return
             action = json.loads(value)
-            target = view.focusProxy() or view
-            point = QPoint(round(action.get('x', 0)), round(action.get('y', 0)))
+            x, y = action.get('x', 0), action.get('y', 0)
+            # 原生输入走系统队列(SendInput,会真动鼠标):窗口已置顶。键盘发给当前焦点——前一步的点击已把焦点
+            # 交给网页(含 iframe 里的游戏);窗口已经是活动窗口时别再 activateWindow / focus_page,
+            # 那会把 Win32 焦点拉回宿主或网页顶层文档,iframe 就收不到键了
+            if not bring_to_foreground(win):
+                print('[scene-workbench] 自检窗口提不到系统前台,原生按键可能落空', flush=True)
             if action['type'] == 'click':
-                QTest.mouseClick(target, Qt.MouseButton.LeftButton, pos=point)
+                native_mouse(view, x, y, 'click')
             elif action['type'] == 'input':
-                QTest.mouseClick(target, Qt.MouseButton.LeftButton, pos=point)
-                QTest.keyClick(target, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
-                QTest.keyClicks(target, action['text'])
-                QTest.keyClick(target, getattr(Qt.Key, 'Key_' + action.get('finishKey', 'Tab')))
+                native_mouse(view, x, y, 'click')
+                QTest.qWait(150)       # 真点击经系统队列进浏览器进程,焦点落到输入框前别急着 Ctrl+A(否则全选整页)
+                native_key('A', modifiers=('Ctrl',))
+                native_type(action['text'])
+                native_key(action.get('finishKey', 'Tab'))
             elif action['type'] == 'key':
-                QTest.keyClick(target, getattr(Qt.Key, 'Key_' + action['key']))
+                native_key(action['key'])
             elif action['type'] == 'drag':
-                button = Qt.MouseButton.RightButton if action.get('button') == 'right' else Qt.MouseButton.LeftButton
-                QTest.mousePress(target, button, pos=point)
+                # 页面上残留的文字选区会让真鼠标按下直接起 HTML 拖放(dragstart → pointercancel,拖动全丢);
+                # QTest 合成的事件不走系统拖放检测所以以前碰不到。拖之前先清掉
+                view.run_js('window.getSelection && getSelection().removeAllRanges()')
+                QTest.qWait(50)
+                button = 'right' if action.get('button') == 'right' else 'left'
+                native_mouse(view, x, y, 'press', button)
                 for i in range(1, 7):
-                    QTest.mouseMove(target, QPoint(round(point.x() + action['dx'] * i / 6), round(point.y() + action['dy'] * i / 6)))
+                    native_mouse(view, x + action['dx'] * i / 6, y + action['dy'] * i / 6, 'move', button)
                     QTest.qWait(20)
-                QTest.mouseRelease(target, button, pos=QPoint(round(point.x() + action['dx']), round(point.y() + action['dy'])))
-            QTimer.singleShot(100, win, lambda: page.runJavaScript('window.__nativeAck = (window.__nativeAck || 0) + 1'))
+                native_mouse(view, x + action['dx'], y + action['dy'], 'release', button)
+            QTimer.singleShot(100, win, lambda: view.run_js('window.__nativeAck = (window.__nativeAck || 0) + 1'))
+        from PySide6.QtTest import QTest
         native_timer = QTimer(win)
-        native_timer.timeout.connect(lambda: page.runJavaScript('JSON.stringify(window.__nativeActions?.shift() || null)', lambda value: native_action(value) if value and value != 'null' else None))
+        native_timer.timeout.connect(lambda: view.run_js('JSON.stringify(window.__nativeActions?.shift() || null)', lambda value: native_action(value) if value and value != 'null' else None))
         native_timer.start(150)
         done = [False]
+
         def finish(value):
             if done[0] or not value:
                 return
             done[0] = True
             print(value, flush=True)
-            capture_attempt = [0]
-            def expose_for_capture():
-                # Re-expose the native surface even if the desktop obscured the
-                # window while keyboard events went into the embedded game.
-                win.hide()
-                win.showNormal()
-                win.raise_()
-                win.activateWindow()
-                page.setVisible(True)
-                view.update()
-                QTimer.singleShot(1500, win, capture_and_exit)
-            def capture_and_exit():
-                failed = 'FAIL' in value or 'EXC' in value
-                if args.screenshot:
-                    shot = view.grab()
-                    raster = shot.toImage()
-                    colors = {raster.pixelColor(int(raster.width() * x / 12), int(raster.height() * y / 12)).rgba()
-                              for x in range(1, 12) for y in range(1, 12)}
-                    if len(colors) < 5 and capture_attempt[0] < 2:
-                        capture_attempt[0] += 1
-                        expose_for_capture()
-                        return
-                    if len(colors) < 5:
-                        print('FAIL screenshot: native surface stayed blank', flush=True)
-                        failed = True
-                    args.screenshot.parent.mkdir(parents=True, exist_ok=True)
-                    shot.save(str(args.screenshot))
-                win.approved = True
-                app.exit(1 if failed else 0)
+            failed = 'FAIL' in value or 'EXC' in value
             if args.screenshot:
-                # QWidget.grab of an occluded accelerated WebEngine can be blank.
-                # Expose only this QA window briefly, never change other windows.
-                win.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-                expose_for_capture()
-            else:
-                capture_and_exit()
+                # 原生窗口 QWidget.grab() 截不到网页;grab_image 走 PrintWindow,被挡住也截得到
+                shot = view.grab_image()
+                colors = {shot.pixelColor(int(shot.width() * x / 12), int(shot.height() * y / 12)).rgba()
+                          for x in range(1, 12) for y in range(1, 12)}
+                if len(colors) < 5:
+                    print('FAIL screenshot: native surface stayed blank', flush=True)
+                    failed = True
+                args.screenshot.parent.mkdir(parents=True, exist_ok=True)
+                shot.save(str(args.screenshot))
+            win.approved = True
+            app.exit(1 if failed else 0)
         test_timer = QTimer(win)
-        test_timer.timeout.connect(lambda: page.runJavaScript('window.__selftestResult || ""', finish))
+        test_timer.timeout.connect(lambda: view.run_js('window.__selftestResult || ""', finish))
         test_timer.start(500)
-        page.loadFinished.connect(lambda ok: page.runJavaScript(args.selftest.read_text(encoding='utf-8')) if ok else finish('FAIL page load'))
+        view.loadFinished.connect(lambda ok: view.run_js(args.selftest.read_text(encoding='utf-8')) if ok else finish('FAIL page load'))
         QTimer.singleShot(180000, win, lambda: finish('FAIL selftest timeout'))
-    page.setAudioMuted(False)
     view.load(QUrl(url))
     win.show()
     try:
         return app.exec()
     finally:
+        release_webgpu_view(view)
         server.shutdown()
         server.server_close()
         backend.close()

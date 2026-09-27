@@ -8,14 +8,29 @@
     for (let i = 0; i < 100 && (window.__nativeAck || 0) === before; i++) await sleep(40);
     check((window.__nativeAck || 0) > before, 'native ' + action.type);
   };
-  const center = element => { const r = element.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+  // 先滚进视野:WebView2 宿主按系统文字缩放算 devicePixelRatio(本机 1.24),同样大的窗口 CSS 空间更小,
+  // 列表里靠下的按钮可能在滚动区外,真鼠标点在它的矩形中心会点到盖在上面的别的面板
+  const center = element => { element.scrollIntoView({ block: 'center' }); const r = element.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
   try {
     for (let i = 0; i < 100 && (!window.workbench?.workspace.scene || window.workbench.workspace.loading); i++) await sleep(200);
     const w = window.workbench.workspace;
     check(w.scene && w.cal && w.image, '真实场景、背景和深度加载');
     check(w.dirtySlots.length === 0, '打开不产生脏数据');
-    check(!navigator.userActivation.hasBeenActive, '音频验证前没有任何用户手势');
-    const audio = new AudioContext(); await audio.resume(); check(audio.state === 'running', '无点击手势音频上下文运行'); await audio.close();
+    // 宿主是 WebView2(tools/qt_webgpu):宿主执行脚本(ExecuteScript——本自检与宿主的轮询都这么进来)本身算一次用户激活,
+    // 还会传给同源子框架,顶层文档的 hasBeenActive 恒为 true。改在一个 data: 的 iframe(不透明源,激活传不进去)里验
+    // "没有手势也能出声",结果 postMessage 回来
+    const quiet = await new Promise(resolve => {
+      const frame = document.createElement('iframe'); frame.style.display = 'none';
+      const onMessage = e => { if (e.source === frame.contentWindow) { removeEventListener('message', onMessage); frame.remove(); resolve(e.data); } };
+      addEventListener('message', onMessage);
+      frame.src = 'data:text/html,' + encodeURIComponent('<script>(async () => { const active = navigator.userActivation.hasBeenActive;'
+        + ' const a = new AudioContext(); await a.resume(); const state = a.state; await a.close();'
+        + ' parent.postMessage({ active, state }, "*"); })();<\/script>');
+      document.body.append(frame);
+      setTimeout(() => resolve({ active: null, state: 'timeout' }), 5000);
+    });
+    check(quiet.active === false, '音频验证前没有任何用户手势');
+    check(quiet.state === 'running', '无点击手势音频上下文运行');
     const width = document.querySelector('canvas').getBoundingClientRect().width;
     check(width > 400, '二维画布实际布局宽度');
     const entity = w.marks().find(m => m.type === 'entity');

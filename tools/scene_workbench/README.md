@@ -4,7 +4,7 @@
 
 本目录是新增的独立工具。没有替换旧入口，也不需要修改根目录的 package.json、Vite、Tauri 或编辑器注册表。
 
-界面使用 React + TypeScript；2D 使用 Canvas，3D 使用 Three.js，最终光影使用原 Pixi 游戏运行时；桌面外壳使用现有 PySide6 / Qt WebEngine，Python 适配层调用原工具的数据逻辑。
+界面使用 React + TypeScript；2D 使用 Canvas，3D 使用 Three.js，最终光影使用原游戏运行时（engine2d / WebGPU）；桌面外壳使用 PySide6 + `tools/qt_webgpu.WebGpuView`（Windows 上是 WebView2——游戏只有 WebGPU，Qt WebEngine 拿不到适配器），Python 适配层调用原工具的数据逻辑。
 
 ## 启动
 
@@ -56,7 +56,7 @@ node scripts/pytool.cjs scene_workbench --scene test_room_b
 | 声学反射、直达、IR | 直接 import `src/audio/acousticSpace.ts`，使用作者态听者与选择的声源 |
 | 反射面可视化的墙／水平面几何 | 原 `acoustic_workbench/viewer/mathx.js` 中的 `Geo.quad` |
 | 灯光默认值、类型转换、校验、运行时传输、时段合并与拆分 | `editor.editors.scene_lights` 中原函数 |
-| WebEngine 零缓存策略 | `tools.webengine_cache_policy.disable_all_caches / apply_no_cache` |
+| 网页视图与零缓存策略 | `tools.qt_webgpu.WebGpuView / apply_webgpu_chromium_flags`（WebView2，每进程新的用户数据目录 + 禁缓存开关）与 `tools.webengine_cache_policy.disable_all_caches` |
 | 专用游戏预览 | 原 `vite.config.ts` 插件与 `src/main.ts`，只适配只读场景索引的根目录；插件产生的临时状态写在新目录 |
 
 `backend.py` 只做请求分发与过期文档检查。没有新 JSON 序列化器、另一个轨迹烘焙器或另一套声学算法。原有 writer 自己的规范化／备份行为保持原样；没有扩展旧数据格式。
@@ -65,7 +65,7 @@ node scripts/pytool.cjs scene_workbench --scene test_room_b
 
 ## 桌面行为
 
-独立 Qt WebEngine profile，不与其他工具或用户浏览器共享；调用统一零缓存策略；禁 LocalStorage、持久 Cookie、自动弹窗与下载；无需音频点击解锁；关闭后台定时器和渲染降速；拦截网页右键菜单、F5、Ctrl+R、Ctrl+P 和浏览器前进后退。保留画布自身的缩放与编辑快捷键。不申请摄像头、麦克风等浏览器权限。
+网页视图是 `tools/qt_webgpu.WebGpuView`（Windows 上是 WebView2——「运行时」页签里的游戏只有 WebGPU，Qt WebEngine 拿不到适配器）：每个进程一份新的用户数据目录，不与其他工具或用户浏览器共享；统一禁缓存开关；无需音频点击解锁；关闭后台定时器和渲染降速。WebView2 没有 Qt WebEngine 那几个宿主钩子，改由宿主在每次载入后往页面注入守卫：拦截右键菜单、F5、Ctrl+R、Ctrl+P 和浏览器前进后退，禁新窗口，拖进来的文件 / 外链不导航（真被导航走了就回到工作台）。保留画布自身的缩放与编辑快捷键。自检的原生输入走系统输入队列（会真动鼠标，窗口置顶）。
 
 专用运行时关闭 Vite HMR、开发 WebSocket 和浏览器控制台转发。Ctrl+S 在嵌入的游戏中也保存工作台文档。
 

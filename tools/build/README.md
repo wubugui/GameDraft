@@ -114,7 +114,7 @@ npm run tauri:build
 tools/build/
   asset_manifest.py     抽取清单生成器（只读；反向能力复用素材审计的引用语义）
   manifest_rules.json   显式抽取规则（每条都注明了 src 里的出处）
-  scene_sweep.py        全场景抓取扫描（QtWebEngine 无头驱动 + 请求拦截 + 清单核对；编排在 scripts/scene_sweep.mjs）
+  scene_sweep.py        全场景抓取扫描（WebView2 真窗口驱动 + 记录代理 + 清单核对；编排在 scripts/scene_sweep.mjs）
   tests/                回归测试，含"生成清单不动工程里任何文件"这条
 scripts/
   package.mjs           装配器：清单 → staging → 转码 → 报告
