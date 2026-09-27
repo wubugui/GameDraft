@@ -70,6 +70,8 @@
   #center { position: relative; overflow: hidden; background: #111; }
   #center canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
   #overlay3d { pointer-events: none; }
+  /* 原画视图的标注层（2D 画布）叠在 GPU 画面（#view2d，游戏的 WebGPU 渲染器）上：不吃鼠标，事件照旧在 #view2d 上收 */
+  #overlay2d { pointer-events: none; }
   #coords { position: absolute; left: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 4px; font: 12px Consolas, "Cascadia Mono", monospace; white-space: pre; pointer-events: none; }
   #legend { position: absolute; right: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; line-height: 1.5; }
   /* 场景芯片只是一块字（没有可点的东西）：不吃鼠标——原来盖在画布左上角约 400×40 px，2D 整场时正好是原画左上角，
@@ -213,7 +215,7 @@
       <label class="chk"><input type="checkbox" id="layer_grid"> 地面网格（2 m）</label>
       <label class="chk"><input type="checkbox" id="layer_particles"> 粒子</label>
       <label class="chk"><input type="checkbox" id="layer_rings"> 群体半径</label>
-      <label class="chk" title="3D 视图画线框；原画视图画真实预览（运行时那段着色器）"><input type="checkbox" id="layer_beams"> 光柱</label>
+      <label class="chk" title="3D 视图画线框；原画视图画游戏同一个渲染器画的光柱（VfxRenderer，WGSL）"><input type="checkbox" id="layer_beams"> 光柱</label>
       <label class="chk"><input type="checkbox" id="layer_marks"> 出生点 / NPC</label>
     </div>
     <h3>游戏</h3>
@@ -224,6 +226,7 @@
     <canvas id="view3d"></canvas>
     <canvas id="overlay3d"></canvas>
     <canvas id="view2d" hidden></canvas>
+    <canvas id="overlay2d" hidden></canvas>
     <div id="coords"></div>
     <div id="legend">V 选择 · A 锚点 · M 玩家 · K 刺激 · ▭/▣ 拉发射 / 范围区域 · W/E/R gizmo（Ctrl 吸附）· 1/2 切 3D / 原画<br>
       区域：拖顶点 · 双击边线加点 · Delete / 右键删点 · 光柱：拖起点 / 终点把手（真实效果看原画视图）<br>右键拖 环视（按住 WASD/QE 飞）· Alt+左键 环绕 · 中键 平移 · 滚轮 朝光标缩放 · F 对准 · Home 整场</div>

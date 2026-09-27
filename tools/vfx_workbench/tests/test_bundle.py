@@ -51,24 +51,42 @@ def test_bundle_exports_the_runtime_modules(built: Path) -> None:
                  "setSpawnPoints", "stepPlateBurn", "plateBurnProgress", "resolvePlateBurnParams",
                  # 薄片绑的可燃物模板：页面把 /api/burnables 的原始文档过它装成 burnTemplates（与 VfxSystem 同一个清洗函数）
                  "resolveBurnable", "BURN_DEFAULTS",
-                 # 光柱：帧与形状闸门、原画视图预览层编译的那一份 GLSL 核心与 uniform 打包
+                 # 光柱：帧与形状闸门（3D 线框、把手）；原画视图的光柱由游戏的 VfxRenderer / VfxBeamView 画（WGSL）
                  "resolveBeam3dFrame", "resolveBeam2dFrame", "beamDefErrors", "sceneQAffine", "packBeamUniforms",
-                 "BEAM_GLSL_CORE", "BEAM_GLSL_UNIFORMS"):
+                 # 原画视图 / 雷预览的画面：接入层的画布宿主 + 游戏的粒子渲染与贴图表装载（与 VfxSystem 同一个函数）
+                 "createCanvasHost", "VfxRenderer", "VfxBeamView", "VfxBoltBatchMesh", "VfxPlateBatchMesh", "loadVfxSpriteSheet",
+                 "VfxStage", "BoltPreviewStage", "BEAM_WGSL_CORE", "BOLT_WGSL_KERNEL"):
         assert re.search(rf"\b{name}\b", src), f"包里没有 {name}：本地预览就不是运行时那一份了"
     for ns in ("vfxSim", "vfxSpace", "sceneSpace", "depthShellField", "groundHeightfield", "sceneWind", "perspectiveScale",
-               "vfxRandom", "vfxConfine", "vfxProgram", "vfxMotionSource", "vfxPlateBurn", "burnables", "vfxBeam", "vfxBeamGlsl"):
-        assert f"{ns}_exports" in src or f"as {ns}" in src, f"包里没导出 {ns}"
+               "vfxRandom", "vfxConfine", "vfxProgram", "vfxMotionSource", "vfxPlateBurn", "burnables", "vfxBeam", "vfxBolt",
+               "workbenchRhi", "vfxView"):
+        assert f"as {ns}" in src, f"包里没导出 {ns}"
+    # 页面不再拿任何 GLSL：光柱 / 雷的 GLSL 孪生不再作为命名空间交给页面（游戏模块里残留的 GlProgram 壳不参与渲染）
+    for ns in ("vfxBeamGlsl", "vfxBoltGlsl"):
+        assert f"as {ns}" not in src, f"包里还把 {ns} 交给页面"
     assert "VFX_SUBSTEP" in src, "定步长常量丢了 = 打的不是模拟核心"
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="没有 node")
 def test_bundle_is_cached_by_source_stamp(built: Path) -> None:
-    """按源文件 mtime + 大小做戳：没改源就一个字节都不写（开页不该每次等 rolldown，
+    """按打包器自报的源清单（尺寸 + 修改时刻）做戳：没改源就一个字节都不写（开页不该每次等打包，
     本进程的仓库写守卫也正好是这条的硬判据——它要是重打就会被守卫拦下）。"""
     before = built.stat().st_mtime_ns
     p, err = bundle.ensure_bundle()
     assert p == built and not err
     assert p.stat().st_mtime_ns == before
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="没有 node")
+def test_bundle_stamp_lists_the_game_render_modules(built: Path) -> None:
+    """打包戳里的源清单是打包器自己报的：游戏的粒子渲染（VfxRenderer / 雷 / 光柱的 WGSL）、贴图表装载、接入层、工作台胶水都在里面，
+    改它们任何一个页面都会重打（不再是正则扫 import 猜的清单）。"""
+    from tools.workbench_rhi import build as wbrhi
+    inputs = wbrhi.inputs_of(built)
+    names = {p.name for p in inputs}
+    assert not any(p.name == "types.ts" and p.parent.name == "data" for p in inputs), "data/types.ts 进了打包戳：只有类型的 import 该被擦掉"
+    assert {"VfxRenderer.ts", "vfxShaders.ts", "vfxBeamShaders.ts", "vfxBeamWgsl.ts", "vfxBoltWgsl.ts", "VfxBoltBatchMesh.ts",
+            "VfxBeamView.ts", "vfxSpriteSheet.ts", "workbenchRhi.ts", "vfxView.ts", "vfxSim.ts", "package-lock.json"} <= names, sorted(names)
 
 
 def test_sources_cover_the_whole_import_tree() -> None:
@@ -85,10 +103,13 @@ def test_sources_cover_the_whole_import_tree() -> None:
             "vfxPlateBurn.ts", "kelvin.ts",
             # 可燃物模板清洗（页面命名空间 burnables）：只改它，页面里模板的缺省也得跟着重打
             "burnables.ts",
-            # 光柱：几何 / 着色核心 / 契约 / 共用曲线采样
-            "vfxBeam.ts", "vfxBeamGlsl.ts", "vfxBeamContract.json", "vfxCurve.ts"} <= names, names
-    # 只有类型的 import 打包时整条擦掉：types.ts 天天在改，进了戳就每次开页都白等 rolldown
-    assert "types.ts" not in names
+            # 光柱：几何 / 打包 uniform / 契约 / 共用曲线采样
+            "vfxBeam.ts", "vfxBeamGlsl.ts", "vfxBeamContract.json", "vfxCurve.ts",
+            # 原画视图的画面：接入层 + 胶水 + 游戏的粒子渲染与贴图表装载
+            "workbenchRhi.ts", "vfxView.ts", "VfxRenderer.ts", "vfxSpriteSheet.ts"} <= names, names
+    # 只有类型的 import 打包时整条擦掉：游戏的 data/types.ts 天天在改，进了戳就每次开页都白等打包
+    # （engine2d / RHI 各有一个带值的 types.ts，那两个是真依赖）
+    assert not any(s.name == "types.ts" and s.parent.name == "data" for s in srcs)
 
 
 def test_import_scan_follows_value_imports_only(tmp_path: Path) -> None:

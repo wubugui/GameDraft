@@ -587,8 +587,11 @@ def test_scene_routes_and_shell_probe(server) -> None:
     assert sc["ok"] and sc["scene"]["cal"] and "marks" in sc["scene"]
     # 本地预览要跟游戏同口径跑：风（薄片只吃它）、透视（薄片尺寸 / 位移）、时段外观（布置按它分份）一样不少；
     # 光柱预览按原画深度截断要与运行时同一个遮挡容差
-    assert {"wind", "perspectiveScale", "phases", "phase", "timePhase", "dayNight", "depthTolerance"} <= set(sc["scene"])
+    assert {"wind", "perspectiveScale", "phases", "phase", "timePhase", "dayNight", "depthTolerance", "depthConfig"} <= set(sc["scene"])
     assert isinstance(sc["scene"]["depthTolerance"], float) and sc["scene"]["depthTolerance"] > 0
+    # 原画视图用游戏同一个 VfxRenderer 画：遮挡吃场景深度图 + depth_mapping（与 SceneDepthSystem 同一份），原样给
+    dc = sc["scene"]["depthConfig"]
+    assert dc and isinstance(dc["depth_map"], str) and {"invert", "scale", "offset"} <= set(dc["depth_mapping"])
     # 布置搬进了布置库：场景描述里不再有 vfx（残留的 vfx 由校验器报 error，工作台不吞也不用）
     assert "vfx" not in sc["scene"]
     ground, _ = get(f"/api/scene_ground?id={SCENE}&bg={sc['scene']['background']}")
@@ -599,3 +602,68 @@ def test_scene_routes_and_shell_probe(server) -> None:
     assert r["ok"] and len(r["contacts"]) == 2 and r["contacts"][1] is None
     c = r["contacts"][0]
     assert c is None or {"penWu", "normal", "px", "py", "groundLike"} <= set(c)
+
+
+@pytest.mark.skipif(not _HAS_SCENE, reason="缺工程真数据（bridge_underpass 背景 / 深度）")
+def test_runtime_resource_route_serves_what_the_game_loader_asks_for(server) -> None:
+    """原画视图用游戏同一套装载：粒子动画包（anim.json + 图集）、单图、场景深度图都按游戏的 URL 取；只放行图与 JSON。"""
+    get, _post, _ = server
+    anim, hd = get("/resources/runtime/animation/fx_paper_money/anim.json")
+    assert isinstance(anim, dict) and anim.get("spritesheet") and "json" in hd.get("Content-Type", "")
+    atlas, hd = get(f"/resources/runtime/animation/fx_paper_money/{anim['spritesheet']}")
+    assert atlas[:8] == b"\x89PNG\r\n\x1a\n"
+    sc, _ = get(f"/api/scene?id={urllib.parse.quote(SCENE)}")
+    depth, hd = get(f"/resources/runtime/scenes/{urllib.parse.quote(SCENE)}/{sc['scene']['depthConfig']['depth_map']}")
+    assert depth[:8] == b"\x89PNG\r\n\x1a\n" and hd.get("Content-Type") == "image/png"
+    for bad in ("/resources/runtime/audio/x.png", f"/resources/runtime/scenes/{SCENE}/nope.png",
+                f"/resources/runtime/scenes/{SCENE}/../../../../assets/data/items.json",
+                "/resources/runtime/animation/%2e%2e/%2e%2e/%2e%2e/assets/data/items.json",
+                "/resources/runtime/images/vfx/..%5C..%5C..%5Cassets%5Cdata%5Citems.json",
+                "/resources/runtime/scenes/x/C:%5Cwindows%5Cwin.ini"):
+        try:
+            get(bad)
+            leaked = True
+        except urllib.error.HTTPError as e:
+            leaked = e.code != 404
+        assert not leaked, bad
+
+
+def _link_dir(link: Path, target: Path) -> None:
+    """目录链接：Windows 上建 junction（不要管理员），别处建符号链。"""
+    if sys.platform == "win32":
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+def test_runtime_resource_route_accepts_junctioned_asset_dirs(tmp_path: Path, monkeypatch) -> None:
+    """素材目录常是 junction / 符号链（DVC 管的素材链到别处、worktree 里也是）：解析后的真实路径落在树外。
+    白名单先按真实路径判、不行再按**字面路径**判（逐段拼、不许 ``..`` / 反斜杠 / 盘符）——树外的真文件照样放行，
+    字面上出了 ``public/resources/runtime`` 的一律 404（与打包那边 ``asset_manifest._public_rel`` 同一个修法）。"""
+    from tools.vfx_workbench import serve
+    root = tmp_path / "repo"
+    runtime = root / "public" / "resources" / "runtime"
+    (runtime / "images" / "vfx").mkdir(parents=True)
+    (runtime / "images" / "vfx" / "a.png").write_bytes(b"\x89PNG\r\n\x1a\nA")
+    outside = tmp_path / "dvc_cache"
+    (outside / "fx_x").mkdir(parents=True)
+    (outside / "fx_x" / "anim.json").write_text('{"spritesheet": "atlas.png"}', encoding="utf-8")
+    (outside / "fx_x" / "atlas.png").write_bytes(b"\x89PNG\r\n\x1a\nB")
+    (outside / "fx_x" / "evil.py").write_text("x = 1", encoding="utf-8")
+    secret = tmp_path / "secret.json"
+    secret.write_text("{}", encoding="utf-8")
+    _link_dir(runtime / "animation", outside)
+    monkeypatch.setattr(serve, "ROOT", root)
+    ok = serve.runtime_resource_path("/resources/runtime/animation/fx_x/anim.json")
+    assert ok is not None and ok.read_text(encoding="utf-8").startswith("{")
+    assert serve.runtime_resource_path("/resources/runtime/animation/fx_x/atlas.png") is not None
+    assert serve.runtime_resource_path("/resources/runtime/images/vfx/a.png") is not None
+    assert serve.resource_image_path("/resources/runtime/images/vfx/a.png") is not None
+    for bad in ("/resources/runtime/animation/fx_x/evil.py", "/resources/runtime/animation/../../../../secret.json",
+                "/resources/runtime/animation/%2e%2e/%2e%2e/%2e%2e/%2e%2e/secret.json",
+                "/resources/runtime/animation/fx_x/..%5C..%5C..%5Csecret.json", "/resources/runtime/animation/fx_x/nope.json",
+                "/resources/runtime/secret.json", "/resources/runtime/images/../animation/fx_x/anim.json"):
+        assert serve.runtime_resource_path(bad) is None, bad
+    # 只认 images 的老入口不放行动画包
+    assert serve.resource_image_path("/resources/runtime/animation/fx_x/atlas.png") is None

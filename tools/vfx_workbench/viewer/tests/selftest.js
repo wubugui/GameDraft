@@ -2281,21 +2281,21 @@
                     select('');
                   }
                 }
-                // ---- #10 2D 里图层「场景」去勾 = 原画不画（与 3D 同一个开关）
+                // ---- #10 2D 里图层「场景」去勾 = 原画不画（与 3D 同一个开关）。原画视图是游戏的 WebGPU 渲染器：看 GPU 画面里的背景精灵
+                //      （宿主拿不到 WebGPU——offscreen 的 QtWebEngine——时记 SKIP 并写明原因；真 GPU 的 Chrome 跑同一份脚本不许 SKIP）
                 {
                   setView(2);
-                  const ctx = el('view2d').getContext('2d');
-                  let nBg = 0;
-                  const orig = ctx.drawImage;
-                  ctx.drawImage = function (img, ...rest) { if (img === v2.bg) nBg++; return orig.call(this, img, ...rest); };
-                  v2.draw(); const drawnOn = nBg;
-                  const box = el('layer_mesh');
-                  nBg = 0; box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); v2.draw();
-                  const drawnOff = nBg;
-                  box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true }));
-                  delete ctx.drawImage;
-                  ok('S22 #10 unticking the 场景 layer hides the art in the 2D view too (ticking it brings it back)',
-                    !!v2.bg && drawnOn > 0 && drawnOff === 0 && S.layers.mesh === true, { bg: !!v2.bg, drawnOn, drawnOff });
+                  if (!v2.gpu.ok) log.push(`SKIP S22 #10 unticking the 场景 layer hides the art in the 2D view ${JSON.stringify({ why: v2.gpu.err || 'no GPU layer' })}`);
+                  else {
+                    for (let i = 0; i < 80 && !v2.gpu.settled; i++) await wait(50);
+                    v2.draw(); const drawnOn = !!v2.gpu.stage.backgroundTexture;
+                    const box = el('layer_mesh');
+                    box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); v2.draw();
+                    const drawnOff = !!v2.gpu.stage.backgroundTexture;
+                    box.checked = true; box.dispatchEvent(new Event('change', { bubbles: true }));
+                    ok('S22 #10 unticking the 场景 layer hides the art in the 2D view too (ticking it brings it back)',
+                      !!v2.bg && drawnOn && !drawnOff && S.layers.mesh === true && !!v2.gpu.stage.backgroundTexture, { bg: !!v2.bg, drawnOn, drawnOff });
+                  }
                   setView(3);
                 }
                 // ---- #11 / #2 预览锚点记在别的场景：检视器不把那份的数当成这里的值、左栏标「默认：出生点」；「记为作者场景」从出生点起一个新的

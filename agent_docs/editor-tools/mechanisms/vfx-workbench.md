@@ -15,6 +15,9 @@ authority:
   - tools/vfx_workbench/viewer/app.js
   - tools/vfx_workbench/viewer/view3d.js
   - tools/vfx_workbench/viewer/beams.js
+  - tools/vfx_workbench/viewer/view2d.js
+  - tools/vfx_workbench/gpu/vfxView.ts
+  - src/systems/vfx/vfxSpriteSheet.ts
   - tools/vfx_workbench/viewer/inspector.js
   - tools/editor/shared/vfx_burn.py
   - tools/vfx_workbench/lightning.py
@@ -28,6 +31,9 @@ triggers:
   topics: [粒子工作台, vfx, 效果资产, 发射器, 群体, 巢, 刺激, 联动, gizmo, 布置, 时段外观, 发射区域, 范围区域, 光柱, 体积光, 光带, 起播错峰, 预热时长, 间隔浮动, simulation, 雷电样式, 雷的样式, 天雷, 雷符, 表面材质区, 水面, 湿地, 倒影]
   tasks: [加光柱, 调体积光, 做粒子效果, 改粒子工作台, 调群体参数, 摆巢, 加发射器, 布置粒子, 拉粒子区域, 调夜里的粒子, 调雷, 画水面]
 verified_by:
+  - tools/vfx_workbench/gpu/vfxView.test.ts
+  - tools/vfx_workbench/tests/test_parity.py
+  - tools/vfx_workbench/viewer/tests/gpu2d-selftest.js
   - tools/vfx_workbench/tests/test_assets_and_serve.py
   - tools/vfx_workbench/tests/test_bundle.py
   - tools/vfx_workbench/tests/test_placements.py
@@ -64,12 +70,21 @@ last_governed: 2026-09-24
 
 ## 本地预览 = 运行时模拟本体,输入也必须同形
 
-`bundle.py` 用仓库自带 rolldown 把 `vfxSim` / `vfxSpace` / `sceneSpace` / 几何底座 / `sceneWind` / `vfxRandom` / `vfxConfine` / `burnables` 等打成 ESM,
-**缓存戳顺 import 扫整棵依赖树**(手抄清单漏过文件,页面一直跑旧包)。**别在 JS 里另写一份模拟 / 清洗 / 缺省。**
+`bundle.py` 经工作台 RHI 接入层(`tools/workbench_rhi`,vite 库模式)把 `vfxSim` / `vfxSpace` / `sceneSpace` / 几何底座 / `sceneWind` /
+`vfxRandom` / `vfxConfine` / `burnables` 与原画视图的画面(接入层 + `gpu/vfxView.ts`)打成 ESM,**新旧按打包器自报的源清单判**
+(2026-09-27 前是正则扫 import 的戳;手抄清单漏过文件,页面一直跑旧包)。**别在 JS 里另写一份模拟 / 清洗 / 缺省 / 着色器。**
 喂给模拟的输入与 `VfxSystem` 同形:场景风 + 风钟(`SceneWindState`)、活动布置的锚点 / 种子(没写 = `hashSeed(id)`)/ 数量 /
 `area` **与 `confine`**、透视度量、可燃模板表(`burnTemplates`)。少一样就"不是游戏里那个"(09-12:三样都没接时纸钱 0 张动)。
-⚠ 本地预览的粒子在 3D / 2D 视图里都**按发射器着色画点**:贴图、颜色曲线、受光、薄片的朝向与弯曲在台里一律看不到,
-外观类改动要推给游戏看——别拿"台里没变化"判改动没生效。
+**原画(2D)视图 = 游戏的画法**(2026-09-27 迁到 WebGPU):画布是游戏同一个 engine2d / RHI 渲染器,`S.sim` 交给游戏的 `VfxRenderer`
+(贴图 / 图集帧 / 颜色曲线 / 薄片朝向弯曲燃烧 / 雷 / 光柱,WGSL 就是游戏那几份),贴图表 = `loadVfxSpriteSheet`(与 `VfxSystem` 同一个函数),
+遮挡吃场景深度图(`depthConfig.depth_map`,与 `SceneDepthSystem` 同一张)。与游戏的差别只有**受光与显示变换**(工作台没有照明载荷,
+同画布特效的无光口径:受光粒子不吃 probe / 灯、显示变换恒等)与背景草木摆动——亮度 / 受光类改动仍要推给游戏看。
+标注(锚点 / 半径 / 区域 / gizmo / 选中光柱包络)画在叠在上面的 `#overlay2d`(2D 画布、不吃鼠标)。3D 视图的粒子仍按发射器着色画点。
+逐像素等于游戏:`tests/parity/run.mjs`(真 GPU,工作台 vs 照游戏组装的参考页)+ `gpu/vfxView.test.ts`(无 GPU 命令流)。
+拿不到 WebGPU(offscreen 的 QtWebEngine)时视图上写原因、不回落;编辑 / 保存 / 模拟照常。
+⚠ `VfxRenderer` 在**没有深度图**时拿发射器贴图顶替深度槽,雷层的占位贴图表没有贴图 ⇒ `ensureView` 当场抛(游戏里没深度的场景 /
+画布特效放雷同样会抛,待修);工作台在深度图还没装到时先不交模拟,雷预览给白图当深度。
+⚠ 天上那道雷按镜头要的高度往上续算、每续一次多一段折线:同一道雷在不同镜头史下分段不同(画面差一两个像素级),逐像素对照前先 `stage.clear()`。
 ⚠ 打包必须在子进程里做(pytest 进程装着仓库写保护)。⚠ Windows 上 `--serve` 同端口能起第二个(`SO_REUSEADDR`),重起前确认旧进程死了。
 
 ## 坐标对齐自证(不许绕过)
@@ -114,8 +129,10 @@ last_governed: 2026-09-24
 
 - **参数表是服务端一份**(`lightning.SPEC`,人话名 + 分组 + wu / 像素 + 上下限),页面照它生成控件:形状、分叉、粗细与光晕(世界宽 + 屏幕下限)、
   回击加粗、落地 / 水面电弧、**雷的灯**(落点 / 雷身 / 天上,色温)、**落地那一下**(冲击风多猛多远多久、点火半径)。
-- **现画预览**:检视器里一块 WebGL2 画布,左远右近两个距离(一个人多少像素写在下面),编译的是 `vfxBolt` / `vfxBoltGlsl`(游戏画 WGSL 孪生 `vfxBoltWgsl`,两份一起改,`src/rendering/shaderTwins.test.ts` 守门)
-  (经 `bundle.py` 打包);参数从服务端 `POST /api/lightning/compose` 拼出「套用之后」的 bolts 与四层(只读、不落盘),页面不另写映射。
+- **现画预览**:检视器里一块 WebGPU 画布(工作台 RHI 接入层,自己一台设备),左远右近两个距离(一个人多少像素写在下面);
+  画面 = `vfxView.BoltPreviewStage`:「套用之后」的效果放进游戏同一份运行时模拟(平面近似空间,落点在格子地面线上),每格一个游戏的
+  `VfxRenderer`(雷形、挑细分级、粗细、寿命曲线、WGSL 全是游戏那一份),两格用模板遮罩裁边;页面里没有着色器(2026-09-27 前是 WebGL2 + `vfxBoltGlsl`)。
+  参数从服务端 `POST /api/lightning/compose` 拼出「套用之后」的 bolts 与四层(只读、不落盘),页面不另写映射。
 - **改参数 / 换样式 / 另存 / 删 / 恢复预设进同一条撤销栈**,但**不算效果的脏**:「●未套用」只有「套用」才落盘(存库带基线 +
   受影响效果全部重新套用、`save_asset`)。当前效果没存就拒绝套用。
 - **样式只拥有那四层**:同一形式(现画)再套保留作者调过的时间曲线 / 寿命,换形式(旧帧表 → 现画)回缺省;旧版的 `bolt_arcs` 层套用时拿掉。
@@ -151,7 +168,8 @@ last_governed: 2026-09-24
 - **薄片「可燃模板」** `plate.burnable {template}`:候选只列能绑的面燃烧模板(**候选面 = 校验面**,`vfx_burn.plate_bindable_template_ids`);
   当前值不在候选里时保值展示并说原因,不静默顶替。本地预览按打包的 `resolveBurnable` 装模板真烧;「火」工具放一段火焰看纸着 → 焦黑 → 成灰。
   本台只读 `burnables/`、从不写。旧 `plate.flammable` 作废、运行时不读,检视器给「删掉」。
-- **光柱**:两个把手(起点 / 终点);**3D 视图只画线框,原画视图用运行时同一份 GLSL 真预览**(台里没有显示变换与场景灯,最终亮度去游戏看);
+- **光柱**:两个把手(起点 / 终点);**3D 视图只画线框,原画视图由游戏的 `VfxRenderer` / `VfxBeamView`(WGSL)真画**,被场景深度图挡
+  (台里没有显示变换与场景灯,最终亮度去游戏看;还没播时淡入当 1 画满,好调形状);
   还被尘埃用着的光柱删不掉;没有深度载荷的场景退平面近似并黄字说明。形状闸门报错与运行时逐字同句。见 [[vfx-beams]]。
 
 ## 联动(双槽,与声学同形)
@@ -173,9 +191,13 @@ last_governed: 2026-09-24
 sh scripts/py.sh -m pytest tools/vfx_workbench -q -p no:cacheprovider   # 资产 / 布置库 / scoped 保存 / 改名删除连带 / program / timing / 打包 / 真 HTTP
 sh scripts/py.sh -m tools.vfx_workbench --selftest                       # 无头桌面壳交互层,有 FAIL 退出码 1
 sh scripts/py.sh -m tools.vfx_workbench --check                          # 全部效果资产 + 布置库过形状闸门
+npx vitest run tools/vfx_workbench/gpu                                   # 原画视图 == 游戏组装(空后端,逐条 GPU 命令与字节)+ 雷预览
+node tools/vfx_workbench/tests/parity/run.mjs --python <py>              # 真 GPU 逐像素:纸钱 / 雷符的云与雨 / 光柱尘埃 / 落雷(含高分屏)
 ```
 
 `--selftest` 在 offscreen + ANGLE/SwiftShader 桌面壳里装真页面(`viewer/tests/` 下 selftest / scoped-save / timing / pipeline / beam /
 lightning / surface 各套):坐标对齐与手性、相机手势、gizmo、保存往返与键序、保存锁、下拉框、薄片输入、布置与区域、燃烧字段、光柱、
 雷电样式(现画预览真画出了雷、套用、同步同组)、表面材质区(真拖框、顶点、检视器、scoped 推送、存盘删光)。
 **改 viewer 下任何东西先跑它**;新抓到的坑往里加一条 `ok()`。主编辑器只读画布护栏见 `test_scene_vfx_overlay.py`。
+offscreen 的 QtWebEngine 拿不到 WebGPU:读原画视图 / 雷预览像素的那几条记 SKIP;`test_selftest.py` 另把**同一份脚本**在真 GPU 的 Chrome 里
+跑一遍(`--serve --selftest-sandbox` + `chrome_page.mjs --no-skip`),一条 SKIP 都不许有(`gpu2d-selftest.js` 专管原画视图的 GPU 画面)。

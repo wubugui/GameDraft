@@ -4,6 +4,7 @@
   python -m tools.vfx_workbench                          # 桌面应用（默认）
   python -m tools.vfx_workbench --open bat_cliff          # 开窗口并直接打开那份效果（已开着就切过去）
   python -m tools.vfx_workbench --serve [--port 5341]     # 只起 HTTP 服务（自动化/测试用，不开浏览器）
+  python -m tools.vfx_workbench --serve --selftest-sandbox # 同上 + 自检读写沙箱（真 GPU 的 Chrome 自检 / 逐像素对照用）
   python -m tools.vfx_workbench --game-url http://127.0.0.1:5173
   python -m tools.vfx_workbench --smoke                   # 桌面壳无头自检
   python -m tools.vfx_workbench --selftest                # 交互层端到端回归（无头真页面 + viewer/tests/selftest.js）
@@ -35,6 +36,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(prog="vfx_workbench")
     ap.add_argument("--open", default="", help="启动后直接打开这份效果")
     ap.add_argument("--serve", action="store_true", help="只起 HTTP 服务，不开桌面窗口")
+    ap.add_argument("--selftest-sandbox", action="store_true",
+                    help="与 --serve 连用：读写沙箱（布置库 / 雷电样式库指到临时拷贝、游戏地址钉死端口），真 GPU 的 Chrome 自检 / 逐像素对照用")
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--game-url", default="", help="游戏 dev server 地址（缺省读 devstate.json，再退 127.0.0.1:5173）")
     ap.add_argument("--smoke", action="store_true", help="桌面壳无头自检：load 完即退")
@@ -94,17 +97,21 @@ def main() -> int:
             serve.LINK.set_base(args.game_url)
         if args.open:
             serve.BOOT_OPEN.append(args.open)
-        try:
-            httpd = ThreadingHTTPServer(("127.0.0.1", port), serve.H)
-        except OSError:
-            print(f"端口 {port} 已被占用（大概已经在跑）")
-            return 2
-        print(f"粒子工作台裸服务（自动化用，不开浏览器）: http://127.0.0.1:{port}/  游戏={serve.LINK.base}", flush=True)
-        try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            pass
-        return 0
+        from contextlib import nullcontext
+        from tools.vfx_workbench.app import selftest_sandbox
+        with (selftest_sandbox() if args.selftest_sandbox else nullcontext()):
+            try:
+                httpd = ThreadingHTTPServer(("127.0.0.1", port), serve.H)
+            except OSError:
+                print(f"端口 {port} 已被占用（大概已经在跑）")
+                return 2
+            print(f"粒子工作台裸服务（自动化用，不开浏览器）: http://127.0.0.1:{port}/  游戏={serve.LINK.base}"
+                  + ("  （自检沙箱：布置库 / 样式库是临时拷贝）" if args.selftest_sandbox else ""), flush=True)
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                pass
+            return 0
 
     from tools.vfx_workbench.app import main as app_main
     t0 = time.time()

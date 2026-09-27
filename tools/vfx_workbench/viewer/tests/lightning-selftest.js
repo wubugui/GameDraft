@@ -31,19 +31,27 @@
     ok('L2 a generator effect does not also show the folded 「没用」 section', !el('inspector').querySelector('.sec[data-sec="lightningOff"]'));
     ok('L2 the impact knobs (blast wind / ignite radius) are in the style section', !!rowOf('冲击风多猛') && !!rowOf('点火半径'));
 
-    // ---- 现画预览：拼出来、真的画出了雷（不是空画布）
+    // ---- 现画预览：拼出来、真的画出了雷（不是空画布）。画面 = 游戏的运行时模拟 + VfxRenderer（WebGPU，经工作台 RHI 接入层）；
+    //      宿主拿不到 WebGPU（offscreen 的 QtWebEngine）时读像素那条记 SKIP 并写明原因，真 GPU 的 Chrome 跑同一份脚本不许 SKIP
     const pv = LightningPanel.player;
     for (let k = 0; k < 60 && !(pv && pv.composed); k++) await wait(50);
-    let lit = 0;
-    if (pv && pv.composed && pv.canvas) {
-      // 从劈下那一刻重播、当场画一帧（无头壳里 rAF 不一定跑，直接调 draw）
+    ok('L2 the preview composed (server-side apply_style) and the page has no shader of its own',
+      !!(pv && pv.composed) && !pv.gl && typeof pv._ensureGl === 'undefined' && !('vfxBoltGlsl' in S.rt), { composed: !!(pv && pv.composed), perr: LightningPanel.previewErr });
+    const gpuOk = pv ? await pv.ready() : false;
+    if (!gpuOk) log.push(`SKIP L2 the drawn preview shows a bright bolt in both panels ${JSON.stringify({ why: (pv && pv.err) || 'no GPU' })}`);
+    else {
+      // 从劈下那一刻重播、当场画一帧（无头壳里 rAF 不一定跑，直接调 draw），同一个任务里回读
       pv.replay(false); pv.t0 = performance.now() - 30; pv.draw();
-      const c2 = document.createElement('canvas'); c2.width = pv.canvas.width; c2.height = pv.canvas.height;
-      const g = c2.getContext('2d'); g.drawImage(pv.canvas, 0, 0);
-      const px = g.getImageData(0, 0, c2.width, c2.height).data;
-      for (let i = 0; i < px.length; i += 4) if (px[i] + px[i + 1] + px[i + 2] > 600) lit++;
+      const px = pv.readPixels();
+      const split = Math.round(px.width * 0.42);
+      let lit = 0, litL = 0, litR = 0;
+      for (let y = 0; y < px.height; y++) for (let x = 0; x < px.width; x++) {
+        const i = (y * px.width + x) * 4;
+        if (px.data[i] + px.data[i + 1] + px.data[i + 2] > 600) { lit++; if (x < split - 2) litL++; else if (x > split + 2) litR++; }
+      }
+      ok('L2 the drawn preview shows a bright bolt in both panels (far / near), drawn by the game sim + VfxRenderer',
+        lit > 20 && litL > 5 && litR > 5 && pv.stage.live >= 2 && !pv.err, { lit, litL, litR, live: pv.stage.live, err: pv.err });
     }
-    ok('L2 the drawn preview composed and shows a bright bolt', !!(pv && pv.composed) && lit > 20, { composed: !!(pv && pv.composed), lit, err: pv && pv.err, perr: LightningPanel.previewErr });
 
     // ---- 改参数：只脏样式库、进撤销栈、撤销回来
     const inp = rowOf('分叉多密') && rowOf('分叉多密').querySelector('input');

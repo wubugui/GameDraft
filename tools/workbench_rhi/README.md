@@ -69,3 +69,26 @@ npx tsc --noEmit -p tools/workbench_rhi                  # 页面侧 TS + 各工
 npx vitest run tools/burn_workbench/gpu                  # 无 GPU 对照
 node tools/workbench_rhi/chrome_page.mjs --url http://127.0.0.1:<端口>/ --smoke --shot out.png
 ```
+
+## 粒子工作台（`tools/vfx_workbench`，2026-09-27 迁过来）的几条经验
+
+- **画面 = 游戏的 `VfxRenderer`**（粒子 / 薄片 / 雷 / 光柱）：胶水 `tools/vfx_workbench/gpu/vfxView.ts` 只照 `Renderer` 的层与 `Game.start` 那组
+  依赖现拼（无光口径：`createLitShader → null`、`canLight → false`、`getToneEnv → null`、显示变换 = `createCharLightUniforms()` 缺省），
+  模拟就是页面里的 `VfxInstanceSim`；贴图表用游戏抽出来的 `loadVfxSpriteSheet`（`VfxSystem.loadSheet` 等价重构出来的那一个）。
+  标注 / gizmo 另起一块叠在上面、`pointer-events: none` 的 2D 画布（`#overlay2d`），事件照旧在 GPU 画布上收。
+- **一页多块画布 = 各自一台设备**：RHI 设备绑一块画布的交换链（`createRhiDevice({canvas})`），两块画布共用一台设备要动 RHI 接口，
+  所以原画视图与检视器里的雷预览各 `createCanvasHost` 一次（引擎2d 的多渲染器互不影响；`Assets` 缓存的纹理各自上传）。没有另建共享设备模块。
+- **`getScreen` 取渲染器自己的 `screen`**（= 游戏的 `app.screen`）：CSS 尺寸可以是小数，`clientWidth` 是取整过的——
+  雷的屏幕下限按 `screen.h / 768` 换算，差半个像素高度就是一片 ±3 的像素差（高分屏对照抓到的）。
+- **有历史的渲染状态先清掉再比**：天上那道雷按镜头要的高度往上续算、每续一次多一段折线，同一道雷在不同镜头史下分段不同；
+  逐像素对照前 `stage.clear()` 让两边都"这个镜头下第一次画"。
+- **Chrome 里跑真数据的自检**：服务开 `--serve --selftest-sandbox`（布置库 / 样式库指到临时拷贝、游戏地址钉死端口，与桌面壳自检同一个沙箱），
+  自检里故意发的坏请求服务端回 500 时给 `chrome_page.mjs --allow` 放过那一类（断言由自检自己做）。
+- ⚠ `VfxRenderer.ensureView` 在 `getDepth()` 为 null 时拿发射器贴图顶替深度槽，**雷层的占位贴图表没有贴图 ⇒ 当场抛**（游戏里没深度的
+  场景 / 画布特效放雷同样会抛，未修）。工作台原画视图在深度图还没装到时先不交模拟；雷预览给白图当深度（平面近似下 `uHasDepth` 恒 0，
+  雷层的深度槽在游戏里没深度时绑的也正是白图）。
+
+```bash
+npx vitest run tools/vfx_workbench/gpu                                        # 无 GPU 对照（三组效果 + 雷预览）
+node tools/vfx_workbench/tests/parity/run.mjs --python <py> --out <目录>        # 真 GPU 逐像素（纸钱 / 雷符的云与雨 / 光柱尘埃 / 落雷 / 高分屏）
+```

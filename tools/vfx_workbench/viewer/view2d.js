@@ -1,8 +1,15 @@
 'use strict';
-/* 粒子工作台 · 2D 原画视图（canvas 2D）。
+/* 粒子工作台 · 2D 原画视图。
  *
- * 画什么：时段背景原画 + **本地预览的粒子投影到画面的点**（`worldToScene`，与运行时同一份换算）、
- * 发射器原点 / 群体三个半径圈 / 预览锚点 / 玩家标记 / 刺激点，以及与 3D 共用的那份变换 gizmo。
+ * 两层画布叠着：
+ * - **`#view2d`（GPU 画面）**：游戏同一个 WebGPU 渲染器（engine2d / RHI，经工作台 RHI 接入层 `S.rt.workbenchRhi`），画面由包里的
+ *   `S.rt.vfxView.VfxStage` 用游戏自己的对象拼——时段背景原画 + **本地预览那一个运行时模拟**交给游戏的 `VfxRenderer`
+ *   （粒子贴图 / 薄片 / 雷 / 光柱，WGSL 就是游戏那几份，被原画深度挡住的样子与游戏相同）。这里**没有着色器**，
+ *   也不再把粒子画成点：作者在这里看到的就是游戏里那一团（受光与显示变换除外：工作台没有照明载荷，同画布特效的无光口径）。
+ *   没有 WebGPU（宿主拿不到适配器）就在标注层上明确说画不了，**不回落**任何别的 API；编辑、保存、模拟照常。
+ * - **`#overlay2d`（标注层，2D 画布，不吃鼠标）**：发射器原点 / 群体三个半径圈 / 预览锚点 / 玩家标记 / 刺激点 / 区域 /
+ *   选中光柱的包络描边，以及与 3D 共用的那份变换 gizmo。鼠标事件照旧在 `#view2d` 上收。
+ *
  * 这一页回答的是"作者在原画上看到的位置"，3D 那页回答"它在世界里的位置"——两页必须一致，
  * 靠的是同一份 `SceneCal` 与运行时 bundle 的对齐自证（app.js `checkAlignment`）。
  *
@@ -14,20 +21,195 @@
  * 「拉发射区域 / 拉范围区域」工具按住拖一个框 = 那块区域（直接画面坐标）；顶点是可选对象（一选中立刻出 gizmo）、
  * 可直接拖；双击边线加点；Delete / 右键（没拖动）删点。 */
 
+/** 原画视图的清屏色（原来 2D 画布的底色） */
+const VIEW2D_CLEAR = 0x111318;
+
+/** 把 `http://host/path?q` 化成 `/path?q`（纹理键与对照参考页都用同源路径） */
+function urlPathOf(src) {
+  try { const u = new URL(src, location.href); return u.pathname + u.search; } catch (e) { return String(src || ''); }
+}
+
+/**
+ * 原画视图的 GPU 画面（游戏的 WebGPU 渲染器 + `vfxView.VfxStage`）。页面只把"画什么"交过去：相机、背景、原画深度、
+ * 透视、本地预览的模拟、图层开关。贴图一律经包里的装载（与游戏 `AssetManager` 同一条 `Assets.load`）。
+ */
+class Gpu2D {
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.ok = false;
+    this.err = '';
+    this.starting = null;
+    this.host = null;
+    this.stage = null;
+    this.book = null;
+    /** url → { tex, err, pending, promise } */
+    this.textures = new Map();
+    this.pendingTextures = 0;
+    /** 这一帧交给 GPU 的输入（对照脚本 / 自检读它） */
+    this.last = null;
+    this.bgUrl = '';
+    this.depthUrl = '';
+    this.perspKey = null; this.persp = null;
+    this.sheetErrors = [];
+  }
+
+  /** 建渲染器（异步：要 WebGPU 适配器与设备）。失败把人话原因写进 `err`；只建一次 */
+  init(rt) {
+    if (this.starting) return this.starting;
+    this.starting = (async () => {
+      if (!rt || !rt.workbenchRhi || !rt.vfxView) { this.err = '运行时包没装上：原画视图的着色画不了'; return false; }
+      try {
+        this.host = await rt.workbenchRhi.createCanvasHost(this.canvas, { background: VIEW2D_CLEAR });
+        this.stage = new rt.vfxView.VfxStage();
+        this.book = new rt.vfxView.VfxSheetBook(undefined, () => { if (typeof draw === 'function') draw(); });
+        this.ok = true; this.err = '';
+      } catch (e) {
+        this.ok = false;
+        this.err = `原画视图的着色画不了：${(e && e.message) || e}`;
+      }
+      return this.ok;
+    })();
+    return this.starting;
+  }
+
+  resize(cssW, cssH, dpr) { if (this.ok) this.host.resize(cssW, cssH, dpr); }
+
+  /** 纹理：还没装到 = null（装到后请求重画） */
+  texture(url) {
+    if (!this.ok || !url) return null;
+    let r = this.textures.get(url);
+    if (!r) {
+      r = { tex: null, err: '', pending: true, promise: null };
+      this.textures.set(url, r);
+      this.pendingTextures++;
+      r.promise = S.rt.workbenchRhi.loadTexture(url).then((t) => { r.tex = t; }, (e) => { r.err = String((e && e.message) || e); })
+        .finally(() => { r.pending = false; this.pendingTextures--; if (typeof draw === 'function') draw(); });
+    }
+    return r.tex;
+  }
+  /** 放掉不再用的纹理：先让舞台不再引用它（绑定已销毁的纹理 = 那一帧抛错），再卸载 */
+  dropTexture(url) {
+    const r = url && this.textures.get(url);
+    if (!r) return;
+    this.textures.delete(url);
+    if (this.ok && r.tex) this.stage.forgetTexture(r.tex);
+    if (r.tex) void S.rt.workbenchRhi.unloadTexture(url);
+  }
+
+  /** 背景换了（换场景 / 换时段外观）：旧的那张放掉 */
+  setBackgroundUrl(url) {
+    if (url === this.bgUrl) return;
+    const old = this.bgUrl;
+    this.bgUrl = url || '';
+    if (old) this.dropTexture(old);
+  }
+
+  /** 这个场景的原画深度（`depthConfig.depth_map`，与 `SceneDepthSystem` 同一张）；没有深度载荷 = '' */
+  depthUrlOf(scene) {
+    const cfg = scene && scene.depthConfig;
+    if (!cfg || !S.rt || !S.rt.vfxView) return '';
+    try { return S.rt.vfxView.sceneDepthUrl(scene.id, cfg); } catch (e) { return ''; }
+  }
+
+  /** 透视系数（按脚点，与 `Game` 同一个 `createPerspectiveScaleResolver`）；场景没配 = null */
+  perspectiveOf(scene) {
+    const key = scene ? JSON.stringify([scene.id, scene.perspectiveScale || null]) : '';
+    if (key !== this.perspKey) {
+      this.perspKey = key;
+      const r = scene && S.rt && S.rt.perspectiveScale ? S.rt.perspectiveScale.createPerspectiveScaleResolver(scene.perspectiveScale) : null;
+      this.persp = r ? (x, y) => r.scaleAt(x, y) : null;
+    }
+    return this.persp;
+  }
+
+  /**
+   * 画一帧。`v` = `{zoom, ox, oy, cssW, cssH, dpr}`；`inp` = 视图要画的：场景 / 世界尺寸 / 背景图地址 / 图层 / 模拟。
+   * 返回画了没有（没 GPU / 画坏了 = false，原因在 `err`）。
+   */
+  frame(v, inp) {
+    if (!this.ok) return false;
+    try {
+      const st = this.stage;
+      st.setCamera(v.zoom, v.ox, v.oy);
+      // 画布逻辑尺寸取渲染器自己的 screen（= 游戏的 app.screen；CSS 尺寸可以是小数，clientWidth 是取整过的）
+      st.setScreen(this.host.renderer.screen.width, this.host.renderer.screen.height);
+      const scene = inp.scene;
+      const depthUrl = this.depthUrlOf(scene);
+      if (depthUrl !== this.depthUrl) { const old = this.depthUrl; this.depthUrl = depthUrl; if (old) this.dropTexture(old); }
+      const depthTex = depthUrl ? this.texture(depthUrl) : null;
+      st.setScene({
+        width: inp.worldW || 1, height: inp.worldH || 1,
+        depth: depthTex && scene.depthConfig ? { texture: depthTex, config: scene.depthConfig } : null,
+        perspective: this.perspectiveOf(scene),
+      });
+      const bgTex = this.bgUrl && inp.showBg ? this.texture(this.bgUrl) : null;
+      st.setBackground(bgTex, inp.worldW, inp.worldH, inp.dim ? 0.5 : 1);
+      // 原画深度还在路上：粒子先不画（游戏里揭幕闸等深度装完才露画面；没挡的那几帧会闪一下，雷层没有深度图还会抛）
+      const depthPending = !!depthUrl && !depthTex && !!(this.textures.get(depthUrl) || {}).pending;
+      const sim = depthPending ? null : (inp.sim || null);
+      let tables = { sheets: new Map(), beamTextures: new Map(), errors: [] };
+      if (sim) tables = this.book.tables(sim.id, sim.effect);
+      this.sheetErrors = tables.errors;
+      st.sync(sim, tables.sheets, tables.beamTextures, { particles: inp.particles, beams: inp.beams, beamsFull: inp.beamsFull });
+      this.host.render(st.root);
+      this.last = { v, inp, depthUrl: depthTex ? depthUrl : '', bgUrl: bgTex ? this.bgUrl : '', sheets: tables.sheets.size };
+      this.err = this.host.lastError ? `GPU：${this.host.lastError}` : '';
+      return true;
+    } catch (e) {
+      this.err = `原画视图这一帧画坏了：${(e && e.message) || e}`;
+      return false;
+    }
+  }
+
+  /** 读一个 CSS 点的像素 `[r, g, b, a]`（同一个任务里重画一遍再读——WebGPU 画布呈现之后读不回来） */
+  readPixel(cx, cy) { return this.ok ? this.host.readPixel(cx, cy) : [0, 0, 0, 0]; }
+  /** 读一块 CSS 矩形（设备像素，RGBA8）；没画过 = null */
+  readRect(cx, cy, cw, ch) {
+    if (!this.ok) return null;
+    const r = this.host.renderer.resolution;
+    return this.host.readPixels(Math.round(cx * r), Math.round(cy * r), Math.max(1, Math.round(cw * r)), Math.max(1, Math.round(ch * r)));
+  }
+  /** 贴图 / 原画深度 / 粒子贴图表都装齐了吗 */
+  get settled() { return this.ok && this.pendingTextures === 0 && (!this.book || this.book.pending === 0); }
+}
+
 class View2D {
   constructor(canvas, host) {
     this.c = canvas; this.host = host;
+    // 标注层：叠在 GPU 画面上、不吃鼠标（事件照旧在 #view2d 上收）；显隐跟着 #view2d 走（setView 只切 #view2d）
+    this.ov = document.getElementById('overlay2d');
+    if (!this.ov) {
+      this.ov = document.createElement('canvas'); this.ov.id = 'overlay2d';
+      this.ov.style.pointerEvents = 'none';
+      canvas.after(this.ov);
+    }
+    this.ov.hidden = canvas.hidden;
+    if (typeof MutationObserver === 'function') new MutationObserver(() => { this.ov.hidden = this.c.hidden; }).observe(canvas, { attributes: true, attributeFilter: ['hidden'] });
+    this.gpu = new Gpu2D(canvas);
     this.zoom = 0.5; this.ox = 0; this.oy = 0;
     this.bg = null;
     this.drag = null; this.hover = null; this.readout = null;
     this.spaceDown = false;
     this._bind();
   }
-  setBackground(img) { this.bg = img; this.draw(); }
+  /** GPU 画面建起来（运行时包装上之后调；建完重画）。拿不到 WebGPU 的原因在 `gpu.err` */
+  async initGpu(rt) {
+    const ok = await this.gpu.init(rt);
+    this.resize();
+    return ok;
+  }
+  /** 时段背景原画：`img` 是 3D 视图也在用的那张 `<img>`；GPU 画面按它的地址经游戏同一条装载取纹理 */
+  setBackground(img) {
+    this.bg = img;
+    this.gpu.setBackgroundUrl(img && img.src ? urlPathOf(img.src) : '');
+    this.draw();
+  }
   resize() {
     const r = this.c.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
-    this.c.width = Math.max(1, Math.round(r.width * dpr));
-    this.c.height = Math.max(1, Math.round(r.height * dpr));
+    this.ov.width = Math.max(1, Math.round(r.width * dpr));
+    this.ov.height = Math.max(1, Math.round(r.height * dpr));
+    if (!this.gpu.ok && !this.gpu.starting && this.host.rt) void this.initGpu(this.host.rt);
+    if (this.gpu.ok && r.width > 0 && r.height > 0) this.gpu.resize(r.width, r.height, dpr);
     // 藏着的时候要过一次整场（`fit` 记下了）：第一次亮出来、有了尺寸就补上
     if (this._needFit && this.c.clientWidth > 0) { this._needFit = false; this.fit(); return; }
     this.draw();
@@ -123,44 +305,50 @@ class View2D {
     return null;
   }
   // ------------------------------------------------------------- 绘制
-  draw() {
-    const g = this.c.getContext('2d'); const dpr = window.devicePixelRatio || 1;
+  /** GPU 画面这一帧的输入（场景 / 背景 / 图层 / 本地预览的模拟） */
+  _gpuInput() {
     const host = this.host, cal = host.cal;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, this.c.clientWidth, this.c.clientHeight);
-    g.fillStyle = '#111318'; g.fillRect(0, 0, this.c.clientWidth, this.c.clientHeight);
     const w = cal ? cal.worldW : (host.scene ? host.scene.worldWidth : 0);
     const h = cal ? cal.worldH : (host.scene ? host.scene.worldHeight : 0);
-    // 图层「场景」去勾 = 原画不画（只看粒子 / 区域；与 3D 同一个开关——原来 2D 只读「压暗」，去勾什么都不变也不说为什么）
-    if (this.bg && w > 0 && host.layers.mesh) {
-      const a = this.toCanvas(0, 0), b = this.toCanvas(w, h);
-      g.globalAlpha = host.layers.dimMesh ? 0.5 : 1;
-      g.drawImage(this.bg, a[0], a[1], b[0] - a[0], b[1] - a[1]);
-      g.globalAlpha = 1;
-    }
+    const pv = host.preview2d ? host.preview2d() : { sim: null, simTime: 0 };
+    return {
+      scene: host.scene, worldW: w, worldH: h,
+      // 图层「场景」去勾 = 原画不画（只看粒子 / 区域；与 3D 同一个开关）；「场景压暗」= 半透明
+      showBg: !!host.layers.mesh, dim: !!host.layers.dimMesh,
+      particles: !!host.layers.particles, beams: !!host.layers.beams,
+      // 还没播（t = 0）时光柱画满（好调形状）；播起来按真实淡入淡出
+      beamsFull: !(pv.simTime > 0),
+      sim: cal ? pv.sim : null,
+    };
+  }
+  draw() {
+    const g = this.ov.getContext('2d'); const dpr = window.devicePixelRatio || 1;
+    const host = this.host, cal = host.cal;
+    const W = this.c.clientWidth, H = this.c.clientHeight;
+    if (W > 0 && H > 0 && this.gpu.ok) this.gpu.frame({ zoom: this.zoom, ox: this.ox, oy: this.oy, cssW: W, cssH: H, dpr }, this._gpuInput());
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const w = cal ? cal.worldW : (host.scene ? host.scene.worldWidth : 0);
+    const h = cal ? cal.worldH : (host.scene ? host.scene.worldHeight : 0);
     if (w > 0) { const a = this.toCanvas(0, 0), b = this.toCanvas(w, h); g.strokeStyle = 'rgba(255,255,255,.15)'; g.lineWidth = 1; g.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); }
+    g.font = '12px "Segoe UI", "Microsoft YaHei", sans-serif';
+    let noteY = 22;
+    const note = (text, css) => { g.fillStyle = css; g.fillText(text, 14, noteY); noteY += 18; };
+    if (!this.gpu.ok || this.gpu.err) note(`⚠ ${this.gpu.err || (this.gpu.starting ? '原画视图的着色正在建…' : '原画视图的着色还没建')}（编辑、保存、本地模拟照常）`, 'rgba(255,180,84,.95)');
+    else if (this.gpu.sheetErrors.length) note(`⚠ ${this.gpu.sheetErrors[0]}${this.gpu.sheetErrors.length > 1 ? ` 等 ${this.gpu.sheetErrors.length} 条` : ''}`, 'rgba(255,180,84,.95)');
     if (!cal) {
       g.fillStyle = '#9aa1ad'; g.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
-      g.fillText('还没装场景', 14, 24);
+      g.fillText('还没装场景', 14, noteY + 2);
       return;
     }
-    if (cal.planar) {
-      g.fillStyle = 'rgba(255,180,84,.9)'; g.font = '12px "Segoe UI", "Microsoft YaHei", sans-serif';
-      g.fillText('没有深度载荷：平面近似（2D 光带与原画上的位置是真的；3D 光柱 / 地形判据都不真）', 14, 22);
-    }
-    // 光柱：运行时那段 GLSL 编译出来的真实预览（按各自的混合合成到原画上），画在粒子与标记下面
-    if (host.layers.beams) host.drawBeams2d(g, { zoom: this.zoom, ox: this.ox, oy: this.oy, cssW: this.c.clientWidth, cssH: this.c.clientHeight, dpr });
-    // 粒子（投影到画面）
-    if (host.layers.particles) {
-      for (const grp of host.particlePoints(true)) {
-        g.fillStyle = grp.css;
-        for (let i = 0; i + 2 < grp.pts.length; i += 3) {
-          const c = this.projectWorld([grp.pts[i], grp.pts[i + 1], grp.pts[i + 2]]);
-          if (!c) continue;
-          const r = Math.max(1, (grp.sizeWu || 4) * 0.5 * this.zoom);
-          g.beginPath(); g.arc(c[0], c[1], r, 0, Math.PI * 2); g.fill();
-        }
-      }
+    if (cal.planar) note('没有深度载荷：平面近似（2D 光带与原画上的位置是真的；3D 光柱 / 地形判据都不真）', 'rgba(255,180,84,.9)');
+    // 选中的那根光柱：包络描边（光柱本身由游戏的 VfxRenderer 画在 GPU 画面里）
+    const hull = host.layers.beams && host.selectedBeamHull ? host.selectedBeamHull() : null;
+    if (hull && hull.count >= 3) {
+      g.strokeStyle = 'rgba(255,230,80,.7)'; g.lineWidth = 1; g.setLineDash([5, 4]);
+      g.beginPath();
+      for (let k = 0; k < hull.count; k++) { const c = this.toCanvas(hull.pts[k * 2], hull.pts[k * 2 + 1]); if (k) g.lineTo(c[0], c[1]); else g.moveTo(c[0], c[1]); }
+      g.closePath(); g.stroke(); g.setLineDash([]);
     }
     this._drawAreas(g);
     // 半径圈（原画里是圆）
@@ -210,7 +398,7 @@ class View2D {
       const c = this.projectWorld(o.pos); if (!c) continue;
       g.fillStyle = `rgba(${Math.round(o.color[0] * 255)},${Math.round(o.color[1] * 255)},${Math.round(o.color[2] * 255)},${o.color[3]})`;
       if (o.vertex) {
-        // 区域顶点画成描黑边的小方块：粒子也是蓝点，圆点混在纸钱里找不到把手
+        // 区域顶点画成描黑边的小方块：粒子也铺在原画上，圆点混在纸钱里找不到把手
         const s = o.selected ? 6 : 4.5;
         g.fillRect(c[0] - s, c[1] - s, s * 2, s * 2);
         g.strokeStyle = o.selected ? GZ.col.hot : 'rgba(10,12,16,.95)'; g.lineWidth = 1.5;
@@ -250,6 +438,16 @@ class View2D {
       g.stroke(); g.setLineDash([]);
     }
     if (sh.draft) poly(sh.draft.poly, host.roleCss(sh.draft.role, 0.85), [6, 4], 1.5);
+  }
+  /** 冒烟（`window.__rhiSmoke2d`）：拿到 WebGPU、画面非空、没报错 */
+  smoke() {
+    if (!this.gpu.ok) return { ok: false, detail: this.gpu.err || '原画视图的着色还没建' };
+    if (this.c.hidden || !this.c.clientWidth) return { ok: false, detail: '原画视图没显示（先 setView(2)）' };
+    this.draw();
+    const drawn = this.gpu.host.countDrawnPixels();
+    const st = this.gpu.stage.stats();
+    return { ok: drawn > 64 && !this.gpu.err && !!this.gpu.last && !!this.gpu.last.bgUrl,
+      detail: { drawn, size: [this.c.width, this.c.height], err: this.gpu.err, bg: this.gpu.last && this.gpu.last.bgUrl, meshes: st.meshes, drawCalls: st.drawCalls } };
   }
   // ------------------------------------------------------------- 交互
   _bind() {
@@ -384,4 +582,10 @@ class View2D {
   nudge(dx, dz) { this.host.nudgeSelected(dx, 0, dz); }
 }
 
-if (typeof module !== 'undefined' && module.exports) module.exports = { View2D };
+/** 冒烟：原画视图的 GPU 画面（`chrome_page.mjs --check "window.__rhiSmoke2d()"`；要先切到 2D） */
+if (typeof window !== 'undefined') {
+  window.__rhiSmoke2d = () => (typeof v2 !== 'undefined' && v2 ? v2.smoke() : { ok: false, detail: '原画视图还没建' });
+  if (!window.__rhiSmoke) window.__rhiSmoke = () => window.__rhiSmoke2d();
+}
+
+if (typeof module !== 'undefined' && module.exports) module.exports = { View2D, Gpu2D };

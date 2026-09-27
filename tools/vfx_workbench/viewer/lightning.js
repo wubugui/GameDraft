@@ -11,7 +11,8 @@
  * - 改参数 / 换样式 / 另存 / 删 / 恢复预设：都经 `host.edit` 进同一条撤销栈（快照里带着样式库草稿与"换样式"清单），
  *   但**不算效果的脏**：样式库有自己的「●未套用」，要点「套用」才落盘（样式库 + 受影响的效果一次做完）。
  * - **渲染只读**：`section()` 绝不写 doc / 样式库，写只在 `host.edit` 的闭包里。
- * - 预览：草稿参数经服务端拼成「套用之后」的样子（只读），用 bundle 里与游戏同一份的代码现画（见 `BoltPreview`）。
+ * - 预览：草稿参数经服务端拼成「套用之后」的样子（只读），交给 bundle 里游戏同一份的运行时模拟 + `VfxRenderer` 现画
+ *   （经工作台 RHI 接入层画在 WebGPU 上，见 `BoltPreview`）——页面里没有着色器。
  * - 同组几份效果：样式层各自按种子画；别的层（落点光团、碎石、水花……）用「把别的层同步给同组」从这一份抄过去。 */
 
 const LightningPanel = {
@@ -236,7 +237,7 @@ const LightningPanel = {
   // ---------------------------------------------------------------- 预览
   /**
    * 预览：草稿样式经服务端 `lightning.apply_style` 拼出「套用之后」的 bolts 与那几层（参数 → 效果的映射只有那一份），
-   * 这里用 bundle 里与游戏同一份的 vfxBolt（形状）+ vfxBoltGlsl（逐段卷积、挑细分级、定粗细）现画。
+   * 这里交给 bundle 里游戏同一份的运行时模拟（`VfxInstanceSim`）与渲染（`VfxRenderer`：雷形、逐段挑细分级、定粗细、WGSL）现画。
    */
   previewBlock(host, doc, gen, style) {
     if (!this.player) this.player = new BoltPreview();
@@ -285,83 +286,56 @@ function ins_chk(value, set, label) {
   return h('label', { class: 'chk' }, inp, label);
 }
 
-/** 随寿命曲线采样（与运行时 `sampleCurve` 同口径：线性插值、两端取端点、空 = 恒 1） */
-function lpSample(curve, t) {
-  if (!curve || !curve.length) return 1;
-  if (t <= curve[0][0]) return curve[0][1];
-  for (let i = 1; i < curve.length; i++) {
-    if (t <= curve[i][0]) {
-      const a = curve[i - 1], b = curve[i];
-      const u = b[0] > a[0] ? (t - a[0]) / (b[0] - a[0]) : 0;
-      return a[1] + (b[1] - a[1]) * u;
-    }
-  }
-  return curve[curve.length - 1][1];
-}
-function lpSampleColor(curve, t) {
-  if (!curve || !curve.length) return [1, 1, 1];
-  const at = (k) => [k[1], k[2], k[3]];
-  if (t <= curve[0][0]) return at(curve[0]);
-  for (let i = 1; i < curve.length; i++) {
-    if (t <= curve[i][0]) {
-      const a = curve[i - 1], b = curve[i];
-      const u = b[0] > a[0] ? (t - a[0]) / (b[0] - a[0]) : 0;
-      return [0, 1, 2].map((c) => a[c + 1] + (b[c + 1] - a[c + 1]) * u);
-    }
-  }
-  return at(curve[curve.length - 1]);
-}
-
-const BOLT_PREVIEW_VS = `#version 300 es
-in vec2 aPos; in vec4 aSeg; in vec2 aK; in vec4 aCol;
-uniform vec2 uCanvas;
-out vec2 vPos; out vec4 vSeg; out vec2 vK; out vec4 vCol;
-void main() {
-  vPos = aPos; vSeg = aSeg; vK = aK; vCol = aCol;
-  gl_Position = vec4(aPos.x / uCanvas.x * 2.0 - 1.0, 1.0 - aPos.y / uCanvas.y * 2.0, 0.0, 1.0);
-}`;
-function boltPreviewFs(rt) {
-  return `#version 300 es
-precision highp float;
-in vec2 vPos; in vec4 vSeg; in vec2 vK; in vec4 vCol;
-out vec4 o;
-${rt.vfxBoltGlsl.BOLT_GLSL_KERNEL}
-void main() {
-  float k = boltSeg(vPos, vSeg.xy, vSeg.zw, vK.x) * vK.y;
-  if (k < 1e-4) discard;
-  o = vec4(min(vCol.rgb * k, vec3(1.0)), clamp(vCol.a * k, 0.0, 1.0));
-}`;
-}
-
 /**
  * 雷的动态预览：两格——远处（一个人几十像素）与近处（一个人一两百像素），像两块缩小了的游戏画面
  * （屏幕下限按「这块画布是一块 768 高的游戏画面」换算）。同一道雷、同一套参数，看粗细怎么随远近变。
- * 画法是 bundle 里的运行时代码（vfxBolt + vfxBoltGlsl）；这里只管摆位置、按寿命曲线调亮度、合成到 2D 画布上。
+ * 画面整个是游戏的东西：`S.rt.vfxView.BoltPreviewStage` 把「套用之后」的效果（bolts + 样式那几层）放进游戏同一份运行时模拟，
+ * 每格一个游戏的 `VfxRenderer`（雷形、挑细分级、粗细、按寿命曲线的亮度与颜色、WGSL 全是游戏那一份），画布是游戏同一个
+ * WebGPU 渲染器（工作台 RHI 接入层）。这里只管时间轴（劈下 → 停一会 → 再劈）、两格的尺度与开关。
+ * 拿不到 WebGPU（如 offscreen 的 QtWebEngine）就在说明行里写原因，**不回落**任何别的 API。
  */
 class BoltPreview {
   constructor() {
     this.canvas = h('canvas', { class: 'lightningCanvas', width: '420', height: '300' });
-    this.gl = null; this.glCanvas = document.createElement('canvas');
-    this.prog = null; this.err = '';
+    this.host = null; this.stage = null; this.starting = null; this.err = '';
     this.composed = null; this.seed = 0; this.inst = 1;
-    this.geoms = null;
     this.slow = false; this.water = false;
     /** 两格的尺度：每 wu 多少游戏屏幕像素（远：雾津街头那样一个人 ~70 像素；近：一个人 ~300 像素） */
     this.far = 0.45; this.near = 2.0;
     this.t0 = performance.now();
     this.raf = 0;
     this.loop = this.loop.bind(this);
-    this.buf = null; this.vao = null; this.data = new Float32Array(6 * 12 * 4096);
+    /** 效果换了 / 要从劈下那一刻重来（下一次 draw 落实） */
+    this.effectDirty = false; this.restartPending = true; this.lastT = -1;
   }
   /** 画布相对 768 高游戏画面的缩小比例 */
-  canvasScale() { return (this.canvas.height || 300) / 768; }
+  canvasScale() { return (this.canvas.clientHeight || this.canvas.height || 300) / 768; }
+  /** GPU 画面建起来（只建一次；失败原因进 `err`） */
+  ready() {
+    if (this.starting) return this.starting;
+    const rt = S.rt;
+    this.starting = (async () => {
+      if (!rt || !rt.workbenchRhi || !rt.vfxView) { this.err = '运行时代码包里没有雷的画面模块（刷新页面重打包）'; return false; }
+      try {
+        this.host = await rt.workbenchRhi.createCanvasHost(this.canvas, { background: 0x0b0d12 });
+        this.stage = new rt.vfxView.BoltPreviewStage();
+        this.effectDirty = true; this.restartPending = true;
+        return true;
+      } catch (e) {
+        this.err = String((e && e.message) || e);
+        return false;
+      }
+    })();
+    return this.starting;
+  }
   setComposed(r, seed) {
     this.composed = r; this.seed = seed;
+    this.effectDirty = true;
     this.replay(false);
   }
   replay(newInstance) {
     if (newInstance) this.inst = (Math.random() * 0x7fffffff) | 0;
-    this.geoms = null;
+    this.restartPending = true;
     this.t0 = performance.now();
     if (!this.raf) this.raf = requestAnimationFrame(this.loop);
   }
@@ -371,124 +345,37 @@ class BoltPreview {
     this.draw();
     this.raf = requestAnimationFrame(this.loop);
   }
-  _ensureGl(rt) {
-    if (this.prog || this.err) return !!this.prog;
-    if (!rt || !rt.vfxBolt || !rt.vfxBoltGlsl) { this.err = '运行时代码包里没有雷的模块（刷新页面重打包）'; return false; }
-    const gl = this.gl = this.glCanvas.getContext('webgl2', { alpha: true, premultipliedAlpha: true, antialias: false });
-    if (!gl) { this.err = '没有 WebGL2'; return false; }
-    const sh = (type, src) => {
-      const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || 'shader 编译失败');
-      return s;
-    };
-    try {
-      const p = gl.createProgram();
-      gl.attachShader(p, sh(gl.VERTEX_SHADER, BOLT_PREVIEW_VS));
-      gl.attachShader(p, sh(gl.FRAGMENT_SHADER, boltPreviewFs(rt)));
-      gl.linkProgram(p);
-      if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) || 'program 链接失败');
-      this.prog = p;
-    } catch (e) { this.err = String(e && e.message || e); return false; }
-    this.vao = gl.createVertexArray(); gl.bindVertexArray(this.vao);
-    this.buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
-    const stride = 12 * 4;
-    const attr = (name, n, off) => { const loc = gl.getAttribLocation(this.prog, name); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, n, gl.FLOAT, false, stride, off * 4); };
-    attr('aPos', 2, 0); attr('aSeg', 4, 2); attr('aK', 2, 6); attr('aCol', 4, 8);
-    gl.bindVertexArray(null);
-    return true;
-  }
-  _geoms(rt) {
-    if (this.geoms) return this.geoms;
-    const out = {};
-    for (const b of this.composed.bolts || []) out[b.id] = rt.vfxBolt.createBolt(b, this.inst);
-    return (this.geoms = out);
-  }
   draw() {
-    const rt = S.rt;
+    if (!this.composed) return;
+    if (!this.host) { if (!this.starting) void this.ready().then(() => this.draw()); return; }
     const c = this.canvas;
-    const W = c.clientWidth || 420;
-    if (c.width !== W) c.width = W;
-    const H = c.height;
-    const g = c.getContext('2d');
-    g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
-    g.fillStyle = '#0b0d12'; g.fillRect(0, 0, W, H);
-    if (!this.composed || !this._ensureGl(rt)) return;
+    const W = c.clientWidth || 420, H = c.clientHeight || 300;
+    this.host.resize(W, H, window.devicePixelRatio || 1);
+    const st = this.stage;
+    if (this.effectDirty) {
+      this.effectDirty = false;
+      const comp = this.composed;
+      try { st.setEffect({ id: 'bolt_preview', bolts: comp.bolts || [], emitters: comp.emitters || [] }); this.err = ''; }
+      catch (e) { this.err = String((e && e.message) || e); st.setEffect(null); }
+      this.restartPending = true;
+    }
     const life = 0.46, pause = 0.9;
     const t = ((performance.now() - this.t0) / 1000 * (this.slow ? 0.25 : 1)) % (life + pause);
+    if (this.restartPending || t < this.lastT) {
+      this.restartPending = false;
+      try { st.restart(this.inst, this.water ? 'water' : 'ground'); } catch (e) { this.err = String((e && e.message) || e); }
+    }
+    this.lastT = t;
+    st.advanceTo(t);
     const k768 = this.canvasScale();
     const split = Math.round(W * 0.42);
-    const panels = [{ x: 0, w: split, s: this.far * k768 }, { x: split, w: W - split, s: this.near * k768 }];
-    const gl = this.gl, gc = this.glCanvas;
-    if (gc.width !== W || gc.height !== H) { gc.width = W; gc.height = H; }
-    gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.useProgram(this.prog); gl.bindVertexArray(this.vao);
-    gl.uniform2f(gl.getUniformLocation(this.prog, 'uCanvas'), W, H);
-    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
-    gl.enable(gl.SCISSOR_TEST);
-    const geoms = this._geoms(rt);
-    for (const P of panels) {
-      const groundY = H - 34, cx = P.x + P.w * 0.55;
-      g.fillStyle = '#161920'; g.fillRect(P.x, groundY, P.w, H - groundY);
-      g.strokeStyle = '#30353f'; g.beginPath(); g.moveTo(P.x, groundY + 0.5); g.lineTo(P.x + P.w, groundY + 0.5); g.stroke();
-      const ph = 150 * P.s, pw = ph * 0.26, px = cx - 120 * P.s - pw / 2;
-      g.fillStyle = '#3d434e'; g.fillRect(px, groundY - ph, pw, ph);
-      g.beginPath(); g.arc(px + pw / 2, groundY - ph - pw * 0.45, pw * 0.45, 0, Math.PI * 2); g.fill();
-      gl.scissor(P.x, 0, P.w, H);
-      if (t <= life) this._panel(rt, geoms, P, cx, groundY, t, k768, H);
-    }
-    gl.disable(gl.SCISSOR_TEST);
-    g.globalCompositeOperation = 'lighter';
-    g.drawImage(gc, 0, 0);
-    g.globalCompositeOperation = 'source-over';
-    g.strokeStyle = '#2a2e36'; g.beginPath(); g.moveTo(split + 0.5, 0); g.lineTo(split + 0.5, H); g.stroke();
+    st.layout(W, H, [{ x: 0, w: split, scale: this.far * k768 }, { x: split, w: W - split, scale: this.near * k768 }]);
+    st.sync();
+    this.host.render(st.root);
+    if (this.host.lastError && !this.err) this.err = `GPU：${this.host.lastError}`;
   }
-  _panel(rt, geoms, P, cx, groundY, t, k768, H) {
-    const gl = this.gl, s = P.s;
-    let n = 0;
-    const d = this.data;
-    const push = (ax, ay, bx, by, sig, amp, col, a) => {
-      const len = Math.hypot(bx - ax, by - ay);
-      if (len < 1e-4 || n + 6 > d.length / 12) return;
-      const r = sig * 3.5, tx = (bx - ax) / len * r, ty = (by - ay) / len * r, nx = -ty, ny = tx;
-      const C = [[ax - tx - nx, ay - ty - ny], [bx + tx - nx, by + ty - ny], [bx + tx + nx, by + ty + ny], [ax - tx + nx, ay - ty + ny]];
-      for (const k of [0, 1, 2, 0, 2, 3]) {
-        const o = n * 12;
-        d[o] = C[k][0]; d[o + 1] = C[k][1]; d[o + 2] = ax; d[o + 3] = ay; d[o + 4] = bx; d[o + 5] = by;
-        d[o + 6] = sig; d[o + 7] = amp; d[o + 8] = col[0] * a; d[o + 9] = col[1] * a; d[o + 10] = col[2] * a; d[o + 11] = a;
-        n++;
-      }
-    };
-    for (const em of this.composed.emitters || []) {
-      const ap = em.appearance || {}, L = ap.bolt;
-      if (!L) continue;
-      if (em.onSurface && !em.onSurface.includes(this.water ? 'water' : 'ground')) continue;
-      const geo = geoms[L.bolt];
-      if (!geo) continue;
-      const lf = (em.life && em.life.seconds && em.life.seconds[0]) || 0.46;
-      if (t > lf) continue;
-      const u = t / lf;
-      const a = lpSample(ap.alphaOverLife, u);
-      if (a <= 0.002) continue;
-      const lc = lpSampleColor(ap.tintOverLife, u), tint = ap.tint || [1, 1, 1];
-      const tintC = [0, 1, 2].map((i) => tint[i] * lc[i]);
-      const view = { footX: 0, footY: 0, persp: 1, pxPerScene: s, k768,
-        view: { x0: (P.x - cx) / s, x1: (P.x + P.w - cx) / s, y0: -groundY / s, y1: (H - groundY) / s } };
-      if (geo.kind === 'surface') view.groundToScene = (dx, dz, out) => { out.x = dx; out.y = dz * 0.5; };
-      else rt.vfxBolt.extendBolt(geo, rt.vfxBoltGlsl.boltNeedHeight(view, 3000));
-      const look = { part: L.part === 'main' ? 'main' : 'all', coreWu: L.coreWu, coreMinPx: L.coreMinPx, glowWu: L.glowWu,
-        glowMinPx: L.glowMinPx, haloWu: L.haloWu || 0, haloMinPx: L.haloMinPx || 0, coreGain: L.coreGain, glowGain: L.glowGain,
-        haloGain: L.haloGain || 0, widthMul: lpSample(ap.sizeOverLife, u) };
-      const core = (L.coreColor || [1, 1, 1]).map((v, i) => v * tintC[i]);
-      const glow = (L.glowColor || [1, 1, 1]).map((v, i) => v * tintC[i]);
-      rt.vfxBoltGlsl.emitBoltSegments(geo, look, view, {
-        segment: (ax, ay, bx, by, sig, amp, color) => push(cx + ax * s, groundY + ay * s, cx + bx * s, groundY + by * s, sig * s, amp, color === 0 ? core : glow, a),
-      });
-    }
-    if (!n) return;
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.buf);
-    gl.bufferData(gl.ARRAY_BUFFER, d.subarray(0, n * 12), gl.DYNAMIC_DRAW);
-    gl.drawArrays(gl.TRIANGLES, 0, n);
-  }
+  /** 回读画布（同一个任务里重画再读；自检用）；没有 GPU = null */
+  readPixels() { return this.host ? this.host.readPixels() : null; }
 }
 
 if (typeof module !== 'undefined' && module.exports) module.exports = { LightningPanel, BoltPreview };

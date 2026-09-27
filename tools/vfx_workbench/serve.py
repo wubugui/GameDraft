@@ -4,7 +4,9 @@
   GET  /                                  viewer
   GET  /vendor/<name>.js                  轨迹工作台 viewer 下的共用件原样转发（common.js / gizmo.js / history.js）
                                           —— 不 fork：声学台内联抄过一份 GZ，那是已知欠账，不加第三份
-  GET  /gen/vfx.bundle.js                 运行时 vfxSim + vfxSpace + sceneSpace + 两个场 + 场景风 + 透视打成的 ESM
+  GET  /gen/vfx.bundle.js                 运行时 vfxSim + vfxSpace + sceneSpace + 两个场 + 场景风 + 透视 + 游戏同一份粒子渲染
+                                          （工作台 RHI 接入层 + VfxRenderer，WGSL）打成的 ESM（按需打包，见 bundle.py）
+  GET  /resources/runtime/{images|animation|scenes}/…   运行时贴图 / 动画包 / 场景深度图（与游戏同一个 URL；只放行图与 JSON）
   GET  /api/boot                          启动参数（--open 的效果 id，只发一次；游戏地址；打包状态；布置库路径）
   GET  /api/scenes                        工程场景清单（深度 / 时段背景 / 行走面场状态 / 时段外观 phases / dayNight）
   GET  /api/scene?id=&phase=[&bg=]        场景描述：标定、尺寸、NPC、出生点 / NPC 脚下的世界点、风、透视、
@@ -46,7 +48,7 @@
   POST /api/lightning/compose {style, seed, doc?}   只读：按草稿样式拼出套用之后的 bolts 与那几层（预览用，不落盘）
   POST /api/lightning/sync_group {effectId}   把这份效果样式以外的那几层抄给同组其余几份
   GET  /api/lightning/progress            套用进度（套用是同步的，恒为空闲；留给页面的旧轮询）
-  （雷的预览在页面里现画：bundle 里的 vfxBolt / vfxBoltGlsl，与游戏同一份代码）
+  （雷的预览在页面里现画：bundle 里游戏同一个 VfxRenderer + 运行时模拟，经工作台 RHI 接入层画在 WebGPU 上）
 
 一切响应 ``Cache-Control: no-store``；错误以 ``{ok:false, err}`` 回给前端而不是断连。
 几何直接用轨迹工作台的 ``get_geometry``（同一份 LRU 缓存、同一份 ``SceneGeometry``）。
@@ -54,6 +56,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -91,22 +94,53 @@ VENDOR = {
 
 #: 运行时贴图 URL 前缀（与游戏同一个 URL：效果资产里写的就是它）
 RESOURCE_IMAGES_URL = "/resources/runtime/images/"
+#: 运行时资源 URL 前缀：页面经游戏同一套装载（``Assets.load`` / 动画包 JSON）取贴图、动画包、场景深度图
+RUNTIME_URL = "/resources/runtime/"
+#: 放行的顶层目录：粒子单图 / 光柱遮罩（images）、粒子动画包（animation）、场景深度图（scenes）
+RUNTIME_DIRS = ("images", "animation", "scenes")
 _IMAGE_TYPES = {".png": "image/png", ".webp": "image/webp", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}
+_RUNTIME_TYPES = {**_IMAGE_TYPES, ".json": "application/json; charset=utf-8"}
+
+
+def _runtime_file(url_path: str, dirs: tuple[str, ...], types: dict) -> Path | None:
+    """``/resources/runtime/<dir>/...`` → ``public/resources/runtime`` 下的文件；不合法 / 不在白名单 / 不存在 = None。
+
+    ⚠ ``public/resources/runtime`` 常是 junction / 符号链（DVC 管的素材链到别处，worktree 里也是）：解析后的真实路径
+    落在树外。所以先按**真实路径**判（真实文件在真实基目录下），不行再按**字面路径**判（逐段拼、不许 ``..`` / 空段 /
+    反斜杠 / 盘符，拼出来字面上就在 ``public/resources/runtime`` 下）——与打包那边 ``asset_manifest._public_rel`` 同一个修法。
+    """
+    from urllib.parse import unquote
+    rel = unquote(url_path.split("?", 1)[0][len(RUNTIME_URL):])
+    if "\\" in rel or ":" in rel or "\x00" in rel:
+        return None
+    parts = rel.split("/")
+    if len(parts) < 2 or parts[0] not in dirs or any(x in ("", ".", "..") for x in parts):
+        return None
+    if Path(parts[-1]).suffix.lower() not in types:
+        return None
+    base = ROOT / "public" / "resources" / "runtime"
+    p = base.joinpath(*parts)
+    try:
+        p.resolve().relative_to(base.resolve())
+    except (ValueError, OSError):
+        lit_base = os.path.abspath(base)
+        if os.path.commonpath([lit_base, os.path.abspath(p)]) != lit_base:
+            return None
+    return p if p.is_file() else None
 
 
 def resource_image_path(url_path: str) -> Path | None:
     """``/resources/runtime/images/...`` → 磁盘文件；出了那个目录 / 不是图片 / 不存在 = None。"""
-    from urllib.parse import unquote
-    rel = unquote(url_path[len(RESOURCE_IMAGES_URL):])
-    base = (ROOT / "public" / "resources" / "runtime" / "images").resolve()
-    try:
-        p = (base / rel).resolve()
-        p.relative_to(base)
-    except (ValueError, OSError):
+    if not url_path.startswith(RESOURCE_IMAGES_URL):
         return None
-    if p.suffix.lower() not in _IMAGE_TYPES or not p.is_file():
+    return _runtime_file(url_path, ("images",), _IMAGE_TYPES)
+
+
+def runtime_resource_path(url_path: str) -> Path | None:
+    """``/resources/runtime/{images|animation|scenes}/...`` 下的图 / JSON → 磁盘文件（与游戏同一个 URL）；否则 None。"""
+    if not url_path.startswith(RUNTIME_URL):
         return None
-    return p
+    return _runtime_file(url_path, RUNTIME_DIRS, _RUNTIME_TYPES)
 
 
 def scene_list() -> list[dict]:
@@ -171,6 +205,8 @@ def scene_summary(sid: str, bg: str | None, phase: str | None = None) -> dict:
     dc = d.get("depthConfig") if isinstance(d.get("depthConfig"), dict) else {}
     tol = dc.get("depth_tolerance")
     s["depthTolerance"] = float(tol) if isinstance(tol, (int, float)) and not isinstance(tol, bool) else 0.05
+    # 原画视图用游戏同一个 VfxRenderer 画：粒子 / 光柱的遮挡吃场景的深度图 + depth_mapping（与 SceneDepthSystem 同一份），原样给
+    s["depthConfig"] = dc if g.has_depth and isinstance(dc.get("depth_map"), str) and isinstance(dc.get("depth_mapping"), dict) else None
     return s
 
 
@@ -289,8 +325,8 @@ class H(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _bytes(self, data: bytes, ctype: str):
-        self.send_response(200)
+    def _bytes(self, data: bytes, ctype: str, code: int = 200):
+        self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -332,12 +368,15 @@ class H(SimpleHTTPRequestHandler):
                 if not p.is_file():
                     return self._json({"ok": False, "err": f"共用件不存在: {rel}"}, 404)
                 return self._bytes(p.read_bytes(), "text/javascript; charset=utf-8")
-            if u.path.startswith(RESOURCE_IMAGES_URL):
-                # 贴图预览（光柱图案遮罩 / 粒子单图）：只放行 public/resources/runtime/images 下的图片，不许拿路径拼任意文件
-                p = resource_image_path(u.path)
+            if u.path == "/favicon.ico":
+                return self._bytes(b"", "image/x-icon", 204)
+            if u.path.startswith(RUNTIME_URL):
+                # 贴图 / 动画包 / 场景深度图（粒子单图、光柱图案遮罩、粒子动画包、原画深度）：只放行
+                # public/resources/runtime/{images,animation,scenes} 下的图与 JSON，不许拿路径拼任意文件
+                p = runtime_resource_path(u.path)
                 if p is None:
-                    return self._json({"ok": False, "err": "不是 resources/runtime/images 下的图片"}, 404)
-                return self._bytes(p.read_bytes(), _IMAGE_TYPES[p.suffix.lower()])
+                    return self._json({"ok": False, "err": "不是 resources/runtime/{images,animation,scenes} 下的图 / JSON"}, 404)
+                return self._bytes(p.read_bytes(), _RUNTIME_TYPES[p.suffix.lower()])
             if u.path == "/gen/vfx.bundle.js":
                 p, err = bundle.ensure_bundle()
                 if not p or not p.exists():

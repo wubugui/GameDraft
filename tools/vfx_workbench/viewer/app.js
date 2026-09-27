@@ -177,8 +177,6 @@ const S = {
 };
 let v3 = null;
 let v2 = null;
-/** 原画视图里光柱的真实预览层（离屏 WebGL，编译运行时那段 GLSL 核心） */
-let beamPreview = null;
 let history = null;
 let simTimer = 0;
 let pubTimer = 0;
@@ -1254,14 +1252,6 @@ function setBeamPointToScene(base, sp) {
   const as = beamAnchorScene(); if (!as) return;
   writeBeamPoint(base.id, base.which, [sp[0] - as[0], sp[1] - as[1]]);
 }
-/** 本地预览模拟里的光柱运行态 + 显示用的淡入淡出（还没播 = 画满，好调形状；播起来按真实淡入淡出） */
-function previewBeamRuntimes() {
-  if (!S.sim || !S.sim.beams) return [];
-  return S.sim.beams.map((b) => {
-    S.sim.beamFrame(b);
-    return { runtime: Object.assign({}, b, { fade: S.simTime > 0 ? b.fade : 1 }), pulse: S.sim.beamPulse(b) };
-  });
-}
 /** 光柱的画面包络（与运行时 `VfxRenderer.renderBeams` 同一条：3D = 两圈截面顶点投到画面的凸包；2D = 四角） */
 function beamHullScene(b) {
   const api = S.rt && S.rt.vfxBeam; if (!api || !S.space) return null;
@@ -1301,32 +1291,21 @@ function beamLines3() {
   }
   return out;
 }
-/** 原画视图：光柱真实预览（运行时那段 GLSL 编译出来画）+ 选中的那根描边 */
-function drawBeams2d(g, view) {
-  if (!S.rt || !S.rt.vfxBeamGlsl || !S.sim || !S.cal || !S.layers.beams) return;
-  if (!beamPreview) { beamPreview = new BeamPreview(); beamPreview.onAsset = () => draw(); }
-  const beams = previewBeamRuntimes();
-  if (!beams.length) return;
-  const env = {
-    affine: S.space ? S.rt.vfxBeam.sceneQAffine(S.space) : null,
-    wuPerQ: S.space ? S.space.wuPerQ : 1, time: S.simTime,
-    uprightQz: S.space && S.space.uprightWorldAtScene
-      ? (fx, fy, sx, sy) => { const q = [0, 0, 0]; S.space.toQ(S.space.uprightWorldAtScene(fx, fy, sx, sy), q); return q[2]; } : null,
-    hasDepth: !!(S.cal && S.cal.shell),
-  };
-  const n = beamPreview.draw(g, S.rt, S.cal, env, beams, view, (b) => beamHullScene(b), S.scene ? S.scene.depthTolerance || 0.05 : 0.05);
-  if (n < 0 && beamPreview.err && !S.beamPreviewErrShown) { S.beamPreviewErrShown = true; status(`光柱预览着色器编译失败：${beamPreview.err}`, 'err'); }
+/**
+ * 原画视图的 GPU 画面要画的本地预览：就是 `S.sim` 这一个运行时模拟（游戏的 `VfxRenderer` 画它的粒子 / 薄片 / 雷 / 光柱，
+ * 见 view2d.js）。`simTime` = 0（还没播）时光柱画满（好调形状），播起来按真实淡入淡出。
+ */
+function preview2d() {
+  return { sim: S.sim, simTime: S.simTime };
+}
+/** 原画视图：选中的那根光柱的画面包络（标注层描边用；光柱本身在 GPU 画面里） */
+function selectedBeamHull() {
   const sel = beamKeyOf(S.sel.key);
-  if (sel) {
-    const b = beams.find((x) => x.runtime.def.id === sel.id);
-    const hull = b ? beamHullScene(b.runtime) : null;
-    if (hull && hull.count >= 3) {
-      g.strokeStyle = 'rgba(255,230,80,.7)'; g.lineWidth = 1; g.setLineDash([5, 4]);
-      g.beginPath();
-      for (let k = 0; k < hull.count; k++) { const x = hull.pts[k * 2] * view.zoom + view.ox, y = hull.pts[k * 2 + 1] * view.zoom + view.oy; if (k) g.lineTo(x, y); else g.moveTo(x, y); }
-      g.closePath(); g.stroke(); g.setLineDash([]);
-    }
-  }
+  if (!sel || !S.sim || !S.sim.beams) return null;
+  const b = S.sim.beams.find((x) => x.def.id === sel.id);
+  if (!b) return null;
+  S.sim.beamFrame(b);
+  return beamHullScene(b);
 }
 
 // ---- 光柱列表操作
@@ -4078,7 +4057,9 @@ const host = {
   setAnchorAt, setAnchorScene, setPlayerAt, addFieldAt,
   setAttachMode, ensureAttach, setWalk,
   currentEmitter, renameEmitter, ensureAuthoring, ensureAnchor, reanchor,
-  currentBeam, renameBeam, beamRefs, beamLines3, drawBeams2d,
+  currentBeam, renameBeam, beamRefs, beamLines3, selectedBeamHull, preview2d,
+  /** 运行时包（原画视图的 GPU 画面从它建：接入层 + vfxView） */
+  get rt() { return S.rt; },
   beamApi: () => (S.rt && S.rt.vfxBeam) || null,
   onCursorWorld, onCursorScene, renderInspector,
   get ls() { return S.ls; },
@@ -4162,6 +4143,8 @@ async function boot() {
   setTool('select');
   setView(v3 && v3.ok ? 3 : 2);
   await loadRuntime();
+  // 原画视图的 GPU 画面（游戏同一个 WebGPU 渲染器）：先建着，拿不到 WebGPU 的原因显示在视图上、编辑照常
+  if (v2) void v2.initGpu(S.rt);
   let boot0 = {};
   try { boot0 = await API.json('/api/boot'); } catch (e) { /* 服务刚起：下面照常 */ }
   if (boot0.bundle && !boot0.bundle.ok && boot0.bundle.err) S.rtErr = boot0.bundle.err;

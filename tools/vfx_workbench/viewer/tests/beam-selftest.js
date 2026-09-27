@@ -1,4 +1,4 @@
-/* 光柱（体积光）交互层回归：左栏加光柱 → 选中立刻有 gizmo → 原画视图真实预览（运行时那段 GLSL）→
+/* 光柱（体积光）交互层回归：左栏加光柱 → 选中立刻有 gizmo → 原画视图真实预览（游戏的 VfxRenderer，WebGPU；拿不到 WebGPU 的宿主记 SKIP）→
  * 从画布入口拖起点把手（一条历史、跟手走）→ 检视器改强度 / 截面 / 模式 → 尘埃挂到光柱上 → 存盘往返 →
  * 改名连带引用 / 被引用时删不掉 → 没深度的场景里 2D 光带照样预览。只写一次性的 zz_selftest_beam_* 效果，收尾删掉。 */
 (async () => {
@@ -29,14 +29,19 @@
     n.dispatchEvent(new Event('change', { bubbles: true }));
     await wait(40);
   };
-  /** 2D 画布在某画面点附近的亮度和（光柱开 / 关对比用） */
+  /** 原画视图（游戏的 WebGPU 渲染器）在某画面点附近的亮度和（光柱开 / 关对比用；同一个任务里重画再读） */
   const lumAt = (sx, sy) => {
-    const c = el('view2d'), g = c.getContext('2d'), dpr = window.devicePixelRatio || 1;
-    const px = Math.round((sx * v2.zoom + v2.ox) * dpr), py = Math.round((sy * v2.zoom + v2.oy) * dpr);
-    const d = g.getImageData(px - 3, py - 3, 7, 7).data;
-    let s = 0; for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2];
+    const px = v2.gpu.readRect(sx * v2.zoom + v2.ox - 3, sy * v2.zoom + v2.oy - 3, 7, 7);
+    if (!px) return 0;
+    let s = 0; for (let i = 0; i < px.data.length; i += 4) s += px.data[i] + px.data[i + 1] + px.data[i + 2];
     return s;
   };
+  /** 读像素的检查：宿主拿不到 WebGPU（offscreen 的 QtWebEngine）时记 SKIP 并写明原因——真 GPU 的 Chrome 跑同一份脚本不许 SKIP */
+  const okGpu = (name, cond, extra) => {
+    if (!v2.gpu.ok) log.push(`SKIP ${name} ${JSON.stringify({ why: v2.gpu.err || 'no GPU layer' })}`);
+    else ok(name, typeof cond === 'function' ? cond() : cond, extra);
+  };
+  const settle = async () => { for (let i = 0; i < 100 && v2.gpu.ok && !v2.gpu.settled; i++) await wait(50); };
   try {
     while (!window.__ready) await wait(50);
     S.link.on = false;
@@ -59,14 +64,19 @@
     ok('B1 local preview runs the runtime sim with the beam (frame solved by vfxBeam.ts)',
       !!S.sim && S.sim.beams.length === 1 && !!S.sim.beamFrame(S.sim.beams[0]).frame3d && !S.simErr, { err: S.simErr });
 
-    // ---- 原画视图真实预览：光柱开 / 关，光柱中段那一片确实亮了（编译的是运行时那段 GLSL）
+    // ---- 原画视图真实预览：光柱开 / 关，光柱中段那一片确实亮了（游戏的 VfxRenderer / VfxBeamView，WGSL）
     const f = S.sim.beamFrame(S.sim.beams[0]).frame3d;
     const mid = [f.origin[0] + f.axis[0] * f.length * 0.5, f.origin[1] + f.axis[1] * f.length * 0.5, f.origin[2] + f.axis[2] * f.length * 0.5];
     const ms = S.cal.worldToScene(mid[0], mid[1], mid[2]);
-    S.layers.beams = false; v2.draw(); const off = lumAt(ms[0], ms[1]);
-    S.layers.beams = true; v2.draw(); const on = lumAt(ms[0], ms[1]);
-    ok('B2 the 2D view draws the beam with the runtime shader core (mid-shaft pixels brighter with the beams layer on, no compile error)',
-      !!beamPreview && !beamPreview.err && on > off + 30, { on, off, err: beamPreview && beamPreview.err });
+    await settle();
+    S.layers.beams = false; v2.draw(); const off = v2.gpu.ok ? lumAt(ms[0], ms[1]) : 0;
+    const hidden = v2.gpu.ok ? v2.gpu.stage.stats() : null;
+    S.layers.beams = true; v2.draw(); const on = v2.gpu.ok ? lumAt(ms[0], ms[1]) : 0;
+    const shown = v2.gpu.ok ? v2.gpu.stage.stats() : null;
+    ok('B2 the page has no shader of its own (no WebGL beam preview layer, no GLSL namespace in the bundle)',
+      typeof BeamPreview === 'undefined' && !('vfxBeamGlsl' in S.rt) && !('vfxBoltGlsl' in S.rt));
+    okGpu('B2 the 2D view draws the beam with the game renderer (VfxBeamView mesh shown / hidden by the layer; mid-shaft pixels brighter with the beams layer on)',
+      () => !v2.gpu.err && shown.visibleBeams === 1 && hidden.visibleBeams === 0 && on > off + 30, { on, off, err: v2.gpu.err, shown, hidden });
 
     // ---- 从画布入口拖起点把手：一条历史、写的是 shape3d.from、光柱跟手走（不等松手重建）
     const from0 = (b.shape3d.from || [0, 0, 0]).slice();
@@ -134,14 +144,15 @@
       S.cal = new PlanarCal(S.scene.worldWidth, S.scene.worldHeight, Math.SQRT2);
       buildSpace(); rebuildSim(); v2.setBackground(v2.bg);
       edit('自检 2D 光带', () => { S.doc.beams[0].mode = '2d'; S.doc.beams[0].shape2d = { from: [-40, -160], to: [0, 0], width: [30, 120] }; });
-      setView(2); await wait(40);
+      setView(2); await wait(40); await settle();
       const b2 = S.sim && S.sim.beamFrame(S.sim.beams[0]);
       const c2 = b2 && b2.frame2d ? [(b2.frame2d.corners[0] + b2.frame2d.corners[4]) / 2, (b2.frame2d.corners[1] + b2.frame2d.corners[5]) / 2] : null;
-      S.layers.beams = false; v2.draw(); const off2 = c2 ? lumAt(c2[0], c2[1]) : 0;
-      S.layers.beams = true; v2.draw(); const on2 = c2 ? lumAt(c2[0], c2[1]) : 0;
-      ok('B8 a scene without depth loads with the planar calibration: local sim runs, the 2D band is drawn',
-        !!S.cal && S.cal.planar === true && !!S.space && S.space.kind === 'planar' && !!b2 && !!b2.frame2d && on2 > off2 + 30,
-        { scene: flat.id, on2, off2, err: S.simErr, planar: !!(S.cal && S.cal.planar), space: S.space && S.space.kind, frame: !!(b2 && b2.frame2d) });
+      S.layers.beams = false; v2.draw(); const off2 = c2 && v2.gpu.ok ? lumAt(c2[0], c2[1]) : 0;
+      S.layers.beams = true; v2.draw(); const on2 = c2 && v2.gpu.ok ? lumAt(c2[0], c2[1]) : 0;
+      ok('B8 a scene without depth loads with the planar calibration: local sim runs with the 2D band',
+        !!S.cal && S.cal.planar === true && !!S.space && S.space.kind === 'planar' && !!b2 && !!b2.frame2d,
+        { scene: flat.id, err: S.simErr, planar: !!(S.cal && S.cal.planar), space: S.space && S.space.kind, frame: !!(b2 && b2.frame2d) });
+      okGpu('B8 the 2D band is drawn by the game renderer on the planar calibration', () => on2 > off2 + 30, { on2, off2, err: v2.gpu.err });
       await loadScene(flat.id, S.phase); await wait(60);
     }
   } catch (error) { log.push('EXC ' + (error.stack || error)); }
