@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """本地预览的裁判：`/gen/burn.bundle.js` 必须真的是**运行时那几个模块本体**打出来的（不是 JS 里照着写的第二份），
-画面必须是**游戏同一份渲染**（engine2d / RHI + 燃烧滤镜的 WGSL），页面里没有任何自己的着色器。
+画面使用 engine2d / RHI 和共享燃烧 WGSL，工具按旧 BurnGL 的单 pass 组合；页面里没有着色器。
 
 打包在子进程里做（pytest 进程装着仓库写守卫，不能自己写 `viewer/_gen/`）；本进程只读产物。
 没有 node（PATH 与 .tools/node 都没有）就 skip——那台机器上工作台照样能改能存，只是没有本地预览。
@@ -46,9 +46,8 @@ def test_bundle_exports_the_runtime_modules(built: Path) -> None:
                  "normalizeAnimationSetDef", "createFieldVfxSpace", "createPlanarVfxSpace", "groundWorldAt", "viewDirWorld",
                  "buildDepthShellField", "resolveSceneWind", "sampleSceneWind", "createPerspectiveScaleResolver", "perspectiveScaleAt",
                  "entityScaleOf", "kelvinToLinearRgb", "loadBurnImageData",
-                 # 画面 = 游戏同一份渲染：渲染器 / 热点实体 / 燃烧渲染与两道滤镜
-                 "createCanvasHost", "createRenderer", "WebGPURenderer", "BurnStage", "BurnRenderer", "BurnMaterialFilter",
-                 "BurnGlowFilter", "BurnFieldTexture", "Hotspot"):
+                 # 单 pass 工具组合，共享引擎和燃烧函数
+                 "createCanvasHost", "createRenderer", "WebGPURenderer", "BurnStage", "BurnPreviewQuad", "BurnFieldTexture", "loadPreviewTexture"):
         assert re.search(rf"\b{name}\b", src), f"包里没有 {name}：本地预览就不是运行时那一份了"
     for ns in ("burnSim", "burnGeometry", "burnAim", "igniteStance", "burnables", "animationSockets", "propPresets",
                "resolveAnimationSet", "sceneSpace", "vfxSpace", "depthShellField", "sceneWind", "perspectiveScale",
@@ -82,7 +81,7 @@ def test_bundle_is_cached_by_source_stamp(built: Path) -> None:
 def test_stamp_lists_what_the_bundler_actually_read(built: Path) -> None:
     """判新旧的清单是打包器自己报的：WGSL（`?raw`）、游戏渲染模块、工作台胶水、依赖包都在里面。"""
     names = {p.name for p in wbrhi.inputs_of(bundle.OUT)}
-    assert {"burnShade.wgsl", "BurnFilters.ts", "BurnRenderer.ts", "Hotspot.ts", "WebGPURenderer.ts", "LumaRhiDevice.ts",
+    assert {"burnShade.wgsl", "BurnFilters.ts", "burnPreview.ts", "WebGPURenderer.ts", "LumaRhiDevice.ts",
             "workbenchRhi.ts", "burnView.ts", "burnSim.ts", "package-lock.json"} <= names, sorted(names)
     assert any("node_modules" in str(p) and "luma.gl" in str(p) for p in wbrhi.inputs_of(bundle.OUT))
 
@@ -96,7 +95,7 @@ def test_sources_cover_the_whole_import_tree() -> None:
             "animationSockets.ts", "propPresets.ts", "resolveAnimationSet.ts", "sceneSpace.ts", "vfxSpace.ts",
             "depthShellField.ts", "groundHeightfield.ts", "groundDepthField.ts", "worldReconstruct.ts", "sceneWind.ts",
             "perspectiveScale.ts", "entityTransform.ts", "kelvin.ts", "burnImageData.ts", "assetPath.ts",
-            "BurnRenderer.ts", "BurnFilters.ts", "burnShade.wgsl", "Hotspot.ts", "workbenchRhi.ts", "burnView.ts"} <= names, names
+            "burnPreview.ts", "BurnFilters.ts", "burnShade.wgsl", "workbenchRhi.ts", "burnView.ts"} <= names, names
     # 站位求解器住在 igniteStance.ts：包不牵点火表演 / 游戏状态机（`src/data/types.ts` 一改包就重打）
     rel = {s.resolve().relative_to(_ROOT.resolve()).as_posix() for s in srcs if s.resolve().is_relative_to(_ROOT.resolve())}
     assert "src/systems/burn/ignitePerformer.ts" not in rel and "src/data/types.ts" not in rel, sorted(rel)
@@ -134,10 +133,27 @@ def test_viewer_does_not_reimplement_the_sim() -> None:
                  "rt.burnables.resolveBurnable", "rt.burnables.burnableWorldSize", "S.rt.burnSim.BurnSceneSim", "loadBurnImageData",
                  "g.burnEntityPlacement(", "g.burnPlacementFrame(", "burnGeometry.burnFrameExtent(",
                  "burnShadeParams.burnShadeParamsOf", "rt.workbenchRhi.createCanvasHost(", "rt.burnView.BurnStage(",
-                 "S.rt.workbenchRhi.loadTexture(", "S.rt.burnView.artHotspotDef(", "sim.encodeTexture(key, dst)"):
+                 "S.rt.burnView.loadPreviewTexture(", "S.rt.burnView.artHotspotDef(", "sim.encodeTexture(key, dst)"):
         assert used in text, used
 
 
 def test_gen_dir_is_gitignored() -> None:
     ign = (bundle.TOOL / ".gitignore").read_text(encoding="utf-8")
     assert "viewer/_gen/" in ign
+
+
+def test_legacy_oracle_is_frozen_and_not_in_production_bundle() -> None:
+    import hashlib
+    import json
+    parity = bundle.TOOL / "tests" / "parity"
+    provenance = json.loads((parity / "legacy-source.json").read_text(encoding="utf-8"))
+    assert provenance["masterCommit"] == "865716499887b24367a25b0da2a2ae5e80a30b84"
+    for record in provenance["files"]:
+        data = (parity / record["fixture"]).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == record["fixtureSha256"]
+        source = data.decode("utf-8")
+        if record["fixture"].endswith(".js"):
+            assert source.endswith(provenance["jsAdapter"])
+            source = source[:-len(provenance["jsAdapter"])]
+        assert hashlib.sha256(source.encode("utf-8")).hexdigest() == record["lfSourceSha256"]
+    assert not any("legacyBurn" in p.name for p in bundle.sources())

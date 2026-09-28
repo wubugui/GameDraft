@@ -1,12 +1,7 @@
 'use strict';
-/* 燃烧工作台 · GPU 着色层（`#gl` 画布）：场景视图背景、模板的图（原画视图 / 场景视图里每个实例）的烤黄 / 焦黑 / 成灰 / 烧没 / 自发光。
- *
- * **这里没有着色器**：画布上是游戏同一个 WebGPU 渲染器（engine2d / RHI，经工作台 RHI 接入层 `S.rt.workbenchRhi`），
- * 画面由包里的 `S.rt.burnView.BurnStage` 用游戏自己的对象拼——实例 = `Hotspot` 展示图，燃烧着色 = `BurnRenderer` 挂的
- * 两道燃烧滤镜（`burnShade.wgsl`），贴图 = 与游戏同一条 `Assets.load`。页面只把"画什么"（相机、实例、燃烧场、参数）交过去。
- * 燃烧场纹理 = 模拟 `encodeTexture` 的产物（与游戏同格式：RGBA8、网格尺寸、NEAREST），燃烧 uv 就是模板图的纹理 uv。
- *
- * 没有 WebGPU（宿主拿不到适配器）就明确说画不了，**不回落**任何别的 API；编辑、保存、模拟、站位照常。 */
+/* WebGPU preview of the legacy tool: direct template UV, straight-alpha sampling, one material/glow pass.
+ * BurnStage shares runtime simulation/frame/shade functions; tests/parity keeps the old BurnGL oracle.
+ * No WebGPU fallback. The tool owns its straight-alpha textures independently of Assets. */
 
 class BurnGpu {
   constructor(canvas) {
@@ -15,18 +10,20 @@ class BurnGpu {
     this.err = '';
     this.host = null;
     this.stage = null;
-    /** url → { tex, err, pending }（`workbenchRhi.loadTexture`：与游戏 AssetManager 同一条装载） */
+    /** url → { tex, err, pending }（工具独占的直通 alpha 纹理，不进 Assets 共享缓存） */
     this.textures = new Map();
     this.pendingTextures = 0;
     this.items = [];
     this.bg = null;
+    this.cssWidth = 1;
+    this.cssHeight = 1;
   }
 
   /** 建渲染器（异步：要 WebGPU 适配器与设备）。失败把人话原因写进 `err` */
   async init(rt) {
     if (!rt || !rt.workbenchRhi || !rt.burnView) { this.err = '运行时包没装上：着色预览画不了'; return false; }
     try {
-      this.host = await rt.workbenchRhi.createCanvasHost(this.canvas, { background: 0x111113 });
+      this.host = await rt.workbenchRhi.createCanvasHost(this.canvas, { background: [0.067, 0.067, 0.075, 1], antialias: true });
       this.stage = new rt.burnView.BurnStage();
       this.ok = true;
       this.err = '';
@@ -38,6 +35,10 @@ class BurnGpu {
   }
 
   resize(cssW, cssH, dpr) {
+    // Legacy BurnGL keeps original CSS uScreen even when css*dpr rounds to integral pixels.
+    // engine2d.screen is rounded pixels / DPR and would shift both artwork and the burn field.
+    this.cssWidth = Math.max(1, cssW);
+    this.cssHeight = Math.max(1, cssH);
     if (this.ok) this.host.resize(cssW, cssH, dpr);
   }
 
@@ -64,10 +65,10 @@ class BurnGpu {
     if (!this.ok || !url) return null;
     let r = this.textures.get(url);
     if (!r) {
-      r = { tex: null, err: '', pending: true, promise: null };
+      r = { dropped: false, tex: null, err: '', pending: true, promise: null };
       this.textures.set(url, r);
       this.pendingTextures++;
-      r.promise = S.rt.workbenchRhi.loadTexture(url).then((t) => { r.tex = t; }, (e) => { r.err = String((e && e.message) || e); })
+      r.promise = S.rt.burnView.loadPreviewTexture(url).then((t) => { if (r.dropped) t.destroy(true); else r.tex = t; }, (e) => { r.err = String((e && e.message) || e); })
         .finally(() => { r.pending = false; this.pendingTextures--; requestDraw(); });
     }
     return r;
@@ -81,9 +82,10 @@ class BurnGpu {
     const r = this.textures.get(url);
     if (!r) return;
     this.textures.delete(url);
+    r.dropped = true;
     if (this.bg && this.bg.tex === r.tex) this.bg = null;
     if (this.ok) this.stage.forgetTexture(r.tex);
-    if (r.tex) void S.rt.workbenchRhi.unloadTexture(url);
+    if (r.tex) r.tex.destroy(true);
   }
 
   /** 这一帧的背景（没调 = 这一帧没有背景） */
@@ -112,6 +114,7 @@ class BurnGpu {
     if (!this.ok) return;
     try {
       this.stage.setBackground(this.bg ? this.bg.tex : null, this.bg ? this.bg.w : 0, this.bg ? this.bg.h : 0);
+      this.stage.setScreen(this.cssWidth, this.cssHeight);
       this.stage.sync(this.items, performance.now());
       this.host.render(this.stage.root);
       this.err = this.host.lastError ? `GPU：${this.host.lastError}` : '';

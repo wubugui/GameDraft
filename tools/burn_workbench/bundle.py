@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""把运行时的燃烧纯函数 + 游戏同一份渲染（engine2d / RHI / 燃烧滤镜）打成一个 ESM 包给工作台页面用
+"""把运行时的燃烧纯函数 + engine2d / RHI 与共享燃烧 WGSL 单 pass 预览打成一个 ESM 包给工作台页面用
 （本地预览 = 同一份运行时代码，不是 JS 镜像；画面 = 游戏同一套 WGSL，不是 GLSL 孪生）。
 
 打包走共用的工作台 RHI 接入层（``tools/workbench_rhi``：vite 库模式、打包器自报的源清单判新旧、产物不进 git）。
@@ -20,9 +20,9 @@
   * ``rendering/burn/burnShadeParams.ts`` 着色参数（与 ``BurnSystem`` 同一个函数）
   * ``rendering/burn/burnImageData.ts``  读图的 RGBA（不预乘、长边 640，燃料网格与游戏逐位相同的前提）
   * ``tools/workbench_rhi/workbenchRhi.ts``  画布宿主：在页面画布上建游戏同一个 WebGPU 渲染器、装图、回读
-  * ``tools/burn_workbench/gpu/burnView.ts`` 画面：游戏的 ``Hotspot`` + ``BurnRenderer``（两道燃烧滤镜，WGSL）拼出来
+  * ``tools/burn_workbench/gpu/burnView.ts`` 画面：旧工具单 pass 组合（共享 burnShade.wgsl，直通采样后预乘）
 
-着色器没有工具自己的一份：页面不再拿任何 GLSL（旧的 ``/gen/burnShade.glsl`` 已删）。
+燃烧数学没有工具自己的一份：页面不再拿任何 GLSL（旧的 ``/gen/burnShade.glsl`` 已删）。
 打包在子进程里做（pytest 装着仓库写守卫）。打不出来不致命：能改能存，只是没有本地预览与站位。
 """
 from __future__ import annotations

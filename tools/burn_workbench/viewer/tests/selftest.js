@@ -45,25 +45,11 @@
     if (noGpu()) log.push(`SKIP ${name} ${JSON.stringify({ why: (V.gpu && V.gpu.err) || 'no GPU layer' })}`);
     else ok(name, typeof cond === 'function' ? cond() : cond, extra);
   };
-  // ---- 已知差异（master 同一 bug；本分支与 master 一致、不改，待制作人定——修复在 wt/burnfix）
-  // 燃烧材质滤镜排在自发光前面（滤镜链中间那一道）：照 Pixi，那一道 pass 的滤镜顶点位置是相对滤镜 bounds 的，燃烧 uv 偏了
-  // 「bounds 左上 ÷ 投影缩放」——焦黑 / 成灰 / 烧没随相机走位，偏得多就整块画不出来（WebView2 宿主 dpr 1.24 的布局下就是整块没了）。
-  // 读像素的检查碰上它时，同一帧再「只挂材质那一道」重读（材质成了链的最后一道、拿得到真屏幕坐标）：那样读到的对了 ⇒ 就是这个已知
-  // bug，记一行 `KNOWN <检查名> {…}`——不是 FAIL、也不是 SKIP；pytest 核对它只出现在登记的那几条上、带着 inbox 记录的路径，并在
-  // 警告汇总里列出来；那样也不对 ⇒ 是别的问题，照常 FAIL。bug 修好之后这几条直接 PASS。
-  const MID_CHAIN_BUG = 'agent_docs/_meta/inbox/2026-09-28-filters-mid-chain-screen-pos.md';
-  const okBurnPixel = async (name, read, pass, knownIf) => {
+  // Burn pixels have no KNOWN exemption: legacy tool presentation is the acceptance target.
+  const okBurnPixel = async (name, read, pass) => {
     if (noGpu()) { log.push(`SKIP ${name} ${JSON.stringify({ why: (V.gpu && V.gpu.err) || 'no GPU layer' })}`); return; }
-    const chained = await read();
-    if (pass(chained)) { ok(name, true, { px: chained }); return; }
-    const key = `a:${TEMPLATE_KEY}`;
-    const attached = V.gpu.stage.setMaterialOnly(key, true);
-    const materialLast = await read();
-    V.gpu.stage.setMaterialOnly(key, false);
-    draw();
-    if (attached && knownIf(chained, materialLast)) {
-      log.push(`KNOWN ${name} ${JSON.stringify({ bug: 'master 同一 bug：燃烧材质滤镜在滤镜链中间时燃烧 uv 按相对 bounds 的坐标算（待制作人定）', see: MID_CHAIN_BUG, chained, materialLast })}`);
-    } else ok(name, false, { chained, materialLast, attached });
+    const px = await read();
+    ok(name, pass(px), { px });
   };
 
   try {
@@ -271,26 +257,24 @@
     const replayed = enc(P.art.sim, TK, P.art);
     ok('S7 scrubbing = deterministic replay from 0: texture bytes identical to the live run', live.length === replayed.length && live.every((x, i) => x === replayed[i]));
     ok('S7 burnt out at t=20 (paper ashAlpha 0)', P.art.sim.state(TK) === 'burnt', { st: P.art.sim.state(TK) });
-    okGpu('S7 the game burn filters (burnShade.wgsl via BurnRenderer) draw it: fresh = paper colour (no burn shading while unburnt)',
+    okGpu('S7 the legacy-tool single pass (shared burnShade.wgsl) draws it: fresh = paper colour (no burn shading while unburnt)',
       Math.abs(fresh[0] - 230) < 12 && Math.abs(fresh[2] - 150) < 12, { fresh });
     const dark = (px) => px[0] < 40 && px[2] < 40;
-    await okBurnPixel('S7 burnt out = background shows through (material + glow chain)',
-      async () => { draw(); return V.gpu.readPixel(cp[0], cp[1]); }, dark, (_ch, ml) => dark(ml));
-    // 相机挪开（展示图 bounds 左上远离屏幕原点）照样烧没——正好是上面那个已知 bug 最显眼的时候（材质那一道的偏移随相机变）
+    await okBurnPixel('S7 burnt out = background shows through (single material + glow pass)',
+      async () => { draw(); return V.gpu.readPixel(cp[0], cp[1]); }, dark);
     {
       const c = V.cam.art, saved = { ox: c.ox, oy: c.oy };
       c.ox += 260; c.oy += 170;
       await okBurnPixel('S7 burnt out stays burnt out wherever the camera puts the sprite',
-        async () => { draw(); return V.gpu.readPixel(...toScreen(size[0] * 0.5, size[1] * 0.5)); }, dark, (_ch, ml) => dark(ml));
+        async () => { draw(); return V.gpu.readPixel(...toScreen(size[0] * 0.5, size[1] * 0.5)); }, dark);
       c.ox = saved.ox; c.oy = saved.oy;
       draw();
     }
     seek(1.0);
-    // 火线：自发光（最后一道，坐标一直对）亮起来，且纸被烤黄 / 焦黑（材质那一道）——后半截碰上已知 bug 时，只挂材质那一道重读要烤到
     const hotAt = () => toScreen(size[0] * 0.5, size[1] * 0.9);
     await okBurnPixel('S7 at t=1 the fire line glows (emission added) over the scorched paper',
       async () => { draw(); return V.gpu.readPixel(...hotAt()); },
-      (px) => px[0] > 240 && px[2] < fresh[2] - 40, (ch, ml) => ch[0] > 240 && ml[2] < fresh[2] - 40);
+      (px) => px[0] > 240 && px[2] < fresh[2] - 40);
     const sl = el('tslider');
     sl.value = '4'; sl.dispatchEvent(new Event('input')); sl.dispatchEvent(new Event('change'));
     ok('S7 timeline slider seeks (replay to that time)', near(P.t, 4, 1e-9) && P.art.sim.state(TK) === 'burning');
@@ -348,12 +332,12 @@
     stepPreview(0.5);
     ok('S8 an instance with initial: burning is lit at 0 s (first ignition point / whole)', P.sc.sim.state('hs_candle') === 'burning' && sceneEventsOf(I.hs_candle)[0].t === 0 && P.sc.sim.state('hs_paper') === 'unburnt');
     draw();
-    okGpu('S8 the scene view is drawn by the game objects: hotspots = Hotspot, NPC = framed, burn shading only on the burning one',
+    okGpu('S8 the scene view draws hotspot and NPC frames, with burn shading only on the burning one',
       () => V.gpu.stage.keys().sort().join() === 's:hs_candle,s:hs_paper,s:hs_paper2,s:npc_paper' && V.gpu.burning('s:hs_candle')
         && !V.gpu.burning('s:hs_paper') && !V.gpu.burning('s:npc_paper'),
       { keys: V.gpu.ok && V.gpu.stage.keys(), candle: V.gpu.ok && V.gpu.burning('s:hs_candle') });
     const fDiff = (a, b) => Math.max(...['ox', 'oy', 'ux', 'uy', 'vx', 'vy'].map((k) => Math.abs(a[k] - b[k])));
-    okGpu('S8 the game Hotspot the view draws sits exactly where the sim placed it (burnHotspotFrame == entity placement, incl. perspective + mirror)',
+    okGpu('S8 preview frames sit exactly where the sim placed them (entity placement, incl. perspective + mirror)',
       () => ['hs_paper', 'hs_paper2', 'hs_candle'].every((k) => fDiff(V.gpu.stage.frameOf(`s:${k}`), I[k].frame) < 1e-9),
       V.gpu.ok ? ['hs_paper', 'hs_paper2', 'hs_candle'].map((k) => fDiff(V.gpu.stage.frameOf(`s:${k}`) || {}, I[k].frame)) : null);
     // 只读：拖不动

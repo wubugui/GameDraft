@@ -1,0 +1,21 @@
+{
+  "masterCommit": "865716499887b24367a25b0da2a2ae5e80a30b84",
+  "scope": "Frozen old tool GPU pipeline only; independent full-tool A/B remains required. Production must not import these fixtures.",
+  "jsAdapter": "\n// Test adapter only: each reference draw gets a new immutable encoded field.\nfunction texGen() { return 0; }\nexport { BurnGL };\n",
+  "files": [
+    {
+      "source": "tools/burn_workbench/viewer/render.js",
+      "fixture": "legacyBurnGL.js",
+      "sourceSha256": "b2634d863cad0fb03f139fa19df08395640751811309076e5aa2f5fa4374cc35",
+      "lfSourceSha256": "b2634d863cad0fb03f139fa19df08395640751811309076e5aa2f5fa4374cc35",
+      "fixtureSha256": "452a421f7913773c1ab5d97ac08e49e95d914e1139f21c6fbd15a5d99f529b12"
+    },
+    {
+      "source": "src/rendering/burn/burnShade.glsl",
+      "fixture": "legacyBurnShade.glsl",
+      "sourceSha256": "7adf3d37e128a69aba1706ff2a890631fd2ecac2f73d0e109f13e3d4282cdd53",
+      "lfSourceSha256": "7adf3d37e128a69aba1706ff2a890631fd2ecac2f73d0e109f13e3d4282cdd53",
+      "fixtureSha256": "7adf3d37e128a69aba1706ff2a890631fd2ecac2f73d0e109f13e3d4282cdd53"
+    }
+  ]
+}

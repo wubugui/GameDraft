@@ -1,18 +1,8 @@
 #!/usr/bin/env node
-/**
- * 燃烧工作台 · 真 GPU 逐像素对照：同一组输入（模板图 + 燃烧场 + 着色参数 + 相机 + 画布尺寸），
- *
- *   工作台：真页面（`serve.py` + 接入层打的包 + `viewer/render.js` → `burnView.BurnStage`）画出来的画布；
- *   游戏  ：`ref.ts`（vite 按游戏模块图编译 `src/`，照游戏组装层 Hotspot + BurnRenderer 现拼）画出来的画布；
- *
- * 两边在同一个 Chrome（真显卡 WebGPU）里各画各的、同任务回读，**必须逐字节相同**。不同就把两张图与差异热图写进 --out。
- *
- *   node tools/burn_workbench/tests/parity/run.mjs --python <python 解释器>      # 自己起样例工程的工作台服务
- *   node tools/burn_workbench/tests/parity/run.mjs --wb http://127.0.0.1:5441   # 用已经在跑的样例工程服务（--serve --fixture）
- *   选项：--out <目录>（缺省系统临时目录）  --case <关键字>  --headed  --browser <exe>  --channel msedge
- *
- * 依赖 playwright-core（`PLAYWRIGHT_CORE` 指到它的包目录）。平台无关：只起子进程与回环端口。
- * 无 GPU 的那一半（逐条 GPU 命令与字节）在 `tools/burn_workbench/gpu/burnView.test.ts`（vitest）。
+/** Workbench WebGPU vs frozen master BurnGL: opaque canvas channel threshold 1 (existing migration rule), five existing inputs.
+ * Exact equality is also reported; no differing pixel may exceed 1 in any RGBA channel.
+ * Usage: node tools/burn_workbench/tests/parity/run.mjs --python <python> --out <fresh directory>
+ * Test-only master provenance is in legacy-source.json; full independent tool A/B is separate.
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -22,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { encodePngRgb } from '../../../ab_compare/png.mjs';
+import { compareCanvasRgba } from './compare.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..', '..');
@@ -32,7 +23,7 @@ const flag = (name, fallback) => {
 };
 const outDir = path.resolve(flag('out', path.join(os.tmpdir(), 'burn_workbench_parity')));
 const only = flag('case', '');
-const CLEAR = 0x111113;
+
 
 /** 用例：原画视图三张（火线发光 / 焦黑成灰 / 消耗燃烧的蜡烛）+ 场景视图一张（背景 + 三个热点，NPC 在画面外）+ 高分屏 */
 const CASES = [
@@ -112,7 +103,7 @@ async function driveWorkbench(c) {
   });
   const out = {
     input: {
-      css: [V.gpu.host.renderer.screen.width, V.gpu.host.renderer.screen.height], dpr: V.gpu.host.renderer.resolution,
+      css: [V.gpu.cssWidth, V.gpu.cssHeight], dpr: V.gpu.host.renderer.resolution,
       cam: { k: cam.k, ox: cam.ox, oy: cam.oy },
       bg: V.gpu.bg ? { url: V.gpu.bg.url, w: V.gpu.bg.w, h: V.gpu.bg.h } : null,
       perspective: S.sv && S.sv.scene ? S.sv.scene.perspectiveScale : null,
@@ -187,34 +178,28 @@ async function main() {
     };
 
     let bad = 0;
+    const reports = [];
     for (const c of CASES) {
       const { w, r } = await pageFor(c.dpr || 1);
       const got = await w.evaluate(driveWorkbench, c);
-      // 按实例帧平贴的实例（NPC）没有游戏侧对应画法：必须整个在画面外，否则这一例不算数
-      const [cssW, cssH] = got.input.css;
-      const visibleFrames = got.input.items.filter((it) => it.kind === 'frame' && !it.screen.every(([x, y]) => x < 0) && !it.screen.every(([x]) => x > cssW)
-        && !it.screen.every(([, y]) => y < 0) && !it.screen.every(([, y]) => y > cssH));
-      if (visibleFrames.length) throw new Error(`${c.name}：NPC 实例 ${visibleFrames.map((i) => i.key)} 在画面里，调相机让它出画`);
-      const ref = await r.evaluate((input) => window.__renderRef(input), { ...got.input, background: CLEAR });
+      const ref = await r.evaluate((input) => window.__renderRef(input), got.input);
       const a = Buffer.from(got.pixels, 'base64');
       const b = Buffer.from(ref.pixels, 'base64');
-      let diff = 0;
-      let maxd = 0;
+      const comparison = compareCanvasRgba({ width: got.w, height: got.h, data: a }, { width: ref.w, height: ref.h, data: b });
+      const diff = comparison.diffPixels;
+      const maxd = comparison.maxChannelDiff;
       let lit = 0;
-      if (got.w !== ref.w || got.h !== ref.h || a.length !== b.length) diff = -1;
-      else {
-        for (let i = 0; i < a.length; i += 4) {
-          const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2]), Math.abs(a[i + 3] - b[i + 3]));
-          if (d) { diff++; maxd = Math.max(maxd, d); }
-          if (Math.abs(a[i] - 17) + Math.abs(a[i + 1] - 17) + Math.abs(a[i + 2] - 19) > 6) lit++;
-        }
+      for (let i = 0; i < a.length; i += 4) {
+        if (Math.abs(a[i] - 17) + Math.abs(a[i + 1] - 17) + Math.abs(a[i + 2] - 19) > 6) lit++;
       }
-      const ok = diff === 0 && lit > 100 && got.burning.length > 0;
+      const ok = comparison.passed && lit > 100 && got.burning.length > 0;
+      reports.push({ case: c.name, width: got.w, height: got.h, comparison, lit, burning: got.burning, passed: ok,
+        referenceContext: ref.context, referenceRenderer: ref.renderer });
       if (!ok) bad++;
       const base = path.join(outDir, c.name);
       writePng(`${base}.workbench.png`, got.w, got.h, a);
+      writePng(`${base}.legacy-tool.png`, ref.w, ref.h, b);
       if (diff !== 0 && ref.w === got.w && ref.h === got.h) {
-        writePng(`${base}.game.png`, ref.w, ref.h, b);
         const heat = Buffer.alloc(a.length);
         for (let i = 0; i < a.length; i += 4) {
           const d = Math.max(Math.abs(a[i] - b[i]), Math.abs(a[i + 1] - b[i + 1]), Math.abs(a[i + 2] - b[i + 2]));
@@ -222,13 +207,17 @@ async function main() {
         }
         writePng(`${base}.diff.png`, got.w, got.h, heat);
       }
-      console.log(`${ok ? 'SAME' : 'DIFF'}  ${c.name.padEnd(26)} ${got.w}x${got.h}  不同像素 ${diff}${maxd ? `（最大差 ${maxd}）` : ''}  非底色像素 ${lit}  在烧 ${got.burning.join(',') || '无'}`);
+      console.log(`${ok ? 'PASS' : 'FAIL'}  ${c.name.padEnd(26)} ${got.w}x${got.h}  exactEqual=${comparison.exactEqual} 不同像素 ${diff} 最大差 ${maxd} 超1像素 ${comparison.pixelsOver1}  非底色像素 ${lit}  在烧 ${got.burning.join(',') || '无'}`);
     }
-    console.log(`\n[parity] ${CASES.length - bad}/${CASES.length} 例逐字节相同；截图在 ${outDir}`);
+    console.log(`\n[parity] ${CASES.length - bad}/${CASES.length} 例每通道差 ≤1；exactEqual 单列，截图在 ${outDir}`);
     if (errors.length) {
       console.log(`[parity] 页面报错 ${errors.length} 条：\n  ${errors.join('\n  ')}`);
       bad++;
     }
+    fs.writeFileSync(path.join(outDir, 'report.json'), JSON.stringify({
+      oracle: 'frozen master BurnGL pipeline; full independent A/B is a separate gate', threshold: 1,
+      reports, errors, exit: bad ? 1 : 0,
+    }, null, 2) + '\n');
     return bad ? 1 : 0;
   } finally {
     for (const f of cleanups.reverse()) { try { await f(); } catch { /* 收尾尽力 */ } }

@@ -3,7 +3,7 @@ id: burn-workbench
 title: 燃烧工作台(独立桌面应用 · 只编可燃物模板、和场景无关 · 页内跑同一份燃烧模拟与着色 · 模板唯一写入者)
 domain: editor-tools
 type: mechanism
-summary: 可燃物模板（burnables/<id>.json：图 / 真实尺寸 / 握点 / 燃料 / 着火点 / 烧法 / 粒子 / 火光）唯一的作者面与写入者，没有"先选场景"；原画视图是主视图（按真实尺寸在平面空间摆一个实例预览，火线速度就是准的）；「用在哪」只读列出所有宿主，点场景实体开只读场景视图（各实体按自己的 transform 摆、同一个模拟、左右点火站位与能不能站）；改名一次事务跟着改所有宿主上的 template 值（只动那几个值的字节、确认后被改过就拒绝、失败回滚），删除有引用就拒绝；页内预览打包运行时 burnSim / burnGeometry / burnAim / igniteStance / burnShadeParams 本体，画面经工作台 RHI 接入层用游戏同一个 WebGPU 渲染器 + 游戏的 Hotspot / BurnRenderer 两道燃烧滤镜（同一份 WGSL，没有 GLSL 孪生），与游戏同输入逐字节相同（真 GPU 对照 + 空后端命令对照）；推给游戏走联动协议 v2
+summary: 可燃物模板（burnables/<id>.json：图 / 真实尺寸 / 握点 / 燃料 / 着火点 / 烧法 / 粒子 / 火光）唯一的作者面与写入者，没有"先选场景"；原画视图是主视图（按真实尺寸在平面空间摆一个实例预览，火线速度就是准的）；「用在哪」只读列出所有宿主，点场景实体开只读场景视图（各实体按自己的 transform 摆、同一个模拟、左右点火站位与能不能站）；改名一次事务跟着改所有宿主上的 template 值（只动那几个值的字节、确认后被改过就拒绝、失败回滚），删除有引用就拒绝；页内预览打包运行时 burnSim / burnGeometry / burnAim / igniteStance / burnShadeParams 本体，画面经工作台 RHI 接入层用 engine2d / WebGPU，工具按旧 BurnGL 的直通纹理采样 + 单 pass 材质/自发光组合，燃烧函数共享 burnShade.wgsl；像素参照是固定 master 旧工具，不能用 B 游戏双滤镜代替；推给游戏走联动协议 v2
 status: active
 authority:
   - tools/burn_workbench/store.py
@@ -14,6 +14,7 @@ authority:
   - tools/burn_workbench/viewer/preview.js
   - tools/burn_workbench/viewer/render.js
   - tools/burn_workbench/gpu/burnView.ts
+  - tools/burn_workbench/gpu/burnPreview.ts
   - tools/workbench_rhi/README.md
   - tools/editor/shared/burnables.py
   - src/dev/runtimeBurnSync.ts
@@ -47,7 +48,7 @@ last_governed: 2026-09-23
   内容没变不写；盘上被别处改过拒写。改名 `rename_plan` → `rename_asset(expect)`、删除 `delete_asset`、引用 `template_refs`（= 共享 `refs_of_template`）。
 - 工程只读数据：`scenes.py`（「用在哪」加人话名字 `refs_detail`、只读场景视图 `scene_summary`（只列开了可燃的热点 / NPC + transform + 透视 / 朝向原始字段）、
   背景 / 行走面与深度壳、本地站位判定、玩家动画、带 igniter 的挂件预设、粒子效果、原画候选 `image_candidates`）。
-- 页内运行时：`bundle.py` 经共用的工作台 RHI 接入层（`tools/workbench_rhi`，vite 库模式、打包器自报源清单判新旧、产物不进 git）把运行时模块 + 游戏渲染（engine2d / RHI / `Hotspot` / `BurnRenderer`）+ 画面胶水 `gpu/burnView.ts` 打成一个 ESM（命名空间 = 文件名）；没有任何 GLSL 路由。
+- 页内运行时：`bundle.py` 经共用的工作台 RHI 接入层（`tools/workbench_rhi`，vite 库模式、打包器自报源清单判新旧、产物不进 git）把运行时模块 + 引擎（engine2d / RHI）+ 工具单 pass `gpu/burnView.ts` / `gpu/burnPreview.ts` 打成一个 ESM（命名空间 = 文件名）；没有任何 GLSL 路由。
 - 页面：`viewer/core.js`（状态 / 撤销重做 / 脏态 / 对话框与选原画）、`preview.js`（模板预览 + 场景视图两份模拟、一条时间轴、站位、实体透视 / 朝向口径）、
   `render.js`（GPU 着色层：只把相机 / 实例 / 燃烧场 / 参数交给包里的 `burnView.BurnStage`，没有着色器）、`views.js`（原画视图 / 只读场景视图 / 笔刷 / 着火点与握点）、`inspector.js`（含真实尺寸与握点）、`app.js`（左栏模板 + 用在哪、改名删除、联动）。
 - 联动：`game_link.py` ↔ `src/dev/runtimeBurnSync.ts`（协议 v2：`runtime-burn` 工作台 → 游戏 `{writer, burnables?, probe?: {seq, action, target, socket?, point?}, walkProbe?}`；
@@ -58,8 +59,11 @@ last_governed: 2026-09-23
 - **没有场景绑定的编辑**：页面上没有场景选择、热点列表、布置编辑（initial / playerIgnite / 条件 / 信号都在宿主身上）、布置库。
   `burn_placements.json` 已删，全工具不读不写（`test_bundle.py` 钉着页面里不许出现旧名字）。场景视图**只读**：只能选中与点火，拖不动、改不了任何实体。
 - **页面里不许有第二份模拟 / 摆放 / 站位 / 着色组装**：摆放 `burnGeometry.burnEntityPlacement` → `burnPlacementFrame`、尺寸 `burnables.burnableWorldSize`、
-  着色参数 `burnShadeParams.burnShadeParamsOf`、画面 = 游戏的 `Hotspot`（热点实例；NPC 按实例帧平贴）+ `BurnRenderer` 滤镜宿主挂的 `BurnMaterialFilter` → `BurnGlowFilter`（`burnShade.wgsl`，与游戏同一份字节）、燃烧 uv 仿射 `burnHotspotFrame`（与 `Game.burnEntityHosts` 同一个函数）、火头伸到哪 `burnAim`、站位 `igniteStance`——
-  全是运行时导出的同一份。`test_bundle.py::test_viewer_does_not_reimplement_the_sim` 钉着名字；包的依赖树里**不许有** `ignitePerformer.ts` / `types.ts`。
+  着色参数 `burnShadeParams.burnShadeParamsOf`、燃烧函数 `burnShade.wgsl`、火头 `burnAim`、站位 `igniteStance` 共享运行时导出。
+  工具组合沿用旧 BurnGL：四角先转 CSS 屏幕坐标、UV 直接插值；直通 alpha 图线性采样后在一个 pass 内依次调 `burnSample` / `burnMaterial` / `burnGlowAdd`，最后预乘混合。
+  HTMLImageElement + ImageSource(no-premultiply-alpha) 独占缓存；不改全局 Assets 的 ImageBitmap 解码设置。抗锯齿开启，清屏 `[.067,.067,.075,1]`。
+  uScreen 保留传入 resize 的 CSS 尺寸；不能用 engine2d `screen`（physical / DPR），非整数 DPR 会因此偏移采样。
+  `test_bundle.py` 钉共享函数及旧工具测试 oracle 不进入生产依赖树；包不许牵 `ignitePerformer.ts` / `types.ts` / `Game.ts`。
 - **预览按真实尺寸**：原画视图的模板实例 = 平面空间（planar）+ `burnEntityPlacement({x:0,y:0}, 真实尺寸)`，同样的事件换一半尺寸烧得更快（自检钉着）。
   没有"假定尺寸 / 布置到热点上才准"这回事。预览风只在页面里（不写资源）。
 - **只读场景视图的摆法照运行时实体本身**（`preview.js` 的 `entityPerspective` / `entityFacingLeft` / `entityPlacementOf`，口径出处写在注释里）：
@@ -99,9 +103,12 @@ last_governed: 2026-09-23
 - 改名要求先保存（弹「保存并继续」），做完清空撤销栈。「联动」默认勾着。
 - Browser pane 隐藏时页面布局是 0 尺寸：在那里跑 `selftest.js` 读像素的几条会假红；以 pytest 为准（桌面壳一遍 + 真 GPU 的 Chrome 一遍，后者不许 SKIP）。
 - 着色层是游戏同一个 WebGPU 渲染器：Qt 宿主走 `run_desktop(webgpu=True)`（WebView2；QtWebEngine 没编 Dawn）；宿主拿不到 WebGPU 时着色预览明确显示原因、不回落。读像素一律 `await host.readPixel(...)`（RHI 纹理回读画布中间纹理）——`drawImage(WebGPU 画布)` 跨了「画」的那个任务就不可靠（实测时而全 0）。
-- ⚠ **已知差异（master 同一 bug，本分支不改，待制作人定）**：燃烧材质滤镜排在链中间（后面总跟着自发光），照 Pixi 中间几道 pass 的 `uOutputFrame.xy` 是 0、滤镜顶点位置是相对 bounds 的，材质的燃烧 uv 偏了「展示图 bounds 左上 ÷ 投影缩放」：焦黑 / 成灰 / 烧没随相机走位，偏多了整块没了（WebView2 宿主 dpr 1.24 的布局下就是）。工作台画的就是游戏画的，同样偏。自检 S7 里受它影响的三条碰上时「只挂材质那一道」重读证实原因、记 `KNOWN`（不是 FAIL / SKIP），pytest 核对只出现在登记的几条上并报警告（`tests/test_selftest.py` 的 `_KNOWN_S7`）。修复在本地分支 `wt/burnfix`（引擎钩子 `filterPassOrigin`），见 `agent_docs/_meta/inbox/2026-09-28-filters-mid-chain-screen-pos.md`。
+- 游戏双滤镜中间 pass 的相对 bounds 问题不能作为旧工具画面的 KNOWN 豁免：旧工具本来直接采样模板 UV。2026-09-28 独立旧工具 A/B 已证新双滤镜预览燃尽仍留纸；工具改回单 pass，游戏滤镜不在本修复范围。自检 S7 每条必须真实 PASS，失败保留 FAIL。
+- 资源归属：舞台销毁 mesh / shader / geometry / 燃烧场，调用方持有原图；dropTexture 先摘舞台引用再销毁图源，pending 图片迟到时立即销毁且不复活缓存。
 
 ## 怎么验证
 
-`sh scripts/py.sh -m pytest tools/burn_workbench -p no:cacheprovider -q`（页内自检 138 条：桌面壳（WebView2，屏幕外固定尺寸的无边框窗口）里跑一遍、零 FAIL 零 SKIP，S7 至多 3 条 KNOWN（上面那个已知差异）；设了 `PLAYWRIGHT_CORE` 时再在真 GPU 的 Chrome 里跑同一份、同样，外加冒烟与 `tests/test_parity.py` 逐像素对照 5 例）。无 GPU 的画法对照：`npx vitest run tools/burn_workbench/gpu`（空后端上逐条 GPU 命令与字节 == 照游戏组装层现拼）。
+`sh scripts/py.sh -m pytest tools/burn_workbench -p no:cacheprovider -q`：桌面壳 WebGPU 与真 GPU Chrome 跑同份交互自检，零 FAIL / SKIP / KNOWN；`tests/test_parity.py` 保留原五组原画/场景/非整数 DPR 输入，参照改为 `tests/parity/legacyBurnGL.js` + `legacyBurnShade.glsl`（来源与 SHA 见 `legacy-source.json`），按迁移既定每通道差 ≤1 对比（零像素可超阈值，同时记录 exactEqual / diffPixels / maxChannelDiff / pixelsOver1；+2 负控制必须失败）。原严格逐字节失败报告保留。测试固定副本不替代完整旧 A 工具 / 新 B 工具独立双轮验收。
+CPU：`npx vitest run tools/burn_workbench/gpu` 验单 pass、角点与 UV、镜像/旋转/透视和画序、source/gen/尺寸变更、资源释放及迟到加载；这不是 GPU 像素验收。
+
 真数据：`sh scripts/py.sh -m tools.burn_workbench --check` 返回 0（模板形状 / 图在不在 / 粒子效果在不在 / 引用处的模板在不在 / 粒子薄片不许绑消耗燃烧）。

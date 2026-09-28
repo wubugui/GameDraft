@@ -7,8 +7,8 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..', '..', '..');
 
-// 燃烧工作台逐像素对照的「游戏侧」参考页：由 vite 按游戏自己的模块图编译 `src/`（与游戏 dev 服同一套 `?raw` / 别名语义），
-// 画法照游戏组装层现拼（见 ref.ts）。图 / 接口一律代理到正在跑的燃烧工作台服务（同一份字节）。
+// 固定 master 旧工具 GPU 参考页（见 ref.ts / legacy-source.json）；几何 helper 沿用共享纯函数。
+// 图 / 接口代理到临时工作台样例服务；完整独立双树 A/B 是另外一道门。
 // 依赖预构建缓存放系统临时目录（别和游戏 dev 服、别的工作树共用 node_modules/.vite）。
 const wb = process.env.BURN_PARITY_WB || 'http://127.0.0.1:5351';
 export default defineConfig({
