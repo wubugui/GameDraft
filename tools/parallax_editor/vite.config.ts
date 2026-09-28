@@ -17,6 +17,7 @@ export default defineConfig({
     alias: { '@src': path.join(repoRoot, 'src') },
   },
   server: {
+    host: '127.0.0.1',
     port: 5205,
     strictPort: false,
     fs: { allow: [repoRoot] },
