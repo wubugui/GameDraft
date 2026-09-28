@@ -252,7 +252,7 @@ export class WebGPURenderer extends RendererBase {
 
     const tick = Container._nextRenderTick();
     this.gc.prerender();
-    prepareTree(container, this, tick);
+    prepareTree(container, this, tick, transform);
 
     const state = (this.states[this.depth] ??= new RenderState());
     this.depth++;

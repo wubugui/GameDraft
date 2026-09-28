@@ -81,8 +81,11 @@ last_governed: 2026-09-25
   (`@builtin(position)`)都与 master 画布一致;画布的模板 / MSAA 走与离屏目标同一条路(resolve 回中间纹理)。离屏目标不变。
 - `Container.worldTransform` 与当前父链一致(按版本缓存,不走 Pixi 的"上一帧渲染结果")。**Culler 例外、照 Pixi**
   (2026-09-28 对齐):缺省 `skipUpdateTransform = true` 读**上一次渲染时**的世界变换(`renderedWorldTransform` =
-  `groupTransform` ⊗ 根上次的变换;`prepareTree` 对未激活子树也照算变换,同 Pixi 更新 visible=false 节点的变换)——
-  本帧逻辑里挪过的节点晚一帧反映,这一帧才新建的节点按单位阵判。以前读当帧变换,落雷第一帧的满载粒子网格
+  所属渲染组的历史世界矩阵 × 自己的历史组内矩阵;`prepareTree` 对未激活子树也照算变换,同 Pixi 更新 visible=false 节点的变换)——
+  本帧逻辑里挪过的节点晚一帧反映,这一帧才新建的节点按单位组内矩阵判。单独 render 已挂树的子树会持久开启组边界,
+  显式 `render({ transform })` 同样进入历史;`prepareDetached` 的临时绘制矩阵与历史分开。重挂立即改所属组,
+  组内矩阵等下次 render 更新;完全脱组保留上次读取值。三条 API 边界与重挂/隐藏/遮罩隔离钉在
+  `culling/cullerRenderGroups.test.ts`(单测证据,不代表已确认游戏画面缺陷)。以前读当帧变换,落雷第一帧的满载粒子网格
   (impact_core / impact_hot)master 被剔、分支照画,A/B 在 strike+120 差一团白光。钉在 `culling/cullerRenderedTransform.test.ts`。
 - 需要背景纹理的混合滤镜(`blendRequired`)没实现(运行时没有用到;用到会直接抛)。
 - 引擎扩展(Pixi 没有,2026-09-28 加,游戏滤镜都还没用):`FilterSystemLike.filterPassOrigin(output)`——滤镜顶点位置 + 它 = 渲染根上的坐标(照 Pixi,`uOutputFrame.xy` 只在链的最后一道带 bounds 偏移,中间几道是 0;燃烧材质 / 深度遮挡 / 受光滤镜排在链中间时屏幕坐标因此是错的,master 同样如此、本分支不改,见 `agent_docs/_meta/inbox/2026-09-28-filters-mid-chain-screen-pos.md`);`renderer.readCanvasPixels()`——异步回读画布中间纹理(最近一次画到画布的内容,自上而下 RGBA,不经浏览器上屏 / 合成;工作台自检读像素用)。

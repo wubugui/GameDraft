@@ -47,12 +47,14 @@ function runOnRender(c: Container, renderer: unknown): void {
 }
 
 /** 算本次渲染的相对根变换与外观。返回本次的 tick(遮罩等据此判断节点是否在本次算过) */
-export function prepareTree(root: Container, renderer: unknown, tick: number): void {
+export function prepareTree(root: Container, renderer: unknown, tick: number, transform?: Matrix): void {
+  // 照 AbstractRenderer:单独 render 过的子树永久成为一个组,之后整树渲染仍保留这个边界。
+  root.enableRenderGroup();
   runOnRender(root, renderer);
   preparedRoundPixels = (renderer as { roundPixels?: boolean } | null)?.roundPixels ? 1 : 0;
   root.updateLocalTransform();
-  // 根这次的世界变换(= Pixi 根渲染组的 worldTransform ← root.localTransform);Culler 缺省读"上次渲染时的变换"要它
-  (root._renderedRootTransform ??= new Matrix()).copyFrom(root.localTransform);
+  // 与本次 global uniforms 使用同一矩阵;显式离屏 transform 也必须进入 Culler 历史。
+  root._renderedGroupWorldTransform!.copyFrom(transform ?? root.localTransform);
   root.groupTransform.identity();
   root.groupColor = 0xffffff;
   root.groupAlpha = 1;
@@ -64,20 +66,33 @@ export function prepareTree(root: Container, renderer: unknown, tick: number): v
   root.globalDisplayStatus = root.localDisplayStatus;
   root._renderTick = tick;
   const children = root.children;
-  for (let i = 0; i < children.length; i++) updateChild(children[i], null, tick);
+  for (let i = 0; i < children.length; i++) updateChild(children[i], null, tick, root);
 }
 
-function updateChild(c: Container, parent: Container | null, tick: number): void {
+/** 与绘制相对根矩阵分开保存历史,嵌套组重新开始算组内矩阵。prepareDetached 不调用它。 */
+function updateRenderedTransform(c: Container, parent: Container | null, group: Container): Container {
+  const relative = c._renderedRelativeTransform ??= new Matrix();
+  if (parent && parent !== group) relative.appendFrom(c.localTransform, parent._renderedRelativeTransform!);
+  else relative.copyFrom(c.localTransform);
+  if (c._renderedGroupWorldTransform) {
+    c._renderedGroupWorldTransform.appendFrom(relative, group._renderedGroupWorldTransform!);
+    return c;
+  }
+  return group;
+}
+
+function updateChild(c: Container, parent: Container | null, tick: number, historyGroup?: Container): void {
   if (!c._activeSelf) {
     // 未激活:整棵子树不画(收集器见 globalDisplayStatus < 7 即跳过,不会再往下看),外观不算。
     // 变换照算:master 用 visible=false 藏 NPC / 热点,Pixi 渲染时照样更新隐藏节点的变换,Culler 缺省读的
     // "上次渲染时的变换"对它们也是最新的;这里不算的话,藏着时挪过、这一帧才露面的节点会按旧位置判剔除
     c.globalDisplayStatus = 0;
     c._renderTick = tick;
-    updateTransformsOnly(c, parent);
+    updateTransformsOnly(c, parent, historyGroup);
     return;
   }
   c.updateLocalTransform();
+  const childHistoryGroup = historyGroup && updateRenderedTransform(c, parent, historyGroup);
   if (!parent) {
     // 根的直接子节点:父按"白色、不透明、normal、全可见"算(Pixi 用 tempContainer)
     c.groupTransform.copyFrom(c.localTransform);
@@ -95,16 +110,17 @@ function updateChild(c: Container, parent: Container | null, tick: number): void
   c.groupColorAlpha = c.groupColor + (((c.groupAlpha * 255) | 0) << 24);
   c._renderTick = tick;
   const children = c.children;
-  for (let i = 0; i < children.length; i++) updateChild(children[i], c, tick);
+  for (let i = 0; i < children.length; i++) updateChild(children[i], c, tick, childHistoryGroup);
 }
 
 /** 未激活子树:只算相对根的变换(同 Pixi updateTransformAndChildren 的变换那一半;外观、tick 不动) */
-function updateTransformsOnly(c: Container, parent: Container | null): void {
+function updateTransformsOnly(c: Container, parent: Container | null, historyGroup?: Container): void {
   c.updateLocalTransform();
+  const childHistoryGroup = historyGroup && updateRenderedTransform(c, parent, historyGroup);
   if (parent) c.groupTransform.appendFrom(c.localTransform, parent.groupTransform);
   else c.groupTransform.copyFrom(c.localTransform);
   const children = c.children;
-  for (let i = 0; i < children.length; i++) updateTransformsOnly(children[i], c);
+  for (let i = 0; i < children.length; i++) updateTransformsOnly(children[i], c, childHistoryGroup);
 }
 
 /**

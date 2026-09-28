@@ -13,8 +13,9 @@
  *   归一成 (0,0,0,0) 后与 view 比(可剔除的据此定 culled,不可剔除的 culled = false),也照样往下走子节点。
  *
  * **世界变换的新鲜度同 Pixi**:`skipUpdateTransform = true`(缺省,游戏 `updateFrustumCulling` 就这么用)读的是
- * **上一次渲染**时的世界变换(Pixi 的 `worldTransform` 只在渲染时更新;engine2d 用 `groupTransform` ⊗ 根上次的变换还原,
- * 见 `renderedWorldTransform`)——本帧逻辑里挪过的节点晚一帧反映,**这一帧才加进来、还没渲染过的节点**按本地坐标当世界坐标判。
+ * **上一次渲染**时的世界变换(所属组的历史世界矩阵 × 自己的历史组内矩阵,见 `renderedWorldTransform`)——本帧逻辑里挪过的节点
+ * 晚一帧反映,**这一帧才加进来、还没渲染过的节点**按单位组内矩阵判。单独 render 子树会持久开启它的组身份,
+ * 显式 render transform 同样写入组历史;临时遮罩准备不改这些历史矩阵。
  * `skipUpdateTransform = false` 按当前父链现算(同 Pixi 的 updateTransformBackwards)。
  * 2026-09-28 以前 engine2d 两种取值都读当帧变换,与 master 的可见差异:落雷那一帧新建的满载粒子网格(impact_core / impact_hot,
  * max = 1,没有落在原点的空槽把包围盒撑到画面里)master 第一帧被剔掉、分支画出来(A/B 对照 strike+120 那一帧的落点白光)。

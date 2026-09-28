@@ -335,11 +335,12 @@ export class Container extends EventEmitter {
   globalDisplayStatus = 7;
   /** 最近一次被渲染的 tick(Culler / 纹理回收之类可据此判断) */
   _renderTick = -1;
-  /**
-   * @internal 本节点最近一次**作为渲染根**时的本地变换(= Pixi 根渲染组的 worldTransform);没当过根 = null。
-   * `groupTransform` 相对根算,两者一拼就是"上次渲染时的世界变换",Culler 缺省读它(见 {@link renderedWorldTransform})。
-   */
-  _renderedRootTransform: Matrix | null = null;
+  /** @internal Culler 的持久历史,独立于 prepareDetached 会改写的绘制用 groupTransform。 */
+  _renderedRelativeTransform: Matrix | null = null;
+  /** @internal 显式或 render 自动开启的组的世界变换;null 表示不是渲染组。 */
+  _renderedGroupWorldTransform: Matrix | null = null;
+  /** @internal 照 Pixi worldTransform:离开全部渲染组后保留上次读取的结果。 */
+  _renderedWorldTransform: Matrix | null = null;
 
   // 排序
   private _zIndex = 0;
@@ -1333,13 +1334,19 @@ export class Container extends EventEmitter {
     return this.localDisplayStatus === 7 && this.groupAlpha > 0;
   }
 
-  /** Pixi 的渲染组开关:这里只是记号(渲染每次都整棵树走一遍,不需要分组) */
-  isRenderGroup = false;
+  /** 渲染仍整树收集;组边界只用于保存 Pixi 的历史变换语义。 */
+  get isRenderGroup(): boolean {
+    return this._renderedGroupWorldTransform !== null;
+  }
+  set isRenderGroup(value: boolean) {
+    if (value) this.enableRenderGroup();
+    else this.disableRenderGroup();
+  }
   enableRenderGroup(): void {
-    this.isRenderGroup = true;
+    this._renderedGroupWorldTransform ??= new Matrix();
   }
   disableRenderGroup(): void {
-    this.isRenderGroup = false;
+    this._renderedGroupWorldTransform = null;
   }
 
   get onRender(): ((renderer: unknown) => void) | null {
@@ -1505,6 +1512,9 @@ export class Container extends EventEmitter {
     this._maskEffect = null;
     this._filterEffect = null;
     this.effects = [];
+    this._renderedRelativeTransform = null;
+    this._renderedGroupWorldTransform = null;
+    this._renderedWorldTransform = null;
     this.emit('destroyed', this);
     this.removeAllListeners();
     const destroyChildren = typeof options === 'boolean' ? options : options?.children;
@@ -1608,17 +1618,20 @@ export function getGlobalBounds(target: Container, skipUpdateTransform: boolean,
 }
 
 /**
- * 节点**上一次渲染时**的世界变换 = Pixi 里 `worldTransform` 的实际含义(`relativeGroupTransform` ⊗ 根渲染组的
- * worldTransform,两者都只在渲染时更新):`groupTransform`(上次 prepareTree 相对渲染根算的)⊗ 根上次作为渲染根时的
- * 本地变换。本帧逻辑里挪过的节点这里还是旧位置;**还没被渲染过的节点** `groupTransform` 是初值单位阵,
- * 等于按本地坐标当世界坐标(与 Pixi 新加的子节点在第一次渲染前的 worldTransform 相同)。
- * 只给 Culler 的缺省参数用;`worldTransform` 本身仍是当帧现算的。
+ * Pixi 的 worldTransform:所属组的历史世界矩阵 × 自己的历史组内矩阵。组节点直接读自己的组世界矩阵。
+ * render(子树) 会持久开启该子树的组身份,即使它仍挂在另一棵树上;新节点的组内矩阵为单位阵。
+ * 换父节点立即改所属组,但组内矩阵等下次 render 才更新;完全脱组则保留上次读取值(没有读过就是单位阵)。
+ * 这里只存矩阵,组归属按当前父链查,不持有摘除/销毁节点的引用。worldTransform 本身仍是当帧现算的。
  */
 export function renderedWorldTransform(target: Container, out: Matrix): Matrix {
-  let top = target;
-  while (top.parent) top = top.parent;
-  const rootWorld = top._renderedRootTransform ?? Matrix.IDENTITY;
-  return top === target ? out.copyFrom(rootWorld) : out.appendFrom(target.groupTransform, rootWorld);
+  const world = target._renderedWorldTransform ??= new Matrix();
+  if (target._renderedGroupWorldTransform) world.copyFrom(target._renderedGroupWorldTransform);
+  else {
+    let group = target.parent;
+    while (group && !group._renderedGroupWorldTransform) group = group.parent;
+    if (group) world.appendFrom(target._renderedRelativeTransform ?? Matrix.IDENTITY, group._renderedGroupWorldTransform!);
+  }
+  return out.copyFrom(world);
 }
 
 /**
@@ -1627,16 +1640,14 @@ export function renderedWorldTransform(target: Container, out: Matrix): Matrix {
  */
 export function getRenderedGlobalBounds(target: Container, bounds: Bounds): Bounds {
   bounds.clear();
-  let top = target;
-  while (top.parent) top = top.parent;
-  _getRenderedGlobalBounds(target, bounds, top._renderedRootTransform ?? Matrix.IDENTITY, top);
+  _getRenderedGlobalBounds(target, bounds);
   if (!bounds.isValid) bounds.set(0, 0, 0, 0);
   return bounds;
 }
 
-function _getRenderedGlobalBounds(target: Container, bounds: Bounds, rootWorld: Matrix, top: Container): void {
+function _getRenderedGlobalBounds(target: Container, bounds: Bounds): void {
   if (!target._activeSelf || !target.visible || !target.measurable) return;
-  const world = target === top ? rootWorld.clone() : new Matrix().appendFrom(target.groupTransform, rootWorld);
+  const world = renderedWorldTransform(target, new Matrix());
   const parentBounds = bounds;
   const preserve = target.effects.length > 0;
   if (preserve) bounds = new Bounds();
@@ -1647,7 +1658,7 @@ function _getRenderedGlobalBounds(target: Container, bounds: Bounds, rootWorld: 
       bounds.matrix = world;
       bounds.addBounds(own);
     }
-    for (const child of target.children) _getRenderedGlobalBounds(child, bounds, rootWorld, top);
+    for (const child of target.children) _getRenderedGlobalBounds(child, bounds);
   }
   if (preserve) {
     for (const e of target.effects) e.addBounds?.(bounds);

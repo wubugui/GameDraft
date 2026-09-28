@@ -27,7 +27,7 @@ last_governed: 2026-09-25
 
 ## 硬契约
 
-- **激活 ≠ 可见**。`setActive(false)`:整棵子树不渲染(连变换准备与 `onRender` 都跳过)、不参与命中 / 包围盒
+- **激活 ≠ 可见**。`setActive(false)`:整棵子树不渲染(`onRender` 与外观准备跳过,变换历史仍更新,供 Culler 与 Pixi 对齐)、不参与命中 / 包围盒
   (含滤镜区域)、组件 onDisable 且不再 update。Culler 对它照样判,结果同 Pixi 里 `visible = false` 的节点
   (空盒归一成 (0,0,0,0) 再与 view 比;master 的 NPC / 热点就是这么被剔的),不留隐藏前的旧 `culled`。`visible = false`:只是不画(Pixi 语义,等价 Unity 的 Renderer.enabled),
   节点照样命中测试之外的一切。**"这个东西现在不存在"用 setActive,"存在但先别画"用 visible。**
@@ -51,6 +51,7 @@ last_governed: 2026-09-25
   保留缩放符号与 pivot / origin,非等比祖先带来的切变放进 `skew.x`。`reparentChild` 为 Pixi 对照保留原样。
 - **世界矩阵按版本缓存**:本地变换或任一祖先变了才重算,算出的值真的变了才升版本(只改 alpha 不连累子孙),
   结果与沿父链现乘逐位相同。`worldTransform` 返回的是缓存本体,**别改它**(改了就是脏缓存)。
+  Culler 缺省读独立保存的上次渲染组历史,包括单独渲染子树与显式渲染矩阵;`skipUpdateTransform=false` 仍按当前父链算。
 - **兄弟顺序 = 渲染先后**(`siblingIndex`、`setAsFirst/LastSibling`);父节点开了 `sortableChildren` 时按 zIndex 另排,
   兄弟序号就不再代表画序。
 
