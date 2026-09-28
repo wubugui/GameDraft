@@ -1,7 +1,7 @@
 /**
  * 场景树节点(照 PixiJS v8.17 `Container` 的对外语义;实现参照 PixiJS,MIT)。
  *
- * 与 Pixi 的差别只在内部:没有 RenderGroup 的增量簿记。渲染核心每次 `render()` 从根往下走一遍,
+ * 与 Pixi 的差别只在内部:指令仍全量收集,只为历史兼容保留组变换与结构版本。渲染核心每次 `render()` 从根往下走一遍,
  * 当场算出本次的世界变换 / 颜色 / 混合 / 可见性(写进 `groupTransform` 等字段),再把可画的东西交给收集器。
  * `worldTransform` / `toGlobal()` 任何时候读都与当前父链一致(按版本号缓存:本地或任一祖先变了才重算;
  * Pixi 的 worldTransform 要等下一次渲染才更新,这里不滞后)。
@@ -341,6 +341,8 @@ export class Container extends EventEmitter {
   _renderedGroupWorldTransform: Matrix | null = null;
   /** @internal 照 Pixi worldTransform:离开全部渲染组后保留上次读取的结果。 */
   _renderedWorldTransform: Matrix | null = null;
+  /** @internal 组指令结构变化计数;Sprite 组根的历史批顶点按它失效。 */
+  _renderGroupStructureTick = 0;
 
   // 排序
   private _zIndex = 0;
@@ -407,6 +409,7 @@ export class Container extends EventEmitter {
       this.children.splice(this.children.indexOf(child), 1);
       this.children.push(child);
       this._didViewChangeTick++;
+      this._markStructureAsChanged();
       notifyChildrenChanged(this);
       return child;
     }
@@ -415,6 +418,7 @@ export class Container extends EventEmitter {
     this.children.push(child);
     if (this.sortableChildren) this.sortDirty = true;
     child.parent = this;
+    this._markStructureAsChanged();
     this.emit('childAdded', child, this, this.children.length - 1);
     child.emit('added', this);
     this._didViewChangeTick++;
@@ -439,6 +443,7 @@ export class Container extends EventEmitter {
     if (index < 0) return false;
     this._didViewChangeTick++;
     this.children.splice(index, 1);
+    this._markStructureAsChanged();
     child.parent = null;
     this.emit('childRemoved', child, this, index);
     child.emit('removed', this);
@@ -464,6 +469,7 @@ export class Container extends EventEmitter {
     child.parent = this;
     if (this.sortableChildren) this.sortDirty = true;
     this._didViewChangeTick++;
+    this._markStructureAsChanged();
     if (sameParent) {
       notifyChildrenChanged(this);
       return child;
@@ -492,7 +498,10 @@ export class Container extends EventEmitter {
         this.emit('childRemoved', removed[i], this, i);
         removed[i].emit('removed', this);
       }
-      if (removed.length > 0) this._didViewChangeTick++;
+      if (removed.length > 0) {
+        this._didViewChangeTick++;
+        this._markStructureAsChanged();
+      }
       for (const r of removed) hierarchyChanged(r, this, null);
       return removed;
     } else if (range === 0 && this.children.length === 0) {
@@ -531,6 +540,7 @@ export class Container extends EventEmitter {
     this.children[i1] = child2;
     this.children[i2] = child;
     this._didViewChangeTick++;
+    this._markStructureAsChanged();
     notifyChildrenChanged(this);
   }
 
@@ -601,6 +611,7 @@ export class Container extends EventEmitter {
   setActive(value: boolean): void {
     if (this._activeSelf === value) return;
     this._activeSelf = value;
+    this.parent?._markStructureAsChanged();
     this._onUpdate();
     this._didViewChangeTick++;
     if (this._subtreeComponents > 0) forEachComponentInSubtree(this, syncComponentLiveness);
@@ -1013,6 +1024,7 @@ export class Container extends EventEmitter {
     if (this.parent) {
       this.parent.sortableChildren = true;
       this.parent.sortDirty = true;
+      this.parent._markStructureAsChanged();
     }
   }
 
@@ -1294,6 +1306,7 @@ export class Container extends EventEmitter {
   }
   set blendMode(value: BlendMode) {
     if (this.localBlendMode === value) return;
+    this.parent?._markStructureAsChanged();
     this.localBlendMode = value;
     this._onUpdate();
   }
@@ -1304,6 +1317,7 @@ export class Container extends EventEmitter {
   set visible(value: boolean) {
     const v = value ? 2 : 0;
     if ((this.localDisplayStatus & 2) === v) return;
+    this.parent?._markStructureAsChanged();
     this.localDisplayStatus ^= 2;
     this._onUpdate();
     this._didViewChangeTick++;
@@ -1316,6 +1330,7 @@ export class Container extends EventEmitter {
   set culled(value: boolean) {
     const v = value ? 0 : 4;
     if ((this.localDisplayStatus & 4) === v) return;
+    this.parent?._markStructureAsChanged();
     this.localDisplayStatus ^= 4;
     this._onUpdate();
   }
@@ -1326,6 +1341,7 @@ export class Container extends EventEmitter {
   set renderable(value: boolean) {
     const v = value ? 1 : 0;
     if ((this.localDisplayStatus & 1) === v) return;
+    this.parent?._markStructureAsChanged();
     this.localDisplayStatus ^= 1;
     this._onUpdate();
   }
@@ -1334,7 +1350,7 @@ export class Container extends EventEmitter {
     return this.localDisplayStatus === 7 && this.groupAlpha > 0;
   }
 
-  /** 渲染仍整树收集;组边界只用于保存 Pixi 的历史变换语义。 */
+  /** 渲染仍整树收集;组边界用于保存 Pixi 的变换/批顶点历史语义。 */
   get isRenderGroup(): boolean {
     return this._renderedGroupWorldTransform !== null;
   }
@@ -1343,10 +1359,22 @@ export class Container extends EventEmitter {
     else this.disableRenderGroup();
   }
   enableRenderGroup(): void {
-    this._renderedGroupWorldTransform ??= new Matrix();
+    if (this._renderedGroupWorldTransform) return;
+    this.parent?._markStructureAsChanged();
+    this._renderedGroupWorldTransform = new Matrix();
+    this._renderGroupStructureTick++;
   }
   disableRenderGroup(): void {
+    if (!this._renderedGroupWorldTransform) return;
+    this.parent?._markStructureAsChanged();
     this._renderedGroupWorldTransform = null;
+  }
+
+  /** @internal 与 Pixi effects/children 的结构失效边界相同,止于最近的渲染组。 */
+  _markStructureAsChanged(): void {
+    let group: Container | null = this;
+    while (group && !group.isRenderGroup) group = group.parent;
+    if (group) group._renderGroupStructureTick++;
   }
 
   get onRender(): ((renderer: unknown) => void) | null {
@@ -1379,6 +1407,7 @@ export class Container extends EventEmitter {
   setMask(options: { mask?: MaskInput | null; inverse?: boolean }): void {
     this._maskOptions = { ...this._maskOptions, ...options };
     if (options.mask) this.mask = options.mask;
+    this._markStructureAsChanged();
   }
 
   get filters(): readonly Filter[] | null {
@@ -1409,6 +1438,7 @@ export class Container extends EventEmitter {
     this.effects.push(effect);
     this.effects.sort((a, b) => a.priority - b.priority);
     this._didViewChangeTick++;
+    this._markStructureAsChanged();
   }
 
   removeEffect(effect: ContainerEffect): void {
@@ -1416,6 +1446,7 @@ export class Container extends EventEmitter {
     if (i === -1) return;
     this.effects.splice(i, 1);
     this._didViewChangeTick++;
+    this._markStructureAsChanged();
   }
 
   // ───────────────────────── 事件属性
@@ -1493,6 +1524,12 @@ export class Container extends EventEmitter {
    * 调用前 `groupTransform` / `groupColorAlpha` / `groupBlendMode` 已按本次渲染算好。
    */
   collectRenderables(_collector: RenderCollector): void {}
+
+  /** @internal Pixi 会准备隐藏组的指令;有历史批数据的组根在这里同步,不提交绘制。 */
+  _prepareRenderGroup(_rendererKey: object | undefined, _visible: boolean): void {}
+
+  /** @internal 在组历史准备前验证换纹理是否使旧批失效。 */
+  _validateRenderGroup(_rendererKey: object | undefined): void {}
 
   /** @internal 渲染核心用 */
   static _nextRenderTick(): number {

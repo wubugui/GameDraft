@@ -1,8 +1,10 @@
 import { ObservablePoint } from '../math/ObservablePoint';
+import { Matrix } from '../math/Matrix';
 import type { PointData } from '../math/Point';
 import { Texture, type TextureSourceLike } from '../textures/Texture';
+import type { TextureSource } from '../textures/TextureSource';
 import { ViewContainer } from '../scene/ViewContainer';
-import { _registerSpriteClassForMasks, type ContainerOptions, type DestroyOptions } from '../scene/Container';
+import { _registerSpriteClassForMasks, type Container, type ContainerOptions, type DestroyOptions } from '../scene/Container';
 import type { BatchableElement, RenderCollector } from '../core/contracts';
 
 export interface SpriteOptions extends ContainerOptions {
@@ -20,6 +22,21 @@ export interface QuadBounds {
   maxY: number;
 }
 
+interface SpriteBatchHistory {
+  /** SpritePipe 首建时抓的是组内矩阵的引用,还是组根的 IDENTITY。 */
+  relative: boolean;
+  group: Matrix | null;
+  structureTick: number;
+  viewTick: number;
+  validatedViewTick: number;
+  packedTransform: Matrix;
+  packedBounds: QuadBounds;
+  sources: readonly TextureSource[] | null;
+  sourceGroup: Matrix | null;
+  sourceStructureTick: number;
+  captureTextures: (sources: readonly TextureSource[]) => void;
+}
+
 /** 画一张纹理的四边形(照 Pixi `Sprite`) */
 export class Sprite extends ViewContainer {
   override renderPipeId = 'sprite';
@@ -34,6 +51,8 @@ export class Sprite extends ViewContainer {
   private _width?: number;
   private _height?: number;
   private readonly _batchable: BatchableElement;
+  private _batchHistory = new WeakMap<object, SpriteBatchHistory>();
+  private readonly _batchTransform = new Matrix();
 
   constructor(options: SpriteOptions | Texture = Texture.EMPTY) {
     const o: SpriteOptions = options instanceof Texture ? { texture: options } : options;
@@ -145,8 +164,11 @@ export class Sprite extends ViewContainer {
 
   override collectRenderables(collector: RenderCollector): void {
     const b = this._batchable;
+    const key = collector.rendererKey ?? this;
     b.texture = this._texture;
-    b.transform = this.groupTransform;
+    b.transform = this.batchTransform(key, true);
+    const history = this._batchHistory.get(key)!;
+    b.onBatchTextures = history.captureTextures;
     b.color = this.groupColorAlpha;
     b.roundPixels = this._latchRoundPixels(collector);
     b.blendMode = this.groupBlendMode;
@@ -154,12 +176,83 @@ export class Sprite extends ViewContainer {
       updateQuadBounds(this._visualBounds, this._anchor, this._texture);
       this._visualBoundsDirty = false;
     }
-    b.bounds = this._visualBounds;
+    b.bounds = this.isRenderGroup ? history.packedBounds : this._visualBounds;
     collector.addBatchable(b);
+  }
+
+  /**
+   * 照 SpritePipe:首次批元素绑定 groupTransform 的身份不随 enableRenderGroup 改变。
+   * 普通 Sprite 后来提升成组根时,旧相对矩阵仍被第一次组构建打进顶点;之后仅内容/本组结构更新才重打包。
+   * 保留这层历史变换,外面仍用本引擎扁平收集的当帧组到渲染根矩阵,不引入组指令缓存。
+   */
+  private batchTransform(key: object, visible: boolean): Matrix {
+    let history = this._batchHistory.get(key);
+    if (!history) {
+      const created: SpriteBatchHistory = {
+        relative: !this.isRenderGroup, group: null, structureTick: -1, viewTick: -1, validatedViewTick: -1,
+        packedTransform: new Matrix(), packedBounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 }, sources: null,
+        sourceGroup: null, sourceStructureTick: -1,
+        captureTextures: (sources) => {
+          let owner: Container | null = this;
+          while (owner && !owner.isRenderGroup) owner = owner.parent;
+          const group = owner?._renderedGroupWorldTransform ?? null;
+          const structureTick = owner?._renderGroupStructureTick ?? 0;
+          // Pixi 原地换纹理不收缩批的 source 表;未用的槽保留到该组下次重建。
+          if (!created.sources || created.sourceGroup !== group || created.sourceStructureTick !== structureTick) {
+            created.sources = sources;
+            created.sourceGroup = group;
+            created.sourceStructureTick = structureTick;
+          }
+        },
+      };
+      history = created;
+      this._batchHistory.set(key, history);
+    }
+    if (!this.isRenderGroup) {
+      history.group = null;
+      if (history.relative) return this.groupTransform;
+      // 首建时已是组根的批元素抓了 IDENTITY;disable 后也不改引用,直到 unload。
+      let group = this.parent;
+      while (group && !group.isRenderGroup) group = group.parent;
+      return group?.groupTransform ?? Matrix.IDENTITY;
+    }
+    if (history.group !== this._renderedGroupWorldTransform
+      || history.structureTick !== this._renderGroupStructureTick
+      || (visible && history.viewTick !== this._viewUpdateTick)) {
+      history.packedTransform.copyFrom(this._renderedRelativeTransform ?? Matrix.IDENTITY);
+      history.group = this._renderedGroupWorldTransform;
+      history.structureTick = this._renderGroupStructureTick;
+      if (this._visualBoundsDirty) {
+        updateQuadBounds(this._visualBounds, this._anchor, this._texture);
+        this._visualBoundsDirty = false;
+      }
+      Object.assign(history.packedBounds, this._visualBounds);
+    }
+    // Pixi 的隐藏组仍构建结构,但 updateRenderable 跳过隐藏内容并消费更新队列。
+    history.viewTick = this._viewUpdateTick;
+    return history.relative ? this._batchTransform.appendFrom(history.packedTransform, this.groupTransform) : this.groupTransform;
+  }
+
+  override _prepareRenderGroup(rendererKey: object | undefined, visible: boolean): void {
+    this.batchTransform(rendererKey ?? this, visible);
+  }
+
+  override _validateRenderGroup(rendererKey: object | undefined): void {
+    const history = this._batchHistory.get(rendererKey ?? this);
+    if (!history || history.validatedViewTick === this._viewUpdateTick) return;
+    history.validatedViewTick = this._viewUpdateTick;
+    // Pixi 验证的是该 Sprite 上一批的 source 表,不是整组所有纹理;同批已有 source 可以原地更新。
+    if (history.sources && !history.sources.includes(this._texture.source)) this._markStructureAsChanged();
+  }
+
+  override unload(): void {
+    this._batchHistory = new WeakMap();
+    super.unload();
   }
 
   override destroy(options: boolean | DestroyOptions = false): void {
     const tex = this._texture;
+    this._batchHistory = new WeakMap();
     super.destroy(options);
     const destroyTexture = typeof options === 'boolean' ? options : options?.texture;
     if (destroyTexture && tex) {

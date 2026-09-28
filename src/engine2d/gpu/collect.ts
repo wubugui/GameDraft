@@ -46,11 +46,18 @@ function runOnRender(c: Container, renderer: unknown): void {
   for (let i = 0; i < children.length; i++) runOnRender(children[i], renderer);
 }
 
+function validateRenderGroups(c: Container, rendererKey: object | undefined): void {
+  c._validateRenderGroup(rendererKey);
+  for (const child of c.children) validateRenderGroups(child, rendererKey);
+}
+
 /** 算本次渲染的相对根变换与外观。返回本次的 tick(遮罩等据此判断节点是否在本次算过) */
 export function prepareTree(root: Container, renderer: unknown, tick: number, transform?: Matrix): void {
   // 照 AbstractRenderer:单独 render 过的子树永久成为一个组,之后整树渲染仍保留这个边界。
   root.enableRenderGroup();
   runOnRender(root, renderer);
+  const rendererKey = renderer !== null && typeof renderer === 'object' ? renderer : undefined;
+  validateRenderGroups(root, rendererKey);
   preparedRoundPixels = (renderer as { roundPixels?: boolean } | null)?.roundPixels ? 1 : 0;
   root.updateLocalTransform();
   // 与本次 global uniforms 使用同一矩阵;显式离屏 transform 也必须进入 Culler 历史。
@@ -65,8 +72,9 @@ export function prepareTree(root: Container, renderer: unknown, tick: number, tr
   root.groupBlendMode = 'normal';
   root.globalDisplayStatus = root.localDisplayStatus;
   root._renderTick = tick;
+  root._prepareRenderGroup(rendererKey, root.globalDisplayStatus === 7);
   const children = root.children;
-  for (let i = 0; i < children.length; i++) updateChild(children[i], null, tick, root);
+  for (let i = 0; i < children.length; i++) updateChild(children[i], null, tick, root, rendererKey);
 }
 
 /** 与绘制相对根矩阵分开保存历史,嵌套组重新开始算组内矩阵。prepareDetached 不调用它。 */
@@ -81,14 +89,14 @@ function updateRenderedTransform(c: Container, parent: Container | null, group: 
   return group;
 }
 
-function updateChild(c: Container, parent: Container | null, tick: number, historyGroup?: Container): void {
+function updateChild(c: Container, parent: Container | null, tick: number, historyGroup?: Container, rendererKey?: object): void {
   if (!c._activeSelf) {
     // 未激活:整棵子树不画(收集器见 globalDisplayStatus < 7 即跳过,不会再往下看),外观不算。
     // 变换照算:master 用 visible=false 藏 NPC / 热点,Pixi 渲染时照样更新隐藏节点的变换,Culler 缺省读的
     // "上次渲染时的变换"对它们也是最新的;这里不算的话,藏着时挪过、这一帧才露面的节点会按旧位置判剔除
     c.globalDisplayStatus = 0;
     c._renderTick = tick;
-    updateTransformsOnly(c, parent, historyGroup);
+    updateTransformsOnly(c, parent, historyGroup, rendererKey);
     return;
   }
   c.updateLocalTransform();
@@ -109,18 +117,20 @@ function updateChild(c: Container, parent: Container | null, tick: number, histo
   }
   c.groupColorAlpha = c.groupColor + (((c.groupAlpha * 255) | 0) << 24);
   c._renderTick = tick;
+  if (historyGroup && c.isRenderGroup) c._prepareRenderGroup(rendererKey, c.globalDisplayStatus === 7);
   const children = c.children;
-  for (let i = 0; i < children.length; i++) updateChild(children[i], c, tick, childHistoryGroup);
+  for (let i = 0; i < children.length; i++) updateChild(children[i], c, tick, childHistoryGroup, rendererKey);
 }
 
 /** 未激活子树:只算相对根的变换(同 Pixi updateTransformAndChildren 的变换那一半;外观、tick 不动) */
-function updateTransformsOnly(c: Container, parent: Container | null, historyGroup?: Container): void {
+function updateTransformsOnly(c: Container, parent: Container | null, historyGroup?: Container, rendererKey?: object): void {
   c.updateLocalTransform();
   const childHistoryGroup = historyGroup && updateRenderedTransform(c, parent, historyGroup);
   if (parent) c.groupTransform.appendFrom(c.localTransform, parent.groupTransform);
   else c.groupTransform.copyFrom(c.localTransform);
+  if (historyGroup && c.isRenderGroup) c._prepareRenderGroup(rendererKey, false);
   const children = c.children;
-  for (let i = 0; i < children.length; i++) updateTransformsOnly(children[i], c, childHistoryGroup);
+  for (let i = 0; i < children.length; i++) updateTransformsOnly(children[i], c, childHistoryGroup, rendererKey);
 }
 
 /**
@@ -193,6 +203,7 @@ export class Collector implements RenderCollector {
   constructor(
     readonly batcher: Batcher,
     public resolution: number,
+    readonly rendererKey: object = batcher,
   ) {}
 
   begin(root: Container, tick: number, resolution: number, roundPixels: number = preparedRoundPixels): void {
@@ -218,7 +229,10 @@ export class Collector implements RenderCollector {
   collect(c: Container): void {
     if (c.globalDisplayStatus < 7 || !c.includeInBuild) return;
     if (c.sortableChildren) c.sortChildren();
+    // 与 Pixi RenderGroupPipe 一样在组边界断批;仍画相对本次根的矩阵,不另建组指令。
+    if (c.isRenderGroup) this.flush();
     this.collectWithEffects(c);
+    if (c.isRenderGroup) this.flush();
   }
 
   private collectWithEffects(c: Container): void {

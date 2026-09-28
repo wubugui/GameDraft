@@ -73,10 +73,15 @@ export class Batcher {
     let start = this.batchIndexStart;
     let textures: TextureSource[] = [];
     let ids = new Map<TextureSource, number>();
+    let batchElementStart = 0;
+    let batchElementEnd = 0;
     const finish = (): void => {
       out.push({ t: 'batch', textures, blendMode, topology, start, size: size - start });
+      for (let j = batchElementStart; j < batchElementEnd; j++) elements[j].onBatchTextures?.(textures);
+      batchElementStart = batchElementEnd;
     };
     for (let i = 0; i < elements.length; i++) {
+      batchElementEnd = i;
       const el = elements[i];
       const source = el.texture.source;
       const adjusted = adjustedBlendMode(el.blendMode, source);
@@ -106,6 +111,7 @@ export class Batcher {
       }
     }
     if (textures.length > 0) {
+      batchElementEnd = elements.length;
       finish();
       start = size;
     }

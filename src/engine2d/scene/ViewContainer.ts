@@ -14,6 +14,8 @@ export abstract class ViewContainer extends Container {
    * `_initBatchableMesh`:值只在建 BatchableXxx 时取一次)。-1 = 还没锁
    */
   _batchRoundPixels = -1;
+  /** @internal 仅内容更新计数(不含显隐/子节点结构变化),供 Sprite 的组根批顶点失效。 */
+  _viewUpdateTick = 0;
 
   constructor(options: ContainerOptions = {}) {
     super(options);
@@ -49,6 +51,7 @@ export abstract class ViewContainer extends Container {
 
   /** 内容变了(纹理 / 几何 / 锚点) */
   onViewUpdate(): void {
+    this._viewUpdateTick++;
     this._didViewChangeTick++;
     this._boundsDirty = true;
   }

@@ -12,6 +12,7 @@
  */
 import type { Matrix } from '../math/Matrix';
 import type { Texture } from '../textures/Texture';
+import type { TextureSource } from '../textures/TextureSource';
 import type { BlendMode } from './blendModes';
 import type { Topology, Geometry } from '../shader/Geometry';
 import type { Shader } from '../shader/Shader';
@@ -22,6 +23,8 @@ import type { Container, FilterEffect, MaskEffect } from '../scene/Container';
  * 顶点 = transform × 本地坐标,在 CPU 上算(公式与 Pixi DefaultBatcher 一字不差),颜色按 unorm8x4 打包。
  */
 export interface BatchableElement {
+  /** 实际批纹理集合的侧带快照,供 Sprite 下帧按 Pixi 的 checkAndUpdateTexture 判结构失效。 */
+  onBatchTextures?: (sources: readonly TextureSource[]) => void;
   texture: Texture;
   /** 相对渲染根的变换(显示对象的 groupTransform) */
   transform: Matrix;
@@ -72,6 +75,8 @@ export interface UnbatchedGraphics {
 
 /** 收集器:场景遍历时把要画的东西按顺序交给它 */
 export interface RenderCollector {
+  /** 同一渲染器的所有嵌套收集共享身份;渲染器本地的 Sprite 批缓存用它隔离。 */
+  readonly rendererKey?: object;
   /** 渲染器分辨率(文字等按它决定位图分辨率,照 Pixi 的 autoResolution) */
   readonly resolution: number;
   /** 渲染器级 roundPixels(0 / 1);合批元素首次收集时与节点自己的取整或起来(照 Pixi `renderer._roundPixels`) */

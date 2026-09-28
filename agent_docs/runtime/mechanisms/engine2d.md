@@ -101,6 +101,13 @@ resolve 回目标——32 位浮点 / 整数这类不能 resolve 的格式照常
 `roundPixels` 在离屏目标(RenderTexture / 滤镜纹理)里的平局方向照 master 的 WebGL 翻转投影:离屏投影本身不翻,
 全局 uniform 尾字段 `uRoundFlipY`(离屏与画布中间纹理都是 1,两类目标的投影都与 master 相反)让内置合批 / 图形 / 网格着色器翻 y 再取整(`batchShader` 的 `roundPixelsTarget`);
 Sprite 的合批四边形只在换纹理 / 改锚点 / 动态纹理 update 时重算(非动态 RenderTexture 改尺寸后停在旧尺寸);
+Sprite 曾作为普通子节点入批、后来被单独 render 提升成组根时,也保留 Pixi 的历史批变换:首次组构建仍把旧组内矩阵
+打进顶点,之后父节点/自身移动只更新组世界矩阵;自己的内容变化或本组结构重建才重新取批矩阵。缓存按渲染器隔离,
+`unload()` 清掉首次矩阵身份;纹理源 GPU 存储卸载不清 Sprite 批历史。真实 Pixi CPU 管线对照在
+`sprite/spriteRenderGroupHistory.test.ts`(物件查看主体偏移的来源,不能在业务坐标里补常量)。
+组内 Sprite 换纹理是否重建,按该 Sprite **上次结构构建的批**的 source 集合判断(同批已有 source 可原地更新,
+未用槽保留到结构重建,别批有不算);
+隐藏组仍准备结构重建,纯内容更新被跳过并消费,不能等显露后才刷新历史顶点。
 `renderer.render({ container })` 的根自己的 `blendMode` 不生效(按 normal 画,要混合就挂一层父节点);
 带 shader 却没有 `gpuProgram` 的网格告警并跳过绘制;
 纹理的**采样参数在一个渲染器 / 一次设备里第一次用到时定下**(照 Pixi WebGPU 的 `_resourceId`:键与参数由各渲染器的 `GpuTextures` 按 style 各记一份,

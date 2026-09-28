@@ -125,8 +125,8 @@ class RenderState {
   indexBuffer: RhiBuffer | null = null;
   uniformBuffer: RhiBuffer | null = null;
 
-  constructor() {
-    this.collector = new Collector(this.batcher, 1);
+  constructor(rendererKey: object) {
+    this.collector = new Collector(this.batcher, 1, rendererKey);
   }
 }
 
@@ -254,7 +254,7 @@ export class WebGPURenderer extends RendererBase {
     this.gc.prerender();
     prepareTree(container, this, tick, transform);
 
-    const state = (this.states[this.depth] ??= new RenderState());
+    const state = (this.states[this.depth] ??= new RenderState(this));
     this.depth++;
     try {
       const { collector, builder } = state;
