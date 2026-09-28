@@ -1203,7 +1203,7 @@ export class Container extends EventEmitter {
   }
 
   getGlobalTransform(matrix: Matrix = new Matrix(), skipUpdate = false): Matrix {
-    void skipUpdate;
+    if (skipUpdate) return renderedWorldTransform(this, matrix);
     return matrix.copyFrom(this._ensureWorld());
   }
 

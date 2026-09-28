@@ -46,6 +46,8 @@ last_governed: 2026-08-05
   用长边比例当偏移,在非正方画面上会让横穿刚出边就入画甚至直接生在画面内,竖穿则远在画外
   要爬几秒才进来——观众看到的是"方向根本不随机"。
 - 离屏 RT 逐帧烘焙的清屏纪律见 [pixi-v8-traps](pixi-v8-traps.md),这套是它的重灾区。
+- 接触 AO 的采样矩阵和 padding 照 master 使用上次渲染的世界矩阵:engine2d 中显式读
+  `getGlobalTransform(out, true)`,不能读当帧 `worldTransform`。镜头缩放过渡时混用会令物件/爬虫轮廓的 AO 偏移。
 
 ## 已知坑
 

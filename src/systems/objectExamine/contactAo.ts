@@ -220,7 +220,7 @@ export class ObjectExamineContactAoFilter extends Filter {
   // bake 矩阵复用，避免每帧分配。
   private readonly tmpInvRoot = new Matrix();
   private readonly tmpCaster = new Matrix();
-  private readonly tmpLocal = new Matrix();
+  private readonly tmpRootWorld = new Matrix();
   private readonly tmpShader = new Matrix();
   private readonly tmpTranslate = new Matrix();
   private readonly tmpScale = new Matrix();
@@ -334,7 +334,8 @@ export class ObjectExamineContactAoFilter extends Filter {
   bake(renderer: PixiRenderer, objectRoot: Container): void {
     if (!this.enabled || !this.rtBody || !this.rtCrit || !this.bodyCaster) return;
     const r = this.castRect;
-    const rootWorld = objectRoot.worldTransform;
+    // engine2d 的 worldTransform 是当帧父链;显式 skipUpdate 才与 master 的渲染历史一致。
+    const rootWorld = objectRoot.getGlobalTransform(this.tmpRootWorld, true);
     this.tmpInvRoot.copyFrom(rootWorld).invert();
     // 合成采样矩阵：uv = S(1/w,1/h) · T(-x,-y) · invWorld · global
     // Pixi append 是右乘；要用 prepend 才能得到注释里的左乘顺序。
@@ -413,7 +414,7 @@ export class ObjectExamineContactAoFilter extends Filter {
     }
     if (!node) {
       // caster 不在 objectRoot 子树里：退回世界变换，至少不静默画错位置。
-      this.tmpCaster.copyFrom(caster.worldTransform).prepend(this.tmpInvRoot);
+      caster.getGlobalTransform(this.tmpCaster, true).prepend(this.tmpInvRoot);
     }
     this.tmpCaster.prepend(this.tmpTranslate).prepend(this.tmpScale);
   }

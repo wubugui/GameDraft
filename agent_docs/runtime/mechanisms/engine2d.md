@@ -79,7 +79,9 @@ last_governed: 2026-09-25
   同尺寸同格式的**画布中间纹理**(`FrameBuilder.bind` 画布用翻转投影、滤镜 `uOutputTexture.z = 1`、`uRoundFlipY = 1`),
   帧末 `WebGPURenderer.presentCanvasFlip` 用 textureLoad 逐像素翻回正向写进交换链。光栅化平局归属、gl_FragCoord 朝向
   (`@builtin(position)`)都与 master 画布一致;画布的模板 / MSAA 走与离屏目标同一条路(resolve 回中间纹理)。离屏目标不变。
-- `Container.worldTransform` 与当前父链一致(按版本缓存,不走 Pixi 的"上一帧渲染结果")。**Culler 例外、照 Pixi**
+- `Container.worldTransform` 与当前父链一致(按版本缓存,不走 Pixi 的"上一帧渲染结果")。
+  `getGlobalTransform(out, true)` 显式读渲染历史,缺省/false 仍读当前父链。物件查看接触 AO 用前者,
+  与 master 的上一帧采样矩阵保持一致(镜头变化时不能换成当帧矩阵)。**Culler 例外、照 Pixi**
   (2026-09-28 对齐):缺省 `skipUpdateTransform = true` 读**上一次渲染时**的世界变换(`renderedWorldTransform` =
   所属渲染组的历史世界矩阵 × 自己的历史组内矩阵;`prepareTree` 对未激活子树也照算变换,同 Pixi 更新 visible=false 节点的变换)——
   本帧逻辑里挪过的节点晚一帧反映,这一帧才新建的节点按单位组内矩阵判。单独 render 已挂树的子树会持久开启组边界,

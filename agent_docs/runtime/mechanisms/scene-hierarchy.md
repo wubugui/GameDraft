@@ -51,6 +51,7 @@ last_governed: 2026-09-25
   保留缩放符号与 pivot / origin,非等比祖先带来的切变放进 `skew.x`。`reparentChild` 为 Pixi 对照保留原样。
 - **世界矩阵按版本缓存**:本地变换或任一祖先变了才重算,算出的值真的变了才升版本(只改 alpha 不连累子孙),
   结果与沿父链现乘逐位相同。`worldTransform` 返回的是缓存本体,**别改它**(改了就是脏缓存)。
+  需要 Pixi 渲染历史的消费者显式用 `getGlobalTransform(out, true)`;缺省/false 仍返回当前父链的副本。
   Culler 缺省读独立保存的上次渲染组历史,包括单独渲染子树与显式渲染矩阵;`skipUpdateTransform=false` 仍按当前父链算。
 - **兄弟顺序 = 渲染先后**(`siblingIndex`、`setAsFirst/LastSibling`);父节点开了 `sortableChildren` 时按 zIndex 另排,
   兄弟序号就不再代表画序。
