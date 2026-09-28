@@ -49,9 +49,21 @@ function rasterizePolygon(pts, grid, out) {
   for (const p of pts) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < z0) z0 = p[1]; if (p[1] > z1) z1 = p[1]; }
   const [ga, gb] = grid.cellOf(x0, z0), [gc, gd] = grid.cellOf(x1, z1);
   const ia = Math.max(0, ga - 1), ib = Math.min(grid.w - 1, gc + 1), ja = Math.max(0, gb - 1), jb = Math.min(grid.h - 1, gd + 1);
+  // 每行只求一次轮廓与格心所在水平线的交点；原来的逐格射线法会把
+  // 轮廓点数乘上格子数，大场景拖动区域时一帧要重复数千万次边测试。
   for (let j = ja; j <= jb; j++) {
-    const cz = grid.centerZ(j);
-    for (let i = ia; i <= ib; i++) if (pointInPolygon(grid.centerX(i), cz, pts)) m[j * grid.w + i] = 1;
+    const cz = grid.centerZ(j), crosses = [];
+    for (let i = 0, k = pts.length - 1; i < pts.length; k = i++) {
+      const xi = pts[i][0], zi = pts[i][1], xk = pts[k][0], zk = pts[k][1];
+      if ((zi > cz) !== (zk > cz)) crosses.push((xk - xi) * (cz - zi) / (zk - zi) + xi);
+    }
+    crosses.sort((a, b) => a - b);
+    let left = 0;
+    for (let i = ia; i <= ib; i++) {
+      const cx = grid.centerX(i);
+      while (left < crosses.length && crosses[left] <= cx) left++;
+      if ((crosses.length - left) & 1) m[j * grid.w + i] = 1;
+    }
   }
   return m;
 }

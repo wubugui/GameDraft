@@ -214,7 +214,30 @@
       const q = v2.projectWorld(gridToWorld(S.doc.regions[0].points[0][0], S.doc.regions[0].points[0][1]));
       click(q[0], q[1]);
       ok('S6 2D view: clicking the same vertex selects it and shows the gizmo', S.sel.key === `region:${r1.id}:v0` && !!v2._gizmo(), { sel: S.sel.key });
+      const hasInk = (id) => { const c = el(id), a = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; for (let i = 3; i < a.length; i += 4) if (a[i]) return true; return false; };
+      ok('S6 2D background and selected regions render on separate visible canvases', shown('view2dStatic') && shown('view2dRegions') && shown('view2dSelected') && hasInk('view2dStatic') && hasInk('view2dRegions') && hasInk('view2dSelected'));
+      const [W2, H2] = cwh();
+      const oldRegions = v2._drawRegions;
+      let regionDraws = 0;
+      v2._drawRegions = function (...args) { regionDraws++; return oldRegions.apply(this, args); };
+      try {
+        ev('mousedown', W2 / 2, H2 / 2, { button: 1, buttons: 4 });
+        ev('mousemove', W2 / 2 + 20, H2 / 2 + 10, { button: 1, buttons: 4 });
+        ok('S6 2D pan moves cached layers without repainting regions', regionDraws === 0 && /translate/.test(el('view2dRegions').style.transform), { regionDraws });
+        ev('mouseup', W2 / 2 + 20, H2 / 2 + 10, { button: 1, buttons: 0 });
+        ok('S6 2D pan commits the new camera', regionDraws > 0 && !el('view2dRegions').style.transform);
+        regionDraws = 0;
+        wheel(W2 / 2, H2 / 2, -40);
+        ok('S6 2D zoom previews cached layers without repainting regions', regionDraws === 0 && /scale/.test(el('view2dRegions').style.transform), { regionDraws });
+        v2._endZoomPreview(true);
+        ok('S6 2D zoom commits the new camera', regionDraws > 0 && !el('view2dRegions').style.transform);
+      } finally { v2._drawRegions = oldRegions; }
       key('1');
+      let hiddenDraws = 0;
+      const oldDraw2 = v2.draw;
+      v2.draw = function (...args) { hiddenDraws++; return oldDraw2.apply(this, args); };
+      try { ev('mousemove', W / 2, H / 2); } finally { v2.draw = oldDraw2; }
+      ok('S6 hidden 2D view does not redraw on 3D pointer movement', hiddenDraws === 0, { hiddenDraws });
     }
 
     // ------------------------------------------------------------------ S7 高度 / 检视 / 快捷键

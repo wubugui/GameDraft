@@ -351,6 +351,33 @@ class ServeTests(unittest.TestCase):
 class JsParityTests(unittest.TestCase):
     """页面即时反馈用的 JS 合成器必须与 Python 合成器**逐格相同**（否则作者看到的与游戏读的不是一回事）。"""
 
+    def test_真实场景多边形_逐行栅格化与逐格射线法相同(self):
+        path = ROOT / "public/resources/runtime/scenes/bridge_underpass/terrain/terrain.json"
+        if not path.is_file():
+            self.skipTest("缺 bridge_underpass 作者层")
+        js = f"""
+const fs = require('fs'), vm = require('vm');
+const ctx = {{ module: {{ exports: {{}} }} }};
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync({json.dumps(str(_JS_MATH))}, 'utf8'), ctx);
+const m = ctx.module.exports, doc = JSON.parse(fs.readFileSync({json.dumps(str(path))}, 'utf8'));
+const grid = new m.Grid(doc.grid);
+for (const r of doc.regions) {{
+  const fast = m.rasterizePolygon(r.points, grid);
+  for (let j = 0; j < grid.h; j++) for (let i = 0; i < grid.w; i++) {{
+    const k = j * grid.w + i;
+    if (fast[k] !== +m.pointInPolygon(grid.centerX(i), grid.centerZ(j), r.points))
+      throw new Error(`${{r.id}} (${{i}},${{j}}): scanline=${{fast[k]}}`);
+  }}
+}}
+process.stdout.write(`matched ${{doc.regions.length}} regions`);
+"""
+        from tools.dev.paths import env_with_node_path
+        out = subprocess.run(["node", "-e", js], capture_output=True, text=True, encoding="utf-8", timeout=60,
+                             env=env_with_node_path())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertTrue(out.stdout.startswith("matched "), out.stdout)
+
     def test_随机作者层_合成逐格相同(self):
         rng = np.random.default_rng(7)
         grid = tc.GridMeta(-2.3, 0.7, 0.37, 23, 17)

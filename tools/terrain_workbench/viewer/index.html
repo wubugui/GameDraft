@@ -45,7 +45,7 @@
   .item button { padding: 0 5px; font-size: 11px; }
   #center { position: relative; overflow: hidden; background: #111; }
   #center canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; outline: none; }
-  #overlay3d { pointer-events: none; }
+  #overlay3d, #view2dStatic, #view2dRegions, #view2dSelected { pointer-events: none; }
   #coords { position: absolute; left: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.55); padding: 3px 8px; border-radius: 4px; font: 12px Consolas, "Cascadia Mono", monospace; white-space: pre; pointer-events: none; }
   #legend { position: absolute; right: 8px; bottom: 8px; z-index: 5; color: var(--dim); background: rgba(0,0,0,.5); padding: 4px 8px; border-radius: 4px; font-size: 12px; pointer-events: none; line-height: 1.5; max-width: 60%; }
   #legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px -1px 0; }
@@ -138,6 +138,9 @@
   <div id="center">
     <canvas id="view3d"></canvas>
     <canvas id="overlay3d"></canvas>
+    <canvas id="view2dStatic" hidden></canvas>
+    <canvas id="view2dRegions" hidden></canvas>
+    <canvas id="view2dSelected" hidden></canvas>
     <canvas id="view2d" hidden></canvas>
     <div id="coords"></div>
     <div id="legend"><i style="background:rgba(242,77,77,.6)"></i>自动阻挡 <i style="background:rgba(255,89,191,.7)"></i>笔刷阻挡 <i style="background:rgba(255,140,51,.7)"></i>多边形阻挡 <i style="background:rgba(89,242,115,.7)"></i>作者改成可走 <i style="background:rgba(255,230,77,.7)"></i>走不到 <i style="background:rgba(77,128,255,.7)"></i>行走面修补<br>

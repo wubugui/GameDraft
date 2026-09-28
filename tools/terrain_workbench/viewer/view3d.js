@@ -516,6 +516,7 @@ class View3D {
     this.draw();
   }
   _move(e) {
+    if (this.host.view !== 3) return;
     if (!this.ok) return;
     const [mx, my] = this._pos(e);
     const host = this.host;

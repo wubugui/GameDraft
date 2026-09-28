@@ -29,7 +29,7 @@ const S = {
   layers: { mesh: true, dimMesh: false, grid: false, cells: true, walkTint: false, cellLines: false, reach: true, height: true, regions: true, marks: true },
   dirty: false, cleanKey: '', baseUpdated: null, needsExport: false, busy: 0, loadingScene: '', sceneOp: 0,
   link: { status: null, align: null, probeSeq: 0, probeCells: null, probeAt: 0, lastAlignRev: -1 },
-  job: null, cursor: null, inspect: null, docRev: 0, composeRev: 0,
+  job: null, cursor: null, inspect: null, docRev: 0, regionRev: 0, composeRev: 0,
 };
 let v3 = null, v2 = null, history = null;
 let draftTimer = 0, probeTimer = 0;
@@ -199,9 +199,9 @@ function edit(label, fn) {
   if (changed) afterEdit();
   return changed;
 }
-function afterEdit() { touch(); recompose(); refreshDirty(); renderLists(); renderInspector(); draw(); }
+function afterEdit() { touch(); S.regionRev++; recompose(); refreshDirty(); renderLists(); renderInspector(); draw(); }
 function dragBegin(label) { history.beginDrag(label); }
-function dragTick(fn) { if (!history.inDrag()) history.beginDrag('拖动'); fn(); touch(); recompose(); draw(); }
+function dragTick(fn) { if (!history.inDrag()) history.beginDrag('拖动'); fn(); touch(); if (S.tool === 'select') S.regionRev++; recompose(); draw(); }
 function dragEnd() { if (history.endDrag()) { refreshDirty(); renderLists(); renderInspector(); } draw(); }
 function doUndo() { const l = history.undo(); if (l) { afterEdit(); status(`撤销：${l}`); } return l; }
 function doRedo() { const l = history.redo(); if (l) { afterEdit(); status(`重做：${l}`); } return l; }
@@ -215,12 +215,14 @@ function parseKey(key) {
   if (!item) return null;
   return { kind: m[1], id: m[2], item, vi: m[3] === undefined ? -1 : +m[3], list };
 }
-function select(key) { S.sel.key = key || ''; renderLists(); renderInspector(); draw(); }
-function objects() {
+function select(key) { S.sel.key = key || ''; S.regionRev++; renderLists(); renderInspector(); draw(); }
+function objects(filter) {
   const out = [];
   if (!S.doc || !S.cal) return out;
   const sel = parseKey(S.sel.key);
   const add = (kind, item, rgb) => {
+    const shapeKey = `${kind}:${item.id}`;
+    if (filter && ((filter.only && filter.only !== shapeKey) || filter.exclude === shapeKey)) return;
     const on = sel && sel.id === item.id && sel.kind === kind;
     item.points.forEach((p, i) => {
       const key = `${kind}:${item.id}:v${i}`;
@@ -233,11 +235,11 @@ function objects() {
   if (S.layers.regions) for (const o of S.doc.heightOps || []) add('op', o, OP_RGB);
   return out;
 }
-function labels3() {
+function labels3(filter) {
   const out = [];
   if (!S.doc || !S.cal || !S.layers.regions) return out;
-  for (const r of S.doc.regions || []) { const c = polygonCentroid(r.points); out.push({ pos: gridToWorld(c[0], c[1]), text: `${r.kind === 'walk' ? '可走' : '阻挡'} ${r.id}`, color: S.sel.key.startsWith(`region:${r.id}`) ? GZ.col.hot : `rgba(${REGION_RGB[r.kind].map((v) => Math.round(v * 255)).join(',')},.9)` }); }
-  for (const o of S.doc.heightOps || []) { const c = polygonCentroid(o.points); out.push({ pos: gridToWorld(c[0], c[1]), text: `${o.kind === 'flatten' ? '压平到' : '抬高'} ${fmt(o.value * S.k, 0)} wu · ${o.id}`, color: S.sel.key.startsWith(`op:${o.id}`) ? GZ.col.hot : 'rgba(150,170,255,.9)' }); }
+  for (const r of S.doc.regions || []) { const key = `region:${r.id}`; if (filter && ((filter.only && filter.only !== key) || filter.exclude === key)) continue; const c = polygonCentroid(r.points); out.push({ pos: gridToWorld(c[0], c[1]), text: `${r.kind === 'walk' ? '可走' : '阻挡'} ${r.id}`, color: S.sel.key.startsWith(key) ? GZ.col.hot : `rgba(${REGION_RGB[r.kind].map((v) => Math.round(v * 255)).join(',')},.9)` }); }
+  for (const o of S.doc.heightOps || []) { const key = `op:${o.id}`; if (filter && ((filter.only && filter.only !== key) || filter.exclude === key)) continue; const c = polygonCentroid(o.points); out.push({ pos: gridToWorld(c[0], c[1]), text: `${o.kind === 'flatten' ? '压平到' : '抬高'} ${fmt(o.value * S.k, 0)} wu · ${o.id}`, color: S.sel.key.startsWith(key) ? GZ.col.hot : 'rgba(150,170,255,.9)' }); }
   return out;
 }
 /** 贴地折线：多边形每条边按格宽采样（与 3D / 2D 共用） */
@@ -268,16 +270,16 @@ function regionLines3() {
   }
   return out;
 }
-function regionLines2() {
+function regionLines2(part = 'all', filter) {
   const out = [];
   if (!S.doc || !S.cal) return out;
   const css = (rgb, a) => `rgba(${Math.round(rgb[0] * 255)},${Math.round(rgb[1] * 255)},${Math.round(rgb[2] * 255)},${a})`;
   const dense = (pts, close) => { const s = edgeSamples(pts, close); const o = []; for (let i = 0; i < s.length; i += 2) o.push(s[i]); if (s.length && !close) o.push(s[s.length - 1]); return o; };
-  if (S.layers.regions) {
-    for (const r of S.doc.regions || []) { const on = S.sel.key.startsWith(`region:${r.id}`); out.push({ pts: dense(r.points, true), close: true, css: on ? GZ.col.hot : css(REGION_RGB[r.kind], 0.95), width: on ? 2.5 : 1.5, fill: css(REGION_RGB[r.kind], 0.08) }); }
-    for (const o of S.doc.heightOps || []) { const on = S.sel.key.startsWith(`op:${o.id}`); out.push({ pts: dense(o.points, true), close: true, css: on ? GZ.col.hot : css(OP_RGB, 0.95), width: on ? 2.5 : 1.5, dash: [6, 4] }); }
+  if (part !== 'draft' && S.layers.regions) {
+    for (const r of S.doc.regions || []) { const key = `region:${r.id}`; if (filter && ((filter.only && filter.only !== key) || filter.exclude === key)) continue; const on = S.sel.key.startsWith(key); out.push({ pts: dense(r.points, true), close: true, css: on ? GZ.col.hot : css(REGION_RGB[r.kind], 0.95), width: on ? 2.5 : 1.5, fill: css(REGION_RGB[r.kind], 0.08) }); }
+    for (const o of S.doc.heightOps || []) { const key = `op:${o.id}`; if (filter && ((filter.only && filter.only !== key) || filter.exclude === key)) continue; const on = S.sel.key.startsWith(key); out.push({ pts: dense(o.points, true), close: true, css: on ? GZ.col.hot : css(OP_RGB, 0.95), width: on ? 2.5 : 1.5, dash: [6, 4] }); }
   }
-  const d = S.draft;
+  const d = part !== 'regions' && S.draft;
   if (d && d.points && d.points.length) { const pts = d.cur ? d.points.concat([d.cur]) : d.points; out.push({ pts: dense(pts, pts.length > 2), close: pts.length > 2, css: 'rgba(255,255,255,.9)', width: 1.5, dash: [4, 3] }); }
   return out;
 }
@@ -763,6 +765,7 @@ function draw() { if (S.view === 3 && v3 && v3.ok) v3.draw(); else if (v2) v2.dr
 function setView(v) {
   S.view = v;
   el('view3d').hidden = v !== 3; el('overlay3d').hidden = v !== 3; el('view2d').hidden = v !== 2;
+  el('view2dStatic').hidden = v !== 2; el('view2dRegions').hidden = v !== 2; el('view2dSelected').hidden = v !== 2;
   el('btnView3').classList.toggle('on', v === 3); el('btnView2').classList.toggle('on', v === 2);
   if (v === 3 && v3 && v3.ok) v3.resize(); else if (v2) v2.resize();
   draw();
@@ -1035,13 +1038,15 @@ function onKeyGlobal(e) {
 // ---------------------------------------------------------------------------
 const host = {
   get doc() { return S.doc; }, get cal() { return S.cal; }, get scene() { return S.scene; }, get marks() { return S.marks; },
-  get sel() { return S.sel; }, get tool() { return S.tool; }, get gizmoMode() { return S.gizmoMode; }, get layers() { return S.layers; },
+  get sel() { return S.sel; }, get tool() { return S.tool; }, get view() { return S.view; }, get gizmoMode() { return S.gizmoMode; }, get layers() { return S.layers; },
+  get regionRev() { return S.regionRev; },
   cellColors: () => (S.colors ? { colors: S.colors, rev: S.colorsRev } : null),
   cellOutline: () => S.cellOutline,
   cellScene: () => (S.cellQuads && S.grid ? { quads: S.cellQuads, n: S.grid.n, cellPx: S.cellPx } : null),
   objects, labels3, regionLines3, regionLines2, regionAtWorld, brushCursor, wheelRadius,
   status, select, onCursorWorld, anchorWorld: () => { const m = S.marks.find((x) => x.kind === 'spawn'); return m ? m.world : null; },
   gizmoPivot, gizmoBase, applyGizmo, gizmoLabel, dragBegin, dragTick, dragEnd, nudgeSelected,
+  inDrag: () => history && history.inDrag(),
   edgeHit, insertVertex, deleteVertexKey,
   toolDown, toolMove, toolUp, toolRight, toolDouble,
 };
@@ -1089,7 +1094,7 @@ async function boot() {
     onChange: () => renderDocState(), limit: 120,
   });
   v3 = new View3D(el('view3d'), el('overlay3d'), host);
-  v2 = new View2D(el('view2d'), host);
+  v2 = new View2D(el('view2d'), host, el('view2dStatic'), el('view2dRegions'), el('view2dSelected'));
   window.addEventListener('keydown', onKey);
   window.addEventListener('keydown', onKeyGlobal);
   window.addEventListener('wheel', (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
