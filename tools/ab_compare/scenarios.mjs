@@ -219,7 +219,11 @@ export function buildScenarios(o) {
   }
   if (o.kinds.has('warp')) {
     const list = o.warps ? o.warps.map((id) => cat.warps.find((w) => w.id === id)).filter(Boolean) : cat.warps;
-    for (const w of list) add('warp', w.id, { warp: w.id, scene: w.scene }, TEMPLATES.warp());
+    for (const w of list) {
+      // 两条已核实的启动路由在进入目标场景之前 await 点击过场;其他 warp 保持原有输入时间线。
+      const advanceDuringLoad = w.id === '义庄镇尸' || w.id === '终幕';
+      add('warp', w.id, { warp: w.id, scene: w.scene, ...(advanceDuringLoad ? { advanceDuringLoad: true } : {}) }, TEMPLATES.warp());
+    }
   }
   if (o.kinds.has('resize')) {
     for (const s of o.resizeScenes ?? scenes.slice(0, 2)) add('resize', s, { scene: s }, TEMPLATES.resize(vw, vh));

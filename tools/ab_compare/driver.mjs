@@ -409,7 +409,14 @@ const ADVANCE_FN = async ({ ms, k, dt, pageClock }) => {
 };
 
 /** 发出去不等:命令 / API 可能要等假时钟或固定帧才兑现,兑现结果记在 window.__abOps[id] */
-const DISPATCH_FN = ({ id, kind, name, args, cmd }) => {
+export const DISPATCH_FN = ({ id, kind, name, args, cmd, bootOnly = false }) => {
+  // 每次派发与检查在同一个页内任务里,防止上一条异步推进已完成启动而末尾点击漏进正常游戏。
+  if (bootOnly) {
+    const g = window.__game;
+    if (g?.runtimeReady !== false || (!g.cutsceneManager?.isPlaying && !g.graphDialogueManager?.isActive)) {
+      return { state: 'boot-finished', result: null };
+    }
+  }
   const ops = (window.__abOps ??= {});
   const rec = { state: 'pending', result: null };
   ops[id] = rec;
@@ -882,8 +889,25 @@ async function pumpIdle(page, watch, opts, rec) {
  * 与机器快慢无关(pumpIdle 的判据没兜住的真异步除外——stall 记录与两侧帧数对比会把它暴露出来)。
  * 装载中整页重载(vite 依赖重新预构建)时新文档从纪元重来,计数清零、记一次 reloads。
  */
-async function pumpBoot(page, watch, expectScene, opts) {
-  const rec = { frames: 0, ticks: 0, timerSteps: 0, fakeMs: 0, firstStepFrame: null, stalls: [], stuck: {}, idleMs: 0, reloads: 0, phases: [], timerLog: [], idleLog: [], trace: [], clockLeaks: [] };
+/**
+ * warp 的铺垫会在 runtimeReady 之前 await 需要点击的过场(义庄镇尸 / 终幕)。
+ * 只在仍处于启动路由时,按固定逻辑帧节拍发送玩家推进;不设状态、不跳过过场、不降低就绪判据。
+ * 同一帧可能有多个定时器步,只能发送一次。普通场景启动与已经就绪的游戏不收这些输入。
+ */
+export function warpBootInputs(boot, state, frame, lastInputFrame) {
+  if (!boot?.warp || boot.advanceDuringLoad !== true || !state.hasGame || !state.frozen || !state.hasStep || state.fatal
+    || state.runtimeReady !== false || (!state.cutscene && !state.dialogue)
+    || frame <= 0 || frame % 60 !== 0 || frame === lastInputFrame) return [];
+  return [
+    { kind: 'api', name: 'completeCutsceneText' },
+    { kind: 'api', name: 'completeDialogueText' },
+    { kind: 'cmd', cmd: { type: 'playerAdvance' } },
+    { kind: 'cmd', cmd: { type: 'playerTap' } },
+  ];
+}
+
+async function pumpBoot(page, watch, expectScene, opts, boot = {}) {
+  const rec = { frames: 0, ticks: 0, timerSteps: 0, fakeMs: 0, firstStepFrame: null, stalls: [], stuck: {}, idleMs: 0, reloads: 0, phases: [], timerLog: [], idleLog: [], trace: [], clockLeaks: [], inputs: [] };
   // 新文档(整页重载)只认 domcontentloaded:同文档的 history 导航不触发它
   let docs = 0;
   const onDoc = () => {
@@ -891,19 +915,21 @@ async function pumpBoot(page, watch, expectScene, opts) {
   };
   page.on('domcontentloaded', onDoc);
   try {
-    return await pumpLoop(page, watch, expectScene, opts, rec, () => docs);
+    return await pumpLoop(page, watch, expectScene, opts, rec, () => docs, boot);
+  } catch (e) {
+    return { ok: false, reason: `泵式装载失败:${msgOf(e)}`, pump: rec };
   } finally {
     page.off('domcontentloaded', onDoc);
   }
 }
 
-async function pumpLoop(page, watch, expectScene, opts, rec, docCount) {
+async function pumpLoop(page, watch, expectScene, opts, rec, docCount, boot) {
   const deadline = Date.now() + opts.bootTimeout;
   let last = null;
   let phase = null;
   let seenDocs = docCount();
   const resetForNewDoc = async () => {
-    Object.assign(rec, { frames: 0, ticks: 0, timerSteps: 0, fakeMs: 0, firstStepFrame: null, stuck: {}, reloads: rec.reloads + 1, timerLog: [], idleLog: [], expectT: 0, readyFrame: undefined });
+    Object.assign(rec, { frames: 0, ticks: 0, timerSteps: 0, fakeMs: 0, firstStepFrame: null, stuck: {}, reloads: rec.reloads + 1, timerLog: [], idleLog: [], expectT: 0, readyFrame: undefined, lastInputFrame: undefined, inputs: [] });
     rec.phases.push({ frame: 0, tick: 0, reload: true });
     phase = null;
     seenDocs = docCount();
@@ -952,6 +978,22 @@ async function pumpLoop(page, watch, expectScene, opts, rec, docCount) {
     }
     if (!s.hasGame || !s.frozen) {
       await sleep(4);
+      continue;
+    }
+    const inputs = rec.readyFrame === undefined ? warpBootInputs(boot, s, rec.frames, rec.lastInputFrame) : [];
+    if (inputs.length) {
+      rec.lastInputFrame = rec.frames;
+      for (let i = 0; i < inputs.length; i++) {
+        const input = inputs[i];
+        const id = `boot-${rec.frames}-${i}`;
+        const r = await evalT(page, DISPATCH_FN, { id, ...input, bootOnly: true }, opts.stepTimeout, '启动过场推进');
+        if (r.state === 'boot-finished') break;
+        rec.inputs.push({ frame: rec.frames, sceneId: s.sceneId, id, ...input, result: r });
+        if (r.state === 'unsupported' || r.state === 'error' || r.state === 'failed') {
+          return { ok: false, reason: `启动过场输入失败:${input.name ?? input.cmd.type}:${r.result}`, state: s, pump: rec };
+        }
+      }
+      // 输入引出的文字纹理/切场异步也要先落地,再继续推进假时钟。
       continue;
     }
     const frameEnd = Math.round((rec.frames + 1) * FRAME_MS);
@@ -1019,8 +1061,18 @@ export async function runScenario({ chromium, opts, side, scenario, rawDir, shar
     const tBoot = Date.now();
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
     if (pump) {
-      const ready = await pumpBoot(page, watch, expectScene, opts);
+      const ready = await pumpBoot(page, watch, expectScene, opts, scenario.boot);
       res.boot = { ...ready, url: url.replace(side.url, '/'), bootMs: Date.now() - tBoot };
+      if (ready.pump.inputs.length) {
+        const ops = await evalT(page, OPS_FN, null, 10000, '读启动输入结果');
+        for (const input of ready.pump.inputs) input.result = ops[input.id] ?? input.result;
+        const failed = ready.pump.inputs.find((input) => input.result.state !== 'done');
+        if (failed && ready.ok) {
+          ready.ok = false;
+          ready.reason = `启动输入未成功:${failed.id}:${failed.result.state}:${failed.result.result}`;
+        }
+      }
+      Object.assign(res.boot, ready);
       if (!ready.ok) {
         res.fatal = `启动未就绪:${ready.reason}`;
         res.tailItems = watch.drain();

@@ -78,6 +78,17 @@ export function pumpBootCounts(runs) {
   return { A, B, same: all.size <= 1, aaSame, bbSame };
 }
 
+/** 启动期输入必须逐帧同序;不同输入得到同样终态也不能冒充同输入 A/B。旧记录/无启动输入不改变判定。 */
+export function pumpBootInputs(runs) {
+  if (![...runs.A, ...runs.B].some((r) => r?.boot?.pump?.inputs?.length)) return null;
+  const key = (r) => r?.boot?.ok ? JSON.stringify((r.boot.pump?.inputs ?? []).map((i) => ({
+    frame: i.frame, scene: i.sceneId, kind: i.kind, name: i.name, args: i.args, cmd: i.cmd,
+  }))) : null;
+  const A = runs.A.map(key);
+  const B = runs.B.map(key);
+  return { A, B, same: new Set([...A, ...B].filter((v) => v !== null)).size <= 1 };
+}
+
 const isErr = (it) => !it.asset && (it.type === 'error' || it.type === 'pageerror' || it.type === 'requestfailed' || it.type === 'http');
 const isWarn = (it) => !it.asset && it.type === 'warning';
 
@@ -286,6 +297,8 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
   if (ranThenDied('B', bootB) && !ranThenDied('A', bootA)) flags.add('B 运行中断');
   const pumpCounts = pumpBootCounts(runs);
   if (pumpCounts && !inconclusive && !pumpCounts.same) flags.add(pumpCounts.aaSame && pumpCounts.bbSame ? PUMP_AB_FLAG : INFO_PUMP_JITTER);
+  const bootInputs = pumpBootInputs(runs);
+  if (bootInputs && !inconclusive && !bootInputs.same) flags.add('启动输入不一致(无法按相同输入对照)');
   const envDrift = { A: runs.A.map((r) => r?.envDrift ?? []), B: runs.B.map((r) => r?.envDrift ?? []) };
   if ([...envDrift.A, ...envDrift.B].some((d) => d.length)) flags.add(INFO_ENV_DRIFT);
   const unsupported = { A: [...new Set(runs.A.flatMap((r) => r?.unsupported ?? []))], B: [...new Set(runs.B.flatMap((r) => r?.unsupported ?? []))] };
@@ -300,6 +313,7 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
         frames: r.boot.pump.frames, ticks: r.boot.pump.ticks, timerSteps: r.boot.pump.timerSteps ?? null, fakeMs: r.boot.pump.fakeMs, syncNow: r.boot.pump.syncNow ?? null,
         firstStepFrame: r.boot.pump.firstStepFrame, stalls: r.boot.pump.stalls, reloads: r.boot.pump.reloads, idleMs: r.boot.pump.idleMs,
         phases: r.boot.pump.phases, timerLog: r.boot.pump.timerLog ?? null, clockLeaks: r.boot.pump.clockLeaks ?? [],
+        inputs: r.boot.pump.inputs ?? [],
       },
     } : {}),
   };
@@ -313,6 +327,7 @@ export function compareScenario({ scenario, runs, imgDir, outDir, opts }) {
       B: runs.B.map(bootRow),
     },
     ...(pumpCounts ? { pumpBoot: pumpCounts } : {}),
+    ...(bootInputs ? { bootInputs } : {}),
     ...([...envDrift.A, ...envDrift.B].some((d) => d.length) ? { envDrift } : {}),
     fatal,
     unsupported,
