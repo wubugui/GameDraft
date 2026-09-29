@@ -8,7 +8,8 @@ import { mediaUrlForRoot } from '../core/projectPaths';
  * 禁用暗），一张白图 tint 出所有状态，改配色不用重出素材。
  *
  * 与 `UITextures` 分开是因为口径不同——那两张是皮肤底料，一定要在首个面板前到位；
- * 图标是点缀，晚到一帧只是这一帧没图标，不值得卡启动。
+ * 图标是点缀，加载失败可降级；但首批 UI 构造前须等并行预载完成，
+ * 否则构造时取到 null 的图标不会自动补进已有容器。
  */
 
 const ICON_FILES = {

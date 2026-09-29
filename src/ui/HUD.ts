@@ -187,7 +187,7 @@ export class HUD {
   private questLabel: string = '';
   /** 当前任务的「当前目标」行；空串 = 该任务没配目标（芯片退回单行，与旧版一致） */
   private questObjectiveLabel: string = '';
-  /** 图标是异步预载的（Game 里 `void preloadUIIcons()`），到位后补一次重建 */
+  /** 独立创建 HUD 的调试入口若晚到铜钱图标，就补一次芯片重建 */
   private chipIconsApplied = false;
 
   /** 右下角入口条（桌面端；触屏 = TouchMobileControls 的 chip，本条不建） */
@@ -1023,8 +1023,8 @@ export class HUD {
   }
 
   private stepFlames(dt: number): void {
-    // 图标是 fire-and-forget 预载的：晚到就补一次重建，否则铜钱条/入口条会一直没图标
-    // （同一批预载，coin 到位 = 全到位，入口条跟着芯片一起补）
+    // 独立创建 HUD 的调试入口可能未先预载图标；铜钱图标到位时补一次重建。
+    // 正常游戏由 Game.start 等整批图标加载结束后才创建 HUD。
     if (!this.chipIconsApplied && uiIcon('coin') !== null) {
       this.rebuildChips();
       this.buildEntryStrip();

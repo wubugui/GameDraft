@@ -102,6 +102,26 @@ function gameRoot() {
   return path.join(path.dirname(app.getPath('exe')), 'game');
 }
 
+function isDevPackage() {
+  const exeDir = path.dirname(app.getPath('exe'));
+  const known = [
+    ['.gamedraft-build.json', 'gamedraft/scripts/release.mjs'],
+    ['.gamedraft-electron-build.json', 'gamedraft/scripts/electron_release.mjs'],
+  ];
+  const targets = [];
+  for (const [name, tool] of known) {
+    try {
+      const marker = JSON.parse(fs.readFileSync(path.join(exeDir, name), 'utf8'));
+      if (marker.tool !== tool || !['dev', 'release'].includes(marker.target)) return false;
+      if (name === '.gamedraft-build.json' && marker.runtime !== 'electron') return false;
+      targets.push(marker.target);
+    } catch (error) {
+      if (error.code !== 'ENOENT') return false;
+    }
+  }
+  return targets.length > 0 && targets.every(target => target === 'dev');
+}
+
 function windowSize(root) {
   try {
     const config = JSON.parse(fs.readFileSync(path.join(root, 'assets', 'data', 'game_config.json'), 'utf8'));
@@ -146,9 +166,13 @@ async function safeGameFile(rootReal, rawPath) {
   return real;
 }
 
-async function registerGameProtocol(gameSession, root) {
+async function registerGameProtocol(gameSession, root, captureBroker) {
   const rootReal = await fsp.realpath(root);
   gameSession.protocol.handle(SCHEME, async request => {
+    if (captureBroker && isGameUrl(request.url) &&
+        new URL(request.url).pathname.startsWith('/__gamedraft-api/webgpu-')) {
+      return await captureBroker.handle(request) || new Response('404 Not Found', { status: 404 });
+    }
     if (!isGameUrl(request.url) || !['GET', 'HEAD'].includes(request.method)) {
       return new Response('403 Forbidden', { status: 403, headers: { 'Cache-Control': 'no-store' } });
     }
@@ -383,7 +407,19 @@ async function launch(initialized) {
   // they need without browser permission prompts or a content sandbox.
   gameSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(true));
   gameSession.setPermissionCheckHandler(() => true);
-  await registerGameProtocol(gameSession, root);
+  let captureBroker = null;
+  if (!DEV_URL && isDevPackage()) {
+    try {
+      const moduleUrl = pathToFileURL(path.join(__dirname, 'webgpu_capture', 'electron_broker.mjs')).href;
+      const { startElectronCaptureBroker } = await import(moduleUrl);
+      captureBroker = await startElectronCaptureBroker(root);
+      log('webgpu-capture-ready', { agentApi: captureBroker.base });
+      app.once('before-quit', () => captureBroker.close());
+    } catch (error) {
+      log('webgpu-capture-unavailable', { reason: error.message });
+    }
+  }
+  await registerGameProtocol(gameSession, root, captureBroker);
   const size = windowSize(root);
   const workArea = screen.getPrimaryDisplay().workAreaSize;
   const scale = Math.min(1, (workArea.width - 32) / size.width, (workArea.height - 80) / size.height);
@@ -405,6 +441,17 @@ async function launch(initialized) {
     log('page-load-failed', { code, description, url });
   });
   window.webContents.on('render-process-gone', (_event, details) => log('render-process-gone', details));
+  if (captureBroker) {
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      if (isGameUrl(url) && new URL(url).pathname === '/__gamedraft-api/webgpu-viewer') {
+        return { action: 'allow', overrideBrowserWindowOptions: {
+          width: 1300, height: 900,
+          webPreferences: { session: gameSession, contextIsolation: true, nodeIntegration: false, sandbox: true },
+        } };
+      }
+      return { action: 'allow' };
+    });
+  }
   app.on('child-process-gone', (_event, details) => log('child-process-gone', details));
   window.once('ready-to-show', () => window.show());
   const entryUrl = DEV_URL?.href || HOME;

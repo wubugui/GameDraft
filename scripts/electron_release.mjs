@@ -193,6 +193,19 @@ function shellFiles(stageApp) {
   if (existsSync(assets)) copyTree(assets, join(stageApp, 'assets'));
 }
 
+function devCaptureFiles(stageApp) {
+  const source = join(ROOT, 'tools', 'webgpu_capture');
+  const target = join(stageApp, 'webgpu_capture');
+  for (const name of [
+    'electron_broker.mjs', 'server.mjs', 'cli.mjs', 'analyze.mjs',
+    'analysis_report.mjs', 'analysis_png.mjs', 'analysis_sidecars.mjs',
+    'viewer.html', 'viewer.js',
+  ]) copyTree(join(source, name), join(target, name));
+  for (const name of ['webgpu_inspector.js', 'LICENSE', 'SOURCE.txt']) {
+    copyTree(join(source, 'vendor', name), join(target, 'vendor', name));
+  }
+}
+
 function countFiles(root) {
   let files = 0;
   let bytes = 0;
@@ -327,6 +340,7 @@ async function main() {
     if (existsSync(app)) fail('Electron ZIP 自带 resources/app，与游戏壳冲突');
     mkdirSync(app);
     shellFiles(app);
+    if (target === 'dev') devCaptureFiles(app);
     copyTree(steamSource, join(app, 'node_modules', 'steamworks.js'));
     copyFileSync(steamDll, join(bundle, 'steam_api64.dll'));
     copyTree(gameSource, join(bundle, 'game'));

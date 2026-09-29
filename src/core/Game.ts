@@ -2259,8 +2259,8 @@ export class Game {
     // UI 皮肤素材（做旧木框九宫格 + 纸纹）必须赶在任何面板首次构建之前到位，
     // 否则那一次会画成纯色降级版、且不会自动重画。单张失败只降级该张，不阻断启动。
     await preloadUITextures();
-    // 图标晚到一帧只是这一帧没图标，不卡启动，所以不 await
-    void preloadUIIcons();
+    // 图标由各 UI 在构造时同步读取；等并行预载结束再建 UI，避免晚到的图标永久缺失。
+    await preloadUIIcons();
 
     await this.stringsProvider.load(this.assetManager);
 

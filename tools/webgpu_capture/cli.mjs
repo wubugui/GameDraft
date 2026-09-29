@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 // Agent entry point for the WebGPU capture broker used by the in-game F2 panel.
 import { analyzeCapture } from './analyze.mjs';
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
-const DEFAULT_BASE = process.env.GAMEDRAFT_WEBGPU_CAPTURE_API || 'http://127.0.0.1:5173';
+const VITE_BASE = 'http://127.0.0.1:5173';
 const API_PATH = '/__gamedraft-api/webgpu-capture';
 const TERMINAL = new Set(['completed', 'failed', 'stopped']);
 
@@ -34,6 +37,22 @@ function endpoint(base, query = {}) {
     if (value !== undefined && value !== '') api.searchParams.set(key, String(value));
   }
   return api;
+}
+
+async function defaultBase() {
+  if (process.env.GAMEDRAFT_WEBGPU_CAPTURE_API) return process.env.GAMEDRAFT_WEBGPU_CAPTURE_API;
+  const file = join(process.env.LOCALAPPDATA || join(homedir(), '.local', 'share'),
+    'GameDraft', 'webgpu-capture-api.json');
+  try {
+    const info = JSON.parse(await readFile(file, 'utf8'));
+    if (info.schema === 'gamedraft-electron-webgpu-capture-v1') {
+      const response = await fetch(endpoint(info.base, { action: 'targets' }), {
+        signal: AbortSignal.timeout(800),
+      });
+      if (response.ok && Array.isArray(await response.json())) return info.base;
+    }
+  } catch { /* A stale package instance must not hide a running Vite server. */ }
+  return VITE_BASE;
 }
 
 async function api(base, method, query = {}, body) {
@@ -93,7 +112,7 @@ Capture files use WebGPU Inspector's .wgpuc format; RenderDoc .rdc files use too
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const base = args.base || DEFAULT_BASE;
+  const base = args.base || await defaultBase();
   switch (args.command) {
     case 'targets':
       print(await api(base, 'GET', { action: 'targets' }));

@@ -112,10 +112,20 @@ function gitWorktrees(projectRoot) {
   return [...new Set(roots.map(root => resolve(root)))];
 }
 
+function insideGitCheckout(candidate) {
+  for (let dir = candidate; ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return true;
+    if (dir === dirname(dir)) return false;
+  }
+}
+
 async function outputRoot(projectRoot) {
   const base = process.env.GAMEDRAFT_WEBGPU_CAPTURE_DIR ||
     join(process.env.LOCALAPPDATA || join(homedir(), '.local', 'share'), 'GameDraft', 'webgpu-captures');
   const candidate = await futureRealpath(base);
+  if (insideGitCheckout(candidate)) {
+    throw new Error('WebGPU captures must be stored outside every project worktree');
+  }
   for (const root of gitWorktrees(projectRoot)) {
     const physical = await futureRealpath(root);
     if (contains(physical, candidate) || contains(candidate, physical)) {
