@@ -44,6 +44,39 @@ const urlParams = resolveBootParams(
  * 生产构建里玩家改 URL 不该拿到任何一条（发行阻断项，2026-08-17 审查批0）。
  */
 const isDevBuild = import.meta.env.DEV;
+
+/** 开发服在创建首个 WebGPU 对象前加载抓帧探针；HMR 重启游戏时沿用已初始化的探针。 */
+async function prepareDevWebGpuCapture(): Promise<void> {
+  if (!isDevBuild || !('gpu' in navigator)) return;
+  const host = globalThis as typeof globalThis & {
+    webgpuInspector?: { initialize?: () => void };
+    __gamedraftWebgpuCaptureInitialized?: boolean;
+  };
+  if (host.__gamedraftWebgpuCaptureInitialized) return;
+  if (!host.webgpuInspector) {
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      let settled = false;
+      const timeout = window.setTimeout(() => finish(new Error('Inspector 加载超时')), 5000);
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        script.onload = null;
+        script.onerror = null;
+        if (error) { script.remove(); reject(error); }
+        else resolve();
+      };
+      script.src = '/__gamedraft-api/webgpu-inspector.js';
+      script.onload = () => finish();
+      script.onerror = () => finish(new Error('Inspector 脚本不可用'));
+      document.head.appendChild(script);
+    });
+  }
+  if (typeof host.webgpuInspector?.initialize !== 'function') throw new Error('Inspector 缺少初始化接口');
+  host.webgpuInspector.initialize();
+  host.__gamedraftWebgpuCaptureInitialized = true;
+}
 /**
  * 把编译期档位**显式暴露出来**，给打包验收门与现场排障用。
  *
@@ -177,7 +210,9 @@ const skipStartGate = Boolean(
  * 存档后端不可用的挂一条横幅（"这次的进度不会留下"），别让人存完档才发现。
  * 卫兵自己不抛——它出问题不该顶掉整个开局。
  */
-void runEntryGuard(isDevBuild)
+void prepareDevWebGpuCapture()
+  .catch((e) => console.warn('main: WebGPU 抓帧探针不可用，游戏继续启动', e))
+  .then(() => runEntryGuard(isDevBuild))
   .catch((e) => {
     console.warn('main: 入口检查失败，按正常流程启动', e);
     return true;

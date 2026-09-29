@@ -28,6 +28,7 @@ import type {
 } from '../systems/objectExamine/types';
 import { OBJECT_EXAMINE_BACKGROUND_PRESETS } from '../systems/objectExamine/types';
 import type { SceneLightingDef } from '../data/types';
+import { WebGpuCaptureClient } from '../dev/webgpuCaptureClient';
 
 /** F2 气味指示器调试：驱动味种 + 实时调烟形参数（只影响显示，不写盘/不动存档）。 */
 export interface SmellDebugController {
@@ -110,6 +111,8 @@ export interface DebugToolsDeps {
   applyDebugSceneWorldSize: (width: number, height: number) => void;
   /** `?mode=dev` 时为 true */
   isDevMode: () => boolean;
+  /** 本次游戏实例的 bootId，供 RenderDoc 服务准确指向当前窗口。 */
+  getCaptureBootId: () => string;
   /** 叙事调试器桥：装了没 / 连上没 / 走哪个端口 / 还有多少没发出去 */
   getNarrativeDebugStatus: () => { installed: boolean; connected: boolean; port: number; queued: number };
   /** 现场开关叙事调试器（会记进工程文件，下次进游戏自动带上） */
@@ -293,6 +296,13 @@ export class DebugTools {
 
   private socketSection: DebugSocketSectionHandle | null = null;
   private lightingSection: DebugLightingSectionHandle | null = null;
+  private webgpuCapture: WebGpuCaptureClient | null = null;
+  private webgpuUiError = '';
+  private webgpuBusy = false;
+  private webgpuBurstFrames = 8;
+  private webgpuViews = new Set<{ root: HTMLElement; status: HTMLElement; input: HTMLInputElement;
+    single: HTMLButtonElement; burst: HTMLButtonElement; stop: HTMLButtonElement;
+    view: HTMLButtonElement }>();
 
   constructor(deps: DebugToolsDeps) {
     this.deps = deps;
@@ -301,6 +311,15 @@ export class DebugTools {
   init(): void {
     this.setupPositionDebugTool();
     this.setupMiddleButtonCameraZoom();
+    this.webgpuCapture = new WebGpuCaptureClient({
+      bootId: this.deps.getCaptureBootId(),
+      sceneId: () => this.deps.getCurrentSceneId(),
+      isGpuReady: () => this.deps.renderer.rhi !== null,
+      setFrameHook: (hook) => this.deps.renderer.app.setFrameCaptureHook(hook),
+      readFramePixels: () => this.deps.renderer.app.renderer.readCanvasPixels(),
+      onChange: () => this.paintWebGpuViews(),
+    });
+    this.webgpuCapture.start();
     this.setupDebugPanelSections();
     // F10 marker 挂在 entityLayer 上，场景卸载会连带销毁它——先行清引用，避免跨场景残留/双 destroy
     this.sceneUnloadCb = () => this.clearDebugMarker();
@@ -2077,6 +2096,116 @@ export class DebugTools {
     };
   }
 
+  private async runWebGpuAction(action: 'single' | 'burst' | 'stop'): Promise<void> {
+    const client = this.webgpuCapture;
+    if (!client || this.webgpuBusy) return;
+    this.webgpuBusy = true;
+    this.webgpuUiError = '';
+    this.paintWebGpuViews();
+    try {
+      if (action === 'stop') await client.stop();
+      else await client.request(action === 'single' ? 1 : this.webgpuBurstFrames);
+    } catch (error) {
+      this.webgpuUiError = String(error);
+      this.deps.debugPanelUI.log(`WebGPU 抓帧：${this.webgpuUiError}`);
+    } finally {
+      this.webgpuBusy = false;
+      this.paintWebGpuViews();
+    }
+  }
+
+  private paintWebGpuView(view: { root: HTMLElement; status: HTMLElement; input: HTMLInputElement;
+    single: HTMLButtonElement; burst: HTMLButtonElement; stop: HTMLButtonElement;
+    view: HTMLButtonElement }): void {
+    const current = this.webgpuCapture?.status;
+    const job = current?.job;
+    const names: Record<NonNullable<typeof job>['state'], string> = {
+      pending: '等待游戏领取', capturing: '抓取中', uploading: '写入中',
+      completed: '已完成', failed: '失败', stopped: '已停止',
+    };
+    const lines = [`本窗口：${current?.ready ? '可抓帧' : `尚不可抓帧（${current?.reason || '等待 Inspector、WebGPU 和 RHI 就绪'}）`}`];
+    if (job) {
+      lines.push(`任务：${job.id} · ${names[job.state]}`);
+      const progress = job.state === 'capturing' || job.state === 'uploading'
+        ? current?.framesCaptured ?? 0 : job.actualFrames;
+      lines.push(`进度：${progress} / ${job.requestedFrames} 帧${job.state === 'stopped' && current?.framesCaptured ? '（本地采集未保存）' : ''}`);
+      if (job.captureFile) lines.push(`项目外文件：${job.captureFile}`);
+      else if (job.outputDir) lines.push(`项目外目录：${job.outputDir}`);
+      if (job.error) lines.push(`失败原因：${job.error}`);
+    }
+    if (current?.error) lines.push(`服务错误：${current.error}`);
+    if (this.webgpuUiError) lines.push(`操作失败：${this.webgpuUiError}`);
+    view.status.textContent = lines.join('\n');
+    if (document.activeElement !== view.input) view.input.value = String(this.webgpuBurstFrames);
+    const active = job && ['pending', 'capturing', 'uploading'].includes(job.state);
+    view.single.disabled = this.webgpuBusy || !current?.ready || !!active;
+    view.burst.disabled = this.webgpuBusy || !current?.ready || !!active;
+    view.stop.disabled = this.webgpuBusy || !active;
+    view.view.disabled = job?.state !== 'completed';
+  }
+
+  private paintWebGpuViews(): void {
+    for (const view of this.webgpuViews) {
+      if (!view.root.isConnected) {
+        this.webgpuViews.delete(view);
+        continue;
+      }
+      this.paintWebGpuView(view);
+    }
+  }
+
+  private buildWebGpuCaptureSection(): DebugSectionContent {
+    const root = document.createElement('div');
+    root.className = 'debug-dock__section-extra';
+    const status = document.createElement('pre');
+    status.className = 'debug-dock__pre';
+    const controls = document.createElement('div');
+    controls.className = 'debug-dock__actions';
+    const inputLabel = document.createElement('label');
+    inputLabel.textContent = '连续帧数（2–120）：';
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.min = '2';
+    input.max = '120';
+    input.step = '1';
+    input.value = String(this.webgpuBurstFrames);
+    input.style.width = '5em';
+    input.addEventListener('change', () => {
+      const raw = Number(input.value);
+      this.webgpuBurstFrames = Number.isFinite(raw) ? Math.min(120, Math.max(2, Math.trunc(raw))) : 8;
+      input.value = String(this.webgpuBurstFrames);
+      this.paintWebGpuViews();
+    });
+    inputLabel.appendChild(input);
+    const button = (label: string, action: 'single' | 'burst' | 'stop'): HTMLButtonElement => {
+      const el = document.createElement('button');
+      el.type = 'button';
+      el.className = 'debug-dock__btn';
+      el.textContent = label;
+      el.addEventListener('click', () => void this.runWebGpuAction(action));
+      return el;
+    };
+    const single = button('抓下一帧', 'single');
+    const burst = button('连续抓 N 帧', 'burst');
+    const stop = button('停止', 'stop');
+    const viewButton = document.createElement('button');
+    viewButton.type = 'button';
+    viewButton.className = 'debug-dock__btn';
+    viewButton.textContent = '查看抓帧';
+    viewButton.addEventListener('click', () => {
+      const job = this.webgpuCapture?.status.job;
+      if (job?.state !== 'completed') return;
+      const url = `/__gamedraft-api/webgpu-viewer?jobId=${encodeURIComponent(job.id)}`;
+      window.open(url, '_blank', 'noopener');
+    });
+    controls.append(single, inputLabel, burst, stop, viewButton);
+    root.append(status, controls);
+    const view = { root, status, input, single, burst, stop, view: viewButton };
+    this.webgpuViews.add(view);
+    this.paintWebGpuView(view);
+    return { text: '按需抓当前游戏的 WebGPU 帧；完成后可查看画面、绘制事件和资源。', extra: root };
+  }
+
   private setupDebugPanelSections(): void {
     const { debugPanelUI, player, inventoryManager, renderer } = this.deps;
 
@@ -2176,6 +2305,11 @@ export class DebugTools {
       setSelectedId: (id) => this.lightingSection?.setSelectedId(id),
     });
     debugPanelUI.addSection(LIGHTING_DEBUG_SECTION_ID, () => this.lightingSection!.build());
+
+    // WebGPU 捕获由 F2 和 agent 共用同一开发服任务队列。
+    debugPanelUI.addSection('WebGPU 抓帧（.wgpuc）', () => this.buildWebGpuCaptureSection());
+    debugPanelUI.addSection('RenderDoc 抓帧', () =>
+      '原生 .rdc 抓帧尚未接入。上方 WebGPU 抓帧仅在点击后抓取指定帧数，可查看画面、绘制事件和资源；已有 .rdc 可由 agent 离线分析。');
 
     debugPanelUI.addSection('Quick Actions', () => {
       const actions: { label: string; fn: () => void }[] = [
@@ -2723,6 +2857,9 @@ export class DebugTools {
   }
 
   destroy(): void {
+    this.webgpuCapture?.dispose();
+    this.webgpuCapture = null;
+    this.webgpuViews.clear();
     // 挂点调试挂上去的道具归本模块所有（SpriteEntity 只摘不毁），自己收
     this.socketSection?.dispose();
     this.socketSection = null;

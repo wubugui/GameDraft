@@ -10,6 +10,201 @@ import { runtimeSwayApi } from './src/dev/runtimeSwayApiPlugin';
 import { runtimeBurnApi } from './src/dev/runtimeBurnApiPlugin';
 import { runtimeBreathingApi } from './src/dev/runtimeBreathingApiPlugin';
 import { runtimeTerrainApi } from './src/dev/runtimeTerrainApiPlugin';
+import { createCaptureController } from './tools/renderdoc_capture/server.mjs';
+import { createWebGpuCaptureController } from './tools/webgpu_capture/server.mjs';
+
+/** DEV 专用：在第一份 WebGPU 对象创建前装入 Inspector，抓帧文件由服务端写到项目外。 */
+function webgpuCaptureApi(): Plugin {
+  return {
+    name: 'gamedraft-webgpu-capture-api',
+    apply: 'serve',
+    configureServer(server) {
+      const controller = createWebGpuCaptureController(server.config.root);
+      server.httpServer?.once('close', () => { void controller.close(); });
+      server.middlewares.use(async (req, res, next) => {
+        const path = (req.url ?? '').split('?')[0];
+        if (path === '/__gamedraft-api/webgpu-inspector.js') {
+          try {
+            const bundle = await readFile(resolve(server.config.root, 'tools/webgpu_capture/vendor/webgpu_inspector.js'), 'utf8');
+            res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-store');
+            res.end(bundle);
+          } catch (error) {
+            res.statusCode = 500;
+            res.end(`console.error(${JSON.stringify(String(error))})`);
+          }
+          return;
+        }
+        if (path === '/__gamedraft-api/webgpu-viewer') {
+          res.setHeader('Cache-Control', 'no-store');
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          if (req.method !== 'GET') {
+            res.statusCode = 405;
+            res.end('method not allowed');
+            return;
+          }
+          const origin = req.headers.origin;
+          if (origin) {
+            try {
+              if (new URL(origin).host !== req.headers.host) throw new Error('foreign origin');
+            } catch {
+              res.statusCode = 403;
+              res.end('foreign origin');
+              return;
+            }
+          }
+          try {
+            const qs = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`).searchParams;
+            const file = qs.get('file') || 'viewer.html';
+            const path = await controller.viewerFile({ jobId: qs.get('jobId') ?? '', file });
+            res.setHeader('Content-Type', file.endsWith('.png') ? 'image/png' :
+              file.endsWith('.js') ? 'text/javascript; charset=utf-8' :
+              file.endsWith('.json') ? 'application/json; charset=utf-8' :
+              file.endsWith('.wgsl') ? 'text/plain; charset=utf-8' : 'text/html; charset=utf-8');
+            res.end(await readFile(path));
+          } catch (error) {
+            res.statusCode = 404;
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.end(error instanceof Error ? error.message : String(error));
+          }
+          return;
+        }
+        if (path !== '/__gamedraft-api/webgpu-capture') { next(); return; }
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        const origin = req.headers.origin;
+        if (origin) {
+          try {
+            if (new URL(origin).host !== req.headers.host) throw new Error('foreign origin');
+          } catch {
+            res.statusCode = 403;
+            res.end(JSON.stringify({ error: 'foreign origin' }));
+            return;
+          }
+        }
+        try {
+          const qs = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`).searchParams;
+          const action = qs.get('action') ?? '';
+          let result: unknown;
+          if (req.method === 'GET') {
+            if (action === 'targets') result = controller.list();
+            else if (action === 'poll') result = controller.poll({ targetBootId: qs.get('targetBootId') ?? '' });
+            else if (action === 'status') result = controller.status({
+              jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+            });
+            else throw new Error('unknown action');
+          } else if (req.method === 'POST') {
+            const chunks: Buffer[] = [];
+            let size = 0;
+            for await (const chunk of req) {
+              const bytes = chunk as Buffer;
+              size += bytes.length;
+              if (size > 8192) throw new Error('request too large');
+              chunks.push(bytes);
+            }
+            const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+            if (body.action === 'register') result = controller.register({
+              targetBootId: body.targetBootId, url: body.url, sceneId: body.sceneId,
+              captureReady: body.captureReady, reason: body.reason,
+            });
+            else if (body.action === 'request') result = await controller.request({ targetBootId: body.targetBootId, frames: body.frames });
+            else if (body.action === 'fail') result = controller.fail({ jobId: body.jobId, targetBootId: body.targetBootId, error: body.error });
+            else if (body.action === 'stop') result = controller.stop({ jobId: body.jobId, targetBootId: body.targetBootId });
+            else throw new Error('unknown action');
+          } else if (req.method === 'PUT') {
+            const length = Number(req.headers['content-length']);
+            const contentLength = Number.isFinite(length) && length >= 0 ? length : null;
+            if (action === 'frame-image') {
+              result = await controller.uploadFrameImage({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                frameIndex: Number(qs.get('frameIndex')), stream: req, contentLength,
+              });
+            } else {
+              result = await controller.upload({
+                jobId: qs.get('jobId') ?? '', targetBootId: qs.get('targetBootId') ?? '',
+                actualFrames: Number(qs.get('actualFrames')), stream: req, contentLength,
+              });
+            }
+          } else {
+            res.statusCode = 405;
+            res.end(JSON.stringify({ error: 'method not allowed' }));
+            return;
+          }
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+        }
+      });
+    },
+  };
+}
+
+/** 开发服的 RenderDoc 控制口；F2 与 agent CLI 共用同一控制器和任务状态。 */
+function renderdocCaptureApi(): Plugin {
+  return {
+    name: 'gamedraft-renderdoc-capture-api',
+    configureServer(server) {
+      const controller = createCaptureController(server.config.root);
+      server.httpServer?.once('close', () => { void controller.close(); });
+      server.middlewares.use(async (req, res, next) => {
+        const path = (req.url ?? '').split('?')[0];
+        if (path !== '/__gamedraft-api/renderdoc-capture') { next(); return; }
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-store');
+        const origin = req.headers.origin;
+        if (origin) {
+          try {
+            if (new URL(origin).host !== req.headers.host) throw new Error('foreign origin');
+          } catch {
+            res.statusCode = 403;
+            res.end(JSON.stringify({ ok: false, error: 'foreign origin' }));
+            return;
+          }
+        }
+        try {
+          const qs = new URL(req.url ?? '', `http://${req.headers.host ?? '127.0.0.1'}`).searchParams;
+          let result: unknown;
+          if (req.method === 'GET') {
+            result = await controller.status({
+              targetBootId: qs.get('targetBootId') ?? '',
+              captureSessionId: qs.get('captureSessionId') ?? qs.get('id') ?? '',
+            });
+          } else if (req.method === 'POST') {
+            const chunks: Buffer[] = [];
+            let size = 0;
+            for await (const chunk of req) {
+              const bytes = chunk as Buffer;
+              size += bytes.length;
+              if (size > 8192) throw new Error('request too large');
+              chunks.push(bytes);
+            }
+            const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+            const targetBootId = typeof body.targetBootId === 'string' ? body.targetBootId : '';
+            const captureSessionId = typeof body.captureSessionId === 'string' ? body.captureSessionId : '';
+            if (body.action === 'stop') {
+              result = await controller.stop({ targetBootId, captureSessionId });
+            } else if (body.action === 'prepare') {
+              const url = new URL(String(body.url ?? ''));
+              if (url.host !== req.headers.host || url.protocol !== 'http:') throw new Error('prepare URL must be this game');
+              result = await controller.prepare({ url: url.href, targetBootId });
+            } else {
+              result = await controller.start({ mode: body.mode, frames: body.frames, targetBootId, captureSessionId });
+            }
+          } else {
+            res.statusCode = 405;
+            res.end(JSON.stringify({ ok: false, error: 'method not allowed' }));
+            return;
+          }
+          res.end(JSON.stringify(result));
+        } catch (error) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+        }
+      });
+    },
+  };
+}
 
 /** 开发服：读写 resources/editor_projects/editor_data/debug_flag_favorites.json，供 F2 Flag 收藏持久化（不使用 localStorage）。 */
 function debugFlagFavoritesApi(): Plugin {
@@ -1167,6 +1362,8 @@ export default defineConfig({
     runtimeBreathingApi(),
     runtimeSwayApi(),
     runtimeTerrainApi(),
+    webgpuCaptureApi(),
+    renderdocCaptureApi(),
     narrativeDebugBridgeApi(),
     runtimeDebugSnapshotApi(),
     runtimeCommandApi(),

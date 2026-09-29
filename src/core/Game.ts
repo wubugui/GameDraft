@@ -3784,6 +3784,7 @@ export class Game {
       },
       applyDebugSceneWorldSize: (w, h) => this.applyDebugSceneWorldSize(w, h),
       isDevMode: () => this.isDevMode,
+      getCaptureBootId: () => this.runtimeBootId,
       getNarrativeDebugStatus: () => this.getNarrativeDebugStatus(),
       setNarrativeDebugEnabled: (on, port) => {
         if (on) this.enableNarrativeDebugBridge({ port, persist: true });

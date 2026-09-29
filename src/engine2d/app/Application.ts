@@ -72,6 +72,8 @@ export class Application<R extends RendererBase = WebGPURenderer> {
   stage: Container = new Container();
   /** 渲染器(init 之后才有) */
   renderer!: R;
+  /** 开发期单帧探针；只在抓帧任务进行时安装，正常渲染路径不多包一层。 */
+  private frameCaptureHook: ((draw: () => void) => void) | null = null;
 
   // ── TickerPlugin 在 init 里装到实例上(init 之前访问是 undefined,与 Pixi 相同)
   declare ticker: Ticker;
@@ -119,7 +121,18 @@ export class Application<R extends RendererBase = WebGPURenderer> {
 
   /** 把 stage 画到画布(TickerPlugin 每帧以 LOW 优先级调用) */
   render(): void {
-    this.renderer.render({ container: this.stage });
+    const hook = this.frameCaptureHook;
+    if (hook && this.canvas.width > 0 && this.canvas.height > 0 && this.stage.visible && this.stage.activeSelf) {
+      // 整次 renderer.render 含准备资源、上传和画布提交；begin/end 不能包在底层 RHI 提交之后。
+      hook(() => this.renderer.render({ container: this.stage }));
+    } else {
+      this.renderer.render({ container: this.stage });
+    }
+  }
+
+  /** 仅供 dev 抓帧控制器安装；destroy 会断开，避免旧任务捕获新 Application。 */
+  setFrameCaptureHook(hook: ((draw: () => void) => void) | null): void {
+    this.frameCaptureHook = hook;
   }
 
   /** 渲染器的画布 */
@@ -147,6 +160,7 @@ export class Application<R extends RendererBase = WebGPURenderer> {
    * @param options stage 的销毁参数(同 Container.destroy)
    */
   destroy(rendererDestroyOptions: RendererDestroyOptions = false, options: boolean | DestroyOptions = false): void {
+    this.frameCaptureHook = null;
     if (this._playerLoopTick) {
       this.ticker?.remove(this._playerLoopTick, null);
       this._playerLoopTick = null;

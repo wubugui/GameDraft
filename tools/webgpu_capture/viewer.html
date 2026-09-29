@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>GameDraft · WebGPU 帧分析</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font: 14px/1.45 system-ui, "Microsoft YaHei", sans-serif;
+      background: #0c111a;
+      color: #e6edf7;
+      --surface: #141c29;
+      --surface-2: #1b2636;
+      --line: #304052;
+      --muted: #9aabbd;
+      --accent: #76c9ff;
+      --warn: #ffc87c;
+      --danger: #ff9096;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; min-width: 320px; }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .topbar { padding: 18px 22px 15px; border-bottom: 1px solid var(--line); background: #101825; }
+    .eyebrow { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+    h1 { margin: 3px 0 4px; font-size: 22px; line-height: 1.25; }
+    h2 { margin: 0; font-size: 16px; }
+    h3 { margin: 0 0 8px; font-size: 14px; }
+    p { margin: 0; }
+    .muted { color: var(--muted); }
+    .small { font-size: 12px; }
+    .top-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .top-meta span { overflow-wrap: anywhere; }
+    #fatal { display: none; margin: 18px 22px 0; padding: 13px 15px; background: #42242b; border: 1px solid #994e5b; border-radius: 9px; color: #ffe6e7; }
+    #fatal:not(:empty) { display: block; }
+    .summary { display: grid; grid-template-columns: repeat(6, minmax(105px, 1fr)); gap: 9px; padding: 14px 22px; }
+    .stat { padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+    .stat strong { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+    .stat span { color: var(--muted); font-size: 12px; }
+    .notice { margin: 0 22px 14px; padding: 10px 13px; border: 1px solid #61533a; border-radius: 8px; background: #29251d; color: #f7d8a7; font-size: 12px; }
+    .workspace { display: grid; grid-template-columns: minmax(250px, 300px) minmax(330px, 1fr) minmax(280px, 380px); gap: 12px; padding: 0 22px 22px; align-items: start; }
+    .column { min-width: 0; display: grid; gap: 12px; }
+    .panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+    .panel-body { padding: 12px 14px; }
+    .stack { display: grid; gap: 8px; }
+    .controls { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); }
+    .control-row { display: flex; gap: 7px; }
+    input, select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; background: #0d1420; color: #e6edf7; }
+    select { width: auto; max-width: 130px; }
+    .plain-button, .tab, .list-button { border: 1px solid var(--line); background: var(--surface-2); color: inherit; }
+    .plain-button { border-radius: 7px; padding: 6px 10px; }
+    .plain-button:hover, .tab:hover, .list-button:hover { border-color: var(--accent); }
+    .plain-button[hidden] { display: none; }
+    .list { max-height: 45vh; overflow: auto; padding: 6px; }
+    .pass-list { max-height: 22vh; }
+    .list-button { display: block; width: 100%; padding: 8px 9px; margin: 0 0 5px; text-align: left; border-radius: 7px; overflow-wrap: anywhere; }
+    .list-button.active { border-color: var(--accent); background: #18364b; }
+    .list-button .sub { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+    .list-footer { padding: 8px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .list-footer button { margin-top: 6px; width: 100%; }
+    .frame-box { display: grid; place-items: center; min-height: 230px; padding: 12px; background: #080d13; }
+    .frame-box img { display: block; max-width: 100%; max-height: min(58vh, 700px); object-fit: contain; image-rendering: auto; }
+    .frame-note { padding: 9px 13px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .detail-grid { display: grid; grid-template-columns: minmax(105px, 145px) minmax(0, 1fr); gap: 0; margin: 0; }
+    .detail-grid dt, .detail-grid dd { padding: 7px 0; border-bottom: 1px solid #253344; }
+    .detail-grid dt { color: var(--muted); }
+    .detail-grid dd { margin: 0; overflow-wrap: anywhere; }
+    .detail-grid dt:last-of-type, .detail-grid dd:last-of-type { border-bottom: 0; }
+    pre { max-height: 37vh; overflow: auto; margin: 7px 0 0; padding: 10px; border: 1px solid #2a394a; border-radius: 7px; background: #0a111b; color: #dbe9fa; font: 12px/1.5 Consolas, "Cascadia Code", monospace; white-space: pre; tab-size: 2; }
+    .data-section { margin-top: 13px; }
+    .data-section:first-child { margin-top: 0; }
+    .data-section > label { color: var(--muted); font-size: 12px; }
+    .resource-tabs { display: flex; flex-wrap: wrap; gap: 5px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+    .tab { padding: 5px 8px; border-radius: 6px; font-size: 12px; }
+    .tab.active { border-color: var(--accent); background: #18364b; }
+    .resource-preview img { display: block; max-width: 100%; max-height: 310px; margin: 9px auto; border: 1px solid var(--line); background: repeating-conic-gradient(#252d39 0% 25%, #384250 0% 50%) 50% / 20px 20px; }
+    .resource-jumps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .error-item { margin: 0 0 7px; padding: 9px; border-left: 3px solid var(--danger); border-radius: 4px; background: #30212b; overflow-wrap: anywhere; }
+    .inline-link { border: 0; padding: 0; background: none; color: var(--accent); text-decoration: underline; }
+    .empty { color: var(--muted); padding: 12px; }
+    @media (max-width: 1150px) {
+      .workspace { grid-template-columns: minmax(230px, 300px) minmax(0, 1fr); }
+      .column:last-child { grid-column: 1 / -1; }
+      .summary { grid-template-columns: repeat(3, 1fr); }
+    }
+    @media (max-width: 680px) {
+      .topbar { padding: 15px 14px; }
+      .summary { grid-template-columns: repeat(2, 1fr); padding: 12px 14px; }
+      .notice { margin: 0 14px 12px; }
+      .workspace { grid-template-columns: 1fr; padding: 0 14px 14px; }
+      .column:last-child { grid-column: auto; }
+      .list, .pass-list { max-height: 260px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="eyebrow">GameDraft / WebGPU Capture</div>
+    <h1>帧分析</h1>
+    <p class="muted small">查看 WebGPU Inspector 捕获的命令、资源和导出的最终帧。</p>
+    <div id="top-meta" class="top-meta" aria-live="polite"></div>
+  </header>
+  <div id="fatal" role="alert"></div>
+  <section id="summary" class="summary" aria-label="捕获统计"></section>
+  <div id="timing-note" class="notice" role="note">正在读取报告…</div>
+  <main class="workspace">
+    <div class="column">
+      <section class="panel" aria-labelledby="passes-title">
+        <div class="panel-head"><h2 id="passes-title">Pass</h2><span id="pass-count" class="muted small"></span></div>
+        <div id="pass-list" class="list pass-list"></div>
+      </section>
+      <section class="panel" aria-labelledby="events-title">
+        <div class="panel-head"><h2 id="events-title">事件</h2><span id="event-count" class="muted small"></span></div>
+        <div class="controls">
+          <div class="control-row"><label for="frame-select" class="muted small" style="align-self:center;white-space:nowrap">查看帧</label><select id="frame-select" aria-label="选择帧" style="width:100%;max-width:none"></select></div>
+          <input id="event-search" type="search" placeholder="搜索命令、管线、参数" aria-label="搜索事件">
+          <div class="control-row">
+            <select id="event-kind" aria-label="事件类型">
+              <option value="all">全部类型</option>
+              <option value="draw">Draw</option>
+              <option value="dispatch">Dispatch</option>
+              <option value="bind">绑定</option>
+              <option value="copy">复制</option>
+              <option value="other">其他</option>
+            </select>
+            <button id="clear-pass" class="plain-button" type="button">全部 Pass</button>
+          </div>
+        </div>
+        <div id="event-list" class="list" aria-label="事件列表"></div>
+        <div class="list-footer"><span id="event-list-status"></span><button id="event-more" class="plain-button" type="button" hidden>显示更多</button></div>
+      </section>
+    </div>
+    <div class="column">
+      <section class="panel" aria-labelledby="frame-title">
+        <div class="panel-head"><h2 id="frame-title">帧图像</h2><span id="frame-size" class="muted small"></span></div>
+        <div class="frame-box"><img id="frame-image" alt="捕获导出的最终帧" hidden><p id="frame-empty" class="empty">正在读取图像…</p></div>
+        <p id="frame-note" class="frame-note">帧边界按 queue.submit 推断；只显示有可导出图像的帧。选中事件显示记录状态，不会生成该 draw 单独的输出图。</p>
+      </section>
+      <section class="panel" aria-labelledby="detail-title">
+        <div class="panel-head"><h2 id="detail-title">事件详情</h2><span id="detail-index" class="muted small"></span></div>
+        <div id="event-detail" class="panel-body"></div>
+      </section>
+      <section class="panel" aria-labelledby="errors-title">
+        <div class="panel-head"><h2 id="errors-title">验证错误</h2><span id="error-count" class="muted small"></span></div>
+        <div id="errors" class="panel-body"></div>
+      </section>
+    </div>
+    <div class="column">
+      <section class="panel" aria-labelledby="resources-title">
+        <div class="panel-head"><h2 id="resources-title">资源</h2><span id="resource-count" class="muted small"></span></div>
+        <div id="resource-tabs" class="resource-tabs" role="group" aria-label="资源类型"></div>
+        <div class="controls"><input id="resource-search" type="search" placeholder="搜索 ID、标签或代码" aria-label="搜索资源"></div>
+        <div id="resource-list" class="list" aria-label="资源列表"></div>
+      </section>
+      <section class="panel" aria-labelledby="resource-detail-title">
+        <div class="panel-head"><h2 id="resource-detail-title">资源详情</h2></div>
+        <div id="resource-detail" class="panel-body"></div>
+      </section>
+    </div>
+  </main>
+  <script>
+    (function () {
+      var script = document.createElement('script');
+      if (location.protocol === 'file:') {
+        script.src = './viewer.js';
+      } else {
+        var url = new URL(location.href);
+        url.searchParams.set('file', 'viewer.js');
+        script.src = url.href;
+      }
+      script.onerror = function () {
+        document.getElementById('fatal').textContent = '无法加载 viewer.js。请确认查看器文件与报告在同一目录，或检查开发服务器。';
+      };
+      document.body.appendChild(script);
+    }());
+  </script>
+</body>
+</html>

@@ -1,0 +1,5 @@
+WebGPU Inspector browser bundle
+Source: https://github.com/brendan-duncan/webgpu_inspector/tree/6ac30d672fb268d58998d24e882be07338601dfe
+File: extensions/chrome/webgpu_inspector.js
+SHA256: B32D0734DDC572907FBF76EBB4BA4856C3BB1565609F1F30E945FCA5181E7E16
+License: MIT (see LICENSE)
