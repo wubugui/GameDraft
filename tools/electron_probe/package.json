@@ -1,0 +1,17 @@
+{
+  "name": "gamedraft-electron-probe",
+  "private": true,
+  "version": "0.0.0",
+  "main": "main.cjs",
+  "description": "Isolated Electron shell experiment for the real GameDraft Vite runtime",
+  "scripts": {
+    "start": "node run.cjs"
+  },
+  "devDependencies": {
+    "electron": "38.8.6"
+  },
+  "optionalDependencies": {
+    "koffi": "3.3.2",
+    "steamworks.js": "0.4.0"
+  }
+}
