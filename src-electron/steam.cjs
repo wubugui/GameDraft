@@ -17,7 +17,9 @@ function positiveAppId(value) {
 }
 
 function readConfig(app) {
-  const configPath = path.join(path.dirname(app.getPath('exe')), 'steam_config.json');
+  // SteamAPI_Init must run before app.ready. process.execPath is available at
+  // module load time and points at the same executable as app.getPath('exe').
+  const configPath = path.join(path.dirname(process.execPath), 'steam_config.json');
   if (fs.existsSync(configPath)) {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     if (!config || typeof config !== 'object') throw new Error('steam_config.json must be an object');
@@ -73,7 +75,7 @@ function createSteamService(app) {
     reason = `Steam native module / overlay hook unavailable: ${error.message}`;
   }
 
-  async function initialize() {
+  function initialize() {
     if (!sdk || !overlayHookInstalled) return false;
     try {
       const config = readConfig(app);
@@ -84,7 +86,7 @@ function createSteamService(app) {
         reason = 'Steam is restarting the game through its client';
         return false;
       }
-      // init() is deliberately before BrowserWindow / any game GPU device.
+      // The caller runs this synchronously before app.ready and BrowserWindow.
       client = appId === null ? sdk.init() : sdk.init(appId);
       appId = client.utils.getAppId();
       reason = null;

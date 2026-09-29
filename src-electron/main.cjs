@@ -337,8 +337,7 @@ async function runSmoke(window) {
   if (process.argv.includes('--steam-smoke-exit')) app.quit();
 }
 
-async function launch() {
-  const initialized = await steam.initialize();
+async function launch(initialized) {
   log('steam-startup', steam.status());
   if (steam.shouldExitForSteam()) return app.quit();
   if (!initialized) log('steam-offline', { reason: steam.status().reason });
@@ -388,9 +387,13 @@ async function launch() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  // SteamAPI_Init must precede app.ready: the WebGL2 overlay experiment only
+  // produced a visible in-game overlay with this ordering. This call is
+  // synchronous and never creates a game window or GPU device.
+  const steamInitialized = steam.initialize();
   app.on('second-instance', () => BrowserWindow.getAllWindows()[0]?.focus());
   app.on('window-all-closed', () => app.quit());
-  app.whenReady().then(launch).catch(error => {
+  app.whenReady().then(() => launch(steamInitialized)).catch(error => {
     log('fatal', { message: error.message, stack: error.stack });
     dialog.showErrorBox('GameDraft cannot start', error.message);
     app.quit();
