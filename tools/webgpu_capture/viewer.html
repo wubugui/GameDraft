@@ -6,112 +6,152 @@
   <meta name="color-scheme" content="dark">
   <title>GameDraft · WebGPU 帧分析</title>
   <style>
-    :root {
-      color-scheme: dark;
-      font: 14px/1.45 system-ui, "Microsoft YaHei", sans-serif;
-      background: #0c111a;
-      color: #e6edf7;
-      --surface: #141c29;
-      --surface-2: #1b2636;
-      --line: #304052;
-      --muted: #9aabbd;
-      --accent: #76c9ff;
-      --warn: #ffc87c;
-      --danger: #ff9096;
-    }
-    * { box-sizing: border-box; }
-    [hidden] { display: none !important; }
-    body { margin: 0; min-width: 320px; }
-    button, input, select { font: inherit; }
-    button { cursor: pointer; }
-    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-    .topbar { padding: 18px 22px 15px; border-bottom: 1px solid var(--line); background: #101825; }
-    .eyebrow { color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
-    h1 { margin: 3px 0 4px; font-size: 22px; line-height: 1.25; }
-    h2 { margin: 0; font-size: 16px; }
-    h3 { margin: 0 0 8px; font-size: 14px; }
-    p { margin: 0; }
-    .muted { color: var(--muted); }
-    .small { font-size: 12px; }
-    .top-meta { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 8px; color: var(--muted); font-size: 12px; }
-    .top-meta span { overflow-wrap: anywhere; }
-    #fatal { display: none; margin: 18px 22px 0; padding: 13px 15px; background: #42242b; border: 1px solid #994e5b; border-radius: 9px; color: #ffe6e7; }
-    #fatal:not(:empty) { display: block; }
-    .summary { display: grid; grid-template-columns: repeat(6, minmax(105px, 1fr)); gap: 9px; padding: 14px 22px; }
-    .stat { padding: 12px 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
-    .stat strong { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
-    .stat span { color: var(--muted); font-size: 12px; }
-    .notice { margin: 0 22px 14px; padding: 10px 13px; border: 1px solid #61533a; border-radius: 8px; background: #29251d; color: #f7d8a7; font-size: 12px; }
-    .workspace { display: grid; grid-template-columns: minmax(250px, 300px) minmax(330px, 1fr) minmax(280px, 380px); gap: 12px; padding: 0 22px 22px; align-items: start; }
-    .column { min-width: 0; display: grid; gap: 12px; }
-    .panel { min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-    .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
-    .panel-body { padding: 12px 14px; }
-    .stack { display: grid; gap: 8px; }
-    .controls { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); }
-    .control-row { display: flex; gap: 7px; }
-    input, select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; background: #0d1420; color: #e6edf7; }
-    select { width: auto; max-width: 130px; }
-    .plain-button, .tab, .list-button { border: 1px solid var(--line); background: var(--surface-2); color: inherit; }
-    .plain-button { border-radius: 7px; padding: 6px 10px; }
-    .plain-button:hover, .tab:hover, .list-button:hover { border-color: var(--accent); }
-    .plain-button[hidden] { display: none; }
-    .list { max-height: 45vh; overflow: auto; padding: 6px; }
-    .pass-list { max-height: 22vh; }
-    .list-button { display: block; width: 100%; padding: 8px 9px; margin: 0 0 5px; text-align: left; border-radius: 7px; overflow-wrap: anywhere; }
-    .list-button.active { border-color: var(--accent); background: #18364b; }
-    .list-button .sub { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
-    .list-footer { padding: 8px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
-    .list-footer button { margin-top: 6px; width: 100%; }
-    .frame-box { display: grid; place-items: center; min-height: 230px; padding: 12px; background: #080d13; }
-    .frame-box img { display: block; max-width: 100%; max-height: min(58vh, 700px); object-fit: contain; image-rendering: auto; }
-    .frame-note { padding: 9px 13px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
-    .detail-grid { display: grid; grid-template-columns: minmax(105px, 145px) minmax(0, 1fr); gap: 0; margin: 0; }
-    .detail-grid dt, .detail-grid dd { padding: 7px 0; border-bottom: 1px solid #253344; }
-    .detail-grid dt { color: var(--muted); }
-    .detail-grid dd { margin: 0; overflow-wrap: anywhere; }
-    .detail-grid dt:last-of-type, .detail-grid dd:last-of-type { border-bottom: 0; }
-    pre { max-height: 37vh; overflow: auto; margin: 7px 0 0; padding: 10px; border: 1px solid #2a394a; border-radius: 7px; background: #0a111b; color: #dbe9fa; font: 12px/1.5 Consolas, "Cascadia Code", monospace; white-space: pre; tab-size: 2; }
-    .data-section { margin-top: 13px; }
-    .data-section:first-child { margin-top: 0; }
-    .data-section > label { color: var(--muted); font-size: 12px; }
-    .resource-tabs { display: flex; flex-wrap: wrap; gap: 5px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
-    .tab { padding: 5px 8px; border-radius: 6px; font-size: 12px; }
-    .tab.active { border-color: var(--accent); background: #18364b; }
-    .resource-preview img { display: block; max-width: 100%; max-height: 310px; margin: 9px auto; border: 1px solid var(--line); background: repeating-conic-gradient(#252d39 0% 25%, #384250 0% 50%) 50% / 20px 20px; }
-    .resource-jumps, .texture-choices { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-    .texture-choices .active { border-color: var(--accent); background: #18364b; }
-    .inspector-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 10px 0; }
-    .inspector-controls label { color: var(--muted); font-size: 12px; }
-    .inspector-controls select { max-width: none; }
-    .inspector-controls input[type=range] { width: 110px; padding: 0; }
-    .inspector-stage { min-height: 155px; max-height: 48vh; overflow: auto; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: repeating-conic-gradient(#252d39 0% 25%, #384250 0% 50%) 50% / 20px 20px; }
-    .inspector-stage img { display: block; max-width: none; image-rendering: pixelated; }
-    .inspector-stage img.fit { max-width: 100%; max-height: 48vh; width: auto !important; height: auto; image-rendering: auto; }
-    .inspect-note { margin-top: 8px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-    .buffer-select { width: 100%; max-width: none; }
-    .buffer-table-wrap { max-height: 300px; overflow: auto; margin-top: 8px; border: 1px solid var(--line); border-radius: 7px; }
-    .buffer-table { border-collapse: collapse; width: 100%; font: 12px/1.4 Consolas, monospace; }
-    .buffer-table th, .buffer-table td { padding: 4px 7px; border-bottom: 1px solid #253344; text-align: left; white-space: nowrap; }
-    .buffer-table th { position: sticky; top: 0; background: #1b2636; }
-    .hex-dump { max-height: 200px; }
-    .filter-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
-    .error-item { margin: 0 0 7px; padding: 9px; border-left: 3px solid var(--danger); border-radius: 4px; background: #30212b; overflow-wrap: anywhere; }
-    .inline-link { border: 0; padding: 0; background: none; color: var(--accent); text-decoration: underline; }
-    .empty { color: var(--muted); padding: 12px; }
-    @media (max-width: 1150px) {
-      .workspace { grid-template-columns: minmax(230px, 300px) minmax(0, 1fr); }
-      .column:last-child { grid-column: 1 / -1; }
-      .summary { grid-template-columns: repeat(3, 1fr); }
-    }
-    @media (max-width: 680px) {
-      .topbar { padding: 15px 14px; }
-      .summary { grid-template-columns: repeat(2, 1fr); padding: 12px 14px; }
-      .notice { margin: 0 14px 12px; }
-      .workspace { grid-template-columns: 1fr; padding: 0 14px 14px; }
-      .column:last-child { grid-column: auto; }
-      .list, .pass-list { max-height: 260px; }
-    }
+    :root { color-scheme:dark; font:12px/1.4 system-ui,"Microsoft YaHei",sans-serif; color:#dbe1e8; background:#1b2027; --surface:#242b33; --line:#3b4651; --muted:#a2afbb; --accent:#70baff; --selection:#285377; --danger:#ff929a; }
+    * { box-sizing:border-box; }
+    [hidden] { display:none !important; }
+    html,body { height:100%; }
+    body { display:flex; flex-direction:column; min-width:320px; margin:0; overflow:hidden; }
+    button,input,select { font:inherit; }
+    button { cursor:pointer; }
+    button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible { outline:2px solid var(--accent); outline-offset:-2px; }
+    h1,h2,h3,p { margin:0; }
+    h1 { font-size:15px; line-height:1.1; }
+    h2 { font-size:12px; }
+    .small { font-size:10px; }
+    .muted { color:var(--muted); }
+    .topbar { flex:none; border-bottom:1px solid #11171d; background:#303740; }
+    .topbar-main { display:flex; align-items:center; gap:18px; min-height:42px; padding:5px 10px; }
+    .brand { min-width:165px; }
+    .eyebrow { display:block; color:#a5b2be; font-size:9px; letter-spacing:.12em; }
+    .mode-switch { display:flex; gap:2px; }
+    .mode-button,.plain-button,.tab { border:1px solid var(--line); border-radius:2px; background:#252c34; color:inherit; }
+    .mode-button { padding:5px 12px; }
+    .mode-button.active,.mode-button[aria-selected=true] { border-color:#7bb6e7; background:#315b7c; color:#fff; }
+    .mode-button:hover,.plain-button:hover,.tab:hover { border-color:var(--accent); }
+    .top-meta { display:flex; gap:13px; overflow:hidden; padding:2px 10px; border-top:1px solid #46515b; color:#b4c0cb; font-size:10px; white-space:nowrap; }
+    .top-meta span { overflow:hidden; text-overflow:ellipsis; }
+    .timing-note { overflow:hidden; padding:2px 10px 4px; color:#e0c395; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+    #fatal { display:none; flex:none; padding:7px 10px; background:#482d34; color:#ffe2e4; }
+    #fatal:not(:empty) { display:block; }
+    #summary { display:none; }
+    .frame-workspace,.gpu-workspace { flex:1 1 auto; min-height:0; }
+    .frame-workspace { display:grid; grid-template-columns:minmax(265px,28%) minmax(0,1fr); }
+    .events-pane,.preview-pane,.inspector-pane,.gpu-chart-pane,.gpu-table-pane { display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; background:var(--surface); }
+    .events-pane { border-right:1px solid #10151b; }
+    .pane-head { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:27px; padding:4px 9px; border-bottom:1px solid var(--line); background:#303740; }
+    .pane-head .small { white-space:nowrap; }
+    .event-controls { display:grid; gap:5px; padding:6px 7px; border-bottom:1px solid var(--line); }
+    .control-row { display:flex; align-items:center; gap:5px; min-width:0; }
+    .control-row label { white-space:nowrap; }
+    input,select { min-width:0; width:100%; height:24px; padding:2px 6px; border:1px solid #44505d; border-radius:2px; background:#1b2229; color:inherit; }
+    select { width:auto; max-width:160px; }
+    input[type=search] { flex:1; }
+    input[type=range] { width:auto; padding:0; accent-color:var(--accent); }
+    .plain-button { flex:none; min-height:24px; padding:2px 7px; white-space:nowrap; }
+    .nav-button { width:25px; padding:0; font-size:17px; line-height:20px; }
+    #event-range { flex:1; min-width:45px; }
+    #event-position { min-width:52px; color:var(--muted); text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    #event-kind { flex:none; width:101px; }
+    .event-tree { flex:1 1 auto; min-height:0; overflow:auto; padding:2px 0 9px; scrollbar-color:#657684 #232b33; }
+    .event-tree button,.event-tree summary { font:inherit; }
+    .tree-frame,.tree-pass-head,.tree-event { display:flex; align-items:center; gap:5px; width:100%; min-height:22px; padding:2px 7px; border:0; border-radius:0; color:inherit; text-align:left; overflow:hidden; white-space:nowrap; }
+    .tree-frame { background:#333c46; border-bottom:1px solid #28313a; font-weight:650; }
+    .tree-pass { margin:0; }
+    .tree-pass-head { list-style:none; background:#2b333c; cursor:pointer; }
+    .tree-pass-head::-webkit-details-marker { display:none; }
+    .tree-pass-head::before { content:"▸"; flex:none; width:10px; color:#a0afbc; font-size:10px; }
+    .tree-pass[open]>.tree-pass-head::before { content:"▾"; }
+    .tree-children { padding-left:13px; }
+    .tree-event { background:transparent; cursor:pointer; }
+    .tree-event::before { content:"·"; flex:none; width:8px; color:#9aabba; }
+    .tree-frame:hover,.tree-pass-head:hover,.tree-event:hover { background:#3b4856; }
+    .tree-pass-head.active,.tree-event.active,.tree-event[aria-selected=true] { background:var(--selection); color:#fff; box-shadow:inset 2px 0 #7cc1f5; }
+    .tree-label { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    .tree-meta { flex:none; color:#a9b7c3; font-size:10px; font-variant-numeric:tabular-nums; }
+    .list-footer { display:flex; justify-content:space-between; align-items:center; flex:none; gap:5px; min-height:25px; padding:3px 7px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }
+    .list-footer .plain-button { min-height:19px; padding:0 5px; }
+    #pass-list,#event-list { display:none !important; }
+    .frame-main { display:grid; grid-template-rows:minmax(280px,57%) minmax(200px,1fr); min-width:0; min-height:0; }
+    .preview-pane { border-bottom:1px solid #10151b; }
+    .preview-head-meta { display:flex; gap:12px; color:var(--muted); font-size:10px; }
+    .preview-source-row { display:flex; align-items:center; gap:6px; min-height:29px; padding:3px 7px; border-bottom:1px solid var(--line); }
+    #texture-scope { flex:none; max-width:155px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .texture-choices { display:flex; flex:1; gap:3px; min-width:0; overflow:auto hidden; white-space:nowrap; scrollbar-width:thin; }
+    .texture-choices button { flex:none; border:1px solid var(--line); border-radius:2px; padding:2px 7px; background:#303943; color:inherit; white-space:nowrap; }
+    .texture-choices button:hover,.texture-choices .active,.preview-source-row .plain-button.active { border-color:var(--accent); background:#315777; }
+    .inspector-controls { display:flex; align-items:center; gap:5px; min-height:30px; overflow:auto hidden; padding:3px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+    .inspector-controls label { flex:none; color:var(--muted); font-size:10px; }
+    .inspector-controls select { width:auto; max-width:none; }
+    #texture-exposure { width:85px; }
+    #texture-zoom { margin-right:auto; }
+    #texture-save,#buffer-save { display:inline-flex; align-items:center; text-decoration:none; }
+    .preview-stage { position:relative; display:block; flex:1 1 auto; min-height:0; overflow:hidden; background:#11171d; }
+    #frame-box,#texture-stage { position:absolute; inset:0; width:100%; height:100%; min-height:0; padding:8px; }
+    #frame-box { display:flex; align-items:center; justify-content:center; overflow:hidden; }
+    #frame-box img { display:block; width:auto; height:auto; max-width:100%; max-height:100%; object-fit:contain; }
+    #texture-stage { display:grid; place-items:center; overflow:auto; background:repeating-conic-gradient(#252d37 0% 25%,#3d4752 0% 50%) 50% / 18px 18px; }
+    #texture-stage img { display:block; max-width:none; image-rendering:pixelated; }
+    #texture-stage img.fit { max-width:100%; max-height:100%; width:auto !important; height:auto; image-rendering:auto; }
+    .preview-notes { display:flex; align-items:center; gap:10px; min-height:23px; max-height:42px; overflow:auto; padding:3px 8px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }
+    .frame-note,.inspect-note { overflow-wrap:anywhere; }
+    .empty { color:#a0adba; padding:10px; }
+    #inspector-scroll { flex:1 1 auto; min-height:0; overflow:auto; scrollbar-color:#657684 #232b33; }
+    .inspector-section { border-bottom:1px solid var(--line); }
+    .inspector-section>summary { display:flex; align-items:center; gap:6px; min-height:25px; padding:3px 9px; background:#303740; cursor:pointer; list-style:none; font-weight:600; }
+    .inspector-section>summary::-webkit-details-marker { display:none; }
+    .inspector-section>summary::before { content:"▸"; width:9px; flex:none; color:#a9b5c1; font-size:10px; }
+    .inspector-section[open]>summary::before { content:"▾"; }
+    .inspector-section>summary:hover { background:#3a4652; }
+    .inspector-section>summary .small { margin-left:auto; font-weight:400; }
+    .panel-body { padding:8px 10px; }
+    .detail-grid { display:grid; grid-template-columns:minmax(105px,155px) minmax(0,1fr); margin:0; }
+    .detail-grid dt,.detail-grid dd { padding:4px 2px; border-bottom:1px solid var(--line); }
+    .detail-grid dt { color:var(--muted); }
+    .detail-grid dd { margin:0; overflow-wrap:anywhere; }
+    .data-section { margin-top:9px; }
+    .data-section>label { color:var(--muted); font-size:10px; }
+    pre { max-height:35vh; overflow:auto; margin:4px 0 0; padding:7px; border:1px solid var(--line); background:#171d24; color:#dfeaf6; font:11px/1.4 Consolas,monospace; white-space:pre; tab-size:2; }
+    .buffer-select { width:100%; max-width:none; }
+    .buffer-table-wrap { max-height:240px; overflow:auto; margin-top:7px; border:1px solid var(--line); }
+    .buffer-table { width:100%; border-collapse:collapse; font:11px/1.4 Consolas,monospace; }
+    .buffer-table th,.buffer-table td { padding:3px 6px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
+    .buffer-table th { position:sticky; top:0; background:#303740; }
+    #buffer-hex { max-height:180px; }
+    .resource-tabs { display:flex; flex-wrap:wrap; gap:3px; padding-bottom:6px; }
+    .tab { padding:2px 7px; }
+    .tab.active { border-color:var(--accent); background:#315777; }
+    .resource-grid { display:grid; grid-template-columns:minmax(220px,32%) minmax(0,1fr); gap:8px; }
+    .resource-list { max-height:260px; overflow:auto; margin-top:5px; border:1px solid var(--line); }
+    .list-button { display:block; width:100%; padding:5px 7px; border:0; border-bottom:1px solid #34404b; background:transparent; color:inherit; text-align:left; overflow-wrap:anywhere; }
+    .list-button:hover { background:#3a4753; }
+    .list-button.active { background:var(--selection); }
+    .list-button .sub { display:block; color:var(--muted); font-size:10px; }
+    .resource-preview img { display:block; max-width:100%; max-height:260px; margin:7px auto; border:1px solid var(--line); background:repeating-conic-gradient(#252d37 0% 25%,#3d4752 0% 50%) 50% / 18px 18px; }
+    .resource-jumps { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+    .error-item { margin-bottom:5px; padding:6px; border-left:2px solid var(--danger); background:#3c2c35; overflow-wrap:anywhere; }
+    .inline-link { border:0; padding:0; background:none; color:var(--accent); text-decoration:underline; }
+    .gpu-workspace { display:grid; grid-template-rows:minmax(260px,48%) minmax(220px,1fr); }
+    .gpu-chart-pane { border-bottom:1px solid #10151b; }
+    .gpu-info { padding:5px 9px; border-bottom:1px solid var(--line); color:var(--muted); font-size:10px; }
+    #gpu-bars { flex:1 1 auto; min-height:0; overflow:auto; padding:8px 11px; }
+    .gpu-bar-row { width:100%; border:0; border-bottom:1px solid #333e49; background:transparent; color:inherit; text-align:left; cursor:pointer; display:grid; grid-template-columns:minmax(120px,26%) minmax(0,1fr) 72px; align-items:center; gap:8px; min-height:23px; font-variant-numeric:tabular-nums; }
+    .gpu-bar-row:hover { background:#354554; }
+    .gpu-bar-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .gpu-bar-track { display:block; width:100%; height:11px; background:#182029; }
+    .gpu-bar-fill { display:block; height:100%; min-width:1px; background:#5aafdf; }
+    .gpu-bar-row:nth-child(4n+2) .gpu-bar-fill { background:#78c196; }
+    .gpu-bar-row:nth-child(4n+3) .gpu-bar-fill { background:#e9b86b; }
+    .gpu-bar-row:nth-child(4n+4) .gpu-bar-fill { background:#b99bd0; }
+    .gpu-bar-value { text-align:right; color:#cbd9e6; }
+    .gpu-table-scroll { flex:1 1 auto; min-height:0; overflow:auto; }
+    .gpu-table { width:100%; border-collapse:collapse; font-size:11px; font-variant-numeric:tabular-nums; }
+    .gpu-table th,.gpu-table td { padding:4px 10px; border-bottom:1px solid var(--line); text-align:left; }
+    .gpu-table th { position:sticky; top:0; background:#303740; color:#c1ccd6; }
+    .gpu-table td:last-child,.gpu-table th:last-child { text-align:right; }
+    .gpu-table tbody tr:hover { background:#354554; }
+    .filter-defs { position:absolute; width:0; height:0; overflow:hidden; }
+    @media (max-width:780px) { .frame-workspace { grid-template-columns:minmax(230px,33%) minmax(0,1fr); } .top-meta span:nth-child(n+4) { display:none; } .resource-grid { grid-template-columns:1fr; } }
+    @media (max-width:620px) { .topbar-main { flex-wrap:wrap; } .brand { min-width:120px; } .frame-workspace { grid-template-columns:1fr; grid-template-rows:minmax(170px,34%) minmax(0,1fr); } .events-pane { border-right:0; border-bottom:1px solid #10151b; } .frame-main { grid-template-rows:minmax(210px,55%) minmax(0,1fr); } .gpu-workspace { grid-template-rows:minmax(210px,45%) minmax(0,1fr); } }
   </style>
 </head>
 <body>
@@ -122,94 +162,102 @@
     <filter id="texture-alpha" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 1 0  0 0 0 1 0  0 0 0 1 0  0 0 0 0 1"/></filter>
   </svg>
   <header class="topbar">
-    <div class="eyebrow">GameDraft / WebGPU Capture</div>
-    <h1>帧分析</h1>
-    <p class="muted small">按帧 → Pass → Draw 检查绑定、纹理和缓冲；图像来源在每处单独标明。</p>
+    <div class="topbar-main">
+      <div class="brand"><span class="eyebrow">GameDraft / WebGPU Capture</span><h1>Frame Debugger</h1></div>
+      <nav class="mode-switch" aria-label="分析模式">
+        <button id="mode-frame" class="mode-button active" type="button" aria-pressed="true">帧调试器</button>
+        <button id="mode-gpu" class="mode-button" type="button" aria-pressed="false">GPU Profiler</button>
+      </nav>
+    </div>
     <div id="top-meta" class="top-meta" aria-live="polite"></div>
+    <div id="timing-note" class="timing-note" role="note">正在读取报告…</div>
   </header>
   <div id="fatal" role="alert"></div>
-  <section id="summary" class="summary" aria-label="捕获统计"></section>
-  <div id="timing-note" class="notice" role="note">正在读取报告…</div>
-  <main class="workspace">
-    <div class="column">
-      <section class="panel" aria-labelledby="passes-title">
-        <div class="panel-head"><h2 id="passes-title">Pass</h2><span id="pass-count" class="muted small"></span></div>
-        <div id="pass-list" class="list pass-list"></div>
-      </section>
-      <section class="panel" aria-labelledby="events-title">
-        <div class="panel-head"><h2 id="events-title">事件</h2><span id="event-count" class="muted small"></span></div>
-        <div class="controls">
-          <div class="control-row"><label for="frame-select" class="muted small" style="align-self:center;white-space:nowrap">查看帧</label><select id="frame-select" aria-label="选择帧" style="width:100%;max-width:none"></select></div>
-          <input id="event-search" type="search" placeholder="搜索命令、管线、参数" aria-label="搜索事件">
-          <div class="control-row">
-            <select id="event-kind" aria-label="事件类型">
-              <option value="all">全部类型</option>
-              <option value="draw">Draw</option>
-              <option value="dispatch">Dispatch</option>
-              <option value="bind">绑定</option>
-              <option value="copy">复制</option>
-              <option value="other">其他</option>
-            </select>
-            <button id="clear-pass" class="plain-button" type="button">全部 Pass</button>
-          </div>
+  <section id="summary" aria-label="捕获统计" hidden></section>
+  <main id="frame-workspace" class="frame-workspace">
+    <aside class="events-pane" aria-labelledby="events-title">
+      <div class="pane-head"><h2 id="events-title">事件层级</h2><h2 id="passes-title" hidden>Pass</h2><span class="small muted"><span id="pass-count"></span> Pass · <span id="event-count"></span> 事件</span></div>
+      <div class="event-controls">
+        <div class="control-row"><label for="frame-select" class="muted small">帧</label><select id="frame-select" aria-label="选择帧" style="flex:1;max-width:none"></select></div>
+        <div class="control-row" aria-label="事件导航">
+          <button id="event-prev" class="plain-button nav-button" type="button" title="上一事件" aria-label="上一事件">‹</button>
+          <button id="event-next" class="plain-button nav-button" type="button" title="下一事件" aria-label="下一事件">›</button>
+          <input id="event-range" type="range" min="0" max="0" value="0" aria-label="当前帧事件位置">
+          <span id="event-position">0 / 0</span>
         </div>
-        <div id="event-list" class="list" aria-label="事件列表"></div>
-        <div class="list-footer"><span id="event-list-status"></span><button id="event-more" class="plain-button" type="button" hidden>显示更多</button></div>
-      </section>
-    </div>
-    <div class="column">
-      <section class="panel" aria-labelledby="texture-title">
-        <div class="panel-head"><h2 id="texture-title">所选 Pass / Draw 的纹理</h2><span id="texture-count" class="muted small"></span></div>
-        <div class="panel-body">
-          <p id="texture-scope" class="muted small"></p>
-          <div id="texture-choices" class="texture-choices" aria-label="绑定纹理及目标"></div>
-          <div class="inspector-controls">
-            <label for="texture-channel">通道</label><select id="texture-channel"><option value="rgba">RGBA</option><option value="red">R</option><option value="green">G</option><option value="blue">B</option><option value="alpha">A</option></select>
-            <label for="texture-exposure">预览曝光</label><input id="texture-exposure" type="range" min="-4" max="4" step="0.25" value="0"><span id="texture-exposure-value" class="small">0 EV</span>
-            <label for="texture-zoom">缩放</label><select id="texture-zoom"><option value="fit">适合</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option><option value="200">200%</option><option value="400">400%</option></select>
-            <a id="texture-save" class="plain-button" download hidden>保存原始预览 PNG</a>
-          </div>
-          <div id="texture-stage" class="inspector-stage"><img id="texture-image" alt="选中纹理的捕获预览" hidden><p id="texture-empty" class="empty">选择 Pass 或 Draw 查看纹理。</p></div>
-          <p id="texture-note" class="inspect-note"></p>
+        <div class="control-row"><input id="event-search" type="search" placeholder="搜索事件或管线" aria-label="搜索事件"><select id="event-kind" aria-label="事件类型">
+          <option value="visual" selected>绘制/派发</option>
+          <option value="all">全部命令</option>
+          <option value="draw">Draw</option>
+          <option value="dispatch">Dispatch</option>
+          <option value="bind">绑定</option>
+          <option value="copy">复制</option>
+          <option value="other">其他</option>
+        </select></div>
+        <div class="control-row"><button id="clear-pass" class="plain-button" type="button">全部 Pass</button><span id="event-list-status" class="small muted"></span></div>
+      </div>
+      <div id="event-tree" class="event-tree" role="tree" aria-label="帧、Pass、Draw 事件树"></div>
+      <div class="list-footer"><span>选择事件查看右侧画面与状态</span><button id="event-more" class="plain-button" type="button" hidden>显示更多</button></div>
+      <div id="pass-list" hidden></div>
+      <div id="event-list" hidden></div>
+    </aside>
+    <div class="frame-main">
+      <section class="preview-pane" aria-labelledby="frame-title">
+        <div class="pane-head"><h2 id="frame-title">输出 / 纹理预览</h2><div class="preview-head-meta"><span id="frame-size"></span><span id="texture-count"></span></div></div>
+        <div class="preview-source-row">
+          <button id="preview-frame-button" class="plain-button active" type="button" aria-pressed="true">Pass 输出</button>
+          <button id="preview-texture-button" class="plain-button" type="button" aria-pressed="false">选中纹理</button>
+          <span id="texture-title" class="muted small">纹理</span>
+          <span id="texture-scope" class="muted small"></span>
+          <div id="texture-choices" class="texture-choices" aria-label="绑定纹理及渲染目标"></div>
         </div>
-      </section>
-      <section class="panel" aria-labelledby="buffer-title">
-        <div class="panel-head"><h2 id="buffer-title">Draw 当时的缓冲 Payload</h2><span id="buffer-count" class="muted small"></span></div>
-        <div class="panel-body">
-          <select id="buffer-select" class="buffer-select" aria-label="选择缓冲 Payload"></select>
-          <p id="buffer-note" class="inspect-note"></p>
-          <a id="buffer-save" class="plain-button" download hidden>保存完整二进制</a>
-          <pre id="buffer-hex" class="hex-dump" hidden></pre>
-          <div id="buffer-table-wrap" class="buffer-table-wrap" hidden><table id="buffer-table" class="buffer-table"><thead><tr><th>偏移</th><th>4 字节 Hex</th><th>uint32 LE</th><th>float32 LE</th></tr></thead><tbody id="buffer-rows"></tbody></table></div>
+        <div class="inspector-controls">
+          <label for="texture-channel">通道</label><select id="texture-channel"><option value="rgba">RGBA</option><option value="red">R</option><option value="green">G</option><option value="blue">B</option><option value="alpha">A</option></select>
+          <label for="texture-exposure">曝光</label><input id="texture-exposure" type="range" min="-4" max="4" step="0.25" value="0"><span id="texture-exposure-value" class="small">0 EV</span>
+          <label for="texture-zoom">缩放</label><select id="texture-zoom"><option value="fit">适合</option><option value="25">25%</option><option value="50">50%</option><option value="100">100%</option><option value="200">200%</option><option value="400">400%</option></select>
+          <a id="texture-save" class="plain-button" download hidden>保存原始预览 PNG</a>
         </div>
+        <div class="preview-stage">
+          <div id="frame-box"><img id="frame-image" alt="捕获导出的画布或 Pass 输出" hidden><p id="frame-empty" class="empty">正在读取图像…</p></div>
+          <div id="texture-stage" hidden><img id="texture-image" alt="选中纹理的捕获预览" hidden><p id="texture-empty" class="empty">选择纹理查看像素。</p></div>
+        </div>
+        <div class="preview-notes"><p id="frame-note" class="frame-note">显示画布或 Pass 结束时的真实读回；逐 Draw 输出未捕获。</p><p id="texture-note" class="inspect-note"></p></div>
       </section>
-      <section class="panel" aria-labelledby="frame-title">
-        <div class="panel-head"><h2 id="frame-title">画布 / Pass 实际读回</h2><span id="frame-size" class="muted small"></span></div>
-        <div class="frame-box"><img id="frame-image" alt="捕获导出的最终帧" hidden><p id="frame-empty" class="empty">正在读取图像…</p></div>
-        <p id="frame-note" class="frame-note">帧边界按 queue.submit 推断；只显示有可导出图像的帧。选中事件显示记录状态，不会生成该 draw 单独的输出图。</p>
-      </section>
-      <section class="panel" aria-labelledby="detail-title">
-        <div class="panel-head"><h2 id="detail-title">事件详情</h2><span id="detail-index" class="muted small"></span></div>
-        <div id="event-detail" class="panel-body"></div>
-      </section>
-      <section class="panel" aria-labelledby="errors-title">
-        <div class="panel-head"><h2 id="errors-title">验证错误 / Sidecar</h2><span id="error-count" class="muted small"></span></div>
-        <div id="errors" class="panel-body"></div>
-      </section>
-    </div>
-    <div class="column">
-      <section class="panel" aria-labelledby="resources-title">
-        <div class="panel-head"><h2 id="resources-title">资源</h2><span id="resource-count" class="muted small"></span></div>
-        <div id="resource-tabs" class="resource-tabs" role="group" aria-label="资源类型"></div>
-        <div class="controls"><input id="resource-search" type="search" placeholder="搜索 ID、标签或代码" aria-label="搜索资源"></div>
-        <div id="resource-list" class="list" aria-label="资源列表"></div>
-      </section>
-      <section class="panel" aria-labelledby="resource-detail-title">
-        <div class="panel-head"><h2 id="resource-detail-title">资源详情</h2></div>
-        <div id="resource-detail" class="panel-body"></div>
+      <section class="inspector-pane" aria-labelledby="detail-title">
+        <div class="pane-head"><h2 id="detail-title">事件信息</h2><span id="detail-index" class="muted small"></span></div>
+        <div id="inspector-scroll">
+          <details class="inspector-section" open><summary>详情</summary><div id="event-detail" class="panel-body"></div></details>
+          <details class="inspector-section" open><summary><span id="buffer-title">Buffers</span><span id="buffer-count" class="small muted"></span></summary>
+            <div class="panel-body">
+              <select id="buffer-select" class="buffer-select" aria-label="选择缓冲 Payload"></select>
+              <p id="buffer-note" class="inspect-note"></p>
+              <a id="buffer-save" class="plain-button" download hidden>保存完整二进制</a>
+              <pre id="buffer-hex" hidden></pre>
+              <div id="buffer-table-wrap" class="buffer-table-wrap" hidden><table id="buffer-table" class="buffer-table"><thead><tr><th>偏移</th><th>4 字节 Hex</th><th>uint32 LE</th><th>float32 LE</th></tr></thead><tbody id="buffer-rows"></tbody></table></div>
+            </div>
+          </details>
+          <details id="resource-panel" class="inspector-section"><summary><span id="resources-title">资源</span><span id="resource-count" class="small muted"></span></summary>
+            <div class="panel-body resource-grid">
+              <div><div id="resource-tabs" class="resource-tabs" role="group" aria-label="资源类型"></div><input id="resource-search" type="search" placeholder="搜索 ID、标签或代码" aria-label="搜索资源"><div id="resource-list" class="resource-list" aria-label="资源列表"></div></div>
+              <div><h3 id="resource-detail-title" class="small muted">资源详情</h3><div id="resource-detail"></div></div>
+            </div>
+          </details>
+          <details class="inspector-section"><summary><span id="errors-title">验证错误 / Sidecar</span><span id="error-count" class="small muted"></span></summary><div id="errors" class="panel-body"></div></details>
+        </div>
       </section>
     </div>
   </main>
+  <section id="gpu-workspace" class="gpu-workspace" aria-label="GPU 单帧分析" hidden>
+    <div class="gpu-chart-pane">
+      <div class="pane-head"><h2>单帧 GPU Pass 时间</h2><span class="muted small">WebGPU timestamp query</span></div>
+      <p id="gpu-note" class="gpu-info">每条表示该帧中一个 Pass 的实际测量时间；未测量项留空。</p>
+      <div id="gpu-bars" aria-label="Pass 耗时条图"></div>
+    </div>
+    <div class="gpu-table-pane">
+      <div class="pane-head"><h2>Hierarchy</h2><span class="muted small">按耗时降序</span></div>
+      <div class="gpu-table-scroll"><table class="gpu-table"><thead><tr><th>Pass</th><th>Draw</th><th>Dispatch</th><th>GPU ms</th><th>占已测合计</th></tr></thead><tbody id="gpu-table-body"></tbody></table></div>
+    </div>
+  </section>
   <script>
     (function () {
       var script = document.createElement('script');

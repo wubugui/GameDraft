@@ -15,6 +15,7 @@
     events: [],
     resources: {},
     selectedFrame: null,
+    frameFilter: null,
     selectedPass: null,
     selectedEvent: null,
     eventLimit: PAGE_SIZE,
@@ -23,11 +24,16 @@
     selectedTextureKey: null,
     textureChoices: [],
     selectedBufferPayloadId: null,
+    previewMode: 'frame',
+    mode: 'frame',
+    navigationIndices: [],
+    expandedPasses: new Set(),
   };
   const el = id => document.getElementById(id);
   const list = value => Array.isArray(value) ? value : [];
   const printable = value => value === null || value === undefined || value === '' ? '—' : String(value);
   const finite = value => typeof value === 'number' && Number.isFinite(value);
+  const compactGpuMs = value => value < 0.001 ? '<0.001 ms' : `${value.toFixed(3)} ms`;
 
   function clear(node) { node.replaceChildren(); }
   function setText(node, value) { node.textContent = printable(value); }
@@ -94,7 +100,7 @@
     el('fatal').textContent = message;
     el('timing-note').textContent = '报告未能打开。';
     el('frame-empty').textContent = '暂无图像';
-    empty(el('event-list'), '暂无事件');
+    empty(el('event-tree'), '暂无事件');
     empty(el('event-detail'), '暂无事件详情');
     empty(el('resource-list'), '暂无资源');
     empty(el('resource-detail'), '暂无资源详情');
@@ -162,56 +168,23 @@
       option.value = String(ordinal);
       select.appendChild(option);
     }
-    select.value = state.selectedFrame === null ? 'all' : String(state.selectedFrame);
+    select.value = state.frameFilter === null ? 'all' : String(state.frameFilter);
   }
 
   function renderPasses() {
     const passes = list(state.report?.passes);
-    const visible = state.selectedFrame === null ? passes : passes.filter(pass =>
+    const visible = state.frameFilter === null ? passes : passes.filter(pass =>
       pass?.frameOrdinal !== null && pass?.frameOrdinal !== undefined &&
-      Number(pass.frameOrdinal) === Number(state.selectedFrame));
-    el('pass-count').textContent = state.selectedFrame === null ? `${passes.length} 个` : `${visible.length} / ${passes.length}`;
-    const holder = el('pass-list');
-    clear(holder);
-    if (!visible.length) { holder.appendChild(make('p', passes.length ? '所选帧没有 Pass 摘要。' : '报告没有 Pass 摘要。', 'empty')); return; }
-    for (const pass of visible) {
-      const button = make('button', undefined, 'list-button');
-      button.type = 'button';
-      button.classList.toggle('active', state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index));
-      button.appendChild(make('span', describePass(pass)));
-      const count = pass.type === 'compute' ? `${pass.dispatches ?? 0} dispatch` : `${pass.draws ?? 0} draw`;
-      const timing = pass.gpuTiming?.source === 'webgpu-timestamp-query' ? ` · GPU ${pass.gpuTiming.durationMs} ms` :
-        finite(pass.inspectorDurationMs) ? ` · Inspector duration ${pass.inspectorDurationMs} ms（来源未验证）` : '';
-      const unavailable = pass.outputUnavailableReason ? ` · 无 Pass 图：${pass.outputUnavailableReason}` :
-        pass.partialOutputUnavailableReason ? ` · 部分输出未读回：${pass.partialOutputUnavailableReason}` : '';
-      button.appendChild(make('span', `${count} · 命令 ${printable(pass.beginCommand)}–${printable(pass.endCommand)}${timing}${unavailable}`, 'sub'));
-      button.addEventListener('click', () => {
-        state.selectedPass = pass.index;
-        state.selectedEvent = state.events.findIndex(event => Number(event?.passIndex) === Number(pass.index) &&
-          ['draw', 'dispatch'].includes(eventKind(String(event?.method || ''))));
-        if (state.selectedEvent < 0) state.selectedEvent = state.events.findIndex(event => Number(event?.passIndex) === Number(pass.index));
-        if (state.selectedEvent < 0) state.selectedEvent = null;
-        state.selectedTextureKey = null;
-        state.selectedBufferPayloadId = null;
-        state.eventLimit = PAGE_SIZE;
-        renderPasses();
-        renderEvents();
-        renderEventDetail();
-        renderTextureInspector();
-        renderBufferInspector();
-        renderFrame();
-      });
-      holder.appendChild(button);
-    }
+      Number(pass.frameOrdinal) === Number(state.frameFilter));
+    el('pass-count').textContent = state.frameFilter === null ? `${passes.length} 个` : `${visible.length} / ${passes.length}`;
   }
 
   function eventMatches(event, query, kind) {
     const method = String(event?.method || '');
-    if (kind !== 'all' && eventKind(method) !== kind) return false;
-    if (state.selectedFrame !== null && (event?.frameOrdinal === null || event?.frameOrdinal === undefined ||
-        Number(event.frameOrdinal) !== Number(state.selectedFrame))) return false;
-    if (state.selectedPass !== null && (event?.passIndex === null || event?.passIndex === undefined ||
-        Number(event.passIndex) !== Number(state.selectedPass))) return false;
+    if (kind === 'visual' ? !['draw', 'dispatch'].includes(eventKind(method)) :
+      kind !== 'all' && eventKind(method) !== kind) return false;
+    if (state.frameFilter !== null && (event?.frameOrdinal === null || event?.frameOrdinal === undefined ||
+        Number(event.frameOrdinal) !== Number(state.frameFilter))) return false;
     if (!query) return true;
     const head = [method, event?.commandIndex, event?.pipelineId, event?.pipelineLabel,
       event?.passIndex, event?.frameOrdinal].map(printable).join(' ').toLocaleLowerCase();
@@ -225,34 +198,155 @@
     for (let i = 0; i < state.events.length; i++) {
       if (eventMatches(state.events[i], query, kind)) matches.push(i);
     }
+    state.navigationIndices = matches;
     el('event-count').textContent = `${matches.length} / ${state.events.length}`;
-    const holder = el('event-list');
+    const holder = el('event-tree');
+    const previousScroll = holder.scrollTop;
     clear(holder);
     if (!matches.length) {
       holder.appendChild(make('p', state.events.length ? '没有符合条件的事件。' : '报告没有事件明细；可查看 Pass 与统计。', 'empty'));
     }
-    for (const index of matches.slice(0, state.eventLimit)) {
+    const visible = matches.slice(0, state.eventLimit);
+    const byPass = new Map();
+    for (const index of visible) {
       const event = state.events[index];
-      const button = make('button', undefined, 'list-button');
-      button.type = 'button';
-      button.classList.toggle('active', state.selectedEvent === index);
-      button.appendChild(make('span', `#${printable(event.commandIndex ?? index)} ${printable(event.method)}`));
-      const pipeline = event.pipelineLabel || event.pipelineId;
-      const pass = event.passIndex === null || event.passIndex === undefined ? '帧级' : `Pass ${event.passIndex}`;
-      button.appendChild(make('span', pipeline ? `${pass} · ${pipeline}` : pass, 'sub'));
-      button.addEventListener('click', () => {
-        state.selectedEvent = index;
-        state.selectedTextureKey = null;
-        state.selectedBufferPayloadId = null;
-        renderEvents();
-        renderEventDetail();
-        renderTextureInspector();
-        renderBufferInspector();
-      });
-      holder.appendChild(button);
+      const key = event?.passIndex == null ? 'frame' : String(event.passIndex);
+      if (!byPass.has(key)) byPass.set(key, []);
+      byPass.get(key).push(index);
     }
+    const appendEvents = (target, indices) => {
+      for (const index of indices) {
+        const event = state.events[index];
+        const button = make('button', undefined, 'tree-event');
+        button.type = 'button';
+        button.dataset.eventIndex = String(index);
+        button.classList.toggle('active', state.selectedEvent === index);
+        button.setAttribute('aria-selected', String(state.selectedEvent === index));
+        button.appendChild(make('span', `#${printable(event.commandIndex ?? index)}  ${printable(event.method)}`, 'tree-label'));
+        const pipeline = event.pipelineLabel || event.pipelineId;
+        if (pipeline) button.appendChild(make('span', String(pipeline), 'tree-meta'));
+        button.addEventListener('click', () => selectEvent(index));
+        target.appendChild(button);
+      }
+    };
+    const allFrames = list(state.report?.frames);
+    const frames = allFrames.length ? allFrames.filter(frame => state.frameFilter === null ||
+      Number(frame?.frameOrdinal) === Number(state.frameFilter)) : [null];
+    if (matches.length) for (const frame of frames) {
+      const ordinal = frame?.frameOrdinal ?? null;
+      const belongs = event => ordinal === null || Number(event?.frameOrdinal) === Number(ordinal);
+      const inFrame = visible.filter(index => belongs(state.events[index]));
+      if (!inFrame.length && query) continue;
+      holder.appendChild(make('div', frame ?
+        `▾ 第 ${frame.frameOrdinal} 帧 · 命令 ${printable(frame.beginCommand)}–${printable(frame.endCommand)}` :
+        '▾ 捕获事件', 'tree-frame'));
+      const passes = list(state.report?.passes).filter(pass => ordinal === null ||
+        Number(pass?.frameOrdinal) === Number(ordinal));
+      const passIds = new Set(passes.map(pass => String(pass.index)));
+      const ungrouped = inFrame.filter(index => state.events[index]?.passIndex == null ||
+        !passIds.has(String(state.events[index].passIndex)));
+      const nodes = passes.filter(pass => (byPass.get(String(pass.index)) || []).length || !query)
+        .map(pass => ({ type: 'pass', value: pass, order: Number(pass.beginCommand) || 0 }));
+      nodes.push(...ungrouped.map(index => ({ type: 'event', value: index,
+        order: Number(state.events[index]?.commandIndex) || index })));
+      nodes.sort((a, b) => a.order - b.order);
+      for (const node of nodes) {
+        if (node.type === 'event') {
+          const group = make('div', undefined, 'tree-children');
+          appendEvents(group, [node.value]);
+          holder.appendChild(group);
+          continue;
+        }
+        const pass = node.value;
+        const key = String(pass.index);
+        const group = make('details', undefined, 'tree-pass');
+        group.open = state.expandedPasses.has(key);
+        const head = make('summary', undefined, 'tree-pass-head');
+        head.appendChild(make('span', describePass(pass), 'tree-label'));
+        const gpuMs = pass.gpuTiming?.source === 'webgpu-timestamp-query' && finite(pass.gpuTiming.durationMs) ?
+          compactGpuMs(pass.gpuTiming.durationMs) : '';
+        head.appendChild(make('span', `${pass.type === 'compute' ? pass.dispatches ?? 0 : pass.draws ?? 0} ${pass.type === 'compute' ? 'dispatch' : 'draw'}${gpuMs ? ` · ${gpuMs}` : ''}`, 'tree-meta'));
+        head.classList.toggle('active', state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index));
+        head.addEventListener('click', event => {
+          event.preventDefault();
+          if (group.open && state.selectedPass !== null && Number(state.selectedPass) === Number(pass.index)) {
+            state.expandedPasses.delete(key);
+            renderEvents();
+          } else {
+            state.expandedPasses.add(key);
+            selectPass(pass.index, { keepTreeScroll: true });
+          }
+        });
+        group.appendChild(head);
+        const children = make('div', undefined, 'tree-children');
+        appendEvents(children, byPass.get(key) || []);
+        group.appendChild(children);
+        holder.appendChild(group);
+      }
+    }
+    holder.scrollTop = previousScroll;
     el('event-list-status').textContent = `显示 ${Math.min(matches.length, state.eventLimit)} / ${matches.length} 条`;
     el('event-more').hidden = matches.length <= state.eventLimit;
+    const step = matches.indexOf(state.selectedEvent);
+    const range = el('event-range');
+    range.max = String(Math.max(0, matches.length - 1));
+    range.value = String(Math.max(0, step));
+    range.disabled = !matches.length;
+    el('event-prev').disabled = step <= 0;
+    el('event-next').disabled = !matches.length || step >= matches.length - 1;
+    el('event-position').textContent = matches.length ? `${step < 0 ? '—' : step + 1} / ${matches.length}` : '0 / 0';
+  }
+
+  function selectEvent(index, scrollToSelected = false) {
+    const event = state.events[index];
+    if (!event) return;
+    const navigationPosition = state.navigationIndices.indexOf(index);
+    if (navigationPosition >= state.eventLimit) state.eventLimit = Math.ceil((navigationPosition + 1) / PAGE_SIZE) * PAGE_SIZE;
+    state.selectedEvent = index;
+    if (event.passIndex !== null && event.passIndex !== undefined) {
+      state.selectedPass = Number(event.passIndex);
+      state.expandedPasses.add(String(event.passIndex));
+    } else state.selectedPass = null;
+    if (event.frameOrdinal !== null && event.frameOrdinal !== undefined) {
+      state.selectedFrame = Number(event.frameOrdinal);
+      renderFrameSelector();
+    }
+    state.selectedTextureKey = null;
+    state.selectedBufferPayloadId = null;
+    state.previewMode = 'frame';
+    renderPasses();
+    renderEvents();
+    renderEventDetail();
+    renderTextureInspector();
+    renderBufferInspector();
+    renderFrame();
+    renderPreviewMode();
+    if (scrollToSelected) el('event-tree').querySelector(`[data-event-index="${index}"]`)?.scrollIntoView({ block: 'center' });
+  }
+
+  function selectPass(index, options = {}) {
+    const pass = passFor(index);
+    if (!pass) return;
+    state.selectedPass = Number(index);
+    if (pass.frameOrdinal !== null && pass.frameOrdinal !== undefined) {
+      state.selectedFrame = Number(pass.frameOrdinal);
+      renderFrameSelector();
+    }
+    const firstDraw = state.events.findIndex(event => Number(event?.passIndex) === Number(index) &&
+      ['draw', 'dispatch'].includes(eventKind(String(event?.method || ''))));
+    state.selectedEvent = firstDraw < 0 ? null : firstDraw;
+    state.expandedPasses.add(String(index));
+    state.selectedTextureKey = null;
+    state.selectedBufferPayloadId = null;
+    state.previewMode = 'frame';
+    renderPasses();
+    renderEvents();
+    renderEventDetail();
+    renderTextureInspector();
+    renderBufferInspector();
+    renderFrame();
+    renderPreviewMode();
+    if (!options.keepTreeScroll) el('event-tree').querySelector(`[data-event-index="${firstDraw}"]`)?.scrollIntoView({ block: 'center' });
   }
 
   function addDetailRow(grid, label, value) {
@@ -414,7 +508,12 @@
       const button = make('button', `${item.role} · #${item.id} ${item.label} · ${evidence}`, 'plain-button');
       button.type = 'button';
       button.classList.toggle('active', item.key === state.selectedTextureKey);
-      button.addEventListener('click', () => { state.selectedTextureKey = item.key; renderTextureInspector(); });
+      button.addEventListener('click', () => {
+        state.selectedTextureKey = item.key;
+        state.previewMode = 'texture';
+        renderTextureInspector();
+        renderPreviewMode();
+      });
       holder.appendChild(button);
     }
     const selected = options.find(item => item.key === state.selectedTextureKey);
@@ -508,7 +607,10 @@
     renderResourceTabs();
     renderResources();
     renderResourceDetail();
-    el('resource-detail').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const panel = el('resource-panel');
+    if (panel) panel.open = true;
+    const scroll = el('inspector-scroll');
+    if (scroll && panel) scroll.scrollTop = panel.offsetTop - scroll.offsetTop;
   }
   function renderResourceTabs() {
     const holder = el('resource-tabs');
@@ -669,6 +771,96 @@
     img.src = url;
   }
 
+  function renderPreviewMode() {
+    const texture = state.previewMode === 'texture';
+    el('frame-box').hidden = texture;
+    el('texture-stage').hidden = !texture;
+    el('frame-note').hidden = texture;
+    el('texture-note').hidden = !texture;
+    const frameButton = el('preview-frame-button');
+    const textureButton = el('preview-texture-button');
+    frameButton.classList.toggle('active', !texture);
+    textureButton.classList.toggle('active', texture);
+    frameButton.setAttribute('aria-pressed', String(!texture));
+    textureButton.setAttribute('aria-pressed', String(texture));
+    textureButton.disabled = !state.textureChoices.length;
+  }
+
+  function renderMode() {
+    const gpu = state.mode === 'gpu';
+    el('frame-workspace').hidden = gpu;
+    el('gpu-workspace').hidden = !gpu;
+    for (const [id, active] of [['mode-frame', !gpu], ['mode-gpu', gpu]]) {
+      const button = el(id);
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
+    if (gpu) renderGpu();
+  }
+
+  function renderGpu() {
+    const frame = selectedFrame();
+    const passes = list(state.report?.passes).filter(pass => state.selectedFrame === null ||
+      Number(pass?.frameOrdinal) === Number(state.selectedFrame));
+    const measured = passes.filter(pass => pass.gpuTiming?.source === 'webgpu-timestamp-query' &&
+      finite(pass.gpuTiming.durationMs) && pass.gpuTiming.durationMs >= 0);
+    const bars = el('gpu-bars');
+    const rows = el('gpu-table-body');
+    clear(bars);
+    clear(rows);
+    const note = el('gpu-note');
+    if (note) note.textContent = frame ? `第 ${frame.frameOrdinal} 帧 · Pass 实测时间戳；未测项留空。没有逐 Draw GPU 时间和历史曲线。` :
+      '捕获中的 Pass 实测时间戳；未测项留空。没有逐 Draw GPU 时间和历史曲线。';
+    if (!measured.length) {
+      bars.appendChild(make('p', '此帧没有可用的 GPU Pass 时间戳。', 'empty'));
+    }
+    if (!passes.length) {
+      const tr = make('tr');
+      const td = make('td', '此帧没有 Pass。');
+      td.colSpan = 5;
+      tr.appendChild(td);
+      rows.appendChild(tr);
+      return;
+    }
+    measured.sort((a, b) => b.gpuTiming.durationMs - a.gpuTiming.durationMs);
+    const total = measured.reduce((sum, pass) => sum + pass.gpuTiming.durationMs, 0);
+    const max = measured[0]?.gpuTiming.durationMs || 1;
+    for (const pass of measured) {
+      const duration = pass.gpuTiming.durationMs;
+      const row = make('button', undefined, 'gpu-bar-row');
+      row.type = 'button';
+      row.title = `查看 ${describePass(pass)}`;
+      row.appendChild(make('span', describePass(pass), 'gpu-bar-label'));
+      const track = make('span', undefined, 'gpu-bar-track');
+      const fill = make('span', undefined, 'gpu-bar-fill');
+      fill.style.width = `${Math.max(0.3, duration / max * 100)}%`;
+      track.appendChild(fill);
+      row.append(track, make('span', `${duration.toFixed(3)} ms`, 'gpu-bar-value'));
+      row.addEventListener('click', () => {
+        state.mode = 'frame';
+        renderMode();
+        selectPass(pass.index);
+      });
+      bars.appendChild(row);
+    }
+    const measuredDuration = pass => pass.gpuTiming?.source === 'webgpu-timestamp-query' &&
+      finite(pass.gpuTiming.durationMs) && pass.gpuTiming.durationMs >= 0 ? pass.gpuTiming.durationMs : null;
+    const tablePasses = [...passes].sort((a, b) => (measuredDuration(b) ?? -1) - (measuredDuration(a) ?? -1));
+    for (const pass of tablePasses) {
+      const duration = measuredDuration(pass);
+      const percent = duration !== null && total > 0 ? `${(duration / total * 100).toFixed(1)}%` : '—';
+      const tr = make('tr');
+      tr.tabIndex = 0;
+      tr.title = `查看 ${describePass(pass)}`;
+      for (const value of [describePass(pass), pass.draws ?? 0, pass.dispatches ?? 0,
+        duration === null ? '—' : duration.toFixed(6), percent]) tr.appendChild(make('td', value));
+      const open = () => { state.mode = 'frame'; renderMode(); selectPass(pass.index); };
+      tr.addEventListener('click', open);
+      tr.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
+      rows.appendChild(tr);
+    }
+  }
+
   function renderAll(report) {
     if (!report || typeof report !== 'object' || Array.isArray(report)) throw new Error('report.json 不是有效的报告对象');
     state.report = report;
@@ -677,12 +869,15 @@
     const frames = list(report.frames);
     state.selectedFrame = frames.length && finite(Number(frames[frames.length - 1]?.frameOrdinal)) ?
       Number(frames[frames.length - 1].frameOrdinal) : null;
-    state.selectedEvent = state.events.findIndex(event =>
+    state.frameFilter = state.selectedFrame;
+    state.selectedEvent = state.events.findLastIndex(event =>
       (state.selectedFrame === null || Number(event?.frameOrdinal) === state.selectedFrame) &&
       eventKind(String(event?.method || '')) === 'draw');
     if (state.selectedEvent < 0) state.selectedEvent = state.events.findIndex(event =>
       state.selectedFrame === null || Number(event?.frameOrdinal) === state.selectedFrame);
     if (state.selectedEvent < 0) state.selectedEvent = null;
+    state.selectedPass = state.selectedEvent === null ? null : state.events[state.selectedEvent]?.passIndex ?? null;
+    if (state.selectedPass !== null) state.expandedPasses.add(String(state.selectedPass));
     el('fatal').textContent = '';
     renderTop();
     renderFrameSelector();
@@ -692,10 +887,13 @@
     renderTextureInspector();
     renderBufferInspector();
     renderFrame();
+    renderPreviewMode();
+    renderMode();
     renderResourceTabs();
     renderResources();
     renderResourceDetail();
     renderErrors();
+    if (state.selectedEvent !== null) el('event-tree').querySelector(`[data-event-index="${state.selectedEvent}"]`)?.scrollIntoView({ block: 'center' });
   }
 
   function loadOfflineReport() {
@@ -720,26 +918,60 @@
     return response.json();
   }
 
-  el('event-search').addEventListener('input', () => { state.eventLimit = PAGE_SIZE; renderEvents(); });
-  el('event-kind').addEventListener('change', () => { state.eventLimit = PAGE_SIZE; renderEvents(); });
+  function applyEventFilter() {
+    state.eventLimit = PAGE_SIZE;
+    renderEvents();
+    if (state.navigationIndices.length && !state.navigationIndices.slice(0, PAGE_SIZE).includes(state.selectedEvent)) {
+      selectEvent(state.navigationIndices[0], true);
+    }
+  }
+  el('event-search').addEventListener('input', applyEventFilter);
+  el('event-kind').addEventListener('change', applyEventFilter);
+  el('event-prev').addEventListener('click', () => {
+    const index = state.navigationIndices.indexOf(state.selectedEvent);
+    if (index > 0) selectEvent(state.navigationIndices[index - 1], true);
+  });
+  el('event-next').addEventListener('click', () => {
+    const index = state.navigationIndices.indexOf(state.selectedEvent);
+    if (index < state.navigationIndices.length - 1) selectEvent(state.navigationIndices[index + 1], true);
+  });
+  el('event-range').addEventListener('input', () => {
+    const index = state.navigationIndices[Number(el('event-range').value)];
+    if (index !== undefined) selectEvent(index, true);
+  });
+  el('mode-frame').addEventListener('click', () => { state.mode = 'frame'; renderMode(); });
+  el('mode-gpu').addEventListener('click', () => { state.mode = 'gpu'; renderMode(); });
+  el('preview-frame-button').addEventListener('click', () => { state.previewMode = 'frame'; renderPreviewMode(); });
+  el('preview-texture-button').addEventListener('click', () => { state.previewMode = 'texture'; renderPreviewMode(); });
   el('frame-select').addEventListener('change', () => {
-    state.selectedFrame = el('frame-select').value === 'all' ? null : Number(el('frame-select').value);
+    state.frameFilter = el('frame-select').value === 'all' ? null : Number(el('frame-select').value);
+    state.selectedFrame = state.frameFilter;
     state.selectedPass = null;
     state.eventLimit = PAGE_SIZE;
     state.selectedEvent = state.events.findIndex(event =>
-      (state.selectedFrame === null || Number(event?.frameOrdinal) === state.selectedFrame) &&
+      (state.frameFilter === null || Number(event?.frameOrdinal) === state.frameFilter) &&
       eventKind(String(event?.method || '')) === 'draw');
     if (state.selectedEvent < 0) state.selectedEvent = state.events.findIndex(event =>
-      state.selectedFrame === null || Number(event?.frameOrdinal) === state.selectedFrame);
+      state.frameFilter === null || Number(event?.frameOrdinal) === state.frameFilter);
     if (state.selectedEvent < 0) state.selectedEvent = null;
+    if (state.selectedEvent !== null && state.events[state.selectedEvent]?.frameOrdinal != null) {
+      state.selectedFrame = Number(state.events[state.selectedEvent].frameOrdinal);
+    }
+    state.selectedPass = state.selectedEvent === null ? null : state.events[state.selectedEvent]?.passIndex ?? null;
+    state.expandedPasses.clear();
+    if (state.selectedPass !== null) state.expandedPasses.add(String(state.selectedPass));
     renderPasses();
     renderEvents();
     renderEventDetail();
     state.selectedTextureKey = null;
     state.selectedBufferPayloadId = null;
+    state.previewMode = 'frame';
     renderTextureInspector();
     renderBufferInspector();
     renderFrame();
+    renderPreviewMode();
+    if (state.mode === 'gpu') renderGpu();
+    if (state.selectedEvent !== null) el('event-tree').querySelector(`[data-event-index="${state.selectedEvent}"]`)?.scrollIntoView({ block: 'center' });
   });
   el('clear-pass').addEventListener('click', () => {
     state.selectedPass = null;
@@ -749,6 +981,7 @@
     renderTextureInspector();
     renderBufferInspector();
     renderFrame();
+    if (state.mode === 'gpu') renderGpu();
   });
   el('event-more').addEventListener('click', () => { state.eventLimit += PAGE_SIZE; renderEvents(); });
   el('resource-search').addEventListener('input', renderResources);
