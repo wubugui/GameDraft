@@ -1,6 +1,6 @@
 # Electron RHI probe
 
-This is an isolated experiment. It opens the real Vite game in Electron and writes GPU, game-start, process, and screenshot evidence to `%LOCALAPPDATA%/GameDraft/electron-probe/`. It does not replace the Tauri release shell.
+This is the historical isolated GPU/Steam experiment. It opens the real Vite game in Electron and writes GPU, game-start, process, and screenshot evidence to `%LOCALAPPDATA%/GameDraft/electron-probe/`. The production Electron shell now lives in `src-electron/` and is built through `scripts/release.mjs`.
 
 The checked-in dependency is Electron 38.8.6, the version used for the initial real-game run on this machine. The version actually used is recorded in each JSON report.
 

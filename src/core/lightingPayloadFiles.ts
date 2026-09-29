@@ -123,7 +123,7 @@ export function requiredLightingPayloadFiles(
  * 取一个载荷文件的字节。**缺文件必须响**，不许把 404 正文当数据。
  *
  * 两条判据缺一不可：
- * - `r.ok`：Tauri 自定义协议 / 静态服务对缺文件回 404 **带正文**（`404 找不到：<path>`），
+ * - `r.ok`：Electron 自定义协议 / 静态服务对缺文件回 404 **带正文**（`404 Not Found: <path>`），
  *   不看状态码就会把那串文字当 probe 图集吃进去 —— 偶数字节补零成全黑图集，奇数字节
  *   `new Uint16Array` 抛 RangeError。两种表现互相矛盾，排查时极易被带偏。
  * - content-type 不是 HTML：vite dev 服的 SPA fallback 对缺文件回 **200 + index.html**，

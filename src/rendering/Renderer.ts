@@ -294,8 +294,8 @@ export class Renderer {
   /**
    * 记录 `game_config.windowSize`——**宿主窗口**的期望尺寸。
    *
-   * 它由宿主消费：编辑器 F5 按它开预览窗（`tools/editor/main_window.py`），exe 按它开 Tauri 窗
-   * （`src-tauri/src/main.rs` 启动时读同一份 game_config.json）。前端**不再**据此改画面盒的 CSS：
+   * 它由宿主消费：编辑器 F5 按它开预览窗（`tools/editor/main_window.py`），exe 按它开 Electron 窗
+   * （`src-electron/main.cjs` 启动时读同一份 game_config.json）。前端**不再**据此改画面盒的 CSS：
    * 画面盒永远由舞台尺寸 + 视口比例算出（{@link layoutMount}），窗口是多大就在里面等比放多大。
    *
    * 以前这里把 `#game-mount` 写死成 `windowSize` 像素并 `max-height:100vh` 封顶，配上 F2 调试坞

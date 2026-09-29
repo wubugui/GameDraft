@@ -601,7 +601,7 @@ def run_sweep(
 
 def window_size_from_game_config(public_root: Path) -> tuple[int, int]:
     """``game_config.json`` 的 ``windowSize``（没有则 ``viewport``）；读不到回落标准的 1024×768。
-    与 ``src-tauri/src/main.rs`` 的 ``window_size_from_config`` 同口径。"""
+    与 ``src-electron/main.cjs`` 的 ``windowSize`` 同口径。"""
     cfg = public_root / "assets" / "data" / "game_config.json"
     try:
         data = json.loads(cfg.read_text(encoding="utf-8"))

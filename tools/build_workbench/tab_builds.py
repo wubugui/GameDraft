@@ -167,7 +167,7 @@ class BuildsTab(QWidget):
         if not b:
             return
         if not b.runnable_exe.is_file():
-            QMessageBox.warning(self, "跑不了", f"这个包里没有 gamedraft.exe：\n{b.path}")
+            QMessageBox.warning(self, "跑不了", f"这个包里没有 GameDraft.exe：\n{b.path}")
             return
         try:
             subprocess.Popen([str(b.runnable_exe)], cwd=str(b.path))

@@ -1,7 +1,7 @@
 """构建工作台的 GUI 冒烟：装得起来、配置能往返、按钮门控对、调度不误触发。
 
 离屏跑（`tools/conftest.py` 已把 QT_QPA_PLATFORM 设成 offscreen）。
-这里**不真跑构建**——那要两分多钟且依赖 Rust/ffmpeg；真构建由
+这里**不真跑构建**——那要几分钟且依赖 Electron/ffmpeg；真构建由
 `scripts/release.mjs` 那条线自己验。这里只保证工作台这一层不坏。
 """
 from __future__ import annotations
@@ -44,7 +44,7 @@ def _fake_repo(root: Path) -> Path:
 def _make_build(root: Path, name: str, built_at: str, *, verified: bool = True) -> Path:
     d = root / name
     d.mkdir(parents=True, exist_ok=True)
-    (d / "gamedraft.exe").write_bytes(b"MZ")
+    (d / "GameDraft.exe").write_bytes(b"MZ")
     (d / BUILD_MARKER).write_text(json.dumps({
         "target": "release", "builtAt": built_at,
         "fileCount": 2, "totalBytes": 2, "verified": verified,

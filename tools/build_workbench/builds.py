@@ -44,6 +44,10 @@ class BuildEntry:
 
     @property
     def runnable_exe(self) -> Path:
+        electron_exe = self.path / "GameDraft.exe"
+        if electron_exe.is_file():
+            return electron_exe
+        # 已归档的旧 Tauri 包仍可从工作台运行。
         return self.path / "gamedraft.exe"
 
 

@@ -3954,8 +3954,8 @@ export interface GameConfig {
    */
   viewport?: { width: number; height: number };
   /**
-   * 宿主窗口的期望尺寸：编辑器 F5 按它开预览窗，exe 启动时读它开 Tauri 窗
-   * （`src-tauri/src/main.rs`）。不影响逻辑分辨率，也**不**决定画面盒尺寸——
+   * 宿主窗口的期望尺寸：编辑器 F5 按它开预览窗，exe 启动时读它开 Electron 窗
+   * （`src-electron/main.cjs`）。不影响逻辑分辨率，也**不**决定画面盒尺寸——
    * 窗口被拖大/最大化后画面按视口比例等比放大。通常与 viewport 相同。
    */
   windowSize?: { width: number; height: number };

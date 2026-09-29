@@ -8,9 +8,9 @@
 dev server 端口会顺延(5173~5180、扫场 5195+),工作台端口由系统分配,按端口杀必漏。
 
 认得的:
-- 打包版游戏 gamedraft.exe(连同它的 WebView2 子进程)
+- 打包版游戏 GameDraft.exe(连同 Electron 渲染/工具子进程);兼容旧 WebView2 子进程
 - 游戏预览窗:带 ``GameDraft\\preview-profile`` 的专用 Chromium 实例(tools/dev/game_preview.py)
-- vite dev server / scripts/dev_agent.cjs / scripts/scene_sweep.mjs / tauri dev(工作目录或路径在仓库内)
+- vite dev server / scripts/dev_agent.cjs / scripts/scene_sweep.mjs / 旧 tauri dev(工作目录或路径在仓库内)
 - 仓库内 python 跑的 ``tools.*`` 编辑器、工作台、控制台、手册站、烘焙子任务
 - 仓库 .tools 下的孤儿 QtWebEngineProcess
 
@@ -76,6 +76,8 @@ def classify(d: dict) -> str | None:
     repo_ctx = in_repo(d["exe"]) or in_repo(d["cwd"]) or REPO_KEY in joined
 
     if name == "gamedraft.exe":
+        if any(arg.startswith("--type=") for arg in cmd):
+            return "游戏(打包版 Electron 子进程)"
         return "游戏(打包版)"
     if name == "msedgewebview2.exe" and "--webview-exe-name=gamedraft.exe" in joined:
         return "游戏(打包版)WebView2"

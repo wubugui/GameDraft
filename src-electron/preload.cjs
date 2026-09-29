@@ -38,6 +38,15 @@ const bridge = Object.freeze({
 });
 
 const url = new URL(location.href);
-if (url.protocol === 'gamedraft:' && url.hostname === 'game') {
+let devOrigin = null;
+try {
+  const raw = process.env.GAMEDRAFT_DEV_URL;
+  if (raw) {
+    const configured = new URL(raw);
+    if (['http:', 'https:'].includes(configured.protocol)) devOrigin = configured.origin;
+  }
+} catch { /* Only a valid explicit developer URL enables this bridge. */ }
+if ((url.protocol === 'gamedraft:' && url.hostname === 'game')
+    || (devOrigin && url.origin === devOrigin)) {
   globalThis.__GAMEDRAFT_ELECTRON__ = bridge;
 }

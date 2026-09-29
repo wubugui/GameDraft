@@ -28,10 +28,8 @@ describe('入口卫兵', () => {
     expect(v.level).toBe('warn');
   });
 
-  it('发行构建不对 origin 说三道四（Tauri 的 origin 本来就不是 127.0.0.1:5173）', () => {
-    expect(inspectEntry('http://tauri.localhost/', 'http://tauri.localhost', false))
-      .toEqual({ ok: true, level: null });
-    expect(inspectEntry('tauri://localhost/', 'tauri://localhost', false))
+  it('发行构建接受 Electron 的本地游戏协议', () => {
+    expect(inspectEntry('gamedraft://game/index.html', 'gamedraft://game', false))
       .toEqual({ ok: true, level: null });
   });
 

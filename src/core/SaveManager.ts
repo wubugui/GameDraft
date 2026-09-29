@@ -38,7 +38,7 @@ function slotKey(slot: number): string {
  * ## 落在哪
  *
  * 文件，不是浏览器存储——见 `storage/persistentStore.ts` 的长注释。开发期经 dev server
- * 写仓库 `local/gamedata/saves/slotN.json`，打包后经 Tauri 写 exe 旁 `gamedata/saves/`。
+ * 写仓库 `local/gamedata/saves/slotN.json`，打包后经 Electron 写 exe 旁 `gamedata/saves/`。
  * 两边同一套 v1 信封格式，档案可以直接互拷。
  *
  * ## 为什么是「内存镜像 + 异步落盘」
@@ -193,7 +193,7 @@ export class SaveManager implements ISaveDataProvider {
     return this.store?.persisted ?? false;
   }
 
-  /** 当前后端种类（'tauri' / 'http' / 'memory'），供调试面板显示。 */
+  /** 当前后端种类（'electron' / 'http' / 'memory'），供调试面板显示。 */
   storeKind(): string {
     return this.store?.kind ?? 'none';
   }

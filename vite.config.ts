@@ -1151,7 +1151,7 @@ const DEV_WATCH_IGNORED = [
   '**/dist/**',
   '**/.build/**',
   '**/local/**',
-  '**/src-tauri/target/**',
+  '**/src-electron/node_modules/**',
 ];
 
 /**
@@ -1163,14 +1163,14 @@ const DEV_WATCH_IGNORED = [
  * ## 为什么必须是文件
  *
  * `localStorage` 按 origin 隔离，而游戏会在**三种壳**里跑：编辑器内嵌 QtWebEngine、
- * 外部浏览器、打包后的 Tauri exe。三者是物理上互不相通的存储，同 origin 也不共享
+ * 外部浏览器、打包后的 Electron exe。三者是物理上互不相通的存储，同 origin 也不共享
  * ——"编辑器里存的档换浏览器就没了"就是这么来的。换成文件后三边读同一批档。
  *
  * ⚠ 这**不是**游戏数据：只写 `local/gamedata/`（已 gitignore）。`public/assets`、
  * `public/resources` 与 `resources/editor_projects` 一个字节都不碰。
  *
- * 打包产物里没有 dev server，那一侧由 Tauri 的 Rust 后端提供同样的目录语义
- * （见 `src-tauri/src/gamedata.rs`），两边同一套 JSON 格式，存档可以互拷。
+ * 打包产物里没有 dev server，那一侧由 Electron 文件后端提供同样的目录语义
+ * （见 `src-electron/storage.cjs`），两边同一套 JSON 格式，存档可以互拷。
  */
 function persistentStoreApi(): Plugin {
   const NAME_RE = /^[A-Za-z0-9_-]+$/;
@@ -1282,7 +1282,7 @@ function persistentStoreApi(): Plugin {
           }
           await mkdir(nsDir, { recursive: true });
           /**
-           * **先写临时文件再原子改名**，与打包侧（`src-tauri/src/gamedata.rs`）同一语义。
+           * **先写临时文件再原子改名**，与打包侧（`src-electron/storage.cjs`）同一语义。
            *
            * 直接覆写时写到一半被打断，玩家拿到的是一个被截断的存档——比没存上更糟，
            * 因为它看起来存在。开发期这份档还是 agent 验证链与编辑器内嵌预览共同的基准面，

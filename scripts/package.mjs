@@ -312,8 +312,8 @@ async function stage(manifest) {
  * 不烘的话发行版每次都直接开一局新游戏，玩家走不到标题上那个「继续」。
  * 详见 `src/core/bootParams.ts` 的长注释与 `tools/build/build_config.json`。
  *
- * 写成**独立的 `boot.js`** 而不是内联 `<script>`：Tauri 那边的 CSP 是
- * `script-src 'self' …`，内联脚本要 `'unsafe-inline'` 或 nonce，而外部文件天然合规。
+ * 写成**独立的 `boot.js`** 而不是内联 `<script>`：启动参数保持为可检查的产物文件，
+ * Electron 与静态验收服读取同一份内容。
  */
 function bakeBootConfig(gameDir) {
   const cfgPath = BUILD_CONFIG_PATH;
@@ -539,7 +539,7 @@ async function main() {
   info(`耗时：${((Date.now() - t0) / 1000).toFixed(1)}s`);
   console.log(
     `\n下一步：\n  验收产物   node scripts/verify_build.mjs --target ${TARGET}\n`
-    + (TARGET === 'release' ? '  打 exe     npm run tauri:build\n' : ''),
+    + (TARGET === 'release' ? '  打 exe     node scripts/release.mjs --out-dir <项目外目录>\n' : ''),
   );
   return report;
 }

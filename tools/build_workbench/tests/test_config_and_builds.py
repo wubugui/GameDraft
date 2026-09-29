@@ -32,11 +32,11 @@ def _write(path: Path, text: str) -> None:
 
 
 def _make_build(root: Path, name: str, *, built_at: str, verified: bool = True,
-                total: int = 1000, files: int = 3) -> Path:
+                total: int = 1000, files: int = 3, exe_name: str = "GameDraft.exe") -> Path:
     d = root / name
     (d / "game").mkdir(parents=True, exist_ok=True)
     _write(d / "game" / "index.html", "x")
-    _write(d / "gamedraft.exe", "MZ")
+    _write(d / exe_name, "MZ")
     _write(d / BUILD_MARKER, json.dumps({
         "target": "release", "builtAt": built_at,
         "fileCount": files, "totalBytes": total, "verified": verified,
@@ -45,7 +45,7 @@ def _make_build(root: Path, name: str, *, built_at: str, verified: bool = True,
 
 
 class ScheduleTests(unittest.TestCase):
-    """粒度只到天：一次构建 569 MB / 两分多钟，按小时排等于一天堆十几 GB。"""
+    """粒度只到天：发行包体积很大，按小时排会迅速占满留档盘。"""
 
     def test_返回的永远是将来的时刻(self) -> None:
         """这条钉住一个踩过的坑：调用方**必须**把结果记成状态，
@@ -229,6 +229,15 @@ class ScanTests(unittest.TestCase):
         self.assertFalse(b.verified)
         self.assertEqual(b.total_bytes, 12345)
         self.assertGreater(b.disk_bytes, 0)  # 实测体积独立于标记里记的
+
+    def test_新Electron入口与旧包都能运行(self) -> None:
+        _make_build(self.root, "electron", built_at="2026-08-29T04:00:00Z")
+        _make_build(self.root, "tauri", built_at="2026-08-28T04:00:00Z",
+                    exe_name="gamedraft.exe")
+        found = {b.name: b for b in scan_builds(self.root)}
+        self.assertEqual(found["electron"].runnable_exe.name, "GameDraft.exe")
+        self.assertTrue(found["electron"].runnable_exe.is_file())
+        self.assertTrue(found["tauri"].runnable_exe.is_file())
 
     def test_根目录不存在返回空_不抛(self) -> None:
         self.assertEqual(scan_builds(self.root / "没有这个"), [])

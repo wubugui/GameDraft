@@ -91,7 +91,7 @@ describe('fetchPayloadBytes：缺文件必须抛，不许把 404 正文当数据
     })) as unknown as typeof fetch;
   };
 
-  it('404（Tauri 协议带正文的那种）→ 抛，错误里带路径', async () => {
+  it('404（Electron 协议带正文的那种）→ 抛，错误里带路径', async () => {
     respond(404, 'text/plain; charset=utf-8', '404 找不到：/x/atlas_bin.bin');
     await expect(fetchPayloadBytes('/x/atlas_bin.bin')).rejects.toThrow(/\/x\/atlas_bin\.bin.*404/);
   });

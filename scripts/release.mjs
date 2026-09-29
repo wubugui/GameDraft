@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 出一个**可以直接发布的绿色版**：抽取内容 → 验收 → 编译 exe → 装配到指定目录。
+ * 出一个**可以直接发布的 Electron 绿色版**：抽取内容 → 扫描 → 验收 → 装配到指定目录。
  *
  * 这是编辑器和自动化**共用的唯一入口**。两边的区别只有一个：传进来的 `--out-dir`。
  *
@@ -13,12 +13,11 @@
  *
  * ## 产出
  *
- *   <out-dir>/gamedraft.exe          3 MB，双击即玩
+ *   <out-dir>/GameDraft.exe          双击即玩
  *   <out-dir>/game/                  游戏内容
  *   <out-dir>/.gamedraft-build.json  构建标记（下次覆盖的依据）+ 体积/耗时账
  *
- * 不打 NSIS 安装包：只要绿色版的话，makensis 压 566 MB 要多花四五分钟，
- * 对"定期自动构建"是纯浪费。要安装包单独跑 `npm run tauri:build`。
+ * 使用 src-electron/ 桌面壳与固定 SHA256 的 Electron ZIP；无需 Rust 工具链。
  *
  * ## 用法
  *
@@ -29,34 +28,24 @@
  *   node scripts/release.mjs --out-dir <目录> --verify-port 5401   （验收门起静态服务的端口，缺省 5299）
  *   node scripts/release.mjs --out-dir <目录> --sweep-port 5403 --sweep-offscreen
  *        （全场景扫描的隔离 dev 服端口，缺省 5197→5194 挨个试；扫描窗口挪到屏幕外，不挡人）
- *
- * exe 从 cargo 的 target 目录取：认 `CARGO_TARGET_DIR`（没设就是 `src-tauri/target`）。
+ *   node scripts/release.mjs --out-dir <目录> --electron-zip D:/cache/electron-v44.4.5-win32-x64.zip
  */
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync,
-  rmSync, statSync, writeFileSync,
+  existsSync, readdirSync, readFileSync, statSync, writeFileSync,
 } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BUILD_MARKER, TAURI_NO_BUNDLE_RESOURCES_PATCH, cargoTargetDir, checkOutputPath,
-  outputDirDisposition, parsePort, shellExeName,
+  BUILD_MARKER, checkOutputPath, outputDirDisposition, parsePort,
 } from './lib/build_helpers.mjs';
+import { ELECTRON_EXE, electronArchivePath } from './lib/electron_toolchain.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-
-/**
- * 覆盖构建时**不删**的目录：玩家存档。
- *
- * 与 `src-tauri/src/gamedata.rs` 的 `resolve_root` 同名——那边把存档落在 exe 旁的
- * `gamedata/`，这边就得认得它。两处改名要一起改。
- */
-const KEEP_ON_OVERWRITE = 'gamedata';
 
 // ------------------------------------------------------------------ 参数
 
@@ -89,6 +78,11 @@ const VERIFY_PORT_RAW = flag('verify-port', '5299');
 const SWEEP_PORT_RAW = flag('sweep-port');
 /** 扫描窗口挪到屏幕外（scene_sweep.mjs --offscreen：真窗口照常渲染，只是不挡人）。 */
 const SWEEP_OFFSCREEN = Boolean(flag('sweep-offscreen', false));
+/** Electron 桌面工具链输入：默认取用户缓存，亦可由调用方显式指定。 */
+const ELECTRON_ZIP = flag('electron-zip');
+const STEAMWORKS_DIR = flag('steamworks-dir');
+const STEAM_APP_ID = flag('steam-app-id');
+const STEAM_RESTART = Boolean(flag('steam-restart-through-steam', false));
 
 const t0 = Date.now();
 const step = (m) => console.log(`\n\u001b[36m▶ ${m}\u001b[0m`);
@@ -128,6 +122,14 @@ const outAbs = pathCheck.abs;
 
 const disposition = outputDirDisposition(inspectOutDir(outAbs), { force: FORCE });
 if (!disposition.ok) die(`${outAbs}\n  ${disposition.reason}`);
+for (const [name, value] of [
+  ['electron-zip', ELECTRON_ZIP], ['steamworks-dir', STEAMWORKS_DIR], ['steam-app-id', STEAM_APP_ID],
+]) if (value === true) die(`--${name} 后面要跟一个值`);
+const electronZip = electronArchivePath(ELECTRON_ZIP);
+if (!electronZip || !existsSync(electronZip)) {
+  die(`缺少 Electron 44.4.5 官方 ZIP：${electronZip ?? '无默认路径'}\n`
+    + '  放到 %LOCALAPPDATA%/GameDraft/electron-probe/，或传 --electron-zip <路径> / 设置 GAMEDRAFT_ELECTRON_ZIP。');
+}
 
 // ------------------------------------------------------------- 子进程
 
@@ -140,8 +142,6 @@ function run(cmd, cmdArgs, extraEnv = {}) {
       ...process.env,
       PYTHONIOENCODING: 'utf-8',
       PYTHONUTF8: '1',
-      // 刚装完 Rust 的机器上 PATH 还没刷新；补一手 cargo 的默认位置
-      PATH: `${join(process.env.USERPROFILE || process.env.HOME || '', '.cargo', 'bin')}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH}`,
       ...extraEnv,
     },
   });
@@ -170,43 +170,6 @@ async function walkFiles(dir) {
   }
   await rec(dir);
   return out;
-}
-
-/**
- * 覆盖前清掉上一次的构建产物，**但保住 `gamedata/`**。
- *
- * 手动构建的常态就是"输出目录不变、反复覆盖"，而 `gamedata/` 是**玩家存档**
- * ——整目录 `rm -rf` 会让每次构建都把自己的存档清掉。存档是这一整轮改动
- * 好不容易才让它"待在一个人能找到的地方"的东西，不能在这里又给弄丢。
- *
- * 残留的其它文件照清：说不清"这个包里到底有什么"比多留几个文件更糟。
- */
-function clearBuildOutputs(dir) {
-  for (const name of readdirSync(dir)) {
-    if (name === KEEP_ON_OVERWRITE) continue;
-    try {
-      rmSync(join(dir, name), { recursive: true, force: true });
-    } catch (e) {
-      // 上一次构建出来的 exe 很可能还开着——那时删它会以 EBUSY/EPERM 失败。
-      // 这个提示比原始错误码有用得多。
-      die(
-        `清理输出目录失败：${e.message}\n`
-        + `  ${join(dir, name)}\n`
-        + '  最常见的原因是**上一次构建出来的 gamedraft.exe 还开着**'
-        + '（或者有资源管理器/杀软正占着里面的文件）。关掉再跑一次。',
-      );
-    }
-  }
-}
-
-function copyTree(srcDir, destDir) {
-  mkdirSync(destDir, { recursive: true });
-  for (const name of readdirSync(srcDir)) {
-    const s = join(srcDir, name);
-    const d = join(destDir, name);
-    if (statSync(s).isDirectory()) copyTree(s, d);
-    else copyFileSync(s, d);
-  }
 }
 
 /**
@@ -262,7 +225,10 @@ async function main() {
     create: '新建', use: '目录为空，直接用', overwrite: '覆盖上一次构建',
   }[disposition.action]}）`);
 
-  step('1/5 抽取内容');
+  step('1/5 类型检查与抽取内容');
+  const tsc = join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
+  if (!existsSync(tsc)) die('找不到 TypeScript，先在项目根执行 npm install');
+  if (run(process.execPath, [tsc, '--noEmit']) !== 0) die('TypeScript 类型检查不通过，不出包');
   const packageArgs = ['--target', TARGET];
   if (BUILD_CONFIG === true) die('--build-config 后面要跟一个文件路径');
   if (BUILD_CONFIG) packageArgs.push('--build-config', resolve(String(BUILD_CONFIG)));
@@ -298,31 +264,29 @@ async function main() {
       + '  确认那些问题可以接受的话，加 --skip-verify 再跑一次。');
   }
 
-  step('4/5 编译 exe');
-  // --no-bundle：只要绿色版，不打 NSIS。省掉 makensis 压 566 MB 的四五分钟。
-  // --config 去掉 bundle.resources：那是给 NSIS 装的，绿色版不用；留着的话 tauri-build 每次编译都把
-  // 整份游戏内容抄进 cargo target 目录（见 build_helpers 的 TAURI_NO_BUNDLE_RESOURCES_PATCH）。
-  const tauriCli = join(ROOT, 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
-  if (!existsSync(tauriCli)) die('找不到 @tauri-apps/cli，先 npm install');
-  if (run(process.execPath, [tauriCli, 'build', '--no-bundle', '--config', TAURI_NO_BUNDLE_RESOURCES_PATCH]) !== 0) {
-    die('exe 编译失败，见上面的输出（需要 Rust 工具链：winget install Rustlang.Rustup）');
-  }
-  const exeName = shellExeName();
-  const exeSrc = join(cargoTargetDir(join(ROOT, 'src-tauri')), 'release', exeName);
-  if (!existsSync(exeSrc)) {
-    die(`编译报成功但找不到 ${exeSrc}（CARGO_TARGET_DIR=${process.env.CARGO_TARGET_DIR ?? '未设'}）`);
-  }
+  step('4/5 装配 Electron 与 Steamworks');
+  const electronArgs = [
+    '--target', TARGET, '--out-dir', outAbs, '--use-existing-game', '--accept-release-marker',
+    '--allow-project-release', '--electron-zip', electronZip,
+  ];
+  if (FORCE) electronArgs.push('--force');
+  if (STEAMWORKS_DIR) electronArgs.push('--steamworks-dir', resolve(String(STEAMWORKS_DIR)));
+  if (STEAM_APP_ID) electronArgs.push('--steam-app-id', String(STEAM_APP_ID));
+  if (STEAM_RESTART) electronArgs.push('--steam-restart-through-steam');
+  if (runNode('electron_release.mjs', electronArgs) !== 0) die('Electron 绿色包装配失败，见上面的输出');
 
-  step('5/5 装配到输出目录');
-  if (disposition.action === 'overwrite') clearBuildOutputs(outAbs);
-  mkdirSync(outAbs, { recursive: true });
-
-  copyFileSync(exeSrc, join(outAbs, exeName));
+  step('5/5 写构建标记');
+  const exeName = ELECTRON_EXE;
+  if (!existsSync(join(outAbs, exeName))) die(`Electron 装配报成功但找不到 ${join(outAbs, exeName)}`);
   const gameSrc = join(ROOT, 'release', TARGET, 'game');
   if (!existsSync(gameSrc)) die(`找不到打包内容 ${relative(ROOT, gameSrc)}`);
-  copyTree(gameSrc, join(outAbs, 'game'));
+  if (!existsSync(join(outAbs, 'game', 'index.html'))) die('Electron 包缺少 game/index.html');
 
-  const files = await walkFiles(outAbs);
+  const files = (await walkFiles(outAbs)).filter((f) => {
+    const rel = relative(outAbs, f).split(sep);
+    return rel[0] !== 'gamedata' && rel[0] !== BUILD_MARKER;
+  });
+  const gameFiles = await walkFiles(join(outAbs, 'game'));
   const totalBytes = files.reduce((n, f) => n + statSync(f).size, 0);
 
   let packageReport = null;
@@ -339,6 +303,7 @@ async function main() {
 
   const marker = {
     tool: 'gamedraft/scripts/release.mjs',
+    runtime: 'electron',
     target: TARGET,
     builtAt: new Date().toISOString(),
     fileCount: files.length,
@@ -356,9 +321,9 @@ async function main() {
   step('完成');
   info(`${outAbs}`);
   info(`  ${exeName.padEnd(15)} ${mb(statSync(join(outAbs, exeName)).size)}`);
-  info(`  game/           ${files.length - 2} 个文件`);
+  info(`  game/           ${gameFiles.length} 个文件`);
   info(`总计 ${mb(totalBytes)}，耗时 ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  console.log(`\n双击 ${join(outAbs, exeName)} 即可运行（存档落在同目录的 gamedata/）。`);
+  console.log(`\n双击 ${join(outAbs, exeName)} 即可运行（存档优先落在同目录的 gamedata/）。`);
 }
 
 main().catch((e) => {

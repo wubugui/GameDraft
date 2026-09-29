@@ -15,7 +15,6 @@
  * | 后端 | 何时用 | 落在哪 |
  * |---|---|---|
  * | `ElectronFsStore` | Electron 打包版 | exe 旁 `gamedata/`(见 src-electron) |
- * | `TauriFsStore`  | Tauri 打包版 | exe 旁 `gamedata/`(见 src-tauri) |
  * | `HttpFileStore` | 开发期(dev server 在) | 仓库 `local/gamedata/` |
  * | `MemoryStore`   | 文件后端都不可用 | 内存,进程结束即失 |
  *
@@ -31,7 +30,7 @@
 /** 一个命名空间下的键值存储。值一律是字符串(JSON 文本)。 */
 export interface PersistentStore {
   /** 后端种类,用于日志与降级提示。 */
-  readonly kind: 'electron' | 'tauri' | 'http' | 'memory';
+  readonly kind: 'electron' | 'http' | 'memory';
   /** 写入是否真的会留下来。`memory` 后端为 false。 */
   readonly persisted: boolean;
   /** 一次性读出该命名空间下所有键值(启动时水化用)。 */
@@ -101,54 +100,6 @@ class ElectronFsStore implements PersistentStore {
     assertName('namespace', namespace);
     assertName('key', key);
     await this.bridge.remove(namespace, key);
-  }
-}
-
-// ---------------------------------------------------------------- Tauri 后端
-
-type TauriInvoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
-
-function tauriInvoke(): TauriInvoke | null {
-  const w = globalThis as unknown as {
-    __TAURI__?: { core?: { invoke?: TauriInvoke }; invoke?: TauriInvoke };
-  };
-  const t = w.__TAURI__;
-  if (!t) return null;
-  // Tauri v2 是 __TAURI__.core.invoke；v1 是 __TAURI__.invoke。两个都认。
-  return t.core?.invoke ?? t.invoke ?? null;
-}
-
-/** 打包后的 exe：经 Rust 侧读写 exe 旁的 `gamedata/`。 */
-class TauriFsStore implements PersistentStore {
-  readonly kind = 'tauri' as const;
-  readonly persisted = true;
-  private invoke: TauriInvoke;
-
-  constructor(invoke: TauriInvoke) {
-    this.invoke = invoke;
-  }
-
-  async readAll(namespace: string): Promise<Record<string, string>> {
-    assertName('namespace', namespace);
-    const out = await this.invoke('gamedata_read_all', { namespace });
-    if (!out || typeof out !== 'object') return {};
-    const rec: Record<string, string> = {};
-    for (const [k, v] of Object.entries(out as Record<string, unknown>)) {
-      if (typeof v === 'string') rec[k] = v;
-    }
-    return rec;
-  }
-
-  async write(namespace: string, key: string, value: string): Promise<void> {
-    assertName('namespace', namespace);
-    assertName('key', key);
-    await this.invoke('gamedata_write', { namespace, key, value });
-  }
-
-  async remove(namespace: string, key: string): Promise<void> {
-    assertName('namespace', namespace);
-    assertName('key', key);
-    await this.invoke('gamedata_remove', { namespace, key });
   }
 }
 
@@ -249,17 +200,6 @@ async function probeBackends(): Promise<PersistentStore> {
     }
   }
 
-  const invoke = tauriInvoke();
-  if (invoke) {
-    const store = new TauriFsStore(invoke);
-    try {
-      await store.readAll('saves');
-      return store;
-    } catch (e) {
-      console.warn('persistentStore: Tauri 后端不可用,继续探测', e);
-    }
-  }
-
   const http = new HttpFileStore();
   try {
     await http.readAll('saves');
@@ -269,14 +209,14 @@ async function probeBackends(): Promise<PersistentStore> {
   }
 
   console.warn(
-    'persistentStore: 没有可用的持久化后端（Electron、Tauri 和 dev server 存储 API 均不可用）。'
+    'persistentStore: 没有可用的持久化后端（Electron 和 dev server 存储 API 均不可用）。'
     + '本次运行的存档与设置只留在内存里,关掉就没了。',
   );
   return new MemoryStore();
 }
 
 /**
- * 挑一个能用的后端。正式 Electron > Tauri > dev server > 内存。
+ * 挑一个能用的后端。正式 Electron > dev server > 内存。
  *
  * dev server 的探测是**真发一次请求**,而不是看 `import.meta.env.DEV`——构建出来的
  * 产物也可能被某个静态服务器托着跑,那时候中间件并不存在,只看构建标志会误判。

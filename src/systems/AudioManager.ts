@@ -24,7 +24,7 @@ export interface ProceduralBreathHandle extends AudioPlaybackHandle {
 const MIX_SETTINGS_NAMESPACE = 'settings';
 const MIX_SETTINGS_KEY = 'audio';
 /**
- * 拖滑条时每个像素都会调一次 setVolume；每次都写一遍文件（dev server PUT / Tauri 写盘）纯属浪费。
+ * 拖滑条时每个像素都会调一次 setVolume；每次都写一遍文件（dev server PUT / Electron 写盘）纯属浪费。
  * 停手这么久才落一次盘。这是 I/O 节流，不是游戏时间，所以用墙钟定时器（世界暂停时设置页照样要能存）。
  */
 const MIX_PERSIST_DEBOUNCE_MS = 300;
@@ -1564,7 +1564,7 @@ export class AudioManager implements IGameSystem, IAudioSettingsProvider {
    * - `Howler.autoSuspend = false`：Howler 缺省 30s 没声音就把 AudioContext 挂起、下次播放再 resume。叠上浏览器对
    *   没焦点 / 被盖住的窗口的后台降级，就是"播着播着断了、点回窗口再播一下才续上"。进程活着上下文就活着。
    * - 每秒看一眼上下文：挂起就 resume。同一时刻只挂一个 resume 在飞——浏览器不放行时那个 promise 会一直等到手势
-   *   才落（Chrome 的行为），不会堆积；放行了（专用预览窗 / Tauri 客户端带 `--autoplay-policy=no-user-gesture-required`）
+   *   才落（Chrome 的行为），不会堆积；放行了（专用预览窗 / Electron 壳带 `--autoplay-policy=no-user-gesture-required`）
    *   下一拍就是 running。
    * - 上下文已 running 而播放门还关着：直接开门放队列，**不放解锁提示音**（那是给"你点了一下"的回应；这里根本没人点）。
    *   没有这一步，自动播放放行的窗口里 `playSfx` 照样排队等一个永远不来的首次手势——工作台的试听就是这么静默丢掉的。

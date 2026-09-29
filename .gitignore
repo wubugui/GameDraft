@@ -19,9 +19,6 @@ coverage/
 # 打包管线的中间产物与产物根（抽取清单、staging、发行包）
 .build/
 release/
-# Rust/Tauri 的编译产物（src-tauri 下的源码与配置要入库，target/ 不要）
-src-tauri/target/
-src-tauri/gen/
 # 运行时持久化：存档、玩家设置、调试偏好。**不是游戏数据**，是这台机器上这一份进度。
 local/
 artifact/content_pipeline/

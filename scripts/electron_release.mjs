@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 /**
- * Windows Electron 绿色包试验入口。现有 Tauri release.mjs 保持原样。
+ * Windows Electron 绿色包装配入口。release.mjs 会先跑游戏抽取和验收，再调用本脚本。
  *
- * node scripts/electron_release.mjs --out-dir C:/builds/gamedraft-electron \
- *   --electron-zip C:/downloads/electron-v44.4.5-win32-x64.zip \
- *   --electron-sha256 <官方 SHASUMS256.txt 中该 ZIP 的 SHA256>
+ * node scripts/electron_release.mjs --out-dir C:/builds/gamedraft-electron
  *
  * 默认先以 package.mjs 抽取 game/。复用现成 staging 时显式加 --use-existing-game。
  * 正式 AppID 可显式传 --steam-app-id；测试 AppID 480 只通过运行时环境变量传给壳。
@@ -20,20 +18,24 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { checkOutputPath } from './lib/build_helpers.mjs';
+import { BUILD_MARKER, checkOutputPath } from './lib/build_helpers.mjs';
+import {
+  ELECTRON_ARCHIVE_SHA256, ELECTRON_VERSION, electronArchivePath,
+} from './lib/electron_toolchain.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MARKER = '.gamedraft-electron-build.json';
 const TOOL = 'gamedraft/scripts/electron_release.mjs';
 const SHELL = join(ROOT, 'src-electron');
 const USAGE = `用法：node scripts/electron_release.mjs --out-dir <项目外目录> \\
-  --electron-zip <官方 Windows x64 ZIP> --electron-sha256 <64 位 SHA256> \\
+  [--electron-zip <官方 Windows x64 ZIP>] [--electron-sha256 <固定 SHA256>] \\
   [--target dev|release] [--use-existing-game] [--steamworks-dir <已安装的 steamworks.js>] \\
   [--steam-app-id <正式 AppID>] [--steam-restart-through-steam]
 
-Electron ZIP 从 https://github.com/electron/electron/releases 获取；SHA256 从同版 SHASUMS256.txt 核对。
+Electron ${ELECTRON_VERSION} ZIP 从 https://github.com/electron/electron/releases 获取；始终核对项目固定 SHA256。
+默认缓存路径：%LOCALAPPDATA%/GameDraft/electron-probe/；也可设 GAMEDRAFT_ELECTRON_ZIP。
 默认调用 TypeScript 检查与 scripts/package.mjs；现成 release/<target>/game 可加 --use-existing-game。
-输出目录只接受空目录或本脚本上次生成的目录；覆盖时保留 gamedata/。
+输出目录只接受空目录或本脚本上次生成的目录；覆盖时保留 gamedata/。正式 release.mjs 也认已有构建标记。
 测试 AppID 480 只在启动包时设置 GAMEDRAFT_STEAM_APP_ID=480，不写进包。`;
 
 function fail(message) {
@@ -42,7 +44,10 @@ function fail(message) {
 
 function parseArgs(argv) {
   const values = new Map();
-  const flags = new Set(['help', 'use-existing-game', 'steam-restart-through-steam']);
+  const flags = new Set([
+    'help', 'use-existing-game', 'steam-restart-through-steam',
+    'accept-release-marker', 'allow-project-release', 'force',
+  ]);
   const options = new Set(['target', 'out-dir', 'electron-zip', 'electron-sha256', 'steamworks-dir', 'steam-app-id']);
   for (let i = 0; i < argv.length; i += 1) {
     const raw = argv[i];
@@ -67,17 +72,26 @@ function inside(base, candidate) {
   return rel === '' || (!rel.startsWith('..' + sep) && rel !== '..' && !isAbsolute(rel));
 }
 
-/** 输出必须在仓库外，不经过任何 junction/symlink，也不能落在另一个 Git 工作树里。 */
-function checkDestination(raw) {
+/** 默认仓库外；正式入口可用 release/ 下的安全子目录。拒绝重解析点和其他工作树。 */
+function checkDestination(raw, { allowProjectRelease = false } = {}) {
   if (!raw) fail(`缺少 --out-dir。\n${USAGE}`);
   const verdict = checkOutputPath(raw, ROOT);
   if (!verdict.ok) fail(`输出路径不安全：${verdict.reason}`);
   const out = verdict.abs;
-  if (inside(ROOT, out)) fail('Electron 绿色包必须放在项目外');
+  const projectRelease = join(ROOT, 'release');
+  const stagingRoots = [join(projectRelease, 'dev'), join(projectRelease, 'release')];
+  if (out === projectRelease || stagingRoots.some((stage) => inside(stage, out) || inside(out, stage))) {
+    fail(`输出目录不能覆盖打包中转目录：${out}`);
+  }
+  if (inside(ROOT, out) && !(allowProjectRelease && inside(projectRelease, out))) {
+    fail('Electron 绿色包必须放在项目外；正式 release.mjs 可输出到仓库 release/ 下');
+  }
   for (let path = out; ; path = dirname(path)) {
     if (existsSync(path)) {
       if (lstatSync(path).isSymbolicLink()) fail(`输出路径经过链接或 junction：${path}`);
-      if (existsSync(join(path, '.git'))) fail(`输出路径位于 Git 工作树：${path}`);
+      if (existsSync(join(path, '.git')) && !(allowProjectRelease && path === ROOT)) {
+        fail(`输出路径位于其他 Git 工作树：${path}`);
+      }
     }
     if (path === dirname(path)) break;
   }
@@ -86,22 +100,31 @@ function checkDestination(raw) {
   while (!existsSync(ancestor)) ancestor = dirname(ancestor);
   const real = realpathSync.native(ancestor);
   const realOut = resolve(real, relative(ancestor, out));
-  if (inside(ROOT, realOut) || inside(realOut, ROOT)) fail(`输出路径实际指向项目或项目上级：${realOut}`);
+  if ((inside(ROOT, realOut) && !(allowProjectRelease && inside(projectRelease, realOut)))
+    || inside(realOut, ROOT)) fail(`输出路径实际指向项目或项目上级：${realOut}`);
   return out;
 }
 
-function checkExistingOutput(out) {
+function checkExistingOutput(out, { acceptReleaseMarker = false, force = false } = {}) {
   if (!existsSync(out)) return;
   if (!lstatSync(out).isDirectory()) fail(`输出路径不是目录：${out}`);
   const names = readdirSync(out);
   if (names.length === 0) return;
-  const markerPath = join(out, MARKER);
-  if (!existsSync(markerPath) || lstatSync(markerPath).isSymbolicLink()) {
-    fail(`目标目录非空、也没有本脚本的 ${MARKER}：${out}`);
+  const ownMarkerPath = join(out, MARKER);
+  const releaseMarkerPath = join(out, BUILD_MARKER);
+  let recognized = false;
+  for (const markerPath of [ownMarkerPath, ...(acceptReleaseMarker ? [releaseMarkerPath] : [])]) {
+    if (!existsSync(markerPath)) continue;
+    if (lstatSync(markerPath).isSymbolicLink()) fail(`旧构建标记是链接：${markerPath}`);
+    let marker;
+    try { marker = JSON.parse(readFileSync(markerPath, 'utf8')); } catch {
+      if (!force) fail(`旧构建标记无法读取：${markerPath}`);
+      continue;
+    }
+    if (markerPath === ownMarkerPath && marker.tool === TOOL && marker.schema === 1) recognized = true;
+    if (markerPath === releaseMarkerPath && marker.tool === 'gamedraft/scripts/release.mjs') recognized = true;
   }
-  let marker;
-  try { marker = JSON.parse(readFileSync(markerPath, 'utf8')); } catch { fail(`旧构建标记无法读取：${markerPath}`); }
-  if (marker.tool !== TOOL || marker.schema !== 1) fail(`旧构建标记不属于本脚本：${markerPath}`);
+  if (!recognized && !force) fail(`目标目录非空且没有可识别的构建标记：${out}；确认无误可加 --force`);
   for (const name of names) {
     const entry = join(out, name);
     if (lstatSync(entry).isSymbolicLink()) fail(`旧包有链接或 junction，拒绝覆盖：${entry}`);
@@ -166,6 +189,8 @@ function shellFiles(stageApp) {
   for (const name of readdirSync(SHELL)) {
     if (name.endsWith('.cjs') && !required.includes(name)) copyTree(join(SHELL, name), join(stageApp, name));
   }
+  const assets = join(SHELL, 'assets');
+  if (existsSync(assets)) copyTree(assets, join(stageApp, 'assets'));
 }
 
 function countFiles(root) {
@@ -186,6 +211,20 @@ function countFiles(root) {
 
 function clearPreviousBuild(out) {
   if (!existsSync(out)) { mkdirSync(out, { recursive: true }); return; }
+  const outReal = realpathSync.native(out);
+  // A previous build may have been modified by hand. Check every descendant
+  // before recursive removal so a nested junction cannot escape this output.
+  const inspect = (dir) => {
+    for (const name of readdirSync(dir)) {
+      if (dir === out && name === 'gamedata') continue;
+      const entry = join(dir, name);
+      const stat = lstatSync(entry);
+      if (stat.isSymbolicLink()) fail(`旧包含链接或 junction，拒绝覆盖：${entry}`);
+      if (!inside(outReal, realpathSync.native(entry))) fail(`旧包路径越界，拒绝覆盖：${entry}`);
+      if (stat.isDirectory()) inspect(entry);
+    }
+  };
+  inspect(out);
   // 覆盖只发生在路径与 marker 验证后。标记先删；中途失败时旧包不会被误认为完整包。
   const marker = join(out, MARKER);
   if (existsSync(marker)) rmSync(marker);
@@ -203,14 +242,21 @@ async function main() {
   if (args.has('help')) { console.log(USAGE); return; }
   const target = args.get('target') ?? 'release';
   if (!['dev', 'release'].includes(target)) fail(`未知 target：${target}`);
-  const out = checkDestination(args.get('out-dir'));
-  checkExistingOutput(out);
+  const destinationOptions = { allowProjectRelease: args.has('allow-project-release') };
+  const outputOptions = { acceptReleaseMarker: args.has('accept-release-marker'), force: args.has('force') };
+  const out = checkDestination(args.get('out-dir'), destinationOptions);
+  checkExistingOutput(out, outputOptions);
 
-  const zipArg = args.get('electron-zip');
-  const expectedHash = String(args.get('electron-sha256') ?? '').toLowerCase();
-  if (!zipArg || !/^[a-f0-9]{64}$/.test(expectedHash)) fail(`必须给 --electron-zip 和 64 位 --electron-sha256。\n${USAGE}`);
-  const zip = resolve(zipArg);
-  if (!existsSync(zip) || !lstatSync(zip).isFile()) fail(`找不到 Electron ZIP：${zip}`);
+  const suppliedHash = args.get('electron-sha256');
+  if (suppliedHash && String(suppliedHash).toLowerCase() !== ELECTRON_ARCHIVE_SHA256) {
+    fail(`Electron ZIP 必须匹配项目固定 SHA256 ${ELECTRON_ARCHIVE_SHA256}；传入 ${suppliedHash}`);
+  }
+  const expectedHash = ELECTRON_ARCHIVE_SHA256;
+  const zip = electronArchivePath(args.get('electron-zip'));
+  if (!zip) fail('找不到 Electron ZIP 缓存根。请给 --electron-zip 或设置 GAMEDRAFT_ELECTRON_ZIP / LOCALAPPDATA');
+  if (!existsSync(zip) || !lstatSync(zip).isFile()) {
+    fail(`找不到 Electron ${ELECTRON_VERSION} 官方 ZIP：${zip}\n从 https://github.com/electron/electron/releases 下载对应 Windows x64 ZIP，或给 --electron-zip <路径>；文件仍须匹配固定 SHA256 ${expectedHash}`);
+  }
 
   const shellPackagePath = join(SHELL, 'package.json');
   if (!existsSync(shellPackagePath)) fail(`找不到 ${shellPackagePath}`);
@@ -218,6 +264,7 @@ async function main() {
   const expectedElectronVersion = shellPackage.devDependencies?.electron ?? shellPackage.dependencies?.electron;
   const expectedSteamVersion = shellPackage.dependencies?.['steamworks.js'];
   if (!/^\d+\.\d+\.\d+$/.test(expectedElectronVersion ?? '')) fail('src-electron/package.json 必须精确锁定 Electron 版本');
+  if (expectedElectronVersion !== ELECTRON_VERSION) fail(`项目固定 Electron ${ELECTRON_VERSION}，壳声明 ${expectedElectronVersion}`);
   if (!/^\d+\.\d+\.\d+$/.test(expectedSteamVersion ?? '')) fail('src-electron/package.json 必须精确锁定 steamworks.js 版本');
 
   let appId = null;
@@ -235,6 +282,12 @@ async function main() {
 
   const steamSource = resolve(args.get('steamworks-dir') ?? join(SHELL, 'node_modules', 'steamworks.js'));
   const steamPackage = join(steamSource, 'package.json');
+  if (!args.has('steamworks-dir') && !existsSync(steamPackage)) {
+    const npmCli = process.env.npm_execpath || join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    if (!existsSync(npmCli)) fail(`缺少 steamworks.js 与 npm CLI：${steamSource}；先在 src-electron 执行 npm ci --omit=dev`);
+    console.log('安装锁定的 steamworks.js 运行依赖（npm ci --omit=dev）');
+    run(process.execPath, [npmCli, 'ci', '--omit=dev', '--prefix', SHELL]);
+  }
   if (!existsSync(steamPackage)) fail(`缺少 steamworks.js 运行依赖：${steamSource}；先在 src-electron 安装依赖或给 --steamworks-dir`);
   if (lstatSync(steamSource).isSymbolicLink()) fail(`Steam 原生模块不接受链接目录：${steamSource}`);
   const steamVersion = JSON.parse(readFileSync(steamPackage, 'utf8')).version;
@@ -256,7 +309,7 @@ async function main() {
   // 先重新校验父目录，随后仅在这个明确指定的输出父目录创建带唯一前缀的临时目录。
   const stageParent = dirname(out);
   mkdirSync(stageParent, { recursive: true });
-  checkDestination(out);
+  checkDestination(out, destinationOptions);
   const stageParentReal = realpathSync.native(stageParent);
   const tempRoot = mkdtempSync(join(stageParent, '.gamedraft-electron-stage-'));
   try {
@@ -302,8 +355,8 @@ async function main() {
     };
 
     // 所有输入齐备、临时包装配成功之后才碰用户指定的目标目录。
-    checkDestination(out);
-    checkExistingOutput(out);
+    checkDestination(out, destinationOptions);
+    checkExistingOutput(out, outputOptions);
     clearPreviousBuild(out);
     for (const name of readdirSync(bundle)) copyTree(join(bundle, name), join(out, name));
     writeFileSync(join(out, MARKER), `${JSON.stringify(marker, null, 2)}\n`);

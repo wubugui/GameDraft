@@ -37,7 +37,7 @@ class SettingsTab(QWidget):
         self._mode.addItem("每周固定几天", "weekly")
         self._mode.currentIndexChanged.connect(self._sync_mode_widgets)
 
-        # 粒度只到天：一次构建 569 MB、两分多钟，按小时排等于一天堆十几 GB
+        # 粒度只到天：发行包体积很大，按小时排会迅速占满留档盘。
         self._every_n_days = QSpinBox()
         self._every_n_days.setRange(1, 60)
         self._every_n_days.setSuffix(" 天一次")
@@ -78,6 +78,7 @@ class SettingsTab(QWidget):
         # ---- 位置 ----
         self._builds_root = QLineEdit()
         self._builds_root.setPlaceholderText("每次构建落在 <这个目录>/<时间戳>/")
+        self._builds_root.setToolTip("请选择 Git 项目外的目录；Electron 绿色包不能装配到源码树里。")
         pick_builds = QPushButton("选…")
         pick_builds.clicked.connect(lambda: self._pick_dir(self._builds_root, "构建根目录"))
         builds_row = QHBoxLayout()

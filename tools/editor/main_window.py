@@ -58,6 +58,25 @@ _GAME_DEV_PORT = urlsplit(GAME_DEV_URL).port or 5173
 _TITLE_BOOT_LAUNCH_PARAMS = "screen_title=1"
 
 
+def _build_output_is_in_git_checkout(path: Path, project_root: Path | None = None) -> bool:
+    """挡住 Git 工作树及其上级目录，避免覆盖项目或旧的仓库内路径。"""
+    resolved = path.resolve()
+    if project_root is not None:
+        project = project_root.resolve()
+        if resolved == project or resolved in project.parents:
+            return True
+    return any((parent / ".git").exists() for parent in (resolved, *resolved.parents))
+
+
+def _default_build_output_dir(target: str) -> Path:
+    """编辑器手动构建固定覆盖一处；优先沿用本机 F:/build 的发行包惯例。"""
+    if os.name == "nt" and Path("F:/build").is_dir():
+        preferred = Path("F:/build/GameDraft/editor") / target
+        if not _build_output_is_in_git_checkout(preferred):
+            return preferred
+    return Path.home() / "GameDraft Builds" / target
+
+
 def _log_mentions_port_conflict(log: str) -> bool:
     """vite/node 因端口被占失败的输出指纹(strictPort: "Port 5173 is already in use")。"""
     low = log.lower()
@@ -2580,7 +2599,7 @@ class MainWindow(QMainWindow):
         vp = cfg.get("viewport")
         if isinstance(vp, dict) and vp.get("width") and vp.get("height"):
             return (int(vp["width"]), int(vp["height"]))
-        # 与 src-tauri/src/main.rs 的 FALLBACK_WINDOW_SIZE 同值：两边回落也要同比例
+        # 与 src-electron/main.cjs 的 FALLBACK_SIZE 同值：两边回落也要同比例
         return (1024, 768)
 
     def _focus_game_tab_and_load(self, url: str | None = None,
@@ -3163,11 +3182,11 @@ class MainWindow(QMainWindow):
                     self._format_build_summary(tgt),
                 )
             else:
-                # 失败原因（缺 ffmpeg、验收不通过、输出目录被拒、缺 Rust 工具链）都在尾部，
+                # 失败原因（缺 ffmpeg、验收不通过、输出目录被拒、Electron 依赖缺失）都在尾部，
                 # 给足 60 行——这些报错通常带着一段可照做的处置说明。
                 tail = "\n".join(self._build_log.splitlines()[-60:])
                 QMessageBox.critical(
-                    self, "构建失败", tail or f"npm run release（{tgt} 档）退出码 {code}",
+                    self, "构建失败", tail or f"scripts/release.mjs（{tgt} 档）退出码 {code}",
                 )
 
         proc.readyReadStandardOutput.connect(_on_out)
@@ -3175,7 +3194,7 @@ class MainWindow(QMainWindow):
         proc.errorOccurred.connect(
             lambda _e: QMessageBox.critical(
                 self, "构建失败",
-                "未找到 npm，请确认已安装 Node.js 且 npm 在 PATH 中。",
+                "未找到 Node.js，请确认 node 在 PATH 中。",
             ) if proc.error() == QProcess.ProcessError.FailedToStart else None,
         )
         proc.start(program, args)
@@ -3194,16 +3213,24 @@ class MainWindow(QMainWindow):
         两边同一个机制。
         """
         remembered = str(self._settings.value(self._BUILD_OUT_DIR_KEY, "") or "")
-        default = remembered or (
-            str(Path(self._model.project_path) / "release" / "ship" / target)
-            if self._model.project_path else ""
-        )
+        if remembered and _build_output_is_in_git_checkout(Path(remembered), Path(self._model.project_path)):
+            remembered = ""  # 旧 Tauri 缺省在仓库内，不能继续交给 Electron 装配器。
+        default_path = Path(remembered) if remembered else _default_build_output_dir(target)
+        if not default_path.exists():
+            try:
+                default_path.mkdir(parents=True)
+            except OSError as exc:
+                QMessageBox.warning(self, "构建目录不可用", f"无法创建输出目录：\n{default_path}\n{exc}")
+                return None
         chosen = QFileDialog.getExistingDirectory(
-            self, f"{target} 档输出到哪个目录（会被整体覆盖）", default,
+            self, f"{target} 档输出到哪个目录（会被整体覆盖）", str(default_path),
         )
         if not chosen:
             return None
         chosen = str(Path(chosen))
+        if _build_output_is_in_git_checkout(Path(chosen), Path(self._model.project_path)):
+            QMessageBox.warning(self, "输出目录不在项目外", "Electron 发行包必须放在 Git 工作树外。")
+            return None
         # 记住的是**编辑器本机偏好**，不写进任何配置文件（见 _BUILD_OUT_DIR_KEY 的注释）
         self._settings.setValue(self._BUILD_OUT_DIR_KEY, chosen)
         return chosen
@@ -3232,7 +3259,7 @@ class MainWindow(QMainWindow):
         if out_dir:
             lines.append("")
             lines.append(f"输出：{out_dir}")
-            lines.append(f"双击 {Path(out_dir) / 'gamedraft.exe'} 即可运行。")
+            lines.append(f"双击 {Path(out_dir) / 'GameDraft.exe'} 即可运行。")
         return "\n".join(lines)
 
     # ---- validation -------------------------------------------------------

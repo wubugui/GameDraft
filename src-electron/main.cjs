@@ -16,6 +16,16 @@ for (const stream of [process.stdout, process.stderr]) {
 
 const SCHEME = 'gamedraft';
 const HOME = `${SCHEME}://game/index.html`;
+function configuredDevUrl() {
+  const raw = process.env.GAMEDRAFT_DEV_URL;
+  if (!raw) return null;
+  const url = new URL(raw);
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) {
+    throw new Error('GAMEDRAFT_DEV_URL must be an HTTP(S) URL without credentials or fragment');
+  }
+  return url;
+}
+const DEV_URL = configuredDevUrl();
 const FALLBACK_SIZE = { width: 1024, height: 768 };
 const MIME = Object.freeze({
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -68,10 +78,19 @@ function isGameUrl(raw) {
   }
 }
 
+function isConfiguredDevUrl(raw) {
+  if (!DEV_URL) return false;
+  try {
+    return new URL(raw).origin === DEV_URL.origin;
+  } catch {
+    return false;
+  }
+}
+
 function requireGameSender(event, window) {
   if (!window || window.isDestroyed() || event.sender !== window.webContents
       || event.senderFrame !== window.webContents.mainFrame
-      || !isGameUrl(event.senderFrame?.url || '')) {
+      || !(isGameUrl(event.senderFrame?.url || '') || isConfiguredDevUrl(event.senderFrame?.url || ''))) {
     throw new Error('IPC caller is not the GameDraft game window');
   }
 }
@@ -301,7 +320,17 @@ async function runSmoke(window) {
       fatalError: document.querySelector('#game-fatal-error')?.textContent || null,
       entryBlocked: document.querySelector('#game-entry-blocked')?.textContent || null,
       webgpuExposed: Boolean(navigator.gpu),
+      electronBridge: Boolean(window.__GAMEDRAFT_ELECTRON__),
+      viteHmrScript: Boolean(document.querySelector('script[src*="/@vite/client"]')),
     };
+    if (location.protocol === 'http:' || location.protocol === 'https:') {
+      try { out.devStorageApiStatus = (await fetch('/__gamedraft-api/store/saves', { cache: 'no-store' })).status; }
+      catch (error) { out.devStorageApiError = String(error); }
+    }
+    if (window.__GAMEDRAFT_ELECTRON__) {
+      try { out.steamBridgeStatus = await window.__GAMEDRAFT_ELECTRON__.steam.status(); }
+      catch (error) { out.steamBridgeError = String(error); }
+    }
     if (navigator.gpu) {
       try {
         const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
@@ -360,6 +389,7 @@ async function launch(initialized) {
   const scale = Math.min(1, (workArea.width - 32) / size.width, (workArea.height - 80) / size.height);
   const window = new BrowserWindow({
     title: 'GameDraft',
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
     width: Math.round(size.width * scale), height: Math.round(size.height * scale),
     minWidth: Math.round(size.width / 2), minHeight: Math.round(size.height / 2),
     useContentSize: true, resizable: true, show: false, center: true,
@@ -377,8 +407,9 @@ async function launch(initialized) {
   window.webContents.on('render-process-gone', (_event, details) => log('render-process-gone', details));
   app.on('child-process-gone', (_event, details) => log('child-process-gone', details));
   window.once('ready-to-show', () => window.show());
-  await window.loadURL(HOME);
-  log('game-window-loaded', { url: HOME, root, contentSize: window.getContentSize() });
+  const entryUrl = DEV_URL?.href || HOME;
+  await window.loadURL(entryUrl);
+  log('game-window-loaded', { url: entryUrl, root, contentSize: window.getContentSize() });
   if (smokeOption('steam-smoke-out')) {
     setTimeout(() => void runSmoke(window).catch(error => log('smoke-error', { message: error.message })), 7000);
   }

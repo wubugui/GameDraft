@@ -40,7 +40,7 @@ describe('MemoryStore', () => {
 });
 
 describe('后端挑选', () => {
-  it('Electron 正式包使用受限文件桥，写失败会传回调用方', async () => {
+  it('Electron 正式包使用文件桥，写失败会传回调用方', async () => {
     const bridge = {
       readAll: vi.fn(async () => ({ slot0: '{"a":1}', bad: 42 })),
       write: vi.fn(async () => { throw new Error('disk full'); }),
@@ -70,21 +70,7 @@ describe('后端挑选', () => {
     expect(bridge.readAll).not.toHaveBeenCalled();
   });
 
-  it('Tauri 在就用 Tauri', async () => {
-    const invoke = vi.fn(async (cmd: string) => (cmd === 'gamedata_read_all' ? {} : undefined));
-    vi.stubGlobal('__TAURI__', { core: { invoke } });
-    const store = await resolvePersistentStore();
-    expect(store.kind).toBe('tauri');
-    expect(store.persisted).toBe(true);
-  });
-
-  it('Tauri v1 的 __TAURI__.invoke 形状也认', async () => {
-    const invoke = vi.fn(async () => ({}));
-    vi.stubGlobal('__TAURI__', { invoke });
-    expect((await resolvePersistentStore()).kind).toBe('tauri');
-  });
-
-  it('没有 Tauri 就试 dev server', async () => {
+  it('没有 Electron 文件桥就试 dev server', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       expect(String(url)).toContain(STORE_API_PREFIX);
       return { ok: true, json: async () => ({}) } as unknown as Response;
@@ -92,7 +78,7 @@ describe('后端挑选', () => {
     expect((await resolvePersistentStore()).kind).toBe('http');
   });
 
-  it('两个都没有就降级到内存，并且降级是**说出来**的', async () => {
+  it('两个文件后端都没有就降级到内存，并且降级是**说出来**的', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubGlobal('fetch', vi.fn(async () => {
       throw new Error('ECONNREFUSED');
@@ -103,15 +89,14 @@ describe('后端挑选', () => {
     expect(warn).toHaveBeenCalled();
   });
 
-  it('Tauri 存在但用不了时继续往下探，不是直接死', async () => {
+  it('Electron 文件桥用不了时继续往下探，不是直接死', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.stubGlobal('__TAURI__', {
-      core: {
-        invoke: vi.fn(async () => {
-          throw new Error('command not found');
-        }),
-      },
-    });
+    vi.stubGlobal('location', { protocol: 'gamedraft:' });
+    vi.stubGlobal('__GAMEDRAFT_ELECTRON__', { store: {
+      readAll: vi.fn(async () => { throw new Error('store unavailable'); }),
+      write: vi.fn(async () => {}),
+      remove: vi.fn(async () => {}),
+    } });
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({}) } as unknown as Response)));
     expect((await resolvePersistentStore()).kind).toBe('http');
   });

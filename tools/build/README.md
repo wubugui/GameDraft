@@ -15,13 +15,13 @@
 
 ```bash
 # 编辑器手动 build：每次传同一个目录 → 覆盖上一次
-node scripts/release.mjs --out-dir D:/builds/current
+node scripts/release.mjs --out-dir F:/build/GameDraft/editor/release
 
 # 自动化定期 build：每次传新目录 → 全部留档
-node scripts/release.mjs --out-dir D:/builds/2026-08-28T09-00
+node scripts/release.mjs --out-dir F:/build/GameDraft/2026-08-28T09-00
 
 # 档位（缺省 release）
-node scripts/release.mjs --out-dir D:/builds/devcheck --target dev
+node scripts/release.mjs --out-dir F:/build/GameDraft/devcheck --target dev
 ```
 
 **输出目录是参数，不进任何配置文件。** 它不是"这个项目怎么构建"的一部分，
@@ -31,23 +31,26 @@ node scripts/release.mjs --out-dir D:/builds/devcheck --target dev
 产出的是**绿色版**，双击即玩，不打安装包：
 
 ```
-<out-dir>/gamedraft.exe          3 MB
+<out-dir>/GameDraft.exe          Electron 游戏入口
 <out-dir>/game/                  游戏内容
-<out-dir>/.gamedraft-build.json  构建标记：档位、时间、体积、有没有过验收
+<out-dir>/resources/             Electron 壳与 Steamworks.js
+<out-dir>/.gamedraft-build.json  构建标记：档位、时间、体积、验收与 runtime=electron
 ```
 
-要 NSIS 安装包单独跑 `npm run tauri:build`。只要绿色版的话不值得等 makensis
-压 566 MB 那四五分钟，所以 `release.mjs` 走 `tauri build --no-bundle`。
+分发时保留整个输出目录；`GameDraft.exe` 旁还有 Electron 运行文件与 Steam 原生库。
+当前入口产出 Windows x64 绿色版。编辑器默认写到 `F:/build/GameDraft/editor/<档位>`
+（没有 `F:/build` 时用用户目录的 `GameDraft Builds/<档位>`）。
 
 ### 输出目录的两道闸
 
 会被**整体清空重写**的目录，所以先过两关：
 
-1. **路径体检**（与磁盘无关）：盘符根、仓库根、仓库根的上级、
-   `public/` `src/` `tools/` 这些源码树，一律拒绝。
+1. **路径体检**：编辑器和构建工作台应输出到 Git 工作树外；发行脚本另允许仓库
+   `release/` 下的安全子目录。盘符根、仓库根、仓库根的上级、
+   `public/` `src/` `tools/` 这些源码树一律拒绝。
 2. **覆盖策略**：目录里有上次的 `.gamedraft-build.json` → 直接覆盖；
-   空目录或不存在 → 直接用；**是个陌生的非空目录 → 报错退出**，
-   确认无误再加 `--force`。防的是手滑把别的目录清了。
+   空目录或不存在 → 直接用；**是个陌生的非空目录 → 报错退出**。
+   覆盖保留包旁的 `gamedata/` 存档。防的是手滑清掉别的目录。
 
 ### 验收不过就不出包
 
@@ -85,8 +88,11 @@ node scripts/verify_build.mjs --target dev --serve
 #   随时 GET /__verify/404 看当前漏了什么
 #   Ctrl-C 收尾，报告写进 release/<档>/verify-report.json
 
-# 出 exe（需要 Rust 工具链）
-npm run tauri:build
+# Electron 绿色包（和编辑器、构建工作台共用同一入口）
+node scripts/release.mjs --out-dir F:/build/GameDraft/editor/release
+
+# Electron 热更新开发窗：首次装配 dev 桌面包，之后复用它并自动启动/关闭本地 Vite
+npm run electron:dev
 ```
 
 ## 光照载荷：运行时读什么只在一处定义
@@ -103,10 +109,11 @@ npm run tauri:build
 | 工具 | 什么时候要 | 装法 |
 |---|---|---|
 | ffmpeg | 发行档的音频转码 | `winget install Gyan.FFmpeg` |
-| Rust 工具链 | 出 exe（`tauri:build` / `tauri:dev`） | `winget install Rustlang.Rustup` |
+| Electron 44.4.5 官方 ZIP | 装配 Windows x64 绿色包；默认读取 `%LOCALAPPDATA%/GameDraft/electron-probe/` | 从 Electron 官方发布页下载并校验 SHA256 |
+| steamworks.js 0.4.0 | 装配 Steam SDK 的原生模块 | `npm ci --omit=dev --prefix src-electron` |
 
-两者都不装也能跑 `package:dev` 与全部验收——只是发行档会在转码那步**直接停下**
-（带着 wav 发出去等于悄悄改了交付内容），exe 打不出来。
+Electron ZIP 或 Steam 原生模块缺失时不能装配 exe。`package:dev` 与静态验收仍可独立运行；
+发行档缺 ffmpeg 会在转码时**直接停下**（带着 wav 发出去等于悄悄改了交付内容）。
 
 ## 目录
 
@@ -119,7 +126,7 @@ tools/build/
 scripts/
   package.mjs           装配器：清单 → staging → 转码 → 报告
   verify_build.mjs      验收门：完整性 / 发行卫生 / 可服务 / 404 记录
-src-tauri/              桌面壳：自定义协议读 exe 旁 game/、存档写 exe 旁 gamedata/
+src-electron/           桌面壳：本地协议读 exe 旁 game/、存档写 exe 旁 gamedata/、接 Steamworks
 ```
 
 ## 「从哪里开始」怎么配

@@ -81,13 +81,16 @@ def test_every_webengine_shell_disables_caches() -> None:
 
 
 def test_shipped_game_serves_no_store() -> None:
-    """发行版那扇窗(Tauri + WebView2)同样受这条规矩管:自定义协议一律 `no-store`。
+    """Electron 发行版的本地游戏协议同样不得缓存旧字节。
 
     这里原本是 `max-age=31536000, immutable` —— 内容躺在 exe 旁边的 `game/` 文件夹里、
-    换图不换名是设计卖点,那条头等于允许 WebView2 一年内喂旧字节。
+    换图不换名是设计卖点,那条头会让 Electron 喂旧字节。
     """
-    src = (_ROOT / "src-tauri" / "src" / "web_root.rs").read_text(encoding="utf-8")
-    # 只看真正发出去的头值(注释里必然写着那条被废掉的 max-age,不该被算成违规)。
-    sent = re.findall(r'header\(\s*"Cache-Control"\s*,\s*"([^"]*)"', src)
-    assert sent, "web_root.rs 里找不到 Cache-Control 头——协议处理被改动过,这道门要跟着改"
+    src = (_ROOT / "src-electron" / "main.cjs").read_text(encoding="utf-8")
+    assert "gameSession.protocol.handle(SCHEME," in src
+    # 协议正常响应与错误响应两种写法都抓到,只看真正发出的头值。
+    sent = re.findall(r"['\"]Cache-Control['\"]\s*:\s*['\"]([^'\"]+)['\"]", src)
+    sent += re.findall(r"headers\.set\(\s*['\"]Cache-Control['\"]\s*,\s*['\"]([^'\"]+)['\"]", src)
+    assert sent, "Electron 协议里找不到 Cache-Control 头——这道门要跟着改"
     assert set(sent) == {"no-store"}, f"发行版窗口只许发 no-store,实际发的是:{sent}"
+    assert "session.fromPartition('gamedraft-game', { cache: false })" in src
