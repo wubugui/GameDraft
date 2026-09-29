@@ -1,0 +1,13 @@
+{
+  "name": "gamedraft-electron-shell",
+  "private": true,
+  "version": "0.1.0",
+  "main": "main.cjs",
+  "description": "GameDraft Windows Electron desktop shell",
+  "dependencies": {
+    "steamworks.js": "0.4.0"
+  },
+  "devDependencies": {
+    "electron": "44.4.5"
+  }
+}

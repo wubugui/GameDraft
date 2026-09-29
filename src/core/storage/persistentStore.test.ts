@@ -40,6 +40,36 @@ describe('MemoryStore', () => {
 });
 
 describe('后端挑选', () => {
+  it('Electron 正式包使用受限文件桥，写失败会传回调用方', async () => {
+    const bridge = {
+      readAll: vi.fn(async () => ({ slot0: '{"a":1}', bad: 42 })),
+      write: vi.fn(async () => { throw new Error('disk full'); }),
+      remove: vi.fn(async () => {}),
+    };
+    vi.stubGlobal('location', { protocol: 'gamedraft:' });
+    vi.stubGlobal('__GAMEDRAFT_ELECTRON__', { store: bridge });
+    const store = await resolvePersistentStore();
+    expect(store.kind).toBe('electron');
+    expect(store.persisted).toBe(true);
+    expect(await store.readAll('saves')).toEqual({ slot0: '{"a":1}' });
+    await expect(store.write('saves', 'slot0', '{}')).rejects.toThrow('disk full');
+    await expect(store.write('saves', '../bad', '{}')).rejects.toThrow(/非法/);
+    expect(bridge.write).toHaveBeenCalledTimes(1);
+  });
+
+  it('Electron 开发窗继续使用 dev server 文件后端', async () => {
+    const bridge = {
+      readAll: vi.fn(async () => ({})),
+      write: vi.fn(async () => {}),
+      remove: vi.fn(async () => {}),
+    };
+    vi.stubGlobal('location', { protocol: 'http:' });
+    vi.stubGlobal('__GAMEDRAFT_ELECTRON__', { store: bridge });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({}) } as unknown as Response)));
+    expect((await resolvePersistentStore()).kind).toBe('http');
+    expect(bridge.readAll).not.toHaveBeenCalled();
+  });
+
   it('Tauri 在就用 Tauri', async () => {
     const invoke = vi.fn(async (cmd: string) => (cmd === 'gamedata_read_all' ? {} : undefined));
     vi.stubGlobal('__TAURI__', { core: { invoke } });

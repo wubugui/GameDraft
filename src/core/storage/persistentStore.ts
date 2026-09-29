@@ -4,19 +4,20 @@
  * ## 为什么不用 localStorage
  *
  * `localStorage` 按 **origin** 隔离,而这个项目的游戏会在至少三种壳里跑:
- * 编辑器内嵌 QtWebEngine、外部浏览器、将来的 Tauri exe。它们是三份物理上
+ * 编辑器内嵌 QtWebEngine、外部浏览器、桌面 exe。它们是物理上
  * 互不相通的存储——同一个 origin 也不共享。于是"编辑器里存的档,浏览器打开
  * 就没了",而数据其实一直都在,只是躺在另一个仓里。
  *
  * 换成文件后,三种壳读写的是**同一批文件**,存档还能直接拷走。
  *
- * ## 三个后端
+ * ## 后端
  *
  * | 后端 | 何时用 | 落在哪 |
  * |---|---|---|
- * | `TauriFsStore`  | 打包后的 exe | exe 旁 `gamedata/`(见 src-tauri) |
+ * | `ElectronFsStore` | Electron 打包版 | exe 旁 `gamedata/`(见 src-electron) |
+ * | `TauriFsStore`  | Tauri 打包版 | exe 旁 `gamedata/`(见 src-tauri) |
  * | `HttpFileStore` | 开发期(dev server 在) | 仓库 `local/gamedata/` |
- * | `MemoryStore`   | 两者都没有 | 内存,进程结束即失 |
+ * | `MemoryStore`   | 文件后端都不可用 | 内存,进程结束即失 |
  *
  * `MemoryStore` 是**诚实的降级**而不是静默兜底:`persisted` 为 false,UI 据此
  * 告诉玩家"这次的进度不会留下",不要让人存了档才发现没存上。
@@ -30,7 +31,7 @@
 /** 一个命名空间下的键值存储。值一律是字符串(JSON 文本)。 */
 export interface PersistentStore {
   /** 后端种类,用于日志与降级提示。 */
-  readonly kind: 'tauri' | 'http' | 'memory';
+  readonly kind: 'electron' | 'tauri' | 'http' | 'memory';
   /** 写入是否真的会留下来。`memory` 后端为 false。 */
   readonly persisted: boolean;
   /** 一次性读出该命名空间下所有键值(启动时水化用)。 */
@@ -51,6 +52,57 @@ function assertName(what: string, s: string): void {
 
 /** dev server 的存储 API 前缀（与 vite.config.ts 的 persistentStoreApi 对齐）。 */
 export const STORE_API_PREFIX = '/__gamedraft-api/store';
+
+// -------------------------------------------------------------- Electron 后端
+
+type ElectronStoreBridge = {
+  readAll(namespace: string): Promise<Record<string, string>>;
+  write(namespace: string, key: string, value: string): Promise<void>;
+  remove(namespace: string, key: string): Promise<void>;
+};
+
+function electronStoreBridge(): ElectronStoreBridge | null {
+  const w = globalThis as typeof globalThis & {
+    __GAMEDRAFT_ELECTRON__?: { store?: ElectronStoreBridge };
+  };
+  // 开发期 Electron 加载 localhost 时仍用 dev server 的 local/gamedata；
+  // 正式包的受信协议才使用 exe 旁的 Electron 文件后端。
+  if (w.location?.protocol !== 'gamedraft:') return null;
+  const store = w.__GAMEDRAFT_ELECTRON__?.store;
+  return store && typeof store.readAll === 'function'
+    && typeof store.write === 'function' && typeof store.remove === 'function'
+    ? store : null;
+}
+
+class ElectronFsStore implements PersistentStore {
+  readonly kind = 'electron' as const;
+  readonly persisted = true;
+
+  constructor(private readonly bridge: ElectronStoreBridge) {}
+
+  async readAll(namespace: string): Promise<Record<string, string>> {
+    assertName('namespace', namespace);
+    const out = await this.bridge.readAll(namespace);
+    if (!out || typeof out !== 'object') return {};
+    const rec: Record<string, string> = {};
+    for (const [key, value] of Object.entries(out)) {
+      if (NAME_RE.test(key) && typeof value === 'string') rec[key] = value;
+    }
+    return rec;
+  }
+
+  async write(namespace: string, key: string, value: string): Promise<void> {
+    assertName('namespace', namespace);
+    assertName('key', key);
+    await this.bridge.write(namespace, key, value);
+  }
+
+  async remove(namespace: string, key: string): Promise<void> {
+    assertName('namespace', namespace);
+    assertName('key', key);
+    await this.bridge.remove(namespace, key);
+  }
+}
 
 // ---------------------------------------------------------------- Tauri 后端
 
@@ -186,6 +238,17 @@ let cached: PersistentStore | null = null;
 let inFlight: Promise<PersistentStore> | null = null;
 
 async function probeBackends(): Promise<PersistentStore> {
+  const electron = electronStoreBridge();
+  if (electron) {
+    const store = new ElectronFsStore(electron);
+    try {
+      await store.readAll('saves');
+      return store;
+    } catch (e) {
+      console.warn('persistentStore: Electron 后端不可用,继续探测', e);
+    }
+  }
+
   const invoke = tauriInvoke();
   if (invoke) {
     const store = new TauriFsStore(invoke);
@@ -206,14 +269,14 @@ async function probeBackends(): Promise<PersistentStore> {
   }
 
   console.warn(
-    'persistentStore: 没有可用的持久化后端（既没有 Tauri,也没有 dev server 存储 API）。'
+    'persistentStore: 没有可用的持久化后端（Electron、Tauri 和 dev server 存储 API 均不可用）。'
     + '本次运行的存档与设置只留在内存里,关掉就没了。',
   );
   return new MemoryStore();
 }
 
 /**
- * 挑一个能用的后端。Tauri > dev server > 内存。
+ * 挑一个能用的后端。正式 Electron > Tauri > dev server > 内存。
  *
  * dev server 的探测是**真发一次请求**,而不是看 `import.meta.env.DEV`——构建出来的
  * 产物也可能被某个静态服务器托着跑,那时候中间件并不存在,只看构建标志会误判。
